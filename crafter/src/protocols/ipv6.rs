@@ -2090,10 +2090,9 @@ pub struct Ipv6SegmentRoutingHeader {
     header_ext_len: Field<u8>,
     routing_type: Field<u8>,
     segments_left: Field<u8>,
-    first_segment: Field<u8>,
-    c_flag: Field<bool>,
-    p_flag: Field<bool>,
-    reserved: Field<u8>,
+    last_entry: Field<u8>,
+    flags: Field<u8>,
+    tag: Field<u16>,
     policy_flag1: Field<u8>,
     policy_flag2: Field<u8>,
     policy_flag3: Field<u8>,
@@ -2102,7 +2101,7 @@ pub struct Ipv6SegmentRoutingHeader {
     segments: Vec<Ipv6Addr>,
     policies: [Ipv6Addr; 4],
     hmac: [u8; IPV6_SEGMENT_HMAC_LEN],
-    extra_data: Vec<u8>,
+    trailing_data: Vec<u8>,
 }
 
 impl Ipv6SegmentRoutingHeader {
@@ -2113,10 +2112,9 @@ impl Ipv6SegmentRoutingHeader {
             header_ext_len: Field::unset(),
             routing_type: Field::defaulted(IPV6_ROUTING_TYPE_SEGMENT),
             segments_left: Field::unset(),
-            first_segment: Field::unset(),
-            c_flag: Field::defaulted(false),
-            p_flag: Field::defaulted(false),
-            reserved: Field::defaulted(0),
+            last_entry: Field::unset(),
+            flags: Field::defaulted(0),
+            tag: Field::defaulted(0),
             policy_flag1: Field::defaulted(IPV6_SEGMENT_POLICY_UNSET),
             policy_flag2: Field::defaulted(IPV6_SEGMENT_POLICY_UNSET),
             policy_flag3: Field::defaulted(IPV6_SEGMENT_POLICY_UNSET),
@@ -2125,7 +2123,7 @@ impl Ipv6SegmentRoutingHeader {
             segments: Vec::new(),
             policies: [Ipv6Addr::UNSPECIFIED; 4],
             hmac: [0; IPV6_SEGMENT_HMAC_LEN],
-            extra_data: Vec::new(),
+            trailing_data: Vec::new(),
         }
     }
 
@@ -2163,21 +2161,38 @@ impl Ipv6SegmentRoutingHeader {
         self.segments_left(segments_left)
     }
 
-    /// Set the first-segment field.
-    pub fn first_segment(mut self, first_segment: u8) -> Self {
-        self.first_segment.set_user(first_segment);
+    /// Set the RFC 8754 Last Entry field.
+    pub fn last_entry(mut self, last_entry: u8) -> Self {
+        self.last_entry.set_user(last_entry);
+        self
+    }
+
+    /// Compatibility alias for the RFC 8754 Last Entry field.
+    pub fn first_segment(self, first_segment: u8) -> Self {
+        self.last_entry(first_segment)
+    }
+
+    /// Set the RFC 8754 Flags byte.
+    pub fn flags(mut self, flags: u8) -> Self {
+        self.flags.set_user(flags);
+        self
+    }
+
+    /// Set the RFC 8754 Tag field.
+    pub fn tag(mut self, tag: u16) -> Self {
+        self.tag.set_user(tag);
         self
     }
 
     /// Set or clear the cleanup flag.
     pub fn c_flag(mut self, c_flag: bool) -> Self {
-        self.c_flag.set_user(c_flag);
+        self.set_flag_bit(0x80, c_flag);
         self
     }
 
     /// Set or clear the protected flag.
     pub fn p_flag(mut self, p_flag: bool) -> Self {
-        self.p_flag.set_user(p_flag);
+        self.set_flag_bit(0x40, p_flag);
         self
     }
 
@@ -2188,7 +2203,10 @@ impl Ipv6SegmentRoutingHeader {
 
     /// Set the two reserved bits.
     pub fn reserved(mut self, reserved: u8) -> Self {
-        self.reserved.set_user(reserved);
+        let mut flags = self.flags_value();
+        flags &= !0x30;
+        flags |= (reserved & 0x03) << 4;
+        self.flags.set_user(flags);
         self
     }
 
@@ -2266,9 +2284,15 @@ impl Ipv6SegmentRoutingHeader {
         self.policy(index, parse_ipv6(policy)?, policy_flag)
     }
 
-    /// Preserve or append extra bytes after known segment-routing fields.
+    /// Preserve or append raw bytes after the RFC 8754 Segment List.
+    pub fn raw_trailing_data(mut self, raw_trailing_data: impl Into<Vec<u8>>) -> Self {
+        self.trailing_data = raw_trailing_data.into();
+        self
+    }
+
+    /// Compatibility alias for raw bytes after the RFC 8754 Segment List.
     pub fn extra_data(mut self, extra_data: impl Into<Vec<u8>>) -> Self {
-        self.extra_data = extra_data.into();
+        self.trailing_data = extra_data.into();
         self
     }
 
@@ -2305,27 +2329,42 @@ impl Ipv6SegmentRoutingHeader {
             .unwrap_or_else(|| saturating_last_index(self.segments.len()))
     }
 
-    /// First-segment value.
-    pub fn first_segment_value(&self) -> u8 {
-        self.first_segment
+    /// RFC 8754 Last Entry value.
+    pub fn last_entry_value(&self) -> u8 {
+        self.last_entry
             .value()
             .copied()
             .unwrap_or_else(|| saturating_last_index(self.segments.len()))
     }
 
+    /// Compatibility alias for the RFC 8754 Last Entry value.
+    pub fn first_segment_value(&self) -> u8 {
+        self.last_entry_value()
+    }
+
+    /// RFC 8754 Flags byte.
+    pub fn flags_value(&self) -> u8 {
+        value_or_copy(&self.flags, 0)
+    }
+
+    /// RFC 8754 Tag value.
+    pub fn tag_value(&self) -> u16 {
+        value_or_copy(&self.tag, 0)
+    }
+
     /// Return true when the cleanup flag is set.
     pub fn c_flag_value(&self) -> bool {
-        value_or_copy(&self.c_flag, false)
+        self.flags_value() & 0x80 != 0
     }
 
     /// Return true when the protected flag is set.
     pub fn p_flag_value(&self) -> bool {
-        value_or_copy(&self.p_flag, false)
+        self.flags_value() & 0x40 != 0
     }
 
     /// Reserved two-bit value.
     pub fn reserved_value(&self) -> u8 {
-        value_or_copy(&self.reserved, 0)
+        (self.flags_value() >> 4) & 0x03
     }
 
     /// Policy flags.
@@ -2348,6 +2387,11 @@ impl Ipv6SegmentRoutingHeader {
         &self.segments
     }
 
+    /// RFC 8754 Segment List entries in encoded order.
+    pub fn segment_list(&self) -> &[Ipv6Addr] {
+        &self.segments
+    }
+
     /// Policy addresses.
     pub fn policies(&self) -> &[Ipv6Addr; 4] {
         &self.policies
@@ -2358,9 +2402,24 @@ impl Ipv6SegmentRoutingHeader {
         &self.hmac
     }
 
-    /// Extra bytes preserved after known fields.
+    /// Raw bytes preserved after the RFC 8754 Segment List.
+    pub fn raw_trailing_data_bytes(&self) -> &[u8] {
+        &self.trailing_data
+    }
+
+    /// Compatibility alias for raw bytes preserved after the RFC 8754 Segment List.
     pub fn extra_data_bytes(&self) -> &[u8] {
-        &self.extra_data
+        &self.trailing_data
+    }
+
+    fn set_flag_bit(&mut self, mask: u8, enabled: bool) {
+        let mut flags = self.flags_value();
+        if enabled {
+            flags |= mask;
+        } else {
+            flags &= !mask;
+        }
+        self.flags.set_user(flags);
     }
 
     fn set_policy(&mut self, index: usize, policy: Ipv6Addr, policy_flag: u8) -> Result<()> {
@@ -2397,19 +2456,7 @@ impl Ipv6SegmentRoutingHeader {
     }
 
     fn known_variable_len(&self) -> usize {
-        self.segments.len() * 16
-            + self
-                .policy_flags()
-                .iter()
-                .filter(|flag| **flag != IPV6_SEGMENT_POLICY_UNSET)
-                .count()
-                * 16
-            + if self.hmac_key_id_value() == 0 {
-                0
-            } else {
-                IPV6_SEGMENT_HMAC_LEN
-            }
-            + self.extra_data.len()
+        self.segments.len() * 16 + self.trailing_data.len()
     }
 
     fn effective_total_len(&self) -> usize {
@@ -2433,17 +2480,6 @@ impl Ipv6SegmentRoutingHeader {
             .unwrap_or(0)
     }
 
-    fn flags_word(&self) -> u16 {
-        let policies = self.policy_flags();
-        (u16::from(self.c_flag_value()) << 15)
-            | (u16::from(self.p_flag_value()) << 14)
-            | ((self.reserved_value() as u16) << 12)
-            | ((policies[0] as u16) << 9)
-            | ((policies[1] as u16) << 6)
-            | ((policies[2] as u16) << 3)
-            | policies[3] as u16
-    }
-
     fn validate(&self) -> Result<()> {
         validate_extension_total_len("ipv6.segment.header_ext_len", self.effective_total_len())?;
         if self.routing_type_value() != IPV6_ROUTING_TYPE_SEGMENT {
@@ -2458,22 +2494,16 @@ impl Ipv6SegmentRoutingHeader {
                 "segment routing header requires at least one segment",
             ));
         }
-        if self.first_segment_value() as usize >= self.segments.len() {
+        if self.last_entry_value() as usize >= self.segments.len() {
             return Err(CrafterError::invalid_field_value(
-                "ipv6.segment.first_segment",
-                "first segment must refer to an existing segment",
+                "ipv6.segment.last_entry",
+                "last entry must refer to an existing segment",
             ));
         }
         if self.segments_left_value() as usize >= self.segments.len() {
             return Err(CrafterError::invalid_field_value(
                 "ipv6.segment.segments_left",
                 "segments left must refer to an existing segment",
-            ));
-        }
-        if self.reserved_value() > 0x03 {
-            return Err(CrafterError::invalid_field_value(
-                "ipv6.segment.reserved",
-                "reserved value must fit in two bits",
             ));
         }
         if self.policy_flags().iter().any(|flag| *flag > 0x07) {
@@ -2531,14 +2561,18 @@ impl Layer for Ipv6SegmentRoutingHeader {
                 format!("{:?}", self.routing_type_status()),
             ),
             ("segments_left", self.segments_left_value().to_string()),
+            ("last_entry", self.last_entry_value().to_string()),
             ("first_segment", self.first_segment_value().to_string()),
+            ("flags", format!("0x{:02x}", self.flags_value())),
             ("c_flag", self.c_flag_value().to_string()),
             ("p_flag", self.p_flag_value().to_string()),
+            ("tag", format!("0x{:04x}", self.tag_value())),
             ("reserved", self.reserved_value().to_string()),
             ("policy_flags", format!("{:?}", self.policy_flags())),
             ("hmac_key_id", self.hmac_key_id_value().to_string()),
-            ("segments", ipv6_list_summary(&self.segments)),
-            ("extra_data", hex_bytes(&self.extra_data)),
+            ("segment_list", ipv6_list_summary(&self.segments)),
+            ("raw_trailing_data", hex_bytes(&self.trailing_data)),
+            ("extra_data", hex_bytes(&self.trailing_data)),
         ]
     }
 
@@ -2555,21 +2589,13 @@ impl Layer for Ipv6SegmentRoutingHeader {
         out.push(self.effective_header_ext_len()?);
         out.push(self.routing_type_value());
         out.push(self.segments_left_value());
-        out.push(self.first_segment_value());
-        out.extend_from_slice(&self.flags_word().to_be_bytes());
-        out.push(self.hmac_key_id_value());
+        out.push(self.last_entry_value());
+        out.push(self.flags_value());
+        out.extend_from_slice(&self.tag_value().to_be_bytes());
         for segment in &self.segments {
             out.extend_from_slice(&segment.octets());
         }
-        for (index, flag) in self.policy_flags().iter().enumerate() {
-            if *flag != IPV6_SEGMENT_POLICY_UNSET {
-                out.extend_from_slice(&self.policies[index].octets());
-            }
-        }
-        if self.hmac_key_id_value() != 0 {
-            out.extend_from_slice(&self.hmac);
-        }
-        out.extend_from_slice(&self.extra_data);
+        out.extend_from_slice(&self.trailing_data);
         out.resize(start + total_len, 0);
         Ok(())
     }
@@ -2792,25 +2818,11 @@ fn decode_segment_routing_header(
         ));
     }
 
-    let flags = read_u16_be(&bytes[5..7])?;
-    let policy_flags = [
-        ((flags >> 9) & 0x07) as u8,
-        ((flags >> 6) & 0x07) as u8,
-        ((flags >> 3) & 0x07) as u8,
-        (flags & 0x07) as u8,
-    ];
-    let first_segment = bytes[4] as usize;
-    let segment_count = first_segment + 1;
-    let policy_count = policy_flags
-        .iter()
-        .filter(|flag| **flag != IPV6_SEGMENT_POLICY_UNSET)
-        .count();
-    let hmac_len = if bytes[7] == 0 {
-        0
-    } else {
-        IPV6_SEGMENT_HMAC_LEN
-    };
-    let required_variable_len = segment_count * 16 + policy_count * 16 + hmac_len;
+    let flags = bytes[5];
+    let tag = read_u16_be(&bytes[6..8])?;
+    let last_entry = bytes[4] as usize;
+    let segment_count = last_entry + 1;
+    let required_variable_len = segment_count * 16;
     let variable = &bytes[IPV6_SEGMENT_BASE_LEN..total_len];
     if variable.len() < required_variable_len {
         return Err(CrafterError::invalid_field_value(
@@ -2828,38 +2840,23 @@ fn decode_segment_routing_header(
         cursor += 16;
     }
 
-    let mut policies = [Ipv6Addr::UNSPECIFIED; 4];
-    for (index, flag) in policy_flags.iter().enumerate() {
-        if *flag != IPV6_SEGMENT_POLICY_UNSET {
-            policies[index] = Ipv6Addr::from(copy_array_16(&variable[cursor..cursor + 16]));
-            cursor += 16;
-        }
-    }
-
-    let mut hmac = [0; IPV6_SEGMENT_HMAC_LEN];
-    if hmac_len != 0 {
-        hmac.copy_from_slice(&variable[cursor..cursor + IPV6_SEGMENT_HMAC_LEN]);
-        cursor += IPV6_SEGMENT_HMAC_LEN;
-    }
-
     Ok(Ipv6SegmentRoutingHeader {
         next_header: Field::user(bytes[0]),
         header_ext_len: Field::user(bytes[1]),
         routing_type: Field::user(bytes[2]),
         segments_left: Field::user(bytes[3]),
-        first_segment: Field::user(bytes[4]),
-        c_flag: Field::user(flags & 0x8000 != 0),
-        p_flag: Field::user(flags & 0x4000 != 0),
-        reserved: Field::user(((flags >> 12) & 0x03) as u8),
-        policy_flag1: Field::user(policy_flags[0]),
-        policy_flag2: Field::user(policy_flags[1]),
-        policy_flag3: Field::user(policy_flags[2]),
-        policy_flag4: Field::user(policy_flags[3]),
-        hmac_key_id: Field::user(bytes[7]),
+        last_entry: Field::user(bytes[4]),
+        flags: Field::user(flags),
+        tag: Field::user(tag),
+        policy_flag1: Field::defaulted(IPV6_SEGMENT_POLICY_UNSET),
+        policy_flag2: Field::defaulted(IPV6_SEGMENT_POLICY_UNSET),
+        policy_flag3: Field::defaulted(IPV6_SEGMENT_POLICY_UNSET),
+        policy_flag4: Field::defaulted(IPV6_SEGMENT_POLICY_UNSET),
+        hmac_key_id: Field::defaulted(0),
         segments,
-        policies,
-        hmac,
-        extra_data: variable[cursor..].to_vec(),
+        policies: [Ipv6Addr::UNSPECIFIED; 4],
+        hmac: [0; IPV6_SEGMENT_HMAC_LEN],
+        trailing_data: variable[cursor..].to_vec(),
     })
 }
 
@@ -3295,7 +3292,7 @@ mod ipv6_extensions {
 mod ipv6_routing_header {
     use super::{
         Ipv6MobileRoutingHeader, Ipv6RoutingHeader, Ipv6SegmentRoutingHeader, IPPROTO_IPV6_ROUTE,
-        IPV6_ROUTING_TYPE_SEGMENT, IPV6_SEGMENT_POLICY_EGRESS, IPV6_SEGMENT_POLICY_SOURCE_ADDRESS,
+        IPV6_ROUTING_TYPE_SEGMENT,
     };
     use crate::{Ipv6, NetworkLayer, Packet, Raw, Tcp};
     use core::net::Ipv6Addr;
@@ -3309,9 +3306,7 @@ mod ipv6_routing_header {
     }
 
     #[test]
-    fn ipv6_segment_routing_header_matches_libcrafter_example_shape() {
-        let mut hmac = [0u8; 32];
-        hmac[15] = 0xff;
+    fn ipv6_segment_routing_header_matches_rfc8754_shape() {
         let sr_header = Ipv6SegmentRoutingHeader::new()
             .push_ipv6_segment("2001:db8:1234::2")
             .unwrap()
@@ -3321,12 +3316,10 @@ mod ipv6_routing_header {
             .unwrap()
             .push_ipv6_segment("2001:db8:1234::5")
             .unwrap()
-            .policy_str(3, "dead:beef::", IPV6_SEGMENT_POLICY_EGRESS)
-            .unwrap()
-            .policy_flag1(IPV6_SEGMENT_POLICY_SOURCE_ADDRESS)
-            .pflag(true)
-            .hmac_key_id(5)
-            .hmac(hmac);
+            .last_entry(3)
+            .flags(0x40)
+            .tag(0x1234)
+            .raw_trailing_data([0x05, 0x02, 0xaa, 0xbb]);
         let packet = Ipv6::new().src(src()).dst(dst())
             / sr_header
             / Tcp::new().sport(1234).dport(80)
@@ -3335,23 +3328,26 @@ mod ipv6_routing_header {
 
         assert_eq!(bytes.as_bytes()[6], IPPROTO_IPV6_ROUTE);
         assert_eq!(bytes.as_bytes()[40], crate::IPPROTO_TCP);
-        assert_eq!(bytes.as_bytes()[41], 16);
+        assert_eq!(bytes.as_bytes()[41], 9);
         assert_eq!(bytes.as_bytes()[42], IPV6_ROUTING_TYPE_SEGMENT);
         assert_eq!(bytes.as_bytes()[43], 3);
         assert_eq!(bytes.as_bytes()[44], 3);
-        assert_eq!(bytes.as_bytes()[45] & 0x40, 0x40);
-        assert_eq!(bytes.as_bytes()[47], 5);
+        assert_eq!(bytes.as_bytes()[45], 0x40);
+        assert_eq!(&bytes.as_bytes()[46..48], &[0x12, 0x34]);
 
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes.as_bytes()).unwrap();
         let sr = decoded.layer::<Ipv6SegmentRoutingHeader>().unwrap();
         assert_eq!(sr.segments().len(), 4);
         assert_eq!(sr.segments_left_value(), 3);
+        assert_eq!(sr.last_entry_value(), 3);
         assert_eq!(sr.first_segment_value(), 3);
-        assert_eq!(sr.policy_flags()[0], IPV6_SEGMENT_POLICY_SOURCE_ADDRESS);
-        assert_eq!(sr.policy_flags()[3], IPV6_SEGMENT_POLICY_EGRESS);
-        assert_eq!(sr.policies()[3], "dead:beef::".parse::<Ipv6Addr>().unwrap());
-        assert_eq!(sr.hmac_key_id_value(), 5);
-        assert_eq!(sr.hmac_bytes()[15], 0xff);
+        assert_eq!(sr.flags_value(), 0x40);
+        assert!(sr.p_flag_value());
+        assert_eq!(sr.tag_value(), 0x1234);
+        assert_eq!(
+            sr.raw_trailing_data_bytes(),
+            &[0x05, 0x02, 0xaa, 0xbb, 0, 0, 0, 0]
+        );
         assert_eq!(decoded.layer::<Tcp>().unwrap().destination_port_value(), 80);
         assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), b"Hello World!");
         assert_eq!(decoded.compile().unwrap(), bytes);
@@ -3388,11 +3384,13 @@ mod ipv6_routing_header {
         let data = [0xde, 0xad, 0xbe, 0xef, 1, 2, 3, 4, 5];
         let packet = Ipv6::new().src(src()).dst(dst())
             / Ipv6RoutingHeader::new()
+                .nh(crate::IPPROTO_IPV6_EXPERIMENTAL_1)
                 .routing_type(253)
                 .segments_left(0)
                 .append_type_data(data)
             / Raw::from("tail");
         let bytes = packet.compile().unwrap();
+        assert_eq!(bytes.as_bytes()[40], crate::IPPROTO_IPV6_EXPERIMENTAL_1);
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes.as_bytes()).unwrap();
         let routing = decoded.layer::<Ipv6RoutingHeader>().unwrap();
 
