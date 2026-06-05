@@ -900,6 +900,20 @@ const PCAP_FIXTURES: &[PcapFixtureCase] = &[
         }],
     },
     PcapFixtureCase {
+        name: "raw-ipv6-base-traffic-flow-udp-raw",
+        path: "pcaps/raw-ipv6-base-traffic-flow-udp-raw.pcap",
+        contents: fixture_bytes!("pcaps/raw-ipv6-base-traffic-flow-udp-raw.pcap"),
+        pcap_link_type: PcapLinkType::RawIp,
+        link_type: LinkType::Raw,
+        timestamp_precision: TimestampPrecision::Microseconds,
+        coverage: PcapCoverageFamily::RawIpIpv6,
+        records: &[PcapFixtureRecord {
+            seconds: 20,
+            fractional: 3,
+            fixture_name: "ipv6-base-traffic-flow-udp-raw",
+        }],
+    },
+    PcapFixtureCase {
         name: "linux-sll-arp-who-has",
         path: "pcaps/linux-sll-arp-who-has.pcap",
         contents: fixture_bytes!("pcaps/linux-sll-arp-who-has.pcap"),

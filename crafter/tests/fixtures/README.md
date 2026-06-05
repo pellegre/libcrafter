@@ -125,7 +125,12 @@ Pcap fixtures cover:
 - Ethernet link type with ARP request and reply records, plus a single-record
   nonstandard ARP frame (`ethernet-arp-nonstandard.pcap`) exercising variable
   address lengths and unknown codepoints.
-- RawIp link type with IPv4 and IPv6 packets.
+- RawIp link type with IPv4 and IPv6 packets, including
+  `raw-ipv6-base-traffic-flow-udp-raw.pcap`: timestamp `20.000003`,
+  DLT_RAW/RawIp, captured/original length 56, byte fixture
+  `ipv6-base-traffic-flow-udp-raw.hex`, decoded as IPv6/UDP/Raw with Traffic
+  Class `0xbb` (DSCP 46, ECN 3), Flow Label `0xabcde`, Hop Limit 37, UDP
+  ports `54049 -> 1049`, a valid UDP checksum, and raw payload `base-v6!`.
 - LinuxSll link type with an ARP payload.
 - NullLoopback link type with an IPv4 UDP payload.
 
