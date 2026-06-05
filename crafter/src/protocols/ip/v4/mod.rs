@@ -11,66 +11,35 @@ use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::packet::{IntoPacket, Layer, LayerContext, Packet, Raw, TransportChecksumContext};
 use crate::protocols::icmp::Icmpv4;
-use crate::protocols::ip::shared::{ip_protocol_summary as protocol_summary, DSCP_SHIFT};
+use crate::protocols::ip::shared::DSCP_SHIFT;
 use crate::protocols::transport::{Tcp, Udp};
 use crate::registry::ProtocolRegistry;
+
+mod constants;
+mod protocol;
 
 pub use crate::protocols::ip::shared::{
     Dscp, Ecn, IPPROTO_AH, IPPROTO_ESP, IPPROTO_EXPERIMENTAL_1, IPPROTO_EXPERIMENTAL_2,
     IPPROTO_GRE, IPPROTO_ICMP, IPPROTO_ICMPV6, IPPROTO_IPV6, IPPROTO_OSPF, IPPROTO_SCTP,
     IPPROTO_TCP, IPPROTO_UDP,
 };
-
-/// IPv4 "reserved" flag bit.
-pub const IPV4_FLAG_RESERVED: u8 = 0b100;
-/// IPv4 "don't fragment" flag bit.
-pub const IPV4_FLAG_DONT_FRAGMENT: u8 = 0b010;
-/// IPv4 "more fragments" flag bit.
-pub const IPV4_FLAG_MORE_FRAGMENTS: u8 = 0b001;
-
-/// IPv4 end-of-option-list option kind.
-pub const IPV4_OPTION_EOL: u8 = 0;
-/// IPv4 no-operation option kind.
-pub const IPV4_OPTION_NOP: u8 = 1;
-/// IPv4 record-route option kind.
-pub const IPV4_OPTION_RECORD_ROUTE: u8 = 7;
-/// IPv4 timestamp option kind.
-pub const IPV4_OPTION_TIMESTAMP: u8 = 0x44;
-/// IPv4 traceroute option kind.
-pub const IPV4_OPTION_TRACEROUTE: u8 = 0x52;
-/// IPv4 loose source-and-record-route option kind.
-pub const IPV4_OPTION_LOOSE_SOURCE_ROUTE: u8 = 0x83;
-/// IPv4 strict source-and-record-route option kind.
-pub const IPV4_OPTION_STRICT_SOURCE_ROUTE: u8 = 0x89;
-/// IPv4 router-alert option kind.
-pub const IPV4_OPTION_ROUTER_ALERT: u8 = 0x94;
-/// IPv4 option kind reserved for experimentation and testing.
-pub const IPV4_OPTION_EXPERIMENTAL_1: u8 = 30;
-/// IPv4 option kind reserved for experimentation and testing.
-pub const IPV4_OPTION_EXPERIMENTAL_2: u8 = 94;
-/// IPv4 option kind reserved for experimentation and testing.
-pub const IPV4_OPTION_EXPERIMENTAL_3: u8 = 158;
-/// IPv4 option kind reserved for experimentation and testing.
-pub const IPV4_OPTION_EXPERIMENTAL_4: u8 = 222;
-
-const IPV4_MIN_HEADER_LEN: usize = 20;
-const IPV4_MAX_HEADER_LEN: usize = 60;
-const IPV4_MAX_IHL: u8 = 15;
-const IPV4_MAX_FLAGS: u8 = 0b111;
-const IPV4_MAX_FRAGMENT_OFFSET: u16 = 0x1fff;
-const IPV4_OPTION_COPIED_MASK: u8 = 0b1000_0000;
-const IPV4_OPTION_CLASS_MASK: u8 = 0b0110_0000;
-const IPV4_OPTION_CLASS_SHIFT: u8 = 5;
-const IPV4_OPTION_NUMBER_MASK: u8 = 0b0001_1111;
-const IPV4_TIMESTAMP_MIN_LEN: usize = 4;
-const IPV4_TIMESTAMP_MAX_LEN: usize = 40;
-const IPV4_TIMESTAMP_POINTER_MIN: u8 = 5;
-const IPV4_TIMESTAMP_FLAG_TIMESTAMPS_ONLY: u8 = 0;
-const IPV4_TIMESTAMP_FLAG_ADDRESS_AND_TIMESTAMP: u8 = 1;
-const IPV4_TIMESTAMP_FLAG_PRESPECIFIED_ADDRESS: u8 = 3;
-const IPV4_TIMESTAMP_WORD_LEN: usize = 4;
-const IPV4_TIMESTAMP_ADDRESS_WORD_LEN: usize = 8;
-const IPV4_ROUTER_ALERT_LEN: usize = 4;
+pub use constants::{
+    IPV4_FLAG_DONT_FRAGMENT, IPV4_FLAG_MORE_FRAGMENTS, IPV4_FLAG_RESERVED, IPV4_OPTION_EOL,
+    IPV4_OPTION_EXPERIMENTAL_1, IPV4_OPTION_EXPERIMENTAL_2, IPV4_OPTION_EXPERIMENTAL_3,
+    IPV4_OPTION_EXPERIMENTAL_4, IPV4_OPTION_LOOSE_SOURCE_ROUTE, IPV4_OPTION_NOP,
+    IPV4_OPTION_RECORD_ROUTE, IPV4_OPTION_ROUTER_ALERT, IPV4_OPTION_STRICT_SOURCE_ROUTE,
+    IPV4_OPTION_TIMESTAMP, IPV4_OPTION_TRACEROUTE,
+};
+use constants::{
+    IPV4_MAX_FLAGS, IPV4_MAX_FRAGMENT_OFFSET, IPV4_MAX_HEADER_LEN, IPV4_MAX_IHL,
+    IPV4_MIN_HEADER_LEN, IPV4_OPTION_CLASS_MASK, IPV4_OPTION_CLASS_SHIFT, IPV4_OPTION_COPIED_MASK,
+    IPV4_OPTION_NUMBER_MASK, IPV4_ROUTER_ALERT_LEN, IPV4_TIMESTAMP_ADDRESS_WORD_LEN,
+    IPV4_TIMESTAMP_FLAG_ADDRESS_AND_TIMESTAMP, IPV4_TIMESTAMP_FLAG_PRESPECIFIED_ADDRESS,
+    IPV4_TIMESTAMP_FLAG_TIMESTAMPS_ONLY, IPV4_TIMESTAMP_MAX_LEN, IPV4_TIMESTAMP_MIN_LEN,
+    IPV4_TIMESTAMP_POINTER_MIN, IPV4_TIMESTAMP_WORD_LEN,
+};
+pub(crate) use protocol::protocol_summary;
+pub use protocol::Ipv4Protocol;
 
 macro_rules! impl_layer_object {
     ($type:ty) => {
@@ -168,44 +137,6 @@ impl Ipv4FragmentInfo {
     /// Return true when this header marks a fragmented datagram.
     pub const fn is_fragmented(self) -> bool {
         self.has_more_fragments() || self.fragment_offset != 0
-    }
-}
-
-/// Common IPv4 protocol numbers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[repr(u8)]
-pub enum Ipv4Protocol {
-    /// IPv6 hop-by-hop option.
-    HopByHop = 0,
-    /// Internet Control Message Protocol for IPv4.
-    Icmpv4 = IPPROTO_ICMP,
-    /// Transmission Control Protocol.
-    Tcp = IPPROTO_TCP,
-    /// User Datagram Protocol.
-    Udp = IPPROTO_UDP,
-    /// IPv6 encapsulation.
-    Ipv6 = IPPROTO_IPV6,
-    /// Generic Routing Encapsulation.
-    Gre = IPPROTO_GRE,
-    /// Encapsulating Security Payload.
-    Esp = IPPROTO_ESP,
-    /// Authentication Header.
-    Ah = IPPROTO_AH,
-    /// ICMPv6.
-    Icmpv6 = IPPROTO_ICMPV6,
-    /// Open Shortest Path First IGP.
-    Ospf = IPPROTO_OSPF,
-    /// Stream Control Transmission Protocol.
-    Sctp = IPPROTO_SCTP,
-    /// Experimentation and testing value 1.
-    Experimental1 = IPPROTO_EXPERIMENTAL_1,
-    /// Experimentation and testing value 2.
-    Experimental2 = IPPROTO_EXPERIMENTAL_2,
-}
-
-impl From<Ipv4Protocol> for u8 {
-    fn from(value: Ipv4Protocol) -> Self {
-        value as u8
     }
 }
 
