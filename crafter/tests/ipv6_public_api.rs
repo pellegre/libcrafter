@@ -1715,6 +1715,178 @@ fn ipv6_option_model() -> crafter::Result<()> {
 }
 
 #[test]
+fn router_alert_option_values_and_malformed_lengths() -> crafter::Result<()> {
+    let rsvp = Ipv6Option::router_alert(IPV6_ROUTER_ALERT_RSVP);
+
+    assert_eq!(IPV6_OPTION_ROUTER_ALERT, 0x05);
+    assert_eq!(rsvp.option_type(), IPV6_OPTION_ROUTER_ALERT);
+    assert_eq!(rsvp.kind(), IPV6_OPTION_ROUTER_ALERT);
+    assert_eq!(rsvp.encoded_len(), 4);
+    assert_eq!(rsvp.data(), &[0, 1]);
+    assert_eq!(rsvp.router_alert_value(), Some(IPV6_ROUTER_ALERT_RSVP));
+    assert_eq!(rsvp.router_alert_value_label(), Some("RSVP"));
+    assert_eq!(rsvp.action_bits(), 0);
+    assert_eq!(rsvp.action(), Ipv6OptionAction::Skip);
+    assert!(!rsvp.change_en_route());
+    assert_eq!(rsvp.rest(), 5);
+    assert_eq!(
+        rsvp.encode()?,
+        vec![IPV6_OPTION_ROUTER_ALERT, 2, 0, IPV6_ROUTER_ALERT_RSVP as u8]
+    );
+    assert_eq!(
+        Ipv6Option::decode_all(&[IPV6_OPTION_ROUTER_ALERT, 2, 0, 1])?,
+        vec![rsvp.clone()]
+    );
+
+    let unassigned = Ipv6Option::router_alert(65502);
+    assert_eq!(unassigned.router_alert_value(), Some(65502));
+    assert_eq!(unassigned.router_alert_value_label(), Some("Unassigned"));
+    assert_eq!(
+        unassigned.encode()?,
+        vec![IPV6_OPTION_ROUTER_ALERT, 2, 0xff, 0xde]
+    );
+
+    assert_eq!(ipv6_router_alert_value_label(IPV6_ROUTER_ALERT_MLD), "MLD");
+    assert_eq!(
+        ipv6_router_alert_value_label(IPV6_ROUTER_ALERT_ACTIVE_NETWORKS),
+        "Active Networks"
+    );
+    assert_eq!(
+        ipv6_router_alert_value_label(IPV6_ROUTER_ALERT_RESERVED),
+        "Reserved"
+    );
+    assert_eq!(
+        ipv6_router_alert_value_label(4),
+        "Aggregated Reservation Nesting Level"
+    );
+    assert_eq!(
+        ipv6_router_alert_value_label(36),
+        "QoS NSLP Aggregation Levels"
+    );
+    assert_eq!(ipv6_router_alert_value_label(68), "NSIS NATFW NSLP");
+    assert_eq!(
+        ipv6_router_alert_value_label(IPV6_ROUTER_ALERT_MPLS_OAM),
+        "MPLS OAM (DEPRECATED)"
+    );
+    assert_eq!(ipv6_router_alert_value_label(65503), "Reserved");
+
+    let short = Ipv6Option::decode_all(&[IPV6_OPTION_ROUTER_ALERT, 1, 0xaa])?;
+    assert_eq!(
+        short,
+        vec![Ipv6Option::Generic {
+            option_type: IPV6_OPTION_ROUTER_ALERT,
+            data: vec![0xaa],
+        }]
+    );
+    assert_eq!(short[0].router_alert_value(), None);
+    assert_eq!(short[0].encode()?, vec![IPV6_OPTION_ROUTER_ALERT, 1, 0xaa]);
+
+    let long = Ipv6Option::decode_all(&[IPV6_OPTION_ROUTER_ALERT, 3, 0, 1, 2])?;
+    assert_eq!(
+        long,
+        vec![Ipv6Option::Generic {
+            option_type: IPV6_OPTION_ROUTER_ALERT,
+            data: vec![0, 1, 2],
+        }]
+    );
+    assert_eq!(long[0].router_alert_value_label(), None);
+    assert_eq!(
+        long[0].encode()?,
+        vec![IPV6_OPTION_ROUTER_ALERT, 3, 0, 1, 2]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn router_alert_hop_by_hop_compile_decode_and_show() -> crafter::Result<()> {
+    let router_alert = Ipv6Option::router_alert(IPV6_ROUTER_ALERT_RSVP);
+    let packet = base_ipv6(64)
+        / Ipv6HopByHopOptionsHeader::new().option(router_alert.clone())
+        / Udp::new().sport(12345).dport(33434)
+        / Raw::from("ra!");
+    let compiled = packet.compile()?;
+    let bytes = compiled.as_bytes();
+
+    assert_ipv6_wire_base_header(bytes, 19, IPPROTO_IPV6_HOPOPTS, 64);
+    assert_eq!(&bytes[40..48], &[IPPROTO_UDP, 0, 0x05, 2, 0, 1, 0, 0]);
+    assert_eq!(&bytes[48..50], &12345u16.to_be_bytes());
+    assert_eq!(&bytes[50..52], &33434u16.to_be_bytes());
+    assert_eq!(&bytes[52..54], &11u16.to_be_bytes());
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+    let hop_by_hop = decoded
+        .layer::<Ipv6HopByHopOptionsHeader>()
+        .expect("hop-by-hop layer");
+    let expected_options = vec![router_alert, Ipv6Option::pad1(), Ipv6Option::pad1()];
+    assert_eq!(hop_by_hop.header_ext_len_value(), Some(0));
+    assert_eq!(hop_by_hop.options_value(), expected_options.as_slice());
+
+    let show = decoded.show();
+    assert!(
+        show.contains("options: Router Alert(0x05,value=RSVP(1)),0x00,0x00"),
+        "{show}"
+    );
+    assert_eq!(decoded.compile()?.as_bytes(), bytes);
+
+    Ok(())
+}
+
+#[test]
+fn router_alert_is_not_inserted_by_defaults() -> crafter::Result<()> {
+    let compiled =
+        (base_ipv6(64) / Ipv6HopByHopOptionsHeader::new() / Udp::new().sport(1111).dport(2222))
+            .compile()?;
+    let extension = &compiled.as_bytes()[40..48];
+
+    assert_eq!(extension[0], IPPROTO_UDP);
+    assert_eq!(extension[1], 0);
+    assert!(!extension[2..].contains(&IPV6_OPTION_ROUTER_ALERT));
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, compiled.as_bytes())?;
+    let hop_by_hop = decoded
+        .layer::<Ipv6HopByHopOptionsHeader>()
+        .expect("hop-by-hop layer");
+    assert!(hop_by_hop
+        .options_value()
+        .iter()
+        .all(|option| *option == Ipv6Option::pad1()));
+
+    Ok(())
+}
+
+#[test]
+fn router_alert_public_paths_exports_are_reachable() {
+    let _: Ipv6Option = Ipv6Option::router_alert(IPV6_ROUTER_ALERT_MLD);
+    let root = crafter::Ipv6Option::router_alert(crafter::IPV6_ROUTER_ALERT_RSVP);
+    let core =
+        crafter::core::Ipv6Option::router_alert(crafter::core::IPV6_ROUTER_ALERT_ACTIVE_NETWORKS);
+    let protocols = crafter::protocols::Ipv6Option::router_alert(
+        crafter::protocols::IPV6_ROUTER_ALERT_MPLS_OAM,
+    );
+
+    assert_eq!(crafter::IPV6_OPTION_ROUTER_ALERT, 0x05);
+    assert_eq!(crafter::core::IPV6_OPTION_ROUTER_ALERT, 0x05);
+    assert_eq!(crafter::protocols::IPV6_OPTION_ROUTER_ALERT, 0x05);
+    assert_eq!(crafter::protocols::ipv6::IPV6_OPTION_ROUTER_ALERT, 0x05);
+    assert_eq!(root.router_alert_value_label(), Some("RSVP"));
+    assert_eq!(core.router_alert_value_label(), Some("Active Networks"));
+    assert_eq!(
+        protocols.router_alert_value_label(),
+        Some("MPLS OAM (DEPRECATED)")
+    );
+    assert_eq!(crafter::ipv6_router_alert_value_label(70), "Unassigned");
+    assert_eq!(
+        crafter::core::ipv6_router_alert_value_label(65535),
+        "Reserved"
+    );
+    assert_eq!(
+        crafter::protocols::ipv6_router_alert_value_label(IPV6_ROUTER_ALERT_MLD),
+        "MLD"
+    );
+}
+
+#[test]
 fn ipv6_option_pad1_encodes_as_one_byte() -> crafter::Result<()> {
     let option = Ipv6Option::pad1();
 

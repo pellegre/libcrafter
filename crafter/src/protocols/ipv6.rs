@@ -43,6 +43,19 @@ pub const IPPROTO_IPV6_EXPERIMENTAL_2: u8 = 254;
 pub const IPV6_OPTION_PAD1: u8 = 0x00;
 /// IPv6 PadN option type shared by Hop-by-Hop and Destination Options headers.
 pub const IPV6_OPTION_PADN: u8 = 0x01;
+/// IPv6 Router Alert option type. Deprecated by IANA for new protocols.
+pub const IPV6_OPTION_ROUTER_ALERT: u8 = 0x05;
+
+/// IPv6 Router Alert value: Multicast Listener Discovery.
+pub const IPV6_ROUTER_ALERT_MLD: u16 = 0;
+/// IPv6 Router Alert value: Resource Reservation Protocol.
+pub const IPV6_ROUTER_ALERT_RSVP: u16 = 1;
+/// IPv6 Router Alert value: Active Networks.
+pub const IPV6_ROUTER_ALERT_ACTIVE_NETWORKS: u16 = 2;
+/// IPv6 Router Alert value: reserved.
+pub const IPV6_ROUTER_ALERT_RESERVED: u16 = 3;
+/// IPv6 Router Alert value: MPLS OAM, deprecated in the IANA registry.
+pub const IPV6_ROUTER_ALERT_MPLS_OAM: u16 = 69;
 
 /// IPv6 Routing Header type for mobile IPv6 home-address routing.
 pub const IPV6_ROUTING_TYPE_MOBILE: u8 = 2;
@@ -71,6 +84,7 @@ const IPV6_TRAFFIC_CLASS_DSCP_SHIFT: u8 = 2;
 const IPV6_TRAFFIC_CLASS_ECN_MASK: u8 = 0x03;
 const IPV6_OPTION_DATA_MAX_LEN: usize = u8::MAX as usize;
 const IPV6_OPTION_HEADER_LEN: usize = 2;
+const IPV6_ROUTER_ALERT_DATA_LEN: usize = 2;
 const IPV6_OPTION_ACTION_SHIFT: u8 = 6;
 const IPV6_OPTION_CHANGE_EN_ROUTE_MASK: u8 = 0x20;
 const IPV6_OPTION_NUMBER_MASK: u8 = 0x1f;
@@ -189,6 +203,12 @@ pub enum Ipv6Option {
         /// Option data bytes after the type and length fields.
         data: Vec<u8>,
     },
+    /// Router Alert option. The two value octets are stored in network byte
+    /// order so the option data remains directly inspectable.
+    RouterAlert {
+        /// Two-octet Router Alert value field in network byte order.
+        value_bytes: [u8; 2],
+    },
     /// Unknown or caller-defined option with a standard IPv6 option length
     /// byte. The full 8-bit option type, including action and change bits, is
     /// preserved verbatim.
@@ -241,6 +261,16 @@ impl Ipv6Option {
         Self::padn_data(data)
     }
 
+    /// Create an RFC 2711 Router Alert option with a two-octet value field.
+    ///
+    /// The option is explicit-only: no IPv6 builder inserts Router Alert unless
+    /// the caller adds this option to a Hop-by-Hop Options header.
+    pub const fn router_alert(value: u16) -> Self {
+        Self::RouterAlert {
+            value_bytes: [(value >> 8) as u8, value as u8],
+        }
+    }
+
     /// Create an unknown or caller-defined option.
     pub fn generic(option_type: u8, data: impl Into<Vec<u8>>) -> Result<Self> {
         validate_ipv6_generic_option_type(option_type)?;
@@ -259,6 +289,7 @@ impl Ipv6Option {
         match self {
             Self::Pad1 => IPV6_OPTION_PAD1,
             Self::PadN { .. } => IPV6_OPTION_PADN,
+            Self::RouterAlert { .. } => IPV6_OPTION_ROUTER_ALERT,
             Self::Generic { option_type, .. } => *option_type,
         }
     }
@@ -273,6 +304,25 @@ impl Ipv6Option {
         match self {
             Self::Pad1 => &[],
             Self::PadN { data } | Self::Generic { data, .. } => data,
+            Self::RouterAlert { value_bytes } => value_bytes,
+        }
+    }
+
+    /// Router Alert value when this is a typed Router Alert option.
+    pub const fn router_alert_value(&self) -> Option<u16> {
+        match self {
+            Self::RouterAlert { value_bytes } => {
+                Some(((value_bytes[0] as u16) << 8) | value_bytes[1] as u16)
+            }
+            _ => None,
+        }
+    }
+
+    /// Source-backed Router Alert value label when this is a Router Alert option.
+    pub const fn router_alert_value_label(&self) -> Option<&'static str> {
+        match self.router_alert_value() {
+            Some(value) => Some(ipv6_router_alert_value_label(value)),
+            None => None,
         }
     }
 
@@ -310,6 +360,7 @@ impl Ipv6Option {
     pub fn encoded_len(&self) -> usize {
         match self {
             Self::Pad1 => 1,
+            Self::RouterAlert { .. } => IPV6_OPTION_HEADER_LEN + IPV6_ROUTER_ALERT_DATA_LEN,
             Self::PadN { data } | Self::Generic { data, .. } => IPV6_OPTION_HEADER_LEN + data.len(),
         }
     }
@@ -323,6 +374,13 @@ impl Ipv6Option {
                 validate_ipv6_option_data_len("ipv6.option.padn.length", data.len())?;
                 bytes.extend_from_slice(&[IPV6_OPTION_PADN, data.len() as u8]);
                 bytes.extend_from_slice(data);
+            }
+            Self::RouterAlert { value_bytes } => {
+                bytes.extend_from_slice(&[
+                    IPV6_OPTION_ROUTER_ALERT,
+                    IPV6_ROUTER_ALERT_DATA_LEN as u8,
+                ]);
+                bytes.extend_from_slice(value_bytes);
             }
             Self::Generic { option_type, data } => {
                 validate_ipv6_generic_option_type(*option_type)?;
@@ -407,9 +465,30 @@ impl Iterator for Ipv6OptionIter<'_> {
         let data = self.bytes[start + IPV6_OPTION_HEADER_LEN..end].to_vec();
         if option_type == IPV6_OPTION_PADN {
             Some(Ok(Ipv6Option::PadN { data }))
+        } else if option_type == IPV6_OPTION_ROUTER_ALERT && data_len == IPV6_ROUTER_ALERT_DATA_LEN
+        {
+            let mut value_bytes = [0; 2];
+            value_bytes.copy_from_slice(&data);
+            Some(Ok(Ipv6Option::RouterAlert { value_bytes }))
         } else {
             Some(Ok(Ipv6Option::Generic { option_type, data }))
         }
+    }
+}
+
+/// Source-backed label for an IPv6 Router Alert value.
+pub const fn ipv6_router_alert_value_label(value: u16) -> &'static str {
+    match value {
+        IPV6_ROUTER_ALERT_MLD => "MLD",
+        IPV6_ROUTER_ALERT_RSVP => "RSVP",
+        IPV6_ROUTER_ALERT_ACTIVE_NETWORKS => "Active Networks",
+        IPV6_ROUTER_ALERT_RESERVED => "Reserved",
+        4..=35 => "Aggregated Reservation Nesting Level",
+        36..=67 => "QoS NSLP Aggregation Levels",
+        68 => "NSIS NATFW NSLP",
+        IPV6_ROUTER_ALERT_MPLS_OAM => "MPLS OAM (DEPRECATED)",
+        70..=65502 => "Unassigned",
+        65503..=65535 => "Reserved",
     }
 }
 
@@ -2629,9 +2708,29 @@ fn ipv6_list_summary(addresses: &[Ipv6Addr]) -> String {
 fn ipv6_options_summary(options: &[Ipv6Option]) -> String {
     options
         .iter()
-        .map(|option| format!("0x{:02x}", option.option_type()))
+        .map(ipv6_option_summary)
         .collect::<Vec<_>>()
         .join(",")
+}
+
+fn ipv6_option_summary(option: &Ipv6Option) -> String {
+    match option {
+        Ipv6Option::RouterAlert { .. } => {
+            let value = option
+                .router_alert_value()
+                .expect("Router Alert option carries two value bytes");
+            format!(
+                "Router Alert(0x{:02x},value={})",
+                option.option_type(),
+                ipv6_router_alert_value_summary(value)
+            )
+        }
+        _ => format!("0x{:02x}", option.option_type()),
+    }
+}
+
+fn ipv6_router_alert_value_summary(value: u16) -> String {
+    format!("{}({value})", ipv6_router_alert_value_label(value))
 }
 
 fn copy_array_16(bytes: &[u8]) -> [u8; 16] {
