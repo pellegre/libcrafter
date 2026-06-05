@@ -188,6 +188,91 @@ fn next_header_override_default_auto_and_aliases_are_preserved() -> crafter::Res
 }
 
 #[test]
+fn next_header_names_are_public_and_used_in_summaries() {
+    let cases = [
+        (IPPROTO_IPV6_HOPOPTS, "hop-by-hop-options(0)"),
+        (IPPROTO_TCP, "tcp(6)"),
+        (IPPROTO_UDP, "udp(17)"),
+        (IPPROTO_IPV6_ROUTE, "routing(43)"),
+        (IPPROTO_IPV6_FRAGMENT, "fragment(44)"),
+        (IPPROTO_IPV6_ESP, "esp(50)"),
+        (IPPROTO_IPV6_AH, "ah(51)"),
+        (IPPROTO_ICMPV6, "icmpv6(58)"),
+        (IPPROTO_IPV6_NO_NEXT, "no-next(59)"),
+        (IPPROTO_IPV6_DSTOPTS, "destination-options(60)"),
+        (IPPROTO_IPV6_MOBILITY, "mobility(135)"),
+        (IPPROTO_IPV6_HIP, "hip(139)"),
+        (IPPROTO_IPV6_SHIM6, "shim6(140)"),
+        (IPPROTO_IPV6_EXPERIMENTAL_1, "experimental-1(253)"),
+        (IPPROTO_IPV6_EXPERIMENTAL_2, "experimental-2(254)"),
+        (149, "unknown(149)"),
+    ];
+
+    for (next_header, label) in cases {
+        let packet = Packet::from_layer(base_ipv6(64).nh(next_header));
+        let summary = packet.summary();
+        let show = packet.show();
+        assert!(summary.contains(&format!("next={label}")), "{summary}");
+        assert!(show.contains(&format!("next_header: {label}")), "{show}");
+    }
+
+    assert_eq!(IPPROTO_IPV6_ESP, 50);
+    assert_eq!(crafter::IPPROTO_IPV6_AH, 51);
+    assert_eq!(crafter::core::IPPROTO_IPV6_NO_NEXT, 59);
+    assert_eq!(crafter::protocols::IPPROTO_IPV6_MOBILITY, 135);
+    assert_eq!(IPPROTO_IPV6_HIP, 139);
+    assert_eq!(crafter::IPPROTO_IPV6_SHIM6, 140);
+    assert_eq!(crafter::core::IPPROTO_IPV6_EXPERIMENTAL_1, 253);
+    assert_eq!(crafter::protocols::IPPROTO_IPV6_EXPERIMENTAL_2, 254);
+}
+
+#[test]
+fn next_header_names_no_next_header_decodes_empty_payload_without_raw() -> crafter::Result<()> {
+    let compiled = (base_ipv6(45).nh(IPPROTO_IPV6_NO_NEXT) / Raw::new()).compile()?;
+    let bytes = compiled.as_bytes();
+
+    assert_ipv6_wire_base_header(bytes, 0, IPPROTO_IPV6_NO_NEXT, 45);
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+    let ipv6 = decoded.layer::<Ipv6>().expect("ipv6 layer");
+
+    assert_decoded_ipv6_base_header(ipv6, 0, IPPROTO_IPV6_NO_NEXT, 45);
+    assert_eq!(decoded.len(), 1);
+    assert!(decoded.layer::<Raw>().is_none());
+    assert!(decoded.summary().contains("no-next(59)"));
+    assert_eq!(decoded.compile()?.as_bytes(), bytes);
+
+    Ok(())
+}
+
+#[test]
+fn next_header_names_no_next_header_preserves_non_empty_payload_as_raw() -> crafter::Result<()> {
+    let payload = [0xde, 0xad, 0xbe, 0xef];
+    let compiled = (base_ipv6(46).nh(IPPROTO_IPV6_NO_NEXT) / Raw::from_bytes(payload)).compile()?;
+    let bytes = compiled.as_bytes();
+
+    assert_ipv6_wire_base_header(bytes, payload.len() as u16, IPPROTO_IPV6_NO_NEXT, 46);
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+    let ipv6 = decoded.layer::<Ipv6>().expect("ipv6 layer");
+    let raw = decoded.layer::<Raw>().expect("raw payload");
+
+    assert_decoded_ipv6_base_header(ipv6, payload.len() as u16, IPPROTO_IPV6_NO_NEXT, 46);
+    assert_eq!(raw.as_bytes(), payload);
+    assert_eq!(
+        decoded.summary(),
+        format!(
+            "Ipv6(src={}, dst={}, next=no-next(59)) / Raw(len=4)",
+            doc_src(),
+            doc_dst()
+        )
+    );
+    assert_eq!(decoded.compile()?.as_bytes(), bytes);
+
+    Ok(())
+}
+
+#[test]
 fn ipv6_udp_base_header_roundtrip_autofills_and_checksums() -> crafter::Result<()> {
     let payload = b"udp4";
     let hop_limit = 42;

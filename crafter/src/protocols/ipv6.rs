@@ -20,8 +20,24 @@ pub const IPPROTO_IPV6_HOPOPTS: u8 = 0;
 pub const IPPROTO_IPV6_ROUTE: u8 = 43;
 /// IPv6 Fragment Header next-header value.
 pub const IPPROTO_IPV6_FRAGMENT: u8 = 44;
+/// IPv6 Encapsulating Security Payload next-header value.
+pub const IPPROTO_IPV6_ESP: u8 = 50;
+/// IPv6 Authentication Header next-header value.
+pub const IPPROTO_IPV6_AH: u8 = 51;
+/// IPv6 No Next Header next-header value.
+pub const IPPROTO_IPV6_NO_NEXT: u8 = 59;
 /// IPv6 Destination Options next-header value.
 pub const IPPROTO_IPV6_DSTOPTS: u8 = 60;
+/// IPv6 Mobility Header next-header value.
+pub const IPPROTO_IPV6_MOBILITY: u8 = 135;
+/// IPv6 Host Identity Protocol next-header value.
+pub const IPPROTO_IPV6_HIP: u8 = 139;
+/// IPv6 Shim6 Protocol next-header value.
+pub const IPPROTO_IPV6_SHIM6: u8 = 140;
+/// IPv6 experimental/testing next-header value 1.
+pub const IPPROTO_IPV6_EXPERIMENTAL_1: u8 = 253;
+/// IPv6 experimental/testing next-header value 2.
+pub const IPPROTO_IPV6_EXPERIMENTAL_2: u8 = 254;
 
 /// IPv6 Routing Header type for mobile IPv6 home-address routing.
 pub const IPV6_ROUTING_TYPE_MOBILE: u8 = 2;
@@ -1831,14 +1847,23 @@ fn value_or_copy<T: Copy>(field: &Field<T>, default: T) -> T {
 
 fn next_header_summary(next_header: u8) -> String {
     match next_header {
-        IPPROTO_IPV6_HOPOPTS => "hopopt(0)".to_string(),
+        IPPROTO_IPV6_HOPOPTS => "hop-by-hop-options(0)".to_string(),
         IPPROTO_TCP => "tcp(6)".to_string(),
         IPPROTO_UDP => "udp(17)".to_string(),
-        IPPROTO_IPV6_ROUTE => "ipv6-route(43)".to_string(),
-        IPPROTO_IPV6_FRAGMENT => "ipv6-fragment(44)".to_string(),
+        IPPROTO_IPV6_ROUTE => "routing(43)".to_string(),
+        IPPROTO_IPV6_FRAGMENT => "fragment(44)".to_string(),
+        IPPROTO_IPV6_ESP => "esp(50)".to_string(),
+        IPPROTO_IPV6_AH => "ah(51)".to_string(),
         IPPROTO_ICMPV6 => "icmpv6(58)".to_string(),
-        IPPROTO_IPV6_DSTOPTS => "ipv6-dstopts(60)".to_string(),
-        value => value.to_string(),
+        IPPROTO_IPV6_NO_NEXT => "no-next(59)".to_string(),
+        IPPROTO_IPV6_DSTOPTS => "destination-options(60)".to_string(),
+        IPPROTO_IPV6_MOBILITY => "mobility(135)".to_string(),
+        IPPROTO_IPV6_HIP => "hip(139)".to_string(),
+        IPPROTO_IPV6_SHIM6 => "shim6(140)".to_string(),
+        IPPROTO_IPV6_EXPERIMENTAL_1 => "experimental-1(253)".to_string(),
+        IPPROTO_IPV6_EXPERIMENTAL_2 => "experimental-2(254)".to_string(),
+        255 => "reserved(255)".to_string(),
+        value => format!("unknown({value})"),
     }
 }
 
