@@ -4336,6 +4336,121 @@ fn registry_options_builtin_and_custom_decode_after_option_headers() -> crafter:
 }
 
 #[test]
+fn registry_and_unsupported_custom_binding_after_supported_chain() -> crafter::Result<()> {
+    let mut registry = ProtocolRegistry::new();
+    let custom_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let custom_calls_for_binding = std::sync::Arc::clone(&custom_calls);
+    registry.bind_ipv6_next_header(IPPROTO_IPV6_EXPERIMENTAL_2, move |packet, payload| {
+        assert_eq!(payload, b"registry-chain");
+        custom_calls_for_binding.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(packet.push(Raw::from_bytes(payload)))
+    });
+
+    let compiled = (base_ipv6(90)
+        / Ipv6HopByHopOptionsHeader::new().option(Ipv6Option::pad1())
+        / Ipv6DestinationOptionsHeader::new().option(Ipv6Option::generic(0x1e, [0xaa])?)
+        / Ipv6RoutingHeader::new()
+            .routing_type(IPV6_ROUTING_TYPE_EXPERIMENTAL_1)
+            .segments_left(0)
+        / Ipv6FragmentHeader::new()
+            .nh(IPPROTO_IPV6_EXPERIMENTAL_2)
+            .fragment_offset(0)
+            .more_fragments(false)
+            .identification(0x4752_0001)
+        / Raw::from("registry-chain"))
+    .compile()?;
+    let bytes = compiled.as_bytes();
+
+    assert_ipv6_wire_base_header(bytes, 46, IPPROTO_IPV6_HOPOPTS, 90);
+    assert_eq!(bytes[40], IPPROTO_IPV6_DSTOPTS);
+    assert_eq!(bytes[48], IPPROTO_IPV6_ROUTE);
+    assert_eq!(bytes[56], IPPROTO_IPV6_FRAGMENT);
+    assert_eq!(bytes[58], IPV6_ROUTING_TYPE_EXPERIMENTAL_1);
+    assert_eq!(bytes[64], IPPROTO_IPV6_EXPERIMENTAL_2);
+
+    let decoded = registry.decode_ipv6(bytes)?;
+    let layer_names: Vec<_> = decoded.iter().map(|layer| layer.name()).collect();
+    let hop_by_hop = decoded
+        .layer::<Ipv6HopByHopOptionsHeader>()
+        .expect("hop-by-hop layer");
+    let destination = decoded
+        .layer::<Ipv6DestinationOptionsHeader>()
+        .expect("destination options layer");
+    let routing = decoded.layer::<Ipv6RoutingHeader>().expect("routing layer");
+    let fragment = decoded
+        .layer::<Ipv6FragmentHeader>()
+        .expect("fragment layer");
+    let raw = decoded.layer::<Raw>().expect("raw payload");
+
+    assert_eq!(
+        layer_names,
+        vec![
+            "Ipv6",
+            "Ipv6HopByHopOptionsHeader",
+            "Ipv6DestinationOptionsHeader",
+            "Ipv6RoutingHeader",
+            "Ipv6FragmentHeader",
+            "Raw",
+        ]
+    );
+    assert_eq!(hop_by_hop.next_header_value(), IPPROTO_IPV6_DSTOPTS);
+    assert_eq!(destination.next_header_value(), IPPROTO_IPV6_ROUTE);
+    assert_eq!(routing.next_header_value(), IPPROTO_IPV6_FRAGMENT);
+    assert_eq!(fragment.next_header_value(), IPPROTO_IPV6_EXPERIMENTAL_2);
+    assert_eq!(fragment.fragment_status(), Ipv6FragmentHeaderStatus::Atomic);
+    assert_eq!(raw.as_bytes(), b"registry-chain");
+    assert_eq!(custom_calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(decoded.compile()?.as_bytes(), bytes);
+
+    Ok(())
+}
+
+#[test]
+fn registry_and_unsupported_default_raw_for_unsupported_values() -> crafter::Result<()> {
+    let registry = ProtocolRegistry::new();
+    let cases: [(&str, u8, &[u8]); 7] = [
+        ("AH", IPPROTO_IPV6_AH, b"ah-unsupported"),
+        ("ESP", IPPROTO_IPV6_ESP, b"esp-unsupported"),
+        (
+            "Mobility Header",
+            IPPROTO_IPV6_MOBILITY,
+            b"mobility-unsupported",
+        ),
+        ("HIP", IPPROTO_IPV6_HIP, b"hip-unsupported"),
+        ("Shim6", IPPROTO_IPV6_SHIM6, b"shim6-unsupported"),
+        (
+            "experimental 253",
+            IPPROTO_IPV6_EXPERIMENTAL_1,
+            b"experimental-253",
+        ),
+        (
+            "experimental 254",
+            IPPROTO_IPV6_EXPERIMENTAL_2,
+            b"experimental-254",
+        ),
+    ];
+
+    for (label, next_header, payload) in cases {
+        let compiled = (base_ipv6(91).nh(next_header) / Raw::from_bytes(payload)).compile()?;
+        let bytes = compiled.as_bytes();
+
+        assert_ipv6_wire_base_header(bytes, payload.len() as u16, next_header, 91);
+
+        let decoded = registry.decode_ipv6(bytes)?;
+        let layer_names: Vec<_> = decoded.iter().map(|layer| layer.name()).collect();
+        let ipv6 = decoded.layer::<Ipv6>().expect("ipv6 layer");
+        let raw = decoded.layer::<Raw>().expect("raw payload");
+
+        assert_eq!(layer_names, vec!["Ipv6", "Raw"], "{label}");
+        assert_eq!(ipv6.next_header_value(), next_header, "{label}");
+        assert_eq!(raw.as_bytes(), payload, "{label}");
+        assert_eq!(decoded.compile()?.as_bytes(), bytes, "{label}");
+    }
+
+    Ok(())
+}
+
+#[test]
 fn destination_options_decode_terminal_unknown_next_header_as_raw() -> crafter::Result<()> {
     let options = vec![
         Ipv6Option::pad1(),
