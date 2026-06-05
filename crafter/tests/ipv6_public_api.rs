@@ -1847,6 +1847,175 @@ fn routing_classification_summary_and_show_label_known_and_unknown_types() -> cr
 }
 
 #[test]
+fn mobile_routing_api_defaults_status_and_overrides_are_inspectable() -> crafter::Result<()> {
+    assert_eq!(IPV6_MOBILE_ROUTING_HEADER_EXT_LEN, 2);
+    assert_eq!(IPV6_MOBILE_ROUTING_SEGMENTS_LEFT, 1);
+    assert_eq!(IPV6_MOBILE_ROUTING_RESERVED, 0);
+    assert_eq!(
+        crafter::IPV6_MOBILE_ROUTING_HEADER_EXT_LEN,
+        IPV6_MOBILE_ROUTING_HEADER_EXT_LEN
+    );
+    assert_eq!(
+        crafter::core::IPV6_MOBILE_ROUTING_SEGMENTS_LEFT,
+        IPV6_MOBILE_ROUTING_SEGMENTS_LEFT
+    );
+    assert_eq!(
+        crafter::protocols::IPV6_MOBILE_ROUTING_RESERVED,
+        IPV6_MOBILE_ROUTING_RESERVED
+    );
+
+    let header = Ipv6MobileRoutingHeader::new().home_str("2001:db8:4::40")?;
+
+    assert_eq!(header.header_ext_len_value(), None);
+    assert_eq!(
+        header.effective_header_ext_len_value(),
+        IPV6_MOBILE_ROUTING_HEADER_EXT_LEN
+    );
+    assert_eq!(
+        header.header_ext_len_status(),
+        Ipv6MobileRoutingHeaderStatus::Valid
+    );
+    assert_eq!(
+        header.segments_left_value(),
+        IPV6_MOBILE_ROUTING_SEGMENTS_LEFT
+    );
+    assert!(header.segments_left_is_defaulted());
+    assert_eq!(
+        header.segments_left_status(),
+        Ipv6MobileRoutingHeaderStatus::Valid
+    );
+    assert_eq!(header.reserved_value(), IPV6_MOBILE_ROUTING_RESERVED);
+    assert!(header.reserved_is_zero());
+    assert_eq!(
+        header.reserved_status(),
+        Ipv6MobileRoutingHeaderStatus::Valid
+    );
+    assert_eq!(
+        header.home_address_value(),
+        "2001:db8:4::40".parse::<Ipv6Addr>().unwrap()
+    );
+    assert_eq!(
+        header.home_address_bytes(),
+        header.home_address_value().octets()
+    );
+    assert_eq!(
+        header.validity_status(),
+        Ipv6MobileRoutingHeaderStatus::Valid
+    );
+    assert!(header.validity_status().is_valid());
+
+    let compiled = (base_ipv6(95) / header / Udp::new().sport(12000).dport(12001)).compile()?;
+    let bytes = compiled.as_bytes();
+
+    assert_ipv6_wire_base_header(bytes, 32, IPPROTO_IPV6_ROUTE, 95);
+    assert_eq!(bytes[40], IPPROTO_UDP);
+    assert_eq!(bytes[41], IPV6_MOBILE_ROUTING_HEADER_EXT_LEN);
+    assert_eq!(bytes[42], IPV6_ROUTING_TYPE_MOBILE);
+    assert_eq!(bytes[43], IPV6_MOBILE_ROUTING_SEGMENTS_LEFT);
+    assert_eq!(&bytes[44..48], &IPV6_MOBILE_ROUTING_RESERVED.to_be_bytes());
+    assert_eq!(
+        &bytes[48..64],
+        &"2001:db8:4::40".parse::<Ipv6Addr>().unwrap().octets()
+    );
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+    let mobile = decoded
+        .layer::<Ipv6MobileRoutingHeader>()
+        .expect("mobile routing header");
+
+    assert_eq!(
+        mobile.header_ext_len_value(),
+        Some(IPV6_MOBILE_ROUTING_HEADER_EXT_LEN)
+    );
+    assert_eq!(
+        mobile.effective_header_ext_len_value(),
+        IPV6_MOBILE_ROUTING_HEADER_EXT_LEN
+    );
+    assert!(!mobile.segments_left_is_defaulted());
+    assert_eq!(
+        mobile.validity_status(),
+        Ipv6MobileRoutingHeaderStatus::Valid
+    );
+    assert_eq!(decoded.compile()?.as_bytes(), bytes);
+
+    let show = decoded.show();
+    assert!(show.contains("validity_status: Valid"), "{show}");
+    assert!(show.contains("segments_left_status: Valid"), "{show}");
+    assert!(show.contains("reserved_status: Valid"), "{show}");
+
+    let override_header = Ipv6MobileRoutingHeader::new()
+        .nh(IPPROTO_IPV6_EXPERIMENTAL_1)
+        .header_ext_len(3)
+        .routing_type(99)
+        .segleft(0)
+        .reserved(0x0102_0304)
+        .home(doc_home());
+
+    assert_eq!(
+        override_header.header_ext_len_status(),
+        Ipv6MobileRoutingHeaderStatus::InvalidHeaderExtLen
+    );
+    assert_eq!(
+        override_header.segments_left_status(),
+        Ipv6MobileRoutingHeaderStatus::InvalidSegmentsLeft
+    );
+    assert_eq!(
+        override_header.reserved_status(),
+        Ipv6MobileRoutingHeaderStatus::NonzeroReserved
+    );
+    assert_eq!(
+        override_header.validity_status(),
+        Ipv6MobileRoutingHeaderStatus::InvalidRoutingType
+    );
+    assert!(!override_header.validity_status().is_valid());
+
+    let override_bytes = (base_ipv6(96) / override_header / Raw::from("override")).compile()?;
+    let bytes = override_bytes.as_bytes();
+
+    assert_ipv6_wire_base_header(bytes, 40, IPPROTO_IPV6_ROUTE, 96);
+    assert_eq!(bytes[40], IPPROTO_IPV6_EXPERIMENTAL_1);
+    assert_eq!(bytes[41], 3);
+    assert_eq!(bytes[42], 99);
+    assert_eq!(bytes[43], 0);
+    assert_eq!(&bytes[44..48], &0x0102_0304u32.to_be_bytes());
+    assert_eq!(&bytes[48..64], &doc_home().octets());
+    assert!(bytes[64..72].iter().all(|byte| *byte == 0));
+    assert_eq!(&bytes[72..], b"override");
+
+    let decoded_override = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+    let generic = decoded_override
+        .layer::<Ipv6RoutingHeader>()
+        .expect("non-Type-2 override decodes generically");
+    assert_eq!(generic.routing_type_value(), 99);
+    assert_eq!(decoded_override.compile()?.as_bytes(), bytes);
+
+    assert_eq!(
+        Ipv6MobileRoutingHeader::new()
+            .header_ext_len(3)
+            .validity_status(),
+        Ipv6MobileRoutingHeaderStatus::InvalidHeaderExtLen
+    );
+    assert_eq!(
+        Ipv6MobileRoutingHeader::new().segleft(0).validity_status(),
+        Ipv6MobileRoutingHeaderStatus::InvalidSegmentsLeft
+    );
+    assert_eq!(
+        Ipv6MobileRoutingHeader::new().reserved(1).validity_status(),
+        Ipv6MobileRoutingHeaderStatus::NonzeroReserved
+    );
+    assert_eq!(
+        crafter::Ipv6MobileRoutingHeaderStatus::Valid,
+        crafter::core::Ipv6MobileRoutingHeaderStatus::Valid
+    );
+    assert_eq!(
+        crafter::protocols::Ipv6MobileRoutingHeaderStatus::InvalidSegmentsLeft,
+        Ipv6MobileRoutingHeaderStatus::InvalidSegmentsLeft
+    );
+
+    Ok(())
+}
+
+#[test]
 fn generic_routing_type_data_lengths_pad_to_extension_header_boundary() -> crafter::Result<()> {
     let cases = [
         (vec![0x11], 0, vec![0x11, 0, 0, 0]),
