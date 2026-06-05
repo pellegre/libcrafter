@@ -382,6 +382,11 @@ fn required_malformed_families() -> &'static [&'static str] {
         "short ipv6 base",
         "bad ipv6 version",
         "ipv6 payload length mismatch",
+        "truncated ipv6 hop-by-hop options header",
+        "truncated ipv6 destination options header",
+        "ipv6 option length overrun",
+        "ipv6 padn option overrun",
+        "ipv6 declared options header overrun",
         "truncated ipv6 routing header",
         "truncated ipv6 fragment header",
         "malformed ipv6 segment routing header",
@@ -454,6 +459,21 @@ fn malformed_family(name: &str) -> Option<&'static str> {
         "short-ipv6-base-header" => Some("short ipv6 base"),
         "bad-ipv6-version" => Some("bad ipv6 version"),
         "ipv6-payload-length-mismatch" => Some("ipv6 payload length mismatch"),
+        "truncated-ipv6-hop-by-hop-options-header" => {
+            Some("truncated ipv6 hop-by-hop options header")
+        }
+        "truncated-ipv6-destination-options-header" => {
+            Some("truncated ipv6 destination options header")
+        }
+        "ipv6-hop-by-hop-option-length-overrun" | "ipv6-destination-option-length-overrun" => {
+            Some("ipv6 option length overrun")
+        }
+        "ipv6-hop-by-hop-padn-length-overrun" | "ipv6-destination-padn-length-overrun" => {
+            Some("ipv6 padn option overrun")
+        }
+        "ipv6-hop-by-hop-declared-header-overrun" | "ipv6-destination-declared-header-overrun" => {
+            Some("ipv6 declared options header overrun")
+        }
         "truncated-ipv6-routing-header" => Some("truncated ipv6 routing header"),
         "truncated-ipv6-fragment-header" => Some("truncated ipv6 fragment header"),
         "malformed-ipv6-segment-routing-header" => Some("malformed ipv6 segment routing header"),
@@ -1014,6 +1034,17 @@ fn is_arp_malformed_case(case: &MalformedCase) -> bool {
     matches!(case.target, DecodeTarget::Ethernet) && case.name.contains("arp")
 }
 
+fn is_ipv6_options_malformed_case(case: &MalformedCase) -> bool {
+    matches!(
+        malformed_family(case.name),
+        Some("truncated ipv6 hop-by-hop options header")
+            | Some("truncated ipv6 destination options header")
+            | Some("ipv6 option length overrun")
+            | Some("ipv6 padn option overrun")
+            | Some("ipv6 declared options header overrun")
+    )
+}
+
 /// Every malformed ARP vector must decode to a fully structured
 /// `CrafterError::BufferTooShort`, carrying the `context` that names the failing
 /// stage (`arp header` for a short fixed header, `arp addresses` for a truncated
@@ -1092,6 +1123,89 @@ fn malformed_arp_corpus_errors_carry_structured_fields() {
             }
             other => panic!(
                 "malformed ARP case {} returned an unexpected error {other:?}",
+                case.name
+            ),
+        }
+    }
+}
+
+#[test]
+fn malformed_ipv6_options_corpus_errors_carry_structured_fields() {
+    let cases = malformed_cases();
+    let ipv6_options_cases = cases
+        .iter()
+        .filter(|case| is_ipv6_options_malformed_case(case))
+        .collect::<Vec<_>>();
+    assert!(
+        !ipv6_options_cases.is_empty(),
+        "malformed corpus must carry IPv6 option-header vectors"
+    );
+
+    let ipv6_options_required_families = [
+        "truncated ipv6 hop-by-hop options header",
+        "truncated ipv6 destination options header",
+        "ipv6 option length overrun",
+        "ipv6 padn option overrun",
+        "ipv6 declared options header overrun",
+    ];
+    let covered = ipv6_options_cases
+        .iter()
+        .filter_map(|case| malformed_family(case.name))
+        .collect::<std::collections::HashSet<_>>();
+    for family in ipv6_options_required_families {
+        assert!(
+            covered.contains(family),
+            "malformed IPv6 options corpus missing structured-field coverage for {family}"
+        );
+    }
+
+    for case in ipv6_options_cases {
+        let Err(error) = decode_malformed_case(case) else {
+            panic!(
+                "malformed IPv6 options corpus case {} unexpectedly decoded",
+                case.name
+            );
+        };
+        assert_error_matches(case, error.clone());
+        let ExpectedOutcome::Error(expected_error) = case.expected_outcome else {
+            panic!(
+                "malformed IPv6 options case {} expected structured error outcome",
+                case.name
+            );
+        };
+        match error {
+            CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            } => {
+                assert_eq!(
+                    context, expected_error.context_or_field,
+                    "malformed IPv6 options case {} carried an unexpected buffer context",
+                    case.name
+                );
+                assert!(
+                    required > available,
+                    "malformed IPv6 options case {} BufferTooShort must require more \
+                     ({required}) than is available ({available})",
+                    case.name
+                );
+            }
+            CrafterError::InvalidFieldValue { field, reason } => {
+                assert_eq!(
+                    field, expected_error.context_or_field,
+                    "malformed IPv6 options case {} carried an unexpected invalid field",
+                    case.name
+                );
+                assert!(
+                    !reason.is_empty(),
+                    "malformed IPv6 options case {} InvalidFieldValue must carry a \
+                     non-empty reason",
+                    case.name
+                );
+            }
+            other => panic!(
+                "malformed IPv6 options case {} returned an unexpected error {other:?}",
                 case.name
             ),
         }
