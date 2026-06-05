@@ -1,0 +1,1 @@
+Ipv6(src=2001:db8:53::10, dst=2001:db8:53::20, next=routing(43)) / Ipv6SegmentRoutingHeader(type=Segment Routing Header (SRH)(4), segments=2, segleft=1, flags=0xa5, tag=0x5353, next=experimental-1(253)) / Raw(len=6)

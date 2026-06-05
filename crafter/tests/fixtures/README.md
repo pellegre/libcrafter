@@ -99,6 +99,11 @@ Valid byte fixtures cover:
   `ipv6-options-hop-destination-udp.hex` (Hop-by-Hop Router Alert, Jumbo
   Payload, unknown option preservation, Destination Options Home Address,
   padding, and terminal UDP payload),
+  `ipv6-routing-generic-unknown-raw.hex` (generic unknown routing type with
+  preserved type-specific data and raw payload), `ipv6-mobile-routing-raw.hex`
+  (Mobile Type 2 routing fixed fields, home address, and raw payload),
+  `ipv6-segment-routing-raw.hex` (Segment Routing Header Last Entry, Flags,
+  Tag, Segment List, raw trailing data, and raw payload),
   `ipv6-tcp-raw.hex`,
   `ipv6-tcp-rich-options.hex` (MSS, Window Scale, SACK Permitted, Timestamp,
   RFC 5482 User Timeout, and a classified Generic option, with IPv6
