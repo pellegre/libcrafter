@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
@@ -21,6 +22,10 @@ _DHCP_OPTION_REGION_KEY = "__option_region_hex__"
 _DHCP_OPTION_MESSAGE_TYPE = 53
 _DHCP_OPTION_PAD = 0
 _DHCP_OPTION_END = 255
+
+# Synthetic field key carrying Hop-by-Hop/Destination Options bytes after the
+# two-octet extension header prefix. Removed during IPv6 option normalization.
+_IPV6_OPTION_REGION_KEY = "__ipv6_option_region_hex__"
 
 _LAYER_ALIASES: dict[str, str] = {
     "ARP": "arp",
@@ -370,6 +375,10 @@ def _packet_layers(packet: Any) -> list[JSONObject]:
             option_bytes = _dhcp_option_region_bytes(current)
             if option_bytes is not None:
                 fields[_DHCP_OPTION_REGION_KEY] = option_bytes.hex()
+        if current.__class__.__name__ in {"IPv6ExtHdrHopByHop", "IPv6ExtHdrDestOpt"}:
+            option_bytes = _ipv6_option_region_bytes(current)
+            if option_bytes is not None:
+                fields[_IPV6_OPTION_REGION_KEY] = option_bytes.hex()
         layers.append(
             {
                 "name": current.__class__.__name__,
@@ -386,6 +395,20 @@ def _dhcp_option_region_bytes(dhcp_layer: Any) -> bytes | None:
         return bytes(import_scapy()["all"].raw(dhcp_layer))
     except Exception:  # pragma: no cover - Scapy serialization edge cases.
         return None
+
+
+def _ipv6_option_region_bytes(layer: Any) -> bytes | None:
+    header_ext_len = getattr(layer, "len", None)
+    if not isinstance(header_ext_len, int):
+        return None
+    total_len = (header_ext_len + 1) * 8
+    try:
+        raw = bytes(import_scapy()["all"].raw(layer))
+    except Exception:  # pragma: no cover - Scapy serialization edge cases.
+        return None
+    if len(raw) < total_len or total_len < 2:
+        return None
+    return raw[2:total_len]
 
 
 def _normalize_layer_name(native_name: str) -> str:
@@ -412,6 +435,10 @@ def _normalize_fields(layer_name: str, fields: JSONObject) -> JSONObject:
     for native_name, value in fields.items():
         normalized_name = _normalize_field_name(layer_name, native_name)
         output[normalized_name] = _normalize_field_value(layer_name, normalized_name, value)
+    if layer_name == "ipv6":
+        _normalize_ipv6_fields(output)
+    if layer_name in {"ipv6_hop_by_hop", "ipv6_destination_options"}:
+        _normalize_ipv6_options_header_fields(output)
     if layer_name == "arp":
         _normalize_arp_fields(output)
     if layer_name in {"icmp", "icmpv6"}:
@@ -1210,6 +1237,90 @@ def _normalize_icmpv6_rest_of_header(fields: JSONObject) -> None:
         fields.pop("extpad", None)
 
 
+def _normalize_ipv6_fields(fields: JSONObject) -> None:
+    traffic_class = fields.get("traffic_class")
+    if isinstance(traffic_class, int):
+        fields["dscp"] = traffic_class >> 2
+        fields["ecn"] = traffic_class & 0x03
+
+
+def _normalize_ipv6_options_header_fields(fields: JSONObject) -> None:
+    fields.pop("autopad", None)
+    option_region_hex = fields.pop(_IPV6_OPTION_REGION_KEY, None)
+    if "header_ext_len" in fields and "length" not in fields:
+        fields["length"] = fields["header_ext_len"]
+    if "length" in fields and "header_ext_len" not in fields:
+        fields["header_ext_len"] = fields["length"]
+
+    options = None
+    if isinstance(option_region_hex, str):
+        options = _decode_ipv6_option_tlvs(option_region_hex)
+    if options is not None:
+        fields["options"] = options
+        fields["option_count"] = len(options)
+        fields["options_raw_hex"] = option_region_hex
+    elif isinstance(fields.get("options"), list):
+        fields["option_count"] = len(fields["options"])
+
+
+def _decode_ipv6_option_tlvs(option_region_hex: str) -> list[JSONObject] | None:
+    try:
+        raw = bytes.fromhex(option_region_hex)
+    except ValueError:
+        return None
+
+    options: list[JSONObject] = []
+    index = 0
+    while index < len(raw):
+        option_type = raw[index]
+        index += 1
+        if option_type == 0:
+            options.append(_ipv6_option_item(option_type, b"", encoded_len=1))
+            continue
+        if index >= len(raw):
+            return None
+        option_length = raw[index]
+        index += 1
+        if index + option_length > len(raw):
+            return None
+        data = raw[index : index + option_length]
+        index += option_length
+        options.append(_ipv6_option_item(option_type, data, encoded_len=option_length + 2))
+    return options
+
+
+def _ipv6_option_item(option_type: int, data: bytes, *, encoded_len: int) -> JSONObject:
+    item: JSONObject = {
+        "option_type": option_type,
+        "kind": _ipv6_option_kind(option_type),
+        "length": encoded_len,
+        "data_hex": data.hex(),
+        "action": option_type >> 6,
+        "change_en_route": bool(option_type & 0x20),
+    }
+    if option_type == 5 and len(data) == 2:
+        item["value"] = int.from_bytes(data, "big")
+    elif option_type == 0xC2 and len(data) == 4:
+        item["jumbo_payload_length"] = int.from_bytes(data, "big")
+    elif option_type == 0xC9 and len(data) == 16:
+        item["address"] = str(ipaddress.IPv6Address(data))
+    return item
+
+
+def _ipv6_option_kind(option_type: int) -> str:
+    if option_type == 0:
+        return "pad1"
+    if option_type == 1:
+        return "padn"
+    if option_type == 5:
+        return "router_alert"
+    if option_type == 0xC2:
+        return "jumbo_payload"
+    if option_type == 0xC9:
+        return "home_address"
+    return "unknown"
+
+
 def _normalize_ipv6_fragment_fields(fields: JSONObject) -> None:
     aliases = {
         "id": "identification",
@@ -1223,15 +1334,89 @@ def _normalize_ipv6_fragment_fields(fields: JSONObject) -> None:
             fields[new] = fields.pop(old)
     if isinstance(fields.get("more_fragments"), int):
         fields["more_fragments"] = bool(fields["more_fragments"])
+    offset = fields.get("fragment_offset")
+    if isinstance(offset, int):
+        fields["fragment_offset_bytes"] = offset * 8
+    more_fragments = fields.get("more_fragments")
+    if isinstance(offset, int) and isinstance(more_fragments, bool):
+        fields["fragment_status"] = _ipv6_fragment_status(offset, more_fragments)
 
 
 def _normalize_ipv6_routing_fields(fields: JSONObject) -> None:
     if "segleft" in fields and "segments_left" not in fields:
         fields["segments_left"] = fields.pop("segleft")
+    if "lastentry" in fields and "last_entry" not in fields:
+        fields["last_entry"] = fields.pop("lastentry")
+    if "header_ext_len" in fields and "length" not in fields:
+        fields["length"] = fields["header_ext_len"]
+    if "length" in fields and "header_ext_len" not in fields:
+        fields["header_ext_len"] = fields["length"]
+    routing_type = fields.get("type")
+    if isinstance(routing_type, int):
+        fields["classification"] = _ipv6_routing_classification(routing_type)
+    if (
+        "segments" not in fields
+        and isinstance(fields.get("addresses"), list)
+        and fields["addresses"]
+        and fields.get("type") == 4
+    ):
+        fields["segments"] = fields["addresses"]
+    if "flags" not in fields:
+        flags = _ipv6_segment_routing_flags(fields)
+        if flags is not None:
+            fields["flags"] = flags
+    if fields.get("tlv_objects") == []:
+        fields["raw_trailing_data"] = ""
+    if (
+        "type_data" not in fields
+        and isinstance(fields.get("reserved"), int)
+        and fields.get("type") not in {2, 4}
+    ):
+        fields["type_data"] = f"{fields['reserved']:08x}"
     if fields.get("reserved") == 0:
         fields["reserved"] = "00000000"
     if fields.get("addresses") == []:
         fields.pop("addresses", None)
+
+
+def _ipv6_fragment_status(offset: int, more_fragments: bool) -> str:
+    if offset == 0 and not more_fragments:
+        return "atomic"
+    if offset == 0:
+        return "initial"
+    return "non_initial"
+
+
+def _ipv6_routing_classification(routing_type: int) -> str:
+    if routing_type in {0, 1}:
+        return "deprecated"
+    if routing_type == 2:
+        return "mobile"
+    if routing_type == 4:
+        return "segment_routing"
+    if routing_type in {253, 254}:
+        return "experimental"
+    if routing_type == 255:
+        return "reserved"
+    return "unknown"
+
+
+def _ipv6_segment_routing_flags(fields: JSONObject) -> int | None:
+    names = ("unused1", "protected", "oam", "alert", "hmac", "unused2")
+    if not any(isinstance(fields.get(name), int) for name in names):
+        return None
+    return (
+        ((_int_or_zero(fields.get("unused1")) & 0x01) << 7)
+        | ((_int_or_zero(fields.get("protected")) & 0x01) << 6)
+        | ((_int_or_zero(fields.get("oam")) & 0x01) << 5)
+        | ((_int_or_zero(fields.get("alert")) & 0x01) << 4)
+        | ((_int_or_zero(fields.get("hmac")) & 0x01) << 3)
+        | (_int_or_zero(fields.get("unused2")) & 0x07)
+    )
+
+
+def _int_or_zero(value: object) -> int:
+    return value if isinstance(value, int) else 0
 
 
 _ARP_ADDRESS_FIELDS = (

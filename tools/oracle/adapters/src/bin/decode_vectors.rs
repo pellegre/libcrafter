@@ -1,10 +1,12 @@
 use crafter::core::{
-    Arp, Dhcp, Dns, Ethernet, Icmpv4, Icmpv4QuotedIp, Icmpv6, Ipv4, Ipv6, Ipv6FragmentHeader,
-    Ipv6MobileRoutingHeader, Ipv6RoutingHeader, Ipv6SegmentRoutingHeader, Layer, LinkType,
-    LinuxSll, NetworkLayer, NullLoopback, Packet, Raw, Tcp, Udp, UdpChecksumStatus, UdpOption,
-    UdpOptionStatus, UdpOptions, Vlan, DNS_FLAG_AUTHENTIC_DATA, DNS_FLAG_AUTHORITATIVE,
-    DNS_FLAG_CHECKING_DISABLED, DNS_FLAG_QR_RESPONSE, DNS_FLAG_RECURSION_AVAILABLE,
-    DNS_FLAG_RECURSION_DESIRED, DNS_FLAG_TRUNCATED,
+    Arp, Dhcp, Dns, Ethernet, Icmpv4, Icmpv4QuotedIp, Icmpv6, Ipv4, Ipv6,
+    Ipv6DestinationOptionsHeader, Ipv6FragmentHeader, Ipv6FragmentHeaderStatus,
+    Ipv6HopByHopOptionsHeader, Ipv6MobileRoutingHeader, Ipv6Option, Ipv6RoutingHeader,
+    Ipv6RoutingTypeStatus, Ipv6SegmentRoutingHeader, Layer, LinkType, LinuxSll, NetworkLayer,
+    NullLoopback, Packet, Raw, Tcp, Udp, UdpChecksumStatus, UdpOption, UdpOptionStatus, UdpOptions,
+    Vlan, DNS_FLAG_AUTHENTIC_DATA, DNS_FLAG_AUTHORITATIVE, DNS_FLAG_CHECKING_DISABLED,
+    DNS_FLAG_QR_RESPONSE, DNS_FLAG_RECURSION_AVAILABLE, DNS_FLAG_RECURSION_DESIRED,
+    DNS_FLAG_TRUNCATED,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -396,6 +398,10 @@ fn normalized_layer_name(layer: &dyn Layer) -> String {
         "ipv4"
     } else if layer.as_any().is::<Ipv6>() {
         "ipv6"
+    } else if layer.as_any().is::<Ipv6HopByHopOptionsHeader>() {
+        "ipv6_hop_by_hop"
+    } else if layer.as_any().is::<Ipv6DestinationOptionsHeader>() {
+        "ipv6_destination_options"
     } else if layer.as_any().is::<Ipv6FragmentHeader>() {
         "ipv6_fragment"
     } else if layer.as_any().is::<Ipv6RoutingHeader>()
@@ -462,6 +468,15 @@ fn normalized_layer_fields(
     }
     if let Some(layer) = layer.as_any().downcast_ref::<Ipv6>() {
         return ipv6_fields(layer);
+    }
+    if let Some(layer) = layer.as_any().downcast_ref::<Ipv6HopByHopOptionsHeader>() {
+        return ipv6_hop_by_hop_fields(layer);
+    }
+    if let Some(layer) = layer
+        .as_any()
+        .downcast_ref::<Ipv6DestinationOptionsHeader>()
+    {
+        return ipv6_destination_options_fields(layer);
     }
     if let Some(layer) = layer.as_any().downcast_ref::<Ipv6FragmentHeader>() {
         return ipv6_fragment_fields(layer);
@@ -602,6 +617,8 @@ fn ipv6_fields(layer: &Ipv6) -> BTreeMap<String, Value> {
     let mut fields = map([
         ("version", json!(layer.version_value())),
         ("traffic_class", json!(layer.traffic_class_value())),
+        ("dscp", json!(layer.dscp_value().value())),
+        ("ecn", json!(layer.ecn_value().value())),
         ("flow_label", json!(layer.flow_label_value())),
         ("next_header", json!(layer.next_header_value())),
         ("hop_limit", json!(layer.hop_limit_value())),
@@ -614,14 +631,61 @@ fn ipv6_fields(layer: &Ipv6) -> BTreeMap<String, Value> {
     fields
 }
 
+fn ipv6_hop_by_hop_fields(layer: &Ipv6HopByHopOptionsHeader) -> BTreeMap<String, Value> {
+    ipv6_options_header_fields(
+        layer.next_header_value(),
+        layer.header_ext_len_value(),
+        layer.options_value(),
+    )
+}
+
+fn ipv6_destination_options_fields(
+    layer: &Ipv6DestinationOptionsHeader,
+) -> BTreeMap<String, Value> {
+    ipv6_options_header_fields(
+        layer.next_header_value(),
+        layer.header_ext_len_value(),
+        layer.options_value(),
+    )
+}
+
+fn ipv6_options_header_fields(
+    next_header: u8,
+    header_ext_len: Option<u8>,
+    options: &[Ipv6Option],
+) -> BTreeMap<String, Value> {
+    let mut fields = map([
+        ("next_header", json!(next_header)),
+        ("option_count", json!(options.len())),
+        ("options", json!(ipv6_options(options))),
+        (
+            "options_raw_hex",
+            json!(hex_bytes(&ipv6_options_bytes(options))),
+        ),
+    ]);
+    if let Some(value) = header_ext_len {
+        fields.insert("header_ext_len".to_string(), json!(value));
+        fields.insert("length".to_string(), json!(value));
+    }
+    fields
+}
+
 fn ipv6_fragment_fields(layer: &Ipv6FragmentHeader) -> BTreeMap<String, Value> {
     map([
         ("next_header", json!(layer.next_header_value())),
         ("reserved", json!(layer.reserved_value())),
         ("fragment_offset", json!(layer.fragment_offset_value())),
+        (
+            "fragment_offset_bytes",
+            json!(layer.fragment_offset_bytes()),
+        ),
         ("res", json!(layer.res_value())),
         ("more_fragments", json!(layer.has_more_fragments())),
         ("identification", json!(layer.identification_value())),
+        (
+            "fragment_status",
+            json!(ipv6_fragment_status(layer.fragment_status())),
+        ),
     ])
 }
 
@@ -629,10 +693,16 @@ fn ipv6_routing_fields(layer: &Ipv6RoutingHeader) -> BTreeMap<String, Value> {
     let mut fields = map([
         ("next_header", json!(layer.next_header_value())),
         ("type", json!(layer.routing_type_value())),
+        (
+            "classification",
+            json!(ipv6_routing_classification(layer.routing_type_value())),
+        ),
         ("segments_left", json!(layer.segments_left_value())),
         ("reserved", json!(hex_bytes(layer.type_data_bytes()))),
+        ("type_data", json!(hex_bytes(layer.type_data_bytes()))),
     ]);
     if let Some(value) = layer.header_ext_len_value() {
+        fields.insert("header_ext_len".to_string(), json!(value));
         fields.insert("length".to_string(), json!(value));
     }
     fields
@@ -642,11 +712,16 @@ fn ipv6_mobile_routing_fields(layer: &Ipv6MobileRoutingHeader) -> BTreeMap<Strin
     let mut fields = map([
         ("next_header", json!(layer.next_header_value())),
         ("type", json!(layer.routing_type_value())),
+        (
+            "classification",
+            json!(ipv6_routing_classification(layer.routing_type_value())),
+        ),
         ("segments_left", json!(layer.segments_left_value())),
         ("reserved", json!(layer.reserved_value())),
         ("addresses", json!([layer.home_address_value().to_string()])),
     ]);
     if let Some(value) = layer.header_ext_len_value() {
+        fields.insert("header_ext_len".to_string(), json!(value));
         fields.insert("length".to_string(), json!(value));
     }
     fields
@@ -656,11 +731,21 @@ fn ipv6_segment_routing_fields(layer: &Ipv6SegmentRoutingHeader) -> BTreeMap<Str
     let mut fields = map([
         ("next_header", json!(layer.next_header_value())),
         ("type", json!(layer.routing_type_value())),
+        (
+            "classification",
+            json!(ipv6_routing_classification(layer.routing_type_value())),
+        ),
         ("segments_left", json!(layer.segments_left_value())),
-        ("last_entry", json!(layer.first_segment_value())),
+        ("last_entry", json!(layer.last_entry_value())),
+        ("flags", json!(layer.flags_value())),
+        ("tag", json!(layer.tag_value())),
         ("protected", json!(layer.p_flag_value())),
         ("reserved", json!(layer.reserved_value())),
         ("hmac", json!(layer.hmac_key_id_value())),
+        (
+            "raw_trailing_data",
+            json!(hex_bytes(layer.raw_trailing_data_bytes())),
+        ),
         (
             "addresses",
             json!(layer
@@ -669,11 +754,89 @@ fn ipv6_segment_routing_fields(layer: &Ipv6SegmentRoutingHeader) -> BTreeMap<Str
                 .map(ToString::to_string)
                 .collect::<Vec<_>>()),
         ),
+        (
+            "segments",
+            json!(layer
+                .segments()
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()),
+        ),
     ]);
     if let Some(value) = layer.header_ext_len_value() {
+        fields.insert("header_ext_len".to_string(), json!(value));
         fields.insert("length".to_string(), json!(value));
     }
     fields
+}
+
+fn ipv6_fragment_status(status: Ipv6FragmentHeaderStatus) -> &'static str {
+    match status {
+        Ipv6FragmentHeaderStatus::Atomic => "atomic",
+        Ipv6FragmentHeaderStatus::Initial => "initial",
+        Ipv6FragmentHeaderStatus::NonInitial => "non_initial",
+    }
+}
+
+fn ipv6_routing_classification(routing_type: u8) -> &'static str {
+    match routing_type {
+        2 => "mobile",
+        4 => "segment_routing",
+        _ => match crafter::core::ipv6_routing_type_status(routing_type) {
+            Ipv6RoutingTypeStatus::Deprecated => "deprecated",
+            Ipv6RoutingTypeStatus::Experimental => "experimental",
+            Ipv6RoutingTypeStatus::Reserved => "reserved",
+            _ => "unknown",
+        },
+    }
+}
+
+fn ipv6_options(options: &[Ipv6Option]) -> Vec<Value> {
+    options.iter().map(ipv6_option_item).collect()
+}
+
+fn ipv6_options_bytes(options: &[Ipv6Option]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for option in options {
+        if let Ok(encoded) = option.encode() {
+            bytes.extend_from_slice(&encoded);
+        }
+    }
+    bytes
+}
+
+fn ipv6_option_item(option: &Ipv6Option) -> Value {
+    let mut item = BTreeMap::new();
+    item.insert("option_type".to_string(), json!(option.option_type()));
+    item.insert("kind".to_string(), json!(ipv6_option_kind(option)));
+    item.insert("length".to_string(), json!(option.encoded_len()));
+    item.insert("data_hex".to_string(), json!(hex_bytes(option.data())));
+    item.insert("action".to_string(), json!(option.action_bits()));
+    item.insert(
+        "change_en_route".to_string(),
+        json!(option.change_en_route()),
+    );
+    if let Some(value) = option.router_alert_value() {
+        item.insert("value".to_string(), json!(value));
+    }
+    if let Some(value) = option.jumbo_payload_length() {
+        item.insert("jumbo_payload_length".to_string(), json!(value));
+    }
+    if let Some(value) = option.home_address_value() {
+        item.insert("address".to_string(), json!(value.to_string()));
+    }
+    Value::Object(item.into_iter().collect())
+}
+
+fn ipv6_option_kind(option: &Ipv6Option) -> &'static str {
+    match option {
+        Ipv6Option::Pad1 => "pad1",
+        Ipv6Option::PadN { .. } => "padn",
+        Ipv6Option::RouterAlert { .. } => "router_alert",
+        Ipv6Option::JumboPayload { .. } => "jumbo_payload",
+        Ipv6Option::HomeAddress { .. } => "home_address",
+        Ipv6Option::Generic { .. } => "unknown",
+    }
 }
 
 fn udp_fields(layer: &Udp) -> BTreeMap<String, Value> {
