@@ -1597,6 +1597,102 @@ fn extension_chaining_middle_explicit_next_header_override_is_preserved() -> cra
 }
 
 #[test]
+fn registry_options_builtin_and_custom_decode_after_option_headers() -> crafter::Result<()> {
+    let mut registry = ProtocolRegistry::new();
+    let custom_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let custom_calls_for_binding = std::sync::Arc::clone(&custom_calls);
+    registry.bind_ipv6_next_header(IPPROTO_IPV6_EXPERIMENTAL_1, move |packet, payload| {
+        assert_eq!(payload, b"registry-custom");
+        custom_calls_for_binding.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(packet.push(Raw::from_bytes(payload)))
+    });
+
+    let builtin_compiled = (base_ipv6(88)
+        / Ipv6HopByHopOptionsHeader::new().option(Ipv6Option::pad1())
+        / Ipv6DestinationOptionsHeader::new().option(Ipv6Option::generic(0x1e, [0xaa])?)
+        / Udp::new().sport(4900).dport(4901)
+        / Raw::from("registry-builtin"))
+    .compile()?;
+    let builtin_bytes = builtin_compiled.as_bytes();
+
+    assert_ipv6_wire_base_header(builtin_bytes, 40, IPPROTO_IPV6_HOPOPTS, 88);
+    assert_eq!(builtin_bytes[40], IPPROTO_IPV6_DSTOPTS);
+    assert_eq!(builtin_bytes[48], IPPROTO_UDP);
+
+    let builtin_decoded = registry.decode_ipv6(builtin_bytes)?;
+    let builtin_layer_names: Vec<_> = builtin_decoded.iter().map(|layer| layer.name()).collect();
+    let builtin_hop_by_hop = builtin_decoded
+        .layer::<Ipv6HopByHopOptionsHeader>()
+        .expect("hop-by-hop layer");
+    let builtin_destination = builtin_decoded
+        .layer::<Ipv6DestinationOptionsHeader>()
+        .expect("destination options layer");
+    let builtin_udp = builtin_decoded.layer::<Udp>().expect("udp layer");
+    let builtin_raw = builtin_decoded.layer::<Raw>().expect("raw payload");
+
+    assert_eq!(
+        builtin_layer_names,
+        vec![
+            "Ipv6",
+            "Ipv6HopByHopOptionsHeader",
+            "Ipv6DestinationOptionsHeader",
+            "Udp",
+            "Raw",
+        ]
+    );
+    assert_eq!(builtin_hop_by_hop.next_header_value(), IPPROTO_IPV6_DSTOPTS);
+    assert_eq!(builtin_destination.next_header_value(), IPPROTO_UDP);
+    assert_eq!(builtin_udp.source_port_value(), 4900);
+    assert_eq!(builtin_udp.destination_port_value(), 4901);
+    assert_eq!(builtin_raw.as_bytes(), b"registry-builtin");
+    assert_eq!(builtin_decoded.compile()?.as_bytes(), builtin_bytes);
+    assert_eq!(custom_calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+
+    let custom_compiled = (base_ipv6(89)
+        / Ipv6HopByHopOptionsHeader::new().option(Ipv6Option::pad1())
+        / Ipv6DestinationOptionsHeader::new()
+            .nh(IPPROTO_IPV6_EXPERIMENTAL_1)
+            .option(Ipv6Option::generic(0x3e, [0xbb, 0xcc])?)
+        / Raw::from("registry-custom"))
+    .compile()?;
+    let custom_bytes = custom_compiled.as_bytes();
+
+    assert_ipv6_wire_base_header(custom_bytes, 31, IPPROTO_IPV6_HOPOPTS, 89);
+    assert_eq!(custom_bytes[40], IPPROTO_IPV6_DSTOPTS);
+    assert_eq!(custom_bytes[48], IPPROTO_IPV6_EXPERIMENTAL_1);
+
+    let custom_decoded = registry.decode_ipv6(custom_bytes)?;
+    let custom_layer_names: Vec<_> = custom_decoded.iter().map(|layer| layer.name()).collect();
+    let custom_hop_by_hop = custom_decoded
+        .layer::<Ipv6HopByHopOptionsHeader>()
+        .expect("hop-by-hop layer");
+    let custom_destination = custom_decoded
+        .layer::<Ipv6DestinationOptionsHeader>()
+        .expect("destination options layer");
+    let custom_raw = custom_decoded.layer::<Raw>().expect("raw payload");
+
+    assert_eq!(
+        custom_layer_names,
+        vec![
+            "Ipv6",
+            "Ipv6HopByHopOptionsHeader",
+            "Ipv6DestinationOptionsHeader",
+            "Raw",
+        ]
+    );
+    assert_eq!(custom_hop_by_hop.next_header_value(), IPPROTO_IPV6_DSTOPTS);
+    assert_eq!(
+        custom_destination.next_header_value(),
+        IPPROTO_IPV6_EXPERIMENTAL_1
+    );
+    assert_eq!(custom_raw.as_bytes(), b"registry-custom");
+    assert_eq!(custom_calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(custom_decoded.compile()?.as_bytes(), custom_bytes);
+
+    Ok(())
+}
+
+#[test]
 fn destination_options_decode_terminal_unknown_next_header_as_raw() -> crafter::Result<()> {
     let options = vec![
         Ipv6Option::pad1(),
