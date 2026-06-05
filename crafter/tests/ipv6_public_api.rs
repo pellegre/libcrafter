@@ -18,6 +18,8 @@ fn doc_home() -> Ipv6Addr {
     Ipv6Addr::new(0x2001, 0x0db8, 0x0004, 0, 0, 0, 0, 0x0040)
 }
 
+const IANA_RESERVED_NEXT_HEADER: u8 = 255;
+
 fn base_ipv6(hop_limit: u8) -> Ipv6 {
     Ipv6::with_addresses(doc_src(), doc_dst())
         .tc(0x2a)
@@ -95,6 +97,15 @@ fn assert_decoded_ipv6_base_header(
     assert_eq!(ipv6.payload_length_value(), Some(payload_length));
     assert_eq!(ipv6.next_header_value(), next_header);
     assert_eq!(ipv6.hop_limit_value(), hop_limit);
+}
+
+fn unknown_next_header_values() -> [u8; 3] {
+    // IANA Protocol Numbers marks 253/254 experimental and 255 reserved.
+    [
+        IPPROTO_IPV6_EXPERIMENTAL_1,
+        IPPROTO_IPV6_EXPERIMENTAL_2,
+        IANA_RESERVED_NEXT_HEADER,
+    ]
 }
 
 fn assert_ipv6_transport_context(ipv6: &Ipv6, next_header: u8) -> TransportChecksumContext {
@@ -268,6 +279,84 @@ fn next_header_names_no_next_header_preserves_non_empty_payload_as_raw() -> craf
         )
     );
     assert_eq!(decoded.compile()?.as_bytes(), bytes);
+
+    Ok(())
+}
+
+#[test]
+fn unknown_next_header_non_empty_payload_decodes_as_raw_and_roundtrips() -> crafter::Result<()> {
+    let payload = [0xca, 0xfe, 0xba, 0xbe, 0x01];
+
+    for (index, next_header) in unknown_next_header_values().into_iter().enumerate() {
+        let hop_limit = 58 + index as u8;
+        let compiled =
+            (base_ipv6(hop_limit).nh(next_header) / Raw::from_bytes(payload)).compile()?;
+        let bytes = compiled.as_bytes();
+
+        assert_ipv6_wire_base_header(bytes, payload.len() as u16, next_header, hop_limit);
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+        let ipv6 = decoded.layer::<Ipv6>().expect("ipv6 layer");
+        let raw = decoded.layer::<Raw>().expect("raw payload");
+
+        assert_decoded_ipv6_base_header(ipv6, payload.len() as u16, next_header, hop_limit);
+        assert_eq!(raw.as_bytes(), payload);
+        assert_eq!(decoded.len(), 2);
+        assert_eq!(decoded.compile()?.as_bytes(), bytes);
+    }
+
+    Ok(())
+}
+
+#[test]
+fn unknown_next_header_empty_payload_roundtrips_without_raw_layer() -> crafter::Result<()> {
+    for (index, next_header) in unknown_next_header_values().into_iter().enumerate() {
+        let hop_limit = 61 + index as u8;
+        let compiled = (base_ipv6(hop_limit).nh(next_header) / Raw::new()).compile()?;
+        let bytes = compiled.as_bytes();
+
+        assert_ipv6_wire_base_header(bytes, 0, next_header, hop_limit);
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+        let ipv6 = decoded.layer::<Ipv6>().expect("ipv6 layer");
+
+        assert_decoded_ipv6_base_header(ipv6, 0, next_header, hop_limit);
+        assert_eq!(decoded.len(), 1);
+        assert!(decoded.layer::<Raw>().is_none());
+        assert_eq!(decoded.compile()?.as_bytes(), bytes);
+    }
+
+    Ok(())
+}
+
+#[test]
+fn unknown_next_header_trailing_bytes_after_payload_length_roundtrip() -> crafter::Result<()> {
+    let declared_payload_len = 2;
+    let payload = [0xde, 0xad, 0xbe, 0xef, 0x5a];
+
+    for (index, next_header) in unknown_next_header_values().into_iter().enumerate() {
+        let hop_limit = 64 + index as u8;
+        let compiled = (base_ipv6(hop_limit)
+            .plen(declared_payload_len)
+            .nh(next_header)
+            / Raw::from_bytes(payload))
+        .compile()?;
+        let bytes = compiled.as_bytes();
+
+        assert_eq!(ipv6_payload_length(bytes), declared_payload_len);
+        assert_eq!(bytes[6], next_header);
+        assert_eq!(bytes[7], hop_limit);
+        assert_eq!(bytes.len(), 40 + payload.len());
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+        let ipv6 = decoded.layer::<Ipv6>().expect("ipv6 layer");
+        let raw_layers: Vec<_> = decoded.layers::<Raw>().map(Raw::as_bytes).collect();
+        let split_at = usize::from(declared_payload_len);
+
+        assert_decoded_ipv6_base_header(ipv6, declared_payload_len, next_header, hop_limit);
+        assert_eq!(raw_layers, vec![&payload[..split_at], &payload[split_at..]]);
+        assert_eq!(decoded.compile()?.as_bytes(), bytes);
+    }
 
     Ok(())
 }
