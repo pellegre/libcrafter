@@ -1,7 +1,7 @@
 version: 1
 kind: layer
 name: ipv6
-summary: IPv6 base header, next-header fallback, and extension-header chaining.
+summary: IPv6 base header, traffic class interpretation, flow label bounds, next-header fallback, options, routing, fragment, and SRH metadata.
 
 roots:
   - "l3:ipv6"
@@ -10,6 +10,8 @@ parents:
   - vlan
   - null_loopback
 children:
+  - ipv6_hop_by_hop
+  - ipv6_destination_options
   - udp
   - tcp
   - icmpv6
@@ -33,13 +35,54 @@ fields:
     required: true
     domains:
       - 0
+      - 187
       - boundary
+    source: RFC 8200; DSCP RFC 2474 / IANA DSCP; ECN RFC 3168
+    subfields:
+      - name: dscp
+        type: uint6
+        domains:
+          - cs0
+          - ef
+          - boundary
+        note: upper six bits of traffic_class; raw byte remains authoritative.
+      - name: ecn
+        type: uint2
+        domains:
+          - not_ect
+          - ect0
+          - ect1
+          - ce
+        note: lower two bits of traffic_class; raw byte remains authoritative.
+  - name: dscp
+    type: uint6
+    required: false
+    domains:
+      - cs0
+      - ef
+      - boundary
+    source: RFC 2474 and IANA DSCP registry
+    note: Derived interpretation of the upper six traffic_class bits; not an independent wire octet.
+  - name: ecn
+    type: uint2
+    required: false
+    domains:
+      - not_ect
+      - ect0
+      - ect1
+      - ce
+    source: RFC 3168
+    note: Derived interpretation of the lower two traffic_class bits; not an independent wire octet.
   - name: flow_label
     type: uint20
     required: true
     domains:
       - 0
+      - 1
+      - 703710
       - boundary
+    source: RFC 8200; RFC 6437
+    note: 20-bit wire field; values outside 0x00000..0xfffff are invalid.
   - name: next_header
     type: uint8
     required: true
@@ -50,6 +93,10 @@ fields:
       - routing
       - fragment
       - icmpv6
+      - destination_options
+      - no_next
+      - experimental_253
+      - experimental_254
       - unknown
   - name: hop_limit
     type: uint8
@@ -60,17 +107,290 @@ fields:
       - 255
 
 extension_layers:
+  - name: ipv6_hop_by_hop
+    summary: Hop-by-Hop Options header with ordered IPv6 option TLVs.
+    next_header: 0
+    source: RFC 8200; RFC 2675; RFC 2711; IANA IPv6 Parameters
+    native_names:
+      - IPv6ExtHdrHopByHop
+    fields:
+      - name: next_header
+        type: uint8
+        domains:
+          - tcp
+          - udp
+          - routing
+          - fragment
+          - destination_options
+          - no_next
+          - unknown
+      - name: header_ext_len
+        type: uint8
+        domains:
+          - derived
+          - boundary
+      - name: options
+        type: ipv6_option_list
+        domains:
+          - pad1
+          - padn
+          - router_alert
+          - jumbo_payload
+          - unknown
+    option_family: ipv6_options
+  - name: ipv6_destination_options
+    summary: Destination Options header with ordered IPv6 option TLVs.
+    next_header: 60
+    source: RFC 8200; RFC 6275; IANA IPv6 Parameters
+    native_names:
+      - IPv6ExtHdrDestOpt
+    fields:
+      - name: next_header
+        type: uint8
+        domains:
+          - tcp
+          - udp
+          - routing
+          - fragment
+          - no_next
+          - unknown
+      - name: header_ext_len
+        type: uint8
+        domains:
+          - derived
+          - boundary
+      - name: options
+        type: ipv6_option_list
+        domains:
+          - pad1
+          - padn
+          - home_address
+          - unknown
+    option_family: ipv6_options
   - name: ipv6_fragment
+    summary: Fragment Header field inspection; no reassembly behavior.
+    next_header: 44
+    source: RFC 8200; RFC 6946
     native_names:
       - IPv6ExtHdrFragment
+    fields:
+      - name: next_header
+        type: uint8
+        domains:
+          - tcp
+          - udp
+          - icmpv6
+          - no_next
+          - unknown
+      - name: reserved
+        type: uint8
+        domains:
+          - 0
+          - boundary
+      - name: fragment_offset
+        type: uint13
+        domains:
+          - 0
+          - 1
+          - boundary
+      - name: more_fragments
+        type: bool
+        domains:
+          - false
+          - true
+      - name: identification
+        type: uint32
+        domains:
+          - deterministic
+          - boundary
+      - name: status
+        type: enum
+        domains:
+          - atomic
+          - initial
+          - non_initial
+        note: atomic is offset zero with more_fragments false; non_initial stops upper-layer decode.
   - name: ipv6_routing
+    summary: Generic Routing Header, Mobile IPv6 Type 2, and Segment Routing Header metadata.
+    next_header: 43
+    source: RFC 8200; RFC 5095; RFC 6275; RFC 8754; IANA IPv6 Parameters
     native_names:
       - IPv6ExtHdrRouting
       - IPv6ExtHdrSegmentRouting
+    fields:
+      - name: next_header
+        type: uint8
+        domains:
+          - tcp
+          - udp
+          - icmpv6
+          - no_next
+          - unknown
+      - name: type
+        type: uint8
+        domains:
+          - source_route_deprecated
+          - mobile_type_2
+          - segment_routing
+          - experimental
+          - unknown
+          - reserved
+      - name: classification
+        type: enum
+        domains:
+          - deprecated
+          - mobile
+          - segment_routing
+          - experimental
+          - reserved
+          - unknown
+      - name: segments_left
+        type: uint8
+        domains:
+          - 0
+          - 1
+          - boundary
+      - name: type_data
+        type: bytes
+        domains:
+          - empty
+          - address_list
+          - raw
+  - name: ipv6_mobile_routing_type2
+    summary: Mobile IPv6 Type 2 Routing Header as packet-layer fields only.
+    next_header: 43
+    routing_type: 2
+    source: RFC 6275
+    native_names:
+      - IPv6ExtHdrRouting
+    fields:
+      - name: segments_left
+        type: uint8
+        domains:
+          - 1
+      - name: reserved
+        type: uint32
+        domains:
+          - 0
+          - boundary
+      - name: home_address
+        type: ipv6
+        domains:
+          - documentation_ipv6
+  - name: ipv6_segment_routing
+    summary: Segment Routing Header fields and raw TLV preservation; no SRv6 endpoint behavior.
+    next_header: 43
+    routing_type: 4
+    source: RFC 8754; IANA Segment Routing Header Flags and TLVs
+    native_names:
+      - IPv6ExtHdrSegmentRouting
+    fields:
+      - name: segments_left
+        type: uint8
+        domains:
+          - 0
+          - 1
+          - boundary
+      - name: last_entry
+        type: uint8
+        domains:
+          - derived
+          - boundary
+      - name: flags
+        type: uint8
+        domains:
+          - 0
+          - boundary
+      - name: tag
+        type: uint16
+        domains:
+          - 0
+          - deterministic
+          - boundary
+      - name: segments
+        type: ipv6_list
+        domains:
+          - documentation_ipv6
+      - name: raw_trailing_data
+        type: bytes
+        domains:
+          - empty
+          - pad1
+          - padn
+          - unknown_tlv
+
+ipv6_options:
+  summary: IPv6 option TLV metadata shared by Hop-by-Hop and Destination Options.
+  source: RFC 8200 Section 4.2; RFC 2675; RFC 2711; RFC 6275; IANA IPv6 Parameters
+  fields:
+    - name: option_type
+      type: uint8
+      domains:
+        - pad1
+        - padn
+        - router_alert
+        - jumbo_payload
+        - home_address
+        - unknown
+    - name: action
+      type: uint2
+      domains:
+        - skip
+        - discard
+        - discard_send_icmp
+        - discard_send_icmp_unicast
+    - name: change_en_route
+      type: bool
+      domains:
+        - false
+        - true
+    - name: option_number
+      type: uint5
+      domains:
+        - known
+        - unknown
+    - name: length
+      type: uint8
+      domains:
+        - derived
+        - boundary
+    - name: data
+      type: bytes
+      domains:
+        - empty
+        - fixed_width
+        - raw
+  option_kinds:
+    - name: pad1
+      value: 0
+      header: none
+      source: RFC 8200
+    - name: padn
+      value: 1
+      header: tlv
+      source: RFC 8200
+    - name: router_alert
+      value: 5
+      header: tlv
+      length: 2
+      source: RFC 2711
+    - name: jumbo_payload
+      value: 194
+      header: tlv
+      length: 4
+      source: RFC 2675
+    - name: home_address
+      value: 201
+      header: tlv
+      length: 16
+      source: RFC 6275
 
 coverage_cases:
   - ipv6-boundary-fields
   - ipv6-unknown-next-header-raw
+  - ipv6-hop-by-hop-options
+  - ipv6-destination-options
+  - ipv6-option-metadata
   - ipv6-fragment-udp
   - ipv6-routing-generic
   - ipv6-mobile-routing

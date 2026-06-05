@@ -1,7 +1,7 @@
 version: 1
 kind: feature
 name: ipv6_fragment_routing
-summary: IPv6 fragment, generic routing, mobile routing, and segment routing headers.
+summary: IPv6 base-field interpretation, options metadata, fragment status, routing classification, Mobile Type 2, and Segment Routing Header coverage.
 
 layers:
   - ipv6
@@ -14,6 +14,109 @@ strict_bytes: true
 malformed: false
 
 behaviors:
+  - name: base_fields
+    fields:
+      - traffic_class
+      - dscp
+      - ecn
+      - flow_label
+    sources:
+      - RFC 8200
+      - RFC 2474
+      - RFC 3168
+      - RFC 6437
+  - name: hop_by_hop_options
+    extension_headers:
+      - hop_by_hop
+    option_kinds:
+      - pad1
+      - padn
+      - router_alert
+      - jumbo_payload
+      - unknown
+    sources:
+      - RFC 8200
+      - RFC 2675
+      - RFC 2711
+  - name: destination_options
+    extension_headers:
+      - destination_options
+    option_kinds:
+      - pad1
+      - padn
+      - home_address
+      - unknown
+    sources:
+      - RFC 8200
+      - RFC 6275
+  - name: ipv6_option_metadata
+    fields:
+      - option_type
+      - action
+      - change_en_route
+      - option_number
+      - length
+      - data
+    sources:
+      - RFC 8200
+      - IANA IPv6 Parameters
+  - name: fragment_header_status
+    extension_headers:
+      - fragment
+    fields:
+      - reserved
+      - fragment_offset
+      - more_fragments
+      - identification
+      - status
+    classifications:
+      - atomic
+      - initial
+      - non_initial
+    sources:
+      - RFC 8200
+      - RFC 6946
+  - name: routing_classification
+    extension_headers:
+      - routing
+    fields:
+      - type
+      - classification
+      - segments_left
+      - type_data
+    classifications:
+      - deprecated
+      - mobile
+      - segment_routing
+      - experimental
+      - reserved
+      - unknown
+    sources:
+      - RFC 8200
+      - RFC 5095
+      - IANA IPv6 Parameters
+  - name: mobile_routing_type2
+    extension_headers:
+      - mobile_routing
+    fields:
+      - segments_left
+      - reserved
+      - home_address
+    sources:
+      - RFC 6275
+  - name: segment_routing_header
+    extension_headers:
+      - segment_routing
+    fields:
+      - segments_left
+      - last_entry
+      - flags
+      - tag
+      - segments
+      - raw_trailing_data
+    sources:
+      - RFC 8754
+      - IANA Segment Routing Header Flags and TLVs
   - name: fragment_udp
     extension_headers:
       - fragment
@@ -49,6 +152,9 @@ behaviors:
       - icmpv6
 
 coverage_cases:
+  - ipv6-hop-by-hop-options
+  - ipv6-destination-options
+  - ipv6-option-metadata
   - ipv6-fragment-udp
   - ipv6-routing-generic
   - ipv6-mobile-routing
@@ -62,6 +168,47 @@ coverage_cases:
   - crafter-ipv6-segment-routing-udp
   - crafter-ipv6-routing-tcp-raw
   - crafter-ipv6-routing-icmpv6
+
+supported_cases:
+  # Existing generator/backend materializers support these strict-byte IPv6
+  # fragment and routing cases today. Hop-by-Hop and Destination Options are
+  # declared above as source-backed coverage, but Step 57 owns their oracle
+  # materializers and should move them into this matrix when they run.
+  - name: ipv6-fragment-udp
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: ipv6-routing-generic
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: ipv6-mobile-routing
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: ipv6-extension-chain-tcp-raw
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: ipv6-routing-icmpv6
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: crafter-ipv6-routing-tcp-raw
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: crafter-ipv6-routing-icmpv6
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
 
 backend_support:
   scapy:
