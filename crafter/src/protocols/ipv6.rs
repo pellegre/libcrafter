@@ -2518,6 +2518,7 @@ impl Ipv6SegmentRoutingHeader {
                 "header extension length is too small for segment data",
             ));
         }
+        validate_segment_routing_tlv_shape(&self.trailing_data)?;
         Ok(())
     }
 }
@@ -2841,6 +2842,8 @@ fn decode_segment_routing_header(
         )));
         cursor += 16;
     }
+    let trailing_data = variable[cursor..].to_vec();
+    validate_segment_routing_tlv_shape(&trailing_data)?;
 
     Ok(Ipv6SegmentRoutingHeader {
         next_header: Field::user(bytes[0]),
@@ -2858,8 +2861,36 @@ fn decode_segment_routing_header(
         segments,
         policies: [Ipv6Addr::UNSPECIFIED; 4],
         hmac: [0; IPV6_SEGMENT_HMAC_LEN],
-        trailing_data: variable[cursor..].to_vec(),
+        trailing_data,
     })
+}
+
+fn validate_segment_routing_tlv_shape(bytes: &[u8]) -> Result<()> {
+    let mut cursor = 0;
+    while cursor < bytes.len() {
+        let tlv_type = bytes[cursor];
+        cursor += 1;
+        if tlv_type == 0 {
+            continue;
+        }
+        if cursor >= bytes.len() {
+            return Err(CrafterError::invalid_field_value(
+                "ipv6.segment.tlv",
+                "segment routing TLV is missing its length byte",
+            ));
+        }
+
+        let value_len = bytes[cursor] as usize;
+        cursor += 1;
+        if bytes.len() - cursor < value_len {
+            return Err(CrafterError::invalid_field_value(
+                "ipv6.segment.tlv",
+                "segment routing TLV length exceeds trailing data",
+            ));
+        }
+        cursor += value_len;
+    }
+    Ok(())
 }
 
 fn decode_fragment_header(bytes: &[u8]) -> Result<(Ipv6FragmentHeader, u8, &[u8])> {

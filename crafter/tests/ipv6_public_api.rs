@@ -155,6 +155,10 @@ fn linux_sll_ipv6_frame(payload: &[u8]) -> Vec<u8> {
 }
 
 fn assert_ipv6_base_decode_error_entrypoints(bytes: &[u8], expected: ExpectedBaseDecodeError) {
+    assert_ipv6_decode_error_entrypoints(bytes, expected);
+}
+
+fn assert_ipv6_decode_error_entrypoints(bytes: &[u8], expected: ExpectedBaseDecodeError) {
     let registry = ProtocolRegistry::new();
     assert_base_decode_error(
         "Packet::decode_from_l3",
@@ -225,6 +229,14 @@ fn assert_ipv6_base_decode_error_entrypoints(bytes: &[u8], expected: ExpectedBas
         registry.decode_linux_sll(&linux_sll),
         expected,
     );
+}
+
+fn ipv6_with_routing_payload(payload: &[u8]) -> Vec<u8> {
+    (base_ipv6(109).nh(IPPROTO_IPV6_ROUTE) / Raw::from_bytes(payload))
+        .compile()
+        .expect("malformed routing payload envelope should compile")
+        .as_bytes()
+        .to_vec()
 }
 
 fn assert_traffic_class_roundtrip(
@@ -2347,6 +2359,153 @@ fn segment_routing_tlv_explicit_header_length_must_fit_raw_optional_data() {
         "segment routing raw optional data too large for explicit length",
         err,
         "ipv6.segment.header_ext_len",
+    );
+}
+
+#[test]
+fn segment_routing_malformed_header_shorter_than_required_is_structured() {
+    let bytes = ipv6_with_routing_payload(&[IPPROTO_UDP, 0, IPV6_ROUTING_TYPE_SEGMENT, 0]);
+
+    assert_ipv6_decode_error_entrypoints(
+        &bytes,
+        ExpectedBaseDecodeError::BufferTooShort {
+            context: "ipv6 routing header",
+            required: 8,
+            available: 4,
+        },
+    );
+}
+
+#[test]
+fn segment_routing_malformed_last_entry_requires_available_segment_bytes() {
+    let bytes =
+        ipv6_with_routing_payload(&[IPPROTO_UDP, 0, IPV6_ROUTING_TYPE_SEGMENT, 0, 1, 0, 0, 0]);
+
+    assert_ipv6_decode_error_entrypoints(
+        &bytes,
+        ExpectedBaseDecodeError::InvalidFieldValue {
+            field: "ipv6.segment.header_ext_len",
+            reason: "segment routing data is shorter than its fields require",
+        },
+    );
+}
+
+#[test]
+fn segment_routing_malformed_declared_length_shorter_than_fields_is_structured() {
+    let mut route_payload = vec![IPPROTO_UDP, 1, IPV6_ROUTING_TYPE_SEGMENT, 0, 0, 0, 0, 0];
+    route_payload.extend_from_slice(&[0xaa; 8]);
+    let bytes = ipv6_with_routing_payload(&route_payload);
+
+    assert_ipv6_decode_error_entrypoints(
+        &bytes,
+        ExpectedBaseDecodeError::InvalidFieldValue {
+            field: "ipv6.segment.header_ext_len",
+            reason: "segment routing data is shorter than its fields require",
+        },
+    );
+}
+
+#[test]
+fn segment_routing_malformed_tlv_length_is_structured() {
+    let segment = doc_midpoint().octets();
+    let mut route_payload = vec![IPPROTO_UDP, 4, IPV6_ROUTING_TYPE_SEGMENT, 0, 0, 0, 0, 0];
+    route_payload.extend_from_slice(&segment);
+    route_payload.extend_from_slice(&[
+        0xee, 0x0f, 0xaa, 0xbb, 0xcc, 0xdd, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09,
+        0x0a,
+    ]);
+    let bytes = ipv6_with_routing_payload(&route_payload);
+
+    assert_ipv6_decode_error_entrypoints(
+        &bytes,
+        ExpectedBaseDecodeError::InvalidFieldValue {
+            field: "ipv6.segment.tlv",
+            reason: "segment routing TLV length exceeds trailing data",
+        },
+    );
+}
+
+#[test]
+fn segment_routing_malformed_invalid_explicit_builder_values_are_structured() {
+    let segment = doc_midpoint();
+
+    let empty_err = Packet::from_layer(Ipv6SegmentRoutingHeader::new())
+        .compile()
+        .expect_err("empty SRH segment list must be rejected");
+    assert_invalid_field_value_error(
+        "segment routing empty builder segment list",
+        empty_err,
+        "ipv6.segment.segments",
+    );
+
+    let routing_type_err = Packet::from_layer(
+        Ipv6SegmentRoutingHeader::new()
+            .routing_type(3)
+            .segment(segment),
+    )
+    .compile()
+    .expect_err("SRH builder must reject non-SRH routing type");
+    assert_invalid_field_value_error(
+        "segment routing explicit routing type",
+        routing_type_err,
+        "ipv6.segment.routing_type",
+    );
+
+    let header_len_err = Packet::from_layer(
+        Ipv6SegmentRoutingHeader::new()
+            .header_ext_len(1)
+            .segment(segment),
+    )
+    .compile()
+    .expect_err("explicit SRH header length must fit segment fields");
+    assert_invalid_field_value_error(
+        "segment routing explicit header length",
+        header_len_err,
+        "ipv6.segment.header_ext_len",
+    );
+
+    let policy_index_err = Ipv6SegmentRoutingHeader::new()
+        .policy_flag(4, 1)
+        .expect_err("policy flag index must be bounded");
+    assert_invalid_field_value_error(
+        "segment routing policy index",
+        policy_index_err,
+        "ipv6.segment.policy",
+    );
+
+    let policy_flag_err = Ipv6SegmentRoutingHeader::new()
+        .policy_flag(0, 8)
+        .expect_err("policy flag must fit three bits");
+    assert_invalid_field_value_error(
+        "segment routing policy flag",
+        policy_flag_err,
+        "ipv6.segment.policy_flag",
+    );
+
+    let tlv_missing_len_err = Packet::from_layer(
+        Ipv6SegmentRoutingHeader::new()
+            .segment(segment)
+            .raw_trailing_data([0xee]),
+    )
+    .compile()
+    .expect_err("SRH TLV type without length must be rejected");
+    assert_invalid_field_value_error(
+        "segment routing TLV missing length",
+        tlv_missing_len_err,
+        "ipv6.segment.tlv",
+    );
+
+    let tlv_overrun_err = Packet::from_layer(
+        Ipv6SegmentRoutingHeader::new()
+            .segment(segment)
+            .raw_trailing_data([0xee, 3, 0xaa]),
+    )
+    .compile()
+    .expect_err("SRH TLV length overrun must be rejected");
+    assert_invalid_field_value_error(
+        "segment routing TLV length overrun",
+        tlv_overrun_err,
+        "ipv6.segment.tlv",
     );
 }
 

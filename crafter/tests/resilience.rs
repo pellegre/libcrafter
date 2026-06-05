@@ -476,7 +476,12 @@ fn malformed_family(name: &str) -> Option<&'static str> {
         }
         "truncated-ipv6-routing-header" => Some("truncated ipv6 routing header"),
         "truncated-ipv6-fragment-header" => Some("truncated ipv6 fragment header"),
-        "malformed-ipv6-segment-routing-header" => Some("malformed ipv6 segment routing header"),
+        "malformed-ipv6-segment-routing-header"
+        | "short-ipv6-segment-routing-header"
+        | "ipv6-segment-routing-declared-fields-overrun"
+        | "ipv6-segment-routing-tlv-length-overrun" => {
+            Some("malformed ipv6 segment routing header")
+        }
         "udp-short-header" => Some("short udp header"),
         "udp-invalid-length" => Some("invalid udp length"),
         "udp-length-overrun" | "udp-ipv6-length-overrun" => Some("udp length overrun"),
@@ -586,6 +591,45 @@ fn deterministic_payload(len: usize, seed: u8) -> Vec<u8> {
 
 fn dhcp_client_mac() -> MacAddr {
     MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0x01])
+}
+
+fn segment_routing_malformed_ipv6_packet(route_payload: &[u8]) -> Vec<u8> {
+    let ipv6 = Ipv6::with_addresses(
+        Ipv6Addr::new(0x2001, 0x0db8, 0x0039, 0, 0, 0, 0, 0x0001),
+        Ipv6Addr::new(0x2001, 0x0db8, 0x0039, 0, 0, 0, 0, 0x0002),
+    )
+    .next_header(43);
+
+    (ipv6 / Raw::from_bytes(route_payload))
+        .compile()
+        .expect("malformed SRH IPv6 envelope should compile")
+        .as_bytes()
+        .to_vec()
+}
+
+fn segment_routing_malformed_ethernet_frame(ipv6_packet: &[u8]) -> Vec<u8> {
+    let ethernet = Ethernet::with_addresses(
+        MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0x02]),
+        MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0x01]),
+    )
+    .ethertype(0x86dd);
+
+    (ethernet / Raw::from_bytes(ipv6_packet))
+        .compile()
+        .expect("malformed SRH Ethernet envelope should compile")
+        .as_bytes()
+        .to_vec()
+}
+
+fn segment_routing_malformed_linux_sll_frame(ipv6_packet: &[u8]) -> Vec<u8> {
+    (LinuxSll::new()
+        .source_address(MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0x01]))
+        .protocol(0x86dd)
+        / Raw::from_bytes(ipv6_packet))
+    .compile()
+    .expect("malformed SRH Linux SLL envelope should compile")
+    .as_bytes()
+    .to_vec()
 }
 
 /// Malformed DHCP option payloads whose typed views are only decoded lazily
@@ -1313,6 +1357,83 @@ fn malformed_corpus_reports_structured_errors() {
                     case.name
                 );
             }
+        }
+    }
+}
+
+#[test]
+fn segment_routing_malformed_decode_entrypoints_report_structured_errors() {
+    let segment = Ipv6Addr::new(0x2001, 0x0db8, 0x0039, 0, 0, 0, 0, 0x0003).octets();
+
+    let mut declared_too_short = vec![17, 1, 4, 0, 0, 0, 0, 0];
+    declared_too_short.extend_from_slice(&[0xaa; 8]);
+
+    let mut tlv_overrun = vec![17, 4, 4, 0, 0, 0, 0, 0];
+    tlv_overrun.extend_from_slice(&segment);
+    tlv_overrun.extend_from_slice(&[
+        0xee, 0x0f, 0xaa, 0xbb, 0xcc, 0xdd, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09,
+        0x0a,
+    ]);
+
+    let cases = [
+        (
+            "segment-routing-short-header",
+            vec![17, 0, 4, 0],
+            ExpectedError {
+                kind: ExpectedErrorKind::BufferTooShort,
+                context_or_field: "ipv6 routing header",
+            },
+        ),
+        (
+            "segment-routing-last-entry-overrun",
+            vec![17, 0, 4, 0, 1, 0, 0, 0],
+            ExpectedError {
+                kind: ExpectedErrorKind::InvalidFieldValue,
+                context_or_field: "ipv6.segment.header_ext_len",
+            },
+        ),
+        (
+            "segment-routing-declared-length-shorter-than-fields",
+            declared_too_short,
+            ExpectedError {
+                kind: ExpectedErrorKind::InvalidFieldValue,
+                context_or_field: "ipv6.segment.header_ext_len",
+            },
+        ),
+        (
+            "segment-routing-tlv-length-overrun",
+            tlv_overrun,
+            ExpectedError {
+                kind: ExpectedErrorKind::InvalidFieldValue,
+                context_or_field: "ipv6.segment.tlv",
+            },
+        ),
+    ];
+
+    for (name, route_payload, expected_error) in cases {
+        let ipv6_packet = segment_routing_malformed_ipv6_packet(&route_payload);
+        let ethernet_frame = segment_routing_malformed_ethernet_frame(&ipv6_packet);
+        let linux_sll_frame = segment_routing_malformed_linux_sll_frame(&ipv6_packet);
+
+        let expected = MalformedCase {
+            name,
+            target: DecodeTarget::Ipv6,
+            expected_outcome: ExpectedOutcome::Error(expected_error),
+            bytes: Vec::new(),
+        };
+
+        for (target, bytes) in [
+            (PacketDecodeTarget::L3(NetworkLayer::Ipv6), ipv6_packet),
+            (PacketDecodeTarget::Link(LinkType::Ethernet), ethernet_frame),
+            (
+                PacketDecodeTarget::Link(LinkType::LinuxSll),
+                linux_sll_frame,
+            ),
+        ] {
+            let error = decode_packet(target, &bytes)
+                .err()
+                .unwrap_or_else(|| panic!("{name} unexpectedly decoded through {target:?}"));
+            assert_error_matches(&expected, error);
         }
     }
 }
