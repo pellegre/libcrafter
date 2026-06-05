@@ -1464,6 +1464,186 @@ fn noninitial_fragment_raw_stops_transport_decode() -> crafter::Result<()> {
 }
 
 #[test]
+fn first_fragment_chain_offset_zero_more_fragments_decodes_complete_terminal_header(
+) -> crafter::Result<()> {
+    // RFC 7112 makes the first fragment's header chain locally meaningful; this
+    // stays packet-layer only and does not imply reassembly or delivery policy.
+    let payload = b"first-chain";
+    let options = vec![Ipv6Option::padn(6)?];
+    let compiled = (base_ipv6(80)
+        / Ipv6FragmentHeader::new()
+            .nh(IPPROTO_IPV6_DSTOPTS)
+            .fragment_offset(0)
+            .more_fragments(true)
+            .identification(0x7112_0001)
+        / Ipv6DestinationOptionsHeader::new().options(options.clone())
+        / Udp::new().sport(7112).dport(7113)
+        / Raw::from_bytes(payload))
+    .compile()?;
+    let bytes = compiled.as_bytes();
+
+    assert_ipv6_wire_base_header(
+        bytes,
+        (8 + 8 + UDP_HEADER_LEN + payload.len()) as u16,
+        IPPROTO_IPV6_FRAGMENT,
+        80,
+    );
+    assert_eq!(bytes[40], IPPROTO_IPV6_DSTOPTS);
+    assert_eq!(bytes[41], 0);
+    assert_eq!(u16_field(bytes, 42), 1);
+    assert_eq!(&bytes[44..48], &0x7112_0001u32.to_be_bytes());
+    assert_eq!(bytes[48], IPPROTO_UDP);
+    assert_eq!(bytes[49], 0);
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+    let layer_names: Vec<_> = decoded.iter().map(|layer| layer.name()).collect();
+    let ipv6 = decoded.layer::<Ipv6>().expect("ipv6 layer");
+    let fragment = decoded
+        .layer::<Ipv6FragmentHeader>()
+        .expect("fragment layer");
+    let destination = decoded
+        .layer::<Ipv6DestinationOptionsHeader>()
+        .expect("destination options layer");
+    let udp = decoded.layer::<Udp>().expect("udp layer");
+    let raw = decoded.layer::<Raw>().expect("raw payload");
+
+    assert_eq!(
+        layer_names,
+        vec![
+            "Ipv6",
+            "Ipv6FragmentHeader",
+            "Ipv6DestinationOptionsHeader",
+            "Udp",
+            "Raw",
+        ]
+    );
+    assert_decoded_ipv6_base_header(
+        ipv6,
+        (8 + 8 + UDP_HEADER_LEN + payload.len()) as u16,
+        IPPROTO_IPV6_FRAGMENT,
+        80,
+    );
+    assert_eq!(fragment.next_header_value(), IPPROTO_IPV6_DSTOPTS);
+    assert_eq!(fragment.fragment_offset_value(), 0);
+    assert_eq!(fragment.fragment_offset_bytes(), 0);
+    assert!(fragment.has_more_fragments());
+    assert!(!fragment.is_last_fragment());
+    assert_eq!(
+        fragment.fragment_status(),
+        Ipv6FragmentHeaderStatus::Initial
+    );
+    assert!(fragment.is_initial_fragment());
+    assert!(!fragment.is_non_initial_fragment());
+    assert_eq!(fragment.identification_value(), 0x7112_0001);
+    assert_eq!(destination.next_header_value(), IPPROTO_UDP);
+    assert_eq!(destination.header_ext_len_value(), Some(0));
+    assert_eq!(destination.options_value(), options.as_slice());
+    assert_eq!(udp.source_port_value(), 7112);
+    assert_eq!(udp.destination_port_value(), 7113);
+    assert_eq!(
+        udp.length_value(),
+        Some((UDP_HEADER_LEN + payload.len()) as u16)
+    );
+    assert_eq!(raw.as_bytes(), payload);
+    assert_eq!(decoded.compile()?.as_bytes(), bytes);
+
+    Ok(())
+}
+
+#[test]
+fn first_fragment_chain_incomplete_extension_header_is_structured_error() -> crafter::Result<()> {
+    let bytes = (base_ipv6(81).nh(IPPROTO_IPV6_FRAGMENT)
+        / Raw::from_bytes([
+            IPPROTO_IPV6_DSTOPTS,
+            0,
+            0,
+            1,
+            0x71,
+            0x12,
+            0x00,
+            0x02,
+            IPPROTO_UDP,
+            0,
+            IPV6_OPTION_PAD1,
+        ]))
+    .compile()?;
+
+    assert_buffer_too_short_error(
+        "first fragment incomplete Destination Options chain",
+        Packet::decode_from_l3(NetworkLayer::Ipv6, bytes.as_bytes()).unwrap_err(),
+        "ipv6 destination options header",
+        8,
+        3,
+    );
+
+    Ok(())
+}
+
+#[test]
+fn first_fragment_chain_oversized_extension_header_is_structured_error() -> crafter::Result<()> {
+    let bytes = (base_ipv6(82).nh(IPPROTO_IPV6_FRAGMENT)
+        / Raw::from_bytes([
+            IPPROTO_IPV6_DSTOPTS,
+            0,
+            0,
+            1,
+            0x71,
+            0x12,
+            0x00,
+            0x03,
+            IPPROTO_IPV6_NO_NEXT,
+            u8::MAX,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ]))
+    .compile()?;
+
+    assert_buffer_too_short_error(
+        "first fragment oversized Destination Options chain",
+        Packet::decode_from_l3(NetworkLayer::Ipv6, bytes.as_bytes()).unwrap_err(),
+        "ipv6 destination options header",
+        2048,
+        8,
+    );
+
+    Ok(())
+}
+
+#[test]
+fn first_fragment_chain_truncated_terminal_header_is_structured_error() -> crafter::Result<()> {
+    let bytes = (base_ipv6(83).nh(IPPROTO_IPV6_FRAGMENT)
+        / Raw::from_bytes([
+            IPPROTO_UDP,
+            0,
+            0,
+            1,
+            0x71,
+            0x12,
+            0x00,
+            0x04,
+            0x1b,
+            0xc8,
+            0x1b,
+            0xc9,
+        ]))
+    .compile()?;
+
+    assert_buffer_too_short_error(
+        "first fragment truncated UDP terminal header",
+        Packet::decode_from_l3(NetworkLayer::Ipv6, bytes.as_bytes()).unwrap_err(),
+        "udp header",
+        UDP_HEADER_LEN,
+        4,
+    );
+
+    Ok(())
+}
+
+#[test]
 fn fragment_boundary_offset_zero_and_max_decode_roundtrip() -> crafter::Result<()> {
     const MAX_FRAGMENT_OFFSET: u16 = 0x1fff;
 
