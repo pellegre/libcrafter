@@ -132,6 +132,62 @@ fn assert_transport_checksum_uses_ipv6_context(
 }
 
 #[test]
+fn hop_limit_default_and_aliases_are_stable() -> crafter::Result<()> {
+    let default_ipv6 = Ipv6::with_addresses(doc_src(), doc_dst()).nh(253);
+    assert_eq!(default_ipv6.hop_limit_value(), 64);
+
+    let default_packet = (default_ipv6 / Raw::from("default-hop")).compile()?;
+    let default_bytes = default_packet.as_bytes();
+    assert_ipv6_wire_base_header(default_bytes, 11, 253, 64);
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, default_bytes)?;
+    let decoded_ipv6 = decoded.layer::<Ipv6>().expect("ipv6 layer");
+    assert_eq!(decoded_ipv6.hop_limit_value(), 64);
+
+    let hop_limit = Ipv6::with_addresses(doc_src(), doc_dst())
+        .hop_limit(31)
+        .nh(253);
+    let hlim = Ipv6::with_addresses(doc_src(), doc_dst()).hlim(31).nh(253);
+    assert_eq!(hop_limit.hop_limit_value(), hlim.hop_limit_value());
+
+    let hop_limit_packet = (hop_limit / Raw::from("alias-hop")).compile()?;
+    let hlim_packet = (hlim / Raw::from("alias-hop")).compile()?;
+    assert_eq!(hop_limit_packet.as_bytes(), hlim_packet.as_bytes());
+    assert_ipv6_wire_base_header(hlim_packet.as_bytes(), 9, 253, 31);
+
+    Ok(())
+}
+
+#[test]
+fn next_header_override_default_auto_and_aliases_are_preserved() -> crafter::Result<()> {
+    let default_ipv6 = Ipv6::with_addresses(doc_src(), doc_dst());
+    assert_eq!(default_ipv6.next_header_value(), IPPROTO_IPV6_HOPOPTS);
+
+    let default_packet = (default_ipv6 / Raw::from("base")).compile()?;
+    assert_ipv6_wire_base_header(default_packet.as_bytes(), 4, IPPROTO_IPV6_HOPOPTS, 64);
+
+    let udp_auto = (Ipv6::with_addresses(doc_src(), doc_dst())
+        / Udp::new().sport(0x1111).dport(0x2222)
+        / Raw::from("udp"))
+    .compile()?;
+    assert_ipv6_wire_base_header(udp_auto.as_bytes(), 11, IPPROTO_UDP, 64);
+
+    let next_header_override = (Ipv6::with_addresses(doc_src(), doc_dst()).next_header(253)
+        / Udp::new().sport(0x3333).dport(0x4444)
+        / Raw::from("next"))
+    .compile()?;
+    assert_ipv6_wire_base_header(next_header_override.as_bytes(), 12, 253, 64);
+
+    let nh_override = (Ipv6::with_addresses(doc_src(), doc_dst()).nh(IPPROTO_TCP)
+        / Udp::new().sport(0x5555).dport(0x6666)
+        / Raw::from("alias"))
+    .compile()?;
+    assert_ipv6_wire_base_header(nh_override.as_bytes(), 13, IPPROTO_TCP, 64);
+
+    Ok(())
+}
+
+#[test]
 fn ipv6_udp_base_header_roundtrip_autofills_and_checksums() -> crafter::Result<()> {
     let payload = b"udp4";
     let hop_limit = 42;
