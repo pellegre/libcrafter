@@ -1287,6 +1287,183 @@ fn atomic_fragment_decode_continues_to_terminal_layer_and_roundtrips() -> crafte
 }
 
 #[test]
+fn noninitial_fragment_raw_stops_transport_decode() -> crafter::Result<()> {
+    let cases: [(&str, u8, &str, &[u8], u16, bool, u32); 4] = [
+        (
+            "udp",
+            IPPROTO_UDP,
+            "udp(17)",
+            b"udp-noninitial",
+            2,
+            true,
+            0x4400_0001,
+        ),
+        (
+            "tcp",
+            IPPROTO_TCP,
+            "tcp(6)",
+            b"tcp-noninitial",
+            3,
+            false,
+            0x4400_0002,
+        ),
+        (
+            "icmpv6",
+            IPPROTO_ICMPV6,
+            "icmpv6(58)",
+            b"icmpv6-noninitial",
+            4,
+            true,
+            0x4400_0003,
+        ),
+        (
+            "unknown",
+            149,
+            "unknown(149)",
+            b"unknown-noninitial",
+            5,
+            false,
+            0x4400_0004,
+        ),
+    ];
+
+    for (
+        label,
+        expected_next_header,
+        expected_next_summary,
+        payload,
+        fragment_offset,
+        more_fragments,
+        identification,
+    ) in cases
+    {
+        let fragment = Ipv6FragmentHeader::new()
+            .nh(expected_next_header)
+            .fragment_offset(fragment_offset)
+            .more_fragments(more_fragments)
+            .identification(identification);
+        let compiled = match label {
+            "udp" => {
+                base_ipv6(79)
+                    / fragment
+                    / Udp::new().sport(7900).dport(7901)
+                    / Raw::from_bytes(payload)
+            }
+            "tcp" => {
+                base_ipv6(79)
+                    / fragment
+                    / Tcp::new()
+                        .sport(7902)
+                        .dport(7903)
+                        .seq(0x0102_0304)
+                        .ack(0x0506_0708)
+                        .flags(TCP_FLAG_ACK)
+                    / Raw::from_bytes(payload)
+            }
+            "icmpv6" => {
+                base_ipv6(79)
+                    / fragment
+                    / Icmpv6::echo_request().id(0x7904).seq(9)
+                    / Raw::from_bytes(payload)
+            }
+            "unknown" => base_ipv6(79) / fragment / Raw::from_bytes(payload),
+            _ => unreachable!("covered non-initial fragment case"),
+        }
+        .compile()?;
+        let bytes = compiled.as_bytes();
+        let expected_fragment_payload = &bytes[48..];
+
+        assert_ipv6_wire_base_header(
+            bytes,
+            (8 + expected_fragment_payload.len()) as u16,
+            IPPROTO_IPV6_FRAGMENT,
+            79,
+        );
+        assert_eq!(bytes[40], expected_next_header, "{label}");
+        assert_eq!(
+            u16_field(bytes, 42),
+            (fragment_offset << 3) | u16::from(more_fragments)
+        );
+        assert_eq!(&bytes[44..48], &identification.to_be_bytes());
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+        let layer_names: Vec<_> = decoded.iter().map(|layer| layer.name()).collect();
+        let fragment = decoded
+            .layer::<Ipv6FragmentHeader>()
+            .expect("fragment layer");
+        let raw_layers: Vec<_> = decoded.layers::<Raw>().collect();
+
+        assert_eq!(
+            layer_names,
+            vec!["Ipv6", "Ipv6FragmentHeader", "Raw"],
+            "{label}"
+        );
+        assert!(decoded.layer::<Udp>().is_none(), "{label}");
+        assert!(decoded.layer::<Tcp>().is_none(), "{label}");
+        assert!(decoded.layer::<Icmpv6>().is_none(), "{label}");
+        assert_eq!(raw_layers.len(), 1, "{label}");
+        assert_eq!(
+            raw_layers[0].as_bytes(),
+            expected_fragment_payload,
+            "{label}"
+        );
+
+        assert_eq!(
+            fragment.next_header_value(),
+            expected_next_header,
+            "{label}"
+        );
+        assert_eq!(fragment.fragment_offset_value(), fragment_offset, "{label}");
+        assert_eq!(
+            fragment.fragment_offset_bytes(),
+            u32::from(fragment_offset) * 8,
+            "{label}"
+        );
+        assert_eq!(
+            fragment.fragment_status(),
+            Ipv6FragmentHeaderStatus::NonInitial,
+            "{label}"
+        );
+        assert!(fragment.is_non_initial_fragment(), "{label}");
+        assert!(!fragment.is_initial_fragment(), "{label}");
+        assert_eq!(fragment.has_more_fragments(), more_fragments, "{label}");
+        assert_eq!(fragment.identification_value(), identification, "{label}");
+
+        let summary = decoded.summary();
+        assert!(
+            summary.contains(&format!(
+                "Ipv6FragmentHeader(offset={fragment_offset}, m={more_fragments}, next={expected_next_summary})"
+            )),
+            "{label}: {summary}"
+        );
+
+        let show = decoded.show();
+        assert!(
+            show.contains(&format!("next_header: {expected_next_summary}")),
+            "{label}: {show}"
+        );
+        assert!(
+            show.contains(&format!(
+                "fragment_offset_bytes: {}",
+                u32::from(fragment_offset) * 8
+            )),
+            "{label}: {show}"
+        );
+        assert!(
+            show.contains("fragment_status: non-initial"),
+            "{label}: {show}"
+        );
+        assert!(
+            show.contains(&format!("identification: 0x{identification:08x}")),
+            "{label}: {show}"
+        );
+        assert_eq!(decoded.compile()?.as_bytes(), bytes, "{label}");
+    }
+
+    Ok(())
+}
+
+#[test]
 fn fragment_boundary_offset_zero_and_max_decode_roundtrip() -> crafter::Result<()> {
     const MAX_FRAGMENT_OFFSET: u16 = 0x1fff;
 
