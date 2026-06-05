@@ -7,6 +7,10 @@ live-gated capture, send planning, send/receive reports, batch workflows,
 interface helpers, IPv4 ranges, reply matching, and representative protocol
 layers.
 
+IPv6-specific examples stay offline or dry-run by default and use documentation
+address space. See [IPv6 wire coverage](ipv6.md) for the IPv6 guide, fixtures,
+and validation coverage.
+
 For the complete inventory, safety classification, and per-example command map,
 see [`crafter/examples/README.md`](../crafter/examples/README.md).
 
