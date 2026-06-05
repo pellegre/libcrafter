@@ -138,6 +138,68 @@ fn dscp_and_ecn_helpers_are_public_and_raw_safe() -> crafter::Result<()> {
 }
 
 #[test]
+fn ipv6_option() -> crafter::Result<()> {
+    let prelude_option: Ipv6Option = Ipv6Option::pad1();
+    let core_option = crafter::core::Ipv6Option::padn(3)?;
+    let root_option = crafter::Ipv6Option::generic(0x63, [0xaa])?;
+    let protocols_option = crafter::protocols::Ipv6Option::unknown(0xc2, [0, 0, 0, 1])?;
+    let ipv6_module_option = crafter::protocols::ipv6::Ipv6Option::pad_n_data([0xde, 0xad])?;
+
+    let prelude_iter: Ipv6OptionIter =
+        Ipv6OptionIter::new(&[IPV6_OPTION_PAD1, IPV6_OPTION_PADN, 1, 0]);
+    let core_iter = crafter::core::Ipv6OptionIter::new(&[crafter::core::IPV6_OPTION_PAD1]);
+    let protocols_iter =
+        crafter::protocols::Ipv6OptionIter::new(&[crafter::protocols::IPV6_OPTION_PAD1]);
+
+    let prelude_action: Ipv6OptionAction = Ipv6OptionAction::Skip;
+    let root_action: crafter::Ipv6OptionAction =
+        crafter::Ipv6OptionAction::DiscardSendIcmpIfNotMulticast;
+    let core_action = crafter::core::Ipv6OptionAction::from_bits(2)?;
+    let protocols_action = crafter::protocols::Ipv6OptionAction::from_option_type(0x63);
+
+    assert_eq!(IPV6_OPTION_PAD1, 0);
+    assert_eq!(crafter::core::IPV6_OPTION_PADN, 1);
+    assert_eq!(crafter::protocols::IPV6_OPTION_PAD1, 0);
+    assert_eq!(crafter::protocols::ipv6::IPV6_OPTION_PADN, 1);
+
+    assert_eq!(prelude_option.encode()?, vec![IPV6_OPTION_PAD1]);
+    assert_eq!(core_option.encode()?, vec![IPV6_OPTION_PADN, 1, 0]);
+    assert_eq!(root_option.kind(), 0x63);
+    assert_eq!(root_option.option_type(), 0x63);
+    assert_eq!(root_option.data(), &[0xaa]);
+    assert_eq!(root_option.action(), Ipv6OptionAction::Discard);
+    assert!(root_option.may_change_en_route());
+    assert_eq!(root_option.option_number(), 3);
+    assert_eq!(root_option.encode()?, vec![0x63, 1, 0xaa]);
+    assert_eq!(protocols_option.action(), root_action);
+    assert!(!protocols_option.change_en_route());
+    assert_eq!(protocols_option.rest(), 2);
+    assert_eq!(
+        ipv6_module_option.encode()?,
+        vec![IPV6_OPTION_PADN, 2, 0xde, 0xad]
+    );
+
+    assert_eq!(
+        prelude_iter.collect::<crafter::Result<Vec<_>>>()?,
+        vec![prelude_option.clone(), core_option.clone()]
+    );
+    assert_eq!(
+        core_iter.collect::<crafter::Result<Vec<_>>>()?,
+        vec![Ipv6Option::Pad1]
+    );
+    assert_eq!(
+        protocols_iter.collect::<crafter::Result<Vec<_>>>()?,
+        vec![Ipv6Option::Pad1]
+    );
+    assert_eq!(prelude_action.bits(), 0);
+    assert_eq!(root_action.bits(), 3);
+    assert_eq!(core_action, Ipv6OptionAction::DiscardSendIcmp);
+    assert_eq!(protocols_action, Ipv6OptionAction::Discard);
+
+    Ok(())
+}
+
+#[test]
 fn udp_public_api_paths_are_usable() -> crafter::Result<()> {
     let prelude_udp: Udp = Udp::new().sport(1111).dport(2222);
     let core_udp = crafter::core::Udp::new().sport(3333).dport(4444);

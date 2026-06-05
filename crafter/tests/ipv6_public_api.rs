@@ -763,18 +763,28 @@ fn ipv6_exports_remain_reachable_through_public_paths() {
     let _: Ipv6FragmentHeader = Ipv6FragmentHeader::new();
     let _: Ipv6MobileRoutingHeader = Ipv6MobileRoutingHeader::new();
     let _: Ipv6SegmentRoutingHeader = Ipv6SegmentRoutingHeader::new();
+    let _: Ipv6Option = Ipv6Option::pad1();
+    let _: Ipv6OptionAction = Ipv6OptionAction::Skip;
+    let _: Ipv6OptionIter<'_> = Ipv6OptionIter::new(&[IPV6_OPTION_PAD1]);
 
     let _: crafter::Ipv6 = crafter::Ipv6::new();
     let _: crafter::Ipv6RoutingHeader = crafter::Ipv6RoutingHeader::new();
     let _: crafter::Ipv6FragmentHeader = crafter::Ipv6FragmentHeader::new();
     let _: crafter::Ipv6MobileRoutingHeader = crafter::Ipv6MobileRoutingHeader::new();
     let _: crafter::Ipv6SegmentRoutingHeader = crafter::Ipv6SegmentRoutingHeader::new();
+    let _: crafter::Ipv6Option = crafter::Ipv6Option::pad1();
+    let _: crafter::Ipv6OptionAction = crafter::Ipv6OptionAction::Skip;
+    let _: crafter::Ipv6OptionIter<'_> = crafter::Ipv6OptionIter::new(&[crafter::IPV6_OPTION_PAD1]);
 
     let _: crafter::core::Ipv6 = crafter::core::Ipv6::new();
     let _: crafter::core::Ipv6RoutingHeader = crafter::core::Ipv6RoutingHeader::new();
     let _: crafter::core::Ipv6FragmentHeader = crafter::core::Ipv6FragmentHeader::new();
     let _: crafter::core::Ipv6MobileRoutingHeader = crafter::core::Ipv6MobileRoutingHeader::new();
     let _: crafter::core::Ipv6SegmentRoutingHeader = crafter::core::Ipv6SegmentRoutingHeader::new();
+    let _: crafter::core::Ipv6Option = crafter::core::Ipv6Option::pad1();
+    let _: crafter::core::Ipv6OptionAction = crafter::core::Ipv6OptionAction::Skip;
+    let _: crafter::core::Ipv6OptionIter<'_> =
+        crafter::core::Ipv6OptionIter::new(&[crafter::core::IPV6_OPTION_PAD1]);
 
     let _: crafter::protocols::Ipv6 = crafter::protocols::Ipv6::new();
     let _: crafter::protocols::Ipv6RoutingHeader = crafter::protocols::Ipv6RoutingHeader::new();
@@ -783,17 +793,132 @@ fn ipv6_exports_remain_reachable_through_public_paths() {
         crafter::protocols::Ipv6MobileRoutingHeader::new();
     let _: crafter::protocols::Ipv6SegmentRoutingHeader =
         crafter::protocols::Ipv6SegmentRoutingHeader::new();
+    let _: crafter::protocols::Ipv6Option = crafter::protocols::Ipv6Option::pad1();
+    let _: crafter::protocols::Ipv6OptionAction = crafter::protocols::Ipv6OptionAction::Skip;
+    let _: crafter::protocols::Ipv6OptionIter<'_> =
+        crafter::protocols::Ipv6OptionIter::new(&[crafter::protocols::IPV6_OPTION_PAD1]);
 
     assert_eq!(IPPROTO_IPV6_HOPOPTS, 0);
     assert_eq!(crafter::IPPROTO_IPV6_ROUTE, 43);
     assert_eq!(crafter::core::IPPROTO_IPV6_FRAGMENT, 44);
     assert_eq!(crafter::protocols::IPPROTO_IPV6_DSTOPTS, 60);
+    assert_eq!(IPV6_OPTION_PAD1, 0);
+    assert_eq!(crafter::IPV6_OPTION_PADN, 1);
     assert_eq!(IPV6_ROUTING_TYPE_MOBILE, 2);
     assert_eq!(crafter::IPV6_ROUTING_TYPE_SEGMENT, 4);
     assert_eq!(IPV6_SEGMENT_POLICY_UNSET, 0);
     assert_eq!(crafter::core::IPV6_SEGMENT_POLICY_INGRESS, 1);
     assert_eq!(crafter::protocols::IPV6_SEGMENT_POLICY_EGRESS, 2);
     assert_eq!(IPV6_SEGMENT_POLICY_SOURCE_ADDRESS, 3);
+}
+
+#[test]
+fn ipv6_option_model() -> crafter::Result<()> {
+    let pad1 = Ipv6Option::pad1();
+    let padn = Ipv6Option::padn(4)?;
+    let unknown = Ipv6Option::generic(0x63, [0xaa, 0xbb, 0xcc])?;
+
+    assert_eq!(pad1.option_type(), IPV6_OPTION_PAD1);
+    assert_eq!(pad1.kind(), IPV6_OPTION_PAD1);
+    assert_eq!(pad1.encoded_len(), 1);
+    assert_eq!(pad1.data(), &[]);
+    assert_eq!(pad1.encode()?, vec![IPV6_OPTION_PAD1]);
+
+    assert_eq!(padn.option_type(), IPV6_OPTION_PADN);
+    assert_eq!(padn.encoded_len(), 4);
+    assert_eq!(padn.data(), &[0, 0]);
+    assert_eq!(padn.encode()?, vec![IPV6_OPTION_PADN, 2, 0, 0]);
+
+    assert_eq!(unknown.option_type(), 0x63);
+    assert_eq!(unknown.data(), &[0xaa, 0xbb, 0xcc]);
+    assert_eq!(unknown.action_bits(), 1);
+    assert_eq!(unknown.action(), Ipv6OptionAction::Discard);
+    assert!(unknown.change_en_route());
+    assert!(unknown.may_change_en_route());
+    assert_eq!(unknown.rest(), 3);
+    assert_eq!(unknown.option_number(), 3);
+    assert_eq!(unknown.encode()?, vec![0x63, 3, 0xaa, 0xbb, 0xcc]);
+
+    assert_eq!(Ipv6OptionAction::from_bits(0)?, Ipv6OptionAction::Skip);
+    assert_eq!(
+        Ipv6OptionAction::from_option_type(0xc2),
+        Ipv6OptionAction::DiscardSendIcmpIfNotMulticast
+    );
+    assert_eq!(Ipv6OptionAction::DiscardSendIcmp.bits(), 2);
+
+    let encoded = [
+        IPV6_OPTION_PAD1,
+        IPV6_OPTION_PADN,
+        2,
+        0,
+        0,
+        0x63,
+        3,
+        0xaa,
+        0xbb,
+        0xcc,
+    ];
+    let decoded = Ipv6Option::decode_all(&encoded)?;
+    assert_eq!(decoded, vec![pad1.clone(), padn.clone(), unknown.clone()]);
+    assert_eq!(
+        Ipv6OptionIter::new(&encoded).collect::<crafter::Result<Vec<_>>>()?,
+        decoded
+    );
+
+    let nonzero_pad = Ipv6Option::decode_all(&[IPV6_OPTION_PADN, 2, 0xde, 0xad])?;
+    assert_eq!(nonzero_pad[0].data(), &[0xde, 0xad]);
+    assert_eq!(
+        nonzero_pad[0].encode()?,
+        vec![IPV6_OPTION_PADN, 2, 0xde, 0xad]
+    );
+
+    match Ipv6Option::padn(1).unwrap_err() {
+        CrafterError::InvalidFieldValue { field, reason } => {
+            assert_eq!(field, "ipv6.option.padn.length");
+            assert!(!reason.is_empty());
+        }
+        other => panic!("short PadN expected InvalidFieldValue, got {other:?}"),
+    }
+    match Ipv6Option::generic(IPV6_OPTION_PAD1, []).unwrap_err() {
+        CrafterError::InvalidFieldValue { field, reason } => {
+            assert_eq!(field, "ipv6.option.type");
+            assert!(!reason.is_empty());
+        }
+        other => panic!("generic Pad1 expected InvalidFieldValue, got {other:?}"),
+    }
+    match Ipv6Option::generic(0x22, vec![0; 256]).unwrap_err() {
+        CrafterError::InvalidFieldValue { field, reason } => {
+            assert_eq!(field, "ipv6.option.length");
+            assert!(!reason.is_empty());
+        }
+        other => panic!("oversized option expected InvalidFieldValue, got {other:?}"),
+    }
+    match Ipv6Option::decode_all(&[0x22]).unwrap_err() {
+        CrafterError::BufferTooShort {
+            context,
+            required,
+            available,
+        } => {
+            assert_eq!(context, "ipv6.option.header");
+            assert_eq!(required, 2);
+            assert_eq!(available, 1);
+        }
+        other => panic!("truncated option header expected BufferTooShort, got {other:?}"),
+    }
+    match Ipv6Option::decode_all(&[0x22, 3, 0xaa]).unwrap_err() {
+        CrafterError::BufferTooShort {
+            context,
+            required,
+            available,
+        } => {
+            assert_eq!(context, "ipv6.option.data");
+            assert_eq!(required, 5);
+            assert_eq!(available, 3);
+        }
+        other => panic!("overrunning option data expected BufferTooShort, got {other:?}"),
+    }
+
+    Ok(())
 }
 
 #[test]
