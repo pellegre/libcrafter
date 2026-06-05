@@ -2262,6 +2262,13 @@ fn append_ipv6_next_with_registry(
                 next_header = inner_next_header;
                 payload = remaining;
             }
+            IPPROTO_IPV6_DSTOPTS => {
+                let (destination_options, inner_next_header, remaining) =
+                    decode_destination_options_header(payload)?;
+                packet = packet.push(destination_options);
+                next_header = inner_next_header;
+                payload = remaining;
+            }
             IPPROTO_IPV6_ROUTE => {
                 let (routing, inner_next_header, remaining) = decode_routing_header(payload)?;
                 packet = match routing {
@@ -2303,6 +2310,24 @@ fn decode_hop_by_hop_header(bytes: &[u8]) -> Result<(Ipv6HopByHopOptionsHeader, 
 
     Ok((
         Ipv6HopByHopOptionsHeader {
+            next_header: Field::user(next_header),
+            header_ext_len: Field::user(bytes[1]),
+            options,
+        },
+        next_header,
+        &bytes[total_len..],
+    ))
+}
+
+fn decode_destination_options_header(
+    bytes: &[u8],
+) -> Result<(Ipv6DestinationOptionsHeader, u8, &[u8])> {
+    let total_len = decode_extension_total_len("ipv6 destination options header", bytes)?;
+    let next_header = bytes[0];
+    let options = Ipv6Option::decode_all(&bytes[2..total_len])?;
+
+    Ok((
+        Ipv6DestinationOptionsHeader {
             next_header: Field::user(next_header),
             header_ext_len: Field::user(bytes[1]),
             options,
