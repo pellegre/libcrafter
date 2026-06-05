@@ -3465,6 +3465,128 @@ fn pcap_fixture_roundtrips() {
 }
 
 #[test]
+fn pcap_ipv6_roundtrip() {
+    let case = PCAP_FIXTURES
+        .iter()
+        .find(|case| case.name == "raw-ipv6-base-traffic-flow-udp-raw")
+        .expect("raw IPv6 pcap fixture should be registered");
+    assert_eq!(case.path, "pcaps/raw-ipv6-base-traffic-flow-udp-raw.pcap");
+    assert_eq!(case.pcap_link_type, PcapLinkType::RawIp);
+    assert_eq!(case.link_type, LinkType::Raw);
+    assert_eq!(case.timestamp_precision, TimestampPrecision::Microseconds);
+    assert_eq!(case.records.len(), 1);
+
+    let expected = case.records[0];
+    assert_eq!(expected.seconds, 20);
+    assert_eq!(expected.fractional, 3);
+    assert_eq!(expected.fixture_name, "ipv6-base-traffic-flow-udp-raw");
+
+    let byte_case = valid_fixture_case(expected.fixture_name);
+    let expected_bytes = fixture_bytes_for_case(byte_case);
+    let expected_timestamp = PcapTimestamp::micros(expected.seconds, expected.fractional).unwrap();
+
+    let reader = PcapReader::from_reader(case.contents)
+        .unwrap_or_else(|err| panic!("pcap fixture {} should parse header: {err}", case.path));
+    let header = reader.header();
+    assert_eq!(header.pcap_link_type(), PcapLinkType::RawIp);
+    assert_eq!(header.link_type(), LinkType::Raw);
+    assert_eq!(header.precision(), TimestampPrecision::Microseconds);
+    assert!(header.snaplen() >= expected_bytes.len() as u32);
+
+    let records = PcapReader::from_reader(case.contents)
+        .unwrap_or_else(|err| {
+            panic!(
+                "pcap fixture {} should parse header twice: {err}",
+                case.path
+            )
+        })
+        .collect_records()
+        .unwrap_or_else(|err| panic!("pcap fixture {} should read records: {err}", case.path));
+    assert_eq!(records.len(), 1);
+    let record = &records[0];
+    assert_eq!(record.timestamp(), expected_timestamp);
+    assert_eq!(record.pcap_link_type(), PcapLinkType::RawIp);
+    assert_eq!(record.link_type(), LinkType::Raw);
+    assert_eq!(record.captured_len(), expected_bytes.len() as u32);
+    assert_eq!(record.original_len(), expected_bytes.len() as u32);
+    assert_eq!(record.data(), expected_bytes.as_slice());
+
+    let packets = PcapReader::from_reader(case.contents)
+        .unwrap_or_else(|err| {
+            panic!(
+                "pcap fixture {} should parse header for packet decode: {err}",
+                case.path
+            )
+        })
+        .collect_packets()
+        .unwrap_or_else(|err| panic!("pcap fixture {} should decode packets: {err}", case.path));
+    assert_eq!(packets.len(), 1);
+    let packet = &packets[0];
+    assert_eq!(packet.timestamp(), expected_timestamp);
+    assert_eq!(packet.original_len(), expected_bytes.len() as u32);
+    assert_eq!(packet.pcap_link_type(), PcapLinkType::RawIp);
+    assert_eq!(packet.link_type(), LinkType::Raw);
+
+    assert_packet_surface(byte_case, packet.packet());
+    assert_fixture_fields(byte_case, packet.packet());
+    assert!(packet
+        .packet()
+        .layers::<Ipv6HopByHopOptionsHeader>()
+        .next()
+        .is_none());
+    assert!(packet
+        .packet()
+        .layers::<Ipv6DestinationOptionsHeader>()
+        .next()
+        .is_none());
+    assert!(packet
+        .packet()
+        .layers::<Ipv6RoutingHeader>()
+        .next()
+        .is_none());
+    assert!(packet
+        .packet()
+        .layers::<Ipv6FragmentHeader>()
+        .next()
+        .is_none());
+    assert_compile_decode_compile(
+        byte_case,
+        packet_target_for_case(byte_case),
+        packet.packet(),
+        &expected_bytes,
+    );
+
+    let mut output = Vec::new();
+    {
+        let options = PcapWriterOptions::new(case.pcap_link_type)
+            .precision(case.timestamp_precision)
+            .snaplen(header.snaplen())
+            .thiszone(header.thiszone())
+            .sigfigs(header.sigfigs());
+        let mut writer = PcapWriter::from_writer_with_options(&mut output, options)
+            .unwrap_or_else(|err| panic!("pcap fixture {} should open writer: {err}", case.path));
+        assert_eq!(writer.header(), header);
+        writer
+            .write_packet_with_timestamp(packet.packet(), record.timestamp())
+            .unwrap_or_else(|err| {
+                panic!(
+                    "pcap fixture {} should rewrite decoded packet: {err}",
+                    case.path
+                )
+            });
+        writer
+            .flush()
+            .unwrap_or_else(|err| panic!("pcap fixture {} should flush writer: {err}", case.path));
+    }
+    assert_eq!(
+        output.as_slice(),
+        case.contents,
+        "pcap fixture {} should roundtrip with deterministic header and record bytes",
+        case.path
+    );
+}
+
+#[test]
 fn fixture_tree_hygiene_matches_readme_conventions() {
     let root = fixture_path("");
     let catalog_paths = VALID_FIXTURES
