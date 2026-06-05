@@ -39,14 +39,157 @@ fn ipv6_flow_label(bytes: &[u8]) -> u32 {
     u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) & 0x000f_ffff
 }
 
+#[derive(Debug, Clone, Copy)]
+enum ExpectedBaseDecodeError {
+    BufferTooShort {
+        context: &'static str,
+        required: usize,
+        available: usize,
+    },
+    InvalidFieldValue {
+        field: &'static str,
+        reason: &'static str,
+    },
+}
+
 fn assert_flow_label_error(err: CrafterError) {
     match err {
         CrafterError::InvalidFieldValue { field, reason } => {
             assert_eq!(field, "ipv6.flow_label");
-            assert!(!reason.is_empty());
+            assert_eq!(reason, "flow label must fit in 20 bits");
         }
         other => panic!("flow label overflow expected InvalidFieldValue, got {other:?}"),
     }
+}
+
+fn assert_base_decode_error(
+    label: &str,
+    result: crafter::Result<Packet>,
+    expected: ExpectedBaseDecodeError,
+) {
+    let err = result.unwrap_err();
+    match (expected, err) {
+        (
+            ExpectedBaseDecodeError::BufferTooShort {
+                context: expected_context,
+                required: expected_required,
+                available: expected_available,
+            },
+            CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            },
+        ) => {
+            assert_eq!(context, expected_context, "{label}");
+            assert_eq!(required, expected_required, "{label}");
+            assert_eq!(available, expected_available, "{label}");
+        }
+        (
+            ExpectedBaseDecodeError::InvalidFieldValue {
+                field: expected_field,
+                reason: expected_reason,
+            },
+            CrafterError::InvalidFieldValue { field, reason },
+        ) => {
+            assert_eq!(field, expected_field, "{label}");
+            assert_eq!(reason, expected_reason, "{label}");
+        }
+        (expected, actual) => panic!("{label} expected {expected:?}, got {actual:?}"),
+    }
+}
+
+fn ethernet_ipv6_frame(payload: &[u8]) -> Vec<u8> {
+    let mut frame = Vec::with_capacity(14 + payload.len());
+    frame.extend_from_slice(&[0x02, 0x00, 0x5e, 0x00, 0x53, 0x02]);
+    frame.extend_from_slice(&[0x02, 0x00, 0x5e, 0x00, 0x53, 0x01]);
+    frame.extend_from_slice(&ETHERTYPE_IPV6.to_be_bytes());
+    frame.extend_from_slice(payload);
+    frame
+}
+
+fn linux_sll_ipv6_frame(payload: &[u8]) -> Vec<u8> {
+    let mut frame = Vec::with_capacity(16 + payload.len());
+    frame.extend_from_slice(&0u16.to_be_bytes());
+    frame.extend_from_slice(&1u16.to_be_bytes());
+    frame.extend_from_slice(&6u16.to_be_bytes());
+    frame.extend_from_slice(&[0x02, 0x00, 0x5e, 0x00, 0x53, 0x01, 0x00, 0x00]);
+    frame.extend_from_slice(&ETHERTYPE_IPV6.to_be_bytes());
+    frame.extend_from_slice(payload);
+    frame
+}
+
+fn assert_ipv6_base_decode_error_entrypoints(bytes: &[u8], expected: ExpectedBaseDecodeError) {
+    let registry = ProtocolRegistry::new();
+    assert_base_decode_error(
+        "Packet::decode_from_l3",
+        Packet::decode_from_l3(NetworkLayer::Ipv6, bytes),
+        expected,
+    );
+    assert_base_decode_error(
+        "Packet::decode_from_l3_with_registry",
+        Packet::decode_from_l3_with_registry(&registry, NetworkLayer::Ipv6, bytes),
+        expected,
+    );
+    assert_base_decode_error(
+        "ProtocolRegistry::decode_from_l3",
+        registry.decode_from_l3(NetworkLayer::Ipv6, bytes),
+        expected,
+    );
+    assert_base_decode_error(
+        "ProtocolRegistry::decode_ipv6",
+        registry.decode_ipv6(bytes),
+        expected,
+    );
+
+    let ethernet = ethernet_ipv6_frame(bytes);
+    assert_base_decode_error(
+        "Packet::decode_from_link(Ethernet)",
+        Packet::decode_from_link(LinkType::Ethernet, &ethernet),
+        expected,
+    );
+    assert_base_decode_error(
+        "Packet::decode_from_link_with_registry(Ethernet)",
+        Packet::decode_from_link_with_registry(&registry, LinkType::Ethernet, &ethernet),
+        expected,
+    );
+    assert_base_decode_error(
+        "ProtocolRegistry::decode_from_link(Ethernet)",
+        registry.decode_from_link(LinkType::Ethernet, &ethernet),
+        expected,
+    );
+    assert_base_decode_error(
+        "ProtocolRegistry::decode_ethernet",
+        registry.decode_ethernet(&ethernet),
+        expected,
+    );
+
+    let linux_sll = linux_sll_ipv6_frame(bytes);
+    assert_base_decode_error(
+        "Packet::decode_from_link(LinuxSll)",
+        Packet::decode_from_link(LinkType::LinuxSll, &linux_sll),
+        expected,
+    );
+    assert_base_decode_error(
+        "Packet::decode_from_link(LinuxCooked)",
+        Packet::decode_from_link(LinkType::LinuxCooked, &linux_sll),
+        expected,
+    );
+    assert_base_decode_error(
+        "Packet::decode_from_link_with_registry(LinuxSll)",
+        Packet::decode_from_link_with_registry(&registry, LinkType::LinuxSll, &linux_sll),
+        expected,
+    );
+    assert_base_decode_error(
+        "ProtocolRegistry::decode_from_link(LinuxSll)",
+        registry.decode_from_link(LinkType::LinuxSll, &linux_sll),
+        expected,
+    );
+    assert_base_decode_error(
+        "ProtocolRegistry::decode_linux_sll",
+        registry.decode_linux_sll(&linux_sll),
+        expected,
+    );
 }
 
 fn assert_traffic_class_roundtrip(
@@ -325,6 +468,58 @@ fn unknown_next_header_empty_payload_roundtrips_without_raw_layer() -> crafter::
         assert!(decoded.layer::<Raw>().is_none());
         assert_eq!(decoded.compile()?.as_bytes(), bytes);
     }
+
+    Ok(())
+}
+
+#[test]
+fn base_decode_error_short_headers_through_public_entrypoints() {
+    for available in [0, 1, 8, 39] {
+        let mut bytes = vec![0; available];
+        if let Some(first) = bytes.first_mut() {
+            *first = 0x60;
+        }
+
+        assert_ipv6_base_decode_error_entrypoints(
+            &bytes,
+            ExpectedBaseDecodeError::BufferTooShort {
+                context: "ipv6 header",
+                required: 40,
+                available,
+            },
+        );
+    }
+}
+
+#[test]
+fn base_decode_error_wrong_version_through_public_entrypoints() -> crafter::Result<()> {
+    let mut bytes = (base_ipv6(64).nh(253) / Raw::new()).compile()?.into_bytes();
+    bytes[0] = 0x40 | (bytes[0] & 0x0f);
+
+    assert_ipv6_base_decode_error_entrypoints(
+        &bytes,
+        ExpectedBaseDecodeError::InvalidFieldValue {
+            field: "ipv6.version",
+            reason: "IPv6 packets must have version 6",
+        },
+    );
+
+    Ok(())
+}
+
+#[test]
+fn base_decode_error_payload_overrun_through_public_entrypoints() -> crafter::Result<()> {
+    let mut bytes = (base_ipv6(64).nh(253) / Raw::new()).compile()?.into_bytes();
+    bytes[4..6].copy_from_slice(&4u16.to_be_bytes());
+
+    assert_ipv6_base_decode_error_entrypoints(
+        &bytes,
+        ExpectedBaseDecodeError::BufferTooShort {
+            context: "ipv6 packet",
+            required: 44,
+            available: 40,
+        },
+    );
 
     Ok(())
 }
@@ -634,7 +829,7 @@ fn flow_label_checked_helper_rejects_overflow_with_structured_error() {
 }
 
 #[test]
-fn flow_label_raw_override_overflow_fails_at_compile_time() {
+fn base_decode_error_flow_label_raw_override_overflow_fails_at_compile_time() {
     let raw_override = Ipv6::new().fl(0x0010_0000);
     assert_eq!(raw_override.flow_label_value(), 0x0010_0000);
 
