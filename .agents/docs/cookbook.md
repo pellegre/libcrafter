@@ -62,6 +62,65 @@ read identification, reserved/DF/MF flags, `fragment_offset`, and
 `fragment_info()`, but `crafter` does not split payloads into fragments,
 reassemble fragments, or model fragment caches, overlap handling, or timers.
 
+## Build IPv6 Base And Extension Packets
+
+For general IPv6 packets, start with `Ipv6`, compose extension headers as normal
+layers before the transport or `Raw` payload, and keep generated defaults
+offline or dry-run. Use documentation IPv6 address space (`2001:db8::/32`) in
+examples, fixtures, and dry-run send plans.
+
+Use the typed DSCP/ECN helpers instead of hand-packing Traffic Class bits:
+`dscp(Dscp::ef())`, `dscp(Dscp::cs3())`, `dscp(Dscp::class_selector(3)?)`, and
+`ecn(Ecn::not_ect() | Ecn::ect0() | Ecn::ect1() | Ecn::ce())`.
+`traffic_class(...)` remains the raw override escape hatch, and `dscp_value()` /
+`ecn_value()` make decode results inspectable.
+
+```rust
+use crafter::prelude::*;
+
+let packet = Ipv6::new()
+    .src_str("2001:db8:10::1")?
+    .dst_str("2001:db8:20::1")?
+    .dscp(Dscp::ef())
+    .ecn(Ecn::ect0())
+    .try_flow_label(0x12345)?
+    / Ipv6HopByHopOptionsHeader::new()
+        .option(Ipv6Option::router_alert(IPV6_ROUTER_ALERT_MLD))
+        .option(Ipv6Option::padn(2)?)
+    / Ipv6DestinationOptionsHeader::new()
+        .option(Ipv6Option::generic(0x22, [0xab, 0xcd])?)
+    / Udp::new().sport(54049).dport(1049)
+    / Raw::from("agent-ipv6");
+
+let bytes = packet.compile()?;
+let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes.as_bytes())?;
+println!("{}", decoded.show());
+```
+
+`compile()` auto-fills payload length and Next Header chaining across supported
+extension headers unless the tool set explicit values. Compose
+`Ipv6HopByHopOptionsHeader`, `Ipv6DestinationOptionsHeader`, generic routing,
+Mobile Routing, Segment Routing, and Fragment Header layers in the order the
+packet needs; `crafter` preserves caller order and explicit overrides.
+
+For Fragment Header work, build `Ipv6FragmentHeader::new()` with
+`fragment_offset(...)`, `more_fragments(...)`, and `identification(...)` (or the
+short aliases) and inspect `fragment_status()` / `fragment_status_label()`.
+The crate exposes fragment fields and atomic/initial/non-initial classification,
+but it does not split payloads or perform IPv6 reassembly.
+
+Focused IPv6 validation stays offline unless a human explicitly asks for a live
+provider run:
+
+```sh
+cargo run -p crafter --example ipv6_extensions
+cargo test -p crafter --test ipv6_public_api ipv6
+tools/oracle/run offline --profile ipv6-enrichment --seed 2 --count 20 --root l3:ipv6 --out target/oracle/ipv6-enrichment-offline
+```
+
+For the user-facing IPv6 coverage boundary, see
+[`docs/ipv6.md`](../../docs/ipv6.md).
+
 ## Build ARP
 
 ARP is a link-layer (L2) protocol, so wrap the `Arp` layer in an `Ethernet`
