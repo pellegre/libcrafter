@@ -883,6 +883,97 @@ fn hop_by_hop_builder() -> crafter::Result<()> {
 }
 
 #[test]
+fn hop_by_hop_decode_chains_to_udp_and_preserves_options() -> crafter::Result<()> {
+    let options = vec![
+        Ipv6Option::pad1(),
+        Ipv6Option::generic(0x1e, [0xaa])?,
+        Ipv6Option::padn_data([0xde, 0xad])?,
+        Ipv6Option::generic(0x3e, [])?,
+        Ipv6Option::padn_data([0, 0])?,
+    ];
+    let hop_by_hop = Ipv6HopByHopOptionsHeader::new()
+        .nh(IPPROTO_UDP)
+        .options(options.clone());
+    let compiled =
+        (base_ipv6(64) / hop_by_hop / Udp::new().sport(12345).dport(33434) / Raw::from("hbh!"))
+            .compile()?;
+    let bytes = compiled.as_bytes();
+
+    assert_ipv6_wire_base_header(bytes, 28, IPPROTO_IPV6_HOPOPTS, 64);
+    assert_eq!(bytes[40], IPPROTO_UDP);
+    assert_eq!(bytes[41], 1);
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes)?;
+    let layer_names: Vec<_> = decoded.iter().map(|layer| layer.name()).collect();
+    let ipv6 = decoded.layer::<Ipv6>().expect("ipv6 layer");
+    let hbh = decoded
+        .layer::<Ipv6HopByHopOptionsHeader>()
+        .expect("hop-by-hop layer");
+    let udp = decoded.layer::<Udp>().expect("udp layer");
+    let raw = decoded.layer::<Raw>().expect("raw payload");
+
+    assert_eq!(
+        layer_names,
+        vec!["Ipv6", "Ipv6HopByHopOptionsHeader", "Udp", "Raw"]
+    );
+    assert_decoded_ipv6_base_header(ipv6, 28, IPPROTO_IPV6_HOPOPTS, 64);
+    assert_eq!(hbh.next_header_value(), IPPROTO_UDP);
+    assert_eq!(hbh.header_ext_len_value(), Some(1));
+    assert_eq!(hbh.options_value(), options.as_slice());
+    assert_eq!(udp.source_port_value(), 12345);
+    assert_eq!(udp.destination_port_value(), 33434);
+    assert_eq!(udp.length_value(), Some(12));
+    assert_eq!(raw.as_bytes(), b"hbh!");
+    assert_eq!(decoded.compile()?.as_bytes(), bytes);
+
+    Ok(())
+}
+
+#[test]
+fn hop_by_hop_decode_reports_truncated_header() -> crafter::Result<()> {
+    let bytes = (base_ipv6(65).nh(IPPROTO_IPV6_HOPOPTS)
+        / Raw::from_bytes([IPPROTO_UDP, 0, IPV6_OPTION_PAD1]))
+    .compile()?;
+
+    match Packet::decode_from_l3(NetworkLayer::Ipv6, bytes.as_bytes()).unwrap_err() {
+        CrafterError::BufferTooShort {
+            context,
+            required,
+            available,
+        } => {
+            assert_eq!(context, "ipv6 hop-by-hop header");
+            assert_eq!(required, 8);
+            assert_eq!(available, 3);
+        }
+        other => panic!("truncated Hop-by-Hop header expected BufferTooShort, got {other:?}"),
+    }
+
+    Ok(())
+}
+
+#[test]
+fn hop_by_hop_decode_reports_option_length_overrun() -> crafter::Result<()> {
+    let bytes = (base_ipv6(66).nh(IPPROTO_IPV6_HOPOPTS)
+        / Raw::from_bytes([IPPROTO_UDP, 0, 0x22, 7, 0xaa, 0xbb, 0xcc, 0xdd]))
+    .compile()?;
+
+    match Packet::decode_from_l3(NetworkLayer::Ipv6, bytes.as_bytes()).unwrap_err() {
+        CrafterError::BufferTooShort {
+            context,
+            required,
+            available,
+        } => {
+            assert_eq!(context, "ipv6.option.data");
+            assert_eq!(required, 9);
+            assert_eq!(available, 6);
+        }
+        other => panic!("overrunning Hop-by-Hop option expected BufferTooShort, got {other:?}"),
+    }
+
+    Ok(())
+}
+
+#[test]
 fn ipv6_option_model() -> crafter::Result<()> {
     let pad1 = Ipv6Option::pad1();
     let padn = Ipv6Option::padn(4)?;
