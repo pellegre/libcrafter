@@ -2079,6 +2079,12 @@ fn append_ipv6_next_with_registry(
 ) -> Result<Packet> {
     loop {
         match next_header {
+            IPPROTO_IPV6_HOPOPTS => {
+                let (hop_by_hop, inner_next_header, remaining) = decode_hop_by_hop_header(payload)?;
+                packet = packet.push(hop_by_hop);
+                next_header = inner_next_header;
+                payload = remaining;
+            }
             IPPROTO_IPV6_ROUTE => {
                 let (routing, inner_next_header, remaining) = decode_routing_header(payload)?;
                 packet = match routing {
@@ -2111,6 +2117,22 @@ enum DecodedRoutingHeader {
     Generic(Ipv6RoutingHeader),
     Mobile(Ipv6MobileRoutingHeader),
     Segment(Ipv6SegmentRoutingHeader),
+}
+
+fn decode_hop_by_hop_header(bytes: &[u8]) -> Result<(Ipv6HopByHopOptionsHeader, u8, &[u8])> {
+    let total_len = decode_extension_total_len("ipv6 hop-by-hop header", bytes)?;
+    let next_header = bytes[0];
+    let options = Ipv6Option::decode_all(&bytes[2..total_len])?;
+
+    Ok((
+        Ipv6HopByHopOptionsHeader {
+            next_header: Field::user(next_header),
+            header_ext_len: Field::user(bytes[1]),
+            options,
+        },
+        next_header,
+        &bytes[total_len..],
+    ))
 }
 
 fn decode_routing_header(bytes: &[u8]) -> Result<(DecodedRoutingHeader, u8, &[u8])> {
