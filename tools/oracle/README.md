@@ -213,6 +213,35 @@ crate's resilience and fixture suites assert that typed error directly (see
 `crafter/tests/fixtures/malformed/core-decode-corpus.hex` and
 `crafter/tests/resilience.rs`).
 
+## IPv6 Enrichment Offline Suite
+
+The `ipv6-enrichment` profile is an offline reproducibility profile for the
+enriched IPv6 base header and extension-header surface. It narrows sampling to
+IPv6 base-field, unknown-next-header, Hop-by-Hop Options, Destination Options,
+fragment, routing, Segment Routing Header, TCP-chain, and ICMPv6-chain cases
+rooted at `l3:ipv6`. It does not send live traffic, require raw sockets, or
+create provider infrastructure.
+
+Run the default offline comparison and an explicit directed comparison before
+promoting IPv6 enrichment behavior:
+
+```sh
+tools/oracle/run offline --profile ipv6-enrichment --seed 2 --count 20 --root l3:ipv6 --out target/oracle/ipv6-enrichment-offline
+tools/oracle/run offline --direction reference_to_libcrafter --profile ipv6-enrichment --seed 3 --count 12 --root l3:ipv6 --out target/oracle/ipv6-enrichment-reference-to-libcrafter
+```
+
+The complementary direction is
+`--direction libcrafter_to_reference`; use it when isolating libcrafter emission
+against the Scapy decoder. Keep artifacts under `target/oracle/`, for example
+`target/oracle/ipv6-enrichment-offline/` and
+`target/oracle/ipv6-enrichment-reference-to-libcrafter/`.
+
+Malformed IPv6 extension chains are declared coverage with
+`byte_policy: structured_error`, but they are not sampled for offline byte
+comparison because the oracle has no offline malformed-packet comparison
+pathway. Those cases remain structured decode-error coverage, not strict-byte
+packet equivalence cases.
+
 ## DNS Pcap Suite
 
 Pcap validation round trips every representable DNS case through deterministic
