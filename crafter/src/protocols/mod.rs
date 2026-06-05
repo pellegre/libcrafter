@@ -180,8 +180,8 @@ pub use ipv4::{
     IPV4_OPTION_TRACEROUTE,
 };
 pub use ipv6::{
-    Ipv6, Ipv6FragmentHeader, Ipv6MobileRoutingHeader, Ipv6Option, Ipv6OptionAction,
-    Ipv6OptionIter, Ipv6RoutingHeader, Ipv6SegmentRoutingHeader, IPPROTO_IPV6_AH,
+    Ipv6, Ipv6FragmentHeader, Ipv6HopByHopOptionsHeader, Ipv6MobileRoutingHeader, Ipv6Option,
+    Ipv6OptionAction, Ipv6OptionIter, Ipv6RoutingHeader, Ipv6SegmentRoutingHeader, IPPROTO_IPV6_AH,
     IPPROTO_IPV6_DSTOPTS, IPPROTO_IPV6_ESP, IPPROTO_IPV6_EXPERIMENTAL_1,
     IPPROTO_IPV6_EXPERIMENTAL_2, IPPROTO_IPV6_FRAGMENT, IPPROTO_IPV6_HIP, IPPROTO_IPV6_HOPOPTS,
     IPPROTO_IPV6_MOBILITY, IPPROTO_IPV6_NO_NEXT, IPPROTO_IPV6_ROUTE, IPPROTO_IPV6_SHIM6,
