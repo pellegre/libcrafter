@@ -513,6 +513,80 @@ impl Dot11 {
         self.addr4.value().copied()
     }
 
+    /// Receiver address for data or management frames.
+    pub fn receiver(&self) -> Option<MacAddr> {
+        match self.frame_type() {
+            Dot11FrameType::Data | Dot11FrameType::Management => self.addr1_value(),
+            _ => None,
+        }
+    }
+
+    /// Transmitter address for data or management frames.
+    pub fn transmitter(&self) -> Option<MacAddr> {
+        match self.frame_type() {
+            Dot11FrameType::Data | Dot11FrameType::Management => self.addr2_value(),
+            _ => None,
+        }
+    }
+
+    /// Destination address for data or management frames.
+    pub fn destination(&self) -> Option<MacAddr> {
+        let frame_control = self.frame_control_value();
+
+        match frame_control.frame_type_value() {
+            Dot11FrameType::Management => self.addr1_value(),
+            Dot11FrameType::Data if frame_control.to_ds() && frame_control.from_ds() => {
+                self.addr3_value()
+            }
+            Dot11FrameType::Data if frame_control.to_ds() => self.addr3_value(),
+            Dot11FrameType::Data => self.addr1_value(),
+            _ => None,
+        }
+    }
+
+    /// Source address for data or management frames.
+    pub fn source(&self) -> Option<MacAddr> {
+        let frame_control = self.frame_control_value();
+
+        match frame_control.frame_type_value() {
+            Dot11FrameType::Management => self.addr2_value(),
+            Dot11FrameType::Data if frame_control.to_ds() && frame_control.from_ds() => {
+                self.fourth_address()
+            }
+            Dot11FrameType::Data if frame_control.from_ds() => self.addr3_value(),
+            Dot11FrameType::Data => self.addr2_value(),
+            _ => None,
+        }
+    }
+
+    /// BSSID address for data or management frames when the role is defined.
+    pub fn bssid(&self) -> Option<MacAddr> {
+        let frame_control = self.frame_control_value();
+
+        match frame_control.frame_type_value() {
+            Dot11FrameType::Management => self.addr3_value(),
+            Dot11FrameType::Data if frame_control.to_ds() && frame_control.from_ds() => None,
+            Dot11FrameType::Data if frame_control.to_ds() => self.addr1_value(),
+            Dot11FrameType::Data if frame_control.from_ds() => self.addr2_value(),
+            Dot11FrameType::Data => self.addr3_value(),
+            _ => None,
+        }
+    }
+
+    /// Fourth address for four-address data frames when present.
+    pub fn fourth_address(&self) -> Option<MacAddr> {
+        let frame_control = self.frame_control_value();
+
+        if frame_control.frame_type_value() == Dot11FrameType::Data
+            && frame_control.to_ds()
+            && frame_control.from_ds()
+        {
+            self.addr4_value()
+        } else {
+            None
+        }
+    }
+
     /// Current sequence-control field value, if present.
     pub fn sequence_control_value(&self) -> Option<Dot11SequenceControl> {
         self.sequence_control.value().copied()
@@ -1605,6 +1679,10 @@ mod tests {
     use super::*;
     use crate::{Packet, Raw};
 
+    fn dot11_role_mac(index: u8) -> MacAddr {
+        MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x00, index])
+    }
+
     #[test]
     fn dot11_constants_frame_control_masks_match_ieee_layout() {
         assert_eq!(DOT11_FRAME_CONTROL_LEN, 2);
@@ -2210,6 +2288,152 @@ mod tests {
         assert_eq!(extension.management_subtype_value(), None);
         assert_eq!(extension.control_subtype_value(), None);
         assert_eq!(extension.data_subtype_value(), None);
+    }
+
+    #[test]
+    fn dot11_address_roles_map_data_frames_without_distribution_system() {
+        let addr1 = dot11_role_mac(1);
+        let addr2 = dot11_role_mac(2);
+        let addr3 = dot11_role_mac(3);
+        let frame = Dot11::data().addr1(addr1).addr2(addr2).addr3(addr3);
+
+        assert_eq!(frame.receiver(), Some(addr1));
+        assert_eq!(frame.transmitter(), Some(addr2));
+        assert_eq!(frame.destination(), Some(addr1));
+        assert_eq!(frame.source(), Some(addr2));
+        assert_eq!(frame.bssid(), Some(addr3));
+        assert_eq!(frame.fourth_address(), None);
+    }
+
+    #[test]
+    fn dot11_address_roles_map_data_frames_to_distribution_system() {
+        let addr1 = dot11_role_mac(1);
+        let addr2 = dot11_role_mac(2);
+        let addr3 = dot11_role_mac(3);
+        let frame = Dot11::data()
+            .frame_control(
+                Dot11FrameControl::new()
+                    .with_frame_type(DOT11_FRAME_TYPE_DATA)
+                    .with_subtype(DOT11_DATA_SUBTYPE_DATA)
+                    .with_to_ds(true),
+            )
+            .addr1(addr1)
+            .addr2(addr2)
+            .addr3(addr3);
+
+        assert_eq!(frame.receiver(), Some(addr1));
+        assert_eq!(frame.transmitter(), Some(addr2));
+        assert_eq!(frame.destination(), Some(addr3));
+        assert_eq!(frame.source(), Some(addr2));
+        assert_eq!(frame.bssid(), Some(addr1));
+        assert_eq!(frame.fourth_address(), None);
+    }
+
+    #[test]
+    fn dot11_address_roles_map_data_frames_from_distribution_system() {
+        let addr1 = dot11_role_mac(1);
+        let addr2 = dot11_role_mac(2);
+        let addr3 = dot11_role_mac(3);
+        let frame = Dot11::data()
+            .frame_control(
+                Dot11FrameControl::new()
+                    .with_frame_type(DOT11_FRAME_TYPE_DATA)
+                    .with_subtype(DOT11_DATA_SUBTYPE_DATA)
+                    .with_from_ds(true),
+            )
+            .addr1(addr1)
+            .addr2(addr2)
+            .addr3(addr3);
+
+        assert_eq!(frame.receiver(), Some(addr1));
+        assert_eq!(frame.transmitter(), Some(addr2));
+        assert_eq!(frame.destination(), Some(addr1));
+        assert_eq!(frame.source(), Some(addr3));
+        assert_eq!(frame.bssid(), Some(addr2));
+        assert_eq!(frame.fourth_address(), None);
+    }
+
+    #[test]
+    fn dot11_address_roles_map_four_address_data_frames() {
+        let addr1 = dot11_role_mac(1);
+        let addr2 = dot11_role_mac(2);
+        let addr3 = dot11_role_mac(3);
+        let addr4 = dot11_role_mac(4);
+        let frame = Dot11::data()
+            .frame_control(
+                Dot11FrameControl::new()
+                    .with_frame_type(DOT11_FRAME_TYPE_DATA)
+                    .with_subtype(DOT11_DATA_SUBTYPE_DATA)
+                    .with_to_ds(true)
+                    .with_from_ds(true),
+            )
+            .addr1(addr1)
+            .addr2(addr2)
+            .addr3(addr3)
+            .addr4(addr4);
+
+        assert_eq!(frame.receiver(), Some(addr1));
+        assert_eq!(frame.transmitter(), Some(addr2));
+        assert_eq!(frame.destination(), Some(addr3));
+        assert_eq!(frame.source(), Some(addr4));
+        assert_eq!(frame.bssid(), None);
+        assert_eq!(frame.fourth_address(), Some(addr4));
+    }
+
+    #[test]
+    fn dot11_address_roles_leave_missing_fourth_address_unset() {
+        let addr1 = dot11_role_mac(1);
+        let addr2 = dot11_role_mac(2);
+        let addr3 = dot11_role_mac(3);
+        let frame = Dot11::data()
+            .frame_control(
+                Dot11FrameControl::new()
+                    .with_frame_type(DOT11_FRAME_TYPE_DATA)
+                    .with_subtype(DOT11_DATA_SUBTYPE_DATA)
+                    .with_to_ds(true)
+                    .with_from_ds(true),
+            )
+            .addr1(addr1)
+            .addr2(addr2)
+            .addr3(addr3);
+
+        assert_eq!(frame.receiver(), Some(addr1));
+        assert_eq!(frame.transmitter(), Some(addr2));
+        assert_eq!(frame.destination(), Some(addr3));
+        assert_eq!(frame.source(), None);
+        assert_eq!(frame.bssid(), None);
+        assert_eq!(frame.fourth_address(), None);
+    }
+
+    #[test]
+    fn dot11_address_roles_map_management_frames() {
+        let addr1 = dot11_role_mac(1);
+        let addr2 = dot11_role_mac(2);
+        let addr3 = dot11_role_mac(3);
+        let frame = Dot11::beacon().addr1(addr1).addr2(addr2).addr3(addr3);
+
+        assert_eq!(frame.receiver(), Some(addr1));
+        assert_eq!(frame.transmitter(), Some(addr2));
+        assert_eq!(frame.destination(), Some(addr1));
+        assert_eq!(frame.source(), Some(addr2));
+        assert_eq!(frame.bssid(), Some(addr3));
+        assert_eq!(frame.fourth_address(), None);
+    }
+
+    #[test]
+    fn dot11_address_roles_are_unset_for_control_frames_in_this_phase() {
+        let frame = Dot11::ack()
+            .addr1(dot11_role_mac(1))
+            .addr2(dot11_role_mac(2))
+            .addr3(dot11_role_mac(3))
+            .addr4(dot11_role_mac(4));
+
+        assert_eq!(frame.receiver(), None);
+        assert_eq!(frame.transmitter(), None);
+        assert_eq!(frame.destination(), None);
+        assert_eq!(frame.source(), None);
+        assert_eq!(frame.bssid(), None);
+        assert_eq!(frame.fourth_address(), None);
     }
 
     #[test]
