@@ -2,18 +2,13 @@ use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::packet::{Layer, LayerContext};
 
-use super::super::constants::{
-    IPV6_EXTENSION_MIN_LEN, IPV6_ROUTING_TYPE_MOBILE, IPV6_ROUTING_TYPE_SEGMENT,
-};
+use super::super::constants::IPV6_EXTENSION_MIN_LEN;
 use super::super::display::{
     hex_bytes, ipv6_routing_type_label, ipv6_routing_type_status, next_header_summary,
     routing_type_summary,
 };
 use super::super::{layer_ipv6_next_header, value_or_copy};
-use super::{
-    decode_extension_total_len, header_ext_len_from_total, round_up_to_8,
-    validate_extension_total_len, DecodedRoutingHeader,
-};
+use super::{header_ext_len_from_total, round_up_to_8, validate_extension_total_len};
 
 /// Source-backed status for an IPv6 Routing Header type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,11 +28,11 @@ pub enum Ipv6RoutingTypeStatus {
 /// Generic IPv6 Routing Header for routing types not represented by a specialized layer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ipv6RoutingHeader {
-    next_header: Field<u8>,
-    header_ext_len: Field<u8>,
-    routing_type: Field<u8>,
-    segments_left: Field<u8>,
-    type_data: Vec<u8>,
+    pub(in crate::protocols::ip::v6) next_header: Field<u8>,
+    pub(in crate::protocols::ip::v6) header_ext_len: Field<u8>,
+    pub(in crate::protocols::ip::v6) routing_type: Field<u8>,
+    pub(in crate::protocols::ip::v6) segments_left: Field<u8>,
+    pub(in crate::protocols::ip::v6) type_data: Vec<u8>,
 }
 
 impl Ipv6RoutingHeader {
@@ -235,32 +230,6 @@ impl Layer for Ipv6RoutingHeader {
 }
 
 impl_ipv6_extension_layer_div!(Ipv6RoutingHeader);
-
-pub(in crate::protocols::ip::v6) fn decode_routing_header(
-    bytes: &[u8],
-) -> Result<(DecodedRoutingHeader, u8, &[u8])> {
-    let total_len = decode_extension_total_len("ipv6 routing header", bytes)?;
-    let next_header = bytes[0];
-    let routing_type = bytes[2];
-
-    let header = match routing_type {
-        IPV6_ROUTING_TYPE_MOBILE => DecodedRoutingHeader::Mobile(
-            super::mobile::decode_mobile_routing_header(bytes, total_len)?,
-        ),
-        IPV6_ROUTING_TYPE_SEGMENT => DecodedRoutingHeader::Segment(
-            super::segment::decode_segment_routing_header(bytes, total_len)?,
-        ),
-        _ => DecodedRoutingHeader::Generic(Ipv6RoutingHeader {
-            next_header: Field::user(next_header),
-            header_ext_len: Field::user(bytes[1]),
-            routing_type: Field::user(bytes[2]),
-            segments_left: Field::user(bytes[3]),
-            type_data: bytes[4..total_len].to_vec(),
-        }),
-    };
-
-    Ok((header, next_header, &bytes[total_len..]))
-}
 
 fn routing_total_len_for_type_data(type_data_len: usize) -> usize {
     round_up_to_8(4 + type_data_len.max(4))

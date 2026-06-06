@@ -1,6 +1,5 @@
 use core::net::Ipv6Addr;
 
-use crate::endian::read_u16_be;
 use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::packet::{Layer, LayerContext};
@@ -9,11 +8,12 @@ use super::super::constants::{
     IPV6_EXTENSION_MIN_LEN, IPV6_ROUTING_TYPE_SEGMENT, IPV6_SEGMENT_BASE_LEN,
     IPV6_SEGMENT_HMAC_LEN, IPV6_SEGMENT_POLICY_UNSET,
 };
+use super::super::decode::validate_segment_routing_tlv_shape;
 use super::super::display::{
     hex_bytes, ipv6_list_summary, ipv6_routing_type_label, ipv6_routing_type_status,
     next_header_summary, routing_type_summary,
 };
-use super::super::{copy_array_16, layer_ipv6_next_header, parse_ipv6, value_or_copy};
+use super::super::{layer_ipv6_next_header, parse_ipv6, value_or_copy};
 use super::{header_ext_len_from_total, round_up_to_8, validate_extension_total_len};
 
 use super::routing::Ipv6RoutingTypeStatus;
@@ -21,22 +21,22 @@ use super::routing::Ipv6RoutingTypeStatus;
 /// IPv6 Segment Routing Header (Routing Header type 4).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ipv6SegmentRoutingHeader {
-    next_header: Field<u8>,
-    header_ext_len: Field<u8>,
-    routing_type: Field<u8>,
-    segments_left: Field<u8>,
-    last_entry: Field<u8>,
-    flags: Field<u8>,
-    tag: Field<u16>,
-    policy_flag1: Field<u8>,
-    policy_flag2: Field<u8>,
-    policy_flag3: Field<u8>,
-    policy_flag4: Field<u8>,
-    hmac_key_id: Field<u8>,
-    segments: Vec<Ipv6Addr>,
-    policies: [Ipv6Addr; 4],
-    hmac: [u8; IPV6_SEGMENT_HMAC_LEN],
-    trailing_data: Vec<u8>,
+    pub(in crate::protocols::ip::v6) next_header: Field<u8>,
+    pub(in crate::protocols::ip::v6) header_ext_len: Field<u8>,
+    pub(in crate::protocols::ip::v6) routing_type: Field<u8>,
+    pub(in crate::protocols::ip::v6) segments_left: Field<u8>,
+    pub(in crate::protocols::ip::v6) last_entry: Field<u8>,
+    pub(in crate::protocols::ip::v6) flags: Field<u8>,
+    pub(in crate::protocols::ip::v6) tag: Field<u16>,
+    pub(in crate::protocols::ip::v6) policy_flag1: Field<u8>,
+    pub(in crate::protocols::ip::v6) policy_flag2: Field<u8>,
+    pub(in crate::protocols::ip::v6) policy_flag3: Field<u8>,
+    pub(in crate::protocols::ip::v6) policy_flag4: Field<u8>,
+    pub(in crate::protocols::ip::v6) hmac_key_id: Field<u8>,
+    pub(in crate::protocols::ip::v6) segments: Vec<Ipv6Addr>,
+    pub(in crate::protocols::ip::v6) policies: [Ipv6Addr; 4],
+    pub(in crate::protocols::ip::v6) hmac: [u8; IPV6_SEGMENT_HMAC_LEN],
+    pub(in crate::protocols::ip::v6) trailing_data: Vec<u8>,
 }
 
 impl Ipv6SegmentRoutingHeader {
@@ -542,89 +542,6 @@ impl Layer for Ipv6SegmentRoutingHeader {
 }
 
 impl_ipv6_extension_layer_div!(Ipv6SegmentRoutingHeader);
-
-pub(in crate::protocols::ip::v6::extension) fn decode_segment_routing_header(
-    bytes: &[u8],
-    total_len: usize,
-) -> Result<Ipv6SegmentRoutingHeader> {
-    if total_len < IPV6_SEGMENT_BASE_LEN {
-        return Err(CrafterError::invalid_field_value(
-            "ipv6.segment.header_ext_len",
-            "segment routing header must be at least 8 bytes",
-        ));
-    }
-
-    let flags = bytes[5];
-    let tag = read_u16_be(&bytes[6..8])?;
-    let last_entry = bytes[4] as usize;
-    let segment_count = last_entry + 1;
-    let required_variable_len = segment_count * 16;
-    let variable = &bytes[IPV6_SEGMENT_BASE_LEN..total_len];
-    if variable.len() < required_variable_len {
-        return Err(CrafterError::invalid_field_value(
-            "ipv6.segment.header_ext_len",
-            "segment routing data is shorter than its fields require",
-        ));
-    }
-
-    let mut cursor = 0;
-    let mut segments = Vec::with_capacity(segment_count);
-    for _ in 0..segment_count {
-        segments.push(Ipv6Addr::from(copy_array_16(
-            &variable[cursor..cursor + 16],
-        )));
-        cursor += 16;
-    }
-    let trailing_data = variable[cursor..].to_vec();
-    validate_segment_routing_tlv_shape(&trailing_data)?;
-
-    Ok(Ipv6SegmentRoutingHeader {
-        next_header: Field::user(bytes[0]),
-        header_ext_len: Field::user(bytes[1]),
-        routing_type: Field::user(bytes[2]),
-        segments_left: Field::user(bytes[3]),
-        last_entry: Field::user(bytes[4]),
-        flags: Field::user(flags),
-        tag: Field::user(tag),
-        policy_flag1: Field::defaulted(IPV6_SEGMENT_POLICY_UNSET),
-        policy_flag2: Field::defaulted(IPV6_SEGMENT_POLICY_UNSET),
-        policy_flag3: Field::defaulted(IPV6_SEGMENT_POLICY_UNSET),
-        policy_flag4: Field::defaulted(IPV6_SEGMENT_POLICY_UNSET),
-        hmac_key_id: Field::defaulted(0),
-        segments,
-        policies: [Ipv6Addr::UNSPECIFIED; 4],
-        hmac: [0; IPV6_SEGMENT_HMAC_LEN],
-        trailing_data,
-    })
-}
-
-fn validate_segment_routing_tlv_shape(bytes: &[u8]) -> Result<()> {
-    let mut cursor = 0;
-    while cursor < bytes.len() {
-        let tlv_type = bytes[cursor];
-        cursor += 1;
-        if tlv_type == 0 {
-            continue;
-        }
-        if cursor >= bytes.len() {
-            return Err(CrafterError::invalid_field_value(
-                "ipv6.segment.tlv",
-                "segment routing TLV is missing its length byte",
-            ));
-        }
-
-        let value_len = bytes[cursor] as usize;
-        cursor += 1;
-        if bytes.len() - cursor < value_len {
-            return Err(CrafterError::invalid_field_value(
-                "ipv6.segment.tlv",
-                "segment routing TLV length exceeds trailing data",
-            ));
-        }
-        cursor += value_len;
-    }
-    Ok(())
-}
 
 fn saturating_last_index(len: usize) -> u8 {
     len.saturating_sub(1).min(u8::MAX as usize) as u8
