@@ -255,20 +255,57 @@ pub const DOT11_CAPABILITY_DELAYED_BLOCK_ACK: u16 = 0x4000;
 /// Capability Information bit: Immediate Block Ack.
 pub const DOT11_CAPABILITY_IMMEDIATE_BLOCK_ACK: u16 = 0x8000;
 
+/// Management element ID: SSID.
+pub const DOT11_TAG_SSID: u8 = 0;
+/// Management element ID: Supported Rates.
+pub const DOT11_TAG_SUPPORTED_RATES: u8 = 1;
+/// Management element ID: DS Parameter Set.
+pub const DOT11_TAG_DS_PARAMETER_SET: u8 = 3;
+/// Management element ID: Traffic Indication Map.
+pub const DOT11_TAG_TIM: u8 = 5;
+/// Management element ID: RSN.
+pub const DOT11_TAG_RSN: u8 = 48;
+
 /// Raw IEEE 802.11 management tagged parameter.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Dot11TaggedParameter {
     id: u8,
+    length: usize,
     data: Vec<u8>,
 }
 
 impl Dot11TaggedParameter {
     /// Create a tagged parameter with an element ID and raw value bytes.
     pub fn new(id: u8, data: impl Into<Vec<u8>>) -> Self {
-        Self {
-            id,
-            data: data.into(),
-        }
+        let data = data.into();
+        let length = data.len();
+
+        Self { id, length, data }
+    }
+
+    /// Create an SSID tagged parameter.
+    pub fn ssid(ssid: impl Into<Vec<u8>>) -> Self {
+        Self::new(DOT11_TAG_SSID, ssid)
+    }
+
+    /// Create a Supported Rates tagged parameter.
+    pub fn supported_rates(rates: impl Into<Vec<u8>>) -> Self {
+        Self::new(DOT11_TAG_SUPPORTED_RATES, rates)
+    }
+
+    /// Create a DS Parameter Set tagged parameter with the current channel.
+    pub fn ds_parameter_set(current_channel: u8) -> Self {
+        Self::new(DOT11_TAG_DS_PARAMETER_SET, [current_channel])
+    }
+
+    /// Create a raw TIM tagged parameter.
+    pub fn tim(data: impl Into<Vec<u8>>) -> Self {
+        Self::new(DOT11_TAG_TIM, data)
+    }
+
+    /// Create a raw RSN tagged parameter.
+    pub fn rsn(data: impl Into<Vec<u8>>) -> Self {
+        Self::new(DOT11_TAG_RSN, data)
     }
 
     /// Element ID.
@@ -276,9 +313,25 @@ impl Dot11TaggedParameter {
         self.id
     }
 
+    /// Declared tagged-parameter value length.
+    pub const fn length(&self) -> usize {
+        self.length
+    }
+
     /// Raw value bytes.
     pub fn data(&self) -> &[u8] {
         &self.data
+    }
+
+    /// Raw value bytes.
+    pub fn value(&self) -> &[u8] {
+        &self.data
+    }
+
+    /// Override the declared value length octet.
+    pub fn with_length(mut self, length: u8) -> Self {
+        self.length = length as usize;
+        self
     }
 
     /// Encoded length including ID and length octets.
@@ -286,16 +339,24 @@ impl Dot11TaggedParameter {
         2 + self.data.len()
     }
 
+    fn from_wire(id: u8, length: u8, data: &[u8]) -> Self {
+        Self {
+            id,
+            length: length as usize,
+            data: data.to_vec(),
+        }
+    }
+
     fn compile(&self, out: &mut Vec<u8>) -> Result<()> {
-        if self.data.len() > u8::MAX as usize {
+        if self.length > u8::MAX as usize {
             return Err(CrafterError::invalid_field_value(
                 "dot11.tagged_parameter.length",
-                "tagged parameter data must be <= 255 bytes",
+                "tagged parameter length must fit in one byte",
             ));
         }
 
         out.push(self.id);
-        out.push(self.data.len() as u8);
+        out.push(self.length as u8);
         out.extend_from_slice(&self.data);
         Ok(())
     }
@@ -501,6 +562,31 @@ impl Dot11 {
     pub fn tags(mut self, tags: impl Into<Vec<Dot11TaggedParameter>>) -> Self {
         self.tagged_parameters = tags.into();
         self
+    }
+
+    /// Append an SSID tagged parameter.
+    pub fn ssid(self, ssid: impl Into<Vec<u8>>) -> Self {
+        self.tag(Dot11TaggedParameter::ssid(ssid))
+    }
+
+    /// Append a Supported Rates tagged parameter.
+    pub fn supported_rates(self, rates: impl Into<Vec<u8>>) -> Self {
+        self.tag(Dot11TaggedParameter::supported_rates(rates))
+    }
+
+    /// Append a DS Parameter Set tagged parameter with the current channel.
+    pub fn ds_parameter_set(self, current_channel: u8) -> Self {
+        self.tag(Dot11TaggedParameter::ds_parameter_set(current_channel))
+    }
+
+    /// Append a raw TIM tagged parameter.
+    pub fn tim(self, data: impl Into<Vec<u8>>) -> Self {
+        self.tag(Dot11TaggedParameter::tim(data))
+    }
+
+    /// Append a raw RSN tagged parameter.
+    pub fn rsn(self, data: impl Into<Vec<u8>>) -> Self {
+        self.tag(Dot11TaggedParameter::rsn(data))
     }
 
     /// Current frame-control value.
@@ -1021,7 +1107,12 @@ fn decode_dot11(bytes: &[u8]) -> Result<(Dot11, &[u8])> {
             dot11.fixed_parameters = bytes[offset..offset + fixed_len].to_vec();
             offset += fixed_len;
 
-            Ok((dot11, &bytes[offset..]))
+            if dot11_management_subtype_has_tagged_parameters(frame_control.subtype()) {
+                dot11.tagged_parameters = decode_dot11_tagged_parameters(&bytes[offset..])?;
+                Ok((dot11, &bytes[bytes.len()..]))
+            } else {
+                Ok((dot11, &bytes[offset..]))
+            }
         }
         Dot11FrameType::Control => {
             if dot11_mac_header_len(frame_control) >= DOT11_CONTROL_TWO_ADDRESS_HEADER_LEN {
@@ -1095,6 +1186,43 @@ fn read_mac_at(bytes: &[u8], offset: usize) -> MacAddr {
         bytes[offset + 4],
         bytes[offset + 5],
     ])
+}
+
+fn decode_dot11_tagged_parameters(bytes: &[u8]) -> Result<Vec<Dot11TaggedParameter>> {
+    let mut tags = Vec::new();
+    let mut offset = 0usize;
+
+    while offset < bytes.len() {
+        if bytes.len() - offset < 2 {
+            return Err(CrafterError::buffer_too_short(
+                "dot11.tagged_parameter",
+                offset + 2,
+                bytes.len(),
+            ));
+        }
+
+        let id = bytes[offset];
+        let length = bytes[offset + 1];
+        let value_start = offset + 2;
+        let value_end = value_start + length as usize;
+
+        if value_end > bytes.len() {
+            return Err(CrafterError::buffer_too_short(
+                "dot11.tagged_parameter",
+                value_end,
+                bytes.len(),
+            ));
+        }
+
+        tags.push(Dot11TaggedParameter::from_wire(
+            id,
+            length,
+            &bytes[value_start..value_end],
+        ));
+        offset = value_end;
+    }
+
+    Ok(tags)
 }
 
 /// IEEE 802.11 frame type subfield.
@@ -1922,6 +2050,19 @@ const fn dot11_data_subtype_carries_payload(subtype: u8) -> bool {
     )
 }
 
+const fn dot11_management_subtype_has_tagged_parameters(subtype: u8) -> bool {
+    matches!(
+        subtype,
+        DOT11_MGMT_SUBTYPE_ASSOCIATION_REQUEST
+            | DOT11_MGMT_SUBTYPE_ASSOCIATION_RESPONSE
+            | DOT11_MGMT_SUBTYPE_REASSOCIATION_REQUEST
+            | DOT11_MGMT_SUBTYPE_REASSOCIATION_RESPONSE
+            | DOT11_MGMT_SUBTYPE_PROBE_REQUEST
+            | DOT11_MGMT_SUBTYPE_PROBE_RESPONSE
+            | DOT11_MGMT_SUBTYPE_BEACON
+    )
+}
+
 const fn dot11_management_fixed_parameters_len(frame_control: Dot11FrameControl) -> usize {
     if !matches!(frame_control.frame_type_value(), Dot11FrameType::Management) {
         return 0;
@@ -2298,26 +2439,28 @@ mod tests {
     }
 
     #[test]
-    fn dot11_decode_basic_management_fixed_bytes_are_kept_in_dot11_and_tags_remain_raw() {
+    fn dot11_decode_basic_management_fixed_bytes_and_tagged_parameters_are_kept_in_dot11() {
         let frame_control =
             dot11_test_frame_control(DOT11_FRAME_TYPE_MANAGEMENT, DOT11_MGMT_SUBTYPE_BEACON);
         let fixed = [1, 2, 3, 4, 5, 6, 7, 8, 0x64, 0x00, 0x01, 0x04];
-        let tags = [0x00, 0x03, b'f', b'o', b'o'];
+        let tags = [DOT11_TAG_SSID, 0x03, b'f', b'o', b'o'];
         let mut bytes = dot11_decode_test_header(frame_control);
         bytes.extend_from_slice(&fixed);
         bytes.extend_from_slice(&tags);
 
         let decoded = decode_dot11_basic(&bytes);
         let dot11 = decoded.layer::<Dot11>().unwrap();
-        let raw = decoded.layer::<Raw>().unwrap();
 
         assert_eq!(
             dot11.management_subtype(),
             Some(Dot11ManagementSubtype::Beacon)
         );
         assert_eq!(dot11.fixed_parameters_value(), fixed);
-        assert_eq!(dot11.tagged_parameters(), &[]);
-        assert_eq!(raw.as_bytes(), tags);
+        assert_eq!(
+            dot11.tagged_parameters(),
+            &[Dot11TaggedParameter::ssid(b"foo")]
+        );
+        assert!(decoded.layer::<Raw>().is_none());
         assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
     }
 
@@ -2399,11 +2542,11 @@ mod tests {
 
     #[test]
     fn dot11_llc_dispatch_non_data_frame_keeps_tail_raw() {
-        let mut bytes = Packet::from_layer(Dot11::beacon())
+        let mut bytes = Packet::from_layer(Dot11::deauthentication())
             .compile()
             .unwrap()
             .into_bytes();
-        let llc_bytes = (LlcSnap::new() / Raw::from("beacon-tail"))
+        let llc_bytes = (LlcSnap::new() / Raw::from("management-tail"))
             .compile()
             .unwrap();
         bytes.extend_from_slice(llc_bytes.as_bytes());
@@ -2840,6 +2983,12 @@ mod tests {
         assert_eq!(DOT11_CAPABILITY_QOS, 0x0200);
         assert_eq!(DOT11_CAPABILITY_SHORT_SLOT_TIME, 0x0400);
         assert_eq!(DOT11_CAPABILITY_IMMEDIATE_BLOCK_ACK, 0x8000);
+
+        assert_eq!(DOT11_TAG_SSID, 0);
+        assert_eq!(DOT11_TAG_SUPPORTED_RATES, 1);
+        assert_eq!(DOT11_TAG_DS_PARAMETER_SET, 3);
+        assert_eq!(DOT11_TAG_TIM, 5);
+        assert_eq!(DOT11_TAG_RSN, 48);
     }
 
     #[test]
@@ -3641,7 +3790,9 @@ mod tests {
 
         assert_eq!(dot11.fixed_parameters_value(), &[0x01, 0x02]);
         assert_eq!(dot11.tags_value()[0].id(), 0xdd);
+        assert_eq!(dot11.tags_value()[0].length(), 3);
         assert_eq!(dot11.tags_value()[0].data(), &[0xaa, 0xbb, 0xcc]);
+        assert_eq!(dot11.tags_value()[0].value(), &[0xaa, 0xbb, 0xcc]);
         assert_eq!(dot11.encoded_len(), DOT11_DATA_HEADER_LEN + 2 + 5);
         assert_eq!(
             Packet::from_layer(dot11).compile().unwrap().as_bytes(),
@@ -3669,8 +3820,101 @@ mod tests {
             err,
             CrafterError::invalid_field_value(
                 "dot11.tagged_parameter.length",
-                "tagged parameter data must be <= 255 bytes"
+                "tagged parameter length must fit in one byte"
             )
+        );
+    }
+
+    #[test]
+    fn dot11_tagged_parameters_helpers_encode_source_backed_ids() {
+        let ssid = Dot11TaggedParameter::ssid(b"test");
+        let supported_rates = Dot11TaggedParameter::supported_rates([0x82, 0x84, 0x8b, 0x96]);
+        let ds = Dot11TaggedParameter::ds_parameter_set(6);
+        let tim = Dot11TaggedParameter::tim([0x00, 0x01, 0x00, 0x00]);
+        let rsn = Dot11TaggedParameter::rsn([0x01, 0x00]);
+
+        assert_eq!(ssid.id(), DOT11_TAG_SSID);
+        assert_eq!(ssid.length(), 4);
+        assert_eq!(ssid.value(), b"test");
+        assert_eq!(supported_rates.id(), DOT11_TAG_SUPPORTED_RATES);
+        assert_eq!(supported_rates.length(), 4);
+        assert_eq!(ds.id(), DOT11_TAG_DS_PARAMETER_SET);
+        assert_eq!(ds.value(), &[6]);
+        assert_eq!(tim.id(), DOT11_TAG_TIM);
+        assert_eq!(rsn.id(), DOT11_TAG_RSN);
+
+        let dot11 = Dot11::beacon()
+            .ssid(b"test")
+            .supported_rates([0x82, 0x84, 0x8b, 0x96])
+            .ds_parameter_set(6)
+            .tim([0x00, 0x01, 0x00, 0x00])
+            .rsn([0x01, 0x00]);
+
+        assert_eq!(
+            dot11.tagged_parameters(),
+            &[ssid, supported_rates, ds, tim, rsn,]
+        );
+    }
+
+    #[test]
+    fn dot11_tagged_parameters_decode_management_tail_and_preserve_unknown() {
+        let frame_control =
+            dot11_test_frame_control(DOT11_FRAME_TYPE_MANAGEMENT, DOT11_MGMT_SUBTYPE_BEACON);
+        let fixed = [0u8; DOT11_MGMT_BEACON_FIXED_LEN];
+        let mut bytes = dot11_decode_test_header(frame_control);
+        bytes.extend_from_slice(&fixed);
+        bytes.extend_from_slice(&[
+            DOT11_TAG_SSID,
+            0x03,
+            b'a',
+            b'p',
+            b'1',
+            0xdd,
+            0x02,
+            0xaa,
+            0xbb,
+        ]);
+
+        let decoded = decode_dot11_basic(&bytes);
+        let dot11 = decoded.layer::<Dot11>().unwrap();
+
+        assert_eq!(dot11.fixed_parameters_value(), fixed);
+        assert_eq!(
+            dot11.tagged_parameters(),
+            &[
+                Dot11TaggedParameter::ssid(b"ap1"),
+                Dot11TaggedParameter::new(0xdd, [0xaa, 0xbb]),
+            ]
+        );
+        assert!(decoded.layer::<Raw>().is_none());
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+    }
+
+    #[test]
+    fn dot11_tagged_parameters_truncated_tags_return_structured_errors() {
+        let frame_control =
+            dot11_test_frame_control(DOT11_FRAME_TYPE_MANAGEMENT, DOT11_MGMT_SUBTYPE_BEACON);
+        let fixed = [0u8; DOT11_MGMT_BEACON_FIXED_LEN];
+        let mut bytes = dot11_decode_test_header(frame_control);
+        bytes.extend_from_slice(&fixed);
+        bytes.extend_from_slice(&[DOT11_TAG_SSID, 0x03, b'a']);
+
+        let err = decode_dot11_with_registry(&ProtocolRegistry::new(), &bytes).unwrap_err();
+
+        assert_eq!(
+            err,
+            CrafterError::buffer_too_short("dot11.tagged_parameter", 5, 3)
+        );
+
+        let mut bytes = dot11_decode_test_header(frame_control);
+        bytes.extend_from_slice(&fixed);
+        bytes.push(DOT11_TAG_SSID);
+
+        let err = decode_dot11_with_registry(&ProtocolRegistry::new(), &bytes).unwrap_err();
+
+        assert_eq!(
+            err,
+            CrafterError::buffer_too_short("dot11.tagged_parameter", 2, 1)
         );
     }
 }
