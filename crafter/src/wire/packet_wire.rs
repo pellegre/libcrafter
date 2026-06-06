@@ -378,34 +378,48 @@ impl fmt::Debug for PacketWire {
 }
 
 fn unsupported_source(target: &PacketWireTarget) -> WireError {
-    let reason = match target {
+    WireError::unsupported_capability(
+        "read",
+        Some(target.backend_identifier()),
+        unsupported_source_reason(target),
+    )
+}
+
+fn unsupported_source_reason(target: &PacketWireTarget) -> &'static str {
+    match target {
         PacketWireTarget::PcapRecorder { .. } => {
             "pcap recorder targets are write-only; use pcap_file for pcap input"
         }
         PacketWireTarget::PcapFile { .. } | PacketWireTarget::PcapInterface { .. } => {
             "no packet source has been opened for this wire"
         }
-    };
-    WireError::unsupported_capability("read", Some(target.backend_identifier()), reason)
+    }
 }
 
 fn unsupported_writer(target: &PacketWireTarget) -> WireError {
-    let reason = match target {
+    WireError::unsupported_capability(
+        "write",
+        Some(target.backend_identifier()),
+        unsupported_writer_reason(target),
+    )
+}
+
+fn unsupported_writer_reason(target: &PacketWireTarget) -> &'static str {
+    match target {
         PacketWireTarget::PcapFile { .. } => {
             "pcap file targets are read-only; use pcap_recorder for pcap output"
         }
         PacketWireTarget::PcapRecorder { .. } | PacketWireTarget::PcapInterface { .. } => {
             "no packet writer has been opened for this wire"
         }
-    };
-    WireError::unsupported_capability("write", Some(target.backend_identifier()), reason)
+    }
 }
 
 fn unsupported_split(target: &PacketWireTarget, has_source: bool, has_writer: bool) -> WireError {
     let reason = match (has_source, has_writer) {
         (false, false) => "source and writer capabilities are not both available",
-        (false, true) => "source capability is not available",
-        (true, false) => "writer capability is not available",
+        (false, true) => unsupported_source_reason(target),
+        (true, false) => unsupported_writer_reason(target),
         (true, true) => unreachable!("split is only unsupported when a capability is missing"),
     };
     WireError::unsupported_capability("split", Some(target.backend_identifier()), reason)
@@ -513,6 +527,7 @@ mod tests {
                 .source(),
             "read",
             &format!("pcap-recorder:{}", temp.path.display()),
+            "pcap recorder targets are write-only; use pcap_file for pcap input",
         );
     }
 
@@ -523,17 +538,37 @@ mod tests {
             PacketWire::pcap_file(&temp.path).open().unwrap().writer(),
             "write",
             &format!("pcap-file:{}", temp.path.display()),
+            "pcap file targets are read-only; use pcap_recorder for pcap output",
         );
     }
 
     #[test]
-    fn unsupported_split_reports_missing_capability() {
+    fn pcap_file_split_reports_read_only_capability() {
         let temp = empty_temp_pcap("split-unsupported");
 
         assert_unsupported(
             PacketWire::pcap_file(&temp.path).open().unwrap().split(),
             "split",
             &format!("pcap-file:{}", temp.path.display()),
+            "pcap file targets are read-only; use pcap_recorder for pcap output",
+        );
+    }
+
+    #[test]
+    fn pcap_recorder_split_reports_write_only_capability() {
+        let temp = empty_temp_pcap("split-recorder-unsupported");
+
+        let wire = PacketWire::pcap_recorder(&temp.path, LinkType::Ethernet)
+            .open()
+            .unwrap();
+        assert!(!wire.has_source());
+        assert!(wire.has_writer());
+
+        assert_unsupported(
+            wire.split(),
+            "split",
+            &format!("pcap-recorder:{}", temp.path.display()),
+            "pcap recorder targets are write-only; use pcap_file for pcap input",
         );
     }
 
@@ -590,7 +625,12 @@ mod tests {
         assert_eq!(report.bytes_written(), 2);
     }
 
-    fn assert_unsupported<T>(result: Result<T>, capability: &'static str, backend: &str) {
+    fn assert_unsupported<T>(
+        result: Result<T>,
+        capability: &'static str,
+        backend: &str,
+        expected_reason: &'static str,
+    ) {
         let err = match result {
             Ok(_) => panic!("expected unsupported capability error"),
             Err(err) => err,
@@ -604,7 +644,7 @@ mod tests {
             } => {
                 assert_eq!(actual_capability, capability);
                 assert_eq!(actual_backend, backend);
-                assert!(!reason.is_empty());
+                assert_eq!(reason, expected_reason);
             }
             other => panic!("expected unsupported capability error, got {other:?}"),
         }
