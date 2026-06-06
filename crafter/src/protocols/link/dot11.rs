@@ -189,6 +189,23 @@ pub const DOT11_SEQUENCE_NUMBER_MASK: u16 = 0xfff0;
 /// Sequence-control sequence-number shift.
 pub const DOT11_SEQUENCE_NUMBER_SHIFT: u8 = 4;
 
+/// QoS-control Traffic Identifier mask.
+pub const DOT11_QOS_TID_MASK: u16 = 0x000f;
+/// QoS-control Traffic Identifier shift.
+pub const DOT11_QOS_TID_SHIFT: u8 = 0;
+/// QoS-control End of Service Period flag.
+pub const DOT11_QOS_EOSP: u16 = 0x0010;
+/// QoS-control ACK policy mask.
+pub const DOT11_QOS_ACK_POLICY_MASK: u16 = 0x0060;
+/// QoS-control ACK policy shift.
+pub const DOT11_QOS_ACK_POLICY_SHIFT: u8 = 5;
+/// QoS-control A-MSDU Present flag.
+pub const DOT11_QOS_A_MSDU_PRESENT: u16 = 0x0080;
+/// QoS-control context-dependent TXOP/queue-size mask.
+pub const DOT11_QOS_TXOP_QUEUE_SIZE_MASK: u16 = 0xff00;
+/// QoS-control context-dependent TXOP/queue-size shift.
+pub const DOT11_QOS_TXOP_QUEUE_SIZE_SHIFT: u8 = 8;
+
 /// Action category: Spectrum Management.
 pub const DOT11_CATEGORY_SPECTRUM_MANAGEMENT: u8 = 0;
 /// Action category: QoS.
@@ -945,6 +962,12 @@ impl Dot11 {
         self
     }
 
+    /// Set the QoS control field from typed subfields.
+    pub fn with_qos_control_fields(mut self, qos_control: Dot11QosControl) -> Self {
+        self.qos_control.set_user(qos_control.bits());
+        self
+    }
+
     /// Set the HT Control field.
     pub fn ht_control(mut self, ht_control: u32) -> Self {
         self.ht_control.set_user(ht_control);
@@ -1223,6 +1246,11 @@ impl Dot11 {
     /// Current QoS control field value, if present.
     pub fn qos_control_value(&self) -> Option<u16> {
         self.qos_control.value().copied()
+    }
+
+    /// Current typed QoS control field value, if present.
+    pub fn qos_control_fields(&self) -> Option<Dot11QosControl> {
+        self.qos_control_value().map(Dot11QosControl::from_bits)
     }
 
     /// Current HT Control field value, if present.
@@ -1590,6 +1618,12 @@ impl Layer for Dot11 {
         if let Some(qos_control) = self.qos_control_value() {
             fields.push(("qos", "present".to_string()));
             fields.push(("qos_control", format!("0x{qos_control:04x}")));
+            let qos = Dot11QosControl::from_bits(qos_control);
+            fields.push(("qos_tid", qos.tid().to_string()));
+            fields.push(("qos_eosp", qos.eosp().to_string()));
+            fields.push(("qos_ack_policy", qos.ack_policy().to_string()));
+            fields.push(("qos_a_msdu_present", qos.a_msdu_present().to_string()));
+            fields.push(("qos_txop_queue_size", qos.txop_queue_size().to_string()));
         }
         if let Some(ht_control) = self.ht_control_value() {
             fields.push(("ht_control", format!("0x{ht_control:08x}")));
@@ -2659,6 +2693,178 @@ impl Dot11SequenceControl {
     }
 }
 
+/// IEEE 802.11 QoS control field.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct Dot11QosControl {
+    bits: u16,
+}
+
+impl Dot11QosControl {
+    /// Create an empty QoS control word.
+    pub const fn new() -> Self {
+        Self { bits: 0 }
+    }
+
+    /// Create a QoS control value from its raw host-endian bit word.
+    pub const fn from_bits(bits: u16) -> Self {
+        Self { bits }
+    }
+
+    /// Decode a QoS control field from exactly two little-endian wire bytes.
+    pub const fn from_le_bytes(bytes: [u8; DOT11_QOS_CONTROL_LEN]) -> Self {
+        Self {
+            bits: (bytes[0] as u16) | ((bytes[1] as u16) << 8),
+        }
+    }
+
+    /// Decode a QoS control field from a byte slice.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> crate::Result<Self> {
+        let bytes = bytes.as_ref();
+        if bytes.len() < DOT11_QOS_CONTROL_LEN {
+            return Err(crate::CrafterError::buffer_too_short(
+                "dot11.qos_control",
+                DOT11_QOS_CONTROL_LEN,
+                bytes.len(),
+            ));
+        }
+
+        Ok(Self::from_le_bytes([bytes[0], bytes[1]]))
+    }
+
+    /// Return the raw host-endian QoS control bit word.
+    pub const fn bits(&self) -> u16 {
+        self.bits
+    }
+
+    /// Set the raw host-endian QoS control bit word.
+    pub const fn raw(mut self, bits: u16) -> Self {
+        self.bits = bits;
+        self
+    }
+
+    /// Compile the QoS control field to little-endian wire bytes.
+    pub const fn to_le_bytes(self) -> [u8; DOT11_QOS_CONTROL_LEN] {
+        [(self.bits & 0x00ff) as u8, (self.bits >> 8) as u8]
+    }
+
+    /// Compile the QoS control field to little-endian wire bytes.
+    pub const fn compile(self) -> [u8; DOT11_QOS_CONTROL_LEN] {
+        self.to_le_bytes()
+    }
+
+    /// Traffic Identifier subfield.
+    pub const fn tid(&self) -> u8 {
+        ((self.bits & DOT11_QOS_TID_MASK) >> DOT11_QOS_TID_SHIFT) as u8
+    }
+
+    /// Return true when the End of Service Period bit is set.
+    pub const fn eosp(&self) -> bool {
+        self.has_flag(DOT11_QOS_EOSP)
+    }
+
+    /// ACK policy subfield.
+    pub const fn ack_policy(&self) -> u8 {
+        ((self.bits & DOT11_QOS_ACK_POLICY_MASK) >> DOT11_QOS_ACK_POLICY_SHIFT) as u8
+    }
+
+    /// Return true when the A-MSDU Present bit is set.
+    pub const fn a_msdu_present(&self) -> bool {
+        self.has_flag(DOT11_QOS_A_MSDU_PRESENT)
+    }
+
+    /// Context-dependent TXOP/queue-size octet.
+    pub const fn txop_queue_size(&self) -> u8 {
+        ((self.bits & DOT11_QOS_TXOP_QUEUE_SIZE_MASK) >> DOT11_QOS_TXOP_QUEUE_SIZE_SHIFT) as u8
+    }
+
+    /// Set the four-bit Traffic Identifier subfield.
+    ///
+    /// Only the low four bits of `tid` are representable in the QoS control
+    /// word. Use [`Self::raw`] to set an exact 16-bit word.
+    pub const fn tid_set(mut self, tid: u8) -> Self {
+        self.bits = set_subfield(self.bits, DOT11_QOS_TID_MASK, DOT11_QOS_TID_SHIFT, tid);
+        self
+    }
+
+    /// Builder alias for [`Self::tid_set`].
+    pub const fn with_tid(self, tid: u8) -> Self {
+        self.tid_set(tid)
+    }
+
+    /// Set or clear the End of Service Period bit.
+    pub const fn eosp_set(mut self, enabled: bool) -> Self {
+        self.bits = set_flag(self.bits, DOT11_QOS_EOSP, enabled);
+        self
+    }
+
+    /// Builder alias for [`Self::eosp_set`].
+    pub const fn with_eosp(self, enabled: bool) -> Self {
+        self.eosp_set(enabled)
+    }
+
+    /// Set the two-bit ACK policy subfield.
+    ///
+    /// Only the low two bits of `ack_policy` are representable in the QoS
+    /// control word. Use [`Self::raw`] to set an exact 16-bit word.
+    pub const fn ack_policy_set(mut self, ack_policy: u8) -> Self {
+        self.bits = set_subfield(
+            self.bits,
+            DOT11_QOS_ACK_POLICY_MASK,
+            DOT11_QOS_ACK_POLICY_SHIFT,
+            ack_policy,
+        );
+        self
+    }
+
+    /// Builder alias for [`Self::ack_policy_set`].
+    pub const fn with_ack_policy(self, ack_policy: u8) -> Self {
+        self.ack_policy_set(ack_policy)
+    }
+
+    /// Set or clear the A-MSDU Present bit.
+    pub const fn a_msdu_present_set(mut self, enabled: bool) -> Self {
+        self.bits = set_flag(self.bits, DOT11_QOS_A_MSDU_PRESENT, enabled);
+        self
+    }
+
+    /// Builder alias for [`Self::a_msdu_present_set`].
+    pub const fn with_a_msdu_present(self, enabled: bool) -> Self {
+        self.a_msdu_present_set(enabled)
+    }
+
+    /// Set the context-dependent TXOP/queue-size octet.
+    pub const fn txop_queue_size_set(mut self, value: u8) -> Self {
+        self.bits = set_subfield(
+            self.bits,
+            DOT11_QOS_TXOP_QUEUE_SIZE_MASK,
+            DOT11_QOS_TXOP_QUEUE_SIZE_SHIFT,
+            value,
+        );
+        self
+    }
+
+    /// Builder alias for [`Self::txop_queue_size_set`].
+    pub const fn with_txop_queue_size(self, value: u8) -> Self {
+        self.txop_queue_size_set(value)
+    }
+
+    const fn has_flag(&self, flag: u16) -> bool {
+        self.bits & flag != 0
+    }
+}
+
+impl From<u16> for Dot11QosControl {
+    fn from(value: u16) -> Self {
+        Self::from_bits(value)
+    }
+}
+
+impl From<Dot11QosControl> for u16 {
+    fn from(value: Dot11QosControl) -> Self {
+        value.bits()
+    }
+}
+
 const fn set_subfield(bits: u16, mask: u16, shift: u8, value: u8) -> u16 {
     (bits & !mask) | (((value as u16) << shift) & mask)
 }
@@ -3255,6 +3461,169 @@ mod tests {
         assert_eq!(dot11.source(), Some(dot11_role_mac(4)));
         assert_eq!(raw.as_bytes(), &[0xde, 0xad, 0xbe, 0xef]);
         assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+    }
+
+    #[test]
+    fn dot11_qos_data_control_fields_encode_decode() {
+        let qos_control = Dot11QosControl::new()
+            .with_tid(0x2f)
+            .with_eosp(true)
+            .with_ack_policy(0x07)
+            .with_a_msdu_present(true)
+            .with_txop_queue_size(0xab);
+
+        assert_eq!(qos_control.bits(), 0xabff);
+        assert_eq!(qos_control.tid(), 0x0f);
+        assert!(qos_control.eosp());
+        assert_eq!(qos_control.ack_policy(), 0x03);
+        assert!(qos_control.a_msdu_present());
+        assert_eq!(qos_control.txop_queue_size(), 0xab);
+        assert_eq!(
+            Dot11QosControl::decode(qos_control.compile()).unwrap(),
+            qos_control
+        );
+
+        let packet =
+            Dot11::qos_data().with_qos_control_fields(qos_control) / Raw::from([0xde, 0xad]);
+        let bytes = packet.compile().unwrap();
+
+        assert_eq!(
+            &bytes.as_bytes()[DOT11_DATA_HEADER_LEN..DOT11_DATA_HEADER_LEN + DOT11_QOS_CONTROL_LEN],
+            &qos_control.compile()
+        );
+
+        let decoded = decode_dot11_basic(bytes.as_bytes());
+        let dot11 = decoded.layer::<Dot11>().unwrap();
+        let decoded_qos = dot11.qos_control_fields().unwrap();
+
+        assert_eq!(dot11.qos_control_value(), Some(qos_control.bits()));
+        assert_eq!(decoded_qos, qos_control);
+        assert_eq!(decoded_qos.tid(), 0x0f);
+        assert!(decoded_qos.eosp());
+        assert_eq!(decoded_qos.ack_policy(), 0x03);
+        assert!(decoded_qos.a_msdu_present());
+        assert_eq!(decoded_qos.txop_queue_size(), 0xab);
+        assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), &[0xde, 0xad]);
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_bytes());
+    }
+
+    #[test]
+    fn dot11_qos_data_subtypes_require_qos_control_from_frame_control() {
+        let cases = [
+            (DOT11_DATA_SUBTYPE_QOS_DATA, Dot11DataSubtype::QosData),
+            (
+                DOT11_DATA_SUBTYPE_QOS_DATA_CF_ACK,
+                Dot11DataSubtype::QosDataCfAck,
+            ),
+            (
+                DOT11_DATA_SUBTYPE_QOS_DATA_CF_POLL,
+                Dot11DataSubtype::QosDataCfPoll,
+            ),
+            (
+                DOT11_DATA_SUBTYPE_QOS_DATA_CF_ACK_CF_POLL,
+                Dot11DataSubtype::QosDataCfAckCfPoll,
+            ),
+            (DOT11_DATA_SUBTYPE_QOS_NULL, Dot11DataSubtype::QosNull),
+            (13, Dot11DataSubtype::Unknown(13)),
+            (DOT11_DATA_SUBTYPE_QOS_CF_POLL, Dot11DataSubtype::QosCfPoll),
+            (
+                DOT11_DATA_SUBTYPE_QOS_CF_ACK_CF_POLL,
+                Dot11DataSubtype::QosCfAckCfPoll,
+            ),
+        ];
+
+        for (subtype, typed_subtype) in cases {
+            let frame_control = dot11_test_frame_control(DOT11_FRAME_TYPE_DATA, subtype);
+
+            assert_eq!(frame_control.data_subtype_value(), Some(typed_subtype));
+            assert_eq!(
+                Dot11::minimum_header_len_for(frame_control),
+                DOT11_DATA_HEADER_LEN + DOT11_QOS_CONTROL_LEN,
+                "data subtype {subtype}"
+            );
+
+            let mut bytes = dot11_decode_test_header(frame_control);
+            bytes.extend_from_slice(&0x1201_u16.to_le_bytes());
+
+            let decoded = decode_dot11_basic(&bytes);
+            let dot11 = decoded.layer::<Dot11>().unwrap();
+            let qos = dot11.qos_control_fields().unwrap();
+
+            assert_eq!(dot11.data_subtype(), Some(typed_subtype));
+            assert_eq!(qos.tid(), 1);
+            assert_eq!(qos.txop_queue_size(), 0x12);
+            assert!(decoded.layer::<Raw>().is_none());
+            assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+        }
+    }
+
+    #[test]
+    fn dot11_qos_data_truncated_before_qos_control_returns_structured_error() {
+        let frame_control =
+            dot11_test_frame_control(DOT11_FRAME_TYPE_DATA, DOT11_DATA_SUBTYPE_QOS_DATA);
+        let required = DOT11_DATA_HEADER_LEN + DOT11_QOS_CONTROL_LEN;
+
+        let err = decode_dot11_with_registry(
+            &ProtocolRegistry::new(),
+            &dot11_test_bytes(frame_control, required - 1),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            CrafterError::buffer_too_short("dot11.header", required, required - 1)
+        );
+    }
+
+    #[test]
+    fn dot11_qos_data_absent_for_plain_data_preserves_tail_as_raw() {
+        let frame_control =
+            dot11_test_frame_control(DOT11_FRAME_TYPE_DATA, DOT11_DATA_SUBTYPE_DATA);
+        let mut bytes = dot11_decode_test_header(frame_control);
+        bytes.extend_from_slice(&0xabcd_u16.to_le_bytes());
+
+        let decoded = decode_dot11_basic(&bytes);
+        let dot11 = decoded.layer::<Dot11>().unwrap();
+        let raw = decoded.layer::<Raw>().unwrap();
+
+        assert_eq!(
+            Dot11::header_len_from_bytes(&bytes).unwrap(),
+            DOT11_DATA_HEADER_LEN
+        );
+        assert_eq!(dot11.data_subtype(), Some(Dot11DataSubtype::Data));
+        assert_eq!(dot11.qos_control_value(), None);
+        assert_eq!(dot11.qos_control_fields(), None);
+        assert_eq!(raw.as_bytes(), &0xabcd_u16.to_le_bytes());
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+    }
+
+    #[test]
+    fn dot11_qos_data_explicit_raw_override_preserved_on_non_qos_compile() {
+        let qos_control = Dot11QosControl::from_bits(0xf135);
+        let dot11 = Dot11::data().qos_control(qos_control.bits());
+        let packet = Packet::from_layer(dot11.clone());
+        let bytes = packet.compile().unwrap();
+
+        assert_eq!(dot11.data_subtype(), Some(Dot11DataSubtype::Data));
+        assert_eq!(dot11.qos_control_value(), Some(qos_control.bits()));
+        assert_eq!(dot11.qos_control_fields(), Some(qos_control));
+        assert_eq!(
+            dot11.encoded_len(),
+            DOT11_DATA_HEADER_LEN + DOT11_QOS_CONTROL_LEN
+        );
+        assert_eq!(
+            &bytes.as_bytes()[DOT11_DATA_HEADER_LEN..DOT11_DATA_HEADER_LEN + DOT11_QOS_CONTROL_LEN],
+            &qos_control.compile()
+        );
+
+        let decoded = decode_dot11_basic(bytes.as_bytes());
+
+        assert_eq!(decoded.layer::<Dot11>().unwrap().qos_control_value(), None);
+        assert_eq!(
+            decoded.layer::<Raw>().unwrap().as_bytes(),
+            &qos_control.compile()
+        );
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_bytes());
     }
 
     #[test]

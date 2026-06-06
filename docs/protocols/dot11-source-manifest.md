@@ -28,6 +28,9 @@ Governs:
   Management, More Data, Protected Frame, and +HTC/Order bits.
 - Duration/ID, Address 1 through Address 4, Sequence Control, fragment number,
   sequence number, QoS Control, and HT Control presence rules.
+- QoS Control field layout for QoS data subtypes: TID in bits 0 through 3,
+  EOSP in bit 4, ACK policy in bits 5 through 6, A-MSDU Present in bit 7, and
+  the context-dependent TXOP/queue-size octet in bits 8 through 15.
 - Management, control, and data frame type/subtype codepoints and subtype
   minimum header lengths.
 - Management fixed fields and tagged parameters/elements used by selected
