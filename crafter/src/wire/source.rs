@@ -85,6 +85,15 @@ impl PacketSource for VecPacketSource {
     }
 }
 
+impl<T> PacketSource for Box<T>
+where
+    T: PacketSource + ?Sized,
+{
+    fn next_record(&mut self) -> Result<Option<PacketRecord>> {
+        (**self).next_record()
+    }
+}
+
 fn memory_record(packet: impl IntoPacket) -> PacketRecord {
     PacketRecord::new(packet)
         .with_origin(PacketOrigin::Generated)

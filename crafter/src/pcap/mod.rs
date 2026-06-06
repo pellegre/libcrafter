@@ -1,9 +1,8 @@
-//! Classic pcap read/write, libpcap BPF filtering, and bounded
-//! capture helpers.
+//! Classic pcap read/write and libpcap BPF filtering helpers.
 //!
-//! Offline pcap APIs are rootless and deterministic. Live capture is explicit
-//! and bounded by count and timeout controls, using native libpcap for interface
-//! capture and BPF filtering.
+//! Offline pcap APIs are rootless and deterministic. Public live capture uses
+//! the `wire` pcap backend; this module keeps the low-level pcap file codec and
+//! offline libpcap filtering surface.
 
 #![forbid(unsafe_code)]
 
@@ -12,14 +11,12 @@ mod error;
 mod libpcap;
 mod types;
 
-pub mod capture;
 pub mod reader;
 pub mod writer;
 
-pub use capture::{Capture, CaptureControl, CaptureHandle, Sniffer};
 pub use error::{PcapError, Result};
 pub(crate) use libpcap::{LibpcapCapture, LibpcapOfflineCapture};
-pub use reader::{read_pcap, read_pcap_filtered, FileSniffer, PcapReader, PcapRecords};
+pub use reader::{read_pcap, read_pcap_filtered, PcapReader, PcapRecords};
 pub use types::{
     PcapHeader, PcapLinkType, PcapPacket, PcapRecord, PcapTimestamp, TimestampPrecision,
     DLT_EN10MB, DLT_IEEE802_11, DLT_IEEE802_11_RADIO, DLT_LINUX_SLL, DLT_LOOP, DLT_NULL, DLT_RAW,

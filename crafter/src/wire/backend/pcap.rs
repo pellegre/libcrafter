@@ -636,7 +636,7 @@ mod tests {
     use crate::pcap::{PcapError, PcapLinkType, PcapRecord, PcapTimestamp, PcapWriter};
     use crate::{
         Dot11, Ethernet, Ipv4, LinkType, MacAddr, Packet, PacketOrigin, PacketWire, Radiotap, Raw,
-        Tcp, Transmitter, WireError,
+        Sniffer, Tcp, Transmitter, WireError,
     };
 
     static NEXT_TEMP_PCAP: AtomicUsize = AtomicUsize::new(0);
@@ -756,6 +756,113 @@ mod tests {
             443
         );
         assert!(source.next_record().unwrap().is_none());
+    }
+
+    #[test]
+    fn pcap_file_wire_sniffer_supports_filtered_iteration_and_spawn() {
+        let temp = write_temp_pcap(
+            "sniffer-wire",
+            [
+                (tcp_packet(10, 80), PcapTimestamp::micros(1, 0).unwrap()),
+                (tcp_packet(11, 443), PcapTimestamp::micros(2, 0).unwrap()),
+            ],
+        );
+
+        let source = PacketWire::pcap_file(temp.path())
+            .filter("tcp and dst port 80")
+            .open()
+            .unwrap()
+            .source()
+            .unwrap();
+        let mut sniffer = Sniffer::new(source).count(1);
+        let first = sniffer.next_record().unwrap().unwrap();
+        assert_eq!(
+            first
+                .packet()
+                .layer::<Tcp>()
+                .unwrap()
+                .destination_port_value(),
+            80
+        );
+        assert!(sniffer.next_record().unwrap().is_none());
+
+        let source = PacketWire::pcap_file(temp.path())
+            .filter("tcp")
+            .open()
+            .unwrap()
+            .source()
+            .unwrap();
+        let mut sniffer = Sniffer::new(source).count(10);
+        let mut accepted = 0;
+        while let Some(record) = sniffer.next_record().unwrap() {
+            accepted += 1;
+            if record
+                .packet()
+                .layer::<Tcp>()
+                .unwrap()
+                .destination_port_value()
+                == 443
+            {
+                break;
+            }
+        }
+        assert_eq!(accepted, 2);
+
+        let source = PacketWire::pcap_file(temp.path())
+            .filter("tcp")
+            .open()
+            .unwrap()
+            .source()
+            .unwrap();
+        let records = Sniffer::new(source).spawn_count(2).unwrap().join().unwrap();
+        assert_eq!(records.len(), 2);
+    }
+
+    #[test]
+    fn pcap_file_wire_sniffer_uses_libpcap_bpf() {
+        let https = tcp_packet(12345, 443);
+        let http = tcp_packet(12345, 80);
+        let temp = write_temp_pcap(
+            "bpf-filter",
+            [
+                (https, PcapTimestamp::micros(1, 0).unwrap()),
+                (http, PcapTimestamp::micros(2, 0).unwrap()),
+            ],
+        );
+
+        let source = PacketWire::pcap_file(temp.path())
+            .filter("tcp and dst port 443")
+            .open()
+            .unwrap()
+            .source()
+            .unwrap();
+        let packets = Sniffer::new(source).collect_records().unwrap();
+        assert_eq!(packets.len(), 1);
+        assert_eq!(
+            packets[0]
+                .packet()
+                .layer::<Tcp>()
+                .unwrap()
+                .destination_port_value(),
+            443
+        );
+
+        let source = PacketWire::pcap_file(temp.path())
+            .filter("tcp and not dst port 443")
+            .open()
+            .unwrap()
+            .source()
+            .unwrap();
+        let packets = Sniffer::new(source).collect_records().unwrap();
+        assert_eq!(packets.len(), 1);
+        assert_eq!(
+            packets[0]
+                .packet()
+                .layer::<Tcp>()
+                .unwrap()
+                .destination_port_value(),
+            80
+        );
     }
 
     #[test]
@@ -889,6 +996,27 @@ mod tests {
     #[test]
     fn pcap_interface_writer_open_rejects_empty_interface_without_live_capture() {
         assert_empty_interface_error(PcapInterfaceWriter::builder("   ").open());
+    }
+
+    #[test]
+    #[ignore = "live capture is reserved for disposable wire endpoint execution"]
+    fn pcap_interface_wire_sniffer_live_endpoint_only() {
+        let Some(iface) = std::env::var_os("LIBCRAFTER_LIVE_CAPTURE_IFACE") else {
+            return;
+        };
+        let source = PacketWire::pcap_interface(iface.to_string_lossy().into_owned())
+            .filter("icmp or arp")
+            .timeout(Duration::from_secs(2))
+            .open()
+            .unwrap()
+            .source()
+            .unwrap();
+        let packets = Sniffer::new(source)
+            .count(1)
+            .timeout(Duration::from_secs(2))
+            .collect_records()
+            .unwrap();
+        assert!(packets.len() <= 1);
     }
 
     #[test]

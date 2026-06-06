@@ -1,7 +1,6 @@
 use std::io::Cursor;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Duration;
 
 use crate::{
     Arp, Dot11, Dot11DataSubtype, Ethernet, Ipv4, LinkType, LlcSnap, MacAddr, Packet, Radiotap,
@@ -10,9 +9,9 @@ use crate::{
 
 use super::codec::{PCAP_HEADER_LEN, PCAP_RECORD_HEADER_LEN};
 use super::{
-    dump_pcap, CaptureControl, PcapLinkType, PcapReader, PcapTimestamp, PcapWriter,
-    PcapWriterOptions, Sniffer, TimestampPrecision, DLT_EN10MB, DLT_IEEE802_11,
-    DLT_IEEE802_11_RADIO, LINKTYPE_IEEE802_11, LINKTYPE_IEEE802_11_RADIOTAP,
+    dump_pcap, PcapLinkType, PcapReader, PcapTimestamp, PcapWriter, PcapWriterOptions,
+    TimestampPrecision, DLT_EN10MB, DLT_IEEE802_11, DLT_IEEE802_11_RADIO, LINKTYPE_IEEE802_11,
+    LINKTYPE_IEEE802_11_RADIOTAP,
 };
 
 const ARP_REQUEST: &[u8] = fixture_bytes!("bytes/arp-who-has.bin");
@@ -87,19 +86,6 @@ fn tcp_packet(source_port: u16, destination_port: u16) -> Packet {
             .dst_str("198.51.100.20")
             .unwrap()
         / Tcp::new().sport(source_port).dport(destination_port)
-        / Raw::from("payload")
-}
-
-fn udp_packet(source_port: u16, destination_port: u16) -> Packet {
-    Ethernet::new()
-        .src(MacAddr::new([0x02, 0, 0, 0, 0, 2]))
-        .dst(MacAddr::BROADCAST)
-        / Ipv4::new()
-            .src_str("203.0.113.30")
-            .unwrap()
-            .dst_str("198.51.100.20")
-            .unwrap()
-        / Udp::new().sport(source_port).dport(destination_port)
         / Raw::from("payload")
 }
 
@@ -636,91 +622,6 @@ fn pcap_write_uses_autofilled_ether_type() {
 }
 
 #[test]
-fn sniffer_offline_supports_iterator_callback_and_spawn() {
-    let tcp = tcp_packet(10, 80);
-    let udp = udp_packet(53000, 53001);
-    let path = write_temp_pcap("sniffer-offline", &[tcp, udp]);
-
-    let mut capture = Sniffer::offline(&path)
-        .filter("tcp")
-        .count(1)
-        .open()
-        .unwrap();
-    let first = capture.next_packet().unwrap().unwrap();
-    assert!(first.packet().layer::<Tcp>().is_some());
-    assert!(capture.next_packet().unwrap().is_none());
-
-    let mut summaries = Vec::new();
-    let callback_count = Sniffer::offline(&path)
-        .filter("udp")
-        .capture(10, |packet| {
-            summaries.push(packet.packet().summary());
-            Ok(CaptureControl::Continue)
-        })
-        .unwrap();
-    assert_eq!(callback_count, 1);
-    assert!(summaries[0].contains("Udp"));
-
-    let spawned_packets = Sniffer::offline(&path)
-        .filter("tcp or udp")
-        .spawn(2)
-        .unwrap()
-        .join()
-        .unwrap();
-    assert_eq!(spawned_packets.len(), 2);
-
-    std::fs::remove_file(path).unwrap();
-}
-
-#[test]
-fn bpf_filter_sniffer_offline_uses_libpcap() {
-    let https = tcp_packet(12345, 443);
-    let http = tcp_packet(12345, 80);
-    let path = write_temp_pcap("bpf-filter", &[https, http]);
-
-    let packets = Sniffer::offline(&path)
-        .filter("tcp and dst port 443")
-        .collect()
-        .unwrap();
-    assert_eq!(packets.len(), 1);
-    assert_eq!(
-        packets[0]
-            .packet()
-            .layer::<Tcp>()
-            .unwrap()
-            .destination_port_value(),
-        443
-    );
-
-    let packets = Sniffer::offline(&path)
-        .filter("tcp and not dst port 443")
-        .collect()
-        .unwrap();
-    assert_eq!(packets.len(), 1);
-    assert_eq!(
-        packets[0]
-            .packet()
-            .layer::<Tcp>()
-            .unwrap()
-            .destination_port_value(),
-        80
-    );
-
-    let mut callback_count = 0;
-    let accepted = Sniffer::offline(&path)
-        .filter("tcp")
-        .capture(10, |_packet| {
-            callback_count += 1;
-            Ok(CaptureControl::Stop)
-        })
-        .unwrap();
-    assert_eq!(accepted, 1);
-    assert_eq!(callback_count, 1);
-
-    std::fs::remove_file(path).unwrap();
-}
-
-#[test]
 fn pcap_roundtrip_arp_request_and_reply_records() {
     let request = ethernet_arp_packet();
     let reply = Packet::decode_from_link(LinkType::Ethernet, ethernet_arp_reply_bytes()).unwrap();
@@ -832,19 +733,4 @@ fn pcap_read_filter_selects_arp_with_libpcap_bpf() {
     assert_eq!(decoded.compile().unwrap().as_bytes(), ARP_REQUEST);
 
     std::fs::remove_file(path).unwrap();
-}
-
-#[test]
-#[ignore = "live capture is reserved for disposable wire endpoint execution"]
-fn sniffer_live_capture_wire_endpoint_only() {
-    let Some(iface) = std::env::var_os("LIBCRAFTER_LIVE_CAPTURE_IFACE") else {
-        return;
-    };
-    let packets = Sniffer::interface(iface.to_string_lossy().into_owned())
-        .filter("icmp or arp")
-        .count(1)
-        .timeout(Duration::from_secs(2))
-        .collect()
-        .unwrap();
-    assert!(packets.len() <= 1);
 }
