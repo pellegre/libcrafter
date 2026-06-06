@@ -20,6 +20,111 @@ fn prelude_builds_and_compiles_packet() -> crafter::Result<()> {
 }
 
 #[test]
+fn public_api_dot11() -> crafter::Result<()> {
+    let receiver = MacAddr::new([0x02, 0x00, 0x5e, 0x11, 0x00, 0x01]);
+    let transmitter = MacAddr::new([0x02, 0x00, 0x5e, 0x11, 0x00, 0x02]);
+    let destination = MacAddr::new([0x02, 0x00, 0x5e, 0x11, 0x00, 0x03]);
+    let source = MacAddr::new([0x02, 0x00, 0x5e, 0x11, 0x00, 0x04]);
+    let frame_control = Dot11FrameControl::new()
+        .with_frame_type(DOT11_FRAME_TYPE_DATA)
+        .with_subtype(DOT11_DATA_SUBTYPE_QOS_DATA)
+        .with_to_ds(true)
+        .with_from_ds(true)
+        .with_protected(true);
+    let sequence_control = Dot11SequenceControl::new()
+        .with_sequence_number(0x123)
+        .with_fragment_number(7);
+
+    let dot11 = Dot11::qos_data()
+        .frame_control(frame_control)
+        .duration_id(0x1234)
+        .addr1(receiver)
+        .addr2(transmitter)
+        .addr3(destination)
+        .addr4(source)
+        .sequence_control(sequence_control)
+        .qos_control(0xabcd);
+    let packet = dot11.clone() / Raw::from("wifi");
+    let compiled = packet.compile()?;
+
+    assert_eq!(
+        compiled.as_bytes().len(),
+        DOT11_DATA_ADDR4_HEADER_LEN + DOT11_QOS_CONTROL_LEN + 4
+    );
+    assert_eq!(&compiled.as_bytes()[0..2], &frame_control.compile());
+    assert_eq!(dot11.frame_type(), Dot11FrameType::Data);
+    assert_eq!(dot11.data_subtype(), Some(Dot11DataSubtype::QosData));
+    assert_eq!(dot11.source(), Some(source));
+    assert_eq!(dot11.destination(), Some(destination));
+    assert_eq!(dot11.bssid(), None);
+    assert!(dot11.is_protected());
+    assert_eq!(
+        dot11.sequence_control_value().unwrap().sequence_number(),
+        0x123
+    );
+    assert_eq!(
+        dot11_subtype_label(DOT11_FRAME_TYPE_DATA, DOT11_DATA_SUBTYPE_QOS_DATA),
+        "qos-data"
+    );
+
+    let ssid = Dot11TaggedParameter::new(0, [b't', b'e', b's', b't']);
+    let beacon = Dot11::beacon()
+        .addr1(MacAddr::BROADCAST)
+        .addr2(transmitter)
+        .addr3(transmitter)
+        .tag(ssid.clone());
+    let beacon_bytes = Packet::from_layer(beacon.clone()).compile()?;
+
+    assert_eq!(ssid.id(), 0);
+    assert_eq!(ssid.data(), b"test");
+    assert_eq!(beacon.tagged_parameters(), &[ssid.clone()]);
+    assert_eq!(
+        beacon.management_subtype(),
+        Some(Dot11ManagementSubtype::Beacon)
+    );
+    assert_eq!(
+        beacon_bytes.as_bytes().len(),
+        DOT11_DATA_HEADER_LEN + DOT11_MGMT_BEACON_FIXED_LEN + ssid.encoded_len()
+    );
+
+    let root_frame_control: crafter::Dot11FrameControl =
+        crafter::Dot11FrameControl::from_bits(crafter::DOT11_FC_PROTECTED);
+    let core_sequence_control: crafter::core::Dot11SequenceControl =
+        crafter::core::Dot11SequenceControl::new().with_sequence_number(7);
+    let protocols_frame_type = crafter::protocols::Dot11FrameType::from_raw(
+        crafter::protocols::DOT11_FRAME_TYPE_MANAGEMENT,
+    );
+    let link_tag = crafter::protocols::link::Dot11TaggedParameter::new(221, [1, 2, 3]);
+
+    assert!(root_frame_control.protected());
+    assert_eq!(core_sequence_control.sequence_number(), 7);
+    assert_eq!(
+        protocols_frame_type,
+        crafter::protocols::Dot11FrameType::Management
+    );
+    assert_eq!(link_tag.id(), 221);
+    assert_eq!(
+        crafter::dot11_frame_type_label(crafter::DOT11_FRAME_TYPE_DATA),
+        "data"
+    );
+    assert_eq!(
+        crafter::core::dot11_control_subtype_label(crafter::core::DOT11_CONTROL_SUBTYPE_ACK),
+        "ack"
+    );
+    assert_eq!(
+        crafter::protocols::dot11_category_label(crafter::protocols::DOT11_CATEGORY_PUBLIC),
+        "public"
+    );
+    assert_eq!(DOT11_MIN_HEADER_LEN, 10);
+    assert_eq!(
+        crafter::protocols::DOT11_DATA_HEADER_LEN,
+        DOT11_DATA_HEADER_LEN
+    );
+
+    Ok(())
+}
+
+#[test]
 fn ipv4_protocol_public_api_paths_are_usable() -> crafter::Result<()> {
     let prelude_protocol: Ipv4Protocol = Ipv4Protocol::Icmpv4;
     let root_protocol: crafter::Ipv4Protocol = crafter::Ipv4Protocol::Tcp;
