@@ -287,7 +287,7 @@ class CommandCapture:
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     repo_root = Path(__file__).resolve().parents[3]
-    wire = repo_root / "tools" / "wire" / "run"
+    wire = repo_root / "tools" / "endpoint" / "run"
 
     plan = _plan_commands(repo_root=repo_root, wire=wire, args=args)
     if not args.live or args.plan_only:

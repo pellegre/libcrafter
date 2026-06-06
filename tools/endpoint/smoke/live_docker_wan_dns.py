@@ -179,7 +179,7 @@ class CommandCapture:
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     repo_root = Path(__file__).resolve().parents[3]
-    wire = repo_root / "tools" / "wire" / "run"
+    wire = repo_root / "tools" / "endpoint" / "run"
 
     plan = _plan_commands(repo_root=repo_root, wire=wire, args=args)
     if not args.live or args.plan_only:
@@ -366,7 +366,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         action="store_true",
         help="acknowledge this smoke sends live WAN traffic from an isolated endpoint",
     )
-    parser.add_argument("--role", default=DEFAULT_ROLE, help="wire endpoint role label")
+    parser.add_argument("--role", default=DEFAULT_ROLE, help="endpoint role label")
     parser.add_argument("--iface", default=DEFAULT_IFACE, help="fallback endpoint interface")
     parser.add_argument(
         "--remote-bin",
@@ -615,7 +615,7 @@ def _write_result_artifacts(
 
 
 def _write_unattached_failure(repo_root: Path, stem: str, result: CommandCapture) -> None:
-    artifact_dir = repo_root / "tools" / "wire" / "artifacts" / "live-docker-wan-dns"
+    artifact_dir = repo_root / "tools" / "endpoint" / "artifacts" / "live-docker-wan-dns"
     _write_result_artifacts(artifact_dir, stem, result)
 
 
