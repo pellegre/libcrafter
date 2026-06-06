@@ -118,6 +118,7 @@ backend_support:
       - Dot11EltRSN
     notes:
       - Unknown suite selectors and trailing bytes compare normalized raw preservation metadata.
+      - Strict canonical RSN smoke cases avoid ambiguous two-octet post-capability tails; raw trailing-byte preservation stays in normalized unknown-suite coverage because libcrafter treats an incomplete PMKID-list boundary as a structured RSN parse error while preserving the enclosing Dot11 tag bytes.
   wireshark:
     status: planned
     native_layers:
