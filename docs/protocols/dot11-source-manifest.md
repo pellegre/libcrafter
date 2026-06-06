@@ -55,7 +55,9 @@ Known ambiguity or deferred behavior:
 - Fragment reassembly, A-MSDU reassembly, mesh-specific address semantics,
   multi-link operation, EHT/802.11be-specific fields, and newer amendment-only
   features are deferred unless a later source-manifest update narrows the
-  implemented subset.
+  implemented subset. Fragmented 802.11 payload bytes remain per-frame
+  observations; no fragment cache, overlap handling, or reassembled payload API
+  is implemented in this phase.
 - `protected` is the preferred public term for the IEEE 802.11 protected-frame
   bit. Older names such as WEP are too narrow for new APIs.
 - FCS generation/validation is not required for phase 1. FCS presence must stay

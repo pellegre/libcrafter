@@ -194,6 +194,7 @@ Constructors and builders:
 - `Dot11::sequence_control(Dot11SequenceControl)`.
 - `Dot11::fragment_number(u8)`.
 - `Dot11::sequence_number(u16)`.
+- `Dot11::more_fragments(bool)`.
 - `Dot11::qos_control(Dot11QosControl)`.
 - `Dot11::protected(bool)`.
 - `Dot11::tag(Dot11TaggedParameter)`.
@@ -221,6 +222,8 @@ Getters:
 - `Dot11::sequence_control_value() -> Option<Dot11SequenceControl>`.
 - `Dot11::fragment_number_value() -> Option<u8>`.
 - `Dot11::sequence_number_value() -> Option<u16>`.
+- `Dot11::has_more_fragments() -> bool`.
+- `Dot11::is_fragmented() -> bool`.
 - `Dot11::qos_control_value() -> Option<Dot11QosControl>`.
 - `Dot11::is_protected() -> bool`.
 - `Dot11::tags_value() -> &[Dot11TaggedParameter]`.

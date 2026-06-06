@@ -922,6 +922,13 @@ impl Dot11 {
         self
     }
 
+    /// Set or clear the More Fragments frame-control bit.
+    pub fn more_fragments(mut self, enabled: bool) -> Self {
+        let frame_control = self.frame_control_value().with_more_fragments(enabled);
+        self.frame_control.set_user(frame_control);
+        self
+    }
+
     /// Set the duration/ID field.
     pub fn duration_id(mut self, duration_id: u16) -> Self {
         self.duration_id.set_user(duration_id);
@@ -954,6 +961,24 @@ impl Dot11 {
 
     /// Set the sequence-control field.
     pub fn sequence_control(mut self, sequence_control: Dot11SequenceControl) -> Self {
+        self.sequence_control.set_user(sequence_control);
+        self
+    }
+
+    /// Set the twelve-bit sequence number in the sequence-control field.
+    pub fn sequence_number(mut self, sequence_number: u16) -> Self {
+        let sequence_control = self
+            .effective_sequence_control()
+            .with_sequence_number(sequence_number);
+        self.sequence_control.set_user(sequence_control);
+        self
+    }
+
+    /// Set the four-bit fragment number in the sequence-control field.
+    pub fn fragment_number(mut self, fragment_number: u8) -> Self {
+        let sequence_control = self
+            .effective_sequence_control()
+            .with_fragment_number(fragment_number);
         self.sequence_control.set_user(sequence_control);
         self
     }
@@ -1245,6 +1270,18 @@ impl Dot11 {
         self.sequence_control.value().copied()
     }
 
+    /// Current sequence-number subfield value, if the frame has sequence control.
+    pub fn sequence_number_value(&self) -> Option<u16> {
+        self.sequence_control_value()
+            .map(|sequence_control| sequence_control.sequence_number())
+    }
+
+    /// Current fragment-number subfield value, if the frame has sequence control.
+    pub fn fragment_number_value(&self) -> Option<u8> {
+        self.sequence_control_value()
+            .map(|sequence_control| sequence_control.fragment_number())
+    }
+
     /// Current QoS control field value, if present.
     pub fn qos_control_value(&self) -> Option<u16> {
         self.qos_control.value().copied()
@@ -1425,6 +1462,22 @@ impl Dot11 {
     /// Return true when the Protected Frame bit is set.
     pub fn is_protected(&self) -> bool {
         self.frame_control_value().protected()
+    }
+
+    /// Return true when the More Fragments frame-control bit is set.
+    pub fn has_more_fragments(&self) -> bool {
+        self.frame_control_value().more_fragments()
+    }
+
+    /// Return true when this frame carries 802.11 fragmentation metadata.
+    ///
+    /// `crafter` exposes this metadata for inspection but does not reassemble
+    /// fragmented 802.11 payloads.
+    pub fn is_fragmented(&self) -> bool {
+        self.has_more_fragments()
+            || self
+                .fragment_number_value()
+                .is_some_and(|number| number != 0)
     }
 
     /// Decoded encrypted body length for protected data frames.
@@ -1810,6 +1863,7 @@ fn dot11_should_dispatch_llc_snap(dot11: &Dot11) -> bool {
     frame_control.frame_type_value() == Dot11FrameType::Data
         && dot11_data_subtype_carries_payload(frame_control.subtype())
         && !frame_control.protected()
+        && !dot11.is_fragmented()
 }
 
 fn decode_dot11(bytes: &[u8]) -> Result<(Dot11, &[u8])> {
@@ -3478,6 +3532,67 @@ mod tests {
         assert_eq!(dot11.source(), Some(dot11_role_mac(4)));
         assert_eq!(raw.as_bytes(), &[0xde, 0xad, 0xbe, 0xef]);
         assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+    }
+
+    #[test]
+    fn dot11_fragment_metadata_decode_first_middle_and_final_fragments() {
+        let cases = [
+            ("first", 0x345, 0, true, b"first-fragment".as_slice()),
+            ("middle", 0x345, 1, true, b"middle-fragment".as_slice()),
+            ("final", 0x345, 2, false, b"final-fragment".as_slice()),
+        ];
+
+        for (name, sequence_number, fragment_number, more_fragments, payload) in cases {
+            let frame_control =
+                dot11_test_frame_control(DOT11_FRAME_TYPE_DATA, DOT11_DATA_SUBTYPE_DATA)
+                    .with_more_fragments(more_fragments);
+            let sequence_control = Dot11SequenceControl::new()
+                .with_sequence_number(sequence_number)
+                .with_fragment_number(fragment_number);
+            let mut bytes = dot11_decode_test_header(frame_control);
+            let sequence_offset =
+                DOT11_FRAME_CONTROL_LEN + DOT11_DURATION_ID_LEN + (DOT11_ADDRESS_LEN * 3);
+            bytes[sequence_offset..sequence_offset + DOT11_SEQUENCE_CONTROL_LEN]
+                .copy_from_slice(&sequence_control.compile());
+            bytes.extend_from_slice(payload);
+
+            let decoded = Packet::decode_from_link(LinkType::Ieee80211, &bytes).unwrap();
+            let dot11 = decoded.layer::<Dot11>().unwrap();
+
+            assert_eq!(
+                dot11.sequence_number_value(),
+                Some(sequence_number),
+                "{name} sequence number"
+            );
+            assert_eq!(
+                dot11.fragment_number_value(),
+                Some(fragment_number),
+                "{name} fragment number"
+            );
+            assert_eq!(
+                dot11.has_more_fragments(),
+                more_fragments,
+                "{name} more-fragments status"
+            );
+            assert!(dot11.is_fragmented(), "{name} fragmented predicate");
+            assert!(decoded.layer::<LlcSnap>().is_none(), "{name} llc dispatch");
+            assert_eq!(
+                decoded.layer::<Raw>().unwrap().as_bytes(),
+                payload,
+                "{name} payload remains frame-local raw bytes"
+            );
+            assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+        }
+
+        let unfragmented = Dot11::data()
+            .sequence_number(0x123)
+            .fragment_number(0)
+            .more_fragments(false);
+
+        assert_eq!(unfragmented.sequence_number_value(), Some(0x123));
+        assert_eq!(unfragmented.fragment_number_value(), Some(0));
+        assert!(!unfragmented.has_more_fragments());
+        assert!(!unfragmented.is_fragmented());
     }
 
     #[test]
