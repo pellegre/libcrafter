@@ -1,4 +1,9 @@
-//! Opened packet wire abstraction.
+//! Packet wire builders and opened backend handles.
+//!
+//! A [`PacketWire`] represents exactly one packet-capable target: a pcap file,
+//! pcap recorder, live pcap interface, or raw socket interface. It advertises
+//! source and writer capabilities explicitly so callers can wire the opened
+//! direction into [`crate::wire::Sniffer`] or [`crate::wire::Transmitter`].
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -19,16 +24,23 @@ use super::writer::PacketWriter;
 use super::{Result, WireError};
 
 /// Boxed packet source returned by an opened packet wire.
+///
+/// The boxed trait object keeps backend-specific capture state hidden while
+/// preserving the common [`PacketSource`] stream contract.
 pub type OpenedPacketSource = Box<dyn PacketSource + Send>;
 
 /// Boxed packet writer returned by an opened packet wire.
+///
+/// The boxed trait object keeps backend-specific emission state hidden while
+/// preserving the common [`PacketWriter`] contract.
 pub type OpenedPacketWriter = Box<dyn PacketWriter + Send>;
 
 /// One packet-capable backend or interface target.
 ///
 /// A target describes exactly one pcap file, pcap recorder, or live interface.
 /// Applications that need multiple media should create multiple
-/// [`PacketWire`] values and orchestrate them outside the crate.
+/// [`PacketWire`] values and orchestrate them outside the crate, usually by
+/// running one sniffer or transmitter per opened source or writer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PacketWireTarget {
     /// Offline pcap file input.
@@ -394,6 +406,12 @@ impl fmt::Debug for PacketWireBuilder {
 }
 
 /// One opened packet-capable backend or interface.
+///
+/// `PacketWire` is a capability handle, not a multiplexer. Consuming
+/// [`source`](Self::source), [`writer`](Self::writer), or [`split`](Self::split)
+/// moves the backend into the caller's pipeline. Unsupported directions return
+/// typed errors, for example trying to read from a pcap recorder or write to a
+/// read-only pcap file input.
 pub struct PacketWire {
     target: PacketWireTarget,
     source: Option<OpenedPacketSource>,

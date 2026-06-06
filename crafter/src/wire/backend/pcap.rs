@@ -1,4 +1,10 @@
 //! Pcap packet wire backend adapters.
+//!
+//! This module adapts the low-level [`crate::pcap`] reader/writer/libpcap
+//! primitives into [`crate::wire::PacketSource`] and
+//! [`crate::wire::PacketWriter`] implementations. Application code should
+//! normally construct these through [`crate::wire::PacketWire`] instead of
+//! naming the backend types directly.
 
 use std::fs::File;
 use std::io::BufReader;

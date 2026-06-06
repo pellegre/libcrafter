@@ -1,4 +1,10 @@
 //! Packet record and metadata types.
+//!
+//! A wire pipeline never yields bare bytes. It yields [`PacketRecord`] values:
+//! typed packets plus metadata gathered from sources, transforms, and writers.
+//! Keeping metadata beside the packet lets later transforms know which backend,
+//! interface, file, link type, or radio medium produced a record without
+//! changing the packet abstraction itself.
 
 use std::path::{Path, PathBuf};
 
@@ -9,6 +15,12 @@ use crate::{
 };
 
 /// A packet plus inspectable metadata from capture, transforms, and writers.
+///
+/// `PacketRecord` is the common item type for [`crate::wire::PacketSource`],
+/// [`crate::wire::Sniffer`], [`crate::wire::PacketTransform`],
+/// [`crate::wire::Transmitter`], and [`crate::wire::PacketWriter`]. The packet
+/// remains a normal [`Packet`]; metadata is additive context for routing,
+/// filtering, diagnostics, and future transforms such as WPA decryption.
 #[derive(Debug, Clone)]
 pub struct PacketRecord {
     packet: Packet,
@@ -228,6 +240,11 @@ impl From<PcapPacket> for PacketRecord {
 }
 
 /// Metadata attached to a packet record.
+///
+/// Metadata is intentionally inspectable and extensible. Backends can attach
+/// pcap timestamps and link types, live interfaces can attach interface names,
+/// transforms can append trace entries, and medium transforms can add Wi-Fi,
+/// Bluetooth, or generic radio annotations.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PacketMetadata {
     origin: PacketOrigin,

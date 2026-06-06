@@ -1,8 +1,18 @@
 //! Packet-shaped wire I/O abstractions.
 //!
-//! This module owns the source, writer, transform, sniffer, transmitter, and
-//! backend contracts for packet I/O. Concrete behavior is added in later
-//! modules while this skeleton reserves the crate-level export surface.
+//! `crafter::wire` is the high-level packet stream layer. Open one
+//! [`PacketWire`] per backend or interface, split it into a [`PacketSource`] or
+//! [`PacketWriter`], and then drive it with a [`Sniffer`] or [`Transmitter`].
+//! Each stream item is a [`PacketRecord`]: a typed [`crate::Packet`] plus
+//! inspectable metadata such as backend, interface, file path, pcap timestamp,
+//! link type, medium annotations, and transform traces.
+//!
+//! Backends are adapters, not the abstraction. The current backend set covers
+//! offline pcap input, pcap recording, live libpcap interfaces, raw socket
+//! writing, and in-memory test streams. Future WPA, fragmentation, stream
+//! reassembly, Bluetooth, or SDR integrations should fit as packet sources,
+//! packet writers, or stateful [`PacketTransform`] stages without changing the
+//! packet-shaped stream contract.
 
 #![forbid(unsafe_code)]
 

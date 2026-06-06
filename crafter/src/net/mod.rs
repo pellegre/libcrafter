@@ -3,7 +3,9 @@
 //! Local callers can compile packets into send plans without transmitting
 //! traffic. Live send and send/receive helpers require explicit live options
 //! and platform privileges; examples keep those paths gated for disposable
-//! labs.
+//! labs. Packet capture and packet-stream transforms are exposed through
+//! [`crate::wire`]; this module keeps the interface lookup, raw socket send
+//! planning, and reply-matching helpers used by those wire backends.
 
 #![forbid(unsafe_code)]
 

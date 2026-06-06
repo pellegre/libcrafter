@@ -4,15 +4,19 @@
 //! examples, generated tools, and agent-directed packet workflows:
 //!
 //! - packet construction, decode, checksums, and protocol layers
-//! - pcap read/write and BPF filtering helpers
+//! - classic pcap read/write helpers and libpcap-backed wire adapters
 //! - interface, send, send/receive, batch, and address helpers
-//! - packet wire source, writer, transform, sniffing, and transmit primitives
+//! - `PacketWire` source/writer backends, `PacketRecord` metadata,
+//!   `Sniffer`/`Transmitter` pipelines, and packet transforms
 //! - Ethernet, IEEE 802.11/radiotap, LLC/SNAP, IP, transport, and selected
 //!   application protocol primitives
 //!
 //! Public modules are organized as `crafter::core`, `crafter::pcap`,
-//! `crafter::net`, `crafter::wire`, and `crafter::prelude`. Most examples should start with
-//! `use crafter::prelude::*;`.
+//! `crafter::net`, `crafter::wire`, and `crafter::prelude`. The `pcap`
+//! module is the low-level classic pcap file format and libpcap adapter layer.
+//! The `wire` module is the packet-stream API that generated tools should use
+//! for backend-neutral capture, transforms, and transmission. Most examples
+//! should start with `use crafter::prelude::*;`.
 //!
 //! Local examples use dry-run send plans or offline pcaps unless live behavior
 //! is explicitly requested.
@@ -700,6 +704,10 @@ pub mod core {
 }
 
 /// Common imports for generated packet tools and examples.
+///
+/// The prelude includes packet construction and decode types, low-level pcap
+/// file helpers, and the high-level wire primitives: [`PacketWire`],
+/// [`PacketRecord`], [`PacketTransform`], [`Sniffer`], and [`Transmitter`].
 pub mod prelude {
     pub use crate::core::*;
     pub use crate::{

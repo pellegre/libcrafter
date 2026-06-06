@@ -1,4 +1,4 @@
-//! Packet transmitter pipeline.
+//! Outbound packet transmitter pipeline.
 
 use std::collections::VecDeque;
 use std::fmt;
@@ -14,7 +14,9 @@ use super::Result;
 ///
 /// A transmitter owns one [`PacketWriter`] and an ordered chain of packet
 /// transforms. Each input record flows through the full transform chain before
-/// every emitted record is written to the backend.
+/// every emitted record is written to the backend. To transmit through multiple
+/// interfaces or media, open multiple [`crate::wire::PacketWire`] values and
+/// run one transmitter per writer.
 pub struct Transmitter {
     writer: Box<dyn PacketWriter + Send>,
     transforms: Vec<Box<dyn PacketTransform + Send>>,
