@@ -10,13 +10,14 @@ Oracle and probe use lab sessions so their live behavior is independent of the
 machine where libcrafter or an agent is running. Oracle still owns reference
 packet validation. Probe still owns kernel and controlled-service behavior
 validation. The endpoint provider layer still owns one endpoint and transport
-operations.
+operations; see [docs/endpoint.md](endpoint.md) for the single-endpoint
+provider lifecycle.
 
 ## Tool Split
 
 | Tool | Owns |
 | --- | --- |
-| `tools/endpoint` | One disposable endpoint: doctor, create, exec, upload, download, collect artifacts, destroy. |
+| `tools/endpoint` | One disposable endpoint: doctor, create, exec, upload, download, collect artifacts, destroy; run it through `tools/endpoint/run`. |
 | `tools/lab` | Multi-endpoint sessions: roles, provider capabilities, endpoint topology, repository archive transfer, remote unpack, bootstrap context, session manifests, artifacts, cleanup records. |
 | `tools/oracle` | Reference packet corpus, offline/pcap/live packet comparison, `libcrafter` and `reference_backend` workload setup, backend policy, oracle reports. |
 | `tools/probe` | Kernel/service probe cases, `stimulus` and `target` workload setup, target service setup, RST guards, stimulus execution, probe reports. |
@@ -104,6 +105,7 @@ Docker LAN and WAN reachability checks are direct endpoint smokes because they
 exercise one container's NAT-backed L3 path through Docker bridge routing:
 
 ```sh
+tools/endpoint/run doctor --provider docker --exposure lan --dry-run
 tools/endpoint/smoke/live_docker_lan_icmp.py --plan-only
 tools/endpoint/smoke/live_docker_wan_dns.py --plan-only
 ```

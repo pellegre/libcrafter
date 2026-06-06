@@ -4,7 +4,9 @@ This directory contains user and contributor documentation for the Rust
 `crafter` crate and its validation workflow.
 
 - [API guide](api.md) summarizes the public crate, explicit IPv4/IPv6 packet
-  APIs, packet composition style, and helper APIs.
+  APIs, packet composition style, packet I/O, and helper APIs.
+- [Wire packet I/O](wire.md) covers `crafter::wire`, `PacketWire`,
+  `PacketRecord` metadata, `Sniffer`, `Transmitter`, and transform chains.
 - [IPv4 wire coverage](ipv4.md) describes IPv4 construction, DSCP/ECN,
   protocol-number labels, checksum status, typed options, fragment fields
   without reassembly, decode policy, and validation coverage, and links the
@@ -32,7 +34,7 @@ This directory contains user and contributor documentation for the Rust
 - [Probe validation](probe.md) describes kernel and service behavior probes.
 - [Lab sessions](lab.md) describes provider-backed multi-endpoint sessions used
   by oracle and probe.
-- [Endpoint provider guide](endpoint.md) covers shared disposable provider setup,
-  credentials, artifacts, and cleanup for one endpoint.
+- [Endpoint provider guide](endpoint.md) covers shared disposable endpoint
+  provider setup, credentials, artifacts, and cleanup for one endpoint.
 Agent operating guidance belongs under
 [`.agents/docs/cookbook.md`](../.agents/docs/cookbook.md), not here.
