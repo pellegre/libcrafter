@@ -122,11 +122,11 @@ class ProbeLabProviderDryRunMatrixTest(unittest.TestCase):
         self.assertEqual(
             [command["operation"] for command in provider_workflow],
             [
-                "wire.doctor",
-                "wire.create",
-                "wire.create",
-                "wire.collect_artifacts",
-                "wire.destroy",
+                "endpoint.doctor",
+                "endpoint.create",
+                "endpoint.create",
+                "endpoint.collect_artifacts",
+                "endpoint.destroy",
             ],
         )
         self.assertEqual(
@@ -134,7 +134,7 @@ class ProbeLabProviderDryRunMatrixTest(unittest.TestCase):
             ["stimulus", "target"],
         )
         self.assertTrue(
-            all(command["operation"] == "wire.create" for command in provider_commands)
+            all(command["operation"] == "endpoint.create" for command in provider_commands)
         )
         self.assertTrue(all(command["dry_run"] for command in provider_workflow))
         self.assertTrue(all(command["dry_run"] for command in provider_commands))
