@@ -401,7 +401,8 @@ pub use wire::{
     PacketOrigin, PacketRecord, PacketSource, PacketTransform, PacketWire, PacketWireBuilder,
     PacketWireTarget, PacketWriter, PassThroughTransform, RadioMetadata, RawSocketWireBuilder,
     RawSocketWriter, SnifferCancel, SnifferHandle, TraceAppendTransform, TransformOutput,
-    TransformTrace, Transmitter, VecPacketSource, WifiMetadata, WireError, WriteReport,
+    TransformTrace, Transmitter, VecPacketSource, WifiDecryptState, WifiMetadata,
+    WifiProtectionStatus, WireError, WriteReport,
 };
 
 /// Core packet and protocol APIs.
@@ -713,7 +714,8 @@ pub mod prelude {
         PcapLinkType, PcapPacket, PcapReader, PcapRecord, PcapRecords, PcapTimestamp, PcapWriter,
         PcapWriterOptions, RawSender, ReplyMatcher, SendMode, SendOptions, SendPlan, SendRecv,
         SendRecvOptions, SendRecvReport, SendReport, SendTarget, Sniffer, SocketSend, SocketSender,
-        TimestampPrecision, Transmitter, VecPacketSource, WifiMetadata, WireError, WriteReport,
+        TimestampPrecision, Transmitter, VecPacketSource, WifiDecryptState, WifiMetadata,
+        WifiProtectionStatus, WireError, WriteReport,
     };
     pub use crate::{
         BackendKind, BluetoothMetadata, DropAllTransform, DuplicateTransform, MediumMetadata,

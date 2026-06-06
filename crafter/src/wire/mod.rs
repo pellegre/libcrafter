@@ -26,7 +26,7 @@ pub use packet_wire::{
 };
 pub use record::{
     BackendKind, BluetoothMetadata, MediumMetadata, PacketMetadata, PacketOrigin, PacketRecord,
-    RadioMetadata, TransformTrace, WifiMetadata,
+    RadioMetadata, TransformTrace, WifiDecryptState, WifiMetadata, WifiProtectionStatus,
 };
 pub use sniffer::{Sniffer, SnifferCancel, SnifferHandle};
 pub use source::{PacketSource, VecPacketSource};
