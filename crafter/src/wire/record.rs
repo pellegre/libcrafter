@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::pcap::{PcapLinkType, PcapTimestamp};
+use crate::pcap::{PcapLinkType, PcapPacket, PcapRecord, PcapTimestamp};
 use crate::{IntoPacket, LinkType, Packet};
 
 /// A packet plus inspectable metadata from capture, transforms, and writers.
@@ -27,6 +27,47 @@ impl PacketRecord {
             packet: packet.into_packet(),
             metadata,
         }
+    }
+
+    /// Decode a raw pcap record into a packet record, preserving pcap metadata.
+    pub fn try_from_pcap_record(record: PcapRecord) -> crate::Result<Self> {
+        let packet = record.decode()?;
+        Ok(Self::from_pcap_parts(
+            packet,
+            record.timestamp(),
+            record.original_len(),
+            record.data().to_vec(),
+            record.pcap_link_type(),
+        ))
+    }
+
+    /// Convert a decoded pcap packet wrapper into a packet record.
+    pub fn from_pcap_packet(packet: PcapPacket) -> Self {
+        let timestamp = packet.timestamp();
+        let original_len = packet.original_len();
+        let captured_bytes = packet.data().to_vec();
+        let pcap_link_type = packet.pcap_link_type();
+        Self::from_pcap_parts(
+            packet.into_packet(),
+            timestamp,
+            original_len,
+            captured_bytes,
+            pcap_link_type,
+        )
+    }
+
+    fn from_pcap_parts(
+        packet: Packet,
+        timestamp: PcapTimestamp,
+        original_len: u32,
+        captured_bytes: Vec<u8>,
+        pcap_link_type: PcapLinkType,
+    ) -> Self {
+        let captured_len = captured_bytes.len() as u32;
+        Self::new(packet)
+            .with_origin(PacketOrigin::Captured)
+            .with_pcap_metadata(timestamp, original_len, captured_len, pcap_link_type)
+            .with_captured_bytes(captured_bytes)
     }
 
     /// Borrow the packet.
@@ -160,6 +201,20 @@ impl PacketRecord {
     pub fn with_transform_trace(mut self, trace: TransformTrace) -> Self {
         self.metadata.push_transform_trace(trace);
         self
+    }
+}
+
+impl TryFrom<PcapRecord> for PacketRecord {
+    type Error = crate::CrafterError;
+
+    fn try_from(value: PcapRecord) -> Result<Self, Self::Error> {
+        Self::try_from_pcap_record(value)
+    }
+}
+
+impl From<PcapPacket> for PacketRecord {
+    fn from(value: PcapPacket) -> Self {
+        Self::from_pcap_packet(value)
     }
 }
 
@@ -754,6 +809,54 @@ mod tests {
         assert_eq!(metadata.captured_bytes(), Some(captured.as_slice()));
         assert_eq!(metadata.link_type(), Some(LinkType::Ethernet));
         assert_eq!(metadata.pcap_link_type(), Some(PcapLinkType::Ethernet));
+    }
+
+    #[test]
+    fn pcap_packet_metadata_from_record_preserves_timestamp_and_link_types() {
+        let timestamp = PcapTimestamp::nanos(1_700_000_001, 987_654_321).unwrap();
+        let captured = vec![0xde, 0xad, 0xbe, 0xef];
+        let pcap_link_type = PcapLinkType::Unknown(65_000);
+        let record = PcapRecord::new(timestamp, 64, captured.clone(), pcap_link_type).unwrap();
+
+        let record = PacketRecord::try_from_pcap_record(record).unwrap();
+
+        assert_eq!(record.packet().summary(), "Raw(len=4)");
+        let metadata = record.metadata();
+        assert_eq!(metadata.origin(), PacketOrigin::Captured);
+        assert_eq!(metadata.backend(), &BackendKind::Unknown);
+        assert_eq!(metadata.timestamp(), Some(timestamp));
+        assert_eq!(metadata.original_len(), Some(64));
+        assert_eq!(metadata.captured_len(), Some(captured.len() as u32));
+        assert_eq!(metadata.captured_bytes(), Some(captured.as_slice()));
+        assert_eq!(metadata.pcap_link_type(), Some(pcap_link_type));
+        assert_eq!(metadata.link_type(), Some(LinkType::Raw));
+    }
+
+    #[test]
+    fn pcap_packet_metadata_from_packet_preserves_timestamp_and_link_types() {
+        let timestamp = PcapTimestamp::micros(1_700_000_002, 123_456).unwrap();
+        let captured = vec![0x08, 0x01, 0x02, 0x03, 0x04];
+        let packet = Packet::decode_raw(&captured).unwrap();
+        let pcap_packet = PcapPacket::new(
+            timestamp,
+            128,
+            captured.clone(),
+            PcapLinkType::Ieee80211,
+            packet,
+        );
+
+        let record = PacketRecord::from_pcap_packet(pcap_packet);
+
+        assert_eq!(record.packet().summary(), "Raw(len=5)");
+        let metadata = record.metadata();
+        assert_eq!(metadata.origin(), PacketOrigin::Captured);
+        assert_eq!(metadata.backend(), &BackendKind::Unknown);
+        assert_eq!(metadata.timestamp(), Some(timestamp));
+        assert_eq!(metadata.original_len(), Some(128));
+        assert_eq!(metadata.captured_len(), Some(captured.len() as u32));
+        assert_eq!(metadata.captured_bytes(), Some(captured.as_slice()));
+        assert_eq!(metadata.pcap_link_type(), Some(PcapLinkType::Ieee80211));
+        assert_eq!(metadata.link_type(), Some(LinkType::Ieee80211));
     }
 
     #[test]
