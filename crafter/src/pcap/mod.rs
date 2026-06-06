@@ -1,8 +1,15 @@
-//! Classic pcap read/write and libpcap BPF filtering helpers.
+//! Classic pcap read/write, record metadata, and libpcap backend helpers.
 //!
-//! Offline pcap APIs are rootless and deterministic. Public live capture uses
-//! the `wire` pcap backend; this module keeps the low-level pcap file codec and
-//! offline libpcap filtering surface.
+//! This module owns the low-level pcap file codec: [`PcapReader`],
+//! [`PcapWriter`], [`PcapRecord`], [`PcapPacket`], [`PcapTimestamp`],
+//! [`PcapLinkType`], timestamp precision, and offline libpcap BPF filtering.
+//! It is intentionally not the high-level packet capture API.
+//!
+//! New sniffer code should use [`crate::wire::Sniffer`] with a
+//! [`crate::wire::PacketWire`] source, such as `PacketWire::pcap_file(...)` or
+//! `PacketWire::pcap_interface(...)`. Recording packet streams should use
+//! `PacketWire::pcap_recorder(...)` through the wire writer/transmitter path
+//! when transform metadata and backend write reports matter.
 
 #![forbid(unsafe_code)]
 
