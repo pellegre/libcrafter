@@ -1,4 +1,4 @@
-//! RSN information element scaffolding.
+//! RSN information element helpers.
 
 use std::fmt;
 
@@ -12,6 +12,8 @@ pub const RSN_CAPABILITIES_LEN: usize = 2;
 
 /// Octets in an RSN cipher or AKM suite selector.
 pub const RSN_SUITE_SELECTOR_LEN: usize = 4;
+
+const RSN_PMKID_LEN: usize = 16;
 
 /// IEEE 802.11 RSN suite selector OUI.
 pub const RSN_SUITE_SELECTOR_OUI: [u8; 3] = [0x00, 0x0f, 0xac];
@@ -804,10 +806,506 @@ pub const fn rsn_akm_suite_label(suite: RsnAkmSuite) -> Option<&'static str> {
     }
 }
 
-/// Placeholder for Robust Security Network information elements.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+/// Robust Security Network information element value bytes.
+///
+/// This type represents only the RSN information element value: it does not
+/// include the outer IEEE 802.11 tagged-parameter element ID or length octets.
+/// Decode preserves unknown suite selectors and unsupported trailing bytes so
+/// decoded values can be encoded back without losing source bytes.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RsnInformation {
-    _private: (),
+    version: u16,
+    group_cipher: RsnCipherSuite,
+    pairwise_ciphers: Vec<RsnCipherSuite>,
+    akm_suites: Vec<RsnAkmSuite>,
+    capabilities: Option<RsnCapabilities>,
+    pmkid_count_present: bool,
+    pmkids: Vec<[u8; RSN_PMKID_LEN]>,
+    group_management_cipher: Option<RsnCipherSuite>,
+    trailing: Vec<u8>,
+}
+
+impl RsnInformation {
+    /// Create a source-backed WPA2-PSK-style RSN value.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Decode RSN information element value bytes.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        Self::from_tagged_parameter_value(bytes)
+    }
+
+    /// Decode RSN information element value bytes.
+    ///
+    /// The input must not include the outer tagged-parameter element ID or
+    /// length octets.
+    pub fn from_tagged_parameter_value(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let bytes = bytes.as_ref();
+        let mut offset = 0usize;
+
+        ensure_rsn_len(bytes, offset + 2, "rsn_information_element.version")?;
+        let version = u16::from_le_bytes([bytes[offset], bytes[offset + 1]]);
+        offset += 2;
+
+        ensure_rsn_len(
+            bytes,
+            offset + RSN_SUITE_SELECTOR_LEN,
+            "rsn_information_element.group_cipher",
+        )?;
+        let group_cipher = RsnCipherSuite::from_bytes(copy_selector(bytes, offset));
+        offset += RSN_SUITE_SELECTOR_LEN;
+
+        ensure_rsn_len(bytes, offset + 2, "rsn_information_element.pairwise_count")?;
+        let pairwise_count = u16::from_le_bytes([bytes[offset], bytes[offset + 1]]) as usize;
+        offset += 2;
+        let pairwise_end = checked_rsn_list_end(
+            offset,
+            pairwise_count,
+            RSN_SUITE_SELECTOR_LEN,
+            "rsn_information_element.pairwise_count",
+        )?;
+        ensure_rsn_len(
+            bytes,
+            pairwise_end,
+            "rsn_information_element.pairwise_ciphers",
+        )?;
+        let mut pairwise_ciphers = Vec::with_capacity(pairwise_count);
+        while offset < pairwise_end {
+            pairwise_ciphers.push(RsnCipherSuite::from_bytes(copy_selector(bytes, offset)));
+            offset += RSN_SUITE_SELECTOR_LEN;
+        }
+
+        ensure_rsn_len(bytes, offset + 2, "rsn_information_element.akm_count")?;
+        let akm_count = u16::from_le_bytes([bytes[offset], bytes[offset + 1]]) as usize;
+        offset += 2;
+        let akm_end = checked_rsn_list_end(
+            offset,
+            akm_count,
+            RSN_SUITE_SELECTOR_LEN,
+            "rsn_information_element.akm_count",
+        )?;
+        ensure_rsn_len(bytes, akm_end, "rsn_information_element.akm_suites")?;
+        let mut akm_suites = Vec::with_capacity(akm_count);
+        while offset < akm_end {
+            akm_suites.push(RsnAkmSuite::from_bytes(copy_selector(bytes, offset)));
+            offset += RSN_SUITE_SELECTOR_LEN;
+        }
+
+        let mut trailing = Vec::new();
+        let capabilities = if bytes.len().saturating_sub(offset) >= RSN_CAPABILITIES_LEN {
+            let capabilities = RsnCapabilities::from_le_bytes([bytes[offset], bytes[offset + 1]]);
+            offset += RSN_CAPABILITIES_LEN;
+            Some(capabilities)
+        } else {
+            trailing.extend_from_slice(&bytes[offset..]);
+            return Ok(Self {
+                version,
+                group_cipher,
+                pairwise_ciphers,
+                akm_suites,
+                capabilities: None,
+                pmkid_count_present: false,
+                pmkids: Vec::new(),
+                group_management_cipher: None,
+                trailing,
+            });
+        };
+
+        let mut pmkid_count_present = false;
+        let mut pmkids = Vec::new();
+        if bytes.len().saturating_sub(offset) >= 2 {
+            pmkid_count_present = true;
+            let pmkid_count = u16::from_le_bytes([bytes[offset], bytes[offset + 1]]) as usize;
+            offset += 2;
+            let pmkid_end = checked_rsn_list_end(
+                offset,
+                pmkid_count,
+                RSN_PMKID_LEN,
+                "rsn_information_element.pmkid_count",
+            )?;
+            ensure_rsn_len(bytes, pmkid_end, "rsn_information_element.pmkids")?;
+            pmkids.reserve(pmkid_count);
+            while offset < pmkid_end {
+                pmkids.push(copy_pmkid(bytes, offset));
+                offset += RSN_PMKID_LEN;
+            }
+        } else {
+            trailing.extend_from_slice(&bytes[offset..]);
+            return Ok(Self {
+                version,
+                group_cipher,
+                pairwise_ciphers,
+                akm_suites,
+                capabilities,
+                pmkid_count_present,
+                pmkids,
+                group_management_cipher: None,
+                trailing,
+            });
+        }
+
+        let group_management_cipher =
+            if bytes.len().saturating_sub(offset) >= RSN_SUITE_SELECTOR_LEN {
+                let cipher = RsnCipherSuite::from_bytes(copy_selector(bytes, offset));
+                offset += RSN_SUITE_SELECTOR_LEN;
+                Some(cipher)
+            } else {
+                None
+            };
+        trailing.extend_from_slice(&bytes[offset..]);
+
+        Ok(Self {
+            version,
+            group_cipher,
+            pairwise_ciphers,
+            akm_suites,
+            capabilities,
+            pmkid_count_present,
+            pmkids,
+            group_management_cipher,
+            trailing,
+        })
+    }
+
+    /// Encode this RSN information element as tagged-parameter value bytes.
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        self.to_tagged_parameter_value()
+    }
+
+    /// Encode this RSN information element as tagged-parameter value bytes.
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
+        self.to_tagged_parameter_value()
+    }
+
+    /// Encode this RSN information element as tagged-parameter value bytes.
+    ///
+    /// The returned bytes do not include the outer tagged-parameter element ID
+    /// or length octets.
+    pub fn to_tagged_parameter_value(&self) -> Result<Vec<u8>> {
+        let pairwise_count = u16::try_from(self.pairwise_ciphers.len()).map_err(|_| {
+            CrafterError::invalid_field_value(
+                "rsn_information_element.pairwise_count",
+                "pairwise cipher count exceeds 65535",
+            )
+        })?;
+        let akm_count = u16::try_from(self.akm_suites.len()).map_err(|_| {
+            CrafterError::invalid_field_value(
+                "rsn_information_element.akm_count",
+                "AKM suite count exceeds 65535",
+            )
+        })?;
+        let pmkid_count = u16::try_from(self.pmkids.len()).map_err(|_| {
+            CrafterError::invalid_field_value(
+                "rsn_information_element.pmkid_count",
+                "PMKID count exceeds 65535",
+            )
+        })?;
+
+        let mut out = Vec::new();
+        out.extend_from_slice(&self.version.to_le_bytes());
+        out.extend_from_slice(&self.group_cipher.to_bytes());
+        out.extend_from_slice(&pairwise_count.to_le_bytes());
+        for cipher in &self.pairwise_ciphers {
+            out.extend_from_slice(&cipher.to_bytes());
+        }
+        out.extend_from_slice(&akm_count.to_le_bytes());
+        for akm in &self.akm_suites {
+            out.extend_from_slice(&akm.to_bytes());
+        }
+
+        let needs_capabilities = self.capabilities.is_some()
+            || self.pmkid_count_present
+            || !self.pmkids.is_empty()
+            || self.group_management_cipher.is_some();
+        if needs_capabilities {
+            out.extend_from_slice(&self.capabilities.unwrap_or_default().to_le_bytes());
+        }
+
+        let needs_pmkid_count = self.pmkid_count_present
+            || !self.pmkids.is_empty()
+            || self.group_management_cipher.is_some();
+        if needs_pmkid_count {
+            out.extend_from_slice(&pmkid_count.to_le_bytes());
+            for pmkid in &self.pmkids {
+                out.extend_from_slice(pmkid);
+            }
+        }
+
+        if let Some(cipher) = self.group_management_cipher {
+            out.extend_from_slice(&cipher.to_bytes());
+        }
+        out.extend_from_slice(&self.trailing);
+        Ok(out)
+    }
+
+    /// RSN information element version.
+    pub const fn version(&self) -> u16 {
+        self.version
+    }
+
+    /// RSN information element version.
+    pub const fn version_value(&self) -> u16 {
+        self.version
+    }
+
+    /// Group Data Cipher Suite selector.
+    pub const fn group_cipher(&self) -> RsnCipherSuite {
+        self.group_cipher
+    }
+
+    /// Group Data Cipher Suite selector.
+    pub const fn group_cipher_suite(&self) -> RsnCipherSuite {
+        self.group_cipher
+    }
+
+    /// Pairwise Cipher Suite List.
+    pub fn pairwise_ciphers(&self) -> &[RsnCipherSuite] {
+        &self.pairwise_ciphers
+    }
+
+    /// Pairwise Cipher Suite List.
+    pub fn pairwise_cipher_list(&self) -> &[RsnCipherSuite] {
+        &self.pairwise_ciphers
+    }
+
+    /// AKM Suite List.
+    pub fn akm_suites(&self) -> &[RsnAkmSuite] {
+        &self.akm_suites
+    }
+
+    /// AKM Suite List.
+    pub fn akm_list(&self) -> &[RsnAkmSuite] {
+        &self.akm_suites
+    }
+
+    /// RSN Capabilities field, when present in the value.
+    pub const fn capabilities(&self) -> Option<RsnCapabilities> {
+        self.capabilities
+    }
+
+    /// Return true when a PMKID Count field was present.
+    pub const fn pmkid_count_present(&self) -> bool {
+        self.pmkid_count_present
+    }
+
+    /// PMKID List.
+    pub fn pmkids(&self) -> &[[u8; RSN_PMKID_LEN]] {
+        &self.pmkids
+    }
+
+    /// PMKID List.
+    pub fn pmkid_list(&self) -> &[[u8; RSN_PMKID_LEN]] {
+        &self.pmkids
+    }
+
+    /// Group Management Cipher Suite selector, when present.
+    pub const fn group_management_cipher(&self) -> Option<RsnCipherSuite> {
+        self.group_management_cipher
+    }
+
+    /// Group Management Cipher Suite selector, when present.
+    pub const fn group_management_cipher_suite(&self) -> Option<RsnCipherSuite> {
+        self.group_management_cipher
+    }
+
+    /// Unsupported trailing bytes preserved from the value.
+    pub fn trailing_bytes(&self) -> &[u8] {
+        &self.trailing
+    }
+
+    /// Unsupported trailing bytes preserved from the value.
+    pub fn extension_bytes(&self) -> &[u8] {
+        &self.trailing
+    }
+
+    /// Set the RSN information element version.
+    pub const fn with_version(mut self, version: u16) -> Self {
+        self.version = version;
+        self
+    }
+
+    /// Set the Group Data Cipher Suite selector.
+    pub const fn with_group_cipher(mut self, cipher: RsnCipherSuite) -> Self {
+        self.group_cipher = cipher;
+        self
+    }
+
+    /// Set the Group Data Cipher Suite selector.
+    pub const fn with_group_cipher_suite(self, cipher: RsnCipherSuite) -> Self {
+        self.with_group_cipher(cipher)
+    }
+
+    /// Replace the Pairwise Cipher Suite List.
+    pub fn with_pairwise_ciphers(mut self, ciphers: impl Into<Vec<RsnCipherSuite>>) -> Self {
+        self.pairwise_ciphers = ciphers.into();
+        self
+    }
+
+    /// Replace the Pairwise Cipher Suite List.
+    pub fn with_pairwise_cipher_list(self, ciphers: impl Into<Vec<RsnCipherSuite>>) -> Self {
+        self.with_pairwise_ciphers(ciphers)
+    }
+
+    /// Append one Pairwise Cipher Suite selector.
+    pub fn with_pairwise_cipher(mut self, cipher: RsnCipherSuite) -> Self {
+        self.pairwise_ciphers.push(cipher);
+        self
+    }
+
+    /// Replace the AKM Suite List.
+    pub fn with_akm_suites(mut self, akms: impl Into<Vec<RsnAkmSuite>>) -> Self {
+        self.akm_suites = akms.into();
+        self
+    }
+
+    /// Replace the AKM Suite List.
+    pub fn with_akm_list(self, akms: impl Into<Vec<RsnAkmSuite>>) -> Self {
+        self.with_akm_suites(akms)
+    }
+
+    /// Append one AKM Suite selector.
+    pub fn with_akm_suite(mut self, akm: RsnAkmSuite) -> Self {
+        self.akm_suites.push(akm);
+        self
+    }
+
+    /// Set the RSN Capabilities field.
+    pub const fn with_capabilities(mut self, capabilities: RsnCapabilities) -> Self {
+        self.capabilities = Some(capabilities);
+        self
+    }
+
+    /// Omit the RSN Capabilities field during encoding unless later fields require it.
+    pub fn without_capabilities(mut self) -> Self {
+        self.capabilities = None;
+        self
+    }
+
+    /// Replace the PMKID List and emit a PMKID Count field.
+    pub fn with_pmkids(mut self, pmkids: impl Into<Vec<[u8; RSN_PMKID_LEN]>>) -> Self {
+        self.pmkids = pmkids.into();
+        self.pmkid_count_present = true;
+        self
+    }
+
+    /// Replace the PMKID List and emit a PMKID Count field.
+    pub fn with_pmkid_list(self, pmkids: impl Into<Vec<[u8; RSN_PMKID_LEN]>>) -> Self {
+        self.with_pmkids(pmkids)
+    }
+
+    /// Control whether a zero PMKID Count field is encoded when the PMKID list is empty.
+    pub const fn with_pmkid_count_present(mut self, present: bool) -> Self {
+        self.pmkid_count_present = present;
+        self
+    }
+
+    /// Clear the PMKID Count and PMKID List fields.
+    pub fn without_pmkids(mut self) -> Self {
+        self.pmkids.clear();
+        self.pmkid_count_present = false;
+        self
+    }
+
+    /// Set the Group Management Cipher Suite selector.
+    pub const fn with_group_management_cipher(mut self, cipher: RsnCipherSuite) -> Self {
+        self.group_management_cipher = Some(cipher);
+        self
+    }
+
+    /// Set the Group Management Cipher Suite selector.
+    pub const fn with_group_management_cipher_suite(self, cipher: RsnCipherSuite) -> Self {
+        self.with_group_management_cipher(cipher)
+    }
+
+    /// Clear the Group Management Cipher Suite selector.
+    pub const fn without_group_management_cipher(mut self) -> Self {
+        self.group_management_cipher = None;
+        self
+    }
+
+    /// Replace unsupported trailing bytes.
+    pub fn with_trailing_bytes(mut self, trailing: impl Into<Vec<u8>>) -> Self {
+        self.trailing = trailing.into();
+        self
+    }
+
+    /// Replace unsupported trailing bytes.
+    pub fn with_extension_bytes(self, trailing: impl Into<Vec<u8>>) -> Self {
+        self.with_trailing_bytes(trailing)
+    }
+}
+
+impl Default for RsnInformation {
+    fn default() -> Self {
+        Self {
+            version: RSN_VERSION_1,
+            group_cipher: RSN_CIPHER_SUITE_CCMP_128,
+            pairwise_ciphers: vec![RSN_CIPHER_SUITE_CCMP_128],
+            akm_suites: vec![RSN_AKM_SUITE_PSK],
+            capabilities: Some(RsnCapabilities::new()),
+            pmkid_count_present: false,
+            pmkids: Vec::new(),
+            group_management_cipher: None,
+            trailing: Vec::new(),
+        }
+    }
+}
+
+fn ensure_rsn_len(bytes: &[u8], required: usize, context: &'static str) -> Result<()> {
+    if bytes.len() < required {
+        return Err(CrafterError::buffer_too_short(
+            context,
+            required,
+            bytes.len(),
+        ));
+    }
+
+    Ok(())
+}
+
+fn checked_rsn_list_end(
+    offset: usize,
+    count: usize,
+    item_len: usize,
+    field: &'static str,
+) -> Result<usize> {
+    let byte_len = count
+        .checked_mul(item_len)
+        .ok_or_else(|| CrafterError::invalid_field_value(field, "RSN list byte length overflow"))?;
+    offset
+        .checked_add(byte_len)
+        .ok_or_else(|| CrafterError::invalid_field_value(field, "RSN list end offset overflow"))
+}
+
+fn copy_selector(bytes: &[u8], offset: usize) -> [u8; RSN_SUITE_SELECTOR_LEN] {
+    [
+        bytes[offset],
+        bytes[offset + 1],
+        bytes[offset + 2],
+        bytes[offset + 3],
+    ]
+}
+
+fn copy_pmkid(bytes: &[u8], offset: usize) -> [u8; RSN_PMKID_LEN] {
+    [
+        bytes[offset],
+        bytes[offset + 1],
+        bytes[offset + 2],
+        bytes[offset + 3],
+        bytes[offset + 4],
+        bytes[offset + 5],
+        bytes[offset + 6],
+        bytes[offset + 7],
+        bytes[offset + 8],
+        bytes[offset + 9],
+        bytes[offset + 10],
+        bytes[offset + 11],
+        bytes[offset + 12],
+        bytes[offset + 13],
+        bytes[offset + 14],
+        bytes[offset + 15],
+    ]
 }
 
 #[cfg(test)]
@@ -1009,6 +1507,187 @@ mod tests {
         assert_eq!(
             <[u8; RSN_CAPABILITIES_LEN]>::from(capabilities),
             [0x01, 0xc0]
+        );
+    }
+
+    #[test]
+    fn rsn_information_element_decodes_and_encodes_fixture_value_bytes() {
+        let bytes = [
+            0x01, 0x00, // version
+            0x00, 0x0f, 0xac, 0x04, // group cipher: CCMP-128
+            0x01, 0x00, // pairwise count
+            0x00, 0x0f, 0xac, 0x04, // pairwise cipher: CCMP-128
+            0x01, 0x00, // AKM count
+            0x00, 0x0f, 0xac, 0x02, // AKM: PSK
+            0x0c, 0x00, // RSN capabilities
+        ];
+
+        let rsn = RsnInformation::decode(bytes).unwrap();
+
+        assert_eq!(rsn.version(), RSN_VERSION_1);
+        assert_eq!(rsn.group_cipher(), RSN_CIPHER_SUITE_CCMP_128);
+        assert_eq!(rsn.pairwise_ciphers(), &[RSN_CIPHER_SUITE_CCMP_128]);
+        assert_eq!(rsn.akm_suites(), &[RSN_AKM_SUITE_PSK]);
+        assert_eq!(rsn.capabilities().unwrap().bits(), 0x000c);
+        assert!(!rsn.pmkid_count_present());
+        assert!(rsn.pmkids().is_empty());
+        assert_eq!(rsn.group_management_cipher(), None);
+        assert!(rsn.trailing_bytes().is_empty());
+        assert_eq!(rsn.to_tagged_parameter_value().unwrap(), bytes);
+        assert_eq!(rsn.encode().unwrap(), bytes);
+    }
+
+    #[test]
+    fn rsn_information_element_preserves_unknown_selectors_pmkids_group_management_and_extensions()
+    {
+        let pmkid = [
+            0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d,
+            0x1e, 0x1f,
+        ];
+        let vendor_group = RsnCipherSuite::new([0x02, 0x00, 0x5e], 0x99);
+        let unknown_pairwise = RsnCipherSuite::new(RSN_SUITE_SELECTOR_OUI, 0xfe);
+        let vendor_akm = RsnAkmSuite::new([0x02, 0x00, 0x5e], 0x55);
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&RSN_VERSION_1.to_le_bytes());
+        bytes.extend_from_slice(&vendor_group.to_bytes());
+        bytes.extend_from_slice(&2u16.to_le_bytes());
+        bytes.extend_from_slice(&RSN_CIPHER_SUITE_CCMP_128.to_bytes());
+        bytes.extend_from_slice(&unknown_pairwise.to_bytes());
+        bytes.extend_from_slice(&2u16.to_le_bytes());
+        bytes.extend_from_slice(&RSN_AKM_SUITE_PSK.to_bytes());
+        bytes.extend_from_slice(&vendor_akm.to_bytes());
+        bytes.extend_from_slice(
+            &RsnCapabilities::new()
+                .with_management_frame_protection_required(true)
+                .with_management_frame_protection_capable(true)
+                .to_le_bytes(),
+        );
+        bytes.extend_from_slice(&1u16.to_le_bytes());
+        bytes.extend_from_slice(&pmkid);
+        bytes.extend_from_slice(&RSN_CIPHER_SUITE_AES_128_CMAC.to_bytes());
+        bytes.extend_from_slice(&[0xee, 0xff]);
+
+        let rsn = RsnInformation::decode(&bytes).unwrap();
+
+        assert_eq!(rsn.group_cipher(), vendor_group);
+        assert_eq!(
+            rsn.pairwise_cipher_list(),
+            &[RSN_CIPHER_SUITE_CCMP_128, unknown_pairwise]
+        );
+        assert_eq!(rsn.akm_list(), &[RSN_AKM_SUITE_PSK, vendor_akm]);
+        assert!(rsn.capabilities().unwrap().mfp_required());
+        assert!(rsn.capabilities().unwrap().mfp_capable());
+        assert!(rsn.pmkid_count_present());
+        assert_eq!(rsn.pmkid_list(), &[pmkid]);
+        assert_eq!(
+            rsn.group_management_cipher_suite(),
+            Some(RSN_CIPHER_SUITE_AES_128_CMAC)
+        );
+        assert_eq!(rsn.extension_bytes(), &[0xee, 0xff]);
+        assert_eq!(rsn.to_bytes().unwrap(), bytes);
+    }
+
+    #[test]
+    fn rsn_information_element_builder_encodes_value_bytes() {
+        let pmkids = [[0x44; 16], [0x55; 16]];
+        let rsn = RsnInformation::new()
+            .with_version(2)
+            .with_group_cipher_suite(RSN_CIPHER_SUITE_GCMP_256)
+            .with_pairwise_cipher_list([RSN_CIPHER_SUITE_GCMP_256, RSN_CIPHER_SUITE_CCMP_128])
+            .with_akm_list([RSN_AKM_SUITE_SAE])
+            .with_capabilities(RsnCapabilities::new().with_extended_key_id(true))
+            .with_pmkid_list(pmkids)
+            .with_group_management_cipher_suite(RSN_CIPHER_SUITE_BIP_GMAC_128)
+            .with_extension_bytes([0xaa]);
+        let mut expected = Vec::new();
+        expected.extend_from_slice(&2u16.to_le_bytes());
+        expected.extend_from_slice(&RSN_CIPHER_SUITE_GCMP_256.to_bytes());
+        expected.extend_from_slice(&2u16.to_le_bytes());
+        expected.extend_from_slice(&RSN_CIPHER_SUITE_GCMP_256.to_bytes());
+        expected.extend_from_slice(&RSN_CIPHER_SUITE_CCMP_128.to_bytes());
+        expected.extend_from_slice(&1u16.to_le_bytes());
+        expected.extend_from_slice(&RSN_AKM_SUITE_SAE.to_bytes());
+        expected.extend_from_slice(&0x2000u16.to_le_bytes());
+        expected.extend_from_slice(&2u16.to_le_bytes());
+        expected.extend_from_slice(&[0x44; 16]);
+        expected.extend_from_slice(&[0x55; 16]);
+        expected.extend_from_slice(&RSN_CIPHER_SUITE_BIP_GMAC_128.to_bytes());
+        expected.push(0xaa);
+
+        assert_eq!(rsn.to_tagged_parameter_value().unwrap(), expected);
+        assert_eq!(RsnInformation::decode(&expected).unwrap(), rsn);
+    }
+
+    #[test]
+    fn rsn_information_element_optional_tails_round_trip_at_their_boundaries() {
+        let without_capabilities = RsnInformation::new()
+            .without_capabilities()
+            .with_trailing_bytes([0xaa]);
+        let without_pmkid_count = RsnInformation::new().with_trailing_bytes([0xbb]);
+        let with_zero_pmkid_count = RsnInformation::new()
+            .with_pmkid_count_present(true)
+            .with_trailing_bytes([0xcc, 0xdd, 0xee]);
+
+        for rsn in [
+            without_capabilities,
+            without_pmkid_count,
+            with_zero_pmkid_count,
+        ] {
+            let encoded = rsn.encode().unwrap();
+            assert_eq!(RsnInformation::decode(&encoded).unwrap(), rsn);
+        }
+    }
+
+    #[test]
+    fn rsn_information_element_pairwise_count_length_mismatch_is_structured_error() {
+        let bytes = [
+            0x01, 0x00, 0x00, 0x0f, 0xac, 0x04, 0x02, 0x00, 0x00, 0x0f, 0xac, 0x04,
+        ];
+        let error = RsnInformation::decode(bytes).unwrap_err();
+
+        assert_eq!(
+            error,
+            CrafterError::buffer_too_short("rsn_information_element.pairwise_ciphers", 16, 12)
+        );
+    }
+
+    #[test]
+    fn rsn_information_element_akm_count_length_mismatch_is_structured_error() {
+        let bytes = [
+            0x01, 0x00, 0x00, 0x0f, 0xac, 0x04, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x04, 0x02, 0x00,
+            0x00, 0x0f, 0xac, 0x02,
+        ];
+        let error = RsnInformation::decode(bytes).unwrap_err();
+
+        assert_eq!(
+            error,
+            CrafterError::buffer_too_short("rsn_information_element.akm_suites", 22, 18)
+        );
+    }
+
+    #[test]
+    fn rsn_information_element_pmkid_count_length_mismatch_is_structured_error() {
+        let mut bytes = RsnInformation::new()
+            .with_pmkids([[0x10; 16]])
+            .encode()
+            .unwrap();
+        let pmkid_count_offset = 20;
+        bytes[pmkid_count_offset..pmkid_count_offset + 2].copy_from_slice(&2u16.to_le_bytes());
+        let error = RsnInformation::decode(bytes).unwrap_err();
+
+        assert_eq!(
+            error,
+            CrafterError::buffer_too_short("rsn_information_element.pmkids", 54, 38)
+        );
+    }
+
+    #[test]
+    fn rsn_information_element_short_mandatory_prefix_is_structured_error() {
+        let error = RsnInformation::decode([0x01]).unwrap_err();
+
+        assert_eq!(
+            error,
+            CrafterError::buffer_too_short("rsn_information_element.version", 2, 1)
         );
     }
 }
