@@ -3,7 +3,7 @@ mod support;
 
 use std::collections::HashSet;
 use std::fs;
-use std::net::{Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::{Path, PathBuf};
 
 use crafter::core::{
@@ -166,6 +166,12 @@ struct PcapFixtureRecord {
     seconds: u64,
     fractional: u32,
     fixture_name: &'static str,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Dot11TextArtifact {
+    path: &'static str,
+    section_start: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -928,6 +934,42 @@ const DOT11_FIXTURES: &[ValidFixtureCase] = &[
         summary_path: None,
     },
 ];
+
+const DOT11_TEXT_ARTIFACTS: &[Dot11TextArtifact] = &[
+    Dot11TextArtifact {
+        path: "docs/dot11.md",
+        section_start: None,
+    },
+    Dot11TextArtifact {
+        path: "docs/dot11-live-manual.md",
+        section_start: None,
+    },
+    Dot11TextArtifact {
+        path: "docs/protocols/dot11-source-manifest.md",
+        section_start: None,
+    },
+    Dot11TextArtifact {
+        path: "docs/protocols/dot11-api-inventory.md",
+        section_start: None,
+    },
+    Dot11TextArtifact {
+        path: "crafter/tests/fixtures/dot11/README.md",
+        section_start: None,
+    },
+    Dot11TextArtifact {
+        path: ".agents/docs/cookbook.md",
+        section_start: Some("## Build Dot11 Stacks"),
+    },
+];
+
+const ALLOWED_DOT11_SYNTHETIC_SSIDS: &[&str] = &[
+    "crafter",
+    "libcrafter-dot11-dry-run",
+    "libcrafter-rsn",
+    "rsn-fixture",
+];
+
+const ALLOWED_DOT11_SYNTHETIC_SSID_PREFIXES: &[&str] = &["dot11-agent-"];
 
 const PCAP_FIXTURES: &[PcapFixtureCase] = &[
     PcapFixtureCase {
@@ -3340,6 +3382,413 @@ fn assert_lower_dash_name(name: &str, label: &str) {
     );
 }
 
+fn repository_path(path: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap_or_else(|| panic!("CARGO_MANIFEST_DIR should have a repository parent"))
+        .join(path)
+}
+
+fn focused_dot11_artifact_text(artifact: Dot11TextArtifact) -> (String, usize) {
+    let path = repository_path(artifact.path);
+    let text = fs::read_to_string(&path).unwrap_or_else(|err| {
+        panic!(
+            "Dot11 artifact {} should be readable at {}: {err}",
+            artifact.path,
+            path.display()
+        )
+    });
+
+    let Some(section_start) = artifact.section_start else {
+        return (text, 1);
+    };
+
+    let start = text.find(section_start).unwrap_or_else(|| {
+        panic!(
+            "Dot11 artifact {} should contain focused section {section_start:?}",
+            artifact.path
+        )
+    });
+    let first_line = text[..start].lines().count() + 1;
+    let section = &text[start..];
+    let end = section[section_start.len()..]
+        .find("\n## ")
+        .map(|offset| section_start.len() + offset)
+        .unwrap_or(section.len());
+
+    (section[..end].to_string(), first_line)
+}
+
+fn add_dot11_violation(
+    violations: &mut Vec<String>,
+    label: &str,
+    line_number: Option<usize>,
+    reason: impl Into<String>,
+) {
+    let reason = reason.into();
+    if let Some(line_number) = line_number {
+        violations.push(format!("{label}:{line_number}: {reason}"));
+    } else {
+        violations.push(format!("{label}: {reason}"));
+    }
+}
+
+fn scan_dot11_text_artifact(artifact: Dot11TextArtifact, violations: &mut Vec<String>) {
+    let (text, first_line) = focused_dot11_artifact_text(artifact);
+    for (line_index, line) in text.lines().enumerate() {
+        scan_dot11_text_line(artifact.path, first_line + line_index, line, violations);
+    }
+}
+
+fn scan_dot11_text_line(label: &str, line_number: usize, line: &str, violations: &mut Vec<String>) {
+    let lower = line.to_ascii_lowercase();
+
+    for marker in [
+        "password=",
+        "password:",
+        "passphrase=",
+        "passphrase:",
+        "psk=",
+        "psk:",
+        "wpa_passphrase=",
+        "api_key=",
+        "secret=",
+        "token=",
+        "private_key=",
+        "-----begin ",
+    ] {
+        if lower.contains(marker) {
+            add_dot11_violation(
+                violations,
+                label,
+                Some(line_number),
+                format!("contains credential marker {marker:?}"),
+            );
+        }
+    }
+
+    for marker in [
+        "ssid=",
+        "ssid:",
+        "bssid=",
+        "bssid:",
+        "captured on ",
+        "captured from ",
+        "pcap captured",
+        "tcpdump -i",
+        "airodump",
+        "airmon-ng",
+        "wlan0",
+        "wlp",
+        "mon0",
+    ] {
+        if lower.contains(marker) {
+            add_dot11_violation(
+                violations,
+                label,
+                Some(line_number),
+                format!("contains live-capture or live-identifier marker {marker:?}"),
+            );
+        }
+    }
+
+    scan_dot11_ssid_builders(label, line_number, line, violations);
+    scan_dot11_macaddr_constructors(label, line_number, line, violations);
+    scan_dot11_ipv4addr_constructors(label, line_number, line, violations);
+    scan_dot11_text_ip_and_mac_tokens(label, line_number, line, violations);
+}
+
+fn scan_dot11_ssid_builders(
+    label: &str,
+    line_number: usize,
+    line: &str,
+    violations: &mut Vec<String>,
+) {
+    let mut rest = line;
+    while let Some(index) = rest.find(".ssid(") {
+        rest = &rest[index + ".ssid(".len()..];
+        let Some(start_quote) = rest.find('"') else {
+            continue;
+        };
+        let after_quote = &rest[start_quote + 1..];
+        let Some(end_quote) = after_quote.find('"') else {
+            continue;
+        };
+        let ssid = &after_quote[..end_quote];
+        assert_allowed_dot11_ssid(label, Some(line_number), ssid, violations);
+        rest = &after_quote[end_quote + 1..];
+    }
+}
+
+fn scan_dot11_macaddr_constructors(
+    label: &str,
+    line_number: usize,
+    line: &str,
+    violations: &mut Vec<String>,
+) {
+    for marker in ["MacAddr::new([", "MacAddr::from(["] {
+        let mut rest = line;
+        while let Some(index) = rest.find(marker) {
+            rest = &rest[index + marker.len()..];
+            let Some(end) = rest.find(']') else {
+                break;
+            };
+            if let Some(bytes) = parse_u8_array::<6>(&rest[..end]) {
+                assert_allowed_dot11_mac(
+                    label,
+                    Some(line_number),
+                    MacAddr::new(bytes),
+                    "MacAddr constructor",
+                    violations,
+                );
+            }
+            rest = &rest[end + 1..];
+        }
+    }
+}
+
+fn scan_dot11_ipv4addr_constructors(
+    label: &str,
+    line_number: usize,
+    line: &str,
+    violations: &mut Vec<String>,
+) {
+    let mut rest = line;
+    while let Some(index) = rest.find("Ipv4Addr::new(") {
+        rest = &rest[index + "Ipv4Addr::new(".len()..];
+        let Some(end) = rest.find(')') else {
+            break;
+        };
+        if let Some(bytes) = parse_u8_array::<4>(&rest[..end]) {
+            assert_allowed_dot11_ip(
+                label,
+                Some(line_number),
+                IpAddr::V4(Ipv4Addr::from(bytes)),
+                "Ipv4Addr constructor",
+                violations,
+            );
+        }
+        rest = &rest[end + 1..];
+    }
+}
+
+fn scan_dot11_text_ip_and_mac_tokens(
+    label: &str,
+    line_number: usize,
+    line: &str,
+    violations: &mut Vec<String>,
+) {
+    for token in line.split(|ch: char| {
+        !(ch.is_ascii_alphanumeric()
+            || ch == '.'
+            || ch == ':'
+            || ch == '/'
+            || ch == '-'
+            || ch == '_')
+    }) {
+        let token = token.trim_matches(|ch| ch == '-' || ch == '.' || ch == ':' || ch == '/');
+        if token.is_empty() {
+            continue;
+        }
+
+        let without_cidr = token.split('/').next().unwrap_or(token);
+        let mac_candidate = if without_cidr.matches(':').count() >= 5 {
+            without_cidr.split('-').next().unwrap_or(without_cidr)
+        } else {
+            without_cidr
+        };
+        if let Ok(mac) = mac_candidate.parse::<MacAddr>() {
+            assert_allowed_dot11_mac(label, Some(line_number), mac, "MAC literal", violations);
+            continue;
+        }
+
+        if without_cidr.contains(['.', ':']) {
+            let ip_candidate = without_cidr.trim_matches(|ch| ch == '-' || ch == '.' || ch == ':');
+            if let Ok(ip) = ip_candidate.parse::<IpAddr>() {
+                assert_allowed_dot11_ip(label, Some(line_number), ip, "IP literal", violations);
+            }
+        }
+    }
+}
+
+fn parse_u8_array<const N: usize>(body: &str) -> Option<[u8; N]> {
+    let parts = body.split(',').map(str::trim).collect::<Vec<_>>();
+    if parts.len() != N {
+        return None;
+    }
+
+    let mut bytes = [0u8; N];
+    for (index, part) in parts.iter().enumerate() {
+        bytes[index] = parse_u8_literal(part)?;
+    }
+    Some(bytes)
+}
+
+fn parse_u8_literal(input: &str) -> Option<u8> {
+    let input = input.trim();
+    if let Some(hex) = input
+        .strip_prefix("0x")
+        .or_else(|| input.strip_prefix("0X"))
+    {
+        u8::from_str_radix(hex, 16).ok()
+    } else {
+        input.parse::<u8>().ok()
+    }
+}
+
+fn scan_dot11_packet_fixture(
+    case: &ValidFixtureCase,
+    packet: &Packet,
+    violations: &mut Vec<String>,
+) {
+    let label = format!("crafter/tests/fixtures/{}", case.path);
+
+    if let Some(dot11) = packet.layer::<Dot11>() {
+        for (field, mac) in [
+            ("addr1", dot11.addr1_value()),
+            ("addr2", dot11.addr2_value()),
+            ("addr3", dot11.addr3_value()),
+            ("addr4", dot11.addr4_value()),
+            ("bssid", dot11.bssid()),
+        ] {
+            if let Some(mac) = mac {
+                assert_allowed_dot11_mac(&label, None, mac, field, violations);
+            }
+        }
+
+        for tag in dot11.tagged_parameters() {
+            if tag.id() == 0 {
+                let ssid = std::str::from_utf8(tag.data()).unwrap_or_else(|_| {
+                    add_dot11_violation(
+                        violations,
+                        &label,
+                        None,
+                        "SSID tag contains non-UTF-8 bytes",
+                    );
+                    ""
+                });
+                assert_allowed_dot11_ssid(&label, None, ssid, violations);
+            }
+        }
+    }
+
+    if let Some(ipv4) = packet.layer::<Ipv4>() {
+        assert_allowed_dot11_ip(
+            &label,
+            None,
+            IpAddr::V4(ipv4.source()),
+            "IPv4 source",
+            violations,
+        );
+        assert_allowed_dot11_ip(
+            &label,
+            None,
+            IpAddr::V4(ipv4.destination()),
+            "IPv4 destination",
+            violations,
+        );
+    }
+
+    if let Some(ipv6) = packet.layer::<Ipv6>() {
+        assert_allowed_dot11_ip(
+            &label,
+            None,
+            IpAddr::V6(ipv6.source()),
+            "IPv6 source",
+            violations,
+        );
+        assert_allowed_dot11_ip(
+            &label,
+            None,
+            IpAddr::V6(ipv6.destination()),
+            "IPv6 destination",
+            violations,
+        );
+    }
+}
+
+fn assert_allowed_dot11_ssid(
+    label: &str,
+    line_number: Option<usize>,
+    ssid: &str,
+    violations: &mut Vec<String>,
+) {
+    if ssid.is_empty()
+        || ALLOWED_DOT11_SYNTHETIC_SSIDS.contains(&ssid)
+        || ALLOWED_DOT11_SYNTHETIC_SSID_PREFIXES
+            .iter()
+            .any(|prefix| ssid.starts_with(prefix))
+    {
+        return;
+    }
+
+    add_dot11_violation(
+        violations,
+        label,
+        line_number,
+        format!("SSID {ssid:?} is not an allowed synthetic Dot11 identifier"),
+    );
+}
+
+fn assert_allowed_dot11_mac(
+    label: &str,
+    line_number: Option<usize>,
+    mac: MacAddr,
+    context: &str,
+    violations: &mut Vec<String>,
+) {
+    if is_allowed_dot11_mac(mac) {
+        return;
+    }
+
+    add_dot11_violation(
+        violations,
+        label,
+        line_number,
+        format!("{context} {mac} is not an allowed synthetic Dot11 MAC"),
+    );
+}
+
+fn is_allowed_dot11_mac(mac: MacAddr) -> bool {
+    let octets = mac.octets();
+    mac == MacAddr::ZERO
+        || mac.is_broadcast()
+        || matches!(octets, [0x00, 0x00, 0x5e, 0x00, 0x53, _])
+        || matches!(octets, [0x02, 0x00, 0x5e, 0x10, _, _])
+}
+
+fn assert_allowed_dot11_ip(
+    label: &str,
+    line_number: Option<usize>,
+    ip: IpAddr,
+    context: &str,
+    violations: &mut Vec<String>,
+) {
+    if is_allowed_dot11_ip(ip) {
+        return;
+    }
+
+    add_dot11_violation(
+        violations,
+        label,
+        line_number,
+        format!("{context} {ip} is outside documentation address space"),
+    );
+}
+
+fn is_allowed_dot11_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ipv4) => matches!(
+            ipv4.octets(),
+            [192, 0, 2, _] | [198, 51, 100, _] | [203, 0, 113, _]
+        ),
+        IpAddr::V6(ipv6) => {
+            let segments = ipv6.segments();
+            segments[0] == 0x2001 && segments[1] == 0x0db8
+        }
+    }
+}
+
 #[test]
 fn valid_fixture_catalog_covers_supported_protocols() {
     let covered = VALID_FIXTURES
@@ -3941,6 +4390,30 @@ fn fixture_tree_hygiene_matches_readme_conventions() {
             "byte fixture {path} must be listed in a fixture catalog"
         );
     }
+}
+
+#[test]
+fn no_sensitive_dot11_artifacts() {
+    let mut violations = Vec::new();
+
+    for artifact in DOT11_TEXT_ARTIFACTS {
+        scan_dot11_text_artifact(*artifact, &mut violations);
+    }
+
+    for case in DOT11_FIXTURES {
+        ensure_fixture_exists(case.path);
+        let bytes = fixture_bytes_for_case(case);
+        let target = packet_target_for_case(case);
+        let packet = decode_packet(target, &bytes)
+            .unwrap_or_else(|err| panic!("fixture {} should decode: {err}", case.path));
+        scan_dot11_packet_fixture(case, &packet, &mut violations);
+    }
+
+    assert!(
+        violations.is_empty(),
+        "Dot11 artifacts contain sensitive or live-looking identifiers:\n{}",
+        violations.join("\n")
+    );
 }
 
 #[test]

@@ -283,6 +283,14 @@ the `00:00:5e:00:53:00` range, documentation IP address space such as
 bytes. Real SSIDs, BSSIDs, captures, credentials, public addresses, and live
 host identifiers do not belong in tracked documentation or fixtures.
 
+The tracked Dot11 artifact hygiene check intentionally allows only narrow
+synthetic Wi-Fi identifiers: RFC 7042/RFC 9542 documentation MACs matching
+`00:00:5e:00:53:*`, broadcast or zero MACs where the frame shape calls for
+them, and the local-administered fixture range `02:00:5e:10:*:*`. Allowed
+synthetic SSID or payload strings are `libcrafter-rsn`,
+`libcrafter-dot11-dry-run`, `dot11-agent-*`, and fixture-only `crafter` or
+`rsn-fixture`.
+
 ## Validation
 
 Focused automated coverage stays offline:
