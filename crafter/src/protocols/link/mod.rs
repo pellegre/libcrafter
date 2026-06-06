@@ -14,6 +14,9 @@ use crate::protocols::ipv6::Ipv6;
 use crate::registry::ProtocolRegistry;
 
 mod arp;
+mod dot11;
+mod llc;
+mod radiotap;
 
 pub(crate) use self::arp::append_arp_packet;
 pub use self::arp::{
@@ -24,6 +27,9 @@ pub use self::arp::{
     ARP_OP_RARP_REQUEST, ARP_OP_REPLY, ARP_OP_REQUEST, ARP_OP_RESERVED, ARP_OP_RESERVED_MAX,
     ARP_PRO_IPV4,
 };
+pub use self::dot11::Dot11;
+pub use self::llc::LlcSnap;
+pub use self::radiotap::Radiotap;
 
 /// Ethernet type for IPv4 payloads.
 pub const ETHERTYPE_IPV4: u16 = 0x0800;
