@@ -13,6 +13,8 @@ pub mod record;
 pub mod sniffer;
 pub mod source;
 pub mod transform;
+#[cfg(test)]
+mod transform_contract;
 pub mod transmitter;
 pub mod writer;
 
