@@ -4,6 +4,7 @@ use crate::error::Result;
 use crate::packet::{LinkType, NetworkLayer, Packet, Raw};
 use crate::protocols::dhcp::{append_dhcp_packet, is_dhcp_port_pair, looks_like_dhcp_payload};
 use crate::protocols::dns::{append_dns_packet, DNS_PORT};
+use crate::protocols::eapol::append_eapol_packet;
 use crate::protocols::icmp::{append_icmp_packet, append_icmpv6_packet};
 use crate::protocols::ipv4::{
     append_ipv4_packet_with_registry, IPPROTO_ICMP, IPPROTO_ICMPV6, IPPROTO_TCP, IPPROTO_UDP,
@@ -13,7 +14,7 @@ use crate::protocols::link::{
     append_arp_packet, append_vlan_packet_with_registry, decode_dot11_with_registry,
     decode_ethernet_with_registry, decode_linux_sll_with_registry,
     decode_null_loopback_with_registry, decode_radiotap_with_registry, ETHERTYPE_ARP,
-    ETHERTYPE_IPV4, ETHERTYPE_IPV6, ETHERTYPE_VLAN,
+    ETHERTYPE_EAPOL, ETHERTYPE_IPV4, ETHERTYPE_IPV6, ETHERTYPE_VLAN,
 };
 use crate::protocols::transport::{
     append_tcp_packet_with_registry, append_udp_packet_with_registry,
@@ -144,6 +145,9 @@ impl ProtocolRegistry {
         });
         registry.bind_ethertype_with_registry(ETHERTYPE_IPV6, |registry, packet, payload| {
             append_ipv6_packet_with_registry(registry, packet, payload)
+        });
+        registry.bind_ethertype_with_registry(ETHERTYPE_EAPOL, |_registry, packet, payload| {
+            append_eapol_packet(packet, payload)
         });
 
         registry.bind_ipv4_protocol_with_registry(IPPROTO_ICMP, |_registry, packet, payload| {
