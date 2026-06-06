@@ -111,6 +111,20 @@ class ScapyL2Ipv4EncodeDecodeTest(unittest.TestCase):
         packet = normalize.decode_root("l2:ipv4", vector.to_bytes())
         self.assertEqual(type(packet).__name__, "IP")
 
+    def test_ipv4_flag_domains_materialize_to_wire_bits(self) -> None:
+        cases = {
+            "none": 0,
+            "reserved": 0b100,
+            "df": 0b010,
+            "mf": 0b001,
+            "df_mf": 0b011,
+            "all": 0b111,
+        }
+        for value, expected in cases.items():
+            with self.subTest(value=value):
+                self.assertEqual(packets._ipv4_flags(value), expected)
+        self.assertEqual(packets._ipv4_flags(["reserved", "mf"]), 0b101)
+
 
 def _icmp_live_plan(icmp_fields: dict, *, case: str, payload_hex: str = "0102030405") -> PacketPlan:
     """Build an l2:ipv4 ICMP live-matrix plan with the given icmp body fields."""

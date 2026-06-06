@@ -16,8 +16,8 @@
 //! Addresses are documentation / link-local space only (`fe80::/10`,
 //! `2001:db8::/32`, the solicited-node multicast `ff02::1:ff..`) and MACs use
 //! the documentation `02:00:5e:00:53:..` range, per the project address-space
-//! policy. These are the same NDP cases the oracle validates against the scapy
-//! reference (`tools/oracle/specs/fixtures/scapy-cases.json`:
+//! policy. These are the same NDP cases the oracle validates against the
+//! reference backend fixture set:
 //! `ndp-router-solicitation`, `ndp-router-advertisement`,
 //! `ndp-neighbor-solicitation`, `ndp-neighbor-advertisement`, `ndp-redirect`).
 
@@ -388,10 +388,10 @@ fn router_advertisement_round_trips_with_route_rdnss_dnssl_mtu() {
     // The full DNS-and-routing SLAAC advertisement: Route Information
     // (RFC 4191), RDNSS + DNSSL (RFC 8106), and MTU (RFC 4861), in that order,
     // to prove every extension field and the option order round-trip together.
-    // The oracle's byte-proof (tools/oracle/specs/fixtures/scapy-cases.json:
-    // ndp-ra-route-rdnss-dnssl-mtu) materializes the same stack in scapy; that
-    // case pins the Route Information option to its 16-octet (Length 3) form to
-    // match scapy's encoder, whereas this round-trip uses the natural
+    // The oracle's byte-proof for ndp-ra-route-rdnss-dnssl-mtu materializes the
+    // same stack in the reference backend; that case pins the Route Information
+    // option to its 16-octet (Length 3) form to match the reference encoder,
+    // whereas this round-trip uses the natural
     // length-derived form (a /48 prefix carries 8 octets, Length 2).
     let body = RouterAdvertisement::new()
         .reachable_time(0)
@@ -724,15 +724,15 @@ fn deferred_icmpv6_types_decode_to_unknown_raw_without_panic() {
 // RFC 9777 type 143 report + type 130 v2 query). These are the primary
 // executable round-trip gate for the families validated in oracle step 30.
 //
-// Reference (scapy) byte agreement: MLDv1 and MLDv2 have native scapy classes
-// (ICMPv6MLQuery / ICMPv6MLReport / ICMPv6MLDone / ICMPv6MLQuery2 /
+// Reference backend byte agreement: MLDv1 and MLDv2 have native reference
+// classes (ICMPv6MLQuery / ICMPv6MLReport / ICMPv6MLDone / ICMPv6MLQuery2 /
 // ICMPv6MLReport2 / ICMPv6MLDMultAddrRec), and the oracle's MLD cases
 // (mldv1-general-query, mldv1-report, mldv1-done, mldv2-report-two-records,
-// mldv2-general-query in tools/oracle/specs/fixtures/scapy-cases.json) were
-// proved byte-identical against scapy 2.7 by materializing both sides and
-// diffing the IPv6-level ICMPv6 bytes. ICMPv6 Extended Echo (160/161) has NO
-// native scapy ICMPv6 class, so its correctness is gated by these Rust
-// round-trips and the per-module unit tests rather than a scapy byte-proof — a
+// mldv2-general-query in the reference fixture set) were proved byte-identical
+// against the reference backend by materializing both sides and diffing the
+// IPv6-level ICMPv6 bytes. ICMPv6 Extended Echo (160/161) has NO native
+// reference ICMPv6 class, so its correctness is gated by these Rust round-trips
+// and the per-module unit tests rather than a reference byte-proof — a
 // documented limitation recorded in the oracle case notes.
 // ===========================================================================
 

@@ -1749,14 +1749,28 @@ def _arp_op(value: object) -> int | str:
 
 
 def _ipv4_flags(value: object) -> object:
+    names = {
+        "mf": 0b001,
+        "more-fragments": 0b001,
+        "df": 0b010,
+        "dont-fragment": 0b010,
+        "reserved": 0b100,
+    }
     if isinstance(value, str):
         lowered = value.lower().replace("_", "-")
         if lowered in {"none", "0"}:
             return 0
-        if lowered in {"df", "dont-fragment"}:
-            return "DF"
-        if lowered in {"mf", "more-fragments"}:
-            return "MF"
+        if lowered == "df-mf":
+            return names["df"] | names["mf"]
+        if lowered == "all":
+            return names["reserved"] | names["df"] | names["mf"]
+        if lowered in names:
+            return names[lowered]
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        flags = 0
+        for item in value:
+            flags |= _int(_ipv4_flags(item), 0)
+        return flags
     return value
 
 

@@ -6804,8 +6804,18 @@ def _pcap_records(report: object) -> list[JSONObject]:
 
     output: list[JSONObject] = []
     for index, item in enumerate(records):
-        output.append(_json_object(item, f"records[{index}]"))
+        record = dict(_json_object(item, f"records[{index}]"))
+        record["layers"] = _canonical_pcap_layers(record.get("layers", []))
+        output.append(record)
     return output
+
+
+def _canonical_pcap_layers(value: object) -> list[str]:
+    aliases = {
+        "Ipv6DestinationOptionsHeader": "ipv6_destination_options",
+        "Ipv6HopByHopOptionsHeader": "ipv6_hop_by_hop",
+    }
+    return [aliases.get(layer, layer) for layer in _string_values(value)]
 
 
 def _select_libcrafter_cases(
