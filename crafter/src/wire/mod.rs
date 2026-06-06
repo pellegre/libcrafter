@@ -16,9 +16,11 @@ pub mod transform;
 pub mod transmitter;
 pub mod writer;
 
+pub use backend::raw_socket::RawSocketWriter;
 pub use error::{Result, WireError};
 pub use packet_wire::{
     OpenedPacketSource, OpenedPacketWriter, PacketWire, PacketWireBuilder, PacketWireTarget,
+    RawSocketWireBuilder,
 };
 pub use record::{
     BackendKind, BluetoothMetadata, MediumMetadata, PacketMetadata, PacketOrigin, PacketRecord,
