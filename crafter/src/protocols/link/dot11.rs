@@ -757,20 +757,42 @@ impl Layer for Dot11 {
 
     fn summary(&self) -> String {
         let frame_control = self.frame_control_value();
-        format!(
-            "Dot11(type={}, subtype={}, addr1={}, addr2={}, addr3={}, protected={})",
-            dot11_frame_type_label(frame_control.frame_type()),
-            dot11_subtype_label(frame_control.frame_type(), frame_control.subtype()),
-            self.effective_addr1(),
-            self.effective_addr2(),
-            self.effective_addr3(),
-            frame_control.protected()
-        )
+        let mut fields = vec![
+            format!("type={}", dot11_frame_type_label(frame_control.frame_type())),
+            format!(
+                "subtype={}",
+                dot11_subtype_label(frame_control.frame_type(), frame_control.subtype())
+            ),
+        ];
+
+        if let Some(source) = self.source() {
+            fields.push(format!("src={source}"));
+        }
+        if let Some(destination) = self.destination() {
+            fields.push(format!("dst={destination}"));
+        }
+        if let Some(bssid) = self.bssid() {
+            fields.push(format!("bssid={bssid}"));
+        }
+
+        fields.push(format!("protected={}", frame_control.protected()));
+
+        if let Some(sequence_control) = self.sequence_control_value() {
+            fields.push(format!("seq={}", sequence_control.sequence_number()));
+            fields.push(format!("frag={}", sequence_control.fragment_number()));
+        }
+        if let Some(qos_control) = self.qos_control_value() {
+            fields.push(format!("qos=0x{qos_control:04x}"));
+        }
+
+        format!("Dot11({})", fields.join(", "))
     }
 
     fn inspection_fields(&self) -> Vec<(&'static str, String)> {
         let frame_control = self.frame_control_value();
-        let mut fields = vec![
+        let mut fields = Vec::new();
+
+        fields.extend([
             (
                 "frame_control",
                 format!(
@@ -780,21 +802,53 @@ impl Layer for Dot11 {
                     dot11_subtype_label(frame_control.frame_type(), frame_control.subtype())
                 ),
             ),
-            ("duration_id", self.effective_duration_id().to_string()),
-            ("addr1", self.effective_addr1().to_string()),
-            ("addr2", self.effective_addr2().to_string()),
-            ("addr3", self.effective_addr3().to_string()),
+            ("type", dot11_frame_type_label(frame_control.frame_type())),
             (
-                "sequence_control",
-                format!("0x{:04x}", self.effective_sequence_control().bits()),
+                "subtype",
+                dot11_subtype_label(frame_control.frame_type(), frame_control.subtype()),
             ),
+            ("duration_id", self.effective_duration_id().to_string()),
             ("protected", frame_control.protected().to_string()),
-        ];
+        ]);
+
+        if let Some(addr1) = self.addr1_value() {
+            fields.push(("addr1", addr1.to_string()));
+        }
+        if let Some(addr2) = self.addr2_value() {
+            fields.push(("addr2", addr2.to_string()));
+        }
+        if let Some(addr3) = self.addr3_value() {
+            fields.push(("addr3", addr3.to_string()));
+        }
 
         if let Some(addr4) = self.addr4_value() {
             fields.push(("addr4", addr4.to_string()));
         }
+        if let Some(source) = self.source() {
+            fields.push(("src", source.to_string()));
+        }
+        if let Some(destination) = self.destination() {
+            fields.push(("dst", destination.to_string()));
+        }
+        if let Some(bssid) = self.bssid() {
+            fields.push(("bssid", bssid.to_string()));
+        }
+        if let Some(sequence_control) = self.sequence_control_value() {
+            fields.push((
+                "sequence_control",
+                format!("0x{:04x}", sequence_control.bits()),
+            ));
+            fields.push((
+                "sequence_number",
+                sequence_control.sequence_number().to_string(),
+            ));
+            fields.push((
+                "fragment_number",
+                sequence_control.fragment_number().to_string(),
+            ));
+        }
         if let Some(qos_control) = self.qos_control_value() {
+            fields.push(("qos", "present".to_string()));
             fields.push(("qos_control", format!("0x{qos_control:04x}")));
         }
         if let Some(ht_control) = self.ht_control_value() {
@@ -2006,6 +2060,16 @@ mod tests {
         decode_dot11_with_registry(&ProtocolRegistry::new(), bytes).unwrap()
     }
 
+    fn dot11_inspection_value(
+        fields: &[(&'static str, String)],
+        name: &str,
+    ) -> Option<String> {
+        fields
+            .iter()
+            .find(|(field, _)| *field == name)
+            .map(|(_, value)| value.clone())
+    }
+
     #[test]
     fn dot11_decode_basic_three_address_data_preserves_raw_tail() {
         let frame_control =
@@ -2030,6 +2094,121 @@ mod tests {
         assert_eq!(dot11.qos_control_value(), None);
         assert_eq!(raw.as_bytes(), b"payload");
         assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+    }
+
+    #[test]
+    fn dot11_summary_show_includes_data_roles_sequence_fragment_and_qos() {
+        let destination = dot11_role_mac(1);
+        let bssid = dot11_role_mac(2);
+        let source = dot11_role_mac(3);
+        let frame_control =
+            dot11_test_frame_control(DOT11_FRAME_TYPE_DATA, DOT11_DATA_SUBTYPE_QOS_DATA)
+                .with_from_ds(true)
+                .with_protected(true);
+        let sequence_control = Dot11SequenceControl::new()
+            .with_sequence_number(0x123)
+            .with_fragment_number(5);
+        let dot11 = Dot11::qos_data()
+            .frame_control(frame_control)
+            .addr1(destination)
+            .addr2(bssid)
+            .addr3(source)
+            .sequence_control(sequence_control)
+            .qos_control(0xabcd);
+
+        let summary = dot11.summary();
+
+        for expected in [
+            "type=data",
+            "subtype=qos-data",
+            "protected=true",
+            "seq=291",
+            "frag=5",
+            "qos=0xabcd",
+        ] {
+            assert!(summary.contains(expected), "{summary}");
+        }
+        assert!(summary.contains(&format!("src={source}")), "{summary}");
+        assert!(summary.contains(&format!("dst={destination}")), "{summary}");
+        assert!(summary.contains(&format!("bssid={bssid}")), "{summary}");
+
+        let fields = dot11.inspection_fields();
+        assert_eq!(dot11_inspection_value(&fields, "type"), Some("data".into()));
+        assert_eq!(
+            dot11_inspection_value(&fields, "subtype"),
+            Some("qos-data".into())
+        );
+        assert_eq!(
+            dot11_inspection_value(&fields, "protected"),
+            Some("true".into())
+        );
+        assert_eq!(
+            dot11_inspection_value(&fields, "sequence_number"),
+            Some("291".into())
+        );
+        assert_eq!(
+            dot11_inspection_value(&fields, "fragment_number"),
+            Some("5".into())
+        );
+        assert_eq!(
+            dot11_inspection_value(&fields, "qos"),
+            Some("present".into())
+        );
+        assert_eq!(
+            dot11_inspection_value(&fields, "qos_control"),
+            Some("0xabcd".into())
+        );
+        assert_eq!(
+            dot11_inspection_value(&fields, "src"),
+            Some(source.to_string())
+        );
+        assert_eq!(
+            dot11_inspection_value(&fields, "dst"),
+            Some(destination.to_string())
+        );
+        assert_eq!(
+            dot11_inspection_value(&fields, "bssid"),
+            Some(bssid.to_string())
+        );
+    }
+
+    #[test]
+    fn dot11_summary_show_exposes_management_roles_without_qos_field() {
+        let destination = dot11_role_mac(1);
+        let source = dot11_role_mac(2);
+        let bssid = dot11_role_mac(3);
+        let dot11 = Dot11::beacon()
+            .addr1(destination)
+            .addr2(source)
+            .addr3(bssid)
+            .sequence_control(Dot11SequenceControl::new().with_sequence_number(7));
+
+        let packet = Packet::from_layer(dot11.clone());
+        let summary = packet.summary();
+        let show = packet.show();
+
+        for expected in [
+            "Dot11(type=management",
+            "subtype=beacon",
+            "protected=false",
+            "seq=7",
+            "frag=0",
+        ] {
+            assert!(summary.contains(expected), "{summary}");
+        }
+        for expected in [
+            "type: management",
+            "subtype: beacon",
+            "protected: false",
+            "sequence_number: 7",
+            "fragment_number: 0",
+        ] {
+            assert!(show.contains(expected), "{show}");
+        }
+        assert!(show.contains(&format!("src: {source}")), "{show}");
+        assert!(show.contains(&format!("dst: {destination}")), "{show}");
+        assert!(show.contains(&format!("bssid: {bssid}")), "{show}");
+        assert!(!show.contains("qos: present"), "{show}");
     }
 
     #[test]
