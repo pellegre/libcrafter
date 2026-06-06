@@ -2,6 +2,10 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 
 use crafter::prelude::*;
 
+fn documentation_mac(last_octet: u8) -> MacAddr {
+    MacAddr::new([0x00, 0x00, 0x5e, 0x00, 0x53, last_octet])
+}
+
 #[test]
 fn prelude_builds_and_compiles_packet() -> crafter::Result<()> {
     let packet = Ipv4::new()
@@ -15,6 +19,199 @@ fn prelude_builds_and_compiles_packet() -> crafter::Result<()> {
     assert!(!compiled.is_empty());
     assert_eq!(compiled.as_bytes()[0] >> 4, 4);
     assert!(packet.summary().contains("Icmp(type=echo-request"));
+
+    Ok(())
+}
+
+#[test]
+fn public_api_dot11_phase15_radiotap_llc_and_send_plan() -> crafter::Result<()> {
+    let station = documentation_mac(0x01);
+    let access_point = documentation_mac(0x02);
+    let destination = documentation_mac(0x03);
+    let to_ds = Dot11::data().frame_control_value().with_to_ds(true);
+    let radiotap_flags = crafter::protocols::link::RADIOTAP_FLAGS_FCS_PRESENT
+        | crafter::protocols::link::RADIOTAP_FLAGS_FAILED_FCS;
+
+    let packet = Radiotap::new()
+        .flags(radiotap_flags)
+        .rate(12)
+        .antenna_signal(-42)
+        / Dot11::data()
+            .frame_control(to_ds)
+            .addr1(access_point)
+            .addr2(station)
+            .addr3(destination)
+            .sequence_number(0x42)
+        / LlcSnap::new().ethertype(ETHERTYPE_IPV4)
+        / Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 10))
+            .dst(Ipv4Addr::new(198, 51, 100, 20))
+        / Icmpv4::echo_request().id(0x4242).seq(1)
+        / Raw::from("phase15");
+
+    let compiled = packet.compile()?;
+    let decoded = Packet::decode_from_link(LinkType::Radiotap, compiled.as_bytes())?;
+    let radiotap = decoded.layer::<Radiotap>().unwrap();
+    let dot11 = decoded.layer::<Dot11>().unwrap();
+    let llc = decoded.layer::<LlcSnap>().unwrap();
+
+    assert_eq!(radiotap.version_value(), Some(0));
+    assert_eq!(radiotap.rate_value(), Some(12));
+    assert_eq!(radiotap.antenna_signal_value(), Some(-42));
+    assert_eq!(radiotap.fcs_status().unwrap().present(), true);
+    assert_eq!(radiotap.fcs_status().unwrap().failed(), true);
+    assert_eq!(dot11.frame_type(), Dot11FrameType::Data);
+    assert_eq!(dot11.data_subtype(), Some(Dot11DataSubtype::Data));
+    assert_eq!(dot11.source(), Some(station));
+    assert_eq!(dot11.destination(), Some(destination));
+    assert_eq!(dot11.bssid(), Some(access_point));
+    assert_eq!(
+        dot11.sequence_control_value().unwrap().sequence_number(),
+        0x42
+    );
+    assert_eq!(llc.ethertype_value(), ETHERTYPE_IPV4);
+    assert!(decoded.layer::<Ipv4>().is_some());
+    assert!(decoded.summary().contains("Radiotap("));
+
+    let plan = packet
+        .send_dry_run(SendOptions::new().iface("wifi-dryrun0"))
+        .expect("radiotap dry-run send plan");
+    assert_eq!(plan.interface(), "wifi-dryrun0");
+    assert_eq!(plan.requested_mode(), SendMode::Auto);
+    assert_eq!(
+        plan.target(),
+        SendTarget::LinkLayer {
+            link_type: LinkType::Radiotap,
+        }
+    );
+    assert_eq!(plan.bytes(), compiled.as_bytes());
+
+    Ok(())
+}
+
+#[test]
+fn public_api_dot11_phase15_eapol_key_and_rsn_builders() -> crafter::Result<()> {
+    let station = documentation_mac(0x11);
+    let access_point = documentation_mac(0x12);
+    let key_information = EapolKeyInformation::new()
+        .with_descriptor_version(2)
+        .with_key_type(true)
+        .with_key_ack(true)
+        .with_key_mic(true)
+        .with_secure(true);
+    let eapol_key = EapolKey::new()
+        .key_information(key_information)
+        .key_length(16)
+        .replay_counter(7)
+        .nonce([0x11; 32])
+        .iv([0x22; 16])
+        .rsc([0x33; 8])
+        .id([0x44; 8])
+        .mic([0x55; 16])
+        .key_data([0xaa, 0xbb, 0xcc]);
+    let eapol_packet = Dot11::data()
+        .addr1(access_point)
+        .addr2(station)
+        .addr3(access_point)
+        / LlcSnap::new().ethertype(ETHERTYPE_EAPOL)
+        / Eapol::key()
+        / eapol_key.clone();
+
+    let eapol_bytes = eapol_packet.compile()?;
+    let decoded_eapol = Packet::decode_from_link(LinkType::Ieee80211, eapol_bytes.as_bytes())?;
+    let decoded_header = decoded_eapol.layer::<Eapol>().unwrap();
+    let decoded_key = decoded_eapol.layer::<EapolKey>().unwrap();
+
+    assert_eq!(decoded_header.version_value(), EAPOL_VERSION_2);
+    assert_eq!(decoded_header.packet_type_kind(), EapolType::Key);
+    assert_eq!(decoded_key.descriptor_type_kind(), EapolDescriptorType::Rsn);
+    assert_eq!(decoded_key.key_information_value(), key_information);
+    assert_eq!(decoded_key.key_length_value(), 16);
+    assert_eq!(decoded_key.replay_counter_value(), 7);
+    assert_eq!(decoded_key.key_data_length_value(), Some(3));
+    assert_eq!(decoded_key.key_data_bytes(), &[0xaa, 0xbb, 0xcc]);
+    assert_eq!(
+        decoded_key.rsn_handshake_metadata().descriptor_type(),
+        EapolDescriptorType::Rsn
+    );
+    assert_eq!(decoded_eapol.compile()?.as_bytes(), eapol_bytes.as_bytes());
+
+    let rsn = RsnInformation::new()
+        .with_pairwise_cipher_list([RSN_CIPHER_SUITE_CCMP_128])
+        .with_akm_list([RSN_AKM_SUITE_PSK])
+        .with_capabilities(
+            RsnCapabilities::new()
+                .with_management_frame_protection_capable(true)
+                .with_management_frame_protection_required(true),
+        );
+    let rsn_tag = Dot11TaggedParameter::from_rsn_information(&rsn)?;
+    let beacon = Dot11::beacon()
+        .addr1(MacAddr::BROADCAST)
+        .addr2(access_point)
+        .addr3(access_point)
+        .ssid(b"phase15")
+        .tag(rsn_tag.clone());
+    let beacon_bytes = Packet::from_layer(beacon).compile()?;
+    let decoded_beacon = Packet::decode_from_link(LinkType::Ieee80211, beacon_bytes.as_bytes())?;
+    let dot11 = decoded_beacon.layer::<Dot11>().unwrap();
+
+    assert_eq!(rsn_tag.id(), DOT11_TAG_RSN);
+    assert_eq!(rsn_tag.rsn_information().unwrap()?, rsn);
+    assert_eq!(
+        dot11.management_subtype(),
+        Some(Dot11ManagementSubtype::Beacon)
+    );
+    assert_eq!(dot11.rsn_information().unwrap()?, rsn);
+    assert_eq!(
+        dot11
+            .rsn_information_elements()
+            .collect::<crafter::Result<Vec<_>>>()?,
+        vec![rsn]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn public_api_dot11_phase15_pcap_link_types_decode() -> crafter::Result<()> {
+    let station = documentation_mac(0x21);
+    let access_point = documentation_mac(0x22);
+    let bare_packet = Dot11::data()
+        .addr1(access_point)
+        .addr2(station)
+        .addr3(access_point)
+        / LlcSnap::new().ethertype(ETHERTYPE_IPV6)
+        / Ipv6::with_addresses(
+            Ipv6Addr::new(0x2001, 0xdb8, 1, 0, 0, 0, 0, 1),
+            Ipv6Addr::new(0x2001, 0xdb8, 2, 0, 0, 0, 0, 2),
+        )
+        .nh(IPPROTO_IPV6_NO_NEXT);
+    let radiotap_packet = Radiotap::new() / bare_packet.clone();
+    let bare_bytes = bare_packet.compile()?;
+    let radiotap_bytes = radiotap_packet.compile()?;
+
+    assert_eq!(PcapLinkType::Ieee80211.datalink(), 105);
+    assert_eq!(PcapLinkType::Ieee80211Radiotap.datalink(), 127);
+    assert_eq!(PcapLinkType::from_datalink(105), PcapLinkType::Ieee80211);
+    assert_eq!(
+        PcapLinkType::from_datalink(127),
+        PcapLinkType::Ieee80211Radiotap
+    );
+    assert_eq!(PcapLinkType::Ieee80211.link_type(), LinkType::Ieee80211);
+    assert_eq!(
+        PcapLinkType::Ieee80211Radiotap.link_type(),
+        LinkType::Radiotap
+    );
+
+    let decoded_bare = PcapLinkType::Ieee80211.decode(bare_bytes.as_bytes())?;
+    assert!(decoded_bare.layer::<Dot11>().is_some());
+    assert!(decoded_bare.layer::<LlcSnap>().is_some());
+    assert!(decoded_bare.layer::<Ipv6>().is_some());
+
+    let decoded_radiotap = PcapLinkType::Ieee80211Radiotap.decode(radiotap_bytes.as_bytes())?;
+    assert!(decoded_radiotap.layer::<Radiotap>().is_some());
+    assert!(decoded_radiotap.layer::<Dot11>().is_some());
+    assert!(decoded_radiotap.layer::<LlcSnap>().is_some());
 
     Ok(())
 }
