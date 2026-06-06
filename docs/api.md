@@ -151,6 +151,30 @@ appropriate.
 The crate-level packet I/O surface lives under `crafter::wire`. See
 [docs/wire.md](wire.md) for the full guide to `PacketWire`, `PacketRecord`
 metadata, `PacketTransform`, `Sniffer`, and `Transmitter`.
+See [docs/wire-api-inventory.md](wire-api-inventory.md) for the inspectable
+API inventory and backend responsibility map.
+
+The public stream shape is:
+
+| API | Role |
+| --- | --- |
+| `PacketWire` | Opens one packet-capable backend or interface and exposes explicit source or writer capabilities. |
+| `PacketSource` | Synchronous packet-record input trait used by `Sniffer`. |
+| `PacketWriter` | Packet-record output trait used by `Transmitter`. |
+| `PacketRecord` | Stream item containing a `Packet` plus inspectable backend, link, pcap, transform, and medium metadata. |
+| `PacketTransform` | Stateful zero/one/many stream transform contract for inbound or outbound packet records. |
+| `Sniffer` | Owns one `PacketSource`, applies inbound transforms, and yields transformed `PacketRecord` values. |
+| `Transmitter` | Owns one `PacketWriter`, applies outbound transforms, and returns ordered write reports. |
+
+`PacketWire::source()`, `PacketWire::writer()`, and `PacketWire::split()`
+consume the opened wire and return typed `WireError::UnsupportedCapability`
+errors when the backend cannot satisfy the requested direction. `pcap` remains
+the low-level file format and libpcap backend module; `wire` is the packet
+stream abstraction built on top.
+
+WPA decryption is not implemented. It belongs as a future stateful
+`PacketTransform` that observes beacons and EAPOL handshakes, keeps per-network
+key state, and emits decrypted packet records without changing `Sniffer`.
 
 Offline pcap input:
 
