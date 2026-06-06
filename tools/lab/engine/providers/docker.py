@@ -313,7 +313,7 @@ def docker_planned_infrastructure(request: LabRequest) -> JSONObject:
             "default_private_cidr": PRIVATE_NETWORK_CIDR,
             "capabilities": ["NET_RAW", "NET_ADMIN"],
             "cap_drop_all": True,
-            "no_new_privileges": True,
+            "no_new_privileges": False,
             "ssh_transport": "localhost-port-forward",
         },
         "public_network_policy": "not_used_private_packet_exchange",
@@ -680,7 +680,7 @@ class DockerLabProviderAdapter:
                 "ssh_transport": "localhost-port-forward",
                 "required_capabilities": ["NET_RAW", "NET_ADMIN"],
                 "cap_drop_all": True,
-                "no_new_privileges": True,
+                "no_new_privileges": False,
                 "planned_private_address": role.planned_ipv4,
                 "planned_private_address_source": role.metadata.get(
                     "planned_private_address_source",

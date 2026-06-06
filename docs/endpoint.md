@@ -54,10 +54,10 @@ Treat Docker daemon and Docker socket access as host-root equivalent. The
 Docker provider should be invoked from the host through the narrow endpoint
 commands; provider containers must not mount the Docker socket. The provider
 also avoids `--privileged`, host networking, host PID mode, and broad host
-filesystem mounts. Containers run with `--cap-drop ALL`,
-`--security-opt no-new-privileges`, and only the packet capabilities for the
-selected exposure: `NET_RAW` plus `NET_ADMIN` for `docker/private`, and
-`NET_RAW` only for NAT-backed LAN and WAN.
+filesystem mounts. Containers run with `--cap-drop ALL`, no privileged or
+host-network mode, no Docker socket mount, and only the packet capabilities
+for the selected exposure: `NET_RAW` plus `NET_ADMIN` for `docker/private`,
+and `NET_RAW` only for NAT-backed LAN and WAN.
 
 Docker environment overrides:
 

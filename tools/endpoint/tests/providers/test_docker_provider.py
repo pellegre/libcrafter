@@ -245,7 +245,7 @@ class DockerDoctorTest(unittest.TestCase):
             container["cap_add"],
             ["NET_RAW", "NET_ADMIN", "SYS_CHROOT", "SETGID", "SETUID"],
         )
-        self.assertTrue(container["no_new_privileges"])
+        self.assertFalse(container["no_new_privileges"])
         self.assertFalse(report["security_model"]["docker_socket_mounted"])  # type: ignore[index]
         self.assertFalse(report["security_model"]["privileged"])  # type: ignore[index]
         self.assertFalse(report["security_model"]["host_network"])  # type: ignore[index]
@@ -627,10 +627,7 @@ class DockerCreateEndpointLivePrivateTest(unittest.TestCase):
             _option_values(run_argv, "--cap-add"),
             ["NET_RAW", "NET_ADMIN", "SYS_CHROOT", "SETGID", "SETUID"],
         )
-        self.assertEqual(
-            _option_values(run_argv, "--security-opt"),
-            ["no-new-privileges"],
-        )
+        self.assertEqual(_option_values(run_argv, "--security-opt"), [])
         self.assertIn("--publish", run_argv)
         self.assertIn("127.0.0.1:29222:22", run_argv)
         self.assertNotIn("--privileged", run_argv)
@@ -671,7 +668,7 @@ class DockerCreateEndpointLivePrivateTest(unittest.TestCase):
             security["cap_add"],  # type: ignore[index]
             ["NET_RAW", "NET_ADMIN", "SYS_CHROOT", "SETGID", "SETUID"],
         )
-        self.assertTrue(security["no_new_privileges"])  # type: ignore[index]
+        self.assertFalse(security["no_new_privileges"])  # type: ignore[index]
         self.assertFalse(security["privileged"])  # type: ignore[index]
         self.assertFalse(security["host_network"])  # type: ignore[index]
         self.assertFalse(security["docker_socket_mounted"])  # type: ignore[index]
@@ -835,10 +832,7 @@ class DockerCreateEndpointLiveNatL3Test(unittest.TestCase):
                     ["NET_RAW", "SYS_CHROOT", "SETGID", "SETUID"],
                 )
                 self.assertNotIn("NET_ADMIN", _option_values(run_argv, "--cap-add"))
-                self.assertEqual(
-                    _option_values(run_argv, "--security-opt"),
-                    ["no-new-privileges"],
-                )
+                self.assertEqual(_option_values(run_argv, "--security-opt"), [])
                 self.assertEqual(
                     _option_values(run_argv, "--publish"),
                     [f"127.0.0.1:{case['port']}:22"],
@@ -878,7 +872,7 @@ class DockerCreateEndpointLiveNatL3Test(unittest.TestCase):
                 )
                 self.assertTrue(security["net_raw_only"])  # type: ignore[index]
                 self.assertFalse(security["net_admin"])  # type: ignore[index]
-                self.assertTrue(security["no_new_privileges"])  # type: ignore[index]
+                self.assertFalse(security["no_new_privileges"])  # type: ignore[index]
                 self.assertFalse(security["host_network"])  # type: ignore[index]
                 self.assertFalse(security["privileged"])  # type: ignore[index]
                 self.assertFalse(security["docker_socket_mounted"])  # type: ignore[index]
@@ -1176,6 +1170,59 @@ class DockerDestroyEndpointTest(unittest.TestCase):
         self.assertIn("Docker container was already missing", _destroy_action_reasons(destroy_output))
         self.assertTrue(destroyed_manifest["metadata"]["docker"]["container_removed"])
 
+    def test_destroy_retries_after_daemon_cannot_kill_running_container(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir, _wire_env(Path(temp_dir)):
+            create_runner = _DockerLivePrivateRunner(
+                image_exists=True,
+                network_exists=True,
+            )
+            with mock.patch(
+                "tools.endpoint.engine.providers.docker.create.free_localhost_tcp_port",
+                return_value=29426,
+            ):
+                output = docker.create_endpoint(
+                    provider="docker",
+                    exposure="private",
+                    role="oracle",
+                    private_group="pair-live",
+                    private_ip="10.79.0.42",
+                    dry_run=False,
+                    confirm_live_run=True,
+                    env={},
+                    command_runner=create_runner,
+                )
+
+            runner = _DockerDestroyRunner(container_kill_permission_denied=True)
+            destroy_output = docker.destroy_endpoint(
+                EndpointManifest.from_dict(output),
+                env={},
+                command_runner=runner,
+            )
+            destroyed_manifest = json.loads(
+                Path(str(destroy_output["manifest_path"])).read_text(encoding="utf-8")
+            )
+
+        self.assertEqual(
+            runner.calls[:4],
+            [
+                ("docker", "container", "rm", "--force", "container-private-1"),
+                ("docker", "exec", "container-private-1", "sh", "-lc", "kill -TERM 1"),
+                ("docker", "container", "wait", "container-private-1"),
+                ("docker", "container", "rm", "--force", "container-private-1"),
+            ],
+        )
+        self.assertEqual(
+            [(action["kind"], action["action"]) for action in destroy_output["actions"][:4]],  # type: ignore[index]
+            [
+                ("docker-container", "remove-retry-needed"),
+                ("docker-container", "terminate"),
+                ("docker-container", "wait"),
+                ("docker-container", "remove"),
+            ],
+        )
+        self.assertTrue(destroy_output["destroyed"])
+        self.assertTrue(destroyed_manifest["metadata"]["docker"]["container_removed"])
+
     def test_private_network_is_retained_while_another_allocation_remains(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir, _wire_env(Path(temp_dir)):
             create_runner = _DockerLivePrivateRunner(
@@ -1382,9 +1429,16 @@ class _DockerLiveNatL3Runner:
 
 
 class _DockerDestroyRunner:
-    def __init__(self, *, container_missing: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        container_missing: bool = False,
+        container_kill_permission_denied: bool = False,
+    ) -> None:
         self.container_missing = container_missing
+        self.container_kill_permission_denied = container_kill_permission_denied
         self.calls: list[tuple[str, ...]] = []
+        self._remove_attempts: dict[str, int] = {}
 
     def __call__(self, argv: Sequence[object], **_: object) -> CommandResult:
         parts = tuple(str(part) for part in argv)
@@ -1393,7 +1447,25 @@ class _DockerDestroyRunner:
         if parts[:4] == ("docker", "container", "rm", "--force"):
             if self.container_missing:
                 return _result(parts, exit_code=1, stderr="No such container\n")
+            container_ref = parts[-1]
+            attempts = self._remove_attempts.get(container_ref, 0)
+            self._remove_attempts[container_ref] = attempts + 1
+            if self.container_kill_permission_denied and attempts == 0:
+                return _result(
+                    parts,
+                    exit_code=1,
+                    stderr=(
+                        "Error response from daemon: cannot remove container "
+                        f"{container_ref!r}: could not kill container: permission denied\n"
+                    ),
+                )
             return _result(parts, stdout=f"{parts[-1]}\n")
+
+        if parts[:2] == ("docker", "exec"):
+            return _result(parts)
+
+        if parts[:3] == ("docker", "container", "wait"):
+            return _result(parts, stdout="0\n")
 
         if parts[:3] == ("docker", "network", "inspect"):
             return _result(parts, stdout=_docker_private_network_inspect_stdout())

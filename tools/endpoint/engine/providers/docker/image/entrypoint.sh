@@ -15,7 +15,8 @@ if [[ ! -s "${AUTHORIZED_KEY_FILE}" ]]; then
     exit 1
 fi
 
-install -m 0600 -o root -g root "${AUTHORIZED_KEY_FILE}" "${AUTHORIZED_KEYS}"
-chown root:root "${SSH_DIR}" "${AUTHORIZED_KEYS}"
+install -m 0600 "${AUTHORIZED_KEY_FILE}" "${AUTHORIZED_KEYS}"
+chmod 0700 "${SSH_DIR}"
+chmod 0600 "${AUTHORIZED_KEYS}"
 
 exec /usr/sbin/sshd -D -e

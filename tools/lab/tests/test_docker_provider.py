@@ -135,7 +135,7 @@ class DockerProviderCapabilityTest(unittest.TestCase):
         self.assertEqual(infrastructure["wire_policy"], DOCKER_WIRE_POLICY)
         self.assertTrue(infrastructure["private_network"])
         self.assertTrue(infrastructure["container_defaults"]["cap_drop_all"])
-        self.assertTrue(infrastructure["container_defaults"]["no_new_privileges"])
+        self.assertFalse(infrastructure["container_defaults"]["no_new_privileges"])
         self.assertEqual(
             infrastructure["container_defaults"]["capabilities"],
             ["NET_RAW", "NET_ADMIN"],

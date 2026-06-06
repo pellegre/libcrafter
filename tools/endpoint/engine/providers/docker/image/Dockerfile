@@ -37,4 +37,4 @@ RUN chmod 0755 /usr/local/bin/libcrafter-wire-entrypoint
 
 EXPOSE 22
 
-ENTRYPOINT ["/usr/local/bin/libcrafter-wire-entrypoint"]
+ENTRYPOINT ["/usr/bin/bash", "/usr/local/bin/libcrafter-wire-entrypoint"]

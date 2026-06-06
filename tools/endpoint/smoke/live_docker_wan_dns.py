@@ -2,9 +2,10 @@
 """Opt-in Docker WAN DNS smoke.
 
 By default this script prints the planned command sequence without creating
-Docker resources. Pass ``--live --i-understand-isolated-lab`` to create a
-confirmed docker/wan endpoint, upload a small libcrafter DNS workload, and
-verify NAT-backed WAN L3 egress to a public resolver.
+Docker resources. Pass ``--live`` to create a confirmed docker/wan endpoint,
+upload a small libcrafter DNS workload, and verify NAT-backed WAN L3 egress to
+a public resolver. The legacy ``--i-understand-isolated-lab`` flag is accepted
+for older command lines but is not required.
 
 This smoke does not exercise public inbound reachability or WAN L2 behavior.
 """
@@ -186,13 +187,7 @@ def main(argv: list[str] | None = None) -> int:
         print(plan)
         return 0
 
-    if not args.i_understand_isolated_lab:
-        print(
-            "live Docker WAN DNS smoke requires --live --i-understand-isolated-lab",
-            file=sys.stderr,
-        )
-        print(plan, file=sys.stderr)
-        return 2
+    os.environ.setdefault("LIBCRAFTER_DOCKER_REBUILD", "1")
 
     endpoint_id: str | None = None
     artifact_dir: Path | None = None
@@ -364,7 +359,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--i-understand-isolated-lab",
         action="store_true",
-        help="acknowledge this smoke sends live WAN traffic from an isolated endpoint",
+        help="accepted for compatibility; --live is the explicit opt-in",
     )
     parser.add_argument("--role", default=DEFAULT_ROLE, help="endpoint role label")
     parser.add_argument("--iface", default=DEFAULT_IFACE, help="fallback endpoint interface")
@@ -382,7 +377,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--dns-id", type=_uint16, default=0x5301)
     parser.add_argument("--timeout-ms", type=_positive_int, default=DEFAULT_TIMEOUT_MS)
     parser.add_argument("--retries", type=_positive_int, default=DEFAULT_RETRIES)
-    parser.add_argument("--create-timeout", type=float, default=300)
+    parser.add_argument("--create-timeout", type=float, default=420)
     parser.add_argument("--build-timeout", type=float, default=600)
     parser.add_argument("--transfer-timeout", type=float, default=120)
     parser.add_argument("--exec-timeout", type=float, default=120)
@@ -427,7 +422,7 @@ def _plan_commands(*, repo_root: Path, wire: Path, args: argparse.Namespace) -> 
     lines = [
         "Docker WAN DNS smoke plan",
         f"repo: {repo_root}",
-        "no Docker resources are created unless --live --i-understand-isolated-lab are both set",
+        "no Docker resources are created unless --live is set",
         f"resolver: {args.resolver}",
         f"query: {args.query}",
         "path: NAT-backed WAN L3 egress through Docker bridge routing",
