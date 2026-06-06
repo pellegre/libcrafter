@@ -1,1 +1,1 @@
-"""Tests for the wire endpoint tool."""
+"""Tests for the endpoint tool."""

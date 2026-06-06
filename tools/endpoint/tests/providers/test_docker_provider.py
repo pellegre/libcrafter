@@ -1,4 +1,4 @@
-"""Coverage for the Docker wire provider."""
+"""Coverage for the Docker endpoint provider."""
 
 from __future__ import annotations
 
@@ -64,7 +64,7 @@ class DockerDoctorTest(unittest.TestCase):
                 self.assertEqual(report["exposure"], exposure)
                 self.assertTrue(_check(report, "provider_exposure")["ok"])
                 self.assertEqual(
-                    report["capabilities"]["wire"]["supported_exposures"],  # type: ignore[index]
+                    report["capabilities"]["packet_io"]["supported_exposures"],  # type: ignore[index]
                     ["lan", "private", "wan"],
                 )
 
@@ -231,15 +231,15 @@ class DockerDoctorTest(unittest.TestCase):
                 command_runner=_successful_runner,
             )
 
-        wire = report["capabilities"]["wire"]  # type: ignore[index]
+        packet_io = report["capabilities"]["packet_io"]  # type: ignore[index]
         container = report["capabilities"]["container"]  # type: ignore[index]
-        self.assertEqual(set(wire["capabilities"]), set(PRIVATE_CAPABILITIES))
-        self.assertIn("link_layer_send", wire["capabilities"])
-        self.assertIn("link_layer_capture", wire["capabilities"])
-        self.assertIn("broadcast", wire["capabilities"])
-        self.assertIn("provider_mac_known", wire["capabilities"])
-        self.assertIn("controlled_services", wire["capabilities"])
-        self.assertNotIn("controlled_router", wire["capabilities"])
+        self.assertEqual(set(packet_io["capabilities"]), set(PRIVATE_CAPABILITIES))
+        self.assertIn("link_layer_send", packet_io["capabilities"])
+        self.assertIn("link_layer_capture", packet_io["capabilities"])
+        self.assertIn("broadcast", packet_io["capabilities"])
+        self.assertIn("provider_mac_known", packet_io["capabilities"])
+        self.assertIn("controlled_services", packet_io["capabilities"])
+        self.assertNotIn("controlled_router", packet_io["capabilities"])
         self.assertEqual(container["cap_drop"], ["ALL"])
         self.assertEqual(
             container["cap_add"],

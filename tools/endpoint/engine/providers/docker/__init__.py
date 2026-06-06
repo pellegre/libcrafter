@@ -1,4 +1,4 @@
-"""Docker wire provider skeleton."""
+"""Docker endpoint provider skeleton."""
 
 from __future__ import annotations
 

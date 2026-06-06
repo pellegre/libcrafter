@@ -1,4 +1,4 @@
-"""Wire local state management."""
+"""Endpoint local state management."""
 
 from __future__ import annotations
 

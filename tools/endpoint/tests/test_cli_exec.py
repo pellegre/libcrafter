@@ -1,4 +1,4 @@
-"""Fake-run coverage for wire exec."""
+"""Fake-run coverage for endpoint exec."""
 
 from __future__ import annotations
 

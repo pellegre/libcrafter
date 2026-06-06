@@ -1,4 +1,4 @@
-"""Wire provider implementations."""
+"""Endpoint provider implementations."""
 
 from __future__ import annotations
 

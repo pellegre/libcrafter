@@ -1,4 +1,4 @@
-"""Wire configuration helpers."""
+"""Endpoint lifecycle configuration helpers."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ DEFAULT_ARTIFACT_ROOT = WIRE_ROOT / "artifacts"
 
 @dataclass(frozen=True, slots=True)
 class WireConfig:
-    """Local wire path configuration."""
+    """Local endpoint path configuration."""
 
     state_root: Path
     artifact_root: Path
@@ -31,7 +31,7 @@ class WireConfig:
 
 
 def default_config(env: Mapping[str, str] | None = None) -> WireConfig:
-    """Return wire configuration from environment overrides and local defaults."""
+    """Return endpoint configuration from environment overrides and local defaults."""
 
     source = os.environ if env is None else env
     return WireConfig(

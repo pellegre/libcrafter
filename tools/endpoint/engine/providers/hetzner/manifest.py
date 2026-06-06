@@ -1,4 +1,4 @@
-"""Endpoint manifest builders for Hetzner wire operations."""
+"""Endpoint manifest builders for Hetzner provider operations."""
 
 from __future__ import annotations
 

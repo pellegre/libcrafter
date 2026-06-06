@@ -1,4 +1,4 @@
-"""QEMU wire provider lifecycle operations."""
+"""QEMU endpoint provider lifecycle operations."""
 
 from __future__ import annotations
 
@@ -13,4 +13,3 @@ __all__ = [
     "destroy_endpoint",
     "doctor",
 ]
-
