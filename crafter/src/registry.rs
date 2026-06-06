@@ -227,6 +227,7 @@ impl ProtocolRegistry {
         match link_type {
             LinkType::Raw => Packet::decode_raw(bytes),
             LinkType::Ethernet => self.decode_ethernet(bytes),
+            LinkType::Ieee80211 | LinkType::Radiotap => Packet::decode_raw(bytes),
             LinkType::LinuxCooked | LinkType::LinuxSll => self.decode_linux_sll(bytes),
             LinkType::NullLoopback => decode_null_loopback_with_registry(self, bytes),
         }
