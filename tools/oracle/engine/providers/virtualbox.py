@@ -447,7 +447,7 @@ def validate_virtualbox_dry_run_exchange(
 def virtualbox_wire_remote_dir() -> str:
     """Return the repository directory used by VirtualBox wire endpoints."""
 
-    return validate_remote_dir(os.environ.get("LIBCRAFTER_WIRE_REMOTE_DIR"))
+    return validate_remote_dir(os.environ.get("LIBCRAFTER_ENDPOINT_REMOTE_DIR"))
 
 
 def virtualbox_endpoint_remote_command(

@@ -97,7 +97,7 @@ pub fn flag_present(name: &str) -> bool {
 }
 
 pub const ADVANCED_LIVE_ACK_FLAG: &str = "--i-understand-isolated-lab";
-pub const LIVE_WIRE_ENV: &str = "LIBCRAFTER_WIRE_ENDPOINT";
+pub const LIVE_WIRE_ENV: &str = "LIBCRAFTER_ENDPOINT";
 
 pub fn live_wire_marker_present() -> bool {
     env::var(LIVE_WIRE_ENV)

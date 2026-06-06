@@ -745,8 +745,8 @@ def _wire_env(root: Path):
     return mock.patch.dict(
         os.environ,
         {
-            "LIBCRAFTER_WIRE_STATE_ROOT": str(root / "wire-state"),
-            "LIBCRAFTER_WIRE_ARTIFACT_ROOT": str(root / "wire-artifacts"),
+            "LIBCRAFTER_ENDPOINT_STATE_ROOT": str(root / "wire-state"),
+            "LIBCRAFTER_ENDPOINT_ARTIFACT_ROOT": str(root / "wire-artifacts"),
         },
     )
 

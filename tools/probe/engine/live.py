@@ -646,7 +646,7 @@ def lab_endpoint_live_report(
 
 
 def probe_lab_remote_dir() -> str | None:
-    remote_dir = os.environ.get("LIBCRAFTER_WIRE_REMOTE_DIR")
+    remote_dir = os.environ.get("LIBCRAFTER_ENDPOINT_REMOTE_DIR")
     if remote_dir is None or remote_dir == "":
         return None
     if not remote_dir.startswith("/"):

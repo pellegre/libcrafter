@@ -345,7 +345,7 @@ def validate_docker_dry_run_exchange(
 def docker_wire_remote_dir() -> str:
     """Return the repository directory used by Docker wire endpoints."""
 
-    return validate_remote_dir(os.environ.get("LIBCRAFTER_WIRE_REMOTE_DIR"))
+    return validate_remote_dir(os.environ.get("LIBCRAFTER_ENDPOINT_REMOTE_DIR"))
 
 
 def docker_endpoint_remote_command(

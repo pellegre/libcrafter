@@ -20,11 +20,11 @@ from ...state import EndpointLayout
 from .helpers import command_error, ensure_endpoint_ssh_key, file_resource, short_provider_resource_name
 
 
-UBUNTU_CLOUD_IMAGE_URL_ENV = "LIBCRAFTER_WIRE_UBUNTU_CLOUD_IMAGE_URL"
+UBUNTU_CLOUD_IMAGE_URL_ENV = "LIBCRAFTER_ENDPOINT_UBUNTU_CLOUD_IMAGE_URL"
 DEFAULT_UBUNTU_CLOUD_IMAGE_URL = (
     "https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img"
 )
-VM_DISK_SIZE_ENV = "LIBCRAFTER_WIRE_VM_DISK_SIZE"
+VM_DISK_SIZE_ENV = "LIBCRAFTER_ENDPOINT_VM_DISK_SIZE"
 DEFAULT_VM_DISK_SIZE = "16G"
 DEFAULT_PACKET_TOOL_PACKAGES = (
     "openssh-server",
