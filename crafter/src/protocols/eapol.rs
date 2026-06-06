@@ -29,7 +29,28 @@ pub const EAPOL_TYPE_KEY: u8 = 3;
 /// EAPOL-Encapsulated-ASF-Alert packet type.
 pub const EAPOL_TYPE_ASF_ALERT: u8 = 4;
 
+/// RSN EAPOL-Key descriptor type.
+pub const EAPOL_KEY_DESCRIPTOR_RSN: u8 = 2;
+/// Minimum RSN EAPOL-Key descriptor body length before variable key data.
+pub const EAPOL_KEY_DESCRIPTOR_MIN_LEN: usize = 95;
+
 const EAPOL_KEY_INFORMATION_LEN: usize = 2;
+const EAPOL_KEY_NONCE_LEN: usize = 32;
+const EAPOL_KEY_IV_LEN: usize = 16;
+const EAPOL_KEY_RSC_LEN: usize = 8;
+const EAPOL_KEY_ID_LEN: usize = 8;
+const EAPOL_KEY_MIC_LEN: usize = 16;
+const EAPOL_KEY_DESCRIPTOR_TYPE_OFFSET: usize = 0;
+const EAPOL_KEY_INFORMATION_OFFSET: usize = 1;
+const EAPOL_KEY_LENGTH_OFFSET: usize = 3;
+const EAPOL_KEY_REPLAY_COUNTER_OFFSET: usize = 5;
+const EAPOL_KEY_NONCE_OFFSET: usize = 13;
+const EAPOL_KEY_IV_OFFSET: usize = 45;
+const EAPOL_KEY_RSC_OFFSET: usize = 61;
+const EAPOL_KEY_ID_OFFSET: usize = 69;
+const EAPOL_KEY_MIC_OFFSET: usize = 77;
+const EAPOL_KEY_DATA_LENGTH_OFFSET: usize = 93;
+const EAPOL_KEY_DATA_OFFSET: usize = EAPOL_KEY_DESCRIPTOR_MIN_LEN;
 const EAPOL_KEY_INFO_DESCRIPTOR_VERSION_MASK: u16 = 0x0007;
 const EAPOL_KEY_INFO_DESCRIPTOR_VERSION_SHIFT: u8 = 0;
 const EAPOL_KEY_INFO_KEY_TYPE: u16 = 0x0008;
@@ -116,6 +137,64 @@ pub fn eapol_type_label(packet_type: u8) -> String {
         EAPOL_TYPE_KEY => "key".to_string(),
         EAPOL_TYPE_ASF_ALERT => "asf-alert".to_string(),
         _ => format!("unknown-eapol-type({packet_type})"),
+    }
+}
+
+/// EAPOL-Key descriptor type codepoint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum EapolDescriptorType {
+    /// RSN EAPOL-Key descriptor.
+    Rsn,
+    /// Unknown caller-supplied or decoded descriptor type.
+    Unknown(u8),
+}
+
+impl EapolDescriptorType {
+    /// Create a descriptor type from its raw numeric value.
+    pub const fn from_raw(value: u8) -> Self {
+        match value {
+            EAPOL_KEY_DESCRIPTOR_RSN => Self::Rsn,
+            value => Self::Unknown(value),
+        }
+    }
+
+    /// Raw numeric value.
+    pub const fn raw(self) -> u8 {
+        match self {
+            Self::Rsn => EAPOL_KEY_DESCRIPTOR_RSN,
+            Self::Unknown(value) => value,
+        }
+    }
+
+    /// Return true when this phase supports typed parsing for the descriptor.
+    pub const fn is_supported(self) -> bool {
+        matches!(self, Self::Rsn)
+    }
+
+    /// Short stable label.
+    pub fn label(self) -> String {
+        eapol_descriptor_type_label(self.raw())
+    }
+}
+
+impl From<u8> for EapolDescriptorType {
+    fn from(value: u8) -> Self {
+        Self::from_raw(value)
+    }
+}
+
+impl From<EapolDescriptorType> for u8 {
+    fn from(value: EapolDescriptorType) -> Self {
+        value.raw()
+    }
+}
+
+/// Return a stable label for an EAPOL-Key descriptor type.
+pub fn eapol_descriptor_type_label(descriptor_type: u8) -> String {
+    match descriptor_type {
+        EAPOL_KEY_DESCRIPTOR_RSN => "rsn".to_string(),
+        _ => format!("unknown-eapol-key-descriptor({descriptor_type})"),
     }
 }
 
@@ -393,6 +472,314 @@ impl EapolKeyInformation {
     }
 }
 
+/// RSN EAPOL-Key descriptor body.
+///
+/// This phase parses the fixed EAPOL-Key metadata needed by later decrypt
+/// work, but it does not derive keys, verify MICs, decrypt key data, or model
+/// authentication workflows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EapolKey {
+    descriptor_type: Field<u8>,
+    key_information: Field<EapolKeyInformation>,
+    key_length: Field<u16>,
+    replay_counter: Field<u64>,
+    nonce: Field<[u8; EAPOL_KEY_NONCE_LEN]>,
+    iv: Field<[u8; EAPOL_KEY_IV_LEN]>,
+    rsc: Field<[u8; EAPOL_KEY_RSC_LEN]>,
+    id: Field<[u8; EAPOL_KEY_ID_LEN]>,
+    mic: Field<[u8; EAPOL_KEY_MIC_LEN]>,
+    key_data_length: Field<u16>,
+    key_data: Vec<u8>,
+}
+
+impl EapolKey {
+    /// Create an RSN EAPOL-Key descriptor with deterministic defaults.
+    pub fn new() -> Self {
+        Self {
+            descriptor_type: Field::defaulted(EAPOL_KEY_DESCRIPTOR_RSN),
+            key_information: Field::defaulted(EapolKeyInformation::new()),
+            key_length: Field::defaulted(0),
+            replay_counter: Field::defaulted(0),
+            nonce: Field::defaulted([0; EAPOL_KEY_NONCE_LEN]),
+            iv: Field::defaulted([0; EAPOL_KEY_IV_LEN]),
+            rsc: Field::defaulted([0; EAPOL_KEY_RSC_LEN]),
+            id: Field::defaulted([0; EAPOL_KEY_ID_LEN]),
+            mic: Field::defaulted([0; EAPOL_KEY_MIC_LEN]),
+            key_data_length: Field::unset(),
+            key_data: Vec::new(),
+        }
+    }
+
+    /// Set the EAPOL-Key descriptor type.
+    pub fn descriptor_type(mut self, descriptor_type: EapolDescriptorType) -> Self {
+        self.descriptor_type.set_user(descriptor_type.raw());
+        self
+    }
+
+    /// Set the EAPOL-Key descriptor type as a raw byte.
+    pub fn descriptor_type_raw(mut self, descriptor_type: u8) -> Self {
+        self.descriptor_type.set_user(descriptor_type);
+        self
+    }
+
+    /// Set the Key Information field.
+    pub fn key_information(mut self, key_information: EapolKeyInformation) -> Self {
+        self.key_information.set_user(key_information);
+        self
+    }
+
+    /// Set the Key Length field.
+    pub fn key_length(mut self, key_length: u16) -> Self {
+        self.key_length.set_user(key_length);
+        self
+    }
+
+    /// Set the Replay Counter field.
+    pub fn replay_counter(mut self, replay_counter: u64) -> Self {
+        self.replay_counter.set_user(replay_counter);
+        self
+    }
+
+    /// Set the Key Nonce field.
+    pub fn nonce(mut self, nonce: [u8; EAPOL_KEY_NONCE_LEN]) -> Self {
+        self.nonce.set_user(nonce);
+        self
+    }
+
+    /// Set the EAPOL-Key IV field.
+    pub fn iv(mut self, iv: [u8; EAPOL_KEY_IV_LEN]) -> Self {
+        self.iv.set_user(iv);
+        self
+    }
+
+    /// Set the Key RSC field.
+    pub fn rsc(mut self, rsc: [u8; EAPOL_KEY_RSC_LEN]) -> Self {
+        self.rsc.set_user(rsc);
+        self
+    }
+
+    /// Set the Key ID field.
+    pub fn id(mut self, id: [u8; EAPOL_KEY_ID_LEN]) -> Self {
+        self.id.set_user(id);
+        self
+    }
+
+    /// Set the Key MIC field.
+    pub fn mic(mut self, mic: [u8; EAPOL_KEY_MIC_LEN]) -> Self {
+        self.mic.set_user(mic);
+        self
+    }
+
+    /// Set the Key Data Length field explicitly.
+    pub fn key_data_length(mut self, key_data_length: u16) -> Self {
+        self.key_data_length.set_user(key_data_length);
+        self
+    }
+
+    /// Compatibility alias for Key Data Length.
+    pub fn key_data_len(self, key_data_length: u16) -> Self {
+        self.key_data_length(key_data_length)
+    }
+
+    /// Set the Key Data bytes.
+    pub fn key_data(mut self, key_data: impl Into<Vec<u8>>) -> Self {
+        self.key_data = key_data.into();
+        self
+    }
+
+    /// Raw EAPOL-Key descriptor type byte.
+    pub fn descriptor_type_value(&self) -> u8 {
+        value_or_copy(&self.descriptor_type, EAPOL_KEY_DESCRIPTOR_RSN)
+    }
+
+    /// Typed EAPOL-Key descriptor type view.
+    pub fn descriptor_type_kind(&self) -> EapolDescriptorType {
+        EapolDescriptorType::from_raw(self.descriptor_type_value())
+    }
+
+    /// Key Information field.
+    pub fn key_information_value(&self) -> EapolKeyInformation {
+        value_or_copy(&self.key_information, EapolKeyInformation::new())
+    }
+
+    /// Key Length field.
+    pub fn key_length_value(&self) -> u16 {
+        value_or_copy(&self.key_length, 0)
+    }
+
+    /// Replay Counter field.
+    pub fn replay_counter_value(&self) -> u64 {
+        value_or_copy(&self.replay_counter, 0)
+    }
+
+    /// Key Nonce field.
+    pub fn nonce_value(&self) -> [u8; EAPOL_KEY_NONCE_LEN] {
+        value_or_copy(&self.nonce, [0; EAPOL_KEY_NONCE_LEN])
+    }
+
+    /// EAPOL-Key IV field.
+    pub fn iv_value(&self) -> [u8; EAPOL_KEY_IV_LEN] {
+        value_or_copy(&self.iv, [0; EAPOL_KEY_IV_LEN])
+    }
+
+    /// Key RSC field.
+    pub fn rsc_value(&self) -> [u8; EAPOL_KEY_RSC_LEN] {
+        value_or_copy(&self.rsc, [0; EAPOL_KEY_RSC_LEN])
+    }
+
+    /// Key ID field.
+    pub fn id_value(&self) -> [u8; EAPOL_KEY_ID_LEN] {
+        value_or_copy(&self.id, [0; EAPOL_KEY_ID_LEN])
+    }
+
+    /// Key MIC field.
+    pub fn mic_value(&self) -> [u8; EAPOL_KEY_MIC_LEN] {
+        value_or_copy(&self.mic, [0; EAPOL_KEY_MIC_LEN])
+    }
+
+    /// Stored Key Data Length, when explicit or decoded.
+    pub fn key_data_length_value(&self) -> Option<u16> {
+        self.key_data_length.value().copied()
+    }
+
+    /// Key Data bytes.
+    pub fn key_data_bytes(&self) -> &[u8] {
+        &self.key_data
+    }
+
+    /// Compatibility alias for Key Data bytes.
+    pub fn key_data_value(&self) -> &[u8] {
+        self.key_data_bytes()
+    }
+
+    /// Mutably borrow Key Data bytes.
+    pub fn key_data_bytes_mut(&mut self) -> &mut Vec<u8> {
+        &mut self.key_data
+    }
+
+    /// Consume the layer and return Key Data bytes.
+    pub fn into_key_data_bytes(self) -> Vec<u8> {
+        self.key_data
+    }
+
+    fn display_key_data_length(&self) -> String {
+        self.key_data_length_value()
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| self.key_data.len().to_string())
+    }
+
+    fn effective_key_data_length(&self) -> Result<u16> {
+        if let Some(length) = self.key_data_length.value().copied() {
+            return Ok(length);
+        }
+
+        u16::try_from(self.key_data.len()).map_err(|_| {
+            CrafterError::invalid_field_value(
+                "eapol.key_data_length",
+                "EAPOL-Key data exceeds 65535 bytes",
+            )
+        })
+    }
+}
+
+impl Default for EapolKey {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Layer for EapolKey {
+    fn name(&self) -> &'static str {
+        "EapolKey"
+    }
+
+    fn summary(&self) -> String {
+        format!(
+            "EapolKey(descriptor={}, key_info=0x{:04x}, key_len={}, replay_counter={}, key_data_len={})",
+            self.descriptor_type_kind().label(),
+            self.key_information_value().bits(),
+            self.key_length_value(),
+            self.replay_counter_value(),
+            self.display_key_data_length()
+        )
+    }
+
+    fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        let key_information = self.key_information_value();
+        vec![
+            ("descriptor_type", self.descriptor_type_kind().label()),
+            (
+                "descriptor_type_raw",
+                format!("0x{:02x}", self.descriptor_type_value()),
+            ),
+            (
+                "key_information",
+                format!("0x{:04x}", key_information.bits()),
+            ),
+            (
+                "key_descriptor_version",
+                key_information.descriptor_version().to_string(),
+            ),
+            ("key_length", self.key_length_value().to_string()),
+            ("replay_counter", self.replay_counter_value().to_string()),
+            ("nonce", hex_bytes(&self.nonce_value())),
+            ("iv", hex_bytes(&self.iv_value())),
+            ("rsc", hex_bytes(&self.rsc_value())),
+            ("id", hex_bytes(&self.id_value())),
+            ("mic", hex_bytes(&self.mic_value())),
+            ("key_data_length", self.display_key_data_length()),
+            ("key_data_bytes_len", self.key_data.len().to_string()),
+            ("key_data", hex_bytes(&self.key_data)),
+        ]
+    }
+
+    fn encoded_len(&self) -> usize {
+        EAPOL_KEY_DESCRIPTOR_MIN_LEN + self.key_data.len()
+    }
+
+    fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
+        out.push(self.descriptor_type_value());
+        out.extend_from_slice(&self.key_information_value().to_be_bytes());
+        out.extend_from_slice(&self.key_length_value().to_be_bytes());
+        out.extend_from_slice(&self.replay_counter_value().to_be_bytes());
+        out.extend_from_slice(&self.nonce_value());
+        out.extend_from_slice(&self.iv_value());
+        out.extend_from_slice(&self.rsc_value());
+        out.extend_from_slice(&self.id_value());
+        out.extend_from_slice(&self.mic_value());
+        out.extend_from_slice(&self.effective_key_data_length()?.to_be_bytes());
+        out.extend_from_slice(&self.key_data);
+        Ok(())
+    }
+
+    fn clone_layer(&self) -> Box<dyn Layer> {
+        Box::new(self.clone())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn into_any(self: Box<Self>) -> Box<dyn Any> {
+        self
+    }
+}
+
+impl<R> Div<R> for EapolKey
+where
+    R: IntoPacket,
+{
+    type Output = Packet;
+
+    fn div(self, rhs: R) -> Self::Output {
+        Packet::from_layer(self).concat(rhs)
+    }
+}
+
 /// Extensible Authentication Protocol over LAN base header.
 ///
 /// The base layer owns the EAPOL header and optional opaque body bytes. The
@@ -611,17 +998,91 @@ where
     }
 }
 
-/// Append a decoded EAPOL frame and preserve opaque body bytes as `Raw`.
+/// Append a decoded EAPOL frame and preserve unsupported opaque body bytes as `Raw`.
 pub(crate) fn append_eapol_packet(mut packet: Packet, bytes: &[u8]) -> Result<Packet> {
     let (eapol, body, surplus) = decode_eapol_parts(bytes)?;
+    let packet_type = eapol.packet_type_kind();
     packet = packet.push(eapol);
-    if !body.is_empty() {
+    if packet_type == EapolType::Key {
+        packet = append_eapol_key_body(packet, body)?;
+    } else if !body.is_empty() {
         packet = packet.push(Raw::from_bytes(body));
     }
     if !surplus.is_empty() {
         packet = packet.push(Raw::from_bytes(surplus));
     }
     Ok(packet)
+}
+
+fn append_eapol_key_body(mut packet: Packet, body: &[u8]) -> Result<Packet> {
+    if body.is_empty() {
+        return Err(CrafterError::buffer_too_short("eapol.key", 1, 0));
+    }
+
+    let descriptor_type = EapolDescriptorType::from_raw(body[EAPOL_KEY_DESCRIPTOR_TYPE_OFFSET]);
+    if !descriptor_type.is_supported() {
+        return Ok(packet.push(Raw::from_bytes(body)));
+    }
+
+    let (key, trailing_body) = decode_eapol_key_parts(body)?;
+    packet = packet.push(key);
+    if !trailing_body.is_empty() {
+        packet = packet.push(Raw::from_bytes(trailing_body));
+    }
+    Ok(packet)
+}
+
+fn decode_eapol_key_parts(bytes: &[u8]) -> Result<(EapolKey, &[u8])> {
+    if bytes.len() < EAPOL_KEY_DESCRIPTOR_MIN_LEN {
+        return Err(CrafterError::buffer_too_short(
+            "eapol.key",
+            EAPOL_KEY_DESCRIPTOR_MIN_LEN,
+            bytes.len(),
+        ));
+    }
+
+    let key_data_length =
+        read_u16_be(&bytes[EAPOL_KEY_DATA_LENGTH_OFFSET..EAPOL_KEY_DATA_LENGTH_OFFSET + 2])?
+            as usize;
+    let required = EAPOL_KEY_DATA_OFFSET
+        .checked_add(key_data_length)
+        .ok_or_else(|| {
+            CrafterError::invalid_field_value(
+                "eapol.key_data_length",
+                "EAPOL-Key data length overflow",
+            )
+        })?;
+    if bytes.len() < required {
+        return Err(CrafterError::buffer_too_short(
+            "eapol.key_data",
+            required,
+            bytes.len(),
+        ));
+    }
+
+    let key = EapolKey {
+        descriptor_type: Field::user(bytes[EAPOL_KEY_DESCRIPTOR_TYPE_OFFSET]),
+        key_information: Field::user(EapolKeyInformation::decode(
+            &bytes[EAPOL_KEY_INFORMATION_OFFSET
+                ..EAPOL_KEY_INFORMATION_OFFSET + EAPOL_KEY_INFORMATION_LEN],
+        )?),
+        key_length: Field::user(read_u16_be(
+            &bytes[EAPOL_KEY_LENGTH_OFFSET..EAPOL_KEY_LENGTH_OFFSET + 2],
+        )?),
+        replay_counter: Field::user(u64::from_be_bytes(copy_array(
+            bytes,
+            EAPOL_KEY_REPLAY_COUNTER_OFFSET,
+        ))),
+        nonce: Field::user(copy_array(bytes, EAPOL_KEY_NONCE_OFFSET)),
+        iv: Field::user(copy_array(bytes, EAPOL_KEY_IV_OFFSET)),
+        rsc: Field::user(copy_array(bytes, EAPOL_KEY_RSC_OFFSET)),
+        id: Field::user(copy_array(bytes, EAPOL_KEY_ID_OFFSET)),
+        mic: Field::user(copy_array(bytes, EAPOL_KEY_MIC_OFFSET)),
+        key_data_length: Field::user(key_data_length as u16),
+        key_data: bytes[EAPOL_KEY_DATA_OFFSET..required].to_vec(),
+    };
+
+    Ok((key, &bytes[required..]))
 }
 
 fn decode_eapol_parts(bytes: &[u8]) -> Result<(Eapol, &[u8], &[u8])> {
@@ -684,6 +1145,12 @@ fn hex_bytes(bytes: &[u8]) -> String {
         .join(":")
 }
 
+fn copy_array<const N: usize>(bytes: &[u8], offset: usize) -> [u8; N] {
+    let mut value = [0u8; N];
+    value.copy_from_slice(&bytes[offset..offset + N]);
+    value
+}
+
 const fn set_key_info_flag(bits: u16, flag: u16, enabled: bool) -> u16 {
     if enabled {
         bits | flag
@@ -700,14 +1167,47 @@ const fn set_key_info_subfield(bits: u16, mask: u16, shift: u8, value: u8) -> u1
 #[cfg(test)]
 mod tests {
     use super::{
-        append_eapol_packet, eapol_type_label, Eapol, EapolKeyInformation, EapolType,
-        EAPOL_HEADER_LEN, EAPOL_KEY_INFO_ENCRYPTED_KEY_DATA, EAPOL_KEY_INFO_ERROR,
-        EAPOL_KEY_INFO_INSTALL, EAPOL_KEY_INFO_KEY_ACK, EAPOL_KEY_INFO_KEY_MIC,
-        EAPOL_KEY_INFO_KEY_TYPE, EAPOL_KEY_INFO_REQUEST, EAPOL_KEY_INFO_RESERVED_MASK,
-        EAPOL_KEY_INFO_SECURE, EAPOL_KEY_INFO_SMK_MESSAGE, EAPOL_TYPE_EAP_PACKET, EAPOL_TYPE_KEY,
-        EAPOL_TYPE_LOGOFF, EAPOL_TYPE_START, EAPOL_VERSION_2,
+        append_eapol_packet, eapol_descriptor_type_label, eapol_type_label, Eapol,
+        EapolDescriptorType, EapolKey, EapolKeyInformation, EapolType, EAPOL_HEADER_LEN,
+        EAPOL_KEY_DESCRIPTOR_MIN_LEN, EAPOL_KEY_DESCRIPTOR_RSN, EAPOL_KEY_INFO_ENCRYPTED_KEY_DATA,
+        EAPOL_KEY_INFO_ERROR, EAPOL_KEY_INFO_INSTALL, EAPOL_KEY_INFO_KEY_ACK,
+        EAPOL_KEY_INFO_KEY_MIC, EAPOL_KEY_INFO_KEY_TYPE, EAPOL_KEY_INFO_REQUEST,
+        EAPOL_KEY_INFO_RESERVED_MASK, EAPOL_KEY_INFO_SECURE, EAPOL_KEY_INFO_SMK_MESSAGE,
+        EAPOL_TYPE_EAP_PACKET, EAPOL_TYPE_KEY, EAPOL_TYPE_LOGOFF, EAPOL_TYPE_START,
+        EAPOL_VERSION_2,
     };
     use crate::{CrafterError, Layer, LlcSnap, Packet, Raw, EAPOL_TYPE_ASF_ALERT, ETHERTYPE_EAPOL};
+
+    fn ascending<const N: usize>(start: u8) -> [u8; N] {
+        let mut bytes = [0u8; N];
+        for (index, byte) in bytes.iter_mut().enumerate() {
+            *byte = start.wrapping_add(index as u8);
+        }
+        bytes
+    }
+
+    fn sample_eapol_key_body() -> Vec<u8> {
+        let mut body = Vec::new();
+        body.push(EAPOL_KEY_DESCRIPTOR_RSN);
+        body.extend_from_slice(&0x13cau16.to_be_bytes());
+        body.extend_from_slice(&16u16.to_be_bytes());
+        body.extend_from_slice(&1u64.to_be_bytes());
+        body.extend_from_slice(&ascending::<32>(0x00));
+        body.extend_from_slice(&ascending::<16>(0xa0));
+        body.extend_from_slice(&ascending::<8>(0xb0));
+        body.extend_from_slice(&ascending::<8>(0xc0));
+        body.extend_from_slice(&ascending::<16>(0xd0));
+        body.extend_from_slice(&3u16.to_be_bytes());
+        body.extend_from_slice(&[0xaa, 0xbb, 0xcc]);
+        body
+    }
+
+    fn eapol_key_packet_bytes(body: &[u8]) -> Vec<u8> {
+        let mut bytes = vec![EAPOL_VERSION_2, EAPOL_TYPE_KEY];
+        bytes.extend_from_slice(&(body.len() as u16).to_be_bytes());
+        bytes.extend_from_slice(body);
+        bytes
+    }
 
     #[test]
     fn eapol_layer_compile_uses_defaults_and_autofills_body_length() {
@@ -846,6 +1346,22 @@ mod tests {
     }
 
     #[test]
+    fn eapol_key_frame_descriptor_type_labels_cover_supported_and_unknown_codepoints() {
+        assert_eq!(eapol_descriptor_type_label(EAPOL_KEY_DESCRIPTOR_RSN), "rsn");
+        assert_eq!(
+            eapol_descriptor_type_label(0xfe),
+            "unknown-eapol-key-descriptor(254)"
+        );
+        assert_eq!(
+            EapolDescriptorType::from_raw(EAPOL_KEY_DESCRIPTOR_RSN),
+            EapolDescriptorType::Rsn
+        );
+        assert_eq!(EapolDescriptorType::Unknown(0x7f).raw(), 0x7f);
+        assert!(EapolDescriptorType::Rsn.is_supported());
+        assert!(!EapolDescriptorType::Unknown(0x7f).is_supported());
+    }
+
+    #[test]
     fn eapol_layer_llc_snap_infers_eapol_ethertype() {
         let bytes = (LlcSnap::new() / Eapol::start()).compile().unwrap();
 
@@ -866,6 +1382,143 @@ mod tests {
                 0x00,
                 0x00,
             ]
+        );
+    }
+
+    #[test]
+    fn eapol_key_frame_compile_uses_defaults_and_autofills_lengths() {
+        let key_information = EapolKeyInformation::new()
+            .with_descriptor_version(2)
+            .with_key_type(true)
+            .with_key_ack(true)
+            .with_key_mic(true);
+        let key = EapolKey::new()
+            .key_information(key_information)
+            .key_length(16)
+            .replay_counter(1)
+            .nonce(ascending::<32>(0x00))
+            .iv(ascending::<16>(0xa0))
+            .rsc(ascending::<8>(0xb0))
+            .id(ascending::<8>(0xc0))
+            .mic(ascending::<16>(0xd0))
+            .key_data([0xaa, 0xbb, 0xcc]);
+        let packet = Eapol::key() / key;
+        let bytes = packet.compile().unwrap();
+        let body = &bytes.as_bytes()[EAPOL_HEADER_LEN..];
+
+        assert_eq!(
+            &bytes.as_bytes()[..EAPOL_HEADER_LEN],
+            &[EAPOL_VERSION_2, EAPOL_TYPE_KEY, 0x00, 0x62]
+        );
+        assert_eq!(body.len(), EAPOL_KEY_DESCRIPTOR_MIN_LEN + 3);
+        assert_eq!(body[0], EAPOL_KEY_DESCRIPTOR_RSN);
+        assert_eq!(&body[1..3], &key_information.to_be_bytes());
+        assert_eq!(&body[3..5], &16u16.to_be_bytes());
+        assert_eq!(&body[5..13], &1u64.to_be_bytes());
+        assert_eq!(&body[93..95], &3u16.to_be_bytes());
+        assert_eq!(&body[95..], &[0xaa, 0xbb, 0xcc]);
+    }
+
+    #[test]
+    fn eapol_key_frame_compile_preserves_explicit_key_data_length_override() {
+        let key = EapolKey::new().key_data_length(4).key_data([0xaa, 0xbb]);
+        let bytes = (Eapol::key() / key).compile().unwrap();
+        let body = &bytes.as_bytes()[EAPOL_HEADER_LEN..];
+
+        assert_eq!(
+            &bytes.as_bytes()[..EAPOL_HEADER_LEN],
+            &[EAPOL_VERSION_2, EAPOL_TYPE_KEY, 0x00, 0x61]
+        );
+        assert_eq!(&body[93..95], &4u16.to_be_bytes());
+        assert_eq!(&body[95..], &[0xaa, 0xbb]);
+    }
+
+    #[test]
+    fn eapol_key_frame_decode_typed_rsn_descriptor() {
+        let body = sample_eapol_key_body();
+        let packet = append_eapol_packet(Packet::new(), &eapol_key_packet_bytes(&body)).unwrap();
+        let eapol = packet.layer::<Eapol>().unwrap();
+        let key = packet.layer::<EapolKey>().unwrap();
+
+        assert_eq!(eapol.packet_type_kind(), EapolType::Key);
+        assert_eq!(eapol.body_length_value(), Some(98));
+        assert_eq!(key.descriptor_type_kind(), EapolDescriptorType::Rsn);
+        assert_eq!(key.key_information_value().bits(), 0x13ca);
+        assert_eq!(key.key_length_value(), 16);
+        assert_eq!(key.replay_counter_value(), 1);
+        assert_eq!(key.nonce_value(), ascending::<32>(0x00));
+        assert_eq!(key.iv_value(), ascending::<16>(0xa0));
+        assert_eq!(key.rsc_value(), ascending::<8>(0xb0));
+        assert_eq!(key.id_value(), ascending::<8>(0xc0));
+        assert_eq!(key.mic_value(), ascending::<16>(0xd0));
+        assert_eq!(key.key_data_length_value(), Some(3));
+        assert_eq!(key.key_data_bytes(), &[0xaa, 0xbb, 0xcc]);
+        assert_eq!(packet.layers::<Raw>().count(), 0);
+        assert_eq!(
+            packet.compile().unwrap().as_bytes(),
+            eapol_key_packet_bytes(&body)
+        );
+    }
+
+    #[test]
+    fn eapol_key_frame_decode_unsupported_descriptor_preserves_raw_body() {
+        let body = [0xfe, 0xaa, 0xbb];
+        let packet = append_eapol_packet(Packet::new(), &eapol_key_packet_bytes(&body)).unwrap();
+        let raw = packet.layer::<Raw>().unwrap();
+
+        assert!(packet.layer::<EapolKey>().is_none());
+        assert_eq!(raw.as_bytes(), body);
+        assert_eq!(
+            packet.compile().unwrap().as_bytes(),
+            eapol_key_packet_bytes(&body)
+        );
+    }
+
+    #[test]
+    fn eapol_key_frame_short_supported_descriptor_is_structured_error() {
+        let body = [EAPOL_KEY_DESCRIPTOR_RSN];
+        let error = append_eapol_packet(Packet::new(), &eapol_key_packet_bytes(&body)).unwrap_err();
+
+        assert_eq!(
+            error,
+            CrafterError::buffer_too_short("eapol.key", EAPOL_KEY_DESCRIPTOR_MIN_LEN, 1)
+        );
+    }
+
+    #[test]
+    fn eapol_key_frame_missing_descriptor_type_is_structured_error() {
+        let error = append_eapol_packet(Packet::new(), &eapol_key_packet_bytes(&[])).unwrap_err();
+
+        assert_eq!(error, CrafterError::buffer_too_short("eapol.key", 1, 0));
+    }
+
+    #[test]
+    fn eapol_key_frame_key_data_length_overrun_is_structured_error() {
+        let mut body = sample_eapol_key_body();
+        body.truncate(EAPOL_KEY_DESCRIPTOR_MIN_LEN);
+        body[93..95].copy_from_slice(&4u16.to_be_bytes());
+        let error = append_eapol_packet(Packet::new(), &eapol_key_packet_bytes(&body)).unwrap_err();
+
+        assert_eq!(
+            error,
+            CrafterError::buffer_too_short("eapol.key_data", EAPOL_KEY_DESCRIPTOR_MIN_LEN + 4, 95)
+        );
+    }
+
+    #[test]
+    fn eapol_key_frame_preserves_trailing_body_after_declared_key_data() {
+        let mut body = sample_eapol_key_body();
+        body[93..95].copy_from_slice(&1u16.to_be_bytes());
+        let packet = append_eapol_packet(Packet::new(), &eapol_key_packet_bytes(&body)).unwrap();
+        let key = packet.layer::<EapolKey>().unwrap();
+        let raw = packet.layer::<Raw>().unwrap();
+
+        assert_eq!(key.key_data_length_value(), Some(1));
+        assert_eq!(key.key_data_bytes(), &[0xaa]);
+        assert_eq!(raw.as_bytes(), &[0xbb, 0xcc]);
+        assert_eq!(
+            packet.compile().unwrap().as_bytes(),
+            eapol_key_packet_bytes(&body)
         );
     }
 

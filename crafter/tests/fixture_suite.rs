@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 
 use crafter::core::{
     Arp, Dhcp, DhcpMessageType, DhcpOption, DhcpRelayAgentInfo, DhcpRelaySuboption, Dns, DnsName,
-    DnsRecord, DnsRecordData, Dot11, Dot11DataSubtype, Dot11ManagementSubtype, Dscp, Eapol, Ecn,
-    EdnsOption, Ethernet, IcmpKind, Icmpv4, Icmpv6, Ipv4, Ipv4Option, Ipv6,
+    DnsRecord, DnsRecordData, Dot11, Dot11DataSubtype, Dot11ManagementSubtype, Dscp, Eapol,
+    EapolKey, Ecn, EdnsOption, Ethernet, IcmpKind, Icmpv4, Icmpv6, Ipv4, Ipv4Option, Ipv6,
     Ipv6DestinationOptionsHeader, Ipv6FragmentHeader, Ipv6FragmentHeaderStatus,
     Ipv6HopByHopOptionsHeader, Ipv6MobileRoutingHeader, Ipv6MobileRoutingHeaderStatus, Ipv6Option,
     Ipv6RoutingHeader, Ipv6RoutingTypeStatus, Ipv6SegmentRoutingHeader, Layer, LinkType, LinuxSll,
@@ -60,6 +60,7 @@ enum ExpectedLayer {
     Dot11,
     LlcSnap,
     Eapol,
+    EapolKey,
     Ethernet,
     LinuxSll,
     NullLoopback,
@@ -912,7 +913,7 @@ const DOT11_FIXTURES: &[ValidFixtureCase] = &[
             ExpectedLayer::Dot11,
             ExpectedLayer::LlcSnap,
             ExpectedLayer::Eapol,
-            ExpectedLayer::Raw,
+            ExpectedLayer::EapolKey,
         ],
         preserve_exact_bytes: true,
         summary_path: None,
@@ -1407,6 +1408,9 @@ fn assert_expected_layers(case: &ValidFixtureCase, packet: &Packet) {
             ExpectedLayer::Eapol => {
                 let _ = expect_layer::<Eapol>(case, packet);
             }
+            ExpectedLayer::EapolKey => {
+                let _ = expect_layer::<EapolKey>(case, packet);
+            }
             ExpectedLayer::Ethernet => {
                 let _ = expect_layer::<Ethernet>(case, packet);
             }
@@ -1496,6 +1500,7 @@ fn expected_layer_name(expected: ExpectedLayer) -> &'static str {
         ExpectedLayer::Dot11 => "Dot11",
         ExpectedLayer::LlcSnap => "LlcSnap",
         ExpectedLayer::Eapol => "Eapol",
+        ExpectedLayer::EapolKey => "EapolKey",
         ExpectedLayer::Ethernet => "Ethernet",
         ExpectedLayer::LinuxSll => "LinuxSll",
         ExpectedLayer::NullLoopback => "NullLoopback",
@@ -1610,12 +1615,17 @@ fn assert_dot11_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
         "dot11-eapol-key" => {
             let llc = expect_layer::<LlcSnap>(case, packet);
             let eapol = expect_layer::<Eapol>(case, packet);
-            let raw = expect_layer::<Raw>(case, packet).as_bytes();
+            let key = expect_layer::<EapolKey>(case, packet);
             assert_eq!(llc.ethertype_value(), ETHERTYPE_EAPOL);
             assert_eq!(eapol.version_value(), 2);
             assert_eq!(eapol.packet_type_value(), 3);
             assert_eq!(eapol.body_length_value(), Some(95));
-            assert_eq!(raw.len(), 95);
+            assert_eq!(key.descriptor_type_value(), 2);
+            assert_eq!(key.key_information_value().bits(), 0x13ca);
+            assert_eq!(key.key_length_value(), 16);
+            assert_eq!(key.replay_counter_value(), 1);
+            assert_eq!(key.key_data_length_value(), Some(0));
+            assert!(key.key_data_bytes().is_empty());
         }
         "dot11-rsn-ie" => {
             let dot11 = expect_layer::<Dot11>(case, packet);
