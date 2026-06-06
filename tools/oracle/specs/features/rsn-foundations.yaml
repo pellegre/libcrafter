@@ -1,0 +1,130 @@
+version: 1
+kind: feature
+name: rsn_foundations
+summary: RSN information element, suite selector, capability, PMKID, management-cipher, and raw-preservation foundations.
+
+layers:
+  - dot11
+  - eapol
+  - rsn
+  - payload
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+  - roundtrip
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: minimal
+    checks:
+      - element_id_rsn
+      - version_preserved
+      - group_cipher_suite_preserved
+  - name: psk-ccmp
+    cipher_suites:
+      - ccmp_128
+    akm_suites:
+      - psk
+    checks:
+      - pairwise_cipher_list_preserved
+      - akm_list_preserved
+  - name: sae-management-protection
+    akm_suites:
+      - sae
+    capabilities:
+      - mfpc
+      - mfpr
+    checks:
+      - capabilities_preserved
+      - group_management_cipher_preserved
+  - name: pmkid-list
+    checks:
+      - pmkid_count_preserved
+      - pmkid_bytes_preserved
+  - name: unknown-suite-raw
+    checks:
+      - unknown_suite_selector_preserved
+      - trailing_bytes_preserved
+  - name: truncated-element
+    checks:
+      - structured_error
+      - excluded_from_offline_byte_comparison
+
+coverage_cases:
+  - rsn-minimal
+  - rsn-psk-ccmp
+  - rsn-sae-management-protection
+  - rsn-pmkid-list
+  - rsn-unknown-suite-raw
+  - malformed-rsn-truncated-element
+  - crafter-rsn-roundtrip
+
+supported_cases:
+  - name: rsn-minimal
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: strict_bytes
+  - name: rsn-psk-ccmp
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: strict_bytes
+  - name: rsn-sae-management-protection
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: strict_bytes
+  - name: rsn-pmkid-list
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: strict_bytes
+  - name: rsn-unknown-suite-raw
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: normalized
+  - name: malformed-rsn-truncated-element
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: structured_error
+    offline_byte_comparison: excluded
+
+normalized_model:
+  element:
+    - element_id
+    - length
+    - version
+    - group_cipher_suite
+    - pairwise_cipher_suites
+    - akm_suites
+    - capabilities
+    - pmkid_list
+    - group_management_cipher_suite
+    - trailing_bytes
+
+backend_support:
+  scapy:
+    status: planned
+    native_layers:
+      - Dot11EltRSN
+    notes:
+      - Unknown suite selectors and trailing bytes compare normalized raw preservation metadata.
+  wireshark:
+    status: planned
+    native_layers:
+      - wlan.rsn
+    notes:
+      - Parser-only pcap coverage may validate normalized RSN fields when tshark is available.
+  libcrafter:
+    status: planned
+    notes:
+      - RSN metadata is an offline foundation for later decrypt primitives; decryption is out of scope for this feature.

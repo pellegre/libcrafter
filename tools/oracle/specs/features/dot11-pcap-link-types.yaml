@@ -1,0 +1,187 @@
+version: 1
+kind: feature
+name: dot11_pcap_link_types
+summary: Classic pcap link-type coverage for bare IEEE 802.11 and radiotap-wrapped IEEE 802.11 packets.
+
+layers:
+  - radiotap
+  - dot11
+  - llc_snap
+  - payload
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+  - roundtrip
+strict_bytes: true
+malformed: false
+
+link_types:
+  - name: ieee80211
+    pcap_dlt: DLT_IEEE802_11
+    linktype: LINKTYPE_IEEE802_11
+    libcrafter: Ieee80211
+    expected_root: dot11
+  - name: radiotap
+    pcap_dlt: DLT_IEEE802_11_RADIO
+    linktype: LINKTYPE_IEEE802_11_RADIOTAP
+    libcrafter: Radiotap
+    expected_root: radiotap
+
+behaviors:
+  - name: bare-dot11-pcap
+    link_types:
+      - ieee80211
+    file_formats:
+      - pcap
+    checks:
+      - file_link_type_preserved
+      - packet_bytes_preserved
+      - decoded_model_starts_with_dot11
+  - name: radiotap-pcap
+    link_types:
+      - radiotap
+    file_formats:
+      - pcap
+    checks:
+      - file_link_type_preserved
+      - packet_bytes_preserved
+      - decoded_model_starts_with_radiotap
+  - name: protected-dot11-pcap
+    link_types:
+      - ieee80211
+      - radiotap
+    file_formats:
+      - pcap
+    checks:
+      - protected_payload_preserved_as_raw
+  - name: pcapng-mixed-dot11-links
+    link_types:
+      - ieee80211
+      - radiotap
+    file_formats:
+      - pcapng
+    support: planned
+    checks:
+      - interface_link_types_preserved
+
+coverage_cases:
+  - pcap-scapy-dot11
+  - pcap-scapy-radiotap
+  - pcap-crafter-dot11
+  - pcap-crafter-radiotap
+  - pcap-dot11-protected-raw
+  - pcapng-dot11-radiotap-mixed-links
+
+supported_cases:
+  - name: pcap-scapy-dot11
+    direction: reference_to_libcrafter
+    writer: scapy
+    reader: libcrafter
+    file_format: pcap
+    link_types:
+      - ieee80211
+    required_checks:
+      - file_format
+      - packet_count
+      - link_type
+      - packet_bytes
+      - decoded_model
+  - name: pcap-scapy-radiotap
+    direction: reference_to_libcrafter
+    writer: scapy
+    reader: libcrafter
+    file_format: pcap
+    link_types:
+      - radiotap
+    required_checks:
+      - file_format
+      - packet_count
+      - link_type
+      - packet_bytes
+      - decoded_model
+  - name: pcap-crafter-dot11
+    direction: libcrafter_to_reference
+    writer: libcrafter
+    reader: scapy
+    file_format: pcap
+    link_types:
+      - ieee80211
+    required_checks:
+      - file_format
+      - packet_count
+      - link_type
+      - packet_bytes
+      - decoded_model
+  - name: pcap-crafter-radiotap
+    direction: libcrafter_to_reference
+    writer: libcrafter
+    reader: scapy
+    file_format: pcap
+    link_types:
+      - radiotap
+    required_checks:
+      - file_format
+      - packet_count
+      - link_type
+      - packet_bytes
+      - decoded_model
+  - name: pcap-dot11-protected-raw
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    file_format: pcap
+    link_types:
+      - ieee80211
+      - radiotap
+    byte_policy: normalized
+    required_checks:
+      - protected_flag
+      - raw_payload_bytes
+  - name: pcapng-dot11-radiotap-mixed-links
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    file_format: pcapng
+    link_types:
+      - ieee80211
+      - radiotap
+    support: planned
+    byte_policy: normalized
+    required_checks:
+      - interface_link_types
+      - packet_count
+      - packet_bytes
+      - decoded_model
+
+live_cases:
+  - name: pcap-sendpacket-plan
+    case: pcap-crafter-radiotap
+    expected_live: dry_run_only
+    required_user_action:
+      - monitor_mode_interface
+      - explicit_live_flag
+      - manual_dongle_validation
+    notes:
+      - Automated tests validate pcap file and send-plan metadata only; live injection remains manual.
+
+backend_support:
+  scapy:
+    status: planned
+    pcap_read: true
+    pcap_write: true
+    native_layers:
+      - Dot11
+      - RadioTap
+      - PcapReader
+      - PcapWriter
+    notes:
+      - Classic pcap cases compare file link type, packet count, packet bytes, and normalized decoded model.
+  libcrafter:
+    status: planned
+    pcap_read: true
+    pcap_write: true
+    notes:
+      - Bare IEEE 802.11 and radiotap-wrapped IEEE 802.11 are classic pcap link types in this phase.
+      - Mixed-link pcapng remains planned unless pcapng support is available in the execution path.

@@ -1,0 +1,156 @@
+version: 1
+kind: feature
+name: dot11_data_llc
+summary: Unprotected IEEE 802.11 data frame LLC/SNAP encapsulation for EtherType-based payload dispatch.
+
+layers:
+  - dot11
+  - llc_snap
+  - arp
+  - ipv4
+  - ipv6
+  - eapol
+  - payload
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+  - roundtrip
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: snap-ipv4
+    ethertypes:
+      - ipv4
+    checks:
+      - dsap_ssap_control_snap_defaults
+      - oui_zero_preserved
+      - ethertype_dispatches_to_ipv4
+  - name: snap-ipv6
+    ethertypes:
+      - ipv6
+    checks:
+      - ethertype_dispatches_to_ipv6
+  - name: snap-arp
+    ethertypes:
+      - arp
+    checks:
+      - ethertype_dispatches_to_arp
+  - name: snap-eapol
+    ethertypes:
+      - eapol
+    checks:
+      - ethertype_dispatches_to_eapol
+  - name: snap-unknown-raw
+    ethertypes:
+      - unknown
+    checks:
+      - enclosing_llc_snap_layer_typed
+      - unknown_payload_preserved_as_raw
+  - name: non-snap-raw
+    checks:
+      - non_snap_llc_values_preserved
+      - payload_preserved_as_raw
+  - name: dot11-ipv4-without-llc
+    checks:
+      - direct_dot11_ipv4_stack_rejected
+      - explicit_llc_snap_required
+  - name: truncated-llc-snap
+    checks:
+      - structured_error
+      - excluded_from_offline_byte_comparison
+
+coverage_cases:
+  - llc-snap-ipv4
+  - llc-snap-ipv6
+  - llc-snap-arp
+  - llc-snap-eapol
+  - llc-snap-unknown-raw
+  - llc-non-snap-raw
+  - dot11-direct-ipv4-rejected
+  - malformed-llc-snap-truncated
+  - crafter-llc-snap-roundtrip
+
+supported_cases:
+  - name: llc-snap-ipv4
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: strict_bytes
+  - name: llc-snap-ipv6
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: strict_bytes
+  - name: llc-snap-arp
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: strict_bytes
+  - name: llc-snap-eapol
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: strict_bytes
+  - name: llc-snap-unknown-raw
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: normalized
+  - name: llc-non-snap-raw
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: normalized
+  - name: dot11-direct-ipv4-rejected
+    directions:
+      - libcrafter_to_reference
+    byte_policy: structured_error
+    offline_byte_comparison: excluded
+  - name: malformed-llc-snap-truncated
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: structured_error
+    offline_byte_comparison: excluded
+
+normalized_model:
+  llc_snap:
+    - dsap
+    - ssap
+    - control
+    - oui
+    - ethertype
+  payload:
+    - decoded_child
+    - raw_bytes
+
+backend_support:
+  scapy:
+    status: planned
+    native_layers:
+      - LLC
+      - SNAP
+      - IP
+      - IPv6
+      - ARP
+      - EAPOL
+    notes:
+      - Non-SNAP and unknown EtherType cases compare normalized raw payload boundaries rather than requiring protocol child dispatch.
+  wireshark:
+    status: planned
+    native_layers:
+      - llc
+      - snap
+    notes:
+      - Parser-only pcap coverage may validate normalized LLC/SNAP metadata when tshark is available.
+  libcrafter:
+    status: planned
+    notes:
+      - LLC/SNAP remains an explicit layer; the generator must not synthesize Dot11 directly above IPv4, IPv6, ARP, or EAPOL.

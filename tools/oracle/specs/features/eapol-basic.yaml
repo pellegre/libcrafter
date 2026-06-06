@@ -1,0 +1,151 @@
+version: 1
+kind: feature
+name: eapol_basic
+summary: IEEE 802.1X EAPOL header and RSN EAPOL-Key parsing foundations carried through LLC/SNAP.
+
+layers:
+  - llc_snap
+  - eapol
+  - rsn
+  - payload
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+  - roundtrip
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: start-logoff
+    packet_types:
+      - start
+      - logoff
+    checks:
+      - body_length_zero
+      - packet_type_preserved
+  - name: eap-packet-raw
+    packet_types:
+      - eap_packet
+    checks:
+      - opaque_eap_body_preserved
+  - name: key-rsn
+    packet_types:
+      - key
+    descriptor_types:
+      - rsn_key
+    checks:
+      - key_information_flags_preserved
+      - replay_counter_preserved
+      - nonce_iv_rsc_id_mic_preserved
+      - key_data_length_derived
+  - name: key-data-rsn
+    packet_types:
+      - key
+    descriptor_types:
+      - rsn_key
+    key_data:
+      - rsn
+    checks:
+      - key_data_bytes_preserved
+      - rsn_key_data_boundary_preserved
+  - name: unknown-type-raw
+    packet_types:
+      - unknown
+    checks:
+      - enclosing_eapol_layer_typed
+      - unknown_body_preserved_as_raw
+  - name: truncated-key-frame
+    checks:
+      - structured_error
+      - excluded_from_offline_byte_comparison
+
+coverage_cases:
+  - eapol-start
+  - eapol-logoff
+  - eapol-eap-packet-raw
+  - eapol-key-rsn
+  - eapol-key-data-rsn
+  - eapol-unknown-type-raw
+  - malformed-eapol-key-truncated
+  - crafter-eapol-roundtrip
+
+supported_cases:
+  - name: eapol-start
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: strict_bytes
+  - name: eapol-logoff
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: strict_bytes
+  - name: eapol-eap-packet-raw
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: normalized
+  - name: eapol-key-rsn
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: strict_bytes
+  - name: eapol-key-data-rsn
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: normalized
+  - name: eapol-unknown-type-raw
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: normalized
+  - name: malformed-eapol-key-truncated
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: structured_error
+    offline_byte_comparison: excluded
+
+normalized_model:
+  header:
+    - version
+    - packet_type
+    - body_length
+  key:
+    - descriptor_type
+    - key_information
+    - key_length
+    - replay_counter
+    - key_nonce
+    - key_iv
+    - key_rsc
+    - key_id
+    - key_mic
+    - key_data_length
+    - key_data
+
+backend_support:
+  scapy:
+    status: planned
+    native_layers:
+      - EAPOL
+      - EAPOL_KEY
+    notes:
+      - Unknown EAPOL bodies and RSN key-data boundaries compare normalized raw bytes where native typed support differs.
+  wireshark:
+    status: planned
+    native_layers:
+      - eapol
+    notes:
+      - Parser-only pcap coverage may validate normalized EAPOL fields when tshark is available.
+  libcrafter:
+    status: planned
+    notes:
+      - EAPOL-Key parsing records handshake metadata needed by later offline decrypt primitives; no handshake harvesting workflow is part of this feature.
