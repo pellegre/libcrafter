@@ -31,7 +31,7 @@ pub(crate) use self::dot11::decode_dot11_with_registry;
 pub use self::dot11::*;
 pub(crate) use self::llc::append_llc_snap_packet_with_registry;
 pub use self::llc::LlcSnap;
-pub use self::radiotap::Radiotap;
+pub use self::radiotap::*;
 
 /// Ethernet type for IPv4 payloads.
 pub const ETHERTYPE_IPV4: u16 = 0x0800;
