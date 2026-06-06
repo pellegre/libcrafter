@@ -11,8 +11,8 @@ use crate::protocols::ipv4::{
 use crate::protocols::ipv6::append_ipv6_packet_with_registry;
 use crate::protocols::link::{
     append_arp_packet, append_vlan_packet_with_registry, decode_ethernet_with_registry,
-    decode_linux_sll_with_registry, decode_null_loopback_with_registry, ETHERTYPE_ARP,
-    ETHERTYPE_IPV4, ETHERTYPE_IPV6, ETHERTYPE_VLAN,
+    decode_dot11_with_registry, decode_linux_sll_with_registry, decode_null_loopback_with_registry,
+    ETHERTYPE_ARP, ETHERTYPE_IPV4, ETHERTYPE_IPV6, ETHERTYPE_VLAN,
 };
 use crate::protocols::transport::{
     append_tcp_packet_with_registry, append_udp_packet_with_registry,
@@ -227,7 +227,8 @@ impl ProtocolRegistry {
         match link_type {
             LinkType::Raw => Packet::decode_raw(bytes),
             LinkType::Ethernet => self.decode_ethernet(bytes),
-            LinkType::Ieee80211 | LinkType::Radiotap => Packet::decode_raw(bytes),
+            LinkType::Ieee80211 => decode_dot11_with_registry(self, bytes),
+            LinkType::Radiotap => Packet::decode_raw(bytes),
             LinkType::LinuxCooked | LinkType::LinuxSll => self.decode_linux_sll(bytes),
             LinkType::NullLoopback => decode_null_loopback_with_registry(self, bytes),
         }
