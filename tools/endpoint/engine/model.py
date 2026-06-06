@@ -1,4 +1,4 @@
-"""JSON-compatible endpoint manifest models for wire."""
+"""JSON-compatible models for endpoint lifecycle manifests."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ JSONObject: TypeAlias = dict[str, JSONValue]
 
 
 class JsonModel:
-    """Mixin for wire models that serialize through JSON objects."""
+    """Mixin for endpoint models that serialize through JSON objects."""
 
     def to_dict(self) -> JSONObject:
         value = to_jsonable(self)
@@ -384,7 +384,7 @@ def string_list(value: object, name: str) -> list[str]:
 
 
 def to_jsonable(value: Any) -> JSONValue:
-    """Return a strict JSON-compatible copy of a wire model value."""
+    """Return a strict JSON-compatible copy of an endpoint model value."""
 
     if value is None or isinstance(value, (str, bool, int)):
         return value
@@ -412,13 +412,13 @@ def to_jsonable(value: Any) -> JSONValue:
 
 
 def dumps_json(value: Any, *, indent: int = 2) -> str:
-    """Serialize a wire value as deterministic JSON text."""
+    """Serialize an endpoint value as deterministic JSON text."""
 
     return json.dumps(to_jsonable(value), indent=indent, sort_keys=True) + "\n"
 
 
 def write_json(path: str | Path, value: Any, *, indent: int = 2) -> None:
-    """Write a wire value as JSON, creating parent directories as needed."""
+    """Write an endpoint value as JSON, creating parent directories as needed."""
 
     output_path = Path(path)
     if not output_path.is_absolute():
@@ -428,7 +428,7 @@ def write_json(path: str | Path, value: Any, *, indent: int = 2) -> None:
 
 
 def read_json(path: str | Path) -> JSONValue:
-    """Read JSON text for later conversion into wire model objects."""
+    """Read JSON text for later conversion into endpoint model objects."""
 
     input_path = Path(path)
     if not input_path.is_absolute():

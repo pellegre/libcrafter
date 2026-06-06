@@ -1,4 +1,4 @@
-"""Wire provider and exposure compatibility registry."""
+"""Endpoint provider and exposure compatibility registry."""
 
 from __future__ import annotations
 
@@ -20,13 +20,13 @@ _KNOWN_EXPOSURES = frozenset({"wan", "private", "lan", "wifi"})
 
 
 def registered_providers() -> tuple[str, ...]:
-    """Return provider names registered with the wire engine."""
+    """Return provider names registered with the endpoint engine."""
 
     return tuple(sorted(_SUPPORTED_EXPOSURES_BY_PROVIDER))
 
 
 def known_exposures() -> tuple[str, ...]:
-    """Return exposure names understood by the wire engine."""
+    """Return exposure names understood by the endpoint engine."""
 
     return tuple(sorted(_KNOWN_EXPOSURES))
 

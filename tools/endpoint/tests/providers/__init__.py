@@ -1,1 +1,1 @@
-"""Provider-specific wire tests."""
+"""Provider-specific endpoint tests."""

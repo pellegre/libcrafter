@@ -1,4 +1,4 @@
-"""Hetzner wire provider lifecycle operations."""
+"""Hetzner endpoint provider lifecycle operations."""
 
 from __future__ import annotations
 

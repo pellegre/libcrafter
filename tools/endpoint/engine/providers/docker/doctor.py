@@ -245,7 +245,7 @@ def _configuration_report(exposure: str, env: Mapping[str, str]) -> dict[str, ob
 def _capabilities_report(exposure: str) -> dict[str, object]:
     return {
         "exposure": exposure,
-        "wire": {
+        "packet_io": {
             "supported": True,
             "supported_exposures": sorted(SUPPORTED_EXPOSURES),
             "capabilities": list(_WIRE_CAPABILITIES_BY_EXPOSURE[exposure]),

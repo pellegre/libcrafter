@@ -1,4 +1,4 @@
-"""Local contract coverage for wire models, registry, and state."""
+"""Local contract coverage for endpoint models, registry, and state."""
 
 from __future__ import annotations
 

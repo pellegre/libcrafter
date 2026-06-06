@@ -1,4 +1,4 @@
-"""Fake-run coverage for wire endpoint transfers."""
+"""Fake-run coverage for endpoint transfers."""
 
 from __future__ import annotations
 

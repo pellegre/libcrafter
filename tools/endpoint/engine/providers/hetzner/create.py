@@ -357,7 +357,7 @@ def _resolve_requested_private_cidr(
 ) -> str:
     """Return a private CIDR that contains ``requested_private_ip``.
 
-    The Hetzner wire default (``DEFAULT_PRIVATE_CIDR`` = 10.0.0.0/16) does not
+    The Hetzner endpoint default (``DEFAULT_PRIVATE_CIDR`` = 10.0.0.0/16) does not
     contain every caller's requested private address; the oracle live lab, for
     example, requests 10.42.19.0/24 endpoints. When the caller requests a
     private IPv4 outside the resolved CIDR and ``HETZNER_PRIVATE_CIDR`` was not

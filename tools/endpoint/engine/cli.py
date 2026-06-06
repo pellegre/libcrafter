@@ -71,8 +71,8 @@ def _add_provider_exposure_options(parser: argparse.ArgumentParser) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="wire",
-        description="Create and operate one wire endpoint at a time.",
+        prog="endpoint",
+        description="Create and operate one provider endpoint at a time.",
     )
     subparsers = parser.add_subparsers(dest="command", metavar="command")
 
@@ -142,7 +142,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     exec_endpoint = subparsers.add_parser(
         "exec",
-        usage="wire exec [-h] ENDPOINT_ID -- COMMAND...",
+        usage="endpoint exec [-h] ENDPOINT_ID -- COMMAND...",
         help="run a command on one endpoint",
         description="Run COMMAND on one endpoint over SSH.",
     )
@@ -221,7 +221,7 @@ def build_parser() -> argparse.ArgumentParser:
     list_endpoints = subparsers.add_parser(
         "list",
         help="list tracked endpoints",
-        description="List tracked wire endpoints.",
+        description="List tracked endpoints.",
     )
     list_endpoints.add_argument("--json", action="store_true", help="emit machine-readable JSON")
     list_endpoints.set_defaults(command_name="list")
@@ -576,7 +576,7 @@ def _run_list_endpoints(args: argparse.Namespace) -> int:
 def _print_doctor_report(report: dict[str, object]) -> None:
     status = "ok" if bool(report["ok"]) else "failed"
     print(
-        "wire doctor: "
+        "endpoint doctor: "
         f"provider={report['provider']} exposure={report['exposure']} "
         f"dry_run={str(report['dry_run']).lower()} status={status}"
     )
@@ -593,7 +593,7 @@ def _print_doctor_report(report: dict[str, object]) -> None:
 def _print_create_endpoint_report(manifest: dict[str, object]) -> None:
     created = str(bool(manifest["created"])).lower()
     print(
-        "wire create: "
+        "endpoint create: "
         f"provider={manifest['provider']} exposure={manifest['exposure']} "
         f"endpoint_id={manifest['endpoint_id']} created={created}"
     )
@@ -603,7 +603,7 @@ def _print_create_endpoint_report(manifest: dict[str, object]) -> None:
 
 def _print_destroy_endpoint_report(output: dict[str, object]) -> None:
     print(
-        "wire destroy: "
+        "endpoint destroy: "
         f"endpoint_id={output['endpoint_id']} status={output['status']} "
         f"destroyed={str(bool(output['destroyed'])).lower()}"
     )
@@ -615,7 +615,7 @@ def _print_destroy_endpoint_report(output: dict[str, object]) -> None:
 
 def _print_ssh_info(output: dict[str, object]) -> None:
     print(
-        "wire ssh-info: "
+        "endpoint ssh-info: "
         f"endpoint_id={output['endpoint_id']} host={output.get('host')} "
         f"user={output.get('user')} port={output.get('port')}"
     )
@@ -627,7 +627,7 @@ def _print_ssh_info(output: dict[str, object]) -> None:
 def _print_endpoint_list(output: dict[str, object]) -> None:
     endpoints = output["endpoints"]
     if not isinstance(endpoints, list) or not endpoints:
-        print("wire list: no endpoints")
+        print("endpoint list: no endpoints")
         return
     for endpoint in endpoints:
         if not isinstance(endpoint, dict):
@@ -645,7 +645,7 @@ def _remote_command_parts(remote_command: Sequence[str]) -> list[str]:
     if command and command[0] == "--":
         command = command[1:]
     if not command:
-        raise ValueError("wire exec requires COMMAND after ENDPOINT_ID --")
+        raise ValueError("endpoint exec requires COMMAND after ENDPOINT_ID --")
     return command
 
 
@@ -742,7 +742,7 @@ def _forward_command_result(result: CommandResult) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run the wire command-line interface."""
+    """Run the endpoint command-line interface."""
     parser = build_parser()
     args = parser.parse_args(argv)
     if getattr(args, "command", None) is None:

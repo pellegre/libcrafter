@@ -1,4 +1,4 @@
-"""Shared helpers for local VM-backed wire providers."""
+"""Shared helpers for local VM-backed endpoint providers."""
 
 from .helpers import (
     command_error,
