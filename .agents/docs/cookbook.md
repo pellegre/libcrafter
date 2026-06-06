@@ -346,6 +346,103 @@ artifacts and tear the session down afterward (see Live-Lab Sending and the
 `lab-session` skill). The user-facing NDP/ICMPv6 coverage boundary lives in
 [`docs/icmpv6-coverage.md`](../../docs/icmpv6-coverage.md).
 
+## Build Dot11 Stacks
+
+Generated Wi-Fi tools should use the normal packet stack shape. For radiotap
+captures and dry-run injection candidates, build `Radiotap / Dot11 / LlcSnap /
+...`; for bare IEEE 802.11 pcap fixtures, start with `Dot11`. Do not generate
+`Dot11 / Ipv4` as IP-over-Wi-Fi: `LlcSnap` is the explicit LLC/SNAP bridge to
+EtherType protocols.
+
+Use documentation MAC addresses (`00:00:5e:00:53:00`-`ff`) and synthetic
+payloads in fixtures, examples, and dry-run plans. Do not store real SSIDs,
+BSSIDs, credentials, public IPs, or live captures in tracked files.
+
+```rust
+use crafter::prelude::*;
+use std::net::Ipv4Addr;
+
+fn main() -> crafter::Result<()> {
+    let sta = MacAddr::from([0x00, 0x00, 0x5e, 0x00, 0x53, 0x10]);
+    let ap = MacAddr::from([0x00, 0x00, 0x5e, 0x00, 0x53, 0x20]);
+
+    let packet = Radiotap::new()
+        / Dot11::data()
+            .addr1(ap) // receiver/BSSID for this synthetic ToDS=false frame
+            .addr2(sta)
+            .addr3(ap)
+            .sequence_number(7)
+        / LlcSnap::new().ethertype(ETHERTYPE_IPV4)
+        / Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 10))
+            .dst(Ipv4Addr::new(198, 51, 100, 20))
+        / Udp::new().sport(53000).dport(33434)
+        / Raw::from("dot11-agent-payload");
+
+    let bytes = packet.compile()?;
+    let decoded = Packet::decode_from_link(LinkType::Radiotap, bytes.as_bytes())?;
+    assert!(decoded.layer::<Radiotap>().is_some());
+    assert!(decoded.layer::<Dot11>().is_some());
+    assert!(decoded.layer::<LlcSnap>().is_some());
+
+    dump_pcap("target/dot11-agent-dry-run.pcap", [&packet], LinkType::Radiotap)?;
+
+    let plan = packet.send_dry_run(
+        SendOptions::new()
+            .iface("dot11-monitor-dry-run")
+            .link_layer(),
+    )?;
+    println!("target={:?}", plan.target());
+    println!("{}", plan.compiled_packet().hexdump());
+    Ok(())
+}
+```
+
+Keep validation offline first. Use deterministic pcap fixtures and the focused
+Dot11 oracle profiles before any live discussion:
+
+```sh
+tools/oracle/run offline --backend scapy --profile dot11-smoke --seed 1101 --count 20 --out target/oracle/dot11-agent-offline
+tools/oracle/run pcap --backend scapy --profile dot11-pcap --seed 1201 --count 20 --out target/oracle/dot11-agent-pcap
+tools/oracle/run live --backend scapy --provider local-dry-run --profile dot11-smoke --seed 1301 --count 5 --dry-run --out target/oracle/dot11-agent-live-local-dry-run
+```
+
+Protected Dot11 data is not decrypted in this phase. If the protected bit is
+set, decode stops before LLC/SNAP and keeps the protected body as `Raw` until a
+later decrypt phase. Generated analyzers should display `is_protected()`,
+`encrypted_body_len()`, and the Raw byte length instead of guessing at inner
+IPv4, EAPOL, or RSN layers.
+
+```rust
+use crafter::prelude::*;
+
+let sta = MacAddr::from([0x00, 0x00, 0x5e, 0x00, 0x53, 0x11]);
+let ap = MacAddr::from([0x00, 0x00, 0x5e, 0x00, 0x53, 0x21]);
+let protected_fc = Dot11::data().frame_control_value().with_protected(true);
+
+let protected = Dot11::data()
+    .frame_control(protected_fc)
+    .addr1(ap)
+    .addr2(sta)
+    .addr3(ap)
+    / Raw::from_bytes([0xaa, 0xaa, 0x03, 0xde, 0xad, 0xbe, 0xef]);
+
+let bytes = protected.compile()?;
+let decoded = Packet::decode_from_link(LinkType::Ieee80211, bytes.as_bytes())?;
+let dot11 = decoded.layer::<Dot11>().expect("Dot11 layer");
+assert!(dot11.is_protected());
+assert!(decoded.layer::<LlcSnap>().is_none());
+assert!(decoded.layer::<Raw>().is_some());
+```
+
+Live radiotap injection is a manual gate, not an automatic generated-tool path.
+The built-in sender can produce dry-run link-layer plans for `Radiotap / Dot11`,
+but current live radiotap transmission returns an unsupported-send error. Do
+not add a generated `--live` mode that assumes monitor-mode injection works.
+Use the manual gate in [`docs/dot11-live-manual.md`](../../docs/dot11-live-manual.md)
+only after human authorization, isolated RF setup, dry-run byte review, artifact
+cleanup, and explicit live confirmation.
+
 ## Build UDP Options
 
 Generated tools should build UDP options as a separate `UdpOptions` layer after
