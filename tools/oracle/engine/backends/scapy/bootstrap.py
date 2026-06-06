@@ -14,7 +14,8 @@ from ...model import JSONObject
 
 SCAPY_REQUIREMENT = "scapy>=2.5,<3"
 PYYAML_REQUIREMENT = "PyYAML>=6.0,<7"
-BACKEND_PYTHON_REQUIREMENTS = (SCAPY_REQUIREMENT, PYYAML_REQUIREMENT)
+PYTEST_REQUIREMENT = "pytest>=8,<10"
+BACKEND_PYTHON_REQUIREMENTS = (SCAPY_REQUIREMENT, PYYAML_REQUIREMENT, PYTEST_REQUIREMENT)
 BOOTSTRAPPED_ENV = "LIBCRAFTER_SCAPY_BOOTSTRAPPED"
 BOOTSTRAP_SOURCE_ENV = "LIBCRAFTER_SCAPY_BOOTSTRAP_SOURCE"
 
@@ -111,6 +112,8 @@ def _reexec_with_scapy() -> None:
             BACKEND_PYTHON_REQUIREMENTS[0],
             "--with",
             BACKEND_PYTHON_REQUIREMENTS[1],
+            "--with",
+            BACKEND_PYTHON_REQUIREMENTS[2],
             "--",
             os.environ.get("ORACLE_PYTHON", "python3"),
             *_reexec_python_args(),
@@ -131,6 +134,9 @@ def _reexec_python_args() -> list[str]:
     main_module = sys.modules.get("__main__")
     module_spec = getattr(main_module, "__spec__", None)
     module_name = getattr(module_spec, "name", None)
+    argv0 = sys.argv[0] if sys.argv else ""
+    if module_name in {"pytest", "pytest.__main__"} or "pytest" in argv0:
+        return ["-m", "pytest", *sys.argv[1:]]
     if module_name:
         return ["-m", module_name, *sys.argv[1:]]
     if not sys.argv:

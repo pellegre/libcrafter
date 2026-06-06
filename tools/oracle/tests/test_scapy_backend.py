@@ -5,6 +5,7 @@ from __future__ import annotations
 import unittest
 
 from tools.oracle.engine.backends.scapy import normalize, packets
+from tools.oracle.engine.generator import generate_plans
 from tools.oracle.engine.model import PacketPlan
 
 
@@ -124,6 +125,129 @@ class ScapyL2Ipv4EncodeDecodeTest(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertEqual(packets._ipv4_flags(value), expected)
         self.assertEqual(packets._ipv4_flags(["reserved", "mf"]), 0b101)
+
+
+def _dot11_plan(
+    *,
+    stack: list[str],
+    fields: dict,
+    root: str,
+    case: str = "dot11-unit",
+) -> PacketPlan:
+    return PacketPlan(
+        stack=stack,
+        fields=fields,
+        profile="dot11-smoke",
+        seed=1,
+        index=0,
+        direction="reference_to_libcrafter",
+        family="dot11",
+        feature_tags=["dot11"],
+        case=case,
+        strict_bytes=True,
+        metadata={"root": root, "root_decoder": root, "stack_name": "dot11_unit"},
+    )
+
+
+class ScapyDot11MaterializationTest(unittest.TestCase):
+    def test_radiotap_dot11_payload_exact_hex(self) -> None:
+        plan = _dot11_plan(
+            stack=["radiotap", "dot11", "payload"],
+            root="link:radiotap",
+            fields={
+                "radiotap": {"version": 0, "pad": 0, "flags": "fcs_present", "rate": 2},
+                "dot11": {
+                    "frame_control": 0x0008,
+                    "duration_id": 0,
+                    "addr1": "00:00:5e:00:53:01",
+                    "addr2": "00:00:5e:00:53:02",
+                    "addr3": "00:00:5e:00:53:03",
+                    "sequence_control": 0x1000,
+                },
+                "payload": {"hex": "010203", "length": 3},
+            },
+        )
+
+        vector = packets.encode_packet_plan(plan)
+
+        self.assertEqual(
+            vector.raw_hex,
+            "00000a000600000010020800000000005e00530100005e00530200005e0053030010010203",
+        )
+        self.assertEqual(vector.metadata["scapy_stack"], ["RadioTap", "Dot11", "Raw"])
+
+    def test_dot11_llc_snap_eapol_start_exact_hex(self) -> None:
+        plan = _dot11_plan(
+            stack=["dot11", "llc_snap", "eapol"],
+            root="link:dot11",
+            fields={
+                "dot11": {
+                    "frame_control": 0x0008,
+                    "duration_id": 0,
+                    "addr1": "00:00:5e:00:53:01",
+                    "addr2": "00:00:5e:00:53:02",
+                    "addr3": "00:00:5e:00:53:03",
+                    "sequence_control": 0x1000,
+                },
+                "llc_snap": {
+                    "dsap": 0xAA,
+                    "ssap": 0xAA,
+                    "control": 0x03,
+                    "oui": {"hex": "000000"},
+                    "ethertype": "eapol",
+                },
+                "eapol": {"version": 2, "packet_type": "start", "body_length": 0},
+            },
+        )
+
+        vector = packets.encode_packet_plan(plan)
+
+        self.assertEqual(
+            vector.raw_hex,
+            "0800000000005e00530100005e00530200005e0053030010aaaa03000000888e02010000",
+        )
+        self.assertEqual(vector.decoder, "Dot11")
+
+    def test_radiotap_dot11_rsn_exact_hex(self) -> None:
+        plan = _dot11_plan(
+            stack=["radiotap", "dot11", "rsn"],
+            root="link:radiotap",
+            fields={
+                "radiotap": {"version": 0, "pad": 0},
+                "dot11": {
+                    "frame_control": 0x0080,
+                    "duration_id": 0,
+                    "addr1": "ff:ff:ff:ff:ff:ff",
+                    "addr2": "00:00:5e:00:53:02",
+                    "addr3": "00:00:5e:00:53:03",
+                    "sequence_control": 0,
+                },
+                "rsn": {
+                    "element_id": 48,
+                    "version": 1,
+                    "group_cipher_suite": "ccmp_128",
+                    "pairwise_cipher_suites": ["ccmp_128"],
+                    "akm_suites": ["psk"],
+                    "capabilities": 0,
+                },
+            },
+        )
+
+        vector = packets.encode_packet_plan(plan)
+
+        self.assertEqual(
+            vector.raw_hex,
+            "000008000000000080000000ffffffffffff00005e00530200005e005303000030140100000fac040100000fac040100000fac020000",
+        )
+
+    def test_generated_dot11_smoke_plans_materialize_without_scapy_bootstrap(self) -> None:
+        plans = generate_plans(seed=1, profile="dot11-smoke", count=3, backend="scapy")
+
+        vectors = [packets.encode_packet_plan(plan) for plan in plans]
+
+        self.assertEqual(len(vectors), 3)
+        self.assertTrue(all(vector.metadata["scapy_version"] == "not-required" for vector in vectors))
+        self.assertTrue(all(vector.raw_hex for vector in vectors))
 
 
 def _icmp_live_plan(icmp_fields: dict, *, case: str, payload_hex: str = "0102030405") -> PacketPlan:

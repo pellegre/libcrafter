@@ -52,6 +52,31 @@ _SUPPORTED_FIELDS: dict[str, set[str]] = {
         "client_hardware_address",
         "options",
     },
+    "dot11": {
+        "addr1",
+        "addr2",
+        "addr3",
+        "addr4",
+        "duration_id",
+        "frame_control",
+        "frame_type",
+        "from_ds",
+        "ht_control",
+        "management_fixed_fields",
+        "more_data",
+        "more_fragments",
+        "order",
+        "payload",
+        "power_management",
+        "protected",
+        "protocol_version",
+        "qos_control",
+        "retry",
+        "sequence_control",
+        "subtype",
+        "tagged_parameters",
+        "to_ds",
+    },
     "dns": {
         "transaction_id",
         "is_response",
@@ -59,6 +84,22 @@ _SUPPORTED_FIELDS: dict[str, set[str]] = {
         "flags",
         "response_code",
         "questions",
+    },
+    "eapol": {
+        "body_length",
+        "descriptor_type",
+        "key_data",
+        "key_data_length",
+        "key_id",
+        "key_information",
+        "key_iv",
+        "key_length",
+        "key_mic",
+        "key_nonce",
+        "key_rsc",
+        "packet_type",
+        "replay_counter",
+        "version",
     },
     "ethernet": {"dst", "src", "ethertype"},
     "icmp": {
@@ -95,8 +136,37 @@ _SUPPORTED_FIELDS: dict[str, set[str]] = {
     },
     "ipv6": {"src", "dst", "traffic_class", "flow_label", "next_header", "hop_limit"},
     "linux_cooked": {"packet_type", "address_type", "address_length", "source_address", "protocol"},
+    "llc_snap": {"control", "dsap", "ethertype", "oui", "payload_length", "ssap"},
     "null_loopback": {"type"},
     "payload": {"hex", "length"},
+    "radiotap": {
+        "antenna",
+        "channel_flags",
+        "channel_frequency",
+        "dbm_antenna_signal",
+        "fcs_status",
+        "flags",
+        "length",
+        "pad",
+        "present_words",
+        "rate",
+        "rx_flags",
+        "tx_flags",
+        "unknown_fields",
+        "version",
+    },
+    "rsn": {
+        "akm_suites",
+        "capabilities",
+        "element_id",
+        "group_cipher_suite",
+        "group_management_cipher_suite",
+        "length",
+        "pairwise_cipher_suites",
+        "pmkid_list",
+        "trailing_bytes",
+        "version",
+    },
     "tcp": {
         "src_port",
         "dst_port",
@@ -170,13 +240,18 @@ _ICMP_BODY_FIELDS = {
 _SCAPY_MATERIALIZED_LAYERS = {
     "arp",
     "dhcp",
+    "dot11",
+    "eapol",
     "dns",
     "ethernet",
     "icmp",
     "icmpv6",
     "ipv4",
     "ipv6",
+    "llc_snap",
     "payload",
+    "radiotap",
+    "rsn",
     "tcp",
     "udp",
     "vlan",
@@ -718,6 +793,22 @@ class PacketGenerator:
             ):
                 if stack_layers not in (["ipv4", "udp", "payload"], ["ipv6", "udp", "payload"]):
                     continue
+            if (
+                feature is None
+                and case is None
+                and root is None
+                and family is None
+                and self.profile in {
+                    "dot11-smoke",
+                    "radiotap-smoke",
+                    "dot11-pcap",
+                    "eapol-smoke",
+                    "rsn-smoke",
+                }
+            ):
+                profile_families = set(profile_family_names)
+                if not profile_families.intersection(stack_families):
+                    continue
             if feature is None and case is None and self.profile == "smoke" and "dhcp" in stack_layers:
                 continue
             if (
@@ -993,6 +1084,16 @@ class PacketGenerator:
         # stays disabled so routing/TCP/ICMPv6 terminal chains remain aligned
         # with their declared stack shapes.
         if feature is None and self.profile == "ipv6-enrichment":
+            if not choices:
+                return "default"
+            return weighted_choice(rng, choices)
+        if feature is None and self.profile in {
+            "dot11-smoke",
+            "radiotap-smoke",
+            "dot11-pcap",
+            "eapol-smoke",
+            "rsn-smoke",
+        }:
             if not choices:
                 return "default"
             return weighted_choice(rng, choices)
@@ -1742,6 +1843,16 @@ class PacketGenerator:
             return _sample_dns_field(ctx, field_name, domain)
         if layer == "dhcp":
             return _sample_dhcp_field(ctx, field_name, domain)
+        if layer == "radiotap":
+            return _sample_radiotap_field(ctx, field_name, domain)
+        if layer == "dot11":
+            return _sample_dot11_field(ctx, field_name, domain, current_fields)
+        if layer == "llc_snap":
+            return _sample_llc_snap_field(ctx, field_name)
+        if layer == "eapol":
+            return _sample_eapol_field(ctx, field_name, domain)
+        if layer == "rsn":
+            return _sample_rsn_field(ctx, field_name, domain)
         if layer == "linux_cooked":
             return _sample_linux_cooked_field(ctx, field_name, domain)
         if layer == "null_loopback":
@@ -4117,6 +4228,276 @@ def _auto_sample_feature(feature: str) -> bool:
     return feature != "icmpv4_errors"
 
 
+def _sample_radiotap_field(ctx: _SamplingContext, field_name: str, domain: object) -> object:
+    if field_name == "version":
+        return 0 if domain != "explicit_nonzero" else 1
+    if field_name == "pad":
+        return 0
+    if field_name == "length":
+        return 0
+    if field_name == "present_words":
+        return [0]
+    if field_name == "flags":
+        if domain == "absent":
+            return _SKIP_FIELD
+        if domain in {"fcs_present", "fcs_present_failed"}:
+            return "fcs_present"
+        if domain == "failed_fcs":
+            return "failed_fcs"
+        return "none"
+    if field_name == "rate":
+        return _SKIP_FIELD if domain == "absent" else (2 if domain == "2" else _integer_domain_value(ctx, domain, field_name, bits=8))
+    if field_name == "channel_frequency":
+        return _SKIP_FIELD if domain == "absent" else _integer_domain_value(ctx, domain, field_name, bits=16)
+    if field_name == "channel_flags":
+        if domain == "absent":
+            return _SKIP_FIELD
+        return domain
+    if field_name == "dbm_antenna_signal":
+        if domain == "absent":
+            return _SKIP_FIELD
+        if domain == "boundary":
+            return -128
+        return -42 if domain == "synthetic_signal" else _integer_domain_value(ctx, domain, field_name, bits=8)
+    if field_name == "antenna":
+        return _SKIP_FIELD if domain == "absent" else _integer_domain_value(ctx, domain, field_name, bits=8)
+    if field_name == "rx_flags":
+        if domain == "absent":
+            return _SKIP_FIELD
+        return 0x0001 if domain == "failed_fcs" else 0
+    if field_name == "tx_flags":
+        if domain == "absent":
+            return _SKIP_FIELD
+        return 0x0008 if domain == "no_ack" else 0
+    if field_name == "unknown_fields":
+        return _SKIP_FIELD if domain == "absent" else {"hex": "aabbccdd"}
+    if field_name == "fcs_status":
+        return _SKIP_FIELD if domain == "absent" else domain
+    raise ValueError(f"spec error: unsupported radiotap field sampler: {field_name}")
+
+
+def _sample_dot11_field(
+    ctx: _SamplingContext,
+    field_name: str,
+    domain: object,
+    current_fields: Mapping[str, object],
+) -> object:
+    frame_control = _dot11_frame_control_for_case(ctx.case, ctx.stack)
+    if field_name == "frame_control":
+        return frame_control
+    if field_name == "protocol_version":
+        return frame_control & 0x3
+    if field_name == "frame_type":
+        return (frame_control >> 2) & 0x3
+    if field_name == "subtype":
+        return (frame_control >> 4) & 0xF
+    if field_name == "to_ds":
+        return 1 if frame_control & 0x0100 else 0
+    if field_name == "from_ds":
+        return 1 if frame_control & 0x0200 else 0
+    if field_name == "more_fragments":
+        return 0
+    if field_name == "retry":
+        return 0
+    if field_name == "power_management":
+        return 0
+    if field_name == "more_data":
+        return 0
+    if field_name == "protected":
+        return 1 if frame_control & 0x4000 else 0
+    if field_name == "order":
+        return 0
+    if field_name == "duration_id":
+        if domain == "nav":
+            return 314
+        if domain == "association_id":
+            return 0xC001
+        if domain == "boundary":
+            return 0xFFFF
+        return 0
+    if field_name == "addr1":
+        return _mac_for_domain(ctx, domain, ctx.dst_mac)
+    if field_name == "addr2":
+        if domain == "absent" and _dot11_control_address_count(frame_control) < 2:
+            return _SKIP_FIELD
+        return _mac_for_domain(ctx, domain, ctx.src_mac)
+    if field_name == "addr3":
+        if domain == "absent" and _dot11_header_has_three_addresses(frame_control):
+            return ctx.dst_mac
+        if domain == "absent":
+            return _SKIP_FIELD
+        return _mac_for_domain(ctx, domain, "00:00:5e:00:53:03")
+    if field_name == "addr4":
+        if not _dot11_has_addr4(current_fields):
+            return _SKIP_FIELD
+        return _mac_for_domain(ctx, domain, "00:00:5e:00:53:04")
+    if field_name == "sequence_control":
+        if not _dot11_header_has_sequence_control(frame_control):
+            return _SKIP_FIELD
+        if domain == "absent":
+            return 0x1000
+        if domain == "fragment_zero":
+            return 0x1000
+        if domain == "sequence":
+            return 0x1230
+        if domain == "boundary":
+            return 0xFFFF
+        return 0x1000
+    if field_name == "qos_control":
+        if not _dot11_has_qos_control(frame_control):
+            return _SKIP_FIELD
+        if domain == "ack_policy":
+            return 0x0020
+        if domain == "boundary":
+            return 0xFFFF
+        return 0
+    if field_name == "ht_control":
+        return _SKIP_FIELD
+    if field_name == "management_fixed_fields":
+        if not _dot11_is_management(frame_control):
+            return _SKIP_FIELD
+        if domain == "authentication_fixed":
+            return {"hex": "000001000000"}
+        if domain == "association_fixed":
+            return {"hex": "31040000"}
+        return {"hex": "000000000000000064000100"}
+    if field_name == "tagged_parameters":
+        return _SKIP_FIELD
+    if field_name == "payload":
+        return _SKIP_FIELD
+    raise ValueError(f"spec error: unsupported dot11 field sampler: {field_name}")
+
+
+def _sample_llc_snap_field(ctx: _SamplingContext, field_name: str) -> object:
+    if field_name == "dsap":
+        return 0xAA
+    if field_name == "ssap":
+        return 0xAA
+    if field_name == "control":
+        return 0x03
+    if field_name == "oui":
+        return {"hex": "000000"}
+    if field_name == "ethertype":
+        return _declared_ethertype_for_stack(ctx.stack, "llc_snap")
+    if field_name == "payload_length":
+        return 0
+    raise ValueError(f"spec error: unsupported llc_snap field sampler: {field_name}")
+
+
+def _sample_eapol_field(ctx: _SamplingContext, field_name: str, domain: object) -> object:
+    is_key = "key" in ctx.case.replace("_", "-")
+    if field_name == "version":
+        return 2 if domain in {1, 2, 3, "explicit"} else 2
+    if field_name == "packet_type":
+        case = ctx.case.replace("_", "-")
+        if "logoff" in case:
+            return "logoff"
+        if is_key:
+            return "key"
+        if "eap-packet" in case:
+            return "eap_packet"
+        return "start"
+    if field_name == "body_length":
+        return 0
+    if not is_key:
+        return _SKIP_FIELD
+    if field_name == "descriptor_type":
+        return "rsn_key"
+    if field_name == "key_information":
+        return 0x008A if "key-data" not in ctx.case else 0x010A
+    if field_name == "key_length":
+        return 16
+    if field_name == "replay_counter":
+        return 1
+    if field_name == "key_nonce":
+        return {"hex": "00112233445566778899aabbccddeeff102132435465768798a9bacbdcedfe0f"}
+    if field_name == "key_iv":
+        return {"hex": "00000000000000000000000000000000"}
+    if field_name == "key_rsc":
+        return {"hex": "0000000000000000"}
+    if field_name == "key_id":
+        return {"hex": "0000000000000000"}
+    if field_name == "key_mic":
+        return {"hex": "00000000000000000000000000000000"}
+    if field_name == "key_data_length":
+        return 0
+    if field_name == "key_data":
+        return {"hex": _rsn_information_value_hex()} if "key-data" in ctx.case else _SKIP_FIELD
+    raise ValueError(f"spec error: unsupported eapol field sampler: {field_name}")
+
+
+def _sample_rsn_field(ctx: _SamplingContext, field_name: str, domain: object) -> object:
+    if field_name == "element_id":
+        return 48
+    if field_name == "length":
+        return 0
+    if field_name == "version":
+        return 1
+    if field_name == "group_cipher_suite":
+        return "ccmp_128"
+    if field_name == "pairwise_cipher_suites":
+        return ["ccmp_128"]
+    if field_name == "akm_suites":
+        return ["sae"] if "sae" in ctx.case else ["psk"]
+    if field_name == "capabilities":
+        return 0x00C0 if "management-protection" in ctx.case else 0
+    if field_name == "pmkid_list":
+        return _SKIP_FIELD
+    if field_name == "group_management_cipher_suite":
+        return "bip_cmac_128" if "management-protection" in ctx.case else _SKIP_FIELD
+    if field_name == "trailing_bytes":
+        return _SKIP_FIELD if domain in {"absent", "empty"} else {"hex": "aabb"}
+    raise ValueError(f"spec error: unsupported rsn field sampler: {field_name}")
+
+
+def _rsn_information_value_hex() -> str:
+    return "0100000fac040100000fac040100000fac020000"
+
+
+def _dot11_frame_control_for_case(case: str, stack: Sequence[str]) -> int:
+    key = case.replace("_", "-")
+    if "control" in key:
+        return (1 << 2) | (11 << 4)
+    if "management" in key or "rsn" in key:
+        return (0 << 2) | (8 << 4)
+    subtype = 8 if "qos" in key else 0
+    flags = 0x4000 if "protected" in key else 0
+    if "tods-fromds" in key:
+        flags |= 0x0300
+    return (2 << 2) | (subtype << 4) | flags
+
+
+def _dot11_is_management(frame_control: int) -> bool:
+    return ((frame_control >> 2) & 0x3) == 0
+
+
+def _dot11_is_control(frame_control: int) -> bool:
+    return ((frame_control >> 2) & 0x3) == 1
+
+
+def _dot11_header_has_three_addresses(frame_control: int) -> bool:
+    return not _dot11_is_control(frame_control)
+
+
+def _dot11_header_has_sequence_control(frame_control: int) -> bool:
+    return not _dot11_is_control(frame_control)
+
+
+def _dot11_has_qos_control(frame_control: int) -> bool:
+    return ((frame_control >> 2) & 0x3) == 2 and (((frame_control >> 4) & 0xF) & 0x8) != 0
+
+
+def _dot11_has_addr4(fields: Mapping[str, object]) -> bool:
+    return bool(fields.get("to_ds")) and bool(fields.get("from_ds"))
+
+
+def _dot11_control_address_count(frame_control: int) -> int:
+    if not _dot11_is_control(frame_control):
+        return 3
+    subtype = (frame_control >> 4) & 0xF
+    return 1 if subtype in {12, 13} else 2
+
+
 def _sample_linux_cooked_field(ctx: _SamplingContext, field_name: str, domain: object) -> object:
     if field_name == "packet_type":
         return domain
@@ -4414,6 +4795,8 @@ def _ethertype_for_stack(stack: Sequence[str], layer: str) -> str:
         return "ipv4"
     if next_layer == "ipv6":
         return "ipv6"
+    if next_layer == "eapol":
+        return "eapol"
     return "unknown"
 
 
