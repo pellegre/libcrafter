@@ -2144,4 +2144,99 @@ mod tests {
         assert_eq!(radiotap.raw_fields(), &[0xde, 0xad, 0xbe, 0xef]);
         assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_slice());
     }
+
+    #[test]
+    fn radiotap_decode_preserves_header_fields_raw_tail_and_inner_dot11() {
+        let dot11 = Dot11::data()
+            .addr1(MacAddr::new([0x02, 0x00, 0x00, 0x00, 0x00, 0x01]))
+            .addr2(MacAddr::new([0x02, 0x00, 0x00, 0x00, 0x00, 0x02]))
+            .addr3(MacAddr::new([0x02, 0x00, 0x00, 0x00, 0x00, 0x03]))
+            .sequence_number(9);
+        let dot11_bytes = Packet::from_layer(dot11).compile().unwrap();
+        let present =
+            RADIOTAP_PRESENT_FLAGS | RADIOTAP_PRESENT_RATE | RADIOTAP_PRESENT_CHANNEL | 0x2000_0000;
+        let mut bytes = vec![
+            0x00, 0x2a, 0x10, 0x00, // version, pad, it_len
+        ];
+        bytes.extend_from_slice(&present.to_le_bytes());
+        bytes.extend_from_slice(&[
+            0x50, // Flags: FCS present + failed FCS
+            0x16, // Rate
+            0x6c, 0x09, 0xa0, 0x00, // Channel
+            0xde, 0xad, // raw bytes for the untyped present bit
+        ]);
+        bytes.extend_from_slice(dot11_bytes.as_bytes());
+
+        let decoded = Packet::decode_from_link(LinkType::Radiotap, &bytes).unwrap();
+        let radiotap = decoded.layer::<Radiotap>().unwrap();
+        let dot11 = decoded.layer::<Dot11>().unwrap();
+
+        assert_eq!(radiotap.version_value(), Some(0));
+        assert_eq!(radiotap.pad_value(), Some(0x2a));
+        assert_eq!(radiotap.length_value(), Some(16));
+        assert_eq!(radiotap.present().unwrap().words(), &[present]);
+        assert_eq!(radiotap.flags_value(), Some(RadiotapFlags::from_bits(0x50)));
+        assert_eq!(
+            radiotap.fcs_status(),
+            Some(RadiotapFcsStatus::new(true, true))
+        );
+        assert_eq!(radiotap.rate_value(), Some(0x16));
+        assert_eq!(
+            radiotap.channel_value(),
+            Some(RadiotapChannel::new(2412, 0x00a0))
+        );
+        assert_eq!(radiotap.raw_fields(), &[0xde, 0xad]);
+        assert_eq!(dot11.sequence_number_value(), Some(9));
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_slice());
+    }
+
+    #[test]
+    fn radiotap_decode_returns_structured_errors_for_header_lengths() {
+        let short_base = [
+            0x00, 0x00, 0x08, 0x00, // version, pad, it_len
+            0x00, 0x00, 0x00,
+        ];
+        let short_base_err = Packet::decode_from_link(LinkType::Radiotap, short_base).unwrap_err();
+        assert_eq!(
+            short_base_err,
+            CrafterError::buffer_too_short("radiotap.header", 8, 7)
+        );
+
+        let invalid_len = [
+            0x00, 0x00, 0x04, 0x00, // version, pad, invalid it_len
+            0x00, 0x00, 0x00, 0x00,
+        ];
+        let invalid_len_err =
+            Packet::decode_from_link(LinkType::Radiotap, invalid_len).unwrap_err();
+        assert_eq!(
+            invalid_len_err,
+            CrafterError::buffer_too_short("radiotap.header", 8, 4)
+        );
+    }
+
+    #[test]
+    fn radiotap_decode_returns_structured_errors_for_truncated_fields() {
+        let truncated_present = [
+            0x00, 0x00, 0x08, 0x00, // version, pad, it_len
+            0x00, 0x00, 0x00, 0x80, // present extension without following word
+        ];
+        let truncated_present_err =
+            Packet::decode_from_link(LinkType::Radiotap, truncated_present).unwrap_err();
+        assert_eq!(
+            truncated_present_err,
+            CrafterError::buffer_too_short("radiotap.present", 8, 4)
+        );
+
+        let truncated_channel = [
+            0x00, 0x00, 0x0a, 0x00, // version, pad, it_len
+            0x08, 0x00, 0x00, 0x00, // present: Channel
+            0x6c, 0x09,
+        ];
+        let truncated_channel_err =
+            Packet::decode_from_link(LinkType::Radiotap, truncated_channel).unwrap_err();
+        assert_eq!(
+            truncated_channel_err,
+            CrafterError::buffer_too_short("radiotap.field", 12, 10)
+        );
+    }
 }
