@@ -2327,7 +2327,7 @@ def _live_provider_lab_command_endpoint_id(
     parts = [part for part in argv if isinstance(part, str)]
     for wire_command in (
         "collect-artifacts",
-        "destroy-endpoint",
+        "destroy",
         "exec",
         "upload",
         "download",

@@ -54,7 +54,7 @@ class HetznerDestroyEndpointTest(unittest.TestCase):
                     redirect_stdout(stdout),
                 ):
                     exit_code = wire_cli.main(
-                        ["destroy-endpoint", manifest.endpoint_id, "--json"]
+                        ["destroy", manifest.endpoint_id, "--json"]
                     )
 
         payload = json.loads(stdout.getvalue())

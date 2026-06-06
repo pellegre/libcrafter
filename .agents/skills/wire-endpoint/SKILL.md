@@ -59,13 +59,13 @@ Wire providers should expose the same high-level workflow:
 
 - `doctor`: verify CLI tools, credentials, exposure, regions, images, and
   permissions.
-- `create-endpoint --dry-run`: show what would be created without changing
+- `create --dry-run`: show what would be created without changing
   provider state.
-- `create-endpoint`: provision a fresh disposable wire endpoint.
+- `create`: provision a fresh disposable wire endpoint.
 - `exec`, `upload`, and `download`: operate on one endpoint for debugging or
   runner orchestration.
 - `collect-artifacts`: collect pcaps, logs, summaries, and result files.
-- `destroy-endpoint`: tear down disposable endpoint resources.
+- `destroy`: tear down disposable endpoint resources.
 
 Wire endpoints are the lower-level single-endpoint primitive. Multi-endpoint
 provider-backed validation should use lab-session so provider-specific endpoint
@@ -92,6 +92,6 @@ fields redacted.
 
 On any failure, collect artifacts first when possible, then destroy disposable
 wire endpoints. If teardown fails, report the provider, resource type, redacted
-resource identifier, and the exact `tools/endpoint/run destroy-endpoint` command to
+resource identifier, and the exact `tools/endpoint/run destroy` command to
 retry. Do not start a new wire run while a previous disposable endpoint may
 still exist.

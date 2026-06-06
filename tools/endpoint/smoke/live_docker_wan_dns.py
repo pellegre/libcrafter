@@ -209,7 +209,7 @@ def main(argv: list[str] | None = None) -> int:
             _write_unattached_failure(repo_root, "create_endpoint", create)
             raise SmokeError("Docker WAN endpoint creation failed", create.exit_code)
 
-        manifest = _endpoint_manifest(create.stdout, "create-endpoint output")
+        manifest = _endpoint_manifest(create.stdout, "create output")
         endpoint_id = _string(manifest.get("endpoint_id"), "endpoint_id")
         artifact_dir = Path(_string(manifest.get("artifact_dir"), "artifact_dir"))
         artifact_dir.mkdir(parents=True, exist_ok=True)
@@ -324,7 +324,7 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         if endpoint_id is not None:
             destroy = _run(
-                [str(wire), "destroy-endpoint", endpoint_id, "--json"],
+                [str(wire), "destroy", endpoint_id, "--json"],
                 cwd=repo_root,
                 timeout=args.destroy_timeout,
             )
@@ -422,7 +422,7 @@ def _plan_commands(*, repo_root: Path, wire: Path, args: argparse.Namespace) -> 
             "--remote",
             args.remote_artifact_dir,
         ],
-        [str(wire), "destroy-endpoint", "<endpoint_id>", "--json"],
+        [str(wire), "destroy", "<endpoint_id>", "--json"],
     ]
     lines = [
         "Docker WAN DNS smoke plan",
@@ -452,7 +452,7 @@ def _create_endpoint(
 def _create_endpoint_argv(*, wire: Path, role: str) -> list[str]:
     return [
         str(wire),
-        "create-endpoint",
+        "create",
         "--provider",
         "docker",
         "--exposure",
@@ -544,7 +544,7 @@ def _collect_artifacts(
 def _wan_endpoint(manifest: dict[str, Any]) -> dict[str, str]:
     interfaces = manifest.get("interfaces")
     if not isinstance(interfaces, list):
-        raise SmokeError("create-endpoint output did not include interfaces")
+        raise SmokeError("create output did not include interfaces")
     for interface in interfaces:
         if not isinstance(interface, dict) or interface.get("exposure") != "wan":
             continue
@@ -552,7 +552,7 @@ def _wan_endpoint(manifest: dict[str, Any]) -> dict[str, str]:
             "name": _string(interface.get("name"), "wan interface name"),
             "ipv4": _string(interface.get("ipv4"), "wan interface ipv4"),
         }
-    raise SmokeError("create-endpoint output did not include a WAN interface with IPv4")
+    raise SmokeError("create output did not include a WAN interface with IPv4")
 
 
 def _run(argv: list[str], *, cwd: Path, timeout: float) -> CommandCapture:

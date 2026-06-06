@@ -114,7 +114,7 @@ def create_endpoint(
             env=env,
             command_runner=command_runner,
         )
-    raise NotImplementedError(f"real hetzner create-endpoint is not implemented for {exposure}")
+    raise NotImplementedError(f"real hetzner create is not implemented for {exposure}")
 
 
 def _create_wan_endpoint(

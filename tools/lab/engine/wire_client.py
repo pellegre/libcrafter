@@ -177,7 +177,7 @@ class WireClient:
         confirm_live_run: bool = False,
     ) -> WireCommandResponse:
         argv: list[str] = [
-            "create-endpoint",
+            "create",
             "--provider",
             provider,
             "--exposure",
@@ -205,11 +205,11 @@ class WireClient:
             live_mutation=not dry_run,
         )
         if response.json_data is None:
-            raise WireClientError("wire create-endpoint did not emit JSON")
+            raise WireClientError("wire create did not emit JSON")
         if not response.ok:
             error = response.json_data.get("error")
             detail = error if isinstance(error, str) and error else f"exit {response.exit_code}"
-            raise WireClientError(f"wire create-endpoint failed: {detail}")
+            raise WireClientError(f"wire create failed: {detail}")
         manifest = _create_endpoint_manifest(response.json_data)
         return WireCommandResponse(
             result=response.result,
@@ -221,7 +221,7 @@ class WireClient:
     def destroy(self, endpoint_id: str) -> WireCommandResponse:
         return self._run(
             "destroy",
-            ["destroy-endpoint", endpoint_id, "--json"],
+            ["destroy", endpoint_id, "--json"],
             parse_json=True,
             dry_run=False,
             live_mutation=True,
@@ -486,7 +486,7 @@ def _endpoint_manifest_json(value: JSONObject) -> JSONObject:
 
 
 def _create_endpoint_manifest(value: JSONObject) -> EndpointManifest:
-    """Parse create-endpoint output, falling back to the stored manifest path."""
+    """Parse create output, falling back to the stored manifest path."""
 
     try:
         return EndpointManifest.from_dict(_endpoint_manifest_json(value))
@@ -497,13 +497,13 @@ def _create_endpoint_manifest(value: JSONObject) -> EndpointManifest:
                 stored = read_wire_json(manifest_path)
             except (OSError, ValueError) as stored_exc:
                 raise WireClientError(
-                    "wire create-endpoint JSON is not an endpoint manifest "
+                    "wire create JSON is not an endpoint manifest "
                     f"and stored manifest could not be read: {stored_exc}"
                 ) from exc
             if isinstance(stored, Mapping):
                 return EndpointManifest.from_dict(_endpoint_manifest_json(_json_object(stored)))
         raise WireClientError(
-            f"wire create-endpoint JSON is not an endpoint manifest: {exc}"
+            f"wire create JSON is not an endpoint manifest: {exc}"
         ) from exc
 
 

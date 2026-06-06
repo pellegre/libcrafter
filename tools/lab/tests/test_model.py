@@ -62,7 +62,7 @@ class LabModelSerializationTest(unittest.TestCase):
 
         self.assertEqual(loaded.to_dict(), session.to_dict())
         self.assertEqual(loaded.endpoints[0].mac, "02:00:00:00:00:10")
-        self.assertEqual(loaded.provider_workflow[0].shell(), "tools/endpoint/run create-endpoint")
+        self.assertEqual(loaded.provider_workflow[0].shell(), "tools/endpoint/run create")
         self.assertEqual(loaded.validation_checks[0].name, "wire-mapping")
 
     def test_write_and_read_json_require_absolute_file_paths(self) -> None:
@@ -224,7 +224,7 @@ def _session() -> LabSession:
             LabCommandPlan(
                 purpose="create endpoint",
                 role="stimulus",
-                argv=["tools/endpoint/run", "create-endpoint"],
+                argv=["tools/endpoint/run", "create"],
                 operation="wire.create",
                 dry_run=True,
                 live_mutation=True,

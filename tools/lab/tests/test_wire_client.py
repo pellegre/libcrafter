@@ -49,14 +49,14 @@ class WireClientCreateTest(unittest.TestCase):
             self.assertEqual(response.manifest.interfaces[0].ipv4, "192.0.2.10")
             self.assertTrue(response.ok)
             self.assertEqual(response.record.operation, "create")
-            self.assertEqual(response.record.wire_command, "create-endpoint")
+            self.assertEqual(response.record.wire_command, "create")
             self.assertTrue(response.record.dry_run)
             self.assertFalse(response.record.live_mutation)
             self.assertEqual(
                 runner.calls[0]["argv"],
                 (
                     str((root / "tools" / "wire" / "run").resolve()),
-                    "create-endpoint",
+                    "create",
                     "--provider",
                     "qemu",
                     "--exposure",
@@ -151,7 +151,7 @@ class WireClientOperationTest(unittest.TestCase):
                         "--json",
                         "--dry-run",
                     ),
-                    ("destroy-endpoint", "endpoint-stimulus", "--json"),
+                    ("destroy", "endpoint-stimulus", "--json"),
                     ("exec", "endpoint-stimulus", "--", "uname", "-a"),
                     (
                         "upload",

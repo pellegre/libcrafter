@@ -285,7 +285,7 @@ def _hetzner_wire_provider_workflow(*, dry_run: bool) -> list[LiveCommandPlan]:
             "create-libcrafter-private-wire-endpoint",
             [
                 WIRE_ENTRYPOINT,
-                "create-endpoint",
+                "create",
                 "--provider",
                 PROVIDER_NAME,
                 "--exposure",
@@ -309,7 +309,7 @@ def _hetzner_wire_provider_workflow(*, dry_run: bool) -> list[LiveCommandPlan]:
             "create-reference-private-wire-endpoint",
             [
                 WIRE_ENTRYPOINT,
-                "create-endpoint",
+                "create",
                 "--provider",
                 PROVIDER_NAME,
                 "--exposure",
@@ -350,7 +350,7 @@ def _hetzner_wire_provider_workflow(*, dry_run: bool) -> list[LiveCommandPlan]:
         (
             "destroy",
             "teardown-disposable-hetzner-endpoints",
-            [WIRE_ENTRYPOINT, "destroy-endpoint", "<endpoint-id>", "--json"],
+            [WIRE_ENTRYPOINT, "destroy", "<endpoint-id>", "--json"],
         ),
     ]
     commands: list[LiveCommandPlan] = []
@@ -1113,7 +1113,7 @@ def _wire_create_argv(
 ) -> list[str]:
     argv = [
         WIRE_ENTRYPOINT,
-        "create-endpoint",
+        "create",
         "--provider",
         provider,
         "--exposure",

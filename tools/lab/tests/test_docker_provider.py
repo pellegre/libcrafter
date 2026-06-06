@@ -290,7 +290,7 @@ class _FakeWireCreateResponse:
     ) -> LabCommandPlan:
         argv = [
             "tools/endpoint/run",
-            "create-endpoint",
+            "create",
             "--provider",
             str(self.call["provider"]),
             "--exposure",

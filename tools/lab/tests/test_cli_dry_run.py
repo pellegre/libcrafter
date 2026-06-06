@@ -275,7 +275,7 @@ class _FakeWireResponse:
     ) -> LabCommandPlan:
         argv = [
             "tools/endpoint/run",
-            "doctor" if self.operation == "doctor" else "create-endpoint",
+            "doctor" if self.operation == "doctor" else "create",
             "--provider",
             self.provider,
             "--exposure",

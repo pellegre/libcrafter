@@ -240,7 +240,7 @@ class VirtualBoxCreateEndpointTest(unittest.TestCase):
             ):
                 exit_code = wire_cli.main(
                     [
-                        "create-endpoint",
+                        "create",
                         "--provider",
                         "virtualbox",
                         "--exposure",

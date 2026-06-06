@@ -345,7 +345,7 @@ class _FakeWireResponse:
         argv = {
             "create": [
                 "tools/endpoint/run",
-                "create-endpoint",
+                "create",
                 "--provider",
                 self.provider,
                 "--exposure",
@@ -363,7 +363,7 @@ class _FakeWireResponse:
             ],
             "destroy": [
                 "tools/endpoint/run",
-                "destroy-endpoint",
+                "destroy",
                 self.endpoint_id,
                 "--json",
             ],
