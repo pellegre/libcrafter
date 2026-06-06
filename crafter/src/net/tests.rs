@@ -166,9 +166,11 @@ mod interface_helpers {
 mod send_plan {
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-    use crate::{Ethernet, Icmpv4, Ipv4, Ipv6, NetworkLayer, Packet, Raw, Tcp, Udp};
+    use crate::{
+        Dot11, Ethernet, Icmpv4, Ipv4, Ipv6, LlcSnap, NetworkLayer, Packet, Radiotap, Raw, Tcp, Udp,
+    };
 
-    use crate::net::{PacketSendExt, SendMode, SendOptions, SendTarget, SocketSender};
+    use crate::net::{NetError, PacketSendExt, SendMode, SendOptions, SendTarget, SocketSender};
 
     fn ipv4_packet() -> Packet {
         Ipv4::new()
@@ -176,6 +178,10 @@ mod send_plan {
             .dst(Ipv4Addr::new(198, 51, 100, 20))
             / Udp::new().sport(1111).dport(2222)
             / Raw::from("hello")
+    }
+
+    fn radiotap_dot11_packet() -> Packet {
+        Radiotap::new() / Dot11::data() / LlcSnap::new() / ipv4_packet()
     }
 
     #[test]
@@ -221,6 +227,57 @@ mod send_plan {
             }
         );
         assert_eq!(plan.bytes()[12..14], crate::ETHERTYPE_IPV4.to_be_bytes());
+    }
+
+    #[test]
+    fn radiotap_send_plan_auto_detects_link_layer() {
+        let packet = radiotap_dot11_packet();
+        let plan = packet
+            .send_dry_run(SendOptions::new().iface("wifi-dryrun0"))
+            .unwrap();
+
+        assert_eq!(plan.interface(), "wifi-dryrun0");
+        assert_eq!(plan.requested_mode(), SendMode::Auto);
+        assert_eq!(
+            plan.target(),
+            SendTarget::LinkLayer {
+                link_type: crate::LinkType::Radiotap
+            }
+        );
+        assert_eq!(plan.bytes()[..8], [0, 0, 8, 0, 0, 0, 0, 0]);
+        assert_eq!(plan.len(), packet.compile().unwrap().len());
+    }
+
+    #[test]
+    fn radiotap_send_plan_respects_explicit_link_layer_intent() {
+        let packet = radiotap_dot11_packet();
+        let plan = packet
+            .send_dry_run(SendOptions::new().iface("wifi-dryrun0").link_layer())
+            .unwrap();
+
+        assert_eq!(plan.requested_mode(), SendMode::LinkLayer);
+        assert!(plan.target().is_link_layer());
+        assert_eq!(
+            plan.target(),
+            SendTarget::LinkLayer {
+                link_type: crate::LinkType::Radiotap
+            }
+        );
+    }
+
+    #[test]
+    fn radiotap_send_plan_reports_supported_wifi_shape_for_bare_dot11() {
+        let packet = Dot11::data() / LlcSnap::new() / ipv4_packet();
+        let error = packet
+            .send_dry_run(SendOptions::new().iface("wifi-dryrun0"))
+            .unwrap_err();
+
+        match error {
+            NetError::UnsupportedPacketShape { reason, .. } => {
+                assert!(reason.contains("Radiotap / Dot11"));
+            }
+            other => panic!("expected unsupported packet shape, got {other}"),
+        }
     }
 
     #[test]

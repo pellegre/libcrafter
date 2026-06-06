@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use crate::{
     CompiledPacket, Ethernet, Icmpv4, Icmpv6, Ipv4, Ipv6, Layer, LinkType, NetworkLayer, Packet,
-    Tcp, Udp, IPPROTO_ICMP, IPPROTO_ICMPV6, IPPROTO_TCP, IPPROTO_UDP,
+    Radiotap, Tcp, Udp, IPPROTO_ICMP, IPPROTO_ICMPV6, IPPROTO_TCP, IPPROTO_UDP,
 };
 use pnet_datalink::{self as datalink, Channel, ChannelType};
 use pnet_packet::ip::IpNextHeaderProtocol;
@@ -404,7 +404,7 @@ fn infer_auto_target(packet: &Packet, first: &dyn Layer, bytes: &[u8]) -> Result
         Err(NetError::UnsupportedPacketShape {
             mode: SendMode::Auto,
             summary: packet.summary(),
-            reason: "first layer must be Ethernet, LinuxSll, NullLoopback, IPv4, or IPv6",
+            reason: "first layer must be Ethernet, LinuxSll, NullLoopback, Radiotap / Dot11 for Wi-Fi, IPv4, or IPv6",
         })
     }
 }
@@ -422,11 +422,15 @@ fn infer_link_target(packet: &Packet, first: &dyn Layer) -> Result<SendTarget> {
         Ok(SendTarget::LinkLayer {
             link_type: LinkType::NullLoopback,
         })
+    } else if first.as_any().is::<Radiotap>() {
+        Ok(SendTarget::LinkLayer {
+            link_type: LinkType::Radiotap,
+        })
     } else {
         Err(NetError::UnsupportedPacketShape {
             mode: SendMode::LinkLayer,
             summary: packet.summary(),
-            reason: "link-layer sends require a supported link header as the first layer",
+            reason: "link-layer sends require Ethernet, LinuxSll, NullLoopback, or Radiotap / Dot11 Wi-Fi as the first layers",
         })
     }
 }
@@ -465,6 +469,7 @@ fn is_link_layer(layer: &dyn Layer) -> bool {
     layer.as_any().is::<Ethernet>()
         || layer.as_any().is::<crate::LinuxSll>()
         || layer.as_any().is::<crate::NullLoopback>()
+        || layer.as_any().is::<Radiotap>()
 }
 
 fn is_network_layer(layer: &dyn Layer) -> bool {
