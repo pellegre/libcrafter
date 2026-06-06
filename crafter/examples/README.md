@@ -35,6 +35,7 @@ values use `Ipv4Protocol`.
 | `pcap_read` | Pcap and sniffing | Offline | Pcap metadata inspection, packet collection, and streaming `PcapReader` workflows. | `cargo run -p crafter --example pcap_read` |
 | `wire_pcap_sniffer` | Pcap and sniffing | Offline | Generated pcap records read through `PacketWire` and `Sniffer` with packet metadata. | `cargo run -p crafter --example wire_pcap_sniffer` |
 | `wire_pcap_recorder` | Pcap and sniffing | Offline | Generated packet records written through `PacketWire` and `Transmitter`, then verified through pcap readback. | `cargo run -p crafter --example wire_pcap_recorder` |
+| `wire_transform_chain` | Pcap and sniffing | Offline | In-memory `Sniffer` transform chain with zero, one, and many packet-record outputs. | `cargo run -p crafter --example wire_transform_chain` |
 | `sniffer_offline` | Pcap and sniffing | Offline | Offline `Sniffer` filtering and bounded packet iteration. | `cargo run -p crafter --example sniffer_offline` |
 | `capture_pcap` | Pcap and sniffing | Live-gated; plan by default | Bounded libpcap capture configuration and pcap writing on an isolated wire endpoint. | `cargo run -p crafter --example capture_pcap` |
 | `arp_who_has` | Protocols | Dry-run | Explicit Ethernet broadcast ARP who-has construction from known MAC and IPv4 values. | `cargo run -p crafter --example arp_who_has` |
