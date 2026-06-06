@@ -18,6 +18,21 @@ const LLC_SNAP_CONTROL_UNNUMBERED_INFORMATION: u8 = 0x03;
 const LLC_SNAP_OUI_ENCAPSULATED_ETHERNET: [u8; 3] = [0x00, 0x00, 0x00];
 
 /// LLC/SNAP header for EtherType-based payloads over IEEE 802.11 data frames.
+///
+/// IP over IEEE 802.11 data frames must carry this layer explicitly:
+///
+/// ```
+/// use crafter::prelude::*;
+///
+/// let packet = Dot11::data()
+///     / LlcSnap::new()
+///     / Ipv4::new()
+///     / Raw::from("payload");
+/// # let _ = packet;
+/// ```
+///
+/// A direct `Dot11 / Ipv4` stack compiles exactly as those sequential layers;
+/// the compiler does not insert LLC/SNAP implicitly.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LlcSnap {
     dsap: Field<u8>,
@@ -318,6 +333,39 @@ mod tests {
         assert_eq!(
             compiled_header(packet),
             [0x01, 0x02, 0xff, 0xde, 0xad, 0xbe, 0x12, 0x34]
+        );
+    }
+
+    #[test]
+    fn dot11_no_direct_ip_inference_compiles_sequential_bytes() {
+        let ipv4 = Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 10))
+            .dst(Ipv4Addr::new(198, 51, 100, 20));
+        let direct = Dot11::data() / ipv4.clone() / Raw::from("payload");
+        let dot11_bytes = Packet::from_layer(Dot11::data()).compile().unwrap();
+        let ip_tail = (ipv4 / Raw::from("payload")).compile().unwrap();
+        let compiled = direct.compile().unwrap();
+
+        let mut expected = dot11_bytes.as_bytes().to_vec();
+        expected.extend_from_slice(ip_tail.as_bytes());
+        assert_eq!(compiled.as_bytes(), expected.as_slice());
+
+        let payload_offset = dot11_bytes.as_bytes().len();
+        assert_eq!(
+            &compiled.as_bytes()[payload_offset..payload_offset + ip_tail.as_bytes().len()],
+            ip_tail.as_bytes()
+        );
+        assert_ne!(
+            &compiled.as_bytes()[payload_offset..payload_offset + 8],
+            &[0xaa, 0xaa, 0x03, 0x00, 0x00, 0x00, 0x08, 0x00]
+        );
+
+        let explicit = (Dot11::data() / LlcSnap::new() / Ipv4::new())
+            .compile()
+            .unwrap();
+        assert_eq!(
+            &explicit.as_bytes()[payload_offset..payload_offset + 8],
+            &[0xaa, 0xaa, 0x03, 0x00, 0x00, 0x00, 0x08, 0x00]
         );
     }
 
