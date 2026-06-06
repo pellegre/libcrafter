@@ -17,13 +17,10 @@ use super::constants::{
     IPV4_FLAG_DONT_FRAGMENT, IPV4_FLAG_MORE_FRAGMENTS, IPV4_FLAG_RESERVED, IPV4_MAX_HEADER_LEN,
     IPV4_MAX_IHL, IPV4_MIN_HEADER_LEN,
 };
-use super::fragment::{
-    compose_flags_fragment, flags_summary, validate_fragment_fields, Ipv4FragmentInfo,
-};
-use super::options::{
-    option_count_summary, padded_options_len, validate_ipv4_options, Ipv4Option, Ipv4OptionIter,
-};
-use super::protocol::{protocol_summary, Ipv4Protocol};
+use super::display;
+use super::fragment::{compose_flags_fragment, validate_fragment_fields, Ipv4FragmentInfo};
+use super::options::{padded_options_len, validate_ipv4_options, Ipv4Option, Ipv4OptionIter};
+use super::protocol::Ipv4Protocol;
 
 macro_rules! impl_layer_object {
     ($type:ty) => {
@@ -541,70 +538,11 @@ impl Layer for Ipv4 {
     }
 
     fn summary(&self) -> String {
-        let mut fields = vec![
-            format!("src={}", self.source()),
-            format!("dst={}", self.destination()),
-            format!("proto={}", protocol_summary(self.protocol_value())),
-        ];
-
-        if self.ds_field_value() != 0 {
-            fields.push(format!(
-                "ds={}",
-                ds_field_summary(self.dscp_value(), self.ecn_value())
-            ));
-        }
-        if self.flags_value() != 0 {
-            fields.push(format!("flags={}", flags_summary(self.flags_value())));
-        }
-        if self.fragment_offset_value() != 0 {
-            fields.push(format!("fragment_offset={}", self.fragment_offset_value()));
-        }
-        let checksum_status = checksum_status_summary(self.checksum_status());
-        if !checksum_status.is_empty() {
-            fields.push(format!("checksum_status={checksum_status}"));
-        }
-        if !self.options.is_empty() {
-            fields.push(format!("options={}", option_count_summary(&self.options)));
-        }
-
-        format!("Ipv4({})", fields.join(", "))
+        display::summary(self)
     }
 
     fn inspection_fields(&self) -> Vec<(&'static str, String)> {
-        let fields = vec![
-            ("version", self.version_value().to_string()),
-            ("ihl", self.ihl_value().to_string()),
-            ("tos", self.tos_value().to_string()),
-            ("dscp", dscp_summary(self.dscp_value())),
-            ("ecn", ecn_summary(self.ecn_value()).to_string()),
-            (
-                "total_length",
-                self.total_length_value()
-                    .map(|value| value.to_string())
-                    .unwrap_or_else(|| "auto".to_string()),
-            ),
-            ("id", format!("0x{:04x}", self.identification_value())),
-            ("flags", flags_summary(self.flags_value())),
-            ("fragment_offset", self.fragment_offset_value().to_string()),
-            ("ttl", self.ttl_value().to_string()),
-            ("protocol", protocol_summary(self.protocol_value())),
-            (
-                "checksum",
-                self.checksum_value()
-                    .map(|value| format!("0x{value:04x}"))
-                    .unwrap_or_else(|| "auto".to_string()),
-            ),
-            (
-                "checksum_status",
-                checksum_status_inspection(self.checksum_status()).to_string(),
-            ),
-            ("src", self.source().to_string()),
-            ("dst", self.destination().to_string()),
-            ("option_count", option_count_summary(&self.options)),
-            ("options", hex_bytes(&self.options)),
-        ];
-
-        fields
+        display::inspection_fields(self)
     }
 
     fn encoded_len(&self) -> usize {
@@ -662,21 +600,6 @@ impl Layer for Ipv4 {
 
 impl_layer_div!(Ipv4);
 
-fn checksum_status_summary(status: Ipv4ChecksumStatus) -> &'static str {
-    match status {
-        Ipv4ChecksumStatus::Invalid => "invalid",
-        Ipv4ChecksumStatus::NotChecked | Ipv4ChecksumStatus::Valid => "",
-    }
-}
-
-fn checksum_status_inspection(status: Ipv4ChecksumStatus) -> &'static str {
-    match status {
-        Ipv4ChecksumStatus::NotChecked => "not_checked",
-        Ipv4ChecksumStatus::Valid => "valid",
-        Ipv4ChecksumStatus::Invalid => "invalid",
-    }
-}
-
 fn payload_len_after(ctx: LayerContext<'_>) -> usize {
     ctx.packet()
         .iter()
@@ -713,34 +636,4 @@ fn value_or_copy<T: Copy>(field: &Field<T>, default: T) -> T {
 
 fn compose_ds_field(dscp: Dscp, ecn: Ecn) -> u8 {
     (dscp.value() << DSCP_SHIFT) | ecn.value()
-}
-
-fn ds_field_summary(dscp: Dscp, ecn: Ecn) -> String {
-    format!("dscp={}/ecn={}", dscp.value(), ecn_summary(ecn))
-}
-
-fn dscp_summary(dscp: Dscp) -> String {
-    dscp.value().to_string()
-}
-
-fn ecn_summary(ecn: Ecn) -> &'static str {
-    match ecn {
-        Ecn::NotEct => "Not-ECT",
-        Ecn::Ect1 => "ECT(1)",
-        Ecn::Ect0 => "ECT(0)",
-        Ecn::Ce => "CE",
-    }
-}
-
-fn hex_bytes(bytes: &[u8]) -> String {
-    let mut output = String::new();
-
-    for (index, byte) in bytes.iter().enumerate() {
-        if index > 0 {
-            output.push(' ');
-        }
-        output.push_str(&format!("{byte:02x}"));
-    }
-
-    output
 }
