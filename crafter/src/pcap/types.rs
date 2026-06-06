@@ -223,6 +223,8 @@ impl From<LinkType> for PcapLinkType {
         match value {
             LinkType::Raw => Self::RawIp,
             LinkType::Ethernet => Self::Ethernet,
+            LinkType::Ieee80211 => Self::Unknown(105),
+            LinkType::Radiotap => Self::Unknown(127),
             LinkType::LinuxCooked | LinkType::LinuxSll => Self::LinuxSll,
             LinkType::NullLoopback => Self::NullLoopback,
         }

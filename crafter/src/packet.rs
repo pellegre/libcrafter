@@ -156,6 +156,10 @@ pub enum LinkType {
     Raw,
     /// Ethernet frames.
     Ethernet,
+    /// Bare IEEE 802.11 MAC frames without radiotap metadata.
+    Ieee80211,
+    /// Radiotap metadata followed by an IEEE 802.11 MAC frame.
+    Radiotap,
     /// Linux cooked capture frames.
     LinuxCooked,
     /// Linux cooked capture frames.
