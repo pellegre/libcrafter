@@ -4,7 +4,7 @@ The live path creates a disposable lab session, archives and bootstraps the
 repository on the endpoints, sets up controlled target services and stimulus
 RST guards, uploads the stimulus request, runs the stimulus endpoint binary,
 downloads its artifacts, tears everything down, and assembles a live probe
-report. This module owns that orchestration plus the lab-wire transport helpers
+report. This module owns that orchestration plus the lab endpoint transport helpers
 (command recording, request upload, endpoint execution, artifact download) and
 the JSON parsing used to read the endpoint response.
 
@@ -27,7 +27,7 @@ from pathlib import Path
 from tools.lab.engine.model import LabSession
 from tools.lab.engine import repo as lab_repo
 from tools.lab.engine import session as lab_session_state
-from tools.lab.engine import wire_client as lab_wire_client
+from tools.lab.engine import endpoint_client as lab_endpoint_client
 
 from . import bootstrap as probe_bootstrap
 from .capabilities import (
@@ -222,7 +222,7 @@ def lab_endpoint_live_report(
     stimulus_endpoint_id = ""
     remote_dir = ""
     remote_artifact_root = ""
-    wire = lab_wire_client.WireClient()
+    wire = lab_endpoint_client.EndpointClient()
 
     if live_plans:
         try:
@@ -491,8 +491,11 @@ def lab_endpoint_live_report(
             provider_capabilities=provider_capabilities,
         )
         wire_endpoint_plan = json_mapping(
-            lab_report_metadata.get("wire_endpoint_plan", {}),
-            "lab_report.wire_endpoint_plan",
+            lab_report_metadata.get(
+                "endpoint_plan",
+                lab_report_metadata.get("wire_endpoint_plan", {}),
+            ),
+            "lab_report.endpoint_plan",
         )
         endpoints = json_mapping(
             lab_report_metadata.get("endpoints", {}),
@@ -552,12 +555,15 @@ def lab_endpoint_live_report(
         artifact_paths.extend(string_list(endpoint_response.get("artifacts", [])))
         artifact_paths.extend(string_list(endpoint_response.get("artifact_paths", [])))
     artifact_paths = dedupe_paths(artifact_paths)
-    lab_wire_endpoint_lifecycle = json_mapping(
-        lab_report_metadata.get("wire_endpoint_lifecycle", {}),
-        "lab_report.wire_endpoint_lifecycle",
+    lab_endpoint_lifecycle = json_mapping(
+        lab_report_metadata.get(
+            "endpoint_lifecycle",
+            lab_report_metadata.get("wire_endpoint_lifecycle", {}),
+        ),
+        "lab_report.endpoint_lifecycle",
     )
     cleanup_state = json_mapping(
-        lab_wire_endpoint_lifecycle.get("cleanup_state", {}),
+        lab_endpoint_lifecycle.get("cleanup_state", {}),
         "lab_report.cleanup_state",
     )
     destroy_attempted = bool(
@@ -614,10 +620,18 @@ def lab_endpoint_live_report(
             "mutates_lab": True,
             "live_packet_exchange": status == STATUS_PASSED and executed_count > 0,
             "provider_workflow": lab_report_metadata.get("provider_workflow", []),
+            "endpoint_plan": wire_endpoint_plan,
             "wire_endpoint_plan": wire_endpoint_plan,
             "endpoints": endpoints,
+            "endpoint_lifecycle": {
+                **lab_endpoint_lifecycle,
+                "remote_dir": remote_dir,
+                "remote_artifact_root": remote_artifact_root,
+                "created_endpoint_ids": list(created_endpoint_ids),
+                "destroy_attempted": destroy_attempted,
+            },
             "wire_endpoint_lifecycle": {
-                **lab_wire_endpoint_lifecycle,
+                **lab_endpoint_lifecycle,
                 "remote_dir": remote_dir,
                 "remote_artifact_root": remote_artifact_root,
                 "created_endpoint_ids": list(created_endpoint_ids),
@@ -680,7 +694,7 @@ def run_lab_wire_command(
     metadata.update(
         {
             "label": label,
-            "wire_command": True,
+            "endpoint_command": True,
             "stdout_path": str(stdout_path),
             "stderr_path": str(stderr_path),
         }
@@ -731,7 +745,7 @@ def upload_wire_probe_request(
         0,
     )
     return {
-        "wire_command": True,
+        "endpoint_command": True,
         "operation": "upload",
         "endpoint_id": endpoint_id,
         "label": "upload-stimulus-request",

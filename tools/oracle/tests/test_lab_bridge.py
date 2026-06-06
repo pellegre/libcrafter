@@ -156,11 +156,11 @@ class LabBridgeTest(unittest.TestCase):
                 )
                 self.assertEqual(
                     metadata["provider_workflow"][0]["operation"],
-                    "wire.doctor",
+                    "endpoint.doctor",
                 )
                 self.assertEqual(
                     metadata["provider_commands"][0]["operation"],
-                    "wire.create",
+                    "endpoint.create",
                 )
                 self.assertEqual(
                     metadata["endpoints"]["libcrafter"]["address"],
@@ -217,13 +217,13 @@ def _fake_session(case: _ProviderCase) -> LabSession:
                 "--dry-run",
                 "--json",
             ],
-            operation="wire.doctor",
+            operation="endpoint.doctor",
             dry_run=True,
             live_mutation=False,
             metadata={
                 "provider": case.provider,
                 "exposure": case.exposure,
-                "wire_command": True,
+                "endpoint_command": True,
             },
         )
     ]
@@ -243,13 +243,13 @@ def _fake_session(case: _ProviderCase) -> LabSession:
                 "--dry-run",
                 "--json",
             ],
-            operation="wire.create",
+            operation="endpoint.create",
             dry_run=True,
             live_mutation=False,
             metadata={
                 "provider": case.provider,
                 "exposure": case.exposure,
-                "wire_command": True,
+                "endpoint_command": True,
             },
         )
         for endpoint in endpoints
@@ -292,7 +292,7 @@ def _fake_session(case: _ProviderCase) -> LabSession:
             "private_group": case.private_group,
             "private_network": case.private_network,
             "bridged_lan": case.bridged_lan,
-            "wire_endpoint_plan": {
+            "endpoint_plan": {
                 "provider": case.provider,
                 "wire_provider": case.provider,
                 "exposure": case.exposure,

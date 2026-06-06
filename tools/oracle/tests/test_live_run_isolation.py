@@ -25,7 +25,7 @@ OVERRIDE_GROUP = "oracle-live-concurrencytest"
 OTHER_OVERRIDE_GROUP = "oracle-live-secondrun"
 
 
-class _RecordingWireClient:
+class _RecordingEndpointClient:
     """Wire client double that records the private group used per create call."""
 
     def __init__(self) -> None:
@@ -77,7 +77,7 @@ class _RecordingWireClient:
 class LiveRunIsolationTest(unittest.TestCase):
     def test_override_group_flows_into_hetzner_metadata_and_argv(self) -> None:
         adapter = resolve_live_provider("hetzner")
-        client = _RecordingWireClient()
+        client = _RecordingEndpointClient()
 
         with patch.dict(
             os.environ,
@@ -120,7 +120,7 @@ class LiveRunIsolationTest(unittest.TestCase):
 
     def test_override_group_flows_into_qemu_metadata(self) -> None:
         adapter = resolve_live_provider("qemu")
-        client = _RecordingWireClient()
+        client = _RecordingEndpointClient()
 
         with patch.dict(
             os.environ,
@@ -146,7 +146,7 @@ class LiveRunIsolationTest(unittest.TestCase):
 
             for provider in ("hetzner", "qemu"):
                 adapter = resolve_live_provider(provider)
-                client = _RecordingWireClient()
+                client = _RecordingEndpointClient()
                 exchange_metadata = adapter.packet_exchange_metadata(dry_run=True)
                 infrastructure = adapter.planned_infrastructure(dry_run=True)
                 plan = adapter.wire_endpoint_plan(dry_run=True, client=client)

@@ -1,7 +1,7 @@
 """VirtualBox oracle live orchestration planning.
 
 This adapter maps the oracle two-endpoint live lab onto the local VirtualBox
-wire provider. VirtualBox uses a private same-segment internal network, so DHCP
+endpoint provider. VirtualBox uses a private same-segment internal network, so DHCP
 coverage stays off any bridged or public LAN.
 """
 
@@ -19,7 +19,7 @@ from tools.lab.engine.model import (
 )
 from tools.lab.engine.providers.common import validate_remote_dir
 from tools.lab.engine.providers.virtualbox import VIRTUALBOX_LAB_PROVIDER_ADAPTER
-from tools.lab.engine import wire_client
+from tools.lab.engine import endpoint_client
 from tools.endpoint.engine.model import (
     EndpointManifest,
     EndpointSSHInfo,
@@ -40,7 +40,7 @@ from ..model import JSONObject, PacketPlan
 
 
 PROVIDER_NAME = "virtualbox"
-WIRE_ENTRYPOINT = "tools/endpoint/run"
+ENDPOINT_ENTRYPOINT = "tools/endpoint/run"
 ORACLE_LIVE_SUITE = "oracle-live"
 ORACLE_PRIVATE_GROUP = "oracle-live-private"
 PRIVATE_NETWORK_CIDR = "10.78.0.0/24"
@@ -175,12 +175,12 @@ def _planned_virtualbox_endpoint(
 def virtualbox_wire_endpoint_plan(
     *,
     dry_run: bool,
-    client: wire_client.WireClient | None = None,
+    client: endpoint_client.EndpointClient | None = None,
     private_group: str | None = None,
     confirm_live_run: bool = False,
     created_endpoint_ids: list[str] | None = None,
 ) -> dict[str, object]:
-    """Create or plan the two private wire endpoints used by VirtualBox oracle runs."""
+    """Create or plan the two private endpoints used by VirtualBox oracle runs."""
 
     return _oracle_wire_endpoint_plan(
         dry_run=dry_run,
@@ -217,7 +217,7 @@ def _live_endpoint_from_wire_plan(
         "private_network": True,
         "private_network_cidr": PRIVATE_NETWORK_CIDR,
         "bridged_lan": False,
-        "resource_type": "wire-endpoint",
+        "resource_type": "endpoint",
         "planned_address": discovered_address is None,
         "address_source": (
             "oracle-planned-private-address"
@@ -323,8 +323,8 @@ def validate_virtualbox_provider_workflow(
     purposes = {command.purpose for command in commands}
     required = {
         "check-virtualbox-provider",
-        "create-libcrafter-private-wire-endpoint",
-        "create-reference-private-wire-endpoint",
+        "create-libcrafter-private-endpoint",
+        "create-reference-private-endpoint",
         "run-oracle-live-exchange-suite",
         "collect-live-endpoint-artifacts",
         "teardown-disposable-virtualbox-endpoints",
@@ -336,10 +336,10 @@ def validate_virtualbox_provider_workflow(
     for command in commands:
         if command.role != "provider":
             errors.append(f"unexpected provider workflow role: {command.role}")
-        if len(command.argv) < 2 or command.argv[0] != WIRE_ENTRYPOINT:
-            errors.append(f"provider command must route through {WIRE_ENTRYPOINT}")
-        if command.metadata.get("wire_command") is not True:
-            errors.append("provider command must be marked as wire_command")
+        if len(command.argv) < 2 or command.argv[0] != ENDPOINT_ENTRYPOINT:
+            errors.append(f"provider command must route through {ENDPOINT_ENTRYPOINT}")
+        if command.metadata.get("endpoint_command") is not True:
+            errors.append("provider command must be marked as endpoint_command")
         if command.metadata.get("provider") != PROVIDER_NAME:
             errors.append("provider command must target VirtualBox")
         if command.metadata.get("private_network") is not True:
@@ -445,7 +445,7 @@ def validate_virtualbox_dry_run_exchange(
 
 
 def virtualbox_wire_remote_dir() -> str:
-    """Return the repository directory used by VirtualBox wire endpoints."""
+    """Return the repository directory used by VirtualBox endpoints."""
 
     return validate_remote_dir(os.environ.get("LIBCRAFTER_ENDPOINT_REMOTE_DIR"))
 
@@ -652,7 +652,7 @@ def _oracle_planned_endpoints(*, dry_run: bool) -> dict[str, LiveEndpoint]:
 def _oracle_wire_endpoint_plan(
     *,
     dry_run: bool,
-    client: wire_client.WireClient | None = None,
+    client: endpoint_client.EndpointClient | None = None,
     private_group: str | None = None,
     confirm_live_run: bool = False,
     created_endpoint_ids: list[str] | None = None,
@@ -664,7 +664,7 @@ def _oracle_wire_endpoint_plan(
     )
     plan = VIRTUALBOX_LAB_PROVIDER_ADAPTER.wire_endpoint_plan(
         request,
-        client=_OracleLabWireClient(client or wire_client.WireClient()),
+        client=_OracleLabEndpointClient(client or endpoint_client.EndpointClient()),
         created_endpoint_ids=created_endpoint_ids,
     )
     return _oracle_wire_plan_from_lab_plan(plan)
@@ -708,7 +708,7 @@ def _oracle_provider_workflow(*, dry_run: bool) -> list[LiveCommandPlan]:
             role="provider",
             purpose="run-oracle-live-exchange-suite",
             argv=[
-                WIRE_ENTRYPOINT,
+                ENDPOINT_ENTRYPOINT,
                 "exec",
                 "<endpoint-id>",
                 "--",
@@ -730,7 +730,7 @@ def _oracle_provider_workflow(*, dry_run: bool) -> list[LiveCommandPlan]:
                 "private_group": _oracle_private_group(),
                 "bridged_lan": False,
                 "wire_policy": dict(VIRTUALBOX_WIRE_POLICY),
-                "wire_command": True,
+                "endpoint_command": True,
                 "operation": "exec",
             },
         ),
@@ -748,7 +748,7 @@ def _live_provider_command_from_lab(command: LabCommandPlan) -> LiveCommandPlan:
     metadata.setdefault("private_group", _oracle_private_group())
     metadata.setdefault("bridged_lan", False)
     metadata.setdefault("wire_policy", dict(VIRTUALBOX_WIRE_POLICY))
-    metadata.setdefault("wire_command", True)
+    metadata.setdefault("endpoint_command", True)
     return LiveCommandPlan(
         role="provider",
         purpose=_oracle_workflow_purpose(command),
@@ -760,24 +760,24 @@ def _live_provider_command_from_lab(command: LabCommandPlan) -> LiveCommandPlan:
 
 
 def _oracle_workflow_purpose(command: LabCommandPlan) -> str:
-    if command.operation == "wire.doctor":
+    if command.operation == "endpoint.doctor":
         return "check-virtualbox-provider"
-    if command.operation == "wire.create":
+    if command.operation == "endpoint.create":
         suffix = "libcrafter" if command.role == "libcrafter" else "reference"
-        return f"create-{suffix}-private-wire-endpoint"
-    if command.operation == "wire.collect_artifacts":
+        return f"create-{suffix}-private-endpoint"
+    if command.operation == "endpoint.collect_artifacts":
         return "collect-live-endpoint-artifacts"
-    if command.operation == "wire.destroy":
+    if command.operation == "endpoint.destroy":
         return "teardown-disposable-virtualbox-endpoints"
     return command.purpose
 
 
 def _oracle_operation(operation: str) -> str:
     return {
-        "wire.doctor": "doctor",
-        "wire.create": "create",
-        "wire.collect_artifacts": "download",
-        "wire.destroy": "destroy",
+        "endpoint.doctor": "doctor",
+        "endpoint.create": "create",
+        "endpoint.collect_artifacts": "download",
+        "endpoint.destroy": "destroy",
     }.get(operation, operation)
 
 
@@ -825,7 +825,7 @@ def _endpoint_suffix(role: str) -> str:
 
 
 @dataclass(frozen=True, slots=True)
-class _LabWireCreateResponse:
+class _LabEndpointCreateResponse:
     source: object
     manifest: EndpointManifest
     json_data: JSONObject
@@ -853,7 +853,7 @@ class _LabWireCreateResponse:
                 "private_network": True,
                 "bridged_lan": False,
                 "wire_policy": dict(VIRTUALBOX_WIRE_POLICY),
-                "wire_command": True,
+                "endpoint_command": True,
             }
         )
         return LabCommandPlan(
@@ -867,7 +867,7 @@ class _LabWireCreateResponse:
                 private_ip=self.private_ip,
                 dry_run=self.dry_run,
             ),
-            operation="wire.create",
+            operation="endpoint.create",
             dry_run=self.dry_run,
             live_mutation=not self.dry_run,
             artifacts=list(artifacts),
@@ -875,7 +875,7 @@ class _LabWireCreateResponse:
         )
 
 
-class _OracleLabWireClient:
+class _OracleLabEndpointClient:
     def __init__(self, client: object) -> None:
         self._client = client
 
@@ -890,7 +890,7 @@ class _OracleLabWireClient:
         dry_run: bool,
         write_manifest: bool,
         confirm_live_run: bool,
-    ) -> _LabWireCreateResponse:
+    ) -> _LabEndpointCreateResponse:
         create = getattr(self._client, "create")
         try:
             response = create(
@@ -923,7 +923,7 @@ class _OracleLabWireClient:
             dry_run=dry_run,
         )
         json_data = _response_json_for_lab(response, manifest)
-        return _LabWireCreateResponse(
+        return _LabEndpointCreateResponse(
             source=response,
             manifest=manifest,
             json_data=json_data,
@@ -1068,7 +1068,7 @@ def _wire_create_argv(
     dry_run: bool,
 ) -> list[str]:
     argv = [
-        WIRE_ENTRYPOINT,
+        ENDPOINT_ENTRYPOINT,
         "create",
         "--provider",
         provider,
@@ -1156,12 +1156,12 @@ class VirtualBoxLiveProviderAdapter:
         self,
         *,
         dry_run: bool,
-        client: wire_client.WireClient | None = None,
+        client: endpoint_client.EndpointClient | None = None,
         private_group: str | None = None,
         confirm_live_run: bool = False,
         created_endpoint_ids: list[str] | None = None,
     ) -> dict[str, object]:
-        """Create or plan the two VirtualBox private wire endpoints."""
+        """Create or plan the two VirtualBox private endpoints."""
 
         return virtualbox_wire_endpoint_plan(
             dry_run=dry_run,
@@ -1195,7 +1195,7 @@ class VirtualBoxLiveProviderAdapter:
         return validate_virtualbox_dry_run_exchange(exchange)
 
     def remote_dir(self) -> str:
-        """Return the remote repository directory for VirtualBox wire endpoints."""
+        """Return the remote repository directory for VirtualBox endpoints."""
 
         return virtualbox_wire_remote_dir()
 

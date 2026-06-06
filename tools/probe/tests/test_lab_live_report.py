@@ -49,7 +49,7 @@ class ProbeLabLiveReportTest(unittest.TestCase):
             report_path = Path(temp_dir) / "report.json"
 
             with (
-                mock.patch.object(cli.lab_wire_client, "WireClient", return_value=fake_wire),
+                mock.patch.object(cli.lab_endpoint_client, "EndpointClient", return_value=fake_wire),
                 mock.patch.object(
                     cli.lab_session_state,
                     "create_session",
@@ -96,7 +96,7 @@ class ProbeLabLiveReportTest(unittest.TestCase):
             "10.77.0.20",
         )
         self.assertEqual(
-            report.metadata["wire_endpoint_lifecycle"]["cleanup_state"]["status"],
+            report.metadata["endpoint_lifecycle"]["cleanup_state"]["status"],
             "cleaned",
         )
         self.assertEqual(report.metadata["lab_session"]["provider"], "qemu")
@@ -117,7 +117,7 @@ class ProbeLabLiveReportTest(unittest.TestCase):
             report_path = Path(temp_dir) / "report.json"
 
             with (
-                mock.patch.object(cli.lab_wire_client, "WireClient", return_value=fake_wire),
+                mock.patch.object(cli.lab_endpoint_client, "EndpointClient", return_value=fake_wire),
                 mock.patch.object(
                     cli.lab_session_state,
                     "create_session",
@@ -211,7 +211,7 @@ class ProbeLabLiveReportTest(unittest.TestCase):
             purpose="destroy endpoint qemu-target",
             role="target",
             argv=["tools/endpoint/run", "destroy", "qemu-target", "--json"],
-            operation="wire.destroy",
+            operation="endpoint.destroy",
             dry_run=False,
             live_mutation=True,
             metadata={"exit_code": 0, "ok": True},
@@ -362,7 +362,7 @@ def _fake_session() -> LabSession:
         purpose="create stimulus endpoint",
         role="stimulus",
         argv=["tools/endpoint/run", "create", "--provider", "qemu"],
-        operation="wire.create",
+        operation="endpoint.create",
         dry_run=False,
         live_mutation=True,
         metadata={"exit_code": 0, "ok": True},
@@ -398,7 +398,7 @@ def _fake_session() -> LabSession:
             "provider": "qemu",
             "private_group": "probe-smoke-seed-1",
             "private_network": True,
-            "wire_endpoint_plan": {
+            "endpoint_plan": {
                 "provider": "qemu",
                 "wire_provider": "qemu",
                 "exposure": "private",
@@ -491,7 +491,7 @@ def _bootstrap_session(
         purpose="run workload bootstrap",
         role="stimulus",
         argv=["tools/endpoint/run", "exec", "qemu-stimulus", "--", "bash", "-lc", "..."],
-        operation="wire.exec",
+        operation="endpoint.exec",
         dry_run=False,
         live_mutation=True,
         artifacts=[str(summary_path)],

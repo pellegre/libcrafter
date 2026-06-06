@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Protocol
 
-from tools.lab.engine import wire_client
+from tools.lab.engine import endpoint_client
 
 from ..live import LiveCommandPlan, LiveEndpoint, LiveExchangePlan, LiveValidationCheck
 from ..model import JSONObject, PacketPlan
@@ -58,12 +58,12 @@ class LiveProviderAdapter(Protocol):
         self,
         *,
         dry_run: bool,
-        client: wire_client.WireClient | None = None,
+        client: endpoint_client.EndpointClient | None = None,
         private_group: str | None = None,
         confirm_live_run: bool = False,
         created_endpoint_ids: list[str] | None = None,
     ) -> dict[str, object]:
-        """Create or plan provider-backed wire endpoints."""
+        """Create or plan provider-backed endpoints."""
 
     def provider_workflow(self, *, dry_run: bool) -> list[LiveCommandPlan]:
         """Return provider lifecycle command plans."""
@@ -83,7 +83,7 @@ class LiveProviderAdapter(Protocol):
         """Validate provider-backed dry-run exchange invariants."""
 
     def remote_dir(self) -> str:
-        """Return the absolute repository directory used on wire endpoints."""
+        """Return the absolute repository directory used on endpoints."""
 
     def endpoint_remote_command(
         self,

@@ -406,7 +406,7 @@ def _live_report(
     provider_commands = [
         {
             "label": f"02-create-{role}",
-            "operation": "wire.create",
+            "operation": "endpoint.create",
             "role": role,
             "exit_code": 0,
         }
@@ -415,12 +415,12 @@ def _live_report(
     lab_provider_workflow = [
         {
             "purpose": f"check-{provider}-provider",
-            "operation": "wire.doctor",
+            "operation": "endpoint.doctor",
             "role": None,
         },
         {
             "purpose": "collect-lab-artifacts",
-            "operation": "wire.collect_artifacts",
+            "operation": "endpoint.collect_artifacts",
             "role": None,
         },
     ]
@@ -497,6 +497,31 @@ def _live_report(
             "wire_skipped_count": 0,
             "wire_skip_reasons": {},
             "planned_infrastructure": lab_session["infrastructure_metadata"],
+            "endpoint_plan": {
+                "provider": provider,
+                "wire_provider": wire_provider,
+                "wire_exposure": wire_exposure,
+                "exposure": wire_exposure,
+                "dry_run": dry_run,
+                "endpoint_count": len(endpoint_roles),
+                "endpoints": {
+                    role: {
+                        "endpoint_id": f"{provider}-oracle-{role}",
+                        "role": role,
+                    }
+                    for role in endpoint_roles
+                },
+                "endpoint_plans": [
+                    {
+                        "endpoint_id": f"{provider}-oracle-{role}",
+                        "role": role,
+                    }
+                    for role in endpoint_roles
+                ],
+                "command_records": provider_commands,
+                "created_endpoint_ids": endpoint_ids,
+                "lab_session_id": lab_session["session_id"],
+            },
             "wire_endpoint_plan": {
                 "provider": provider,
                 "wire_provider": wire_provider,
@@ -532,6 +557,7 @@ def _live_report(
             ],
             "artifact_collection": {"always_attempt": True},
             "teardown": {"always_attempt": True},
+            "endpoint_lifecycle": lifecycle,
             "wire_endpoint_lifecycle": lifecycle,
             "provider_commands": provider_commands,
             "command_records": provider_commands,

@@ -381,7 +381,7 @@ class LiveProviderRegistryTest(unittest.TestCase):
 
     def test_hetzner_adapter_plans_wire_endpoints_with_private_exposure(self) -> None:
         adapter = resolve_live_provider("hetzner")
-        client = _FakeWireClient()
+        client = _FakeEndpointClient()
 
         plan = adapter.wire_endpoint_plan(dry_run=True, client=client)
 
@@ -500,7 +500,7 @@ class LiveProviderRegistryTest(unittest.TestCase):
 
     def test_qemu_adapter_plans_wire_endpoints_with_private_exposure(self) -> None:
         adapter = resolve_live_provider("qemu")
-        client = _FakeWireClient()
+        client = _FakeEndpointClient()
 
         plan = adapter.wire_endpoint_plan(dry_run=True, client=client)
 
@@ -533,7 +533,7 @@ class LiveProviderRegistryTest(unittest.TestCase):
 
     def test_docker_adapter_plans_wire_endpoints_with_private_exposure(self) -> None:
         adapter = resolve_live_provider("docker")
-        client = _FakeWireClient()
+        client = _FakeEndpointClient()
 
         plan = adapter.wire_endpoint_plan(dry_run=True, client=client)
 
@@ -585,7 +585,7 @@ class LiveProviderRegistryTest(unittest.TestCase):
 
     def test_virtualbox_adapter_plans_wire_endpoints_with_private_exposure(self) -> None:
         adapter = resolve_live_provider("virtualbox")
-        client = _FakeWireClient()
+        client = _FakeEndpointClient()
 
         plan = adapter.wire_endpoint_plan(dry_run=True, client=client)
 
@@ -828,14 +828,14 @@ class LiveProviderRegistryTest(unittest.TestCase):
             report_path = output_dir / "report.json"
             args = _real_live_args("fakecloud", output_dir)
             adapter = _FakeLiveProviderAdapter()
-            wire = _FakeLiveWireClient()
+            wire = _FakeLiveEndpointClient()
             plan = _fake_packet_plan()
             corpus_metadata = _fake_corpus_metadata(adapter.name, [plan])
             lab_env = _isolated_lab_env(temp_dir)
 
             with (
                 patch.dict(os.environ, lab_env),
-                patch("tools.lab.engine.wire_client.WireClient", return_value=wire),
+                patch("tools.lab.engine.endpoint_client.EndpointClient", return_value=wire),
                 patch("tools.lab.engine.repo.create_repository_archive", side_effect=_fake_repo_archive),
                 patch.object(cli, "_backend_versions", return_value={}),
                 patch.object(cli, "_libcrafter_info", return_value={}),
@@ -931,7 +931,7 @@ class LiveProviderRegistryTest(unittest.TestCase):
             report_path = output_dir / "report.json"
             args = _real_live_args("fakecloud", output_dir)
             adapter = _FakeLiveProviderAdapter()
-            wire = _FakeLiveWireClient()
+            wire = _FakeLiveEndpointClient()
             plan = _fake_packet_plan()
             corpus_metadata = _fake_corpus_metadata(adapter.name, [plan])
             lab_env = _isolated_lab_env(temp_dir)
@@ -976,7 +976,7 @@ class LiveProviderRegistryTest(unittest.TestCase):
 
             with (
                 patch.dict(os.environ, lab_env),
-                patch("tools.lab.engine.wire_client.WireClient", return_value=wire),
+                patch("tools.lab.engine.endpoint_client.EndpointClient", return_value=wire),
                 patch("tools.lab.engine.repo.create_repository_archive", side_effect=_fake_repo_archive),
                 patch.object(cli, "_backend_versions", return_value={}),
                 patch.object(cli, "_libcrafter_info", return_value={}),
@@ -1027,14 +1027,14 @@ class LiveProviderRegistryTest(unittest.TestCase):
             report_path = output_dir / "report.json"
             args = _real_live_args("fakecloud", output_dir)
             adapter = _FakeLiveProviderAdapter()
-            wire = _FakeLiveWireClient(collect_raises=True)
+            wire = _FakeLiveEndpointClient(collect_raises=True)
             plan = _fake_packet_plan()
             corpus_metadata = _fake_corpus_metadata(adapter.name, [plan])
             lab_env = _isolated_lab_env(temp_dir)
 
             with (
                 patch.dict(os.environ, lab_env),
-                patch("tools.lab.engine.wire_client.WireClient", return_value=wire),
+                patch("tools.lab.engine.endpoint_client.EndpointClient", return_value=wire),
                 patch("tools.lab.engine.repo.create_repository_archive", side_effect=_fake_repo_archive),
                 patch.object(cli, "_backend_versions", return_value={}),
                 patch.object(cli, "_libcrafter_info", return_value={}),
@@ -1315,7 +1315,7 @@ class _FakeRecord:
         }
 
 
-class _FakeWireClient:
+class _FakeEndpointClient:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
 
@@ -1629,7 +1629,7 @@ def _fake_endpoint_execution(
     return {
         "argv": ["fake-wire", "exec", endpoint_id, "--", *command],
         "operation": "exec",
-        "wire_command": True,
+        "endpoint_command": True,
         "endpoint_id": endpoint_id,
         "label": label,
         "exit_code": 0,
@@ -1997,7 +1997,7 @@ class _FakeLabProviderAdapter:
                     purpose="check-fake-provider",
                     role=None,
                     argv=["fake-wire", "doctor"],
-                    operation="wire.doctor",
+                    operation="endpoint.doctor",
                     dry_run=request.dry_run,
                     live_mutation=False,
                     metadata={"provider": self.name, "exposure": self.wire_exposure},
@@ -2027,9 +2027,9 @@ class _FakeLabProviderAdapter:
         )
 
 
-class _FakeLiveWireClient:
+class _FakeLiveEndpointClient:
     def __init__(self, *, collect_raises: bool = False) -> None:
-        self.wire_path = "fake-wire"
+        self.endpoint_path = "fake-wire"
         self.cwd = "."
         self.collect_raises = collect_raises
         self.doctor_calls: list[dict[str, str]] = []
