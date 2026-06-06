@@ -4,6 +4,8 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use crate::net::send::validated_interface;
+use crate::net::{SendMode, SendOptions};
 use crate::pcap::PcapLinkType;
 
 use super::backend::pcap::{
@@ -11,6 +13,7 @@ use super::backend::pcap::{
     DEFAULT_INTERFACE_IMMEDIATE, DEFAULT_INTERFACE_NONBLOCKING, DEFAULT_INTERFACE_PROMISC,
     DEFAULT_INTERFACE_SNAPLEN, DEFAULT_INTERFACE_TIMEOUT,
 };
+use super::backend::raw_socket::RawSocketWriter;
 use super::source::PacketSource;
 use super::writer::PacketWriter;
 use super::{Result, WireError};
@@ -45,6 +48,11 @@ pub enum PacketWireTarget {
         /// Interface name.
         interface: String,
     },
+    /// Write-only raw socket interface target.
+    RawSocketInterface {
+        /// Interface name selected for raw socket send planning and live send.
+        interface: String,
+    },
 }
 
 impl PacketWireTarget {
@@ -52,14 +60,16 @@ impl PacketWireTarget {
     pub fn path(&self) -> Option<&Path> {
         match self {
             Self::PcapFile { path } | Self::PcapRecorder { path, .. } => Some(path.as_path()),
-            Self::PcapInterface { .. } => None,
+            Self::PcapInterface { .. } | Self::RawSocketInterface { .. } => None,
         }
     }
 
     /// Return the interface name when this target is interface-backed.
     pub fn interface(&self) -> Option<&str> {
         match self {
-            Self::PcapInterface { interface } => Some(interface),
+            Self::PcapInterface { interface } | Self::RawSocketInterface { interface } => {
+                Some(interface)
+            }
             Self::PcapFile { .. } | Self::PcapRecorder { .. } => None,
         }
     }
@@ -68,7 +78,9 @@ impl PacketWireTarget {
     pub const fn pcap_link_type(&self) -> Option<PcapLinkType> {
         match self {
             Self::PcapRecorder { link_type, .. } => Some(*link_type),
-            Self::PcapFile { .. } | Self::PcapInterface { .. } => None,
+            Self::PcapFile { .. }
+            | Self::PcapInterface { .. }
+            | Self::RawSocketInterface { .. } => None,
         }
     }
 
@@ -77,6 +89,7 @@ impl PacketWireTarget {
             Self::PcapFile { path } => format!("pcap-file:{}", path.display()),
             Self::PcapRecorder { path, .. } => format!("pcap-recorder:{}", path.display()),
             Self::PcapInterface { interface } => format!("pcap-interface:{interface}"),
+            Self::RawSocketInterface { interface } => format!("raw-socket:{interface}"),
         }
     }
 }
@@ -229,6 +242,7 @@ impl PacketWireBuilder {
                     self.source = Some(Box::new(builder.open()?));
                 }
                 PacketWireTarget::PcapRecorder { .. } => {}
+                PacketWireTarget::RawSocketInterface { .. } => {}
             }
         }
 
@@ -251,6 +265,7 @@ impl PacketWireBuilder {
                     self.writer = Some(Box::new(builder.open()?));
                 }
                 PacketWireTarget::PcapFile { .. } => {}
+                PacketWireTarget::RawSocketInterface { .. } => {}
             }
         }
 
@@ -271,6 +286,94 @@ impl PacketWireBuilder {
     fn with_writer(mut self, writer: impl PacketWriter + Send + 'static) -> Self {
         self.writer = Some(Box::new(writer));
         self
+    }
+}
+
+/// Builder for a write-only raw socket packet wire.
+///
+/// This builder is intentionally separate from [`PacketWireBuilder`] because a
+/// raw socket writer adapts [`SocketSender`](crate::net::SocketSender), not a
+/// libpcap capture handle. It defaults to dry-run send planning so the packet
+/// wire API keeps offline behavior as the default; call [`Self::live`] to opt
+/// in to live raw socket transmission.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RawSocketWireBuilder {
+    options: SendOptions,
+}
+
+impl RawSocketWireBuilder {
+    fn new(interface: impl Into<String>) -> Self {
+        Self {
+            options: SendOptions::new().interface(interface).dry_run(),
+        }
+    }
+
+    /// Borrow the send options this raw socket writer will use.
+    pub const fn options(&self) -> &SendOptions {
+        &self.options
+    }
+
+    /// Interface selected for raw socket send planning and live send.
+    pub fn interface(&self) -> Option<&str> {
+        self.options.interface_name()
+    }
+
+    /// Set the raw socket send mode.
+    pub fn mode(mut self, mode: SendMode) -> Self {
+        self.options = self.options.mode(mode);
+        self
+    }
+
+    /// Require a link-layer raw socket send plan.
+    pub fn link_layer(self) -> Self {
+        self.mode(SendMode::LinkLayer)
+    }
+
+    /// Require a network-layer raw socket send plan.
+    pub fn network_layer(self) -> Self {
+        self.mode(SendMode::NetworkLayer)
+    }
+
+    /// Compile and plan records without transmitting bytes.
+    pub fn dry_run(mut self) -> Self {
+        self.options = self.options.dry_run();
+        self
+    }
+
+    /// Opt in to live raw socket transmission.
+    pub fn live(mut self) -> Self {
+        self.options = self.options.live();
+        self
+    }
+
+    /// Set the raw socket write timeout hint.
+    pub fn write_timeout(mut self, timeout: Duration) -> Self {
+        self.options = self.options.write_timeout(timeout);
+        self
+    }
+
+    /// Clear the raw socket write timeout hint.
+    pub fn no_write_timeout(mut self) -> Self {
+        self.options = self.options.no_write_timeout();
+        self
+    }
+
+    /// Set the raw socket write buffer size hint.
+    pub fn write_buffer_size(mut self, size: usize) -> Self {
+        self.options = self.options.write_buffer_size(size);
+        self
+    }
+
+    /// Open this write-only raw socket target as one packet wire.
+    pub fn open(self) -> Result<PacketWire> {
+        let interface = validated_interface(&self.options)?;
+        let writer = RawSocketWriter::new(self.options);
+
+        Ok(PacketWire {
+            target: PacketWireTarget::RawSocketInterface { interface },
+            source: None,
+            writer: Some(Box::new(writer)),
+        })
     }
 }
 
@@ -319,6 +422,19 @@ impl PacketWire {
         PacketWireBuilder::new(PacketWireTarget::PcapInterface {
             interface: interface.into(),
         })
+    }
+
+    /// Build a write-only raw socket interface target.
+    ///
+    /// This constructor is distinct from [`Self::pcap_interface`] because the
+    /// raw socket path wraps [`SocketSender`](crate::net::SocketSender) and
+    /// preserves its send-mode validation, dry-run plans, and live-send gates.
+    /// It defaults to dry-run planning; call
+    /// [`RawSocketWireBuilder::live`] to explicitly opt in to live raw socket
+    /// transmission. Unsupported radiotap injection remains a `SocketSender`
+    /// validation error rather than being rerouted through raw socket behavior.
+    pub fn raw_socket_interface(interface: impl Into<String>) -> RawSocketWireBuilder {
+        RawSocketWireBuilder::new(interface)
     }
 
     /// Inspect the single backend or interface opened by this wire.
@@ -390,6 +506,9 @@ fn unsupported_source_reason(target: &PacketWireTarget) -> &'static str {
         PacketWireTarget::PcapRecorder { .. } => {
             "pcap recorder targets are write-only; use pcap_file for pcap input"
         }
+        PacketWireTarget::RawSocketInterface { .. } => {
+            "raw socket interface targets are write-only; use pcap_interface for capture"
+        }
         PacketWireTarget::PcapFile { .. } | PacketWireTarget::PcapInterface { .. } => {
             "no packet source has been opened for this wire"
         }
@@ -409,7 +528,9 @@ fn unsupported_writer_reason(target: &PacketWireTarget) -> &'static str {
         PacketWireTarget::PcapFile { .. } => {
             "pcap file targets are read-only; use pcap_recorder for pcap output"
         }
-        PacketWireTarget::PcapRecorder { .. } | PacketWireTarget::PcapInterface { .. } => {
+        PacketWireTarget::PcapRecorder { .. }
+        | PacketWireTarget::PcapInterface { .. }
+        | PacketWireTarget::RawSocketInterface { .. } => {
             "no packet writer has been opened for this wire"
         }
     }

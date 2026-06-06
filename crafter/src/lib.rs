@@ -399,9 +399,9 @@ pub use wire::{
     BackendKind, BluetoothMetadata, DropAllTransform, DuplicateTransform, MediumMetadata,
     MemoryPacketWriter, MemoryWrite, OpenedPacketSource, OpenedPacketWriter, PacketMetadata,
     PacketOrigin, PacketRecord, PacketSource, PacketTransform, PacketWire, PacketWireBuilder,
-    PacketWireTarget, PacketWriter, PassThroughTransform, RadioMetadata, SnifferCancel,
-    SnifferHandle, TraceAppendTransform, TransformOutput, TransformTrace, Transmitter,
-    VecPacketSource, WifiMetadata, WireError, WriteReport,
+    PacketWireTarget, PacketWriter, PassThroughTransform, RadioMetadata, RawSocketWireBuilder,
+    RawSocketWriter, SnifferCancel, SnifferHandle, TraceAppendTransform, TransformOutput,
+    TransformTrace, Transmitter, VecPacketSource, WifiMetadata, WireError, WriteReport,
 };
 
 /// Core packet and protocol APIs.
@@ -719,7 +719,8 @@ pub mod prelude {
         BackendKind, BluetoothMetadata, DropAllTransform, DuplicateTransform, MediumMetadata,
         MemoryPacketWriter, MemoryWrite, OpenedPacketSource, OpenedPacketWriter, PacketMetadata,
         PacketOrigin, PacketRecord, PacketSource, PacketTransform, PacketWire, PacketWireBuilder,
-        PacketWireTarget, PacketWriter, PassThroughTransform, RadioMetadata, SnifferCancel,
-        SnifferHandle, TraceAppendTransform, TransformOutput, TransformTrace,
+        PacketWireTarget, PacketWriter, PassThroughTransform, RadioMetadata, RawSocketWireBuilder,
+        RawSocketWriter, SnifferCancel, SnifferHandle, TraceAppendTransform, TransformOutput,
+        TransformTrace,
     };
 }
