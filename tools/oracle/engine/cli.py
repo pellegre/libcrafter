@@ -1866,7 +1866,15 @@ def _live_provider(args: argparse.Namespace, provider_adapter) -> int:
             "live_corpus_artifact": str(corpus_batch_artifact),
             "execution_directions": directions,
             "planned_infrastructure": lab_report_metadata["planned_infrastructure"],
+            "endpoint_plan": lab_report_metadata.get(
+                "endpoint_plan",
+                lab_report_metadata["wire_endpoint_plan"],
+            ),
             "wire_endpoint_plan": lab_report_metadata["wire_endpoint_plan"],
+            "endpoint_lifecycle": lab_report_metadata.get(
+                "endpoint_lifecycle",
+                lab_report_metadata["wire_endpoint_lifecycle"],
+            ),
             "wire_endpoint_lifecycle": lab_report_metadata["wire_endpoint_lifecycle"],
             "provider_workflow": [command.to_dict() for command in provider_workflow],
             "lab_provider_workflow": lab_report_metadata["provider_workflow"],
@@ -2230,7 +2238,11 @@ def _live_provider_lab_command_records(records: Sequence[object]) -> list[JSONOb
         item = _json_object(raw, f"lab command record {index}")
         metadata = _json_object(item.get("metadata", {}), f"lab command record {index}.metadata")
         item.setdefault("label", _live_provider_lab_command_label(item, index))
-        item.setdefault("wire_command", str(item.get("operation", "")).startswith("wire."))
+        operation = str(item.get("operation", ""))
+        item.setdefault(
+            "endpoint_command",
+            operation.startswith(("endpoint.", "wire.")),
+        )
         endpoint_id = _live_provider_lab_command_endpoint_id(item)
         if endpoint_id is not None:
             item.setdefault("endpoint_id", endpoint_id)
@@ -2276,8 +2288,10 @@ def _live_provider_lab_cleanup_attempt_records(
                 _json_object(
                     {
                         "argv": [],
-                        "operation": f"wire.{operation}" if isinstance(operation, str) else key,
-                        "wire_command": True,
+                        "operation": (
+                            f"endpoint.{operation}" if isinstance(operation, str) else key
+                        ),
+                        "endpoint_command": True,
                         "endpoint_id": endpoint_id,
                         "endpoint_role": role,
                         "label": f"{label_prefix}-{label_subject or len(output)}",
@@ -2297,15 +2311,20 @@ def _live_provider_lab_command_label(command: Mapping[str, object], index: int) 
     endpoint_id = _live_provider_lab_command_endpoint_id(command)
     metadata = command.get("metadata")
     phase = metadata.get("phase") if isinstance(metadata, Mapping) else None
-    if operation == "wire.create":
+    if operation in {"endpoint.create", "wire.create"}:
         return f"02-create-{role or index}"
     if operation == "lab.repo_archive":
         return "03-repo-archive"
-    if operation in {"wire.upload", "wire.exec"} and isinstance(phase, str):
+    if operation in {
+        "endpoint.upload",
+        "endpoint.exec",
+        "wire.upload",
+        "wire.exec",
+    } and isinstance(phase, str):
         return f"04-bootstrap-{role or endpoint_id or index}-{phase}"
-    if operation == "wire.collect_artifacts":
+    if operation in {"endpoint.collect_artifacts", "wire.collect_artifacts"}:
         return f"98-artifact-{role or endpoint_id or index}"
-    if operation == "wire.destroy":
+    if operation in {"endpoint.destroy", "wire.destroy"}:
         return f"99-destroy-{endpoint_id or role or index}"
     return f"lab-command-{index:02d}"
 
@@ -2325,7 +2344,7 @@ def _live_provider_lab_command_endpoint_id(
     if not isinstance(argv, Sequence) or isinstance(argv, (str, bytes, bytearray)):
         return None
     parts = [part for part in argv if isinstance(part, str)]
-    for wire_command in (
+    for endpoint_command in (
         "collect-artifacts",
         "destroy",
         "exec",
@@ -2333,7 +2352,7 @@ def _live_provider_lab_command_endpoint_id(
         "download",
     ):
         try:
-            command_index = parts.index(wire_command)
+            command_index = parts.index(endpoint_command)
         except ValueError:
             continue
         if command_index + 1 < len(parts) and parts[command_index + 1]:
@@ -2719,7 +2738,7 @@ def _live_provider_execute(
     from .backends.scapy.packets import encode_packet_plans
     from tools.lab.engine import repo as lab_repo
     from tools.lab.engine import session as lab_session_state
-    from tools.lab.engine import wire_client as lab_wire_client
+    from tools.lab.engine import endpoint_client as lab_endpoint_client
     from .live import (
         LiveCommandPlan,
         LiveExchangePlan,
@@ -2736,11 +2755,11 @@ def _live_provider_execute(
     wire_environment = _live_provider_wire_environment(provider_adapter)
     if wire_environment:
         def run_wire_command(argv, **kwargs):
-            return lab_wire_client.run_command(argv, env=wire_environment, **kwargs)
+            return lab_endpoint_client.run_command(argv, env=wire_environment, **kwargs)
 
-        wire = lab_wire_client.WireClient(runner=run_wire_command)
+        wire = lab_endpoint_client.EndpointClient(runner=run_wire_command)
     else:
-        wire = lab_wire_client.WireClient()
+        wire = lab_endpoint_client.EndpointClient()
     endpoints = {}
     lab_session = None
     provider_workflow = provider_adapter.provider_workflow(dry_run=False)
@@ -2814,8 +2833,11 @@ def _live_provider_execute(
         created_endpoint_ids = list(lab_session.created_endpoint_ids)
         lab_report_metadata = lab_session_oracle_report_metadata(lab_session)
         wire_endpoint_plan = _json_object(
-            lab_report_metadata["wire_endpoint_plan"],
-            "lab_session.wire_endpoint_plan",
+            lab_report_metadata.get(
+                "endpoint_plan",
+                lab_report_metadata["wire_endpoint_plan"],
+            ),
+            "lab_session.endpoint_plan",
         )
 
         repo_archive = lab_repo.create_repository_archive(
@@ -2862,7 +2884,7 @@ def _live_provider_execute(
 
         discovered_capabilities = provider_adapter.default_provider_capabilities(
             dry_run=False,
-            source="wire-endpoint-bootstrap",
+            source="endpoint-bootstrap",
         )
         capability_path = _write_wire_provider_capabilities(
             output_dir=output_dir,
@@ -3048,7 +3070,7 @@ def _live_provider_execute(
                     "batch_size": len(direction_plans),
                     "planned_live_packet_exchange": True,
                     "live_packet_exchange": False,
-                    "wire_command": True,
+                    "endpoint_command": True,
                     "wire_endpoint_id": receiver.endpoint_id,
                 },
             )
@@ -3075,7 +3097,7 @@ def _live_provider_execute(
                     "batch_size": len(direction_plans),
                     "planned_live_packet_exchange": True,
                     "live_packet_exchange": False,
-                    "wire_command": True,
+                    "endpoint_command": True,
                     "wire_endpoint_id": sender.endpoint_id,
                 },
             )
@@ -3395,24 +3417,27 @@ def _live_provider_execute(
         if lab_session is not None
         else {}
     )
-    lab_wire_endpoint_lifecycle = (
+    lab_endpoint_lifecycle = (
         _json_object(
-            lab_report_metadata.get("wire_endpoint_lifecycle", {}),
-            "lab_session.wire_endpoint_lifecycle",
+            lab_report_metadata.get(
+                "endpoint_lifecycle",
+                lab_report_metadata.get("wire_endpoint_lifecycle", {}),
+            ),
+            "lab_session.endpoint_lifecycle",
         )
         if lab_report_metadata
         else {}
     )
-    wire_endpoint_lifecycle = {
-        **lab_wire_endpoint_lifecycle,
+    endpoint_lifecycle = {
+        **lab_endpoint_lifecycle,
         "remote_dir": remote_dir,
         "remote_artifact_root": remote_artifact_root,
         "created_endpoint_ids": list(created_endpoint_ids),
         "keep_wire_endpoints": keep_wire_endpoints,
     }
-    if lab_wire_endpoint_lifecycle.get("remote_artifact_root") != remote_artifact_root:
-        wire_endpoint_lifecycle["lab_remote_artifact_root"] = (
-            lab_wire_endpoint_lifecycle.get("remote_artifact_root")
+    if lab_endpoint_lifecycle.get("remote_artifact_root") != remote_artifact_root:
+        endpoint_lifecycle["lab_remote_artifact_root"] = (
+            lab_endpoint_lifecycle.get("remote_artifact_root")
         )
     report = RunReport(
         mode="live",
@@ -3455,11 +3480,16 @@ def _live_provider_execute(
                 "planned_infrastructure",
                 provider_adapter.planned_infrastructure(dry_run=False),
             ),
+            "endpoint_plan": lab_report_metadata.get(
+                "endpoint_plan",
+                lab_report_metadata.get("wire_endpoint_plan", wire_endpoint_plan),
+            ),
             "wire_endpoint_plan": lab_report_metadata.get(
                 "wire_endpoint_plan",
-                wire_endpoint_plan,
+                lab_report_metadata.get("endpoint_plan", wire_endpoint_plan),
             ),
-            "wire_endpoint_lifecycle": wire_endpoint_lifecycle,
+            "endpoint_lifecycle": endpoint_lifecycle,
+            "wire_endpoint_lifecycle": endpoint_lifecycle,
             "provider_workflow": [command.to_dict() for command in provider_workflow],
             "lab_provider_workflow": lab_report_metadata.get("provider_workflow", []),
             "provider_commands": provider_commands,
@@ -3562,7 +3592,7 @@ def _run_wire_command(response, *, output_dir: Path, label: str) -> JSONObject:
     metadata.update(
         {
             "label": label,
-            "wire_command": True,
+            "endpoint_command": True,
             "stdout_path": str(stdout_path),
             "stderr_path": str(stderr_path),
         }
@@ -3590,7 +3620,7 @@ def _run_wire_command_safely(command, *, output_dir: Path, label: str) -> JSONOb
             "exit_code": 1,
             "ok": False,
             "label": label,
-            "wire_command": True,
+            "endpoint_command": True,
             "stdout_path": str(stdout_path),
             "stderr_path": str(stderr_path),
             "error": str(exc),
@@ -3633,7 +3663,7 @@ def _wire_create_command_records(
             continue
         item = _json_object(record, f"wire_endpoint_plan.command_metadata[{index}]")
         item["label"] = labels[index] if index < len(labels) else f"02-create-{index}"
-        item["wire_command"] = True
+        item["endpoint_command"] = True
         output.append(item)
     return output
 
@@ -3728,7 +3758,7 @@ def _write_wire_provider_capabilities(
     capability_path = output_dir / "artifacts" / "wire" / "capabilities.json"
     capabilities["capability_report_path"] = str(capability_path)
     report = {
-        "source": capabilities.get("source", "wire-endpoint-bootstrap"),
+        "source": capabilities.get("source", "endpoint-bootstrap"),
         "provider_capabilities": capabilities,
         "endpoints": {
             role: endpoint.to_dict()
@@ -3876,7 +3906,7 @@ def _upload_wire_endpoint_request(
         "phase_role": "upload",
         "endpoint_role": role,
         "endpoint_id": endpoint_id,
-        "wire_command": True,
+        "endpoint_command": True,
         "exit_code": exit_code,
         "label": label,
         "request_path": str(local_request_path),
@@ -3886,7 +3916,7 @@ def _upload_wire_endpoint_request(
 
 
 def _wire_exec_argv(wire, endpoint_id: str, command: Sequence[str]) -> list[str]:
-    return [wire.wire_path, "exec", endpoint_id, "--", *command]
+    return [wire.endpoint_path, "exec", endpoint_id, "--", *command]
 
 
 def _start_wire_endpoint_batch(
@@ -3910,7 +3940,7 @@ def _start_wire_endpoint_batch(
     return {
         "argv": argv,
         "operation": "exec",
-        "wire_command": True,
+        "endpoint_command": True,
         "endpoint_id": endpoint_id,
         "label": label,
         "process": process,
@@ -3937,7 +3967,7 @@ def _run_wire_endpoint_batch(
     return {
         **result.record.to_dict(),
         "endpoint_id": endpoint_id,
-        "wire_command": True,
+        "endpoint_command": True,
         "label": label,
         "stdout_path": str(stdout_path),
         "stderr_path": str(stderr_path),
@@ -8790,7 +8820,7 @@ def build_parser() -> argparse.ArgumentParser:
     live_parser.add_argument(
         "--keep-wire-endpoints",
         action="store_true",
-        help="keep provider wire endpoints after a non-dry-run for debugging",
+        help="keep provider endpoints after a non-dry-run for debugging",
     )
     live_parser.set_defaults(func=_live)
 

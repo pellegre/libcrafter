@@ -19,7 +19,7 @@ from tools.lab.engine.model import (
 )
 from tools.lab.engine.providers.common import validate_remote_dir
 from tools.lab.engine.providers.hetzner import HETZNER_LAB_PROVIDER_ADAPTER
-from tools.lab.engine import wire_client
+from tools.lab.engine import endpoint_client
 from tools.endpoint.engine.model import (
     EndpointManifest,
     EndpointSSHInfo,
@@ -39,7 +39,7 @@ from ..model import JSONObject, PacketPlan
 
 
 PROVIDER_NAME = "hetzner"
-WIRE_ENTRYPOINT = "tools/endpoint/run"
+ENDPOINT_ENTRYPOINT = "tools/endpoint/run"
 ORACLE_LIVE_SUITE = "oracle-live"
 ORACLE_PRIVATE_GROUP = "oracle-live-private"
 PRIVATE_NETWORK_CIDR = "10.42.19.0/24"
@@ -160,12 +160,12 @@ def hetzner_endpoints(*, dry_run: bool) -> dict[str, LiveEndpoint]:
 def hetzner_wire_endpoint_plan(
     *,
     dry_run: bool,
-    client: wire_client.WireClient | None = None,
+    client: endpoint_client.EndpointClient | None = None,
     private_group: str | None = None,
     confirm_live_run: bool = False,
     created_endpoint_ids: list[str] | None = None,
 ) -> dict[str, object]:
-    """Create or plan the two private wire endpoints used by Hetzner oracle runs."""
+    """Create or plan the two private endpoints used by Hetzner oracle runs."""
 
     return _oracle_wire_endpoint_plan(
         dry_run=dry_run,
@@ -206,7 +206,7 @@ def _live_endpoint_from_wire_plan(
             "private_network": True,
             "private_network_cidr": PRIVATE_NETWORK_CIDR,
             "network_zone": PRIVATE_NETWORK_ZONE,
-            "resource_type": "wire-endpoint",
+            "resource_type": "endpoint",
             "peer_role": (
                 "reference_backend" if role == "libcrafter" else "libcrafter"
             ),
@@ -270,7 +270,7 @@ def _hetzner_wire_provider_workflow(*, dry_run: bool) -> list[LiveCommandPlan]:
             "doctor",
             "check-hetzner-provider",
             [
-                WIRE_ENTRYPOINT,
+                ENDPOINT_ENTRYPOINT,
                 "doctor",
                 "--provider",
                 PROVIDER_NAME,
@@ -282,9 +282,9 @@ def _hetzner_wire_provider_workflow(*, dry_run: bool) -> list[LiveCommandPlan]:
         ),
         (
             "create",
-            "create-libcrafter-private-wire-endpoint",
+            "create-libcrafter-private-endpoint",
             [
-                WIRE_ENTRYPOINT,
+                ENDPOINT_ENTRYPOINT,
                 "create",
                 "--provider",
                 PROVIDER_NAME,
@@ -306,9 +306,9 @@ def _hetzner_wire_provider_workflow(*, dry_run: bool) -> list[LiveCommandPlan]:
         ),
         (
             "create",
-            "create-reference-private-wire-endpoint",
+            "create-reference-private-endpoint",
             [
-                WIRE_ENTRYPOINT,
+                ENDPOINT_ENTRYPOINT,
                 "create",
                 "--provider",
                 PROVIDER_NAME,
@@ -332,7 +332,7 @@ def _hetzner_wire_provider_workflow(*, dry_run: bool) -> list[LiveCommandPlan]:
             "exec",
             "run-oracle-live-exchange-suite",
             [
-                WIRE_ENTRYPOINT,
+                ENDPOINT_ENTRYPOINT,
                 "exec",
                 "<endpoint-id>",
                 "--",
@@ -345,12 +345,12 @@ def _hetzner_wire_provider_workflow(*, dry_run: bool) -> list[LiveCommandPlan]:
         (
             "download",
             "collect-live-endpoint-artifacts",
-            [WIRE_ENTRYPOINT, "download", "<endpoint-id>", "<remote>", "<local>"],
+            [ENDPOINT_ENTRYPOINT, "download", "<endpoint-id>", "<remote>", "<local>"],
         ),
         (
             "destroy",
             "teardown-disposable-hetzner-endpoints",
-            [WIRE_ENTRYPOINT, "destroy", "<endpoint-id>", "--json"],
+            [ENDPOINT_ENTRYPOINT, "destroy", "<endpoint-id>", "--json"],
         ),
     ]
     commands: list[LiveCommandPlan] = []
@@ -372,7 +372,7 @@ def _hetzner_wire_provider_workflow(*, dry_run: bool) -> list[LiveCommandPlan]:
                     "oracle_two_endpoint": True,
                     "private_network": True,
                     "private_group": _oracle_private_group(),
-                    "wire_command": True,
+                    "endpoint_command": True,
                     "operation": operation,
                 },
             )
@@ -391,8 +391,8 @@ def validate_hetzner_provider_workflow(
     purposes = {command.purpose for command in commands}
     required = {
         "check-hetzner-provider",
-        "create-libcrafter-private-wire-endpoint",
-        "create-reference-private-wire-endpoint",
+        "create-libcrafter-private-endpoint",
+        "create-reference-private-endpoint",
         "run-oracle-live-exchange-suite",
         "collect-live-endpoint-artifacts",
         "teardown-disposable-hetzner-endpoints",
@@ -404,10 +404,10 @@ def validate_hetzner_provider_workflow(
     for command in commands:
         if command.role != "provider":
             errors.append(f"unexpected provider workflow role: {command.role}")
-        if len(command.argv) < 2 or command.argv[0] != WIRE_ENTRYPOINT:
-            errors.append(f"provider command must route through {WIRE_ENTRYPOINT}")
-        if command.metadata.get("wire_command") is not True:
-            errors.append("provider command must be marked as wire_command")
+        if len(command.argv) < 2 or command.argv[0] != ENDPOINT_ENTRYPOINT:
+            errors.append(f"provider command must route through {ENDPOINT_ENTRYPOINT}")
+        if command.metadata.get("endpoint_command") is not True:
+            errors.append("provider command must be marked as endpoint_command")
         if command.metadata.get("provider") != PROVIDER_NAME:
             errors.append("provider command must target Hetzner")
         if dry_run and command.metadata.get("operation") in {
@@ -487,7 +487,7 @@ def validate_hetzner_dry_run_exchange(
 
 
 def hetzner_wire_remote_dir() -> str:
-    """Return the repository directory used by Hetzner wire endpoints."""
+    """Return the repository directory used by Hetzner endpoints."""
 
     return validate_remote_dir(os.environ.get("LIBCRAFTER_ENDPOINT_REMOTE_DIR"))
 
@@ -499,7 +499,7 @@ def hetzner_endpoint_remote_command(
     request_path: str,
     out_dir: str,
 ) -> list[str]:
-    """Return the endpoint protocol command executed on a Hetzner wire endpoint."""
+    """Return the endpoint protocol command executed on a Hetzner endpoint."""
 
     quoted_remote_dir = shlex.quote(remote_dir)
     quoted_request = shlex.quote(request_path)
@@ -693,7 +693,7 @@ def _oracle_planned_endpoints(*, dry_run: bool) -> dict[str, LiveEndpoint]:
 def _oracle_wire_endpoint_plan(
     *,
     dry_run: bool,
-    client: wire_client.WireClient | None = None,
+    client: endpoint_client.EndpointClient | None = None,
     private_group: str | None = None,
     confirm_live_run: bool = False,
     created_endpoint_ids: list[str] | None = None,
@@ -705,7 +705,7 @@ def _oracle_wire_endpoint_plan(
     )
     plan = HETZNER_LAB_PROVIDER_ADAPTER.wire_endpoint_plan(
         request,
-        client=_OracleLabWireClient(client or wire_client.WireClient()),
+        client=_OracleLabEndpointClient(client or endpoint_client.EndpointClient()),
         created_endpoint_ids=created_endpoint_ids,
     )
     return _oracle_wire_plan_from_lab_plan(plan)
@@ -763,7 +763,7 @@ def _oracle_provider_workflow(*, dry_run: bool) -> list[LiveCommandPlan]:
             role="provider",
             purpose="run-oracle-live-exchange-suite",
             argv=[
-                WIRE_ENTRYPOINT,
+                ENDPOINT_ENTRYPOINT,
                 "exec",
                 "<endpoint-id>",
                 "--",
@@ -783,7 +783,7 @@ def _oracle_provider_workflow(*, dry_run: bool) -> list[LiveCommandPlan]:
                 "oracle_two_endpoint": True,
                 "private_network": True,
                 "private_group": _oracle_private_group(),
-                "wire_command": True,
+                "endpoint_command": True,
                 "operation": "exec",
             },
         ),
@@ -797,7 +797,7 @@ def _live_provider_command_from_lab(command: LabCommandPlan) -> LiveCommandPlan:
     metadata["operation"] = _oracle_operation(command.operation)
     metadata.setdefault("provider", PROVIDER_NAME)
     metadata.setdefault("exposure", HETZNER_LAB_PROVIDER_ADAPTER.wire_exposure)
-    metadata.setdefault("wire_command", True)
+    metadata.setdefault("endpoint_command", True)
     return LiveCommandPlan(
         role="provider",
         purpose=_oracle_workflow_purpose(command),
@@ -809,24 +809,24 @@ def _live_provider_command_from_lab(command: LabCommandPlan) -> LiveCommandPlan:
 
 
 def _oracle_workflow_purpose(command: LabCommandPlan) -> str:
-    if command.operation == "wire.doctor":
+    if command.operation == "endpoint.doctor":
         return "check-hetzner-provider"
-    if command.operation == "wire.create":
+    if command.operation == "endpoint.create":
         suffix = "libcrafter" if command.role == "libcrafter" else "reference"
-        return f"create-{suffix}-private-wire-endpoint"
-    if command.operation == "wire.collect_artifacts":
+        return f"create-{suffix}-private-endpoint"
+    if command.operation == "endpoint.collect_artifacts":
         return "collect-live-endpoint-artifacts"
-    if command.operation == "wire.destroy":
+    if command.operation == "endpoint.destroy":
         return "teardown-disposable-hetzner-endpoints"
     return command.purpose
 
 
 def _oracle_operation(operation: str) -> str:
     return {
-        "wire.doctor": "doctor",
-        "wire.create": "create",
-        "wire.collect_artifacts": "download",
-        "wire.destroy": "destroy",
+        "endpoint.doctor": "doctor",
+        "endpoint.create": "create",
+        "endpoint.collect_artifacts": "download",
+        "endpoint.destroy": "destroy",
     }.get(operation, operation)
 
 
@@ -872,7 +872,7 @@ def _endpoint_suffix(role: str) -> str:
 
 
 @dataclass(frozen=True, slots=True)
-class _LabWireCreateResponse:
+class _LabEndpointCreateResponse:
     source: object
     manifest: EndpointManifest
     json_data: JSONObject
@@ -897,7 +897,7 @@ class _LabWireCreateResponse:
                 "exposure": self.exposure,
                 "private_group": self.private_group,
                 "private_ip": self.private_ip,
-                "wire_command": True,
+                "endpoint_command": True,
             }
         )
         return LabCommandPlan(
@@ -911,7 +911,7 @@ class _LabWireCreateResponse:
                 private_ip=self.private_ip,
                 dry_run=self.dry_run,
             ),
-            operation="wire.create",
+            operation="endpoint.create",
             dry_run=self.dry_run,
             live_mutation=not self.dry_run,
             artifacts=list(artifacts),
@@ -919,7 +919,7 @@ class _LabWireCreateResponse:
         )
 
 
-class _OracleLabWireClient:
+class _OracleLabEndpointClient:
     def __init__(self, client: object) -> None:
         self._client = client
 
@@ -934,7 +934,7 @@ class _OracleLabWireClient:
         dry_run: bool,
         write_manifest: bool,
         confirm_live_run: bool,
-    ) -> _LabWireCreateResponse:
+    ) -> _LabEndpointCreateResponse:
         create = getattr(self._client, "create")
         try:
             response = create(
@@ -967,7 +967,7 @@ class _OracleLabWireClient:
             dry_run=dry_run,
         )
         json_data = _response_json_for_lab(response, manifest)
-        return _LabWireCreateResponse(
+        return _LabEndpointCreateResponse(
             source=response,
             manifest=manifest,
             json_data=json_data,
@@ -1112,7 +1112,7 @@ def _wire_create_argv(
     dry_run: bool,
 ) -> list[str]:
     argv = [
-        WIRE_ENTRYPOINT,
+        ENDPOINT_ENTRYPOINT,
         "create",
         "--provider",
         provider,
@@ -1201,12 +1201,12 @@ class HetznerLiveProviderAdapter:
         self,
         *,
         dry_run: bool,
-        client: wire_client.WireClient | None = None,
+        client: endpoint_client.EndpointClient | None = None,
         private_group: str | None = None,
         confirm_live_run: bool = False,
         created_endpoint_ids: list[str] | None = None,
     ) -> dict[str, object]:
-        """Create or plan the two Hetzner private wire endpoints."""
+        """Create or plan the two Hetzner private endpoints."""
 
         return hetzner_wire_endpoint_plan(
             dry_run=dry_run,
@@ -1240,7 +1240,7 @@ class HetznerLiveProviderAdapter:
         return validate_hetzner_dry_run_exchange(exchange)
 
     def remote_dir(self) -> str:
-        """Return the remote repository directory for Hetzner wire endpoints."""
+        """Return the remote repository directory for Hetzner endpoints."""
 
         return hetzner_wire_remote_dir()
 

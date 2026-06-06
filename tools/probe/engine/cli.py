@@ -19,7 +19,7 @@ if str(_REPO_ROOT_FOR_IMPORTS) not in sys.path:
 from tools.lab.engine.model import LabRequest, LabRole, LabSession
 from tools.lab.engine import repo as lab_repo
 from tools.lab.engine import session as lab_session_state
-from tools.lab.engine import wire_client as lab_wire_client
+from tools.lab.engine import endpoint_client as lab_endpoint_client
 
 from .capabilities import (
     SKIP_CAPABILITY_UNAVAILABLE,
@@ -728,6 +728,17 @@ def _lab_session_probe_report_metadata(
     provider_workflow = [command.to_dict() for command in session.provider_workflow]
     command_records = [command.to_dict() for command in session.command_records]
 
+    endpoint_plan = _lab_session_wire_endpoint_plan(
+        session,
+        endpoints=endpoint_context,
+    )
+    endpoint_lifecycle: JSONObject = {
+        "remote_dir": session.remote_dir,
+        "remote_artifact_root": session.remote_artifact_root,
+        "created_endpoint_ids": list(session.created_endpoint_ids),
+        "cleanup_state": dict(session.cleanup_state),
+    }
+
     metadata: JSONObject = {
         "provider": session.provider,
         "wire_provider": session.wire_provider,
@@ -745,16 +756,10 @@ def _lab_session_probe_report_metadata(
         ),
         "endpoint_count": len(session.endpoints),
         "planned_infrastructure": infrastructure,
-        "wire_endpoint_plan": _lab_session_wire_endpoint_plan(
-            session,
-            endpoints=endpoint_context,
-        ),
-        "wire_endpoint_lifecycle": {
-            "remote_dir": session.remote_dir,
-            "remote_artifact_root": session.remote_artifact_root,
-            "created_endpoint_ids": list(session.created_endpoint_ids),
-            "cleanup_state": dict(session.cleanup_state),
-        },
+        "endpoint_plan": endpoint_plan,
+        "wire_endpoint_plan": endpoint_plan,
+        "endpoint_lifecycle": endpoint_lifecycle,
+        "wire_endpoint_lifecycle": endpoint_lifecycle,
         "provider_workflow": provider_workflow,
         "provider_commands": command_records,
         "command_records": command_records,
@@ -772,7 +777,7 @@ def _lab_session_wire_endpoint_plan(
     *,
     endpoints: Mapping[str, JSONValue],
 ) -> JSONObject:
-    raw_plan = session.metadata.get("wire_endpoint_plan")
+    raw_plan = session.metadata.get("endpoint_plan", session.metadata.get("wire_endpoint_plan"))
     plan: JSONObject = (
         json_object(raw_plan, "lab_session.wire_endpoint_plan")
         if isinstance(raw_plan, Mapping)

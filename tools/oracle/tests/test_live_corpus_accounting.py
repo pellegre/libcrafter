@@ -3,7 +3,7 @@
 These tests assert that an ICMP corpus rooted at ``l2:ipv4`` is wire-eligible on
 Hetzner: plans are generated, comparison canonicalizes to the IPv4 header
 (``l3:ipv4``), eligible plans are not skipped, and the only skipped plan is the
-intentionally malformed one that wire providers must not exchange. They guard
+intentionally malformed one that endpoint providers must not exchange. They guard
 against the new ICMP matrix silently disappearing from live accounting.
 """
 

@@ -43,7 +43,7 @@ edits to packet generation, endpoint protocol comparison, report assembly, or
 the generic provider execution flow.
 
 `local-dry-run` is intentionally separate from this provider-backed adapter
-registry. It is a CI-safe planning mode that does not create wire endpoints and
+registry. It is a CI-safe planning mode that does not create endpoints and
 does not represent a provider-backed live exchange.
 
 The current provider-backed adapters share the same oracle execution path:
@@ -168,7 +168,7 @@ fi
 With `LIBCRAFTER_RUN_DHCP_HETZNER_LIVE` unset (the default), the gate takes the
 echo-skip branch and nothing runs. When it is `1`, the run still refuses to
 exchange packets unless `--confirm-live-run` is passed, and it refuses again
-unless Hetzner credentials are present in the environment: the wire provider
+unless Hetzner credentials are present in the environment: the endpoint provider
 reads `HETZNER_API_TOKEN` or `HCLOUD_TOKEN`. Credentials are never hardcoded,
 committed, or written to tracked files. When confirmed and credentialed, the
 run provisions disposable Hetzner endpoints, runs the libcrafter and
@@ -249,7 +249,7 @@ single-endpoint loopback test.
 repository push/bootstrap, artifact collection, and cleanup. `tools/endpoint`
 remains the owner of one endpoint and artifact transport. An oracle live
 provider adapter maps oracle roles and comparison policy onto lab sessions; it
-does not replace the lab or wire provider implementation.
+does not replace the lab or endpoint provider implementation.
 
 ## Backend Capabilities
 

@@ -246,6 +246,16 @@ def lab_session_oracle_report_metadata(
         role: endpoint.to_dict()
         for role, endpoint in endpoints.items()
     }
+    endpoint_plan = _lab_session_wire_endpoint_plan(
+        lab_session,
+        endpoints=endpoints,
+    )
+    endpoint_lifecycle: JSONObject = {
+        "remote_dir": lab_session.remote_dir,
+        "remote_artifact_root": lab_session.remote_artifact_root,
+        "created_endpoint_ids": list(lab_session.created_endpoint_ids),
+        "cleanup_state": dict(lab_session.cleanup_state),
+    }
     metadata: JSONObject = {
         "provider": lab_session.provider,
         "wire_provider": lab_session.wire_provider,
@@ -263,16 +273,10 @@ def lab_session_oracle_report_metadata(
         ),
         "endpoint_count": len(endpoints),
         "planned_infrastructure": infrastructure,
-        "wire_endpoint_plan": _lab_session_wire_endpoint_plan(
-            lab_session,
-            endpoints=endpoints,
-        ),
-        "wire_endpoint_lifecycle": {
-            "remote_dir": lab_session.remote_dir,
-            "remote_artifact_root": lab_session.remote_artifact_root,
-            "created_endpoint_ids": list(lab_session.created_endpoint_ids),
-            "cleanup_state": dict(lab_session.cleanup_state),
-        },
+        "endpoint_plan": endpoint_plan,
+        "wire_endpoint_plan": endpoint_plan,
+        "endpoint_lifecycle": endpoint_lifecycle,
+        "wire_endpoint_lifecycle": endpoint_lifecycle,
         "provider_workflow": provider_workflow,
         "provider_commands": command_records,
         "command_records": command_records,
@@ -330,7 +334,9 @@ def _lab_endpoint_live_metadata(
         metadata["peer_addresses"] = dict(endpoint.peer_addresses)
         _add_single_peer_metadata(metadata, endpoint.peer_addresses)
     if endpoint.wire_manifest:
-        metadata.setdefault("wire_endpoint_plan", dict(endpoint.wire_manifest))
+        endpoint_plan = dict(endpoint.wire_manifest)
+        metadata.setdefault("endpoint_plan", endpoint_plan)
+        metadata.setdefault("wire_endpoint_plan", endpoint_plan)
         manifest_path = endpoint.wire_manifest.get("manifest_path")
         artifact_dir = endpoint.wire_manifest.get("artifact_dir")
         if manifest_path is not None:
@@ -379,7 +385,7 @@ def _lab_session_wire_endpoint_plan(
     *,
     endpoints: Mapping[str, LiveEndpoint],
 ) -> JSONObject:
-    raw_plan = session.metadata.get("wire_endpoint_plan")
+    raw_plan = session.metadata.get("endpoint_plan", session.metadata.get("wire_endpoint_plan"))
     plan: JSONObject = (
         {
             key: coerce_json_value(value)

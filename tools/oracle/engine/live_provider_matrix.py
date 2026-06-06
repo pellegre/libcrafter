@@ -81,14 +81,14 @@ def validate_live_report(
         "metadata.planned_infrastructure",
         errors,
     )
-    wire_endpoint_plan = _object_or_error(
-        metadata.get("wire_endpoint_plan"),
-        "metadata.wire_endpoint_plan",
+    endpoint_plan = _object_or_error(
+        metadata.get("endpoint_plan", metadata.get("wire_endpoint_plan")),
+        "metadata.endpoint_plan",
         errors,
     )
-    wire_lifecycle = _object_or_error(
-        metadata.get("wire_endpoint_lifecycle"),
-        "metadata.wire_endpoint_lifecycle",
+    endpoint_lifecycle = _object_or_error(
+        metadata.get("endpoint_lifecycle", metadata.get("wire_endpoint_lifecycle")),
+        "metadata.endpoint_lifecycle",
         errors,
     )
     artifact_collection = _object_or_error(
@@ -108,8 +108,8 @@ def validate_live_report(
         errors,
     )
     lifecycle_cleanup_state = _object_or_error(
-        wire_lifecycle.get("cleanup_state"),
-        "metadata.wire_endpoint_lifecycle.cleanup_state",
+        endpoint_lifecycle.get("cleanup_state"),
+        "metadata.endpoint_lifecycle.cleanup_state",
         errors,
     )
     provider_workflow = _json_list(metadata.get("provider_workflow", []))
@@ -126,18 +126,18 @@ def validate_live_report(
     ]
     lab_role_names = _role_names_from_roles(lab_session.get("roles", []))
     lab_endpoint_roles = _role_names_from_endpoints(lab_session.get("endpoints", []))
-    plan_endpoint_roles = _role_names_from_plan(wire_endpoint_plan)
-    lifecycle_endpoint_ids = _string_values(wire_lifecycle.get("created_endpoint_ids", []))
+    plan_endpoint_roles = _role_names_from_plan(endpoint_plan)
+    lifecycle_endpoint_ids = _string_values(endpoint_lifecycle.get("created_endpoint_ids", []))
     lab_endpoint_ids = _string_values(lab_session.get("created_endpoint_ids", []))
-    plan_endpoint_ids = _string_values(wire_endpoint_plan.get("created_endpoint_ids", []))
+    plan_endpoint_ids = _string_values(endpoint_plan.get("created_endpoint_ids", []))
     lab_session_id = _optional_string(lab_session.get("session_id"))
-    plan_session_id = _optional_string(wire_endpoint_plan.get("lab_session_id"))
+    plan_session_id = _optional_string(endpoint_plan.get("lab_session_id"))
     lab_remote_artifact_root = _optional_string(lab_session.get("remote_artifact_root"))
     lifecycle_remote_artifact_root = _optional_string(
-        wire_lifecycle.get("remote_artifact_root")
+        endpoint_lifecycle.get("remote_artifact_root")
     )
     lifecycle_lab_remote_artifact_root = _optional_string(
-        wire_lifecycle.get("lab_remote_artifact_root")
+        endpoint_lifecycle.get("lab_remote_artifact_root")
     )
 
     _expect(report.get("mode") == "live", "mode must be 'live'", errors)
@@ -171,8 +171,11 @@ def validate_live_report(
             errors,
         )
         _expect(
-            isinstance(metadata.get("wire_endpoint_lifecycle"), dict),
-            "metadata.wire_endpoint_lifecycle must be present",
+            isinstance(
+                metadata.get("endpoint_lifecycle", metadata.get("wire_endpoint_lifecycle")),
+                dict,
+            ),
+            "metadata.endpoint_lifecycle must be present",
             errors,
         )
     _expect(
@@ -233,44 +236,44 @@ def validate_live_report(
         errors,
     )
     _expect(
-        wire_endpoint_plan.get("provider") == provider,
-        "metadata.wire_endpoint_plan.provider mismatch",
+        endpoint_plan.get("provider") == provider,
+        "metadata.endpoint_plan.provider mismatch",
         errors,
     )
     _expect(
-        wire_endpoint_plan.get("wire_provider") == adapter.wire_provider,
-        "metadata.wire_endpoint_plan.wire_provider mismatch",
+        endpoint_plan.get("wire_provider") == adapter.wire_provider,
+        "metadata.endpoint_plan.wire_provider mismatch",
         errors,
     )
     _expect(
-        wire_endpoint_plan.get("wire_exposure", wire_endpoint_plan.get("exposure"))
+        endpoint_plan.get("wire_exposure", endpoint_plan.get("exposure"))
         == adapter.wire_exposure,
-        "metadata.wire_endpoint_plan.wire_exposure mismatch",
+        "metadata.endpoint_plan.wire_exposure mismatch",
         errors,
     )
     _expect(
-        wire_endpoint_plan.get("dry_run") is dry_run,
-        "metadata.wire_endpoint_plan.dry_run mismatch",
+        endpoint_plan.get("dry_run") is dry_run,
+        "metadata.endpoint_plan.dry_run mismatch",
         errors,
     )
     _expect(
-        wire_endpoint_plan.get("endpoint_count") == len(expected_roles),
-        "metadata.wire_endpoint_plan.endpoint_count mismatch",
+        endpoint_plan.get("endpoint_count") == len(expected_roles),
+        "metadata.endpoint_plan.endpoint_count mismatch",
         errors,
     )
     _expect(
         _same_role_set(plan_endpoint_roles, expected_roles),
-        "metadata.wire_endpoint_plan endpoints must match endpoint roles",
+        "metadata.endpoint_plan endpoints must match endpoint roles",
         errors,
     )
     _expect(
         plan_endpoint_ids == lab_endpoint_ids,
-        "metadata.wire_endpoint_plan.created_endpoint_ids must match lab_session",
+        "metadata.endpoint_plan.created_endpoint_ids must match lab_session",
         errors,
     )
     _expect(
         plan_session_id is not None and plan_session_id == lab_session_id,
-        "metadata.wire_endpoint_plan.lab_session_id must match lab_session",
+        "metadata.endpoint_plan.lab_session_id must match lab_session",
         errors,
     )
     _expect(
@@ -371,12 +374,12 @@ def validate_live_report(
     )
     _expect(
         lifecycle_endpoint_ids == lab_endpoint_ids,
-        "metadata.wire_endpoint_lifecycle.created_endpoint_ids must match lab_session",
+        "metadata.endpoint_lifecycle.created_endpoint_ids must match lab_session",
         errors,
     )
     _expect(
         lifecycle_cleanup_state == lab_cleanup_state,
-        "metadata.wire_endpoint_lifecycle.cleanup_state must match lab_session.cleanup_state",
+        "metadata.endpoint_lifecycle.cleanup_state must match lab_session.cleanup_state",
         errors,
     )
     _expect(
@@ -386,14 +389,14 @@ def validate_live_report(
     )
     _expect(
         lifecycle_remote_artifact_root is not None,
-        "metadata.wire_endpoint_lifecycle.remote_artifact_root must be present",
+        "metadata.endpoint_lifecycle.remote_artifact_root must be present",
         errors,
     )
     _expect(
         lab_remote_artifact_root is None
         or lifecycle_remote_artifact_root == lab_remote_artifact_root
         or lifecycle_lab_remote_artifact_root == lab_remote_artifact_root,
-        "metadata.wire_endpoint_lifecycle remote artifact roots must reference lab_session",
+        "metadata.endpoint_lifecycle remote artifact roots must reference lab_session",
         errors,
     )
     _expect(
@@ -449,10 +452,11 @@ def validate_live_report(
             "command_record_count": len(command_records),
             "artifact_collection": artifact_collection,
             "teardown": teardown,
-            "wire_endpoint_lifecycle": wire_lifecycle,
+            "endpoint_lifecycle": endpoint_lifecycle,
+            "wire_endpoint_lifecycle": endpoint_lifecycle,
             "endpoint_ids": lifecycle_endpoint_ids,
             "remote_artifact_root": _optional_string(
-                wire_lifecycle.get("remote_artifact_root")
+                endpoint_lifecycle.get("remote_artifact_root")
             ),
         },
         "lab_session": {
@@ -639,6 +643,7 @@ def _validate_no_wire_eligible_dry_run_report(
             "command_record_count": 0,
             "artifact_collection": {"always_attempt": False},
             "teardown": {"always_attempt": False},
+            "endpoint_lifecycle": {},
             "wire_endpoint_lifecycle": {},
             "endpoint_ids": [],
             "remote_artifact_root": None,
@@ -1162,8 +1167,8 @@ def _live_failure_is_unavailable(report: JSONObject | None) -> bool:
     if isinstance(exchanges, list) and exchanges:
         return False
     lifecycle = _object(
-        metadata.get("wire_endpoint_lifecycle", {}),
-        "live_report.metadata.wire_endpoint_lifecycle",
+        metadata.get("endpoint_lifecycle", metadata.get("wire_endpoint_lifecycle", {})),
+        "live_report.metadata.endpoint_lifecycle",
     )
     created_endpoint_ids = _string_values(lifecycle.get("created_endpoint_ids", []))
     if not created_endpoint_ids and metadata.get("creates_infrastructure") is not True:
