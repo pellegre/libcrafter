@@ -9,6 +9,7 @@ use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::mac::MacAddr;
 use crate::packet::{IntoPacket, Layer, LayerContext, NetworkLayer, Packet, Raw};
+use crate::protocols::eapol::Eapol;
 use crate::protocols::ipv4::Ipv4;
 use crate::protocols::ipv6::Ipv6;
 use crate::registry::ProtocolRegistry;
@@ -42,6 +43,8 @@ pub const ETHERTYPE_ARP: u16 = 0x0806;
 pub const ETHERTYPE_VLAN: u16 = 0x8100;
 /// Ethernet type for IPv6 payloads.
 pub const ETHERTYPE_IPV6: u16 = 0x86dd;
+/// Ethernet type for IEEE 802.1X EAPOL payloads.
+pub const ETHERTYPE_EAPOL: u16 = 0x888e;
 
 const ETHERNET_HEADER_LEN: usize = 14;
 const VLAN_HEADER_LEN: usize = 4;
@@ -765,6 +768,8 @@ fn layer_ethertype(layer: &dyn Layer) -> Option<u16> {
         Some(ETHERTYPE_IPV4)
     } else if layer.as_any().is::<Ipv6>() {
         Some(ETHERTYPE_IPV6)
+    } else if layer.as_any().is::<Eapol>() {
+        Some(ETHERTYPE_EAPOL)
     } else {
         None
     }
