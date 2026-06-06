@@ -27,7 +27,7 @@ pub use self::arp::{
     ARP_OP_RARP_REQUEST, ARP_OP_REPLY, ARP_OP_REQUEST, ARP_OP_RESERVED, ARP_OP_RESERVED_MAX,
     ARP_PRO_IPV4,
 };
-pub use self::dot11::Dot11;
+pub use self::dot11::*;
 pub use self::llc::LlcSnap;
 pub use self::radiotap::Radiotap;
 
