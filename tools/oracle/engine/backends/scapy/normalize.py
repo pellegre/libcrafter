@@ -34,17 +34,23 @@ _LAYER_ALIASES: dict[str, str] = {
     "DHCP": "dhcp",
     "DNS": "dns",
     "Dot1Q": "vlan",
+    "Dot11": "dot11",
+    "Dot11EltRSN": "rsn",
     "Ether": "ethernet",
+    "EAPOL": "eapol",
     "ICMP": "icmp",
     "IP": "ipv4",
     "IPv6": "ipv6",
+    "LLC": "llc_snap",
     "IPv6ExtHdrDestOpt": "ipv6_destination_options",
     "IPv6ExtHdrFragment": "ipv6_fragment",
     "IPv6ExtHdrHopByHop": "ipv6_hop_by_hop",
     "IPv6ExtHdrRouting": "ipv6_routing",
     "IPv6ExtHdrSegmentRouting": "ipv6_routing",
     "Loopback": "null_loopback",
+    "RadioTap": "radiotap",
     "Raw": "payload",
+    "SNAP": "llc_snap",
     "TCP": "tcp",
     "UDP": "udp",
 }
@@ -159,13 +165,19 @@ _PROTOCOLS: dict[str, int] = {
 _ROOT_ALIASES: dict[str, str] = {
     "CookedLinux": "link:linux-cooked",
     "Ether": "link:ethernet",
+    "Dot11": "link:dot11",
     "IP": "l3:ipv4",
     "IPv6": "l3:ipv6",
     "Loopback": "link:null-loopback",
+    "RadioTap": "link:radiotap",
     "Raw": "link:raw",
     "l2:ipv4": "l3:ipv4",
+    "link:ieee80211": "link:dot11",
     "link:linux-sll": "link:linux-cooked",
 }
+
+_DOT11_ROOTS = frozenset({"Dot11", "link:dot11", "link:ieee80211"})
+_RADIOTAP_ROOTS = frozenset({"RadioTap", "link:radiotap"})
 
 
 def decode_root(
@@ -180,15 +192,20 @@ def decode_root(
     scapy_all = import_scapy()["all"]
     decoders = {
         "CookedLinux": "CookedLinux",
+        "Dot11": "Dot11",
         "Ether": "Ether",
         "IP": "IP",
         "IPv6": "IPv6",
         "Loopback": "Loopback",
+        "RadioTap": "RadioTap",
         "Raw": "Raw",
+        "link:dot11": "Dot11",
         "link:ethernet": "Ether",
+        "link:ieee80211": "Dot11",
         "link:linux-cooked": "CookedLinux",
         "link:linux-sll": "CookedLinux",
         "link:null-loopback": "Loopback",
+        "link:radiotap": "RadioTap",
         "link:raw": "Raw",
         "l2:ipv4": "IP",
         "l3:ipv4": "IP",
@@ -213,6 +230,14 @@ def decode_bytes(
     capabilities: BackendCapabilities | BackendRegistration | None = None,
 ) -> DecodedModel:
     """Decode raw bytes and return the normalized Scapy model."""
+
+    if root in _DOT11_ROOTS or root in _RADIOTAP_ROOTS:
+        return _decode_dot11_bytes(
+            raw,
+            root=root,
+            source_hex=source_hex or raw.hex(),
+            feature_tags=feature_tags,
+        )
 
     packet = decode_root(root, raw, capabilities=capabilities)
     return normalize_packet(
@@ -1220,6 +1245,636 @@ def _payload_fields_from_bytes(body: bytes) -> JSONObject:
         "length": len(body),
         "ascii": body.decode("utf-8", "replace"),
     }
+
+
+def _decode_dot11_bytes(
+    raw: bytes,
+    *,
+    root: str,
+    source_hex: str,
+    feature_tags: Sequence[str],
+) -> DecodedModel:
+    canonical_root = _normalize_root_name(root)
+    layers: list[str] = []
+    fields: dict[str, JSONObject] = {}
+    offset = 0
+
+    if canonical_root == "link:radiotap":
+        radiotap_fields, offset = _parse_radiotap(raw)
+        _append_normalized_layer(layers, fields, "radiotap", radiotap_fields)
+    elif canonical_root != "link:dot11":
+        raise ValueError(f"unsupported Dot11 byte-normalizer root: {root!r}")
+
+    dot11_fields, dot11_tail, rsn_layers = _parse_dot11(raw[offset:])
+    _append_normalized_layer(layers, fields, "dot11", dot11_fields)
+
+    if dot11_fields.get("protected") is True:
+        if dot11_tail:
+            _append_normalized_layer(layers, fields, "payload", _payload_fields_from_bytes(dot11_tail))
+    elif dot11_fields.get("frame_type") == 2:
+        if dot11_fields.get("more_fragments") is True or dot11_fields.get("fragment_number", 0) != 0:
+            if dot11_tail:
+                _append_normalized_layer(layers, fields, "payload", _payload_fields_from_bytes(dot11_tail))
+        else:
+            _decode_llc_or_payload(layers, fields, dot11_tail)
+    else:
+        for rsn_fields in rsn_layers:
+            _append_normalized_layer(layers, fields, "rsn", rsn_fields)
+        if dot11_tail:
+            _append_normalized_layer(layers, fields, "payload", _payload_fields_from_bytes(dot11_tail))
+
+    metadata: JSONObject = {
+        "native": {
+            "summary": f"{canonical_root or root} byte-normalized packet",
+            "layers": [
+                {"name": layer, "fields": fields[_layer_key_at(layers, index)], "summary": layer}
+                for index, layer in enumerate(layers)
+            ],
+        },
+        "normalization": "byte_level_dot11",
+        "reencoded_hex": source_hex,
+    }
+
+    return DecodedModel(
+        backend=BACKEND_NAME,
+        layers=layers,
+        fields=fields,
+        root=canonical_root,
+        source_hex=source_hex,
+        feature_tags=list(feature_tags),
+        metadata=metadata,
+    )
+
+
+def _append_normalized_layer(
+    layers: list[str],
+    fields: dict[str, JSONObject],
+    layer_name: str,
+    layer_fields: JSONObject,
+) -> None:
+    key = _field_key(fields, layer_name)
+    fields[key] = layer_fields
+    layers.append(layer_name)
+
+
+def _parse_radiotap(raw: bytes) -> tuple[JSONObject, int]:
+    if len(raw) < 8:
+        raise ValueError(f"radiotap header requires 8 bytes, got {len(raw)}")
+    length = int.from_bytes(raw[2:4], "little")
+    if length < 8:
+        raise ValueError(f"radiotap length must be at least 8, got {length}")
+    if length > len(raw):
+        raise ValueError(f"radiotap length {length} exceeds available {len(raw)}")
+
+    present_words: list[int] = []
+    offset = 4
+    while True:
+        if offset + 4 > length:
+            raise ValueError("radiotap extended present bitmap is truncated")
+        word = int.from_bytes(raw[offset : offset + 4], "little")
+        present_words.append(word)
+        offset += 4
+        if word & (1 << 31) == 0:
+            break
+
+    fields: JSONObject = {
+        "version": raw[0],
+        "pad": raw[1],
+        "length": length,
+        "present_words": present_words,
+    }
+    unknown_bits: list[int] = []
+    cursor = offset
+    for word_index, word in enumerate(present_words):
+        for bit in range(31):
+            if word & (1 << bit) == 0:
+                continue
+            field_bit = word_index * 32 + bit
+            parsed = _parse_radiotap_field(raw, length, field_bit, cursor, fields)
+            if parsed is None:
+                unknown_bits.append(field_bit)
+                continue
+            cursor = parsed
+    if unknown_bits:
+        fields["unknown_present_bits"] = unknown_bits
+    return fields, length
+
+
+def _parse_radiotap_field(
+    raw: bytes,
+    header_length: int,
+    bit: int,
+    cursor: int,
+    fields: JSONObject,
+) -> int | None:
+    specs = {
+        0: (8, 8, "tsft", "u64"),
+        1: (1, 1, "flags", "u8"),
+        2: (1, 1, "rate", "u8"),
+        3: (2, 4, "channel", "channel"),
+        4: (2, 2, "fhss", "hex"),
+        5: (1, 1, "dbm_antenna_signal", "i8"),
+        6: (1, 1, "dbm_antenna_noise", "i8"),
+        7: (2, 2, "lock_quality", "u16"),
+        8: (2, 2, "tx_attenuation", "u16"),
+        9: (2, 2, "db_tx_attenuation", "u16"),
+        10: (1, 1, "dbm_tx_power", "i8"),
+        11: (1, 1, "antenna", "u8"),
+        14: (2, 2, "rx_flags", "u16"),
+        15: (2, 2, "tx_flags", "u16"),
+        17: (1, 1, "data_retries", "u8"),
+    }
+    spec = specs.get(bit)
+    if spec is None:
+        return None
+    alignment, size, name, kind = spec
+    cursor += _radiotap_padding(cursor, alignment)
+    if cursor + size > header_length:
+        raise ValueError(f"radiotap field bit {bit} exceeds declared header length")
+    data = raw[cursor : cursor + size]
+    if kind == "u8":
+        fields[name] = data[0]
+    elif kind == "i8":
+        fields[name] = int.from_bytes(data, "little", signed=True)
+    elif kind == "u16":
+        fields[name] = int.from_bytes(data, "little")
+    elif kind == "u64":
+        fields[name] = int.from_bytes(data, "little")
+    elif kind == "channel":
+        fields["channel_frequency"] = int.from_bytes(data[:2], "little")
+        fields["channel_flags"] = int.from_bytes(data[2:], "little")
+    elif kind == "hex":
+        fields[name] = {"hex": data.hex()}
+    if bit == 1:
+        fields["fcs_status"] = _radiotap_fcs_status(data[0])
+    return cursor + size
+
+
+def _radiotap_padding(offset: int, alignment: int) -> int:
+    if alignment <= 1:
+        return 0
+    remainder = offset % alignment
+    return 0 if remainder == 0 else alignment - remainder
+
+
+def _parse_dot11(raw: bytes) -> tuple[JSONObject, bytes, list[JSONObject]]:
+    if len(raw) < 10:
+        raise ValueError(f"dot11 header requires at least 10 bytes, got {len(raw)}")
+    frame_control = int.from_bytes(raw[0:2], "little")
+    frame_type = (frame_control >> 2) & 0x03
+    subtype = (frame_control >> 4) & 0x0F
+    fields: JSONObject = {
+        "frame_control": frame_control,
+        "protocol_version": frame_control & 0x03,
+        "frame_type": frame_type,
+        "subtype": subtype,
+        "to_ds": bool(frame_control & 0x0100),
+        "from_ds": bool(frame_control & 0x0200),
+        "more_fragments": bool(frame_control & 0x0400),
+        "retry": bool(frame_control & 0x0800),
+        "power_management": bool(frame_control & 0x1000),
+        "more_data": bool(frame_control & 0x2000),
+        "protected": bool(frame_control & 0x4000),
+        "order": bool(frame_control & 0x8000),
+        "duration_id": int.from_bytes(raw[2:4], "little"),
+        "addr1": _mac_text(raw[4:10]),
+    }
+    offset = 10
+    rsn_layers: list[JSONObject] = []
+
+    if frame_type == 1:
+        if subtype not in {12, 13}:
+            if len(raw) < 16:
+                raise ValueError(f"dot11 control header requires 16 bytes, got {len(raw)}")
+            fields["addr2"] = _mac_text(raw[10:16])
+            offset = 16
+        return fields, raw[offset:], rsn_layers
+
+    if len(raw) < 24:
+        raise ValueError(f"dot11 three-address header requires 24 bytes, got {len(raw)}")
+    fields["addr2"] = _mac_text(raw[10:16])
+    fields["addr3"] = _mac_text(raw[16:22])
+    sequence_control = int.from_bytes(raw[22:24], "little")
+    fields["sequence_control"] = sequence_control
+    fields["fragment_number"] = sequence_control & 0x0F
+    fields["sequence_number"] = sequence_control >> 4
+    offset = 24
+
+    if frame_type == 2 and fields["to_ds"] and fields["from_ds"]:
+        if len(raw) < offset + 6:
+            raise ValueError(f"dot11 four-address header requires {offset + 6} bytes, got {len(raw)}")
+        fields["addr4"] = _mac_text(raw[offset : offset + 6])
+        offset += 6
+    if frame_type == 2 and subtype & 0x08:
+        if len(raw) < offset + 2:
+            raise ValueError(f"dot11 QoS header requires {offset + 2} bytes, got {len(raw)}")
+        fields["qos_control"] = int.from_bytes(raw[offset : offset + 2], "little")
+        offset += 2
+        if fields["order"]:
+            if len(raw) < offset + 4:
+                raise ValueError(f"dot11 HT control requires {offset + 4} bytes, got {len(raw)}")
+            fields["ht_control"] = int.from_bytes(raw[offset : offset + 4], "little")
+            offset += 4
+    elif frame_type == 0 and fields["order"]:
+        if len(raw) < offset + 4:
+            raise ValueError(f"dot11 HT control requires {offset + 4} bytes, got {len(raw)}")
+        fields["ht_control"] = int.from_bytes(raw[offset : offset + 4], "little")
+        offset += 4
+
+    if frame_type == 0:
+        fixed_len = _dot11_management_fixed_len(subtype)
+        if len(raw) < offset + fixed_len:
+            raise ValueError(f"dot11 management fixed fields require {offset + fixed_len} bytes, got {len(raw)}")
+        fixed = raw[offset : offset + fixed_len]
+        if fixed:
+            fields["management_fixed_fields"] = {"hex": fixed.hex()}
+        offset += fixed_len
+        if _dot11_management_has_tags(subtype):
+            tags, rsn_layers = _parse_dot11_tags(raw[offset:])
+            if tags:
+                fields["tagged_parameters"] = tags
+            offset = len(raw)
+    elif fields["protected"]:
+        fields["encrypted_body_len"] = len(raw) - offset
+
+    return fields, raw[offset:], rsn_layers
+
+
+def _decode_llc_or_payload(layers: list[str], fields: dict[str, JSONObject], raw: bytes) -> None:
+    if not raw:
+        return
+    if len(raw) < 8:
+        if _is_truncated_snap_prefix(raw):
+            raise ValueError(f"llc_snap header requires 8 bytes, got {len(raw)}")
+        _append_normalized_layer(layers, fields, "payload", _payload_fields_from_bytes(raw))
+        return
+    llc = {
+        "dsap": raw[0],
+        "ssap": raw[1],
+        "control": raw[2],
+        "oui": {"hex": raw[3:6].hex()},
+        "ethertype": int.from_bytes(raw[6:8], "big"),
+    }
+    if raw[:3] != b"\xaa\xaa\x03":
+        _append_normalized_layer(layers, fields, "payload", _payload_fields_from_bytes(raw))
+        return
+    _append_normalized_layer(layers, fields, "llc_snap", llc)
+    payload = raw[8:]
+    if raw[3:6] != b"\x00\x00\x00":
+        if payload:
+            _append_normalized_layer(layers, fields, "payload", _payload_fields_from_bytes(payload))
+        return
+    ethertype = llc["ethertype"]
+    if ethertype == 0x0806 and payload:
+        _append_normalized_layer(layers, fields, "arp", _parse_arp(payload))
+    elif ethertype == 0x0800 and payload:
+        _append_normalized_layer(layers, fields, "ipv4", _parse_ipv4(payload))
+    elif ethertype == 0x86DD and payload:
+        _append_normalized_layer(layers, fields, "ipv6", _parse_ipv6(payload))
+    elif ethertype == 0x888E:
+        _decode_eapol(layers, fields, payload)
+    elif payload:
+        _append_normalized_layer(layers, fields, "payload", _payload_fields_from_bytes(payload))
+
+
+def _decode_eapol(layers: list[str], fields: dict[str, JSONObject], raw: bytes) -> None:
+    if len(raw) < 4:
+        raise ValueError(f"eapol header requires 4 bytes, got {len(raw)}")
+    body_length = int.from_bytes(raw[2:4], "big")
+    required = 4 + body_length
+    if len(raw) < required:
+        raise ValueError(f"eapol body requires {required} bytes, got {len(raw)}")
+    packet_type = raw[1]
+    _append_normalized_layer(
+        layers,
+        fields,
+        "eapol",
+        {"version": raw[0], "packet_type": packet_type, "body_length": body_length},
+    )
+    body = raw[4:required]
+    surplus = raw[required:]
+    if packet_type == 3 and body:
+        key_fields, key_tail = _parse_eapol_key(body)
+        if key_fields is None:
+            _append_normalized_layer(layers, fields, "payload", _payload_fields_from_bytes(body))
+        else:
+            _append_normalized_layer(layers, fields, "eapol_key", key_fields)
+            if key_tail:
+                _append_normalized_layer(layers, fields, "payload", _payload_fields_from_bytes(key_tail))
+    elif body:
+        _append_normalized_layer(layers, fields, "payload", _payload_fields_from_bytes(body))
+    if surplus:
+        _append_normalized_layer(layers, fields, "payload", _payload_fields_from_bytes(surplus))
+
+
+def _parse_eapol_key(raw: bytes) -> tuple[JSONObject | None, bytes]:
+    if len(raw) < 95:
+        raise ValueError(f"eapol key body requires 95 bytes, got {len(raw)}")
+    if raw[0] not in {2}:
+        return None, b""
+    key_data_length = int.from_bytes(raw[93:95], "big")
+    required = 95 + key_data_length
+    if len(raw) < required:
+        raise ValueError(f"eapol key data requires {required} bytes, got {len(raw)}")
+    return (
+        {
+            "descriptor_type": raw[0],
+            "key_information": int.from_bytes(raw[1:3], "big"),
+            "key_length": int.from_bytes(raw[3:5], "big"),
+            "replay_counter": int.from_bytes(raw[5:13], "big"),
+            "key_nonce": {"hex": raw[13:45].hex()},
+            "key_iv": {"hex": raw[45:61].hex()},
+            "key_rsc": {"hex": raw[61:69].hex()},
+            "key_id": {"hex": raw[69:77].hex()},
+            "key_mic": {"hex": raw[77:93].hex()},
+            "key_data_length": key_data_length,
+            "key_data": {"hex": raw[95:required].hex()},
+        },
+        raw[required:],
+    )
+
+
+def _parse_arp(raw: bytes) -> JSONObject:
+    if len(raw) < 8:
+        raise ValueError(f"arp header requires 8 bytes, got {len(raw)}")
+    hw_len = raw[4]
+    proto_len = raw[5]
+    required = 8 + (2 * hw_len) + (2 * proto_len)
+    if len(raw) < required:
+        raise ValueError(f"arp addresses require {required} bytes, got {len(raw)}")
+    hardware_type = int.from_bytes(raw[0:2], "big")
+    protocol_type = int.from_bytes(raw[2:4], "big")
+    cursor = 8
+    sender_hardware = raw[cursor : cursor + hw_len]
+    cursor += hw_len
+    sender_protocol = raw[cursor : cursor + proto_len]
+    cursor += proto_len
+    target_hardware = raw[cursor : cursor + hw_len]
+    cursor += hw_len
+    target_protocol = raw[cursor : cursor + proto_len]
+    fields: JSONObject = {
+        "hardware_type": hardware_type,
+        "protocol_type": protocol_type,
+        "hardware_length": hw_len,
+        "protocol_length": proto_len,
+        "opcode": int.from_bytes(raw[6:8], "big"),
+    }
+    if hardware_type == 1 and hw_len == 6:
+        fields["sender_hardware_address"] = _mac_text(sender_hardware)
+        fields["target_hardware_address"] = _mac_text(target_hardware)
+    else:
+        fields["sender_hardware_address"] = {"hex": sender_hardware.hex()}
+        fields["target_hardware_address"] = {"hex": target_hardware.hex()}
+    if protocol_type == 0x0800 and proto_len == 4:
+        fields["sender_protocol_address"] = ".".join(str(byte) for byte in sender_protocol)
+        fields["target_protocol_address"] = ".".join(str(byte) for byte in target_protocol)
+    else:
+        fields["sender_protocol_address"] = {"hex": sender_protocol.hex()}
+        fields["target_protocol_address"] = {"hex": target_protocol.hex()}
+    return fields
+
+
+def _parse_ipv4(raw: bytes) -> JSONObject:
+    if len(raw) < 20:
+        raise ValueError(f"ipv4 header requires 20 bytes, got {len(raw)}")
+    header_length = (raw[0] & 0x0F) * 4
+    if header_length < 20 or len(raw) < header_length:
+        raise ValueError(f"ipv4 header length {header_length} exceeds available {len(raw)}")
+    flags_fragment = int.from_bytes(raw[6:8], "big")
+    return {
+        "version": raw[0] >> 4,
+        "header_length": raw[0] & 0x0F,
+        "tos": raw[1],
+        "length": int.from_bytes(raw[2:4], "big"),
+        "identification": int.from_bytes(raw[4:6], "big"),
+        "flags": _ipv4_flags((flags_fragment >> 13) & 0x07),
+        "fragment_offset": flags_fragment & 0x1FFF,
+        "ttl": raw[8],
+        "protocol": raw[9],
+        "checksum": int.from_bytes(raw[10:12], "big"),
+        "src": ".".join(str(byte) for byte in raw[12:16]),
+        "dst": ".".join(str(byte) for byte in raw[16:20]),
+        "options": raw[20:header_length].hex(),
+    }
+
+
+def _parse_ipv6(raw: bytes) -> JSONObject:
+    if len(raw) < 40:
+        raise ValueError(f"ipv6 header requires 40 bytes, got {len(raw)}")
+    first = int.from_bytes(raw[0:4], "big")
+    traffic_class = (first >> 20) & 0xFF
+    return {
+        "version": raw[0] >> 4,
+        "traffic_class": traffic_class,
+        "dscp": traffic_class >> 2,
+        "ecn": traffic_class & 0x03,
+        "flow_label": first & 0xFFFFF,
+        "payload_length": int.from_bytes(raw[4:6], "big"),
+        "next_header": raw[6],
+        "hop_limit": raw[7],
+        "src": str(ipaddress.IPv6Address(raw[8:24])),
+        "dst": str(ipaddress.IPv6Address(raw[24:40])),
+    }
+
+
+def _parse_dot11_tags(raw: bytes) -> tuple[list[JSONObject], list[JSONObject]]:
+    tags: list[JSONObject] = []
+    rsn_layers: list[JSONObject] = []
+    offset = 0
+    while offset < len(raw):
+        if offset + 2 > len(raw):
+            raise ValueError("dot11 tagged parameter header is truncated")
+        element_id = raw[offset]
+        length = raw[offset + 1]
+        start = offset + 2
+        end = start + length
+        if end > len(raw):
+            raise ValueError(f"dot11 tagged parameter length {length} exceeds available bytes")
+        value = raw[start:end]
+        tags.append({"id": element_id, "length": length, "value": {"hex": value.hex()}})
+        if element_id == 48:
+            rsn_layers.append(_parse_rsn_information(element_id, length, value))
+        offset = end
+    return tags, rsn_layers
+
+
+def _parse_rsn_information(element_id: int, length: int, value: bytes) -> JSONObject:
+    if len(value) < 8:
+        raise ValueError(f"rsn information requires at least 8 value bytes, got {len(value)}")
+    offset = 0
+    version = int.from_bytes(value[offset : offset + 2], "little")
+    offset += 2
+    group_cipher = _rsn_suite_selector(value[offset : offset + 4], kind="cipher")
+    offset += 4
+    if offset + 2 > len(value):
+        raise ValueError("rsn pairwise cipher count is truncated")
+    pairwise_count = int.from_bytes(value[offset : offset + 2], "little")
+    offset += 2
+    pairwise: list[JSONObject] = []
+    for _ in range(pairwise_count):
+        if offset + 4 > len(value):
+            raise ValueError("rsn pairwise cipher selector is truncated")
+        pairwise.append(_rsn_suite_selector(value[offset : offset + 4], kind="cipher"))
+        offset += 4
+    if offset + 2 > len(value):
+        raise ValueError("rsn akm count is truncated")
+    akm_count = int.from_bytes(value[offset : offset + 2], "little")
+    offset += 2
+    akms: list[JSONObject] = []
+    for _ in range(akm_count):
+        if offset + 4 > len(value):
+            raise ValueError("rsn akm selector is truncated")
+        akms.append(_rsn_suite_selector(value[offset : offset + 4], kind="akm"))
+        offset += 4
+
+    fields: JSONObject = {
+        "element_id": element_id,
+        "length": length,
+        "version": version,
+        "group_cipher_suite": group_cipher,
+        "pairwise_cipher_suites": pairwise,
+        "akm_suites": akms,
+    }
+    if offset + 2 <= len(value):
+        fields["capabilities"] = int.from_bytes(value[offset : offset + 2], "little")
+        offset += 2
+    if offset + 2 <= len(value):
+        pmkid_count = int.from_bytes(value[offset : offset + 2], "little")
+        pmkid_start = offset + 2
+        pmkid_end = pmkid_start + (pmkid_count * 16)
+        if pmkid_end <= len(value):
+            fields["pmkid_count_present"] = True
+            fields["pmkid_list"] = [
+                {"hex": value[index : index + 16].hex()}
+                for index in range(pmkid_start, pmkid_end, 16)
+            ]
+            offset = pmkid_end
+    if offset + 4 <= len(value):
+        fields["group_management_cipher_suite"] = _rsn_suite_selector(
+            value[offset : offset + 4],
+            kind="cipher",
+        )
+        offset += 4
+    if offset < len(value):
+        fields["trailing_bytes"] = {"hex": value[offset:].hex()}
+    return fields
+
+
+def _rsn_suite_selector(raw: bytes, *, kind: str) -> JSONObject:
+    selector = bytes(raw)
+    label = _rsn_cipher_label(selector) if kind == "cipher" else _rsn_akm_label(selector)
+    output: JSONObject = {
+        "selector": selector.hex(),
+        "oui": selector[:3].hex(),
+        "suite_type": selector[3],
+    }
+    if label is not None:
+        output["label"] = label
+    return output
+
+
+def _rsn_cipher_label(selector: bytes) -> str | None:
+    if selector[:3] != b"\x00\x0f\xac":
+        return None
+    return {
+        0: "use-group",
+        2: "tkip",
+        4: "ccmp-128",
+        6: "aes-128-cmac",
+        7: "no-group-addressed",
+        8: "gcmp-128",
+        9: "gcmp-256",
+        10: "ccmp-256",
+        11: "bip-gmac-128",
+        12: "bip-gmac-256",
+        13: "bip-cmac-256",
+        18: "ccm-star",
+    }.get(selector[3])
+
+
+def _rsn_akm_label(selector: bytes) -> str | None:
+    if selector[:3] != b"\x00\x0f\xac":
+        return None
+    return {
+        1: "802.1x",
+        2: "psk",
+        3: "ft-802.1x",
+        4: "ft-psk",
+        5: "802.1x-sha256",
+        6: "psk-sha256",
+        7: "tdls",
+        8: "sae",
+        9: "ft-sae",
+        10: "ap-peer-key",
+        11: "802.1x-suite-b",
+        12: "802.1x-suite-b-192",
+        13: "ft-802.1x-sha384-cmp-256",
+        14: "fils-sha256",
+        15: "fils-sha384",
+        16: "ft-fils-sha256",
+        17: "ft-fils-sha384",
+        18: "owe",
+        19: "ft-psk-sha384",
+        20: "psk-sha384",
+        21: "pasn",
+        22: "ft-802.1x-sha384",
+        23: "802.1x-sha384",
+        24: "sae-pmk384",
+        25: "ft-sae-pmk384",
+        26: "pasn-defined-key-wrap",
+        29: "edpke",
+    }.get(selector[3])
+
+
+def _dot11_management_fixed_len(subtype: int) -> int:
+    return {
+        0: 4,
+        1: 6,
+        2: 10,
+        3: 6,
+        5: 12,
+        8: 12,
+        10: 2,
+        11: 6,
+        12: 2,
+        13: 1,
+        14: 1,
+    }.get(subtype, 0)
+
+
+def _dot11_management_has_tags(subtype: int) -> bool:
+    return subtype in {0, 1, 2, 3, 4, 5, 8, 11}
+
+
+def _is_truncated_snap_prefix(raw: bytes) -> bool:
+    return b"\xaa\xaa\x03".startswith(raw) and bool(raw)
+
+
+def _mac_text(raw: bytes) -> str:
+    return ":".join(f"{byte:02x}" for byte in raw)
+
+
+def _radiotap_fcs_status(flags: int) -> str:
+    present = bool(flags & 0x10)
+    failed = bool(flags & 0x40)
+    if present and failed:
+        return "present_failed"
+    if present:
+        return "present"
+    if failed:
+        return "failed"
+    return "absent"
+
+
+def _ipv4_flags(flags: int) -> str:
+    names = []
+    if flags & 0x01:
+        names.append("mf")
+    if flags & 0x02:
+        names.append("df")
+    if flags & 0x04:
+        names.append("reserved")
+    return "|".join(names) if names else "none"
 
 
 def _fill_icmp_rest_of_header(fields: JSONObject) -> None:

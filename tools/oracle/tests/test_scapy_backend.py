@@ -221,6 +221,7 @@ class ScapyDot11MaterializationTest(unittest.TestCase):
                     "addr2": "00:00:5e:00:53:02",
                     "addr3": "00:00:5e:00:53:03",
                     "sequence_control": 0,
+                    "management_fixed_fields": {"hex": "000000000000000064000100"},
                 },
                 "rsn": {
                     "element_id": 48,
@@ -237,7 +238,7 @@ class ScapyDot11MaterializationTest(unittest.TestCase):
 
         self.assertEqual(
             vector.raw_hex,
-            "000008000000000080000000ffffffffffff00005e00530200005e005303000030140100000fac040100000fac040100000fac020000",
+            "000008000000000080000000ffffffffffff00005e00530200005e005303000000000000000000006400010030140100000fac040100000fac040100000fac020000",
         )
 
     def test_generated_dot11_smoke_plans_materialize_without_scapy_bootstrap(self) -> None:
@@ -248,6 +249,85 @@ class ScapyDot11MaterializationTest(unittest.TestCase):
         self.assertEqual(len(vectors), 3)
         self.assertTrue(all(vector.metadata["scapy_version"] == "not-required" for vector in vectors))
         self.assertTrue(all(vector.raw_hex for vector in vectors))
+
+
+class ScapyDot11NormalizationTest(unittest.TestCase):
+    def test_radiotap_dot11_llc_snap_eapol_payload_normalizes_from_bytes(self) -> None:
+        plan = _dot11_plan(
+            stack=["radiotap", "dot11", "llc_snap", "eapol", "payload"],
+            root="link:radiotap",
+            fields={
+                "radiotap": {"version": 0, "pad": 0, "flags": "fcs_present", "rate": 2},
+                "dot11": {
+                    "frame_control": 0x0008,
+                    "duration_id": 0,
+                    "addr1": "00:00:5e:00:53:01",
+                    "addr2": "00:00:5e:00:53:02",
+                    "addr3": "00:00:5e:00:53:03",
+                    "sequence_control": 0x1000,
+                },
+                "llc_snap": {"dsap": 0xAA, "ssap": 0xAA, "control": 0x03, "ethertype": "eapol"},
+                "eapol": {"version": 2, "packet_type": "start", "body_length": 0},
+                "payload": {"hex": "01020304", "length": 4},
+            },
+        )
+
+        vector = packets.encode_packet_plan(plan)
+        decoded = normalize.decode_bytes(vector.to_bytes(), root=vector.root, source_hex=vector.raw_hex)
+
+        self.assertEqual(decoded.layers, ["radiotap", "dot11", "llc_snap", "eapol", "payload"])
+        self.assertEqual(decoded.fields["radiotap"]["fcs_status"], "present")
+        self.assertEqual(decoded.fields["dot11"]["sequence_number"], 0x100)
+        self.assertEqual(decoded.fields["llc_snap"]["ethertype"], 0x888E)
+        self.assertEqual(decoded.fields["eapol"]["body_length"], 4)
+        self.assertEqual(decoded.fields["payload"]["hex"], "01020304")
+
+    def test_protected_dot11_data_body_stays_payload(self) -> None:
+        raw = bytes.fromhex(
+            "0840000000005e00530100005e00530200005e0053030010"
+            "aaaa03000000080001020304"
+        )
+
+        decoded = normalize.decode_bytes(raw, root="link:dot11", source_hex=raw.hex())
+
+        self.assertEqual(decoded.layers, ["dot11", "payload"])
+        self.assertTrue(decoded.fields["dot11"]["protected"])
+        self.assertEqual(decoded.fields["dot11"]["encrypted_body_len"], 12)
+        self.assertEqual(decoded.fields["payload"]["hex"], "aaaa03000000080001020304")
+
+    def test_rsn_tag_normalizes_as_rsn_layer(self) -> None:
+        plan = _dot11_plan(
+            stack=["radiotap", "dot11", "rsn"],
+            root="link:radiotap",
+            fields={
+                "radiotap": {"version": 0, "pad": 0},
+                "dot11": {
+                    "frame_control": 0x0080,
+                    "duration_id": 0,
+                    "addr1": "ff:ff:ff:ff:ff:ff",
+                    "addr2": "00:00:5e:00:53:02",
+                    "addr3": "00:00:5e:00:53:03",
+                    "sequence_control": 0,
+                    "management_fixed_fields": {"hex": "000000000000000064000100"},
+                },
+                "rsn": {
+                    "element_id": 48,
+                    "version": 1,
+                    "group_cipher_suite": "ccmp_128",
+                    "pairwise_cipher_suites": ["ccmp_128"],
+                    "akm_suites": ["psk"],
+                    "capabilities": 0,
+                },
+            },
+        )
+
+        vector = packets.encode_packet_plan(plan)
+        decoded = normalize.decode_bytes(vector.to_bytes(), root=vector.root, source_hex=vector.raw_hex)
+
+        self.assertEqual(decoded.layers, ["radiotap", "dot11", "rsn"])
+        self.assertEqual(decoded.fields["rsn"]["version"], 1)
+        self.assertEqual(decoded.fields["rsn"]["group_cipher_suite"]["label"], "ccmp-128")
+        self.assertEqual(decoded.fields["rsn"]["akm_suites"][0]["label"], "psk")
 
 
 def _icmp_live_plan(icmp_fields: dict, *, case: str, payload_hex: str = "0102030405") -> PacketPlan:

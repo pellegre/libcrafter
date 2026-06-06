@@ -1,13 +1,15 @@
 use crafter::core::{
-    Arp, Dhcp, Dns, Ethernet, Icmpv4, Icmpv4QuotedIp, Icmpv6, Ipv4, Ipv6,
+    Arp, Dhcp, Dns, Dot11, Eapol, EapolKey, Ethernet, Icmpv4, Icmpv4QuotedIp, Icmpv6, Ipv4, Ipv6,
     Ipv6DestinationOptionsHeader, Ipv6FragmentHeader, Ipv6FragmentHeaderStatus,
     Ipv6HopByHopOptionsHeader, Ipv6MobileRoutingHeader, Ipv6Option, Ipv6RoutingHeader,
-    Ipv6RoutingTypeStatus, Ipv6SegmentRoutingHeader, Layer, LinkType, LinuxSll, NetworkLayer,
-    NullLoopback, Packet, Raw, Tcp, Udp, UdpChecksumStatus, UdpOption, UdpOptionStatus, UdpOptions,
-    Vlan, DNS_FLAG_AUTHENTIC_DATA, DNS_FLAG_AUTHORITATIVE, DNS_FLAG_CHECKING_DISABLED,
+    Ipv6RoutingTypeStatus, Ipv6SegmentRoutingHeader, Layer, LinkType, LinuxSll, LlcSnap,
+    NetworkLayer, NullLoopback, Packet, Radiotap, Raw, RsnAkmSuite, RsnCipherSuite, RsnInformation,
+    Tcp, Udp, UdpChecksumStatus, UdpOption, UdpOptionStatus, UdpOptions, Vlan,
+    DNS_FLAG_AUTHENTIC_DATA, DNS_FLAG_AUTHORITATIVE, DNS_FLAG_CHECKING_DISABLED,
     DNS_FLAG_QR_RESPONSE, DNS_FLAG_RECURSION_AVAILABLE, DNS_FLAG_RECURSION_DESIRED,
     DNS_FLAG_TRUNCATED,
 };
+use crafter::protocols::link::RadiotapFcsStatus;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -201,6 +203,10 @@ fn decode_for_root(root: &str, bytes: &[u8]) -> ExampleResult<Packet> {
             Packet::decode_from_link(LinkType::NullLoopback, bytes)
         }
         "Raw" | "link:raw" => Packet::decode_from_link(LinkType::Raw, bytes),
+        "Dot11" | "link:dot11" | "link:ieee80211" => {
+            Packet::decode_from_link(LinkType::Ieee80211, bytes)
+        }
+        "RadioTap" | "link:radiotap" => Packet::decode_from_link(LinkType::Radiotap, bytes),
         "IP" | "l3:ipv4" | "l2:ipv4" => Packet::decode_from_l3(NetworkLayer::Ipv4, bytes),
         "IPv6" | "l3:ipv6" => Packet::decode_from_l3(NetworkLayer::Ipv6, bytes),
         "l3:raw" => Packet::decode_from_l3(NetworkLayer::Raw, bytes),
@@ -243,6 +249,14 @@ fn normalize_packet(
             "name": layer.name(),
             "summary": layer.summary()
         }));
+        if let Some(dot11) = layer.as_any().downcast_ref::<Dot11>() {
+            for rsn_fields in dot11_rsn_layers(dot11) {
+                let layer_name = "rsn".to_string();
+                layers.push(layer_name.clone());
+                let key = field_key(&fields, &layer_name);
+                fields.insert(key, rsn_fields);
+            }
+        }
     }
 
     // Canonicalize a typed ICMPv4 error body to the backend-neutral flat model:
@@ -386,6 +400,12 @@ fn field_key(existing: &BTreeMap<String, BTreeMap<String, Value>>, layer_name: &
 fn normalized_layer_name(layer: &dyn Layer) -> String {
     if layer.as_any().is::<Ethernet>() {
         "ethernet"
+    } else if layer.as_any().is::<Radiotap>() {
+        "radiotap"
+    } else if layer.as_any().is::<Dot11>() {
+        "dot11"
+    } else if layer.as_any().is::<LlcSnap>() {
+        "llc_snap"
     } else if layer.as_any().is::<Arp>() {
         "arp"
     } else if layer.as_any().is::<Vlan>() {
@@ -423,6 +443,10 @@ fn normalized_layer_name(layer: &dyn Layer) -> String {
         "dns"
     } else if layer.as_any().is::<Dhcp>() {
         "dhcp"
+    } else if layer.as_any().is::<Eapol>() {
+        "eapol"
+    } else if layer.as_any().is::<EapolKey>() {
+        "eapol_key"
     } else if layer.as_any().is::<Raw>() {
         "payload"
     } else {
@@ -434,10 +458,12 @@ fn normalized_layer_name(layer: &dyn Layer) -> String {
 fn normalize_root_name(root: &str) -> &str {
     match root {
         "CookedLinux" | "link:linux-sll" => "link:linux-cooked",
+        "Dot11" | "link:ieee80211" => "link:dot11",
         "Ether" => "link:ethernet",
         "IP" | "l2:ipv4" => "l3:ipv4",
         "IPv6" => "l3:ipv6",
         "Loopback" => "link:null-loopback",
+        "RadioTap" => "link:radiotap",
         "Raw" => "link:raw",
         _ => root,
     }
@@ -450,6 +476,15 @@ fn normalized_layer_fields(
 ) -> BTreeMap<String, Value> {
     if let Some(layer) = layer.as_any().downcast_ref::<Ethernet>() {
         return ethernet_fields(layer);
+    }
+    if let Some(layer) = layer.as_any().downcast_ref::<Radiotap>() {
+        return radiotap_fields(layer);
+    }
+    if let Some(layer) = layer.as_any().downcast_ref::<Dot11>() {
+        return dot11_fields(layer);
+    }
+    if let Some(layer) = layer.as_any().downcast_ref::<LlcSnap>() {
+        return llc_snap_fields(layer);
     }
     if let Some(layer) = layer.as_any().downcast_ref::<Arp>() {
         return arp_fields(layer);
@@ -511,10 +546,252 @@ fn normalized_layer_fields(
     if let Some(layer) = layer.as_any().downcast_ref::<Dhcp>() {
         return dhcp_fields(layer);
     }
+    if let Some(layer) = layer.as_any().downcast_ref::<Eapol>() {
+        return eapol_fields(layer);
+    }
+    if let Some(layer) = layer.as_any().downcast_ref::<EapolKey>() {
+        return eapol_key_fields(layer);
+    }
     if let Some(layer) = layer.as_any().downcast_ref::<Raw>() {
         return payload_fields(layer);
     }
     BTreeMap::new()
+}
+
+fn radiotap_fields(layer: &Radiotap) -> BTreeMap<String, Value> {
+    let mut fields = BTreeMap::new();
+    if let Some(value) = layer.version_value() {
+        fields.insert("version".to_string(), json!(value));
+    }
+    if let Some(value) = layer.pad_value() {
+        fields.insert("pad".to_string(), json!(value));
+    }
+    if let Some(value) = layer.length_value() {
+        fields.insert("length".to_string(), json!(value));
+    }
+    if let Ok(present) = layer.present() {
+        fields.insert("present_words".to_string(), json!(present.words()));
+    }
+    if let Some(value) = layer.flags_value() {
+        fields.insert("flags".to_string(), json!(value.bits()));
+        fields.insert(
+            "fcs_status".to_string(),
+            json!(radiotap_fcs_status(value.fcs_status())),
+        );
+    }
+    if let Some(value) = layer.rate_value() {
+        fields.insert("rate".to_string(), json!(value));
+    }
+    if let Some(value) = layer.channel_value() {
+        fields.insert("channel_frequency".to_string(), json!(value.frequency()));
+        fields.insert("channel_flags".to_string(), json!(value.flags()));
+    }
+    if let Some(value) = layer.antenna_signal_value() {
+        fields.insert("dbm_antenna_signal".to_string(), json!(value));
+    }
+    if let Some(value) = layer.antenna_noise_value() {
+        fields.insert("dbm_antenna_noise".to_string(), json!(value));
+    }
+    if let Some(value) = layer.antenna_value() {
+        fields.insert("antenna".to_string(), json!(value));
+    }
+    if let Some(value) = layer.rx_flags_value() {
+        fields.insert("rx_flags".to_string(), json!(value.bits()));
+    }
+    if let Some(value) = layer.tx_flags_value() {
+        fields.insert("tx_flags".to_string(), json!(value.bits()));
+    }
+    if let Some(value) = layer.data_retries_value() {
+        fields.insert("data_retries".to_string(), json!(value));
+    }
+    fields
+}
+
+fn dot11_fields(layer: &Dot11) -> BTreeMap<String, Value> {
+    let frame_control = layer.frame_control_value();
+    let mut fields = map([
+        ("frame_control", json!(frame_control.bits())),
+        ("protocol_version", json!(frame_control.protocol_version())),
+        ("frame_type", json!(frame_control.frame_type())),
+        ("subtype", json!(frame_control.subtype())),
+        ("to_ds", json!(frame_control.to_ds())),
+        ("from_ds", json!(frame_control.from_ds())),
+        ("more_fragments", json!(frame_control.more_fragments())),
+        ("retry", json!(frame_control.retry())),
+        ("power_management", json!(frame_control.power_management())),
+        ("more_data", json!(frame_control.more_data())),
+        ("protected", json!(frame_control.protected())),
+        ("order", json!(frame_control.order())),
+    ]);
+    if let Some(value) = layer.duration_id_value() {
+        fields.insert("duration_id".to_string(), json!(value));
+    }
+    insert_mac(&mut fields, "addr1", layer.addr1_value());
+    insert_mac(&mut fields, "addr2", layer.addr2_value());
+    insert_mac(&mut fields, "addr3", layer.addr3_value());
+    insert_mac(&mut fields, "addr4", layer.addr4_value());
+    if let Some(value) = layer.sequence_control_value() {
+        fields.insert("sequence_control".to_string(), json!(value.bits()));
+        fields.insert(
+            "fragment_number".to_string(),
+            json!(value.fragment_number()),
+        );
+        fields.insert(
+            "sequence_number".to_string(),
+            json!(value.sequence_number()),
+        );
+    }
+    if let Some(value) = layer.qos_control_value() {
+        fields.insert("qos_control".to_string(), json!(value));
+    }
+    if let Some(value) = layer.ht_control_value() {
+        fields.insert("ht_control".to_string(), json!(value));
+    }
+    if !layer.fixed_parameters_value().is_empty() {
+        fields.insert(
+            "management_fixed_fields".to_string(),
+            json!({"hex": hex_bytes(layer.fixed_parameters_value())}),
+        );
+    }
+    if !layer.tags_value().is_empty() {
+        fields.insert(
+            "tagged_parameters".to_string(),
+            json!(layer
+                .tags_value()
+                .iter()
+                .map(|tag| {
+                    json!({
+                        "id": tag.id(),
+                        "length": tag.length(),
+                        "value": {"hex": hex_bytes(tag.value())}
+                    })
+                })
+                .collect::<Vec<_>>()),
+        );
+    }
+    if let Some(value) = layer.encrypted_body_len() {
+        fields.insert("encrypted_body_len".to_string(), json!(value));
+    }
+    fields
+}
+
+fn llc_snap_fields(layer: &LlcSnap) -> BTreeMap<String, Value> {
+    let oui = layer.oui_value();
+    map([
+        ("dsap", json!(layer.dsap_value())),
+        ("ssap", json!(layer.ssap_value())),
+        ("control", json!(layer.control_value())),
+        ("oui", json!({"hex": hex_bytes(&oui)})),
+        ("ethertype", json!(layer.ethertype_value())),
+    ])
+}
+
+fn eapol_fields(layer: &Eapol) -> BTreeMap<String, Value> {
+    let mut fields = map([
+        ("version", json!(layer.version_value())),
+        ("packet_type", json!(layer.packet_type_value())),
+    ]);
+    if let Some(value) = layer.body_length_value() {
+        fields.insert("body_length".to_string(), json!(value));
+    }
+    fields
+}
+
+fn eapol_key_fields(layer: &EapolKey) -> BTreeMap<String, Value> {
+    let key_information = layer.key_information_value();
+    map([
+        ("descriptor_type", json!(layer.descriptor_type_value())),
+        ("key_information", json!(key_information.bits())),
+        ("key_length", json!(layer.key_length_value())),
+        ("replay_counter", json!(layer.replay_counter_value())),
+        ("key_nonce", json!({"hex": hex_bytes(&layer.nonce_value())})),
+        ("key_iv", json!({"hex": hex_bytes(&layer.iv_value())})),
+        ("key_rsc", json!({"hex": hex_bytes(&layer.rsc_value())})),
+        ("key_id", json!({"hex": hex_bytes(&layer.id_value())})),
+        ("key_mic", json!({"hex": hex_bytes(&layer.mic_value())})),
+        (
+            "key_data_length",
+            json!(layer
+                .key_data_length_value()
+                .unwrap_or(layer.key_data_bytes().len() as u16)),
+        ),
+        (
+            "key_data",
+            json!({"hex": hex_bytes(layer.key_data_bytes())}),
+        ),
+    ])
+}
+
+fn dot11_rsn_layers(layer: &Dot11) -> Vec<BTreeMap<String, Value>> {
+    layer
+        .tags_value()
+        .iter()
+        .filter_map(|tag| match tag.rsn_information() {
+            Some(Ok(rsn)) => Some(rsn_information_fields(tag.id(), tag.length(), &rsn)),
+            _ => None,
+        })
+        .collect()
+}
+
+fn rsn_information_fields(
+    element_id: u8,
+    length: usize,
+    rsn: &RsnInformation,
+) -> BTreeMap<String, Value> {
+    let mut fields = map([
+        ("element_id", json!(element_id)),
+        ("length", json!(length)),
+        ("version", json!(rsn.version_value())),
+        (
+            "group_cipher_suite",
+            rsn_cipher_suite_value(rsn.group_cipher_suite()),
+        ),
+        (
+            "pairwise_cipher_suites",
+            json!(rsn
+                .pairwise_cipher_list()
+                .iter()
+                .copied()
+                .map(rsn_cipher_suite_value)
+                .collect::<Vec<_>>()),
+        ),
+        (
+            "akm_suites",
+            json!(rsn
+                .akm_list()
+                .iter()
+                .copied()
+                .map(rsn_akm_suite_value)
+                .collect::<Vec<_>>()),
+        ),
+    ]);
+    if let Some(value) = rsn.capabilities() {
+        fields.insert("capabilities".to_string(), json!(value.bits()));
+    }
+    if rsn.pmkid_count_present() {
+        fields.insert("pmkid_count_present".to_string(), json!(true));
+        fields.insert(
+            "pmkid_list".to_string(),
+            json!(rsn
+                .pmkid_list()
+                .iter()
+                .map(|pmkid| json!({"hex": hex_bytes(pmkid)}))
+                .collect::<Vec<_>>()),
+        );
+    }
+    if let Some(value) = rsn.group_management_cipher_suite() {
+        fields.insert(
+            "group_management_cipher_suite".to_string(),
+            rsn_cipher_suite_value(value),
+        );
+    }
+    if !rsn.trailing_bytes().is_empty() {
+        fields.insert(
+            "trailing_bytes".to_string(),
+            json!({"hex": hex_bytes(rsn.trailing_bytes())}),
+        );
+    }
+    fields
 }
 
 fn ethernet_fields(layer: &Ethernet) -> BTreeMap<String, Value> {
@@ -1151,6 +1428,45 @@ fn insert_address(
         text.map(Value::String)
             .unwrap_or_else(|| json!({"hex": hex_bytes(&raw)})),
     );
+}
+
+fn insert_mac<T: ToString>(fields: &mut BTreeMap<String, Value>, name: &str, value: Option<T>) {
+    if let Some(value) = value {
+        fields.insert(name.to_string(), json!(value.to_string()));
+    }
+}
+
+fn radiotap_fcs_status(status: RadiotapFcsStatus) -> &'static str {
+    match (status.present(), status.failed()) {
+        (true, true) => "present_failed",
+        (true, false) => "present",
+        (false, true) => "failed",
+        (false, false) => "absent",
+    }
+}
+
+fn rsn_cipher_suite_value(suite: RsnCipherSuite) -> Value {
+    let selector = suite.to_bytes();
+    let mut fields = BTreeMap::new();
+    fields.insert("selector".to_string(), json!(hex_bytes(&selector)));
+    fields.insert("oui".to_string(), json!(hex_bytes(&selector[..3])));
+    fields.insert("suite_type".to_string(), json!(suite.suite_type()));
+    if let Some(label) = suite.label() {
+        fields.insert("label".to_string(), json!(label));
+    }
+    Value::Object(fields.into_iter().collect())
+}
+
+fn rsn_akm_suite_value(suite: RsnAkmSuite) -> Value {
+    let selector = suite.to_bytes();
+    let mut fields = BTreeMap::new();
+    fields.insert("selector".to_string(), json!(hex_bytes(&selector)));
+    fields.insert("oui".to_string(), json!(hex_bytes(&selector[..3])));
+    fields.insert("suite_type".to_string(), json!(suite.suite_type()));
+    if let Some(label) = suite.label() {
+        fields.insert("label".to_string(), json!(label));
+    }
+    Value::Object(fields.into_iter().collect())
 }
 
 fn dns_flag(dns: &Dns, flag: u16) -> bool {
