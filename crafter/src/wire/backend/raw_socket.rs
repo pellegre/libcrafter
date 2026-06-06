@@ -1,6 +1,9 @@
 //! Raw socket packet writer adapter.
 
-use crate::net::{SendMode, SendOptions, SendReport, SendTarget, SocketSender};
+use crate::net::{
+    Result as NetResult, SendMode, SendOptions, SendPlan, SendReport, SendTarget, SocketSender,
+};
+use crate::Packet;
 use crate::{LinkType, NetworkLayer};
 
 use super::super::record::{BackendKind, PacketRecord};
@@ -50,6 +53,16 @@ impl RawSocketWriter {
     pub const fn options(&self) -> &SendOptions {
         self.sender.options()
     }
+
+    /// Build the send plan this writer would use for a packet.
+    pub fn plan_packet(&self, packet: &Packet) -> NetResult<SendPlan> {
+        self.sender.plan(packet)
+    }
+
+    /// Send a packet through the adapted raw socket sender.
+    pub fn send_packet(&self, packet: &Packet) -> NetResult<SendReport> {
+        self.sender.send(packet)
+    }
 }
 
 impl From<SocketSender> for RawSocketWriter {
@@ -60,7 +73,7 @@ impl From<SocketSender> for RawSocketWriter {
 
 impl PacketWriter for RawSocketWriter {
     fn write_record(&mut self, record: &PacketRecord) -> Result<WriteReport> {
-        let send_report = self.sender.send(record.packet())?;
+        let send_report = self.send_packet(record.packet())?;
         Ok(write_report_from_send_report(&send_report))
     }
 }
