@@ -1813,7 +1813,8 @@ class PacketGenerator:
         if domain is _SKIP_FIELD:
             return _SKIP_FIELD
         if layer == "payload":
-            return ctx.payload.hex() if field_name == "hex" else len(ctx.payload)
+            payload = _payload_for_context(ctx)
+            return payload.hex() if field_name == "hex" else len(payload)
         if layer == "ethernet":
             if field_name == "src":
                 return _mac_for_domain(ctx, domain, ctx.src_mac)
@@ -4366,7 +4367,10 @@ def _sample_dot11_field(
             return _SKIP_FIELD
         return {"hex": _dot11_management_fixed_hex(frame_control, str(domain))}
     if field_name == "tagged_parameters":
-        return _SKIP_FIELD
+        subtype = (frame_control >> 4) & 0x0F
+        if not _dot11_is_management(frame_control) or not _dot11_management_subtype_has_tags(subtype):
+            return _SKIP_FIELD
+        return _dot11_management_tags(ctx.case, str(domain))
     if field_name == "payload":
         return _SKIP_FIELD
     raise ValueError(f"spec error: unsupported dot11 field sampler: {field_name}")
@@ -4393,6 +4397,35 @@ def _dot11_management_fixed_hex(frame_control: int, domain: str) -> str:
     if domain == "authentication_fixed":
         return "000001000000"
     return ""
+
+
+def _payload_for_context(ctx: _SamplingContext) -> bytes:
+    dot11 = ctx.sampled_layers.get("dot11")
+    if isinstance(dot11, Mapping):
+        frame_control = dot11.get("frame_control")
+        if isinstance(frame_control, int) and _dot11_is_management(frame_control):
+            return b""
+    return ctx.payload
+
+
+def _dot11_management_tags(case: str, domain: str) -> list[JSONObject]:
+    if domain == "absent":
+        return []
+    if domain == "rsn" or "rsn" in case.replace("_", "-"):
+        return [{"id": 48, "value": {"hex": _rsn_information_value_hex()}}]
+    if domain == "supported_rates":
+        return [{"id": 1, "value": {"hex": "82848b96"}}]
+    if domain == "unknown":
+        return [{"id": 221, "value": {"hex": "0050f20101"}}]
+    return [
+        {"id": 0, "value": {"hex": "6c696263726166746572"}},
+        {"id": 1, "value": {"hex": "82848b96"}},
+        {"id": 221, "value": {"hex": "0050f20101"}},
+    ]
+
+
+def _dot11_management_subtype_has_tags(subtype: int) -> bool:
+    return subtype in {0, 2, 4, 5, 8}
 
 
 def _sample_llc_snap_field(ctx: _SamplingContext, field_name: str) -> object:
