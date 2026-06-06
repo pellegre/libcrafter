@@ -38,6 +38,23 @@ class PcapRecordCanonicalizationTest(unittest.TestCase):
         )
         self.assertEqual(records[0]["raw_hex"], "00")
 
+    def test_dot11_rsn_information_element_uses_dot11_layer_contract(self) -> None:
+        report = {
+            "metadata": {
+                "records": [
+                    {
+                        "layers": ["radiotap", "dot11", "rsn"],
+                        "raw_hex": "010203",
+                    }
+                ]
+            }
+        }
+
+        records = cli._pcap_records(report)
+
+        self.assertEqual(records[0]["layers"], ["radiotap", "dot11"])
+        self.assertEqual(records[0]["raw_hex"], "010203")
+
 
 if __name__ == "__main__":
     unittest.main()

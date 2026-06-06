@@ -5946,7 +5946,10 @@ def _pcap_reference_to_libcrafter(
     try:
         write_pcap(pcap_path, vectors)
         artifacts.append(str(pcap_path))
-        expected_records = read_pcap(pcap_path)
+        expected_records = [
+            _canonical_pcap_record(record, f"{label}.reference records[{index}]")
+            for index, record in enumerate(read_pcap(pcap_path))
+        ]
         expected_path = run_dir / f"{label}.scapy-reference-read.json"
         write_json(expected_path, {"records": expected_records})
         artifacts.append(str(expected_path))
@@ -6159,11 +6162,19 @@ def _pcap_read_reference_records(backend: str, pcap_path: Path) -> list[JSONObje
     if backend == "scapy":
         from .backends.scapy.pcap import read_pcap
 
-        return read_pcap(pcap_path)
+        records = read_pcap(pcap_path)
+        return [
+            _canonical_pcap_record(record, f"{backend} pcap records[{index}]")
+            for index, record in enumerate(records)
+        ]
     if backend == "wireshark":
         from .backends.wireshark.pcap import read_pcap
 
-        return read_pcap(pcap_path)
+        records = read_pcap(pcap_path)
+        return [
+            _canonical_pcap_record(record, f"{backend} pcap records[{index}]")
+            for index, record in enumerate(records)
+        ]
     raise RuntimeError(f"unsupported pcap read backend: {backend}")
 
 
@@ -6913,10 +6924,14 @@ def _pcap_records(report: object) -> list[JSONObject]:
 
     output: list[JSONObject] = []
     for index, item in enumerate(records):
-        record = dict(_json_object(item, f"records[{index}]"))
-        record["layers"] = _canonical_pcap_layers(record.get("layers", []))
-        output.append(record)
+        output.append(_canonical_pcap_record(item, f"records[{index}]"))
     return output
+
+
+def _canonical_pcap_record(value: object, context: str) -> JSONObject:
+    record = dict(_json_object(value, context))
+    record["layers"] = _canonical_pcap_layers(record.get("layers", []))
+    return record
 
 
 def _canonical_pcap_layers(value: object) -> list[str]:
@@ -6924,7 +6939,13 @@ def _canonical_pcap_layers(value: object) -> list[str]:
         "Ipv6DestinationOptionsHeader": "ipv6_destination_options",
         "Ipv6HopByHopOptionsHeader": "ipv6_hop_by_hop",
     }
-    return [aliases.get(layer, layer) for layer in _string_values(value)]
+    layers = [aliases.get(layer, layer) for layer in _string_values(value)]
+    canonical: list[str] = []
+    for layer in layers:
+        if layer == "rsn" and canonical and canonical[-1] == "dot11":
+            continue
+        canonical.append(layer)
+    return canonical
 
 
 def _select_libcrafter_cases(

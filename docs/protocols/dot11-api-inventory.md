@@ -430,7 +430,7 @@ case for exposing them:
 - LLC/SNAP parser cursors.
 - EAPOL and RSN byte-slice cursor helpers.
 - Oracle normalization structs.
-- Scapy or tshark backend adapters.
+- Reference or tshark backend adapters.
 - Live monitor-mode setup helpers.
 
 WPA/WPA2/WPA3 plaintext recovery, passphrase handling, key derivation,
