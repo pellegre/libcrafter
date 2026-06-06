@@ -472,6 +472,157 @@ impl EapolKeyInformation {
     }
 }
 
+/// Candidate RSN EAPOL-Key four-way handshake message shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum RsnEapolKeyHandshakeMessage {
+    /// Message 1 of the RSN four-way handshake.
+    Message1,
+    /// Message 2 of the RSN four-way handshake.
+    Message2,
+    /// Message 3 of the RSN four-way handshake.
+    Message3,
+    /// Message 4 of the RSN four-way handshake.
+    Message4,
+    /// The observed flags and fields do not match a supported passive shape.
+    Unknown,
+}
+
+impl RsnEapolKeyHandshakeMessage {
+    /// Return true when this value is one of the four recognized message shapes.
+    pub const fn is_known(self) -> bool {
+        match self {
+            Self::Message1 | Self::Message2 | Self::Message3 | Self::Message4 => true,
+            Self::Unknown => false,
+        }
+    }
+
+    /// Return the one-based four-way handshake message number.
+    pub const fn number(self) -> Option<u8> {
+        match self {
+            Self::Message1 => Some(1),
+            Self::Message2 => Some(2),
+            Self::Message3 => Some(3),
+            Self::Message4 => Some(4),
+            Self::Unknown => None,
+        }
+    }
+
+    /// Short stable label.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Message1 => "message-1",
+            Self::Message2 => "message-2",
+            Self::Message3 => "message-3",
+            Self::Message4 => "message-4",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+/// Passive RSN EAPOL-Key handshake classification metadata.
+///
+/// The message value is a shape classification for an isolated EAPOL-Key
+/// descriptor. It does not infer authenticator/supplicant roles, validate MICs,
+/// derive keys, decrypt key data, or store handshake state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct RsnEapolKeyHandshakeMetadata {
+    message: RsnEapolKeyHandshakeMessage,
+    descriptor_type: EapolDescriptorType,
+    key_information: EapolKeyInformation,
+    declared_key_data_length: Option<u16>,
+    reported_key_data_length: usize,
+    key_data_bytes_len: usize,
+    has_nonzero_nonce: bool,
+    has_nonzero_mic: bool,
+}
+
+impl RsnEapolKeyHandshakeMetadata {
+    fn new(
+        descriptor_type: EapolDescriptorType,
+        key_information: EapolKeyInformation,
+        declared_key_data_length: Option<u16>,
+        key_data_bytes_len: usize,
+        has_nonzero_nonce: bool,
+        has_nonzero_mic: bool,
+    ) -> Self {
+        let reported_key_data_length =
+            declared_key_data_length.map_or(key_data_bytes_len, usize::from);
+        let has_key_data = reported_key_data_length != 0 || key_data_bytes_len != 0;
+        let message = classify_rsn_eapol_key_handshake_message(
+            descriptor_type,
+            key_information,
+            has_nonzero_nonce,
+            has_nonzero_mic,
+            has_key_data,
+        );
+
+        Self {
+            message,
+            descriptor_type,
+            key_information,
+            declared_key_data_length,
+            reported_key_data_length,
+            key_data_bytes_len,
+            has_nonzero_nonce,
+            has_nonzero_mic,
+        }
+    }
+
+    /// Candidate four-way handshake message shape.
+    pub const fn message(&self) -> RsnEapolKeyHandshakeMessage {
+        self.message
+    }
+
+    /// Typed EAPOL-Key descriptor type.
+    pub const fn descriptor_type(&self) -> EapolDescriptorType {
+        self.descriptor_type
+    }
+
+    /// Return true when this metadata came from an RSN EAPOL-Key descriptor.
+    pub const fn is_rsn_descriptor(&self) -> bool {
+        match self.descriptor_type {
+            EapolDescriptorType::Rsn => true,
+            EapolDescriptorType::Unknown(_) => false,
+        }
+    }
+
+    /// Key Information field used for classification.
+    pub const fn key_information(&self) -> EapolKeyInformation {
+        self.key_information
+    }
+
+    /// Decoded or explicitly configured Key Data Length field.
+    pub const fn declared_key_data_length(&self) -> Option<u16> {
+        self.declared_key_data_length
+    }
+
+    /// Key Data Length when present, otherwise the current key-data byte count.
+    pub const fn reported_key_data_length(&self) -> usize {
+        self.reported_key_data_length
+    }
+
+    /// Number of key-data bytes currently stored on the layer.
+    pub const fn key_data_bytes_len(&self) -> usize {
+        self.key_data_bytes_len
+    }
+
+    /// Return true when either the reported length or stored key-data bytes are nonzero.
+    pub const fn has_key_data(&self) -> bool {
+        self.reported_key_data_length != 0 || self.key_data_bytes_len != 0
+    }
+
+    /// Return true when the fixed nonce field contains any nonzero octet.
+    pub const fn has_nonzero_nonce(&self) -> bool {
+        self.has_nonzero_nonce
+    }
+
+    /// Return true when the fixed MIC field contains any nonzero octet.
+    pub const fn has_nonzero_mic(&self) -> bool {
+        self.has_nonzero_mic
+    }
+}
+
 /// RSN EAPOL-Key descriptor body.
 ///
 /// This phase parses the fixed EAPOL-Key metadata needed by later decrypt
@@ -650,6 +801,26 @@ impl EapolKey {
     /// Compatibility alias for Key Data bytes.
     pub fn key_data_value(&self) -> &[u8] {
         self.key_data_bytes()
+    }
+
+    /// Passive metadata for classifying RSN four-way handshake message shapes.
+    pub fn rsn_handshake_metadata(&self) -> RsnEapolKeyHandshakeMetadata {
+        let nonce = self.nonce_value();
+        let mic = self.mic_value();
+
+        RsnEapolKeyHandshakeMetadata::new(
+            self.descriptor_type_kind(),
+            self.key_information_value(),
+            self.key_data_length_value(),
+            self.key_data.len(),
+            bytes_have_nonzero_octet(&nonce),
+            bytes_have_nonzero_octet(&mic),
+        )
+    }
+
+    /// Candidate RSN four-way handshake message shape.
+    pub fn rsn_handshake_message(&self) -> RsnEapolKeyHandshakeMessage {
+        self.rsn_handshake_metadata().message()
     }
 
     /// Mutably borrow Key Data bytes.
@@ -1145,6 +1316,50 @@ fn hex_bytes(bytes: &[u8]) -> String {
         .join(":")
 }
 
+fn bytes_have_nonzero_octet(bytes: &[u8]) -> bool {
+    bytes.iter().any(|byte| *byte != 0)
+}
+
+fn classify_rsn_eapol_key_handshake_message(
+    descriptor_type: EapolDescriptorType,
+    key_information: EapolKeyInformation,
+    has_nonzero_nonce: bool,
+    has_nonzero_mic: bool,
+    has_key_data: bool,
+) -> RsnEapolKeyHandshakeMessage {
+    if descriptor_type != EapolDescriptorType::Rsn
+        || !key_information.key_type()
+        || key_information.error()
+        || key_information.request()
+        || key_information.smk_message()
+    {
+        return RsnEapolKeyHandshakeMessage::Unknown;
+    }
+
+    match (
+        key_information.key_ack(),
+        key_information.key_mic(),
+        key_information.install(),
+        key_information.secure(),
+        key_information.encrypted_key_data(),
+        has_nonzero_nonce,
+        has_nonzero_mic,
+        has_key_data,
+    ) {
+        (true, false, false, false, false, true, false, false) => {
+            RsnEapolKeyHandshakeMessage::Message1
+        }
+        (false, true, false, false, false, true, true, true) => {
+            RsnEapolKeyHandshakeMessage::Message2
+        }
+        (true, true, true, true, true, true, true, true) => RsnEapolKeyHandshakeMessage::Message3,
+        (false, true, false, true, false, false, true, false) => {
+            RsnEapolKeyHandshakeMessage::Message4
+        }
+        _ => RsnEapolKeyHandshakeMessage::Unknown,
+    }
+}
+
 fn copy_array<const N: usize>(bytes: &[u8], offset: usize) -> [u8; N] {
     let mut value = [0u8; N];
     value.copy_from_slice(&bytes[offset..offset + N]);
@@ -1168,13 +1383,13 @@ const fn set_key_info_subfield(bits: u16, mask: u16, shift: u8, value: u8) -> u1
 mod tests {
     use super::{
         append_eapol_packet, eapol_descriptor_type_label, eapol_type_label, Eapol,
-        EapolDescriptorType, EapolKey, EapolKeyInformation, EapolType, EAPOL_HEADER_LEN,
-        EAPOL_KEY_DESCRIPTOR_MIN_LEN, EAPOL_KEY_DESCRIPTOR_RSN, EAPOL_KEY_INFO_ENCRYPTED_KEY_DATA,
-        EAPOL_KEY_INFO_ERROR, EAPOL_KEY_INFO_INSTALL, EAPOL_KEY_INFO_KEY_ACK,
-        EAPOL_KEY_INFO_KEY_MIC, EAPOL_KEY_INFO_KEY_TYPE, EAPOL_KEY_INFO_REQUEST,
-        EAPOL_KEY_INFO_RESERVED_MASK, EAPOL_KEY_INFO_SECURE, EAPOL_KEY_INFO_SMK_MESSAGE,
-        EAPOL_TYPE_EAP_PACKET, EAPOL_TYPE_KEY, EAPOL_TYPE_LOGOFF, EAPOL_TYPE_START,
-        EAPOL_VERSION_2,
+        EapolDescriptorType, EapolKey, EapolKeyInformation, EapolType, RsnEapolKeyHandshakeMessage,
+        EAPOL_HEADER_LEN, EAPOL_KEY_DESCRIPTOR_MIN_LEN, EAPOL_KEY_DESCRIPTOR_RSN,
+        EAPOL_KEY_INFO_ENCRYPTED_KEY_DATA, EAPOL_KEY_INFO_ERROR, EAPOL_KEY_INFO_INSTALL,
+        EAPOL_KEY_INFO_KEY_ACK, EAPOL_KEY_INFO_KEY_MIC, EAPOL_KEY_INFO_KEY_TYPE,
+        EAPOL_KEY_INFO_REQUEST, EAPOL_KEY_INFO_RESERVED_MASK, EAPOL_KEY_INFO_SECURE,
+        EAPOL_KEY_INFO_SMK_MESSAGE, EAPOL_TYPE_EAP_PACKET, EAPOL_TYPE_KEY, EAPOL_TYPE_LOGOFF,
+        EAPOL_TYPE_START, EAPOL_VERSION_2,
     };
     use crate::{CrafterError, Layer, LlcSnap, Packet, Raw, EAPOL_TYPE_ASF_ALERT, ETHERTYPE_EAPOL};
 
@@ -1207,6 +1422,38 @@ mod tests {
         bytes.extend_from_slice(&(body.len() as u16).to_be_bytes());
         bytes.extend_from_slice(body);
         bytes
+    }
+
+    fn rsn_pairwise_key_information() -> EapolKeyInformation {
+        EapolKeyInformation::new()
+            .with_descriptor_version(2)
+            .with_key_type(true)
+    }
+
+    fn synthetic_rsn_handshake_key(
+        key_information: EapolKeyInformation,
+        has_nonce: bool,
+        has_mic: bool,
+        key_data: &[u8],
+    ) -> EapolKey {
+        let nonce = if has_nonce {
+            ascending::<32>(0x10)
+        } else {
+            [0; 32]
+        };
+        let mic = if has_mic {
+            ascending::<16>(0x80)
+        } else {
+            [0; 16]
+        };
+
+        EapolKey::new()
+            .key_information(key_information)
+            .key_length(16)
+            .replay_counter(7)
+            .nonce(nonce)
+            .mic(mic)
+            .key_data(key_data.to_vec())
     }
 
     #[test]
@@ -1520,6 +1767,184 @@ mod tests {
             packet.compile().unwrap().as_bytes(),
             eapol_key_packet_bytes(&body)
         );
+    }
+
+    #[test]
+    fn rsn_handshake_metadata_classifies_synthetic_four_way_message_shapes() {
+        let base = rsn_pairwise_key_information();
+        let cases = vec![
+            (
+                "message 1",
+                synthetic_rsn_handshake_key(base.with_key_ack(true), true, false, &[]),
+                RsnEapolKeyHandshakeMessage::Message1,
+                true,
+                false,
+                false,
+                0,
+            ),
+            (
+                "message 2",
+                synthetic_rsn_handshake_key(base.with_key_mic(true), true, true, &[0x30, 0x14]),
+                RsnEapolKeyHandshakeMessage::Message2,
+                true,
+                true,
+                true,
+                2,
+            ),
+            (
+                "message 3",
+                synthetic_rsn_handshake_key(
+                    base.with_key_ack(true)
+                        .with_key_mic(true)
+                        .with_install(true)
+                        .with_secure(true)
+                        .with_encrypted_key_data(true),
+                    true,
+                    true,
+                    &[0xdd, 0x16, 0x01],
+                ),
+                RsnEapolKeyHandshakeMessage::Message3,
+                true,
+                true,
+                true,
+                3,
+            ),
+            (
+                "message 4",
+                synthetic_rsn_handshake_key(
+                    base.with_key_mic(true).with_secure(true),
+                    false,
+                    true,
+                    &[],
+                ),
+                RsnEapolKeyHandshakeMessage::Message4,
+                false,
+                true,
+                false,
+                0,
+            ),
+        ];
+
+        for (
+            name,
+            key,
+            expected,
+            expected_nonce,
+            expected_mic,
+            expected_key_data,
+            expected_key_data_len,
+        ) in cases
+        {
+            let metadata = key.rsn_handshake_metadata();
+
+            assert_eq!(metadata.message(), expected, "{name}");
+            assert_eq!(key.rsn_handshake_message(), expected, "{name}");
+            assert!(metadata.message().is_known(), "{name}");
+            assert_eq!(metadata.message().number(), expected.number(), "{name}");
+            assert_eq!(metadata.message().label(), expected.label(), "{name}");
+            assert!(metadata.is_rsn_descriptor(), "{name}");
+            assert_eq!(
+                metadata.descriptor_type(),
+                EapolDescriptorType::Rsn,
+                "{name}"
+            );
+            assert!(metadata.key_information().key_type(), "{name}");
+            assert_eq!(metadata.has_nonzero_nonce(), expected_nonce, "{name}");
+            assert_eq!(metadata.has_nonzero_mic(), expected_mic, "{name}");
+            assert_eq!(metadata.has_key_data(), expected_key_data, "{name}");
+            assert_eq!(
+                metadata.key_data_bytes_len(),
+                expected_key_data_len,
+                "{name}"
+            );
+            assert_eq!(
+                metadata.reported_key_data_length(),
+                expected_key_data_len,
+                "{name}"
+            );
+            assert_eq!(metadata.declared_key_data_length(), None, "{name}");
+        }
+    }
+
+    #[test]
+    fn rsn_handshake_metadata_preserves_unknown_and_malformed_shapes() {
+        let base = rsn_pairwise_key_information();
+        let request = synthetic_rsn_handshake_key(
+            base.with_key_mic(true).with_request(true),
+            true,
+            true,
+            &[0xaa],
+        );
+        let request_metadata = request.rsn_handshake_metadata();
+
+        assert_eq!(
+            request_metadata.message(),
+            RsnEapolKeyHandshakeMessage::Unknown
+        );
+        assert!(!request_metadata.message().is_known());
+        assert_eq!(request_metadata.message().number(), None);
+        assert_eq!(request_metadata.message().label(), "unknown");
+        assert!(request_metadata.key_information().request());
+        assert!(request_metadata.has_key_data());
+        assert_eq!(request_metadata.reported_key_data_length(), 1);
+        assert_eq!(request_metadata.key_data_bytes_len(), 1);
+
+        let declared_only = synthetic_rsn_handshake_key(base.with_key_ack(true), true, false, &[])
+            .key_data_length(4);
+        let declared_only_metadata = declared_only.rsn_handshake_metadata();
+
+        assert_eq!(
+            declared_only_metadata.message(),
+            RsnEapolKeyHandshakeMessage::Unknown
+        );
+        assert_eq!(declared_only_metadata.declared_key_data_length(), Some(4));
+        assert_eq!(declared_only_metadata.reported_key_data_length(), 4);
+        assert_eq!(declared_only_metadata.key_data_bytes_len(), 0);
+        assert!(declared_only_metadata.has_key_data());
+
+        let unknown_descriptor =
+            synthetic_rsn_handshake_key(base.with_key_ack(true), true, false, &[])
+                .descriptor_type_raw(0x7f);
+        let unknown_descriptor_metadata = unknown_descriptor.rsn_handshake_metadata();
+
+        assert_eq!(
+            unknown_descriptor_metadata.message(),
+            RsnEapolKeyHandshakeMessage::Unknown
+        );
+        assert!(!unknown_descriptor_metadata.is_rsn_descriptor());
+        assert_eq!(
+            unknown_descriptor_metadata.descriptor_type(),
+            EapolDescriptorType::Unknown(0x7f)
+        );
+    }
+
+    #[test]
+    fn rsn_handshake_metadata_public_exports_resolve() {
+        use crate::prelude::{
+            RsnEapolKeyHandshakeMessage as PreludeMessage,
+            RsnEapolKeyHandshakeMetadata as PreludeMetadata,
+        };
+        use crate::protocols::{
+            RsnEapolKeyHandshakeMessage as ProtocolsMessage,
+            RsnEapolKeyHandshakeMetadata as ProtocolsMetadata,
+        };
+        use crate::{
+            RsnEapolKeyHandshakeMessage as RootMessage,
+            RsnEapolKeyHandshakeMetadata as RootMetadata,
+        };
+
+        let key = synthetic_rsn_handshake_key(
+            rsn_pairwise_key_information().with_key_ack(true),
+            true,
+            false,
+            &[],
+        );
+
+        let _: RootMessage = ProtocolsMessage::Message1;
+        let _: PreludeMessage = RootMessage::Message2;
+        let _: ProtocolsMetadata = key.rsn_handshake_metadata();
+        let _: RootMetadata = key.rsn_handshake_metadata();
+        let _: PreludeMetadata = key.rsn_handshake_metadata();
     }
 
     #[test]
