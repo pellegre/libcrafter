@@ -89,6 +89,40 @@ class LiveProviderMatrixTest(unittest.TestCase):
         self.assertEqual(summary["lab_session"]["roles"], ["libcrafter", "reference_backend"])
         self.assertEqual(summary["lab_session"]["validation_count"], 2)
 
+    def test_validate_live_report_accepts_no_wire_eligible_dry_run_skip(self) -> None:
+        adapter = resolve_live_provider("hetzner")
+        corpus_path = Path("/tmp/libcrafter-corpus/plans.json")
+        report = _no_wire_eligible_live_report(
+            provider="hetzner",
+            wire_provider=adapter.wire_provider,
+            wire_exposure=adapter.wire_exposure,
+            endpoint_roles=list(adapter.endpoint_roles),
+            corpus_path=corpus_path,
+            planned_infrastructure=adapter.planned_infrastructure(dry_run=True),
+            provider_workflow=[
+                command.to_dict()
+                for command in adapter.provider_workflow(dry_run=True)
+            ],
+        )
+
+        summary = validate_live_report(
+            report,
+            provider="hetzner",
+            adapter=adapter,
+            corpus_id="corpus-v1-test",
+            corpus_path=corpus_path,
+            report_path=Path("/tmp/hetzner/live/report.json"),
+        )
+
+        self.assertEqual(summary["provider"], "hetzner")
+        self.assertEqual(summary["status"], "skipped")
+        self.assertEqual(summary["skip_reason"], "no_wire_eligible_packets")
+        self.assertEqual(summary["wire_eligible_count"], 0)
+        self.assertTrue(summary["no_live_packets_sent"])
+        self.assertFalse(summary["live_packet_exchange"])
+        self.assertEqual(summary["lifecycle"]["endpoint_bootstrap_count"], 2)
+        self.assertEqual(summary["lifecycle"]["provider_command_count"], 0)
+
     def test_validate_real_live_report_preserves_vm_lifecycle(self) -> None:
         adapter = resolve_live_provider("qemu")
         corpus_path = Path("/tmp/libcrafter-corpus/plans.json")
@@ -292,6 +326,54 @@ class LiveProviderMatrixTest(unittest.TestCase):
 
         self.assertIn("provider doctor failed", reason)
         self.assertIn("VBoxManage_installed", reason)
+
+
+def _no_wire_eligible_live_report(
+    *,
+    provider: str,
+    wire_provider: str,
+    wire_exposure: str,
+    endpoint_roles: list[str],
+    corpus_path: Path,
+    planned_infrastructure: dict[str, object],
+    provider_workflow: list[dict[str, object]],
+) -> dict[str, object]:
+    return {
+        "mode": "live",
+        "backend": "scapy",
+        "profile": "dot11-smoke",
+        "seed": 1302,
+        "count": 0,
+        "status": "skipped",
+        "artifact_paths": ["/tmp/hetzner/live/report.json"],
+        "metadata": {
+            "provider": provider,
+            "dry_run": True,
+            "skipped": True,
+            "skip_reason": "no_wire_eligible_packets",
+            "creates_infrastructure": False,
+            "planned_live_packet_exchange": False,
+            "live_packet_exchange": False,
+            "no_live_packets_sent": True,
+            "corpus_id": "corpus-v1-test",
+            "corpus_path": str(corpus_path),
+            "wire_provider": wire_provider,
+            "wire_exposure": wire_exposure,
+            "endpoint_roles": endpoint_roles,
+            "wire_eligible_count": 0,
+            "wire_skipped_count": 5,
+            "wire_skip_reasons": {
+                "requires_l2": 5,
+                "wire_compare_root_unavailable": 5,
+            },
+            "planned_infrastructure_if_packets_eligible": planned_infrastructure,
+            "provider_workflow_if_packets_eligible": provider_workflow,
+            "endpoint_bootstrap_if_packets_eligible": [
+                {"role": role, "purpose": "bootstrap"}
+                for role in endpoint_roles
+            ],
+        },
+    }
 
 
 def _live_report(

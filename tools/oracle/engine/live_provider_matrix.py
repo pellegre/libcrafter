@@ -57,6 +57,22 @@ def validate_live_report(
     """Return compact provider summary after validating live report metadata."""
 
     metadata = _object(report.get("metadata"), "report.metadata")
+    if (
+        dry_run
+        and report.get("status") == "skipped"
+        and metadata.get("skip_reason") == "no_wire_eligible_packets"
+    ):
+        return _validate_no_wire_eligible_dry_run_report(
+            report,
+            metadata=metadata,
+            provider=provider,
+            adapter=adapter,
+            corpus_id=corpus_id,
+            corpus_path=corpus_path,
+            report_path=report_path,
+            doctor=doctor,
+        )
+
     errors: list[str] = []
     expected_status = "dry-run" if dry_run else "passed"
     expected_roles = list(adapter.endpoint_roles)
@@ -405,7 +421,9 @@ def validate_live_report(
     if errors:
         raise MatrixValidationError(f"{report_path}: " + "; ".join(errors))
 
-    artifact_paths = _string_values(report.get("artifact_paths", report.get("artifacts", [])))
+    artifact_paths = _string_values(
+        report.get("artifact_paths", report.get("artifacts", []))
+    )
 
     return {
         "provider": provider,
@@ -454,6 +472,179 @@ def validate_live_report(
         },
         "provider_workflow": provider_workflow,
         "provider_commands": provider_commands,
+        **({"doctor": doctor} if doctor is not None else {}),
+    }
+
+
+def _validate_no_wire_eligible_dry_run_report(
+    report: Mapping[str, Any],
+    *,
+    metadata: Mapping[str, Any],
+    provider: str,
+    adapter: LiveProviderAdapter,
+    corpus_id: str,
+    corpus_path: Path,
+    report_path: Path,
+    doctor: JSONObject | None = None,
+) -> JSONObject:
+    """Validate a dry-run live report where the corpus has no wire cases."""
+
+    errors: list[str] = []
+    expected_roles = list(adapter.endpoint_roles)
+    planned_infrastructure = _object_or_error(
+        metadata.get("planned_infrastructure_if_packets_eligible"),
+        "metadata.planned_infrastructure_if_packets_eligible",
+        errors,
+    )
+    provider_workflow = _json_list(
+        metadata.get("provider_workflow_if_packets_eligible", [])
+    )
+    endpoint_bootstrap = _json_list(
+        metadata.get("endpoint_bootstrap_if_packets_eligible", [])
+    )
+
+    _expect(report.get("mode") == "live", "mode must be 'live'", errors)
+    _expect(report.get("status") == "skipped", "status must be 'skipped'", errors)
+    _expect(metadata.get("provider") == provider, "metadata.provider mismatch", errors)
+    _expect(metadata.get("dry_run") is True, "metadata.dry_run mismatch", errors)
+    _expect(
+        metadata.get("skipped") is True,
+        "metadata.skipped must be true",
+        errors,
+    )
+    _expect(
+        metadata.get("skip_reason") == "no_wire_eligible_packets",
+        "metadata.skip_reason must be no_wire_eligible_packets",
+        errors,
+    )
+    _expect(
+        metadata.get("creates_infrastructure") is False,
+        "metadata.creates_infrastructure must be false",
+        errors,
+    )
+    _expect(
+        metadata.get("no_live_packets_sent") is True,
+        "metadata.no_live_packets_sent must be true",
+        errors,
+    )
+    _expect(
+        metadata.get("planned_live_packet_exchange") is False,
+        "metadata.planned_live_packet_exchange must be false",
+        errors,
+    )
+    _expect(
+        metadata.get("live_packet_exchange") is False,
+        "metadata.live_packet_exchange must be false",
+        errors,
+    )
+    _expect(
+        metadata.get("corpus_id") == corpus_id,
+        "metadata.corpus_id must match matrix corpus",
+        errors,
+    )
+    _expect(
+        _same_path(metadata.get("corpus_path"), corpus_path),
+        "metadata.corpus_path must match matrix corpus path",
+        errors,
+    )
+    _expect(
+        metadata.get("wire_provider") == adapter.wire_provider,
+        "metadata.wire_provider mismatch",
+        errors,
+    )
+    _expect(
+        metadata.get("wire_exposure") == adapter.wire_exposure,
+        "metadata.wire_exposure mismatch",
+        errors,
+    )
+    _expect(
+        metadata.get("endpoint_roles") == expected_roles,
+        "metadata.endpoint_roles mismatch",
+        errors,
+    )
+    _expect(
+        metadata.get("wire_eligible_count") == 0,
+        "metadata.wire_eligible_count must be zero",
+        errors,
+    )
+    _expect(
+        isinstance(metadata.get("wire_skipped_count"), int),
+        "metadata.wire_skipped_count must be present",
+        errors,
+    )
+    _expect(
+        isinstance(metadata.get("wire_skip_reasons"), dict),
+        "metadata.wire_skip_reasons must be present",
+        errors,
+    )
+    _expect(
+        planned_infrastructure.get("provider") == provider,
+        "metadata.planned_infrastructure_if_packets_eligible.provider mismatch",
+        errors,
+    )
+    _expect(
+        planned_infrastructure.get("wire_provider") == adapter.wire_provider,
+        "metadata.planned_infrastructure_if_packets_eligible.wire_provider mismatch",
+        errors,
+    )
+    _expect(
+        planned_infrastructure.get("wire_exposure") == adapter.wire_exposure,
+        "metadata.planned_infrastructure_if_packets_eligible.wire_exposure mismatch",
+        errors,
+    )
+    _expect(
+        planned_infrastructure.get("dry_run") is True,
+        "metadata.planned_infrastructure_if_packets_eligible.dry_run mismatch",
+        errors,
+    )
+    _expect(
+        bool(provider_workflow),
+        "metadata.provider_workflow_if_packets_eligible must be a non-empty list",
+        errors,
+    )
+    _expect(
+        bool(endpoint_bootstrap)
+        and _roles_from_commands(endpoint_bootstrap) == set(expected_roles),
+        "metadata.endpoint_bootstrap_if_packets_eligible must cover all endpoint roles",
+        errors,
+    )
+
+    if errors:
+        raise MatrixValidationError(f"{report_path}: " + "; ".join(errors))
+
+    artifact_paths = _string_values(report.get("artifact_paths", report.get("artifacts", [])))
+
+    return {
+        "provider": provider,
+        "wire_provider": adapter.wire_provider,
+        "wire_exposure": adapter.wire_exposure,
+        "endpoint_roles": expected_roles,
+        "status": "skipped",
+        "dry_run": True,
+        "skip_reason": "no_wire_eligible_packets",
+        "report_path": str(report_path),
+        "corpus_id": corpus_id,
+        "wire_eligible_count": 0,
+        "wire_skipped_count": int(metadata["wire_skipped_count"]),
+        "wire_skip_reasons": dict(metadata["wire_skip_reasons"]),
+        "exchange_count": int(report.get("count", 0)),
+        "no_live_packets_sent": True,
+        "live_packet_exchange": False,
+        "artifact_paths": artifact_paths,
+        "lifecycle": {
+            "provider_workflow_count": len(provider_workflow),
+            "lab_provider_workflow_count": 0,
+            "endpoint_bootstrap_count": len(endpoint_bootstrap),
+            "provider_command_count": 0,
+            "command_record_count": 0,
+            "artifact_collection": {"always_attempt": False},
+            "teardown": {"always_attempt": False},
+            "wire_endpoint_lifecycle": {},
+            "endpoint_ids": [],
+            "remote_artifact_root": None,
+        },
+        "provider_workflow": provider_workflow,
+        "provider_commands": [],
         **({"doctor": doctor} if doctor is not None else {}),
     }
 
