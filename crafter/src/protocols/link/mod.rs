@@ -31,6 +31,7 @@ pub(crate) use self::dot11::decode_dot11_with_registry;
 pub use self::dot11::*;
 pub(crate) use self::llc::append_llc_snap_packet_with_registry;
 pub use self::llc::LlcSnap;
+pub(crate) use self::radiotap::decode_radiotap_with_registry;
 pub use self::radiotap::*;
 
 /// Ethernet type for IPv4 payloads.

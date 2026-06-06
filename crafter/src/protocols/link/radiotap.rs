@@ -3,9 +3,18 @@
 //! Field IDs and layout metadata follow the radiotap source entries recorded in
 //! `docs/protocols/dot11-source-manifest.md`.
 
+use core::any::Any;
+use core::ops::Div;
+
 use crate::error::{CrafterError, Result};
+use crate::field::Field;
+use crate::packet::{IntoPacket, Layer, LayerContext, Packet};
+use crate::registry::ProtocolRegistry;
+
+use super::decode_dot11_with_registry;
 
 pub(crate) const RADIOTAP_FIXED_HEADER_LEN: usize = 4;
+pub(crate) const RADIOTAP_MIN_HEADER_LEN: usize = 8;
 const RADIOTAP_PRESENT_WORD_LEN: usize = 4;
 const RADIOTAP_PRESENT_EXTENSION_BIT: u16 = 31;
 
@@ -718,9 +727,14 @@ impl RadiotapField {
 }
 
 /// Radiotap metadata preceding IEEE 802.11 frames.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Radiotap {
+    version: Field<u8>,
+    pad: Field<u8>,
+    length: Field<u16>,
+    present: Field<RadiotapPresent>,
     fields: Vec<RadiotapField>,
+    raw_fields: Vec<u8>,
 }
 
 impl Radiotap {
@@ -729,7 +743,44 @@ impl Radiotap {
     /// Radiotap fields are absent until the caller sets them or decode records
     /// them from wire bytes.
     pub fn new() -> Self {
-        Self { fields: Vec::new() }
+        Self {
+            version: Field::defaulted(0),
+            pad: Field::defaulted(0),
+            length: Field::unset(),
+            present: Field::unset(),
+            fields: Vec::new(),
+            raw_fields: Vec::new(),
+        }
+    }
+
+    /// Set the radiotap version byte.
+    pub fn version(mut self, version: u8) -> Self {
+        self.version.set_user(version);
+        self
+    }
+
+    /// Current radiotap version byte, when known.
+    pub fn version_value(&self) -> Option<u8> {
+        self.version.value().copied()
+    }
+
+    /// Set the radiotap pad byte.
+    pub fn pad(mut self, pad: u8) -> Self {
+        self.pad.set_user(pad);
+        self
+    }
+
+    /// Current radiotap pad byte, when known.
+    pub fn pad_value(&self) -> Option<u8> {
+        self.pad.value().copied()
+    }
+
+    /// Declared radiotap header length from decode, when present.
+    ///
+    /// Constructed radiotap layers compile this value from the encoded present
+    /// words, selected field bodies, and preserved raw field bytes.
+    pub fn length_value(&self) -> Option<u16> {
+        self.length.value().copied()
     }
 
     /// Stored radiotap fields in insertion order.
@@ -745,6 +796,15 @@ impl Radiotap {
     /// Stored raw unknown radiotap fields.
     pub fn unknown_fields(&self) -> impl Iterator<Item = &RadiotapUnknownField> {
         self.fields.iter().filter_map(RadiotapField::unknown_field)
+    }
+
+    /// Raw radiotap field bytes preserved after the last typed field.
+    ///
+    /// These bytes are recorded during decode when an untyped present bit makes
+    /// the remaining implicit field lengths unknowable, or when the declared
+    /// radiotap header contains trailing metadata this phase does not type.
+    pub fn raw_fields(&self) -> &[u8] {
+        &self.raw_fields
     }
 
     /// Return a stored field by present bit.
@@ -772,7 +832,11 @@ impl Radiotap {
 
     /// Present bitmap implied by stored typed and unknown fields.
     pub fn present(&self) -> Result<RadiotapPresent> {
-        RadiotapPresent::from_field_bits(self.typed_field_bits(), self.unknown_field_bits())
+        if let Some(present) = self.present.value() {
+            Ok(present.clone())
+        } else {
+            self.inferred_present()
+        }
     }
 
     /// Present bits for typed fields.
@@ -1087,7 +1151,7 @@ impl Radiotap {
             offset += field.size();
         }
 
-        offset - fields_offset_from_header_start
+        offset - fields_offset_from_header_start + self.raw_fields.len()
     }
 
     pub(crate) fn compile_fields_from_offset(
@@ -1105,6 +1169,8 @@ impl Radiotap {
             field.encode_body(out);
             offset += field.size();
         }
+
+        out.extend_from_slice(&self.raw_fields);
 
         out.len() - initial_len
     }
@@ -1138,6 +1204,211 @@ impl Radiotap {
 
         Ok((fields, offset))
     }
+
+    fn inferred_present(&self) -> Result<RadiotapPresent> {
+        RadiotapPresent::from_field_bits(self.typed_field_bits(), self.unknown_field_bits())
+    }
+
+    fn effective_version(&self) -> u8 {
+        self.version.value().copied().unwrap_or(0)
+    }
+
+    fn effective_pad(&self) -> u8 {
+        self.pad.value().copied().unwrap_or(0)
+    }
+
+    fn header_len_with_present(&self, present: &RadiotapPresent) -> usize {
+        let fields_offset = RADIOTAP_FIXED_HEADER_LEN + present.encoded_len();
+        RADIOTAP_FIXED_HEADER_LEN
+            + present.encoded_len()
+            + self.encoded_fields_len_from_offset(fields_offset)
+    }
+
+    fn compiled_header_len(&self) -> Result<u16> {
+        let present = self.present()?;
+        let header_len = self.header_len_with_present(&present);
+        u16::try_from(header_len).map_err(|_| {
+            CrafterError::invalid_field_value(
+                "radiotap.length",
+                "encoded radiotap header exceeds u16 length",
+            )
+        })
+    }
+}
+
+impl Default for Radiotap {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Layer for Radiotap {
+    fn name(&self) -> &'static str {
+        "Radiotap"
+    }
+
+    fn summary(&self) -> String {
+        let present = self
+            .present()
+            .expect("radiotap field bits are validated before storage");
+        let length = self
+            .compiled_header_len()
+            .map(usize::from)
+            .unwrap_or_else(|_| self.header_len_with_present(&present));
+        let mut fields = vec![
+            format!("version={}", self.effective_version()),
+            format!("len={length}"),
+            format!("present={}", radiotap_present_summary(&present)),
+            format!("fields={}", self.fields.len()),
+        ];
+
+        if !self.raw_fields.is_empty() {
+            fields.push(format!("raw_fields_len={}", self.raw_fields.len()));
+        }
+        if let Some(fcs) = self.fcs_status() {
+            fields.push(format!("fcs_present={}", fcs.present()));
+            fields.push(format!("failed_fcs={}", fcs.failed()));
+        }
+
+        format!("Radiotap({})", fields.join(", "))
+    }
+
+    fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        let present = self
+            .present()
+            .expect("radiotap field bits are validated before storage");
+        let length = self
+            .compiled_header_len()
+            .map(usize::from)
+            .unwrap_or_else(|_| self.header_len_with_present(&present));
+        let mut fields = vec![
+            ("version", self.effective_version().to_string()),
+            ("pad", format!("0x{:02x}", self.effective_pad())),
+            ("length", length.to_string()),
+            ("present", radiotap_present_summary(&present)),
+            ("field_count", self.fields.len().to_string()),
+        ];
+
+        for field in self.fields_in_present_order() {
+            fields.push((field.inspection_name(), field.inspection_value()));
+        }
+
+        if !self.raw_fields.is_empty() {
+            fields.push(("raw_fields_len", self.raw_fields.len().to_string()));
+            fields.push(("raw_fields", radiotap_hex_bytes(&self.raw_fields)));
+        }
+        if let Some(fcs) = self.fcs_status() {
+            fields.push(("fcs_present", fcs.present().to_string()));
+            fields.push(("failed_fcs", fcs.failed().to_string()));
+        }
+
+        fields
+    }
+
+    fn encoded_len(&self) -> usize {
+        let present = self
+            .present()
+            .expect("radiotap field bits are validated before storage");
+        self.header_len_with_present(&present)
+    }
+
+    fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
+        let present = self.present()?;
+        let length = self.compiled_header_len()?;
+        let fields_offset = RADIOTAP_FIXED_HEADER_LEN + present.encoded_len();
+
+        out.push(self.effective_version());
+        out.push(self.effective_pad());
+        out.extend_from_slice(&length.to_le_bytes());
+        present.encode(out);
+        self.compile_fields_from_offset(fields_offset, out);
+        Ok(())
+    }
+
+    fn clone_layer(&self) -> Box<dyn Layer> {
+        Box::new(self.clone())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn into_any(self: Box<Self>) -> Box<dyn Any> {
+        self
+    }
+}
+
+impl<R> Div<R> for Radiotap
+where
+    R: IntoPacket,
+{
+    type Output = Packet;
+
+    fn div(self, rhs: R) -> Self::Output {
+        Packet::from_layer(self).concat(rhs)
+    }
+}
+
+/// Decode radiotap metadata followed by an IEEE 802.11 MAC frame.
+pub(crate) fn decode_radiotap_with_registry(
+    registry: &ProtocolRegistry,
+    bytes: &[u8],
+) -> Result<Packet> {
+    let (radiotap, tail) = decode_radiotap(bytes)?;
+    let packet = Packet::new().push(radiotap);
+
+    if tail.is_empty() {
+        Ok(packet)
+    } else {
+        decode_dot11_with_registry(registry, tail).map(|dot11| packet.concat(dot11))
+    }
+}
+
+fn decode_radiotap(bytes: &[u8]) -> Result<(Radiotap, &[u8])> {
+    if bytes.len() < RADIOTAP_FIXED_HEADER_LEN {
+        return Err(CrafterError::buffer_too_short(
+            "radiotap.header",
+            RADIOTAP_FIXED_HEADER_LEN,
+            bytes.len(),
+        ));
+    }
+
+    let declared_len = u16::from_le_bytes([bytes[2], bytes[3]]);
+    let header_len = usize::from(declared_len);
+    if header_len < RADIOTAP_MIN_HEADER_LEN {
+        return Err(CrafterError::buffer_too_short(
+            "radiotap.header",
+            RADIOTAP_MIN_HEADER_LEN,
+            header_len,
+        ));
+    }
+    if bytes.len() < header_len {
+        return Err(CrafterError::buffer_too_short(
+            "radiotap.header",
+            header_len,
+            bytes.len(),
+        ));
+    }
+
+    let header = &bytes[..header_len];
+    let (present, present_len) = RadiotapPresent::decode(&header[RADIOTAP_FIXED_HEADER_LEN..])?;
+    let fields_offset = RADIOTAP_FIXED_HEADER_LEN + present_len;
+    let (fields, consumed) = Radiotap::decode_fields_from_header(&present, header, fields_offset)?;
+
+    let radiotap = Radiotap {
+        version: Field::user(bytes[0]),
+        pad: Field::user(bytes[1]),
+        length: Field::user(declared_len),
+        present: Field::user(present),
+        fields,
+        raw_fields: header[consumed..].to_vec(),
+    };
+
+    Ok((radiotap, &bytes[header_len..]))
 }
 
 pub(crate) fn decode_radiotap_field(bit: u16, bytes: &[u8]) -> Result<RadiotapField> {
@@ -1226,9 +1497,97 @@ pub(crate) fn decode_radiotap_field(bit: u16, bytes: &[u8]) -> Result<RadiotapFi
     Ok(field)
 }
 
+impl RadiotapField {
+    fn inspection_name(&self) -> &'static str {
+        match self {
+            Self::Tsft(_) => "tsft",
+            Self::Flags(_) => "flags",
+            Self::Rate(_) => "rate_500kbps",
+            Self::Channel(_) => "channel",
+            Self::Fhss(_) => "fhss",
+            Self::AntennaSignal(_) => "antenna_signal_dbm",
+            Self::AntennaNoise(_) => "antenna_noise_dbm",
+            Self::LockQuality(_) => "lock_quality",
+            Self::TxAttenuation(_) => "tx_attenuation",
+            Self::DbTxAttenuation(_) => "db_tx_attenuation",
+            Self::DbmTxPower(_) => "dbm_tx_power_dbm",
+            Self::Antenna(_) => "antenna",
+            Self::RxFlags(_) => "rx_flags",
+            Self::TxFlags(_) => "tx_flags",
+            Self::RtsRetries(_) => "rts_retries",
+            Self::DataRetries(_) => "data_retries",
+            Self::Mcs(_) => "mcs",
+            Self::AMpduStatus(_) => "a_mpdu_status",
+            Self::Vht(_) => "vht",
+            Self::Unknown(_) => "unknown_field",
+        }
+    }
+
+    fn inspection_value(&self) -> String {
+        match self {
+            Self::Tsft(value) => value.to_string(),
+            Self::Flags(value) => format!("0x{:02x}", value.bits()),
+            Self::Rate(value) => value.to_string(),
+            Self::Channel(value) => {
+                format!(
+                    "frequency={}, flags=0x{:04x}",
+                    value.frequency(),
+                    value.flags()
+                )
+            }
+            Self::Fhss(value) => radiotap_hex_bytes(value),
+            Self::AntennaSignal(value) => value.to_string(),
+            Self::AntennaNoise(value) => value.to_string(),
+            Self::LockQuality(value) => value.to_string(),
+            Self::TxAttenuation(value) => value.to_string(),
+            Self::DbTxAttenuation(value) => value.to_string(),
+            Self::DbmTxPower(value) => value.to_string(),
+            Self::Antenna(value) => value.to_string(),
+            Self::RxFlags(value) => format!("0x{:04x}", value.bits()),
+            Self::TxFlags(value) => format!("0x{:04x}", value.bits()),
+            Self::RtsRetries(value) => value.to_string(),
+            Self::DataRetries(value) => value.to_string(),
+            Self::Mcs(value) => radiotap_hex_bytes(value),
+            Self::AMpduStatus(value) => radiotap_hex_bytes(value),
+            Self::Vht(value) => radiotap_hex_bytes(value),
+            Self::Unknown(value) => format!(
+                "bit={}, align={}, bytes={}",
+                value.present_bit(),
+                value.alignment(),
+                radiotap_hex_bytes(value.raw_bytes())
+            ),
+        }
+    }
+}
+
+fn radiotap_present_summary(present: &RadiotapPresent) -> String {
+    present
+        .words()
+        .iter()
+        .map(|word| format!("0x{word:08x}"))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn radiotap_hex_bytes(bytes: &[u8]) -> String {
+    let mut output = String::new();
+
+    for (index, byte) in bytes.iter().enumerate() {
+        if index > 0 {
+            output.push(' ');
+        }
+        output.push_str(&format!("{byte:02x}"));
+    }
+
+    output
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mac::MacAddr;
+    use crate::packet::{LinkType, Raw};
+    use crate::protocols::link::Dot11;
 
     #[test]
     fn radiotap_present_bitmap_decodes_single_word_and_reencodes_little_endian() {
@@ -1700,5 +2059,89 @@ mod tests {
                 "alignment must be at least one octet",
             )
         );
+    }
+
+    #[test]
+    fn radiotap_layer_compile_computes_length_present_and_inspection() {
+        let packet = Radiotap::new()
+            .flags(RADIOTAP_FLAGS_FCS_PRESENT)
+            .rate(12)
+            .channel((2412, 0x00a0))
+            / Raw::from([0xaa, 0xbb]);
+        let radiotap = packet.layer::<Radiotap>().unwrap();
+
+        assert_eq!(radiotap.encoded_len(), 14);
+        assert_eq!(radiotap.version_value(), Some(0));
+        assert_eq!(radiotap.pad_value(), Some(0));
+        assert_eq!(radiotap.length_value(), None);
+        assert_eq!(
+            radiotap.fcs_status(),
+            Some(RadiotapFcsStatus::new(true, false))
+        );
+        assert_eq!(
+            radiotap.present().unwrap().words(),
+            &[RADIOTAP_PRESENT_FLAGS | RADIOTAP_PRESENT_RATE | RADIOTAP_PRESENT_CHANNEL]
+        );
+
+        let compiled = packet.compile().unwrap();
+
+        assert_eq!(
+            compiled.as_bytes(),
+            &[
+                0x00, 0x00, 0x0e, 0x00, // version, pad, it_len
+                0x0e, 0x00, 0x00, 0x00, // present: Flags, Rate, Channel
+                0x10, 0x0c, // Flags and Rate
+                0x6c, 0x09, 0xa0, 0x00, // Channel
+                0xaa, 0xbb,
+            ]
+        );
+        assert!(packet.summary().contains("Radiotap("));
+        assert!(packet.show().contains("fcs_present: true"));
+    }
+
+    #[test]
+    fn radiotap_layer_decode_dispatches_dot11_and_round_trips() {
+        let dot11 = Dot11::data()
+            .addr1(MacAddr::new([0x02, 0x00, 0x00, 0x00, 0x00, 0x01]))
+            .addr2(MacAddr::new([0x02, 0x00, 0x00, 0x00, 0x00, 0x02]))
+            .addr3(MacAddr::new([0x02, 0x00, 0x00, 0x00, 0x00, 0x03]))
+            .sequence_number(7);
+        let dot11_bytes = Packet::from_layer(dot11).compile().unwrap();
+        let mut bytes = vec![
+            0x00, 0x00, 0x0a, 0x00, // version, pad, it_len
+            0x06, 0x00, 0x00, 0x00, // present: Flags, Rate
+            0x50, 0x16,
+        ];
+        bytes.extend_from_slice(dot11_bytes.as_bytes());
+
+        let decoded = Packet::decode_from_link(LinkType::Radiotap, &bytes).unwrap();
+        let radiotap = decoded.layer::<Radiotap>().unwrap();
+
+        assert_eq!(radiotap.length_value(), Some(10));
+        assert_eq!(radiotap.flags_value(), Some(RadiotapFlags::from_bits(0x50)));
+        assert_eq!(
+            radiotap.fcs_status(),
+            Some(RadiotapFcsStatus::new(true, true))
+        );
+        assert_eq!(radiotap.rate_value(), Some(0x16));
+        assert!(radiotap.raw_fields().is_empty());
+        assert!(decoded.layer::<Dot11>().is_some());
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_slice());
+    }
+
+    #[test]
+    fn radiotap_layer_decode_preserves_unknown_header_tail() {
+        let bytes = [
+            0x00, 0x00, 0x0c, 0x00, // version, pad, it_len
+            0x00, 0x00, 0x00, 0x20, // present: untyped bit 29
+            0xde, 0xad, 0xbe, 0xef,
+        ];
+
+        let decoded = Packet::decode_from_link(LinkType::Radiotap, bytes).unwrap();
+        let radiotap = decoded.layer::<Radiotap>().unwrap();
+
+        assert_eq!(radiotap.present().unwrap().words(), &[0x2000_0000]);
+        assert_eq!(radiotap.raw_fields(), &[0xde, 0xad, 0xbe, 0xef]);
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_slice());
     }
 }
