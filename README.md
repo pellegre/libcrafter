@@ -112,10 +112,12 @@ traffic only in networks where you are authorized to send and capture packets.
 
 ## Agent-Directed Endpoint Workflows
 
-Endpoint tooling lives under `tools/endpoint`, `tools/oracle`, and `tools/probe`.
-Together they let an agent provision a disposable network position, transfer
-adapters, run packet work from it, collect artifacts, and destroy the
-underlying provider resources when the run is done.
+Endpoint provider workflows live under `tools/endpoint`, `tools/oracle`, and
+`tools/probe`. Together they let an agent provision a disposable network
+position, transfer adapters, run packet work from it, collect artifacts, and
+destroy the underlying provider resources when the run is done. Provider setup,
+credentials, artifacts, and cleanup are covered in
+[docs/endpoint.md](docs/endpoint.md).
 
 The endpoint lifecycle is the easy part to describe; what matters is what an
 endpoint *is*. An endpoint is a clean place from which an agent can generate
@@ -133,8 +135,9 @@ tools/oracle/run live --provider hetzner --dry-run --profile smoke --seed 1 --co
 tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10
 ```
 
-Hetzner is the current provider-backed endpoint implementation. QEMU and
-VirtualBox providers are not part of version 2.0.0.
+The endpoint provider layer is separate from the crate-level packet wire API:
+`tools/endpoint/run` manages provider lifecycle, while future Rust packet I/O
+will live under `crafter::wire`.
 
 ## Crate And Modules
 
@@ -144,6 +147,7 @@ VirtualBox providers are not part of version 2.0.0.
 | `crafter::core` | Packet model, layer composition, encode/decode, checksums, protocol registry, formatting. |
 | `crafter::pcap` | Classic pcap read/write, libpcap BPF filters, offline sniffing, bounded live capture hooks. |
 | `crafter::net` | Interface helpers, raw send planning, live send backends, send/receive matching, batch workflows. |
+| `crafter::wire` | Reserved for the future crate-level packet I/O API: packet wires, sources, writers, sniffers, transmitters, and transforms. |
 
 ## Protocol Coverage
 
