@@ -304,6 +304,47 @@ mod send_plan {
     }
 
     #[test]
+    fn radiotap_live_send_gate_rejects_live_send_without_interface_lookup() {
+        let packet = radiotap_dot11_packet();
+        let error = SocketSender::new(SendOptions::new().iface("missing-crafter-wifi0"))
+            .send(&packet)
+            .unwrap_err();
+
+        match error {
+            NetError::UnsupportedSendTarget { target, reason } => {
+                assert_eq!(
+                    target,
+                    SendTarget::LinkLayer {
+                        link_type: crate::LinkType::Radiotap
+                    }
+                );
+                assert!(reason.contains("live radiotap Wi-Fi injection is not implemented"));
+                assert!(reason.contains("dry-run"));
+                assert!(reason.contains("monitor-mode radiotap backend"));
+            }
+            other => panic!("expected unsupported radiotap live send target, got {other}"),
+        }
+    }
+
+    #[test]
+    fn radiotap_live_send_gate_preserves_dry_run_report() {
+        let packet = radiotap_dot11_packet();
+        let report = SocketSender::new(SendOptions::new().iface("wifi-dryrun0").dry_run())
+            .send(&packet)
+            .unwrap();
+
+        assert!(report.is_dry_run());
+        assert_eq!(report.bytes_sent(), report.plan().len());
+        assert_eq!(
+            report.plan().target(),
+            SendTarget::LinkLayer {
+                link_type: crate::LinkType::Radiotap
+            }
+        );
+        assert_eq!(report.plan().bytes()[..8], [0, 0, 8, 0, 0, 0, 0, 0]);
+    }
+
+    #[test]
     fn send_plan_supports_ipv6_dry_run() {
         let packet = Ipv6::new()
             .src(Ipv6Addr::LOCALHOST)
