@@ -85,6 +85,47 @@ any backend flag from dry-run to live. Keep the synthetic payload recognizable
 and non-sensitive so captures, when intentionally taken, are easy to identify
 and discard.
 
+## Monitor-Mode Capture
+
+Capture uses the wire pcap backend, not the raw socket sender. Create the
+monitor-mode interface outside libcrafter, pin it to the authorized test
+channel, and open it with `PacketWire::pcap_interface`:
+
+```rust
+use crafter::prelude::*;
+
+fn main() -> crafter::Result<()> {
+    let monitor_iface = "wlan0mon";
+
+    let source = PacketWire::pcap_interface(monitor_iface)
+        .filter("type mgt or type data")
+        .open()?
+        .source()?;
+
+    let records = Sniffer::new(source)
+        .with(Dot11Metadata::new())
+        .count(10)
+        .collect_records()?;
+
+    for record in records {
+        println!("{}", record.packet().summary());
+        println!("{:?}", record.metadata().wifi());
+    }
+
+    Ok(())
+}
+```
+
+This is a live monitor-mode pcap source. Use it only in an authorized isolated
+RF environment, and do not commit captures or identifiers from real networks.
+`Dot11Metadata` is a `PacketTransform` that adds best-effort Wi-Fi annotations
+without decrypting frames or changing live gates.
+
+A future `Wpa2PskDecryptor` belongs as the next inbound `PacketTransform` after
+`Dot11Metadata`, followed by any IP/TCP or application transforms. This manual
+page intentionally does not define secret handling or implement WPA
+decryption.
+
 ## Manual Live Gates
 
 Any future manual dongle runner or backend must keep live transmission behind

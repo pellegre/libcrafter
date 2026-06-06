@@ -263,6 +263,45 @@ Keep pcap fixtures synthetic and deterministic. Do not add packet captures from
 real networks, public BSSIDs, public IPs, credentials, or sensitive traffic to
 tracked files.
 
+## Monitor-Mode Capture Through Wire
+
+For live capture on a Wi-Fi dongle, create and configure the monitor-mode
+interface outside `crafter`, then open it as a pcap-backed packet source:
+
+```rust
+use crafter::prelude::*;
+
+let source = PacketWire::pcap_interface("wlan0mon")
+    .filter("type mgt or type data")
+    .open()?
+    .source()?;
+
+let mut sniffer = Sniffer::new(source)
+    .with(Dot11Metadata::new())
+    .count(25);
+
+while let Some(record) = sniffer.next_record()? {
+    println!("{}", record.packet().summary());
+    if let Some(wifi) = record.metadata().wifi() {
+        println!("wifi metadata: {:?}", wifi);
+    }
+}
+# Ok::<(), crafter::CrafterError>(())
+```
+
+`PacketWire::pcap_interface` is the live libpcap interface backend. When the
+interface is a monitor-mode Wi-Fi device, the records are still ordinary
+`PacketRecord` values whose packets decode as radiotap or bare Dot11 depending
+on the data-link type reported by pcap.
+
+`Dot11Metadata` is an inbound `PacketTransform` that annotates the record with
+best-effort Wi-Fi metadata and then passes the same packet onward. It does not
+decrypt protected data frames. A future `Wpa2PskDecryptor` would fit after
+`Dot11Metadata` in the `Sniffer` transform chain, before later IPv4/IPv6
+fragment, TCP stream, or application transforms. That future transform placement
+does not change the `Sniffer` contract: every emitted item is still a
+`PacketRecord` with a packet and metadata.
+
 ## Live Testing Boundary
 
 Offline construction, decode, fixtures, pcap round trips, and oracle validation
