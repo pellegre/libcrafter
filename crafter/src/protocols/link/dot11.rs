@@ -838,6 +838,111 @@ impl Dot11FrameControl {
     }
 }
 
+/// IEEE 802.11 sequence-control field.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct Dot11SequenceControl {
+    bits: u16,
+}
+
+impl Dot11SequenceControl {
+    /// Create an empty sequence-control word.
+    pub const fn new() -> Self {
+        Self { bits: 0 }
+    }
+
+    /// Create a sequence-control value from its raw host-endian bit word.
+    pub const fn from_bits(bits: u16) -> Self {
+        Self { bits }
+    }
+
+    /// Decode a sequence-control field from exactly two little-endian wire bytes.
+    pub const fn from_le_bytes(bytes: [u8; DOT11_SEQUENCE_CONTROL_LEN]) -> Self {
+        Self {
+            bits: (bytes[0] as u16) | ((bytes[1] as u16) << 8),
+        }
+    }
+
+    /// Decode a sequence-control field from a byte slice.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> crate::Result<Self> {
+        let bytes = bytes.as_ref();
+        if bytes.len() < DOT11_SEQUENCE_CONTROL_LEN {
+            return Err(crate::CrafterError::buffer_too_short(
+                "dot11.sequence_control",
+                DOT11_SEQUENCE_CONTROL_LEN,
+                bytes.len(),
+            ));
+        }
+
+        Ok(Self::from_le_bytes([bytes[0], bytes[1]]))
+    }
+
+    /// Return the raw host-endian sequence-control bit word.
+    pub const fn bits(&self) -> u16 {
+        self.bits
+    }
+
+    /// Set the raw host-endian sequence-control bit word.
+    pub const fn raw(mut self, bits: u16) -> Self {
+        self.bits = bits;
+        self
+    }
+
+    /// Compile the sequence-control field to little-endian wire bytes.
+    pub const fn to_le_bytes(self) -> [u8; DOT11_SEQUENCE_CONTROL_LEN] {
+        [(self.bits & 0x00ff) as u8, (self.bits >> 8) as u8]
+    }
+
+    /// Compile the sequence-control field to little-endian wire bytes.
+    pub const fn compile(self) -> [u8; DOT11_SEQUENCE_CONTROL_LEN] {
+        self.to_le_bytes()
+    }
+
+    /// Fragment number subfield.
+    pub const fn fragment_number(&self) -> u8 {
+        ((self.bits & DOT11_SEQUENCE_FRAGMENT_NUMBER_MASK) >> DOT11_SEQUENCE_FRAGMENT_NUMBER_SHIFT)
+            as u8
+    }
+
+    /// Sequence number subfield.
+    pub const fn sequence_number(&self) -> u16 {
+        (self.bits & DOT11_SEQUENCE_NUMBER_MASK) >> DOT11_SEQUENCE_NUMBER_SHIFT
+    }
+
+    /// Set the four-bit fragment-number subfield.
+    ///
+    /// Only the low four bits of `fragment_number` are representable in the
+    /// sequence-control word. Use [`Self::raw`] to set an exact 16-bit word.
+    pub const fn fragment_number_set(mut self, fragment_number: u8) -> Self {
+        self.bits = set_subfield(
+            self.bits,
+            DOT11_SEQUENCE_FRAGMENT_NUMBER_MASK,
+            DOT11_SEQUENCE_FRAGMENT_NUMBER_SHIFT,
+            fragment_number,
+        );
+        self
+    }
+
+    /// Builder alias for [`Self::fragment_number_set`].
+    pub const fn with_fragment_number(self, fragment_number: u8) -> Self {
+        self.fragment_number_set(fragment_number)
+    }
+
+    /// Set the twelve-bit sequence-number subfield.
+    ///
+    /// Only the low twelve bits of `sequence_number` are representable in the
+    /// sequence-control word. Use [`Self::raw`] to set an exact 16-bit word.
+    pub const fn sequence_number_set(mut self, sequence_number: u16) -> Self {
+        self.bits = (self.bits & !DOT11_SEQUENCE_NUMBER_MASK)
+            | ((sequence_number << DOT11_SEQUENCE_NUMBER_SHIFT) & DOT11_SEQUENCE_NUMBER_MASK);
+        self
+    }
+
+    /// Builder alias for [`Self::sequence_number_set`].
+    pub const fn with_sequence_number(self, sequence_number: u16) -> Self {
+        self.sequence_number_set(sequence_number)
+    }
+}
+
 const fn set_subfield(bits: u16, mask: u16, shift: u8, value: u8) -> u16 {
     (bits & !mask) | (((value as u16) << shift) & mask)
 }
@@ -1240,6 +1345,89 @@ mod tests {
 
         assert_eq!(frame_control.bits(), 0xa55a);
         assert_eq!(frame_control.compile(), [0x5a, 0xa5]);
+    }
+
+    #[test]
+    fn dot11_sequence_control_little_endian_decode_and_compile_round_trip() {
+        let sequence_control = Dot11SequenceControl::from_le_bytes([0x7b, 0x12]);
+
+        assert_eq!(sequence_control.bits(), 0x127b);
+        assert_eq!(sequence_control.fragment_number(), 0x0b);
+        assert_eq!(sequence_control.sequence_number(), 0x127);
+        assert_eq!(sequence_control.to_le_bytes(), [0x7b, 0x12]);
+        assert_eq!(sequence_control.compile(), [0x7b, 0x12]);
+    }
+
+    #[test]
+    fn dot11_sequence_control_decode_short_buffer_returns_structured_error() {
+        let err = Dot11SequenceControl::decode([0x10]).unwrap_err();
+
+        assert_eq!(
+            err,
+            crate::CrafterError::buffer_too_short("dot11.sequence_control", 2, 1)
+        );
+    }
+
+    #[test]
+    fn dot11_sequence_control_accessors_read_boundary_values() {
+        let empty = Dot11SequenceControl::new();
+
+        assert_eq!(empty.bits(), 0);
+        assert_eq!(empty.fragment_number(), 0);
+        assert_eq!(empty.sequence_number(), 0);
+
+        let max = Dot11SequenceControl::from_bits(0xffff);
+
+        assert_eq!(max.fragment_number(), 15);
+        assert_eq!(max.sequence_number(), 4095);
+        assert_eq!(max.to_le_bytes(), [0xff, 0xff]);
+    }
+
+    #[test]
+    fn dot11_sequence_control_builder_setters_set_boundary_values() {
+        let sequence_control = Dot11SequenceControl::new()
+            .fragment_number_set(15)
+            .sequence_number_set(4095);
+
+        assert_eq!(sequence_control.bits(), 0xffff);
+        assert_eq!(sequence_control.fragment_number(), 15);
+        assert_eq!(sequence_control.sequence_number(), 4095);
+        assert_eq!(sequence_control.compile(), [0xff, 0xff]);
+    }
+
+    #[test]
+    fn dot11_sequence_control_builder_setters_preserve_unrelated_bits() {
+        let sequence_control = Dot11SequenceControl::from_bits(0xffff)
+            .fragment_number_set(0)
+            .sequence_number_set(0x123);
+
+        assert_eq!(sequence_control.bits(), 0x1230);
+        assert_eq!(sequence_control.fragment_number(), 0);
+        assert_eq!(sequence_control.sequence_number(), 0x123);
+    }
+
+    #[test]
+    fn dot11_sequence_control_width_limited_setters_mask_to_wire_subfields() {
+        let sequence_control = Dot11SequenceControl::new()
+            .with_fragment_number(0xff)
+            .with_sequence_number(0xffff);
+
+        assert_eq!(sequence_control.fragment_number(), 15);
+        assert_eq!(sequence_control.sequence_number(), 4095);
+        assert_eq!(
+            sequence_control.bits(),
+            DOT11_SEQUENCE_FRAGMENT_NUMBER_MASK | DOT11_SEQUENCE_NUMBER_MASK
+        );
+    }
+
+    #[test]
+    fn dot11_sequence_control_raw_builder_preserves_exact_word() {
+        let sequence_control = Dot11SequenceControl::new().raw(0xa55a);
+
+        assert_eq!(sequence_control.bits(), 0xa55a);
+        assert_eq!(sequence_control.fragment_number(), 0x0a);
+        assert_eq!(sequence_control.sequence_number(), 0xa55);
+        assert_eq!(sequence_control.compile(), [0x5a, 0xa5]);
     }
 
     #[test]
