@@ -174,7 +174,7 @@ def docker_default_provider_capabilities(
             "provider_mac_known": {
                 "status": "planned" if dry_run else "default",
                 "value": True,
-                "reason": "wire endpoint manifests record Docker private interface MACs before packet exchange",
+                "reason": "endpoint manifests record Docker private interface MACs before packet exchange",
             },
             "controlled_services": {
                 "status": "planned" if dry_run else "default",
@@ -583,7 +583,7 @@ class DockerLabProviderAdapter:
         client: endpoint_client.EndpointClient | None = None,
         created_endpoint_ids: list[str] | None = None,
     ) -> JSONObject:
-        """Plan or create Docker wire endpoints for all request roles."""
+        """Plan or create Docker endpoints for all request roles."""
 
         planned_request = _request_with_planned_roles(request)
         validation = self.validate_request(planned_request)
@@ -656,7 +656,7 @@ class DockerLabProviderAdapter:
         peer_roles: Sequence[LabRole] = (),
         request: LabRequest,
     ) -> LabEndpoint:
-        """Convert a wire manifest into a provider-neutral endpoint."""
+        """Convert an endpoint manifest into a provider-neutral endpoint."""
 
         private_group = self.private_group(request)
         private_network = docker_private_network_metadata(private_group)
@@ -956,7 +956,7 @@ def _response_manifest(response: object) -> EndpointManifest:
         value = metadata()
         if isinstance(value, Mapping):
             return EndpointManifest.from_dict(json_object(value, "wire_manifest"))
-    raise ValueError("wire create response did not include an endpoint manifest")
+    raise ValueError("endpoint create response did not include an endpoint manifest")
 
 
 def _response_json(response: object, manifest: EndpointManifest) -> JSONObject:

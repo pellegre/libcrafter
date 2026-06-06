@@ -185,10 +185,10 @@ class _FakeEndpointClient:
         provider: str,
         exposure: str,
         dry_run: bool,
-    ) -> "_FakeWireResponse":
+    ) -> "_FakeEndpointResponse":
         call = {"provider": provider, "exposure": exposure, "dry_run": dry_run}
         self.doctor_calls.append(call)
-        return _FakeWireResponse(
+        return _FakeEndpointResponse(
             operation="doctor",
             provider=provider,
             exposure=exposure,
@@ -215,7 +215,7 @@ class _FakeEndpointClient:
         dry_run: bool,
         write_manifest: bool,
         confirm_live_run: bool,
-    ) -> "_FakeWireResponse":
+    ) -> "_FakeEndpointResponse":
         call = {
             "provider": provider,
             "exposure": exposure,
@@ -234,7 +234,7 @@ class _FakeEndpointClient:
             private_group=private_group,
             private_ip=private_ip,
         )
-        return _FakeWireResponse(
+        return _FakeEndpointResponse(
             operation="create",
             provider=provider,
             exposure=exposure,
@@ -245,7 +245,7 @@ class _FakeEndpointClient:
         )
 
 
-class _FakeWireResponse:
+class _FakeEndpointResponse:
     def __init__(
         self,
         *,
@@ -286,7 +286,7 @@ class _FakeWireResponse:
         if self.operation == "create" and (role or self.role):
             argv.extend(["--role", role or self.role or "role"])
         return LabCommandPlan(
-            purpose=purpose or f"wire {self.operation}",
+            purpose=purpose or f"endpoint {self.operation}",
             role=role,
             argv=argv,
             operation=f"endpoint.{self.operation}",

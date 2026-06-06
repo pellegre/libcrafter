@@ -172,7 +172,7 @@ class LabRequest(JsonModel):
 
 @dataclass(frozen=True, slots=True)
 class LabEndpoint(JsonModel):
-    """Normalized wire endpoint selected for one lab role."""
+    """Normalized endpoint selected for one lab role."""
 
     endpoint_id: str
     role: str

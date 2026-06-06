@@ -155,7 +155,7 @@ def virtualbox_default_provider_capabilities(
             "provider_mac_known": {
                 "status": "planned" if dry_run else "manifest_required",
                 "value": True,
-                "reason": "wire endpoint manifests record private interface MACs before packet exchange",
+                "reason": "endpoint manifests record private interface MACs before packet exchange",
             },
             "controlled_services": {
                 "status": "planned" if dry_run else "default",
@@ -556,7 +556,7 @@ class VirtualBoxLabProviderAdapter:
         client: endpoint_client.EndpointClient | None = None,
         created_endpoint_ids: list[str] | None = None,
     ) -> JSONObject:
-        """Plan or create VirtualBox wire endpoints for all request roles."""
+        """Plan or create VirtualBox endpoints for all request roles."""
 
         planned_request = _request_with_planned_roles(request)
         validation = self.validate_request(planned_request)
@@ -625,7 +625,7 @@ class VirtualBoxLabProviderAdapter:
         peer_roles: Sequence[LabRole] = (),
         request: LabRequest,
     ) -> LabEndpoint:
-        """Convert a wire manifest into a provider-neutral endpoint."""
+        """Convert an endpoint manifest into a provider-neutral endpoint."""
 
         return lab_endpoint_from_manifest(
             manifest,
@@ -880,7 +880,7 @@ def _response_manifest(response: object) -> EndpointManifest:
         value = metadata()
         if isinstance(value, Mapping):
             return EndpointManifest.from_dict(json_object(value, "wire_manifest"))
-    raise ValueError("wire create response did not include an endpoint manifest")
+    raise ValueError("endpoint create response did not include an endpoint manifest")
 
 
 def _response_json(response: object, manifest: EndpointManifest) -> JSONObject:

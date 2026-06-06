@@ -217,7 +217,7 @@ class _FakeEndpointClient:
         dry_run: bool,
         write_manifest: bool,
         confirm_live_run: bool,
-    ) -> "_FakeWireCreateResponse":
+    ) -> "_FakeEndpointCreateResponse":
         call = {
             "provider": provider,
             "exposure": exposure,
@@ -235,10 +235,10 @@ class _FakeEndpointClient:
             private_ip=private_ip,
             dry_run=dry_run,
         )
-        return _FakeWireCreateResponse(manifest=manifest, call=call)
+        return _FakeEndpointCreateResponse(manifest=manifest, call=call)
 
 
-class _FakeWireCreateResponse:
+class _FakeEndpointCreateResponse:
     def __init__(self, *, manifest: EndpointManifest, call: dict[str, object]) -> None:
         self.manifest = manifest
         self.json_data = manifest.to_dict()
@@ -269,7 +269,7 @@ class _FakeWireCreateResponse:
         if self.call["dry_run"]:
             argv.append("--dry-run")
         return LabCommandPlan(
-            purpose=purpose or "wire create",
+            purpose=purpose or "endpoint create",
             role=role,
             argv=argv,
             operation="endpoint.create",

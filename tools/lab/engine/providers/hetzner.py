@@ -537,7 +537,7 @@ class HetznerLabProviderAdapter:
         client: endpoint_client.EndpointClient | None = None,
         created_endpoint_ids: list[str] | None = None,
     ) -> JSONObject:
-        """Plan or create Hetzner wire endpoints for all request roles."""
+        """Plan or create Hetzner endpoints for all request roles."""
 
         planned_request = _request_with_planned_roles(request)
         validation = self.validate_request(planned_request)
@@ -606,7 +606,7 @@ class HetznerLabProviderAdapter:
         peer_roles: Sequence[LabRole] = (),
         request: LabRequest,
     ) -> LabEndpoint:
-        """Convert a wire manifest into a provider-neutral endpoint."""
+        """Convert an endpoint manifest into a provider-neutral endpoint."""
 
         private_group = self.private_group(request)
         return lab_endpoint_from_manifest(
@@ -840,7 +840,7 @@ def _response_manifest(response: object) -> EndpointManifest:
         value = metadata()
         if isinstance(value, Mapping):
             return EndpointManifest.from_dict(json_object(value, "wire_manifest"))
-    raise ValueError("wire create response did not include an endpoint manifest")
+    raise ValueError("endpoint create response did not include an endpoint manifest")
 
 
 def _response_json(response: object, manifest: EndpointManifest) -> JSONObject:
