@@ -14,7 +14,7 @@ import `crafter::prelude::*`.
 layered packet construction with auto-filled lengths and checksums, decode
 entrypoints for Ethernet, Linux cooked capture, null/loopback, and raw IPv4 /
 IPv6 inputs, classic pcap read/write with libpcap BPF filters, raw send and
-send/receive matching, provider-backed wire endpoints, and multi-endpoint lab
+send/receive matching, provider-backed endpoints, and multi-endpoint lab
 sessions (Hetzner, QEMU, VirtualBox) for traffic that cannot live on a
 developer machine.
 
@@ -61,7 +61,7 @@ must use documentation address space (`192.0.2.0/24`, `198.51.100.0/24`,
 `2001:db8::/32`) and dry-run plans. Real targets enter the picture only when an
 authorized human or agent has said so.
 
-Wire endpoints and lab sessions exist so that the live path does not have to
+Endpoint providers and lab sessions exist so that the live path does not have to
 originate from the developer machine. When an agent needs to send crafted
 traffic for real, the correct move is to provision a disposable provider
 endpoint or lab session, run the work from there, collect the artifacts, and
@@ -105,15 +105,15 @@ get approval first.
   send plans unless explicitly gated.
 - Do not store real credentials, provider account data, public IPs, live host
   identifiers, or packet captures from sensitive networks in tracked files.
-  The wire provider reads `HETZNER_API_TOKEN` or `HCLOUD_TOKEN` from the
+  The endpoint provider reads `HETZNER_API_TOKEN` or `HCLOUD_TOKEN` from the
   environment.
 - Run the local release gate before declaring a change ready to ship:
   `.agents/scripts/check-crafter-release --static`.
 - For provider-backed packet validation, start with `--dry-run` against the
-  `lab`, `oracle`, `probe`, and `wire` runners before any live invocation.
+  `lab`, `oracle`, `probe`, and `endpoint` runners before any live invocation.
 - Use the repo-local skills when the task they describe comes up:
   `agent-cargo-publish`, `commit-changes`, `prepare-pr`, `packet-validation`,
-  `lab-session`, `lab-provider`, `wire-endpoint`, `scratch-work`,
+  `lab-session`, `lab-provider`, `endpoint-provider`, `scratch-work`,
   `create-branch`. They encode policy that this file does not repeat.
 - Operating guidance for agents writing generated tools belongs in
   [`.agents/docs/cookbook.md`](.agents/docs/cookbook.md). User-facing crate
