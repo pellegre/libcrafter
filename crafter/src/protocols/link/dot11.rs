@@ -1,5 +1,13 @@
 //! IEEE 802.11 MAC layer scaffolding.
 
+use core::any::Any;
+use core::ops::Div;
+
+use crate::error::{CrafterError, Result};
+use crate::field::Field;
+use crate::mac::MacAddr;
+use crate::packet::{IntoPacket, Layer, LayerContext, Packet};
+
 /// IEEE 802.11 frame-control field length in octets.
 pub const DOT11_FRAME_CONTROL_LEN: usize = 2;
 /// IEEE 802.11 duration/ID field length in octets.
@@ -8,6 +16,18 @@ pub const DOT11_DURATION_ID_LEN: usize = 2;
 pub const DOT11_ADDRESS_LEN: usize = 6;
 /// IEEE 802.11 sequence-control field length in octets.
 pub const DOT11_SEQUENCE_CONTROL_LEN: usize = 2;
+/// IEEE 802.11 QoS control field length in octets.
+pub const DOT11_QOS_CONTROL_LEN: usize = 2;
+/// Smallest IEEE 802.11 MAC header represented in phase 1.5.
+pub const DOT11_MIN_HEADER_LEN: usize =
+    DOT11_FRAME_CONTROL_LEN + DOT11_DURATION_ID_LEN + DOT11_ADDRESS_LEN;
+/// IEEE 802.11 three-address data/management MAC header length in octets.
+pub const DOT11_DATA_HEADER_LEN: usize = DOT11_FRAME_CONTROL_LEN
+    + DOT11_DURATION_ID_LEN
+    + (DOT11_ADDRESS_LEN * 3)
+    + DOT11_SEQUENCE_CONTROL_LEN;
+/// IEEE 802.11 data MAC header length with a fourth address in octets.
+pub const DOT11_DATA_ADDR4_HEADER_LEN: usize = DOT11_DATA_HEADER_LEN + DOT11_ADDRESS_LEN;
 
 /// Frame-control protocol-version mask.
 pub const DOT11_FC_PROTOCOL_VERSION_MASK: u16 = 0x0003;
@@ -203,10 +223,396 @@ pub const DOT11_CAPABILITY_DELAYED_BLOCK_ACK: u16 = 0x4000;
 /// Capability Information bit: Immediate Block Ack.
 pub const DOT11_CAPABILITY_IMMEDIATE_BLOCK_ACK: u16 = 0x8000;
 
-/// Placeholder for the IEEE 802.11 MAC layer.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+/// Raw IEEE 802.11 management tagged parameter.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Dot11TaggedParameter {
+    id: u8,
+    data: Vec<u8>,
+}
+
+impl Dot11TaggedParameter {
+    /// Create a tagged parameter with an element ID and raw value bytes.
+    pub fn new(id: u8, data: impl Into<Vec<u8>>) -> Self {
+        Self {
+            id,
+            data: data.into(),
+        }
+    }
+
+    /// Element ID.
+    pub const fn id(&self) -> u8 {
+        self.id
+    }
+
+    /// Raw value bytes.
+    pub fn data(&self) -> &[u8] {
+        &self.data
+    }
+
+    /// Encoded length including ID and length octets.
+    pub fn encoded_len(&self) -> usize {
+        2 + self.data.len()
+    }
+
+    fn compile(&self, out: &mut Vec<u8>) -> Result<()> {
+        if self.data.len() > u8::MAX as usize {
+            return Err(CrafterError::invalid_field_value(
+                "dot11.tagged_parameter.length",
+                "tagged parameter data must be <= 255 bytes",
+            ));
+        }
+
+        out.push(self.id);
+        out.push(self.data.len() as u8);
+        out.extend_from_slice(&self.data);
+        Ok(())
+    }
+}
+
+/// IEEE 802.11 MAC layer.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Dot11 {
-    _private: (),
+    frame_control: Field<Dot11FrameControl>,
+    duration_id: Field<u16>,
+    addr1: Field<MacAddr>,
+    addr2: Field<MacAddr>,
+    addr3: Field<MacAddr>,
+    sequence_control: Field<Dot11SequenceControl>,
+    addr4: Field<MacAddr>,
+    qos_control: Field<u16>,
+    fixed_parameters: Vec<u8>,
+    tagged_parameters: Vec<Dot11TaggedParameter>,
+}
+
+impl Dot11 {
+    /// Create a three-address data MAC header with deterministic safe defaults.
+    pub fn new() -> Self {
+        Self {
+            frame_control: Field::defaulted(
+                Dot11FrameControl::new()
+                    .with_frame_type(DOT11_FRAME_TYPE_DATA)
+                    .with_subtype(DOT11_DATA_SUBTYPE_DATA),
+            ),
+            duration_id: Field::defaulted(0),
+            addr1: Field::defaulted(MacAddr::BROADCAST),
+            addr2: Field::defaulted(MacAddr::ZERO),
+            addr3: Field::defaulted(MacAddr::ZERO),
+            sequence_control: Field::defaulted(Dot11SequenceControl::new()),
+            addr4: Field::unset(),
+            qos_control: Field::unset(),
+            fixed_parameters: Vec::new(),
+            tagged_parameters: Vec::new(),
+        }
+    }
+
+    /// Set the frame-control field.
+    pub fn frame_control(mut self, frame_control: Dot11FrameControl) -> Self {
+        self.frame_control.set_user(frame_control);
+        self
+    }
+
+    /// Set the duration/ID field.
+    pub fn duration_id(mut self, duration_id: u16) -> Self {
+        self.duration_id.set_user(duration_id);
+        self
+    }
+
+    /// Set address 1.
+    pub fn addr1(mut self, addr: impl Into<MacAddr>) -> Self {
+        self.addr1.set_user(addr.into());
+        self
+    }
+
+    /// Set address 2.
+    pub fn addr2(mut self, addr: impl Into<MacAddr>) -> Self {
+        self.addr2.set_user(addr.into());
+        self
+    }
+
+    /// Set address 3.
+    pub fn addr3(mut self, addr: impl Into<MacAddr>) -> Self {
+        self.addr3.set_user(addr.into());
+        self
+    }
+
+    /// Set address 4.
+    pub fn addr4(mut self, addr: impl Into<MacAddr>) -> Self {
+        self.addr4.set_user(addr.into());
+        self
+    }
+
+    /// Set the sequence-control field.
+    pub fn sequence_control(mut self, sequence_control: Dot11SequenceControl) -> Self {
+        self.sequence_control.set_user(sequence_control);
+        self
+    }
+
+    /// Set the QoS control field.
+    pub fn qos_control(mut self, qos_control: u16) -> Self {
+        self.qos_control.set_user(qos_control);
+        self
+    }
+
+    /// Set raw fixed management-field bytes to emit after the MAC header.
+    pub fn fixed_parameters(mut self, fixed_parameters: impl Into<Vec<u8>>) -> Self {
+        self.fixed_parameters = fixed_parameters.into();
+        self
+    }
+
+    /// Append a raw tagged parameter.
+    pub fn tag(mut self, tag: Dot11TaggedParameter) -> Self {
+        self.tagged_parameters.push(tag);
+        self
+    }
+
+    /// Replace raw tagged parameters.
+    pub fn tags(mut self, tags: impl Into<Vec<Dot11TaggedParameter>>) -> Self {
+        self.tagged_parameters = tags.into();
+        self
+    }
+
+    /// Current frame-control value.
+    pub fn frame_control_value(&self) -> Dot11FrameControl {
+        value_or_copy(&self.frame_control, Dot11::default_frame_control())
+    }
+
+    /// Current typed frame type.
+    pub fn frame_type(&self) -> Dot11FrameType {
+        self.frame_control_value().frame_type_value()
+    }
+
+    /// Current typed management subtype, when applicable.
+    pub fn management_subtype(&self) -> Option<Dot11ManagementSubtype> {
+        self.frame_control_value().management_subtype_value()
+    }
+
+    /// Current typed control subtype, when applicable.
+    pub fn control_subtype(&self) -> Option<Dot11ControlSubtype> {
+        self.frame_control_value().control_subtype_value()
+    }
+
+    /// Current typed data subtype, when applicable.
+    pub fn data_subtype(&self) -> Option<Dot11DataSubtype> {
+        self.frame_control_value().data_subtype_value()
+    }
+
+    /// Current duration/ID field value, if present.
+    pub fn duration_id_value(&self) -> Option<u16> {
+        self.duration_id.value().copied()
+    }
+
+    /// Current address 1 value, if present.
+    pub fn addr1_value(&self) -> Option<MacAddr> {
+        self.addr1.value().copied()
+    }
+
+    /// Current address 2 value, if present.
+    pub fn addr2_value(&self) -> Option<MacAddr> {
+        self.addr2.value().copied()
+    }
+
+    /// Current address 3 value, if present.
+    pub fn addr3_value(&self) -> Option<MacAddr> {
+        self.addr3.value().copied()
+    }
+
+    /// Current address 4 value, if present.
+    pub fn addr4_value(&self) -> Option<MacAddr> {
+        self.addr4.value().copied()
+    }
+
+    /// Current sequence-control field value, if present.
+    pub fn sequence_control_value(&self) -> Option<Dot11SequenceControl> {
+        self.sequence_control.value().copied()
+    }
+
+    /// Current QoS control field value, if present.
+    pub fn qos_control_value(&self) -> Option<u16> {
+        self.qos_control.value().copied()
+    }
+
+    /// Raw fixed management-field bytes.
+    pub fn fixed_parameters_value(&self) -> &[u8] {
+        &self.fixed_parameters
+    }
+
+    /// Raw tagged parameters.
+    pub fn tags_value(&self) -> &[Dot11TaggedParameter] {
+        &self.tagged_parameters
+    }
+
+    /// Raw tagged parameters.
+    pub fn tagged_parameters(&self) -> &[Dot11TaggedParameter] {
+        &self.tagged_parameters
+    }
+
+    /// Return true when the Protected Frame bit is set.
+    pub fn is_protected(&self) -> bool {
+        self.frame_control_value().protected()
+    }
+
+    fn default_frame_control() -> Dot11FrameControl {
+        Dot11FrameControl::new()
+            .with_frame_type(DOT11_FRAME_TYPE_DATA)
+            .with_subtype(DOT11_DATA_SUBTYPE_DATA)
+    }
+
+    fn effective_duration_id(&self) -> u16 {
+        value_or_copy(&self.duration_id, 0)
+    }
+
+    fn effective_addr1(&self) -> MacAddr {
+        value_or_copy(&self.addr1, MacAddr::BROADCAST)
+    }
+
+    fn effective_addr2(&self) -> MacAddr {
+        value_or_copy(&self.addr2, MacAddr::ZERO)
+    }
+
+    fn effective_addr3(&self) -> MacAddr {
+        value_or_copy(&self.addr3, MacAddr::ZERO)
+    }
+
+    fn effective_sequence_control(&self) -> Dot11SequenceControl {
+        value_or_copy(&self.sequence_control, Dot11SequenceControl::new())
+    }
+}
+
+impl Default for Dot11 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Layer for Dot11 {
+    fn name(&self) -> &'static str {
+        "Dot11"
+    }
+
+    fn summary(&self) -> String {
+        let frame_control = self.frame_control_value();
+        format!(
+            "Dot11(type={}, subtype={}, addr1={}, addr2={}, addr3={}, protected={})",
+            dot11_frame_type_label(frame_control.frame_type()),
+            dot11_subtype_label(frame_control.frame_type(), frame_control.subtype()),
+            self.effective_addr1(),
+            self.effective_addr2(),
+            self.effective_addr3(),
+            frame_control.protected()
+        )
+    }
+
+    fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        let frame_control = self.frame_control_value();
+        let mut fields = vec![
+            (
+                "frame_control",
+                format!(
+                    "0x{:04x} ({}/{})",
+                    frame_control.bits(),
+                    dot11_frame_type_label(frame_control.frame_type()),
+                    dot11_subtype_label(frame_control.frame_type(), frame_control.subtype())
+                ),
+            ),
+            ("duration_id", self.effective_duration_id().to_string()),
+            ("addr1", self.effective_addr1().to_string()),
+            ("addr2", self.effective_addr2().to_string()),
+            ("addr3", self.effective_addr3().to_string()),
+            (
+                "sequence_control",
+                format!("0x{:04x}", self.effective_sequence_control().bits()),
+            ),
+            ("protected", frame_control.protected().to_string()),
+        ];
+
+        if let Some(addr4) = self.addr4_value() {
+            fields.push(("addr4", addr4.to_string()));
+        }
+        if let Some(qos_control) = self.qos_control_value() {
+            fields.push(("qos_control", format!("0x{qos_control:04x}")));
+        }
+        if !self.fixed_parameters.is_empty() {
+            fields.push((
+                "fixed_parameters",
+                dot11_hex_bytes(&self.fixed_parameters),
+            ));
+        }
+        if !self.tagged_parameters.is_empty() {
+            fields.push(("tagged_parameters", self.tagged_parameters.len().to_string()));
+        }
+
+        fields
+    }
+
+    fn encoded_len(&self) -> usize {
+        DOT11_DATA_HEADER_LEN
+            + self
+                .addr4
+                .value()
+                .map(|_| DOT11_ADDRESS_LEN)
+                .unwrap_or_default()
+            + self
+                .qos_control
+                .value()
+                .map(|_| DOT11_QOS_CONTROL_LEN)
+                .unwrap_or_default()
+            + self.fixed_parameters.len()
+            + self
+                .tagged_parameters
+                .iter()
+                .map(Dot11TaggedParameter::encoded_len)
+                .sum::<usize>()
+    }
+
+    fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
+        out.extend_from_slice(&self.frame_control_value().compile());
+        out.extend_from_slice(&self.effective_duration_id().to_le_bytes());
+        out.extend_from_slice(&self.effective_addr1().octets());
+        out.extend_from_slice(&self.effective_addr2().octets());
+        out.extend_from_slice(&self.effective_addr3().octets());
+        out.extend_from_slice(&self.effective_sequence_control().compile());
+
+        if let Some(addr4) = self.addr4_value() {
+            out.extend_from_slice(&addr4.octets());
+        }
+        if let Some(qos_control) = self.qos_control_value() {
+            out.extend_from_slice(&qos_control.to_le_bytes());
+        }
+
+        out.extend_from_slice(&self.fixed_parameters);
+        for tag in &self.tagged_parameters {
+            tag.compile(out)?;
+        }
+
+        Ok(())
+    }
+
+    fn clone_layer(&self) -> Box<dyn Layer> {
+        Box::new(self.clone())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn into_any(self: Box<Self>) -> Box<dyn Any> {
+        self
+    }
+}
+
+impl<R> Div<R> for Dot11
+where
+    R: IntoPacket,
+{
+    type Output = Packet;
+
+    fn div(self, rhs: R) -> Self::Output {
+        Packet::from_layer(self).concat(rhs)
+    }
 }
 
 /// IEEE 802.11 frame type subfield.
@@ -955,6 +1361,23 @@ const fn set_flag(bits: u16, flag: u16, enabled: bool) -> u16 {
     }
 }
 
+fn value_or_copy<T: Copy>(field: &Field<T>, default: T) -> T {
+    field.value().copied().unwrap_or(default)
+}
+
+fn dot11_hex_bytes(bytes: &[u8]) -> String {
+    let mut output = String::new();
+
+    for (index, byte) in bytes.iter().enumerate() {
+        if index > 0 {
+            output.push(' ');
+        }
+        output.push_str(&format!("{byte:02x}"));
+    }
+
+    output
+}
+
 /// Return a stable label for an IEEE 802.11 frame type.
 pub fn dot11_frame_type_label(frame_type: u8) -> String {
     match frame_type {
@@ -1065,6 +1488,7 @@ pub fn dot11_category_label(category: u8) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{Packet, Raw};
 
     #[test]
     fn dot11_constants_frame_control_masks_match_ieee_layout() {
@@ -1072,6 +1496,10 @@ mod tests {
         assert_eq!(DOT11_DURATION_ID_LEN, 2);
         assert_eq!(DOT11_ADDRESS_LEN, 6);
         assert_eq!(DOT11_SEQUENCE_CONTROL_LEN, 2);
+        assert_eq!(DOT11_QOS_CONTROL_LEN, 2);
+        assert_eq!(DOT11_MIN_HEADER_LEN, 10);
+        assert_eq!(DOT11_DATA_HEADER_LEN, 24);
+        assert_eq!(DOT11_DATA_ADDR4_HEADER_LEN, 30);
 
         assert_eq!(DOT11_FC_PROTOCOL_VERSION_MASK, 0x0003);
         assert_eq!(DOT11_FC_PROTOCOL_VERSION_SHIFT, 0);
@@ -1667,5 +2095,101 @@ mod tests {
         assert_eq!(extension.management_subtype_value(), None);
         assert_eq!(extension.control_subtype_value(), None);
         assert_eq!(extension.data_subtype_value(), None);
+    }
+
+    #[test]
+    fn dot11_layer_compile_default_three_address_data_header() {
+        let packet = Packet::from_layer(Dot11::new());
+        let compiled = packet.compile().unwrap();
+
+        assert_eq!(Dot11::new().encoded_len(), DOT11_DATA_HEADER_LEN);
+        assert_eq!(
+            compiled.as_bytes(),
+            &[
+                0x08, 0x00, // frame control: data/data, little-endian
+                0x00, 0x00, // duration/id
+                0xff, 0xff, 0xff, 0xff, 0xff, 0xff, // address 1
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // address 2
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // address 3
+                0x00, 0x00, // sequence control
+            ]
+        );
+    }
+
+    #[test]
+    fn dot11_layer_compile_preserves_explicit_fields_and_composes_payload() {
+        let addr1 = MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x00, 0x01]);
+        let addr2 = MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x00, 0x02]);
+        let addr3 = MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x00, 0x03]);
+        let addr4 = MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x00, 0x04]);
+        let dot11 = Dot11::new()
+            .frame_control(Dot11FrameControl::from_bits(0x4288))
+            .duration_id(0x1234)
+            .addr1(addr1)
+            .addr2(addr2)
+            .addr3(addr3)
+            .sequence_control(Dot11SequenceControl::from_bits(0x0abc))
+            .addr4(addr4)
+            .qos_control(0x55aa);
+        let packet = dot11.clone() / Raw::from([0xde, 0xad]);
+
+        assert_eq!(packet.layer::<Dot11>(), Some(&dot11));
+        assert_eq!(packet.len(), 2);
+        assert_eq!(dot11.encoded_len(), DOT11_DATA_ADDR4_HEADER_LEN + DOT11_QOS_CONTROL_LEN);
+        assert_eq!(
+            packet.compile().unwrap().as_bytes(),
+            &[
+                0x88, 0x42, // frame control
+                0x34, 0x12, // duration/id
+                0x02, 0x00, 0x5e, 0x10, 0x00, 0x01, // address 1
+                0x02, 0x00, 0x5e, 0x10, 0x00, 0x02, // address 2
+                0x02, 0x00, 0x5e, 0x10, 0x00, 0x03, // address 3
+                0xbc, 0x0a, // sequence control
+                0x02, 0x00, 0x5e, 0x10, 0x00, 0x04, // address 4
+                0xaa, 0x55, // QoS control
+                0xde, 0xad, // Raw payload
+            ]
+        );
+    }
+
+    #[test]
+    fn dot11_layer_compile_includes_fixed_and_tagged_management_bytes() {
+        let dot11 = Dot11::new()
+            .fixed_parameters([0x01, 0x02])
+            .tag(Dot11TaggedParameter::new(0xdd, [0xaa, 0xbb, 0xcc]));
+
+        assert_eq!(dot11.fixed_parameters_value(), &[0x01, 0x02]);
+        assert_eq!(dot11.tags_value()[0].id(), 0xdd);
+        assert_eq!(dot11.tags_value()[0].data(), &[0xaa, 0xbb, 0xcc]);
+        assert_eq!(dot11.encoded_len(), DOT11_DATA_HEADER_LEN + 2 + 5);
+        assert_eq!(
+            Packet::from_layer(dot11).compile().unwrap().as_bytes(),
+            &[
+                0x08, 0x00, // frame control
+                0x00, 0x00, // duration/id
+                0xff, 0xff, 0xff, 0xff, 0xff, 0xff, // address 1
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // address 2
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // address 3
+                0x00, 0x00, // sequence control
+                0x01, 0x02, // fixed fields
+                0xdd, 0x03, 0xaa, 0xbb, 0xcc, // tagged parameter
+            ]
+        );
+    }
+
+    #[test]
+    fn dot11_layer_compile_rejects_oversized_tagged_parameter() {
+        let tag = Dot11TaggedParameter::new(0xdd, vec![0u8; 256]);
+        let err = Packet::from_layer(Dot11::new().tag(tag))
+            .compile()
+            .unwrap_err();
+
+        assert_eq!(
+            err,
+            CrafterError::invalid_field_value(
+                "dot11.tagged_parameter.length",
+                "tagged parameter data must be <= 255 bytes"
+            )
+        );
     }
 }
