@@ -205,8 +205,11 @@ pub use ipv6::{
 };
 pub use link::{
     arp_hardware_type_label, arp_protocol_type_label, Arp, ArpOperation, Dot11,
+    Dot11ActionFixedFields, Dot11AssociationRequestFixedFields,
+    Dot11AssociationResponseFixedFields, Dot11AuthenticationFixedFields, Dot11BeaconFixedFields,
     Dot11ControlSubtype, Dot11DataSubtype, Dot11FrameControl, Dot11FrameType,
-    Dot11ManagementSubtype, Dot11SequenceControl, Dot1Q, Ethernet, LinuxSll, LlcSnap,
+    Dot11ManagementFixedFields, Dot11ManagementSubtype, Dot11ReasonCodeFixedFields,
+    Dot11ReassociationRequestFixedFields, Dot11SequenceControl, Dot1Q, Ethernet, LinuxSll, LlcSnap,
     NullByteOrder, NullLoopback, Radiotap, Vlan, ARP_HRD_ATM, ARP_HRD_ETHERNET,
     ARP_HRD_FIBRE_CHANNEL, ARP_HRD_IEEE_802, ARP_HRD_INFINIBAND, ARP_HRD_MAPOS, ARP_OP_ARP_NAK,
     ARP_OP_DRARP_ERROR, ARP_OP_DRARP_REPLY, ARP_OP_DRARP_REQUEST, ARP_OP_EXP1, ARP_OP_EXP2,
