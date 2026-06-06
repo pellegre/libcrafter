@@ -72,6 +72,57 @@ fn ipv4_protocol_public_api_paths_are_usable() -> crafter::Result<()> {
 }
 
 #[test]
+fn canonical_ip_module_paths_are_usable() -> crafter::Result<()> {
+    let dscp = crafter::protocols::ip::shared::Dscp::ef();
+    let ecn = crafter::protocols::ip::shared::Ecn::capable_1();
+    let ds_field = (dscp.value() << 2) | ecn.value();
+
+    let v4_protocol = crafter::protocols::ip::v4::Ipv4Protocol::Udp;
+    let v4_packet = (crafter::protocols::ip::v4::Ipv4::new()
+        .src(Ipv4Addr::new(192, 0, 2, 10))
+        .dst(Ipv4Addr::new(198, 51, 100, 20))
+        .dscp(dscp)
+        .ecn(ecn)
+        .ipv4_protocol(v4_protocol)
+        / crafter::Raw::from("v4"))
+    .compile()?;
+
+    assert_eq!(v4_packet.as_bytes()[0] >> 4, 4);
+    assert_eq!(v4_packet.as_bytes()[1], ds_field);
+    assert_eq!(
+        v4_packet.as_bytes()[9],
+        crafter::protocols::ip::v4::IPPROTO_UDP
+    );
+    assert_eq!(
+        u8::from(v4_protocol),
+        crafter::protocols::ip::v4::IPPROTO_UDP
+    );
+
+    let v6_header = crafter::protocols::ip::v6::Ipv6::with_addresses(
+        Ipv6Addr::new(0x2001, 0xdb8, 1, 0, 0, 0, 0, 1),
+        Ipv6Addr::new(0x2001, 0xdb8, 2, 0, 0, 0, 0, 2),
+    )
+    .dscp(dscp)
+    .ecn(ecn)
+    .nh(crafter::protocols::ip::v6::IPPROTO_IPV6_NO_NEXT);
+    let v6_packet = (v6_header / crafter::Raw::from("v6")).compile()?;
+    let v6_traffic_class = ((v6_packet.as_bytes()[0] & 0x0f) << 4) | (v6_packet.as_bytes()[1] >> 4);
+    let v6_option = crafter::protocols::ip::v6::Ipv6Option::router_alert(
+        crafter::protocols::ip::v6::IPV6_ROUTER_ALERT_MLD,
+    );
+
+    assert_eq!(v6_packet.as_bytes()[0] >> 4, 6);
+    assert_eq!(v6_traffic_class, ds_field);
+    assert_eq!(
+        v6_packet.as_bytes()[6],
+        crafter::protocols::ip::v6::IPPROTO_IPV6_NO_NEXT
+    );
+    assert_eq!(v6_option.router_alert_value_label(), Some("MLD"));
+
+    Ok(())
+}
+
+#[test]
 fn public_module_paths_expose_representative_items() -> crafter::Result<()> {
     let packet = crafter::core::Packet::from_layer(crafter::core::Raw::from("core"));
     assert_eq!(packet.compile()?.as_bytes(), b"core");
