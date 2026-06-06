@@ -1,0 +1,8 @@
+# Synthetic IEEE 802.11 data frame carrying LLC/SNAP EAPOL packet bytes.
+08 00 00 00
+02 00 5e 10 00 01
+02 00 5e 10 00 02
+02 00 5e 10 00 03
+70 00
+aa aa 03 00 00 00 88 8e
+02 00 00 05 01 02 00 05 01

@@ -8,14 +8,15 @@ use std::path::{Path, PathBuf};
 
 use crafter::core::{
     Arp, Dhcp, DhcpMessageType, DhcpOption, DhcpRelayAgentInfo, DhcpRelaySuboption, Dns, DnsName,
-    DnsRecord, DnsRecordData, Dscp, Ecn, EdnsOption, Ethernet, IcmpKind, Icmpv4, Icmpv6, Ipv4,
-    Ipv4Option, Ipv6, Ipv6DestinationOptionsHeader, Ipv6FragmentHeader, Ipv6FragmentHeaderStatus,
+    DnsRecord, DnsRecordData, Dot11, Dot11DataSubtype, Dot11ManagementSubtype, Dscp, Ecn,
+    EdnsOption, Ethernet, IcmpKind, Icmpv4, Icmpv6, Ipv4, Ipv4Option, Ipv6,
+    Ipv6DestinationOptionsHeader, Ipv6FragmentHeader, Ipv6FragmentHeaderStatus,
     Ipv6HopByHopOptionsHeader, Ipv6MobileRoutingHeader, Ipv6MobileRoutingHeaderStatus, Ipv6Option,
     Ipv6RoutingHeader, Ipv6RoutingTypeStatus, Ipv6SegmentRoutingHeader, Layer, LinkType, LinuxSll,
-    MacAddr, NetworkLayer, NullByteOrder, NullLoopback, OptionOverload, Packet, Raw, Tcp,
-    TcpOption, TcpSackBlock, Udp, UdpChecksumStatus, UdpOption, UdpOptionStatus, UdpOptions, Vlan,
-    ARP_HRD_INFINIBAND, BOOTP_REQUEST, DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_CLASS_IN,
-    DNS_EDNS_DEFAULT_UDP_PAYLOAD_SIZE, DNS_EDNS_OPTION_COOKIE, DNS_EDNS_OPTION_NSID,
+    LlcSnap, MacAddr, NetworkLayer, NullByteOrder, NullLoopback, OptionOverload, Packet, Radiotap,
+    Raw, Tcp, TcpOption, TcpSackBlock, Udp, UdpChecksumStatus, UdpOption, UdpOptionStatus,
+    UdpOptions, Vlan, ARP_HRD_INFINIBAND, BOOTP_REQUEST, DHCP_CLIENT_PORT, DHCP_SERVER_PORT,
+    DNS_CLASS_IN, DNS_EDNS_DEFAULT_UDP_PAYLOAD_SIZE, DNS_EDNS_OPTION_COOKIE, DNS_EDNS_OPTION_NSID,
     DNS_FLAG_AUTHORITATIVE, DNS_FLAG_QR_RESPONSE, DNS_FLAG_RECURSION_DESIRED, DNS_SVCB_KEY_ALPN,
     DNS_SVCB_KEY_IPV4HINT, DNS_SVCB_KEY_IPV6HINT, DNS_SVCB_KEY_PORT, DNS_TYPE_A, DNS_TYPE_AAAA,
     DNS_TYPE_CNAME, DNS_TYPE_DNSKEY, DNS_TYPE_DS, DNS_TYPE_HTTPS, DNS_TYPE_NS, DNS_TYPE_NSEC,
@@ -55,6 +56,9 @@ enum FixtureContents {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ExpectedLayer {
+    Radiotap,
+    Dot11,
+    LlcSnap,
     Ethernet,
     LinuxSll,
     NullLoopback,
@@ -820,6 +824,107 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
     },
 ];
 
+const DOT11_FIXTURES: &[ValidFixtureCase] = &[
+    ValidFixtureCase {
+        name: "dot11-bare-data",
+        path: "dot11/bare-data.hex",
+        contents: FixtureContents::Hex(fixture_str!("dot11/bare-data.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::Link(LinkType::Ieee80211)),
+        expected_layers: &[ExpectedLayer::Dot11, ExpectedLayer::Raw],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "dot11-qos-data",
+        path: "dot11/qos-data.hex",
+        contents: FixtureContents::Hex(fixture_str!("dot11/qos-data.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::Link(LinkType::Ieee80211)),
+        expected_layers: &[ExpectedLayer::Dot11, ExpectedLayer::Raw],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "dot11-protected-data",
+        path: "dot11/protected-data.hex",
+        contents: FixtureContents::Hex(fixture_str!("dot11/protected-data.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::Link(LinkType::Ieee80211)),
+        expected_layers: &[ExpectedLayer::Dot11, ExpectedLayer::Raw],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "dot11-beacon-tags",
+        path: "dot11/beacon-tags.hex",
+        contents: FixtureContents::Hex(fixture_str!("dot11/beacon-tags.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::Link(LinkType::Ieee80211)),
+        expected_layers: &[ExpectedLayer::Dot11],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "dot11-radiotap-data",
+        path: "dot11/radiotap-data.hex",
+        contents: FixtureContents::Hex(fixture_str!("dot11/radiotap-data.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::Link(LinkType::Radiotap)),
+        expected_layers: &[
+            ExpectedLayer::Radiotap,
+            ExpectedLayer::Dot11,
+            ExpectedLayer::Raw,
+        ],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "dot11-llc-snap-ipv4",
+        path: "dot11/llc-snap-ipv4.hex",
+        contents: FixtureContents::Hex(fixture_str!("dot11/llc-snap-ipv4.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::Link(LinkType::Ieee80211)),
+        expected_layers: &[
+            ExpectedLayer::Dot11,
+            ExpectedLayer::LlcSnap,
+            ExpectedLayer::Ipv4,
+            ExpectedLayer::Raw,
+        ],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "dot11-llc-snap-eapol",
+        path: "dot11/llc-snap-eapol.hex",
+        contents: FixtureContents::Hex(fixture_str!("dot11/llc-snap-eapol.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::Link(LinkType::Ieee80211)),
+        expected_layers: &[
+            ExpectedLayer::Dot11,
+            ExpectedLayer::LlcSnap,
+            ExpectedLayer::Raw,
+        ],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "dot11-eapol-key",
+        path: "dot11/eapol-key.hex",
+        contents: FixtureContents::Hex(fixture_str!("dot11/eapol-key.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::Link(LinkType::Ieee80211)),
+        expected_layers: &[
+            ExpectedLayer::Dot11,
+            ExpectedLayer::LlcSnap,
+            ExpectedLayer::Raw,
+        ],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "dot11-rsn-ie",
+        path: "dot11/rsn-ie.hex",
+        contents: FixtureContents::Hex(fixture_str!("dot11/rsn-ie.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::Link(LinkType::Ieee80211)),
+        expected_layers: &[ExpectedLayer::Dot11],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+];
+
 const PCAP_FIXTURES: &[PcapFixtureCase] = &[
     PcapFixtureCase {
         name: "ethernet-arp-request-reply",
@@ -1287,6 +1392,15 @@ fn assert_packet_surface(case: &ValidFixtureCase, packet: &Packet) {
 fn assert_expected_layers(case: &ValidFixtureCase, packet: &Packet) {
     for expected in case.expected_layers {
         match expected {
+            ExpectedLayer::Radiotap => {
+                let _ = expect_layer::<Radiotap>(case, packet);
+            }
+            ExpectedLayer::Dot11 => {
+                let _ = expect_layer::<Dot11>(case, packet);
+            }
+            ExpectedLayer::LlcSnap => {
+                let _ = expect_layer::<LlcSnap>(case, packet);
+            }
             ExpectedLayer::Ethernet => {
                 let _ = expect_layer::<Ethernet>(case, packet);
             }
@@ -1354,6 +1468,51 @@ fn assert_expected_layers(case: &ValidFixtureCase, packet: &Packet) {
     }
 }
 
+fn assert_exact_layer_stack(case: &ValidFixtureCase, packet: &Packet) {
+    let actual = packet.iter().map(|layer| layer.name()).collect::<Vec<_>>();
+    let expected = case
+        .expected_layers
+        .iter()
+        .copied()
+        .map(expected_layer_name)
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        actual, expected,
+        "fixture {} decoded with unexpected layer order",
+        case.path
+    );
+}
+
+fn expected_layer_name(expected: ExpectedLayer) -> &'static str {
+    match expected {
+        ExpectedLayer::Radiotap => "Radiotap",
+        ExpectedLayer::Dot11 => "Dot11",
+        ExpectedLayer::LlcSnap => "LlcSnap",
+        ExpectedLayer::Ethernet => "Ethernet",
+        ExpectedLayer::LinuxSll => "LinuxSll",
+        ExpectedLayer::NullLoopback => "NullLoopback",
+        ExpectedLayer::Vlan => "Vlan",
+        ExpectedLayer::Arp => "Arp",
+        ExpectedLayer::Ipv4 => "Ipv4",
+        ExpectedLayer::Ipv6 => "Ipv6",
+        ExpectedLayer::Ipv6HopByHopOptions => "Ipv6HopByHopOptionsHeader",
+        ExpectedLayer::Ipv6DestinationOptions => "Ipv6DestinationOptionsHeader",
+        ExpectedLayer::Ipv6Routing => "Ipv6RoutingHeader",
+        ExpectedLayer::Ipv6MobileRouting => "Ipv6MobileRoutingHeader",
+        ExpectedLayer::Ipv6SegmentRouting => "Ipv6SegmentRoutingHeader",
+        ExpectedLayer::Ipv6Fragment => "Ipv6FragmentHeader",
+        ExpectedLayer::Icmp => "Icmpv4",
+        ExpectedLayer::Icmpv6 => "Icmpv6",
+        ExpectedLayer::Tcp => "Tcp",
+        ExpectedLayer::Udp => "Udp",
+        ExpectedLayer::UdpOptions => "UdpOptions",
+        ExpectedLayer::Dns => "Dns",
+        ExpectedLayer::Dhcp => "Dhcp",
+        ExpectedLayer::Raw => "Raw",
+    }
+}
+
 fn expect_layer<'a, T>(case: &ValidFixtureCase, packet: &'a Packet) -> &'a T
 where
     T: Layer,
@@ -1366,6 +1525,110 @@ where
             packet.summary()
         )
     })
+}
+
+fn assert_dot11_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
+    match case.name {
+        "dot11-bare-data" => {
+            let dot11 = expect_layer::<Dot11>(case, packet);
+            assert_eq!(dot11.data_subtype(), Some(Dot11DataSubtype::Data));
+            assert_eq!(dot11.sequence_number_value(), Some(1));
+            assert!(!dot11.is_protected());
+            assert_eq!(expect_layer::<Raw>(case, packet).as_bytes(), b"bare-data");
+        }
+        "dot11-qos-data" => {
+            let dot11 = expect_layer::<Dot11>(case, packet);
+            assert_eq!(dot11.data_subtype(), Some(Dot11DataSubtype::QosData));
+            assert_eq!(dot11.sequence_number_value(), Some(2));
+            assert_eq!(dot11.qos_control_value(), Some(0x1205));
+            assert_eq!(expect_layer::<Raw>(case, packet).as_bytes(), b"qos-data");
+        }
+        "dot11-protected-data" => {
+            let dot11 = expect_layer::<Dot11>(case, packet);
+            let raw = expect_layer::<Raw>(case, packet);
+            assert!(dot11.is_protected());
+            assert_eq!(dot11.encrypted_body_len(), Some(12));
+            assert_eq!(
+                raw.as_bytes(),
+                &[0xaa, 0xaa, 0x03, 0x00, 0x00, 0x00, 0x08, 0x00, 0xde, 0xad, 0xbe, 0xef]
+            );
+            assert!(packet.layer::<LlcSnap>().is_none());
+            assert!(packet.layer::<Ipv4>().is_none());
+        }
+        "dot11-beacon-tags" => {
+            let dot11 = expect_layer::<Dot11>(case, packet);
+            assert_eq!(
+                dot11.management_subtype(),
+                Some(Dot11ManagementSubtype::Beacon)
+            );
+            let tags = dot11.tagged_parameters();
+            assert_eq!(tags.len(), 4);
+            assert_eq!(tags[0].id(), 0);
+            assert_eq!(tags[0].value(), b"crafter");
+            assert_eq!(tags[1].id(), 1);
+            assert_eq!(tags[1].value(), &[0x82, 0x84, 0x8b, 0x96]);
+            assert_eq!(tags[2].id(), 3);
+            assert_eq!(tags[2].value(), &[6]);
+            assert_eq!(tags[3].id(), 5);
+            assert_eq!(tags[3].value(), &[0, 1, 0, 0]);
+        }
+        "dot11-radiotap-data" => {
+            let radiotap = expect_layer::<Radiotap>(case, packet);
+            let dot11 = expect_layer::<Dot11>(case, packet);
+            assert_eq!(radiotap.length_value(), Some(10));
+            assert_eq!(radiotap.rate_value(), Some(0x16));
+            assert_eq!(dot11.data_subtype(), Some(Dot11DataSubtype::Data));
+            assert_eq!(dot11.sequence_number_value(), Some(5));
+            assert_eq!(expect_layer::<Raw>(case, packet).as_bytes(), b"radiotap");
+        }
+        "dot11-llc-snap-ipv4" => {
+            let llc = expect_layer::<LlcSnap>(case, packet);
+            let ipv4 = expect_layer::<Ipv4>(case, packet);
+            assert_eq!(llc.ethertype_value(), ETHERTYPE_IPV4);
+            assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 10));
+            assert_eq!(ipv4.destination(), Ipv4Addr::new(198, 51, 100, 20));
+            assert_eq!(ipv4.protocol_value(), 253);
+            assert_eq!(expect_layer::<Raw>(case, packet).as_bytes(), b"v4");
+        }
+        "dot11-llc-snap-eapol" => {
+            let llc = expect_layer::<LlcSnap>(case, packet);
+            let raw = expect_layer::<Raw>(case, packet);
+            assert_eq!(llc.ethertype_value(), 0x888e);
+            assert_eq!(
+                raw.as_bytes(),
+                &[0x02, 0x00, 0x00, 0x05, 0x01, 0x02, 0x00, 0x05, 0x01]
+            );
+        }
+        "dot11-eapol-key" => {
+            let llc = expect_layer::<LlcSnap>(case, packet);
+            let raw = expect_layer::<Raw>(case, packet).as_bytes();
+            assert_eq!(llc.ethertype_value(), 0x888e);
+            assert_eq!(raw[0], 2);
+            assert_eq!(raw[1], 3);
+            assert_eq!(u16::from_be_bytes([raw[2], raw[3]]), 95);
+            assert_eq!(raw.len(), 99);
+        }
+        "dot11-rsn-ie" => {
+            let dot11 = expect_layer::<Dot11>(case, packet);
+            assert_eq!(
+                dot11.management_subtype(),
+                Some(Dot11ManagementSubtype::Beacon)
+            );
+            let tags = dot11.tagged_parameters();
+            let rsn = tags
+                .iter()
+                .find(|tag| tag.id() == 48)
+                .expect("RSN tag must be present");
+            assert_eq!(
+                rsn.value(),
+                &[
+                    0x01, 0x00, 0x00, 0x0f, 0xac, 0x04, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x04, 0x01,
+                    0x00, 0x00, 0x0f, 0xac, 0x02, 0x0c, 0x00,
+                ]
+            );
+        }
+        other => panic!("dot11 fixture {other} is missing typed field assertions"),
+    }
 }
 
 fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
@@ -3010,7 +3273,7 @@ fn assert_fixture_filename_convention(relative: &Path) {
     let relative_str = relative
         .to_str()
         .unwrap_or_else(|| panic!("fixture path {relative:?} should be UTF-8"));
-    if relative_str == "README.md"
+    if relative.file_name().and_then(|name| name.to_str()) == Some("README.md")
         || relative.file_name().and_then(|name| name.to_str()) == Some(".gitkeep")
     {
         return;
@@ -3028,6 +3291,7 @@ fn assert_fixture_filename_convention(relative: &Path) {
 
     let base_name = match category {
         "bytes" => strip_allowed_suffix(file_name, &[".bin", ".hex"]),
+        "dot11" => strip_allowed_suffix(file_name, &[".hex"]),
         "malformed" => strip_allowed_suffix(file_name, &[".bin", ".hex"]),
         "pcaps" => strip_allowed_suffix(file_name, &[".pcap", ".pcapng"]),
         "summaries" => strip_allowed_suffix(file_name, &[".summary.txt", ".summary.json"]),
@@ -3088,6 +3352,22 @@ fn valid_byte_fixtures_decode_compile_and_summarize() {
             }
             FixtureDecodeTarget::DhcpOptions => assert_dhcp_option_fixture(case, &bytes),
         }
+    }
+}
+
+#[test]
+fn fixture_dot11_corpus_decodes_layer_stacks() {
+    for case in DOT11_FIXTURES {
+        ensure_fixture_exists(case.path);
+        let bytes = fixture_bytes_for_case(case);
+        let target = packet_target_for_case(case);
+        let packet = decode_packet(target, &bytes)
+            .unwrap_or_else(|err| panic!("fixture {} should decode: {err}", case.path));
+
+        assert_packet_surface(case, &packet);
+        assert_exact_layer_stack(case, &packet);
+        assert_dot11_fixture_fields(case, &packet);
+        assert_compile_decode_compile(case, target, &packet, &bytes);
     }
 }
 
@@ -3590,9 +3870,10 @@ fn fixture_tree_hygiene_matches_readme_conventions() {
     let root = fixture_path("");
     let catalog_paths = VALID_FIXTURES
         .iter()
+        .chain(DOT11_FIXTURES.iter())
         .map(|case| case.path)
         .collect::<HashSet<_>>();
-    let mut bytes_fixture_paths = HashSet::new();
+    let mut cataloged_byte_fixture_paths = HashSet::new();
 
     for file in fixture_files(&root) {
         let relative = file.strip_prefix(&root).unwrap_or_else(|err| {
@@ -3604,33 +3885,41 @@ fn fixture_tree_hygiene_matches_readme_conventions() {
         assert_fixture_filename_convention(relative);
 
         let is_gitkeep = relative.file_name().and_then(|name| name.to_str()) == Some(".gitkeep");
-        if !is_gitkeep
-            && relative
-                .components()
-                .next()
-                .and_then(|component| component.as_os_str().to_str())
-                == Some("bytes")
-        {
+        let category = relative
+            .components()
+            .next()
+            .and_then(|component| component.as_os_str().to_str());
+        let is_readme = relative.file_name().and_then(|name| name.to_str()) == Some("README.md");
+        if !is_gitkeep && !is_readme && matches!(category, Some("bytes" | "dot11")) {
             let path = relative
                 .to_str()
                 .unwrap_or_else(|| panic!("fixture path {relative:?} should be UTF-8"));
-            bytes_fixture_paths.insert(path.to_string());
+            cataloged_byte_fixture_paths.insert(path.to_string());
         }
     }
 
     for case in VALID_FIXTURES {
         ensure_fixture_exists(case.path);
         assert!(
-            bytes_fixture_paths.contains(case.path),
+            cataloged_byte_fixture_paths.contains(case.path),
             "catalog entry {} must live under the fixture bytes/ directory",
             case.path
         );
     }
 
-    for path in bytes_fixture_paths {
+    for case in DOT11_FIXTURES {
+        ensure_fixture_exists(case.path);
+        assert!(
+            cataloged_byte_fixture_paths.contains(case.path),
+            "catalog entry {} must live under the fixture dot11/ directory",
+            case.path
+        );
+    }
+
+    for path in cataloged_byte_fixture_paths {
         assert!(
             catalog_paths.contains(path.as_str()),
-            "bytes fixture {path} must be listed in VALID_FIXTURES"
+            "byte fixture {path} must be listed in a fixture catalog"
         );
     }
 }

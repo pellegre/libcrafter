@@ -12,6 +12,9 @@ files in this tree.
 - `bytes/`: compact packet bytes used by decode, summary, field assertion, and
   compile/decode/compile tests. Use `.bin` for opaque bytes and `.hex` when
   line-oriented review is useful.
+- `dot11/`: synthetic IEEE 802.11, radiotap, LLC/SNAP, EAPOL, and RSN-oriented
+  hex fixtures. These are generated from documentation-space addresses and
+  locally administered documentation MACs, not live captures.
 - `pcaps/`: classic pcap files for supported offline link types. These exercise
   public pcap reader behavior, link type mapping, timestamps, record lengths,
   and packet decoding.
@@ -37,6 +40,7 @@ The integration fixture catalog lives in
 - `summary_path`: optional expected summary fixture.
 
 All files under `bytes/` must be listed in `VALID_FIXTURES`.
+All packet hex files under `dot11/` must be listed in `DOT11_FIXTURES`.
 All files under `pcaps/` must be listed in `PCAP_FIXTURES`.
 The catalog tests fail if checked-in fixtures are missing from the catalogs or
 if a required supported protocol family loses coverage.

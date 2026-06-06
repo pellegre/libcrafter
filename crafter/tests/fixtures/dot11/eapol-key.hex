@@ -1,0 +1,17 @@
+# Synthetic IEEE 802.11 data frame carrying raw LLC/SNAP EAPOL-Key bytes.
+08 00 00 00
+02 00 5e 10 00 01
+02 00 5e 10 00 02
+02 00 5e 10 00 03
+80 00
+aa aa 03 00 00 00 88 8e
+02 03 00 5f
+02 13 ca 00 10
+00 00 00 00 00 00 00 01
+00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f
+10 11 12 13 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f
+a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 aa ab ac ad ae af
+b0 b1 b2 b3 b4 b5 b6 b7
+c0 c1 c2 c3 c4 c5 c6 c7
+d0 d1 d2 d3 d4 d5 d6 d7 d8 d9 da db dc dd de df
+00 00
