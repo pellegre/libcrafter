@@ -305,7 +305,7 @@ class LiveProviderMatrixTest(unittest.TestCase):
 
         command = _provider_doctor_command(adapter)
 
-        self.assertEqual(command[:2], ["tools/wire/run", "doctor"])
+        self.assertEqual(command[:2], ["tools/endpoint/run", "doctor"])
         self.assertIn("virtualbox", command)
         self.assertIn("private", command)
         self.assertIn("--json", command)

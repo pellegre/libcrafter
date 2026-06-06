@@ -4,7 +4,7 @@ This document defines the live validation contract for `tools/oracle/run live`.
 The oracle runner owns the live report, packet plan, backend capability checks,
 and reproduction coordinates. `tools/lab` owns multi-endpoint provider
 sessions, repository push/bootstrap, artifact collection, and cleanup.
-`tools/wire` owns one endpoint and transport operations.
+`tools/endpoint` owns one endpoint and transport operations.
 
 ## Live Mode Invariant
 
@@ -246,7 +246,7 @@ a clear skipped report. It must not silently downgrade a live run into a
 single-endpoint loopback test.
 
 `tools/lab` remains the owner of disposable multi-endpoint session lifecycle,
-repository push/bootstrap, artifact collection, and cleanup. `tools/wire`
+repository push/bootstrap, artifact collection, and cleanup. `tools/endpoint`
 remains the owner of one endpoint and artifact transport. An oracle live
 provider adapter maps oracle roles and comparison policy onto lab sessions; it
 does not replace the lab or wire provider implementation.

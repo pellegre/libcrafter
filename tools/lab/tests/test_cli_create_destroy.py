@@ -15,7 +15,7 @@ from tools.lab.engine import cli
 from tools.lab.engine.model import LabCommandPlan
 from tools.lab.engine.paths import LAB_ARTIFACT_ROOT_ENV, LAB_STATE_ROOT_ENV
 from tools.lab.engine.session import read_session_manifest
-from tools.wire.engine.model import (
+from tools.endpoint.engine.model import (
     EndpointManifest,
     EndpointSSHInfo,
     NetworkInterface,
@@ -344,7 +344,7 @@ class _FakeWireResponse:
         }[self.operation]
         argv = {
             "create": [
-                "tools/wire/run",
+                "tools/endpoint/run",
                 "create-endpoint",
                 "--provider",
                 self.provider,
@@ -357,12 +357,12 @@ class _FakeWireResponse:
                 "--json",
             ],
             "collect_artifacts": [
-                "tools/wire/run",
+                "tools/endpoint/run",
                 "collect-artifacts",
                 self.endpoint_id,
             ],
             "destroy": [
-                "tools/wire/run",
+                "tools/endpoint/run",
                 "destroy-endpoint",
                 self.endpoint_id,
                 "--json",

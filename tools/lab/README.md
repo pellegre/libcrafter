@@ -52,8 +52,8 @@ Most validation should enter through `tools/oracle/run live` or
 Use direct wire smokes for Docker LAN and WAN checks:
 
 ```sh
-tools/wire/smoke/live_docker_lan_icmp.py --plan-only
-tools/wire/smoke/live_docker_wan_dns.py --plan-only
+tools/endpoint/smoke/live_docker_lan_icmp.py --plan-only
+tools/endpoint/smoke/live_docker_wan_dns.py --plan-only
 ```
 
 Those smokes test NAT-backed L3 reachability from one constrained container.

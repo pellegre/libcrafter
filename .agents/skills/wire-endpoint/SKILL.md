@@ -26,8 +26,8 @@ endpoints for provider-backed execution.
    - `.agents/scripts/check-crafter-release --static` for release-like changes
    - any relevant fixture, golden-byte, pcap, decode, or example compile tests
 2. Run provider dry-runs before creating endpoints:
-   - `tools/wire/run doctor --provider hetzner --exposure wan --dry-run`
-   - `tools/wire/run doctor --provider hetzner --exposure private --dry-run`
+   - `tools/endpoint/run doctor --provider hetzner --exposure wan --dry-run`
+   - `tools/endpoint/run doctor --provider hetzner --exposure private --dry-run`
    - use `lab-session` dry-runs for multi-endpoint oracle/probe workflows
    - `tools/oracle/run live --provider hetzner --dry-run --profile smoke --seed 1 --count 10`
    - `tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10`
@@ -35,7 +35,7 @@ endpoints for provider-backed execution.
    wire-run confirmation such as `--confirm-live-run`.
 4. Run the requested wire packet exchange, reference backend, Rust, probe,
    traceroute-style workflow, or legacy libcrafter check through `tools/oracle`,
-   `tools/probe`, `tools/wire`, or a bounded command on the endpoint.
+   `tools/probe`, `tools/endpoint`, or a bounded command on the endpoint.
 5. Collect logs, pcaps, decoded summaries, command output, reports, and provider
    metadata as artifacts.
 6. Destroy disposable wire endpoints after every wire run, including failed runs.
@@ -92,6 +92,6 @@ fields redacted.
 
 On any failure, collect artifacts first when possible, then destroy disposable
 wire endpoints. If teardown fails, report the provider, resource type, redacted
-resource identifier, and the exact `tools/wire/run destroy-endpoint` command to
+resource identifier, and the exact `tools/endpoint/run destroy-endpoint` command to
 retry. Do not start a new wire run while a previous disposable endpoint may
 still exist.

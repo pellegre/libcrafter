@@ -40,8 +40,8 @@ class RepositoryArchiveTest(unittest.TestCase):
             self.assertTrue(_has_tar_member(names, "Cargo.toml"))
             self.assertTrue(_has_tar_member(names, "src/lib.rs"))
             self.assertFalse(_has_tar_member(names, "target/debug/libcrafter.rlib"))
-            self.assertFalse(_has_tar_member(names, "tools/wire/.state/endpoint.json"))
-            self.assertFalse(_has_tar_member(names, "tools/wire/artifacts/upload.log"))
+            self.assertFalse(_has_tar_member(names, "tools/endpoint/.state/endpoint.json"))
+            self.assertFalse(_has_tar_member(names, "tools/endpoint/artifacts/upload.log"))
             self.assertFalse(_has_tar_member(names, "tools/lab/.state/session.json"))
             self.assertFalse(_has_tar_member(names, "tools/lab/artifacts/repo.tar.gz"))
             self.assertFalse(_has_tar_member(names, "generated/case.json"))
@@ -192,7 +192,7 @@ class _FakeWireClient:
     ) -> "_FakeWireResponse":
         if not isinstance(command, (list, tuple)):
             raise TypeError("expected command sequence")
-        argv = ["tools/wire/run", "exec", endpoint_id, "--", *[str(part) for part in command]]
+        argv = ["tools/endpoint/run", "exec", endpoint_id, "--", *[str(part) for part in command]]
         self.exec_calls.append(
             {
                 "endpoint_id": endpoint_id,
@@ -213,7 +213,7 @@ class _FakeWireClient:
         local_path: str | Path,
         remote_path: str,
     ) -> "_FakeWireResponse":
-        argv = ["tools/wire/run", "upload", endpoint_id, str(local_path), remote_path]
+        argv = ["tools/endpoint/run", "upload", endpoint_id, str(local_path), remote_path]
         self.upload_calls.append(
             {
                 "endpoint_id": endpoint_id,

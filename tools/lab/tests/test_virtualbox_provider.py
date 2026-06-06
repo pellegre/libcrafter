@@ -13,13 +13,13 @@ from tools.lab.engine.providers.virtualbox import (
     virtualbox_private_network_metadata,
     virtualbox_session_id,
 )
-from tools.wire.engine.model import (
+from tools.endpoint.engine.model import (
     EndpointManifest,
     EndpointSSHInfo,
     NetworkInterface,
     ProviderResources,
 )
-from tools.wire.engine.providers.virtualbox.constants import VBOX_DEFAULT_PRIVATE_CIDR
+from tools.endpoint.engine.providers.virtualbox.constants import VBOX_DEFAULT_PRIVATE_CIDR
 
 
 class VirtualBoxProviderMetadataTest(unittest.TestCase):
@@ -267,7 +267,7 @@ class _FakeWireCreateResponse:
         artifacts: list[str] = (),
     ) -> LabCommandPlan:
         argv = [
-            "tools/wire/run",
+            "tools/endpoint/run",
             "create-endpoint",
             "--provider",
             str(self.call["provider"]),

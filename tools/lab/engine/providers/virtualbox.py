@@ -9,8 +9,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 
-from tools.wire.engine.model import EndpointManifest
-from tools.wire.engine.providers.virtualbox.constants import (
+from tools.endpoint.engine.model import EndpointManifest
+from tools.endpoint.engine.providers.virtualbox.constants import (
     VBOXMANAGE_COMMAND,
     VBOX_DEFAULT_PRIVATE_CIDR,
 )
@@ -40,7 +40,7 @@ from .common import (
 PROVIDER_NAME = "virtualbox"
 WIRE_PROVIDER = "virtualbox"
 WIRE_EXPOSURE = "private"
-WIRE_ENTRYPOINT = "tools/wire/run"
+WIRE_ENTRYPOINT = "tools/endpoint/run"
 PRIVATE_NETWORK_CIDR = VBOX_DEFAULT_PRIVATE_CIDR
 DEFAULT_PRIVATE_IPV4_PREFIX = "10.78.0"
 CAPABILITY_REPORT_ARTIFACT = "artifacts/lab/capabilities.json"

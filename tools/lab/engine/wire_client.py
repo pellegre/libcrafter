@@ -8,8 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TypeAlias
 
-from tools.wire.engine.model import EndpointManifest
-from tools.wire.engine.model import read_json as read_wire_json
+from tools.endpoint.engine.model import EndpointManifest
+from tools.endpoint.engine.model import read_json as read_wire_json
 
 from .model import JSONValue, JSONObject, LabCommandPlan
 from .process import CommandResult, render_argv, run_command
@@ -124,7 +124,7 @@ class WireCommandResponse:
 
 
 class WireClient:
-    """Small process boundary around ``tools/wire/run`` for lab callers."""
+    """Small process boundary around ``tools/endpoint/run`` for lab callers."""
 
     def __init__(
         self,

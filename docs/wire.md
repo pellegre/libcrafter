@@ -1,6 +1,6 @@
 # Wire Endpoint Provider Guide
 
-`tools/wire` defines the provider contract for one disposable endpoint:
+`tools/endpoint` defines the provider contract for one disposable endpoint:
 provision, command execution, upload, download, artifact collection, SSH access,
 and destroy. It is the lower-level endpoint primitive used by `tools/lab`.
 
@@ -34,20 +34,20 @@ internet reachability.
 Run provider checks before real endpoint creation:
 
 ```sh
-tools/wire/run doctor --provider hetzner --exposure private --json
-tools/wire/run doctor --provider qemu --exposure private --json
-tools/wire/run doctor --provider virtualbox --exposure lan --json
-tools/wire/run doctor --provider docker --exposure private --json
-tools/wire/run doctor --provider docker --exposure lan --json
-tools/wire/run doctor --provider docker --exposure wan --json
+tools/endpoint/run doctor --provider hetzner --exposure private --json
+tools/endpoint/run doctor --provider qemu --exposure private --json
+tools/endpoint/run doctor --provider virtualbox --exposure lan --json
+tools/endpoint/run doctor --provider docker --exposure private --json
+tools/endpoint/run doctor --provider docker --exposure lan --json
+tools/endpoint/run doctor --provider docker --exposure wan --json
 ```
 
-VM provider prerequisites are documented in `tools/wire/README.md`. In short,
+VM provider prerequisites are documented in `tools/endpoint/README.md`. In short,
 QEMU needs `qemu-system-x86_64`, `qemu-img`, `cloud-localds`, and SSH tooling.
 VirtualBox needs `VBoxManage`, `qemu-img`, `cloud-localds`, SSH tooling, and a
 usable bridged interface. Set `LIBCRAFTER_VBOX_BRIDGE_IFACE` to request a
 specific bridge. Docker needs the Docker CLI, a reachable daemon, SSH tooling,
-and permission for the user running `tools/wire` to use Docker.
+and permission for the user running `tools/endpoint` to use Docker.
 
 Treat Docker daemon and Docker socket access as host-root equivalent. The
 Docker provider should be invoked from the host through the narrow wire
@@ -72,17 +72,17 @@ Docker environment overrides:
 Plan Docker endpoints without side effects:
 
 ```sh
-tools/wire/run create-endpoint --provider docker --exposure private --private-group lab-a --private-ip 10.79.0.10 --dry-run --json
-tools/wire/run create-endpoint --provider docker --exposure lan --dry-run --json
-tools/wire/run create-endpoint --provider docker --exposure wan --dry-run --json
+tools/endpoint/run create-endpoint --provider docker --exposure private --private-group lab-a --private-ip 10.79.0.10 --dry-run --json
+tools/endpoint/run create-endpoint --provider docker --exposure lan --dry-run --json
+tools/endpoint/run create-endpoint --provider docker --exposure wan --dry-run --json
 ```
 
 Create Docker endpoints only after the normal live confirmation gate:
 
 ```sh
-tools/wire/run create-endpoint --provider docker --exposure private --private-group lab-a --private-ip 10.79.0.10 --confirm-live-run --json
-tools/wire/run create-endpoint --provider docker --exposure lan --confirm-live-run --json
-tools/wire/run create-endpoint --provider docker --exposure wan --confirm-live-run --json
+tools/endpoint/run create-endpoint --provider docker --exposure private --private-group lab-a --private-ip 10.79.0.10 --confirm-live-run --json
+tools/endpoint/run create-endpoint --provider docker --exposure lan --confirm-live-run --json
+tools/endpoint/run create-endpoint --provider docker --exposure wan --confirm-live-run --json
 ```
 
 For `docker/private`, pass the same `--private-group` to endpoints that should
@@ -101,9 +101,9 @@ configured.
 Run dry-run checks first:
 
 ```sh
-tools/wire/run doctor --provider hetzner --exposure wan --dry-run
-tools/wire/run doctor --provider hetzner --exposure private --dry-run
-tools/wire/run create-endpoint --provider hetzner --exposure wan --dry-run --write-manifest
+tools/endpoint/run doctor --provider hetzner --exposure wan --dry-run
+tools/endpoint/run doctor --provider hetzner --exposure private --dry-run
+tools/endpoint/run create-endpoint --provider hetzner --exposure wan --dry-run --write-manifest
 ```
 
 Oracle offline and pcap validation plus lab-backed oracle/probe dry-runs should
@@ -127,7 +127,7 @@ python3 tools/oracle/engine/live_provider_matrix.py --providers qemu,virtualbox 
 tools/probe/run --provider hetzner --confirm-live-run --profile smoke --seed 21 --count 25
 ```
 
-Generated wire endpoint state is written below `tools/wire/.state/`. Lab
+Generated wire endpoint state is written below `tools/endpoint/.state/`. Lab
 session state and artifacts are written below ignored lab state/artifact roots.
 Oracle reports and packet artifacts are written below `target/oracle/`; probe
 reports are written below `target/probe/`.
@@ -155,14 +155,14 @@ Use direct wire commands only for debugging, inspection, or manual provider
 maintenance of one endpoint:
 
 ```sh
-tools/wire/run create-endpoint --provider hetzner --exposure wan --confirm-live-run --json
-tools/wire/run create-endpoint --provider docker --exposure private --private-group lab-a --confirm-live-run --json
-tools/wire/run create-endpoint --provider docker --exposure lan --confirm-live-run --json
-tools/wire/run create-endpoint --provider docker --exposure wan --confirm-live-run --json
-tools/wire/run list-endpoints --json
-tools/wire/run ssh-info ENDPOINT_ID --json
-tools/wire/run collect-artifacts ENDPOINT_ID
-tools/wire/run destroy-endpoint ENDPOINT_ID --json
+tools/endpoint/run create-endpoint --provider hetzner --exposure wan --confirm-live-run --json
+tools/endpoint/run create-endpoint --provider docker --exposure private --private-group lab-a --confirm-live-run --json
+tools/endpoint/run create-endpoint --provider docker --exposure lan --confirm-live-run --json
+tools/endpoint/run create-endpoint --provider docker --exposure wan --confirm-live-run --json
+tools/endpoint/run list-endpoints --json
+tools/endpoint/run ssh-info ENDPOINT_ID --json
+tools/endpoint/run collect-artifacts ENDPOINT_ID
+tools/endpoint/run destroy-endpoint ENDPOINT_ID --json
 ```
 
 For private endpoint experiments, pass the same `--private-group` to each
@@ -193,18 +193,18 @@ protected workflows with environment approval.
 Recommended provider dry-run flow:
 
 ```sh
-tools/wire/run doctor --provider hetzner --exposure private --dry-run
-tools/wire/run doctor --provider qemu --exposure private --dry-run
-tools/wire/run doctor --provider virtualbox --exposure lan --dry-run
-tools/wire/run doctor --provider docker --exposure private --dry-run
-tools/wire/run doctor --provider docker --exposure lan --dry-run
-tools/wire/run doctor --provider docker --exposure wan --dry-run
+tools/endpoint/run doctor --provider hetzner --exposure private --dry-run
+tools/endpoint/run doctor --provider qemu --exposure private --dry-run
+tools/endpoint/run doctor --provider virtualbox --exposure lan --dry-run
+tools/endpoint/run doctor --provider docker --exposure private --dry-run
+tools/endpoint/run doctor --provider docker --exposure lan --dry-run
+tools/endpoint/run doctor --provider docker --exposure wan --dry-run
 tools/lab/run plan --provider hetzner --dry-run --profile smoke --seed 1 --role stimulus --role target --json
 tools/lab/run plan --provider qemu --dry-run --profile smoke --seed 1 --role stimulus --role target --json
 tools/lab/run plan --provider virtualbox --dry-run --profile smoke --seed 1 --role stimulus --role target --json
-tools/wire/run create-endpoint --provider docker --exposure private --private-group ci-plan --dry-run --json
-tools/wire/run create-endpoint --provider docker --exposure lan --dry-run --json
-tools/wire/run create-endpoint --provider docker --exposure wan --dry-run --json
+tools/endpoint/run create-endpoint --provider docker --exposure private --private-group ci-plan --dry-run --json
+tools/endpoint/run create-endpoint --provider docker --exposure lan --dry-run --json
+tools/endpoint/run create-endpoint --provider docker --exposure wan --dry-run --json
 tools/oracle/run live --provider hetzner --dry-run --profile smoke --seed 12345 --count 10
 python3 tools/oracle/engine/live_provider_matrix.py --providers hetzner,qemu,virtualbox --profile smoke --seed 12345 --count 5 --dry-run --out target/oracle/provider-matrix-dry-run
 tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10
@@ -222,7 +222,7 @@ destruction so resources are still torn down after a failed validation step.
 Destroy disposable hosts as soon as provider validation finishes:
 
 ```sh
-tools/wire/run destroy-endpoint ENDPOINT_ID --json
+tools/endpoint/run destroy-endpoint ENDPOINT_ID --json
 ```
 
 If a command fails before cleanup, keep the ignored state directory until

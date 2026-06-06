@@ -10,8 +10,8 @@ import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 
-from tools.wire.engine.model import EndpointManifest
-from tools.wire.engine.providers.hetzner.constants import (
+from tools.endpoint.engine.model import EndpointManifest
+from tools.endpoint.engine.providers.hetzner.constants import (
     DEFAULT_IMAGE,
     DEFAULT_LOCATION,
     DEFAULT_PRIVATE_NETWORK_ZONE,
@@ -19,7 +19,7 @@ from tools.wire.engine.providers.hetzner.constants import (
     HCLOUD_TOKEN_ENV,
     TOKEN_ENV,
 )
-from tools.wire.engine.state import DEFAULT_PRIVATE_CIDR
+from tools.endpoint.engine.state import DEFAULT_PRIVATE_CIDR
 
 from .. import paths, wire_client
 from ..model import (
@@ -46,7 +46,7 @@ from .common import (
 PROVIDER_NAME = "hetzner"
 WIRE_PROVIDER = "hetzner"
 WIRE_EXPOSURE = "private"
-WIRE_ENTRYPOINT = "tools/wire/run"
+WIRE_ENTRYPOINT = "tools/endpoint/run"
 PRIVATE_NETWORK_CIDR = DEFAULT_PRIVATE_CIDR
 PRIVATE_NETWORK_ZONE = DEFAULT_PRIVATE_NETWORK_ZONE
 DEFAULT_PRIVATE_IPV4_PREFIX = "10.0.25"

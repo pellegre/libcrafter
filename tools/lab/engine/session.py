@@ -191,7 +191,7 @@ def cleanup_created_endpoints(
                 purpose=f"collect artifacts for {endpoint_id}",
                 role=role,
                 fallback_operation="wire.collect_artifacts",
-                fallback_argv=["tools/wire/run", "collect-artifacts", endpoint_id],
+                fallback_argv=["tools/endpoint/run", "collect-artifacts", endpoint_id],
                 live_mutation=False,
             )
         )
@@ -220,7 +220,7 @@ def cleanup_created_endpoints(
                         role=role,
                         fallback_operation="wire.destroy",
                         fallback_argv=[
-                            "tools/wire/run",
+                            "tools/endpoint/run",
                             "destroy-endpoint",
                             endpoint_id,
                             "--json",
@@ -409,7 +409,7 @@ def _tracked_command_records(client: object) -> list[LabCommandPlan]:
 
 
 def _create_fallback_argv(kwargs: Mapping[str, object]) -> list[str]:
-    argv = ["tools/wire/run", "create-endpoint"]
+    argv = ["tools/endpoint/run", "create-endpoint"]
     _extend_flag(argv, "--provider", kwargs.get("provider"))
     _extend_flag(argv, "--exposure", kwargs.get("exposure"))
     _extend_flag(argv, "--role", kwargs.get("role"))

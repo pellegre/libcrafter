@@ -103,7 +103,7 @@ def _assert_provider_neutral(test: unittest.TestCase, script: str) -> None:
     for fragment in (
         "rm -rf",
         "tar -xzf",
-        "tools/wire/run",
+        "tools/endpoint/run",
         "hcloud",
         "VBoxManage",
         "qemu-system",

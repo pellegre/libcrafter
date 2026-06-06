@@ -12,13 +12,13 @@ from tools.lab.engine.providers.docker import (
     docker_private_network_metadata,
     docker_session_id,
 )
-from tools.wire.engine.model import (
+from tools.endpoint.engine.model import (
     EndpointManifest,
     EndpointSSHInfo,
     NetworkInterface,
     ProviderResources,
 )
-from tools.wire.engine.providers.docker.constants import DOCKER_DEFAULT_PRIVATE_CIDR
+from tools.endpoint.engine.providers.docker.constants import DOCKER_DEFAULT_PRIVATE_CIDR
 
 
 class DockerProviderMetadataTest(unittest.TestCase):
@@ -289,7 +289,7 @@ class _FakeWireCreateResponse:
         artifacts: list[str] = (),
     ) -> LabCommandPlan:
         argv = [
-            "tools/wire/run",
+            "tools/endpoint/run",
             "create-endpoint",
             "--provider",
             str(self.call["provider"]),

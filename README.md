@@ -112,7 +112,7 @@ traffic only in networks where you are authorized to send and capture packets.
 
 ## Agent-Directed Wire Workflows
 
-Wire tooling lives under `tools/wire`, `tools/oracle`, and `tools/probe`.
+Wire tooling lives under `tools/endpoint`, `tools/oracle`, and `tools/probe`.
 Together they let an agent provision a disposable network position, transfer
 adapters, run packet work from it, collect artifacts, and destroy the
 underlying provider resources when the run is done.
@@ -123,12 +123,12 @@ traffic, watch how real network stacks respond, and feed those observations
 back into its next step. Running the same primitive across several endpoints
 in parallel is the same idea at width.
 
-`tools/wire` owns the provider contract — provision, command execution,
+`tools/endpoint` owns the provider contract — provision, command execution,
 artifact collection, SSH access, destroy — so `tools/oracle` and `tools/probe`
 consume an endpoint without depending on which provider produced it.
 
 ```sh
-tools/wire/run doctor --provider hetzner --exposure wan --dry-run
+tools/endpoint/run doctor --provider hetzner --exposure wan --dry-run
 tools/oracle/run live --provider hetzner --dry-run --profile smoke --seed 1 --count 10
 tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10
 ```
@@ -196,7 +196,7 @@ The full local release gate is:
 Provider-backed packet validation should start with dry-runs:
 
 ```sh
-tools/wire/run doctor --provider hetzner --exposure wan --dry-run
+tools/endpoint/run doctor --provider hetzner --exposure wan --dry-run
 tools/oracle/run live --provider hetzner --dry-run --profile smoke --seed 1 --count 10
 tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10
 ```
