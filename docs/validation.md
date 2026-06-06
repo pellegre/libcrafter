@@ -290,7 +290,7 @@ multi-endpoint substrate; oracle still owns the `libcrafter` and
 advertises IPv4 unicast, link-layer send and capture, broadcast, provider MAC
 knowledge, and controlled services, but not IPv6 or a controlled router.
 
-Docker `lan` and `wan` are direct wire smokes for NAT-backed L3 reachability
+Docker `lan` and `wan` are direct endpoint smokes for NAT-backed L3 reachability
 from one container. They are not oracle lab-backed multi-endpoint modes and do
 not claim LAN L2, WAN L2, or public inbound behavior:
 
@@ -314,7 +314,7 @@ python3 tools/oracle/engine/live_provider_matrix.py --providers hetzner,qemu,vir
 ```
 
 Real provider-backed validation is reserved for explicit protected workflows on
-disposable wire endpoints and requires `--confirm-live-run`. Provider selection
+disposable endpoints and requires `--confirm-live-run`. Provider selection
 still uses the same live oracle command and adapter registry:
 
 ```sh
@@ -323,7 +323,7 @@ tools/oracle/run live --provider docker --confirm-live-run --profile smoke --see
 ```
 
 For local VM providers, use the guarded matrix smoke path. It runs QEMU and
-VirtualBox wire doctor checks first, uses a small corpus, and records
+VirtualBox endpoint doctor checks first, uses a small corpus, and records
 structured skips by default when VM creation is not explicitly enabled:
 
 ```sh
@@ -339,7 +339,7 @@ private group `oracle-live-private`; VirtualBox uses `virtualbox/lan` with the
 bridged interface discovered by `VBoxManage` or requested through
 `LIBCRAFTER_VBOX_BRIDGE_IFACE`.
 
-See [lab.md](lab.md) for lab session metadata and [wire.md](wire.md) for
+See [lab.md](lab.md) for lab session metadata and [endpoint.md](endpoint.md) for
 single-endpoint provider credentials, artifacts, and cleanup.
 
 ## ICMPv4 Live Matrix
@@ -380,7 +380,7 @@ to coordinate or reproduce a specific run; do not commit live IPs or captures.
 ## CI Expectations
 
 Pull request CI should run deterministic corpus, offline, pcap, provider-backed
-wire dry-run, and probe dry-run checks. Oracle provider checks are selected
+dry-run, and probe dry-run checks. Oracle provider checks are selected
 through the live provider adapter registry. Real live packet exchange must stay
 behind explicit protected workflow confirmation and cleanup logic. Dry-runs are
 the default validation path for provider-backed lab, oracle, and probe checks.

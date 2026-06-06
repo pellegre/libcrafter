@@ -1,7 +1,7 @@
 # Lab Sessions
 
 `tools/lab` is the standalone multi-endpoint substrate tool for libcrafter
-provider-backed work. It composes lower-level `wire` endpoints into named
+provider-backed work. It composes lower-level provider endpoints into named
 roles, persists a lab session manifest, records provider workflow and command
 metadata, and owns repository archive transfer, remote unpack, bootstrap
 context, artifact collection, and cleanup records.
@@ -9,7 +9,8 @@ context, artifact collection, and cleanup records.
 Oracle and probe use lab sessions so their live behavior is independent of the
 machine where libcrafter or an agent is running. Oracle still owns reference
 packet validation. Probe still owns kernel and controlled-service behavior
-validation. Wire still owns one endpoint and transport operations.
+validation. The endpoint provider layer still owns one endpoint and transport
+operations.
 
 ## Tool Split
 
@@ -29,9 +30,9 @@ name. The current lab-backed providers are:
 - `docker`: local constrained containers on an isolated `docker/private`
   bridge.
 
-The Docker lab provider maps provider `docker` to the wire provider/exposure
+The Docker lab provider maps provider `docker` to the endpoint provider/exposure
 pair `docker/private`. It is the Docker mode intended for coordinated
-multi-endpoint lab sessions. Docker `lan` and `wan` are direct wire endpoint
+multi-endpoint lab sessions. Docker `lan` and `wan` are direct endpoint
 modes for single-endpoint smokes, not lab-backed multi-endpoint modes.
 
 ## Bootstrap Ownership
@@ -99,7 +100,7 @@ tools/probe/run --provider virtualbox --dry-run --profile smoke --seed 1 --count
 tools/probe/run --provider docker --dry-run --profile smoke --seed 1 --count 10
 ```
 
-Docker LAN and WAN reachability checks are direct wire smokes because they
+Docker LAN and WAN reachability checks are direct endpoint smokes because they
 exercise one container's NAT-backed L3 path through Docker bridge routing:
 
 ```sh
@@ -133,7 +134,7 @@ artifacts, and tear down the session.
 
 Lab-backed reports include:
 
-- `lab_session`: provider, wire provider/exposure, roles, endpoints,
+- `lab_session`: provider, endpoint provider/exposure, roles, endpoints,
   capabilities, validation checks, remote paths, command records, and cleanup
   state.
 - `planned_infrastructure`: dry-run-safe provider topology metadata.
@@ -142,7 +143,7 @@ Lab-backed reports include:
 - endpoint role/address metadata used by oracle or probe.
 
 Artifacts are written under the selected runner output directory and ignored
-lab/wire state roots. Do not commit credentials, provider account data, public
+lab/endpoint state roots. Do not commit credentials, provider account data, public
 host identifiers, live public IPs, or packet captures from sensitive networks.
 
 For agent operating guidance, use the repo-local `lab-session` and

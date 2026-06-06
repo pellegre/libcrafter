@@ -38,7 +38,7 @@ state.
 Docker is a lab provider for private multi-endpoint probe sessions. The Docker
 adapter maps provider `docker` to `docker/private`, so lab owns only the
 constrained private endpoint substrate while probe still owns `stimulus` and
-`target` workload bootstrap. Docker `lan` and `wan` stay direct wire smoke
+`target` workload bootstrap. Docker `lan` and `wan` stay direct endpoint smoke
 modes for NAT-backed L3 reachability, not probe lab-backed multi-endpoint
 modes.
 
@@ -233,7 +233,7 @@ tools/lab/run plan --provider virtualbox --dry-run --profile smoke --seed 1 --ro
 tools/lab/run plan --provider docker --dry-run --profile smoke --seed 1 --role stimulus --role target --json
 ```
 
-Docker LAN and WAN checks use direct wire smokes instead of probe lab sessions:
+Docker LAN and WAN checks use direct endpoint smokes instead of probe lab sessions:
 
 ```sh
 tools/endpoint/smoke/live_docker_lan_icmp.py --plan-only
@@ -276,8 +276,10 @@ TCP RST guards on the stimulus endpoint, the `stimulus_endpoint` binary from
 Probe reports include selected cases, generated probe plans, execution counts,
 skip counts, lab session metadata, provider command metadata, observed
 responses, and per-case failure reasons. Local reports are written below
-`target/probe/`. Provider artifacts are collected through lab/wire into ignored
-artifact directories or the configured runner output directory.
+`target/probe/`. Provider artifacts are collected through lab/endpoint
+workflows into ignored artifact directories or the configured runner output
+directory. See [endpoint.md](endpoint.md) for single-endpoint provider
+credentials, artifacts, and cleanup.
 
 Do not commit provider state, public host addresses, live host identifiers,
 packet captures from non-disposable networks, or credentials.

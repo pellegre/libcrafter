@@ -27,12 +27,12 @@ This directory contains user and contributor documentation for the Rust
   tests, oracle, interop, provider dry-run matrix, and the QEMU / VirtualBox
   live-run outcomes including the NDP hop-limit-255 defect found and fixed.
 - [Examples](examples.md) explains how to build and run the Rust examples.
-- [Oracle validation](validation.md) describes corpus, offline, pcap, and wire
-  reference validation.
+- [Oracle validation](validation.md) describes corpus, offline, pcap, and
+  provider-backed reference validation.
 - [Probe validation](probe.md) describes kernel and service behavior probes.
 - [Lab sessions](lab.md) describes provider-backed multi-endpoint sessions used
   by oracle and probe.
-- [Wire endpoint provider guide](wire.md) covers shared disposable provider setup,
+- [Endpoint provider guide](endpoint.md) covers shared disposable provider setup,
   credentials, artifacts, and cleanup for one endpoint.
 Agent operating guidance belongs under
 [`.agents/docs/cookbook.md`](../.agents/docs/cookbook.md), not here.
