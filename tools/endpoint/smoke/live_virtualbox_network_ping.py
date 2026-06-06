@@ -65,7 +65,7 @@ class CommandCapture:
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     repo_root = Path(__file__).resolve().parents[3]
-    wire = repo_root / "tools" / "wire" / "run"
+    wire = repo_root / "tools" / "endpoint" / "run"
     binary = (
         repo_root / "target" / "debug" / "examples" / "network_ping"
         if args.binary is None
@@ -273,7 +273,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         action="store_true",
         help="acknowledge this smoke sends live LAN traffic",
     )
-    parser.add_argument("--role", default=DEFAULT_ROLE, help="wire endpoint role label")
+    parser.add_argument("--role", default=DEFAULT_ROLE, help="endpoint role label")
     parser.add_argument(
         "--binary",
         default=None,
@@ -441,7 +441,7 @@ def _write_result_artifacts(
 
 
 def _write_unattached_failure(repo_root: Path, stem: str, result: CommandCapture) -> None:
-    artifact_dir = repo_root / "tools" / "wire" / "artifacts" / "live-virtualbox-network-ping"
+    artifact_dir = repo_root / "tools" / "endpoint" / "artifacts" / "live-virtualbox-network-ping"
     _write_result_artifacts(artifact_dir, stem, result)
 
 
