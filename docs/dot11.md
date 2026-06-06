@@ -271,7 +271,7 @@ interface outside `crafter`, then open it as a pcap-backed packet source:
 ```rust
 use crafter::prelude::*;
 
-let source = PacketWire::pcap_interface("wlan0mon")
+let source = PacketWire::pcap_interface("dot11-doc-iface")
     .filter("type mgt or type data")
     .open()?
     .source()?;
