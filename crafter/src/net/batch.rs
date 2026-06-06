@@ -3,7 +3,7 @@ use std::time::Duration;
 use crate::Packet;
 
 use super::error::Result;
-use super::send::{SendMode, SendOptions, SendReport, SocketSender};
+use super::send::{send_packet, SendMode, SendOptions, SendReport};
 use super::send_recv::SendRecv;
 pub use super::send_recv::{
     send_recv_packets, BatchSendRecv, BatchSendRecvEntry, BatchSendRecvReport,
@@ -132,15 +132,14 @@ impl BatchSend {
         let mut entries = (0..packets.len())
             .map(BatchSendEntry::new)
             .collect::<Vec<_>>();
-        let sender = SocketSender::new(self.send_options.clone());
-
         for chunk_start in (0..packets.len()).step_by(self.concurrency_limit) {
             let chunk_end = (chunk_start + self.concurrency_limit).min(packets.len());
             for attempt in 0..self.retries {
                 for request_index in chunk_start..chunk_end {
-                    entries[request_index]
-                        .send_reports
-                        .push(sender.send(&packets[request_index])?);
+                    entries[request_index].send_reports.push(send_packet(
+                        &packets[request_index],
+                        self.send_options.clone(),
+                    )?);
                 }
                 maybe_wait_between_live_retries(
                     self.send_options.is_dry_run(),

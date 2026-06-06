@@ -170,7 +170,10 @@ mod send_plan {
         Dot11, Ethernet, Icmpv4, Ipv4, Ipv6, LlcSnap, NetworkLayer, Packet, Radiotap, Raw, Tcp, Udp,
     };
 
-    use crate::net::{NetError, PacketSendExt, SendMode, SendOptions, SendTarget, SocketSender};
+    use crate::net::{
+        send_packet as one_shot_send_packet, send_plan as one_shot_send_plan, NetError,
+        PacketSendExt, SendMode, SendOptions, SendTarget, SocketSender,
+    };
 
     fn ipv4_packet() -> Packet {
         Ipv4::new()
@@ -289,6 +292,41 @@ mod send_plan {
 
         assert_eq!(plan.requested_mode(), SendMode::NetworkLayer);
         assert!(plan.target().is_network_layer());
+    }
+
+    #[test]
+    fn one_shot_send_plan_uses_raw_socket_writer_planning_path() {
+        let packet = ipv4_packet();
+        let plan =
+            one_shot_send_plan(&packet, SendOptions::new().iface("lo").network_layer()).unwrap();
+
+        assert_eq!(plan.interface(), "lo");
+        assert_eq!(plan.requested_mode(), SendMode::NetworkLayer);
+        assert!(matches!(plan.target(), SendTarget::NetworkLayer { .. }));
+        assert_eq!(plan.len(), packet.compile().unwrap().len());
+    }
+
+    #[test]
+    fn one_shot_and_extension_send_return_raw_socket_reports() {
+        let packet = ipv4_packet();
+
+        let one_shot_report = one_shot_send_packet(
+            &packet,
+            SendOptions::new().iface("eth0").network_layer().dry_run(),
+        )
+        .unwrap();
+        let extension_report = packet
+            .send(SendOptions::new().iface("eth0").network_layer().dry_run())
+            .unwrap();
+
+        assert!(one_shot_report.is_dry_run());
+        assert!(extension_report.is_dry_run());
+        assert_eq!(one_shot_report.bytes_sent(), one_shot_report.plan().len());
+        assert_eq!(extension_report.bytes_sent(), extension_report.plan().len());
+        assert_eq!(
+            one_shot_report.plan().target(),
+            extension_report.plan().target()
+        );
     }
 
     #[test]

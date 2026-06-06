@@ -2,6 +2,7 @@ use std::io;
 use std::net::IpAddr;
 use std::time::Duration;
 
+use crate::wire::RawSocketWriter;
 use crate::{
     CompiledPacket, Ethernet, Icmpv4, Icmpv6, Ipv4, Ipv6, Layer, LinkType, NetworkLayer, Packet,
     Radiotap, Tcp, Udp, IPPROTO_ICMP, IPPROTO_ICMPV6, IPPROTO_TCP, IPPROTO_UDP,
@@ -327,26 +328,26 @@ pub trait PacketSendExt {
 
 impl PacketSendExt for Packet {
     fn send_plan(&self, options: impl Into<SendOptions>) -> Result<SendPlan> {
-        SendPlan::from_packet(self, options)
+        RawSocketWriter::new(options).plan_packet(self)
     }
 
     fn send_dry_run(&self, options: impl Into<SendOptions>) -> Result<SendPlan> {
-        SendPlan::from_packet(self, options.into().dry_run())
+        RawSocketWriter::new(options.into().dry_run()).plan_packet(self)
     }
 
     fn send(&self, options: impl Into<SendOptions>) -> Result<SendReport> {
-        SocketSender::new(options).send(self)
+        send_packet(self, options)
     }
 }
 
 /// Compile and send a packet in one call.
 pub fn send_packet(packet: &Packet, options: impl Into<SendOptions>) -> Result<SendReport> {
-    SocketSender::new(options).send(packet)
+    RawSocketWriter::new(options).send_packet(packet)
 }
 
 /// Build a dry-run send plan in one call.
 pub fn send_plan(packet: &Packet, options: impl Into<SendOptions>) -> Result<SendPlan> {
-    SendPlan::from_packet(packet, options.into().dry_run())
+    RawSocketWriter::new(options.into().dry_run()).plan_packet(packet)
 }
 
 pub(crate) fn validated_interface(options: &SendOptions) -> Result<String> {
