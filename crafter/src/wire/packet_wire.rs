@@ -2,10 +2,15 @@
 
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use crate::pcap::PcapLinkType;
 
-use super::backend::pcap::OfflinePcapSource;
+use super::backend::pcap::{
+    filter_trimmed, OfflinePcapSource, PcapInterfaceSource, DEFAULT_INTERFACE_IMMEDIATE,
+    DEFAULT_INTERFACE_NONBLOCKING, DEFAULT_INTERFACE_PROMISC, DEFAULT_INTERFACE_SNAPLEN,
+    DEFAULT_INTERFACE_TIMEOUT,
+};
 use super::source::PacketSource;
 use super::writer::PacketWriter;
 use super::{Result, WireError};
@@ -79,12 +84,17 @@ impl PacketWireTarget {
 /// Builder for one packet wire target.
 ///
 /// The builder records which backend or interface should be opened. Backend
-/// adapters attach concrete source and writer capabilities during `open`; until
-/// those adapters are wired in, unsupported operations fail as typed
-/// [`WireError::UnsupportedCapability`] values.
+/// adapters attach concrete source and writer capabilities during `open`;
+/// unsupported directions fail as typed [`WireError::UnsupportedCapability`]
+/// values.
 pub struct PacketWireBuilder {
     target: PacketWireTarget,
     pcap_filter: Option<String>,
+    pcap_timeout: Option<Duration>,
+    pcap_snaplen: u32,
+    pcap_promisc: bool,
+    pcap_immediate: bool,
+    pcap_nonblocking: bool,
     source: Option<OpenedPacketSource>,
     writer: Option<OpenedPacketWriter>,
 }
@@ -94,6 +104,11 @@ impl PacketWireBuilder {
         Self {
             target,
             pcap_filter: None,
+            pcap_timeout: Some(DEFAULT_INTERFACE_TIMEOUT),
+            pcap_snaplen: DEFAULT_INTERFACE_SNAPLEN,
+            pcap_promisc: DEFAULT_INTERFACE_PROMISC,
+            pcap_immediate: DEFAULT_INTERFACE_IMMEDIATE,
+            pcap_nonblocking: DEFAULT_INTERFACE_NONBLOCKING,
             source: None,
             writer: None,
         }
@@ -106,7 +121,13 @@ impl PacketWireBuilder {
 
     /// Set a libpcap BPF filter for pcap source targets.
     pub fn filter(mut self, filter: impl Into<String>) -> Self {
-        self.pcap_filter = Some(filter.into());
+        self.pcap_filter = filter_trimmed(filter);
+        self
+    }
+
+    /// Remove any configured libpcap BPF filter.
+    pub fn clear_filter(mut self) -> Self {
+        self.pcap_filter = None;
         self
     }
 
@@ -115,14 +136,99 @@ impl PacketWireBuilder {
         self.pcap_filter.as_deref()
     }
 
+    /// Set the libpcap read timeout for live pcap interface sources.
+    pub fn timeout(mut self, timeout: Duration) -> Self {
+        self.pcap_timeout = Some(timeout);
+        self
+    }
+
+    /// Disable the libpcap read timeout for live pcap interface sources.
+    pub fn no_timeout(mut self) -> Self {
+        self.pcap_timeout = None;
+        self
+    }
+
+    /// Configured live pcap interface read timeout.
+    pub const fn pcap_timeout(&self) -> Option<Duration> {
+        self.pcap_timeout
+    }
+
+    /// Set the snapshot length for live pcap interface capture.
+    pub const fn snaplen(mut self, snaplen: u32) -> Self {
+        self.pcap_snaplen = snaplen;
+        self
+    }
+
+    /// Configured live pcap interface snapshot length.
+    pub const fn pcap_snaplen(&self) -> u32 {
+        self.pcap_snaplen
+    }
+
+    /// Enable or disable promiscuous mode for live pcap interface capture.
+    pub const fn promisc(mut self, promisc: bool) -> Self {
+        self.pcap_promisc = promisc;
+        self
+    }
+
+    /// Whether live pcap interface promiscuous mode is enabled.
+    pub const fn pcap_promisc(&self) -> bool {
+        self.pcap_promisc
+    }
+
+    /// Enable or disable immediate mode for live pcap interface capture.
+    pub const fn immediate_mode(mut self, immediate: bool) -> Self {
+        self.pcap_immediate = immediate;
+        self
+    }
+
+    /// Whether live pcap interface immediate mode is enabled.
+    pub const fn pcap_immediate_mode(&self) -> bool {
+        self.pcap_immediate
+    }
+
+    /// Enable or disable nonblocking reads for live pcap interface capture.
+    pub const fn nonblocking(mut self, nonblocking: bool) -> Self {
+        self.pcap_nonblocking = nonblocking;
+        self
+    }
+
+    /// Enable nonblocking reads for live pcap interface capture.
+    pub const fn nonblock(self) -> Self {
+        self.nonblocking(true)
+    }
+
+    /// Whether live pcap interface nonblocking reads are enabled.
+    pub const fn pcap_nonblocking(&self) -> bool {
+        self.pcap_nonblocking
+    }
+
     /// Open this target as one packet wire.
     pub fn open(mut self) -> Result<PacketWire> {
         if self.source.is_none() {
-            if let PacketWireTarget::PcapFile { path } = &self.target {
-                self.source = Some(Box::new(OfflinePcapSource::open_with_optional_filter(
-                    path,
-                    self.pcap_filter.as_deref(),
-                )?));
+            match &self.target {
+                PacketWireTarget::PcapFile { path } => {
+                    self.source = Some(Box::new(OfflinePcapSource::open_with_optional_filter(
+                        path,
+                        self.pcap_filter.as_deref(),
+                    )?));
+                }
+                PacketWireTarget::PcapInterface { interface } => {
+                    let mut builder = PcapInterfaceSource::builder(interface.clone())
+                        .snaplen(self.pcap_snaplen)
+                        .promisc(self.pcap_promisc)
+                        .immediate_mode(self.pcap_immediate)
+                        .nonblocking(self.pcap_nonblocking);
+                    if let Some(timeout) = self.pcap_timeout {
+                        builder = builder.timeout(timeout);
+                    } else {
+                        builder = builder.no_timeout();
+                    }
+                    if let Some(filter) = self.pcap_filter.as_deref() {
+                        builder = builder.filter(filter);
+                    }
+                    self.source = Some(Box::new(builder.open()?));
+                }
+                PacketWireTarget::PcapRecorder { .. } => {}
             }
         }
 
@@ -151,6 +257,11 @@ impl fmt::Debug for PacketWireBuilder {
         f.debug_struct("PacketWireBuilder")
             .field("target", &self.target)
             .field("pcap_filter", &self.pcap_filter)
+            .field("pcap_timeout", &self.pcap_timeout)
+            .field("pcap_snaplen", &self.pcap_snaplen)
+            .field("pcap_promisc", &self.pcap_promisc)
+            .field("pcap_immediate", &self.pcap_immediate)
+            .field("pcap_nonblocking", &self.pcap_nonblocking)
             .field("has_source", &self.source.is_some())
             .field("has_writer", &self.writer.is_some())
             .finish()
@@ -360,7 +471,10 @@ mod tests {
             }
         );
 
-        let wire = builder.open().unwrap();
+        let wire = builder
+            .with_source(VecPacketSource::empty())
+            .open()
+            .unwrap();
         assert_eq!(wire.target().interface(), Some("wlan0mon"));
         assert_eq!(wire.target().path(), None);
     }
