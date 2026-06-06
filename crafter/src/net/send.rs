@@ -518,6 +518,13 @@ fn transmit_plan(plan: &SendPlan, options: &SendOptions) -> Result<usize> {
 }
 
 fn transmit_link(plan: &SendPlan, options: &SendOptions, link_type: LinkType) -> Result<usize> {
+    if link_type == LinkType::Radiotap {
+        return Err(NetError::UnsupportedSendTarget {
+            target: plan.target,
+            reason: "live radiotap Wi-Fi injection is not implemented; use dry-run planning or an explicit monitor-mode radiotap backend",
+        });
+    }
+
     if link_type != LinkType::Ethernet {
         return Err(NetError::UnsupportedSendTarget {
             target: plan.target,
