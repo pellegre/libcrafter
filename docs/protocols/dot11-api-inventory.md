@@ -9,10 +9,14 @@ use crafter::prelude::*;
 
 let packet = Radiotap::new()
     / Dot11::data()
-    / LlcSnap::ethertype(ETHERTYPE_IPV4)
+    / LlcSnap::new().ethertype(ETHERTYPE_IPV4)
     / Ipv4::new()
     / Raw::from("payload");
 ```
+
+`Dot11::data() / Ipv4::new()` is only a sequential byte stack. It does not
+create a valid IP-over-802.11 payload and must not cause hidden LLC/SNAP
+insertion.
 
 Existing public types must not be renamed. In particular, `Packet`, `Raw`,
 `Layer`, `LinkType`, `NetworkLayer`, `ProtocolRegistry`, `MacAddr`, `Ethernet`,
