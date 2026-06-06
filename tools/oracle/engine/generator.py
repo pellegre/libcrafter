@@ -2237,6 +2237,8 @@ def _sample_ipv4_field(
             return 1
         if any(layer in ctx.stack for layer in ("tcp", "udp", "icmp", "dns", "dhcp")):
             return 0
+        if domain == "non_initial":
+            return 1
         if current_fields.get("flags") == "mf":
             return _integer_domain_value(ctx, domain, field_name, bits=13)
         return 0
@@ -4471,7 +4473,9 @@ def _sample_rsn_field(ctx: _SamplingContext, field_name: str, domain: object) ->
     if field_name == "group_management_cipher_suite":
         return "bip_cmac_128" if "management-protection" in ctx.case else _SKIP_FIELD
     if field_name == "trailing_bytes":
-        return _SKIP_FIELD if domain in {"absent", "empty"} else {"hex": "aabb"}
+        if domain in {"absent", "empty"} or "unknown-suite-raw" not in ctx.case:
+            return _SKIP_FIELD
+        return {"hex": "aabb"}
     raise ValueError(f"spec error: unsupported rsn field sampler: {field_name}")
 
 

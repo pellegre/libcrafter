@@ -1804,6 +1804,8 @@ def _rsn_information_value_bytes(fields: Mapping[str, object] | None = None) -> 
             raise ValueError("rsn pmkid_list length must be a multiple of 16")
         output.extend((len(pmkids) // 16).to_bytes(2, "little"))
         output.extend(pmkids)
+    elif "group_management_cipher_suite" in fields:
+        output.extend((0).to_bytes(2, "little"))
     if "group_management_cipher_suite" in fields:
         output.extend(_rsn_suite_selector(fields.get("group_management_cipher_suite"), default_type=6))
     output.extend(_bytes_optional(fields.get("trailing_bytes")))
