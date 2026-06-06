@@ -24,10 +24,11 @@ fn main() -> ExampleResult<()> {
         println!("created: {} packets at {}", generated.len(), path.display());
     }
 
-    let packets = Sniffer::offline(&path)
+    let source = PacketWire::pcap_file(&path)
         .filter(&filter)
-        .count(count)
-        .collect()?;
+        .open()?
+        .source()?;
+    let packets = Sniffer::new(source).count(count).collect_records()?;
 
     println!("example: sniffer_offline");
     println!("mode: offline");
@@ -35,8 +36,8 @@ fn main() -> ExampleResult<()> {
     println!("filter: {filter}");
     println!("packets: {}", packets.len());
 
-    for (index, captured) in packets.iter().enumerate() {
-        let packet = captured.packet();
+    for (index, record) in packets.iter().enumerate() {
+        let packet = record.packet();
         println!("packet[{index}]: {}", packet.summary());
 
         if let Some(tcp) = packet.layer::<Tcp>() {

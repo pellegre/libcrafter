@@ -44,25 +44,35 @@ fn main() -> ExampleResult<()> {
     println!("safety: live capture guard satisfied");
     ensure_parent(&out)?;
 
-    let mut sniffer = Sniffer::interface(iface.clone())
-        .count(count)
-        .timeout(Duration::from_secs(timeout_seconds as u64));
+    let timeout = Duration::from_secs(timeout_seconds as u64);
+    let mut wire = PacketWire::pcap_interface(iface.clone()).timeout(timeout);
     if let Some(filter) = filter.as_deref() {
-        sniffer = sniffer.filter(filter);
+        wire = wire.filter(filter);
     }
 
-    let packets = sniffer.collect()?;
+    let source = wire.open()?.source()?;
+    let packets = Sniffer::new(source)
+        .count(count)
+        .timeout(timeout)
+        .collect_records()?;
     let Some(first) = packets.first() else {
         return Err("no packets captured".into());
     };
 
-    let link_type = first.pcap_link_type();
+    let link_type = first
+        .metadata()
+        .pcap_link_type()
+        .ok_or("capture record is missing pcap link type")?;
     let mut writer = PcapWriter::create(&out, link_type)?;
-    for packet in &packets {
-        if packet.pcap_link_type() != link_type {
+    for record in &packets {
+        if record.metadata().pcap_link_type() != Some(link_type) {
             return Err("capture returned mixed pcap link types".into());
         }
-        writer.write_packet_with_timestamp(packet.packet(), packet.timestamp())?;
+        let timestamp = record
+            .metadata()
+            .timestamp()
+            .ok_or("capture record is missing pcap timestamp")?;
+        writer.write_packet_with_timestamp(record.packet(), timestamp)?;
     }
     writer.flush()?;
 
