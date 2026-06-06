@@ -7,6 +7,7 @@
 #![allow(dead_code)]
 
 use crafter::prelude::*;
+use crafter::protocols::link::{RadiotapChannel, RadiotapFlags, RadiotapRxFlags, RadiotapTxFlags};
 use serde_json::{json, Map, Value};
 use std::env;
 use std::error::Error;
@@ -170,11 +171,17 @@ pub fn build_packet(plan: &Value) -> ExampleResult<Packet> {
 
     for raw_layer in stack {
         let layer = canonical_layer(&raw_layer);
+        if layer == "rsn" {
+            continue;
+        }
         if layer == "udp_options" {
             saw_udp_options_layer = true;
         }
         let piece = build_layer(plan, &layer)?;
         packet.push_box_mut(piece);
+        if layer == "eapol" && eapol_key_layer_is_present(plan)? {
+            packet.push_box_mut(Box::new(eapol_key_layer(plan)?));
+        }
     }
 
     if append_udp_options && !saw_udp_options_layer {
@@ -205,8 +212,246 @@ fn build_layer(plan: &Value, layer: &str) -> ExampleResult<Box<dyn Layer>> {
         "icmpv6" => Ok(Box::new(icmpv6_layer(plan)?)),
         "dns" => Ok(Box::new(dns_layer(plan)?)),
         "dhcp" => Ok(Box::new(dhcp_layer(plan)?)),
+        "radiotap" => Ok(Box::new(radiotap_layer(plan)?)),
+        "dot11" => Ok(Box::new(dot11_layer(plan)?)),
+        "llc_snap" => Ok(Box::new(llc_snap_layer(plan)?)),
+        "eapol" => Ok(Box::new(eapol_layer(plan)?)),
         _ => Err(format!("unsupported libcrafter materialization layer: {layer}").into()),
     }
+}
+
+fn radiotap_layer(plan: &Value) -> ExampleResult<Radiotap> {
+    let fields = layer_fields(plan, "radiotap")?;
+    let mut layer = Radiotap::new()
+        .version(
+            optional(fields, &["version"])
+                .map(u8_value)
+                .transpose()?
+                .unwrap_or(0),
+        )
+        .pad(
+            optional(fields, &["pad"])
+                .map(u8_value)
+                .transpose()?
+                .unwrap_or(0),
+        );
+
+    let has_flags =
+        optional(fields, &["flags"]).is_some() || optional(fields, &["fcs_status"]).is_some();
+    if has_flags {
+        layer = layer.flags(RadiotapFlags::from_bits(radiotap_flags(fields)?));
+    }
+    if let Some(value) = optional(fields, &["rate"]) {
+        layer = layer.rate(u8_value(value)?);
+    }
+    if optional(fields, &["channel_frequency"]).is_some()
+        || optional(fields, &["channel_flags"]).is_some()
+    {
+        layer = layer.channel(RadiotapChannel::new(
+            optional(fields, &["channel_frequency"])
+                .map(u16_value)
+                .transpose()?
+                .unwrap_or(2412),
+            radiotap_channel_flags(optional(fields, &["channel_flags"]))?,
+        ));
+    }
+    if let Some(value) = optional(fields, &["dbm_antenna_signal"]) {
+        layer = layer.antenna_signal(i8_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["antenna"]) {
+        layer = layer.antenna(u8_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["rx_flags"]) {
+        layer = layer.rx_flags(RadiotapRxFlags::from_bits(u16_value(value)?));
+    }
+    if let Some(value) = optional(fields, &["tx_flags"]) {
+        layer = layer.tx_flags(RadiotapTxFlags::from_bits(u16_value(value)?));
+    }
+
+    Ok(layer)
+}
+
+fn dot11_layer(plan: &Value) -> ExampleResult<Dot11> {
+    let fields = layer_fields(plan, "dot11")?;
+    let mut layer = Dot11::new()
+        .frame_control(Dot11FrameControl::from_bits(dot11_frame_control(fields)?))
+        .duration_id(
+            optional(fields, &["duration_id"])
+                .map(u16_value)
+                .transpose()?
+                .unwrap_or(0),
+        )
+        .addr1(mac_addr_field(fields, &["addr1"], "00:00:5e:00:53:01")?)
+        .addr2(mac_addr_field(fields, &["addr2"], "00:00:5e:00:53:02")?)
+        .addr3(mac_addr_field(fields, &["addr3"], "00:00:5e:00:53:03")?);
+
+    if let Some(value) = optional(fields, &["addr4"]) {
+        layer = layer.addr4(mac_addr_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["sequence_control"]) {
+        layer = layer.sequence_control(Dot11SequenceControl::from_bits(u16_value(value)?));
+    }
+    if let Some(value) = optional(fields, &["qos_control"]) {
+        layer = layer.qos_control(u16_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["ht_control"]) {
+        layer = layer.ht_control(u32_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["management_fixed_fields"]) {
+        layer = layer.fixed_parameters(option_bytes(value)?);
+    }
+    if let Some(value) = optional(fields, &["tagged_parameters"]) {
+        for tag in dot11_tagged_parameters(value)? {
+            layer = layer.tag(tag);
+        }
+    }
+    if stack_contains(plan, "rsn") {
+        if let Some(rsn) = optional_layer_fields(plan, "rsn")? {
+            layer = layer.tag(rsn_tagged_parameter(rsn)?);
+        }
+    }
+
+    Ok(layer)
+}
+
+fn llc_snap_layer(plan: &Value) -> ExampleResult<LlcSnap> {
+    let fields = layer_fields(plan, "llc_snap")?;
+    let oui = optional(fields, &["oui"])
+        .map(|value| fixed_3_bytes(value, "llc_snap.oui"))
+        .transpose()?
+        .unwrap_or([0, 0, 0]);
+    Ok(LlcSnap::new()
+        .dsap(
+            optional(fields, &["dsap"])
+                .map(u8_value)
+                .transpose()?
+                .unwrap_or(0xaa),
+        )
+        .ssap(
+            optional(fields, &["ssap"])
+                .map(u8_value)
+                .transpose()?
+                .unwrap_or(0xaa),
+        )
+        .control(
+            optional(fields, &["control"])
+                .map(u8_value)
+                .transpose()?
+                .unwrap_or(0x03),
+        )
+        .oui(oui)
+        .ethertype(
+            optional(fields, &["ethertype", "type"])
+                .map(ethertype_value)
+                .transpose()?
+                .unwrap_or_else(|| ethertype_for_next_stack_layer(plan, "llc_snap")),
+        ))
+}
+
+fn eapol_layer(plan: &Value) -> ExampleResult<Eapol> {
+    let fields = layer_fields(plan, "eapol")?;
+    let mut layer = Eapol::new()
+        .version(
+            optional(fields, &["version"])
+                .map(u8_value)
+                .transpose()?
+                .unwrap_or(EAPOL_VERSION_2),
+        )
+        .packet_type_raw(
+            optional(fields, &["packet_type", "type"])
+                .map(eapol_type_value)
+                .transpose()?
+                .unwrap_or(EAPOL_TYPE_EAP_PACKET),
+        );
+    if let Some(value) = optional(fields, &["body", "body_bytes"]) {
+        layer = layer.body(option_bytes(value)?);
+    }
+    if let Some(value) = optional(fields, &["body_length", "len"]) {
+        let length = u16_value(value)?;
+        if length != 0 {
+            layer = layer.body_length(length);
+        }
+    }
+    Ok(layer)
+}
+
+fn eapol_key_layer_is_present(plan: &Value) -> ExampleResult<bool> {
+    let Some(fields) = optional_layer_fields(plan, "eapol")? else {
+        return Ok(false);
+    };
+    if optional(
+        fields,
+        &[
+            "descriptor_type",
+            "key_information",
+            "key_length",
+            "replay_counter",
+        ],
+    )
+    .is_some()
+    {
+        return Ok(true);
+    }
+    Ok(optional(fields, &["packet_type", "type"])
+        .map(eapol_type_value)
+        .transpose()?
+        == Some(EAPOL_TYPE_KEY))
+}
+
+fn eapol_key_layer(plan: &Value) -> ExampleResult<EapolKey> {
+    let fields = layer_fields(plan, "eapol")?;
+    let mut layer = EapolKey::new()
+        .descriptor_type_raw(
+            optional(fields, &["descriptor_type"])
+                .map(eapol_descriptor_type)
+                .transpose()?
+                .unwrap_or(EAPOL_KEY_DESCRIPTOR_RSN),
+        )
+        .key_information(EapolKeyInformation::from_bits(
+            optional(fields, &["key_information"])
+                .map(u16_value)
+                .transpose()?
+                .unwrap_or(0),
+        ))
+        .key_length(
+            optional(fields, &["key_length"])
+                .map(u16_value)
+                .transpose()?
+                .unwrap_or(0),
+        )
+        .replay_counter(
+            optional(fields, &["replay_counter"])
+                .map(u64_value)
+                .transpose()?
+                .unwrap_or(0),
+        );
+
+    if let Some(value) = optional(fields, &["key_nonce", "nonce"]) {
+        layer = layer.nonce(fixed_32_bytes(value, "eapol.key_nonce")?);
+    }
+    if let Some(value) = optional(fields, &["key_iv", "iv"]) {
+        layer = layer.iv(fixed_16_bytes(value, "eapol.key_iv")?);
+    }
+    if let Some(value) = optional(fields, &["key_rsc", "rsc"]) {
+        layer = layer.rsc(fixed_8_bytes(value, "eapol.key_rsc")?);
+    }
+    if let Some(value) = optional(fields, &["key_id", "id"]) {
+        layer = layer.id(fixed_8_bytes(value, "eapol.key_id")?);
+    }
+    if let Some(value) = optional(fields, &["key_mic", "mic"]) {
+        layer = layer.mic(fixed_16_bytes(value, "eapol.key_mic")?);
+    }
+    if let Some(value) = optional(fields, &["key_data"]) {
+        layer = layer.key_data(option_bytes(value)?);
+    }
+    if let Some(value) = optional(fields, &["key_data_length", "key_data_len"]) {
+        let length = u16_value(value)?;
+        if length != 0 || optional(fields, &["key_data"]).is_none() {
+            layer = layer.key_data_length(length);
+        }
+    }
+
+    Ok(layer)
 }
 
 fn ethernet_layer(plan: &Value) -> ExampleResult<Ethernet> {
@@ -1100,6 +1345,387 @@ fn dhcp_layer(plan: &Value) -> ExampleResult<Dhcp> {
     Ok(layer)
 }
 
+fn radiotap_flags(fields: &Map<String, Value>) -> ExampleResult<u8> {
+    let mut flags = 0u8;
+    if let Some(value) = optional(fields, &["flags"]) {
+        flags |= radiotap_flags_value(value)?;
+    }
+    if let Some(value) = optional(fields, &["fcs_status"]) {
+        flags |= radiotap_flags_value(value)?;
+    }
+    Ok(flags)
+}
+
+fn radiotap_flags_value(value: &Value) -> ExampleResult<u8> {
+    if let Some(text) = value.as_str() {
+        return match text.to_ascii_lowercase().replace('-', "_").as_str() {
+            "none" | "absent" | "0" => Ok(0),
+            "fcs_present" | "present" => Ok(0x10),
+            "failed_fcs" | "failed" => Ok(0x40),
+            "fcs_present_failed" | "present_failed" => Ok(0x50),
+            _ => u8_text(text),
+        };
+    }
+    u8_value(value)
+}
+
+fn radiotap_channel_flags(value: Option<&Value>) -> ExampleResult<u16> {
+    let Some(value) = value else {
+        return Ok(0x00a0);
+    };
+    if let Some(text) = value.as_str() {
+        return match text.to_ascii_lowercase().replace('-', "_").as_str() {
+            "two_ghz_cck" => Ok(0x00a0),
+            "two_ghz_ofdm" => Ok(0x00c0),
+            "five_ghz_ofdm" => Ok(0x0140),
+            _ => u16_text(text),
+        };
+    }
+    u16_value(value)
+}
+
+fn dot11_frame_control(fields: &Map<String, Value>) -> ExampleResult<u16> {
+    if let Some(value) = optional(fields, &["frame_control"]) {
+        return u16_value(value);
+    }
+
+    let mut frame_control = optional(fields, &["protocol_version"])
+        .map(u16_value)
+        .transpose()?
+        .unwrap_or(0)
+        & 0x0003;
+    frame_control |=
+        ((dot11_frame_type_value(optional(fields, &["frame_type"]))? as u16) & 0x03) << 2;
+    frame_control |= ((dot11_subtype_value(optional(fields, &["subtype"]))? as u16) & 0x0f) << 4;
+    for (name, mask) in [
+        ("to_ds", 0x0100),
+        ("from_ds", 0x0200),
+        ("more_fragments", 0x0400),
+        ("retry", 0x0800),
+        ("power_management", 0x1000),
+        ("more_data", 0x2000),
+        ("protected", 0x4000),
+        ("order", 0x8000),
+    ] {
+        if optional(fields, &[name])
+            .map(bool_value)
+            .transpose()?
+            .unwrap_or(false)
+        {
+            frame_control |= mask;
+        }
+    }
+    Ok(frame_control)
+}
+
+fn dot11_frame_type_value(value: Option<&Value>) -> ExampleResult<u8> {
+    let Some(value) = value else {
+        return Ok(DOT11_FRAME_TYPE_DATA);
+    };
+    if let Some(text) = value.as_str() {
+        return match text.to_ascii_lowercase().replace('-', "_").as_str() {
+            "management" => Ok(DOT11_FRAME_TYPE_MANAGEMENT),
+            "control" => Ok(DOT11_FRAME_TYPE_CONTROL),
+            "data" => Ok(DOT11_FRAME_TYPE_DATA),
+            "extension" => Ok(DOT11_FRAME_TYPE_EXTENSION),
+            _ => u8_text(text),
+        };
+    }
+    u8_value(value)
+}
+
+fn dot11_subtype_value(value: Option<&Value>) -> ExampleResult<u8> {
+    let Some(value) = value else {
+        return Ok(DOT11_DATA_SUBTYPE_DATA);
+    };
+    if let Some(text) = value.as_str() {
+        return match text.to_ascii_lowercase().replace('-', "_").as_str() {
+            "association_request" => Ok(DOT11_MGMT_SUBTYPE_ASSOCIATION_REQUEST),
+            "probe_request" => Ok(DOT11_MGMT_SUBTYPE_PROBE_REQUEST),
+            "beacon" => Ok(DOT11_MGMT_SUBTYPE_BEACON),
+            "authentication" => Ok(DOT11_MGMT_SUBTYPE_AUTHENTICATION),
+            "deauthentication" => Ok(DOT11_MGMT_SUBTYPE_DEAUTHENTICATION),
+            "rts" => Ok(DOT11_CONTROL_SUBTYPE_RTS),
+            "cts" => Ok(DOT11_CONTROL_SUBTYPE_CTS),
+            "ack" => Ok(DOT11_CONTROL_SUBTYPE_ACK),
+            "data" => Ok(DOT11_DATA_SUBTYPE_DATA),
+            "qos_data" => Ok(DOT11_DATA_SUBTYPE_QOS_DATA),
+            "unknown" => Ok(15),
+            _ => u8_text(text),
+        };
+    }
+    u8_value(value)
+}
+
+fn mac_addr_field(
+    fields: &Map<String, Value>,
+    names: &[&str],
+    default: &str,
+) -> ExampleResult<MacAddr> {
+    match optional(fields, names) {
+        Some(value) => mac_addr_value(value),
+        None => Ok(MacAddr::from_str(default)?),
+    }
+}
+
+fn mac_addr_value(value: &Value) -> ExampleResult<MacAddr> {
+    if let Some(text) = value.as_str() {
+        return Ok(MacAddr::from_str(text)?);
+    }
+    let bytes = fixed_6_bytes(value, "dot11.mac")?;
+    Ok(MacAddr::from(bytes))
+}
+
+fn dot11_tagged_parameters(value: &Value) -> ExampleResult<Vec<Dot11TaggedParameter>> {
+    if let Some(items) = value.as_array() {
+        return items.iter().map(dot11_tagged_parameter).collect();
+    }
+    Ok(vec![dot11_tagged_parameter(value)?])
+}
+
+fn dot11_tagged_parameter(value: &Value) -> ExampleResult<Dot11TaggedParameter> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| format!("dot11 tagged parameter must be an object, got {value:?}"))?;
+    let id = optional(object, &["id", "tag", "element_id"])
+        .map(u8_value)
+        .transpose()?
+        .unwrap_or(DOT11_TAG_SSID);
+    let data = optional(object, &["value", "data", "bytes"])
+        .map(option_bytes)
+        .transpose()?
+        .unwrap_or_default();
+    let mut tag = Dot11TaggedParameter::new(id, data);
+    if let Some(length) = optional(object, &["length", "len"]) {
+        tag = tag.with_length(u8_value(length)?);
+    }
+    Ok(tag)
+}
+
+fn rsn_tagged_parameter(fields: &Map<String, Value>) -> ExampleResult<Dot11TaggedParameter> {
+    let element_id = optional(fields, &["element_id", "id", "tag"])
+        .map(u8_value)
+        .transpose()?
+        .unwrap_or(DOT11_TAG_RSN);
+    let rsn = rsn_information(fields)?;
+    let value_bytes = rsn.to_tagged_parameter_value()?;
+    let mut tag = if element_id == DOT11_TAG_RSN {
+        Dot11TaggedParameter::from_rsn_information(&rsn)?
+    } else {
+        Dot11TaggedParameter::new(element_id, value_bytes)
+    };
+    if let Some(value) = optional(fields, &["length", "len"]) {
+        let length = u8_value(value)?;
+        if length != 0 {
+            tag = tag.with_length(length);
+        }
+    }
+    Ok(tag)
+}
+
+fn rsn_information(fields: &Map<String, Value>) -> ExampleResult<RsnInformation> {
+    let mut rsn = RsnInformation::new()
+        .with_version(
+            optional(fields, &["version"])
+                .map(u16_value)
+                .transpose()?
+                .unwrap_or(RSN_VERSION_1),
+        )
+        .without_capabilities()
+        .without_pmkids()
+        .without_group_management_cipher();
+    if let Some(value) = optional(fields, &["group_cipher_suite", "group_cipher"]) {
+        rsn = rsn.with_group_cipher_suite(rsn_cipher_suite(value)?);
+    }
+    if let Some(value) = optional(fields, &["pairwise_cipher_suites", "pairwise_ciphers"]) {
+        rsn = rsn.with_pairwise_cipher_list(rsn_cipher_suite_list(value)?);
+    }
+    if let Some(value) = optional(fields, &["akm_suites", "akm_list"]) {
+        rsn = rsn.with_akm_list(rsn_akm_suite_list(value)?);
+    }
+    if let Some(value) = optional(fields, &["capabilities"]) {
+        rsn = rsn.with_capabilities(RsnCapabilities::from_bits(u16_value(value)?));
+    }
+    if let Some(value) = optional(fields, &["pmkid_list", "pmkids"]) {
+        let pmkids = rsn_pmkid_list(value)?;
+        if !pmkids.is_empty() {
+            rsn = rsn.with_pmkid_list(pmkids);
+        }
+    }
+    if let Some(value) = optional(
+        fields,
+        &["group_management_cipher_suite", "group_management_cipher"],
+    ) {
+        rsn = rsn.with_group_management_cipher_suite(rsn_cipher_suite(value)?);
+    }
+    if let Some(value) = optional(fields, &["trailing_bytes", "extension_bytes"]) {
+        rsn = rsn.with_trailing_bytes(option_bytes(value)?);
+    }
+    Ok(rsn)
+}
+
+fn rsn_cipher_suite_list(value: &Value) -> ExampleResult<Vec<RsnCipherSuite>> {
+    if let Some(items) = value.as_array() {
+        return items.iter().map(rsn_cipher_suite).collect();
+    }
+    Ok(vec![rsn_cipher_suite(value)?])
+}
+
+fn rsn_akm_suite_list(value: &Value) -> ExampleResult<Vec<RsnAkmSuite>> {
+    if let Some(items) = value.as_array() {
+        return items.iter().map(rsn_akm_suite).collect();
+    }
+    Ok(vec![rsn_akm_suite(value)?])
+}
+
+fn rsn_cipher_suite(value: &Value) -> ExampleResult<RsnCipherSuite> {
+    if let Some(text) = value.as_str() {
+        return match text.to_ascii_lowercase().replace('-', "_").as_str() {
+            "use_group" => Ok(RSN_CIPHER_SUITE_USE_GROUP),
+            "tkip" => Ok(RSN_CIPHER_SUITE_TKIP),
+            "ccmp_128" => Ok(RSN_CIPHER_SUITE_CCMP_128),
+            "ccmp_256" => Ok(RSN_CIPHER_SUITE_CCMP_256),
+            "gcmp_128" => Ok(RSN_CIPHER_SUITE_GCMP_128),
+            "gcmp_256" => Ok(RSN_CIPHER_SUITE_GCMP_256),
+            "aes_128_cmac" | "bip_cmac_128" => Ok(RSN_CIPHER_SUITE_AES_128_CMAC),
+            "bip_cmac_256" => Ok(RSN_CIPHER_SUITE_BIP_CMAC_256),
+            "bip_gmac_128" => Ok(RSN_CIPHER_SUITE_BIP_GMAC_128),
+            "bip_gmac_256" => Ok(RSN_CIPHER_SUITE_BIP_GMAC_256),
+            "no_group_addressed" => Ok(RSN_CIPHER_SUITE_NO_GROUP_ADDRESSED),
+            _ => Ok(RsnCipherSuite::from_bytes(fixed_4_padded_bytes(
+                value,
+                "rsn.cipher_suite",
+            )?)),
+        };
+    }
+    Ok(RsnCipherSuite::from_bytes(fixed_4_padded_bytes(
+        value,
+        "rsn.cipher_suite",
+    )?))
+}
+
+fn rsn_akm_suite(value: &Value) -> ExampleResult<RsnAkmSuite> {
+    if let Some(text) = value.as_str() {
+        return match text.to_ascii_lowercase().replace(['-', '.'], "_").as_str() {
+            "ieee8021x" | "802_1x" => Ok(RSN_AKM_SUITE_8021X),
+            "psk" => Ok(RSN_AKM_SUITE_PSK),
+            "ft_psk" => Ok(RSN_AKM_SUITE_FT_PSK),
+            "psk_sha256" => Ok(RSN_AKM_SUITE_PSK_SHA256),
+            "sae" => Ok(RSN_AKM_SUITE_SAE),
+            "owe" => Ok(RSN_AKM_SUITE_OWE),
+            _ => Ok(RsnAkmSuite::from_bytes(fixed_4_padded_bytes(
+                value,
+                "rsn.akm_suite",
+            )?)),
+        };
+    }
+    Ok(RsnAkmSuite::from_bytes(fixed_4_padded_bytes(
+        value,
+        "rsn.akm_suite",
+    )?))
+}
+
+fn rsn_pmkid_list(value: &Value) -> ExampleResult<Vec<[u8; 16]>> {
+    let bytes = option_bytes(value)?;
+    if bytes.len() % 16 != 0 {
+        return Err("rsn pmkid_list length must be a multiple of 16".into());
+    }
+    Ok(bytes
+        .chunks(16)
+        .map(|chunk| chunk.try_into().expect("chunk size is fixed"))
+        .collect())
+}
+
+fn eapol_type_value(value: &Value) -> ExampleResult<u8> {
+    if let Some(text) = value.as_str() {
+        return match text.to_ascii_lowercase().replace('-', "_").as_str() {
+            "eap_packet" => Ok(EAPOL_TYPE_EAP_PACKET),
+            "start" => Ok(EAPOL_TYPE_START),
+            "logoff" => Ok(EAPOL_TYPE_LOGOFF),
+            "key" => Ok(EAPOL_TYPE_KEY),
+            "asf_alert" => Ok(EAPOL_TYPE_ASF_ALERT),
+            "unknown" => Ok(255),
+            _ => u8_text(text),
+        };
+    }
+    u8_value(value)
+}
+
+fn eapol_descriptor_type(value: &Value) -> ExampleResult<u8> {
+    if let Some(text) = value.as_str() {
+        return match text.to_ascii_lowercase().replace('-', "_").as_str() {
+            "rc4_key" => Ok(1),
+            "rsn_key" => Ok(EAPOL_KEY_DESCRIPTOR_RSN),
+            "unknown" => Ok(254),
+            _ => u8_text(text),
+        };
+    }
+    u8_value(value)
+}
+
+fn stack_contains(plan: &Value, needle: &str) -> bool {
+    string_array(plan.get("stack"))
+        .unwrap_or_default()
+        .iter()
+        .map(|layer| canonical_layer(layer))
+        .any(|layer| layer == needle)
+}
+
+fn ethertype_for_next_stack_layer(plan: &Value, current: &str) -> u16 {
+    let stack = string_array(plan.get("stack")).unwrap_or_default();
+    let canonical = stack
+        .iter()
+        .map(|layer| canonical_layer(layer))
+        .collect::<Vec<_>>();
+    let Some(index) = canonical.iter().position(|layer| layer == current) else {
+        return 0x9000;
+    };
+    match canonical.get(index + 1).map(String::as_str) {
+        Some("arp") => ETHERTYPE_ARP,
+        Some("eapol") => ETHERTYPE_EAPOL,
+        Some("ipv4") => ETHERTYPE_IPV4,
+        Some("ipv6") => ETHERTYPE_IPV6,
+        Some("vlan") => ETHERTYPE_VLAN,
+        _ => 0x9000,
+    }
+}
+
+fn fixed_padded_bytes<const N: usize>(value: &Value, field: &str) -> ExampleResult<[u8; N]> {
+    let raw = option_bytes(value)?;
+    let mut out = [0u8; N];
+    let count = raw.len().min(N);
+    out[..count].copy_from_slice(&raw[..count]);
+    if raw.len() > N {
+        return Ok(out);
+    }
+    let _ = field;
+    Ok(out)
+}
+
+fn fixed_3_bytes(value: &Value, field: &str) -> ExampleResult<[u8; 3]> {
+    fixed_padded_bytes(value, field)
+}
+
+fn fixed_4_padded_bytes(value: &Value, field: &str) -> ExampleResult<[u8; 4]> {
+    fixed_padded_bytes(value, field)
+}
+
+fn fixed_6_bytes(value: &Value, field: &str) -> ExampleResult<[u8; 6]> {
+    fixed_padded_bytes(value, field)
+}
+
+fn fixed_8_bytes(value: &Value, field: &str) -> ExampleResult<[u8; 8]> {
+    fixed_padded_bytes(value, field)
+}
+
+fn fixed_16_bytes(value: &Value, field: &str) -> ExampleResult<[u8; 16]> {
+    fixed_padded_bytes(value, field)
+}
+
+fn fixed_32_bytes(value: &Value, field: &str) -> ExampleResult<[u8; 32]> {
+    fixed_padded_bytes(value, field)
+}
+
 fn dns_record(object: &Map<String, Value>) -> ExampleResult<DnsRecord> {
     let rr_type = optional(object, &["type", "record_type"])
         .map(dns_record_type)
@@ -1845,6 +2471,7 @@ fn ethertype_value(value: &Value) -> ExampleResult<u16> {
     if let Some(text) = value.as_str() {
         return match text.to_ascii_lowercase().as_str() {
             "arp" => Ok(ETHERTYPE_ARP),
+            "eapol" => Ok(ETHERTYPE_EAPOL),
             "experimental" | "unknown" => Ok(0x9000),
             "ipv4" | "ip" => Ok(ETHERTYPE_IPV4),
             "ipv6" => Ok(ETHERTYPE_IPV6),
@@ -2222,6 +2849,19 @@ fn bool_value(value: &Value) -> ExampleResult<bool> {
         };
     }
     Err(format!("expected bool-compatible value, got {value:?}").into())
+}
+
+fn i8_value(value: &Value) -> ExampleResult<i8> {
+    if let Some(value) = value.as_i64() {
+        return Ok(i8::try_from(value)?);
+    }
+    if let Some(value) = value.as_u64() {
+        return Ok(i8::try_from(value)?);
+    }
+    if let Some(text) = value.as_str() {
+        return Ok(text.trim().parse::<i8>()?);
+    }
+    Err(format!("expected int8-compatible value, got {value:?}").into())
 }
 
 fn u8_value(value: &Value) -> ExampleResult<u8> {
@@ -2644,5 +3284,168 @@ mod ipv4_dhcp_materialization {
         assert_eq!(dhcp.op_value(), BOOTP_REQUEST);
         assert_eq!(dhcp.hardware_type_value(), DHCP_HTYPE_ETHERNET);
         assert_eq!(dhcp.hardware_len_value(), 6);
+    }
+}
+
+#[cfg(test)]
+mod dot11_materialization {
+    use super::{decode_hex, materialize_plan};
+    use crafter::prelude::*;
+    use serde_json::{json, Value};
+
+    fn raw_bytes(vector: &Value) -> Vec<u8> {
+        let raw_hex = vector
+            .get("raw_hex")
+            .and_then(Value::as_str)
+            .expect("vector must carry raw_hex bytes");
+        decode_hex(raw_hex).expect("raw_hex must decode")
+    }
+
+    #[test]
+    fn radiotap_dot11_eapol_key_plan_materializes_with_public_layers() {
+        let plan = json!({
+            "stack": ["radiotap", "dot11", "llc_snap", "eapol", "payload"],
+            "metadata": {"root_decoder": "link:radiotap", "root": "link:radiotap"},
+            "feature_tags": ["radiotap", "dot11", "llc_snap", "eapol"],
+            "strict_bytes": true,
+            "fields": {
+                "radiotap": {
+                    "version": 0,
+                    "pad": 0,
+                    "flags": "fcs_present",
+                    "rate": 2,
+                    "channel_frequency": 2412,
+                    "channel_flags": "two_ghz_cck",
+                    "rx_flags": 0,
+                    "tx_flags": 8
+                },
+                "dot11": {
+                    "frame_control": 8,
+                    "duration_id": 0,
+                    "addr1": "00:00:5e:00:53:01",
+                    "addr2": "00:00:5e:00:53:02",
+                    "addr3": "00:00:5e:00:53:03",
+                    "sequence_control": 4096
+                },
+                "llc_snap": {
+                    "dsap": 170,
+                    "ssap": 170,
+                    "control": 3,
+                    "oui": {"hex": "000000"},
+                    "ethertype": "eapol"
+                },
+                "eapol": {
+                    "version": 2,
+                    "packet_type": "key",
+                    "body_length": 0,
+                    "descriptor_type": "rsn_key",
+                    "key_information": 266,
+                    "key_length": 16,
+                    "replay_counter": 1,
+                    "key_nonce": {"hex": "00112233445566778899aabbccddeeff102132435465768798a9bacbdcedfe0f"},
+                    "key_iv": {"hex": "00000000000000000000000000000000"},
+                    "key_rsc": {"hex": "0000000000000000"},
+                    "key_id": {"hex": "0000000000000000"},
+                    "key_mic": {"hex": "00000000000000000000000000000000"},
+                    "key_data_length": 0,
+                    "key_data": {"hex": "0100000fac040100000fac040100000fac020000"}
+                },
+                "payload": {"hex": "01020304", "length": 4}
+            }
+        });
+
+        let vector = materialize_plan(&plan).expect("Dot11 EAPOL-Key plan must materialize");
+        assert_eq!(
+            vector.get("root").and_then(Value::as_str),
+            Some("link:radiotap")
+        );
+        let bytes = raw_bytes(&vector);
+        let decoded = Packet::decode_from_link(LinkType::Radiotap, &bytes)
+            .expect("materialized radiotap Dot11 EAPOL-Key vector must decode");
+
+        decoded.layer::<Radiotap>().expect("radiotap layer");
+        decoded.layer::<Dot11>().expect("dot11 layer");
+        decoded.layer::<LlcSnap>().expect("llc/snap layer");
+        let eapol = decoded.layer::<Eapol>().expect("eapol layer");
+        assert_eq!(eapol.packet_type_value(), EAPOL_TYPE_KEY);
+        let key = decoded.layer::<EapolKey>().expect("eapol key layer");
+        assert_eq!(key.key_data_bytes().len(), 20);
+    }
+
+    #[test]
+    fn bare_dot11_control_plan_materializes_from_link_root() {
+        let plan = json!({
+            "stack": ["dot11", "payload"],
+            "metadata": {"root_decoder": "link:dot11", "root": "link:dot11"},
+            "feature_tags": ["dot11"],
+            "strict_bytes": true,
+            "fields": {
+                "dot11": {
+                    "frame_control": 180,
+                    "duration_id": 314,
+                    "addr1": "00:00:5e:00:53:10",
+                    "addr2": "00:00:5e:00:53:20"
+                },
+                "payload": {"hex": "aabbcc", "length": 3}
+            }
+        });
+
+        let vector = materialize_plan(&plan).expect("bare Dot11 control plan must materialize");
+        assert_eq!(
+            vector.get("decoder").and_then(Value::as_str),
+            Some("link:dot11")
+        );
+        let decoded = Packet::decode_from_link(LinkType::Ieee80211, &raw_bytes(&vector))
+            .expect("materialized bare Dot11 vector must decode");
+        let dot11 = decoded.layer::<Dot11>().expect("dot11 layer");
+        assert_eq!(
+            dot11.frame_control_value().frame_type(),
+            DOT11_FRAME_TYPE_CONTROL
+        );
+        assert_eq!(
+            dot11.frame_control_value().subtype(),
+            DOT11_CONTROL_SUBTYPE_RTS
+        );
+    }
+
+    #[test]
+    fn radiotap_dot11_rsn_plan_attaches_rsn_tag_to_dot11() {
+        let plan = json!({
+            "stack": ["radiotap", "dot11", "rsn"],
+            "metadata": {"root_decoder": "link:radiotap", "root": "link:radiotap"},
+            "feature_tags": ["radiotap", "dot11", "rsn"],
+            "strict_bytes": true,
+            "fields": {
+                "radiotap": {"version": 0, "pad": 0},
+                "dot11": {
+                    "frame_control": 128,
+                    "duration_id": 0,
+                    "addr1": "ff:ff:ff:ff:ff:ff",
+                    "addr2": "00:00:5e:00:53:02",
+                    "addr3": "00:00:5e:00:53:03",
+                    "sequence_control": 0,
+                    "management_fixed_fields": {"hex": "000000000000000064000100"}
+                },
+                "rsn": {
+                    "element_id": 48,
+                    "version": 1,
+                    "group_cipher_suite": "ccmp_128",
+                    "pairwise_cipher_suites": ["ccmp_128"],
+                    "akm_suites": ["psk"],
+                    "capabilities": 0
+                }
+            }
+        });
+
+        let vector = materialize_plan(&plan).expect("Dot11 RSN plan must materialize");
+        let decoded = Packet::decode_from_link(LinkType::Radiotap, &raw_bytes(&vector))
+            .expect("materialized Dot11 RSN vector must decode");
+        let dot11 = decoded.layer::<Dot11>().expect("dot11 layer");
+        let rsn = dot11
+            .rsn_information()
+            .expect("RSN tag must be attached to Dot11")
+            .expect("RSN tag must parse");
+        assert_eq!(rsn.group_cipher_suite(), RSN_CIPHER_SUITE_CCMP_128);
+        assert_eq!(rsn.akm_suites(), &[RSN_AKM_SUITE_PSK]);
     }
 }

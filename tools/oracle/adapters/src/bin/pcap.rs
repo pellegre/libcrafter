@@ -354,6 +354,8 @@ fn link_type_name(link_type: PcapLinkType) -> &'static str {
         PcapLinkType::Ethernet => "ethernet",
         PcapLinkType::RawIp => "raw",
         PcapLinkType::LinuxSll => "linux_sll",
+        PcapLinkType::Ieee80211 => "ieee80211",
+        PcapLinkType::Ieee80211Radiotap => "ieee80211_radiotap",
         PcapLinkType::Unknown(_) => "unknown",
     }
 }
@@ -364,6 +366,8 @@ fn root_for_link_type(link_type: PcapLinkType) -> &'static str {
         PcapLinkType::Ethernet => "link:ethernet",
         PcapLinkType::RawIp => "link:raw",
         PcapLinkType::LinuxSll => "link:linux-sll",
+        PcapLinkType::Ieee80211 => "link:dot11",
+        PcapLinkType::Ieee80211Radiotap => "link:radiotap",
         PcapLinkType::Unknown(_) => "link:raw",
     }
 }
