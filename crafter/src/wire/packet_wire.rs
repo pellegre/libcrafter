@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use crate::pcap::PcapLinkType;
 
+use super::backend::pcap::OfflinePcapSource;
 use super::source::PacketSource;
 use super::writer::PacketWriter;
 use super::{Result, WireError};
@@ -83,6 +84,7 @@ impl PacketWireTarget {
 /// [`WireError::UnsupportedCapability`] values.
 pub struct PacketWireBuilder {
     target: PacketWireTarget,
+    pcap_filter: Option<String>,
     source: Option<OpenedPacketSource>,
     writer: Option<OpenedPacketWriter>,
 }
@@ -91,6 +93,7 @@ impl PacketWireBuilder {
     fn new(target: PacketWireTarget) -> Self {
         Self {
             target,
+            pcap_filter: None,
             source: None,
             writer: None,
         }
@@ -101,8 +104,28 @@ impl PacketWireBuilder {
         &self.target
     }
 
+    /// Set a libpcap BPF filter for pcap source targets.
+    pub fn filter(mut self, filter: impl Into<String>) -> Self {
+        self.pcap_filter = Some(filter.into());
+        self
+    }
+
+    /// Configured libpcap BPF filter, if any.
+    pub fn pcap_filter(&self) -> Option<&str> {
+        self.pcap_filter.as_deref()
+    }
+
     /// Open this target as one packet wire.
-    pub fn open(self) -> Result<PacketWire> {
+    pub fn open(mut self) -> Result<PacketWire> {
+        if self.source.is_none() {
+            if let PacketWireTarget::PcapFile { path } = &self.target {
+                self.source = Some(Box::new(OfflinePcapSource::open_with_optional_filter(
+                    path,
+                    self.pcap_filter.as_deref(),
+                )?));
+            }
+        }
+
         Ok(PacketWire {
             target: self.target,
             source: self.source,
@@ -127,6 +150,7 @@ impl fmt::Debug for PacketWireBuilder {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PacketWireBuilder")
             .field("target", &self.target)
+            .field("pcap_filter", &self.pcap_filter)
             .field("has_source", &self.source.is_some())
             .field("has_writer", &self.writer.is_some())
             .finish()
@@ -256,27 +280,55 @@ fn unsupported_split(target: &PacketWireTarget, has_source: bool, has_writer: bo
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use super::super::record::{BackendKind, PacketRecord};
     use super::super::source::VecPacketSource;
     use super::super::writer::MemoryPacketWriter;
     use super::*;
-    use crate::{LinkType, Raw};
+    use crate::{LinkType, PcapWriter, Raw};
+
+    static NEXT_TEMP_PCAP: AtomicUsize = AtomicUsize::new(0);
+
+    struct TempPcap {
+        path: PathBuf,
+    }
+
+    impl Drop for TempPcap {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+
+    fn empty_temp_pcap(name: &str) -> TempPcap {
+        let path = std::env::temp_dir().join(format!(
+            "packet-wire-{name}-{}-{}.pcap",
+            std::process::id(),
+            NEXT_TEMP_PCAP.fetch_add(1, Ordering::Relaxed)
+        ));
+        {
+            let mut writer = PcapWriter::create(&path, LinkType::Ethernet).unwrap();
+            writer.flush().unwrap();
+        }
+        TempPcap { path }
+    }
 
     #[test]
     fn pcap_file_builder_records_one_file_target() {
-        let builder = PacketWire::pcap_file("fixtures/input.pcap");
+        let temp = empty_temp_pcap("input");
+        let builder = PacketWire::pcap_file(&temp.path);
 
         assert_eq!(
             builder.target(),
             &PacketWireTarget::PcapFile {
-                path: PathBuf::from("fixtures/input.pcap")
+                path: temp.path.clone()
             }
         );
 
         let wire = builder.open().unwrap();
-        assert_eq!(wire.target().path(), Some(Path::new("fixtures/input.pcap")));
+        assert_eq!(wire.target().path(), Some(temp.path.as_path()));
         assert_eq!(wire.target().interface(), None);
-        assert!(!wire.has_source());
+        assert!(wire.has_source());
         assert!(!wire.has_writer());
     }
 
@@ -327,10 +379,11 @@ mod tests {
 
     #[test]
     fn unsupported_writer_returns_typed_capability_error() {
+        let temp = empty_temp_pcap("writer-unsupported");
         assert_unsupported(
-            PacketWire::pcap_file("input.pcap").open().unwrap().writer(),
+            PacketWire::pcap_file(&temp.path).open().unwrap().writer(),
             "write",
-            "pcap-file:input.pcap",
+            &format!("pcap-file:{}", temp.path.display()),
         );
     }
 
@@ -400,7 +453,7 @@ mod tests {
         assert_eq!(report.bytes_written(), 2);
     }
 
-    fn assert_unsupported<T>(result: Result<T>, capability: &'static str, backend: &'static str) {
+    fn assert_unsupported<T>(result: Result<T>, capability: &'static str, backend: &str) {
         let err = match result {
             Ok(_) => panic!("expected unsupported capability error"),
             Err(err) => err,

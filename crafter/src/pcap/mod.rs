@@ -18,6 +18,7 @@ pub mod writer;
 
 pub use capture::{Capture, CaptureControl, CaptureHandle, Sniffer};
 pub use error::{PcapError, Result};
+pub(crate) use libpcap::LibpcapOfflineCapture;
 pub use reader::{read_pcap, read_pcap_filtered, FileSniffer, PcapReader, PcapRecords};
 pub use types::{
     PcapHeader, PcapLinkType, PcapPacket, PcapRecord, PcapTimestamp, TimestampPrecision,
