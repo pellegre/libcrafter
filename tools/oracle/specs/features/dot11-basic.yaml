@@ -140,6 +140,64 @@ supported_cases:
       - libcrafter_to_reference
     byte_policy: structured_error
     offline_byte_comparison: excluded
+    generator_policy:
+      strict_byte_comparison: excluded
+      reason: structured_error
+    crate_test_coverage:
+      test: crafter/tests/resilience.rs::malformed_dot11_and_radiotap_corpus_errors_carry_structured_fields
+      fixture: crafter/tests/fixtures/malformed/core-decode-corpus.hex
+
+structured_error_cases:
+  - name: short-dot11-frame-control
+    coverage_case: malformed-dot11-truncated-header
+    decode_target: link:dot11
+    expected_error:
+      kind: buffer-too-short
+      context: dot11.frame_control
+      required: 2
+      available: 1
+    crate_test: crafter/tests/resilience.rs::malformed_dot11_and_radiotap_corpus_errors_carry_structured_fields
+    fixture: crafter/tests/fixtures/malformed/core-decode-corpus.hex
+  - name: truncated-dot11-data-header
+    coverage_case: malformed-dot11-truncated-header
+    decode_target: link:dot11
+    expected_error:
+      kind: buffer-too-short
+      context: dot11.header
+      required: 24
+      available: 23
+    crate_test: crafter/tests/resilience.rs::malformed_dot11_and_radiotap_corpus_errors_carry_structured_fields
+    fixture: crafter/tests/fixtures/malformed/core-decode-corpus.hex
+  - name: truncated-dot11-qos-control
+    coverage_case: malformed-dot11-truncated-header
+    decode_target: link:dot11
+    expected_error:
+      kind: buffer-too-short
+      context: dot11.header
+      required: 26
+      available: 25
+    crate_test: crafter/tests/resilience.rs::malformed_dot11_and_radiotap_corpus_errors_carry_structured_fields
+    fixture: crafter/tests/fixtures/malformed/core-decode-corpus.hex
+  - name: truncated-dot11-address-four
+    coverage_case: malformed-dot11-truncated-header
+    decode_target: link:dot11
+    expected_error:
+      kind: buffer-too-short
+      context: dot11.header
+      required: 30
+      available: 29
+    crate_test: crafter/tests/resilience.rs::malformed_dot11_and_radiotap_corpus_errors_carry_structured_fields
+    fixture: crafter/tests/fixtures/malformed/core-decode-corpus.hex
+  - name: truncated-dot11-tagged-parameter
+    coverage_case: malformed-dot11-truncated-header
+    decode_target: link:dot11
+    expected_error:
+      kind: buffer-too-short
+      context: dot11.tagged_parameter
+      required: 9
+      available: 4
+    crate_test: crafter/tests/resilience.rs::malformed_dot11_and_radiotap_corpus_errors_carry_structured_fields
+    fixture: crafter/tests/fixtures/malformed/core-decode-corpus.hex
 
 normalized_model:
   frame_control:
