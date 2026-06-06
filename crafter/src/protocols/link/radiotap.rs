@@ -107,6 +107,13 @@ pub const RADIOTAP_FLAGS_FCS_PRESENT: u8 = 0x10;
 pub const RADIOTAP_FLAGS_FAILED_FCS: u8 = 0x40;
 /// Alias for [`RADIOTAP_FLAGS_FAILED_FCS`].
 pub const RADIOTAP_FLAGS_BAD_FCS: u8 = RADIOTAP_FLAGS_FAILED_FCS;
+/// Radiotap RX flags bit reserved by current radiotap docs.
+///
+/// This bit was previously used for FCS-failed metadata. Current radiotap
+/// records FCS failure through [`RADIOTAP_FLAGS_FAILED_FCS`] instead.
+pub const RADIOTAP_RX_FLAGS_RESERVED_WAS_FCS_FAILED: u16 = 0x0001;
+/// Radiotap RX flags bit: PLCP CRC check failed.
+pub const RADIOTAP_RX_FLAGS_PLCP_CRC_FAILED: u16 = 0x0002;
 
 const fn present_mask(bit: u8) -> u32 {
     1u32 << (bit as u32)
@@ -501,6 +508,16 @@ impl RadiotapRxFlags {
     /// Raw RX flags bits.
     pub const fn bits(&self) -> u16 {
         self.bits
+    }
+
+    /// Return true when the reserved bit formerly used for FCS-failed metadata is set.
+    pub const fn reserved_fcs_failed_bit(&self) -> bool {
+        self.bits & RADIOTAP_RX_FLAGS_RESERVED_WAS_FCS_FAILED != 0
+    }
+
+    /// Return true when radiotap says the PLCP CRC check failed.
+    pub const fn plcp_crc_failed(&self) -> bool {
+        self.bits & RADIOTAP_RX_FLAGS_PLCP_CRC_FAILED != 0
     }
 }
 
@@ -2125,6 +2142,78 @@ mod tests {
         );
         assert_eq!(radiotap.rate_value(), Some(0x16));
         assert!(radiotap.raw_fields().is_empty());
+        assert!(decoded.layer::<Dot11>().is_some());
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_slice());
+    }
+
+    #[test]
+    fn radiotap_fcs_metadata_failed_fcs_decodes_typed_layers_and_preserves_tail() {
+        let dot11 = Dot11::data()
+            .addr1(MacAddr::new([0x02, 0x00, 0x00, 0x00, 0x00, 0x01]))
+            .addr2(MacAddr::new([0x02, 0x00, 0x00, 0x00, 0x00, 0x02]))
+            .addr3(MacAddr::new([0x02, 0x00, 0x00, 0x00, 0x00, 0x03]))
+            .sequence_number(11);
+        let dot11_bytes = Packet::from_layer(dot11).compile().unwrap();
+        let fcs = [0xde, 0xad, 0xbe, 0xef];
+        let present = RADIOTAP_PRESENT_FLAGS | RADIOTAP_PRESENT_RX_FLAGS;
+        let mut bytes = vec![
+            0x00, 0x00, 0x0c, 0x00, // version, pad, it_len
+        ];
+        bytes.extend_from_slice(&present.to_le_bytes());
+        bytes.extend_from_slice(&[
+            RADIOTAP_FLAGS_FCS_PRESENT | RADIOTAP_FLAGS_FAILED_FCS,
+            0x00, // alignment padding before RX flags
+        ]);
+        bytes.extend_from_slice(&RADIOTAP_RX_FLAGS_PLCP_CRC_FAILED.to_le_bytes());
+        bytes.extend_from_slice(dot11_bytes.as_bytes());
+        bytes.extend_from_slice(&fcs);
+
+        let decoded = Packet::decode_from_link(LinkType::Radiotap, &bytes).unwrap();
+        let radiotap = decoded.layer::<Radiotap>().unwrap();
+        let rx_flags = radiotap.rx_flags_value().unwrap();
+
+        assert_eq!(
+            radiotap.fcs_status(),
+            Some(RadiotapFcsStatus::new(true, true))
+        );
+        assert_eq!(rx_flags.bits(), RADIOTAP_RX_FLAGS_PLCP_CRC_FAILED);
+        assert!(rx_flags.plcp_crc_failed());
+        assert!(!rx_flags.reserved_fcs_failed_bit());
+        assert!(decoded.layer::<Dot11>().is_some());
+        assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), &fcs);
+
+        let summary = decoded.summary();
+        assert!(summary.contains("fcs_present=true"), "{summary}");
+        assert!(summary.contains("failed_fcs=true"), "{summary}");
+        let show = decoded.show();
+        assert!(show.contains("rx_flags: 0x0002"), "{show}");
+        assert!(show.contains("failed_fcs: true"), "{show}");
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_slice());
+    }
+
+    #[test]
+    fn radiotap_fcs_metadata_rx_reserved_bit_is_not_failed_fcs_status() {
+        let dot11 = Dot11::data()
+            .addr1(MacAddr::new([0x02, 0x00, 0x00, 0x00, 0x00, 0x01]))
+            .addr2(MacAddr::new([0x02, 0x00, 0x00, 0x00, 0x00, 0x02]))
+            .addr3(MacAddr::new([0x02, 0x00, 0x00, 0x00, 0x00, 0x03]))
+            .sequence_number(12);
+        let dot11_bytes = Packet::from_layer(dot11).compile().unwrap();
+        let mut bytes = vec![
+            0x00, 0x00, 0x0a, 0x00, // version, pad, it_len
+        ];
+        bytes.extend_from_slice(&RADIOTAP_PRESENT_RX_FLAGS.to_le_bytes());
+        bytes.extend_from_slice(&RADIOTAP_RX_FLAGS_RESERVED_WAS_FCS_FAILED.to_le_bytes());
+        bytes.extend_from_slice(dot11_bytes.as_bytes());
+
+        let decoded = Packet::decode_from_link(LinkType::Radiotap, &bytes).unwrap();
+        let radiotap = decoded.layer::<Radiotap>().unwrap();
+        let rx_flags = radiotap.rx_flags_value().unwrap();
+
+        assert_eq!(radiotap.fcs_status(), None);
+        assert_eq!(rx_flags.bits(), RADIOTAP_RX_FLAGS_RESERVED_WAS_FCS_FAILED);
+        assert!(rx_flags.reserved_fcs_failed_bit());
+        assert!(!rx_flags.plcp_crc_failed());
         assert!(decoded.layer::<Dot11>().is_some());
         assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_slice());
     }
