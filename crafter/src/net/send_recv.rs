@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::wire::{backend::pcap::PcapInterfaceSource, Sniffer, WireError};
+use crate::wire::{PacketWire, Sniffer, WireError};
 use crate::Packet;
 
 use super::error::{NetError, Result};
@@ -756,12 +756,15 @@ fn open_pcap_sniffer(
     timeout: Duration,
     count: usize,
 ) -> Result<Sniffer> {
-    let mut builder = PcapInterfaceSource::builder(interface.to_owned()).timeout(timeout);
+    let mut builder = PacketWire::pcap_interface(interface.to_owned()).timeout(timeout);
     if let Some(filter) = filter {
         builder = builder.filter(filter);
     }
 
-    let source = builder.open().map_err(capture_wire_error)?;
+    let source = builder
+        .open()
+        .and_then(PacketWire::source)
+        .map_err(capture_wire_error)?;
 
     Ok(Sniffer::new(source).timeout(timeout).count(count))
 }
