@@ -78,9 +78,10 @@ pub use dns::{
 };
 pub use eapol::{
     eapol_descriptor_type_label, eapol_type_label, Eapol, EapolDescriptorType, EapolKey,
-    EapolKeyInformation, EapolType, EAPOL_HEADER_LEN, EAPOL_KEY_DESCRIPTOR_MIN_LEN,
-    EAPOL_KEY_DESCRIPTOR_RSN, EAPOL_TYPE_ASF_ALERT, EAPOL_TYPE_EAP_PACKET, EAPOL_TYPE_KEY,
-    EAPOL_TYPE_LOGOFF, EAPOL_TYPE_START, EAPOL_VERSION_1, EAPOL_VERSION_2, EAPOL_VERSION_3,
+    EapolKeyInformation, EapolType, RsnEapolKeyHandshakeMessage, RsnEapolKeyHandshakeMetadata,
+    EAPOL_HEADER_LEN, EAPOL_KEY_DESCRIPTOR_MIN_LEN, EAPOL_KEY_DESCRIPTOR_RSN, EAPOL_TYPE_ASF_ALERT,
+    EAPOL_TYPE_EAP_PACKET, EAPOL_TYPE_KEY, EAPOL_TYPE_LOGOFF, EAPOL_TYPE_START, EAPOL_VERSION_1,
+    EAPOL_VERSION_2, EAPOL_VERSION_3,
 };
 // Re-export the deprecated `Icmp*` aliases separately so the
 // `#[allow(deprecated)]` scope stays narrow: only these aliases are exempt from
