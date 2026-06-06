@@ -6,6 +6,8 @@
 //! - packet construction, decode, checksums, and protocol layers
 //! - pcap read/write and sniffing helpers
 //! - interface, send, send/receive, batch, and address helpers
+//! - Ethernet, IEEE 802.11/radiotap, LLC/SNAP, IP, transport, and selected
+//!   application protocol primitives
 //!
 //! Public modules are organized as `crafter::core`, `crafter::pcap`,
 //! `crafter::net`, and `crafter::prelude`. Most examples should start with
@@ -28,6 +30,46 @@
 //! let compiled = packet.compile()?;
 //! println!("{}", packet.summary());
 //! println!("{}", compiled.hexdump());
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! Wi-Fi stacks use the same offline packet model. IP over IEEE 802.11 is
+//! represented with explicit LLC/SNAP, and the example below only compiles,
+//! decodes, and inspects synthetic bytes.
+//!
+//! ```rust
+//! use crafter::prelude::*;
+//! use std::net::Ipv4Addr;
+//!
+//! # fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
+//! let sta = MacAddr::new([0x00, 0x00, 0x5e, 0x00, 0x53, 0x01]);
+//! let ap = MacAddr::new([0x00, 0x00, 0x5e, 0x00, 0x53, 0x02]);
+//! let dot11 = Dot11::data();
+//! let to_ds = dot11.frame_control_value().with_to_ds(true);
+//!
+//! let packet = Radiotap::new()
+//!     / dot11
+//!         .frame_control(to_ds)
+//!         .addr1(ap)
+//!         .addr2(sta)
+//!         .addr3(ap)
+//!         .sequence_number(1)
+//!     / LlcSnap::new().ethertype(ETHERTYPE_IPV4)
+//!     / Ipv4::new()
+//!         .src(Ipv4Addr::new(192, 0, 2, 10))
+//!         .dst(Ipv4Addr::new(198, 51, 100, 20))
+//!     / Icmpv4::echo_request().id(0x4242).seq(1)
+//!     / Raw::from("hello");
+//!
+//! let compiled = packet.compile()?;
+//! let decoded = Packet::decode_from_link(LinkType::Radiotap, compiled.as_bytes())?;
+//! assert!(decoded.layer::<Radiotap>().is_some());
+//! assert!(decoded.layer::<Dot11>().is_some());
+//! assert!(decoded.layer::<LlcSnap>().is_some());
+//! assert!(decoded.layer::<Ipv4>().is_some());
+//! let _show = decoded.show();
+//! let _hexdump = compiled.hexdump();
 //! # Ok(())
 //! # }
 //! ```

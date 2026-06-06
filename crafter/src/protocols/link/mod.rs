@@ -1,4 +1,36 @@
 //! Link-layer protocol implementations.
+//!
+//! This module exposes the link roots and link-adjacent encapsulations used by
+//! packet stacks: Ethernet, Linux cooked capture, null/loopback, radiotap,
+//! IEEE 802.11 MAC frames, and LLC/SNAP. Wi-Fi IP payloads carry LLC/SNAP
+//! explicitly; `Dot11 / Ipv4` is not rewritten into `Dot11 / LlcSnap / Ipv4`.
+//!
+//! ```rust
+//! use crafter::prelude::*;
+//! use std::net::Ipv4Addr;
+//!
+//! # fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
+//! let station = MacAddr::new([0x00, 0x00, 0x5e, 0x00, 0x53, 0x11]);
+//! let access_point = MacAddr::new([0x00, 0x00, 0x5e, 0x00, 0x53, 0x12]);
+//! let packet = Radiotap::new()
+//!     / Dot11::data()
+//!         .addr1(access_point)
+//!         .addr2(station)
+//!         .addr3(access_point)
+//!     / LlcSnap::new().ethertype(ETHERTYPE_IPV4)
+//!     / Ipv4::new()
+//!         .src(Ipv4Addr::new(192, 0, 2, 30))
+//!         .dst(Ipv4Addr::new(198, 51, 100, 40))
+//!     / Icmpv4::echo_request()
+//!     / Raw::from("offline");
+//!
+//! let compiled = packet.compile()?;
+//! let decoded = Packet::decode_from_link(LinkType::Radiotap, compiled.as_bytes())?;
+//! assert!(decoded.layer::<Dot11>().is_some());
+//! let _hexdump = compiled.hexdump();
+//! # Ok(())
+//! # }
+//! ```
 
 use core::any::Any;
 use core::ops::Div;

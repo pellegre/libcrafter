@@ -21,14 +21,24 @@ const LLC_SNAP_OUI_ENCAPSULATED_ETHERNET: [u8; 3] = [0x00, 0x00, 0x00];
 ///
 /// IP over IEEE 802.11 data frames must carry this layer explicitly:
 ///
-/// ```
+/// ```rust
 /// use crafter::prelude::*;
+/// use std::net::Ipv4Addr;
 ///
-/// let packet = Dot11::data()
-///     / LlcSnap::new()
+/// # fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
+/// let packet = Radiotap::new()
+///     / Dot11::data()
+///     / LlcSnap::new().ethertype(ETHERTYPE_IPV4)
 ///     / Ipv4::new()
+///         .src(Ipv4Addr::new(192, 0, 2, 50))
+///         .dst(Ipv4Addr::new(198, 51, 100, 60))
+///     / Icmpv4::echo_request()
 ///     / Raw::from("payload");
-/// # let _ = packet;
+/// let compiled = packet.compile()?;
+/// let decoded = Packet::decode_from_link(LinkType::Radiotap, compiled.as_bytes())?;
+/// assert!(decoded.layer::<LlcSnap>().is_some());
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// A direct `Dot11 / Ipv4` stack compiles exactly as those sequential layers;
