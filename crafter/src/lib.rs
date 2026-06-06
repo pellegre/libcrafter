@@ -394,7 +394,14 @@ pub use pcap::{
     PcapError, PcapHeader, PcapLinkType, PcapPacket, PcapReader, PcapRecord, PcapRecords,
     PcapTimestamp, PcapWriter, PcapWriterOptions, Sniffer, TimestampPrecision,
 };
-pub use wire::WireError;
+pub use wire::{
+    BackendKind, BluetoothMetadata, DropAllTransform, DuplicateTransform, MediumMetadata,
+    MemoryPacketWriter, MemoryWrite, OpenedPacketSource, OpenedPacketWriter, PacketMetadata,
+    PacketOrigin, PacketRecord, PacketSource, PacketTransform, PacketWire, PacketWireBuilder,
+    PacketWireTarget, PacketWriter, PassThroughTransform, RadioMetadata, Sniffer as WireSniffer,
+    SnifferCancel, SnifferHandle, TraceAppendTransform, TransformOutput, TransformTrace,
+    Transmitter, VecPacketSource, WifiMetadata, WireError, WriteReport,
+};
 
 /// Core packet and protocol APIs.
 pub mod core {
@@ -705,6 +712,14 @@ pub mod prelude {
         PacketSendRecvExt, PcapError, PcapHeader, PcapLinkType, PcapPacket, PcapReader, PcapRecord,
         PcapRecords, PcapTimestamp, PcapWriter, PcapWriterOptions, RawSender, ReplyMatcher,
         SendMode, SendOptions, SendPlan, SendRecv, SendRecvOptions, SendRecvReport, SendReport,
-        SendTarget, Sniffer, SocketSend, SocketSender, TimestampPrecision, WireError,
+        SendTarget, Sniffer, SocketSend, SocketSender, TimestampPrecision, Transmitter,
+        VecPacketSource, WifiMetadata, WireError, WireSniffer, WriteReport,
+    };
+    pub use crate::{
+        BackendKind, BluetoothMetadata, DropAllTransform, DuplicateTransform, MediumMetadata,
+        MemoryPacketWriter, MemoryWrite, OpenedPacketSource, OpenedPacketWriter, PacketMetadata,
+        PacketOrigin, PacketRecord, PacketSource, PacketTransform, PacketWire, PacketWireBuilder,
+        PacketWireTarget, PacketWriter, PassThroughTransform, RadioMetadata, SnifferCancel,
+        SnifferHandle, TraceAppendTransform, TransformOutput, TransformTrace,
     };
 }

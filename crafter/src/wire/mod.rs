@@ -17,5 +17,18 @@ pub mod transmitter;
 pub mod writer;
 
 pub use error::{Result, WireError};
-pub use sniffer::Sniffer;
+pub use packet_wire::{
+    OpenedPacketSource, OpenedPacketWriter, PacketWire, PacketWireBuilder, PacketWireTarget,
+};
+pub use record::{
+    BackendKind, BluetoothMetadata, MediumMetadata, PacketMetadata, PacketOrigin, PacketRecord,
+    RadioMetadata, TransformTrace, WifiMetadata,
+};
+pub use sniffer::{Sniffer, SnifferCancel, SnifferHandle};
+pub use source::{PacketSource, VecPacketSource};
+pub use transform::{
+    DropAllTransform, DuplicateTransform, PacketTransform, PassThroughTransform,
+    TraceAppendTransform, TransformOutput,
+};
 pub use transmitter::Transmitter;
+pub use writer::{MemoryPacketWriter, MemoryWrite, PacketWriter, WriteReport};
