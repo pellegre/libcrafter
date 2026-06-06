@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use crafter::core::{
     Arp, Dhcp, DhcpMessageType, DhcpOption, DhcpRelayAgentInfo, DhcpRelaySuboption, Dns, DnsName,
-    DnsRecord, DnsRecordData, Dot11, Dot11DataSubtype, Dot11ManagementSubtype, Dscp, Ecn,
+    DnsRecord, DnsRecordData, Dot11, Dot11DataSubtype, Dot11ManagementSubtype, Dscp, Eapol, Ecn,
     EdnsOption, Ethernet, IcmpKind, Icmpv4, Icmpv6, Ipv4, Ipv4Option, Ipv6,
     Ipv6DestinationOptionsHeader, Ipv6FragmentHeader, Ipv6FragmentHeaderStatus,
     Ipv6HopByHopOptionsHeader, Ipv6MobileRoutingHeader, Ipv6MobileRoutingHeaderStatus, Ipv6Option,
@@ -21,10 +21,10 @@ use crafter::core::{
     DNS_SVCB_KEY_IPV4HINT, DNS_SVCB_KEY_IPV6HINT, DNS_SVCB_KEY_PORT, DNS_TYPE_A, DNS_TYPE_AAAA,
     DNS_TYPE_CNAME, DNS_TYPE_DNSKEY, DNS_TYPE_DS, DNS_TYPE_HTTPS, DNS_TYPE_NS, DNS_TYPE_NSEC,
     DNS_TYPE_NSEC3, DNS_TYPE_OPT, DNS_TYPE_RRSIG, DNS_TYPE_SOA, DNS_TYPE_SRV, DNS_TYPE_SVCB,
-    ETHERTYPE_ARP, ETHERTYPE_IPV4, ETHERTYPE_VLAN, ICMPV6_ECHO_REQUEST, ICMPV6_TIME_EXCEEDED,
-    ICMP_DESTINATION_UNREACHABLE, ICMP_ECHO_REQUEST, IPPROTO_ICMP, IPPROTO_ICMPV6,
-    IPPROTO_IPV6_DSTOPTS, IPPROTO_IPV6_EXPERIMENTAL_1, IPPROTO_IPV6_FRAGMENT, IPPROTO_IPV6_HOPOPTS,
-    IPPROTO_IPV6_ROUTE, IPPROTO_TCP, IPPROTO_UDP, IPV4_FLAG_DONT_FRAGMENT,
+    ETHERTYPE_ARP, ETHERTYPE_EAPOL, ETHERTYPE_IPV4, ETHERTYPE_VLAN, ICMPV6_ECHO_REQUEST,
+    ICMPV6_TIME_EXCEEDED, ICMP_DESTINATION_UNREACHABLE, ICMP_ECHO_REQUEST, IPPROTO_ICMP,
+    IPPROTO_ICMPV6, IPPROTO_IPV6_DSTOPTS, IPPROTO_IPV6_EXPERIMENTAL_1, IPPROTO_IPV6_FRAGMENT,
+    IPPROTO_IPV6_HOPOPTS, IPPROTO_IPV6_ROUTE, IPPROTO_TCP, IPPROTO_UDP, IPV4_FLAG_DONT_FRAGMENT,
     IPV4_FLAG_MORE_FRAGMENTS, IPV4_FLAG_RESERVED, IPV6_ROUTING_TYPE_MOBILE,
     IPV6_ROUTING_TYPE_SEGMENT, TCP_FLAG_ACK, TCP_FLAG_PSH, TCP_FLAG_SYN, UDP_HEADER_LEN,
     UDP_OPTION_EOL, UDP_OPTION_NOP,
@@ -59,6 +59,7 @@ enum ExpectedLayer {
     Radiotap,
     Dot11,
     LlcSnap,
+    Eapol,
     Ethernet,
     LinuxSll,
     NullLoopback,
@@ -896,6 +897,7 @@ const DOT11_FIXTURES: &[ValidFixtureCase] = &[
         expected_layers: &[
             ExpectedLayer::Dot11,
             ExpectedLayer::LlcSnap,
+            ExpectedLayer::Eapol,
             ExpectedLayer::Raw,
         ],
         preserve_exact_bytes: true,
@@ -909,6 +911,7 @@ const DOT11_FIXTURES: &[ValidFixtureCase] = &[
         expected_layers: &[
             ExpectedLayer::Dot11,
             ExpectedLayer::LlcSnap,
+            ExpectedLayer::Eapol,
             ExpectedLayer::Raw,
         ],
         preserve_exact_bytes: true,
@@ -1401,6 +1404,9 @@ fn assert_expected_layers(case: &ValidFixtureCase, packet: &Packet) {
             ExpectedLayer::LlcSnap => {
                 let _ = expect_layer::<LlcSnap>(case, packet);
             }
+            ExpectedLayer::Eapol => {
+                let _ = expect_layer::<Eapol>(case, packet);
+            }
             ExpectedLayer::Ethernet => {
                 let _ = expect_layer::<Ethernet>(case, packet);
             }
@@ -1489,6 +1495,7 @@ fn expected_layer_name(expected: ExpectedLayer) -> &'static str {
         ExpectedLayer::Radiotap => "Radiotap",
         ExpectedLayer::Dot11 => "Dot11",
         ExpectedLayer::LlcSnap => "LlcSnap",
+        ExpectedLayer::Eapol => "Eapol",
         ExpectedLayer::Ethernet => "Ethernet",
         ExpectedLayer::LinuxSll => "LinuxSll",
         ExpectedLayer::NullLoopback => "NullLoopback",
@@ -1592,21 +1599,23 @@ fn assert_dot11_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
         }
         "dot11-llc-snap-eapol" => {
             let llc = expect_layer::<LlcSnap>(case, packet);
+            let eapol = expect_layer::<Eapol>(case, packet);
             let raw = expect_layer::<Raw>(case, packet);
-            assert_eq!(llc.ethertype_value(), 0x888e);
-            assert_eq!(
-                raw.as_bytes(),
-                &[0x02, 0x00, 0x00, 0x05, 0x01, 0x02, 0x00, 0x05, 0x01]
-            );
+            assert_eq!(llc.ethertype_value(), ETHERTYPE_EAPOL);
+            assert_eq!(eapol.version_value(), 2);
+            assert_eq!(eapol.packet_type_value(), 0);
+            assert_eq!(eapol.body_length_value(), Some(5));
+            assert_eq!(raw.as_bytes(), &[0x01, 0x02, 0x00, 0x05, 0x01]);
         }
         "dot11-eapol-key" => {
             let llc = expect_layer::<LlcSnap>(case, packet);
+            let eapol = expect_layer::<Eapol>(case, packet);
             let raw = expect_layer::<Raw>(case, packet).as_bytes();
-            assert_eq!(llc.ethertype_value(), 0x888e);
-            assert_eq!(raw[0], 2);
-            assert_eq!(raw[1], 3);
-            assert_eq!(u16::from_be_bytes([raw[2], raw[3]]), 95);
-            assert_eq!(raw.len(), 99);
+            assert_eq!(llc.ethertype_value(), ETHERTYPE_EAPOL);
+            assert_eq!(eapol.version_value(), 2);
+            assert_eq!(eapol.packet_type_value(), 3);
+            assert_eq!(eapol.body_length_value(), Some(95));
+            assert_eq!(raw.len(), 95);
         }
         "dot11-rsn-ie" => {
             let dot11 = expect_layer::<Dot11>(case, packet);

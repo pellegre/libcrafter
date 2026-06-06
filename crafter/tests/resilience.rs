@@ -8,9 +8,8 @@ use crafter::core::{
     DhcpOptionArea, Dns, Ethernet, Icmpv4, Icmpv6, Ipv4, Ipv4Option, Ipv4Protocol, Ipv6,
     Ipv6DestinationOptionsHeader, Ipv6FragmentHeader, Ipv6HopByHopOptionsHeader,
     Ipv6MobileRoutingHeader, Ipv6Option, Ipv6RoutingHeader, Ipv6SegmentRoutingHeader, LinkType,
-    LinuxSll, LlcSnap, MacAddr, NetworkLayer, NullLoopback, OptionOverload, Packet, Raw, Tcp,
-    TcpOption, Udp, UdpOptionStatus, UdpOptions, Vlan, DHCP_CLIENT_PORT, DHCP_SERVER_PORT,
-    DNS_PORT,
+    LinuxSll, MacAddr, NetworkLayer, NullLoopback, OptionOverload, Packet, Raw, Tcp, TcpOption,
+    Udp, UdpOptionStatus, UdpOptions, Vlan, DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT,
     IPPROTO_IPV6_AH, IPPROTO_IPV6_ESP, IPPROTO_IPV6_EXPERIMENTAL_1, IPPROTO_IPV6_EXPERIMENTAL_2,
     IPPROTO_IPV6_HIP, IPPROTO_IPV6_MOBILITY, IPPROTO_IPV6_ROUTE, IPPROTO_IPV6_SHIM6, IPPROTO_UDP,
     IPV6_ROUTING_TYPE_EXPERIMENTAL_1, IPV6_ROUTING_TYPE_EXPERIMENTAL_2, IPV6_ROUTING_TYPE_MOBILE,
@@ -1369,12 +1368,7 @@ fn malformed_dot11_and_radiotap_corpus_errors_carry_structured_fields() {
             4,
         ),
         ("truncated-dot11-llc-snap", "llc_snap.header", 8, 4),
-        (
-            "truncated-dot11-rsn-ie",
-            "dot11.tagged_parameter",
-            22,
-            8,
-        ),
+        ("truncated-dot11-rsn-ie", "dot11.tagged_parameter", 22, 8),
     ];
     let covered = dot11_cases
         .iter()
@@ -1438,30 +1432,18 @@ fn malformed_dot11_and_radiotap_corpus_errors_carry_structured_fields() {
 }
 
 #[test]
-fn malformed_dot11_truncated_eapol_payload_stays_raw_until_typed_decoder_exists() {
+fn malformed_dot11_truncated_eapol_payload_returns_structured_error() {
     let bytes = parse_hex(
-        "truncated-dot11-eapol-raw-boundary",
+        "truncated-dot11-eapol-body",
         "\
         0800000002005e10000102005e10000202005e1000037000\
         aaaa03000000888e0203000501\
         ",
     );
 
-    let packet = Packet::decode_from_link(LinkType::Ieee80211, &bytes)
-        .expect("EAPOL EtherType is preserved as Raw until the typed decoder exists");
-    let llc = packet
-        .layer::<LlcSnap>()
-        .expect("complete LLC/SNAP header should decode");
-    let raw = packet
-        .layer::<Raw>()
-        .expect("truncated EAPOL payload should remain inspectable as Raw");
-
-    assert_eq!(llc.ethertype_value(), 0x888e);
-    assert_eq!(raw.as_bytes(), &[0x02, 0x03, 0x00, 0x05, 0x01]);
     assert_eq!(
-        packet.compile().unwrap().as_bytes(),
-        bytes.as_slice(),
-        "Raw EAPOL boundary must preserve original bytes"
+        Packet::decode_from_link(LinkType::Ieee80211, &bytes).unwrap_err(),
+        CrafterError::buffer_too_short("eapol.body", 9, 5)
     );
 }
 

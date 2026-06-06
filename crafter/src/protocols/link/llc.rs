@@ -277,8 +277,8 @@ where
 mod tests {
     use super::LlcSnap;
     use crate::{
-        Arp, CrafterError, Dot11, Ipv4, Ipv6, Layer, LinkType, Packet, ProtocolRegistry, Raw,
-        ETHERTYPE_ARP, ETHERTYPE_IPV6,
+        Arp, CrafterError, Dot11, Eapol, EapolType, Ipv4, Ipv6, Layer, LinkType, Packet,
+        ProtocolRegistry, Raw, ETHERTYPE_ARP, ETHERTYPE_IPV6,
     };
     use core::net::Ipv4Addr;
 
@@ -423,6 +423,37 @@ mod tests {
         assert!(arp.layer::<LlcSnap>().is_some());
         assert!(arp.layer::<Arp>().is_some());
         assert!(arp.layer::<Raw>().is_none());
+    }
+
+    #[test]
+    fn eapol_registry_dispatch() {
+        let packet = Dot11::data() / LlcSnap::new() / Eapol::start() / Raw::from("hi");
+        let decoded = decode_dot11_packet(packet.clone());
+
+        let eapol = decoded.layer::<Eapol>().unwrap();
+        let raw = decoded.layer::<Raw>().unwrap();
+
+        assert!(decoded.layer::<Dot11>().is_some());
+        assert!(decoded.layer::<LlcSnap>().is_some());
+        assert_eq!(eapol.version_value(), 2);
+        assert_eq!(eapol.packet_type_kind(), EapolType::Start);
+        assert_eq!(eapol.body_length_value(), Some(2));
+        assert_eq!(raw.as_bytes(), b"hi");
+        assert_eq!(
+            decoded.compile().unwrap().as_bytes(),
+            packet.compile().unwrap().as_bytes()
+        );
+
+        let unknown = decode_dot11_packet(
+            Dot11::data()
+                / LlcSnap::new()
+                / Eapol::new().packet_type_raw(0x7f)
+                / Raw::from_bytes([0xde, 0xad]),
+        );
+        let unknown_eapol = unknown.layer::<Eapol>().unwrap();
+
+        assert_eq!(unknown_eapol.packet_type_kind(), EapolType::Unknown(0x7f));
+        assert_eq!(unknown.layer::<Raw>().unwrap().as_bytes(), &[0xde, 0xad]);
     }
 
     #[test]
