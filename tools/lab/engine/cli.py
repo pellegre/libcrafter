@@ -23,6 +23,8 @@ COMMANDS = (
     "session-info",
 )
 
+DEFAULT_LAB_ROLE_SPECS = ("stimulus", "target")
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -70,6 +72,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="confirm protected non-dry-run provider execution",
     )
+    create.add_argument("--dry-run", action="store_true", help="plan without making changes")
     create.add_argument("--json", action="store_true", help="emit machine-readable JSON")
     create.set_defaults(command_name="create")
 
@@ -119,9 +122,11 @@ def _add_session_request_options(parser: argparse.ArgumentParser) -> None:
         "--role",
         dest="roles",
         action="append",
-        required=True,
         metavar="ROLE",
-        help="role to include in the lab session, optionally ROLE=IPV4; may be repeated",
+        help=(
+            "role to include in the lab session, optionally ROLE=IPV4; may be repeated "
+            "(default: stimulus and target)"
+        ),
     )
     parser.add_argument(
         "--role-address",
@@ -270,7 +275,8 @@ def _run_plan(args: argparse.Namespace) -> int:
 
 
 def _run_create(args: argparse.Namespace) -> int:
-    if not args.confirm_live_run:
+    dry_run = bool(getattr(args, "dry_run", False))
+    if not dry_run and not args.confirm_live_run:
         output = {
             "ok": False,
             "command": args.command_name,
@@ -295,12 +301,15 @@ def _run_create(args: argparse.Namespace) -> int:
                 role_specs=args.roles,
                 address_specs=args.role_addresses,
             ),
-            dry_run=False,
-            confirm_live_run=True,
+            dry_run=dry_run,
+            confirm_live_run=bool(args.confirm_live_run) and not dry_run,
             remote_dir=args.remote_dir,
             workload_label=args.workload_label,
         )
-        lab_session = lab_session_state.create_session(adapter, request)
+        if dry_run:
+            lab_session = adapter.plan_session(request)
+        else:
+            lab_session = lab_session_state.create_session(adapter, request)
         return _write_output(
             lab_session.to_dict(),
             args,
@@ -418,13 +427,13 @@ def _cleanup_status(session: LabSession) -> str:
 def _lab_roles_from_args(
     *,
     provider: str,
-    role_specs: Sequence[str],
+    role_specs: Sequence[str] | None,
     address_specs: Sequence[str],
 ) -> list[LabRole]:
     role_names: list[str] = []
     addresses: dict[str, str] = {}
 
-    for spec in role_specs:
+    for spec in role_specs or DEFAULT_LAB_ROLE_SPECS:
         role_name, address = _parse_role_spec(spec)
         role_names.append(role_name)
         if address is not None:

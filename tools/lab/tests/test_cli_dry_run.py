@@ -72,6 +72,24 @@ class LabCliDoctorTest(unittest.TestCase):
 
 
 class LabCliPlanTest(unittest.TestCase):
+    def test_plan_defaults_to_smoke_roles_when_roles_are_omitted(self) -> None:
+        fake = _FakeEndpointClient()
+
+        with patch("tools.lab.engine.endpoint_client.EndpointClient", return_value=fake):
+            exit_code, stdout, stderr = _run_cli(
+                "plan",
+                "--provider",
+                "docker",
+                "--dry-run",
+                "--json",
+            )
+
+        self.assertEqual(exit_code, 0, stderr)
+        session = json.loads(stdout)
+        self.assertEqual([role["name"] for role in session["roles"]], ["stimulus", "target"])
+        self.assertEqual([call["role"] for call in fake.create_calls], ["stimulus", "target"])
+        self.assertTrue(all(call["dry_run"] for call in fake.create_calls))
+
     def test_plan_emits_lab_session_for_each_provider_without_writing_manifests(self) -> None:
         cases = [
             ("docker", "docker", "private"),
@@ -164,6 +182,30 @@ class LabCliPlanTest(unittest.TestCase):
             [call["private_ip"] for call in fake.create_calls],
             ["10.77.0.88", "10.77.0.99"],
         )
+
+
+class LabCliCreateDryRunTest(unittest.TestCase):
+    def test_create_dry_run_uses_default_roles_without_persisting_manifest(self) -> None:
+        fake = _FakeEndpointClient()
+
+        with patch("tools.lab.engine.endpoint_client.EndpointClient", return_value=fake):
+            exit_code, stdout, stderr = _run_cli(
+                "create",
+                "--provider",
+                "docker",
+                "--dry-run",
+                "--json",
+            )
+
+        self.assertEqual(exit_code, 0, stderr)
+        session = json.loads(stdout)
+        self.assertTrue(session["dry_run"])
+        self.assertEqual([role["name"] for role in session["roles"]], ["stimulus", "target"])
+        self.assertEqual(session["created_endpoint_ids"], [])
+        self.assertEqual([call["role"] for call in fake.create_calls], ["stimulus", "target"])
+        self.assertTrue(all(call["dry_run"] for call in fake.create_calls))
+        self.assertTrue(all(call["write_manifest"] is False for call in fake.create_calls))
+        self.assertTrue(all(call["confirm_live_run"] is False for call in fake.create_calls))
 
 
 def _run_cli(*args: str) -> tuple[int, str, str]:
