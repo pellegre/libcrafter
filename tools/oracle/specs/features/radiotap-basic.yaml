@@ -1,0 +1,185 @@
+version: 1
+kind: feature
+name: radiotap_basic
+summary: Radiotap base header, present bitmap, aligned fields, FCS metadata, and raw-preserved unknown field coverage.
+
+layers:
+  - radiotap
+  - dot11
+  - payload
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+  - roundtrip
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: minimal
+    present_fields:
+      - none
+    checks:
+      - version_zero
+      - length_derived
+      - no_metadata_defaults_invented
+  - name: flags-rate-channel
+    present_fields:
+      - flags
+      - rate
+      - channel
+    checks:
+      - alignment_padding_preserved
+      - selected_fields_preserved
+  - name: signal-antenna
+    present_fields:
+      - dbm_antenna_signal
+      - antenna
+    checks:
+      - signed_signal_preserved
+      - antenna_index_preserved
+  - name: rx-tx-flags
+    present_fields:
+      - rx_flags
+      - tx_flags
+    checks:
+      - rx_flags_preserved
+      - tx_flags_preserved
+  - name: extended-present
+    present_fields:
+      - extended
+    checks:
+      - extended_present_words_preserved
+      - terminating_present_word_required
+  - name: unknown-fields
+    present_fields:
+      - unknown
+    checks:
+      - unknown_present_bits_preserved
+      - unknown_field_bytes_preserved
+      - alignment_padding_preserved
+  - name: fcs-metadata
+    present_fields:
+      - flags
+      - rx_flags
+    checks:
+      - fcs_present_observable
+      - failed_fcs_observable
+      - frame_bytes_not_silently_stripped
+  - name: truncated-header
+    checks:
+      - structured_error
+      - excluded_from_offline_byte_comparison
+
+coverage_cases:
+  - radiotap-basic
+  - radiotap-flags-rate-channel
+  - radiotap-signal-antenna
+  - radiotap-rx-tx-flags
+  - radiotap-extended-present
+  - radiotap-unknown-fields
+  - radiotap-fcs-metadata
+  - malformed-radiotap-truncated-header
+  - crafter-radiotap-roundtrip
+
+supported_cases:
+  - name: radiotap-basic
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: strict_bytes
+  - name: radiotap-flags-rate-channel
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: strict_bytes
+  - name: radiotap-signal-antenna
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: strict_bytes
+  - name: radiotap-rx-tx-flags
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: strict_bytes
+  - name: radiotap-extended-present
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: strict_bytes
+  - name: radiotap-unknown-fields
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: normalized
+  - name: radiotap-fcs-metadata
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: normalized
+  - name: malformed-radiotap-truncated-header
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: structured_error
+    offline_byte_comparison: excluded
+
+normalized_model:
+  header:
+    - version
+    - pad
+    - length
+    - present_words
+  metadata:
+    - flags
+    - rate
+    - channel_frequency
+    - channel_flags
+    - dbm_antenna_signal
+    - antenna
+    - rx_flags
+    - tx_flags
+    - fcs_status
+  raw_preservation:
+    - unknown_fields
+    - padding
+    - payload_bytes
+
+live_cases:
+  - name: monitor-mode-injection-plan
+    case: radiotap-basic
+    expected_live: dry_run_only
+    required_user_action:
+      - monitor_mode_interface
+      - manual_channel_selection
+      - explicit_live_flag
+      - manual_dongle_validation
+    notes:
+      - Automated validation must stop at send-plan inspection and never require Wi-Fi hardware.
+
+backend_support:
+  scapy:
+    status: planned
+    native_layers:
+      - RadioTap
+      - Dot11
+    notes:
+      - Unknown radiotap field cases compare normalized preservation metadata where the reference backend cannot name a field.
+  wireshark:
+    status: planned
+    native_layers:
+      - radiotap
+      - wlan
+    notes:
+      - Parser-only pcap coverage may validate normalized radiotap metadata when tshark is available.
+  libcrafter:
+    status: planned
+    notes:
+      - Radiotap must not invent channel, signal, antenna, FCS, or retry defaults when fields are unset.

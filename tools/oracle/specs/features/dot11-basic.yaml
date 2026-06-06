@@ -1,0 +1,194 @@
+version: 1
+kind: feature
+name: dot11_basic
+summary: IEEE 802.11 MAC frame-control, addressing, subtype, protected-body, and structured-error coverage.
+
+layers:
+  - dot11
+  - payload
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+  - roundtrip
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: data-basic
+    frame_types:
+      - data
+    checks:
+      - frame_control_bits_preserved
+      - duration_id_preserved
+      - addr1_addr2_addr3_preserved
+      - sequence_control_preserved
+      - payload_boundary_preserved
+  - name: qos-data
+    frame_types:
+      - data
+    subtypes:
+      - qos_data
+    checks:
+      - qos_control_preserved
+      - payload_boundary_preserved
+  - name: tods-fromds-address4
+    frame_types:
+      - data
+    flags:
+      - to_ds
+      - from_ds
+    checks:
+      - addr4_required_when_to_ds_and_from_ds
+      - address_roles_normalized
+  - name: protected-raw
+    frame_types:
+      - data
+    flags:
+      - protected
+    checks:
+      - protected_body_stays_raw
+      - protected_bit_visible
+  - name: management-basic
+    frame_types:
+      - management
+    subtypes:
+      - beacon
+      - authentication
+      - deauthentication
+    checks:
+      - fixed_fields_preserved
+      - tagged_parameters_preserved
+  - name: control-basic
+    frame_types:
+      - control
+    subtypes:
+      - rts
+      - cts
+      - ack
+    checks:
+      - subtype_address_layout_preserved
+  - name: unknown-subtype
+    frame_types:
+      - management
+      - control
+      - data
+    checks:
+      - enclosing_dot11_layer_typed
+      - unsupported_tail_preserved_as_raw
+  - name: truncated-header
+    checks:
+      - structured_error
+      - excluded_from_offline_byte_comparison
+
+coverage_cases:
+  - dot11-data-basic
+  - dot11-qos-data
+  - dot11-tods-fromds-address4
+  - dot11-protected-raw
+  - dot11-management-basic
+  - dot11-control-basic
+  - dot11-unknown-subtype-raw
+  - malformed-dot11-truncated-header
+  - crafter-dot11-roundtrip
+
+supported_cases:
+  - name: dot11-data-basic
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: strict_bytes
+  - name: dot11-qos-data
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: strict_bytes
+  - name: dot11-tods-fromds-address4
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: strict_bytes
+  - name: dot11-protected-raw
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: normalized
+  - name: dot11-management-basic
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: strict_bytes
+  - name: dot11-control-basic
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: strict_bytes
+  - name: dot11-unknown-subtype-raw
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: normalized
+  - name: malformed-dot11-truncated-header
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: structured_error
+    offline_byte_comparison: excluded
+
+normalized_model:
+  frame_control:
+    - protocol_version
+    - frame_type
+    - subtype
+    - to_ds
+    - from_ds
+    - more_fragments
+    - retry
+    - power_management
+    - more_data
+    - protected
+    - order
+  addressing:
+    - addr1
+    - addr2
+    - addr3
+    - addr4
+    - address_roles
+  payload:
+    - raw_bytes
+    - protected_body_raw
+
+live_cases:
+  - name: radiotap-monitor-mode-plan
+    case: dot11-data-basic
+    expected_live: dry_run_only
+    required_user_action:
+      - manual_monitor_mode_interface
+      - explicit_live_flag
+      - manual_dongle_validation
+    notes:
+      - Automated oracle runs only validate dry-run send planning for IEEE 802.11 stacks.
+
+backend_support:
+  scapy:
+    status: planned
+    native_layers:
+      - Dot11
+    notes:
+      - Malformed structured-error cases are excluded from offline byte comparison because the reference encoder has no malformed decode pathway.
+  wireshark:
+    status: planned
+    native_layers:
+      - wlan
+    notes:
+      - Parser-only pcap coverage may validate normalized decode models when tshark is available and must skip cleanly otherwise.
+  libcrafter:
+    status: planned
+    notes:
+      - Protected data frame bodies stay raw until a later decrypt phase.
