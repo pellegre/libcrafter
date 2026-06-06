@@ -45,6 +45,9 @@ values use `Ipv4Protocol`.
 | `vlan` | Protocols | Offline | 802.1Q VLAN frame construction, compile, and decode. | `cargo run -p crafter --example vlan` |
 | `linux_sll` | Protocols | Offline | Linux cooked capture packet construction, compile, and decode. | `cargo run -p crafter --example linux_sll` |
 | `null_loopback` | Protocols | Offline | BSD null/loopback link-layer packet construction, compile, and decode. | `cargo run -p crafter --example null_loopback` |
+| `dot11_radiotap_ipv4` | Protocols | Offline | Radiotap/Dot11/LlcSnap/IPv4 construction, compile, decode, show, and hexdump output. | `cargo run -p crafter --example dot11_radiotap_ipv4` |
+| `dot11_beacon_rsn` | Protocols | Offline | Bare Dot11 beacon construction with typed Rsn information element inspection. | `cargo run -p crafter --example dot11_beacon_rsn` |
+| `eapol_key_parse` | Protocols | Offline | Synthetic Dot11/LlcSnap/Eapol-Key byte parsing with summary, show, and hexdump output. | `cargo run -p crafter --example eapol_key_parse` |
 | `ipv4_enrichment` | Protocols | Offline | IPv4 DSCP/ECN helpers, typed options, checksum status, and fragment metadata inspection. | `cargo run -p crafter --example ipv4_enrichment` |
 | `ipv4_options` | Protocols | Offline | IPv4 option builders with checksum and length auto-fill. | `cargo run -p crafter --example ipv4_options` |
 | `tcp_options` | Protocols | Offline | TCP option builders, option ordering, and header-length auto-fill. | `cargo run -p crafter --example tcp_options` |
