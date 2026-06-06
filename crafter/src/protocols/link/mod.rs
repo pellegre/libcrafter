@@ -19,7 +19,6 @@ mod llc;
 mod radiotap;
 
 pub(crate) use self::arp::append_arp_packet;
-pub(crate) use self::dot11::decode_dot11_with_registry;
 pub use self::arp::{
     arp_hardware_type_label, arp_protocol_type_label, Arp, ArpOperation, ARP_HRD_ATM,
     ARP_HRD_ETHERNET, ARP_HRD_FIBRE_CHANNEL, ARP_HRD_IEEE_802, ARP_HRD_INFINIBAND, ARP_HRD_MAPOS,
@@ -28,7 +27,9 @@ pub use self::arp::{
     ARP_OP_RARP_REQUEST, ARP_OP_REPLY, ARP_OP_REQUEST, ARP_OP_RESERVED, ARP_OP_RESERVED_MAX,
     ARP_PRO_IPV4,
 };
+pub(crate) use self::dot11::decode_dot11_with_registry;
 pub use self::dot11::*;
+pub(crate) use self::llc::append_llc_snap_packet_with_registry;
 pub use self::llc::LlcSnap;
 pub use self::radiotap::Radiotap;
 
