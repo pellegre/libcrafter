@@ -95,7 +95,7 @@ channel, and open it with `PacketWire::pcap_interface`:
 use crafter::prelude::*;
 
 fn main() -> crafter::Result<()> {
-    let monitor_iface = "wlan0mon";
+    let monitor_iface = "dot11-doc-iface";
 
     let source = PacketWire::pcap_interface(monitor_iface)
         .filter("type mgt or type data")
