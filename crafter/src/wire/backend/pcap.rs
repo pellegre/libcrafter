@@ -777,6 +777,17 @@ mod tests {
         let mut sniffer = Sniffer::new(source).count(1);
         let first = sniffer.next_record().unwrap().unwrap();
         assert_eq!(
+            first.metadata().timestamp(),
+            Some(PcapTimestamp::micros(1, 0).unwrap())
+        );
+        assert_eq!(first.metadata().link_type(), Some(LinkType::Ethernet));
+        assert_eq!(
+            first.metadata().pcap_link_type(),
+            Some(PcapLinkType::Ethernet)
+        );
+        assert_eq!(first.metadata().backend(), &BackendKind::PcapFile);
+        assert_eq!(first.metadata().file(), Some(temp.path()));
+        assert_eq!(
             first
                 .packet()
                 .layer::<Tcp>()
@@ -803,6 +814,11 @@ mod tests {
                 .destination_port_value()
                 == 443
             {
+                assert_eq!(
+                    record.metadata().timestamp(),
+                    Some(PcapTimestamp::micros(2, 0).unwrap())
+                );
+                assert_eq!(record.metadata().link_type(), Some(LinkType::Ethernet));
                 break;
             }
         }
@@ -816,6 +832,22 @@ mod tests {
             .unwrap();
         let records = Sniffer::new(source).spawn_count(2).unwrap().join().unwrap();
         assert_eq!(records.len(), 2);
+        assert_eq!(
+            records
+                .iter()
+                .map(|record| record.metadata().timestamp().unwrap())
+                .collect::<Vec<_>>(),
+            vec![
+                PcapTimestamp::micros(1, 0).unwrap(),
+                PcapTimestamp::micros(2, 0).unwrap()
+            ]
+        );
+        assert!(records
+            .iter()
+            .all(|record| record.metadata().link_type() == Some(LinkType::Ethernet)));
+        assert!(records
+            .iter()
+            .all(|record| record.packet().layer::<Tcp>().is_some()));
     }
 
     #[test]
@@ -846,6 +878,15 @@ mod tests {
                 .destination_port_value(),
             443
         );
+        assert_eq!(
+            packets[0].metadata().timestamp(),
+            Some(PcapTimestamp::micros(1, 0).unwrap())
+        );
+        assert_eq!(packets[0].metadata().link_type(), Some(LinkType::Ethernet));
+        assert_eq!(
+            packets[0].metadata().pcap_link_type(),
+            Some(PcapLinkType::Ethernet)
+        );
 
         let source = PacketWire::pcap_file(temp.path())
             .filter("tcp and not dst port 443")
@@ -863,6 +904,11 @@ mod tests {
                 .destination_port_value(),
             80
         );
+        assert_eq!(
+            packets[0].metadata().timestamp(),
+            Some(PcapTimestamp::micros(2, 0).unwrap())
+        );
+        assert_eq!(packets[0].metadata().link_type(), Some(LinkType::Ethernet));
     }
 
     #[test]
@@ -1017,6 +1063,15 @@ mod tests {
             .collect_records()
             .unwrap();
         assert!(packets.len() <= 1);
+        for packet in packets {
+            assert_eq!(packet.metadata().backend(), &BackendKind::PcapInterface);
+            assert_eq!(
+                packet.metadata().interface(),
+                Some(iface.to_string_lossy().as_ref())
+            );
+            assert!(packet.metadata().timestamp().is_some());
+            assert!(packet.metadata().link_type().is_some());
+        }
     }
 
     #[test]
