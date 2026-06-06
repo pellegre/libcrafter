@@ -209,6 +209,282 @@ pub struct Dot11 {
     _private: (),
 }
 
+/// IEEE 802.11 frame-control field.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct Dot11FrameControl {
+    bits: u16,
+}
+
+impl Dot11FrameControl {
+    /// Create an empty frame-control word.
+    pub const fn new() -> Self {
+        Self { bits: 0 }
+    }
+
+    /// Create a frame-control value from its raw host-endian bit word.
+    pub const fn from_bits(bits: u16) -> Self {
+        Self { bits }
+    }
+
+    /// Decode a frame-control field from exactly two little-endian wire bytes.
+    pub const fn from_le_bytes(bytes: [u8; DOT11_FRAME_CONTROL_LEN]) -> Self {
+        Self {
+            bits: (bytes[0] as u16) | ((bytes[1] as u16) << 8),
+        }
+    }
+
+    /// Decode a frame-control field from a byte slice.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> crate::Result<Self> {
+        let bytes = bytes.as_ref();
+        if bytes.len() < DOT11_FRAME_CONTROL_LEN {
+            return Err(crate::CrafterError::buffer_too_short(
+                "dot11.frame_control",
+                DOT11_FRAME_CONTROL_LEN,
+                bytes.len(),
+            ));
+        }
+
+        Ok(Self::from_le_bytes([bytes[0], bytes[1]]))
+    }
+
+    /// Return the raw host-endian frame-control bit word.
+    pub const fn bits(&self) -> u16 {
+        self.bits
+    }
+
+    /// Set the raw host-endian frame-control bit word.
+    pub const fn raw(mut self, bits: u16) -> Self {
+        self.bits = bits;
+        self
+    }
+
+    /// Compile the frame-control field to little-endian wire bytes.
+    pub const fn to_le_bytes(self) -> [u8; DOT11_FRAME_CONTROL_LEN] {
+        [(self.bits & 0x00ff) as u8, (self.bits >> 8) as u8]
+    }
+
+    /// Compile the frame-control field to little-endian wire bytes.
+    pub const fn compile(self) -> [u8; DOT11_FRAME_CONTROL_LEN] {
+        self.to_le_bytes()
+    }
+
+    /// Protocol version subfield.
+    pub const fn protocol_version(&self) -> u8 {
+        ((self.bits & DOT11_FC_PROTOCOL_VERSION_MASK) >> DOT11_FC_PROTOCOL_VERSION_SHIFT) as u8
+    }
+
+    /// Frame type subfield.
+    pub const fn frame_type(&self) -> u8 {
+        ((self.bits & DOT11_FC_TYPE_MASK) >> DOT11_FC_TYPE_SHIFT) as u8
+    }
+
+    /// Frame subtype subfield.
+    pub const fn subtype(&self) -> u8 {
+        ((self.bits & DOT11_FC_SUBTYPE_MASK) >> DOT11_FC_SUBTYPE_SHIFT) as u8
+    }
+
+    /// Return true when the To DS flag is set.
+    pub const fn to_ds(&self) -> bool {
+        self.has_flag(DOT11_FC_TO_DS)
+    }
+
+    /// Return true when the From DS flag is set.
+    pub const fn from_ds(&self) -> bool {
+        self.has_flag(DOT11_FC_FROM_DS)
+    }
+
+    /// Return true when the More Fragments flag is set.
+    pub const fn more_fragments(&self) -> bool {
+        self.has_flag(DOT11_FC_MORE_FRAGMENTS)
+    }
+
+    /// Return true when the Retry flag is set.
+    pub const fn retry(&self) -> bool {
+        self.has_flag(DOT11_FC_RETRY)
+    }
+
+    /// Return true when the Power Management flag is set.
+    pub const fn power_management(&self) -> bool {
+        self.has_flag(DOT11_FC_POWER_MANAGEMENT)
+    }
+
+    /// Return true when the More Data flag is set.
+    pub const fn more_data(&self) -> bool {
+        self.has_flag(DOT11_FC_MORE_DATA)
+    }
+
+    /// Return true when the Protected Frame flag is set.
+    pub const fn protected(&self) -> bool {
+        self.has_flag(DOT11_FC_PROTECTED)
+    }
+
+    /// Return true when the Order/+HTC flag is set.
+    pub const fn order(&self) -> bool {
+        self.has_flag(DOT11_FC_ORDER)
+    }
+
+    /// Set the two-bit protocol-version subfield.
+    ///
+    /// Only the low two bits of `protocol_version` are representable in the
+    /// frame-control word. Use [`Self::raw`] to set an exact 16-bit word.
+    pub const fn protocol_version_set(mut self, protocol_version: u8) -> Self {
+        self.bits = set_subfield(
+            self.bits,
+            DOT11_FC_PROTOCOL_VERSION_MASK,
+            DOT11_FC_PROTOCOL_VERSION_SHIFT,
+            protocol_version,
+        );
+        self
+    }
+
+    /// Builder alias for [`Self::protocol_version_set`].
+    pub const fn with_protocol_version(self, protocol_version: u8) -> Self {
+        self.protocol_version_set(protocol_version)
+    }
+
+    /// Set the two-bit frame type subfield.
+    ///
+    /// Only the low two bits of `frame_type` are representable in the
+    /// frame-control word. Use [`Self::raw`] to set an exact 16-bit word.
+    pub const fn frame_type_set(mut self, frame_type: u8) -> Self {
+        self.bits = set_subfield(
+            self.bits,
+            DOT11_FC_TYPE_MASK,
+            DOT11_FC_TYPE_SHIFT,
+            frame_type,
+        );
+        self
+    }
+
+    /// Builder alias for [`Self::frame_type_set`].
+    pub const fn with_frame_type(self, frame_type: u8) -> Self {
+        self.frame_type_set(frame_type)
+    }
+
+    /// Set the four-bit frame subtype subfield.
+    ///
+    /// Only the low four bits of `subtype` are representable in the
+    /// frame-control word. Use [`Self::raw`] to set an exact 16-bit word.
+    pub const fn subtype_set(mut self, subtype: u8) -> Self {
+        self.bits = set_subfield(
+            self.bits,
+            DOT11_FC_SUBTYPE_MASK,
+            DOT11_FC_SUBTYPE_SHIFT,
+            subtype,
+        );
+        self
+    }
+
+    /// Builder alias for [`Self::subtype_set`].
+    pub const fn with_subtype(self, subtype: u8) -> Self {
+        self.subtype_set(subtype)
+    }
+
+    /// Set or clear the To DS flag.
+    pub const fn to_ds_set(mut self, enabled: bool) -> Self {
+        self.bits = set_flag(self.bits, DOT11_FC_TO_DS, enabled);
+        self
+    }
+
+    /// Builder alias for [`Self::to_ds_set`].
+    pub const fn with_to_ds(self, enabled: bool) -> Self {
+        self.to_ds_set(enabled)
+    }
+
+    /// Set or clear the From DS flag.
+    pub const fn from_ds_set(mut self, enabled: bool) -> Self {
+        self.bits = set_flag(self.bits, DOT11_FC_FROM_DS, enabled);
+        self
+    }
+
+    /// Builder alias for [`Self::from_ds_set`].
+    pub const fn with_from_ds(self, enabled: bool) -> Self {
+        self.from_ds_set(enabled)
+    }
+
+    /// Set or clear the More Fragments flag.
+    pub const fn more_fragments_set(mut self, enabled: bool) -> Self {
+        self.bits = set_flag(self.bits, DOT11_FC_MORE_FRAGMENTS, enabled);
+        self
+    }
+
+    /// Builder alias for [`Self::more_fragments_set`].
+    pub const fn with_more_fragments(self, enabled: bool) -> Self {
+        self.more_fragments_set(enabled)
+    }
+
+    /// Set or clear the Retry flag.
+    pub const fn retry_set(mut self, enabled: bool) -> Self {
+        self.bits = set_flag(self.bits, DOT11_FC_RETRY, enabled);
+        self
+    }
+
+    /// Builder alias for [`Self::retry_set`].
+    pub const fn with_retry(self, enabled: bool) -> Self {
+        self.retry_set(enabled)
+    }
+
+    /// Set or clear the Power Management flag.
+    pub const fn power_management_set(mut self, enabled: bool) -> Self {
+        self.bits = set_flag(self.bits, DOT11_FC_POWER_MANAGEMENT, enabled);
+        self
+    }
+
+    /// Builder alias for [`Self::power_management_set`].
+    pub const fn with_power_management(self, enabled: bool) -> Self {
+        self.power_management_set(enabled)
+    }
+
+    /// Set or clear the More Data flag.
+    pub const fn more_data_set(mut self, enabled: bool) -> Self {
+        self.bits = set_flag(self.bits, DOT11_FC_MORE_DATA, enabled);
+        self
+    }
+
+    /// Builder alias for [`Self::more_data_set`].
+    pub const fn with_more_data(self, enabled: bool) -> Self {
+        self.more_data_set(enabled)
+    }
+
+    /// Set or clear the Protected Frame flag.
+    pub const fn protected_set(mut self, enabled: bool) -> Self {
+        self.bits = set_flag(self.bits, DOT11_FC_PROTECTED, enabled);
+        self
+    }
+
+    /// Builder alias for [`Self::protected_set`].
+    pub const fn with_protected(self, enabled: bool) -> Self {
+        self.protected_set(enabled)
+    }
+
+    /// Set or clear the Order/+HTC flag.
+    pub const fn order_set(mut self, enabled: bool) -> Self {
+        self.bits = set_flag(self.bits, DOT11_FC_ORDER, enabled);
+        self
+    }
+
+    /// Builder alias for [`Self::order_set`].
+    pub const fn with_order(self, enabled: bool) -> Self {
+        self.order_set(enabled)
+    }
+
+    const fn has_flag(&self, flag: u16) -> bool {
+        self.bits & flag != 0
+    }
+}
+
+const fn set_subfield(bits: u16, mask: u16, shift: u8, value: u8) -> u16 {
+    (bits & !mask) | (((value as u16) << shift) & mask)
+}
+
+const fn set_flag(bits: u16, flag: u16, enabled: bool) -> u16 {
+    if enabled {
+        bits | flag
+    } else {
+        bits & !flag
+    }
+}
+
 /// Return a stable label for an IEEE 802.11 frame type.
 pub fn dot11_frame_type_label(frame_type: u8) -> String {
     match frame_type {
@@ -466,5 +742,138 @@ mod tests {
         assert_eq!(DOT11_CAPABILITY_QOS, 0x0200);
         assert_eq!(DOT11_CAPABILITY_SHORT_SLOT_TIME, 0x0400);
         assert_eq!(DOT11_CAPABILITY_IMMEDIATE_BLOCK_ACK, 0x8000);
+    }
+
+    #[test]
+    fn dot11_frame_control_little_endian_decode_and_compile_round_trip() {
+        let frame_control = Dot11FrameControl::from_le_bytes([0x88, 0x42]);
+
+        assert_eq!(frame_control.bits(), 0x4288);
+        assert_eq!(frame_control.protocol_version(), 0);
+        assert_eq!(frame_control.frame_type(), DOT11_FRAME_TYPE_DATA);
+        assert_eq!(frame_control.subtype(), DOT11_DATA_SUBTYPE_QOS_DATA);
+        assert!(!frame_control.to_ds());
+        assert!(frame_control.from_ds());
+        assert!(frame_control.protected());
+        assert_eq!(frame_control.to_le_bytes(), [0x88, 0x42]);
+        assert_eq!(frame_control.compile(), [0x88, 0x42]);
+    }
+
+    #[test]
+    fn dot11_frame_control_decode_short_buffer_returns_structured_error() {
+        let err = Dot11FrameControl::decode([0x08]).unwrap_err();
+
+        assert_eq!(
+            err,
+            crate::CrafterError::buffer_too_short("dot11.frame_control", 2, 1)
+        );
+    }
+
+    #[test]
+    fn dot11_frame_control_accessors_read_numbered_subfield_bits() {
+        assert_eq!(Dot11FrameControl::from_bits(0x0001).protocol_version(), 1);
+        assert_eq!(Dot11FrameControl::from_bits(0x0002).protocol_version(), 2);
+        assert_eq!(Dot11FrameControl::from_bits(0x0003).protocol_version(), 3);
+
+        assert_eq!(Dot11FrameControl::from_bits(0x0004).frame_type(), 1);
+        assert_eq!(Dot11FrameControl::from_bits(0x0008).frame_type(), 2);
+        assert_eq!(Dot11FrameControl::from_bits(0x000c).frame_type(), 3);
+
+        assert_eq!(Dot11FrameControl::from_bits(0x0010).subtype(), 1);
+        assert_eq!(Dot11FrameControl::from_bits(0x0020).subtype(), 2);
+        assert_eq!(Dot11FrameControl::from_bits(0x0040).subtype(), 4);
+        assert_eq!(Dot11FrameControl::from_bits(0x0080).subtype(), 8);
+        assert_eq!(Dot11FrameControl::from_bits(0x00f0).subtype(), 15);
+    }
+
+    #[test]
+    fn dot11_frame_control_accessors_read_each_flag_bit() {
+        assert!(Dot11FrameControl::from_bits(DOT11_FC_TO_DS).to_ds());
+        assert!(Dot11FrameControl::from_bits(DOT11_FC_FROM_DS).from_ds());
+        assert!(Dot11FrameControl::from_bits(DOT11_FC_MORE_FRAGMENTS).more_fragments());
+        assert!(Dot11FrameControl::from_bits(DOT11_FC_RETRY).retry());
+        assert!(Dot11FrameControl::from_bits(DOT11_FC_POWER_MANAGEMENT).power_management());
+        assert!(Dot11FrameControl::from_bits(DOT11_FC_MORE_DATA).more_data());
+        assert!(Dot11FrameControl::from_bits(DOT11_FC_PROTECTED).protected());
+        assert!(Dot11FrameControl::from_bits(DOT11_FC_ORDER).order());
+
+        let empty = Dot11FrameControl::new();
+        assert!(!empty.to_ds());
+        assert!(!empty.from_ds());
+        assert!(!empty.more_fragments());
+        assert!(!empty.retry());
+        assert!(!empty.power_management());
+        assert!(!empty.more_data());
+        assert!(!empty.protected());
+        assert!(!empty.order());
+    }
+
+    #[test]
+    fn dot11_frame_control_builder_setters_set_every_bit_position() {
+        let frame_control = Dot11FrameControl::new()
+            .protocol_version_set(3)
+            .frame_type_set(3)
+            .subtype_set(15)
+            .to_ds_set(true)
+            .from_ds_set(true)
+            .more_fragments_set(true)
+            .retry_set(true)
+            .power_management_set(true)
+            .more_data_set(true)
+            .protected_set(true)
+            .order_set(true);
+
+        assert_eq!(frame_control.bits(), 0xffff);
+        assert_eq!(frame_control.to_le_bytes(), [0xff, 0xff]);
+    }
+
+    #[test]
+    fn dot11_frame_control_builder_setters_preserve_unrelated_bits() {
+        let frame_control = Dot11FrameControl::from_bits(0xffff)
+            .protocol_version_set(0)
+            .frame_type_set(0)
+            .subtype_set(0)
+            .to_ds_set(false)
+            .protected_set(false);
+
+        assert_eq!(
+            frame_control.bits(),
+            0xffff
+                & !DOT11_FC_PROTOCOL_VERSION_MASK
+                & !DOT11_FC_TYPE_MASK
+                & !DOT11_FC_SUBTYPE_MASK
+                & !DOT11_FC_TO_DS
+                & !DOT11_FC_PROTECTED
+        );
+        assert!(frame_control.from_ds());
+        assert!(frame_control.more_fragments());
+        assert!(frame_control.retry());
+        assert!(frame_control.power_management());
+        assert!(frame_control.more_data());
+        assert!(frame_control.order());
+    }
+
+    #[test]
+    fn dot11_frame_control_width_limited_setters_mask_to_wire_subfields() {
+        let frame_control = Dot11FrameControl::new()
+            .with_protocol_version(0xff)
+            .with_frame_type(0xff)
+            .with_subtype(0xff);
+
+        assert_eq!(frame_control.protocol_version(), 3);
+        assert_eq!(frame_control.frame_type(), 3);
+        assert_eq!(frame_control.subtype(), 15);
+        assert_eq!(
+            frame_control.bits(),
+            DOT11_FC_PROTOCOL_VERSION_MASK | DOT11_FC_TYPE_MASK | DOT11_FC_SUBTYPE_MASK
+        );
+    }
+
+    #[test]
+    fn dot11_frame_control_raw_builder_preserves_exact_word() {
+        let frame_control = Dot11FrameControl::new().raw(0xa55a);
+
+        assert_eq!(frame_control.bits(), 0xa55a);
+        assert_eq!(frame_control.compile(), [0x5a, 0xa5]);
     }
 }
