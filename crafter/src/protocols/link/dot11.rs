@@ -1967,7 +1967,7 @@ pub fn dot11_category_label(category: u8) -> String {
 mod tests {
     use super::*;
     use crate::registry::ProtocolRegistry;
-    use crate::{Packet, Raw};
+    use crate::{LinkType, Packet, Raw};
 
     fn dot11_role_mac(index: u8) -> MacAddr {
         MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x00, index])
@@ -2030,6 +2030,35 @@ mod tests {
         assert_eq!(dot11.qos_control_value(), None);
         assert_eq!(raw.as_bytes(), b"payload");
         assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+    }
+
+    #[test]
+    fn dot11_decode_from_link_ieee80211_uses_typed_dot11_root() {
+        let frame_control =
+            dot11_test_frame_control(DOT11_FRAME_TYPE_DATA, DOT11_DATA_SUBTYPE_DATA);
+        let mut bytes = dot11_decode_test_header(frame_control);
+        bytes.extend_from_slice(b"link-root-payload");
+
+        let decoded = Packet::decode_from_link(LinkType::Ieee80211, &bytes).unwrap();
+        let dot11 = decoded.layer::<Dot11>().unwrap();
+        let raw = decoded.layer::<Raw>().unwrap();
+
+        assert_eq!(dot11.frame_control_value(), frame_control);
+        assert_eq!(dot11.addr1_value(), Some(dot11_role_mac(1)));
+        assert_eq!(dot11.addr2_value(), Some(dot11_role_mac(2)));
+        assert_eq!(dot11.addr3_value(), Some(dot11_role_mac(3)));
+        assert_eq!(raw.as_bytes(), b"link-root-payload");
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+    }
+
+    #[test]
+    fn dot11_decode_from_link_radiotap_placeholder_remains_raw() {
+        let bytes = [0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00];
+
+        let decoded = Packet::decode_from_link(LinkType::Radiotap, bytes).unwrap();
+
+        assert!(decoded.layer::<Dot11>().is_none());
+        assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), &bytes);
     }
 
     #[test]

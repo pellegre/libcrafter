@@ -19,6 +19,7 @@ mod llc;
 mod radiotap;
 
 pub(crate) use self::arp::append_arp_packet;
+pub(crate) use self::dot11::decode_dot11_with_registry;
 pub use self::arp::{
     arp_hardware_type_label, arp_protocol_type_label, Arp, ArpOperation, ARP_HRD_ATM,
     ARP_HRD_ETHERNET, ARP_HRD_FIBRE_CHANNEL, ARP_HRD_IEEE_802, ARP_HRD_INFINIBAND, ARP_HRD_MAPOS,
