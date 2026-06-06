@@ -10,7 +10,7 @@ or more coordinated endpoints. A lab session owns substrate setup, repository
 push/bootstrap, endpoint metadata, artifact collection, and teardown; oracle,
 probe, or generated tools own the workload they run inside that substrate.
 
-For one-off manual work on a single endpoint, use `wire-endpoint`. For adding
+For one-off manual work on a single endpoint, use `endpoint-provider`. For adding
 or changing provider adapters, use `lab-provider`.
 
 ## Required Order
@@ -20,7 +20,7 @@ or changing provider adapters, use `lab-provider`.
    - `tools/oracle/run live --provider <provider> --dry-run --profile smoke --seed 1 --count 10`
    - `tools/probe/run --provider <provider> --dry-run --profile smoke --seed 1 --count 10`
 2. Inspect the lab session metadata before any live work:
-   - provider, wire provider, and exposure
+   - provider, endpoint provider, and exposure
    - endpoint roles and planned addresses
    - provider capabilities
    - provider workflow and command records

@@ -113,7 +113,7 @@ Command-definition sites found:
 - `tools/endpoint/README.md`
 - `docs/wire.md`
 - `.github/workflows/wire.yml`
-- `.agents/skills/wire-endpoint/SKILL.md`
+- `.agents/skills/endpoint-provider/SKILL.md`
 - `tools/lab/engine/wire_client.py`
 - `tools/lab/engine/session.py`
 - `tools/lab/engine/providers/{docker,hetzner,qemu,virtualbox}.py`
@@ -166,8 +166,8 @@ Intended replacement: the current provider lifecycle guide becomes
 
 - `docs/wire.md` -> `docs/endpoint.md` for current provider lifecycle content
 - references to `tools/endpoint` -> `tools/endpoint`
-- "wire provider" / "wire endpoint provider" -> "endpoint provider"
-- "wire endpoint" -> "endpoint" when describing provider lifecycle resources
+- provider lifecycle wording uses "endpoint provider"
+- provider lifecycle resources use "endpoint" terminology
 - command examples use `tools/endpoint/run create`, `destroy`, and `list`
 - smoke script examples use `tools/endpoint/smoke/...`
 - provider state text uses `tools/endpoint/.state` and `tools/endpoint/artifacts`
@@ -200,13 +200,13 @@ provider lifecycle content is moved out.
 Intended replacement: repo-local skills describe endpoint provider lifecycle
 without using wire as the lifecycle noun.
 
-- `.agents/skills/wire-endpoint/SKILL.md` -> `.agents/skills/endpoint/SKILL.md`
-- skill title/description "wire endpoint" -> "endpoint"
+- `.agents/skills/endpoint-provider/SKILL.md`
+- skill title/description use "endpoint provider"
 - skill command examples `tools/endpoint/run ...` -> `tools/endpoint/run ...`
 - skill command names use `create`, `destroy`
 - teardown guidance uses `tools/endpoint/run destroy`
-- `.agents/skills/lab-session/SKILL.md`: "wire provider" -> "endpoint provider"
-- `.agents/skills/lab-provider/SKILL.md`: "wire provider" and "wire endpoint planning/creation" -> endpoint terminology
+- `.agents/skills/lab-session/SKILL.md`: use "endpoint provider"
+- `.agents/skills/lab-provider/SKILL.md`: use endpoint provider lifecycle terminology
 - `.agents/skills/packet-validation/SKILL.md`: update any lab/provider lifecycle wording if found during the edit step
 - `AGENTS.md` skill list should refer to the renamed endpoint skill after the skill path is changed
 
@@ -263,7 +263,7 @@ endpoint provider metadata; packet byte-policy names can remain wire.
 - lifecycle commands use `create` / `destroy` / `list`
 - remote directory override uses `LIBCRAFTER_ENDPOINT_REMOTE_DIR`
 - lifecycle metadata `wire_provider`, `wire_exposure`, `wire_endpoint_plan`, `wire_endpoint_lifecycle` -> endpoint equivalents
-- CLI help text "provider wire endpoints" -> "provider endpoints"
+- CLI help text uses "provider endpoints"
 - rsync excludes `tools/endpoint/.state` and `tools/endpoint/artifacts` -> endpoint paths
 
 Oracle files found:
@@ -360,7 +360,7 @@ Rust packet I/O module owns wire terminology later.
 
 - `.github/workflows/local-static.yml`: compile `tools/endpoint/engine` and `tools/endpoint/smoke`; run endpoint tests
 - `.github/workflows/wire.yml` -> `.github/workflows/endpoint.yml`
-- workflow names "wire endpoint dry runs" / "protected Hetzner wire endpoint exchange" -> endpoint wording
+- workflow names use endpoint provider wording
 - workflow env `LIBCRAFTER_ENDPOINT_ARTIFACT_ROOT`, `LIBCRAFTER_ENDPOINT_STATE_ROOT` -> endpoint env vars
 - workflow target dirs `target/wire-artifacts`, `target/wire-state` -> endpoint target dirs
 - workflow cleanup commands `tools/endpoint/run list`, `destroy`, `collect-artifacts` -> endpoint path and command names

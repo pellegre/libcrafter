@@ -19,13 +19,13 @@ Every lab provider must implement the adapter protocol in
 `tools/lab/engine/providers/base.py` and be registered through the lab provider
 registry. Keep these contracts provider-neutral:
 
-- provider name, wire provider, and exposure
+- provider name, endpoint provider, and exposure
 - credential or prerequisite availability
 - default and normalized provider capabilities
 - role planning and deterministic address defaults
 - dry-run infrastructure metadata
 - provider workflow command records
-- wire endpoint planning/creation
+- endpoint planning/creation
 - endpoint normalization
 - request/session validation
 
