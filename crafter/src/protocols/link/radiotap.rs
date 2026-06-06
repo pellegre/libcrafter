@@ -3,6 +3,11 @@
 //! Field IDs and layout metadata follow the radiotap source entries recorded in
 //! `docs/protocols/dot11-source-manifest.md`.
 
+use crate::error::{CrafterError, Result};
+
+const RADIOTAP_PRESENT_WORD_LEN: usize = 4;
+const RADIOTAP_PRESENT_EXTENSION_BIT: u16 = 31;
+
 /// Present bit: TSFT.
 pub const RADIOTAP_FIELD_TSFT: u8 = 0;
 /// Present bit: Flags.
@@ -161,6 +166,171 @@ pub fn radiotap_field_metadata(bit: u16) -> Option<RadiotapFieldMetadata> {
         .find(|metadata| metadata.bit as u16 == bit)
 }
 
+/// Radiotap present bitmap words.
+///
+/// Each word is encoded little-endian. Bit 31 in each word is the extension
+/// flag and is normalized from the number of words rather than treated as a
+/// data-field bit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RadiotapPresent {
+    words: Vec<u32>,
+}
+
+impl RadiotapPresent {
+    /// Create an empty present bitmap with the required first word.
+    pub fn new() -> Self {
+        Self { words: vec![0] }
+    }
+
+    /// Build a present bitmap from already grouped words.
+    pub fn from_words(words: impl Into<Vec<u32>>) -> Self {
+        let mut present = Self {
+            words: words.into(),
+        };
+        present.normalize_extension_bits();
+        present
+    }
+
+    /// Decode one or more little-endian radiotap present words.
+    pub fn decode(bytes: &[u8]) -> Result<(Self, usize)> {
+        let mut offset = 0;
+        let mut words = Vec::new();
+
+        loop {
+            let required = offset + RADIOTAP_PRESENT_WORD_LEN;
+            if bytes.len() < required {
+                return Err(CrafterError::buffer_too_short(
+                    "radiotap.present",
+                    required,
+                    bytes.len(),
+                ));
+            }
+
+            let word = u32::from_le_bytes([
+                bytes[offset],
+                bytes[offset + 1],
+                bytes[offset + 2],
+                bytes[offset + 3],
+            ]);
+            let has_extension = word & RADIOTAP_PRESENT_EXTENDED != 0;
+            words.push(word);
+            offset = required;
+
+            if !has_extension {
+                break;
+            }
+        }
+
+        Ok((Self::from_words(words), offset))
+    }
+
+    /// Build a deterministic present bitmap from typed and raw field bits.
+    pub fn from_field_bits<Typed, Raw>(typed_bits: Typed, raw_bits: Raw) -> Result<Self>
+    where
+        Typed: IntoIterator<Item = u16>,
+        Raw: IntoIterator<Item = u16>,
+    {
+        let mut present = Self::new();
+
+        for bit in typed_bits {
+            present.insert_field_bit(bit)?;
+        }
+        for bit in raw_bits {
+            present.insert_field_bit(bit)?;
+        }
+
+        Ok(present)
+    }
+
+    /// Mark one radiotap data-field bit as present.
+    pub fn insert_field_bit(&mut self, bit: u16) -> Result<()> {
+        validate_radiotap_field_bit(bit)?;
+        let word_index = usize::from(bit / 32);
+        let bit_index = u32::from(bit % 32);
+
+        if self.words.len() <= word_index {
+            self.words.resize(word_index + 1, 0);
+        }
+
+        self.words[word_index] |= 1u32 << bit_index;
+        self.normalize_extension_bits();
+        Ok(())
+    }
+
+    /// Return true when the given radiotap data-field bit is marked present.
+    pub fn is_field_present(&self, bit: u16) -> bool {
+        if is_extension_field_bit(bit) {
+            return false;
+        }
+
+        let word_index = usize::from(bit / 32);
+        let bit_index = u32::from(bit % 32);
+        self.words
+            .get(word_index)
+            .map(|word| word & (1u32 << bit_index) != 0)
+            .unwrap_or(false)
+    }
+
+    /// Present bitmap words with normalized extension bits.
+    pub fn words(&self) -> &[u32] {
+        &self.words
+    }
+
+    /// Number of bytes used by the encoded bitmap words.
+    pub fn encoded_len(&self) -> usize {
+        self.words.len() * RADIOTAP_PRESENT_WORD_LEN
+    }
+
+    /// Encode the bitmap words as little-endian radiotap present words.
+    pub fn encode(&self, out: &mut Vec<u8>) {
+        for word in &self.words {
+            out.extend_from_slice(&word.to_le_bytes());
+        }
+    }
+
+    /// Encode the bitmap words into a new byte vector.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(self.encoded_len());
+        self.encode(&mut bytes);
+        bytes
+    }
+
+    fn normalize_extension_bits(&mut self) {
+        if self.words.is_empty() {
+            self.words.push(0);
+        }
+
+        let last_index = self.words.len() - 1;
+        for (index, word) in self.words.iter_mut().enumerate() {
+            *word &= !RADIOTAP_PRESENT_EXTENDED;
+            if index != last_index {
+                *word |= RADIOTAP_PRESENT_EXTENDED;
+            }
+        }
+    }
+}
+
+impl Default for RadiotapPresent {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn validate_radiotap_field_bit(bit: u16) -> Result<()> {
+    if is_extension_field_bit(bit) {
+        return Err(CrafterError::invalid_field_value(
+            "radiotap.present.bit",
+            "bit 31 of each present word is the extension flag",
+        ));
+    }
+
+    Ok(())
+}
+
+fn is_extension_field_bit(bit: u16) -> bool {
+    bit % 32 == RADIOTAP_PRESENT_EXTENSION_BIT
+}
+
 /// Placeholder for radiotap metadata preceding IEEE 802.11 frames.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Radiotap {
@@ -170,6 +340,102 @@ pub struct Radiotap {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn radiotap_present_bitmap_decodes_single_word_and_reencodes_little_endian() {
+        let word = RADIOTAP_PRESENT_FLAGS | RADIOTAP_PRESENT_RATE;
+        let mut bytes = word.to_le_bytes().to_vec();
+        bytes.extend_from_slice(b"tail");
+
+        let (present, consumed) = RadiotapPresent::decode(&bytes).unwrap();
+
+        assert_eq!(consumed, 4);
+        assert_eq!(present.words(), &[word]);
+        assert!(present.is_field_present(RADIOTAP_FIELD_FLAGS.into()));
+        assert!(present.is_field_present(RADIOTAP_FIELD_RATE.into()));
+        assert!(!present.is_field_present(RADIOTAP_FIELD_TSFT.into()));
+        assert_eq!(present.encoded_len(), 4);
+        assert_eq!(present.to_bytes(), word.to_le_bytes().to_vec());
+    }
+
+    #[test]
+    fn radiotap_present_bitmap_decodes_extended_words_until_terminator() {
+        let first = RADIOTAP_PRESENT_EXTENDED | RADIOTAP_PRESENT_FLAGS;
+        let second = 0x0000_0005_u32;
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&first.to_le_bytes());
+        bytes.extend_from_slice(&second.to_le_bytes());
+        bytes.extend_from_slice(b"payload");
+
+        let (present, consumed) = RadiotapPresent::decode(&bytes).unwrap();
+
+        assert_eq!(consumed, 8);
+        assert_eq!(present.words(), &[first, second]);
+        assert!(present.is_field_present(RADIOTAP_FIELD_FLAGS.into()));
+        assert!(present.is_field_present(32));
+        assert!(present.is_field_present(34));
+        assert!(!present.is_field_present(31));
+        assert!(!present.is_field_present(63));
+        assert_eq!(
+            present.to_bytes(),
+            [first.to_le_bytes(), second.to_le_bytes()].concat()
+        );
+    }
+
+    #[test]
+    fn radiotap_present_bitmap_encodes_deterministically_from_typed_and_raw_bits() {
+        let present = RadiotapPresent::from_field_bits(
+            [u16::from(RADIOTAP_FIELD_RATE), 34],
+            [32, u16::from(RADIOTAP_FIELD_FLAGS)],
+        )
+        .unwrap();
+        let same_present = RadiotapPresent::from_field_bits(
+            [32, u16::from(RADIOTAP_FIELD_FLAGS)],
+            [u16::from(RADIOTAP_FIELD_RATE), 34],
+        )
+        .unwrap();
+
+        assert_eq!(
+            present.words(),
+            &[
+                RADIOTAP_PRESENT_EXTENDED | RADIOTAP_PRESENT_FLAGS | RADIOTAP_PRESENT_RATE,
+                0x5
+            ]
+        );
+        assert_eq!(present, same_present);
+        assert_eq!(
+            present.to_bytes(),
+            [
+                (RADIOTAP_PRESENT_EXTENDED | RADIOTAP_PRESENT_FLAGS | RADIOTAP_PRESENT_RATE)
+                    .to_le_bytes(),
+                0x5_u32.to_le_bytes(),
+            ]
+            .concat()
+        );
+
+        let err = RadiotapPresent::from_field_bits([31], []).unwrap_err();
+        assert_eq!(
+            err,
+            CrafterError::invalid_field_value(
+                "radiotap.present.bit",
+                "bit 31 of each present word is the extension flag",
+            )
+        );
+    }
+
+    #[test]
+    fn radiotap_present_bitmap_truncated_extension_word_is_structured_error() {
+        let first = RADIOTAP_PRESENT_EXTENDED | RADIOTAP_PRESENT_FLAGS;
+        let mut bytes = first.to_le_bytes().to_vec();
+        bytes.extend_from_slice(&[0xaa, 0xbb]);
+
+        let err = RadiotapPresent::decode(&bytes).unwrap_err();
+
+        assert_eq!(
+            err,
+            CrafterError::buffer_too_short("radiotap.present", 8, 6)
+        );
+    }
 
     #[test]
     fn radiotap_constants_selected_present_bits_have_source_backed_masks() {
