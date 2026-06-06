@@ -5559,10 +5559,13 @@ def _offline_reference_to_libcrafter(args: argparse.Namespace) -> int:
         print(f"unsupported offline direction: {args.direction}", file=sys.stderr)
         return 2
 
-    from .backends.scapy.normalize import decode_vectors
     from .backends.scapy.packets import encode_packet_plans
 
-    if args.backend != "scapy":
+    if args.backend == "scapy":
+        from .backends.scapy.normalize import decode_vectors
+    elif args.backend == "wireshark":
+        from .backends.wireshark.normalize import decode_vectors
+    else:
         print(f"unsupported backend: {args.backend}", file=sys.stderr)
         return 2
 
