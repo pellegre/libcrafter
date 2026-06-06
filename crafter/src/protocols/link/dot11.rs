@@ -362,6 +362,372 @@ impl Dot11TaggedParameter {
     }
 }
 
+/// Source-backed typed management fixed fields, or the raw fallback bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Dot11ManagementFixedFields<'a> {
+    /// Beacon fixed fields.
+    Beacon(Dot11BeaconFixedFields),
+    /// Probe Response fixed fields.
+    ProbeResponse(Dot11BeaconFixedFields),
+    /// Association Request fixed fields.
+    AssociationRequest(Dot11AssociationRequestFixedFields),
+    /// Association Response fixed fields.
+    AssociationResponse(Dot11AssociationResponseFixedFields),
+    /// Reassociation Request fixed fields.
+    ReassociationRequest(Dot11ReassociationRequestFixedFields),
+    /// Reassociation Response fixed fields.
+    ReassociationResponse(Dot11AssociationResponseFixedFields),
+    /// Authentication fixed fields.
+    Authentication(Dot11AuthenticationFixedFields),
+    /// Deauthentication fixed fields.
+    Deauthentication(Dot11ReasonCodeFixedFields),
+    /// Disassociation fixed fields.
+    Disassociation(Dot11ReasonCodeFixedFields),
+    /// Action or Action No Ack fixed fields.
+    Action(Dot11ActionFixedFields),
+    /// Unsupported subtype or malformed fixed-field override bytes.
+    Raw(&'a [u8]),
+}
+
+/// Timestamp, beacon interval, and capability information fixed fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Dot11BeaconFixedFields {
+    timestamp: u64,
+    beacon_interval: u16,
+    capability_information: u16,
+}
+
+impl Dot11BeaconFixedFields {
+    /// Create beacon/probe-response fixed fields.
+    pub const fn new(timestamp: u64, beacon_interval: u16, capability_information: u16) -> Self {
+        Self {
+            timestamp,
+            beacon_interval,
+            capability_information,
+        }
+    }
+
+    /// Timestamp field.
+    pub const fn timestamp(&self) -> u64 {
+        self.timestamp
+    }
+
+    /// Beacon Interval field.
+    pub const fn beacon_interval(&self) -> u16 {
+        self.beacon_interval
+    }
+
+    /// Capability Information field.
+    pub const fn capability_information(&self) -> u16 {
+        self.capability_information
+    }
+
+    /// Compile to little-endian wire bytes.
+    pub fn to_bytes(self) -> [u8; DOT11_MGMT_BEACON_FIXED_LEN] {
+        let mut bytes = [0; DOT11_MGMT_BEACON_FIXED_LEN];
+        bytes[0..8].copy_from_slice(&self.timestamp.to_le_bytes());
+        bytes[8..10].copy_from_slice(&self.beacon_interval.to_le_bytes());
+        bytes[10..12].copy_from_slice(&self.capability_information.to_le_bytes());
+        bytes
+    }
+
+    fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() != DOT11_MGMT_BEACON_FIXED_LEN {
+            return None;
+        }
+
+        Some(Self::new(
+            u64::from_le_bytes([
+                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+            ]),
+            read_u16_le_at(bytes, 8),
+            read_u16_le_at(bytes, 10),
+        ))
+    }
+}
+
+/// Capability information and listen interval fixed fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Dot11AssociationRequestFixedFields {
+    capability_information: u16,
+    listen_interval: u16,
+}
+
+impl Dot11AssociationRequestFixedFields {
+    /// Create Association Request fixed fields.
+    pub const fn new(capability_information: u16, listen_interval: u16) -> Self {
+        Self {
+            capability_information,
+            listen_interval,
+        }
+    }
+
+    /// Capability Information field.
+    pub const fn capability_information(&self) -> u16 {
+        self.capability_information
+    }
+
+    /// Listen Interval field.
+    pub const fn listen_interval(&self) -> u16 {
+        self.listen_interval
+    }
+
+    /// Compile to little-endian wire bytes.
+    pub fn to_bytes(self) -> [u8; DOT11_MGMT_ASSOCIATION_REQUEST_FIXED_LEN] {
+        let mut bytes = [0; DOT11_MGMT_ASSOCIATION_REQUEST_FIXED_LEN];
+        bytes[0..2].copy_from_slice(&self.capability_information.to_le_bytes());
+        bytes[2..4].copy_from_slice(&self.listen_interval.to_le_bytes());
+        bytes
+    }
+
+    fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() != DOT11_MGMT_ASSOCIATION_REQUEST_FIXED_LEN {
+            return None;
+        }
+
+        Some(Self::new(
+            read_u16_le_at(bytes, 0),
+            read_u16_le_at(bytes, 2),
+        ))
+    }
+}
+
+/// Capability information, status code, and association ID fixed fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Dot11AssociationResponseFixedFields {
+    capability_information: u16,
+    status_code: u16,
+    association_id: u16,
+}
+
+impl Dot11AssociationResponseFixedFields {
+    /// Create Association/Reassociation Response fixed fields.
+    pub const fn new(capability_information: u16, status_code: u16, association_id: u16) -> Self {
+        Self {
+            capability_information,
+            status_code,
+            association_id,
+        }
+    }
+
+    /// Capability Information field.
+    pub const fn capability_information(&self) -> u16 {
+        self.capability_information
+    }
+
+    /// Status Code field.
+    pub const fn status_code(&self) -> u16 {
+        self.status_code
+    }
+
+    /// Association ID field.
+    pub const fn association_id(&self) -> u16 {
+        self.association_id
+    }
+
+    /// Compile to little-endian wire bytes.
+    pub fn to_bytes(self) -> [u8; DOT11_MGMT_ASSOCIATION_RESPONSE_FIXED_LEN] {
+        let mut bytes = [0; DOT11_MGMT_ASSOCIATION_RESPONSE_FIXED_LEN];
+        bytes[0..2].copy_from_slice(&self.capability_information.to_le_bytes());
+        bytes[2..4].copy_from_slice(&self.status_code.to_le_bytes());
+        bytes[4..6].copy_from_slice(&self.association_id.to_le_bytes());
+        bytes
+    }
+
+    fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() != DOT11_MGMT_ASSOCIATION_RESPONSE_FIXED_LEN {
+            return None;
+        }
+
+        Some(Self::new(
+            read_u16_le_at(bytes, 0),
+            read_u16_le_at(bytes, 2),
+            read_u16_le_at(bytes, 4),
+        ))
+    }
+}
+
+/// Capability information, listen interval, and current AP address fixed fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Dot11ReassociationRequestFixedFields {
+    capability_information: u16,
+    listen_interval: u16,
+    current_ap_address: MacAddr,
+}
+
+impl Dot11ReassociationRequestFixedFields {
+    /// Create Reassociation Request fixed fields.
+    pub const fn new(
+        capability_information: u16,
+        listen_interval: u16,
+        current_ap_address: MacAddr,
+    ) -> Self {
+        Self {
+            capability_information,
+            listen_interval,
+            current_ap_address,
+        }
+    }
+
+    /// Capability Information field.
+    pub const fn capability_information(&self) -> u16 {
+        self.capability_information
+    }
+
+    /// Listen Interval field.
+    pub const fn listen_interval(&self) -> u16 {
+        self.listen_interval
+    }
+
+    /// Current AP Address field.
+    pub const fn current_ap_address(&self) -> MacAddr {
+        self.current_ap_address
+    }
+
+    /// Compile to little-endian wire bytes.
+    pub fn to_bytes(self) -> [u8; DOT11_MGMT_REASSOCIATION_REQUEST_FIXED_LEN] {
+        let mut bytes = [0; DOT11_MGMT_REASSOCIATION_REQUEST_FIXED_LEN];
+        bytes[0..2].copy_from_slice(&self.capability_information.to_le_bytes());
+        bytes[2..4].copy_from_slice(&self.listen_interval.to_le_bytes());
+        bytes[4..10].copy_from_slice(&self.current_ap_address.octets());
+        bytes
+    }
+
+    fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() != DOT11_MGMT_REASSOCIATION_REQUEST_FIXED_LEN {
+            return None;
+        }
+
+        Some(Self::new(
+            read_u16_le_at(bytes, 0),
+            read_u16_le_at(bytes, 2),
+            read_mac_at(bytes, 4),
+        ))
+    }
+}
+
+/// Authentication algorithm, transaction sequence, and status code fixed fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Dot11AuthenticationFixedFields {
+    algorithm_number: u16,
+    transaction_sequence_number: u16,
+    status_code: u16,
+}
+
+impl Dot11AuthenticationFixedFields {
+    /// Create Authentication fixed fields.
+    pub const fn new(
+        algorithm_number: u16,
+        transaction_sequence_number: u16,
+        status_code: u16,
+    ) -> Self {
+        Self {
+            algorithm_number,
+            transaction_sequence_number,
+            status_code,
+        }
+    }
+
+    /// Authentication Algorithm Number field.
+    pub const fn algorithm_number(&self) -> u16 {
+        self.algorithm_number
+    }
+
+    /// Authentication Transaction Sequence Number field.
+    pub const fn transaction_sequence_number(&self) -> u16 {
+        self.transaction_sequence_number
+    }
+
+    /// Status Code field.
+    pub const fn status_code(&self) -> u16 {
+        self.status_code
+    }
+
+    /// Compile to little-endian wire bytes.
+    pub fn to_bytes(self) -> [u8; DOT11_MGMT_AUTHENTICATION_FIXED_LEN] {
+        let mut bytes = [0; DOT11_MGMT_AUTHENTICATION_FIXED_LEN];
+        bytes[0..2].copy_from_slice(&self.algorithm_number.to_le_bytes());
+        bytes[2..4].copy_from_slice(&self.transaction_sequence_number.to_le_bytes());
+        bytes[4..6].copy_from_slice(&self.status_code.to_le_bytes());
+        bytes
+    }
+
+    fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() != DOT11_MGMT_AUTHENTICATION_FIXED_LEN {
+            return None;
+        }
+
+        Some(Self::new(
+            read_u16_le_at(bytes, 0),
+            read_u16_le_at(bytes, 2),
+            read_u16_le_at(bytes, 4),
+        ))
+    }
+}
+
+/// Reason Code fixed field used by deauthentication and disassociation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Dot11ReasonCodeFixedFields {
+    reason_code: u16,
+}
+
+impl Dot11ReasonCodeFixedFields {
+    /// Create a Reason Code fixed field.
+    pub const fn new(reason_code: u16) -> Self {
+        Self { reason_code }
+    }
+
+    /// Reason Code field.
+    pub const fn reason_code(&self) -> u16 {
+        self.reason_code
+    }
+
+    /// Compile to little-endian wire bytes.
+    pub fn to_bytes(self) -> [u8; DOT11_MGMT_DEAUTHENTICATION_FIXED_LEN] {
+        self.reason_code.to_le_bytes()
+    }
+
+    fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() != DOT11_MGMT_DEAUTHENTICATION_FIXED_LEN {
+            return None;
+        }
+
+        Some(Self::new(read_u16_le_at(bytes, 0)))
+    }
+}
+
+/// Action category fixed field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Dot11ActionFixedFields {
+    category: u8,
+}
+
+impl Dot11ActionFixedFields {
+    /// Create an Action fixed field with a category code.
+    pub const fn new(category: u8) -> Self {
+        Self { category }
+    }
+
+    /// Category field.
+    pub const fn category(&self) -> u8 {
+        self.category
+    }
+
+    /// Compile to wire bytes.
+    pub const fn to_bytes(self) -> [u8; DOT11_MGMT_ACTION_FIXED_LEN] {
+        [self.category]
+    }
+
+    fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() != DOT11_MGMT_ACTION_FIXED_LEN {
+            return None;
+        }
+
+        Some(Self::new(bytes[0]))
+    }
+}
+
 /// IEEE 802.11 MAC layer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Dot11 {
@@ -422,7 +788,8 @@ impl Dot11 {
 
     /// Create a beacon management frame.
     pub fn beacon() -> Self {
-        Self::management(Dot11ManagementSubtype::Beacon).with_default_fixed_parameters(12)
+        Self::management(Dot11ManagementSubtype::Beacon)
+            .with_default_fixed_parameters(DOT11_MGMT_BEACON_FIXED_LEN)
     }
 
     /// Create a probe request management frame.
@@ -432,39 +799,62 @@ impl Dot11 {
 
     /// Create a probe response management frame.
     pub fn probe_response() -> Self {
-        Self::management(Dot11ManagementSubtype::ProbeResponse).with_default_fixed_parameters(12)
+        Self::management(Dot11ManagementSubtype::ProbeResponse)
+            .with_default_fixed_parameters(DOT11_MGMT_PROBE_RESPONSE_FIXED_LEN)
     }
 
     /// Create an association request management frame.
     pub fn association_request() -> Self {
         Self::management(Dot11ManagementSubtype::AssociationRequest)
-            .with_default_fixed_parameters(4)
+            .with_default_fixed_parameters(DOT11_MGMT_ASSOCIATION_REQUEST_FIXED_LEN)
     }
 
     /// Create an association response management frame.
     pub fn association_response() -> Self {
         Self::management(Dot11ManagementSubtype::AssociationResponse)
-            .with_default_fixed_parameters(6)
+            .with_default_fixed_parameters(DOT11_MGMT_ASSOCIATION_RESPONSE_FIXED_LEN)
+    }
+
+    /// Create a reassociation request management frame.
+    pub fn reassociation_request() -> Self {
+        Self::management(Dot11ManagementSubtype::ReassociationRequest)
+            .with_default_fixed_parameters(DOT11_MGMT_REASSOCIATION_REQUEST_FIXED_LEN)
+    }
+
+    /// Create a reassociation response management frame.
+    pub fn reassociation_response() -> Self {
+        Self::management(Dot11ManagementSubtype::ReassociationResponse)
+            .with_default_fixed_parameters(DOT11_MGMT_REASSOCIATION_RESPONSE_FIXED_LEN)
     }
 
     /// Create an authentication management frame.
     pub fn authentication() -> Self {
-        Self::management(Dot11ManagementSubtype::Authentication).with_default_fixed_parameters(6)
+        Self::management(Dot11ManagementSubtype::Authentication)
+            .with_default_fixed_parameters(DOT11_MGMT_AUTHENTICATION_FIXED_LEN)
     }
 
     /// Create a deauthentication management frame.
     pub fn deauthentication() -> Self {
-        Self::management(Dot11ManagementSubtype::Deauthentication).with_default_fixed_parameters(2)
+        Self::management(Dot11ManagementSubtype::Deauthentication)
+            .with_default_fixed_parameters(DOT11_MGMT_DEAUTHENTICATION_FIXED_LEN)
     }
 
     /// Create a disassociation management frame.
     pub fn disassociation() -> Self {
-        Self::management(Dot11ManagementSubtype::Disassociation).with_default_fixed_parameters(2)
+        Self::management(Dot11ManagementSubtype::Disassociation)
+            .with_default_fixed_parameters(DOT11_MGMT_DISASSOCIATION_FIXED_LEN)
     }
 
     /// Create an action management frame with a zero category field.
     pub fn action() -> Self {
-        Self::management(Dot11ManagementSubtype::Action).with_default_fixed_parameters(1)
+        Self::management(Dot11ManagementSubtype::Action)
+            .with_default_fixed_parameters(DOT11_MGMT_ACTION_FIXED_LEN)
+    }
+
+    /// Create an action-no-ack management frame with a zero category field.
+    pub fn action_no_ack() -> Self {
+        Self::management(Dot11ManagementSubtype::ActionNoAck)
+            .with_default_fixed_parameters(DOT11_MGMT_ACTION_FIXED_LEN)
     }
 
     /// Create an ACK control frame.
@@ -549,6 +939,90 @@ impl Dot11 {
     /// Set raw fixed management-field bytes to emit after the MAC header.
     pub fn fixed_parameters(mut self, fixed_parameters: impl Into<Vec<u8>>) -> Self {
         self.fixed_parameters = fixed_parameters.into();
+        self
+    }
+
+    /// Set Beacon fixed fields without changing the frame subtype.
+    pub fn with_beacon_fixed_fields(mut self, fixed_fields: Dot11BeaconFixedFields) -> Self {
+        self.fixed_parameters = fixed_fields.to_bytes().to_vec();
+        self
+    }
+
+    /// Set Probe Response fixed fields without changing the frame subtype.
+    pub fn with_probe_response_fixed_fields(
+        mut self,
+        fixed_fields: Dot11BeaconFixedFields,
+    ) -> Self {
+        self.fixed_parameters = fixed_fields.to_bytes().to_vec();
+        self
+    }
+
+    /// Set Association Request fixed fields without changing the frame subtype.
+    pub fn with_association_request_fixed_fields(
+        mut self,
+        fixed_fields: Dot11AssociationRequestFixedFields,
+    ) -> Self {
+        self.fixed_parameters = fixed_fields.to_bytes().to_vec();
+        self
+    }
+
+    /// Set Association Response fixed fields without changing the frame subtype.
+    pub fn with_association_response_fixed_fields(
+        mut self,
+        fixed_fields: Dot11AssociationResponseFixedFields,
+    ) -> Self {
+        self.fixed_parameters = fixed_fields.to_bytes().to_vec();
+        self
+    }
+
+    /// Set Reassociation Request fixed fields without changing the frame subtype.
+    pub fn with_reassociation_request_fixed_fields(
+        mut self,
+        fixed_fields: Dot11ReassociationRequestFixedFields,
+    ) -> Self {
+        self.fixed_parameters = fixed_fields.to_bytes().to_vec();
+        self
+    }
+
+    /// Set Reassociation Response fixed fields without changing the frame subtype.
+    pub fn with_reassociation_response_fixed_fields(
+        mut self,
+        fixed_fields: Dot11AssociationResponseFixedFields,
+    ) -> Self {
+        self.fixed_parameters = fixed_fields.to_bytes().to_vec();
+        self
+    }
+
+    /// Set Authentication fixed fields without changing the frame subtype.
+    pub fn with_authentication_fixed_fields(
+        mut self,
+        fixed_fields: Dot11AuthenticationFixedFields,
+    ) -> Self {
+        self.fixed_parameters = fixed_fields.to_bytes().to_vec();
+        self
+    }
+
+    /// Set Deauthentication fixed fields without changing the frame subtype.
+    pub fn with_deauthentication_fixed_fields(
+        mut self,
+        fixed_fields: Dot11ReasonCodeFixedFields,
+    ) -> Self {
+        self.fixed_parameters = fixed_fields.to_bytes().to_vec();
+        self
+    }
+
+    /// Set Disassociation fixed fields without changing the frame subtype.
+    pub fn with_disassociation_fixed_fields(
+        mut self,
+        fixed_fields: Dot11ReasonCodeFixedFields,
+    ) -> Self {
+        self.fixed_parameters = fixed_fields.to_bytes().to_vec();
+        self
+    }
+
+    /// Set Action fixed fields without changing the frame subtype.
+    pub fn with_action_fixed_fields(mut self, fixed_fields: Dot11ActionFixedFields) -> Self {
+        self.fixed_parameters = fixed_fields.to_bytes().to_vec();
         self
     }
 
@@ -731,6 +1205,153 @@ impl Dot11 {
     /// Raw fixed management-field bytes.
     pub fn fixed_parameters_value(&self) -> &[u8] {
         &self.fixed_parameters
+    }
+
+    /// Raw fixed management-field bytes, including unsupported or malformed shapes.
+    pub fn raw_fixed_parameters(&self) -> &[u8] {
+        &self.fixed_parameters
+    }
+
+    /// Typed management fixed fields, or raw bytes when the shape is unsupported.
+    pub fn management_fixed_fields(&self) -> Dot11ManagementFixedFields<'_> {
+        match self.management_subtype() {
+            Some(Dot11ManagementSubtype::Beacon) => self
+                .beacon_fixed_fields()
+                .map(Dot11ManagementFixedFields::Beacon)
+                .unwrap_or(Dot11ManagementFixedFields::Raw(&self.fixed_parameters)),
+            Some(Dot11ManagementSubtype::ProbeResponse) => self
+                .probe_response_fixed_fields()
+                .map(Dot11ManagementFixedFields::ProbeResponse)
+                .unwrap_or(Dot11ManagementFixedFields::Raw(&self.fixed_parameters)),
+            Some(Dot11ManagementSubtype::AssociationRequest) => self
+                .association_request_fixed_fields()
+                .map(Dot11ManagementFixedFields::AssociationRequest)
+                .unwrap_or(Dot11ManagementFixedFields::Raw(&self.fixed_parameters)),
+            Some(Dot11ManagementSubtype::AssociationResponse) => self
+                .association_response_fixed_fields()
+                .map(Dot11ManagementFixedFields::AssociationResponse)
+                .unwrap_or(Dot11ManagementFixedFields::Raw(&self.fixed_parameters)),
+            Some(Dot11ManagementSubtype::ReassociationRequest) => self
+                .reassociation_request_fixed_fields()
+                .map(Dot11ManagementFixedFields::ReassociationRequest)
+                .unwrap_or(Dot11ManagementFixedFields::Raw(&self.fixed_parameters)),
+            Some(Dot11ManagementSubtype::ReassociationResponse) => self
+                .reassociation_response_fixed_fields()
+                .map(Dot11ManagementFixedFields::ReassociationResponse)
+                .unwrap_or(Dot11ManagementFixedFields::Raw(&self.fixed_parameters)),
+            Some(Dot11ManagementSubtype::Authentication) => self
+                .authentication_fixed_fields()
+                .map(Dot11ManagementFixedFields::Authentication)
+                .unwrap_or(Dot11ManagementFixedFields::Raw(&self.fixed_parameters)),
+            Some(Dot11ManagementSubtype::Deauthentication) => self
+                .deauthentication_fixed_fields()
+                .map(Dot11ManagementFixedFields::Deauthentication)
+                .unwrap_or(Dot11ManagementFixedFields::Raw(&self.fixed_parameters)),
+            Some(Dot11ManagementSubtype::Disassociation) => self
+                .disassociation_fixed_fields()
+                .map(Dot11ManagementFixedFields::Disassociation)
+                .unwrap_or(Dot11ManagementFixedFields::Raw(&self.fixed_parameters)),
+            Some(Dot11ManagementSubtype::Action | Dot11ManagementSubtype::ActionNoAck) => self
+                .action_fixed_fields()
+                .map(Dot11ManagementFixedFields::Action)
+                .unwrap_or(Dot11ManagementFixedFields::Raw(&self.fixed_parameters)),
+            _ => Dot11ManagementFixedFields::Raw(&self.fixed_parameters),
+        }
+    }
+
+    /// Beacon fixed fields when this frame has the supported Beacon shape.
+    pub fn beacon_fixed_fields(&self) -> Option<Dot11BeaconFixedFields> {
+        if self.management_subtype() == Some(Dot11ManagementSubtype::Beacon) {
+            Dot11BeaconFixedFields::from_bytes(&self.fixed_parameters)
+        } else {
+            None
+        }
+    }
+
+    /// Probe Response fixed fields when this frame has the supported shape.
+    pub fn probe_response_fixed_fields(&self) -> Option<Dot11BeaconFixedFields> {
+        if self.management_subtype() == Some(Dot11ManagementSubtype::ProbeResponse) {
+            Dot11BeaconFixedFields::from_bytes(&self.fixed_parameters)
+        } else {
+            None
+        }
+    }
+
+    /// Association Request fixed fields when this frame has the supported shape.
+    pub fn association_request_fixed_fields(&self) -> Option<Dot11AssociationRequestFixedFields> {
+        if self.management_subtype() == Some(Dot11ManagementSubtype::AssociationRequest) {
+            Dot11AssociationRequestFixedFields::from_bytes(&self.fixed_parameters)
+        } else {
+            None
+        }
+    }
+
+    /// Association Response fixed fields when this frame has the supported shape.
+    pub fn association_response_fixed_fields(&self) -> Option<Dot11AssociationResponseFixedFields> {
+        if self.management_subtype() == Some(Dot11ManagementSubtype::AssociationResponse) {
+            Dot11AssociationResponseFixedFields::from_bytes(&self.fixed_parameters)
+        } else {
+            None
+        }
+    }
+
+    /// Reassociation Request fixed fields when this frame has the supported shape.
+    pub fn reassociation_request_fixed_fields(
+        &self,
+    ) -> Option<Dot11ReassociationRequestFixedFields> {
+        if self.management_subtype() == Some(Dot11ManagementSubtype::ReassociationRequest) {
+            Dot11ReassociationRequestFixedFields::from_bytes(&self.fixed_parameters)
+        } else {
+            None
+        }
+    }
+
+    /// Reassociation Response fixed fields when this frame has the supported shape.
+    pub fn reassociation_response_fixed_fields(
+        &self,
+    ) -> Option<Dot11AssociationResponseFixedFields> {
+        if self.management_subtype() == Some(Dot11ManagementSubtype::ReassociationResponse) {
+            Dot11AssociationResponseFixedFields::from_bytes(&self.fixed_parameters)
+        } else {
+            None
+        }
+    }
+
+    /// Authentication fixed fields when this frame has the supported shape.
+    pub fn authentication_fixed_fields(&self) -> Option<Dot11AuthenticationFixedFields> {
+        if self.management_subtype() == Some(Dot11ManagementSubtype::Authentication) {
+            Dot11AuthenticationFixedFields::from_bytes(&self.fixed_parameters)
+        } else {
+            None
+        }
+    }
+
+    /// Deauthentication fixed fields when this frame has the supported shape.
+    pub fn deauthentication_fixed_fields(&self) -> Option<Dot11ReasonCodeFixedFields> {
+        if self.management_subtype() == Some(Dot11ManagementSubtype::Deauthentication) {
+            Dot11ReasonCodeFixedFields::from_bytes(&self.fixed_parameters)
+        } else {
+            None
+        }
+    }
+
+    /// Disassociation fixed fields when this frame has the supported shape.
+    pub fn disassociation_fixed_fields(&self) -> Option<Dot11ReasonCodeFixedFields> {
+        if self.management_subtype() == Some(Dot11ManagementSubtype::Disassociation) {
+            Dot11ReasonCodeFixedFields::from_bytes(&self.fixed_parameters)
+        } else {
+            None
+        }
+    }
+
+    /// Action fixed fields when this frame has the supported Action shape.
+    pub fn action_fixed_fields(&self) -> Option<Dot11ActionFixedFields> {
+        match self.management_subtype() {
+            Some(Dot11ManagementSubtype::Action | Dot11ManagementSubtype::ActionNoAck) => {
+                Dot11ActionFixedFields::from_bytes(&self.fixed_parameters)
+            }
+            _ => None,
+        }
     }
 
     /// Raw tagged parameters.
@@ -947,6 +1568,58 @@ impl Layer for Dot11 {
         }
         if !self.fixed_parameters.is_empty() {
             fields.push(("fixed_parameters", dot11_hex_bytes(&self.fixed_parameters)));
+        }
+        match self.management_fixed_fields() {
+            Dot11ManagementFixedFields::Beacon(fixed)
+            | Dot11ManagementFixedFields::ProbeResponse(fixed) => {
+                fields.push(("timestamp", fixed.timestamp().to_string()));
+                fields.push(("beacon_interval", fixed.beacon_interval().to_string()));
+                fields.push((
+                    "capability_information",
+                    format!("0x{:04x}", fixed.capability_information()),
+                ));
+            }
+            Dot11ManagementFixedFields::AssociationRequest(fixed) => {
+                fields.push((
+                    "capability_information",
+                    format!("0x{:04x}", fixed.capability_information()),
+                ));
+                fields.push(("listen_interval", fixed.listen_interval().to_string()));
+            }
+            Dot11ManagementFixedFields::AssociationResponse(fixed)
+            | Dot11ManagementFixedFields::ReassociationResponse(fixed) => {
+                fields.push((
+                    "capability_information",
+                    format!("0x{:04x}", fixed.capability_information()),
+                ));
+                fields.push(("status_code", fixed.status_code().to_string()));
+                fields.push(("association_id", fixed.association_id().to_string()));
+            }
+            Dot11ManagementFixedFields::ReassociationRequest(fixed) => {
+                fields.push((
+                    "capability_information",
+                    format!("0x{:04x}", fixed.capability_information()),
+                ));
+                fields.push(("listen_interval", fixed.listen_interval().to_string()));
+                fields.push(("current_ap_address", fixed.current_ap_address().to_string()));
+            }
+            Dot11ManagementFixedFields::Authentication(fixed) => {
+                fields.push(("algorithm_number", fixed.algorithm_number().to_string()));
+                fields.push((
+                    "transaction_sequence_number",
+                    fixed.transaction_sequence_number().to_string(),
+                ));
+                fields.push(("status_code", fixed.status_code().to_string()));
+            }
+            Dot11ManagementFixedFields::Deauthentication(fixed)
+            | Dot11ManagementFixedFields::Disassociation(fixed) => {
+                fields.push(("reason_code", fixed.reason_code().to_string()));
+            }
+            Dot11ManagementFixedFields::Action(fixed) => {
+                fields.push(("category", fixed.category().to_string()));
+                fields.push(("category_label", dot11_category_label(fixed.category())));
+            }
+            Dot11ManagementFixedFields::Raw(_) => {}
         }
         if !self.tagged_parameters.is_empty() {
             fields.push((
@@ -2233,6 +2906,23 @@ mod tests {
         decode_dot11_with_registry(&ProtocolRegistry::new(), bytes).unwrap()
     }
 
+    fn decode_dot11_management_fixed_fields_frame(
+        subtype: u8,
+        fixed: &[u8],
+        tail: &[u8],
+    ) -> (Packet, Vec<u8>) {
+        let frame_control = dot11_test_frame_control(DOT11_FRAME_TYPE_MANAGEMENT, subtype);
+        let mut bytes = dot11_decode_test_header(frame_control);
+        bytes.extend_from_slice(fixed);
+        bytes.extend_from_slice(tail);
+
+        (decode_dot11_basic(&bytes), bytes)
+    }
+
+    fn dot11_compiled_management_body(dot11: Dot11) -> Vec<u8> {
+        Packet::from_layer(dot11).compile().unwrap().into_bytes()[DOT11_DATA_HEADER_LEN..].to_vec()
+    }
+
     fn dot11_inspection_value(fields: &[(&'static str, String)], name: &str) -> Option<String> {
         fields
             .iter()
@@ -2462,6 +3152,306 @@ mod tests {
         );
         assert!(decoded.layer::<Raw>().is_none());
         assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+    }
+
+    #[test]
+    fn dot11_management_fixed_fields_encode_typed_builders_for_supported_subtypes() {
+        let beacon = Dot11BeaconFixedFields::new(0x0102_0304_0506_0708, 0x1000, 0x0431);
+        let association_request = Dot11AssociationRequestFixedFields::new(0x1201, 0x3344);
+        let association_response = Dot11AssociationResponseFixedFields::new(0x0001, 0x0000, 0xc123);
+        let reassociation_request =
+            Dot11ReassociationRequestFixedFields::new(0x0411, 0x0020, dot11_role_mac(4));
+        let authentication = Dot11AuthenticationFixedFields::new(0x0000, 0x0002, 0x0000);
+        let reason = Dot11ReasonCodeFixedFields::new(0x0007);
+        let action = Dot11ActionFixedFields::new(DOT11_CATEGORY_PUBLIC);
+
+        let frame = Dot11::beacon().with_beacon_fixed_fields(beacon);
+        assert_eq!(frame.beacon_fixed_fields(), Some(beacon));
+        assert_eq!(
+            frame.management_fixed_fields(),
+            Dot11ManagementFixedFields::Beacon(beacon)
+        );
+        assert_eq!(frame.raw_fixed_parameters(), beacon.to_bytes());
+        assert_eq!(dot11_compiled_management_body(frame), beacon.to_bytes());
+
+        let frame = Dot11::probe_response().with_probe_response_fixed_fields(beacon);
+        assert_eq!(frame.probe_response_fixed_fields(), Some(beacon));
+        assert_eq!(
+            frame.management_fixed_fields(),
+            Dot11ManagementFixedFields::ProbeResponse(beacon)
+        );
+        assert_eq!(dot11_compiled_management_body(frame), beacon.to_bytes());
+
+        let frame =
+            Dot11::association_request().with_association_request_fixed_fields(association_request);
+        assert_eq!(
+            frame.association_request_fixed_fields(),
+            Some(association_request)
+        );
+        assert_eq!(
+            frame.management_fixed_fields(),
+            Dot11ManagementFixedFields::AssociationRequest(association_request)
+        );
+        assert_eq!(
+            dot11_compiled_management_body(frame),
+            association_request.to_bytes()
+        );
+
+        let frame = Dot11::association_response()
+            .with_association_response_fixed_fields(association_response);
+        assert_eq!(
+            frame.association_response_fixed_fields(),
+            Some(association_response)
+        );
+        assert_eq!(
+            frame.management_fixed_fields(),
+            Dot11ManagementFixedFields::AssociationResponse(association_response)
+        );
+        assert_eq!(
+            dot11_compiled_management_body(frame),
+            association_response.to_bytes()
+        );
+
+        let frame = Dot11::reassociation_request()
+            .with_reassociation_request_fixed_fields(reassociation_request);
+        assert_eq!(
+            frame.reassociation_request_fixed_fields(),
+            Some(reassociation_request)
+        );
+        assert_eq!(
+            frame.management_fixed_fields(),
+            Dot11ManagementFixedFields::ReassociationRequest(reassociation_request)
+        );
+        assert_eq!(
+            dot11_compiled_management_body(frame),
+            reassociation_request.to_bytes()
+        );
+
+        let frame = Dot11::reassociation_response()
+            .with_reassociation_response_fixed_fields(association_response);
+        assert_eq!(
+            frame.reassociation_response_fixed_fields(),
+            Some(association_response)
+        );
+        assert_eq!(
+            frame.management_fixed_fields(),
+            Dot11ManagementFixedFields::ReassociationResponse(association_response)
+        );
+        assert_eq!(
+            dot11_compiled_management_body(frame),
+            association_response.to_bytes()
+        );
+
+        let frame = Dot11::authentication().with_authentication_fixed_fields(authentication);
+        assert_eq!(frame.authentication_fixed_fields(), Some(authentication));
+        assert_eq!(
+            frame.management_fixed_fields(),
+            Dot11ManagementFixedFields::Authentication(authentication)
+        );
+        assert_eq!(
+            dot11_compiled_management_body(frame),
+            authentication.to_bytes()
+        );
+
+        let frame = Dot11::deauthentication().with_deauthentication_fixed_fields(reason);
+        assert_eq!(frame.deauthentication_fixed_fields(), Some(reason));
+        assert_eq!(
+            frame.management_fixed_fields(),
+            Dot11ManagementFixedFields::Deauthentication(reason)
+        );
+        assert_eq!(dot11_compiled_management_body(frame), reason.to_bytes());
+
+        let frame = Dot11::disassociation().with_disassociation_fixed_fields(reason);
+        assert_eq!(frame.disassociation_fixed_fields(), Some(reason));
+        assert_eq!(
+            frame.management_fixed_fields(),
+            Dot11ManagementFixedFields::Disassociation(reason)
+        );
+        assert_eq!(dot11_compiled_management_body(frame), reason.to_bytes());
+
+        let frame = Dot11::action().with_action_fixed_fields(action);
+        assert_eq!(frame.action_fixed_fields(), Some(action));
+        assert_eq!(
+            frame.management_fixed_fields(),
+            Dot11ManagementFixedFields::Action(action)
+        );
+        assert_eq!(dot11_compiled_management_body(frame), action.to_bytes());
+
+        let frame = Dot11::action_no_ack().with_action_fixed_fields(action);
+        assert_eq!(
+            frame.management_subtype(),
+            Some(Dot11ManagementSubtype::ActionNoAck)
+        );
+        assert_eq!(frame.action_fixed_fields(), Some(action));
+        assert_eq!(dot11_compiled_management_body(frame), action.to_bytes());
+    }
+
+    #[test]
+    fn dot11_management_fixed_fields_decode_supported_subtypes_from_wire() {
+        let beacon = Dot11BeaconFixedFields::new(0x0807_0605_0403_0201, 0x0064, 0x0411);
+        let association_request = Dot11AssociationRequestFixedFields::new(0x0431, 0x000a);
+        let association_response = Dot11AssociationResponseFixedFields::new(0x0411, 0x0011, 0xc002);
+        let reassociation_request =
+            Dot11ReassociationRequestFixedFields::new(0x0421, 0x000b, dot11_role_mac(9));
+        let authentication = Dot11AuthenticationFixedFields::new(0x0000, 0x0001, 0x0000);
+        let reason = Dot11ReasonCodeFixedFields::new(0x0008);
+        let action = Dot11ActionFixedFields::new(DOT11_CATEGORY_SA_QUERY);
+
+        let (decoded, bytes) = decode_dot11_management_fixed_fields_frame(
+            DOT11_MGMT_SUBTYPE_BEACON,
+            &beacon.to_bytes(),
+            &[],
+        );
+        let dot11 = decoded.layer::<Dot11>().unwrap();
+        assert_eq!(dot11.beacon_fixed_fields(), Some(beacon));
+        assert_eq!(
+            dot11.management_fixed_fields(),
+            Dot11ManagementFixedFields::Beacon(beacon)
+        );
+        assert!(decoded.layer::<Raw>().is_none());
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+
+        let (decoded, bytes) = decode_dot11_management_fixed_fields_frame(
+            DOT11_MGMT_SUBTYPE_PROBE_RESPONSE,
+            &beacon.to_bytes(),
+            &[],
+        );
+        let dot11 = decoded.layer::<Dot11>().unwrap();
+        assert_eq!(dot11.probe_response_fixed_fields(), Some(beacon));
+        assert_eq!(
+            dot11.management_fixed_fields(),
+            Dot11ManagementFixedFields::ProbeResponse(beacon)
+        );
+        assert!(decoded.layer::<Raw>().is_none());
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+
+        let (decoded, bytes) = decode_dot11_management_fixed_fields_frame(
+            DOT11_MGMT_SUBTYPE_ASSOCIATION_REQUEST,
+            &association_request.to_bytes(),
+            &[],
+        );
+        let dot11 = decoded.layer::<Dot11>().unwrap();
+        assert_eq!(
+            dot11.association_request_fixed_fields(),
+            Some(association_request)
+        );
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+
+        let (decoded, bytes) = decode_dot11_management_fixed_fields_frame(
+            DOT11_MGMT_SUBTYPE_ASSOCIATION_RESPONSE,
+            &association_response.to_bytes(),
+            &[],
+        );
+        let dot11 = decoded.layer::<Dot11>().unwrap();
+        assert_eq!(
+            dot11.association_response_fixed_fields(),
+            Some(association_response)
+        );
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+
+        let (decoded, bytes) = decode_dot11_management_fixed_fields_frame(
+            DOT11_MGMT_SUBTYPE_REASSOCIATION_REQUEST,
+            &reassociation_request.to_bytes(),
+            &[],
+        );
+        let dot11 = decoded.layer::<Dot11>().unwrap();
+        assert_eq!(
+            dot11.reassociation_request_fixed_fields(),
+            Some(reassociation_request)
+        );
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+
+        let (decoded, bytes) = decode_dot11_management_fixed_fields_frame(
+            DOT11_MGMT_SUBTYPE_REASSOCIATION_RESPONSE,
+            &association_response.to_bytes(),
+            &[],
+        );
+        let dot11 = decoded.layer::<Dot11>().unwrap();
+        assert_eq!(
+            dot11.reassociation_response_fixed_fields(),
+            Some(association_response)
+        );
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+
+        let (decoded, bytes) = decode_dot11_management_fixed_fields_frame(
+            DOT11_MGMT_SUBTYPE_AUTHENTICATION,
+            &authentication.to_bytes(),
+            &[],
+        );
+        let dot11 = decoded.layer::<Dot11>().unwrap();
+        assert_eq!(dot11.authentication_fixed_fields(), Some(authentication));
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+
+        let (decoded, bytes) = decode_dot11_management_fixed_fields_frame(
+            DOT11_MGMT_SUBTYPE_DEAUTHENTICATION,
+            &reason.to_bytes(),
+            &[],
+        );
+        let dot11 = decoded.layer::<Dot11>().unwrap();
+        assert_eq!(dot11.deauthentication_fixed_fields(), Some(reason));
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+
+        let (decoded, bytes) = decode_dot11_management_fixed_fields_frame(
+            DOT11_MGMT_SUBTYPE_DISASSOCIATION,
+            &reason.to_bytes(),
+            &[],
+        );
+        let dot11 = decoded.layer::<Dot11>().unwrap();
+        assert_eq!(dot11.disassociation_fixed_fields(), Some(reason));
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+
+        let (decoded, bytes) = decode_dot11_management_fixed_fields_frame(
+            DOT11_MGMT_SUBTYPE_ACTION,
+            &action.to_bytes(),
+            b"action-body",
+        );
+        let dot11 = decoded.layer::<Dot11>().unwrap();
+        assert_eq!(dot11.action_fixed_fields(), Some(action));
+        assert_eq!(
+            dot11.management_fixed_fields(),
+            Dot11ManagementFixedFields::Action(action)
+        );
+        assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), b"action-body");
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+
+        let (decoded, bytes) = decode_dot11_management_fixed_fields_frame(
+            DOT11_MGMT_SUBTYPE_ACTION_NO_ACK,
+            &action.to_bytes(),
+            b"no-ack-body",
+        );
+        let dot11 = decoded.layer::<Dot11>().unwrap();
+        assert_eq!(dot11.action_fixed_fields(), Some(action));
+        assert_eq!(
+            dot11.management_fixed_fields(),
+            Dot11ManagementFixedFields::Action(action)
+        );
+        assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), b"no-ack-body");
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+    }
+
+    #[test]
+    fn dot11_management_fixed_fields_raw_fallback_preserves_overrides() {
+        let malformed = Dot11::beacon().fixed_parameters([0xaa, 0xbb]);
+
+        assert_eq!(malformed.beacon_fixed_fields(), None);
+        assert_eq!(
+            malformed.management_fixed_fields(),
+            Dot11ManagementFixedFields::Raw(&[0xaa, 0xbb])
+        );
+        assert_eq!(malformed.raw_fixed_parameters(), &[0xaa, 0xbb]);
+        assert_eq!(dot11_compiled_management_body(malformed), vec![0xaa, 0xbb]);
+
+        let unsupported = Dot11::management(Dot11ManagementSubtype::Unknown(7))
+            .fixed_parameters([0x01, 0x02, 0x03]);
+
+        assert_eq!(
+            unsupported.management_fixed_fields(),
+            Dot11ManagementFixedFields::Raw(&[0x01, 0x02, 0x03])
+        );
+        assert_eq!(
+            dot11_compiled_management_body(unsupported),
+            vec![0x01, 0x02, 0x03]
+        );
     }
 
     #[test]
