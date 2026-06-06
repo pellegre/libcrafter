@@ -8,6 +8,7 @@ use crate::field::Field;
 use crate::mac::MacAddr;
 use crate::packet::Raw;
 use crate::packet::{IntoPacket, Layer, LayerContext, Packet};
+use crate::protocols::rsn::RsnInformation;
 use crate::registry::ProtocolRegistry;
 
 use super::append_llc_snap_packet_with_registry;
@@ -323,6 +324,28 @@ impl Dot11TaggedParameter {
     /// Create a raw RSN tagged parameter.
     pub fn rsn(data: impl Into<Vec<u8>>) -> Self {
         Self::new(DOT11_TAG_RSN, data)
+    }
+
+    /// Create an RSN tagged parameter from typed RSN information.
+    pub fn from_rsn_information(rsn: &RsnInformation) -> Result<Self> {
+        let data = rsn.to_tagged_parameter_value()?;
+        if data.len() > u8::MAX as usize {
+            return Err(CrafterError::invalid_field_value(
+                "dot11.tagged_parameter.length",
+                "tagged parameter length must fit in one byte",
+            ));
+        }
+
+        Ok(Self::rsn(data))
+    }
+
+    /// Parse this tagged parameter as typed RSN information when it is an RSN tag.
+    pub fn rsn_information(&self) -> Option<Result<RsnInformation>> {
+        if self.id == DOT11_TAG_RSN {
+            Some(RsnInformation::from_tagged_parameter_value(&self.data))
+        } else {
+            None
+        }
     }
 
     /// Element ID.
@@ -1128,6 +1151,11 @@ impl Dot11 {
         self.tag(Dot11TaggedParameter::rsn(data))
     }
 
+    /// Append an RSN tagged parameter from typed RSN information.
+    pub fn with_rsn_information(self, rsn: &RsnInformation) -> Result<Self> {
+        Ok(self.tag(Dot11TaggedParameter::from_rsn_information(rsn)?))
+    }
+
     /// Current frame-control value.
     pub fn frame_control_value(&self) -> Dot11FrameControl {
         value_or_copy(&self.frame_control, Dot11::default_frame_control())
@@ -1457,6 +1485,20 @@ impl Dot11 {
     /// Raw tagged parameters.
     pub fn tagged_parameters(&self) -> &[Dot11TaggedParameter] {
         &self.tagged_parameters
+    }
+
+    /// First RSN information element carried by the raw tagged parameters.
+    pub fn rsn_information(&self) -> Option<Result<RsnInformation>> {
+        self.tagged_parameters
+            .iter()
+            .find_map(Dot11TaggedParameter::rsn_information)
+    }
+
+    /// RSN information elements carried by the raw tagged parameters.
+    pub fn rsn_information_elements(&self) -> impl Iterator<Item = Result<RsnInformation>> + '_ {
+        self.tagged_parameters
+            .iter()
+            .filter_map(Dot11TaggedParameter::rsn_information)
     }
 
     /// Return true when the Protected Frame bit is set.
@@ -3273,7 +3315,10 @@ pub fn dot11_category_label(category: u8) -> String {
 mod tests {
     use super::*;
     use crate::registry::ProtocolRegistry;
-    use crate::{Ipv4, LinkType, LlcSnap, Packet, Radiotap, Raw};
+    use crate::{
+        Ipv4, LinkType, LlcSnap, Packet, Radiotap, Raw, RsnCapabilities, RSN_AKM_SUITE_SAE,
+        RSN_CIPHER_SUITE_GCMP_256,
+    };
 
     fn dot11_role_mac(index: u8) -> MacAddr {
         MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x00, index])
@@ -5758,6 +5803,91 @@ mod tests {
             dot11.tagged_parameters(),
             &[ssid, supported_rates, ds, tim, rsn,]
         );
+    }
+
+    #[test]
+    fn dot11_rsn_tag_integration_beacon_surfaces_typed_rsn_and_preserves_raw_tags() {
+        let rsn = RsnInformation::new()
+            .with_capabilities(RsnCapabilities::new().with_pre_authentication(true));
+        let ssid = Dot11TaggedParameter::ssid(b"rsn-ap");
+        let unknown = Dot11TaggedParameter::new(0xdd, [0xaa, 0xbb, 0xcc]);
+        let typed_rsn = Dot11TaggedParameter::from_rsn_information(&rsn).unwrap();
+        let raw_rsn = Dot11TaggedParameter::rsn([0x01]);
+        let dot11 = Dot11::beacon()
+            .tag(ssid.clone())
+            .tag(unknown.clone())
+            .with_rsn_information(&rsn)
+            .unwrap()
+            .tag(raw_rsn.clone());
+        let compiled = Packet::from_layer(dot11).compile().unwrap().into_bytes();
+
+        let decoded = decode_dot11_basic(&compiled);
+        let dot11 = decoded.layer::<Dot11>().unwrap();
+
+        assert_eq!(
+            dot11.management_subtype(),
+            Some(Dot11ManagementSubtype::Beacon)
+        );
+        assert_eq!(
+            dot11.tagged_parameters(),
+            &[ssid, unknown.clone(), typed_rsn, raw_rsn.clone()]
+        );
+        assert!(unknown.rsn_information().is_none());
+        assert_eq!(dot11.rsn_information().unwrap().unwrap(), rsn);
+        assert_eq!(
+            dot11.rsn_information_elements().next().unwrap().unwrap(),
+            rsn
+        );
+
+        let raw_rsn_error = raw_rsn.rsn_information().unwrap().unwrap_err();
+        assert_eq!(
+            raw_rsn_error,
+            CrafterError::buffer_too_short("rsn_information_element.version", 2, 1)
+        );
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_slice());
+    }
+
+    #[test]
+    fn dot11_rsn_tag_integration_association_request_carries_rsn_ie() {
+        let rsn = RsnInformation::new()
+            .with_group_cipher_suite(RSN_CIPHER_SUITE_GCMP_256)
+            .with_pairwise_cipher_list([RSN_CIPHER_SUITE_GCMP_256])
+            .with_akm_list([RSN_AKM_SUITE_SAE])
+            .with_capabilities(
+                RsnCapabilities::new()
+                    .with_management_frame_protection_required(true)
+                    .with_management_frame_protection_capable(true),
+            );
+        let ssid = Dot11TaggedParameter::ssid(b"rsn-ap");
+        let rates = Dot11TaggedParameter::supported_rates([0x82, 0x84, 0x8b, 0x96]);
+        let typed_rsn = Dot11TaggedParameter::from_rsn_information(&rsn).unwrap();
+        let dot11 = Dot11::association_request()
+            .tag(ssid.clone())
+            .tag(rates.clone())
+            .with_rsn_information(&rsn)
+            .unwrap();
+        let compiled = Packet::from_layer(dot11).compile().unwrap().into_bytes();
+
+        let decoded = decode_dot11_basic(&compiled);
+        let dot11 = decoded.layer::<Dot11>().unwrap();
+
+        assert_eq!(
+            dot11.management_subtype(),
+            Some(Dot11ManagementSubtype::AssociationRequest)
+        );
+        assert_eq!(
+            dot11.fixed_parameters_value().len(),
+            DOT11_MGMT_ASSOCIATION_REQUEST_FIXED_LEN
+        );
+        assert_eq!(dot11.tagged_parameters(), &[ssid, rates, typed_rsn]);
+        assert_eq!(dot11.rsn_information().unwrap().unwrap(), rsn);
+
+        let rsns: Vec<_> = dot11
+            .rsn_information_elements()
+            .map(|result| result.unwrap())
+            .collect();
+        assert_eq!(rsns, vec![rsn]);
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_slice());
     }
 
     #[test]
