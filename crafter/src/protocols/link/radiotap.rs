@@ -2147,6 +2147,48 @@ mod tests {
     }
 
     #[test]
+    fn radiotap_decode_from_link_dispatches_radiotap_root_and_inner_dot11() {
+        let dot11 = Dot11::data()
+            .addr1(MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x00, 0x01]))
+            .addr2(MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x00, 0x02]))
+            .addr3(MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x00, 0x03]))
+            .sequence_number(37);
+        let dot11_bytes = Packet::from_layer(dot11).compile().unwrap();
+        let mut bytes = vec![
+            0x00, 0x00, 0x08, 0x00, // version, pad, it_len
+            0x00, 0x00, 0x00, 0x00, // present: no fields
+        ];
+        bytes.extend_from_slice(dot11_bytes.as_bytes());
+
+        let decoded = Packet::decode_from_link(LinkType::Radiotap, &bytes).unwrap();
+        let radiotap = decoded.layer::<Radiotap>().unwrap();
+        let dot11 = decoded.layer::<Dot11>().unwrap();
+
+        assert_eq!(radiotap.version_value(), Some(0));
+        assert_eq!(radiotap.length_value(), Some(8));
+        assert!(radiotap.fields().is_empty());
+        assert_eq!(dot11.sequence_number_value(), Some(37));
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_slice());
+    }
+
+    #[test]
+    fn radiotap_decode_from_link_keeps_bare_dot11_link_root_separate() {
+        let dot11 = Dot11::data()
+            .addr1(MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x00, 0x11]))
+            .addr2(MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x00, 0x12]))
+            .addr3(MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x00, 0x13]))
+            .sequence_number(38);
+        let bytes = Packet::from_layer(dot11).compile().unwrap();
+
+        let decoded = Packet::decode_from_link(LinkType::Ieee80211, bytes.as_bytes()).unwrap();
+        let dot11 = decoded.layer::<Dot11>().unwrap();
+
+        assert!(decoded.layer::<Radiotap>().is_none());
+        assert_eq!(dot11.sequence_number_value(), Some(38));
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_bytes());
+    }
+
+    #[test]
     fn radiotap_fcs_metadata_failed_fcs_decodes_typed_layers_and_preserves_tail() {
         let dot11 = Dot11::data()
             .addr1(MacAddr::new([0x02, 0x00, 0x00, 0x00, 0x00, 0x01]))
