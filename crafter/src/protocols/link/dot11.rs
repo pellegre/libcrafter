@@ -18,6 +18,8 @@ pub const DOT11_ADDRESS_LEN: usize = 6;
 pub const DOT11_SEQUENCE_CONTROL_LEN: usize = 2;
 /// IEEE 802.11 QoS control field length in octets.
 pub const DOT11_QOS_CONTROL_LEN: usize = 2;
+/// IEEE 802.11 HT Control field length in octets.
+pub const DOT11_HT_CONTROL_LEN: usize = 4;
 /// Smallest IEEE 802.11 MAC header represented in phase 1.5.
 pub const DOT11_MIN_HEADER_LEN: usize =
     DOT11_FRAME_CONTROL_LEN + DOT11_DURATION_ID_LEN + DOT11_ADDRESS_LEN;
@@ -28,6 +30,32 @@ pub const DOT11_DATA_HEADER_LEN: usize = DOT11_FRAME_CONTROL_LEN
     + DOT11_SEQUENCE_CONTROL_LEN;
 /// IEEE 802.11 data MAC header length with a fourth address in octets.
 pub const DOT11_DATA_ADDR4_HEADER_LEN: usize = DOT11_DATA_HEADER_LEN + DOT11_ADDRESS_LEN;
+/// IEEE 802.11 one-address control MAC header length in octets.
+pub const DOT11_CONTROL_ONE_ADDRESS_HEADER_LEN: usize = DOT11_MIN_HEADER_LEN;
+/// IEEE 802.11 two-address control MAC header length in octets.
+pub const DOT11_CONTROL_TWO_ADDRESS_HEADER_LEN: usize =
+    DOT11_FRAME_CONTROL_LEN + DOT11_DURATION_ID_LEN + (DOT11_ADDRESS_LEN * 2);
+
+/// Association Request fixed management fields length in octets.
+pub const DOT11_MGMT_ASSOCIATION_REQUEST_FIXED_LEN: usize = 4;
+/// Association Response fixed management fields length in octets.
+pub const DOT11_MGMT_ASSOCIATION_RESPONSE_FIXED_LEN: usize = 6;
+/// Reassociation Request fixed management fields length in octets.
+pub const DOT11_MGMT_REASSOCIATION_REQUEST_FIXED_LEN: usize = 10;
+/// Reassociation Response fixed management fields length in octets.
+pub const DOT11_MGMT_REASSOCIATION_RESPONSE_FIXED_LEN: usize = 6;
+/// Probe Response fixed management fields length in octets.
+pub const DOT11_MGMT_PROBE_RESPONSE_FIXED_LEN: usize = 12;
+/// Beacon fixed management fields length in octets.
+pub const DOT11_MGMT_BEACON_FIXED_LEN: usize = 12;
+/// Disassociation fixed management fields length in octets.
+pub const DOT11_MGMT_DISASSOCIATION_FIXED_LEN: usize = 2;
+/// Authentication fixed management fields length in octets.
+pub const DOT11_MGMT_AUTHENTICATION_FIXED_LEN: usize = 6;
+/// Deauthentication fixed management fields length in octets.
+pub const DOT11_MGMT_DEAUTHENTICATION_FIXED_LEN: usize = 2;
+/// Action and Action No Ack category fixed field length in octets.
+pub const DOT11_MGMT_ACTION_FIXED_LEN: usize = 1;
 
 /// Frame-control protocol-version mask.
 pub const DOT11_FC_PROTOCOL_VERSION_MASK: u16 = 0x0003;
@@ -615,6 +643,40 @@ impl Dot11 {
     /// Return true when the Protected Frame bit is set.
     pub fn is_protected(&self) -> bool {
         self.frame_control_value().protected()
+    }
+
+    /// Minimum header length implied by this frame's type/subtype and flags.
+    ///
+    /// This is the source-backed decode boundary: MAC header fields, optional
+    /// address four, QoS control, HT Control when signaled by supported
+    /// +HTC/Order shapes, and selected management fixed fields. It does not
+    /// include tagged parameters or higher-layer payload bytes.
+    pub fn minimum_header_len(&self) -> usize {
+        dot11_required_header_len(self.frame_control_value())
+    }
+
+    /// Minimum header length implied by a frame-control word.
+    pub fn minimum_header_len_for(frame_control: Dot11FrameControl) -> usize {
+        dot11_required_header_len(frame_control)
+    }
+
+    /// Read frame control from `bytes`, compute the minimum header length, and
+    /// return a structured error when the buffer is truncated before that
+    /// boundary.
+    pub fn header_len_from_bytes(bytes: impl AsRef<[u8]>) -> Result<usize> {
+        let bytes = bytes.as_ref();
+        let frame_control = Dot11FrameControl::decode(bytes)?;
+        let header_len = dot11_required_header_len(frame_control);
+
+        if bytes.len() < header_len {
+            return Err(CrafterError::buffer_too_short(
+                "dot11.header",
+                header_len,
+                bytes.len(),
+            ));
+        }
+
+        Ok(header_len)
     }
 
     fn default_frame_control() -> Dot11FrameControl {
@@ -1567,6 +1629,74 @@ fn dot11_hex_bytes(bytes: &[u8]) -> String {
     output
 }
 
+const fn dot11_required_header_len(frame_control: Dot11FrameControl) -> usize {
+    dot11_mac_header_len(frame_control) + dot11_management_fixed_parameters_len(frame_control)
+}
+
+const fn dot11_mac_header_len(frame_control: Dot11FrameControl) -> usize {
+    match frame_control.frame_type_value() {
+        Dot11FrameType::Management => {
+            DOT11_DATA_HEADER_LEN + dot11_ht_control_len(frame_control, true)
+        }
+        Dot11FrameType::Control => match frame_control.subtype() {
+            DOT11_CONTROL_SUBTYPE_CTS | DOT11_CONTROL_SUBTYPE_ACK => {
+                DOT11_CONTROL_ONE_ADDRESS_HEADER_LEN
+            }
+            DOT11_CONTROL_SUBTYPE_RTS
+            | DOT11_CONTROL_SUBTYPE_PS_POLL
+            | DOT11_CONTROL_SUBTYPE_CF_END
+            | DOT11_CONTROL_SUBTYPE_CF_END_CF_ACK => DOT11_CONTROL_TWO_ADDRESS_HEADER_LEN,
+            _ => DOT11_CONTROL_ONE_ADDRESS_HEADER_LEN,
+        },
+        Dot11FrameType::Data => {
+            let mut len = DOT11_DATA_HEADER_LEN;
+
+            if frame_control.to_ds() && frame_control.from_ds() {
+                len += DOT11_ADDRESS_LEN;
+            }
+            if dot11_data_subtype_has_qos(frame_control.subtype()) {
+                len += DOT11_QOS_CONTROL_LEN;
+                len += dot11_ht_control_len(frame_control, true);
+            }
+
+            len
+        }
+        Dot11FrameType::Extension | Dot11FrameType::Unknown(_) => DOT11_MIN_HEADER_LEN,
+    }
+}
+
+const fn dot11_ht_control_len(frame_control: Dot11FrameControl, supported_shape: bool) -> usize {
+    if frame_control.order() && supported_shape {
+        DOT11_HT_CONTROL_LEN
+    } else {
+        0
+    }
+}
+
+const fn dot11_data_subtype_has_qos(subtype: u8) -> bool {
+    subtype & 0b1000 != 0
+}
+
+const fn dot11_management_fixed_parameters_len(frame_control: Dot11FrameControl) -> usize {
+    if !matches!(frame_control.frame_type_value(), Dot11FrameType::Management) {
+        return 0;
+    }
+
+    match frame_control.subtype() {
+        DOT11_MGMT_SUBTYPE_ASSOCIATION_REQUEST => DOT11_MGMT_ASSOCIATION_REQUEST_FIXED_LEN,
+        DOT11_MGMT_SUBTYPE_ASSOCIATION_RESPONSE => DOT11_MGMT_ASSOCIATION_RESPONSE_FIXED_LEN,
+        DOT11_MGMT_SUBTYPE_REASSOCIATION_REQUEST => DOT11_MGMT_REASSOCIATION_REQUEST_FIXED_LEN,
+        DOT11_MGMT_SUBTYPE_REASSOCIATION_RESPONSE => DOT11_MGMT_REASSOCIATION_RESPONSE_FIXED_LEN,
+        DOT11_MGMT_SUBTYPE_PROBE_RESPONSE => DOT11_MGMT_PROBE_RESPONSE_FIXED_LEN,
+        DOT11_MGMT_SUBTYPE_BEACON => DOT11_MGMT_BEACON_FIXED_LEN,
+        DOT11_MGMT_SUBTYPE_DISASSOCIATION => DOT11_MGMT_DISASSOCIATION_FIXED_LEN,
+        DOT11_MGMT_SUBTYPE_AUTHENTICATION => DOT11_MGMT_AUTHENTICATION_FIXED_LEN,
+        DOT11_MGMT_SUBTYPE_DEAUTHENTICATION => DOT11_MGMT_DEAUTHENTICATION_FIXED_LEN,
+        DOT11_MGMT_SUBTYPE_ACTION | DOT11_MGMT_SUBTYPE_ACTION_NO_ACK => DOT11_MGMT_ACTION_FIXED_LEN,
+        _ => 0,
+    }
+}
+
 /// Return a stable label for an IEEE 802.11 frame type.
 pub fn dot11_frame_type_label(frame_type: u8) -> String {
     match frame_type {
@@ -1683,6 +1813,24 @@ mod tests {
         MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x00, index])
     }
 
+    fn dot11_test_frame_control(frame_type: u8, subtype: u8) -> Dot11FrameControl {
+        Dot11FrameControl::new()
+            .with_frame_type(frame_type)
+            .with_subtype(subtype)
+    }
+
+    fn dot11_test_bytes(frame_control: Dot11FrameControl, len: usize) -> Vec<u8> {
+        let mut bytes = vec![0; len];
+        let frame_control = frame_control.compile();
+        if len > 0 {
+            bytes[0] = frame_control[0];
+        }
+        if len > 1 {
+            bytes[1] = frame_control[1];
+        }
+        bytes
+    }
+
     #[test]
     fn dot11_constants_frame_control_masks_match_ieee_layout() {
         assert_eq!(DOT11_FRAME_CONTROL_LEN, 2);
@@ -1690,9 +1838,12 @@ mod tests {
         assert_eq!(DOT11_ADDRESS_LEN, 6);
         assert_eq!(DOT11_SEQUENCE_CONTROL_LEN, 2);
         assert_eq!(DOT11_QOS_CONTROL_LEN, 2);
+        assert_eq!(DOT11_HT_CONTROL_LEN, 4);
         assert_eq!(DOT11_MIN_HEADER_LEN, 10);
         assert_eq!(DOT11_DATA_HEADER_LEN, 24);
         assert_eq!(DOT11_DATA_ADDR4_HEADER_LEN, 30);
+        assert_eq!(DOT11_CONTROL_ONE_ADDRESS_HEADER_LEN, 10);
+        assert_eq!(DOT11_CONTROL_TWO_ADDRESS_HEADER_LEN, 16);
 
         assert_eq!(DOT11_FC_PROTOCOL_VERSION_MASK, 0x0003);
         assert_eq!(DOT11_FC_PROTOCOL_VERSION_SHIFT, 0);
@@ -1709,6 +1860,222 @@ mod tests {
         assert_eq!(DOT11_FC_MORE_DATA, 0x2000);
         assert_eq!(DOT11_FC_PROTECTED, 0x4000);
         assert_eq!(DOT11_FC_ORDER, 0x8000);
+    }
+
+    #[test]
+    fn dot11_header_length_data_family_tracks_ds_qos_and_ht_control_boundaries() {
+        let data = dot11_test_frame_control(DOT11_FRAME_TYPE_DATA, DOT11_DATA_SUBTYPE_DATA);
+        let four_address = data.with_to_ds(true).with_from_ds(true);
+        let qos = dot11_test_frame_control(DOT11_FRAME_TYPE_DATA, DOT11_DATA_SUBTYPE_QOS_DATA);
+        let qos_four_address = qos.with_to_ds(true).with_from_ds(true);
+        let qos_four_address_htc = qos_four_address.with_order(true);
+        let non_qos_order = data.with_order(true);
+
+        assert_eq!(Dot11::minimum_header_len_for(data), DOT11_DATA_HEADER_LEN);
+        assert_eq!(
+            Dot11::minimum_header_len_for(four_address),
+            DOT11_DATA_ADDR4_HEADER_LEN
+        );
+        assert_eq!(
+            Dot11::minimum_header_len_for(qos),
+            DOT11_DATA_HEADER_LEN + DOT11_QOS_CONTROL_LEN
+        );
+        assert_eq!(
+            Dot11::minimum_header_len_for(qos_four_address),
+            DOT11_DATA_ADDR4_HEADER_LEN + DOT11_QOS_CONTROL_LEN
+        );
+        assert_eq!(
+            Dot11::minimum_header_len_for(qos_four_address_htc),
+            DOT11_DATA_ADDR4_HEADER_LEN + DOT11_QOS_CONTROL_LEN + DOT11_HT_CONTROL_LEN
+        );
+        assert_eq!(
+            Dot11::minimum_header_len_for(non_qos_order),
+            DOT11_DATA_HEADER_LEN
+        );
+        assert_eq!(Dot11::data().minimum_header_len(), DOT11_DATA_HEADER_LEN);
+        assert_eq!(
+            Dot11::qos_data().minimum_header_len(),
+            DOT11_DATA_HEADER_LEN + DOT11_QOS_CONTROL_LEN
+        );
+    }
+
+    #[test]
+    fn dot11_header_length_management_family_includes_selected_fixed_fields() {
+        let cases = [
+            (
+                DOT11_MGMT_SUBTYPE_ASSOCIATION_REQUEST,
+                DOT11_MGMT_ASSOCIATION_REQUEST_FIXED_LEN,
+            ),
+            (
+                DOT11_MGMT_SUBTYPE_ASSOCIATION_RESPONSE,
+                DOT11_MGMT_ASSOCIATION_RESPONSE_FIXED_LEN,
+            ),
+            (
+                DOT11_MGMT_SUBTYPE_REASSOCIATION_REQUEST,
+                DOT11_MGMT_REASSOCIATION_REQUEST_FIXED_LEN,
+            ),
+            (
+                DOT11_MGMT_SUBTYPE_REASSOCIATION_RESPONSE,
+                DOT11_MGMT_REASSOCIATION_RESPONSE_FIXED_LEN,
+            ),
+            (DOT11_MGMT_SUBTYPE_PROBE_REQUEST, 0),
+            (
+                DOT11_MGMT_SUBTYPE_PROBE_RESPONSE,
+                DOT11_MGMT_PROBE_RESPONSE_FIXED_LEN,
+            ),
+            (DOT11_MGMT_SUBTYPE_BEACON, DOT11_MGMT_BEACON_FIXED_LEN),
+            (DOT11_MGMT_SUBTYPE_ATIM, 0),
+            (
+                DOT11_MGMT_SUBTYPE_DISASSOCIATION,
+                DOT11_MGMT_DISASSOCIATION_FIXED_LEN,
+            ),
+            (
+                DOT11_MGMT_SUBTYPE_AUTHENTICATION,
+                DOT11_MGMT_AUTHENTICATION_FIXED_LEN,
+            ),
+            (
+                DOT11_MGMT_SUBTYPE_DEAUTHENTICATION,
+                DOT11_MGMT_DEAUTHENTICATION_FIXED_LEN,
+            ),
+            (DOT11_MGMT_SUBTYPE_ACTION, DOT11_MGMT_ACTION_FIXED_LEN),
+            (
+                DOT11_MGMT_SUBTYPE_ACTION_NO_ACK,
+                DOT11_MGMT_ACTION_FIXED_LEN,
+            ),
+            (7, 0),
+        ];
+
+        for (subtype, fixed_len) in cases {
+            let frame_control = dot11_test_frame_control(DOT11_FRAME_TYPE_MANAGEMENT, subtype);
+
+            assert_eq!(
+                Dot11::minimum_header_len_for(frame_control),
+                DOT11_DATA_HEADER_LEN + fixed_len,
+                "management subtype {subtype}"
+            );
+        }
+
+        let beacon_with_ht_control =
+            dot11_test_frame_control(DOT11_FRAME_TYPE_MANAGEMENT, DOT11_MGMT_SUBTYPE_BEACON)
+                .with_order(true);
+
+        assert_eq!(
+            Dot11::minimum_header_len_for(beacon_with_ht_control),
+            DOT11_DATA_HEADER_LEN + DOT11_HT_CONTROL_LEN + DOT11_MGMT_BEACON_FIXED_LEN
+        );
+    }
+
+    #[test]
+    fn dot11_header_length_control_family_uses_subtype_address_layouts() {
+        let one_address = [
+            DOT11_CONTROL_SUBTYPE_CTS,
+            DOT11_CONTROL_SUBTYPE_ACK,
+            0,
+            DOT11_CONTROL_SUBTYPE_TRIGGER,
+            DOT11_CONTROL_SUBTYPE_BLOCK_ACK,
+        ];
+        let two_address = [
+            DOT11_CONTROL_SUBTYPE_RTS,
+            DOT11_CONTROL_SUBTYPE_PS_POLL,
+            DOT11_CONTROL_SUBTYPE_CF_END,
+            DOT11_CONTROL_SUBTYPE_CF_END_CF_ACK,
+        ];
+
+        for subtype in one_address {
+            let frame_control = dot11_test_frame_control(DOT11_FRAME_TYPE_CONTROL, subtype);
+
+            assert_eq!(
+                Dot11::minimum_header_len_for(frame_control),
+                DOT11_CONTROL_ONE_ADDRESS_HEADER_LEN,
+                "control subtype {subtype}"
+            );
+        }
+
+        for subtype in two_address {
+            let frame_control = dot11_test_frame_control(DOT11_FRAME_TYPE_CONTROL, subtype);
+
+            assert_eq!(
+                Dot11::minimum_header_len_for(frame_control),
+                DOT11_CONTROL_TWO_ADDRESS_HEADER_LEN,
+                "control subtype {subtype}"
+            );
+        }
+    }
+
+    #[test]
+    fn dot11_header_length_from_bytes_reports_supported_boundaries() {
+        let qos_four_address_htc =
+            dot11_test_frame_control(DOT11_FRAME_TYPE_DATA, DOT11_DATA_SUBTYPE_QOS_DATA)
+                .with_to_ds(true)
+                .with_from_ds(true)
+                .with_order(true);
+        let header_len = DOT11_DATA_ADDR4_HEADER_LEN + DOT11_QOS_CONTROL_LEN + DOT11_HT_CONTROL_LEN;
+        let bytes = dot11_test_bytes(qos_four_address_htc, header_len + 3);
+
+        assert_eq!(Dot11::header_len_from_bytes(&bytes).unwrap(), header_len);
+
+        let ack = dot11_test_frame_control(DOT11_FRAME_TYPE_CONTROL, DOT11_CONTROL_SUBTYPE_ACK);
+        let bytes = dot11_test_bytes(ack, DOT11_CONTROL_ONE_ADDRESS_HEADER_LEN);
+
+        assert_eq!(
+            Dot11::header_len_from_bytes(&bytes).unwrap(),
+            DOT11_CONTROL_ONE_ADDRESS_HEADER_LEN
+        );
+    }
+
+    #[test]
+    fn dot11_header_length_from_bytes_rejects_truncated_boundaries() {
+        let err = Dot11::header_len_from_bytes([0x08]).unwrap_err();
+
+        assert_eq!(
+            err,
+            CrafterError::buffer_too_short("dot11.frame_control", 2, 1)
+        );
+
+        let beacon =
+            dot11_test_frame_control(DOT11_FRAME_TYPE_MANAGEMENT, DOT11_MGMT_SUBTYPE_BEACON);
+        let beacon_header_len = DOT11_DATA_HEADER_LEN + DOT11_MGMT_BEACON_FIXED_LEN;
+        let err = Dot11::header_len_from_bytes(dot11_test_bytes(beacon, beacon_header_len - 1))
+            .unwrap_err();
+
+        assert_eq!(
+            err,
+            CrafterError::buffer_too_short(
+                "dot11.header",
+                beacon_header_len,
+                beacon_header_len - 1
+            )
+        );
+
+        let qos_four_address =
+            dot11_test_frame_control(DOT11_FRAME_TYPE_DATA, DOT11_DATA_SUBTYPE_QOS_DATA)
+                .with_to_ds(true)
+                .with_from_ds(true);
+        let qos_header_len = DOT11_DATA_ADDR4_HEADER_LEN + DOT11_QOS_CONTROL_LEN;
+        let err =
+            Dot11::header_len_from_bytes(dot11_test_bytes(qos_four_address, qos_header_len - 1))
+                .unwrap_err();
+
+        assert_eq!(
+            err,
+            CrafterError::buffer_too_short("dot11.header", qos_header_len, qos_header_len - 1)
+        );
+
+        let ack = dot11_test_frame_control(DOT11_FRAME_TYPE_CONTROL, DOT11_CONTROL_SUBTYPE_ACK);
+        let err = Dot11::header_len_from_bytes(dot11_test_bytes(
+            ack,
+            DOT11_CONTROL_ONE_ADDRESS_HEADER_LEN - 1,
+        ))
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            CrafterError::buffer_too_short(
+                "dot11.header",
+                DOT11_CONTROL_ONE_ADDRESS_HEADER_LEN,
+                DOT11_CONTROL_ONE_ADDRESS_HEADER_LEN - 1
+            )
+        );
     }
 
     #[test]
