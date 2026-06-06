@@ -76,7 +76,11 @@ pub use dns::{
     DNS_TYPE_NS, DNS_TYPE_NSEC, DNS_TYPE_NSEC3, DNS_TYPE_NSEC3PARAM, DNS_TYPE_OPT, DNS_TYPE_PTR,
     DNS_TYPE_RRSIG, DNS_TYPE_SOA, DNS_TYPE_SRV, DNS_TYPE_SVCB, DNS_TYPE_TLSA, DNS_TYPE_TXT,
 };
-pub use eapol::Eapol;
+pub use eapol::{
+    eapol_type_label, Eapol, EapolType, EAPOL_HEADER_LEN, EAPOL_TYPE_ASF_ALERT,
+    EAPOL_TYPE_EAP_PACKET, EAPOL_TYPE_KEY, EAPOL_TYPE_LOGOFF, EAPOL_TYPE_START, EAPOL_VERSION_1,
+    EAPOL_VERSION_2, EAPOL_VERSION_3,
+};
 // Re-export the deprecated `Icmp*` aliases separately so the
 // `#[allow(deprecated)]` scope stays narrow: only these aliases are exempt from
 // the deprecation warning, while the rest of the icmp surface keeps full lint
@@ -215,7 +219,7 @@ pub use link::{
     ARP_OP_ARP_NAK, ARP_OP_DRARP_ERROR, ARP_OP_DRARP_REPLY, ARP_OP_DRARP_REQUEST, ARP_OP_EXP1,
     ARP_OP_EXP2, ARP_OP_INARP_REPLY, ARP_OP_INARP_REQUEST, ARP_OP_MAPOS_UNARP, ARP_OP_RARP_REPLY,
     ARP_OP_RARP_REQUEST, ARP_OP_REPLY, ARP_OP_REQUEST, ARP_OP_RESERVED, ARP_OP_RESERVED_MAX,
-    ARP_PRO_IPV4, ETHERTYPE_ARP, ETHERTYPE_IPV4, ETHERTYPE_IPV6, ETHERTYPE_VLAN,
+    ARP_PRO_IPV4, ETHERTYPE_ARP, ETHERTYPE_EAPOL, ETHERTYPE_IPV4, ETHERTYPE_IPV6, ETHERTYPE_VLAN,
 };
 pub use link::{
     dot11_category_label, dot11_control_subtype_label, dot11_data_subtype_label,
