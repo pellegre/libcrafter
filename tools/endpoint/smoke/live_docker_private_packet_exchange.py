@@ -317,7 +317,7 @@ def main(argv: list[str] | None = None) -> int:
             timeout=args.create_timeout,
         )
         receiver_manifest = _endpoint_manifest(
-            receiver_create.stdout, "receiver create-endpoint output"
+            receiver_create.stdout, "receiver create output"
         )
         receiver_id = _string(receiver_manifest.get("endpoint_id"), "receiver endpoint_id")
         receiver_artifact_dir = Path(
@@ -336,7 +336,7 @@ def main(argv: list[str] | None = None) -> int:
             private_ip=args.sender_ip,
             timeout=args.create_timeout,
         )
-        sender_manifest = _endpoint_manifest(sender_create.stdout, "sender create-endpoint output")
+        sender_manifest = _endpoint_manifest(sender_create.stdout, "sender create output")
         sender_id = _string(sender_manifest.get("endpoint_id"), "sender endpoint_id")
         sender_artifact_dir = Path(_string(sender_manifest.get("artifact_dir"), "sender artifact_dir"))
         artifact_dirs.append(sender_artifact_dir)
@@ -696,8 +696,8 @@ def _plan_commands(*, repo_root: Path, wire: Path, args: argparse.Namespace) -> 
             "--remote",
             args.remote_artifact_dir,
         ],
-        [str(wire), "destroy-endpoint", "<sender_endpoint_id>", "--json"],
-        [str(wire), "destroy-endpoint", "<receiver_endpoint_id>", "--json"],
+        [str(wire), "destroy", "<sender_endpoint_id>", "--json"],
+        [str(wire), "destroy", "<receiver_endpoint_id>", "--json"],
     ]
     lines = [
         "Docker private packet exchange smoke plan",
@@ -742,7 +742,7 @@ def _create_endpoint_argv(
 ) -> list[str]:
     return [
         str(wire),
-        "create-endpoint",
+        "create",
         "--provider",
         "docker",
         "--exposure",
@@ -827,7 +827,7 @@ def _destroy_endpoints(
             continue
         seen.add(endpoint_id)
         result = _run(
-            [str(wire), "destroy-endpoint", endpoint_id, "--json"],
+            [str(wire), "destroy", endpoint_id, "--json"],
             cwd=repo_root,
             timeout=timeout,
         )
@@ -928,7 +928,7 @@ def _shell_env(values: dict[str, str]) -> str:
 def _private_endpoint(manifest: dict[str, Any]) -> dict[str, str]:
     interfaces = manifest.get("interfaces")
     if not isinstance(interfaces, list):
-        raise SmokeError("create-endpoint output did not include interfaces")
+        raise SmokeError("create output did not include interfaces")
     for interface in interfaces:
         if not isinstance(interface, dict) or interface.get("exposure") != "private":
             continue
@@ -937,7 +937,7 @@ def _private_endpoint(manifest: dict[str, Any]) -> dict[str, str]:
             "ipv4": _string(interface.get("ipv4"), "private interface ipv4"),
             "mac": _string(interface.get("mac"), "private interface mac"),
         }
-    raise SmokeError("create-endpoint output did not include a private interface")
+    raise SmokeError("create output did not include a private interface")
 
 
 def _run(argv: list[str], *, cwd: Path, timeout: float) -> CommandCapture:

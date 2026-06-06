@@ -142,23 +142,23 @@ tools/endpoint/run doctor --provider docker --exposure wan --json
 Dry-runs plan an endpoint without creating provider resources:
 
 ```sh
-tools/endpoint/run create-endpoint --provider virtualbox --exposure lan --dry-run --json
-tools/endpoint/run create-endpoint --provider qemu --exposure wan --dry-run --json
-tools/endpoint/run create-endpoint --provider qemu --exposure private --private-group lab-a --dry-run --json
-tools/endpoint/run create-endpoint --provider docker --exposure private --private-group lab-a --private-ip 10.79.0.10 --dry-run --json
-tools/endpoint/run create-endpoint --provider docker --exposure lan --dry-run --json
-tools/endpoint/run create-endpoint --provider docker --exposure wan --dry-run --json
+tools/endpoint/run create --provider virtualbox --exposure lan --dry-run --json
+tools/endpoint/run create --provider qemu --exposure wan --dry-run --json
+tools/endpoint/run create --provider qemu --exposure private --private-group lab-a --dry-run --json
+tools/endpoint/run create --provider docker --exposure private --private-group lab-a --private-ip 10.79.0.10 --dry-run --json
+tools/endpoint/run create --provider docker --exposure lan --dry-run --json
+tools/endpoint/run create --provider docker --exposure wan --dry-run --json
 ```
 
 Live creation is protected and requires `--confirm-live-run`:
 
 ```sh
-tools/endpoint/run create-endpoint --provider virtualbox --exposure lan --confirm-live-run --json
-tools/endpoint/run create-endpoint --provider qemu --exposure wan --confirm-live-run --json
-tools/endpoint/run create-endpoint --provider qemu --exposure private --private-group lab-a --confirm-live-run --json
-tools/endpoint/run create-endpoint --provider docker --exposure private --private-group lab-a --private-ip 10.79.0.10 --confirm-live-run --json
-tools/endpoint/run create-endpoint --provider docker --exposure lan --confirm-live-run --json
-tools/endpoint/run create-endpoint --provider docker --exposure wan --confirm-live-run --json
+tools/endpoint/run create --provider virtualbox --exposure lan --confirm-live-run --json
+tools/endpoint/run create --provider qemu --exposure wan --confirm-live-run --json
+tools/endpoint/run create --provider qemu --exposure private --private-group lab-a --confirm-live-run --json
+tools/endpoint/run create --provider docker --exposure private --private-group lab-a --private-ip 10.79.0.10 --confirm-live-run --json
+tools/endpoint/run create --provider docker --exposure lan --confirm-live-run --json
+tools/endpoint/run create --provider docker --exposure wan --confirm-live-run --json
 ```
 
 For real QEMU private endpoints, `--private-group` is required. `--private-ip`
@@ -179,9 +179,9 @@ container.
 Unsupported QEMU LAN and Wi-Fi requests fail before provider side effects:
 
 ```sh
-tools/endpoint/run create-endpoint --provider qemu --exposure lan --dry-run --json
-tools/endpoint/run create-endpoint --provider qemu --exposure wifi --dry-run --json
-tools/endpoint/run create-endpoint --provider docker --exposure wifi --dry-run --json
+tools/endpoint/run create --provider qemu --exposure lan --dry-run --json
+tools/endpoint/run create --provider qemu --exposure wifi --dry-run --json
+tools/endpoint/run create --provider docker --exposure wifi --dry-run --json
 ```
 
 Those commands return an unsupported provider/exposure error because QEMU LAN,
@@ -196,16 +196,16 @@ semantics.
 ## Endpoint Operations
 
 Every operation uses the stored manifest for the endpoint ID returned by
-`create-endpoint`. Upload and download paths must be absolute on both sides.
+`create`. Upload and download paths must be absolute on both sides.
 
 ```sh
-tools/endpoint/run list-endpoints
+tools/endpoint/run list
 tools/endpoint/run ssh-info <endpoint_id>
 tools/endpoint/run exec <endpoint_id> -- uname -a
 tools/endpoint/run upload <endpoint_id> /absolute/local/path /absolute/remote/path
 tools/endpoint/run download <endpoint_id> /absolute/remote/path /absolute/local/path
 tools/endpoint/run collect-artifacts <endpoint_id>
-tools/endpoint/run destroy-endpoint <endpoint_id>
+tools/endpoint/run destroy <endpoint_id>
 ```
 
 `exec` writes `stdout` and `stderr` artifacts under the endpoint artifact

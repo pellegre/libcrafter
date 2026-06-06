@@ -130,7 +130,7 @@ def create_endpoint(
             ssh_wait_timeout=ssh_wait_timeout,
             ssh_wait_interval=ssh_wait_interval,
         )
-    raise NotImplementedError(f"real qemu create-endpoint is not implemented for {exposure}")
+    raise NotImplementedError(f"real qemu create is not implemented for {exposure}")
 
 
 def _planned_endpoint_manifest(

@@ -48,7 +48,7 @@ class HetznerCreateEndpointTest(unittest.TestCase):
             ):
                 exit_code = wire_cli.main(
                     [
-                        "create-endpoint",
+                        "create",
                         "--provider",
                         "hetzner",
                         "--exposure",
@@ -98,7 +98,7 @@ class HetznerCreateEndpointTest(unittest.TestCase):
             ):
                 exit_code = wire_cli.main(
                     [
-                        "create-endpoint",
+                        "create",
                         "--provider",
                         "hetzner",
                         "--exposure",
@@ -151,7 +151,7 @@ class HetznerCreateEndpointTest(unittest.TestCase):
             ):
                 wire_cli.main(
                     [
-                        "create-endpoint",
+                        "create",
                         "--provider",
                         "hetzner",
                         "--exposure",
@@ -179,7 +179,7 @@ class HetznerCreateEndpointTest(unittest.TestCase):
             ):
                 exit_code = wire_cli.main(
                     [
-                        "create-endpoint",
+                        "create",
                         "--provider",
                         "hetzner",
                         "--exposure",

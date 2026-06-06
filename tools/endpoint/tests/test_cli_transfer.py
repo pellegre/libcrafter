@@ -419,7 +419,7 @@ class WireTransferEndpointTest(unittest.TestCase):
 
                 list_stdout = io.StringIO()
                 with contextlib.redirect_stdout(list_stdout):
-                    list_exit = wire_cli.main(["list-endpoints", "--json"])
+                    list_exit = wire_cli.main(["list", "--json"])
                 list_output = json.loads(list_stdout.getvalue())
 
                 self.assertEqual(list_exit, 0)

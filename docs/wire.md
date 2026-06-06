@@ -72,17 +72,17 @@ Docker environment overrides:
 Plan Docker endpoints without side effects:
 
 ```sh
-tools/endpoint/run create-endpoint --provider docker --exposure private --private-group lab-a --private-ip 10.79.0.10 --dry-run --json
-tools/endpoint/run create-endpoint --provider docker --exposure lan --dry-run --json
-tools/endpoint/run create-endpoint --provider docker --exposure wan --dry-run --json
+tools/endpoint/run create --provider docker --exposure private --private-group lab-a --private-ip 10.79.0.10 --dry-run --json
+tools/endpoint/run create --provider docker --exposure lan --dry-run --json
+tools/endpoint/run create --provider docker --exposure wan --dry-run --json
 ```
 
 Create Docker endpoints only after the normal live confirmation gate:
 
 ```sh
-tools/endpoint/run create-endpoint --provider docker --exposure private --private-group lab-a --private-ip 10.79.0.10 --confirm-live-run --json
-tools/endpoint/run create-endpoint --provider docker --exposure lan --confirm-live-run --json
-tools/endpoint/run create-endpoint --provider docker --exposure wan --confirm-live-run --json
+tools/endpoint/run create --provider docker --exposure private --private-group lab-a --private-ip 10.79.0.10 --confirm-live-run --json
+tools/endpoint/run create --provider docker --exposure lan --confirm-live-run --json
+tools/endpoint/run create --provider docker --exposure wan --confirm-live-run --json
 ```
 
 For `docker/private`, pass the same `--private-group` to endpoints that should
@@ -103,7 +103,7 @@ Run dry-run checks first:
 ```sh
 tools/endpoint/run doctor --provider hetzner --exposure wan --dry-run
 tools/endpoint/run doctor --provider hetzner --exposure private --dry-run
-tools/endpoint/run create-endpoint --provider hetzner --exposure wan --dry-run --write-manifest
+tools/endpoint/run create --provider hetzner --exposure wan --dry-run --write-manifest
 ```
 
 Oracle offline and pcap validation plus lab-backed oracle/probe dry-runs should
@@ -155,14 +155,14 @@ Use direct wire commands only for debugging, inspection, or manual provider
 maintenance of one endpoint:
 
 ```sh
-tools/endpoint/run create-endpoint --provider hetzner --exposure wan --confirm-live-run --json
-tools/endpoint/run create-endpoint --provider docker --exposure private --private-group lab-a --confirm-live-run --json
-tools/endpoint/run create-endpoint --provider docker --exposure lan --confirm-live-run --json
-tools/endpoint/run create-endpoint --provider docker --exposure wan --confirm-live-run --json
-tools/endpoint/run list-endpoints --json
+tools/endpoint/run create --provider hetzner --exposure wan --confirm-live-run --json
+tools/endpoint/run create --provider docker --exposure private --private-group lab-a --confirm-live-run --json
+tools/endpoint/run create --provider docker --exposure lan --confirm-live-run --json
+tools/endpoint/run create --provider docker --exposure wan --confirm-live-run --json
+tools/endpoint/run list --json
 tools/endpoint/run ssh-info ENDPOINT_ID --json
 tools/endpoint/run collect-artifacts ENDPOINT_ID
-tools/endpoint/run destroy-endpoint ENDPOINT_ID --json
+tools/endpoint/run destroy ENDPOINT_ID --json
 ```
 
 For private endpoint experiments, pass the same `--private-group` to each
@@ -202,9 +202,9 @@ tools/endpoint/run doctor --provider docker --exposure wan --dry-run
 tools/lab/run plan --provider hetzner --dry-run --profile smoke --seed 1 --role stimulus --role target --json
 tools/lab/run plan --provider qemu --dry-run --profile smoke --seed 1 --role stimulus --role target --json
 tools/lab/run plan --provider virtualbox --dry-run --profile smoke --seed 1 --role stimulus --role target --json
-tools/endpoint/run create-endpoint --provider docker --exposure private --private-group ci-plan --dry-run --json
-tools/endpoint/run create-endpoint --provider docker --exposure lan --dry-run --json
-tools/endpoint/run create-endpoint --provider docker --exposure wan --dry-run --json
+tools/endpoint/run create --provider docker --exposure private --private-group ci-plan --dry-run --json
+tools/endpoint/run create --provider docker --exposure lan --dry-run --json
+tools/endpoint/run create --provider docker --exposure wan --dry-run --json
 tools/oracle/run live --provider hetzner --dry-run --profile smoke --seed 12345 --count 10
 python3 tools/oracle/engine/live_provider_matrix.py --providers hetzner,qemu,virtualbox --profile smoke --seed 12345 --count 5 --dry-run --out target/oracle/provider-matrix-dry-run
 tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10
@@ -222,11 +222,11 @@ destruction so resources are still torn down after a failed validation step.
 Destroy disposable hosts as soon as provider validation finishes:
 
 ```sh
-tools/endpoint/run destroy-endpoint ENDPOINT_ID --json
+tools/endpoint/run destroy ENDPOINT_ID --json
 ```
 
 If a command fails before cleanup, keep the ignored state directory until
-`destroy-endpoint` succeeds. The endpoint manifest contains the provider
+`destroy` succeeds. The endpoint manifest contains the provider
 resource ids needed for cleanup. After cleanup, artifacts can be kept locally
 for debugging and removed manually when no longer needed.
 

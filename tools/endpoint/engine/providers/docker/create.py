@@ -177,7 +177,7 @@ def create_endpoint(
                 env=environ,
             )
         raise NotImplementedError(
-            f"docker dry-run create-endpoint is not implemented for {exposure}"
+            f"docker dry-run create is not implemented for {exposure}"
         )
 
     if not confirm_live_run:
@@ -209,7 +209,7 @@ def create_endpoint(
             command_runner=command_runner,
         )
     raise NotImplementedError(
-        f"real docker create-endpoint is not implemented for {exposure}"
+        f"real docker create is not implemented for {exposure}"
     )
 
 

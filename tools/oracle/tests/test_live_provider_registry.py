@@ -1309,7 +1309,7 @@ class _FakeRecord:
 
     def to_dict(self) -> dict[str, object]:
         return {
-            "operation": "create-endpoint",
+            "operation": "create",
             "role": self.role,
             "exit_code": 0,
         }
@@ -1847,7 +1847,7 @@ class _FakeLiveProviderAdapter:
             LiveCommandPlan(
                 role="provider",
                 purpose=self.teardown_purpose,
-                argv=["fake-wire", "destroy-endpoint"],
+                argv=["fake-wire", "destroy"],
                 metadata={"operation": "destroy", "always_attempt": True},
             ),
         ]
@@ -2064,7 +2064,7 @@ class _FakeLiveWireClient:
                 "confirm_live_run": confirm_live_run,
             }
         )
-        return _FakeWireCommandResponse("create-endpoint", endpoint_id=f"fake-{role}")
+        return _FakeWireCommandResponse("create", endpoint_id=f"fake-{role}")
 
     def upload(self, endpoint_id: str, local_path: Path, remote_path: str):
         return _FakeWireCommandResponse("upload", endpoint_id=endpoint_id)
@@ -2086,7 +2086,7 @@ class _FakeLiveWireClient:
 
     def destroy(self, endpoint_id: str):
         self.destroyed.append(endpoint_id)
-        return _FakeWireCommandResponse("destroy-endpoint", endpoint_id=endpoint_id)
+        return _FakeWireCommandResponse("destroy", endpoint_id=endpoint_id)
 
 
 class _FakeWireCommandResponse:
@@ -2134,15 +2134,15 @@ class _FakeWireCommandResponse:
             argv=list(self.record.to_dict()["argv"]),
             operation={
                 "collect-artifacts": "wire.collect_artifacts",
-                "create-endpoint": "wire.create",
-                "destroy-endpoint": "wire.destroy",
+                "create": "wire.create",
+                "destroy": "wire.destroy",
                 "download": "wire.download",
                 "doctor": "wire.doctor",
                 "exec": "wire.exec",
                 "upload": "wire.upload",
             }.get(self.record.operation, f"wire.{self.record.operation}"),
             dry_run=False,
-            live_mutation=self.record.operation in {"create-endpoint", "destroy-endpoint"},
+            live_mutation=self.record.operation in {"create", "destroy"},
             artifacts=list(artifacts),
             metadata=self.metadata(),
         )

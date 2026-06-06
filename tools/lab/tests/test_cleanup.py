@@ -304,9 +304,9 @@ class _FakeWireResponse:
             "destroy": "wire.destroy",
         }[self.operation]
         argv = {
-            "create": ["tools/endpoint/run", "create-endpoint", "--role", role or self.role or "role"],
+            "create": ["tools/endpoint/run", "create", "--role", role or self.role or "role"],
             "collect_artifacts": ["tools/endpoint/run", "collect-artifacts", self.endpoint_id],
-            "destroy": ["tools/endpoint/run", "destroy-endpoint", self.endpoint_id, "--json"],
+            "destroy": ["tools/endpoint/run", "destroy", self.endpoint_id, "--json"],
         }[self.operation]
         return LabCommandPlan(
             purpose=purpose or f"wire {self.operation}",

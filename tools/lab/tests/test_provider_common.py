@@ -61,7 +61,7 @@ class ProviderCommonCommandPlanTest(unittest.TestCase):
         plan = build_command_plan(
             purpose="create stimulus endpoint",
             role="provider",
-            argv=["tools/endpoint/run", "create-endpoint", "--json"],
+            argv=["tools/endpoint/run", "create", "--json"],
             operation="wire.create",
             dry_run=True,
             live_mutation=False,

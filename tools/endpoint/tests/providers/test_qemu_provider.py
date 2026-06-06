@@ -548,7 +548,7 @@ class QemuCreateEndpointTest(unittest.TestCase):
             ):
                 exit_code = wire_cli.main(
                     [
-                        "create-endpoint",
+                        "create",
                         "--provider",
                         "qemu",
                         "--exposure",

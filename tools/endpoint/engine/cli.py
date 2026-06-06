@@ -31,14 +31,14 @@ from .state import (
 
 COMMANDS = (
     "doctor",
-    "create-endpoint",
-    "destroy-endpoint",
+    "create",
+    "destroy",
     "exec",
     "upload",
     "download",
     "collect-artifacts",
     "ssh-info",
-    "list-endpoints",
+    "list",
 )
 
 
@@ -87,7 +87,7 @@ def build_parser() -> argparse.ArgumentParser:
     doctor.set_defaults(command_name="doctor")
 
     create_endpoint = subparsers.add_parser(
-        "create-endpoint",
+        "create",
         help="create one endpoint",
         description="Create one endpoint for a provider and exposure.",
     )
@@ -129,16 +129,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="confirm protected non-dry-run provider execution",
     )
     create_endpoint.add_argument("--json", action="store_true", help="emit machine-readable JSON")
-    create_endpoint.set_defaults(command_name="create-endpoint")
+    create_endpoint.set_defaults(command_name="create")
 
     destroy_endpoint = subparsers.add_parser(
-        "destroy-endpoint",
+        "destroy",
         help="destroy one endpoint",
         description="Destroy one endpoint and its tracked provider resources.",
     )
     destroy_endpoint.add_argument("endpoint_id", metavar="ENDPOINT_ID", help="endpoint to destroy")
     destroy_endpoint.add_argument("--json", action="store_true", help="emit machine-readable JSON")
-    destroy_endpoint.set_defaults(command_name="destroy-endpoint")
+    destroy_endpoint.set_defaults(command_name="destroy")
 
     exec_endpoint = subparsers.add_parser(
         "exec",
@@ -219,12 +219,12 @@ def build_parser() -> argparse.ArgumentParser:
     ssh_info.set_defaults(command_name="ssh-info")
 
     list_endpoints = subparsers.add_parser(
-        "list-endpoints",
+        "list",
         help="list tracked endpoints",
         description="List tracked wire endpoints.",
     )
     list_endpoints.add_argument("--json", action="store_true", help="emit machine-readable JSON")
-    list_endpoints.set_defaults(command_name="list-endpoints")
+    list_endpoints.set_defaults(command_name="list")
 
     return parser
 
@@ -593,7 +593,7 @@ def _print_doctor_report(report: dict[str, object]) -> None:
 def _print_create_endpoint_report(manifest: dict[str, object]) -> None:
     created = str(bool(manifest["created"])).lower()
     print(
-        "wire create-endpoint: "
+        "wire create: "
         f"provider={manifest['provider']} exposure={manifest['exposure']} "
         f"endpoint_id={manifest['endpoint_id']} created={created}"
     )
@@ -603,7 +603,7 @@ def _print_create_endpoint_report(manifest: dict[str, object]) -> None:
 
 def _print_destroy_endpoint_report(output: dict[str, object]) -> None:
     print(
-        "wire destroy-endpoint: "
+        "wire destroy: "
         f"endpoint_id={output['endpoint_id']} status={output['status']} "
         f"destroyed={str(bool(output['destroyed'])).lower()}"
     )
@@ -627,7 +627,7 @@ def _print_ssh_info(output: dict[str, object]) -> None:
 def _print_endpoint_list(output: dict[str, object]) -> None:
     endpoints = output["endpoints"]
     if not isinstance(endpoints, list) or not endpoints:
-        print("wire list-endpoints: no endpoints")
+        print("wire list: no endpoints")
         return
     for endpoint in endpoints:
         if not isinstance(endpoint, dict):
@@ -750,9 +750,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if args.command_name == "doctor":
         return _run_doctor(args)
-    if args.command_name == "create-endpoint":
+    if args.command_name == "create":
         return _run_create_endpoint(args)
-    if args.command_name == "destroy-endpoint":
+    if args.command_name == "destroy":
         return _run_destroy_endpoint(args)
     if args.command_name == "exec":
         return _run_exec_endpoint(args)
@@ -764,7 +764,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_collect_artifacts(args)
     if args.command_name == "ssh-info":
         return _run_ssh_info(args)
-    if args.command_name == "list-endpoints":
+    if args.command_name == "list":
         return _run_list_endpoints(args)
     parser.error(f"{args.command_name!r} is not implemented yet")
     return 2

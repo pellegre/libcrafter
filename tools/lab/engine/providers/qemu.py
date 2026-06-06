@@ -364,7 +364,7 @@ def qemu_provider_workflow(request: LabRequest) -> list[LabCommandPlan]:
                 role=role.name,
                 argv=[
                     WIRE_ENTRYPOINT,
-                    "create-endpoint",
+                    "create",
                     "--provider",
                     WIRE_PROVIDER,
                     "--exposure",
@@ -422,7 +422,7 @@ def qemu_provider_workflow(request: LabRequest) -> list[LabCommandPlan]:
             build_command_plan(
                 purpose="teardown-disposable-qemu-wire-endpoints",
                 role=None,
-                argv=[WIRE_ENTRYPOINT, "destroy-endpoint", "<endpoint-id>", "--json"],
+                argv=[WIRE_ENTRYPOINT, "destroy", "<endpoint-id>", "--json"],
                 operation="wire.destroy",
                 dry_run=request.dry_run,
                 live_mutation=not request.dry_run,

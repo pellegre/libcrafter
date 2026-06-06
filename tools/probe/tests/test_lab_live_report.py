@@ -210,7 +210,7 @@ class ProbeLabLiveReportTest(unittest.TestCase):
         cleanup_record = LabCommandPlan(
             purpose="destroy endpoint qemu-target",
             role="target",
-            argv=["tools/endpoint/run", "destroy-endpoint", "qemu-target", "--json"],
+            argv=["tools/endpoint/run", "destroy", "qemu-target", "--json"],
             operation="wire.destroy",
             dry_run=False,
             live_mutation=True,
@@ -361,7 +361,7 @@ def _fake_session() -> LabSession:
     provider_record = LabCommandPlan(
         purpose="create stimulus endpoint",
         role="stimulus",
-        argv=["tools/endpoint/run", "create-endpoint", "--provider", "qemu"],
+        argv=["tools/endpoint/run", "create", "--provider", "qemu"],
         operation="wire.create",
         dry_run=False,
         live_mutation=True,

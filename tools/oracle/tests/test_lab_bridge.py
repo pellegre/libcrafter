@@ -233,7 +233,7 @@ def _fake_session(case: _ProviderCase) -> LabSession:
             role=endpoint.role,
             argv=[
                 "tools/endpoint/run",
-                "create-endpoint",
+                "create",
                 "--provider",
                 case.provider,
                 "--exposure",

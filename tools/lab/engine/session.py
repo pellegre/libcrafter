@@ -221,7 +221,7 @@ def cleanup_created_endpoints(
                         fallback_operation="wire.destroy",
                         fallback_argv=[
                             "tools/endpoint/run",
-                            "destroy-endpoint",
+                            "destroy",
                             endpoint_id,
                             "--json",
                         ],
@@ -409,7 +409,7 @@ def _tracked_command_records(client: object) -> list[LabCommandPlan]:
 
 
 def _create_fallback_argv(kwargs: Mapping[str, object]) -> list[str]:
-    argv = ["tools/endpoint/run", "create-endpoint"]
+    argv = ["tools/endpoint/run", "create"]
     _extend_flag(argv, "--provider", kwargs.get("provider"))
     _extend_flag(argv, "--exposure", kwargs.get("exposure"))
     _extend_flag(argv, "--role", kwargs.get("role"))

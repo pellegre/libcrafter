@@ -963,7 +963,7 @@ def _wire_create_argv(
 ) -> list[str]:
     argv = [
         WIRE_ENTRYPOINT,
-        "create-endpoint",
+        "create",
         "--provider",
         provider,
         "--exposure",

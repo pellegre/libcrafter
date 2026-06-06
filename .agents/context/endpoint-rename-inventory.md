@@ -94,18 +94,18 @@ wire if they are not lifecycle provider fields.
 
 ## Command Names
 
-Intended replacement: command path becomes `tools/endpoint/run`, and lifecycle
-subcommands drop redundant `-endpoint` suffixes.
+Current command path is `tools/endpoint/run`, and lifecycle subcommands use the
+concise endpoint vocabulary.
 
-- `tools/endpoint/run doctor` -> `tools/endpoint/run doctor`
-- `tools/endpoint/run create-endpoint` -> `tools/endpoint/run create`
-- `tools/endpoint/run destroy-endpoint` -> `tools/endpoint/run destroy`
-- `tools/endpoint/run exec` -> `tools/endpoint/run exec`
-- `tools/endpoint/run upload` -> `tools/endpoint/run upload`
-- `tools/endpoint/run download` -> `tools/endpoint/run download`
-- `tools/endpoint/run collect-artifacts` -> `tools/endpoint/run collect-artifacts`
-- `tools/endpoint/run ssh-info` -> `tools/endpoint/run ssh-info`
-- `tools/endpoint/run list-endpoints` -> `tools/endpoint/run list`
+- `tools/endpoint/run doctor`
+- `tools/endpoint/run create`
+- `tools/endpoint/run destroy`
+- `tools/endpoint/run exec`
+- `tools/endpoint/run upload`
+- `tools/endpoint/run download`
+- `tools/endpoint/run collect-artifacts`
+- `tools/endpoint/run ssh-info`
+- `tools/endpoint/run list`
 
 Command-definition sites found:
 
@@ -203,8 +203,8 @@ without using wire as the lifecycle noun.
 - `.agents/skills/wire-endpoint/SKILL.md` -> `.agents/skills/endpoint/SKILL.md`
 - skill title/description "wire endpoint" -> "endpoint"
 - skill command examples `tools/endpoint/run ...` -> `tools/endpoint/run ...`
-- skill command names `create-endpoint`, `destroy-endpoint` -> `create`, `destroy`
-- teardown guidance `tools/endpoint/run destroy-endpoint` -> `tools/endpoint/run destroy`
+- skill command names use `create`, `destroy`
+- teardown guidance uses `tools/endpoint/run destroy`
 - `.agents/skills/lab-session/SKILL.md`: "wire provider" -> "endpoint provider"
 - `.agents/skills/lab-provider/SKILL.md`: "wire provider" and "wire endpoint planning/creation" -> endpoint terminology
 - `.agents/skills/packet-validation/SKILL.md`: update any lab/provider lifecycle wording if found during the edit step
@@ -260,7 +260,7 @@ endpoint provider metadata; packet byte-policy names can remain wire.
 - `WireClient`-typed parameters -> `EndpointClient`
 - `WIRE_ENTRYPOINT` -> `ENDPOINT_ENTRYPOINT`
 - command argv path `tools/endpoint/run` -> `tools/endpoint/run`
-- lifecycle commands `create-endpoint` / `destroy-endpoint` / `list-endpoints` -> `create` / `destroy` / `list`
+- lifecycle commands use `create` / `destroy` / `list`
 - `LIBCRAFTER_WIRE_REMOTE_DIR` -> `LIBCRAFTER_ENDPOINT_REMOTE_DIR`
 - lifecycle metadata `wire_provider`, `wire_exposure`, `wire_endpoint_plan`, `wire_endpoint_lifecycle` -> endpoint equivalents
 - CLI help text "provider wire endpoints" -> "provider endpoints"
@@ -321,7 +321,7 @@ target `tools.endpoint`, and assertions use endpoint command vocabulary.
 - `python3 -m unittest discover -s tools/endpoint/tests -p 'test_*.py'` -> `python3 -m unittest discover -s tools/endpoint/tests -p 'test_*.py'`
 - patch targets `tools.endpoint.engine...` -> `tools.endpoint.engine...`
 - test argv `tools/endpoint/run` -> `tools/endpoint/run`
-- expected operations `create-endpoint`, `destroy-endpoint`, `list-endpoints` -> `create`, `destroy`, `list`
+- expected operations use `create`, `destroy`, `list`
 - fake command response classes and fields use endpoint names
 - lab test `test_wire_client.py` -> `test_endpoint_client.py`
 
@@ -348,7 +348,7 @@ endpoint command vocabulary.
 - `tools/endpoint/smoke/live_docker_private_packet_exchange.py` -> `tools/endpoint/smoke/live_docker_private_packet_exchange.py`
 - `tools/endpoint/smoke/live_docker_wan_dns.py` -> `tools/endpoint/smoke/live_docker_wan_dns.py`
 - internal command path `tools/endpoint/run` -> `tools/endpoint/run`
-- internal operations `create-endpoint` / `destroy-endpoint` -> `create` / `destroy`
+- internal operations use `create` / `destroy`
 - safety marker `LIBCRAFTER_WIRE_ENDPOINT=1` -> `LIBCRAFTER_ENDPOINT=1`
 - artifact defaults `tools/endpoint/artifacts/...` -> `tools/endpoint/artifacts/...`
 
@@ -363,6 +363,5 @@ Rust packet I/O module owns wire terminology later.
 - workflow names "wire endpoint dry runs" / "protected Hetzner wire endpoint exchange" -> endpoint wording
 - workflow env `LIBCRAFTER_WIRE_ARTIFACT_ROOT`, `LIBCRAFTER_WIRE_STATE_ROOT` -> endpoint env vars
 - workflow target dirs `target/wire-artifacts`, `target/wire-state` -> endpoint target dirs
-- workflow cleanup commands `tools/endpoint/run list-endpoints`, `destroy-endpoint`, `collect-artifacts` -> endpoint path and command names
+- workflow cleanup commands `tools/endpoint/run list`, `destroy`, `collect-artifacts` -> endpoint path and command names
 - `.gitignore` updates described in Tool Paths
-

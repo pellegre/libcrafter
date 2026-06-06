@@ -103,7 +103,7 @@ def main(argv: list[str] | None = None) -> int:
         create = _run(
             [
                 str(wire),
-                "create-endpoint",
+                "create",
                 "--provider",
                 "virtualbox",
                 "--exposure",
@@ -117,10 +117,10 @@ def main(argv: list[str] | None = None) -> int:
             timeout=args.create_timeout,
         )
         if not create.ok:
-            _write_unattached_failure(repo_root, "create-endpoint", create)
+            _write_unattached_failure(repo_root, "create", create)
             raise SmokeError("VirtualBox endpoint creation failed", create.exit_code)
 
-        manifest = _json_object(create.stdout, "create-endpoint output")
+        manifest = _json_object(create.stdout, "create output")
         endpoint_id = _string(manifest.get("endpoint_id"), "endpoint_id")
         artifact_dir = Path(_string(manifest.get("artifact_dir"), "artifact_dir"))
         artifact_dir.mkdir(parents=True, exist_ok=True)
@@ -236,7 +236,7 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         if endpoint_id is not None:
             destroy = _run(
-                [str(wire), "destroy-endpoint", endpoint_id, "--json"],
+                [str(wire), "destroy", endpoint_id, "--json"],
                 cwd=repo_root,
                 timeout=args.destroy_timeout,
             )
@@ -314,7 +314,7 @@ def _plan_commands(
     commands = [
         [
             str(wire),
-            "create-endpoint",
+            "create",
             "--provider",
             "virtualbox",
             "--exposure",
@@ -357,7 +357,7 @@ def _plan_commands(
             "-lc",
             DEFAULT_GUEST_STATE_COMMAND,
         ],
-        [str(wire), "destroy-endpoint", "<endpoint_id>", "--json"],
+        [str(wire), "destroy", "<endpoint_id>", "--json"],
     ]
     lines = [
         "VirtualBox LAN network_ping smoke plan",
@@ -403,14 +403,14 @@ def _run(argv: list[str], *, cwd: Path, timeout: float) -> CommandCapture:
 def _lan_endpoint(manifest: dict[str, Any]) -> tuple[str, str]:
     interfaces = manifest.get("interfaces")
     if not isinstance(interfaces, list):
-        raise SmokeError("create-endpoint output did not include interfaces")
+        raise SmokeError("create output did not include interfaces")
     for interface in interfaces:
         if not isinstance(interface, dict) or interface.get("exposure") != "lan":
             continue
         name = _string(interface.get("name"), "lan interface name")
         ipv4 = _string(interface.get("ipv4"), "lan interface ipv4")
         return name, ipv4
-    raise SmokeError("create-endpoint output did not include a LAN interface with IPv4")
+    raise SmokeError("create output did not include a LAN interface with IPv4")
 
 
 def _write_result_artifacts(

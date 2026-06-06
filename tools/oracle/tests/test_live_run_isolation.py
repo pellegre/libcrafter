@@ -99,13 +99,13 @@ class LiveRunIsolationTest(unittest.TestCase):
         self.assertEqual(infrastructure["network"]["private_group"], OVERRIDE_GROUP)
         self.assertEqual(plan["private_group"], OVERRIDE_GROUP)
 
-        # Every wire create-endpoint call (argv-equivalent) uses the override.
+        # Every wire create call (argv-equivalent) uses the override.
         self.assertEqual(
             [call["private_group"] for call in client.calls],
             [OVERRIDE_GROUP, OVERRIDE_GROUP],
         )
 
-        # The static create-endpoint argv builder also carries the override.
+        # The static create argv builder also carries the override.
         create_commands = [
             command
             for command in workflow
