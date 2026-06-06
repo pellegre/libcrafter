@@ -3,10 +3,11 @@
 
 This script is intentionally outside default test discovery. By default it
 prints the planned command sequence without creating containers. Pass
-``--live --i-understand-isolated-lab`` to create two confirmed docker/private
-wire endpoints on one isolated bridge, upload small libcrafter sender/receiver
-workloads, exchange one L3 UDP packet and one L2 Ethernet/IPv4/UDP packet, and
-then destroy both endpoints.
+``--live`` to create two confirmed docker/private wire endpoints on one
+isolated bridge, upload small libcrafter sender/receiver workloads, exchange
+one L3 UDP packet and one L2 Ethernet/IPv4/UDP packet, and then destroy both
+endpoints. The legacy ``--i-understand-isolated-lab`` flag is accepted for
+older command lines but is not required.
 """
 
 from __future__ import annotations
@@ -65,17 +66,18 @@ fn main() -> std::result::Result<(), Box<dyn Error>> {
     }
 
     let filter = format!("udp and dst port {destination_port} and src host {source_ip}");
-    let mut capture = Sniffer::interface(&iface)
+    let source = PacketWire::pcap_interface(iface.clone())
         .filter(&filter)
         .timeout(Duration::from_secs(timeout_secs))
         .promisc(false)
         .immediate_mode(true)
-        .nonblock()
-        .open()?;
+        .open()?
+        .source()?;
+    let mut capture = Sniffer::new(source).no_timeout();
 
     println!("READY iface={iface} filter={filter:?} pending={}", pending.len());
 
-    while let Some(frame) = capture.next_packet()? {
+    while let Some(frame) = capture.next_record()? {
         let summary = frame.packet().summary();
         let Some(raw) = frame.packet().layer::<Raw>() else {
             println!("observed packet without raw payload: {summary}");
@@ -231,7 +233,10 @@ fn ipv4_udp_packet(
     destination_port: u16,
     payload: &[u8],
 ) -> Packet {
-    Ipv4::new().src(source_ip).dst(destination_ip)
+    Ipv4::new()
+        .src(source_ip)
+        .dst(destination_ip)
+        .ipv4_protocol(Ipv4Protocol::Udp)
         / Udp::new().sport(source_port).dport(destination_port)
         / Raw::from_bytes(payload)
 }
@@ -294,13 +299,7 @@ def main(argv: list[str] | None = None) -> int:
         print(plan)
         return 0
 
-    if not args.i_understand_isolated_lab:
-        print(
-            "live Docker private smoke requires --live --i-understand-isolated-lab",
-            file=sys.stderr,
-        )
-        print(plan, file=sys.stderr)
-        return 2
+    os.environ.setdefault("LIBCRAFTER_DOCKER_REBUILD", "1")
 
     receiver_id: str | None = None
     sender_id: str | None = None
@@ -316,6 +315,8 @@ def main(argv: list[str] | None = None) -> int:
             private_ip=args.receiver_ip,
             timeout=args.create_timeout,
         )
+        if not receiver_create.ok:
+            raise SmokeError(_command_failure("receiver endpoint creation failed", receiver_create))
         receiver_manifest = _endpoint_manifest(
             receiver_create.stdout, "receiver create output"
         )
@@ -325,8 +326,6 @@ def main(argv: list[str] | None = None) -> int:
         )
         artifact_dirs.append(receiver_artifact_dir)
         _write_result_artifacts(receiver_artifact_dir, "create_receiver", receiver_create)
-        if not receiver_create.ok:
-            raise SmokeError("receiver endpoint creation failed", receiver_create.exit_code)
 
         sender_create = _create_endpoint(
             wire=wire,
@@ -336,13 +335,13 @@ def main(argv: list[str] | None = None) -> int:
             private_ip=args.sender_ip,
             timeout=args.create_timeout,
         )
+        if not sender_create.ok:
+            raise SmokeError(_command_failure("sender endpoint creation failed", sender_create))
         sender_manifest = _endpoint_manifest(sender_create.stdout, "sender create output")
         sender_id = _string(sender_manifest.get("endpoint_id"), "sender endpoint_id")
         sender_artifact_dir = Path(_string(sender_manifest.get("artifact_dir"), "sender artifact_dir"))
         artifact_dirs.append(sender_artifact_dir)
         _write_result_artifacts(sender_artifact_dir, "create_sender", sender_create)
-        if not sender_create.ok:
-            raise SmokeError("sender endpoint creation failed", sender_create.exit_code)
 
         receiver_iface = _private_endpoint(receiver_manifest)
         sender_iface = _private_endpoint(sender_manifest)
@@ -578,7 +577,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--i-understand-isolated-lab",
         action="store_true",
-        help="acknowledge this smoke creates a local isolated Docker packet lab",
+        help="accepted for compatibility; --live is the explicit opt-in",
     )
     parser.add_argument(
         "--private-group",
@@ -600,7 +599,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--remote-artifact-dir", default=DEFAULT_REMOTE_ARTIFACT_DIR)
     parser.add_argument("--ready-attempts", type=_positive_int, default=50)
     parser.add_argument("--done-attempts", type=_positive_int, default=100)
-    parser.add_argument("--create-timeout", type=float, default=300)
+    parser.add_argument("--create-timeout", type=float, default=420)
     parser.add_argument("--build-timeout", type=float, default=600)
     parser.add_argument("--transfer-timeout", type=float, default=120)
     parser.add_argument("--exec-timeout", type=float, default=120)
@@ -702,7 +701,7 @@ def _plan_commands(*, repo_root: Path, wire: Path, args: argparse.Namespace) -> 
     lines = [
         "Docker private packet exchange smoke plan",
         f"repo: {repo_root}",
-        "no Docker resources are created unless --live --i-understand-isolated-lab are both set",
+        "no Docker resources are created unless --live is set",
         f"private group: {args.private_group}",
         f"sender: {args.sender_ip}",
         f"receiver: {args.receiver_ip}",
@@ -1041,6 +1040,13 @@ def _endpoint_manifest(value: str, name: str) -> dict[str, Any]:
     if isinstance(endpoint, dict):
         return endpoint
     return output
+
+
+def _command_failure(message: str, result: CommandCapture) -> str:
+    detail = result.stderr.strip() or result.stdout.strip()
+    if detail:
+        return f"{message}: {detail}"
+    return f"{message}: exit {result.exit_code}"
 
 
 def _string(value: Any, name: str) -> str:

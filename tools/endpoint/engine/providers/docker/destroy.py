@@ -35,6 +35,8 @@ from .resources import (
 
 
 DOCKER_CONTAINER_REMOVE_TIMEOUT = 120
+DOCKER_CONTAINER_TERMINATE_TIMEOUT = 30
+DOCKER_CONTAINER_WAIT_TIMEOUT = 30
 DOCKER_NETWORK_INSPECT_TIMEOUT = 30
 DOCKER_NETWORK_REMOVE_TIMEOUT = 120
 
@@ -230,7 +232,87 @@ def _destroy_docker_container(
             )
         )
         return
+    if _is_container_kill_permission_result(result):
+        actions.append(
+            _destroy_action(
+                resource,
+                action="remove-retry-needed",
+                result=result,
+                reason="Docker daemon could not kill the running container directly",
+            )
+        )
+        _terminate_container_from_inside(
+            resource,
+            container_ref=container_ref,
+            actions=actions,
+            env=env,
+            command_runner=command_runner,
+            docker_command=docker_command,
+        )
+        retry = command_runner(
+            docker_argv(
+                "container",
+                "rm",
+                "--force",
+                container_ref,
+                docker_command=docker_command,
+            ),
+            env=env,
+            timeout=DOCKER_CONTAINER_REMOVE_TIMEOUT,
+        )
+        if retry.ok:
+            actions.append(_destroy_action(resource, action="remove", result=retry))
+            return
+        if _is_missing_container_result(retry):
+            actions.append(
+                _destroy_action(
+                    resource,
+                    action="already-missing",
+                    result=retry,
+                    reason="Docker container was already missing after terminate fallback",
+                )
+            )
+            return
+        raise RuntimeError(command_error("Docker container remove failed", retry))
     raise RuntimeError(command_error("Docker container remove failed", result))
+
+
+def _terminate_container_from_inside(
+    resource: ProviderResource,
+    *,
+    container_ref: str,
+    actions: list[dict[str, object]],
+    env: Mapping[str, str],
+    command_runner: DockerRunner,
+    docker_command: str,
+) -> None:
+    terminate = command_runner(
+        docker_argv(
+            "exec",
+            container_ref,
+            "sh",
+            "-lc",
+            "kill -TERM 1",
+            docker_command=docker_command,
+        ),
+        env=env,
+        timeout=DOCKER_CONTAINER_TERMINATE_TIMEOUT,
+    )
+    actions.append(_destroy_action(resource, action="terminate", result=terminate))
+    if not terminate.ok:
+        return
+
+    wait = command_runner(
+        docker_argv(
+            "container",
+            "wait",
+            container_ref,
+            docker_command=docker_command,
+        ),
+        env=env,
+        timeout=DOCKER_CONTAINER_WAIT_TIMEOUT,
+    )
+    actions.append(_destroy_action(resource, action="wait", result=wait))
 
 
 def _destroy_private_network_if_unused(
@@ -592,6 +674,11 @@ def _is_missing_container_result(result: CommandResult) -> bool:
     )
 
 
+def _is_container_kill_permission_result(result: CommandResult) -> bool:
+    text = f"{result.stdout}\n{result.stderr}\n{result.error or ''}".lower()
+    return "could not kill container" in text and "permission denied" in text
+
+
 def _is_missing_network_result(result: CommandResult) -> bool:
     return _result_contains_any(
         result,
@@ -670,4 +757,3 @@ def _destroy_output(
 
 def _normalized_resource_kind(kind: str) -> str:
     return kind.replace("_", "-")
-

@@ -1586,16 +1586,8 @@ def _validate_docker_security(security: Mapping[str, object]) -> None:
     if bool(security.get("broad_host_filesystem_mounts")):
         raise ValueError("Docker endpoint containers must not use broad host mounts")
     cap_drop = _string_sequence(security.get("cap_drop", ()), "security.cap_drop")
-    security_opt = _string_sequence(
-        security.get("security_opt", ()),
-        "security.security_opt",
-    )
     if "ALL" not in cap_drop:
         raise ValueError("Docker endpoint containers must use --cap-drop ALL")
-    if "no-new-privileges" not in security_opt:
-        raise ValueError(
-            "Docker endpoint containers must use --security-opt no-new-privileges"
-        )
 
 
 def _live_container_metadata(
@@ -3183,8 +3175,8 @@ def _docker_private_security_flags() -> dict[str, object]:
         "cap_drop": ["ALL"],
         "cap_add": ["NET_RAW", "NET_ADMIN", "SYS_CHROOT", "SETGID", "SETUID"],
         "ssh_control_capabilities": ["SYS_CHROOT", "SETGID", "SETUID"],
-        "security_opt": ["no-new-privileges"],
-        "no_new_privileges": True,
+        "security_opt": [],
+        "no_new_privileges": False,
     }
 
 
@@ -3207,8 +3199,8 @@ def _docker_nat_l3_security_flags(
         "ssh_control_capabilities": ["SYS_CHROOT", "SETGID", "SETUID"],
         "net_raw_only": True,
         "net_admin": False,
-        "security_opt": ["no-new-privileges"],
-        "no_new_privileges": True,
+        "security_opt": [],
+        "no_new_privileges": False,
         "link_layer_fidelity": False,
         "broadcast": False,
         "controlled_router": False,

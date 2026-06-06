@@ -60,9 +60,9 @@ The Docker lab provider creates role endpoints on a provider-owned internal
 Docker bridge. Endpoints in the same lab session share one private group,
 receive deterministic private IPv4 addresses, record provider MAC metadata,
 and remain reachable through the existing SSH transport on localhost port
-forwards. Live containers run with `--cap-drop ALL`,
-`--security-opt no-new-privileges`, and only the packet capabilities required
-for `docker/private`.
+forwards. Live containers run with `--cap-drop ALL`, no privileged or
+host-network mode, no Docker socket mount, and only the packet capabilities
+required for `docker/private`.
 
 `docker/private` advertises IPv4 unicast, link-layer send, link-layer capture,
 broadcast, provider MAC knowledge, and controlled services. It does not

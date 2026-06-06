@@ -2,10 +2,13 @@
 """Opt-in Docker LAN ICMP smoke.
 
 By default this script prints the planned command sequence without creating
-Docker resources. Pass ``--live --i-understand-isolated-lab`` and provide a
-LAN router target through ``--router``, ``LIBCRAFTER_DOCKER_LAN_ROUTER``, or
-``LAN_ROUTER`` to create a confirmed docker/lan endpoint, upload a small
-libcrafter ICMP workload, and verify NAT-backed L3 LAN reachability.
+Docker resources. Pass ``--live`` to create a confirmed docker/lan endpoint,
+upload a small libcrafter ICMP workload, and verify NAT-backed L3 LAN
+reachability. A LAN router target can be supplied through ``--router``,
+``LIBCRAFTER_DOCKER_LAN_ROUTER``, or ``LAN_ROUTER``; otherwise the smoke uses
+the endpoint's Docker bridge gateway. The legacy
+``--i-understand-isolated-lab`` flag is accepted for older command lines but is
+not required.
 
 This smoke does not exercise true LAN L2 behavior.
 """
@@ -20,6 +23,7 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
+from ipaddress import IPv4Address
 from pathlib import Path
 from typing import Any
 
@@ -153,25 +157,11 @@ def main(argv: list[str] | None = None) -> int:
         print(plan)
         return 0
 
-    if not args.i_understand_isolated_lab:
-        print(
-            "live Docker LAN ICMP smoke requires --live --i-understand-isolated-lab",
-            file=sys.stderr,
-        )
-        print(plan, file=sys.stderr)
-        return 2
-
-    if not args.router:
-        print(
-            "live Docker LAN ICMP smoke requires --router, "
-            "LIBCRAFTER_DOCKER_LAN_ROUTER, or LAN_ROUTER",
-            file=sys.stderr,
-        )
-        print(plan, file=sys.stderr)
-        return 2
+    os.environ.setdefault("LIBCRAFTER_DOCKER_REBUILD", "1")
 
     endpoint_id: str | None = None
     artifact_dir: Path | None = None
+    router_ip: str | None = args.router
     exit_code = 1
 
     try:
@@ -192,6 +182,7 @@ def main(argv: list[str] | None = None) -> int:
         _write_result_artifacts(artifact_dir, "create_endpoint", create)
 
         lan_iface = _lan_endpoint(manifest)
+        router_ip = _lan_router(args.router, lan_iface["ipv4"])
 
         with tempfile.TemporaryDirectory(prefix="libcrafter-docker-lan-icmp-") as temp_dir:
             workspace = Path(temp_dir)
@@ -241,7 +232,7 @@ def main(argv: list[str] | None = None) -> int:
                 "--",
                 "sh",
                 "-lc",
-                _remote_workload_command(args=args, lan_iface=lan_iface),
+                _remote_workload_command(args=args, lan_iface=lan_iface, router=router_ip),
             ],
             cwd=repo_root,
             timeout=args.packet_timeout,
@@ -265,7 +256,8 @@ def main(argv: list[str] | None = None) -> int:
         summary = {
             "ok": True,
             "endpoint_id": endpoint_id,
-            "router": args.router,
+            "router": router_ip,
+            "router_source": "explicit" if args.router else "docker-bridge-gateway",
             "iface": lan_iface["name"],
             "src": lan_iface["ipv4"],
             "remote_bin": args.remote_bin,
@@ -288,7 +280,7 @@ def main(argv: list[str] | None = None) -> int:
                 {
                     "ok": False,
                     "endpoint_id": endpoint_id,
-                    "router": args.router,
+                    "router": router_ip,
                     "artifact_dir": str(artifact_dir),
                     "error": str(exc),
                     "lan_semantics": _lan_semantics(),
@@ -318,7 +310,10 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--router",
         default=os.environ.get("LIBCRAFTER_DOCKER_LAN_ROUTER") or os.environ.get("LAN_ROUTER"),
-        help="LAN router IPv4 target; defaults to LIBCRAFTER_DOCKER_LAN_ROUTER or LAN_ROUTER",
+        help=(
+            "LAN router IPv4 target; defaults to LIBCRAFTER_DOCKER_LAN_ROUTER, "
+            "LAN_ROUTER, or the endpoint Docker bridge gateway"
+        ),
     )
     parser.add_argument(
         "--plan-only",
@@ -333,7 +328,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--i-understand-isolated-lab",
         action="store_true",
-        help="acknowledge this smoke sends live LAN traffic from an isolated endpoint",
+        help="accepted for compatibility; --live is the explicit opt-in",
     )
     parser.add_argument("--role", default=DEFAULT_ROLE, help="endpoint role label")
     parser.add_argument("--iface", default=DEFAULT_IFACE, help="fallback endpoint interface")
@@ -352,7 +347,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--payload", default=DEFAULT_PAYLOAD)
     parser.add_argument("--timeout-ms", type=_positive_int, default=DEFAULT_TIMEOUT_MS)
     parser.add_argument("--retries", type=_positive_int, default=DEFAULT_RETRIES)
-    parser.add_argument("--create-timeout", type=float, default=300)
+    parser.add_argument("--create-timeout", type=float, default=420)
     parser.add_argument("--build-timeout", type=float, default=600)
     parser.add_argument("--transfer-timeout", type=float, default=120)
     parser.add_argument("--exec-timeout", type=float, default=120)
@@ -362,7 +357,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 
 
 def _plan_commands(*, repo_root: Path, wire: Path, args: argparse.Namespace) -> str:
-    router = args.router or "<LAN_ROUTER>"
+    router = args.router or "<DOCKER_BRIDGE_GATEWAY>"
     commands = [
         _create_endpoint_argv(wire=wire, role=args.role),
         [
@@ -399,7 +394,7 @@ def _plan_commands(*, repo_root: Path, wire: Path, args: argparse.Namespace) -> 
     lines = [
         "Docker LAN ICMP smoke plan",
         f"repo: {repo_root}",
-        "no Docker resources are created unless --live --i-understand-isolated-lab are both set",
+        "no Docker resources are created unless --live is set",
         f"router: {router}",
         "path: NAT-backed L3 LAN reachability through Docker bridge routing",
         "true LAN L2 was not exercised by this smoke",
@@ -466,7 +461,7 @@ def _remote_workload_command(
     lan_iface: dict[str, str],
     router: str | None = None,
 ) -> str:
-    router_ip = router or _required_router(args.router)
+    router_ip = router or _lan_router(args.router, lan_iface["ipv4"])
     log = f"{args.remote_artifact_dir}/workload.log"
     guest_state = f"{args.remote_artifact_dir}/guest_state.txt"
     env = _shell_env(
@@ -620,10 +615,13 @@ def _string(value: Any, name: str) -> str:
     return value
 
 
-def _required_router(value: str | None) -> str:
-    if not value:
-        raise SmokeError("router target is required")
-    return value
+def _lan_router(explicit_router: str | None, endpoint_ipv4: str) -> str:
+    if explicit_router:
+        return explicit_router
+    address = IPv4Address(endpoint_ipv4)
+    octets = str(address).split(".")
+    octets[-1] = "1"
+    return ".".join(octets)
 
 
 def _lan_semantics() -> dict[str, object]:

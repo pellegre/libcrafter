@@ -99,9 +99,9 @@ access as host-root equivalent, including membership in a Docker group. The
 provider reduces raw-packet permissions for the agent process only when agents
 use the narrow wire provider commands; arbitrary Docker access is still a host
 control surface. Provider containers must not mount the Docker socket, do not
-use `--privileged`, do not use host networking, and run with `--cap-drop ALL`,
-`--security-opt no-new-privileges`, and only the exposure-specific capabilities
-needed for packet work. Rootless Docker or restricted daemons may not support
+use `--privileged`, do not use host networking, and run with `--cap-drop ALL`
+plus only the exposure-specific capabilities needed for packet work. Rootless
+Docker or restricted daemons may not support
 the required packet capabilities; `doctor` reports that as provider readiness.
 
 Run provider checks before live creation:

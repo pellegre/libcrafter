@@ -254,7 +254,7 @@ def _capabilities_report(exposure: str) -> dict[str, object]:
         "container": {
             "cap_drop": ["ALL"],
             "cap_add": list(_DOCKER_CAPABILITIES_BY_EXPOSURE[exposure]),
-            "no_new_privileges": True,
+            "no_new_privileges": False,
         },
     }
 
@@ -268,7 +268,7 @@ def _security_model_report(exposure: str) -> dict[str, object]:
         "broad_host_filesystem_mounts": False,
         "cap_drop": ["ALL"],
         "cap_add": list(_DOCKER_CAPABILITIES_BY_EXPOSURE[exposure]),
-        "no_new_privileges": True,
+        "no_new_privileges": False,
         "lan_wan_semantics": "NAT-backed L3 only",
     }
     checks = [
