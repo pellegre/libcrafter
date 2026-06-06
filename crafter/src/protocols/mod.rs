@@ -2,11 +2,13 @@
 
 pub mod dhcp;
 pub mod dns;
+pub mod eapol;
 pub mod icmp;
 pub mod ip;
 pub mod ipv4;
 pub mod ipv6;
 pub mod link;
+pub mod rsn;
 pub mod transport;
 
 pub use crate::packet::Raw;
@@ -74,6 +76,7 @@ pub use dns::{
     DNS_TYPE_NS, DNS_TYPE_NSEC, DNS_TYPE_NSEC3, DNS_TYPE_NSEC3PARAM, DNS_TYPE_OPT, DNS_TYPE_PTR,
     DNS_TYPE_RRSIG, DNS_TYPE_SOA, DNS_TYPE_SRV, DNS_TYPE_SVCB, DNS_TYPE_TLSA, DNS_TYPE_TXT,
 };
+pub use eapol::Eapol;
 // Re-export the deprecated `Icmp*` aliases separately so the
 // `#[allow(deprecated)]` scope stays narrow: only these aliases are exempt from
 // the deprecation warning, while the rest of the icmp surface keeps full lint
@@ -201,14 +204,15 @@ pub use ipv6::{
     IPV6_SEGMENT_POLICY_SOURCE_ADDRESS, IPV6_SEGMENT_POLICY_UNSET,
 };
 pub use link::{
-    arp_hardware_type_label, arp_protocol_type_label, Arp, ArpOperation, Dot1Q, Ethernet, LinuxSll,
-    NullByteOrder, NullLoopback, Vlan, ARP_HRD_ATM, ARP_HRD_ETHERNET, ARP_HRD_FIBRE_CHANNEL,
-    ARP_HRD_IEEE_802, ARP_HRD_INFINIBAND, ARP_HRD_MAPOS, ARP_OP_ARP_NAK, ARP_OP_DRARP_ERROR,
-    ARP_OP_DRARP_REPLY, ARP_OP_DRARP_REQUEST, ARP_OP_EXP1, ARP_OP_EXP2, ARP_OP_INARP_REPLY,
-    ARP_OP_INARP_REQUEST, ARP_OP_MAPOS_UNARP, ARP_OP_RARP_REPLY, ARP_OP_RARP_REQUEST, ARP_OP_REPLY,
-    ARP_OP_REQUEST, ARP_OP_RESERVED, ARP_OP_RESERVED_MAX, ARP_PRO_IPV4, ETHERTYPE_ARP,
-    ETHERTYPE_IPV4, ETHERTYPE_IPV6, ETHERTYPE_VLAN,
+    arp_hardware_type_label, arp_protocol_type_label, Arp, ArpOperation, Dot11, Dot1Q, Ethernet,
+    LinuxSll, LlcSnap, NullByteOrder, NullLoopback, Radiotap, Vlan, ARP_HRD_ATM, ARP_HRD_ETHERNET,
+    ARP_HRD_FIBRE_CHANNEL, ARP_HRD_IEEE_802, ARP_HRD_INFINIBAND, ARP_HRD_MAPOS, ARP_OP_ARP_NAK,
+    ARP_OP_DRARP_ERROR, ARP_OP_DRARP_REPLY, ARP_OP_DRARP_REQUEST, ARP_OP_EXP1, ARP_OP_EXP2,
+    ARP_OP_INARP_REPLY, ARP_OP_INARP_REQUEST, ARP_OP_MAPOS_UNARP, ARP_OP_RARP_REPLY,
+    ARP_OP_RARP_REQUEST, ARP_OP_REPLY, ARP_OP_REQUEST, ARP_OP_RESERVED, ARP_OP_RESERVED_MAX,
+    ARP_PRO_IPV4, ETHERTYPE_ARP, ETHERTYPE_IPV4, ETHERTYPE_IPV6, ETHERTYPE_VLAN,
 };
+pub use rsn::RsnInformation;
 pub use transport::{
     tcp_option_kind_class, tcp_option_kind_is_assigned, tcp_option_kind_is_experimental,
     udp_option_kind_class, udp_option_kind_is_unsafe, udp_option_kind_is_unsupported, Tcp,
