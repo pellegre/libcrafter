@@ -3,6 +3,18 @@
 # Expected kinds intentionally assert structured error data, not full Display strings.
 
 short-ethernet|ethernet|buffer-too-short|ethernet header|0011
+short-radiotap-header|radiotap|buffer-too-short|radiotap.header|00000800000000
+invalid-radiotap-length-below-base|radiotap|buffer-too-short|radiotap.header|0000040000000000
+radiotap-length-overrun|radiotap|buffer-too-short|radiotap.header|00000c0000000000
+unterminated-radiotap-present-bitmap|radiotap|buffer-too-short|radiotap.present|0000080000000080
+truncated-radiotap-channel-field|radiotap|buffer-too-short|radiotap.field|00000a00080000006c09
+short-dot11-frame-control|dot11|buffer-too-short|dot11.frame_control|08
+truncated-dot11-data-header|dot11|buffer-too-short|dot11.header|0800000002005e10000102005e10000202005e10000310
+truncated-dot11-qos-control|dot11|buffer-too-short|dot11.header|8800000002005e10000102005e10000202005e100003200005
+truncated-dot11-address-four|dot11|buffer-too-short|dot11.header|0803000002005e10000102005e10000202005e100003300002005e1000
+truncated-dot11-tagged-parameter|dot11|buffer-too-short|dot11.tagged_parameter|80000000ffffffffffff02005e10001002005e100010400008070605040302016400110000076372
+truncated-dot11-llc-snap|dot11|buffer-too-short|llc_snap.header|0800000002005e10000102005e10000202005e1000037000aaaa0300
+truncated-dot11-rsn-ie|dot11|buffer-too-short|dot11.tagged_parameter|80000000ffffffffffff02005e10001002005e100010900008070605040302016400110030140100000fac04
 truncated-vlan-header|ethernet|buffer-too-short|vlan header|ffffffffffff020000000001810000
 short-arp-header|ethernet|buffer-too-short|arp header|ffffffffffff020000000001080600010800
 truncated-arp-addresses|ethernet|buffer-too-short|arp addresses|ffffffffffff02000000000108060001080006040001

@@ -8,8 +8,9 @@ use crafter::core::{
     DhcpOptionArea, Dns, Ethernet, Icmpv4, Icmpv6, Ipv4, Ipv4Option, Ipv4Protocol, Ipv6,
     Ipv6DestinationOptionsHeader, Ipv6FragmentHeader, Ipv6HopByHopOptionsHeader,
     Ipv6MobileRoutingHeader, Ipv6Option, Ipv6RoutingHeader, Ipv6SegmentRoutingHeader, LinkType,
-    LinuxSll, MacAddr, NetworkLayer, NullLoopback, OptionOverload, Packet, Raw, Tcp, TcpOption,
-    Udp, UdpOptionStatus, UdpOptions, Vlan, DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT,
+    LinuxSll, LlcSnap, MacAddr, NetworkLayer, NullLoopback, OptionOverload, Packet, Raw, Tcp,
+    TcpOption, Udp, UdpOptionStatus, UdpOptions, Vlan, DHCP_CLIENT_PORT, DHCP_SERVER_PORT,
+    DNS_PORT,
     IPPROTO_IPV6_AH, IPPROTO_IPV6_ESP, IPPROTO_IPV6_EXPERIMENTAL_1, IPPROTO_IPV6_EXPERIMENTAL_2,
     IPPROTO_IPV6_HIP, IPPROTO_IPV6_MOBILITY, IPPROTO_IPV6_ROUTE, IPPROTO_IPV6_SHIM6, IPPROTO_UDP,
     IPV6_ROUTING_TYPE_EXPERIMENTAL_1, IPV6_ROUTING_TYPE_EXPERIMENTAL_2, IPV6_ROUTING_TYPE_MOBILE,
@@ -20,6 +21,8 @@ use proptest::prelude::*;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum DecodeTarget {
     Ethernet,
+    Dot11,
+    Radiotap,
     LinuxSll,
     NullLoopback,
     Ipv4,
@@ -165,6 +168,12 @@ fn decode_malformed_packet_case(case: &MalformedCase) -> crafter::core::Result<P
         DecodeTarget::Ethernet => {
             decode_packet(PacketDecodeTarget::Link(LinkType::Ethernet), &case.bytes)
         }
+        DecodeTarget::Dot11 => {
+            decode_packet(PacketDecodeTarget::Link(LinkType::Ieee80211), &case.bytes)
+        }
+        DecodeTarget::Radiotap => {
+            decode_packet(PacketDecodeTarget::Link(LinkType::Radiotap), &case.bytes)
+        }
         DecodeTarget::LinuxSll => {
             decode_packet(PacketDecodeTarget::Link(LinkType::LinuxSll), &case.bytes)
         }
@@ -248,6 +257,8 @@ fn malformed_cases() -> Vec<MalformedCase> {
 fn parse_target(name: &str, target: &str) -> DecodeTarget {
     match target {
         "ethernet" => DecodeTarget::Ethernet,
+        "dot11" => DecodeTarget::Dot11,
+        "radiotap" => DecodeTarget::Radiotap,
         "linux-sll" => DecodeTarget::LinuxSll,
         "null-loopback" => DecodeTarget::NullLoopback,
         "ipv4" => DecodeTarget::Ipv4,
@@ -375,6 +386,18 @@ fn expects_decoded_udp_option_status(case: &MalformedCase) -> bool {
 fn required_malformed_families() -> &'static [&'static str] {
     &[
         "short ethernet",
+        "short radiotap header",
+        "invalid radiotap length",
+        "radiotap length overrun",
+        "unterminated radiotap present bitmap",
+        "truncated radiotap field",
+        "short dot11 frame control",
+        "truncated dot11 header",
+        "truncated dot11 qos control",
+        "truncated dot11 address four",
+        "truncated dot11 tagged parameter",
+        "truncated dot11 llc snap",
+        "truncated dot11 rsn ie",
         "truncated vlan",
         "short arp",
         "short linux sll",
@@ -453,6 +476,18 @@ fn required_malformed_families() -> &'static [&'static str] {
 fn malformed_family(name: &str) -> Option<&'static str> {
     match name {
         "short-ethernet" => Some("short ethernet"),
+        "short-radiotap-header" => Some("short radiotap header"),
+        "invalid-radiotap-length-below-base" => Some("invalid radiotap length"),
+        "radiotap-length-overrun" => Some("radiotap length overrun"),
+        "unterminated-radiotap-present-bitmap" => Some("unterminated radiotap present bitmap"),
+        "truncated-radiotap-channel-field" => Some("truncated radiotap field"),
+        "short-dot11-frame-control" => Some("short dot11 frame control"),
+        "truncated-dot11-data-header" => Some("truncated dot11 header"),
+        "truncated-dot11-qos-control" => Some("truncated dot11 qos control"),
+        "truncated-dot11-address-four" => Some("truncated dot11 address four"),
+        "truncated-dot11-tagged-parameter" => Some("truncated dot11 tagged parameter"),
+        "truncated-dot11-llc-snap" => Some("truncated dot11 llc snap"),
+        "truncated-dot11-rsn-ie" => Some("truncated dot11 rsn ie"),
         "truncated-vlan-header" => Some("truncated vlan"),
         "short-arp-header" | "truncated-arp-addresses" => Some("short arp"),
         "short-linux-sll" => Some("short linux sll"),
@@ -1291,6 +1326,145 @@ fn is_ipv6_options_malformed_case(case: &MalformedCase) -> bool {
     )
 }
 
+fn is_dot11_or_radiotap_malformed_case(case: &MalformedCase) -> bool {
+    matches!(case.target, DecodeTarget::Dot11 | DecodeTarget::Radiotap)
+}
+
+#[test]
+fn malformed_dot11_and_radiotap_corpus_errors_carry_structured_fields() {
+    let cases = malformed_cases();
+    let dot11_cases = cases
+        .iter()
+        .filter(|case| is_dot11_or_radiotap_malformed_case(case))
+        .collect::<Vec<_>>();
+    assert!(
+        !dot11_cases.is_empty(),
+        "malformed corpus must carry Dot11/radiotap vectors"
+    );
+
+    let exact_counts = [
+        ("short-radiotap-header", "radiotap.header", 8, 7),
+        (
+            "invalid-radiotap-length-below-base",
+            "radiotap.header",
+            8,
+            4,
+        ),
+        ("radiotap-length-overrun", "radiotap.header", 12, 8),
+        (
+            "unterminated-radiotap-present-bitmap",
+            "radiotap.present",
+            8,
+            4,
+        ),
+        ("truncated-radiotap-channel-field", "radiotap.field", 12, 10),
+        ("short-dot11-frame-control", "dot11.frame_control", 2, 1),
+        ("truncated-dot11-data-header", "dot11.header", 24, 23),
+        ("truncated-dot11-qos-control", "dot11.header", 26, 25),
+        ("truncated-dot11-address-four", "dot11.header", 30, 29),
+        (
+            "truncated-dot11-tagged-parameter",
+            "dot11.tagged_parameter",
+            9,
+            4,
+        ),
+        ("truncated-dot11-llc-snap", "llc_snap.header", 8, 4),
+        (
+            "truncated-dot11-rsn-ie",
+            "dot11.tagged_parameter",
+            22,
+            8,
+        ),
+    ];
+    let covered = dot11_cases
+        .iter()
+        .map(|case| case.name)
+        .collect::<std::collections::HashSet<_>>();
+    for (name, _, _, _) in exact_counts {
+        assert!(
+            covered.contains(name),
+            "malformed Dot11/radiotap corpus missing structured-field coverage for {name}"
+        );
+    }
+
+    for (name, expected_context, expected_required, expected_available) in exact_counts {
+        let case = dot11_cases
+            .iter()
+            .copied()
+            .find(|case| case.name == name)
+            .expect("checked coverage above");
+        let Err(error) = decode_malformed_case(case) else {
+            panic!(
+                "malformed Dot11/radiotap corpus case {} unexpectedly decoded",
+                case.name
+            );
+        };
+        assert_error_matches(case, error.clone());
+
+        match error {
+            CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            } => {
+                assert_eq!(
+                    context, expected_context,
+                    "malformed Dot11/radiotap case {} carried an unexpected buffer context",
+                    case.name
+                );
+                assert_eq!(
+                    required, expected_required,
+                    "malformed Dot11/radiotap case {} carried an unexpected required length",
+                    case.name
+                );
+                assert_eq!(
+                    available, expected_available,
+                    "malformed Dot11/radiotap case {} carried an unexpected available length",
+                    case.name
+                );
+                assert!(
+                    required > available,
+                    "malformed Dot11/radiotap case {} BufferTooShort must require more \
+                     ({required}) than is available ({available})",
+                    case.name
+                );
+            }
+            other => panic!(
+                "malformed Dot11/radiotap case {} returned an unexpected error {other:?}",
+                case.name
+            ),
+        }
+    }
+}
+
+#[test]
+fn malformed_dot11_truncated_eapol_payload_stays_raw_until_typed_decoder_exists() {
+    let bytes = parse_hex(
+        "truncated-dot11-eapol-raw-boundary",
+        "\
+        0800000002005e10000102005e10000202005e1000037000\
+        aaaa03000000888e0203000501\
+        ",
+    );
+
+    let packet = Packet::decode_from_link(LinkType::Ieee80211, &bytes)
+        .expect("EAPOL EtherType is preserved as Raw until the typed decoder exists");
+    let llc = packet
+        .layer::<LlcSnap>()
+        .expect("complete LLC/SNAP header should decode");
+    let raw = packet
+        .layer::<Raw>()
+        .expect("truncated EAPOL payload should remain inspectable as Raw");
+
+    assert_eq!(llc.ethertype_value(), 0x888e);
+    assert_eq!(raw.as_bytes(), &[0x02, 0x03, 0x00, 0x05, 0x01]);
+    assert_eq!(
+        packet.compile().unwrap().as_bytes(),
+        bytes.as_slice(),
+        "Raw EAPOL boundary must preserve original bytes"
+    );
+}
+
 /// Every malformed ARP vector must decode to a fully structured
 /// `CrafterError::BufferTooShort`, carrying the `context` that names the failing
 /// stage (`arp header` for a short fixed header, `arp addresses` for a truncated
@@ -1556,6 +1730,8 @@ fn malformed_corpus_decoder_paths_do_not_panic() {
 
     for expected in [
         DecodeTarget::Ethernet,
+        DecodeTarget::Dot11,
+        DecodeTarget::Radiotap,
         DecodeTarget::LinuxSll,
         DecodeTarget::NullLoopback,
         DecodeTarget::Ipv4,
@@ -1599,6 +1775,8 @@ fn malformed_corpus_reports_structured_errors() {
 
     for expected in [
         DecodeTarget::Ethernet,
+        DecodeTarget::Dot11,
+        DecodeTarget::Radiotap,
         DecodeTarget::LinuxSll,
         DecodeTarget::NullLoopback,
         DecodeTarget::Ipv4,
@@ -1811,6 +1989,8 @@ proptest! {
         ipv4_like_bytes in ipv4_like_bytes_strategy(),
     ) {
         exercise_packet_decode(PacketDecodeTarget::Link(LinkType::Ethernet), &bytes);
+        exercise_packet_decode(PacketDecodeTarget::Link(LinkType::Ieee80211), &bytes);
+        exercise_packet_decode(PacketDecodeTarget::Link(LinkType::Radiotap), &bytes);
         exercise_packet_decode(PacketDecodeTarget::Link(LinkType::LinuxSll), &bytes);
         exercise_packet_decode(PacketDecodeTarget::Link(LinkType::NullLoopback), &bytes);
         exercise_packet_decode(PacketDecodeTarget::L3(NetworkLayer::Ipv4), &bytes);
