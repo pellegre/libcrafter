@@ -3,12 +3,19 @@
 use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
-use crate::pcap::{LibpcapOfflineCapture, PcapReader, PcapRecord};
+use crate::pcap::{LibpcapCapture, LibpcapOfflineCapture, PcapReader, PcapRecord};
 
 use super::super::record::{BackendKind, PacketOrigin, PacketRecord};
 use super::super::source::PacketSource;
 use super::super::Result;
+
+pub(crate) const DEFAULT_INTERFACE_TIMEOUT: Duration = Duration::from_secs(10);
+pub(crate) const DEFAULT_INTERFACE_SNAPLEN: u32 = 65_535;
+pub(crate) const DEFAULT_INTERFACE_PROMISC: bool = true;
+pub(crate) const DEFAULT_INTERFACE_IMMEDIATE: bool = true;
+pub(crate) const DEFAULT_INTERFACE_NONBLOCKING: bool = false;
 
 /// Offline pcap packet source.
 #[derive(Debug)]
@@ -84,6 +91,215 @@ impl PacketSource for OfflinePcapSource {
     }
 }
 
+/// Builder for a live pcap interface packet source.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PcapInterfaceSourceBuilder {
+    interface: String,
+    filter: Option<String>,
+    timeout: Option<Duration>,
+    snaplen: u32,
+    promisc: bool,
+    immediate: bool,
+    nonblocking: bool,
+}
+
+impl PcapInterfaceSourceBuilder {
+    /// Create a live pcap interface source builder.
+    pub fn new(interface: impl Into<String>) -> Self {
+        Self {
+            interface: interface.into(),
+            filter: None,
+            timeout: Some(DEFAULT_INTERFACE_TIMEOUT),
+            snaplen: DEFAULT_INTERFACE_SNAPLEN,
+            promisc: DEFAULT_INTERFACE_PROMISC,
+            immediate: DEFAULT_INTERFACE_IMMEDIATE,
+            nonblocking: DEFAULT_INTERFACE_NONBLOCKING,
+        }
+    }
+
+    /// Interface this source will open.
+    pub fn interface(&self) -> &str {
+        &self.interface
+    }
+
+    /// Set a libpcap BPF filter.
+    pub fn filter(mut self, filter: impl Into<String>) -> Self {
+        let filter = filter.into();
+        self.filter = filter_trimmed(filter);
+        self
+    }
+
+    /// Remove any configured BPF filter.
+    pub fn clear_filter(mut self) -> Self {
+        self.filter = None;
+        self
+    }
+
+    /// Configured libpcap BPF filter, if any.
+    pub fn pcap_filter(&self) -> Option<&str> {
+        self.filter.as_deref()
+    }
+
+    /// Set the libpcap read timeout used while opening the interface.
+    pub fn timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = Some(timeout);
+        self
+    }
+
+    /// Disable the libpcap read timeout.
+    pub fn no_timeout(mut self) -> Self {
+        self.timeout = None;
+        self
+    }
+
+    /// Configured libpcap read timeout.
+    pub const fn timeout_limit(&self) -> Option<Duration> {
+        self.timeout
+    }
+
+    /// Set the snapshot length for live capture.
+    pub const fn snaplen(mut self, snaplen: u32) -> Self {
+        self.snaplen = snaplen;
+        self
+    }
+
+    /// Configured live capture snapshot length.
+    pub const fn snaplen_value(&self) -> u32 {
+        self.snaplen
+    }
+
+    /// Enable or disable promiscuous mode.
+    pub const fn promisc(mut self, promisc: bool) -> Self {
+        self.promisc = promisc;
+        self
+    }
+
+    /// Whether promiscuous mode is enabled.
+    pub const fn promisc_enabled(&self) -> bool {
+        self.promisc
+    }
+
+    /// Enable or disable immediate mode.
+    pub const fn immediate_mode(mut self, immediate: bool) -> Self {
+        self.immediate = immediate;
+        self
+    }
+
+    /// Whether immediate mode is enabled.
+    pub const fn immediate_mode_enabled(&self) -> bool {
+        self.immediate
+    }
+
+    /// Enable or disable nonblocking reads.
+    pub const fn nonblocking(mut self, nonblocking: bool) -> Self {
+        self.nonblocking = nonblocking;
+        self
+    }
+
+    /// Enable nonblocking reads.
+    pub const fn nonblock(self) -> Self {
+        self.nonblocking(true)
+    }
+
+    /// Whether nonblocking reads are enabled.
+    pub const fn nonblocking_enabled(&self) -> bool {
+        self.nonblocking
+    }
+
+    /// Open this live pcap interface source.
+    pub fn open(self) -> Result<PcapInterfaceSource> {
+        let inner = LibpcapCapture::open(
+            &self.interface,
+            self.filter.as_deref(),
+            self.timeout,
+            self.snaplen,
+            self.promisc,
+            self.immediate,
+            self.nonblocking,
+        )?;
+
+        Ok(PcapInterfaceSource {
+            interface: self.interface,
+            filter: self.filter,
+            timeout: self.timeout,
+            snaplen: self.snaplen,
+            promisc: self.promisc,
+            immediate: self.immediate,
+            nonblocking: self.nonblocking,
+            inner,
+        })
+    }
+}
+
+/// Live pcap interface packet source.
+#[derive(Debug)]
+pub struct PcapInterfaceSource {
+    interface: String,
+    filter: Option<String>,
+    timeout: Option<Duration>,
+    snaplen: u32,
+    promisc: bool,
+    immediate: bool,
+    nonblocking: bool,
+    inner: LibpcapCapture,
+}
+
+impl PcapInterfaceSource {
+    /// Create a builder for a live pcap interface packet source.
+    pub fn builder(interface: impl Into<String>) -> PcapInterfaceSourceBuilder {
+        PcapInterfaceSourceBuilder::new(interface)
+    }
+
+    /// Open a live pcap interface source with default options.
+    pub fn open(interface: impl Into<String>) -> Result<Self> {
+        Self::builder(interface).open()
+    }
+
+    /// Interface backing this live source.
+    pub fn interface(&self) -> &str {
+        &self.interface
+    }
+
+    /// Configured BPF filter, if this source is filtered.
+    pub fn filter(&self) -> Option<&str> {
+        self.filter.as_deref()
+    }
+
+    /// Configured libpcap read timeout.
+    pub const fn timeout_limit(&self) -> Option<Duration> {
+        self.timeout
+    }
+
+    /// Configured snapshot length.
+    pub const fn snaplen_value(&self) -> u32 {
+        self.snaplen
+    }
+
+    /// Whether promiscuous mode is enabled.
+    pub const fn promisc_enabled(&self) -> bool {
+        self.promisc
+    }
+
+    /// Whether immediate mode is enabled.
+    pub const fn immediate_mode_enabled(&self) -> bool {
+        self.immediate
+    }
+
+    /// Whether nonblocking reads are enabled.
+    pub const fn nonblocking_enabled(&self) -> bool {
+        self.nonblocking
+    }
+}
+
+impl PacketSource for PcapInterfaceSource {
+    fn next_record(&mut self) -> Result<Option<PacketRecord>> {
+        self.inner
+            .next_record()?
+            .map(|record| pcap_interface_record_to_packet_record(self.interface(), record))
+            .transpose()
+    }
+}
+
 fn pcap_record_to_packet_record(path: &Path, record: PcapRecord) -> Result<PacketRecord> {
     let packet = record.decode()?;
     Ok(PacketRecord::new(packet)
@@ -99,12 +315,37 @@ fn pcap_record_to_packet_record(path: &Path, record: PcapRecord) -> Result<Packe
         .with_captured_bytes(record.data().to_vec()))
 }
 
+fn pcap_interface_record_to_packet_record(
+    interface: &str,
+    record: PcapRecord,
+) -> Result<PacketRecord> {
+    let packet = record.decode()?;
+    Ok(PacketRecord::new(packet)
+        .with_origin(PacketOrigin::Captured)
+        .with_backend(BackendKind::PcapInterface)
+        .with_interface(interface)
+        .with_pcap_metadata(
+            record.timestamp(),
+            record.original_len(),
+            record.captured_len(),
+            record.pcap_link_type(),
+        )
+        .with_captured_bytes(record.data().to_vec()))
+}
+
+pub(crate) fn filter_trimmed(filter: impl Into<String>) -> Option<String> {
+    let filter = filter.into();
+    let filter = filter.trim();
+    (!filter.is_empty()).then(|| filter.to_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
 
     use super::*;
-    use crate::pcap::{PcapLinkType, PcapTimestamp, PcapWriter};
+    use crate::pcap::{PcapError, PcapLinkType, PcapRecord, PcapTimestamp, PcapWriter};
     use crate::{Ethernet, Ipv4, LinkType, MacAddr, Packet, PacketWire, Raw, Tcp, WireError};
 
     static NEXT_TEMP_PCAP: AtomicUsize = AtomicUsize::new(0);
@@ -227,6 +468,103 @@ mod tests {
     }
 
     #[test]
+    fn pcap_interface_source_builder_uses_live_capture_defaults() {
+        let builder = PcapInterfaceSource::builder("eth0");
+
+        assert_eq!(builder.interface(), "eth0");
+        assert_eq!(builder.pcap_filter(), None);
+        assert_eq!(builder.timeout_limit(), Some(DEFAULT_INTERFACE_TIMEOUT));
+        assert_eq!(builder.snaplen_value(), DEFAULT_INTERFACE_SNAPLEN);
+        assert_eq!(builder.promisc_enabled(), DEFAULT_INTERFACE_PROMISC);
+        assert_eq!(
+            builder.immediate_mode_enabled(),
+            DEFAULT_INTERFACE_IMMEDIATE
+        );
+        assert_eq!(builder.nonblocking_enabled(), DEFAULT_INTERFACE_NONBLOCKING);
+    }
+
+    #[test]
+    fn pcap_interface_source_builder_preserves_configured_options() {
+        let builder = PcapInterfaceSource::builder("wlan0mon")
+            .filter("  tcp and port 443  ")
+            .timeout(Duration::from_millis(250))
+            .snaplen(4096)
+            .promisc(false)
+            .immediate_mode(false)
+            .nonblock();
+
+        assert_eq!(builder.interface(), "wlan0mon");
+        assert_eq!(builder.pcap_filter(), Some("tcp and port 443"));
+        assert_eq!(builder.timeout_limit(), Some(Duration::from_millis(250)));
+        assert_eq!(builder.snaplen_value(), 4096);
+        assert!(!builder.promisc_enabled());
+        assert!(!builder.immediate_mode_enabled());
+        assert!(builder.nonblocking_enabled());
+
+        let cleared = builder.clear_filter().no_timeout().nonblocking(false);
+        assert_eq!(cleared.pcap_filter(), None);
+        assert_eq!(cleared.timeout_limit(), None);
+        assert!(!cleared.nonblocking_enabled());
+    }
+
+    #[test]
+    fn pcap_interface_record_decode_attaches_interface_metadata() {
+        let timestamp = PcapTimestamp::micros(12, 34).unwrap();
+        let packet = tcp_packet(50000, 22);
+        let captured = packet.compile().unwrap().into_bytes();
+        let pcap_record = PcapRecord::new(
+            timestamp,
+            captured.len() as u32,
+            captured.clone(),
+            PcapLinkType::Ethernet,
+        )
+        .unwrap();
+
+        let record = pcap_interface_record_to_packet_record("eth0", pcap_record).unwrap();
+
+        assert_eq!(
+            record
+                .packet()
+                .layer::<Tcp>()
+                .unwrap()
+                .destination_port_value(),
+            22
+        );
+        assert_eq!(record.metadata().origin(), PacketOrigin::Captured);
+        assert_eq!(record.metadata().backend(), &BackendKind::PcapInterface);
+        assert_eq!(record.metadata().interface(), Some("eth0"));
+        assert_eq!(record.metadata().file(), None);
+        assert_eq!(record.metadata().timestamp(), Some(timestamp));
+        assert_eq!(
+            record.metadata().original_len(),
+            Some(captured.len() as u32)
+        );
+        assert_eq!(
+            record.metadata().captured_len(),
+            Some(captured.len() as u32)
+        );
+        assert_eq!(
+            record.metadata().captured_bytes(),
+            Some(captured.as_slice())
+        );
+        assert_eq!(record.metadata().link_type(), Some(LinkType::Ethernet));
+        assert_eq!(
+            record.metadata().pcap_link_type(),
+            Some(PcapLinkType::Ethernet)
+        );
+    }
+
+    #[test]
+    fn pcap_interface_source_open_rejects_empty_interface_without_live_capture() {
+        assert_empty_interface_error(PcapInterfaceSource::builder("   ").open());
+    }
+
+    #[test]
+    fn packet_wire_pcap_interface_open_rejects_empty_interface_without_live_capture() {
+        assert_empty_interface_error(PacketWire::pcap_interface("").open());
+    }
+
+    #[test]
     fn packet_wire_pcap_file_opens_offline_source() {
         let temp = write_temp_pcap(
             "packet-wire",
@@ -285,6 +623,20 @@ mod tests {
         match err {
             WireError::Pcap(_) => {}
             other => panic!("expected pcap error for missing file, got {other:?}"),
+        }
+    }
+
+    fn assert_empty_interface_error<T>(result: Result<T>) {
+        let err = match result {
+            Ok(_) => panic!("expected empty interface to fail"),
+            Err(err) => err,
+        };
+
+        match err {
+            WireError::Pcap(PcapError::LiveCaptureUnavailable(reason)) => {
+                assert!(reason.contains("interface name"));
+            }
+            other => panic!("expected live capture unavailable error, got {other:?}"),
         }
     }
 }

@@ -34,7 +34,7 @@ impl LibpcapOfflineCapture {
     }
 }
 
-pub(super) struct LibpcapCapture {
+pub(crate) struct LibpcapCapture {
     capture: pcap_crate::Capture<pcap_crate::Active>,
     link_type: PcapLinkType,
 }
@@ -48,7 +48,7 @@ impl fmt::Debug for LibpcapCapture {
 }
 
 impl LibpcapCapture {
-    pub(super) fn open(
+    pub(crate) fn open(
         iface: &str,
         filter: Option<&str>,
         timeout: Option<Duration>,
@@ -82,7 +82,7 @@ impl LibpcapCapture {
         Ok(Self { capture, link_type })
     }
 
-    pub(super) fn next_record(&mut self) -> Result<Option<PcapRecord>> {
+    pub(crate) fn next_record(&mut self) -> Result<Option<PcapRecord>> {
         next_libpcap_record(&mut self.capture, self.link_type)
     }
 }
