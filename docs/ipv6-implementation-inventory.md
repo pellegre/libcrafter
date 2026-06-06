@@ -214,14 +214,13 @@ Oracle coverage for the IPv6 enrichment is now a focused offline path:
 - `tools/oracle/specs/stacks.yaml` includes rooted `l3:ipv6` stacks for base
   IPv6, Hop-by-Hop Options, Destination Options, Fragment Header, routing,
   TCP-chain, UDP-chain, and ICMPv6-chain cases.
-- `tools/oracle/specs/fixtures/scapy-cases.json` marks both Scapy-originated
-  and libcrafter-originated IPv6 enrichment cases.
-- `tools/oracle/engine/backends/scapy/packets.py` materializes the enriched
-  Scapy reference packets, including Hop-by-Hop Options, Destination Options,
-  Router Alert, Jumbo Payload, Home Address, Fragment Header, generic routing,
-  and SRH.
-- `tools/oracle/engine/backends/scapy/normalize.py` normalizes IPv6 extension
-  chains and option bytes for comparison.
+- The oracle reference fixture set marks both reference-originated and
+  libcrafter-originated IPv6 enrichment cases.
+- The oracle reference backend packet materializer emits enriched reference
+  packets, including Hop-by-Hop Options, Destination Options, Router Alert,
+  Jumbo Payload, Home Address, Fragment Header, generic routing, and SRH.
+- The oracle reference backend normalizer canonicalizes IPv6 extension chains
+  and option bytes for comparison.
 - `tools/oracle/adapters/src/bin/vectors/cases.rs` materializes the
   libcrafter-originated IPv6 vectors.
 

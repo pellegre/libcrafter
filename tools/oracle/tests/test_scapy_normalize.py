@@ -44,6 +44,14 @@ def _normalize(packet):
     return normalize.decode_bytes(raw, root="l2:ipv4", source_hex=raw.hex())
 
 
+class ScapyIpv4FlagNormalizeTest(unittest.TestCase):
+    def test_ipv4_reserved_flag_uses_libcrafter_name(self) -> None:
+        self.assertEqual(
+            normalize._normalize_field_value("ipv4", "flags", "evil"),
+            "reserved",
+        )
+
+
 # Native Scapy ICMP rest-of-header field names that must never survive
 # normalization; libcrafter folds them into rest_of_header / payload.
 _NATIVE_ICMP_FIELD_NAMES = (

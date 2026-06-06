@@ -997,6 +997,8 @@ def _normalize_field_value(layer_name: str, field_name: str, value: JSONValue) -
             return _normalize_tcp_flags(value)
         if layer_name == "dhcp":
             return _normalize_dhcp_flags(value)
+        if layer_name == "ipv4":
+            return _normalize_ipv4_flags(value)
         return _normalize_flags(value)
     if field_name == "is_response" and isinstance(value, int):
         return bool(value)
@@ -1011,6 +1013,13 @@ def _normalize_flags(value: JSONValue) -> JSONValue:
             return "none"
         return value.lower().replace("+", "|").replace(" ", "_")
     return value
+
+
+def _normalize_ipv4_flags(value: JSONValue) -> JSONValue:
+    normalized = _normalize_flags(value)
+    if normalized == "evil":
+        return "reserved"
+    return normalized
 
 
 def _normalize_icmpv6_type(value: str) -> str:

@@ -71,7 +71,7 @@ constructible. Every field has a setter: `source_port`/`sport`,
 `destination_port`/`dport`, `sequence_number`/`seq`,
 `acknowledgment_number`/`ack`, `window`, `urgent_pointer`/`urgptr`,
 `reserved`, `data_offset`/`dataofs`, and `checksum`/`chksum`. The short aliases
-exist for ergonomic, scapy-style construction; the long names read clearly in
+exist for ergonomic short-form construction; the long names read clearly in
 generated tool code.
 
 Control bits can be set three ways:

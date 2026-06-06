@@ -7,7 +7,7 @@ the `Icmp` → `Icmpv4` public rename, and the new ICMPv6 message families.
 
 It is the final acceptance artifact for the effort and records, per the spec's
 final acceptance criterion, every command run with its PASS/FAIL, the message
-families and options covered, the scapy interop directions, the QEMU and
+families and options covered, the reference interop directions, the QEMU and
 VirtualBox live-run outcomes, and the one real code defect found during live
 testing and its fix.
 
@@ -24,9 +24,9 @@ counts match the effort's smoke profile.
 |---|---------|--------|
 | 1 | `.agents/scripts/check-crafter-release --static` | **PASS** (exit 0) |
 | 2 | `cargo test -p crafter` | **PASS** (exit 0) |
-| 3 | `tools/oracle/run offline --backend scapy --profile smoke --seed 1 --count 10` | **PASS** — `reference_to_libcrafter` 10/10 |
-| 4 | `tools/oracle/run pcap --backend scapy --profile smoke --seed 1 --count 10` | **PASS** — `pcap roundtrip` 20/20 |
-| 5 | `python3 tools/oracle/engine/live_provider_matrix.py --providers qemu,virtualbox --backend scapy --profile smoke --seed 1 --count 2 --dry-run --out target/oracle/icmpv6-ndp-matrix-dry-run` | **PASS** — matrix `status=passed`, qemu + virtualbox each `dry-run`, no live packets sent |
+| 3 | `tools/oracle/run offline --backend <reference> --profile smoke --seed 1 --count 10` | **PASS** — `reference_to_libcrafter` 10/10 |
+| 4 | `tools/oracle/run pcap --backend <reference> --profile smoke --seed 1 --count 10` | **PASS** — `pcap roundtrip` 20/20 |
+| 5 | `python3 tools/oracle/engine/live_provider_matrix.py --providers qemu,virtualbox --backend <reference> --profile smoke --seed 1 --count 2 --dry-run --out target/oracle/icmpv6-ndp-matrix-dry-run` | **PASS** — matrix `status=passed`, qemu + virtualbox each `dry-run`, no live packets sent |
 
 ### Release gate (command 1)
 
@@ -64,8 +64,8 @@ byte-identical.
 
 ### Offline + pcap oracle (commands 3–4)
 
-- Offline (`reference_to_libcrafter`, scapy backend): **10/10 passed**.
-- Pcap round-trip (scapy backend): **20/20 passed**. (Scapy emits benign
+- Offline (`reference_to_libcrafter`, reference backend): **10/10 passed**.
+- Pcap round-trip (reference backend): **20/20 passed**. (The reference backend emits benign
   "Inconsistent linktypes" warnings on stderr while writing the mixed-linktype
   corpus; the run status is `passed`.)
 
@@ -77,8 +77,9 @@ byte-identical.
 oracle live-endpoint exchange → collect-artifacts → destroy — with
 `no_live_packets_sent: true` and `live_packet_exchange: false`. Both providers
 report `wire_skip_reasons: {requires_ipv6: 1}` because the oracle live providers
-declare `ipv6_unicast=false`; the byte-exact NDP path stays pinned by the scapy
-interop cases and the Rust round-trips rather than oracle live IPv6 send.
+declare `ipv6_unicast=false`; the byte-exact NDP path stays pinned by the
+reference interop cases and the Rust round-trips rather than oracle live IPv6
+send.
 Summary: `target/oracle/icmpv6-ndp-matrix-dry-run/matrix-summary.json`
 (under `target/`, not tracked).
 
@@ -140,29 +141,29 @@ are likewise out of scope and preserved as unknown options/messages. The named
 future effort can add typed bodies behind them. Full deferral rationale lives in
 [`docs/icmpv6-coverage.md`](../icmpv6-coverage.md).
 
-## 3. Scapy interop direction coverage
+## 3. Reference interop direction coverage
 
-Interop cases live in `tools/oracle/specs/fixtures/scapy-cases.json` and are
-materialized through the scapy backend under
-`tools/oracle/engine/backends/scapy/`.
+Interop cases live in the oracle reference fixture set and are materialized
+through the oracle reference backend.
 
-- **Both directions** (`scapy_to_libcrafter` *and* `libcrafter_to_scapy`),
-  byte-proven against scapy via direct materialization diff:
+- **Both directions** (`reference_to_libcrafter` *and* `libcrafter_to_reference`),
+  byte-proven against the reference backend via direct materialization diff:
   - NDP: RS, RA (incl. Prefix Information + MTU, Route Information, RDNSS, DNSSL,
     and a combined RA(PI+MTU+RDNSS)), NS, NS-DAD, NA, Redirect.
   - MLDv1: Query / Report / Done.
   - MLDv2: Version 2 Report and Query.
-  RS/NS/NA/Redirect and the MLD families are byte-identical to scapy; RA matches
-  once the reference's RFC 4191 Prf field is held at the value libcrafter emits
+  RS/NS/NA/Redirect and the MLD families are byte-identical to the reference
+  backend; RA matches once the reference's RFC 4191 Prf field is held at the
+  value libcrafter emits
   (libcrafter sends RFC 4861 "send-as-zero" Reserved bits as zero, and can emit
   a non-zero Prf explicitly).
-- **One direction + documented limitation** (no native scapy ICMPv6 class, so
+- **One direction + documented limitation** (no native reference ICMPv6 class, so
   byte-agreement is covered by the Rust round-trips and `ndp_option.rs` unit
   tests rather than a native-class diff):
-  - Extended Echo Request/Reply (types 160/161) — no native scapy class.
-  - Node Information Query/Response (139/140, experimental) — no native scapy
+  - Extended Echo Request/Reply (types 160/161) — no native reference class.
+  - Node Information Query/Response (139/140, experimental) — no native reference
     class.
-  - Nonce (opt 14) and RA Flags Extension (opt 26) — no native scapy option
+  - Nonce (opt 14) and RA Flags Extension (opt 26) — no native reference option
     class; materialized via `ICMPv6NDOptUnknown`.
 
 ## 4. Live-run outcomes (QEMU and VirtualBox)
