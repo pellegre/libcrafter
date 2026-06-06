@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::pcap::{PcapLinkType, PcapPacket, PcapRecord, PcapTimestamp};
-use crate::{IntoPacket, LinkType, Packet};
+use crate::{IntoPacket, LinkType, MacAddr, Packet};
 
 /// A packet plus inspectable metadata from capture, transforms, and writers.
 #[derive(Debug, Clone)]
@@ -197,6 +197,12 @@ impl PacketRecord {
         self
     }
 
+    /// Set Wi-Fi medium metadata.
+    pub fn with_wifi_metadata(mut self, wifi: WifiMetadata) -> Self {
+        self.metadata = self.metadata.with_wifi_metadata(wifi);
+        self
+    }
+
     /// Append a transform trace.
     pub fn with_transform_trace(mut self, trace: TransformTrace) -> Self {
         self.metadata.push_transform_trace(trace);
@@ -305,6 +311,14 @@ impl PacketMetadata {
     /// Medium-specific annotations.
     pub const fn medium(&self) -> Option<&MediumMetadata> {
         self.medium.as_ref()
+    }
+
+    /// Wi-Fi medium metadata when this record carries Wi-Fi annotations.
+    pub const fn wifi(&self) -> Option<&WifiMetadata> {
+        match self.medium.as_ref() {
+            Some(MediumMetadata::Wifi(wifi)) => Some(wifi),
+            _ => None,
+        }
     }
 
     /// Ordered transform history.
@@ -427,6 +441,11 @@ impl PacketMetadata {
         self
     }
 
+    /// Set Wi-Fi medium metadata.
+    pub fn with_wifi_metadata(self, wifi: WifiMetadata) -> Self {
+        self.with_medium(MediumMetadata::Wifi(wifi))
+    }
+
     /// Clear medium-specific metadata.
     pub fn clear_medium(mut self) -> Self {
         self.medium = None;
@@ -515,19 +534,95 @@ pub enum MediumMetadata {
     Other(String),
 }
 
+/// Protection marker extracted from an IEEE 802.11 frame when known.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum WifiProtectionStatus {
+    /// The frame is not marked as protected.
+    Unprotected,
+    /// The frame is marked as protected.
+    Protected,
+}
+
+impl WifiProtectionStatus {
+    /// Return true when the frame is marked as protected.
+    pub const fn is_protected(self) -> bool {
+        matches!(self, Self::Protected)
+    }
+}
+
+impl From<bool> for WifiProtectionStatus {
+    fn from(protected: bool) -> Self {
+        if protected {
+            Self::Protected
+        } else {
+            Self::Unprotected
+        }
+    }
+}
+
+/// Decryption status for future Wi-Fi transforms.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum WifiDecryptState {
+    /// The frame did not require decryption.
+    NotRequired,
+    /// The frame may require decryption, but no transform attempted it yet.
+    NotAttempted,
+    /// A transform is waiting for key material before it can decrypt.
+    KeyMaterialMissing,
+    /// A transform successfully decrypted the frame payload.
+    Decrypted,
+    /// A transform attempted decryption and could not decrypt the payload.
+    Failed,
+}
+
 /// Initial Wi-Fi annotations.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct WifiMetadata {
+    ssid: Option<Vec<u8>>,
+    bssid: Option<MacAddr>,
+    transmitter: Option<MacAddr>,
+    receiver: Option<MacAddr>,
     channel: Option<u16>,
     frequency_mhz: Option<u32>,
     signal_dbm: Option<i16>,
-    protected: Option<bool>,
+    protection: Option<WifiProtectionStatus>,
+    key_id: Option<u8>,
+    decrypt_state: Option<WifiDecryptState>,
 }
 
 impl WifiMetadata {
     /// Create empty Wi-Fi metadata.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// SSID bytes when known.
+    ///
+    /// SSIDs are bytes on the wire and are not guaranteed to be UTF-8.
+    pub fn ssid(&self) -> Option<&[u8]> {
+        self.ssid.as_deref()
+    }
+
+    /// SSID as UTF-8 when the captured bytes are valid text.
+    pub fn ssid_str(&self) -> Option<&str> {
+        self.ssid
+            .as_deref()
+            .and_then(|ssid| core::str::from_utf8(ssid).ok())
+    }
+
+    /// BSSID when known.
+    pub const fn bssid(&self) -> Option<MacAddr> {
+        self.bssid
+    }
+
+    /// Transmitter address when known.
+    pub const fn transmitter(&self) -> Option<MacAddr> {
+        self.transmitter
+    }
+
+    /// Receiver address when known.
+    pub const fn receiver(&self) -> Option<MacAddr> {
+        self.receiver
     }
 
     /// Channel number when known.
@@ -545,9 +640,61 @@ impl WifiMetadata {
         self.signal_dbm
     }
 
+    /// RSSI in dBm when known.
+    pub const fn rssi_dbm(&self) -> Option<i16> {
+        self.signal_dbm
+    }
+
+    /// Protected-frame status when known.
+    pub const fn protection_status(&self) -> Option<WifiProtectionStatus> {
+        self.protection
+    }
+
     /// Whether the frame was marked protected when known.
     pub const fn protected(&self) -> Option<bool> {
-        self.protected
+        match self.protection {
+            Some(status) => Some(status.is_protected()),
+            None => None,
+        }
+    }
+
+    /// Key identifier when known.
+    pub const fn key_id(&self) -> Option<u8> {
+        self.key_id
+    }
+
+    /// Decrypt state recorded by a future Wi-Fi transform when known.
+    pub const fn decrypt_state(&self) -> Option<WifiDecryptState> {
+        self.decrypt_state
+    }
+
+    /// Set SSID bytes.
+    pub fn with_ssid(mut self, ssid: impl Into<Vec<u8>>) -> Self {
+        self.ssid = Some(ssid.into());
+        self
+    }
+
+    /// Set SSID from text.
+    pub fn with_ssid_str(self, ssid: impl Into<String>) -> Self {
+        self.with_ssid(ssid.into().into_bytes())
+    }
+
+    /// Set BSSID.
+    pub const fn with_bssid(mut self, bssid: MacAddr) -> Self {
+        self.bssid = Some(bssid);
+        self
+    }
+
+    /// Set transmitter address.
+    pub const fn with_transmitter(mut self, transmitter: MacAddr) -> Self {
+        self.transmitter = Some(transmitter);
+        self
+    }
+
+    /// Set receiver address.
+    pub const fn with_receiver(mut self, receiver: MacAddr) -> Self {
+        self.receiver = Some(receiver);
+        self
     }
 
     /// Set channel number.
@@ -568,9 +715,36 @@ impl WifiMetadata {
         self
     }
 
+    /// Set RSSI in dBm.
+    pub const fn with_rssi_dbm(self, rssi_dbm: i16) -> Self {
+        self.with_signal_dbm(rssi_dbm)
+    }
+
+    /// Set protected-frame status.
+    pub const fn with_protection_status(mut self, protection: WifiProtectionStatus) -> Self {
+        self.protection = Some(protection);
+        self
+    }
+
     /// Set protected-frame marker.
     pub const fn with_protected(mut self, protected: bool) -> Self {
-        self.protected = Some(protected);
+        self.protection = Some(if protected {
+            WifiProtectionStatus::Protected
+        } else {
+            WifiProtectionStatus::Unprotected
+        });
+        self
+    }
+
+    /// Set key identifier.
+    pub const fn with_key_id(mut self, key_id: u8) -> Self {
+        self.key_id = Some(key_id);
+        self
+    }
+
+    /// Set decrypt state.
+    pub const fn with_decrypt_state(mut self, decrypt_state: WifiDecryptState) -> Self {
+        self.decrypt_state = Some(decrypt_state);
         self
     }
 }
@@ -857,6 +1031,73 @@ mod tests {
         assert_eq!(metadata.captured_bytes(), Some(captured.as_slice()));
         assert_eq!(metadata.pcap_link_type(), Some(PcapLinkType::Ieee80211));
         assert_eq!(metadata.link_type(), Some(LinkType::Ieee80211));
+    }
+
+    #[test]
+    fn wifi_metadata_attaches_to_packet_record() {
+        let bssid = MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x00, 0x01]);
+        let transmitter = MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x00, 0x02]);
+        let receiver = MacAddr::BROADCAST;
+        let wifi = WifiMetadata::new()
+            .with_ssid_str("labnet")
+            .with_bssid(bssid)
+            .with_transmitter(transmitter)
+            .with_receiver(receiver)
+            .with_channel(6)
+            .with_frequency_mhz(2437)
+            .with_rssi_dbm(-42)
+            .with_protection_status(WifiProtectionStatus::Protected)
+            .with_key_id(2)
+            .with_decrypt_state(WifiDecryptState::KeyMaterialMissing);
+
+        let record = PacketRecord::new(Raw::from("dot11")).with_wifi_metadata(wifi.clone());
+        let metadata = record.metadata();
+        assert_eq!(metadata.wifi(), Some(&wifi));
+        assert!(matches!(metadata.medium(), Some(MediumMetadata::Wifi(_))));
+
+        let attached = metadata.wifi().unwrap();
+        assert_eq!(attached.ssid(), Some("labnet".as_bytes()));
+        assert_eq!(attached.ssid_str(), Some("labnet"));
+        assert_eq!(attached.bssid(), Some(bssid));
+        assert_eq!(attached.transmitter(), Some(transmitter));
+        assert_eq!(attached.receiver(), Some(receiver));
+        assert_eq!(attached.channel(), Some(6));
+        assert_eq!(attached.frequency_mhz(), Some(2437));
+        assert_eq!(attached.signal_dbm(), Some(-42));
+        assert_eq!(attached.rssi_dbm(), Some(-42));
+        assert_eq!(
+            attached.protection_status(),
+            Some(WifiProtectionStatus::Protected)
+        );
+        assert_eq!(attached.protected(), Some(true));
+        assert_eq!(attached.key_id(), Some(2));
+        assert_eq!(
+            attached.decrypt_state(),
+            Some(WifiDecryptState::KeyMaterialMissing)
+        );
+    }
+
+    #[test]
+    fn wifi_metadata_preserves_raw_ssid_bytes_and_legacy_protected_marker() {
+        let wifi = WifiMetadata::new()
+            .with_ssid(vec![0xff, 0x00, b'a'])
+            .with_protected(false)
+            .with_decrypt_state(WifiDecryptState::NotRequired);
+        let metadata = PacketMetadata::new().with_wifi_metadata(wifi.clone());
+
+        let attached = metadata.wifi().unwrap();
+        assert_eq!(attached.ssid(), Some(&[0xff, 0x00, b'a'][..]));
+        assert_eq!(attached.ssid_str(), None);
+        assert_eq!(
+            attached.protection_status(),
+            Some(WifiProtectionStatus::Unprotected)
+        );
+        assert_eq!(attached.protected(), Some(false));
+        assert_eq!(
+            attached.decrypt_state(),
+            Some(WifiDecryptState::NotRequired)
+        );
+        assert_eq!(metadata.medium(), Some(&MediumMetadata::Wifi(wifi)));
     }
 
     #[test]
