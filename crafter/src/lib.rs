@@ -396,12 +396,12 @@ pub use pcap::{
 };
 pub use wire::Sniffer;
 pub use wire::{
-    BackendKind, BluetoothMetadata, DropAllTransform, DuplicateTransform, MediumMetadata,
-    MemoryPacketWriter, MemoryWrite, OpenedPacketSource, OpenedPacketWriter, PacketMetadata,
-    PacketOrigin, PacketRecord, PacketSource, PacketTransform, PacketWire, PacketWireBuilder,
-    PacketWireTarget, PacketWriter, PassThroughTransform, RadioMetadata, RawSocketWireBuilder,
-    RawSocketWriter, SnifferCancel, SnifferHandle, TraceAppendTransform, TransformOutput,
-    TransformTrace, Transmitter, VecPacketSource, WifiDecryptState, WifiMetadata,
+    BackendKind, BluetoothMetadata, Dot11Metadata, DropAllTransform, DuplicateTransform,
+    MediumMetadata, MemoryPacketWriter, MemoryWrite, OpenedPacketSource, OpenedPacketWriter,
+    PacketMetadata, PacketOrigin, PacketRecord, PacketSource, PacketTransform, PacketWire,
+    PacketWireBuilder, PacketWireTarget, PacketWriter, PassThroughTransform, RadioMetadata,
+    RawSocketWireBuilder, RawSocketWriter, SnifferCancel, SnifferHandle, TraceAppendTransform,
+    TransformOutput, TransformTrace, Transmitter, VecPacketSource, WifiDecryptState, WifiMetadata,
     WifiProtectionStatus, WireError, WriteReport,
 };
 
@@ -709,7 +709,7 @@ pub mod prelude {
         parse_ip_range, parse_numbers, read_pcap, read_pcap_filtered, reply_filter, reply_matches,
         send_packet, send_packets, send_plan, send_recv_packet, send_recv_packets, BatchSend,
         BatchSendEntry, BatchSendRecv, BatchSendRecvEntry, BatchSendRecvReport, BatchSendReport,
-        InterfaceAddress, InterfaceInfo, Ipv4Range, NetError, PacketBatchSendExt,
+        Dot11Metadata, InterfaceAddress, InterfaceInfo, Ipv4Range, NetError, PacketBatchSendExt,
         PacketBatchSendRecvExt, PacketSendExt, PacketSendRecvExt, PcapError, PcapHeader,
         PcapLinkType, PcapPacket, PcapReader, PcapRecord, PcapRecords, PcapTimestamp, PcapWriter,
         PcapWriterOptions, RawSender, ReplyMatcher, SendMode, SendOptions, SendPlan, SendRecv,
