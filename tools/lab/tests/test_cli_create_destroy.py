@@ -247,7 +247,7 @@ class _FakeEndpointClient:
         dry_run: bool,
         write_manifest: bool,
         confirm_live_run: bool,
-    ) -> "_FakeWireResponse":
+    ) -> "_FakeEndpointResponse":
         call = {
             "provider": provider,
             "exposure": exposure,
@@ -267,7 +267,7 @@ class _FakeEndpointClient:
             private_ip=private_ip,
             dry_run=dry_run,
         )
-        return _FakeWireResponse(
+        return _FakeEndpointResponse(
             operation="create",
             provider=provider,
             exposure=exposure,
@@ -281,11 +281,11 @@ class _FakeEndpointClient:
         self,
         endpoint_id: str,
         remote_path: str | None = None,
-    ) -> "_FakeWireResponse":
+    ) -> "_FakeEndpointResponse":
         self.collect_calls.append({"endpoint_id": endpoint_id, "remote_path": remote_path})
         if endpoint_id in self.fail_collect_for:
             raise RuntimeError(f"cannot collect {endpoint_id}")
-        return _FakeWireResponse(
+        return _FakeEndpointResponse(
             operation="collect_artifacts",
             provider="qemu",
             exposure="private",
@@ -295,9 +295,9 @@ class _FakeEndpointClient:
             json_data={"ok": True, "endpoint_id": endpoint_id},
         )
 
-    def destroy(self, endpoint_id: str) -> "_FakeWireResponse":
+    def destroy(self, endpoint_id: str) -> "_FakeEndpointResponse":
         self.destroy_calls.append(endpoint_id)
-        return _FakeWireResponse(
+        return _FakeEndpointResponse(
             operation="destroy",
             provider="qemu",
             exposure="private",
@@ -308,7 +308,7 @@ class _FakeEndpointClient:
         )
 
 
-class _FakeWireResponse:
+class _FakeEndpointResponse:
     def __init__(
         self,
         *,
@@ -369,7 +369,7 @@ class _FakeWireResponse:
             ],
         }[self.operation]
         return LabCommandPlan(
-            purpose=purpose or f"wire {self.operation}",
+            purpose=purpose or f"endpoint {self.operation}",
             role=role,
             argv=argv,
             operation=operation,

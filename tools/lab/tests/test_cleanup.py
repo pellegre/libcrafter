@@ -187,27 +187,27 @@ class _FakeCleanupEndpointClient:
         self,
         endpoint_id: str,
         remote_path: str | None = None,
-    ) -> "_FakeWireResponse":
+    ) -> "_FakeEndpointResponse":
         self.collect_calls.append((endpoint_id, remote_path))
         error = self.collect_failures.get(endpoint_id)
         if error is not None:
-            return _FakeWireResponse(
+            return _FakeEndpointResponse(
                 operation="collect_artifacts",
                 endpoint_id=endpoint_id,
                 ok=False,
                 exit_code=37,
                 error=error,
             )
-        return _FakeWireResponse(operation="collect_artifacts", endpoint_id=endpoint_id)
+        return _FakeEndpointResponse(operation="collect_artifacts", endpoint_id=endpoint_id)
 
-    def destroy(self, endpoint_id: str) -> "_FakeWireResponse":
+    def destroy(self, endpoint_id: str) -> "_FakeEndpointResponse":
         self.destroy_calls.append(endpoint_id)
         sequence = self.destroy_failure_sequences.get(endpoint_id)
         if sequence:
             error = sequence.pop(0)
             if error is None:
-                return _FakeWireResponse(operation="destroy", endpoint_id=endpoint_id)
-            return _FakeWireResponse(
+                return _FakeEndpointResponse(operation="destroy", endpoint_id=endpoint_id)
+            return _FakeEndpointResponse(
                 operation="destroy",
                 endpoint_id=endpoint_id,
                 ok=False,
@@ -216,14 +216,14 @@ class _FakeCleanupEndpointClient:
             )
         error = self.destroy_failures.get(endpoint_id)
         if error is not None:
-            return _FakeWireResponse(
+            return _FakeEndpointResponse(
                 operation="destroy",
                 endpoint_id=endpoint_id,
                 ok=False,
                 exit_code=38,
                 error=error,
             )
-        return _FakeWireResponse(operation="destroy", endpoint_id=endpoint_id)
+        return _FakeEndpointResponse(operation="destroy", endpoint_id=endpoint_id)
 
 
 class _FakeCreateFailureEndpointClient(_FakeCleanupEndpointClient):
@@ -243,12 +243,12 @@ class _FakeCreateFailureEndpointClient(_FakeCleanupEndpointClient):
         dry_run: bool,
         write_manifest: bool,
         confirm_live_run: bool,
-    ) -> "_FakeWireResponse":
+    ) -> "_FakeEndpointResponse":
         del provider, exposure, private_group, private_ip, write_manifest, confirm_live_run
         self.events.append(("create", role))
         if role == self.fail_role:
             raise endpoint_client.EndpointClientError(f"create {role} failed")
-        return _FakeWireResponse(
+        return _FakeEndpointResponse(
             operation="create",
             endpoint_id=f"endpoint-{role}",
             role=role,
@@ -259,16 +259,16 @@ class _FakeCreateFailureEndpointClient(_FakeCleanupEndpointClient):
         self,
         endpoint_id: str,
         remote_path: str | None = None,
-    ) -> "_FakeWireResponse":
+    ) -> "_FakeEndpointResponse":
         self.events.append(("collect", endpoint_id, remote_path))
         return super().collect_artifacts(endpoint_id, remote_path)
 
-    def destroy(self, endpoint_id: str) -> "_FakeWireResponse":
+    def destroy(self, endpoint_id: str) -> "_FakeEndpointResponse":
         self.events.append(("destroy", endpoint_id))
         return super().destroy(endpoint_id)
 
 
-class _FakeWireResponse:
+class _FakeEndpointResponse:
     def __init__(
         self,
         *,
@@ -309,7 +309,7 @@ class _FakeWireResponse:
             "destroy": ["tools/endpoint/run", "destroy", self.endpoint_id, "--json"],
         }[self.operation]
         return LabCommandPlan(
-            purpose=purpose or f"wire {self.operation}",
+            purpose=purpose or f"endpoint {self.operation}",
             role=role,
             argv=argv,
             operation=operation,

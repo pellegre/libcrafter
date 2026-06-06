@@ -75,7 +75,7 @@ class LabProviderAdapter(Protocol):
         client: endpoint_client.EndpointClient | None = None,
         created_endpoint_ids: list[str] | None = None,
     ) -> JSONObject:
-        """Plan or create provider-backed wire endpoints for all requested roles."""
+        """Plan or create provider-backed endpoints for all requested roles."""
 
     def normalize_endpoint(
         self,
@@ -85,7 +85,7 @@ class LabProviderAdapter(Protocol):
         peer_roles: Sequence[LabRole] = (),
         request: LabRequest,
     ) -> LabEndpoint:
-        """Convert a wire endpoint manifest into a provider-neutral lab endpoint."""
+        """Convert an endpoint manifest into a provider-neutral lab endpoint."""
 
     def plan_session(
         self,

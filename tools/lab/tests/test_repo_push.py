@@ -189,7 +189,7 @@ class _FakeEndpointClient:
         command: object,
         *,
         timeout: float | None = None,
-    ) -> "_FakeWireResponse":
+    ) -> "_FakeEndpointResponse":
         if not isinstance(command, (list, tuple)):
             raise TypeError("expected command sequence")
         argv = ["tools/endpoint/run", "exec", endpoint_id, "--", *[str(part) for part in command]]
@@ -201,7 +201,7 @@ class _FakeEndpointClient:
                 "argv": tuple(argv),
             }
         )
-        return _FakeWireResponse(
+        return _FakeEndpointResponse(
             operation="exec",
             endpoint_id=endpoint_id,
             argv=argv,
@@ -212,7 +212,7 @@ class _FakeEndpointClient:
         endpoint_id: str,
         local_path: str | Path,
         remote_path: str,
-    ) -> "_FakeWireResponse":
+    ) -> "_FakeEndpointResponse":
         argv = ["tools/endpoint/run", "upload", endpoint_id, str(local_path), remote_path]
         self.upload_calls.append(
             {
@@ -222,14 +222,14 @@ class _FakeEndpointClient:
                 "argv": tuple(argv),
             }
         )
-        return _FakeWireResponse(
+        return _FakeEndpointResponse(
             operation="upload",
             endpoint_id=endpoint_id,
             argv=argv,
         )
 
 
-class _FakeWireResponse:
+class _FakeEndpointResponse:
     def __init__(self, *, operation: str, endpoint_id: str, argv: list[str]) -> None:
         self.operation = operation
         self.endpoint_id = endpoint_id
@@ -245,7 +245,7 @@ class _FakeWireResponse:
         artifacts: list[str] = (),
     ) -> LabCommandPlan:
         return LabCommandPlan(
-            purpose=purpose or f"wire {self.operation}",
+            purpose=purpose or f"endpoint {self.operation}",
             role=role,
             argv=self.argv,
             operation=f"endpoint.{self.operation}",

@@ -150,7 +150,7 @@ def select_manifest_interface(
     if fallback_to_first and endpoint_manifest.interfaces:
         return endpoint_manifest.interfaces[0]
     raise ValueError(
-        f"wire manifest {endpoint_manifest.endpoint_id!r} lacks an {exposure!r} interface"
+        f"endpoint manifest {endpoint_manifest.endpoint_id!r} lacks an {exposure!r} interface"
     )
 
 
@@ -164,7 +164,7 @@ def lab_endpoint_from_manifest(
     fallback_to_first_interface: bool = False,
     metadata: Mapping[str, object] | None = None,
 ) -> LabEndpoint:
-    """Convert a wire endpoint manifest into the lab endpoint shape."""
+    """Convert an endpoint manifest into the lab endpoint shape."""
 
     endpoint_manifest = coerce_endpoint_manifest(manifest)
     lab_role = role if isinstance(role, LabRole) else LabRole(name=role)
@@ -176,7 +176,7 @@ def lab_endpoint_from_manifest(
     ipv4 = interface.ipv4 or lab_role.planned_ipv4 or lab_role.requested_private_ipv4
     if ipv4 is None:
         raise ValueError(
-            f"wire manifest {endpoint_manifest.endpoint_id!r} lacks an IPv4 address "
+            f"endpoint manifest {endpoint_manifest.endpoint_id!r} lacks an IPv4 address "
             f"for role {lab_role.name!r}"
         )
 
@@ -264,12 +264,12 @@ def normalize_provider_capabilities(
 def coerce_endpoint_manifest(
     manifest: EndpointManifest | Mapping[str, object],
 ) -> EndpointManifest:
-    """Return a typed wire endpoint manifest from model or JSON-compatible data."""
+    """Return a typed endpoint manifest from model or JSON-compatible data."""
 
     if isinstance(manifest, EndpointManifest):
         return manifest
     if not isinstance(manifest, Mapping):
-        raise ValueError("wire manifest must be an object")
+        raise ValueError("endpoint manifest must be an object")
     return EndpointManifest.from_dict(_wire_manifest_object(manifest))
 
 
