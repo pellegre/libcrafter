@@ -17,3 +17,4 @@ pub mod transmitter;
 pub mod writer;
 
 pub use error::{Result, WireError};
+pub use sniffer::Sniffer;
