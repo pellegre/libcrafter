@@ -4334,6 +4334,12 @@ def _sample_dot11_field(
     if field_name == "sequence_control":
         if not _dot11_header_has_sequence_control(frame_control):
             return _SKIP_FIELD
+        if _dot11_is_data(frame_control) and "llc_snap" in ctx.stack:
+            if domain == "sequence":
+                return 0x1230
+            if domain == "boundary":
+                return 0xFFF0
+            return 0x1000
         if domain == "absent":
             return 0x1000
         if domain == "fragment_zero":
@@ -4356,16 +4362,35 @@ def _sample_dot11_field(
     if field_name == "management_fixed_fields":
         if not _dot11_is_management(frame_control):
             return _SKIP_FIELD
-        if domain == "authentication_fixed":
-            return {"hex": "000001000000"}
-        if domain == "association_fixed":
-            return {"hex": "31040000"}
-        return {"hex": "000000000000000064000100"}
+        return {"hex": _dot11_management_fixed_hex(frame_control, str(domain))}
     if field_name == "tagged_parameters":
         return _SKIP_FIELD
     if field_name == "payload":
         return _SKIP_FIELD
     raise ValueError(f"spec error: unsupported dot11 field sampler: {field_name}")
+
+
+def _dot11_management_fixed_hex(frame_control: int, domain: str) -> str:
+    subtype = (frame_control >> 4) & 0x0F
+    if subtype in {5, 8}:  # probe response, beacon
+        return "000000000000000064000100"
+    if subtype == 0:  # association request
+        return "31040000"
+    if subtype in {1, 3}:  # association/reassociation response
+        return "310400000100"
+    if subtype == 2:  # reassociation request
+        return "3104000000005e005301"
+    if subtype == 11:  # authentication
+        return "000001000000"
+    if subtype in {10, 12}:  # disassociation/deauthentication
+        return "0100"
+    if subtype in {13, 14}:  # action/action-no-ack category
+        return "00"
+    if domain == "association_fixed":
+        return "31040000"
+    if domain == "authentication_fixed":
+        return "000001000000"
+    return ""
 
 
 def _sample_llc_snap_field(ctx: _SamplingContext, field_name: str) -> object:
@@ -4473,6 +4498,10 @@ def _dot11_is_management(frame_control: int) -> bool:
 
 def _dot11_is_control(frame_control: int) -> bool:
     return ((frame_control >> 2) & 0x3) == 1
+
+
+def _dot11_is_data(frame_control: int) -> bool:
+    return ((frame_control >> 2) & 0x3) == 2
 
 
 def _dot11_header_has_three_addresses(frame_control: int) -> bool:
