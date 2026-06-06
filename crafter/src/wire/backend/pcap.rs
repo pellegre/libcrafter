@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use crate::pcap::{LibpcapCapture, LibpcapOfflineCapture, PcapReader, PcapRecord};
 
-use super::super::record::{BackendKind, PacketOrigin, PacketRecord};
+use super::super::record::{BackendKind, PacketRecord};
 use super::super::source::PacketSource;
 use super::super::Result;
 
@@ -301,36 +301,18 @@ impl PacketSource for PcapInterfaceSource {
 }
 
 fn pcap_record_to_packet_record(path: &Path, record: PcapRecord) -> Result<PacketRecord> {
-    let packet = record.decode()?;
-    Ok(PacketRecord::new(packet)
-        .with_origin(PacketOrigin::Captured)
+    Ok(PacketRecord::try_from_pcap_record(record)?
         .with_backend(BackendKind::PcapFile)
-        .with_file(path.to_path_buf())
-        .with_pcap_metadata(
-            record.timestamp(),
-            record.original_len(),
-            record.captured_len(),
-            record.pcap_link_type(),
-        )
-        .with_captured_bytes(record.data().to_vec()))
+        .with_file(path.to_path_buf()))
 }
 
 fn pcap_interface_record_to_packet_record(
     interface: &str,
     record: PcapRecord,
 ) -> Result<PacketRecord> {
-    let packet = record.decode()?;
-    Ok(PacketRecord::new(packet)
-        .with_origin(PacketOrigin::Captured)
+    Ok(PacketRecord::try_from_pcap_record(record)?
         .with_backend(BackendKind::PcapInterface)
-        .with_interface(interface)
-        .with_pcap_metadata(
-            record.timestamp(),
-            record.original_len(),
-            record.captured_len(),
-            record.pcap_link_type(),
-        )
-        .with_captured_bytes(record.data().to_vec()))
+        .with_interface(interface))
 }
 
 pub(crate) fn filter_trimmed(filter: impl Into<String>) -> Option<String> {
@@ -346,7 +328,9 @@ mod tests {
 
     use super::*;
     use crate::pcap::{PcapError, PcapLinkType, PcapRecord, PcapTimestamp, PcapWriter};
-    use crate::{Ethernet, Ipv4, LinkType, MacAddr, Packet, PacketWire, Raw, Tcp, WireError};
+    use crate::{
+        Ethernet, Ipv4, LinkType, MacAddr, Packet, PacketOrigin, PacketWire, Raw, Tcp, WireError,
+    };
 
     static NEXT_TEMP_PCAP: AtomicUsize = AtomicUsize::new(0);
 
