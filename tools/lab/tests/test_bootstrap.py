@@ -31,7 +31,7 @@ class LabBootstrapApiTest(unittest.TestCase):
             root = Path(temp_dir)
             archive = root / "repo.tar.gz"
             archive.write_bytes(b"archive")
-            client = _FakeWireClient()
+            client = _FakeEndpointClient()
             contexts: list[RepoBootstrapContext] = []
             session = _session()
 
@@ -111,7 +111,7 @@ class LabBootstrapApiTest(unittest.TestCase):
             root = Path(temp_dir)
             archive = root / "repo.tar.gz"
             archive.write_bytes(b"archive")
-            client = _FakeWireClient(fail_bootstrap_endpoint="endpoint-target")
+            client = _FakeEndpointClient(fail_bootstrap_endpoint="endpoint-target")
 
             result = bootstrap_lab_session(
                 _session(),
@@ -161,7 +161,7 @@ class LabBootstrapApiTest(unittest.TestCase):
                     remote_dir="/opt/libcrafter-lab/session",
                     archive=archive,
                     output_dir=root / "bootstrap",
-                    client=_FakeWireClient(),
+                    client=_FakeEndpointClient(),
                 )
 
 
@@ -290,7 +290,7 @@ class WorkloadBootstrapScriptHelperTest(unittest.TestCase):
         )
 
 
-class _FakeWireClient:
+class _FakeEndpointClient:
     def __init__(self, *, fail_bootstrap_endpoint: str | None = None) -> None:
         self.fail_bootstrap_endpoint = fail_bootstrap_endpoint
         self.exec_calls: list[dict[str, Any]] = []
@@ -390,7 +390,7 @@ class _FakeWireResponse:
             purpose=purpose or f"wire {self.operation}",
             role=role,
             argv=self.argv,
-            operation=f"wire.{self.operation}",
+            operation=f"endpoint.{self.operation}",
             dry_run=False,
             live_mutation=True,
             artifacts=list(artifacts),

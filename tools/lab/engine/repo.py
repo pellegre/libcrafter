@@ -20,7 +20,7 @@ from .model import (
 )
 from .process import CommandResult, render_argv, run_command
 from .providers.common import validate_remote_dir
-from .wire_client import WireClient, repo_root
+from .endpoint_client import EndpointClient, repo_root
 
 
 DEFAULT_REPO_ARCHIVE_NAME = "libcrafter-repo.tar.gz"
@@ -271,7 +271,7 @@ def push_repository_to_session(
     session: LabSession,
     archive: str | Path | RepoArchiveResult,
     *,
-    client: WireClient | None = None,
+    client: EndpointClient | None = None,
     remote_dir: str | None = None,
     archive_name: str = DEFAULT_REPO_ARCHIVE_NAME,
     bootstrap_commands: Mapping[str, BootstrapCommandSpec] | None = None,
@@ -297,7 +297,7 @@ def push_repository_to_session(
         else _remote_artifact_root(session, target_dir)
     )
     remote_archive = _remote_archive_path(target_dir, archive_name)
-    wire = client or WireClient()
+    endpoint_cli = client or EndpointClient()
     hooks = dict(bootstrap_commands or {})
     roles_by_name = {role.name: role for role in session.roles}
     endpoints_by_role = {endpoint.role: endpoint for endpoint in session.endpoints}
@@ -322,12 +322,12 @@ def push_repository_to_session(
         endpoint_errors: list[str] = []
 
         _run_endpoint_step(
-            wire.exec,
+            endpoint_cli.exec,
             endpoint.endpoint_id,
             _ensure_remote_parent_command(remote_archive),
             purpose="prepare remote repository archive directory",
             role=endpoint.role,
-            operation="wire.exec",
+            operation="endpoint.exec",
             fallback_argv=[
                 WIRE_ENTRYPOINT,
                 "exec",
@@ -354,7 +354,7 @@ def push_repository_to_session(
             continue
 
         _run_upload_step(
-            wire,
+            endpoint_cli,
             endpoint,
             archive_path,
             remote_archive,
@@ -370,7 +370,7 @@ def push_repository_to_session(
             continue
 
         _run_endpoint_step(
-            wire.exec,
+            endpoint_cli.exec,
             endpoint.endpoint_id,
             _unpack_repository_command(
                 remote_archive=remote_archive,
@@ -379,7 +379,7 @@ def push_repository_to_session(
             ),
             purpose="unpack repository archive",
             role=endpoint.role,
-            operation="wire.exec",
+            operation="endpoint.exec",
             fallback_argv=[
                 WIRE_ENTRYPOINT,
                 "exec",
@@ -413,12 +413,12 @@ def push_repository_to_session(
         bootstrap = _bootstrap_command_for(hooks, context)
         if bootstrap is not None:
             _run_endpoint_step(
-                wire.exec,
+                endpoint_cli.exec,
                 endpoint.endpoint_id,
                 bootstrap.argv,
                 purpose="run workload bootstrap",
                 role=endpoint.role,
-                operation="wire.exec",
+                operation="endpoint.exec",
                 fallback_argv=[
                     WIRE_ENTRYPOINT,
                     "exec",
@@ -463,7 +463,7 @@ def bootstrap_lab_session(
     remote_dir: str,
     archive: str | Path | RepoArchiveResult,
     output_dir: str | Path,
-    client: WireClient | None = None,
+    client: EndpointClient | None = None,
     archive_name: str | None = None,
     remote_command_timeout: float | None = DEFAULT_REMOTE_COMMAND_TIMEOUT_SECONDS,
 ) -> LabBootstrapResult:
@@ -512,7 +512,7 @@ def push_repository(
     output_dir: str | Path,
     *,
     source_root: str | Path | None = None,
-    client: WireClient | None = None,
+    client: EndpointClient | None = None,
     remote_dir: str | None = None,
     bootstrap_commands: Mapping[str, BootstrapCommandSpec] | None = None,
     archive_runner: Callable[..., CommandResult] = run_command,
@@ -728,7 +728,7 @@ def _bootstrap_command_for(
 
 
 def _run_upload_step(
-    wire: object,
+    endpoint_client: object,
     endpoint: LabEndpoint,
     archive_path: Path,
     remote_archive: str,
@@ -740,7 +740,7 @@ def _run_upload_step(
     artifact_label: str | None = None,
 ) -> None:
     try:
-        response = wire.upload(endpoint.endpoint_id, archive_path, remote_archive)
+        response = endpoint_client.upload(endpoint.endpoint_id, archive_path, remote_archive)
     except Exception as exc:  # pragma: no cover - concrete clients vary.
         metadata = {
             "endpoint_id": endpoint.endpoint_id,
@@ -757,7 +757,7 @@ def _run_upload_step(
         plan = _exception_command_plan(
             purpose="upload repository archive",
             role=endpoint.role,
-            operation="wire.upload",
+            operation="endpoint.upload",
             argv=[
                 WIRE_ENTRYPOINT,
                 "upload",
@@ -790,7 +790,7 @@ def _run_upload_step(
         response,
         purpose="upload repository archive",
         role=endpoint.role,
-        fallback_operation="wire.upload",
+        fallback_operation="endpoint.upload",
         fallback_argv=[
             WIRE_ENTRYPOINT,
             "upload",

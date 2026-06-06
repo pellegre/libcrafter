@@ -225,7 +225,7 @@ def _session() -> LabSession:
                 purpose="create endpoint",
                 role="stimulus",
                 argv=["tools/endpoint/run", "create"],
-                operation="wire.create",
+                operation="endpoint.create",
                 dry_run=True,
                 live_mutation=True,
                 artifacts=["/tmp/libcrafter-lab/stimulus/create.json"],

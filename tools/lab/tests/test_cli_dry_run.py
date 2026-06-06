@@ -44,9 +44,9 @@ class LabCliProviderListTest(unittest.TestCase):
 
 class LabCliDoctorTest(unittest.TestCase):
     def test_doctor_calls_wire_doctor_through_registered_adapter_in_dry_run(self) -> None:
-        fake = _FakeWireClient()
+        fake = _FakeEndpointClient()
 
-        with patch("tools.lab.engine.wire_client.WireClient", return_value=fake):
+        with patch("tools.lab.engine.endpoint_client.EndpointClient", return_value=fake):
             exit_code, stdout, stderr = _run_cli(
                 "doctor",
                 "--provider",
@@ -66,7 +66,7 @@ class LabCliDoctorTest(unittest.TestCase):
             [{"provider": "virtualbox", "exposure": "private", "dry_run": True}],
         )
         self.assertEqual(payload["wire_doctor"]["provider"], "virtualbox")
-        self.assertEqual(payload["command_records"][0]["operation"], "wire.doctor")
+        self.assertEqual(payload["command_records"][0]["operation"], "endpoint.doctor")
         self.assertFalse(payload["command_records"][0]["live_mutation"])
         self.assertEqual(fake.create_calls, [])
 
@@ -82,8 +82,8 @@ class LabCliPlanTest(unittest.TestCase):
 
         for provider, wire_provider, exposure in cases:
             with self.subTest(provider=provider):
-                fake = _FakeWireClient()
-                with patch("tools.lab.engine.wire_client.WireClient", return_value=fake):
+                fake = _FakeEndpointClient()
+                with patch("tools.lab.engine.endpoint_client.EndpointClient", return_value=fake):
                     exit_code, stdout, stderr = _run_cli(
                         "plan",
                         "--provider",
@@ -130,9 +130,9 @@ class LabCliPlanTest(unittest.TestCase):
                 self.assertEqual(fake.doctor_calls, [])
 
     def test_plan_accepts_workload_label_and_role_address_overrides(self) -> None:
-        fake = _FakeWireClient()
+        fake = _FakeEndpointClient()
 
-        with patch("tools.lab.engine.wire_client.WireClient", return_value=fake):
+        with patch("tools.lab.engine.endpoint_client.EndpointClient", return_value=fake):
             exit_code, stdout, stderr = _run_cli(
                 "plan",
                 "--provider",
@@ -174,7 +174,7 @@ def _run_cli(*args: str) -> tuple[int, str, str]:
     return exit_code, stdout.getvalue(), stderr.getvalue()
 
 
-class _FakeWireClient:
+class _FakeEndpointClient:
     def __init__(self) -> None:
         self.doctor_calls: list[dict[str, object]] = []
         self.create_calls: list[dict[str, object]] = []
@@ -289,7 +289,7 @@ class _FakeWireResponse:
             purpose=purpose or f"wire {self.operation}",
             role=role,
             argv=argv,
-            operation=f"wire.{self.operation}",
+            operation=f"endpoint.{self.operation}",
             dry_run=self.dry_run,
             live_mutation=False,
             artifacts=list(artifacts),

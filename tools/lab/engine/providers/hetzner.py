@@ -21,7 +21,7 @@ from tools.endpoint.engine.providers.hetzner.constants import (
 )
 from tools.endpoint.engine.state import DEFAULT_PRIVATE_CIDR
 
-from .. import paths, wire_client
+from .. import paths, endpoint_client
 from ..model import (
     JSONObject,
     LabCommandPlan,
@@ -321,12 +321,12 @@ def hetzner_provider_workflow(request: LabRequest) -> list[LabCommandPlan]:
                 *dry_run_flag,
                 "--json",
             ],
-            operation="wire.doctor",
+            operation="endpoint.doctor",
             dry_run=request.dry_run,
             provider=PROVIDER_NAME,
             exposure=WIRE_EXPOSURE,
             metadata={
-                "wire_command": True,
+                "endpoint_command": True,
                 "private_group": private_group,
                 "private_network": True,
             },
@@ -356,13 +356,13 @@ def hetzner_provider_workflow(request: LabRequest) -> list[LabCommandPlan]:
                     *live_create_flags,
                     "--json",
                 ],
-                operation="wire.create",
+                operation="endpoint.create",
                 dry_run=request.dry_run,
                 live_mutation=not request.dry_run,
                 provider=PROVIDER_NAME,
                 exposure=WIRE_EXPOSURE,
                 metadata={
-                    "wire_command": True,
+                    "endpoint_command": True,
                     "private_group": private_group,
                     "private_network": True,
                     "private_ip": private_ip,
@@ -384,12 +384,12 @@ def hetzner_provider_workflow(request: LabRequest) -> list[LabCommandPlan]:
                     "--remote",
                     remote_artifacts,
                 ],
-                operation="wire.collect_artifacts",
+                operation="endpoint.collect_artifacts",
                 dry_run=request.dry_run,
                 provider=PROVIDER_NAME,
                 exposure=WIRE_EXPOSURE,
                 metadata={
-                    "wire_command": True,
+                    "endpoint_command": True,
                     "always_attempt": True,
                     "private_group": private_group,
                     "remote_artifact_root": remote_artifacts,
@@ -399,13 +399,13 @@ def hetzner_provider_workflow(request: LabRequest) -> list[LabCommandPlan]:
                 purpose="teardown-disposable-hetzner-wire-endpoints",
                 role=None,
                 argv=[WIRE_ENTRYPOINT, "destroy", "<endpoint-id>", "--json"],
-                operation="wire.destroy",
+                operation="endpoint.destroy",
                 dry_run=request.dry_run,
                 live_mutation=not request.dry_run,
                 provider=PROVIDER_NAME,
                 exposure=WIRE_EXPOSURE,
                 metadata={
-                    "wire_command": True,
+                    "endpoint_command": True,
                     "always_attempt": True,
                     "private_group": private_group,
                     "private_network": True,
@@ -514,7 +514,7 @@ class HetznerLabProviderAdapter:
         return hetzner_private_group(request)
 
     def requested_private_ip(self, role: LabRole, request: LabRequest) -> str | None:
-        """Return the private IPv4 address to request from wire."""
+        """Return the private IPv4 address to request from endpoint."""
 
         planned_roles = {planned.name: planned for planned in plan_hetzner_roles(request)}
         planned = planned_roles.get(role.name, role)
@@ -534,7 +534,7 @@ class HetznerLabProviderAdapter:
         self,
         request: LabRequest,
         *,
-        client: wire_client.WireClient | None = None,
+        client: endpoint_client.EndpointClient | None = None,
         created_endpoint_ids: list[str] | None = None,
     ) -> JSONObject:
         """Plan or create Hetzner wire endpoints for all request roles."""
@@ -544,7 +544,7 @@ class HetznerLabProviderAdapter:
         if not validation.passed:
             raise PermissionError("; ".join(validation.errors))
 
-        wire = client or wire_client.WireClient()
+        endpoint_cli = client or endpoint_client.EndpointClient()
         private_group = self.private_group(planned_request)
         endpoint_plans: list[JSONObject] = []
         endpoints: dict[str, JSONObject] = {}
@@ -553,7 +553,7 @@ class HetznerLabProviderAdapter:
 
         for role in planned_request.roles:
             private_ip = self.requested_private_ip(role, planned_request)
-            response = wire.create(
+            response = endpoint_cli.create(
                 provider=self.wire_provider,
                 exposure=self.wire_exposure,
                 role=role.name,
@@ -631,7 +631,7 @@ class HetznerLabProviderAdapter:
         self,
         request: LabRequest,
         *,
-        client: wire_client.WireClient | None = None,
+        client: endpoint_client.EndpointClient | None = None,
     ) -> LabSession:
         """Return a planned or live Hetzner lab session."""
 
@@ -758,23 +758,23 @@ class HetznerLabProviderAdapter:
         for command in commands:
             if len(command.argv) < 2 or command.argv[0] != WIRE_ENTRYPOINT:
                 errors.append(f"provider command must route through {WIRE_ENTRYPOINT}")
-            if command.metadata.get("wire_command") is not True:
-                errors.append("provider command must be marked as wire_command")
+            if command.metadata.get("endpoint_command") is not True:
+                errors.append("provider command must be marked as endpoint_command")
             if command.metadata.get("provider") != self.name:
                 errors.append("provider command must target Hetzner")
             if command.metadata.get("exposure") != self.wire_exposure:
                 errors.append("provider command must target private exposure")
-            if dry_run and command.operation in {"wire.doctor", "wire.create"}:
+            if dry_run and command.operation in {"endpoint.doctor", "endpoint.create"}:
                 if "--dry-run" not in command.argv:
                     errors.append(f"dry-run provider command lacks --dry-run: {command.shell()}")
                 if command.live_mutation:
                     errors.append("dry-run provider command cannot be marked live_mutation")
-            if not dry_run and command.operation == "wire.create":
+            if not dry_run and command.operation == "endpoint.create":
                 if "--confirm-live-run" not in command.argv:
                     errors.append("real provider create command lacks --confirm-live-run")
                 if not command.live_mutation:
                     errors.append("real provider create command must be live_mutation")
-            if command.operation in {"wire.collect_artifacts", "wire.destroy"}:
+            if command.operation in {"endpoint.collect_artifacts", "endpoint.destroy"}:
                 if command.metadata.get("always_attempt") is not True:
                     errors.append(f"{command.operation} must be marked always_attempt")
 

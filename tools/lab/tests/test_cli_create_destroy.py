@@ -25,11 +25,11 @@ from tools.endpoint.engine.model import (
 
 class LabCliCreateDestroyTest(unittest.TestCase):
     def test_create_refuses_live_run_without_confirmation(self) -> None:
-        fake = _FakeWireClient()
+        fake = _FakeEndpointClient()
 
         with _temporary_lab_state() as env:
             with patch.dict(os.environ, env, clear=False):
-                with patch("tools.lab.engine.wire_client.WireClient", return_value=fake):
+                with patch("tools.lab.engine.endpoint_client.EndpointClient", return_value=fake):
                     exit_code, stdout, stderr = _run_cli(
                         "create",
                         "--provider",
@@ -52,11 +52,11 @@ class LabCliCreateDestroyTest(unittest.TestCase):
         self.assertEqual(fake.create_calls, [])
 
     def test_create_persists_live_session_and_inspection_commands_read_it(self) -> None:
-        fake = _FakeWireClient()
+        fake = _FakeEndpointClient()
 
         with _temporary_lab_state() as env:
             with patch.dict(os.environ, env, clear=False):
-                with patch("tools.lab.engine.wire_client.WireClient", return_value=fake):
+                with patch("tools.lab.engine.endpoint_client.EndpointClient", return_value=fake):
                     exit_code, stdout, stderr = _run_cli(
                         "create",
                         "--provider",
@@ -108,11 +108,11 @@ class LabCliCreateDestroyTest(unittest.TestCase):
                 self.assertEqual(json.loads(info_stdout), created)
 
     def test_destroy_collects_artifacts_destroys_endpoints_and_updates_manifest(self) -> None:
-        fake = _FakeWireClient()
+        fake = _FakeEndpointClient()
 
         with _temporary_lab_state() as env:
             with patch.dict(os.environ, env, clear=False):
-                with patch("tools.lab.engine.wire_client.WireClient", return_value=fake):
+                with patch("tools.lab.engine.endpoint_client.EndpointClient", return_value=fake):
                     create_exit, create_stdout, create_stderr = _run_cli(
                         "create",
                         "--provider",
@@ -166,12 +166,12 @@ class LabCliCreateDestroyTest(unittest.TestCase):
                 self.assertEqual(persisted.to_dict(), destroyed)
 
     def test_destroy_keeps_attempting_after_collection_failure(self) -> None:
-        fake = _FakeWireClient()
+        fake = _FakeEndpointClient()
         fake.fail_collect_for.add("endpoint-qemu-private-stimulus")
 
         with _temporary_lab_state() as env:
             with patch.dict(os.environ, env, clear=False):
-                with patch("tools.lab.engine.wire_client.WireClient", return_value=fake):
+                with patch("tools.lab.engine.endpoint_client.EndpointClient", return_value=fake):
                     create_exit, create_stdout, create_stderr = _run_cli(
                         "create",
                         "--provider",
@@ -229,7 +229,7 @@ class _temporary_lab_state:
         self._temp.cleanup()
 
 
-class _FakeWireClient:
+class _FakeEndpointClient:
     def __init__(self) -> None:
         self.create_calls: list[dict[str, object]] = []
         self.collect_calls: list[dict[str, object]] = []
@@ -338,9 +338,9 @@ class _FakeWireResponse:
         artifacts: list[str] = (),
     ) -> LabCommandPlan:
         operation = {
-            "create": "wire.create",
-            "collect_artifacts": "wire.collect_artifacts",
-            "destroy": "wire.destroy",
+            "create": "endpoint.create",
+            "collect_artifacts": "endpoint.collect_artifacts",
+            "destroy": "endpoint.destroy",
         }[self.operation]
         argv = {
             "create": [

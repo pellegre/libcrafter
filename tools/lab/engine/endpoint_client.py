@@ -1,4 +1,4 @@
-"""Lab-side client for the shared wire endpoint CLI."""
+"""Lab-side client for the shared endpoint CLI."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import TypeAlias
 
 from tools.endpoint.engine.model import EndpointManifest
-from tools.endpoint.engine.model import read_json as read_wire_json
+from tools.endpoint.engine.model import read_json as read_endpoint_json
 
 from .model import JSONValue, JSONObject, LabCommandPlan
 from .process import CommandResult, render_argv, run_command
@@ -18,17 +18,17 @@ from .process import CommandResult, render_argv, run_command
 CommandRunner: TypeAlias = Callable[..., CommandResult]
 
 
-class WireClientError(RuntimeError):
-    """Raised when a wire command cannot be parsed as expected."""
+class EndpointClientError(RuntimeError):
+    """Raised when an endpoint command cannot be parsed as expected."""
 
 
 @dataclass(frozen=True, slots=True)
-class WireCommandRecord:
-    """Redacted metadata for one wire CLI invocation."""
+class EndpointCommandRecord:
+    """Redacted metadata for one endpoint CLI invocation."""
 
     operation: str
-    wire_command: str
-    wire_path: str
+    endpoint_command: str
+    endpoint_path: str
     argv: tuple[str, ...]
     command: str
     cwd: str | None
@@ -45,8 +45,8 @@ class WireCommandRecord:
     def to_dict(self) -> JSONObject:
         return {
             "operation": self.operation,
-            "wire_command": self.wire_command,
-            "wire_path": self.wire_path,
+            "endpoint_command": self.endpoint_command,
+            "endpoint_path": self.endpoint_path,
             "argv": list(self.argv),
             "redacted_argv": list(self.argv),
             "command": self.command,
@@ -72,10 +72,10 @@ class WireCommandRecord:
         """Return this record in the lab command-record shape."""
 
         return LabCommandPlan(
-            purpose=purpose or f"wire {self.operation}",
+            purpose=purpose or f"endpoint {self.operation}",
             role=role,
             argv=list(self.argv),
-            operation=f"wire.{self.operation}",
+            operation=f"endpoint.{self.operation}",
             dry_run=self.dry_run,
             live_mutation=self.live_mutation,
             artifacts=list(artifacts),
@@ -84,11 +84,11 @@ class WireCommandRecord:
 
 
 @dataclass(frozen=True, slots=True)
-class WireCommandResponse:
-    """Result of one wire CLI request plus parsed JSON when available."""
+class EndpointCommandResponse:
+    """Result of one endpoint CLI request plus parsed JSON when available."""
 
     result: CommandResult
-    record: WireCommandRecord
+    record: EndpointCommandRecord
     json_data: JSONObject | None = None
     manifest: EndpointManifest | None = None
 
@@ -123,18 +123,20 @@ class WireCommandResponse:
         )
 
 
-class WireClient:
+class EndpointClient:
     """Small process boundary around ``tools/endpoint/run`` for lab callers."""
 
     def __init__(
         self,
         *,
-        wire_path: str | Path | None = None,
+        endpoint_path: str | Path | None = None,
         runner: CommandRunner = run_command,
         cwd: str | Path | None = None,
         timeout: float | None = None,
     ) -> None:
-        self.wire_path = str(Path(wire_path).resolve() if wire_path else default_wire_path())
+        self.endpoint_path = str(
+            Path(endpoint_path).resolve() if endpoint_path else default_endpoint_path()
+        )
         self.runner = runner
         self.cwd = str(Path(cwd).resolve()) if cwd is not None else str(repo_root())
         self.timeout = timeout
@@ -145,7 +147,7 @@ class WireClient:
         provider: str,
         exposure: str,
         dry_run: bool = False,
-    ) -> WireCommandResponse:
+    ) -> EndpointCommandResponse:
         argv: list[str] = [
             "doctor",
             "--provider",
@@ -175,7 +177,7 @@ class WireClient:
         dry_run: bool = False,
         write_manifest: bool = True,
         confirm_live_run: bool = False,
-    ) -> WireCommandResponse:
+    ) -> EndpointCommandResponse:
         argv: list[str] = [
             "create",
             "--provider",
@@ -205,20 +207,20 @@ class WireClient:
             live_mutation=not dry_run,
         )
         if response.json_data is None:
-            raise WireClientError("wire create did not emit JSON")
+            raise EndpointClientError("endpoint create did not emit JSON")
         if not response.ok:
             error = response.json_data.get("error")
             detail = error if isinstance(error, str) and error else f"exit {response.exit_code}"
-            raise WireClientError(f"wire create failed: {detail}")
+            raise EndpointClientError(f"endpoint create failed: {detail}")
         manifest = _create_endpoint_manifest(response.json_data)
-        return WireCommandResponse(
+        return EndpointCommandResponse(
             result=response.result,
             record=response.record,
             json_data=response.json_data,
             manifest=manifest,
         )
 
-    def destroy(self, endpoint_id: str) -> WireCommandResponse:
+    def destroy(self, endpoint_id: str) -> EndpointCommandResponse:
         return self._run(
             "destroy",
             ["destroy", endpoint_id, "--json"],
@@ -233,9 +235,9 @@ class WireClient:
         command: Sequence[str],
         *,
         timeout: float | None = None,
-    ) -> WireCommandResponse:
+    ) -> EndpointCommandResponse:
         if not command:
-            raise ValueError("wire exec requires at least one command argument")
+            raise ValueError("endpoint exec requires at least one command argument")
         return self._run(
             "exec",
             ["exec", endpoint_id, "--", *command],
@@ -250,7 +252,7 @@ class WireClient:
         endpoint_id: str,
         local_path: str | Path,
         remote_path: str,
-    ) -> WireCommandResponse:
+    ) -> EndpointCommandResponse:
         return self._run(
             "upload",
             ["upload", endpoint_id, str(Path(local_path).resolve()), remote_path],
@@ -264,7 +266,7 @@ class WireClient:
         endpoint_id: str,
         remote_path: str,
         local_path: str | Path,
-    ) -> WireCommandResponse:
+    ) -> EndpointCommandResponse:
         return self._run(
             "download",
             ["download", endpoint_id, remote_path, str(Path(local_path).resolve())],
@@ -273,7 +275,7 @@ class WireClient:
             live_mutation=False,
         )
 
-    def ssh_info(self, endpoint_id: str) -> WireCommandResponse:
+    def ssh_info(self, endpoint_id: str) -> EndpointCommandResponse:
         return self._run(
             "ssh_info",
             ["ssh-info", endpoint_id, "--json"],
@@ -286,7 +288,7 @@ class WireClient:
         self,
         endpoint_id: str,
         remote_path: str | None = None,
-    ) -> WireCommandResponse:
+    ) -> EndpointCommandResponse:
         argv = ["collect-artifacts", endpoint_id]
         if remote_path is not None:
             argv.extend(["--remote", remote_path])
@@ -307,8 +309,8 @@ class WireClient:
         dry_run: bool,
         live_mutation: bool,
         timeout: float | None = None,
-    ) -> WireCommandResponse:
-        argv = [self.wire_path, *args]
+    ) -> EndpointCommandResponse:
+        argv = [self.endpoint_path, *args]
         result = self.runner(
             argv,
             cwd=self.cwd,
@@ -317,19 +319,19 @@ class WireClient:
         parsed = _parse_json_stdout(result.stdout, operation) if parse_json else None
         record = _record_command(
             operation,
-            wire_command=args[0],
-            wire_path=self.wire_path,
+            endpoint_command=args[0],
+            endpoint_path=self.endpoint_path,
             result=result,
             dry_run=dry_run,
             live_mutation=live_mutation,
         )
-        return WireCommandResponse(result=result, record=record, json_data=parsed)
+        return EndpointCommandResponse(result=result, record=record, json_data=parsed)
 
 
-def default_wire_path() -> Path:
-    """Return the absolute repository-local wire CLI path."""
+def default_endpoint_path() -> Path:
+    """Return the absolute repository-local endpoint CLI path."""
 
-    return repo_root() / "tools" / "wire" / "run"
+    return repo_root() / "tools" / "endpoint" / "run"
 
 
 def repo_root() -> Path:
@@ -343,9 +345,9 @@ def doctor(
     provider: str,
     exposure: str,
     dry_run: bool = False,
-    client: WireClient | None = None,
-) -> WireCommandResponse:
-    return (client or WireClient()).doctor(
+    client: EndpointClient | None = None,
+) -> EndpointCommandResponse:
+    return (client or EndpointClient()).doctor(
         provider=provider,
         exposure=exposure,
         dry_run=dry_run,
@@ -362,9 +364,9 @@ def create(
     dry_run: bool = False,
     write_manifest: bool = True,
     confirm_live_run: bool = False,
-    client: WireClient | None = None,
-) -> WireCommandResponse:
-    return (client or WireClient()).create(
+    client: EndpointClient | None = None,
+) -> EndpointCommandResponse:
+    return (client or EndpointClient()).create(
         provider=provider,
         exposure=exposure,
         role=role,
@@ -376,8 +378,8 @@ def create(
     )
 
 
-def destroy(endpoint_id: str, *, client: WireClient | None = None) -> WireCommandResponse:
-    return (client or WireClient()).destroy(endpoint_id)
+def destroy(endpoint_id: str, *, client: EndpointClient | None = None) -> EndpointCommandResponse:
+    return (client or EndpointClient()).destroy(endpoint_id)
 
 
 def exec(
@@ -385,9 +387,9 @@ def exec(
     command: Sequence[str],
     *,
     timeout: float | None = None,
-    client: WireClient | None = None,
-) -> WireCommandResponse:
-    return (client or WireClient()).exec(endpoint_id, command, timeout=timeout)
+    client: EndpointClient | None = None,
+) -> EndpointCommandResponse:
+    return (client or EndpointClient()).exec(endpoint_id, command, timeout=timeout)
 
 
 def upload(
@@ -395,9 +397,9 @@ def upload(
     local_path: str | Path,
     remote_path: str,
     *,
-    client: WireClient | None = None,
-) -> WireCommandResponse:
-    return (client or WireClient()).upload(endpoint_id, local_path, remote_path)
+    client: EndpointClient | None = None,
+) -> EndpointCommandResponse:
+    return (client or EndpointClient()).upload(endpoint_id, local_path, remote_path)
 
 
 def download(
@@ -405,38 +407,38 @@ def download(
     remote_path: str,
     local_path: str | Path,
     *,
-    client: WireClient | None = None,
-) -> WireCommandResponse:
-    return (client or WireClient()).download(endpoint_id, remote_path, local_path)
+    client: EndpointClient | None = None,
+) -> EndpointCommandResponse:
+    return (client or EndpointClient()).download(endpoint_id, remote_path, local_path)
 
 
-def ssh_info(endpoint_id: str, *, client: WireClient | None = None) -> WireCommandResponse:
-    return (client or WireClient()).ssh_info(endpoint_id)
+def ssh_info(endpoint_id: str, *, client: EndpointClient | None = None) -> EndpointCommandResponse:
+    return (client or EndpointClient()).ssh_info(endpoint_id)
 
 
 def collect_artifacts(
     endpoint_id: str,
     remote_path: str | None = None,
     *,
-    client: WireClient | None = None,
-) -> WireCommandResponse:
-    return (client or WireClient()).collect_artifacts(endpoint_id, remote_path)
+    client: EndpointClient | None = None,
+) -> EndpointCommandResponse:
+    return (client or EndpointClient()).collect_artifacts(endpoint_id, remote_path)
 
 
 def _record_command(
     operation: str,
     *,
-    wire_command: str,
-    wire_path: str,
+    endpoint_command: str,
+    endpoint_path: str,
     result: CommandResult,
     dry_run: bool,
     live_mutation: bool,
-) -> WireCommandRecord:
+) -> EndpointCommandRecord:
     redacted_argv = result.redacted_argv
-    return WireCommandRecord(
+    return EndpointCommandRecord(
         operation=operation,
-        wire_command=wire_command,
-        wire_path=wire_path,
+        endpoint_command=endpoint_command,
+        endpoint_path=endpoint_path,
         argv=redacted_argv,
         command=render_argv(redacted_argv),
         cwd=result.cwd,
@@ -456,9 +458,9 @@ def _parse_json_stdout(stdout: str, operation: str) -> JSONObject:
     try:
         parsed = json.loads(stdout)
     except json.JSONDecodeError as exc:
-        raise WireClientError(f"wire {operation} emitted invalid JSON: {exc}") from exc
+        raise EndpointClientError(f"endpoint {operation} emitted invalid JSON: {exc}") from exc
     if not isinstance(parsed, Mapping):
-        raise WireClientError(f"wire {operation} emitted non-object JSON")
+        raise EndpointClientError(f"endpoint {operation} emitted non-object JSON")
     return _json_object(parsed)
 
 
@@ -466,13 +468,13 @@ def _json_object(value: Mapping[str, object]) -> JSONObject:
     output: JSONObject = {}
     for key, item in value.items():
         if not isinstance(key, str):
-            raise WireClientError("wire JSON object keys must be strings")
+            raise EndpointClientError("endpoint JSON object keys must be strings")
         output[key] = _json_value(item)
     return output
 
 
 def _endpoint_manifest_json(value: JSONObject) -> JSONObject:
-    """Return a typed-manifest view of the wire CLI compatibility JSON."""
+    """Return a typed-manifest view of the endpoint CLI JSON."""
 
     manifest = dict(value)
     provider_resources = manifest.get("provider_resources")
@@ -494,16 +496,16 @@ def _create_endpoint_manifest(value: JSONObject) -> EndpointManifest:
         manifest_path = value.get("manifest_path")
         if isinstance(manifest_path, str) and manifest_path:
             try:
-                stored = read_wire_json(manifest_path)
+                stored = read_endpoint_json(manifest_path)
             except (OSError, ValueError) as stored_exc:
-                raise WireClientError(
-                    "wire create JSON is not an endpoint manifest "
+                raise EndpointClientError(
+                    "endpoint create JSON is not an endpoint manifest "
                     f"and stored manifest could not be read: {stored_exc}"
                 ) from exc
             if isinstance(stored, Mapping):
                 return EndpointManifest.from_dict(_endpoint_manifest_json(_json_object(stored)))
-        raise WireClientError(
-            f"wire create JSON is not an endpoint manifest: {exc}"
+        raise EndpointClientError(
+            f"endpoint create JSON is not an endpoint manifest: {exc}"
         ) from exc
 
 
@@ -514,4 +516,4 @@ def _json_value(value: object) -> JSONValue:
         return _json_object(value)
     if isinstance(value, list):
         return [_json_value(item) for item in value]
-    raise WireClientError(f"wire JSON value is not JSON-compatible: {value!r}")
+    raise EndpointClientError(f"endpoint JSON value is not JSON-compatible: {value!r}")

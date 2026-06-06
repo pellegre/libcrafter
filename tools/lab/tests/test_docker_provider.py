@@ -143,7 +143,7 @@ class DockerProviderCapabilityTest(unittest.TestCase):
 
 
 class DockerProviderWorkflowTest(unittest.TestCase):
-    def test_provider_workflow_plans_private_wire_commands(self) -> None:
+    def test_provider_workflow_plans_private_endpoint_commands(self) -> None:
         request = _request()
         adapter = DOCKER_LAB_PROVIDER_ADAPTER
 
@@ -153,7 +153,7 @@ class DockerProviderWorkflowTest(unittest.TestCase):
         self.assertTrue(validation.passed, validation.errors)
         self.assertEqual(workflow[0].purpose, "check-docker-private-wire")
         create_commands = [
-            command for command in workflow if command.operation == "wire.create"
+            command for command in workflow if command.operation == "endpoint.create"
         ]
         self.assertEqual(len(create_commands), 2)
         self.assertTrue(all("--dry-run" in command.argv for command in create_commands))
@@ -172,7 +172,7 @@ class DockerProviderWorkflowTest(unittest.TestCase):
 class DockerProviderSessionPlanningTest(unittest.TestCase):
     def test_plan_session_uses_wire_dry_run_and_returns_lab_session(self) -> None:
         request = _request()
-        client = _FakeWireClient()
+        client = _FakeEndpointClient()
 
         session = DOCKER_LAB_PROVIDER_ADAPTER.plan_session(request, client=client)
 
@@ -210,7 +210,7 @@ class DockerProviderSessionPlanningTest(unittest.TestCase):
 
     def test_live_request_without_confirmation_is_rejected_before_wire_create(self) -> None:
         request = _request(dry_run=False, confirm_live_run=False)
-        client = _FakeWireClient()
+        client = _FakeEndpointClient()
 
         with self.assertRaisesRegex(PermissionError, "confirm_live_run"):
             DOCKER_LAB_PROVIDER_ADAPTER.wire_endpoint_plan(request, client=client)
@@ -239,7 +239,7 @@ def _request(
     )
 
 
-class _FakeWireClient:
+class _FakeEndpointClient:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
 
@@ -309,7 +309,7 @@ class _FakeWireCreateResponse:
             purpose=purpose or "wire create",
             role=role,
             argv=argv,
-            operation="wire.create",
+            operation="endpoint.create",
             dry_run=bool(self.call["dry_run"]),
             live_mutation=not bool(self.call["dry_run"]),
             artifacts=list(artifacts),

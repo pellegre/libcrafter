@@ -8,7 +8,7 @@ import sys
 from collections.abc import Sequence
 
 from . import session as lab_session_state
-from . import wire_client
+from . import endpoint_client
 from .model import JSONObject, LabRequest, LabRole, LabSession
 from .providers import UnknownLabProviderError, registered_providers, resolve_lab_provider
 
@@ -182,8 +182,8 @@ def _run_doctor(args: argparse.Namespace) -> int:
     try:
         adapter = resolve_lab_provider(args.provider)
         dry_run = True
-        wire = wire_client.WireClient()
-        response = wire.doctor(
+        endpoint = endpoint_client.EndpointClient()
+        response = endpoint.doctor(
             provider=adapter.wire_provider,
             exposure=adapter.wire_exposure,
             dry_run=dry_run,
@@ -218,7 +218,7 @@ def _run_doctor(args: argparse.Namespace) -> int:
             ),
             exit_code=exit_code,
         )
-    except (UnknownLabProviderError, wire_client.WireClientError, ValueError) as exc:
+    except (UnknownLabProviderError, endpoint_client.EndpointClientError, ValueError) as exc:
         return _write_output(
             _error_output(args, exc),
             args,
@@ -259,7 +259,7 @@ def _run_plan(args: argparse.Namespace) -> int:
         PermissionError,
         UnknownLabProviderError,
         ValueError,
-        wire_client.WireClientError,
+        endpoint_client.EndpointClientError,
     ) as exc:
         return _write_output(
             _error_output(args, exc),
@@ -310,7 +310,7 @@ def _run_create(args: argparse.Namespace) -> int:
         PermissionError,
         UnknownLabProviderError,
         ValueError,
-        wire_client.WireClientError,
+        endpoint_client.EndpointClientError,
     ) as exc:
         return _write_output(
             _error_output(args, exc),
@@ -331,7 +331,7 @@ def _run_destroy(args: argparse.Namespace) -> int:
             text=f"lab destroy: session={lab_session.session_id} status={cleanup_status}",
             exit_code=exit_code,
         )
-    except (FileNotFoundError, ValueError, wire_client.WireClientError) as exc:
+    except (FileNotFoundError, ValueError, endpoint_client.EndpointClientError) as exc:
         return _write_output(
             _error_output(args, exc),
             args,

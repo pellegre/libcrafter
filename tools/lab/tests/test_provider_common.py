@@ -62,7 +62,7 @@ class ProviderCommonCommandPlanTest(unittest.TestCase):
             purpose="create stimulus endpoint",
             role="provider",
             argv=["tools/endpoint/run", "create", "--json"],
-            operation="wire.create",
+            operation="endpoint.create",
             dry_run=True,
             live_mutation=False,
             provider="qemu",
@@ -71,7 +71,7 @@ class ProviderCommonCommandPlanTest(unittest.TestCase):
         )
 
         self.assertIsInstance(plan, LabCommandPlan)
-        self.assertEqual(plan.operation, "wire.create")
+        self.assertEqual(plan.operation, "endpoint.create")
         self.assertTrue(plan.dry_run)
         self.assertFalse(plan.live_mutation)
         self.assertEqual(plan.metadata["provider"], "qemu")

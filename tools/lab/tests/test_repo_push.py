@@ -27,8 +27,8 @@ class RepositoryArchiveTest(unittest.TestCase):
             _write(source / "Cargo.toml", "[workspace]\n")
             _write(source / "src" / "lib.rs", "pub fn ok() {}\n")
             _write(source / "target" / "debug" / "libcrafter.rlib", "build\n")
-            _write(source / "tools" / "wire" / ".state" / "endpoint.json", "{}\n")
-            _write(source / "tools" / "wire" / "artifacts" / "upload.log", "wire\n")
+            _write(source / "tools" / "endpoint" / ".state" / "endpoint.json", "{}\n")
+            _write(source / "tools" / "endpoint" / "artifacts" / "upload.log", "wire\n")
             _write(source / "tools" / "lab" / ".state" / "session.json", "{}\n")
             _write(source / "tools" / "lab" / "artifacts" / "repo.tar.gz", "lab\n")
             _write(source / "generated" / "case.json", "{}\n")
@@ -57,7 +57,7 @@ class RepositoryPushTest(unittest.TestCase):
             root = Path(temp_dir)
             archive = root / "libcrafter-repo.tar.gz"
             archive.write_bytes(b"archive")
-            client = _FakeWireClient()
+            client = _FakeEndpointClient()
             contexts: list[RepoBootstrapContext] = []
 
             def stimulus_bootstrap(context: RepoBootstrapContext) -> RepoBootstrapCommand:
@@ -148,7 +148,7 @@ class RepositoryPushTest(unittest.TestCase):
                 _session(),
                 root / "out",
                 source_root=source,
-                client=_FakeWireClient(),
+                client=_FakeEndpointClient(),
             )
 
             self.assertTrue(result.ok)
@@ -168,17 +168,17 @@ class RepositoryPushTest(unittest.TestCase):
                 push_repository_to_session(
                     _session(dry_run=True),
                     archive,
-                    client=_FakeWireClient(),
+                    client=_FakeEndpointClient(),
                 )
             with self.assertRaisesRegex(RepoPushError, "must not be /"):
                 push_repository_to_session(
                     _session(remote_dir="/"),
                     archive,
-                    client=_FakeWireClient(),
+                    client=_FakeEndpointClient(),
                 )
 
 
-class _FakeWireClient:
+class _FakeEndpointClient:
     def __init__(self) -> None:
         self.exec_calls: list[dict[str, Any]] = []
         self.upload_calls: list[dict[str, Any]] = []
@@ -248,7 +248,7 @@ class _FakeWireResponse:
             purpose=purpose or f"wire {self.operation}",
             role=role,
             argv=self.argv,
-            operation=f"wire.{self.operation}",
+            operation=f"endpoint.{self.operation}",
             dry_run=False,
             live_mutation=True,
             artifacts=list(artifacts),
