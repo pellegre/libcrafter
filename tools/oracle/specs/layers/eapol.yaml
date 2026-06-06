@@ -1,0 +1,163 @@
+version: 1
+kind: layer
+name: eapol
+summary: IEEE 802.1X EAPOL frame header and RSN EAPOL-Key fields carried through LLC/SNAP EtherType 0x888e.
+
+roots: []
+parents:
+  - llc_snap
+children:
+  - rsn
+  - payload
+
+supported_directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+  - roundtrip
+live_eligibility: false
+live_gate: inherited_from_dot11_radiotap
+
+fields:
+  - name: version
+    type: uint8
+    required: true
+    domains:
+      - 1
+      - 2
+      - 3
+      - explicit
+  - name: packet_type
+    type: uint8
+    required: true
+    domains:
+      - eap_packet
+      - start
+      - logoff
+      - key
+      - asf_alert
+      - unknown
+  - name: body_length
+    type: uint16
+    required: true
+    domains:
+      - derived
+      - empty
+      - key_frame
+      - boundary
+  - name: descriptor_type
+    type: uint8
+    required: false
+    domains:
+      - absent
+      - rc4_key
+      - rsn_key
+      - unknown
+  - name: key_information
+    type: uint16
+    required: false
+    domains:
+      - absent
+      - pairwise
+      - install
+      - ack
+      - mic
+      - secure
+      - encrypted_key_data
+      - request
+      - error
+      - boundary
+  - name: key_length
+    type: uint16
+    required: false
+    domains:
+      - absent
+      - zero
+      - ccmp
+      - tkip
+      - boundary
+  - name: replay_counter
+    type: uint64
+    required: false
+    domains:
+      - absent
+      - deterministic
+      - boundary
+  - name: key_nonce
+    type: bytes
+    required: false
+    domains:
+      - absent
+      - zero32
+      - deterministic32
+  - name: key_iv
+    type: bytes
+    required: false
+    domains:
+      - absent
+      - zero16
+      - deterministic16
+  - name: key_rsc
+    type: bytes
+    required: false
+    domains:
+      - absent
+      - zero8
+      - deterministic8
+  - name: key_id
+    type: bytes
+    required: false
+    domains:
+      - absent
+      - zero8
+      - deterministic8
+  - name: key_mic
+    type: bytes
+    required: false
+    domains:
+      - absent
+      - zero16
+      - deterministic16
+  - name: key_data_length
+    type: uint16
+    required: false
+    domains:
+      - absent
+      - derived
+      - zero
+      - with_rsn
+      - boundary
+  - name: key_data
+    type: bytes
+    required: false
+    domains:
+      - absent
+      - empty
+      - rsn
+      - synthetic
+      - unknown
+
+coverage_cases:
+  - eapol-start
+  - eapol-key-rsn
+  - eapol-key-data-rsn
+  - eapol-unknown-type-raw
+  - crafter-eapol-roundtrip
+
+backend_support:
+  scapy:
+    status: planned
+    native_layers:
+      - EAPOL
+      - EAPOL_KEY
+    notes:
+      - Offline materialization and normalization are added in later Dot11 oracle steps.
+  wireshark:
+    status: planned
+    native_layers:
+      - eapol
+    notes:
+      - Parser-only pcap decode coverage is optional and must skip when tshark is unavailable.
+  libcrafter:
+    status: planned
+    notes:
+      - EAPOL-Key parsing is a phase 1.5 foundation for later offline decrypt primitives, not live handshake capture automation.

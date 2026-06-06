@@ -1,0 +1,148 @@
+version: 1
+kind: layer
+name: radiotap
+summary: Radiotap metadata header carrying IEEE 802.11 frames, including present bitmaps, aligned fields, FCS metadata, and raw-preserved unknown fields.
+
+roots: []
+parents:
+  - root
+children:
+  - dot11
+
+planned_roots:
+  - "link:radiotap"
+supported_directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+  - roundtrip
+live_eligibility: false
+live_gate: manual_monitor_mode_radiotap_only
+
+fields:
+  - name: version
+    type: uint8
+    required: true
+    domains:
+      - 0
+      - explicit_nonzero
+  - name: pad
+    type: uint8
+    required: true
+    domains:
+      - 0
+  - name: length
+    type: uint16
+    required: true
+    domains:
+      - derived
+      - minimum
+      - with_present_fields
+      - boundary
+  - name: present_words
+    type: uint32_list
+    required: true
+    domains:
+      - none
+      - selected_fields
+      - extended
+      - unknown_bits
+  - name: flags
+    type: flags
+    required: false
+    domains:
+      - absent
+      - none
+      - fcs_present
+      - failed_fcs
+      - fcs_present_failed
+  - name: rate
+    type: uint8
+    required: false
+    domains:
+      - absent
+      - 2
+      - 12
+      - 108
+  - name: channel_frequency
+    type: uint16
+    required: false
+    domains:
+      - absent
+      - 2412
+      - 2437
+      - 5180
+  - name: channel_flags
+    type: flags
+    required: false
+    domains:
+      - absent
+      - two_ghz_cck
+      - two_ghz_ofdm
+      - five_ghz_ofdm
+  - name: dbm_antenna_signal
+    type: int8
+    required: false
+    domains:
+      - absent
+      - synthetic_signal
+      - boundary
+  - name: antenna
+    type: uint8
+    required: false
+    domains:
+      - absent
+      - 0
+      - 1
+  - name: rx_flags
+    type: uint16
+    required: false
+    domains:
+      - absent
+      - none
+      - failed_fcs
+  - name: tx_flags
+    type: uint16
+    required: false
+    domains:
+      - absent
+      - none
+      - no_ack
+  - name: unknown_fields
+    type: bytes
+    required: false
+    domains:
+      - absent
+      - deterministic
+      - aligned_padding
+  - name: fcs_status
+    type: enum
+    required: false
+    domains:
+      - absent
+      - present
+      - failed
+      - present_failed
+
+coverage_cases:
+  - radiotap-basic
+  - radiotap-unknown-fields
+  - radiotap-fcs-metadata
+  - crafter-radiotap-roundtrip
+
+backend_support:
+  scapy:
+    status: planned
+    native_layers:
+      - RadioTap
+    notes:
+      - Offline materialization and normalization are added in later Dot11 oracle steps.
+  wireshark:
+    status: planned
+    native_layers:
+      - radiotap
+    notes:
+      - Parser-only pcap decode coverage is optional and must skip when tshark is unavailable.
+  libcrafter:
+    status: planned
+    notes:
+      - Live endpoint eligibility remains false until explicit monitor-mode injection support is added.

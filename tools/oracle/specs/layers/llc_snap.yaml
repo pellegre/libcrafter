@@ -1,0 +1,97 @@
+version: 1
+kind: layer
+name: llc_snap
+summary: IEEE 802.2 LLC SNAP encapsulation used by unprotected IEEE 802.11 data frames to carry EtherType-based protocols.
+
+roots: []
+parents:
+  - dot11
+children:
+  - arp
+  - ipv4
+  - ipv6
+  - eapol
+  - payload
+
+supported_directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+  - roundtrip
+live_eligibility: false
+live_gate: inherited_from_dot11_radiotap
+
+fields:
+  - name: dsap
+    type: uint8
+    required: true
+    domains:
+      - snap
+      - non_snap
+      - boundary
+  - name: ssap
+    type: uint8
+    required: true
+    domains:
+      - snap
+      - non_snap
+      - boundary
+  - name: control
+    type: uint8
+    required: true
+    domains:
+      - unnumbered_information
+      - non_snap
+      - boundary
+  - name: oui
+    type: uint24
+    required: true
+    domains:
+      - rfc1042_zero
+      - unknown
+      - boundary
+  - name: ethertype
+    type: uint16
+    required: true
+    domains:
+      - ipv4
+      - ipv6
+      - arp
+      - eapol
+      - experimental
+      - unknown
+  - name: payload_length
+    type: uint16
+    required: true
+    domains:
+      - derived
+      - empty
+      - synthetic
+      - boundary
+
+coverage_cases:
+  - llc-snap-ipv4
+  - llc-snap-ipv6
+  - llc-snap-arp
+  - llc-snap-eapol
+  - llc-snap-unknown-raw
+  - crafter-llc-snap-roundtrip
+
+backend_support:
+  scapy:
+    status: planned
+    native_layers:
+      - LLC
+      - SNAP
+    notes:
+      - Offline materialization and normalization are added in later Dot11 oracle steps.
+  wireshark:
+    status: planned
+    native_layers:
+      - llc
+      - snap
+    notes:
+      - Parser-only pcap decode coverage is optional and must skip when tshark is unavailable.
+  libcrafter:
+    status: planned
+    notes:
+      - LLC/SNAP is the explicit bridge for IP, ARP, and EAPOL over IEEE 802.11 data.

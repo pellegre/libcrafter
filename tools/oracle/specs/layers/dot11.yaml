@@ -1,0 +1,223 @@
+version: 1
+kind: layer
+name: dot11
+summary: IEEE 802.11 MAC frame header for management, control, and data frames, preserving protected payloads and unsupported subtypes as raw data.
+
+roots: []
+parents:
+  - root
+  - radiotap
+children:
+  - llc_snap
+  - rsn
+  - payload
+
+planned_roots:
+  - "link:dot11"
+  - "link:ieee80211"
+supported_directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+  - roundtrip
+live_eligibility: false
+live_gate: manual_monitor_mode_radiotap_only
+
+fields:
+  - name: frame_control
+    type: uint16
+    required: true
+    domains:
+      - management
+      - control
+      - data
+      - qos_data
+      - protected_data
+      - tods_fromds
+      - unknown_subtype
+  - name: protocol_version
+    type: uint2
+    required: true
+    domains:
+      - 0
+      - explicit_nonzero
+  - name: frame_type
+    type: uint2
+    required: true
+    domains:
+      - management
+      - control
+      - data
+      - extension
+  - name: subtype
+    type: uint4
+    required: true
+    domains:
+      - association_request
+      - probe_request
+      - beacon
+      - authentication
+      - deauthentication
+      - rts
+      - cts
+      - ack
+      - data
+      - qos_data
+      - unknown
+  - name: to_ds
+    type: uint1
+    required: true
+    domains:
+      - 0
+      - 1
+  - name: from_ds
+    type: uint1
+    required: true
+    domains:
+      - 0
+      - 1
+  - name: more_fragments
+    type: uint1
+    required: true
+    domains:
+      - 0
+      - 1
+  - name: retry
+    type: uint1
+    required: true
+    domains:
+      - 0
+      - 1
+  - name: power_management
+    type: uint1
+    required: true
+    domains:
+      - 0
+      - 1
+  - name: more_data
+    type: uint1
+    required: true
+    domains:
+      - 0
+      - 1
+  - name: protected
+    type: uint1
+    required: true
+    domains:
+      - 0
+      - 1
+  - name: order
+    type: uint1
+    required: true
+    domains:
+      - 0
+      - 1
+  - name: duration_id
+    type: uint16
+    required: true
+    domains:
+      - 0
+      - nav
+      - association_id
+      - boundary
+  - name: addr1
+    type: mac
+    required: true
+    domains:
+      - documentation_mac
+      - broadcast
+      - zero
+  - name: addr2
+    type: mac
+    required: false
+    domains:
+      - absent
+      - documentation_mac
+      - zero
+  - name: addr3
+    type: mac
+    required: false
+    domains:
+      - absent
+      - documentation_mac
+      - zero
+  - name: addr4
+    type: mac
+    required: false
+    domains:
+      - absent
+      - documentation_mac
+      - zero
+  - name: sequence_control
+    type: uint16
+    required: false
+    domains:
+      - absent
+      - fragment_zero
+      - sequence
+      - boundary
+  - name: qos_control
+    type: uint16
+    required: false
+    domains:
+      - absent
+      - tid_zero
+      - ack_policy
+      - boundary
+  - name: ht_control
+    type: uint32
+    required: false
+    domains:
+      - absent
+      - raw_preserved
+  - name: management_fixed_fields
+    type: bytes
+    required: false
+    domains:
+      - absent
+      - beacon_fixed
+      - authentication_fixed
+      - association_fixed
+      - synthetic
+  - name: tagged_parameters
+    type: option_list
+    required: false
+    domains:
+      - absent
+      - ssid
+      - supported_rates
+      - rsn
+      - unknown
+      - truncated
+  - name: payload
+    type: bytes
+    required: false
+    domains:
+      - absent
+      - synthetic_unprotected
+      - synthetic_protected
+      - empty
+
+coverage_cases:
+  - dot11-data-basic
+  - dot11-qos-data
+  - dot11-protected-raw
+  - dot11-management-rsn
+  - crafter-dot11-roundtrip
+
+backend_support:
+  scapy:
+    status: planned
+    native_layers:
+      - Dot11
+    notes:
+      - Offline materialization and normalization are added in later Dot11 oracle steps.
+  wireshark:
+    status: planned
+    native_layers:
+      - wlan
+    notes:
+      - Parser-only pcap decode coverage is optional and must skip when tshark is unavailable.
+  libcrafter:
+    status: planned
+    notes:
+      - Bare IEEE 802.11 live sends are not eligible; live use is gated by radiotap monitor-mode injection.

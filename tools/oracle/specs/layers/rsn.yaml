@@ -1,0 +1,125 @@
+version: 1
+kind: layer
+name: rsn
+summary: IEEE 802.11 RSN information element and suite selector data used by management frames and RSN EAPOL key data.
+
+roots: []
+parents:
+  - dot11
+  - eapol
+children: []
+
+supported_directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+  - roundtrip
+live_eligibility: false
+live_gate: offline_metadata_only
+
+fields:
+  - name: element_id
+    type: uint8
+    required: true
+    domains:
+      - rsn
+      - vendor_specific
+      - unknown
+  - name: length
+    type: uint8
+    required: true
+    domains:
+      - derived
+      - minimum
+      - with_suites
+      - boundary
+  - name: version
+    type: uint16
+    required: true
+    domains:
+      - 1
+      - explicit
+  - name: group_cipher_suite
+    type: suite_selector
+    required: true
+    domains:
+      - ccmp_128
+      - tkip
+      - use_group
+      - unknown
+  - name: pairwise_cipher_suites
+    type: suite_list
+    required: false
+    domains:
+      - absent
+      - ccmp_128
+      - tkip
+      - mixed
+      - unknown
+  - name: akm_suites
+    type: suite_list
+    required: false
+    domains:
+      - absent
+      - psk
+      - ieee8021x
+      - sae
+      - mixed
+      - unknown
+  - name: capabilities
+    type: flags
+    required: false
+    domains:
+      - absent
+      - none
+      - preauth
+      - no_pairwise
+      - mfpc
+      - mfpr
+      - boundary
+  - name: pmkid_list
+    type: bytes
+    required: false
+    domains:
+      - absent
+      - empty
+      - synthetic
+  - name: group_management_cipher_suite
+    type: suite_selector
+    required: false
+    domains:
+      - absent
+      - bip_cmac_128
+      - unknown
+  - name: trailing_bytes
+    type: bytes
+    required: false
+    domains:
+      - absent
+      - empty
+      - synthetic
+      - raw_preserved
+
+coverage_cases:
+  - rsn-minimal
+  - rsn-psk-ccmp
+  - rsn-sae-management-protection
+  - rsn-unknown-suite-raw
+  - crafter-rsn-roundtrip
+
+backend_support:
+  scapy:
+    status: planned
+    native_layers:
+      - Dot11EltRSN
+    notes:
+      - Offline materialization and normalization are added in later Dot11 oracle steps.
+  wireshark:
+    status: planned
+    native_layers:
+      - wlan.rsn
+    notes:
+      - Parser-only pcap decode coverage is optional and must skip when tshark is unavailable.
+  libcrafter:
+    status: planned
+    notes:
+      - RSN parsing records metadata needed by later decrypt primitives without implementing decryption in this phase.
