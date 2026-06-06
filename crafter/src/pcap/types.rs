@@ -15,8 +15,16 @@ pub const DLT_EN10MB: u32 = 1;
 pub const DLT_LOOP: u32 = 108;
 /// Raw IPv4/IPv6 pcap data-link type.
 pub const DLT_RAW: u32 = 101;
+/// Bare IEEE 802.11 MAC frame pcap data-link type.
+pub const DLT_IEEE802_11: u32 = 105;
+/// Bare IEEE 802.11 MAC frame pcap link type.
+pub const LINKTYPE_IEEE802_11: u32 = DLT_IEEE802_11;
 /// Linux cooked capture v1 pcap data-link type.
 pub const DLT_LINUX_SLL: u32 = 113;
+/// Radiotap metadata followed by IEEE 802.11 MAC frame pcap data-link type.
+pub const DLT_IEEE802_11_RADIO: u32 = 127;
+/// Radiotap metadata followed by IEEE 802.11 MAC frame pcap link type.
+pub const LINKTYPE_IEEE802_11_RADIOTAP: u32 = DLT_IEEE802_11_RADIO;
 const DLT_RAW_BSD: u32 = 12;
 const DLT_IPV4: u32 = 228;
 const DLT_IPV6: u32 = 229;
@@ -155,6 +163,10 @@ pub enum PcapLinkType {
     NullLoopback,
     /// Ethernet frames.
     Ethernet,
+    /// Bare IEEE 802.11 MAC frames.
+    Ieee80211,
+    /// Radiotap metadata followed by IEEE 802.11 MAC frames.
+    Ieee80211Radiotap,
     /// Raw IPv4/IPv6 packets without a link-layer header.
     RawIp,
     /// Linux cooked capture v1.
@@ -169,8 +181,10 @@ impl PcapLinkType {
         match datalink {
             DLT_NULL | DLT_LOOP => Self::NullLoopback,
             DLT_EN10MB => Self::Ethernet,
+            DLT_IEEE802_11 => Self::Ieee80211,
             DLT_RAW | DLT_RAW_BSD | DLT_IPV4 | DLT_IPV6 => Self::RawIp,
             DLT_LINUX_SLL => Self::LinuxSll,
+            DLT_IEEE802_11_RADIO => Self::Ieee80211Radiotap,
             value => Self::Unknown(value),
         }
     }
@@ -180,6 +194,8 @@ impl PcapLinkType {
         match self {
             Self::NullLoopback => DLT_NULL,
             Self::Ethernet => DLT_EN10MB,
+            Self::Ieee80211 => DLT_IEEE802_11,
+            Self::Ieee80211Radiotap => DLT_IEEE802_11_RADIO,
             Self::RawIp => DLT_RAW,
             Self::LinuxSll => DLT_LINUX_SLL,
             Self::Unknown(value) => value,
@@ -191,6 +207,8 @@ impl PcapLinkType {
         match self {
             Self::NullLoopback => LinkType::NullLoopback,
             Self::Ethernet => LinkType::Ethernet,
+            Self::Ieee80211 => LinkType::Ieee80211,
+            Self::Ieee80211Radiotap => LinkType::Radiotap,
             Self::LinuxSll => LinkType::LinuxSll,
             Self::RawIp | Self::Unknown(_) => LinkType::Raw,
         }
@@ -209,7 +227,11 @@ impl PcapLinkType {
     ) -> crate::Result<Packet> {
         let bytes = bytes.as_ref();
         match self {
-            Self::NullLoopback | Self::Ethernet | Self::LinuxSll => {
+            Self::NullLoopback
+            | Self::Ethernet
+            | Self::Ieee80211
+            | Self::Ieee80211Radiotap
+            | Self::LinuxSll => {
                 Packet::decode_from_link_with_registry(registry, self.link_type(), bytes)
             }
             Self::RawIp => decode_raw_ip_with_registry(registry, bytes),
@@ -223,8 +245,8 @@ impl From<LinkType> for PcapLinkType {
         match value {
             LinkType::Raw => Self::RawIp,
             LinkType::Ethernet => Self::Ethernet,
-            LinkType::Ieee80211 => Self::Unknown(105),
-            LinkType::Radiotap => Self::Unknown(127),
+            LinkType::Ieee80211 => Self::Ieee80211,
+            LinkType::Radiotap => Self::Ieee80211Radiotap,
             LinkType::LinuxCooked | LinkType::LinuxSll => Self::LinuxSll,
             LinkType::NullLoopback => Self::NullLoopback,
         }
