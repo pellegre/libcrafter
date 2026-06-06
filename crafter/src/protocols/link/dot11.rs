@@ -305,6 +305,98 @@ impl Dot11 {
         }
     }
 
+    /// Create a management frame with the given subtype.
+    pub fn management(subtype: Dot11ManagementSubtype) -> Self {
+        Self::new().with_default_frame_control(DOT11_FRAME_TYPE_MANAGEMENT, subtype.raw())
+    }
+
+    /// Create a control frame with the given subtype.
+    pub fn control(subtype: Dot11ControlSubtype) -> Self {
+        Self::new().with_default_frame_control(DOT11_FRAME_TYPE_CONTROL, subtype.raw())
+    }
+
+    /// Create a data frame.
+    pub fn data() -> Self {
+        Self::data_with_subtype(Dot11DataSubtype::Data)
+    }
+
+    /// Create a QoS data frame with a zero QoS control field.
+    pub fn qos_data() -> Self {
+        Self::data_with_subtype(Dot11DataSubtype::QosData).with_default_qos_control(0)
+    }
+
+    /// Create a beacon management frame.
+    pub fn beacon() -> Self {
+        Self::management(Dot11ManagementSubtype::Beacon).with_default_fixed_parameters(12)
+    }
+
+    /// Create a probe request management frame.
+    pub fn probe_request() -> Self {
+        Self::management(Dot11ManagementSubtype::ProbeRequest)
+    }
+
+    /// Create a probe response management frame.
+    pub fn probe_response() -> Self {
+        Self::management(Dot11ManagementSubtype::ProbeResponse).with_default_fixed_parameters(12)
+    }
+
+    /// Create an association request management frame.
+    pub fn association_request() -> Self {
+        Self::management(Dot11ManagementSubtype::AssociationRequest)
+            .with_default_fixed_parameters(4)
+    }
+
+    /// Create an association response management frame.
+    pub fn association_response() -> Self {
+        Self::management(Dot11ManagementSubtype::AssociationResponse)
+            .with_default_fixed_parameters(6)
+    }
+
+    /// Create an authentication management frame.
+    pub fn authentication() -> Self {
+        Self::management(Dot11ManagementSubtype::Authentication).with_default_fixed_parameters(6)
+    }
+
+    /// Create a deauthentication management frame.
+    pub fn deauthentication() -> Self {
+        Self::management(Dot11ManagementSubtype::Deauthentication).with_default_fixed_parameters(2)
+    }
+
+    /// Create a disassociation management frame.
+    pub fn disassociation() -> Self {
+        Self::management(Dot11ManagementSubtype::Disassociation).with_default_fixed_parameters(2)
+    }
+
+    /// Create an action management frame with a zero category field.
+    pub fn action() -> Self {
+        Self::management(Dot11ManagementSubtype::Action).with_default_fixed_parameters(1)
+    }
+
+    /// Create an ACK control frame.
+    pub fn ack() -> Self {
+        Self::control(Dot11ControlSubtype::Ack)
+    }
+
+    /// Create an RTS control frame.
+    pub fn rts() -> Self {
+        Self::control(Dot11ControlSubtype::Rts)
+    }
+
+    /// Create a CTS control frame.
+    pub fn cts() -> Self {
+        Self::control(Dot11ControlSubtype::Cts)
+    }
+
+    /// Create a Block Ack control frame.
+    pub fn block_ack() -> Self {
+        Self::control(Dot11ControlSubtype::BlockAck)
+    }
+
+    /// Create a PS-Poll control frame.
+    pub fn ps_poll() -> Self {
+        Self::control(Dot11ControlSubtype::PsPoll)
+    }
+
     /// Set the frame-control field.
     pub fn frame_control(mut self, frame_control: Dot11FrameControl) -> Self {
         self.frame_control.set_user(frame_control);
@@ -457,6 +549,29 @@ impl Dot11 {
             .with_subtype(DOT11_DATA_SUBTYPE_DATA)
     }
 
+    fn with_default_frame_control(mut self, frame_type: u8, subtype: u8) -> Self {
+        self.frame_control = Field::defaulted(
+            Dot11FrameControl::new()
+                .with_frame_type(frame_type)
+                .with_subtype(subtype),
+        );
+        self
+    }
+
+    fn data_with_subtype(subtype: Dot11DataSubtype) -> Self {
+        Self::new().with_default_frame_control(DOT11_FRAME_TYPE_DATA, subtype.raw())
+    }
+
+    fn with_default_fixed_parameters(mut self, len: usize) -> Self {
+        self.fixed_parameters = vec![0; len];
+        self
+    }
+
+    fn with_default_qos_control(mut self, qos_control: u16) -> Self {
+        self.qos_control = Field::defaulted(qos_control);
+        self
+    }
+
     fn effective_duration_id(&self) -> u16 {
         value_or_copy(&self.duration_id, 0)
     }
@@ -532,13 +647,13 @@ impl Layer for Dot11 {
             fields.push(("qos_control", format!("0x{qos_control:04x}")));
         }
         if !self.fixed_parameters.is_empty() {
-            fields.push((
-                "fixed_parameters",
-                dot11_hex_bytes(&self.fixed_parameters),
-            ));
+            fields.push(("fixed_parameters", dot11_hex_bytes(&self.fixed_parameters)));
         }
         if !self.tagged_parameters.is_empty() {
-            fields.push(("tagged_parameters", self.tagged_parameters.len().to_string()));
+            fields.push((
+                "tagged_parameters",
+                self.tagged_parameters.len().to_string(),
+            ));
         }
 
         fields
@@ -2098,6 +2213,138 @@ mod tests {
     }
 
     #[test]
+    fn dot11_builders_create_data_frame_defaults() {
+        let data = Dot11::data();
+
+        assert_eq!(data.frame_type(), Dot11FrameType::Data);
+        assert_eq!(data.data_subtype(), Some(Dot11DataSubtype::Data));
+        assert_eq!(data.control_subtype(), None);
+        assert_eq!(data.management_subtype(), None);
+        assert_eq!(data.qos_control_value(), None);
+        assert_eq!(data.fixed_parameters_value(), &[]);
+        assert_eq!(data.addr1_value(), Some(MacAddr::BROADCAST));
+        assert_eq!(data.addr2_value(), Some(MacAddr::ZERO));
+        assert_eq!(data.addr3_value(), Some(MacAddr::ZERO));
+    }
+
+    #[test]
+    fn dot11_builders_create_qos_data_defaults() {
+        let qos_data = Dot11::qos_data();
+
+        assert_eq!(qos_data.frame_type(), Dot11FrameType::Data);
+        assert_eq!(qos_data.data_subtype(), Some(Dot11DataSubtype::QosData));
+        assert_eq!(qos_data.qos_control_value(), Some(0));
+        assert_eq!(qos_data.fixed_parameters_value(), &[]);
+        assert_eq!(
+            qos_data.encoded_len(),
+            DOT11_DATA_HEADER_LEN + DOT11_QOS_CONTROL_LEN
+        );
+    }
+
+    #[test]
+    fn dot11_builders_create_management_frame_defaults() {
+        let cases = [
+            (Dot11::beacon(), Dot11ManagementSubtype::Beacon, 12usize),
+            (
+                Dot11::probe_request(),
+                Dot11ManagementSubtype::ProbeRequest,
+                0,
+            ),
+            (
+                Dot11::probe_response(),
+                Dot11ManagementSubtype::ProbeResponse,
+                12,
+            ),
+            (
+                Dot11::association_request(),
+                Dot11ManagementSubtype::AssociationRequest,
+                4,
+            ),
+            (
+                Dot11::association_response(),
+                Dot11ManagementSubtype::AssociationResponse,
+                6,
+            ),
+            (
+                Dot11::authentication(),
+                Dot11ManagementSubtype::Authentication,
+                6,
+            ),
+            (
+                Dot11::deauthentication(),
+                Dot11ManagementSubtype::Deauthentication,
+                2,
+            ),
+            (
+                Dot11::disassociation(),
+                Dot11ManagementSubtype::Disassociation,
+                2,
+            ),
+            (Dot11::action(), Dot11ManagementSubtype::Action, 1),
+        ];
+
+        for (frame, subtype, fixed_len) in cases {
+            assert_eq!(frame.frame_type(), Dot11FrameType::Management);
+            assert_eq!(frame.management_subtype(), Some(subtype));
+            assert_eq!(frame.control_subtype(), None);
+            assert_eq!(frame.data_subtype(), None);
+            assert_eq!(frame.fixed_parameters_value().len(), fixed_len);
+            assert!(frame.fixed_parameters_value().iter().all(|byte| *byte == 0));
+            assert_eq!(frame.encoded_len(), DOT11_DATA_HEADER_LEN + fixed_len);
+        }
+    }
+
+    #[test]
+    fn dot11_builders_create_control_frame_defaults() {
+        let cases = [
+            (Dot11::ack(), Dot11ControlSubtype::Ack),
+            (Dot11::rts(), Dot11ControlSubtype::Rts),
+            (Dot11::cts(), Dot11ControlSubtype::Cts),
+            (Dot11::block_ack(), Dot11ControlSubtype::BlockAck),
+            (Dot11::ps_poll(), Dot11ControlSubtype::PsPoll),
+        ];
+
+        for (frame, subtype) in cases {
+            assert_eq!(frame.frame_type(), Dot11FrameType::Control);
+            assert_eq!(frame.control_subtype(), Some(subtype));
+            assert_eq!(frame.management_subtype(), None);
+            assert_eq!(frame.data_subtype(), None);
+            assert_eq!(frame.fixed_parameters_value(), &[]);
+            assert_eq!(frame.qos_control_value(), None);
+            assert_eq!(frame.encoded_len(), DOT11_DATA_HEADER_LEN);
+        }
+    }
+
+    #[test]
+    fn dot11_builders_remain_packet_composable_and_preserve_overrides() {
+        let custom_fc = Dot11FrameControl::from_bits(0xffff);
+        let custom_addr = MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x00, 0x01]);
+        let dot11 = Dot11::beacon()
+            .frame_control(custom_fc)
+            .addr1(custom_addr)
+            .fixed_parameters([0xaa, 0xbb]);
+        let packet = dot11.clone() / Raw::from([0xcc]);
+
+        assert_eq!(packet.layer::<Dot11>(), Some(&dot11));
+        assert_eq!(dot11.frame_control_value(), custom_fc);
+        assert_eq!(dot11.addr1_value(), Some(custom_addr));
+        assert_eq!(dot11.fixed_parameters_value(), &[0xaa, 0xbb]);
+        assert_eq!(
+            packet.compile().unwrap().as_bytes(),
+            &[
+                0xff, 0xff, // caller-supplied frame control
+                0x00, 0x00, // duration/id
+                0x02, 0x00, 0x5e, 0x10, 0x00, 0x01, // address 1
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // address 2
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // address 3
+                0x00, 0x00, // sequence control
+                0xaa, 0xbb, // caller-supplied fixed fields
+                0xcc, // Raw payload
+            ]
+        );
+    }
+
+    #[test]
     fn dot11_layer_compile_default_three_address_data_header() {
         let packet = Packet::from_layer(Dot11::new());
         let compiled = packet.compile().unwrap();
@@ -2135,7 +2382,10 @@ mod tests {
 
         assert_eq!(packet.layer::<Dot11>(), Some(&dot11));
         assert_eq!(packet.len(), 2);
-        assert_eq!(dot11.encoded_len(), DOT11_DATA_ADDR4_HEADER_LEN + DOT11_QOS_CONTROL_LEN);
+        assert_eq!(
+            dot11.encoded_len(),
+            DOT11_DATA_ADDR4_HEADER_LEN + DOT11_QOS_CONTROL_LEN
+        );
         assert_eq!(
             packet.compile().unwrap().as_bytes(),
             &[
