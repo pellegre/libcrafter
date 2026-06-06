@@ -5349,17 +5349,22 @@ fn router_alert_public_paths_exports_are_reachable() {
     let protocols = crafter::protocols::Ipv6Option::router_alert(
         crafter::protocols::IPV6_ROUTER_ALERT_MPLS_OAM,
     );
+    let canonical = crafter::protocols::ip::v6::Ipv6Option::router_alert(
+        crafter::protocols::ip::v6::IPV6_ROUTER_ALERT_MLD,
+    );
 
     assert_eq!(crafter::IPV6_OPTION_ROUTER_ALERT, 0x05);
     assert_eq!(crafter::core::IPV6_OPTION_ROUTER_ALERT, 0x05);
     assert_eq!(crafter::protocols::IPV6_OPTION_ROUTER_ALERT, 0x05);
     assert_eq!(crafter::protocols::ipv6::IPV6_OPTION_ROUTER_ALERT, 0x05);
+    assert_eq!(crafter::protocols::ip::v6::IPV6_OPTION_ROUTER_ALERT, 0x05);
     assert_eq!(root.router_alert_value_label(), Some("RSVP"));
     assert_eq!(core.router_alert_value_label(), Some("Active Networks"));
     assert_eq!(
         protocols.router_alert_value_label(),
         Some("MPLS OAM (DEPRECATED)")
     );
+    assert_eq!(canonical.router_alert_value_label(), Some("MLD"));
     assert_eq!(crafter::ipv6_router_alert_value_label(70), "Unassigned");
     assert_eq!(
         crafter::core::ipv6_router_alert_value_label(65535),
