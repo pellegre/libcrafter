@@ -92,6 +92,11 @@ pub enum NetError {
     },
     /// Packet capture failed while waiting for a reply.
     Capture(PcapError),
+    /// A packet wire capture pipeline failed while waiting for a reply.
+    WireCapture {
+        /// Stable diagnostic reason.
+        reason: String,
+    },
 }
 
 impl fmt::Display for NetError {
@@ -145,6 +150,7 @@ impl fmt::Display for NetError {
             }
             Self::Io { operation, source } => write!(f, "{operation} failed: {source}"),
             Self::Capture(err) => write!(f, "{err}"),
+            Self::WireCapture { reason } => write!(f, "packet capture failed: {reason}"),
         }
     }
 }

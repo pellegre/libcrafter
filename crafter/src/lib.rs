@@ -4,7 +4,7 @@
 //! examples, generated tools, and agent-directed packet workflows:
 //!
 //! - packet construction, decode, checksums, and protocol layers
-//! - pcap read/write and sniffing helpers
+//! - pcap read/write and BPF filtering helpers
 //! - interface, send, send/receive, batch, and address helpers
 //! - packet wire source, writer, transform, sniffing, and transmit primitives
 //! - Ethernet, IEEE 802.11/radiotap, LLC/SNAP, IP, transport, and selected
@@ -390,17 +390,18 @@ pub use net::{
     SendRecvOptions, SendRecvReport, SendReport, SendTarget, SocketSend, SocketSender,
 };
 pub use pcap::{
-    dump_pcap, read_pcap, read_pcap_filtered, Capture, CaptureControl, CaptureHandle, FileSniffer,
-    PcapError, PcapHeader, PcapLinkType, PcapPacket, PcapReader, PcapRecord, PcapRecords,
-    PcapTimestamp, PcapWriter, PcapWriterOptions, Sniffer, TimestampPrecision,
+    dump_pcap, read_pcap, read_pcap_filtered, PcapError, PcapHeader, PcapLinkType, PcapPacket,
+    PcapReader, PcapRecord, PcapRecords, PcapTimestamp, PcapWriter, PcapWriterOptions,
+    TimestampPrecision,
 };
+pub use wire::Sniffer;
 pub use wire::{
     BackendKind, BluetoothMetadata, DropAllTransform, DuplicateTransform, MediumMetadata,
     MemoryPacketWriter, MemoryWrite, OpenedPacketSource, OpenedPacketWriter, PacketMetadata,
     PacketOrigin, PacketRecord, PacketSource, PacketTransform, PacketWire, PacketWireBuilder,
-    PacketWireTarget, PacketWriter, PassThroughTransform, RadioMetadata, Sniffer as WireSniffer,
-    SnifferCancel, SnifferHandle, TraceAppendTransform, TransformOutput, TransformTrace,
-    Transmitter, VecPacketSource, WifiMetadata, WireError, WriteReport,
+    PacketWireTarget, PacketWriter, PassThroughTransform, RadioMetadata, SnifferCancel,
+    SnifferHandle, TraceAppendTransform, TransformOutput, TransformTrace, Transmitter,
+    VecPacketSource, WifiMetadata, WireError, WriteReport,
 };
 
 /// Core packet and protocol APIs.
@@ -707,13 +708,12 @@ pub mod prelude {
         parse_ip_range, parse_numbers, read_pcap, read_pcap_filtered, reply_filter, reply_matches,
         send_packet, send_packets, send_plan, send_recv_packet, send_recv_packets, BatchSend,
         BatchSendEntry, BatchSendRecv, BatchSendRecvEntry, BatchSendRecvReport, BatchSendReport,
-        Capture, CaptureControl, CaptureHandle, FileSniffer, InterfaceAddress, InterfaceInfo,
-        Ipv4Range, NetError, PacketBatchSendExt, PacketBatchSendRecvExt, PacketSendExt,
-        PacketSendRecvExt, PcapError, PcapHeader, PcapLinkType, PcapPacket, PcapReader, PcapRecord,
-        PcapRecords, PcapTimestamp, PcapWriter, PcapWriterOptions, RawSender, ReplyMatcher,
-        SendMode, SendOptions, SendPlan, SendRecv, SendRecvOptions, SendRecvReport, SendReport,
-        SendTarget, Sniffer, SocketSend, SocketSender, TimestampPrecision, Transmitter,
-        VecPacketSource, WifiMetadata, WireError, WireSniffer, WriteReport,
+        InterfaceAddress, InterfaceInfo, Ipv4Range, NetError, PacketBatchSendExt,
+        PacketBatchSendRecvExt, PacketSendExt, PacketSendRecvExt, PcapError, PcapHeader,
+        PcapLinkType, PcapPacket, PcapReader, PcapRecord, PcapRecords, PcapTimestamp, PcapWriter,
+        PcapWriterOptions, RawSender, ReplyMatcher, SendMode, SendOptions, SendPlan, SendRecv,
+        SendRecvOptions, SendRecvReport, SendReport, SendTarget, Sniffer, SocketSend, SocketSender,
+        TimestampPrecision, Transmitter, VecPacketSource, WifiMetadata, WireError, WriteReport,
     };
     pub use crate::{
         BackendKind, BluetoothMetadata, DropAllTransform, DuplicateTransform, MediumMetadata,

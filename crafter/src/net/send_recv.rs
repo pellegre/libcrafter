@@ -1,9 +1,9 @@
 use std::time::Duration;
 
-use crate::pcap::Sniffer;
+use crate::wire::{backend::pcap::PcapInterfaceSource, Sniffer, WireError};
 use crate::Packet;
 
-use super::error::Result;
+use super::error::{NetError, Result};
 use super::reply::{batch_reply_filter, combine_filters};
 pub use super::reply::{reply_filter, reply_matches, ReplyMatcher};
 use super::send::{validated_interface, SendMode, SendOptions, SendReport, SocketSender};
@@ -152,16 +152,14 @@ impl SendRecv {
         }
 
         for _ in 0..self.retries.max(1) {
-            let mut sniffer = Sniffer::interface(interface.clone())
-                .timeout(self.timeout)
-                .count(self.capture_limit);
-            if let Some(filter) = effective_filter.as_deref() {
-                sniffer = sniffer.filter(filter);
-            }
-
-            let mut capture = sniffer.open()?;
+            let mut sniffer = open_pcap_sniffer(
+                &interface,
+                effective_filter.as_deref(),
+                self.timeout,
+                self.capture_limit,
+            )?;
             send_reports.push(sender.send(packet)?);
-            while let Some(reply) = capture.next_packet()? {
+            while let Some(reply) = sniffer.next_record().map_err(capture_wire_error)? {
                 if matcher.matches(reply.packet()) {
                     return Ok(SendRecvReport::new(
                         send_reports,
@@ -442,26 +440,22 @@ impl BatchSendRecv {
                     break;
                 }
 
-                let mut sniffer = Sniffer::interface(interface.clone())
-                    .timeout(self.send_recv.timeout_value())
-                    .count(
-                        self.send_recv
-                            .capture_limit
-                            .saturating_mul(pending.len().max(1))
-                            .max(1),
-                    );
-                if let Some(filter) = effective_filter.as_deref() {
-                    sniffer = sniffer.filter(filter);
-                }
-
-                let mut capture = sniffer.open()?;
+                let mut sniffer = open_pcap_sniffer(
+                    &interface,
+                    effective_filter.as_deref(),
+                    self.send_recv.timeout_value(),
+                    self.send_recv
+                        .capture_limit
+                        .saturating_mul(pending.len().max(1))
+                        .max(1),
+                )?;
                 for request_index in pending.iter().copied() {
                     entries[request_index]
                         .send_reports
                         .push(sender.send(&packets[request_index])?);
                 }
 
-                while let Some(reply) = capture.next_packet()? {
+                while let Some(reply) = sniffer.next_record().map_err(capture_wire_error)? {
                     let packet = reply.into_packet();
                     assign_reply_to_first_match(&mut entries, packets, packet);
                     if pending
@@ -754,4 +748,32 @@ fn assign_reply_to_first_match(
 
     entries[entry_index].reply = Some(candidate);
     true
+}
+
+fn open_pcap_sniffer(
+    interface: &str,
+    filter: Option<&str>,
+    timeout: Duration,
+    count: usize,
+) -> Result<Sniffer> {
+    let mut builder = PcapInterfaceSource::builder(interface.to_owned()).timeout(timeout);
+    if let Some(filter) = filter {
+        builder = builder.filter(filter);
+    }
+
+    let source = builder.open().map_err(capture_wire_error)?;
+
+    Ok(Sniffer::new(source).timeout(timeout).count(count))
+}
+
+fn capture_wire_error(err: WireError) -> NetError {
+    match err {
+        WireError::Pcap(err) => NetError::Capture(err),
+        WireError::Packet(err) => NetError::Packet(err),
+        WireError::Net(err) => err,
+        WireError::Io { operation, source } => NetError::Io { operation, source },
+        other => NetError::WireCapture {
+            reason: other.to_string(),
+        },
+    }
 }
