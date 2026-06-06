@@ -36,6 +36,28 @@ roots:
       - ipv4
       - ipv6
       - udp
+  - name: "link:dot11"
+    layers:
+      - dot11
+    families:
+      - link
+      - dot11
+      - llc_snap
+      - eapol
+      - rsn
+  - name: "link:radiotap"
+    layers:
+      - radiotap
+    families:
+      - link
+      - radiotap
+      - dot11
+      - llc_snap
+      - arp
+      - ipv4
+      - ipv6
+      - eapol
+      - rsn
   - name: "l3:ipv4"
     layers:
       - ipv4
@@ -93,6 +115,55 @@ families:
     feature_tags:
       - udp
       - payload
+  - name: dot11
+    default_stack:
+      - dot11
+      - payload
+    feature_tags:
+      - dot11
+      - payload
+  - name: radiotap
+    default_stack:
+      - radiotap
+      - dot11
+      - payload
+    feature_tags:
+      - radiotap
+      - dot11
+      - payload
+  - name: llc_snap
+    default_stack:
+      - radiotap
+      - dot11
+      - llc_snap
+      - payload
+    feature_tags:
+      - radiotap
+      - dot11
+      - llc_snap
+      - payload
+  - name: eapol
+    default_stack:
+      - radiotap
+      - dot11
+      - llc_snap
+      - eapol
+      - payload
+    feature_tags:
+      - radiotap
+      - dot11
+      - llc_snap
+      - eapol
+      - payload
+  - name: rsn
+    default_stack:
+      - radiotap
+      - dot11
+      - rsn
+    feature_tags:
+      - radiotap
+      - dot11
+      - rsn
 
 stacks:
   - name: ethernet_payload
@@ -110,6 +181,96 @@ stacks:
     coverage_cases:
       - raw-payload-link
       - crafter-raw-payload
+  # dot11 / payload: bare IEEE 802.11 MAC frames for pcap fixtures and
+  # offline decode/round-trip coverage. Live traffic is intentionally absent
+  # from this root; monitor-mode injection is represented by the radiotap root
+  # and remains dry-run/manual until a dongle-backed validation path exists.
+  - name: dot11_payload
+    root: "link:dot11"
+    layers:
+      - dot11
+      - payload
+    coverage_cases:
+      - dot11-data-basic
+      - dot11-qos-data
+      - dot11-protected-raw
+      - dot11-management-basic
+      - dot11-control-basic
+      - dot11-unknown-subtype-raw
+      - pcap-scapy-dot11
+      - pcap-crafter-dot11
+      - pcap-dot11-protected-raw
+      - crafter-dot11-roundtrip
+  # radiotap / dot11: monitor-mode metadata wrapped around an IEEE 802.11 MAC
+  # frame. Automated oracle profiles keep this offline/dry-run only; live
+  # injection requires explicit manual dongle validation in a later step.
+  - name: radiotap_dot11_payload
+    root: "link:radiotap"
+    layers:
+      - radiotap
+      - dot11
+      - payload
+    coverage_cases:
+      - radiotap-basic
+      - radiotap-flags-rate-channel
+      - radiotap-fcs-metadata
+      - pcap-scapy-radiotap
+      - pcap-crafter-radiotap
+      - pcap-dot11-protected-raw
+      - crafter-radiotap-roundtrip
+  - name: radiotap_dot11_llc_snap_ipv4
+    root: "link:radiotap"
+    layers:
+      - radiotap
+      - dot11
+      - llc_snap
+      - ipv4
+    coverage_cases:
+      - llc-snap-ipv4
+  - name: radiotap_dot11_llc_snap_ipv6
+    root: "link:radiotap"
+    layers:
+      - radiotap
+      - dot11
+      - llc_snap
+      - ipv6
+    coverage_cases:
+      - llc-snap-ipv6
+  - name: radiotap_dot11_llc_snap_arp
+    root: "link:radiotap"
+    layers:
+      - radiotap
+      - dot11
+      - llc_snap
+      - arp
+    coverage_cases:
+      - llc-snap-arp
+  - name: radiotap_dot11_llc_snap_eapol
+    root: "link:radiotap"
+    layers:
+      - radiotap
+      - dot11
+      - llc_snap
+      - eapol
+      - payload
+    coverage_cases:
+      - llc-snap-eapol
+      - eapol-start
+      - eapol-key-rsn
+      - eapol-key-data-rsn
+      - crafter-eapol-roundtrip
+  - name: radiotap_dot11_rsn
+    root: "link:radiotap"
+    layers:
+      - radiotap
+      - dot11
+      - rsn
+    coverage_cases:
+      - dot11-management-rsn
+      - rsn-minimal
+      - rsn-psk-ccmp
+      - rsn-sae-management-protection
+      - crafter-rsn-roundtrip
   # ethernet / arp: ARP over Ethernet. ARP is IPv4-era link-layer address
   # resolution (target/arp-rfc/scope.md: RFC 826 over media-generic
   # HRD/PRO/HLN/PLN), so it stays rooted at a link layer and is never eligible
