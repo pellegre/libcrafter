@@ -11,7 +11,7 @@ from typing import Any
 from ...model import EncodedVector, JSONObject
 from ..registry import BackendCapabilities, BackendRegistration, get_backend
 from .bootstrap import import_scapy
-from .normalize import normalize_packet
+from .normalize import decode_bytes, normalize_packet
 
 
 PCAP_TIMESTAMP_BASE_SECONDS = 1_700_000_000
@@ -23,23 +23,29 @@ _LINK_TYPES: dict[int, str] = {
     1: "ethernet",
     12: "raw",
     101: "raw",
+    105: "ieee80211",
     108: "null_loopback",
     113: "linux_sll",
+    127: "radiotap",
     228: "raw",
     229: "raw",
 }
 _ROOTS_BY_LINK_TYPE: dict[str, str] = {
     "ethernet": "link:ethernet",
+    "ieee80211": "link:dot11",
     "linux_cooked": "link:linux-cooked",
     "linux_sll": "link:linux-sll",
     "null_loopback": "link:null-loopback",
+    "radiotap": "link:radiotap",
     "raw": "link:raw",
 }
 _DATALINK_BY_LINK_TYPE: dict[str, int] = {
     "ethernet": 1,
+    "ieee80211": 105,
     "linux_cooked": 113,
     "linux_sll": 113,
     "null_loopback": 0,
+    "radiotap": 127,
     "raw": 101,
 }
 
@@ -137,7 +143,10 @@ def read_pcap(
     records: list[JSONObject] = []
     for position, packet in enumerate(packets):
         raw_hex = bytes(scapy_all.raw(packet)).hex()
-        decoded = normalize_packet(packet, root=root, source_hex=raw_hex)
+        if root in {"link:dot11", "link:radiotap"}:
+            decoded = decode_bytes(bytes.fromhex(raw_hex), root=root, source_hex=raw_hex)
+        else:
+            decoded = normalize_packet(packet, root=root, source_hex=raw_hex)
         records.append(
             {
                 "index": position,
@@ -221,6 +230,10 @@ def _pcap_link_type_for_vector(vector: EncodedVector, requested: str) -> str:
         return "linux_sll"
     if root in {"Loopback", "link:null-loopback"}:
         return "null_loopback"
+    if root in {"Dot11", "link:dot11", "link:ieee80211"}:
+        return "ieee80211"
+    if root in {"RadioTap", "link:radiotap"}:
+        return "radiotap"
     return _canonical_link_type_name(requested)
 
 
@@ -248,6 +261,11 @@ def _decode_packet_for_write(root: str | None, raw: bytes, scapy_all: Any) -> An
         "link:linux-sll": "CookedLinux",
         "Loopback": "Loopback",
         "link:null-loopback": "Loopback",
+        "Dot11": "Dot11",
+        "link:dot11": "Dot11",
+        "link:ieee80211": "Dot11",
+        "RadioTap": "RadioTap",
+        "link:radiotap": "RadioTap",
         "Raw": "Raw",
         "link:raw": "Raw",
         "l3:ipv4": "IP",
@@ -336,6 +354,10 @@ def _canonical_link_type_name(name: str) -> str:
     normalized = name.replace("-", "_")
     if normalized == "linux_cooked":
         return "linux_sll"
+    if normalized in {"dot11", "ieee80211", "ieee802_11"}:
+        return "ieee80211"
+    if normalized in {"radiotap", "ieee80211_radio", "ieee80211_radiotap"}:
+        return "radiotap"
     return normalized
 
 

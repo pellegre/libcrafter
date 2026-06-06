@@ -48,6 +48,7 @@ from .report import DEFAULT_OUTPUT_ROOT, REPO_ROOT
 
 PCAP_CONTRACT_SPEC = "features/pcap.yaml"
 PCAP_LINK_TYPES_SPEC = "features/pcap-link-types.yaml"
+PCAP_DOT11_LINK_TYPES_SPEC = "features/dot11-pcap-link-types.yaml"
 GENERATOR_SELECTED_SPECS = (
     "tools/oracle/specs/stacks.yaml",
     "tools/oracle/specs/profiles.yaml",
@@ -55,6 +56,7 @@ GENERATOR_SELECTED_SPECS = (
 PCAP_SELECTED_SPECS = (
     PCAP_CONTRACT_SPEC,
     PCAP_LINK_TYPES_SPEC,
+    PCAP_DOT11_LINK_TYPES_SPEC,
     *GENERATOR_SELECTED_SPECS,
 )
 LIVE_COUNT_FIELDS = (
@@ -7339,21 +7341,25 @@ def _pcap_spec_cases() -> list[JSONObject]:
     from .spec_loader import load_oracle_specs
 
     specs = load_oracle_specs()
-    feature = specs.features.get("pcap_contracts")
-    if feature is None:
-        raise ValueError("pcap feature spec is missing: pcap_contracts")
-    raw_cases = feature.raw.get("supported_cases", [])
-    if not isinstance(raw_cases, list):
-        raise ValueError("features/pcap.yaml supported_cases must be a list")
     cases: list[JSONObject] = []
-    for raw_case in raw_cases:
-        if not isinstance(raw_case, dict):
-            raise ValueError("features/pcap.yaml supported_cases entries must be objects")
-        pcap_case = dict(raw_case)
-        pcap_case.setdefault("strict_bytes", feature.strict_bytes)
-        pcap_case.setdefault("timestamp_policy", "exact")
-        pcap_case["feature"] = feature.name
-        cases.append(pcap_case)  # type: ignore[arg-type]
+    for spec_name, feature_name in (
+        (PCAP_CONTRACT_SPEC, "pcap_contracts"),
+        (PCAP_DOT11_LINK_TYPES_SPEC, "dot11_pcap_link_types"),
+    ):
+        feature = specs.features.get(feature_name)
+        if feature is None:
+            raise ValueError(f"pcap feature spec is missing: {feature_name}")
+        raw_cases = feature.raw.get("supported_cases", [])
+        if not isinstance(raw_cases, list):
+            raise ValueError(f"{spec_name} supported_cases must be a list")
+        for raw_case in raw_cases:
+            if not isinstance(raw_case, dict):
+                raise ValueError(f"{spec_name} supported_cases entries must be objects")
+            pcap_case = dict(raw_case)
+            pcap_case.setdefault("strict_bytes", feature.strict_bytes)
+            pcap_case.setdefault("timestamp_policy", "exact")
+            pcap_case["feature"] = feature.name
+            cases.append(pcap_case)  # type: ignore[arg-type]
     return cases
 
 
@@ -7826,7 +7832,13 @@ def _pcap_case_matches_filter(
     if feature in {"pcap", "pcap_contracts"}:
         return True
     if feature == "pcap_link_types":
-        return pcap_case.get("writer") is None and pcap_case.get("reader") is None
+        return (
+            pcap_case.get("feature") == "pcap_contracts"
+            and pcap_case.get("writer") is None
+            and pcap_case.get("reader") is None
+        )
+    if feature == "dot11_pcap_link_types":
+        return pcap_case.get("feature") == "dot11_pcap_link_types"
     return False
 
 
@@ -7907,6 +7919,10 @@ def _pcap_generation_root(requested_root: str | None, link_type: str, index: int
         return "link:linux-cooked"
     if link_type == "null_loopback":
         return "link:null-loopback"
+    if link_type == "ieee80211":
+        return "link:dot11"
+    if link_type == "radiotap":
+        return "link:radiotap"
     if link_type == "raw":
         return "l3:ipv6" if index % 2 else "l3:ipv4"
     raise ValueError(f"unsupported pcap link type: {link_type}")
@@ -7919,6 +7935,10 @@ def _pcap_generator_case(link_type: str, root: str) -> str:
         return "linux-cooked-ipv4-udp"
     if link_type == "null_loopback":
         return "null-loopback-ipv4-little-endian"
+    if link_type == "ieee80211":
+        return "dot11-qos-data"
+    if link_type == "radiotap":
+        return "radiotap-basic"
     if link_type == "raw" and root == "link:raw":
         return "raw-payload-link"
     if link_type == "raw" and root == "l3:ipv6":
@@ -7932,6 +7952,10 @@ def _pcap_link_type_for_root(root: str) -> str:
     normalized = root.replace("_", "-")
     if normalized in {"link:ethernet", "ether"}:
         return "ethernet"
+    if normalized in {"link:dot11", "link:ieee80211", "dot11", "ieee80211"}:
+        return "ieee80211"
+    if normalized in {"link:radiotap", "radiotap"}:
+        return "radiotap"
     if normalized in {"link:linux-cooked", "link:linux-sll", "cookedlinux"}:
         return "linux_cooked"
     if normalized in {"link:null-loopback", "loopback"}:
@@ -7947,6 +7971,10 @@ def _pcap_canonical_link_type(link_type: str) -> str:
         return "linux_cooked"
     if normalized in {"ether", "ethernet"}:
         return "ethernet"
+    if normalized in {"dot11", "ieee80211", "ieee802_11"}:
+        return "ieee80211"
+    if normalized in {"radiotap", "ieee80211_radio", "ieee80211_radiotap"}:
+        return "radiotap"
     if normalized in {"null", "null_loopback", "loopback"}:
         return "null_loopback"
     if normalized in {"raw", "raw_ip"}:

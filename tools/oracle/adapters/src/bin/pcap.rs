@@ -1,7 +1,7 @@
 use crafter::core::{
-    Arp, Dhcp, Dns, Ethernet, Icmpv4, Icmpv6, Ipv4, Ipv6, Ipv6FragmentHeader,
-    Ipv6MobileRoutingHeader, Ipv6RoutingHeader, Ipv6SegmentRoutingHeader, Layer, LinuxSll,
-    NullLoopback, Raw, Tcp, Udp, Vlan,
+    Arp, Dhcp, Dns, Dot11, Eapol, EapolKey, Ethernet, Icmpv4, Icmpv6, Ipv4, Ipv6,
+    Ipv6FragmentHeader, Ipv6MobileRoutingHeader, Ipv6RoutingHeader, Ipv6SegmentRoutingHeader,
+    Layer, LinuxSll, LlcSnap, NullLoopback, Radiotap, Raw, Tcp, Udp, Vlan,
 };
 use crafter::pcap::{
     PcapLinkType, PcapReader, PcapRecord, PcapTimestamp, PcapWriter, TimestampPrecision,
@@ -132,6 +132,12 @@ fn parse_link_type(value: &str) -> ExampleResult<PcapLinkType> {
         "ethernet" | "link:ethernet" => PcapLinkType::Ethernet,
         "linux_cooked" | "linux-sll" | "linux_sll" | "link:linux-sll" => PcapLinkType::LinuxSll,
         "null_loopback" | "null-loopback" | "link:null-loopback" => PcapLinkType::NullLoopback,
+        "dot11" | "ieee80211" | "ieee802_11" | "link:dot11" | "link:ieee80211" => {
+            PcapLinkType::Ieee80211
+        }
+        "radiotap" | "ieee80211_radio" | "ieee80211_radiotap" | "link:radiotap" => {
+            PcapLinkType::Ieee80211Radiotap
+        }
         "raw" | "raw_ip" | "link:raw" => PcapLinkType::RawIp,
         _ => return Err(format!("unsupported pcap link type: {value}").into()),
     })
@@ -355,7 +361,7 @@ fn link_type_name(link_type: PcapLinkType) -> &'static str {
         PcapLinkType::RawIp => "raw",
         PcapLinkType::LinuxSll => "linux_sll",
         PcapLinkType::Ieee80211 => "ieee80211",
-        PcapLinkType::Ieee80211Radiotap => "ieee80211_radiotap",
+        PcapLinkType::Ieee80211Radiotap => "radiotap",
         PcapLinkType::Unknown(_) => "unknown",
     }
 }
@@ -390,6 +396,16 @@ fn normalized_layer_name(layer: &dyn Layer) -> String {
         "linux_sll"
     } else if layer.as_any().is::<NullLoopback>() {
         "null_loopback"
+    } else if layer.as_any().is::<Radiotap>() {
+        "radiotap"
+    } else if layer.as_any().is::<Dot11>() {
+        "dot11"
+    } else if layer.as_any().is::<LlcSnap>() {
+        "llc_snap"
+    } else if layer.as_any().is::<Eapol>() {
+        "eapol"
+    } else if layer.as_any().is::<EapolKey>() {
+        "eapol_key"
     } else if layer.as_any().is::<Ipv4>() {
         "ipv4"
     } else if layer.as_any().is::<Ipv6>() {

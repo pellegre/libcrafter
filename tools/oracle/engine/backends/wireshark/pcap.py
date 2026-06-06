@@ -14,23 +14,29 @@ _LINK_TYPES: dict[int, str] = {
     1: "ethernet",
     12: "raw",
     101: "raw",
+    105: "ieee80211",
     108: "null_loopback",
     113: "linux_sll",
+    127: "radiotap",
     228: "raw",
     229: "raw",
 }
 _ROOTS_BY_LINK_TYPE: dict[str, str] = {
     "ethernet": "link:ethernet",
+    "ieee80211": "link:dot11",
     "linux_cooked": "link:linux-cooked",
     "linux_sll": "link:linux-sll",
     "null_loopback": "link:null-loopback",
+    "radiotap": "link:radiotap",
     "raw": "link:raw",
 }
 _DATALINK_BY_LINK_TYPE: dict[str, int] = {
     "ethernet": 1,
+    "ieee80211": 105,
     "linux_cooked": 113,
     "linux_sll": 113,
     "null_loopback": 0,
+    "radiotap": 127,
     "raw": 101,
 }
 
@@ -158,6 +164,10 @@ def _canonical_link_type_name(name: str) -> str:
     normalized = name.replace("-", "_")
     if normalized == "linux_cooked":
         return "linux_sll"
+    if normalized in {"dot11", "ieee80211", "ieee802_11"}:
+        return "ieee80211"
+    if normalized in {"radiotap", "ieee80211_radio", "ieee80211_radiotap"}:
+        return "radiotap"
     return normalized
 
 

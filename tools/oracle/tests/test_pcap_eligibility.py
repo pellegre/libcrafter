@@ -107,6 +107,24 @@ class PcapEligibilityBytePolicyTest(unittest.TestCase):
         self.assertFalse(packet.pcap.eligible)
         self.assertIn(SKIP_PCAP_LINK_TYPE_UNAVAILABLE, packet.pcap.skip_reasons)
 
+    def test_dot11_roots_are_pcap_eligible(self) -> None:
+        packets = populate_corpus_eligibility(
+            backend="scapy",
+            packets=[
+                CorpusPacket.from_plan(_dot11_plan(root="link:dot11")),
+                CorpusPacket.from_plan(_dot11_plan(root="link:radiotap")),
+            ],
+            case_byte_policies={},
+        )
+
+        self.assertTrue(packets[0].pcap.eligible)
+        self.assertEqual(packets[0].pcap.metadata["pcap_link_type"], "DLT_IEEE802_11")
+        self.assertTrue(packets[1].pcap.eligible)
+        self.assertEqual(
+            packets[1].pcap.metadata["pcap_link_type"],
+            "DLT_IEEE802_11_RADIO",
+        )
+
     def test_default_loader_resolves_real_spec_policies(self) -> None:
         # Without an explicit map, the corpus loads byte policies from the specs.
         plan = _dns_plan("dns-compressed-names", root="l3:ipv4")
@@ -158,6 +176,35 @@ def _ipv6_plan(case: str) -> PacketPlan:
         family="ipv6",
         case=case,
         metadata={"root": "l3:ipv6"},
+    )
+
+
+def _dot11_plan(*, root: str) -> PacketPlan:
+    stack = ["dot11", "payload"]
+    fields: dict[str, object] = {
+        "dot11": {
+            "frame_control": 0x0008,
+            "duration_id": 0,
+            "addr1": "00:00:5e:00:53:01",
+            "addr2": "00:00:5e:00:53:02",
+            "addr3": "00:00:5e:00:53:03",
+            "sequence_control": 0,
+        },
+        "payload": {"hex": "01020304", "length": 4},
+    }
+    if root == "link:radiotap":
+        stack = ["radiotap", *stack]
+        fields["radiotap"] = {"version": 0, "pad": 0}
+    return PacketPlan(
+        stack=stack,
+        fields=fields,
+        profile="dot11-pcap",
+        seed=1,
+        index=0,
+        direction="reference_to_libcrafter",
+        family="dot11",
+        case="dot11-qos-data",
+        metadata={"root": root},
     )
 
 

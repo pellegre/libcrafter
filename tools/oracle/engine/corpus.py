@@ -70,6 +70,8 @@ _WIRE_INELIGIBLE_BYTE_POLICIES = {
 
 _PCAP_LINK_TYPES_BY_ROOT = {
     "link:ethernet": "DLT_EN10MB",
+    "link:dot11": "DLT_IEEE802_11",
+    "link:radiotap": "DLT_IEEE802_11_RADIO",
     "link:linux-cooked": "DLT_LINUX_SLL",
     "link:null-loopback": "DLT_NULL",
     "l3:ipv4": "DLT_RAW",
