@@ -1,4 +1,4 @@
-# Wire Endpoint Provider Guide
+# Endpoint Provider Guide
 
 `tools/endpoint` defines the provider contract for one disposable endpoint:
 provision, command execution, upload, download, artifact collection, SSH access,
@@ -6,10 +6,11 @@ and destroy. It is the lower-level endpoint primitive used by `tools/lab`.
 
 Use `tools/lab` for coordinated multi-endpoint provider sessions. Oracle and
 probe own the workload, reports, and reproduction coordinates; lab owns the
-multi-endpoint session; wire owns one endpoint and transport operations. The
-current wire providers are Hetzner, QEMU, VirtualBox, and Docker.
+multi-endpoint session; the endpoint provider layer owns one provider-backed
+endpoint and transport operations. The current endpoint providers are Hetzner,
+QEMU, VirtualBox, and Docker.
 
-Local static tests should run before any provider command. Provider-backed wire
+Local static tests should run before any provider command. Provider-backed
 endpoints are for tests that need root privileges, raw sockets, packet capture,
 reference comparison, or kernel/service replies on disposable infrastructure.
 See [validation.md](validation.md) for oracle modes and CI expectations, and
@@ -23,7 +24,7 @@ Hetzner uses `hetzner/private` for oracle live exchange. QEMU uses
 oracle role addresses `10.77.0.10` and `10.77.0.20`. VirtualBox uses
 `virtualbox/lan`; the guest LAN address is discovered from the bridged
 interface manifest and is not requested by oracle. Docker supports
-`docker/private`, `docker/lan`, and `docker/wan` as direct wire endpoint modes.
+`docker/private`, `docker/lan`, and `docker/wan` as direct endpoint modes.
 `docker/private` is the isolated multi-endpoint mode: endpoints in the same
 private group join a provider-owned internal bridge with static private IPv4
 and deterministic MAC metadata. `docker/lan` and `docker/wan` use Docker bridge
@@ -50,7 +51,7 @@ specific bridge. Docker needs the Docker CLI, a reachable daemon, SSH tooling,
 and permission for the user running `tools/endpoint` to use Docker.
 
 Treat Docker daemon and Docker socket access as host-root equivalent. The
-Docker provider should be invoked from the host through the narrow wire
+Docker provider should be invoked from the host through the narrow endpoint
 commands; provider containers must not mount the Docker socket. The provider
 also avoids `--privileged`, host networking, host PID mode, and broad host
 filesystem mounts. Containers run with `--cap-drop ALL`,
@@ -93,7 +94,7 @@ and discover the container IPv4.
 
 ## Hetzner Setup
 
-The Hetzner wire provider reads `HETZNER_API_TOKEN` or `HCLOUD_TOKEN` from the
+The Hetzner endpoint provider reads `HETZNER_API_TOKEN` or `HCLOUD_TOKEN` from the
 process environment. Do not place real token values in repo files, shell history
 snippets, logs, or examples. The provider prints only whether credentials are
 configured.
@@ -127,7 +128,7 @@ python3 tools/oracle/engine/live_provider_matrix.py --providers qemu,virtualbox 
 tools/probe/run --provider hetzner --confirm-live-run --profile smoke --seed 21 --count 25
 ```
 
-Generated wire endpoint state is written below `tools/endpoint/.state/`. Lab
+Generated endpoint state is written below `tools/endpoint/.state/`. Lab
 session state and artifacts are written below ignored lab state/artifact roots.
 Oracle reports and packet artifacts are written below `target/oracle/`; probe
 reports are written below `target/probe/`.
@@ -151,7 +152,7 @@ sequence number, case name, seed, and profile.
 ## Direct Endpoint Operations
 
 The high-level oracle and probe runners create and destroy lab sessions.
-Use direct wire commands only for debugging, inspection, or manual provider
+Use direct endpoint commands only for debugging, inspection, or manual provider
 maintenance of one endpoint:
 
 ```sh
@@ -167,19 +168,19 @@ tools/endpoint/run destroy ENDPOINT_ID --json
 
 For private endpoint experiments, pass the same `--private-group` to each
 endpoint and unique `--private-ip` values inside the supported private range.
-For Docker, SSH still uses the normal wire transport through a localhost
+For Docker, SSH still uses the normal endpoint transport through a localhost
 forward to `sshd` inside the container, so `exec`, `upload`, `download`, and
 `collect-artifacts` work the same way as other providers.
 
 ## Artifacts
 
-Collect artifacts through wire or the owning oracle/probe runner. Keep artifacts
-local. Do not commit provider account data, public host addresses, live host
+Collect artifacts through endpoint operations or the owning oracle/probe
+runner. Keep artifacts local. Do not commit provider account data, public host
 identifiers, packet captures from non-disposable networks, private keys, or
 credentials.
 
 Docker endpoint artifacts include manifests, SSH identity and known-hosts paths,
-command stdout/stderr from wire operations, Docker image inspect/build command
+command stdout/stderr from endpoint operations, Docker image inspect/build command
 logs, container and network metadata, interface discovery data, and cleanup
 state. The provider records enough metadata to destroy tracked containers after
 partial failures and to remove provider-owned private networks only when safe.
@@ -212,9 +213,9 @@ tools/probe/run --provider qemu --dry-run --profile smoke --seed 1 --count 10
 tools/probe/run --provider virtualbox --dry-run --profile smoke --seed 1 --count 10
 ```
 
-Pull request CI should run corpus, offline, pcap, Hetzner wire dry-run, and
+Pull request CI should run corpus, offline, pcap, Hetzner endpoint dry-run, and
 probe dry-run validation through [validation.md](validation.md). Real provider
-runs should be manual, protected, and keep cleanup logic around wire endpoint
+runs should be manual, protected, and keep cleanup logic around endpoint
 destruction so resources are still torn down after a failed validation step.
 
 ## Cleanup

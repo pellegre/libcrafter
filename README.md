@@ -40,7 +40,7 @@ use crafter::prelude::*;
   ranges, and capture packets through bounded pcap workflows.
 - Compare packet behavior against reference backends and real network stacks
   through repository validation tooling.
-- Provision disposable network positions through a wire provider — clean
+- Provision disposable network positions through an endpoint provider — clean
   vantage points for sending, capturing, and reaching networks the developer
   host cannot — and fan the same primitive across several endpoints in
   parallel when broader coverage is needed.
@@ -110,9 +110,9 @@ Live workflows expose raw send, send/receive matching, batch sends, interface
 helpers, route hints, reply filters, and timeout-bounded capture. Run live
 traffic only in networks where you are authorized to send and capture packets.
 
-## Agent-Directed Wire Workflows
+## Agent-Directed Endpoint Workflows
 
-Wire tooling lives under `tools/endpoint`, `tools/oracle`, and `tools/probe`.
+Endpoint tooling lives under `tools/endpoint`, `tools/oracle`, and `tools/probe`.
 Together they let an agent provision a disposable network position, transfer
 adapters, run packet work from it, collect artifacts, and destroy the
 underlying provider resources when the run is done.
@@ -201,7 +201,7 @@ tools/oracle/run live --provider hetzner --dry-run --profile smoke --seed 1 --co
 tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10
 ```
 
-The Hetzner wire provider reads `HETZNER_API_TOKEN` or `HCLOUD_TOKEN` from the
+The Hetzner endpoint provider reads `HETZNER_API_TOKEN` or `HCLOUD_TOKEN` from the
 environment. Do not store real credentials, provider account data, public IPs,
 live host IDs, or packet captures from sensitive networks in tracked files.
 
@@ -217,9 +217,9 @@ live host IDs, or packet captures from sensitive networks in tracked files.
 - [docs/examples.md](docs/examples.md) lists example commands and workflows.
 - [docs/validation.md](docs/validation.md) describes oracle validation modes
   and CI expectations.
-- [docs/probe.md](docs/probe.md) describes wire-backed kernel and service
+- [docs/probe.md](docs/probe.md) describes provider-backed kernel and service
   behavior probes.
-- [docs/wire.md](docs/wire.md) covers provider endpoint setup, credentials,
+- [docs/endpoint.md](docs/endpoint.md) covers provider endpoint setup, credentials,
   artifacts, and cleanup.
 - [CHANGELOG.md](CHANGELOG.md) records the version 2.0.0 scope.
 
