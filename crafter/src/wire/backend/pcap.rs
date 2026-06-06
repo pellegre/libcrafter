@@ -5,10 +5,14 @@ use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::pcap::{LibpcapCapture, LibpcapOfflineCapture, PcapReader, PcapRecord};
+use crate::pcap::{
+    LibpcapCapture, LibpcapOfflineCapture, PcapError, PcapLinkType, PcapReader, PcapRecord,
+    PcapTimestamp, PcapWriter,
+};
 
 use super::super::record::{BackendKind, PacketRecord};
 use super::super::source::PacketSource;
+use super::super::writer::{PacketWriter, WriteReport};
 use super::super::Result;
 
 pub(crate) const DEFAULT_INTERFACE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -300,6 +304,89 @@ impl PacketSource for PcapInterfaceSource {
     }
 }
 
+/// Offline pcap packet writer.
+#[derive(Debug)]
+pub struct PcapFileWriter {
+    path: PathBuf,
+    link_type: PcapLinkType,
+    inner: PcapWriter,
+}
+
+impl PcapFileWriter {
+    /// Create a pcap file writer with the supplied pcap data-link type.
+    pub fn create(path: impl AsRef<Path>, link_type: impl Into<PcapLinkType>) -> Result<Self> {
+        let path = path.as_ref().to_path_buf();
+        let link_type = link_type.into();
+        let inner = PcapWriter::create(&path, link_type)?;
+        Ok(Self {
+            path,
+            link_type,
+            inner,
+        })
+    }
+
+    /// File backing this pcap writer.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Pcap data-link type enforced by this writer.
+    pub const fn pcap_link_type(&self) -> PcapLinkType {
+        self.link_type
+    }
+
+    /// Flush buffered pcap output.
+    pub fn flush(&mut self) -> Result<()> {
+        self.inner.flush().map_err(Into::into)
+    }
+
+    fn ensure_record_link_type(&self, record: &PacketRecord) -> Result<()> {
+        let record_link_type = record
+            .metadata()
+            .pcap_link_type()
+            .or_else(|| record.metadata().link_type().map(PcapLinkType::from));
+
+        if let Some(record_link_type) = record_link_type {
+            if record_link_type != self.link_type {
+                return Err(PcapError::InvalidRecord(
+                    "record link type must match writer link type",
+                )
+                .into());
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl PacketWriter for PcapFileWriter {
+    fn write_record(&mut self, record: &PacketRecord) -> Result<WriteReport> {
+        self.ensure_record_link_type(record)?;
+
+        let compiled = record.packet().compile()?;
+        let bytes = compiled.into_bytes();
+        let byte_len = bytes.len();
+        let captured_len = u32::try_from(byte_len).map_err(|_| PcapError::RecordTooLarge {
+            field: "captured length",
+            max: u32::MAX as u64,
+            actual: byte_len as u64,
+        })?;
+        let timestamp = record
+            .metadata()
+            .timestamp()
+            .unwrap_or_else(PcapTimestamp::zero);
+        let pcap_record = PcapRecord::new(timestamp, captured_len, bytes, self.link_type)?;
+
+        self.inner.write_record(&pcap_record)?;
+        self.inner.flush()?;
+
+        Ok(
+            WriteReport::new(BackendKind::PcapFile, byte_len, byte_len, false)
+                .with_target_details(self.path.display().to_string()),
+        )
+    }
+}
+
 fn pcap_record_to_packet_record(path: &Path, record: PcapRecord) -> Result<PacketRecord> {
     Ok(PacketRecord::try_from_pcap_record(record)?
         .with_backend(BackendKind::PcapFile)
@@ -329,7 +416,8 @@ mod tests {
     use super::*;
     use crate::pcap::{PcapError, PcapLinkType, PcapRecord, PcapTimestamp, PcapWriter};
     use crate::{
-        Ethernet, Ipv4, LinkType, MacAddr, Packet, PacketOrigin, PacketWire, Raw, Tcp, WireError,
+        Ethernet, Ipv4, LinkType, MacAddr, Packet, PacketOrigin, PacketWire, Raw, Tcp, Transmitter,
+        WireError,
     };
 
     static NEXT_TEMP_PCAP: AtomicUsize = AtomicUsize::new(0);
@@ -607,6 +695,101 @@ mod tests {
         match err {
             WireError::Pcap(_) => {}
             other => panic!("expected pcap error for missing file, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pcap_file_writer_transmitter_round_trips_records_through_packet_wire() {
+        let temp = TempPcap {
+            path: temp_pcap_path("writer-roundtrip"),
+        };
+        let first_timestamp = PcapTimestamp::micros(123, 456).unwrap();
+        let second_timestamp = PcapTimestamp::micros(124, 789).unwrap();
+        let first = PacketRecord::new(tcp_packet(41000, 443))
+            .with_pcap_link_type(PcapLinkType::Ethernet)
+            .with_timestamp(first_timestamp);
+        let second = PacketRecord::new(tcp_packet(41001, 80))
+            .with_pcap_link_type(PcapLinkType::Ethernet)
+            .with_timestamp(second_timestamp);
+        let first_compiled = first.packet().compile().unwrap();
+        let second_compiled = second.packet().compile().unwrap();
+        let expected_summaries = vec![
+            PcapLinkType::Ethernet
+                .decode(first_compiled.as_bytes())
+                .unwrap()
+                .summary(),
+            PcapLinkType::Ethernet
+                .decode(second_compiled.as_bytes())
+                .unwrap()
+                .summary(),
+        ];
+        let expected_timestamps = vec![first_timestamp, second_timestamp];
+        let first_len = first_compiled.as_bytes().len();
+        let second_len = second_compiled.as_bytes().len();
+
+        {
+            let writer = PacketWire::pcap_recorder(temp.path(), LinkType::Ethernet)
+                .open()
+                .unwrap()
+                .writer()
+                .unwrap();
+            let mut transmitter = Transmitter::new(writer);
+
+            let first_reports = transmitter.write_record(first).unwrap();
+            let second_reports = transmitter.write_record(second).unwrap();
+
+            assert_eq!(first_reports.len(), 1);
+            assert_eq!(first_reports[0].backend(), &BackendKind::PcapFile);
+            assert_eq!(first_reports[0].bytes_requested(), first_len);
+            assert_eq!(first_reports[0].bytes_written(), first_len);
+            assert!(!first_reports[0].is_dry_run());
+            assert_eq!(
+                first_reports[0].target_details(),
+                Some(temp.path().display().to_string().as_str())
+            );
+            assert_eq!(second_reports.len(), 1);
+            assert_eq!(second_reports[0].bytes_requested(), second_len);
+            assert_eq!(second_reports[0].bytes_written(), second_len);
+        }
+
+        let mut source = PacketWire::pcap_file(temp.path())
+            .open()
+            .unwrap()
+            .source()
+            .unwrap();
+        let mut actual_summaries = Vec::new();
+        let mut actual_timestamps = Vec::new();
+
+        while let Some(record) = source.next_record().unwrap() {
+            actual_summaries.push(record.packet().summary());
+            actual_timestamps.push(record.metadata().timestamp().unwrap());
+        }
+
+        assert_eq!(actual_summaries, expected_summaries);
+        assert_eq!(actual_timestamps, expected_timestamps);
+    }
+
+    #[test]
+    fn pcap_file_writer_rejects_record_link_type_mismatch() {
+        let temp = TempPcap {
+            path: temp_pcap_path("writer-link-type-mismatch"),
+        };
+        let writer = PacketWire::pcap_recorder(temp.path(), LinkType::Ethernet)
+            .open()
+            .unwrap()
+            .writer()
+            .unwrap();
+        let mut transmitter = Transmitter::new(writer);
+        let record =
+            PacketRecord::new(Raw::from("payload")).with_pcap_link_type(PcapLinkType::RawIp);
+
+        let err = transmitter.write_record(record).unwrap_err();
+
+        match err {
+            WireError::Pcap(PcapError::InvalidRecord(reason)) => {
+                assert_eq!(reason, "record link type must match writer link type");
+            }
+            other => panic!("expected pcap link-type error, got {other:?}"),
         }
     }
 

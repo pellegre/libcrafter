@@ -14,6 +14,15 @@ pub trait PacketWriter {
     fn write_record(&mut self, record: &PacketRecord) -> Result<WriteReport>;
 }
 
+impl<T> PacketWriter for Box<T>
+where
+    T: PacketWriter + ?Sized,
+{
+    fn write_record(&mut self, record: &PacketRecord) -> Result<WriteReport> {
+        self.as_mut().write_record(record)
+    }
+}
+
 /// Report returned by a packet writer after one outbound record.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WriteReport {
