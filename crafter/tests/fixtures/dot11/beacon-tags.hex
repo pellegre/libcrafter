@@ -1,0 +1,13 @@
+# Synthetic IEEE 802.11 beacon with selected raw tagged parameters.
+80 00 00 00
+ff ff ff ff ff ff
+02 00 5e 10 00 10
+02 00 5e 10 00 10
+40 00
+08 07 06 05 04 03 02 01
+64 00
+11 00
+00 07 63 72 61 66 74 65 72
+01 04 82 84 8b 96
+03 01 06
+05 04 00 01 00 00

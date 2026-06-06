@@ -1,0 +1,9 @@
+# Synthetic IEEE 802.11 data frame carrying LLC/SNAP IPv4 with a raw payload.
+08 00 00 00
+02 00 5e 10 00 01
+02 00 5e 10 00 02
+02 00 5e 10 00 03
+60 00
+aa aa 03 00 00 00 08 00
+45 00 00 16 41 01 00 00 40 fd 00 00 c0 00 02 0a c6 33 64 14
+76 34

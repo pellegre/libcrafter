@@ -1,0 +1,7 @@
+# Synthetic protected IEEE 802.11 data frame. The SNAP-looking body stays Raw.
+08 40 00 00
+02 00 5e 10 00 01
+02 00 5e 10 00 02
+02 00 5e 10 00 03
+30 00
+aa aa 03 00 00 00 08 00 de ad be ef
