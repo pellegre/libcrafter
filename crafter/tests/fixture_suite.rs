@@ -3933,12 +3933,14 @@ fn malformed_corpus_rows_are_well_formed() {
         "dhcp",
         "dhcp-options",
         "dns-name",
+        "dot11",
         "ethernet",
         "ipv4",
         "ipv4-options",
         "ipv6",
         "linux-sll",
         "null-loopback",
+        "radiotap",
         "tcp-options",
     ]);
 
