@@ -10,6 +10,8 @@ use crate::packet::Raw;
 use crate::packet::{IntoPacket, Layer, LayerContext, Packet};
 use crate::registry::ProtocolRegistry;
 
+use super::append_llc_snap_packet_with_registry;
+
 /// IEEE 802.11 frame-control field length in octets.
 pub const DOT11_FRAME_CONTROL_LEN: usize = 2;
 /// IEEE 802.11 duration/ID field length in octets.
@@ -758,7 +760,10 @@ impl Layer for Dot11 {
     fn summary(&self) -> String {
         let frame_control = self.frame_control_value();
         let mut fields = vec![
-            format!("type={}", dot11_frame_type_label(frame_control.frame_type())),
+            format!(
+                "type={}",
+                dot11_frame_type_label(frame_control.frame_type())
+            ),
             format!(
                 "subtype={}",
                 dot11_subtype_label(frame_control.frame_type(), frame_control.subtype())
@@ -948,17 +953,23 @@ where
 
 /// Decode a bare IEEE 802.11 MAC frame and preserve the undecoded body as Raw.
 pub(crate) fn decode_dot11_with_registry(
-    _registry: &ProtocolRegistry,
+    registry: &ProtocolRegistry,
     bytes: &[u8],
 ) -> Result<Packet> {
     let (dot11, tail) = decode_dot11(bytes)?;
-    let mut packet = Packet::new().push(dot11);
+    let decode_llc_snap = dot11.frame_control_value().frame_type_value() == Dot11FrameType::Data
+        && !dot11.is_protected();
+    let packet = Packet::new().push(dot11);
 
-    if !tail.is_empty() {
-        packet = packet.push(Raw::from_bytes(tail));
+    if tail.is_empty() {
+        return Ok(packet);
     }
 
-    Ok(packet)
+    if decode_llc_snap {
+        append_llc_snap_packet_with_registry(registry, packet, tail)
+    } else {
+        Ok(packet.push(Raw::from_bytes(tail)))
+    }
 }
 
 fn decode_dot11(bytes: &[u8]) -> Result<(Dot11, &[u8])> {
@@ -2060,10 +2071,7 @@ mod tests {
         decode_dot11_with_registry(&ProtocolRegistry::new(), bytes).unwrap()
     }
 
-    fn dot11_inspection_value(
-        fields: &[(&'static str, String)],
-        name: &str,
-    ) -> Option<String> {
+    fn dot11_inspection_value(fields: &[(&'static str, String)], name: &str) -> Option<String> {
         fields
             .iter()
             .find(|(field, _)| *field == name)
