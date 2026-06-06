@@ -295,6 +295,8 @@ pub use protocols::{
     DOT11_MGMT_SUBTYPE_TIMING_ADVERTISEMENT, DOT11_MIN_HEADER_LEN, DOT11_QOS_CONTROL_LEN,
     DOT11_SEQUENCE_CONTROL_LEN, DOT11_SEQUENCE_FRAGMENT_NUMBER_MASK,
     DOT11_SEQUENCE_FRAGMENT_NUMBER_SHIFT, DOT11_SEQUENCE_NUMBER_MASK, DOT11_SEQUENCE_NUMBER_SHIFT,
+    DOT11_TAG_DS_PARAMETER_SET, DOT11_TAG_RSN, DOT11_TAG_SSID, DOT11_TAG_SUPPORTED_RATES,
+    DOT11_TAG_TIM,
 };
 // The deprecated `Icmp*` aliases (renamed to the explicit `Icmpv4*` names) are
 // re-exported separately so the `#[allow(deprecated)]` exemption stays scoped to
@@ -580,7 +582,8 @@ pub mod core {
         DOT11_MGMT_SUBTYPE_TIMING_ADVERTISEMENT, DOT11_MIN_HEADER_LEN, DOT11_QOS_CONTROL_LEN,
         DOT11_SEQUENCE_CONTROL_LEN, DOT11_SEQUENCE_FRAGMENT_NUMBER_MASK,
         DOT11_SEQUENCE_FRAGMENT_NUMBER_SHIFT, DOT11_SEQUENCE_NUMBER_MASK,
-        DOT11_SEQUENCE_NUMBER_SHIFT,
+        DOT11_SEQUENCE_NUMBER_SHIFT, DOT11_TAG_DS_PARAMETER_SET, DOT11_TAG_RSN, DOT11_TAG_SSID,
+        DOT11_TAG_SUPPORTED_RATES, DOT11_TAG_TIM,
     };
     // The deprecated `Icmp*` aliases (renamed to the explicit `Icmpv4*` names) are
     // re-exported separately so the `#[allow(deprecated)]` exemption stays scoped to
