@@ -1,4 +1,4 @@
-//! Packet sniffer pipeline.
+//! Inbound packet sniffer pipeline.
 
 use std::collections::VecDeque;
 use std::fmt;
@@ -20,7 +20,9 @@ const DEFAULT_SNIFFER_TIMEOUT: Duration = Duration::from_secs(10);
 ///
 /// A sniffer owns one [`PacketSource`] and an ordered chain of packet
 /// transforms. Each source record flows through the full transform chain before
-/// any emitted record is yielded to the caller.
+/// any emitted record is yielded to the caller. To capture from multiple
+/// interfaces or media, open multiple [`crate::wire::PacketWire`] values and
+/// run one sniffer per source.
 pub struct Sniffer {
     source: Box<dyn PacketSource + Send>,
     transforms: Vec<Box<dyn PacketTransform + Send>>,

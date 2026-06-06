@@ -1,4 +1,4 @@
-//! Packet transform contracts.
+//! Stateful packet transform contracts.
 
 use super::record::{PacketRecord, TransformTrace};
 use super::Result;
@@ -8,7 +8,10 @@ use super::Result;
 /// A transform consumes one [`PacketRecord`] and may emit zero, one, or many
 /// packet records through the supplied callback. Implementers can keep state
 /// across calls for decryption, defragmentation, reassembly, or protocol
-/// decoding without changing the packet-shaped stream contract.
+/// decoding without changing the packet-shaped stream contract. Future WPA
+/// decryptors belong here: they can observe handshake records, retain key
+/// state, and emit decrypted packet records when payload frames become
+/// decodable.
 pub trait PacketTransform {
     /// Stable transform name used in diagnostics and transform traces.
     fn name(&self) -> &'static str;
