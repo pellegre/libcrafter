@@ -3273,7 +3273,7 @@ pub fn dot11_category_label(category: u8) -> String {
 mod tests {
     use super::*;
     use crate::registry::ProtocolRegistry;
-    use crate::{Ipv4, LinkType, LlcSnap, Packet, Raw};
+    use crate::{Ipv4, LinkType, LlcSnap, Packet, Radiotap, Raw};
 
     fn dot11_role_mac(index: u8) -> MacAddr {
         MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x00, index])
@@ -3497,13 +3497,18 @@ mod tests {
     }
 
     #[test]
-    fn dot11_decode_from_link_radiotap_placeholder_remains_raw() {
+    fn dot11_decode_from_link_radiotap_uses_typed_radiotap_root() {
         let bytes = [0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00];
 
         let decoded = Packet::decode_from_link(LinkType::Radiotap, bytes).unwrap();
 
+        let radiotap = decoded.layer::<Radiotap>().unwrap();
+        assert_eq!(radiotap.version_value(), Some(0));
+        assert_eq!(radiotap.length_value(), Some(8));
+        assert!(radiotap.fields().is_empty());
         assert!(decoded.layer::<Dot11>().is_none());
-        assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), &bytes);
+        assert!(decoded.layer::<Raw>().is_none());
+        assert_eq!(decoded.compile().unwrap().as_bytes(), &bytes);
     }
 
     #[test]
