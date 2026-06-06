@@ -957,8 +957,7 @@ pub(crate) fn decode_dot11_with_registry(
     bytes: &[u8],
 ) -> Result<Packet> {
     let (dot11, tail) = decode_dot11(bytes)?;
-    let decode_llc_snap = dot11.frame_control_value().frame_type_value() == Dot11FrameType::Data
-        && !dot11.is_protected();
+    let decode_llc_snap = dot11_should_dispatch_llc_snap(&dot11);
     let packet = Packet::new().push(dot11);
 
     if tail.is_empty() {
@@ -970,6 +969,14 @@ pub(crate) fn decode_dot11_with_registry(
     } else {
         Ok(packet.push(Raw::from_bytes(tail)))
     }
+}
+
+fn dot11_should_dispatch_llc_snap(dot11: &Dot11) -> bool {
+    let frame_control = dot11.frame_control_value();
+
+    frame_control.frame_type_value() == Dot11FrameType::Data
+        && dot11_data_subtype_carries_payload(frame_control.subtype())
+        && !frame_control.protected()
 }
 
 fn decode_dot11(bytes: &[u8]) -> Result<(Dot11, &[u8])> {
@@ -1901,6 +1908,20 @@ const fn dot11_data_subtype_has_qos(subtype: u8) -> bool {
     subtype & 0b1000 != 0
 }
 
+const fn dot11_data_subtype_carries_payload(subtype: u8) -> bool {
+    matches!(
+        subtype,
+        DOT11_DATA_SUBTYPE_DATA
+            | DOT11_DATA_SUBTYPE_DATA_CF_ACK
+            | DOT11_DATA_SUBTYPE_DATA_CF_POLL
+            | DOT11_DATA_SUBTYPE_DATA_CF_ACK_CF_POLL
+            | DOT11_DATA_SUBTYPE_QOS_DATA
+            | DOT11_DATA_SUBTYPE_QOS_DATA_CF_ACK
+            | DOT11_DATA_SUBTYPE_QOS_DATA_CF_POLL
+            | DOT11_DATA_SUBTYPE_QOS_DATA_CF_ACK_CF_POLL
+    )
+}
+
 const fn dot11_management_fixed_parameters_len(frame_control: Dot11FrameControl) -> usize {
     if !matches!(frame_control.frame_type_value(), Dot11FrameType::Management) {
         return 0;
@@ -2032,7 +2053,7 @@ pub fn dot11_category_label(category: u8) -> String {
 mod tests {
     use super::*;
     use crate::registry::ProtocolRegistry;
-    use crate::{LinkType, Packet, Raw};
+    use crate::{Ipv4, LinkType, LlcSnap, Packet, Raw};
 
     fn dot11_role_mac(index: u8) -> MacAddr {
         MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x00, index])
@@ -2342,6 +2363,79 @@ mod tests {
         assert!(dot11.frame_control_value().retry());
         assert_eq!(raw.as_bytes(), b"unknown-management-body");
         assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+    }
+
+    #[test]
+    fn dot11_llc_dispatch_unprotected_data_decodes_snap_ipv4() {
+        let packet = Dot11::data() / LlcSnap::new() / Ipv4::new() / Raw::from("v4");
+        let bytes = packet.compile().unwrap();
+
+        let decoded = Packet::decode_from_link(LinkType::Ieee80211, bytes.as_bytes()).unwrap();
+
+        assert!(decoded.layer::<Dot11>().is_some());
+        assert!(decoded.layer::<LlcSnap>().is_some());
+        assert!(decoded.layer::<Ipv4>().is_some());
+        assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), b"v4");
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_bytes());
+    }
+
+    #[test]
+    fn dot11_llc_dispatch_protected_data_keeps_body_raw() {
+        let frame_control = Dot11::data().frame_control_value().with_protected(true);
+        let dot11 = Dot11::data().frame_control(frame_control);
+        let packet = dot11.clone() / LlcSnap::new() / Ipv4::new() / Raw::from("v4");
+        let bytes = packet.compile().unwrap();
+
+        let decoded = Packet::decode_from_link(LinkType::Ieee80211, bytes.as_bytes()).unwrap();
+
+        assert!(decoded.layer::<LlcSnap>().is_none());
+        assert!(decoded.layer::<Ipv4>().is_none());
+        assert_eq!(
+            decoded.layer::<Raw>().unwrap().as_bytes(),
+            &bytes.as_bytes()[dot11.encoded_len()..]
+        );
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_bytes());
+    }
+
+    #[test]
+    fn dot11_llc_dispatch_non_data_frame_keeps_tail_raw() {
+        let mut bytes = Packet::from_layer(Dot11::beacon())
+            .compile()
+            .unwrap()
+            .into_bytes();
+        let llc_bytes = (LlcSnap::new() / Raw::from("beacon-tail"))
+            .compile()
+            .unwrap();
+        bytes.extend_from_slice(llc_bytes.as_bytes());
+
+        let decoded = Packet::decode_from_link(LinkType::Ieee80211, &bytes).unwrap();
+
+        assert!(decoded.layer::<LlcSnap>().is_none());
+        assert!(decoded.layer::<Ipv4>().is_none());
+        assert_eq!(
+            decoded.layer::<Raw>().unwrap().as_bytes(),
+            llc_bytes.as_bytes()
+        );
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_slice());
+    }
+
+    #[test]
+    fn dot11_llc_dispatch_null_data_subtype_keeps_body_raw() {
+        let frame_control =
+            dot11_test_frame_control(DOT11_FRAME_TYPE_DATA, DOT11_DATA_SUBTYPE_NULL);
+        let dot11 = Dot11::data().frame_control(frame_control);
+        let packet = dot11.clone() / LlcSnap::new() / Ipv4::new() / Raw::from("null-tail");
+        let bytes = packet.compile().unwrap();
+
+        let decoded = Packet::decode_from_link(LinkType::Ieee80211, bytes.as_bytes()).unwrap();
+
+        assert!(decoded.layer::<LlcSnap>().is_none());
+        assert!(decoded.layer::<Ipv4>().is_none());
+        assert_eq!(
+            decoded.layer::<Raw>().unwrap().as_bytes(),
+            &bytes.as_bytes()[dot11.encoded_len()..]
+        );
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_bytes());
     }
 
     #[test]
