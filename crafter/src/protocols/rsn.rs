@@ -2,8 +2,13 @@
 
 use std::fmt;
 
+use crate::error::{CrafterError, Result};
+
 /// Robust Security Network information element version 1.
 pub const RSN_VERSION_1: u16 = 1;
+
+/// Octets in an RSN Capabilities field.
+pub const RSN_CAPABILITIES_LEN: usize = 2;
 
 /// Octets in an RSN cipher or AKM suite selector.
 pub const RSN_SUITE_SELECTOR_LEN: usize = 4;
@@ -107,6 +112,402 @@ pub const RSN_AKM_SUITE_PASN_DEFINED_KEY_WRAP: RsnAkmSuite =
     RsnAkmSuite::new(RSN_SUITE_SELECTOR_OUI, 26);
 /// RSN AKM suite selector: EDPKE.
 pub const RSN_AKM_SUITE_EDPKE: RsnAkmSuite = RsnAkmSuite::new(RSN_SUITE_SELECTOR_OUI, 29);
+
+const RSN_CAP_PRE_AUTHENTICATION: u16 = 0x0001;
+const RSN_CAP_NO_PAIRWISE: u16 = 0x0002;
+const RSN_CAP_PTKSA_REPLAY_COUNTER_MASK: u16 = 0x000c;
+const RSN_CAP_PTKSA_REPLAY_COUNTER_SHIFT: u8 = 2;
+const RSN_CAP_GTKSA_REPLAY_COUNTER_MASK: u16 = 0x0030;
+const RSN_CAP_GTKSA_REPLAY_COUNTER_SHIFT: u8 = 4;
+const RSN_CAP_MFP_REQUIRED: u16 = 0x0040;
+const RSN_CAP_MFP_CAPABLE: u16 = 0x0080;
+const RSN_CAP_JOINT_MULTI_BAND_RSNA: u16 = 0x0100;
+const RSN_CAP_PEERKEY_ENABLED: u16 = 0x0200;
+const RSN_CAP_SPP_A_MSDU_CAPABLE: u16 = 0x0400;
+const RSN_CAP_SPP_A_MSDU_REQUIRED: u16 = 0x0800;
+const RSN_CAP_PBAC: u16 = 0x1000;
+const RSN_CAP_EXTENDED_KEY_ID: u16 = 0x2000;
+const RSN_CAP_RESERVED_MASK: u16 = 0xc000;
+
+/// RSN Capabilities field.
+///
+/// The field is encoded as a little-endian two-octet RSN information element
+/// subfield. Accessors expose source-backed IEEE 802.11 capability bits while
+/// the raw word remains available so reserved or future bits round-trip
+/// unchanged.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct RsnCapabilities {
+    bits: u16,
+}
+
+impl RsnCapabilities {
+    /// Create an empty RSN Capabilities field.
+    pub const fn new() -> Self {
+        Self { bits: 0 }
+    }
+
+    /// Create an RSN Capabilities value from its raw host-endian bit word.
+    pub const fn from_bits(bits: u16) -> Self {
+        Self { bits }
+    }
+
+    /// Create an RSN Capabilities value from its raw host-endian bit word.
+    pub const fn from_raw(bits: u16) -> Self {
+        Self::from_bits(bits)
+    }
+
+    /// Decode an RSN Capabilities field from exactly two little-endian bytes.
+    pub const fn from_le_bytes(bytes: [u8; RSN_CAPABILITIES_LEN]) -> Self {
+        Self {
+            bits: u16::from_le_bytes(bytes),
+        }
+    }
+
+    /// Decode an RSN Capabilities field from a byte slice.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let bytes = bytes.as_ref();
+        if bytes.len() < RSN_CAPABILITIES_LEN {
+            return Err(CrafterError::buffer_too_short(
+                "rsn.capabilities",
+                RSN_CAPABILITIES_LEN,
+                bytes.len(),
+            ));
+        }
+
+        Ok(Self::from_le_bytes([bytes[0], bytes[1]]))
+    }
+
+    /// Return the raw host-endian RSN Capabilities bit word.
+    pub const fn bits(&self) -> u16 {
+        self.bits
+    }
+
+    /// Return the raw host-endian RSN Capabilities bit word.
+    pub const fn raw(&self) -> u16 {
+        self.bits
+    }
+
+    /// Set the raw host-endian RSN Capabilities bit word.
+    pub const fn raw_set(mut self, bits: u16) -> Self {
+        self.bits = bits;
+        self
+    }
+
+    /// Builder alias for [`Self::raw_set`].
+    pub const fn with_raw(self, bits: u16) -> Self {
+        self.raw_set(bits)
+    }
+
+    /// Compile the RSN Capabilities field to little-endian wire bytes.
+    pub const fn to_le_bytes(self) -> [u8; RSN_CAPABILITIES_LEN] {
+        self.bits.to_le_bytes()
+    }
+
+    /// Compile the RSN Capabilities field to little-endian wire bytes.
+    pub const fn encode(self) -> [u8; RSN_CAPABILITIES_LEN] {
+        self.to_le_bytes()
+    }
+
+    /// Return true when the Pre-Authentication bit is set.
+    pub const fn pre_authentication(&self) -> bool {
+        self.has_flag(RSN_CAP_PRE_AUTHENTICATION)
+    }
+
+    /// Return true when the No Pairwise bit is set.
+    pub const fn no_pairwise(&self) -> bool {
+        self.has_flag(RSN_CAP_NO_PAIRWISE)
+    }
+
+    /// Two-bit PTKSA Replay Counter selector as encoded on the wire.
+    pub const fn ptksa_replay_counter(&self) -> u8 {
+        ((self.bits & RSN_CAP_PTKSA_REPLAY_COUNTER_MASK) >> RSN_CAP_PTKSA_REPLAY_COUNTER_SHIFT)
+            as u8
+    }
+
+    /// Number of PTKSA replay counters represented by the selector.
+    pub const fn ptksa_replay_counter_count(&self) -> u8 {
+        rsn_replay_counter_count(self.ptksa_replay_counter())
+    }
+
+    /// Two-bit GTKSA Replay Counter selector as encoded on the wire.
+    pub const fn gtksa_replay_counter(&self) -> u8 {
+        ((self.bits & RSN_CAP_GTKSA_REPLAY_COUNTER_MASK) >> RSN_CAP_GTKSA_REPLAY_COUNTER_SHIFT)
+            as u8
+    }
+
+    /// Number of GTKSA replay counters represented by the selector.
+    pub const fn gtksa_replay_counter_count(&self) -> u8 {
+        rsn_replay_counter_count(self.gtksa_replay_counter())
+    }
+
+    /// Return true when Management Frame Protection Required is set.
+    pub const fn management_frame_protection_required(&self) -> bool {
+        self.has_flag(RSN_CAP_MFP_REQUIRED)
+    }
+
+    /// Compatibility alias for [`Self::management_frame_protection_required`].
+    pub const fn mfp_required(&self) -> bool {
+        self.management_frame_protection_required()
+    }
+
+    /// Return true when Management Frame Protection Capable is set.
+    pub const fn management_frame_protection_capable(&self) -> bool {
+        self.has_flag(RSN_CAP_MFP_CAPABLE)
+    }
+
+    /// Compatibility alias for [`Self::management_frame_protection_capable`].
+    pub const fn mfp_capable(&self) -> bool {
+        self.management_frame_protection_capable()
+    }
+
+    /// Return true when Joint Multi-band RSNA is set.
+    pub const fn joint_multi_band_rsna(&self) -> bool {
+        self.has_flag(RSN_CAP_JOINT_MULTI_BAND_RSNA)
+    }
+
+    /// Return true when PeerKey Enabled is set.
+    pub const fn peerkey_enabled(&self) -> bool {
+        self.has_flag(RSN_CAP_PEERKEY_ENABLED)
+    }
+
+    /// Return true when SPP A-MSDU Capable is set.
+    pub const fn spp_a_msdu_capable(&self) -> bool {
+        self.has_flag(RSN_CAP_SPP_A_MSDU_CAPABLE)
+    }
+
+    /// Return true when SPP A-MSDU Required is set.
+    pub const fn spp_a_msdu_required(&self) -> bool {
+        self.has_flag(RSN_CAP_SPP_A_MSDU_REQUIRED)
+    }
+
+    /// Return true when PBAC is set.
+    pub const fn pbac(&self) -> bool {
+        self.has_flag(RSN_CAP_PBAC)
+    }
+
+    /// Compatibility alias for [`Self::pbac`].
+    pub const fn pbac_enabled(&self) -> bool {
+        self.pbac()
+    }
+
+    /// Return true when Extended Key ID for individually addressed frames is set.
+    pub const fn extended_key_id(&self) -> bool {
+        self.has_flag(RSN_CAP_EXTENDED_KEY_ID)
+    }
+
+    /// Reserved bits as they appear in the raw 16-bit word.
+    pub const fn reserved_bits(&self) -> u16 {
+        self.bits & RSN_CAP_RESERVED_MASK
+    }
+
+    /// Set or clear the Pre-Authentication bit.
+    pub const fn pre_authentication_set(mut self, enabled: bool) -> Self {
+        self.bits = set_rsn_capability_flag(self.bits, RSN_CAP_PRE_AUTHENTICATION, enabled);
+        self
+    }
+
+    /// Builder alias for [`Self::pre_authentication_set`].
+    pub const fn with_pre_authentication(self, enabled: bool) -> Self {
+        self.pre_authentication_set(enabled)
+    }
+
+    /// Set or clear the No Pairwise bit.
+    pub const fn no_pairwise_set(mut self, enabled: bool) -> Self {
+        self.bits = set_rsn_capability_flag(self.bits, RSN_CAP_NO_PAIRWISE, enabled);
+        self
+    }
+
+    /// Builder alias for [`Self::no_pairwise_set`].
+    pub const fn with_no_pairwise(self, enabled: bool) -> Self {
+        self.no_pairwise_set(enabled)
+    }
+
+    /// Set the two-bit PTKSA Replay Counter selector.
+    ///
+    /// Only the low two bits of `replay_counter` are representable. Use
+    /// [`Self::raw_set`] to set an exact 16-bit word.
+    pub const fn ptksa_replay_counter_set(mut self, replay_counter: u8) -> Self {
+        self.bits = set_rsn_capability_subfield(
+            self.bits,
+            RSN_CAP_PTKSA_REPLAY_COUNTER_MASK,
+            RSN_CAP_PTKSA_REPLAY_COUNTER_SHIFT,
+            replay_counter,
+        );
+        self
+    }
+
+    /// Builder alias for [`Self::ptksa_replay_counter_set`].
+    pub const fn with_ptksa_replay_counter(self, replay_counter: u8) -> Self {
+        self.ptksa_replay_counter_set(replay_counter)
+    }
+
+    /// Set the two-bit GTKSA Replay Counter selector.
+    ///
+    /// Only the low two bits of `replay_counter` are representable. Use
+    /// [`Self::raw_set`] to set an exact 16-bit word.
+    pub const fn gtksa_replay_counter_set(mut self, replay_counter: u8) -> Self {
+        self.bits = set_rsn_capability_subfield(
+            self.bits,
+            RSN_CAP_GTKSA_REPLAY_COUNTER_MASK,
+            RSN_CAP_GTKSA_REPLAY_COUNTER_SHIFT,
+            replay_counter,
+        );
+        self
+    }
+
+    /// Builder alias for [`Self::gtksa_replay_counter_set`].
+    pub const fn with_gtksa_replay_counter(self, replay_counter: u8) -> Self {
+        self.gtksa_replay_counter_set(replay_counter)
+    }
+
+    /// Set or clear the Management Frame Protection Required bit.
+    pub const fn management_frame_protection_required_set(mut self, enabled: bool) -> Self {
+        self.bits = set_rsn_capability_flag(self.bits, RSN_CAP_MFP_REQUIRED, enabled);
+        self
+    }
+
+    /// Builder alias for [`Self::management_frame_protection_required_set`].
+    pub const fn with_management_frame_protection_required(self, enabled: bool) -> Self {
+        self.management_frame_protection_required_set(enabled)
+    }
+
+    /// Set or clear the Management Frame Protection Capable bit.
+    pub const fn management_frame_protection_capable_set(mut self, enabled: bool) -> Self {
+        self.bits = set_rsn_capability_flag(self.bits, RSN_CAP_MFP_CAPABLE, enabled);
+        self
+    }
+
+    /// Builder alias for [`Self::management_frame_protection_capable_set`].
+    pub const fn with_management_frame_protection_capable(self, enabled: bool) -> Self {
+        self.management_frame_protection_capable_set(enabled)
+    }
+
+    /// Set or clear the Joint Multi-band RSNA bit.
+    pub const fn joint_multi_band_rsna_set(mut self, enabled: bool) -> Self {
+        self.bits = set_rsn_capability_flag(self.bits, RSN_CAP_JOINT_MULTI_BAND_RSNA, enabled);
+        self
+    }
+
+    /// Builder alias for [`Self::joint_multi_band_rsna_set`].
+    pub const fn with_joint_multi_band_rsna(self, enabled: bool) -> Self {
+        self.joint_multi_band_rsna_set(enabled)
+    }
+
+    /// Set or clear the PeerKey Enabled bit.
+    pub const fn peerkey_enabled_set(mut self, enabled: bool) -> Self {
+        self.bits = set_rsn_capability_flag(self.bits, RSN_CAP_PEERKEY_ENABLED, enabled);
+        self
+    }
+
+    /// Builder alias for [`Self::peerkey_enabled_set`].
+    pub const fn with_peerkey_enabled(self, enabled: bool) -> Self {
+        self.peerkey_enabled_set(enabled)
+    }
+
+    /// Set or clear the SPP A-MSDU Capable bit.
+    pub const fn spp_a_msdu_capable_set(mut self, enabled: bool) -> Self {
+        self.bits = set_rsn_capability_flag(self.bits, RSN_CAP_SPP_A_MSDU_CAPABLE, enabled);
+        self
+    }
+
+    /// Builder alias for [`Self::spp_a_msdu_capable_set`].
+    pub const fn with_spp_a_msdu_capable(self, enabled: bool) -> Self {
+        self.spp_a_msdu_capable_set(enabled)
+    }
+
+    /// Set or clear the SPP A-MSDU Required bit.
+    pub const fn spp_a_msdu_required_set(mut self, enabled: bool) -> Self {
+        self.bits = set_rsn_capability_flag(self.bits, RSN_CAP_SPP_A_MSDU_REQUIRED, enabled);
+        self
+    }
+
+    /// Builder alias for [`Self::spp_a_msdu_required_set`].
+    pub const fn with_spp_a_msdu_required(self, enabled: bool) -> Self {
+        self.spp_a_msdu_required_set(enabled)
+    }
+
+    /// Set or clear the PBAC bit.
+    pub const fn pbac_set(mut self, enabled: bool) -> Self {
+        self.bits = set_rsn_capability_flag(self.bits, RSN_CAP_PBAC, enabled);
+        self
+    }
+
+    /// Builder alias for [`Self::pbac_set`].
+    pub const fn with_pbac(self, enabled: bool) -> Self {
+        self.pbac_set(enabled)
+    }
+
+    /// Set or clear the Extended Key ID bit.
+    pub const fn extended_key_id_set(mut self, enabled: bool) -> Self {
+        self.bits = set_rsn_capability_flag(self.bits, RSN_CAP_EXTENDED_KEY_ID, enabled);
+        self
+    }
+
+    /// Builder alias for [`Self::extended_key_id_set`].
+    pub const fn with_extended_key_id(self, enabled: bool) -> Self {
+        self.extended_key_id_set(enabled)
+    }
+
+    /// Set the reserved bits that this phase does not interpret.
+    pub const fn reserved_bits_set(mut self, reserved_bits: u16) -> Self {
+        self.bits = (self.bits & !RSN_CAP_RESERVED_MASK) | (reserved_bits & RSN_CAP_RESERVED_MASK);
+        self
+    }
+
+    /// Builder alias for [`Self::reserved_bits_set`].
+    pub const fn with_reserved_bits(self, reserved_bits: u16) -> Self {
+        self.reserved_bits_set(reserved_bits)
+    }
+
+    const fn has_flag(&self, flag: u16) -> bool {
+        self.bits & flag != 0
+    }
+}
+
+impl From<u16> for RsnCapabilities {
+    fn from(bits: u16) -> Self {
+        Self::from_bits(bits)
+    }
+}
+
+impl From<RsnCapabilities> for u16 {
+    fn from(capabilities: RsnCapabilities) -> Self {
+        capabilities.bits()
+    }
+}
+
+impl From<[u8; RSN_CAPABILITIES_LEN]> for RsnCapabilities {
+    fn from(bytes: [u8; RSN_CAPABILITIES_LEN]) -> Self {
+        Self::from_le_bytes(bytes)
+    }
+}
+
+impl From<RsnCapabilities> for [u8; RSN_CAPABILITIES_LEN] {
+    fn from(capabilities: RsnCapabilities) -> Self {
+        capabilities.to_le_bytes()
+    }
+}
+
+const fn rsn_replay_counter_count(encoded: u8) -> u8 {
+    match encoded & 0x03 {
+        0 => 1,
+        1 => 2,
+        2 => 4,
+        _ => 16,
+    }
+}
+
+const fn set_rsn_capability_flag(bits: u16, flag: u16, enabled: bool) -> u16 {
+    if enabled {
+        bits | flag
+    } else {
+        bits & !flag
+    }
+}
+
+const fn set_rsn_capability_subfield(bits: u16, mask: u16, shift: u8, value: u8) -> u16 {
+    (bits & !mask) | (((value as u16) << shift) & mask)
+}
 
 /// Raw RSN suite selector shape: a three-octet OUI plus one-octet suite type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -486,16 +887,26 @@ mod tests {
 
     #[test]
     fn rsn_suite_selectors_public_exports_resolve() {
-        use crate::core::{RsnAkmSuite as CoreAkm, RSN_AKM_SUITE_PSK as CORE_PSK};
+        use crate::core::{
+            RsnAkmSuite as CoreAkm, RsnCapabilities as CoreCapabilities,
+            RSN_AKM_SUITE_PSK as CORE_PSK,
+        };
         use crate::prelude::{
-            RsnCipherSuite as PreludeCipher, RSN_CIPHER_SUITE_CCMP_128 as PRELUDE_CCMP,
+            RsnCapabilities as PreludeCapabilities, RsnCipherSuite as PreludeCipher,
+            RSN_CIPHER_SUITE_CCMP_128 as PRELUDE_CCMP,
         };
         use crate::protocols::{
-            rsn_akm_suite_label as protocols_akm_label, RsnSuiteSelector as ProtocolsSelector,
+            rsn_akm_suite_label as protocols_akm_label, RsnCapabilities as ProtocolsCapabilities,
+            RsnSuiteSelector as ProtocolsSelector,
         };
 
         assert_eq!(CoreAkm::from(CORE_PSK).label(), Some("psk"));
         assert_eq!(PreludeCipher::from(PRELUDE_CCMP).label(), Some("ccmp-128"));
+        assert!(CoreCapabilities::new()
+            .with_pre_authentication(true)
+            .pre_authentication());
+        assert!(PreludeCapabilities::from_le_bytes([0x80, 0x00]).mfp_capable());
+        assert!(ProtocolsCapabilities::from_raw(0x2000).extended_key_id());
         assert_eq!(
             protocols_akm_label(RsnAkmSuite::new(RSN_SUITE_SELECTOR_OUI, 8)),
             Some("sae")
@@ -503,6 +914,101 @@ mod tests {
         assert_eq!(
             ProtocolsSelector::from([0x00, 0x0f, 0xac, 0x04]).to_bytes(),
             [0x00, 0x0f, 0xac, 0x04]
+        );
+    }
+
+    #[test]
+    fn rsn_capabilities_decode_encode_little_endian_and_raw_bits() {
+        let capabilities = RsnCapabilities::from_le_bytes([0xca, 0x35]);
+
+        assert_eq!(capabilities.bits(), 0x35ca);
+        assert_eq!(capabilities.raw(), 0x35ca);
+        assert_eq!(capabilities.to_le_bytes(), [0xca, 0x35]);
+        assert_eq!(capabilities.encode(), [0xca, 0x35]);
+        assert_eq!(RsnCapabilities::decode([0xca, 0x35]).unwrap(), capabilities);
+        assert_eq!(
+            RsnCapabilities::decode([0xff]).unwrap_err(),
+            CrafterError::buffer_too_short("rsn.capabilities", RSN_CAPABILITIES_LEN, 1)
+        );
+    }
+
+    #[test]
+    fn rsn_capabilities_bit_accessors_cover_source_backed_flags() {
+        let capabilities = RsnCapabilities::new()
+            .with_pre_authentication(true)
+            .with_no_pairwise(true)
+            .with_management_frame_protection_required(true)
+            .with_management_frame_protection_capable(true)
+            .with_joint_multi_band_rsna(true)
+            .with_peerkey_enabled(true)
+            .with_spp_a_msdu_capable(true)
+            .with_spp_a_msdu_required(true)
+            .with_pbac(true)
+            .with_extended_key_id(true);
+
+        assert!(capabilities.pre_authentication());
+        assert!(capabilities.no_pairwise());
+        assert!(capabilities.management_frame_protection_required());
+        assert!(capabilities.mfp_required());
+        assert!(capabilities.management_frame_protection_capable());
+        assert!(capabilities.mfp_capable());
+        assert!(capabilities.joint_multi_band_rsna());
+        assert!(capabilities.peerkey_enabled());
+        assert!(capabilities.spp_a_msdu_capable());
+        assert!(capabilities.spp_a_msdu_required());
+        assert!(capabilities.pbac());
+        assert!(capabilities.pbac_enabled());
+        assert!(capabilities.extended_key_id());
+        assert_eq!(capabilities.bits(), 0x3fc3);
+        assert_eq!(capabilities.to_le_bytes(), [0xc3, 0x3f]);
+    }
+
+    #[test]
+    fn rsn_capabilities_replay_counter_accessors_cover_encoded_counts() {
+        let counts = [1, 2, 4, 16];
+
+        for encoded in 0..=3 {
+            let capabilities = RsnCapabilities::new()
+                .with_ptksa_replay_counter(encoded)
+                .with_gtksa_replay_counter(3 - encoded);
+
+            assert_eq!(capabilities.ptksa_replay_counter(), encoded);
+            assert_eq!(
+                capabilities.ptksa_replay_counter_count(),
+                counts[encoded as usize]
+            );
+            assert_eq!(capabilities.gtksa_replay_counter(), 3 - encoded);
+            assert_eq!(
+                capabilities.gtksa_replay_counter_count(),
+                counts[(3 - encoded) as usize]
+            );
+        }
+
+        let truncated = RsnCapabilities::new()
+            .with_ptksa_replay_counter(0xff)
+            .with_gtksa_replay_counter(0xfe);
+        assert_eq!(truncated.ptksa_replay_counter(), 3);
+        assert_eq!(truncated.gtksa_replay_counter(), 2);
+    }
+
+    #[test]
+    fn rsn_capabilities_reserved_bits_are_lossless() {
+        let decoded = RsnCapabilities::from_raw(0xffff);
+
+        assert_eq!(decoded.reserved_bits(), 0xc000);
+        assert_eq!(decoded.to_le_bytes(), [0xff, 0xff]);
+
+        let capabilities = RsnCapabilities::new()
+            .with_pre_authentication(true)
+            .with_reserved_bits(0xffff);
+
+        assert!(capabilities.pre_authentication());
+        assert_eq!(capabilities.reserved_bits(), 0xc000);
+        assert_eq!(capabilities.bits(), 0xc001);
+        assert_eq!(u16::from(capabilities), 0xc001);
+        assert_eq!(
+            <[u8; RSN_CAPABILITIES_LEN]>::from(capabilities),
+            [0x01, 0xc0]
         );
     }
 }
