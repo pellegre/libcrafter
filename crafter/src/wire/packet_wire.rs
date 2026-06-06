@@ -7,9 +7,9 @@ use std::time::Duration;
 use crate::pcap::PcapLinkType;
 
 use super::backend::pcap::{
-    filter_trimmed, OfflinePcapSource, PcapInterfaceSource, DEFAULT_INTERFACE_IMMEDIATE,
-    DEFAULT_INTERFACE_NONBLOCKING, DEFAULT_INTERFACE_PROMISC, DEFAULT_INTERFACE_SNAPLEN,
-    DEFAULT_INTERFACE_TIMEOUT,
+    filter_trimmed, OfflinePcapSource, PcapFileWriter, PcapInterfaceSource,
+    DEFAULT_INTERFACE_IMMEDIATE, DEFAULT_INTERFACE_NONBLOCKING, DEFAULT_INTERFACE_PROMISC,
+    DEFAULT_INTERFACE_SNAPLEN, DEFAULT_INTERFACE_TIMEOUT,
 };
 use super::source::PacketSource;
 use super::writer::PacketWriter;
@@ -229,6 +229,12 @@ impl PacketWireBuilder {
                     self.source = Some(Box::new(builder.open()?));
                 }
                 PacketWireTarget::PcapRecorder { .. } => {}
+            }
+        }
+
+        if self.writer.is_none() {
+            if let PacketWireTarget::PcapRecorder { path, link_type } = &self.target {
+                self.writer = Some(Box::new(PcapFileWriter::create(path, *link_type)?));
             }
         }
 
@@ -481,13 +487,15 @@ mod tests {
 
     #[test]
     fn unsupported_source_returns_typed_capability_error() {
+        let temp = empty_temp_pcap("source-unsupported");
+
         assert_unsupported(
-            PacketWire::pcap_recorder("out.pcap", LinkType::Ethernet)
+            PacketWire::pcap_recorder(&temp.path, LinkType::Ethernet)
                 .open()
                 .unwrap()
                 .source(),
             "read",
-            "pcap-recorder:out.pcap",
+            &format!("pcap-recorder:{}", temp.path.display()),
         );
     }
 
