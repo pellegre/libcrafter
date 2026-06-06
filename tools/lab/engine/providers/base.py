@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Protocol
 
-from tools.wire.engine.model import EndpointManifest
+from tools.endpoint.engine.model import EndpointManifest
 
 from .. import wire_client
 from ..model import (

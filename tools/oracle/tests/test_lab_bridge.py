@@ -208,7 +208,7 @@ def _fake_session(case: _ProviderCase) -> LabSession:
             purpose=f"check-{case.provider}-wire",
             role=None,
             argv=[
-                "tools/wire/run",
+                "tools/endpoint/run",
                 "doctor",
                 "--provider",
                 case.provider,
@@ -232,7 +232,7 @@ def _fake_session(case: _ProviderCase) -> LabSession:
             purpose=f"create {endpoint.role} endpoint",
             role=endpoint.role,
             argv=[
-                "tools/wire/run",
+                "tools/endpoint/run",
                 "create-endpoint",
                 "--provider",
                 case.provider,

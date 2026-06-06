@@ -7,51 +7,51 @@ Rust `crafter::wire` packet I/O module.
 
 ## Tool Paths
 
-Intended replacement: move the provider lifecycle package from `tools/wire` to
-`tools/endpoint`; do not leave a `tools/wire` wrapper or second executable.
+Intended replacement: move the provider lifecycle package from `tools/endpoint` to
+`tools/endpoint`; do not leave a `tools/endpoint` wrapper or second executable.
 
-- `tools/wire/README.md` -> `tools/endpoint/README.md`
-- `tools/wire/run` -> `tools/endpoint/run`
-- `tools/wire/engine/*` -> `tools/endpoint/engine/*`
-- `tools/wire/engine/providers/{docker,hetzner,qemu,virtualbox,vm}/*` -> `tools/endpoint/engine/providers/{docker,hetzner,qemu,virtualbox,vm}/*`
-- `tools/wire/tests/*` -> `tools/endpoint/tests/*`
-- `tools/wire/tests/providers/*` -> `tools/endpoint/tests/providers/*`
-- `tools/wire/smoke/*` -> `tools/endpoint/smoke/*`
-- `.gitignore` entries `tools/wire/.state/` and `tools/wire/artifacts/` -> `tools/endpoint/.state/` and `tools/endpoint/artifacts/`
-- generated metadata string `created_by: tools/wire` -> `created_by: tools/endpoint`
-- test metadata string `tools/wire-test` -> `tools/endpoint-test`
+- `tools/endpoint/README.md` -> `tools/endpoint/README.md`
+- `tools/endpoint/run` -> `tools/endpoint/run`
+- `tools/endpoint/engine/*` -> `tools/endpoint/engine/*`
+- `tools/endpoint/engine/providers/{docker,hetzner,qemu,virtualbox,vm}/*` -> `tools/endpoint/engine/providers/{docker,hetzner,qemu,virtualbox,vm}/*`
+- `tools/endpoint/tests/*` -> `tools/endpoint/tests/*`
+- `tools/endpoint/tests/providers/*` -> `tools/endpoint/tests/providers/*`
+- `tools/endpoint/smoke/*` -> `tools/endpoint/smoke/*`
+- `.gitignore` entries `tools/endpoint/.state/` and `tools/endpoint/artifacts/` -> `tools/endpoint/.state/` and `tools/endpoint/artifacts/`
+- generated metadata string `created_by: tools/endpoint` -> `created_by: tools/endpoint`
+- test metadata string `tools/endpoint-test` -> `tools/endpoint-test`
 
 Current tool files found:
 
-- `tools/wire/README.md`
-- `tools/wire/run`
-- `tools/wire/engine/__init__.py`
-- `tools/wire/engine/cli.py`
-- `tools/wire/engine/config.py`
-- `tools/wire/engine/model.py`
-- `tools/wire/engine/process.py`
-- `tools/wire/engine/registry.py`
-- `tools/wire/engine/ssh.py`
-- `tools/wire/engine/state.py`
-- `tools/wire/engine/providers/__init__.py`
-- `tools/wire/engine/providers/docker/*`
-- `tools/wire/engine/providers/hetzner/*`
-- `tools/wire/engine/providers/qemu/*`
-- `tools/wire/engine/providers/virtualbox/*`
-- `tools/wire/engine/providers/vm/*`
-- `tools/wire/tests/*.py`
-- `tools/wire/tests/providers/*.py`
-- `tools/wire/smoke/live_docker_lan_icmp.py`
-- `tools/wire/smoke/live_docker_private_packet_exchange.py`
-- `tools/wire/smoke/live_docker_wan_dns.py`
-- `tools/wire/smoke/live_virtualbox_network_ping.py`
+- `tools/endpoint/README.md`
+- `tools/endpoint/run`
+- `tools/endpoint/engine/__init__.py`
+- `tools/endpoint/engine/cli.py`
+- `tools/endpoint/engine/config.py`
+- `tools/endpoint/engine/model.py`
+- `tools/endpoint/engine/process.py`
+- `tools/endpoint/engine/registry.py`
+- `tools/endpoint/engine/ssh.py`
+- `tools/endpoint/engine/state.py`
+- `tools/endpoint/engine/providers/__init__.py`
+- `tools/endpoint/engine/providers/docker/*`
+- `tools/endpoint/engine/providers/hetzner/*`
+- `tools/endpoint/engine/providers/qemu/*`
+- `tools/endpoint/engine/providers/virtualbox/*`
+- `tools/endpoint/engine/providers/vm/*`
+- `tools/endpoint/tests/*.py`
+- `tools/endpoint/tests/providers/*.py`
+- `tools/endpoint/smoke/live_docker_lan_icmp.py`
+- `tools/endpoint/smoke/live_docker_private_packet_exchange.py`
+- `tools/endpoint/smoke/live_docker_wan_dns.py`
+- `tools/endpoint/smoke/live_virtualbox_network_ping.py`
 
 ## Python Imports And Public Names
 
 Intended replacement: imports use `tools.endpoint.engine.*`, and lab process
 boundary names use endpoint terminology.
 
-- `tools.wire.engine.*` -> `tools.endpoint.engine.*`
+- `tools.endpoint.engine.*` -> `tools.endpoint.engine.*`
 - `tools.lab.engine.wire_client` -> `tools.lab.engine.endpoint_client`
 - `tools/lab/engine/wire_client.py` -> `tools/lab/engine/endpoint_client.py`
 - `read_wire_json` / `write_wire_json` aliases -> `read_endpoint_json` / `write_endpoint_json`
@@ -84,8 +84,8 @@ Import/update sites found:
 - `tools/oracle/engine/providers/qemu.py`
 - `tools/oracle/engine/providers/virtualbox.py`
 - `tools/probe/engine/live.py`
-- all current `tools/wire/tests/**/*.py` imports when moved to `tools/endpoint/tests`
-- lab/oracle/probe tests that import `tools.wire.engine.*`
+- all current `tools/endpoint/tests/**/*.py` imports when moved to `tools/endpoint/tests`
+- lab/oracle/probe tests that import `tools.endpoint.engine.*`
 
 Keep-review boundary: names that describe packet bytes or protocol comparison,
 such as `metadata["wire"]`, `_live_endpoint_request_wire_metadata`,
@@ -97,20 +97,20 @@ wire if they are not lifecycle provider fields.
 Intended replacement: command path becomes `tools/endpoint/run`, and lifecycle
 subcommands drop redundant `-endpoint` suffixes.
 
-- `tools/wire/run doctor` -> `tools/endpoint/run doctor`
-- `tools/wire/run create-endpoint` -> `tools/endpoint/run create`
-- `tools/wire/run destroy-endpoint` -> `tools/endpoint/run destroy`
-- `tools/wire/run exec` -> `tools/endpoint/run exec`
-- `tools/wire/run upload` -> `tools/endpoint/run upload`
-- `tools/wire/run download` -> `tools/endpoint/run download`
-- `tools/wire/run collect-artifacts` -> `tools/endpoint/run collect-artifacts`
-- `tools/wire/run ssh-info` -> `tools/endpoint/run ssh-info`
-- `tools/wire/run list-endpoints` -> `tools/endpoint/run list`
+- `tools/endpoint/run doctor` -> `tools/endpoint/run doctor`
+- `tools/endpoint/run create-endpoint` -> `tools/endpoint/run create`
+- `tools/endpoint/run destroy-endpoint` -> `tools/endpoint/run destroy`
+- `tools/endpoint/run exec` -> `tools/endpoint/run exec`
+- `tools/endpoint/run upload` -> `tools/endpoint/run upload`
+- `tools/endpoint/run download` -> `tools/endpoint/run download`
+- `tools/endpoint/run collect-artifacts` -> `tools/endpoint/run collect-artifacts`
+- `tools/endpoint/run ssh-info` -> `tools/endpoint/run ssh-info`
+- `tools/endpoint/run list-endpoints` -> `tools/endpoint/run list`
 
 Command-definition sites found:
 
-- `tools/wire/engine/cli.py`
-- `tools/wire/README.md`
+- `tools/endpoint/engine/cli.py`
+- `tools/endpoint/README.md`
 - `docs/wire.md`
 - `.github/workflows/wire.yml`
 - `.agents/skills/wire-endpoint/SKILL.md`
@@ -121,7 +121,7 @@ Command-definition sites found:
 - `tools/oracle/engine/providers/{docker,hetzner,qemu,virtualbox}.py`
 - `tools/oracle/engine/live_provider_matrix.py`
 - `tools/probe/engine/live.py`
-- `tools/wire/smoke/*.py`
+- `tools/endpoint/smoke/*.py`
 - lab/oracle/probe tests asserting command argv or operation names
 
 ## Environment Variables And State Roots
@@ -140,20 +140,20 @@ wire as lifecycle terminology.
 - disposable endpoint safety marker `LIBCRAFTER_WIRE_ENDPOINT=1` -> `LIBCRAFTER_ENDPOINT=1`
 - `target/wire-state` -> `target/endpoint-state`
 - `target/wire-artifacts` -> `target/endpoint-artifacts`
-- `tools/wire/.state` -> `tools/endpoint/.state`
-- `tools/wire/artifacts` -> `tools/endpoint/artifacts`
+- `tools/endpoint/.state` -> `tools/endpoint/.state`
+- `tools/endpoint/artifacts` -> `tools/endpoint/artifacts`
 
 Environment variable sites found:
 
-- `tools/wire/engine/config.py`
-- `tools/wire/engine/providers/vm/images.py`
-- `tools/wire/README.md`
+- `tools/endpoint/engine/config.py`
+- `tools/endpoint/engine/providers/vm/images.py`
+- `tools/endpoint/README.md`
 - `.github/workflows/wire.yml`
-- `tools/wire/tests/providers/test_{docker,hetzner_create,hetzner_destroy,qemu,virtualbox}_provider.py`
-- `tools/wire/tests/test_cli_transfer.py`
+- `tools/endpoint/tests/providers/test_{docker,hetzner_create,hetzner_destroy,qemu,virtualbox}_provider.py`
+- `tools/endpoint/tests/test_cli_transfer.py`
 - `tools/oracle/engine/providers/{docker,hetzner,qemu,virtualbox}.py`
 - `tools/probe/engine/live.py`
-- `tools/wire/smoke/live_virtualbox_network_ping.py`
+- `tools/endpoint/smoke/live_virtualbox_network_ping.py`
 - `crafter/examples/common/mod.rs`
 - `crafter/examples/README.md`
 - `CHANGELOG.md`
@@ -165,7 +165,7 @@ Intended replacement: the current provider lifecycle guide becomes
 `crafter::wire` packet I/O.
 
 - `docs/wire.md` -> `docs/endpoint.md` for current provider lifecycle content
-- references to `tools/wire` -> `tools/endpoint`
+- references to `tools/endpoint` -> `tools/endpoint`
 - "wire provider" / "wire endpoint provider" -> "endpoint provider"
 - "wire endpoint" -> "endpoint" when describing provider lifecycle resources
 - command examples use `tools/endpoint/run create`, `destroy`, and `list`
@@ -188,7 +188,7 @@ Doc files with lifecycle references:
 - `tools/lab/README.md`
 - `tools/oracle/README.md`
 - `tools/oracle/LIVE.md`
-- `tools/wire/README.md`
+- `tools/endpoint/README.md`
 - `crafter/examples/README.md`
 
 Keep-review boundary: documentation that intentionally discusses packet wire
@@ -202,9 +202,9 @@ without using wire as the lifecycle noun.
 
 - `.agents/skills/wire-endpoint/SKILL.md` -> `.agents/skills/endpoint/SKILL.md`
 - skill title/description "wire endpoint" -> "endpoint"
-- skill command examples `tools/wire/run ...` -> `tools/endpoint/run ...`
+- skill command examples `tools/endpoint/run ...` -> `tools/endpoint/run ...`
 - skill command names `create-endpoint`, `destroy-endpoint` -> `create`, `destroy`
-- teardown guidance `tools/wire/run destroy-endpoint` -> `tools/endpoint/run destroy`
+- teardown guidance `tools/endpoint/run destroy-endpoint` -> `tools/endpoint/run destroy`
 - `.agents/skills/lab-session/SKILL.md`: "wire provider" -> "endpoint provider"
 - `.agents/skills/lab-provider/SKILL.md`: "wire provider" and "wire endpoint planning/creation" -> endpoint terminology
 - `.agents/skills/packet-validation/SKILL.md`: update any lab/provider lifecycle wording if found during the edit step
@@ -216,13 +216,13 @@ Intended replacement: lab providers keep representing provider-backed endpoint
 resources, but metadata and client names use endpoint terminology.
 
 - `tools/lab/engine/wire_client.py` -> `tools/lab/engine/endpoint_client.py`
-- imports of `tools.wire.engine.model` and provider constants -> `tools.endpoint.engine...`
-- `WIRE_ENTRYPOINT = "tools/wire/run"` -> `ENDPOINT_ENTRYPOINT = "tools/endpoint/run"`
+- imports of `tools.endpoint.engine.model` and provider constants -> `tools.endpoint.engine...`
+- `WIRE_ENTRYPOINT = "tools/endpoint/run"` -> `ENDPOINT_ENTRYPOINT = "tools/endpoint/run"`
 - `wire_provider` / `wire_exposure` / `wire_policy` lifecycle metadata -> `endpoint_provider` / `endpoint_exposure` / `endpoint_policy`
 - `wire_manifest` fields on lab endpoint models -> `endpoint_manifest` unless they describe packet-level wire data
 - `wire_endpoint_plan` / `wire_endpoint_lifecycle` metadata -> `endpoint_plan` / `endpoint_lifecycle`
 - lab dry-run command records use `create`, `destroy`, and `list`
-- repository excludes `tools/wire/.state` and `tools/wire/artifacts` -> endpoint paths
+- repository excludes `tools/endpoint/.state` and `tools/endpoint/artifacts` -> endpoint paths
 
 Lab files found:
 
@@ -259,12 +259,12 @@ endpoint provider metadata; packet byte-policy names can remain wire.
 - `tools.lab.engine.wire_client` imports -> `tools.lab.engine.endpoint_client`
 - `WireClient`-typed parameters -> `EndpointClient`
 - `WIRE_ENTRYPOINT` -> `ENDPOINT_ENTRYPOINT`
-- command argv path `tools/wire/run` -> `tools/endpoint/run`
+- command argv path `tools/endpoint/run` -> `tools/endpoint/run`
 - lifecycle commands `create-endpoint` / `destroy-endpoint` / `list-endpoints` -> `create` / `destroy` / `list`
 - `LIBCRAFTER_WIRE_REMOTE_DIR` -> `LIBCRAFTER_ENDPOINT_REMOTE_DIR`
 - lifecycle metadata `wire_provider`, `wire_exposure`, `wire_endpoint_plan`, `wire_endpoint_lifecycle` -> endpoint equivalents
 - CLI help text "provider wire endpoints" -> "provider endpoints"
-- rsync excludes `tools/wire/.state` and `tools/wire/artifacts` -> endpoint paths
+- rsync excludes `tools/endpoint/.state` and `tools/endpoint/artifacts` -> endpoint paths
 
 Oracle files found:
 
@@ -317,17 +317,17 @@ packet transit/byte-policy concept and should be reviewed before renaming.
 Intended replacement: provider lifecycle unit tests move with the tool, imports
 target `tools.endpoint`, and assertions use endpoint command vocabulary.
 
-- `tools/wire/tests` -> `tools/endpoint/tests`
-- `python3 -m unittest discover -s tools/wire/tests -p 'test_*.py'` -> `python3 -m unittest discover -s tools/endpoint/tests -p 'test_*.py'`
-- patch targets `tools.wire.engine...` -> `tools.endpoint.engine...`
-- test argv `tools/wire/run` -> `tools/endpoint/run`
+- `tools/endpoint/tests` -> `tools/endpoint/tests`
+- `python3 -m unittest discover -s tools/endpoint/tests -p 'test_*.py'` -> `python3 -m unittest discover -s tools/endpoint/tests -p 'test_*.py'`
+- patch targets `tools.endpoint.engine...` -> `tools.endpoint.engine...`
+- test argv `tools/endpoint/run` -> `tools/endpoint/run`
 - expected operations `create-endpoint`, `destroy-endpoint`, `list-endpoints` -> `create`, `destroy`, `list`
 - fake command response classes and fields use endpoint names
 - lab test `test_wire_client.py` -> `test_endpoint_client.py`
 
 Test groups with lifecycle references:
 
-- `tools/wire/tests/**/*.py`
+- `tools/endpoint/tests/**/*.py`
 - `tools/lab/tests/*.py`
 - `tools/oracle/tests/test_lab_bridge.py`
 - `tools/oracle/tests/test_live_provider_matrix.py`
@@ -343,14 +343,14 @@ Test groups with lifecycle references:
 Intended replacement: smoke scripts move under the endpoint tool path and use
 endpoint command vocabulary.
 
-- `tools/wire/smoke/live_virtualbox_network_ping.py` -> `tools/endpoint/smoke/live_virtualbox_network_ping.py`
-- `tools/wire/smoke/live_docker_lan_icmp.py` -> `tools/endpoint/smoke/live_docker_lan_icmp.py`
-- `tools/wire/smoke/live_docker_private_packet_exchange.py` -> `tools/endpoint/smoke/live_docker_private_packet_exchange.py`
-- `tools/wire/smoke/live_docker_wan_dns.py` -> `tools/endpoint/smoke/live_docker_wan_dns.py`
-- internal command path `tools/wire/run` -> `tools/endpoint/run`
+- `tools/endpoint/smoke/live_virtualbox_network_ping.py` -> `tools/endpoint/smoke/live_virtualbox_network_ping.py`
+- `tools/endpoint/smoke/live_docker_lan_icmp.py` -> `tools/endpoint/smoke/live_docker_lan_icmp.py`
+- `tools/endpoint/smoke/live_docker_private_packet_exchange.py` -> `tools/endpoint/smoke/live_docker_private_packet_exchange.py`
+- `tools/endpoint/smoke/live_docker_wan_dns.py` -> `tools/endpoint/smoke/live_docker_wan_dns.py`
+- internal command path `tools/endpoint/run` -> `tools/endpoint/run`
 - internal operations `create-endpoint` / `destroy-endpoint` -> `create` / `destroy`
 - safety marker `LIBCRAFTER_WIRE_ENDPOINT=1` -> `LIBCRAFTER_ENDPOINT=1`
-- artifact defaults `tools/wire/artifacts/...` -> `tools/endpoint/artifacts/...`
+- artifact defaults `tools/endpoint/artifacts/...` -> `tools/endpoint/artifacts/...`
 
 ## CI And Repository Metadata
 
@@ -363,6 +363,6 @@ Rust packet I/O module owns wire terminology later.
 - workflow names "wire endpoint dry runs" / "protected Hetzner wire endpoint exchange" -> endpoint wording
 - workflow env `LIBCRAFTER_WIRE_ARTIFACT_ROOT`, `LIBCRAFTER_WIRE_STATE_ROOT` -> endpoint env vars
 - workflow target dirs `target/wire-artifacts`, `target/wire-state` -> endpoint target dirs
-- workflow cleanup commands `tools/wire/run list-endpoints`, `destroy-endpoint`, `collect-artifacts` -> endpoint path and command names
+- workflow cleanup commands `tools/endpoint/run list-endpoints`, `destroy-endpoint`, `collect-artifacts` -> endpoint path and command names
 - `.gitignore` updates described in Tool Paths
 

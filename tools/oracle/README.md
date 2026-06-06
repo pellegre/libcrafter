@@ -352,7 +352,7 @@ own oracle-specific capabilities and wire comparison policy while delegating
 provider substrate to `tools/lab`. The generic live runner still owns packet
 generation, endpoint protocol comparison, report assembly, and provider
 execution flow. `tools/lab` owns multi-endpoint session creation, repository
-push/bootstrap, artifact collection, and cleanup; `tools/wire` owns one
+push/bootstrap, artifact collection, and cleanup; `tools/endpoint` owns one
 endpoint and transport operations.
 
 The Rust-side libcrafter adapters live in `tools/oracle/adapters/` as an

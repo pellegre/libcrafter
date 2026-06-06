@@ -6,7 +6,7 @@ import re
 from collections.abc import Mapping, Sequence
 from pathlib import PurePosixPath
 
-from tools.wire.engine.model import EndpointManifest, NetworkInterface
+from tools.endpoint.engine.model import EndpointManifest, NetworkInterface
 
 from ..model import (
     JSONObject,

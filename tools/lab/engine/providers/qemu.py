@@ -10,8 +10,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from hashlib import sha256
 
-from tools.wire.engine.model import EndpointManifest
-from tools.wire.engine.providers.qemu.constants import (
+from tools.endpoint.engine.model import EndpointManifest
+from tools.endpoint.engine.providers.qemu.constants import (
     QEMU_ACCEL_ENV,
     QEMU_CPUS_ENV,
     QEMU_DEFAULT_ACCEL,
@@ -48,7 +48,7 @@ from .common import (
 PROVIDER_NAME = "qemu"
 WIRE_PROVIDER = "qemu"
 WIRE_EXPOSURE = "private"
-WIRE_ENTRYPOINT = "tools/wire/run"
+WIRE_ENTRYPOINT = "tools/endpoint/run"
 PRIVATE_NETWORK_CIDR = QEMU_DEFAULT_PRIVATE_CIDR
 DEFAULT_PRIVATE_IPV4_PREFIX = "10.77.0"
 CAPABILITY_REPORT_ARTIFACT = "artifacts/lab/capabilities.json"

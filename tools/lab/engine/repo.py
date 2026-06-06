@@ -31,14 +31,14 @@ DEFAULT_ARCHIVE_EXCLUDES = (
     ".libcrafter-live",
     "artifacts",
     "generated",
-    "tools/wire/.state",
-    "tools/wire/artifacts",
+    "tools/endpoint/.state",
+    "tools/endpoint/artifacts",
     "tools/lab/.state",
     "tools/lab/artifacts",
 )
 DEFAULT_BOOTSTRAP_TIMEOUT_SECONDS = 1800.0
 DEFAULT_REMOTE_COMMAND_TIMEOUT_SECONDS = 900.0
-WIRE_ENTRYPOINT = "tools/wire/run"
+WIRE_ENTRYPOINT = "tools/endpoint/run"
 
 
 class RepoArchiveError(RuntimeError):

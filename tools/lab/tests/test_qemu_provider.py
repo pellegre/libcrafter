@@ -12,7 +12,7 @@ from tools.lab.engine.providers.qemu import (
     qemu_private_network_metadata,
     qemu_session_id,
 )
-from tools.wire.engine.model import (
+from tools.endpoint.engine.model import (
     EndpointManifest,
     EndpointSSHInfo,
     NetworkInterface,
@@ -252,7 +252,7 @@ class _FakeWireCreateResponse:
         artifacts: list[str] = (),
     ) -> LabCommandPlan:
         argv = [
-            "tools/wire/run",
+            "tools/endpoint/run",
             "create-endpoint",
             "--provider",
             str(self.call["provider"]),

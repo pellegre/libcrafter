@@ -1070,7 +1070,7 @@ def _run_command(
 
 def _provider_doctor_command(adapter: LiveProviderAdapter) -> list[str]:
     return [
-        "tools/wire/run",
+        "tools/endpoint/run",
         "doctor",
         "--provider",
         adapter.wire_provider,

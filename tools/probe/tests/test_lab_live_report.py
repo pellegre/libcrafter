@@ -210,7 +210,7 @@ class ProbeLabLiveReportTest(unittest.TestCase):
         cleanup_record = LabCommandPlan(
             purpose="destroy endpoint qemu-target",
             role="target",
-            argv=["tools/wire/run", "destroy-endpoint", "qemu-target", "--json"],
+            argv=["tools/endpoint/run", "destroy-endpoint", "qemu-target", "--json"],
             operation="wire.destroy",
             dry_run=False,
             live_mutation=True,
@@ -255,7 +255,7 @@ class _FakeWireResponse:
         return {
             "operation": self.operation,
             "endpoint_id": self.endpoint_id,
-            "argv": ["tools/wire/run", self.operation, self.endpoint_id],
+            "argv": ["tools/endpoint/run", self.operation, self.endpoint_id],
             "exit_code": self.result.exit_code,
             "ok": self.result.ok,
             "artifacts": [],
@@ -361,7 +361,7 @@ def _fake_session() -> LabSession:
     provider_record = LabCommandPlan(
         purpose="create stimulus endpoint",
         role="stimulus",
-        argv=["tools/wire/run", "create-endpoint", "--provider", "qemu"],
+        argv=["tools/endpoint/run", "create-endpoint", "--provider", "qemu"],
         operation="wire.create",
         dry_run=False,
         live_mutation=True,
@@ -490,7 +490,7 @@ def _bootstrap_session(
     bootstrap_record = LabCommandPlan(
         purpose="run workload bootstrap",
         role="stimulus",
-        argv=["tools/wire/run", "exec", "qemu-stimulus", "--", "bash", "-lc", "..."],
+        argv=["tools/endpoint/run", "exec", "qemu-stimulus", "--", "bash", "-lc", "..."],
         operation="wire.exec",
         dry_run=False,
         live_mutation=True,
@@ -535,7 +535,7 @@ def _assert_probe_bootstrap_command(
     if command.metadata.get("role") != role:
         raise AssertionError(command.metadata)
     script = command.argv[2]
-    if "tar -xzf" in script or "tools/wire/run" in script:
+    if "tar -xzf" in script or "tools/endpoint/run" in script:
         raise AssertionError(script)
     if role == "stimulus" and "stimulus_endpoint" not in script:
         raise AssertionError(script)

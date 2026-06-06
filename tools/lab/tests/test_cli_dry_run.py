@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from tools.lab.engine import cli
 from tools.lab.engine.model import LabCommandPlan
-from tools.wire.engine.model import (
+from tools.endpoint.engine.model import (
     EndpointManifest,
     EndpointSSHInfo,
     NetworkInterface,
@@ -274,7 +274,7 @@ class _FakeWireResponse:
         artifacts: list[str] = (),
     ) -> LabCommandPlan:
         argv = [
-            "tools/wire/run",
+            "tools/endpoint/run",
             "doctor" if self.operation == "doctor" else "create-endpoint",
             "--provider",
             self.provider,

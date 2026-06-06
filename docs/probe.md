@@ -236,8 +236,8 @@ tools/lab/run plan --provider docker --dry-run --profile smoke --seed 1 --role s
 Docker LAN and WAN checks use direct wire smokes instead of probe lab sessions:
 
 ```sh
-tools/wire/smoke/live_docker_lan_icmp.py --plan-only
-tools/wire/smoke/live_docker_wan_dns.py --plan-only
+tools/endpoint/smoke/live_docker_lan_icmp.py --plan-only
+tools/endpoint/smoke/live_docker_wan_dns.py --plan-only
 ```
 
 Those smokes default to plan output. Live runs require explicit

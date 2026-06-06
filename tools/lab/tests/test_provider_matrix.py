@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from tools.lab.engine.model import LabCommandPlan, LabRequest, LabRole
 from tools.lab.engine.providers import registered_provider_names, resolve_lab_provider
 from tools.lab.engine.providers.base import LabProviderAdapter
-from tools.wire.engine.model import (
+from tools.endpoint.engine.model import (
     EndpointManifest,
     EndpointSSHInfo,
     NetworkInterface,
@@ -281,7 +281,7 @@ class _FakeWireCreateResponse:
         artifacts: list[str] = (),
     ) -> LabCommandPlan:
         argv = [
-            "tools/wire/run",
+            "tools/endpoint/run",
             "create-endpoint",
             "--provider",
             str(self.call["provider"]),

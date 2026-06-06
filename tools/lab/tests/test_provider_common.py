@@ -16,7 +16,7 @@ from tools.lab.engine.providers.common import (
     slug_label,
     validate_remote_dir,
 )
-from tools.wire.engine.model import (
+from tools.endpoint.engine.model import (
     EndpointManifest,
     EndpointSSHInfo,
     NetworkInterface,
@@ -61,7 +61,7 @@ class ProviderCommonCommandPlanTest(unittest.TestCase):
         plan = build_command_plan(
             purpose="create stimulus endpoint",
             role="provider",
-            argv=["tools/wire/run", "create-endpoint", "--json"],
+            argv=["tools/endpoint/run", "create-endpoint", "--json"],
             operation="wire.create",
             dry_run=True,
             live_mutation=False,

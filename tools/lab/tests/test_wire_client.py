@@ -9,7 +9,7 @@ from pathlib import Path
 
 from tools.lab.engine.process import CommandResult, redact_argv
 from tools.lab.engine.wire_client import WireClient, WireClientError
-from tools.wire.engine.model import write_json as write_wire_json
+from tools.endpoint.engine.model import write_json as write_wire_json
 
 
 class WireClientCreateTest(unittest.TestCase):

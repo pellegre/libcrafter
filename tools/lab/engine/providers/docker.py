@@ -9,8 +9,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 
-from tools.wire.engine.model import EndpointManifest
-from tools.wire.engine.providers.docker.constants import (
+from tools.endpoint.engine.model import EndpointManifest
+from tools.endpoint.engine.providers.docker.constants import (
     DOCKER_COMMAND,
     DOCKER_COMMAND_ENV,
     DOCKER_DEFAULT_IMAGE,
@@ -18,7 +18,7 @@ from tools.wire.engine.providers.docker.constants import (
     DOCKER_IMAGE_ENV,
     DOCKER_PRIVATE_CIDR_ENV,
 )
-from tools.wire.engine.providers.docker.resources import (
+from tools.endpoint.engine.providers.docker.resources import (
     docker_private_network_name,
     validate_requested_private_ipv4,
 )
@@ -48,7 +48,7 @@ from .common import (
 PROVIDER_NAME = "docker"
 WIRE_PROVIDER = "docker"
 WIRE_EXPOSURE = "private"
-WIRE_ENTRYPOINT = "tools/wire/run"
+WIRE_ENTRYPOINT = "tools/endpoint/run"
 PRIVATE_NETWORK_CIDR = DOCKER_DEFAULT_PRIVATE_CIDR
 DEFAULT_PRIVATE_IPV4_PREFIX = "10.79.0"
 CAPABILITY_REPORT_ARTIFACT = "artifacts/lab/capabilities.json"

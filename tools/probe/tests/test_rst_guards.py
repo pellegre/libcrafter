@@ -140,7 +140,7 @@ class _FakeWireResponse:
         return {
             "operation": self.operation,
             "endpoint_id": self.endpoint_id,
-            "argv": ["tools/wire/run", self.operation, self.endpoint_id],
+            "argv": ["tools/endpoint/run", self.operation, self.endpoint_id],
             "exit_code": self.result.exit_code,
             "ok": self.result.ok,
             "artifacts": [],

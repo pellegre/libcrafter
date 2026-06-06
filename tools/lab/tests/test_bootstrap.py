@@ -244,7 +244,7 @@ class WorkloadBootstrapScriptHelperTest(unittest.TestCase):
             "hcloud",
             "VBoxManage",
             "qemu-system",
-            "tools/wire/run send",
+            "tools/endpoint/run send",
             "tcpdump",
         ]
         for fragment in forbidden_fragments:
@@ -306,7 +306,7 @@ class _FakeWireClient:
         if not isinstance(command, (list, tuple)):
             raise TypeError("expected command sequence")
         command_parts = tuple(str(part) for part in command)
-        argv = ["tools/wire/run", "exec", endpoint_id, "--", *command_parts]
+        argv = ["tools/endpoint/run", "exec", endpoint_id, "--", *command_parts]
         self.exec_calls.append(
             {
                 "endpoint_id": endpoint_id,
@@ -335,7 +335,7 @@ class _FakeWireClient:
         local_path: str | Path,
         remote_path: str,
     ) -> "_FakeWireResponse":
-        argv = ["tools/wire/run", "upload", endpoint_id, str(local_path), remote_path]
+        argv = ["tools/endpoint/run", "upload", endpoint_id, str(local_path), remote_path]
         self.upload_calls.append(
             {
                 "endpoint_id": endpoint_id,

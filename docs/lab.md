@@ -15,7 +15,7 @@ validation. Wire still owns one endpoint and transport operations.
 
 | Tool | Owns |
 | --- | --- |
-| `tools/wire` | One disposable endpoint: doctor, create, exec, upload, download, collect artifacts, destroy. |
+| `tools/endpoint` | One disposable endpoint: doctor, create, exec, upload, download, collect artifacts, destroy. |
 | `tools/lab` | Multi-endpoint sessions: roles, provider capabilities, endpoint topology, repository archive transfer, remote unpack, bootstrap context, session manifests, artifacts, cleanup records. |
 | `tools/oracle` | Reference packet corpus, offline/pcap/live packet comparison, `libcrafter` and `reference_backend` workload setup, backend policy, oracle reports. |
 | `tools/probe` | Kernel/service probe cases, `stimulus` and `target` workload setup, target service setup, RST guards, stimulus execution, probe reports. |
@@ -103,8 +103,8 @@ Docker LAN and WAN reachability checks are direct wire smokes because they
 exercise one container's NAT-backed L3 path through Docker bridge routing:
 
 ```sh
-tools/wire/smoke/live_docker_lan_icmp.py --plan-only
-tools/wire/smoke/live_docker_wan_dns.py --plan-only
+tools/endpoint/smoke/live_docker_lan_icmp.py --plan-only
+tools/endpoint/smoke/live_docker_wan_dns.py --plan-only
 ```
 
 Those scripts default to plan output. Live LAN/WAN smokes require their own

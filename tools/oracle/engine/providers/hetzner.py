@@ -20,7 +20,7 @@ from tools.lab.engine.model import (
 from tools.lab.engine.providers.common import validate_remote_dir
 from tools.lab.engine.providers.hetzner import HETZNER_LAB_PROVIDER_ADAPTER
 from tools.lab.engine import wire_client
-from tools.wire.engine.model import (
+from tools.endpoint.engine.model import (
     EndpointManifest,
     EndpointSSHInfo,
     NetworkInterface,
@@ -39,7 +39,7 @@ from ..model import JSONObject, PacketPlan
 
 
 PROVIDER_NAME = "hetzner"
-WIRE_ENTRYPOINT = "tools/wire/run"
+WIRE_ENTRYPOINT = "tools/endpoint/run"
 ORACLE_LIVE_SUITE = "oracle-live"
 ORACLE_PRIVATE_GROUP = "oracle-live-private"
 PRIVATE_NETWORK_CIDR = "10.42.19.0/24"
