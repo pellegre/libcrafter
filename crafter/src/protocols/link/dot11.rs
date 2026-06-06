@@ -6,7 +6,9 @@ use core::ops::Div;
 use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::mac::MacAddr;
+use crate::packet::Raw;
 use crate::packet::{IntoPacket, Layer, LayerContext, Packet};
+use crate::registry::ProtocolRegistry;
 
 /// IEEE 802.11 frame-control field length in octets.
 pub const DOT11_FRAME_CONTROL_LEN: usize = 2;
@@ -308,6 +310,7 @@ pub struct Dot11 {
     sequence_control: Field<Dot11SequenceControl>,
     addr4: Field<MacAddr>,
     qos_control: Field<u16>,
+    ht_control: Field<u32>,
     fixed_parameters: Vec<u8>,
     tagged_parameters: Vec<Dot11TaggedParameter>,
 }
@@ -328,6 +331,7 @@ impl Dot11 {
             sequence_control: Field::defaulted(Dot11SequenceControl::new()),
             addr4: Field::unset(),
             qos_control: Field::unset(),
+            ht_control: Field::unset(),
             fixed_parameters: Vec::new(),
             tagged_parameters: Vec::new(),
         }
@@ -470,6 +474,12 @@ impl Dot11 {
     /// Set the QoS control field.
     pub fn qos_control(mut self, qos_control: u16) -> Self {
         self.qos_control.set_user(qos_control);
+        self
+    }
+
+    /// Set the HT Control field.
+    pub fn ht_control(mut self, ht_control: u32) -> Self {
+        self.ht_control.set_user(ht_control);
         self
     }
 
@@ -623,6 +633,11 @@ impl Dot11 {
     /// Current QoS control field value, if present.
     pub fn qos_control_value(&self) -> Option<u16> {
         self.qos_control.value().copied()
+    }
+
+    /// Current HT Control field value, if present.
+    pub fn ht_control_value(&self) -> Option<u32> {
+        self.ht_control.value().copied()
     }
 
     /// Raw fixed management-field bytes.
@@ -782,6 +797,9 @@ impl Layer for Dot11 {
         if let Some(qos_control) = self.qos_control_value() {
             fields.push(("qos_control", format!("0x{qos_control:04x}")));
         }
+        if let Some(ht_control) = self.ht_control_value() {
+            fields.push(("ht_control", format!("0x{ht_control:08x}")));
+        }
         if !self.fixed_parameters.is_empty() {
             fields.push(("fixed_parameters", dot11_hex_bytes(&self.fixed_parameters)));
         }
@@ -807,6 +825,11 @@ impl Layer for Dot11 {
                 .value()
                 .map(|_| DOT11_QOS_CONTROL_LEN)
                 .unwrap_or_default()
+            + self
+                .ht_control
+                .value()
+                .map(|_| DOT11_HT_CONTROL_LEN)
+                .unwrap_or_default()
             + self.fixed_parameters.len()
             + self
                 .tagged_parameters
@@ -828,6 +851,9 @@ impl Layer for Dot11 {
         }
         if let Some(qos_control) = self.qos_control_value() {
             out.extend_from_slice(&qos_control.to_le_bytes());
+        }
+        if let Some(ht_control) = self.ht_control_value() {
+            out.extend_from_slice(&ht_control.to_le_bytes());
         }
 
         out.extend_from_slice(&self.fixed_parameters);
@@ -864,6 +890,139 @@ where
     fn div(self, rhs: R) -> Self::Output {
         Packet::from_layer(self).concat(rhs)
     }
+}
+
+/// Decode a bare IEEE 802.11 MAC frame and preserve the undecoded body as Raw.
+pub(crate) fn decode_dot11_with_registry(
+    _registry: &ProtocolRegistry,
+    bytes: &[u8],
+) -> Result<Packet> {
+    let (dot11, tail) = decode_dot11(bytes)?;
+    let mut packet = Packet::new().push(dot11);
+
+    if !tail.is_empty() {
+        packet = packet.push(Raw::from_bytes(tail));
+    }
+
+    Ok(packet)
+}
+
+fn decode_dot11(bytes: &[u8]) -> Result<(Dot11, &[u8])> {
+    let frame_control = Dot11FrameControl::decode(bytes)?;
+    let header_len = dot11_required_header_len(frame_control);
+
+    if bytes.len() < header_len {
+        return Err(CrafterError::buffer_too_short(
+            "dot11.header",
+            header_len,
+            bytes.len(),
+        ));
+    }
+
+    let mut dot11 = Dot11 {
+        frame_control: Field::user(frame_control),
+        duration_id: Field::user(read_u16_le_at(bytes, DOT11_FRAME_CONTROL_LEN)),
+        addr1: Field::user(read_mac_at(
+            bytes,
+            DOT11_FRAME_CONTROL_LEN + DOT11_DURATION_ID_LEN,
+        )),
+        addr2: Field::unset(),
+        addr3: Field::unset(),
+        sequence_control: Field::unset(),
+        addr4: Field::unset(),
+        qos_control: Field::unset(),
+        ht_control: Field::unset(),
+        fixed_parameters: Vec::new(),
+        tagged_parameters: Vec::new(),
+    };
+
+    match frame_control.frame_type_value() {
+        Dot11FrameType::Management => {
+            let mut offset = decode_dot11_three_address_header(bytes, &mut dot11);
+
+            if frame_control.order() {
+                dot11.ht_control = Field::user(read_u32_le_at(bytes, offset));
+                offset += DOT11_HT_CONTROL_LEN;
+            }
+
+            let fixed_len = dot11_management_fixed_parameters_len(frame_control);
+            dot11.fixed_parameters = bytes[offset..offset + fixed_len].to_vec();
+            offset += fixed_len;
+
+            Ok((dot11, &bytes[offset..]))
+        }
+        Dot11FrameType::Control => {
+            if dot11_mac_header_len(frame_control) >= DOT11_CONTROL_TWO_ADDRESS_HEADER_LEN {
+                dot11.addr2 = Field::user(read_mac_at(
+                    bytes,
+                    DOT11_FRAME_CONTROL_LEN + DOT11_DURATION_ID_LEN + DOT11_ADDRESS_LEN,
+                ));
+            }
+
+            Ok((dot11, &bytes[header_len..]))
+        }
+        Dot11FrameType::Data => {
+            let mut offset = decode_dot11_three_address_header(bytes, &mut dot11);
+
+            if frame_control.to_ds() && frame_control.from_ds() {
+                dot11.addr4 = Field::user(read_mac_at(bytes, offset));
+                offset += DOT11_ADDRESS_LEN;
+            }
+            if dot11_data_subtype_has_qos(frame_control.subtype()) {
+                dot11.qos_control = Field::user(read_u16_le_at(bytes, offset));
+                offset += DOT11_QOS_CONTROL_LEN;
+
+                if frame_control.order() {
+                    dot11.ht_control = Field::user(read_u32_le_at(bytes, offset));
+                    offset += DOT11_HT_CONTROL_LEN;
+                }
+            }
+
+            Ok((dot11, &bytes[offset..]))
+        }
+        Dot11FrameType::Extension | Dot11FrameType::Unknown(_) => Ok((dot11, &bytes[header_len..])),
+    }
+}
+
+fn decode_dot11_three_address_header(bytes: &[u8], dot11: &mut Dot11) -> usize {
+    dot11.addr2 = Field::user(read_mac_at(
+        bytes,
+        DOT11_FRAME_CONTROL_LEN + DOT11_DURATION_ID_LEN + DOT11_ADDRESS_LEN,
+    ));
+    dot11.addr3 = Field::user(read_mac_at(
+        bytes,
+        DOT11_FRAME_CONTROL_LEN + DOT11_DURATION_ID_LEN + (DOT11_ADDRESS_LEN * 2),
+    ));
+    dot11.sequence_control = Field::user(Dot11SequenceControl::from_le_bytes([
+        bytes[DOT11_FRAME_CONTROL_LEN + DOT11_DURATION_ID_LEN + (DOT11_ADDRESS_LEN * 3)],
+        bytes[DOT11_FRAME_CONTROL_LEN + DOT11_DURATION_ID_LEN + (DOT11_ADDRESS_LEN * 3) + 1],
+    ]));
+
+    DOT11_DATA_HEADER_LEN
+}
+
+fn read_u16_le_at(bytes: &[u8], offset: usize) -> u16 {
+    u16::from_le_bytes([bytes[offset], bytes[offset + 1]])
+}
+
+fn read_u32_le_at(bytes: &[u8], offset: usize) -> u32 {
+    u32::from_le_bytes([
+        bytes[offset],
+        bytes[offset + 1],
+        bytes[offset + 2],
+        bytes[offset + 3],
+    ])
+}
+
+fn read_mac_at(bytes: &[u8], offset: usize) -> MacAddr {
+    MacAddr::new([
+        bytes[offset],
+        bytes[offset + 1],
+        bytes[offset + 2],
+        bytes[offset + 3],
+        bytes[offset + 4],
+        bytes[offset + 5],
+    ])
 }
 
 /// IEEE 802.11 frame type subfield.
@@ -1807,6 +1966,7 @@ pub fn dot11_category_label(category: u8) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::registry::ProtocolRegistry;
     use crate::{Packet, Raw};
 
     fn dot11_role_mac(index: u8) -> MacAddr {
@@ -1829,6 +1989,176 @@ mod tests {
             bytes[1] = frame_control[1];
         }
         bytes
+    }
+
+    fn dot11_decode_test_header(frame_control: Dot11FrameControl) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&frame_control.compile());
+        bytes.extend_from_slice(&0x1234u16.to_le_bytes());
+        bytes.extend_from_slice(&dot11_role_mac(1).octets());
+        bytes.extend_from_slice(&dot11_role_mac(2).octets());
+        bytes.extend_from_slice(&dot11_role_mac(3).octets());
+        bytes.extend_from_slice(&0x5678u16.to_le_bytes());
+        bytes
+    }
+
+    fn decode_dot11_basic(bytes: &[u8]) -> Packet {
+        decode_dot11_with_registry(&ProtocolRegistry::new(), bytes).unwrap()
+    }
+
+    #[test]
+    fn dot11_decode_basic_three_address_data_preserves_raw_tail() {
+        let frame_control =
+            dot11_test_frame_control(DOT11_FRAME_TYPE_DATA, DOT11_DATA_SUBTYPE_DATA);
+        let mut bytes = dot11_decode_test_header(frame_control);
+        bytes.extend_from_slice(b"payload");
+
+        let decoded = decode_dot11_basic(&bytes);
+        let dot11 = decoded.layer::<Dot11>().unwrap();
+        let raw = decoded.layer::<Raw>().unwrap();
+
+        assert_eq!(dot11.frame_control_value(), frame_control);
+        assert_eq!(dot11.duration_id_value(), Some(0x1234));
+        assert_eq!(dot11.addr1_value(), Some(dot11_role_mac(1)));
+        assert_eq!(dot11.addr2_value(), Some(dot11_role_mac(2)));
+        assert_eq!(dot11.addr3_value(), Some(dot11_role_mac(3)));
+        assert_eq!(
+            dot11.sequence_control_value(),
+            Some(Dot11SequenceControl::from_bits(0x5678))
+        );
+        assert_eq!(dot11.addr4_value(), None);
+        assert_eq!(dot11.qos_control_value(), None);
+        assert_eq!(raw.as_bytes(), b"payload");
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+    }
+
+    #[test]
+    fn dot11_decode_basic_qos_four_address_data_reads_optional_header_fields() {
+        let frame_control =
+            dot11_test_frame_control(DOT11_FRAME_TYPE_DATA, DOT11_DATA_SUBTYPE_QOS_DATA)
+                .with_to_ds(true)
+                .with_from_ds(true)
+                .with_order(true)
+                .with_protected(true);
+        let mut bytes = dot11_decode_test_header(frame_control);
+        bytes.extend_from_slice(&dot11_role_mac(4).octets());
+        bytes.extend_from_slice(&0xabcd_u16.to_le_bytes());
+        bytes.extend_from_slice(&0x1234_5678_u32.to_le_bytes());
+        bytes.extend_from_slice(&[0xde, 0xad, 0xbe, 0xef]);
+
+        let decoded = decode_dot11_basic(&bytes);
+        let dot11 = decoded.layer::<Dot11>().unwrap();
+        let raw = decoded.layer::<Raw>().unwrap();
+
+        assert_eq!(dot11.frame_control_value(), frame_control);
+        assert!(dot11.is_protected());
+        assert_eq!(dot11.addr4_value(), Some(dot11_role_mac(4)));
+        assert_eq!(dot11.qos_control_value(), Some(0xabcd));
+        assert_eq!(dot11.ht_control_value(), Some(0x1234_5678));
+        assert_eq!(dot11.source(), Some(dot11_role_mac(4)));
+        assert_eq!(raw.as_bytes(), &[0xde, 0xad, 0xbe, 0xef]);
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+    }
+
+    #[test]
+    fn dot11_decode_basic_management_fixed_bytes_are_kept_in_dot11_and_tags_remain_raw() {
+        let frame_control =
+            dot11_test_frame_control(DOT11_FRAME_TYPE_MANAGEMENT, DOT11_MGMT_SUBTYPE_BEACON);
+        let fixed = [1, 2, 3, 4, 5, 6, 7, 8, 0x64, 0x00, 0x01, 0x04];
+        let tags = [0x00, 0x03, b'f', b'o', b'o'];
+        let mut bytes = dot11_decode_test_header(frame_control);
+        bytes.extend_from_slice(&fixed);
+        bytes.extend_from_slice(&tags);
+
+        let decoded = decode_dot11_basic(&bytes);
+        let dot11 = decoded.layer::<Dot11>().unwrap();
+        let raw = decoded.layer::<Raw>().unwrap();
+
+        assert_eq!(
+            dot11.management_subtype(),
+            Some(Dot11ManagementSubtype::Beacon)
+        );
+        assert_eq!(dot11.fixed_parameters_value(), fixed);
+        assert_eq!(dot11.tagged_parameters(), &[]);
+        assert_eq!(raw.as_bytes(), tags);
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+    }
+
+    #[test]
+    fn dot11_decode_basic_control_two_address_frame_preserves_supported_addresses() {
+        let frame_control =
+            dot11_test_frame_control(DOT11_FRAME_TYPE_CONTROL, DOT11_CONTROL_SUBTYPE_RTS);
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&frame_control.compile());
+        bytes.extend_from_slice(&0x9999u16.to_le_bytes());
+        bytes.extend_from_slice(&dot11_role_mac(1).octets());
+        bytes.extend_from_slice(&dot11_role_mac(2).octets());
+        bytes.extend_from_slice(b"rts-tail");
+
+        let decoded = decode_dot11_basic(&bytes);
+        let dot11 = decoded.layer::<Dot11>().unwrap();
+        let raw = decoded.layer::<Raw>().unwrap();
+
+        assert_eq!(dot11.control_subtype(), Some(Dot11ControlSubtype::Rts));
+        assert_eq!(dot11.duration_id_value(), Some(0x9999));
+        assert_eq!(dot11.addr1_value(), Some(dot11_role_mac(1)));
+        assert_eq!(dot11.addr2_value(), Some(dot11_role_mac(2)));
+        assert_eq!(dot11.addr3_value(), None);
+        assert_eq!(dot11.sequence_control_value(), None);
+        assert_eq!(raw.as_bytes(), b"rts-tail");
+    }
+
+    #[test]
+    fn dot11_decode_basic_unknown_valid_subtype_stays_typed_with_raw_tail() {
+        let frame_control =
+            dot11_test_frame_control(DOT11_FRAME_TYPE_MANAGEMENT, 7).with_retry(true);
+        let mut bytes = dot11_decode_test_header(frame_control);
+        bytes.extend_from_slice(b"unknown-management-body");
+
+        let decoded = decode_dot11_basic(&bytes);
+        let dot11 = decoded.layer::<Dot11>().unwrap();
+        let raw = decoded.layer::<Raw>().unwrap();
+
+        assert_eq!(
+            dot11.management_subtype(),
+            Some(Dot11ManagementSubtype::Unknown(7))
+        );
+        assert!(dot11.frame_control_value().retry());
+        assert_eq!(raw.as_bytes(), b"unknown-management-body");
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+    }
+
+    #[test]
+    fn dot11_decode_basic_truncated_headers_return_structured_errors() {
+        let err = decode_dot11_with_registry(&ProtocolRegistry::new(), &[0x08]).unwrap_err();
+
+        assert_eq!(
+            err,
+            CrafterError::buffer_too_short("dot11.frame_control", 2, 1)
+        );
+
+        let data = dot11_test_frame_control(DOT11_FRAME_TYPE_DATA, DOT11_DATA_SUBTYPE_DATA);
+        let err = decode_dot11_with_registry(&ProtocolRegistry::new(), &dot11_test_bytes(data, 23))
+            .unwrap_err();
+
+        assert_eq!(err, CrafterError::buffer_too_short("dot11.header", 24, 23));
+
+        let qos_four_address_htc =
+            dot11_test_frame_control(DOT11_FRAME_TYPE_DATA, DOT11_DATA_SUBTYPE_QOS_DATA)
+                .with_to_ds(true)
+                .with_from_ds(true)
+                .with_order(true);
+        let required = DOT11_DATA_ADDR4_HEADER_LEN + DOT11_QOS_CONTROL_LEN + DOT11_HT_CONTROL_LEN;
+        let err = decode_dot11_with_registry(
+            &ProtocolRegistry::new(),
+            &dot11_test_bytes(qos_four_address_htc, required - 1),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            CrafterError::buffer_too_short("dot11.header", required, required - 1)
+        );
     }
 
     #[test]
