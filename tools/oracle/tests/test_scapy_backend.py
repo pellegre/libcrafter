@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
-from tools.oracle.engine.backends.scapy import normalize, packets
+from tools.oracle.engine.backends.scapy import normalize, packets, pcap
 from tools.oracle.engine.generator import generate_plans
 from tools.oracle.engine.model import PacketPlan
 
@@ -328,6 +330,74 @@ class ScapyDot11NormalizationTest(unittest.TestCase):
         self.assertEqual(decoded.fields["rsn"]["version"], 1)
         self.assertEqual(decoded.fields["rsn"]["group_cipher_suite"]["label"], "ccmp-128")
         self.assertEqual(decoded.fields["rsn"]["akm_suites"][0]["label"], "psk")
+
+
+class ScapyDot11PcapTest(unittest.TestCase):
+    def test_bare_dot11_pcap_roundtrip_preserves_link_type_and_layers(self) -> None:
+        plan = _dot11_plan(
+            stack=["dot11", "payload"],
+            root="link:dot11",
+            fields={
+                "dot11": {
+                    "frame_control": 0x0008,
+                    "duration_id": 0,
+                    "addr1": "00:00:5e:00:53:01",
+                    "addr2": "00:00:5e:00:53:02",
+                    "addr3": "00:00:5e:00:53:03",
+                    "sequence_control": 0x1000,
+                },
+                "payload": {"hex": "01020304", "length": 4},
+            },
+            case="pcap-scapy-dot11",
+        )
+
+        vector = pcap.with_pcap_metadata([packets.encode_packet_plan(plan)], link_type="ieee80211")[0]
+
+        self.assertEqual(vector.metadata["pcap_record"]["link_type"]["name"], "ieee80211")
+        self.assertEqual(vector.metadata["pcap_record"]["link_type"]["datalink"], 105)
+        self.assertEqual(pcap.pcap_link_type_for_vectors([vector]), "ieee80211")
+        records = _write_and_read_scapy_pcap(vector)
+        self.assertEqual(records[0]["link_type"]["name"], "ieee80211")
+        self.assertEqual(records[0]["link_type"]["datalink"], 105)
+        self.assertEqual(records[0]["layers"], ["dot11", "payload"])
+        self.assertEqual(records[0]["raw_hex"], vector.raw_hex)
+
+    def test_radiotap_pcap_roundtrip_preserves_link_type_and_layers(self) -> None:
+        plan = _dot11_plan(
+            stack=["radiotap", "dot11", "payload"],
+            root="link:radiotap",
+            fields={
+                "radiotap": {"version": 0, "pad": 0, "rate": 2},
+                "dot11": {
+                    "frame_control": 0x0008,
+                    "duration_id": 0,
+                    "addr1": "00:00:5e:00:53:01",
+                    "addr2": "00:00:5e:00:53:02",
+                    "addr3": "00:00:5e:00:53:03",
+                    "sequence_control": 0x1000,
+                },
+                "payload": {"hex": "01020304", "length": 4},
+            },
+            case="pcap-scapy-radiotap",
+        )
+
+        vector = pcap.with_pcap_metadata([packets.encode_packet_plan(plan)], link_type="radiotap")[0]
+
+        self.assertEqual(vector.metadata["pcap_record"]["link_type"]["name"], "radiotap")
+        self.assertEqual(vector.metadata["pcap_record"]["link_type"]["datalink"], 127)
+        self.assertEqual(pcap.pcap_link_type_for_vectors([vector]), "radiotap")
+        records = _write_and_read_scapy_pcap(vector)
+        self.assertEqual(records[0]["link_type"]["name"], "radiotap")
+        self.assertEqual(records[0]["link_type"]["datalink"], 127)
+        self.assertEqual(records[0]["layers"], ["radiotap", "dot11", "payload"])
+        self.assertEqual(records[0]["raw_hex"], vector.raw_hex)
+
+
+def _write_and_read_scapy_pcap(vector):
+    with tempfile.TemporaryDirectory() as temp_dir:
+        path = Path(temp_dir) / "dot11.pcap"
+        pcap.write_pcap(path, [vector])
+        return pcap.read_pcap(path)
 
 
 def _icmp_live_plan(icmp_fields: dict, *, case: str, payload_hex: str = "0102030405") -> PacketPlan:
