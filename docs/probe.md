@@ -40,7 +40,8 @@ adapter maps provider `docker` to `docker/private`, so lab owns only the
 constrained private endpoint substrate while probe still owns `stimulus` and
 `target` workload bootstrap. Docker `lan` and `wan` stay direct endpoint smoke
 modes for NAT-backed L3 reachability, not probe lab-backed multi-endpoint
-modes.
+modes. See [docs/endpoint.md](endpoint.md) for endpoint provider lifecycle and
+artifact handling.
 
 ## Cases
 
@@ -236,6 +237,7 @@ tools/lab/run plan --provider docker --dry-run --profile smoke --seed 1 --role s
 Docker LAN and WAN checks use direct endpoint smokes instead of probe lab sessions:
 
 ```sh
+tools/endpoint/run doctor --provider docker --exposure lan --dry-run
 tools/endpoint/smoke/live_docker_lan_icmp.py --plan-only
 tools/endpoint/smoke/live_docker_wan_dns.py --plan-only
 ```
@@ -278,7 +280,7 @@ skip counts, lab session metadata, provider command metadata, observed
 responses, and per-case failure reasons. Local reports are written below
 `target/probe/`. Provider artifacts are collected through lab/endpoint
 workflows into ignored artifact directories or the configured runner output
-directory. See [endpoint.md](endpoint.md) for single-endpoint provider
+directory. See [docs/endpoint.md](endpoint.md) for single-endpoint provider
 credentials, artifacts, and cleanup.
 
 Do not commit provider state, public host addresses, live host identifiers,

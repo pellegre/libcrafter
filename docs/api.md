@@ -20,7 +20,8 @@ modules inside the one crate:
 | --- | --- |
 | `crafter::prelude` | Common imports for examples and agent-written tools. |
 | `crafter::core` | Packet model, layer model, encode/decode, checksums, formatting, and protocol registry. |
-| `crafter::pcap` | Pcap reader/writer helpers and libpcap-backed capture adapters. |
+| `crafter::pcap` | Low-level pcap reader/writer helpers, records, timestamps, link types, and libpcap backend support. |
+| `crafter::wire` | Wire packet I/O through `PacketWire`, `PacketRecord`, packet sources, packet writers, sniffers, transmitters, and transform chains. |
 | `crafter::net` | Interfaces, raw sockets, send, send-receive, routing helpers, and address helpers. |
 
 ## Packet Composition
@@ -145,41 +146,58 @@ while let Some(record) = reader.next_record()? {
 Pcap helpers are exposed under `crafter::pcap` and through the prelude where
 appropriate.
 
-## Sniff Helpers
+## Wire Packet I/O
 
-Iterator form:
+The crate-level packet I/O surface lives under `crafter::wire`. See
+[docs/wire.md](wire.md) for the full guide to `PacketWire`, `PacketRecord`
+metadata, `PacketTransform`, `Sniffer`, and `Transmitter`.
+
+Offline pcap input:
 
 ```rust
-let mut sniffer = Sniffer::interface("eth0")
+let source = PacketWire::pcap_file("input.pcap")
     .filter("icmp")
-    .timeout(Duration::from_secs(3))
-    .open()?;
+    .open()?
+    .source()?;
 
-for packet in sniffer.take(10) {
-    println!("{}", packet?.summary());
+let mut sniffer = Sniffer::new(source).count(10);
+
+while let Some(record) = sniffer.next_record()? {
+    println!("{}", record.packet().summary());
+    println!("{:?}", record.metadata());
 }
 ```
 
-Callback form:
+Live pcap capture is explicit and bounded:
 
 ```rust
-Sniffer::interface("eth0")
+let source = PacketWire::pcap_interface("eth0")
     .filter("tcp port 80")
-    .capture(100, |packet| {
-        println!("{}", packet.summary());
-        Ok(CaptureControl::Continue)
-    })?;
+    .timeout(Duration::from_secs(1))
+    .open()?
+    .source()?;
+
+let records = Sniffer::new(source)
+    .timeout(Duration::from_secs(3))
+    .count(100)
+    .collect_records()?;
 ```
 
-Spawned capture:
+Offline pcap output and raw socket dry-run writing use `Transmitter`:
 
 ```rust
-let handle = Sniffer::interface("eth0").filter("arp").spawn(50)?;
-let packets = handle.join()?;
+let writer = PacketWire::pcap_recorder("out.pcap", PcapLinkType::Ethernet)
+    .open()?
+    .writer()?;
+
+let mut tx = Transmitter::new(writer);
+let reports = tx.send(packet)?;
 ```
 
-Sniffing must use timeouts by default in examples and tests. Live sniffing
-belongs in disposable wire endpoint workflows, not local static tests.
+`PacketWire::raw_socket_interface("eth0")` defaults to dry-run planning and
+requires `.live()` for real raw socket transmission. Live capture or transmit
+belongs in authorized endpoint provider or lab workflows, not local static
+tests.
 
 ## Send And Send-Receive
 
@@ -559,7 +577,7 @@ in [ICMPv6 message coverage](icmpv6-coverage.md).
 | `send_plan` | Network-layer send planning, compiled bytes, targets, and derived reply filters. |
 | `send_packet` | Network-layer and link-layer send reports using dry-run options by default. |
 | `send_recv_icmp` | ICMP send/receive configuration, retry timing, filters, and dry-run reports. |
-| `network_ping` | Network-layer ICMP echo send/receive for disposable wire endpoint smoke tests. |
+| `network_ping` | Network-layer ICMP echo send/receive for disposable endpoint smoke tests. |
 | `reply_matching` | Synthetic request/reply matching and generated reply filters. |
 | `batch_send` | Positional batch send reports for multiple TCP packets. |
 | `batch_send_recv` | Batch send/receive reports across IPv4 and IPv6 requests. |
@@ -567,8 +585,8 @@ in [ICMPv6 message coverage](icmpv6-coverage.md).
 | `ip_ranges` | IPv4 CIDR, range, and list parsing. |
 | `pcap_write` | Generated Ethernet/IPv4/TCP packets written to a pcap file. |
 | `pcap_read` | Pcap metadata inspection, packet collection, and streaming `PcapReader` workflows. |
-| `sniffer_offline` | Offline `Sniffer` filtering and bounded packet iteration. |
-| `capture_pcap` | Bounded libpcap capture configuration and pcap writing after isolated-lab opt-in. |
+| `sniffer_offline` | Offline `PacketWire` pcap input, `PacketRecord` metadata, and bounded `Sniffer` iteration. |
+| `capture_pcap` | Bounded `PacketWire` pcap interface capture and pcap writing after isolated-lab opt-in. |
 | `arp_who_has` | Explicit Ethernet broadcast ARP who-has construction from known MAC and IPv4 values. |
 | `dns_query` | DNS query construction, dry-run send/receive reporting, and synthetic response decoding. |
 | `dhcp_discover` | DHCP discover construction with an explicit client MAC and link-layer send options. |
