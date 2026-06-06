@@ -759,6 +759,7 @@ pub struct Dot11 {
     ht_control: Field<u32>,
     fixed_parameters: Vec<u8>,
     tagged_parameters: Vec<Dot11TaggedParameter>,
+    encrypted_body_len: Option<usize>,
 }
 
 impl Dot11 {
@@ -780,6 +781,7 @@ impl Dot11 {
             ht_control: Field::unset(),
             fixed_parameters: Vec::new(),
             tagged_parameters: Vec::new(),
+            encrypted_body_len: None,
         }
     }
 
@@ -1425,6 +1427,11 @@ impl Dot11 {
         self.frame_control_value().protected()
     }
 
+    /// Decoded encrypted body length for protected data frames.
+    pub fn encrypted_body_len(&self) -> Option<usize> {
+        self.encrypted_body_len
+    }
+
     /// Minimum header length implied by this frame's type/subtype and flags.
     ///
     /// This is the source-backed decode boundary: MAC header fields, optional
@@ -1544,6 +1551,9 @@ impl Layer for Dot11 {
         }
 
         fields.push(format!("protected={}", frame_control.protected()));
+        if let Some(encrypted_body_len) = self.encrypted_body_len() {
+            fields.push(format!("encrypted_body_len={encrypted_body_len}"));
+        }
 
         if let Some(sequence_control) = self.sequence_control_value() {
             fields.push(format!("seq={}", sequence_control.sequence_number()));
@@ -1578,6 +1588,9 @@ impl Layer for Dot11 {
             ("duration_id", self.effective_duration_id().to_string()),
             ("protected", frame_control.protected().to_string()),
         ]);
+        if let Some(encrypted_body_len) = self.encrypted_body_len() {
+            fields.push(("encrypted_body_len", encrypted_body_len.to_string()));
+        }
 
         if let Some(addr1) = self.addr1_value() {
             fields.push(("addr1", addr1.to_string()));
@@ -1826,6 +1839,7 @@ fn decode_dot11(bytes: &[u8]) -> Result<(Dot11, &[u8])> {
         ht_control: Field::unset(),
         fixed_parameters: Vec::new(),
         tagged_parameters: Vec::new(),
+        encrypted_body_len: None,
     };
 
     match frame_control.frame_type_value() {
@@ -1873,6 +1887,9 @@ fn decode_dot11(bytes: &[u8]) -> Result<(Dot11, &[u8])> {
                     dot11.ht_control = Field::user(read_u32_le_at(bytes, offset));
                     offset += DOT11_HT_CONTROL_LEN;
                 }
+            }
+            if frame_control.protected() {
+                dot11.encrypted_body_len = Some(bytes.len() - offset);
             }
 
             Ok((dot11, &bytes[offset..]))
@@ -4188,6 +4205,43 @@ mod tests {
         assert!(decoded.layer::<Ipv4>().is_some());
         assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), b"v4");
         assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_bytes());
+    }
+
+    #[test]
+    fn dot11_protected_data_raw_body_len_and_no_llc_dispatch() {
+        let frame_control =
+            dot11_test_frame_control(DOT11_FRAME_TYPE_DATA, DOT11_DATA_SUBTYPE_DATA)
+                .with_protected(true);
+        let encrypted_body = [
+            0xaa, 0xaa, 0x03, 0x00, 0x00, 0x00, 0x08, 0x00, 0xde, 0xad, 0xbe, 0xef,
+        ];
+        let mut bytes = dot11_decode_test_header(frame_control);
+        bytes.extend_from_slice(&encrypted_body);
+
+        let decoded = Packet::decode_from_link(LinkType::Ieee80211, &bytes).unwrap();
+        let dot11 = decoded.layer::<Dot11>().unwrap();
+        let raw = decoded.layer::<Raw>().unwrap();
+
+        assert!(dot11.is_protected());
+        assert_eq!(dot11.encrypted_body_len(), Some(encrypted_body.len()));
+        assert!(decoded.layer::<LlcSnap>().is_none());
+        assert!(decoded.layer::<Ipv4>().is_none());
+        assert_eq!(raw.as_bytes(), encrypted_body.as_slice());
+
+        let summary = decoded.summary();
+        assert!(summary.contains("protected=true"), "{summary}");
+        assert!(summary.contains("encrypted_body_len=12"), "{summary}");
+
+        let fields = dot11.inspection_fields();
+        assert_eq!(
+            dot11_inspection_value(&fields, "protected"),
+            Some("true".into())
+        );
+        assert_eq!(
+            dot11_inspection_value(&fields, "encrypted_body_len"),
+            Some("12".into())
+        );
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_slice());
     }
 
     #[test]
