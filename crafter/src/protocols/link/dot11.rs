@@ -877,9 +877,24 @@ impl Dot11 {
         Self::control(Dot11ControlSubtype::BlockAck)
     }
 
+    /// Create a Block Ack Request control frame.
+    pub fn block_ack_request() -> Self {
+        Self::control(Dot11ControlSubtype::BlockAckRequest)
+    }
+
     /// Create a PS-Poll control frame.
     pub fn ps_poll() -> Self {
         Self::control(Dot11ControlSubtype::PsPoll)
+    }
+
+    /// Create a CF-End control frame.
+    pub fn cf_end() -> Self {
+        Self::control(Dot11ControlSubtype::CfEnd)
+    }
+
+    /// Create a CF-End + CF-Ack control frame.
+    pub fn cf_end_cf_ack() -> Self {
+        Self::control(Dot11ControlSubtype::CfEndCfAck)
     }
 
     /// Set the frame-control field.
@@ -1113,18 +1128,24 @@ impl Dot11 {
         self.addr4.value().copied()
     }
 
-    /// Receiver address for data or management frames.
+    /// Receiver address for data, management, or supported control frames.
     pub fn receiver(&self) -> Option<MacAddr> {
         match self.frame_type() {
             Dot11FrameType::Data | Dot11FrameType::Management => self.addr1_value(),
+            Dot11FrameType::Control if dot11_control_subtype_has_known_address_layout(self) => {
+                self.addr1_value()
+            }
             _ => None,
         }
     }
 
-    /// Transmitter address for data or management frames.
+    /// Transmitter address for data, management, or supported two-address control frames.
     pub fn transmitter(&self) -> Option<MacAddr> {
         match self.frame_type() {
             Dot11FrameType::Data | Dot11FrameType::Management => self.addr2_value(),
+            Dot11FrameType::Control if dot11_control_subtype_has_addr2(self.control_subtype()) => {
+                self.addr2_value()
+            }
             _ => None,
         }
     }
@@ -1165,6 +1186,13 @@ impl Dot11 {
 
         match frame_control.frame_type_value() {
             Dot11FrameType::Management => self.addr3_value(),
+            Dot11FrameType::Control => match frame_control.control_subtype_value() {
+                Some(Dot11ControlSubtype::PsPoll) => self.addr1_value(),
+                Some(Dot11ControlSubtype::CfEnd | Dot11ControlSubtype::CfEndCfAck) => {
+                    self.addr2_value()
+                }
+                _ => None,
+            },
             Dot11FrameType::Data if frame_control.to_ds() && frame_control.from_ds() => None,
             Dot11FrameType::Data if frame_control.to_ds() => self.addr1_value(),
             Dot11FrameType::Data if frame_control.from_ds() => self.addr2_value(),
@@ -1632,22 +1660,7 @@ impl Layer for Dot11 {
     }
 
     fn encoded_len(&self) -> usize {
-        DOT11_DATA_HEADER_LEN
-            + self
-                .addr4
-                .value()
-                .map(|_| DOT11_ADDRESS_LEN)
-                .unwrap_or_default()
-            + self
-                .qos_control
-                .value()
-                .map(|_| DOT11_QOS_CONTROL_LEN)
-                .unwrap_or_default()
-            + self
-                .ht_control
-                .value()
-                .map(|_| DOT11_HT_CONTROL_LEN)
-                .unwrap_or_default()
+        dot11_encoded_mac_header_len(self)
             + self.fixed_parameters.len()
             + self
                 .tagged_parameters
@@ -1660,9 +1673,23 @@ impl Layer for Dot11 {
         out.extend_from_slice(&self.frame_control_value().compile());
         out.extend_from_slice(&self.effective_duration_id().to_le_bytes());
         out.extend_from_slice(&self.effective_addr1().octets());
-        out.extend_from_slice(&self.effective_addr2().octets());
-        out.extend_from_slice(&self.effective_addr3().octets());
-        out.extend_from_slice(&self.effective_sequence_control().compile());
+
+        let frame_control = self.frame_control_value();
+        if frame_control.frame_type_value() == Dot11FrameType::Control {
+            if dot11_control_emit_addr2(self) {
+                out.extend_from_slice(&self.effective_addr2().octets());
+            }
+            if dot11_control_emit_addr3(self) {
+                out.extend_from_slice(&self.effective_addr3().octets());
+            }
+            if dot11_control_emit_sequence_control(self) {
+                out.extend_from_slice(&self.effective_sequence_control().compile());
+            }
+        } else {
+            out.extend_from_slice(&self.effective_addr2().octets());
+            out.extend_from_slice(&self.effective_addr3().octets());
+            out.extend_from_slice(&self.effective_sequence_control().compile());
+        }
 
         if let Some(addr4) = self.addr4_value() {
             out.extend_from_slice(&addr4.octets());
@@ -2665,6 +2692,76 @@ const fn dot11_required_header_len(frame_control: Dot11FrameControl) -> usize {
     dot11_mac_header_len(frame_control) + dot11_management_fixed_parameters_len(frame_control)
 }
 
+fn dot11_encoded_mac_header_len(dot11: &Dot11) -> usize {
+    let frame_control = dot11.frame_control_value();
+
+    if frame_control.frame_type_value() == Dot11FrameType::Control {
+        return DOT11_CONTROL_ONE_ADDRESS_HEADER_LEN
+            + dot11_control_emit_addr2(dot11)
+                .then_some(DOT11_ADDRESS_LEN)
+                .unwrap_or_default()
+            + dot11_control_emit_addr3(dot11)
+                .then_some(DOT11_ADDRESS_LEN)
+                .unwrap_or_default()
+            + dot11_control_emit_sequence_control(dot11)
+                .then_some(DOT11_SEQUENCE_CONTROL_LEN)
+                .unwrap_or_default()
+            + dot11
+                .addr4
+                .value()
+                .map(|_| DOT11_ADDRESS_LEN)
+                .unwrap_or_default()
+            + dot11
+                .qos_control
+                .value()
+                .map(|_| DOT11_QOS_CONTROL_LEN)
+                .unwrap_or_default()
+            + dot11
+                .ht_control
+                .value()
+                .map(|_| DOT11_HT_CONTROL_LEN)
+                .unwrap_or_default();
+    }
+
+    DOT11_DATA_HEADER_LEN
+        + dot11
+            .addr4
+            .value()
+            .map(|_| DOT11_ADDRESS_LEN)
+            .unwrap_or_default()
+        + dot11
+            .qos_control
+            .value()
+            .map(|_| DOT11_QOS_CONTROL_LEN)
+            .unwrap_or_default()
+        + dot11
+            .ht_control
+            .value()
+            .map(|_| DOT11_HT_CONTROL_LEN)
+            .unwrap_or_default()
+}
+
+fn dot11_control_emit_addr2(dot11: &Dot11) -> bool {
+    dot11_control_subtype_has_addr2(dot11.control_subtype())
+        || dot11.addr2.is_user_set()
+        || dot11_control_emit_addr3(dot11)
+}
+
+fn dot11_control_emit_addr3(dot11: &Dot11) -> bool {
+    dot11.addr3.is_user_set()
+        || dot11_control_emit_sequence_control(dot11)
+        || dot11.addr4.value().is_some()
+        || dot11.qos_control.value().is_some()
+        || dot11.ht_control.value().is_some()
+}
+
+fn dot11_control_emit_sequence_control(dot11: &Dot11) -> bool {
+    dot11.sequence_control.is_user_set()
+        || dot11.addr4.value().is_some()
+        || dot11.qos_control.value().is_some()
+        || dot11.ht_control.value().is_some()
+}
+
 const fn dot11_mac_header_len(frame_control: Dot11FrameControl) -> usize {
     match frame_control.frame_type_value() {
         Dot11FrameType::Management => {
@@ -2674,7 +2771,9 @@ const fn dot11_mac_header_len(frame_control: Dot11FrameControl) -> usize {
             DOT11_CONTROL_SUBTYPE_CTS | DOT11_CONTROL_SUBTYPE_ACK => {
                 DOT11_CONTROL_ONE_ADDRESS_HEADER_LEN
             }
-            DOT11_CONTROL_SUBTYPE_RTS
+            DOT11_CONTROL_SUBTYPE_BLOCK_ACK_REQUEST
+            | DOT11_CONTROL_SUBTYPE_BLOCK_ACK
+            | DOT11_CONTROL_SUBTYPE_RTS
             | DOT11_CONTROL_SUBTYPE_PS_POLL
             | DOT11_CONTROL_SUBTYPE_CF_END
             | DOT11_CONTROL_SUBTYPE_CF_END_CF_ACK => DOT11_CONTROL_TWO_ADDRESS_HEADER_LEN,
@@ -2695,6 +2794,36 @@ const fn dot11_mac_header_len(frame_control: Dot11FrameControl) -> usize {
         }
         Dot11FrameType::Extension | Dot11FrameType::Unknown(_) => DOT11_MIN_HEADER_LEN,
     }
+}
+
+fn dot11_control_subtype_has_known_address_layout(dot11: &Dot11) -> bool {
+    matches!(
+        dot11.control_subtype(),
+        Some(
+            Dot11ControlSubtype::Ack
+                | Dot11ControlSubtype::Cts
+                | Dot11ControlSubtype::Rts
+                | Dot11ControlSubtype::PsPoll
+                | Dot11ControlSubtype::CfEnd
+                | Dot11ControlSubtype::CfEndCfAck
+                | Dot11ControlSubtype::BlockAckRequest
+                | Dot11ControlSubtype::BlockAck
+        )
+    )
+}
+
+const fn dot11_control_subtype_has_addr2(subtype: Option<Dot11ControlSubtype>) -> bool {
+    matches!(
+        subtype,
+        Some(
+            Dot11ControlSubtype::Rts
+                | Dot11ControlSubtype::PsPoll
+                | Dot11ControlSubtype::CfEnd
+                | Dot11ControlSubtype::CfEndCfAck
+                | Dot11ControlSubtype::BlockAckRequest
+                | Dot11ControlSubtype::BlockAck
+        )
+    )
 }
 
 const fn dot11_ht_control_len(frame_control: Dot11FrameControl, supported_shape: bool) -> usize {
@@ -3479,6 +3608,186 @@ mod tests {
     }
 
     #[test]
+    fn dot11_control_frames_encode_decode_supported_address_layouts() {
+        let ra = dot11_role_mac(1);
+        let ta = dot11_role_mac(2);
+        let cases = [
+            (
+                Dot11::ack().addr1(ra),
+                Dot11ControlSubtype::Ack,
+                DOT11_CONTROL_ONE_ADDRESS_HEADER_LEN,
+                false,
+            ),
+            (
+                Dot11::cts().addr1(ra),
+                Dot11ControlSubtype::Cts,
+                DOT11_CONTROL_ONE_ADDRESS_HEADER_LEN,
+                false,
+            ),
+            (
+                Dot11::rts().addr1(ra).addr2(ta),
+                Dot11ControlSubtype::Rts,
+                DOT11_CONTROL_TWO_ADDRESS_HEADER_LEN,
+                true,
+            ),
+            (
+                Dot11::ps_poll().addr1(ra).addr2(ta),
+                Dot11ControlSubtype::PsPoll,
+                DOT11_CONTROL_TWO_ADDRESS_HEADER_LEN,
+                true,
+            ),
+            (
+                Dot11::cf_end().addr1(ra).addr2(ta),
+                Dot11ControlSubtype::CfEnd,
+                DOT11_CONTROL_TWO_ADDRESS_HEADER_LEN,
+                true,
+            ),
+            (
+                Dot11::cf_end_cf_ack().addr1(ra).addr2(ta),
+                Dot11ControlSubtype::CfEndCfAck,
+                DOT11_CONTROL_TWO_ADDRESS_HEADER_LEN,
+                true,
+            ),
+            (
+                Dot11::block_ack_request().addr1(ra).addr2(ta),
+                Dot11ControlSubtype::BlockAckRequest,
+                DOT11_CONTROL_TWO_ADDRESS_HEADER_LEN,
+                true,
+            ),
+            (
+                Dot11::block_ack().addr1(ra).addr2(ta),
+                Dot11ControlSubtype::BlockAck,
+                DOT11_CONTROL_TWO_ADDRESS_HEADER_LEN,
+                true,
+            ),
+        ];
+
+        for (frame, subtype, expected_len, has_addr2) in cases {
+            let compiled = Packet::from_layer(frame.clone()).compile().unwrap();
+            assert_eq!(frame.encoded_len(), expected_len);
+            assert_eq!(compiled.as_bytes().len(), expected_len);
+
+            let decoded = decode_dot11_basic(compiled.as_bytes());
+            let dot11 = decoded.layer::<Dot11>().unwrap();
+
+            assert_eq!(dot11.frame_type(), Dot11FrameType::Control);
+            assert_eq!(dot11.control_subtype(), Some(subtype));
+            assert_eq!(dot11.addr1_value(), Some(ra));
+            if has_addr2 {
+                assert_eq!(dot11.addr2_value(), Some(ta));
+                assert_eq!(dot11.transmitter(), Some(ta));
+            } else {
+                assert_eq!(dot11.addr2_value(), None);
+                assert_eq!(dot11.transmitter(), None);
+            }
+            assert_eq!(dot11.addr3_value(), None);
+            assert_eq!(dot11.sequence_control_value(), None);
+            assert!(decoded.layer::<Raw>().is_none());
+            assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+        }
+    }
+
+    #[test]
+    fn dot11_control_frames_preserve_unsupported_subtypes_as_raw_tail() {
+        let frame_control =
+            dot11_test_frame_control(DOT11_FRAME_TYPE_CONTROL, DOT11_CONTROL_SUBTYPE_TRIGGER);
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&frame_control.compile());
+        bytes.extend_from_slice(&0x0102u16.to_le_bytes());
+        bytes.extend_from_slice(&dot11_role_mac(1).octets());
+        bytes.extend_from_slice(b"unsupported-control-body");
+
+        let decoded = decode_dot11_basic(&bytes);
+        let dot11 = decoded.layer::<Dot11>().unwrap();
+        let raw = decoded.layer::<Raw>().unwrap();
+
+        assert_eq!(dot11.frame_type(), Dot11FrameType::Control);
+        assert_eq!(dot11.control_subtype(), Some(Dot11ControlSubtype::Trigger));
+        assert_eq!(dot11.addr1_value(), Some(dot11_role_mac(1)));
+        assert_eq!(dot11.addr2_value(), None);
+        assert_eq!(raw.as_bytes(), b"unsupported-control-body");
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes);
+    }
+
+    #[test]
+    fn dot11_control_frames_truncated_supported_layouts_return_structured_errors() {
+        let cases = [
+            (
+                DOT11_CONTROL_SUBTYPE_ACK,
+                DOT11_CONTROL_ONE_ADDRESS_HEADER_LEN,
+            ),
+            (
+                DOT11_CONTROL_SUBTYPE_CTS,
+                DOT11_CONTROL_ONE_ADDRESS_HEADER_LEN,
+            ),
+            (
+                DOT11_CONTROL_SUBTYPE_RTS,
+                DOT11_CONTROL_TWO_ADDRESS_HEADER_LEN,
+            ),
+            (
+                DOT11_CONTROL_SUBTYPE_PS_POLL,
+                DOT11_CONTROL_TWO_ADDRESS_HEADER_LEN,
+            ),
+            (
+                DOT11_CONTROL_SUBTYPE_CF_END,
+                DOT11_CONTROL_TWO_ADDRESS_HEADER_LEN,
+            ),
+            (
+                DOT11_CONTROL_SUBTYPE_CF_END_CF_ACK,
+                DOT11_CONTROL_TWO_ADDRESS_HEADER_LEN,
+            ),
+            (
+                DOT11_CONTROL_SUBTYPE_BLOCK_ACK_REQUEST,
+                DOT11_CONTROL_TWO_ADDRESS_HEADER_LEN,
+            ),
+            (
+                DOT11_CONTROL_SUBTYPE_BLOCK_ACK,
+                DOT11_CONTROL_TWO_ADDRESS_HEADER_LEN,
+            ),
+        ];
+
+        for (subtype, required) in cases {
+            let frame_control = dot11_test_frame_control(DOT11_FRAME_TYPE_CONTROL, subtype);
+            let available = required - 1;
+            let err = decode_dot11_with_registry(
+                &ProtocolRegistry::new(),
+                &dot11_test_bytes(frame_control, available),
+            )
+            .unwrap_err();
+
+            assert_eq!(
+                err,
+                CrafterError::buffer_too_short("dot11.header", required, available),
+                "control subtype {subtype}"
+            );
+        }
+    }
+
+    #[test]
+    fn dot11_control_frames_preserve_explicit_extra_fields_as_malformed_bytes() {
+        let ra = dot11_role_mac(1);
+        let ta = dot11_role_mac(2);
+        let frame = Dot11::ack().addr1(ra).addr2(ta);
+        let compiled = Packet::from_layer(frame.clone()).compile().unwrap();
+
+        assert_eq!(frame.encoded_len(), DOT11_CONTROL_TWO_ADDRESS_HEADER_LEN);
+        assert_eq!(
+            &compiled.as_bytes()[DOT11_CONTROL_ONE_ADDRESS_HEADER_LEN..],
+            ta.octets().as_slice()
+        );
+
+        let decoded = decode_dot11_basic(compiled.as_bytes());
+        let dot11 = decoded.layer::<Dot11>().unwrap();
+        let raw = decoded.layer::<Raw>().unwrap();
+
+        assert_eq!(dot11.control_subtype(), Some(Dot11ControlSubtype::Ack));
+        assert_eq!(dot11.addr1_value(), Some(ra));
+        assert_eq!(dot11.addr2_value(), None);
+        assert_eq!(raw.as_bytes(), ta.octets().as_slice());
+        assert_eq!(decoded.compile().unwrap().as_bytes(), compiled.as_bytes());
+    }
+
+    #[test]
     fn dot11_decode_basic_unknown_valid_subtype_stays_typed_with_raw_tail() {
         let frame_control =
             dot11_test_frame_control(DOT11_FRAME_TYPE_MANAGEMENT, 7).with_retry(true);
@@ -3745,9 +4054,10 @@ mod tests {
             DOT11_CONTROL_SUBTYPE_ACK,
             0,
             DOT11_CONTROL_SUBTYPE_TRIGGER,
-            DOT11_CONTROL_SUBTYPE_BLOCK_ACK,
         ];
         let two_address = [
+            DOT11_CONTROL_SUBTYPE_BLOCK_ACK_REQUEST,
+            DOT11_CONTROL_SUBTYPE_BLOCK_ACK,
             DOT11_CONTROL_SUBTYPE_RTS,
             DOT11_CONTROL_SUBTYPE_PS_POLL,
             DOT11_CONTROL_SUBTYPE_CF_END,
@@ -4567,19 +4877,45 @@ mod tests {
     }
 
     #[test]
-    fn dot11_address_roles_are_unset_for_control_frames_in_this_phase() {
-        let frame = Dot11::ack()
-            .addr1(dot11_role_mac(1))
-            .addr2(dot11_role_mac(2))
-            .addr3(dot11_role_mac(3))
-            .addr4(dot11_role_mac(4));
+    fn dot11_address_roles_map_supported_control_frames() {
+        let ra = dot11_role_mac(1);
+        let ta = dot11_role_mac(2);
 
-        assert_eq!(frame.receiver(), None);
-        assert_eq!(frame.transmitter(), None);
-        assert_eq!(frame.destination(), None);
-        assert_eq!(frame.source(), None);
-        assert_eq!(frame.bssid(), None);
-        assert_eq!(frame.fourth_address(), None);
+        let ack = Dot11::ack().addr1(ra).addr2(ta);
+        assert_eq!(ack.receiver(), Some(ra));
+        assert_eq!(ack.transmitter(), None);
+        assert_eq!(ack.bssid(), None);
+
+        for frame in [
+            Dot11::rts().addr1(ra).addr2(ta),
+            Dot11::block_ack_request().addr1(ra).addr2(ta),
+            Dot11::block_ack().addr1(ra).addr2(ta),
+        ] {
+            assert_eq!(frame.receiver(), Some(ra));
+            assert_eq!(frame.transmitter(), Some(ta));
+            assert_eq!(frame.bssid(), None);
+        }
+
+        let ps_poll = Dot11::ps_poll().addr1(ra).addr2(ta);
+        assert_eq!(ps_poll.receiver(), Some(ra));
+        assert_eq!(ps_poll.transmitter(), Some(ta));
+        assert_eq!(ps_poll.bssid(), Some(ra));
+
+        let cf_end = Dot11::cf_end().addr1(ra).addr2(ta);
+        assert_eq!(cf_end.receiver(), Some(ra));
+        assert_eq!(cf_end.transmitter(), Some(ta));
+        assert_eq!(cf_end.bssid(), Some(ta));
+
+        let unsupported = Dot11::control(Dot11ControlSubtype::Trigger)
+            .addr1(ra)
+            .addr2(ta);
+        assert_eq!(unsupported.receiver(), None);
+        assert_eq!(unsupported.transmitter(), None);
+        assert_eq!(unsupported.bssid(), None);
+
+        assert_eq!(ack.destination(), None);
+        assert_eq!(ack.source(), None);
+        assert_eq!(ack.fourth_address(), None);
     }
 
     #[test]
@@ -4667,21 +5003,56 @@ mod tests {
     #[test]
     fn dot11_builders_create_control_frame_defaults() {
         let cases = [
-            (Dot11::ack(), Dot11ControlSubtype::Ack),
-            (Dot11::rts(), Dot11ControlSubtype::Rts),
-            (Dot11::cts(), Dot11ControlSubtype::Cts),
-            (Dot11::block_ack(), Dot11ControlSubtype::BlockAck),
-            (Dot11::ps_poll(), Dot11ControlSubtype::PsPoll),
+            (
+                Dot11::ack(),
+                Dot11ControlSubtype::Ack,
+                DOT11_CONTROL_ONE_ADDRESS_HEADER_LEN,
+            ),
+            (
+                Dot11::rts(),
+                Dot11ControlSubtype::Rts,
+                DOT11_CONTROL_TWO_ADDRESS_HEADER_LEN,
+            ),
+            (
+                Dot11::cts(),
+                Dot11ControlSubtype::Cts,
+                DOT11_CONTROL_ONE_ADDRESS_HEADER_LEN,
+            ),
+            (
+                Dot11::block_ack_request(),
+                Dot11ControlSubtype::BlockAckRequest,
+                DOT11_CONTROL_TWO_ADDRESS_HEADER_LEN,
+            ),
+            (
+                Dot11::block_ack(),
+                Dot11ControlSubtype::BlockAck,
+                DOT11_CONTROL_TWO_ADDRESS_HEADER_LEN,
+            ),
+            (
+                Dot11::ps_poll(),
+                Dot11ControlSubtype::PsPoll,
+                DOT11_CONTROL_TWO_ADDRESS_HEADER_LEN,
+            ),
+            (
+                Dot11::cf_end(),
+                Dot11ControlSubtype::CfEnd,
+                DOT11_CONTROL_TWO_ADDRESS_HEADER_LEN,
+            ),
+            (
+                Dot11::cf_end_cf_ack(),
+                Dot11ControlSubtype::CfEndCfAck,
+                DOT11_CONTROL_TWO_ADDRESS_HEADER_LEN,
+            ),
         ];
 
-        for (frame, subtype) in cases {
+        for (frame, subtype, encoded_len) in cases {
             assert_eq!(frame.frame_type(), Dot11FrameType::Control);
             assert_eq!(frame.control_subtype(), Some(subtype));
             assert_eq!(frame.management_subtype(), None);
             assert_eq!(frame.data_subtype(), None);
             assert_eq!(frame.fixed_parameters_value(), &[]);
             assert_eq!(frame.qos_control_value(), None);
-            assert_eq!(frame.encoded_len(), DOT11_DATA_HEADER_LEN);
+            assert_eq!(frame.encoded_len(), encoded_len);
         }
     }
 
