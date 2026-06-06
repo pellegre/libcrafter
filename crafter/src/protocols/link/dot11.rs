@@ -209,6 +209,342 @@ pub struct Dot11 {
     _private: (),
 }
 
+/// IEEE 802.11 frame type subfield.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Dot11FrameType {
+    /// Management frame.
+    Management,
+    /// Control frame.
+    Control,
+    /// Data frame.
+    Data,
+    /// Extension frame.
+    Extension,
+    /// Unknown caller-supplied value preserved verbatim.
+    Unknown(u8),
+}
+
+impl Dot11FrameType {
+    /// Create a frame type from its raw numeric value.
+    pub const fn from_raw(value: u8) -> Self {
+        match value {
+            DOT11_FRAME_TYPE_MANAGEMENT => Self::Management,
+            DOT11_FRAME_TYPE_CONTROL => Self::Control,
+            DOT11_FRAME_TYPE_DATA => Self::Data,
+            DOT11_FRAME_TYPE_EXTENSION => Self::Extension,
+            value => Self::Unknown(value),
+        }
+    }
+
+    /// Raw numeric value.
+    pub const fn raw(self) -> u8 {
+        match self {
+            Self::Management => DOT11_FRAME_TYPE_MANAGEMENT,
+            Self::Control => DOT11_FRAME_TYPE_CONTROL,
+            Self::Data => DOT11_FRAME_TYPE_DATA,
+            Self::Extension => DOT11_FRAME_TYPE_EXTENSION,
+            Self::Unknown(value) => value,
+        }
+    }
+
+    /// Short stable label.
+    pub fn label(self) -> String {
+        dot11_frame_type_label(self.raw())
+    }
+}
+
+impl From<u8> for Dot11FrameType {
+    fn from(value: u8) -> Self {
+        Self::from_raw(value)
+    }
+}
+
+impl From<Dot11FrameType> for u8 {
+    fn from(value: Dot11FrameType) -> Self {
+        value.raw()
+    }
+}
+
+/// IEEE 802.11 management frame subtype subfield.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Dot11ManagementSubtype {
+    /// Association Request.
+    AssociationRequest,
+    /// Association Response.
+    AssociationResponse,
+    /// Reassociation Request.
+    ReassociationRequest,
+    /// Reassociation Response.
+    ReassociationResponse,
+    /// Probe Request.
+    ProbeRequest,
+    /// Probe Response.
+    ProbeResponse,
+    /// Timing Advertisement.
+    TimingAdvertisement,
+    /// Beacon.
+    Beacon,
+    /// Announcement traffic indication message.
+    Atim,
+    /// Disassociation.
+    Disassociation,
+    /// Authentication.
+    Authentication,
+    /// Deauthentication.
+    Deauthentication,
+    /// Action.
+    Action,
+    /// Action No Ack.
+    ActionNoAck,
+    /// Unknown or reserved value preserved verbatim.
+    Unknown(u8),
+}
+
+impl Dot11ManagementSubtype {
+    /// Create a management subtype from its raw numeric value.
+    pub const fn from_raw(value: u8) -> Self {
+        match value {
+            DOT11_MGMT_SUBTYPE_ASSOCIATION_REQUEST => Self::AssociationRequest,
+            DOT11_MGMT_SUBTYPE_ASSOCIATION_RESPONSE => Self::AssociationResponse,
+            DOT11_MGMT_SUBTYPE_REASSOCIATION_REQUEST => Self::ReassociationRequest,
+            DOT11_MGMT_SUBTYPE_REASSOCIATION_RESPONSE => Self::ReassociationResponse,
+            DOT11_MGMT_SUBTYPE_PROBE_REQUEST => Self::ProbeRequest,
+            DOT11_MGMT_SUBTYPE_PROBE_RESPONSE => Self::ProbeResponse,
+            DOT11_MGMT_SUBTYPE_TIMING_ADVERTISEMENT => Self::TimingAdvertisement,
+            DOT11_MGMT_SUBTYPE_BEACON => Self::Beacon,
+            DOT11_MGMT_SUBTYPE_ATIM => Self::Atim,
+            DOT11_MGMT_SUBTYPE_DISASSOCIATION => Self::Disassociation,
+            DOT11_MGMT_SUBTYPE_AUTHENTICATION => Self::Authentication,
+            DOT11_MGMT_SUBTYPE_DEAUTHENTICATION => Self::Deauthentication,
+            DOT11_MGMT_SUBTYPE_ACTION => Self::Action,
+            DOT11_MGMT_SUBTYPE_ACTION_NO_ACK => Self::ActionNoAck,
+            value => Self::Unknown(value),
+        }
+    }
+
+    /// Raw numeric value.
+    pub const fn raw(self) -> u8 {
+        match self {
+            Self::AssociationRequest => DOT11_MGMT_SUBTYPE_ASSOCIATION_REQUEST,
+            Self::AssociationResponse => DOT11_MGMT_SUBTYPE_ASSOCIATION_RESPONSE,
+            Self::ReassociationRequest => DOT11_MGMT_SUBTYPE_REASSOCIATION_REQUEST,
+            Self::ReassociationResponse => DOT11_MGMT_SUBTYPE_REASSOCIATION_RESPONSE,
+            Self::ProbeRequest => DOT11_MGMT_SUBTYPE_PROBE_REQUEST,
+            Self::ProbeResponse => DOT11_MGMT_SUBTYPE_PROBE_RESPONSE,
+            Self::TimingAdvertisement => DOT11_MGMT_SUBTYPE_TIMING_ADVERTISEMENT,
+            Self::Beacon => DOT11_MGMT_SUBTYPE_BEACON,
+            Self::Atim => DOT11_MGMT_SUBTYPE_ATIM,
+            Self::Disassociation => DOT11_MGMT_SUBTYPE_DISASSOCIATION,
+            Self::Authentication => DOT11_MGMT_SUBTYPE_AUTHENTICATION,
+            Self::Deauthentication => DOT11_MGMT_SUBTYPE_DEAUTHENTICATION,
+            Self::Action => DOT11_MGMT_SUBTYPE_ACTION,
+            Self::ActionNoAck => DOT11_MGMT_SUBTYPE_ACTION_NO_ACK,
+            Self::Unknown(value) => value,
+        }
+    }
+
+    /// Short stable label.
+    pub fn label(self) -> String {
+        dot11_management_subtype_label(self.raw())
+    }
+}
+
+impl From<u8> for Dot11ManagementSubtype {
+    fn from(value: u8) -> Self {
+        Self::from_raw(value)
+    }
+}
+
+impl From<Dot11ManagementSubtype> for u8 {
+    fn from(value: Dot11ManagementSubtype) -> Self {
+        value.raw()
+    }
+}
+
+/// IEEE 802.11 control frame subtype subfield.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Dot11ControlSubtype {
+    /// Trigger.
+    Trigger,
+    /// Control Wrapper.
+    ControlWrapper,
+    /// Block Ack Request.
+    BlockAckRequest,
+    /// Block Ack.
+    BlockAck,
+    /// Power Save Poll.
+    PsPoll,
+    /// Request To Send.
+    Rts,
+    /// Clear To Send.
+    Cts,
+    /// Acknowledgment.
+    Ack,
+    /// Contention-Free End.
+    CfEnd,
+    /// Contention-Free End plus Contention-Free Ack.
+    CfEndCfAck,
+    /// Unknown or reserved value preserved verbatim.
+    Unknown(u8),
+}
+
+impl Dot11ControlSubtype {
+    /// Create a control subtype from its raw numeric value.
+    pub const fn from_raw(value: u8) -> Self {
+        match value {
+            DOT11_CONTROL_SUBTYPE_TRIGGER => Self::Trigger,
+            DOT11_CONTROL_SUBTYPE_CONTROL_WRAPPER => Self::ControlWrapper,
+            DOT11_CONTROL_SUBTYPE_BLOCK_ACK_REQUEST => Self::BlockAckRequest,
+            DOT11_CONTROL_SUBTYPE_BLOCK_ACK => Self::BlockAck,
+            DOT11_CONTROL_SUBTYPE_PS_POLL => Self::PsPoll,
+            DOT11_CONTROL_SUBTYPE_RTS => Self::Rts,
+            DOT11_CONTROL_SUBTYPE_CTS => Self::Cts,
+            DOT11_CONTROL_SUBTYPE_ACK => Self::Ack,
+            DOT11_CONTROL_SUBTYPE_CF_END => Self::CfEnd,
+            DOT11_CONTROL_SUBTYPE_CF_END_CF_ACK => Self::CfEndCfAck,
+            value => Self::Unknown(value),
+        }
+    }
+
+    /// Raw numeric value.
+    pub const fn raw(self) -> u8 {
+        match self {
+            Self::Trigger => DOT11_CONTROL_SUBTYPE_TRIGGER,
+            Self::ControlWrapper => DOT11_CONTROL_SUBTYPE_CONTROL_WRAPPER,
+            Self::BlockAckRequest => DOT11_CONTROL_SUBTYPE_BLOCK_ACK_REQUEST,
+            Self::BlockAck => DOT11_CONTROL_SUBTYPE_BLOCK_ACK,
+            Self::PsPoll => DOT11_CONTROL_SUBTYPE_PS_POLL,
+            Self::Rts => DOT11_CONTROL_SUBTYPE_RTS,
+            Self::Cts => DOT11_CONTROL_SUBTYPE_CTS,
+            Self::Ack => DOT11_CONTROL_SUBTYPE_ACK,
+            Self::CfEnd => DOT11_CONTROL_SUBTYPE_CF_END,
+            Self::CfEndCfAck => DOT11_CONTROL_SUBTYPE_CF_END_CF_ACK,
+            Self::Unknown(value) => value,
+        }
+    }
+
+    /// Short stable label.
+    pub fn label(self) -> String {
+        dot11_control_subtype_label(self.raw())
+    }
+}
+
+impl From<u8> for Dot11ControlSubtype {
+    fn from(value: u8) -> Self {
+        Self::from_raw(value)
+    }
+}
+
+impl From<Dot11ControlSubtype> for u8 {
+    fn from(value: Dot11ControlSubtype) -> Self {
+        value.raw()
+    }
+}
+
+/// IEEE 802.11 data frame subtype subfield.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Dot11DataSubtype {
+    /// Data.
+    Data,
+    /// Data plus CF-Ack.
+    DataCfAck,
+    /// Data plus CF-Poll.
+    DataCfPoll,
+    /// Data plus CF-Ack and CF-Poll.
+    DataCfAckCfPoll,
+    /// Null function, no data.
+    Null,
+    /// CF-Ack, no data.
+    CfAck,
+    /// CF-Poll, no data.
+    CfPoll,
+    /// CF-Ack plus CF-Poll, no data.
+    CfAckCfPoll,
+    /// QoS Data.
+    QosData,
+    /// QoS Data plus CF-Ack.
+    QosDataCfAck,
+    /// QoS Data plus CF-Poll.
+    QosDataCfPoll,
+    /// QoS Data plus CF-Ack and CF-Poll.
+    QosDataCfAckCfPoll,
+    /// QoS Null, no data.
+    QosNull,
+    /// QoS CF-Poll, no data.
+    QosCfPoll,
+    /// QoS CF-Ack plus CF-Poll, no data.
+    QosCfAckCfPoll,
+    /// Unknown or reserved value preserved verbatim.
+    Unknown(u8),
+}
+
+impl Dot11DataSubtype {
+    /// Create a data subtype from its raw numeric value.
+    pub const fn from_raw(value: u8) -> Self {
+        match value {
+            DOT11_DATA_SUBTYPE_DATA => Self::Data,
+            DOT11_DATA_SUBTYPE_DATA_CF_ACK => Self::DataCfAck,
+            DOT11_DATA_SUBTYPE_DATA_CF_POLL => Self::DataCfPoll,
+            DOT11_DATA_SUBTYPE_DATA_CF_ACK_CF_POLL => Self::DataCfAckCfPoll,
+            DOT11_DATA_SUBTYPE_NULL => Self::Null,
+            DOT11_DATA_SUBTYPE_CF_ACK => Self::CfAck,
+            DOT11_DATA_SUBTYPE_CF_POLL => Self::CfPoll,
+            DOT11_DATA_SUBTYPE_CF_ACK_CF_POLL => Self::CfAckCfPoll,
+            DOT11_DATA_SUBTYPE_QOS_DATA => Self::QosData,
+            DOT11_DATA_SUBTYPE_QOS_DATA_CF_ACK => Self::QosDataCfAck,
+            DOT11_DATA_SUBTYPE_QOS_DATA_CF_POLL => Self::QosDataCfPoll,
+            DOT11_DATA_SUBTYPE_QOS_DATA_CF_ACK_CF_POLL => Self::QosDataCfAckCfPoll,
+            DOT11_DATA_SUBTYPE_QOS_NULL => Self::QosNull,
+            DOT11_DATA_SUBTYPE_QOS_CF_POLL => Self::QosCfPoll,
+            DOT11_DATA_SUBTYPE_QOS_CF_ACK_CF_POLL => Self::QosCfAckCfPoll,
+            value => Self::Unknown(value),
+        }
+    }
+
+    /// Raw numeric value.
+    pub const fn raw(self) -> u8 {
+        match self {
+            Self::Data => DOT11_DATA_SUBTYPE_DATA,
+            Self::DataCfAck => DOT11_DATA_SUBTYPE_DATA_CF_ACK,
+            Self::DataCfPoll => DOT11_DATA_SUBTYPE_DATA_CF_POLL,
+            Self::DataCfAckCfPoll => DOT11_DATA_SUBTYPE_DATA_CF_ACK_CF_POLL,
+            Self::Null => DOT11_DATA_SUBTYPE_NULL,
+            Self::CfAck => DOT11_DATA_SUBTYPE_CF_ACK,
+            Self::CfPoll => DOT11_DATA_SUBTYPE_CF_POLL,
+            Self::CfAckCfPoll => DOT11_DATA_SUBTYPE_CF_ACK_CF_POLL,
+            Self::QosData => DOT11_DATA_SUBTYPE_QOS_DATA,
+            Self::QosDataCfAck => DOT11_DATA_SUBTYPE_QOS_DATA_CF_ACK,
+            Self::QosDataCfPoll => DOT11_DATA_SUBTYPE_QOS_DATA_CF_POLL,
+            Self::QosDataCfAckCfPoll => DOT11_DATA_SUBTYPE_QOS_DATA_CF_ACK_CF_POLL,
+            Self::QosNull => DOT11_DATA_SUBTYPE_QOS_NULL,
+            Self::QosCfPoll => DOT11_DATA_SUBTYPE_QOS_CF_POLL,
+            Self::QosCfAckCfPoll => DOT11_DATA_SUBTYPE_QOS_CF_ACK_CF_POLL,
+            Self::Unknown(value) => value,
+        }
+    }
+
+    /// Short stable label.
+    pub fn label(self) -> String {
+        dot11_data_subtype_label(self.raw())
+    }
+}
+
+impl From<u8> for Dot11DataSubtype {
+    fn from(value: u8) -> Self {
+        Self::from_raw(value)
+    }
+}
+
+impl From<Dot11DataSubtype> for u8 {
+    fn from(value: Dot11DataSubtype) -> Self {
+        value.raw()
+    }
+}
+
 /// IEEE 802.11 frame-control field.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Dot11FrameControl {
@@ -278,9 +614,38 @@ impl Dot11FrameControl {
         ((self.bits & DOT11_FC_TYPE_MASK) >> DOT11_FC_TYPE_SHIFT) as u8
     }
 
+    /// Typed frame type subfield.
+    pub const fn frame_type_value(&self) -> Dot11FrameType {
+        Dot11FrameType::from_raw(self.frame_type())
+    }
+
     /// Frame subtype subfield.
     pub const fn subtype(&self) -> u8 {
         ((self.bits & DOT11_FC_SUBTYPE_MASK) >> DOT11_FC_SUBTYPE_SHIFT) as u8
+    }
+
+    /// Typed management subtype when this is a management frame.
+    pub const fn management_subtype_value(&self) -> Option<Dot11ManagementSubtype> {
+        match self.frame_type_value() {
+            Dot11FrameType::Management => Some(Dot11ManagementSubtype::from_raw(self.subtype())),
+            _ => None,
+        }
+    }
+
+    /// Typed control subtype when this is a control frame.
+    pub const fn control_subtype_value(&self) -> Option<Dot11ControlSubtype> {
+        match self.frame_type_value() {
+            Dot11FrameType::Control => Some(Dot11ControlSubtype::from_raw(self.subtype())),
+            _ => None,
+        }
+    }
+
+    /// Typed data subtype when this is a data frame.
+    pub const fn data_subtype_value(&self) -> Option<Dot11DataSubtype> {
+        match self.frame_type_value() {
+            Dot11FrameType::Data => Some(Dot11DataSubtype::from_raw(self.subtype())),
+            _ => None,
+        }
     }
 
     /// Return true when the To DS flag is set.
@@ -875,5 +1240,244 @@ mod tests {
 
         assert_eq!(frame_control.bits(), 0xa55a);
         assert_eq!(frame_control.compile(), [0x5a, 0xa5]);
+    }
+
+    #[test]
+    fn dot11_frame_type_enum_converts_known_frame_types() {
+        let cases = [
+            (
+                DOT11_FRAME_TYPE_MANAGEMENT,
+                Dot11FrameType::Management,
+                "management",
+            ),
+            (DOT11_FRAME_TYPE_CONTROL, Dot11FrameType::Control, "control"),
+            (DOT11_FRAME_TYPE_DATA, Dot11FrameType::Data, "data"),
+            (
+                DOT11_FRAME_TYPE_EXTENSION,
+                Dot11FrameType::Extension,
+                "extension",
+            ),
+        ];
+
+        for (raw, expected, label) in cases {
+            assert_eq!(Dot11FrameType::from_raw(raw), expected);
+            assert_eq!(Dot11FrameType::from(raw), expected);
+            assert_eq!(expected.raw(), raw);
+            assert_eq!(u8::from(expected), raw);
+            assert_eq!(expected.label(), label);
+        }
+    }
+
+    #[test]
+    fn dot11_frame_type_management_subtype_enum_converts_known_values() {
+        let cases = [
+            (
+                DOT11_MGMT_SUBTYPE_ASSOCIATION_REQUEST,
+                Dot11ManagementSubtype::AssociationRequest,
+            ),
+            (
+                DOT11_MGMT_SUBTYPE_ASSOCIATION_RESPONSE,
+                Dot11ManagementSubtype::AssociationResponse,
+            ),
+            (
+                DOT11_MGMT_SUBTYPE_REASSOCIATION_REQUEST,
+                Dot11ManagementSubtype::ReassociationRequest,
+            ),
+            (
+                DOT11_MGMT_SUBTYPE_REASSOCIATION_RESPONSE,
+                Dot11ManagementSubtype::ReassociationResponse,
+            ),
+            (
+                DOT11_MGMT_SUBTYPE_PROBE_REQUEST,
+                Dot11ManagementSubtype::ProbeRequest,
+            ),
+            (
+                DOT11_MGMT_SUBTYPE_PROBE_RESPONSE,
+                Dot11ManagementSubtype::ProbeResponse,
+            ),
+            (
+                DOT11_MGMT_SUBTYPE_TIMING_ADVERTISEMENT,
+                Dot11ManagementSubtype::TimingAdvertisement,
+            ),
+            (DOT11_MGMT_SUBTYPE_BEACON, Dot11ManagementSubtype::Beacon),
+            (DOT11_MGMT_SUBTYPE_ATIM, Dot11ManagementSubtype::Atim),
+            (
+                DOT11_MGMT_SUBTYPE_DISASSOCIATION,
+                Dot11ManagementSubtype::Disassociation,
+            ),
+            (
+                DOT11_MGMT_SUBTYPE_AUTHENTICATION,
+                Dot11ManagementSubtype::Authentication,
+            ),
+            (
+                DOT11_MGMT_SUBTYPE_DEAUTHENTICATION,
+                Dot11ManagementSubtype::Deauthentication,
+            ),
+            (DOT11_MGMT_SUBTYPE_ACTION, Dot11ManagementSubtype::Action),
+            (
+                DOT11_MGMT_SUBTYPE_ACTION_NO_ACK,
+                Dot11ManagementSubtype::ActionNoAck,
+            ),
+        ];
+
+        for (raw, expected) in cases {
+            assert_eq!(Dot11ManagementSubtype::from_raw(raw), expected);
+            assert_eq!(Dot11ManagementSubtype::from(raw), expected);
+            assert_eq!(expected.raw(), raw);
+            assert_eq!(u8::from(expected), raw);
+            assert_eq!(expected.label(), dot11_management_subtype_label(raw));
+        }
+    }
+
+    #[test]
+    fn dot11_frame_type_control_subtype_enum_converts_known_values() {
+        let cases = [
+            (DOT11_CONTROL_SUBTYPE_TRIGGER, Dot11ControlSubtype::Trigger),
+            (
+                DOT11_CONTROL_SUBTYPE_CONTROL_WRAPPER,
+                Dot11ControlSubtype::ControlWrapper,
+            ),
+            (
+                DOT11_CONTROL_SUBTYPE_BLOCK_ACK_REQUEST,
+                Dot11ControlSubtype::BlockAckRequest,
+            ),
+            (
+                DOT11_CONTROL_SUBTYPE_BLOCK_ACK,
+                Dot11ControlSubtype::BlockAck,
+            ),
+            (DOT11_CONTROL_SUBTYPE_PS_POLL, Dot11ControlSubtype::PsPoll),
+            (DOT11_CONTROL_SUBTYPE_RTS, Dot11ControlSubtype::Rts),
+            (DOT11_CONTROL_SUBTYPE_CTS, Dot11ControlSubtype::Cts),
+            (DOT11_CONTROL_SUBTYPE_ACK, Dot11ControlSubtype::Ack),
+            (DOT11_CONTROL_SUBTYPE_CF_END, Dot11ControlSubtype::CfEnd),
+            (
+                DOT11_CONTROL_SUBTYPE_CF_END_CF_ACK,
+                Dot11ControlSubtype::CfEndCfAck,
+            ),
+        ];
+
+        for (raw, expected) in cases {
+            assert_eq!(Dot11ControlSubtype::from_raw(raw), expected);
+            assert_eq!(Dot11ControlSubtype::from(raw), expected);
+            assert_eq!(expected.raw(), raw);
+            assert_eq!(u8::from(expected), raw);
+            assert_eq!(expected.label(), dot11_control_subtype_label(raw));
+        }
+    }
+
+    #[test]
+    fn dot11_frame_type_data_subtype_enum_converts_known_values() {
+        let cases = [
+            (DOT11_DATA_SUBTYPE_DATA, Dot11DataSubtype::Data),
+            (DOT11_DATA_SUBTYPE_DATA_CF_ACK, Dot11DataSubtype::DataCfAck),
+            (
+                DOT11_DATA_SUBTYPE_DATA_CF_POLL,
+                Dot11DataSubtype::DataCfPoll,
+            ),
+            (
+                DOT11_DATA_SUBTYPE_DATA_CF_ACK_CF_POLL,
+                Dot11DataSubtype::DataCfAckCfPoll,
+            ),
+            (DOT11_DATA_SUBTYPE_NULL, Dot11DataSubtype::Null),
+            (DOT11_DATA_SUBTYPE_CF_ACK, Dot11DataSubtype::CfAck),
+            (DOT11_DATA_SUBTYPE_CF_POLL, Dot11DataSubtype::CfPoll),
+            (
+                DOT11_DATA_SUBTYPE_CF_ACK_CF_POLL,
+                Dot11DataSubtype::CfAckCfPoll,
+            ),
+            (DOT11_DATA_SUBTYPE_QOS_DATA, Dot11DataSubtype::QosData),
+            (
+                DOT11_DATA_SUBTYPE_QOS_DATA_CF_ACK,
+                Dot11DataSubtype::QosDataCfAck,
+            ),
+            (
+                DOT11_DATA_SUBTYPE_QOS_DATA_CF_POLL,
+                Dot11DataSubtype::QosDataCfPoll,
+            ),
+            (
+                DOT11_DATA_SUBTYPE_QOS_DATA_CF_ACK_CF_POLL,
+                Dot11DataSubtype::QosDataCfAckCfPoll,
+            ),
+            (DOT11_DATA_SUBTYPE_QOS_NULL, Dot11DataSubtype::QosNull),
+            (DOT11_DATA_SUBTYPE_QOS_CF_POLL, Dot11DataSubtype::QosCfPoll),
+            (
+                DOT11_DATA_SUBTYPE_QOS_CF_ACK_CF_POLL,
+                Dot11DataSubtype::QosCfAckCfPoll,
+            ),
+        ];
+
+        for (raw, expected) in cases {
+            assert_eq!(Dot11DataSubtype::from_raw(raw), expected);
+            assert_eq!(Dot11DataSubtype::from(raw), expected);
+            assert_eq!(expected.raw(), raw);
+            assert_eq!(u8::from(expected), raw);
+            assert_eq!(expected.label(), dot11_data_subtype_label(raw));
+        }
+    }
+
+    #[test]
+    fn dot11_frame_type_enums_preserve_reserved_and_unknown_raw_values() {
+        assert_eq!(Dot11FrameType::from_raw(4), Dot11FrameType::Unknown(4));
+        assert_eq!(Dot11FrameType::Unknown(0xff).raw(), 0xff);
+        assert_eq!(
+            Dot11ManagementSubtype::from_raw(7),
+            Dot11ManagementSubtype::Unknown(7)
+        );
+        assert_eq!(Dot11ManagementSubtype::Unknown(0xff).raw(), 0xff);
+        assert_eq!(
+            Dot11ControlSubtype::from_raw(0),
+            Dot11ControlSubtype::Unknown(0)
+        );
+        assert_eq!(Dot11ControlSubtype::Unknown(0xff).raw(), 0xff);
+        assert_eq!(
+            Dot11DataSubtype::from_raw(13),
+            Dot11DataSubtype::Unknown(13)
+        );
+        assert_eq!(Dot11DataSubtype::Unknown(0xff).raw(), 0xff);
+    }
+
+    #[test]
+    fn dot11_frame_type_frame_control_accessors_return_typed_values() {
+        let beacon = Dot11FrameControl::new()
+            .with_frame_type(DOT11_FRAME_TYPE_MANAGEMENT)
+            .with_subtype(DOT11_MGMT_SUBTYPE_BEACON);
+
+        assert_eq!(beacon.frame_type_value(), Dot11FrameType::Management);
+        assert_eq!(
+            beacon.management_subtype_value(),
+            Some(Dot11ManagementSubtype::Beacon)
+        );
+        assert_eq!(beacon.control_subtype_value(), None);
+        assert_eq!(beacon.data_subtype_value(), None);
+
+        let rts = Dot11FrameControl::new()
+            .with_frame_type(DOT11_FRAME_TYPE_CONTROL)
+            .with_subtype(DOT11_CONTROL_SUBTYPE_RTS);
+
+        assert_eq!(rts.frame_type_value(), Dot11FrameType::Control);
+        assert_eq!(rts.control_subtype_value(), Some(Dot11ControlSubtype::Rts));
+        assert_eq!(rts.management_subtype_value(), None);
+        assert_eq!(rts.data_subtype_value(), None);
+
+        let qos_data = Dot11FrameControl::new()
+            .with_frame_type(DOT11_FRAME_TYPE_DATA)
+            .with_subtype(DOT11_DATA_SUBTYPE_QOS_DATA);
+
+        assert_eq!(qos_data.frame_type_value(), Dot11FrameType::Data);
+        assert_eq!(
+            qos_data.data_subtype_value(),
+            Some(Dot11DataSubtype::QosData)
+        );
+        assert_eq!(qos_data.management_subtype_value(), None);
+        assert_eq!(qos_data.control_subtype_value(), None);
+
+        let extension = Dot11FrameControl::new()
+            .with_frame_type(DOT11_FRAME_TYPE_EXTENSION)
+            .with_subtype(9);
+
+        assert_eq!(extension.frame_type_value(), Dot11FrameType::Extension);
+        assert_eq!(extension.management_subtype_value(), None);
+        assert_eq!(extension.control_subtype_value(), None);
+        assert_eq!(extension.data_subtype_value(), None);
     }
 }
