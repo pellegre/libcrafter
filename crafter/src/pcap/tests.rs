@@ -3,7 +3,10 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use crate::{Arp, Ethernet, Ipv4, LinkType, MacAddr, Packet, Raw, Tcp, Udp, ETHERTYPE_ARP};
+use crate::{
+    Arp, Dot11, Dot11DataSubtype, Ethernet, Ipv4, LinkType, LlcSnap, MacAddr, Packet, Radiotap,
+    Raw, Tcp, Udp, ETHERTYPE_ARP,
+};
 
 use super::codec::PCAP_HEADER_LEN;
 use super::{
@@ -41,6 +44,22 @@ fn ethernet_arp_reply_bytes() -> Vec<u8> {
 
 fn ethernet_arp_nonstandard_bytes() -> Vec<u8> {
     decode_hex(ARP_NONSTANDARD_HEX)
+}
+
+fn dot11_llc_unknown_ethertype_bytes() -> Vec<u8> {
+    let mut bytes = vec![
+        0x08, 0x00, // frame control: data
+        0x34, 0x12, // duration/id
+        0x02, 0x00, 0x5e, 0x10, 0x00, 0x01, // addr1 / destination
+        0x02, 0x00, 0x5e, 0x10, 0x00, 0x02, // addr2 / source
+        0x02, 0x00, 0x5e, 0x10, 0x00, 0x03, // addr3 / BSSID
+        0x30, 0x12, // sequence number 0x123, fragment 0
+        0xaa, 0xaa, 0x03, // LLC SNAP
+        0x00, 0x00, 0x00, // RFC 1042 OUI
+        0x88, 0xb5, // unknown experimental EtherType for Raw preservation
+    ];
+    bytes.extend_from_slice(b"wifi");
+    bytes
 }
 
 fn tcp_packet(source_port: u16, destination_port: u16) -> Packet {
@@ -199,6 +218,133 @@ fn pcap_dot11_link_types_numeric_round_trips() {
         assert_eq!(pcap_link_type.link_type(), link_type);
         assert_eq!(PcapLinkType::from(link_type), pcap_link_type);
     }
+}
+
+#[test]
+fn pcap_read_dot11_bare_decodes_layer_stack() {
+    let dot11_bytes = dot11_llc_unknown_ethertype_bytes();
+    let record = super::PcapRecord::new(
+        PcapTimestamp::micros(2, 250).unwrap(),
+        dot11_bytes.len() as u32,
+        dot11_bytes.clone(),
+        PcapLinkType::Ieee80211,
+    )
+    .unwrap();
+    let mut output = Vec::new();
+    {
+        let mut writer = PcapWriter::from_writer(&mut output, PcapLinkType::Ieee80211).unwrap();
+        writer.write_record(&record).unwrap();
+        writer.flush().unwrap();
+    }
+
+    let mut reader = PcapReader::from_reader(Cursor::new(output)).unwrap();
+    assert_eq!(reader.link_type(), LinkType::Ieee80211);
+    assert_eq!(reader.pcap_link_type(), PcapLinkType::Ieee80211);
+
+    let record = reader.next_record().unwrap().unwrap();
+    assert_eq!(record.timestamp(), PcapTimestamp::micros(2, 250).unwrap());
+    assert_eq!(record.link_type(), LinkType::Ieee80211);
+    assert_eq!(record.pcap_link_type(), PcapLinkType::Ieee80211);
+    assert_eq!(record.data(), dot11_bytes.as_slice());
+
+    let decoded = record.decode().unwrap();
+    assert_eq!(decoded.len(), 3);
+    assert_eq!(decoded.get(0).unwrap().name(), "Dot11");
+    assert_eq!(decoded.get(1).unwrap().name(), "LlcSnap");
+    assert_eq!(decoded.get(2).unwrap().name(), "Raw");
+
+    let dot11 = decoded.layer::<Dot11>().unwrap();
+    assert_eq!(dot11.data_subtype(), Some(Dot11DataSubtype::Data));
+    assert_eq!(dot11.duration_id_value(), Some(0x1234));
+    assert_eq!(
+        dot11.destination(),
+        Some(MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x00, 0x01]))
+    );
+    assert_eq!(
+        dot11.source(),
+        Some(MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x00, 0x02]))
+    );
+    assert_eq!(
+        dot11.bssid(),
+        Some(MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x00, 0x03]))
+    );
+    assert_eq!(dot11.sequence_number_value(), Some(0x123));
+
+    let llc = decoded.layer::<LlcSnap>().unwrap();
+    assert_eq!(llc.ethertype_value(), 0x88b5);
+    assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), b"wifi");
+    assert_eq!(
+        decoded.compile().unwrap().as_bytes(),
+        dot11_bytes.as_slice()
+    );
+    assert!(reader.next_record().unwrap().is_none());
+}
+
+#[test]
+fn pcap_read_dot11_radiotap_decodes_layer_stack() {
+    let dot11_bytes = dot11_llc_unknown_ethertype_bytes();
+    let mut radiotap_bytes = vec![
+        0x00, 0x00, 0x0a, 0x00, // version, pad, it_len
+        0x06, 0x00, 0x00, 0x00, // present: Flags, Rate
+        0x00, 0x16, // flags, rate
+    ];
+    radiotap_bytes.extend_from_slice(&dot11_bytes);
+    let record = super::PcapRecord::new(
+        PcapTimestamp::micros(3, 750).unwrap(),
+        radiotap_bytes.len() as u32,
+        radiotap_bytes.clone(),
+        PcapLinkType::Ieee80211Radiotap,
+    )
+    .unwrap();
+    let mut output = Vec::new();
+    {
+        let mut writer =
+            PcapWriter::from_writer(&mut output, PcapLinkType::Ieee80211Radiotap).unwrap();
+        writer.write_record(&record).unwrap();
+        writer.flush().unwrap();
+    }
+
+    let mut reader = PcapReader::from_reader(Cursor::new(output)).unwrap();
+    assert_eq!(reader.link_type(), LinkType::Radiotap);
+    assert_eq!(reader.pcap_link_type(), PcapLinkType::Ieee80211Radiotap);
+
+    let record = reader.next_record().unwrap().unwrap();
+    assert_eq!(record.timestamp(), PcapTimestamp::micros(3, 750).unwrap());
+    assert_eq!(record.link_type(), LinkType::Radiotap);
+    assert_eq!(record.pcap_link_type(), PcapLinkType::Ieee80211Radiotap);
+    assert_eq!(record.data(), radiotap_bytes.as_slice());
+
+    let decoded = record.decode().unwrap();
+    assert_eq!(decoded.len(), 4);
+    assert_eq!(decoded.get(0).unwrap().name(), "Radiotap");
+    assert_eq!(decoded.get(1).unwrap().name(), "Dot11");
+    assert_eq!(decoded.get(2).unwrap().name(), "LlcSnap");
+    assert_eq!(decoded.get(3).unwrap().name(), "Raw");
+
+    let radiotap = decoded.layer::<Radiotap>().unwrap();
+    assert_eq!(radiotap.version_value(), Some(0));
+    assert_eq!(radiotap.length_value(), Some(10));
+    assert_eq!(radiotap.present().unwrap().words(), &[0x06]);
+    assert_eq!(radiotap.flags_value().map(|flags| flags.bits()), Some(0));
+    assert_eq!(radiotap.rate_value(), Some(0x16));
+
+    let dot11 = decoded.layer::<Dot11>().unwrap();
+    assert_eq!(dot11.data_subtype(), Some(Dot11DataSubtype::Data));
+    assert_eq!(dot11.sequence_number_value(), Some(0x123));
+    assert_eq!(
+        dot11.source(),
+        Some(MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x00, 0x02]))
+    );
+    assert_eq!(
+        decoded.layer::<LlcSnap>().unwrap().ethertype_value(),
+        0x88b5
+    );
+    assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), b"wifi");
+    assert_eq!(
+        decoded.compile().unwrap().as_bytes(),
+        radiotap_bytes.as_slice()
+    );
+    assert!(reader.next_record().unwrap().is_none());
 }
 
 #[test]
