@@ -7,7 +7,7 @@ use std::time::Duration;
 use crate::pcap::PcapLinkType;
 
 use super::backend::pcap::{
-    filter_trimmed, OfflinePcapSource, PcapFileWriter, PcapInterfaceSource,
+    filter_trimmed, OfflinePcapSource, PcapFileWriter, PcapInterfaceSource, PcapInterfaceWriter,
     DEFAULT_INTERFACE_IMMEDIATE, DEFAULT_INTERFACE_NONBLOCKING, DEFAULT_INTERFACE_PROMISC,
     DEFAULT_INTERFACE_SNAPLEN, DEFAULT_INTERFACE_TIMEOUT,
 };
@@ -233,8 +233,24 @@ impl PacketWireBuilder {
         }
 
         if self.writer.is_none() {
-            if let PacketWireTarget::PcapRecorder { path, link_type } = &self.target {
-                self.writer = Some(Box::new(PcapFileWriter::create(path, *link_type)?));
+            match &self.target {
+                PacketWireTarget::PcapRecorder { path, link_type } => {
+                    self.writer = Some(Box::new(PcapFileWriter::create(path, *link_type)?));
+                }
+                PacketWireTarget::PcapInterface { interface } => {
+                    let mut builder = PcapInterfaceWriter::builder(interface.clone())
+                        .snaplen(self.pcap_snaplen)
+                        .promisc(self.pcap_promisc)
+                        .immediate_mode(self.pcap_immediate)
+                        .nonblocking(self.pcap_nonblocking);
+                    if let Some(timeout) = self.pcap_timeout {
+                        builder = builder.timeout(timeout);
+                    } else {
+                        builder = builder.no_timeout();
+                    }
+                    self.writer = Some(Box::new(builder.open()?));
+                }
+                PacketWireTarget::PcapFile { .. } => {}
             }
         }
 
@@ -479,6 +495,7 @@ mod tests {
 
         let wire = builder
             .with_source(VecPacketSource::empty())
+            .with_writer(MemoryPacketWriter::new())
             .open()
             .unwrap();
         assert_eq!(wire.target().interface(), Some("wlan0mon"));
@@ -511,14 +528,12 @@ mod tests {
 
     #[test]
     fn unsupported_split_reports_missing_capability() {
+        let temp = empty_temp_pcap("split-unsupported");
+
         assert_unsupported(
-            PacketWire::pcap_interface("eth0")
-                .with_source(VecPacketSource::empty())
-                .open()
-                .unwrap()
-                .split(),
+            PacketWire::pcap_file(&temp.path).open().unwrap().split(),
             "split",
-            "pcap-interface:eth0",
+            &format!("pcap-file:{}", temp.path.display()),
         );
     }
 

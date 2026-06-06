@@ -85,6 +85,22 @@ impl LibpcapCapture {
     pub(crate) fn next_record(&mut self) -> Result<Option<PcapRecord>> {
         next_libpcap_record(&mut self.capture, self.link_type)
     }
+
+    pub(crate) const fn link_type(&self) -> PcapLinkType {
+        self.link_type
+    }
+
+    pub(crate) fn send_packet(&mut self, bytes: &[u8]) -> Result<()> {
+        if bytes.len() > i32::MAX as usize {
+            return Err(PcapError::RecordTooLarge {
+                field: "packet length",
+                max: i32::MAX as u64,
+                actual: bytes.len() as u64,
+            });
+        }
+
+        self.capture.sendpacket(bytes).map_err(PcapError::Libpcap)
+    }
 }
 
 fn next_libpcap_record<T>(
