@@ -6,11 +6,12 @@
 //! - packet construction, decode, checksums, and protocol layers
 //! - pcap read/write and sniffing helpers
 //! - interface, send, send/receive, batch, and address helpers
+//! - packet wire source, writer, transform, sniffing, and transmit primitives
 //! - Ethernet, IEEE 802.11/radiotap, LLC/SNAP, IP, transport, and selected
 //!   application protocol primitives
 //!
 //! Public modules are organized as `crafter::core`, `crafter::pcap`,
-//! `crafter::net`, and `crafter::prelude`. Most examples should start with
+//! `crafter::net`, `crafter::wire`, and `crafter::prelude`. Most examples should start with
 //! `use crafter::prelude::*;`.
 //!
 //! Local examples use dry-run send plans or offline pcaps unless live behavior
@@ -92,6 +93,7 @@ pub mod registry;
 
 pub mod net;
 pub mod pcap;
+pub mod wire;
 
 pub use error::{CrafterError, Result};
 pub use field::{Field, FieldState};
@@ -392,6 +394,7 @@ pub use pcap::{
     PcapError, PcapHeader, PcapLinkType, PcapPacket, PcapReader, PcapRecord, PcapRecords,
     PcapTimestamp, PcapWriter, PcapWriterOptions, Sniffer, TimestampPrecision,
 };
+pub use wire::WireError;
 
 /// Core packet and protocol APIs.
 pub mod core {
@@ -702,6 +705,6 @@ pub mod prelude {
         PacketSendRecvExt, PcapError, PcapHeader, PcapLinkType, PcapPacket, PcapReader, PcapRecord,
         PcapRecords, PcapTimestamp, PcapWriter, PcapWriterOptions, RawSender, ReplyMatcher,
         SendMode, SendOptions, SendPlan, SendRecv, SendRecvOptions, SendRecvReport, SendReport,
-        SendTarget, Sniffer, SocketSend, SocketSender, TimestampPrecision,
+        SendTarget, Sniffer, SocketSend, SocketSender, TimestampPrecision, WireError,
     };
 }

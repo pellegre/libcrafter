@@ -1,0 +1,1 @@
+//! Opened packet wire abstraction.
