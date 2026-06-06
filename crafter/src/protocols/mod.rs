@@ -77,9 +77,9 @@ pub use dns::{
     DNS_TYPE_RRSIG, DNS_TYPE_SOA, DNS_TYPE_SRV, DNS_TYPE_SVCB, DNS_TYPE_TLSA, DNS_TYPE_TXT,
 };
 pub use eapol::{
-    eapol_type_label, Eapol, EapolType, EAPOL_HEADER_LEN, EAPOL_TYPE_ASF_ALERT,
-    EAPOL_TYPE_EAP_PACKET, EAPOL_TYPE_KEY, EAPOL_TYPE_LOGOFF, EAPOL_TYPE_START, EAPOL_VERSION_1,
-    EAPOL_VERSION_2, EAPOL_VERSION_3,
+    eapol_type_label, Eapol, EapolKeyInformation, EapolType, EAPOL_HEADER_LEN,
+    EAPOL_TYPE_ASF_ALERT, EAPOL_TYPE_EAP_PACKET, EAPOL_TYPE_KEY, EAPOL_TYPE_LOGOFF,
+    EAPOL_TYPE_START, EAPOL_VERSION_1, EAPOL_VERSION_2, EAPOL_VERSION_3,
 };
 // Re-export the deprecated `Icmp*` aliases separately so the
 // `#[allow(deprecated)]` scope stays narrow: only these aliases are exempt from
