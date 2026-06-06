@@ -5,6 +5,7 @@
 
 use crate::error::{CrafterError, Result};
 
+pub(crate) const RADIOTAP_FIXED_HEADER_LEN: usize = 4;
 const RADIOTAP_PRESENT_WORD_LEN: usize = 4;
 const RADIOTAP_PRESENT_EXTENSION_BIT: u16 = 31;
 
@@ -173,6 +174,20 @@ pub fn radiotap_field_metadata(bit: u16) -> Option<RadiotapFieldMetadata> {
         .find(|metadata| metadata.bit as u16 == bit)
 }
 
+/// Calculate field padding from the start of the radiotap header.
+pub const fn radiotap_field_padding(offset_from_header_start: usize, alignment: usize) -> usize {
+    if alignment <= 1 {
+        0
+    } else {
+        let remainder = offset_from_header_start % alignment;
+        if remainder == 0 {
+            0
+        } else {
+            alignment - remainder
+        }
+    }
+}
+
 /// Radiotap present bitmap words.
 ///
 /// Each word is encoded little-endian. Bit 31 in each word is the extension
@@ -276,6 +291,30 @@ impl RadiotapPresent {
             .get(word_index)
             .map(|word| word & (1u32 << bit_index) != 0)
             .unwrap_or(false)
+    }
+
+    /// Present data-field bits in radiotap field order.
+    pub fn field_bits(&self) -> impl Iterator<Item = u16> + '_ {
+        self.words
+            .iter()
+            .enumerate()
+            .flat_map(|(word_index, word)| {
+                (0u16..32).filter_map(move |bit_index| {
+                    if bit_index == RADIOTAP_PRESENT_EXTENSION_BIT {
+                        return None;
+                    }
+
+                    let mask = 1u32 << u32::from(bit_index);
+                    if word & mask == 0 {
+                        return None;
+                    }
+
+                    let base_bit = word_index
+                        .checked_mul(32)
+                        .and_then(|bit| u16::try_from(bit).ok())?;
+                    Some(base_bit + bit_index)
+                })
+            })
     }
 
     /// Present bitmap words with normalized extension bits.
@@ -651,6 +690,31 @@ impl RadiotapField {
             _ => None,
         }
     }
+
+    pub(crate) fn encode_body(&self, out: &mut Vec<u8>) {
+        match self {
+            Self::Tsft(value) => out.extend_from_slice(&value.to_le_bytes()),
+            Self::Flags(value) => out.push(value.bits()),
+            Self::Rate(value) => out.push(*value),
+            Self::Channel(value) => out.extend_from_slice(&value.to_bytes()),
+            Self::Fhss(value) => out.extend_from_slice(value),
+            Self::AntennaSignal(value) => out.push(*value as u8),
+            Self::AntennaNoise(value) => out.push(*value as u8),
+            Self::LockQuality(value) => out.extend_from_slice(&value.to_le_bytes()),
+            Self::TxAttenuation(value) => out.extend_from_slice(&value.to_le_bytes()),
+            Self::DbTxAttenuation(value) => out.extend_from_slice(&value.to_le_bytes()),
+            Self::DbmTxPower(value) => out.push(*value as u8),
+            Self::Antenna(value) => out.push(*value),
+            Self::RxFlags(value) => out.extend_from_slice(&value.bits().to_le_bytes()),
+            Self::TxFlags(value) => out.extend_from_slice(&value.bits().to_le_bytes()),
+            Self::RtsRetries(value) => out.push(*value),
+            Self::DataRetries(value) => out.push(*value),
+            Self::Mcs(value) => out.extend_from_slice(value),
+            Self::AMpduStatus(value) => out.extend_from_slice(value),
+            Self::Vht(value) => out.extend_from_slice(value),
+            Self::Unknown(field) => out.extend_from_slice(field.raw_bytes()),
+        }
+    }
 }
 
 /// Radiotap metadata preceding IEEE 802.11 frames.
@@ -1005,6 +1069,161 @@ impl Radiotap {
             self.fields.push(field);
         }
     }
+
+    pub(crate) fn fields_in_present_order(&self) -> Vec<&RadiotapField> {
+        let mut fields = self.fields.iter().collect::<Vec<_>>();
+        fields.sort_by_key(|field| field.present_bit());
+        fields
+    }
+
+    pub(crate) fn encoded_fields_len_from_offset(
+        &self,
+        fields_offset_from_header_start: usize,
+    ) -> usize {
+        let mut offset = fields_offset_from_header_start;
+
+        for field in self.fields_in_present_order() {
+            offset += radiotap_field_padding(offset, field.alignment());
+            offset += field.size();
+        }
+
+        offset - fields_offset_from_header_start
+    }
+
+    pub(crate) fn compile_fields_from_offset(
+        &self,
+        fields_offset_from_header_start: usize,
+        out: &mut Vec<u8>,
+    ) -> usize {
+        let initial_len = out.len();
+        let mut offset = fields_offset_from_header_start;
+
+        for field in self.fields_in_present_order() {
+            let padding = radiotap_field_padding(offset, field.alignment());
+            out.resize(out.len() + padding, 0);
+            offset += padding;
+            field.encode_body(out);
+            offset += field.size();
+        }
+
+        out.len() - initial_len
+    }
+
+    pub(crate) fn decode_fields_from_header(
+        present: &RadiotapPresent,
+        header: &[u8],
+        fields_offset_from_header_start: usize,
+    ) -> Result<(Vec<RadiotapField>, usize)> {
+        let mut fields = Vec::new();
+        let mut offset = fields_offset_from_header_start;
+
+        for bit in present.field_bits() {
+            let Some(metadata) = radiotap_field_metadata(bit) else {
+                break;
+            };
+
+            offset += radiotap_field_padding(offset, metadata.alignment());
+            let required = offset + metadata.size();
+            if header.len() < required {
+                return Err(CrafterError::buffer_too_short(
+                    "radiotap.field",
+                    required,
+                    header.len(),
+                ));
+            }
+
+            fields.push(decode_radiotap_field(bit, &header[offset..required])?);
+            offset = required;
+        }
+
+        Ok((fields, offset))
+    }
+}
+
+pub(crate) fn decode_radiotap_field(bit: u16, bytes: &[u8]) -> Result<RadiotapField> {
+    let Some(metadata) = radiotap_field_metadata(bit) else {
+        return Err(CrafterError::invalid_field_value(
+            "radiotap.field.bit",
+            "unknown radiotap field bit",
+        ));
+    };
+    if bytes.len() < metadata.size() {
+        return Err(CrafterError::buffer_too_short(
+            "radiotap.field",
+            metadata.size(),
+            bytes.len(),
+        ));
+    }
+    let bytes = &bytes[..metadata.size()];
+
+    let field = match bit {
+        bit if bit == u16::from(RADIOTAP_FIELD_TSFT) => {
+            RadiotapField::Tsft(u64::from_le_bytes(bytes.try_into().expect("TSFT size")))
+        }
+        bit if bit == u16::from(RADIOTAP_FIELD_FLAGS) => {
+            RadiotapField::Flags(RadiotapFlags::from_bits(bytes[0]))
+        }
+        bit if bit == u16::from(RADIOTAP_FIELD_RATE) => RadiotapField::Rate(bytes[0]),
+        bit if bit == u16::from(RADIOTAP_FIELD_CHANNEL) => {
+            RadiotapField::Channel(RadiotapChannel::new(
+                u16::from_le_bytes([bytes[0], bytes[1]]),
+                u16::from_le_bytes([bytes[2], bytes[3]]),
+            ))
+        }
+        bit if bit == u16::from(RADIOTAP_FIELD_FHSS) => {
+            RadiotapField::Fhss(bytes.try_into().expect("FHSS size"))
+        }
+        bit if bit == u16::from(RADIOTAP_FIELD_ANTENNA_SIGNAL) => {
+            RadiotapField::AntennaSignal(bytes[0] as i8)
+        }
+        bit if bit == u16::from(RADIOTAP_FIELD_ANTENNA_NOISE) => {
+            RadiotapField::AntennaNoise(bytes[0] as i8)
+        }
+        bit if bit == u16::from(RADIOTAP_FIELD_LOCK_QUALITY) => {
+            RadiotapField::LockQuality(u16::from_le_bytes([bytes[0], bytes[1]]))
+        }
+        bit if bit == u16::from(RADIOTAP_FIELD_TX_ATTENUATION) => {
+            RadiotapField::TxAttenuation(u16::from_le_bytes([bytes[0], bytes[1]]))
+        }
+        bit if bit == u16::from(RADIOTAP_FIELD_DB_TX_ATTENUATION) => {
+            RadiotapField::DbTxAttenuation(u16::from_le_bytes([bytes[0], bytes[1]]))
+        }
+        bit if bit == u16::from(RADIOTAP_FIELD_DBM_TX_POWER) => {
+            RadiotapField::DbmTxPower(bytes[0] as i8)
+        }
+        bit if bit == u16::from(RADIOTAP_FIELD_ANTENNA) => RadiotapField::Antenna(bytes[0]),
+        bit if bit == u16::from(RADIOTAP_FIELD_RX_FLAGS) => {
+            RadiotapField::RxFlags(RadiotapRxFlags::from_bits(u16::from_le_bytes([
+                bytes[0], bytes[1],
+            ])))
+        }
+        bit if bit == u16::from(RADIOTAP_FIELD_TX_FLAGS) => {
+            RadiotapField::TxFlags(RadiotapTxFlags::from_bits(u16::from_le_bytes([
+                bytes[0], bytes[1],
+            ])))
+        }
+        bit if bit == u16::from(RADIOTAP_FIELD_RTS_RETRIES) => RadiotapField::RtsRetries(bytes[0]),
+        bit if bit == u16::from(RADIOTAP_FIELD_DATA_RETRIES) => {
+            RadiotapField::DataRetries(bytes[0])
+        }
+        bit if bit == u16::from(RADIOTAP_FIELD_MCS) => {
+            RadiotapField::Mcs(bytes.try_into().expect("MCS size"))
+        }
+        bit if bit == u16::from(RADIOTAP_FIELD_A_MPDU_STATUS) => {
+            RadiotapField::AMpduStatus(bytes.try_into().expect("A-MPDU status size"))
+        }
+        bit if bit == u16::from(RADIOTAP_FIELD_VHT) => {
+            RadiotapField::Vht(bytes.try_into().expect("VHT size"))
+        }
+        _ => {
+            return Err(CrafterError::invalid_field_value(
+                "radiotap.field.bit",
+                "unknown radiotap field bit",
+            ))
+        }
+    };
+
+    Ok(field)
 }
 
 #[cfg(test)]
@@ -1239,6 +1458,92 @@ mod tests {
         for bit in [12, 13, 18, 22, 29, 30, 31, 32, 63] {
             assert_eq!(radiotap_field_metadata(bit), None);
         }
+    }
+
+    #[test]
+    fn radiotap_alignment_padding_from_header_start_handles_required_boundaries() {
+        assert_eq!(radiotap_field_padding(8, 1), 0);
+        assert_eq!(radiotap_field_padding(9, 2), 1);
+        assert_eq!(radiotap_field_padding(10, 4), 2);
+        assert_eq!(radiotap_field_padding(12, 8), 4);
+        assert_eq!(radiotap_field_padding(16, 8), 0);
+    }
+
+    #[test]
+    fn radiotap_alignment_compile_fields_inserts_padding_by_present_order() {
+        let radiotap = Radiotap::new()
+            .unknown_field(32, 4, [0xde, 0xad, 0xbe, 0xef])
+            .unwrap()
+            .with_field(RadiotapField::AMpduStatus([
+                0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7,
+            ]))
+            .channel((0x1122, 0x3344))
+            .flags(0x5a)
+            .tsft(0x0102_0304_0506_0708);
+        let present = radiotap.present().unwrap();
+        let fields_offset = RADIOTAP_FIXED_HEADER_LEN + present.encoded_len();
+        let mut encoded = Vec::new();
+
+        let emitted = radiotap.compile_fields_from_offset(fields_offset, &mut encoded);
+
+        assert_eq!(fields_offset, 12);
+        assert_eq!(emitted, encoded.len());
+        assert_eq!(
+            radiotap.encoded_fields_len_from_offset(fields_offset),
+            encoded.len()
+        );
+        assert_eq!(
+            encoded,
+            vec![
+                // TSFT aligns from header offset 12 to 16.
+                0x00, 0x00, 0x00, 0x00, 0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,
+                // Flags is 1-byte aligned.
+                0x5a, // Channel aligns from header offset 25 to 26.
+                0x00, 0x22, 0x11, 0x44, 0x33,
+                // A-MPDU status aligns from header offset 30 to 32.
+                0x00, 0x00, 0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7,
+                // Unknown bit 32 uses its stored 4-byte alignment.
+                0xde, 0xad, 0xbe, 0xef,
+            ]
+        );
+    }
+
+    #[test]
+    fn radiotap_alignment_decode_fields_skips_padding_by_present_order() {
+        let present = RadiotapPresent::from_words([
+            RADIOTAP_PRESENT_EXTENDED
+                | RADIOTAP_PRESENT_TSFT
+                | RADIOTAP_PRESENT_FLAGS
+                | RADIOTAP_PRESENT_CHANNEL
+                | RADIOTAP_PRESENT_A_MPDU_STATUS,
+            0,
+        ]);
+        let fields_offset = RADIOTAP_FIXED_HEADER_LEN + present.encoded_len();
+        let mut header = vec![0; fields_offset];
+        header.extend_from_slice(&[
+            // TSFT aligns from header offset 12 to 16.
+            0x00, 0x00, 0x00, 0x00, 0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,
+            // Flags is 1-byte aligned.
+            0x5a, // Channel aligns from header offset 25 to 26.
+            0x00, 0x22, 0x11, 0x44, 0x33,
+            // A-MPDU status aligns from header offset 30 to 32.
+            0x00, 0x00, 0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7,
+        ]);
+
+        let (fields, consumed) =
+            Radiotap::decode_fields_from_header(&present, &header, fields_offset).unwrap();
+
+        assert_eq!(fields_offset, 12);
+        assert_eq!(consumed, header.len());
+        assert_eq!(
+            fields,
+            vec![
+                RadiotapField::Tsft(0x0102_0304_0506_0708),
+                RadiotapField::Flags(RadiotapFlags::from_bits(0x5a)),
+                RadiotapField::Channel(RadiotapChannel::new(0x1122, 0x3344)),
+                RadiotapField::AMpduStatus([0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7,]),
+            ]
+        );
     }
 
     #[test]
