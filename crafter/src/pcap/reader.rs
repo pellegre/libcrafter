@@ -10,7 +10,7 @@ use super::codec::{
 use super::libpcap::LibpcapOfflineCapture;
 use super::{PcapError, PcapHeader, PcapLinkType, PcapPacket, PcapRecord, PcapTimestamp, Result};
 
-/// Offline pcap reader.
+/// Offline pcap file reader.
 #[derive(Debug)]
 pub struct PcapReader<R = BufReader<File>> {
     reader: R,
@@ -174,7 +174,10 @@ where
     }
 }
 
-/// File-backed pcap reader alias used by generated examples.
+/// File-backed pcap reader alias.
+///
+/// Prefer [`crate::wire::Sniffer`] with `PacketWire::pcap_file(...)` for
+/// packet-stream capture and transform pipelines.
 pub type FileSniffer = PcapReader<BufReader<File>>;
 
 pub fn read_pcap(path: impl AsRef<Path>) -> Result<Vec<PcapPacket>> {

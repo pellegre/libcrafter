@@ -5,14 +5,14 @@ use crate::CrafterError;
 
 pub type Result<T> = std::result::Result<T, PcapError>;
 
-/// Errors returned by pcap file helpers.
+/// Errors returned by pcap file and libpcap backend helpers.
 #[derive(Debug)]
 pub enum PcapError {
     /// An underlying file or stream operation failed.
     Io(io::Error),
     /// Packet compile or decode failed.
     Packet(CrafterError),
-    /// Native libpcap failed while opening, filtering, or reading capture.
+    /// Native libpcap failed while opening, filtering, reading, or writing.
     Libpcap(::pcap::Error),
     /// The pcap global header is malformed or unsupported.
     InvalidHeader(&'static str),
@@ -27,11 +27,11 @@ pub enum PcapError {
         /// Actual value.
         actual: u64,
     },
-    /// A sniffer was opened without selecting a pcap file or interface.
+    /// A pcap-backed source was opened without selecting a file or interface.
     CaptureSourceMissing,
-    /// Live capture cannot be opened in the current environment.
+    /// A live pcap backend cannot be opened in the current environment.
     LiveCaptureUnavailable(&'static str),
-    /// A spawned capture thread panicked.
+    /// A spawned pcap backend thread panicked.
     CaptureThreadPanicked,
 }
 
