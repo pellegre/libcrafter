@@ -402,9 +402,9 @@ Keep validation offline first. Use deterministic pcap fixtures and the focused
 Dot11 oracle profiles before any live discussion:
 
 ```sh
-tools/oracle/run offline --backend scapy --profile dot11-smoke --seed 1101 --count 20 --out target/oracle/dot11-agent-offline
-tools/oracle/run pcap --backend scapy --profile dot11-pcap --seed 1201 --count 20 --out target/oracle/dot11-agent-pcap
-tools/oracle/run live --backend scapy --provider local-dry-run --profile dot11-smoke --seed 1301 --count 5 --dry-run --out target/oracle/dot11-agent-live-local-dry-run
+tools/oracle/run offline --profile dot11-smoke --seed 1101 --count 20 --out target/oracle/dot11-agent-offline
+tools/oracle/run pcap --profile dot11-pcap --seed 1201 --count 20 --out target/oracle/dot11-agent-pcap
+tools/oracle/run live --provider local-dry-run --profile dot11-smoke --seed 1301 --count 5 --dry-run --out target/oracle/dot11-agent-live-local-dry-run
 ```
 
 Protected Dot11 data is not decrypted in this phase. If the protected bit is
