@@ -108,11 +108,13 @@ coverage_cases:
 
 backend_support:
   scapy:
-    status: planned
+    status: supported
+    encode: true
+    decode: false
     native_layers:
       - Dot11EltRSN
     notes:
-      - Offline materialization and normalization are added in later Dot11 oracle steps.
+      - Offline deterministic materialization is supported for phase 1.5 byte vectors.
   wireshark:
     status: planned
     native_layers:
@@ -120,6 +122,8 @@ backend_support:
     notes:
       - Parser-only pcap decode coverage is optional and must skip when tshark is unavailable.
   libcrafter:
-    status: planned
+    status: supported
+    encode: true
+    decode: true
     notes:
       - RSN parsing records metadata needed by later decrypt primitives without implementing decryption in this phase.
