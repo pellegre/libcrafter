@@ -5394,11 +5394,13 @@ def _pcap_execute(args: argparse.Namespace) -> int:
             artifact_paths=artifacts,
             results=results,
             failures=failures,
-            reproduction_commands=[
-                command
-                for command in (result.reproduction_command for result in failures)
-                if command is not None
-            ],
+            reproduction_commands=list(
+                dict.fromkeys(
+                    command
+                    for command in (result.reproduction_command for result in failures)
+                    if command is not None
+                )
+            ),
             backend_versions=backend_versions,
             libcrafter=libcrafter_info,
             metadata={
@@ -5940,51 +5942,64 @@ def _pcap_reference_to_libcrafter(
     from .backends.scapy.pcap import read_pcap, write_pcap
 
     pcap_path = run_dir / f"{label}.scapy-reference.pcap"
-    write_pcap(pcap_path, vectors)
-    expected_records = read_pcap(pcap_path)
-    expected_path = run_dir / f"{label}.scapy-reference-read.json"
-    write_json(expected_path, {"records": expected_records})
+    artifacts: list[str] = [str(vector_path)]
+    try:
+        write_pcap(pcap_path, vectors)
+        artifacts.append(str(pcap_path))
+        expected_records = read_pcap(pcap_path)
+        expected_path = run_dir / f"{label}.scapy-reference-read.json"
+        write_json(expected_path, {"records": expected_records})
+        artifacts.append(str(expected_path))
 
-    bridge = _run_libcrafter_pcap_reader(pcap_path, run_dir, f"{label}.scapy-reference")
-    actual_records = _pcap_records(bridge["report"])
-    actual_path = run_dir / f"{label}.libcrafter-read-scapy-reference.json"
-    write_json(actual_path, bridge["report"])
+        bridge = _run_libcrafter_pcap_reader(pcap_path, run_dir, f"{label}.scapy-reference")
+        actual_records = _pcap_records(bridge["report"])
+        actual_path = run_dir / f"{label}.libcrafter-read-scapy-reference.json"
+        write_json(actual_path, bridge["report"])
+        artifacts.extend(
+            [
+                str(actual_path),
+                str(bridge["stdout_path"]),
+                str(bridge["stderr_path"]),
+            ]
+        )
 
-    results = _compare_pcap_records(
-        args=args,
-        direction="reference_to_libcrafter",
-        expected=expected_records,
-        actual=actual_records,
-        plans=plans,
-    )
+        results = _compare_pcap_records(
+            args=args,
+            direction="reference_to_libcrafter",
+            expected=expected_records,
+            actual=actual_records,
+            plans=plans,
+        )
 
-    artifacts = _dedupe_paths(
-        [
-            str(vector_path),
-            str(pcap_path),
-            str(expected_path),
-            str(actual_path),
-            str(bridge["stdout_path"]),
-            str(bridge["stderr_path"]),
-        ]
-    )
-    return {
-        "results": results,
-        "artifacts": artifacts,
-        "bridge_exit_code": bridge["exit_code"],
-        "metadata": {
-            "direction": "reference_to_libcrafter",
-            "writer": "scapy",
-            "reader": "libcrafter",
-            "label": label,
-            "pcap": str(pcap_path),
-            "record_count": len(expected_records),
-            "libcrafter_bridge": {
-                "argv": bridge["argv"],
-                "exit_code": bridge["exit_code"],
+        return {
+            "results": results,
+            "artifacts": _dedupe_existing_paths(artifacts),
+            "bridge_exit_code": bridge["exit_code"],
+            "metadata": {
+                "direction": "reference_to_libcrafter",
+                "writer": "scapy",
+                "reader": "libcrafter",
+                "label": label,
+                "pcap": str(pcap_path),
+                "record_count": len(expected_records),
+                "libcrafter_bridge": {
+                    "argv": bridge["argv"],
+                    "exit_code": bridge["exit_code"],
+                },
             },
-        },
-    }
+        }
+    except (ValueError, RuntimeError) as exc:
+        return _pcap_group_failure_run(
+            args=args,
+            direction="reference_to_libcrafter",
+            plans=plans,
+            label=label,
+            writer="scapy",
+            reader="libcrafter",
+            pcap_path=pcap_path,
+            artifacts=artifacts,
+            error=exc,
+        )
 
 
 def _pcap_libcrafter_to_reference(
@@ -5999,56 +6014,145 @@ def _pcap_libcrafter_to_reference(
     from .backends.scapy.pcap import pcap_link_type_for_vectors
 
     pcap_path = run_dir / f"{label}.libcrafter-reference.pcap"
-    bridge = _run_libcrafter_pcap_writer(
-        vector_path=vector_path,
-        pcap_path=pcap_path,
-        run_dir=run_dir,
-        label=f"{label}.libcrafter-reference",
-        link_type=pcap_link_type_for_vectors(vectors, requested="ethernet"),
-    )
-    expected_records = _pcap_records(bridge["report"])
-    expected_path = run_dir / f"{label}.libcrafter-reference-written.json"
-    write_json(expected_path, bridge["report"])
+    artifacts: list[str] = [str(vector_path)]
+    bridge: JSONObject | None = None
+    try:
+        bridge = _run_libcrafter_pcap_writer(
+            vector_path=vector_path,
+            pcap_path=pcap_path,
+            run_dir=run_dir,
+            label=f"{label}.libcrafter-reference",
+            link_type=pcap_link_type_for_vectors(vectors, requested="ethernet"),
+        )
+        artifacts.extend(
+            [
+                str(pcap_path),
+                str(bridge["stdout_path"]),
+                str(bridge["stderr_path"]),
+            ]
+        )
+        expected_records = _pcap_records(bridge["report"])
+        expected_path = run_dir / f"{label}.libcrafter-reference-written.json"
+        write_json(expected_path, bridge["report"])
+        artifacts.append(str(expected_path))
 
-    actual_records = _pcap_read_reference_records(args.backend, pcap_path)
-    actual_path = run_dir / f"{label}.{args.backend}-read-libcrafter-reference.json"
-    write_json(actual_path, {"records": actual_records})
+        actual_records = _pcap_read_reference_records(args.backend, pcap_path)
+        actual_path = run_dir / f"{label}.{args.backend}-read-libcrafter-reference.json"
+        write_json(actual_path, {"records": actual_records})
+        artifacts.append(str(actual_path))
 
-    results = _compare_pcap_records(
-        args=args,
-        direction="libcrafter_to_reference",
-        expected=expected_records,
-        actual=actual_records,
-        plans=plans,
-    )
+        results = _compare_pcap_records(
+            args=args,
+            direction="libcrafter_to_reference",
+            expected=expected_records,
+            actual=actual_records,
+            plans=plans,
+        )
 
-    artifacts = _dedupe_paths(
-        [
-            str(vector_path),
-            str(pcap_path),
-            str(expected_path),
-            str(actual_path),
-            str(bridge["stdout_path"]),
-            str(bridge["stderr_path"]),
-        ]
-    )
-    return {
-        "results": results,
-        "artifacts": artifacts,
-        "bridge_exit_code": bridge["exit_code"],
-        "metadata": {
-            "direction": "libcrafter_to_reference",
-            "writer": "libcrafter",
-            "reader": args.backend,
-            "label": label,
-            "pcap": str(pcap_path),
-            "record_count": len(expected_records),
-            "libcrafter_bridge": {
+        return {
+            "results": results,
+            "artifacts": _dedupe_existing_paths(artifacts),
+            "bridge_exit_code": bridge["exit_code"],
+            "metadata": {
+                "direction": "libcrafter_to_reference",
+                "writer": "libcrafter",
+                "reader": args.backend,
+                "label": label,
+                "pcap": str(pcap_path),
+                "record_count": len(expected_records),
+                "libcrafter_bridge": {
+                    "argv": bridge["argv"],
+                    "exit_code": bridge["exit_code"],
+                },
+            },
+        }
+    except (ValueError, RuntimeError) as exc:
+        metadata = {}
+        if bridge is not None:
+            metadata["libcrafter_bridge"] = {
                 "argv": bridge["argv"],
                 "exit_code": bridge["exit_code"],
+            }
+        return _pcap_group_failure_run(
+            args=args,
+            direction="libcrafter_to_reference",
+            plans=plans,
+            label=label,
+            writer="libcrafter",
+            reader=args.backend,
+            pcap_path=pcap_path,
+            artifacts=artifacts,
+            error=exc,
+            metadata=metadata,
+        )
+
+
+def _pcap_group_failure_run(
+    *,
+    args: argparse.Namespace,
+    direction: str,
+    plans: list[PacketPlan],
+    label: str,
+    writer: str,
+    reader: str,
+    pcap_path: Path,
+    artifacts: Sequence[str],
+    error: Exception,
+    metadata: JSONObject | None = None,
+) -> JSONObject:
+    error_text = str(error)
+    differences: list[JSONObject] = [
+        {
+            "path": "pcap_execution",
+            "expected": "completed",
+            "actual": error_text,
+        }
+    ]
+    results = [
+        ComparisonResult(
+            passed=False,
+            direction=direction,
+            expected={"pcap_execution": "completed"},
+            actual={
+                "error": error_text,
+                "group_failure": True,
+                "label": label,
             },
+            plan=replace(plan, direction=direction),
+            strict_bytes=plan.strict_bytes,
+            byte_equal=False,
+            differences=differences,
+            reproduction_command=_pcap_group_reproduction_command(args, direction),
+            metadata={
+                "group_failure": True,
+                "group_reproduction": True,
+                "label": label,
+                "writer": writer,
+                "reader": reader,
+            },
+        )
+        for plan in plans
+    ]
+    return {
+        "results": results,
+        "artifacts": _dedupe_existing_paths(artifacts),
+        "bridge_exit_code": 1,
+        "metadata": {
+            "direction": direction,
+            "writer": writer,
+            "reader": reader,
+            "label": label,
+            "pcap": str(pcap_path),
+            "record_count": 0,
+            "group_failure": True,
+            "error": error_text,
+            **(metadata or {}),
         },
     }
+
+
+def _dedupe_existing_paths(paths: Sequence[str]) -> list[str]:
+    return _dedupe_paths([path for path in paths if Path(path).exists()])
 
 
 def _pcap_read_reference_records(backend: str, pcap_path: Path) -> list[JSONObject]:
@@ -7202,6 +7306,41 @@ def _pcap_reproduction_command(args: argparse.Namespace, index: int, direction: 
         "--index",
         str(index),
     ]
+    if args.case_name is not None:
+        argv.extend(["--case", args.case_name])
+    if args.feature is not None:
+        argv.extend(["--feature", args.feature])
+    if args.family is not None:
+        argv.extend(["--family", args.family])
+    if args.root is not None:
+        argv.extend(["--root", args.root])
+    return shlex.join(argv)
+
+
+def _pcap_group_reproduction_command(args: argparse.Namespace, direction: str) -> str:
+    argv = [
+        "tools/oracle/run",
+        "pcap",
+        "--backend",
+        args.backend,
+        "--direction",
+        direction,
+    ]
+    if getattr(args, "corpus", None) is not None:
+        argv.extend(["--corpus", args.corpus])
+    else:
+        argv.extend(
+            [
+                "--profile",
+                args.profile,
+                "--seed",
+                str(args.seed),
+                "--count",
+                str(args.count),
+            ]
+        )
+    if args.index is not None:
+        argv.extend(["--index", str(args.index)])
     if args.case_name is not None:
         argv.extend(["--case", args.case_name])
     if args.feature is not None:
