@@ -72,7 +72,7 @@ class LabProviderMatrixTest(unittest.TestCase):
         for case in PROVIDER_CASES:
             with self.subTest(provider=case.name):
                 adapter = resolve_lab_provider(case.name)
-                client = _FakeWireClient()
+                client = _FakeEndpointClient()
                 request = _request(case, requested_addresses=False)
 
                 session = adapter.plan_session(request, client=client)
@@ -118,14 +118,14 @@ class LabProviderMatrixTest(unittest.TestCase):
         for case in PROVIDER_CASES:
             with self.subTest(provider=case.name):
                 adapter = resolve_lab_provider(case.name)
-                client = _FakeWireClient()
+                client = _FakeEndpointClient()
                 request = _request(case, requested_addresses=True)
 
                 session = adapter.plan_session(request, client=client)
                 create_workflow = [
                     command
                     for command in session.provider_workflow
-                    if command.operation == "wire.create"
+                    if command.operation == "endpoint.create"
                 ]
 
                 self.assertEqual(len(create_workflow), 2)
@@ -184,11 +184,11 @@ class LabProviderMatrixTest(unittest.TestCase):
         self.assertEqual(
             operations,
             [
-                "wire.doctor",
-                "wire.create",
-                "wire.create",
-                "wire.collect_artifacts",
-                "wire.destroy",
+                "endpoint.doctor",
+                "endpoint.create",
+                "endpoint.create",
+                "endpoint.collect_artifacts",
+                "endpoint.destroy",
             ],
         )
         self.assertTrue(all(command.dry_run for command in workflow))
@@ -198,10 +198,10 @@ class LabProviderMatrixTest(unittest.TestCase):
             self.assertEqual(command.metadata["provider"], case.name)
             self.assertEqual(command.metadata["exposure"], case.wire_exposure)
             self.assertEqual(command.metadata["operation"], command.operation)
-            self.assertTrue(command.metadata["wire_command"])
-            if command.operation in {"wire.doctor", "wire.create"}:
+            self.assertTrue(command.metadata["endpoint_command"])
+            if command.operation in {"endpoint.doctor", "endpoint.create"}:
                 self.assertIn("--dry-run", command.argv)
-            if command.operation in {"wire.collect_artifacts", "wire.destroy"}:
+            if command.operation in {"endpoint.collect_artifacts", "endpoint.destroy"}:
                 self.assertTrue(command.metadata["always_attempt"])
 
         validation = adapter.validate_provider_workflow(workflow, dry_run=True)
@@ -227,7 +227,7 @@ def _request(case: _ProviderCase, *, requested_addresses: bool) -> LabRequest:
     )
 
 
-class _FakeWireClient:
+class _FakeEndpointClient:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
 
@@ -300,7 +300,7 @@ class _FakeWireCreateResponse:
             purpose=purpose or "wire create",
             role=role,
             argv=argv,
-            operation="wire.create",
+            operation="endpoint.create",
             dry_run=bool(self.call["dry_run"]),
             live_mutation=not bool(self.call["dry_run"]),
             artifacts=list(artifacts),

@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tools.lab.engine import wire_client
+from tools.lab.engine import endpoint_client
 from tools.lab.engine.model import (
     LabCommandPlan,
     LabEndpoint,
@@ -24,7 +24,7 @@ from tools.lab.engine.session import (
 
 class LabCleanupTest(unittest.TestCase):
     def test_create_failure_cleans_created_endpoint_before_reraising(self) -> None:
-        client = _FakeCreateFailureWireClient(fail_role="target")
+        client = _FakeCreateFailureEndpointClient(fail_role="target")
         request = LabRequest(
             provider="qemu",
             profile="smoke",
@@ -41,7 +41,7 @@ class LabCleanupTest(unittest.TestCase):
                 artifact_root=root / "artifacts",
             )
             with self.assertRaisesRegex(
-                wire_client.WireClientError,
+                endpoint_client.EndpointClientError,
                 "create target failed",
             ) as raised:
                 create_session(_FailingCreateAdapter(), request, client=client, config=config)
@@ -61,11 +61,11 @@ class LabCleanupTest(unittest.TestCase):
         self.assertEqual(cleanup_state["destroy_endpoint_ids"], ["endpoint-stimulus"])
         self.assertEqual(
             [record.operation for record in raised.exception.lab_cleanup_command_records],
-            ["wire.create", "wire.collect_artifacts", "wire.destroy"],
+            ["endpoint.create", "endpoint.collect_artifacts", "endpoint.destroy"],
         )
 
     def test_cleanup_session_keeps_destroying_after_failed_collect_result(self) -> None:
-        client = _FakeCleanupWireClient()
+        client = _FakeCleanupEndpointClient()
         client.collect_failures["endpoint-stimulus"] = "collect failed"
 
         updated = cleanup_lab_session(_live_session(), client=client)
@@ -86,15 +86,15 @@ class LabCleanupTest(unittest.TestCase):
         self.assertEqual(
             [record.operation for record in updated.command_records],
             [
-                "wire.collect_artifacts",
-                "wire.collect_artifacts",
-                "wire.destroy",
-                "wire.destroy",
+                "endpoint.collect_artifacts",
+                "endpoint.collect_artifacts",
+                "endpoint.destroy",
+                "endpoint.destroy",
             ],
         )
 
     def test_cleanup_endpoint_list_records_failed_destroy_and_continues(self) -> None:
-        client = _FakeCleanupWireClient()
+        client = _FakeCleanupEndpointClient()
         client.destroy_failures["endpoint-target"] = "destroy failed"
 
         result = cleanup_created_endpoints(
@@ -131,7 +131,7 @@ class LabCleanupTest(unittest.TestCase):
         self.assertEqual(len(result.command_records), 6)
 
     def test_cleanup_retries_destroy_until_success(self) -> None:
-        client = _FakeCleanupWireClient()
+        client = _FakeCleanupEndpointClient()
         client.destroy_failure_sequences["endpoint-target"] = ["destroy busy", None]
 
         result = cleanup_created_endpoints(
@@ -175,7 +175,7 @@ class _FailingCreateAdapter:
         return _live_session()
 
 
-class _FakeCleanupWireClient:
+class _FakeCleanupEndpointClient:
     def __init__(self) -> None:
         self.collect_calls: list[tuple[str, str | None]] = []
         self.destroy_calls: list[str] = []
@@ -226,7 +226,7 @@ class _FakeCleanupWireClient:
         return _FakeWireResponse(operation="destroy", endpoint_id=endpoint_id)
 
 
-class _FakeCreateFailureWireClient(_FakeCleanupWireClient):
+class _FakeCreateFailureEndpointClient(_FakeCleanupEndpointClient):
     def __init__(self, *, fail_role: str) -> None:
         super().__init__()
         self.fail_role = fail_role
@@ -247,7 +247,7 @@ class _FakeCreateFailureWireClient(_FakeCleanupWireClient):
         del provider, exposure, private_group, private_ip, write_manifest, confirm_live_run
         self.events.append(("create", role))
         if role == self.fail_role:
-            raise wire_client.WireClientError(f"create {role} failed")
+            raise endpoint_client.EndpointClientError(f"create {role} failed")
         return _FakeWireResponse(
             operation="create",
             endpoint_id=f"endpoint-{role}",
@@ -299,9 +299,9 @@ class _FakeWireResponse:
         artifacts: list[str] = (),
     ) -> LabCommandPlan:
         operation = {
-            "create": "wire.create",
-            "collect_artifacts": "wire.collect_artifacts",
-            "destroy": "wire.destroy",
+            "create": "endpoint.create",
+            "collect_artifacts": "endpoint.collect_artifacts",
+            "destroy": "endpoint.destroy",
         }[self.operation]
         argv = {
             "create": ["tools/endpoint/run", "create", "--role", role or self.role or "role"],

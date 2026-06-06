@@ -1,4 +1,4 @@
-"""Focused coverage for the lab wire client process boundary."""
+"""Focused coverage for the lab endpoint client process boundary."""
 
 from __future__ import annotations
 
@@ -8,27 +8,27 @@ import unittest
 from pathlib import Path
 
 from tools.lab.engine.process import CommandResult, redact_argv
-from tools.lab.engine.wire_client import WireClient, WireClientError
-from tools.endpoint.engine.model import write_json as write_wire_json
+from tools.lab.engine.endpoint_client import EndpointClient, EndpointClientError
+from tools.endpoint.engine.model import write_json as write_endpoint_json
 
 
-class WireClientCreateTest(unittest.TestCase):
-    def test_default_wire_path_points_to_run_entrypoint(self) -> None:
-        wire_path = WireClient().wire_path
+class EndpointClientCreateTest(unittest.TestCase):
+    def test_default_endpoint_path_points_to_run_entrypoint(self) -> None:
+        endpoint_path = EndpointClient().endpoint_path
 
-        self.assertEqual(Path(wire_path).name, "run")
-        self.assertEqual(Path(wire_path).parent.name, "wire")
-        self.assertTrue(Path(wire_path).is_absolute())
-        self.assertTrue(Path(wire_path).is_file())
+        self.assertEqual(Path(endpoint_path).name, "run")
+        self.assertEqual(Path(endpoint_path).parent.name, "endpoint")
+        self.assertTrue(Path(endpoint_path).is_absolute())
+        self.assertTrue(Path(endpoint_path).is_file())
 
-    def test_create_builds_wire_argv_and_parses_manifest(self) -> None:
+    def test_create_builds_endpoint_argv_and_parses_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             runner = FakeRunner()
             manifest = _manifest(root)
             runner.enqueue(stdout=json.dumps(manifest))
-            client = WireClient(
-                wire_path=root / "tools" / "wire" / "run",
+            client = EndpointClient(
+                endpoint_path=root / "tools" / "endpoint" / "run",
                 runner=runner,
                 cwd=root,
                 timeout=30,
@@ -49,13 +49,13 @@ class WireClientCreateTest(unittest.TestCase):
             self.assertEqual(response.manifest.interfaces[0].ipv4, "192.0.2.10")
             self.assertTrue(response.ok)
             self.assertEqual(response.record.operation, "create")
-            self.assertEqual(response.record.wire_command, "create")
+            self.assertEqual(response.record.endpoint_command, "create")
             self.assertTrue(response.record.dry_run)
             self.assertFalse(response.record.live_mutation)
             self.assertEqual(
                 runner.calls[0]["argv"],
                 (
-                    str((root / "tools" / "wire" / "run").resolve()),
+                    str((root / "tools" / "endpoint" / "run").resolve()),
                     "create",
                     "--provider",
                     "qemu",
@@ -76,12 +76,12 @@ class WireClientCreateTest(unittest.TestCase):
             self.assertEqual(runner.calls[0]["cwd"], str(root.resolve()))
             self.assertEqual(runner.calls[0]["timeout"], 30)
 
-    def test_create_can_load_manifest_from_wire_manifest_path(self) -> None:
+    def test_create_can_load_manifest_from_endpoint_manifest_path(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            manifest_path = root / "wire" / "endpoint.json"
+            manifest_path = root / "endpoint" / "endpoint.json"
             manifest = _manifest(root)
-            write_wire_json(manifest_path, manifest)
+            write_endpoint_json(manifest_path, manifest)
             runner = FakeRunner()
             runner.enqueue(
                 stdout=json.dumps(
@@ -92,26 +92,26 @@ class WireClientCreateTest(unittest.TestCase):
                     }
                 )
             )
-            client = WireClient(wire_path=root / "wire-run", runner=runner, cwd=root)
+            client = EndpointClient(endpoint_path=root / "endpoint-run", runner=runner, cwd=root)
 
             response = client.create(provider="qemu", exposure="private", dry_run=True)
 
             self.assertEqual(response.manifest.endpoint_id, "endpoint-stimulus")
             self.assertEqual(response.manifest.provider, "qemu")
 
-    def test_create_failure_raises_with_wire_error(self) -> None:
+    def test_create_failure_raises_with_endpoint_error(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             runner = FakeRunner()
             runner.enqueue(stdout=json.dumps({"ok": False, "error": "missing token"}), exit_code=2)
-            client = WireClient(wire_path=root / "wire-run", runner=runner, cwd=root)
+            client = EndpointClient(endpoint_path=root / "endpoint-run", runner=runner, cwd=root)
 
-            with self.assertRaisesRegex(WireClientError, "missing token"):
+            with self.assertRaisesRegex(EndpointClientError, "missing token"):
                 client.create(provider="hetzner", exposure="private")
 
 
-class WireClientOperationTest(unittest.TestCase):
-    def test_supports_all_wire_operations(self) -> None:
+class EndpointClientOperationTest(unittest.TestCase):
+    def test_supports_all_endpoint_operations(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             runner = FakeRunner()
@@ -122,7 +122,7 @@ class WireClientOperationTest(unittest.TestCase):
             runner.enqueue(stdout="download stdout\n")
             runner.enqueue(stdout=json.dumps({"endpoint_id": "endpoint-stimulus", "ok": True}))
             runner.enqueue(stdout=f"{root / 'artifacts'}\n")
-            client = WireClient(wire_path=root / "wire-run", runner=runner, cwd=root)
+            client = EndpointClient(endpoint_path=root / "endpoint-run", runner=runner, cwd=root)
 
             doctor = client.doctor(provider="qemu", exposure="private", dry_run=True)
             destroy = client.destroy("endpoint-stimulus")
@@ -176,7 +176,7 @@ class WireClientOperationTest(unittest.TestCase):
             root = Path(temp_dir)
             runner = FakeRunner()
             runner.enqueue(stdout="ok\n")
-            client = WireClient(wire_path=root / "wire-run", runner=runner, cwd=root)
+            client = EndpointClient(endpoint_path=root / "endpoint-run", runner=runner, cwd=root)
 
             response = client.exec(
                 "endpoint-stimulus",
@@ -190,26 +190,26 @@ class WireClientOperationTest(unittest.TestCase):
             self.assertNotIn("supersecret", record_json)
             self.assertIn("<redacted>", plan_json)
             self.assertNotIn("supersecret", plan_json)
-            self.assertEqual(plan.operation, "wire.exec")
+            self.assertEqual(plan.operation, "endpoint.exec")
             self.assertFalse(plan.dry_run)
             self.assertTrue(plan.live_mutation)
 
     def test_exec_rejects_empty_command(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            client = WireClient(wire_path=root / "wire-run", runner=FakeRunner(), cwd=root)
+            client = EndpointClient(endpoint_path=root / "endpoint-run", runner=FakeRunner(), cwd=root)
 
-            with self.assertRaisesRegex(ValueError, "wire exec requires"):
+            with self.assertRaisesRegex(ValueError, "endpoint exec requires"):
                 client.exec("endpoint-stimulus", [])
 
-    def test_invalid_json_raises_wire_client_error(self) -> None:
+    def test_invalid_json_raises_endpoint_client_error(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             runner = FakeRunner()
             runner.enqueue(stdout="not json")
-            client = WireClient(wire_path=root / "wire-run", runner=runner, cwd=root)
+            client = EndpointClient(endpoint_path=root / "endpoint-run", runner=runner, cwd=root)
 
-            with self.assertRaisesRegex(WireClientError, "invalid JSON"):
+            with self.assertRaisesRegex(EndpointClientError, "invalid JSON"):
                 client.doctor(provider="qemu", exposure="private")
 
 

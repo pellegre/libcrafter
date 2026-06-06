@@ -7,7 +7,7 @@ from typing import Protocol
 
 from tools.endpoint.engine.model import EndpointManifest
 
-from .. import wire_client
+from .. import endpoint_client
 from ..model import (
     JSONObject,
     LabCommandPlan,
@@ -72,7 +72,7 @@ class LabProviderAdapter(Protocol):
         self,
         request: LabRequest,
         *,
-        client: wire_client.WireClient | None = None,
+        client: endpoint_client.EndpointClient | None = None,
         created_endpoint_ids: list[str] | None = None,
     ) -> JSONObject:
         """Plan or create provider-backed wire endpoints for all requested roles."""
@@ -91,7 +91,7 @@ class LabProviderAdapter(Protocol):
         self,
         request: LabRequest,
         *,
-        client: wire_client.WireClient | None = None,
+        client: endpoint_client.EndpointClient | None = None,
     ) -> LabSession:
         """Return a planned or live lab session for the request."""
 

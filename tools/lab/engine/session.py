@@ -7,7 +7,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 import time
 
-from . import wire_client
+from . import endpoint_client
 from .model import (
     JSONObject,
     LabCommandPlan,
@@ -40,7 +40,7 @@ def create_session(
     adapter: object,
     request: LabRequest,
     *,
-    client: wire_client.WireClient | None = None,
+    client: endpoint_client.EndpointClient | None = None,
     config: LabConfig | None = None,
 ) -> LabSession:
     """Create or plan a lab session through an adapter and persist its manifest."""
@@ -50,17 +50,17 @@ def create_session(
     plan_session = getattr(adapter, "plan_session", None)
     if not callable(plan_session):
         raise TypeError("adapter must provide plan_session")
-    wire = client or wire_client.WireClient()
+    endpoint_cli = client or endpoint_client.EndpointClient()
     created_endpoint_ids: list[str] = []
-    tracked_wire = _CreateTrackingWireClient(wire, created_endpoint_ids)
+    tracked_endpoint = _CreateTrackingEndpointClient(endpoint_cli, created_endpoint_ids)
     try:
-        session = plan_session(request, client=tracked_wire)
+        session = plan_session(request, client=tracked_endpoint)
     except Exception as exc:
         if not request.dry_run:
             _cleanup_after_create_failure(
                 exc,
                 created_endpoint_ids=created_endpoint_ids,
-                client=tracked_wire,
+                client=tracked_endpoint,
             )
         raise
     if not isinstance(session, LabSession):
@@ -120,7 +120,7 @@ def list_session_manifests(config: LabConfig | None = None) -> list[LabSession]:
 def destroy_session(
     session_id: str,
     *,
-    client: wire_client.WireClient | None = None,
+    client: endpoint_client.EndpointClient | None = None,
     config: LabConfig | None = None,
 ) -> LabSession:
     """Collect artifacts, destroy tracked endpoints, and persist cleanup state."""
@@ -168,7 +168,7 @@ def cleanup_created_endpoints(
 
     tracked_endpoint_ids = _endpoint_id_list(endpoint_ids)
     role_map = dict(endpoint_roles or {})
-    wire = client or wire_client.WireClient()
+    endpoint_cli = client or endpoint_client.EndpointClient()
     updated_command_records = list(command_records)
     artifact_attempts: list[JSONObject] = []
     teardown_attempts: list[JSONObject] = []
@@ -177,7 +177,7 @@ def cleanup_created_endpoints(
     for endpoint_id in tracked_endpoint_ids:
         role = role_map.get(endpoint_id)
         try:
-            response = wire.collect_artifacts(endpoint_id, remote_artifact_root)
+            response = endpoint_cli.collect_artifacts(endpoint_id, remote_artifact_root)
         except Exception as exc:  # pragma: no cover - concrete clients vary.
             artifact_attempts.append(_exception_attempt(endpoint_id, role, "collect_artifacts", exc))
             errors.append(f"artifact collection failed for {endpoint_id}: {exc}")
@@ -190,7 +190,7 @@ def cleanup_created_endpoints(
                 response,
                 purpose=f"collect artifacts for {endpoint_id}",
                 role=role,
-                fallback_operation="wire.collect_artifacts",
+                fallback_operation="endpoint.collect_artifacts",
                 fallback_argv=["tools/endpoint/run", "collect-artifacts", endpoint_id],
                 live_mutation=False,
             )
@@ -203,7 +203,7 @@ def cleanup_created_endpoints(
         destroy_error: str | None = None
         for attempt_index in range(max(1, destroy_attempts)):
             try:
-                response = wire.destroy(endpoint_id)
+                response = endpoint_cli.destroy(endpoint_id)
             except Exception as exc:  # pragma: no cover - concrete clients vary.
                 teardown_attempts.append(
                     _exception_attempt(endpoint_id, role, "destroy", exc)
@@ -218,7 +218,7 @@ def cleanup_created_endpoints(
                         response,
                         purpose=f"destroy endpoint {endpoint_id}",
                         role=role,
-                        fallback_operation="wire.destroy",
+                        fallback_operation="endpoint.destroy",
                         fallback_argv=[
                             "tools/endpoint/run",
                             "destroy",
@@ -321,7 +321,7 @@ def _cleanup_state(
     )
 
 
-class _CreateTrackingWireClient:
+class _CreateTrackingEndpointClient:
     def __init__(self, client: object, created_endpoint_ids: list[str]) -> None:
         self._client = client
         self._created_endpoint_ids = created_endpoint_ids
@@ -340,7 +340,7 @@ class _CreateTrackingWireClient:
                 response,
                 purpose=f"create endpoint {endpoint_id or role or 'unknown'}",
                 role=role,
-                fallback_operation="wire.create",
+                fallback_operation="endpoint.create",
                 fallback_argv=_create_fallback_argv(kwargs),
                 live_mutation=not dry_run,
             )
