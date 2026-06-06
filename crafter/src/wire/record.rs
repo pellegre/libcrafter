@@ -3,7 +3,10 @@
 use std::path::{Path, PathBuf};
 
 use crate::pcap::{PcapLinkType, PcapPacket, PcapRecord, PcapTimestamp};
-use crate::{IntoPacket, LinkType, MacAddr, Packet};
+use crate::{
+    Dot11ControlSubtype, Dot11DataSubtype, Dot11FrameType, Dot11ManagementSubtype, IntoPacket,
+    LinkType, MacAddr, Packet,
+};
 
 /// A packet plus inspectable metadata from capture, transforms, and writers.
 #[derive(Debug, Clone)]
@@ -585,6 +588,10 @@ pub struct WifiMetadata {
     channel: Option<u16>,
     frequency_mhz: Option<u32>,
     signal_dbm: Option<i16>,
+    dot11_frame_type: Option<Dot11FrameType>,
+    dot11_management_subtype: Option<Dot11ManagementSubtype>,
+    dot11_control_subtype: Option<Dot11ControlSubtype>,
+    dot11_data_subtype: Option<Dot11DataSubtype>,
     protection: Option<WifiProtectionStatus>,
     key_id: Option<u8>,
     decrypt_state: Option<WifiDecryptState>,
@@ -643,6 +650,26 @@ impl WifiMetadata {
     /// RSSI in dBm when known.
     pub const fn rssi_dbm(&self) -> Option<i16> {
         self.signal_dbm
+    }
+
+    /// IEEE 802.11 frame type when known.
+    pub const fn dot11_frame_type(&self) -> Option<Dot11FrameType> {
+        self.dot11_frame_type
+    }
+
+    /// IEEE 802.11 management subtype when known.
+    pub const fn dot11_management_subtype(&self) -> Option<Dot11ManagementSubtype> {
+        self.dot11_management_subtype
+    }
+
+    /// IEEE 802.11 control subtype when known.
+    pub const fn dot11_control_subtype(&self) -> Option<Dot11ControlSubtype> {
+        self.dot11_control_subtype
+    }
+
+    /// IEEE 802.11 data subtype when known.
+    pub const fn dot11_data_subtype(&self) -> Option<Dot11DataSubtype> {
+        self.dot11_data_subtype
     }
 
     /// Protected-frame status when known.
@@ -718,6 +745,30 @@ impl WifiMetadata {
     /// Set RSSI in dBm.
     pub const fn with_rssi_dbm(self, rssi_dbm: i16) -> Self {
         self.with_signal_dbm(rssi_dbm)
+    }
+
+    /// Set IEEE 802.11 frame type.
+    pub const fn with_dot11_frame_type(mut self, frame_type: Dot11FrameType) -> Self {
+        self.dot11_frame_type = Some(frame_type);
+        self
+    }
+
+    /// Set IEEE 802.11 management subtype.
+    pub const fn with_dot11_management_subtype(mut self, subtype: Dot11ManagementSubtype) -> Self {
+        self.dot11_management_subtype = Some(subtype);
+        self
+    }
+
+    /// Set IEEE 802.11 control subtype.
+    pub const fn with_dot11_control_subtype(mut self, subtype: Dot11ControlSubtype) -> Self {
+        self.dot11_control_subtype = Some(subtype);
+        self
+    }
+
+    /// Set IEEE 802.11 data subtype.
+    pub const fn with_dot11_data_subtype(mut self, subtype: Dot11DataSubtype) -> Self {
+        self.dot11_data_subtype = Some(subtype);
+        self
     }
 
     /// Set protected-frame status.
