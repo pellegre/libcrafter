@@ -9,6 +9,7 @@ use crate::pcap::{
     LibpcapCapture, LibpcapOfflineCapture, PcapError, PcapLinkType, PcapReader, PcapRecord,
     PcapTimestamp, PcapWriter,
 };
+use crate::{Dot11, Ethernet, Ipv4, Ipv6, LinuxSll, NullLoopback, Radiotap};
 
 use super::super::record::{BackendKind, PacketRecord};
 use super::super::source::PacketSource;
@@ -304,6 +305,203 @@ impl PacketSource for PcapInterfaceSource {
     }
 }
 
+/// Builder for a live pcap interface packet writer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PcapInterfaceWriterBuilder {
+    interface: String,
+    timeout: Option<Duration>,
+    snaplen: u32,
+    promisc: bool,
+    immediate: bool,
+    nonblocking: bool,
+}
+
+impl PcapInterfaceWriterBuilder {
+    /// Create a live pcap interface writer builder.
+    pub fn new(interface: impl Into<String>) -> Self {
+        Self {
+            interface: interface.into(),
+            timeout: Some(DEFAULT_INTERFACE_TIMEOUT),
+            snaplen: DEFAULT_INTERFACE_SNAPLEN,
+            promisc: DEFAULT_INTERFACE_PROMISC,
+            immediate: DEFAULT_INTERFACE_IMMEDIATE,
+            nonblocking: DEFAULT_INTERFACE_NONBLOCKING,
+        }
+    }
+
+    /// Interface this writer will open.
+    pub fn interface(&self) -> &str {
+        &self.interface
+    }
+
+    /// Set the libpcap timeout used while opening the interface.
+    pub fn timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = Some(timeout);
+        self
+    }
+
+    /// Disable the libpcap timeout.
+    pub fn no_timeout(mut self) -> Self {
+        self.timeout = None;
+        self
+    }
+
+    /// Configured libpcap timeout.
+    pub const fn timeout_limit(&self) -> Option<Duration> {
+        self.timeout
+    }
+
+    /// Set the snapshot length for the live pcap handle.
+    pub const fn snaplen(mut self, snaplen: u32) -> Self {
+        self.snaplen = snaplen;
+        self
+    }
+
+    /// Configured live pcap snapshot length.
+    pub const fn snaplen_value(&self) -> u32 {
+        self.snaplen
+    }
+
+    /// Enable or disable promiscuous mode.
+    pub const fn promisc(mut self, promisc: bool) -> Self {
+        self.promisc = promisc;
+        self
+    }
+
+    /// Whether promiscuous mode is enabled.
+    pub const fn promisc_enabled(&self) -> bool {
+        self.promisc
+    }
+
+    /// Enable or disable immediate mode.
+    pub const fn immediate_mode(mut self, immediate: bool) -> Self {
+        self.immediate = immediate;
+        self
+    }
+
+    /// Whether immediate mode is enabled.
+    pub const fn immediate_mode_enabled(&self) -> bool {
+        self.immediate
+    }
+
+    /// Enable or disable nonblocking mode.
+    pub const fn nonblocking(mut self, nonblocking: bool) -> Self {
+        self.nonblocking = nonblocking;
+        self
+    }
+
+    /// Enable nonblocking mode.
+    pub const fn nonblock(self) -> Self {
+        self.nonblocking(true)
+    }
+
+    /// Whether nonblocking mode is enabled.
+    pub const fn nonblocking_enabled(&self) -> bool {
+        self.nonblocking
+    }
+
+    /// Open this live pcap interface writer.
+    pub fn open(self) -> Result<PcapInterfaceWriter> {
+        let inner = LibpcapCapture::open(
+            &self.interface,
+            None,
+            self.timeout,
+            self.snaplen,
+            self.promisc,
+            self.immediate,
+            self.nonblocking,
+        )?;
+        let link_type = inner.link_type();
+
+        Ok(PcapInterfaceWriter {
+            interface: self.interface,
+            timeout: self.timeout,
+            snaplen: self.snaplen,
+            promisc: self.promisc,
+            immediate: self.immediate,
+            nonblocking: self.nonblocking,
+            link_type,
+            inner,
+        })
+    }
+}
+
+/// Live pcap interface packet writer.
+#[derive(Debug)]
+pub struct PcapInterfaceWriter {
+    interface: String,
+    timeout: Option<Duration>,
+    snaplen: u32,
+    promisc: bool,
+    immediate: bool,
+    nonblocking: bool,
+    link_type: PcapLinkType,
+    inner: LibpcapCapture,
+}
+
+impl PcapInterfaceWriter {
+    /// Create a builder for a live pcap interface packet writer.
+    pub fn builder(interface: impl Into<String>) -> PcapInterfaceWriterBuilder {
+        PcapInterfaceWriterBuilder::new(interface)
+    }
+
+    /// Open a live pcap interface writer with default options.
+    pub fn open(interface: impl Into<String>) -> Result<Self> {
+        Self::builder(interface).open()
+    }
+
+    /// Interface backing this live writer.
+    pub fn interface(&self) -> &str {
+        &self.interface
+    }
+
+    /// Configured libpcap timeout.
+    pub const fn timeout_limit(&self) -> Option<Duration> {
+        self.timeout
+    }
+
+    /// Configured snapshot length.
+    pub const fn snaplen_value(&self) -> u32 {
+        self.snaplen
+    }
+
+    /// Whether promiscuous mode is enabled.
+    pub const fn promisc_enabled(&self) -> bool {
+        self.promisc
+    }
+
+    /// Whether immediate mode is enabled.
+    pub const fn immediate_mode_enabled(&self) -> bool {
+        self.immediate
+    }
+
+    /// Whether nonblocking mode is enabled.
+    pub const fn nonblocking_enabled(&self) -> bool {
+        self.nonblocking
+    }
+
+    /// Pcap data-link type reported by the live interface.
+    pub const fn pcap_link_type(&self) -> PcapLinkType {
+        self.link_type
+    }
+}
+
+impl PacketWriter for PcapInterfaceWriter {
+    fn write_record(&mut self, record: &PacketRecord) -> Result<WriteReport> {
+        ensure_record_link_type(record, self.link_type)?;
+
+        let compiled = record.packet().compile()?;
+        let bytes = compiled.into_bytes();
+        let byte_len = bytes.len();
+        self.inner.send_packet(&bytes)?;
+
+        Ok(
+            WriteReport::new(BackendKind::PcapInterface, byte_len, byte_len, false)
+                .with_target_details(self.interface.clone()),
+        )
+    }
+}
+
 /// Offline pcap packet writer.
 #[derive(Debug)]
 pub struct PcapFileWriter {
@@ -339,29 +537,11 @@ impl PcapFileWriter {
     pub fn flush(&mut self) -> Result<()> {
         self.inner.flush().map_err(Into::into)
     }
-
-    fn ensure_record_link_type(&self, record: &PacketRecord) -> Result<()> {
-        let record_link_type = record
-            .metadata()
-            .pcap_link_type()
-            .or_else(|| record.metadata().link_type().map(PcapLinkType::from));
-
-        if let Some(record_link_type) = record_link_type {
-            if record_link_type != self.link_type {
-                return Err(PcapError::InvalidRecord(
-                    "record link type must match writer link type",
-                )
-                .into());
-            }
-        }
-
-        Ok(())
-    }
 }
 
 impl PacketWriter for PcapFileWriter {
     fn write_record(&mut self, record: &PacketRecord) -> Result<WriteReport> {
-        self.ensure_record_link_type(record)?;
+        ensure_record_link_type(record, self.link_type)?;
 
         let compiled = record.packet().compile()?;
         let bytes = compiled.into_bytes();
@@ -402,6 +582,45 @@ fn pcap_interface_record_to_packet_record(
         .with_interface(interface))
 }
 
+fn record_pcap_link_type(record: &PacketRecord) -> Option<PcapLinkType> {
+    record
+        .metadata()
+        .pcap_link_type()
+        .or_else(|| record.metadata().link_type().map(PcapLinkType::from))
+        .or_else(|| packet_pcap_link_type(record))
+}
+
+fn packet_pcap_link_type(record: &PacketRecord) -> Option<PcapLinkType> {
+    let first = record.packet().get(0)?;
+    if first.as_any().is::<Ethernet>() {
+        Some(PcapLinkType::Ethernet)
+    } else if first.as_any().is::<Dot11>() {
+        Some(PcapLinkType::Ieee80211)
+    } else if first.as_any().is::<Radiotap>() {
+        Some(PcapLinkType::Ieee80211Radiotap)
+    } else if first.as_any().is::<LinuxSll>() {
+        Some(PcapLinkType::LinuxSll)
+    } else if first.as_any().is::<NullLoopback>() {
+        Some(PcapLinkType::NullLoopback)
+    } else if first.as_any().is::<Ipv4>() || first.as_any().is::<Ipv6>() {
+        Some(PcapLinkType::RawIp)
+    } else {
+        None
+    }
+}
+
+fn ensure_record_link_type(record: &PacketRecord, link_type: PcapLinkType) -> Result<()> {
+    if let Some(record_link_type) = record_pcap_link_type(record) {
+        if record_link_type != link_type {
+            return Err(
+                PcapError::InvalidRecord("record link type must match writer link type").into(),
+            );
+        }
+    }
+
+    Ok(())
+}
+
 pub(crate) fn filter_trimmed(filter: impl Into<String>) -> Option<String> {
     let filter = filter.into();
     let filter = filter.trim();
@@ -416,8 +635,8 @@ mod tests {
     use super::*;
     use crate::pcap::{PcapError, PcapLinkType, PcapRecord, PcapTimestamp, PcapWriter};
     use crate::{
-        Ethernet, Ipv4, LinkType, MacAddr, Packet, PacketOrigin, PacketWire, Raw, Tcp, Transmitter,
-        WireError,
+        Dot11, Ethernet, Ipv4, LinkType, MacAddr, Packet, PacketOrigin, PacketWire, Radiotap, Raw,
+        Tcp, Transmitter, WireError,
     };
 
     static NEXT_TEMP_PCAP: AtomicUsize = AtomicUsize::new(0);
@@ -580,6 +799,42 @@ mod tests {
     }
 
     #[test]
+    fn pcap_interface_writer_builder_uses_live_capture_defaults() {
+        let builder = PcapInterfaceWriter::builder("eth0");
+
+        assert_eq!(builder.interface(), "eth0");
+        assert_eq!(builder.timeout_limit(), Some(DEFAULT_INTERFACE_TIMEOUT));
+        assert_eq!(builder.snaplen_value(), DEFAULT_INTERFACE_SNAPLEN);
+        assert_eq!(builder.promisc_enabled(), DEFAULT_INTERFACE_PROMISC);
+        assert_eq!(
+            builder.immediate_mode_enabled(),
+            DEFAULT_INTERFACE_IMMEDIATE
+        );
+        assert_eq!(builder.nonblocking_enabled(), DEFAULT_INTERFACE_NONBLOCKING);
+    }
+
+    #[test]
+    fn pcap_interface_writer_builder_preserves_configured_options() {
+        let builder = PcapInterfaceWriter::builder("wlan0mon")
+            .timeout(Duration::from_millis(250))
+            .snaplen(4096)
+            .promisc(false)
+            .immediate_mode(false)
+            .nonblock();
+
+        assert_eq!(builder.interface(), "wlan0mon");
+        assert_eq!(builder.timeout_limit(), Some(Duration::from_millis(250)));
+        assert_eq!(builder.snaplen_value(), 4096);
+        assert!(!builder.promisc_enabled());
+        assert!(!builder.immediate_mode_enabled());
+        assert!(builder.nonblocking_enabled());
+
+        let cleared = builder.no_timeout().nonblocking(false);
+        assert_eq!(cleared.timeout_limit(), None);
+        assert!(!cleared.nonblocking_enabled());
+    }
+
+    #[test]
     fn pcap_interface_record_decode_attaches_interface_metadata() {
         let timestamp = PcapTimestamp::micros(12, 34).unwrap();
         let packet = tcp_packet(50000, 22);
@@ -629,6 +884,11 @@ mod tests {
     #[test]
     fn pcap_interface_source_open_rejects_empty_interface_without_live_capture() {
         assert_empty_interface_error(PcapInterfaceSource::builder("   ").open());
+    }
+
+    #[test]
+    fn pcap_interface_writer_open_rejects_empty_interface_without_live_capture() {
+        assert_empty_interface_error(PcapInterfaceWriter::builder("   ").open());
     }
 
     #[test]
@@ -790,6 +1050,37 @@ mod tests {
                 assert_eq!(reason, "record link type must match writer link type");
             }
             other => panic!("expected pcap link-type error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pcap_interface_writer_link_type_validation_is_explicit() {
+        let matching =
+            PacketRecord::new(tcp_packet(43000, 443)).with_pcap_link_type(PcapLinkType::Ethernet);
+        let inferred = PacketRecord::new(tcp_packet(43001, 443)).with_link_type(LinkType::Ethernet);
+        let untyped_raw = PacketRecord::new(Raw::from("opaque"));
+        let mismatched =
+            PacketRecord::new(Raw::from("radiotap")).with_pcap_link_type(PcapLinkType::RawIp);
+        let inferred_mismatch = PacketRecord::new(Radiotap::new() / Dot11::data());
+
+        ensure_record_link_type(&matching, PcapLinkType::Ethernet).unwrap();
+        ensure_record_link_type(&inferred, PcapLinkType::Ethernet).unwrap();
+        ensure_record_link_type(&untyped_raw, PcapLinkType::Ieee80211Radiotap).unwrap();
+
+        let err = ensure_record_link_type(&mismatched, PcapLinkType::Ethernet).unwrap_err();
+        match err {
+            WireError::Pcap(PcapError::InvalidRecord(reason)) => {
+                assert_eq!(reason, "record link type must match writer link type");
+            }
+            other => panic!("expected pcap link-type error, got {other:?}"),
+        }
+
+        let err = ensure_record_link_type(&inferred_mismatch, PcapLinkType::Ethernet).unwrap_err();
+        match err {
+            WireError::Pcap(PcapError::InvalidRecord(reason)) => {
+                assert_eq!(reason, "record link type must match writer link type");
+            }
+            other => panic!("expected inferred pcap link-type error, got {other:?}"),
         }
     }
 
