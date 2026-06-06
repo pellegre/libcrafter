@@ -8,7 +8,7 @@ use crate::{
     Raw, Tcp, Udp, ETHERTYPE_ARP,
 };
 
-use super::codec::PCAP_HEADER_LEN;
+use super::codec::{PCAP_HEADER_LEN, PCAP_RECORD_HEADER_LEN};
 use super::{
     dump_pcap, CaptureControl, PcapLinkType, PcapReader, PcapTimestamp, PcapWriter,
     PcapWriterOptions, Sniffer, TimestampPrecision, DLT_EN10MB, DLT_IEEE802_11,
@@ -60,6 +60,21 @@ fn dot11_llc_unknown_ethertype_bytes() -> Vec<u8> {
     ];
     bytes.extend_from_slice(b"wifi");
     bytes
+}
+
+fn radiotap_dot11_llc_unknown_ethertype_bytes() -> Vec<u8> {
+    let dot11_bytes = dot11_llc_unknown_ethertype_bytes();
+    let mut bytes = vec![
+        0x00, 0x00, 0x0a, 0x00, // version, pad, it_len
+        0x06, 0x00, 0x00, 0x00, // present: Flags, Rate
+        0x00, 0x16, // flags, rate
+    ];
+    bytes.extend_from_slice(&dot11_bytes);
+    bytes
+}
+
+fn read_le_u32(bytes: &[u8]) -> u32 {
+    u32::from_le_bytes(bytes.try_into().unwrap())
 }
 
 fn tcp_packet(source_port: u16, destination_port: u16) -> Packet {
@@ -282,13 +297,7 @@ fn pcap_read_dot11_bare_decodes_layer_stack() {
 
 #[test]
 fn pcap_read_dot11_radiotap_decodes_layer_stack() {
-    let dot11_bytes = dot11_llc_unknown_ethertype_bytes();
-    let mut radiotap_bytes = vec![
-        0x00, 0x00, 0x0a, 0x00, // version, pad, it_len
-        0x06, 0x00, 0x00, 0x00, // present: Flags, Rate
-        0x00, 0x16, // flags, rate
-    ];
-    radiotap_bytes.extend_from_slice(&dot11_bytes);
+    let radiotap_bytes = radiotap_dot11_llc_unknown_ethertype_bytes();
     let record = super::PcapRecord::new(
         PcapTimestamp::micros(3, 750).unwrap(),
         radiotap_bytes.len() as u32,
@@ -345,6 +354,139 @@ fn pcap_read_dot11_radiotap_decodes_layer_stack() {
         radiotap_bytes.as_slice()
     );
     assert!(reader.next_record().unwrap().is_none());
+}
+
+fn assert_pcap_write_dot11_roundtrip(
+    pcap_link_type: PcapLinkType,
+    link_type: LinkType,
+    datalink: u32,
+    precision: TimestampPrecision,
+    timestamp: PcapTimestamp,
+    bytes: Vec<u8>,
+) {
+    let record =
+        super::PcapRecord::new(timestamp, bytes.len() as u32, bytes.clone(), pcap_link_type)
+            .unwrap();
+    let options = PcapWriterOptions::new(pcap_link_type).precision(precision);
+    let mut output = Vec::new();
+    {
+        let mut writer = PcapWriter::from_writer_with_options(&mut output, options).unwrap();
+        assert_eq!(writer.header().pcap_link_type(), pcap_link_type);
+        assert_eq!(writer.header().link_type(), link_type);
+        assert_eq!(writer.header().precision(), precision);
+        writer.write_record(&record).unwrap();
+        writer.flush().unwrap();
+    }
+
+    let expected_magic = match precision {
+        TimestampPrecision::Microseconds => [0xd4, 0xc3, 0xb2, 0xa1],
+        TimestampPrecision::Nanoseconds => [0x4d, 0x3c, 0xb2, 0xa1],
+    };
+    assert_eq!(&output[..4], &expected_magic);
+    assert_eq!(read_le_u32(&output[20..24]), datalink);
+    assert_eq!(
+        read_le_u32(&output[PCAP_HEADER_LEN..PCAP_HEADER_LEN + 4]),
+        timestamp.seconds() as u32
+    );
+    assert_eq!(
+        read_le_u32(&output[PCAP_HEADER_LEN + 4..PCAP_HEADER_LEN + 8]),
+        timestamp.fractional()
+    );
+    assert_eq!(
+        read_le_u32(&output[PCAP_HEADER_LEN + 8..PCAP_HEADER_LEN + 12]),
+        bytes.len() as u32
+    );
+    assert_eq!(
+        read_le_u32(&output[PCAP_HEADER_LEN + 12..PCAP_HEADER_LEN + 16]),
+        bytes.len() as u32
+    );
+    assert_eq!(
+        &output[PCAP_HEADER_LEN + PCAP_RECORD_HEADER_LEN..],
+        bytes.as_slice()
+    );
+
+    let mut reader = PcapReader::from_reader(Cursor::new(output.as_slice())).unwrap();
+    assert_eq!(reader.header().pcap_link_type(), pcap_link_type);
+    assert_eq!(reader.header().link_type(), link_type);
+    assert_eq!(reader.header().precision(), precision);
+
+    let record = reader.next_record().unwrap().unwrap();
+    assert_eq!(record.timestamp(), timestamp);
+    assert_eq!(record.link_type(), link_type);
+    assert_eq!(record.pcap_link_type(), pcap_link_type);
+    assert_eq!(record.original_len(), bytes.len() as u32);
+    assert_eq!(record.data(), bytes.as_slice());
+    assert!(reader.next_record().unwrap().is_none());
+
+    let decoded = record.decode().unwrap();
+    assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_slice());
+
+    let mut rewritten_from_decoded = Vec::new();
+    {
+        let mut writer =
+            PcapWriter::from_writer_with_options(&mut rewritten_from_decoded, options).unwrap();
+        writer
+            .write_packet_with_timestamp(&decoded, timestamp)
+            .unwrap();
+        writer.flush().unwrap();
+    }
+    assert_eq!(rewritten_from_decoded, output);
+
+    let mut rewritten = Vec::new();
+    {
+        let mut writer = PcapWriter::from_writer_with_options(&mut rewritten, options).unwrap();
+        writer.write_record(&record).unwrap();
+        writer.flush().unwrap();
+    }
+    assert_eq!(rewritten, output);
+}
+
+#[test]
+fn pcap_write_dot11_roundtrip_bare_microsecond_precision() {
+    assert_pcap_write_dot11_roundtrip(
+        PcapLinkType::Ieee80211,
+        LinkType::Ieee80211,
+        DLT_IEEE802_11,
+        TimestampPrecision::Microseconds,
+        PcapTimestamp::micros(4, 250).unwrap(),
+        dot11_llc_unknown_ethertype_bytes(),
+    );
+}
+
+#[test]
+fn pcap_write_dot11_roundtrip_bare_nanosecond_precision() {
+    assert_pcap_write_dot11_roundtrip(
+        PcapLinkType::Ieee80211,
+        LinkType::Ieee80211,
+        DLT_IEEE802_11,
+        TimestampPrecision::Nanoseconds,
+        PcapTimestamp::nanos(6, 42_000_001).unwrap(),
+        dot11_llc_unknown_ethertype_bytes(),
+    );
+}
+
+#[test]
+fn pcap_write_dot11_roundtrip_radiotap_microsecond_precision() {
+    assert_pcap_write_dot11_roundtrip(
+        PcapLinkType::Ieee80211Radiotap,
+        LinkType::Radiotap,
+        DLT_IEEE802_11_RADIO,
+        TimestampPrecision::Microseconds,
+        PcapTimestamp::micros(7, 875).unwrap(),
+        radiotap_dot11_llc_unknown_ethertype_bytes(),
+    );
+}
+
+#[test]
+fn pcap_write_dot11_roundtrip_radiotap_nanosecond_precision() {
+    assert_pcap_write_dot11_roundtrip(
+        PcapLinkType::Ieee80211Radiotap,
+        LinkType::Radiotap,
+        DLT_IEEE802_11_RADIO,
+        TimestampPrecision::Nanoseconds,
+        PcapTimestamp::nanos(5, 250_123_456).unwrap(),
+        radiotap_dot11_llc_unknown_ethertype_bytes(),
+    );
 }
 
 #[test]
