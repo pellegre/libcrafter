@@ -1,4 +1,3 @@
-use crate::endian::{read_u16_be, read_u32_be};
 use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::packet::{Layer, LayerContext};
@@ -44,12 +43,12 @@ impl Ipv6FragmentHeaderStatus {
 /// IPv6 Fragment Header.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ipv6FragmentHeader {
-    next_header: Field<u8>,
-    reserved: Field<u8>,
-    fragment_offset: Field<u16>,
-    res: Field<u8>,
-    more_fragments: Field<bool>,
-    identification: Field<u32>,
+    pub(in crate::protocols::ip::v6) next_header: Field<u8>,
+    pub(in crate::protocols::ip::v6) reserved: Field<u8>,
+    pub(in crate::protocols::ip::v6) fragment_offset: Field<u16>,
+    pub(in crate::protocols::ip::v6) res: Field<u8>,
+    pub(in crate::protocols::ip::v6) more_fragments: Field<bool>,
+    pub(in crate::protocols::ip::v6) identification: Field<u32>,
 }
 
 impl Ipv6FragmentHeader {
@@ -340,27 +339,3 @@ impl Layer for Ipv6FragmentHeader {
 }
 
 impl_ipv6_extension_layer_div!(Ipv6FragmentHeader);
-
-pub(in crate::protocols::ip::v6) fn decode_fragment_header(
-    bytes: &[u8],
-) -> Result<(Ipv6FragmentHeader, u8, &[u8])> {
-    if bytes.len() < IPV6_FRAGMENT_HEADER_LEN {
-        return Err(CrafterError::buffer_too_short(
-            "ipv6 fragment header",
-            IPV6_FRAGMENT_HEADER_LEN,
-            bytes.len(),
-        ));
-    }
-
-    let fragment_field = read_u16_be(&bytes[2..4])?;
-    let fragment = Ipv6FragmentHeader {
-        next_header: Field::user(bytes[0]),
-        reserved: Field::user(bytes[1]),
-        fragment_offset: Field::user(fragment_field >> 3),
-        res: Field::user(((fragment_field >> 1) & 0x03) as u8),
-        more_fragments: Field::user(fragment_field & 1 != 0),
-        identification: Field::user(read_u32_be(&bytes[4..8])?),
-    };
-
-    Ok((fragment, bytes[0], &bytes[IPV6_FRAGMENT_HEADER_LEN..]))
-}

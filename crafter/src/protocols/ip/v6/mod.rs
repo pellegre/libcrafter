@@ -1,6 +1,7 @@
 //! IPv6 base header and IPv6 extension header implementations.
 
 mod constants;
+mod decode;
 mod display;
 mod extension;
 mod header;
@@ -9,14 +10,12 @@ mod options;
 use core::net::Ipv6Addr;
 use core::str::FromStr;
 
-use crate::endian::{read_u16_be, read_u32_be};
 use crate::error::{CrafterError, Result};
 use crate::field::Field;
-use crate::packet::{Layer, LayerContext, Packet, Raw};
+use crate::packet::{Layer, LayerContext};
 use crate::protocols::icmp::Icmpv6;
 use crate::protocols::ip::shared::{IPPROTO_ICMPV6, IPPROTO_TCP, IPPROTO_UDP};
 use crate::protocols::transport::{Tcp, Udp};
-use crate::registry::ProtocolRegistry;
 
 pub use constants::{
     IPPROTO_IPV6_AH, IPPROTO_IPV6_DSTOPTS, IPPROTO_IPV6_ESP, IPPROTO_IPV6_EXPERIMENTAL_1,
@@ -33,13 +32,9 @@ pub use constants::{
     IPV6_ROUTING_TYPE_SOURCE_ROUTE, IPV6_SEGMENT_POLICY_EGRESS, IPV6_SEGMENT_POLICY_INGRESS,
     IPV6_SEGMENT_POLICY_SOURCE_ADDRESS, IPV6_SEGMENT_POLICY_UNSET,
 };
-use constants::{IPV6_HEADER_LEN, IPV6_MAX_FLOW_LABEL};
+pub(crate) use decode::append_ipv6_packet_with_registry;
 pub use display::{
     ipv6_fragment_header_status_label, ipv6_routing_type_label, ipv6_routing_type_status,
-};
-use extension::{
-    decode_destination_options_header, decode_fragment_header, decode_hop_by_hop_header,
-    decode_routing_header, DecodedRoutingHeader,
 };
 pub use extension::{
     Ipv6DestinationOptionsHeader, Ipv6FragmentHeader, Ipv6FragmentHeaderStatus,
@@ -48,131 +43,6 @@ pub use extension::{
 };
 pub use header::Ipv6;
 pub use options::{ipv6_router_alert_value_label, Ipv6Option, Ipv6OptionAction, Ipv6OptionIter};
-
-/// Append a decoded IPv6 packet using an explicit registry.
-pub(crate) fn append_ipv6_packet_with_registry(
-    registry: &ProtocolRegistry,
-    packet: Packet,
-    bytes: &[u8],
-) -> Result<Packet> {
-    let (ipv6, payload, rest) = decode_ipv6_parts(bytes)?;
-    append_ipv6_payload_with_registry(registry, packet.push(ipv6), payload, rest)
-}
-
-fn decode_ipv6_parts(bytes: &[u8]) -> Result<(Ipv6, &[u8], &[u8])> {
-    if bytes.len() < IPV6_HEADER_LEN {
-        return Err(CrafterError::buffer_too_short(
-            "ipv6 header",
-            IPV6_HEADER_LEN,
-            bytes.len(),
-        ));
-    }
-
-    let version_class_flow = read_u32_be(&bytes[0..4])?;
-    let version = (version_class_flow >> 28) as u8;
-    if version != 6 {
-        return Err(CrafterError::invalid_field_value(
-            "ipv6.version",
-            "IPv6 packets must have version 6",
-        ));
-    }
-
-    let payload_length = read_u16_be(&bytes[4..6])? as usize;
-    let total_length = IPV6_HEADER_LEN + payload_length;
-    if bytes.len() < total_length {
-        return Err(CrafterError::buffer_too_short(
-            "ipv6 packet",
-            total_length,
-            bytes.len(),
-        ));
-    }
-
-    let ipv6 = Ipv6 {
-        version: Field::user(version),
-        traffic_class: Field::user(((version_class_flow >> 20) & 0xff) as u8),
-        flow_label: Field::user(version_class_flow & IPV6_MAX_FLOW_LABEL),
-        payload_length: Field::user(payload_length as u16),
-        next_header: Field::user(bytes[6]),
-        hop_limit: Field::user(bytes[7]),
-        source: Field::user(Ipv6Addr::from(copy_array_16(&bytes[8..24]))),
-        destination: Field::user(Ipv6Addr::from(copy_array_16(&bytes[24..40]))),
-    };
-
-    Ok((
-        ipv6,
-        &bytes[IPV6_HEADER_LEN..total_length],
-        &bytes[total_length..],
-    ))
-}
-
-fn append_ipv6_payload_with_registry(
-    registry: &ProtocolRegistry,
-    mut packet: Packet,
-    payload: &[u8],
-    rest: &[u8],
-) -> Result<Packet> {
-    let next_header = packet
-        .layer::<Ipv6>()
-        .map(Ipv6::next_header_value)
-        .unwrap_or_default();
-
-    packet = append_ipv6_next_with_registry(registry, packet, next_header, payload)?;
-
-    if !rest.is_empty() {
-        packet = packet.push(Raw::from_bytes(rest));
-    }
-
-    Ok(packet)
-}
-
-fn append_ipv6_next_with_registry(
-    registry: &ProtocolRegistry,
-    mut packet: Packet,
-    mut next_header: u8,
-    mut payload: &[u8],
-) -> Result<Packet> {
-    loop {
-        match next_header {
-            IPPROTO_IPV6_HOPOPTS => {
-                let (hop_by_hop, inner_next_header, remaining) = decode_hop_by_hop_header(payload)?;
-                packet = packet.push(hop_by_hop);
-                next_header = inner_next_header;
-                payload = remaining;
-            }
-            IPPROTO_IPV6_DSTOPTS => {
-                let (destination_options, inner_next_header, remaining) =
-                    decode_destination_options_header(payload)?;
-                packet = packet.push(destination_options);
-                next_header = inner_next_header;
-                payload = remaining;
-            }
-            IPPROTO_IPV6_ROUTE => {
-                let (routing, inner_next_header, remaining) = decode_routing_header(payload)?;
-                packet = match routing {
-                    DecodedRoutingHeader::Generic(layer) => packet.push(layer),
-                    DecodedRoutingHeader::Mobile(layer) => packet.push(layer),
-                    DecodedRoutingHeader::Segment(layer) => packet.push(layer),
-                };
-                next_header = inner_next_header;
-                payload = remaining;
-            }
-            IPPROTO_IPV6_FRAGMENT => {
-                let (fragment, inner_next_header, remaining) = decode_fragment_header(payload)?;
-                let is_non_initial_fragment = fragment.fragment_offset_value() > 0;
-                packet = packet.push(fragment);
-                if is_non_initial_fragment {
-                    if !remaining.is_empty() {
-                        packet = packet.push(Raw::from_bytes(remaining));
-                    }
-                    return Ok(packet);
-                }
-                next_header = inner_next_header;
-                payload = remaining;
-            }
-            _ => return registry.decode_ipv6_next_header(packet, next_header, payload),
-        }
-    }
-}
 
 fn payload_len_after(ctx: LayerContext<'_>) -> usize {
     ctx.packet()

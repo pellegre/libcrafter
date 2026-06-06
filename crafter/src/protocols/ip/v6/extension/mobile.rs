@@ -343,7 +343,7 @@ impl Layer for Ipv6MobileRoutingHeader {
 
 impl_ipv6_extension_layer_div!(Ipv6MobileRoutingHeader);
 
-pub(in crate::protocols::ip::v6::extension) fn decode_mobile_routing_header(
+pub(in crate::protocols::ip::v6) fn decode_mobile_routing_header(
     bytes: &[u8],
     total_len: usize,
 ) -> Result<Ipv6MobileRoutingHeader> {

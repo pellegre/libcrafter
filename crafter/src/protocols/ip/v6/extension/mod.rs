@@ -47,9 +47,8 @@ use crate::error::{CrafterError, Result};
 use super::constants::{IPV6_EXTENSION_MIN_LEN, IPV6_MAX_HEADER_EXT_LEN};
 
 pub(super) use destination::decode_destination_options_header;
-pub(super) use fragment::decode_fragment_header;
 pub(super) use hop_by_hop::decode_hop_by_hop_header;
-pub(super) use routing::decode_routing_header;
+pub(super) use mobile::decode_mobile_routing_header;
 
 pub use destination::Ipv6DestinationOptionsHeader;
 pub use fragment::{Ipv6FragmentHeader, Ipv6FragmentHeaderStatus};
@@ -57,12 +56,6 @@ pub use hop_by_hop::Ipv6HopByHopOptionsHeader;
 pub use mobile::{Ipv6MobileRoutingHeader, Ipv6MobileRoutingHeaderStatus};
 pub use routing::{Ipv6RoutingHeader, Ipv6RoutingTypeStatus};
 pub use segment::Ipv6SegmentRoutingHeader;
-
-pub(super) enum DecodedRoutingHeader {
-    Generic(Ipv6RoutingHeader),
-    Mobile(Ipv6MobileRoutingHeader),
-    Segment(Ipv6SegmentRoutingHeader),
-}
 
 pub(super) fn decode_extension_total_len(context: &'static str, bytes: &[u8]) -> Result<usize> {
     if bytes.len() < IPV6_EXTENSION_MIN_LEN {
