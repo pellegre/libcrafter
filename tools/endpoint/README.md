@@ -119,11 +119,12 @@ tools/endpoint/run doctor --provider docker --exposure wan --json
 
 | Variable | Used by | Meaning |
 | --- | --- | --- |
-| `LIBCRAFTER_WIRE_STATE_ROOT` | all providers | Override endpoint manifest and state root |
-| `LIBCRAFTER_WIRE_ARTIFACT_ROOT` | all providers | Override endpoint artifact root |
-| `LIBCRAFTER_WIRE_STATE_DIR` | all providers | Legacy state-root override |
-| `LIBCRAFTER_WIRE_ARTIFACT_DIR` | all providers | Legacy artifact-root override |
-| `LIBCRAFTER_WIRE_UBUNTU_CLOUD_IMAGE_URL` | VM providers | Override the Ubuntu cloud image URL |
+| `LIBCRAFTER_ENDPOINT_STATE_ROOT` | all providers | Override endpoint manifest and state root |
+| `LIBCRAFTER_ENDPOINT_ARTIFACT_ROOT` | all providers | Override endpoint artifact root |
+| `LIBCRAFTER_ENDPOINT_STATE_DIR` | all providers | Legacy state-root override |
+| `LIBCRAFTER_ENDPOINT_ARTIFACT_DIR` | all providers | Legacy artifact-root override |
+| `LIBCRAFTER_ENDPOINT_UBUNTU_CLOUD_IMAGE_URL` | VM providers | Override the Ubuntu cloud image URL |
+| `LIBCRAFTER_ENDPOINT_VM_DISK_SIZE` | VM providers | Override the guest disk size |
 | `LIBCRAFTER_VBOX_BRIDGE_IFACE` | VirtualBox LAN | Request a specific host bridge interface |
 | `LIBCRAFTER_QEMU_ACCEL` | QEMU | `tcg` by default, or `kvm` on compatible Linux hosts |
 | `LIBCRAFTER_QEMU_MEMORY_MB` | QEMU | Guest memory in MiB, default `2048` |
@@ -243,7 +244,7 @@ python3 tools/endpoint/smoke/live_virtualbox_network_ping.py \
 
 The smoke creates a VirtualBox LAN endpoint, builds
 `cargo build -p crafter --example network_ping`, uploads the binary, runs it
-with `LIBCRAFTER_WIRE_ENDPOINT=1`, collects guest state, and destroys the
+with `LIBCRAFTER_ENDPOINT=1`, collects guest state, and destroys the
 endpoint in a `finally` path. Step stdout, stderr, and JSON reports are written
 to the endpoint artifact directory. If creation fails before an endpoint
 artifact directory exists, failure artifacts are written below

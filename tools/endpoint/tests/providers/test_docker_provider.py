@@ -1698,8 +1698,8 @@ def _destroy_action_reasons(output: Mapping[str, object]) -> list[str]:
 @contextmanager
 def _wire_env(root: Path, extra: Mapping[str, str] | None = None) -> Iterator[None]:
     env = {
-        "LIBCRAFTER_WIRE_STATE_ROOT": str(root / "wire-state"),
-        "LIBCRAFTER_WIRE_ARTIFACT_ROOT": str(root / "wire-artifacts"),
+        "LIBCRAFTER_ENDPOINT_STATE_ROOT": str(root / "wire-state"),
+        "LIBCRAFTER_ENDPOINT_ARTIFACT_ROOT": str(root / "wire-artifacts"),
     }
     if extra is not None:
         env.update(extra)

@@ -126,18 +126,18 @@ Command-definition sites found:
 
 ## Environment Variables And State Roots
 
-Intended replacement: lifecycle environment variables use `ENDPOINT`, state and
+Endpoint lifecycle environment variables now use `ENDPOINT`, state and
 artifact roots use endpoint names, and workflow target directories stop using
 wire as lifecycle terminology.
 
-- `LIBCRAFTER_WIRE_STATE_ROOT` -> `LIBCRAFTER_ENDPOINT_STATE_ROOT`
-- `LIBCRAFTER_WIRE_ARTIFACT_ROOT` -> `LIBCRAFTER_ENDPOINT_ARTIFACT_ROOT`
-- `LIBCRAFTER_WIRE_STATE_DIR` -> `LIBCRAFTER_ENDPOINT_STATE_DIR`
-- `LIBCRAFTER_WIRE_ARTIFACT_DIR` -> `LIBCRAFTER_ENDPOINT_ARTIFACT_DIR`
-- `LIBCRAFTER_WIRE_UBUNTU_CLOUD_IMAGE_URL` -> `LIBCRAFTER_ENDPOINT_UBUNTU_CLOUD_IMAGE_URL`
-- `LIBCRAFTER_WIRE_VM_DISK_SIZE` -> `LIBCRAFTER_ENDPOINT_VM_DISK_SIZE`
-- `LIBCRAFTER_WIRE_REMOTE_DIR` -> `LIBCRAFTER_ENDPOINT_REMOTE_DIR`
-- disposable endpoint safety marker `LIBCRAFTER_WIRE_ENDPOINT=1` -> `LIBCRAFTER_ENDPOINT=1`
+- `LIBCRAFTER_ENDPOINT_STATE_ROOT`
+- `LIBCRAFTER_ENDPOINT_ARTIFACT_ROOT`
+- `LIBCRAFTER_ENDPOINT_STATE_DIR`
+- `LIBCRAFTER_ENDPOINT_ARTIFACT_DIR`
+- `LIBCRAFTER_ENDPOINT_UBUNTU_CLOUD_IMAGE_URL`
+- `LIBCRAFTER_ENDPOINT_VM_DISK_SIZE`
+- `LIBCRAFTER_ENDPOINT_REMOTE_DIR`
+- disposable endpoint safety marker `LIBCRAFTER_ENDPOINT=1`
 - `target/wire-state` -> `target/endpoint-state`
 - `target/wire-artifacts` -> `target/endpoint-artifacts`
 - `tools/endpoint/.state` -> `tools/endpoint/.state`
@@ -261,7 +261,7 @@ endpoint provider metadata; packet byte-policy names can remain wire.
 - `WIRE_ENTRYPOINT` -> `ENDPOINT_ENTRYPOINT`
 - command argv path `tools/endpoint/run` -> `tools/endpoint/run`
 - lifecycle commands use `create` / `destroy` / `list`
-- `LIBCRAFTER_WIRE_REMOTE_DIR` -> `LIBCRAFTER_ENDPOINT_REMOTE_DIR`
+- remote directory override uses `LIBCRAFTER_ENDPOINT_REMOTE_DIR`
 - lifecycle metadata `wire_provider`, `wire_exposure`, `wire_endpoint_plan`, `wire_endpoint_lifecycle` -> endpoint equivalents
 - CLI help text "provider wire endpoints" -> "provider endpoints"
 - rsync excludes `tools/endpoint/.state` and `tools/endpoint/artifacts` -> endpoint paths
@@ -296,7 +296,7 @@ they are byte-level policy.
 - helper names `run_lab_wire_command`, `upload_wire_probe_request`, `download_wire_probe_artifacts`, `prepare_wire_probe_target`, `cleanup_wire_probe_target`, `run_wire_stimulus_endpoint`, `wire_command_failed` -> endpoint equivalents
 - report metadata `wire_endpoint_plan` / `wire_endpoint_lifecycle` -> `endpoint_plan` / `endpoint_lifecycle`
 - command records with `"wire_command": true` -> endpoint command marker
-- `LIBCRAFTER_WIRE_REMOTE_DIR` -> `LIBCRAFTER_ENDPOINT_REMOTE_DIR`
+- remote directory override uses `LIBCRAFTER_ENDPOINT_REMOTE_DIR`
 - `tools/probe/engine/lab.py` lifecycle fields `wire_provider`, `wire_exposure`, `wire_endpoint_plan` -> endpoint equivalents
 
 Probe files found:
@@ -349,7 +349,7 @@ endpoint command vocabulary.
 - `tools/endpoint/smoke/live_docker_wan_dns.py` -> `tools/endpoint/smoke/live_docker_wan_dns.py`
 - internal command path `tools/endpoint/run` -> `tools/endpoint/run`
 - internal operations use `create` / `destroy`
-- safety marker `LIBCRAFTER_WIRE_ENDPOINT=1` -> `LIBCRAFTER_ENDPOINT=1`
+- safety marker uses `LIBCRAFTER_ENDPOINT=1`
 - artifact defaults `tools/endpoint/artifacts/...` -> `tools/endpoint/artifacts/...`
 
 ## CI And Repository Metadata
@@ -361,7 +361,7 @@ Rust packet I/O module owns wire terminology later.
 - `.github/workflows/local-static.yml`: compile `tools/endpoint/engine` and `tools/endpoint/smoke`; run endpoint tests
 - `.github/workflows/wire.yml` -> `.github/workflows/endpoint.yml`
 - workflow names "wire endpoint dry runs" / "protected Hetzner wire endpoint exchange" -> endpoint wording
-- workflow env `LIBCRAFTER_WIRE_ARTIFACT_ROOT`, `LIBCRAFTER_WIRE_STATE_ROOT` -> endpoint env vars
+- workflow env `LIBCRAFTER_ENDPOINT_ARTIFACT_ROOT`, `LIBCRAFTER_ENDPOINT_STATE_ROOT` -> endpoint env vars
 - workflow target dirs `target/wire-artifacts`, `target/wire-state` -> endpoint target dirs
 - workflow cleanup commands `tools/endpoint/run list`, `destroy`, `collect-artifacts` -> endpoint path and command names
 - `.gitignore` updates described in Tool Paths

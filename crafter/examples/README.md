@@ -55,4 +55,4 @@ values use `Ipv4Protocol`.
 
 Live-gated examples require all three opt-ins before opening live sockets or
 capture handles: `--live`, `--i-understand-isolated-lab`, and
-`LIBCRAFTER_WIRE_ENDPOINT=1`.
+`LIBCRAFTER_ENDPOINT=1`.

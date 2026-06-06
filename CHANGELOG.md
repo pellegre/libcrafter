@@ -46,6 +46,6 @@ workspace, released as one public crate: `crafter`.
 
 - Local tests and examples are dry-run or offline by default.
 - Advanced examples require `--live`, `--i-understand-isolated-lab`, and
-  `LIBCRAFTER_WIRE_ENDPOINT=1` before traffic-changing behavior.
+  `LIBCRAFTER_ENDPOINT=1` before traffic-changing behavior.
 - Provider credentials are read from environment variables or ignored local
   config files and must not be committed.
