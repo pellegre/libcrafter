@@ -6,7 +6,7 @@ use pcap as pcap_crate;
 
 use super::{PcapError, PcapLinkType, PcapRecord, PcapTimestamp, Result};
 
-pub(super) struct LibpcapOfflineCapture {
+pub(crate) struct LibpcapOfflineCapture {
     capture: pcap_crate::Capture<pcap_crate::Offline>,
     link_type: PcapLinkType,
 }
@@ -20,7 +20,7 @@ impl fmt::Debug for LibpcapOfflineCapture {
 }
 
 impl LibpcapOfflineCapture {
-    pub(super) fn open(path: impl AsRef<Path>, filter: Option<&str>) -> Result<Self> {
+    pub(crate) fn open(path: impl AsRef<Path>, filter: Option<&str>) -> Result<Self> {
         let mut capture = pcap_crate::Capture::from_file(path)?;
         if let Some(filter) = filter.filter(|filter| !filter.trim().is_empty()) {
             capture.filter(filter, true)?;
@@ -29,7 +29,7 @@ impl LibpcapOfflineCapture {
         Ok(Self { capture, link_type })
     }
 
-    pub(super) fn next_record(&mut self) -> Result<Option<PcapRecord>> {
+    pub(crate) fn next_record(&mut self) -> Result<Option<PcapRecord>> {
         next_libpcap_record(&mut self.capture, self.link_type)
     }
 }
