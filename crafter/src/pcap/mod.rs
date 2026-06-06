@@ -21,7 +21,8 @@ pub use error::{PcapError, Result};
 pub use reader::{read_pcap, read_pcap_filtered, FileSniffer, PcapReader, PcapRecords};
 pub use types::{
     PcapHeader, PcapLinkType, PcapPacket, PcapRecord, PcapTimestamp, TimestampPrecision,
-    DLT_EN10MB, DLT_LINUX_SLL, DLT_LOOP, DLT_NULL, DLT_RAW,
+    DLT_EN10MB, DLT_IEEE802_11, DLT_IEEE802_11_RADIO, DLT_LINUX_SLL, DLT_LOOP, DLT_NULL, DLT_RAW,
+    LINKTYPE_IEEE802_11, LINKTYPE_IEEE802_11_RADIOTAP,
 };
 pub use writer::{dump_pcap, PcapWriter, PcapWriterOptions};
 

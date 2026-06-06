@@ -8,7 +8,8 @@ use crate::{Arp, Ethernet, Ipv4, LinkType, MacAddr, Packet, Raw, Tcp, Udp, ETHER
 use super::codec::PCAP_HEADER_LEN;
 use super::{
     dump_pcap, CaptureControl, PcapLinkType, PcapReader, PcapTimestamp, PcapWriter,
-    PcapWriterOptions, Sniffer, TimestampPrecision, DLT_EN10MB,
+    PcapWriterOptions, Sniffer, TimestampPrecision, DLT_EN10MB, DLT_IEEE802_11,
+    DLT_IEEE802_11_RADIO, LINKTYPE_IEEE802_11, LINKTYPE_IEEE802_11_RADIOTAP,
 };
 
 const ARP_REQUEST: &[u8] = fixture_bytes!("bytes/arp-who-has.bin");
@@ -176,6 +177,28 @@ fn pcap_read_decodes_ethernet_fixture() {
     assert!(decoded.layer::<Arp>().is_some());
     assert_eq!(decoded.compile().unwrap().as_bytes(), ARP_REQUEST);
     assert!(reader.next_record().unwrap().is_none());
+}
+
+#[test]
+fn pcap_dot11_link_types_numeric_round_trips() {
+    assert_eq!(LINKTYPE_IEEE802_11, DLT_IEEE802_11);
+    assert_eq!(LINKTYPE_IEEE802_11_RADIOTAP, DLT_IEEE802_11_RADIO);
+
+    let cases = [
+        (DLT_IEEE802_11, PcapLinkType::Ieee80211, LinkType::Ieee80211),
+        (
+            DLT_IEEE802_11_RADIO,
+            PcapLinkType::Ieee80211Radiotap,
+            LinkType::Radiotap,
+        ),
+    ];
+
+    for (datalink, pcap_link_type, link_type) in cases {
+        assert_eq!(PcapLinkType::from_datalink(datalink), pcap_link_type);
+        assert_eq!(pcap_link_type.datalink(), datalink);
+        assert_eq!(pcap_link_type.link_type(), link_type);
+        assert_eq!(PcapLinkType::from(link_type), pcap_link_type);
+    }
 }
 
 #[test]
