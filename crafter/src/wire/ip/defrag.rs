@@ -1,6 +1,7 @@
 //! Receive-side IP defragmentation transform.
 
 use std::collections::BTreeMap;
+use std::fmt;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::time::Duration;
 
@@ -35,7 +36,74 @@ const IPV6_ATOMIC_FRAGMENT_NORMALIZED_NOTE: &str = "atomic fragment normalized";
 const IPV6_ATOMIC_FRAGMENT_PASSTHROUGH_NOTE: &str = "atomic fragment pass-through";
 
 /// Receive-side IP defragmentation transform.
-#[derive(Debug, Clone, Default)]
+///
+/// `IpDefrag` is a [`PacketTransform`] for inbound packet streams. It buffers
+/// IPv4 fragments and supported IPv6 Fragment Header records until a datagram
+/// is complete, then emits one packet-shaped [`PacketRecord`] with
+/// [`IpDefragMetadata`] attached. Non-fragmented records pass through by
+/// default.
+///
+/// Use it directly on offline records when testing transform behavior:
+///
+/// ```
+/// use std::net::Ipv4Addr;
+///
+/// use crafter::prelude::*;
+///
+/// let packet = (Ipv4::with_addresses(
+///     Ipv4Addr::new(192, 0, 2, 1),
+///     Ipv4Addr::new(198, 51, 100, 1),
+/// )
+/// .protocol(17)
+///     / Raw::from_bytes(b"not fragmented"));
+/// let source = VecPacketSource::from_packets([packet]);
+///
+/// let records = Sniffer::new(source)
+///     .with(IpDefrag::new().trace_passthrough(true))
+///     .collect_records()
+///     .unwrap();
+///
+/// assert_eq!(records.len(), 1);
+/// assert_eq!(records[0].metadata().transforms()[0].name(), "ip-defrag");
+/// ```
+///
+/// Reassembled records expose defragmentation metadata through
+/// [`PacketMetadata::ip_defrag_metadata`]:
+///
+/// ```
+/// use std::net::Ipv4Addr;
+///
+/// use crafter::prelude::*;
+///
+/// let src = Ipv4Addr::new(192, 0, 2, 10);
+/// let dst = Ipv4Addr::new(198, 51, 100, 20);
+/// let first = PacketRecord::new(
+///     Ipv4::with_addresses(src, dst)
+///         .protocol(17)
+///         .identification(0x1234)
+///         .more_fragments(true)
+///         .fragment_offset(0)
+///         / Raw::from_bytes(b"abcdefgh"),
+/// );
+/// let final_fragment = PacketRecord::new(
+///     Ipv4::with_addresses(src, dst)
+///         .protocol(17)
+///         .identification(0x1234)
+///         .fragment_offset(1)
+///         / Raw::from_bytes(b"ijkl"),
+/// );
+/// let source = VecPacketSource::new([final_fragment, first]);
+///
+/// let records = Sniffer::new(source)
+///     .with(IpDefrag::new())
+///     .collect_records()
+///     .unwrap();
+///
+/// let metadata = &records[0].metadata().ip_defrag_metadata()[0];
+/// assert_eq!(metadata.fragment_count(), 2);
+/// assert_eq!(metadata.duplicate_count(), 0);
+/// ```
+#[derive(Clone, Default)]
 pub struct IpDefrag {
     config: IpDefragConfig,
     ipv4_datagrams: BTreeMap<Ipv4DefragKey, Ipv4DatagramState>,
@@ -54,6 +122,17 @@ impl IpDefrag {
         Self::default()
     }
 
+    /// Create an IP defragmentation transform from an explicit configuration.
+    pub fn from_config(config: IpDefragConfig) -> Self {
+        Self::default().with_config(config)
+    }
+
+    /// Create an IP defragmentation transform from a validated configuration.
+    pub fn try_from_config(config: IpDefragConfig) -> Result<Self> {
+        config.validate()?;
+        Ok(Self::from_config(config))
+    }
+
     /// Replace the defragmentation configuration.
     pub const fn with_config(mut self, config: IpDefragConfig) -> Self {
         self.config = config;
@@ -65,6 +144,79 @@ impl IpDefrag {
         config.validate()?;
         self.config = config;
         Ok(self)
+    }
+
+    /// Configure whether records that are not handled as fragments pass through.
+    pub const fn pass_non_fragments(mut self, pass_non_fragments: bool) -> Self {
+        self.config = self.config.pass_non_fragments(pass_non_fragments);
+        self
+    }
+
+    /// Set the maximum number of incomplete datagrams retained at once.
+    pub const fn max_datagrams(mut self, max_datagrams: usize) -> Self {
+        self.config = self.config.max_datagrams(max_datagrams);
+        self
+    }
+
+    /// Set the maximum number of incomplete datagrams retained at once.
+    pub fn try_max_datagrams(mut self, max_datagrams: usize) -> Result<Self> {
+        self.config = self.config.try_max_datagrams(max_datagrams)?;
+        Ok(self)
+    }
+
+    /// Set the maximum bytes retained for one incomplete datagram.
+    pub const fn max_bytes_per_datagram(mut self, max_bytes_per_datagram: usize) -> Self {
+        self.config = self.config.max_bytes_per_datagram(max_bytes_per_datagram);
+        self
+    }
+
+    /// Set the maximum bytes retained for one incomplete datagram.
+    pub fn try_max_bytes_per_datagram(mut self, max_bytes_per_datagram: usize) -> Result<Self> {
+        self.config = self
+            .config
+            .try_max_bytes_per_datagram(max_bytes_per_datagram)?;
+        Ok(self)
+    }
+
+    /// Set the maximum age for an incomplete datagram.
+    pub const fn max_age(mut self, max_age: Duration) -> Self {
+        self.config = self.config.max_age(max_age);
+        self
+    }
+
+    /// Set the maximum age for an incomplete datagram.
+    pub fn try_max_age(mut self, max_age: Duration) -> Result<Self> {
+        self.config = self.config.try_max_age(max_age)?;
+        Ok(self)
+    }
+
+    /// Set the conflicting-overlap handling policy.
+    pub const fn overlap_policy(mut self, overlap_policy: IpDefragOverlapPolicy) -> Self {
+        self.config = self.config.overlap_policy(overlap_policy);
+        self
+    }
+
+    /// Set the IPv6 atomic fragment handling policy.
+    pub const fn ipv6_atomic_fragments(
+        mut self,
+        ipv6_atomic_fragment_policy: Ipv6AtomicFragmentPolicy,
+    ) -> Self {
+        self.config = self
+            .config
+            .ipv6_atomic_fragments(ipv6_atomic_fragment_policy);
+        self
+    }
+
+    /// Configure whether records emitted unchanged receive transform traces.
+    pub const fn trace_passthrough(mut self, trace_passthrough: bool) -> Self {
+        self.config = self.config.trace_passthrough(trace_passthrough);
+        self
+    }
+
+    /// Configure whether evictions emit representative trace records.
+    pub const fn trace_evictions(mut self, trace_evictions: bool) -> Self {
+        self.config = self.config.trace_evictions(trace_evictions);
+        self
     }
 
     /// Borrow the current configuration.
@@ -80,6 +232,21 @@ impl IpDefrag {
     /// Number of records successfully emitted.
     pub const fn emitted_count(&self) -> usize {
         self.emitted_count
+    }
+
+    /// Number of incomplete IPv4 datagrams currently buffered.
+    pub fn pending_ipv4_datagram_count(&self) -> usize {
+        self.ipv4_datagrams.len()
+    }
+
+    /// Number of incomplete IPv6 datagrams currently buffered.
+    pub fn pending_ipv6_datagram_count(&self) -> usize {
+        self.ipv6_datagrams.len()
+    }
+
+    /// Number of incomplete IPv4 and IPv6 datagrams currently buffered.
+    pub fn pending_datagram_count(&self) -> usize {
+        self.pending_ipv4_datagram_count() + self.pending_ipv6_datagram_count()
     }
 
     /// Number of incomplete datagram states evicted before reassembly.
@@ -535,6 +702,25 @@ impl IpDefrag {
         emit(record)?;
         self.emitted_count += 1;
         Ok(())
+    }
+}
+
+impl fmt::Debug for IpDefrag {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("IpDefrag")
+            .field("config", &self.config)
+            .field("pending_ipv4_datagrams", &self.ipv4_datagrams.len())
+            .field("pending_ipv6_datagrams", &self.ipv6_datagrams.len())
+            .field("input_count", &self.input_count)
+            .field("emitted_count", &self.emitted_count)
+            .field("eviction_count", &self.eviction_count)
+            .field("timeout_eviction_count", &self.timeout_eviction_count)
+            .field(
+                "datagram_limit_eviction_count",
+                &self.datagram_limit_eviction_count,
+            )
+            .field("byte_limit_eviction_count", &self.byte_limit_eviction_count)
+            .finish_non_exhaustive()
     }
 }
 
@@ -1555,6 +1741,111 @@ fn ipv6_atomic_fragment_metadata(
             .with_byte_ranges([IpFragmentRange::new(0, range_end)])
             .with_total_len(total_len),
     )
+}
+
+#[cfg(test)]
+mod public_api {
+    use super::*;
+    use crate::wire::record::PacketRecord;
+    use crate::wire::sniffer::Sniffer;
+    use crate::wire::source::VecPacketSource;
+    use crate::Raw;
+
+    const PROTOCOL_UDP: u8 = 17;
+    const IDENTIFICATION: u16 = 0x1234;
+
+    fn source() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 10)
+    }
+
+    fn destination() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 20)
+    }
+
+    fn fragment_record(fragment_offset: u16, more_fragments: bool, payload: &[u8]) -> PacketRecord {
+        PacketRecord::new(
+            Ipv4::with_addresses(source(), destination())
+                .protocol(PROTOCOL_UDP)
+                .identification(IDENTIFICATION)
+                .more_fragments(more_fragments)
+                .fragment_offset(fragment_offset)
+                / Raw::from_bytes(payload),
+        )
+    }
+
+    #[test]
+    fn public_builders_forward_to_config() {
+        let transform = IpDefrag::new()
+            .pass_non_fragments(false)
+            .max_datagrams(16)
+            .max_bytes_per_datagram(4096)
+            .max_age(Duration::from_secs(5))
+            .overlap_policy(IpDefragOverlapPolicy::PassThroughConflicting)
+            .ipv6_atomic_fragments(Ipv6AtomicFragmentPolicy::PassThrough)
+            .trace_passthrough(true)
+            .trace_evictions(true);
+
+        assert!(!transform.config().emits_non_fragments());
+        assert_eq!(transform.config().max_datagrams_limit(), 16);
+        assert_eq!(transform.config().max_bytes_per_datagram_limit(), 4096);
+        assert_eq!(transform.config().max_age_limit(), Duration::from_secs(5));
+        assert_eq!(
+            transform.config().configured_overlap_policy(),
+            IpDefragOverlapPolicy::PassThroughConflicting
+        );
+        assert_eq!(
+            transform.config().ipv6_atomic_fragment_policy(),
+            Ipv6AtomicFragmentPolicy::PassThrough
+        );
+        assert!(transform.config().traces_passthrough());
+        assert!(transform.config().traces_evictions());
+
+        assert!(IpDefrag::new().try_max_datagrams(0).is_err());
+        assert!(IpDefrag::new().try_max_bytes_per_datagram(0).is_err());
+        assert!(IpDefrag::new().try_max_age(Duration::from_secs(0)).is_err());
+        assert!(IpDefrag::try_from_config(IpDefragConfig::new().max_datagrams(0)).is_err());
+        assert!(IpDefrag::from_config(IpDefragConfig::new())
+            .try_with_config(IpDefragConfig::new())
+            .is_ok());
+    }
+
+    #[test]
+    fn sniffer_accepts_defrag_transform_and_exposes_metadata() {
+        let source = VecPacketSource::new([
+            fragment_record(1, false, b"ijkl"),
+            fragment_record(0, true, b"abcdefgh"),
+        ]);
+
+        let records = Sniffer::new(source)
+            .with(IpDefrag::new())
+            .collect_records()
+            .unwrap();
+
+        assert_eq!(records.len(), 1);
+        let metadata = &records[0].metadata().ip_defrag_metadata()[0];
+        assert_eq!(metadata.identification(), IDENTIFICATION as u32);
+        assert_eq!(metadata.fragment_count(), 2);
+        assert_eq!(metadata.duplicate_count(), 0);
+    }
+
+    #[test]
+    fn debug_output_uses_counts_not_buffer_contents() {
+        let mut transform = IpDefrag::new();
+        let output = transform
+            .defrag_record(fragment_record(0, true, b"abcdefgh"))
+            .unwrap();
+
+        assert!(output.is_empty());
+        assert_eq!(transform.pending_ipv4_datagram_count(), 1);
+        assert_eq!(transform.pending_ipv6_datagram_count(), 0);
+        assert_eq!(transform.pending_datagram_count(), 1);
+
+        let debug = format!("{transform:?}");
+        assert!(debug.contains("pending_ipv4_datagrams: 1"));
+        assert!(debug.contains("pending_ipv6_datagrams: 0"));
+        assert!(!debug.contains("Ipv4DatagramState"));
+        assert!(!debug.contains("abcdefgh"));
+    }
 }
 
 #[cfg(test)]
