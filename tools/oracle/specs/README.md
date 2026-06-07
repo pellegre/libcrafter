@@ -77,6 +77,15 @@ backend-specific generation logic. The expected profiles are:
   from packet equivalence. Store focused run artifacts below `target/oracle/`,
   such as `target/oracle/ipv6-enrichment-offline/` and
   `target/oracle/ipv6-enrichment-reference-to-libcrafter/`.
+- `ip-fragment-offline`, `ip-fragment-pcap`, and
+  `ip-fragment-lab-dry-run`: planned profiles declared by the
+  `ip_fragment_transforms` feature contract. They cover Scapy-backed IPv4 and
+  IPv6 fragment byte sequences, `IpDefrag` many-record-to-one behavior,
+  `IpFragment` one-record-to-many behavior, duplicate and overlap policy,
+  missing-fragment eviction, IPv4 DF handling, IPv6 atomic fragments, supported
+  extension-header scope, pcap payload-hash comparison, and provider-backed
+  constrained-MTU lab dry-runs. These profile names are contract metadata until
+  the oracle transform-case schema can execute packet-stream transforms.
 
 ## Directions
 
@@ -90,6 +99,30 @@ Oracle reports use backend-neutral direction names:
 - `live_exchange`: at least two endpoints exchange packets over a live network.
 
 A feature that is supported in only one direction must say so in its spec.
+
+## IP Fragment Transform Contract
+
+`tools/oracle/specs/features/ip-fragment-transforms.yaml` defines the planned
+oracle contract for IPv4 and IPv6 packet-stream transforms before the library
+implementation exists. Scapy is the reference backend for byte-level fragment
+behavior: Scapy-owned inputs feed `IpDefrag` in the
+`reference_to_libcrafter` direction, and future `IpFragment` output is decoded
+and normalized by Scapy in the `libcrafter_to_reference` direction. Roundtrip
+cases feed `IpFragment` output back into `IpDefrag`, while the live profile is
+reserved for provider-backed constrained-MTU lab sessions.
+
+Those cases are marked `contract_only` because the current oracle schema can
+compare single packet vectors but cannot yet model many input `PacketRecord`s,
+many output `PacketRecord`s, or transform trace metadata. The minimal extension
+is recorded in the feature spec: add transform-case input and output record
+sequences, transform names, expected trace/error assertions, Scapy fragment
+sequence materializers, libcrafter transform adapter JSON, pcap payload-hash
+comparison, and provider-backed dry-run/live profiles.
+
+`tools/oracle/run specs suite --family ip --json` therefore emits the planned
+contract matrix without producing runnable offline commands yet. Once the schema
+extension lands, the same case names should become executable without changing
+the byte policies or directions recorded in the contract.
 
 ## Strict Byte Comparison
 
