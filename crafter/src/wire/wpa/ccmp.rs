@@ -350,12 +350,12 @@ fn decrypt_parsed_ccmp(
 
 /// Classify the key type needed for a protected data frame.
 pub(crate) fn key_kind_for_dot11(dot11: &Dot11) -> Option<WpaKeyKind> {
-    dot11.destination().map(key_kind_for_destination)
+    dot11.receiver().map(key_kind_for_receiver)
 }
 
-/// Classify pairwise or group key use from the logical frame destination.
-pub(crate) const fn key_kind_for_destination(destination: MacAddr) -> WpaKeyKind {
-    if destination.is_multicast() {
+/// Classify pairwise or group key use from the 802.11 receiver address.
+pub(crate) const fn key_kind_for_receiver(receiver: MacAddr) -> WpaKeyKind {
+    if receiver.is_multicast() {
         WpaKeyKind::Group
     } else {
         WpaKeyKind::Pairwise
@@ -687,7 +687,7 @@ mod tests {
             .addr3(MacAddr::BROADCAST);
         assert_eq!(
             header.key_kind_for_dot11(&group_to_ds),
-            Some(WpaKeyKind::Group)
+            Some(WpaKeyKind::Pairwise)
         );
     }
 
