@@ -57,20 +57,15 @@ impl fmt::Debug for Gtk {
 }
 
 /// Group-key readiness state for one observed BSS.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub(crate) enum GroupKeyReadiness {
     /// No encrypted key-data frame has been processed yet.
+    #[default]
     Unknown,
     /// At least one GTK is available.
     Available,
     /// Key data was seen but no usable GTK is currently available.
     Unavailable(WpaDecryptReason),
-}
-
-impl Default for GroupKeyReadiness {
-    fn default() -> Self {
-        Self::Unknown
-    }
 }
 
 /// Group-key state for one observed BSS, keyed by GTK key id.
@@ -83,6 +78,7 @@ pub(crate) struct GroupKeyState {
 
 impl GroupKeyState {
     /// GTKs keyed by key id.
+    #[cfg(test)]
     pub(crate) fn gtks(&self) -> &HashMap<u8, Gtk> {
         &self.gtks
     }
@@ -98,6 +94,7 @@ impl GroupKeyState {
     }
 
     /// Number of valid but unsupported KDEs seen while parsing key data.
+    #[cfg(test)]
     pub(crate) const fn unsupported_kde_count(&self) -> usize {
         self.unsupported_kde_count
     }
@@ -176,6 +173,7 @@ impl HandshakeMessage {
     }
 
     /// One-based message number.
+    #[cfg(test)]
     pub(crate) const fn number(self) -> Option<u8> {
         match self {
             Self::Message1 => Some(1),
@@ -187,6 +185,7 @@ impl HandshakeMessage {
     }
 
     /// Stable lowercase label used by diagnostics.
+    #[cfg(test)]
     pub(crate) const fn label(self) -> &'static str {
         match self {
             Self::Message1 => "message_1",
@@ -245,21 +244,25 @@ impl HandshakeObservation {
     }
 
     /// EAPOL-Key replay counter.
+    #[cfg(test)]
     pub(crate) const fn replay_counter(&self) -> u64 {
         self.replay_counter
     }
 
     /// Transmitting MAC address observed for this EAPOL-Key frame.
+    #[cfg(test)]
     pub(crate) const fn transmitter(&self) -> MacAddr {
         self.transmitter
     }
 
     /// Receiving MAC address observed for this EAPOL-Key frame.
+    #[cfg(test)]
     pub(crate) const fn receiver(&self) -> MacAddr {
         self.receiver
     }
 
     /// Candidate role of the transmitting MAC when the message is known.
+    #[cfg(test)]
     pub(crate) const fn transmitter_role(&self) -> Option<PairwiseRole> {
         self.transmitter_role
     }
@@ -279,11 +282,13 @@ pub(crate) struct HandshakeStepState {
 
 impl HandshakeStepState {
     /// Latest accepted replay counter for this message.
+    #[cfg(test)]
     pub(crate) const fn replay_counter(&self) -> Option<u64> {
         self.replay_counter
     }
 
     /// Number of accepted observations, including duplicates.
+    #[cfg(test)]
     pub(crate) const fn observation_count(&self) -> usize {
         self.observation_count
     }
@@ -351,66 +356,79 @@ impl PairwiseSession {
     }
 
     /// BSSID/AP address for this session.
+    #[cfg(test)]
     pub(crate) const fn bssid(&self) -> MacAddr {
         self.bssid
     }
 
     /// Station address for this session.
+    #[cfg(test)]
     pub(crate) const fn station(&self) -> MacAddr {
         self.station
     }
 
     /// Candidate authenticator address observed from message direction.
+    #[cfg(test)]
     pub(crate) const fn authenticator(&self) -> Option<MacAddr> {
         self.authenticator
     }
 
     /// Candidate supplicant address observed from message direction.
+    #[cfg(test)]
     pub(crate) const fn supplicant(&self) -> Option<MacAddr> {
         self.supplicant
     }
 
     /// Latest accepted AP nonce.
+    #[cfg(test)]
     pub(crate) const fn ap_nonce(&self) -> Option<[u8; 32]> {
         self.ap_nonce
     }
 
     /// Replay counter associated with the stored AP nonce.
+    #[cfg(test)]
     pub(crate) const fn ap_nonce_replay_counter(&self) -> Option<u64> {
         self.ap_nonce_replay_counter
     }
 
     /// Latest accepted station nonce.
+    #[cfg(test)]
     pub(crate) const fn station_nonce(&self) -> Option<[u8; 32]> {
         self.station_nonce
     }
 
     /// Replay counter associated with the stored station nonce.
+    #[cfg(test)]
     pub(crate) const fn station_nonce_replay_counter(&self) -> Option<u64> {
         self.station_nonce_replay_counter
     }
 
     /// Stored state for message 1.
+    #[cfg(test)]
     pub(crate) const fn message_1(&self) -> &HandshakeStepState {
         &self.message_1
     }
 
     /// Stored state for message 2.
+    #[cfg(test)]
     pub(crate) const fn message_2(&self) -> &HandshakeStepState {
         &self.message_2
     }
 
     /// Stored state for message 3.
+    #[cfg(test)]
     pub(crate) const fn message_3(&self) -> &HandshakeStepState {
         &self.message_3
     }
 
     /// Stored state for message 4.
+    #[cfg(test)]
     pub(crate) const fn message_4(&self) -> &HandshakeStepState {
         &self.message_4
     }
 
     /// Last classified handshake observation.
+    #[cfg(test)]
     pub(crate) const fn last_observation(&self) -> Option<HandshakeObservation> {
         self.last_observation
     }
@@ -426,6 +444,7 @@ impl PairwiseSession {
     }
 
     /// Replay counter for the MIC-bearing frame that last set credential state.
+    #[cfg(test)]
     pub(crate) const fn mic_replay_counter(&self) -> Option<u64> {
         self.mic_replay_counter
     }
@@ -686,6 +705,7 @@ impl ObservedBss {
     }
 
     /// BSSID for this observed network.
+    #[cfg(test)]
     pub(crate) const fn bssid(&self) -> MacAddr {
         self.bssid
     }
@@ -706,6 +726,7 @@ impl ObservedBss {
     }
 
     /// Last observed RSN information element.
+    #[cfg(test)]
     pub(crate) const fn rsn(&self) -> Option<&RsnInformation> {
         self.rsn.as_ref()
     }
@@ -769,6 +790,7 @@ impl ObservedBss {
     }
 
     /// Observed stations associated with or talking to this BSS.
+    #[cfg(test)]
     pub(crate) fn stations(&self) -> &HashSet<MacAddr> {
         &self.stations
     }
@@ -814,6 +836,7 @@ impl ObservedBss {
     }
 
     /// Observe and verify one MIC-bearing EAPOL-Key record with known station.
+    #[cfg(test)]
     pub(crate) fn observe_pairwise_key_with_mic(
         &mut self,
         station: MacAddr,

@@ -64,6 +64,7 @@ impl<'a> CcmpHeader<'a> {
     }
 
     /// Return the raw 8-octet CCMP header.
+    #[cfg(test)]
     pub(crate) const fn header_bytes(&self) -> [u8; CCMP_HEADER_LEN] {
         self.header
     }
@@ -288,7 +289,7 @@ fn decrypt_parsed_ccmp(
         );
     }
 
-    let nonce = match ccmp_nonce(dot11, &ccmp) {
+    let nonce = match ccmp_nonce(dot11, ccmp) {
         Ok(nonce) => nonce,
         Err(_) => {
             return CcmpDecryptResult::failed(

@@ -82,10 +82,12 @@ impl WpaDecrypt {
         &self.networks
     }
 
+    #[cfg(test)]
     pub(crate) fn observed_bss(&self, bssid: MacAddr) -> Option<&ObservedBss> {
         self.bsses.get(&bssid)
     }
 
+    #[cfg(test)]
     pub(crate) fn observed_bsses(&self) -> &HashMap<MacAddr, ObservedBss> {
         &self.bsses
     }
@@ -208,9 +210,11 @@ impl WpaDecrypt {
             .then(|| compile_eapol_frame(packet))
             .flatten();
 
-        let mut context = WpaObservationContext::default();
-        context.bssid = bssid;
-        context.station = station;
+        let mut context = WpaObservationContext {
+            bssid,
+            station,
+            ..Default::default()
+        };
 
         if let Some(bssid) = bssid {
             let bss = self
@@ -686,13 +690,11 @@ fn group_key_missing_reason(bss: &ObservedBss) -> WpaDecryptReason {
 }
 
 fn bss_pairwise_status(bss: &ObservedBss) -> (WpaCredentialStatus, WpaHandshakeStatus) {
-    let mut saw_session = false;
     let mut saw_observing = false;
     let mut saw_complete = false;
     let mut saw_mismatch = false;
 
     for session in bss.pairwise_sessions().values() {
-        saw_session = true;
         if session.is_ready() {
             return (
                 WpaCredentialStatus::Matched,
@@ -716,8 +718,6 @@ fn bss_pairwise_status(bss: &ObservedBss) -> (WpaCredentialStatus, WpaHandshakeS
         (WpaCredentialStatus::Unknown, WpaHandshakeStatus::Complete)
     } else if saw_observing {
         (WpaCredentialStatus::Unknown, WpaHandshakeStatus::Observing)
-    } else if saw_session {
-        (WpaCredentialStatus::Unknown, WpaHandshakeStatus::NotStarted)
     } else {
         (WpaCredentialStatus::Unknown, WpaHandshakeStatus::NotStarted)
     }

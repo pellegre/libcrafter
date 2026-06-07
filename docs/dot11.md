@@ -262,7 +262,7 @@ while let Some(record) = sniffer.next_record()? {
         .and_then(|wifi| wifi.wpa_metadata())
     {
         println!(
-            "bssid={:?} station={:?} cipher={:?} key={:?} reason={:?}",
+            "BSSID {:?} station {:?} cipher {:?} key {:?} reason {:?}",
             wpa.bssid(),
             wpa.station(),
             wpa.cipher(),
