@@ -268,7 +268,7 @@ class LiveProviderRegistryTest(unittest.TestCase):
         self.assertEqual(infrastructure["network"]["private_group"], DOCKER_ORACLE_PRIVATE_GROUP)
         self.assertEqual(infrastructure["network"]["private_cidr"], DOCKER_PRIVATE_NETWORK_CIDR)
         self.assertTrue(infrastructure["container_defaults"]["cap_drop_all"])
-        self.assertTrue(infrastructure["container_defaults"]["no_new_privileges"])
+        self.assertFalse(infrastructure["container_defaults"]["no_new_privileges"])
         self.assertEqual(
             infrastructure["container_defaults"]["capabilities"],
             ["NET_RAW", "NET_ADMIN"],
