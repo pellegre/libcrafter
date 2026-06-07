@@ -1588,3 +1588,53 @@ fn ipv4_public_api_paths_expose_enriched_helpers() -> crafter::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn wpa_config_builder_public_api() -> crafter::Result<()> {
+    let pmk = [0x2a; 32];
+    let decryptor = WpaDecrypt::new()
+        .network("lab-ssid", "12345678")?
+        .network_bytes(b"\xffssid".as_slice(), "abcdefgh")?
+        .with_network(WpaNetwork::pmk_bytes(b"pmk-ssid".as_slice(), pmk)?)
+        .with_config(
+            WpaDecryptConfig::new()
+                .pass_originals(false)
+                .only_ciphers([WpaCipher::Ccmp128, WpaCipher::Tkip])
+                .allow_cipher(WpaCipher::Ccmp128),
+        );
+
+    assert!(!decryptor.config().emits_originals());
+    assert_eq!(
+        decryptor.config().supported_ciphers(),
+        &[WpaCipher::Ccmp128, WpaCipher::Tkip]
+    );
+    assert!(decryptor.config().supports_cipher(WpaCipher::Ccmp128));
+    assert_eq!(decryptor.networks().len(), 3);
+    assert_eq!(decryptor.networks()[0].ssid(), b"lab-ssid");
+    assert_eq!(decryptor.networks()[0].ssid_str(), Some("lab-ssid"));
+    assert!(decryptor.networks()[0].uses_passphrase());
+    assert_eq!(decryptor.networks()[1].ssid(), b"\xffssid");
+    assert_eq!(decryptor.networks()[1].ssid_str(), None);
+    assert!(decryptor.networks()[2].uses_pmk());
+    assert_eq!(decryptor.networks()[2].pmk_value(), Some(pmk));
+
+    let debug = format!("{decryptor:?}");
+    assert!(debug.contains("<redacted>"));
+    assert!(!debug.contains("12345678"));
+    assert!(!debug.contains("abcdefgh"));
+
+    Ok(())
+}
+
+#[test]
+fn wpa_config_builder_rejects_invalid_public_passphrase() {
+    let err = WpaDecrypt::new().network("lab-ssid", "short").unwrap_err();
+
+    match err {
+        crafter::CrafterError::InvalidFieldValue { field, reason } => {
+            assert_eq!(field, "wpa.passphrase");
+            assert_eq!(reason, "must be 8 to 63 octets");
+        }
+        other => panic!("invalid WPA passphrase should be structured, got {other:?}"),
+    }
+}
