@@ -265,11 +265,14 @@ impl WpaDecrypt {
                         }
 
                         if let Some(session) = station.and_then(|station| bss.session(station)) {
-                            context.handshake_status = Some(visible_handshake_status(session));
-                            context.credential_status = Some(session.credential_status());
+                            apply_pairwise_session_context(&mut context, session);
                         }
                     }
                 }
+            }
+
+            if let Some(session) = station.and_then(|station| bss.session(station)) {
+                apply_pairwise_session_context(&mut context, session);
             }
 
             context.ssid = bss.ssid().map(<[u8]>::to_vec);
@@ -277,7 +280,7 @@ impl WpaDecrypt {
             context.frequency_mhz = bss.frequency_mhz();
             context.cipher = bss.cipher();
             context.akm = bss.akm();
-            context.decrypt_reason = bss.decrypt_reason();
+            context.decrypt_reason = context.decrypt_reason.or_else(|| bss.decrypt_reason());
         }
 
         if malformed_rsn {
@@ -643,6 +646,14 @@ fn visible_handshake_status(session: &PairwiseSession) -> WpaHandshakeStatus {
     }
 }
 
+fn apply_pairwise_session_context(context: &mut WpaObservationContext, session: &PairwiseSession) {
+    context.handshake_status = Some(visible_handshake_status(session));
+    context.credential_status = Some(session.credential_status());
+    if session.credential_status() == WpaCredentialStatus::Mismatch {
+        context.decrypt_reason = Some(WpaDecryptReason::MicFailed);
+    }
+}
+
 fn compile_eapol_frame(packet: &Packet) -> Option<Vec<u8>> {
     let eapol = packet.layer::<Eapol>()?;
     let key = packet.layer::<EapolKey>()?;
@@ -832,13 +843,14 @@ fn is_station_candidate(candidate: MacAddr, bssid: MacAddr) -> bool {
 mod tests {
     use super::super::ccmp::encrypt_unicast_for_tests;
     use super::super::crypto::{
-        derive_ptk, wrap_key_data_for_tests, PairwiseTransientKey, Pmk, WPA_PMK_LEN,
+        derive_pmk, derive_ptk, wrap_key_data_for_tests, PairwiseTransientKey, Pmk, WPA_PMK_LEN,
         WPA_PTK_TEMPORAL_KEY_LEN,
     };
     use super::*;
     use core::net::Ipv4Addr;
     use hmac::{Hmac, Mac};
     use sha1::Sha1;
+    use std::path::Path;
 
     use crate::wire::{BackendKind, PacketOrigin};
     use crate::{
@@ -856,6 +868,18 @@ mod tests {
     const WPA_KEY_DATA_RSN_OUI: [u8; 3] = [0x00, 0x0f, 0xac];
     const WPA_KEY_DATA_GTK_KDE_TYPE: u8 = 1;
     const WPA_GTK_KEY_ID_MASK: u8 = 0x03;
+
+    #[derive(Debug, Clone, Copy)]
+    struct MultiNetworkFixture {
+        ssid: &'static [u8],
+        passphrase: &'static str,
+        bssid: MacAddr,
+        station: MacAddr,
+        peer: MacAddr,
+        ap_nonce: [u8; 32],
+        station_nonce: [u8; 32],
+        replay_counter: u64,
+    }
 
     fn record(payload: &'static str) -> PacketRecord {
         PacketRecord::new(Raw::from(payload))
@@ -1139,6 +1163,144 @@ mod tests {
         PacketRecord::new(dot11)
     }
 
+    fn multi_network_fixture(
+        ssid: &'static [u8],
+        passphrase: &'static str,
+        suffix: u8,
+        nonce: u8,
+        replay_counter: u64,
+    ) -> MultiNetworkFixture {
+        MultiNetworkFixture {
+            ssid,
+            passphrase,
+            bssid: mac(suffix),
+            station: mac(suffix + 1),
+            peer: mac(suffix + 2),
+            ap_nonce: [nonce; 32],
+            station_nonce: [nonce.wrapping_add(0x40); 32],
+            replay_counter,
+        }
+    }
+
+    fn multi_network_ptk(fixture: &MultiNetworkFixture) -> PairwiseTransientKey {
+        let pmk = derive_pmk(fixture.passphrase, fixture.ssid).unwrap();
+        derive_ptk(
+            &pmk,
+            &fixture.bssid.octets(),
+            &fixture.station.octets(),
+            &fixture.ap_nonce,
+            &fixture.station_nonce,
+        )
+    }
+
+    fn observe_multi_network_beacon(transform: &mut WpaDecrypt, fixture: &MultiNetworkFixture) {
+        transform
+            .decrypt_record(beacon_with_rsn(
+                fixture.bssid,
+                fixture.ssid,
+                &RsnInformation::new(),
+            ))
+            .unwrap();
+    }
+
+    fn observe_multi_network_message_1(transform: &mut WpaDecrypt, fixture: &MultiNetworkFixture) {
+        let packet = Dot11::data()
+            .addr1(fixture.station)
+            .addr2(fixture.bssid)
+            .addr3(fixture.bssid)
+            / LlcSnap::new().ethertype(ETHERTYPE_EAPOL)
+            / Eapol::key()
+            / pairwise_message_1(fixture.replay_counter, fixture.ap_nonce);
+
+        transform
+            .decrypt_record(PacketRecord::new(packet).with_link_type(LinkType::Ieee80211))
+            .unwrap();
+    }
+
+    fn observe_multi_network_message_2(
+        transform: &mut WpaDecrypt,
+        fixture: &MultiNetworkFixture,
+        ptk: &PairwiseTransientKey,
+    ) {
+        let (message_2, _eapol_frame) = signed_eapol_key(
+            pairwise_message_2(fixture.replay_counter, fixture.station_nonce),
+            ptk,
+        );
+        let packet = Dot11::data()
+            .addr1(fixture.bssid)
+            .addr2(fixture.station)
+            .addr3(fixture.bssid)
+            / LlcSnap::new().ethertype(ETHERTYPE_EAPOL)
+            / Eapol::key()
+            / message_2;
+
+        transform
+            .decrypt_record(PacketRecord::new(packet).with_link_type(LinkType::Ieee80211))
+            .unwrap();
+    }
+
+    fn encrypted_multi_network_record(
+        fixture: &MultiNetworkFixture,
+        ptk: &PairwiseTransientKey,
+        key_id: u8,
+        packet_number: u8,
+        payload: &'static [u8],
+    ) -> PacketRecord {
+        let dot11 = protected_to_ds_data(fixture.bssid, fixture.station, fixture.peer);
+        let encrypted_body = encrypt_unicast_for_tests(
+            &dot11,
+            ptk.temporal_key(),
+            key_id,
+            [packet_number, 0, 0, 0, 0, 0],
+            &ipv4_plaintext(payload),
+        );
+
+        PacketRecord::new(dot11 / Raw::from_bytes(encrypted_body))
+            .with_origin(PacketOrigin::Captured)
+            .with_link_type(LinkType::Ieee80211)
+    }
+
+    fn assert_multi_network_decrypted_record(
+        record: &PacketRecord,
+        fixture: &MultiNetworkFixture,
+        key_id: u8,
+        packet_number: u64,
+        payload: &'static [u8],
+    ) {
+        assert_eq!(record.metadata().origin(), PacketOrigin::Transformed);
+        assert_eq!(record.metadata().link_type(), Some(LinkType::Ethernet));
+        assert_eq!(
+            record.packet().layer::<Ethernet>().unwrap().source(),
+            Some(fixture.station)
+        );
+        assert_eq!(
+            record.packet().layer::<Ethernet>().unwrap().destination(),
+            Some(fixture.peer)
+        );
+        assert_eq!(record.packet().layer::<Raw>().unwrap().as_bytes(), payload);
+
+        let wifi = record.metadata().wifi().unwrap();
+        assert_eq!(wifi.ssid(), Some(fixture.ssid));
+        assert_eq!(wifi.bssid(), Some(fixture.bssid));
+        assert_eq!(wifi.key_id(), Some(key_id));
+        assert_eq!(wifi.decrypt_state(), Some(WifiDecryptState::Decrypted));
+
+        let wpa = wifi.wpa_metadata().unwrap();
+        assert_eq!(wpa.bssid(), Some(fixture.bssid));
+        assert_eq!(wpa.station(), Some(fixture.station));
+        assert_eq!(wpa.cipher(), Some(WpaCipher::Ccmp128));
+        assert_eq!(wpa.akm(), Some(WpaAkm::Psk));
+        assert_eq!(wpa.key_kind(), Some(WpaKeyKind::Pairwise));
+        assert_eq!(wpa.key_id(), Some(key_id));
+        assert_eq!(wpa.packet_number(), Some(packet_number));
+        assert_eq!(wpa.decrypt_reason(), Some(WpaDecryptReason::Decrypted));
+        assert_eq!(wpa.credential_status(), Some(WpaCredentialStatus::Matched));
+        assert_eq!(
+            wpa.handshake_status(),
+            Some(WpaHandshakeStatus::MicVerified)
+        );
+    }
+
     #[test]
     fn wpa_decrypt_skeleton_passes_records_unchanged() {
         let input = record("payload");
@@ -1396,6 +1558,165 @@ mod tests {
         );
         assert_eq!(transform.decrypted_count(), 1);
         assert_eq!(transform.failed_count(), 0);
+    }
+
+    #[test]
+    fn multi_network_decrypts_interleaved_sessions_with_independent_metadata() {
+        let alpha = multi_network_fixture(b"multi-alpha", "alpha-pass", 0xa0, 0x11, 10);
+        let beta = multi_network_fixture(b"multi-beta", "beta-pass", 0xb0, 0x21, 20);
+        let alpha_ptk = multi_network_ptk(&alpha);
+        let beta_ptk = multi_network_ptk(&beta);
+        let mut transform = WpaDecrypt::new()
+            .network("multi-alpha", "alpha-pass")
+            .unwrap()
+            .network("multi-beta", "beta-pass")
+            .unwrap();
+
+        observe_multi_network_beacon(&mut transform, &alpha);
+        observe_multi_network_beacon(&mut transform, &beta);
+        observe_multi_network_message_1(&mut transform, &alpha);
+        observe_multi_network_message_1(&mut transform, &beta);
+        observe_multi_network_message_2(&mut transform, &beta, &beta_ptk);
+        observe_multi_network_message_2(&mut transform, &alpha, &alpha_ptk);
+
+        assert_eq!(transform.networks().len(), 2);
+        assert_eq!(transform.observed_handshake_count(), 4);
+        assert_eq!(transform.verified_session_count(), 2);
+        assert!(transform
+            .observed_bss(alpha.bssid)
+            .unwrap()
+            .session(alpha.station)
+            .unwrap()
+            .is_ready());
+        assert!(transform
+            .observed_bss(beta.bssid)
+            .unwrap()
+            .session(beta.station)
+            .unwrap()
+            .is_ready());
+
+        let alpha_output = transform
+            .decrypt_record(
+                encrypted_multi_network_record(&alpha, &alpha_ptk, 1, 31, b"alpha")
+                    .with_backend(BackendKind::PcapInterface)
+                    .with_interface("wlan0mon"),
+            )
+            .unwrap();
+        let beta_output = transform
+            .decrypt_record(
+                encrypted_multi_network_record(&beta, &beta_ptk, 2, 41, b"beta")
+                    .with_backend(BackendKind::PcapFile)
+                    .with_file("fixtures/multi-beta.pcap"),
+            )
+            .unwrap();
+
+        assert_eq!(alpha_output.len(), 1);
+        assert_eq!(beta_output.len(), 1);
+        assert_multi_network_decrypted_record(&alpha_output.records()[0], &alpha, 1, 31, b"alpha");
+        assert_multi_network_decrypted_record(&beta_output.records()[0], &beta, 2, 41, b"beta");
+        assert_eq!(
+            alpha_output.records()[0].metadata().backend(),
+            &BackendKind::PcapInterface
+        );
+        assert_eq!(
+            alpha_output.records()[0].metadata().interface(),
+            Some("wlan0mon")
+        );
+        assert_eq!(
+            beta_output.records()[0].metadata().backend(),
+            &BackendKind::PcapFile
+        );
+        assert_eq!(
+            beta_output.records()[0].metadata().file(),
+            Some(Path::new("fixtures/multi-beta.pcap"))
+        );
+        assert_eq!(transform.decrypted_count(), 2);
+        assert_eq!(transform.failed_count(), 0);
+    }
+
+    #[test]
+    fn multi_network_wrong_passphrase_does_not_poison_successful_network() {
+        let good = multi_network_fixture(b"multi-good", "good-pass", 0xc0, 0x31, 30);
+        let bad = multi_network_fixture(b"multi-bad", "right-pass", 0xd0, 0x41, 40);
+        let good_ptk = multi_network_ptk(&good);
+        let bad_actual_ptk = multi_network_ptk(&bad);
+        let mut transform = WpaDecrypt::new()
+            .with_config(WpaDecryptConfig::new().pass_originals(true))
+            .network("multi-good", "good-pass")
+            .unwrap()
+            .network("multi-bad", "wrong-pass")
+            .unwrap();
+
+        observe_multi_network_beacon(&mut transform, &good);
+        observe_multi_network_beacon(&mut transform, &bad);
+        observe_multi_network_message_1(&mut transform, &bad);
+        observe_multi_network_message_1(&mut transform, &good);
+        observe_multi_network_message_2(&mut transform, &bad, &bad_actual_ptk);
+        observe_multi_network_message_2(&mut transform, &good, &good_ptk);
+
+        let good_session = transform
+            .observed_bss(good.bssid)
+            .unwrap()
+            .session(good.station)
+            .unwrap();
+        let bad_session = transform
+            .observed_bss(bad.bssid)
+            .unwrap()
+            .session(bad.station)
+            .unwrap();
+        assert!(good_session.is_ready());
+        assert_eq!(
+            good_session.credential_status(),
+            WpaCredentialStatus::Matched
+        );
+        assert!(!bad_session.is_ready());
+        assert_eq!(
+            bad_session.credential_status(),
+            WpaCredentialStatus::Mismatch
+        );
+        assert_eq!(transform.verified_session_count(), 1);
+
+        let bad_output = transform
+            .decrypt_record(
+                encrypted_multi_network_record(&bad, &bad_actual_ptk, 0, 51, b"bad")
+                    .with_backend(BackendKind::PcapInterface)
+                    .with_interface("wlan1mon"),
+            )
+            .unwrap();
+        let good_output = transform
+            .decrypt_record(
+                encrypted_multi_network_record(&good, &good_ptk, 0, 61, b"good")
+                    .with_backend(BackendKind::PcapInterface)
+                    .with_interface("wlan0mon"),
+            )
+            .unwrap();
+
+        assert_eq!(bad_output.len(), 1);
+        assert_eq!(
+            bad_output.records()[0].metadata().origin(),
+            PacketOrigin::Captured
+        );
+        let bad_wifi = bad_output.records()[0].metadata().wifi().unwrap();
+        assert_eq!(bad_wifi.ssid(), Some(bad.ssid));
+        assert_eq!(bad_wifi.bssid(), Some(bad.bssid));
+        assert_ne!(bad_wifi.decrypt_state(), Some(WifiDecryptState::Decrypted));
+        let bad_wpa = bad_wifi.wpa_metadata().unwrap();
+        assert_eq!(
+            bad_wpa.credential_status(),
+            Some(WpaCredentialStatus::Mismatch)
+        );
+        assert_eq!(bad_wpa.handshake_status(), Some(WpaHandshakeStatus::Failed));
+
+        assert_eq!(good_output.len(), 2);
+        let decrypted_good = good_output
+            .records()
+            .iter()
+            .find(|record| record.metadata().origin() == PacketOrigin::Transformed)
+            .unwrap();
+        assert_multi_network_decrypted_record(decrypted_good, &good, 0, 61, b"good");
+        assert_eq!(decrypted_good.metadata().interface(), Some("wlan0mon"));
+        assert_eq!(transform.decrypted_count(), 1);
+        assert_eq!(transform.failed_count(), 1);
     }
 
     #[test]
