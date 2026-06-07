@@ -1,10 +1,14 @@
 //! WPA key derivation and verification helpers.
 //!
 //! This module isolates secret-bearing WPA material from transform and state
-//! code. Later steps will add AES key unwrap and CCMP authentication here.
+//! code. Later steps will add CCMP authentication here.
 
 use core::fmt;
 
+#[cfg(test)]
+use aes::cipher::BlockEncrypt;
+use aes::cipher::{BlockDecrypt, KeyInit as AesKeyInit};
+use aes::Aes128;
 use hmac::{Hmac, Mac};
 use pbkdf2::pbkdf2;
 use sha1::Sha1;
@@ -42,6 +46,11 @@ const WPA2_KEY_DESCRIPTOR_VERSION: u8 = 2;
 const EAPOL_KEY_INFO_OFFSET_FROM_EAPOL: usize = EAPOL_HEADER_LEN + 1;
 const EAPOL_KEY_MIC_OFFSET_FROM_EAPOL: usize = EAPOL_HEADER_LEN + 77;
 const EAPOL_KEY_MIC_LEN: usize = 16;
+const AES_BLOCK_LEN: usize = 16;
+const AES_KEY_WRAP_SEMIBLOCK_LEN: usize = 8;
+const AES_KEY_WRAP_ROUNDS: usize = 6;
+const AES_KEY_WRAP_DEFAULT_IV: [u8; AES_KEY_WRAP_SEMIBLOCK_LEN] =
+    [0xa6; AES_KEY_WRAP_SEMIBLOCK_LEN];
 
 /// WPA/WPA2-Personal pairwise master key material.
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -202,6 +211,122 @@ pub(crate) fn verify_eapol_mic(
     Ok(constant_time_eq(observed_mic, &expected_mic))
 }
 
+/// Unwrap WPA2 encrypted EAPOL-Key data using the PTK key encryption key.
+///
+/// WPA2 RSN descriptor version 2 uses AES Key Wrap with the RFC 3394 default
+/// IV for encrypted key data. The returned bytes are the unwrapped key-data
+/// element stream, including any WPA padding octets that were encrypted.
+pub(crate) fn unwrap_key_data(
+    kek: &[u8; WPA_PTK_KEK_LEN],
+    encrypted_key_data: impl AsRef<[u8]>,
+) -> Result<Vec<u8>> {
+    let encrypted_key_data = encrypted_key_data.as_ref();
+    if encrypted_key_data.len() < AES_BLOCK_LEN {
+        return Err(CrafterError::buffer_too_short(
+            "wpa.key_data.encrypted",
+            AES_BLOCK_LEN,
+            encrypted_key_data.len(),
+        ));
+    }
+    if encrypted_key_data.len() % AES_KEY_WRAP_SEMIBLOCK_LEN != 0 {
+        return Err(CrafterError::invalid_field_value(
+            "wpa.key_data.encrypted",
+            "AES key wrap ciphertext length must be a multiple of 8 bytes",
+        ));
+    }
+
+    let n = encrypted_key_data.len() / AES_KEY_WRAP_SEMIBLOCK_LEN - 1;
+    let mut a = [0u8; AES_KEY_WRAP_SEMIBLOCK_LEN];
+    a.copy_from_slice(&encrypted_key_data[..AES_KEY_WRAP_SEMIBLOCK_LEN]);
+    let mut r: Vec<[u8; AES_KEY_WRAP_SEMIBLOCK_LEN]> = encrypted_key_data
+        [AES_KEY_WRAP_SEMIBLOCK_LEN..]
+        .chunks_exact(AES_KEY_WRAP_SEMIBLOCK_LEN)
+        .map(|chunk| {
+            let mut block = [0u8; AES_KEY_WRAP_SEMIBLOCK_LEN];
+            block.copy_from_slice(chunk);
+            block
+        })
+        .collect();
+
+    let cipher = Aes128::new_from_slice(kek).expect("WPA2 KEK length is AES-128");
+    for j in (0..AES_KEY_WRAP_ROUNDS).rev() {
+        for i in (1..=n).rev() {
+            let t = (n * j + i) as u64;
+            let mut block = [0u8; AES_BLOCK_LEN];
+            copy_a_xor_t(&mut block[..AES_KEY_WRAP_SEMIBLOCK_LEN], &a, t);
+            block[AES_KEY_WRAP_SEMIBLOCK_LEN..].copy_from_slice(&r[i - 1]);
+
+            let decrypted = aes_decrypt_block(&cipher, block);
+            a.copy_from_slice(&decrypted[..AES_KEY_WRAP_SEMIBLOCK_LEN]);
+            r[i - 1].copy_from_slice(&decrypted[AES_KEY_WRAP_SEMIBLOCK_LEN..]);
+        }
+    }
+
+    if a != AES_KEY_WRAP_DEFAULT_IV {
+        return Err(CrafterError::invalid_field_value(
+            "wpa.key_data.integrity",
+            "AES key unwrap integrity check failed",
+        ));
+    }
+
+    let mut plaintext = Vec::with_capacity(n * AES_KEY_WRAP_SEMIBLOCK_LEN);
+    for block in r {
+        plaintext.extend_from_slice(&block);
+    }
+    Ok(plaintext)
+}
+
+#[cfg(test)]
+pub(crate) fn wrap_key_data_for_tests(
+    kek: &[u8; WPA_PTK_KEK_LEN],
+    key_data: impl AsRef<[u8]>,
+) -> Vec<u8> {
+    let key_data = key_data.as_ref();
+    assert!(
+        key_data.len() >= AES_KEY_WRAP_SEMIBLOCK_LEN
+            && key_data.len() % AES_KEY_WRAP_SEMIBLOCK_LEN == 0,
+        "AES key wrap test plaintext must be non-empty and 8-byte aligned"
+    );
+
+    let n = key_data.len() / AES_KEY_WRAP_SEMIBLOCK_LEN;
+    let mut a = AES_KEY_WRAP_DEFAULT_IV;
+    let mut r: Vec<[u8; AES_KEY_WRAP_SEMIBLOCK_LEN]> = key_data
+        .chunks_exact(AES_KEY_WRAP_SEMIBLOCK_LEN)
+        .map(|chunk| {
+            let mut block = [0u8; AES_KEY_WRAP_SEMIBLOCK_LEN];
+            block.copy_from_slice(chunk);
+            block
+        })
+        .collect();
+
+    let cipher = Aes128::new_from_slice(kek).expect("WPA2 KEK length is AES-128");
+    for j in 0..AES_KEY_WRAP_ROUNDS {
+        for i in 1..=n {
+            let mut block = [0u8; AES_BLOCK_LEN];
+            block[..AES_KEY_WRAP_SEMIBLOCK_LEN].copy_from_slice(&a);
+            block[AES_KEY_WRAP_SEMIBLOCK_LEN..].copy_from_slice(&r[i - 1]);
+
+            let encrypted = aes_encrypt_block(&cipher, block);
+            let t = (n * j + i) as u64;
+            copy_a_xor_t(
+                &mut a,
+                (&encrypted[..AES_KEY_WRAP_SEMIBLOCK_LEN])
+                    .try_into()
+                    .unwrap(),
+                t,
+            );
+            r[i - 1].copy_from_slice(&encrypted[AES_KEY_WRAP_SEMIBLOCK_LEN..]);
+        }
+    }
+
+    let mut wrapped = Vec::with_capacity((n + 1) * AES_KEY_WRAP_SEMIBLOCK_LEN);
+    wrapped.extend_from_slice(&a);
+    for block in r {
+        wrapped.extend_from_slice(&block);
+    }
+    wrapped
+}
+
 fn canonical_pair<'a, const N: usize>(
     first: &'a [u8; N],
     second: &'a [u8; N],
@@ -218,7 +343,8 @@ fn wpa_prf_sha1(key: &[u8], label: &[u8], data: &[u8], output: &mut [u8]) {
     let mut counter = 0u8;
 
     while written < output.len() {
-        let mut mac = HmacSha1::new_from_slice(key).expect("HMAC accepts WPA key material");
+        let mut mac =
+            <HmacSha1 as Mac>::new_from_slice(key).expect("HMAC accepts WPA key material");
         mac.update(label);
         mac.update(&[0]);
         mac.update(data);
@@ -236,13 +362,39 @@ fn wpa_prf_sha1(key: &[u8], label: &[u8], data: &[u8], output: &mut [u8]) {
 }
 
 fn wpa2_eapol_mic(kck: &[u8; WPA_PTK_KCK_LEN], mic_input: &[u8]) -> [u8; EAPOL_KEY_MIC_LEN] {
-    let mut mac = HmacSha1::new_from_slice(kck).expect("HMAC accepts WPA KCK material");
+    let mut mac = <HmacSha1 as Mac>::new_from_slice(kck).expect("HMAC accepts WPA KCK material");
     mac.update(mic_input);
 
     let digest = mac.finalize().into_bytes();
     let mut mic = [0u8; EAPOL_KEY_MIC_LEN];
     mic.copy_from_slice(&digest[..EAPOL_KEY_MIC_LEN]);
     mic
+}
+
+fn aes_decrypt_block(cipher: &Aes128, block: [u8; AES_BLOCK_LEN]) -> [u8; AES_BLOCK_LEN] {
+    let mut block = aes::cipher::Block::<Aes128>::clone_from_slice(&block);
+    cipher.decrypt_block(&mut block);
+
+    let mut out = [0u8; AES_BLOCK_LEN];
+    out.copy_from_slice(&block);
+    out
+}
+
+#[cfg(test)]
+fn aes_encrypt_block(cipher: &Aes128, block: [u8; AES_BLOCK_LEN]) -> [u8; AES_BLOCK_LEN] {
+    let mut block = aes::cipher::Block::<Aes128>::clone_from_slice(&block);
+    cipher.encrypt_block(&mut block);
+
+    let mut out = [0u8; AES_BLOCK_LEN];
+    out.copy_from_slice(&block);
+    out
+}
+
+fn copy_a_xor_t(out: &mut [u8], a: &[u8; AES_KEY_WRAP_SEMIBLOCK_LEN], t: u64) {
+    let t = t.to_be_bytes();
+    for (out, (a, t)) in out.iter_mut().zip(a.iter().zip(t)) {
+        *out = a ^ t;
+    }
 }
 
 fn validated_eapol_key_mic_frame(frame: &[u8]) -> Result<&[u8]> {
@@ -488,6 +640,75 @@ mod tests {
             CrafterError::InvalidFieldValue {
                 field: "eapol.key_information.descriptor_version",
                 reason: "only WPA2 EAPOL-Key descriptor version 2 is supported"
+            }
+        );
+    }
+
+    #[test]
+    fn key_unwrap_unwraps_rfc3394_vector() {
+        let kek = [
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d,
+            0x0e, 0x0f,
+        ];
+        let ciphertext = [
+            0x1f, 0xa6, 0x8b, 0x0a, 0x81, 0x12, 0xb4, 0x47, 0xae, 0xf3, 0x4b, 0xd8, 0xfb, 0x5a,
+            0x7b, 0x82, 0x9d, 0x3e, 0x86, 0x23, 0x71, 0xd2, 0xcf, 0xe5,
+        ];
+
+        assert_eq!(
+            unwrap_key_data(&kek, ciphertext).unwrap(),
+            [
+                0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd,
+                0xee, 0xff,
+            ]
+        );
+    }
+
+    #[test]
+    fn key_unwrap_round_trips_test_wrapped_key_data() {
+        let kek = [0x7a; WPA_PTK_KEK_LEN];
+        let key_data = [
+            0xdd, 0x16, 0x00, 0x0f, 0xac, 0x01, 0x02, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16,
+            0x17, 0x18,
+        ];
+
+        let encrypted = wrap_key_data_for_tests(&kek, key_data);
+
+        assert_ne!(encrypted, key_data);
+        assert_eq!(unwrap_key_data(&kek, encrypted).unwrap(), key_data);
+    }
+
+    #[test]
+    fn key_unwrap_rejects_tampered_ciphertext() {
+        let kek = [0x7a; WPA_PTK_KEK_LEN];
+        let key_data = [0x11; 16];
+        let mut encrypted = wrap_key_data_for_tests(&kek, key_data);
+        encrypted[10] ^= 0x01;
+
+        let error = unwrap_key_data(&kek, encrypted).unwrap_err();
+
+        assert_eq!(
+            error,
+            CrafterError::InvalidFieldValue {
+                field: "wpa.key_data.integrity",
+                reason: "AES key unwrap integrity check failed"
+            }
+        );
+    }
+
+    #[test]
+    fn key_unwrap_rejects_malformed_lengths() {
+        let kek = [0x7a; WPA_PTK_KEK_LEN];
+
+        assert_eq!(
+            unwrap_key_data(&kek, [0u8; 8]).unwrap_err(),
+            CrafterError::buffer_too_short("wpa.key_data.encrypted", AES_BLOCK_LEN, 8)
+        );
+        assert_eq!(
+            unwrap_key_data(&kek, [0u8; 17]).unwrap_err(),
+            CrafterError::InvalidFieldValue {
+                field: "wpa.key_data.encrypted",
+                reason: "AES key wrap ciphertext length must be a multiple of 8 bytes"
             }
         );
     }

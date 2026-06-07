@@ -1,17 +1,150 @@
 //! WPA passive observation state machines.
 
+use core::fmt;
 use std::collections::{HashMap, HashSet};
 
-use super::crypto::{derive_ptk, verify_eapol_mic, PairwiseTransientKey, Pmk};
+use super::crypto::{derive_ptk, unwrap_key_data, verify_eapol_mic, PairwiseTransientKey, Pmk};
 use super::metadata::{
     WpaAkm, WpaCipher, WpaCredentialStatus, WpaDecryptReason, WpaHandshakeStatus,
 };
 use crate::{
-    EapolKey, MacAddr, RsnAkmSuite, RsnCipherSuite, RsnEapolKeyHandshakeMessage, RsnInformation,
-    RSN_AKM_SUITE_8021X, RSN_AKM_SUITE_PSK, RSN_AKM_SUITE_SAE, RSN_CIPHER_SUITE_CCMP_128,
-    RSN_CIPHER_SUITE_CCMP_256, RSN_CIPHER_SUITE_GCMP_128, RSN_CIPHER_SUITE_GCMP_256,
-    RSN_CIPHER_SUITE_TKIP,
+    CrafterError, EapolKey, MacAddr, RsnAkmSuite, RsnCipherSuite, RsnEapolKeyHandshakeMessage,
+    RsnInformation, RSN_AKM_SUITE_8021X, RSN_AKM_SUITE_PSK, RSN_AKM_SUITE_SAE,
+    RSN_CIPHER_SUITE_CCMP_128, RSN_CIPHER_SUITE_CCMP_256, RSN_CIPHER_SUITE_GCMP_128,
+    RSN_CIPHER_SUITE_GCMP_256, RSN_CIPHER_SUITE_TKIP,
 };
+
+const WPA_KEY_DATA_VENDOR_SPECIFIC_ELEMENT_ID: u8 = 0xdd;
+const WPA_KEY_DATA_RSN_OUI: [u8; 3] = [0x00, 0x0f, 0xac];
+const WPA_KEY_DATA_GTK_KDE_TYPE: u8 = 1;
+const WPA_GTK_KEY_ID_MASK: u8 = 0x03;
+
+/// Group temporal key material extracted from WPA2 encrypted key data.
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct Gtk {
+    key_id: u8,
+    bytes: Vec<u8>,
+}
+
+impl Gtk {
+    /// Create a GTK with its two-bit key identifier.
+    pub(crate) fn new(key_id: u8, bytes: impl Into<Vec<u8>>) -> Self {
+        Self {
+            key_id: key_id & WPA_GTK_KEY_ID_MASK,
+            bytes: bytes.into(),
+        }
+    }
+
+    /// WPA key identifier carried by the GTK KDE.
+    pub(crate) const fn key_id(&self) -> u8 {
+        self.key_id
+    }
+
+    /// Borrow raw GTK bytes.
+    pub(crate) fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+}
+
+impl fmt::Debug for Gtk {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Gtk")
+            .field("key_id", &self.key_id)
+            .field("bytes", &"<redacted>")
+            .field("len", &self.bytes.len())
+            .finish()
+    }
+}
+
+/// Group-key readiness state for one observed BSS.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum GroupKeyReadiness {
+    /// No encrypted key-data frame has been processed yet.
+    Unknown,
+    /// At least one GTK is available.
+    Available,
+    /// Key data was seen but no usable GTK is currently available.
+    Unavailable(WpaDecryptReason),
+}
+
+impl Default for GroupKeyReadiness {
+    fn default() -> Self {
+        Self::Unknown
+    }
+}
+
+/// Group-key state for one observed BSS, keyed by GTK key id.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct GroupKeyState {
+    gtks: HashMap<u8, Gtk>,
+    readiness: GroupKeyReadiness,
+    unsupported_kde_count: usize,
+}
+
+impl GroupKeyState {
+    /// GTKs keyed by key id.
+    pub(crate) fn gtks(&self) -> &HashMap<u8, Gtk> {
+        &self.gtks
+    }
+
+    /// Borrow one GTK by key id.
+    pub(crate) fn gtk(&self, key_id: u8) -> Option<&Gtk> {
+        self.gtks.get(&(key_id & WPA_GTK_KEY_ID_MASK))
+    }
+
+    /// Current group-key readiness.
+    pub(crate) const fn readiness(&self) -> GroupKeyReadiness {
+        self.readiness
+    }
+
+    /// Number of valid but unsupported KDEs seen while parsing key data.
+    pub(crate) const fn unsupported_kde_count(&self) -> usize {
+        self.unsupported_kde_count
+    }
+
+    fn apply_update(&mut self, update: &GroupKeyUpdate) {
+        self.unsupported_kde_count += update.unsupported_kde_count;
+        for gtk in &update.gtks {
+            self.gtks.insert(gtk.key_id(), gtk.clone());
+        }
+
+        self.readiness = if self.gtks.is_empty() {
+            GroupKeyReadiness::Unavailable(
+                update
+                    .reason
+                    .unwrap_or(WpaDecryptReason::MissingKeyMaterial),
+            )
+        } else {
+            GroupKeyReadiness::Available
+        };
+    }
+}
+
+/// Result of trying to decrypt and parse one EAPOL-Key key-data field.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GroupKeyUpdate {
+    gtks: Vec<Gtk>,
+    reason: Option<WpaDecryptReason>,
+    unsupported_kde_count: usize,
+}
+
+impl GroupKeyUpdate {
+    fn available(gtks: Vec<Gtk>, unsupported_kde_count: usize) -> Self {
+        Self {
+            gtks,
+            reason: None,
+            unsupported_kde_count,
+        }
+    }
+
+    fn unavailable(reason: WpaDecryptReason, unsupported_kde_count: usize) -> Self {
+        Self {
+            gtks: Vec::new(),
+            reason: Some(reason),
+            unsupported_kde_count,
+        }
+    }
+}
 
 /// WPA/WPA2-Personal four-way handshake message classifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -428,6 +561,33 @@ impl PairwiseSession {
         Ok(Some(false))
     }
 
+    /// Decrypt and parse encrypted key data for GTK material when the PTK is ready.
+    pub(crate) fn decrypt_group_key_data(&self, key: &EapolKey) -> GroupKeyUpdate {
+        if !key.key_information_value().encrypted_key_data() || key.key_data_bytes().is_empty() {
+            return GroupKeyUpdate::unavailable(WpaDecryptReason::MissingKeyMaterial, 0);
+        }
+
+        let Some(pairwise_transient_key) = self.pairwise_transient_key.as_ref() else {
+            return GroupKeyUpdate::unavailable(WpaDecryptReason::MissingKeyMaterial, 0);
+        };
+
+        let decrypted = match unwrap_key_data(pairwise_transient_key.kek(), key.key_data_bytes()) {
+            Ok(decrypted) => decrypted,
+            Err(error) => {
+                return GroupKeyUpdate::unavailable(group_key_unwrap_reason(&error), 0);
+            }
+        };
+
+        match parse_key_data_elements(&decrypted) {
+            Ok(parsed) if parsed.gtks.is_empty() => GroupKeyUpdate::unavailable(
+                WpaDecryptReason::MissingKeyMaterial,
+                parsed.unsupported_kde_count,
+            ),
+            Ok(parsed) => GroupKeyUpdate::available(parsed.gtks, parsed.unsupported_kde_count),
+            Err(_) => GroupKeyUpdate::unavailable(WpaDecryptReason::MalformedFrame, 0),
+        }
+    }
+
     fn note_roles(
         &mut self,
         transmitter_role: Option<PairwiseRole>,
@@ -502,6 +662,7 @@ pub(crate) struct ObservedBss {
     decrypt_reason: Option<WpaDecryptReason>,
     stations: HashSet<MacAddr>,
     pairwise_sessions: HashMap<MacAddr, PairwiseSession>,
+    group_keys: GroupKeyState,
 }
 
 impl ObservedBss {
@@ -518,6 +679,7 @@ impl ObservedBss {
             decrypt_reason: None,
             stations: HashSet::new(),
             pairwise_sessions: HashMap::new(),
+            group_keys: GroupKeyState::default(),
         }
     }
 
@@ -607,6 +769,16 @@ impl ObservedBss {
         &self.pairwise_sessions
     }
 
+    /// Borrow group-key state for this BSS.
+    pub(crate) const fn group_key_state(&self) -> &GroupKeyState {
+        &self.group_keys
+    }
+
+    /// Borrow one stored GTK by key id.
+    pub(crate) fn gtk(&self, key_id: u8) -> Option<&Gtk> {
+        self.group_keys.gtk(key_id)
+    }
+
     /// Borrow a pairwise session if it exists.
     pub(crate) fn session(&self, station: MacAddr) -> Option<&PairwiseSession> {
         self.pairwise_sessions.get(&station)
@@ -642,9 +814,16 @@ impl ObservedBss {
         eapol_frame: &[u8],
         pmk: &Pmk,
     ) -> crate::Result<HandshakeObservation> {
-        let session = self.session_mut(station);
-        let observation = session.observe_key(transmitter, receiver, key);
-        session.verify_key_mic(pmk, key, eapol_frame)?;
+        let (observation, group_key_update) = {
+            let session = self.session_mut(station);
+            let observation = session.observe_key(transmitter, receiver, key);
+            session.verify_key_mic(pmk, key, eapol_frame)?;
+            let group_key_update = session.decrypt_group_key_data(key);
+            (observation, group_key_update)
+        };
+        if key.key_information_value().encrypted_key_data() && !key.key_data_bytes().is_empty() {
+            self.group_keys.apply_update(&group_key_update);
+        }
         Ok(observation)
     }
 
@@ -664,6 +843,100 @@ impl ObservedBss {
         };
 
         Some(self.observe_pairwise_key(station, transmitter, receiver, key))
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct ParsedKeyData {
+    gtks: Vec<Gtk>,
+    unsupported_kde_count: usize,
+}
+
+fn parse_key_data_elements(key_data: &[u8]) -> crate::Result<ParsedKeyData> {
+    let mut parsed = ParsedKeyData::default();
+    let mut offset = 0usize;
+
+    while offset < key_data.len() {
+        if key_data[offset..].iter().all(|byte| *byte == 0) {
+            break;
+        }
+
+        let header_end = offset + 2;
+        if header_end > key_data.len() {
+            return Err(CrafterError::buffer_too_short(
+                "wpa.key_data.element.header",
+                header_end,
+                key_data.len(),
+            ));
+        }
+
+        let element_id = key_data[offset];
+        let element_len = usize::from(key_data[offset + 1]);
+        let value_start = header_end;
+        let value_end = value_start.checked_add(element_len).ok_or_else(|| {
+            CrafterError::invalid_field_value("wpa.key_data.element.length", "length overflow")
+        })?;
+        if value_end > key_data.len() {
+            return Err(CrafterError::buffer_too_short(
+                "wpa.key_data.element.value",
+                value_end,
+                key_data.len(),
+            ));
+        }
+
+        let value = &key_data[value_start..value_end];
+        if element_id == WPA_KEY_DATA_VENDOR_SPECIFIC_ELEMENT_ID {
+            match parse_vendor_specific_key_data_element(value)? {
+                Some(gtk) => parsed.gtks.push(gtk),
+                None => parsed.unsupported_kde_count += 1,
+            }
+        }
+
+        offset = value_end;
+    }
+
+    Ok(parsed)
+}
+
+fn parse_vendor_specific_key_data_element(value: &[u8]) -> crate::Result<Option<Gtk>> {
+    if value.len() < 4 {
+        return Err(CrafterError::buffer_too_short(
+            "wpa.key_data.kde.selector",
+            4,
+            value.len(),
+        ));
+    }
+
+    let oui = [value[0], value[1], value[2]];
+    let kde_type = value[3];
+    if oui != WPA_KEY_DATA_RSN_OUI || kde_type != WPA_KEY_DATA_GTK_KDE_TYPE {
+        return Ok(None);
+    }
+
+    if value.len() < 6 {
+        return Err(CrafterError::buffer_too_short(
+            "wpa.key_data.gtk",
+            6,
+            value.len(),
+        ));
+    }
+
+    let key_id = value[4] & WPA_GTK_KEY_ID_MASK;
+    let gtk = value[5..].to_vec();
+    if gtk.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(Gtk::new(key_id, gtk)))
+}
+
+fn group_key_unwrap_reason(error: &CrafterError) -> WpaDecryptReason {
+    match error {
+        CrafterError::InvalidFieldValue {
+            field: "wpa.key_data.integrity",
+            ..
+        } => WpaDecryptReason::AuthenticationFailed,
+        _ => WpaDecryptReason::MalformedFrame,
     }
 }
 
@@ -764,7 +1037,7 @@ mod tests {
     use hmac::{Hmac, Mac};
     use sha1::Sha1;
 
-    use super::super::crypto::WPA_PMK_LEN;
+    use super::super::crypto::{wrap_key_data_for_tests, WPA_PMK_LEN};
     use crate::{Eapol, EapolKeyInformation, EAPOL_HEADER_LEN};
 
     type HmacSha1 = Hmac<Sha1>;
@@ -864,6 +1137,65 @@ mod tests {
         let mut mic = [0u8; EAPOL_KEY_MIC_LEN];
         mic.copy_from_slice(&digest[..EAPOL_KEY_MIC_LEN]);
         mic
+    }
+
+    fn verified_bss() -> (ObservedBss, MacAddr, MacAddr, Pmk, PairwiseTransientKey) {
+        let bssid = mac(1);
+        let station = mac(2);
+        let mut bss = ObservedBss::new(bssid);
+        let pmk = Pmk::new([0x61; WPA_PMK_LEN]);
+
+        bss.observe_pairwise_key(station, bssid, station, &message_1(1, 0x10));
+        let ptk = derive_ptk(
+            &pmk,
+            &bssid.octets(),
+            &station.octets(),
+            &bytes::<32>(0x10),
+            &bytes::<32>(0x20),
+        );
+        let (signed_message_2, eapol_frame) = signed_eapol_key(message_2(1, 0x20), &ptk);
+        bss.observe_pairwise_key_with_mic(
+            station,
+            station,
+            bssid,
+            &signed_message_2,
+            &eapol_frame,
+            &pmk,
+        )
+        .unwrap();
+
+        (bss, bssid, station, pmk, ptk)
+    }
+
+    fn encrypted_message_3(
+        ptk: &PairwiseTransientKey,
+        key_data: impl Into<Vec<u8>>,
+    ) -> (EapolKey, Vec<u8>) {
+        let encrypted_key_data = wrap_key_data_for_tests(ptk.kek(), pad_key_data(key_data));
+        signed_eapol_key(message_3(2, 0x10).key_data(encrypted_key_data), ptk)
+    }
+
+    fn pad_key_data(key_data: impl Into<Vec<u8>>) -> Vec<u8> {
+        let mut key_data = key_data.into();
+        while key_data.len() % 8 != 0 {
+            key_data.push(0);
+        }
+        key_data
+    }
+
+    fn gtk_kde(key_id: u8, gtk: impl AsRef<[u8]>) -> Vec<u8> {
+        let gtk = gtk.as_ref();
+        let kde_len = 5 + gtk.len();
+        assert!(kde_len <= u8::MAX as usize);
+
+        let mut key_data = Vec::with_capacity(2 + kde_len);
+        key_data.push(WPA_KEY_DATA_VENDOR_SPECIFIC_ELEMENT_ID);
+        key_data.push(kde_len as u8);
+        key_data.extend_from_slice(&WPA_KEY_DATA_RSN_OUI);
+        key_data.push(WPA_KEY_DATA_GTK_KDE_TYPE);
+        key_data.push(key_id & WPA_GTK_KEY_ID_MASK);
+        key_data.extend_from_slice(gtk);
+        key_data
     }
 
     #[test]
@@ -1131,5 +1463,97 @@ mod tests {
         assert_eq!(session.credential_status(), WpaCredentialStatus::Matched);
         assert_eq!(session.pairwise_transient_key(), Some(&expected_ptk));
         assert!(session.is_ready());
+    }
+
+    #[test]
+    fn gtk_key_data_extracts_valid_group_key_by_key_id() {
+        let (mut bss, bssid, station, pmk, ptk) = verified_bss();
+        let gtk_bytes = bytes::<16>(0x44);
+        let (message_3, eapol_frame) = encrypted_message_3(&ptk, gtk_kde(2, gtk_bytes));
+
+        bss.observe_pairwise_key_with_mic(station, bssid, station, &message_3, &eapol_frame, &pmk)
+            .unwrap();
+
+        let stored_gtk = bss.gtk(2).unwrap();
+        assert_eq!(stored_gtk.key_id(), 2);
+        assert_eq!(stored_gtk.bytes(), &gtk_bytes);
+        assert_eq!(
+            bss.group_key_state().readiness(),
+            GroupKeyReadiness::Available
+        );
+        assert_eq!(bss.group_key_state().gtks().len(), 1);
+        assert_eq!(
+            format!("{stored_gtk:?}"),
+            "Gtk { key_id: 2, bytes: \"<redacted>\", len: 16 }"
+        );
+    }
+
+    #[test]
+    fn gtk_malformed_key_data_marks_group_key_unavailable_without_regressing_session() {
+        let (mut bss, bssid, station, pmk, ptk) = verified_bss();
+        let malformed_kde = [
+            WPA_KEY_DATA_VENDOR_SPECIFIC_ELEMENT_ID,
+            0x20,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ];
+        let (message_3, eapol_frame) = encrypted_message_3(&ptk, malformed_kde);
+
+        bss.observe_pairwise_key_with_mic(station, bssid, station, &message_3, &eapol_frame, &pmk)
+            .unwrap();
+
+        let session = bss.session(station).unwrap();
+        assert_eq!(session.credential_status(), WpaCredentialStatus::Matched);
+        assert!(session.is_ready());
+        assert!(bss.gtk(0).is_none());
+        assert_eq!(
+            bss.group_key_state().readiness(),
+            GroupKeyReadiness::Unavailable(WpaDecryptReason::MalformedFrame)
+        );
+    }
+
+    #[test]
+    fn gtk_unsupported_kdes_are_counted_without_claiming_group_key_readiness() {
+        let (mut bss, bssid, station, pmk, ptk) = verified_bss();
+        let unsupported_kde = [
+            WPA_KEY_DATA_VENDOR_SPECIFIC_ELEMENT_ID,
+            6,
+            0x00,
+            0x0f,
+            0xac,
+            0xff,
+            0xaa,
+            0xbb,
+        ];
+        let (message_3, eapol_frame) = encrypted_message_3(&ptk, unsupported_kde);
+
+        bss.observe_pairwise_key_with_mic(station, bssid, station, &message_3, &eapol_frame, &pmk)
+            .unwrap();
+
+        assert_eq!(bss.group_key_state().unsupported_kde_count(), 1);
+        assert_eq!(
+            bss.group_key_state().readiness(),
+            GroupKeyReadiness::Unavailable(WpaDecryptReason::MissingKeyMaterial)
+        );
+    }
+
+    #[test]
+    fn gtk_encrypted_key_data_with_no_usable_gtk_marks_missing_group_key_material() {
+        let (mut bss, bssid, station, pmk, ptk) = verified_bss();
+        let rsn_element_only = [0x30, 0x02, 0x01, 0x00, 0, 0, 0, 0];
+        let (message_3, eapol_frame) = encrypted_message_3(&ptk, rsn_element_only);
+
+        bss.observe_pairwise_key_with_mic(station, bssid, station, &message_3, &eapol_frame, &pmk)
+            .unwrap();
+
+        assert!(bss.group_key_state().gtks().is_empty());
+        assert_eq!(
+            bss.group_key_state().readiness(),
+            GroupKeyReadiness::Unavailable(WpaDecryptReason::MissingKeyMaterial)
+        );
     }
 }

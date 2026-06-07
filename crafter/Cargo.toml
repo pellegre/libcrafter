@@ -16,6 +16,7 @@ categories.workspace = true
 path = "src/lib.rs"
 
 [dependencies]
+aes = "0.8"
 hmac = "0.12"
 pcap = "2.4.0"
 pbkdf2 = "0.12"
