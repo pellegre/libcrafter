@@ -111,7 +111,7 @@ impl<'a> CcmpHeader<'a> {
     }
 }
 
-/// Result of attempting to decrypt one CCMP-protected unicast data frame.
+/// Result of attempting to decrypt one CCMP-protected data frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct CcmpDecryptResult {
     plaintext: Option<Vec<u8>>,
@@ -132,7 +132,7 @@ impl CcmpDecryptResult {
         }
     }
 
-    fn failed(
+    pub(crate) fn failed(
         packet_number: Option<u64>,
         key_id: Option<u8>,
         key_kind: Option<WpaKeyKind>,
@@ -185,6 +185,59 @@ pub(crate) fn decrypt_unicast(
     temporal_key: &[u8; WPA_PTK_TEMPORAL_KEY_LEN],
     last_packet_number: Option<u64>,
 ) -> CcmpDecryptResult {
+    decrypt_ccmp(
+        dot11,
+        encrypted_body,
+        temporal_key,
+        WpaKeyKind::Pairwise,
+        last_packet_number,
+    )
+}
+
+/// Decrypt one WPA2-PSK CCMP-128 protected group-addressed data frame.
+pub(crate) fn decrypt_group(
+    dot11: &Dot11,
+    encrypted_body: &[u8],
+    temporal_key: &[u8],
+    last_packet_number: Option<u64>,
+) -> CcmpDecryptResult {
+    let ccmp = match CcmpHeader::parse(encrypted_body) {
+        Ok(ccmp) => ccmp,
+        Err(_) => {
+            return CcmpDecryptResult::failed(None, None, None, WpaDecryptReason::MalformedFrame);
+        }
+    };
+    let packet_number = ccmp.packet_number();
+    let key_id = ccmp.key_id();
+    let key_kind = ccmp
+        .key_kind_for_dot11(dot11)
+        .unwrap_or(WpaKeyKind::Unknown);
+
+    let Ok(temporal_key) = <&[u8; WPA_PTK_TEMPORAL_KEY_LEN]>::try_from(temporal_key) else {
+        return CcmpDecryptResult::failed(
+            Some(packet_number),
+            Some(key_id),
+            Some(key_kind),
+            WpaDecryptReason::MissingKeyMaterial,
+        );
+    };
+
+    decrypt_parsed_ccmp(
+        dot11,
+        &ccmp,
+        temporal_key,
+        WpaKeyKind::Group,
+        last_packet_number,
+    )
+}
+
+fn decrypt_ccmp(
+    dot11: &Dot11,
+    encrypted_body: &[u8],
+    temporal_key: &[u8; WPA_PTK_TEMPORAL_KEY_LEN],
+    expected_key_kind: WpaKeyKind,
+    last_packet_number: Option<u64>,
+) -> CcmpDecryptResult {
     let ccmp = match CcmpHeader::parse(encrypted_body) {
         Ok(ccmp) => ccmp,
         Err(_) => {
@@ -192,13 +245,29 @@ pub(crate) fn decrypt_unicast(
         }
     };
 
+    decrypt_parsed_ccmp(
+        dot11,
+        &ccmp,
+        temporal_key,
+        expected_key_kind,
+        last_packet_number,
+    )
+}
+
+fn decrypt_parsed_ccmp(
+    dot11: &Dot11,
+    ccmp: &CcmpHeader<'_>,
+    temporal_key: &[u8; WPA_PTK_TEMPORAL_KEY_LEN],
+    expected_key_kind: WpaKeyKind,
+    last_packet_number: Option<u64>,
+) -> CcmpDecryptResult {
     let packet_number = ccmp.packet_number();
     let key_id = ccmp.key_id();
     let key_kind = ccmp
         .key_kind_for_dot11(dot11)
         .unwrap_or(WpaKeyKind::Unknown);
 
-    if key_kind != WpaKeyKind::Pairwise {
+    if key_kind != expected_key_kind {
         return CcmpDecryptResult::failed(
             Some(packet_number),
             Some(key_id),
