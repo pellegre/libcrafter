@@ -682,3 +682,164 @@ mod ipv4_emit {
         }
     }
 }
+
+#[cfg(test)]
+mod ipv4_link_wrapper {
+    use super::super::{IpFragment, IpFragmentFamily, IpFragmentRange, IpFragmentReason};
+    use crate::wire::record::{PacketOrigin, PacketRecord};
+    use crate::{Ethernet, Ipv4, MacAddr, Packet, Raw, ETHERTYPE_IPV4};
+    use std::net::Ipv4Addr;
+
+    const MTU: usize = 36;
+    const PROTOCOL: u8 = 253;
+
+    fn source() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 28)
+    }
+
+    fn destination() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 28)
+    }
+
+    fn source_mac() -> MacAddr {
+        MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0x28])
+    }
+
+    fn destination_mac() -> MacAddr {
+        MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0x29])
+    }
+
+    fn oversized_ipv4_packet(payload: &[u8]) -> Packet {
+        Ipv4::with_addresses(source(), destination())
+            .protocol(PROTOCOL)
+            .identification(0x2828)
+            / Raw::from_bytes(payload)
+    }
+
+    fn raw_ipv4_record(payload: &[u8]) -> PacketRecord {
+        PacketRecord::new(oversized_ipv4_packet(payload))
+    }
+
+    fn ethernet_wrapped_ipv4_record(payload: &[u8]) -> PacketRecord {
+        PacketRecord::new(
+            Ethernet::new()
+                .src(source_mac())
+                .dst(destination_mac())
+                .ethertype(ETHERTYPE_IPV4)
+                / oversized_ipv4_packet(payload),
+        )
+    }
+
+    fn expected_fragments() -> [(usize, usize, u16, bool, u16); 3] {
+        [
+            (0, 16, 0, true, 36),
+            (16, 32, 2, true, 36),
+            (32, 34, 4, false, 22),
+        ]
+    }
+
+    fn assert_ipv4_fragment(
+        record: &PacketRecord,
+        payload: &[u8],
+        index: usize,
+        expected: (usize, usize, u16, bool, u16),
+    ) {
+        let (start, end, offset, more_fragments, total_len) = expected;
+        let packet = record.packet();
+        let ipv4 = packet.layer::<Ipv4>().unwrap();
+        let raw = packet.layer::<Raw>().unwrap();
+
+        assert_eq!(record.metadata().origin(), PacketOrigin::Transformed);
+        assert!(record.metadata().captured_bytes().is_none());
+        assert_eq!(ipv4.source(), source());
+        assert_eq!(ipv4.destination(), destination());
+        assert_eq!(ipv4.protocol_value(), PROTOCOL);
+        assert_eq!(ipv4.identification_value(), 0x2828);
+        assert_eq!(ipv4.fragment_offset_value(), offset);
+        assert_eq!(ipv4.has_more_fragments(), more_fragments);
+        assert_eq!(ipv4.total_length_value(), Some(total_len));
+        assert_eq!(raw.as_bytes(), &payload[start..end]);
+
+        let metadata = &record.metadata().ip_fragment_metadata()[0];
+        assert_eq!(metadata.family(), IpFragmentFamily::Ipv4);
+        assert_eq!(metadata.mtu(), MTU);
+        assert_eq!(metadata.identification(), 0x2828);
+        assert_eq!(metadata.fragment_offset(), offset);
+        assert_eq!(metadata.more_fragments(), more_fragments);
+        assert_eq!(metadata.fragment_count(), 3);
+        assert_eq!(metadata.fragment_index(), index);
+        assert_eq!(
+            metadata.byte_range(),
+            IpFragmentRange::new(start as u32, end as u32)
+        );
+        assert_eq!(metadata.original_len(), Some(payload.len() as u32));
+        assert_eq!(metadata.reason(), Some(&IpFragmentReason::Fragmented));
+    }
+
+    #[test]
+    fn raw_ipv4_fragmentation_emits_l3_records() {
+        let payload = (0u8..34).collect::<Vec<_>>();
+        let mut transform = IpFragment::new(MTU);
+
+        let output = transform
+            .fragment_record(raw_ipv4_record(&payload))
+            .unwrap();
+
+        assert_eq!(output.len(), 3);
+        assert_eq!(transform.emitted_count(), 3);
+
+        for (index, (record, expected)) in output
+            .records()
+            .iter()
+            .zip(expected_fragments())
+            .enumerate()
+        {
+            assert!(record.packet().layer::<Ethernet>().is_none());
+            assert_ipv4_fragment(record, &payload, index, expected);
+
+            let wire = record.packet().compile().unwrap();
+            assert_eq!(wire.as_bytes()[0] >> 4, 4);
+            assert_eq!(record.metadata().original_len(), Some(54));
+            assert_eq!(record.metadata().captured_len(), Some(54));
+            assert_eq!(record.metadata().emitted_len(), Some(u32::from(expected.4)));
+        }
+    }
+
+    #[test]
+    fn ethernet_wrapped_ipv4_fragmentation_preserves_link_wrapper_on_all_fragments() {
+        let payload = (0u8..34).collect::<Vec<_>>();
+        let mut transform = IpFragment::new(MTU);
+
+        let output = transform
+            .fragment_record(ethernet_wrapped_ipv4_record(&payload))
+            .unwrap();
+
+        assert_eq!(output.len(), 3);
+        assert_eq!(transform.emitted_count(), 3);
+
+        for (index, (record, expected)) in output
+            .records()
+            .iter()
+            .zip(expected_fragments())
+            .enumerate()
+        {
+            let ethernet = record.packet().layer::<Ethernet>().unwrap();
+            assert_eq!(ethernet.source(), Some(source_mac()));
+            assert_eq!(ethernet.destination(), Some(destination_mac()));
+            assert_eq!(ethernet.ethertype_value(), Some(ETHERTYPE_IPV4));
+            assert_ipv4_fragment(record, &payload, index, expected);
+
+            let wire = record.packet().compile().unwrap();
+            assert_eq!(&wire.as_bytes()[0..6], &destination_mac().octets());
+            assert_eq!(&wire.as_bytes()[6..12], &source_mac().octets());
+            assert_eq!(&wire.as_bytes()[12..14], &ETHERTYPE_IPV4.to_be_bytes());
+            assert_eq!(wire.as_bytes()[14] >> 4, 4);
+            assert_eq!(record.metadata().original_len(), Some(68));
+            assert_eq!(record.metadata().captured_len(), Some(68));
+            assert_eq!(
+                record.metadata().emitted_len(),
+                Some(u32::from(expected.4) + 14)
+            );
+        }
+    }
+}
