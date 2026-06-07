@@ -1762,3 +1762,288 @@ mod ipv4_link_wrapper {
         }
     }
 }
+
+#[cfg(test)]
+mod ipv6_emit {
+    use super::super::{
+        IpFragment, IpFragmentConfig, IpFragmentFamily, IpFragmentRange, IpFragmentReason,
+    };
+    use crate::wire::record::{PacketOrigin, PacketRecord};
+    use crate::{
+        Ethernet, Ipv6, Ipv6DestinationOptionsHeader, Ipv6FragmentHeader, MacAddr, Packet, Raw,
+        ETHERTYPE_IPV6, IPPROTO_IPV6_DSTOPTS, IPPROTO_IPV6_FRAGMENT, IPPROTO_UDP,
+    };
+    use std::net::Ipv6Addr;
+
+    const MTU: usize = 72;
+    const IDENTIFICATION: u32 = 0x3232_3232;
+
+    fn source() -> Ipv6Addr {
+        "2001:db8:32::1".parse().unwrap()
+    }
+
+    fn destination() -> Ipv6Addr {
+        "2001:db8:32::2".parse().unwrap()
+    }
+
+    fn source_mac() -> MacAddr {
+        MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x32, 0x01])
+    }
+
+    fn destination_mac() -> MacAddr {
+        MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x32, 0x02])
+    }
+
+    fn plain_packet(payload: &[u8]) -> Packet {
+        Ipv6::new()
+            .src(source())
+            .dst(destination())
+            .traffic_class(0xab)
+            .flow_label(0x0cdef)
+            .hop_limit(37)
+            .next_header(IPPROTO_UDP)
+            / Raw::from_bytes(payload)
+    }
+
+    fn extension_packet(payload: &[u8]) -> Packet {
+        Ipv6::new()
+            .src(source())
+            .dst(destination())
+            .next_header(IPPROTO_IPV6_DSTOPTS)
+            / Ipv6DestinationOptionsHeader::new().next_header(IPPROTO_UDP)
+            / Raw::from_bytes(payload)
+    }
+
+    fn ethernet_record(payload: &[u8]) -> PacketRecord {
+        PacketRecord::new(
+            Ethernet::new()
+                .src(source_mac())
+                .dst(destination_mac())
+                .ethertype(ETHERTYPE_IPV6)
+                / plain_packet(payload),
+        )
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct ExpectedFragment {
+        start: usize,
+        end: usize,
+        offset: u16,
+        more_fragments: bool,
+        payload_length: u16,
+    }
+
+    impl ExpectedFragment {
+        const fn new(
+            start: usize,
+            end: usize,
+            offset: u16,
+            more_fragments: bool,
+            payload_length: u16,
+        ) -> Self {
+            Self {
+                start,
+                end,
+                offset,
+                more_fragments,
+                payload_length,
+            }
+        }
+    }
+
+    fn assert_plain_ipv6_fragment(
+        record: &PacketRecord,
+        payload: &[u8],
+        index: usize,
+        fragment_count: usize,
+        expected: ExpectedFragment,
+        input_len: u32,
+        emitted_len: u32,
+        l3_offset: usize,
+    ) -> Vec<u8> {
+        let packet = record.packet();
+        let ipv6 = packet.layer::<Ipv6>().unwrap();
+        let fragment = packet.layer::<Ipv6FragmentHeader>().unwrap();
+        let raw = packet.layer::<Raw>().unwrap();
+
+        assert_eq!(record.metadata().origin(), PacketOrigin::Transformed);
+        assert!(record.metadata().captured_bytes().is_none());
+        assert_eq!(record.metadata().original_len(), Some(input_len));
+        assert_eq!(record.metadata().captured_len(), Some(input_len));
+        assert_eq!(record.metadata().emitted_len(), Some(emitted_len));
+
+        assert_eq!(ipv6.source(), source());
+        assert_eq!(ipv6.destination(), destination());
+        assert_eq!(ipv6.traffic_class_value(), 0xab);
+        assert_eq!(ipv6.flow_label_value(), 0x0cdef);
+        assert_eq!(ipv6.hop_limit_value(), 37);
+        assert_eq!(ipv6.next_header_value(), IPPROTO_IPV6_FRAGMENT);
+        assert_eq!(ipv6.payload_length_value(), Some(expected.payload_length));
+
+        assert_eq!(fragment.next_header_value(), IPPROTO_UDP);
+        assert_eq!(fragment.identification_value(), IDENTIFICATION);
+        assert_eq!(fragment.fragment_offset_value(), expected.offset);
+        assert_eq!(fragment.more_fragments_value(), expected.more_fragments);
+        assert!(fragment.reserved_fields_are_zero());
+        assert_eq!(raw.as_bytes(), &payload[expected.start..expected.end]);
+
+        let wire = packet.compile().unwrap();
+        assert_eq!(
+            &wire.as_bytes()[l3_offset + 4..l3_offset + 6],
+            &expected.payload_length.to_be_bytes()
+        );
+        assert_eq!(wire.as_bytes()[l3_offset + 6], IPPROTO_IPV6_FRAGMENT);
+        assert_eq!(wire.as_bytes()[l3_offset + 40], IPPROTO_UDP);
+        assert_eq!(
+            u16::from_be_bytes([
+                wire.as_bytes()[l3_offset + 42],
+                wire.as_bytes()[l3_offset + 43]
+            ]) >> 3,
+            expected.offset
+        );
+        assert_eq!(
+            wire.as_bytes()[l3_offset + 43] & 0x01 != 0,
+            expected.more_fragments
+        );
+
+        let metadata = &record.metadata().ip_fragment_metadata()[0];
+        assert_eq!(metadata.family(), IpFragmentFamily::Ipv6);
+        assert_eq!(metadata.mtu(), MTU);
+        assert_eq!(metadata.identification(), IDENTIFICATION);
+        assert_eq!(metadata.fragment_offset(), expected.offset);
+        assert_eq!(metadata.more_fragments(), expected.more_fragments);
+        assert_eq!(metadata.fragment_count(), fragment_count);
+        assert_eq!(metadata.fragment_index(), index);
+        assert_eq!(
+            metadata.byte_range(),
+            IpFragmentRange::new(expected.start as u32, expected.end as u32)
+        );
+        assert_eq!(metadata.original_len(), Some(payload.len() as u32));
+        assert_eq!(metadata.reason(), Some(&IpFragmentReason::Fragmented));
+
+        raw.as_bytes().to_vec()
+    }
+
+    #[test]
+    fn oversized_plain_ipv6_packet_emits_valid_fragment_headers() {
+        let payload = (0u8..73).collect::<Vec<_>>();
+        let config = IpFragmentConfig::new(MTU).ipv6_identification(IDENTIFICATION);
+        let mut transform = IpFragment::with_config(config);
+
+        let output = transform
+            .fragment_record(PacketRecord::new(plain_packet(&payload)))
+            .unwrap();
+
+        assert_eq!(output.len(), 4);
+        assert_eq!(transform.emitted_count(), 4);
+
+        let expected_fragments = [
+            ExpectedFragment::new(0, 24, 0, true, 32),
+            ExpectedFragment::new(24, 48, 3, true, 32),
+            ExpectedFragment::new(48, 72, 6, true, 32),
+            ExpectedFragment::new(72, 73, 9, false, 9),
+        ];
+        let mut reconstructed = Vec::new();
+        for (index, (record, expected)) in
+            output.records().iter().zip(expected_fragments).enumerate()
+        {
+            reconstructed.extend(assert_plain_ipv6_fragment(
+                record,
+                &payload,
+                index,
+                expected_fragments.len(),
+                expected,
+                40 + payload.len() as u32,
+                40 + u32::from(expected.payload_length),
+                0,
+            ));
+        }
+
+        assert_eq!(reconstructed, payload);
+    }
+
+    #[test]
+    fn supported_extension_chain_is_preserved_before_fragment_header() {
+        let payload = (0u8..49).collect::<Vec<_>>();
+        let config = IpFragmentConfig::new(80).ipv6_identification(IDENTIFICATION);
+        let mut transform = IpFragment::with_config(config);
+
+        let output = transform
+            .fragment_record(PacketRecord::new(extension_packet(&payload)))
+            .unwrap();
+
+        assert_eq!(output.len(), 3);
+        for (index, record) in output.records().iter().enumerate() {
+            let ipv6 = record.packet().layer::<Ipv6>().unwrap();
+            let destination_options = record
+                .packet()
+                .layer::<Ipv6DestinationOptionsHeader>()
+                .unwrap();
+            let fragment = record.packet().layer::<Ipv6FragmentHeader>().unwrap();
+            let raw = record.packet().layer::<Raw>().unwrap();
+
+            assert_eq!(ipv6.next_header_value(), IPPROTO_IPV6_DSTOPTS);
+            assert_eq!(
+                destination_options.next_header_value(),
+                IPPROTO_IPV6_FRAGMENT
+            );
+            assert_eq!(fragment.next_header_value(), IPPROTO_UDP);
+            assert_eq!(fragment.identification_value(), IDENTIFICATION);
+            assert_eq!(fragment.fragment_offset_value(), (index * 3) as u16);
+            assert_eq!(fragment.more_fragments_value(), index < 2);
+
+            let wire = record.packet().compile().unwrap();
+            assert!(wire.as_bytes().len() <= 80);
+            assert_eq!(wire.as_bytes()[6], IPPROTO_IPV6_DSTOPTS);
+            assert_eq!(wire.as_bytes()[40], IPPROTO_IPV6_FRAGMENT);
+            assert_eq!(wire.as_bytes()[48], IPPROTO_UDP);
+
+            let metadata = &record.metadata().ip_fragment_metadata()[0];
+            assert_eq!(metadata.family(), IpFragmentFamily::Ipv6);
+            assert_eq!(metadata.fragment_count(), 3);
+            assert_eq!(metadata.fragment_index(), index);
+            assert_eq!(metadata.original_len(), Some(payload.len() as u32));
+
+            let start = index * 24;
+            let end = if index < 2 { start + 24 } else { payload.len() };
+            assert_eq!(raw.as_bytes(), &payload[start..end]);
+        }
+    }
+
+    #[test]
+    fn ethernet_wrapped_ipv6_fragmentation_preserves_link_wrapper() {
+        let payload = (0u8..49).collect::<Vec<_>>();
+        let config = IpFragmentConfig::new(MTU).ipv6_identification(IDENTIFICATION);
+        let mut transform = IpFragment::with_config(config);
+
+        let output = transform
+            .fragment_record(ethernet_record(&payload))
+            .unwrap();
+
+        assert_eq!(output.len(), 3);
+        let expected_fragments = [
+            ExpectedFragment::new(0, 24, 0, true, 32),
+            ExpectedFragment::new(24, 48, 3, true, 32),
+            ExpectedFragment::new(48, 49, 6, false, 9),
+        ];
+        for (index, (record, expected)) in
+            output.records().iter().zip(expected_fragments).enumerate()
+        {
+            let ethernet = record.packet().layer::<Ethernet>().unwrap();
+            assert_eq!(ethernet.source(), Some(source_mac()));
+            assert_eq!(ethernet.destination(), Some(destination_mac()));
+            assert_eq!(ethernet.ethertype_value(), Some(ETHERTYPE_IPV6));
+
+            assert_plain_ipv6_fragment(
+                record,
+                &payload,
+                index,
+                expected_fragments.len(),
+                expected,
+                14 + 40 + payload.len() as u32,
+                14 + 40 + u32::from(expected.payload_length),
+                14,
+            );
+        }
+    }
+}
