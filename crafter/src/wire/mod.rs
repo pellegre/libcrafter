@@ -34,7 +34,11 @@ pub mod writer;
 pub use backend::raw_socket::RawSocketWriter;
 pub use dot11_metadata::Dot11Metadata;
 pub use error::{Result, WireError};
-pub use ip::{IpDefrag, IpDefragConfig, IpFragment, IpFragmentConfig};
+pub use ip::{
+    IpDefrag, IpDefragConfig, IpDefragEvictionReason, IpDefragMetadata, IpDefragOverlapStatus,
+    IpFragment, IpFragmentConfig, IpFragmentFamily, IpFragmentMetadata, IpFragmentRange,
+    IpFragmentReason,
+};
 pub use packet_wire::{
     OpenedPacketSource, OpenedPacketWriter, PacketWire, PacketWireBuilder, PacketWireTarget,
     RawSocketWireBuilder,

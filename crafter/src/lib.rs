@@ -401,14 +401,17 @@ pub use pcap::{
 pub use wire::Sniffer;
 pub use wire::{
     derive_pmk, derive_ptk, BackendKind, BluetoothMetadata, Dot11Metadata, DropAllTransform,
-    DuplicateTransform, MediumMetadata, MemoryPacketWriter, MemoryWrite, OpenedPacketSource,
-    OpenedPacketWriter, PacketMetadata, PacketOrigin, PacketRecord, PacketSource, PacketTransform,
-    PacketWire, PacketWireBuilder, PacketWireTarget, PacketWriter, PairwiseTransientKey,
-    PassThroughTransform, Pmk, RadioMetadata, RawSocketWireBuilder, RawSocketWriter, SnifferCancel,
-    SnifferHandle, TraceAppendTransform, TransformOutput, TransformTrace, Transmitter,
-    VecPacketSource, WifiDecryptState, WifiMetadata, WifiProtectionStatus, WireError, WpaAkm,
-    WpaCipher, WpaCredentialStatus, WpaDecrypt, WpaDecryptConfig, WpaDecryptReason,
-    WpaHandshakeStatus, WpaKeyKind, WpaMetadata, WpaNetwork, WriteReport,
+    DuplicateTransform, IpDefrag, IpDefragConfig, IpDefragEvictionReason, IpDefragMetadata,
+    IpDefragOverlapStatus, IpFragment, IpFragmentConfig, IpFragmentFamily, IpFragmentMetadata,
+    IpFragmentRange, IpFragmentReason, MediumMetadata, MemoryPacketWriter, MemoryWrite,
+    OpenedPacketSource, OpenedPacketWriter, PacketMetadata, PacketOrigin, PacketRecord,
+    PacketSource, PacketTransform, PacketWire, PacketWireBuilder, PacketWireTarget, PacketWriter,
+    PairwiseTransientKey, PassThroughTransform, Pmk, RadioMetadata, RawSocketWireBuilder,
+    RawSocketWriter, SnifferCancel, SnifferHandle, TraceAppendTransform, TransformOutput,
+    TransformTrace, Transmitter, VecPacketSource, WifiDecryptState, WifiMetadata,
+    WifiProtectionStatus, WireError, WpaAkm, WpaCipher, WpaCredentialStatus, WpaDecrypt,
+    WpaDecryptConfig, WpaDecryptReason, WpaHandshakeStatus, WpaKeyKind, WpaMetadata, WpaNetwork,
+    WriteReport,
 };
 
 /// Core packet and protocol APIs.
@@ -731,11 +734,13 @@ pub mod prelude {
         WpaNetwork, WriteReport,
     };
     pub use crate::{
-        BackendKind, BluetoothMetadata, DropAllTransform, DuplicateTransform, MediumMetadata,
-        MemoryPacketWriter, MemoryWrite, OpenedPacketSource, OpenedPacketWriter, PacketMetadata,
-        PacketOrigin, PacketRecord, PacketSource, PacketTransform, PacketWire, PacketWireBuilder,
-        PacketWireTarget, PacketWriter, PassThroughTransform, RadioMetadata, RawSocketWireBuilder,
-        RawSocketWriter, SnifferCancel, SnifferHandle, TraceAppendTransform, TransformOutput,
-        TransformTrace,
+        BackendKind, BluetoothMetadata, DropAllTransform, DuplicateTransform, IpDefrag,
+        IpDefragConfig, IpDefragEvictionReason, IpDefragMetadata, IpDefragOverlapStatus,
+        IpFragment, IpFragmentConfig, IpFragmentFamily, IpFragmentMetadata, IpFragmentRange,
+        IpFragmentReason, MediumMetadata, MemoryPacketWriter, MemoryWrite, OpenedPacketSource,
+        OpenedPacketWriter, PacketMetadata, PacketOrigin, PacketRecord, PacketSource,
+        PacketTransform, PacketWire, PacketWireBuilder, PacketWireTarget, PacketWriter,
+        PassThroughTransform, RadioMetadata, RawSocketWireBuilder, RawSocketWriter, SnifferCancel,
+        SnifferHandle, TraceAppendTransform, TransformOutput, TransformTrace,
     };
 }
