@@ -468,6 +468,498 @@ pub(super) mod ipv4_planner {
     }
 }
 
+pub(super) mod ipv6_planner {
+    #![allow(dead_code)]
+
+    use super::super::ipv6::{Ipv6FragmentExtensionContext, Ipv6FragmentView};
+    use super::super::metadata::IpFragmentRange;
+    use crate::{CrafterError, Result};
+
+    const IPV6_HEADER_LEN: usize = 40;
+    const IPV6_FRAGMENT_HEADER_LEN: usize = 8;
+    const IPV6_MAX_PAYLOAD_LEN: usize = 65_535;
+    const IPV6_MAX_FRAGMENT_OFFSET: u32 = 0x1fff;
+    const IPV6_FRAGMENT_ALIGNMENT: usize = 8;
+
+    /// IPv6 source-side header lengths that influence Fragment Header planning.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub(in crate::wire::ip) struct Ipv6FragmentHeaderContext {
+        unfragmentable_len: usize,
+    }
+
+    impl Ipv6FragmentHeaderContext {
+        /// Create IPv6 planning context from the bytes before the Fragment Header.
+        pub(in crate::wire::ip) const fn new(unfragmentable_len: usize) -> Self {
+            Self { unfragmentable_len }
+        }
+
+        /// Create planning context from an already extracted supported scope.
+        pub(in crate::wire::ip) fn from_extension_context(
+            extension_chain: &Ipv6FragmentExtensionContext,
+        ) -> Self {
+            Self::new(extension_chain.unfragmentable().len())
+        }
+
+        /// Create planning context from an already extracted IPv6 Fragment Header view.
+        pub(in crate::wire::ip) fn from_fragment_view(view: &Ipv6FragmentView) -> Self {
+            Self::from_extension_context(view.extension_chain())
+        }
+
+        /// Extension bytes that remain before the inserted Fragment Header.
+        pub(in crate::wire::ip) const fn unfragmentable_len(self) -> usize {
+            self.unfragmentable_len
+        }
+
+        /// IPv6 fixed header plus supported unfragmentable extension headers.
+        pub(in crate::wire::ip) const fn per_fragment_header_len(self) -> usize {
+            IPV6_HEADER_LEN + self.unfragmentable_len
+        }
+
+        /// Per-fragment headers after the Fragment Header is inserted.
+        pub(in crate::wire::ip) const fn per_fragment_header_len_with_fragment_header(
+            self,
+        ) -> usize {
+            IPV6_HEADER_LEN + self.unfragmentable_len + IPV6_FRAGMENT_HEADER_LEN
+        }
+    }
+
+    /// Deterministic IPv6 source-side fragmentation plan for one fragmentable part.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub(in crate::wire::ip) struct Ipv6FragmentPlan {
+        header: Ipv6FragmentHeaderContext,
+        fragmentable_payload_len: usize,
+        mtu: usize,
+        max_fragmentable_payload_len: usize,
+        aligned_fragmentable_payload_len: usize,
+        fragments: Vec<Ipv6PlannedFragment>,
+    }
+
+    impl Ipv6FragmentPlan {
+        /// Plan IPv6 fragments for supported unfragmentable headers, payload, and MTU.
+        pub(in crate::wire::ip) fn new(
+            header: Ipv6FragmentHeaderContext,
+            fragmentable_payload_len: usize,
+            mtu: usize,
+        ) -> Result<Self> {
+            validate_ipv6_fragment_inputs(header, fragmentable_payload_len, mtu)?;
+
+            let payload_capacity = mtu - header.per_fragment_header_len_with_fragment_header();
+            let max_ipv6_fragment_payload_len =
+                IPV6_MAX_PAYLOAD_LEN - header.unfragmentable_len() - IPV6_FRAGMENT_HEADER_LEN;
+            let max_fragmentable_payload_len = payload_capacity.min(max_ipv6_fragment_payload_len);
+            let aligned_fragmentable_payload_len =
+                align_down(max_fragmentable_payload_len, IPV6_FRAGMENT_ALIGNMENT);
+            if fragmentable_payload_len > max_fragmentable_payload_len
+                && aligned_fragmentable_payload_len == 0
+            {
+                return Err(unfragmentable_alignment_room());
+            }
+            let fragments = plan_fragments(
+                fragmentable_payload_len,
+                max_fragmentable_payload_len,
+                aligned_fragmentable_payload_len,
+            )?;
+
+            Ok(Self {
+                header,
+                fragmentable_payload_len,
+                mtu,
+                max_fragmentable_payload_len,
+                aligned_fragmentable_payload_len,
+                fragments,
+            })
+        }
+
+        /// Header context used to produce this plan.
+        pub(in crate::wire::ip) const fn header(&self) -> Ipv6FragmentHeaderContext {
+            self.header
+        }
+
+        /// Source fragmentable payload length in bytes.
+        pub(in crate::wire::ip) const fn fragmentable_payload_len(&self) -> usize {
+            self.fragmentable_payload_len
+        }
+
+        /// MTU used to produce this plan.
+        pub(in crate::wire::ip) const fn mtu(&self) -> usize {
+            self.mtu
+        }
+
+        /// Maximum fragmentable bytes allowed in any emitted IPv6 fragment.
+        pub(in crate::wire::ip) const fn max_fragmentable_payload_len(&self) -> usize {
+            self.max_fragmentable_payload_len
+        }
+
+        /// 8-byte-aligned fragmentable bytes used for non-final fragments.
+        pub(in crate::wire::ip) const fn aligned_fragmentable_payload_len(&self) -> usize {
+            self.aligned_fragmentable_payload_len
+        }
+
+        /// Planned fragments in emission order.
+        pub(in crate::wire::ip) fn fragments(&self) -> &[Ipv6PlannedFragment] {
+            &self.fragments
+        }
+
+        /// Number of planned emitted records.
+        pub(in crate::wire::ip) fn fragment_count(&self) -> usize {
+            self.fragments.len()
+        }
+    }
+
+    /// One planned IPv6 fragmentable range and Fragment Header offset.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub(in crate::wire::ip) struct Ipv6PlannedFragment {
+        fragmentable_range: IpFragmentRange,
+        fragment_offset: u16,
+        more_fragments: bool,
+    }
+
+    impl Ipv6PlannedFragment {
+        fn new(
+            fragmentable_start: usize,
+            fragmentable_end: usize,
+            more_fragments: bool,
+        ) -> Result<Self> {
+            if fragmentable_start > fragmentable_end {
+                return Err(CrafterError::invalid_field_value(
+                    "ipv6.fragmentable_range",
+                    "fragmentable range start must not exceed end",
+                ));
+            }
+            if fragmentable_start % IPV6_FRAGMENT_ALIGNMENT != 0 {
+                return Err(CrafterError::invalid_field_value(
+                    "ipv6.fragment_offset",
+                    "planned fragment offset must be 8-byte aligned",
+                ));
+            }
+
+            let fragmentable_len = fragmentable_end - fragmentable_start;
+            if more_fragments && fragmentable_len % IPV6_FRAGMENT_ALIGNMENT != 0 {
+                return Err(CrafterError::invalid_field_value(
+                    "ipv6.fragmentable_length",
+                    "non-final fragmentable payload length must be 8-byte aligned",
+                ));
+            }
+
+            let fragmentable_start = u32::try_from(fragmentable_start).map_err(|_| {
+                CrafterError::invalid_field_value(
+                    "ipv6.fragmentable_length",
+                    "fragmentable payload length exceeds IPv6 payload length limit",
+                )
+            })?;
+            let fragmentable_end = u32::try_from(fragmentable_end).map_err(|_| {
+                CrafterError::invalid_field_value(
+                    "ipv6.fragmentable_length",
+                    "fragmentable payload length exceeds IPv6 payload length limit",
+                )
+            })?;
+            let offset_units = fragmentable_start / IPV6_FRAGMENT_ALIGNMENT as u32;
+            if offset_units > IPV6_MAX_FRAGMENT_OFFSET {
+                return Err(fragment_offset_overflow());
+            }
+
+            Ok(Self {
+                fragmentable_range: IpFragmentRange::new(fragmentable_start, fragmentable_end),
+                fragment_offset: offset_units as u16,
+                more_fragments,
+            })
+        }
+
+        /// Byte range in the input packet's fragmentable part.
+        pub(in crate::wire::ip) const fn fragmentable_range(self) -> IpFragmentRange {
+            self.fragmentable_range
+        }
+
+        /// IPv6 Fragment Header Fragment Offset field value in 8-byte units.
+        pub(in crate::wire::ip) const fn fragment_offset(self) -> u16 {
+            self.fragment_offset
+        }
+
+        /// Whether this planned fragment should carry More Fragments.
+        pub(in crate::wire::ip) const fn more_fragments(self) -> bool {
+            self.more_fragments
+        }
+    }
+
+    fn validate_ipv6_fragment_inputs(
+        header: Ipv6FragmentHeaderContext,
+        fragmentable_payload_len: usize,
+        mtu: usize,
+    ) -> Result<()> {
+        if header.unfragmentable_len() % IPV6_FRAGMENT_ALIGNMENT != 0 {
+            return Err(CrafterError::invalid_field_value(
+                "ipv6.unfragmentable_length",
+                "must be a multiple of 8 bytes for the supported extension-header scope",
+            ));
+        }
+
+        let original_payload_len = header
+            .unfragmentable_len()
+            .checked_add(fragmentable_payload_len)
+            .ok_or_else(fragmentable_payload_overflow)?;
+        if original_payload_len > IPV6_MAX_PAYLOAD_LEN {
+            return Err(fragmentable_payload_overflow());
+        }
+
+        let fragment_header_payload_len = header
+            .unfragmentable_len()
+            .checked_add(IPV6_FRAGMENT_HEADER_LEN)
+            .ok_or_else(unfragmentable_length_overflow)?;
+        if fragment_header_payload_len > IPV6_MAX_PAYLOAD_LEN {
+            return Err(unfragmentable_length_overflow());
+        }
+
+        let payload_capacity = mtu
+            .checked_sub(header.per_fragment_header_len_with_fragment_header())
+            .ok_or_else(mtu_too_small)?;
+        if payload_capacity < IPV6_FRAGMENT_ALIGNMENT {
+            return Err(mtu_too_small());
+        }
+
+        Ok(())
+    }
+
+    fn plan_fragments(
+        fragmentable_payload_len: usize,
+        max_fragmentable_payload_len: usize,
+        aligned_fragmentable_payload_len: usize,
+    ) -> Result<Vec<Ipv6PlannedFragment>> {
+        if fragmentable_payload_len == 0 {
+            return Ok(vec![Ipv6PlannedFragment::new(0, 0, false)?]);
+        }
+
+        let mut fragments = Vec::new();
+        let mut fragmentable_start = 0usize;
+        while fragmentable_start < fragmentable_payload_len {
+            let remaining = fragmentable_payload_len - fragmentable_start;
+            let fragmentable_len = if remaining <= max_fragmentable_payload_len {
+                remaining
+            } else {
+                aligned_fragmentable_payload_len
+            };
+            let fragmentable_end = fragmentable_start + fragmentable_len;
+            let more_fragments = fragmentable_end < fragmentable_payload_len;
+            fragments.push(Ipv6PlannedFragment::new(
+                fragmentable_start,
+                fragmentable_end,
+                more_fragments,
+            )?);
+            fragmentable_start = fragmentable_end;
+        }
+
+        Ok(fragments)
+    }
+
+    const fn align_down(value: usize, alignment: usize) -> usize {
+        value - (value % alignment)
+    }
+
+    fn mtu_too_small() -> CrafterError {
+        CrafterError::invalid_field_value(
+            "ip.fragment.mtu",
+            "must fit the IPv6 fixed header, unfragmentable headers, Fragment Header, and one aligned 8-byte fragment unit",
+        )
+    }
+
+    fn fragmentable_payload_overflow() -> CrafterError {
+        CrafterError::invalid_field_value(
+            "ipv6.fragmentable_length",
+            "fragmentable payload length exceeds IPv6 payload length limit",
+        )
+    }
+
+    fn unfragmentable_length_overflow() -> CrafterError {
+        CrafterError::invalid_field_value(
+            "ipv6.unfragmentable_length",
+            "unfragmentable headers plus Fragment Header exceed IPv6 payload length limit",
+        )
+    }
+
+    fn unfragmentable_alignment_room() -> CrafterError {
+        CrafterError::invalid_field_value(
+            "ipv6.unfragmentable_length",
+            "unfragmentable headers plus Fragment Header leave no aligned non-final fragmentable payload room",
+        )
+    }
+
+    fn fragment_offset_overflow() -> CrafterError {
+        CrafterError::invalid_field_value(
+            "ipv6.fragment_offset",
+            "planned fragment offset must fit in 13 bits",
+        )
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn context(unfragmentable_len: usize) -> Ipv6FragmentHeaderContext {
+            Ipv6FragmentHeaderContext::new(unfragmentable_len)
+        }
+
+        fn range(start: u32, end: u32) -> IpFragmentRange {
+            IpFragmentRange::new(start, end)
+        }
+
+        fn assert_invalid_field(error: CrafterError, expected_field: &'static str) {
+            match error {
+                CrafterError::InvalidFieldValue { field, .. } => assert_eq!(field, expected_field),
+                other => panic!("expected InvalidFieldValue, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn plans_single_fragment_when_fragmentable_payload_fits_mtu() {
+            let header = context(0);
+            let plan = Ipv6FragmentPlan::new(header, 120, 168).unwrap();
+
+            assert_eq!(plan.header(), header);
+            assert_eq!(plan.fragmentable_payload_len(), 120);
+            assert_eq!(plan.mtu(), 168);
+            assert_eq!(plan.max_fragmentable_payload_len(), 120);
+            assert_eq!(plan.aligned_fragmentable_payload_len(), 120);
+            assert_eq!(plan.fragment_count(), 1);
+            let fragment = plan.fragments()[0];
+            assert_eq!(fragment.fragmentable_range(), range(0, 120));
+            assert_eq!(fragment.fragment_offset(), 0);
+            assert!(!fragment.more_fragments());
+        }
+
+        #[test]
+        fn plans_8_byte_aligned_non_final_fragments() {
+            let plan = Ipv6FragmentPlan::new(context(0), 73, 72).unwrap();
+
+            assert_eq!(plan.max_fragmentable_payload_len(), 24);
+            assert_eq!(plan.aligned_fragmentable_payload_len(), 24);
+            assert_eq!(plan.fragment_count(), 4);
+
+            let fragments = plan.fragments();
+            assert_eq!(fragments[0].fragmentable_range(), range(0, 24));
+            assert_eq!(fragments[0].fragment_offset(), 0);
+            assert!(fragments[0].more_fragments());
+
+            assert_eq!(fragments[1].fragmentable_range(), range(24, 48));
+            assert_eq!(fragments[1].fragment_offset(), 3);
+            assert!(fragments[1].more_fragments());
+
+            assert_eq!(fragments[2].fragmentable_range(), range(48, 72));
+            assert_eq!(fragments[2].fragment_offset(), 6);
+            assert!(fragments[2].more_fragments());
+
+            assert_eq!(fragments[3].fragmentable_range(), range(72, 73));
+            assert_eq!(fragments[3].fragment_offset(), 9);
+            assert!(!fragments[3].more_fragments());
+        }
+
+        #[test]
+        fn accounts_for_unfragmentable_extension_headers_before_fragment_header() {
+            let header = context(24);
+            let plan = Ipv6FragmentPlan::new(header, 49, 96).unwrap();
+
+            assert_eq!(header.unfragmentable_len(), 24);
+            assert_eq!(header.per_fragment_header_len(), 64);
+            assert_eq!(header.per_fragment_header_len_with_fragment_header(), 72);
+            assert_eq!(plan.max_fragmentable_payload_len(), 24);
+            assert_eq!(plan.fragment_count(), 3);
+            assert_eq!(plan.fragments()[0].fragmentable_range(), range(0, 24));
+            assert_eq!(plan.fragments()[1].fragmentable_range(), range(24, 48));
+            assert_eq!(plan.fragments()[2].fragmentable_range(), range(48, 49));
+        }
+
+        #[test]
+        fn builds_context_from_existing_supported_fragment_header_scope() {
+            use super::super::super::ipv6::{extract_ipv6_fragment, Ipv6FragmentExtract};
+            use crate::wire::record::PacketRecord;
+            use crate::{
+                Ipv6, Ipv6DestinationOptionsHeader, Ipv6FragmentHeader, Ipv6HopByHopOptionsHeader,
+                Ipv6RoutingHeader, Raw, IPPROTO_UDP,
+            };
+
+            let packet = Ipv6::new()
+                .src("2001:db8:30::1".parse().unwrap())
+                .dst("2001:db8:30::2".parse().unwrap())
+                / Ipv6HopByHopOptionsHeader::new()
+                / Ipv6DestinationOptionsHeader::new()
+                / Ipv6RoutingHeader::new()
+                / Ipv6FragmentHeader::new()
+                    .next_header(IPPROTO_UDP)
+                    .identification(0x3030_3030)
+                    .more_fragments(true)
+                / Raw::from_bytes(b"abcdefgh");
+            let record = PacketRecord::new(packet);
+            let view = match extract_ipv6_fragment(&record).unwrap() {
+                Ipv6FragmentExtract::View(view) => view,
+                Ipv6FragmentExtract::PassThrough(pass_through) => {
+                    panic!("expected supported Fragment Header scope, got {pass_through:?}")
+                }
+            };
+
+            let header = Ipv6FragmentHeaderContext::from_fragment_view(&view);
+            let plan =
+                Ipv6FragmentPlan::new(header, view.fragmentable_payload().len(), 88).unwrap();
+
+            assert_eq!(header.unfragmentable_len(), 24);
+            assert_eq!(plan.fragment_count(), 1);
+            assert_eq!(plan.fragments()[0].fragmentable_range(), range(0, 8));
+        }
+
+        #[test]
+        fn zero_fragmentable_payload_still_gets_one_deterministic_record() {
+            let plan = Ipv6FragmentPlan::new(context(0), 0, 56).unwrap();
+
+            assert_eq!(plan.fragment_count(), 1);
+            let fragment = plan.fragments()[0];
+            assert_eq!(fragment.fragmentable_range(), range(0, 0));
+            assert_eq!(fragment.fragment_offset(), 0);
+            assert!(!fragment.more_fragments());
+        }
+
+        #[test]
+        fn rejects_mtu_without_required_headers_and_aligned_fragment_unit() {
+            let error = Ipv6FragmentPlan::new(context(16), 1, 71).unwrap_err();
+
+            assert_invalid_field(error, "ip.fragment.mtu");
+        }
+
+        #[test]
+        fn rejects_unaligned_unfragmentable_header_length() {
+            let error = Ipv6FragmentPlan::new(context(10), 1, 80).unwrap_err();
+
+            assert_invalid_field(error, "ipv6.unfragmentable_length");
+        }
+
+        #[test]
+        fn rejects_fragmentable_payloads_that_exceed_ipv6_payload_length() {
+            let error = Ipv6FragmentPlan::new(context(8), 65_528, 1280).unwrap_err();
+
+            assert_invalid_field(error, "ipv6.fragmentable_length");
+        }
+
+        #[test]
+        fn rejects_unfragmentable_headers_that_leave_no_fragment_header_room() {
+            let error = Ipv6FragmentPlan::new(context(65_528), 0, 65_584).unwrap_err();
+
+            assert_invalid_field(error, "ipv6.unfragmentable_length");
+        }
+
+        #[test]
+        fn rejects_unfragmentable_headers_that_leave_no_aligned_non_final_room() {
+            let error = Ipv6FragmentPlan::new(context(65_520), 8, 65_576).unwrap_err();
+
+            assert_invalid_field(error, "ipv6.unfragmentable_length");
+        }
+
+        #[test]
+        fn planned_fragment_validation_rejects_unaligned_non_final_ranges() {
+            let unaligned_offset = Ipv6PlannedFragment::new(1, 9, true).unwrap_err();
+            assert_invalid_field(unaligned_offset, "ipv6.fragment_offset");
+
+            let unaligned_len = Ipv6PlannedFragment::new(0, 9, true).unwrap_err();
+            assert_invalid_field(unaligned_len, "ipv6.fragmentable_length");
+        }
+    }
+}
+
 #[cfg(test)]
 mod ipv4_df {
     use super::super::{
