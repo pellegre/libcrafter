@@ -269,8 +269,8 @@ let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, packet.compile()?.as_by
 
 ## Fragment Header
 
-`Ipv6FragmentHeader` exposes the Fragment Header fields without implementing
-fragment generation or reassembly:
+`Ipv6FragmentHeader` exposes the Fragment Header fields used by packet-layer
+inspection and by the packet-stream fragment transforms:
 
 - `next_header` / `nh`
 - `reserved`
@@ -308,6 +308,37 @@ let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes.as_bytes())?;
 let fragment = decoded.layer::<Ipv6FragmentHeader>().unwrap();
 assert_eq!(fragment.fragment_status(), Ipv6FragmentHeaderStatus::Initial);
 ```
+
+## Fragment Header Extension Scope
+
+The packet-stream `IpDefrag` and `IpFragment` transforms use a deliberately
+narrow IPv6 extension scope for Fragment Header handling. Source authority is
+RFC 8200 for the Fragment Header and extension-chain repair rules, RFC 6946 for
+atomic fragments, RFC 7112 for first-fragment header-chain requirements, and
+[`docs/protocols/ip-fragment-source-manifest.md`](protocols/ip-fragment-source-manifest.md)
+for the transform-specific manifest.
+
+Supported scope:
+
+- Plain IPv6 with a Fragment Header directly after the fixed header.
+- Hop-by-Hop Options, Destination Options, and Routing headers before the
+  Fragment Header. These are preserved as the unfragmentable part so the
+  Fragment Header can be removed and the previous Next Header byte can be
+  repaired from the offset-zero fragment.
+
+Unsupported extension scope:
+
+- AH, ESP, Mobility Header, HIP, Shim6, experimental extension-header values,
+  and other known extension-header values that the transform cannot safely
+  repair around a Fragment Header.
+- Unknown Next Header values are preserved as ordinary unsupported payloads
+  unless a caller installs custom registry support.
+
+Unsupported extension chains are not partially rewritten. The transforms pass
+them through unchanged and attach a transform trace with the note
+`unsupported IPv6 extension chain outside Fragment Header extension scope`.
+Malformed supported chains still return structured errors with the usual
+context, required, and available lengths.
 
 ## Malformed Decode Policy
 

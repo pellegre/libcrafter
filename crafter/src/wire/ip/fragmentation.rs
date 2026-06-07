@@ -1,5 +1,6 @@
 //! Transmit-side IP fragmentation transform.
 
+use super::ipv6::{extract_ipv6_fragment, Ipv6FragmentExtract};
 use super::IpFragmentConfig;
 use crate::wire::record::{PacketRecord, TransformTrace};
 use crate::wire::transform::{PacketTransform, TransformOutput};
@@ -74,10 +75,17 @@ impl PacketTransform for IpFragment {
         self.input_count += 1;
 
         let mut record = record;
-        if self.config.traces_passthrough() {
+        let trace_note = match extract_ipv6_fragment(&record)? {
+            Ipv6FragmentExtract::PassThrough(pass_through) => pass_through.reason().trace_note(),
+            Ipv6FragmentExtract::View(_) => None,
+        };
+
+        if let Some(note) =
+            trace_note.or_else(|| self.config.traces_passthrough().then_some("passthrough"))
+        {
             record
                 .metadata_mut()
-                .push_transform_trace(TransformTrace::new(self.name()).with_note("passthrough"));
+                .push_transform_trace(TransformTrace::new(self.name()).with_note(note));
         }
 
         emit(record)?;
