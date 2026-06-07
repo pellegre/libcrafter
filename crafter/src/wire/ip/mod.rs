@@ -9,6 +9,7 @@
 
 mod config;
 mod defrag;
+mod fragment;
 mod fragmentation;
 mod ipv4;
 mod ipv6;
