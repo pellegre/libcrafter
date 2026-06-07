@@ -27,6 +27,7 @@ pub mod transform;
 #[cfg(test)]
 mod transform_contract;
 pub mod transmitter;
+pub mod wpa;
 pub mod writer;
 
 pub use backend::raw_socket::RawSocketWriter;
@@ -47,4 +48,8 @@ pub use transform::{
     TraceAppendTransform, TransformOutput,
 };
 pub use transmitter::Transmitter;
+pub use wpa::{
+    WpaAkm, WpaCipher, WpaDecrypt, WpaDecryptConfig, WpaDecryptReason, WpaHandshakeStatus,
+    WpaKeyKind, WpaMetadata, WpaNetwork,
+};
 pub use writer::{MemoryPacketWriter, MemoryWrite, PacketWriter, WriteReport};
