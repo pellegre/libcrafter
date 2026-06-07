@@ -19,6 +19,7 @@
 pub mod backend;
 pub mod dot11_metadata;
 mod error;
+pub mod ip;
 pub mod packet_wire;
 pub mod record;
 pub mod sniffer;
@@ -33,6 +34,7 @@ pub mod writer;
 pub use backend::raw_socket::RawSocketWriter;
 pub use dot11_metadata::Dot11Metadata;
 pub use error::{Result, WireError};
+pub use ip::{IpDefrag, IpDefragConfig, IpFragment, IpFragmentConfig};
 pub use packet_wire::{
     OpenedPacketSource, OpenedPacketWriter, PacketWire, PacketWireBuilder, PacketWireTarget,
     RawSocketWireBuilder,
