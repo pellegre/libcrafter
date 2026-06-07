@@ -42,8 +42,24 @@ profiles:
     purpose: Scapy-backed byte and metadata contract for transform-only offline cases.
   - name: ip-fragment-pcap
     purpose: Fragment pcap fixtures and reassembled payload hash comparison.
+  - name: fragmentation-smoke
+    purpose: Focused pcap dry-run planning for deterministic IP fragment fixture coverage.
   - name: ip-fragment-lab-dry-run
     purpose: Provider-backed Hetzner, QEMU, and VirtualBox constrained-MTU dry-run planning.
+
+pcap_fixtures:
+  - name: raw-ipv4-ipfragment-generated
+    path: crafter/tests/fixtures/pcaps/raw-ipv4-ipfragment-generated.pcap
+    source: IpFragment
+    transform: IpFragment_then_IpDefrag
+    profile: fragmentation-smoke
+    expected: checked-in pcap bytes match deterministic IpFragment output and reassemble through IpDefrag.
+  - name: raw-ipv6-fragment-oracle-reference
+    path: crafter/tests/fixtures/pcaps/raw-ipv6-fragment-oracle-reference.pcap
+    source: oracle-scapy-reference
+    transform: IpDefrag
+    profile: fragmentation-smoke
+    expected: reference IPv6 fragment records reassemble through IpDefrag with the Fragment Header removed.
 
 behaviors:
   - name: ipv4_defrag_complete

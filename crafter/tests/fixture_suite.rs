@@ -608,6 +608,28 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         summary_path: None,
     },
     ValidFixtureCase {
+        name: "ipv4-fragment-ipfragment-generated-first",
+        path: "bytes/ipv4-fragment-ipfragment-generated-first.hex",
+        contents: FixtureContents::Hex(fixture_str!(
+            "bytes/ipv4-fragment-ipfragment-generated-first.hex"
+        )),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Raw],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ipv4-fragment-ipfragment-generated-final",
+        path: "bytes/ipv4-fragment-ipfragment-generated-final.hex",
+        contents: FixtureContents::Hex(fixture_str!(
+            "bytes/ipv4-fragment-ipfragment-generated-final.hex"
+        )),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Raw],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
         name: "ipv4-options-traceroute-udp-raw",
         path: "bytes/ipv4-options-traceroute-udp-raw.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-options-traceroute-udp-raw.hex")),
@@ -934,6 +956,36 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         preserve_exact_bytes: true,
         summary_path: Some("summaries/ipv6-fragment-non-initial-udp-raw.summary.txt"),
     },
+    ValidFixtureCase {
+        name: "ipv6-fragment-oracle-reference-first",
+        path: "bytes/ipv6-fragment-oracle-reference-first.hex",
+        contents: FixtureContents::Hex(fixture_str!(
+            "bytes/ipv6-fragment-oracle-reference-first.hex"
+        )),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv6)),
+        expected_layers: &[
+            ExpectedLayer::Ipv6,
+            ExpectedLayer::Ipv6Fragment,
+            ExpectedLayer::Raw,
+        ],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ipv6-fragment-oracle-reference-final",
+        path: "bytes/ipv6-fragment-oracle-reference-final.hex",
+        contents: FixtureContents::Hex(fixture_str!(
+            "bytes/ipv6-fragment-oracle-reference-final.hex"
+        )),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv6)),
+        expected_layers: &[
+            ExpectedLayer::Ipv6,
+            ExpectedLayer::Ipv6Fragment,
+            ExpectedLayer::Raw,
+        ],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
 ];
 
 const DOT11_FIXTURES: &[ValidFixtureCase] = &[
@@ -1187,6 +1239,27 @@ const PCAP_FIXTURES: &[PcapFixtureCase] = &[
         }],
     },
     PcapFixtureCase {
+        name: "raw-ipv4-ipfragment-generated",
+        path: "pcaps/raw-ipv4-ipfragment-generated.pcap",
+        contents: fixture_bytes!("pcaps/raw-ipv4-ipfragment-generated.pcap"),
+        pcap_link_type: PcapLinkType::RawIp,
+        link_type: LinkType::Raw,
+        timestamp_precision: TimestampPrecision::Microseconds,
+        coverage: PcapCoverageFamily::RawIpIpv4,
+        records: &[
+            PcapFixtureRecord {
+                seconds: 90,
+                fractional: 120_300,
+                fixture_name: "ipv4-fragment-ipfragment-generated-first",
+            },
+            PcapFixtureRecord {
+                seconds: 90,
+                fractional: 120_301,
+                fixture_name: "ipv4-fragment-ipfragment-generated-final",
+            },
+        ],
+    },
+    PcapFixtureCase {
         name: "raw-ipv6-icmp-echo-request",
         path: "pcaps/raw-ipv6-icmp-echo-request.pcap",
         contents: fixture_bytes!("pcaps/raw-ipv6-icmp-echo-request.pcap"),
@@ -1213,6 +1286,27 @@ const PCAP_FIXTURES: &[PcapFixtureCase] = &[
             fractional: 3,
             fixture_name: "ipv6-base-traffic-flow-udp-raw",
         }],
+    },
+    PcapFixtureCase {
+        name: "raw-ipv6-fragment-oracle-reference",
+        path: "pcaps/raw-ipv6-fragment-oracle-reference.pcap",
+        contents: fixture_bytes!("pcaps/raw-ipv6-fragment-oracle-reference.pcap"),
+        pcap_link_type: PcapLinkType::RawIp,
+        link_type: LinkType::Raw,
+        timestamp_precision: TimestampPrecision::Microseconds,
+        coverage: PcapCoverageFamily::RawIpIpv6,
+        records: &[
+            PcapFixtureRecord {
+                seconds: 91,
+                fractional: 120_300,
+                fixture_name: "ipv6-fragment-oracle-reference-first",
+            },
+            PcapFixtureRecord {
+                seconds: 91,
+                fractional: 120_301,
+                fixture_name: "ipv6-fragment-oracle-reference-final",
+            },
+        ],
     },
     PcapFixtureCase {
         name: "linux-sll-arp-who-has",
@@ -1464,7 +1558,9 @@ fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
         | "ipv4-fragment-defrag-missing-final"
         | "ipv4-fragment-defrag-missing-first"
         | "ipv4-fragment-defrag-overlap-conflict"
-        | "ipv4-fragment-defrag-overlap-first" => &[CoverageFamily::Ipv4Fragment],
+        | "ipv4-fragment-defrag-overlap-first"
+        | "ipv4-fragment-ipfragment-generated-first"
+        | "ipv4-fragment-ipfragment-generated-final" => &[CoverageFamily::Ipv4Fragment],
         "ipv4-options-traceroute-udp-raw" => &[CoverageFamily::Ipv4Options],
         "ipv4-tcp-syn-options" | "ipv4-tcp-syn-rich-options" => &[CoverageFamily::Ipv4TcpOptions],
         "ipv4-udp-dns-query-example-com" => &[CoverageFamily::Ipv4UdpDnsQuery],
@@ -1492,7 +1588,9 @@ fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
         "ipv6-tcp-raw" | "ipv6-tcp-rich-options" => &[CoverageFamily::Ipv6Tcp],
         "ipv6-fragment-udp-raw"
         | "ipv6-fragment-atomic-udp-raw"
-        | "ipv6-fragment-non-initial-udp-raw" => &[CoverageFamily::Ipv6ExtensionHeader],
+        | "ipv6-fragment-non-initial-udp-raw"
+        | "ipv6-fragment-oracle-reference-first"
+        | "ipv6-fragment-oracle-reference-final" => &[CoverageFamily::Ipv6ExtensionHeader],
         other => panic!("fixture {other} has no coverage-family mapping"),
     }
 }
@@ -1843,6 +1941,81 @@ fn assert_ipv4_fragment_defrag_fixture_fields(case: &ValidFixtureCase, packet: &
     assert_eq!(compiled.as_bytes(), fixture_bytes_for_case(case).as_slice());
 }
 
+fn assert_ipv4_ipfragment_generated_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
+    let (flags, offset, total_len, payload): (u8, u16, u16, Vec<u8>) = match case.name {
+        "ipv4-fragment-ipfragment-generated-first" => {
+            (IPV4_FLAG_MORE_FRAGMENTS, 0, 44, (0x40u8..0x58).collect())
+        }
+        "ipv4-fragment-ipfragment-generated-final" => (0, 3, 28, (0x58u8..0x60).collect()),
+        other => panic!("fixture {other} is not an IpFragment-generated IPv4 fixture"),
+    };
+
+    let ipv4 = expect_layer::<Ipv4>(case, packet);
+    assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 74));
+    assert_eq!(ipv4.destination(), Ipv4Addr::new(198, 51, 100, 74));
+    assert_eq!(ipv4.identification_value(), 0x5145);
+    assert_eq!(ipv4.flags_value(), flags);
+    assert_eq!(
+        ipv4.has_more_fragments(),
+        flags & IPV4_FLAG_MORE_FRAGMENTS != 0
+    );
+    assert_eq!(ipv4.fragment_offset_value(), offset);
+    assert!(ipv4.is_fragmented());
+    assert_eq!(ipv4.ttl_value(), 43);
+    assert_eq!(ipv4.protocol_value(), 253);
+    assert_eq!(ipv4.ds_field_value(), 0x29);
+    assert_eq!(ipv4.total_length_value(), Some(total_len));
+    assert_eq!(ipv4.checksum_status(), Ipv4ChecksumStatus::Valid);
+    assert_eq!(
+        expect_layer::<Raw>(case, packet).as_bytes(),
+        payload.as_slice()
+    );
+}
+
+fn assert_ipv6_oracle_reference_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
+    let (offset, more_fragments, payload_len, payload): (u16, bool, u16, Vec<u8>) = match case.name
+    {
+        "ipv6-fragment-oracle-reference-first" => (0, true, 32, (0x60u8..0x78).collect()),
+        "ipv6-fragment-oracle-reference-final" => (3, false, 16, (0x78u8..0x80).collect()),
+        other => panic!("fixture {other} is not an oracle reference IPv6 fragment fixture"),
+    };
+
+    let ipv6 = expect_layer::<Ipv6>(case, packet);
+    assert_eq!(
+        ipv6.source(),
+        Ipv6Addr::new(0x2001, 0x0db8, 0x0074, 0, 0, 0, 0, 0x0040)
+    );
+    assert_eq!(
+        ipv6.destination(),
+        Ipv6Addr::new(0x2001, 0x0db8, 0x0074, 0, 0, 0, 0, 0x0041)
+    );
+    assert_eq!(ipv6.traffic_class_value(), 0x40);
+    assert_eq!(ipv6.flow_label_value(), 0x74040);
+    assert_eq!(ipv6.hop_limit_value(), 41);
+    assert_eq!(ipv6.payload_length_value(), Some(payload_len));
+    assert_eq!(ipv6.next_header_value(), IPPROTO_IPV6_FRAGMENT);
+
+    let fragment = expect_layer::<Ipv6FragmentHeader>(case, packet);
+    assert_eq!(fragment.next_header_value(), 253);
+    assert_eq!(fragment.fragment_offset_value(), offset);
+    assert_eq!(fragment.fragment_offset_bytes(), u32::from(offset) * 8);
+    assert_eq!(fragment.has_more_fragments(), more_fragments);
+    assert_eq!(fragment.is_last_fragment(), !more_fragments);
+    assert_eq!(fragment.identification_value(), 0x1203_0040);
+    assert_eq!(
+        fragment.fragment_status(),
+        if offset == 0 {
+            Ipv6FragmentHeaderStatus::Initial
+        } else {
+            Ipv6FragmentHeaderStatus::NonInitial
+        }
+    );
+    assert_eq!(
+        expect_layer::<Raw>(case, packet).as_bytes(),
+        payload.as_slice()
+    );
+}
+
 fn assert_dot11_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
     match case.name {
         "dot11-bare-data" => {
@@ -2050,6 +2223,12 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
         name if name.starts_with("dot11-") => assert_dot11_fixture_fields(case, packet),
         name if name.starts_with("ipv4-fragment-defrag-") => {
             assert_ipv4_fragment_defrag_fixture_fields(case, packet)
+        }
+        name if name.starts_with("ipv4-fragment-ipfragment-generated-") => {
+            assert_ipv4_ipfragment_generated_fixture_fields(case, packet)
+        }
+        name if name.starts_with("ipv6-fragment-oracle-reference-") => {
+            assert_ipv6_oracle_reference_fixture_fields(case, packet)
         }
         "arp-who-has" => {
             let ethernet = expect_layer::<Ethernet>(case, packet);
@@ -4453,6 +4632,219 @@ fn ipv4_fragment_defrag_overlap_fixture_rejects_conflicting_bytes() {
         }
         other => panic!("expected structured overlap rejection, got {other:?}"),
     }
+}
+
+fn pcap_fixture_case(name: &str) -> &'static PcapFixtureCase {
+    PCAP_FIXTURES
+        .iter()
+        .find(|case| case.name == name)
+        .unwrap_or_else(|| panic!("pcap fixture {name} should be cataloged"))
+}
+
+fn packet_records_from_pcap_fixture(case: &PcapFixtureCase) -> Vec<PacketRecord> {
+    let path = fixture_path(case.path);
+    let source = PacketWire::pcap_file(path.clone())
+        .open()
+        .unwrap_or_else(|err| panic!("pcap fixture {} should open: {err}", case.path))
+        .source()
+        .unwrap_or_else(|err| panic!("pcap fixture {} should expose source: {err}", case.path));
+    Sniffer::new(source)
+        .collect_records()
+        .unwrap_or_else(|err| panic!("pcap fixture {} should read records: {err}", case.path))
+}
+
+fn defrag_pcap_records(records: Vec<PacketRecord>) -> (IpDefrag, Vec<PacketRecord>) {
+    let mut transform = IpDefrag::new();
+    let mut emitted = Vec::new();
+    for record in records {
+        emitted.extend(
+            transform
+                .defrag_record(record)
+                .expect("pcap fragment record should defrag")
+                .into_records(),
+        );
+    }
+    (transform, emitted)
+}
+
+fn ipfragment_generated_ipv4_pcap_bytes() -> Vec<u8> {
+    let payload = (0x40u8..0x60).collect::<Vec<_>>();
+    let input = PacketRecord::new(
+        Ipv4::with_addresses(
+            Ipv4Addr::new(192, 0, 2, 74),
+            Ipv4Addr::new(198, 51, 100, 74),
+        )
+        .protocol(253)
+        .identification(0x5145)
+        .ttl(43)
+        .ds_field(0x29)
+            / Raw::from_bytes(&payload),
+    );
+    let mut transform = IpFragment::new(44);
+    let output = transform
+        .fragment_record(input)
+        .expect("IpFragment should generate deterministic IPv4 pcap fixture records");
+    assert_eq!(output.len(), 2);
+
+    let timestamps = [
+        PcapTimestamp::new(90, 120_300, TimestampPrecision::Microseconds).unwrap(),
+        PcapTimestamp::new(90, 120_301, TimestampPrecision::Microseconds).unwrap(),
+    ];
+    let mut pcap = Vec::new();
+    {
+        let options =
+            PcapWriterOptions::new(PcapLinkType::RawIp).precision(TimestampPrecision::Microseconds);
+        let mut writer = PcapWriter::from_writer_with_options(&mut pcap, options)
+            .expect("in-memory pcap writer should initialize");
+        for (record, timestamp) in output.records().iter().zip(timestamps) {
+            writer
+                .write_packet_with_timestamp(record.packet(), timestamp)
+                .expect("generated IpFragment record should write to pcap");
+        }
+        writer.flush().expect("in-memory pcap should flush");
+    }
+    pcap
+}
+
+fn assert_ipfragment_generated_ipv4_defrag_output(record: &PacketRecord) {
+    let payload = (0x40u8..0x60).collect::<Vec<_>>();
+    let ipv4 = record
+        .packet()
+        .layer::<Ipv4>()
+        .expect("IpFragment pcap defrag output should contain IPv4");
+    assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 74));
+    assert_eq!(ipv4.destination(), Ipv4Addr::new(198, 51, 100, 74));
+    assert_eq!(ipv4.identification_value(), 0x5145);
+    assert_eq!(ipv4.flags_value(), 0);
+    assert_eq!(ipv4.fragment_offset_value(), 0);
+    assert_eq!(ipv4.protocol_value(), 253);
+    assert_eq!(ipv4.total_length_value(), Some(52));
+    assert_eq!(ipv4.checksum_status(), Ipv4ChecksumStatus::Valid);
+    assert_eq!(
+        record
+            .packet()
+            .layer::<Raw>()
+            .expect("IpFragment pcap defrag output should preserve Raw payload")
+            .as_bytes(),
+        payload.as_slice()
+    );
+    assert_eq!(record.metadata().origin(), PacketOrigin::Transformed);
+    assert_eq!(record.metadata().backend(), &BackendKind::PcapFile);
+    assert_eq!(
+        record.metadata().pcap_link_type(),
+        Some(PcapLinkType::RawIp)
+    );
+    assert_eq!(
+        record.metadata().timestamp(),
+        Some(PcapTimestamp::new(90, 120_300, TimestampPrecision::Microseconds).unwrap())
+    );
+    assert_eq!(record.metadata().original_len(), Some(52));
+    assert_eq!(record.metadata().captured_len(), Some(52));
+    assert_eq!(record.metadata().emitted_len(), Some(52));
+
+    let metadata = &record.metadata().ip_defrag_metadata()[0];
+    assert_eq!(metadata.family(), IpFragmentFamily::Ipv4);
+    assert_eq!(metadata.identification(), 0x5145);
+    assert_eq!(
+        metadata.datagram_key(),
+        Some("192.0.2.74>198.51.100.74 proto=253 id=0x5145")
+    );
+    assert_eq!(metadata.fragment_count(), 2);
+    assert_eq!(metadata.duplicate_count(), 0);
+    assert_eq!(metadata.overlap_status(), IpDefragOverlapStatus::None);
+    assert_eq!(
+        metadata.byte_ranges(),
+        &[IpFragmentRange::new(0, 24), IpFragmentRange::new(24, 32)]
+    );
+    assert_eq!(metadata.total_len(), Some(52));
+}
+
+fn assert_oracle_reference_ipv6_defrag_output(record: &PacketRecord) {
+    let payload = (0x60u8..0x80).collect::<Vec<_>>();
+    let ipv6 = record
+        .packet()
+        .layer::<Ipv6>()
+        .expect("oracle pcap defrag output should contain IPv6");
+    assert_eq!(
+        ipv6.source(),
+        Ipv6Addr::new(0x2001, 0x0db8, 0x0074, 0, 0, 0, 0, 0x0040)
+    );
+    assert_eq!(
+        ipv6.destination(),
+        Ipv6Addr::new(0x2001, 0x0db8, 0x0074, 0, 0, 0, 0, 0x0041)
+    );
+    assert_eq!(ipv6.traffic_class_value(), 0x40);
+    assert_eq!(ipv6.flow_label_value(), 0x74040);
+    assert_eq!(ipv6.hop_limit_value(), 41);
+    assert_eq!(ipv6.payload_length_value(), Some(32));
+    assert_eq!(ipv6.next_header_value(), 253);
+    assert!(record.packet().layer::<Ipv6FragmentHeader>().is_none());
+    assert_eq!(
+        record
+            .packet()
+            .layer::<Raw>()
+            .expect("oracle pcap defrag output should preserve Raw payload")
+            .as_bytes(),
+        payload.as_slice()
+    );
+    assert_eq!(record.metadata().origin(), PacketOrigin::Transformed);
+    assert_eq!(record.metadata().backend(), &BackendKind::PcapFile);
+    assert_eq!(
+        record.metadata().pcap_link_type(),
+        Some(PcapLinkType::RawIp)
+    );
+    assert_eq!(
+        record.metadata().timestamp(),
+        Some(PcapTimestamp::new(91, 120_300, TimestampPrecision::Microseconds).unwrap())
+    );
+    assert_eq!(record.metadata().original_len(), Some(72));
+    assert_eq!(record.metadata().captured_len(), Some(72));
+    assert_eq!(record.metadata().emitted_len(), Some(72));
+
+    let metadata = &record.metadata().ip_defrag_metadata()[0];
+    assert_eq!(metadata.family(), IpFragmentFamily::Ipv6);
+    assert_eq!(metadata.identification(), 0x1203_0040);
+    assert_eq!(
+        metadata.datagram_key(),
+        Some("2001:db8:74::40>2001:db8:74::41 id=0x12030040")
+    );
+    assert_eq!(metadata.fragment_count(), 2);
+    assert_eq!(metadata.duplicate_count(), 0);
+    assert_eq!(metadata.overlap_status(), IpDefragOverlapStatus::None);
+    assert_eq!(
+        metadata.byte_ranges(),
+        &[IpFragmentRange::new(0, 24), IpFragmentRange::new(24, 32)]
+    );
+    assert_eq!(metadata.total_len(), Some(72));
+}
+
+#[test]
+fn ip_fragment_generated_pcap_fixture_matches_ipfragment_and_defrags() {
+    let case = pcap_fixture_case("raw-ipv4-ipfragment-generated");
+    assert_eq!(case.contents, ipfragment_generated_ipv4_pcap_bytes());
+
+    let records = packet_records_from_pcap_fixture(case);
+    assert_eq!(records.len(), 2);
+    let (transform, emitted) = defrag_pcap_records(records);
+    assert_eq!(transform.input_count(), 2);
+    assert_eq!(transform.fragments_observed(), 2);
+    assert_eq!(transform.completed_datagrams(), 1);
+    assert_eq!(emitted.len(), 1);
+    assert_ipfragment_generated_ipv4_defrag_output(&emitted[0]);
+}
+
+#[test]
+fn ip_fragment_oracle_reference_pcap_fixture_defrags_ipv6() {
+    let case = pcap_fixture_case("raw-ipv6-fragment-oracle-reference");
+    let records = packet_records_from_pcap_fixture(case);
+    assert_eq!(records.len(), 2);
+
+    let (transform, emitted) = defrag_pcap_records(records);
+    assert_eq!(transform.input_count(), 2);
+    assert_eq!(transform.fragments_observed(), 2);
+    assert_eq!(transform.completed_datagrams(), 1);
+    assert_eq!(emitted.len(), 1);
+    assert_oracle_reference_ipv6_defrag_output(&emitted[0]);
 }
 
 #[derive(Debug, Clone, Copy)]

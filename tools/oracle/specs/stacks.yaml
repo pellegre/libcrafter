@@ -107,6 +107,15 @@ families:
       - ipv6
       - udp
       - payload
+  - name: ip
+    default_stack:
+      - ipv4
+      - payload
+    feature_tags:
+      - ip
+      - ipv4
+      - ipv6
+      - payload
   - name: udp
     default_stack:
       - ipv4
