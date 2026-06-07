@@ -3,7 +3,8 @@
 use super::{WpaDecryptConfig, WpaNetwork};
 use crate::wire::record::PacketRecord;
 use crate::wire::transform::{PacketTransform, TransformOutput};
-use crate::wire::Result;
+use crate::wire::Result as WireResult;
+use crate::Result as CrafterResult;
 
 /// Passive WPA/WPA2-Personal decryptor transform.
 ///
@@ -31,21 +32,28 @@ impl WpaDecrypt {
         self
     }
 
-    /// Add a configured network from a UTF-8 SSID and passphrase.
-    pub fn network(mut self, ssid: impl Into<String>, passphrase: impl Into<String>) -> Self {
-        self.networks.push(WpaNetwork::passphrase(ssid, passphrase));
+    /// Add a pre-built configured network.
+    pub fn with_network(mut self, network: WpaNetwork) -> Self {
+        self.networks.push(network);
         self
+    }
+
+    /// Add a configured network from a UTF-8 SSID and passphrase.
+    pub fn network(
+        self,
+        ssid: impl AsRef<str>,
+        passphrase: impl Into<String>,
+    ) -> CrafterResult<Self> {
+        Ok(self.with_network(WpaNetwork::passphrase(ssid, passphrase)?))
     }
 
     /// Add a configured network from raw SSID bytes and passphrase.
     pub fn network_bytes(
-        mut self,
-        ssid: impl Into<Vec<u8>>,
+        self,
+        ssid: impl AsRef<[u8]>,
         passphrase: impl Into<String>,
-    ) -> Self {
-        self.networks
-            .push(WpaNetwork::passphrase_bytes(ssid, passphrase));
-        self
+    ) -> CrafterResult<Self> {
+        Ok(self.with_network(WpaNetwork::passphrase_bytes(ssid, passphrase)?))
     }
 
     /// Borrow the current configuration.
@@ -69,7 +77,7 @@ impl WpaDecrypt {
     }
 
     /// Run the transform and collect emitted records into a small buffer.
-    pub fn decrypt_record(&mut self, record: PacketRecord) -> Result<TransformOutput> {
+    pub fn decrypt_record(&mut self, record: PacketRecord) -> WireResult<TransformOutput> {
         self.transform_to_output(record)
     }
 }
@@ -82,8 +90,8 @@ impl PacketTransform for WpaDecrypt {
     fn transform(
         &mut self,
         record: PacketRecord,
-        emit: &mut dyn FnMut(PacketRecord) -> Result<()>,
-    ) -> Result<()> {
+        emit: &mut dyn FnMut(PacketRecord) -> WireResult<()>,
+    ) -> WireResult<()> {
         self.input_count += 1;
         emit(record)?;
         self.emitted_count += 1;
@@ -129,7 +137,9 @@ mod tests {
     fn wpa_decrypt_skeleton_keeps_configured_networks() {
         let transform = WpaDecrypt::new()
             .network("lab", "passphrase")
-            .network_bytes(b"\xffssid".to_vec(), "other");
+            .unwrap()
+            .network_bytes(b"\xffssid".as_slice(), "otherpass")
+            .unwrap();
 
         assert_eq!(transform.networks().len(), 2);
         assert_eq!(transform.networks()[0].ssid(), b"lab");
