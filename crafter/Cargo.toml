@@ -17,6 +17,7 @@ path = "src/lib.rs"
 
 [dependencies]
 aes = "0.8"
+ccm = "0.5"
 hmac = "0.12"
 pcap = "2.4.0"
 pbkdf2 = "0.12"
