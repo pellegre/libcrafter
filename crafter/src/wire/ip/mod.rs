@@ -10,6 +10,7 @@
 mod config;
 mod defrag;
 mod fragmentation;
+mod ipv4;
 mod metadata;
 mod range;
 
