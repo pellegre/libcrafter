@@ -658,6 +658,7 @@ pub(crate) struct ObservedBss {
     frequency_mhz: Option<u32>,
     rsn: Option<RsnInformation>,
     cipher: Option<WpaCipher>,
+    group_cipher: Option<WpaCipher>,
     akm: Option<WpaAkm>,
     decrypt_reason: Option<WpaDecryptReason>,
     stations: HashSet<MacAddr>,
@@ -675,6 +676,7 @@ impl ObservedBss {
             frequency_mhz: None,
             rsn: None,
             cipher: None,
+            group_cipher: None,
             akm: None,
             decrypt_reason: None,
             stations: HashSet::new(),
@@ -713,6 +715,11 @@ impl ObservedBss {
         self.cipher
     }
 
+    /// Selected group cipher inferred from RSN information.
+    pub(crate) const fn group_cipher(&self) -> Option<WpaCipher> {
+        self.group_cipher
+    }
+
     /// Selected AKM suite inferred from RSN information.
     pub(crate) const fn akm(&self) -> Option<WpaAkm> {
         self.akm
@@ -744,8 +751,10 @@ impl ObservedBss {
     /// Learn or refresh RSN security metadata for this BSS.
     pub(crate) fn observe_rsn(&mut self, rsn: RsnInformation) {
         let (cipher, akm, reason) = classify_rsn_security(&rsn);
+        let group_cipher = rsn_cipher_to_wpa(rsn.group_cipher());
         self.rsn = Some(rsn);
         self.cipher = Some(cipher);
+        self.group_cipher = Some(group_cipher);
         self.akm = Some(akm);
         self.decrypt_reason = reason;
     }
