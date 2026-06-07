@@ -80,6 +80,12 @@ Valid byte fixtures cover:
 - IPv4 fragment fields without reassembly, including identification, reserved
   flag, Don't Fragment, More Fragments, and fragment offset:
   `ipv4-fragment-noninitial-raw.hex`
+- IPv4 defragmentation vectors for complete out-of-order fragments, exact
+  duplicate fragments, missing middle fragments, and conflicting overlaps:
+  `ipv4-fragment-defrag-complete-*.hex`,
+  `ipv4-fragment-defrag-duplicate-*.hex`,
+  `ipv4-fragment-defrag-missing-*.hex`,
+  `ipv4-fragment-defrag-overlap-*.hex`
 - IPv4 options, including Record Route, Traceroute, Timestamp, and Router
   Alert:
   `ipv4-options-traceroute-udp-raw.hex`
