@@ -8802,6 +8802,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     pcap_parser.add_argument(
         "--dry-plan",
+        "--dry-run",
+        dest="dry_plan",
         action="store_true",
         help="print deterministic pcap plans without invoking a backend",
     )

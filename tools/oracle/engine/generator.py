@@ -846,6 +846,13 @@ class PacketGenerator:
                 and not _has_ipv6_enrichment_case(coverage_cases)
             ):
                 continue
+            if (
+                feature is None
+                and case is None
+                and self.profile == "fragmentation-smoke"
+                and not _has_ip_fragment_smoke_case(coverage_cases)
+            ):
+                continue
             candidates.append(stack)
         return candidates
 
@@ -859,6 +866,19 @@ class PacketGenerator:
                 )
                 for case in coverage_cases:
                     if not _is_ipv6_enrichment_case(case):
+                        continue
+                    deck.append({**stack, "coverage_cases": [case]})
+            if deck:
+                return deck
+        if self.profile == "fragmentation-smoke":
+            deck = []
+            for stack in stacks:
+                coverage_cases = _string_list(
+                    stack.get("coverage_cases", []),
+                    "stack.coverage_cases",
+                )
+                for case in coverage_cases:
+                    if not _is_ip_fragment_smoke_case(case):
                         continue
                     deck.append({**stack, "coverage_cases": [case]})
             if deck:
@@ -1022,6 +1042,12 @@ class PacketGenerator:
             # extension chains because any ipv6_routing stack can otherwise draw
             # cases whose terminal layer belongs to a different stack.
             coverage_cases = [case for case in coverage_cases if _is_ipv6_enrichment_case(case)]
+        if feature is None and self.profile == "fragmentation-smoke":
+            # Focused fragmentation profile: keep case selection on the stack's
+            # own pcap-eligible fragment cases. Transform feature contract cases
+            # are many-record stream cases and must not be paired with unrelated
+            # packet stacks by the generic feature expansion below.
+            coverage_cases = [case for case in coverage_cases if _is_ip_fragment_smoke_case(case)]
         if feature is not None:
             feature_spec = self._feature_spec(feature)
             feature_cases = _string_list(feature_spec.get("coverage_cases"), "feature.coverage_cases")
@@ -1084,6 +1110,12 @@ class PacketGenerator:
         # stays disabled so routing/TCP/ICMPv6 terminal chains remain aligned
         # with their declared stack shapes.
         if feature is None and self.profile == "ipv6-enrichment":
+            if not choices:
+                return "default"
+            return weighted_choice(rng, choices)
+        # Focused fragmentation smoke profile: select only stack-declared
+        # fragment cases so dry-run plans stay packet-shape consistent.
+        if feature is None and self.profile == "fragmentation-smoke":
             if not choices:
                 return "default"
             return weighted_choice(rng, choices)
@@ -1205,6 +1237,13 @@ class PacketGenerator:
             # Keep other IPv6-adjacent features (UDP/TCP/pcap/live) out of the
             # automatic feature sampler for reproducibility.
             if self.profile == "ipv6-enrichment" and name != "ipv6_fragment_routing":
+                continue
+            # The fragmentation smoke profile keeps generated packet cases on
+            # IP fragment behavior; pcap itself is selected by pcap mode later.
+            if self.profile == "fragmentation-smoke" and name not in (
+                "ip_fragment_transforms",
+                "ipv6_fragment_routing",
+            ):
                 continue
             feature = _object(raw_feature, f"features.{name}")
             layers = _string_list(feature.get("layers"), f"features.{name}.layers")
@@ -4196,6 +4235,16 @@ def _has_ipv6_enrichment_case(cases: Sequence[str]) -> bool:
     return any(_is_ipv6_enrichment_case(case) for case in cases)
 
 
+def _has_ip_fragment_smoke_case(cases: Sequence[str]) -> bool:
+    """Whether ``cases`` contains an IP fragmentation smoke coverage case."""
+
+    return any(_is_ip_fragment_smoke_case(case) for case in cases)
+
+
+def _is_ip_fragment_smoke_case(case: str) -> bool:
+    return "fragment" in case.replace("_", "-")
+
+
 # Behavior names of the focused single-option tcp_options cases (tcp-option-*).
 # These select exactly one option kind so they must not be matched against the
 # broad option-list cases (tcp-options*, tcp-all-flags-reserved-offset), which
@@ -4758,6 +4807,8 @@ def _stack_families(layers: Sequence[str], root_families: Sequence[str]) -> list
         {"ethernet", "vlan", "payload", "linux_cooked", "null_loopback"}
     ):
         families.append("link")
+    if layer_set.intersection({"ipv4", "ipv6", "ipv6_fragment"}):
+        families.append("ip")
     if not families:
         families.extend(root_families)
     return list(dict.fromkeys(families))

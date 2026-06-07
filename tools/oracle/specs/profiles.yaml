@@ -232,6 +232,25 @@ profiles:
       malformed: 1
       pcap: 0
       live: 0
+  # fragmentation-smoke: focused classic pcap dry-run planning for IP fragment
+  # coverage. It accepts the aggregate `ip` family filter used by transform
+  # validation commands and narrows generation to existing IPv4/IPv6 fragment
+  # coverage cases without live traffic.
+  - name: fragmentation-smoke
+    purpose: focused offline pcap planning for IP fragment coverage
+    default_count: 10
+    family_weights:
+      - name: ip
+        weight: 1
+    payload_length:
+      min: 16
+      max: 96
+    feature_weights:
+      baseline: 1
+      boundary: 6
+      malformed: 0
+      pcap: 0
+      live: 0
   # dot11-smoke: focused offline IEEE 802.11 MAC smoke coverage. This profile
   # keeps live weight at zero; monitor-mode dongle injection is manual and can
   # only be represented by later dry-run send-plan validation.

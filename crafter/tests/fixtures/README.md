@@ -141,6 +141,11 @@ Pcap fixtures cover:
   `ipv6-base-traffic-flow-udp-raw.hex`, decoded as IPv6/UDP/Raw with Traffic
   Class `0xbb` (DSCP 46, ECN 3), Flow Label `0xabcde`, Hop Limit 37, UDP
   ports `54049 -> 1049`, a valid UDP checksum, and raw payload `base-v6!`.
+  The RawIp pcap corpus also includes deterministic IP fragment transform
+  fixtures: `raw-ipv4-ipfragment-generated.pcap` is byte-for-byte regenerated
+  from `IpFragment`, and `raw-ipv6-fragment-oracle-reference.pcap` carries an
+  oracle reference IPv6 fragment pair. Both are read back into `PacketRecord`s
+  and reassembled through `IpDefrag`.
 - LinuxSll link type with an ARP payload.
 - NullLoopback link type with an IPv4 UDP payload.
 - IEEE 802.11 link type with a synthetic WPA2-PSK CCMP conversation:
@@ -150,11 +155,11 @@ Pcap fixtures cover:
   documentation-safe identifiers.
 
 The checked-in pcap fixtures currently exercise link type mapping, timestamps,
-record lengths, and packet decoding for those link types. They include RawIp
-IPv4 DSCP/ECN and IEEE 802.11 WPA decryptor coverage, but do not currently
-include pcap records for IPv4 fragment fields, IPv4 options, Timestamp, or
-Router Alert coverage; those cases live in byte and summary fixtures unless a
-matching pcap fixture is added.
+record lengths, packet decoding, and IP fragment transform handoff for those
+link types. They include RawIp IPv4 DSCP/ECN, RawIp IPv4/IPv6 fragment pcap,
+and IEEE 802.11 WPA decryptor coverage. IPv4 options, Timestamp, and Router
+Alert coverage still live in byte and summary fixtures unless a matching pcap
+fixture is added.
 
 Malformed packet fixtures cover short or inconsistent Ethernet, VLAN, ARP,
 Linux cooked, null loopback, IPv4, IPv4 options, IPv6 extension headers, UDP,
