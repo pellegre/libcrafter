@@ -30,8 +30,10 @@ use crafter::core::{
     UDP_OPTION_EOL, UDP_OPTION_NOP,
 };
 use crafter::{
-    PcapError, PcapLinkType, PcapReader, PcapTimestamp, PcapWriter, PcapWriterOptions,
-    TimestampPrecision,
+    BackendKind, Dot11Metadata, PacketOrigin, PacketWire, PcapError, PcapLinkType, PcapReader,
+    PcapTimestamp, PcapWriter, PcapWriterOptions, Sniffer, TimestampPrecision, WifiDecryptState,
+    WpaAkm, WpaCipher, WpaCredentialStatus, WpaDecrypt, WpaDecryptReason, WpaHandshakeStatus,
+    WpaKeyKind,
 };
 use support::fixture_path;
 
@@ -132,6 +134,7 @@ enum CoverageFamily {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum PcapCoverageFamily {
     Ethernet,
+    Ieee80211,
     RawIpIpv4,
     RawIpIpv6,
     LinuxSll,
@@ -933,6 +936,52 @@ const DOT11_FIXTURES: &[ValidFixtureCase] = &[
         preserve_exact_bytes: true,
         summary_path: None,
     },
+    ValidFixtureCase {
+        name: "dot11-wpa2-psk-ccmp-beacon",
+        path: "dot11/wpa2-psk-ccmp-beacon.hex",
+        contents: FixtureContents::Hex(fixture_str!("dot11/wpa2-psk-ccmp-beacon.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::Link(LinkType::Ieee80211)),
+        expected_layers: &[ExpectedLayer::Dot11],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "dot11-wpa2-psk-ccmp-message-1",
+        path: "dot11/wpa2-psk-ccmp-message-1.hex",
+        contents: FixtureContents::Hex(fixture_str!("dot11/wpa2-psk-ccmp-message-1.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::Link(LinkType::Ieee80211)),
+        expected_layers: &[
+            ExpectedLayer::Dot11,
+            ExpectedLayer::LlcSnap,
+            ExpectedLayer::Eapol,
+            ExpectedLayer::EapolKey,
+        ],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "dot11-wpa2-psk-ccmp-message-2",
+        path: "dot11/wpa2-psk-ccmp-message-2.hex",
+        contents: FixtureContents::Hex(fixture_str!("dot11/wpa2-psk-ccmp-message-2.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::Link(LinkType::Ieee80211)),
+        expected_layers: &[
+            ExpectedLayer::Dot11,
+            ExpectedLayer::LlcSnap,
+            ExpectedLayer::Eapol,
+            ExpectedLayer::EapolKey,
+        ],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "dot11-wpa2-psk-ccmp-unicast-data",
+        path: "dot11/wpa2-psk-ccmp-unicast-data.hex",
+        contents: FixtureContents::Hex(fixture_str!("dot11/wpa2-psk-ccmp-unicast-data.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::Link(LinkType::Ieee80211)),
+        expected_layers: &[ExpectedLayer::Dot11, ExpectedLayer::Raw],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
 ];
 
 const DOT11_TEXT_ARTIFACTS: &[Dot11TextArtifact] = &[
@@ -964,6 +1013,7 @@ const DOT11_TEXT_ARTIFACTS: &[Dot11TextArtifact] = &[
 
 const ALLOWED_DOT11_SYNTHETIC_SSIDS: &[&str] = &[
     "crafter",
+    "libcrafter-wpa",
     "libcrafter-dot11-dry-run",
     "libcrafter-rsn",
     "rsn-fixture",
@@ -1090,6 +1140,37 @@ const PCAP_FIXTURES: &[PcapFixtureCase] = &[
             fractional: 4,
             fixture_name: "null-loopback-ipv4-udp-raw",
         }],
+    },
+    PcapFixtureCase {
+        name: "wpa2-psk-ccmp-unicast",
+        path: "pcaps/wpa2-psk-ccmp-unicast.pcap",
+        contents: fixture_bytes!("pcaps/wpa2-psk-ccmp-unicast.pcap"),
+        pcap_link_type: PcapLinkType::Ieee80211,
+        link_type: LinkType::Ieee80211,
+        timestamp_precision: TimestampPrecision::Microseconds,
+        coverage: PcapCoverageFamily::Ieee80211,
+        records: &[
+            PcapFixtureRecord {
+                seconds: 70,
+                fractional: 100,
+                fixture_name: "dot11-wpa2-psk-ccmp-beacon",
+            },
+            PcapFixtureRecord {
+                seconds: 70,
+                fractional: 200,
+                fixture_name: "dot11-wpa2-psk-ccmp-message-1",
+            },
+            PcapFixtureRecord {
+                seconds: 70,
+                fractional: 300,
+                fixture_name: "dot11-wpa2-psk-ccmp-message-2",
+            },
+            PcapFixtureRecord {
+                seconds: 70,
+                fractional: 400,
+                fixture_name: "dot11-wpa2-psk-ccmp-unicast-data",
+            },
+        ],
     },
 ];
 
@@ -1218,6 +1299,10 @@ const REQUIRED_VALID_COVERAGE: &[(CoverageFamily, &str)] = &[
 const REQUIRED_PCAP_COVERAGE: &[(PcapCoverageFamily, &str)] = &[
     (PcapCoverageFamily::Ethernet, "Ethernet pcap link type"),
     (
+        PcapCoverageFamily::Ieee80211,
+        "IEEE 802.11 pcap with WPA2-PSK CCMP fixture",
+    ),
+    (
         PcapCoverageFamily::RawIpIpv4,
         "RawIp pcap with IPv4 payload",
     ),
@@ -1312,8 +1397,9 @@ fn fixture_bytes_for_case(case: &ValidFixtureCase) -> Vec<u8> {
 fn valid_fixture_case(name: &str) -> &'static ValidFixtureCase {
     VALID_FIXTURES
         .iter()
+        .chain(DOT11_FIXTURES.iter())
         .find(|case| case.name == name)
-        .unwrap_or_else(|| panic!("pcap fixture references unknown byte fixture {name}"))
+        .unwrap_or_else(|| panic!("pcap fixture references unknown packet fixture {name}"))
 }
 
 fn packet_target_for_case(case: &ValidFixtureCase) -> PacketDecodeTarget {
@@ -1688,12 +1774,104 @@ fn assert_dot11_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
                 ]
             );
         }
+        "dot11-wpa2-psk-ccmp-beacon" => {
+            let dot11 = expect_layer::<Dot11>(case, packet);
+            assert_eq!(
+                dot11.management_subtype(),
+                Some(Dot11ManagementSubtype::Beacon)
+            );
+            assert_eq!(
+                dot11.addr2_value(),
+                Some(MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x20, 0x01]))
+            );
+            assert_eq!(
+                dot11.addr3_value(),
+                Some(MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x20, 0x01]))
+            );
+
+            let tags = dot11.tagged_parameters();
+            let ssid = tags
+                .iter()
+                .find(|tag| tag.id() == 0)
+                .expect("WPA fixture beacon should carry SSID");
+            assert_eq!(ssid.value(), b"libcrafter-wpa");
+            assert!(tags.iter().any(|tag| tag.id() == 48));
+        }
+        "dot11-wpa2-psk-ccmp-message-1" => {
+            let dot11 = expect_layer::<Dot11>(case, packet);
+            assert_eq!(
+                dot11.addr1_value(),
+                Some(MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x20, 0x02]))
+            );
+            assert_eq!(
+                dot11.addr2_value(),
+                Some(MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x20, 0x01]))
+            );
+            assert_eq!(
+                dot11.addr3_value(),
+                Some(MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x20, 0x01]))
+            );
+
+            let llc = expect_layer::<LlcSnap>(case, packet);
+            assert_eq!(llc.ethertype_value(), ETHERTYPE_EAPOL);
+            let key = expect_layer::<EapolKey>(case, packet);
+            assert_eq!(key.replay_counter_value(), 77);
+            assert_eq!(key.nonce_value(), [0x41; 32]);
+            assert!(key.key_information_value().key_ack());
+            assert!(!key.key_information_value().key_mic());
+        }
+        "dot11-wpa2-psk-ccmp-message-2" => {
+            let dot11 = expect_layer::<Dot11>(case, packet);
+            assert_eq!(
+                dot11.addr1_value(),
+                Some(MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x20, 0x01]))
+            );
+            assert_eq!(
+                dot11.addr2_value(),
+                Some(MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x20, 0x02]))
+            );
+            assert_eq!(
+                dot11.addr3_value(),
+                Some(MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x20, 0x01]))
+            );
+
+            let key = expect_layer::<EapolKey>(case, packet);
+            assert_eq!(key.replay_counter_value(), 77);
+            assert_eq!(key.nonce_value(), [0x62; 32]);
+            assert!(key.key_information_value().key_mic());
+            assert!(key.mic_value().iter().any(|byte| *byte != 0));
+            assert_eq!(key.key_data_bytes(), &[0x30, 0x14]);
+        }
+        "dot11-wpa2-psk-ccmp-unicast-data" => {
+            let dot11 = expect_layer::<Dot11>(case, packet);
+            assert!(dot11.is_protected());
+            assert_eq!(
+                dot11.addr1_value(),
+                Some(MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x20, 0x01]))
+            );
+            assert_eq!(
+                dot11.addr2_value(),
+                Some(MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x20, 0x02]))
+            );
+            assert_eq!(
+                dot11.addr3_value(),
+                Some(MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x20, 0x03]))
+            );
+            assert_eq!(dot11.sequence_number_value(), Some(0x333));
+
+            let encrypted = expect_layer::<Raw>(case, packet).as_bytes();
+            assert!(encrypted.len() > 16);
+            assert_eq!(encrypted[0], 0x33);
+            assert_eq!(encrypted[3] & 0x20, 0x20);
+            assert_eq!(encrypted[3] >> 6, 1);
+        }
         other => panic!("dot11 fixture {other} is missing typed field assertions"),
     }
 }
 
 fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
     match case.name {
+        name if name.starts_with("dot11-") => assert_dot11_fixture_fields(case, packet),
         "arp-who-has" => {
             let ethernet = expect_layer::<Ethernet>(case, packet);
             assert_eq!(ethernet.destination(), Some(MacAddr::BROADCAST));
@@ -3642,7 +3820,10 @@ fn scan_dot11_packet_fixture(
     violations: &mut Vec<String>,
 ) {
     let label = format!("crafter/tests/fixtures/{}", case.path);
+    scan_dot11_packet(&label, packet, violations);
+}
 
+fn scan_dot11_packet(label: &str, packet: &Packet, violations: &mut Vec<String>) {
     if let Some(dot11) = packet.layer::<Dot11>() {
         for (field, mac) in [
             ("addr1", dot11.addr1_value()),
@@ -4212,6 +4393,84 @@ fn pcap_fixture_roundtrips() {
 }
 
 #[test]
+fn wpa_pcap_fixture_decrypts_through_packet_wire_sniffer() {
+    let path = fixture_path("pcaps/wpa2-psk-ccmp-unicast.pcap");
+    let source = PacketWire::pcap_file(path.clone())
+        .open()
+        .expect("WPA pcap fixture should open")
+        .source()
+        .expect("WPA pcap fixture should expose source capability");
+    let records = Sniffer::new(source)
+        .with(Dot11Metadata::new())
+        .with(
+            WpaDecrypt::new()
+                .network("libcrafter-wpa", "libcrafter-pass")
+                .expect("synthetic WPA fixture credentials should validate"),
+        )
+        .collect_records()
+        .expect("WPA pcap fixture should decrypt");
+
+    assert_eq!(records.len(), 2);
+    assert!(records
+        .iter()
+        .any(|record| record.packet().layer::<Dot11>().is_some()));
+
+    let decrypted = records
+        .iter()
+        .find(|record| record.metadata().origin() == PacketOrigin::Transformed)
+        .expect("WPA pcap fixture should emit one decrypted record");
+    assert_eq!(decrypted.metadata().backend(), &BackendKind::PcapFile);
+    assert_eq!(decrypted.metadata().file(), Some(path.as_path()));
+    assert_eq!(decrypted.metadata().link_type(), Some(LinkType::Ethernet));
+
+    let summary = decrypted.packet().summary();
+    assert!(summary.contains("Ethernet("), "{summary}");
+    assert!(
+        summary.contains("Ipv4(src=192.0.2.10, dst=198.51.100.20"),
+        "{summary}"
+    );
+    assert!(summary.ends_with("Raw(len=14)"), "{summary}");
+    assert_eq!(
+        decrypted
+            .packet()
+            .layer::<Raw>()
+            .expect("raw payload")
+            .as_bytes(),
+        b"libcrafter wpa"
+    );
+
+    let wifi = decrypted.metadata().wifi().expect("Wi-Fi metadata");
+    assert_eq!(wifi.ssid(), Some(b"libcrafter-wpa".as_slice()));
+    assert_eq!(
+        wifi.bssid(),
+        Some(MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x20, 0x01]))
+    );
+    assert_eq!(
+        wifi.transmitter(),
+        Some(MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x20, 0x02]))
+    );
+    assert_eq!(
+        wifi.receiver(),
+        Some(MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x20, 0x01]))
+    );
+    assert_eq!(wifi.key_id(), Some(1));
+    assert_eq!(wifi.decrypt_state(), Some(WifiDecryptState::Decrypted));
+
+    let wpa = wifi.wpa_metadata().expect("WPA metadata");
+    assert_eq!(wpa.cipher(), Some(WpaCipher::Ccmp128));
+    assert_eq!(wpa.akm(), Some(WpaAkm::Psk));
+    assert_eq!(wpa.key_kind(), Some(WpaKeyKind::Pairwise));
+    assert_eq!(wpa.key_id(), Some(1));
+    assert_eq!(wpa.packet_number(), Some(0x33));
+    assert_eq!(wpa.decrypt_reason(), Some(WpaDecryptReason::Decrypted));
+    assert_eq!(wpa.credential_status(), Some(WpaCredentialStatus::Matched));
+    assert_eq!(
+        wpa.handshake_status(),
+        Some(WpaHandshakeStatus::MicVerified)
+    );
+}
+
+#[test]
 fn pcap_ipv6_roundtrip() {
     let case = PCAP_FIXTURES
         .iter()
@@ -4407,6 +4666,26 @@ fn no_sensitive_dot11_artifacts() {
         let packet = decode_packet(target, &bytes)
             .unwrap_or_else(|err| panic!("fixture {} should decode: {err}", case.path));
         scan_dot11_packet_fixture(case, &packet, &mut violations);
+    }
+
+    for case in PCAP_FIXTURES {
+        if !matches!(case.link_type, LinkType::Ieee80211 | LinkType::Radiotap) {
+            continue;
+        }
+
+        let packets = PcapReader::from_reader(case.contents)
+            .unwrap_or_else(|err| panic!("pcap fixture {} should parse: {err}", case.path))
+            .collect_packets()
+            .unwrap_or_else(|err| {
+                panic!("pcap fixture {} should decode packets: {err}", case.path)
+            });
+        for (index, packet) in packets.iter().enumerate() {
+            scan_dot11_packet(
+                &format!("crafter/tests/fixtures/{} record {index}", case.path),
+                packet.packet(),
+                &mut violations,
+            );
+        }
     }
 
     assert!(

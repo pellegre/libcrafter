@@ -137,12 +137,18 @@ Pcap fixtures cover:
   ports `54049 -> 1049`, a valid UDP checksum, and raw payload `base-v6!`.
 - LinuxSll link type with an ARP payload.
 - NullLoopback link type with an IPv4 UDP payload.
+- IEEE 802.11 link type with a synthetic WPA2-PSK CCMP conversation:
+  `wpa2-psk-ccmp-unicast.pcap` contains a beacon, two EAPOL-Key handshake
+  records, and one protected unicast data record. The fixture decrypts to an
+  Ethernet-equivalent IPv4 raw payload through `WpaDecrypt` and uses only
+  documentation-safe identifiers.
 
 The checked-in pcap fixtures currently exercise link type mapping, timestamps,
 record lengths, and packet decoding for those link types. They include RawIp
-IPv4 DSCP/ECN coverage, but do not currently include pcap records for IPv4
-fragment fields, IPv4 options, Timestamp, or Router Alert coverage; those cases
-live in byte and summary fixtures unless a matching pcap fixture is added.
+IPv4 DSCP/ECN and IEEE 802.11 WPA decryptor coverage, but do not currently
+include pcap records for IPv4 fragment fields, IPv4 options, Timestamp, or
+Router Alert coverage; those cases live in byte and summary fixtures unless a
+matching pcap fixture is added.
 
 Malformed packet fixtures cover short or inconsistent Ethernet, VLAN, ARP,
 Linux cooked, null loopback, IPv4, IPv4 options, IPv6 extension headers, UDP,
