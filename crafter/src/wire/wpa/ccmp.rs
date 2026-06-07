@@ -1,15 +1,21 @@
 //! CCMP protected-frame parsing and decrypt helpers.
 //!
-//! Later steps will construct nonces and AAD, then authenticate/decrypt
-//! protected payloads here.
-
 use super::metadata::WpaKeyKind;
-use crate::{CrafterError, Dot11, MacAddr, Result};
+use crate::{
+    CrafterError, Dot11, Dot11DataSubtype, Dot11FrameControl, Dot11FrameType, MacAddr, Result,
+    DOT11_FC_ORDER,
+};
 
 const CCMP_HEADER_LEN: usize = 8;
+const CCMP_NONCE_LEN: usize = 13;
+const CCMP_AAD_BASE_LEN: usize = 22;
 const CCMP_EXTENDED_IV_BIT: u8 = 0x20;
 const CCMP_KEY_ID_SHIFT: u8 = 6;
 const CCMP_KEY_ID_MASK: u8 = 0x03;
+const CCMP_AAD_FRAME_CONTROL_MASK: u16 = 0xc38f;
+const CCMP_AAD_SEQUENCE_CONTROL_MASK: u16 = 0x000f;
+const CCMP_AAD_QOS_CONTROL_MASK: u16 = 0x000f;
+const CCMP_NONCE_QOS_PRIORITY_MASK: u16 = 0x000f;
 
 /// Parsed 8-octet CCMP header plus the encrypted payload that follows it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,10 +114,173 @@ pub(crate) const fn key_kind_for_destination(destination: MacAddr) -> WpaKeyKind
     }
 }
 
+/// Build the 13-octet CCMP nonce from the QoS priority, transmitter, and PN.
+pub(crate) fn ccmp_nonce(dot11: &Dot11, ccmp: &CcmpHeader<'_>) -> Result<[u8; CCMP_NONCE_LEN]> {
+    let fields = ccmp_frame_fields(dot11, "ccmp.nonce.frame")?;
+    let mut nonce = [0u8; CCMP_NONCE_LEN];
+
+    nonce[0] = fields
+        .qos_control
+        .map(|qos| (qos & CCMP_NONCE_QOS_PRIORITY_MASK) as u8)
+        .unwrap_or_default();
+    nonce[1..7].copy_from_slice(&fields.transmitter.octets());
+    nonce[7..].copy_from_slice(&ccmp.packet_number_nonce_bytes());
+
+    Ok(nonce)
+}
+
+/// Build CCMP additional authenticated data for supported protected data frames.
+pub(crate) fn ccmp_aad(dot11: &Dot11) -> Result<Vec<u8>> {
+    let fields = ccmp_frame_fields(dot11, "ccmp.aad.frame")?;
+    let mut frame_control = fields.frame_control.bits() & CCMP_AAD_FRAME_CONTROL_MASK;
+
+    if fields.qos_control.is_some() {
+        frame_control &= !DOT11_FC_ORDER;
+    }
+
+    let sequence_control = fields.sequence_control & CCMP_AAD_SEQUENCE_CONTROL_MASK;
+    let mut aad = Vec::with_capacity(
+        CCMP_AAD_BASE_LEN
+            + fields.addr4.map(|_| 6).unwrap_or_default()
+            + fields.qos_control.map(|_| 2).unwrap_or_default(),
+    );
+
+    aad.extend_from_slice(&frame_control.to_le_bytes());
+    aad.extend_from_slice(&fields.addr1.octets());
+    aad.extend_from_slice(&fields.addr2.octets());
+    aad.extend_from_slice(&fields.addr3.octets());
+    aad.extend_from_slice(&sequence_control.to_le_bytes());
+    if let Some(addr4) = fields.addr4 {
+        aad.extend_from_slice(&addr4.octets());
+    }
+    if let Some(qos_control) = fields.qos_control {
+        aad.extend_from_slice(&(qos_control & CCMP_AAD_QOS_CONTROL_MASK).to_le_bytes());
+    }
+
+    Ok(aad)
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CcmpFrameFields {
+    frame_control: Dot11FrameControl,
+    addr1: MacAddr,
+    addr2: MacAddr,
+    addr3: MacAddr,
+    addr4: Option<MacAddr>,
+    transmitter: MacAddr,
+    sequence_control: u16,
+    qos_control: Option<u16>,
+}
+
+fn ccmp_frame_fields(dot11: &Dot11, field: &'static str) -> Result<CcmpFrameFields> {
+    let frame_control = dot11.frame_control_value();
+
+    if frame_control.frame_type_value() != Dot11FrameType::Data {
+        return Err(CrafterError::invalid_field_value(
+            field,
+            "only data frames are supported",
+        ));
+    }
+    if !frame_control.protected() {
+        return Err(CrafterError::invalid_field_value(
+            field,
+            "only protected data frames are supported",
+        ));
+    }
+    if dot11.is_fragmented() {
+        return Err(CrafterError::invalid_field_value(
+            field,
+            "fragmented data frames are not supported",
+        ));
+    }
+
+    let subtype = frame_control
+        .data_subtype_value()
+        .ok_or_else(|| CrafterError::invalid_field_value(field, "missing data subtype"))?;
+    if !ccmp_data_subtype_carries_payload(subtype) {
+        return Err(CrafterError::invalid_field_value(
+            field,
+            "data subtype does not carry a payload",
+        ));
+    }
+
+    let qos_control = if ccmp_data_subtype_has_qos(subtype) {
+        Some(
+            dot11
+                .qos_control_value()
+                .ok_or_else(|| CrafterError::invalid_field_value(field, "missing QoS control"))?,
+        )
+    } else {
+        if frame_control.order() {
+            return Err(CrafterError::invalid_field_value(
+                field,
+                "HT control without QoS data is not supported",
+            ));
+        }
+        None
+    };
+
+    let addr4 = if frame_control.to_ds() && frame_control.from_ds() {
+        Some(
+            dot11
+                .fourth_address()
+                .ok_or_else(|| CrafterError::invalid_field_value(field, "missing address 4"))?,
+        )
+    } else {
+        None
+    };
+
+    Ok(CcmpFrameFields {
+        frame_control,
+        addr1: dot11
+            .addr1_value()
+            .ok_or_else(|| CrafterError::invalid_field_value(field, "missing address 1"))?,
+        addr2: dot11
+            .addr2_value()
+            .ok_or_else(|| CrafterError::invalid_field_value(field, "missing address 2"))?,
+        addr3: dot11
+            .addr3_value()
+            .ok_or_else(|| CrafterError::invalid_field_value(field, "missing address 3"))?,
+        addr4,
+        transmitter: dot11
+            .transmitter()
+            .ok_or_else(|| CrafterError::invalid_field_value(field, "missing transmitter"))?,
+        sequence_control: dot11
+            .sequence_control_value()
+            .ok_or_else(|| CrafterError::invalid_field_value(field, "missing sequence control"))?
+            .bits(),
+        qos_control,
+    })
+}
+
+const fn ccmp_data_subtype_carries_payload(subtype: Dot11DataSubtype) -> bool {
+    matches!(
+        subtype,
+        Dot11DataSubtype::Data
+            | Dot11DataSubtype::DataCfAck
+            | Dot11DataSubtype::DataCfPoll
+            | Dot11DataSubtype::DataCfAckCfPoll
+            | Dot11DataSubtype::QosData
+            | Dot11DataSubtype::QosDataCfAck
+            | Dot11DataSubtype::QosDataCfPoll
+            | Dot11DataSubtype::QosDataCfAckCfPoll
+    )
+}
+
+const fn ccmp_data_subtype_has_qos(subtype: Dot11DataSubtype) -> bool {
+    matches!(
+        subtype,
+        Dot11DataSubtype::QosData
+            | Dot11DataSubtype::QosDataCfAck
+            | Dot11DataSubtype::QosDataCfPoll
+            | Dot11DataSubtype::QosDataCfAckCfPoll
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Dot11, MacAddr};
+    use crate::{Dot11, Dot11QosControl, Dot11SequenceControl, MacAddr};
 
     fn ccmp_body(key_id: u8, pn: [u8; 6], encrypted_payload: &[u8]) -> Vec<u8> {
         let mut body = vec![
@@ -130,6 +299,28 @@ mod tests {
 
     fn mac(last: u8) -> MacAddr {
         MacAddr::new([0x02, 0x00, 0x5e, 0x11, 0x00, last])
+    }
+
+    fn protected(dot11: Dot11) -> Dot11 {
+        let frame_control = dot11.frame_control_value().with_protected(true);
+        dot11.frame_control(frame_control)
+    }
+
+    fn data_frame() -> Dot11 {
+        protected(Dot11::data())
+            .addr1(mac(1))
+            .addr2(mac(2))
+            .addr3(mac(3))
+            .sequence_control(Dot11SequenceControl::new().with_sequence_number(0xabc))
+    }
+
+    fn qos_data_frame() -> Dot11 {
+        protected(Dot11::qos_data())
+            .addr1(mac(1))
+            .addr2(mac(2))
+            .addr3(mac(3))
+            .sequence_control(Dot11SequenceControl::new().with_sequence_number(0xabc))
+            .with_qos_control_fields(Dot11QosControl::from_bits(0xabcd))
     }
 
     #[test]
@@ -222,6 +413,156 @@ mod tests {
         assert_eq!(
             header.key_kind_for_dot11(&group_to_ds),
             Some(WpaKeyKind::Group)
+        );
+    }
+
+    #[test]
+    fn nonce_uses_zero_priority_for_plain_data() {
+        let body = ccmp_body(0, [1, 2, 3, 4, 5, 6], &[0xaa]);
+        let header = CcmpHeader::parse(&body).unwrap();
+        let nonce = ccmp_nonce(&data_frame(), &header).unwrap();
+
+        assert_eq!(
+            nonce,
+            [0, 0x02, 0x00, 0x5e, 0x11, 0x00, 0x02, 6, 5, 4, 3, 2, 1]
+        );
+    }
+
+    #[test]
+    fn nonce_uses_qos_tid_as_priority() {
+        let body = ccmp_body(0, [1, 2, 3, 4, 5, 6], &[0xaa]);
+        let header = CcmpHeader::parse(&body).unwrap();
+        let nonce = ccmp_nonce(&qos_data_frame(), &header).unwrap();
+
+        assert_eq!(nonce[0], 0x0d);
+        assert_eq!(&nonce[1..7], &mac(2).octets());
+        assert_eq!(&nonce[7..], &[6, 5, 4, 3, 2, 1]);
+    }
+
+    #[test]
+    fn nonce_rejects_unprotected_data() {
+        let body = ccmp_body(0, [1, 2, 3, 4, 5, 6], &[]);
+        let header = CcmpHeader::parse(&body).unwrap();
+        let error = ccmp_nonce(&Dot11::data(), &header).unwrap_err();
+
+        assert_eq!(
+            error,
+            CrafterError::InvalidFieldValue {
+                field: "ccmp.nonce.frame",
+                reason: "only protected data frames are supported",
+            }
+        );
+    }
+
+    #[test]
+    fn aad_builds_plain_data_header_fields() {
+        let aad = ccmp_aad(&data_frame()).unwrap();
+
+        assert_eq!(aad.len(), CCMP_AAD_BASE_LEN);
+        assert_eq!(&aad[0..2], &0x4008u16.to_le_bytes());
+        assert_eq!(&aad[2..8], &mac(1).octets());
+        assert_eq!(&aad[8..14], &mac(2).octets());
+        assert_eq!(&aad[14..20], &mac(3).octets());
+        assert_eq!(&aad[20..22], &[0, 0]);
+    }
+
+    #[test]
+    fn aad_builds_qos_data_with_masked_qos_control() {
+        let mut dot11 = qos_data_frame();
+        let frame_control = dot11.frame_control_value().with_order(true);
+        dot11 = dot11.frame_control(frame_control).ht_control(0x1234_5678);
+        let aad = ccmp_aad(&dot11).unwrap();
+
+        assert_eq!(aad.len(), CCMP_AAD_BASE_LEN + 2);
+        assert_eq!(&aad[0..2], &0x4088u16.to_le_bytes());
+        assert_eq!(&aad[20..22], &[0, 0]);
+        assert_eq!(&aad[22..24], &[0x0d, 0x00]);
+    }
+
+    #[test]
+    fn aad_preserves_to_ds_address_fields() {
+        let mut dot11 = data_frame().addr1(mac(10)).addr2(mac(11)).addr3(mac(12));
+        let frame_control = dot11.frame_control_value().with_to_ds(true);
+        dot11 = dot11.frame_control(frame_control);
+        let aad = ccmp_aad(&dot11).unwrap();
+
+        assert_eq!(&aad[0..2], &0x4108u16.to_le_bytes());
+        assert_eq!(&aad[2..8], &mac(10).octets());
+        assert_eq!(&aad[8..14], &mac(11).octets());
+        assert_eq!(&aad[14..20], &mac(12).octets());
+    }
+
+    #[test]
+    fn aad_preserves_from_ds_address_fields() {
+        let mut dot11 = data_frame().addr1(mac(20)).addr2(mac(21)).addr3(mac(22));
+        let frame_control = dot11.frame_control_value().with_from_ds(true);
+        dot11 = dot11.frame_control(frame_control);
+        let aad = ccmp_aad(&dot11).unwrap();
+
+        assert_eq!(&aad[0..2], &0x4208u16.to_le_bytes());
+        assert_eq!(&aad[2..8], &mac(20).octets());
+        assert_eq!(&aad[8..14], &mac(21).octets());
+        assert_eq!(&aad[14..20], &mac(22).octets());
+    }
+
+    #[test]
+    fn aad_includes_four_address_fields_where_supported() {
+        let mut dot11 = qos_data_frame()
+            .addr1(mac(30))
+            .addr2(mac(31))
+            .addr3(mac(32))
+            .addr4(mac(33));
+        let frame_control = dot11
+            .frame_control_value()
+            .with_to_ds(true)
+            .with_from_ds(true);
+        dot11 = dot11.frame_control(frame_control);
+        let aad = ccmp_aad(&dot11).unwrap();
+
+        assert_eq!(aad.len(), CCMP_AAD_BASE_LEN + 6 + 2);
+        assert_eq!(&aad[0..2], &0x4388u16.to_le_bytes());
+        assert_eq!(&aad[2..8], &mac(30).octets());
+        assert_eq!(&aad[8..14], &mac(31).octets());
+        assert_eq!(&aad[14..20], &mac(32).octets());
+        assert_eq!(&aad[22..28], &mac(33).octets());
+        assert_eq!(&aad[28..30], &[0x0d, 0x00]);
+    }
+
+    #[test]
+    fn aad_masks_sequence_number_and_mutable_frame_control_bits() {
+        let mut dot11 =
+            data_frame().sequence_control(Dot11SequenceControl::new().with_sequence_number(0xfff));
+        let frame_control = dot11
+            .frame_control_value()
+            .with_retry(true)
+            .with_power_management(true)
+            .with_more_data(true);
+        dot11 = dot11.frame_control(frame_control);
+        let aad = ccmp_aad(&dot11).unwrap();
+
+        assert_eq!(&aad[0..2], &0x4008u16.to_le_bytes());
+        assert_eq!(&aad[20..22], &[0, 0]);
+    }
+
+    #[test]
+    fn aad_rejects_unsupported_fragmented_data() {
+        let error = ccmp_aad(&data_frame().fragment_number(1)).unwrap_err();
+
+        assert_eq!(
+            error,
+            CrafterError::InvalidFieldValue {
+                field: "ccmp.aad.frame",
+                reason: "fragmented data frames are not supported",
+            }
+        );
+
+        let error = ccmp_aad(&data_frame().more_fragments(true)).unwrap_err();
+        assert_eq!(
+            error,
+            CrafterError::InvalidFieldValue {
+                field: "ccmp.aad.frame",
+                reason: "fragmented data frames are not supported",
+            }
         );
     }
 }
