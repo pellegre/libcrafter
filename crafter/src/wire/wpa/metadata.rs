@@ -86,6 +86,8 @@ pub enum WpaDecryptReason {
     WaitingForHandshake,
     /// The observed cipher is not supported by this decryptor.
     UnsupportedCipher,
+    /// The observed authentication/key-management suite is not supported.
+    UnsupportedAkm,
     /// Required pairwise or group key material is missing.
     MissingKeyMaterial,
     /// EAPOL-Key MIC verification failed.
