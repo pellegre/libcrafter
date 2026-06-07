@@ -110,10 +110,73 @@ pub struct IpDefrag {
     ipv6_datagrams: BTreeMap<Ipv6DefragKey, Ipv6DatagramState>,
     input_count: usize,
     emitted_count: usize,
+    pass_through_count: usize,
+    fragments_observed: usize,
+    completed_datagram_count: usize,
     eviction_count: usize,
     timeout_eviction_count: usize,
     datagram_limit_eviction_count: usize,
     byte_limit_eviction_count: usize,
+    conflict_count: usize,
+    error_count: usize,
+}
+
+/// Compact counters for an [`IpDefrag`] transform.
+///
+/// These counters summarize transform activity without exposing buffered
+/// fragment payloads or per-datagram state.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct IpDefragStats {
+    input_count: usize,
+    emitted_count: usize,
+    pass_through_count: usize,
+    fragments_observed: usize,
+    completed_datagrams: usize,
+    evicted_datagrams: usize,
+    conflicts: usize,
+    errors: usize,
+}
+
+impl IpDefragStats {
+    /// Number of input records seen.
+    pub const fn input_count(&self) -> usize {
+        self.input_count
+    }
+
+    /// Number of records successfully emitted.
+    pub const fn emitted_count(&self) -> usize {
+        self.emitted_count
+    }
+
+    /// Number of records emitted without fragment reassembly.
+    pub const fn pass_through_count(&self) -> usize {
+        self.pass_through_count
+    }
+
+    /// Number of fragment records observed by the transform.
+    pub const fn fragments_observed(&self) -> usize {
+        self.fragments_observed
+    }
+
+    /// Number of fragmented datagrams completed by reassembly or normalization.
+    pub const fn completed_datagrams(&self) -> usize {
+        self.completed_datagrams
+    }
+
+    /// Number of incomplete datagrams evicted before reassembly.
+    pub const fn evicted_datagrams(&self) -> usize {
+        self.evicted_datagrams
+    }
+
+    /// Number of conflicting fragment datagrams observed.
+    pub const fn conflicts(&self) -> usize {
+        self.conflicts
+    }
+
+    /// Number of transform calls that returned an error.
+    pub const fn errors(&self) -> usize {
+        self.errors
+    }
 }
 
 impl IpDefrag {
@@ -232,6 +295,50 @@ impl IpDefrag {
     /// Number of records successfully emitted.
     pub const fn emitted_count(&self) -> usize {
         self.emitted_count
+    }
+
+    /// Number of records emitted without fragment reassembly.
+    pub const fn pass_through_count(&self) -> usize {
+        self.pass_through_count
+    }
+
+    /// Number of fragment records observed by the transform.
+    pub const fn fragments_observed(&self) -> usize {
+        self.fragments_observed
+    }
+
+    /// Number of fragmented datagrams completed by reassembly or normalization.
+    pub const fn completed_datagrams(&self) -> usize {
+        self.completed_datagram_count
+    }
+
+    /// Number of incomplete datagrams evicted before reassembly.
+    pub const fn evicted_datagrams(&self) -> usize {
+        self.eviction_count
+    }
+
+    /// Number of conflicting fragment datagrams observed.
+    pub const fn conflicts(&self) -> usize {
+        self.conflict_count
+    }
+
+    /// Number of transform calls that returned an error.
+    pub const fn errors(&self) -> usize {
+        self.error_count
+    }
+
+    /// Return a compact snapshot of transform counters.
+    pub const fn stats(&self) -> IpDefragStats {
+        IpDefragStats {
+            input_count: self.input_count,
+            emitted_count: self.emitted_count,
+            pass_through_count: self.pass_through_count,
+            fragments_observed: self.fragments_observed,
+            completed_datagrams: self.completed_datagram_count,
+            evicted_datagrams: self.eviction_count,
+            conflicts: self.conflict_count,
+            errors: self.error_count,
+        }
     }
 
     /// Number of incomplete IPv4 datagrams currently buffered.
@@ -640,6 +747,7 @@ impl IpDefrag {
 
         emit(record)?;
         self.emitted_count += 1;
+        self.pass_through_count += 1;
         Ok(())
     }
 
@@ -688,6 +796,7 @@ impl IpDefrag {
 
         emit(PacketRecord::from_packet_metadata(packet, metadata))?;
         self.emitted_count += 1;
+        self.completed_datagram_count += 1;
         Ok(())
     }
 
@@ -701,6 +810,7 @@ impl IpDefrag {
         );
         emit(record)?;
         self.emitted_count += 1;
+        self.pass_through_count += 1;
         Ok(())
     }
 }
@@ -713,6 +823,9 @@ impl fmt::Debug for IpDefrag {
             .field("pending_ipv6_datagrams", &self.ipv6_datagrams.len())
             .field("input_count", &self.input_count)
             .field("emitted_count", &self.emitted_count)
+            .field("pass_through_count", &self.pass_through_count)
+            .field("fragments_observed", &self.fragments_observed)
+            .field("completed_datagrams", &self.completed_datagram_count)
             .field("eviction_count", &self.eviction_count)
             .field("timeout_eviction_count", &self.timeout_eviction_count)
             .field(
@@ -720,6 +833,8 @@ impl fmt::Debug for IpDefrag {
                 &self.datagram_limit_eviction_count,
             )
             .field("byte_limit_eviction_count", &self.byte_limit_eviction_count)
+            .field("conflicts", &self.conflict_count)
+            .field("errors", &self.error_count)
             .finish_non_exhaustive()
     }
 }
@@ -734,6 +849,20 @@ impl PacketTransform for IpDefrag {
         record: PacketRecord,
         emit: &mut dyn FnMut(PacketRecord) -> Result<()>,
     ) -> Result<()> {
+        let result = self.try_transform(record, emit);
+        if result.is_err() {
+            self.error_count += 1;
+        }
+        result
+    }
+}
+
+impl IpDefrag {
+    fn try_transform(
+        &mut self,
+        record: PacketRecord,
+        emit: &mut dyn FnMut(PacketRecord) -> Result<()>,
+    ) -> Result<()> {
         self.config.validate()?;
         self.input_count += 1;
 
@@ -742,14 +871,17 @@ impl PacketTransform for IpDefrag {
 
         if let Ipv4FragmentExtract::View(view) = extract_ipv4_fragment(&record)? {
             if view.is_fragmented() {
+                self.fragments_observed += 1;
                 match self.observe_ipv4_fragment(&record, &view, emit) {
                     Ipv4DefragObservation::Buffered => {}
                     Ipv4DefragObservation::Evicted => {}
                     Ipv4DefragObservation::Complete(state) => {
                         emit(state.reassembled_record(self.name())?)?;
                         self.emitted_count += 1;
+                        self.completed_datagram_count += 1;
                     }
                     Ipv4DefragObservation::Conflict(state) => {
+                        self.conflict_count += 1;
                         self.handle_ipv4_conflict(record, state, emit)?;
                     }
                     Ipv4DefragObservation::Error(error) => return Err(error),
@@ -760,6 +892,7 @@ impl PacketTransform for IpDefrag {
 
         match extract_ipv6_fragment(&record)? {
             Ipv6FragmentExtract::View(view) => {
+                self.fragments_observed += 1;
                 if view.is_atomic() {
                     return self.handle_ipv6_atomic_fragment(record, &view, emit);
                 }
@@ -769,8 +902,10 @@ impl PacketTransform for IpDefrag {
                     Ipv6DefragObservation::Complete(state) => {
                         emit(state.reassembled_record(self.name())?)?;
                         self.emitted_count += 1;
+                        self.completed_datagram_count += 1;
                     }
                     Ipv6DefragObservation::Conflict(state) => {
+                        self.conflict_count += 1;
                         self.handle_ipv6_conflict(record, state, emit)?;
                     }
                     Ipv6DefragObservation::Error(error) => return Err(error),
