@@ -1,7 +1,7 @@
 //! Transmit-side IP fragmentation transform.
 
 use super::IpFragmentConfig;
-use crate::wire::record::PacketRecord;
+use crate::wire::record::{PacketRecord, TransformTrace};
 use crate::wire::transform::{PacketTransform, TransformOutput};
 use crate::wire::Result;
 
@@ -19,6 +19,11 @@ impl IpFragment {
         Self::with_config(IpFragmentConfig::new(mtu))
     }
 
+    /// Create an IP fragmentation transform with a validated explicit MTU.
+    pub fn try_new(mtu: usize) -> Result<Self> {
+        Ok(Self::with_config(IpFragmentConfig::try_new(mtu)?))
+    }
+
     /// Create an IP fragmentation transform from an explicit configuration.
     pub const fn with_config(config: IpFragmentConfig) -> Self {
         Self {
@@ -26,6 +31,12 @@ impl IpFragment {
             input_count: 0,
             emitted_count: 0,
         }
+    }
+
+    /// Create an IP fragmentation transform from a validated explicit configuration.
+    pub fn try_with_config(config: IpFragmentConfig) -> Result<Self> {
+        config.validate()?;
+        Ok(Self::with_config(config))
     }
 
     /// Borrow the current configuration.
@@ -59,7 +70,16 @@ impl PacketTransform for IpFragment {
         record: PacketRecord,
         emit: &mut dyn FnMut(PacketRecord) -> Result<()>,
     ) -> Result<()> {
+        self.config.validate()?;
         self.input_count += 1;
+
+        let mut record = record;
+        if self.config.traces_passthrough() {
+            record
+                .metadata_mut()
+                .push_transform_trace(TransformTrace::new(self.name()).with_note("passthrough"));
+        }
+
         emit(record)?;
         self.emitted_count += 1;
         Ok(())

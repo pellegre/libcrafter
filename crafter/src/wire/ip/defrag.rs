@@ -1,7 +1,7 @@
 //! Receive-side IP defragmentation transform.
 
 use super::IpDefragConfig;
-use crate::wire::record::PacketRecord;
+use crate::wire::record::{PacketRecord, TransformTrace};
 use crate::wire::transform::{PacketTransform, TransformOutput};
 use crate::wire::Result;
 
@@ -23,6 +23,13 @@ impl IpDefrag {
     pub const fn with_config(mut self, config: IpDefragConfig) -> Self {
         self.config = config;
         self
+    }
+
+    /// Replace the defragmentation configuration after validating it.
+    pub fn try_with_config(mut self, config: IpDefragConfig) -> Result<Self> {
+        config.validate()?;
+        self.config = config;
+        Ok(self)
     }
 
     /// Borrow the current configuration.
@@ -56,7 +63,16 @@ impl PacketTransform for IpDefrag {
         record: PacketRecord,
         emit: &mut dyn FnMut(PacketRecord) -> Result<()>,
     ) -> Result<()> {
+        self.config.validate()?;
         self.input_count += 1;
+
+        let mut record = record;
+        if self.config.traces_passthrough() {
+            record
+                .metadata_mut()
+                .push_transform_trace(TransformTrace::new(self.name()).with_note("passthrough"));
+        }
+
         emit(record)?;
         self.emitted_count += 1;
         Ok(())
