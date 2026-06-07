@@ -268,6 +268,26 @@ impl IpDefrag {
             }
         }
     }
+
+    fn emit_pass_through(
+        &mut self,
+        mut record: PacketRecord,
+        emit: &mut dyn FnMut(PacketRecord) -> Result<()>,
+    ) -> Result<()> {
+        if !self.config.emits_non_fragments() {
+            return Ok(());
+        }
+
+        if self.config.traces_passthrough() {
+            record
+                .metadata_mut()
+                .push_transform_trace(TransformTrace::new(self.name()).with_note("passthrough"));
+        }
+
+        emit(record)?;
+        self.emitted_count += 1;
+        Ok(())
+    }
 }
 
 impl PacketTransform for IpDefrag {
@@ -303,16 +323,7 @@ impl PacketTransform for IpDefrag {
             }
         }
 
-        let mut record = record;
-        if self.config.traces_passthrough() {
-            record
-                .metadata_mut()
-                .push_transform_trace(TransformTrace::new(self.name()).with_note("passthrough"));
-        }
-
-        emit(record)?;
-        self.emitted_count += 1;
-        Ok(())
+        self.emit_pass_through(record, emit)
     }
 }
 
@@ -754,6 +765,102 @@ fn trace_record_snapshot(record: &PacketRecord) -> PacketRecord {
         record.packet().clone(),
         record.metadata().clone().clear_captured_bytes(),
     )
+}
+
+#[cfg(test)]
+mod ipv4_pass_through {
+    use super::*;
+    use crate::wire::record::{BackendKind, PacketOrigin, PacketRecord};
+    use crate::{Ethernet, Ipv4, Raw};
+
+    fn ipv4_packet() -> Packet {
+        Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 10))
+            .dst(Ipv4Addr::new(198, 51, 100, 20))
+            .protocol(17)
+            .identification(0x2468)
+            / Raw::from_bytes(b"non-fragmented")
+    }
+
+    fn assert_record_unchanged(output: &TransformOutput, input: &PacketRecord) {
+        assert_eq!(output.len(), 1);
+        let record = &output.records()[0];
+        assert_eq!(record.packet().summary(), input.packet().summary());
+        assert_eq!(
+            record.packet().compile().unwrap().as_bytes(),
+            input.packet().compile().unwrap().as_bytes()
+        );
+        assert_eq!(record.metadata(), input.metadata());
+    }
+
+    #[test]
+    fn l3_non_fragmented_ipv4_passes_through_unchanged() {
+        let input = PacketRecord::new(ipv4_packet())
+            .with_origin(PacketOrigin::Generated)
+            .with_backend(BackendKind::Memory)
+            .with_interface("lo");
+        let mut transform = IpDefrag::new();
+
+        let output = transform.defrag_record(input.clone()).unwrap();
+
+        assert_eq!(transform.input_count(), 1);
+        assert_eq!(transform.emitted_count(), 1);
+        assert!(transform.ipv4_datagrams.is_empty());
+        assert_record_unchanged(&output, &input);
+    }
+
+    #[test]
+    fn ethernet_non_fragmented_ipv4_passes_through_unchanged() {
+        let input = PacketRecord::new(Ethernet::new() / ipv4_packet())
+            .with_origin(PacketOrigin::Generated)
+            .with_backend(BackendKind::Memory)
+            .with_interface("eth0");
+        let mut transform = IpDefrag::new();
+
+        let output = transform.defrag_record(input.clone()).unwrap();
+
+        assert_eq!(transform.input_count(), 1);
+        assert_eq!(transform.emitted_count(), 1);
+        assert!(transform.ipv4_datagrams.is_empty());
+        assert_record_unchanged(&output, &input);
+    }
+
+    #[test]
+    fn trace_passthrough_marks_non_fragmented_ipv4_without_rewriting_packet() {
+        let input = PacketRecord::new(ipv4_packet());
+        let expected_bytes = input.packet().compile().unwrap().as_bytes().to_vec();
+        let config = IpDefragConfig::new().trace_passthrough(true);
+        let mut transform = IpDefrag::new().with_config(config);
+
+        let output = transform.defrag_record(input).unwrap();
+
+        assert_eq!(output.len(), 1);
+        assert_eq!(transform.emitted_count(), 1);
+        let record = &output.records()[0];
+        assert_eq!(
+            record.packet().compile().unwrap().as_bytes(),
+            expected_bytes.as_slice()
+        );
+        let traces = record.metadata().transforms();
+        assert_eq!(traces.len(), 1);
+        assert_eq!(traces[0].name(), "ip-defrag");
+        assert_eq!(traces[0].note(), Some("passthrough"));
+    }
+
+    #[test]
+    fn pass_non_fragments_false_drops_non_fragmented_ipv4() {
+        let config = IpDefragConfig::new().pass_non_fragments(false);
+        let mut transform = IpDefrag::new().with_config(config);
+
+        let output = transform
+            .defrag_record(PacketRecord::new(ipv4_packet()))
+            .unwrap();
+
+        assert!(output.is_empty());
+        assert_eq!(transform.input_count(), 1);
+        assert_eq!(transform.emitted_count(), 0);
+        assert!(transform.ipv4_datagrams.is_empty());
+    }
 }
 
 #[cfg(test)]
