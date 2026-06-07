@@ -30,11 +30,11 @@ use crafter::core::{
     UDP_OPTION_EOL, UDP_OPTION_NOP,
 };
 use crafter::{
-    BackendKind, CrafterError, Dot11Metadata, IpDefrag, IpDefragOverlapStatus, IpFragmentFamily,
-    IpFragmentRange, PacketOrigin, PacketRecord, PacketWire, PcapError, PcapLinkType, PcapReader,
-    PcapTimestamp, PcapWriter, PcapWriterOptions, Sniffer, TimestampPrecision, WifiDecryptState,
-    WireError, WpaAkm, WpaCipher, WpaCredentialStatus, WpaDecrypt, WpaDecryptReason,
-    WpaHandshakeStatus, WpaKeyKind,
+    BackendKind, CrafterError, Dot11Metadata, IpDefrag, IpDefragOverlapStatus, IpFragment,
+    IpFragmentFamily, IpFragmentRange, IpFragmentReason, PacketOrigin, PacketRecord, PacketWire,
+    PcapError, PcapLinkType, PcapReader, PcapTimestamp, PcapWriter, PcapWriterOptions, Sniffer,
+    TimestampPrecision, WifiDecryptState, WireError, WpaAkm, WpaCipher, WpaCredentialStatus,
+    WpaDecrypt, WpaDecryptReason, WpaHandshakeStatus, WpaKeyKind, IPV4_OPTION_NOP,
 };
 use support::fixture_path;
 
@@ -4452,6 +4452,169 @@ fn ipv4_fragment_defrag_overlap_fixture_rejects_conflicting_bytes() {
         }
         other => panic!("expected structured overlap rejection, got {other:?}"),
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Ipv4FragmentEmitExpected {
+    start: usize,
+    end: usize,
+    offset: u16,
+    more_fragments: bool,
+    total_len: u16,
+}
+
+impl Ipv4FragmentEmitExpected {
+    const fn new(
+        start: usize,
+        end: usize,
+        offset: u16,
+        more_fragments: bool,
+        total_len: u16,
+    ) -> Self {
+        Self {
+            start,
+            end,
+            offset,
+            more_fragments,
+            total_len,
+        }
+    }
+}
+
+fn ipv4_fragment_emit_record(payload: &[u8], with_options: bool) -> PacketRecord {
+    let mut ipv4 = Ipv4::with_addresses(
+        Ipv4Addr::new(192, 0, 2, 72),
+        Ipv4Addr::new(198, 51, 100, 72),
+    )
+    .protocol(253)
+    .identification(0x5129)
+    .ttl(43)
+    .ds_field(0x29);
+    if with_options {
+        ipv4 = ipv4.option([IPV4_OPTION_NOP]);
+    }
+
+    PacketRecord::new(ipv4 / Raw::from_bytes(payload))
+}
+
+fn assert_ipv4_fragment_emit_fixture(
+    name: &str,
+    mtu: usize,
+    with_options: bool,
+    payload: &[u8],
+    expected: &[Ipv4FragmentEmitExpected],
+) {
+    let mut transform = IpFragment::new(mtu);
+
+    let output = transform
+        .fragment_record(ipv4_fragment_emit_record(payload, with_options))
+        .unwrap_or_else(|error| panic!("{name} should fragment: {error}"));
+
+    assert_eq!(output.len(), expected.len(), "{name} fragment count");
+    assert_eq!(
+        transform.emitted_count(),
+        expected.len(),
+        "{name} emissions"
+    );
+    let mut reconstructed = Vec::new();
+    for (index, (record, fragment)) in output.records().iter().zip(expected).enumerate() {
+        assert_eq!(fragment.start, reconstructed.len(), "{name} order");
+        let wire = record.packet().compile().unwrap();
+        assert!(
+            wire.as_bytes().len() <= mtu,
+            "{name} fragment {index} exceeded MTU"
+        );
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, wire.as_bytes()).unwrap();
+        let ipv4 = decoded.layer::<Ipv4>().unwrap();
+        assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 72), "{name}");
+        assert_eq!(
+            ipv4.destination(),
+            Ipv4Addr::new(198, 51, 100, 72),
+            "{name}"
+        );
+        assert_eq!(ipv4.protocol_value(), 253, "{name}");
+        assert_eq!(ipv4.identification_value(), 0x5129, "{name}");
+        assert_eq!(ipv4.checksum_status(), Ipv4ChecksumStatus::Valid, "{name}");
+        assert_eq!(ipv4.fragment_offset_value(), fragment.offset, "{name}");
+        assert_eq!(ipv4.has_more_fragments(), fragment.more_fragments, "{name}");
+        assert_eq!(
+            ipv4.total_length_value(),
+            Some(fragment.total_len),
+            "{name}"
+        );
+        if with_options {
+            assert_eq!(ipv4.option_bytes(), &[IPV4_OPTION_NOP, 0, 0, 0], "{name}");
+        }
+
+        let raw = decoded.layer::<Raw>().unwrap();
+        assert_eq!(
+            raw.as_bytes(),
+            &payload[fragment.start..fragment.end],
+            "{name}"
+        );
+        reconstructed.extend_from_slice(raw.as_bytes());
+
+        let metadata = &record.metadata().ip_fragment_metadata()[0];
+        assert_eq!(metadata.family(), IpFragmentFamily::Ipv4, "{name}");
+        assert_eq!(metadata.fragment_count(), expected.len(), "{name}");
+        assert_eq!(metadata.fragment_index(), index, "{name}");
+        assert_eq!(
+            metadata.byte_range(),
+            IpFragmentRange::new(fragment.start as u32, fragment.end as u32),
+            "{name}"
+        );
+        assert_eq!(
+            metadata.reason(),
+            Some(&IpFragmentReason::Fragmented),
+            "{name}"
+        );
+    }
+
+    assert_eq!(reconstructed, payload, "{name} reconstructed payload");
+}
+
+#[test]
+fn ipv4_fragment_emit_boundary_fixture_rows_decode_and_reconstruct() {
+    let one_byte_over_payload = (0u8..21).collect::<Vec<_>>();
+    assert_ipv4_fragment_emit_fixture(
+        "one_byte_over_mtu",
+        40,
+        false,
+        &one_byte_over_payload,
+        &[
+            Ipv4FragmentEmitExpected::new(0, 16, 0, true, 36),
+            Ipv4FragmentEmitExpected::new(16, 21, 2, false, 25),
+        ],
+    );
+
+    let many_fragments_payload = (0u8..73).collect::<Vec<_>>();
+    assert_ipv4_fragment_emit_fixture(
+        "many_fragments",
+        36,
+        false,
+        &many_fragments_payload,
+        &[
+            Ipv4FragmentEmitExpected::new(0, 16, 0, true, 36),
+            Ipv4FragmentEmitExpected::new(16, 32, 2, true, 36),
+            Ipv4FragmentEmitExpected::new(32, 48, 4, true, 36),
+            Ipv4FragmentEmitExpected::new(48, 64, 6, true, 36),
+            Ipv4FragmentEmitExpected::new(64, 73, 8, false, 29),
+        ],
+    );
+
+    let options_odd_final_payload = (0u8..35).collect::<Vec<_>>();
+    assert_ipv4_fragment_emit_fixture(
+        "options_odd_final",
+        40,
+        true,
+        &options_odd_final_payload,
+        &[
+            Ipv4FragmentEmitExpected::new(0, 16, 0, true, 40),
+            Ipv4FragmentEmitExpected::new(16, 32, 2, true, 40),
+            Ipv4FragmentEmitExpected::new(32, 35, 4, false, 27),
+        ],
+    );
 }
 
 #[test]
