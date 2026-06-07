@@ -406,8 +406,9 @@ pub use wire::{
     PacketWireBuilder, PacketWireTarget, PacketWriter, PassThroughTransform, RadioMetadata,
     RawSocketWireBuilder, RawSocketWriter, SnifferCancel, SnifferHandle, TraceAppendTransform,
     TransformOutput, TransformTrace, Transmitter, VecPacketSource, WifiDecryptState, WifiMetadata,
-    WifiProtectionStatus, WireError, WpaAkm, WpaCipher, WpaDecrypt, WpaDecryptConfig,
-    WpaDecryptReason, WpaHandshakeStatus, WpaKeyKind, WpaMetadata, WpaNetwork, WriteReport,
+    WifiProtectionStatus, WireError, WpaAkm, WpaCipher, WpaCredentialStatus, WpaDecrypt,
+    WpaDecryptConfig, WpaDecryptReason, WpaHandshakeStatus, WpaKeyKind, WpaMetadata, WpaNetwork,
+    WriteReport,
 };
 
 /// Core packet and protocol APIs.
@@ -724,8 +725,9 @@ pub mod prelude {
         PcapWriterOptions, RawSender, ReplyMatcher, SendMode, SendOptions, SendPlan, SendRecv,
         SendRecvOptions, SendRecvReport, SendReport, SendTarget, Sniffer, SocketSend, SocketSender,
         TimestampPrecision, Transmitter, VecPacketSource, WifiDecryptState, WifiMetadata,
-        WifiProtectionStatus, WireError, WpaAkm, WpaCipher, WpaDecrypt, WpaDecryptConfig,
-        WpaDecryptReason, WpaHandshakeStatus, WpaKeyKind, WpaMetadata, WpaNetwork, WriteReport,
+        WifiProtectionStatus, WireError, WpaAkm, WpaCipher, WpaCredentialStatus, WpaDecrypt,
+        WpaDecryptConfig, WpaDecryptReason, WpaHandshakeStatus, WpaKeyKind, WpaMetadata,
+        WpaNetwork, WriteReport,
     };
     pub use crate::{
         BackendKind, BluetoothMetadata, DropAllTransform, DuplicateTransform, MediumMetadata,
