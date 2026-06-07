@@ -40,13 +40,13 @@ pub enum Ipv6AtomicFragmentPolicy {
     PassThrough,
     /// Normalize atomic fragments by removing the Fragment Header.
     Normalize,
-    /// Drop atomic fragments with explicit trace metadata.
+    /// Drop atomic fragments without emitting an output record.
     Drop,
 }
 
 impl Default for Ipv6AtomicFragmentPolicy {
     fn default() -> Self {
-        Self::PassThrough
+        Self::Normalize
     }
 }
 
@@ -121,7 +121,7 @@ impl IpDefragConfig {
             max_bytes_per_datagram: IP_DEFRAG_DEFAULT_MAX_BYTES_PER_DATAGRAM,
             max_age: IP_DEFRAG_DEFAULT_MAX_AGE,
             overlap_policy: IpDefragOverlapPolicy::RejectConflicting,
-            ipv6_atomic_fragment_policy: Ipv6AtomicFragmentPolicy::PassThrough,
+            ipv6_atomic_fragment_policy: Ipv6AtomicFragmentPolicy::Normalize,
             trace_passthrough: false,
             trace_evictions: false,
         }

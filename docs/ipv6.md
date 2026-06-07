@@ -32,7 +32,7 @@ under `tools/oracle/specs/layers/ipv6.yaml` and
 | Hop-by-Hop Options | Supported | Ordered `Ipv6Option` TLVs, explicit-only options, 8-octet header padding. |
 | Destination Options | Supported | Ordered `Ipv6Option` TLVs, including Home Address as packet-layer data. |
 | Routing headers | Supported | Generic Routing Header, Mobile Type 2, and Segment Routing Header (SRH). |
-| Fragment Header | Supported | Field inspection and initial/atomic/non-initial classification; no reassembly. |
+| Fragment Header | Supported | Field inspection, initial/atomic/non-initial classification, and transform-scoped `IpDefrag` handling. |
 | Malformed decode | Supported | Structured errors for truncation and invalid fields; no silent panic. |
 | Live traffic | Opt-in only | Examples, fixtures, and oracle coverage are offline or dry-run by default. |
 
@@ -288,8 +288,16 @@ Inspection helpers expose byte offsets, reserved-field status, and
 
 Initial and atomic fragments continue normal upper-layer decode when the header
 chain is present. Non-initial fragments stop upper-layer decode and preserve the
-remaining bytes as `Raw`, because there is no reassembly, overlap handling,
-fragment queue, timeout, or fragment cache.
+remaining bytes as `Raw` in the base decoder.
+
+The packet-stream `IpDefrag` transform follows RFC 6946 for atomic fragments:
+an IPv6 Fragment Header with Fragment Offset zero and M flag clear is processed
+in isolation from queued fragments with the same source, destination, and
+identification. The default `Ipv6AtomicFragmentPolicy::Normalize` removes the
+Fragment Header for supported chains and emits a normal packet-shaped record
+with `IpDefragMetadata` and an `atomic fragment normalized` transform trace.
+Configured pass-through keeps the Fragment Header and records an
+`atomic fragment pass-through` trace; configured drop emits no record.
 
 ```rust
 use crafter::prelude::*;

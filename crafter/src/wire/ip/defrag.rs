@@ -15,7 +15,7 @@ use super::ipv6::{
 use super::range::{RangeMap, RangeMapConflict, RangeMapInsert};
 use super::{
     IpDefragConfig, IpDefragEvictionReason, IpDefragMetadata, IpDefragOverlapPolicy,
-    IpFragmentFamily, IpFragmentRange,
+    IpFragmentFamily, IpFragmentRange, Ipv6AtomicFragmentPolicy,
 };
 use crate::pcap::PcapTimestamp;
 use crate::protocols::ipv4::append_ipv4_packet_with_registry;
@@ -31,6 +31,8 @@ use crate::{CrafterError, Ipv4, Ipv6FragmentHeaderStatus, LinkType, NetworkLayer
 
 const IPV4_MIN_HEADER_LEN: usize = 20;
 const IPV6_HEADER_LEN: usize = 40;
+const IPV6_ATOMIC_FRAGMENT_NORMALIZED_NOTE: &str = "atomic fragment normalized";
+const IPV6_ATOMIC_FRAGMENT_PASSTHROUGH_NOTE: &str = "atomic fragment pass-through";
 
 /// Receive-side IP defragmentation transform.
 #[derive(Debug, Clone, Default)]
@@ -404,6 +406,67 @@ impl IpDefrag {
         self.emitted_count += 1;
         Ok(())
     }
+
+    fn handle_ipv6_atomic_fragment(
+        &mut self,
+        record: PacketRecord,
+        view: &Ipv6FragmentView,
+        emit: &mut dyn FnMut(PacketRecord) -> Result<()>,
+    ) -> Result<()> {
+        match self.config.ipv6_atomic_fragment_policy() {
+            Ipv6AtomicFragmentPolicy::Normalize => {
+                self.emit_normalized_ipv6_atomic_fragment(&record, view, emit)
+            }
+            Ipv6AtomicFragmentPolicy::PassThrough => {
+                self.emit_ipv6_atomic_pass_through(record, emit)
+            }
+            Ipv6AtomicFragmentPolicy::Drop => Ok(()),
+        }
+    }
+
+    fn emit_normalized_ipv6_atomic_fragment(
+        &mut self,
+        record: &PacketRecord,
+        view: &Ipv6FragmentView,
+        emit: &mut dyn FnMut(PacketRecord) -> Result<()>,
+    ) -> Result<()> {
+        let input_len = ipv6_fragment_record_len(view)?;
+        let initial_fragment = Ipv6InitialFragment::from_record(record, view);
+        let (packet, emitted_len, total_len) =
+            initial_fragment.reassembled_packet(view.fragmentable_payload())?;
+        let metadata = record
+            .metadata()
+            .clone()
+            .clear_captured_bytes()
+            .with_origin(PacketOrigin::Transformed)
+            .with_original_len(input_len)
+            .with_captured_len(input_len)
+            .with_emitted_len(emitted_len)
+            .with_ip_defrag_metadata(ipv6_atomic_fragment_metadata(view, total_len)?)
+            .with_transform_trace(
+                TransformTrace::new(self.name())
+                    .with_note(IPV6_ATOMIC_FRAGMENT_NORMALIZED_NOTE)
+                    .with_input_len(input_len)
+                    .with_output_len(emitted_len),
+            );
+
+        emit(PacketRecord::from_packet_metadata(packet, metadata))?;
+        self.emitted_count += 1;
+        Ok(())
+    }
+
+    fn emit_ipv6_atomic_pass_through(
+        &mut self,
+        mut record: PacketRecord,
+        emit: &mut dyn FnMut(PacketRecord) -> Result<()>,
+    ) -> Result<()> {
+        record.metadata_mut().push_transform_trace(
+            TransformTrace::new(self.name()).with_note(IPV6_ATOMIC_FRAGMENT_PASSTHROUGH_NOTE),
+        );
+        emit(record)?;
+        self.emitted_count += 1;
+        Ok(())
+    }
 }
 
 impl PacketTransform for IpDefrag {
@@ -442,7 +505,7 @@ impl PacketTransform for IpDefrag {
         match extract_ipv6_fragment(&record)? {
             Ipv6FragmentExtract::View(view) => {
                 if view.is_atomic() {
-                    return self.emit_pass_through(record, emit);
+                    return self.handle_ipv6_atomic_fragment(record, &view, emit);
                 }
                 match self.observe_ipv6_fragment(&record, &view, emit) {
                     Ipv6DefragObservation::Buffered => {}
@@ -1334,6 +1397,49 @@ fn trace_record_snapshot(record: &PacketRecord) -> PacketRecord {
     PacketRecord::from_packet_metadata(
         record.packet().clone(),
         record.metadata().clone().clear_captured_bytes(),
+    )
+}
+
+fn ipv6_fragment_record_len(view: &Ipv6FragmentView) -> Result<u32> {
+    let len = view
+        .wrapper()
+        .prefix()
+        .len()
+        .checked_add(view.total_len())
+        .and_then(|len| len.checked_add(view.wrapper().suffix().len()))
+        .ok_or_else(|| {
+            CrafterError::invalid_field_value(
+                "ip.defrag.ipv6.input_len",
+                "IPv6 fragment record length overflow",
+            )
+        })?;
+    u32::try_from(len).map_err(|_| {
+        CrafterError::invalid_field_value(
+            "ip.defrag.ipv6.input_len",
+            "IPv6 fragment record length exceeds u32",
+        )
+        .into()
+    })
+}
+
+fn ipv6_atomic_fragment_metadata(
+    view: &Ipv6FragmentView,
+    total_len: u32,
+) -> Result<IpDefragMetadata> {
+    let range_end = u32::try_from(view.fragmentable_payload().len()).map_err(|_| {
+        CrafterError::invalid_field_value(
+            "ip.defrag.ipv6.atomic_payload",
+            "IPv6 atomic fragment payload length exceeds u32",
+        )
+    })?;
+
+    Ok(
+        IpDefragMetadata::new(IpFragmentFamily::Ipv6, view.identification())
+            .with_datagram_key(Ipv6DefragKey::from_view(view).summary())
+            .with_fragment_count(1)
+            .with_duplicate_count(0)
+            .with_byte_ranges([IpFragmentRange::new(0, range_end)])
+            .with_total_len(total_len),
     )
 }
 
@@ -2381,7 +2487,7 @@ mod ipv6_state {
     }
 
     #[test]
-    fn atomic_ipv6_fragments_pass_through_without_creating_state() {
+    fn atomic_ipv6_fragments_normalize_without_creating_state() {
         let mut transform = IpDefrag::new();
 
         let output = transform
@@ -2390,6 +2496,231 @@ mod ipv6_state {
 
         assert_eq!(output.len(), 1);
         assert_eq!(transform.emitted_count(), 1);
+        assert!(transform.ipv6_datagrams.is_empty());
+        assert!(output.records()[0]
+            .packet()
+            .layer::<Ipv6FragmentHeader>()
+            .is_none());
+    }
+}
+
+#[cfg(test)]
+mod ipv6_atomic {
+    use super::*;
+    use crate::pcap::PcapTimestamp;
+    use crate::wire::ip::{IpDefragOverlapStatus, IpFragmentFamily, IpFragmentRange};
+    use crate::wire::record::{BackendKind, PacketOrigin, PacketRecord};
+    use crate::{
+        Ipv6, Ipv6DestinationOptionsHeader, Ipv6FragmentHeader, Raw, IPPROTO_IPV6_DSTOPTS,
+        IPPROTO_UDP,
+    };
+
+    const IDENTIFICATION: u32 = 0x6946_0019;
+
+    fn source() -> Ipv6Addr {
+        "2001:db8:19::1".parse().unwrap()
+    }
+
+    fn destination() -> Ipv6Addr {
+        "2001:db8:19::2".parse().unwrap()
+    }
+
+    fn atomic_record(payload: &[u8]) -> PacketRecord {
+        let packet = Ipv6::new().src(source()).dst(destination())
+            / Ipv6FragmentHeader::new()
+                .next_header(IPPROTO_UDP)
+                .identification(IDENTIFICATION)
+                .fragment_offset(0)
+                .more_fragments(false)
+            / Raw::from_bytes(payload);
+
+        PacketRecord::new(packet)
+            .with_origin(PacketOrigin::Captured)
+            .with_timestamp(PcapTimestamp::micros(19, 46).unwrap())
+            .with_backend(BackendKind::PcapFile)
+            .with_interface("wan19")
+    }
+
+    fn atomic_record_with_destination_options(payload: &[u8]) -> PacketRecord {
+        let packet = Ipv6::new().src(source()).dst(destination())
+            / Ipv6DestinationOptionsHeader::new()
+            / Ipv6FragmentHeader::new()
+                .next_header(IPPROTO_UDP)
+                .identification(IDENTIFICATION)
+                .fragment_offset(0)
+                .more_fragments(false)
+            / Raw::from_bytes(payload);
+
+        PacketRecord::new(packet)
+    }
+
+    fn initial_fragment_record(payload: &[u8]) -> PacketRecord {
+        let packet = Ipv6::new().src(source()).dst(destination())
+            / Ipv6FragmentHeader::new()
+                .next_header(IPPROTO_UDP)
+                .identification(IDENTIFICATION)
+                .fragment_offset(0)
+                .more_fragments(true)
+            / Raw::from_bytes(payload);
+
+        PacketRecord::new(packet)
+    }
+
+    #[test]
+    fn default_normalizes_atomic_fragment_and_records_trace() {
+        let mut transform = IpDefrag::new();
+
+        let output = transform.defrag_record(atomic_record(b"atomic")).unwrap();
+
+        assert_eq!(output.len(), 1);
+        assert_eq!(transform.input_count(), 1);
+        assert_eq!(transform.emitted_count(), 1);
+        assert!(transform.ipv6_datagrams.is_empty());
+
+        let record = &output.records()[0];
+        let ipv6 = record.packet().layer::<Ipv6>().unwrap();
+        let raw = record.packet().layer::<Raw>().unwrap();
+        assert_eq!(ipv6.source(), source());
+        assert_eq!(ipv6.destination(), destination());
+        assert_eq!(ipv6.next_header_value(), IPPROTO_UDP);
+        assert_eq!(ipv6.payload_length_value(), Some(6));
+        assert!(record.packet().layer::<Ipv6FragmentHeader>().is_none());
+        assert_eq!(raw.as_bytes(), b"atomic");
+
+        let compiled = record.packet().compile().unwrap();
+        assert_eq!(
+            u16::from_be_bytes([compiled.as_bytes()[4], compiled.as_bytes()[5]]),
+            6
+        );
+        assert_eq!(compiled.as_bytes()[6], IPPROTO_UDP);
+        assert_eq!(&compiled.as_bytes()[40..], b"atomic");
+
+        assert_eq!(record.metadata().origin(), PacketOrigin::Transformed);
+        assert_eq!(record.metadata().backend(), &BackendKind::PcapFile);
+        assert_eq!(record.metadata().interface(), Some("wan19"));
+        assert_eq!(
+            record.metadata().timestamp(),
+            Some(PcapTimestamp::micros(19, 46).unwrap())
+        );
+        assert_eq!(record.metadata().original_len(), Some(54));
+        assert_eq!(record.metadata().captured_len(), Some(54));
+        assert_eq!(record.metadata().emitted_len(), Some(46));
+
+        let metadata = &record.metadata().ip_defrag_metadata()[0];
+        assert_eq!(metadata.family(), IpFragmentFamily::Ipv6);
+        assert_eq!(metadata.identification(), IDENTIFICATION);
+        assert_eq!(
+            metadata.datagram_key(),
+            Some("2001:db8:19::1>2001:db8:19::2 id=0x69460019")
+        );
+        assert_eq!(metadata.fragment_count(), 1);
+        assert_eq!(metadata.duplicate_count(), 0);
+        assert_eq!(metadata.overlap_status(), IpDefragOverlapStatus::None);
+        assert_eq!(metadata.byte_ranges(), &[IpFragmentRange::new(0, 6)]);
+        assert_eq!(metadata.total_len(), Some(46));
+
+        let trace = &record.metadata().transforms()[0];
+        assert_eq!(trace.name(), "ip-defrag");
+        assert_eq!(trace.note(), Some("atomic fragment normalized"));
+        assert_eq!(trace.input_len(), Some(54));
+        assert_eq!(trace.output_len(), Some(46));
+    }
+
+    #[test]
+    fn default_normalizes_atomic_fragment_with_supported_extension_chain() {
+        let mut transform = IpDefrag::new();
+
+        let output = transform
+            .defrag_record(atomic_record_with_destination_options(b"atomic"))
+            .unwrap();
+
+        assert_eq!(output.len(), 1);
+        let record = &output.records()[0];
+        let ipv6 = record.packet().layer::<Ipv6>().unwrap();
+        let destination_options = record
+            .packet()
+            .layer::<Ipv6DestinationOptionsHeader>()
+            .unwrap();
+        let raw = record.packet().layer::<Raw>().unwrap();
+
+        assert_eq!(ipv6.next_header_value(), IPPROTO_IPV6_DSTOPTS);
+        assert_eq!(ipv6.payload_length_value(), Some(14));
+        assert_eq!(destination_options.next_header_value(), IPPROTO_UDP);
+        assert!(record.packet().layer::<Ipv6FragmentHeader>().is_none());
+        assert_eq!(raw.as_bytes(), b"atomic");
+
+        let compiled = record.packet().compile().unwrap();
+        assert_eq!(
+            u16::from_be_bytes([compiled.as_bytes()[4], compiled.as_bytes()[5]]),
+            14
+        );
+        assert_eq!(compiled.as_bytes()[6], IPPROTO_IPV6_DSTOPTS);
+        assert_eq!(compiled.as_bytes()[40], IPPROTO_UDP);
+        assert_eq!(&compiled.as_bytes()[48..], b"atomic");
+    }
+
+    #[test]
+    fn atomic_fragment_is_processed_in_isolation_from_existing_state() {
+        let mut transform = IpDefrag::new();
+
+        assert!(transform
+            .defrag_record(initial_fragment_record(b"abcdefgh"))
+            .unwrap()
+            .is_empty());
+        let output = transform.defrag_record(atomic_record(b"atomic")).unwrap();
+
+        assert_eq!(output.len(), 1);
+        assert_eq!(transform.emitted_count(), 1);
+        assert_eq!(transform.ipv6_datagrams.len(), 1);
+        let state = transform
+            .ipv6_datagrams
+            .get(&Ipv6DefragKey::new(source(), destination(), IDENTIFICATION))
+            .expect("original non-atomic fragment state should remain queued");
+        assert_eq!(state.fragment_count, 1);
+        let ranges = state.ranges.ranges();
+        assert_eq!(ranges.len(), 1);
+        assert_eq!(ranges[0].start(), 0);
+        assert_eq!(ranges[0].end(), 8);
+        assert_eq!(
+            output.records()[0].metadata().transforms()[0].note(),
+            Some("atomic fragment normalized")
+        );
+    }
+
+    #[test]
+    fn configured_pass_through_keeps_atomic_fragment_header_with_trace() {
+        let config =
+            IpDefragConfig::new().ipv6_atomic_fragments(Ipv6AtomicFragmentPolicy::PassThrough);
+        let mut transform = IpDefrag::new().with_config(config);
+        let input = atomic_record(b"atomic");
+        let input_bytes = input.packet().compile().unwrap().as_bytes().to_vec();
+
+        let output = transform.defrag_record(input).unwrap();
+
+        assert_eq!(output.len(), 1);
+        assert_eq!(transform.emitted_count(), 1);
+        let record = &output.records()[0];
+        assert_eq!(
+            record.packet().compile().unwrap().as_bytes(),
+            input_bytes.as_slice()
+        );
+        assert!(record.packet().layer::<Ipv6FragmentHeader>().is_some());
+        assert!(transform.ipv6_datagrams.is_empty());
+        let trace = &record.metadata().transforms()[0];
+        assert_eq!(trace.name(), "ip-defrag");
+        assert_eq!(trace.note(), Some("atomic fragment pass-through"));
+    }
+
+    #[test]
+    fn configured_drop_suppresses_atomic_fragment_without_state() {
+        let config = IpDefragConfig::new().ipv6_atomic_fragments(Ipv6AtomicFragmentPolicy::Drop);
+        let mut transform = IpDefrag::new().with_config(config);
+
+        let output = transform.defrag_record(atomic_record(b"atomic")).unwrap();
+
+        assert!(output.is_empty());
+        assert_eq!(transform.input_count(), 1);
+        assert_eq!(transform.emitted_count(), 0);
         assert!(transform.ipv6_datagrams.is_empty());
     }
 }
