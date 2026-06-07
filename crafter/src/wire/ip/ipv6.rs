@@ -440,7 +440,7 @@ fn locate_by_packet_shape(packet: &Packet, bytes: &[u8]) -> Result<Ipv6Location>
     if first.as_any().is::<Vlan>() {
         return locate_stacked_vlan(bytes, 0);
     }
-    if looks_like_ipv6(bytes) {
+    if bytes.len() >= IPV6_HEADER_LEN && looks_like_ipv6(bytes) {
         return locate_l3(bytes);
     }
 
@@ -858,6 +858,19 @@ mod tests {
     #[test]
     fn unsupported_wrappers_return_pass_through_reason() {
         let record = PacketRecord::new(Raw::from("payload"));
+
+        let extracted = extract_ipv6_fragment(&record).unwrap();
+
+        assert_eq!(
+            extracted.pass_through().map(|pass| pass.reason()),
+            Some(Ipv6FragmentPassThroughReason::UnsupportedWrapper)
+        );
+        assert!(extracted.view().is_none());
+    }
+
+    #[test]
+    fn short_raw_payload_with_ipv6_version_nibble_passes_through() {
+        let record = PacketRecord::new(Raw::from("defrag"));
 
         let extracted = extract_ipv6_fragment(&record).unwrap();
 

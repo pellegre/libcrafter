@@ -1,12 +1,16 @@
 //! Receive-side IP defragmentation transform.
 
 use std::collections::BTreeMap;
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, Ipv6Addr};
 use std::time::Duration;
 
 use super::ipv4::{
     extract_ipv4_fragment, Ipv4FragmentExtract, Ipv4FragmentView, Ipv4FragmentWrapper,
     Ipv4FragmentWrapperKind,
+};
+use super::ipv6::{
+    extract_ipv6_fragment, Ipv6FragmentExtensionContext, Ipv6FragmentExtract, Ipv6FragmentView,
+    Ipv6FragmentWrapper,
 };
 use super::range::{RangeMap, RangeMapConflict, RangeMapInsert};
 use super::{
@@ -20,7 +24,7 @@ use crate::registry::ProtocolRegistry;
 use crate::wire::record::{PacketMetadata, PacketOrigin, PacketRecord, TransformTrace};
 use crate::wire::transform::{PacketTransform, TransformOutput};
 use crate::wire::Result;
-use crate::{CrafterError, Ipv4, LinkType, NetworkLayer, Packet, Raw};
+use crate::{CrafterError, Ipv4, Ipv6FragmentHeaderStatus, LinkType, NetworkLayer, Packet, Raw};
 
 const IPV4_MIN_HEADER_LEN: usize = 20;
 
@@ -29,6 +33,7 @@ const IPV4_MIN_HEADER_LEN: usize = 20;
 pub struct IpDefrag {
     config: IpDefragConfig,
     ipv4_datagrams: BTreeMap<Ipv4DefragKey, Ipv4DatagramState>,
+    ipv6_datagrams: BTreeMap<Ipv6DefragKey, Ipv6DatagramState>,
     input_count: usize,
     emitted_count: usize,
     eviction_count: usize,
@@ -188,6 +193,49 @@ impl IpDefrag {
         }
     }
 
+    fn observe_ipv6_fragment(
+        &mut self,
+        record: &PacketRecord,
+        view: &Ipv6FragmentView,
+        emit: &mut dyn FnMut(PacketRecord) -> Result<()>,
+    ) -> Ipv6DefragObservation {
+        let key = Ipv6DefragKey::from_view(view);
+        let outcome = {
+            let input_order = self.input_count;
+            let trace_evictions = self.config.traces_evictions();
+            let state = self.ipv6_datagrams.entry(key.clone()).or_insert_with(|| {
+                Ipv6DatagramState::new(key.clone(), record, input_order, trace_evictions)
+            });
+            state.observe_fragment(record, view, input_order, trace_evictions);
+            if state.exceeds_max_bytes(self.config.max_bytes_per_datagram_limit()) {
+                Ipv6DefragObservationKind::ByteLimit
+            } else {
+                Ipv6DefragObservationKind::Buffered
+            }
+        };
+
+        match outcome {
+            Ipv6DefragObservationKind::Buffered => {
+                if let Err(error) = self.evict_ipv6_to_datagram_limit(emit) {
+                    return Ipv6DefragObservation::Error(error);
+                }
+                Ipv6DefragObservation::Buffered
+            }
+            Ipv6DefragObservationKind::ByteLimit => {
+                let state = self
+                    .ipv6_datagrams
+                    .remove(&key)
+                    .expect("byte-limited IPv6 defrag state must remain in the map");
+                if let Err(error) =
+                    self.evict_ipv6_state(state, IpDefragEvictionReason::ByteLimit, emit)
+                {
+                    return Ipv6DefragObservation::Error(error);
+                }
+                Ipv6DefragObservation::Evicted
+            }
+        }
+    }
+
     fn evict_ipv4_to_datagram_limit(
         &mut self,
         emit: &mut dyn FnMut(PacketRecord) -> Result<()>,
@@ -214,9 +262,53 @@ impl IpDefrag {
         Ok(())
     }
 
+    fn evict_ipv6_to_datagram_limit(
+        &mut self,
+        emit: &mut dyn FnMut(PacketRecord) -> Result<()>,
+    ) -> Result<()> {
+        let max_datagrams = self.config.max_datagrams_limit();
+        while self.ipv4_datagrams.len() + self.ipv6_datagrams.len() > max_datagrams {
+            let Some(key) = self
+                .ipv6_datagrams
+                .iter()
+                .min_by(|(left_key, left), (right_key, right)| {
+                    left.eviction_order()
+                        .cmp(&right.eviction_order())
+                        .then_with(|| left_key.cmp(right_key))
+                })
+                .map(|(key, _)| key.clone())
+            else {
+                break;
+            };
+            let state = self
+                .ipv6_datagrams
+                .remove(&key)
+                .expect("datagram-limited IPv6 defrag state must remain in the map");
+            self.evict_ipv6_state(state, IpDefragEvictionReason::DatagramLimit, emit)?;
+        }
+
+        Ok(())
+    }
+
     fn evict_ipv4_state(
         &mut self,
         state: Ipv4DatagramState,
+        reason: IpDefragEvictionReason,
+        emit: &mut dyn FnMut(PacketRecord) -> Result<()>,
+    ) -> Result<()> {
+        self.record_eviction(&reason);
+        if self.config.traces_evictions() {
+            if let Some(record) = state.eviction_record(reason, self.name()) {
+                emit(record)?;
+                self.emitted_count += 1;
+            }
+        }
+        Ok(())
+    }
+
+    fn evict_ipv6_state(
+        &mut self,
+        state: Ipv6DatagramState,
         reason: IpDefragEvictionReason,
         emit: &mut dyn FnMut(PacketRecord) -> Result<()>,
     ) -> Result<()> {
@@ -323,6 +415,18 @@ impl PacketTransform for IpDefrag {
             }
         }
 
+        if let Ipv6FragmentExtract::View(view) = extract_ipv6_fragment(&record)? {
+            if view.is_atomic() {
+                return self.emit_pass_through(record, emit);
+            }
+            match self.observe_ipv6_fragment(&record, &view, emit) {
+                Ipv6DefragObservation::Buffered => {}
+                Ipv6DefragObservation::Evicted => {}
+                Ipv6DefragObservation::Error(error) => return Err(error),
+            }
+            return Ok(());
+        }
+
         self.emit_pass_through(record, emit)
     }
 }
@@ -341,6 +445,19 @@ enum Ipv4DefragObservation {
     Evicted,
     Complete(Ipv4DatagramState),
     Conflict(Ipv4DatagramState),
+    Error(crate::wire::WireError),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Ipv6DefragObservationKind {
+    Buffered,
+    ByteLimit,
+}
+
+#[derive(Debug)]
+enum Ipv6DefragObservation {
+    Buffered,
+    Evicted,
     Error(crate::wire::WireError),
 }
 
@@ -380,6 +497,34 @@ impl Ipv4DefragKey {
         format!(
             "{}>{} proto={} id=0x{:04x}",
             self.source, self.destination, self.protocol, self.identification
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct Ipv6DefragKey {
+    source: Ipv6Addr,
+    destination: Ipv6Addr,
+    identification: u32,
+}
+
+impl Ipv6DefragKey {
+    const fn new(source: Ipv6Addr, destination: Ipv6Addr, identification: u32) -> Self {
+        Self {
+            source,
+            destination,
+            identification,
+        }
+    }
+
+    fn from_view(view: &Ipv6FragmentView) -> Self {
+        Self::new(view.source(), view.destination(), view.identification())
+    }
+
+    fn summary(&self) -> String {
+        format!(
+            "{}>{} id=0x{:08x}",
+            self.source, self.destination, self.identification
         )
     }
 }
@@ -635,6 +780,201 @@ impl Ipv4DatagramState {
     }
 }
 
+#[derive(Debug, Clone)]
+struct Ipv6DatagramState {
+    key: Ipv6DefragKey,
+    ranges: RangeMap,
+    initial_fragment: Option<Ipv6InitialFragment>,
+    fragment_next_header: Option<u8>,
+    observed_fragment_next_headers: BTreeMap<u8, usize>,
+    total_expected_fragmentable_payload_len: Option<u32>,
+    fragment_count: usize,
+    duplicate_count: usize,
+    conflict_count: usize,
+    first_conflict: Option<RangeMapConflict>,
+    reserved_field_observations: Vec<Ipv6ReservedFieldObservation>,
+    first_timestamp: Option<PcapTimestamp>,
+    last_timestamp: Option<PcapTimestamp>,
+    first_seen_order: usize,
+    last_seen_order: usize,
+    trace_record: Option<PacketRecord>,
+}
+
+impl Ipv6DatagramState {
+    fn new(
+        key: Ipv6DefragKey,
+        record: &PacketRecord,
+        input_order: usize,
+        keep_trace_record: bool,
+    ) -> Self {
+        let timestamp = record.metadata().timestamp();
+        Self {
+            key,
+            ranges: RangeMap::new(),
+            initial_fragment: None,
+            fragment_next_header: None,
+            observed_fragment_next_headers: BTreeMap::new(),
+            total_expected_fragmentable_payload_len: None,
+            fragment_count: 0,
+            duplicate_count: 0,
+            conflict_count: 0,
+            first_conflict: None,
+            reserved_field_observations: Vec::new(),
+            first_timestamp: timestamp,
+            last_timestamp: timestamp,
+            first_seen_order: input_order,
+            last_seen_order: input_order,
+            trace_record: keep_trace_record.then(|| trace_record_snapshot(record)),
+        }
+    }
+
+    fn observe_fragment(
+        &mut self,
+        record: &PacketRecord,
+        view: &Ipv6FragmentView,
+        input_order: usize,
+        keep_trace_record: bool,
+    ) {
+        self.last_seen_order = input_order;
+        if self.trace_record.is_none() && keep_trace_record {
+            self.trace_record = Some(trace_record_snapshot(record));
+        }
+        self.update_timestamps(record.metadata().timestamp());
+        *self
+            .observed_fragment_next_headers
+            .entry(view.fragment_next_header())
+            .or_insert(0) += 1;
+
+        if view.fragment_status().is_initial() && self.initial_fragment.is_none() {
+            self.fragment_next_header = Some(view.fragment_next_header());
+            self.initial_fragment = Some(Ipv6InitialFragment::from_record(record, view));
+        }
+
+        if view.reserved() != 0 || view.reserved_bits() != 0 {
+            self.reserved_field_observations
+                .push(Ipv6ReservedFieldObservation::from_view(view, input_order));
+        }
+
+        match self
+            .ranges
+            .insert(view.fragment_offset_bytes(), view.fragmentable_payload())
+        {
+            RangeMapInsert::Inserted { .. } | RangeMapInsert::Empty { .. } => {
+                self.fragment_count += 1;
+            }
+            RangeMapInsert::Duplicate { .. } => {}
+            RangeMapInsert::Conflict(conflict) => self.record_conflict(conflict),
+        }
+        self.duplicate_count = self.ranges.duplicate_count();
+
+        if !view.more_fragments() {
+            let total_expected = view
+                .fragment_offset_bytes()
+                .saturating_add(view.fragmentable_payload().len() as u32);
+            match self.ranges.set_total_len(total_expected) {
+                Ok(()) => self.total_expected_fragmentable_payload_len = Some(total_expected),
+                Err(conflict) => self.record_conflict(conflict),
+            }
+        }
+    }
+
+    fn update_timestamps(&mut self, timestamp: Option<PcapTimestamp>) {
+        let Some(timestamp) = timestamp else {
+            return;
+        };
+        if self.first_timestamp.is_none() {
+            self.first_timestamp = Some(timestamp);
+        }
+        self.last_timestamp = Some(timestamp);
+    }
+
+    fn record_conflict(&mut self, conflict: RangeMapConflict) {
+        self.conflict_count += 1;
+        if self.first_conflict.is_none() {
+            self.first_conflict = Some(conflict);
+        }
+    }
+
+    fn byte_len(&self) -> usize {
+        self.ranges.byte_len()
+    }
+
+    fn exceeds_max_bytes(&self, max_bytes: usize) -> bool {
+        self.byte_len() > max_bytes
+    }
+
+    fn eviction_order(&self) -> (usize, usize) {
+        (self.first_seen_order, self.last_seen_order)
+    }
+
+    fn metadata(&self) -> IpDefragMetadata {
+        IpDefragMetadata::new(IpFragmentFamily::Ipv6, self.key.identification)
+            .with_datagram_key(self.key.summary())
+            .with_fragment_count(self.fragment_count)
+            .with_duplicate_count(self.duplicate_count)
+            .with_overlap_status(self.ranges.overlap_status())
+            .with_byte_ranges(
+                self.ranges
+                    .ranges()
+                    .into_iter()
+                    .map(|range| IpFragmentRange::new(range.start(), range.end())),
+            )
+    }
+
+    fn eviction_metadata(&self, eviction_reason: IpDefragEvictionReason) -> IpDefragMetadata {
+        let metadata = match self.known_packet_total_len() {
+            Some(total_len) => self.metadata().with_total_len(total_len),
+            None => self.metadata(),
+        };
+        metadata.with_eviction_reason(eviction_reason)
+    }
+
+    fn eviction_record(
+        &self,
+        eviction_reason: IpDefragEvictionReason,
+        transform_name: &'static str,
+    ) -> Option<PacketRecord> {
+        let mut record = self.trace_record.clone()?;
+        record
+            .metadata_mut()
+            .push_ip_defrag_metadata(self.eviction_metadata(eviction_reason.clone()));
+        record.metadata_mut().push_transform_trace(
+            TransformTrace::new(transform_name)
+                .with_note(self.eviction_trace_note(&eviction_reason)),
+        );
+        Some(record)
+    }
+
+    fn eviction_trace_note(&self, eviction_reason: &IpDefragEvictionReason) -> String {
+        let reason = match eviction_reason {
+            IpDefragEvictionReason::Timeout => "max_age",
+            IpDefragEvictionReason::DatagramLimit => "max_datagrams",
+            IpDefragEvictionReason::ByteLimit => "max_bytes",
+            IpDefragEvictionReason::Conflict => "conflict",
+            IpDefragEvictionReason::Other(reason) => reason.as_str(),
+        };
+        format!(
+            "evicted incomplete IPv6 defrag state: reason={reason} key={} fragments={} bytes={}",
+            self.key.summary(),
+            self.fragment_count,
+            self.byte_len()
+        )
+    }
+
+    fn known_packet_total_len(&self) -> Option<u32> {
+        let payload_len = self
+            .total_expected_fragmentable_payload_len
+            .or_else(|| self.ranges.total_len())?;
+        let initial_fragment = self.initial_fragment.as_ref()?;
+        let header_len = u32::try_from(initial_fragment.header.len()).ok()?;
+        let unfragmentable_len =
+            u32::try_from(initial_fragment.extension_chain.unfragmentable().len()).ok()?;
+        header_len
+            .checked_add(unfragmentable_len)?
+            .checked_add(payload_len)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Ipv4FirstFragment {
     header: Vec<u8>,
@@ -666,6 +1006,52 @@ impl Ipv4FirstFragment {
         })?;
 
         Ok((packet, emitted_len, total_len))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Ipv6InitialFragment {
+    header: Vec<u8>,
+    wrapper: Ipv6FragmentWrapper,
+    extension_chain: Ipv6FragmentExtensionContext,
+    fragment_header: Vec<u8>,
+    ipv6_next_header: u8,
+    fragment_next_header: u8,
+    fragment_status: Ipv6FragmentHeaderStatus,
+    input_metadata: PacketMetadata,
+}
+
+impl Ipv6InitialFragment {
+    fn from_record(record: &PacketRecord, view: &Ipv6FragmentView) -> Self {
+        Self {
+            header: view.header().to_vec(),
+            wrapper: view.wrapper().clone(),
+            extension_chain: view.extension_chain().clone(),
+            fragment_header: view.fragment_header().to_vec(),
+            ipv6_next_header: view.ipv6_next_header(),
+            fragment_next_header: view.fragment_next_header(),
+            fragment_status: view.fragment_status(),
+            input_metadata: record.metadata().clone().clear_captured_bytes(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Ipv6ReservedFieldObservation {
+    fragment_offset_bytes: u32,
+    reserved: u8,
+    reserved_bits: u8,
+    input_order: usize,
+}
+
+impl Ipv6ReservedFieldObservation {
+    fn from_view(view: &Ipv6FragmentView, input_order: usize) -> Self {
+        Self {
+            fragment_offset_bytes: view.fragment_offset_bytes(),
+            reserved: view.reserved(),
+            reserved_bits: view.reserved_bits(),
+            input_order,
+        }
     }
 }
 
@@ -1386,5 +1772,229 @@ mod ipv4_limits {
         let note = trace.note().unwrap();
         assert!(note.contains("max_bytes"));
         assert!(note.contains("evicted incomplete IPv4 defrag state"));
+    }
+}
+
+#[cfg(test)]
+mod ipv6_state {
+    use super::super::ipv6::Ipv6FragmentWrapperKind;
+    use super::*;
+    use crate::wire::ip::{IpDefragOverlapStatus, IpFragmentFamily, IpFragmentRange};
+    use crate::wire::record::PacketRecord;
+    use crate::{
+        Ipv6, Ipv6DestinationOptionsHeader, Ipv6FragmentHeader, Raw, IPPROTO_TCP, IPPROTO_UDP,
+    };
+
+    const IDENTIFICATION: u32 = 0xfeed_ba11;
+
+    fn source() -> Ipv6Addr {
+        "2001:db8::10".parse().unwrap()
+    }
+
+    fn other_source() -> Ipv6Addr {
+        "2001:db8::11".parse().unwrap()
+    }
+
+    fn destination() -> Ipv6Addr {
+        "2001:db8::20".parse().unwrap()
+    }
+
+    fn fragment_record(
+        source: Ipv6Addr,
+        fragment_next_header: u8,
+        fragment_offset: u16,
+        more_fragments: bool,
+        payload: &[u8],
+    ) -> PacketRecord {
+        reserved_fragment_record(
+            source,
+            fragment_next_header,
+            fragment_offset,
+            more_fragments,
+            payload,
+            0,
+            0,
+        )
+    }
+
+    fn reserved_fragment_record(
+        source: Ipv6Addr,
+        fragment_next_header: u8,
+        fragment_offset: u16,
+        more_fragments: bool,
+        payload: &[u8],
+        reserved: u8,
+        reserved_bits: u8,
+    ) -> PacketRecord {
+        let packet = Ipv6::new().src(source).dst(destination())
+            / Ipv6FragmentHeader::new()
+                .next_header(fragment_next_header)
+                .identification(IDENTIFICATION)
+                .fragment_offset(fragment_offset)
+                .reserved(reserved)
+                .res(reserved_bits)
+                .more_fragments(more_fragments)
+            / Raw::from_bytes(payload);
+
+        PacketRecord::new(packet)
+    }
+
+    fn fragment_record_with_destination_options() -> PacketRecord {
+        let packet = Ipv6::new().src(source()).dst(destination())
+            / Ipv6DestinationOptionsHeader::new()
+            / Ipv6FragmentHeader::new()
+                .next_header(IPPROTO_UDP)
+                .identification(IDENTIFICATION)
+                .more_fragments(true)
+            / Raw::from_bytes(b"abcdefgh");
+
+        PacketRecord::new(packet)
+    }
+
+    fn key_for(source: Ipv6Addr) -> Ipv6DefragKey {
+        Ipv6DefragKey::new(source, destination(), IDENTIFICATION)
+    }
+
+    fn view(record: &PacketRecord) -> Ipv6FragmentView {
+        match extract_ipv6_fragment(record).unwrap() {
+            Ipv6FragmentExtract::View(view) => view,
+            Ipv6FragmentExtract::PassThrough(pass_through) => {
+                panic!(
+                    "expected IPv6 fragment view, got {:?}",
+                    pass_through.reason()
+                )
+            }
+        }
+    }
+
+    #[test]
+    fn ipv6_defrag_key_uses_fragment_identity_without_next_header() {
+        let mut transform = IpDefrag::new();
+
+        let first = transform
+            .defrag_record(fragment_record(source(), IPPROTO_UDP, 0, true, b"abcdefgh"))
+            .unwrap();
+        let final_fragment = transform
+            .defrag_record(fragment_record(source(), IPPROTO_TCP, 1, false, b"ijkl"))
+            .unwrap();
+
+        assert!(first.is_empty());
+        assert!(final_fragment.is_empty());
+        assert_eq!(transform.emitted_count(), 0);
+        assert_eq!(transform.ipv6_datagrams.len(), 1);
+        assert!(transform.ipv6_datagrams.contains_key(&key_for(source())));
+        assert!(!transform
+            .ipv6_datagrams
+            .contains_key(&key_for(other_source())));
+
+        let state = transform.ipv6_datagrams.get(&key_for(source())).unwrap();
+        assert_eq!(state.fragment_count, 2);
+        assert_eq!(state.duplicate_count, 0);
+        assert_eq!(state.total_expected_fragmentable_payload_len, Some(12));
+        assert!(state.initial_fragment.is_some());
+        assert!(state.ranges.is_complete());
+        assert_eq!(state.fragment_next_header, Some(IPPROTO_UDP));
+        assert_eq!(
+            state.observed_fragment_next_headers.get(&IPPROTO_UDP),
+            Some(&1)
+        );
+        assert_eq!(
+            state.observed_fragment_next_headers.get(&IPPROTO_TCP),
+            Some(&1)
+        );
+
+        let metadata = state.metadata();
+        assert_eq!(metadata.family(), IpFragmentFamily::Ipv6);
+        assert_eq!(metadata.identification(), IDENTIFICATION);
+        assert_eq!(
+            metadata.datagram_key(),
+            Some("2001:db8::10>2001:db8::20 id=0xfeedba11")
+        );
+        assert_eq!(metadata.fragment_count(), 2);
+        assert_eq!(metadata.overlap_status(), IpDefragOverlapStatus::None);
+        assert_eq!(
+            metadata.byte_ranges(),
+            &[IpFragmentRange::new(0, 8), IpFragmentRange::new(8, 12)]
+        );
+    }
+
+    #[test]
+    fn ipv6_datagram_state_tracks_duplicates_conflicts_and_reserved_fields() {
+        let first = reserved_fragment_record(source(), IPPROTO_UDP, 0, true, b"abcdefgh", 0xab, 3);
+        let duplicate = fragment_record(source(), IPPROTO_UDP, 0, true, b"abcdefgh");
+        let conflict = fragment_record(source(), IPPROTO_UDP, 0, true, b"abcdWXYZ");
+        let mut state = Ipv6DatagramState::new(key_for(source()), &first, 1, false);
+
+        for (order, record) in [(1, &first), (2, &duplicate), (3, &conflict)] {
+            let view = view(record);
+            state.observe_fragment(record, &view, order, false);
+        }
+
+        assert_eq!(state.fragment_count, 1);
+        assert_eq!(state.duplicate_count, 1);
+        assert_eq!(state.conflict_count, 1);
+        assert!(state.first_conflict.is_some());
+        assert!(state.ranges.has_conflict());
+        assert_eq!(state.reserved_field_observations.len(), 1);
+        assert_eq!(
+            state.reserved_field_observations[0],
+            Ipv6ReservedFieldObservation {
+                fragment_offset_bytes: 0,
+                reserved: 0xab,
+                reserved_bits: 3,
+                input_order: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn initial_fragment_context_keeps_extension_chain_and_output_repair_metadata() {
+        let record = fragment_record_with_destination_options();
+        let view = view(&record);
+        let mut state = Ipv6DatagramState::new(key_for(source()), &record, 1, false);
+
+        state.observe_fragment(&record, &view, 1, false);
+
+        let initial_fragment = state
+            .initial_fragment
+            .as_ref()
+            .expect("offset-zero IPv6 fragment should store initial context");
+        assert_eq!(initial_fragment.header.len(), 40);
+        assert_eq!(initial_fragment.wrapper.kind(), Ipv6FragmentWrapperKind::L3);
+        assert_eq!(
+            initial_fragment.extension_chain.fragment_header_offset(),
+            48
+        );
+        assert_eq!(
+            initial_fragment
+                .extension_chain
+                .previous_next_header_offset(),
+            40
+        );
+        assert_eq!(initial_fragment.extension_chain.unfragmentable().len(), 8);
+        assert_eq!(initial_fragment.fragment_header.len(), 8);
+        assert_eq!(
+            initial_fragment.ipv6_next_header,
+            crate::IPPROTO_IPV6_DSTOPTS
+        );
+        assert_eq!(initial_fragment.fragment_next_header, IPPROTO_UDP);
+        assert_eq!(
+            initial_fragment.fragment_status,
+            Ipv6FragmentHeaderStatus::Initial
+        );
+        assert!(initial_fragment.input_metadata.captured_bytes().is_none());
+    }
+
+    #[test]
+    fn atomic_ipv6_fragments_pass_through_without_creating_state() {
+        let mut transform = IpDefrag::new();
+
+        let output = transform
+            .defrag_record(fragment_record(source(), IPPROTO_UDP, 0, false, b"atomic"))
+            .unwrap();
+
+        assert_eq!(output.len(), 1);
+        assert_eq!(transform.emitted_count(), 1);
+        assert!(transform.ipv6_datagrams.is_empty());
     }
 }
