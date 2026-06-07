@@ -1627,6 +1627,74 @@ fn wpa_config_builder_public_api() -> crafter::Result<()> {
 }
 
 #[test]
+fn wpa_decrypt_sniffer_public_api() -> crafter::Result<()> {
+    let pcap = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/pcaps/wpa2-psk-ccmp-unicast.pcap");
+    let source = PacketWire::pcap_file(pcap.clone())
+        .open()
+        .expect("WPA fixture pcap should open")
+        .source()
+        .expect("WPA fixture pcap should expose source capability");
+    let decryptor = WpaDecrypt::new()
+        .network("libcrafter-wpa", "libcrafter-pass")?
+        .network_bytes(b"\xffunused".as_slice(), "abcdefgh")?
+        .with_config(
+            WpaDecryptConfig::new()
+                .pass_originals(false)
+                .only_ciphers([WpaCipher::Ccmp128]),
+        );
+    let records = Sniffer::new(source)
+        .with(Dot11Metadata::new())
+        .with(decryptor)
+        .collect_records()
+        .expect("WPA fixture pcap should decrypt");
+
+    let decrypted = records
+        .iter()
+        .find(|record| record.metadata().origin() == PacketOrigin::Transformed)
+        .expect("WPA fixture should emit one transformed decrypted record");
+
+    assert_eq!(decrypted.metadata().backend(), &BackendKind::PcapFile);
+    assert_eq!(decrypted.metadata().file(), Some(pcap.as_path()));
+    assert_eq!(decrypted.metadata().link_type(), Some(LinkType::Ethernet));
+    assert!(decrypted.packet().layer::<Ethernet>().is_some());
+    assert!(decrypted.packet().layer::<Ipv4>().is_some());
+    assert_eq!(
+        decrypted.packet().layer::<Raw>().unwrap().as_bytes(),
+        b"libcrafter wpa"
+    );
+
+    let wifi = decrypted
+        .metadata()
+        .wifi()
+        .expect("decrypted record should keep Wi-Fi metadata");
+    assert_eq!(wifi.ssid(), Some(b"libcrafter-wpa".as_slice()));
+    assert_eq!(
+        wifi.bssid(),
+        Some(MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x20, 0x01]))
+    );
+    assert_eq!(wifi.key_id(), Some(1));
+    assert_eq!(wifi.decrypt_state(), Some(WifiDecryptState::Decrypted));
+
+    let wpa = wifi
+        .wpa_metadata()
+        .expect("decrypted record should include WPA metadata");
+    assert_eq!(wpa.cipher(), Some(WpaCipher::Ccmp128));
+    assert_eq!(wpa.akm(), Some(WpaAkm::Psk));
+    assert_eq!(wpa.key_kind(), Some(WpaKeyKind::Pairwise));
+    assert_eq!(wpa.packet_number(), Some(0x33));
+    assert_eq!(wpa.decrypt_reason(), Some(WpaDecryptReason::Decrypted));
+    assert_eq!(wpa.credential_status(), Some(WpaCredentialStatus::Matched));
+    assert_eq!(wpa.credentials_matched(), Some(true));
+    assert_eq!(
+        wpa.handshake_status(),
+        Some(WpaHandshakeStatus::MicVerified)
+    );
+
+    Ok(())
+}
+
+#[test]
 fn wpa_config_builder_rejects_invalid_public_passphrase() {
     let err = WpaDecrypt::new().network("lab-ssid", "short").unwrap_err();
 
