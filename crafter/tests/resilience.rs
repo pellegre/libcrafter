@@ -11,10 +11,12 @@ use crafter::core::{
     LinuxSll, MacAddr, NetworkLayer, NullLoopback, OptionOverload, Packet, Raw, Tcp, TcpOption,
     Udp, UdpOptionStatus, UdpOptions, Vlan, DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT,
     IPPROTO_IPV6_AH, IPPROTO_IPV6_ESP, IPPROTO_IPV6_EXPERIMENTAL_1, IPPROTO_IPV6_EXPERIMENTAL_2,
-    IPPROTO_IPV6_HIP, IPPROTO_IPV6_MOBILITY, IPPROTO_IPV6_ROUTE, IPPROTO_IPV6_SHIM6, IPPROTO_UDP,
-    IPV6_ROUTING_TYPE_EXPERIMENTAL_1, IPV6_ROUTING_TYPE_EXPERIMENTAL_2, IPV6_ROUTING_TYPE_MOBILE,
-    IPV6_ROUTING_TYPE_NIMROD, IPV6_ROUTING_TYPE_RH0, TCP_FLAG_ACK, TCP_FLAG_PSH, TCP_FLAG_SYN,
+    IPPROTO_IPV6_FRAGMENT, IPPROTO_IPV6_HIP, IPPROTO_IPV6_MOBILITY, IPPROTO_IPV6_ROUTE,
+    IPPROTO_IPV6_SHIM6, IPPROTO_UDP, IPV6_ROUTING_TYPE_EXPERIMENTAL_1,
+    IPV6_ROUTING_TYPE_EXPERIMENTAL_2, IPV6_ROUTING_TYPE_MOBILE, IPV6_ROUTING_TYPE_NIMROD,
+    IPV6_ROUTING_TYPE_RH0, TCP_FLAG_ACK, TCP_FLAG_PSH, TCP_FLAG_SYN,
 };
+use crafter::wire::{IpDefrag, IpFragment, PacketRecord, WireError};
 use proptest::prelude::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1889,6 +1891,181 @@ fn segment_routing_malformed_decode_entrypoints_report_structured_errors() {
             assert_error_matches(&expected, error);
         }
     }
+}
+
+fn captured_raw_ip_record(bytes: Vec<u8>) -> PacketRecord {
+    PacketRecord::new(Raw::from_bytes(&bytes))
+        .with_pcap_link_type(crafter::PcapLinkType::RawIp)
+        .with_captured_bytes(bytes)
+}
+
+fn captured_pcap_record(bytes: Vec<u8>, link_type: crafter::PcapLinkType) -> PacketRecord {
+    PacketRecord::new(Raw::from_bytes(&bytes))
+        .with_pcap_link_type(link_type)
+        .with_captured_bytes(bytes)
+}
+
+fn ipv4_fragment_resilience_bytes(flags_fragment: u16, total_len: u16, payload: &[u8]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(20 + payload.len());
+    bytes.push(0x45);
+    bytes.push(0);
+    bytes.extend_from_slice(&total_len.to_be_bytes());
+    bytes.extend_from_slice(&0x2026u16.to_be_bytes());
+    bytes.extend_from_slice(&flags_fragment.to_be_bytes());
+    bytes.push(64);
+    bytes.push(253);
+    bytes.extend_from_slice(&[0, 0]);
+    bytes.extend_from_slice(&[192, 0, 2, 10]);
+    bytes.extend_from_slice(&[198, 51, 100, 20]);
+    bytes.extend_from_slice(payload);
+    bytes
+}
+
+fn ipv6_fragment_resilience_bytes(payload_len: u16, fragment_bytes: &[u8]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(40 + fragment_bytes.len());
+    bytes.extend_from_slice(&[0x60, 0, 0, 0]);
+    bytes.extend_from_slice(&payload_len.to_be_bytes());
+    bytes.push(IPPROTO_IPV6_FRAGMENT);
+    bytes.push(64);
+    bytes.extend_from_slice(&[
+        0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x10,
+    ]);
+    bytes.extend_from_slice(&[
+        0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x20,
+    ]);
+    bytes.extend_from_slice(fragment_bytes);
+    bytes
+}
+
+fn assert_fragment_buffer_error(error: CrafterError, context: &'static str) {
+    match error {
+        CrafterError::BufferTooShort {
+            context: actual,
+            required,
+            available,
+        } => {
+            assert_eq!(actual, context);
+            assert!(
+                required > available,
+                "fragment BufferTooShort must require more bytes than are available"
+            );
+        }
+        other => panic!("expected fragment BufferTooShort for {context}, got {other:?}"),
+    }
+}
+
+fn assert_fragment_invalid_field(error: CrafterError, field: &'static str) {
+    match error {
+        CrafterError::InvalidFieldValue {
+            field: actual,
+            reason,
+        } => {
+            assert_eq!(actual, field);
+            assert!(!reason.is_empty());
+        }
+        other => panic!("expected fragment InvalidFieldValue for {field}, got {other:?}"),
+    }
+}
+
+fn wire_packet_error(error: WireError) -> CrafterError {
+    match error {
+        WireError::Packet(error) => error,
+        other => panic!("expected packet error, got {other:?}"),
+    }
+}
+
+#[test]
+fn fragment_malformed_decode_entrypoints_report_structured_errors() {
+    let mut truncated_ipv4 = ipv4_fragment_resilience_bytes(0x2000, 20, &[]);
+    truncated_ipv4.truncate(19);
+    let truncated_ipv6 = ipv6_fragment_resilience_bytes(4, &[IPPROTO_UDP, 0, 0, 1]);
+    let ipv4_length_mismatch = ipv4_fragment_resilience_bytes(0x2000, 32, &[0xaa; 8]);
+    let ipv6_length_mismatch = ipv6_fragment_resilience_bytes(8, &[IPPROTO_UDP, 0, 0, 1]);
+
+    for (label, target, bytes, context) in [
+        (
+            "truncated ipv4 fragment header",
+            PacketDecodeTarget::L3(NetworkLayer::Ipv4),
+            truncated_ipv4,
+            "ipv4 header",
+        ),
+        (
+            "truncated ipv6 fragment header",
+            PacketDecodeTarget::L3(NetworkLayer::Ipv6),
+            truncated_ipv6,
+            "ipv6 fragment header",
+        ),
+        (
+            "ipv4 fragment payload length mismatch",
+            PacketDecodeTarget::L3(NetworkLayer::Ipv4),
+            ipv4_length_mismatch,
+            "ipv4 packet",
+        ),
+        (
+            "ipv6 fragment payload length mismatch",
+            PacketDecodeTarget::L3(NetworkLayer::Ipv6),
+            ipv6_length_mismatch,
+            "ipv6 packet",
+        ),
+    ] {
+        let error = decode_packet(target, &bytes)
+            .err()
+            .unwrap_or_else(|| panic!("{label} unexpectedly decoded"));
+        assert_fragment_buffer_error(error, context);
+    }
+}
+
+#[test]
+fn fragment_malformed_transforms_report_structured_errors() {
+    let mut truncated_ipv4 = ipv4_fragment_resilience_bytes(0x2000, 20, &[]);
+    truncated_ipv4.truncate(19);
+    let truncated_ipv6 = ipv6_fragment_resilience_bytes(4, &[IPPROTO_UDP, 0, 0, 1]);
+
+    let mut defrag = IpDefrag::new();
+    let error = defrag
+        .defrag_record(captured_raw_ip_record(truncated_ipv4))
+        .unwrap_err();
+    assert_fragment_buffer_error(wire_packet_error(error), "ipv4 header");
+
+    let mut defrag = IpDefrag::new();
+    let error = defrag
+        .defrag_record(captured_raw_ip_record(truncated_ipv6))
+        .unwrap_err();
+    assert_fragment_buffer_error(wire_packet_error(error), "ipv6 fragment header");
+
+    let impossible_offset = Ipv4::new()
+        .src(Ipv4Addr::new(192, 0, 2, 10))
+        .dst(Ipv4Addr::new(198, 51, 100, 20))
+        .protocol(253)
+        .fragment_offset(0x1fff)
+        / Raw::from_bytes([0x5a; 16]);
+    let mut fragment = IpFragment::new(28);
+    let error = fragment
+        .fragment_record(PacketRecord::new(impossible_offset))
+        .unwrap_err();
+    assert_fragment_invalid_field(wire_packet_error(error), "ipv4.fragment_offset");
+}
+
+#[test]
+fn fragment_unsupported_wrappers_pass_through_without_panic() {
+    let bytes = ipv4_fragment_resilience_bytes(0x2000, 28, &[0xaa; 8]);
+    let record = captured_pcap_record(bytes.clone(), crafter::PcapLinkType::Ieee80211);
+
+    let mut defrag = IpDefrag::new();
+    let output = defrag.defrag_record(record.clone()).unwrap();
+    assert_eq!(output.len(), 1);
+    assert_eq!(
+        output.records()[0].metadata().captured_bytes(),
+        Some(bytes.as_slice())
+    );
+
+    let mut fragment = IpFragment::new(1280);
+    let output = fragment.fragment_record(record).unwrap();
+    assert_eq!(output.len(), 1);
+    assert_eq!(
+        output.records()[0].metadata().captured_bytes(),
+        Some(bytes.as_slice())
+    );
 }
 
 #[test]
