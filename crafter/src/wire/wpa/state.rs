@@ -1,9 +1,14 @@
 //! WPA passive observation state machines.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use super::metadata::WpaHandshakeStatus;
-use crate::{EapolKey, MacAddr, RsnEapolKeyHandshakeMessage};
+use super::metadata::{WpaAkm, WpaCipher, WpaDecryptReason, WpaHandshakeStatus};
+use crate::{
+    EapolKey, MacAddr, RsnAkmSuite, RsnCipherSuite, RsnEapolKeyHandshakeMessage, RsnInformation,
+    RSN_AKM_SUITE_8021X, RSN_AKM_SUITE_PSK, RSN_AKM_SUITE_SAE, RSN_CIPHER_SUITE_CCMP_128,
+    RSN_CIPHER_SUITE_CCMP_256, RSN_CIPHER_SUITE_GCMP_128, RSN_CIPHER_SUITE_GCMP_256,
+    RSN_CIPHER_SUITE_TKIP,
+};
 
 /// WPA/WPA2-Personal four-way handshake message classifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -403,6 +408,13 @@ impl PairwiseSession {
 pub(crate) struct ObservedBss {
     bssid: MacAddr,
     ssid: Option<Vec<u8>>,
+    channel: Option<u16>,
+    frequency_mhz: Option<u32>,
+    rsn: Option<RsnInformation>,
+    cipher: Option<WpaCipher>,
+    akm: Option<WpaAkm>,
+    decrypt_reason: Option<WpaDecryptReason>,
+    stations: HashSet<MacAddr>,
     pairwise_sessions: HashMap<MacAddr, PairwiseSession>,
 }
 
@@ -412,6 +424,13 @@ impl ObservedBss {
         Self {
             bssid,
             ssid: None,
+            channel: None,
+            frequency_mhz: None,
+            rsn: None,
+            cipher: None,
+            akm: None,
+            decrypt_reason: None,
+            stations: HashSet::new(),
             pairwise_sessions: HashMap::new(),
         }
     }
@@ -426,12 +445,75 @@ impl ObservedBss {
         self.ssid.as_deref()
     }
 
+    /// Last observed channel number for this BSS.
+    pub(crate) const fn channel(&self) -> Option<u16> {
+        self.channel
+    }
+
+    /// Last observed center frequency in MHz for this BSS.
+    pub(crate) const fn frequency_mhz(&self) -> Option<u32> {
+        self.frequency_mhz
+    }
+
+    /// Last observed RSN information element.
+    pub(crate) const fn rsn(&self) -> Option<&RsnInformation> {
+        self.rsn.as_ref()
+    }
+
+    /// Selected pairwise cipher inferred from RSN information.
+    pub(crate) const fn cipher(&self) -> Option<WpaCipher> {
+        self.cipher
+    }
+
+    /// Selected AKM suite inferred from RSN information.
+    pub(crate) const fn akm(&self) -> Option<WpaAkm> {
+        self.akm
+    }
+
+    /// Current decrypt reason inferred while observing this BSS.
+    pub(crate) const fn decrypt_reason(&self) -> Option<WpaDecryptReason> {
+        self.decrypt_reason
+    }
+
     /// Learn or refresh SSID bytes for this BSS.
     pub(crate) fn observe_ssid(&mut self, ssid: impl AsRef<[u8]>) {
         let ssid = ssid.as_ref();
         if self.ssid.is_none() || !ssid.is_empty() {
             self.ssid = Some(ssid.to_vec());
         }
+    }
+
+    /// Learn or refresh channel metadata for this BSS.
+    pub(crate) fn observe_channel(&mut self, channel: u16) {
+        self.channel = Some(channel);
+    }
+
+    /// Learn or refresh frequency metadata for this BSS.
+    pub(crate) fn observe_frequency_mhz(&mut self, frequency_mhz: u32) {
+        self.frequency_mhz = Some(frequency_mhz);
+    }
+
+    /// Learn or refresh RSN security metadata for this BSS.
+    pub(crate) fn observe_rsn(&mut self, rsn: RsnInformation) {
+        let (cipher, akm, reason) = classify_rsn_security(&rsn);
+        self.rsn = Some(rsn);
+        self.cipher = Some(cipher);
+        self.akm = Some(akm);
+        self.decrypt_reason = reason;
+    }
+
+    /// Learn that a station is associated with or talking to this BSS.
+    pub(crate) fn observe_station(&mut self, station: MacAddr) -> bool {
+        if station == self.bssid || station == MacAddr::BROADCAST || station == MacAddr::ZERO {
+            return false;
+        }
+
+        self.stations.insert(station)
+    }
+
+    /// Observed stations associated with or talking to this BSS.
+    pub(crate) fn stations(&self) -> &HashSet<MacAddr> {
+        &self.stations
     }
 
     /// Borrow observed pairwise sessions keyed by station address.
@@ -446,6 +528,7 @@ impl ObservedBss {
 
     /// Borrow or create a pairwise session for a station.
     pub(crate) fn session_mut(&mut self, station: MacAddr) -> &mut PairwiseSession {
+        self.observe_station(station);
         self.pairwise_sessions
             .entry(station)
             .or_insert_with(|| PairwiseSession::new(self.bssid, station))
@@ -480,6 +563,78 @@ impl ObservedBss {
 
         Some(self.observe_pairwise_key(station, transmitter, receiver, key))
     }
+}
+
+pub(crate) fn classify_rsn_security(
+    rsn: &RsnInformation,
+) -> (WpaCipher, WpaAkm, Option<WpaDecryptReason>) {
+    let cipher = select_pairwise_cipher(rsn);
+    let akm = select_akm(rsn);
+    let reason = if cipher != WpaCipher::Ccmp128 {
+        Some(WpaDecryptReason::UnsupportedCipher)
+    } else if akm != WpaAkm::Psk {
+        Some(WpaDecryptReason::UnsupportedAkm)
+    } else {
+        None
+    };
+
+    (cipher, akm, reason)
+}
+
+fn select_pairwise_cipher(rsn: &RsnInformation) -> WpaCipher {
+    if rsn.pairwise_ciphers().contains(&RSN_CIPHER_SUITE_CCMP_128) {
+        return WpaCipher::Ccmp128;
+    }
+
+    rsn.pairwise_ciphers()
+        .first()
+        .copied()
+        .map(rsn_cipher_to_wpa)
+        .unwrap_or_else(|| rsn_cipher_to_wpa(rsn.group_cipher()))
+}
+
+fn select_akm(rsn: &RsnInformation) -> WpaAkm {
+    if rsn.akm_suites().contains(&RSN_AKM_SUITE_PSK) {
+        return WpaAkm::Psk;
+    }
+
+    rsn.akm_suites()
+        .first()
+        .copied()
+        .map(rsn_akm_to_wpa)
+        .unwrap_or(WpaAkm::Unknown)
+}
+
+fn rsn_cipher_to_wpa(suite: RsnCipherSuite) -> WpaCipher {
+    if suite == RSN_CIPHER_SUITE_CCMP_128 {
+        WpaCipher::Ccmp128
+    } else if suite == RSN_CIPHER_SUITE_TKIP {
+        WpaCipher::Tkip
+    } else if suite == RSN_CIPHER_SUITE_GCMP_128 {
+        WpaCipher::Gcmp128
+    } else if suite == RSN_CIPHER_SUITE_GCMP_256 {
+        WpaCipher::Gcmp256
+    } else if suite == RSN_CIPHER_SUITE_CCMP_256 {
+        WpaCipher::Ccmp256
+    } else {
+        WpaCipher::Unsupported(selector_code(suite.to_bytes()))
+    }
+}
+
+fn rsn_akm_to_wpa(suite: RsnAkmSuite) -> WpaAkm {
+    if suite == RSN_AKM_SUITE_PSK {
+        WpaAkm::Psk
+    } else if suite == RSN_AKM_SUITE_8021X {
+        WpaAkm::Enterprise
+    } else if suite == RSN_AKM_SUITE_SAE {
+        WpaAkm::Sae
+    } else {
+        WpaAkm::Unsupported(selector_code(suite.to_bytes()))
+    }
+}
+
+fn selector_code(bytes: [u8; 4]) -> u32 {
+    u32::from_be_bytes(bytes)
 }
 
 fn update_nonce(
