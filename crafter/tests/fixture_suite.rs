@@ -9,8 +9,8 @@ use std::path::{Path, PathBuf};
 use crafter::core::{
     Arp, Dhcp, DhcpMessageType, DhcpOption, DhcpRelayAgentInfo, DhcpRelaySuboption, Dns, DnsName,
     DnsRecord, DnsRecordData, Dot11, Dot11DataSubtype, Dot11ManagementSubtype, Dscp, Eapol,
-    EapolKey, Ecn, EdnsOption, Ethernet, IcmpKind, Icmpv4, Icmpv6, Ipv4, Ipv4Option, Ipv6,
-    Ipv6DestinationOptionsHeader, Ipv6FragmentHeader, Ipv6FragmentHeaderStatus,
+    EapolKey, Ecn, EdnsOption, Ethernet, IcmpKind, Icmpv4, Icmpv6, Ipv4, Ipv4ChecksumStatus,
+    Ipv4Option, Ipv6, Ipv6DestinationOptionsHeader, Ipv6FragmentHeader, Ipv6FragmentHeaderStatus,
     Ipv6HopByHopOptionsHeader, Ipv6MobileRoutingHeader, Ipv6MobileRoutingHeaderStatus, Ipv6Option,
     Ipv6RoutingHeader, Ipv6RoutingTypeStatus, Ipv6SegmentRoutingHeader, Layer, LinkType, LinuxSll,
     LlcSnap, MacAddr, NetworkLayer, NullByteOrder, NullLoopback, OptionOverload, Packet, Radiotap,
@@ -30,10 +30,11 @@ use crafter::core::{
     UDP_OPTION_EOL, UDP_OPTION_NOP,
 };
 use crafter::{
-    BackendKind, Dot11Metadata, PacketOrigin, PacketWire, PcapError, PcapLinkType, PcapReader,
+    BackendKind, CrafterError, Dot11Metadata, IpDefrag, IpDefragOverlapStatus, IpFragmentFamily,
+    IpFragmentRange, PacketOrigin, PacketRecord, PacketWire, PcapError, PcapLinkType, PcapReader,
     PcapTimestamp, PcapWriter, PcapWriterOptions, Sniffer, TimestampPrecision, WifiDecryptState,
-    WpaAkm, WpaCipher, WpaCredentialStatus, WpaDecrypt, WpaDecryptReason, WpaHandshakeStatus,
-    WpaKeyKind,
+    WireError, WpaAkm, WpaCipher, WpaCredentialStatus, WpaDecrypt, WpaDecryptReason,
+    WpaHandshakeStatus, WpaKeyKind,
 };
 use support::fixture_path;
 
@@ -501,6 +502,105 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         name: "ipv4-fragment-noninitial-raw",
         path: "bytes/ipv4-fragment-noninitial-raw.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-fragment-noninitial-raw.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Raw],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ipv4-fragment-defrag-complete-final",
+        path: "bytes/ipv4-fragment-defrag-complete-final.hex",
+        contents: FixtureContents::Hex(fixture_str!(
+            "bytes/ipv4-fragment-defrag-complete-final.hex"
+        )),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Raw],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ipv4-fragment-defrag-complete-first",
+        path: "bytes/ipv4-fragment-defrag-complete-first.hex",
+        contents: FixtureContents::Hex(fixture_str!(
+            "bytes/ipv4-fragment-defrag-complete-first.hex"
+        )),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Raw],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ipv4-fragment-defrag-duplicate-final",
+        path: "bytes/ipv4-fragment-defrag-duplicate-final.hex",
+        contents: FixtureContents::Hex(fixture_str!(
+            "bytes/ipv4-fragment-defrag-duplicate-final.hex"
+        )),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Raw],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ipv4-fragment-defrag-duplicate-first",
+        path: "bytes/ipv4-fragment-defrag-duplicate-first.hex",
+        contents: FixtureContents::Hex(fixture_str!(
+            "bytes/ipv4-fragment-defrag-duplicate-first.hex"
+        )),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Raw],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ipv4-fragment-defrag-duplicate-repeat",
+        path: "bytes/ipv4-fragment-defrag-duplicate-repeat.hex",
+        contents: FixtureContents::Hex(fixture_str!(
+            "bytes/ipv4-fragment-defrag-duplicate-repeat.hex"
+        )),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Raw],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ipv4-fragment-defrag-missing-final",
+        path: "bytes/ipv4-fragment-defrag-missing-final.hex",
+        contents: FixtureContents::Hex(fixture_str!(
+            "bytes/ipv4-fragment-defrag-missing-final.hex"
+        )),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Raw],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ipv4-fragment-defrag-missing-first",
+        path: "bytes/ipv4-fragment-defrag-missing-first.hex",
+        contents: FixtureContents::Hex(fixture_str!(
+            "bytes/ipv4-fragment-defrag-missing-first.hex"
+        )),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Raw],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ipv4-fragment-defrag-overlap-conflict",
+        path: "bytes/ipv4-fragment-defrag-overlap-conflict.hex",
+        contents: FixtureContents::Hex(fixture_str!(
+            "bytes/ipv4-fragment-defrag-overlap-conflict.hex"
+        )),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Raw],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ipv4-fragment-defrag-overlap-first",
+        path: "bytes/ipv4-fragment-defrag-overlap-first.hex",
+        contents: FixtureContents::Hex(fixture_str!(
+            "bytes/ipv4-fragment-defrag-overlap-first.hex"
+        )),
         target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
         expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Raw],
         preserve_exact_bytes: true,
@@ -1354,7 +1454,16 @@ fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
         "ipv4-icmp-echo-request" => &[CoverageFamily::Ipv4IcmpEcho],
         "ipv4-icmp-destination-unreachable" => &[CoverageFamily::Ipv4IcmpError],
         "ipv4-udp-dscp-ecn-raw" => &[CoverageFamily::Ipv4DscpEcn],
-        "ipv4-fragment-noninitial-raw" => &[CoverageFamily::Ipv4Fragment],
+        "ipv4-fragment-noninitial-raw"
+        | "ipv4-fragment-defrag-complete-final"
+        | "ipv4-fragment-defrag-complete-first"
+        | "ipv4-fragment-defrag-duplicate-final"
+        | "ipv4-fragment-defrag-duplicate-first"
+        | "ipv4-fragment-defrag-duplicate-repeat"
+        | "ipv4-fragment-defrag-missing-final"
+        | "ipv4-fragment-defrag-missing-first"
+        | "ipv4-fragment-defrag-overlap-conflict"
+        | "ipv4-fragment-defrag-overlap-first" => &[CoverageFamily::Ipv4Fragment],
         "ipv4-options-traceroute-udp-raw" => &[CoverageFamily::Ipv4Options],
         "ipv4-tcp-syn-options" | "ipv4-tcp-syn-rich-options" => &[CoverageFamily::Ipv4TcpOptions],
         "ipv4-udp-dns-query-example-com" => &[CoverageFamily::Ipv4UdpDnsQuery],
@@ -1454,6 +1563,27 @@ fn decode_packet(target: PacketDecodeTarget, bytes: &[u8]) -> crafter::core::Res
         PacketDecodeTarget::Link(link_type) => Packet::decode_from_link(link_type, bytes),
         PacketDecodeTarget::L3(network_layer) => Packet::decode_from_l3(network_layer, bytes),
     }
+}
+
+fn ipv4_fragment_record_from_fixture(name: &str, timestamp_micros: u32) -> PacketRecord {
+    let case = valid_fixture_case(name);
+    let bytes = fixture_bytes_for_case(case);
+    let packet = decode_packet(packet_target_for_case(case), &bytes)
+        .unwrap_or_else(|err| panic!("fixture {} should decode: {err}", case.path));
+    let len = bytes.len() as u32;
+
+    PacketRecord::new(packet)
+        .with_origin(PacketOrigin::Captured)
+        .with_backend(BackendKind::PcapFile)
+        .with_file(fixture_path(case.path))
+        .with_pcap_metadata(
+            PcapTimestamp::micros(14, timestamp_micros)
+                .unwrap_or_else(|err| panic!("fixture timestamp should be valid: {err}")),
+            len,
+            len,
+            PcapLinkType::RawIp,
+        )
+        .with_captured_bytes(bytes)
 }
 
 fn assert_compile_decode_compile(
@@ -1667,6 +1797,51 @@ where
     })
 }
 
+fn assert_ipv4_fragment_defrag_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
+    let (host_octet, identification, flags, offset, payload): (u8, u16, u8, u16, &'static [u8]) =
+        match case.name {
+            "ipv4-fragment-defrag-complete-final" => (70, 0x5141, 0, 1, b"ijklmnop"),
+            "ipv4-fragment-defrag-complete-first" => {
+                (70, 0x5141, IPV4_FLAG_MORE_FRAGMENTS, 0, b"abcdefgh")
+            }
+            "ipv4-fragment-defrag-duplicate-final" => (71, 0x5142, 0, 1, b"IJKLMNOP"),
+            "ipv4-fragment-defrag-duplicate-first" | "ipv4-fragment-defrag-duplicate-repeat" => {
+                (71, 0x5142, IPV4_FLAG_MORE_FRAGMENTS, 0, b"ABCDEFGH")
+            }
+            "ipv4-fragment-defrag-missing-final" => (72, 0x5143, 0, 2, b"tail"),
+            "ipv4-fragment-defrag-missing-first" => {
+                (72, 0x5143, IPV4_FLAG_MORE_FRAGMENTS, 0, b"missfrag")
+            }
+            "ipv4-fragment-defrag-overlap-conflict" => (73, 0x5144, 0, 1, b"QRSTUVWX"),
+            "ipv4-fragment-defrag-overlap-first" => {
+                (73, 0x5144, IPV4_FLAG_MORE_FRAGMENTS, 0, b"abcdefghijklmnop")
+            }
+            other => panic!("fixture {other} is not an IPv4 defrag fixture"),
+        };
+
+    let ipv4 = expect_layer::<Ipv4>(case, packet);
+    assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, host_octet));
+    assert_eq!(ipv4.destination(), Ipv4Addr::new(198, 51, 100, host_octet));
+    assert_eq!(ipv4.identification_value(), identification);
+    assert_eq!(ipv4.flags_value(), flags);
+    assert_eq!(
+        ipv4.has_more_fragments(),
+        flags & IPV4_FLAG_MORE_FRAGMENTS != 0
+    );
+    assert_eq!(ipv4.fragment_offset_value(), offset);
+    assert!(ipv4.is_fragmented());
+    assert_eq!(ipv4.ttl_value(), 64);
+    assert_eq!(ipv4.protocol_value(), IPPROTO_UDP);
+    assert_eq!(ipv4.total_length_value(), Some((20 + payload.len()) as u16));
+    assert_eq!(ipv4.checksum_status(), Ipv4ChecksumStatus::Valid);
+    assert_eq!(expect_layer::<Raw>(case, packet).as_bytes(), payload);
+
+    let compiled = packet
+        .compile()
+        .unwrap_or_else(|err| panic!("fixture {} should compile: {err}", case.path));
+    assert_eq!(compiled.as_bytes(), fixture_bytes_for_case(case).as_slice());
+}
+
 fn assert_dot11_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
     match case.name {
         "dot11-bare-data" => {
@@ -1872,6 +2047,9 @@ fn assert_dot11_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
 fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
     match case.name {
         name if name.starts_with("dot11-") => assert_dot11_fixture_fields(case, packet),
+        name if name.starts_with("ipv4-fragment-defrag-") => {
+            assert_ipv4_fragment_defrag_fixture_fields(case, packet)
+        }
         "arp-who-has" => {
             let ethernet = expect_layer::<Ethernet>(case, packet);
             assert_eq!(ethernet.destination(), Some(MacAddr::BROADCAST));
@@ -4057,6 +4235,222 @@ fn ipv6_fragment_fixtures_decode_compile_and_summarize() {
         assert_packet_surface(case, &packet);
         assert_fixture_fields(case, &packet);
         assert_compile_decode_compile(case, target, &packet, &bytes);
+    }
+}
+
+#[test]
+fn ipv4_fragment_defrag_fixtures_decode_compile_and_summarize() {
+    for name in [
+        "ipv4-fragment-defrag-complete-final",
+        "ipv4-fragment-defrag-complete-first",
+        "ipv4-fragment-defrag-duplicate-final",
+        "ipv4-fragment-defrag-duplicate-first",
+        "ipv4-fragment-defrag-duplicate-repeat",
+        "ipv4-fragment-defrag-missing-final",
+        "ipv4-fragment-defrag-missing-first",
+        "ipv4-fragment-defrag-overlap-conflict",
+        "ipv4-fragment-defrag-overlap-first",
+    ] {
+        let case = valid_fixture_case(name);
+        ensure_fixture_exists(case.path);
+        let bytes = fixture_bytes_for_case(case);
+        let target = packet_target_for_case(case);
+        let packet = decode_packet(target, &bytes)
+            .unwrap_or_else(|err| panic!("fixture {} should decode: {err}", case.path));
+
+        assert_packet_surface(case, &packet);
+        assert_fixture_fields(case, &packet);
+        assert_compile_decode_compile(case, target, &packet, &bytes);
+    }
+}
+
+fn assert_ipv4_fragment_defrag_reassembled_record(
+    record: &PacketRecord,
+    host_octet: u8,
+    identification: u16,
+    payload: &[u8],
+    fragment_count: usize,
+    duplicate_count: usize,
+) {
+    let ipv4 = record
+        .packet()
+        .layer::<Ipv4>()
+        .expect("reassembled fixture output should contain IPv4");
+    assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, host_octet));
+    assert_eq!(ipv4.destination(), Ipv4Addr::new(198, 51, 100, host_octet));
+    assert_eq!(ipv4.identification_value(), identification);
+    assert_eq!(ipv4.flags_value(), 0);
+    assert_eq!(ipv4.fragment_offset_value(), 0);
+    assert!(!ipv4.is_fragmented());
+    assert_eq!(ipv4.protocol_value(), IPPROTO_UDP);
+    assert_eq!(ipv4.total_length_value(), Some((20 + payload.len()) as u16));
+    assert_eq!(ipv4.checksum_status(), Ipv4ChecksumStatus::Valid);
+    assert_eq!(
+        record
+            .packet()
+            .layer::<Raw>()
+            .expect("reassembled fixture output should keep raw payload")
+            .as_bytes(),
+        payload
+    );
+
+    let expected_total_len = (20 + payload.len()) as u32;
+    assert_eq!(record.metadata().origin(), PacketOrigin::Transformed);
+    assert_eq!(record.metadata().backend(), &BackendKind::PcapFile);
+    assert_eq!(
+        record.metadata().pcap_link_type(),
+        Some(PcapLinkType::RawIp)
+    );
+    assert_eq!(record.metadata().original_len(), Some(expected_total_len));
+    assert_eq!(record.metadata().captured_len(), Some(expected_total_len));
+    assert_eq!(record.metadata().emitted_len(), Some(expected_total_len));
+    assert!(record.metadata().captured_bytes().is_none());
+
+    let metadata = record.metadata().ip_defrag_metadata();
+    assert_eq!(metadata.len(), 1);
+    assert_eq!(metadata[0].family(), IpFragmentFamily::Ipv4);
+    assert_eq!(metadata[0].identification(), identification as u32);
+    let expected_key =
+        format!("192.0.2.{host_octet}>198.51.100.{host_octet} proto=17 id=0x{identification:04x}");
+    assert_eq!(metadata[0].datagram_key(), Some(expected_key.as_str()));
+    assert_eq!(metadata[0].fragment_count(), fragment_count);
+    assert_eq!(metadata[0].duplicate_count(), duplicate_count);
+    assert_eq!(metadata[0].overlap_status(), IpDefragOverlapStatus::None);
+    assert_eq!(
+        metadata[0].byte_ranges(),
+        [IpFragmentRange::new(0, 8), IpFragmentRange::new(8, 16)].as_slice()
+    );
+    assert_eq!(metadata[0].total_len(), Some(expected_total_len));
+
+    let traces = record.metadata().transforms();
+    assert_eq!(traces.len(), 1);
+    assert_eq!(traces[0].name(), "ip-defrag");
+    assert_eq!(traces[0].note(), Some("reassembled"));
+    assert_eq!(traces[0].output_len(), Some(expected_total_len));
+}
+
+#[test]
+fn ipv4_fragment_defrag_complete_out_of_order_fixture_reassembles() {
+    let mut transform = IpDefrag::new();
+
+    let final_output = transform
+        .defrag_record(ipv4_fragment_record_from_fixture(
+            "ipv4-fragment-defrag-complete-final",
+            1,
+        ))
+        .expect("final fragment should buffer");
+    let first_output = transform
+        .defrag_record(ipv4_fragment_record_from_fixture(
+            "ipv4-fragment-defrag-complete-first",
+            2,
+        ))
+        .expect("first fragment should complete the datagram");
+
+    assert!(final_output.is_empty());
+    assert_eq!(first_output.len(), 1);
+    assert_eq!(transform.input_count(), 2);
+    assert_eq!(transform.emitted_count(), 1);
+    assert_ipv4_fragment_defrag_reassembled_record(
+        &first_output.records()[0],
+        70,
+        0x5141,
+        b"abcdefghijklmnop",
+        2,
+        0,
+    );
+}
+
+#[test]
+fn ipv4_fragment_defrag_duplicate_fixture_records_duplicate_count() {
+    let mut transform = IpDefrag::new();
+
+    assert!(transform
+        .defrag_record(ipv4_fragment_record_from_fixture(
+            "ipv4-fragment-defrag-duplicate-first",
+            1,
+        ))
+        .expect("first fragment should buffer")
+        .is_empty());
+    assert!(transform
+        .defrag_record(ipv4_fragment_record_from_fixture(
+            "ipv4-fragment-defrag-duplicate-repeat",
+            2,
+        ))
+        .expect("duplicate fragment should buffer")
+        .is_empty());
+    let output = transform
+        .defrag_record(ipv4_fragment_record_from_fixture(
+            "ipv4-fragment-defrag-duplicate-final",
+            3,
+        ))
+        .expect("final fragment should complete duplicate fixture");
+
+    assert_eq!(output.len(), 1);
+    assert_eq!(transform.input_count(), 3);
+    assert_eq!(transform.emitted_count(), 1);
+    assert_ipv4_fragment_defrag_reassembled_record(
+        &output.records()[0],
+        71,
+        0x5142,
+        b"ABCDEFGHIJKLMNOP",
+        2,
+        1,
+    );
+}
+
+#[test]
+fn ipv4_fragment_defrag_missing_fixture_does_not_emit_incomplete_datagram() {
+    let mut transform = IpDefrag::new();
+
+    let first_output = transform
+        .defrag_record(ipv4_fragment_record_from_fixture(
+            "ipv4-fragment-defrag-missing-first",
+            1,
+        ))
+        .expect("first missing-vector fragment should buffer");
+    let final_output = transform
+        .defrag_record(ipv4_fragment_record_from_fixture(
+            "ipv4-fragment-defrag-missing-final",
+            2,
+        ))
+        .expect("final missing-vector fragment should buffer");
+
+    assert!(first_output.is_empty());
+    assert!(final_output.is_empty());
+    assert_eq!(transform.input_count(), 2);
+    assert_eq!(transform.emitted_count(), 0);
+}
+
+#[test]
+fn ipv4_fragment_defrag_overlap_fixture_rejects_conflicting_bytes() {
+    let mut transform = IpDefrag::new();
+
+    let first_output = transform
+        .defrag_record(ipv4_fragment_record_from_fixture(
+            "ipv4-fragment-defrag-overlap-first",
+            1,
+        ))
+        .expect("first overlap-vector fragment should buffer");
+    let error = match transform.defrag_record(ipv4_fragment_record_from_fixture(
+        "ipv4-fragment-defrag-overlap-conflict",
+        2,
+    )) {
+        Ok(output) => panic!(
+            "conflicting overlap fixture unexpectedly emitted {} records",
+            output.len()
+        ),
+        Err(error) => error,
+    };
+
+    assert!(first_output.is_empty());
+    assert_eq!(transform.input_count(), 2);
+    assert_eq!(transform.emitted_count(), 0);
+    match error {
+        WireError::Packet(CrafterError::InvalidFieldValue { field, reason }) => {
+            assert_eq!(field, "ip.defrag.ipv4.overlap");
+            assert!(reason.contains("ambiguous"));
+        }
+        other => panic!("expected structured overlap rejection, got {other:?}"),
     }
 }
 
