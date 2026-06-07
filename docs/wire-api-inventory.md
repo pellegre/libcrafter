@@ -130,11 +130,11 @@ annotate metadata, decrypt payloads, reassemble fragments, or decode higher
 layers while preserving packet-shaped output.
 
 Current helper transforms include pass-through, drop-all, duplicate, trace
-append, and Dot11 metadata annotation. WPA decryption is not implemented. It
-belongs as a future inbound `PacketTransform` that accepts SSID/passphrase
+append, Dot11 metadata annotation, and `WpaDecrypt`. The WPA transform is an
+inbound `PacketTransform` that accepts SSID/passphrase or SSID/PMK
 configuration, observes beacons and EAPOL handshakes, keeps per-network key
-state, and emits decrypted Ethernet/IP packet records with metadata identifying
-the source network.
+state, and emits decrypted Ethernet-equivalent packet records with metadata
+identifying the source network when WPA2-PSK CCMP-128 state verifies.
 
 ## Concurrency Model
 

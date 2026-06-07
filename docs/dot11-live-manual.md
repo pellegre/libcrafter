@@ -121,10 +121,45 @@ RF environment, and do not commit captures or identifiers from real networks.
 `Dot11Metadata` is a `PacketTransform` that adds best-effort Wi-Fi annotations
 without decrypting frames or changing live gates.
 
-A future `Wpa2PskDecryptor` belongs as the next inbound `PacketTransform` after
-`Dot11Metadata`, followed by any IP/TCP or application transforms. This manual
-page intentionally does not define secret handling or implement WPA
-decryption.
+For explicit authorized monitor-mode decryption, add `WpaDecrypt` as the next
+inbound `PacketTransform` after `Dot11Metadata`, followed by any IP/TCP or
+application transforms. Configure only SSIDs and passphrases or PMKs for
+networks the operator is authorized to observe. Prefer the offline
+`wpa_decrypt_offline` example and synthetic pcap fixture before any live
+capture.
+
+```rust
+use crafter::prelude::*;
+
+fn main() -> crafter::Result<()> {
+    let monitor_iface = "dot11-doc-iface";
+
+    let source = PacketWire::pcap_interface(monitor_iface)
+        .filter("type mgt or type data")
+        .open()?
+        .source()?;
+
+    let records = Sniffer::new(source)
+        .with(Dot11Metadata::new())
+        .with(WpaDecrypt::new().network("libcrafter-wpa", "libcrafter-pass")?)
+        .count(25)
+        .collect_records()?;
+
+    for record in records {
+        println!("{}", record.packet().summary());
+        println!("{:?}", record.metadata().wifi());
+    }
+
+    Ok(())
+}
+```
+
+The placeholder SSID and passphrase above must be replaced only in local,
+untracked code for an authorized isolated RF environment. Do not add real
+credentials, PMKs, BSSIDs, SSIDs, packet captures, or decrypted traffic to
+tracked files or automated tests. `WpaDecrypt` is passive; this manual does not
+provide active deauthentication, password cracking, association, scanning, or
+channel-hopping instructions.
 
 ## Manual Live Gates
 

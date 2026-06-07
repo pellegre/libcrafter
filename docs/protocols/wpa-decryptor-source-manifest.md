@@ -10,17 +10,19 @@ examples and does not define any live capture workflow.
 | --- | --- | --- |
 | IEEE 802.11 MAC frame layout, address roles, protected frame bit, management tagged parameters, RSN information elements, RSNA key hierarchy, four-way handshake, and CCMP protected data | IEEE Std 802.11-2020, including the MAC and RSNA security material inherited from IEEE 802.11i | Use this as the authority for Dot11 frame interpretation, BSSID/station roles, RSN suite selectors, PTK/GTK context, replay counters, packet numbers, CCMP AAD/nonce inputs, and WPA2-PSK CCMP-128 behavior. |
 | EAP and EAPOL carriage | IEEE Std 802.1X-2020 for EAPOL LAN encapsulation; RFC 3748 for the Extensible Authentication Protocol model | The decryptor observes EAPOL-Key records carried by LLC/SNAP EtherType `0x888e`; it does not implement an authenticator, supplicant, or EAP method. |
-| EAPOL-Key message classification | IEEE Std 802.11-2020 RSNA EAPOL-Key descriptor definitions | Existing crate classification is a passive shape classifier only. The transform still needs state validation against addresses, replay counters, nonces, and MIC verification. |
-| Passphrase-to-PMK derivation | IEEE Std 802.11-2020 for WPA/WPA2-Personal parameters; RFC 8018 for the PBKDF2 primitive | First scope is PBKDF2-HMAC-SHA1 with SSID bytes as the salt and the IEEE-specified iteration/output parameters. SSIDs are bytes, not guaranteed UTF-8 strings. |
-| PTK expansion and EAPOL MIC verification | IEEE Std 802.11-2020 RSNA key hierarchy and EAPOL-Key descriptor-version rules | The transform must derive key material only after it has both MAC addresses, both nonces, configured credentials, and enough EAPOL bytes to verify a MIC with the MIC field zeroed. |
-| Encrypted EAPOL-Key data unwrap | IEEE Std 802.11-2020 encrypted key data rules; RFC 3394 for the AES Key Wrap primitive where the RSNA descriptor uses AES key wrap | First scope can record GTK/key-data presence, but pairwise unicast CCMP decryption must not depend on group-key support. |
+| EAPOL-Key message classification | IEEE Std 802.11-2020 RSNA EAPOL-Key descriptor definitions | The transform validates observed handshake state against addresses, replay counters, nonces, and MIC verification while remaining passive. |
+| Passphrase-to-PMK derivation | IEEE Std 802.11-2020 for WPA/WPA2-Personal parameters; RFC 8018 for the PBKDF2 primitive | Implemented as PBKDF2-HMAC-SHA1 with SSID bytes as the salt and the IEEE-specified iteration/output parameters. SSIDs are bytes, not guaranteed UTF-8 strings. |
+| PTK expansion and EAPOL MIC verification | IEEE Std 802.11-2020 RSNA key hierarchy and EAPOL-Key descriptor-version rules | The transform derives key material only after it has both MAC addresses, both nonces, configured credentials, and enough EAPOL bytes to verify a MIC with the MIC field zeroed. |
+| Encrypted EAPOL-Key data unwrap | IEEE Std 802.11-2020 encrypted key data rules; RFC 3394 for the AES Key Wrap primitive where the RSNA descriptor uses AES key wrap | Implemented for supported WPA2 encrypted GTK key data so group-addressed CCMP frames can use learned GTK material. |
 | AES block cipher and CCM mode | FIPS 197 for AES; NIST SP 800-38C for CCM; IEEE Std 802.11-2020 for the CCMP profile, header, packet number, AAD, nonce, and MIC layout | Use RustCrypto primitives behind a WPA module boundary. CCMP authentication failure is a decrypt failure state, not a panic or successful packet. |
 
 The source-backed first implementation scope is passive WPA2-PSK with
-CCMP-128-protected unicast data frames. The transform may learn beacon/probe
-RSN information, station/BSSID relationships, EAPOL-Key handshake state, and
-protected data metadata from a monitor-mode packet stream. It must not actively
-send traffic, force handshakes, change channels, or crack passwords.
+CCMP-128-protected unicast data frames and group-addressed data frames when GTK
+material has been learned from supported encrypted key data. The transform may
+learn beacon/probe RSN information, station/BSSID relationships, EAPOL-Key
+handshake state, and protected data metadata from a monitor-mode packet stream.
+It must not actively send traffic, force handshakes, change channels, or crack
+passwords.
 
 WPA3/SAE, enterprise authentication, TKIP decryption, WEP, GCMP, CCMP-256,
 active deauthentication, AP/supplicant behavior, channel management, password
@@ -29,7 +31,7 @@ explicitly out of scope for this first pass.
 
 ## Implementation Inventory
 
-| Planned primitive | Existing crate surface | Missing helper or type |
+| Primitive | Crate surface | WPA implementation |
 | --- | --- | --- |
 | Stream transform contract | `crafter/src/wire/transform.rs` defines `PacketTransform`, which can keep state and emit zero, one, or many `PacketRecord` values. | `crafter/src/wire/wpa/transform.rs` with `WpaDecrypt` and diagnostics counters. |
 | Packet record metadata | `crafter/src/wire/record.rs` preserves packet, origin, backend, interface, pcap timestamp, captured bytes, link type, transform trace, and initial `WifiMetadata`. | WPA-specific metadata nested under Wi-Fi metadata: cipher, AKM, BSSID/station session, handshake status, key kind, packet number, and decrypt reason. |
@@ -38,10 +40,10 @@ explicitly out of scope for this first pass.
 | RSN information elements | `crafter/src/protocols/rsn.rs` exposes RSN version, cipher suite selectors, AKM suite selectors, capabilities, PMKIDs, group management cipher, decode, encode, and known labels including `RSN_CIPHER_SUITE_CCMP_128` and `RSN_AKM_SUITE_PSK`. | Supported-network classifier that reduces RSN information to WPA2-PSK CCMP-128, unsupported cipher/AKM reasons, and configured SSID matching state. |
 | EAPOL and EAPOL-Key | `crafter/src/protocols/eapol.rs` exposes EAPOL headers, EAPOL-Key descriptor fields, key information flags, nonce, MIC, replay counter, key data, and passive RSN four-way handshake message classification. | MIC-zeroed EAPOL serialization, descriptor-version policy, replay validation, PTK key slice selection, and EAPOL state-machine integration keyed by BSSID/station. |
 | LLC/SNAP plaintext decode | `crafter/src/protocols/link/llc.rs` decodes RFC 1042 SNAP payloads through the EtherType registry and preserves non-SNAP data as `Raw`. | A reusable internal helper for WPA to decode decrypted plaintext bytes into `LlcSnap` plus higher layers or `Raw`, and optional Ethernet-equivalent packet construction for downstream IP/TCP transforms. |
-| WPA credential material | No dedicated WPA module exists yet. | `WpaNetwork` with SSID bytes, passphrase or pre-derived PMK, validation for WPA passphrase length/encoding rules, and a PMK cache keyed by SSID bytes. |
-| WPA crypto | No PBKDF2, PTK PRF, EAPOL MIC verification, AES key unwrap, or CCMP decrypt helper exists in the crate. | Isolated `crafter/src/wire/wpa/crypto.rs` and `ccmp.rs` using audited RustCrypto crates, deterministic test vectors, and structured errors. |
-| WPA state machines | No WPA session state exists yet. | `ConfiguredNetwork`, `ObservedBss`, `PairwiseSession`, and optional `GroupKeyState`, keyed by BSSID and station, tolerant of duplicate and out-of-order EAPOL records. |
-| Offline validation | `crafter/tests/public_api.rs` already covers Dot11, LLC/SNAP, EAPOL-Key, RSN, radiotap, and public re-exports. | Synthetic WPA2-PSK CCMP fixtures, crypto vector tests, state-machine tests, pcap-backed transform tests, and wrong-passphrase failure tests. |
+| WPA credential material | `WpaNetwork` stores SSID bytes with either a passphrase-derived PMK or a caller-provided PMK. | Validation enforces WPA SSID/passphrase sizes and redacts secret material in debug output. |
+| WPA crypto | `crafter/src/wire/wpa/crypto.rs` and `ccmp.rs` isolate PBKDF2, PTK PRF, EAPOL MIC verification, AES key unwrap, and CCMP decrypt helpers. | Uses audited RustCrypto crates, deterministic test vectors, and structured errors. |
+| WPA state machines | `ObservedBss`, `PairwiseSession`, and group key state are keyed by BSSID, station, and key id where appropriate. | State tolerates duplicate and out-of-order EAPOL records, tracks credential status, and keeps replay state separate for pairwise and group traffic. |
+| Offline validation | `crafter/tests/public_api.rs`, `crafter/tests/fixture_suite.rs`, and WPA unit tests cover public API, Dot11/RSN/EAPOL parsing, synthetic pcap fixtures, crypto vectors, state machines, wrong-passphrase failure, and pcap-backed transform output. | Validation stays synthetic and offline by default. |
 
 ## Initial Behavior Contract
 
