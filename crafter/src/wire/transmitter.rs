@@ -103,15 +103,27 @@ mod tests {
     use super::super::record::{BackendKind, PacketRecord};
     use super::super::transform::{DropAllTransform, DuplicateTransform};
     use super::super::writer::MemoryPacketWriter;
-    use super::super::{IpFragmentFamily, IpFragmentMetadata, IpFragmentRange};
+    use super::super::{IpFragment, IpFragmentFamily, IpFragmentMetadata, IpFragmentRange};
     use super::*;
-    use crate::Raw;
+    use crate::{Ipv4, Raw};
+    use std::net::Ipv4Addr;
     use std::sync::{Arc, Mutex};
 
     fn record(payload: &'static str) -> PacketRecord {
         PacketRecord::new(Raw::from(payload))
             .with_backend(BackendKind::Memory)
             .with_interface(payload)
+    }
+
+    fn ipv4_record(payload: &[u8]) -> PacketRecord {
+        let ipv4 = Ipv4::with_addresses(
+            Ipv4Addr::new(192, 0, 2, 29),
+            Ipv4Addr::new(198, 51, 100, 29),
+        )
+        .protocol(253)
+        .identification(0x2929);
+
+        PacketRecord::new(ipv4 / Raw::from_bytes(payload))
     }
 
     #[test]
@@ -181,6 +193,33 @@ mod tests {
         );
         let writes = writes.lock().unwrap();
         assert_eq!(*writes, [(0, 0, 5), (1, 8, 11), (2, 16, 23)]);
+    }
+
+    #[test]
+    fn ip_fragment_transform_writes_multiple_fragments_through_memory_writer() {
+        let payload = (0u8..21).collect::<Vec<_>>();
+        let mut transmitter = Transmitter::new(MemoryPacketWriter::new()).with(IpFragment::new(40));
+
+        let reports = transmitter.write_record(ipv4_record(&payload)).unwrap();
+
+        assert_eq!(reports.len(), 2);
+        assert_eq!(
+            reports
+                .iter()
+                .map(WriteReport::bytes_requested)
+                .collect::<Vec<_>>(),
+            [36, 25]
+        );
+        assert_eq!(
+            reports
+                .iter()
+                .map(WriteReport::bytes_written)
+                .collect::<Vec<_>>(),
+            [36, 25]
+        );
+        assert!(reports
+            .iter()
+            .all(|report| report.backend() == &BackendKind::Memory));
     }
 
     #[derive(Debug, Clone)]
