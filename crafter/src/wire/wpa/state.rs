@@ -836,6 +836,25 @@ impl ObservedBss {
         Ok(observation)
     }
 
+    /// Verify an already-observed MIC-bearing EAPOL-Key record with known station.
+    pub(crate) fn verify_pairwise_key_mic(
+        &mut self,
+        station: MacAddr,
+        key: &EapolKey,
+        eapol_frame: &[u8],
+        pmk: &Pmk,
+    ) -> crate::Result<()> {
+        let group_key_update = {
+            let session = self.session_mut(station);
+            session.verify_key_mic(pmk, key, eapol_frame)?;
+            session.decrypt_group_key_data(key)
+        };
+        if key.key_information_value().encrypted_key_data() && !key.key_data_bytes().is_empty() {
+            self.group_keys.apply_update(&group_key_update);
+        }
+        Ok(())
+    }
+
     /// Observe one EAPOL-Key record and infer the station from BSSID direction.
     pub(crate) fn observe_eapol_key(
         &mut self,
