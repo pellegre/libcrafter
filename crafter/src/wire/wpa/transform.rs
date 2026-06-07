@@ -3,11 +3,12 @@
 use std::collections::HashMap;
 
 use super::ccmp::{decrypt_group, decrypt_unicast, CcmpDecryptResult, CcmpHeader};
+use super::crypto::Pmk;
 use super::metadata::{
     WpaAkm, WpaCipher, WpaCredentialStatus, WpaDecryptReason, WpaHandshakeStatus, WpaKeyKind,
     WpaMetadata,
 };
-use super::state::{GroupKeyReadiness, ObservedBss};
+use super::state::{GroupKeyReadiness, ObservedBss, PairwiseSession};
 use super::{WpaDecryptConfig, WpaNetwork};
 use crate::wire::record::{
     PacketMetadata, PacketOrigin, PacketRecord, TransformTrace, WifiDecryptState, WifiMetadata,
@@ -21,11 +22,6 @@ use crate::{
 };
 
 /// Passive WPA/WPA2-Personal decryptor transform.
-///
-/// This skeleton implements the public transform shape without changing packet
-/// behavior. It currently emits each input record unchanged and does not append
-/// WPA metadata. Later steps will use the same `PacketTransform` contract to
-/// observe handshakes and emit decrypted packet records.
 #[derive(Debug, Clone, Default)]
 pub struct WpaDecrypt {
     config: WpaDecryptConfig,
@@ -35,6 +31,9 @@ pub struct WpaDecrypt {
     group_packet_numbers: HashMap<GroupReplayKey, u64>,
     input_count: usize,
     emitted_count: usize,
+    observed_handshake_count: usize,
+    decrypted_count: usize,
+    failed_count: usize,
 }
 
 impl WpaDecrypt {
@@ -101,9 +100,45 @@ impl WpaDecrypt {
         self.emitted_count
     }
 
+    /// Number of accepted EAPOL-Key handshake records observed.
+    pub const fn observed_handshake_count(&self) -> usize {
+        self.observed_handshake_count
+    }
+
+    /// Number of pairwise sessions with verified key material.
+    pub fn verified_session_count(&self) -> usize {
+        self.bsses
+            .values()
+            .flat_map(|bss| bss.pairwise_sessions().values())
+            .filter(|session| session.is_ready())
+            .count()
+    }
+
+    /// Number of protected records successfully decrypted.
+    pub const fn decrypted_count(&self) -> usize {
+        self.decrypted_count
+    }
+
+    /// Number of protected records that could not be decrypted.
+    pub const fn failed_count(&self) -> usize {
+        self.failed_count
+    }
+
     /// Run the transform and collect emitted records into a small buffer.
     pub fn decrypt_record(&mut self, record: PacketRecord) -> WireResult<TransformOutput> {
         self.transform_to_output(record)
+    }
+
+    fn matching_pmks_for_ssid(&self, ssid: Option<&[u8]>) -> Vec<Pmk> {
+        let Some(ssid) = ssid else {
+            return Vec::new();
+        };
+
+        self.networks
+            .iter()
+            .filter(|network| network.ssid() == ssid)
+            .map(|network| network.cached_pmk().clone())
+            .collect()
     }
 
     fn observe_and_annotate(
@@ -165,6 +200,13 @@ impl WpaDecrypt {
         let eapol_key = packet.layer::<EapolKey>();
         let has_eapol_stack =
             packet.layer::<LlcSnap>().is_some() && packet.layer::<Eapol>().is_some();
+        let matching_pmks =
+            self.matching_pmks_for_ssid(ssid.as_deref().or_else(|| {
+                bssid.and_then(|bssid| self.bsses.get(&bssid).and_then(|bss| bss.ssid()))
+            }));
+        let eapol_frame = has_eapol_stack
+            .then(|| compile_eapol_frame(packet))
+            .flatten();
 
         let mut context = WpaObservationContext::default();
         context.bssid = bssid;
@@ -196,10 +238,36 @@ impl WpaDecrypt {
                 if let (Some(transmitter), Some(receiver), Some(key)) =
                     (dot11.transmitter(), dot11.receiver(), eapol_key)
                 {
-                    if bss.observe_eapol_key(transmitter, receiver, key).is_some() {
-                        context.handshake_status = station.and_then(|station| {
-                            bss.session(station).map(|session| session.status())
-                        });
+                    if let Some(observation) = bss.observe_eapol_key(transmitter, receiver, key) {
+                        if observation.accepted() && observation.message().is_known() {
+                            self.observed_handshake_count += 1;
+                        }
+
+                        if let (Some(station), Some(eapol_frame)) =
+                            (station, eapol_frame.as_deref())
+                        {
+                            for pmk in &matching_pmks {
+                                if bss
+                                    .verify_pairwise_key_mic(station, key, eapol_frame, pmk)
+                                    .is_err()
+                                {
+                                    context.decrypt_reason = Some(WpaDecryptReason::MalformedFrame);
+                                    break;
+                                }
+                                if bss
+                                    .session(station)
+                                    .map(PairwiseSession::is_ready)
+                                    .unwrap_or(false)
+                                {
+                                    break;
+                                }
+                            }
+                        }
+
+                        if let Some(session) = station.and_then(|station| bss.session(station)) {
+                            context.handshake_status = Some(visible_handshake_status(session));
+                            context.credential_status = Some(session.credential_status());
+                        }
                     }
                 }
             }
@@ -278,6 +346,9 @@ impl WpaDecrypt {
             metadata = metadata.with_decrypt_reason(WpaDecryptReason::NotAttempted);
         }
         if let Some(credential_status) = self.credential_status(context.ssid.as_deref()) {
+            metadata = metadata
+                .with_credential_status(context.credential_status.unwrap_or(credential_status));
+        } else if let Some(credential_status) = context.credential_status {
             metadata = metadata.with_credential_status(credential_status);
         }
 
@@ -444,6 +515,18 @@ impl WpaDecrypt {
 
         PacketRecord::from_packet_metadata(decrypted_packet, metadata)
     }
+
+    fn should_emit_original(&self, record: &PacketRecord) -> bool {
+        if self.config.emits_originals() {
+            return true;
+        }
+
+        let Some(dot11) = record.packet().layer::<Dot11>() else {
+            return true;
+        };
+
+        !dot11.is_protected() && !is_eapol_key_record(record)
+    }
 }
 
 impl PacketTransform for WpaDecrypt {
@@ -476,15 +559,22 @@ impl PacketTransform for WpaDecrypt {
                     self.decrypted_record(record.metadata(), decrypted_packet, &attempt);
                 emit(decrypted)?;
                 self.emitted_count += 1;
+                self.decrypted_count += 1;
+            } else {
+                self.failed_count += 1;
             }
-            if self.config.emits_originals() {
+            if self.should_emit_original(&record) {
                 emit(record)?;
                 self.emitted_count += 1;
             }
             return Ok(());
         }
 
-        if self.config.emits_originals() {
+        if is_protected_dot11_record(&record) {
+            self.failed_count += 1;
+        }
+
+        if self.should_emit_original(&record) {
             emit(record)?;
             self.emitted_count += 1;
         }
@@ -539,7 +629,40 @@ struct WpaObservationContext {
     cipher: Option<WpaCipher>,
     akm: Option<WpaAkm>,
     handshake_status: Option<WpaHandshakeStatus>,
+    credential_status: Option<WpaCredentialStatus>,
     decrypt_reason: Option<WpaDecryptReason>,
+}
+
+fn visible_handshake_status(session: &PairwiseSession) -> WpaHandshakeStatus {
+    if session.is_ready() {
+        WpaHandshakeStatus::MicVerified
+    } else if session.credential_status() == WpaCredentialStatus::Mismatch {
+        WpaHandshakeStatus::Failed
+    } else {
+        session.status()
+    }
+}
+
+fn compile_eapol_frame(packet: &Packet) -> Option<Vec<u8>> {
+    let eapol = packet.layer::<Eapol>()?;
+    let key = packet.layer::<EapolKey>()?;
+
+    (eapol.clone() / key.clone())
+        .compile()
+        .ok()
+        .map(|compiled| compiled.into_bytes())
+}
+
+fn is_protected_dot11_record(record: &PacketRecord) -> bool {
+    record
+        .packet()
+        .layer::<Dot11>()
+        .map(Dot11::is_protected)
+        .unwrap_or(false)
+}
+
+fn is_eapol_key_record(record: &PacketRecord) -> bool {
+    record.packet().layer::<EapolKey>().is_some()
 }
 
 fn group_key_missing_reason(bss: &ObservedBss) -> WpaDecryptReason {
@@ -1156,7 +1279,10 @@ mod tests {
     fn observes_eapol_station_and_carries_learned_bss_metadata() {
         let bssid = mac(4);
         let station = mac(0x44);
-        let mut transform = WpaDecrypt::new().network("lab", "12345678").unwrap();
+        let mut transform = WpaDecrypt::new()
+            .with_config(WpaDecryptConfig::new().pass_originals(true))
+            .network("lab", "12345678")
+            .unwrap();
         transform
             .decrypt_record(beacon_with_rsn(
                 bssid,
@@ -1190,6 +1316,86 @@ mod tests {
         assert_eq!(wpa.akm(), Some(WpaAkm::Psk));
         assert_eq!(wpa.handshake_status(), Some(WpaHandshakeStatus::Observing));
         assert_eq!(wpa.credential_status(), Some(WpaCredentialStatus::Unknown));
+        assert_eq!(transform.observed_handshake_count(), 1);
+        assert_eq!(transform.verified_session_count(), 0);
+        assert_eq!(transform.decrypted_count(), 0);
+        assert_eq!(transform.failed_count(), 0);
+    }
+
+    #[test]
+    fn configured_network_verifies_handshake_and_decrypts_default_output() {
+        let bssid = mac(5);
+        let station = mac(0x55);
+        let peer = mac(0x56);
+        let ap_nonce = [0x12; 32];
+        let station_nonce = [0x34; 32];
+        let mut transform = WpaDecrypt::new().network("lab", "12345678").unwrap();
+        let pmk = transform.networks()[0].cached_pmk().clone();
+        let ptk = derive_ptk(
+            &pmk,
+            &bssid.octets(),
+            &station.octets(),
+            &ap_nonce,
+            &station_nonce,
+        );
+
+        assert_eq!(
+            transform
+                .decrypt_record(beacon_with_rsn(
+                    bssid,
+                    b"lab".as_slice(),
+                    &RsnInformation::new(),
+                ))
+                .unwrap()
+                .len(),
+            1
+        );
+
+        let message_1_packet = Dot11::data().addr1(station).addr2(bssid).addr3(bssid)
+            / LlcSnap::new().ethertype(ETHERTYPE_EAPOL)
+            / Eapol::key()
+            / pairwise_message_1(1, ap_nonce);
+        assert!(transform
+            .decrypt_record(PacketRecord::new(message_1_packet))
+            .unwrap()
+            .is_empty());
+
+        let (message_2, _eapol_frame) =
+            signed_eapol_key(pairwise_message_2(1, station_nonce), &ptk);
+        let message_2_packet = Dot11::data().addr1(bssid).addr2(station).addr3(bssid)
+            / LlcSnap::new().ethertype(ETHERTYPE_EAPOL)
+            / Eapol::key()
+            / message_2;
+        assert!(transform
+            .decrypt_record(PacketRecord::new(message_2_packet))
+            .unwrap()
+            .is_empty());
+
+        assert_eq!(transform.observed_handshake_count(), 2);
+        assert_eq!(transform.verified_session_count(), 1);
+
+        let dot11 = protected_to_ds_data(bssid, station, peer);
+        let encrypted_body =
+            encrypt_unicast_for_tests(&dot11, ptk.temporal_key(), 0, [13, 0, 0, 0, 0, 0], b"plain");
+        let output = transform
+            .decrypt_record(PacketRecord::new(dot11 / Raw::from_bytes(encrypted_body)))
+            .unwrap();
+
+        assert_eq!(output.len(), 1);
+        assert_eq!(
+            output.records()[0].metadata().origin(),
+            PacketOrigin::Transformed
+        );
+        assert_eq!(
+            output.records()[0]
+                .metadata()
+                .wifi()
+                .unwrap()
+                .decrypt_state(),
+            Some(WifiDecryptState::Decrypted)
+        );
+        assert_eq!(transform.decrypted_count(), 1);
+        assert_eq!(transform.failed_count(), 0);
     }
 
     #[test]
@@ -1249,6 +1455,8 @@ mod tests {
             wpa.handshake_status(),
             Some(WpaHandshakeStatus::MicVerified)
         );
+        assert_eq!(transform.decrypted_count(), 1);
+        assert_eq!(transform.failed_count(), 0);
     }
 
     #[test]

@@ -16,11 +16,6 @@ pub const WPA_PASSPHRASE_MIN_LEN: usize = 8;
 pub const WPA_PASSPHRASE_MAX_LEN: usize = 63;
 
 /// Configuration for the passive WPA decrypt transform.
-///
-/// The current skeleton keeps behavior inert and passes records through
-/// unchanged. Later steps will use this configuration to decide how original
-/// frames, handshake records, diagnostics, and undecryptable protected frames
-/// are emitted.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct WpaDecryptConfig {
     pass_originals: bool,
@@ -31,12 +26,16 @@ impl WpaDecryptConfig {
     /// Create the default WPA decryptor configuration.
     pub fn new() -> Self {
         Self {
-            pass_originals: true,
+            pass_originals: false,
             supported_ciphers: vec![WpaCipher::Ccmp128],
         }
     }
 
     /// Configure whether original records should be passed through.
+    ///
+    /// When disabled, the transform still passes non-Wi-Fi and unprotected
+    /// non-handshake records. Handshake records and undecryptable protected
+    /// records are retained as state but do not produce output.
     pub const fn pass_originals(mut self, pass_originals: bool) -> Self {
         self.pass_originals = pass_originals;
         self
@@ -229,10 +228,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn config_defaults_to_passing_originals_and_ccmp128() {
+    fn config_defaults_to_decrypting_output_and_ccmp128() {
         let config = WpaDecryptConfig::new();
 
-        assert!(config.emits_originals());
+        assert!(!config.emits_originals());
         assert_eq!(config.supported_ciphers(), &[WpaCipher::Ccmp128]);
         assert!(config.supports_cipher(WpaCipher::Ccmp128));
         assert!(!config.supports_cipher(WpaCipher::Tkip));
