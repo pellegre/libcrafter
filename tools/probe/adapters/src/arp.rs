@@ -20,10 +20,11 @@ use std::net::Ipv4Addr;
 use std::time::Duration;
 
 use crate::common::{
-    capture_filter, decoded_packet_json, failed_outcome, hex_bytes, observed_response, plan_json,
-    required_str, required_u16, send_report_json, target_service_json, ArpSend, ArpValidation,
-    CandidateValidation, ExampleResult, ProbeOutcome, ProbePlan, StimulusEndpointRequest,
-    FAILURE_DECODE_FAILED, FAILURE_TIMEOUT, FAILURE_WRONG_PAYLOAD, FAILURE_WRONG_PEER,
+    capture_filter, captured_data, decoded_packet_json, failed_outcome, hex_bytes,
+    observed_response, open_capture_sniffer, plan_json, required_str, required_u16,
+    send_report_json, target_service_json, ArpSend, ArpValidation, CandidateValidation,
+    ExampleResult, ProbeOutcome, ProbePlan, StimulusEndpointRequest, FAILURE_DECODE_FAILED,
+    FAILURE_TIMEOUT, FAILURE_WRONG_PAYLOAD, FAILURE_WRONG_PEER,
 };
 
 /// Stable identifier for the ARP case module.
@@ -112,25 +113,20 @@ pub fn run_arp_live(
     }
     let packet = arp_who_has_packet(plan)?;
     let timeout = Duration::from_secs(request.timeout_seconds.max(1));
-    let mut sniffer = match Sniffer::interface(request.interface.clone())
-        .timeout(timeout)
-        .count(64)
-        .filter(capture_filter(plan))
-        .nonblock()
-        .open()
-    {
-        Ok(sniffer) => sniffer,
-        Err(err) => {
-            return Ok(failed_outcome(
-                plan,
-                FAILURE_DECODE_FAILED,
-                vec![format!("capture open failed: {err}")],
-                None,
-                false,
-                false,
-            ));
-        }
-    };
+    let mut sniffer =
+        match open_capture_sniffer(request.interface.clone(), timeout, 64, capture_filter(plan)) {
+            Ok(sniffer) => sniffer,
+            Err(err) => {
+                return Ok(failed_outcome(
+                    plan,
+                    FAILURE_DECODE_FAILED,
+                    vec![format!("capture open failed: {err}")],
+                    None,
+                    false,
+                    false,
+                ));
+            }
+        };
     let send_report = match SocketSender::new(
         SendOptions::new()
             .iface(request.interface.clone())
@@ -155,7 +151,7 @@ pub fn run_arp_live(
     let sent = send_report.bytes_sent() > 0;
     let mut wrong_peer = None;
     let mut wrong_payload = None;
-    while let Some(captured) = match sniffer.next_packet() {
+    while let Some(captured) = match sniffer.next_record() {
         Ok(packet) => packet,
         Err(err) => {
             return Ok(failed_outcome(
@@ -168,10 +164,10 @@ pub fn run_arp_live(
             ));
         }
     } {
-        match validate_arp_candidate(plan, captured.packet(), captured.data())? {
+        match validate_arp_candidate(plan, captured.packet(), captured_data(&captured))? {
             CandidateValidation::Ignore => {}
             CandidateValidation::Passed(decoded) => {
-                let raw_hex = hex_bytes(captured.data());
+                let raw_hex = hex_bytes(captured_data(&captured));
                 // Record the compiled request frame length so a padded who-has
                 // (`arp-padding-reply`) reports the sent frame length alongside
                 // the decoded reply.

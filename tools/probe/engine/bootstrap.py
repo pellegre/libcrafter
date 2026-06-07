@@ -33,6 +33,7 @@ TARGET_BOOTSTRAP_PACKAGES = (
     "python3",
 )
 STIMULUS_BUILD_COMMAND = "cargo build -p probe-adapters --bin stimulus_endpoint"
+PREINSTALLED_BOOTSTRAP_PROVIDERS = frozenset({"docker"})
 
 
 def bootstrap_commands() -> dict[str, Callable[[RepoBootstrapContext], RepoBootstrapCommand]]:
@@ -50,6 +51,7 @@ def repo_bootstrap_command(context: RepoBootstrapContext) -> RepoBootstrapComman
     role = context.role.name
     if role not in BOOTSTRAP_ROLES:
         raise ValueError(f"unsupported probe bootstrap role: {role}")
+    preinstalled = _provider_preinstalls_bootstrap_dependencies(context)
     return RepoBootstrapCommand(
         argv=["bash", "-lc", _bootstrap_script(context)],
         timeout=1800,
@@ -57,18 +59,21 @@ def repo_bootstrap_command(context: RepoBootstrapContext) -> RepoBootstrapComman
             "workload": "probe",
             "role": role,
             "builds_stimulus_endpoint": role == STIMULUS_ROLE,
+            "provider_preinstalls_bootstrap_dependencies": preinstalled,
         },
     )
 
 
 def _bootstrap_script(context: RepoBootstrapContext) -> str:
     role = context.role.name
+    preinstalled = _provider_preinstalls_bootstrap_dependencies(context)
     if role == STIMULUS_ROLE:
         return lab_bootstrap.render_workload_bootstrap_script(
             context,
             artifact_subdir=("probe", "bootstrap"),
-            packages=STIMULUS_BOOTSTRAP_PACKAGES,
-            install_rust=True,
+            packages=() if preinstalled else STIMULUS_BOOTSTRAP_PACKAGES,
+            install_rust=not preinstalled,
+            load_rust_env=not preinstalled,
             cargo_build_commands=[STIMULUS_BUILD_COMMAND],
             env_artifacts=[_stimulus_env_artifact()],
         )
@@ -76,11 +81,15 @@ def _bootstrap_script(context: RepoBootstrapContext) -> str:
         return lab_bootstrap.render_workload_bootstrap_script(
             context,
             artifact_subdir=("probe", "bootstrap"),
-            packages=TARGET_BOOTSTRAP_PACKAGES,
+            packages=() if preinstalled else TARGET_BOOTSTRAP_PACKAGES,
             load_rust_env=False,
             env_artifacts=[_target_env_artifact()],
         )
     raise ValueError(f"unsupported probe bootstrap role: {role}")
+
+
+def _provider_preinstalls_bootstrap_dependencies(context: RepoBootstrapContext) -> bool:
+    return context.session.provider in PREINSTALLED_BOOTSTRAP_PROVIDERS
 
 
 def _stimulus_env_artifact() -> lab_bootstrap.BootstrapEnvArtifact:

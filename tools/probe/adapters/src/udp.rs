@@ -19,10 +19,11 @@ use std::net::Ipv4Addr;
 use std::time::Duration;
 
 use crate::common::{
-    capture_filter, decode_hex, decoded_packet_json, failed_outcome, hex_bytes, observed_response,
-    plan_json, raw_payload, required_str, required_u16, send_report_json, target_service_json,
-    CandidateValidation, ExampleResult, ProbeOutcome, ProbePlan, StimulusEndpointRequest, UdpSend,
-    FAILURE_DECODE_FAILED, FAILURE_TIMEOUT, FAILURE_WRONG_PAYLOAD, FAILURE_WRONG_PEER,
+    capture_filter, captured_data, decode_hex, decoded_packet_json, failed_outcome, hex_bytes,
+    observed_response, open_capture_sniffer, plan_json, raw_payload, required_str, required_u16,
+    send_report_json, target_service_json, CandidateValidation, ExampleResult, ProbeOutcome,
+    ProbePlan, StimulusEndpointRequest, UdpSend, FAILURE_DECODE_FAILED, FAILURE_TIMEOUT,
+    FAILURE_WRONG_PAYLOAD, FAILURE_WRONG_PEER,
 };
 use crate::icmp;
 
@@ -108,25 +109,20 @@ pub fn run_udp_live(
     }
     let packet = udp_packet(plan)?;
     let timeout = Duration::from_secs(request.timeout_seconds.max(1));
-    let mut sniffer = match Sniffer::interface(request.interface.clone())
-        .timeout(timeout)
-        .count(64)
-        .filter(capture_filter(plan))
-        .nonblock()
-        .open()
-    {
-        Ok(sniffer) => sniffer,
-        Err(err) => {
-            return Ok(failed_outcome(
-                plan,
-                FAILURE_DECODE_FAILED,
-                vec![format!("capture open failed: {err}")],
-                None,
-                false,
-                false,
-            ));
-        }
-    };
+    let mut sniffer =
+        match open_capture_sniffer(request.interface.clone(), timeout, 64, capture_filter(plan)) {
+            Ok(sniffer) => sniffer,
+            Err(err) => {
+                return Ok(failed_outcome(
+                    plan,
+                    FAILURE_DECODE_FAILED,
+                    vec![format!("capture open failed: {err}")],
+                    None,
+                    false,
+                    false,
+                ));
+            }
+        };
     let send_report = match SocketSender::new(
         SendOptions::new()
             .iface(request.interface.clone())
@@ -151,7 +147,7 @@ pub fn run_udp_live(
     let sent = send_report.bytes_sent() > 0;
     let mut wrong_peer = None;
     let mut wrong_payload = None;
-    while let Some(captured) = match sniffer.next_packet() {
+    while let Some(captured) = match sniffer.next_record() {
         Ok(packet) => packet,
         Err(err) => {
             return Ok(failed_outcome(
@@ -164,10 +160,10 @@ pub fn run_udp_live(
             ));
         }
     } {
-        match validate_udp_candidate(plan, captured.packet(), captured.data())? {
+        match validate_udp_candidate(plan, captured.packet(), captured_data(&captured))? {
             CandidateValidation::Ignore => {}
             CandidateValidation::Passed(decoded) => {
-                let raw_hex = hex_bytes(captured.data());
+                let raw_hex = hex_bytes(captured_data(&captured));
                 let observed = observed_response(
                     plan,
                     true,
@@ -313,25 +309,20 @@ fn run_udp_closed_port_live(
 ) -> ExampleResult<ProbeOutcome> {
     let packet = udp_packet(plan)?;
     let timeout = Duration::from_secs(request.timeout_seconds.max(1));
-    let mut sniffer = match Sniffer::interface(request.interface.clone())
-        .timeout(timeout)
-        .count(64)
-        .filter(capture_filter(plan))
-        .nonblock()
-        .open()
-    {
-        Ok(sniffer) => sniffer,
-        Err(err) => {
-            return Ok(failed_outcome(
-                plan,
-                FAILURE_DECODE_FAILED,
-                vec![format!("capture open failed: {err}")],
-                None,
-                false,
-                false,
-            ));
-        }
-    };
+    let mut sniffer =
+        match open_capture_sniffer(request.interface.clone(), timeout, 64, capture_filter(plan)) {
+            Ok(sniffer) => sniffer,
+            Err(err) => {
+                return Ok(failed_outcome(
+                    plan,
+                    FAILURE_DECODE_FAILED,
+                    vec![format!("capture open failed: {err}")],
+                    None,
+                    false,
+                    false,
+                ));
+            }
+        };
     let send_report = match SocketSender::new(
         SendOptions::new()
             .iface(request.interface.clone())
@@ -358,7 +349,7 @@ fn run_udp_closed_port_live(
         expected_closed_port_embedded_prefix(request, plan, send_report.plan().bytes())?;
     let mut wrong_peer = None;
     let mut wrong_payload = None;
-    while let Some(captured) = match sniffer.next_packet() {
+    while let Some(captured) = match sniffer.next_record() {
         Ok(packet) => packet,
         Err(err) => {
             return Ok(failed_outcome(
@@ -374,12 +365,12 @@ fn run_udp_closed_port_live(
         match icmp::validate_ttl_expired_candidate(
             plan,
             captured.packet(),
-            captured.data(),
+            captured_data(&captured),
             &embedded_prefix,
         )? {
             CandidateValidation::Ignore => {}
             CandidateValidation::Passed(decoded) => {
-                let raw_hex = hex_bytes(captured.data());
+                let raw_hex = hex_bytes(captured_data(&captured));
                 let observed = observed_response(
                     plan,
                     true,
