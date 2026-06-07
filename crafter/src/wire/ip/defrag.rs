@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::net::Ipv4Addr;
+use std::time::Duration;
 
 use super::ipv4::{
     extract_ipv4_fragment, Ipv4FragmentExtract, Ipv4FragmentView, Ipv4FragmentWrapper,
@@ -30,6 +31,10 @@ pub struct IpDefrag {
     ipv4_datagrams: BTreeMap<Ipv4DefragKey, Ipv4DatagramState>,
     input_count: usize,
     emitted_count: usize,
+    eviction_count: usize,
+    timeout_eviction_count: usize,
+    datagram_limit_eviction_count: usize,
+    byte_limit_eviction_count: usize,
 }
 
 impl IpDefrag {
@@ -66,25 +71,80 @@ impl IpDefrag {
         self.emitted_count
     }
 
+    /// Number of incomplete datagram states evicted before reassembly.
+    pub const fn eviction_count(&self) -> usize {
+        self.eviction_count
+    }
+
+    /// Number of datagrams evicted because they exceeded `max_age`.
+    pub const fn timeout_eviction_count(&self) -> usize {
+        self.timeout_eviction_count
+    }
+
+    /// Number of datagrams evicted because `max_datagrams` was exceeded.
+    pub const fn datagram_limit_eviction_count(&self) -> usize {
+        self.datagram_limit_eviction_count
+    }
+
+    /// Number of datagrams evicted because `max_bytes_per_datagram` was exceeded.
+    pub const fn byte_limit_eviction_count(&self) -> usize {
+        self.byte_limit_eviction_count
+    }
+
     /// Run the transform and collect emitted records into a small buffer.
     pub fn defrag_record(&mut self, record: PacketRecord) -> Result<TransformOutput> {
         self.transform_to_output(record)
+    }
+
+    fn evict_ipv4_expired(
+        &mut self,
+        timestamp: Option<PcapTimestamp>,
+        emit: &mut dyn FnMut(PacketRecord) -> Result<()>,
+    ) -> Result<()> {
+        let Some(timestamp) = timestamp else {
+            return Ok(());
+        };
+
+        let max_age = self.config.max_age_limit();
+        let keys = self
+            .ipv4_datagrams
+            .iter()
+            .filter_map(|(key, state)| {
+                state
+                    .exceeds_max_age(timestamp, max_age)
+                    .then(|| key.clone())
+            })
+            .collect::<Vec<_>>();
+
+        for key in keys {
+            let state = self
+                .ipv4_datagrams
+                .remove(&key)
+                .expect("expired IPv4 defrag state must remain in the map");
+            self.evict_ipv4_state(state, IpDefragEvictionReason::Timeout, emit)?;
+        }
+
+        Ok(())
     }
 
     fn observe_ipv4_fragment(
         &mut self,
         record: &PacketRecord,
         view: &Ipv4FragmentView,
+        emit: &mut dyn FnMut(PacketRecord) -> Result<()>,
     ) -> Ipv4DefragObservation {
         let key = Ipv4DefragKey::from_view(view);
         let outcome = {
-            let state = self
-                .ipv4_datagrams
-                .entry(key.clone())
-                .or_insert_with(|| Ipv4DatagramState::new(key.clone(), record));
-            state.observe_fragment(record, view);
+            let input_order = self.input_count;
+            let trace_evictions = self.config.traces_evictions();
+            let state = self.ipv4_datagrams.entry(key.clone()).or_insert_with(|| {
+                Ipv4DatagramState::new(key.clone(), record, input_order, trace_evictions)
+            });
+            state.observe_fragment(record, view, input_order, trace_evictions);
             if state.has_conflict() {
                 Ipv4DefragObservationKind::Conflict
+            } else if state.exceeds_max_bytes(self.config.max_bytes_per_datagram_limit()) {
+                Ipv4DefragObservationKind::ByteLimit
             } else if state.is_complete() {
                 Ipv4DefragObservationKind::Complete
             } else {
@@ -93,7 +153,24 @@ impl IpDefrag {
         };
 
         match outcome {
-            Ipv4DefragObservationKind::Buffered => Ipv4DefragObservation::Buffered,
+            Ipv4DefragObservationKind::Buffered => {
+                if let Err(error) = self.evict_ipv4_to_datagram_limit(emit) {
+                    return Ipv4DefragObservation::Error(error);
+                }
+                Ipv4DefragObservation::Buffered
+            }
+            Ipv4DefragObservationKind::ByteLimit => {
+                let state = self
+                    .ipv4_datagrams
+                    .remove(&key)
+                    .expect("byte-limited IPv4 defrag state must remain in the map");
+                if let Err(error) =
+                    self.evict_ipv4_state(state, IpDefragEvictionReason::ByteLimit, emit)
+                {
+                    return Ipv4DefragObservation::Error(error);
+                }
+                Ipv4DefragObservation::Evicted
+            }
             Ipv4DefragObservationKind::Complete => {
                 let state = self
                     .ipv4_datagrams
@@ -108,6 +185,58 @@ impl IpDefrag {
                     .expect("conflicting IPv4 defrag state must remain in the map");
                 Ipv4DefragObservation::Conflict(state)
             }
+        }
+    }
+
+    fn evict_ipv4_to_datagram_limit(
+        &mut self,
+        emit: &mut dyn FnMut(PacketRecord) -> Result<()>,
+    ) -> Result<()> {
+        let max_datagrams = self.config.max_datagrams_limit();
+        while self.ipv4_datagrams.len() > max_datagrams {
+            let key = self
+                .ipv4_datagrams
+                .iter()
+                .min_by(|(left_key, left), (right_key, right)| {
+                    left.eviction_order()
+                        .cmp(&right.eviction_order())
+                        .then_with(|| left_key.cmp(right_key))
+                })
+                .map(|(key, _)| key.clone())
+                .expect("IPv4 defrag state must be non-empty when over datagram limit");
+            let state = self
+                .ipv4_datagrams
+                .remove(&key)
+                .expect("datagram-limited IPv4 defrag state must remain in the map");
+            self.evict_ipv4_state(state, IpDefragEvictionReason::DatagramLimit, emit)?;
+        }
+
+        Ok(())
+    }
+
+    fn evict_ipv4_state(
+        &mut self,
+        state: Ipv4DatagramState,
+        reason: IpDefragEvictionReason,
+        emit: &mut dyn FnMut(PacketRecord) -> Result<()>,
+    ) -> Result<()> {
+        self.record_eviction(&reason);
+        if self.config.traces_evictions() {
+            if let Some(record) = state.eviction_record(reason, self.name()) {
+                emit(record)?;
+                self.emitted_count += 1;
+            }
+        }
+        Ok(())
+    }
+
+    fn record_eviction(&mut self, reason: &IpDefragEvictionReason) {
+        self.eviction_count += 1;
+        match reason {
+            IpDefragEvictionReason::Timeout => self.timeout_eviction_count += 1,
+            IpDefragEvictionReason::DatagramLimit => self.datagram_limit_eviction_count += 1,
+            IpDefragEvictionReason::ByteLimit => self.byte_limit_eviction_count += 1,
+            IpDefragEvictionReason::Conflict | IpDefragEvictionReason::Other(_) => {}
         }
     }
 
@@ -154,10 +283,13 @@ impl PacketTransform for IpDefrag {
         self.config.validate()?;
         self.input_count += 1;
 
+        self.evict_ipv4_expired(record.metadata().timestamp(), emit)?;
+
         if let Ipv4FragmentExtract::View(view) = extract_ipv4_fragment(&record)? {
             if view.is_fragmented() {
-                match self.observe_ipv4_fragment(&record, &view) {
+                match self.observe_ipv4_fragment(&record, &view, emit) {
                     Ipv4DefragObservation::Buffered => {}
+                    Ipv4DefragObservation::Evicted => {}
                     Ipv4DefragObservation::Complete(state) => {
                         emit(state.reassembled_record(self.name())?)?;
                         self.emitted_count += 1;
@@ -165,6 +297,7 @@ impl PacketTransform for IpDefrag {
                     Ipv4DefragObservation::Conflict(state) => {
                         self.handle_ipv4_conflict(record, state, emit)?;
                     }
+                    Ipv4DefragObservation::Error(error) => return Err(error),
                 }
                 return Ok(());
             }
@@ -188,13 +321,16 @@ enum Ipv4DefragObservationKind {
     Buffered,
     Complete,
     Conflict,
+    ByteLimit,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 enum Ipv4DefragObservation {
     Buffered,
+    Evicted,
     Complete(Ipv4DatagramState),
     Conflict(Ipv4DatagramState),
+    Error(crate::wire::WireError),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -237,7 +373,7 @@ impl Ipv4DefragKey {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 struct Ipv4DatagramState {
     key: Ipv4DefragKey,
     ranges: RangeMap,
@@ -249,11 +385,18 @@ struct Ipv4DatagramState {
     first_conflict: Option<RangeMapConflict>,
     first_timestamp: Option<PcapTimestamp>,
     last_timestamp: Option<PcapTimestamp>,
-    input_metadata: Ipv4DefragInputMetadata,
+    first_seen_order: usize,
+    last_seen_order: usize,
+    trace_record: Option<PacketRecord>,
 }
 
 impl Ipv4DatagramState {
-    fn new(key: Ipv4DefragKey, record: &PacketRecord) -> Self {
+    fn new(
+        key: Ipv4DefragKey,
+        record: &PacketRecord,
+        input_order: usize,
+        keep_trace_record: bool,
+    ) -> Self {
         let timestamp = record.metadata().timestamp();
         Self {
             key,
@@ -266,11 +409,23 @@ impl Ipv4DatagramState {
             first_conflict: None,
             first_timestamp: timestamp,
             last_timestamp: timestamp,
-            input_metadata: Ipv4DefragInputMetadata::from_record(record),
+            first_seen_order: input_order,
+            last_seen_order: input_order,
+            trace_record: keep_trace_record.then(|| trace_record_snapshot(record)),
         }
     }
 
-    fn observe_fragment(&mut self, record: &PacketRecord, view: &Ipv4FragmentView) {
+    fn observe_fragment(
+        &mut self,
+        record: &PacketRecord,
+        view: &Ipv4FragmentView,
+        input_order: usize,
+        keep_trace_record: bool,
+    ) {
+        self.last_seen_order = input_order;
+        if self.trace_record.is_none() && keep_trace_record {
+            self.trace_record = Some(trace_record_snapshot(record));
+        }
         self.update_timestamps(record.metadata().timestamp());
 
         if view.fragment_offset_bytes() == 0 && self.first_fragment.is_none() {
@@ -323,6 +478,27 @@ impl Ipv4DatagramState {
 
     fn is_complete(&self) -> bool {
         self.first_fragment.is_some() && self.ranges.is_complete()
+    }
+
+    fn byte_len(&self) -> usize {
+        self.ranges.byte_len()
+    }
+
+    fn exceeds_max_bytes(&self, max_bytes: usize) -> bool {
+        self.byte_len() > max_bytes
+    }
+
+    fn exceeds_max_age(&self, now: PcapTimestamp, max_age: Duration) -> bool {
+        let Some(first_timestamp) = self.first_timestamp else {
+            return false;
+        };
+        now.as_duration()
+            .checked_sub(first_timestamp.as_duration())
+            .is_some_and(|age| age > max_age)
+    }
+
+    fn eviction_order(&self) -> (usize, usize) {
+        (self.first_seen_order, self.last_seen_order)
     }
 
     fn reassembled_record(&self, transform_name: &'static str) -> Result<PacketRecord> {
@@ -381,6 +557,38 @@ impl Ipv4DatagramState {
             None => self.metadata(),
         };
         metadata.with_eviction_reason(eviction_reason)
+    }
+
+    fn eviction_record(
+        &self,
+        eviction_reason: IpDefragEvictionReason,
+        transform_name: &'static str,
+    ) -> Option<PacketRecord> {
+        let mut record = self.trace_record.clone()?;
+        record
+            .metadata_mut()
+            .push_ip_defrag_metadata(self.eviction_metadata(eviction_reason.clone()));
+        record.metadata_mut().push_transform_trace(
+            TransformTrace::new(transform_name)
+                .with_note(self.eviction_trace_note(&eviction_reason)),
+        );
+        Some(record)
+    }
+
+    fn eviction_trace_note(&self, eviction_reason: &IpDefragEvictionReason) -> String {
+        let reason = match eviction_reason {
+            IpDefragEvictionReason::Timeout => "max_age",
+            IpDefragEvictionReason::DatagramLimit => "max_datagrams",
+            IpDefragEvictionReason::ByteLimit => "max_bytes",
+            IpDefragEvictionReason::Conflict => "conflict",
+            IpDefragEvictionReason::Other(reason) => reason.as_str(),
+        };
+        format!(
+            "evicted incomplete IPv4 defrag state: reason={reason} key={} fragments={} bytes={}",
+            self.key.summary(),
+            self.fragment_count,
+            self.byte_len()
+        )
     }
 
     fn known_packet_total_len(&self) -> Option<u32> {
@@ -539,6 +747,13 @@ impl Ipv4DefragInputMetadata {
             metadata: record.metadata().clone().clear_captured_bytes(),
         }
     }
+}
+
+fn trace_record_snapshot(record: &PacketRecord) -> PacketRecord {
+    PacketRecord::from_packet_metadata(
+        record.packet().clone(),
+        record.metadata().clone().clear_captured_bytes(),
+    )
 }
 
 #[cfg(test)]
@@ -720,13 +935,13 @@ mod ipv4_reassembles {
         let first = fragment_record(source(), 0, true, b"abcdefgh", timestamp, "wan0");
         let duplicate = fragment_record(source(), 0, true, b"abcdefgh", timestamp, "wan0");
         let conflict = fragment_record(source(), 0, true, b"abcdWXYZ", timestamp, "wan0");
-        let mut state = Ipv4DatagramState::new(key_for(source()), &first);
+        let mut state = Ipv4DatagramState::new(key_for(source()), &first, 1, false);
 
         for record in [&first, &duplicate, &conflict] {
             let Ipv4FragmentExtract::View(view) = extract_ipv4_fragment(record).unwrap() else {
                 panic!("expected IPv4 fragment view");
             };
-            state.observe_fragment(record, &view);
+            state.observe_fragment(record, &view, 1, false);
         }
 
         assert_eq!(state.fragment_count, 1);
@@ -885,5 +1100,184 @@ mod ipv4_overlap {
         assert!(note.contains("ambiguous"));
         assert!(note.contains("ByteMismatch"));
         assert!(note.contains("offset=8"));
+    }
+}
+
+#[cfg(test)]
+mod ipv4_limits {
+    use super::*;
+    use std::time::Duration;
+
+    use crate::wire::ip::{IpFragmentFamily, IpFragmentRange};
+    use crate::wire::record::{BackendKind, PacketRecord};
+    use crate::Raw;
+
+    const PROTOCOL_UDP: u8 = 17;
+    const IDENTIFICATION: u16 = 0x3456;
+
+    fn source_one() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 40)
+    }
+
+    fn source_two() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 41)
+    }
+
+    fn destination() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 40)
+    }
+
+    fn fragment_record(
+        source: Ipv4Addr,
+        fragment_offset: u16,
+        more_fragments: bool,
+        payload: &[u8],
+        seconds: u64,
+    ) -> PacketRecord {
+        let packet = Ipv4::new()
+            .src(source)
+            .dst(destination())
+            .protocol(PROTOCOL_UDP)
+            .identification(IDENTIFICATION)
+            .more_fragments(more_fragments)
+            .fragment_offset(fragment_offset)
+            / Raw::from_bytes(payload);
+
+        PacketRecord::new(packet)
+            .with_timestamp(PcapTimestamp::micros(seconds, 0).unwrap())
+            .with_backend(BackendKind::PcapFile)
+    }
+
+    fn key_for(source: Ipv4Addr) -> Ipv4DefragKey {
+        Ipv4DefragKey::new(source, destination(), PROTOCOL_UDP, IDENTIFICATION)
+    }
+
+    #[test]
+    fn max_bytes_evicts_without_emitting_incomplete_datagram() {
+        let config = IpDefragConfig::new().max_bytes_per_datagram(8);
+        let mut transform = IpDefrag::new().with_config(config);
+
+        let first = transform
+            .defrag_record(fragment_record(source_one(), 0, true, b"abcdefgh", 1))
+            .unwrap();
+        let second = transform
+            .defrag_record(fragment_record(source_one(), 1, false, b"ijkl", 2))
+            .unwrap();
+
+        assert!(first.is_empty());
+        assert!(second.is_empty());
+        assert!(!transform
+            .ipv4_datagrams
+            .contains_key(&key_for(source_one())));
+        assert_eq!(transform.eviction_count(), 1);
+        assert_eq!(transform.byte_limit_eviction_count(), 1);
+        assert_eq!(transform.datagram_limit_eviction_count(), 0);
+        assert_eq!(transform.timeout_eviction_count(), 0);
+        assert_eq!(transform.emitted_count(), 0);
+    }
+
+    #[test]
+    fn max_datagrams_evicts_oldest_state_deterministically() {
+        let config = IpDefragConfig::new().max_datagrams(1);
+        let mut transform = IpDefrag::new().with_config(config);
+
+        let first = transform
+            .defrag_record(fragment_record(source_one(), 0, true, b"abcdefgh", 1))
+            .unwrap();
+        let second = transform
+            .defrag_record(fragment_record(source_two(), 0, true, b"abcdefgh", 1))
+            .unwrap();
+
+        assert!(first.is_empty());
+        assert!(second.is_empty());
+        assert!(!transform
+            .ipv4_datagrams
+            .contains_key(&key_for(source_one())));
+        assert!(transform
+            .ipv4_datagrams
+            .contains_key(&key_for(source_two())));
+        assert_eq!(transform.eviction_count(), 1);
+        assert_eq!(transform.datagram_limit_eviction_count(), 1);
+
+        let late_final = transform
+            .defrag_record(fragment_record(source_one(), 1, false, b"ijkl", 2))
+            .unwrap();
+
+        assert!(late_final.is_empty());
+        assert_eq!(transform.emitted_count(), 0);
+    }
+
+    #[test]
+    fn max_age_evicts_expired_state_before_later_fragments() {
+        let config = IpDefragConfig::new().max_age(Duration::from_secs(1));
+        let mut transform = IpDefrag::new().with_config(config);
+
+        let first = transform
+            .defrag_record(fragment_record(source_one(), 0, true, b"abcdefgh", 1))
+            .unwrap();
+        let late_final = transform
+            .defrag_record(fragment_record(source_one(), 1, false, b"ijkl", 3))
+            .unwrap();
+
+        assert!(first.is_empty());
+        assert!(late_final.is_empty());
+        assert_eq!(transform.eviction_count(), 1);
+        assert_eq!(transform.timeout_eviction_count(), 1);
+        assert_eq!(transform.emitted_count(), 0);
+
+        let state = transform
+            .ipv4_datagrams
+            .get(&key_for(source_one()))
+            .expect("late final fragment should start new incomplete state");
+        assert_eq!(state.fragment_count, 1);
+        assert!(state.first_fragment.is_none());
+        assert_eq!(
+            state.ranges.ranges(),
+            vec![super::super::range::RangeMapRange::new(8, 12)]
+        );
+    }
+
+    #[test]
+    fn trace_evictions_emits_representative_record_with_eviction_metadata() {
+        let config = IpDefragConfig::new()
+            .max_bytes_per_datagram(8)
+            .trace_evictions(true);
+        let mut transform = IpDefrag::new().with_config(config);
+
+        let first = transform
+            .defrag_record(fragment_record(source_one(), 0, true, b"abcdefgh", 1))
+            .unwrap();
+        let second = transform
+            .defrag_record(fragment_record(source_one(), 1, false, b"ijkl", 2))
+            .unwrap();
+
+        assert!(first.is_empty());
+        assert_eq!(second.len(), 1);
+        assert_eq!(transform.eviction_count(), 1);
+        assert_eq!(transform.byte_limit_eviction_count(), 1);
+        assert_eq!(transform.emitted_count(), 1);
+
+        let record = &second.records()[0];
+        let ipv4 = record.packet().layer::<Ipv4>().unwrap();
+        assert!(ipv4.is_fragmented());
+
+        let metadata = &record.metadata().ip_defrag_metadata()[0];
+        assert_eq!(metadata.family(), IpFragmentFamily::Ipv4);
+        assert_eq!(metadata.identification(), IDENTIFICATION as u32);
+        assert_eq!(metadata.fragment_count(), 2);
+        assert_eq!(
+            metadata.eviction_reason(),
+            Some(&IpDefragEvictionReason::ByteLimit)
+        );
+        assert_eq!(
+            metadata.byte_ranges(),
+            &[IpFragmentRange::new(0, 8), IpFragmentRange::new(8, 12)]
+        );
+
+        let trace = &record.metadata().transforms()[0];
+        assert_eq!(trace.name(), "ip-defrag");
+        let note = trace.note().unwrap();
+        assert!(note.contains("max_bytes"));
+        assert!(note.contains("evicted incomplete IPv4 defrag state"));
     }
 }
