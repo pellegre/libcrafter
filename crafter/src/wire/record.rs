@@ -8,6 +8,7 @@
 
 use std::path::{Path, PathBuf};
 
+use super::ip::{IpDefragMetadata, IpFragmentMetadata};
 use super::wpa::WpaMetadata;
 use crate::pcap::{PcapLinkType, PcapPacket, PcapRecord, PcapTimestamp};
 use crate::{
@@ -219,6 +220,18 @@ impl PacketRecord {
         self
     }
 
+    /// Append IP fragmentation metadata.
+    pub fn with_ip_fragment_metadata(mut self, metadata: IpFragmentMetadata) -> Self {
+        self.metadata = self.metadata.with_ip_fragment_metadata(metadata);
+        self
+    }
+
+    /// Append IP defragmentation metadata.
+    pub fn with_ip_defrag_metadata(mut self, metadata: IpDefragMetadata) -> Self {
+        self.metadata = self.metadata.with_ip_defrag_metadata(metadata);
+        self
+    }
+
     /// Append a transform trace.
     pub fn with_transform_trace(mut self, trace: TransformTrace) -> Self {
         self.metadata.push_transform_trace(trace);
@@ -260,6 +273,8 @@ pub struct PacketMetadata {
     link_type: Option<LinkType>,
     pcap_link_type: Option<PcapLinkType>,
     medium: Option<MediumMetadata>,
+    ip_fragments: Vec<IpFragmentMetadata>,
+    ip_defrags: Vec<IpDefragMetadata>,
     transforms: Vec<TransformTrace>,
 }
 
@@ -332,6 +347,16 @@ impl PacketMetadata {
     /// Medium-specific annotations.
     pub const fn medium(&self) -> Option<&MediumMetadata> {
         self.medium.as_ref()
+    }
+
+    /// IP fragmentation metadata attached by transmit-side transforms.
+    pub fn ip_fragment_metadata(&self) -> &[IpFragmentMetadata] {
+        &self.ip_fragments
+    }
+
+    /// IP defragmentation metadata attached by receive-side transforms.
+    pub fn ip_defrag_metadata(&self) -> &[IpDefragMetadata] {
+        &self.ip_defrags
     }
 
     /// Wi-Fi medium metadata when this record carries Wi-Fi annotations.
@@ -467,9 +492,33 @@ impl PacketMetadata {
         self.with_medium(MediumMetadata::Wifi(wifi))
     }
 
+    /// Append IP fragmentation metadata.
+    pub fn with_ip_fragment_metadata(mut self, metadata: IpFragmentMetadata) -> Self {
+        self.ip_fragments.push(metadata);
+        self
+    }
+
+    /// Append IP defragmentation metadata.
+    pub fn with_ip_defrag_metadata(mut self, metadata: IpDefragMetadata) -> Self {
+        self.ip_defrags.push(metadata);
+        self
+    }
+
     /// Clear medium-specific metadata.
     pub fn clear_medium(mut self) -> Self {
         self.medium = None;
+        self
+    }
+
+    /// Append IP fragmentation metadata in place.
+    pub fn push_ip_fragment_metadata(&mut self, metadata: IpFragmentMetadata) -> &mut Self {
+        self.ip_fragments.push(metadata);
+        self
+    }
+
+    /// Append IP defragmentation metadata in place.
+    pub fn push_ip_defrag_metadata(&mut self, metadata: IpDefragMetadata) -> &mut Self {
+        self.ip_defrags.push(metadata);
         self
     }
 
@@ -501,6 +550,8 @@ impl Default for PacketMetadata {
             link_type: None,
             pcap_link_type: None,
             medium: None,
+            ip_fragments: Vec::new(),
+            ip_defrags: Vec::new(),
             transforms: Vec::new(),
         }
     }
@@ -1030,6 +1081,10 @@ impl TransformTrace {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::wire::ip::{
+        IpDefragEvictionReason, IpDefragMetadata, IpDefragOverlapStatus, IpFragmentFamily,
+        IpFragmentMetadata, IpFragmentRange, IpFragmentReason,
+    };
     use crate::wire::{
         WpaAkm, WpaCipher, WpaCredentialStatus, WpaDecryptReason, WpaHandshakeStatus, WpaKeyKind,
     };
@@ -1237,6 +1292,50 @@ mod tests {
             Some(WpaCredentialStatus::Matched)
         );
         assert_eq!(attached_wpa.credentials_matched(), Some(true));
+    }
+
+    #[test]
+    fn ip_metadata_does_not_replace_wifi_or_wpa_metadata() {
+        let bssid = MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x00, 0x01]);
+        let wpa = WpaMetadata::new()
+            .with_bssid(bssid)
+            .with_cipher(WpaCipher::Ccmp128);
+        let wifi = WifiMetadata::new()
+            .with_ssid_str("labnet")
+            .with_bssid(bssid)
+            .with_wpa_metadata(wpa.clone());
+        let fragment = IpFragmentMetadata::new(
+            IpFragmentFamily::Ipv4,
+            576,
+            0x1234,
+            2,
+            true,
+            3,
+            1,
+            IpFragmentRange::new(16, 32),
+        )
+        .with_original_len(96)
+        .with_reason(IpFragmentReason::Fragmented);
+        let defrag = IpDefragMetadata::new(IpFragmentFamily::Ipv4, 0x1234)
+            .with_datagram_key("192.0.2.1>198.51.100.1 proto=17 id=0x1234")
+            .with_fragment_count(3)
+            .with_duplicate_count(1)
+            .with_overlap_status(IpDefragOverlapStatus::NonConflicting)
+            .with_byte_ranges([IpFragmentRange::new(0, 16), IpFragmentRange::new(16, 32)])
+            .with_total_len(96)
+            .with_eviction_reason(IpDefragEvictionReason::Timeout);
+
+        let record = PacketRecord::new(Raw::from("dot11"))
+            .with_wifi_metadata(wifi.clone())
+            .with_ip_fragment_metadata(fragment.clone())
+            .with_ip_defrag_metadata(defrag.clone());
+
+        let metadata = record.metadata();
+        assert_eq!(metadata.wifi(), Some(&wifi));
+        assert_eq!(metadata.wifi().unwrap().wpa_metadata(), Some(&wpa));
+        assert_eq!(metadata.ip_fragment_metadata(), &[fragment]);
+        assert_eq!(metadata.ip_defrag_metadata(), &[defrag]);
+        assert!(matches!(metadata.medium(), Some(MediumMetadata::Wifi(_))));
     }
 
     #[test]

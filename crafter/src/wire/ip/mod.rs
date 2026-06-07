@@ -19,3 +19,7 @@ mod tests;
 pub use config::{IpDefragConfig, IpFragmentConfig};
 pub use defrag::IpDefrag;
 pub use fragmentation::IpFragment;
+pub use metadata::{
+    IpDefragEvictionReason, IpDefragMetadata, IpDefragOverlapStatus, IpFragmentFamily,
+    IpFragmentMetadata, IpFragmentRange, IpFragmentReason,
+};
