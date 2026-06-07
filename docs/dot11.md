@@ -9,13 +9,14 @@ and which Wi-Fi behaviors stay outside the crate.
 summarizes, and shows Wi-Fi layers through the same `Packet` surface as every
 other protocol: `/` composition, `compile()`, `decode_from_link`, `summary()`,
 `show()`, and `hexdump()`. It is not a scanner, supplicant, access point,
-channel manager, password-cracking tool, WPA decryptor, or complete Wi-Fi
-stack.
+channel manager, password-cracking tool, deauthentication workflow, or complete
+Wi-Fi stack.
 
 Protocol facts here are source-backed. The authority record is
 [`docs/protocols/dot11-source-manifest.md`](protocols/dot11-source-manifest.md).
 The current branch also has offline examples under `crafter/examples/`:
-`dot11_radiotap_ipv4`, `dot11_beacon_rsn`, and `eapol_key_parse`.
+`dot11_radiotap_ipv4`, `dot11_beacon_rsn`, `eapol_key_parse`, and
+`wpa_decrypt_offline`.
 
 ## Coverage At A Glance
 
@@ -27,7 +28,8 @@ The current branch also has offline examples under `crafter/examples/`:
 | IPv4 / IPv6 / ARP over Dot11 | Supported through LLC/SNAP | The stack must include `LlcSnap`; `Dot11 / Ipv4` does not imply SNAP. |
 | EAPOL | Supported | Base EAPOL header, opaque bodies, EAPOL-Key dispatch, and EtherType `0x888e` through LLC/SNAP. |
 | RSN foundations | Supported | RSN information element values, suite selectors, capabilities, Dot11 RSN tagged parameter helpers, and RSN EAPOL-Key metadata. |
-| Protected data frames | Preserved as Raw | The protected bit remains visible; decrypt and reassembly are out of scope. |
+| WPA2-PSK CCMP decrypt | Supported through `WpaDecrypt` | Passive transform observes SSID/RSN/EAPOL state and emits decrypted packet records for supported WPA2-Personal CCMP-128 traffic. |
+| Protected data frames | Preserved as Raw by direct decode | The protected bit remains visible. Unsupported or not-ready protected frames stay packet-shaped and carry inspectable WPA metadata when processed by `WpaDecrypt`. |
 | Classic pcap | Supported | Bare IEEE 802.11 (`DLT_IEEE802_11`) and radiotap (`DLT_IEEE802_11_RADIO`) read/write and decode. |
 | Live radiotap send | Dry-run/manual boundary | Dry-run planning is supported. Built-in automatic live injection is not part of automated validation. |
 
@@ -84,8 +86,9 @@ transmitter, and BSSID roles. Unsupported or subtype-specific control roles
 remain raw address observations.
 
 Decode preserves valid unknown tails as `Raw`. Protected data frames stop at
-`Raw`; `crafter` does not derive keys, decrypt bodies, or validate protected
-payload integrity. Fragmented data frames also keep per-frame payload bytes
+`Raw` during direct packet decode. `WpaDecrypt` can later consume the resulting
+packet records, maintain WPA state, and emit decrypted records for supported
+WPA2-PSK CCMP traffic. Fragmented data frames keep per-frame payload bytes
 instead of attempting fragment reassembly.
 
 ## Radiotap
@@ -180,9 +183,10 @@ let packet = Dot11::data()
 ```
 
 This is packet-layer metadata, not an authentication workflow. `crafter` does
-not implement a supplicant, authenticator, EAP method parser, key derivation,
-MIC verification, pairwise transient key handling, or decryption. Unsupported
-valid EAPOL bodies remain raw bytes.
+not implement a supplicant, authenticator, or EAP method parser. The
+`WpaDecrypt` transform uses EAPOL-Key records for passive WPA2-PSK CCMP key
+derivation and MIC verification; unsupported valid EAPOL bodies remain raw
+bytes.
 
 ## RSN Foundations
 
@@ -222,8 +226,81 @@ round-trip as Dot11 tags, while typed RSN parsing returns a structured error.
 
 RSN EAPOL-Key parsing is intentionally narrow. It identifies descriptor type,
 key-information flags, replay counter, nonce, IV, RSC, ID, MIC, key-data length,
-and key-data bytes. It does not decide roles, validate credentials, decrypt
-traffic, or collect handshakes.
+and key-data bytes. It does not decide roles or validate credentials by itself;
+`WpaDecrypt` is the stateful transform that collects handshakes, verifies
+configured credentials, unwraps supported GTK key data, and attempts protected
+data decryption.
+
+## WPA Decrypt Transform
+
+`WpaDecrypt` is a passive inbound `PacketTransform` for WPA/WPA2-Personal
+traffic. It is designed for monitor-mode Dot11 packet streams and offline pcap
+fixtures. It accepts configured SSID bytes with either a passphrase or a
+pre-derived PMK, observes management and EAPOL-Key traffic, and emits decrypted
+packet records when WPA2-PSK CCMP-128 key state is available.
+
+The usual ordering is:
+
+```rust
+use crafter::prelude::*;
+
+let source = PacketWire::pcap_file(
+    "crafter/tests/fixtures/pcaps/wpa2-psk-ccmp-unicast.pcap",
+)
+    .open()?
+    .source()?;
+
+let mut sniffer = Sniffer::new(source)
+    .with(Dot11Metadata::new())
+    .with(WpaDecrypt::new().network("libcrafter-wpa", "libcrafter-pass")?);
+
+while let Some(record) = sniffer.next_record()? {
+    println!("{}", record.packet().summary());
+    if let Some(wpa) = record
+        .metadata()
+        .wifi()
+        .and_then(|wifi| wifi.wpa_metadata())
+    {
+        println!(
+            "bssid={:?} station={:?} cipher={:?} key={:?} reason={:?}",
+            wpa.bssid(),
+            wpa.station(),
+            wpa.cipher(),
+            wpa.key_kind(),
+            wpa.decrypt_reason(),
+        );
+    }
+}
+# Ok::<(), crafter::CrafterError>(())
+```
+
+When decrypted plaintext is RFC 1042 LLC/SNAP with known addresses,
+`WpaDecrypt` emits an Ethernet-equivalent packet so later IP, TCP, or
+application transforms can continue from the normal link-layer shape. Unknown
+plaintext remains `Raw` inside a `Packet`. The output `PacketRecord` preserves
+available pcap and backend metadata and adds WPA details under
+`record.metadata().wifi().and_then(|wifi| wifi.wpa_metadata())`, including SSID,
+BSSID, station, cipher, AKM, key kind, key id, packet number, handshake status,
+credential status, and decrypt reason.
+
+The implemented decrypt path is WPA2-PSK CCMP-128. Unsupported ciphers such as
+TKIP, GCMP, and CCMP-256, unsupported AKMs such as enterprise or SAE, incomplete
+handshakes, MIC failures, replayed packet numbers, malformed CCMP headers, and
+authentication failures are surfaced through metadata such as
+`WpaDecryptReason::UnsupportedCipher`, `UnsupportedAkm`,
+`WaitingForHandshake`, `MicFailed`, `ReplayDetected`, `MalformedFrame`, or
+`AuthenticationFailed`.
+
+Use the tracked synthetic fixture and offline example for repeatable validation:
+
+```sh
+cargo run -p crafter --example wpa_decrypt_offline
+```
+
+Do not commit real SSIDs, passphrases, PMKs, BSSIDs, live packet captures, or
+traffic from networks you are not authorized to observe. `WpaDecrypt` is not a
+password cracker and does not perform active deauthentication, scanning,
+association, channel hopping, AP behavior, or supplicant behavior.
 
 ## Pcap Usage
 
@@ -296,11 +373,12 @@ on the data-link type reported by pcap.
 
 `Dot11Metadata` is an inbound `PacketTransform` that annotates the record with
 best-effort Wi-Fi metadata and then passes the same packet onward. It does not
-decrypt protected data frames. A future `Wpa2PskDecryptor` would fit after
-`Dot11Metadata` in the `Sniffer` transform chain, before later IPv4/IPv6
-fragment, TCP stream, or application transforms. That future transform placement
-does not change the `Sniffer` contract: every emitted item is still a
-`PacketRecord` with a packet and metadata.
+decrypt protected data frames by itself. Add `WpaDecrypt` after
+`Dot11Metadata` in the `Sniffer` transform chain when an authorized caller has
+configured the relevant synthetic or test-network SSID and credential material.
+Later IPv4/IPv6 fragment, TCP stream, or application transforms can follow the
+WPA transform. The `Sniffer` contract does not change: every emitted item is
+still a `PacketRecord` with a packet and metadata.
 
 ## Live Testing Boundary
 
@@ -326,7 +404,7 @@ The tracked Dot11 artifact hygiene check intentionally allows only narrow
 synthetic Wi-Fi identifiers: RFC 7042/RFC 9542 documentation MACs matching
 `00:00:5e:00:53:*`, broadcast or zero MACs where the frame shape calls for
 them, and the local-administered fixture range `02:00:5e:10:*:*`. Allowed
-synthetic SSID or payload strings are `libcrafter-rsn`,
+synthetic SSID or payload strings are `libcrafter-rsn`, `libcrafter-wpa`,
 `libcrafter-dot11-dry-run`, `dot11-agent-*`, and fixture-only `crafter` or
 `rsn-fixture`.
 
@@ -338,6 +416,7 @@ Focused automated coverage stays offline:
 cargo run -p crafter --example dot11_radiotap_ipv4
 cargo run -p crafter --example dot11_beacon_rsn
 cargo run -p crafter --example eapol_key_parse
+cargo run -p crafter --example wpa_decrypt_offline
 cargo test -p crafter --test fixture_suite dot11
 tools/oracle/run offline --family dot11 --profile smoke --seed 1101 --count 20
 tools/oracle/run pcap --family dot11 --profile smoke --seed 1102 --count 20

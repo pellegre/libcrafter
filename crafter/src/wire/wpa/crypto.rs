@@ -1,7 +1,8 @@
 //! WPA key derivation and verification helpers.
 //!
 //! This module isolates secret-bearing WPA material from transform and state
-//! code. Later steps will add CCMP authentication here.
+//! code. CCMP protected-frame authentication lives in the sibling `ccmp`
+//! module.
 
 use core::fmt;
 

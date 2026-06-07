@@ -172,9 +172,12 @@ errors when the backend cannot satisfy the requested direction. `pcap` remains
 the low-level file format and libpcap backend module; `wire` is the packet
 stream abstraction built on top.
 
-WPA decryption is not implemented. It belongs as a future stateful
-`PacketTransform` that observes beacons and EAPOL handshakes, keeps per-network
-key state, and emits decrypted packet records without changing `Sniffer`.
+WPA decryption is available as the stateful `WpaDecrypt` inbound
+`PacketTransform`. It observes beacons and EAPOL handshakes, keeps per-network
+key state for configured SSID/passphrase or SSID/PMK entries, and emits
+decrypted packet records without changing `Sniffer`. The implemented decrypt
+path is passive WPA2-PSK CCMP-128; unsupported ciphers and missing key material
+remain inspectable metadata on packet-shaped records.
 
 Offline pcap input:
 

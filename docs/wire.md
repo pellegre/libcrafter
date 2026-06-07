@@ -144,20 +144,66 @@ next. If a transform emits no records, the rest of the chain is skipped for that
 input. If it emits many records, downstream transforms and writers see each
 record in emission order.
 
-Common future transform shapes include:
+Common transform shapes include:
 
 - Wi-Fi metadata annotation, such as `Dot11Metadata`;
-- WPA/WPA2 key-state tracking and protected-data decryption;
+- WPA/WPA2 key-state tracking and protected-data decryption, such as
+  `WpaDecrypt`;
 - IPv4 and IPv6 fragment reassembly;
 - TCP stream reassembly;
 - application protocol decoding that emits higher-level packet stacks while
   preserving raw data as needed.
 
-WPA decryption is intentionally an extension point here, not part of the current
-implementation. A future WPA transform can accept configured SSID and passphrase
-material, observe beacons and EAPOL handshakes, cache per-network key state, and
-emit decrypted Ethernet/IP `PacketRecord` values once data frames can be
-decrypted. The `Sniffer` contract does not need to change for that work.
+`WpaDecrypt` is an inbound transform. It accepts one or more configured SSIDs
+with either passphrases or pre-derived PMKs, observes beacons, RSN information,
+EAPOL-Key handshakes, and protected Dot11 data frames, and emits decrypted
+packet records when the observed WPA2-PSK CCMP-128 state verifies.
+
+Put `Dot11Metadata` before `WpaDecrypt` so the WPA transform can extend the
+same Wi-Fi metadata record:
+
+```rust
+use crafter::prelude::*;
+
+let source = PacketWire::pcap_file(
+    "crafter/tests/fixtures/pcaps/wpa2-psk-ccmp-unicast.pcap",
+)
+    .open()?
+    .source()?;
+
+let records = Sniffer::new(source)
+    .with(Dot11Metadata::new())
+    .with(WpaDecrypt::new().network("libcrafter-wpa", "libcrafter-pass")?)
+    .collect_records()?;
+
+for record in records {
+    println!("{}", record.packet().summary());
+    if let Some(wpa) = record
+        .metadata()
+        .wifi()
+        .and_then(|wifi| wifi.wpa_metadata())
+    {
+        println!("{:?} {:?}", wpa.cipher(), wpa.decrypt_reason());
+    }
+}
+# Ok::<(), crafter::CrafterError>(())
+```
+
+The first complete decrypt path is passive WPA2-Personal with CCMP-128. TKIP,
+GCMP, CCMP-256, WPA3/SAE, enterprise authentication, password cracking,
+deauthentication, channel management, and AP or supplicant behavior are outside
+this transform. Unsupported ciphers or AKMs remain packet-shaped observations
+with inspectable `WpaMetadata` such as `WpaDecryptReason::UnsupportedCipher` or
+`WpaDecryptReason::UnsupportedAkm`; they are not treated as silently decrypted
+or guessed plaintext.
+
+By default `WpaDecrypt` suppresses handshake-only records and undecryptable
+protected originals while still passing non-Wi-Fi and unprotected non-handshake
+records. Use `WpaDecryptConfig::new().pass_originals(true)` for diagnostic
+captures that need the original protected records annotated with WPA metadata.
+Real SSIDs, passphrases, PMKs, live captures, and unauthorized RF observations
+do not belong in tracked files or automated tests. Use synthetic offline pcap
+fixtures for examples and CI.
 
 ## Live Capture
 
@@ -273,4 +319,3 @@ let ethernet_records = ethernet.join()?;
 The crate deliberately does not provide a multi-wire builder. Keeping each
 `PacketWire` tied to one backend makes ownership, capabilities, live safety, and
 failure reporting explicit.
-
