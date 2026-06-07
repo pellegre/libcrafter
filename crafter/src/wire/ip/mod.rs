@@ -23,6 +23,8 @@ mod fragment_contract;
 #[cfg(test)]
 mod fragment_metadata;
 #[cfg(test)]
+mod roundtrip;
+#[cfg(test)]
 mod tests;
 
 #[cfg(test)]
