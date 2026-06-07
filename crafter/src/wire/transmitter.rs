@@ -103,8 +103,10 @@ mod tests {
     use super::super::record::{BackendKind, PacketRecord};
     use super::super::transform::{DropAllTransform, DuplicateTransform};
     use super::super::writer::MemoryPacketWriter;
+    use super::super::{IpFragmentFamily, IpFragmentMetadata, IpFragmentRange};
     use super::*;
     use crate::Raw;
+    use std::sync::{Arc, Mutex};
 
     fn record(payload: &'static str) -> PacketRecord {
         PacketRecord::new(Raw::from(payload))
@@ -161,6 +163,26 @@ mod tests {
         assert_eq!(reports[1].bytes_written(), 7);
     }
 
+    #[test]
+    fn send_record_returns_reports_in_fragment_metadata_order() {
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let writer = FragmentMetadataOrderWriter::new(Arc::clone(&writes));
+        let mut transmitter = Transmitter::new(writer).with(FragmentMetadataTransform);
+
+        let reports = transmitter.send_record(record("input")).unwrap();
+
+        assert_eq!(reports.len(), 3);
+        assert_eq!(
+            reports
+                .iter()
+                .map(WriteReport::bytes_requested)
+                .collect::<Vec<_>>(),
+            [5, 3, 7]
+        );
+        let writes = writes.lock().unwrap();
+        assert_eq!(*writes, [(0, 0, 5), (1, 8, 11), (2, 16, 23)]);
+    }
+
     #[derive(Debug, Clone)]
     struct RewritePayloadTransform {
         payload: &'static str,
@@ -183,6 +205,73 @@ mod tests {
             emit: &mut dyn FnMut(PacketRecord) -> Result<()>,
         ) -> Result<()> {
             emit(record(self.payload))
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    struct FragmentMetadataTransform;
+
+    impl PacketTransform for FragmentMetadataTransform {
+        fn name(&self) -> &'static str {
+            "fragment-metadata-test"
+        }
+
+        fn transform(
+            &mut self,
+            _record: PacketRecord,
+            emit: &mut dyn FnMut(PacketRecord) -> Result<()>,
+        ) -> Result<()> {
+            for (index, payload, range) in [
+                (0, "first", IpFragmentRange::new(0, 5)),
+                (1, "mid", IpFragmentRange::new(8, 11)),
+                (2, "trailer", IpFragmentRange::new(16, 23)),
+            ] {
+                emit(
+                    PacketRecord::new(Raw::from(payload)).with_ip_fragment_metadata(
+                        IpFragmentMetadata::new(
+                            IpFragmentFamily::Ipv4,
+                            28,
+                            0x4321,
+                            (range.start() / 8) as u16,
+                            index < 2,
+                            3,
+                            index,
+                            range,
+                        ),
+                    ),
+                )?;
+            }
+            Ok(())
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    struct FragmentMetadataOrderWriter {
+        writes: Arc<Mutex<Vec<(usize, u32, u32)>>>,
+    }
+
+    impl FragmentMetadataOrderWriter {
+        fn new(writes: Arc<Mutex<Vec<(usize, u32, u32)>>>) -> Self {
+            Self { writes }
+        }
+    }
+
+    impl PacketWriter for FragmentMetadataOrderWriter {
+        fn write_record(&mut self, record: &PacketRecord) -> Result<WriteReport> {
+            let metadata = &record.metadata().ip_fragment_metadata()[0];
+            self.writes.lock().unwrap().push((
+                metadata.fragment_index(),
+                metadata.byte_range().start(),
+                metadata.byte_range().end(),
+            ));
+
+            let byte_len = record.packet().compile()?.as_bytes().len();
+            Ok(WriteReport::new(
+                BackendKind::Memory,
+                byte_len,
+                byte_len,
+                false,
+            ))
         }
     }
 }
