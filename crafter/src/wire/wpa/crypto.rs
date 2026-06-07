@@ -1,8 +1,7 @@
 //! WPA key derivation and verification helpers.
 //!
 //! This module isolates secret-bearing WPA material from transform and state
-//! code. Later steps will add EAPOL-Key MIC verification, AES key unwrap, and
-//! CCMP authentication here.
+//! code. Later steps will add AES key unwrap and CCMP authentication here.
 
 use core::fmt;
 
@@ -11,7 +10,7 @@ use pbkdf2::pbkdf2;
 use sha1::Sha1;
 
 use super::config::{WPA_PASSPHRASE_MAX_LEN, WPA_PASSPHRASE_MIN_LEN, WPA_SSID_MAX_LEN};
-use crate::{CrafterError, Result};
+use crate::{CrafterError, Result, EAPOL_HEADER_LEN, EAPOL_TYPE_KEY};
 
 /// WPA/WPA2-Personal PMK length in octets.
 pub const WPA_PMK_LEN: usize = 32;
@@ -38,6 +37,11 @@ pub const WPA_PTK_KEK_LEN: usize = 16;
 pub const WPA_PTK_TEMPORAL_KEY_LEN: usize = 16;
 
 type HmacSha1 = Hmac<Sha1>;
+
+const WPA2_KEY_DESCRIPTOR_VERSION: u8 = 2;
+const EAPOL_KEY_INFO_OFFSET_FROM_EAPOL: usize = EAPOL_HEADER_LEN + 1;
+const EAPOL_KEY_MIC_OFFSET_FROM_EAPOL: usize = EAPOL_HEADER_LEN + 77;
+const EAPOL_KEY_MIC_LEN: usize = 16;
 
 /// WPA/WPA2-Personal pairwise master key material.
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -167,6 +171,37 @@ pub fn derive_ptk(
     PairwiseTransientKey::new(ptk)
 }
 
+/// Verify a WPA2 RSN EAPOL-Key MIC using the PTK key confirmation key.
+///
+/// The input must be the complete EAPOL frame, starting at the EAPOL header.
+/// The MIC field is zeroed before HMAC-SHA1-128 verification. Only key
+/// descriptor version 2, used by the supported WPA2-PSK CCMP path, is accepted.
+pub(crate) fn verify_eapol_mic(
+    ptk: &PairwiseTransientKey,
+    eapol_frame: impl AsRef<[u8]>,
+) -> Result<bool> {
+    let frame = validated_eapol_key_mic_frame(eapol_frame.as_ref())?;
+    let descriptor_version = eapol_key_descriptor_version(frame)?;
+    if descriptor_version != WPA2_KEY_DESCRIPTOR_VERSION {
+        return Err(CrafterError::invalid_field_value(
+            "eapol.key_information.descriptor_version",
+            "only WPA2 EAPOL-Key descriptor version 2 is supported",
+        ));
+    }
+
+    let mic_start = EAPOL_KEY_MIC_OFFSET_FROM_EAPOL;
+    let mic_end = mic_start + EAPOL_KEY_MIC_LEN;
+    let observed_mic = &frame[mic_start..mic_end];
+
+    let mut mic_input = frame.to_vec();
+    for byte in &mut mic_input[mic_start..mic_end] {
+        *byte = 0;
+    }
+
+    let expected_mic = wpa2_eapol_mic(ptk.kck(), &mic_input);
+    Ok(constant_time_eq(observed_mic, &expected_mic))
+}
+
 fn canonical_pair<'a, const N: usize>(
     first: &'a [u8; N],
     second: &'a [u8; N],
@@ -198,6 +233,81 @@ fn wpa_prf_sha1(key: &[u8], label: &[u8], data: &[u8], output: &mut [u8]) {
             .checked_add(1)
             .expect("WPA PRF output length fits one-octet counter");
     }
+}
+
+fn wpa2_eapol_mic(kck: &[u8; WPA_PTK_KCK_LEN], mic_input: &[u8]) -> [u8; EAPOL_KEY_MIC_LEN] {
+    let mut mac = HmacSha1::new_from_slice(kck).expect("HMAC accepts WPA KCK material");
+    mac.update(mic_input);
+
+    let digest = mac.finalize().into_bytes();
+    let mut mic = [0u8; EAPOL_KEY_MIC_LEN];
+    mic.copy_from_slice(&digest[..EAPOL_KEY_MIC_LEN]);
+    mic
+}
+
+fn validated_eapol_key_mic_frame(frame: &[u8]) -> Result<&[u8]> {
+    if frame.len() < EAPOL_HEADER_LEN {
+        return Err(CrafterError::buffer_too_short(
+            "eapol.header",
+            EAPOL_HEADER_LEN,
+            frame.len(),
+        ));
+    }
+    if frame[1] != EAPOL_TYPE_KEY {
+        return Err(CrafterError::invalid_field_value(
+            "eapol.packet_type",
+            "must be EAPOL-Key",
+        ));
+    }
+
+    let body_len = u16::from_be_bytes([frame[2], frame[3]]) as usize;
+    let required = EAPOL_HEADER_LEN.checked_add(body_len).ok_or_else(|| {
+        CrafterError::invalid_field_value("eapol.body_length", "EAPOL body length overflow")
+    })?;
+    if frame.len() < required {
+        return Err(CrafterError::buffer_too_short(
+            "eapol.body",
+            required,
+            frame.len(),
+        ));
+    }
+    if required < EAPOL_KEY_MIC_OFFSET_FROM_EAPOL + EAPOL_KEY_MIC_LEN {
+        return Err(CrafterError::buffer_too_short(
+            "eapol.key.mic",
+            EAPOL_KEY_MIC_OFFSET_FROM_EAPOL + EAPOL_KEY_MIC_LEN,
+            required,
+        ));
+    }
+
+    Ok(&frame[..required])
+}
+
+fn eapol_key_descriptor_version(frame: &[u8]) -> Result<u8> {
+    let key_info_end = EAPOL_KEY_INFO_OFFSET_FROM_EAPOL + 2;
+    if frame.len() < key_info_end {
+        return Err(CrafterError::buffer_too_short(
+            "eapol.key_information",
+            key_info_end,
+            frame.len(),
+        ));
+    }
+
+    Ok(u16::from_be_bytes([
+        frame[EAPOL_KEY_INFO_OFFSET_FROM_EAPOL],
+        frame[EAPOL_KEY_INFO_OFFSET_FROM_EAPOL + 1],
+    ]) as u8
+        & 0x07)
+}
+
+fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+
+    left.iter()
+        .zip(right)
+        .fold(0u8, |diff, (left, right)| diff | (left ^ right))
+        == 0
 }
 
 fn validate_pmk_inputs(passphrase: &str, ssid: &[u8]) -> Result<()> {
@@ -334,11 +444,76 @@ mod tests {
         assert!(!debug.contains("171"));
     }
 
+    #[test]
+    fn mic_verifies_wpa2_eapol_key_frame() {
+        let ptk = PairwiseTransientKey::new([0x4a; WPA_PTK_CCMP128_LEN]);
+        let mut frame = eapol_key_frame([0; EAPOL_KEY_MIC_LEN], 2);
+        let mic = wpa2_eapol_mic(ptk.kck(), &frame);
+        frame[EAPOL_KEY_MIC_OFFSET_FROM_EAPOL..EAPOL_KEY_MIC_OFFSET_FROM_EAPOL + EAPOL_KEY_MIC_LEN]
+            .copy_from_slice(&mic);
+
+        assert!(verify_eapol_mic(&ptk, &frame).unwrap());
+
+        frame[12] ^= 0x01;
+        assert!(!verify_eapol_mic(&ptk, &frame).unwrap());
+    }
+
+    #[test]
+    fn mic_zeroes_eapol_key_mic_field_before_verification() {
+        let ptk = PairwiseTransientKey::new([0x33; WPA_PTK_CCMP128_LEN]);
+        let mut frame = eapol_key_frame([0; EAPOL_KEY_MIC_LEN], 2);
+        let mic = wpa2_eapol_mic(ptk.kck(), &frame);
+        frame[EAPOL_KEY_MIC_OFFSET_FROM_EAPOL..EAPOL_KEY_MIC_OFFSET_FROM_EAPOL + EAPOL_KEY_MIC_LEN]
+            .copy_from_slice(&mic);
+
+        let mut zeroed_input = frame.clone();
+        zeroed_input
+            [EAPOL_KEY_MIC_OFFSET_FROM_EAPOL..EAPOL_KEY_MIC_OFFSET_FROM_EAPOL + EAPOL_KEY_MIC_LEN]
+            .fill(0);
+        assert_eq!(wpa2_eapol_mic(ptk.kck(), &zeroed_input), mic);
+        assert!(verify_eapol_mic(&ptk, &frame).unwrap());
+    }
+
+    #[test]
+    fn mic_rejects_unsupported_descriptor_version() {
+        let ptk = PairwiseTransientKey::new([0x4a; WPA_PTK_CCMP128_LEN]);
+        let mut frame = eapol_key_frame([0; EAPOL_KEY_MIC_LEN], 1);
+        let mic = wpa2_eapol_mic(ptk.kck(), &frame);
+        frame[EAPOL_KEY_MIC_OFFSET_FROM_EAPOL..EAPOL_KEY_MIC_OFFSET_FROM_EAPOL + EAPOL_KEY_MIC_LEN]
+            .copy_from_slice(&mic);
+
+        let error = verify_eapol_mic(&ptk, &frame).unwrap_err();
+        assert_eq!(
+            error,
+            CrafterError::InvalidFieldValue {
+                field: "eapol.key_information.descriptor_version",
+                reason: "only WPA2 EAPOL-Key descriptor version 2 is supported"
+            }
+        );
+    }
+
     fn increasing_nonce(first: u8) -> [u8; WPA_NONCE_LEN] {
         let mut nonce = [0u8; WPA_NONCE_LEN];
         for (offset, byte) in nonce.iter_mut().enumerate() {
             *byte = first + offset as u8;
         }
         nonce
+    }
+
+    fn eapol_key_frame(mic: [u8; EAPOL_KEY_MIC_LEN], descriptor_version: u8) -> Vec<u8> {
+        let key_info = crate::EapolKeyInformation::new()
+            .with_descriptor_version(descriptor_version)
+            .with_key_type(true)
+            .with_key_mic(true);
+        let packet = crate::Eapol::key()
+            / crate::EapolKey::new()
+                .key_information(key_info)
+                .key_length(16)
+                .replay_counter(7)
+                .nonce(increasing_nonce(0x20))
+                .mic(mic)
+                .key_data([0x30, 0x14]);
+
+        packet.compile().unwrap().as_bytes().to_vec()
     }
 }

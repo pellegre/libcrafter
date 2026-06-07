@@ -2,7 +2,10 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::metadata::{WpaAkm, WpaCipher, WpaDecryptReason, WpaHandshakeStatus};
+use super::crypto::{derive_ptk, verify_eapol_mic, PairwiseTransientKey, Pmk};
+use super::metadata::{
+    WpaAkm, WpaCipher, WpaCredentialStatus, WpaDecryptReason, WpaHandshakeStatus,
+};
 use crate::{
     EapolKey, MacAddr, RsnAkmSuite, RsnCipherSuite, RsnEapolKeyHandshakeMessage, RsnInformation,
     RSN_AKM_SUITE_8021X, RSN_AKM_SUITE_PSK, RSN_AKM_SUITE_SAE, RSN_CIPHER_SUITE_CCMP_128,
@@ -186,6 +189,9 @@ pub(crate) struct PairwiseSession {
     message_3: HandshakeStepState,
     message_4: HandshakeStepState,
     last_observation: Option<HandshakeObservation>,
+    pairwise_transient_key: Option<PairwiseTransientKey>,
+    credential_status: WpaCredentialStatus,
+    mic_replay_counter: Option<u64>,
 }
 
 impl PairwiseSession {
@@ -205,6 +211,9 @@ impl PairwiseSession {
             message_3: HandshakeStepState::default(),
             message_4: HandshakeStepState::default(),
             last_observation: None,
+            pairwise_transient_key: None,
+            credential_status: WpaCredentialStatus::Unknown,
+            mic_replay_counter: None,
         }
     }
 
@@ -271,6 +280,31 @@ impl PairwiseSession {
     /// Last classified handshake observation.
     pub(crate) const fn last_observation(&self) -> Option<HandshakeObservation> {
         self.last_observation
+    }
+
+    /// Verified PTK material, available only after a matching EAPOL MIC.
+    pub(crate) const fn pairwise_transient_key(&self) -> Option<&PairwiseTransientKey> {
+        self.pairwise_transient_key.as_ref()
+    }
+
+    /// Credential status inferred from EAPOL-Key MIC verification.
+    pub(crate) const fn credential_status(&self) -> WpaCredentialStatus {
+        self.credential_status
+    }
+
+    /// Replay counter for the MIC-bearing frame that last set credential state.
+    pub(crate) const fn mic_replay_counter(&self) -> Option<u64> {
+        self.mic_replay_counter
+    }
+
+    /// Whether credentials match the observed pairwise handshake.
+    pub(crate) const fn credentials_match(&self) -> bool {
+        matches!(self.credential_status, WpaCredentialStatus::Matched)
+    }
+
+    /// Whether this session has verified pairwise key material ready to use.
+    pub(crate) fn is_ready(&self) -> bool {
+        self.credentials_match() && self.pairwise_transient_key.is_some()
     }
 
     /// Passive handshake status derived from currently stored state.
@@ -357,6 +391,43 @@ impl PairwiseSession {
         observation
     }
 
+    /// Verify one MIC-bearing EAPOL-Key frame against a configured PMK.
+    ///
+    /// This derives a candidate PTK once MAC roles and both nonces are known,
+    /// then stores usable key material only when credentials match the frame
+    /// MIC. Once a session has verified successfully, later duplicate or bad
+    /// observations do not regress it.
+    pub(crate) fn verify_key_mic(
+        &mut self,
+        pmk: &Pmk,
+        key: &EapolKey,
+        eapol_frame: &[u8],
+    ) -> crate::Result<Option<bool>> {
+        if !key.key_information_value().key_mic() {
+            return Ok(None);
+        }
+
+        let Some(pairwise_transient_key) = self.derive_pairwise_transient_key(pmk) else {
+            return Ok(None);
+        };
+
+        let credentials_match = verify_eapol_mic(&pairwise_transient_key, eapol_frame)?;
+        if credentials_match {
+            self.pairwise_transient_key = Some(pairwise_transient_key);
+            self.credential_status = WpaCredentialStatus::Matched;
+            self.mic_replay_counter = Some(key.replay_counter_value());
+            return Ok(Some(true));
+        }
+
+        if !self.credentials_match() {
+            self.pairwise_transient_key = None;
+            self.credential_status = WpaCredentialStatus::Mismatch;
+            self.mic_replay_counter = Some(key.replay_counter_value());
+        }
+
+        Ok(Some(false))
+    }
+
     fn note_roles(
         &mut self,
         transmitter_role: Option<PairwiseRole>,
@@ -400,6 +471,21 @@ impl PairwiseSession {
             replay_counter,
             nonce,
         );
+    }
+
+    fn derive_pairwise_transient_key(&self, pmk: &Pmk) -> Option<PairwiseTransientKey> {
+        let authenticator = self.authenticator?.octets();
+        let supplicant = self.supplicant?.octets();
+        let ap_nonce = self.ap_nonce?;
+        let station_nonce = self.station_nonce?;
+
+        Some(derive_ptk(
+            pmk,
+            &authenticator,
+            &supplicant,
+            &ap_nonce,
+            &station_nonce,
+        ))
     }
 }
 
@@ -546,6 +632,22 @@ impl ObservedBss {
             .observe_key(transmitter, receiver, key)
     }
 
+    /// Observe and verify one MIC-bearing EAPOL-Key record with known station.
+    pub(crate) fn observe_pairwise_key_with_mic(
+        &mut self,
+        station: MacAddr,
+        transmitter: MacAddr,
+        receiver: MacAddr,
+        key: &EapolKey,
+        eapol_frame: &[u8],
+        pmk: &Pmk,
+    ) -> crate::Result<HandshakeObservation> {
+        let session = self.session_mut(station);
+        let observation = session.observe_key(transmitter, receiver, key);
+        session.verify_key_mic(pmk, key, eapol_frame)?;
+        Ok(observation)
+    }
+
     /// Observe one EAPOL-Key record and infer the station from BSSID direction.
     pub(crate) fn observe_eapol_key(
         &mut self,
@@ -659,7 +761,16 @@ fn update_nonce(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::EapolKeyInformation;
+    use hmac::{Hmac, Mac};
+    use sha1::Sha1;
+
+    use super::super::crypto::WPA_PMK_LEN;
+    use crate::{Eapol, EapolKeyInformation, EAPOL_HEADER_LEN};
+
+    type HmacSha1 = Hmac<Sha1>;
+
+    const EAPOL_KEY_MIC_OFFSET_FROM_EAPOL: usize = EAPOL_HEADER_LEN + 77;
+    const EAPOL_KEY_MIC_LEN: usize = 16;
 
     fn mac(last: u8) -> MacAddr {
         MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x00, last])
@@ -720,6 +831,39 @@ mod tests {
             .key_length(16)
             .replay_counter(replay_counter)
             .mic(bytes::<16>(0xa0))
+    }
+
+    fn signed_eapol_key(
+        key: EapolKey,
+        pairwise_transient_key: &PairwiseTransientKey,
+    ) -> (EapolKey, Vec<u8>) {
+        let zeroed_key = key.clone().mic([0; EAPOL_KEY_MIC_LEN]);
+        let zeroed_frame = compile_eapol_key(&zeroed_key);
+        let mic = eapol_mic(pairwise_transient_key.kck(), &zeroed_frame);
+        let signed_key = key.mic(mic);
+        let signed_frame = compile_eapol_key(&signed_key);
+        (signed_key, signed_frame)
+    }
+
+    fn compile_eapol_key(key: &EapolKey) -> Vec<u8> {
+        (Eapol::key() / key.clone())
+            .compile()
+            .unwrap()
+            .as_bytes()
+            .to_vec()
+    }
+
+    fn eapol_mic(kck: &[u8; 16], frame: &[u8]) -> [u8; EAPOL_KEY_MIC_LEN] {
+        let mut input = frame.to_vec();
+        input[EAPOL_KEY_MIC_OFFSET_FROM_EAPOL..EAPOL_KEY_MIC_OFFSET_FROM_EAPOL + EAPOL_KEY_MIC_LEN]
+            .fill(0);
+
+        let mut mac = HmacSha1::new_from_slice(kck).unwrap();
+        mac.update(&input);
+        let digest = mac.finalize().into_bytes();
+        let mut mic = [0u8; EAPOL_KEY_MIC_LEN];
+        mic.copy_from_slice(&digest[..EAPOL_KEY_MIC_LEN]);
+        mic
     }
 
     #[test]
@@ -861,5 +1005,131 @@ mod tests {
         assert_eq!(session.message_4().replay_counter(), Some(20));
         assert!(session.is_complete());
         assert_eq!(session.status(), WpaHandshakeStatus::Complete);
+    }
+
+    #[test]
+    fn mic_verification_marks_credentials_match_and_stores_ptk() {
+        let bssid = mac(1);
+        let station = mac(2);
+        let mut bss = ObservedBss::new(bssid);
+        let pmk = Pmk::new([0x61; WPA_PMK_LEN]);
+
+        bss.observe_pairwise_key(station, bssid, station, &message_1(1, 0x10));
+        let expected_ptk = derive_ptk(
+            &pmk,
+            &bssid.octets(),
+            &station.octets(),
+            &bytes::<32>(0x10),
+            &bytes::<32>(0x20),
+        );
+        let (signed_message_2, eapol_frame) = signed_eapol_key(message_2(1, 0x20), &expected_ptk);
+
+        let observation = bss
+            .observe_pairwise_key_with_mic(
+                station,
+                station,
+                bssid,
+                &signed_message_2,
+                &eapol_frame,
+                &pmk,
+            )
+            .unwrap();
+
+        assert_eq!(observation.message(), HandshakeMessage::Message2);
+        let session = bss.session(station).unwrap();
+        assert_eq!(session.credential_status(), WpaCredentialStatus::Matched);
+        assert!(session.credentials_match());
+        assert!(session.is_ready());
+        assert_eq!(session.mic_replay_counter(), Some(1));
+        assert_eq!(session.pairwise_transient_key(), Some(&expected_ptk));
+    }
+
+    #[test]
+    fn mic_verification_marks_wrong_credentials_as_mismatch() {
+        let bssid = mac(1);
+        let station = mac(2);
+        let mut bss = ObservedBss::new(bssid);
+        let correct_pmk = Pmk::new([0x61; WPA_PMK_LEN]);
+        let wrong_pmk = Pmk::new([0x62; WPA_PMK_LEN]);
+
+        bss.observe_pairwise_key(station, bssid, station, &message_1(1, 0x10));
+        let correct_ptk = derive_ptk(
+            &correct_pmk,
+            &bssid.octets(),
+            &station.octets(),
+            &bytes::<32>(0x10),
+            &bytes::<32>(0x20),
+        );
+        let (signed_message_2, eapol_frame) = signed_eapol_key(message_2(1, 0x20), &correct_ptk);
+
+        bss.observe_pairwise_key_with_mic(
+            station,
+            station,
+            bssid,
+            &signed_message_2,
+            &eapol_frame,
+            &wrong_pmk,
+        )
+        .unwrap();
+
+        let session = bss.session(station).unwrap();
+        assert_eq!(session.credential_status(), WpaCredentialStatus::Mismatch);
+        assert!(!session.credentials_match());
+        assert!(!session.is_ready());
+        assert_eq!(session.mic_replay_counter(), Some(1));
+        assert!(session.pairwise_transient_key().is_none());
+    }
+
+    #[test]
+    fn mic_duplicate_eapol_records_do_not_regress_verified_session() {
+        let bssid = mac(1);
+        let station = mac(2);
+        let mut bss = ObservedBss::new(bssid);
+        let correct_pmk = Pmk::new([0x61; WPA_PMK_LEN]);
+        let wrong_pmk = Pmk::new([0x62; WPA_PMK_LEN]);
+
+        bss.observe_pairwise_key(station, bssid, station, &message_1(1, 0x10));
+        let expected_ptk = derive_ptk(
+            &correct_pmk,
+            &bssid.octets(),
+            &station.octets(),
+            &bytes::<32>(0x10),
+            &bytes::<32>(0x20),
+        );
+        let (signed_message_2, eapol_frame) = signed_eapol_key(message_2(1, 0x20), &expected_ptk);
+
+        bss.observe_pairwise_key_with_mic(
+            station,
+            station,
+            bssid,
+            &signed_message_2,
+            &eapol_frame,
+            &correct_pmk,
+        )
+        .unwrap();
+        bss.observe_pairwise_key_with_mic(
+            station,
+            station,
+            bssid,
+            &signed_message_2,
+            &eapol_frame,
+            &correct_pmk,
+        )
+        .unwrap();
+
+        let session = bss.session_mut(station);
+        assert_eq!(session.message_2().observation_count(), 2);
+        assert_eq!(session.credential_status(), WpaCredentialStatus::Matched);
+        assert_eq!(session.pairwise_transient_key(), Some(&expected_ptk));
+
+        assert_eq!(
+            session
+                .verify_key_mic(&wrong_pmk, &signed_message_2, &eapol_frame)
+                .unwrap(),
+            Some(false)
+        );
+        assert_eq!(session.credential_status(), WpaCredentialStatus::Matched);
+        assert_eq!(session.pairwise_transient_key(), Some(&expected_ptk));
+        assert!(session.is_ready());
     }
 }
