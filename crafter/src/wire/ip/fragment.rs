@@ -576,14 +576,109 @@ mod ipv4_df {
             .fragment_record(df_record(b"abcdefghijklmnopqrstuvwxyz"))
             .unwrap();
 
-        assert_eq!(output.len(), 1);
-        assert_eq!(transform.emitted_count(), 1);
-        let metadata = &output.records()[0].metadata().ip_fragment_metadata()[0];
-        assert_eq!(metadata.reason(), Some(&IpFragmentReason::Fragmented));
+        assert_eq!(output.len(), 2);
+        assert_eq!(transform.emitted_count(), 2);
+        for (index, record) in output.records().iter().enumerate() {
+            let metadata = &record.metadata().ip_fragment_metadata()[0];
+            assert_eq!(metadata.reason(), Some(&IpFragmentReason::Fragmented));
+            assert_eq!(metadata.fragment_count(), 2);
+            assert_eq!(metadata.fragment_index(), index);
 
-        let traces = output.records()[0].metadata().transforms();
-        assert_eq!(traces.len(), 1);
-        assert_eq!(traces[0].name(), "ip-fragment");
-        assert_eq!(traces[0].note(), Some("ipv4 don't-fragment override"));
+            let traces = record.metadata().transforms();
+            assert_eq!(traces.len(), 1);
+            assert_eq!(traces[0].name(), "ip-fragment");
+            assert_eq!(traces[0].note(), Some("ipv4 don't-fragment override"));
+        }
+    }
+}
+
+#[cfg(test)]
+mod ipv4_emit {
+    use super::super::{IpFragment, IpFragmentFamily, IpFragmentRange, IpFragmentReason};
+    use crate::checksum::verify_internet_checksum;
+    use crate::wire::record::{PacketOrigin, PacketRecord};
+    use crate::{Ipv4, Raw, IPV4_OPTION_NOP};
+    use std::net::Ipv4Addr;
+
+    const MTU: usize = 40;
+    const PROTOCOL: u8 = 253;
+
+    fn source() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 27)
+    }
+
+    fn destination() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 27)
+    }
+
+    fn oversized_record(payload: &[u8]) -> PacketRecord {
+        PacketRecord::new(
+            Ipv4::with_addresses(source(), destination())
+                .protocol(PROTOCOL)
+                .identification(0x2727)
+                .ttl(37)
+                .ds_field(0xb9)
+                .option([IPV4_OPTION_NOP])
+                / Raw::from_bytes(payload),
+        )
+    }
+
+    #[test]
+    fn oversized_ipv4_packet_emits_valid_aligned_fragments() {
+        let payload = (0u8..38).collect::<Vec<_>>();
+        let mut transform = IpFragment::new(MTU);
+
+        let output = transform
+            .fragment_record(oversized_record(&payload))
+            .unwrap();
+
+        assert_eq!(output.len(), 3);
+        assert_eq!(transform.emitted_count(), 3);
+
+        let expected = [
+            (0usize, 16usize, 0u16, true, 40u16),
+            (16, 32, 2, true, 40),
+            (32, 38, 4, false, 30),
+        ];
+        for (index, (record, (start, end, offset, more_fragments, total_len))) in
+            output.records().iter().zip(expected).enumerate()
+        {
+            let packet = record.packet();
+            let ipv4 = packet.layer::<Ipv4>().unwrap();
+            let raw = packet.layer::<Raw>().unwrap();
+
+            assert_eq!(record.metadata().origin(), PacketOrigin::Transformed);
+            assert!(record.metadata().captured_bytes().is_none());
+            assert_eq!(ipv4.source(), source());
+            assert_eq!(ipv4.destination(), destination());
+            assert_eq!(ipv4.protocol_value(), PROTOCOL);
+            assert_eq!(ipv4.identification_value(), 0x2727);
+            assert_eq!(ipv4.ttl_value(), 37);
+            assert_eq!(ipv4.ds_field_value(), 0xb9);
+            assert_eq!(ipv4.option_bytes(), &[IPV4_OPTION_NOP, 0, 0, 0]);
+            assert_eq!(ipv4.fragment_offset_value(), offset);
+            assert_eq!(ipv4.has_more_fragments(), more_fragments);
+            assert_eq!(ipv4.total_length_value(), Some(total_len));
+            assert_eq!(raw.as_bytes(), &payload[start..end]);
+
+            let wire = packet.compile().unwrap();
+            assert_eq!(&wire.as_bytes()[2..4], &total_len.to_be_bytes());
+            assert!(verify_internet_checksum(&wire.as_bytes()[..24]));
+
+            let metadata = &record.metadata().ip_fragment_metadata()[0];
+            assert_eq!(metadata.family(), IpFragmentFamily::Ipv4);
+            assert_eq!(metadata.mtu(), MTU);
+            assert_eq!(metadata.identification(), 0x2727);
+            assert_eq!(metadata.fragment_offset(), offset);
+            assert_eq!(metadata.more_fragments(), more_fragments);
+            assert_eq!(metadata.fragment_count(), 3);
+            assert_eq!(metadata.fragment_index(), index);
+            assert_eq!(
+                metadata.byte_range(),
+                IpFragmentRange::new(start as u32, end as u32)
+            );
+            assert_eq!(metadata.original_len(), Some(payload.len() as u32));
+            assert_eq!(metadata.reason(), Some(&IpFragmentReason::Fragmented));
+        }
     }
 }

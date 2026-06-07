@@ -1,15 +1,23 @@
 //! Transmit-side IP fragmentation transform.
 
-use super::fragment::ipv4_planner::Ipv4FragmentPlan;
-use super::ipv4::{extract_ipv4_fragment, Ipv4FragmentExtract, Ipv4FragmentView};
+use super::fragment::ipv4_planner::{Ipv4FragmentPlan, Ipv4PlannedFragment};
+use super::ipv4::{
+    extract_ipv4_fragment, Ipv4FragmentExtract, Ipv4FragmentView, Ipv4FragmentWrapper,
+    Ipv4FragmentWrapperKind,
+};
 use super::ipv6::{extract_ipv6_fragment, Ipv6FragmentExtract, Ipv6FragmentView};
 use super::{
     IpFragmentConfig, IpFragmentFamily, IpFragmentMetadata, IpFragmentRange, IpFragmentReason,
     Ipv4DontFragmentPolicy,
 };
+use crate::protocols::ipv4::{append_ipv4_packet_with_registry, IPV4_FLAG_MORE_FRAGMENTS};
+use crate::protocols::link::{append_vlan_packet_with_registry, ETHERTYPE_IPV4, ETHERTYPE_VLAN};
 use crate::wire::record::{PacketRecord, TransformTrace};
 use crate::wire::transform::{PacketTransform, TransformOutput};
 use crate::wire::{Result, WireError};
+use crate::{
+    CrafterError, Ipv4, LinkType, NetworkLayer, Packet, PacketOrigin, ProtocolRegistry, Raw,
+};
 
 pub(crate) const IPV4_DONT_FRAGMENT_ERROR_REASON: &str =
     "IPv4 Don't Fragment is set and packet exceeds configured MTU";
@@ -84,37 +92,42 @@ impl PacketTransform for IpFragment {
         self.config.validate()?;
         self.input_count += 1;
 
-        let mut record = record;
-        let trace_note = self.attach_fragment_metadata(&mut record)?;
+        match extract_ipv4_fragment(&record)? {
+            Ipv4FragmentExtract::View(view) => {
+                let plan = Ipv4FragmentPlan::from_view(&view, self.config.mtu())?;
+                let decision = self.ipv4_fragment_decision(&view, &plan)?;
 
-        if let Some(note) =
-            trace_note.or_else(|| self.config.traces_passthrough().then_some("passthrough"))
-        {
-            record
-                .metadata_mut()
-                .push_transform_trace(TransformTrace::new(self.name()).with_note(note));
+                if plan.fragment_count() > 1 && decision.reason == IpFragmentReason::Fragmented {
+                    self.emit_ipv4_fragments(&record, &view, &plan, decision.trace_note, emit)?;
+                    return Ok(());
+                }
+
+                let mut record = record;
+                record
+                    .metadata_mut()
+                    .push_ip_fragment_metadata(ipv4_fragment_metadata(
+                        &view,
+                        self.config.mtu(),
+                        decision.reason,
+                    ));
+                self.emit_single(record, decision.trace_note, emit)?;
+                return Ok(());
+            }
+            Ipv4FragmentExtract::PassThrough(_) => {}
         }
 
-        emit(record)?;
-        self.emitted_count += 1;
+        let mut record = record;
+        let trace_note = self.attach_non_ipv4_fragment_metadata(&mut record)?;
+        self.emit_single(record, trace_note, emit)?;
         Ok(())
     }
 }
 
 impl IpFragment {
-    fn attach_fragment_metadata(&self, record: &mut PacketRecord) -> Result<Option<&'static str>> {
-        if let Ipv4FragmentExtract::View(view) = extract_ipv4_fragment(record)? {
-            let decision = self.ipv4_fragment_decision(&view)?;
-            record
-                .metadata_mut()
-                .push_ip_fragment_metadata(ipv4_fragment_metadata(
-                    &view,
-                    self.config.mtu(),
-                    decision.reason,
-                ));
-            return Ok(decision.trace_note);
-        }
-
+    fn attach_non_ipv4_fragment_metadata(
+        &self,
+        record: &mut PacketRecord,
+    ) -> Result<Option<&'static str>> {
         match extract_ipv6_fragment(record)? {
             Ipv6FragmentExtract::View(view) => {
                 record
@@ -128,8 +141,11 @@ impl IpFragment {
         }
     }
 
-    fn ipv4_fragment_decision(&self, view: &Ipv4FragmentView) -> Result<Ipv4FragmentDecision> {
-        let plan = Ipv4FragmentPlan::from_view(view, self.config.mtu())?;
+    fn ipv4_fragment_decision(
+        &self,
+        view: &Ipv4FragmentView,
+        plan: &Ipv4FragmentPlan,
+    ) -> Result<Ipv4FragmentDecision> {
         let fragmentation_required = plan.fragment_count() > 1;
 
         if view.is_dont_fragment() && fragmentation_required {
@@ -159,6 +175,82 @@ impl IpFragment {
             reason,
             trace_note: None,
         })
+    }
+
+    fn emit_single(
+        &mut self,
+        mut record: PacketRecord,
+        trace_note: Option<&'static str>,
+        emit: &mut dyn FnMut(PacketRecord) -> Result<()>,
+    ) -> Result<()> {
+        if let Some(note) =
+            trace_note.or_else(|| self.config.traces_passthrough().then_some("passthrough"))
+        {
+            record
+                .metadata_mut()
+                .push_transform_trace(TransformTrace::new(self.name()).with_note(note));
+        }
+
+        emit(record)?;
+        self.emitted_count += 1;
+        Ok(())
+    }
+
+    fn emit_ipv4_fragments(
+        &mut self,
+        record: &PacketRecord,
+        view: &Ipv4FragmentView,
+        plan: &Ipv4FragmentPlan,
+        trace_note: Option<&'static str>,
+        emit: &mut dyn FnMut(PacketRecord) -> Result<()>,
+    ) -> Result<()> {
+        let input_len = ipv4_fragment_record_len(view)?;
+        let original_len = saturated_u32(view.payload().len());
+
+        for (index, fragment) in plan.fragments().iter().copied().enumerate() {
+            let packet = ipv4_fragment_packet(view, fragment)?;
+            let l3_bytes = packet.compile()?.as_bytes().to_vec();
+            let frame_bytes = wrap_ipv4_l3(view.wrapper(), &l3_bytes);
+            let emitted_len = saturated_u32(frame_bytes.len());
+            let packet = decode_ipv4_fragment_packet(view.wrapper(), &frame_bytes)?;
+
+            let mut metadata = record
+                .metadata()
+                .clone()
+                .clear_captured_bytes()
+                .with_origin(PacketOrigin::Transformed)
+                .with_original_len(input_len)
+                .with_captured_len(input_len)
+                .with_emitted_len(emitted_len)
+                .with_ip_fragment_metadata(
+                    IpFragmentMetadata::new(
+                        IpFragmentFamily::Ipv4,
+                        self.config.mtu(),
+                        u32::from(view.identification()),
+                        fragment.fragment_offset(),
+                        fragment.more_fragments(),
+                        plan.fragment_count(),
+                        index,
+                        fragment.datagram_range(),
+                    )
+                    .with_original_len(original_len)
+                    .with_reason(IpFragmentReason::Fragmented),
+                );
+
+            if let Some(note) = trace_note {
+                metadata = metadata.with_transform_trace(
+                    TransformTrace::new(self.name())
+                        .with_note(note)
+                        .with_input_len(input_len)
+                        .with_output_len(emitted_len),
+                );
+            }
+
+            emit(PacketRecord::from_packet_metadata(packet, metadata))?;
+            self.emitted_count += 1;
+        }
+
+        Ok(())
     }
 }
 
@@ -206,6 +298,137 @@ fn ipv6_fragment_metadata(view: &Ipv6FragmentView, mtu: usize) -> IpFragmentMeta
     )
     .with_original_len(payload_len)
     .with_reason(IpFragmentReason::Fragmented)
+}
+
+fn ipv4_fragment_packet(view: &Ipv4FragmentView, fragment: Ipv4PlannedFragment) -> Result<Packet> {
+    let range = fragment.payload_range();
+    let payload = payload_slice(view.payload(), range)?;
+    let ipv4 = ipv4_layer_for_fragment(view, fragment)?;
+
+    Ok(Packet::new().push(ipv4).push(Raw::from_bytes(payload)))
+}
+
+fn ipv4_layer_for_fragment(view: &Ipv4FragmentView, fragment: Ipv4PlannedFragment) -> Result<Ipv4> {
+    let header = view.header();
+    if header.len() < 20 {
+        return Err(CrafterError::buffer_too_short("ipv4 header", 20, header.len()).into());
+    }
+
+    let options = if header.len() > 20 {
+        header[20..].to_vec()
+    } else {
+        Vec::new()
+    };
+    let flags = ipv4_fragment_flags(view.flags(), fragment.more_fragments());
+
+    Ok(Ipv4::new()
+        .version(header[0] >> 4)
+        .ihl(header[0] & 0x0f)
+        .tos(header[1])
+        .identification(view.identification())
+        .flags(flags)
+        .fragment_offset(fragment.fragment_offset())
+        .ttl(header[8])
+        .protocol(view.protocol())
+        .src(view.source())
+        .dst(view.destination())
+        .options(options))
+}
+
+fn ipv4_fragment_flags(input_flags: u8, more_fragments: bool) -> u8 {
+    let mut flags = input_flags & !IPV4_FLAG_MORE_FRAGMENTS;
+    if more_fragments {
+        flags |= IPV4_FLAG_MORE_FRAGMENTS;
+    }
+    flags
+}
+
+fn payload_slice(payload: &[u8], range: IpFragmentRange) -> Result<&[u8]> {
+    let start = usize::try_from(range.start()).map_err(|_| {
+        CrafterError::invalid_field_value(
+            "ipv4.payload_range",
+            "fragment payload range start exceeds usize",
+        )
+    })?;
+    let end = usize::try_from(range.end()).map_err(|_| {
+        CrafterError::invalid_field_value(
+            "ipv4.payload_range",
+            "fragment payload range end exceeds usize",
+        )
+    })?;
+
+    payload.get(start..end).ok_or_else(|| {
+        CrafterError::invalid_field_value(
+            "ipv4.payload_range",
+            "fragment payload range must be within the IPv4 payload",
+        )
+        .into()
+    })
+}
+
+fn wrap_ipv4_l3(wrapper: &Ipv4FragmentWrapper, l3_bytes: &[u8]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(wrapper.prefix().len() + l3_bytes.len());
+    bytes.extend_from_slice(wrapper.prefix());
+    bytes.extend_from_slice(l3_bytes);
+    bytes
+}
+
+fn decode_ipv4_fragment_packet(wrapper: &Ipv4FragmentWrapper, bytes: &[u8]) -> Result<Packet> {
+    let registry = ipv4_fragment_registry();
+    match wrapper.kind() {
+        Ipv4FragmentWrapperKind::L3 => Ok(Packet::decode_from_l3_with_registry(
+            &registry,
+            NetworkLayer::Ipv4,
+            bytes,
+        )?),
+        Ipv4FragmentWrapperKind::Ethernet | Ipv4FragmentWrapperKind::EthernetVlan { .. } => Ok(
+            Packet::decode_from_link_with_registry(&registry, LinkType::Ethernet, bytes)?,
+        ),
+        Ipv4FragmentWrapperKind::LinuxSll => Ok(Packet::decode_from_link_with_registry(
+            &registry,
+            LinkType::LinuxSll,
+            bytes,
+        )?),
+        Ipv4FragmentWrapperKind::NullLoopback => Ok(Packet::decode_from_link_with_registry(
+            &registry,
+            LinkType::NullLoopback,
+            bytes,
+        )?),
+    }
+}
+
+fn ipv4_fragment_registry() -> ProtocolRegistry {
+    let mut registry = ProtocolRegistry::empty();
+    registry.bind_ethertype_with_registry(ETHERTYPE_IPV4, |registry, packet, payload| {
+        append_ipv4_packet_with_registry(registry, packet, payload)
+    });
+    registry.bind_ethertype_with_registry(ETHERTYPE_VLAN, |registry, packet, payload| {
+        append_vlan_packet_with_registry(registry, packet, payload)
+    });
+    registry
+}
+
+fn ipv4_fragment_record_len(view: &Ipv4FragmentView) -> Result<u32> {
+    let len = view
+        .wrapper()
+        .prefix()
+        .len()
+        .checked_add(view.total_len())
+        .and_then(|len| len.checked_add(view.wrapper().suffix().len()))
+        .ok_or_else(|| {
+            CrafterError::invalid_field_value(
+                "ip.fragment.ipv4.input_len",
+                "IPv4 fragment record length overflow",
+            )
+        })?;
+
+    u32::try_from(len).map_err(|_| {
+        CrafterError::invalid_field_value(
+            "ip.fragment.ipv4.input_len",
+            "IPv4 fragment record length exceeds u32",
+        )
+        .into()
+    })
 }
 
 fn saturated_u32(value: usize) -> u32 {
