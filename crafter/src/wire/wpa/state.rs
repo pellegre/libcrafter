@@ -950,6 +950,10 @@ fn parse_key_data_elements(key_data: &[u8]) -> crate::Result<ParsedKeyData> {
 }
 
 fn parse_vendor_specific_key_data_element(value: &[u8]) -> crate::Result<Option<Gtk>> {
+    if value.is_empty() {
+        return Ok(None);
+    }
+
     if value.len() < 4 {
         return Err(CrafterError::buffer_too_short(
             "wpa.key_data.kde.selector",
@@ -1538,6 +1542,26 @@ mod tests {
             format!("{stored_gtk:?}"),
             "Gtk { key_id: 2, bytes: \"<redacted>\", len: 16 }"
         );
+    }
+
+    #[test]
+    fn gtk_key_data_ignores_empty_vendor_padding_after_group_key() {
+        let (mut bss, bssid, station, pmk, ptk) = verified_bss();
+        let gtk_bytes = bytes::<16>(0x44);
+        let mut key_data = gtk_kde(1, gtk_bytes);
+        key_data.extend_from_slice(&[WPA_KEY_DATA_VENDOR_SPECIFIC_ELEMENT_ID, 0]);
+        let (message_3, eapol_frame) = encrypted_message_3(&ptk, key_data);
+
+        bss.observe_pairwise_key_with_mic(station, bssid, station, &message_3, &eapol_frame, &pmk)
+            .unwrap();
+
+        let stored_gtk = bss.gtk(1).unwrap();
+        assert_eq!(stored_gtk.bytes(), &gtk_bytes);
+        assert_eq!(
+            bss.group_key_state().readiness(),
+            GroupKeyReadiness::Available
+        );
+        assert_eq!(bss.group_key_state().unsupported_kde_count(), 1);
     }
 
     #[test]
