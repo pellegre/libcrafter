@@ -1093,7 +1093,7 @@ mod tests {
 
     fn gtk_kde(key_id: u8, gtk: impl AsRef<[u8]>) -> Vec<u8> {
         let gtk = gtk.as_ref();
-        let kde_len = 5 + gtk.len();
+        let kde_len = 6 + gtk.len();
         assert!(kde_len <= u8::MAX as usize);
 
         let mut key_data = Vec::with_capacity(2 + kde_len);
@@ -1102,6 +1102,7 @@ mod tests {
         key_data.extend_from_slice(&WPA_KEY_DATA_RSN_OUI);
         key_data.push(WPA_KEY_DATA_GTK_KDE_TYPE);
         key_data.push(key_id & WPA_GTK_KEY_ID_MASK);
+        key_data.push(0);
         key_data.extend_from_slice(gtk);
         key_data
     }
