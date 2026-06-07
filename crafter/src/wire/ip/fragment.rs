@@ -960,6 +960,166 @@ pub(super) mod ipv6_planner {
     }
 }
 
+pub(super) mod ipv6_identification {
+    #![allow(dead_code)]
+
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    const IPV6_IDENTIFICATION_GAMMA: u64 = 0x9e37_79b9_7f4a_7c15;
+    static IPV6_IDENTIFICATION_AUTO_SEED: AtomicU64 = AtomicU64::new(0x243f_6a88_85a3_08d3);
+
+    /// Stateful IPv6 Fragment Header Identification generator.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub(in crate::wire::ip) struct Ipv6IdentificationGenerator {
+        state: Option<u64>,
+        previous: Option<u32>,
+    }
+
+    impl Ipv6IdentificationGenerator {
+        pub(in crate::wire::ip) const fn new() -> Self {
+            Self {
+                state: None,
+                previous: None,
+            }
+        }
+
+        pub(in crate::wire::ip) fn next(&mut self, configured_seed: Option<u64>) -> u32 {
+            loop {
+                let value = {
+                    let state = self
+                        .state
+                        .get_or_insert_with(|| initial_ipv6_identification_seed(configured_seed));
+                    next_splitmix64(state)
+                };
+                let identification = (value >> 32) as u32;
+                if self.previous == Some(identification) {
+                    continue;
+                }
+                self.previous = Some(identification);
+                return identification;
+            }
+        }
+    }
+
+    fn initial_ipv6_identification_seed(configured_seed: Option<u64>) -> u64 {
+        configured_seed.unwrap_or_else(automatic_ipv6_identification_seed)
+    }
+
+    fn automatic_ipv6_identification_seed() -> u64 {
+        let counter =
+            IPV6_IDENTIFICATION_AUTO_SEED.fetch_add(IPV6_IDENTIFICATION_GAMMA, Ordering::Relaxed);
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| {
+                let nanos = duration.as_nanos();
+                (nanos as u64) ^ ((nanos >> 64) as u64)
+            })
+            .unwrap_or(0);
+        let pid = u64::from(std::process::id());
+        let stack = (&counter as *const u64 as usize) as u64;
+
+        let mut seed = counter ^ now ^ pid.rotate_left(17) ^ stack.rotate_left(32);
+        next_splitmix64(&mut seed)
+    }
+
+    fn next_splitmix64(state: &mut u64) -> u64 {
+        *state = state.wrapping_add(IPV6_IDENTIFICATION_GAMMA);
+        let mut value = *state;
+        value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        value ^ (value >> 31)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::super::super::{IpFragment, IpFragmentConfig, Ipv6FragmentIdentificationPolicy};
+        use crate::{Ipv6, Ipv6FragmentHeader, Raw, IPPROTO_IPV6_FRAGMENT, IPPROTO_UDP};
+        use std::net::Ipv6Addr;
+
+        fn source() -> Ipv6Addr {
+            "2001:db8:31::1".parse().unwrap()
+        }
+
+        fn destination() -> Ipv6Addr {
+            "2001:db8:31::2".parse().unwrap()
+        }
+
+        #[test]
+        fn fixed_policy_uses_explicit_fragment_identification() {
+            let config = IpFragmentConfig::new(1280)
+                .ipv6_identification(0x0102_0304)
+                .ipv6_identification_seed(0x31);
+            let mut transform = IpFragment::with_config(config);
+
+            assert_eq!(transform.next_ipv6_fragment_identification(), 0x0102_0304);
+            assert_eq!(transform.next_ipv6_fragment_identification(), 0x0102_0304);
+        }
+
+        #[test]
+        fn seeded_generation_is_deterministic_and_stateful() {
+            let config =
+                IpFragmentConfig::new(1280).ipv6_identification_seed(0x0123_4567_89ab_cdef);
+            let mut first = IpFragment::with_config(config);
+            let mut second = IpFragment::with_config(config);
+
+            assert_eq!(
+                config.configured_ipv6_identification_policy(),
+                Ipv6FragmentIdentificationPolicy::Generate
+            );
+            assert_eq!(
+                config.configured_ipv6_identification_seed(),
+                Some(0x0123_4567_89ab_cdef)
+            );
+            assert_eq!(first.next_ipv6_fragment_identification(), 0x157a_3807);
+            assert_eq!(first.next_ipv6_fragment_identification(), 0xd573_529b);
+            assert_eq!(second.next_ipv6_fragment_identification(), 0x157a_3807);
+            assert_eq!(second.next_ipv6_fragment_identification(), 0xd573_529b);
+        }
+
+        #[test]
+        fn automatic_generation_uses_unseeded_generate_policy() {
+            let config = IpFragmentConfig::new(1280);
+            let mut transform = IpFragment::with_config(config);
+
+            assert_eq!(
+                config.configured_ipv6_identification_policy(),
+                Ipv6FragmentIdentificationPolicy::Generate
+            );
+            assert_eq!(config.configured_ipv6_identification_seed(), None);
+            assert_ne!(
+                transform.next_ipv6_fragment_identification(),
+                transform.next_ipv6_fragment_identification()
+            );
+        }
+
+        #[test]
+        fn seeded_identification_produces_exact_fragment_header_bytes() {
+            let config = IpFragmentConfig::new(1280).ipv6_identification_seed(0x31);
+            let mut transform = IpFragment::with_config(config);
+            let identification = transform.next_ipv6_fragment_identification();
+
+            let wire = (Ipv6::new()
+                .src(source())
+                .dst(destination())
+                .next_header(IPPROTO_IPV6_FRAGMENT)
+                / Ipv6FragmentHeader::new()
+                    .next_header(IPPROTO_UDP)
+                    .identification(identification)
+                    .more_fragments(true)
+                / Raw::from_bytes(b"abcdefgh"))
+            .compile()
+            .unwrap();
+
+            assert_eq!(identification, 0x1c4a_97a6);
+            assert_eq!(
+                &wire.as_bytes()[40..48],
+                &[IPPROTO_UDP, 0x00, 0x00, 0x01, 0x1c, 0x4a, 0x97, 0xa6]
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod ipv4_df {
     use super::super::{
