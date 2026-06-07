@@ -16,7 +16,12 @@ mod range;
 #[cfg(test)]
 mod tests;
 
-pub use config::{IpDefragConfig, IpFragmentConfig};
+pub use config::{
+    IpDefragConfig, IpDefragOverlapPolicy, IpFragmentConfig, Ipv4DontFragmentPolicy,
+    Ipv4FragmentIdentificationPolicy, Ipv6AtomicFragmentPolicy, Ipv6FragmentIdentificationPolicy,
+    IP_DEFRAG_DEFAULT_MAX_AGE, IP_DEFRAG_DEFAULT_MAX_BYTES_PER_DATAGRAM,
+    IP_DEFRAG_DEFAULT_MAX_DATAGRAMS, IP_FRAGMENT_MIN_MTU,
+};
 pub use defrag::IpDefrag;
 pub use fragmentation::IpFragment;
 pub use metadata::{
