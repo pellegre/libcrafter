@@ -1,4 +1,710 @@
 //! WPA passive observation state machines.
-//!
-//! This module is intentionally empty in the skeleton step. Later steps will
-//! keep observed BSS, station, pairwise handshake, and group key state here.
+
+use std::collections::HashMap;
+
+use super::metadata::WpaHandshakeStatus;
+use crate::{EapolKey, MacAddr, RsnEapolKeyHandshakeMessage};
+
+/// WPA/WPA2-Personal four-way handshake message classifier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum HandshakeMessage {
+    /// Message 1 from authenticator to supplicant.
+    Message1,
+    /// Message 2 from supplicant to authenticator.
+    Message2,
+    /// Message 3 from authenticator to supplicant.
+    Message3,
+    /// Message 4 from supplicant to authenticator.
+    Message4,
+    /// A frame that does not match a supported four-way handshake shape.
+    Unknown,
+}
+
+impl HandshakeMessage {
+    /// Classify an EAPOL-Key layer into a passive four-way handshake shape.
+    pub(crate) fn classify(key: &EapolKey) -> Self {
+        key.rsn_handshake_message().into()
+    }
+
+    /// Return true for one of the four known handshake messages.
+    pub(crate) const fn is_known(self) -> bool {
+        match self {
+            Self::Message1 | Self::Message2 | Self::Message3 | Self::Message4 => true,
+            Self::Unknown => false,
+        }
+    }
+
+    /// One-based message number.
+    pub(crate) const fn number(self) -> Option<u8> {
+        match self {
+            Self::Message1 => Some(1),
+            Self::Message2 => Some(2),
+            Self::Message3 => Some(3),
+            Self::Message4 => Some(4),
+            Self::Unknown => None,
+        }
+    }
+
+    /// Stable lowercase label used by diagnostics.
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            Self::Message1 => "message_1",
+            Self::Message2 => "message_2",
+            Self::Message3 => "message_3",
+            Self::Message4 => "message_4",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    const fn transmitter_role(self) -> Option<PairwiseRole> {
+        match self {
+            Self::Message1 | Self::Message3 => Some(PairwiseRole::Authenticator),
+            Self::Message2 | Self::Message4 => Some(PairwiseRole::Supplicant),
+            Self::Unknown => None,
+        }
+    }
+}
+
+impl From<RsnEapolKeyHandshakeMessage> for HandshakeMessage {
+    fn from(value: RsnEapolKeyHandshakeMessage) -> Self {
+        match value {
+            RsnEapolKeyHandshakeMessage::Message1 => Self::Message1,
+            RsnEapolKeyHandshakeMessage::Message2 => Self::Message2,
+            RsnEapolKeyHandshakeMessage::Message3 => Self::Message3,
+            RsnEapolKeyHandshakeMessage::Message4 => Self::Message4,
+            RsnEapolKeyHandshakeMessage::Unknown => Self::Unknown,
+        }
+    }
+}
+
+/// Candidate pairwise role inferred from a handshake message direction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum PairwiseRole {
+    /// Authenticator role, normally the AP/BSSID.
+    Authenticator,
+    /// Supplicant role, normally the associated station.
+    Supplicant,
+}
+
+/// One observed EAPOL-Key handshake record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct HandshakeObservation {
+    message: HandshakeMessage,
+    replay_counter: u64,
+    transmitter: MacAddr,
+    receiver: MacAddr,
+    transmitter_role: Option<PairwiseRole>,
+    accepted: bool,
+}
+
+impl HandshakeObservation {
+    /// Classified four-way handshake message.
+    pub(crate) const fn message(&self) -> HandshakeMessage {
+        self.message
+    }
+
+    /// EAPOL-Key replay counter.
+    pub(crate) const fn replay_counter(&self) -> u64 {
+        self.replay_counter
+    }
+
+    /// Transmitting MAC address observed for this EAPOL-Key frame.
+    pub(crate) const fn transmitter(&self) -> MacAddr {
+        self.transmitter
+    }
+
+    /// Receiving MAC address observed for this EAPOL-Key frame.
+    pub(crate) const fn receiver(&self) -> MacAddr {
+        self.receiver
+    }
+
+    /// Candidate role of the transmitting MAC when the message is known.
+    pub(crate) const fn transmitter_role(&self) -> Option<PairwiseRole> {
+        self.transmitter_role
+    }
+
+    /// Whether this record advanced or refreshed the stored session state.
+    pub(crate) const fn accepted(&self) -> bool {
+        self.accepted
+    }
+}
+
+/// Stored replay-counter state for one four-way handshake message.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub(crate) struct HandshakeStepState {
+    replay_counter: Option<u64>,
+    observation_count: usize,
+}
+
+impl HandshakeStepState {
+    /// Latest accepted replay counter for this message.
+    pub(crate) const fn replay_counter(&self) -> Option<u64> {
+        self.replay_counter
+    }
+
+    /// Number of accepted observations, including duplicates.
+    pub(crate) const fn observation_count(&self) -> usize {
+        self.observation_count
+    }
+
+    /// Whether this message has been observed.
+    pub(crate) const fn observed(&self) -> bool {
+        self.replay_counter.is_some()
+    }
+
+    fn observe(&mut self, replay_counter: u64) -> bool {
+        if let Some(current) = self.replay_counter {
+            if replay_counter < current {
+                return false;
+            }
+        }
+
+        self.replay_counter = Some(replay_counter);
+        self.observation_count += 1;
+        true
+    }
+}
+
+/// Pairwise WPA handshake state for one BSSID/station pair.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PairwiseSession {
+    bssid: MacAddr,
+    station: MacAddr,
+    authenticator: Option<MacAddr>,
+    supplicant: Option<MacAddr>,
+    ap_nonce: Option<[u8; 32]>,
+    ap_nonce_replay_counter: Option<u64>,
+    station_nonce: Option<[u8; 32]>,
+    station_nonce_replay_counter: Option<u64>,
+    message_1: HandshakeStepState,
+    message_2: HandshakeStepState,
+    message_3: HandshakeStepState,
+    message_4: HandshakeStepState,
+    last_observation: Option<HandshakeObservation>,
+}
+
+impl PairwiseSession {
+    /// Create empty pairwise handshake state for a BSSID/station pair.
+    pub(crate) fn new(bssid: MacAddr, station: MacAddr) -> Self {
+        Self {
+            bssid,
+            station,
+            authenticator: None,
+            supplicant: None,
+            ap_nonce: None,
+            ap_nonce_replay_counter: None,
+            station_nonce: None,
+            station_nonce_replay_counter: None,
+            message_1: HandshakeStepState::default(),
+            message_2: HandshakeStepState::default(),
+            message_3: HandshakeStepState::default(),
+            message_4: HandshakeStepState::default(),
+            last_observation: None,
+        }
+    }
+
+    /// BSSID/AP address for this session.
+    pub(crate) const fn bssid(&self) -> MacAddr {
+        self.bssid
+    }
+
+    /// Station address for this session.
+    pub(crate) const fn station(&self) -> MacAddr {
+        self.station
+    }
+
+    /// Candidate authenticator address observed from message direction.
+    pub(crate) const fn authenticator(&self) -> Option<MacAddr> {
+        self.authenticator
+    }
+
+    /// Candidate supplicant address observed from message direction.
+    pub(crate) const fn supplicant(&self) -> Option<MacAddr> {
+        self.supplicant
+    }
+
+    /// Latest accepted AP nonce.
+    pub(crate) const fn ap_nonce(&self) -> Option<[u8; 32]> {
+        self.ap_nonce
+    }
+
+    /// Replay counter associated with the stored AP nonce.
+    pub(crate) const fn ap_nonce_replay_counter(&self) -> Option<u64> {
+        self.ap_nonce_replay_counter
+    }
+
+    /// Latest accepted station nonce.
+    pub(crate) const fn station_nonce(&self) -> Option<[u8; 32]> {
+        self.station_nonce
+    }
+
+    /// Replay counter associated with the stored station nonce.
+    pub(crate) const fn station_nonce_replay_counter(&self) -> Option<u64> {
+        self.station_nonce_replay_counter
+    }
+
+    /// Stored state for message 1.
+    pub(crate) const fn message_1(&self) -> &HandshakeStepState {
+        &self.message_1
+    }
+
+    /// Stored state for message 2.
+    pub(crate) const fn message_2(&self) -> &HandshakeStepState {
+        &self.message_2
+    }
+
+    /// Stored state for message 3.
+    pub(crate) const fn message_3(&self) -> &HandshakeStepState {
+        &self.message_3
+    }
+
+    /// Stored state for message 4.
+    pub(crate) const fn message_4(&self) -> &HandshakeStepState {
+        &self.message_4
+    }
+
+    /// Last classified handshake observation.
+    pub(crate) const fn last_observation(&self) -> Option<HandshakeObservation> {
+        self.last_observation
+    }
+
+    /// Passive handshake status derived from currently stored state.
+    pub(crate) fn status(&self) -> WpaHandshakeStatus {
+        if !self.message_1.observed()
+            && !self.message_2.observed()
+            && !self.message_3.observed()
+            && !self.message_4.observed()
+        {
+            return WpaHandshakeStatus::NotStarted;
+        }
+
+        if self.is_complete() {
+            WpaHandshakeStatus::Complete
+        } else {
+            WpaHandshakeStatus::Observing
+        }
+    }
+
+    /// Whether all four messages and both pairwise nonces have been observed.
+    pub(crate) fn is_complete(&self) -> bool {
+        self.message_1.observed()
+            && self.message_2.observed()
+            && self.message_3.observed()
+            && self.message_4.observed()
+            && self.ap_nonce.is_some()
+            && self.station_nonce.is_some()
+    }
+
+    /// Observe one EAPOL-Key record for this BSSID/station pair.
+    pub(crate) fn observe_key(
+        &mut self,
+        transmitter: MacAddr,
+        receiver: MacAddr,
+        key: &EapolKey,
+    ) -> HandshakeObservation {
+        let message = HandshakeMessage::classify(key);
+        let replay_counter = key.replay_counter_value();
+        let transmitter_role = message.transmitter_role();
+        let accepted = match message {
+            HandshakeMessage::Message1 => {
+                let accepted = self.message_1.observe(replay_counter);
+                if accepted {
+                    self.note_roles(transmitter_role, transmitter, receiver);
+                    self.update_ap_nonce(replay_counter, key.nonce_value());
+                }
+                accepted
+            }
+            HandshakeMessage::Message2 => {
+                let accepted = self.message_2.observe(replay_counter);
+                if accepted {
+                    self.note_roles(transmitter_role, transmitter, receiver);
+                    self.update_station_nonce(replay_counter, key.nonce_value());
+                }
+                accepted
+            }
+            HandshakeMessage::Message3 => {
+                let accepted = self.message_3.observe(replay_counter);
+                if accepted {
+                    self.note_roles(transmitter_role, transmitter, receiver);
+                    self.update_ap_nonce(replay_counter, key.nonce_value());
+                }
+                accepted
+            }
+            HandshakeMessage::Message4 => {
+                let accepted = self.message_4.observe(replay_counter);
+                if accepted {
+                    self.note_roles(transmitter_role, transmitter, receiver);
+                }
+                accepted
+            }
+            HandshakeMessage::Unknown => false,
+        };
+
+        let observation = HandshakeObservation {
+            message,
+            replay_counter,
+            transmitter,
+            receiver,
+            transmitter_role,
+            accepted,
+        };
+        self.last_observation = Some(observation);
+        observation
+    }
+
+    fn note_roles(
+        &mut self,
+        transmitter_role: Option<PairwiseRole>,
+        transmitter: MacAddr,
+        receiver: MacAddr,
+    ) {
+        match transmitter_role {
+            Some(PairwiseRole::Authenticator) => {
+                if transmitter == self.bssid {
+                    self.authenticator = Some(transmitter);
+                }
+                if receiver == self.station {
+                    self.supplicant = Some(receiver);
+                }
+            }
+            Some(PairwiseRole::Supplicant) => {
+                if transmitter == self.station {
+                    self.supplicant = Some(transmitter);
+                }
+                if receiver == self.bssid {
+                    self.authenticator = Some(receiver);
+                }
+            }
+            None => {}
+        }
+    }
+
+    fn update_ap_nonce(&mut self, replay_counter: u64, nonce: [u8; 32]) {
+        update_nonce(
+            &mut self.ap_nonce,
+            &mut self.ap_nonce_replay_counter,
+            replay_counter,
+            nonce,
+        );
+    }
+
+    fn update_station_nonce(&mut self, replay_counter: u64, nonce: [u8; 32]) {
+        update_nonce(
+            &mut self.station_nonce,
+            &mut self.station_nonce_replay_counter,
+            replay_counter,
+            nonce,
+        );
+    }
+}
+
+/// Observed WPA BSS state keyed by station address.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ObservedBss {
+    bssid: MacAddr,
+    ssid: Option<Vec<u8>>,
+    pairwise_sessions: HashMap<MacAddr, PairwiseSession>,
+}
+
+impl ObservedBss {
+    /// Create an observed BSS entry for one BSSID.
+    pub(crate) fn new(bssid: MacAddr) -> Self {
+        Self {
+            bssid,
+            ssid: None,
+            pairwise_sessions: HashMap::new(),
+        }
+    }
+
+    /// BSSID for this observed network.
+    pub(crate) const fn bssid(&self) -> MacAddr {
+        self.bssid
+    }
+
+    /// SSID bytes when learned.
+    pub(crate) fn ssid(&self) -> Option<&[u8]> {
+        self.ssid.as_deref()
+    }
+
+    /// Learn or refresh SSID bytes for this BSS.
+    pub(crate) fn observe_ssid(&mut self, ssid: impl AsRef<[u8]>) {
+        let ssid = ssid.as_ref();
+        if self.ssid.is_none() || !ssid.is_empty() {
+            self.ssid = Some(ssid.to_vec());
+        }
+    }
+
+    /// Borrow observed pairwise sessions keyed by station address.
+    pub(crate) fn pairwise_sessions(&self) -> &HashMap<MacAddr, PairwiseSession> {
+        &self.pairwise_sessions
+    }
+
+    /// Borrow a pairwise session if it exists.
+    pub(crate) fn session(&self, station: MacAddr) -> Option<&PairwiseSession> {
+        self.pairwise_sessions.get(&station)
+    }
+
+    /// Borrow or create a pairwise session for a station.
+    pub(crate) fn session_mut(&mut self, station: MacAddr) -> &mut PairwiseSession {
+        self.pairwise_sessions
+            .entry(station)
+            .or_insert_with(|| PairwiseSession::new(self.bssid, station))
+    }
+
+    /// Observe one EAPOL-Key record when the caller already knows the station.
+    pub(crate) fn observe_pairwise_key(
+        &mut self,
+        station: MacAddr,
+        transmitter: MacAddr,
+        receiver: MacAddr,
+        key: &EapolKey,
+    ) -> HandshakeObservation {
+        self.session_mut(station)
+            .observe_key(transmitter, receiver, key)
+    }
+
+    /// Observe one EAPOL-Key record and infer the station from BSSID direction.
+    pub(crate) fn observe_eapol_key(
+        &mut self,
+        transmitter: MacAddr,
+        receiver: MacAddr,
+        key: &EapolKey,
+    ) -> Option<HandshakeObservation> {
+        let station = if transmitter == self.bssid && receiver != MacAddr::BROADCAST {
+            receiver
+        } else if receiver == self.bssid && transmitter != MacAddr::BROADCAST {
+            transmitter
+        } else {
+            return None;
+        };
+
+        Some(self.observe_pairwise_key(station, transmitter, receiver, key))
+    }
+}
+
+fn update_nonce(
+    stored_nonce: &mut Option<[u8; 32]>,
+    stored_replay_counter: &mut Option<u64>,
+    replay_counter: u64,
+    nonce: [u8; 32],
+) {
+    if nonce.iter().all(|byte| *byte == 0) {
+        return;
+    }
+    if let Some(current) = *stored_replay_counter {
+        if replay_counter < current {
+            return;
+        }
+    }
+
+    *stored_nonce = Some(nonce);
+    *stored_replay_counter = Some(replay_counter);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::EapolKeyInformation;
+
+    fn mac(last: u8) -> MacAddr {
+        MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x00, last])
+    }
+
+    fn bytes<const N: usize>(seed: u8) -> [u8; N] {
+        let mut out = [0u8; N];
+        for (index, byte) in out.iter_mut().enumerate() {
+            *byte = seed.wrapping_add(index as u8);
+        }
+        out
+    }
+
+    fn base_info() -> EapolKeyInformation {
+        EapolKeyInformation::new()
+            .with_descriptor_version(2)
+            .with_key_type(true)
+    }
+
+    fn message_1(replay_counter: u64, nonce_seed: u8) -> EapolKey {
+        EapolKey::new()
+            .key_information(base_info().with_key_ack(true))
+            .key_length(16)
+            .replay_counter(replay_counter)
+            .nonce(bytes::<32>(nonce_seed))
+    }
+
+    fn message_2(replay_counter: u64, nonce_seed: u8) -> EapolKey {
+        EapolKey::new()
+            .key_information(base_info().with_key_mic(true))
+            .key_length(16)
+            .replay_counter(replay_counter)
+            .nonce(bytes::<32>(nonce_seed))
+            .mic(bytes::<16>(0x80))
+            .key_data([0x30, 0x14])
+    }
+
+    fn message_3(replay_counter: u64, nonce_seed: u8) -> EapolKey {
+        EapolKey::new()
+            .key_information(
+                base_info()
+                    .with_key_ack(true)
+                    .with_key_mic(true)
+                    .with_install(true)
+                    .with_secure(true)
+                    .with_encrypted_key_data(true),
+            )
+            .key_length(16)
+            .replay_counter(replay_counter)
+            .nonce(bytes::<32>(nonce_seed))
+            .mic(bytes::<16>(0x90))
+            .key_data([0xdd, 0x16, 0x01])
+    }
+
+    fn message_4(replay_counter: u64) -> EapolKey {
+        EapolKey::new()
+            .key_information(base_info().with_key_mic(true).with_secure(true))
+            .key_length(16)
+            .replay_counter(replay_counter)
+            .mic(bytes::<16>(0xa0))
+    }
+
+    #[test]
+    fn handshake_classifies_synthetic_eapol_key_messages() {
+        assert_eq!(
+            HandshakeMessage::classify(&message_1(1, 0x10)),
+            HandshakeMessage::Message1
+        );
+        assert_eq!(
+            HandshakeMessage::classify(&message_2(1, 0x20)),
+            HandshakeMessage::Message2
+        );
+        assert_eq!(
+            HandshakeMessage::classify(&message_3(2, 0x10)),
+            HandshakeMessage::Message3
+        );
+        assert_eq!(
+            HandshakeMessage::classify(&message_4(2)),
+            HandshakeMessage::Message4
+        );
+
+        let unknown = EapolKey::new()
+            .key_information(base_info().with_key_mic(true).with_request(true))
+            .replay_counter(3)
+            .nonce(bytes::<32>(0x30))
+            .mic(bytes::<16>(0xb0))
+            .key_data([0x01]);
+
+        assert_eq!(
+            HandshakeMessage::classify(&unknown),
+            HandshakeMessage::Unknown
+        );
+        assert!(HandshakeMessage::Message1.is_known());
+        assert_eq!(HandshakeMessage::Message4.number(), Some(4));
+        assert_eq!(HandshakeMessage::Message4.label(), "message_4");
+    }
+
+    #[test]
+    fn handshake_session_tracks_normal_sequence() {
+        let bssid = mac(1);
+        let station = mac(2);
+        let mut bss = ObservedBss::new(bssid);
+
+        bss.observe_ssid(b"lab");
+        assert_eq!(bss.bssid(), bssid);
+        assert_eq!(bss.ssid(), Some(b"lab".as_slice()));
+
+        let observed_1 = bss
+            .observe_eapol_key(bssid, station, &message_1(1, 0x10))
+            .unwrap();
+        let observed_2 = bss
+            .observe_eapol_key(station, bssid, &message_2(1, 0x20))
+            .unwrap();
+        let observed_3 = bss
+            .observe_eapol_key(bssid, station, &message_3(2, 0x10))
+            .unwrap();
+        let observed_4 = bss
+            .observe_eapol_key(station, bssid, &message_4(2))
+            .unwrap();
+
+        assert_eq!(observed_1.message(), HandshakeMessage::Message1);
+        assert_eq!(observed_2.message(), HandshakeMessage::Message2);
+        assert_eq!(observed_3.message(), HandshakeMessage::Message3);
+        assert_eq!(observed_4.message(), HandshakeMessage::Message4);
+        assert_eq!(observed_1.replay_counter(), 1);
+        assert_eq!(observed_1.transmitter(), bssid);
+        assert_eq!(observed_2.receiver(), bssid);
+        assert_eq!(
+            observed_3.transmitter_role(),
+            Some(PairwiseRole::Authenticator)
+        );
+        assert!(observed_4.accepted());
+
+        let session = bss.session(station).unwrap();
+        assert_eq!(session.bssid(), bssid);
+        assert_eq!(session.station(), station);
+        assert_eq!(session.authenticator(), Some(bssid));
+        assert_eq!(session.supplicant(), Some(station));
+        assert_eq!(session.message_1().replay_counter(), Some(1));
+        assert_eq!(session.message_2().replay_counter(), Some(1));
+        assert_eq!(session.message_3().replay_counter(), Some(2));
+        assert_eq!(session.message_4().replay_counter(), Some(2));
+        assert_eq!(session.message_1().observation_count(), 1);
+        assert_eq!(session.ap_nonce(), Some(bytes::<32>(0x10)));
+        assert_eq!(session.ap_nonce_replay_counter(), Some(2));
+        assert_eq!(session.station_nonce(), Some(bytes::<32>(0x20)));
+        assert_eq!(session.station_nonce_replay_counter(), Some(1));
+        assert_eq!(session.status(), WpaHandshakeStatus::Complete);
+        assert_eq!(
+            session.last_observation().unwrap().message(),
+            HandshakeMessage::Message4
+        );
+        assert_eq!(bss.pairwise_sessions().len(), 1);
+    }
+
+    #[test]
+    fn handshake_session_tolerates_duplicate_messages() {
+        let bssid = mac(1);
+        let station = mac(2);
+        let mut bss = ObservedBss::new(bssid);
+
+        let first = bss.observe_pairwise_key(station, bssid, station, &message_1(5, 0x10));
+        let duplicate = bss.observe_pairwise_key(station, bssid, station, &message_1(5, 0x10));
+        bss.observe_pairwise_key(station, station, bssid, &message_2(5, 0x20));
+        bss.observe_pairwise_key(station, station, bssid, &message_2(5, 0x20));
+
+        assert!(first.accepted());
+        assert!(duplicate.accepted());
+
+        let session = bss.session(station).unwrap();
+        assert_eq!(session.message_1().replay_counter(), Some(5));
+        assert_eq!(session.message_1().observation_count(), 2);
+        assert_eq!(session.message_2().observation_count(), 2);
+        assert_eq!(session.ap_nonce(), Some(bytes::<32>(0x10)));
+        assert_eq!(session.station_nonce(), Some(bytes::<32>(0x20)));
+        assert_eq!(session.status(), WpaHandshakeStatus::Observing);
+    }
+
+    #[test]
+    fn handshake_session_keeps_newer_nonce_after_out_of_order_frames() {
+        let bssid = mac(1);
+        let station = mac(2);
+        let mut bss = ObservedBss::new(bssid);
+
+        bss.observe_pairwise_key(station, bssid, station, &message_3(20, 0x30));
+        bss.observe_pairwise_key(station, bssid, station, &message_1(10, 0x10));
+        bss.observe_pairwise_key(station, station, bssid, &message_4(20));
+        bss.observe_pairwise_key(station, station, bssid, &message_2(10, 0x40));
+
+        let stale = bss.observe_pairwise_key(station, bssid, station, &message_3(19, 0x50));
+        let session = bss.session(station).unwrap();
+
+        assert!(!stale.accepted());
+        assert_eq!(session.message_1().replay_counter(), Some(10));
+        assert_eq!(session.message_3().replay_counter(), Some(20));
+        assert_eq!(session.ap_nonce(), Some(bytes::<32>(0x30)));
+        assert_eq!(session.ap_nonce_replay_counter(), Some(20));
+        assert_eq!(session.station_nonce(), Some(bytes::<32>(0x40)));
+        assert_eq!(session.message_4().replay_counter(), Some(20));
+        assert!(session.is_complete());
+        assert_eq!(session.status(), WpaHandshakeStatus::Complete);
+    }
+}
