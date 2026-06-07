@@ -23,6 +23,8 @@ mod fragment_contract;
 #[cfg(test)]
 mod fragment_metadata;
 #[cfg(test)]
+mod observability;
+#[cfg(test)]
 mod resilience;
 #[cfg(test)]
 mod roundtrip;
@@ -180,8 +182,8 @@ pub use config::{
     IP_DEFRAG_DEFAULT_MAX_AGE, IP_DEFRAG_DEFAULT_MAX_BYTES_PER_DATAGRAM,
     IP_DEFRAG_DEFAULT_MAX_DATAGRAMS, IP_FRAGMENT_MIN_MTU,
 };
-pub use defrag::IpDefrag;
-pub use fragmentation::IpFragment;
+pub use defrag::{IpDefrag, IpDefragStats};
+pub use fragmentation::{IpFragment, IpFragmentStats};
 pub use metadata::{
     IpDefragEvictionReason, IpDefragMetadata, IpDefragOverlapStatus, IpFragmentFamily,
     IpFragmentMetadata, IpFragmentRange, IpFragmentReason,

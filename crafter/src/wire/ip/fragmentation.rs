@@ -40,6 +40,68 @@ pub struct IpFragment {
     ipv6_identification_generator: Ipv6IdentificationGenerator,
     input_count: usize,
     emitted_count: usize,
+    pass_through_count: usize,
+    fragments_observed: usize,
+    completed_datagram_count: usize,
+    error_count: usize,
+}
+
+/// Compact counters for an [`IpFragment`] transform.
+///
+/// These counters summarize source-side fragmentation activity without
+/// retaining packet bytes or emitted records.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct IpFragmentStats {
+    input_count: usize,
+    emitted_count: usize,
+    pass_through_count: usize,
+    fragments_observed: usize,
+    completed_datagrams: usize,
+    evicted_datagrams: usize,
+    conflicts: usize,
+    errors: usize,
+}
+
+impl IpFragmentStats {
+    /// Number of input records seen.
+    pub const fn input_count(&self) -> usize {
+        self.input_count
+    }
+
+    /// Number of records successfully emitted.
+    pub const fn emitted_count(&self) -> usize {
+        self.emitted_count
+    }
+
+    /// Number of records emitted without splitting into new fragments.
+    pub const fn pass_through_count(&self) -> usize {
+        self.pass_through_count
+    }
+
+    /// Number of fragment records emitted or accepted as pre-fragmented input.
+    pub const fn fragments_observed(&self) -> usize {
+        self.fragments_observed
+    }
+
+    /// Number of source datagrams split into multiple fragments.
+    pub const fn completed_datagrams(&self) -> usize {
+        self.completed_datagrams
+    }
+
+    /// Number of datagrams evicted by this transform.
+    pub const fn evicted_datagrams(&self) -> usize {
+        self.evicted_datagrams
+    }
+
+    /// Number of conflicting fragment datagrams observed by this transform.
+    pub const fn conflicts(&self) -> usize {
+        self.conflicts
+    }
+
+    /// Number of transform calls that returned an error.
+    pub const fn errors(&self) -> usize {
+        self.errors
+    }
 }
 
 impl IpFragment {
@@ -60,6 +122,10 @@ impl IpFragment {
             ipv6_identification_generator: Ipv6IdentificationGenerator::new(),
             input_count: 0,
             emitted_count: 0,
+            pass_through_count: 0,
+            fragments_observed: 0,
+            completed_datagram_count: 0,
+            error_count: 0,
         }
     }
 
@@ -84,6 +150,50 @@ impl IpFragment {
         self.emitted_count
     }
 
+    /// Number of records emitted without splitting into new fragments.
+    pub const fn pass_through_count(&self) -> usize {
+        self.pass_through_count
+    }
+
+    /// Number of fragment records emitted or accepted as pre-fragmented input.
+    pub const fn fragments_observed(&self) -> usize {
+        self.fragments_observed
+    }
+
+    /// Number of source datagrams split into multiple fragments.
+    pub const fn completed_datagrams(&self) -> usize {
+        self.completed_datagram_count
+    }
+
+    /// Number of datagrams evicted by this transform.
+    pub const fn evicted_datagrams(&self) -> usize {
+        0
+    }
+
+    /// Number of conflicting fragment datagrams observed by this transform.
+    pub const fn conflicts(&self) -> usize {
+        0
+    }
+
+    /// Number of transform calls that returned an error.
+    pub const fn errors(&self) -> usize {
+        self.error_count
+    }
+
+    /// Return a compact snapshot of transform counters.
+    pub const fn stats(&self) -> IpFragmentStats {
+        IpFragmentStats {
+            input_count: self.input_count,
+            emitted_count: self.emitted_count,
+            pass_through_count: self.pass_through_count,
+            fragments_observed: self.fragments_observed,
+            completed_datagrams: self.completed_datagram_count,
+            evicted_datagrams: 0,
+            conflicts: 0,
+            errors: self.error_count,
+        }
+    }
+
     /// Run the transform and collect emitted records into a small buffer.
     pub fn fragment_record(&mut self, record: PacketRecord) -> Result<TransformOutput> {
         self.transform_to_output(record)
@@ -96,6 +206,20 @@ impl PacketTransform for IpFragment {
     }
 
     fn transform(
+        &mut self,
+        record: PacketRecord,
+        emit: &mut dyn FnMut(PacketRecord) -> Result<()>,
+    ) -> Result<()> {
+        let result = self.try_transform(record, emit);
+        if result.is_err() {
+            self.error_count += 1;
+        }
+        result
+    }
+}
+
+impl IpFragment {
+    fn try_transform(
         &mut self,
         record: PacketRecord,
         emit: &mut dyn FnMut(PacketRecord) -> Result<()>,
@@ -113,6 +237,9 @@ impl PacketTransform for IpFragment {
                     return Ok(());
                 }
 
+                if view.is_fragmented() {
+                    self.fragments_observed += 1;
+                }
                 let mut record = record;
                 record
                     .metadata_mut()
@@ -140,6 +267,7 @@ impl IpFragment {
     ) -> Result<()> {
         match extract_ipv6_fragment(&record)? {
             Ipv6FragmentExtract::View(view) => {
+                self.fragments_observed += 1;
                 let mut record = record;
                 record
                     .metadata_mut()
@@ -235,6 +363,7 @@ impl IpFragment {
 
         emit(record)?;
         self.emitted_count += 1;
+        self.pass_through_count += 1;
         Ok(())
     }
 
@@ -290,8 +419,10 @@ impl IpFragment {
 
             emit(PacketRecord::from_packet_metadata(packet, metadata))?;
             self.emitted_count += 1;
+            self.fragments_observed += 1;
         }
 
+        self.completed_datagram_count += 1;
         Ok(())
     }
 
@@ -338,8 +469,10 @@ impl IpFragment {
 
             emit(PacketRecord::from_packet_metadata(packet, metadata))?;
             self.emitted_count += 1;
+            self.fragments_observed += 1;
         }
 
+        self.completed_datagram_count += 1;
         Ok(())
     }
 }
