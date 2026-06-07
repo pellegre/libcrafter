@@ -109,7 +109,7 @@ jobs:
           fi
 
       - name: Compile Python validation tooling
-        run: python3 -m compileall tools/lab/engine tools/oracle/engine tools/probe/engine tools/wire/engine tools/wire/smoke
+        run: python3 -m compileall tools/lab/engine tools/oracle/engine tools/probe/engine tools/endpoint/engine tools/endpoint/smoke
 
       - name: Run lab Python tests
         run: python3 -m unittest discover -s tools/lab/tests -p 'test_*.py'
@@ -120,8 +120,8 @@ jobs:
       - name: Run probe Python tests
         run: python3 -m unittest discover -s tools/probe/tests -p 'test_*.py'
 
-      - name: Run wire Python tests
-        run: python3 -m unittest discover -s tools/wire/tests -p 'test_*.py'
+      - name: Run endpoint Python tests
+        run: python3 -m unittest discover -s tools/endpoint/tests -p 'test_*.py'
 
       - name: Generate oracle CI corpus
         run: tools/oracle/run corpus --profile ci --seed 12345 --count 100 --out target/oracle/ci-corpus
