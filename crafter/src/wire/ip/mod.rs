@@ -19,6 +19,8 @@ mod range;
 #[cfg(test)]
 mod defrag_contract;
 #[cfg(test)]
+mod fragment_contract;
+#[cfg(test)]
 mod fragment_metadata;
 #[cfg(test)]
 mod tests;
