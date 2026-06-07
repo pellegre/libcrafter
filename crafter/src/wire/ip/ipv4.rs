@@ -57,6 +57,7 @@ pub(crate) struct Ipv4FragmentView {
     fragment_offset: u16,
     header_len: usize,
     total_len: usize,
+    header: Vec<u8>,
     payload: Vec<u8>,
 }
 
@@ -109,6 +110,11 @@ impl Ipv4FragmentView {
     /// IPv4 total length in bytes.
     pub(crate) const fn total_len(&self) -> usize {
         self.total_len
+    }
+
+    /// Raw IPv4 header bytes from the fragment.
+    pub(crate) fn header(&self) -> &[u8] {
+        &self.header
     }
 
     /// IPv4 payload bytes after the IPv4 header and before any wrapper suffix.
@@ -477,6 +483,7 @@ fn parse_ipv4_view(start: Ipv4Start, bytes: &[u8]) -> Result<Ipv4FragmentView> {
     let flags_fragment = read_u16_be(&datagram[6..8])?;
     let flags = (flags_fragment >> 13) as u8;
     let fragment_offset = flags_fragment & IPV4_FRAGMENT_OFFSET_MASK;
+    let header = datagram[..header_len].to_vec();
     let payload = datagram[header_len..total_len].to_vec();
     let wrapper = Ipv4FragmentWrapper::new(start.kind, start.offset, bytes, total_len);
 
@@ -490,6 +497,7 @@ fn parse_ipv4_view(start: Ipv4Start, bytes: &[u8]) -> Result<Ipv4FragmentView> {
         fragment_offset,
         header_len,
         total_len,
+        header,
         payload,
     })
 }
