@@ -157,6 +157,11 @@ impl IpFragmentMetadata {
         self.emitted_index
     }
 
+    /// Compatibility alias for the zero-based emitted fragment index.
+    pub const fn fragment_index(&self) -> usize {
+        self.emitted_index()
+    }
+
     /// Byte range from the source packet's fragmentable payload.
     pub const fn byte_range(&self) -> IpFragmentRange {
         self.byte_range

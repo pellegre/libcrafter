@@ -1,7 +1,10 @@
 //! Transmit-side IP fragmentation transform.
 
-use super::ipv6::{extract_ipv6_fragment, Ipv6FragmentExtract};
-use super::IpFragmentConfig;
+use super::ipv4::{extract_ipv4_fragment, Ipv4FragmentExtract, Ipv4FragmentView};
+use super::ipv6::{extract_ipv6_fragment, Ipv6FragmentExtract, Ipv6FragmentView};
+use super::{
+    IpFragmentConfig, IpFragmentFamily, IpFragmentMetadata, IpFragmentRange, IpFragmentReason,
+};
 use crate::wire::record::{PacketRecord, TransformTrace};
 use crate::wire::transform::{PacketTransform, TransformOutput};
 use crate::wire::Result;
@@ -75,10 +78,7 @@ impl PacketTransform for IpFragment {
         self.input_count += 1;
 
         let mut record = record;
-        let trace_note = match extract_ipv6_fragment(&record)? {
-            Ipv6FragmentExtract::PassThrough(pass_through) => pass_through.reason().trace_note(),
-            Ipv6FragmentExtract::View(_) => None,
-        };
+        let trace_note = self.attach_fragment_metadata(&mut record)?;
 
         if let Some(note) =
             trace_note.or_else(|| self.config.traces_passthrough().then_some("passthrough"))
@@ -92,6 +92,74 @@ impl PacketTransform for IpFragment {
         self.emitted_count += 1;
         Ok(())
     }
+}
+
+impl IpFragment {
+    fn attach_fragment_metadata(&self, record: &mut PacketRecord) -> Result<Option<&'static str>> {
+        if let Ipv4FragmentExtract::View(view) = extract_ipv4_fragment(record)? {
+            record
+                .metadata_mut()
+                .push_ip_fragment_metadata(ipv4_fragment_metadata(&view, self.config.mtu()));
+            return Ok(None);
+        }
+
+        match extract_ipv6_fragment(record)? {
+            Ipv6FragmentExtract::View(view) => {
+                record
+                    .metadata_mut()
+                    .push_ip_fragment_metadata(ipv6_fragment_metadata(&view, self.config.mtu()));
+                Ok(None)
+            }
+            Ipv6FragmentExtract::PassThrough(pass_through) => {
+                Ok(pass_through.reason().trace_note())
+            }
+        }
+    }
+}
+
+fn ipv4_fragment_metadata(view: &Ipv4FragmentView, mtu: usize) -> IpFragmentMetadata {
+    let start = view.fragment_offset_bytes();
+    let payload_len = saturated_u32(view.payload().len());
+    let reason = if view.is_fragmented() {
+        IpFragmentReason::Fragmented
+    } else {
+        IpFragmentReason::AlreadyFits
+    };
+
+    IpFragmentMetadata::new(
+        IpFragmentFamily::Ipv4,
+        mtu,
+        u32::from(view.identification()),
+        view.fragment_offset(),
+        view.more_fragments(),
+        1,
+        0,
+        IpFragmentRange::new(start, start.saturating_add(payload_len)),
+    )
+    .with_original_len(payload_len)
+    .with_reason(reason)
+}
+
+fn ipv6_fragment_metadata(view: &Ipv6FragmentView, mtu: usize) -> IpFragmentMetadata {
+    let start = view.fragment_offset_bytes();
+    let payload_len = saturated_u32(view.fragmentable_payload().len());
+
+    IpFragmentMetadata::new(
+        IpFragmentFamily::Ipv6,
+        mtu,
+        view.identification(),
+        view.fragment_offset(),
+        view.more_fragments(),
+        1,
+        0,
+        IpFragmentRange::new(start, start.saturating_add(payload_len)),
+    )
+    .with_original_len(payload_len)
+    .with_reason(IpFragmentReason::Fragmented)
+}
+
+fn saturated_u32(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
 }
 
 #[cfg(test)]
