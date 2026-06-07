@@ -1,11 +1,13 @@
 use std::sync::{Arc, Mutex};
 
-use crate::Raw;
+use std::net::Ipv4Addr;
+
+use crate::{Ipv4, Raw};
 
 use super::{
-    BackendKind, DropAllTransform, DuplicateTransform, PacketOrigin, PacketRecord, PacketTransform,
-    PacketWriter, PassThroughTransform, Result, Sniffer, TraceAppendTransform, TransformTrace,
-    Transmitter, VecPacketSource, WireError, WriteReport,
+    BackendKind, DropAllTransform, DuplicateTransform, IpDefrag, PacketOrigin, PacketRecord,
+    PacketTransform, PacketWriter, PassThroughTransform, Result, Sniffer, TraceAppendTransform,
+    TransformTrace, Transmitter, VecPacketSource, WireError, WriteReport,
 };
 
 fn make_record(payload: impl Into<String>) -> PacketRecord {
@@ -174,6 +176,39 @@ fn transform_contract_stateful_handshake_update_can_emit_later_packet() {
     assert_packet_shaped(&records);
 }
 
+#[test]
+fn transform_contract_ip_defrag_uses_zero_one_and_passthrough_outputs() {
+    let mut direct = IpDefrag::new();
+    let incomplete = direct
+        .transform_to_output(ipv4_fragment_record(0, true, b"abcdefgh"))
+        .unwrap();
+    assert!(incomplete.is_empty());
+
+    let complete = direct
+        .transform_to_output(ipv4_fragment_record(1, false, b"ijkl"))
+        .unwrap();
+    assert_eq!(complete.len(), 1);
+    assert_packet_shaped(complete.records());
+
+    let non_fragmented = direct
+        .transform_to_output(ipv4_non_fragmented_record())
+        .unwrap();
+    assert_eq!(non_fragmented.len(), 1);
+    assert_packet_shaped(non_fragmented.records());
+
+    let sniffer_records = Sniffer::new(VecPacketSource::new([
+        ipv4_fragment_record(0, true, b"abcdefgh"),
+        ipv4_fragment_record(1, false, b"ijkl"),
+        ipv4_non_fragmented_record(),
+    ]))
+    .with(IpDefrag::new())
+    .no_timeout()
+    .collect_records()
+    .unwrap();
+    assert_eq!(sniffer_records.len(), 2);
+    assert_packet_shaped(&sniffer_records);
+}
+
 fn texts(records: &[PacketRecord]) -> Vec<String> {
     records.iter().map(packet_text).collect()
 }
@@ -183,6 +218,35 @@ fn assert_trace(record: &PacketRecord, name: &str, note: Option<&str>) {
     assert_eq!(traces.len(), 1);
     assert_eq!(traces[0].name(), name);
     assert_eq!(traces[0].note(), note);
+}
+
+fn ipv4_fragment_record(
+    fragment_offset: u16,
+    more_fragments: bool,
+    payload: &[u8],
+) -> PacketRecord {
+    PacketRecord::new(
+        Ipv4::with_addresses(
+            Ipv4Addr::new(192, 0, 2, 77),
+            Ipv4Addr::new(198, 51, 100, 77),
+        )
+        .protocol(17)
+        .identification(0x7777)
+        .fragment_offset(fragment_offset)
+        .more_fragments(more_fragments)
+            / Raw::from_bytes(payload),
+    )
+}
+
+fn ipv4_non_fragmented_record() -> PacketRecord {
+    PacketRecord::new(
+        Ipv4::with_addresses(
+            Ipv4Addr::new(192, 0, 2, 77),
+            Ipv4Addr::new(198, 51, 100, 77),
+        )
+        .protocol(6)
+            / Raw::from_bytes(b"not-fragmented"),
+    )
 }
 
 #[derive(Debug, Clone, Default)]
