@@ -97,6 +97,9 @@ __pycache__/
 .libcrafter-live/
 tools/endpoint/.state/
 tools/endpoint/artifacts/
+# Legacy generated state from the pre-endpoint provider tool name.
+tools/wire/.state/
+tools/wire/artifacts/
 tools/lab/.state/
 tools/lab/artifacts/
 
