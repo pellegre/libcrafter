@@ -1,0 +1,373 @@
+version: 1
+kind: feature
+name: ip_fragment_transforms
+summary: IPv4 and IPv6 packet-stream fragmentation and defragmentation transform contract.
+
+layers:
+  - ipv4
+  - ipv6
+  - ipv6_fragment
+  - udp
+  - payload
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+  - roundtrip
+  - live_exchange
+strict_bytes: true
+malformed: true
+
+schema_note: >
+  The current oracle suite schema models one packet vector at a time. IP
+  defragmentation is many input records to one output record, and IP
+  fragmentation is one input record to many output records. These cases are
+  therefore contract_only until the oracle runner can execute packet-stream
+  transforms, compare ordered record sequences, and assert transform trace
+  metadata.
+schema_extension_plan:
+  - Add a transform_case model with transform name, direction, input_records,
+    expected_records, expected_trace, and expected_error fields.
+  - Allow Scapy backend materializers to generate ordered IPv4 and IPv6
+    fragment record sequences, including duplicate, overlap, and missing-final
+    variants.
+  - Allow libcrafter adapter commands to run PacketTransform implementations
+    over PacketRecord streams and emit normalized record plus metadata JSON.
+  - Extend pcap mode to compare fragment pcaps with transform-reassembled
+    payload hashes and per-record trace metadata.
+  - Add provider-backed live_exchange profiles for constrained-MTU lab runs
+    after offline and pcap transform cases are executable.
+
+profiles:
+  - name: ip-fragment-offline
+    purpose: Scapy-backed byte and metadata contract for transform-only offline cases.
+  - name: ip-fragment-pcap
+    purpose: Fragment pcap fixtures and reassembled payload hash comparison.
+  - name: ip-fragment-lab-dry-run
+    purpose: Provider-backed Hetzner, QEMU, and VirtualBox constrained-MTU dry-run planning.
+
+behaviors:
+  - name: ipv4_defrag_complete
+    family: IPv4
+    transform: IpDefrag
+    expected_direction: reference_to_libcrafter
+    byte_policy: reassembled_packet
+    requirements:
+      - Group by source, destination, protocol, and identification.
+      - Accept in-order and out-of-order fragment arrival.
+      - Emit one IPv4 packet with corrected total length and checksum when byte ranges are complete.
+      - Preserve packet metadata where appropriate and append defrag trace metadata.
+  - name: ipv4_defrag_duplicates
+    family: IPv4
+    transform: IpDefrag
+    expected_direction: reference_to_libcrafter
+    byte_policy: reassembled_packet_with_duplicate_trace
+    requirements:
+      - Exact duplicate ranges with identical bytes are accepted.
+      - Duplicate observations are recorded in metadata without changing deterministic output.
+  - name: ipv4_defrag_overlap_conflict
+    family: IPv4
+    transform: IpDefrag
+    expected_direction: reference_to_libcrafter
+    byte_policy: structured_ambiguity
+    requirements:
+      - Conflicting overlaps must not silently choose payload bytes.
+      - The datagram emits no reassembled packet and records conflict metadata.
+  - name: ipv4_defrag_missing
+    family: IPv4
+    transform: IpDefrag
+    expected_direction: reference_to_libcrafter
+    byte_policy: no_emit_until_eviction
+    requirements:
+      - Missing final fragments or gaps do not emit a packet.
+      - Timeout or bounded-state eviction is trace-visible.
+  - name: ipv4_fragment_mtu
+    family: IPv4
+    transform: IpFragment
+    expected_direction: libcrafter_to_reference
+    byte_policy: fragment_sequence
+    requirements:
+      - DF-clear oversized packets split into 8-byte-aligned non-final fragments.
+      - Offsets, More Fragments, total lengths, and checksums match Scapy-normalized IPv4 fragment bytes.
+      - Packet metadata is preserved where appropriate and fragmentation trace metadata is appended.
+  - name: ipv4_fragment_df
+    family: IPv4
+    transform: IpFragment
+    expected_direction: libcrafter_to_reference
+    byte_policy: structured_error_or_explicit_nonfragmenting_trace
+    requirements:
+      - DF-set oversized packets do not emit fragments by default.
+      - The result is a structured error or explicit non-fragmenting transform trace.
+  - name: ipv6_defrag_complete
+    family: IPv6
+    transform: IpDefrag
+    expected_direction: reference_to_libcrafter
+    byte_policy: reassembled_packet
+    requirements:
+      - Group by source, destination, and Fragment Identification.
+      - Accept out-of-order arrival and exact duplicate fragments.
+      - Remove the Fragment Header and repair the supported extension chain from the offset-zero fragment.
+      - Emit one IPv6 packet with trace metadata when byte ranges are complete.
+  - name: ipv6_defrag_atomic
+    family: IPv6
+    transform: IpDefrag
+    expected_direction: reference_to_libcrafter
+    byte_policy: atomic_packet_without_fragment_header
+    requirements:
+      - Atomic fragments are processed in isolation.
+      - Atomic fragments are not merged with or used to flush other fragment state.
+  - name: ipv6_defrag_overlap_conflict
+    family: IPv6
+    transform: IpDefrag
+    expected_direction: reference_to_libcrafter
+    byte_policy: structured_ambiguity
+    requirements:
+      - Overlapping IPv6 fragments abandon the ambiguous packet.
+      - Duplicate identical fragments remain trace-visible and do not change output.
+  - name: ipv6_fragment_mtu
+    family: IPv6
+    transform: IpFragment
+    expected_direction: libcrafter_to_reference
+    byte_policy: fragment_sequence
+    requirements:
+      - Source-side fragmentation inserts IPv6 Fragment headers.
+      - Non-final fragmentable parts are 8-byte aligned.
+      - The supported narrow scope covers plain IPv6 plus already-modeled Hop-by-Hop, Destination Options, Routing, UDP, ICMPv6, TCP-as-raw, and Payload chains.
+      - Unsupported extension-header chains fail or pass through with explicit trace metadata; they are never silently rewritten.
+
+coverage_cases:
+  - ip-defrag-ipv4-in-order
+  - ip-defrag-ipv4-out-of-order
+  - ip-defrag-ipv4-duplicate
+  - ip-defrag-ipv4-overlap-conflict
+  - ip-defrag-ipv4-missing-final
+  - ip-fragment-ipv4-df-clear
+  - ip-fragment-ipv4-df-set
+  - ip-fragment-ipv4-too-small-mtu
+  - ip-defrag-ipv6-out-of-order
+  - ip-defrag-ipv6-duplicate
+  - ip-defrag-ipv6-overlap-conflict
+  - ip-defrag-ipv6-missing-final
+  - ip-defrag-ipv6-atomic
+  - ip-fragment-ipv6-plain
+  - ip-fragment-ipv6-supported-extension-scope
+  - ip-fragment-ipv6-unsupported-extension-scope
+  - ip-fragment-roundtrip-ipv4
+  - ip-fragment-roundtrip-ipv6
+  - ip-fragment-lab-constrained-mtu
+
+supported_cases:
+  - name: ip-defrag-ipv4-in-order
+    directions:
+      - reference_to_libcrafter
+    byte_policy: reassembled_packet
+    transform: IpDefrag
+    family: IPv4
+    profiles:
+      - ip-fragment-offline
+      - ip-fragment-pcap
+    contract_only: true
+    expected: emit one reassembled IPv4 PacketRecord with original payload, corrected total length, corrected checksum, and defrag trace metadata.
+  - name: ip-defrag-ipv4-out-of-order
+    directions:
+      - reference_to_libcrafter
+    byte_policy: reassembled_packet
+    transform: IpDefrag
+    family: IPv4
+    profiles:
+      - ip-fragment-offline
+      - ip-fragment-pcap
+    contract_only: true
+    expected: emit the same IPv4 PacketRecord as the in-order case after complete out-of-order fragments arrive.
+  - name: ip-defrag-ipv4-duplicate
+    directions:
+      - reference_to_libcrafter
+    byte_policy: reassembled_packet_with_duplicate_trace
+    transform: IpDefrag
+    family: IPv4
+    profiles:
+      - ip-fragment-offline
+      - ip-fragment-pcap
+    contract_only: true
+    expected: accept identical duplicate fragment bytes, keep deterministic reassembly, and record duplicate_count metadata.
+  - name: ip-defrag-ipv4-overlap-conflict
+    directions:
+      - reference_to_libcrafter
+    byte_policy: structured_ambiguity
+    transform: IpDefrag
+    family: IPv4
+    profiles:
+      - ip-fragment-offline
+      - ip-fragment-pcap
+    contract_only: true
+    expected: emit no reassembled packet and report conflicting overlap metadata.
+  - name: ip-defrag-ipv4-missing-final
+    directions:
+      - reference_to_libcrafter
+    byte_policy: no_emit_until_eviction
+    transform: IpDefrag
+    family: IPv4
+    profiles:
+      - ip-fragment-offline
+    contract_only: true
+    expected: emit nothing until a configured timeout or bound evicts the incomplete datagram with trace metadata.
+  - name: ip-fragment-ipv4-df-clear
+    directions:
+      - libcrafter_to_reference
+    byte_policy: fragment_sequence
+    transform: IpFragment
+    family: IPv4
+    profiles:
+      - ip-fragment-offline
+      - ip-fragment-pcap
+    contract_only: true
+    expected: emit IPv4 fragments with Scapy-equivalent offsets, MF flags, total lengths, checksums, and 8-byte-aligned non-final payload lengths.
+  - name: ip-fragment-ipv4-df-set
+    directions:
+      - libcrafter_to_reference
+    byte_policy: structured_error_or_explicit_nonfragmenting_trace
+    transform: IpFragment
+    family: IPv4
+    profiles:
+      - ip-fragment-offline
+    contract_only: true
+    expected: default behavior emits no fragments for oversized DF packets and returns a structured error or explicit non-fragmenting trace.
+  - name: ip-fragment-ipv4-too-small-mtu
+    directions:
+      - libcrafter_to_reference
+    byte_policy: structured_error
+    transform: IpFragment
+    family: IPv4
+    profiles:
+      - ip-fragment-offline
+    contract_only: true
+    expected: MTU too small for required IPv4 headers is a structured transform error, not a truncated packet.
+  - name: ip-defrag-ipv6-out-of-order
+    directions:
+      - reference_to_libcrafter
+    byte_policy: reassembled_packet
+    transform: IpDefrag
+    family: IPv6
+    profiles:
+      - ip-fragment-offline
+      - ip-fragment-pcap
+    contract_only: true
+    expected: group by IPv6 source, destination, and Fragment Identification, then emit one IPv6 PacketRecord with the Fragment Header removed.
+  - name: ip-defrag-ipv6-duplicate
+    directions:
+      - reference_to_libcrafter
+    byte_policy: reassembled_packet_with_duplicate_trace
+    transform: IpDefrag
+    family: IPv6
+    profiles:
+      - ip-fragment-offline
+      - ip-fragment-pcap
+    contract_only: true
+    expected: accept identical duplicate fragments, emit deterministic output, and record duplicate metadata.
+  - name: ip-defrag-ipv6-overlap-conflict
+    directions:
+      - reference_to_libcrafter
+    byte_policy: structured_ambiguity
+    transform: IpDefrag
+    family: IPv6
+    profiles:
+      - ip-fragment-offline
+      - ip-fragment-pcap
+    contract_only: true
+    expected: abandon the ambiguous IPv6 packet and do not silently emit overlapping payload bytes.
+  - name: ip-defrag-ipv6-missing-final
+    directions:
+      - reference_to_libcrafter
+    byte_policy: no_emit_until_eviction
+    transform: IpDefrag
+    family: IPv6
+    profiles:
+      - ip-fragment-offline
+    contract_only: true
+    expected: incomplete IPv6 fragment sets emit no packet and expose timeout or bounded-state eviction metadata.
+  - name: ip-defrag-ipv6-atomic
+    directions:
+      - reference_to_libcrafter
+    byte_policy: atomic_packet_without_fragment_header
+    transform: IpDefrag
+    family: IPv6
+    profiles:
+      - ip-fragment-offline
+      - ip-fragment-pcap
+    contract_only: true
+    expected: process the atomic fragment independently, remove the Fragment Header, and avoid interaction with other queued fragments.
+  - name: ip-fragment-ipv6-plain
+    directions:
+      - libcrafter_to_reference
+    byte_policy: fragment_sequence
+    transform: IpFragment
+    family: IPv6
+    profiles:
+      - ip-fragment-offline
+      - ip-fragment-pcap
+    contract_only: true
+    expected: emit source-side IPv6 fragments with Fragment headers, correct offsets, and 8-byte-aligned non-final fragmentable parts.
+  - name: ip-fragment-ipv6-supported-extension-scope
+    directions:
+      - libcrafter_to_reference
+    byte_policy: fragment_sequence
+    transform: IpFragment
+    family: IPv6
+    profiles:
+      - ip-fragment-offline
+      - ip-fragment-pcap
+    contract_only: true
+    expected: support the documented narrow extension-header scope and repair next-header links through Scapy-equivalent fragment bytes.
+  - name: ip-fragment-ipv6-unsupported-extension-scope
+    directions:
+      - libcrafter_to_reference
+    byte_policy: structured_error_or_explicit_passthrough_trace
+    transform: IpFragment
+    family: IPv6
+    profiles:
+      - ip-fragment-offline
+    contract_only: true
+    expected: unsupported extension-header chains fail or pass through with explicit trace metadata.
+  - name: ip-fragment-roundtrip-ipv4
+    directions:
+      - roundtrip
+    byte_policy: payload_hash_and_trace
+    transform: IpFragment_then_IpDefrag
+    family: IPv4
+    profiles:
+      - ip-fragment-offline
+      - ip-fragment-pcap
+    contract_only: true
+    expected: IpFragment output fed to IpDefrag reassembles to the original IPv4 payload and records both transform traces.
+  - name: ip-fragment-roundtrip-ipv6
+    directions:
+      - roundtrip
+    byte_policy: payload_hash_and_trace
+    transform: IpFragment_then_IpDefrag
+    family: IPv6
+    profiles:
+      - ip-fragment-offline
+      - ip-fragment-pcap
+    contract_only: true
+    expected: IpFragment output fed to IpDefrag reassembles to the original IPv6 payload, with the Fragment Header removed and traces preserved.
+  - name: ip-fragment-lab-constrained-mtu
+    directions:
+      - live_exchange
+    byte_policy: payload_hash_and_trace
+    transform: IpFragment_and_IpDefrag
+    family: IPv4_IPv6
+    profiles:
+      - ip-fragment-lab-dry-run
+    contract_only: true
+    expected: provider-backed lab endpoints with constrained MTU and offloads disabled produce kernel-delivered payload hashes matching transform-reassembled payload hashes, or a structured provider skip artifact.
+
+backend_support:
+  scapy:
+    status: planned
+    notes:
+      - Scapy is the reference backend for generating IPv4 and IPv6 fragment sequences and normalizing fragment bytes.
+      - Transform-only execution needs an oracle schema extension before these contract cases can run.
+  libcrafter:
+    status: planned
+    notes:
+      - IpDefrag and IpFragment PacketTransform implementations are planned by the ip-fragment-transforms work.
+      - The future adapter must emit PacketRecord metadata and TransformTrace JSON for comparison.

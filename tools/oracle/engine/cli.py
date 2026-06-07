@@ -8272,6 +8272,7 @@ def _self_check(args: argparse.Namespace) -> int:
 
 _SUITE_FEATURE_BY_FAMILY = {
     "dns": "dns_behavior",
+    "ip": "ip_fragment_transforms",
     "ipv6": "ipv6_fragment_routing",
 }
 _SUITE_OFFLINE_DIRECTIONS = (
@@ -8285,7 +8286,9 @@ def _suite_offline_cases(feature_name: str) -> list[JSONObject]:
 
     Each entry pairs a declared case with one supported offline direction and
     its byte policy, excluding structured_error cases (the oracle has no offline
-    malformed comparison pathway). The result is sorted for reproducibility.
+    malformed comparison pathway). Contract-only cases are returned for JSON
+    reporting but are not emitted as runnable offline commands. The result is
+    sorted for reproducibility.
     """
 
     from .generator import load_stack_grammar
@@ -8306,19 +8309,29 @@ def _suite_offline_cases(feature_name: str) -> list[JSONObject]:
         byte_policy = raw_case.get("byte_policy")
         if byte_policy == "structured_error":
             continue
+        contract_only = raw_case.get("contract_only") is True
+        profiles = raw_case.get("profiles", [])
+        profile_names = (
+            [profile for profile in profiles if isinstance(profile, str)]
+            if isinstance(profiles, Sequence) and not isinstance(profiles, str)
+            else []
+        )
         directions = raw_case.get("directions", [])
         if not isinstance(directions, Sequence) or isinstance(directions, str):
             directions = []
         for direction in _SUITE_OFFLINE_DIRECTIONS:
             if direction not in directions and "roundtrip" not in directions:
                 continue
-            entries.append(
-                {
-                    "case": name,
-                    "direction": direction,
-                    "byte_policy": byte_policy if isinstance(byte_policy, str) else None,
-                }
-            )
+            entry: JSONObject = {
+                "case": name,
+                "direction": direction,
+                "byte_policy": byte_policy if isinstance(byte_policy, str) else None,
+            }
+            if contract_only:
+                entry["contract_only"] = True
+            if profile_names:
+                entry["profiles"] = profile_names
+            entries.append(entry)
     entries.sort(key=lambda entry: (entry["case"], entry["direction"]))
     return entries
 
@@ -8342,7 +8355,11 @@ def _specs_suite(args: argparse.Namespace) -> int:
 
     out_root = posixpath.join(args.out, f"{family}-offline-suite")
     commands: list[JSONObject] = []
+    contract_cases: list[JSONObject] = []
     for entry in cases:
+        if entry.get("contract_only") is True:
+            contract_cases.append(dict(entry))
+            continue
         case = entry["case"]
         direction = entry["direction"]
         seed = _derive_suite_seed(args.seed, family, case, direction)
@@ -8390,6 +8407,9 @@ def _specs_suite(args: argparse.Namespace) -> int:
         "directions": list(_SUITE_OFFLINE_DIRECTIONS),
         "commands": commands,
     }
+    if contract_cases:
+        summary["contract_count"] = len(contract_cases)
+        summary["contract_cases"] = contract_cases
 
     if args.run:
         return _run_specs_suite(summary, commands)
@@ -8405,6 +8425,11 @@ def _specs_suite(args: argparse.Namespace) -> int:
             print(
                 f"  {command['direction']:<26} {command['case']:<34} "
                 f"seed={command['seed']} -> {command['artifact']}"
+            )
+        for entry in contract_cases:
+            print(
+                f"  {entry['direction']:<26} {entry['case']:<34} "
+                f"contract-only byte_policy={entry['byte_policy']}"
             )
     return 0
 
@@ -8871,7 +8896,8 @@ def build_parser() -> argparse.ArgumentParser:
             "Emit every offline-eligible supported case for a protocol family in "
             "each direction it declares, derived from the feature spec's "
             "supported_cases (directions + byte_policy). structured_error cases are "
-            "excluded because the oracle has no offline malformed pathway."
+            "excluded because the oracle has no offline malformed pathway. "
+            "contract_only cases are reported in JSON without runnable commands."
         ),
     )
     specs_suite_parser.add_argument(
