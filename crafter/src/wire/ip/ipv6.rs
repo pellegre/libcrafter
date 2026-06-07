@@ -59,6 +59,34 @@ impl Ipv6FragmentExtract {
     }
 }
 
+/// Result of inspecting a packet record as a source-side IPv6 fragmentation
+/// candidate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Ipv6FragmentableExtract {
+    /// The record contains an IPv6 packet in the supported source-fragmentation scope.
+    View(Ipv6FragmentableView),
+    /// The record is not an IPv6 packet handled by source-side fragmentation.
+    PassThrough(Ipv6FragmentPassThrough),
+}
+
+impl Ipv6FragmentableExtract {
+    /// Borrow the extracted source-side view when present.
+    pub(crate) const fn view(&self) -> Option<&Ipv6FragmentableView> {
+        match self {
+            Self::View(view) => Some(view),
+            Self::PassThrough(_) => None,
+        }
+    }
+
+    /// Borrow the pass-through reason when this record is not handled.
+    pub(crate) const fn pass_through(&self) -> Option<&Ipv6FragmentPassThrough> {
+        match self {
+            Self::View(_) => None,
+            Self::PassThrough(pass_through) => Some(pass_through),
+        }
+    }
+}
+
 /// Extracted IPv6 Fragment Header fields and fragmentable payload bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Ipv6FragmentView {
@@ -173,6 +201,73 @@ impl Ipv6FragmentView {
     }
 
     /// Bytes after the Fragment Header within this fragment.
+    pub(crate) fn fragmentable_payload(&self) -> &[u8] {
+        &self.fragmentable_payload
+    }
+}
+
+/// Extracted source-side IPv6 fields and fragmentable payload bytes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Ipv6FragmentableView {
+    wrapper: Ipv6FragmentWrapper,
+    source: Ipv6Addr,
+    destination: Ipv6Addr,
+    ipv6_next_header: u8,
+    fragment_next_header: u8,
+    payload_length: usize,
+    total_len: usize,
+    header: Vec<u8>,
+    extension_chain: Ipv6FragmentExtensionContext,
+    fragmentable_payload: Vec<u8>,
+}
+
+impl Ipv6FragmentableView {
+    /// Link or L3 wrapper context around the IPv6 packet.
+    pub(crate) const fn wrapper(&self) -> &Ipv6FragmentWrapper {
+        &self.wrapper
+    }
+
+    /// IPv6 source address.
+    pub(crate) const fn source(&self) -> Ipv6Addr {
+        self.source
+    }
+
+    /// IPv6 destination address.
+    pub(crate) const fn destination(&self) -> Ipv6Addr {
+        self.destination
+    }
+
+    /// IPv6 base-header Next Header value.
+    pub(crate) const fn ipv6_next_header(&self) -> u8 {
+        self.ipv6_next_header
+    }
+
+    /// Final Next Header value carried by the fragmentable part.
+    pub(crate) const fn fragment_next_header(&self) -> u8 {
+        self.fragment_next_header
+    }
+
+    /// IPv6 payload length from the fixed header.
+    pub(crate) const fn payload_length(&self) -> usize {
+        self.payload_length
+    }
+
+    /// IPv6 packet length in bytes, excluding wrapper prefix/suffix.
+    pub(crate) const fn total_len(&self) -> usize {
+        self.total_len
+    }
+
+    /// Raw IPv6 fixed-header bytes.
+    pub(crate) fn header(&self) -> &[u8] {
+        &self.header
+    }
+
+    /// Context needed to insert the Fragment Header into the extension chain.
+    pub(crate) const fn extension_chain(&self) -> &Ipv6FragmentExtensionContext {
+        &self.extension_chain
+    }
+
+    /// Fragmentable bytes that will be split across emitted fragments.
     pub(crate) fn fragmentable_payload(&self) -> &[u8] {
         &self.fragmentable_payload
     }
@@ -340,8 +435,22 @@ struct FragmentHeaderStart {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FragmentHeaderInsertion {
+    offset: usize,
+    previous_next_header_offset: usize,
+    fragment_next_header: u8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FragmentHeaderLocation {
     Found(FragmentHeaderStart),
+    PassThrough(Ipv6FragmentPassThroughReason),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FragmentInsertionLocation {
+    Insert(FragmentHeaderInsertion),
+    ExistingFragmentHeader,
     PassThrough(Ipv6FragmentPassThroughReason),
 }
 
@@ -365,6 +474,36 @@ pub(crate) fn extract_ipv6_fragment(record: &PacketRecord) -> Result<Ipv6Fragmen
     }
 
     parse_ipv6_view(start, bytes)
+}
+
+/// Extract a source-side IPv6 fragmentation view from a packet record or return
+/// an explicit pass-through reason. Malformed IPv6 or malformed supported
+/// wrappers return structured [`CrafterError`] values.
+pub(crate) fn extract_ipv6_fragmentable(record: &PacketRecord) -> Result<Ipv6FragmentableExtract> {
+    let bytes = record_bytes(record)?;
+    let bytes = bytes.borrow();
+
+    let start = match locate_ipv6(record, bytes)? {
+        Ipv6Location::Found(start) => start,
+        Ipv6Location::PassThrough(reason) => {
+            return Ok(Ipv6FragmentableExtract::PassThrough(
+                Ipv6FragmentPassThrough::new(reason),
+            ))
+        }
+    };
+
+    if bytes.len() <= start.offset {
+        return Ok(Ipv6FragmentableExtract::PassThrough(
+            Ipv6FragmentPassThrough::new(Ipv6FragmentPassThroughReason::NonIpv6),
+        ));
+    }
+    if bytes[start.offset] >> 4 != 6 {
+        return Ok(Ipv6FragmentableExtract::PassThrough(
+            Ipv6FragmentPassThrough::new(Ipv6FragmentPassThroughReason::NonIpv6),
+        ));
+    }
+
+    parse_ipv6_fragmentable_view(start, bytes)
 }
 
 fn pass_through(reason: Ipv6FragmentPassThroughReason) -> Ipv6FragmentExtract {
@@ -618,6 +757,58 @@ fn parse_ipv6_view(start: Ipv6Start, bytes: &[u8]) -> Result<Ipv6FragmentExtract
     }))
 }
 
+fn parse_ipv6_fragmentable_view(start: Ipv6Start, bytes: &[u8]) -> Result<Ipv6FragmentableExtract> {
+    let datagram = &bytes[start.offset..];
+    ensure_len("ipv6 header", IPV6_HEADER_LEN, datagram.len())?;
+
+    let version_class_flow = read_u32_be(&datagram[0..4])?;
+    let version = (version_class_flow >> 28) as u8;
+    if version != 6 {
+        return Err(CrafterError::invalid_field_value(
+            "ipv6.version",
+            "IPv6 packets must have version 6",
+        ));
+    }
+
+    let payload_length = read_u16_be(&datagram[4..6])? as usize;
+    let total_len = IPV6_HEADER_LEN + payload_length;
+    ensure_len("ipv6 packet", total_len, datagram.len())?;
+    let datagram = &datagram[..total_len];
+
+    let insertion = match locate_fragment_insertion(datagram)? {
+        FragmentInsertionLocation::Insert(insertion) => insertion,
+        FragmentInsertionLocation::ExistingFragmentHeader => {
+            return Ok(Ipv6FragmentableExtract::PassThrough(
+                Ipv6FragmentPassThrough::new(Ipv6FragmentPassThroughReason::NoFragmentHeader),
+            ))
+        }
+        FragmentInsertionLocation::PassThrough(reason) => {
+            return Ok(Ipv6FragmentableExtract::PassThrough(
+                Ipv6FragmentPassThrough::new(reason),
+            ))
+        }
+    };
+    let extension_chain = Ipv6FragmentExtensionContext::new(
+        insertion.offset,
+        insertion.previous_next_header_offset,
+        datagram,
+    );
+    let wrapper = Ipv6FragmentWrapper::new(start.kind, start.offset, bytes, total_len);
+
+    Ok(Ipv6FragmentableExtract::View(Ipv6FragmentableView {
+        wrapper,
+        source: Ipv6Addr::from(copy_array_16(&datagram[8..24])),
+        destination: Ipv6Addr::from(copy_array_16(&datagram[24..40])),
+        ipv6_next_header: datagram[6],
+        fragment_next_header: insertion.fragment_next_header,
+        payload_length,
+        total_len,
+        header: datagram[..IPV6_HEADER_LEN].to_vec(),
+        extension_chain,
+        fragmentable_payload: datagram[insertion.offset..].to_vec(),
+    }))
+}
+
 fn locate_fragment_header(datagram: &[u8]) -> Result<FragmentHeaderLocation> {
     let mut next_header = datagram[6];
     let mut previous_next_header_offset = 6usize;
@@ -652,6 +843,44 @@ fn locate_fragment_header(datagram: &[u8]) -> Result<FragmentHeaderLocation> {
                 return Ok(FragmentHeaderLocation::PassThrough(
                     Ipv6FragmentPassThroughReason::NoFragmentHeader,
                 ));
+            }
+        }
+    }
+}
+
+fn locate_fragment_insertion(datagram: &[u8]) -> Result<FragmentInsertionLocation> {
+    let mut next_header = datagram[6];
+    let mut previous_next_header_offset = 6usize;
+    let mut cursor = IPV6_HEADER_LEN;
+
+    loop {
+        match next_header {
+            IPPROTO_IPV6_FRAGMENT => {
+                return Ok(FragmentInsertionLocation::ExistingFragmentHeader);
+            }
+            _ if is_supported_fragment_scope_extension(next_header) => {
+                ensure_len(
+                    "ipv6 extension header",
+                    cursor + IPV6_EXTENSION_MIN_LEN,
+                    datagram.len(),
+                )?;
+                let total_len = IPV6_EXTENSION_MIN_LEN + datagram[cursor + 1] as usize * 8;
+                ensure_len("ipv6 extension header", cursor + total_len, datagram.len())?;
+                next_header = datagram[cursor];
+                previous_next_header_offset = cursor;
+                cursor += total_len;
+            }
+            _ if is_unsupported_fragment_scope_extension(next_header) => {
+                return Ok(FragmentInsertionLocation::PassThrough(
+                    Ipv6FragmentPassThroughReason::UnsupportedExtensionChain,
+                ));
+            }
+            _ => {
+                return Ok(FragmentInsertionLocation::Insert(FragmentHeaderInsertion {
+                    offset: cursor,
+                    previous_next_header_offset,
+                    fragment_next_header: next_header,
+                }));
             }
         }
     }
