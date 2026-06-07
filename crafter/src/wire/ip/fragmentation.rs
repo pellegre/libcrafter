@@ -1,6 +1,7 @@
 //! Transmit-side IP fragmentation transform.
 
 use super::fragment::ipv4_planner::{Ipv4FragmentPlan, Ipv4PlannedFragment};
+use super::fragment::ipv6_identification::Ipv6IdentificationGenerator;
 use super::ipv4::{
     extract_ipv4_fragment, Ipv4FragmentExtract, Ipv4FragmentView, Ipv4FragmentWrapper,
     Ipv4FragmentWrapperKind,
@@ -8,7 +9,7 @@ use super::ipv4::{
 use super::ipv6::{extract_ipv6_fragment, Ipv6FragmentExtract, Ipv6FragmentView};
 use super::{
     IpFragmentConfig, IpFragmentFamily, IpFragmentMetadata, IpFragmentRange, IpFragmentReason,
-    Ipv4DontFragmentPolicy,
+    Ipv4DontFragmentPolicy, Ipv6FragmentIdentificationPolicy,
 };
 use crate::protocols::ipv4::{append_ipv4_packet_with_registry, IPV4_FLAG_MORE_FRAGMENTS};
 use crate::protocols::link::{append_vlan_packet_with_registry, ETHERTYPE_IPV4, ETHERTYPE_VLAN};
@@ -28,6 +29,8 @@ pub(crate) const IPV4_DONT_FRAGMENT_OVERRIDE_NOTE: &str = "ipv4 don't-fragment o
 #[derive(Debug, Clone)]
 pub struct IpFragment {
     config: IpFragmentConfig,
+    #[allow(dead_code)]
+    ipv6_identification_generator: Ipv6IdentificationGenerator,
     input_count: usize,
     emitted_count: usize,
 }
@@ -47,6 +50,7 @@ impl IpFragment {
     pub const fn with_config(config: IpFragmentConfig) -> Self {
         Self {
             config,
+            ipv6_identification_generator: Ipv6IdentificationGenerator::new(),
             input_count: 0,
             emitted_count: 0,
         }
@@ -138,6 +142,16 @@ impl IpFragment {
             Ipv6FragmentExtract::PassThrough(pass_through) => {
                 Ok(pass_through.reason().trace_note())
             }
+        }
+    }
+
+    #[allow(dead_code)]
+    pub(in crate::wire::ip) fn next_ipv6_fragment_identification(&mut self) -> u32 {
+        match self.config.configured_ipv6_identification_policy() {
+            Ipv6FragmentIdentificationPolicy::Generate => self
+                .ipv6_identification_generator
+                .next(self.config.configured_ipv6_identification_seed()),
+            Ipv6FragmentIdentificationPolicy::Fixed(identification) => identification,
         }
     }
 

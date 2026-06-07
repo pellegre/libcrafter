@@ -261,6 +261,7 @@ pub struct IpFragmentConfig {
     dont_fragment_policy: Ipv4DontFragmentPolicy,
     ipv4_identification_policy: Ipv4FragmentIdentificationPolicy,
     ipv6_identification_policy: Ipv6FragmentIdentificationPolicy,
+    ipv6_identification_seed: Option<u64>,
     trace_passthrough: bool,
 }
 
@@ -272,6 +273,7 @@ impl IpFragmentConfig {
             dont_fragment_policy: Ipv4DontFragmentPolicy::Error,
             ipv4_identification_policy: Ipv4FragmentIdentificationPolicy::PreserveOrGenerate,
             ipv6_identification_policy: Ipv6FragmentIdentificationPolicy::Generate,
+            ipv6_identification_seed: None,
             trace_passthrough: false,
         }
     }
@@ -354,9 +356,32 @@ impl IpFragmentConfig {
         self
     }
 
+    /// Set one explicit IPv6 Fragment Header Identification value.
+    pub const fn ipv6_identification(mut self, identification: u32) -> Self {
+        self.ipv6_identification_policy = Ipv6FragmentIdentificationPolicy::Fixed(identification);
+        self
+    }
+
     /// IPv6 Fragment Identification handling policy.
     pub const fn configured_ipv6_identification_policy(&self) -> Ipv6FragmentIdentificationPolicy {
         self.ipv6_identification_policy
+    }
+
+    /// Seed generated IPv6 Fragment Header Identification values deterministically.
+    pub const fn ipv6_identification_seed(mut self, seed: u64) -> Self {
+        self.ipv6_identification_seed = Some(seed);
+        self
+    }
+
+    /// Clear the deterministic IPv6 Fragment Header Identification seed.
+    pub const fn clear_ipv6_identification_seed(mut self) -> Self {
+        self.ipv6_identification_seed = None;
+        self
+    }
+
+    /// Configured deterministic IPv6 Fragment Header Identification seed.
+    pub const fn configured_ipv6_identification_seed(&self) -> Option<u64> {
+        self.ipv6_identification_seed
     }
 
     /// Configure whether records emitted unchanged receive transform traces.
@@ -480,7 +505,8 @@ mod tests {
             .with_mtu(1280)
             .dont_fragment_policy(Ipv4DontFragmentPolicy::PassThrough)
             .ipv4_identification_policy(Ipv4FragmentIdentificationPolicy::Fixed(0x1234))
-            .ipv6_identification_policy(Ipv6FragmentIdentificationPolicy::Fixed(0xfeed_beef))
+            .ipv6_identification(0xfeed_beef)
+            .ipv6_identification_seed(0x3100_0000_0000_0000)
             .trace_passthrough(true);
 
         assert_eq!(config.mtu(), 1280);
@@ -497,8 +523,21 @@ mod tests {
             config.configured_ipv6_identification_policy(),
             Ipv6FragmentIdentificationPolicy::Fixed(0xfeed_beef)
         );
+        assert_eq!(
+            config.configured_ipv6_identification_seed(),
+            Some(0x3100_0000_0000_0000)
+        );
         assert!(config.traces_passthrough());
         config.validate().unwrap();
+    }
+
+    #[test]
+    fn ip_fragment_config_can_clear_ipv6_identification_seed() {
+        let config = IpFragmentConfig::new(1280)
+            .ipv6_identification_seed(31)
+            .clear_ipv6_identification_seed();
+
+        assert_eq!(config.configured_ipv6_identification_seed(), None);
     }
 
     #[test]
