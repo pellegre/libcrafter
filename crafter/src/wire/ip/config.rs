@@ -109,6 +109,7 @@ pub struct IpDefragConfig {
     overlap_policy: IpDefragOverlapPolicy,
     ipv6_atomic_fragment_policy: Ipv6AtomicFragmentPolicy,
     trace_passthrough: bool,
+    trace_evictions: bool,
 }
 
 impl IpDefragConfig {
@@ -122,6 +123,7 @@ impl IpDefragConfig {
             overlap_policy: IpDefragOverlapPolicy::RejectConflicting,
             ipv6_atomic_fragment_policy: Ipv6AtomicFragmentPolicy::PassThrough,
             trace_passthrough: false,
+            trace_evictions: false,
         }
     }
 
@@ -221,6 +223,17 @@ impl IpDefragConfig {
     /// Whether records emitted unchanged receive transform traces.
     pub const fn traces_passthrough(&self) -> bool {
         self.trace_passthrough
+    }
+
+    /// Configure whether evictions emit representative trace records.
+    pub const fn trace_evictions(mut self, trace_evictions: bool) -> Self {
+        self.trace_evictions = trace_evictions;
+        self
+    }
+
+    /// Whether evictions emit representative trace records.
+    pub const fn traces_evictions(&self) -> bool {
+        self.trace_evictions
     }
 
     /// Validate configuration bounds.
@@ -425,7 +438,8 @@ mod tests {
             .max_age(Duration::from_secs(30))
             .overlap_policy(IpDefragOverlapPolicy::DropConflicting)
             .ipv6_atomic_fragments(Ipv6AtomicFragmentPolicy::Normalize)
-            .trace_passthrough(true);
+            .trace_passthrough(true)
+            .trace_evictions(true);
 
         assert!(!config.emits_non_fragments());
         assert_eq!(config.max_datagrams_limit(), 64);
@@ -440,6 +454,7 @@ mod tests {
             Ipv6AtomicFragmentPolicy::Normalize
         );
         assert!(config.traces_passthrough());
+        assert!(config.traces_evictions());
         config.validate().unwrap();
     }
 
