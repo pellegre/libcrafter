@@ -1,4 +1,6 @@
-//! WPA metadata attached by future decryptor stages.
+//! WPA metadata attached by decryptor stages.
+
+use crate::MacAddr;
 
 /// WPA/WPA2 cipher suite recognized by the decryptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -45,6 +47,19 @@ pub enum WpaKeyKind {
     Group,
 }
 
+/// Whether configured credentials matched the observed WPA handshake.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum WpaCredentialStatus {
+    /// Credential matching has not been attempted yet.
+    Unknown,
+    /// No configured network matched the observed record.
+    NotConfigured,
+    /// Configured credentials matched and produced usable key material.
+    Matched,
+    /// Configured credentials did not verify the observed handshake.
+    Mismatch,
+}
+
 /// Passive 4-way-handshake state visible to callers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WpaHandshakeStatus {
@@ -84,23 +99,34 @@ pub enum WpaDecryptReason {
 }
 
 /// WPA-specific metadata produced by the decryptor.
-///
-/// This type is public now so downstream code can compile against the planned
-/// surface. It is not attached to [`crate::wire::WifiMetadata`] until a later
-/// implementation step adds real state tracking.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct WpaMetadata {
+    bssid: Option<MacAddr>,
+    station: Option<MacAddr>,
     cipher: Option<WpaCipher>,
     akm: Option<WpaAkm>,
     key_kind: Option<WpaKeyKind>,
+    key_id: Option<u8>,
+    packet_number: Option<u64>,
     handshake_status: Option<WpaHandshakeStatus>,
     decrypt_reason: Option<WpaDecryptReason>,
+    credential_status: Option<WpaCredentialStatus>,
 }
 
 impl WpaMetadata {
     /// Create empty WPA metadata.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// BSSID associated with this WPA observation when known.
+    pub const fn bssid(&self) -> Option<MacAddr> {
+        self.bssid
+    }
+
+    /// Station address associated with this WPA session when known.
+    pub const fn station(&self) -> Option<MacAddr> {
+        self.station
     }
 
     /// Cipher suite when known.
@@ -118,6 +144,16 @@ impl WpaMetadata {
         self.key_kind
     }
 
+    /// Key identifier when known.
+    pub const fn key_id(&self) -> Option<u8> {
+        self.key_id
+    }
+
+    /// WPA packet number when known.
+    pub const fn packet_number(&self) -> Option<u64> {
+        self.packet_number
+    }
+
     /// Handshake status when known.
     pub const fn handshake_status(&self) -> Option<WpaHandshakeStatus> {
         self.handshake_status
@@ -126,6 +162,32 @@ impl WpaMetadata {
     /// Decrypt reason when known.
     pub const fn decrypt_reason(&self) -> Option<WpaDecryptReason> {
         self.decrypt_reason
+    }
+
+    /// Credential-match status when known.
+    pub const fn credential_status(&self) -> Option<WpaCredentialStatus> {
+        self.credential_status
+    }
+
+    /// Whether configured credentials matched when that is known.
+    pub const fn credentials_matched(&self) -> Option<bool> {
+        match self.credential_status {
+            Some(WpaCredentialStatus::Matched) => Some(true),
+            Some(WpaCredentialStatus::Mismatch) => Some(false),
+            _ => None,
+        }
+    }
+
+    /// Set BSSID metadata.
+    pub const fn with_bssid(mut self, bssid: MacAddr) -> Self {
+        self.bssid = Some(bssid);
+        self
+    }
+
+    /// Set station address metadata.
+    pub const fn with_station(mut self, station: MacAddr) -> Self {
+        self.station = Some(station);
+        self
     }
 
     /// Set cipher suite metadata.
@@ -146,6 +208,18 @@ impl WpaMetadata {
         self
     }
 
+    /// Set key identifier metadata.
+    pub const fn with_key_id(mut self, key_id: u8) -> Self {
+        self.key_id = Some(key_id);
+        self
+    }
+
+    /// Set WPA packet number metadata.
+    pub const fn with_packet_number(mut self, packet_number: u64) -> Self {
+        self.packet_number = Some(packet_number);
+        self
+    }
+
     /// Set handshake status metadata.
     pub const fn with_handshake_status(mut self, handshake_status: WpaHandshakeStatus) -> Self {
         self.handshake_status = Some(handshake_status);
@@ -155,6 +229,22 @@ impl WpaMetadata {
     /// Set decrypt reason metadata.
     pub const fn with_decrypt_reason(mut self, decrypt_reason: WpaDecryptReason) -> Self {
         self.decrypt_reason = Some(decrypt_reason);
+        self
+    }
+
+    /// Set credential-match status metadata.
+    pub const fn with_credential_status(mut self, credential_status: WpaCredentialStatus) -> Self {
+        self.credential_status = Some(credential_status);
+        self
+    }
+
+    /// Set credential-match metadata as a boolean.
+    pub const fn with_credentials_matched(mut self, matched: bool) -> Self {
+        self.credential_status = Some(if matched {
+            WpaCredentialStatus::Matched
+        } else {
+            WpaCredentialStatus::Mismatch
+        });
         self
     }
 }

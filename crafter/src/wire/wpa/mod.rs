@@ -14,6 +14,7 @@ mod transform;
 
 pub use config::{WpaDecryptConfig, WpaNetwork};
 pub use metadata::{
-    WpaAkm, WpaCipher, WpaDecryptReason, WpaHandshakeStatus, WpaKeyKind, WpaMetadata,
+    WpaAkm, WpaCipher, WpaCredentialStatus, WpaDecryptReason, WpaHandshakeStatus, WpaKeyKind,
+    WpaMetadata,
 };
 pub use transform::WpaDecrypt;

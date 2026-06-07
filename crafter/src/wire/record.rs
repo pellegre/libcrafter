@@ -8,6 +8,7 @@
 
 use std::path::{Path, PathBuf};
 
+use super::wpa::WpaMetadata;
 use crate::pcap::{PcapLinkType, PcapPacket, PcapRecord, PcapTimestamp};
 use crate::{
     Dot11ControlSubtype, Dot11DataSubtype, Dot11FrameType, Dot11ManagementSubtype, IntoPacket,
@@ -612,6 +613,7 @@ pub struct WifiMetadata {
     protection: Option<WifiProtectionStatus>,
     key_id: Option<u8>,
     decrypt_state: Option<WifiDecryptState>,
+    wpa_metadata: Option<WpaMetadata>,
 }
 
 impl WifiMetadata {
@@ -710,6 +712,11 @@ impl WifiMetadata {
     /// Decrypt state recorded by a future Wi-Fi transform when known.
     pub const fn decrypt_state(&self) -> Option<WifiDecryptState> {
         self.decrypt_state
+    }
+
+    /// WPA decryption metadata when a WPA transform attached details.
+    pub const fn wpa_metadata(&self) -> Option<&WpaMetadata> {
+        self.wpa_metadata.as_ref()
     }
 
     /// Set SSID bytes.
@@ -813,6 +820,18 @@ impl WifiMetadata {
     /// Set decrypt state.
     pub const fn with_decrypt_state(mut self, decrypt_state: WifiDecryptState) -> Self {
         self.decrypt_state = Some(decrypt_state);
+        self
+    }
+
+    /// Attach WPA decryption metadata.
+    pub fn with_wpa_metadata(mut self, wpa_metadata: WpaMetadata) -> Self {
+        self.wpa_metadata = Some(wpa_metadata);
+        self
+    }
+
+    /// Clear attached WPA decryption metadata.
+    pub fn clear_wpa_metadata(mut self) -> Self {
+        self.wpa_metadata = None;
         self
     }
 }
@@ -1011,6 +1030,9 @@ impl TransformTrace {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::wire::{
+        WpaAkm, WpaCipher, WpaCredentialStatus, WpaDecryptReason, WpaHandshakeStatus, WpaKeyKind,
+    };
     use crate::Raw;
 
     #[test]
@@ -1166,6 +1188,55 @@ mod tests {
             Some(WifiDecryptState::NotRequired)
         );
         assert_eq!(metadata.medium(), Some(&MediumMetadata::Wifi(wifi)));
+    }
+
+    #[test]
+    fn wifi_metadata_carries_wpa_metadata() {
+        let bssid = MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x00, 0x01]);
+        let station = MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x00, 0x44]);
+        let wpa = WpaMetadata::new()
+            .with_bssid(bssid)
+            .with_station(station)
+            .with_cipher(WpaCipher::Ccmp128)
+            .with_akm(WpaAkm::Psk)
+            .with_key_kind(WpaKeyKind::Pairwise)
+            .with_key_id(1)
+            .with_packet_number(0x0000_0102_0304)
+            .with_handshake_status(WpaHandshakeStatus::MicVerified)
+            .with_decrypt_reason(WpaDecryptReason::Decrypted)
+            .with_credential_status(WpaCredentialStatus::Matched);
+        let wifi = WifiMetadata::new()
+            .with_ssid_str("labnet")
+            .with_bssid(bssid)
+            .with_wpa_metadata(wpa.clone());
+
+        let record = PacketRecord::new(Raw::from("dot11")).with_wifi_metadata(wifi.clone());
+        let attached_wifi = record.metadata().wifi().unwrap();
+        let attached_wpa = attached_wifi.wpa_metadata().unwrap();
+
+        assert_eq!(attached_wifi, &wifi);
+        assert_eq!(attached_wpa, &wpa);
+        assert_eq!(attached_wpa.clone(), wpa);
+        assert_eq!(attached_wpa.bssid(), Some(bssid));
+        assert_eq!(attached_wpa.station(), Some(station));
+        assert_eq!(attached_wpa.cipher(), Some(WpaCipher::Ccmp128));
+        assert_eq!(attached_wpa.akm(), Some(WpaAkm::Psk));
+        assert_eq!(attached_wpa.key_kind(), Some(WpaKeyKind::Pairwise));
+        assert_eq!(attached_wpa.key_id(), Some(1));
+        assert_eq!(attached_wpa.packet_number(), Some(0x0000_0102_0304));
+        assert_eq!(
+            attached_wpa.handshake_status(),
+            Some(WpaHandshakeStatus::MicVerified)
+        );
+        assert_eq!(
+            attached_wpa.decrypt_reason(),
+            Some(WpaDecryptReason::Decrypted)
+        );
+        assert_eq!(
+            attached_wpa.credential_status(),
+            Some(WpaCredentialStatus::Matched)
+        );
+        assert_eq!(attached_wpa.credentials_matched(), Some(true));
     }
 
     #[test]
