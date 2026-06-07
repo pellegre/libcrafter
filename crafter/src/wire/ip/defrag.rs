@@ -363,17 +363,28 @@ impl IpDefrag {
 
     fn emit_pass_through(
         &mut self,
+        record: PacketRecord,
+        emit: &mut dyn FnMut(PacketRecord) -> Result<()>,
+    ) -> Result<()> {
+        self.emit_pass_through_with_note(record, None, emit)
+    }
+
+    fn emit_pass_through_with_note(
+        &mut self,
         mut record: PacketRecord,
+        note: Option<&'static str>,
         emit: &mut dyn FnMut(PacketRecord) -> Result<()>,
     ) -> Result<()> {
         if !self.config.emits_non_fragments() {
             return Ok(());
         }
 
-        if self.config.traces_passthrough() {
+        if let Some(note) =
+            note.or_else(|| self.config.traces_passthrough().then_some("passthrough"))
+        {
             record
                 .metadata_mut()
-                .push_transform_trace(TransformTrace::new(self.name()).with_note("passthrough"));
+                .push_transform_trace(TransformTrace::new(self.name()).with_note(note));
         }
 
         emit(record)?;
@@ -415,16 +426,23 @@ impl PacketTransform for IpDefrag {
             }
         }
 
-        if let Ipv6FragmentExtract::View(view) = extract_ipv6_fragment(&record)? {
-            if view.is_atomic() {
-                return self.emit_pass_through(record, emit);
+        match extract_ipv6_fragment(&record)? {
+            Ipv6FragmentExtract::View(view) => {
+                if view.is_atomic() {
+                    return self.emit_pass_through(record, emit);
+                }
+                match self.observe_ipv6_fragment(&record, &view, emit) {
+                    Ipv6DefragObservation::Buffered => {}
+                    Ipv6DefragObservation::Evicted => {}
+                    Ipv6DefragObservation::Error(error) => return Err(error),
+                }
+                return Ok(());
             }
-            match self.observe_ipv6_fragment(&record, &view, emit) {
-                Ipv6DefragObservation::Buffered => {}
-                Ipv6DefragObservation::Evicted => {}
-                Ipv6DefragObservation::Error(error) => return Err(error),
+            Ipv6FragmentExtract::PassThrough(pass_through) => {
+                if let Some(note) = pass_through.reason().trace_note() {
+                    return self.emit_pass_through_with_note(record, Some(note), emit);
+                }
             }
-            return Ok(());
         }
 
         self.emit_pass_through(record, emit)

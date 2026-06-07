@@ -8,8 +8,9 @@ use crate::endian::{read_u16_be, read_u32_be, read_u32_le};
 use crate::pcap::PcapLinkType;
 use crate::protocols::{
     ETHERTYPE_IPV6, ETHERTYPE_VLAN, IPPROTO_IPV6_AH, IPPROTO_IPV6_DSTOPTS, IPPROTO_IPV6_ESP,
-    IPPROTO_IPV6_FRAGMENT, IPPROTO_IPV6_HIP, IPPROTO_IPV6_HOPOPTS, IPPROTO_IPV6_MOBILITY,
-    IPPROTO_IPV6_ROUTE, IPPROTO_IPV6_SHIM6,
+    IPPROTO_IPV6_EXPERIMENTAL_1, IPPROTO_IPV6_EXPERIMENTAL_2, IPPROTO_IPV6_FRAGMENT,
+    IPPROTO_IPV6_HIP, IPPROTO_IPV6_HOPOPTS, IPPROTO_IPV6_MOBILITY, IPPROTO_IPV6_ROUTE,
+    IPPROTO_IPV6_SHIM6,
 };
 use crate::wire::record::PacketRecord;
 use crate::{
@@ -28,6 +29,8 @@ const VLAN_HEADER_LEN: usize = 4;
 const LINUX_SLL_HEADER_LEN: usize = 16;
 const NULL_LOOPBACK_HEADER_LEN: usize = 4;
 const AF_INET6: u32 = 24;
+pub(crate) const IPV6_FRAGMENT_UNSUPPORTED_EXTENSION_SCOPE_NOTE: &str =
+    "unsupported IPv6 extension chain outside Fragment Header extension scope";
 
 /// Result of inspecting a packet record for an IPv6 Fragment Header.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -306,6 +309,16 @@ pub(crate) enum Ipv6FragmentPassThroughReason {
     UnsupportedExtensionChain,
     /// The record uses a wrapper not handled by the IPv6 fragment transforms.
     UnsupportedWrapper,
+}
+
+impl Ipv6FragmentPassThroughReason {
+    /// Trace note to attach when pass-through is part of the narrow Fragment Header scope.
+    pub(crate) const fn trace_note(self) -> Option<&'static str> {
+        match self {
+            Self::UnsupportedExtensionChain => Some(IPV6_FRAGMENT_UNSUPPORTED_EXTENSION_SCOPE_NOTE),
+            Self::Empty | Self::NonIpv6 | Self::NoFragmentHeader | Self::UnsupportedWrapper => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -618,7 +631,7 @@ fn locate_fragment_header(datagram: &[u8]) -> Result<FragmentHeaderLocation> {
                     previous_next_header_offset,
                 }));
             }
-            IPPROTO_IPV6_HOPOPTS | IPPROTO_IPV6_DSTOPTS | IPPROTO_IPV6_ROUTE => {
+            _ if is_supported_fragment_scope_extension(next_header) => {
                 ensure_len(
                     "ipv6 extension header",
                     cursor + IPV6_EXTENSION_MIN_LEN,
@@ -630,11 +643,7 @@ fn locate_fragment_header(datagram: &[u8]) -> Result<FragmentHeaderLocation> {
                 previous_next_header_offset = cursor;
                 cursor += total_len;
             }
-            IPPROTO_IPV6_AH
-            | IPPROTO_IPV6_ESP
-            | IPPROTO_IPV6_MOBILITY
-            | IPPROTO_IPV6_HIP
-            | IPPROTO_IPV6_SHIM6 => {
+            _ if is_unsupported_fragment_scope_extension(next_header) => {
                 return Ok(FragmentHeaderLocation::PassThrough(
                     Ipv6FragmentPassThroughReason::UnsupportedExtensionChain,
                 ));
@@ -646,6 +655,26 @@ fn locate_fragment_header(datagram: &[u8]) -> Result<FragmentHeaderLocation> {
             }
         }
     }
+}
+
+fn is_supported_fragment_scope_extension(next_header: u8) -> bool {
+    matches!(
+        next_header,
+        IPPROTO_IPV6_HOPOPTS | IPPROTO_IPV6_DSTOPTS | IPPROTO_IPV6_ROUTE
+    )
+}
+
+fn is_unsupported_fragment_scope_extension(next_header: u8) -> bool {
+    matches!(
+        next_header,
+        IPPROTO_IPV6_AH
+            | IPPROTO_IPV6_ESP
+            | IPPROTO_IPV6_MOBILITY
+            | IPPROTO_IPV6_HIP
+            | IPPROTO_IPV6_SHIM6
+            | IPPROTO_IPV6_EXPERIMENTAL_1
+            | IPPROTO_IPV6_EXPERIMENTAL_2
+    )
 }
 
 fn fragment_status(fragment_offset: u16, more_fragments: bool) -> Ipv6FragmentHeaderStatus {
