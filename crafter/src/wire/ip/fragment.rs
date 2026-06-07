@@ -467,3 +467,123 @@ pub(super) mod ipv4_planner {
         }
     }
 }
+
+#[cfg(test)]
+mod ipv4_df {
+    use super::super::{
+        IpFragment, IpFragmentConfig, IpFragmentFamily, IpFragmentRange, IpFragmentReason,
+        Ipv4DontFragmentPolicy,
+    };
+    use crate::wire::record::PacketRecord;
+    use crate::wire::WireError;
+    use crate::{Ipv4, Raw, IPPROTO_UDP};
+    use std::net::Ipv4Addr;
+
+    const SMALL_MTU: usize = 36;
+
+    fn source() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 26)
+    }
+
+    fn destination() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 26)
+    }
+
+    fn df_record(payload: &'static [u8]) -> PacketRecord {
+        PacketRecord::new(
+            Ipv4::with_addresses(source(), destination())
+                .protocol(IPPROTO_UDP)
+                .identification(0x2626)
+                .dont_fragment(true)
+                / Raw::from_bytes(payload),
+        )
+    }
+
+    #[test]
+    fn default_policy_errors_when_df_packet_would_need_fragmentation() {
+        let mut transform = IpFragment::new(SMALL_MTU);
+
+        let error = transform
+            .fragment_record(df_record(b"abcdefghijklmnopqrstuvwxyz"))
+            .unwrap_err();
+
+        match error {
+            WireError::Transform { transform, reason } => {
+                assert_eq!(transform, "ip-fragment");
+                assert_eq!(
+                    reason,
+                    "IPv4 Don't Fragment is set and packet exceeds configured MTU"
+                );
+            }
+            other => panic!("expected transform error, got {other:?}"),
+        }
+        assert_eq!(transform.input_count(), 1);
+        assert_eq!(transform.emitted_count(), 0);
+    }
+
+    #[test]
+    fn default_policy_allows_df_packet_that_already_fits_mtu() {
+        let mut transform = IpFragment::new(1500);
+
+        let output = transform.fragment_record(df_record(b"fits")).unwrap();
+
+        assert_eq!(output.len(), 1);
+        assert_eq!(transform.emitted_count(), 1);
+        let metadata = &output.records()[0].metadata().ip_fragment_metadata()[0];
+        assert_eq!(metadata.family(), IpFragmentFamily::Ipv4);
+        assert_eq!(metadata.byte_range(), IpFragmentRange::new(0, 4));
+        assert_eq!(metadata.reason(), Some(&IpFragmentReason::AlreadyFits));
+        assert!(output.records()[0].metadata().transforms().is_empty());
+    }
+
+    #[test]
+    fn pass_through_policy_emits_df_packet_with_explicit_metadata_and_trace() {
+        let mut transform = IpFragment::with_config(
+            IpFragmentConfig::new(SMALL_MTU)
+                .dont_fragment_policy(Ipv4DontFragmentPolicy::PassThrough),
+        );
+
+        let output = transform
+            .fragment_record(df_record(b"abcdefghijklmnopqrstuvwxyz"))
+            .unwrap();
+
+        assert_eq!(output.len(), 1);
+        assert_eq!(transform.emitted_count(), 1);
+        let metadata = &output.records()[0].metadata().ip_fragment_metadata()[0];
+        assert_eq!(metadata.family(), IpFragmentFamily::Ipv4);
+        assert_eq!(metadata.mtu(), SMALL_MTU);
+        assert_eq!(metadata.identification(), 0x2626);
+        assert_eq!(metadata.fragment_count(), 1);
+        assert_eq!(metadata.fragment_index(), 0);
+        assert_eq!(metadata.byte_range(), IpFragmentRange::new(0, 26));
+        assert_eq!(metadata.original_len(), Some(26));
+        assert_eq!(metadata.reason(), Some(&IpFragmentReason::DontFragment));
+
+        let traces = output.records()[0].metadata().transforms();
+        assert_eq!(traces.len(), 1);
+        assert_eq!(traces[0].name(), "ip-fragment");
+        assert_eq!(traces[0].note(), Some("ipv4 don't-fragment pass-through"));
+    }
+
+    #[test]
+    fn fragment_anyway_policy_is_an_explicit_df_override() {
+        let mut transform = IpFragment::with_config(
+            IpFragmentConfig::new(SMALL_MTU)
+                .dont_fragment_policy(Ipv4DontFragmentPolicy::FragmentAnyway),
+        );
+
+        let output = transform
+            .fragment_record(df_record(b"abcdefghijklmnopqrstuvwxyz"))
+            .unwrap();
+
+        assert_eq!(output.len(), 1);
+        assert_eq!(transform.emitted_count(), 1);
+        let metadata = &output.records()[0].metadata().ip_fragment_metadata()[0];
+        assert_eq!(metadata.reason(), Some(&IpFragmentReason::Fragmented));
+
+        let traces = output.records()[0].metadata().transforms();
+        assert_eq!(traces.len(), 1);
+        assert_eq!(traces[0].name(), "ip-fragment");
+        assert_eq!(traces[0].note(), Some("ipv4 don't-fragment override"));
+    }
+}

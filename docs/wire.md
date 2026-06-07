@@ -150,9 +150,22 @@ Common transform shapes include:
 - WPA/WPA2 key-state tracking and protected-data decryption, such as
   `WpaDecrypt`;
 - IPv4 and IPv6 fragment reassembly;
+- IPv4 and IPv6 outbound fragmentation through `IpFragment`;
 - TCP stream reassembly;
 - application protocol decoding that emits higher-level packet stacks while
   preserving raw data as needed.
+
+`IpFragment` is an outbound transform with an explicit MTU. For IPv4, the
+default `Ipv4DontFragmentPolicy::Error` honors Don't Fragment (DF): when a
+DF-set packet exceeds the configured MTU, the transform returns a structured
+`ip-fragment` error instead of silently fragmenting. Callers that want an
+explicit no-fragment result can configure
+`IpFragmentConfig::new(mtu).dont_fragment_policy(Ipv4DontFragmentPolicy::PassThrough)`,
+which emits the original record with `IpFragmentReason::DontFragment` metadata
+and an `ipv4 don't-fragment pass-through` trace. The only override that plans
+fragmentation despite DF is the explicit
+`Ipv4DontFragmentPolicy::FragmentAnyway` policy; the legacy
+`honor_dont_fragment(false)` builder maps to that same override.
 
 `WpaDecrypt` is an inbound transform. It accepts one or more configured SSIDs
 with either passphrases or pre-derived PMKs, observes beacons, RSN information,

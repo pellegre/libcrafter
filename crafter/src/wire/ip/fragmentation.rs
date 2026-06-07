@@ -1,13 +1,20 @@
 //! Transmit-side IP fragmentation transform.
 
+use super::fragment::ipv4_planner::Ipv4FragmentPlan;
 use super::ipv4::{extract_ipv4_fragment, Ipv4FragmentExtract, Ipv4FragmentView};
 use super::ipv6::{extract_ipv6_fragment, Ipv6FragmentExtract, Ipv6FragmentView};
 use super::{
     IpFragmentConfig, IpFragmentFamily, IpFragmentMetadata, IpFragmentRange, IpFragmentReason,
+    Ipv4DontFragmentPolicy,
 };
 use crate::wire::record::{PacketRecord, TransformTrace};
 use crate::wire::transform::{PacketTransform, TransformOutput};
-use crate::wire::Result;
+use crate::wire::{Result, WireError};
+
+pub(crate) const IPV4_DONT_FRAGMENT_ERROR_REASON: &str =
+    "IPv4 Don't Fragment is set and packet exceeds configured MTU";
+pub(crate) const IPV4_DONT_FRAGMENT_PASSTHROUGH_NOTE: &str = "ipv4 don't-fragment pass-through";
+pub(crate) const IPV4_DONT_FRAGMENT_OVERRIDE_NOTE: &str = "ipv4 don't-fragment override";
 
 /// Transmit-side IP fragmentation transform.
 #[derive(Debug, Clone)]
@@ -97,10 +104,15 @@ impl PacketTransform for IpFragment {
 impl IpFragment {
     fn attach_fragment_metadata(&self, record: &mut PacketRecord) -> Result<Option<&'static str>> {
         if let Ipv4FragmentExtract::View(view) = extract_ipv4_fragment(record)? {
+            let decision = self.ipv4_fragment_decision(&view)?;
             record
                 .metadata_mut()
-                .push_ip_fragment_metadata(ipv4_fragment_metadata(&view, self.config.mtu()));
-            return Ok(None);
+                .push_ip_fragment_metadata(ipv4_fragment_metadata(
+                    &view,
+                    self.config.mtu(),
+                    decision.reason,
+                ));
+            return Ok(decision.trace_note);
         }
 
         match extract_ipv6_fragment(record)? {
@@ -115,16 +127,54 @@ impl IpFragment {
             }
         }
     }
+
+    fn ipv4_fragment_decision(&self, view: &Ipv4FragmentView) -> Result<Ipv4FragmentDecision> {
+        let plan = Ipv4FragmentPlan::from_view(view, self.config.mtu())?;
+        let fragmentation_required = plan.fragment_count() > 1;
+
+        if view.is_dont_fragment() && fragmentation_required {
+            return match self.config.configured_dont_fragment_policy() {
+                Ipv4DontFragmentPolicy::Error => Err(WireError::transform(
+                    self.name(),
+                    IPV4_DONT_FRAGMENT_ERROR_REASON,
+                )),
+                Ipv4DontFragmentPolicy::PassThrough => Ok(Ipv4FragmentDecision {
+                    reason: IpFragmentReason::DontFragment,
+                    trace_note: Some(IPV4_DONT_FRAGMENT_PASSTHROUGH_NOTE),
+                }),
+                Ipv4DontFragmentPolicy::FragmentAnyway => Ok(Ipv4FragmentDecision {
+                    reason: IpFragmentReason::Fragmented,
+                    trace_note: Some(IPV4_DONT_FRAGMENT_OVERRIDE_NOTE),
+                }),
+            };
+        }
+
+        let reason = if fragmentation_required || view.is_fragmented() {
+            IpFragmentReason::Fragmented
+        } else {
+            IpFragmentReason::AlreadyFits
+        };
+
+        Ok(Ipv4FragmentDecision {
+            reason,
+            trace_note: None,
+        })
+    }
 }
 
-fn ipv4_fragment_metadata(view: &Ipv4FragmentView, mtu: usize) -> IpFragmentMetadata {
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Ipv4FragmentDecision {
+    reason: IpFragmentReason,
+    trace_note: Option<&'static str>,
+}
+
+fn ipv4_fragment_metadata(
+    view: &Ipv4FragmentView,
+    mtu: usize,
+    reason: IpFragmentReason,
+) -> IpFragmentMetadata {
     let start = view.fragment_offset_bytes();
     let payload_len = saturated_u32(view.payload().len());
-    let reason = if view.is_fragmented() {
-        IpFragmentReason::Fragmented
-    } else {
-        IpFragmentReason::AlreadyFits
-    };
 
     IpFragmentMetadata::new(
         IpFragmentFamily::Ipv4,

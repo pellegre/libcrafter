@@ -8,6 +8,7 @@ use crate::endian::{read_u16_be, read_u32_be, read_u32_le};
 use crate::pcap::PcapLinkType;
 use crate::protocols::{ETHERTYPE_IPV4, ETHERTYPE_VLAN};
 use crate::wire::record::PacketRecord;
+use crate::IPV4_FLAG_DONT_FRAGMENT;
 use crate::{CrafterError, Ethernet, Ipv4, LinkType, LinuxSll, NullLoopback, Packet, Result, Vlan};
 
 const IPV4_MIN_HEADER_LEN: usize = 20;
@@ -125,6 +126,11 @@ impl Ipv4FragmentView {
     /// Return true when the More Fragments flag is set.
     pub(crate) const fn more_fragments(&self) -> bool {
         self.flags & 0b001 != 0
+    }
+
+    /// Return true when the Don't Fragment flag is set.
+    pub(crate) const fn is_dont_fragment(&self) -> bool {
+        self.flags & IPV4_FLAG_DONT_FRAGMENT != 0
     }
 
     /// Return true when the IPv4 header marks this datagram as fragmented.
