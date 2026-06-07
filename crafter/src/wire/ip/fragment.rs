@@ -2159,3 +2159,298 @@ mod ipv6_link_wrapper {
         }
     }
 }
+
+#[cfg(test)]
+mod ipv6 {
+    use super::super::ipv6::IPV6_FRAGMENT_UNSUPPORTED_EXTENSION_SCOPE_NOTE;
+    use super::super::{
+        IpFragment, IpFragmentConfig, IpFragmentFamily, IpFragmentRange, IpFragmentReason,
+    };
+    use crate::wire::record::{BackendKind, PacketOrigin, PacketRecord};
+    use crate::wire::{MemoryPacketWriter, Transmitter, WireError};
+    use crate::{
+        CrafterError, Ipv6, Ipv6FragmentHeader, Packet, Raw, IPPROTO_IPV6_AH,
+        IPPROTO_IPV6_FRAGMENT, IPPROTO_UDP,
+    };
+    use std::net::Ipv6Addr;
+
+    const MTU: usize = 72;
+    const IDENTIFICATION: u32 = 0x3434_3434;
+
+    fn source() -> Ipv6Addr {
+        "2001:db8:34::1".parse().unwrap()
+    }
+
+    fn destination() -> Ipv6Addr {
+        "2001:db8:34::2".parse().unwrap()
+    }
+
+    fn plain_packet(payload: &[u8]) -> Packet {
+        Ipv6::new()
+            .src(source())
+            .dst(destination())
+            .traffic_class(0x34)
+            .flow_label(0x03434)
+            .hop_limit(44)
+            .next_header(IPPROTO_UDP)
+            / Raw::from_bytes(payload)
+    }
+
+    fn unsupported_extension_packet(payload: &[u8]) -> Packet {
+        Ipv6::new()
+            .src(source())
+            .dst(destination())
+            .next_header(IPPROTO_IPV6_AH)
+            / Raw::from_bytes(payload)
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct ExpectedFragment {
+        start: usize,
+        end: usize,
+        offset: u16,
+        more_fragments: bool,
+        payload_length: u16,
+    }
+
+    impl ExpectedFragment {
+        const fn new(
+            start: usize,
+            end: usize,
+            offset: u16,
+            more_fragments: bool,
+            payload_length: u16,
+        ) -> Self {
+            Self {
+                start,
+                end,
+                offset,
+                more_fragments,
+                payload_length,
+            }
+        }
+    }
+
+    fn fixed_identification_transform(mtu: usize) -> IpFragment {
+        IpFragment::with_config(IpFragmentConfig::new(mtu).ipv6_identification(IDENTIFICATION))
+    }
+
+    fn assert_ipv6_fragment(
+        record: &PacketRecord,
+        payload: &[u8],
+        index: usize,
+        fragment_count: usize,
+        expected: ExpectedFragment,
+    ) -> Vec<u8> {
+        let packet = record.packet();
+        let ipv6 = packet.layer::<Ipv6>().unwrap();
+        let fragment = packet.layer::<Ipv6FragmentHeader>().unwrap();
+        let raw = packet.layer::<Raw>().unwrap();
+
+        assert_eq!(record.metadata().origin(), PacketOrigin::Transformed);
+        assert!(record.metadata().captured_bytes().is_none());
+        assert_eq!(ipv6.source(), source());
+        assert_eq!(ipv6.destination(), destination());
+        assert_eq!(ipv6.traffic_class_value(), 0x34);
+        assert_eq!(ipv6.flow_label_value(), 0x03434);
+        assert_eq!(ipv6.hop_limit_value(), 44);
+        assert_eq!(ipv6.next_header_value(), IPPROTO_IPV6_FRAGMENT);
+        assert_eq!(ipv6.payload_length_value(), Some(expected.payload_length));
+
+        assert_eq!(fragment.next_header_value(), IPPROTO_UDP);
+        assert_eq!(fragment.identification_value(), IDENTIFICATION);
+        assert_eq!(fragment.fragment_offset_value(), expected.offset);
+        assert_eq!(fragment.more_fragments_value(), expected.more_fragments);
+        assert_eq!(raw.as_bytes(), &payload[expected.start..expected.end]);
+
+        let metadata = &record.metadata().ip_fragment_metadata()[0];
+        assert_eq!(metadata.family(), IpFragmentFamily::Ipv6);
+        assert_eq!(metadata.mtu(), MTU);
+        assert_eq!(metadata.identification(), IDENTIFICATION);
+        assert_eq!(metadata.fragment_offset(), expected.offset);
+        assert_eq!(metadata.more_fragments(), expected.more_fragments);
+        assert_eq!(metadata.fragment_count(), fragment_count);
+        assert_eq!(metadata.fragment_index(), index);
+        assert_eq!(
+            metadata.byte_range(),
+            IpFragmentRange::new(expected.start as u32, expected.end as u32)
+        );
+        assert_eq!(metadata.original_len(), Some(payload.len() as u32));
+        assert_eq!(metadata.reason(), Some(&IpFragmentReason::Fragmented));
+
+        let wire = packet.compile().unwrap();
+        assert!(wire.as_bytes().len() <= MTU);
+        assert_eq!(
+            &wire.as_bytes()[4..6],
+            &expected.payload_length.to_be_bytes()
+        );
+        assert_eq!(wire.as_bytes()[6], IPPROTO_IPV6_FRAGMENT);
+        assert_eq!(wire.as_bytes()[40], IPPROTO_UDP);
+
+        raw.as_bytes().to_vec()
+    }
+
+    fn assert_fragment_sequence(payload: &[u8], expected: &[ExpectedFragment]) {
+        let mut transform = fixed_identification_transform(MTU);
+
+        let output = transform
+            .fragment_record(PacketRecord::new(plain_packet(payload)))
+            .unwrap();
+
+        assert_eq!(output.len(), expected.len());
+        assert_eq!(transform.emitted_count(), expected.len());
+        let fragment_count = expected.len();
+        let mut reconstructed = Vec::new();
+        for (index, (record, expected)) in output.records().iter().zip(expected).enumerate() {
+            reconstructed.extend(assert_ipv6_fragment(
+                record,
+                payload,
+                index,
+                fragment_count,
+                *expected,
+            ));
+        }
+        assert_eq!(reconstructed, payload);
+    }
+
+    #[test]
+    fn exact_mtu_ipv6_packet_passes_through_without_fragment_header() {
+        let payload = (0u8..32).collect::<Vec<_>>();
+        let input = PacketRecord::new(plain_packet(&payload));
+        let expected_summary = input.packet().summary();
+        let expected_metadata = input.metadata().clone();
+        let mut transform = fixed_identification_transform(MTU);
+
+        let output = transform.fragment_record(input).unwrap();
+
+        assert_eq!(output.len(), 1);
+        assert_eq!(transform.input_count(), 1);
+        assert_eq!(transform.emitted_count(), 1);
+        let record = &output.records()[0];
+        assert_eq!(record.packet().summary(), expected_summary);
+        assert!(record.packet().layer::<Ipv6FragmentHeader>().is_none());
+        assert_eq!(record.metadata(), &expected_metadata);
+    }
+
+    #[test]
+    fn one_byte_over_mtu_emits_two_ipv6_fragments() {
+        let payload = (0u8..33).collect::<Vec<_>>();
+
+        assert_fragment_sequence(
+            &payload,
+            &[
+                ExpectedFragment::new(0, 24, 0, true, 32),
+                ExpectedFragment::new(24, 33, 3, false, 17),
+            ],
+        );
+    }
+
+    #[test]
+    fn many_fragments_keep_offsets_lengths_and_payload_order() {
+        let payload = (0u8..97).collect::<Vec<_>>();
+
+        assert_fragment_sequence(
+            &payload,
+            &[
+                ExpectedFragment::new(0, 24, 0, true, 32),
+                ExpectedFragment::new(24, 48, 3, true, 32),
+                ExpectedFragment::new(48, 72, 6, true, 32),
+                ExpectedFragment::new(72, 96, 9, true, 32),
+                ExpectedFragment::new(96, 97, 12, false, 9),
+            ],
+        );
+    }
+
+    #[test]
+    fn too_small_mtu_for_ipv6_fragment_unit_returns_structured_error() {
+        let payload = (0u8..24).collect::<Vec<_>>();
+        let mut transform = fixed_identification_transform(55);
+
+        let error = transform
+            .fragment_record(PacketRecord::new(plain_packet(&payload)))
+            .unwrap_err();
+
+        match error {
+            WireError::Packet(CrafterError::InvalidFieldValue { field, .. }) => {
+                assert_eq!(field, "ip.fragment.mtu");
+            }
+            other => panic!("expected IPv6 too_small_mtu InvalidFieldValue, got {other:?}"),
+        }
+        assert_eq!(transform.input_count(), 1);
+        assert_eq!(transform.emitted_count(), 0);
+    }
+
+    #[test]
+    fn atomic_sized_no_fragment_pass_through_at_ipv6_minimum_mtu() {
+        let payload = vec![0x34; 1240];
+        let input = PacketRecord::new(plain_packet(&payload));
+        let expected_summary = input.packet().summary();
+        let expected_metadata = input.metadata().clone();
+        let mut transform = fixed_identification_transform(1280);
+
+        let output = transform.fragment_record(input).unwrap();
+
+        assert_eq!(output.len(), 1);
+        assert_eq!(transform.input_count(), 1);
+        assert_eq!(transform.emitted_count(), 1);
+        let record = &output.records()[0];
+        assert_eq!(record.packet().summary(), expected_summary);
+        assert!(record.packet().layer::<Ipv6FragmentHeader>().is_none());
+        assert_eq!(record.metadata(), &expected_metadata);
+        assert_eq!(record.packet().compile().unwrap().as_bytes().len(), 1280);
+    }
+
+    #[test]
+    fn unsupported_extension_chain_passes_through_with_trace_when_oversized() {
+        let payload = vec![0u8; 96];
+        let input = PacketRecord::new(unsupported_extension_packet(&payload));
+        let expected_summary = input.packet().summary();
+        let mut transform = fixed_identification_transform(MTU);
+
+        let output = transform.fragment_record(input).unwrap();
+
+        assert_eq!(output.len(), 1);
+        assert_eq!(transform.input_count(), 1);
+        assert_eq!(transform.emitted_count(), 1);
+        let record = &output.records()[0];
+        assert_eq!(record.packet().summary(), expected_summary);
+        assert!(record.metadata().ip_fragment_metadata().is_empty());
+        let traces = record.metadata().transforms();
+        assert_eq!(traces.len(), 1);
+        assert_eq!(traces[0].name(), "ip-fragment");
+        assert_eq!(
+            traces[0].note(),
+            Some(IPV6_FRAGMENT_UNSUPPORTED_EXTENSION_SCOPE_NOTE)
+        );
+    }
+
+    #[test]
+    fn transmitter_path_writes_ipv6_fragments_through_memorypacketwriter() {
+        let payload = (0u8..49).collect::<Vec<_>>();
+        let mut transmitter =
+            Transmitter::new(MemoryPacketWriter::new()).with(fixed_identification_transform(MTU));
+
+        let reports = transmitter
+            .write_record(PacketRecord::new(plain_packet(&payload)))
+            .unwrap();
+
+        assert_eq!(reports.len(), 3);
+        assert_eq!(
+            reports
+                .iter()
+                .map(|report| report.bytes_requested())
+                .collect::<Vec<_>>(),
+            [72, 72, 49]
+        );
+        assert_eq!(
+            reports
+                .iter()
+                .map(|report| report.bytes_written())
+                .collect::<Vec<_>>(),
+            [72, 72, 49]
+        );
+        assert!(reports
+            .iter()
+            .all(|report| report.backend() == &BackendKind::Memory));
+    }
+}

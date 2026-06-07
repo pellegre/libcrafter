@@ -31,10 +31,11 @@ use crafter::core::{
 };
 use crafter::{
     BackendKind, CrafterError, Dot11Metadata, IpDefrag, IpDefragOverlapStatus, IpFragment,
-    IpFragmentFamily, IpFragmentRange, IpFragmentReason, PacketOrigin, PacketRecord, PacketWire,
-    PcapError, PcapLinkType, PcapReader, PcapTimestamp, PcapWriter, PcapWriterOptions, Sniffer,
-    TimestampPrecision, WifiDecryptState, WireError, WpaAkm, WpaCipher, WpaCredentialStatus,
-    WpaDecrypt, WpaDecryptReason, WpaHandshakeStatus, WpaKeyKind, IPV4_OPTION_NOP,
+    IpFragmentConfig, IpFragmentFamily, IpFragmentRange, IpFragmentReason, PacketOrigin,
+    PacketRecord, PacketWire, PcapError, PcapLinkType, PcapReader, PcapTimestamp, PcapWriter,
+    PcapWriterOptions, Sniffer, TimestampPrecision, WifiDecryptState, WireError, WpaAkm, WpaCipher,
+    WpaCredentialStatus, WpaDecrypt, WpaDecryptReason, WpaHandshakeStatus, WpaKeyKind,
+    IPV4_OPTION_NOP,
 };
 use support::fixture_path;
 
@@ -4614,6 +4615,282 @@ fn ipv4_fragment_emit_boundary_fixture_rows_decode_and_reconstruct() {
             Ipv4FragmentEmitExpected::new(16, 32, 2, true, 40),
             Ipv4FragmentEmitExpected::new(32, 35, 4, false, 27),
         ],
+    );
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Ipv6FragmentEmitExpected {
+    start: usize,
+    end: usize,
+    offset: u16,
+    more_fragments: bool,
+    payload_len: u16,
+}
+
+impl Ipv6FragmentEmitExpected {
+    const fn new(
+        start: usize,
+        end: usize,
+        offset: u16,
+        more_fragments: bool,
+        payload_len: u16,
+    ) -> Self {
+        Self {
+            start,
+            end,
+            offset,
+            more_fragments,
+            payload_len,
+        }
+    }
+}
+
+fn ipv6_fragment_source() -> Ipv6Addr {
+    "2001:db8:74::1".parse().unwrap()
+}
+
+fn ipv6_fragment_destination() -> Ipv6Addr {
+    "2001:db8:74::2".parse().unwrap()
+}
+
+fn ipv6_fragment_emit_record(payload: &[u8], with_destination_options: bool) -> PacketRecord {
+    let ipv6 = Ipv6::new()
+        .src(ipv6_fragment_source())
+        .dst(ipv6_fragment_destination())
+        .traffic_class(0x74)
+        .flow_label(0x07474)
+        .hop_limit(52);
+
+    if with_destination_options {
+        PacketRecord::new(
+            ipv6.next_header(IPPROTO_IPV6_DSTOPTS)
+                / Ipv6DestinationOptionsHeader::new().next_header(IPPROTO_UDP)
+                / Raw::from_bytes(payload),
+        )
+    } else {
+        PacketRecord::new(ipv6.next_header(IPPROTO_UDP) / Raw::from_bytes(payload))
+    }
+}
+
+fn ipv6_unsupported_extension_emit_record(payload: &[u8]) -> PacketRecord {
+    PacketRecord::new(
+        Ipv6::new()
+            .src(ipv6_fragment_source())
+            .dst(ipv6_fragment_destination())
+            .next_header(IPPROTO_IPV6_EXPERIMENTAL_1)
+            / Raw::from_bytes(payload),
+    )
+}
+
+fn assert_ipv6_fragment_emit_fixture(
+    name: &str,
+    mtu: usize,
+    with_destination_options: bool,
+    payload: &[u8],
+    expected: &[Ipv6FragmentEmitExpected],
+) {
+    let config = IpFragmentConfig::new(mtu).ipv6_identification(0x5174_0001);
+    let mut transform = IpFragment::with_config(config);
+
+    let output = transform
+        .fragment_record(ipv6_fragment_emit_record(payload, with_destination_options))
+        .unwrap_or_else(|error| panic!("{name} should fragment: {error}"));
+
+    assert_eq!(output.len(), expected.len(), "{name} fragment count");
+    assert_eq!(
+        transform.emitted_count(),
+        expected.len(),
+        "{name} emissions"
+    );
+    let mut reconstructed = Vec::new();
+    for (index, (record, fragment)) in output.records().iter().zip(expected).enumerate() {
+        assert_eq!(fragment.start, reconstructed.len(), "{name} order");
+        let wire = record.packet().compile().unwrap();
+        assert!(
+            wire.as_bytes().len() <= mtu,
+            "{name} fragment {index} exceeded MTU"
+        );
+
+        let ipv6 = record.packet().layer::<Ipv6>().unwrap();
+        assert_eq!(ipv6.source(), ipv6_fragment_source(), "{name}");
+        assert_eq!(ipv6.destination(), ipv6_fragment_destination(), "{name}");
+        assert_eq!(ipv6.traffic_class_value(), 0x74, "{name}");
+        assert_eq!(ipv6.flow_label_value(), 0x07474, "{name}");
+        assert_eq!(ipv6.hop_limit_value(), 52, "{name}");
+        assert_eq!(
+            ipv6.payload_length_value(),
+            Some(fragment.payload_len),
+            "{name}"
+        );
+        if with_destination_options {
+            assert_eq!(ipv6.next_header_value(), IPPROTO_IPV6_DSTOPTS, "{name}");
+            let destination_options = record
+                .packet()
+                .layer::<Ipv6DestinationOptionsHeader>()
+                .unwrap();
+            assert_eq!(
+                destination_options.next_header_value(),
+                IPPROTO_IPV6_FRAGMENT,
+                "{name}"
+            );
+        } else {
+            assert_eq!(ipv6.next_header_value(), IPPROTO_IPV6_FRAGMENT, "{name}");
+        }
+
+        let fragment_header = record.packet().layer::<Ipv6FragmentHeader>().unwrap();
+        assert_eq!(fragment_header.next_header_value(), IPPROTO_UDP, "{name}");
+        assert_eq!(
+            fragment_header.identification_value(),
+            0x5174_0001,
+            "{name}"
+        );
+        assert_eq!(
+            fragment_header.fragment_offset_value(),
+            fragment.offset,
+            "{name}"
+        );
+        assert_eq!(
+            fragment_header.more_fragments_value(),
+            fragment.more_fragments,
+            "{name}"
+        );
+
+        let raw = record.packet().layer::<Raw>().unwrap();
+        assert_eq!(
+            raw.as_bytes(),
+            &payload[fragment.start..fragment.end],
+            "{name}"
+        );
+        reconstructed.extend_from_slice(raw.as_bytes());
+
+        let metadata = &record.metadata().ip_fragment_metadata()[0];
+        assert_eq!(metadata.family(), IpFragmentFamily::Ipv6, "{name}");
+        assert_eq!(metadata.fragment_count(), expected.len(), "{name}");
+        assert_eq!(metadata.fragment_index(), index, "{name}");
+        assert_eq!(
+            metadata.byte_range(),
+            IpFragmentRange::new(fragment.start as u32, fragment.end as u32),
+            "{name}"
+        );
+        assert_eq!(
+            metadata.reason(),
+            Some(&IpFragmentReason::Fragmented),
+            "{name}"
+        );
+    }
+
+    assert_eq!(reconstructed, payload, "{name} reconstructed payload");
+}
+
+#[test]
+fn ipv6_fragment_emit_boundary_fixture_rows_decode_and_reconstruct() {
+    let exact_mtu_payload = (0u8..32).collect::<Vec<_>>();
+    let exact_input = ipv6_fragment_emit_record(&exact_mtu_payload, false);
+    let exact_summary = exact_input.packet().summary();
+    let mut exact_transform =
+        IpFragment::with_config(IpFragmentConfig::new(72).ipv6_identification(0x5174_0001));
+    let exact_output = exact_transform.fragment_record(exact_input).unwrap();
+    assert_eq!(exact_output.len(), 1, "exact_mtu");
+    assert_eq!(exact_output.records()[0].packet().summary(), exact_summary);
+    assert!(exact_output.records()[0]
+        .packet()
+        .layer::<Ipv6FragmentHeader>()
+        .is_none());
+
+    let one_byte_over_payload = (0u8..33).collect::<Vec<_>>();
+    assert_ipv6_fragment_emit_fixture(
+        "one_byte_over_mtu",
+        72,
+        false,
+        &one_byte_over_payload,
+        &[
+            Ipv6FragmentEmitExpected::new(0, 24, 0, true, 32),
+            Ipv6FragmentEmitExpected::new(24, 33, 3, false, 17),
+        ],
+    );
+
+    let many_fragments_payload = (0u8..97).collect::<Vec<_>>();
+    assert_ipv6_fragment_emit_fixture(
+        "many_fragments",
+        72,
+        false,
+        &many_fragments_payload,
+        &[
+            Ipv6FragmentEmitExpected::new(0, 24, 0, true, 32),
+            Ipv6FragmentEmitExpected::new(24, 48, 3, true, 32),
+            Ipv6FragmentEmitExpected::new(48, 72, 6, true, 32),
+            Ipv6FragmentEmitExpected::new(72, 96, 9, true, 32),
+            Ipv6FragmentEmitExpected::new(96, 97, 12, false, 9),
+        ],
+    );
+
+    let extension_boundary_payload = (0u8..49).collect::<Vec<_>>();
+    assert_ipv6_fragment_emit_fixture(
+        "destination_options_boundary",
+        80,
+        true,
+        &extension_boundary_payload,
+        &[
+            Ipv6FragmentEmitExpected::new(0, 24, 0, true, 40),
+            Ipv6FragmentEmitExpected::new(24, 48, 3, true, 40),
+            Ipv6FragmentEmitExpected::new(48, 49, 6, false, 17),
+        ],
+    );
+
+    let mut too_small_mtu_transform =
+        IpFragment::with_config(IpFragmentConfig::new(55).ipv6_identification(0x5174_0001));
+    let too_small_mtu_error = too_small_mtu_transform
+        .fragment_record(ipv6_fragment_emit_record(
+            &(0u8..24).collect::<Vec<_>>(),
+            false,
+        ))
+        .unwrap_err();
+    match too_small_mtu_error {
+        WireError::Packet(CrafterError::InvalidFieldValue { field, .. }) => {
+            assert_eq!(field, "ip.fragment.mtu", "too_small_mtu");
+        }
+        other => panic!("expected too_small_mtu InvalidFieldValue, got {other:?}"),
+    }
+
+    let atomic_sized_payload = vec![0x74; 1240];
+    let atomic_sized_input = ipv6_fragment_emit_record(&atomic_sized_payload, false);
+    let atomic_sized_summary = atomic_sized_input.packet().summary();
+    let mut atomic_sized_transform =
+        IpFragment::with_config(IpFragmentConfig::new(1280).ipv6_identification(0x5174_0001));
+    let atomic_sized_output = atomic_sized_transform
+        .fragment_record(atomic_sized_input)
+        .unwrap();
+    assert_eq!(atomic_sized_output.len(), 1, "atomic_sized");
+    assert_eq!(
+        atomic_sized_output.records()[0].packet().summary(),
+        atomic_sized_summary
+    );
+    assert!(atomic_sized_output.records()[0]
+        .packet()
+        .layer::<Ipv6FragmentHeader>()
+        .is_none());
+
+    let mut unsupported_extension_transform =
+        IpFragment::with_config(IpFragmentConfig::new(72).ipv6_identification(0x5174_0001));
+    let unsupported_extension_output = unsupported_extension_transform
+        .fragment_record(ipv6_unsupported_extension_emit_record(&vec![0u8; 96]))
+        .unwrap();
+    assert_eq!(
+        unsupported_extension_output.len(),
+        1,
+        "unsupported_extension"
+    );
+    assert!(unsupported_extension_output.records()[0]
+        .metadata()
+        .ip_fragment_metadata()
+        .is_empty());
+    assert_eq!(
+        unsupported_extension_output.records()[0]
+            .metadata()
+            .transforms()[0]
+            .note(),
+        Some("unsupported IPv6 extension chain outside Fragment Header extension scope"),
+        "unsupported_extension"
     );
 }
 
