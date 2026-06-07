@@ -2047,3 +2047,115 @@ mod ipv6_emit {
         }
     }
 }
+
+#[cfg(test)]
+mod ipv6_link_wrapper {
+    use super::super::{IpFragment, IpFragmentConfig};
+    use crate::wire::record::PacketRecord;
+    use crate::{
+        Ethernet, Ipv6, Ipv6FragmentHeader, MacAddr, Packet, Raw, ETHERTYPE_IPV6,
+        IPPROTO_IPV6_FRAGMENT, IPPROTO_UDP,
+    };
+    use std::net::Ipv6Addr;
+
+    const MTU: usize = 72;
+    const IDENTIFICATION: u32 = 0x3333_3333;
+
+    fn source() -> Ipv6Addr {
+        "2001:db8:33::1".parse().unwrap()
+    }
+
+    fn destination() -> Ipv6Addr {
+        "2001:db8:33::2".parse().unwrap()
+    }
+
+    fn source_mac() -> MacAddr {
+        MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x33, 0x01])
+    }
+
+    fn destination_mac() -> MacAddr {
+        MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x33, 0x02])
+    }
+
+    fn ipv6_packet(payload: &[u8]) -> Packet {
+        Ipv6::new()
+            .src(source())
+            .dst(destination())
+            .hop_limit(51)
+            .next_header(IPPROTO_UDP)
+            / Raw::from_bytes(payload)
+    }
+
+    fn raw_ipv6_record(payload: &[u8]) -> PacketRecord {
+        PacketRecord::new(ipv6_packet(payload))
+    }
+
+    fn ethernet_wrapped_ipv6_record(payload: &[u8]) -> PacketRecord {
+        PacketRecord::new(
+            Ethernet::new()
+                .src(source_mac())
+                .dst(destination_mac())
+                .ethertype(ETHERTYPE_IPV6)
+                / ipv6_packet(payload),
+        )
+    }
+
+    #[test]
+    fn raw_ipv6_fragmentation_emits_l3_packet_records() {
+        let payload = (0u8..49).collect::<Vec<_>>();
+        let config = IpFragmentConfig::new(MTU).ipv6_identification(IDENTIFICATION);
+        let mut transform = IpFragment::with_config(config);
+
+        let output = transform
+            .fragment_record(raw_ipv6_record(&payload))
+            .unwrap();
+
+        assert_eq!(output.len(), 3);
+        for record in output.records() {
+            assert!(record.packet().layer::<Ethernet>().is_none());
+
+            let ipv6 = record.packet().layer::<Ipv6>().unwrap();
+            let fragment = record.packet().layer::<Ipv6FragmentHeader>().unwrap();
+            assert_eq!(ipv6.source(), source());
+            assert_eq!(ipv6.destination(), destination());
+            assert_eq!(ipv6.next_header_value(), IPPROTO_IPV6_FRAGMENT);
+            assert_eq!(fragment.next_header_value(), IPPROTO_UDP);
+            assert_eq!(fragment.identification_value(), IDENTIFICATION);
+
+            let wire = record.packet().compile().unwrap();
+            assert_eq!(wire.as_bytes()[0] >> 4, 6);
+        }
+    }
+
+    #[test]
+    fn ethernet_wrapped_ipv6_fragmentation_preserves_link_wrapper_on_all_fragments() {
+        let payload = (0u8..49).collect::<Vec<_>>();
+        let config = IpFragmentConfig::new(MTU).ipv6_identification(IDENTIFICATION);
+        let mut transform = IpFragment::with_config(config);
+
+        let output = transform
+            .fragment_record(ethernet_wrapped_ipv6_record(&payload))
+            .unwrap();
+
+        assert_eq!(output.len(), 3);
+        for record in output.records() {
+            let ethernet = record.packet().layer::<Ethernet>().unwrap();
+            assert_eq!(ethernet.source(), Some(source_mac()));
+            assert_eq!(ethernet.destination(), Some(destination_mac()));
+            assert_eq!(ethernet.ethertype_value(), Some(ETHERTYPE_IPV6));
+
+            let ipv6 = record.packet().layer::<Ipv6>().unwrap();
+            let fragment = record.packet().layer::<Ipv6FragmentHeader>().unwrap();
+            assert_eq!(ipv6.source(), source());
+            assert_eq!(ipv6.destination(), destination());
+            assert_eq!(ipv6.next_header_value(), IPPROTO_IPV6_FRAGMENT);
+            assert_eq!(fragment.identification_value(), IDENTIFICATION);
+
+            let wire = record.packet().compile().unwrap();
+            assert_eq!(&wire.as_bytes()[0..6], &destination_mac().octets());
+            assert_eq!(&wire.as_bytes()[6..12], &source_mac().octets());
+            assert_eq!(&wire.as_bytes()[12..14], &ETHERTYPE_IPV6.to_be_bytes());
+            assert_eq!(wire.as_bytes()[14] >> 4, 6);
+        }
+    }
+}
