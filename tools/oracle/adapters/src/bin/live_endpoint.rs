@@ -439,14 +439,16 @@ fn run_receiver(
     // receiver never reaches its deadline — hanging the whole live exchange.
     // Nonblocking reads let `Capture::next_packet` re-check the deadline between
     // polls and always return at `timeout`, emitting a (possibly empty) capture.
-    let mut sniffer = Sniffer::interface(resolve_live_interface(request))
+    let mut wire = PacketWire::pcap_interface(resolve_live_interface(request))
         .timeout(timeout)
-        .nonblock()
-        .count(prepared.len().max(1));
+        .nonblock();
     if let Some(filter) = capture_filter.clone() {
-        sniffer = sniffer.filter(filter);
+        wire = wire.filter(filter);
     }
-    let capture = sniffer.open()?;
+    let source = wire.open()?.source()?;
+    let capture = Sniffer::new(source)
+        .timeout(timeout)
+        .count(prepared.len().max(1));
     // Signal that the capture is open and listening so the orchestrator only
     // launches the sender once packets can actually be observed. Without this
     // the sender can transmit its whole burst before the receiver is ready,
@@ -455,7 +457,7 @@ fn run_receiver(
         out_dir.join(format!("receiver-ready-{}", request.direction)),
         b"ready",
     );
-    let captured = capture.collect_packets()?;
+    let captured = capture.collect_records()?;
 
     let capture_dir = artifact_path(out_dir, &request.artifact_paths, "captures", "captures");
     fs::create_dir_all(&capture_dir)?;
@@ -473,7 +475,11 @@ fn run_receiver(
         let capture_slice = capture_slice_for_root(captured_packet, &compare_root)?;
         let observed_raw_hex = hex_bytes(&capture_slice.comparable_raw);
         let full_capture_raw_hex = hex_bytes(&capture_slice.full_raw);
-        let capture_link_type = format!("{:?}", captured_packet.link_type());
+        let capture_link_type = captured_packet
+            .metadata()
+            .link_type()
+            .map(|link_type| format!("{link_type:?}"))
+            .unwrap_or_else(|| "Unknown".to_string());
         decoded_models.push(decoded_model(
             &capture_slice.packet,
             Some(&capture_slice.compare_root),
@@ -585,7 +591,10 @@ fn run_receiver(
         vec![json!({
             "endpoint_role": request.endpoint_role,
             "path": capture_summary_path.to_string_lossy(),
-            "link_type": captured.first().map(|packet| format!("{:?}", packet.link_type())),
+            "link_type": captured
+                .first()
+                .and_then(|packet| packet.metadata().link_type())
+                .map(|link_type| format!("{link_type:?}")),
             "packet_count": captured.len(),
             "metadata": {
                 "artifact_kind": "decoded-live-capture-summary",
@@ -986,11 +995,14 @@ fn decoded_model(
 }
 
 fn capture_slice_for_root(
-    captured: &PcapPacket,
+    captured: &PacketRecord,
     compare_root: &str,
 ) -> ExampleResult<CaptureSlice> {
     let root = canonical_compare_root(compare_root)?;
-    let full_raw = captured.data().to_vec();
+    let full_raw = match captured.metadata().captured_bytes() {
+        Some(bytes) => bytes.to_vec(),
+        None => captured.packet().compile()?.into_bytes(),
+    };
     match root {
         "l3:ipv4" => {
             let offset = ip_header_offset(&full_raw, 4, ETHERTYPE_IPV4)?;
@@ -3087,13 +3099,13 @@ mod l2_ipv4_root {
         let wire_bytes = wire.as_bytes().to_vec();
         let decoded = Packet::decode_from_link(LinkType::Ethernet, &wire_bytes)
             .expect("ethernet frame decodes");
-        let captured = PcapPacket::new(
+        let captured = PacketRecord::from_pcap_packet(PcapPacket::new(
             PcapTimestamp::zero(),
             wire_bytes.len() as u32,
             wire_bytes,
             PcapLinkType::Ethernet,
             decoded,
-        );
+        ));
 
         let slice =
             capture_slice_for_root(&captured, "l2:ipv4").expect("l2:ipv4 capture slice is sliced");
