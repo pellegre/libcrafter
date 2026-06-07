@@ -850,9 +850,9 @@ mod tests {
     use core::net::Ipv4Addr;
     use hmac::{Hmac, Mac};
     use sha1::Sha1;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
-    use crate::wire::{BackendKind, PacketOrigin};
+    use crate::wire::{BackendKind, Dot11Metadata, PacketOrigin, PacketWire, Sniffer};
     use crate::{
         Dot11, Dot11SequenceControl, Eapol, EapolKey, EapolKeyInformation, Ethernet, Ipv4,
         LinkType, LlcSnap, MacAddr, RsnInformation, RSN_AKM_SUITE_SAE, RSN_CIPHER_SUITE_GCMP_256,
@@ -1301,6 +1301,15 @@ mod tests {
         );
     }
 
+    fn wpa_pcap_fixture_path() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/pcaps/wpa2-psk-ccmp-unicast.pcap")
+    }
+
+    fn wpa_pcap_fixture_mac(last: u8) -> MacAddr {
+        MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x20, last])
+    }
+
     #[test]
     fn wpa_decrypt_skeleton_passes_records_unchanged() {
         let input = record("payload");
@@ -1558,6 +1567,61 @@ mod tests {
         );
         assert_eq!(transform.decrypted_count(), 1);
         assert_eq!(transform.failed_count(), 0);
+    }
+
+    #[test]
+    fn pcap_fixture_decrypts_packet_wire_sniffer_pipeline() {
+        let path = wpa_pcap_fixture_path();
+        let source = PacketWire::pcap_file(path.clone())
+            .open()
+            .unwrap()
+            .source()
+            .unwrap();
+        let records = Sniffer::new(source)
+            .with(Dot11Metadata::new())
+            .with(
+                WpaDecrypt::new()
+                    .network("libcrafter-wpa", "libcrafter-pass")
+                    .unwrap(),
+            )
+            .collect_records()
+            .unwrap();
+
+        assert_eq!(records.len(), 2);
+        let decrypted = records
+            .iter()
+            .find(|record| record.metadata().origin() == PacketOrigin::Transformed)
+            .expect("fixture should emit one decrypted record");
+        assert_eq!(decrypted.metadata().backend(), &BackendKind::PcapFile);
+        assert_eq!(decrypted.metadata().file(), Some(path.as_path()));
+        assert_eq!(decrypted.metadata().link_type(), Some(LinkType::Ethernet));
+        assert!(decrypted.packet().layer::<Ethernet>().is_some());
+        assert!(decrypted.packet().layer::<Ipv4>().is_some());
+        assert_eq!(
+            decrypted.packet().layer::<Raw>().unwrap().as_bytes(),
+            b"libcrafter wpa"
+        );
+
+        let wifi = decrypted.metadata().wifi().unwrap();
+        assert_eq!(wifi.ssid(), Some(b"libcrafter-wpa".as_slice()));
+        assert_eq!(wifi.bssid(), Some(wpa_pcap_fixture_mac(0x01)));
+        assert_eq!(wifi.transmitter(), Some(wpa_pcap_fixture_mac(0x02)));
+        assert_eq!(wifi.receiver(), Some(wpa_pcap_fixture_mac(0x01)));
+        assert_eq!(wifi.key_id(), Some(1));
+        assert_eq!(wifi.decrypt_state(), Some(WifiDecryptState::Decrypted));
+
+        let wpa = wifi.wpa_metadata().unwrap();
+        assert_eq!(wpa.cipher(), Some(WpaCipher::Ccmp128));
+        assert_eq!(wpa.akm(), Some(WpaAkm::Psk));
+        assert_eq!(wpa.key_kind(), Some(WpaKeyKind::Pairwise));
+        assert_eq!(wpa.key_id(), Some(1));
+        assert_eq!(wpa.packet_number(), Some(0x33));
+        assert_eq!(wpa.decrypt_reason(), Some(WpaDecryptReason::Decrypted));
+        assert_eq!(wpa.credential_status(), Some(WpaCredentialStatus::Matched));
+        assert_eq!(
+            wpa.handshake_status(),
+            Some(WpaHandshakeStatus::MicVerified)
+        );
     }
 
     #[test]
