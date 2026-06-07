@@ -49,7 +49,8 @@ pub use transform::{
 };
 pub use transmitter::Transmitter;
 pub use wpa::{
-    derive_pmk, Pmk, WpaAkm, WpaCipher, WpaCredentialStatus, WpaDecrypt, WpaDecryptConfig,
-    WpaDecryptReason, WpaHandshakeStatus, WpaKeyKind, WpaMetadata, WpaNetwork,
+    derive_pmk, derive_ptk, PairwiseTransientKey, Pmk, WpaAkm, WpaCipher, WpaCredentialStatus,
+    WpaDecrypt, WpaDecryptConfig, WpaDecryptReason, WpaHandshakeStatus, WpaKeyKind, WpaMetadata,
+    WpaNetwork,
 };
 pub use writer::{MemoryPacketWriter, MemoryWrite, PacketWriter, WriteReport};

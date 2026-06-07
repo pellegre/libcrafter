@@ -400,15 +400,15 @@ pub use pcap::{
 };
 pub use wire::Sniffer;
 pub use wire::{
-    derive_pmk, BackendKind, BluetoothMetadata, Dot11Metadata, DropAllTransform,
+    derive_pmk, derive_ptk, BackendKind, BluetoothMetadata, Dot11Metadata, DropAllTransform,
     DuplicateTransform, MediumMetadata, MemoryPacketWriter, MemoryWrite, OpenedPacketSource,
     OpenedPacketWriter, PacketMetadata, PacketOrigin, PacketRecord, PacketSource, PacketTransform,
-    PacketWire, PacketWireBuilder, PacketWireTarget, PacketWriter, PassThroughTransform, Pmk,
-    RadioMetadata, RawSocketWireBuilder, RawSocketWriter, SnifferCancel, SnifferHandle,
-    TraceAppendTransform, TransformOutput, TransformTrace, Transmitter, VecPacketSource,
-    WifiDecryptState, WifiMetadata, WifiProtectionStatus, WireError, WpaAkm, WpaCipher,
-    WpaCredentialStatus, WpaDecrypt, WpaDecryptConfig, WpaDecryptReason, WpaHandshakeStatus,
-    WpaKeyKind, WpaMetadata, WpaNetwork, WriteReport,
+    PacketWire, PacketWireBuilder, PacketWireTarget, PacketWriter, PairwiseTransientKey,
+    PassThroughTransform, Pmk, RadioMetadata, RawSocketWireBuilder, RawSocketWriter, SnifferCancel,
+    SnifferHandle, TraceAppendTransform, TransformOutput, TransformTrace, Transmitter,
+    VecPacketSource, WifiDecryptState, WifiMetadata, WifiProtectionStatus, WireError, WpaAkm,
+    WpaCipher, WpaCredentialStatus, WpaDecrypt, WpaDecryptConfig, WpaDecryptReason,
+    WpaHandshakeStatus, WpaKeyKind, WpaMetadata, WpaNetwork, WriteReport,
 };
 
 /// Core packet and protocol APIs.
@@ -713,21 +713,22 @@ pub mod core {
 pub mod prelude {
     pub use crate::core::*;
     pub use crate::{
-        default_interface, default_interface_in, default_interface_name, derive_pmk, dump_pcap,
-        find_interface, find_interface_in, get_ip_strings, get_ips, get_my_ip, get_my_ip_in,
-        get_my_ipv6, get_my_ipv6_in, get_my_mac, get_my_mac_in, interface_for, interface_for_in,
-        interfaces, parse_ip_range, parse_numbers, read_pcap, read_pcap_filtered, reply_filter,
-        reply_matches, send_packet, send_packets, send_plan, send_recv_packet, send_recv_packets,
-        BatchSend, BatchSendEntry, BatchSendRecv, BatchSendRecvEntry, BatchSendRecvReport,
-        BatchSendReport, Dot11Metadata, InterfaceAddress, InterfaceInfo, Ipv4Range, NetError,
-        PacketBatchSendExt, PacketBatchSendRecvExt, PacketSendExt, PacketSendRecvExt, PcapError,
-        PcapHeader, PcapLinkType, PcapPacket, PcapReader, PcapRecord, PcapRecords, PcapTimestamp,
-        PcapWriter, PcapWriterOptions, Pmk, RawSender, ReplyMatcher, SendMode, SendOptions,
-        SendPlan, SendRecv, SendRecvOptions, SendRecvReport, SendReport, SendTarget, Sniffer,
-        SocketSend, SocketSender, TimestampPrecision, Transmitter, VecPacketSource,
-        WifiDecryptState, WifiMetadata, WifiProtectionStatus, WireError, WpaAkm, WpaCipher,
-        WpaCredentialStatus, WpaDecrypt, WpaDecryptConfig, WpaDecryptReason, WpaHandshakeStatus,
-        WpaKeyKind, WpaMetadata, WpaNetwork, WriteReport,
+        default_interface, default_interface_in, default_interface_name, derive_pmk, derive_ptk,
+        dump_pcap, find_interface, find_interface_in, get_ip_strings, get_ips, get_my_ip,
+        get_my_ip_in, get_my_ipv6, get_my_ipv6_in, get_my_mac, get_my_mac_in, interface_for,
+        interface_for_in, interfaces, parse_ip_range, parse_numbers, read_pcap, read_pcap_filtered,
+        reply_filter, reply_matches, send_packet, send_packets, send_plan, send_recv_packet,
+        send_recv_packets, BatchSend, BatchSendEntry, BatchSendRecv, BatchSendRecvEntry,
+        BatchSendRecvReport, BatchSendReport, Dot11Metadata, InterfaceAddress, InterfaceInfo,
+        Ipv4Range, NetError, PacketBatchSendExt, PacketBatchSendRecvExt, PacketSendExt,
+        PacketSendRecvExt, PairwiseTransientKey, PcapError, PcapHeader, PcapLinkType, PcapPacket,
+        PcapReader, PcapRecord, PcapRecords, PcapTimestamp, PcapWriter, PcapWriterOptions, Pmk,
+        RawSender, ReplyMatcher, SendMode, SendOptions, SendPlan, SendRecv, SendRecvOptions,
+        SendRecvReport, SendReport, SendTarget, Sniffer, SocketSend, SocketSender,
+        TimestampPrecision, Transmitter, VecPacketSource, WifiDecryptState, WifiMetadata,
+        WifiProtectionStatus, WireError, WpaAkm, WpaCipher, WpaCredentialStatus, WpaDecrypt,
+        WpaDecryptConfig, WpaDecryptReason, WpaHandshakeStatus, WpaKeyKind, WpaMetadata,
+        WpaNetwork, WriteReport,
     };
     pub use crate::{
         BackendKind, BluetoothMetadata, DropAllTransform, DuplicateTransform, MediumMetadata,
