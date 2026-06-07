@@ -8,7 +8,10 @@ use super::ipv4::{
     Ipv4FragmentWrapperKind,
 };
 use super::range::{RangeMap, RangeMapConflict, RangeMapInsert};
-use super::{IpDefragConfig, IpDefragMetadata, IpFragmentFamily, IpFragmentRange};
+use super::{
+    IpDefragConfig, IpDefragEvictionReason, IpDefragMetadata, IpDefragOverlapPolicy,
+    IpFragmentFamily, IpFragmentRange,
+};
 use crate::pcap::PcapTimestamp;
 use crate::protocols::ipv4::append_ipv4_packet_with_registry;
 use crate::protocols::link::{append_vlan_packet_with_registry, ETHERTYPE_IPV4, ETHERTYPE_VLAN};
@@ -72,20 +75,68 @@ impl IpDefrag {
         &mut self,
         record: &PacketRecord,
         view: &Ipv4FragmentView,
-    ) -> Option<Ipv4DatagramState> {
+    ) -> Ipv4DefragObservation {
         let key = Ipv4DefragKey::from_view(view);
-        let complete = {
+        let outcome = {
             let state = self
                 .ipv4_datagrams
                 .entry(key.clone())
                 .or_insert_with(|| Ipv4DatagramState::new(key.clone(), record));
             state.observe_fragment(record, view);
-            state.is_complete()
+            if state.has_conflict() {
+                Ipv4DefragObservationKind::Conflict
+            } else if state.is_complete() {
+                Ipv4DefragObservationKind::Complete
+            } else {
+                Ipv4DefragObservationKind::Buffered
+            }
         };
-        if complete {
-            self.ipv4_datagrams.remove(&key)
-        } else {
-            None
+
+        match outcome {
+            Ipv4DefragObservationKind::Buffered => Ipv4DefragObservation::Buffered,
+            Ipv4DefragObservationKind::Complete => {
+                let state = self
+                    .ipv4_datagrams
+                    .remove(&key)
+                    .expect("complete IPv4 defrag state must remain in the map");
+                Ipv4DefragObservation::Complete(state)
+            }
+            Ipv4DefragObservationKind::Conflict => {
+                let state = self
+                    .ipv4_datagrams
+                    .remove(&key)
+                    .expect("conflicting IPv4 defrag state must remain in the map");
+                Ipv4DefragObservation::Conflict(state)
+            }
+        }
+    }
+
+    fn handle_ipv4_conflict(
+        &mut self,
+        mut record: PacketRecord,
+        state: Ipv4DatagramState,
+        emit: &mut dyn FnMut(PacketRecord) -> Result<()>,
+    ) -> Result<()> {
+        match self.config.configured_overlap_policy() {
+            IpDefragOverlapPolicy::RejectConflicting => Err(CrafterError::invalid_field_value(
+                "ip.defrag.ipv4.overlap",
+                "conflicting IPv4 fragment overlap is ambiguous",
+            )
+            .into()),
+            IpDefragOverlapPolicy::DropConflicting => Ok(()),
+            IpDefragOverlapPolicy::PassThroughConflicting => {
+                record.metadata_mut().push_ip_defrag_metadata(
+                    state.eviction_metadata(IpDefragEvictionReason::Conflict),
+                );
+                record.metadata_mut().push_transform_trace(
+                    TransformTrace::new(self.name()).with_note(
+                        state.conflict_trace_note(self.config.configured_overlap_policy()),
+                    ),
+                );
+                emit(record)?;
+                self.emitted_count += 1;
+                Ok(())
+            }
         }
     }
 }
@@ -105,9 +156,15 @@ impl PacketTransform for IpDefrag {
 
         if let Ipv4FragmentExtract::View(view) = extract_ipv4_fragment(&record)? {
             if view.is_fragmented() {
-                if let Some(state) = self.observe_ipv4_fragment(&record, &view) {
-                    emit(state.reassembled_record(self.name())?)?;
-                    self.emitted_count += 1;
+                match self.observe_ipv4_fragment(&record, &view) {
+                    Ipv4DefragObservation::Buffered => {}
+                    Ipv4DefragObservation::Complete(state) => {
+                        emit(state.reassembled_record(self.name())?)?;
+                        self.emitted_count += 1;
+                    }
+                    Ipv4DefragObservation::Conflict(state) => {
+                        self.handle_ipv4_conflict(record, state, emit)?;
+                    }
                 }
                 return Ok(());
             }
@@ -124,6 +181,20 @@ impl PacketTransform for IpDefrag {
         self.emitted_count += 1;
         Ok(())
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Ipv4DefragObservationKind {
+    Buffered,
+    Complete,
+    Conflict,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Ipv4DefragObservation {
+    Buffered,
+    Complete(Ipv4DatagramState),
+    Conflict(Ipv4DatagramState),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -246,6 +317,10 @@ impl Ipv4DatagramState {
         }
     }
 
+    fn has_conflict(&self) -> bool {
+        self.first_conflict.is_some() || self.ranges.has_conflict()
+    }
+
     fn is_complete(&self) -> bool {
         self.first_fragment.is_some() && self.ranges.is_complete()
     }
@@ -272,7 +347,7 @@ impl Ipv4DatagramState {
             .with_original_len(emitted_len)
             .with_captured_len(emitted_len)
             .with_emitted_len(emitted_len)
-            .with_ip_defrag_metadata(self.metadata(total_len))
+            .with_ip_defrag_metadata(self.reassembled_metadata(total_len))
             .with_transform_trace(
                 TransformTrace::new(transform_name)
                     .with_note("reassembled")
@@ -282,7 +357,7 @@ impl Ipv4DatagramState {
         Ok(PacketRecord::from_packet_metadata(packet, metadata))
     }
 
-    fn metadata(&self, total_len: u32) -> IpDefragMetadata {
+    fn metadata(&self) -> IpDefragMetadata {
         IpDefragMetadata::new(IpFragmentFamily::Ipv4, self.key.identification as u32)
             .with_datagram_key(self.key.summary())
             .with_fragment_count(self.fragment_count)
@@ -294,7 +369,50 @@ impl Ipv4DatagramState {
                     .into_iter()
                     .map(|range| IpFragmentRange::new(range.start(), range.end())),
             )
-            .with_total_len(total_len)
+    }
+
+    fn reassembled_metadata(&self, total_len: u32) -> IpDefragMetadata {
+        self.metadata().with_total_len(total_len)
+    }
+
+    fn eviction_metadata(&self, eviction_reason: IpDefragEvictionReason) -> IpDefragMetadata {
+        let metadata = match self.known_packet_total_len() {
+            Some(total_len) => self.metadata().with_total_len(total_len),
+            None => self.metadata(),
+        };
+        metadata.with_eviction_reason(eviction_reason)
+    }
+
+    fn known_packet_total_len(&self) -> Option<u32> {
+        let payload_len = self.total_expected.or_else(|| self.ranges.total_len())?;
+        let header_len = u32::try_from(self.first_fragment.as_ref()?.header.len()).ok()?;
+        header_len.checked_add(payload_len)
+    }
+
+    fn conflict_trace_note(&self, policy: IpDefragOverlapPolicy) -> String {
+        let action = match policy {
+            IpDefragOverlapPolicy::RejectConflicting => "reject",
+            IpDefragOverlapPolicy::DropConflicting => "drop",
+            IpDefragOverlapPolicy::PassThroughConflicting => "pass-through",
+        };
+
+        let Some(conflict) = self
+            .first_conflict
+            .as_ref()
+            .or_else(|| self.ranges.conflict())
+        else {
+            return format!("ambiguous conflicting IPv4 overlap: policy={action}");
+        };
+
+        format!(
+            "ambiguous conflicting IPv4 overlap: policy={action} reason={:?} offset={} incoming={:?} existing={:?} incoming_byte={:?} existing_byte={:?}",
+            conflict.reason(),
+            conflict.offset(),
+            conflict.incoming(),
+            conflict.existing(),
+            conflict.incoming_byte(),
+            conflict.existing_byte()
+        )
     }
 }
 
@@ -599,44 +717,173 @@ mod ipv4_reassembles {
     #[test]
     fn ipv4_datagram_state_tracks_duplicates_and_conflicts() {
         let timestamp = PcapTimestamp::micros(12, 0).unwrap();
-        let mut transform = IpDefrag::new();
+        let first = fragment_record(source(), 0, true, b"abcdefgh", timestamp, "wan0");
+        let duplicate = fragment_record(source(), 0, true, b"abcdefgh", timestamp, "wan0");
+        let conflict = fragment_record(source(), 0, true, b"abcdWXYZ", timestamp, "wan0");
+        let mut state = Ipv4DatagramState::new(key_for(source()), &first);
 
-        transform
-            .defrag_record(fragment_record(
-                source(),
-                0,
-                true,
-                b"abcdefgh",
-                timestamp,
-                "wan0",
-            ))
-            .unwrap();
-        transform
-            .defrag_record(fragment_record(
-                source(),
-                0,
-                true,
-                b"abcdefgh",
-                timestamp,
-                "wan0",
-            ))
-            .unwrap();
-        transform
-            .defrag_record(fragment_record(
-                source(),
-                0,
-                true,
-                b"abcdWXYZ",
-                timestamp,
-                "wan0",
-            ))
-            .unwrap();
+        for record in [&first, &duplicate, &conflict] {
+            let Ipv4FragmentExtract::View(view) = extract_ipv4_fragment(record).unwrap() else {
+                panic!("expected IPv4 fragment view");
+            };
+            state.observe_fragment(record, &view);
+        }
 
-        let state = transform.ipv4_datagrams.get(&key_for(source())).unwrap();
         assert_eq!(state.fragment_count, 1);
         assert_eq!(state.duplicate_count, 1);
         assert_eq!(state.conflict_count, 1);
         assert!(state.first_conflict.is_some());
         assert!(state.ranges.has_conflict());
+    }
+}
+
+#[cfg(test)]
+mod ipv4_overlap {
+    use super::*;
+    use crate::wire::ip::{
+        IpDefragOverlapPolicy, IpDefragOverlapStatus, IpFragmentFamily, IpFragmentRange,
+    };
+    use crate::wire::record::{BackendKind, PacketRecord};
+    use crate::wire::WireError;
+    use crate::Raw;
+
+    const PROTOCOL_UDP: u8 = 17;
+    const IDENTIFICATION: u16 = 0x789a;
+
+    fn source() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 10)
+    }
+
+    fn destination() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 20)
+    }
+
+    fn fragment_record(fragment_offset: u16, more_fragments: bool, payload: &[u8]) -> PacketRecord {
+        let packet = Ipv4::new()
+            .src(source())
+            .dst(destination())
+            .protocol(PROTOCOL_UDP)
+            .identification(IDENTIFICATION)
+            .more_fragments(more_fragments)
+            .fragment_offset(fragment_offset)
+            / Raw::from_bytes(payload);
+
+        PacketRecord::new(packet).with_backend(BackendKind::PcapFile)
+    }
+
+    fn key() -> Ipv4DefragKey {
+        Ipv4DefragKey::new(source(), destination(), PROTOCOL_UDP, IDENTIFICATION)
+    }
+
+    fn start_conflict_sequence(transform: &mut IpDefrag) -> PacketRecord {
+        let first = fragment_record(0, true, b"abcdefghijklmnop");
+        let conflicting = fragment_record(1, false, b"QRSTUVWX");
+
+        let output = transform.defrag_record(first).unwrap();
+        assert!(output.is_empty());
+
+        conflicting
+    }
+
+    #[test]
+    fn exact_duplicate_fragments_reassemble_and_record_duplicate_count() {
+        let mut transform = IpDefrag::new();
+
+        assert!(transform
+            .defrag_record(fragment_record(0, true, b"abcdefgh"))
+            .unwrap()
+            .is_empty());
+        assert!(transform
+            .defrag_record(fragment_record(0, true, b"abcdefgh"))
+            .unwrap()
+            .is_empty());
+        let output = transform
+            .defrag_record(fragment_record(1, false, b"ijkl"))
+            .unwrap();
+
+        assert_eq!(output.len(), 1);
+        assert!(!transform.ipv4_datagrams.contains_key(&key()));
+
+        let record = &output.records()[0];
+        let raw = record.packet().layer::<Raw>().unwrap();
+        assert_eq!(raw.as_bytes(), b"abcdefghijkl");
+
+        let metadata = &record.metadata().ip_defrag_metadata()[0];
+        assert_eq!(metadata.family(), IpFragmentFamily::Ipv4);
+        assert_eq!(metadata.fragment_count(), 2);
+        assert_eq!(metadata.duplicate_count(), 1);
+        assert_eq!(metadata.overlap_status(), IpDefragOverlapStatus::None);
+        assert_eq!(
+            metadata.byte_ranges(),
+            &[IpFragmentRange::new(0, 8), IpFragmentRange::new(8, 12)]
+        );
+        assert_eq!(metadata.total_len(), Some(32));
+    }
+
+    #[test]
+    fn default_rejects_conflicting_overlaps_as_ambiguous() {
+        let mut transform = IpDefrag::new();
+        let conflicting = start_conflict_sequence(&mut transform);
+
+        let error = transform.defrag_record(conflicting).unwrap_err();
+
+        match error {
+            WireError::Packet(CrafterError::InvalidFieldValue { field, reason }) => {
+                assert_eq!(field, "ip.defrag.ipv4.overlap");
+                assert!(reason.contains("ambiguous"));
+            }
+            other => panic!("expected structured ambiguous overlap error, got {other:?}"),
+        }
+        assert!(!transform.ipv4_datagrams.contains_key(&key()));
+        assert_eq!(transform.emitted_count(), 0);
+    }
+
+    #[test]
+    fn drop_policy_discards_ambiguous_ipv4_datagram() {
+        let config = IpDefragConfig::new().overlap_policy(IpDefragOverlapPolicy::DropConflicting);
+        let mut transform = IpDefrag::new().with_config(config);
+        let conflicting = start_conflict_sequence(&mut transform);
+
+        let output = transform.defrag_record(conflicting).unwrap();
+
+        assert!(output.is_empty());
+        assert!(!transform.ipv4_datagrams.contains_key(&key()));
+        assert_eq!(transform.emitted_count(), 0);
+    }
+
+    #[test]
+    fn pass_through_policy_emits_conflicting_fragment_with_trace_metadata() {
+        let config =
+            IpDefragConfig::new().overlap_policy(IpDefragOverlapPolicy::PassThroughConflicting);
+        let mut transform = IpDefrag::new().with_config(config);
+        let conflicting = start_conflict_sequence(&mut transform);
+
+        let output = transform.defrag_record(conflicting).unwrap();
+
+        assert_eq!(output.len(), 1);
+        assert!(!transform.ipv4_datagrams.contains_key(&key()));
+        assert_eq!(transform.emitted_count(), 1);
+
+        let record = &output.records()[0];
+        let metadata = &record.metadata().ip_defrag_metadata()[0];
+        assert_eq!(metadata.family(), IpFragmentFamily::Ipv4);
+        assert_eq!(metadata.duplicate_count(), 0);
+        assert_eq!(
+            metadata.overlap_status(),
+            IpDefragOverlapStatus::Conflicting
+        );
+        assert_eq!(
+            metadata.eviction_reason(),
+            Some(&IpDefragEvictionReason::Conflict)
+        );
+        assert_eq!(metadata.byte_ranges(), &[IpFragmentRange::new(0, 16)]);
+        assert_eq!(metadata.total_len(), Some(36));
+
+        let trace = &record.metadata().transforms()[0];
+        assert_eq!(trace.name(), "ip-defrag");
+        let note = trace.note().unwrap();
+        assert!(note.contains("ambiguous"));
+        assert!(note.contains("ByteMismatch"));
+        assert!(note.contains("offset=8"));
     }
 }
