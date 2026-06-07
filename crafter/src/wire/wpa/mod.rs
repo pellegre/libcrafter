@@ -13,6 +13,7 @@ mod state;
 mod transform;
 
 pub use config::{WpaDecryptConfig, WpaNetwork};
+pub use crypto::{derive_pmk, Pmk};
 pub use metadata::{
     WpaAkm, WpaCipher, WpaCredentialStatus, WpaDecryptReason, WpaHandshakeStatus, WpaKeyKind,
     WpaMetadata,

@@ -2,6 +2,7 @@
 
 use core::fmt;
 
+use super::crypto::{derive_pmk, Pmk};
 use super::metadata::WpaCipher;
 use crate::{CrafterError, Result};
 
@@ -85,9 +86,8 @@ impl Default for WpaDecryptConfig {
 /// One configured WPA/WPA2-Personal network.
 ///
 /// SSIDs are bytes on the wire and are not guaranteed to be UTF-8. This
-/// configuration stores either caller-provided passphrase material or a
-/// pre-derived PMK; key derivation is intentionally left to later
-/// implementation steps.
+/// configuration stores caller-provided passphrase material with a cached PMK,
+/// or caller-supplied pre-derived PMK material.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct WpaNetwork {
     ssid: Vec<u8>,
@@ -96,8 +96,8 @@ pub struct WpaNetwork {
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 enum WpaCredential {
-    Passphrase(String),
-    Pmk([u8; 32]),
+    Passphrase { passphrase: String, pmk: Pmk },
+    Pmk(Pmk),
 }
 
 impl WpaNetwork {
@@ -111,23 +111,24 @@ impl WpaNetwork {
         let ssid = validate_ssid(ssid.as_ref())?;
         let passphrase = passphrase.into();
         validate_passphrase(&passphrase)?;
+        let pmk = derive_pmk(&passphrase, &ssid)?;
 
         Ok(Self {
             ssid,
-            credential: WpaCredential::Passphrase(passphrase),
+            credential: WpaCredential::Passphrase { passphrase, pmk },
         })
     }
 
     /// Configure a network from a UTF-8 SSID and a pre-derived PMK.
-    pub fn pmk(ssid: impl AsRef<str>, pmk: [u8; 32]) -> Result<Self> {
+    pub fn pmk(ssid: impl AsRef<str>, pmk: impl Into<Pmk>) -> Result<Self> {
         Self::pmk_bytes(ssid.as_ref().as_bytes(), pmk)
     }
 
     /// Configure a network from raw SSID bytes and a pre-derived PMK.
-    pub fn pmk_bytes(ssid: impl AsRef<[u8]>, pmk: [u8; 32]) -> Result<Self> {
+    pub fn pmk_bytes(ssid: impl AsRef<[u8]>, pmk: impl Into<Pmk>) -> Result<Self> {
         Ok(Self {
             ssid: validate_ssid(ssid.as_ref())?,
-            credential: WpaCredential::Pmk(pmk),
+            credential: WpaCredential::Pmk(pmk.into()),
         })
     }
 
@@ -144,22 +145,29 @@ impl WpaNetwork {
     /// Configured passphrase, when this network was configured with one.
     pub fn passphrase_value(&self) -> Option<&str> {
         match &self.credential {
-            WpaCredential::Passphrase(passphrase) => Some(passphrase),
+            WpaCredential::Passphrase { passphrase, .. } => Some(passphrase),
             WpaCredential::Pmk(_) => None,
         }
     }
 
-    /// Configured pre-derived PMK, when supplied by the caller.
+    /// Cached PMK material for this configured network.
+    pub fn cached_pmk(&self) -> &Pmk {
+        match &self.credential {
+            WpaCredential::Passphrase { pmk, .. } | WpaCredential::Pmk(pmk) => pmk,
+        }
+    }
+
+    /// Configured pre-derived PMK bytes, when supplied by the caller.
     pub fn pmk_value(&self) -> Option<[u8; 32]> {
         match &self.credential {
-            WpaCredential::Passphrase(_) => None,
-            WpaCredential::Pmk(pmk) => Some(*pmk),
+            WpaCredential::Passphrase { .. } => None,
+            WpaCredential::Pmk(pmk) => Some(pmk.to_bytes()),
         }
     }
 
     /// Whether this network was configured from a passphrase.
     pub fn uses_passphrase(&self) -> bool {
-        matches!(&self.credential, WpaCredential::Passphrase(_))
+        matches!(&self.credential, WpaCredential::Passphrase { .. })
     }
 
     /// Whether this network was configured from pre-derived PMK material.
@@ -181,7 +189,7 @@ impl fmt::Debug for WpaNetwork {
 impl fmt::Debug for WpaCredential {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Passphrase(_) => f.write_str("Passphrase(<redacted>)"),
+            Self::Passphrase { .. } => f.write_str("Passphrase(<redacted>)"),
             Self::Pmk(_) => f.write_str("Pmk(<redacted>)"),
         }
     }
@@ -250,10 +258,12 @@ mod tests {
     fn passphrase_network_accepts_text_and_non_utf8_ssid_bytes() {
         let text = WpaNetwork::passphrase("lab", "12345678").unwrap();
         let bytes = WpaNetwork::passphrase_bytes(b"\xfflab".as_slice(), "abcdefgh").unwrap();
+        let expected_pmk = derive_pmk("12345678", b"lab").unwrap();
 
         assert_eq!(text.ssid(), b"lab");
         assert_eq!(text.ssid_str(), Some("lab"));
         assert_eq!(text.passphrase_value(), Some("12345678"));
+        assert_eq!(text.cached_pmk(), &expected_pmk);
         assert!(text.uses_passphrase());
         assert!(!text.uses_pmk());
         assert_eq!(bytes.ssid(), b"\xfflab");
@@ -269,6 +279,7 @@ mod tests {
         assert_eq!(text.ssid(), b"lab");
         assert_eq!(text.passphrase_value(), None);
         assert_eq!(text.pmk_value(), Some(pmk));
+        assert_eq!(text.cached_pmk().as_bytes(), &pmk);
         assert!(!text.uses_passphrase());
         assert!(text.uses_pmk());
         assert_eq!(bytes.ssid(), b"\xfflab");
