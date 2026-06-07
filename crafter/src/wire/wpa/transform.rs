@@ -2,18 +2,21 @@
 
 use std::collections::HashMap;
 
+use super::ccmp::{decrypt_unicast, CcmpDecryptResult, CcmpHeader};
 use super::metadata::{
     WpaAkm, WpaCipher, WpaCredentialStatus, WpaDecryptReason, WpaHandshakeStatus, WpaMetadata,
 };
 use super::state::ObservedBss;
 use super::{WpaDecryptConfig, WpaNetwork};
-use crate::wire::record::{PacketRecord, TransformTrace, WifiDecryptState, WifiMetadata};
+use crate::wire::record::{
+    PacketMetadata, PacketOrigin, PacketRecord, TransformTrace, WifiDecryptState, WifiMetadata,
+};
 use crate::wire::transform::{PacketTransform, TransformOutput};
 use crate::wire::Result as WireResult;
 use crate::Result as CrafterResult;
 use crate::{
-    Dot11, Eapol, EapolKey, LlcSnap, MacAddr, Packet, DOT11_TAG_DS_PARAMETER_SET, DOT11_TAG_RSN,
-    DOT11_TAG_SSID,
+    Dot11, Eapol, EapolKey, Ethernet, LinkType, LlcSnap, MacAddr, Packet, Raw,
+    DOT11_TAG_DS_PARAMETER_SET, DOT11_TAG_RSN, DOT11_TAG_SSID,
 };
 
 /// Passive WPA/WPA2-Personal decryptor transform.
@@ -27,6 +30,7 @@ pub struct WpaDecrypt {
     config: WpaDecryptConfig,
     networks: Vec<WpaNetwork>,
     bsses: HashMap<MacAddr, ObservedBss>,
+    pairwise_packet_numbers: HashMap<PairwiseReplayKey, u64>,
     input_count: usize,
     emitted_count: usize,
 }
@@ -286,6 +290,93 @@ impl WpaDecrypt {
             Some(WpaCredentialStatus::NotConfigured)
         }
     }
+
+    fn try_decrypt_unicast(&mut self, record: &PacketRecord) -> Option<WpaUnicastAttempt> {
+        let dot11 = record.packet().layer::<Dot11>()?;
+        if !dot11.is_protected() {
+            return None;
+        }
+
+        let encrypted_body = record.packet().layer::<Raw>()?.as_bytes();
+        let bssid = dot11.bssid()?;
+        let station = station_from_dot11(dot11, bssid)?;
+        let bss = self.bsses.get(&bssid)?;
+        let session = bss.session(station)?;
+        let ptk = session.pairwise_transient_key()?;
+
+        let header = CcmpHeader::parse(encrypted_body).ok();
+        let last_packet_number = header.as_ref().and_then(|header| {
+            self.pairwise_packet_numbers
+                .get(&PairwiseReplayKey::new(bssid, station, header.key_id()))
+                .copied()
+        });
+        let result = decrypt_unicast(
+            dot11,
+            encrypted_body,
+            ptk.temporal_key(),
+            last_packet_number,
+        );
+
+        let decrypted_packet = result
+            .plaintext()
+            .map(|plaintext| decode_decrypted_plaintext(dot11, plaintext));
+        if result.is_decrypted() {
+            if let (Some(packet_number), Some(key_id)) = (result.packet_number(), result.key_id()) {
+                self.pairwise_packet_numbers.insert(
+                    PairwiseReplayKey::new(bssid, station, key_id),
+                    packet_number,
+                );
+            }
+        }
+
+        Some(WpaUnicastAttempt {
+            result,
+            decrypted_packet,
+            credential_status: session.credential_status(),
+            handshake_status: if session.is_ready() {
+                WpaHandshakeStatus::MicVerified
+            } else {
+                session.status()
+            },
+        })
+    }
+
+    fn record_with_attempt_metadata(
+        &self,
+        mut record: PacketRecord,
+        attempt: &WpaUnicastAttempt,
+    ) -> PacketRecord {
+        let wifi = record.metadata().wifi().cloned().unwrap_or_default();
+        record = record.with_wifi_metadata(wifi_with_decrypt_result(
+            wifi,
+            &attempt.result,
+            attempt.credential_status,
+            attempt.handshake_status,
+        ));
+        record
+    }
+
+    fn decrypted_record(
+        &self,
+        source_metadata: &PacketMetadata,
+        decrypted_packet: Packet,
+        attempt: &WpaUnicastAttempt,
+    ) -> PacketRecord {
+        let wifi = source_metadata.wifi().cloned().unwrap_or_default();
+        let metadata = source_metadata
+            .clone()
+            .with_origin(PacketOrigin::Transformed)
+            .with_link_type(LinkType::Ethernet)
+            .with_wifi_metadata(wifi_with_decrypt_result(
+                wifi,
+                &attempt.result,
+                attempt.credential_status,
+                attempt.handshake_status,
+            ))
+            .with_transform_trace(TransformTrace::new(self.name()).with_note("decrypted"));
+
+        PacketRecord::from_packet_metadata(decrypted_packet, metadata)
+    }
 }
 
 impl PacketTransform for WpaDecrypt {
@@ -307,9 +398,53 @@ impl PacketTransform for WpaDecrypt {
                 .metadata_mut()
                 .push_transform_trace(TransformTrace::new(self.name()).with_note("observed"));
         }
-        emit(record)?;
-        self.emitted_count += 1;
+
+        let attempt = self.try_decrypt_unicast(&record);
+        if let Some(attempt) = attempt {
+            record = self.record_with_attempt_metadata(record, &attempt);
+            if let Some(decrypted_packet) = attempt.decrypted_packet.clone() {
+                let decrypted =
+                    self.decrypted_record(record.metadata(), decrypted_packet, &attempt);
+                emit(decrypted)?;
+                self.emitted_count += 1;
+            }
+            if self.config.emits_originals() {
+                emit(record)?;
+                self.emitted_count += 1;
+            }
+            return Ok(());
+        }
+
+        if self.config.emits_originals() {
+            emit(record)?;
+            self.emitted_count += 1;
+        }
         Ok(())
+    }
+}
+
+#[derive(Debug, Clone)]
+struct WpaUnicastAttempt {
+    result: CcmpDecryptResult,
+    decrypted_packet: Option<Packet>,
+    credential_status: WpaCredentialStatus,
+    handshake_status: WpaHandshakeStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct PairwiseReplayKey {
+    bssid: MacAddr,
+    station: MacAddr,
+    key_id: u8,
+}
+
+impl PairwiseReplayKey {
+    const fn new(bssid: MacAddr, station: MacAddr, key_id: u8) -> Self {
+        Self {
+            bssid,
+            station,
+            key_id,
+        }
     }
 }
 
@@ -337,11 +472,86 @@ fn wifi_decrypt_state(protected: bool, reason: Option<WpaDecryptReason>) -> Wifi
             | WpaDecryptReason::UnsupportedAkm
             | WpaDecryptReason::MalformedFrame
             | WpaDecryptReason::MicFailed
-            | WpaDecryptReason::AuthenticationFailed,
+            | WpaDecryptReason::AuthenticationFailed
+            | WpaDecryptReason::ReplayDetected,
         ) => WifiDecryptState::Failed,
         Some(WpaDecryptReason::Decrypted) => WifiDecryptState::Decrypted,
         _ => WifiDecryptState::KeyMaterialMissing,
     }
+}
+
+fn wifi_with_decrypt_result(
+    mut wifi: WifiMetadata,
+    result: &CcmpDecryptResult,
+    credential_status: WpaCredentialStatus,
+    handshake_status: WpaHandshakeStatus,
+) -> WifiMetadata {
+    if let Some(key_id) = result.key_id() {
+        wifi = wifi.with_key_id(key_id);
+    }
+
+    let reason = result
+        .failure_reason()
+        .unwrap_or(WpaDecryptReason::Decrypted);
+    wifi = wifi.with_decrypt_state(wifi_decrypt_state(true, Some(reason)));
+
+    let mut metadata = wifi.wpa_metadata().cloned().unwrap_or_default();
+    metadata = metadata
+        .with_decrypt_reason(reason)
+        .with_credential_status(credential_status)
+        .with_handshake_status(handshake_status);
+    if let Some(key_kind) = result.key_kind() {
+        metadata = metadata.with_key_kind(key_kind);
+    }
+    if let Some(key_id) = result.key_id() {
+        metadata = metadata.with_key_id(key_id);
+    }
+    if let Some(packet_number) = result.packet_number() {
+        metadata = metadata.with_packet_number(packet_number);
+    }
+
+    wifi.with_wpa_metadata(metadata)
+}
+
+fn decode_decrypted_plaintext(dot11: &Dot11, plaintext: &[u8]) -> Packet {
+    if let Some((ethertype, payload)) = plaintext_llc_snap(plaintext) {
+        if let (Some(source), Some(destination)) = (dot11.source(), dot11.destination()) {
+            let mut ethernet_bytes = Vec::with_capacity(14 + payload.len());
+            ethernet_bytes.extend_from_slice(&destination.octets());
+            ethernet_bytes.extend_from_slice(&source.octets());
+            ethernet_bytes.extend_from_slice(&ethertype.to_be_bytes());
+            ethernet_bytes.extend_from_slice(payload);
+
+            return Packet::decode_from_link(LinkType::Ethernet, &ethernet_bytes).unwrap_or_else(
+                |_| {
+                    Ethernet::with_addresses(source, destination).ethertype(ethertype)
+                        / Raw::from_bytes(payload)
+                },
+            );
+        }
+    }
+
+    Packet::decode_raw(plaintext).expect("raw packet decode is infallible")
+}
+
+fn plaintext_llc_snap(plaintext: &[u8]) -> Option<(u16, &[u8])> {
+    if plaintext.len() < 8 {
+        return None;
+    }
+
+    let snap = LlcSnap::new();
+    let is_rfc1042 = plaintext[0] == snap.dsap_value()
+        && plaintext[1] == snap.ssap_value()
+        && plaintext[2] == snap.control_value()
+        && plaintext[3..6] == snap.oui_value();
+    if !is_rfc1042 {
+        return None;
+    }
+
+    Some((
+        u16::from_be_bytes([plaintext[6], plaintext[7]]),
+        &plaintext[8..],
+    ))
 }
 
 fn station_from_dot11(dot11: &Dot11, bssid: MacAddr) -> Option<MacAddr> {
@@ -369,13 +579,24 @@ fn is_station_candidate(candidate: MacAddr, bssid: MacAddr) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::super::ccmp::encrypt_unicast_for_tests;
+    use super::super::crypto::{derive_ptk, PairwiseTransientKey, Pmk, WPA_PMK_LEN};
     use super::*;
+    use core::net::Ipv4Addr;
+    use hmac::{Hmac, Mac};
+    use sha1::Sha1;
+
     use crate::wire::{BackendKind, PacketOrigin};
     use crate::{
-        Dot11, Eapol, EapolKey, EapolKeyInformation, LlcSnap, MacAddr, RsnInformation,
-        RSN_AKM_SUITE_SAE, RSN_CIPHER_SUITE_GCMP_256,
+        Dot11, Dot11SequenceControl, Eapol, EapolKey, EapolKeyInformation, Ethernet, Ipv4,
+        LinkType, LlcSnap, MacAddr, RsnInformation, RSN_AKM_SUITE_SAE, RSN_CIPHER_SUITE_GCMP_256,
     };
-    use crate::{Raw, ETHERTYPE_EAPOL};
+    use crate::{Raw, WpaKeyKind, EAPOL_HEADER_LEN, ETHERTYPE_EAPOL, ETHERTYPE_IPV4};
+
+    type HmacSha1 = Hmac<Sha1>;
+
+    const EAPOL_KEY_MIC_OFFSET_FROM_EAPOL: usize = EAPOL_HEADER_LEN + 77;
+    const EAPOL_KEY_MIC_LEN: usize = 16;
 
     fn record(payload: &'static str) -> PacketRecord {
         PacketRecord::new(Raw::from(payload))
@@ -398,6 +619,111 @@ mod tests {
             .key_length(16)
             .replay_counter(replay_counter)
             .nonce([0x42; 32])
+    }
+
+    fn pairwise_message_1(replay_counter: u64, nonce: [u8; 32]) -> EapolKey {
+        EapolKey::new()
+            .key_information(
+                EapolKeyInformation::new()
+                    .with_descriptor_version(2)
+                    .with_key_type(true)
+                    .with_key_ack(true),
+            )
+            .key_length(16)
+            .replay_counter(replay_counter)
+            .nonce(nonce)
+    }
+
+    fn pairwise_message_2(replay_counter: u64, nonce: [u8; 32]) -> EapolKey {
+        EapolKey::new()
+            .key_information(
+                EapolKeyInformation::new()
+                    .with_descriptor_version(2)
+                    .with_key_type(true)
+                    .with_key_mic(true),
+            )
+            .key_length(16)
+            .replay_counter(replay_counter)
+            .nonce(nonce)
+            .mic([0; EAPOL_KEY_MIC_LEN])
+            .key_data([0x30, 0x14])
+    }
+
+    fn signed_eapol_key(
+        key: EapolKey,
+        pairwise_transient_key: &PairwiseTransientKey,
+    ) -> (EapolKey, Vec<u8>) {
+        let zeroed_key = key.clone().mic([0; EAPOL_KEY_MIC_LEN]);
+        let zeroed_frame = compile_eapol_key(&zeroed_key);
+        let mic = eapol_mic(pairwise_transient_key.kck(), &zeroed_frame);
+        let signed_key = key.mic(mic);
+        let signed_frame = compile_eapol_key(&signed_key);
+        (signed_key, signed_frame)
+    }
+
+    fn compile_eapol_key(key: &EapolKey) -> Vec<u8> {
+        (Eapol::key() / key.clone())
+            .compile()
+            .unwrap()
+            .as_bytes()
+            .to_vec()
+    }
+
+    fn eapol_mic(kck: &[u8; 16], frame: &[u8]) -> [u8; EAPOL_KEY_MIC_LEN] {
+        let mut input = frame.to_vec();
+        input[EAPOL_KEY_MIC_OFFSET_FROM_EAPOL..EAPOL_KEY_MIC_OFFSET_FROM_EAPOL + EAPOL_KEY_MIC_LEN]
+            .fill(0);
+
+        let mut mac = HmacSha1::new_from_slice(kck).unwrap();
+        mac.update(&input);
+        let digest = mac.finalize().into_bytes();
+        let mut mic = [0u8; EAPOL_KEY_MIC_LEN];
+        mic.copy_from_slice(&digest[..EAPOL_KEY_MIC_LEN]);
+        mic
+    }
+
+    fn verified_unicast_transform() -> (WpaDecrypt, MacAddr, MacAddr, MacAddr, PairwiseTransientKey)
+    {
+        let bssid = mac(0x70);
+        let station = mac(0x71);
+        let peer = mac(0x72);
+        let pmk = Pmk::new([0x61; WPA_PMK_LEN]);
+        let ap_nonce = [0x10; 32];
+        let station_nonce = [0x20; 32];
+        let mut bss = ObservedBss::new(bssid);
+        bss.observe_ssid(b"lab");
+        bss.observe_rsn(RsnInformation::new());
+        bss.observe_pairwise_key(station, bssid, station, &pairwise_message_1(1, ap_nonce));
+
+        let ptk = derive_ptk(
+            &pmk,
+            &bssid.octets(),
+            &station.octets(),
+            &ap_nonce,
+            &station_nonce,
+        );
+        let (message_2, eapol_frame) = signed_eapol_key(pairwise_message_2(1, station_nonce), &ptk);
+        bss.observe_pairwise_key_with_mic(station, station, bssid, &message_2, &eapol_frame, &pmk)
+            .unwrap();
+        assert!(bss.session(station).unwrap().is_ready());
+
+        let mut transform =
+            WpaDecrypt::new().with_config(WpaDecryptConfig::new().pass_originals(false));
+        transform.bsses.insert(bssid, bss);
+        (transform, bssid, station, peer, ptk)
+    }
+
+    fn protected_to_ds_data(bssid: MacAddr, station: MacAddr, destination: MacAddr) -> Dot11 {
+        let frame_control = Dot11::data()
+            .frame_control_value()
+            .with_to_ds(true)
+            .with_protected(true);
+        Dot11::data()
+            .frame_control(frame_control)
+            .addr1(bssid)
+            .addr2(station)
+            .addr3(destination)
+            .sequence_control(Dot11SequenceControl::new().with_sequence_number(0x123))
     }
 
     fn beacon_with_rsn(
@@ -590,5 +916,90 @@ mod tests {
         assert_eq!(wpa.akm(), Some(WpaAkm::Psk));
         assert_eq!(wpa.handshake_status(), Some(WpaHandshakeStatus::Observing));
         assert_eq!(wpa.credential_status(), Some(WpaCredentialStatus::Unknown));
+    }
+
+    #[test]
+    fn unicast_decrypts_llc_snap_to_ethernet_equivalent_packet() {
+        let (mut transform, bssid, station, peer, ptk) = verified_unicast_transform();
+        let dot11 = protected_to_ds_data(bssid, station, peer);
+        let plaintext = (LlcSnap::new().ethertype(ETHERTYPE_IPV4)
+            / Ipv4::new()
+                .src(Ipv4Addr::new(192, 0, 2, 10))
+                .dst(Ipv4Addr::new(198, 51, 100, 20))
+            / Raw::from("hello"))
+        .compile()
+        .unwrap()
+        .into_bytes();
+        let encrypted_body = encrypt_unicast_for_tests(
+            &dot11,
+            ptk.temporal_key(),
+            2,
+            [5, 0, 0, 0, 0, 0],
+            &plaintext,
+        );
+
+        let output = transform
+            .decrypt_record(
+                PacketRecord::new(dot11 / Raw::from_bytes(encrypted_body))
+                    .with_origin(PacketOrigin::Captured)
+                    .with_backend(BackendKind::Memory),
+            )
+            .unwrap();
+
+        assert_eq!(output.len(), 1);
+        let record = &output.records()[0];
+        assert_eq!(record.metadata().origin(), PacketOrigin::Transformed);
+        assert_eq!(record.metadata().link_type(), Some(LinkType::Ethernet));
+        assert_eq!(record.metadata().backend(), &BackendKind::Memory);
+
+        let ethernet = record.packet().layer::<Ethernet>().unwrap();
+        assert_eq!(ethernet.source(), Some(station));
+        assert_eq!(ethernet.destination(), Some(peer));
+        assert_eq!(ethernet.ethertype_value(), Some(ETHERTYPE_IPV4));
+        assert!(record.packet().layer::<Ipv4>().is_some());
+        assert_eq!(record.packet().layer::<Raw>().unwrap().as_bytes(), b"hello");
+
+        let wifi = record.metadata().wifi().unwrap();
+        assert_eq!(wifi.ssid(), Some(b"lab".as_slice()));
+        assert_eq!(wifi.bssid(), Some(bssid));
+        assert_eq!(wifi.key_id(), Some(2));
+        assert_eq!(wifi.decrypt_state(), Some(WifiDecryptState::Decrypted));
+
+        let wpa = wifi.wpa_metadata().unwrap();
+        assert_eq!(wpa.key_kind(), Some(WpaKeyKind::Pairwise));
+        assert_eq!(wpa.key_id(), Some(2));
+        assert_eq!(wpa.packet_number(), Some(5));
+        assert_eq!(wpa.decrypt_reason(), Some(WpaDecryptReason::Decrypted));
+        assert_eq!(wpa.credential_status(), Some(WpaCredentialStatus::Matched));
+        assert_eq!(
+            wpa.handshake_status(),
+            Some(WpaHandshakeStatus::MicVerified)
+        );
+    }
+
+    #[test]
+    fn unicast_preserves_unknown_decrypted_plaintext_as_raw_packet() {
+        let (mut transform, bssid, station, peer, ptk) = verified_unicast_transform();
+        let dot11 = protected_to_ds_data(bssid, station, peer);
+        let plaintext = b"opaque application bytes";
+        let encrypted_body =
+            encrypt_unicast_for_tests(&dot11, ptk.temporal_key(), 0, [6, 0, 0, 0, 0, 0], plaintext);
+
+        let output = transform
+            .decrypt_record(PacketRecord::new(dot11 / Raw::from_bytes(encrypted_body)))
+            .unwrap();
+
+        assert_eq!(output.len(), 1);
+        let packet = output.records()[0].packet();
+        assert!(packet.layer::<Ethernet>().is_none());
+        assert_eq!(packet.layer::<Raw>().unwrap().as_bytes(), plaintext);
+        let wpa = output.records()[0]
+            .metadata()
+            .wifi()
+            .unwrap()
+            .wpa_metadata()
+            .unwrap();
+        assert_eq!(wpa.decrypt_reason(), Some(WpaDecryptReason::Decrypted));
+        assert_eq!(wpa.packet_number(), Some(6));
     }
 }

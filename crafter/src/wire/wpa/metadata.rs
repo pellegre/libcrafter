@@ -94,6 +94,8 @@ pub enum WpaDecryptReason {
     MicFailed,
     /// Protected payload authentication failed.
     AuthenticationFailed,
+    /// Protected payload reused an old or current packet number.
+    ReplayDetected,
     /// The protected frame or handshake record was malformed.
     MalformedFrame,
     /// The record was successfully decrypted.

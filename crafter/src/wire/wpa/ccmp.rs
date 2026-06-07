@@ -1,12 +1,21 @@
 //! CCMP protected-frame parsing and decrypt helpers.
 //!
-use super::metadata::WpaKeyKind;
+use aes::Aes128;
+use ccm::{
+    aead::{generic_array::GenericArray, AeadInPlace, KeyInit},
+    consts::{U13, U8},
+    Ccm,
+};
+
+use super::crypto::WPA_PTK_TEMPORAL_KEY_LEN;
+use super::metadata::{WpaDecryptReason, WpaKeyKind};
 use crate::{
     CrafterError, Dot11, Dot11DataSubtype, Dot11FrameControl, Dot11FrameType, MacAddr, Result,
     DOT11_FC_ORDER,
 };
 
 const CCMP_HEADER_LEN: usize = 8;
+const CCMP_MIC_LEN: usize = 8;
 const CCMP_NONCE_LEN: usize = 13;
 const CCMP_AAD_BASE_LEN: usize = 22;
 const CCMP_EXTENDED_IV_BIT: u8 = 0x20;
@@ -16,6 +25,8 @@ const CCMP_AAD_FRAME_CONTROL_MASK: u16 = 0xc38f;
 const CCMP_AAD_SEQUENCE_CONTROL_MASK: u16 = 0x000f;
 const CCMP_AAD_QOS_CONTROL_MASK: u16 = 0x000f;
 const CCMP_NONCE_QOS_PRIORITY_MASK: u16 = 0x000f;
+
+type Aes128Ccmp = Ccm<Aes128, U8, U13>;
 
 /// Parsed 8-octet CCMP header plus the encrypted payload that follows it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,6 +109,173 @@ impl<'a> CcmpHeader<'a> {
     pub(crate) fn key_kind_for_dot11(&self, dot11: &Dot11) -> Option<WpaKeyKind> {
         key_kind_for_dot11(dot11)
     }
+}
+
+/// Result of attempting to decrypt one CCMP-protected unicast data frame.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CcmpDecryptResult {
+    plaintext: Option<Vec<u8>>,
+    packet_number: Option<u64>,
+    key_id: Option<u8>,
+    key_kind: Option<WpaKeyKind>,
+    failure_reason: Option<WpaDecryptReason>,
+}
+
+impl CcmpDecryptResult {
+    fn decrypted(plaintext: Vec<u8>, packet_number: u64, key_id: u8, key_kind: WpaKeyKind) -> Self {
+        Self {
+            plaintext: Some(plaintext),
+            packet_number: Some(packet_number),
+            key_id: Some(key_id),
+            key_kind: Some(key_kind),
+            failure_reason: None,
+        }
+    }
+
+    fn failed(
+        packet_number: Option<u64>,
+        key_id: Option<u8>,
+        key_kind: Option<WpaKeyKind>,
+        failure_reason: WpaDecryptReason,
+    ) -> Self {
+        Self {
+            plaintext: None,
+            packet_number,
+            key_id,
+            key_kind,
+            failure_reason: Some(failure_reason),
+        }
+    }
+
+    /// Decrypted plaintext bytes, when authentication succeeded.
+    pub(crate) fn plaintext(&self) -> Option<&[u8]> {
+        self.plaintext.as_deref()
+    }
+
+    /// CCMP packet number parsed from the protected frame.
+    pub(crate) const fn packet_number(&self) -> Option<u64> {
+        self.packet_number
+    }
+
+    /// CCMP key identifier parsed from the protected frame.
+    pub(crate) const fn key_id(&self) -> Option<u8> {
+        self.key_id
+    }
+
+    /// Pairwise or group key class inferred from the 802.11 destination.
+    pub(crate) const fn key_kind(&self) -> Option<WpaKeyKind> {
+        self.key_kind
+    }
+
+    /// Failure reason when decryption did not produce plaintext.
+    pub(crate) const fn failure_reason(&self) -> Option<WpaDecryptReason> {
+        self.failure_reason
+    }
+
+    /// Return true when plaintext was authenticated and decrypted.
+    pub(crate) const fn is_decrypted(&self) -> bool {
+        self.failure_reason.is_none() && self.plaintext.is_some()
+    }
+}
+
+/// Decrypt one WPA2-PSK CCMP-128 protected unicast data frame.
+pub(crate) fn decrypt_unicast(
+    dot11: &Dot11,
+    encrypted_body: &[u8],
+    temporal_key: &[u8; WPA_PTK_TEMPORAL_KEY_LEN],
+    last_packet_number: Option<u64>,
+) -> CcmpDecryptResult {
+    let ccmp = match CcmpHeader::parse(encrypted_body) {
+        Ok(ccmp) => ccmp,
+        Err(_) => {
+            return CcmpDecryptResult::failed(None, None, None, WpaDecryptReason::MalformedFrame);
+        }
+    };
+
+    let packet_number = ccmp.packet_number();
+    let key_id = ccmp.key_id();
+    let key_kind = ccmp
+        .key_kind_for_dot11(dot11)
+        .unwrap_or(WpaKeyKind::Unknown);
+
+    if key_kind != WpaKeyKind::Pairwise {
+        return CcmpDecryptResult::failed(
+            Some(packet_number),
+            Some(key_id),
+            Some(key_kind),
+            WpaDecryptReason::MissingKeyMaterial,
+        );
+    }
+
+    if last_packet_number
+        .map(|last| packet_number <= last)
+        .unwrap_or(false)
+    {
+        return CcmpDecryptResult::failed(
+            Some(packet_number),
+            Some(key_id),
+            Some(key_kind),
+            WpaDecryptReason::ReplayDetected,
+        );
+    }
+
+    let nonce = match ccmp_nonce(dot11, &ccmp) {
+        Ok(nonce) => nonce,
+        Err(_) => {
+            return CcmpDecryptResult::failed(
+                Some(packet_number),
+                Some(key_id),
+                Some(key_kind),
+                WpaDecryptReason::MalformedFrame,
+            );
+        }
+    };
+    let aad = match ccmp_aad(dot11) {
+        Ok(aad) => aad,
+        Err(_) => {
+            return CcmpDecryptResult::failed(
+                Some(packet_number),
+                Some(key_id),
+                Some(key_kind),
+                WpaDecryptReason::MalformedFrame,
+            );
+        }
+    };
+
+    let encrypted_payload = ccmp.encrypted_payload();
+    if encrypted_payload.len() < CCMP_MIC_LEN {
+        return CcmpDecryptResult::failed(
+            Some(packet_number),
+            Some(key_id),
+            Some(key_kind),
+            WpaDecryptReason::MalformedFrame,
+        );
+    }
+
+    let tag_offset = encrypted_payload.len() - CCMP_MIC_LEN;
+    let (ciphertext, tag) = encrypted_payload.split_at(tag_offset);
+    let mut plaintext = ciphertext.to_vec();
+    let cipher = Aes128Ccmp::new_from_slice(temporal_key)
+        .expect("WPA2-PSK CCMP temporal key length is AES-128");
+
+    if cipher
+        .decrypt_in_place_detached(
+            GenericArray::from_slice(&nonce),
+            &aad,
+            &mut plaintext,
+            GenericArray::from_slice(tag),
+        )
+        .is_err()
+    {
+        return CcmpDecryptResult::failed(
+            Some(packet_number),
+            Some(key_id),
+            Some(key_kind),
+            WpaDecryptReason::AuthenticationFailed,
+        );
+    }
+
+    CcmpDecryptResult::decrypted(plaintext, packet_number, key_id, key_kind)
 }
 
 /// Classify the key type needed for a protected data frame.
@@ -278,23 +456,50 @@ const fn ccmp_data_subtype_has_qos(subtype: Dot11DataSubtype) -> bool {
 }
 
 #[cfg(test)]
+pub(crate) fn ccmp_body_for_tests(key_id: u8, pn: [u8; 6], encrypted_payload: &[u8]) -> Vec<u8> {
+    let mut body = vec![
+        pn[0],
+        pn[1],
+        0x00,
+        CCMP_EXTENDED_IV_BIT | ((key_id & CCMP_KEY_ID_MASK) << CCMP_KEY_ID_SHIFT),
+        pn[2],
+        pn[3],
+        pn[4],
+        pn[5],
+    ];
+    body.extend_from_slice(encrypted_payload);
+    body
+}
+
+#[cfg(test)]
+pub(crate) fn encrypt_unicast_for_tests(
+    dot11: &Dot11,
+    temporal_key: &[u8; WPA_PTK_TEMPORAL_KEY_LEN],
+    key_id: u8,
+    pn: [u8; 6],
+    plaintext: &[u8],
+) -> Vec<u8> {
+    let header_body = ccmp_body_for_tests(key_id, pn, &[]);
+    let ccmp = CcmpHeader::parse(&header_body).unwrap();
+    let nonce = ccmp_nonce(dot11, &ccmp).unwrap();
+    let aad = ccmp_aad(dot11).unwrap();
+    let cipher = Aes128Ccmp::new_from_slice(temporal_key)
+        .expect("WPA2-PSK CCMP temporal key length is AES-128");
+    let mut encrypted = plaintext.to_vec();
+    let tag = cipher
+        .encrypt_in_place_detached(GenericArray::from_slice(&nonce), &aad, &mut encrypted)
+        .unwrap();
+    encrypted.extend_from_slice(&tag);
+    ccmp_body_for_tests(key_id, pn, &encrypted)
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::{Dot11, Dot11QosControl, Dot11SequenceControl, MacAddr};
 
     fn ccmp_body(key_id: u8, pn: [u8; 6], encrypted_payload: &[u8]) -> Vec<u8> {
-        let mut body = vec![
-            pn[0],
-            pn[1],
-            0x00,
-            CCMP_EXTENDED_IV_BIT | ((key_id & CCMP_KEY_ID_MASK) << CCMP_KEY_ID_SHIFT),
-            pn[2],
-            pn[3],
-            pn[4],
-            pn[5],
-        ];
-        body.extend_from_slice(encrypted_payload);
-        body
+        ccmp_body_for_tests(key_id, pn, encrypted_payload)
     }
 
     fn mac(last: u8) -> MacAddr {
@@ -564,5 +769,82 @@ mod tests {
                 reason: "fragmented data frames are not supported",
             }
         );
+    }
+
+    #[test]
+    fn decrypt_unicast_authenticates_and_returns_plaintext_metadata() {
+        let dot11 = data_frame();
+        let key = [0x41; WPA_PTK_TEMPORAL_KEY_LEN];
+        let plaintext = b"\xaa\xaa\x03\x00\x00\x00\x08\x00payload";
+        let body = encrypt_unicast_for_tests(&dot11, &key, 1, [1, 2, 3, 4, 5, 6], plaintext);
+
+        let decrypted = decrypt_unicast(&dot11, &body, &key, None);
+
+        assert!(decrypted.is_decrypted());
+        assert_eq!(decrypted.plaintext(), Some(plaintext.as_slice()));
+        assert_eq!(decrypted.packet_number(), Some(0x0605_0403_0201));
+        assert_eq!(decrypted.key_id(), Some(1));
+        assert_eq!(decrypted.key_kind(), Some(WpaKeyKind::Pairwise));
+        assert_eq!(decrypted.failure_reason(), None);
+    }
+
+    #[test]
+    fn decrypt_unicast_rejects_wrong_key_modified_ciphertext_and_modified_aad() {
+        let dot11 = data_frame();
+        let key = [0x42; WPA_PTK_TEMPORAL_KEY_LEN];
+        let plaintext = b"plaintext";
+        let body = encrypt_unicast_for_tests(&dot11, &key, 0, [1, 0, 0, 0, 0, 0], plaintext);
+
+        let wrong_key = [0x24; WPA_PTK_TEMPORAL_KEY_LEN];
+        let failed = decrypt_unicast(&dot11, &body, &wrong_key, None);
+        assert_eq!(
+            failed.failure_reason(),
+            Some(WpaDecryptReason::AuthenticationFailed)
+        );
+        assert_eq!(failed.plaintext(), None);
+
+        let mut modified_body = body.clone();
+        modified_body[CCMP_HEADER_LEN] ^= 0x80;
+        let failed = decrypt_unicast(&dot11, &modified_body, &key, None);
+        assert_eq!(
+            failed.failure_reason(),
+            Some(WpaDecryptReason::AuthenticationFailed)
+        );
+
+        let modified_aad = dot11.clone().addr1(mac(9));
+        let failed = decrypt_unicast(&modified_aad, &body, &key, None);
+        assert_eq!(
+            failed.failure_reason(),
+            Some(WpaDecryptReason::AuthenticationFailed)
+        );
+    }
+
+    #[test]
+    fn decrypt_unicast_rejects_replayed_packet_numbers_before_decrypting() {
+        let dot11 = data_frame();
+        let key = [0x43; WPA_PTK_TEMPORAL_KEY_LEN];
+        let body = encrypt_unicast_for_tests(&dot11, &key, 0, [2, 0, 0, 0, 0, 0], b"payload");
+
+        let replayed = decrypt_unicast(&dot11, &body, &key, Some(2));
+
+        assert_eq!(
+            replayed.failure_reason(),
+            Some(WpaDecryptReason::ReplayDetected)
+        );
+        assert_eq!(replayed.packet_number(), Some(2));
+        assert_eq!(replayed.plaintext(), None);
+    }
+
+    #[test]
+    fn decrypt_unicast_preserves_unknown_plaintext_as_plain_bytes() {
+        let dot11 = data_frame();
+        let key = [0x44; WPA_PTK_TEMPORAL_KEY_LEN];
+        let plaintext = b"not an llc snap frame";
+        let body = encrypt_unicast_for_tests(&dot11, &key, 0, [3, 0, 0, 0, 0, 0], plaintext);
+
+        let decrypted = decrypt_unicast(&dot11, &body, &key, None);
+
+        assert_eq!(decrypted.plaintext(), Some(plaintext.as_slice()));
+        assert_eq!(decrypted.failure_reason(), None);
     }
 }
