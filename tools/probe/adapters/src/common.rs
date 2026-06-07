@@ -15,6 +15,7 @@ use std::error::Error;
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use crate::{arp, dhcp, dns, icmp, ndp, tcp, udp};
 
@@ -27,6 +28,24 @@ pub const FAILURE_WRONG_PAYLOAD: &str = "wrong_payload";
 pub const FAILURE_WRONG_FLAGS: &str = "wrong_flags";
 pub const FAILURE_DECODE_FAILED: &str = "decode_failed";
 pub const FAILURE_TARGET_SETUP_FAILED: &str = "target_setup_failed";
+
+pub fn open_capture_sniffer(
+    interface: impl Into<String>,
+    timeout: Duration,
+    count: usize,
+    filter: impl Into<String>,
+) -> crafter::wire::Result<Sniffer> {
+    let source = PacketWire::pcap_interface(interface)
+        .timeout(timeout)
+        .filter(filter)
+        .open()?
+        .source()?;
+    Ok(Sniffer::new(source).timeout(timeout).count(count))
+}
+
+pub fn captured_data(record: &PacketRecord) -> &[u8] {
+    record.metadata().captured_bytes().unwrap_or(&[])
+}
 
 #[derive(Debug)]
 pub struct Args {

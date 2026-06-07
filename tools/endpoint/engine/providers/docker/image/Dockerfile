@@ -1,28 +1,38 @@
-FROM debian:bookworm-slim
+FROM rust:1.78-slim-bookworm
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         bash \
+        build-essential \
         ca-certificates \
+        clang \
         coreutils \
         curl \
         ethtool \
         findutils \
+        git \
         grep \
         iproute2 \
+        iptables \
         iputils-ping \
+        libpcap-dev \
         libpcap0.8 \
         net-tools \
         openssh-server \
+        pkg-config \
         procps \
+        python3 \
         sed \
         tar \
         tcpdump \
     && rm -rf /var/lib/apt/lists/*
 
-RUN mkdir -p /run/sshd /root/.ssh \
+RUN rustup default 1.78.0 \
+    && mkdir -p /run/sshd /root/.ssh \
+    && ln -sf "$(rustup which cargo)" /usr/local/bin/cargo \
+    && ln -sf "$(rustup which rustc)" /usr/local/bin/rustc \
     && chmod 700 /root/.ssh \
     && sed -i \
         -e 's/^#\?PermitRootLogin .*/PermitRootLogin prohibit-password/' \

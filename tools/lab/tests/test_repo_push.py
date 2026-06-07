@@ -107,12 +107,12 @@ class RepositoryPushTest(unittest.TestCase):
             unpack_scripts = [
                 call["command"][2]
                 for call in client.exec_calls
-                if "tar -xzf" in call["command"][2]
+                if "tar --no-same-owner -xzf" in call["command"][2]
             ]
             self.assertEqual(len(unpack_scripts), 2)
             self.assertIn("rm -rf /opt/libcrafter-lab/session", unpack_scripts[0])
             self.assertIn(
-                "tar -xzf /opt/libcrafter-lab/libcrafter-repo.tar.gz "
+                "tar --no-same-owner -xzf /opt/libcrafter-lab/libcrafter-repo.tar.gz "
                 "-C /opt/libcrafter-lab/session",
                 unpack_scripts[0],
             )

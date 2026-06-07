@@ -702,7 +702,7 @@ def _unpack_repository_command(
             "set -euo pipefail",
             f"rm -rf {quoted_remote_dir}",
             f"mkdir -p {quoted_remote_dir}",
-            f"tar -xzf {quoted_archive} -C {quoted_remote_dir}",
+            f"tar --no-same-owner -xzf {quoted_archive} -C {quoted_remote_dir}",
             f"mkdir -p {quoted_artifacts}",
         ]
     )

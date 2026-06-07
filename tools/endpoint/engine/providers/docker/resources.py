@@ -44,6 +44,7 @@ DOCKER_LABEL_EXPOSURE = f"{DOCKER_LABEL_PREFIX}.exposure"
 DOCKER_LABEL_ROLE = f"{DOCKER_LABEL_PREFIX}.role"
 DOCKER_LABEL_CREATED_AT = f"{DOCKER_LABEL_PREFIX}.created-at"
 DOCKER_LABEL_MANAGED = f"{DOCKER_LABEL_PREFIX}.managed"
+DOCKER_IMAGE_CONTEXT_LABEL = f"{DOCKER_LABEL_PREFIX}.image-context-sha256"
 
 DOCKER_MANAGED_LABEL_VALUE = "true"
 DOCKER_CONTAINER_KIND = "docker-container"
@@ -459,6 +460,20 @@ def docker_image_dockerfile_path() -> Path:
     return docker_image_context_dir() / "Dockerfile"
 
 
+def docker_image_context_digest() -> str:
+    """Return a deterministic digest of the provider-owned image context."""
+
+    context_dir = docker_image_context_dir()
+    digest = sha256()
+    for path in sorted(item for item in context_dir.rglob("*") if item.is_file()):
+        relative = path.relative_to(context_dir).as_posix()
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
 def docker_image_command_log_path(
     artifact_dir: str | Path,
     *,
@@ -501,6 +516,8 @@ def docker_image_build_argv(
         "build",
         "-t",
         _non_empty_string(image_tag, "image_tag"),
+        "--label",
+        f"{DOCKER_IMAGE_CONTEXT_LABEL}={docker_image_context_digest()}",
         "-f",
         docker_image_dockerfile_path(),
         docker_image_context_dir(),
@@ -528,6 +545,8 @@ def docker_image_metadata(
         "uses_default": image_tag == DOCKER_DEFAULT_IMAGE,
         "rebuild_env": DOCKER_REBUILD_ENV,
         "rebuild_requested": docker_rebuild_requested(environ),
+        "context_digest": docker_image_context_digest(),
+        "context_label": DOCKER_IMAGE_CONTEXT_LABEL,
         "dockerfile_path": str(docker_image_dockerfile_path()),
         "context_dir": str(docker_image_context_dir()),
         "inspect_argv": docker_image_inspect_argv(
@@ -622,8 +641,13 @@ def ensure_docker_image(
         timeout=inspect_timeout,
     )
     exists_before = inspect_result.ok
+    context_digest = docker_image_context_digest()
     should_build = docker_rebuild_requested(environ) or (
         image_tag == DOCKER_DEFAULT_IMAGE and not exists_before
+    ) or (
+        image_tag == DOCKER_DEFAULT_IMAGE
+        and exists_before
+        and not _docker_image_matches_context(inspect_result.stdout, context_digest)
     )
 
     built = False
@@ -850,6 +874,27 @@ def _build_docker_image(
     )
 
 
+def _docker_image_matches_context(stdout: str, expected_digest: str) -> bool:
+    """Return whether Docker inspect output carries the current context digest."""
+
+    try:
+        records = json.loads(stdout)
+    except json.JSONDecodeError:
+        return True
+    if not isinstance(records, list) or not records:
+        return True
+    first = records[0]
+    if not isinstance(first, Mapping):
+        return True
+    config = first.get("Config")
+    if not isinstance(config, Mapping):
+        return False
+    labels = config.get("Labels")
+    if not isinstance(labels, Mapping):
+        return False
+    return labels.get(DOCKER_IMAGE_CONTEXT_LABEL) == expected_digest
+
+
 class _DockerCommandRecorder:
     def __init__(self, runner: DockerRunner, log_path: Path) -> None:
         self._runner = runner
@@ -923,6 +968,7 @@ __all__ = [
     "DOCKER_CONTAINER_KIND",
     "DOCKER_IMAGE_BUILD_TIMEOUT_SECONDS",
     "DOCKER_IMAGE_COMMAND_LOG_NAME",
+    "DOCKER_IMAGE_CONTEXT_LABEL",
     "DOCKER_IMAGE_KIND",
     "DOCKER_IMAGE_INSPECT_TIMEOUT_SECONDS",
     "DOCKER_LABEL_CREATED_AT",
@@ -941,6 +987,7 @@ __all__ = [
     "deterministic_private_mac",
     "docker_image_build_argv",
     "docker_image_command_log_path",
+    "docker_image_context_digest",
     "docker_image_context_dir",
     "docker_image_dockerfile_path",
     "docker_image_exists",

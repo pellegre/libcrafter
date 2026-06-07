@@ -22,9 +22,11 @@ class ProbeBootstrapTest(unittest.TestCase):
         self.assertEqual(stimulus.metadata["workload"], "probe")
         self.assertEqual(stimulus.metadata["role"], "stimulus")
         self.assertTrue(stimulus.metadata["builds_stimulus_endpoint"])
+        self.assertFalse(stimulus.metadata["provider_preinstalls_bootstrap_dependencies"])
         self.assertEqual(target.metadata["workload"], "probe")
         self.assertEqual(target.metadata["role"], "target")
         self.assertFalse(target.metadata["builds_stimulus_endpoint"])
+        self.assertFalse(target.metadata["provider_preinstalls_bootstrap_dependencies"])
 
     def test_stimulus_script_builds_endpoint_under_lab_artifacts(self) -> None:
         command = bootstrap.repo_bootstrap_command(_bootstrap_context("stimulus"))
@@ -87,6 +89,32 @@ class ProbeBootstrapTest(unittest.TestCase):
         self.assertNotIn("rustup.rs", script)
         _assert_provider_neutral(self, script)
 
+    def test_docker_script_uses_preinstalled_endpoint_dependencies(self) -> None:
+        stimulus = bootstrap.repo_bootstrap_command(
+            _bootstrap_context("stimulus", provider="docker")
+        )
+        stimulus_script = _script(stimulus)
+
+        self.assertTrue(stimulus.metadata["provider_preinstalls_bootstrap_dependencies"])
+        self.assertNotIn("apt-get", stimulus_script)
+        self.assertNotIn("rustup.rs", stimulus_script)
+        self.assertIn(
+            "cargo build -p probe-adapters --bin stimulus_endpoint",
+            stimulus_script,
+        )
+        _assert_provider_neutral(self, stimulus_script)
+
+        target = bootstrap.repo_bootstrap_command(
+            _bootstrap_context("target", provider="docker")
+        )
+        target_script = _script(target)
+
+        self.assertTrue(target.metadata["provider_preinstalls_bootstrap_dependencies"])
+        self.assertNotIn("apt-get", target_script)
+        self.assertNotIn("rustup.rs", target_script)
+        self.assertNotIn("cargo build", target_script)
+        _assert_provider_neutral(self, target_script)
+
     def test_rejects_unknown_probe_bootstrap_role(self) -> None:
         with self.assertRaisesRegex(ValueError, "unsupported probe bootstrap role"):
             bootstrap.repo_bootstrap_command(_bootstrap_context("router"))
@@ -112,7 +140,7 @@ def _assert_provider_neutral(test: unittest.TestCase, script: str) -> None:
         test.assertNotIn(fragment, script)
 
 
-def _bootstrap_context(role: str) -> RepoBootstrapContext:
+def _bootstrap_context(role: str, *, provider: str = "qemu") -> RepoBootstrapContext:
     roles = [
         LabRole(name="stimulus", planned_ipv4="10.77.0.10", peer_roles=["target"]),
         LabRole(name="target", planned_ipv4="10.77.0.20", peer_roles=["stimulus"]),
@@ -145,8 +173,8 @@ def _bootstrap_context(role: str) -> RepoBootstrapContext:
         roles.append(selected_role)
         endpoints.append(selected_endpoint)
     session = LabSession(
-        provider="qemu",
-        wire_provider="qemu",
+        provider=provider,
+        wire_provider=provider,
         wire_exposure="private",
         session_id="lab-qemu-probe-smoke-seed-1",
         roles=roles,
