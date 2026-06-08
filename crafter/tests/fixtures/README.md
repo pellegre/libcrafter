@@ -240,6 +240,14 @@ precision. A pcap should normally contain one conversation or one behavior under
 test. Do not commit captures from personal networks unless they have been
 sanitized and reduced to deterministic fixture data.
 
+IP fragmentation pcaps in this tree must stay deterministic RawIp fixtures built
+from documentation address space, such as `192.0.2.0/24`,
+`198.51.100.0/24`, `203.0.113.0/24`, or `2001:db8::/32`. Provider-backed live
+fragment artifacts belong under ignored `target/oracle/ip-fragment-*` or
+`target/lab/ip-fragment-*` directories; only sanitized summaries that omit
+credentials, public host addresses, live captures, and cloud resource IDs may be
+promoted into tracked docs or `.agents/context/`.
+
 ## Oracle Promotion
 
 Oracle-generated packet behavior coverage is produced by executable specs and

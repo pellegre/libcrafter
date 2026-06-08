@@ -179,6 +179,12 @@ struct Dot11TextArtifact {
     section_start: Option<&'static str>,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct IpFragmentTextArtifact {
+    path: &'static str,
+    section_start: Option<&'static str>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct MalformedFixtureRow {
     name: String,
@@ -1173,6 +1179,29 @@ const ALLOWED_DOT11_SYNTHETIC_SSIDS: &[&str] = &[
 ];
 
 const ALLOWED_DOT11_SYNTHETIC_SSID_PREFIXES: &[&str] = &["dot11-agent-"];
+
+const IP_FRAGMENT_TEXT_ARTIFACTS: &[IpFragmentTextArtifact] = &[
+    IpFragmentTextArtifact {
+        path: "docs/wire.md",
+        section_start: Some("Built-in transform shapes include:"),
+    },
+    IpFragmentTextArtifact {
+        path: "docs/lab.md",
+        section_start: Some("## IP Fragment Lab Safety"),
+    },
+    IpFragmentTextArtifact {
+        path: "docs/validation.md",
+        section_start: Some("## IP Fragment Transform Validation"),
+    },
+    IpFragmentTextArtifact {
+        path: "crafter/tests/fixtures/README.md",
+        section_start: Some("## Current Coverage Matrix"),
+    },
+    IpFragmentTextArtifact {
+        path: ".agents/context/ip-fragment-live-audit.md",
+        section_start: None,
+    },
+];
 
 const PCAP_FIXTURES: &[PcapFixtureCase] = &[
     PcapFixtureCase {
@@ -3925,24 +3954,28 @@ fn repository_path(path: &str) -> PathBuf {
         .join(path)
 }
 
-fn focused_dot11_artifact_text(artifact: Dot11TextArtifact) -> (String, usize) {
-    let path = repository_path(artifact.path);
+fn focused_repository_artifact_text(
+    path_label: &str,
+    section_start: Option<&str>,
+    kind: &str,
+) -> (String, usize) {
+    let path = repository_path(path_label);
     let text = fs::read_to_string(&path).unwrap_or_else(|err| {
         panic!(
-            "Dot11 artifact {} should be readable at {}: {err}",
-            artifact.path,
+            "{kind} artifact {} should be readable at {}: {err}",
+            path_label,
             path.display()
         )
     });
 
-    let Some(section_start) = artifact.section_start else {
+    let Some(section_start) = section_start else {
         return (text, 1);
     };
 
     let start = text.find(section_start).unwrap_or_else(|| {
         panic!(
-            "Dot11 artifact {} should contain focused section {section_start:?}",
-            artifact.path
+            "{kind} artifact {} should contain focused section {section_start:?}",
+            path_label
         )
     });
     let first_line = text[..start].lines().count() + 1;
@@ -3953,6 +3986,14 @@ fn focused_dot11_artifact_text(artifact: Dot11TextArtifact) -> (String, usize) {
         .unwrap_or(section.len());
 
     (section[..end].to_string(), first_line)
+}
+
+fn focused_dot11_artifact_text(artifact: Dot11TextArtifact) -> (String, usize) {
+    focused_repository_artifact_text(artifact.path, artifact.section_start, "Dot11")
+}
+
+fn focused_ip_fragment_artifact_text(artifact: IpFragmentTextArtifact) -> (String, usize) {
+    focused_repository_artifact_text(artifact.path, artifact.section_start, "IP fragment")
 }
 
 fn add_dot11_violation(
@@ -4316,6 +4357,10 @@ fn assert_allowed_dot11_ip(
 }
 
 fn is_allowed_dot11_ip(ip: IpAddr) -> bool {
+    is_documentation_ip(ip)
+}
+
+fn is_documentation_ip(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(ipv4) => matches!(
             ipv4.octets(),
@@ -4326,6 +4371,227 @@ fn is_allowed_dot11_ip(ip: IpAddr) -> bool {
             segments[0] == 0x2001 && segments[1] == 0x0db8
         }
     }
+}
+
+fn scan_ip_fragment_hygiene(violations: &mut Vec<String>) {
+    for artifact in IP_FRAGMENT_TEXT_ARTIFACTS {
+        scan_ip_fragment_text_artifact(*artifact, violations);
+    }
+
+    assert_ip_fragment_target_artifacts_are_ignored(violations);
+
+    for case in VALID_FIXTURES
+        .iter()
+        .filter(|case| is_ip_fragment_case(case.name))
+    {
+        ensure_fixture_exists(case.path);
+        let bytes = fixture_bytes_for_case(case);
+        let target = packet_target_for_case(case);
+        let packet = decode_packet(target, &bytes)
+            .unwrap_or_else(|err| panic!("fixture {} should decode: {err}", case.path));
+        scan_ip_fragment_packet(
+            &format!("crafter/tests/fixtures/{}", case.path),
+            &packet,
+            violations,
+        );
+    }
+
+    for case in PCAP_FIXTURES
+        .iter()
+        .filter(|case| is_ip_fragment_case(case.name))
+    {
+        assert!(
+            case.path.starts_with("pcaps/raw-ip"),
+            "IP fragment pcap fixture {} must stay a RawIp fixture, not a live link capture",
+            case.path
+        );
+        let packets = PcapReader::from_reader(case.contents)
+            .unwrap_or_else(|err| panic!("pcap fixture {} should parse: {err}", case.path))
+            .collect_packets()
+            .unwrap_or_else(|err| {
+                panic!("pcap fixture {} should decode packets: {err}", case.path)
+            });
+        for (index, packet) in packets.iter().enumerate() {
+            scan_ip_fragment_packet(
+                &format!("crafter/tests/fixtures/{} record {index}", case.path),
+                packet.packet(),
+                violations,
+            );
+        }
+    }
+}
+
+fn is_ip_fragment_case(name: &str) -> bool {
+    name.starts_with("ipv4-fragment-")
+        || name.starts_with("ipv6-fragment-")
+        || name.contains("ipfragment")
+        || name.contains("fragment-oracle-reference")
+}
+
+fn scan_ip_fragment_text_artifact(artifact: IpFragmentTextArtifact, violations: &mut Vec<String>) {
+    let (text, first_line) = focused_ip_fragment_artifact_text(artifact);
+    for (line_index, line) in text.lines().enumerate() {
+        scan_ip_fragment_text_line(artifact.path, first_line + line_index, line, violations);
+    }
+}
+
+fn scan_ip_fragment_text_line(
+    label: &str,
+    line_number: usize,
+    line: &str,
+    violations: &mut Vec<String>,
+) {
+    let lower = line.to_ascii_lowercase();
+    for marker in [
+        "password=",
+        "password:",
+        "passphrase=",
+        "passphrase:",
+        "api_key=",
+        "secret=",
+        "private_key=",
+        "-----begin ",
+    ] {
+        if lower.contains(marker) {
+            add_dot11_violation(
+                violations,
+                label,
+                Some(line_number),
+                format!("contains credential marker {marker:?}"),
+            );
+        }
+    }
+
+    for token in hygiene_tokens(line) {
+        let without_cidr = token.split('/').next().unwrap_or(token);
+        let ip_candidate = without_cidr.trim_matches(|ch| ch == '-' || ch == '.' || ch == ':');
+        if let Ok(ip) = ip_candidate.parse::<IpAddr>() {
+            assert_allowed_ip_fragment_ip(label, Some(line_number), ip, "IP literal", violations);
+        }
+
+        if token.contains("ip-fragment") && looks_like_artifact_path(token) {
+            assert_allowed_ip_fragment_artifact_path(label, Some(line_number), token, violations);
+        }
+    }
+}
+
+fn hygiene_tokens(line: &str) -> impl Iterator<Item = &str> {
+    line.split(|ch: char| {
+        !(ch.is_ascii_alphanumeric()
+            || ch == '.'
+            || ch == ':'
+            || ch == '/'
+            || ch == '-'
+            || ch == '_')
+    })
+    .map(|token| token.trim_matches(|ch| ch == '.' || ch == ':' || ch == '/'))
+    .filter(|token| !token.is_empty())
+}
+
+fn looks_like_artifact_path(token: &str) -> bool {
+    token.contains('/') || token.ends_with(".pcap") || token.ends_with(".pcapng")
+}
+
+fn assert_allowed_ip_fragment_artifact_path(
+    label: &str,
+    line_number: Option<usize>,
+    path: &str,
+    violations: &mut Vec<String>,
+) {
+    if path.starts_with("target/oracle/ip-fragment-")
+        || path.starts_with("target/lab/ip-fragment-")
+        || path.starts_with("crafter/tests/fixtures/bytes/ipv4-fragment-")
+        || path.starts_with("crafter/tests/fixtures/bytes/ipv6-fragment-")
+        || path.starts_with("crafter/tests/fixtures/pcaps/raw-ipv4-ipfragment-generated.pcap")
+        || path.starts_with("crafter/tests/fixtures/pcaps/raw-ipv6-fragment-oracle-reference.pcap")
+        || path.starts_with("crafter/tests/fixtures/summaries/ipv6-fragment-")
+        || path.starts_with("pcaps/raw-ipv4-ipfragment-generated.pcap")
+        || path.starts_with("pcaps/raw-ipv6-fragment-oracle-reference.pcap")
+    {
+        return;
+    }
+
+    add_dot11_violation(
+        violations,
+        label,
+        line_number,
+        format!("IP fragment artifact path {path:?} is not a sanitized target/ or fixture path"),
+    );
+}
+
+fn assert_ip_fragment_target_artifacts_are_ignored(violations: &mut Vec<String>) {
+    let path = repository_path(".gitignore");
+    let text = fs::read_to_string(&path).unwrap_or_else(|err| {
+        panic!(
+            ".gitignore should be readable at {} for artifact hygiene checks: {err}",
+            path.display()
+        )
+    });
+    if text.lines().map(str::trim).any(|line| line == "/target/") {
+        return;
+    }
+
+    add_dot11_violation(
+        violations,
+        ".gitignore",
+        None,
+        "target/ must stay ignored so live IP fragment artifacts are not tracked",
+    );
+}
+
+fn scan_ip_fragment_packet(label: &str, packet: &Packet, violations: &mut Vec<String>) {
+    if let Some(ipv4) = packet.layer::<Ipv4>() {
+        assert_allowed_ip_fragment_ip(
+            label,
+            None,
+            IpAddr::V4(ipv4.source()),
+            "IPv4 source",
+            violations,
+        );
+        assert_allowed_ip_fragment_ip(
+            label,
+            None,
+            IpAddr::V4(ipv4.destination()),
+            "IPv4 destination",
+            violations,
+        );
+    }
+
+    if let Some(ipv6) = packet.layer::<Ipv6>() {
+        assert_allowed_ip_fragment_ip(
+            label,
+            None,
+            IpAddr::V6(ipv6.source()),
+            "IPv6 source",
+            violations,
+        );
+        assert_allowed_ip_fragment_ip(
+            label,
+            None,
+            IpAddr::V6(ipv6.destination()),
+            "IPv6 destination",
+            violations,
+        );
+    }
+}
+
+fn assert_allowed_ip_fragment_ip(
+    label: &str,
+    line_number: Option<usize>,
+    ip: IpAddr,
+    context: &str,
+    violations: &mut Vec<String>,
+) {
+    if is_documentation_ip(ip) {
+        return;
+    }
+
+    add_dot11_violation(
+        violations,
+        label,
+        line_number,
+        format!("{context} {ip} is outside documentation address space"),
+    );
 }
 
 #[test]
@@ -5914,9 +6180,11 @@ fn no_sensitive_dot11_artifacts() {
         }
     }
 
+    scan_ip_fragment_hygiene(&mut violations);
+
     assert!(
         violations.is_empty(),
-        "Dot11 artifacts contain sensitive or live-looking identifiers:\n{}",
+        "Dot11/IP fragment artifacts contain sensitive or live-looking identifiers:\n{}",
         violations.join("\n")
     );
 }
