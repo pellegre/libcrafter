@@ -24,6 +24,88 @@ fn prelude_builds_and_compiles_packet() -> crafter::Result<()> {
 }
 
 #[test]
+fn public_api_ip_fragment_exports() {
+    use crafter::wire::{
+        IpDefrag as WireIpDefrag, IpDefragConfig as WireIpDefragConfig,
+        IpDefragEvictionReason as WireIpDefragEvictionReason,
+        IpDefragMetadata as WireIpDefragMetadata,
+        IpDefragOverlapPolicy as WireIpDefragOverlapPolicy,
+        IpDefragOverlapStatus as WireIpDefragOverlapStatus, IpDefragStats as WireIpDefragStats,
+        IpFragment as WireIpFragment, IpFragmentConfig as WireIpFragmentConfig,
+        IpFragmentFamily as WireIpFragmentFamily, IpFragmentMetadata as WireIpFragmentMetadata,
+        IpFragmentRange as WireIpFragmentRange, IpFragmentReason as WireIpFragmentReason,
+        IpFragmentStats as WireIpFragmentStats,
+        Ipv4DontFragmentPolicy as WireIpv4DontFragmentPolicy,
+        Ipv4FragmentIdentificationPolicy as WireIpv4FragmentIdentificationPolicy,
+        Ipv6AtomicFragmentPolicy as WireIpv6AtomicFragmentPolicy,
+        Ipv6FragmentIdentificationPolicy as WireIpv6FragmentIdentificationPolicy,
+    };
+
+    let prelude_defrag = IpDefrag::new().with_config(
+        IpDefragConfig::new()
+            .overlap_policy(IpDefragOverlapPolicy::PassThroughConflicting)
+            .ipv6_atomic_fragments(Ipv6AtomicFragmentPolicy::Normalize),
+    );
+    let prelude_fragment = IpFragment::with_config(
+        IpFragmentConfig::new(1280)
+            .dont_fragment_policy(Ipv4DontFragmentPolicy::PassThrough)
+            .ipv4_identification_policy(Ipv4FragmentIdentificationPolicy::Fixed(0x1234))
+            .ipv6_identification(0x0102_0304),
+    );
+    let _: IpDefragStats = prelude_defrag.stats();
+    let _: IpFragmentStats = prelude_fragment.stats();
+    let _: IpDefragMetadata = IpDefragMetadata::new(IpFragmentFamily::Ipv4, 0x1234)
+        .with_overlap_status(IpDefragOverlapStatus::NonConflicting)
+        .with_eviction_reason(IpDefragEvictionReason::Timeout);
+    let _: IpFragmentMetadata = IpFragmentMetadata::new(
+        IpFragmentFamily::Ipv6,
+        1280,
+        0x0102_0304,
+        0,
+        false,
+        1,
+        0,
+        IpFragmentRange::new(0, 8),
+    )
+    .with_reason(IpFragmentReason::AlreadyFits);
+
+    let wire_defrag = WireIpDefrag::new().with_config(
+        WireIpDefragConfig::new()
+            .overlap_policy(WireIpDefragOverlapPolicy::RejectConflicting)
+            .ipv6_atomic_fragments(WireIpv6AtomicFragmentPolicy::PassThrough),
+    );
+    let wire_fragment = WireIpFragment::with_config(
+        WireIpFragmentConfig::new(1280)
+            .dont_fragment_policy(WireIpv4DontFragmentPolicy::FragmentAnyway)
+            .ipv4_identification_policy(WireIpv4FragmentIdentificationPolicy::Fixed(0x4321))
+            .ipv6_identification(0x0403_0201),
+    );
+    let _: WireIpDefragStats = wire_defrag.stats();
+    let _: WireIpFragmentStats = wire_fragment.stats();
+    let _: WireIpDefragMetadata = WireIpDefragMetadata::new(WireIpFragmentFamily::Ipv4, 0x4321)
+        .with_overlap_status(WireIpDefragOverlapStatus::None)
+        .with_eviction_reason(WireIpDefragEvictionReason::ByteLimit);
+    let _: WireIpFragmentMetadata = WireIpFragmentMetadata::new(
+        WireIpFragmentFamily::Ipv4,
+        1280,
+        0x4321,
+        0,
+        false,
+        1,
+        0,
+        WireIpFragmentRange::new(0, 8),
+    )
+    .with_reason(WireIpFragmentReason::DontFragment);
+
+    let _: crafter::IpDefragStats = crafter::IpDefrag::new().stats();
+    let _: crafter::IpFragmentStats = crafter::IpFragment::new(1280).stats();
+    let _: crafter::Ipv4FragmentIdentificationPolicy =
+        WireIpv4FragmentIdentificationPolicy::PreserveOrGenerate;
+    let _: crafter::Ipv6FragmentIdentificationPolicy =
+        WireIpv6FragmentIdentificationPolicy::Generate;
+}
+
+#[test]
 fn public_api_dot11_phase15_radiotap_llc_and_send_plan() -> crafter::Result<()> {
     let station = documentation_mac(0x01);
     let access_point = documentation_mac(0x02);

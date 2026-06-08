@@ -36,10 +36,11 @@ pub use dot11_metadata::Dot11Metadata;
 pub use error::{Result, WireError};
 pub use ip::{
     IpDefrag, IpDefragConfig, IpDefragEvictionReason, IpDefragMetadata, IpDefragOverlapPolicy,
-    IpDefragOverlapStatus, IpFragment, IpFragmentConfig, IpFragmentFamily, IpFragmentMetadata,
-    IpFragmentRange, IpFragmentReason, Ipv4DontFragmentPolicy, Ipv4FragmentIdentificationPolicy,
-    Ipv6AtomicFragmentPolicy, Ipv6FragmentIdentificationPolicy, IP_DEFRAG_DEFAULT_MAX_AGE,
-    IP_DEFRAG_DEFAULT_MAX_BYTES_PER_DATAGRAM, IP_DEFRAG_DEFAULT_MAX_DATAGRAMS, IP_FRAGMENT_MIN_MTU,
+    IpDefragOverlapStatus, IpDefragStats, IpFragment, IpFragmentConfig, IpFragmentFamily,
+    IpFragmentMetadata, IpFragmentRange, IpFragmentReason, IpFragmentStats, Ipv4DontFragmentPolicy,
+    Ipv4FragmentIdentificationPolicy, Ipv6AtomicFragmentPolicy, Ipv6FragmentIdentificationPolicy,
+    IP_DEFRAG_DEFAULT_MAX_AGE, IP_DEFRAG_DEFAULT_MAX_BYTES_PER_DATAGRAM,
+    IP_DEFRAG_DEFAULT_MAX_DATAGRAMS, IP_FRAGMENT_MIN_MTU,
 };
 pub use packet_wire::{
     OpenedPacketSource, OpenedPacketWriter, PacketWire, PacketWireBuilder, PacketWireTarget,
