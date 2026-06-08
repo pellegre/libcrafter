@@ -226,6 +226,64 @@ requires `.live()` for real raw socket transmission. Live capture or transmit
 belongs in authorized endpoint provider or lab workflows, not local static
 tests.
 
+## IP Fragment Transforms
+
+`IpDefrag` and `IpFragment` are packet-stream transforms under
+`crafter::wire`. They do not change the `Packet` builder surface: generated
+tools still compose IPv4 and IPv6 packets normally, then place the transform on
+the stream that needs it.
+
+Use `IpDefrag` on receive-side sources and sniffers. It buffers IPv4 fragments
+and supported IPv6 Fragment Header records until a datagram is complete, then
+emits one packet-shaped `PacketRecord` with `IpDefragMetadata` and transform
+trace entries. Non-fragmented records pass through by default.
+
+```rust
+let first = PacketRecord::new(
+    Ipv4::new().src("192.0.2.10")?.dst("198.51.100.20")?
+        .protocol(IPPROTO_EXPERIMENTAL_1)
+        .identification(0x4444)
+        .more_fragments(true)
+        .fragment_offset(0)
+        / Raw::from_bytes(b"abcdefgh"),
+);
+let final_fragment = PacketRecord::new(
+    Ipv4::new().src("192.0.2.10")?.dst("198.51.100.20")?
+        .protocol(IPPROTO_EXPERIMENTAL_1)
+        .identification(0x4444)
+        .fragment_offset(1)
+        / Raw::from_bytes(b"ijkl"),
+);
+
+let source = VecPacketSource::new([final_fragment, first]);
+let records = Sniffer::new(source)
+    .with(IpDefrag::new())
+    .collect_records()?;
+```
+
+Use `IpFragment` on transmit-side writers and transmitters. It has an explicit
+MTU, emits one or more packet-shaped fragment records, and records
+`IpFragmentMetadata` on each emitted record. Offline pcap recorders and
+`MemoryPacketWriter::dry_run()` are the default examples; use documentation
+addresses such as `192.0.2.0/24`, `198.51.100.0/24`, and `2001:db8::/32`.
+
+```rust
+let writer = MemoryPacketWriter::dry_run();
+let mut tx = Transmitter::new(writer).with(IpFragment::new(1280));
+
+let reports = tx.send(
+    Ipv6::new().src_str("2001:db8:10::1")?.dst_str("2001:db8:10::2")?
+        / Udp::new().sport(40000).dport(40001)
+        / Raw::from_bytes(&[0u8; 1600]),
+)?;
+
+assert!(reports.iter().all(|report| report.is_dry_run()));
+```
+
+These transforms reconstruct IP datagrams only. TCP stream reassembly,
+fragmented application payload reconstruction, HTTP/file recovery, and full
+stack delivery are out of scope for the crate primitive.
+
 ## Send And Send-Receive
 
 ```rust
@@ -442,9 +500,9 @@ let targets = Ipv4Range::parse("192.0.2.1-20")?;
 IPv4-specific construction and decode behavior is covered in
 [IPv4 wire coverage](ipv4.md). The `Ipv4` layer exposes DSCP/ECN helpers,
 protocol-number labels and constants, decode-time checksum status, typed IPv4
-options, fragment metadata fields without fragmentation/reassembly, enriched
-`summary()` / `show()` output, and `Raw` fallback for unknown or unsupported
-payloads.
+options, fragment metadata fields, `IpDefrag` / `IpFragment` packet-stream
+transforms, enriched `summary()` / `show()` output, and `Raw` fallback for
+unknown or unsupported payloads.
 
 IPv6 base-header and extension-header details live in
 [IPv6 wire coverage](ipv6.md), including source manifests, fixture coverage,

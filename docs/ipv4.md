@@ -7,8 +7,10 @@ metadata are exposed, and what is intentionally out of scope.
 
 `crafter` treats IPv4 as one packet layer. It composes with `/`, compiles into a
 single IPv4 datagram, decodes from the `decode_from_l3` entrypoints, and stays
-inspectable through `summary()`, `show()`, and typed getters. It is **not** an IP
-stack, router, path MTU engine, fragmenter, reassembler, scanner, or fuzzer. See
+inspectable through `summary()`, `show()`, and typed getters. The base `Ipv4`
+layer is **not** an IP stack, router, path MTU engine, scanner, or fuzzer. IPv4
+fragment generation and reassembly live in the packet-stream `IpFragment` and
+`IpDefrag` transforms under `crafter::wire`. See
 [Explicit exclusions](#explicit-exclusions).
 
 All wire facts on this page trace to reviewed RFC text and IANA registries. The
@@ -28,7 +30,7 @@ user-facing API built on top of that manifest.
 | Protocol numbers | Supported | `Ipv4Protocol` variants, `IPPROTO_*` constants, labels in summaries, and `Raw` fallback for unknown or unsupported payloads. |
 | Checksum status | Supported | Header checksum auto-fill on compile; decode records `Ipv4ChecksumStatus`. Invalid checksums remain inspectable. |
 | Options | Supported | Raw options, typed `Ipv4Option` helpers, `Ipv4OptionIter`, `parsed_options`, and option-kind metadata. |
-| Fragment fields | Supported | ID, reserved/DF/MF flags, fragment offset, and `Ipv4FragmentInfo`. No fragment generation or reassembly. |
+| Fragment fields and transforms | Supported | ID, reserved/DF/MF flags, fragment offset, `Ipv4FragmentInfo`, receive-side `IpDefrag`, and transmit-side `IpFragment`. |
 | Decode errors | Supported | Malformed IPv4 headers and options return structured `CrafterError` values. |
 | Inspection | Supported | `summary()`, `show()`, `hexdump()`, and per-field getters. |
 | Pcap / oracle coverage | Supported | Focused public API tests, malformed corpus entries, deterministic fixtures, pcap-mode validation, and the `ipv4-enrichment` oracle profile. |
@@ -249,10 +251,13 @@ preserved as `Ipv4Option::Generic`. Malformed option envelopes return structured
 errors such as `ipv4 option`, `ipv4.option.length`, `ipv4.option.pointer`, or
 `ipv4.option.timestamp`; they do not panic or loop.
 
-## Fragment fields without reassembly
+## Fragment Fields And Transforms
 
-`crafter` exposes IPv4's fragmentation-related header fields, but it does not
-split payloads into fragments and it does not reassemble fragments.
+The `Ipv4` layer exposes IPv4's fragmentation-related header fields. The layer
+itself only models one datagram header; it does not keep fragment queues or
+split outbound streams. Use `IpDefrag` on receive-side `Sniffer` pipelines and
+`IpFragment` on transmit-side `Transmitter` pipelines when a packet stream needs
+those transforms.
 
 ```rust
 use crafter::prelude::*;
@@ -292,9 +297,70 @@ Decode policy is intentionally conservative. A non-initial fragment
 (`fragment_offset != 0`) keeps the IPv4 header typed and preserves the payload as
 `Raw`, because the transport header is not available without reassembly. An
 offset-zero packet with `MF` set may decode a complete transport header when the
-payload is self-consistent; otherwise the payload remains `Raw`. Fragmentation
-generation, fragment caches, overlap handling, timers, and reassembly are
-outside the crate.
+payload is self-consistent; otherwise the payload remains `Raw`. The decoder
+does not maintain fragment caches by itself.
+
+Receive-side reassembly belongs on a source or sniffer:
+
+```rust
+use crafter::prelude::*;
+
+let first = PacketRecord::new(
+    Ipv4::new().src("192.0.2.10")?.dst("198.51.100.20")?
+        .protocol(IPPROTO_EXPERIMENTAL_1)
+        .identification(0x2024)
+        .more_fragments(true)
+        .fragment_offset(0)
+        / Raw::from_bytes(b"abcdefgh"),
+);
+let final_fragment = PacketRecord::new(
+    Ipv4::new().src("192.0.2.10")?.dst("198.51.100.20")?
+        .protocol(IPPROTO_EXPERIMENTAL_1)
+        .identification(0x2024)
+        .fragment_offset(1)
+        / Raw::from_bytes(b"ijkl"),
+);
+
+let records = Sniffer::new(VecPacketSource::new([final_fragment, first]))
+    .with(IpDefrag::new())
+    .collect_records()?;
+
+for metadata in records[0].metadata().ip_defrag_metadata() {
+    println!("{:?}", metadata);
+}
+# Ok::<(), crafter::CrafterError>(())
+```
+
+`IpDefrag` groups IPv4 fragments by source, destination, protocol, and
+identification. It accepts exact duplicate ranges, records overlaps in
+`IpDefragMetadata`, and does not silently emit ambiguous bytes for conflicting
+overlaps. State is bounded by configured datagram count, byte count, and age.
+
+Transmit-side fragmentation belongs on a writer or transmitter. The default
+IPv4 policy honors DF: if a DF-set packet is larger than the configured MTU,
+`IpFragment` returns a structured error instead of fragmenting unless the caller
+chooses an explicit override policy.
+
+```rust
+use crafter::prelude::*;
+
+let writer = MemoryPacketWriter::dry_run();
+let mut tx = Transmitter::new(writer).with(IpFragment::new(576));
+
+let reports = tx.send(
+    Ipv4::new().src("192.0.2.10")?.dst("198.51.100.20")?
+        .identification(0x2025)
+        / Udp::new().sport(40000).dport(40001)
+        / Raw::from_bytes(&[0u8; 1200]),
+)?;
+
+assert!(reports.iter().all(|report| report.is_dry_run()));
+# Ok::<(), crafter::CrafterError>(())
+```
+
+Examples use documentation address space and offline or dry-run writers. Do not
+turn fragment examples into live traffic instructions; provider-backed lab
+workflows are the explicit live path.
 
 ## Decode behavior
 
@@ -378,6 +444,8 @@ IPv4 behavior is covered by focused offline tests and deterministic fixtures:
   IPv4 option cases for structured-error coverage.
 - `tools/oracle/specs/profiles.yaml` defines the `ipv4-enrichment` profile for
   focused offline IPv4 header behavior.
+- `tools/oracle/specs/features/ip-fragment-transforms.yaml` covers IPv4
+  fragment transform contracts and runnable offline packet cases.
 - `tools/oracle/specs/stacks.yaml` includes IPv4 payload stacks for boundary
   fields, unknown protocol `Raw`, MF+offset fragments, TTL 255, and option
   coverage.
@@ -397,8 +465,8 @@ capture, provider, and lab-session APIs.
 
 - IPv4 routing, forwarding, TTL decrement, route selection, or ICMP generation
   caused by forwarding.
-- Fragment generation, reassembly, fragment caches, overlap policy, timers, or
-  stack delivery of reassembled data.
+- Stack delivery of reassembled data, TCP stream reassembly, or application
+  payload reconstruction after `IpDefrag`.
 - Global IPv4 Identification allocation or uniqueness tracking.
 - Path MTU Discovery, Packetization Layer PMTUD, MTU probing, or MTU caches.
 - A full IP stack, scanner, fuzzer, analyzer workflow, or live traffic policy.
