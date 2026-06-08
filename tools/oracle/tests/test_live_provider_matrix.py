@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from tools.oracle.engine import cli as oracle_cli
+from tools.oracle.engine import live_provider_matrix
 from tools.oracle.engine.live_provider_matrix import (
     MatrixValidationError,
     _doctor_skip_reason,
@@ -383,6 +386,100 @@ class LiveProviderMatrixTest(unittest.TestCase):
 
         self.assertIn("provider doctor failed", reason)
         self.assertIn("VBoxManage_installed", reason)
+
+    def test_real_hetzner_doctor_failure_writes_structured_skip_matrix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp) / "matrix"
+            labels: list[str] = []
+
+            def fake_run_command(
+                argv: list[str],
+                *,
+                cwd: Path,
+                out_dir: Path,
+                label: str,
+                check: bool = True,
+            ) -> dict[str, object]:
+                del cwd, check
+                labels.append(label)
+                logs_dir = out_dir / "logs"
+                logs_dir.mkdir(parents=True, exist_ok=True)
+                stdout_path = logs_dir / f"{label}.stdout.txt"
+                stderr_path = logs_dir / f"{label}.stderr.txt"
+                stdout_path.write_text("", encoding="utf-8")
+                stderr_path.write_text("", encoding="utf-8")
+                exit_code = 0
+
+                if label == "corpus":
+                    corpus_out = Path(argv[argv.index("--out") + 1])
+                    corpus_out.mkdir(parents=True, exist_ok=True)
+                    (corpus_out / "plans.json").write_text(
+                        json.dumps({"corpus_id": "corpus-v1-test", "count": 2}),
+                        encoding="utf-8",
+                    )
+                elif label == "doctor-hetzner":
+                    exit_code = 1
+                    stdout_path.write_text(
+                        json.dumps(
+                            {
+                                "ok": False,
+                                "checks": [
+                                    {
+                                        "name": "credentials",
+                                        "ok": False,
+                                        "message": (
+                                            "missing HETZNER_API_TOKEN or HCLOUD_TOKEN"
+                                        ),
+                                    }
+                                ],
+                            }
+                        ),
+                        encoding="utf-8",
+                    )
+
+                return {
+                    "label": label,
+                    "argv": list(argv),
+                    "exit_code": exit_code,
+                    "stdout_path": str(stdout_path),
+                    "stderr_path": str(stderr_path),
+                }
+
+            with patch.object(
+                live_provider_matrix,
+                "_run_command",
+                side_effect=fake_run_command,
+            ):
+                exit_code = live_provider_matrix.main(
+                    [
+                        "--providers",
+                        "hetzner",
+                        "--backend",
+                        "scapy",
+                        "--profile",
+                        "ip-fragment-smoke",
+                        "--seed",
+                        "1305",
+                        "--count",
+                        "2",
+                        "--real",
+                        "--skip-unavailable",
+                        "--confirm-live-run",
+                        "--out",
+                        str(out_dir),
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(labels, ["corpus", "offline", "pcap", "doctor-hetzner"])
+            summary = json.loads((out_dir / "matrix-summary.json").read_text())
+            provider = summary["providers"][0]
+            self.assertFalse(summary["dry_run"])
+            self.assertTrue(summary["real_run"])
+            self.assertEqual(provider["provider"], "hetzner")
+            self.assertEqual(provider["status"], "skipped")
+            self.assertIn("missing HETZNER_API_TOKEN", provider["skip_reason"])
+            self.assertTrue(provider["no_live_packets_sent"])
 
 
 def _no_wire_eligible_live_report(
