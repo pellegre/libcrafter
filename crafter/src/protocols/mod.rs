@@ -5,6 +5,7 @@ pub mod dns;
 pub mod eapol;
 pub mod icmp;
 pub mod ip;
+pub mod ipsec;
 pub mod ipv4;
 pub mod ipv6;
 pub mod link;
