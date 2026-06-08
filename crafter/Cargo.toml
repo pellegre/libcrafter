@@ -17,7 +17,12 @@ path = "src/lib.rs"
 
 [dependencies]
 aes = "0.8"
+aes-gcm = "0.10"
+cbc = "0.1"
 ccm = "0.5"
+chacha20poly1305 = "0.10"
+cipher = "0.4"
+ctr = "0.9"
 hmac = "0.12"
 pcap = "2.4.0"
 pbkdf2 = "0.12"
@@ -25,6 +30,8 @@ pnet_datalink = "0.35.0"
 pnet_packet = "0.35.0"
 pnet_transport = "0.35.0"
 sha1 = "0.10"
+sha2 = "0.10"
+subtle = "2"
 
 [dev-dependencies]
 proptest = "1"
