@@ -1025,7 +1025,7 @@ fn capture_slice_for_root(
     match root {
         "l3:ipv4" => {
             let offset = ip_header_offset(&full_raw, 4, ETHERTYPE_IPV4)?;
-            let comparable_raw = full_raw[offset..].to_vec();
+            let comparable_raw = trim_ipv4_capture_padding(&full_raw[offset..]).to_vec();
             let packet = Packet::decode_from_l3(NetworkLayer::Ipv4, &comparable_raw)?;
             Ok(CaptureSlice {
                 compare_root: root.to_string(),
@@ -1060,6 +1060,18 @@ fn capture_slice_for_root(
         }
         _ => Err(format!("wire compare root unavailable for live capture: {compare_root}").into()),
     }
+}
+
+fn trim_ipv4_capture_padding(bytes: &[u8]) -> &[u8] {
+    if bytes.len() < 4 || bytes.first().map(|byte| byte >> 4) != Some(4) {
+        return bytes;
+    }
+    let ihl = usize::from(bytes[0] & 0x0f) * 4;
+    let total_length = usize::from(u16::from_be_bytes([bytes[2], bytes[3]]));
+    if ihl < 20 || total_length < ihl || total_length > bytes.len() {
+        return bytes;
+    }
+    &bytes[..total_length]
 }
 
 fn ip_header_offset(bytes: &[u8], version: u8, ethertype: u16) -> ExampleResult<usize> {
@@ -3173,6 +3185,52 @@ mod l2_ipv4_root {
         assert_eq!(slice.comparable_raw.first().map(|byte| byte >> 4), Some(4));
         assert!(slice.packet.layer::<Ipv4>().is_some());
         assert!(slice.packet.layer::<Icmpv4>().is_some());
+        assert!(slice.packet.layer::<Ethernet>().is_none());
+    }
+
+    #[test]
+    fn l2_ipv4_capture_slice_trims_ethernet_padding() {
+        let payload =
+            decode_hex("9143b12f45fd0bdbbe5ac967cdb6e9ce55189546ac4f9768c3")
+                .expect("payload hex decodes");
+        let ipv4 = Ipv4::new()
+            .src_str("10.78.0.10")
+            .expect("valid source")
+            .dst_str("10.78.0.20")
+            .expect("valid destination")
+            .id(65535)
+            .tos(255)
+            .ttl(255)
+            .ipv4_protocol(Ipv4Protocol::Experimental1)
+            .flags(IPV4_FLAG_MORE_FRAGMENTS)
+            .fragment_offset(1);
+        let frame = Ethernet::new()
+            .src(MacAddr::from([0x08, 0x00, 0x27, 0xc9, 0xdd, 0xb3]))
+            .dst(MacAddr::from([0x08, 0x00, 0x27, 0x2f, 0xbc, 0xc1]))
+            .ethertype(ETHERTYPE_IPV4)
+            / ipv4
+            / Raw::from_bytes(payload.clone());
+        let wire = frame.compile().expect("frame compiles");
+        let mut wire_bytes = wire.as_bytes().to_vec();
+        assert_eq!(wire_bytes.len(), 59);
+        wire_bytes.push(0);
+        let decoded = Packet::decode_from_link(LinkType::Ethernet, &wire_bytes)
+            .expect("ethernet frame decodes");
+        let captured = PacketRecord::from_pcap_packet(PcapPacket::new(
+            PcapTimestamp::zero(),
+            wire_bytes.len() as u32,
+            wire_bytes,
+            PcapLinkType::Ethernet,
+            decoded,
+        ));
+
+        let slice =
+            capture_slice_for_root(&captured, "l2:ipv4").expect("l2:ipv4 capture slice is sliced");
+
+        assert_eq!(slice.full_raw.len(), 60);
+        assert_eq!(slice.comparable_raw.len(), 45);
+        assert_eq!(&slice.comparable_raw[20..], payload.as_slice());
+        assert!(slice.packet.layer::<Ipv4>().is_some());
         assert!(slice.packet.layer::<Ethernet>().is_none());
     }
 }
