@@ -132,6 +132,46 @@ lab commands. Those runners create lab sessions, ask lab to transfer and unpack
 the repository, supply workload-owned bootstrap hooks, run the workload, collect
 artifacts, and tear down the session.
 
+## IP Fragment Lab Safety
+
+IP fragmentation behavior is validated live only through provider-backed lab
+sessions. `IpDefrag` and `IpFragment` examples, fixture tests, and oracle pcap
+checks are the default path; live runs are reserved for cases that need a real
+peer kernel, constrained MTU, and captured fragment exchange.
+
+Fragment lab sessions use disposable `stimulus` and `target` roles. The
+workload should configure the lab link MTU below the packet size being tested,
+disable TSO, GSO, GRO, LRO, and comparable offloads when the provider exposes
+them, send oversized ICMP or UDP payloads over lab-assigned private addresses
+plus explicit crafted fragment sequences, capture on the target, and compare
+kernel-delivered payload hashes with `IpDefrag` transform output hashes. The
+workload owns those commands; providers own only endpoint creation,
+connectivity, capability reporting, artifact transfer, and teardown.
+
+Plan provider capability and topology before any live packet exchange:
+
+```sh
+tools/lab/run plan --provider qemu --dry-run --profile ip-fragment --seed 1204 --role stimulus --role target --workload-label ip-fragment --json
+tools/lab/run plan --provider virtualbox --dry-run --profile ip-fragment --seed 1204 --role stimulus --role target --workload-label ip-fragment --json
+tools/oracle/run live --backend scapy --provider qemu --dry-run --family ip --profile fragmentation-smoke --seed 1204 --count 20 --out target/lab/ip-fragment-qemu-dry-run
+```
+
+Real fragment validation must be explicitly confirmed and artifacted under a
+fresh `target/lab/ip-fragment-*` directory:
+
+```sh
+tools/oracle/run live --backend scapy --provider qemu --confirm-live-run --family ip --profile fragmentation-smoke --seed 1205 --count 20 --out target/lab/ip-fragment-qemu-live
+```
+
+Each live run must leave enough evidence for review: provider manifests,
+session metadata, command logs, pcaps, decoded summaries, transform JSON,
+payload-hash comparisons, final reports, and teardown records. A provider that
+cannot satisfy the fragment workload should write a structured skip artifact
+under the requested `target/lab/ip-fragment-*` directory. A supported provider
+that creates endpoints must tear them down before the run is considered
+complete; use `--keep-wire-endpoints` only for an operator-approved debugging
+session and record the manual cleanup plan.
+
 ## Metadata And Artifacts
 
 Lab-backed reports include:

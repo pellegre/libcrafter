@@ -231,6 +231,59 @@ decode behavior that should survive file serialization.
 Packets that cannot be represented in the requested pcap mode are reported as
 skipped with a stable reason.
 
+## IP Fragment Transform Validation
+
+`IpDefrag` and `IpFragment` validation follows the same safe ladder as the rest
+of the packet stack: transform unit tests, offline oracle checks, pcap
+roundtrips, provider dry-runs, and only then explicitly confirmed lab-backed
+live behavior. Fragment examples and generated tools should use documentation
+addresses and dry-run or pcap writers unless a protected provider workflow has
+been selected.
+
+Run the offline transform and fixture checks first. They do not create
+infrastructure and keep artifacts under `target/oracle/` or `target/examples/`:
+
+```sh
+cargo test -p crafter wire::ip
+cargo test -p crafter --test fixture_suite ip_fragment
+tools/oracle/run offline --backend scapy --family ip --profile fragmentation-smoke --seed 1201 --count 50 --out target/oracle/ip-fragment-offline
+tools/oracle/run pcap --backend scapy --family ip --profile fragmentation-smoke --seed 1203 --count 50 --out target/oracle/ip-fragment-pcap
+cargo run -p crafter --example ip_defrag_pcap_summary -- --out target/examples/ip-defrag-pcap-summary.json
+```
+
+The pcap summary example is the inspectable bridge between oracle fixtures and
+lab artifacts: it reads fragment pcaps through public `crafter` APIs, runs
+`IpDefrag`, and writes packet hashes, payload hashes, metadata, and transform
+traces as JSON.
+
+Live IP fragmentation validation must not originate as raw traffic from the
+developer machine. Use lab-backed providers only, with disposable `stimulus`
+and `target` roles, constrained MTUs, offloads disabled where the provider
+supports it, and artifacts rooted at `target/lab/ip-fragment-*`. Start with
+provider dry-runs:
+
+```sh
+tools/oracle/run live --backend scapy --provider qemu --dry-run --family ip --profile fragmentation-smoke --seed 1204 --count 20 --out target/lab/ip-fragment-qemu-dry-run
+python3 tools/oracle/engine/live_provider_matrix.py --providers hetzner,qemu,virtualbox,docker --backend scapy --profile fragmentation-smoke --seed 1204 --count 20 --dry-run --out target/lab/ip-fragment-provider-matrix-dry-run
+```
+
+Real provider-backed fragment behavior is a protected workflow. It must use
+`--confirm-live-run`, write pcaps, decoded summaries, transform JSON, provider
+manifests, command logs, and `report.json` under a fresh
+`target/lab/ip-fragment-*` directory, and finish with teardown records. When a
+provider lacks the needed capability or prerequisite, the run should write a
+structured skip artifact under the same directory instead of silently passing:
+
+```sh
+tools/oracle/run live --backend scapy --provider qemu --confirm-live-run --family ip --profile fragmentation-smoke --seed 1205 --count 20 --out target/lab/ip-fragment-qemu-live
+python3 tools/oracle/engine/live_provider_matrix.py --providers qemu,virtualbox --backend scapy --profile fragmentation-smoke --seed 1205 --count 5 --real --confirm-live-run --skip-unavailable --out target/lab/ip-fragment-vm-live
+```
+
+Do not keep live endpoints after fragment validation except for an explicit
+debugging session approved by the operator. A completed run needs either
+teardown evidence for every disposable session or a skip artifact explaining why
+no live session was created.
+
 ## UDP Options Validation
 
 UDP options validation exercises the RFC 9868 surplus area after UDP Length,

@@ -218,6 +218,14 @@ Use documentation address space in examples and dry-run or pcap writers by
 default. Provider-backed lab sessions are the live path when a workflow needs
 real packet exchange.
 
+For `IpDefrag` and `IpFragment` validation, run transform tests, oracle offline
+checks, and pcap checks before any live workflow. Live fragment behavior must go
+through a disposable lab provider session with `--confirm-live-run`, artifacts
+under `target/lab/ip-fragment-*`, and teardown or skip artifacts that explain
+what happened. Do not validate IP fragmentation by sending raw live traffic from
+the developer machine; use the lab-backed workflow in [validation.md](validation.md)
+and [lab.md](lab.md).
+
 `WpaDecrypt` is an inbound transform. It accepts one or more configured SSIDs
 with either passphrases or pre-derived PMKs, observes beacons, RSN information,
 EAPOL-Key handshakes, and protected Dot11 data frames, and emits decrypted
