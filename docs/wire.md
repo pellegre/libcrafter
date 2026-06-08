@@ -144,16 +144,44 @@ next. If a transform emits no records, the rest of the chain is skipped for that
 input. If it emits many records, downstream transforms and writers see each
 record in emission order.
 
-Common transform shapes include:
+Built-in transform shapes include:
 
 - Wi-Fi metadata annotation, such as `Dot11Metadata`;
 - WPA/WPA2 key-state tracking and protected-data decryption, such as
   `WpaDecrypt`;
-- IPv4 and IPv6 fragment reassembly;
-- IPv4 and IPv6 outbound fragmentation through `IpFragment`;
-- TCP stream reassembly;
-- application protocol decoding that emits higher-level packet stacks while
-  preserving raw data as needed.
+- IPv4 and IPv6 receive-side fragment reassembly through `IpDefrag`;
+- IPv4 and IPv6 transmit-side fragmentation through `IpFragment`.
+
+TCP stream reassembly and application reconstruction are out of scope for the
+built-in wire transforms. Tools that need those workflows can implement their
+own `PacketTransform`, but the crate keeps its built-in transforms at packet
+datagram scope.
+
+`IpDefrag` is an inbound transform for sources and sniffers. It consumes
+fragmented IPv4 records and supported IPv6 Fragment Header records, buffers
+bounded per-datagram state, and emits a reassembled packet-shaped record when
+all byte ranges are present. Metadata stays inspectable through
+`PacketMetadata::ip_defrag_metadata()` and transform traces.
+
+```rust
+use crafter::prelude::*;
+
+let source = PacketWire::pcap_file(
+    "crafter/tests/fixtures/pcaps/raw-ipv4-ipfragment-generated.pcap",
+)
+    .open()?
+    .source()?;
+
+let records = Sniffer::new(source)
+    .with(IpDefrag::new())
+    .collect_records()?;
+
+for record in records {
+    println!("{}", record.packet().summary());
+    println!("{:?}", record.metadata().ip_defrag_metadata());
+}
+# Ok::<(), crafter::CrafterError>(())
+```
 
 `IpFragment` is an outbound transform with an explicit MTU. For IPv4, the
 default `Ipv4DontFragmentPolicy::Error` honors Don't Fragment (DF): when a
@@ -166,6 +194,29 @@ and an `ipv4 don't-fragment pass-through` trace. The only override that plans
 fragmentation despite DF is the explicit
 `Ipv4DontFragmentPolicy::FragmentAnyway` policy; the legacy
 `honor_dont_fragment(false)` builder maps to that same override.
+
+Place `IpFragment` on `Transmitter`, not on `Sniffer`. Offline writers keep
+fragment output deterministic and reviewable:
+
+```rust
+use crafter::prelude::*;
+
+let writer = MemoryPacketWriter::dry_run();
+let mut tx = Transmitter::new(writer).with(IpFragment::new(1280));
+
+let reports = tx.send(
+    Ipv6::new().src_str("2001:db8:20::1")?.dst_str("2001:db8:20::2")?
+        / Udp::new().sport(53000).dport(53001)
+        / Raw::from_bytes(&[0u8; 1600]),
+)?;
+
+assert!(reports.iter().all(|report| report.is_dry_run()));
+# Ok::<(), crafter::CrafterError>(())
+```
+
+Use documentation address space in examples and dry-run or pcap writers by
+default. Provider-backed lab sessions are the live path when a workflow needs
+real packet exchange.
 
 `WpaDecrypt` is an inbound transform. It accepts one or more configured SSIDs
 with either passphrases or pre-derived PMKs, observes beacons, RSN information,

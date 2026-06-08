@@ -9,7 +9,10 @@ behaviors stay outside the crate.
 and shows IPv6 layers through the same `Packet` surface as every other protocol:
 `/` composition, `compile()`, `decode_from_l3`, `summary()`, `show()`, and
 `hexdump()`. It is not an IPv6 stack, router, PMTUD engine, fragment
-reassembler, SRv6 endpoint, Mobile IPv6 node, scanner, or fuzzer.
+reassembler, SRv6 endpoint, Mobile IPv6 node, scanner, or fuzzer. IPv6
+Fragment Header reassembly and source-side fragmentation are packet-stream
+transforms: use `IpDefrag` on `Sniffer` sources and `IpFragment` on
+`Transmitter` writers.
 
 Protocol facts here are source-backed. The source record is
 [`docs/ipv6-rfc-manifest.md`](ipv6-rfc-manifest.md), and the implementation
@@ -32,7 +35,7 @@ under `tools/oracle/specs/layers/ipv6.yaml` and
 | Hop-by-Hop Options | Supported | Ordered `Ipv6Option` TLVs, explicit-only options, 8-octet header padding. |
 | Destination Options | Supported | Ordered `Ipv6Option` TLVs, including Home Address as packet-layer data. |
 | Routing headers | Supported | Generic Routing Header, Mobile Type 2, and Segment Routing Header (SRH). |
-| Fragment Header | Supported | Field inspection, initial/atomic/non-initial classification, and transform-scoped `IpDefrag` handling. |
+| Fragment Header | Supported | Field inspection, initial/atomic/non-initial classification, transform-scoped `IpDefrag`, and source-side `IpFragment`. |
 | Malformed decode | Supported | Structured errors for truncation and invalid fields; no silent panic. |
 | Live traffic | Opt-in only | Examples, fixtures, and oracle coverage are offline or dry-run by default. |
 
@@ -317,6 +320,66 @@ let fragment = decoded.layer::<Ipv6FragmentHeader>().unwrap();
 assert_eq!(fragment.fragment_status(), Ipv6FragmentHeaderStatus::Initial);
 ```
 
+Use `IpDefrag` on receive-side packet sources when a stream contains related
+fragments. Reassembly identity is the IPv6 source address, destination address,
+and Fragment Identification only; the Fragment Header Next Header value is
+preserved as context and metadata, not as key material.
+
+```rust
+use crafter::prelude::*;
+
+let first = PacketRecord::new(
+    Ipv6::new().src_str("2001:db8:40::1")?.dst_str("2001:db8:40::2")?
+        / Ipv6FragmentHeader::new()
+            .next_header(IPPROTO_IPV6_EXPERIMENTAL_1)
+            .identification(0x0102_0304)
+            .more_fragments(true)
+        / Raw::from_bytes(b"abcdefgh"),
+);
+let final_fragment = PacketRecord::new(
+    Ipv6::new().src_str("2001:db8:40::1")?.dst_str("2001:db8:40::2")?
+        / Ipv6FragmentHeader::new()
+            .next_header(IPPROTO_IPV6_EXPERIMENTAL_1)
+            .identification(0x0102_0304)
+            .fragment_offset(1)
+        / Raw::from_bytes(b"ijkl"),
+);
+
+let records = Sniffer::new(VecPacketSource::new([final_fragment, first]))
+    .with(IpDefrag::new())
+    .collect_records()?;
+
+println!("{:?}", records[0].metadata().ip_defrag_metadata());
+# Ok::<(), crafter::CrafterError>(())
+```
+
+Use `IpFragment` on transmit-side packet writers. It inserts IPv6 Fragment
+Headers for supported source-side header chains and emits packet-shaped records
+with `IpFragmentMetadata`.
+
+```rust
+use crafter::prelude::*;
+
+let writer = MemoryPacketWriter::dry_run();
+let mut tx = Transmitter::new(writer).with(
+    IpFragment::with_config(
+        IpFragmentConfig::new(1280).ipv6_identification(0x0102_0304),
+    ),
+);
+
+let reports = tx.send(
+    Ipv6::new().src_str("2001:db8:50::1")?.dst_str("2001:db8:50::2")?
+        / Udp::new().sport(40000).dport(40001)
+        / Raw::from_bytes(&[0u8; 1600]),
+)?;
+
+assert!(reports.iter().all(|report| report.is_dry_run()));
+# Ok::<(), crafter::CrafterError>(())
+```
+
+The examples use `2001:db8::/32` and dry-run memory output. They are intended
+for offline examples, tests, and generated tooling, not live traffic.
+
 ## Fragment Header Extension Scope
 
 The packet-stream `IpDefrag` and `IpFragment` transforms use a deliberately
@@ -423,10 +486,9 @@ when a human explicitly authorizes live packet exchange.
 The following behavior is intentionally outside `crafter`'s IPv6 packet
 primitive:
 
-- IPv6 fragmentation generation across multiple packets.
-- IPv6 reassembly, overlap handling, fragment queues, timers, or fragment
-  caches.
-- PMTUD probing or live Packet Too Big workflows.
+- TCP stream reassembly and application payload reconstruction after
+  `IpDefrag` emits an IPv6 datagram.
+- Full IPv6 stack delivery, PMTUD probing, or live Packet Too Big workflows.
 - Automatic Flow Label generation policy.
 - Automatic extension-header ordering or Router Alert insertion.
 - Full jumbogram transport semantics, huge payload allocation, or live
