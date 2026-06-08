@@ -37,6 +37,8 @@ values use `Ipv4Protocol`.
 | `wire_pcap_recorder` | Pcap and sniffing | Offline | Generated packet records written through `PacketWire` and `Transmitter`, then verified through pcap readback. | `cargo run -p crafter --example wire_pcap_recorder` |
 | `wire_transform_chain` | Pcap and sniffing | Offline | In-memory `Sniffer` transform chain with zero, one, and many packet-record outputs. | `cargo run -p crafter --example wire_transform_chain` |
 | `ip_defrag_pcap_summary` | Pcap and sniffing | Offline | Pcap input run through `IpDefrag` with JSON artifact output containing payload hashes, defrag metadata, and transform traces. | `cargo run -p crafter --example ip_defrag_pcap_summary` |
+| `ip_defrag_offline` | Pcap and sniffing | Offline | Generated memory fragments replayed through `IpDefrag` without opening a live interface. | `cargo run -p crafter --example ip_defrag_offline` |
+| `ip_fragment_offline` | Pcap and sniffing | Offline | Documentation-addressed IPv6 packet fragmentation written to an in-memory writer. | `cargo run -p crafter --example ip_fragment_offline` |
 | `wpa_decrypt_offline` | Pcap and sniffing | Offline | Synthetic WPA2-PSK CCMP pcap decryption through `PacketWire`, `Sniffer`, and `WpaDecrypt` with Wi-Fi/WPA metadata. | `cargo run -p crafter --example wpa_decrypt_offline` |
 | `sniffer_offline` | Pcap and sniffing | Offline | Offline `Sniffer` filtering and bounded packet iteration. | `cargo run -p crafter --example sniffer_offline` |
 | `capture_pcap` | Pcap and sniffing | Live-gated; plan by default | Bounded libpcap capture configuration and pcap writing on an isolated wire endpoint. | `cargo run -p crafter --example capture_pcap` |
