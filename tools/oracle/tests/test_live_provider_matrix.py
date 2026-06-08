@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 import tempfile
 import unittest
 
+from tools.oracle.engine import cli as oracle_cli
 from tools.oracle.engine.live_provider_matrix import (
     MatrixValidationError,
     _doctor_skip_reason,
@@ -54,6 +56,61 @@ class LiveProviderMatrixTest(unittest.TestCase):
         self.assertEqual(summary["lab_session"]["provider"], "virtualbox")
         self.assertEqual(summary["lab_session"]["roles"], ["libcrafter", "reference_backend"])
         self.assertEqual(summary["lab_session"]["validation_count"], 2)
+
+    def test_validate_live_report_preserves_ip_fragment_workload_plan(self) -> None:
+        adapter = resolve_live_provider("qemu")
+        corpus_path = Path("/tmp/libcrafter-corpus/plans.json")
+        report = _live_report(
+            provider="qemu",
+            wire_provider=adapter.wire_provider,
+            wire_exposure=adapter.wire_exposure,
+            endpoint_roles=list(adapter.endpoint_roles),
+            corpus_path=corpus_path,
+        )
+        report["profile"] = "ip-fragment-smoke"
+        metadata = report["metadata"]
+        self.assertIsInstance(metadata, dict)
+        metadata["workload_plan"] = _ip_fragment_workload_plan()
+
+        summary = validate_live_report(
+            report,
+            provider="qemu",
+            adapter=adapter,
+            corpus_id="corpus-v1-test",
+            corpus_path=corpus_path,
+            report_path=Path("/tmp/qemu/live/report.json"),
+        )
+
+        self.assertEqual(summary["workload_plan"]["profile"], "ip-fragment-smoke")
+        self.assertIn("small MTU setup", summary["workload_plan"]["steps"])
+        self.assertIn("payload hash comparison", summary["workload_plan"]["steps"])
+
+    def test_ip_fragment_workload_plan_confirms_live_send_command(self) -> None:
+        adapter = resolve_live_provider("qemu")
+        plan = oracle_cli._ip_fragment_workload_plan(
+            argparse.Namespace(
+                profile="ip-fragment-smoke",
+                backend="scapy",
+                provider="qemu",
+                seed=1301,
+                count=2,
+            ),
+            adapter,
+            dry_run=True,
+            output_dir=Path("/tmp/qemu/live"),
+        )
+
+        self.assertIsNotNone(plan)
+        commands = plan["commands"]
+        self.assertIsInstance(commands, list)
+        send_command = next(
+            command
+            for command in commands
+            if command["name"] == "send-oversized-payload"
+        )
+        self.assertIn("--backend", send_command["argv"])
+        self.assertIn("scapy", send_command["argv"])
+        self.assertIn("--confirm-live-run", send_command["argv"])
 
     def test_validate_live_report_accepts_docker_adapter_owned_metadata(self) -> None:
         adapter = resolve_live_provider("docker")
@@ -373,6 +430,34 @@ def _no_wire_eligible_live_report(
                 for role in endpoint_roles
             ],
         },
+    }
+
+
+def _ip_fragment_workload_plan() -> dict[str, object]:
+    return {
+        "name": "ip-fragment-smoke",
+        "profile": "ip-fragment-smoke",
+        "provider": "qemu",
+        "backend": "scapy",
+        "seed": 1301,
+        "count": 2,
+        "dry_run": True,
+        "creates_infrastructure": False,
+        "no_live_packets_sent": True,
+        "steps": [
+            "small MTU setup",
+            "offload disabling where supported",
+            "oversized/crafted fragment traffic",
+            "pcap capture",
+            "payload hash comparison",
+        ],
+        "commands": [
+            {"description": "small MTU setup", "argv": ["ip", "link"]},
+            {"description": "offload disabling", "argv": ["ethtool"]},
+            {"description": "oversized/crafted fragment traffic", "argv": ["send"]},
+            {"description": "pcap capture", "argv": ["tcpdump"]},
+            {"description": "payload hash comparison", "argv": ["summary"]},
+        ],
     }
 
 

@@ -151,9 +151,9 @@ connectivity, capability reporting, artifact transfer, and teardown.
 Plan provider capability and topology before any live packet exchange:
 
 ```sh
-tools/lab/run plan --provider qemu --dry-run --profile ip-fragment --seed 1204 --role stimulus --role target --workload-label ip-fragment --json
-tools/lab/run plan --provider virtualbox --dry-run --profile ip-fragment --seed 1204 --role stimulus --role target --workload-label ip-fragment --json
-tools/oracle/run live --backend scapy --provider qemu --dry-run --family ip --profile fragmentation-smoke --seed 1204 --count 20 --out target/lab/ip-fragment-qemu-dry-run
+tools/lab/run plan --provider qemu --dry-run --profile ip-fragment-smoke --seed 1204 --role stimulus --role target --workload-label ip-fragment-smoke --json
+tools/lab/run plan --provider virtualbox --dry-run --profile ip-fragment-smoke --seed 1204 --role stimulus --role target --workload-label ip-fragment-smoke --json
+tools/oracle/run live --backend scapy --provider qemu --dry-run --family ip --profile ip-fragment-smoke --seed 1204 --count 20 --out target/lab/ip-fragment-qemu-dry-run
 ```
 
 Real fragment validation must be explicitly confirmed and artifacted under a

@@ -259,12 +259,14 @@ traces as JSON.
 Live IP fragmentation validation must not originate as raw traffic from the
 developer machine. Use lab-backed providers only, with disposable `stimulus`
 and `target` roles, constrained MTUs, offloads disabled where the provider
-supports it, and artifacts rooted at `target/lab/ip-fragment-*`. Start with
-provider dry-runs:
+supports it, and artifacts rooted at `target/lab/ip-fragment-*`. The
+`ip-fragment-smoke` provider dry-run profile writes an oracle workload plan for
+small MTU setup, offload handling, oversized/crafted fragment traffic, pcap
+capture, and payload hash comparison. Start with provider dry-runs:
 
 ```sh
-tools/oracle/run live --backend scapy --provider qemu --dry-run --family ip --profile fragmentation-smoke --seed 1204 --count 20 --out target/lab/ip-fragment-qemu-dry-run
-python3 tools/oracle/engine/live_provider_matrix.py --providers hetzner,qemu,virtualbox,docker --backend scapy --profile fragmentation-smoke --seed 1204 --count 20 --dry-run --out target/lab/ip-fragment-provider-matrix-dry-run
+tools/oracle/run live --backend scapy --provider qemu --dry-run --family ip --profile ip-fragment-smoke --seed 1204 --count 20 --out target/lab/ip-fragment-qemu-dry-run
+python3 tools/oracle/engine/live_provider_matrix.py --providers hetzner,qemu,virtualbox,docker --backend scapy --profile ip-fragment-smoke --seed 1204 --count 20 --dry-run --out target/lab/ip-fragment-provider-matrix-dry-run
 ```
 
 Real provider-backed fragment behavior is a protected workflow. It must use
@@ -275,8 +277,8 @@ provider lacks the needed capability or prerequisite, the run should write a
 structured skip artifact under the same directory instead of silently passing:
 
 ```sh
-tools/oracle/run live --backend scapy --provider qemu --confirm-live-run --family ip --profile fragmentation-smoke --seed 1205 --count 20 --out target/lab/ip-fragment-qemu-live
-python3 tools/oracle/engine/live_provider_matrix.py --providers qemu,virtualbox --backend scapy --profile fragmentation-smoke --seed 1205 --count 5 --real --confirm-live-run --skip-unavailable --out target/lab/ip-fragment-vm-live
+tools/oracle/run live --backend scapy --provider qemu --confirm-live-run --family ip --profile ip-fragment-smoke --seed 1205 --count 20 --out target/lab/ip-fragment-qemu-live
+python3 tools/oracle/engine/live_provider_matrix.py --providers qemu,virtualbox --backend scapy --profile ip-fragment-smoke --seed 1205 --count 5 --real --confirm-live-run --skip-unavailable --out target/lab/ip-fragment-vm-live
 ```
 
 Do not keep live endpoints after fragment validation except for an explicit

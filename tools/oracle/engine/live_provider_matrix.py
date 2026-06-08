@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -30,6 +31,7 @@ STRICT_VM_SMOKE_ENV = "LIBCRAFTER_ORACLE_VM_SMOKE_STRICT"
 ALLOW_VM_CREATE_ENV = "LIBCRAFTER_ORACLE_VM_SMOKE_ALLOW_CREATE"
 REAL_MAX_COUNT_ENV = "LIBCRAFTER_ORACLE_VM_SMOKE_MAX_COUNT"
 DEFAULT_REAL_MAX_COUNT = 5
+IP_FRAGMENT_SMOKE_PROFILE = "ip-fragment-smoke"
 
 
 class MatrixValidationError(RuntimeError):
@@ -420,6 +422,12 @@ def validate_live_report(
         "metadata.wire_skip_reasons must be present",
         errors,
     )
+    workload_plan = _validate_ip_fragment_workload_plan(
+        report,
+        metadata,
+        errors,
+        dry_run=dry_run,
+    )
 
     if errors:
         raise MatrixValidationError(f"{report_path}: " + "; ".join(errors))
@@ -476,6 +484,7 @@ def validate_live_report(
         },
         "provider_workflow": provider_workflow,
         "provider_commands": provider_commands,
+        **({"workload_plan": workload_plan} if workload_plan is not None else {}),
         **({"doctor": doctor} if doctor is not None else {}),
     }
 
@@ -612,6 +621,12 @@ def _validate_no_wire_eligible_dry_run_report(
         "metadata.endpoint_bootstrap_if_packets_eligible must cover all endpoint roles",
         errors,
     )
+    workload_plan = _validate_ip_fragment_workload_plan(
+        report,
+        metadata,
+        errors,
+        dry_run=True,
+    )
 
     if errors:
         raise MatrixValidationError(f"{report_path}: " + "; ".join(errors))
@@ -650,8 +665,64 @@ def _validate_no_wire_eligible_dry_run_report(
         },
         "provider_workflow": provider_workflow,
         "provider_commands": [],
+        **({"workload_plan": workload_plan} if workload_plan is not None else {}),
         **({"doctor": doctor} if doctor is not None else {}),
     }
+
+
+def _validate_ip_fragment_workload_plan(
+    report: Mapping[str, Any],
+    metadata: Mapping[str, Any],
+    errors: list[str],
+    *,
+    dry_run: bool,
+) -> JSONObject | None:
+    if report.get("profile") != IP_FRAGMENT_SMOKE_PROFILE or not dry_run:
+        return None
+
+    workload_plan = _object_or_error(
+        metadata.get("workload_plan"),
+        "metadata.workload_plan",
+        errors,
+    )
+    if not workload_plan:
+        return None
+
+    commands = _json_list(workload_plan.get("commands", []))
+    plan_text = json.dumps(workload_plan, sort_keys=True)
+    _expect(
+        workload_plan.get("profile") == IP_FRAGMENT_SMOKE_PROFILE,
+        "metadata.workload_plan.profile must be ip-fragment-smoke",
+        errors,
+    )
+    _expect(
+        workload_plan.get("dry_run") is True,
+        "metadata.workload_plan.dry_run must be true",
+        errors,
+    )
+    _expect(
+        workload_plan.get("creates_infrastructure") is False,
+        "metadata.workload_plan.creates_infrastructure must be false",
+        errors,
+    )
+    _expect(
+        len(commands) >= 5,
+        "metadata.workload_plan.commands must describe provider workload commands",
+        errors,
+    )
+    for phrase in (
+        "small MTU",
+        "offload",
+        "oversized/crafted fragment traffic",
+        "pcap capture",
+        "payload hash",
+    ):
+        _expect(
+            phrase in plan_text,
+            f"metadata.workload_plan must mention {phrase}",
+            errors,
+        )
+    return workload_plan
 
 
 def build_matrix_summary(

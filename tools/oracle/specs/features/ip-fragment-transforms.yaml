@@ -46,6 +46,8 @@ profiles:
     purpose: Focused pcap dry-run planning for deterministic IP fragment fixture coverage.
   - name: ip-fragment-lab-dry-run
     purpose: Provider-backed Hetzner, QEMU, and VirtualBox constrained-MTU dry-run planning.
+  - name: ip-fragment-smoke
+    purpose: Provider-neutral oracle live dry-run plan for constrained-MTU IP fragment behavior.
 
 pcap_fixtures:
   - name: raw-ipv4-ipfragment-generated
@@ -429,6 +431,7 @@ supported_cases:
     family: IPv4_IPv6
     profiles:
       - ip-fragment-lab-dry-run
+      - ip-fragment-smoke
     contract_only: true
     expected: provider-backed lab endpoints with constrained MTU and offloads disabled produce kernel-delivered payload hashes matching transform-reassembled payload hashes, or a structured provider skip artifact.
 

@@ -849,7 +849,7 @@ class PacketGenerator:
             if (
                 feature is None
                 and case is None
-                and self.profile == "fragmentation-smoke"
+                and self.profile in _IP_FRAGMENT_SMOKE_PROFILES
                 and not _has_ip_fragment_smoke_case(coverage_cases)
             ):
                 continue
@@ -870,7 +870,7 @@ class PacketGenerator:
                     deck.append({**stack, "coverage_cases": [case]})
             if deck:
                 return deck
-        if self.profile == "fragmentation-smoke":
+        if self.profile in _IP_FRAGMENT_SMOKE_PROFILES:
             deck = []
             for stack in stacks:
                 coverage_cases = _string_list(
@@ -1042,7 +1042,7 @@ class PacketGenerator:
             # extension chains because any ipv6_routing stack can otherwise draw
             # cases whose terminal layer belongs to a different stack.
             coverage_cases = [case for case in coverage_cases if _is_ipv6_enrichment_case(case)]
-        if feature is None and self.profile == "fragmentation-smoke":
+        if feature is None and self.profile in _IP_FRAGMENT_SMOKE_PROFILES:
             # Focused fragmentation profile: keep case selection on the stack's
             # own pcap-eligible fragment cases. Transform feature contract cases
             # are many-record stream cases and must not be paired with unrelated
@@ -1115,7 +1115,7 @@ class PacketGenerator:
             return weighted_choice(rng, choices)
         # Focused fragmentation smoke profile: select only stack-declared
         # fragment cases so dry-run plans stay packet-shape consistent.
-        if feature is None and self.profile == "fragmentation-smoke":
+        if feature is None and self.profile in _IP_FRAGMENT_SMOKE_PROFILES:
             if not choices:
                 return "default"
             return weighted_choice(rng, choices)
@@ -1240,7 +1240,7 @@ class PacketGenerator:
                 continue
             # The fragmentation smoke profile keeps generated packet cases on
             # IP fragment behavior; pcap itself is selected by pcap mode later.
-            if self.profile == "fragmentation-smoke" and name not in (
+            if self.profile in _IP_FRAGMENT_SMOKE_PROFILES and name not in (
                 "ip_fragment_transforms",
                 "ipv6_fragment_routing",
             ):
@@ -4233,6 +4233,14 @@ def _has_ipv6_enrichment_case(cases: Sequence[str]) -> bool:
     """Whether ``cases`` contains an ipv6-enrichment coverage case."""
 
     return any(_is_ipv6_enrichment_case(case) for case in cases)
+
+
+_IP_FRAGMENT_SMOKE_PROFILES = frozenset(
+    {
+        "fragmentation-smoke",
+        "ip-fragment-smoke",
+    }
+)
 
 
 def _has_ip_fragment_smoke_case(cases: Sequence[str]) -> bool:
