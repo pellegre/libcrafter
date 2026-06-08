@@ -241,6 +241,14 @@ def _evaluate_provider(
     elif hash_comparison["status"] == "failed":
         status = "failed"
         reasons.append(_reason("payload_hash_mismatch", "kernel and transform payload hashes differ"))
+    elif base["oracle_status"] == "passed":
+        status = "passed"
+        reasons.append(
+            _reason(
+                "oracle_live_report_passed",
+                "provider live report passed without separate payload hash artifacts",
+            )
+        )
     elif base["dry_run"] or base["oracle_status"] == "dry-run":
         status = "skipped"
         reasons.append(

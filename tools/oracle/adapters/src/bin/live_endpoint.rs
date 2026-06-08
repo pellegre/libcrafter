@@ -16,7 +16,7 @@ use std::io::{self, Read};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 // Shared packet/DNS materializer — the exact code the offline `materialize_plans`
 // bin uses — so the live endpoint builds packets identically and never drifts
@@ -445,10 +445,7 @@ fn run_receiver(
     if let Some(filter) = capture_filter.clone() {
         wire = wire.filter(filter);
     }
-    let source = wire.open()?.source()?;
-    let capture = Sniffer::new(source)
-        .timeout(timeout)
-        .count(prepared.len().max(1));
+    let mut source = wire.open()?.source()?;
     // Signal that the capture is open and listening so the orchestrator only
     // launches the sender once packets can actually be observed. Without this
     // the sender can transmit its whole burst before the receiver is ready,
@@ -457,7 +454,7 @@ fn run_receiver(
         out_dir.join(format!("receiver-ready-{}", request.direction)),
         b"ready",
     );
-    let captured = capture.collect_records()?;
+    let captured = collect_live_capture_records(source.as_mut(), timeout, prepared.len().max(1))?;
 
     let capture_dir = artifact_path(out_dir, &request.artifact_paths, "captures", "captures");
     fs::create_dir_all(&capture_dir)?;
@@ -605,6 +602,28 @@ fn run_receiver(
         Vec::new(),
         json!({ "phase_role": "receiver" }),
     ))
+}
+
+fn collect_live_capture_records(
+    source: &mut dyn crafter::wire::PacketSource,
+    timeout: Duration,
+    count: usize,
+) -> ExampleResult<Vec<crafter::wire::PacketRecord>> {
+    let deadline = Instant::now() + timeout;
+    let mut captured = Vec::with_capacity(count);
+
+    while captured.len() < count {
+        if let Some(record) = source.next_record()? {
+            captured.push(record);
+            continue;
+        }
+        if Instant::now() >= deadline {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    Ok(captured)
 }
 
 fn common_send_mode(prepared: &[PreparedPacket]) -> ExampleResult<SendMode> {
@@ -2417,6 +2436,44 @@ fn _parse_ipv4(value: &str) -> ExampleResult<Ipv4Addr> {
 #[allow(dead_code)]
 fn _parse_ipv6(value: &str) -> ExampleResult<Ipv6Addr> {
     Ok(Ipv6Addr::from_str(value)?)
+}
+
+#[cfg(test)]
+mod live_capture_polling {
+    use super::*;
+    use crafter::wire::{PacketRecord, PacketSource};
+
+    struct DelayedSource {
+        empty_polls: usize,
+        emitted: bool,
+    }
+
+    impl PacketSource for DelayedSource {
+        fn next_record(&mut self) -> crafter::wire::Result<Option<PacketRecord>> {
+            if self.empty_polls > 0 {
+                self.empty_polls -= 1;
+                return Ok(None);
+            }
+            if self.emitted {
+                return Ok(None);
+            }
+            self.emitted = true;
+            Ok(Some(PacketRecord::new(Raw::from("captured"))))
+        }
+    }
+
+    #[test]
+    fn live_receiver_polling_does_not_treat_empty_nonblocking_read_as_eof() {
+        let mut source = DelayedSource {
+            empty_polls: 2,
+            emitted: false,
+        };
+        let captured = collect_live_capture_records(&mut source, Duration::from_millis(200), 1)
+            .expect("polling live capture should collect delayed packet");
+
+        assert_eq!(captured.len(), 1);
+        assert!(source.emitted);
+    }
 }
 
 /// Live endpoint batch contract coverage for the IPv4-root `ipv4 / udp / dhcp`

@@ -95,6 +95,53 @@ class IpFragmentArtifactsTest(unittest.TestCase):
                 "dry_run_no_payload_hash_comparison",
             )
 
+    def test_passed_live_report_without_hash_artifacts_passes_provider(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "input"
+            out_dir = Path(tmp) / "audit"
+            write_json(
+                root / "matrix-summary.json",
+                {
+                    "status": "passed",
+                    "dry_run": False,
+                    "baseline": {},
+                    "providers": [
+                        {
+                            "provider": "qemu",
+                            "status": "passed",
+                            "dry_run": False,
+                        }
+                    ],
+                },
+            )
+            write_json(
+                root / "providers" / "qemu" / "live" / "report.json",
+                {
+                    "mode": "live",
+                    "status": "passed",
+                    "profile": "ip-fragment-smoke",
+                    "failures": [],
+                    "metadata": {
+                        "provider": "qemu",
+                        "dry_run": False,
+                    },
+                },
+            )
+
+            exit_code = ip_fragment_artifacts.main(
+                ["--input", str(root), "--out", str(out_dir)]
+            )
+
+            self.assertEqual(exit_code, 0)
+            report = json.loads((out_dir / "report.json").read_text())
+            self.assertEqual(report["status"], "passed")
+            provider = report["providers"][0]
+            self.assertEqual(provider["status"], "passed")
+            self.assertEqual(
+                provider["reasons"][0]["code"],
+                "oracle_live_report_passed",
+            )
+
 
 def _write_fixture(
     root: Path,

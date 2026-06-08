@@ -258,6 +258,11 @@ def _canonical_fields(fields: Mapping[str, object]) -> JSONObject:
 def _canonical_field_value(layer_name: str, field_name: str, value: object) -> JSONValue | object:
     if layer_name == "payload" and field_name == "ascii":
         return _SKIP
+    if layer_name == "ipv4":
+        if field_name in {"checksum_status", "dscp", "ecn", "option_count"}:
+            return _SKIP
+        if field_name == "flags" and isinstance(value, str):
+            return value.lower()
     if layer_name in {"icmp", "icmpv6"} and field_name == "unused":
         return _SKIP
     if layer_name == "ipv6_routing" and field_name in {
