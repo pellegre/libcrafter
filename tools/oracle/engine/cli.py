@@ -7458,7 +7458,7 @@ def _live_output_dir(out: str) -> Path:
     output_root = Path(out)
     if not output_root.is_absolute():
         output_root = REPO_ROOT / output_root
-    if output_root.name == "live":
+    if output_root.resolve() != (REPO_ROOT / DEFAULT_OUTPUT_ROOT).resolve():
         return output_root
     return output_root / "live"
 

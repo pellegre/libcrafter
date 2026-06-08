@@ -985,7 +985,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "live",
                     args=args,
                     corpus_path=corpus_path,
-                    out_dir=provider_out,
+                    out_dir=provider_out / "live",
                 ),
                 "--provider",
                 provider,
