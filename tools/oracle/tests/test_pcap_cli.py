@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 import unittest
 
 from tools.oracle.engine import cli
@@ -54,6 +55,22 @@ class PcapRecordCanonicalizationTest(unittest.TestCase):
 
         self.assertEqual(records[0]["layers"], ["radiotap", "dot11"])
         self.assertEqual(records[0]["raw_hex"], "010203")
+
+
+class PcapOutputDirTest(unittest.TestCase):
+    def test_default_output_uses_mode_subdir(self) -> None:
+        self.assertEqual(
+            cli._pcap_output_dir(str(cli.DEFAULT_OUTPUT_ROOT)),
+            cli.REPO_ROOT / cli.DEFAULT_OUTPUT_ROOT / "pcap",
+        )
+
+    def test_explicit_output_is_exact_directory(self) -> None:
+        requested = Path("target/oracle/ip-fragment-pcap")
+
+        self.assertEqual(
+            cli._pcap_output_dir(str(requested)),
+            cli.REPO_ROOT / requested,
+        )
 
 
 if __name__ == "__main__":
