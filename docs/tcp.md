@@ -37,7 +37,7 @@ set.
 | TCP-AO / TCP-ENO crypto | Out of scope | Bytes preserved for inspection; no MAC, key, or negotiation logic. |
 | MPTCP connection logic | Out of scope | Subtype parsed, bytes preserved; no multipath state. |
 | Stream reassembly, state machine, congestion control | Out of scope | See [Explicit exclusions](#explicit-exclusions). |
-| IP fragmentation / reassembly | Out of scope | Non-initial IPv6 fragments preserved as `Raw`; no reassembly. |
+| IP fragmentation / reassembly | Supported outside TCP | `IpFragment` / `IpDefrag` packet-stream transforms handle IP datagrams; TCP segmentation and TCP reassembly remain future work. |
 
 ## TCP construction
 
@@ -375,8 +375,10 @@ MTU.
   cache.
 
 These are all illustrative guidance. The interaction is documented, but
-`crafter` neither fragments, reassembles, nor probes; a generated tool composes
-these primitives to do PMTUD/PLPMTUD work.
+the TCP layer neither performs TCP segmentation, TCP reassembly, nor path MTU
+probing; a generated tool composes these primitives to do PMTUD/PLPMTUD work.
+IP fragmentation and IP datagram reassembly are available separately through the
+packet-stream `IpFragment` and `IpDefrag` transforms.
 
 ## Explicit exclusions
 
@@ -384,10 +386,11 @@ these primitives to do PMTUD/PLPMTUD work.
 segments and does **not** implement, and this guide does not authorize:
 
 - A TCP connection state machine, retransmission engine, or congestion control.
-- TCP stream reassembly.
-- IP fragmentation, IP reassembly, or a fragment cache. Non-initial IPv6
-  fragments carrying TCP next-header are preserved as `Raw`; `crafter` never
-  reassembles them or attempts TCP decode without the initial header.
+- TCP segmentation, TCP reassembly, or application payload reconstruction.
+- TCP-owned IP fragmentation, IP reassembly, or a fragment cache. Non-initial
+  IPv6 fragments carrying TCP next-header are preserved as `Raw` by base decode;
+  receive-side IP datagram reassembly belongs to `IpDefrag`, and transmit-side
+  IP fragmentation belongs to `IpFragment`.
 - TCP-AO or TCP-ENO cryptography: option bytes are preserved for inspection and
   round-trip only. No MAC is computed or verified, no key is derived or rolled,
   and no encryption is negotiated (TCP-ENO / tcpcrypt, RFC 8548).
@@ -399,7 +402,8 @@ segments and does **not** implement, and this guide does not authorize:
 PMTUD/PLPMTUD (RFC 1191, RFC 8201, RFC 8899), the IPv4 Don't Fragment bit, ICMP
 fragmentation-needed, IPv6 Packet Too Big, and the IPv6 minimum-MTU facts are
 modeled as sizing guidance only; `crafter` never probes a path MTU, and
-fragmentation implementation is out of scope. See
+TCP segmentation and TCP reassembly remain future work. IP fragmentation and IP
+datagram reassembly are implemented only by the packet-stream transforms. See
 [PMTUD / PLPMTUD and fragmentation (guidance only)](#pmtud--plpmtud-and-fragmentation-guidance-only).
 These boundaries mirror the spec's "what not to do" and the manifest's
 [Explicit Exclusions](tcp-rfc-manifest.md#explicit-exclusions).
