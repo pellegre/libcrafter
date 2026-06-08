@@ -112,6 +112,7 @@ _SUPPORTED_FEATURES = {
     "icmpv4_errors",
     "icmpv4_live",
     "icmpv6_errors",
+    "ip_fragment_transforms",
     "ipv4_options",
     "ipv6_fragment_routing",
     "pcap_contracts",

@@ -667,6 +667,7 @@ stacks:
       - payload
     coverage_cases:
       - ipv6-fragment-udp
+      - crafter-ipv6-fragment-udp
   - name: ipv6_hop_by_hop_payload
     root: "l3:ipv6"
     layers:

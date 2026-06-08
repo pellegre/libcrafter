@@ -4856,10 +4856,10 @@ def _layers_cover_feature(stack: Sequence[str], feature_layers: Sequence[str]) -
         "ipv6_hop_by_hop",
         "ipv6_routing",
     }
-    if "ipv6" in feature_set and feature_set.intersection(ipv6_extension_layers):
-        return "ipv6" in stack_set and bool(stack_set.intersection(ipv6_extension_layers))
     if {"ipv4", "ipv6"}.issubset(feature_set):
         return bool(stack_set.intersection(feature_set))
+    if "ipv6" in feature_set and feature_set.intersection(ipv6_extension_layers):
+        return "ipv6" in stack_set and bool(stack_set.intersection(ipv6_extension_layers))
     return all(layer in stack_set for layer in feature_layers)
 
 

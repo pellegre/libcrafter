@@ -15,15 +15,15 @@ directions:
   - roundtrip
   - live_exchange
 strict_bytes: true
-malformed: true
+malformed: false
 
 schema_note: >
-  The current oracle suite schema models one packet vector at a time. IP
-  defragmentation is many input records to one output record, and IP
-  fragmentation is one input record to many output records. These cases are
-  therefore contract_only until the oracle runner can execute packet-stream
-  transforms, compare ordered record sequences, and assert transform trace
-  metadata.
+  The current oracle suite schema models one packet vector at a time. Packet
+  shaped IPv4 and IPv6 fragment header cases are runnable as strict-byte
+  reference/backend vectors today. Packet-stream transform cases remain
+  contract_only until the oracle runner can execute transforms over ordered
+  PacketRecord streams, compare ordered record sequences, and assert transform
+  trace metadata.
 schema_extension_plan:
   - Add a transform_case model with transform name, direction, input_records,
     expected_records, expected_trace, and expected_error fields.
@@ -151,6 +151,14 @@ behaviors:
       - Unsupported extension-header chains fail or pass through with explicit trace metadata; they are never silently rewritten.
 
 coverage_cases:
+  # Runnable packet-level strict-byte cases. These exercise the fragment wire
+  # shapes the transforms emit or consume, with Scapy as the reference backend.
+  - ipv4-fragment-mf-offset
+  - crafter-ipv4-fragment-mf-offset
+  - ipv6-fragment-udp
+  - crafter-ipv6-fragment-udp
+  # Packet-stream transform contracts. These remain contract_only until the
+  # oracle has a transform-case execution model.
   - ip-defrag-ipv4-in-order
   - ip-defrag-ipv4-out-of-order
   - ip-defrag-ipv4-duplicate
@@ -172,6 +180,54 @@ coverage_cases:
   - ip-fragment-lab-constrained-mtu
 
 supported_cases:
+  # Existing generator/backend materializers can compare these packet-level
+  # fragment wire shapes in both offline directions today. They validate strict
+  # bytes for fragment headers and payload preservation while the many-record
+  # PacketTransform contracts below remain explicit contract cases.
+  - name: ipv4-fragment-mf-offset
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+    family: IPv4
+    profiles:
+      - fragmentation-smoke
+      - ip-fragment-offline
+    reference_backend: scapy
+    expected: IPv4 packet with MF set, non-zero fragment offset, raw payload, and Scapy-equivalent header checksum.
+  - name: crafter-ipv4-fragment-mf-offset
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+    family: IPv4
+    profiles:
+      - fragmentation-smoke
+      - ip-fragment-offline
+    reference_backend: scapy
+    expected: libcrafter-oriented IPv4 fragment vector stays byte-identical against the Scapy reference backend.
+  - name: ipv6-fragment-udp
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+    family: IPv6
+    profiles:
+      - fragmentation-smoke
+      - ip-fragment-offline
+    reference_backend: scapy
+    expected: IPv6 Fragment Header carrying UDP and payload bytes stays byte-identical against Scapy.
+  - name: crafter-ipv6-fragment-udp
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+    family: IPv6
+    profiles:
+      - fragmentation-smoke
+      - ip-fragment-offline
+    reference_backend: scapy
+    expected: libcrafter-oriented IPv6 Fragment Header vector stays byte-identical against the Scapy reference backend.
   - name: ip-defrag-ipv4-in-order
     directions:
       - reference_to_libcrafter
@@ -378,12 +434,16 @@ supported_cases:
 
 backend_support:
   scapy:
-    status: planned
+    status: supported
+    encode: true
+    decode: true
     notes:
-      - Scapy is the reference backend for generating IPv4 and IPv6 fragment sequences and normalizing fragment bytes.
-      - Transform-only execution needs an oracle schema extension before these contract cases can run.
+      - Scapy is the reference backend for strict-byte IPv4 and IPv6 fragment packet vectors.
+      - Packet-stream transform execution still needs an oracle schema extension before transform-only contract cases can run.
   libcrafter:
-    status: planned
+    status: partial
+    encode: true
+    decode: true
     notes:
-      - IpDefrag and IpFragment PacketTransform implementations are planned by the ip-fragment-transforms work.
-      - The future adapter must emit PacketRecord metadata and TransformTrace JSON for comparison.
+      - Packet-level fragment vectors compile and decode through the existing oracle adapter.
+      - The future transform adapter must emit PacketRecord metadata and TransformTrace JSON for PacketTransform comparison.
