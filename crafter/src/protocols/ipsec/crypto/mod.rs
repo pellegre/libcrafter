@@ -5,8 +5,10 @@
 //! (AES-GCM, AES-CCM, ChaCha20-Poly1305), each verified against an RFC
 //! Known-Answer Test before use. Submodules are added by later steps.
 
+pub mod aead;
 pub mod cipher;
 pub mod integrity;
 
+pub use aead::AeadTransform;
 pub use cipher::CipherTransform;
 pub use integrity::IntegrityTransform;
