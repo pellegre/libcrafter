@@ -851,7 +851,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "pcap",
             args=args,
             corpus_path=corpus_path,
-            out_dir=baseline_out,
+            out_dir=baseline_out / "pcap",
         )
         commands.append(
             _run_command(offline_command, cwd=repo_root, out_dir=out_dir, label="offline")
