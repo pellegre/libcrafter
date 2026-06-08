@@ -25,6 +25,8 @@ mod fragment_metadata;
 #[cfg(test)]
 mod observability;
 #[cfg(test)]
+mod performance_bounds;
+#[cfg(test)]
 mod resilience;
 #[cfg(test)]
 mod roundtrip;
