@@ -106,6 +106,75 @@ fn public_api_ip_fragment_exports() {
 }
 
 #[test]
+fn public_api_ip_fragment_smoke() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    const IPV4_MTU: usize = 44;
+    const IPV6_MTU: usize = 1280;
+    const RAW_IPV4_PROTOCOL: u8 = 253;
+
+    let ipv4_payload = b"public api ipv4 defrag smoke payload from documentation space";
+    let ipv4_header = Ipv4::with_addresses(
+        Ipv4Addr::new(192, 0, 2, 59),
+        Ipv4Addr::new(198, 51, 100, 59),
+    )
+    .protocol(RAW_IPV4_PROTOCOL)
+    .identification(0x5904);
+    let ipv4_packet = ipv4_header / Raw::from_bytes(ipv4_payload);
+    assert_eq!(ipv4_packet.compile()?.as_bytes()[0] >> 4, 4);
+
+    let mut ipv4_fragment = IpFragment::new(IPV4_MTU);
+    let mut ipv4_fragments = ipv4_fragment
+        .fragment_record(PacketRecord::new(ipv4_packet))?
+        .into_records();
+    assert!(ipv4_fragments.len() > 1);
+    ipv4_fragments.rotate_right(1);
+
+    let reassembled = Sniffer::new(VecPacketSource::new(ipv4_fragments))
+        .with(IpDefrag::new())
+        .collect_records()?;
+    assert_eq!(reassembled.len(), 1);
+    let raw = reassembled[0]
+        .packet()
+        .layer::<Raw>()
+        .expect("reassembled IPv4 packet should expose the Raw payload");
+    assert_eq!(raw.as_bytes(), ipv4_payload);
+    assert_eq!(
+        reassembled[0]
+            .metadata()
+            .ip_defrag_metadata()
+            .first()
+            .map(IpDefragMetadata::fragment_count),
+        Some(3)
+    );
+
+    let ipv6_payload: Vec<u8> = (0..1301).map(|index| b'a' + (index % 26) as u8).collect();
+    let ipv6_packet = Ipv6::new()
+        .src(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 59))
+        .dst(Ipv6Addr::new(0x2001, 0xdb8, 0, 1, 0, 0, 0, 59))
+        .hop_limit(64)
+        / Udp::new().sport(5900).dport(5901)
+        / Raw::from_bytes(&ipv6_payload);
+    assert_eq!(ipv6_packet.compile()?.as_bytes()[0] >> 4, 6);
+
+    let reports = Transmitter::new(
+        MemoryPacketWriter::dry_run().with_target_details("public-api-fragment-smoke"),
+    )
+    .with(IpFragment::with_config(
+        IpFragmentConfig::new(IPV6_MTU).ipv6_identification(0x5900_0059),
+    ))
+    .send(ipv6_packet)?;
+    assert!(reports.len() > 1);
+    assert!(reports.iter().all(|report| report.is_dry_run()));
+    assert!(reports
+        .iter()
+        .all(|report| report.backend() == &BackendKind::Memory));
+    assert!(reports
+        .iter()
+        .all(|report| report.bytes_requested() <= IPV6_MTU));
+
+    Ok(())
+}
+
+#[test]
 fn public_api_dot11_phase15_radiotap_llc_and_send_plan() -> crafter::Result<()> {
     let station = documentation_mac(0x01);
     let access_point = documentation_mac(0x02);
