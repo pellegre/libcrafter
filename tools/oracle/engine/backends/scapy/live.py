@@ -844,24 +844,36 @@ def _capture_slice_for_root(
     if root == "l3:ipv4":
         if not packet.haslayer(scapy_all.IP):
             raise ValueError("captured packet has no IPv4 header for l3:ipv4 compare root")
-        comparable_packet = packet[scapy_all.IP]
+        comparable_raw = _trim_ipv4_capture_padding(bytes(scapy_all.raw(packet[scapy_all.IP])))
+        comparable_packet = scapy_all.IP(comparable_raw)
     elif root == "l3:ipv6":
         if not packet.haslayer(scapy_all.IPv6):
             raise ValueError("captured packet has no IPv6 header for l3:ipv6 compare root")
         comparable_packet = packet[scapy_all.IPv6]
+        comparable_raw = bytes(scapy_all.raw(comparable_packet))
     elif root == "link:ethernet":
         if not packet.haslayer(scapy_all.Ether):
             raise ValueError("captured packet has no Ethernet frame for link:ethernet compare root")
         comparable_packet = packet
+        comparable_raw = bytes(scapy_all.raw(comparable_packet))
     else:  # pragma: no cover - _canonical_compare_root raises first.
         raise ValueError(f"unsupported capture compare root: {compare_root}")
-    comparable_raw = bytes(scapy_all.raw(comparable_packet))
     return CaptureSlice(
         compare_root=root,
         full_raw=full_raw,
         comparable_raw=comparable_raw,
         packet=comparable_packet,
     )
+
+
+def _trim_ipv4_capture_padding(raw: bytes) -> bytes:
+    if len(raw) < 4 or raw[0] >> 4 != 4:
+        return raw
+    ihl = (raw[0] & 0x0F) * 4
+    total_length = int.from_bytes(raw[2:4], "big")
+    if ihl < 20 or total_length < ihl or total_length > len(raw):
+        return raw
+    return raw[:total_length]
 
 
 def _compare_root_for_vector(request: JSONObject, vector: EncodedVector) -> str:

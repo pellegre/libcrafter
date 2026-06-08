@@ -163,6 +163,40 @@ class ScapyLiveCaptureSliceTest(unittest.TestCase):
             len(capture_slice.comparable_raw),
         )
 
+    def test_capture_slice_trims_ipv4_ethernet_padding(self) -> None:
+        scapy_all = import_scapy()["all"]
+        payload = bytes.fromhex(
+            "9143b12f45fd0bdbbe5ac967cdb6e9ce55189546ac4f9768c3"
+        )
+        frame = (
+            scapy_all.Ether(
+                src="02:00:00:00:00:01",
+                dst="02:00:00:00:00:02",
+                type=0x0800,
+            )
+            / scapy_all.IP(
+                src="10.78.0.10",
+                dst="10.78.0.20",
+                proto=253,
+                flags="MF",
+                frag=1,
+                id=65535,
+                tos=255,
+                ttl=255,
+                len=45,
+            )
+            / scapy_all.Raw(payload)
+            / scapy_all.Padding(b"\x00")
+        )
+
+        capture_slice = live._capture_slice_for_root(scapy_all, frame, "l2:ipv4")
+
+        self.assertEqual(capture_slice.compare_root, "l3:ipv4")
+        self.assertEqual(len(capture_slice.full_raw), 60)
+        self.assertEqual(len(capture_slice.comparable_raw), 45)
+        self.assertEqual(capture_slice.comparable_raw[-len(payload) :], payload)
+        self.assertEqual(bytes(scapy_all.raw(capture_slice.packet)), capture_slice.comparable_raw)
+
 
 if __name__ == "__main__":
     unittest.main()
