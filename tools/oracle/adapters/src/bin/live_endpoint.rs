@@ -3190,9 +3190,8 @@ mod l2_ipv4_root {
 
     #[test]
     fn l2_ipv4_capture_slice_trims_ethernet_padding() {
-        let payload =
-            decode_hex("9143b12f45fd0bdbbe5ac967cdb6e9ce55189546ac4f9768c3")
-                .expect("payload hex decodes");
+        let payload = decode_hex("9143b12f45fd0bdbbe5ac967cdb6e9ce55189546ac4f9768c3")
+            .expect("payload hex decodes");
         let ipv4 = Ipv4::new()
             .src_str("10.78.0.10")
             .expect("valid source")
