@@ -73,5 +73,21 @@ class PcapOutputDirTest(unittest.TestCase):
         )
 
 
+class LiveOutputDirTest(unittest.TestCase):
+    def test_default_output_uses_mode_subdir(self) -> None:
+        self.assertEqual(
+            cli._live_output_dir(str(cli.DEFAULT_OUTPUT_ROOT)),
+            cli.REPO_ROOT / cli.DEFAULT_OUTPUT_ROOT / "live",
+        )
+
+    def test_explicit_output_is_exact_directory(self) -> None:
+        requested = Path("target/oracle/ip-fragment-live")
+
+        self.assertEqual(
+            cli._live_output_dir(str(requested)),
+            cli.REPO_ROOT / requested,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
