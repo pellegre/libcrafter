@@ -470,7 +470,7 @@ impl IpDefrag {
 
         match outcome {
             Ipv4DefragObservationKind::Buffered => {
-                if let Err(error) = self.evict_ipv4_to_datagram_limit(emit) {
+                if let Err(error) = self.evict_to_datagram_limit(emit) {
                     return Ipv4DefragObservation::Error(error);
                 }
                 Ipv4DefragObservation::Buffered
@@ -531,7 +531,7 @@ impl IpDefrag {
 
         match outcome {
             Ipv6DefragObservationKind::Buffered => {
-                if let Err(error) = self.evict_ipv6_to_datagram_limit(emit) {
+                if let Err(error) = self.evict_to_datagram_limit(emit) {
                     return Ipv6DefragObservation::Error(error);
                 }
                 Ipv6DefragObservation::Buffered
@@ -565,58 +565,75 @@ impl IpDefrag {
         }
     }
 
-    fn evict_ipv4_to_datagram_limit(
+    fn evict_to_datagram_limit(
         &mut self,
         emit: &mut dyn FnMut(PacketRecord) -> Result<()>,
     ) -> Result<()> {
         let max_datagrams = self.config.max_datagrams_limit();
-        while self.ipv4_datagrams.len() > max_datagrams {
-            let key = self
-                .ipv4_datagrams
-                .iter()
-                .min_by(|(left_key, left), (right_key, right)| {
-                    left.eviction_order()
-                        .cmp(&right.eviction_order())
-                        .then_with(|| left_key.cmp(right_key))
-                })
-                .map(|(key, _)| key.clone())
-                .expect("IPv4 defrag state must be non-empty when over datagram limit");
-            let state = self
-                .ipv4_datagrams
-                .remove(&key)
-                .expect("datagram-limited IPv4 defrag state must remain in the map");
-            self.evict_ipv4_state(state, IpDefragEvictionReason::DatagramLimit, emit)?;
+        while self.pending_datagram_count() > max_datagrams {
+            match self.oldest_datagram_key() {
+                Some(DefragDatagramKey::Ipv4(key)) => {
+                    let state = self
+                        .ipv4_datagrams
+                        .remove(&key)
+                        .expect("datagram-limited IPv4 defrag state must remain in the map");
+                    self.evict_ipv4_state(state, IpDefragEvictionReason::DatagramLimit, emit)?;
+                }
+                Some(DefragDatagramKey::Ipv6(key)) => {
+                    let state = self
+                        .ipv6_datagrams
+                        .remove(&key)
+                        .expect("datagram-limited IPv6 defrag state must remain in the map");
+                    self.evict_ipv6_state(state, IpDefragEvictionReason::DatagramLimit, emit)?;
+                }
+                None => break,
+            }
         }
 
         Ok(())
     }
 
-    fn evict_ipv6_to_datagram_limit(
-        &mut self,
-        emit: &mut dyn FnMut(PacketRecord) -> Result<()>,
-    ) -> Result<()> {
-        let max_datagrams = self.config.max_datagrams_limit();
-        while self.ipv4_datagrams.len() + self.ipv6_datagrams.len() > max_datagrams {
-            let Some(key) = self
-                .ipv6_datagrams
-                .iter()
-                .min_by(|(left_key, left), (right_key, right)| {
-                    left.eviction_order()
-                        .cmp(&right.eviction_order())
-                        .then_with(|| left_key.cmp(right_key))
-                })
-                .map(|(key, _)| key.clone())
-            else {
-                break;
-            };
-            let state = self
-                .ipv6_datagrams
-                .remove(&key)
-                .expect("datagram-limited IPv6 defrag state must remain in the map");
-            self.evict_ipv6_state(state, IpDefragEvictionReason::DatagramLimit, emit)?;
-        }
+    fn oldest_datagram_key(&self) -> Option<DefragDatagramKey> {
+        let oldest_ipv4 = self
+            .ipv4_datagrams
+            .iter()
+            .min_by(|(left_key, left), (right_key, right)| {
+                left.eviction_order()
+                    .cmp(&right.eviction_order())
+                    .then_with(|| left_key.cmp(right_key))
+            })
+            .map(|(key, state)| (state.eviction_order(), DefragDatagramKey::Ipv4(key.clone())));
+        let oldest_ipv6 = self
+            .ipv6_datagrams
+            .iter()
+            .min_by(|(left_key, left), (right_key, right)| {
+                left.eviction_order()
+                    .cmp(&right.eviction_order())
+                    .then_with(|| left_key.cmp(right_key))
+            })
+            .map(|(key, state)| (state.eviction_order(), DefragDatagramKey::Ipv6(key.clone())));
 
-        Ok(())
+        match (oldest_ipv4, oldest_ipv6) {
+            (Some((ipv4_order, ipv4_key)), Some((ipv6_order, ipv6_key))) => {
+                if ipv4_order <= ipv6_order {
+                    Some(ipv4_key)
+                } else {
+                    Some(ipv6_key)
+                }
+            }
+            (Some((_, key)), None) | (None, Some((_, key))) => Some(key),
+            (None, None) => None,
+        }
+    }
+
+    fn record_eviction(&mut self, reason: &IpDefragEvictionReason) {
+        self.eviction_count += 1;
+        match reason {
+            IpDefragEvictionReason::Timeout => self.timeout_eviction_count += 1,
+            IpDefragEvictionReason::DatagramLimit => self.datagram_limit_eviction_count += 1,
+            IpDefragEvictionReason::ByteLimit => self.byte_limit_eviction_count += 1,
+            IpDefragEvictionReason::Conflict | IpDefragEvictionReason::Other(_) => {}
+        }
     }
 
     fn evict_ipv4_state(
@@ -649,16 +666,6 @@ impl IpDefrag {
             }
         }
         Ok(())
-    }
-
-    fn record_eviction(&mut self, reason: &IpDefragEvictionReason) {
-        self.eviction_count += 1;
-        match reason {
-            IpDefragEvictionReason::Timeout => self.timeout_eviction_count += 1,
-            IpDefragEvictionReason::DatagramLimit => self.datagram_limit_eviction_count += 1,
-            IpDefragEvictionReason::ByteLimit => self.byte_limit_eviction_count += 1,
-            IpDefragEvictionReason::Conflict | IpDefragEvictionReason::Other(_) => {}
-        }
     }
 
     fn handle_ipv4_conflict(
@@ -921,6 +928,12 @@ impl IpDefrag {
 
         self.emit_pass_through(record, emit)
     }
+}
+
+#[derive(Debug, Clone)]
+enum DefragDatagramKey {
+    Ipv4(Ipv4DefragKey),
+    Ipv6(Ipv6DefragKey),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

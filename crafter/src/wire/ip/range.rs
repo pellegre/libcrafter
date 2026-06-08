@@ -157,6 +157,7 @@ pub(crate) enum RangeMapInsert {
 pub(crate) struct RangeMap {
     ranges: BTreeMap<u32, RangeEntry>,
     complete_len: Option<u32>,
+    byte_len: usize,
     duplicate_count: usize,
     overlap_status: IpDefragOverlapStatus,
     conflict: Option<RangeMapConflict>,
@@ -280,8 +281,8 @@ impl RangeMap {
     }
 
     /// Number of accepted, unique payload bytes stored by the map.
-    pub(crate) fn byte_len(&self) -> usize {
-        self.ranges.values().map(|entry| entry.bytes.len()).sum()
+    pub(crate) const fn byte_len(&self) -> usize {
+        self.byte_len
     }
 
     /// Number of exact duplicate observations.
@@ -386,26 +387,43 @@ impl RangeMap {
     }
 
     fn overlapping_entries(&self, range: RangeMapRange) -> Vec<EntrySnapshot> {
-        self.ranges
-            .range(..range.end())
-            .filter_map(|(&start, entry)| {
-                let existing = RangeMapRange::new(start, entry.end);
-                (existing.end() > range.start()).then(|| EntrySnapshot {
-                    range: existing,
+        let mut entries = Vec::new();
+        if let Some((&start, entry)) = self.ranges.range(..range.start()).next_back() {
+            if entry.end > range.start() {
+                entries.push(EntrySnapshot {
+                    range: RangeMapRange::new(start, entry.end),
                     bytes: entry.bytes.clone(),
-                })
-            })
-            .collect()
+                });
+            }
+        }
+        entries.extend(
+            self.ranges
+                .range(range.start()..range.end())
+                .map(|(&start, entry)| EntrySnapshot {
+                    range: RangeMapRange::new(start, entry.end),
+                    bytes: entry.bytes.clone(),
+                }),
+        );
+        entries
     }
 
     fn first_entry_beyond(&self, complete_len: u32) -> Option<EntrySnapshot> {
-        self.ranges.iter().find_map(|(&start, entry)| {
-            let range = RangeMapRange::new(start, entry.end);
-            (entry.end > complete_len).then(|| EntrySnapshot {
-                range,
+        if let Some((&start, entry)) = self.ranges.range(..=complete_len).next_back() {
+            if entry.end > complete_len {
+                return Some(EntrySnapshot {
+                    range: RangeMapRange::new(start, entry.end),
+                    bytes: entry.bytes.clone(),
+                });
+            }
+        }
+
+        self.ranges
+            .range(complete_len..)
+            .next()
+            .map(|(&start, entry)| EntrySnapshot {
+                range: RangeMapRange::new(start, entry.end),
                 bytes: entry.bytes.clone(),
             })
-        })
     }
 
     fn insert_merged(
@@ -430,9 +448,16 @@ impl RangeMap {
         }
         copy_into(&mut merged, merged_range.start(), incoming.start(), payload);
 
+        let removed_len = overlaps
+            .iter()
+            .map(|entry| entry.bytes.len())
+            .sum::<usize>();
+
         for entry in overlaps {
             self.ranges.remove(&entry.range.start());
         }
+        self.byte_len -= removed_len;
+        self.byte_len += merged.len();
         self.ranges.insert(
             merged_range.start(),
             RangeEntry {
@@ -455,6 +480,7 @@ impl Default for RangeMap {
         Self {
             ranges: BTreeMap::new(),
             complete_len: None,
+            byte_len: 0,
             duplicate_count: 0,
             overlap_status: IpDefragOverlapStatus::None,
             conflict: None,
