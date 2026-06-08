@@ -802,7 +802,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     mode.add_argument(
         "--real",
         action="store_true",
-        help="run guarded real VM provider-backed live validations",
+        help="run guarded real provider-backed live validations",
     )
     parser.add_argument(
         "--out",
@@ -813,13 +813,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--skip-unavailable",
         action="store_true",
         default=True,
-        help="skip real VM providers whose doctor checks fail (default)",
+        help="skip real providers whose doctor checks fail (default)",
     )
     parser.add_argument(
         "--strict-vm-smoke",
         action="store_true",
         help=(
-            "return a failure when a real VM provider is skipped; also enabled by "
+            "return a failure when a real provider is skipped; also enabled by "
             f"{STRICT_VM_SMOKE_ENV}=1"
         ),
     )
@@ -835,7 +835,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--real-max-count",
         type=_positive_int,
         default=_default_real_max_count(),
-        help="maximum packet count allowed for guarded real VM smoke",
+        help="maximum packet count allowed for guarded real provider smoke",
     )
     parser.add_argument(
         "--confirm-live-run",
@@ -852,19 +852,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     strict_vm_smoke = bool(args.strict_vm_smoke or _env_flag(STRICT_VM_SMOKE_ENV))
     allow_vm_create = bool(args.allow_vm_create or _env_flag(ALLOW_VM_CREATE_ENV))
     if args.real:
-        invalid_real_providers = [
-            provider for provider in args.providers if provider not in REAL_VM_PROVIDERS
-        ]
-        if invalid_real_providers:
-            print(
-                "error: --real matrix supports VM providers only: "
-                f"{','.join(REAL_VM_PROVIDERS)}; got {','.join(invalid_real_providers)}",
-                file=sys.stderr,
-            )
-            return 2
         if args.count > args.real_max_count:
             print(
-                "error: --real count must be bounded for VM smoke "
+                "error: --real count must be bounded for real provider smoke "
                 f"(count={args.count}, max={args.real_max_count})",
                 file=sys.stderr,
             )
@@ -872,14 +862,14 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.real and not args.confirm_live_run:
         print(
-            "error: real VM matrix requires --confirm-live-run to send live packets; "
+            "error: real provider matrix requires --confirm-live-run to send live packets; "
             "no infrastructure was created (use --dry-run to plan without confirmation)",
             file=sys.stderr,
         )
         return 2
 
     if not args.skip_unavailable and args.real and not strict_vm_smoke:
-        print("error: real VM matrix requires skip-unavailable or strict mode", file=sys.stderr)
+        print("error: real provider matrix requires skip-unavailable or strict mode", file=sys.stderr)
         return 2
 
     repo_root = Path(os.environ.get("ORACLE_REPO_ROOT", _REPO_ROOT)).resolve()
@@ -962,7 +952,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     )
                     skipped_providers.append(provider)
                     continue
-                if not allow_vm_create:
+                if provider in REAL_VM_PROVIDERS and not allow_vm_create:
                     provider_summaries.append(
                         _provider_skip_summary(
                             provider=provider,
