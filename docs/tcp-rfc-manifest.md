@@ -6,11 +6,16 @@ compile, decode, display, fixture, and oracle work. It is intentionally narrow:
 segments, fills dependent header fields on `compile()`, preserves deliberate
 overrides, and exposes TCP options as typed, inspectable packet data. It does
 not implement a TCP/IP stack, connection state machine, retransmission engine,
-congestion control, stream reassembly, IP fragmentation, or IP reassembly. The
-fragmentation-adjacent facts recorded here (TCP MSS, payload sizing, option
+congestion control, TCP segmentation, TCP stream reassembly, or application
+reconstruction. IP fragmentation and IP datagram reassembly are implemented
+only by the packet-stream `IpFragment` and `IpDefrag` transforms; they are not
+TCP behavior and are governed by
+[`docs/protocols/ip-fragment-source-manifest.md`](protocols/ip-fragment-source-manifest.md).
+The fragmentation-adjacent facts recorded here (TCP MSS, payload sizing, option
 budgeting, Don't Fragment guidance, IPv6 minimum MTU, PMTUD/PLPMTUD) are
-modeled only to size and document correct TCP segments, never to fragment,
-reassemble, or probe by default.
+modeled only to size and document correct TCP segments, never to perform TCP
+segmentation, TCP reassembly, or probing by default. TCP segmentation and TCP
+reassembly remain future work outside this feature.
 
 Date checked: 2026-06-02 (RFC Editor, IANA TCP Parameters, and Datatracker
 status reviewed on this date).
@@ -348,9 +353,13 @@ still constructs, classifies, encodes, decodes, and round-trips byte-for-byte.
 ## Segment Sizing And Fragmentation-Adjacent Guidance (Documentation Only)
 
 These facts size correct TCP segments and inform helper documentation. They do
-not introduce a fragmenter, reassembler, fragment cache, or live probe. To be
-explicit: **`crafter` does not fragment or reassemble TCP segments, and
-fragmentation implementation is out of scope** for this work. The sizing helpers
+not introduce a TCP segmenter, TCP reassembler, TCP-owned fragment cache, or
+live probe. To be explicit: **`crafter` does not perform TCP segmentation or
+TCP reassembly in this TCP layer**. IP fragmentation and IP datagram
+reassembly are available through the separate `IpFragment` and `IpDefrag`
+packet-stream transforms, but those transforms reconstruct IP datagrams only and
+do not reconstruct TCP streams or application objects. TCP segmentation and TCP
+reassembly remain future work outside this IP transform feature. The sizing helpers
 (`effective_mss`, `effective_mss_ipv4`, `effective_mss_ipv6`,
 `max_tcp_payload`, `tcp_header_len`, `option_budget`) and the constants
 `TCP_DEFAULT_IPV4_MSS` (536) and `IPV6_MINIMUM_MTU` (1280) document correct
@@ -401,8 +410,9 @@ sizing; the caller always supplies the path MTU.
 When TCP is carried over IPv6 with a Fragment header (RFC 8200 §4.5), only the
 first fragment contains the TCP header. `crafter` must preserve non-initial
 fragments as raw and must not attempt TCP decode without the initial TCP header.
-This is consistent with the scope exclusion: `crafter` does not reassemble IPv6
-fragments; it only avoids misparsing a fragment that has no TCP header.
+This section describes the base TCP decode boundary when individual fragments
+reach the TCP layer. Receive-side IP reassembly belongs to `IpDefrag`; the TCP
+layer itself only avoids misparsing a fragment that has no TCP header.
 
 Modeled behavior (decode rules):
 
@@ -417,14 +427,17 @@ Modeled behavior (decode rules):
 
 These two rules are pinned by the `tcp_ipv6_fragment_adjacent_decode_rules`
 unit test in `crafter/src/protocols/transport/tcp/tests.rs`. They document and
-test the boundary only; `crafter` still performs no IPv6 reassembly.
+test the boundary only; TCP decode still performs no IP reassembly on its own.
 
 ## Explicit Exclusions
 
 `crafter` does not implement, and this manifest does not authorize, a TCP
 connection state machine, retransmission engine, congestion control, TCP stream
-reassembly, IP fragmentation, IP reassembly, a fragment cache, a scanner, a
-fuzzer, or a packet-analyzer workflow. TCP-AO and TCP-ENO bytes are preserved
+reassembly, TCP segmentation, application payload reconstruction, a TCP-owned
+fragment cache, a scanner, a fuzzer, or a packet-analyzer workflow. IP
+fragmentation and IP datagram reassembly are handled only by `IpFragment` and
+`IpDefrag` as packet-stream transforms; they do not add TCP connection state,
+TCP reassembly, or application reconstruction. TCP-AO and TCP-ENO bytes are preserved
 for inspection and round-trip only; `crafter` does not compute MACs, derive
 keys, or negotiate encryption. MPTCP subtype bytes are preserved and the subtype
 is parsed, but `crafter` does not run multipath connection logic.

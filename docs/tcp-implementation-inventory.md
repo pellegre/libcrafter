@@ -143,11 +143,16 @@ Status Reconciliation".
 
 ## Out-of-scope (must not be added to the crate)
 
+IP fragmentation and IP datagram reassembly are no longer TCP inventory gaps:
+they are implemented outside the TCP layer by the packet-stream `IpFragment` and
+`IpDefrag` transforms. This inventory excludes only TCP-owned segmentation,
+TCP reassembly, connection state, and application reconstruction behavior; those
+remain future work outside the IP transform feature.
+
 | Item | Status | Notes |
 | --- | --- | --- |
 | TCP connection state machine, retransmission engine, congestion control | out of scope | Spec Scope; manifest "Explicit Exclusions". |
-| TCP stream reassembly | out of scope | Spec Scope. |
-| IP fragmentation, IP reassembly, fragment cache | out of scope | Spec Scope; only IPv6 non-initial-fragment preservation (raw) is in scope, not reassembly. |
+| TCP segmentation, TCP stream reassembly, application reconstruction | out of scope | Future work; this TCP inventory only covers individual segment build/decode and packet-level option handling. |
 | TCP-AO MAC computation/verification, key derivation | out of scope | Manifest: TCP-AO bytes preserved for inspection only. |
 | TCP-ENO encryption negotiation, tcpcrypt | out of scope | Manifest: TCP-ENO bytes preserved only; no negotiation. |
 | MPTCP connection logic | out of scope | Manifest: subtype parsed and bytes preserved; no multipath connection logic. |
