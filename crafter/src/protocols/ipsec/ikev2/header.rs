@@ -12,6 +12,7 @@
 
 use crate::field::Field;
 use crate::packet::{Layer, LayerContext};
+use crate::protocols::ipsec::ikev2::payload::following_next_payload;
 use crate::protocols::transport::common::{impl_layer_div, impl_layer_object, payload_bytes_after};
 use crate::Result;
 
@@ -288,19 +289,18 @@ impl IkeHeader {
 
     /// Resolve the Next Payload value for `compile()` (RFC 7296 §3.1).
     ///
-    /// A caller-set value (including a deliberately wrong one) wins. Otherwise
-    /// it defaults to [`NO_NEXT_PAYLOAD`] (`0`).
-    ///
-    /// TODO(step 34): when the IKEv2 generic-payload chain lands, derive the
-    /// Next Payload from the first following `IkePayload` layer
-    /// (`ctx.next()` → `payload_type()`) instead of defaulting to
-    /// `NO_NEXT_PAYLOAD`. The `IkePayload` trait does not exist yet, so this
-    /// step deliberately does not forward-reference it.
-    fn effective_next_payload(&self, _ctx: &LayerContext<'_>) -> u8 {
+    /// A caller-set value (including a deliberately wrong one) wins. Otherwise it
+    /// is derived from the first payload in the chain — the layer that follows
+    /// the header — via [`following_next_payload`], which maps the next layer's
+    /// [`Layer::name`] to its [`PayloadType`](crate::protocols::ipsec::ikev2::payload::PayloadType).
+    /// When no IKEv2 payload follows it falls back to [`NO_NEXT_PAYLOAD`] (`0`),
+    /// terminating the chain. (No payload layer exists until Steps 35–44, so the
+    /// fallback is exercised today; the derivation lights up as payloads land.)
+    fn effective_next_payload(&self, ctx: &LayerContext<'_>) -> u8 {
         if let Some(next_payload) = self.next_payload.value().copied() {
             return next_payload;
         }
-        NO_NEXT_PAYLOAD
+        following_next_payload(ctx)
     }
 
     /// Resolve the total message Length for `compile()` (RFC 7296 §3.1).
