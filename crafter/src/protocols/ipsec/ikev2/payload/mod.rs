@@ -32,12 +32,14 @@ use crate::packet::{Layer, LayerContext};
 use crate::Result;
 
 pub mod delete;
+pub mod id;
 pub mod ke;
 pub mod nonce;
 pub mod notify;
 pub mod sa;
 
 pub use delete::IkeDeletePayload;
+pub use id::{IdRole, IdType, IkeIdPayload};
 pub use ke::IkeKePayload;
 pub use nonce::IkeNoncePayload;
 pub use notify::{IkeNotifyPayload, NotifyType};
@@ -273,6 +275,8 @@ pub fn payload_type_for_layer_name(name: &str) -> Option<PayloadType> {
     match name {
         sa::IKE_SA_PAYLOAD_NAME => Some(PayloadType::SecurityAssociation),
         ke::IKE_KE_PAYLOAD_NAME => Some(PayloadType::KeyExchange),
+        id::IKE_IDI_PAYLOAD_NAME => Some(PayloadType::IdInitiator),
+        id::IKE_IDR_PAYLOAD_NAME => Some(PayloadType::IdResponder),
         nonce::IKE_NONCE_PAYLOAD_NAME => Some(PayloadType::Nonce),
         notify::IKE_NOTIFY_PAYLOAD_NAME => Some(PayloadType::Notify),
         delete::IKE_DELETE_PAYLOAD_NAME => Some(PayloadType::Delete),
