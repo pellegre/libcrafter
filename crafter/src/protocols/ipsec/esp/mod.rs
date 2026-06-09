@@ -367,26 +367,17 @@ impl Esp {
     ///    integrity algorithm (caller `icv` override wins).
     /// 5. Emit `SPI || Seq || IV || ciphertext || ICV`.
     ///
-    /// This path rejects the `NULL`+`NONE` (no-integrity) case with a structured
-    /// error — that branch is filled by Step 14.
+    /// `NULL` encryption (RFC 2410) routes here too: it is an identity cipher, so
+    /// the "ciphertext" is the padded plaintext verbatim and the ICV comes from
+    /// the SA's integrity algorithm. With `NULL` + `NONE` (no crypto at all) the
+    /// seal yields an empty IV and empty ICV, emitting `SPI || Seq || trailer`.
     fn compile_with_cipher(&self, ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
         let sa = self.sa.as_ref().ok_or_else(|| {
             CrafterError::invalid_field_value(
                 "esp.compile",
-                "ESP compile without a SecurityAssociation is not supported in this build step",
+                "ESP compile_with_cipher requires a SecurityAssociation",
             )
         })?;
-
-        // The no-integrity NULL case (NULL+NONE) is handled by Step 14.
-        if matches!(
-            sa.integ,
-            crate::protocols::ipsec::sa::IntegrityAlgorithm::None
-        ) {
-            return Err(CrafterError::invalid_field_value(
-                "esp.compile",
-                "NULL/opaque ESP compilation is unsupported in this build step",
-            ));
-        }
 
         let (_spi, _sequence, plaintext, aad, iv) = self.esp_seal_inputs(ctx, sa)?;
 
@@ -426,7 +417,7 @@ impl Esp {
         let sa = self.sa.as_ref().ok_or_else(|| {
             CrafterError::invalid_field_value(
                 "esp.compile",
-                "ESP compile without a SecurityAssociation is not supported in this build step",
+                "ESP compile_with_aead requires a SecurityAssociation",
             )
         })?;
 
@@ -448,6 +439,57 @@ impl Esp {
         out.extend_from_slice(&icv);
         Ok(())
     }
+
+    /// Compile the opaque (pre-encrypted, no-SA) ESP datagram.
+    ///
+    /// When no [`SecurityAssociation`] is attached but the caller carries an
+    /// `opaque` body (typically produced by the no-SA decode path, Step 16), the
+    /// body is the already-encrypted ciphertext + trailer + ICV captured verbatim
+    /// from the wire. The IV and ICV the decoder split out are part of that blob,
+    /// so they are **not** re-added here — emitting `SPI || Seq || opaque`
+    /// reproduces the original datagram byte-for-byte.
+    fn compile_opaque(&self, out: &mut Vec<u8>) -> Result<()> {
+        let spi = self.spi.value().copied().unwrap_or(DEFAULT_ESP_SPI);
+        let sequence = self
+            .sequence
+            .value()
+            .copied()
+            .unwrap_or(DEFAULT_ESP_SEQUENCE);
+        // `compile_opaque` is only reached with `opaque` present (see dispatch).
+        let opaque = self.opaque.as_deref().unwrap_or_default();
+
+        out.reserve(ESP_HEADER_LEN + opaque.len());
+        out.extend_from_slice(&spi.to_be_bytes());
+        out.extend_from_slice(&sequence.to_be_bytes());
+        out.extend_from_slice(opaque);
+        Ok(())
+    }
+
+    /// Compile the keyless-construction ESP datagram (no SA, no opaque body).
+    ///
+    /// A bare `Esp::new()` with no attached SA and no opaque body has no key to
+    /// encrypt with. Rather than error, `compile()` emits the ESP header followed
+    /// by the unencrypted upper-layer bytes: `SPI || Seq || following-layer-bytes`.
+    /// This keeps `Ipv4 / Esp::new() / Raw` round-tripping and lets a tool stamp an
+    /// ESP header onto a body without holding keys. There is no trailer, padding,
+    /// or ICV — those belong to a real (or NULL+integrity) seal. The following
+    /// layers' bytes are the body this ESP emits; the whole-packet double-emission
+    /// of the cleartext tail is the step-15 tail-consumption concern.
+    fn compile_keyless(&self, ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
+        let spi = self.spi.value().copied().unwrap_or(DEFAULT_ESP_SPI);
+        let sequence = self
+            .sequence
+            .value()
+            .copied()
+            .unwrap_or(DEFAULT_ESP_SEQUENCE);
+        let body = payload_bytes_after(*ctx)?;
+
+        out.reserve(ESP_HEADER_LEN + body.len());
+        out.extend_from_slice(&spi.to_be_bytes());
+        out.extend_from_slice(&sequence.to_be_bytes());
+        out.extend_from_slice(&body);
+        Ok(())
+    }
 }
 
 impl Layer for Esp {
@@ -463,13 +505,21 @@ impl Layer for Esp {
     }
 
     fn compile(&self, ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
-        // Dispatch by the SA's encryption suite. AEAD suites (AES-GCM, AES-CCM,
-        // ChaCha20-Poly1305) take the combined-mode path; AES-CBC/CTR + separate
-        // integrity take the encrypt-then-MAC path. The NULL/opaque and no-SA
-        // branches return a structured error and are filled by Step 14.
+        // Dispatch by what the caller attached. The order matters: a pre-encrypted
+        // `opaque` body (no-SA decode path) is emitted verbatim; an attached SA
+        // selects the AEAD combined-mode path (AES-GCM/CCM/ChaCha20) or the
+        // encrypt-then-MAC path (AES-CBC/CTR/NULL + separate integrity); a bare
+        // `Esp::new()` with neither emits the keyless construction default.
         match self.sa.as_ref() {
+            // No SA but a pre-encrypted body: emit SPI || Seq || opaque verbatim.
+            None if self.opaque.is_some() => self.compile_opaque(out),
+            // AEAD suite: single combined seal produces ciphertext + tag (ICV).
             Some(sa) if sa.enc.is_aead() => self.compile_with_aead(ctx, out),
-            _ => self.compile_with_cipher(ctx, out),
+            // Any non-AEAD SA (AES-CBC, AES-CTR, NULL + separate integrity, and
+            // NULL + NONE): encrypt-then-MAC. NULL is an identity cipher.
+            Some(_) => self.compile_with_cipher(ctx, out),
+            // No SA and no opaque body: keyless construction default.
+            None => self.compile_keyless(ctx, out),
         }
     }
 
@@ -1013,31 +1063,126 @@ mod tests {
         assert_eq!(&esp_bytes[esp_bytes.len() - 16..], &bad_icv[..]);
     }
 
-    #[test]
-    fn compile_rejects_null_and_no_sa_in_this_step() {
-        // AEAD compile is now implemented (Step 13); NULL+NONE / no-SA stay
-        // unsupported until Step 14.
-        let no_sa = Esp::new().next_header(IPPROTO_TCP);
-        let err = compile_err(no_sa);
-        assert!(
-            matches!(err, CrafterError::InvalidFieldValue { field, .. } if field == "esp.compile")
-        );
+    // --- compile (NULL encryption + opaque + keyless) ---------------------
 
-        // NULL encryption with NONE integrity (no crypto at all) is the Step 14
-        // opaque/passthrough case and still errors here.
-        let null_none = Esp::secured(SecurityAssociation::new(0x10)).next_header(IPPROTO_TCP);
-        let err = compile_err(null_none);
-        assert!(
-            matches!(err, CrafterError::InvalidFieldValue { field, .. } if field == "esp.compile")
-        );
+    #[test]
+    fn compile_opaque_round_trips_bytes_verbatim() {
+        // The no-SA decode path (Step 16) yields SPI/Seq plus an opaque body
+        // (the captured ciphertext + trailer + ICV, with the IV folded in). The
+        // caller's `iv`/`icv` are part of that blob, so re-compiling must emit
+        // exactly SPI || Seq || opaque, reproducing the original bytes.
+        let opaque: Vec<u8> = (0x10u8..0x30).collect();
+        let esp = Esp::new()
+            .spi(0xCAFE_F00D)
+            .sequence(0x0000_0007)
+            // These overrides must NOT be re-added: they live inside `opaque`.
+            .iv(vec![0xFFu8; 8])
+            .icv(vec![0xEEu8; 16])
+            .opaque(opaque.clone());
+        let (esp_bytes, ip_protocol) = compile_esp_over_ipv4(esp, &payload());
+
+        assert_eq!(ip_protocol, crate::protocols::ipv4::IPPROTO_ESP);
+
+        // Wire layout is exactly SPI || Seq || opaque (no re-added IV/ICV/body).
+        let mut expected = Vec::new();
+        expected.extend_from_slice(&0xCAFE_F00Du32.to_be_bytes());
+        expected.extend_from_slice(&0x0000_0007u32.to_be_bytes());
+        expected.extend_from_slice(&opaque);
+        assert_eq!(esp_bytes, expected);
+        assert_eq!(esp_bytes.len(), ESP_HEADER_LEN + opaque.len());
     }
 
-    /// Compile `Ipv4 / Esp / Raw` and return the expected structured error.
-    fn compile_err(esp: Esp) -> CrafterError {
-        let ipv4 = Ipv4::new()
-            .src("192.0.2.1".parse().unwrap())
-            .dst("192.0.2.2".parse().unwrap());
-        let packet: Packet = Packet::from_layer(ipv4) / esp / Raw::from_bytes(payload());
-        packet.compile().unwrap_err()
+    #[test]
+    fn compile_null_encryption_builds_real_trailer_and_icv() {
+        // NULL encryption (RFC 2410) with a real integrity algorithm: identity
+        // cipher, but a real RFC 4303 §2.4 trailer and a SA-computed ICV.
+        let sa = SecurityAssociation::new(0x0000_2000)
+            .encryption(EncryptionAlgorithm::Null, Vec::new())
+            .integrity(IntegrityAlgorithm::HmacSha2_256_128, hmac_key());
+        assert!(sa.validate().is_ok());
+
+        let esp = Esp::secured(sa.clone())
+            .spi(0x0000_2000)
+            .sequence(1)
+            .next_header(IPPROTO_TCP);
+        let (esp_bytes, ip_protocol) = compile_esp_over_ipv4(esp, &payload());
+
+        assert_eq!(ip_protocol, crate::protocols::ipv4::IPPROTO_ESP);
+
+        // NULL carries no IV; lock against the proven `seal` primitive (identity
+        // cipher => "ciphertext" is the padded plaintext verbatim).
+        let expected = expected_esp_bytes(&sa, 0x0000_2000, 1, &[], IPPROTO_TCP, &payload());
+        assert_eq!(esp_bytes, expected);
+
+        // payload(4) + padlen(1) + nh(1) = 6 → pad 2 → 8-octet "ciphertext";
+        // HMAC-SHA-256-128 ICV is 16 octets; NULL has a 0-octet IV.
+        assert_eq!(esp_bytes.len(), ESP_HEADER_LEN + 0 + 8 + 16);
+        assert_eq!(&esp_bytes[0..4], &0x0000_2000u32.to_be_bytes());
+        assert_eq!(&esp_bytes[4..8], &1u32.to_be_bytes());
+
+        // The trailer is real: the padded "ciphertext" is the plaintext verbatim
+        // (identity cipher), so the body before the ICV is payload | pad | padlen
+        // | next-header, and the last body octet is the next header (TCP).
+        let body = &esp_bytes[ESP_HEADER_LEN..esp_bytes.len() - 16];
+        assert_eq!(&body[..4], &payload()[..]);
+        assert_eq!(body, &[0xDE, 0xAD, 0xBE, 0xEF, 1, 2, 2, IPPROTO_TCP]);
+
+        // The ICV verifies through `open` (NULL identity cipher recovers the
+        // padded plaintext, confirming wire bytes are an openable ESP datagram).
+        let mut aad = Vec::new();
+        aad.extend_from_slice(&0x0000_2000u32.to_be_bytes());
+        aad.extend_from_slice(&1u32.to_be_bytes());
+        let icv = &esp_bytes[esp_bytes.len() - 16..];
+        let opened = crate::protocols::ipsec::sa::open(&sa, &[], &aad, body, icv).unwrap();
+        assert_eq!(&opened[..4], &payload()[..]);
+        assert_eq!(*opened.last().unwrap(), IPPROTO_TCP);
+    }
+
+    #[test]
+    fn compile_null_none_emits_trailer_without_iv_or_icv() {
+        // NULL + NONE (no crypto at all): identity cipher, empty IV, empty ICV.
+        // The output is SPI || Seq || (padded plaintext trailer).
+        let sa = SecurityAssociation::new(0x10).encryption(EncryptionAlgorithm::Null, Vec::new());
+        assert!(sa.validate().is_ok());
+
+        let esp = Esp::secured(sa)
+            .spi(0x10)
+            .sequence(1)
+            .next_header(IPPROTO_TCP);
+        let (esp_bytes, _) = compile_esp_over_ipv4(esp, &payload());
+
+        // No IV, no ICV: just SPI || Seq || trailer (8 octets of padded body).
+        assert_eq!(esp_bytes.len(), ESP_HEADER_LEN + 8);
+        let body = &esp_bytes[ESP_HEADER_LEN..];
+        assert_eq!(body, &[0xDE, 0xAD, 0xBE, 0xEF, 1, 2, 2, IPPROTO_TCP]);
+    }
+
+    #[test]
+    fn compile_keyless_emits_header_plus_unencrypted_body() {
+        // A bare Esp::new() (no SA, no opaque) is the keyless construction
+        // default: SPI || Seq || following-layer-bytes, unencrypted. This keeps
+        // `Ipv4 / Esp::new() / Raw` round-tripping without holding keys.
+        let esp = Esp::new().spi(0x0000_0001).sequence(1);
+        let (esp_bytes, ip_protocol) = compile_esp_over_ipv4(esp, &payload());
+
+        assert_eq!(ip_protocol, crate::protocols::ipv4::IPPROTO_ESP);
+
+        let mut expected = Vec::new();
+        expected.extend_from_slice(&0x0000_0001u32.to_be_bytes());
+        expected.extend_from_slice(&1u32.to_be_bytes());
+        expected.extend_from_slice(&payload()); // unencrypted body, no trailer/ICV.
+        assert_eq!(esp_bytes, expected);
+        assert_eq!(esp_bytes.len(), ESP_HEADER_LEN + payload().len());
+    }
+
+    #[test]
+    fn compile_keyless_defaults_spi_and_sequence() {
+        // With neither SPI nor sequence set, the keyless path emits the builder
+        // defaults (SPI 1, Seq 1) ahead of the unencrypted body.
+        let esp = Esp::new();
+        let (esp_bytes, _) = compile_esp_over_ipv4(esp, &payload());
+        assert_eq!(&esp_bytes[0..4], &DEFAULT_ESP_SPI.to_be_bytes());
+        assert_eq!(&esp_bytes[4..8], &DEFAULT_ESP_SEQUENCE.to_be_bytes());
+        assert_eq!(&esp_bytes[ESP_HEADER_LEN..], &payload()[..]);
     }
 }
