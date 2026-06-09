@@ -180,6 +180,10 @@ pub use icmp::{
     Icmp, IcmpAddressMask, IcmpQuotedIpv4, IcmpRouterAdvertisementEntry, IcmpTimestamp,
 };
 pub use ip::shared::{Dscp, Ecn};
+pub use ipsec::{
+    EncryptionAlgorithm, Esp, IntegrityAlgorithm, IpsecMode, SecurityAssociation, ESP_HEADER_LEN,
+    ESP_HIGH_SEQUENCE_LEN, ESP_MAX_PAD_LEN, ESP_NEXT_HEADER_FIELD_LEN, ESP_PAD_LENGTH_FIELD_LEN,
+};
 pub use ipv4::{
     Ipv4, Ipv4ChecksumStatus, Ipv4FragmentInfo, Ipv4Option, Ipv4OptionIter, Ipv4OptionKind,
     Ipv4Protocol, Ipv4RouteOptionKind, IPPROTO_AH, IPPROTO_ESP, IPPROTO_EXPERIMENTAL_1,
