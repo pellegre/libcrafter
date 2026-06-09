@@ -33,10 +33,12 @@ use crate::Result;
 
 pub mod ke;
 pub mod nonce;
+pub mod notify;
 pub mod sa;
 
 pub use ke::IkeKePayload;
 pub use nonce::IkeNoncePayload;
+pub use notify::{IkeNotifyPayload, NotifyType};
 pub use sa::{IkeSaPayload, Proposal, Transform, TransformAttribute};
 
 /// Length of the IKEv2 generic payload header (RFC 7296 §3.2): Next Payload (1) +
@@ -270,6 +272,7 @@ pub fn payload_type_for_layer_name(name: &str) -> Option<PayloadType> {
         sa::IKE_SA_PAYLOAD_NAME => Some(PayloadType::SecurityAssociation),
         ke::IKE_KE_PAYLOAD_NAME => Some(PayloadType::KeyExchange),
         nonce::IKE_NONCE_PAYLOAD_NAME => Some(PayloadType::Nonce),
+        notify::IKE_NOTIFY_PAYLOAD_NAME => Some(PayloadType::Notify),
         _ => None,
     }
 }
