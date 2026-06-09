@@ -31,6 +31,10 @@ use crate::field::Field;
 use crate::packet::{Layer, LayerContext};
 use crate::Result;
 
+pub mod sa;
+
+pub use sa::{IkeSaPayload, Proposal, Transform, TransformAttribute};
+
 /// Length of the IKEv2 generic payload header (RFC 7296 §3.2): Next Payload (1) +
 /// Critical/Reserved (1) + Payload Length (2) = 4 octets.
 pub const GENERIC_PAYLOAD_HEADER_LEN: usize = 4;
@@ -255,11 +259,13 @@ pub trait IkePayload: Layer {
 pub fn payload_type_for_layer_name(name: &str) -> Option<PayloadType> {
     // Steps 35–44 extend this table as each payload layer lands. Keeping it in
     // one place keeps the chaining model maintainable: the generic-header writer
-    // and the IKE header both derive Next Payload through this function. No
-    // payload layer exists yet, so every name (including a trailing `Raw` or the
-    // `IkeHeader`) resolves to `None`, terminating the chain.
-    let _ = name;
-    None
+    // and the IKE header both derive Next Payload through this function. A name
+    // that is not an IKEv2 payload (a trailing `Raw`, the `IkeHeader`) resolves
+    // to `None`, terminating the chain.
+    match name {
+        sa::IKE_SA_PAYLOAD_NAME => Some(PayloadType::SecurityAssociation),
+        _ => None,
+    }
 }
 
 /// The [`PayloadType`] of the payload that follows the current layer in the
