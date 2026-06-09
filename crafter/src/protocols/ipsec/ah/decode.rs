@@ -160,11 +160,10 @@ fn dispatch_ah_inner(
 /// only authenticates, no SA is needed to recover the inner protocol — the data
 /// is always in the clear (RFC 4302 §1).
 ///
-/// The built-in IPv4-protocol-51 / IPv6-next-header AH bindings (a later step)
-/// call this hook. Mirrors UDP's `append_udp_packet_with_registry` shape: decode
-/// parts, push the layer, dispatch inner. A truncated buffer surfaces the
-/// structured error from `decode_ah_parts`.
-#[allow(dead_code)]
+/// The built-in IPv4-protocol-51 / IPv6-next-header AH bindings call this hook.
+/// Mirrors UDP's `append_udp_packet_with_registry` shape: decode parts, push the
+/// layer, dispatch inner. A truncated buffer surfaces the structured error from
+/// `decode_ah_parts`.
 pub(crate) fn append_ah_packet_with_registry(
     registry: &ProtocolRegistry,
     packet: Packet,
