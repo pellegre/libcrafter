@@ -99,6 +99,14 @@ pub struct Ah {
     /// computation but is never transmitted; only the low 32-bit `sequence`
     /// appears on the wire. Defaults to 0.
     high_sequence: Field<u32>,
+    /// ICV verification status recorded by the SA-driven decode path (RFC 4302
+    /// §3.4.4). `None` means no verification was attempted (no SA, or the layer
+    /// was built rather than decoded-and-verified); `Some(true)` means the
+    /// recomputed ICV matched in constant time; `Some(false)` is unreachable on a
+    /// successful decode because a mismatch fails closed with a structured error.
+    /// This status is never emitted on the wire and never participates in
+    /// `compile()`.
+    verified: Option<bool>,
 }
 
 impl Ah {
@@ -119,6 +127,7 @@ impl Ah {
             icv: Field::unset(),
             sa: None,
             high_sequence: Field::defaulted(DEFAULT_AH_HIGH_SEQUENCE),
+            verified: None,
         }
     }
 
@@ -167,6 +176,28 @@ impl Ah {
     /// Explicit ICV override bytes, when set or decoded.
     pub fn icv_value(&self) -> Option<&[u8]> {
         self.icv.value().map(Vec::as_slice)
+    }
+
+    /// ICV verification status recorded by the SA-driven decode path (RFC 4302
+    /// §3.4.4).
+    ///
+    /// `None` means no verification was attempted — the layer was built, or
+    /// decoded without an SA. `Some(true)` means the SA-driven decode recomputed
+    /// the ICV over the canonicalized input and it matched in constant time. A
+    /// mismatch never produces `Some(false)` on a returned layer: the decode fails
+    /// closed with a structured error instead.
+    pub fn verification_status(&self) -> Option<bool> {
+        self.verified
+    }
+
+    /// Record the ICV verification status on this layer (internal decode hook).
+    ///
+    /// Used by the SA-driven decode entry
+    /// ([`decode::append_ah_packet_with_registry_sa`]) to stamp a verified status
+    /// on the recovered `Ah` layer. The status never participates in `compile()`
+    /// and is never emitted on the wire.
+    pub(crate) fn set_verification_status(&mut self, verified: bool) {
+        self.verified = Some(verified);
     }
 
     /// The attached Security Association, when present.
@@ -393,19 +424,21 @@ impl Ah {
         bytes
     }
 
-    /// Compute the AH Integrity Check Value over the RFC 4302 §3.3.3 ICV input.
+    /// Assemble the RFC 4302 §3.3.3 ICV input shared by the sender (`compile()`)
+    /// and the receiver ([`decode::verify_ah`]).
     ///
-    /// The ICV input is `canonical immutable IP header || AH header with the ICV
-    /// field zeroed || upper-layer data`, with the high-order 32-bit Extended
-    /// Sequence Number word appended when the SA enables ESN (RFC 4302 §3.3.3.2).
-    /// The ICV is computed via the SA's integrity algorithm and zero-padded to the
-    /// boundary-aligned [`Ah::effective_icv_len`].
+    /// The input is `canonical immutable IP header || AH header with the ICV field
+    /// zeroed (at `padded_icv_len`) || upper-layer data`, with the high-order
+    /// 32-bit Extended Sequence Number word appended when the SA enables ESN
+    /// (RFC 4302 §3.3.3.2). Factoring it here guarantees the sealed and verified
+    /// inputs are byte-identical: both ends drive the same canonicalization, the
+    /// same zeroed-ICV header assembly, and the same upper-layer gather from the
+    /// shared [`LayerContext`].
     ///
-    /// Returns the padded ICV bytes. The HMAC and AES-XCBC-MAC integrity
-    /// algorithms (the RFC 8221 MUST/SHOULD set) key directly from the SA's
-    /// integrity key; the AES-GMAC salt/IV key folding (RFC 4543) is layered in a
-    /// later step alongside the verify path.
-    fn compute_icv(
+    /// `next_header`, `payload_len`, `reserved`, `spi`, and `sequence` are the
+    /// resolved AH field values; `padded_icv_len` is the boundary-aligned ICV
+    /// length the zeroed ICV field occupies.
+    fn ah_icv_input(
         &self,
         ctx: &LayerContext<'_>,
         sa: &SecurityAssociation,
@@ -415,9 +448,8 @@ impl Ah {
         reserved: u16,
         spi: u32,
         sequence: u32,
+        padded_icv_len: usize,
     ) -> Result<Vec<u8>> {
-        let padded_icv_len = self.effective_icv_len(ip_version);
-
         // RFC 4302 §3.3.3: ICV input = canonical IP header || AH header with the
         // ICV field zeroed || upper-layer data (|| ESN high word when enabled).
         let canonical_ip = Self::canonical_preceding_ip(ctx, ip_version)?;
@@ -438,6 +470,74 @@ impl Ah {
                 .unwrap_or(DEFAULT_AH_HIGH_SEQUENCE);
             input.extend_from_slice(&high.to_be_bytes());
         }
+        Ok(input)
+    }
+
+    /// Resolve the AH field values `compile()` would emit for this layer under the
+    /// preceding IP version, as the `(next_header, payload_len, reserved, spi,
+    /// sequence)` tuple the ICV-input assembly needs.
+    ///
+    /// A caller override (including a deliberately wrong one) wins for each field,
+    /// exactly as [`Ah::compile_ah`] resolves them; otherwise the RFC-derived value
+    /// is used. Sharing this resolution keeps the receiver's recomputed ICV input
+    /// aligned with the sender's.
+    fn resolved_icv_fields(
+        &self,
+        ctx: &LayerContext<'_>,
+        ip_version: u8,
+    ) -> (u8, u8, u16, u32, u32) {
+        let mode = self.sa.as_ref().map(|sa| sa.mode).unwrap_or_default();
+        let next_header = self.effective_next_header(ctx, mode);
+        let payload_len = self.effective_payload_len(ip_version);
+        let reserved = self
+            .reserved
+            .value()
+            .copied()
+            .unwrap_or(DEFAULT_AH_RESERVED);
+        let spi = self.spi.value().copied().unwrap_or(DEFAULT_AH_SPI);
+        let sequence = self
+            .sequence
+            .value()
+            .copied()
+            .unwrap_or(DEFAULT_AH_SEQUENCE);
+        (next_header, payload_len, reserved, spi, sequence)
+    }
+
+    /// Compute the AH Integrity Check Value over the RFC 4302 §3.3.3 ICV input.
+    ///
+    /// The ICV input is assembled by [`Ah::ah_icv_input`] — `canonical immutable IP
+    /// header || AH header with the ICV field zeroed || upper-layer data` (|| ESN
+    /// high word when enabled) — then run through the SA's integrity algorithm and
+    /// zero-padded to the boundary-aligned [`Ah::effective_icv_len`].
+    ///
+    /// Returns the padded ICV bytes. The HMAC and AES-XCBC-MAC integrity
+    /// algorithms (the RFC 8221 MUST/SHOULD set) key directly from the SA's
+    /// integrity key; the AES-GMAC salt/IV key folding (RFC 4543) is layered in a
+    /// later step alongside the verify path.
+    fn compute_icv(
+        &self,
+        ctx: &LayerContext<'_>,
+        sa: &SecurityAssociation,
+        ip_version: u8,
+        next_header: u8,
+        payload_len: u8,
+        reserved: u16,
+        spi: u32,
+        sequence: u32,
+    ) -> Result<Vec<u8>> {
+        let padded_icv_len = self.effective_icv_len(ip_version);
+
+        let input = self.ah_icv_input(
+            ctx,
+            sa,
+            ip_version,
+            next_header,
+            payload_len,
+            reserved,
+            spi,
+            sequence,
+            padded_icv_len,
+        )?;
 
         // Compute the ICV via the SA integrity algorithm, then zero-pad it to the
         // boundary-aligned length the AH header reserves (RFC 4302 §2.6).
@@ -464,20 +564,8 @@ impl Ah {
     fn compile_ah(&self, ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
         let ip_version = Self::preceding_ip_version(ctx)?;
 
-        let mode = self.sa.as_ref().map(|sa| sa.mode).unwrap_or_default();
-        let next_header = self.effective_next_header(ctx, mode);
-        let payload_len = self.effective_payload_len(ip_version);
-        let reserved = self
-            .reserved
-            .value()
-            .copied()
-            .unwrap_or(DEFAULT_AH_RESERVED);
-        let spi = self.spi.value().copied().unwrap_or(DEFAULT_AH_SPI);
-        let sequence = self
-            .sequence
-            .value()
-            .copied()
-            .unwrap_or(DEFAULT_AH_SEQUENCE);
+        let (next_header, payload_len, reserved, spi, sequence) =
+            self.resolved_icv_fields(ctx, ip_version);
 
         // Resolve the ICV: a caller override (zero-padded to the AH boundary)
         // wins; otherwise compute it from the SA when one is attached; with
