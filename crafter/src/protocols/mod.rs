@@ -181,7 +181,9 @@ pub use icmp::{
 };
 pub use ip::shared::{Dscp, Ecn};
 pub use ipsec::{
-    EncryptionAlgorithm, Esp, IntegrityAlgorithm, IpsecMode, SecurityAssociation, ESP_HEADER_LEN,
+    Ah, EncryptionAlgorithm, Esp, IntegrityAlgorithm, IpsecMode, SecurityAssociation, AH_FIXED_LEN,
+    AH_HIGH_SEQUENCE_LEN, AH_LENGTH_UNIT, AH_NEXT_HEADER_LEN, AH_PAYLOAD_LEN_FIELD_LEN,
+    AH_PAYLOAD_LEN_OFFSET, AH_RESERVED_LEN, AH_SEQUENCE_LEN, AH_SPI_LEN, ESP_HEADER_LEN,
     ESP_HIGH_SEQUENCE_LEN, ESP_MAX_PAD_LEN, ESP_NEXT_HEADER_FIELD_LEN, ESP_PAD_LENGTH_FIELD_LEN,
 };
 pub use ipv4::{
