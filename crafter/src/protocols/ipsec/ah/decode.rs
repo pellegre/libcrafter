@@ -16,10 +16,13 @@
 //! and ESP's `decode_<proto>_parts` / `append_<proto>_packet_with_registry`
 //! shape.
 
+use subtle::ConstantTimeEq;
+
 use crate::endian::{read_u16_be, read_u32_be};
 use crate::error::{CrafterError, Result};
-use crate::packet::Packet;
+use crate::packet::{LayerContext, Packet};
 use crate::protocols::ip::shared::protocol_numbers::IPPROTO_IPV6;
+use crate::protocols::ipsec::sa::SecurityAssociation;
 use crate::registry::ProtocolRegistry;
 
 use super::header::{AH_FIXED_LEN, AH_LENGTH_UNIT, AH_PAYLOAD_LEN_OFFSET};
@@ -170,6 +173,148 @@ pub(crate) fn append_ah_packet_with_registry(
     let (ah, inner_offset, next_header) = decode_ah_parts(bytes)?;
     let packet = packet.push(ah);
     dispatch_ah_inner(registry, packet, next_header, &bytes[inner_offset..])
+}
+
+/// Verify a decoded AH layer's ICV against a supplied SA (RFC 4302 §3.4.4).
+///
+/// `packet` is the layer stack the receiver assembled — the preceding IP header,
+/// the [`Ah`] layer at `ah_index`, and the cleartext upper-layer data following
+/// it — and `sa` is the integrity context to verify against. Verification
+/// recomputes the ICV input *exactly* as the sender's [`Ah::compile_ah`] does
+/// (RFC 4302 §3.4.4 says the receiver computes the ICV "in the same way as the
+/// sender"):
+///
+/// 1. canonicalize the immutable fields of the preceding IP header,
+/// 2. assemble the AH header with the ICV field zeroed at its padded length,
+/// 3. append the cleartext upper-layer data, and
+/// 4. append the high-order ESN word when the SA enables it.
+///
+/// The assembly is the shared [`Ah::ah_icv_input`] helper, so the receiver's
+/// input is byte-identical to the sealed one. The recomputed ICV is then compared
+/// against the decoded ICV (the [`Ah`] layer's captured `icv` bytes) using the SA
+/// integrity transform's constant-time [`verify`]. The comparison runs over the
+/// *transmitted* (unpadded) ICV length, the high-order octets a §2.6 boundary pad
+/// would leave zero notwithstanding.
+///
+/// Fails closed: a mismatch — from a tampered immutable IP field, a tampered
+/// upper-layer byte, or a tampered ICV — returns a structured
+/// [`CrafterError::invalid_field_value`] on `ipsec.ah.icv` rather than a panic or
+/// a silently accepted forgery. A missing SA integrity transform, an absent ICV,
+/// or a missing enclosing IP header also surface as structured errors.
+///
+/// [`verify`]: crate::protocols::ipsec::crypto::IntegrityTransform::verify
+#[allow(dead_code)]
+pub(crate) fn verify_ah(packet: &Packet, ah_index: usize, sa: &SecurityAssociation) -> Result<()> {
+    let ctx = LayerContext::new(packet, ah_index);
+
+    let ah = packet
+        .get(ah_index)
+        .and_then(|layer| layer.as_any().downcast_ref::<Ah>())
+        .ok_or_else(|| {
+            CrafterError::invalid_field_value(
+                "ipsec.ah.verify",
+                "layer at the given index is not an AH header",
+            )
+        })?;
+
+    // The transmitted ICV is the AH layer's captured ICV bytes (decoded verbatim
+    // by `decode_ah_parts`). Without one there is nothing to verify.
+    let transmitted_icv = ah.icv_value().ok_or_else(|| {
+        CrafterError::invalid_field_value("ipsec.ah.icv", "AH layer carries no ICV to verify")
+    })?;
+
+    // Resolve the IP version and the AH field values exactly as `compile()` does,
+    // then assemble the ICV input through the shared helper so the recomputed
+    // input is byte-identical to the sealed one (RFC 4302 §3.4.4).
+    let ip_version = Ah::preceding_ip_version(&ctx)?;
+    let padded_icv_len = ah.effective_icv_len(ip_version);
+    let (next_header, payload_len, reserved, spi, sequence) =
+        ah.resolved_icv_fields(&ctx, ip_version);
+    let input = ah.ah_icv_input(
+        &ctx,
+        sa,
+        ip_version,
+        next_header,
+        payload_len,
+        reserved,
+        spi,
+        sequence,
+        padded_icv_len,
+    )?;
+
+    // Recompute the ICV over the assembled input, zero-padded to the boundary the
+    // AH header reserves (RFC 4302 §2.6) so it lines up with the transmitted ICV's
+    // length, then compare in constant time. The SA integrity transform's own
+    // `verify` already runs the comparison in constant time when the lengths match
+    // (the common HMAC-SHA2 case, where no boundary padding is added); the
+    // padded-length fallback below re-pads the recomputed ICV and compares it the
+    // same way for the rare boundary-padded transforms. RFC 4302 §3.4.4: either
+    // way, a mismatch fails closed.
+    let transform = sa.integ.integrity_transform()?;
+    let matched = if transform.icv_len() == transmitted_icv.len() {
+        transform.verify(&sa.integ_key, &input, transmitted_icv)?
+    } else {
+        let mut expected = transform.compute(&sa.integ_key, &input)?;
+        if expected.len() < transmitted_icv.len() {
+            expected.resize(transmitted_icv.len(), 0);
+        }
+        expected.as_slice().ct_eq(transmitted_icv).into()
+    };
+
+    if !matched {
+        return Err(CrafterError::invalid_field_value(
+            "ipsec.ah.icv",
+            "AH ICV verification failed: recomputed integrity check value does not match",
+        ));
+    }
+    Ok(())
+}
+
+/// Append a decoded AH datagram using an explicit registry and an optional SA
+/// (RFC 4302).
+///
+/// This is the SA-aware decode entry: when an SA is supplied, it recovers the AH
+/// layer and inner data ([`append_ah_packet_with_registry`]), then re-verifies
+/// the ICV ([`verify_ah`]) over the assembled stack and stamps the verified
+/// status onto the recovered [`Ah`] layer ([`Ah::verification_status`]).
+///
+/// - **`Some(sa)`** — verify the ICV; on success record `Some(true)` on the AH
+///   layer; on failure return the structured `ipsec.ah.icv` mismatch error from
+///   [`verify_ah`] (the decode fails closed). AH never encrypts, so the inner
+///   layers are recovered identically to the no-SA path; the SA only adds the
+///   verification.
+/// - **`None`** — the opaque path: recover the AH header and dispatch the
+///   cleartext inner protocol without verifying, leaving the verification status
+///   `None` ([`append_ah_packet_with_registry`]).
+#[allow(dead_code)]
+pub(crate) fn append_ah_packet_with_registry_sa(
+    registry: &ProtocolRegistry,
+    packet: Packet,
+    bytes: &[u8],
+    sa: Option<&SecurityAssociation>,
+) -> Result<Packet> {
+    let Some(sa) = sa else {
+        // No SA for this SPI: fall back to the opaque (no-verify) decode path.
+        return append_ah_packet_with_registry(registry, packet, bytes);
+    };
+
+    // Recover the AH layer and dispatch the cleartext inner protocol; AH does not
+    // encrypt, so the inner layers are the same as the no-SA path.
+    let ah_index = packet.len();
+    let mut decoded = append_ah_packet_with_registry(registry, packet, bytes)?;
+
+    // Verify the ICV over the assembled stack (preceding IP + AH + upper layers).
+    // A mismatch returns the structured `ipsec.ah.icv` error — fail closed.
+    verify_ah(&decoded, ah_index, sa)?;
+
+    // Stamp the verified status onto the recovered AH layer.
+    if let Some(ah) = decoded
+        .get_mut(ah_index)
+        .and_then(|layer| layer.as_any_mut().downcast_mut::<Ah>())
+    {
+        ah.set_verification_status(true);
+    }
+    Ok(decoded)
 }
 
 #[cfg(test)]
@@ -356,5 +501,192 @@ mod tests {
             }
             other => panic!("expected buffer_too_short, got {other:?}"),
         }
+    }
+
+    // --- SA-driven ICV verification (RFC 4302 §3.4.4) ----------------------
+
+    /// The shared HMAC-SHA-256-128 (RFC 4868) SA used by the verify tests, with a
+    /// fixed documentation key. SPI matches the AH header the sender emits.
+    fn verify_sa() -> SecurityAssociation {
+        SecurityAssociation::new(0x0000_2000)
+            .integrity(IntegrityAlgorithm::HmacSha2_256_128, vec![0x77u8; 32])
+    }
+
+    /// A representative documentation IPv4 header that enclosed the AH datagram.
+    fn verify_ipv4() -> Ipv4 {
+        Ipv4::new()
+            .protocol(IPPROTO_AH)
+            .src("192.0.2.1".parse().unwrap())
+            .dst("192.0.2.2".parse().unwrap())
+            .ttl(64)
+    }
+
+    /// Build the decoded layer stack a receiver would assemble from an
+    /// `Ipv4 / Ah::secured(sa) / Tcp / Raw` datagram: the enclosing IPv4 header,
+    /// the AH layer with its on-wire ICV captured verbatim (no SA attached, fields
+    /// caller-set per `decode_ah_parts`), and the cleartext inner Tcp / Raw. This
+    /// mirrors what the SA-aware registry decode produces, but without depending on
+    /// the (later-step) AH registry binding.
+    fn decoded_verify_packet() -> Packet {
+        let ah_bytes = compile_ah_packet();
+        let (decoded_ah, _, _) = decode_ah_parts(&ah_bytes).expect("decode AH parts");
+        Packet::from_layer(verify_ipv4())
+            / decoded_ah
+            / Tcp::new().sport(1234).dport(443)
+            / Raw::from_bytes(vec![0xDE, 0xAD, 0xBE, 0xEF])
+    }
+
+    #[test]
+    fn verify_ah_with_matching_sa_passes() {
+        // The receiver recomputes the ICV over the canonicalized IPv4 header, the
+        // AH header with the ICV field zeroed, and the cleartext Tcp / Raw, and it
+        // matches the on-wire ICV the sender emitted (RFC 4302 §3.4.4).
+        let packet = decoded_verify_packet();
+        verify_ah(&packet, 1, &verify_sa()).expect("ICV verifies with the matching SA");
+    }
+
+    #[test]
+    fn verify_ah_detects_tampered_payload_byte() {
+        // Flipping one upper-layer payload byte changes the ICV input, so the
+        // recomputed ICV no longer matches the captured one: verification fails
+        // closed with a structured `ipsec.ah.icv` error, never a panic.
+        let ah_bytes = compile_ah_packet();
+        let (decoded_ah, _, _) = decode_ah_parts(&ah_bytes).expect("decode AH parts");
+        let tampered: Packet = Packet::from_layer(verify_ipv4())
+            / decoded_ah
+            / Tcp::new().sport(1234).dport(443)
+            // One payload byte flipped (0xDE -> 0xDF) versus the sealed datagram.
+            / Raw::from_bytes(vec![0xDF, 0xAD, 0xBE, 0xEF]);
+
+        let err = verify_ah(&tampered, 1, &verify_sa())
+            .expect_err("a flipped payload byte must fail verification");
+        match err {
+            CrafterError::InvalidFieldValue { field, .. } => {
+                assert_eq!(field, "ipsec.ah.icv", "tamper fails on the ICV field");
+            }
+            other => panic!("expected an ICV mismatch error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn verify_ah_detects_tampered_immutable_ipv4_field() {
+        // Change an immutable IPv4 field that AH canonicalization does NOT zero —
+        // a source-address byte (192.0.2.1 -> 192.0.2.9). It survives into the
+        // canonical IP header, so the recomputed ICV differs from the captured one
+        // and verification fails closed (RFC 4302 §3.3.3.1.1 covers the source
+        // address as immutable).
+        let ah_bytes = compile_ah_packet();
+        let (decoded_ah, _, _) = decode_ah_parts(&ah_bytes).expect("decode AH parts");
+        let tampered_ip = Ipv4::new()
+            .protocol(IPPROTO_AH)
+            .src("192.0.2.9".parse().unwrap()) // immutable source address altered
+            .dst("192.0.2.2".parse().unwrap())
+            .ttl(64);
+        let tampered: Packet = Packet::from_layer(tampered_ip)
+            / decoded_ah
+            / Tcp::new().sport(1234).dport(443)
+            / Raw::from_bytes(vec![0xDE, 0xAD, 0xBE, 0xEF]);
+
+        let err = verify_ah(&tampered, 1, &verify_sa())
+            .expect_err("a flipped immutable IPv4 field must fail verification");
+        assert!(
+            matches!(err, CrafterError::InvalidFieldValue { field, .. } if field == "ipsec.ah.icv"),
+            "expected an ICV mismatch error, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn verify_ah_ignores_mutable_ipv4_field_changes() {
+        // A change to a *mutable* IPv4 field (TTL) is zeroed by canonicalization,
+        // so it does NOT affect the ICV: verification still passes. This guards the
+        // canonicalization being applied on the receiver side (RFC 4302
+        // §3.3.3.1.1: TTL is mutable and zeroed before the ICV).
+        let ah_bytes = compile_ah_packet();
+        let (decoded_ah, _, _) = decode_ah_parts(&ah_bytes).expect("decode AH parts");
+        let retimed_ip = Ipv4::new()
+            .protocol(IPPROTO_AH)
+            .src("192.0.2.1".parse().unwrap())
+            .dst("192.0.2.2".parse().unwrap())
+            .ttl(7); // different TTL than the sender (64); mutable, so zeroed
+        let packet: Packet = Packet::from_layer(retimed_ip)
+            / decoded_ah
+            / Tcp::new().sport(1234).dport(443)
+            / Raw::from_bytes(vec![0xDE, 0xAD, 0xBE, 0xEF]);
+
+        verify_ah(&packet, 1, &verify_sa())
+            .expect("a mutable-field (TTL) change is canonicalized away and still verifies");
+    }
+
+    #[test]
+    fn decode_with_sa_records_verified_status() {
+        // The SA-aware decode entry recovers the AH layer, verifies the ICV, and
+        // stamps a verified status on the recovered `Ah` layer. The inner Tcp is
+        // recovered in the clear (AH does not encrypt).
+        let ah_bytes = compile_ah_packet();
+        let registry = ProtocolRegistry::with_builtin_bindings();
+        let sa = verify_sa();
+        // Seed the in-progress packet with the enclosing IPv4 header so `verify_ah`
+        // can read the preceding IP header through the layer context.
+        let seeded = Packet::from_layer(verify_ipv4());
+        let decoded = append_ah_packet_with_registry_sa(&registry, seeded, &ah_bytes, Some(&sa))
+            .expect("SA-aware decode + verify succeeds");
+
+        let ah = decoded
+            .get(1)
+            .and_then(|layer| layer.as_any().downcast_ref::<Ah>())
+            .expect("AH layer at index 1");
+        assert_eq!(
+            ah.verification_status(),
+            Some(true),
+            "verified status recorded on the AH layer"
+        );
+
+        let tcp = decoded
+            .layer::<Tcp>()
+            .expect("inner Tcp decoded in the clear");
+        assert_eq!(tcp.source_port_value(), 1234);
+        assert_eq!(tcp.destination_port_value(), 443);
+    }
+
+    #[test]
+    fn decode_with_sa_fails_closed_on_tampered_icv() {
+        // Flip one octet of the on-wire ICV before the SA-aware decode. The
+        // recovered AH layer captures the tampered ICV, so verification fails
+        // closed with the structured `ipsec.ah.icv` error — no layer, no panic, no
+        // silently accepted forgery.
+        let mut ah_bytes = compile_ah_packet();
+        // The ICV starts right after the 12-octet fixed header; flip its first bit.
+        ah_bytes[AH_FIXED_LEN] ^= 0x01;
+
+        let registry = ProtocolRegistry::with_builtin_bindings();
+        let sa = verify_sa();
+        let seeded = Packet::from_layer(verify_ipv4());
+        let err = append_ah_packet_with_registry_sa(&registry, seeded, &ah_bytes, Some(&sa))
+            .expect_err("a tampered ICV must fail the SA-aware decode");
+        assert!(
+            matches!(err, CrafterError::InvalidFieldValue { field, .. } if field == "ipsec.ah.icv"),
+            "expected an ICV mismatch error, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn decode_without_sa_leaves_verification_status_unset() {
+        // The opaque (no-SA) path recovers the AH header and inner protocol but
+        // never verifies, so the verification status stays `None`.
+        let ah_bytes = compile_ah_packet();
+        let registry = ProtocolRegistry::with_builtin_bindings();
+        let seeded = Packet::from_layer(verify_ipv4());
+        let decoded = append_ah_packet_with_registry_sa(&registry, seeded, &ah_bytes, None)
+            .expect("opaque decode without an SA succeeds");
+
+        let ah = decoded
+            .get(1)
+            .and_then(|layer| layer.as_any().downcast_ref::<Ah>())
+            .expect("AH layer at index 1");
+        assert_eq!(
+            ah.verification_status(),
+            None,
+            "no verification attempted without an SA"
+        );
     }
 }
