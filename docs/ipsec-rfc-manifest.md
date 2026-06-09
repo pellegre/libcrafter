@@ -294,17 +294,17 @@ Notify Message Types referenced by later steps. Types 1–16383 are errors;
 | 14 | Error | NO_PROPOSAL_CHOSEN |
 | 17 | Error | INVALID_KE_PAYLOAD |
 | 24 | Error | AUTHENTICATION_FAILED |
-| 16388 | Status | INITIAL_CONTACT |
-| 16389 | Status | SET_WINDOW_SIZE |
-| 16390 | Status | ADDITIONAL_TS_POSSIBLE |
-| 16391 | Status | IPCOMP_SUPPORTED |
-| 16392 | Status | NAT_DETECTION_SOURCE_IP |
-| 16393 | Status | NAT_DETECTION_DESTINATION_IP |
-| 16394 | Status | COOKIE |
-| 16395 | Status | USE_TRANSPORT_MODE |
-| 16396 | Status | HTTP_CERT_LOOKUP_SUPPORTED |
-| 16397 | Status | REKEY_SA |
-| 16398 | Status | ESP_TFC_PADDING_NOT_SUPPORTED |
+| 16384 | Status | INITIAL_CONTACT |
+| 16385 | Status | SET_WINDOW_SIZE |
+| 16386 | Status | ADDITIONAL_TS_POSSIBLE |
+| 16387 | Status | IPCOMP_SUPPORTED |
+| 16388 | Status | NAT_DETECTION_SOURCE_IP |
+| 16389 | Status | NAT_DETECTION_DESTINATION_IP |
+| 16390 | Status | COOKIE |
+| 16391 | Status | USE_TRANSPORT_MODE |
+| 16392 | Status | HTTP_CERT_LOOKUP_SUPPORTED |
+| 16393 | Status | REKEY_SA |
+| 16394 | Status | ESP_TFC_PADDING_NOT_SUPPORTED |
 | 16399 | Status | NON_FIRST_FRAGMENTS_ALSO |
 
 The IANA "IKEv2 Notify Message Types - Status Types / Error Types" registries
