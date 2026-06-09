@@ -29,7 +29,7 @@ use crate::protocols::transport::common::{
 use crate::protocols::{Tcp, Udp};
 use crate::{CrafterError, Result};
 
-use self::header::ESP_HEADER_LEN;
+use self::header::{ESP_HEADER_LEN, ESP_HIGH_SEQUENCE_LEN};
 
 /// IP protocol number for IPv4-in-IPv4 encapsulation (tunnel-mode inner IPv4).
 ///
@@ -64,6 +64,11 @@ pub struct Esp {
     sa: Option<SecurityAssociation>,
     /// Pre-encrypted body when no SA is supplied (decode / no-crypto).
     opaque: Option<Vec<u8>>,
+    /// High-order 32 bits of the 64-bit Extended Sequence Number (RFC 4303
+    /// §2.2.1). When the SA enables ESN, this word participates in the
+    /// ICV/AAD computation but is never transmitted; only the low 32-bit
+    /// `sequence` appears on the wire. Defaults to 0.
+    high_sequence: Field<u32>,
 }
 
 /// Default SPI assigned by [`Esp::new`] when the caller does not set one.
@@ -72,6 +77,10 @@ const DEFAULT_ESP_SPI: u32 = 0x0000_0001;
 /// Default Sequence Number assigned by [`Esp::new`] (RFC 4303 §3.3.3: the
 /// first packet sent on an SA uses sequence number 1).
 const DEFAULT_ESP_SEQUENCE: u32 = 1;
+
+/// Default high-order Extended Sequence Number word (RFC 4303 §2.2.1: the
+/// 64-bit ESN counter starts at 1, so its high 32 bits are 0).
+const DEFAULT_ESP_HIGH_SEQUENCE: u32 = 0;
 
 impl Esp {
     /// Create an ESP layer with deterministic packet-builder defaults.
@@ -90,6 +99,7 @@ impl Esp {
             icv: Field::unset(),
             sa: None,
             opaque: None,
+            high_sequence: Field::defaulted(DEFAULT_ESP_HIGH_SEQUENCE),
         }
     }
 
@@ -116,6 +126,19 @@ impl Esp {
     /// Compatibility alias for [`Esp::sequence`].
     pub fn seq(self, sequence: u32) -> Self {
         self.sequence(sequence)
+    }
+
+    /// Set the high-order 32 bits of the Extended Sequence Number (RFC 4303
+    /// §2.2.1).
+    ///
+    /// This word is only meaningful when the attached [`SecurityAssociation`]
+    /// has ESN enabled ([`SecurityAssociation::extended_sequence`]). It is
+    /// folded into the ICV/AAD computation at `compile()` but never appears on
+    /// the wire — only the low 32-bit [`Esp::sequence`] is transmitted. With
+    /// ESN disabled the high word is ignored.
+    pub fn high_sequence(mut self, high_sequence: u32) -> Self {
+        self.high_sequence.set_user(high_sequence);
+        self
     }
 
     /// Attach a [`SecurityAssociation`] crypto context.
@@ -168,6 +191,13 @@ impl Esp {
     /// Stored Sequence Number value, when explicit or decoded.
     pub fn sequence_value(&self) -> Option<u32> {
         self.sequence.value().copied()
+    }
+
+    /// Stored high-order Extended Sequence Number word (RFC 4303 §2.2.1).
+    ///
+    /// Defaults to 0; only participates in the ICV/AAD when the SA enables ESN.
+    pub fn high_sequence_value(&self) -> Option<u32> {
+        self.high_sequence.value().copied()
     }
 
     /// Stored ESP trailer Next Header value, when explicit or decoded.
@@ -331,8 +361,10 @@ impl Esp {
     ///   the padding computed to the cipher block / 4-octet boundary (RFC 4303
     ///   §2.4) unless the caller pinned an explicit `pad`.
     /// - **AAD** = `SPI || Seq` — for cipher+integrity this is the integrity
-    ///   prefix, for AEAD this is the authenticated data (the ESN high-order bits
-    ///   are folded in by Step 20).
+    ///   prefix, for AEAD this is the authenticated data — followed by the
+    ///   high-order Extended Sequence Number word when `sa.esn` is set (RFC 4303
+    ///   §2.2.1, §3.3.3). That high word participates in the ICV but is never
+    ///   emitted on the wire (the compile paths transmit only `SPI || Seq`).
     /// - **iv** = the caller `iv` override, else a deterministic all-zero IV of
     ///   the cipher's IV length.
     ///
@@ -371,10 +403,21 @@ impl Esp {
         plaintext.push(pad_len);
         plaintext.push(next_header);
 
-        // Integrity / AEAD prefix = SPI || Seq (ESN high bits added in Step 20).
-        let mut aad = Vec::with_capacity(ESP_HEADER_LEN);
+        // Integrity / AEAD prefix = SPI || Seq, plus the Extended Sequence
+        // Number high-order 32 bits when the SA enables ESN (RFC 4303 §2.2.1,
+        // §3.3.3): those bits authenticate but are never transmitted, so they
+        // are appended to the AAD only — never to the emitted wire bytes.
+        let mut aad = Vec::with_capacity(ESP_HEADER_LEN + ESP_HIGH_SEQUENCE_LEN);
         aad.extend_from_slice(&spi.to_be_bytes());
         aad.extend_from_slice(&sequence.to_be_bytes());
+        if sa.esn {
+            let high = self
+                .high_sequence
+                .value()
+                .copied()
+                .unwrap_or(DEFAULT_ESP_HIGH_SEQUENCE);
+            aad.extend_from_slice(&high.to_be_bytes());
+        }
 
         // Explicit IV: caller override, else a deterministic all-zero IV.
         let iv = match self.iv.value() {
@@ -421,9 +464,12 @@ impl Esp {
             None => sealed.icv,
         };
 
-        // Wire layout: SPI || Seq || IV || ciphertext || ICV.
+        // Wire layout: SPI || Seq || IV || ciphertext || ICV. Only the first
+        // ESP_HEADER_LEN octets of the AAD (SPI||Seq) are transmitted; any ESN
+        // high-order word that `esp_seal_inputs` appended to the AAD for the ICV
+        // is authenticated but never on the wire (RFC 4303 §2.2.1).
         out.reserve(ESP_HEADER_LEN + iv.len() + sealed.ciphertext.len() + icv.len());
-        out.extend_from_slice(&aad);
+        out.extend_from_slice(&aad[..ESP_HEADER_LEN]);
         out.extend_from_slice(&iv);
         out.extend_from_slice(&sealed.ciphertext);
         out.extend_from_slice(&icv);
@@ -440,7 +486,9 @@ impl Esp {
     ///
     /// 1. Gather the upper-layer bytes and append `pad || pad-length ||
     ///    next-header` to form the plaintext.
-    /// 2. AAD = `SPI || Seq` (the ESN high-order bits are folded in by Step 20).
+    /// 2. AAD = `SPI || Seq`, plus the high-order Extended Sequence Number word
+    ///    when `sa.esn` is set (RFC 4303 §2.2.1); the high word authenticates
+    ///    the tag but is not emitted on the wire.
     /// 3. The nonce is `sa.salt || iv`, assembled inside [`seal`]; the IV is the
     ///    caller override or a deterministic 8-octet IV.
     /// 4. Emit `SPI || Seq || IV || ciphertext || tag(ICV)`; a caller `icv`
@@ -464,9 +512,12 @@ impl Esp {
             None => sealed.icv,
         };
 
-        // Wire layout: SPI || Seq || IV || ciphertext || tag(ICV).
+        // Wire layout: SPI || Seq || IV || ciphertext || tag(ICV). Only the
+        // first ESP_HEADER_LEN octets of the AAD (SPI||Seq) are transmitted; an
+        // ESN high-order word folded into the AAD authenticates the tag but is
+        // never on the wire (RFC 4303 §2.2.1).
         out.reserve(ESP_HEADER_LEN + iv.len() + sealed.ciphertext.len() + icv.len());
-        out.extend_from_slice(&aad);
+        out.extend_from_slice(&aad[..ESP_HEADER_LEN]);
         out.extend_from_slice(&iv);
         out.extend_from_slice(&sealed.ciphertext);
         out.extend_from_slice(&icv);
@@ -694,6 +745,13 @@ mod tests {
         assert_eq!(esp.sequence.state(), FieldState::Defaulted);
         assert_eq!(esp.sequence.value().copied(), Some(DEFAULT_ESP_SEQUENCE));
 
+        // The ESN high word defaults to 0 (RFC 4303 §2.2.1), not caller-set.
+        assert_eq!(esp.high_sequence.state(), FieldState::Defaulted);
+        assert_eq!(
+            esp.high_sequence.value().copied(),
+            Some(DEFAULT_ESP_HIGH_SEQUENCE)
+        );
+
         // Everything else is unset, no SA, no opaque body.
         assert_eq!(esp.next_header.state(), FieldState::Unset);
         assert_eq!(esp.pad.state(), FieldState::Unset);
@@ -717,6 +775,7 @@ mod tests {
         let esp = Esp::new()
             .spi(0x0000_2000)
             .sequence(42)
+            .high_sequence(0x0000_0001)
             .next_header(6)
             .pad(vec![0x01, 0x02])
             .iv(vec![0xAAu8; 8])
@@ -726,6 +785,8 @@ mod tests {
         assert_eq!(esp.spi_value(), Some(0x0000_2000));
         assert_eq!(esp.sequence.state(), FieldState::User);
         assert_eq!(esp.sequence_value(), Some(42));
+        assert_eq!(esp.high_sequence.state(), FieldState::User);
+        assert_eq!(esp.high_sequence_value(), Some(0x0000_0001));
         assert_eq!(esp.next_header.state(), FieldState::User);
         assert_eq!(esp.next_header_value(), Some(6));
         assert_eq!(esp.pad.state(), FieldState::User);
