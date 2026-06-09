@@ -14,6 +14,7 @@
 //! later steps.
 
 pub mod header;
+pub(crate) mod icv;
 
 use crate::field::Field;
 use crate::protocols::ipsec::sa::SecurityAssociation;
