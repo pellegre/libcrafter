@@ -6,12 +6,13 @@ use crate::protocols::dhcp::{append_dhcp_packet, is_dhcp_port_pair, looks_like_d
 use crate::protocols::dns::{append_dns_packet, DNS_PORT};
 use crate::protocols::eapol::append_eapol_packet;
 use crate::protocols::icmp::{append_icmp_packet, append_icmpv6_packet};
+use crate::protocols::ipsec::ah::decode::append_ah_packet_with_registry;
 use crate::protocols::ipsec::esp::decode::append_esp_packet_with_registry;
 use crate::protocols::ipv4::{
-    append_ipv4_packet_with_registry, IPPROTO_ESP, IPPROTO_ICMP, IPPROTO_ICMPV6, IPPROTO_TCP,
-    IPPROTO_UDP,
+    append_ipv4_packet_with_registry, IPPROTO_AH, IPPROTO_ESP, IPPROTO_ICMP, IPPROTO_ICMPV6,
+    IPPROTO_TCP, IPPROTO_UDP,
 };
-use crate::protocols::ipv6::{append_ipv6_packet_with_registry, IPPROTO_IPV6_ESP};
+use crate::protocols::ipv6::{append_ipv6_packet_with_registry, IPPROTO_IPV6_AH, IPPROTO_IPV6_ESP};
 use crate::protocols::link::{
     append_arp_packet, append_vlan_packet_with_registry, decode_dot11_with_registry,
     decode_ethernet_with_registry, decode_linux_sll_with_registry,
@@ -168,6 +169,16 @@ impl ProtocolRegistry {
         registry.bind_ipv4_protocol_with_registry(IPPROTO_ESP, |registry, packet, payload| {
             append_esp_packet_with_registry(registry, packet, payload)
         });
+        // AH (IP protocol 51, RFC 4302). AH only authenticates, so the protected
+        // upper-layer data — and, in tunnel mode, the inner IP datagram — is
+        // always in the clear: the typed `Ah` header and its variable-length ICV
+        // decode without keys, and the inner protocol dispatches by Next Header.
+        // The built-in registry carries no SA, so the ICV is preserved verbatim
+        // rather than verified; a caller that holds keys binds an SA-aware
+        // decoder of its own.
+        registry.bind_ipv4_protocol_with_registry(IPPROTO_AH, |registry, packet, payload| {
+            append_ah_packet_with_registry(registry, packet, payload)
+        });
 
         registry
             .bind_ipv6_next_header_with_registry(IPPROTO_ICMPV6, |_registry, packet, payload| {
@@ -183,6 +194,14 @@ impl ProtocolRegistry {
         registry
             .bind_ipv6_next_header_with_registry(IPPROTO_IPV6_ESP, |registry, packet, payload| {
                 append_esp_packet_with_registry(registry, packet, payload)
+            });
+        // AH as an IPv6 next-header (RFC 4302). AH can appear in the IPv6
+        // extension-header chain, so once the chain walk reaches next-header 51
+        // it dispatches here; the cleartext upper-layer data (transport mode) or
+        // inner IP datagram (tunnel mode) decodes without keys, same as IPv4.
+        registry
+            .bind_ipv6_next_header_with_registry(IPPROTO_IPV6_AH, |registry, packet, payload| {
+                append_ah_packet_with_registry(registry, packet, payload)
             });
 
         registry.bind_udp_port_with_registry(DNS_PORT, |_registry, packet, payload| {
@@ -810,6 +829,179 @@ mod esp_protocol_binding {
         assert!(esp.opaque_body().is_some());
 
         assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_bytes());
+    }
+}
+
+#[cfg(test)]
+mod ah_protocol_binding {
+    use crate::protocols::ipsec::ah::Ah;
+    use crate::protocols::ipsec::sa::{IntegrityAlgorithm, SecurityAssociation};
+    use crate::protocols::ipv4::{IPPROTO_AH, IPPROTO_TCP};
+    use crate::protocols::ipv6::IPPROTO_IPV6_AH;
+    use crate::{Ipv4, Ipv6, NetworkLayer, Packet, Raw, Tcp};
+
+    /// An HMAC-SHA-256-128 (RFC 4868) integrity-only SA with a fixed
+    /// documentation key. AH only authenticates, so the built-in registry can
+    /// recover the inner protocol in the clear without ever holding this SA.
+    fn ah_sa() -> SecurityAssociation {
+        SecurityAssociation::new(0x0000_2000)
+            .integrity(IntegrityAlgorithm::HmacSha2_256_128, vec![0x77u8; 32])
+    }
+
+    #[test]
+    fn default_registry_decodes_ipv4_protocol_51_as_ah_with_inner_tcp() {
+        // The enclosing IPv4 protocol is pinned to AH (51); the AH header is
+        // sealed by the SA, but the protected Tcp / Raw travels in the clear.
+        let bytes = (Ipv4::new()
+            .protocol(IPPROTO_AH)
+            .src("192.0.2.1".parse().unwrap())
+            .dst("192.0.2.2".parse().unwrap())
+            .ttl(64)
+            / Ah::secured(ah_sa()).spi(0x0000_2000).sequence(1)
+            / Tcp::new().sport(1234).dport(443)
+            / Raw::from_bytes(vec![0xDE, 0xAD, 0xBE, 0xEF]))
+        .compile()
+        .unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+
+        // IPv4 header, then the typed Ah, then the cleartext inner Tcp / Raw.
+        assert!(decoded.layer::<Ipv4>().is_some());
+        let ah = decoded
+            .get(1)
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Ah>()
+            .expect("second layer is Ah");
+        assert_eq!(ah.spi_value(), Some(0x0000_2000));
+        assert_eq!(ah.sequence_value(), Some(1));
+        assert_eq!(ah.next_header_value(), Some(IPPROTO_TCP));
+        // The built-in registry has no SA, so the ICV is preserved verbatim and
+        // never verified.
+        assert_eq!(ah.verification_status(), None);
+
+        let tcp = decoded
+            .layer::<Tcp>()
+            .expect("inner Tcp decoded in the clear");
+        assert_eq!(tcp.source_port_value(), 1234);
+        assert_eq!(tcp.destination_port_value(), 443);
+        assert_eq!(
+            decoded
+                .layer::<Raw>()
+                .expect("inner Raw decoded")
+                .as_bytes(),
+            &[0xDE, 0xAD, 0xBE, 0xEF]
+        );
+
+        // The decoded packet re-compiles byte-for-byte.
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_bytes());
+    }
+
+    #[test]
+    fn default_registry_decodes_ipv6_next_header_51_as_ah_with_inner_tcp() {
+        let bytes = (Ipv6::new()
+            .nh(IPPROTO_IPV6_AH)
+            .src("2001:db8::1".parse().unwrap())
+            .dst("2001:db8::2".parse().unwrap())
+            .hop_limit(64)
+            / Ah::secured(ah_sa()).spi(0x0000_3000).sequence(9)
+            / Tcp::new().sport(2345).dport(80)
+            / Raw::from_bytes(vec![0xAA, 0xBB, 0xCC, 0xDD]))
+        .compile()
+        .unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes.as_bytes()).unwrap();
+
+        assert!(decoded.layer::<Ipv6>().is_some());
+        let ah = decoded
+            .get(1)
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Ah>()
+            .expect("second layer is Ah");
+        assert_eq!(ah.spi_value(), Some(0x0000_3000));
+        assert_eq!(ah.sequence_value(), Some(9));
+        assert_eq!(ah.next_header_value(), Some(IPPROTO_TCP));
+        assert_eq!(ah.verification_status(), None);
+
+        let tcp = decoded
+            .layer::<Tcp>()
+            .expect("inner Tcp decoded in the clear");
+        assert_eq!(tcp.source_port_value(), 2345);
+        assert_eq!(tcp.destination_port_value(), 80);
+        assert_eq!(
+            decoded
+                .layer::<Raw>()
+                .expect("inner Raw decoded")
+                .as_bytes(),
+            &[0xAA, 0xBB, 0xCC, 0xDD]
+        );
+
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_bytes());
+    }
+
+    #[test]
+    fn ah_in_ipv6_decodes_after_a_preceding_extension_header() {
+        use crate::protocols::ipv6::Ipv6DestinationOptionsHeader;
+        use crate::Ipv6Option;
+
+        // AH following another IPv6 extension header: the next-header chain walk
+        // must reach the AH binding. First build a real AH datagram (the AH
+        // header + ICV followed by the cleartext Tcp / Raw) from a direct
+        // `Ipv6(nh=AH) / Ah / Tcp / Raw` stack, then capture the bytes that
+        // follow the IPv6 base header — i.e. the AH-onward wire bytes.
+        let direct = (Ipv6::new()
+            .nh(IPPROTO_IPV6_AH)
+            .src("2001:db8::1".parse().unwrap())
+            .dst("2001:db8::2".parse().unwrap())
+            .hop_limit(64)
+            / Ah::secured(ah_sa()).spi(0x0000_4000).sequence(3)
+            / Tcp::new().sport(3456).dport(8080)
+            / Raw::from_bytes(vec![0x11, 0x22, 0x33, 0x44]))
+        .compile()
+        .unwrap();
+        // Strip the 40-octet IPv6 base header to leave the AH datagram bytes.
+        let ah_datagram = direct.as_bytes()[40..].to_vec();
+
+        // Place the AH datagram after a Destination Options extension header
+        // whose own Next Header advertises AH (51). The IPv6 base header points
+        // at the Destination Options header, so the registry's extension-header
+        // chain walk advances base -> Destination Options -> next-header 51,
+        // reaching the AH binding for the trailing bytes.
+        let bytes = (Ipv6::new()
+            .src("2001:db8::1".parse().unwrap())
+            .dst("2001:db8::2".parse().unwrap())
+            .hop_limit(64)
+            / Ipv6DestinationOptionsHeader::new()
+                .nh(IPPROTO_IPV6_AH)
+                .option(Ipv6Option::pad1())
+            / Raw::from_bytes(ah_datagram))
+        .compile()
+        .unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes.as_bytes()).unwrap();
+
+        // The chain walk reaches the AH binding after the Destination Options
+        // header, producing a typed `Ah` (not a `Raw` tail).
+        let ah = decoded
+            .layer::<Ah>()
+            .expect("Ah decoded after the extension header");
+        assert_eq!(ah.spi_value(), Some(0x0000_4000));
+        assert_eq!(ah.next_header_value(), Some(IPPROTO_TCP));
+
+        let tcp = decoded
+            .layer::<Tcp>()
+            .expect("inner Tcp decoded in the clear");
+        assert_eq!(tcp.source_port_value(), 3456);
+        assert_eq!(tcp.destination_port_value(), 8080);
+
+        // This case confirms the decode side: the IPv6 extension-header chain
+        // walk advances past the Destination Options header and dispatches
+        // next-header 51 to the AH binding. (A byte-exact re-compile is asserted
+        // by the two direct `Ipv4 / Ah / Tcp` and `Ipv6 / Ah / Tcp` cases above;
+        // `Ah::compile` reads only its immediately preceding layer for the IP
+        // version, so re-emitting AH that sits *behind* an extension header is a
+        // separate build-side concern, not part of registry dispatch.)
     }
 }
 

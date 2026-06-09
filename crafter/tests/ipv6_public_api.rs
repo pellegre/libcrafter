@@ -4511,12 +4511,11 @@ fn registry_and_unsupported_custom_binding_after_supported_chain() -> crafter::R
 #[test]
 fn registry_and_unsupported_default_raw_for_unsupported_values() -> crafter::Result<()> {
     let registry = ProtocolRegistry::new();
-    // ESP (next-header 50) is no longer in this list: the built-in registry now
-    // binds it to the opaque ESP decode (a typed `Esp` layer), covered by the
-    // crate-internal `registry::esp_protocol_binding` tests. AH (51) is still
-    // unbound and therefore still decodes to `Raw`.
-    let cases: [(&str, u8, &[u8]); 6] = [
-        ("AH", IPPROTO_IPV6_AH, b"ah-unsupported"),
+    // ESP (next-header 50) and AH (next-header 51) are no longer in this list:
+    // the built-in registry now binds them to typed IPSec decodes (an opaque
+    // `Esp` layer, an `Ah` layer), covered by the crate-internal
+    // `registry::esp_protocol_binding` / `registry::ah_protocol_binding` tests.
+    let cases: [(&str, u8, &[u8]); 5] = [
         (
             "Mobility Header",
             IPPROTO_IPV6_MOBILITY,
