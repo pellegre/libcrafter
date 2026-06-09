@@ -13,6 +13,7 @@
 //! the `Layer` impl, and the opaque/SA-driven verify decode path are added by
 //! later steps.
 
+pub(crate) mod decode;
 pub mod header;
 pub(crate) mod icv;
 
