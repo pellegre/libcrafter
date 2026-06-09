@@ -94,9 +94,12 @@ mod ipv4_protocol {
 
     #[test]
     fn ip_protocol_source_backed_unsupported_values_decode_as_raw_payload() {
+        // ESP (protocol 50) is intentionally absent: the built-in registry now
+        // decodes it to a typed opaque `Esp` layer (with an 8-octet minimum), not
+        // a `Raw` fallback. Its decode is covered by the ESP registry tests. AH
+        // (51) remains unbound and still falls back to `Raw`.
         let cases = [
             Ipv4Protocol::Gre,
-            Ipv4Protocol::Esp,
             Ipv4Protocol::Ah,
             Ipv4Protocol::Ospf,
             Ipv4Protocol::Sctp,

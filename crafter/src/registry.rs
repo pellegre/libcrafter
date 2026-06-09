@@ -6,10 +6,12 @@ use crate::protocols::dhcp::{append_dhcp_packet, is_dhcp_port_pair, looks_like_d
 use crate::protocols::dns::{append_dns_packet, DNS_PORT};
 use crate::protocols::eapol::append_eapol_packet;
 use crate::protocols::icmp::{append_icmp_packet, append_icmpv6_packet};
+use crate::protocols::ipsec::esp::decode::append_esp_packet_with_registry;
 use crate::protocols::ipv4::{
-    append_ipv4_packet_with_registry, IPPROTO_ICMP, IPPROTO_ICMPV6, IPPROTO_TCP, IPPROTO_UDP,
+    append_ipv4_packet_with_registry, IPPROTO_ESP, IPPROTO_ICMP, IPPROTO_ICMPV6, IPPROTO_TCP,
+    IPPROTO_UDP,
 };
-use crate::protocols::ipv6::append_ipv6_packet_with_registry;
+use crate::protocols::ipv6::{append_ipv6_packet_with_registry, IPPROTO_IPV6_ESP};
 use crate::protocols::link::{
     append_arp_packet, append_vlan_packet_with_registry, decode_dot11_with_registry,
     decode_ethernet_with_registry, decode_linux_sll_with_registry,
@@ -159,6 +161,13 @@ impl ProtocolRegistry {
         registry.bind_ipv4_protocol_with_registry(IPPROTO_UDP, |registry, packet, payload| {
             append_udp_packet_with_registry(registry, packet, payload)
         });
+        // ESP (IP protocol 50, RFC 4303). The built-in registry carries no SA,
+        // so this decodes via the opaque path: the SPI/Sequence are exposed and
+        // the encrypted body is preserved verbatim. A caller that holds keys
+        // binds an SA-aware decoder of its own.
+        registry.bind_ipv4_protocol_with_registry(IPPROTO_ESP, |registry, packet, payload| {
+            append_esp_packet_with_registry(registry, packet, payload)
+        });
 
         registry
             .bind_ipv6_next_header_with_registry(IPPROTO_ICMPV6, |_registry, packet, payload| {
@@ -170,6 +179,11 @@ impl ProtocolRegistry {
         registry.bind_ipv6_next_header_with_registry(IPPROTO_UDP, |registry, packet, payload| {
             append_udp_packet_with_registry(registry, packet, payload)
         });
+        // ESP as an IPv6 next-header (RFC 4303); same opaque default as IPv4.
+        registry
+            .bind_ipv6_next_header_with_registry(IPPROTO_IPV6_ESP, |registry, packet, payload| {
+                append_esp_packet_with_registry(registry, packet, payload)
+            });
 
         registry.bind_udp_port_with_registry(DNS_PORT, |_registry, packet, payload| {
             append_dns_packet(packet, payload)
@@ -733,6 +747,69 @@ mod decode_dispatch {
 
         assert_eq!(ipv4.layer::<Raw>().unwrap().as_bytes(), b"v4-private");
         assert_eq!(ipv6.layer::<Raw>().unwrap().as_bytes(), b"v6-private");
+    }
+}
+
+#[cfg(test)]
+mod esp_protocol_binding {
+    use crate::protocols::ipsec::esp::Esp;
+    use crate::protocols::ipv4::IPPROTO_ESP;
+    use crate::protocols::ipv6::IPPROTO_IPV6_ESP;
+    use crate::{Ipv4, Ipv6, NetworkLayer, Packet, Raw};
+
+    #[test]
+    fn default_registry_decodes_ipv4_protocol_50_as_opaque_esp() {
+        // The built-in registry has no SA, so IP protocol 50 must decode via the
+        // opaque ESP path: the SPI/Sequence are exposed and the body is preserved
+        // verbatim. The enclosing IPv4 protocol is pinned to 50 (auto-deriving 50
+        // from an inner Esp is not wired; prior ESP tests set it explicitly too).
+        let bytes = (Ipv4::new().protocol(IPPROTO_ESP)
+            / Esp::new().spi(0x0000_2000).sequence(7)
+            / Raw::from_bytes(vec![0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x02, 0x03, 0x04]))
+        .compile()
+        .unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+
+        // First layer is the IPv4 header; the second is the typed Esp.
+        assert!(decoded.layer::<Ipv4>().is_some());
+        let esp = decoded
+            .get(1)
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Esp>()
+            .expect("second layer is Esp");
+        assert_eq!(esp.spi_value(), Some(0x0000_2000));
+        assert_eq!(esp.sequence_value(), Some(7));
+        // No SA in the built-in registry: the body is carried opaquely.
+        assert!(esp.opaque_body().is_some());
+
+        // The decoded packet re-compiles byte-for-byte.
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_bytes());
+    }
+
+    #[test]
+    fn default_registry_decodes_ipv6_next_header_50_as_opaque_esp() {
+        let bytes = (Ipv6::new().nh(IPPROTO_IPV6_ESP)
+            / Esp::new().spi(0x0000_3000).sequence(9)
+            / Raw::from_bytes(vec![0xAA, 0xBB, 0xCC, 0xDD, 0x10, 0x20, 0x30, 0x40]))
+        .compile()
+        .unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes.as_bytes()).unwrap();
+
+        assert!(decoded.layer::<Ipv6>().is_some());
+        let esp = decoded
+            .get(1)
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Esp>()
+            .expect("second layer is Esp");
+        assert_eq!(esp.spi_value(), Some(0x0000_3000));
+        assert_eq!(esp.sequence_value(), Some(9));
+        assert!(esp.opaque_body().is_some());
+
+        assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_bytes());
     }
 }
 

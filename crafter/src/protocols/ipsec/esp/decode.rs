@@ -260,10 +260,9 @@ fn dispatch_esp_inner(
 ///
 /// Decodes the SPI/Sequence header and pushes the opaque [`Esp`] layer onto the
 /// packet. There is no inner dispatch in the no-SA path, so the `registry`
-/// argument is currently unused; the IP-protocol/next-header bindings that call
-/// this hook are wired in a later step. Mirrors UDP's
+/// argument is unused. The built-in IPv4-protocol-50 / IPv6-next-header ESP
+/// bindings (Step 19) call this hook. Mirrors UDP's
 /// `append_udp_packet_with_registry` shape.
-#[allow(dead_code)]
 pub(crate) fn append_esp_packet_with_registry(
     _registry: &ProtocolRegistry,
     packet: Packet,

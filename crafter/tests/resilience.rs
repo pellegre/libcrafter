@@ -10,7 +10,7 @@ use crafter::core::{
     Ipv6MobileRoutingHeader, Ipv6Option, Ipv6RoutingHeader, Ipv6SegmentRoutingHeader, LinkType,
     LinuxSll, MacAddr, NetworkLayer, NullLoopback, OptionOverload, Packet, Raw, Tcp, TcpOption,
     Udp, UdpOptionStatus, UdpOptions, Vlan, DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT,
-    IPPROTO_IPV6_AH, IPPROTO_IPV6_ESP, IPPROTO_IPV6_EXPERIMENTAL_1, IPPROTO_IPV6_EXPERIMENTAL_2,
+    IPPROTO_IPV6_AH, IPPROTO_IPV6_EXPERIMENTAL_1, IPPROTO_IPV6_EXPERIMENTAL_2,
     IPPROTO_IPV6_FRAGMENT, IPPROTO_IPV6_HIP, IPPROTO_IPV6_MOBILITY, IPPROTO_IPV6_ROUTE,
     IPPROTO_IPV6_SHIM6, IPPROTO_UDP, IPV6_ROUTING_TYPE_EXPERIMENTAL_1,
     IPV6_ROUTING_TYPE_EXPERIMENTAL_2, IPV6_ROUTING_TYPE_MOBILE, IPV6_ROUTING_TYPE_NIMROD,
@@ -823,7 +823,10 @@ fn ipv6_curated_resilience_decode_surfaces_are_inspectable() -> crafter::core::R
 
     for (label, next_header) in [
         ("unknown-ah", IPPROTO_IPV6_AH),
-        ("unknown-esp", IPPROTO_IPV6_ESP),
+        // ESP (next-header 50) is no longer an unknown next header: the built-in
+        // registry now decodes it to a typed opaque `Esp` layer, which has its own
+        // minimum-length contract (needs the 8-octet SPI/Seq header). Its
+        // round-trip is covered by the crate-internal ESP registry tests.
         ("unknown-mobility", IPPROTO_IPV6_MOBILITY),
         ("unknown-hip", IPPROTO_IPV6_HIP),
         ("unknown-shim6", IPPROTO_IPV6_SHIM6),
@@ -2173,9 +2176,12 @@ proptest! {
 
     #[test]
     fn ipv6_unknown_next_header_raw_roundtrip_property(
+        // ESP (50) is excluded: it is now a bound protocol decoding to a typed
+        // opaque `Esp` layer with an 8-octet minimum, not an unknown next header
+        // that always falls back to `Raw`. ESP round-trips are covered by the
+        // crate-internal ESP registry tests.
         next_header in prop::sample::select(vec![
             IPPROTO_IPV6_AH,
-            IPPROTO_IPV6_ESP,
             IPPROTO_IPV6_MOBILITY,
             IPPROTO_IPV6_HIP,
             IPPROTO_IPV6_SHIM6,

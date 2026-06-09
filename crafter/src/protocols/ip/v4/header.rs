@@ -601,15 +601,19 @@ impl Layer for Ipv4 {
 impl_layer_div!(Ipv4);
 
 fn payload_len_after(ctx: LayerContext<'_>) -> usize {
-    ctx.packet()
-        .iter()
-        .enumerate()
-        .skip(ctx.index() + 1)
-        .map(|(index, layer)| {
-            let layer_ctx = LayerContext::new(ctx.packet(), index);
-            layer.encoded_len_with_context(&layer_ctx)
-        })
-        .sum()
+    let mut total = 0;
+    for (index, layer) in ctx.packet().iter().enumerate().skip(ctx.index() + 1) {
+        let layer_ctx = LayerContext::new(ctx.packet(), index);
+        total += layer.encoded_len_with_context(&layer_ctx);
+        // An encapsulating layer (e.g. ESP) embeds the following layers inside its
+        // own body, and `Packet::compile_into` stops emitting after it. Stop
+        // summing here too so the consumed tail is not counted twice in the IPv4
+        // Total Length.
+        if layer.consumes_following() {
+            break;
+        }
+    }
+    total
 }
 
 fn layer_ipv4_protocol(layer: &dyn Layer) -> Option<u8> {
