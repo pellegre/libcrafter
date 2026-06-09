@@ -66,7 +66,7 @@ pub(super) fn value_or_copy<T: Copy>(field: &Field<T>, default: T) -> T {
     field.value().copied().unwrap_or(default)
 }
 
-pub(super) fn hex_bytes(bytes: &[u8]) -> String {
+pub(crate) fn hex_bytes(bytes: &[u8]) -> String {
     let mut output = String::new();
 
     for (index, byte) in bytes.iter().enumerate() {

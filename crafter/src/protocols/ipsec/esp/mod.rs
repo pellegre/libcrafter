@@ -16,10 +16,14 @@ use crate::protocols::icmp::{Icmpv4, Icmpv6};
 use crate::protocols::ip::shared::protocol_numbers::{
     IPPROTO_ICMP, IPPROTO_ICMPV6, IPPROTO_IPV6, IPPROTO_NO_NEXT, IPPROTO_TCP, IPPROTO_UDP,
 };
-use crate::protocols::ipsec::sa::{seal, IpsecMode, SecurityAssociation};
+use crate::protocols::ipsec::sa::{
+    seal, EncryptionAlgorithm, IntegrityAlgorithm, IpsecMode, SecurityAssociation,
+};
 use crate::protocols::ipv4::Ipv4;
 use crate::protocols::ipv6::Ipv6;
-use crate::protocols::transport::common::{impl_layer_div, impl_layer_object, payload_bytes_after};
+use crate::protocols::transport::common::{
+    hex_bytes, impl_layer_div, impl_layer_object, payload_bytes_after,
+};
 use crate::protocols::{Tcp, Udp};
 use crate::{CrafterError, Result};
 
@@ -41,7 +45,6 @@ const IPPROTO_IPV4: u8 = 4;
 /// malformed output. When no SA is present, `opaque` carries pre-encrypted
 /// body bytes verbatim so decode/re-encode is byte-exact.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct Esp {
     /// Security Parameters Index identifying the SA on the wire.
     spi: Field<u32>,
@@ -68,7 +71,6 @@ const DEFAULT_ESP_SPI: u32 = 0x0000_0001;
 /// first packet sent on an SA uses sequence number 1).
 const DEFAULT_ESP_SEQUENCE: u32 = 1;
 
-#[allow(dead_code)]
 impl Esp {
     /// Create an ESP layer with deterministic packet-builder defaults.
     ///
@@ -242,6 +244,35 @@ fn layer_esp_next_header(layer: &dyn Layer, _mode: IpsecMode) -> Option<u8> {
         return Some(IPPROTO_ICMPV6);
     }
     None
+}
+
+/// Stable IANA-style label for an ESP encryption algorithm (inspection only).
+///
+/// Mirrors the SA's redacted summary labels; it never touches key material.
+fn esp_encryption_label(alg: EncryptionAlgorithm) -> String {
+    match alg {
+        EncryptionAlgorithm::Null => "NULL".to_string(),
+        EncryptionAlgorithm::AesCbc => "AES_CBC".to_string(),
+        EncryptionAlgorithm::AesCtr => "AES_CTR".to_string(),
+        EncryptionAlgorithm::AesCcm8 => "AES_CCM_8".to_string(),
+        EncryptionAlgorithm::AesGcm16 => "AES_GCM_16".to_string(),
+        EncryptionAlgorithm::ChaCha20Poly1305 => "CHACHA20_POLY1305".to_string(),
+        EncryptionAlgorithm::Unknown(id) => format!("UNKNOWN({id})"),
+    }
+}
+
+/// Stable IANA-style label for an ESP integrity algorithm (inspection only).
+fn esp_integrity_label(alg: IntegrityAlgorithm) -> String {
+    match alg {
+        IntegrityAlgorithm::None => "NONE".to_string(),
+        IntegrityAlgorithm::HmacSha1_96 => "HMAC_SHA1_96".to_string(),
+        IntegrityAlgorithm::AesXcbc96 => "AES_XCBC_96".to_string(),
+        IntegrityAlgorithm::AesGmac => "AES_128_GMAC".to_string(),
+        IntegrityAlgorithm::HmacSha2_256_128 => "HMAC_SHA2_256_128".to_string(),
+        IntegrityAlgorithm::HmacSha2_384_192 => "HMAC_SHA2_384_192".to_string(),
+        IntegrityAlgorithm::HmacSha2_512_256 => "HMAC_SHA2_512_256".to_string(),
+        IntegrityAlgorithm::Unknown(id) => format!("UNKNOWN({id})"),
+    }
 }
 
 impl Esp {
@@ -490,6 +521,45 @@ impl Esp {
         out.extend_from_slice(&body);
         Ok(())
     }
+
+    /// Resolved SPI for inspection (explicit, decoded, or the builder default).
+    fn display_spi(&self) -> u32 {
+        self.spi.value().copied().unwrap_or(DEFAULT_ESP_SPI)
+    }
+
+    /// Resolved Sequence Number for inspection.
+    fn display_sequence(&self) -> u32 {
+        self.sequence
+            .value()
+            .copied()
+            .unwrap_or(DEFAULT_ESP_SEQUENCE)
+    }
+
+    /// IANA-style encryption label for summaries: the SA's encryption algorithm,
+    /// or `opaque` when no SA is attached (pre-encrypted or keyless body).
+    fn display_enc_label(&self) -> String {
+        match self.sa.as_ref() {
+            Some(sa) => esp_encryption_label(sa.enc),
+            None => "opaque".to_string(),
+        }
+    }
+
+    /// Resolved ICV length in octets for inspection, when known.
+    ///
+    /// A caller-pinned `icv` wins; otherwise it comes from the SA's AEAD tag
+    /// length (AEAD suites) or its separate integrity algorithm (`None` for the
+    /// keyless / opaque / NULL+NONE paths that emit no ICV).
+    fn display_icv_len(&self) -> Option<usize> {
+        if let Some(icv) = self.icv.value() {
+            return Some(icv.len());
+        }
+        let sa = self.sa.as_ref()?;
+        if sa.enc.is_aead() {
+            sa.enc.icv_len()
+        } else {
+            sa.integ.icv_len()
+        }
+    }
 }
 
 impl Layer for Esp {
@@ -497,11 +567,83 @@ impl Layer for Esp {
         "Esp"
     }
 
+    fn summary(&self) -> String {
+        let mode = self
+            .sa
+            .as_ref()
+            .map(|sa| sa.mode.label())
+            .unwrap_or("transport");
+        format!(
+            "Esp(spi=0x{:08x}, seq={}, enc={}, mode={})",
+            self.display_spi(),
+            self.display_sequence(),
+            self.display_enc_label(),
+            mode,
+        )
+    }
+
+    fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        // Never print key or salt bytes — only algorithm labels and lengths.
+        let mut fields = vec![
+            ("spi", format!("0x{:08x}", self.display_spi())),
+            ("sequence", self.display_sequence().to_string()),
+            (
+                "next_header",
+                self.next_header
+                    .value()
+                    .map(|nh| nh.to_string())
+                    .unwrap_or_else(|| "auto".to_string()),
+            ),
+            ("encryption", self.display_enc_label()),
+            (
+                "integrity",
+                self.sa
+                    .as_ref()
+                    .map(|sa| esp_integrity_label(sa.integ))
+                    .unwrap_or_else(|| "none".to_string()),
+            ),
+            (
+                "icv_len",
+                self.display_icv_len()
+                    .map(|len| len.to_string())
+                    .unwrap_or_else(|| "auto".to_string()),
+            ),
+        ];
+        if let Some(opaque) = self.opaque.as_deref() {
+            fields.push(("body_len", opaque.len().to_string()));
+            fields.push(("opaque", hex_bytes(opaque)));
+        }
+        fields
+    }
+
     fn encoded_len(&self) -> usize {
-        // A context-free capacity hint: the fixed SPI + Sequence header. The true
-        // on-wire size depends on the encrypted trailer and ICV, finalized in a
-        // later step.
-        ESP_HEADER_LEN
+        // A context-free capacity hint: the fixed SPI + Sequence header plus any
+        // opaque body. The true on-wire size of a sealed body depends on the
+        // following layers and is refined by `encoded_len_with_context`.
+        ESP_HEADER_LEN + self.opaque.as_deref().map_or(0, <[u8]>::len)
+    }
+
+    fn encoded_len_with_context(&self, ctx: &LayerContext<'_>) -> usize {
+        // Best-effort on-wire estimate. The opaque path is exact (SPI||Seq||body).
+        // For a sealed body, compile the layer through its own context and measure
+        // the result; this also keeps `show()` from over-counting the consumed
+        // tail (the body already embeds the following layers). On any compile
+        // error fall back to the context-free header-only hint.
+        if self.opaque.is_some() {
+            return self.encoded_len();
+        }
+        let mut out = Vec::new();
+        match self.compile(ctx, &mut out) {
+            Ok(()) => out.len(),
+            Err(_) => self.encoded_len(),
+        }
+    }
+
+    fn consumes_following(&self) -> bool {
+        // ESP always emits its body (encrypted, NULL, or keyless) from the
+        // following layers (or an opaque blob). The packet compiler must not also
+        // emit those following layers as a cleartext tail.
+        true
     }
 
     fn compile(&self, ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
@@ -1184,5 +1326,132 @@ mod tests {
         assert_eq!(&esp_bytes[0..4], &DEFAULT_ESP_SPI.to_be_bytes());
         assert_eq!(&esp_bytes[4..8], &DEFAULT_ESP_SEQUENCE.to_be_bytes());
         assert_eq!(&esp_bytes[ESP_HEADER_LEN..], &payload()[..]);
+    }
+
+    // --- whole-packet compile + tail consumption (step 15) ----------------
+
+    /// Build a representative AEAD SA for the whole-packet tests.
+    fn whole_packet_sa() -> SecurityAssociation {
+        SecurityAssociation::new(0x0000_2000)
+            .encryption(EncryptionAlgorithm::AesGcm16, aes_key())
+            .salt(vec![0xAA, 0xBB, 0xCC, 0xDD])
+    }
+
+    #[test]
+    fn whole_packet_compile_consumes_following_layers() {
+        // `Ipv4 / Esp::secured(sa) / Tcp / Raw` must NOT emit a cleartext Tcp/Raw
+        // tail after the encrypted ESP body — ESP consumes the following layers.
+        let sa = whole_packet_sa();
+        let iv = aead_iv();
+        let esp = Esp::secured(sa.clone())
+            .spi(0x0000_2000)
+            .sequence(1)
+            .iv(iv.clone());
+
+        let ipv4 = Ipv4::new()
+            .protocol(crate::protocols::ipv4::IPPROTO_ESP)
+            .src("192.0.2.1".parse().unwrap())
+            .dst("192.0.2.2".parse().unwrap());
+        let tcp = crate::protocols::Tcp::new();
+        let packet: Packet = Packet::from_layer(ipv4) / esp / tcp / Raw::from_bytes([0xDEu8; 4]);
+
+        // The ESP layer marks itself as consuming the following layers.
+        assert!(packet.get(1).unwrap().consumes_following());
+
+        let whole = packet.compile().unwrap();
+
+        // Compile the IPv4 header and the ESP datagram independently, then assert
+        // the whole-packet output is EXACTLY IPv4 header + ESP body — no Tcp/Raw
+        // cleartext tail double-emitted after the encrypted body.
+        let ip_bytes = {
+            let mut out = Vec::new();
+            let ctx = LayerContext::new(&packet, 0);
+            packet.get(0).unwrap().compile(&ctx, &mut out).unwrap();
+            out
+        };
+        let esp_bytes = {
+            let mut out = Vec::new();
+            let ctx = LayerContext::new(&packet, 1);
+            packet.get(1).unwrap().compile(&ctx, &mut out).unwrap();
+            out
+        };
+        assert_eq!(whole.len(), ip_bytes.len() + esp_bytes.len());
+        assert_eq!(&whole.as_bytes()[..ip_bytes.len()], &ip_bytes[..]);
+        assert_eq!(&whole.as_bytes()[ip_bytes.len()..], &esp_bytes[..]);
+
+        // And the IPv4 header advertises ESP (protocol 50).
+        assert_eq!(ip_bytes[9], crate::protocols::ipv4::IPPROTO_ESP);
+    }
+
+    #[test]
+    fn whole_packet_encoded_len_excludes_consumed_tail() {
+        // `encoded_len()` (used by `show()`) must stop after the ESP layer so the
+        // consumed Tcp/Raw tail is not counted twice. It equals IPv4 + ESP body.
+        let sa = whole_packet_sa();
+        let esp = Esp::secured(sa).spi(0x0000_2000).sequence(1).iv(aead_iv());
+
+        let ipv4 = Ipv4::new()
+            .protocol(crate::protocols::ipv4::IPPROTO_ESP)
+            .src("192.0.2.1".parse().unwrap())
+            .dst("192.0.2.2".parse().unwrap());
+        let tcp = crate::protocols::Tcp::new();
+        let packet: Packet = Packet::from_layer(ipv4) / esp / tcp / Raw::from_bytes([0xDEu8; 4]);
+
+        // The compiled length and the reported encoded_len agree (no over-count).
+        assert_eq!(packet.encoded_len(), packet.compile().unwrap().len());
+    }
+
+    #[test]
+    fn summary_reports_spi_and_algorithm_without_key_bytes() {
+        let sa = SecurityAssociation::new(0x0000_2000)
+            .encryption(EncryptionAlgorithm::AesGcm16, vec![0xDEu8; 16])
+            .salt(vec![0xBEu8; 4]);
+        let esp = Esp::secured(sa).spi(0x0000_2000).sequence(7);
+        let summary = esp.summary();
+
+        assert_eq!(
+            summary,
+            "Esp(spi=0x00002000, seq=7, enc=AES_GCM_16, mode=transport)"
+        );
+        // No run of repeated key/salt bytes may appear in the summary.
+        assert!(!summary.to_lowercase().contains("dede"));
+        assert!(!summary.to_lowercase().contains("bebe"));
+    }
+
+    #[test]
+    fn summary_reports_opaque_when_no_sa() {
+        let esp = Esp::new().spi(0x10).sequence(3);
+        assert_eq!(
+            esp.summary(),
+            "Esp(spi=0x00000010, seq=3, enc=opaque, mode=transport)"
+        );
+    }
+
+    #[test]
+    fn show_contains_spi_and_algorithm_without_key_bytes() {
+        let sa = SecurityAssociation::new(0x0000_2000)
+            .encryption(EncryptionAlgorithm::AesCbc, vec![0xDEu8; 16])
+            .integrity(IntegrityAlgorithm::HmacSha2_256_128, vec![0xBEu8; 32]);
+        let iv = (0u8..16).collect::<Vec<u8>>();
+        let esp = Esp::secured(sa)
+            .spi(0x0000_2000)
+            .sequence(1)
+            .next_header(IPPROTO_TCP)
+            .iv(iv);
+
+        let ipv4 = Ipv4::new()
+            .protocol(crate::protocols::ipv4::IPPROTO_ESP)
+            .src("192.0.2.1".parse().unwrap())
+            .dst("192.0.2.2".parse().unwrap());
+        let packet: Packet = Packet::from_layer(ipv4) / esp / Raw::from_bytes(b"hello!!!");
+        let show = packet.show();
+
+        // The inspection output names the SPI and the algorithm labels.
+        assert!(show.contains("spi: 0x00002000"));
+        assert!(show.contains("AES_CBC"));
+        assert!(show.contains("HMAC_SHA2_256_128"));
+        // Key material never appears (no run of the 0xDE/0xBE key bytes).
+        assert!(!show.to_lowercase().contains("dede"));
+        assert!(!show.to_lowercase().contains("bebe"));
     }
 }

@@ -86,6 +86,19 @@ pub trait Layer: fmt::Debug + Send + Sync + 'static {
     /// Encode this layer into `out`.
     fn compile(&self, ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()>;
 
+    /// Whether this layer's `compile()` emits all following layers itself.
+    ///
+    /// Most layers encode only their own bytes and let the packet compiler walk
+    /// on to the next layer. An encapsulating layer such as ESP, however, gathers
+    /// the following layers, encrypts them, and emits them inside its own body
+    /// (see [`crate::protocols::ipsec::Esp`]). When this returns `true`,
+    /// [`Packet::compile_into`] must **not** also emit the following layers — they
+    /// have already been consumed — so the cleartext tail is not double-emitted
+    /// after the encrypted body. Defaults to `false` for every ordinary layer.
+    fn consumes_following(&self) -> bool {
+        false
+    }
+
     /// Return pseudo-header data for a following transport layer, when present.
     fn transport_checksum_context(
         &self,
@@ -413,14 +426,17 @@ impl Packet {
 
     /// Return the encoded byte length implied by the current layers.
     pub fn encoded_len(&self) -> usize {
-        self.layers
-            .iter()
-            .enumerate()
-            .map(|(index, layer)| {
-                let ctx = LayerContext::new(self, index);
-                layer.encoded_len_with_context(&ctx)
-            })
-            .sum()
+        let mut total = 0;
+        for (index, layer) in self.layers.iter().enumerate() {
+            let ctx = LayerContext::new(self, index);
+            total += layer.encoded_len_with_context(&ctx);
+            // An encapsulating layer accounts for the following layers inside its
+            // own body; stop summing so the consumed tail is not counted twice.
+            if layer.consumes_following() {
+                break;
+            }
+        }
+        total
     }
 
     /// Positional layer access.
@@ -495,6 +511,12 @@ impl Packet {
         for (index, layer) in self.layers.iter().enumerate() {
             let ctx = LayerContext::new(self, index);
             layer.compile(&ctx, out)?;
+            // An encapsulating layer (e.g. ESP) emits all following layers inside
+            // its own body. Stop here so the consumed tail is not re-emitted as a
+            // cleartext duplicate after the encrypted body.
+            if layer.consumes_following() {
+                break;
+            }
         }
         Ok(())
     }
