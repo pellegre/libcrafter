@@ -22,10 +22,14 @@ use crate::protocols::icmp::{Icmpv4, Icmpv6};
 use crate::protocols::ip::shared::protocol_numbers::{
     IPPROTO_ICMP, IPPROTO_ICMPV6, IPPROTO_IPV6, IPPROTO_NO_NEXT, IPPROTO_TCP, IPPROTO_UDP,
 };
-use crate::protocols::ipsec::sa::{IpsecMode, SecurityAssociation};
+use crate::protocols::ipsec::sa::{
+    EncryptionAlgorithm, IntegrityAlgorithm, IpsecMode, SecurityAssociation,
+};
 use crate::protocols::ipv4::Ipv4;
 use crate::protocols::ipv6::Ipv6;
-use crate::protocols::transport::common::{impl_layer_div, impl_layer_object, payload_bytes_after};
+use crate::protocols::transport::common::{
+    hex_bytes, impl_layer_div, impl_layer_object, payload_bytes_after,
+};
 use crate::protocols::{Tcp, Udp};
 use crate::{CrafterError, Result};
 
@@ -503,6 +507,33 @@ impl Ah {
         out.extend_from_slice(&header);
         Ok(())
     }
+
+    /// Resolved SPI for inspection (explicit, decoded, or the builder default).
+    fn display_spi(&self) -> u32 {
+        self.spi.value().copied().unwrap_or(DEFAULT_AH_SPI)
+    }
+
+    /// Resolved Sequence Number for inspection.
+    fn display_sequence(&self) -> u32 {
+        self.sequence
+            .value()
+            .copied()
+            .unwrap_or(DEFAULT_AH_SEQUENCE)
+    }
+
+    /// IANA-style label for the algorithm that drives the AH ICV (inspection).
+    ///
+    /// AH authenticates with the SA's separate integrity algorithm, except when
+    /// the SA carries an AEAD encryption suite — then the AEAD tag supplies the
+    /// ICV (RFC 4543 GMAC-style integrity) and the label reflects that suite.
+    /// With no SA the ICV is opaque (a caller `icv` override or empty).
+    fn display_integ_label(&self) -> String {
+        match self.sa.as_ref() {
+            Some(sa) if sa.enc.is_aead() => ah_encryption_label(sa.enc),
+            Some(sa) => ah_integrity_label(sa.integ),
+            None => "opaque".to_string(),
+        }
+    }
 }
 
 /// Map a following layer to the AH Next Header value for the given mode
@@ -541,17 +572,114 @@ fn layer_ah_next_header(layer: &dyn Layer, _mode: IpsecMode) -> Option<u8> {
     None
 }
 
+/// Stable IANA-style label for an AH integrity algorithm (inspection only).
+///
+/// Mirrors the SA's redacted summary labels; it never touches key material.
+fn ah_integrity_label(alg: IntegrityAlgorithm) -> String {
+    match alg {
+        IntegrityAlgorithm::None => "NONE".to_string(),
+        IntegrityAlgorithm::HmacSha1_96 => "HMAC_SHA1_96".to_string(),
+        IntegrityAlgorithm::AesXcbc96 => "AES_XCBC_96".to_string(),
+        IntegrityAlgorithm::AesGmac => "AES_128_GMAC".to_string(),
+        IntegrityAlgorithm::HmacSha2_256_128 => "HMAC_SHA2_256_128".to_string(),
+        IntegrityAlgorithm::HmacSha2_384_192 => "HMAC_SHA2_384_192".to_string(),
+        IntegrityAlgorithm::HmacSha2_512_256 => "HMAC_SHA2_512_256".to_string(),
+        IntegrityAlgorithm::Unknown(id) => format!("UNKNOWN({id})"),
+    }
+}
+
+/// Stable IANA-style label for an AH AEAD encryption algorithm (inspection
+/// only), used when the SA's encryption suite supplies the ICV directly
+/// (RFC 4543 GMAC-style integrity). Never touches key material.
+fn ah_encryption_label(alg: EncryptionAlgorithm) -> String {
+    match alg {
+        EncryptionAlgorithm::Null => "NULL".to_string(),
+        EncryptionAlgorithm::AesCbc => "AES_CBC".to_string(),
+        EncryptionAlgorithm::AesCtr => "AES_CTR".to_string(),
+        EncryptionAlgorithm::AesCcm8 => "AES_CCM_8".to_string(),
+        EncryptionAlgorithm::AesGcm16 => "AES_GCM_16".to_string(),
+        EncryptionAlgorithm::ChaCha20Poly1305 => "CHACHA20_POLY1305".to_string(),
+        EncryptionAlgorithm::Unknown(id) => format!("UNKNOWN({id})"),
+    }
+}
+
 impl Layer for Ah {
     fn name(&self) -> &'static str {
         "Ah"
     }
 
+    fn summary(&self) -> String {
+        format!(
+            "Ah(spi=0x{:08x}, seq={}, integ={}, nh={})",
+            self.display_spi(),
+            self.display_sequence(),
+            self.display_integ_label(),
+            self.next_header
+                .value()
+                .map(|nh| nh.to_string())
+                .unwrap_or_else(|| "auto".to_string()),
+        )
+    }
+
+    fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        // Never print key or salt bytes — only algorithm labels, lengths, and an
+        // explicit (caller-pinned or decoded) ICV. The on-wire ICV defaults to
+        // the IPv4 (32-bit) alignment for a context-free view; the exact padded
+        // length under the enclosing IP version is reflected by
+        // `encoded_len_with_context`.
+        let mut fields = vec![
+            (
+                "next_header",
+                self.next_header
+                    .value()
+                    .map(|nh| nh.to_string())
+                    .unwrap_or_else(|| "auto".to_string()),
+            ),
+            (
+                "payload_len",
+                self.payload_len
+                    .value()
+                    .map(|len| len.to_string())
+                    .unwrap_or_else(|| "auto".to_string()),
+            ),
+            (
+                "reserved",
+                format!(
+                    "0x{:04x}",
+                    self.reserved
+                        .value()
+                        .copied()
+                        .unwrap_or(DEFAULT_AH_RESERVED)
+                ),
+            ),
+            ("spi", format!("0x{:08x}", self.display_spi())),
+            ("sequence", self.display_sequence().to_string()),
+            ("integrity", self.display_integ_label()),
+        ];
+        // An explicit/decoded ICV is shown verbatim (it is not key material);
+        // otherwise report the boundary-padded length the SA produces.
+        match self.icv.value() {
+            Some(icv) => fields.push(("icv", hex_bytes(icv))),
+            None => fields.push(("icv_len", self.effective_icv_len(4).to_string())),
+        }
+        fields
+    }
+
     fn encoded_len(&self) -> usize {
-        // Context-free capacity hint: the fixed 12-octet header plus the unpadded
-        // ICV length. The exact on-wire size (boundary-padded ICV) depends on the
-        // enclosing IP version and is refined by `encoded_len_with_context`; the
-        // full summary/inspection surface is finalized in a later step.
-        header::AH_FIXED_LEN + self.unpadded_icv_len()
+        // Context-free on-wire size: the fixed 12-octet header plus the ICV padded
+        // to the IPv4 (32-bit) alignment. The exact size for an IPv6-enclosed AH
+        // (64-bit ICV alignment) is refined by `encoded_len_with_context` using
+        // the preceding IP version.
+        header::AH_FIXED_LEN + self.effective_icv_len(4)
+    }
+
+    fn encoded_len_with_context(&self, ctx: &LayerContext<'_>) -> usize {
+        // AH does not consume the following layers, so its own size is just the
+        // fixed header plus the boundary-padded ICV. Refine the ICV alignment with
+        // the preceding IP version (IPv6 pads to 64 bits, IPv4 to 32); fall back to
+        // the context-free IPv4 estimate when there is no enclosing IP header.
+        let ip_version = Self::preceding_ip_version(ctx).unwrap_or(4);
+        header::AH_FIXED_LEN + self.effective_icv_len(ip_version)
     }
 
     fn compile(&self, ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
@@ -915,5 +1043,90 @@ mod tests {
         assert_eq!(&whole[ah_start..ah_start + ah_bytes.len()], &ah_bytes[..]);
         // The 4-octet Raw payload survives in the clear at the end of the packet.
         assert_eq!(&whole[whole.len() - 4..], &[0xDE, 0xAD, 0xBE, 0xEF]);
+    }
+
+    // --- Layer surface: compose / summary / show --------------------------
+
+    #[test]
+    fn ipv4_ah_tcp_composes_and_compiles() {
+        // `Ipv4 / Ah::secured(sa) / Tcp` builds a three-layer stack that compiles
+        // end-to-end: AH inserts its header+ICV between the IPv4 header and the
+        // cleartext TCP segment (AH authenticates, it does not consume the tail).
+        let sa = SecurityAssociation::new(0x0000_2000)
+            .integrity(IntegrityAlgorithm::HmacSha2_256_128, vec![0xABu8; 32]);
+        let ipv4 = Ipv4::new()
+            .protocol(IPPROTO_AH)
+            .src("192.0.2.1".parse().unwrap())
+            .dst("192.0.2.2".parse().unwrap());
+
+        let packet: Packet = ipv4 / Ah::secured(sa) / Tcp::new();
+        assert_eq!(packet.len(), 3);
+
+        let bytes = packet.compile().unwrap();
+        // IPv4 header (20) + AH header (12) + ICV (16) + TCP header (20) = 68.
+        assert_eq!(bytes.len(), 20 + 12 + 16 + 20);
+    }
+
+    #[test]
+    fn summary_carries_spi_and_algorithm_without_key_bytes() {
+        // The AH layer summary names the SPI and the integrity algorithm but never
+        // the key. The integrity key is `0xAB` × 32, so a four-octet hex run of
+        // "ab" would betray key material in the human-facing string.
+        let sa = SecurityAssociation::new(0x0000_2000)
+            .integrity(IntegrityAlgorithm::HmacSha2_256_128, vec![0xABu8; 32]);
+        let ah = Ah::secured(sa).spi(0x0000_2000).sequence(1);
+
+        let summary = ah.summary();
+        assert!(summary.contains("spi=0x00002000"), "summary: {summary}");
+        assert!(
+            summary.contains("integ=HMAC_SHA2_256_128"),
+            "summary: {summary}"
+        );
+        assert!(summary.contains("seq=1"), "summary: {summary}");
+        // No key bytes: a run of the redacted key octet must not appear.
+        assert!(!summary.contains("ab ab ab ab"), "summary leaked key bytes");
+    }
+
+    #[test]
+    fn show_carries_spi_and_algorithm_without_key_bytes() {
+        // `show()` walks each layer's `inspection_fields()`; the AH row must carry
+        // the SPI and integrity algorithm and never the key material.
+        let sa = SecurityAssociation::new(0x0000_2000)
+            .integrity(IntegrityAlgorithm::HmacSha2_256_128, vec![0xABu8; 32]);
+        let ipv4 = Ipv4::new()
+            .protocol(IPPROTO_AH)
+            .src("192.0.2.1".parse().unwrap())
+            .dst("192.0.2.2".parse().unwrap());
+        let packet: Packet = ipv4 / Ah::secured(sa).spi(0x0000_2000) / Tcp::new();
+
+        let show = packet.show();
+        assert!(show.contains("Ah"), "show: {show}");
+        assert!(show.contains("spi: 0x00002000"), "show: {show}");
+        assert!(
+            show.contains("integrity: HMAC_SHA2_256_128"),
+            "show: {show}"
+        );
+        // The redacted ICV is reported by length, not bytes; and no key leaks.
+        assert!(show.contains("icv_len: 16"), "show: {show}");
+        assert!(!show.contains("ab ab ab ab"), "show leaked key bytes");
+    }
+
+    #[test]
+    fn inspection_fields_show_explicit_icv_and_auto_placeholders() {
+        // A bare AH with an explicit ICV reports it verbatim (it is not key
+        // material), and the auto-filled Next Header / Payload Len read "auto".
+        let ah = Ah::new().icv(vec![0xDE, 0xAD, 0xBE, 0xEF]);
+        let fields = ah.inspection_fields();
+        let lookup = |name: &str| {
+            fields
+                .iter()
+                .find(|(field, _)| *field == name)
+                .map(|(_, value)| value.clone())
+        };
+        assert_eq!(lookup("next_header").as_deref(), Some("auto"));
+        assert_eq!(lookup("payload_len").as_deref(), Some("auto"));
+        assert_eq!(lookup("integrity").as_deref(), Some("opaque"));
+        // The 4-octet ICV pads to 12 on IPv4 alignment and is shown verbatim.
+        assert_eq!(lookup("icv").as_deref(), Some("de ad be ef"));
     }
 }
