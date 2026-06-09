@@ -3,10 +3,12 @@
 //! A lightweight per-packet crypto context carrying the SPI, mode,
 //! encryption/integrity algorithms, keys, salt, and ESN flag that drive
 //! ESP/AH and IKEv2 SK crypto. It is not a policy database (SAD/SPD).
-//! The seal/open crypto driver is added by later steps; the
+//! The [`crypto`] submodule provides the [`crypto::seal`]/[`crypto::open`]
+//! driver that routes an SA to the right transforms; the
 //! algorithm-identifier enums live in `algorithms`.
 
 mod algorithms;
+pub mod crypto;
 
 pub use algorithms::{
     EncryptionAlgorithm, IntegrityAlgorithm, AUTH_AES_128_GMAC, AUTH_AES_XCBC_96,
@@ -14,6 +16,7 @@ pub use algorithms::{
     AUTH_NONE, ENCR_AES_CBC, ENCR_AES_CCM_8, ENCR_AES_CTR, ENCR_AES_GCM_16, ENCR_CHACHA20_POLY1305,
     ENCR_NULL,
 };
+pub use crypto::{iv_requirement, open, seal, IvRequirement, SealOutput};
 
 use crate::{CrafterError, Result};
 
@@ -226,13 +229,19 @@ impl std::fmt::Debug for SecurityAssociation {
             .field("spi", &format_args!("0x{:08x}", self.spi))
             .field("mode", &self.mode)
             .field("enc", &self.enc)
-            .field("enc_key", &format_args!("<{} bytes redacted>", self.enc_key.len()))
+            .field(
+                "enc_key",
+                &format_args!("<{} bytes redacted>", self.enc_key.len()),
+            )
             .field("integ", &self.integ)
             .field(
                 "integ_key",
                 &format_args!("<{} bytes redacted>", self.integ_key.len()),
             )
-            .field("salt", &format_args!("<{} bytes redacted>", self.salt.len()))
+            .field(
+                "salt",
+                &format_args!("<{} bytes redacted>", self.salt.len()),
+            )
             .field("esn", &self.esn)
             .finish()
     }
