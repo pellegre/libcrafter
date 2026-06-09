@@ -10,6 +10,8 @@
 
 pub mod header;
 
+pub(crate) mod decode;
+
 use crate::field::Field;
 use crate::packet::{Layer, LayerContext};
 use crate::protocols::icmp::{Icmpv4, Icmpv6};
