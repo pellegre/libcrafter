@@ -289,48 +289,26 @@ impl Esp {
         (1..=pad_len as u8).collect()
     }
 
-    /// Compile the cipher + separate-integrity (non-AEAD) ESP datagram.
+    /// Build the ESP plaintext, AAD, explicit IV, and SPI/Seq for `compile()`.
     ///
-    /// Implements the RFC 4303 §2 encrypt-then-MAC layout for AES-CBC / AES-CTR
-    /// (and `NULL`) paired with a separate HMAC/XCBC/GMAC integrity algorithm:
+    /// Both the cipher+integrity and the AEAD paths share the same RFC 4303 §2
+    /// trailer assembly and integrity prefix:
     ///
-    /// 1. Gather the upper-layer bytes (the following layers) as the plaintext.
-    /// 2. Append `pad || pad-length || next-header` (RFC 4303 §2.4–2.6); the
-    ///    padding is computed to the cipher block / 4-octet boundary unless the
-    ///    caller pinned an explicit pad.
-    /// 3. Encrypt the padded plaintext under the SA's cipher with the explicit
-    ///    IV (caller override, else an all-zero IV of the cipher's IV length).
-    /// 4. Compute the ICV over `SPI||Seq || IV || ciphertext` via the SA's
-    ///    integrity algorithm (caller `icv` override wins).
-    /// 5. Emit `SPI || Seq || IV || ciphertext || ICV`.
+    /// - **plaintext** = `upper-layer bytes || pad || pad-length || next-header`,
+    ///   the padding computed to the cipher block / 4-octet boundary (RFC 4303
+    ///   §2.4) unless the caller pinned an explicit `pad`.
+    /// - **AAD** = `SPI || Seq` — for cipher+integrity this is the integrity
+    ///   prefix, for AEAD this is the authenticated data (the ESN high-order bits
+    ///   are folded in by Step 20).
+    /// - **iv** = the caller `iv` override, else a deterministic all-zero IV of
+    ///   the cipher's IV length.
     ///
-    /// This path rejects AEAD suites, `NULL`+`NONE`, and the no-SA case with a
-    /// structured error — those branches are filled by Steps 13/14.
-    fn compile_with_cipher(&self, ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
-        let sa = self.sa.as_ref().ok_or_else(|| {
-            CrafterError::invalid_field_value(
-                "esp.compile",
-                "ESP compile without a SecurityAssociation is not supported in this build step",
-            )
-        })?;
-
-        // AEAD and the no-integrity NULL case are handled by later steps.
-        if sa.enc.is_aead() {
-            return Err(CrafterError::invalid_field_value(
-                "esp.compile",
-                "AEAD ESP compilation is unsupported in this build step",
-            ));
-        }
-        if matches!(
-            sa.integ,
-            crate::protocols::ipsec::sa::IntegrityAlgorithm::None
-        ) {
-            return Err(CrafterError::invalid_field_value(
-                "esp.compile",
-                "NULL/opaque ESP compilation is unsupported in this build step",
-            ));
-        }
-
+    /// Returns `(spi, sequence, plaintext, aad, iv)`.
+    fn esp_seal_inputs(
+        &self,
+        ctx: &LayerContext<'_>,
+        sa: &SecurityAssociation,
+    ) -> Result<(u32, u32, Vec<u8>, Vec<u8>, Vec<u8>)> {
         let spi = self.spi.value().copied().unwrap_or(DEFAULT_ESP_SPI);
         let sequence = self
             .sequence
@@ -338,10 +316,10 @@ impl Esp {
             .copied()
             .unwrap_or(DEFAULT_ESP_SEQUENCE);
 
-        // 1. Upper-layer plaintext = every following layer's bytes.
+        // Upper-layer plaintext = every following layer's bytes.
         let payload = payload_bytes_after(*ctx)?;
 
-        // 2. Trailer: pad || pad-length || next-header (RFC 4303 §2.4–2.6).
+        // Trailer: pad || pad-length || next-header (RFC 4303 §2.4–2.6).
         let block_size = sa.enc.block_size();
         let pad = self.effective_pad(payload.len(), block_size);
         let pad_len = u8::try_from(pad.len()).map_err(|_| {
@@ -360,23 +338,109 @@ impl Esp {
         plaintext.push(pad_len);
         plaintext.push(next_header);
 
-        // 3. Explicit IV: caller override, else a deterministic all-zero IV.
+        // Integrity / AEAD prefix = SPI || Seq (ESN high bits added in Step 20).
+        let mut aad = Vec::with_capacity(ESP_HEADER_LEN);
+        aad.extend_from_slice(&spi.to_be_bytes());
+        aad.extend_from_slice(&sequence.to_be_bytes());
+
+        // Explicit IV: caller override, else a deterministic all-zero IV.
         let iv = match self.iv.value() {
             Some(iv) => iv.clone(),
             None => default_iv(sa.enc.iv_len()),
         };
 
-        // 4. Seal: cipher encrypt, then ICV over SPI||Seq || IV || ciphertext.
-        let mut aad = Vec::with_capacity(ESP_HEADER_LEN);
-        aad.extend_from_slice(&spi.to_be_bytes());
-        aad.extend_from_slice(&sequence.to_be_bytes());
+        Ok((spi, sequence, plaintext, aad, iv))
+    }
+
+    /// Compile the cipher + separate-integrity (non-AEAD) ESP datagram.
+    ///
+    /// Implements the RFC 4303 §2 encrypt-then-MAC layout for AES-CBC / AES-CTR
+    /// (and `NULL`) paired with a separate HMAC/XCBC/GMAC integrity algorithm:
+    ///
+    /// 1. Gather the upper-layer bytes (the following layers) as the plaintext.
+    /// 2. Append `pad || pad-length || next-header` (RFC 4303 §2.4–2.6); the
+    ///    padding is computed to the cipher block / 4-octet boundary unless the
+    ///    caller pinned an explicit pad.
+    /// 3. Encrypt the padded plaintext under the SA's cipher with the explicit
+    ///    IV (caller override, else an all-zero IV of the cipher's IV length).
+    /// 4. Compute the ICV over `SPI||Seq || IV || ciphertext` via the SA's
+    ///    integrity algorithm (caller `icv` override wins).
+    /// 5. Emit `SPI || Seq || IV || ciphertext || ICV`.
+    ///
+    /// This path rejects the `NULL`+`NONE` (no-integrity) case with a structured
+    /// error — that branch is filled by Step 14.
+    fn compile_with_cipher(&self, ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
+        let sa = self.sa.as_ref().ok_or_else(|| {
+            CrafterError::invalid_field_value(
+                "esp.compile",
+                "ESP compile without a SecurityAssociation is not supported in this build step",
+            )
+        })?;
+
+        // The no-integrity NULL case (NULL+NONE) is handled by Step 14.
+        if matches!(
+            sa.integ,
+            crate::protocols::ipsec::sa::IntegrityAlgorithm::None
+        ) {
+            return Err(CrafterError::invalid_field_value(
+                "esp.compile",
+                "NULL/opaque ESP compilation is unsupported in this build step",
+            ));
+        }
+
+        let (_spi, _sequence, plaintext, aad, iv) = self.esp_seal_inputs(ctx, sa)?;
+
+        // Seal: cipher encrypt, then ICV over SPI||Seq || IV || ciphertext.
         let sealed = seal(sa, &iv, &aad, &plaintext)?;
         let icv = match self.icv.value() {
             Some(icv) => icv.clone(),
             None => sealed.icv,
         };
 
-        // 5. Wire layout: SPI || Seq || IV || ciphertext || ICV.
+        // Wire layout: SPI || Seq || IV || ciphertext || ICV.
+        out.reserve(ESP_HEADER_LEN + iv.len() + sealed.ciphertext.len() + icv.len());
+        out.extend_from_slice(&aad);
+        out.extend_from_slice(&iv);
+        out.extend_from_slice(&sealed.ciphertext);
+        out.extend_from_slice(&icv);
+        Ok(())
+    }
+
+    /// Compile the AEAD ESP datagram (AES-GCM, AES-CCM, ChaCha20-Poly1305).
+    ///
+    /// Implements the RFC 4106 / 4309 / 7634 combined-mode layout: a single seal
+    /// produces ciphertext and the authentication tag (the ICV). Block alignment
+    /// is not required for these stream/AEAD suites, but RFC 4303 still pads to a
+    /// 4-octet boundary (handled by `effective_pad`); a caller `pad` override is
+    /// honored verbatim.
+    ///
+    /// 1. Gather the upper-layer bytes and append `pad || pad-length ||
+    ///    next-header` to form the plaintext.
+    /// 2. AAD = `SPI || Seq` (the ESN high-order bits are folded in by Step 20).
+    /// 3. The nonce is `sa.salt || iv`, assembled inside [`seal`]; the IV is the
+    ///    caller override or a deterministic 8-octet IV.
+    /// 4. Emit `SPI || Seq || IV || ciphertext || tag(ICV)`; a caller `icv`
+    ///    override replaces the AEAD tag verbatim for deliberately malformed
+    ///    output.
+    fn compile_with_aead(&self, ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
+        let sa = self.sa.as_ref().ok_or_else(|| {
+            CrafterError::invalid_field_value(
+                "esp.compile",
+                "ESP compile without a SecurityAssociation is not supported in this build step",
+            )
+        })?;
+
+        let (_spi, _sequence, plaintext, aad, iv) = self.esp_seal_inputs(ctx, sa)?;
+
+        // Seal: the AEAD authenticates `aad` and returns the tag as the ICV; the
+        // nonce `sa.salt || iv` is assembled inside `seal`.
+        let sealed = seal(sa, &iv, &aad, &plaintext)?;
+        let icv = match self.icv.value() {
+            Some(icv) => icv.clone(),
+            None => sealed.icv,
+        };
+
+        // Wire layout: SPI || Seq || IV || ciphertext || tag(ICV).
         out.reserve(ESP_HEADER_LEN + iv.len() + sealed.ciphertext.len() + icv.len());
         out.extend_from_slice(&aad);
         out.extend_from_slice(&iv);
@@ -399,11 +463,14 @@ impl Layer for Esp {
     }
 
     fn compile(&self, ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
-        // This build step implements only the cipher + separate-integrity
-        // (non-AEAD) path. AEAD, NULL/opaque, and the no-SA branches return a
-        // structured error from `compile_with_cipher` and are filled by Steps
-        // 13/14.
-        self.compile_with_cipher(ctx, out)
+        // Dispatch by the SA's encryption suite. AEAD suites (AES-GCM, AES-CCM,
+        // ChaCha20-Poly1305) take the combined-mode path; AES-CBC/CTR + separate
+        // integrity take the encrypt-then-MAC path. The NULL/opaque and no-SA
+        // branches return a structured error and are filled by Step 14.
+        match self.sa.as_ref() {
+            Some(sa) if sa.enc.is_aead() => self.compile_with_aead(ctx, out),
+            _ => self.compile_with_cipher(ctx, out),
+        }
     }
 
     impl_layer_object!(Esp);
@@ -783,22 +850,183 @@ mod tests {
         assert_eq!(*opened.last().unwrap(), IPPROTO_UDP);
     }
 
+    // --- compile (AEAD) golden vectors ------------------------------------
+
+    /// A 32-octet ChaCha20-Poly1305 key (fixed, documentation-only).
+    fn chacha_key() -> Vec<u8> {
+        vec![0x22u8; 32]
+    }
+
+    /// A fixed 8-octet AEAD explicit IV (the IV carried before the ciphertext).
+    fn aead_iv() -> Vec<u8> {
+        vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]
+    }
+
     #[test]
-    fn compile_rejects_aead_and_null_in_this_step() {
-        // AEAD compile is filled by Step 13; NULL+NONE / no-SA by Step 14.
-        let aead = Esp::secured(
-            SecurityAssociation::new(0x10)
-                .encryption(EncryptionAlgorithm::AesGcm16, aes_key())
-                .salt(vec![0u8; 4]),
-        )
-        .next_header(IPPROTO_TCP);
-        let err = compile_err(aead);
+    fn compile_aes_gcm_16_golden() {
+        // AES-GCM-16 (RFC 4106): AEAD, 16-octet ICV, 4-octet salt, 8-octet IV.
+        let sa = SecurityAssociation::new(0x0000_2000)
+            .encryption(EncryptionAlgorithm::AesGcm16, aes_key())
+            .salt(vec![0xAA, 0xBB, 0xCC, 0xDD]);
+        assert!(sa.validate().is_ok());
+
+        let iv = aead_iv();
+        let esp = Esp::secured(sa.clone())
+            .spi(0x0000_2000)
+            .sequence(1)
+            .next_header(IPPROTO_TCP)
+            .iv(iv.clone());
+
+        let (esp_bytes, ip_protocol) = compile_esp_over_ipv4(esp, &payload());
+
+        // The enclosing IPv4 datagram advertises ESP (protocol 50).
+        assert_eq!(ip_protocol, crate::protocols::ipv4::IPPROTO_ESP);
+
+        // Behavior-lock against the RFC-KAT-proven `seal` primitive (Steps 06/09).
+        let expected = expected_esp_bytes(&sa, 0x0000_2000, 1, &iv, IPPROTO_TCP, &payload());
+        assert_eq!(esp_bytes, expected);
+
+        // Structural locks: SPI || Seq prefix, then the 8-octet IV.
+        assert_eq!(&esp_bytes[0..4], &0x0000_2000u32.to_be_bytes());
+        assert_eq!(&esp_bytes[4..8], &1u32.to_be_bytes());
+        assert_eq!(&esp_bytes[ESP_HEADER_LEN..ESP_HEADER_LEN + 8], &iv[..]);
+        // AEAD imposes no block alignment, only the 4-octet boundary:
+        // payload(4) + padlen(1) + nh(1) = 6 → pad 2 → 8 ciphertext octets.
+        // GCM ICV (tag) is 16 octets.
+        assert_eq!(esp_bytes.len(), ESP_HEADER_LEN + 8 + 8 + 16);
+    }
+
+    #[test]
+    fn compile_chacha20_poly1305_golden() {
+        // ChaCha20-Poly1305 (RFC 7634): AEAD, 16-octet ICV, 32-octet key.
+        let sa = SecurityAssociation::new(0x0000_2000)
+            .encryption(EncryptionAlgorithm::ChaCha20Poly1305, chacha_key())
+            .salt(vec![0xA0, 0xA1, 0xA2, 0xA3]);
+        assert!(sa.validate().is_ok());
+
+        let iv = aead_iv();
+        let esp = Esp::secured(sa.clone())
+            .spi(0x0000_2000)
+            .sequence(1)
+            .next_header(IPPROTO_TCP)
+            .iv(iv.clone());
+
+        let (esp_bytes, ip_protocol) = compile_esp_over_ipv4(esp, &payload());
+
+        assert_eq!(ip_protocol, crate::protocols::ipv4::IPPROTO_ESP);
+
+        let expected = expected_esp_bytes(&sa, 0x0000_2000, 1, &iv, IPPROTO_TCP, &payload());
+        assert_eq!(esp_bytes, expected);
+
+        assert_eq!(&esp_bytes[0..4], &0x0000_2000u32.to_be_bytes());
+        assert_eq!(&esp_bytes[4..8], &1u32.to_be_bytes());
+        assert_eq!(&esp_bytes[ESP_HEADER_LEN..ESP_HEADER_LEN + 8], &iv[..]);
+        // payload(4) → pad to 4-octet boundary → 8 ciphertext octets; 16 ICV.
+        assert_eq!(esp_bytes.len(), ESP_HEADER_LEN + 8 + 8 + 16);
+    }
+
+    #[test]
+    fn compile_aes_ccm_8_golden() {
+        // AES-CCM-8 (RFC 4309): AEAD, 8-octet ICV, 3-octet salt, 8-octet IV.
+        let sa = SecurityAssociation::new(0x0000_2000)
+            .encryption(EncryptionAlgorithm::AesCcm8, aes_key())
+            .salt(vec![0xA0, 0xA1, 0xA2]);
+        assert!(sa.validate().is_ok());
+
+        let iv = aead_iv();
+        let esp = Esp::secured(sa.clone())
+            .spi(0x0000_2000)
+            .sequence(1)
+            .next_header(IPPROTO_TCP)
+            .iv(iv.clone());
+
+        let (esp_bytes, ip_protocol) = compile_esp_over_ipv4(esp, &payload());
+
+        assert_eq!(ip_protocol, crate::protocols::ipv4::IPPROTO_ESP);
+
+        let expected = expected_esp_bytes(&sa, 0x0000_2000, 1, &iv, IPPROTO_TCP, &payload());
+        assert_eq!(esp_bytes, expected);
+
+        assert_eq!(&esp_bytes[0..4], &0x0000_2000u32.to_be_bytes());
+        assert_eq!(&esp_bytes[4..8], &1u32.to_be_bytes());
+        assert_eq!(&esp_bytes[ESP_HEADER_LEN..ESP_HEADER_LEN + 8], &iv[..]);
+        // payload(4) → pad to 4-octet boundary → 8 ciphertext octets; 8 ICV.
+        assert_eq!(esp_bytes.len(), ESP_HEADER_LEN + 8 + 8 + 8);
+    }
+
+    #[test]
+    fn compile_aead_round_trips_through_seal_open() {
+        // The AEAD wire bytes are an openable ESP datagram: opening recovers the
+        // padded plaintext and confirms the next-header octet.
+        let sa = SecurityAssociation::new(0x0000_2000)
+            .encryption(EncryptionAlgorithm::AesGcm16, aes_key())
+            .salt(vec![0xAA, 0xBB, 0xCC, 0xDD]);
+        let iv = aead_iv();
+        let esp = Esp::secured(sa.clone())
+            .spi(0x0000_2000)
+            .sequence(1)
+            .next_header(IPPROTO_TCP)
+            .iv(iv.clone());
+        let (esp_bytes, _) = compile_esp_over_ipv4(esp, &payload());
+
+        let mut aad = Vec::new();
+        aad.extend_from_slice(&0x0000_2000u32.to_be_bytes());
+        aad.extend_from_slice(&1u32.to_be_bytes());
+        // GCM ICV is 16 octets; IV is 8 octets after the 8-octet ESP header.
+        let ct = &esp_bytes[ESP_HEADER_LEN + 8..esp_bytes.len() - 16];
+        let icv = &esp_bytes[esp_bytes.len() - 16..];
+        let opened = crate::protocols::ipsec::sa::open(&sa, &iv, &aad, ct, icv).unwrap();
+        assert_eq!(&opened[..4], &payload()[..]);
+        assert_eq!(*opened.last().unwrap(), IPPROTO_TCP);
+    }
+
+    #[test]
+    fn compile_aead_default_iv_is_zero_filled() {
+        // With no IV override, AEAD compile fills the cipher's 8-octet IV length
+        // with zeros (deterministic builder convenience).
+        let sa = SecurityAssociation::new(0x10)
+            .encryption(EncryptionAlgorithm::AesGcm16, aes_key())
+            .salt(vec![0u8; 4]);
+        let esp = Esp::secured(sa)
+            .spi(0x10)
+            .sequence(1)
+            .next_header(IPPROTO_TCP);
+        let (esp_bytes, _) = compile_esp_over_ipv4(esp, &payload());
+        // The 8-octet AEAD IV directly follows the 8-octet ESP header.
+        assert_eq!(&esp_bytes[ESP_HEADER_LEN..ESP_HEADER_LEN + 8], &[0u8; 8]);
+    }
+
+    #[test]
+    fn compile_aead_icv_override_is_emitted_verbatim() {
+        // A caller-set ICV replaces the AEAD tag verbatim (malformed-by-design).
+        let sa = SecurityAssociation::new(0x10)
+            .encryption(EncryptionAlgorithm::AesGcm16, aes_key())
+            .salt(vec![0u8; 4]);
+        let bad_icv = vec![0xFFu8; 16];
+        let esp = Esp::secured(sa)
+            .spi(0x10)
+            .sequence(1)
+            .next_header(IPPROTO_TCP)
+            .iv(aead_iv())
+            .icv(bad_icv.clone());
+        let (esp_bytes, _) = compile_esp_over_ipv4(esp, &payload());
+        assert_eq!(&esp_bytes[esp_bytes.len() - 16..], &bad_icv[..]);
+    }
+
+    #[test]
+    fn compile_rejects_null_and_no_sa_in_this_step() {
+        // AEAD compile is now implemented (Step 13); NULL+NONE / no-SA stay
+        // unsupported until Step 14.
+        let no_sa = Esp::new().next_header(IPPROTO_TCP);
+        let err = compile_err(no_sa);
         assert!(
             matches!(err, CrafterError::InvalidFieldValue { field, .. } if field == "esp.compile")
         );
 
-        let no_sa = Esp::new().next_header(IPPROTO_TCP);
-        let err = compile_err(no_sa);
+        // NULL encryption with NONE integrity (no crypto at all) is the Step 14
+        // opaque/passthrough case and still errors here.
+        let null_none = Esp::secured(SecurityAssociation::new(0x10)).next_header(IPPROTO_TCP);
+        let err = compile_err(null_none);
         assert!(
             matches!(err, CrafterError::InvalidFieldValue { field, .. } if field == "esp.compile")
         );
