@@ -107,7 +107,6 @@ const IPV4_CHECKSUM_OFFSET: usize = 10;
 /// Returns a structured error when the input is shorter than the 20-byte IPv4
 /// base header, so a truncated buffer surfaces as a typed error rather than a
 /// panic.
-#[allow(dead_code)]
 pub(crate) fn canonical_ipv4_for_ah(ipv4_header_bytes: &[u8]) -> Result<Vec<u8>> {
     if ipv4_header_bytes.len() < IPV4_MIN_HEADER_LEN {
         return Err(CrafterError::buffer_too_short(
@@ -149,7 +148,6 @@ pub(crate) fn canonical_ipv4_for_ah(ipv4_header_bytes: &[u8]) -> Result<Vec<u8>>
 /// fields (IHL, Total Length, Protocol, Checksum) reflect the real header. It
 /// returns a structured error when there is no preceding layer or it is not an
 /// IPv4 header, so an AH built without an enclosing IPv4 surfaces a typed error.
-#[allow(dead_code)]
 pub(crate) fn preceding_ipv4_header_bytes(ctx: &LayerContext<'_>) -> Result<Vec<u8>> {
     let previous = ctx.previous().ok_or_else(|| {
         CrafterError::invalid_field_value(
@@ -200,7 +198,6 @@ pub(crate) fn preceding_ipv4_header_bytes(ctx: &LayerContext<'_>) -> Result<Vec<
 /// Returns a structured error when the base header is shorter than 40 bytes or
 /// an extension header runs off the end of the supplied bytes, so a truncated
 /// buffer surfaces as a typed error rather than a panic.
-#[allow(dead_code)]
 pub(crate) fn canonical_ipv6_for_ah(
     ipv6_header_bytes: &[u8],
     preceding_ext_headers: &[u8],
@@ -336,7 +333,6 @@ fn canonicalize_ipv6_options(options: &mut [u8]) {
 /// Returns a structured error when there is no preceding layer chain ending in
 /// an IPv6 base header, so an AH built without an enclosing IPv6 surfaces a
 /// typed error.
-#[allow(dead_code)]
 pub(crate) fn preceding_ipv6_header_bytes(ctx: &LayerContext<'_>) -> Result<(Vec<u8>, Vec<u8>)> {
     let ah_index = ctx.index();
     if ah_index == 0 {
