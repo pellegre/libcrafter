@@ -1,6 +1,6 @@
 //! UDP and TCP protocol implementations.
 
-mod common;
+pub(crate) mod common;
 mod tcp;
 mod udp;
 

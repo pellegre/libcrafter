@@ -39,10 +39,10 @@ macro_rules! impl_layer_div {
     };
 }
 
-pub(super) use impl_layer_div;
-pub(super) use impl_layer_object;
+pub(crate) use impl_layer_div;
+pub(crate) use impl_layer_object;
 
-pub(super) fn payload_bytes_after(ctx: LayerContext<'_>) -> Result<Vec<u8>> {
+pub(crate) fn payload_bytes_after(ctx: LayerContext<'_>) -> Result<Vec<u8>> {
     let mut payload = Vec::new();
     for (index, layer) in ctx.packet().iter().enumerate().skip(ctx.index() + 1) {
         let layer_ctx = LayerContext::new(ctx.packet(), index);
