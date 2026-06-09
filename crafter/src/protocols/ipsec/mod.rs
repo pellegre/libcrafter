@@ -7,7 +7,7 @@
 //! transforms that drive ESP/AH/SK confidentiality and integrity.
 //!
 //! The submodule tree is established here; the typed layers, builders, and
-//! decoders are filled in by later steps. The ESP layer, the
+//! decoders are filled in by later steps. The ESP and AH layers, the
 //! `SecurityAssociation` crypto context, and the algorithm-identifier enums are
 //! re-exported here (and on up through `protocols`, the crate root, `core`, and
 //! the `prelude`) so generated tools reach them with `crafter::prelude::*`.
@@ -18,6 +18,11 @@ pub mod esp;
 pub mod ikev2;
 pub mod sa;
 
+pub use ah::header::{
+    AH_FIXED_LEN, AH_HIGH_SEQUENCE_LEN, AH_LENGTH_UNIT, AH_NEXT_HEADER_LEN,
+    AH_PAYLOAD_LEN_FIELD_LEN, AH_PAYLOAD_LEN_OFFSET, AH_RESERVED_LEN, AH_SEQUENCE_LEN, AH_SPI_LEN,
+};
+pub use ah::Ah;
 pub use esp::header::{
     ESP_HEADER_LEN, ESP_HIGH_SEQUENCE_LEN, ESP_MAX_PAD_LEN, ESP_NEXT_HEADER_FIELD_LEN,
     ESP_PAD_LENGTH_FIELD_LEN,
