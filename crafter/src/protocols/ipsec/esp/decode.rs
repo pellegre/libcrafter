@@ -11,11 +11,21 @@
 use crate::endian::read_u32_be;
 use crate::error::{CrafterError, Result};
 use crate::packet::Packet;
+use crate::protocols::ip::shared::protocol_numbers::IPPROTO_IPV6;
 use crate::protocols::ipsec::sa::{open, SecurityAssociation};
 use crate::registry::ProtocolRegistry;
 
 use super::header::{ESP_HEADER_LEN, ESP_NEXT_HEADER_FIELD_LEN, ESP_PAD_LENGTH_FIELD_LEN};
 use super::Esp;
+
+/// IP protocol number for IPv4-in-IP encapsulation (tunnel-mode inner IPv4).
+///
+/// IANA assigns protocol number 4 to "IPv4 encapsulation". The shared
+/// `protocol_numbers` table has no constant for it, so the ESP decode carries a
+/// local one to recognize a tunnel-mode inner IPv4 datagram via the ESP trailer
+/// Next Header (RFC 4303 §2.6). The inner IPv6 case uses the shared
+/// [`IPPROTO_IPV6`] (41).
+const IPPROTO_IPV4: u8 = 4;
 
 /// Decode an ESP datagram with no Security Association into an opaque [`Esp`].
 ///
@@ -201,6 +211,51 @@ pub(crate) fn decode_esp_with_sa(bytes: &[u8], sa: &SecurityAssociation) -> Resu
     })
 }
 
+/// Dispatch the recovered ESP plaintext to nested typed layers (RFC 4303 §2.6).
+///
+/// The ESP trailer Next Header tells the receiver what the decrypted plaintext
+/// is, exactly as the enclosing IP header's Protocol / Next Header field would:
+///
+/// - **Tunnel mode** (`next_header` 4 = IPv4-in-IP or 41 = IPv6): the plaintext
+///   is an entire inner IP datagram (RFC 4303 §3.1.2). It is decoded through the
+///   registry's L3 path ([`ProtocolRegistry::decode_ipv4`] /
+///   [`ProtocolRegistry::decode_ipv6`]) — the same routing every other inner-IP
+///   site uses — and the resulting layers (inner IP + its own nested layers) are
+///   appended in order.
+/// - **Transport mode** (any other `next_header`): the plaintext is the protected
+///   upper-layer payload, so it is dispatched by protocol number through the
+///   registry's IPv4-protocol routing
+///   ([`ProtocolRegistry::decode_ipv4_protocol`]). A bound protocol (TCP, UDP,
+///   ICMP, …) decodes to its typed layer; an unknown protocol number falls back
+///   to a preserved `Raw` payload, matching the crate's unknown-next-protocol
+///   contract.
+///
+/// The IPv4-protocol routing is shared across IP versions (the protocol-number
+/// space is identical for IPv4 Protocol and IPv6 Next Header), so it is the
+/// correct transport-mode dispatcher regardless of the enclosing IP version.
+fn dispatch_esp_inner(
+    registry: &ProtocolRegistry,
+    packet: Packet,
+    next_header: u8,
+    plaintext: &[u8],
+) -> Result<Packet> {
+    match next_header {
+        // Tunnel mode: the plaintext is a full inner IP datagram. Decode it with
+        // the registry's L3 path and append the recovered layers in order.
+        IPPROTO_IPV4 => {
+            let inner = registry.decode_ipv4(plaintext)?;
+            Ok(packet.concat(inner))
+        }
+        IPPROTO_IPV6 => {
+            let inner = registry.decode_ipv6(plaintext)?;
+            Ok(packet.concat(inner))
+        }
+        // Transport mode: dispatch the upper-layer plaintext by protocol number,
+        // falling back to `Raw` for an unknown protocol.
+        protocol => registry.decode_ipv4_protocol(packet, protocol, plaintext),
+    }
+}
+
 /// Append a decoded opaque ESP datagram using an explicit registry.
 ///
 /// Decodes the SPI/Sequence header and pushes the opaque [`Esp`] layer onto the
@@ -216,6 +271,51 @@ pub(crate) fn append_esp_packet_with_registry(
 ) -> Result<Packet> {
     let esp = decode_esp_opaque(bytes)?;
     Ok(packet.push(esp))
+}
+
+/// Append a decoded ESP datagram using an explicit registry and an optional SA.
+///
+/// This is the entry point the registry binding (Step 19) calls once it can look
+/// up an SA for the on-wire SPI:
+///
+/// - **`Some(sa)`** — the SA-decode path: verify the ICV, decrypt, strip the
+///   RFC 4303 §2.4 padding ([`decode_esp_with_sa`]), push the recovered [`Esp`]
+///   header layer (its decoded SPI/Sequence as caller-set fields, with the
+///   trailer Next Header recorded), then dispatch the recovered plaintext to
+///   nested typed layers via [`dispatch_esp_inner`] (transport mode by protocol
+///   number, tunnel mode as an inner IP datagram). An integrity/padding/length
+///   failure surfaces the structured error from `decode_esp_with_sa` — the decode
+///   fails closed, never producing a wrong plaintext or a panic.
+/// - **`None`** — the opaque path (Step 16): the registry has no SA for this SPI,
+///   so the body cannot be decrypted. The SPI/Sequence are exposed and the
+///   encrypted remainder is preserved verbatim
+///   ([`append_esp_packet_with_registry`]); no inner dispatch occurs.
+///
+/// Mirrors UDP's `append_udp_packet_with_registry` shape: decode parts, push the
+/// layer, dispatch inner.
+#[allow(dead_code)]
+pub(crate) fn append_esp_packet_with_registry_sa(
+    registry: &ProtocolRegistry,
+    packet: Packet,
+    bytes: &[u8],
+    sa: Option<&SecurityAssociation>,
+) -> Result<Packet> {
+    let Some(sa) = sa else {
+        // No SA for this SPI: fall back to the opaque (no-crypto) decode path.
+        return append_esp_packet_with_registry(registry, packet, bytes);
+    };
+
+    let DecodedEsp {
+        esp,
+        plaintext,
+        next_header,
+        ..
+    } = decode_esp_with_sa(bytes, sa)?;
+
+    // Push the recovered ESP header layer, then dispatch the plaintext to nested
+    // typed layers (transport mode by protocol, tunnel mode as inner IP).
+    let packet = packet.push(esp);
+    dispatch_esp_inner(registry, packet, next_header, &plaintext)
 }
 
 #[cfg(test)]
@@ -493,5 +593,133 @@ mod tests {
         let truncated = vec![0u8; ESP_HEADER_LEN + 4];
         let err = decode_esp_with_sa(&truncated, &sa).expect_err("must reject truncated ESP");
         assert!(matches!(err, CrafterError::BufferTooShort { .. }));
+    }
+
+    // --- inner-protocol dispatch (Step 18) --------------------------------
+
+    use crate::protocols::ipv4::IPPROTO_TCP;
+
+    /// Compile `Ipv4 / Esp::secured(sa) / <inner...>` and return the ESP bytes
+    /// that follow the outer IPv4 header (the ESP datagram the wire would carry).
+    ///
+    /// `inner` is the packet ESP protects (an upper-layer header in transport
+    /// mode, or a whole inner IP datagram in tunnel mode). Step 15's tail
+    /// consumption means the bytes after the outer IPv4 header are exactly the
+    /// ESP datagram.
+    fn compile_esp_datagram_bytes(sa: SecurityAssociation, iv: Vec<u8>, inner: Packet) -> Vec<u8> {
+        let ipv4 = Ipv4::new()
+            .protocol(IPPROTO_ESP)
+            .src("192.0.2.1".parse().unwrap())
+            .dst("192.0.2.2".parse().unwrap());
+        let spi = sa.spi;
+        let esp = Esp::secured(sa).spi(spi).iv(iv);
+
+        let packet: Packet = (Packet::from_layer(ipv4) / esp).concat(inner);
+        let compiled = packet.compile().expect("compile packet").into_bytes();
+
+        // Strip the outer IPv4 header using its IHL nibble (×4 octets).
+        let ip_header_len = usize::from(compiled[0] & 0x0f) * 4;
+        compiled[ip_header_len..].to_vec()
+    }
+
+    #[test]
+    fn transport_mode_dispatches_inner_tcp() {
+        // Transport mode: the ESP next-header is the upper-layer protocol (TCP),
+        // so the recovered plaintext must decode back into a typed Tcp layer.
+        let sa = SecurityAssociation::new(0x0000_2000)
+            .encryption(EncryptionAlgorithm::AesGcm16, aes_key())
+            .salt(vec![0xAA, 0xBB, 0xCC, 0xDD]);
+        let iv = vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
+
+        let inner = Packet::from_layer(Tcp::new().sport(1234).dport(443))
+            / Raw::from_bytes(vec![0xDE, 0xAD, 0xBE, 0xEF, 0x10, 0x20, 0x30, 0x40]);
+        let esp_bytes = compile_esp_datagram_bytes(sa.clone(), iv, inner);
+
+        let registry = ProtocolRegistry::with_builtin_bindings();
+        let packet =
+            append_esp_packet_with_registry_sa(&registry, Packet::new(), &esp_bytes, Some(&sa))
+                .expect("decode transport-mode ESP with SA");
+
+        // ESP header layer, then the nested typed TCP layer (transport mode).
+        let esp = packet
+            .get(0)
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Esp>()
+            .expect("first layer is Esp");
+        assert_eq!(esp.spi_value(), Some(sa.spi));
+        assert_eq!(esp.next_header_value(), Some(IPPROTO_TCP));
+
+        let tcp = packet.layer::<Tcp>().expect("inner Tcp decoded");
+        assert_eq!(tcp.source_port_value(), 1234);
+        assert_eq!(tcp.destination_port_value(), 443);
+        // The TCP payload survived as a trailing Raw layer.
+        assert_eq!(
+            packet.layer::<Raw>().expect("inner Raw decoded").as_bytes(),
+            &[0xDE, 0xAD, 0xBE, 0xEF, 0x10, 0x20, 0x30, 0x40]
+        );
+    }
+
+    #[test]
+    fn tunnel_mode_dispatches_inner_ipv4_tcp() {
+        // Tunnel mode: the ESP next-header is IPv4-in-IP (4), so the recovered
+        // plaintext is an entire inner IPv4 datagram that must decode back into a
+        // typed Ipv4 / Tcp stack.
+        let sa = SecurityAssociation::new(0x0000_3000)
+            .encryption(EncryptionAlgorithm::AesGcm16, aes_key())
+            .salt(vec![0xAA, 0xBB, 0xCC, 0xDD])
+            .tunnel();
+        let iv = vec![0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18];
+
+        // Inner IP datagram: a complete IPv4 / Tcp over documentation addresses.
+        let inner_ipv4 = Ipv4::new()
+            .protocol(IPPROTO_TCP)
+            .src("198.51.100.1".parse().unwrap())
+            .dst("198.51.100.2".parse().unwrap());
+        let inner = Packet::from_layer(inner_ipv4) / Tcp::new().sport(2222).dport(8080);
+        let esp_bytes = compile_esp_datagram_bytes(sa.clone(), iv, inner);
+
+        let registry = ProtocolRegistry::with_builtin_bindings();
+        let packet =
+            append_esp_packet_with_registry_sa(&registry, Packet::new(), &esp_bytes, Some(&sa))
+                .expect("decode tunnel-mode ESP with SA");
+
+        // ESP header layer, then the nested inner IPv4 / Tcp stack.
+        let esp = packet
+            .get(0)
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Esp>()
+            .expect("first layer is Esp");
+        assert_eq!(esp.spi_value(), Some(sa.spi));
+        // Tunnel mode next-header is IPv4-in-IP (4).
+        assert_eq!(esp.next_header_value(), Some(IPPROTO_IPV4));
+
+        let inner_ip = packet.layer::<Ipv4>().expect("inner Ipv4 decoded");
+        assert_eq!(inner_ip.source().to_string(), "198.51.100.1");
+        assert_eq!(inner_ip.destination().to_string(), "198.51.100.2");
+        let inner_tcp = packet.layer::<Tcp>().expect("inner Tcp decoded");
+        assert_eq!(inner_tcp.source_port_value(), 2222);
+        assert_eq!(inner_tcp.destination_port_value(), 8080);
+    }
+
+    #[test]
+    fn no_sa_uses_the_opaque_path() {
+        // When the registry has no SA for the SPI, the SA-aware entry point falls
+        // back to the opaque path: SPI/Sequence exposed, body preserved verbatim,
+        // and no inner dispatch.
+        let bytes = fixed_esp_bytes();
+        let registry = ProtocolRegistry::with_builtin_bindings();
+        let packet = append_esp_packet_with_registry_sa(&registry, Packet::new(), &bytes, None)
+            .expect("opaque fallback");
+
+        assert_eq!(packet.len(), 1);
+        let esp = packet
+            .get(0)
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Esp>()
+            .expect("pushed layer is Esp");
+        assert_eq!(esp.opaque_body(), Some(&bytes[ESP_HEADER_LEN..]));
     }
 }
