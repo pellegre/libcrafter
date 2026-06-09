@@ -85,8 +85,8 @@ impl AeadTransform {
     /// Cipher key length in octets (excludes the per-SA salt).
     pub const fn key_len(self) -> usize {
         match self {
-            Self::AesGcm16 => AES128_KEY_LEN,         // RFC 4106: AES-128 key
-            Self::AesCcm8 => AES128_KEY_LEN,          // RFC 4309: AES-128 key
+            Self::AesGcm16 => AES128_KEY_LEN,           // RFC 4106: AES-128 key
+            Self::AesCcm8 => AES128_KEY_LEN,            // RFC 4309: AES-128 key
             Self::ChaCha20Poly1305 => CHACHA20_KEY_LEN, // RFC 7634: 256-bit key
         }
     }
@@ -322,18 +322,14 @@ mod tests {
     fn aes_gcm16_gcm_appendix_b_case3_no_aad() {
         let key = hex("feffe9928665731c6d6a8f9467308308");
         let nonce = hex("cafebabefacedbaddecaf888"); // salt(4)||IV(8)
-        let plaintext = hex(
-            "d9313225f88406e5a55909c5aff5269a\
+        let plaintext = hex("d9313225f88406e5a55909c5aff5269a\
              86a7a9531534f7da2e4c303d8a318a72\
              1c3c0c95956809532fcf0e2449a6b525\
-             b16aedf5aa0de657ba637b391aafd255",
-        );
-        let expected_ct = hex(
-            "42831ec2217774244b7221b784d0d49c\
+             b16aedf5aa0de657ba637b391aafd255");
+        let expected_ct = hex("42831ec2217774244b7221b784d0d49c\
              e3aa212f2c02a4e035c17e2329aca12e\
              21d514b25466931c7d8f6a5aac84aa05\
-             1ba30b396a0aac973d58e091473f5985",
-        );
+             1ba30b396a0aac973d58e091473f5985");
         let expected_tag = hex("4d5c2af327cd64a62cf35abd2ba6fab4");
 
         let t = AeadTransform::AesGcm16;
@@ -364,18 +360,14 @@ mod tests {
         let key = hex("feffe9928665731c6d6a8f9467308308");
         let nonce = hex("cafebabefacedbaddecaf888");
         let aad = hex("feedfacedeadbeeffeedfacedeadbeefabaddad2");
-        let plaintext = hex(
-            "d9313225f88406e5a55909c5aff5269a\
+        let plaintext = hex("d9313225f88406e5a55909c5aff5269a\
              86a7a9531534f7da2e4c303d8a318a72\
              1c3c0c95956809532fcf0e2449a6b525\
-             b16aedf5aa0de657ba637b39",
-        );
-        let expected_ct = hex(
-            "42831ec2217774244b7221b784d0d49c\
+             b16aedf5aa0de657ba637b39");
+        let expected_ct = hex("42831ec2217774244b7221b784d0d49c\
              e3aa212f2c02a4e035c17e2329aca12e\
              21d514b25466931c7d8f6a5aac84aa05\
-             1ba30b396a0aac973d58e091",
-        );
+             1ba30b396a0aac973d58e091");
         let expected_tag = hex("5bc94fbc3221a5db94fae95ae7121a47");
 
         let t = AeadTransform::AesGcm16;
@@ -425,10 +417,8 @@ mod tests {
     /// open() recovers the plaintext and rejects a tampered tag.
     #[test]
     fn chacha20poly1305_rfc7634_appendix_a() {
-        let key = hex(
-            "808182838485868788898a8b8c8d8e8f\
-             909192939495969798999a9b9c9d9e9f",
-        );
+        let key = hex("808182838485868788898a8b8c8d8e8f\
+             909192939495969798999a9b9c9d9e9f");
         let salt = hex("a0a1a2a3");
         let iv = hex("1011121314151617");
         let mut nonce = salt.clone();
@@ -439,22 +429,18 @@ mod tests {
 
         // Plaintext = inner IPv4 packet + ESP pad/pad-length/next-header
         // (RFC 7634 Appendix A), 88 octets total.
-        let plaintext = hex(
-            "45000054a6f2000040 01e778c63364 05c0000205 08005b7a\
+        let plaintext = hex("45000054a6f2000040 01e778c63364 05c0000205 08005b7a\
              3a0800005 53bec1000073627\
              08090a0b0c0d0e0f1011121314151617\
              18191a1b1c1d1e1f2021222324252627\
              28292a2b2c2d2e2f3031323334353637\
-             0102020 4",
-        );
-        let expected_ct = hex(
-            "2403942 8b97f417e3c13753a4f05087b\
+             0102020 4");
+        let expected_ct = hex("2403942 8b97f417e3c13753a4f05087b\
              67c352e6a7fab1b982d466ef407ae5c6\
              14ee8099d52844eb61aa95dfab4c02f7\
              2aa71e7c4c4f64c9befe2facc638e8f3\
              cbec163fac469b502773f6fb94e664da\
-             9165b82829f641e0",
-        );
+             9165b82829f641e0");
         let expected_tag = hex("76aaa8266b7fb0f7b11b369907e1ad43");
 
         let t = AeadTransform::ChaCha20Poly1305;
