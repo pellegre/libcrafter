@@ -66,7 +66,7 @@ impl CipherTransform {
         match self {
             Self::AesCbc => AES_BLOCK_LEN, // RFC 3602 §3: 16-octet block
             Self::AesCtr => 1,             // RFC 3686 §2: keystream, no block padding
-            Self::Null => 1,              // RFC 2410 §2.1: blocksize of 1
+            Self::Null => 1,               // RFC 2410 §2.1: blocksize of 1
         }
     }
 
@@ -151,10 +151,7 @@ fn aes_cbc_encrypt(key: &[u8], iv: &[u8], plaintext: &[u8]) -> Result<Vec<u8>> {
     let ct = AesCbcEnc::new(key.into(), iv.into())
         .encrypt_padded_mut::<NoPadding>(&mut buf, len)
         .map_err(|_| {
-            CrafterError::invalid_field_value(
-                "ipsec.cipher.aes_cbc",
-                "AES-CBC encryption failed",
-            )
+            CrafterError::invalid_field_value("ipsec.cipher.aes_cbc", "AES-CBC encryption failed")
         })?;
     Ok(ct.to_vec())
 }
@@ -174,10 +171,7 @@ fn aes_cbc_decrypt(key: &[u8], iv: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>> 
     let pt = AesCbcDec::new(key.into(), iv.into())
         .decrypt_padded_mut::<NoPadding>(&mut buf)
         .map_err(|_| {
-            CrafterError::invalid_field_value(
-                "ipsec.cipher.aes_cbc",
-                "AES-CBC decryption failed",
-            )
+            CrafterError::invalid_field_value("ipsec.cipher.aes_cbc", "AES-CBC decryption failed")
         })?;
     Ok(pt.to_vec())
 }
@@ -275,14 +269,10 @@ mod tests {
     fn aes_cbc_rfc3602_case4() {
         let key = hex("56e47a38c5598974bc46903dba290349");
         let iv = hex("8ce82eefbea0da3c44699ed7db51b7d9");
-        let plaintext = hex(
-            "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf\
-             b0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
-        );
-        let expected = hex(
-            "c30e32ffedc0774e6aff6af0869f71aa\
-             0f3af07a9a31a9c684db207eb0ef8e4e",
-        );
+        let plaintext = hex("a0a1a2a3a4a5a6a7a8a9aaabacadaeaf\
+             b0b1b2b3b4b5b6b7b8b9babbbcbdbebf");
+        let expected = hex("c30e32ffedc0774e6aff6af0869f71aa\
+             0f3af07a9a31a9c684db207eb0ef8e4e");
 
         let ct = CipherTransform::AesCbc
             .encrypt(&key, &iv, &plaintext)
@@ -364,14 +354,10 @@ mod tests {
         let aes_key = hex("7e24067817fae0d743d6ce1f32539163");
         let nonce = hex("006cb6db");
         let iv = hex("c0543b59da48d90b");
-        let plaintext = hex(
-            "000102030405060708090a0b0c0d0e0f\
-             101112131415161718191a1b1c1d1e1f",
-        );
-        let expected = hex(
-            "5104a106168a72d9790d41ee8edad388\
-             eb2e1efc46da57c8fce630df9141be28",
-        );
+        let plaintext = hex("000102030405060708090a0b0c0d0e0f\
+             101112131415161718191a1b1c1d1e1f");
+        let expected = hex("5104a106168a72d9790d41ee8edad388\
+             eb2e1efc46da57c8fce630df9141be28");
 
         let mut key = aes_key.clone();
         key.extend_from_slice(&nonce);
@@ -400,16 +386,12 @@ mod tests {
         let aes_key = hex("7691be035e5020a8ac6e618529f9a0dc");
         let nonce = hex("00e0017b");
         let iv = hex("27777f3f4a1786f0");
-        let plaintext = hex(
-            "000102030405060708090a0b0c0d0e0f\
+        let plaintext = hex("000102030405060708090a0b0c0d0e0f\
              101112131415161718191a1b1c1d1e1f\
-             20212223",
-        );
-        let expected = hex(
-            "c1cf48a89f2ffdd9cf4652e9efdb72d7\
+             20212223");
+        let expected = hex("c1cf48a89f2ffdd9cf4652e9efdb72d7\
              4540a42bde6d7836d59a5ceaaef31053\
-             25b2072f",
-        );
+             25b2072f");
 
         let mut key = aes_key.clone();
         key.extend_from_slice(&nonce);
@@ -427,13 +409,17 @@ mod tests {
     #[test]
     fn aes_ctr_key_iv_guards() {
         let key = hex("ae6852f8121067cc4bf7a5765577f39e00000030"); // 20 octets
-        // Wrong IV length.
+                                                                   // Wrong IV length.
         assert!(CipherTransform::AesCtr
             .encrypt(&key, &hex("0000"), &[0u8; 4])
             .is_err());
         // Wrong key length (missing salt).
         assert!(CipherTransform::AesCtr
-            .encrypt(&hex("ae6852f8121067cc4bf7a5765577f39e"), &hex("0000000000000000"), &[0u8; 4])
+            .encrypt(
+                &hex("ae6852f8121067cc4bf7a5765577f39e"),
+                &hex("0000000000000000"),
+                &[0u8; 4]
+            )
             .is_err());
     }
 
@@ -453,6 +439,9 @@ mod tests {
         assert_eq!(pt, data);
 
         // Empty input round-trips too.
-        assert_eq!(CipherTransform::Null.encrypt(&[], &[], &[]).unwrap(), Vec::<u8>::new());
+        assert_eq!(
+            CipherTransform::Null.encrypt(&[], &[], &[]).unwrap(),
+            Vec::<u8>::new()
+        );
     }
 }

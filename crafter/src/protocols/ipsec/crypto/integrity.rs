@@ -58,12 +58,12 @@ impl IntegrityTransform {
     /// ICV length in octets for this transform.
     pub const fn icv_len(self) -> usize {
         match self {
-            Self::HmacSha1_96 => 12,        // RFC 2404: 96 bits
-            Self::HmacSha2_256_128 => 16,   // RFC 4868: 128 bits
-            Self::HmacSha2_384_192 => 24,   // RFC 4868: 192 bits
-            Self::HmacSha2_512_256 => 32,   // RFC 4868: 256 bits
-            Self::AesXcbcMac96 => 12,       // RFC 3566: 96 bits
-            Self::AesGmac => 16,            // RFC 4543: 128 bits
+            Self::HmacSha1_96 => 12,      // RFC 2404: 96 bits
+            Self::HmacSha2_256_128 => 16, // RFC 4868: 128 bits
+            Self::HmacSha2_384_192 => 24, // RFC 4868: 192 bits
+            Self::HmacSha2_512_256 => 32, // RFC 4868: 256 bits
+            Self::AesXcbcMac96 => 12,     // RFC 3566: 96 bits
+            Self::AesGmac => 16,          // RFC 4543: 128 bits
         }
     }
 
@@ -253,10 +253,7 @@ fn aes_gmac(key: &[u8], message: &[u8]) -> Result<Vec<u8>> {
     let tag = gmac
         .encrypt_in_place_detached(GenericArray::from_slice(nonce), message, &mut [])
         .map_err(|_| {
-            CrafterError::invalid_field_value(
-                "ipsec.integrity.aes_gmac",
-                "GMAC computation failed",
-            )
+            CrafterError::invalid_field_value("ipsec.integrity.aes_gmac", "GMAC computation failed")
         })?;
     Ok(tag.to_vec())
 }
@@ -312,10 +309,8 @@ mod tests {
     fn hmac_sha2_256_128_rfc4868_case2() {
         let key = b"Jefe";
         let message = b"what do ya want for nothing?";
-        let full = hex(
-            "5bdcc146bf60754e6a042426089575c7\
-             5a003f089d2739839dec58b964ec3843",
-        );
+        let full = hex("5bdcc146bf60754e6a042426089575c7\
+             5a003f089d2739839dec58b964ec3843");
         let tag = IntegrityTransform::HmacSha2_256_128
             .compute(key, message)
             .unwrap();
@@ -336,11 +331,9 @@ mod tests {
     fn hmac_sha2_384_192_rfc4868_case2() {
         let key = b"Jefe";
         let message = b"what do ya want for nothing?";
-        let full = hex(
-            "af45d2e376484031617f78d2b58a6b1b\
+        let full = hex("af45d2e376484031617f78d2b58a6b1b\
              9c7ef464f5a01b47e42ec3736322445e\
-             8e2240ca5e69e2c78b3239ecfab21649",
-        );
+             8e2240ca5e69e2c78b3239ecfab21649");
         let tag = IntegrityTransform::HmacSha2_384_192
             .compute(key, message)
             .unwrap();
@@ -361,12 +354,10 @@ mod tests {
     fn hmac_sha2_512_256_rfc4868_case2() {
         let key = b"Jefe";
         let message = b"what do ya want for nothing?";
-        let full = hex(
-            "164b7a7bfcf819e2e395fbe73b56e0a3\
+        let full = hex("164b7a7bfcf819e2e395fbe73b56e0a3\
              87bd64222e831fd610270cd7ea250554\
              9758bf75c05a994a6d034f65f8f0e6fd\
-             caeab1a34d4a6b4b636e070a38bce737",
-        );
+             caeab1a34d4a6b4b636e070a38bce737");
         let tag = IntegrityTransform::HmacSha2_512_256
             .compute(key, message)
             .unwrap();
@@ -390,10 +381,7 @@ mod tests {
     fn aes_xcbc_mac_rfc3566_case1_len0() {
         let key = hex(XCBC_KEY);
         let full = aes_xcbc_mac(&key, &[]).unwrap();
-        assert_eq!(
-            full.to_vec(),
-            hex("75f0251d528ac01c4573dfd584d79f29")
-        );
+        assert_eq!(full.to_vec(), hex("75f0251d528ac01c4573dfd584d79f29"));
     }
 
     /// RFC 3566 §4: Test Case #2 — Message length 3 (000102).
@@ -403,10 +391,7 @@ mod tests {
         let key = hex(XCBC_KEY);
         let message = hex("000102");
         let full = aes_xcbc_mac(&key, &message).unwrap();
-        assert_eq!(
-            full.to_vec(),
-            hex("5b376580ae2f19afe7219ceef172756f")
-        );
+        assert_eq!(full.to_vec(), hex("5b376580ae2f19afe7219ceef172756f"));
         // 96-bit ICV is the high-order 12 octets.
         let icv = IntegrityTransform::AesXcbcMac96
             .compute(&key, &message)
@@ -425,10 +410,7 @@ mod tests {
         let key = hex(XCBC_KEY);
         let message = hex("000102030405060708090a0b0c0d0e0f");
         let full = aes_xcbc_mac(&key, &message).unwrap();
-        assert_eq!(
-            full.to_vec(),
-            hex("d2a246fa349b68a79998a4394ff7a263")
-        );
+        assert_eq!(full.to_vec(), hex("d2a246fa349b68a79998a4394ff7a263"));
     }
 
     /// RFC 3566 §4: Test Case #5 — Message length 20 (00..13).
@@ -438,10 +420,7 @@ mod tests {
         let key = hex(XCBC_KEY);
         let message = hex("000102030405060708090a0b0c0d0e0f10111213");
         let full = aes_xcbc_mac(&key, &message).unwrap();
-        assert_eq!(
-            full.to_vec(),
-            hex("47f51b4564966215b8985c63055ed308")
-        );
+        assert_eq!(full.to_vec(), hex("47f51b4564966215b8985c63055ed308"));
     }
 
     /// RFC 3566 §4: Test Case #7 — Message length 32 (00..1f, two full blocks).
@@ -449,13 +428,9 @@ mod tests {
     #[test]
     fn aes_xcbc_mac_rfc3566_case7_len32() {
         let key = hex(XCBC_KEY);
-        let message =
-            hex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
+        let message = hex("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
         let full = aes_xcbc_mac(&key, &message).unwrap();
-        assert_eq!(
-            full.to_vec(),
-            hex("f54f0ec8d2b9f3d36807734bd5283fd4")
-        );
+        assert_eq!(full.to_vec(), hex("f54f0ec8d2b9f3d36807734bd5283fd4"));
     }
 
     // --- AES-GMAC -----------------------------------------------------------
@@ -510,7 +485,9 @@ mod tests {
 
         let icv = IntegrityTransform::AesGmac.compute(&key, &aad).unwrap();
         assert_eq!(icv, hex("346434fd51d5cd0c5887ec63e39b907a"));
-        assert!(IntegrityTransform::AesGmac.verify(&key, &aad, &icv).unwrap());
+        assert!(IntegrityTransform::AesGmac
+            .verify(&key, &aad, &icv)
+            .unwrap());
         // Tamper detection: flip one AAD bit, ICV must differ.
         let mut bad_aad = aad.clone();
         bad_aad[0] ^= 0x01;
@@ -533,7 +510,9 @@ mod tests {
             .unwrap());
 
         let short = hex("00112233");
-        assert!(IntegrityTransform::AesGmac.compute(&short, message).is_err());
+        assert!(IntegrityTransform::AesGmac
+            .compute(&short, message)
+            .is_err());
     }
 
     /// AES-XCBC-MAC rejects a non-16-octet key with a structured error.
