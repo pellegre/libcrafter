@@ -8,6 +8,12 @@
 /// Length of the unencrypted ESP header: SPI (4) + Sequence Number (4).
 pub const ESP_HEADER_LEN: usize = 8;
 
+/// Length of the high-order Extended Sequence Number word (RFC 4303 §2.2.1).
+///
+/// When ESN is enabled the high 32 bits of the 64-bit sequence number are
+/// appended to the ICV/AAD input but are never transmitted on the wire.
+pub const ESP_HIGH_SEQUENCE_LEN: usize = 4;
+
 /// Length of the Pad Length field in the ESP trailer (RFC 4303 §2.4).
 pub const ESP_PAD_LENGTH_FIELD_LEN: usize = 1;
 

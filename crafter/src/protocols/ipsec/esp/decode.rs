@@ -105,11 +105,15 @@ fn sa_icv_len(sa: &SecurityAssociation) -> usize {
 /// explicit-IV length ([`EncryptionAlgorithm::iv_len`]) and ICV length
 /// ([`sa_icv_len`]), then drives the [`open`] crypto primitive (Step 09):
 ///
-/// - The AAD is `SPI || Seq` — the ESP header octets verbatim (RFC 4303 §3.4.4;
-///   the high-order ESN bits are folded in by Step 20). `open` verifies the ICV
-///   in constant time (cipher+integrity) or via the AEAD tag, decrypting only on
-///   a match. On an integrity failure `open`'s structured error is propagated
-///   unchanged and no plaintext is returned — the decode fails closed.
+/// - The AAD is `SPI || Seq` — the ESP header octets verbatim (RFC 4303
+///   §3.4.4) — plus the caller-supplied high-order Extended Sequence Number
+///   word when `sa.esn` is set (RFC 4303 §2.2.1, §3.3.3). Those high bits are
+///   never on the wire, so the receiver must reconstruct them from its own ESN
+///   counter; here they come from `high_sequence`. `open` verifies the ICV in
+///   constant time (cipher+integrity) or via the AEAD tag, decrypting only on a
+///   match. On an integrity failure `open`'s structured error is propagated
+///   unchanged and no plaintext is returned — the decode fails closed. A wrong
+///   assumed high word therefore fails integrity exactly like any other tamper.
 /// - On success the recovered plaintext is `inner || pad || pad-length ||
 ///   next-header`. The trailing Next Header and Pad Length octets are read, the
 ///   Pad Length is validated against the remaining length, and (for block
@@ -124,7 +128,11 @@ fn sa_icv_len(sa: &SecurityAssociation) -> usize {
 ///
 /// [`EncryptionAlgorithm::iv_len`]: crate::protocols::ipsec::sa::EncryptionAlgorithm::iv_len
 #[allow(dead_code)]
-pub(crate) fn decode_esp_with_sa(bytes: &[u8], sa: &SecurityAssociation) -> Result<DecodedEsp> {
+pub(crate) fn decode_esp_with_sa(
+    bytes: &[u8],
+    sa: &SecurityAssociation,
+    high_sequence: u32,
+) -> Result<DecodedEsp> {
     let iv_len = sa.enc.iv_len();
     let icv_len = sa_icv_len(sa);
 
@@ -143,8 +151,16 @@ pub(crate) fn decode_esp_with_sa(bytes: &[u8], sa: &SecurityAssociation) -> Resu
     let spi = read_u32_be(&bytes[0..4])?;
     let sequence = read_u32_be(&bytes[4..8])?;
 
-    // AAD = SPI || Seq (the unencrypted ESP header). ESN high bits: Step 20.
-    let aad = &bytes[0..ESP_HEADER_LEN];
+    // AAD = SPI || Seq (the unencrypted ESP header), plus the high-order
+    // Extended Sequence Number word when `sa.esn` is set (RFC 4303 §2.2.1,
+    // §3.3.3). The high word is never on the wire, so it is rebuilt from the
+    // caller-supplied `high_sequence` and appended to the AAD exactly as
+    // `compile()` does. Reconstruct it identically so a matching high word
+    // verifies and a wrong one fails integrity.
+    let mut aad = bytes[0..ESP_HEADER_LEN].to_vec();
+    if sa.esn {
+        aad.extend_from_slice(&high_sequence.to_be_bytes());
+    }
     let iv = &bytes[ESP_HEADER_LEN..ESP_HEADER_LEN + iv_len];
     let icv_start = bytes.len() - icv_len;
     let ciphertext = &bytes[ESP_HEADER_LEN + iv_len..icv_start];
@@ -152,7 +168,7 @@ pub(crate) fn decode_esp_with_sa(bytes: &[u8], sa: &SecurityAssociation) -> Resu
 
     // Verify + decrypt. An integrity failure surfaces `open`'s structured error
     // (field `ipsec.sa.icv`) and never plaintext: the decode fails closed.
-    let plaintext = open(sa, iv, aad, ciphertext, icv)?;
+    let plaintext = open(sa, iv, &aad, ciphertext, icv)?;
 
     // The decrypted buffer is `inner || pad || pad-length || next-header`.
     // There must be at least the two fixed trailer octets to read.
@@ -197,11 +213,17 @@ pub(crate) fn decode_esp_with_sa(bytes: &[u8], sa: &SecurityAssociation) -> Resu
 
     // Reconstruct the ESP header layer with the decoded SPI/Sequence as
     // caller-set fields so a re-compile reproduces them. The recovered trailer
-    // fields travel on the `DecodedEsp` rather than the header layer.
-    let esp = Esp::new()
+    // fields travel on the `DecodedEsp` rather than the header layer. The ESN
+    // high word is not on the wire, so it is carried forward from the decode
+    // input (`high_sequence`) only when the SA enables ESN; this keeps a
+    // re-compile's ICV/AAD input identical to the one just verified.
+    let mut esp = Esp::new()
         .spi(spi)
         .sequence(sequence)
         .next_header(next_header);
+    if sa.esn {
+        esp = esp.high_sequence(high_sequence);
+    }
 
     Ok(DecodedEsp {
         esp,
@@ -304,12 +326,17 @@ pub(crate) fn append_esp_packet_with_registry_sa(
         return append_esp_packet_with_registry(registry, packet, bytes);
     };
 
+    // The high-order ESN word is not on the wire (RFC 4303 §2.2.1): a receiver
+    // tracks it in its own counter. This registry hook has no such counter, so
+    // it assumes the high word is 0 (the common case for an SA that has not yet
+    // wrapped the low 32-bit sequence). SA-decode callers that know a different
+    // high word use `decode_esp_with_sa` directly.
     let DecodedEsp {
         esp,
         plaintext,
         next_header,
         ..
-    } = decode_esp_with_sa(bytes, sa)?;
+    } = decode_esp_with_sa(bytes, sa, 0)?;
 
     // Push the recovered ESP header layer, then dispatch the plaintext to nested
     // typed layers (transport mode by protocol, tunnel mode as inner IP).
@@ -485,7 +512,8 @@ mod tests {
         let (esp_bytes, inner) = compile_esp_packet(sa.clone(), iv);
 
         // Decode with the matching SA recovers the inner plaintext exactly.
-        let decoded = decode_esp_with_sa(&esp_bytes, &sa).expect("decode ESP with SA");
+        // These SAs do not enable ESN, so the high word is ignored (pass 0).
+        let decoded = decode_esp_with_sa(&esp_bytes, &sa, 0).expect("decode ESP with SA");
         assert_eq!(
             decoded.plaintext, inner,
             "recovered inner must match cleartext"
@@ -502,7 +530,7 @@ mod tests {
         let ct_index = ESP_HEADER_LEN + iv_len;
         bad_ct[ct_index] ^= 0x01;
         assert!(
-            decode_esp_with_sa(&bad_ct, &sa).is_err(),
+            decode_esp_with_sa(&bad_ct, &sa, 0).is_err(),
             "a tampered ciphertext bit must make decode fail closed"
         );
 
@@ -511,7 +539,7 @@ mod tests {
         let last = bad_icv.len() - 1;
         bad_icv[last] ^= 0x01;
         assert!(
-            decode_esp_with_sa(&bad_icv, &sa).is_err(),
+            decode_esp_with_sa(&bad_icv, &sa, 0).is_err(),
             "a tampered ICV bit must make decode fail closed"
         );
         // The ICV really is icv_len octets at the tail (length sanity check).
@@ -573,7 +601,7 @@ mod tests {
         esp_bytes.extend_from_slice(&sealed.ciphertext);
         esp_bytes.extend_from_slice(&sealed.icv);
 
-        let err = decode_esp_with_sa(&esp_bytes, &sa).expect_err("bad CBC pad must error");
+        let err = decode_esp_with_sa(&esp_bytes, &sa, 0).expect_err("bad CBC pad must error");
         match err {
             CrafterError::InvalidFieldValue { field, .. } => {
                 assert_eq!(field, "esp.pad_length");
@@ -590,7 +618,7 @@ mod tests {
             .encryption(EncryptionAlgorithm::AesGcm16, aes_key())
             .salt(vec![0xAA, 0xBB, 0xCC, 0xDD]);
         let truncated = vec![0u8; ESP_HEADER_LEN + 4];
-        let err = decode_esp_with_sa(&truncated, &sa).expect_err("must reject truncated ESP");
+        let err = decode_esp_with_sa(&truncated, &sa, 0).expect_err("must reject truncated ESP");
         assert!(matches!(err, CrafterError::BufferTooShort { .. }));
     }
 
@@ -720,5 +748,140 @@ mod tests {
             .downcast_ref::<Esp>()
             .expect("pushed layer is Esp");
         assert_eq!(esp.opaque_body(), Some(&bytes[ESP_HEADER_LEN..]));
+    }
+
+    // --- extended sequence numbers (ESN, Step 20) -------------------------
+
+    /// Compile `Ipv4 / Esp::secured(sa).high_sequence(high) / Tcp / Raw` and
+    /// return the ESP datagram bytes that follow the outer IPv4 header.
+    ///
+    /// The 32-bit `high` word is only folded into the ICV/AAD when `sa.esn` is
+    /// set; it never appears on the wire (RFC 4303 §2.2.1), so the returned
+    /// bytes have the same length whether ESN is on or off — only the ICV (and,
+    /// for AEAD, the ciphertext authentication) differs.
+    fn compile_esn_esp_bytes(sa: SecurityAssociation, iv: Vec<u8>, high: u32) -> Vec<u8> {
+        let ipv4 = Ipv4::new()
+            .protocol(IPPROTO_ESP)
+            .src("192.0.2.1".parse().unwrap())
+            .dst("192.0.2.2".parse().unwrap());
+        let spi = sa.spi;
+        let esp = Esp::secured(sa)
+            .spi(spi)
+            .sequence(1)
+            .iv(iv)
+            .high_sequence(high);
+        let tcp = Tcp::new().sport(1234).dport(443);
+        let raw = Raw::from_bytes(vec![0xDE, 0xAD, 0xBE, 0xEF, 0x10, 0x20, 0x30, 0x40]);
+
+        let packet: Packet = Packet::from_layer(ipv4) / esp / tcp / raw;
+        let compiled = packet.compile().expect("compile ESN packet").into_bytes();
+        let ip_header_len = usize::from(compiled[0] & 0x0f) * 4;
+        compiled[ip_header_len..].to_vec()
+    }
+
+    /// An AES-GCM-16 SA (AEAD); `esn` toggles Extended Sequence Numbers.
+    fn esn_gcm_sa(esn: bool) -> SecurityAssociation {
+        SecurityAssociation::new(0x0000_2000)
+            .encryption(EncryptionAlgorithm::AesGcm16, aes_key())
+            .salt(vec![0xAA, 0xBB, 0xCC, 0xDD])
+            .extended_sequence(esn)
+    }
+
+    #[test]
+    fn esn_changes_the_icv_and_round_trips_aead() {
+        // RFC 4303 §2.2.1/§3.3.3: with ESN on, the high-order 32 bits of the
+        // 64-bit sequence number authenticate via the AAD but are not on the
+        // wire. The low 32 bits and IV are pinned identical, so the only
+        // difference between ESN-off and ESN-on(high=7) is the high word folded
+        // into the AAD — which must change the AEAD tag (the ICV).
+        let iv = vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
+        let high = 7u32;
+
+        let off = compile_esn_esp_bytes(esn_gcm_sa(false), iv.clone(), high);
+        let on = compile_esn_esp_bytes(esn_gcm_sa(true), iv.clone(), high);
+
+        // The high word is never transmitted, so both datagrams are the same
+        // length; only the trailing ICV (the AEAD tag) differs.
+        assert_eq!(off.len(), on.len(), "the ESN high word is not on the wire");
+        let icv_len = 16;
+        assert_ne!(
+            &off[off.len() - icv_len..],
+            &on[on.len() - icv_len..],
+            "enabling ESN must change the ICV"
+        );
+
+        // Round-trip: decoding the ESN datagram with the same SA + high word
+        // verifies the ICV and recovers the inner plaintext.
+        let sa_on = esn_gcm_sa(true);
+        let decoded = decode_esp_with_sa(&on, &sa_on, high).expect("ESN decode round-trips");
+        assert_eq!(decoded.next_header, 6); // inner TCP
+        assert_eq!(decoded.esp.high_sequence_value(), Some(high));
+        // The recovered inner is the TCP header + the Raw payload tail.
+        assert_eq!(
+            &decoded.plaintext[decoded.plaintext.len() - 8..],
+            &[0xDE, 0xAD, 0xBE, 0xEF, 0x10, 0x20, 0x30, 0x40]
+        );
+    }
+
+    #[test]
+    fn esn_wrong_high_word_fails_integrity_aead() {
+        // Decoding an ESN datagram with the WRONG assumed high word changes the
+        // reconstructed AAD, so the AEAD tag must fail to verify — the decode
+        // fails closed with a structured error, never a wrong plaintext.
+        let iv = vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
+        let on = compile_esn_esp_bytes(esn_gcm_sa(true), iv, 7);
+        let sa_on = esn_gcm_sa(true);
+
+        assert!(
+            decode_esp_with_sa(&on, &sa_on, 7).is_ok(),
+            "the correct high word must verify"
+        );
+        let err = decode_esp_with_sa(&on, &sa_on, 8)
+            .expect_err("a wrong ESN high word must fail integrity");
+        assert!(
+            matches!(err, CrafterError::InvalidFieldValue { .. }),
+            "wrong high word is a structured integrity error, got {err:?}"
+        );
+    }
+
+    /// An AES-CBC + HMAC-SHA-256-128 SA; `esn` toggles ESN.
+    fn esn_cbc_sa(esn: bool) -> SecurityAssociation {
+        SecurityAssociation::new(0x0000_3000)
+            .encryption(EncryptionAlgorithm::AesCbc, aes_key())
+            .integrity(IntegrityAlgorithm::HmacSha2_256_128, hmac_key())
+            .extended_sequence(esn)
+    }
+
+    #[test]
+    fn esn_changes_the_icv_and_round_trips_cbc_hmac() {
+        // The cipher+integrity path computes the ICV over aad || iv ||
+        // ciphertext; appending the ESN high word to the AAD (RFC 4303 §3.3.3)
+        // changes that ICV while leaving the ciphertext untouched.
+        let iv: Vec<u8> = (0u8..16).collect();
+        let high = 9u32;
+
+        let off = compile_esn_esp_bytes(esn_cbc_sa(false), iv.clone(), high);
+        let on = compile_esn_esp_bytes(esn_cbc_sa(true), iv.clone(), high);
+
+        let icv_len = 16; // HMAC-SHA-256-128
+        assert_eq!(off.len(), on.len(), "the ESN high word is not on the wire");
+        // The ciphertext (everything between the IV and the ICV) is identical:
+        // ESN only affects the integrity input, not the cipher.
+        let body = |b: &[u8]| b[ESP_HEADER_LEN + 16..b.len() - icv_len].to_vec();
+        assert_eq!(body(&off), body(&on), "ESN must not change the ciphertext");
+        assert_ne!(
+            &off[off.len() - icv_len..],
+            &on[on.len() - icv_len..],
+            "enabling ESN must change the ICV"
+        );
+
+        // Round-trip with the matching high word, and a wrong high word fails.
+        let sa_on = esn_cbc_sa(true);
+        let decoded = decode_esp_with_sa(&on, &sa_on, high).expect("ESN CBC decode round-trips");
+        assert_eq!(decoded.next_header, 6); // inner TCP
+        assert!(
+            decode_esp_with_sa(&on, &sa_on, high.wrapping_add(1)).is_err(),
+            "a wrong ESN high word must fail the separate-integrity ICV"
+        );
     }
 }
