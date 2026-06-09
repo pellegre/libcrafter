@@ -31,11 +31,13 @@ use crate::field::Field;
 use crate::packet::{Layer, LayerContext};
 use crate::Result;
 
+pub mod delete;
 pub mod ke;
 pub mod nonce;
 pub mod notify;
 pub mod sa;
 
+pub use delete::IkeDeletePayload;
 pub use ke::IkeKePayload;
 pub use nonce::IkeNoncePayload;
 pub use notify::{IkeNotifyPayload, NotifyType};
@@ -273,6 +275,7 @@ pub fn payload_type_for_layer_name(name: &str) -> Option<PayloadType> {
         ke::IKE_KE_PAYLOAD_NAME => Some(PayloadType::KeyExchange),
         nonce::IKE_NONCE_PAYLOAD_NAME => Some(PayloadType::Nonce),
         notify::IKE_NOTIFY_PAYLOAD_NAME => Some(PayloadType::Notify),
+        delete::IKE_DELETE_PAYLOAD_NAME => Some(PayloadType::Delete),
         _ => None,
     }
 }
