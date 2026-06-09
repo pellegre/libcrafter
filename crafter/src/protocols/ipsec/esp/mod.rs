@@ -11,7 +11,26 @@
 pub mod header;
 
 use crate::field::Field;
-use crate::protocols::ipsec::sa::SecurityAssociation;
+use crate::packet::{Layer, LayerContext};
+use crate::protocols::icmp::{Icmpv4, Icmpv6};
+use crate::protocols::ip::shared::protocol_numbers::{
+    IPPROTO_ICMP, IPPROTO_ICMPV6, IPPROTO_IPV6, IPPROTO_NO_NEXT, IPPROTO_TCP, IPPROTO_UDP,
+};
+use crate::protocols::ipsec::sa::{seal, IpsecMode, SecurityAssociation};
+use crate::protocols::ipv4::Ipv4;
+use crate::protocols::ipv6::Ipv6;
+use crate::protocols::transport::common::{impl_layer_div, impl_layer_object, payload_bytes_after};
+use crate::protocols::{Tcp, Udp};
+use crate::{CrafterError, Result};
+
+use self::header::ESP_HEADER_LEN;
+
+/// IP protocol number for IPv4-in-IPv4 encapsulation (tunnel-mode inner IPv4).
+///
+/// IANA assigns protocol number 4 to "IPv4 encapsulation"; the shared
+/// `protocol_numbers` table does not define a constant for it, so ESP carries a
+/// local one for the tunnel-mode ESP Next Header.
+const IPPROTO_IPV4: u8 = 4;
 
 /// Encapsulating Security Payload header, trailer, and crypto context.
 ///
@@ -178,6 +197,220 @@ impl Esp {
     }
 }
 
+/// Default per-packet IV/nonce used when the caller pins none.
+///
+/// `compile()` needs a deterministic IV so the emitted ESP bytes are
+/// reproducible (and oracle byte-parity holds). When the caller does not set
+/// [`Esp::iv`], the cipher's required IV is filled with all-zero octets of the
+/// algorithm's [`crate::protocols::ipsec::sa::EncryptionAlgorithm::iv_len`].
+/// This is a builder convenience only — a real send would pin a unique IV.
+fn default_iv(len: usize) -> Vec<u8> {
+    vec![0u8; len]
+}
+
+/// Map a following layer to the ESP Next Header value for the given mode.
+///
+/// - **Transport mode** (RFC 4303 §3.1.1): the Next Header is the protected
+///   upper-layer protocol number — TCP (6), UDP (17), ICMPv4 (1), or ICMPv6
+///   (58). An inner IP header in transport mode is unusual, so an `Ipv4`/`Ipv6`
+///   inner layer is still mapped to its IP-in-IP protocol number.
+/// - **Tunnel mode** (RFC 4303 §3.1.2): the protected data is an entire inner
+///   IP datagram, so the Next Header is `IPv4`-in-`IPv4` (4) or `IPv6` (41).
+///
+/// A following layer ESP does not recognize yields `None`; the caller then
+/// falls back to `IPPROTO_NO_NEXT` (59) rather than guessing.
+fn layer_esp_next_header(layer: &dyn Layer, _mode: IpsecMode) -> Option<u8> {
+    let any = layer.as_any();
+    // IP-in-IP uses the same protocol number whether the inner IP datagram is
+    // protected in tunnel mode or (unusually) nested in transport mode.
+    if any.is::<Ipv4>() {
+        return Some(IPPROTO_IPV4);
+    }
+    if any.is::<Ipv6>() {
+        return Some(IPPROTO_IPV6);
+    }
+    if any.is::<Tcp>() {
+        return Some(IPPROTO_TCP);
+    }
+    if any.is::<Udp>() {
+        return Some(IPPROTO_UDP);
+    }
+    if any.is::<Icmpv4>() {
+        return Some(IPPROTO_ICMP);
+    }
+    if any.is::<Icmpv6>() {
+        return Some(IPPROTO_ICMPV6);
+    }
+    None
+}
+
+impl Esp {
+    /// Resolve the ESP trailer Next Header for `compile()`.
+    ///
+    /// A caller-set value (including a deliberately wrong one) wins. Otherwise it
+    /// is derived from the following layer via [`layer_esp_next_header`]; with no
+    /// following layer the Next Header is `IPPROTO_NO_NEXT` (59).
+    fn effective_next_header(&self, ctx: &LayerContext<'_>, mode: IpsecMode) -> u8 {
+        if let Some(next_header) = self.next_header.value().copied() {
+            return next_header;
+        }
+        ctx.next()
+            .and_then(|layer| layer_esp_next_header(layer, mode))
+            .unwrap_or(IPPROTO_NO_NEXT)
+    }
+
+    /// Compute the RFC 4303 §2.4 ESP padding for a plaintext of `payload_len`
+    /// upper-layer octets under `block_size`.
+    ///
+    /// The padded plaintext is `payload || pad || pad-length || next-header`; its
+    /// total length must be a multiple of the cipher block size **and** of 4
+    /// octets (RFC 4303 §2.4). The pad bytes themselves are the monotonically
+    /// increasing sequence `1, 2, 3, …` the RFC specifies. A caller-set [`pad`]
+    /// override is returned verbatim, even when it breaks that alignment, so
+    /// deliberately malformed packets remain buildable.
+    ///
+    /// [`pad`]: Esp::pad
+    fn effective_pad(&self, payload_len: usize, block_size: usize) -> Vec<u8> {
+        if let Some(pad) = self.pad.value() {
+            return pad.clone();
+        }
+        // The trailer always contributes the Pad Length + Next Header octets, so
+        // the alignment target covers `payload + pad + 2`.
+        let alignment = block_size.max(4);
+        let trailer_fixed = header::ESP_PAD_LENGTH_FIELD_LEN + header::ESP_NEXT_HEADER_FIELD_LEN;
+        let unaligned = payload_len + trailer_fixed;
+        let remainder = unaligned % alignment;
+        let pad_len = if remainder == 0 {
+            0
+        } else {
+            alignment - remainder
+        };
+        // RFC 4303 §2.4: padding octets are 1, 2, 3, … starting at 1.
+        (1..=pad_len as u8).collect()
+    }
+
+    /// Compile the cipher + separate-integrity (non-AEAD) ESP datagram.
+    ///
+    /// Implements the RFC 4303 §2 encrypt-then-MAC layout for AES-CBC / AES-CTR
+    /// (and `NULL`) paired with a separate HMAC/XCBC/GMAC integrity algorithm:
+    ///
+    /// 1. Gather the upper-layer bytes (the following layers) as the plaintext.
+    /// 2. Append `pad || pad-length || next-header` (RFC 4303 §2.4–2.6); the
+    ///    padding is computed to the cipher block / 4-octet boundary unless the
+    ///    caller pinned an explicit pad.
+    /// 3. Encrypt the padded plaintext under the SA's cipher with the explicit
+    ///    IV (caller override, else an all-zero IV of the cipher's IV length).
+    /// 4. Compute the ICV over `SPI||Seq || IV || ciphertext` via the SA's
+    ///    integrity algorithm (caller `icv` override wins).
+    /// 5. Emit `SPI || Seq || IV || ciphertext || ICV`.
+    ///
+    /// This path rejects AEAD suites, `NULL`+`NONE`, and the no-SA case with a
+    /// structured error — those branches are filled by Steps 13/14.
+    fn compile_with_cipher(&self, ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
+        let sa = self.sa.as_ref().ok_or_else(|| {
+            CrafterError::invalid_field_value(
+                "esp.compile",
+                "ESP compile without a SecurityAssociation is not supported in this build step",
+            )
+        })?;
+
+        // AEAD and the no-integrity NULL case are handled by later steps.
+        if sa.enc.is_aead() {
+            return Err(CrafterError::invalid_field_value(
+                "esp.compile",
+                "AEAD ESP compilation is unsupported in this build step",
+            ));
+        }
+        if matches!(
+            sa.integ,
+            crate::protocols::ipsec::sa::IntegrityAlgorithm::None
+        ) {
+            return Err(CrafterError::invalid_field_value(
+                "esp.compile",
+                "NULL/opaque ESP compilation is unsupported in this build step",
+            ));
+        }
+
+        let spi = self.spi.value().copied().unwrap_or(DEFAULT_ESP_SPI);
+        let sequence = self
+            .sequence
+            .value()
+            .copied()
+            .unwrap_or(DEFAULT_ESP_SEQUENCE);
+
+        // 1. Upper-layer plaintext = every following layer's bytes.
+        let payload = payload_bytes_after(*ctx)?;
+
+        // 2. Trailer: pad || pad-length || next-header (RFC 4303 §2.4–2.6).
+        let block_size = sa.enc.block_size();
+        let pad = self.effective_pad(payload.len(), block_size);
+        let pad_len = u8::try_from(pad.len()).map_err(|_| {
+            CrafterError::invalid_field_value("esp.pad", "ESP pad exceeds 255 octets")
+        })?;
+        let next_header = self.effective_next_header(ctx, sa.mode);
+
+        let mut plaintext = Vec::with_capacity(
+            payload.len()
+                + pad.len()
+                + header::ESP_PAD_LENGTH_FIELD_LEN
+                + header::ESP_NEXT_HEADER_FIELD_LEN,
+        );
+        plaintext.extend_from_slice(&payload);
+        plaintext.extend_from_slice(&pad);
+        plaintext.push(pad_len);
+        plaintext.push(next_header);
+
+        // 3. Explicit IV: caller override, else a deterministic all-zero IV.
+        let iv = match self.iv.value() {
+            Some(iv) => iv.clone(),
+            None => default_iv(sa.enc.iv_len()),
+        };
+
+        // 4. Seal: cipher encrypt, then ICV over SPI||Seq || IV || ciphertext.
+        let mut aad = Vec::with_capacity(ESP_HEADER_LEN);
+        aad.extend_from_slice(&spi.to_be_bytes());
+        aad.extend_from_slice(&sequence.to_be_bytes());
+        let sealed = seal(sa, &iv, &aad, &plaintext)?;
+        let icv = match self.icv.value() {
+            Some(icv) => icv.clone(),
+            None => sealed.icv,
+        };
+
+        // 5. Wire layout: SPI || Seq || IV || ciphertext || ICV.
+        out.reserve(ESP_HEADER_LEN + iv.len() + sealed.ciphertext.len() + icv.len());
+        out.extend_from_slice(&aad);
+        out.extend_from_slice(&iv);
+        out.extend_from_slice(&sealed.ciphertext);
+        out.extend_from_slice(&icv);
+        Ok(())
+    }
+}
+
+impl Layer for Esp {
+    fn name(&self) -> &'static str {
+        "Esp"
+    }
+
+    fn encoded_len(&self) -> usize {
+        // A context-free capacity hint: the fixed SPI + Sequence header. The true
+        // on-wire size depends on the encrypted trailer and ICV, finalized in a
+        // later step.
+        ESP_HEADER_LEN
+    }
+
+    fn compile(&self, ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
+        // This build step implements only the cipher + separate-integrity
+        // (non-AEAD) path. AEAD, NULL/opaque, and the no-SA branches return a
+        // structured error from `compile_with_cipher` and are filled by Steps
+        // 13/14.
+        self.compile_with_cipher(ctx, out)
+    }
+
+    impl_layer_object!(Esp);
+}
+
+impl_layer_div!(Esp);
+
 impl Default for Esp {
     fn default() -> Self {
         Self::new()
@@ -275,5 +508,308 @@ mod tests {
     fn opaque_carries_body_bytes() {
         let esp = Esp::new().opaque(vec![0xDE, 0xAD, 0xBE, 0xEF]);
         assert_eq!(esp.opaque_body(), Some(&[0xDE, 0xAD, 0xBE, 0xEF][..]));
+    }
+
+    // --- compile (CBC/CTR + HMAC) golden vectors --------------------------
+
+    use crate::packet::Packet;
+    use crate::packet::Raw;
+    use crate::protocols::ipsec::sa::{seal, IntegrityAlgorithm};
+    use crate::protocols::ipv4::Ipv4;
+
+    /// A 16-octet AES-128 key (fixed, documentation-only).
+    fn aes_key() -> Vec<u8> {
+        vec![0x11u8; 16]
+    }
+
+    /// A 32-octet HMAC-SHA-256 integrity key (fixed, documentation-only).
+    fn hmac_key() -> Vec<u8> {
+        vec![0x33u8; 32]
+    }
+
+    /// A fixed upper-layer payload of 4 octets.
+    fn payload() -> Vec<u8> {
+        vec![0xDE, 0xAD, 0xBE, 0xEF]
+    }
+
+    /// Build the expected ESP datagram bytes for a cipher+integrity SA using the
+    /// already-RFC-KAT-proven [`seal`] primitive (Steps 04/05/09). This locks the
+    /// step-12 wire assembly (`SPI || Seq || IV || ciphertext || ICV`, RFC 4303
+    /// §2) against the proven crypto without re-deriving ciphertext by hand.
+    fn expected_esp_bytes(
+        sa: &SecurityAssociation,
+        spi: u32,
+        sequence: u32,
+        iv: &[u8],
+        next_header: u8,
+        upper: &[u8],
+    ) -> Vec<u8> {
+        // Recompute the RFC 4303 §2.4 padding for this payload + block size.
+        let block_size = sa.enc.block_size();
+        let alignment = block_size.max(4);
+        let unaligned =
+            upper.len() + header::ESP_PAD_LENGTH_FIELD_LEN + header::ESP_NEXT_HEADER_FIELD_LEN;
+        let remainder = unaligned % alignment;
+        let pad_len = if remainder == 0 {
+            0
+        } else {
+            alignment - remainder
+        };
+        let pad: Vec<u8> = (1..=pad_len as u8).collect();
+
+        let mut plaintext = Vec::new();
+        plaintext.extend_from_slice(upper);
+        plaintext.extend_from_slice(&pad);
+        plaintext.push(pad_len as u8);
+        plaintext.push(next_header);
+
+        let mut aad = Vec::new();
+        aad.extend_from_slice(&spi.to_be_bytes());
+        aad.extend_from_slice(&sequence.to_be_bytes());
+        let sealed = seal(sa, iv, &aad, &plaintext).unwrap();
+
+        let mut out = Vec::new();
+        out.extend_from_slice(&aad);
+        out.extend_from_slice(iv);
+        out.extend_from_slice(&sealed.ciphertext);
+        out.extend_from_slice(&sealed.icv);
+        out
+    }
+
+    /// Build `Ipv4 / Esp / <inner...>` and compile only the ESP layer in
+    /// isolation, returning its ESP datagram bytes plus the IPv4 protocol number.
+    ///
+    /// The ESP layer at index 1 is compiled through its own `LayerContext` so its
+    /// encrypted body — which already embeds the following layers via
+    /// `payload_bytes_after` — is not double-emitted by the trailing cleartext
+    /// layers. (Whole-packet compilation that elides the consumed tail is the
+    /// step-15 "Layer polish" concern.) The IPv4 protocol is pinned to ESP (50);
+    /// auto-deriving 50 from an inner `Esp` is a later registry step.
+    fn compile_esp_over_ipv4_inner(esp: Esp, inner: Packet) -> (Vec<u8>, u8) {
+        let ipv4 = Ipv4::new()
+            .protocol(crate::protocols::ipv4::IPPROTO_ESP)
+            .src("192.0.2.1".parse().unwrap())
+            .dst("192.0.2.2".parse().unwrap());
+        let packet: Packet = (Packet::from_layer(ipv4) / esp).concat(inner);
+
+        // Confirm the enclosing IPv4 datagram advertises ESP (protocol 50).
+        let ip_bytes = {
+            let mut out = Vec::new();
+            let ctx = LayerContext::new(&packet, 0);
+            packet.get(0).unwrap().compile(&ctx, &mut out).unwrap();
+            out
+        };
+        let ip_protocol = ip_bytes[9];
+
+        // Compile only the ESP layer (index 1) in isolation.
+        let mut esp_bytes = Vec::new();
+        let ctx = LayerContext::new(&packet, 1);
+        packet
+            .get(1)
+            .unwrap()
+            .compile(&ctx, &mut esp_bytes)
+            .unwrap();
+        (esp_bytes, ip_protocol)
+    }
+
+    /// Convenience wrapper for the common `Esp / Raw(upper)` case.
+    fn compile_esp_over_ipv4(esp: Esp, upper: &[u8]) -> (Vec<u8>, u8) {
+        compile_esp_over_ipv4_inner(esp, Packet::from_layer(Raw::from_bytes(upper)))
+    }
+
+    #[test]
+    fn compile_aes_cbc_hmac_sha256_golden() {
+        let sa = SecurityAssociation::new(0x0000_2000)
+            .encryption(EncryptionAlgorithm::AesCbc, aes_key())
+            .integrity(IntegrityAlgorithm::HmacSha2_256_128, hmac_key());
+        assert!(sa.validate().is_ok());
+
+        // Fixed 16-octet CBC IV.
+        let iv: Vec<u8> = (0u8..16).collect();
+        let esp = Esp::secured(sa.clone())
+            .spi(0x0000_2000)
+            .sequence(1)
+            .next_header(IPPROTO_TCP)
+            .iv(iv.clone());
+
+        let (esp_bytes, ip_protocol) = compile_esp_over_ipv4(esp, &payload());
+
+        // The enclosing IPv4 datagram advertises ESP (protocol 50).
+        assert_eq!(ip_protocol, crate::protocols::ipv4::IPPROTO_ESP);
+
+        let expected = expected_esp_bytes(&sa, 0x0000_2000, 1, &iv, IPPROTO_TCP, &payload());
+        assert_eq!(esp_bytes, expected);
+
+        // Structural locks: SPI || Seq prefix, then the 16-octet IV.
+        assert_eq!(&esp_bytes[0..4], &0x0000_2000u32.to_be_bytes());
+        assert_eq!(&esp_bytes[4..8], &1u32.to_be_bytes());
+        assert_eq!(&esp_bytes[8..24], &iv[..]);
+        // payload(4) + pad + padlen + nh padded to the 16-octet CBC block = 16;
+        // ciphertext is 16 octets; HMAC-SHA-256-128 ICV is 16 octets.
+        assert_eq!(esp_bytes.len(), ESP_HEADER_LEN + 16 + 16 + 16);
+    }
+
+    #[test]
+    fn compile_aes_ctr_hmac_sha256_golden() {
+        let sa = SecurityAssociation::new(0x0000_2000)
+            .encryption(EncryptionAlgorithm::AesCtr, aes_key())
+            .salt(vec![0x00, 0x00, 0x00, 0x30]) // CTR salt is 4 octets (RFC 3686).
+            .integrity(IntegrityAlgorithm::HmacSha2_256_128, hmac_key());
+        assert!(sa.validate().is_ok());
+
+        // Fixed 8-octet CTR IV.
+        let iv: Vec<u8> = vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
+        let esp = Esp::secured(sa.clone())
+            .spi(0x0000_2000)
+            .sequence(1)
+            .next_header(IPPROTO_TCP)
+            .iv(iv.clone());
+
+        let (esp_bytes, ip_protocol) = compile_esp_over_ipv4(esp, &payload());
+
+        assert_eq!(ip_protocol, crate::protocols::ipv4::IPPROTO_ESP);
+
+        let expected = expected_esp_bytes(&sa, 0x0000_2000, 1, &iv, IPPROTO_TCP, &payload());
+        assert_eq!(esp_bytes, expected);
+
+        // CTR has block size 1, so padding only satisfies the 4-octet alignment:
+        // payload(4) + padlen(1) + nh(1) = 6 → pad 2 → 8 ciphertext octets.
+        assert_eq!(&esp_bytes[0..4], &0x0000_2000u32.to_be_bytes());
+        assert_eq!(&esp_bytes[4..8], &1u32.to_be_bytes());
+        assert_eq!(&esp_bytes[8..16], &iv[..]);
+        assert_eq!(esp_bytes.len(), ESP_HEADER_LEN + 8 + 8 + 16);
+    }
+
+    #[test]
+    fn compile_round_trips_through_seal_open() {
+        // Sealing then opening the produced ciphertext recovers the padded
+        // plaintext, confirming the wire bytes are an openable ESP datagram.
+        let sa = SecurityAssociation::new(0x0000_2000)
+            .encryption(EncryptionAlgorithm::AesCbc, aes_key())
+            .integrity(IntegrityAlgorithm::HmacSha2_256_128, hmac_key());
+        let iv: Vec<u8> = (0u8..16).collect();
+        let esp = Esp::secured(sa.clone())
+            .spi(0x0000_2000)
+            .sequence(1)
+            .next_header(IPPROTO_TCP)
+            .iv(iv.clone());
+        let (esp_bytes, _) = compile_esp_over_ipv4(esp, &payload());
+
+        let mut aad = Vec::new();
+        aad.extend_from_slice(&0x0000_2000u32.to_be_bytes());
+        aad.extend_from_slice(&1u32.to_be_bytes());
+        let ct = &esp_bytes[ESP_HEADER_LEN + 16..esp_bytes.len() - 16];
+        let icv = &esp_bytes[esp_bytes.len() - 16..];
+        let opened = crate::protocols::ipsec::sa::open(&sa, &iv, &aad, ct, icv).unwrap();
+        // Padded plaintext: payload | pad(1..=10) | pad_len(10) | next_header(6).
+        assert_eq!(&opened[..4], &payload()[..]);
+        assert_eq!(*opened.last().unwrap(), IPPROTO_TCP);
+    }
+
+    #[test]
+    fn compile_pad_override_is_emitted_verbatim() {
+        // A caller-set pad is honored even when it breaks block alignment; the
+        // emitted plaintext uses exactly those pad octets (CTR keeps ciphertext
+        // length equal to plaintext length, so this is directly observable).
+        let sa = SecurityAssociation::new(0x10)
+            .encryption(EncryptionAlgorithm::AesCtr, aes_key())
+            .salt(vec![0x00, 0x00, 0x00, 0x30])
+            .integrity(IntegrityAlgorithm::HmacSha2_256_128, hmac_key());
+        let iv: Vec<u8> = vec![0u8; 8];
+        let esp = Esp::secured(sa.clone())
+            .spi(0x10)
+            .sequence(1)
+            .next_header(IPPROTO_TCP)
+            .iv(iv.clone())
+            .pad(vec![0xAA, 0xBB, 0xCC]); // 3 octets, deliberately unaligned.
+        let (esp_bytes, _) = compile_esp_over_ipv4(esp, &payload());
+
+        // ESP_HEADER(8) + IV(8) + ciphertext + ICV(16).
+        // ciphertext = payload(4) + pad(3) + padlen(1) + nh(1) = 9 octets.
+        assert_eq!(esp_bytes.len(), ESP_HEADER_LEN + 8 + 9 + 16);
+
+        // Open and confirm the override pad bytes survived untouched.
+        let mut aad = Vec::new();
+        aad.extend_from_slice(&0x10u32.to_be_bytes());
+        aad.extend_from_slice(&1u32.to_be_bytes());
+        let ct = &esp_bytes[ESP_HEADER_LEN + 8..esp_bytes.len() - 16];
+        let icv = &esp_bytes[esp_bytes.len() - 16..];
+        let opened = crate::protocols::ipsec::sa::open(&sa, &iv, &aad, ct, icv).unwrap();
+        assert_eq!(
+            opened,
+            vec![0xDE, 0xAD, 0xBE, 0xEF, 0xAA, 0xBB, 0xCC, 3, IPPROTO_TCP]
+        );
+    }
+
+    #[test]
+    fn compile_default_iv_is_zero_filled() {
+        // With no IV override, compile fills the cipher's IV length with zeros.
+        let sa = SecurityAssociation::new(0x10)
+            .encryption(EncryptionAlgorithm::AesCbc, aes_key())
+            .integrity(IntegrityAlgorithm::HmacSha2_256_128, hmac_key());
+        let esp = Esp::secured(sa)
+            .spi(0x10)
+            .sequence(1)
+            .next_header(IPPROTO_TCP);
+        let (esp_bytes, _) = compile_esp_over_ipv4(esp, &payload());
+        // The 16-octet CBC IV directly follows the 8-octet ESP header.
+        assert_eq!(&esp_bytes[ESP_HEADER_LEN..ESP_HEADER_LEN + 16], &[0u8; 16]);
+    }
+
+    #[test]
+    fn compile_derives_next_header_from_inner_udp() {
+        // Without a next_header override the value comes from the following layer
+        // (transport mode → the inner IP protocol number, UDP = 17).
+        let sa = SecurityAssociation::new(0x10)
+            .encryption(EncryptionAlgorithm::AesCbc, aes_key())
+            .integrity(IntegrityAlgorithm::HmacSha2_256_128, hmac_key());
+        let iv: Vec<u8> = (0u8..16).collect();
+        let esp = Esp::secured(sa.clone())
+            .spi(0x10)
+            .sequence(1)
+            .iv(iv.clone());
+
+        let inner: Packet =
+            Packet::from_layer(crate::protocols::Udp::new()) / Raw::from_bytes([0u8; 0]);
+        let (esp_bytes, _) = compile_esp_over_ipv4_inner(esp, inner);
+
+        // Decrypt the trailer and confirm the next-header octet is UDP (17).
+        let mut aad = Vec::new();
+        aad.extend_from_slice(&0x10u32.to_be_bytes());
+        aad.extend_from_slice(&1u32.to_be_bytes());
+        let ct = &esp_bytes[ESP_HEADER_LEN + 16..esp_bytes.len() - 16];
+        let icv = &esp_bytes[esp_bytes.len() - 16..];
+        let opened = crate::protocols::ipsec::sa::open(&sa, &iv, &aad, ct, icv).unwrap();
+        assert_eq!(*opened.last().unwrap(), IPPROTO_UDP);
+    }
+
+    #[test]
+    fn compile_rejects_aead_and_null_in_this_step() {
+        // AEAD compile is filled by Step 13; NULL+NONE / no-SA by Step 14.
+        let aead = Esp::secured(
+            SecurityAssociation::new(0x10)
+                .encryption(EncryptionAlgorithm::AesGcm16, aes_key())
+                .salt(vec![0u8; 4]),
+        )
+        .next_header(IPPROTO_TCP);
+        let err = compile_err(aead);
+        assert!(
+            matches!(err, CrafterError::InvalidFieldValue { field, .. } if field == "esp.compile")
+        );
+
+        let no_sa = Esp::new().next_header(IPPROTO_TCP);
+        let err = compile_err(no_sa);
+        assert!(
+            matches!(err, CrafterError::InvalidFieldValue { field, .. } if field == "esp.compile")
+        );
+    }
+
+    /// Compile `Ipv4 / Esp / Raw` and return the expected structured error.
+    fn compile_err(esp: Esp) -> CrafterError {
+        let ipv4 = Ipv4::new()
+            .src("192.0.2.1".parse().unwrap())
+            .dst("192.0.2.2".parse().unwrap());
+        let packet: Packet = Packet::from_layer(ipv4) / esp / Raw::from_bytes(payload());
+        packet.compile().unwrap_err()
     }
 }
