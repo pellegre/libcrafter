@@ -1,0 +1,83 @@
+version: 1
+kind: layer
+name: ah
+summary: >-
+  AH (RFC 4302) Authentication Header over IPv4 and IPv6, carrying next-header,
+  payload-length (32-bit words minus 2), reserved, SPI, sequence, and the ICV
+  computed over canonicalized immutable IP fields; integrity-only, never
+  encrypts the upper-layer data.
+
+roots: []
+parents:
+  - ipv4
+  - ipv6
+children:
+  - payload
+  - ipv4
+  - ipv6
+  - tcp
+  - udp
+  - icmp
+
+fields:
+  - name: next_header
+    type: uint8
+    required: true
+    domains:
+      - tcp
+      - udp
+      - icmp
+      - ipv4
+      - ipv6
+  - name: payload_len
+    type: uint8
+    required: true
+    domains:
+      - derived
+      - boundary
+  - name: reserved
+    type: uint16
+    required: true
+    domains:
+      - zero
+      - boundary
+  - name: spi
+    type: uint32
+    required: true
+    domains:
+      - spi_sender
+      - spi_responder
+      - zero
+      - boundary
+  - name: sequence
+    type: uint32
+    required: true
+    domains:
+      - sequence_initial
+      - sequence_boundary
+      - boundary
+  - name: icv
+    type: bytes
+    required: false
+    domains:
+      - derived
+
+coverage_cases:
+  - ah-hmac-transport
+  - ah-hmac-tunnel-inner-ip
+  - ah-ipv6-transport
+  - ah-sequence-boundary
+  - crafter-ah-hmac-transport
+  - crafter-ah-hmac-tunnel-inner-ip
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - AH
+    encode: true
+    decode: true
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
