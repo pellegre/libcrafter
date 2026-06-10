@@ -11,6 +11,10 @@ name = "decode_vectors"
 path = "src/bin/decode_vectors.rs"
 
 [[bin]]
+name = "ipsec_interop"
+path = "src/bin/ipsec_interop.rs"
+
+[[bin]]
 name = "live_endpoint"
 path = "src/bin/live_endpoint.rs"
 

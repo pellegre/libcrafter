@@ -126,6 +126,7 @@ from .report import DEFAULT_OUTPUT_ROOT, REPO_ROOT
 from .target_services import (
     target_service_setup_plan as _target_service_setup_plan,
 )
+from . import ipsec_interop as _ipsec_interop
 
 
 PROBE_SELECTED_SPECS = ("probe-contracts",)
@@ -234,6 +235,19 @@ def _run(args: argparse.Namespace) -> int:
             f"probe: status={report.status} provider={request.provider} "
             f"planned={len(report.results)} report={report_path}"
         )
+        # An IPSec dry-run that ran the cross-crypto interop check fails loud if a
+        # parity assertion did not hold: a libcrafter-sealed packet the reference
+        # could not open (or vice versa) is a behavioral defect to fix, not a
+        # silently green dry-run. A check that could not run (tools absent) leaves
+        # the dry-run plan itself valid, so it does not fail the run.
+        interop = report.metadata.get("ipsec_interop")
+        if isinstance(interop, Mapping) and interop.get("passed") is False:
+            print(
+                "probe: ipsec cross-crypto interop parity FAILED "
+                f"({interop.get('passed_count')}/{interop.get('case_count')} cases passed)",
+                file=sys.stderr,
+            )
+            return 2
         return 0
 
     report = _guarded_live_report(
@@ -308,6 +322,16 @@ def _dry_run_report(
             provider_capabilities=provider_capabilities,
         )
 
+    # The IPSec profile's dry-run exercises the deterministic, network-free
+    # cross-crypto behavioral parity (interop) check: a libcrafter-sealed ESP /
+    # AH / IKEv2-SK packet is opened by the reference crypto and vice versa, both
+    # directions plus tamper detection, over documentation addresses and pinned
+    # keys. The result is recorded in the report so the offline dry-run path
+    # carries the behavioral-parity evidence without any live traffic.
+    interop = _ipsec_interop_dry_run_metadata(selected_cases)
+    if interop is not None:
+        provider_context = {**provider_context, "ipsec_interop": interop}
+
     return _build_report(
         request=request,
         selected_cases=selected_cases,
@@ -320,6 +344,47 @@ def _dry_run_report(
         provider_capabilities=provider_capabilities,
         stimulus_endpoint=stimulus_endpoint,
     )
+
+
+# Probe case names whose dry-run plan is an ESP / AH / IKEv2 IPSec exchange. When
+# the profile selects any of these, the dry-run runs the cross-crypto interop
+# check (see :mod:`tools.probe.engine.ipsec_interop`).
+_IPSEC_PROBE_CASES: frozenset[str] = frozenset(
+    {
+        "esp-transport-echo",
+        "esp-tunnel-echo",
+        "ah-transport-verify",
+        "ikev2-sa-init",
+    }
+)
+
+
+def _ipsec_interop_dry_run_metadata(
+    selected_cases: Sequence[ProbeCase],
+) -> JSONObject | None:
+    """Run the cross-crypto IPSec interop check for an IPSec dry-run.
+
+    Returns the structured interop report when the selected cases include an
+    IPSec exchange, otherwise ``None`` (non-IPSec profiles skip the check). A
+    failed assertion is reported as ``passed: False`` in the returned object so
+    the report carries it; the CLI surfaces that as a non-zero exit. A missing
+    build/crypto tool is recorded as ``available: False`` rather than crashing
+    the dry-run, since the offline plan itself is still valid.
+    """
+
+    if not any(case.name in _IPSEC_PROBE_CASES for case in selected_cases):
+        return None
+    try:
+        report = _ipsec_interop.run_interop()
+    except _ipsec_interop.IpsecInteropError as exc:
+        return {
+            "check": "ipsec-cross-crypto-interop",
+            "available": False,
+            "passed": None,
+            "reason": str(exc),
+        }
+    report["available"] = True
+    return report
 
 
 def _guarded_live_report(
