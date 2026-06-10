@@ -226,19 +226,8 @@ pub(crate) fn verify_ah(packet: &Packet, ah_index: usize, sa: &SecurityAssociati
     // input is byte-identical to the sealed one (RFC 4302 §3.4.4).
     let ip_version = Ah::preceding_ip_version(&ctx)?;
     let padded_icv_len = ah.effective_icv_len(ip_version);
-    let (next_header, payload_len, reserved, spi, sequence) =
-        ah.resolved_icv_fields(&ctx, ip_version);
-    let input = ah.ah_icv_input(
-        &ctx,
-        sa,
-        ip_version,
-        next_header,
-        payload_len,
-        reserved,
-        spi,
-        sequence,
-        padded_icv_len,
-    )?;
+    let fields = ah.resolved_icv_fields(&ctx, ip_version);
+    let input = ah.ah_icv_input(&ctx, sa, ip_version, &fields, padded_icv_len)?;
 
     // Recompute the ICV over the assembled input, zero-padded to the boundary the
     // AH header reserves (RFC 4302 §2.6) so it lines up with the transmitted ICV's

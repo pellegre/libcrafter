@@ -315,7 +315,7 @@ impl IkeNotifyPayload {
         self.spi_size
             .value()
             .copied()
-            .unwrap_or_else(|| self.spi.len() as u8)
+            .unwrap_or(self.spi.len() as u8)
     }
 
     /// The Notify Message Type as a [`NotifyType`] (RFC 7296 §3.10.1).

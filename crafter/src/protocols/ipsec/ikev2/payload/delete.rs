@@ -172,7 +172,7 @@ impl IkeDeletePayload {
         self.num_spis
             .value()
             .copied()
-            .unwrap_or_else(|| self.spis.len() as u16)
+            .unwrap_or(self.spis.len() as u16)
     }
 
     /// The SPIs being deleted (RFC 7296 §3.11).
