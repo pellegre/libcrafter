@@ -1,5 +1,5 @@
 use crafter::core::{
-    Arp, Dhcp, Dns, Dot11, Eapol, EapolKey, Ethernet, Icmpv4, Icmpv6, Ipv4, Ipv6,
+    Ah, Arp, Dhcp, Dns, Dot11, Eapol, EapolKey, Esp, Ethernet, Icmpv4, Icmpv6, Ipv4, Ipv6,
     Ipv6FragmentHeader, Ipv6MobileRoutingHeader, Ipv6RoutingHeader, Ipv6SegmentRoutingHeader,
     Layer, LinuxSll, LlcSnap, NullLoopback, Radiotap, Raw, Tcp, Udp, Vlan,
 };
@@ -429,6 +429,13 @@ fn normalized_layer_name(layer: &dyn Layer) -> String {
         "dns"
     } else if layer.as_any().is::<Dhcp>() {
         "dhcp"
+    } else if layer.as_any().is::<Esp>() {
+        // The Scapy reference normalizes ESP to the lowercase oracle name; mirror
+        // it here so the pcap-roundtrip decoded layer lists match across backends
+        // (libcrafter's Layer::name is "Esp").
+        "esp"
+    } else if layer.as_any().is::<Ah>() {
+        "ah"
     } else if layer.as_any().is::<Raw>() {
         "payload"
     } else {

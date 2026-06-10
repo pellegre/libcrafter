@@ -1,0 +1,1 @@
+Ipv4(src=192.0.2.10, dst=198.51.100.20, proto=udp(17)) / Udp(sport=500, dport=500, len=128, checksum_status=Valid) / IkeHeader(exchange=34, flags=0x08, msgid=0, ispi=0x0102030405060708, rspi=0x0000000000000000) / IkeSaPayload(proposals=1, transforms=2) / IkeKePayload(dh_group=14, kex_len=32) / IkeNoncePayload(nonce_len=16)
