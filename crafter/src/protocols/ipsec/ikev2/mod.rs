@@ -6,6 +6,8 @@
 //! format only — round-trip construction and decoding, not a negotiation
 //! state machine.
 
+pub mod decode;
+
 pub mod header;
 
 pub mod payload;

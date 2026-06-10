@@ -29,7 +29,6 @@ use crate::protocols::ipsec::ikev2::payload::{
     write_generic_payload_header, IkePayload, PayloadHeaderFields, PayloadType,
 };
 use crate::protocols::transport::common::{impl_layer_div, impl_layer_object};
-#[cfg(test)]
 use crate::CrafterError;
 use crate::Result;
 
@@ -279,8 +278,7 @@ impl_layer_div!(IkeDeletePayload);
 /// on-wire SPI Size and Num of SPIs are pinned so a re-compile reproduces the
 /// bytes exactly even when they disagree with the SPI list (malformed inputs
 /// round-trip).
-#[cfg(test)]
-fn parse_delete_payload_body(bytes: &[u8]) -> Result<IkeDeletePayload> {
+pub(crate) fn parse_delete_payload_body(bytes: &[u8]) -> Result<IkeDeletePayload> {
     if bytes.len() < DELETE_FIXED_LEN {
         return Err(CrafterError::buffer_too_short(
             "ikev2.delete",

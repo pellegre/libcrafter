@@ -43,7 +43,6 @@ use crate::protocols::ipsec::ikev2::payload::{
     write_generic_payload_header, IkePayload, PayloadHeaderFields, PayloadType,
 };
 use crate::protocols::transport::common::{impl_layer_div, impl_layer_object};
-#[cfg(test)]
 use crate::CrafterError;
 use crate::Result;
 
@@ -520,8 +519,7 @@ impl_layer_div!(IkeTsPayload);
 /// remainder after the 8-octet fixed header, split evenly into the Starting and
 /// Ending Address. A truncated buffer or a length shorter than the fixed header
 /// is a structured error rather than a panic.
-#[cfg(test)]
-fn parse_traffic_selector(bytes: &[u8]) -> Result<(TrafficSelector, usize)> {
+pub(crate) fn parse_traffic_selector(bytes: &[u8]) -> Result<(TrafficSelector, usize)> {
     if bytes.len() < TS_FIXED_LEN {
         return Err(CrafterError::buffer_too_short(
             "ikev2.ts.selector",
@@ -568,8 +566,7 @@ fn parse_traffic_selector(bytes: &[u8]) -> Result<(TrafficSelector, usize)> {
 /// are ignored, and that many Traffic Selector substructures are parsed. A
 /// buffer shorter than the fixed body header is a structured error rather than
 /// a panic.
-#[cfg(test)]
-fn parse_ts_payload_body(role: TsRole, bytes: &[u8]) -> Result<IkeTsPayload> {
+pub(crate) fn parse_ts_payload_body(role: TsRole, bytes: &[u8]) -> Result<IkeTsPayload> {
     if bytes.len() < TS_PAYLOAD_FIXED_LEN {
         return Err(CrafterError::buffer_too_short(
             "ikev2.ts",

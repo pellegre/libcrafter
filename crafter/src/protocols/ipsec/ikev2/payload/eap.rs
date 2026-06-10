@@ -159,8 +159,7 @@ impl_layer_div!(IkeEapPayload);
 ///
 /// The whole body is the EAP message, carried verbatim. A re-compile reproduces
 /// the bytes exactly.
-#[cfg(test)]
-fn parse_eap_payload_body(bytes: &[u8]) -> Result<IkeEapPayload> {
+pub(crate) fn parse_eap_payload_body(bytes: &[u8]) -> Result<IkeEapPayload> {
     Ok(IkeEapPayload::new(bytes.to_vec()))
 }
 

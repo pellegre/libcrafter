@@ -160,8 +160,7 @@ impl_layer_div!(IkeVendorIdPayload);
 /// The whole body is the Vendor ID, carried verbatim (an empty body yields an
 /// empty Vendor ID; both are valid wire shapes). A re-compile reproduces the
 /// bytes exactly.
-#[cfg(test)]
-fn parse_vendor_id_payload_body(bytes: &[u8]) -> Result<IkeVendorIdPayload> {
+pub(crate) fn parse_vendor_id_payload_body(bytes: &[u8]) -> Result<IkeVendorIdPayload> {
     Ok(IkeVendorIdPayload::new(bytes.to_vec()))
 }
 

@@ -24,7 +24,6 @@ use crate::protocols::ipsec::ikev2::payload::{
     write_generic_payload_header, IkePayload, PayloadHeaderFields, PayloadType,
 };
 use crate::protocols::transport::common::{impl_layer_div, impl_layer_object};
-#[cfg(test)]
 use crate::CrafterError;
 use crate::Result;
 
@@ -202,8 +201,7 @@ impl_layer_div!(IkeKePayload);
 /// Parse a KE payload **body** (the bytes after the 4-octet generic header) per
 /// RFC 7296 §3.4. Local to this step; the registry-driven chain decode lands in
 /// Step 45.
-#[cfg(test)]
-fn parse_ke_payload_body(bytes: &[u8]) -> Result<IkeKePayload> {
+pub(crate) fn parse_ke_payload_body(bytes: &[u8]) -> Result<IkeKePayload> {
     if bytes.len() < KE_FIXED_LEN {
         return Err(CrafterError::buffer_too_short(
             "ikev2.ke",

@@ -35,7 +35,6 @@ use crate::protocols::ipsec::ikev2::payload::{
     write_generic_payload_header, IkePayload, PayloadHeaderFields, PayloadType,
 };
 use crate::protocols::transport::common::{impl_layer_div, impl_layer_object};
-#[cfg(test)]
 use crate::CrafterError;
 use crate::Result;
 
@@ -482,8 +481,7 @@ impl_layer_div!(IkeCertReqPayload);
 /// Certificate Data, carried verbatim. A buffer shorter than the fixed body
 /// header is a structured error rather than a panic. Decoded fields are stored
 /// with `Field::user` so a re-compile reproduces the bytes exactly.
-#[cfg(test)]
-fn parse_cert_payload_body(bytes: &[u8]) -> Result<IkeCertPayload> {
+pub(crate) fn parse_cert_payload_body(bytes: &[u8]) -> Result<IkeCertPayload> {
     if bytes.len() < CERT_FIXED_LEN {
         return Err(CrafterError::buffer_too_short(
             "ikev2.cert",
@@ -503,8 +501,7 @@ fn parse_cert_payload_body(bytes: &[u8]) -> Result<IkeCertPayload> {
 /// The Cert Encoding is read from the first octet and the remainder is the
 /// Certification Authority field, carried verbatim. A buffer shorter than the
 /// fixed body header is a structured error rather than a panic.
-#[cfg(test)]
-fn parse_certreq_payload_body(bytes: &[u8]) -> Result<IkeCertReqPayload> {
+pub(crate) fn parse_certreq_payload_body(bytes: &[u8]) -> Result<IkeCertReqPayload> {
     if bytes.len() < CERT_FIXED_LEN {
         return Err(CrafterError::buffer_too_short(
             "ikev2.certreq",

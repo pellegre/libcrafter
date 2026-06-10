@@ -175,8 +175,7 @@ impl_layer_div!(IkeNoncePayload);
 ///
 /// No length range check is applied: a body outside the RFC 7296 §3.9
 /// 16–256-octet window is accepted verbatim so malformed wire bytes round-trip.
-#[cfg(test)]
-fn parse_nonce_payload_body(bytes: &[u8]) -> Result<IkeNoncePayload> {
+pub(crate) fn parse_nonce_payload_body(bytes: &[u8]) -> Result<IkeNoncePayload> {
     Ok(IkeNoncePayload::new(bytes.to_vec()))
 }
 

@@ -8,6 +8,7 @@ use crate::protocols::eapol::append_eapol_packet;
 use crate::protocols::icmp::{append_icmp_packet, append_icmpv6_packet};
 use crate::protocols::ipsec::ah::decode::append_ah_packet_with_registry;
 use crate::protocols::ipsec::esp::decode::append_esp_packet_with_registry;
+use crate::protocols::ipsec::ikev2::decode::append_ikev2_packet_with_registry;
 use crate::protocols::ipv4::{
     append_ipv4_packet_with_registry, IPPROTO_AH, IPPROTO_ESP, IPPROTO_ICMP, IPPROTO_ICMPV6,
     IPPROTO_TCP, IPPROTO_UDP,
@@ -22,6 +23,11 @@ use crate::protocols::link::{
 use crate::protocols::transport::{
     append_tcp_packet_with_registry, append_udp_packet_with_registry,
 };
+
+/// UDP port for IKEv2 (RFC 7296 §2; IANA "isakmp" 500). An IKE message on this
+/// port is the 28-octet header plus its payload chain; the registry routes it to
+/// the IKEv2 decoder.
+const IKEV2_UDP_PORT: u16 = 500;
 
 type ProtocolDecoder = dyn for<'a> Fn(&'a ProtocolRegistry, Packet, &'a [u8]) -> Result<Packet>
     + Send
@@ -206,6 +212,14 @@ impl ProtocolRegistry {
 
         registry.bind_udp_port_with_registry(DNS_PORT, |_registry, packet, payload| {
             append_dns_packet(packet, payload)
+        });
+        // IKEv2 over UDP/500 (RFC 7296 §2). The UDP application dispatch passes the
+        // UDP payload, which for port 500 is a complete IKE message (28-octet
+        // header + payload chain); the decoder walks it into typed payload layers
+        // (Raw for an unmodeled type). UDP/4500 NAT-T disambiguation — the non-ESP
+        // marker that routes to IKEv2 vs. UDP-encapsulated ESP — is a later step.
+        registry.bind_udp_port_with_registry(IKEV2_UDP_PORT, |registry, packet, payload| {
+            append_ikev2_packet_with_registry(registry, packet, payload)
         });
         // DHCPv4 decode stays deliberately conservative to avoid false
         // positives: it binds only when the UDP pair is the standard client/
