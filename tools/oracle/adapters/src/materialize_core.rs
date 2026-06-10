@@ -219,6 +219,7 @@ fn build_layer(plan: &Value, layer: &str) -> ExampleResult<Box<dyn Layer>> {
         "arp" => Ok(Box::new(arp_layer(plan)?)),
         "ipv4" => Ok(Box::new(ipv4_layer(plan)?)),
         "ipv6" => Ok(Box::new(ipv6_layer(plan)?)),
+        "ikev2" => Ok(Box::new(ikev2_layer(plan)?)),
         "ipv6_hop_by_hop" => Ok(Box::new(ipv6_hop_by_hop_layer(plan)?)),
         "ipv6_destination_options" => Ok(Box::new(ipv6_destination_options_layer(plan)?)),
         "ipv6_fragment" => Ok(Box::new(ipv6_fragment_layer(plan)?)),
@@ -356,6 +357,129 @@ fn ah_layer(plan: &Value, stack: &[String], index: usize) -> ExampleResult<Box<d
         ah = ah.reserved(u16_value(value)?);
     }
     Ok(Box::new(ah))
+}
+
+/// Build the IKEv2 message header (RFC 7296 §3.1) for the offline oracle.
+///
+/// The seeded plan pins the initiator/responder SPIs, next-payload, version,
+/// exchange type, flags, and message id; the IKE payload chain itself is the
+/// following `payload` Raw layer in the stack, which the build loop appends
+/// after this header. `IkeHeader` does not consume the tail, so the auto-filled
+/// message Length covers the 28-octet header plus the trailing payload bytes —
+/// byte-identical to the Scapy `scapy.layers.isakmp.ISAKMP` reference, which
+/// also materializes only the header and recomputes the length over the same
+/// following Raw bytes. Every header field is pinned explicitly (including a
+/// `next_payload` of `none`/`0` and a deliberately out-of-spec `version` such as
+/// `0` or `255`) so the wire bytes match the reference verbatim.
+fn ikev2_layer(plan: &Value) -> ExampleResult<IkeHeader> {
+    let fields = layer_fields(plan, "ikev2")?;
+    let mut header = IkeHeader::new();
+    if let Some(value) = optional(fields, &["initiator_spi"]) {
+        header = header.initiator_spi(ikev2_spi(value)?);
+    }
+    if let Some(value) = optional(fields, &["responder_spi"]) {
+        header = header.responder_spi(ikev2_spi(value)?);
+    }
+    // The next payload is pinned explicitly: the following payload chain is an
+    // opaque Raw layer that does not register an IKEv2 payload type, so the
+    // header's auto-derivation cannot recover the plan's intended pointer.
+    if let Some(value) = optional(fields, &["next_payload"]) {
+        header = header.next_payload(ikev2_next_payload(value)?);
+    }
+    if let Some(value) = optional(fields, &["version"]) {
+        header = header.version(u8_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["exchange_type"]) {
+        header = header.exchange(u8_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["flags"]) {
+        header = header.flags(ikev2_flags(value)?);
+    }
+    if let Some(value) = optional(fields, &["message_id"]) {
+        header = header.message_id(u32_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["length"]) {
+        header = header.length(u32_value(value)?);
+    }
+    Ok(header)
+}
+
+/// Read an 8-octet IKEv2 SPI (RFC 7296 §3.1) from the plan's `{"hex": ...}` or
+/// hex-string form and pack it big-endian into a `u64` for `IkeHeader`.
+fn ikev2_spi(value: &Value) -> ExampleResult<u64> {
+    let bytes = option_bytes(value)?;
+    if bytes.len() != 8 {
+        return Err(format!(
+            "IKEv2 SPI must contain exactly 8 octets, got {}",
+            bytes.len()
+        )
+        .into());
+    }
+    let mut octets = [0u8; 8];
+    octets.copy_from_slice(&bytes);
+    Ok(u64::from_be_bytes(octets))
+}
+
+/// Resolve an IKEv2 Next Payload codepoint (RFC 7296 §3.2) from the plan value.
+///
+/// The plan carries the libcrafter payload-type layer name (`IkeSaPayload`,
+/// `IkeKePayload`, `IkeNoncePayload`), the literal `none`, or a numeric value;
+/// each maps to the same wire codepoint the Scapy reference stores.
+fn ikev2_next_payload(value: &Value) -> ExampleResult<u8> {
+    if let Some(text) = value.as_str() {
+        let lowered = text.to_ascii_lowercase().replace('-', "_");
+        return match lowered.as_str() {
+            "none" => Ok(0),
+            "ikesapayload" | "sa" => Ok(33),
+            "ikekepayload" | "ke" => Ok(34),
+            "ikeidipayload" => Ok(35),
+            "ikeidrpayload" => Ok(36),
+            "ikecertpayload" => Ok(37),
+            "ikecertreqpayload" => Ok(38),
+            "ikeauthpayload" | "auth" => Ok(39),
+            "ikenoncepayload" | "nonce" => Ok(40),
+            "ikenotifypayload" | "notify" => Ok(41),
+            "ikedeletepayload" | "delete" => Ok(42),
+            "ikevendorpayload" => Ok(43),
+            "iketsipayload" => Ok(44),
+            "iketsrpayload" => Ok(45),
+            "ikeencryptedpayload" | "encrypted" => Ok(46),
+            "ikeconfigpayload" => Ok(47),
+            "ikeeappayload" => Ok(48),
+            _ => u8_text(text),
+        };
+    }
+    u8_value(value)
+}
+
+/// Resolve the IKEv2 Flags octet (RFC 7296 §3.1) from the plan value.
+///
+/// The plan carries a list of flag names (`initiator`, `version`, `response`),
+/// a single name, or a numeric value; the names OR their bit positions together
+/// exactly as the Scapy reference resolves them.
+fn ikev2_flags(value: &Value) -> ExampleResult<u8> {
+    if let Some(items) = value.as_array() {
+        let mut flags = 0u8;
+        for item in items {
+            flags |= ikev2_flag_bit(item)?;
+        }
+        return Ok(flags);
+    }
+    ikev2_flag_bit(value)
+}
+
+/// Resolve a single IKEv2 flag (name or numeric) to its bit (RFC 7296 §3.1).
+fn ikev2_flag_bit(value: &Value) -> ExampleResult<u8> {
+    if let Some(text) = value.as_str() {
+        let lowered = text.to_ascii_lowercase().replace('-', "_");
+        return match lowered.as_str() {
+            "initiator" => Ok(IKE_FLAG_INITIATOR),
+            "version" => Ok(IKE_FLAG_VERSION),
+            "response" => Ok(IKE_FLAG_RESPONSE),
+            _ => u8_text(text),
+        };
+    }
+    u8_value(value)
 }
 
 /// Resolve an explicit ESP Next Header override from the plan's string/int value
