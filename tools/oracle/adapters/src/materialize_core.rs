@@ -169,15 +169,33 @@ pub fn build_packet(plan: &Value) -> ExampleResult<Packet> {
     let append_udp_options = udp_options_field(plan).is_some();
     let mut saw_udp_options_layer = false;
 
-    for raw_layer in stack {
-        let layer = canonical_layer(&raw_layer);
+    let canonical_stack: Vec<String> = stack.iter().map(|layer| canonical_layer(layer)).collect();
+    for (index, layer) in canonical_stack.iter().enumerate() {
+        let layer = layer.as_str();
         if layer == "rsn" {
             continue;
         }
         if layer == "udp_options" {
             saw_udp_options_layer = true;
         }
-        let piece = build_layer(plan, &layer)?;
+        let next_layer = canonical_stack.get(index + 1).map(String::as_str);
+        let piece = if layer == "esp" {
+            esp_layer(plan, &canonical_stack, index)?
+        } else if layer == "ah" {
+            ah_layer(plan, &canonical_stack, index)?
+        } else if layer == "ipv4" && matches!(next_layer, Some("esp" | "ah")) {
+            // Scapy's SecurityAssociation.encrypt forces the carrying IP protocol
+            // to ESP (50) / AH (51); the seeded plan leaves the outer IPv4
+            // protocol "unknown". Pin it here so libcrafter's sealed datagram is
+            // byte-identical to the reference.
+            let proto = ipsec_protocol_for_next(next_layer);
+            Box::new(ipv4_layer(plan)?.protocol(proto))
+        } else if layer == "ipv6" && matches!(next_layer, Some("esp" | "ah")) {
+            let proto = ipsec_protocol_for_next(next_layer);
+            Box::new(ipv6_layer(plan)?.nh(proto))
+        } else {
+            build_layer(plan, layer)?
+        };
         packet.push_box_mut(piece);
         if layer == "eapol" && eapol_key_layer_is_present(plan)? {
             packet.push_box_mut(Box::new(eapol_key_layer(plan)?));
@@ -216,8 +234,291 @@ fn build_layer(plan: &Value, layer: &str) -> ExampleResult<Box<dyn Layer>> {
         "dot11" => Ok(Box::new(dot11_layer(plan)?)),
         "llc_snap" => Ok(Box::new(llc_snap_layer(plan)?)),
         "eapol" => Ok(Box::new(eapol_layer(plan)?)),
+        "esp" | "ah" => Err(format!(
+            "{layer} must be materialized with stack context (see build_packet)"
+        )
+        .into()),
         _ => Err(format!("unsupported libcrafter materialization layer: {layer}").into()),
     }
+}
+
+/// The IP protocol / next-header value the carrying IP header must advertise for
+/// the ESP/AH layer that follows it (RFC 4303 §2 / RFC 4302 §2).
+fn ipsec_protocol_for_next(next_layer: Option<&str>) -> u8 {
+    match next_layer {
+        Some("ah") => IPPROTO_AH,
+        _ => IPPROTO_ESP,
+    }
+}
+
+/// IP-in-IP protocol number for ESP/AH tunnel mode (RFC 4303 §3.1.1). Not an
+/// exported crate constant, so it is defined locally to match `Esp`'s own
+/// derivation.
+const IPPROTO_IP_IN_IP: u8 = 4;
+
+/// Resolve the ESP/AH Next Header for the sealed datagram.
+///
+/// Scapy's `SecurityAssociation.encrypt` derives the value from the packet it
+/// seals, *before* it rewrites the carrying IP protocol to ESP/AH:
+/// - Tunnel mode: the inner IP version (4 for IPv4, 41 for IPv6).
+/// - Transport mode: the carrying IP header's protocol/next-header field as the
+///   seeded plan set it. For plain ESP/AH the plan leaves the outer IP protocol
+///   "unknown" (253); for UDP-encapsulated NAT-T it is UDP (17). The emitted
+///   outer IP protocol is overridden to 50/51 separately, but the trailer Next
+///   Header keeps this pre-override value, so mirror it for byte parity.
+fn ipsec_next_header(plan: &Value, stack: &[String], sec_index: usize) -> ExampleResult<u8> {
+    let inner = stack.get(sec_index + 1).map(String::as_str);
+    if matches!(inner, Some("ipv4")) {
+        return Ok(IPPROTO_IP_IN_IP);
+    }
+    if matches!(inner, Some("ipv6")) {
+        return Ok(IPPROTO_IPV6);
+    }
+    // Transport mode: the Next Header is the carrying IP header's protocol field
+    // as the plan set it (NAT-T's intervening UDP carries the ESP, so the carrier
+    // is the UDP layer; otherwise it is the outer IP header).
+    let carrier = stack.get(sec_index.wrapping_sub(1)).map(String::as_str);
+    if matches!(carrier, Some("udp")) {
+        return Ok(IPPROTO_UDP);
+    }
+    outer_ip_protocol(plan, carrier)
+}
+
+/// Read the carrying IP header's protocol / next-header value from the plan,
+/// exactly as the seeded plan declared it (before any ESP/AH override).
+fn outer_ip_protocol(plan: &Value, carrier: Option<&str>) -> ExampleResult<u8> {
+    match carrier {
+        Some("ipv4") => {
+            let fields = layer_fields(plan, "ipv4")?;
+            ip_protocol(required(fields, &["protocol", "proto"])?)
+        }
+        Some("ipv6") => {
+            let fields = layer_fields(plan, "ipv6")?;
+            ipv6_next_header(required(fields, &["next_header", "nh"])?)
+        }
+        _ => Err("ESP/AH transport materialization requires a carrying IP layer".into()),
+    }
+}
+
+/// Build the ESP layer (and its Security Association) for the offline oracle.
+///
+/// The seeded plan pins the SPI, sequence, key/salt, and explicit IV so the
+/// sealed `SPI || Seq || IV || ciphertext || ICV` is byte-reproducible against
+/// the Scapy reference. The keyless `null-opaque` behavior carries the following
+/// bytes verbatim as the opaque ESP body. Inner layers are appended by the
+/// caller and consumed by `Esp::consumes_following()` during compile.
+fn esp_layer(plan: &Value, stack: &[String], index: usize) -> ExampleResult<Box<dyn Layer>> {
+    let fields = layer_fields(plan, "esp")?;
+    let spi = u32_value(required(fields, &["spi"])?)?;
+    let sequence = optional(fields, &["sequence", "seq"])
+        .map(u32_value)
+        .transpose()?
+        .unwrap_or(1);
+
+    if ipsec_feature_behavior(plan) == "null-opaque" {
+        // No SA: the following bytes are preserved verbatim as the opaque body.
+        let opaque = ipsec_following_bytes(plan, stack, index)?;
+        let mut esp = Esp::new().spi(spi).sequence(sequence).opaque(opaque);
+        if let Some(value) = optional(fields, &["next_header", "nh"]) {
+            esp = esp.next_header(ipsec_next_header_field(plan, value, stack, index)?);
+        }
+        return Ok(Box::new(esp));
+    }
+
+    let sa = esp_security_association(plan, fields, spi)?;
+    let mut esp = Esp::secured(sa)
+        .spi(spi)
+        .sequence(sequence)
+        .next_header(ipsec_next_header(plan, stack, index)?);
+    esp = esp.iv(esp_explicit_iv(plan, fields)?);
+    // The trailer pad is left derived: compile() pads to the cipher block size
+    // per RFC 4303 §2.4, exactly as Scapy's SecurityAssociation.encrypt does. The
+    // seeded plan's `pad_length` (often 0) is only a domain marker and would
+    // break CBC block alignment if forced, so it is intentionally not pinned.
+    Ok(Box::new(esp))
+}
+
+/// Build the AH layer (and its Security Association) for the offline oracle.
+fn ah_layer(plan: &Value, stack: &[String], index: usize) -> ExampleResult<Box<dyn Layer>> {
+    let fields = layer_fields(plan, "ah")?;
+    let spi = u32_value(required(fields, &["spi"])?)?;
+    let sequence = optional(fields, &["sequence", "seq"])
+        .map(u32_value)
+        .transpose()?
+        .unwrap_or(1);
+
+    let sa = ah_security_association(plan, fields, spi)?;
+    let mut ah = Ah::secured(sa)
+        .spi(spi)
+        .sequence(sequence)
+        .next_header(ipsec_next_header(plan, stack, index)?);
+    if let Some(value) = optional(fields, &["reserved"]) {
+        ah = ah.reserved(u16_value(value)?);
+    }
+    Ok(Box::new(ah))
+}
+
+/// Resolve an explicit ESP Next Header override from the plan's string/int value
+/// (used only by the keyless opaque path, which has no SA to drive derivation).
+fn ipsec_next_header_field(
+    plan: &Value,
+    value: &Value,
+    stack: &[String],
+    sec_index: usize,
+) -> ExampleResult<u8> {
+    if let Some(text) = value.as_str() {
+        return match text.to_ascii_lowercase().as_str() {
+            "ipv4" => Ok(IPPROTO_IP_IN_IP),
+            "ipv6" => Ok(IPPROTO_IPV6),
+            "tcp" => Ok(IPPROTO_TCP),
+            "udp" => Ok(IPPROTO_UDP),
+            "icmp" => Ok(IPPROTO_ICMP),
+            "payload" | "raw" | "unknown" => ipsec_next_header(plan, stack, sec_index),
+            _ => u8_text(text),
+        };
+    }
+    u8_value(value)
+}
+
+/// Resolve the pinned explicit ESP IV, mirroring the Scapy backend.
+///
+/// AEAD (RFC 4106) uses the 8-octet explicit IV: a per-layer `iv` override wins
+/// (the generator pins it, including the all-zero `zero` domain), otherwise the
+/// crypto block's `iv`/`aead_iv`. CBC (RFC 3602) uses the 16-octet `cbc_iv` from
+/// the crypto block; the ESP `iv` field only carries the 8-octet AEAD IV.
+fn esp_explicit_iv(plan: &Value, fields: &Map<String, Value>) -> ExampleResult<Vec<u8>> {
+    let crypto = ipsec_crypto_block(fields)?;
+    if ipsec_feature(plan) == "esp_aead" {
+        if let Some(value) = optional(fields, &["iv"]) {
+            return option_bytes(value);
+        }
+        return ipsec_crypto_bytes(crypto, &["iv", "aead_iv"]);
+    }
+    ipsec_crypto_bytes(crypto, &["cbc_iv"])
+}
+
+/// Build the ESP Security Association from the plan's pinned crypto block,
+/// selecting the suite from the feature: `esp_aead` → AES-GCM-16 (AEAD), every
+/// other keyed ESP → AES-CBC + HMAC-SHA2-256-128 (matching the Scapy backend's
+/// `_esp_suite`).
+fn esp_security_association(
+    plan: &Value,
+    fields: &Map<String, Value>,
+    spi: u32,
+) -> ExampleResult<SecurityAssociation> {
+    let crypto = ipsec_crypto_block(fields)?;
+    let mode = ipsec_mode(plan, stack_has_inner_ip(plan));
+    let mut sa = SecurityAssociation::new(spi);
+    if ipsec_feature(plan) == "esp_aead" {
+        sa = sa
+            .encryption(
+                EncryptionAlgorithm::AesGcm16,
+                ipsec_crypto_bytes(crypto, &["encryption_key"])?,
+            )
+            .salt(ipsec_crypto_bytes(crypto, &["salt"])?);
+    } else {
+        sa = sa
+            .encryption(
+                EncryptionAlgorithm::AesCbc,
+                ipsec_crypto_bytes(crypto, &["encryption_key"])?,
+            )
+            .integrity(
+                IntegrityAlgorithm::HmacSha2_256_128,
+                ipsec_crypto_bytes(crypto, &["integrity_key"])?,
+            );
+    }
+    sa = apply_ipsec_mode(sa, mode).extended_sequence(false);
+    Ok(sa)
+}
+
+/// Build the AH Security Association (integrity-only HMAC-SHA2-256-128).
+fn ah_security_association(
+    plan: &Value,
+    fields: &Map<String, Value>,
+    spi: u32,
+) -> ExampleResult<SecurityAssociation> {
+    let crypto = ipsec_crypto_block(fields)?;
+    let mode = ipsec_mode(plan, stack_has_inner_ip(plan));
+    let sa = SecurityAssociation::new(spi).integrity(
+        IntegrityAlgorithm::HmacSha2_256_128,
+        ipsec_crypto_bytes(crypto, &["integrity_key"])?,
+    );
+    Ok(apply_ipsec_mode(sa, mode).extended_sequence(false))
+}
+
+/// Apply the resolved IPSec mode to a Security Association builder.
+fn apply_ipsec_mode(sa: SecurityAssociation, tunnel: bool) -> SecurityAssociation {
+    if tunnel {
+        sa.tunnel()
+    } else {
+        sa.transport()
+    }
+}
+
+/// True when the ESP/AH stack seals a whole inner IP datagram (tunnel mode).
+fn stack_has_inner_ip(plan: &Value) -> bool {
+    let Some(stack) = string_array(plan.get("stack")) else {
+        return false;
+    };
+    let canonical: Vec<String> = stack.iter().map(|layer| canonical_layer(layer)).collect();
+    for (index, layer) in canonical.iter().enumerate() {
+        if layer == "esp" || layer == "ah" {
+            return matches!(
+                canonical.get(index + 1).map(String::as_str),
+                Some("ipv4" | "ipv6")
+            );
+        }
+    }
+    false
+}
+
+/// Resolve the IPSec mode (tunnel when a whole inner IP datagram is sealed).
+fn ipsec_mode(_plan: &Value, has_inner_ip: bool) -> bool {
+    has_inner_ip
+}
+
+/// The ESP/AH pinned crypto block carried under the layer fields.
+fn ipsec_crypto_block(fields: &Map<String, Value>) -> ExampleResult<&Map<String, Value>> {
+    required(fields, &["crypto"])?
+        .as_object()
+        .ok_or_else(|| "ipsec crypto block must be an object".into())
+}
+
+/// Read a pinned crypto value (`{ "hex": ... }`) as raw bytes.
+fn ipsec_crypto_bytes(crypto: &Map<String, Value>, names: &[&str]) -> ExampleResult<Vec<u8>> {
+    option_bytes(required(crypto, names)?)
+}
+
+/// The IPSec feature name from the plan metadata (`esp_aead`, `esp_cbc`, …).
+fn ipsec_feature(plan: &Value) -> String {
+    plan.pointer("/metadata/feature")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string()
+}
+
+/// The IPSec feature behavior from the plan metadata (`aead-transport`, …).
+fn ipsec_feature_behavior(plan: &Value) -> String {
+    plan.pointer("/metadata/feature_behavior")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string()
+}
+
+/// Collect the verbatim bytes of every layer following the ESP layer (used as
+/// the opaque body for the keyless null-opaque case).
+fn ipsec_following_bytes(plan: &Value, stack: &[String], index: usize) -> ExampleResult<Vec<u8>> {
+    let mut bytes = Vec::new();
+    for layer in stack.iter().skip(index + 1) {
+        if layer == "rsn" || layer == "udp_options" {
+            continue;
+        }
+        let piece = build_layer(plan, layer)?;
+        let mut packet = Packet::new();
+        packet.push_box_mut(piece);
+        bytes.extend_from_slice(packet.compile()?.as_bytes());
+    }
+    Ok(bytes)
 }
 
 fn radiotap_layer(plan: &Value) -> ExampleResult<Radiotap> {

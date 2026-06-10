@@ -1,6 +1,6 @@
 use crafter::core::{
-    Arp, Dhcp, Dns, Dot11, Eapol, EapolKey, Ethernet, Icmpv4, Icmpv4QuotedIp, Icmpv6, Ipv4, Ipv6,
-    Ipv6DestinationOptionsHeader, Ipv6FragmentHeader, Ipv6FragmentHeaderStatus,
+    Ah, Arp, Dhcp, Dns, Dot11, Eapol, EapolKey, Esp, Ethernet, Icmpv4, Icmpv4QuotedIp, Icmpv6,
+    Ipv4, Ipv6, Ipv6DestinationOptionsHeader, Ipv6FragmentHeader, Ipv6FragmentHeaderStatus,
     Ipv6HopByHopOptionsHeader, Ipv6MobileRoutingHeader, Ipv6Option, Ipv6RoutingHeader,
     Ipv6RoutingTypeStatus, Ipv6SegmentRoutingHeader, Layer, LinkType, LinuxSll, LlcSnap,
     NetworkLayer, NullLoopback, Packet, Radiotap, Raw, RsnAkmSuite, RsnCipherSuite, RsnInformation,
@@ -447,6 +447,13 @@ fn normalized_layer_name(layer: &dyn Layer) -> String {
         "eapol"
     } else if layer.as_any().is::<EapolKey>() {
         "eapol_key"
+    } else if layer.as_any().is::<Esp>() {
+        // The Scapy reference normalizes ESP to the lowercase oracle name; mirror
+        // it here so the decoded layer lists match (libcrafter's Layer::name is
+        // "Esp").
+        "esp"
+    } else if layer.as_any().is::<Ah>() {
+        "ah"
     } else if layer.as_any().is::<Raw>() {
         "payload"
     } else {
@@ -552,10 +559,70 @@ fn normalized_layer_fields(
     if let Some(layer) = layer.as_any().downcast_ref::<EapolKey>() {
         return eapol_key_fields(layer);
     }
+    if let Some(layer) = layer.as_any().downcast_ref::<Esp>() {
+        return esp_fields(layer);
+    }
+    if let Some(layer) = layer.as_any().downcast_ref::<Ah>() {
+        return ah_fields(layer);
+    }
     if let Some(layer) = layer.as_any().downcast_ref::<Raw>() {
         return payload_fields(layer);
     }
     BTreeMap::new()
+}
+
+/// Normalize a decoded ESP header into the backend-neutral oracle shape.
+///
+/// Without an SA libcrafter decodes ESP as `spi`, `sequence`, and the opaque
+/// encrypted body (explicit IV, ciphertext, and appended ICV) preserved as one
+/// blob. The Scapy reference reports the same three fields, naming the opaque
+/// blob `data`; mirror that so the decoded models compare equal.
+fn esp_fields(layer: &Esp) -> BTreeMap<String, Value> {
+    let mut fields = BTreeMap::new();
+    if let Some(spi) = layer.spi_value() {
+        fields.insert("spi".to_string(), json!(spi));
+    }
+    if let Some(sequence) = layer.sequence_value() {
+        fields.insert("sequence".to_string(), json!(sequence));
+    }
+    let body = layer.opaque_body().unwrap_or(&[]);
+    fields.insert("data".to_string(), bytes_hex_ascii(body));
+    fields
+}
+
+/// Normalize a decoded AH header into the backend-neutral oracle shape.
+///
+/// AH carries the next-header, payload-length (32-bit words minus 2), reserved
+/// field, SPI, sequence, and the ICV. The Scapy reference reports exactly these
+/// fields with the ICV as a `{hex, ascii}` blob; mirror that here.
+fn ah_fields(layer: &Ah) -> BTreeMap<String, Value> {
+    let mut fields = BTreeMap::new();
+    if let Some(value) = layer.next_header_value() {
+        fields.insert("next_header".to_string(), json!(value));
+    }
+    if let Some(value) = layer.payload_len_value() {
+        fields.insert("payload_len".to_string(), json!(value));
+    }
+    if let Some(value) = layer.reserved_value() {
+        fields.insert("reserved".to_string(), json!(value));
+    }
+    if let Some(value) = layer.spi_value() {
+        fields.insert("spi".to_string(), json!(value));
+    }
+    if let Some(value) = layer.sequence_value() {
+        fields.insert("sequence".to_string(), json!(value));
+    }
+    let icv = layer.icv_value().unwrap_or(&[]);
+    fields.insert("icv".to_string(), bytes_hex_ascii(icv));
+    fields
+}
+
+/// Build the `{hex, ascii}` representation the oracle uses for opaque byte blobs.
+fn bytes_hex_ascii(bytes: &[u8]) -> Value {
+    json!({
+        "hex": hex_bytes(bytes),
+        "ascii": String::from_utf8_lossy(bytes).into_owned(),
+    })
 }
 
 fn radiotap_fields(layer: &Radiotap) -> BTreeMap<String, Value> {
