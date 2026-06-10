@@ -1,0 +1,90 @@
+version: 1
+kind: layer
+name: ikev2
+summary: >-
+  IKEv2 (RFC 7296) message header over UDP/500 and UDP/4500, carrying the
+  initiator/responder SPIs, next-payload chain anchor, version, exchange type,
+  flags, message id, and auto-filled message length; payloads decode as the
+  generic-payload chain, unknown types preserved as Raw.
+
+roots: []
+parents:
+  - udp
+children:
+  - payload
+
+fields:
+  - name: initiator_spi
+    type: bytes
+    required: true
+    domains:
+      - spi_sender
+      - zero
+  - name: responder_spi
+    type: bytes
+    required: true
+    domains:
+      - spi_responder
+      - zero
+  - name: next_payload
+    type: uint8
+    required: true
+    domains:
+      - sa
+      - ke
+      - nonce
+      - none
+  - name: version
+    type: uint8
+    required: true
+    domains:
+      - ikev2
+      - boundary
+  - name: exchange_type
+    type: uint8
+    required: true
+    domains:
+      - ike_sa_init
+      - ike_auth
+      - create_child_sa
+      - informational
+  - name: flags
+    type: flags
+    required: true
+    domains:
+      - initiator
+      - response
+      - version
+  - name: message_id
+    type: uint32
+    required: true
+    domains:
+      - sequence_initial
+      - sequence_boundary
+      - boundary
+  - name: length
+    type: uint32
+    required: true
+    domains:
+      - derived
+      - boundary
+
+coverage_cases:
+  - ikev2-sa-init
+  - ikev2-auth
+  - ikev2-sk-encrypted
+  - ikev2-unknown-payload-raw
+  - crafter-ikev2-sa-init
+  - crafter-ikev2-auth
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - ISAKMP
+    encode: true
+    decode: true
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true

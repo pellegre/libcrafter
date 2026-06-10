@@ -1,0 +1,85 @@
+version: 1
+kind: layer
+name: esp
+summary: >-
+  ESP (RFC 4303) Encapsulating Security Payload over IPv4 and IPv6, carrying
+  SPI, sequence, encrypted trailer (pad/pad-length/next-header), explicit IV,
+  and the appended ICV; opaque without an SA, typed inner protocol or inner IP
+  with an SA.
+
+roots: []
+parents:
+  - ipv4
+  - ipv6
+children:
+  - payload
+  - ipv4
+  - ipv6
+  - tcp
+  - udp
+  - icmp
+
+fields:
+  - name: spi
+    type: uint32
+    required: true
+    domains:
+      - spi_sender
+      - spi_responder
+      - zero
+      - boundary
+  - name: sequence
+    type: uint32
+    required: true
+    domains:
+      - sequence_initial
+      - sequence_boundary
+      - boundary
+  - name: next_header
+    type: uint8
+    required: true
+    domains:
+      - tcp
+      - udp
+      - icmp
+      - ipv4
+      - ipv6
+  - name: pad_length
+    type: uint8
+    required: true
+    domains:
+      - derived
+      - zero
+      - boundary
+  - name: iv
+    type: bytes
+    required: false
+    domains:
+      - derived
+      - zero
+  - name: icv
+    type: bytes
+    required: false
+    domains:
+      - derived
+
+coverage_cases:
+  - esp-aead-transport
+  - esp-cbc-hmac-transport
+  - esp-null-opaque
+  - esp-tunnel-inner-ip
+  - esp-sequence-boundary
+  - crafter-esp-aead-transport
+  - crafter-esp-cbc-hmac-transport
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - ESP
+    encode: true
+    decode: true
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
