@@ -1,0 +1,84 @@
+version: 1
+kind: feature
+name: ikev2_malformed
+summary: >-
+  IKEv2 (RFC 7296) malformed-input contract: a truncated buffer shorter than the
+  28-byte header, a generic payload whose length field runs off the end of the
+  message, and a next-payload chain that points past the available bytes. Each
+  is a structured decode error, never a panic.
+
+# Deliberately malformed IKEv2 inputs. A truncated header, a payload length that
+# overruns the message, and a next-payload chain that runs off the end are
+# structured errors rather than comparable packets, so every case carries
+# byte_policy: structured_error and is excluded from offline encode/decode
+# sampling (the oracle has no offline malformed comparison path; see
+# tools/oracle/engine/generator.py _case_supported_in_direction). The cases stay
+# declared coverage; the crate's resilience and fixture suites assert the
+# BufferTooShort / InvalidFieldValue structured errors for these shapes (see
+# crafter/tests/resilience.rs).
+
+layers:
+  - ikev2
+  - udp
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: false
+malformed: true
+
+behaviors:
+  # Fewer than 28 bytes: cannot hold the IKE header (SPIs | Next Payload |
+  # Version | Exchange | Flags | Message ID | Length); BufferTooShort.
+  - name: truncated-header
+    fields:
+      - length
+  # A generic payload Length field that exceeds the remaining message bytes: the
+  # body slice runs off the end; InvalidFieldValue rather than a truncated read.
+  - name: payload-length-overrun
+    fields:
+      - length
+  # A Next Payload chain that references a payload past the end of the message:
+  # the walk runs off the end; structured error, not a panic.
+  - name: bad-next-payload-chain
+    next_payload:
+      - sa
+    checks:
+      - chain_overrun_not_panic
+
+coverage_cases:
+  - ikev2-malformed-truncated-header
+  - ikev2-malformed-payload-length-overrun
+  - ikev2-malformed-bad-next-payload-chain
+
+supported_cases:
+  - name: ikev2-malformed-truncated-header
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: structured_error
+  - name: ikev2-malformed-payload-length-overrun
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: structured_error
+  - name: ikev2-malformed-bad-next-payload-chain
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: structured_error
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - ISAKMP
+    notes:
+      - Malformed IKEv2 shapes are not byte-compared; the Scapy reference backend
+        declares native ISAKMP support for the well-formed sibling features and
+        these cases are excluded from offline sampling as structured errors.
+  libcrafter:
+    status: supported
+    notes:
+      - Truncated headers, payload-length overruns, and bad next-payload chains
+        surface as BufferTooShort / InvalidFieldValue structured errors with
+        context, required, and available where applicable, never as a panic.

@@ -1,0 +1,107 @@
+version: 1
+kind: feature
+name: esp_aead
+summary: >-
+  ESP (RFC 4303) AEAD confidentiality with AES-GCM-16 in transport mode over
+  IPv4 and IPv6, with pinned key/salt/IV so the explicit IV in the payload, the
+  ciphertext, and the appended 16-byte ICV (the GCM tag) are deterministic and
+  byte-comparable against the Scapy reference backend.
+
+# Offline ESP AEAD compile/decode coverage. Each supported case is materialized
+# by both the Scapy reference backend (scapy.layers.ipsec.SecurityAssociation,
+# ENCR_AES_GCM_16) and the libcrafter adapter from the same packet plan, with
+# the SPI, sequence, key, salt, and explicit IV pinned to constants so the AEAD
+# output (IV || ciphertext || tag) is identical in both backends. AAD is
+# SPI||Seq per RFC 4106; the tag is the ICV. The tunnel-mode case carries an
+# inner IPv4 datagram (next-header 4) so the decoded model dispatches inner IP
+# under an SA. The sequence-boundary case fixes the sequence to its 32-bit
+# maximum to confirm the AAD and wire sequence remain stable at the boundary.
+
+layers:
+  - esp
+  - ipv4
+  - ipv6
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: true
+malformed: false
+
+behaviors:
+  # AES-GCM-16 transport mode over IPv4: nonce = salt(4) || IV(8), AAD = SPI||Seq,
+  # tag is the 16-byte ICV. With key/salt/IV pinned the whole datagram is
+  # byte-stable across both backends.
+  - name: aead-transport
+    suite:
+      - encr_aes_gcm_16
+    mode: transport
+    checks:
+      - aead_iv_in_payload
+      - aead_aad_spi_seq
+      - aead_tag_is_icv
+  # AES-GCM-16 tunnel mode: ESP next-header 4 (IPv4-in-IPv4). The decoded model
+  # exposes the inner IP datagram under the SA.
+  - name: tunnel-inner-ip
+    suite:
+      - encr_aes_gcm_16
+    mode: tunnel
+    next_header:
+      - ipv4
+    checks:
+      - tunnel_inner_ip_dispatch
+  # Sequence at the 32-bit boundary: the wire sequence and the AAD high word
+  # stay stable; non-ESN, so the wire carries SPI||Seq only.
+  - name: sequence-boundary
+    suite:
+      - encr_aes_gcm_16
+    mode: transport
+    fields:
+      - sequence
+
+coverage_cases:
+  - esp-aead-transport
+  - esp-tunnel-inner-ip
+  - esp-sequence-boundary
+  - crafter-esp-aead-transport
+
+supported_cases:
+  - name: esp-aead-transport
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: esp-tunnel-inner-ip
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: esp-sequence-boundary
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: crafter-esp-aead-transport
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - ESP
+    encode: true
+    decode: true
+    notes:
+      - ESP AEAD bytes are materialized with scapy.layers.ipsec.SecurityAssociation
+        using ENCR_AES_GCM_16 and pinned key, salt, and explicit IV so the
+        IV || ciphertext || 16-byte tag is byte-identical to libcrafter.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    notes:
+      - The pinned AES-GCM-16 SA produces a byte-identical ESP datagram and the
+        AEAD tag is emitted as the ICV; tunnel mode dispatches the inner IP
+        datagram under the SA on decode.
