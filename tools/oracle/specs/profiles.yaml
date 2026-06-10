@@ -371,6 +371,94 @@ profiles:
       malformed: 1
       pcap: 0
       live: 0
+  # ipsec-smoke: representative offline IPSec smoke set covering ESP (RFC 4303,
+  # IP protocol 50), AH (RFC 4302, IP protocol 51), and IKEv2 (RFC 7296, UDP/500
+  # and UDP/4500). It keeps all three IPSec families eligible so a single small
+  # run materializes a representative mix of ESP, AH, and IKEv2 packet plans. The
+  # generator emits PINNED key/salt/IV crypto material into every esp/ah/ikev2
+  # plan (see the IPSec domain samplers in tools/oracle/engine/generator.py) so
+  # the ESP/AH ciphertext and ICV are byte-reproducible across the Scapy
+  # reference backend and the libcrafter adapter; this is the determinism seam
+  # for ESP/AH byte-parity. live and pcap weights stay at 0: IPSec is offline /
+  # dry-run only, and every plan uses documentation address space. The actual
+  # Scapy ESP/AH/ISAKMP materialization arrives with the scapy backend step, so
+  # this profile is generation/dry-plan eligible on its own.
+  - name: ipsec-smoke
+    purpose: representative offline IPSec ESP/AH/IKEv2 smoke coverage
+    default_count: 10
+    family_weights:
+      - name: esp
+        weight: 3
+      - name: ah
+        weight: 2
+      - name: ikev2
+        weight: 2
+    payload_length:
+      min: 0
+      max: 64
+    feature_weights:
+      baseline: 10
+      boundary: 4
+      malformed: 0
+      pcap: 0
+      live: 0
+  # esp: focused offline ESP coverage (transport AEAD, transport CBC+HMAC,
+  # NULL/opaque, tunnel inner-IP, sequence boundary) over IPv4 and IPv6. The ESP
+  # family is weighted alone so case selection stays on the ESP stacks. Pinned
+  # crypto material keeps the IV || ciphertext || ICV deterministic for both
+  # backends.
+  - name: esp
+    purpose: focused offline ESP encrypt/integrity compile and decode behavior
+    default_count: 10
+    family_weights:
+      - name: esp
+        weight: 1
+    payload_length:
+      min: 0
+      max: 64
+    feature_weights:
+      baseline: 10
+      boundary: 4
+      malformed: 0
+      pcap: 0
+      live: 0
+  # ah: focused offline AH coverage (HMAC transport over IPv4 and IPv6, tunnel
+  # inner-IP, sequence boundary). The ICV is computed over the canonical
+  # immutable IP fields with a pinned integrity key so the appended ICV is
+  # byte-comparable.
+  - name: ah
+    purpose: focused offline AH integrity compile and decode behavior
+    default_count: 10
+    family_weights:
+      - name: ah
+        weight: 1
+    payload_length:
+      min: 0
+      max: 64
+    feature_weights:
+      baseline: 10
+      boundary: 4
+      malformed: 0
+      pcap: 0
+      live: 0
+  # ikev2: focused offline IKEv2 message coverage (IKE_SA_INIT, IKE_AUTH, SK
+  # encrypted payload, unknown-payload-raw) over UDP/500. Initiator/responder
+  # SPIs are deterministic and the SK payload uses pinned crypto material.
+  - name: ikev2
+    purpose: focused offline IKEv2 header and payload-chain compile and decode behavior
+    default_count: 10
+    family_weights:
+      - name: ikev2
+        weight: 1
+    payload_length:
+      min: 0
+      max: 64
+    feature_weights:
+      baseline: 10
+      boundary: 4
+      malformed: 0
+      pcap: 0
+      live: 0
 
 backend_support:
   scapy:
