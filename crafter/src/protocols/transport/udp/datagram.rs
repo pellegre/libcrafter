@@ -381,6 +381,15 @@ fn udp_user_payload_bytes_after(ctx: LayerContext<'_>) -> Result<Vec<u8>> {
         let layer_ctx = LayerContext::new(ctx.packet(), index);
         layer.compile(&layer_ctx, &mut payload)?;
 
+        // An encapsulating layer (e.g. UDP-encapsulated ESP, RFC 3948) already
+        // embeds every following layer in its own compiled body. The packet
+        // compiler stops after such a layer, so the UDP payload length must too —
+        // otherwise the following layers are double-counted and the on-wire UDP
+        // length over-reads (mirrors the IPv4/IPv6 `payload_len_after` fix).
+        if layer.consumes_following() {
+            break;
+        }
+
         if is_udp_application_layer(layer) {
             seen_application_layer = true;
         }

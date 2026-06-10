@@ -8,7 +8,9 @@ use crate::protocols::eapol::append_eapol_packet;
 use crate::protocols::icmp::{append_icmp_packet, append_icmpv6_packet};
 use crate::protocols::ipsec::ah::decode::append_ah_packet_with_registry;
 use crate::protocols::ipsec::esp::decode::append_esp_packet_with_registry;
+use crate::protocols::ipsec::esp::header::ESP_HEADER_LEN;
 use crate::protocols::ipsec::ikev2::decode::append_ikev2_packet_with_registry;
+use crate::protocols::ipsec::natt::{is_non_esp_marker, NatTraversal, NON_ESP_MARKER_LEN};
 use crate::protocols::ipv4::{
     append_ipv4_packet_with_registry, IPPROTO_AH, IPPROTO_ESP, IPPROTO_ICMP, IPPROTO_ICMPV6,
     IPPROTO_TCP, IPPROTO_UDP,
@@ -28,6 +30,11 @@ use crate::protocols::transport::{
 /// port is the 28-octet header plus its payload chain; the registry routes it to
 /// the IKEv2 decoder.
 const IKEV2_UDP_PORT: u16 = 500;
+
+/// UDP port for IPSec NAT traversal (RFC 3948 §2; IANA "ipsec-nat-t" 4500). This
+/// port carries both UDP-encapsulated ESP and IKE; the registry disambiguates
+/// them by the RFC 3948 non-ESP marker (the leading four octets).
+const NATT_UDP_PORT: u16 = 4500;
 
 type ProtocolDecoder = dyn for<'a> Fn(&'a ProtocolRegistry, Packet, &'a [u8]) -> Result<Packet>
     + Send
@@ -216,11 +223,50 @@ impl ProtocolRegistry {
         // IKEv2 over UDP/500 (RFC 7296 §2). The UDP application dispatch passes the
         // UDP payload, which for port 500 is a complete IKE message (28-octet
         // header + payload chain); the decoder walks it into typed payload layers
-        // (Raw for an unmodeled type). UDP/4500 NAT-T disambiguation — the non-ESP
-        // marker that routes to IKEv2 vs. UDP-encapsulated ESP — is a later step.
+        // (Raw for an unmodeled type). UDP/500 carries IKE only and never the
+        // non-ESP marker (RFC 3948 §2.2), so no disambiguation is needed here.
         registry.bind_udp_port_with_registry(IKEV2_UDP_PORT, |registry, packet, payload| {
             append_ikev2_packet_with_registry(registry, packet, payload)
         });
+        // IPSec NAT traversal over UDP/4500 (RFC 3948). The same flow carries both
+        // UDP-encapsulated ESP and IKE, so the registry inspects the leading four
+        // octets to disambiguate (RFC 3948 §2.1–§2.2):
+        //
+        // - **non-ESP marker** (four zero octets): an IKE message. The marker is
+        //   pushed as a typed `NatTraversal` layer so it round-trips byte-exact,
+        //   then the remaining bytes decode as an IKEv2 message.
+        // - **a nonzero leading word**: a UDP-encapsulated ESP datagram whose
+        //   leading word is a real ESP SPI (SPI 0 is reserved, RFC 4303 §2.1), so
+        //   it decodes through the ESP decoder (opaque in the built-in registry).
+        //
+        // The binding is deliberately conservative to avoid claiming unrelated
+        // traffic that merely uses port 4500: it matches only when the payload is
+        // at least the ESP fixed-header length (8 octets, RFC 4303 §2). A shorter
+        // payload — the RFC 3948 §4 single-octet NAT keepalive, or any short non-
+        // IPSec datagram — cannot be a UDP-encapsulated ESP datagram or a
+        // marker+IKE message, so it falls through to the default Raw payload.
+        registry.bind_udp_with_registry(
+            |ctx| {
+                (ctx.source_port == NATT_UDP_PORT || ctx.destination_port == NATT_UDP_PORT)
+                    && ctx.payload.len() >= ESP_HEADER_LEN
+            },
+            |registry, packet, payload| {
+                if is_non_esp_marker(payload) {
+                    // Strip the four-octet marker, preserving it as a typed layer,
+                    // then decode the IKE message that follows it.
+                    let marker =
+                        NatTraversal::marker().bytes(payload[..NON_ESP_MARKER_LEN].to_vec());
+                    let packet = packet.push(marker);
+                    append_ikev2_packet_with_registry(
+                        registry,
+                        packet,
+                        &payload[NON_ESP_MARKER_LEN..],
+                    )
+                } else {
+                    append_esp_packet_with_registry(registry, packet, payload)
+                }
+            },
+        );
         // DHCPv4 decode stays deliberately conservative to avoid false
         // positives: it binds only when the UDP pair is the standard client/
         // server port pair (67/68, in either direction) AND the payload carries

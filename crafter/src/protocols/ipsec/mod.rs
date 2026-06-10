@@ -16,6 +16,7 @@ pub mod ah;
 pub mod crypto;
 pub mod esp;
 pub mod ikev2;
+pub mod natt;
 pub mod sa;
 
 pub use ah::header::{
@@ -54,5 +55,8 @@ pub use ikev2::{
     PAYLOAD_SK, PAYLOAD_TSI, PAYLOAD_TSR, PAYLOAD_TYPE_NONE, PAYLOAD_VENDOR_ID, PROTOCOL_ID_AH,
     PROTOCOL_ID_ESP, PROTOCOL_ID_IKE, TRANSFORM_TYPE_DH, TRANSFORM_TYPE_ENCR, TRANSFORM_TYPE_ESN,
     TRANSFORM_TYPE_INTEG, TRANSFORM_TYPE_PRF, TS_IPV4_ADDR_RANGE, TS_IPV6_ADDR_RANGE,
+};
+pub use natt::{
+    is_non_esp_marker, non_esp_marker, NatTraversal, NON_ESP_MARKER, NON_ESP_MARKER_LEN,
 };
 pub use sa::{EncryptionAlgorithm, IntegrityAlgorithm, IpsecMode, SecurityAssociation};
