@@ -7,10 +7,11 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::{Path, PathBuf};
 
 use crafter::core::{
-    Arp, Dhcp, DhcpMessageType, DhcpOption, DhcpRelayAgentInfo, DhcpRelaySuboption, Dns, DnsName,
-    DnsRecord, DnsRecordData, Dot11, Dot11DataSubtype, Dot11ManagementSubtype, Dscp, Eapol,
-    EapolKey, Ecn, EdnsOption, Ethernet, IcmpKind, Icmpv4, Icmpv6, Ipv4, Ipv4ChecksumStatus,
-    Ipv4Option, Ipv6, Ipv6DestinationOptionsHeader, Ipv6FragmentHeader, Ipv6FragmentHeaderStatus,
+    Ah, Arp, Dhcp, DhcpMessageType, DhcpOption, DhcpRelayAgentInfo, DhcpRelaySuboption, Dns,
+    DnsName, DnsRecord, DnsRecordData, Dot11, Dot11DataSubtype, Dot11ManagementSubtype, Dscp,
+    Eapol, EapolKey, Ecn, EdnsOption, Esp, Ethernet, IcmpKind, Icmpv4, Icmpv6, IkeHeader,
+    IkeKePayload, IkeNoncePayload, IkeSaPayload, Ipv4, Ipv4ChecksumStatus, Ipv4Option, Ipv6,
+    Ipv6DestinationOptionsHeader, Ipv6FragmentHeader, Ipv6FragmentHeaderStatus,
     Ipv6HopByHopOptionsHeader, Ipv6MobileRoutingHeader, Ipv6MobileRoutingHeaderStatus, Ipv6Option,
     Ipv6RoutingHeader, Ipv6RoutingTypeStatus, Ipv6SegmentRoutingHeader, Layer, LinkType, LinuxSll,
     LlcSnap, MacAddr, NetworkLayer, NullByteOrder, NullLoopback, OptionOverload, Packet, Radiotap,
@@ -85,6 +86,12 @@ enum ExpectedLayer {
     UdpOptions,
     Dns,
     Dhcp,
+    Esp,
+    Ah,
+    IkeHeader,
+    IkeSaPayload,
+    IkeKePayload,
+    IkeNoncePayload,
     Raw,
 }
 
@@ -131,6 +138,9 @@ enum CoverageFamily {
     DhcpOptionOverload,
     DhcpLongOption,
     DhcpRelayOption82,
+    IpsecEsp,
+    IpsecAh,
+    IpsecIkev2,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -992,6 +1002,67 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         preserve_exact_bytes: true,
         summary_path: None,
     },
+    // IPSec ESP transport over IPv4, AES-GCM-16 AEAD (RFC 4303 + RFC 4106). The
+    // built-in registry carries no SA, so the sealed body decodes opaquely as a
+    // typed ESP header (SPI/Seq) whose ciphertext re-compiles byte-for-byte.
+    ValidFixtureCase {
+        name: "ipv4-esp-aead-gcm-opaque",
+        path: "bytes/ipv4-esp-aead-gcm-opaque.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-esp-aead-gcm-opaque.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Esp],
+        preserve_exact_bytes: true,
+        summary_path: Some("summaries/ipv4-esp-aead-gcm-opaque.summary.txt"),
+    },
+    // IPSec ESP transport over IPv4, AES-CBC encryption + HMAC-SHA-256-128
+    // integrity (RFC 4303 + RFC 3602 + RFC 4868). Decodes opaquely (no SA in the
+    // default registry) and re-compiles byte-for-byte.
+    ValidFixtureCase {
+        name: "ipv4-esp-cbc-hmac-opaque",
+        path: "bytes/ipv4-esp-cbc-hmac-opaque.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-esp-cbc-hmac-opaque.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Esp],
+        preserve_exact_bytes: true,
+        summary_path: Some("summaries/ipv4-esp-cbc-hmac-opaque.summary.txt"),
+    },
+    // IPSec AH transport over IPv4, HMAC-SHA-256-128 (RFC 4302 + RFC 4868). AH
+    // never encrypts, so the cleartext TCP / Raw tail is dispatched by the AH
+    // Next Header and the whole datagram (including the captured ICV) round-trips.
+    ValidFixtureCase {
+        name: "ipv4-ah-hmac-sha256-transport",
+        path: "bytes/ipv4-ah-hmac-sha256-transport.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-ah-hmac-sha256-transport.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[
+            ExpectedLayer::Ipv4,
+            ExpectedLayer::Ah,
+            ExpectedLayer::Tcp,
+            ExpectedLayer::Raw,
+        ],
+        preserve_exact_bytes: true,
+        summary_path: Some("summaries/ipv4-ah-hmac-sha256-transport.summary.txt"),
+    },
+    // IPSec IKEv2 IKE_SA_INIT message over UDP/500 (RFC 7296 §1.2): the IKE
+    // header plus the SA / KE / Ni payload chain. UDP/500 routes to IKEv2 and the
+    // Next Payload chain decodes into one typed layer per payload, re-compiling
+    // byte-for-byte including the auto-filled IKE message length.
+    ValidFixtureCase {
+        name: "ipv4-udp-ikev2-sa-init",
+        path: "bytes/ipv4-udp-ikev2-sa-init.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-udp-ikev2-sa-init.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[
+            ExpectedLayer::Ipv4,
+            ExpectedLayer::Udp,
+            ExpectedLayer::IkeHeader,
+            ExpectedLayer::IkeSaPayload,
+            ExpectedLayer::IkeKePayload,
+            ExpectedLayer::IkeNoncePayload,
+        ],
+        preserve_exact_bytes: true,
+        summary_path: Some("summaries/ipv4-udp-ikev2-sa-init.summary.txt"),
+    },
 ];
 
 const DOT11_FIXTURES: &[ValidFixtureCase] = &[
@@ -1288,6 +1359,41 @@ const PCAP_FIXTURES: &[PcapFixtureCase] = &[
             },
         ],
     },
+    // Deterministic RawIp pcap carrying the IPSec ESP / AH / IKEv2 byte fixtures
+    // as four records: ESP AES-GCM transport, ESP AES-CBC + HMAC transport, AH
+    // HMAC-SHA-256-128 transport, and an IKE_SA_INIT message over UDP/500. The
+    // records are read back and decoded as the typed ESP / AH / IKE layer stacks.
+    PcapFixtureCase {
+        name: "raw-ipsec-esp-ah-ikev2",
+        path: "pcaps/raw-ipsec-esp-ah-ikev2.pcap",
+        contents: fixture_bytes!("pcaps/raw-ipsec-esp-ah-ikev2.pcap"),
+        pcap_link_type: PcapLinkType::RawIp,
+        link_type: LinkType::Raw,
+        timestamp_precision: TimestampPrecision::Microseconds,
+        coverage: PcapCoverageFamily::RawIpIpv4,
+        records: &[
+            PcapFixtureRecord {
+                seconds: 40,
+                fractional: 1,
+                fixture_name: "ipv4-esp-aead-gcm-opaque",
+            },
+            PcapFixtureRecord {
+                seconds: 40,
+                fractional: 2,
+                fixture_name: "ipv4-esp-cbc-hmac-opaque",
+            },
+            PcapFixtureRecord {
+                seconds: 40,
+                fractional: 3,
+                fixture_name: "ipv4-ah-hmac-sha256-transport",
+            },
+            PcapFixtureRecord {
+                seconds: 40,
+                fractional: 4,
+                fixture_name: "ipv4-udp-ikev2-sa-init",
+            },
+        ],
+    },
     PcapFixtureCase {
         name: "raw-ipv6-icmp-echo-request",
         path: "pcaps/raw-ipv6-icmp-echo-request.pcap",
@@ -1518,6 +1624,18 @@ const REQUIRED_VALID_COVERAGE: &[(CoverageFamily, &str)] = &[
         CoverageFamily::DhcpRelayOption82,
         "DHCP relay agent option 82 with multiple suboptions",
     ),
+    (
+        CoverageFamily::IpsecEsp,
+        "IPSec ESP datagram (RFC 4303) over IPv4",
+    ),
+    (
+        CoverageFamily::IpsecAh,
+        "IPSec AH datagram (RFC 4302) over IPv4",
+    ),
+    (
+        CoverageFamily::IpsecIkev2,
+        "IPSec IKEv2 IKE_SA_INIT message (RFC 7296) over UDP",
+    ),
 ];
 
 const REQUIRED_PCAP_COVERAGE: &[(PcapCoverageFamily, &str)] = &[
@@ -1620,6 +1738,9 @@ fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
         | "ipv6-fragment-non-initial-udp-raw"
         | "ipv6-fragment-oracle-reference-first"
         | "ipv6-fragment-oracle-reference-final" => &[CoverageFamily::Ipv6ExtensionHeader],
+        "ipv4-esp-aead-gcm-opaque" | "ipv4-esp-cbc-hmac-opaque" => &[CoverageFamily::IpsecEsp],
+        "ipv4-ah-hmac-sha256-transport" => &[CoverageFamily::IpsecAh],
+        "ipv4-udp-ikev2-sa-init" => &[CoverageFamily::IpsecIkev2],
         other => panic!("fixture {other} has no coverage-family mapping"),
     }
 }
@@ -1857,6 +1978,24 @@ fn assert_expected_layers(case: &ValidFixtureCase, packet: &Packet) {
             ExpectedLayer::Dhcp => {
                 let _ = expect_layer::<Dhcp>(case, packet);
             }
+            ExpectedLayer::Esp => {
+                let _ = expect_layer::<Esp>(case, packet);
+            }
+            ExpectedLayer::Ah => {
+                let _ = expect_layer::<Ah>(case, packet);
+            }
+            ExpectedLayer::IkeHeader => {
+                let _ = expect_layer::<IkeHeader>(case, packet);
+            }
+            ExpectedLayer::IkeSaPayload => {
+                let _ = expect_layer::<IkeSaPayload>(case, packet);
+            }
+            ExpectedLayer::IkeKePayload => {
+                let _ = expect_layer::<IkeKePayload>(case, packet);
+            }
+            ExpectedLayer::IkeNoncePayload => {
+                let _ = expect_layer::<IkeNoncePayload>(case, packet);
+            }
             ExpectedLayer::Raw => {
                 let _ = expect_layer::<Raw>(case, packet);
             }
@@ -1907,6 +2046,12 @@ fn expected_layer_name(expected: ExpectedLayer) -> &'static str {
         ExpectedLayer::UdpOptions => "UdpOptions",
         ExpectedLayer::Dns => "Dns",
         ExpectedLayer::Dhcp => "Dhcp",
+        ExpectedLayer::Esp => "Esp",
+        ExpectedLayer::Ah => "Ah",
+        ExpectedLayer::IkeHeader => "IkeHeader",
+        ExpectedLayer::IkeSaPayload => "IkeSaPayload",
+        ExpectedLayer::IkeKePayload => "IkeKePayload",
+        ExpectedLayer::IkeNoncePayload => "IkeNoncePayload",
         ExpectedLayer::Raw => "Raw",
     }
 }
@@ -3608,6 +3753,77 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
                     DhcpRelaySuboption::remote_id(vec![0x02, 0x00, 0x5e, 0x00, 0x53, 0xff]),
                 ])
             );
+        }
+        "ipv4-esp-aead-gcm-opaque" | "ipv4-esp-cbc-hmac-opaque" => {
+            let ipv4 = expect_layer::<Ipv4>(case, packet);
+            assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 10));
+            assert_eq!(ipv4.destination(), Ipv4Addr::new(198, 51, 100, 20));
+            // The enclosing IPv4 advertises ESP (protocol 50).
+            assert_eq!(ipv4.protocol_value(), 50);
+
+            let esp = expect_layer::<Esp>(case, packet);
+            let expected_spi = if case.name == "ipv4-esp-aead-gcm-opaque" {
+                0x0000_2100
+            } else {
+                0x0000_2800
+            };
+            assert_eq!(esp.spi_value(), Some(expected_spi));
+            assert_eq!(esp.sequence_value(), Some(1));
+            // No SA in the default registry: the encrypted body is opaque and the
+            // sealed datagram carries no cleartext inner layers.
+            assert!(
+                esp.opaque_body().is_some(),
+                "ESP fixture {} decodes opaquely without an SA",
+                case.name
+            );
+            assert!(
+                packet.layer::<Tcp>().is_none(),
+                "no SA: the ESP inner TCP stays encrypted"
+            );
+        }
+        "ipv4-ah-hmac-sha256-transport" => {
+            let ipv4 = expect_layer::<Ipv4>(case, packet);
+            assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 10));
+            assert_eq!(ipv4.destination(), Ipv4Addr::new(198, 51, 100, 20));
+            // The enclosing IPv4 advertises AH (protocol 51).
+            assert_eq!(ipv4.protocol_value(), 51);
+
+            let ah = expect_layer::<Ah>(case, packet);
+            assert_eq!(ah.spi_value(), Some(0x0000_3100));
+            assert_eq!(ah.sequence_value(), Some(1));
+            // AH Next Header dispatches the cleartext TCP upper layer.
+            assert_eq!(ah.next_header_value(), Some(IPPROTO_TCP));
+            // HMAC-SHA-256-128 emits a 16-octet ICV (RFC 4868), 32-bit aligned.
+            assert_eq!(ah.icv_value().map(<[u8]>::len), Some(16));
+            // No SA in the default registry: AH decodes opaque (no verify status).
+            assert_eq!(ah.verification_status(), None);
+
+            // AH only authenticates: the protected upper layer survives in clear.
+            let tcp = expect_layer::<Tcp>(case, packet);
+            assert_eq!(tcp.source_port_value(), 43000);
+            assert_eq!(tcp.destination_port_value(), 443);
+            assert_eq!(expect_layer::<Raw>(case, packet).as_bytes(), b"ah-golden");
+        }
+        "ipv4-udp-ikev2-sa-init" => {
+            let ipv4 = expect_layer::<Ipv4>(case, packet);
+            assert_eq!(ipv4.protocol_value(), IPPROTO_UDP);
+
+            let udp = expect_layer::<Udp>(case, packet);
+            assert_eq!(udp.source_port_value(), 500);
+            assert_eq!(udp.destination_port_value(), 500);
+
+            let header = expect_layer::<IkeHeader>(case, packet);
+            assert_eq!(header.initiator_spi_value(), Some(0x0102_0304_0506_0708));
+            assert_eq!(header.exchange_type_value(), Some(34)); // IKE_SA_INIT
+                                                                // The header's Next Payload names the first payload in the chain (SA).
+            assert_eq!(header.next_payload_value(), Some(33));
+
+            // The SA / KE / Ni payload chain all decode as typed layers.
+            let _ = expect_layer::<IkeSaPayload>(case, packet);
+            let ke = expect_layer::<IkeKePayload>(case, packet);
+            // The KE payload preserves the D-H group it was built with (group 14).
+            assert_eq!(ke.dh_group_num(), 14);
+            let _ = expect_layer::<IkeNoncePayload>(case, packet);
         }
         other => panic!("fixture {other} is missing typed field assertions"),
     }
