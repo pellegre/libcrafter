@@ -28,6 +28,7 @@ _DHCP_OPTION_END = 255
 _IPV6_OPTION_REGION_KEY = "__ipv6_option_region_hex__"
 
 _LAYER_ALIASES: dict[str, str] = {
+    "AH": "ah",
     "ARP": "arp",
     "BOOTP": "dhcp",
     "CookedLinux": "linux_sll",
@@ -36,11 +37,14 @@ _LAYER_ALIASES: dict[str, str] = {
     "Dot1Q": "vlan",
     "Dot11": "dot11",
     "Dot11EltRSN": "rsn",
+    "ESP": "esp",
     "Ether": "ethernet",
     "EAPOL": "eapol",
     "ICMP": "icmp",
     "IP": "ipv4",
     "IPv6": "ipv6",
+    "ISAKMP": "ikev2",
+    "ISAKMP_v1": "ikev2",
     "LLC": "llc_snap",
     "IPv6ExtHdrDestOpt": "ipv6_destination_options",
     "IPv6ExtHdrFragment": "ipv6_fragment",
@@ -73,10 +77,24 @@ _FIELD_ALIASES: dict[str, str] = {
     "urgptr": "urgent_pointer",
 }
 _LAYER_FIELD_ALIASES: dict[str, dict[str, str]] = {
+    "ah": {
+        "nh": "next_header",
+        "payloadlen": "payload_len",
+        "seq": "sequence",
+    },
     "arp": {
         "hwlen": "hardware_length",
         "hwtype": "hardware_type",
         "plen": "protocol_length",
+    },
+    "esp": {
+        "seq": "sequence",
+    },
+    "ikev2": {
+        "exch_type": "exchange_type",
+        "id": "message_id",
+        "init_cookie": "initiator_spi",
+        "resp_cookie": "responder_spi",
     },
     "dhcp": {
         "ciaddr": "client_ip",
@@ -404,6 +422,16 @@ def _packet_layers(packet: Any) -> list[JSONObject]:
             option_bytes = _ipv6_option_region_bytes(current)
             if option_bytes is not None:
                 fields[_IPV6_OPTION_REGION_KEY] = option_bytes.hex()
+        if current.__class__.__name__ in {"ISAKMP", "ISAKMP_v1"}:
+            # Scapy's ISAKMP FlagsField uses the IKEv1 flag labels, so its string
+            # repr renders the IKEv2 (RFC 7296) bits as "?". Capture the raw
+            # integer so the normalizer can resolve the IKEv2 flag set.
+            raw_flags = current.fields.get("flags")
+            if raw_flags is not None:
+                try:
+                    fields["flags"] = int(raw_flags)
+                except (TypeError, ValueError):  # pragma: no cover - defensive
+                    pass
         layers.append(
             {
                 "name": current.__class__.__name__,
@@ -477,7 +505,56 @@ def _normalize_fields(layer_name: str, fields: JSONObject) -> JSONObject:
         _normalize_ipv6_fragment_fields(output)
     if layer_name == "ipv6_routing":
         _normalize_ipv6_routing_fields(output)
+    if layer_name in {"esp", "ah", "ikev2"}:
+        _normalize_ipsec_fields(layer_name, output)
     return output
+
+
+def _normalize_ipsec_fields(layer_name: str, output: JSONObject) -> None:
+    """Tidy decoded ESP/AH/IKEv2 fields into the comparable oracle shape.
+
+    ESP carries the SPI, sequence, and the opaque encrypted body (``data``); AH
+    carries the header fields plus the ICV, with the empty trailing ``padding``
+    artifact dropped; IKEv2 (ISAKMP) carries the SPIs, next-payload, version,
+    exchange type, flags, message id, and length. The ESP/AH SPI is reported as
+    an unsigned integer to match the libcrafter decode model.
+    """
+
+    if layer_name == "ah":
+        # Scapy appends an empty ``padding`` field on the AH header; it carries
+        # no wire bytes (the ICV padding is folded into ``icv``), so drop it.
+        padding = output.get("padding")
+        if padding in (None, {"hex": "", "ascii": ""}, ""):
+            output.pop("padding", None)
+    if layer_name == "ikev2":
+        flags = output.get("flags")
+        if flags is not None:
+            output["flags"] = _normalize_ikev2_flags(flags)
+
+
+# IKEv2 (ISAKMP) flag bits (RFC 7296 §3.1) mapped to the stable domain names the
+# generator emits, so a decoded flag set compares against the planned domain.
+_IKEV2_FLAG_NAMES: dict[int, str] = {
+    0x08: "initiator",
+    0x10: "version",
+    0x20: "response",
+}
+
+
+def _normalize_ikev2_flags(value: JSONValue) -> JSONValue:
+    if isinstance(value, str):
+        # Scapy renders the FlagsField as a textual token (e.g. "initiator").
+        cleaned = value.strip()
+        if not cleaned:
+            return []
+        tokens = [
+            token.lower().replace("-", "_").replace("+", "_")
+            for token in cleaned.replace("+", " ").split()
+        ]
+        return tokens
+    if isinstance(value, int) and not isinstance(value, bool):
+        return [name for bit, name in sorted(_IKEV2_FLAG_NAMES.items()) if value & bit]
+    return value
 
 
 def _normalize_dns_fields(fields: JSONObject) -> JSONObject:

@@ -15,7 +15,17 @@ from ...model import JSONObject
 SCAPY_REQUIREMENT = "scapy>=2.5,<3"
 PYYAML_REQUIREMENT = "PyYAML>=6.0,<7"
 PYTEST_REQUIREMENT = "pytest>=8,<10"
-BACKEND_PYTHON_REQUIREMENTS = (SCAPY_REQUIREMENT, PYYAML_REQUIREMENT, PYTEST_REQUIREMENT)
+# Scapy's IPSec SecurityAssociation (scapy.layers.ipsec) seals ESP/AH with the
+# ``cryptography`` library; without it only the NULL cipher/auth are available
+# and AES-GCM/AES-CBC/HMAC sealing raises. Pin it so the ESP/AH oracle backend
+# can produce byte-parity ciphertext + ICV against libcrafter.
+CRYPTOGRAPHY_REQUIREMENT = "cryptography>=42,<46"
+BACKEND_PYTHON_REQUIREMENTS = (
+    SCAPY_REQUIREMENT,
+    PYYAML_REQUIREMENT,
+    PYTEST_REQUIREMENT,
+    CRYPTOGRAPHY_REQUIREMENT,
+)
 BOOTSTRAPPED_ENV = "LIBCRAFTER_SCAPY_BOOTSTRAPPED"
 BOOTSTRAP_SOURCE_ENV = "LIBCRAFTER_SCAPY_BOOTSTRAP_SOURCE"
 
@@ -101,6 +111,9 @@ def _reexec_with_scapy() -> None:
         )
 
     env = _bootstrap_env("uv")
+    with_args: list[str] = []
+    for requirement in BACKEND_PYTHON_REQUIREMENTS:
+        with_args.extend(("--with", requirement))
     os.execvpe(
         uv,
         [
@@ -108,12 +121,7 @@ def _reexec_with_scapy() -> None:
             "run",
             "--quiet",
             "--no-project",
-            "--with",
-            BACKEND_PYTHON_REQUIREMENTS[0],
-            "--with",
-            BACKEND_PYTHON_REQUIREMENTS[1],
-            "--with",
-            BACKEND_PYTHON_REQUIREMENTS[2],
+            *with_args,
             "--",
             os.environ.get("ORACLE_PYTHON", "python3"),
             *_reexec_python_args(),
