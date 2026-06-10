@@ -171,9 +171,22 @@ fn decode_payload_chain(
         }
 
         let payload = &remaining[..payload_length];
-        packet = push_typed_payload(packet, PayloadType::from(next_payload), payload)?;
+        let this_payload_type = PayloadType::from(next_payload);
+        packet = push_typed_payload(packet, this_payload_type, payload)?;
 
         offset += payload_length;
+
+        // RFC 7296 §3.14: the Encrypted (SK) payload is always the last payload of
+        // a message — its body is `IV || ciphertext || ICV`, and the inner payload
+        // chain it protects lives *inside* the ciphertext, not in the cleartext
+        // chain. So although the SK generic header's Next Payload names the first
+        // *inner* payload type, there is no further cleartext generic payload to
+        // walk. Terminate the chain here; following that Next Payload into the SK
+        // ciphertext would misread encrypted bytes as a generic header.
+        if matches!(this_payload_type, PayloadType::Encrypted) {
+            break;
+        }
+
         next_payload = this_next_payload;
     }
 
