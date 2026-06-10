@@ -1,11 +1,11 @@
-//! Public-surface baseline tests for the ESP and AH (IPSec) layers.
+//! Public-surface baseline tests for the ESP, AH, and IKEv2 (IPSec) layers.
 //!
 //! These tests confirm that the ESP and AH layers, the `SecurityAssociation`
 //! crypto context, the `IpsecMode`/`EncryptionAlgorithm`/`IntegrityAlgorithm`
-//! enums, and the ESP/AH wire constants are all reachable through
-//! `crafter::prelude::*`, and that a prelude-only tool can build, compile, and
-//! decode ESP and AH packets. They stay fully offline and use documentation
-//! address space only.
+//! enums, the ESP/AH wire constants, and the IKEv2 message header, payload set,
+//! and codepoints are all reachable through `crafter::prelude::*`, and that a
+//! prelude-only tool can build, compile, and decode ESP, AH, and IKEv2 packets.
+//! They stay fully offline and use documentation address space only.
 
 use std::net::Ipv4Addr;
 
@@ -241,6 +241,142 @@ fn prelude_only_ah_tunnel_build_and_decode() -> Result<()> {
     assert!(decoded.layer::<Tcp>().is_some(), "inner TCP decodes");
 
     // The decoded packet re-compiles to the same wire bytes.
+    let recompiled = decoded.compile()?;
+    assert_eq!(recompiled.as_bytes(), wire.as_slice());
+    Ok(())
+}
+
+/// UDP port 500, the IKEv2 well-known port (RFC 7296 §2).
+const IKE_UDP_PORT: u16 = 500;
+
+#[test]
+fn prelude_exposes_ikev2_surface() {
+    // Every IKEv2 name below is reached through `crafter::prelude::*` only;
+    // constructing them is the compile-time proof the re-exports land. The
+    // header, the payload-type enum, the full payload set, and the per-payload
+    // field enums all surface for a prelude-only tool.
+    let _header: IkeHeader = IkeHeader::new().exchange(IKE_SA_INIT).initiator();
+    let _sa: IkeSaPayload = IkeSaPayload::new().with_proposal(
+        Proposal::new(1, PROTOCOL_ID_IKE).with_transform(
+            Transform::new(TRANSFORM_TYPE_ENCR, 20)
+                .with_attribute(TransformAttribute::key_length(128)),
+        ),
+    );
+    let _ke: IkeKePayload = IkeKePayload::new(DH_GROUP_MODP_2048, vec![0u8; 32]);
+    let _ni: IkeNoncePayload = IkeNoncePayload::new(vec![0u8; 16]);
+    let _notify: IkeNotifyPayload =
+        IkeNotifyPayload::new(NOTIFY_PROTOCOL_NONE, NotifyType::Cookie, Vec::<u8>::new());
+    let _delete: IkeDeletePayload = IkeDeletePayload::new(DELETE_PROTOCOL_ESP);
+    let _id: IkeIdPayload = IkeIdPayload::initiator_ipv4(Ipv4Addr::new(192, 0, 2, 10));
+    let _id_role = IdRole::Initiator;
+    let _auth: IkeAuthPayload = IkeAuthPayload::new(AuthMethod::SharedKeyMic, vec![0u8; 8]);
+    let _vendor: IkeVendorIdPayload = IkeVendorIdPayload::new(vec![0u8; 4]);
+    let _eap: IkeEapPayload = IkeEapPayload::new(vec![0u8; 4]);
+
+    // The payload-type codepoint enum and field enums are reachable too.
+    let _pt: PayloadType = PayloadType::SecurityAssociation;
+    let _ts_role = TsRole::Initiator;
+    let _id_type = IdType::Ipv4Addr;
+    let _cfg = CfgType::Request;
+    let _cert = CertEncoding::X509Signature;
+
+    // IKEv2 wire constants are reachable through the prelude.
+    assert_eq!(IKE_HEADER_LEN, 28);
+    assert_eq!(IKE_VERSION_2, 0x20);
+    assert_eq!(IKE_SA_INIT, 34);
+    assert_eq!(GENERIC_PAYLOAD_HEADER_LEN, 4);
+    assert_eq!(PAYLOAD_SA, 33);
+    assert_eq!(PAYLOAD_KE, 34);
+    assert_eq!(PAYLOAD_NONCE, 40);
+    assert_eq!(PAYLOAD_TYPE_NONE, 0);
+}
+
+/// Build an `IKE_SA_INIT` initiator message — `IkeHeader / SA / KE / Ni` — over
+/// UDP/500, using only names reachable from `crafter::prelude::*`. This is the
+/// minimal first message of the IKEv2 exchange (RFC 7296 §1.2).
+fn ike_sa_init_packet() -> Packet {
+    // One IKE proposal carrying a single ENCR transform (AES-128) plus a D-H
+    // group transform; codepoints are illustrative for the wire round-trip.
+    let proposal = Proposal::new(1, PROTOCOL_ID_IKE)
+        .with_transform(
+            Transform::new(TRANSFORM_TYPE_ENCR, 20)
+                .with_attribute(TransformAttribute::key_length(128)),
+        )
+        .with_transform(Transform::new(TRANSFORM_TYPE_DH, DH_GROUP_MODP_2048));
+    let sa = IkeSaPayload::new().with_proposal(proposal);
+    let ke = IkeKePayload::new(DH_GROUP_MODP_2048, vec![0xAB; 32]);
+    let ni = IkeNoncePayload::new(vec![0x5A; 16]);
+
+    let header = IkeHeader::new()
+        .initiator_spi(0x0102_0304_0506_0708)
+        .exchange(IKE_SA_INIT)
+        .initiator();
+
+    Ipv4::new().src(DOC_SRC).dst(DOC_DST).protocol(IPPROTO_UDP)
+        / Udp::new().sport(IKE_UDP_PORT).dport(IKE_UDP_PORT)
+        / header
+        / sa
+        / ke
+        / ni
+}
+
+#[test]
+fn prelude_only_ike_sa_init_build_decode_round_trips() -> Result<()> {
+    // A prelude-only tool builds the IKE_SA_INIT message, compiles it over
+    // UDP/500, decodes it from L3, and confirms the typed layers plus a
+    // byte-exact re-compile — the headline IKEv2 acceptance (spec §"IKEv2
+    // message round-trip").
+    let packet = ike_sa_init_packet();
+    let compiled = packet.compile()?;
+    let wire = compiled.as_bytes().to_vec();
+
+    // The enclosing IPv4 advertises UDP (17); the IKE message follows the
+    // 8-octet UDP header (after the 20-octet IPv4 header).
+    assert_eq!(wire[9], IPPROTO_UDP);
+    // UDP source/destination ports are both 500 (the IKEv2 port).
+    assert_eq!(&wire[20..22], &IKE_UDP_PORT.to_be_bytes());
+    assert_eq!(&wire[22..24], &IKE_UDP_PORT.to_be_bytes());
+    // The IKE header starts at offset 28: Initiator SPI is the pinned value.
+    assert_eq!(&wire[28..36], &0x0102_0304_0506_0708u64.to_be_bytes());
+
+    // The summary names the IKE header and never leaks key material.
+    let summary = packet.summary();
+    assert!(
+        summary.contains("IkeHeader"),
+        "summary names the IKE header"
+    );
+
+    // Decode from L3. UDP/500 routes to IKEv2, and the Next Payload chain
+    // produces one typed layer per payload — all reachable via the prelude.
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, &wire)?;
+
+    let header = decoded
+        .layer::<IkeHeader>()
+        .expect("decoded IKE header present");
+    assert_eq!(header.exchange_type_value(), Some(IKE_SA_INIT));
+    assert_eq!(header.initiator_spi_value(), Some(0x0102_0304_0506_0708));
+    // The header's Next Payload names the first payload in the chain (SA, 33).
+    assert_eq!(header.next_payload_value(), Some(PAYLOAD_SA));
+
+    assert!(
+        decoded.layer::<IkeSaPayload>().is_some(),
+        "SA payload decodes"
+    );
+    assert!(
+        decoded.layer::<IkeKePayload>().is_some(),
+        "KE payload decodes"
+    );
+    assert!(
+        decoded.layer::<IkeNoncePayload>().is_some(),
+        "Nonce payload decodes"
+    );
+
+    // The decoded KE payload preserves the D-H group it was built with.
+    let ke = decoded.layer::<IkeKePayload>().unwrap();
+    assert_eq!(ke.dh_group_num(), DH_GROUP_MODP_2048);
+
+    // Re-compiling the decoded packet reproduces the wire bytes exactly,
+    // including the auto-filled IKE message length and Next Payload chain.
     let recompiled = decoded.compile()?;
     assert_eq!(recompiled.as_bytes(), wire.as_slice());
     Ok(())
