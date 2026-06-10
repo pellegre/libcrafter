@@ -36,6 +36,7 @@ pub mod cert;
 pub mod config;
 pub mod delete;
 pub mod eap;
+pub mod encrypted;
 pub mod id;
 pub mod ke;
 pub mod nonce;
@@ -49,6 +50,7 @@ pub use cert::{CertEncoding, IkeCertPayload, IkeCertReqPayload};
 pub use config::{CfgType, ConfigAttribute, IkeConfigPayload};
 pub use delete::IkeDeletePayload;
 pub use eap::IkeEapPayload;
+pub use encrypted::{DecodedSk, IkeEncryptedPayload};
 pub use id::{IdRole, IdType, IkeIdPayload};
 pub use ke::IkeKePayload;
 pub use nonce::IkeNoncePayload;
@@ -300,6 +302,7 @@ pub fn payload_type_for_layer_name(name: &str) -> Option<PayloadType> {
         ts::IKE_TSR_PAYLOAD_NAME => Some(PayloadType::TrafficSelectorResponder),
         config::IKE_CONFIG_PAYLOAD_NAME => Some(PayloadType::Configuration),
         eap::IKE_EAP_PAYLOAD_NAME => Some(PayloadType::ExtensibleAuthentication),
+        encrypted::IKE_ENCRYPTED_PAYLOAD_NAME => Some(PayloadType::Encrypted),
         _ => None,
     }
 }
