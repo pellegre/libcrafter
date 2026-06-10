@@ -99,7 +99,9 @@ class ProbeProfileMembershipTest(unittest.TestCase):
         )
 
     def test_known_profiles_listed_sorted(self) -> None:
-        self.assertEqual(cases.known_profiles(), ("behavior", "smoke", "tcp-smoke"))
+        self.assertEqual(
+            cases.known_profiles(), ("behavior", "ipsec", "smoke", "tcp-smoke")
+        )
 
     def test_tcp_smoke_profile_selects_tcp_cases_with_options(self) -> None:
         names = cases.profile_case_names("tcp-smoke")
