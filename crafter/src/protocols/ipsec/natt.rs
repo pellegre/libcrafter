@@ -73,7 +73,7 @@ pub fn non_esp_marker() -> NatTraversal {
 ///
 /// `NatTraversal` carries the four-octet marker that prefixes an IKE message on
 /// UDP/4500 (RFC 3948 §2.2). It compiles to exactly its stored marker octets and
-/// consumes nothing, so it slots in front of an [`IkeHeader`] without disturbing
+/// consumes nothing, so it slots in front of an `IkeHeader` without disturbing
 /// the IKE message that follows. The marker bytes are a caller-set field, so a
 /// decoded marker re-compiles byte-for-byte — including a deliberately
 /// non-canonical value built for malformed testing.

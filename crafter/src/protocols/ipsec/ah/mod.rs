@@ -235,7 +235,7 @@ impl Ah {
     /// Set the Payload Len field explicitly (RFC 4302 §2.2).
     ///
     /// `compile()` (a later step) otherwise derives this from the ICV length
-    /// ([`Ah::effective_payload_len`]); setting it pins the value verbatim,
+    /// (`Ah::effective_payload_len`); setting it pins the value verbatim,
     /// including a deliberately wrong one for malformed tests.
     pub fn payload_len(mut self, payload_len: u8) -> Self {
         self.payload_len.set_user(payload_len);

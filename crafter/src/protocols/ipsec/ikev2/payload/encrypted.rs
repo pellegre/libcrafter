@@ -19,8 +19,8 @@
 //! following sibling layers.
 //!
 //! The crypto is driven by a [`SecurityAssociation`] through the shared
-//! [`seal`](crate::protocols::ipsec::sa::seal)/[`open`](crate::protocols::ipsec::sa::open)
-//! driver (Step 09), exactly as ESP does. RFC 7296 §3.14 specifies that, for a
+//! [`seal`]/[`open`] driver (Step 09), exactly as ESP does. RFC 7296 §3.14
+//! specifies that, for a
 //! non-AEAD suite, the Integrity Checksum Data covers the entire IKE message from
 //! the first octet of the IKE header through the end of the SK payload (excluding
 //! the checksum field itself). At the level of this payload's own `compile`, the
