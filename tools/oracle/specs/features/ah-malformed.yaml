@@ -1,0 +1,92 @@
+version: 1
+kind: feature
+name: ah_malformed
+summary: >-
+  AH (RFC 4302) malformed-input contract: a truncated datagram shorter than the
+  12-byte fixed AH header, an oversized payload-length that claims more ICV than
+  the buffer holds, and a one-bit tamper of an immutable IP field or the payload
+  that fails verification. Each is a structured decode or verification error,
+  never a panic.
+
+# Deliberately malformed AH inputs. A truncated fixed header, an oversized
+# payload-length field, and a flipped immutable-field/payload bit are structured
+# errors rather than comparable packets, so every case carries
+# byte_policy: structured_error and is excluded from offline encode/decode
+# sampling (the oracle has no offline malformed comparison path; see
+# tools/oracle/engine/generator.py _case_supported_in_direction). The cases stay
+# declared coverage; the crate's resilience and fixture suites assert the
+# BufferTooShort / InvalidFieldValue / verification structured errors for these
+# shapes (see crafter/tests/resilience.rs and the AH tamper integration test).
+
+layers:
+  - ah
+  - ipv4
+  - ipv6
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: false
+malformed: true
+
+behaviors:
+  # Fewer than 12 bytes: cannot hold the fixed AH header (NH | PayloadLen |
+  # Reserved | SPI | Seq); BufferTooShort.
+  - name: truncated-header
+    fields:
+      - next_header
+      - payload_len
+      - spi
+      - sequence
+  # Payload-length claims more 32-bit words than the buffer holds: the ICV slice
+  # runs off the end; InvalidFieldValue rather than a truncated read.
+  - name: oversized-payload-len
+    fields:
+      - payload_len
+  # One flipped bit in an immutable IP field or the payload: the recomputed ICV
+  # no longer matches; verification fails closed without a panic.
+  - name: icv-mismatch
+    suite:
+      - auth_hmac_sha2_256_128
+    fields:
+      - icv
+    checks:
+      - verification_failure_not_panic
+
+coverage_cases:
+  - ah-malformed-truncated-header
+  - ah-malformed-oversized-payload-len
+  - ah-malformed-icv-mismatch
+
+supported_cases:
+  - name: ah-malformed-truncated-header
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: structured_error
+  - name: ah-malformed-oversized-payload-len
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: structured_error
+  - name: ah-malformed-icv-mismatch
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: structured_error
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - AH
+    notes:
+      - Malformed AH shapes are not byte-compared; the Scapy reference backend
+        declares native AH support for the well-formed sibling feature and these
+        cases are excluded from offline sampling as structured errors.
+  libcrafter:
+    status: supported
+    notes:
+      - Truncated headers, oversized payload-lengths, and tampered immutable
+        fields surface as BufferTooShort / InvalidFieldValue / verification
+        structured errors with context, required, and available where
+        applicable, never as a panic.

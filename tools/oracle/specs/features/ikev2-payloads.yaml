@@ -1,0 +1,108 @@
+version: 1
+kind: feature
+name: ikev2_payloads
+summary: >-
+  IKEv2 (RFC 7296) generic-payload chain over UDP/500: the standard payload set
+  (SA, KE, IDi/IDr, AUTH, Ni/Nr, Notify, Delete, TSi/TSr, CERT, V, CP, EAP) and
+  the Encrypted (SK) payload, plus the contract that an unknown payload type
+  decodes as a preserved Raw payload. Deterministic payloads are byte-comparable
+  against the Scapy ISAKMP reference backend.
+
+# Offline IKEv2 payload compile/decode coverage. Each supported case is
+# materialized by both the Scapy reference backend (scapy.layers.isakmp) and the
+# libcrafter adapter from the same packet plan. The IKE_AUTH case exercises the
+# IDi/AUTH/SA/TSi/TSr payload set with pinned bodies so the generic payload
+# headers (Next Payload | C+Reserved | Length) and bodies are byte-identical.
+# The sk-encrypted case builds an Encrypted (SK) payload with a pinned SA so the
+# IV || ciphertext || ICV is deterministic. The unknown-payload-raw case sets an
+# unassigned payload type so the chain decodes the body as a preserved Raw
+# payload; it is compared on the decoded structure, not on a Scapy-native type.
+
+layers:
+  - ikev2
+  - udp
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: true
+malformed: false
+
+behaviors:
+  # IKE_AUTH exchange: IDi || AUTH || SA || TSi || TSr payload chain with pinned
+  # bodies; generic payload headers and bodies round-trip byte-for-byte.
+  - name: auth
+    exchange:
+      - ike_auth
+    next_payload:
+      - idi
+    checks:
+      - next_payload_chain_roundtrip
+      - payload_bodies_preserved
+  # Encrypted (SK) payload driven by a pinned SA: SK body is
+  # IV | seal(inner || pad || pad-length) | ICV; deterministic with pinned key/IV.
+  - name: sk-encrypted
+    next_payload:
+      - sk
+    checks:
+      - sk_iv_ciphertext_icv
+  # Unknown payload type: an unassigned codepoint in the chain decodes its body
+  # as a preserved Raw payload rather than being reinterpreted.
+  - name: unknown-payload-raw
+    next_payload:
+      - unknown
+    checks:
+      - unknown_payload_preserved_as_raw
+
+coverage_cases:
+  - ikev2-auth
+  - ikev2-sk-encrypted
+  - ikev2-unknown-payload-raw
+  - crafter-ikev2-auth
+
+supported_cases:
+  - name: ikev2-auth
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: ikev2-sk-encrypted
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  # Unknown payload type is preserved as Raw rather than reinterpreted; compared
+  # on decoded structure rather than on a Scapy-native payload type.
+  - name: ikev2-unknown-payload-raw
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: crafter-ikev2-auth
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - ISAKMP
+    encode: true
+    decode: true
+    notes:
+      - The IKEv2 payload set is materialized with scapy.layers.isakmp from the
+        same pinned plan so the generic payload headers and bodies are
+        byte-identical; the SK payload uses a pinned SA for a deterministic
+        IV || ciphertext || ICV.
+      - The unknown-payload-raw case carries an unassigned payload type that both
+        backends preserve as opaque body bytes.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    notes:
+      - The generic payload chain auto-fills each payload's Next Payload and
+        Length, re-compiles byte-for-byte, decrypts and re-verifies the SK
+        payload under a pinned SA, and preserves an unknown payload type as a
+        Raw payload on decode.

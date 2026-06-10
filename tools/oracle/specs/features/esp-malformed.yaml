@@ -1,0 +1,105 @@
+version: 1
+kind: feature
+name: esp_malformed
+summary: >-
+  ESP (RFC 4303) malformed-input contract: a truncated datagram shorter than the
+  8-byte SPI+sequence header, a body that cannot hold the SA's IV and ICV, a bad
+  ESP pad-length that runs past the decrypted trailer, and a one-bit ICV/tag
+  tamper. Each is a structured decode error, never a panic and never a silently
+  wrong plaintext.
+
+# Deliberately malformed ESP inputs. A truncated header, an undersized encrypted
+# body, an out-of-range pad length, and a flipped ICV/ciphertext bit are all
+# structured decode errors rather than comparable packets, so every case carries
+# byte_policy: structured_error and is excluded from the offline encode/decode
+# sampling pathway (the oracle has no offline malformed comparison path; see
+# tools/oracle/engine/generator.py _case_supported_in_direction). The cases stay
+# declared coverage; the crate's resilience and fixture suites assert the
+# BufferTooShort / InvalidFieldValue / integrity structured errors for these
+# shapes (see crafter/tests/resilience.rs and the ESP tamper integration test).
+
+layers:
+  - esp
+  - ipv4
+  - ipv6
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: false
+malformed: true
+
+behaviors:
+  # Fewer than 8 bytes: cannot hold SPI(4) + Seq(4); BufferTooShort.
+  - name: truncated-header
+    fields:
+      - spi
+      - sequence
+  # Encrypted body shorter than the SA's IV + ICV lengths: cannot split the
+  # ciphertext; structured length error.
+  - name: truncated-body
+    suite:
+      - encr_aes_gcm_16
+    fields:
+      - iv
+      - icv
+  # Pad length larger than the decrypted trailer: the strip runs off the end;
+  # InvalidFieldValue rather than a wrong plaintext.
+  - name: bad-pad-length
+    suite:
+      - encr_aes_cbc
+      - auth_hmac_sha2_256_128
+    fields:
+      - pad_length
+  # One flipped bit in the ICV/tag: the AEAD verify fails; structured integrity
+  # error, never a silently wrong plaintext.
+  - name: icv-tamper
+    suite:
+      - encr_aes_gcm_16
+    fields:
+      - icv
+    checks:
+      - integrity_failure_not_panic
+
+coverage_cases:
+  - esp-malformed-truncated-header
+  - esp-malformed-truncated-body
+  - esp-malformed-bad-pad-length
+  - esp-malformed-icv-tamper
+
+supported_cases:
+  - name: esp-malformed-truncated-header
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: structured_error
+  - name: esp-malformed-truncated-body
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: structured_error
+  - name: esp-malformed-bad-pad-length
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: structured_error
+  - name: esp-malformed-icv-tamper
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: structured_error
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - ESP
+    notes:
+      - Malformed ESP shapes are not byte-compared; the Scapy reference backend
+        declares native ESP support for the well-formed sibling features and
+        these cases are excluded from offline sampling as structured errors.
+  libcrafter:
+    status: supported
+    notes:
+      - Truncated headers and bodies, bad pad lengths, and tampered ICVs surface
+        as BufferTooShort / InvalidFieldValue / integrity structured errors with
+        context, required, and available where applicable, never as a panic.

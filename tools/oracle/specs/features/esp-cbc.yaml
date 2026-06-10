@@ -1,0 +1,97 @@
+version: 1
+kind: feature
+name: esp_cbc
+summary: >-
+  ESP (RFC 4303) AES-CBC confidentiality with separate HMAC-SHA-256-128
+  integrity in transport mode over IPv4 and IPv6, plus the NULL-cipher opaque
+  shape. With pinned key, integrity key, and explicit IV the padded trailer,
+  ciphertext, and appended 16-byte ICV are deterministic and byte-comparable
+  against the Scapy reference backend.
+
+# Offline ESP CBC+HMAC compile/decode coverage. Each supported case is
+# materialized by both the Scapy reference backend
+# (scapy.layers.ipsec.SecurityAssociation, ENCR_AES_CBC + AUTH_HMAC_SHA2_256_128)
+# and the libcrafter adapter from the same packet plan. The encryption key,
+# integrity key, and explicit IV are pinned so the explicit IV, the
+# block-padded ciphertext (payload | pad | pad-length | next-header padded to
+# the AES block size per RFC 4303 §2.4), and the separately computed ICV are
+# byte-identical. The null-opaque case uses ENCR_NULL with no integrity so the
+# ESP body is preserved verbatim (SPI || Seq || opaque) and re-compiles
+# byte-for-byte.
+
+layers:
+  - esp
+  - ipv4
+  - ipv6
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: true
+malformed: false
+
+behaviors:
+  # AES-CBC encryption + HMAC-SHA-256-128 integrity, transport mode. The ESP
+  # trailer is padded to the AES block size, encrypted, and a 16-byte ICV is
+  # appended over ESP header + IV + ciphertext.
+  - name: cbc-hmac-transport
+    suite:
+      - encr_aes_cbc
+      - auth_hmac_sha2_256_128
+    mode: transport
+    checks:
+      - cbc_block_padded_trailer
+      - cbc_explicit_iv
+      - hmac_sha256_128_icv
+  # NULL cipher, no integrity: the ESP body is opaque (SPI || Seq || payload)
+  # and round-trips byte-for-byte with no decrypt or ICV.
+  - name: null-opaque
+    suite:
+      - encr_null
+    mode: transport
+    checks:
+      - opaque_body_preserved
+
+coverage_cases:
+  - esp-cbc-hmac-transport
+  - esp-null-opaque
+  - crafter-esp-cbc-hmac-transport
+
+supported_cases:
+  - name: esp-cbc-hmac-transport
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: esp-null-opaque
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: crafter-esp-cbc-hmac-transport
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - ESP
+    encode: true
+    decode: true
+    notes:
+      - ESP CBC+HMAC bytes are materialized with
+        scapy.layers.ipsec.SecurityAssociation using ENCR_AES_CBC and
+        AUTH_HMAC_SHA2_256_128 with pinned keys and explicit IV so the padded
+        ciphertext and appended 16-byte ICV are byte-identical to libcrafter.
+      - The null-opaque case uses ENCR_NULL with no integrity; the ESP body is
+        carried verbatim and compared octet-for-octet.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    notes:
+      - The pinned AES-CBC SA pads the ESP trailer to the AES block size per
+        RFC 4303 §2.4, appends the separately computed HMAC-SHA-256-128 ICV,
+        and re-compiles byte-for-byte; ENCR_NULL preserves the opaque body.

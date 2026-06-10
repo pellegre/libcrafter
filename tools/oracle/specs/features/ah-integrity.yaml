@@ -1,0 +1,131 @@
+version: 1
+kind: feature
+name: ah_integrity
+summary: >-
+  AH (RFC 4302) HMAC-SHA-256-128 integrity over IPv4 and IPv6 in transport and
+  tunnel mode. With a pinned integrity key the ICV computed over the
+  canonicalized immutable IP fields, the ICV-zeroed AH header, and the
+  upper-layer data is deterministic and byte-comparable against the Scapy
+  reference backend; AH never encrypts the upper-layer data.
+
+# Offline AH compile/decode coverage. Each supported case is materialized by both
+# the Scapy reference backend (scapy.layers.ipsec.SecurityAssociation,
+# AUTH_HMAC_SHA2_256_128) and the libcrafter adapter from the same packet plan
+# with the integrity key pinned, so the 16-byte ICV (padded to the 32-bit (v4) /
+# 64-bit (v6) boundary) is byte-identical. The ICV input is the canonicalized
+# immutable IP header (mutable fields zeroed per RFC 4302 §3.3.3.1), the AH
+# header with the ICV field zeroed, and the upper-layer data. The tunnel case
+# carries an inner IPv4 datagram (next-header 4); the ipv6-transport case
+# exercises the IPv6 canonicalization and 64-bit ICV alignment; the
+# sequence-boundary case fixes the sequence to its 32-bit maximum.
+
+layers:
+  - ah
+  - ipv4
+  - ipv6
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: true
+malformed: false
+
+behaviors:
+  # HMAC-SHA-256-128 transport mode over IPv4: ICV over canonical IPv4 +
+  # ICV-zeroed AH + upper-layer data, padded to a 32-bit boundary.
+  - name: hmac-transport
+    suite:
+      - auth_hmac_sha2_256_128
+    mode: transport
+    checks:
+      - ah_canonical_immutable_fields
+      - ah_icv_zeroed_in_input
+      - hmac_sha256_128_icv
+  # HMAC-SHA-256-128 tunnel mode: AH next-header 4 (IPv4-in-IPv4); the inner IP
+  # datagram is authenticated and dispatched on decode.
+  - name: hmac-tunnel-inner-ip
+    suite:
+      - auth_hmac_sha2_256_128
+    mode: tunnel
+    next_header:
+      - ipv4
+    checks:
+      - tunnel_inner_ip_dispatch
+  # HMAC-SHA-256-128 transport mode over IPv6: IPv6 canonicalization (traffic
+  # class, flow label, hop limit zeroed) and 64-bit ICV alignment.
+  - name: ipv6-transport
+    suite:
+      - auth_hmac_sha2_256_128
+    mode: transport
+    checks:
+      - ah_ipv6_canonical_immutable_fields
+      - ah_ipv6_icv_alignment
+  # Sequence at the 32-bit boundary stays stable on the wire and in the ICV
+  # input.
+  - name: sequence-boundary
+    suite:
+      - auth_hmac_sha2_256_128
+    mode: transport
+    fields:
+      - sequence
+
+coverage_cases:
+  - ah-hmac-transport
+  - ah-hmac-tunnel-inner-ip
+  - ah-ipv6-transport
+  - ah-sequence-boundary
+  - crafter-ah-hmac-transport
+  - crafter-ah-hmac-tunnel-inner-ip
+
+supported_cases:
+  - name: ah-hmac-transport
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: ah-hmac-tunnel-inner-ip
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: ah-ipv6-transport
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: ah-sequence-boundary
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: crafter-ah-hmac-transport
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: crafter-ah-hmac-tunnel-inner-ip
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - AH
+    encode: true
+    decode: true
+    notes:
+      - AH bytes are materialized with scapy.layers.ipsec.SecurityAssociation
+        using AUTH_HMAC_SHA2_256_128 and a pinned integrity key so the
+        canonicalized ICV input and the appended 16-byte ICV are byte-identical
+        to libcrafter over both IPv4 and IPv6.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    notes:
+      - AH canonicalizes the immutable IP fields per RFC 4302 §3.3.3.1, zeroes
+        the ICV field in the AH header for the input, and appends the
+        HMAC-SHA-256-128 ICV padded to the 32-bit (v4) / 64-bit (v6) boundary;
+        decode re-verifies the ICV without modifying the upper-layer data.

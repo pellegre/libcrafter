@@ -1,0 +1,76 @@
+version: 1
+kind: feature
+name: ikev2_header
+summary: >-
+  IKEv2 (RFC 7296) message header over UDP/500: the IKE_SA_INIT exchange with
+  the initiator/responder SPIs, next-payload chain anchor, version 0x20,
+  exchange type, flags, message id, and auto-filled message length. The header
+  and its SA / KE / Nonce payload chain round-trip and are byte-comparable
+  against the Scapy ISAKMP reference backend.
+
+# Offline IKEv2 header compile/decode coverage. Each supported case is
+# materialized by both the Scapy reference backend (scapy.layers.isakmp ISAKMP)
+# and the libcrafter adapter from the same packet plan. The initiator and
+# responder SPIs, message id, and payload bodies are pinned to constants so the
+# 28-byte header (including the auto-filled message length) and the generic
+# payload chain are byte-identical. The IKE_SA_INIT case carries the canonical
+# SA || KE || Ni chain; the crafter case is the libcrafter-oriented sibling.
+
+layers:
+  - ikev2
+  - udp
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: true
+malformed: false
+
+behaviors:
+  # IKE_SA_INIT request: initiator flag set, SA || KE || Ni payload chain, the
+  # 4-byte message length auto-filled to cover the header plus the chain.
+  - name: sa-init
+    exchange:
+      - ike_sa_init
+    flags:
+      - initiator
+    next_payload:
+      - sa
+    checks:
+      - ike_message_length_auto_filled
+      - next_payload_chain_roundtrip
+
+coverage_cases:
+  - ikev2-sa-init
+  - crafter-ikev2-sa-init
+
+supported_cases:
+  - name: ikev2-sa-init
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: crafter-ikev2-sa-init
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - ISAKMP
+    encode: true
+    decode: true
+    notes:
+      - The IKEv2 header and its SA / KE / Nonce payload chain are materialized
+        with scapy.layers.isakmp ISAKMP from the same pinned plan so the 28-byte
+        header and auto-filled message length are byte-identical to libcrafter.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    notes:
+      - The IkeHeader layer auto-fills the message length to cover the header
+        plus the following payload chain unless overridden, and the decoded
+        layers re-compile byte-for-byte over UDP/500.
