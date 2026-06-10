@@ -611,6 +611,151 @@ fn budget(path_mtu: usize) {
 }
 ```
 
+## Build IPSec (ESP, AH, IKEv2)
+
+IPSec is a set of ordinary layers: `Esp`, `Ah`, the `IkeHeader` plus the typed
+IKEv2 payload set, and the `NatTraversal` marker, all reachable through
+`crafter::prelude::*`. They compose with `/` over IPv4 and IPv6 and slot into the
+same builder/decode/summary shape as every other protocol. `crafter` is a
+**wire-level primitive**, not a kernel IPSec stack: there is no SAD/SPD, no
+replay window, and IKEv2 is message wire format only (no negotiation, no
+Diffie-Hellman, no key derivation).
+
+A `SecurityAssociation` is the per-packet crypto context that drives ESP/AH and
+the IKEv2 Encrypted (SK) payload. **Keys are caller-supplied test material — fixed
+repeated bytes in examples and fixtures, never a real secret, and never
+committed.** Build one with the consuming fluent builder and a documentation SPI:
+
+```rust
+use crafter::prelude::*;
+use std::net::Ipv4Addr;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // AES-GCM-16 (AEAD) transport SA. AEAD carries its own integrity, so the
+    // pair is `IntegrityAlgorithm::None`; AEAD/CTR suites also carry a salt.
+    // The 0x24 / 0xA1B2C3D4 bytes are documentation-only key material.
+    let sa = SecurityAssociation::new(0x0000_2100)
+        .encryption(EncryptionAlgorithm::AesGcm16, vec![0x24u8; 16])
+        .salt(vec![0xA1, 0xB2, 0xC3, 0xD4])
+        .transport();
+    sa.validate()?; // checks key/salt lengths; never mutates the caller's bytes
+
+    // `Esp::secured(sa)` seals the layers that follow; the IP layer advertises
+    // ESP (protocol 50). The TCP / Raw tail is encrypted *inside* the ESP body,
+    // so there is no cleartext copy on the wire. The IV is pinned for a
+    // deterministic fixture.
+    let esp = Ipv4::new()
+        .src(Ipv4Addr::new(192, 0, 2, 10))
+        .dst(Ipv4Addr::new(198, 51, 100, 20))
+        .protocol(IPPROTO_ESP)
+        / Esp::secured(sa).spi(0x0000_2100).sequence(1)
+            .iv(vec![1, 2, 3, 4, 5, 6, 7, 8])
+        / Tcp::new().sport(40001).dport(443)
+        / Raw::from("agent-esp");
+
+    let bytes = esp.compile()?;
+    println!("{}", esp.summary()); // key/salt bytes are never printed
+    println!("{}", bytes.hexdump());
+    Ok(())
+}
+```
+
+`compile()` fills the pad, pad-length, next-header, and ICV; an explicit `.spi`,
+`.sequence`, `.iv`, `.pad`, `.icv`, or `.next_header` is emitted verbatim,
+including a deliberately wrong value for malformed testing. AH (`Ah::secured(sa)`,
+protocol 51) is the integrity-only analog — it authenticates but never encrypts,
+so the upper layer travels in the clear. Tunnel mode (`.tunnel()` on the SA)
+protects a whole inner IP datagram placed after `Esp`/`Ah`.
+
+An `IKE_SA_INIT` is the `IkeHeader` plus the composed payload chain over
+UDP/500; `compile()` derives the Next Payload chain from layer order and fills
+the IKE message length. SK payloads (`IkeEncryptedPayload::new(sa)`) own their
+inner chain and seal it under the same SA shape.
+
+```rust
+use crafter::prelude::*;
+use std::net::Ipv4Addr;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let proposal = Proposal::new(1, PROTOCOL_ID_IKE)
+        .with_transform(
+            Transform::new(TRANSFORM_TYPE_ENCR, 20)
+                .with_attribute(TransformAttribute::key_length(128)),
+        )
+        .with_transform(Transform::new(TRANSFORM_TYPE_DH, DH_GROUP_MODP_2048));
+
+    let header = IkeHeader::new()
+        .initiator_spi(0x0102_0304_0506_0708)
+        .exchange(IKE_SA_INIT)
+        .initiator();
+
+    let ike = Ipv4::new()
+        .src(Ipv4Addr::new(192, 0, 2, 10))
+        .dst(Ipv4Addr::new(198, 51, 100, 20))
+        .protocol(IPPROTO_UDP)
+        / Udp::new().sport(500).dport(500)
+        / header
+        / IkeSaPayload::new().with_proposal(proposal)
+        / IkeKePayload::new(DH_GROUP_MODP_2048, vec![0xAB; 32])
+        / IkeNoncePayload::new(vec![0x5A; 16]);
+
+    let bytes = ike.compile()?;
+    println!("{}", ike.summary());
+    println!("{}", bytes.hexdump());
+    Ok(())
+}
+```
+
+Decoding follows the registry rule: the built-in registry carries no SA, so ESP
+and AH decode as typed headers with the encrypted body preserved as opaque
+ciphertext that re-compiles byte-for-byte (an SK payload decodes opaquely, and
+unknown IKE payload types decode as a preserved `Raw`). Register the matching SA
+to decrypt and verify — `ProtocolRegistry::with_security_association(sa)` (or
+`register_security_association`) keys SAs by SPI:
+
+```rust
+use crafter::prelude::*;
+
+fn inspect_esp(bytes: &[u8], sa: SecurityAssociation) -> Result<(), CrafterError> {
+    // No SA: the ESP header is typed but the body stays opaque.
+    let opaque = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes)?;
+    let esp = opaque.layer::<Esp>().expect("typed ESP header");
+    println!("spi={:?} opaque={}", esp.spi_value(), esp.opaque_body().is_some());
+
+    // With the SA: the ICV is verified (constant-time), the body is decrypted,
+    // padding is stripped, and the inner layers are dispatched as typed layers.
+    // A one-bit change to the ciphertext or ICV fails closed with a structured
+    // `CrafterError` (`ipsec.sa.icv` / `ipsec.ah.icv`) — never a panic and never
+    // a silently wrong plaintext.
+    let registry = ProtocolRegistry::new().with_security_association(sa);
+    let decoded =
+        Packet::decode_from_l3_with_registry(&registry, NetworkLayer::Ipv4, bytes)?;
+    if let Some(tcp) = decoded.layer::<Tcp>() {
+        println!("inner tcp dport={}", tcp.destination_port_value());
+    }
+    Ok(())
+}
+```
+
+Keep generated IPSec validation offline first. The oracle compares libcrafter
+bytes and the decode model against the Scapy reference backend, and the `ipsec`
+probe profile plans the ESP/AH/IKEv2 behavioral exchange plus an engine-level
+cross-crypto parity check — all without a network:
+
+```sh
+tools/oracle/run offline --profile ipsec-smoke --seed 1 --count 20 --out target/oracle/ipsec-agent-offline
+tools/oracle/run offline --profile esp --seed 1 --count 20 --root l3:ipv4 --out target/oracle/esp-agent-offline
+tools/oracle/run pcap --profile ipsec-smoke --seed 1 --count 20 --out target/oracle/ipsec-agent-pcap
+tools/probe/run --provider local-dry-run --dry-run --profile ipsec --seed 1 --case esp-transport-echo
+```
+
+Any live IPSec exchange is opt-in only and must run from disposable
+infrastructure, never raw from the developer host. Start with the probe dry-run
+above, then provision a controlled IPSec-capable peer through a `lab-session`
+(see Live-Lab Sending and the `lab-session` skill); collect artifacts and tear
+the session down afterward. For the user-facing coverage boundary, see
+[`docs/ipsec.md`](../../docs/ipsec.md).
+
 ## Validate TCP: Dry-Run First, Provider Live Opt-In
 
 Dry-run is the default for TCP, exactly as for every other layer. `send_dry_run`
