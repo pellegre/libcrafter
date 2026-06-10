@@ -5575,10 +5575,150 @@ def _ndp_duplicate_address_detection_probe_plan(
     }
 
 
+# IPSec ESP/AH IP protocol numbers (RFC 4303 / RFC 4302) and the IKEv2 UDP port
+# (RFC 7296). Recorded in the dry-run plan so an inspecting agent sees the wire
+# protocol/port the exchange rides without consulting the crate.
+_IPSEC_ESP_PROTOCOL = 50
+_IPSEC_AH_PROTOCOL = 51
+_IKEV2_UDP_PORT = 500
+
+
+def _ipsec_probe_plan(
+    *,
+    case_name: str,
+    profile: str,
+    seed: int,
+    sequence: int,
+) -> JSONObject:
+    """Plan an IPSec behavioral case (ESP transport/tunnel, AH, IKE_SA_INIT).
+
+    The IPSec cases drive a controlled IPSec-capable peer (Linux xfrm /
+    strongSwan / Scapy reference peer) and need libcrafter to seal/authenticate
+    a datagram or build an IKE_SA_INIT against the Security Association the peer
+    holds. The crate-side stimulus/response *builders* (and the cross-crypto
+    parity assertion) land in the later probe steps; until then the dry-run plan
+    is ``planned_only``: it records the case, the stimulus/expected-response
+    packet shapes (ipsec protocol, mode, wire protocol number / UDP port, the
+    deterministic SPI and peer addresses), and the live-path note, but builds no
+    packet bytes. This keeps the dry-run plan well-formed and inspectable
+    without requiring the crate stimulus builders or a live peer.
+    """
+
+    case = PROBE_CASE_BY_NAME[case_name]
+    metadata = case.metadata or {}
+    ipsec_protocol = str(metadata.get("ipsec_protocol", "ipsec"))
+    mode = metadata.get("mode")
+    exchange = metadata.get("exchange")
+    requires_tunnel = bool(metadata.get("requires_tunnel", False))
+
+    digest = deterministic_bytes(case_name, profile, seed, sequence)
+    stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
+    # Deterministic, non-zero SPI (RFC 4303 reserves 0; the oracle SPI samplers
+    # avoid it for the same NON_ESP heuristic reason). Kept in the dynamic
+    # 0x1000..0xFFFFFFFF range so it never collides with the IKE/reserved low SPIs.
+    spi = 0x1000 + int.from_bytes(digest[0:4], "big") % 0xFFFF_0000
+
+    # The stimulus/response packet shape: the wire protocol the exchange rides
+    # and, for ESP/AH, the mode and per-exchange SPI. This is the inspectable
+    # contract the later crate stimulus builders will materialize.
+    stimulus_shape: JSONObject = {
+        "ipsec_protocol": ipsec_protocol,
+        "stimulus": case.stimulus,
+    }
+    response_shape: JSONObject = {
+        "ipsec_protocol": ipsec_protocol,
+        "expected_response": case.expected_response,
+    }
+    if ipsec_protocol == "esp":
+        stimulus_shape["ip_protocol"] = _IPSEC_ESP_PROTOCOL
+        response_shape["ip_protocol"] = _IPSEC_ESP_PROTOCOL
+        stimulus_shape["spi"] = spi
+        response_shape["spi"] = spi
+        if mode is not None:
+            stimulus_shape["mode"] = mode
+            response_shape["mode"] = mode
+    elif ipsec_protocol == "ah":
+        stimulus_shape["ip_protocol"] = _IPSEC_AH_PROTOCOL
+        response_shape["ip_protocol"] = _IPSEC_AH_PROTOCOL
+        stimulus_shape["spi"] = spi
+        response_shape["spi"] = spi
+        if mode is not None:
+            stimulus_shape["mode"] = mode
+            response_shape["mode"] = mode
+    elif ipsec_protocol == "ikev2":
+        stimulus_shape["udp_port"] = _IKEV2_UDP_PORT
+        response_shape["udp_port"] = _IKEV2_UDP_PORT
+        if exchange is not None:
+            stimulus_shape["exchange"] = exchange
+            response_shape["exchange"] = exchange
+
+    plan: JSONObject = {
+        "schema_version": 1,
+        "case": case_name,
+        "sequence": sequence,
+        "index": sequence,
+        "profile": profile,
+        "seed": seed,
+        "stimulus": case.stimulus,
+        "expected_response": case.expected_response,
+        # The IPSec stimulus/response builders and cross-crypto parity check land
+        # in later probe steps; the dry-run plan is planned-only (no packet bytes
+        # built) but still records the full exchange shape below.
+        "planned_only": True,
+        "ipsec_protocol": ipsec_protocol,
+        "source_ipv4": stimulus_ipv4,
+        "destination_ipv4": target_ipv4,
+        "expected_reply_source_ipv4": target_ipv4,
+        "expected_reply_destination_ipv4": stimulus_ipv4,
+        "stimulus_packet_shape": stimulus_shape,
+        "expected_response_packet_shape": response_shape,
+        # The peer that opens/answers the exchange. ESP/AH need it to hold the
+        # matching SA; IKEv2 needs it to run an IKE responder. The peer is the
+        # Linux xfrm / strongSwan stack or a Scapy reference peer configured on
+        # the controlled target endpoint -- provisioned only on the opt-in live
+        # path (lab-session / providers), never for the dry-run.
+        "ipsec_peer": {
+            "required": True,
+            "role": "ipsec_peer" if ipsec_protocol != "ikev2" else "ikev2_responder",
+            "kind": (
+                "ikev2-responder"
+                if ipsec_protocol == "ikev2"
+                else f"ipsec-{ipsec_protocol}-{mode or 'transport'}-peer"
+            ),
+            "peer_options": [
+                "linux-xfrm",
+                "strongswan",
+                "scapy-reference-peer",
+            ],
+            "live_only": True,
+        },
+        "live_path": (
+            "Opt-in via lab-session / providers: provision an IPSec-capable peer "
+            "(Linux xfrm / strongSwan / Scapy reference peer) holding the "
+            "matching SA (or running an IKE responder), run from there, collect "
+            "artifacts, and tear it down. The dry-run plans this exchange without "
+            "any live traffic."
+        ),
+        "digest_hex": digest.hex()[:16],
+    }
+    if mode is not None:
+        plan["mode"] = mode
+    if exchange is not None:
+        plan["exchange"] = exchange
+    if requires_tunnel:
+        # Mirror the case metadata: tunnel-mode ESP needs a tunnel-mode SA on the
+        # peer, so a transport-only peer skips this case while transport-mode
+        # cases still plan. The shared capability is still ``ipsec_esp``.
+        plan["requires_tunnel"] = True
+    return plan
+
+
 # Registry of per-case plan builders. The dispatcher in
 # :func:`probe_plan_for_case` looks up a builder by case name; cases without an
 # entry fall back to a minimal planned-only plan. DNS, DHCP, ARP, and UDP case
-# groups extend the behavior suite by registering builders here.
+# groups extend the behavior suite by registering builders here. The IPSec
+# cases register a planned-only builder that records the exchange shape (see
+# :func:`_ipsec_probe_plan`).
 PLAN_BUILDERS: dict[str, PlanBuilder] = {
     "icmp-echo": _icmp_echo_probe_plan,
     "tcp-syn-open": _tcp_syn_probe_plan,
@@ -5630,7 +5770,27 @@ PLAN_BUILDERS: dict[str, PlanBuilder] = {
     "udp-closed-port-icmp": _udp_closed_port_icmp_probe_plan,
     "udp-zero-checksum-ipv4": _udp_zero_checksum_ipv4_probe_plan,
     "udp-options-surplus-echo": _udp_options_surplus_echo_probe_plan,
+    "esp-transport-echo": _ipsec_probe_plan,
+    "esp-tunnel-echo": _ipsec_probe_plan,
+    "ah-transport-verify": _ipsec_probe_plan,
+    "ikev2-sa-init": _ipsec_probe_plan,
 }
+
+
+# Registered cases whose builder intentionally emits a ``planned_only`` plan
+# (the exchange shape is recorded, but no packet bytes are built). The IPSec
+# cases land here: their crate-side stimulus/response builders and the
+# cross-crypto parity check arrive in later probe steps, so for now the dry-run
+# plan records the full ESP/AH/IKEv2 exchange shape without materializing wire
+# bytes. Every other registered builder produces a fully materialized plan.
+PLANNED_ONLY_REGISTERED_CASES: frozenset[str] = frozenset(
+    {
+        "esp-transport-echo",
+        "esp-tunnel-echo",
+        "ah-transport-verify",
+        "ikev2-sa-init",
+    }
+)
 
 
 def register_plan_builder(case_name: str, builder: PlanBuilder) -> None:

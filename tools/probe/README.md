@@ -22,6 +22,7 @@ tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10
 tools/probe/run --provider qemu --dry-run --profile smoke --seed 1 --count 10
 tools/probe/run --provider virtualbox --dry-run --profile smoke --seed 1 --count 10
 tools/probe/run --provider qemu --dry-run --profile behavior --seed 1052 --count 40
+tools/probe/run --provider qemu --dry-run --profile ipsec --out target/probe/ipsec-dry-run
 python3 tools/probe/engine/provider_matrix.py --providers hetzner,qemu,virtualbox,docker --dry-run --profile behavior --seed 1052 --count 40 --out target/probe/provider-matrix
 ```
 
@@ -40,6 +41,24 @@ forty cases in a stable order, ten per protocol:
   closed-port ICMP, IPv4 zero-checksum, surplus options, and length-boundary
   datagram cases.
 
+The `ipsec` profile is the IPSec peer-exchange suite (kept separate from
+`behavior` because it needs an IPSec-capable peer): ESP transport-mode echo,
+ESP tunnel-mode echo, AH transport-mode verify, and an IKE_SA_INIT exchange.
+ESP/AH need a peer holding the matching Security Association (the `ipsec_esp` /
+`ipsec_ah` capabilities); IKEv2 needs the peer to run an IKE responder on
+UDP/500 (the `ikev2` capability). All three derive from IPv4 unicast plus a
+controlled service, so a substrate without a configurable peer skips the cases
+with the stable `requires_ipsec_peer` / `requires_ikev2_responder` reasons. The
+peer is realized live as the Linux kernel xfrm / strongSwan stack or a
+Scapy-driven reference peer on the disposable target endpoint; the dry-run plans
+the exchange shape (ESP/AH protocol numbers, IKEv2 UDP port, per-exchange SPI,
+peer addresses) without provisioning the peer or sending any traffic. The live
+path is opt-in through `lab-session` / providers — provision the peer, run from
+there, collect artifacts, and tear it down — never from the developer machine.
+The IPSec stimulus/response cases are `planned_only` in the plan until the
+crate-side stimulus builders and the cross-crypto parity check land in later
+probe steps.
+
 Provider-backed probe dry-runs use `tools/lab` to plan `stimulus` and `target`
 roles, derive endpoint addresses and interfaces, and include lab session
 metadata in the report. Probe still owns target service setup, TCP RST guards,
@@ -48,9 +67,12 @@ stimulus execution, response parsing, and result assembly.
 Provider capability checks decide whether a case can run. DNS and UDP need IPv4
 unicast plus controlled services. DHCP needs a private link-layer segment with
 broadcast and controlled services. ARP needs link-layer send/capture and
-broadcast; some ARP cases also need provider MAC metadata. Unsupported cases
-skip with stable capability reasons and do not count as failures. Build, send,
-decode, or validation errors on supported cases must remain failures.
+broadcast; some ARP cases also need provider MAC metadata. IPSec ESP/AH need a
+peer that holds the matching Security Association, and IKEv2 needs an IKE
+responder; absent either, the cases skip with `requires_ipsec_peer` /
+`requires_ikev2_responder`. Unsupported cases skip with stable capability
+reasons and do not count as failures. Build, send, decode, or validation errors
+on supported cases must remain failures.
 
 Target setup is controlled and disposable. The target endpoint runs generated
 Python DNS, DHCP, and UDP responders where needed, and uses kernel behavior for
