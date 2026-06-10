@@ -62,6 +62,9 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
             "link_layer_arp",
             "provider_mac",
             "repeated_response",
+            "ipsec_esp",
+            "ipsec_ah",
+            "ikev2",
         ):
             self.assertIn(name, PROBE_CAPABILITY_NAMES)
 
@@ -84,6 +87,10 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
             "link_layer_arp",
             "provider_mac",
             "repeated_response",
+            # An IPSec-capable peer rides the controlled-services substrate.
+            "ipsec_esp",
+            "ipsec_ah",
+            "ikev2",
         ):
             self.assertIs(derived[name], True, name)
 
@@ -104,6 +111,11 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
             "udp_options_surplus",
             "privileged_udp_port",
             "repeated_response",
+            # IPSec rides IPv4 unicast + a controlled peer, not the link layer,
+            # so an L3-only-but-controlled substrate still grants it.
+            "ipsec_esp",
+            "ipsec_ah",
+            "ikev2",
         ):
             self.assertIs(derived[granted], True, granted)
 
@@ -169,6 +181,52 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
 
         self.assertIs(derived["udp_service"], True)
         self.assertIs(derived["udp_options_surplus"], False)
+
+    def test_ipsec_capabilities_denied_without_controlled_service(self) -> None:
+        # An IPSec peer needs a controlled service to host the SA / IKE
+        # responder; a bare substrate without one denies every IPSec capability.
+        substrate = dict(_L3_ONLY_SUBSTRATE)
+        substrate["controlled_services"] = False
+
+        derived = probe_capabilities_from_lab_capabilities(
+            "bare-l3",
+            substrate,
+            dry_run=True,
+        )
+
+        for denied in ("ipsec_esp", "ipsec_ah", "ikev2"):
+            self.assertIs(derived[denied], False, denied)
+
+    def test_explicit_ipsec_peer_denial_disables_esp_and_ah(self) -> None:
+        # A controlled substrate that cannot configure the xfrm/strongSwan SA can
+        # deny the peer explicitly; ESP/AH are denied while IKEv2 (which only
+        # needs the IKE responder) is unaffected.
+        substrate = dict(_LINK_LAYER_SUBSTRATE)
+        substrate["ipsec_peer"] = False
+
+        derived = probe_capabilities_from_lab_capabilities(
+            "qemu",
+            substrate,
+            dry_run=True,
+        )
+
+        self.assertIs(derived["ipsec_esp"], False)
+        self.assertIs(derived["ipsec_ah"], False)
+        self.assertIs(derived["ikev2"], True)
+
+    def test_explicit_ikev2_responder_denial_disables_ikev2_only(self) -> None:
+        substrate = dict(_LINK_LAYER_SUBSTRATE)
+        substrate["ikev2_responder"] = False
+
+        derived = probe_capabilities_from_lab_capabilities(
+            "qemu",
+            substrate,
+            dry_run=True,
+        )
+
+        self.assertIs(derived["ikev2"], False)
+        self.assertIs(derived["ipsec_esp"], True)
+        self.assertIs(derived["ipsec_ah"], True)
 
 
 class ProbeMissingCapabilityTest(unittest.TestCase):
@@ -310,6 +368,23 @@ class ProbeSkipReasonTest(unittest.TestCase):
                 case, "controlled_services"
             ),
             capabilities.SKIP_REQUIRES_CONTROLLED_SERVICE,
+        )
+
+    def test_ipsec_capabilities_map_to_stable_peer_reasons(self) -> None:
+        esp_case = cases.PROBE_CASE_BY_NAME["esp-transport-echo"]
+        ah_case = cases.PROBE_CASE_BY_NAME["ah-transport-verify"]
+        ikev2_case = cases.PROBE_CASE_BY_NAME["ikev2-sa-init"]
+        self.assertEqual(
+            capabilities.skip_reason_for_missing_capability(esp_case, "ipsec_esp"),
+            capabilities.SKIP_REQUIRES_IPSEC_PEER,
+        )
+        self.assertEqual(
+            capabilities.skip_reason_for_missing_capability(ah_case, "ipsec_ah"),
+            capabilities.SKIP_REQUIRES_IPSEC_PEER,
+        )
+        self.assertEqual(
+            capabilities.skip_reason_for_missing_capability(ikev2_case, "ikev2"),
+            capabilities.SKIP_REQUIRES_IKEV2_RESPONDER,
         )
 
     def test_unknown_capability_falls_back_to_unavailable(self) -> None:

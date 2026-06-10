@@ -82,16 +82,27 @@ class ProbePlanningDispatchTest(unittest.TestCase):
             case = probe_cases.PROBE_CASE_BY_NAME[name]
             plan = planning.probe_plan_for_case(request=request, case=case, sequence=0)
             self.assertEqual(plan["case"], case.name)
-            self.assertNotIn("planned_only", plan)
+            # The IPSec cases are registered but intentionally planned-only until
+            # their crate stimulus builders land (later probe steps); every other
+            # registered builder produces a fully materialized plan.
+            if name in planning.PLANNED_ONLY_REGISTERED_CASES:
+                self.assertIs(plan["planned_only"], True, name)
+            else:
+                self.assertNotIn("planned_only", plan)
 
     def test_dispatch_falls_back_to_planned_only_for_unregistered_case(self) -> None:
         request = _request()
         for case in probe_cases.PROBE_CASES:
             plan = planning.probe_plan_for_case(request=request, case=case, sequence=0)
             self.assertEqual(plan["case"], case.name)
-            if case.name in planning.PLAN_BUILDERS:
+            if (
+                case.name in planning.PLAN_BUILDERS
+                and case.name not in planning.PLANNED_ONLY_REGISTERED_CASES
+            ):
                 self.assertNotIn("planned_only", plan)
             else:
+                # Unregistered cases use the planned-only fallback; the IPSec
+                # cases are registered but deliberately planned-only.
                 self.assertIs(plan["planned_only"], True)
 
     def test_icmp_plan_shape_is_stable(self) -> None:
@@ -181,7 +192,15 @@ class ProbePlanningRegistryTest(unittest.TestCase):
                 case=case,
                 sequence=1,
             )
-            self.assertNotIn("planned_only", plan, name)
+            if name in planning.PLANNED_ONLY_REGISTERED_CASES:
+                # The IPSec builder routes through the dispatcher (not the bare
+                # fallback): it emits a planned-only plan that still carries the
+                # builder-specific exchange shape.
+                self.assertIs(plan["planned_only"], True, name)
+                self.assertIn("ipsec_protocol", plan, name)
+                self.assertIn("stimulus_packet_shape", plan, name)
+            else:
+                self.assertNotIn("planned_only", plan, name)
 
     def test_cli_reexports_planning_for_backward_compatibility(self) -> None:
         self.assertIs(cli._planned_cases, planning.planned_cases)

@@ -40,6 +40,14 @@ PROBE_CAPABILITY_NAMES = (
     "ipv6_multicast",
     "provider_mac",
     "repeated_response",
+    # IPSec behavioral capabilities. An IPSec-capable peer holds the matching
+    # Security Association (ESP/AH) or runs an IKEv2 responder. The peer is the
+    # Linux kernel xfrm / strongSwan stack or a Scapy-driven reference peer
+    # configured on the controlled target endpoint; none of this is required for
+    # a dry-run, which plans the exchange without provisioning the peer.
+    "ipsec_esp",
+    "ipsec_ah",
+    "ikev2",
 )
 
 
@@ -186,6 +194,40 @@ def probe_capabilities_from_lab_capabilities(
     )
     privileged_udp_port = ipv4_unicast and controlled_services
     repeated_response = ipv4_unicast and controlled_services
+    # IPSec behavioral capabilities. The ESP/AH cases need a peer on the
+    # controlled target endpoint that holds the matching Security Association
+    # (the same SPI, mode, algorithms, and keys libcrafter seals/verifies with);
+    # the IKEv2 case needs that peer to run an IKE responder on UDP/500. The peer
+    # is realized as the Linux kernel xfrm / strongSwan stack or a Scapy-driven
+    # reference peer configured on the target VM, so the capabilities derive from
+    # the same IPv4-unicast + controlled-services substrate the DNS/UDP services
+    # use: a substrate that can carry IPv4 unicast and host a controlled service
+    # can host the IPSec peer too. Providers without a controlled service (a
+    # bare L3 transit with no configurable peer) skip the IPSec cases cleanly
+    # with the stable requires-IPSec-peer / requires-IKEv2-responder reasons.
+    # An explicit ``ipsec_peer`` substrate flag, when present, can deny the peer
+    # even where controlled services exist (e.g. a peer the lab cannot configure
+    # with an xfrm/strongSwan SA). Tunnel-mode ESP additionally needs a
+    # tunnel-mode SA on the peer; the ``requires_tunnel`` case metadata records
+    # that so a transport-only peer skips the tunnel case while transport cases
+    # still plan -- the capability itself is shared (``ipsec_esp``).
+    ipsec_peer = (
+        ipv4_unicast
+        and controlled_services
+        and _capability_default_true(substrate, "ipsec_peer")
+    )
+    ikev2_responder = (
+        ipv4_unicast
+        and controlled_services
+        and _capability_default_true(
+            substrate,
+            "ikev2_responder",
+            "ike_responder",
+        )
+    )
+    ipsec_esp = ipsec_peer
+    ipsec_ah = ipsec_peer
+    ikev2 = ikev2_responder
     derived_dry_run = (
         dry_run
         if dry_run is not None
@@ -220,6 +262,9 @@ def probe_capabilities_from_lab_capabilities(
         "arp_resolution": arp_resolution,
         "link_layer_arp": link_layer_arp,
         "repeated_response": repeated_response,
+        "ipsec_esp": ipsec_esp,
+        "ipsec_ah": ipsec_ah,
+        "ikev2": ikev2,
         "capability_names": list(PROBE_CAPABILITY_NAMES),
         "capability_sources": {
             "icmp_echo": ["ipv4_unicast"],
@@ -272,6 +317,13 @@ def probe_capabilities_from_lab_capabilities(
                 "provider_mac_known",
             ],
             "repeated_response": ["ipv4_unicast", "controlled_services"],
+            "ipsec_esp": ["ipv4_unicast", "controlled_services", "ipsec_peer"],
+            "ipsec_ah": ["ipv4_unicast", "controlled_services", "ipsec_peer"],
+            "ikev2": [
+                "ipv4_unicast",
+                "controlled_services",
+                "ikev2_responder",
+            ],
         },
         "lab_capabilities": substrate,
     }
