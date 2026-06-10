@@ -109,6 +109,27 @@ pub struct Ah {
     verified: Option<bool>,
 }
 
+/// The resolved AH header field values shared by the sender (`compile()`) and the
+/// receiver ([`decode::verify_ah`]).
+///
+/// Resolved once by [`Ah::resolved_icv_fields`] — a caller override (including a
+/// deliberately wrong one) wins per field, otherwise the RFC 4302 §3.3-derived
+/// value is used — then threaded through ICV-input assembly, ICV computation, and
+/// on-wire header assembly so both ends operate on byte-identical inputs.
+#[derive(Clone, Copy)]
+struct ResolvedAhFields {
+    /// AH Next Header (RFC 4302 §3.3): the protected upper-layer protocol.
+    next_header: u8,
+    /// AH Payload Len (RFC 4302 §2.2): the AH length in 32-bit words minus 2.
+    payload_len: u8,
+    /// AH Reserved (RFC 4302 §2.3): the 16-bit reserved field.
+    reserved: u16,
+    /// AH Security Parameters Index (RFC 4302 §2.4).
+    spi: u32,
+    /// AH Sequence Number (RFC 4302 §2.5), the low 32 bits.
+    sequence: u32,
+}
+
 impl Ah {
     /// Create an AH layer with deterministic packet-builder defaults.
     ///
@@ -404,22 +425,15 @@ impl Ah {
     /// Seq) followed by the ICV field, which is `zeroed` for the ICV-input form
     /// and the computed ICV bytes for the on-wire form.
     ///
-    /// `payload_len`, `reserved`, `spi`, and `sequence` are the resolved field
-    /// values; `icv` is the (already-padded) ICV bytes to place in the ICV field.
-    fn assemble_header(
-        next_header: u8,
-        payload_len: u8,
-        reserved: u16,
-        spi: u32,
-        sequence: u32,
-        icv: &[u8],
-    ) -> Vec<u8> {
+    /// `fields` carries the resolved AH field values; `icv` is the (already-padded)
+    /// ICV bytes to place in the ICV field.
+    fn assemble_header(fields: &ResolvedAhFields, icv: &[u8]) -> Vec<u8> {
         let mut bytes = Vec::with_capacity(header::AH_FIXED_LEN + icv.len());
-        bytes.push(next_header);
-        bytes.push(payload_len);
-        bytes.extend_from_slice(&reserved.to_be_bytes());
-        bytes.extend_from_slice(&spi.to_be_bytes());
-        bytes.extend_from_slice(&sequence.to_be_bytes());
+        bytes.push(fields.next_header);
+        bytes.push(fields.payload_len);
+        bytes.extend_from_slice(&fields.reserved.to_be_bytes());
+        bytes.extend_from_slice(&fields.spi.to_be_bytes());
+        bytes.extend_from_slice(&fields.sequence.to_be_bytes());
         bytes.extend_from_slice(icv);
         bytes
     }
@@ -435,27 +449,21 @@ impl Ah {
     /// same zeroed-ICV header assembly, and the same upper-layer gather from the
     /// shared [`LayerContext`].
     ///
-    /// `next_header`, `payload_len`, `reserved`, `spi`, and `sequence` are the
-    /// resolved AH field values; `padded_icv_len` is the boundary-aligned ICV
-    /// length the zeroed ICV field occupies.
+    /// `fields` carries the resolved AH field values; `padded_icv_len` is the
+    /// boundary-aligned ICV length the zeroed ICV field occupies.
     fn ah_icv_input(
         &self,
         ctx: &LayerContext<'_>,
         sa: &SecurityAssociation,
         ip_version: u8,
-        next_header: u8,
-        payload_len: u8,
-        reserved: u16,
-        spi: u32,
-        sequence: u32,
+        fields: &ResolvedAhFields,
         padded_icv_len: usize,
     ) -> Result<Vec<u8>> {
         // RFC 4302 §3.3.3: ICV input = canonical IP header || AH header with the
         // ICV field zeroed || upper-layer data (|| ESN high word when enabled).
         let canonical_ip = Self::canonical_preceding_ip(ctx, ip_version)?;
         let zeroed = vec![0u8; padded_icv_len];
-        let ah_zeroed =
-            Self::assemble_header(next_header, payload_len, reserved, spi, sequence, &zeroed);
+        let ah_zeroed = Self::assemble_header(fields, &zeroed);
         let upper = payload_bytes_after(*ctx)?;
 
         let mut input = Vec::with_capacity(canonical_ip.len() + ah_zeroed.len() + upper.len() + 4);
@@ -474,18 +482,14 @@ impl Ah {
     }
 
     /// Resolve the AH field values `compile()` would emit for this layer under the
-    /// preceding IP version, as the `(next_header, payload_len, reserved, spi,
-    /// sequence)` tuple the ICV-input assembly needs.
+    /// preceding IP version, as the [`ResolvedAhFields`] the ICV-input assembly
+    /// needs.
     ///
     /// A caller override (including a deliberately wrong one) wins for each field,
     /// exactly as [`Ah::compile_ah`] resolves them; otherwise the RFC-derived value
     /// is used. Sharing this resolution keeps the receiver's recomputed ICV input
     /// aligned with the sender's.
-    fn resolved_icv_fields(
-        &self,
-        ctx: &LayerContext<'_>,
-        ip_version: u8,
-    ) -> (u8, u8, u16, u32, u32) {
+    fn resolved_icv_fields(&self, ctx: &LayerContext<'_>, ip_version: u8) -> ResolvedAhFields {
         let mode = self.sa.as_ref().map(|sa| sa.mode).unwrap_or_default();
         let next_header = self.effective_next_header(ctx, mode);
         let payload_len = self.effective_payload_len(ip_version);
@@ -500,7 +504,13 @@ impl Ah {
             .value()
             .copied()
             .unwrap_or(DEFAULT_AH_SEQUENCE);
-        (next_header, payload_len, reserved, spi, sequence)
+        ResolvedAhFields {
+            next_header,
+            payload_len,
+            reserved,
+            spi,
+            sequence,
+        }
     }
 
     /// Compute the AH Integrity Check Value over the RFC 4302 §3.3.3 ICV input.
@@ -519,25 +529,11 @@ impl Ah {
         ctx: &LayerContext<'_>,
         sa: &SecurityAssociation,
         ip_version: u8,
-        next_header: u8,
-        payload_len: u8,
-        reserved: u16,
-        spi: u32,
-        sequence: u32,
+        fields: &ResolvedAhFields,
     ) -> Result<Vec<u8>> {
         let padded_icv_len = self.effective_icv_len(ip_version);
 
-        let input = self.ah_icv_input(
-            ctx,
-            sa,
-            ip_version,
-            next_header,
-            payload_len,
-            reserved,
-            spi,
-            sequence,
-            padded_icv_len,
-        )?;
+        let input = self.ah_icv_input(ctx, sa, ip_version, fields, padded_icv_len)?;
 
         // Compute the ICV via the SA integrity algorithm, then zero-pad it to the
         // boundary-aligned length the AH header reserves (RFC 4302 §2.6).
@@ -564,8 +560,7 @@ impl Ah {
     fn compile_ah(&self, ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
         let ip_version = Self::preceding_ip_version(ctx)?;
 
-        let (next_header, payload_len, reserved, spi, sequence) =
-            self.resolved_icv_fields(ctx, ip_version);
+        let fields = self.resolved_icv_fields(ctx, ip_version);
 
         // Resolve the ICV: a caller override (zero-padded to the AH boundary)
         // wins; otherwise compute it from the SA when one is attached; with
@@ -578,21 +573,12 @@ impl Ah {
             }
             icv
         } else if let Some(sa) = self.sa.as_ref() {
-            self.compute_icv(
-                ctx,
-                sa,
-                ip_version,
-                next_header,
-                payload_len,
-                reserved,
-                spi,
-                sequence,
-            )?
+            self.compute_icv(ctx, sa, ip_version, &fields)?
         } else {
             Vec::new()
         };
 
-        let header = Self::assemble_header(next_header, payload_len, reserved, spi, sequence, &icv);
+        let header = Self::assemble_header(&fields, &icv);
         out.extend_from_slice(&header);
         Ok(())
     }
@@ -1013,15 +999,12 @@ mod tests {
     /// without re-deriving the MAC by hand.
     ///
     /// `ip_ctx` is the compile context of the AH layer (index 1), used to read the
-    /// preceding IPv4 header bytes exactly as `compile()` does.
+    /// preceding IPv4 header bytes exactly as `compile()` does; `fields` carries the
+    /// resolved AH header field values.
     fn expected_ah_bytes(
         ip_ctx: &LayerContext<'_>,
         integ_key: &[u8],
-        spi: u32,
-        sequence: u32,
-        next_header: u8,
-        payload_len: u8,
-        reserved: u16,
+        fields: &ResolvedAhFields,
         icv_len: usize,
     ) -> Vec<u8> {
         // Canonical immutable IPv4 header (mutable fields zeroed; protocol 51).
@@ -1030,11 +1013,11 @@ mod tests {
 
         // AH header with the ICV field zeroed at its padded length.
         let mut ah_zeroed = Vec::new();
-        ah_zeroed.push(next_header);
-        ah_zeroed.push(payload_len);
-        ah_zeroed.extend_from_slice(&reserved.to_be_bytes());
-        ah_zeroed.extend_from_slice(&spi.to_be_bytes());
-        ah_zeroed.extend_from_slice(&sequence.to_be_bytes());
+        ah_zeroed.push(fields.next_header);
+        ah_zeroed.push(fields.payload_len);
+        ah_zeroed.extend_from_slice(&fields.reserved.to_be_bytes());
+        ah_zeroed.extend_from_slice(&fields.spi.to_be_bytes());
+        ah_zeroed.extend_from_slice(&fields.sequence.to_be_bytes());
         ah_zeroed.extend_from_slice(&vec![0u8; icv_len]);
 
         // Upper-layer data (the following layers, in the clear).
@@ -1052,11 +1035,11 @@ mod tests {
 
         // Wire bytes: Next Header | Payload Len | Reserved | SPI | Seq | ICV.
         let mut out = Vec::new();
-        out.push(next_header);
-        out.push(payload_len);
-        out.extend_from_slice(&reserved.to_be_bytes());
-        out.extend_from_slice(&spi.to_be_bytes());
-        out.extend_from_slice(&sequence.to_be_bytes());
+        out.push(fields.next_header);
+        out.push(fields.payload_len);
+        out.extend_from_slice(&fields.reserved.to_be_bytes());
+        out.extend_from_slice(&fields.spi.to_be_bytes());
+        out.extend_from_slice(&fields.sequence.to_be_bytes());
         out.extend_from_slice(&icv);
         out
     }
@@ -1097,20 +1080,15 @@ mod tests {
 
         // HMAC-SHA-256-128 ICV is 16 octets (already 32-bit aligned on IPv4), so
         // Payload Len = (12 + 16)/4 − 2 = 5 and the AH header is 28 octets.
-        let next_header = IPPROTO_TCP;
-        let payload_len = 5u8;
-        let reserved = 0u16;
         let icv_len = 16usize;
-        let expected = expected_ah_bytes(
-            &ah_ctx,
-            &hmac_key(),
-            0x0000_2000,
-            1,
-            next_header,
-            payload_len,
-            reserved,
-            icv_len,
-        );
+        let fields = ResolvedAhFields {
+            next_header: IPPROTO_TCP,
+            payload_len: 5,
+            reserved: 0,
+            spi: 0x0000_2000,
+            sequence: 1,
+        };
+        let expected = expected_ah_bytes(&ah_ctx, &hmac_key(), &fields, icv_len);
         assert_eq!(ah_bytes, expected);
 
         // Structural locks on the AH header fields (RFC 4302 §2).

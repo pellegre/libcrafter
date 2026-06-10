@@ -307,6 +307,22 @@ fn esp_integrity_label(alg: IntegrityAlgorithm) -> String {
     }
 }
 
+/// The shared RFC 4303 §2 seal inputs assembled by [`Esp::esp_seal_inputs`] and
+/// consumed by both the cipher+integrity and AEAD compile paths.
+///
+/// The SPI and Sequence Number are not carried here: both compile paths emit
+/// them by reusing the first [`ESP_HEADER_LEN`] octets of `aad` (`SPI || Seq`),
+/// so a separate copy would be redundant.
+struct EspSealInputs {
+    /// `upper-layer bytes || pad || pad-length || next-header` (RFC 4303 §2.4–2.6).
+    plaintext: Vec<u8>,
+    /// The integrity / AEAD authenticated data: `SPI || Seq` plus the ESN
+    /// high-order word when `sa.esn` is set (the high word is never on the wire).
+    aad: Vec<u8>,
+    /// The explicit IV: the caller override, else a deterministic all-zero IV.
+    iv: Vec<u8>,
+}
+
 impl Esp {
     /// Resolve the ESP trailer Next Header for `compile()`.
     ///
@@ -368,12 +384,12 @@ impl Esp {
     /// - **iv** = the caller `iv` override, else a deterministic all-zero IV of
     ///   the cipher's IV length.
     ///
-    /// Returns `(spi, sequence, plaintext, aad, iv)`.
+    /// Returns the assembled [`EspSealInputs`].
     fn esp_seal_inputs(
         &self,
         ctx: &LayerContext<'_>,
         sa: &SecurityAssociation,
-    ) -> Result<(u32, u32, Vec<u8>, Vec<u8>, Vec<u8>)> {
+    ) -> Result<EspSealInputs> {
         let spi = self.spi.value().copied().unwrap_or(DEFAULT_ESP_SPI);
         let sequence = self
             .sequence
@@ -425,7 +441,7 @@ impl Esp {
             None => default_iv(sa.enc.iv_len()),
         };
 
-        Ok((spi, sequence, plaintext, aad, iv))
+        Ok(EspSealInputs { plaintext, aad, iv })
     }
 
     /// Compile the cipher + separate-integrity (non-AEAD) ESP datagram.
@@ -455,7 +471,7 @@ impl Esp {
             )
         })?;
 
-        let (_spi, _sequence, plaintext, aad, iv) = self.esp_seal_inputs(ctx, sa)?;
+        let EspSealInputs { plaintext, aad, iv } = self.esp_seal_inputs(ctx, sa)?;
 
         // Seal: cipher encrypt, then ICV over SPI||Seq || IV || ciphertext.
         let sealed = seal(sa, &iv, &aad, &plaintext)?;
@@ -502,7 +518,7 @@ impl Esp {
             )
         })?;
 
-        let (_spi, _sequence, plaintext, aad, iv) = self.esp_seal_inputs(ctx, sa)?;
+        let EspSealInputs { plaintext, aad, iv } = self.esp_seal_inputs(ctx, sa)?;
 
         // Seal: the AEAD authenticates `aad` and returns the tag as the ICV; the
         // nonce `sa.salt || iv` is assembled inside `seal`.
@@ -1320,8 +1336,9 @@ mod tests {
         assert_eq!(esp_bytes, expected);
 
         // payload(4) + padlen(1) + nh(1) = 6 → pad 2 → 8-octet "ciphertext";
-        // HMAC-SHA-256-128 ICV is 16 octets; NULL has a 0-octet IV.
-        assert_eq!(esp_bytes.len(), ESP_HEADER_LEN + 0 + 8 + 16);
+        // HMAC-SHA-256-128 ICV is 16 octets; NULL has a 0-octet IV, so the wire
+        // is SPI||Seq (ESP_HEADER_LEN) + body(8) + ICV(16).
+        assert_eq!(esp_bytes.len(), ESP_HEADER_LEN + 8 + 16);
         assert_eq!(&esp_bytes[0..4], &0x0000_2000u32.to_be_bytes());
         assert_eq!(&esp_bytes[4..8], &1u32.to_be_bytes());
 
