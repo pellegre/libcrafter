@@ -202,7 +202,6 @@ pub(crate) fn append_ah_packet_with_registry(
 /// or a missing enclosing IP header also surface as structured errors.
 ///
 /// [`verify`]: crate::protocols::ipsec::crypto::IntegrityTransform::verify
-#[allow(dead_code)]
 pub(crate) fn verify_ah(packet: &Packet, ah_index: usize, sa: &SecurityAssociation) -> Result<()> {
     let ctx = LayerContext::new(packet, ah_index);
 
@@ -285,7 +284,6 @@ pub(crate) fn verify_ah(packet: &Packet, ah_index: usize, sa: &SecurityAssociati
 /// - **`None`** — the opaque path: recover the AH header and dispatch the
 ///   cleartext inner protocol without verifying, leaving the verification status
 ///   `None` ([`append_ah_packet_with_registry`]).
-#[allow(dead_code)]
 pub(crate) fn append_ah_packet_with_registry_sa(
     registry: &ProtocolRegistry,
     packet: Packet,

@@ -69,7 +69,6 @@ pub(crate) fn decode_esp_opaque(bytes: &[u8]) -> Result<Esp> {
 /// itself (building the nested transport/IP layers from `next_header` and
 /// `plaintext`) is wired by a later step; this type exposes the recovered pieces
 /// so that decode and tests can verify the round-trip.
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct DecodedEsp {
     /// The decoded ESP header layer (SPI / Sequence as caller-set fields).
@@ -82,6 +81,11 @@ pub struct DecodedEsp {
     pub next_header: u8,
     /// The ESP trailer Pad Length octet (RFC 4303 §2.4): how many pad octets
     /// preceded the Pad Length / Next Header fields inside the ciphertext.
+    ///
+    /// Part of the recovered-trailer model for inspection; the registry decode
+    /// dispatches on `next_header` and the pad is already stripped from
+    /// `plaintext`, so this field is exposed but not consumed by the decode path.
+    #[allow(dead_code)]
     pub pad_length: u8,
 }
 
@@ -127,7 +131,6 @@ fn sa_icv_len(sa: &SecurityAssociation) -> usize {
 /// trailer, and ICV is a structured [`CrafterError::buffer_too_short`].
 ///
 /// [`EncryptionAlgorithm::iv_len`]: crate::protocols::ipsec::sa::EncryptionAlgorithm::iv_len
-#[allow(dead_code)]
 pub(crate) fn decode_esp_with_sa(
     bytes: &[u8],
     sa: &SecurityAssociation,
@@ -314,7 +317,6 @@ pub(crate) fn append_esp_packet_with_registry(
 ///
 /// Mirrors UDP's `append_udp_packet_with_registry` shape: decode parts, push the
 /// layer, dispatch inner.
-#[allow(dead_code)]
 pub(crate) fn append_esp_packet_with_registry_sa(
     registry: &ProtocolRegistry,
     packet: Packet,

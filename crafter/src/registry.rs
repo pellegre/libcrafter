@@ -1,16 +1,18 @@
 //! Explicit protocol binding and decode dispatch.
 
+use crate::endian::read_u32_be;
 use crate::error::Result;
 use crate::packet::{LinkType, NetworkLayer, Packet, Raw};
 use crate::protocols::dhcp::{append_dhcp_packet, is_dhcp_port_pair, looks_like_dhcp_payload};
 use crate::protocols::dns::{append_dns_packet, DNS_PORT};
 use crate::protocols::eapol::append_eapol_packet;
 use crate::protocols::icmp::{append_icmp_packet, append_icmpv6_packet};
-use crate::protocols::ipsec::ah::decode::append_ah_packet_with_registry;
-use crate::protocols::ipsec::esp::decode::append_esp_packet_with_registry;
+use crate::protocols::ipsec::ah::decode::append_ah_packet_with_registry_sa;
+use crate::protocols::ipsec::esp::decode::append_esp_packet_with_registry_sa;
 use crate::protocols::ipsec::esp::header::ESP_HEADER_LEN;
 use crate::protocols::ipsec::ikev2::decode::append_ikev2_packet_with_registry;
 use crate::protocols::ipsec::natt::{is_non_esp_marker, NatTraversal, NON_ESP_MARKER_LEN};
+use crate::protocols::ipsec::sa::SecurityAssociation;
 use crate::protocols::ipv4::{
     append_ipv4_packet_with_registry, IPPROTO_AH, IPPROTO_ESP, IPPROTO_ICMP, IPPROTO_ICMPV6,
     IPPROTO_TCP, IPPROTO_UDP,
@@ -127,6 +129,7 @@ pub struct ProtocolRegistry {
     ipv6_bindings: Vec<Ipv6NextHeaderBinding>,
     udp_bindings: Vec<UdpBinding>,
     tcp_bindings: Vec<TcpBinding>,
+    security_associations: Vec<SecurityAssociation>,
 }
 
 impl ProtocolRegistry {
@@ -143,6 +146,7 @@ impl ProtocolRegistry {
             ipv6_bindings: Vec::new(),
             udp_bindings: Vec::new(),
             tcp_bindings: Vec::new(),
+            security_associations: Vec::new(),
         }
     }
 
@@ -175,22 +179,25 @@ impl ProtocolRegistry {
         registry.bind_ipv4_protocol_with_registry(IPPROTO_UDP, |registry, packet, payload| {
             append_udp_packet_with_registry(registry, packet, payload)
         });
-        // ESP (IP protocol 50, RFC 4303). The built-in registry carries no SA,
-        // so this decodes via the opaque path: the SPI/Sequence are exposed and
-        // the encrypted body is preserved verbatim. A caller that holds keys
-        // binds an SA-aware decoder of its own.
+        // ESP (IP protocol 50, RFC 4303). The decoder looks up a registered SA by
+        // the on-wire SPI: when one is found it drives the SA-aware path (verify
+        // the ICV, decrypt, strip padding, dispatch the inner protocol/IP); when
+        // none is found — as in the default SA-less registry — it falls back to
+        // the opaque path (SPI/Sequence exposed, encrypted body preserved
+        // verbatim). Callers register SAs with
+        // [`ProtocolRegistry::register_security_association`].
         registry.bind_ipv4_protocol_with_registry(IPPROTO_ESP, |registry, packet, payload| {
-            append_esp_packet_with_registry(registry, packet, payload)
+            decode_esp_with_registry_sa(registry, packet, payload)
         });
         // AH (IP protocol 51, RFC 4302). AH only authenticates, so the protected
         // upper-layer data — and, in tunnel mode, the inner IP datagram — is
         // always in the clear: the typed `Ah` header and its variable-length ICV
         // decode without keys, and the inner protocol dispatches by Next Header.
-        // The built-in registry carries no SA, so the ICV is preserved verbatim
-        // rather than verified; a caller that holds keys binds an SA-aware
-        // decoder of its own.
+        // When a registered SA matches the on-wire SPI the decoder also verifies
+        // the ICV and records the verified status; otherwise — as in the default
+        // SA-less registry — the ICV is preserved verbatim rather than verified.
         registry.bind_ipv4_protocol_with_registry(IPPROTO_AH, |registry, packet, payload| {
-            append_ah_packet_with_registry(registry, packet, payload)
+            decode_ah_with_registry_sa(registry, packet, payload)
         });
 
         registry
@@ -203,18 +210,19 @@ impl ProtocolRegistry {
         registry.bind_ipv6_next_header_with_registry(IPPROTO_UDP, |registry, packet, payload| {
             append_udp_packet_with_registry(registry, packet, payload)
         });
-        // ESP as an IPv6 next-header (RFC 4303); same opaque default as IPv4.
+        // ESP as an IPv6 next-header (RFC 4303); same SA-lookup behavior as IPv4.
         registry
             .bind_ipv6_next_header_with_registry(IPPROTO_IPV6_ESP, |registry, packet, payload| {
-                append_esp_packet_with_registry(registry, packet, payload)
+                decode_esp_with_registry_sa(registry, packet, payload)
             });
         // AH as an IPv6 next-header (RFC 4302). AH can appear in the IPv6
         // extension-header chain, so once the chain walk reaches next-header 51
         // it dispatches here; the cleartext upper-layer data (transport mode) or
-        // inner IP datagram (tunnel mode) decodes without keys, same as IPv4.
+        // inner IP datagram (tunnel mode) decodes without keys, and a registered
+        // SA matching the SPI additionally verifies the ICV, same as IPv4.
         registry
             .bind_ipv6_next_header_with_registry(IPPROTO_IPV6_AH, |registry, packet, payload| {
-                append_ah_packet_with_registry(registry, packet, payload)
+                decode_ah_with_registry_sa(registry, packet, payload)
             });
 
         registry.bind_udp_port_with_registry(DNS_PORT, |_registry, packet, payload| {
@@ -263,7 +271,7 @@ impl ProtocolRegistry {
                         &payload[NON_ESP_MARKER_LEN..],
                     )
                 } else {
-                    append_esp_packet_with_registry(registry, packet, payload)
+                    decode_esp_with_registry_sa(registry, packet, payload)
                 }
             },
         );
@@ -364,6 +372,58 @@ impl ProtocolRegistry {
     /// Decode bytes as an IPv6 packet.
     pub fn decode_ipv6(&self, bytes: impl AsRef<[u8]>) -> Result<Packet> {
         append_ipv6_packet_with_registry(self, Packet::new(), bytes.as_ref())
+    }
+
+    /// Register a [`SecurityAssociation`] so the ESP and AH decoders can verify
+    /// and decrypt (ESP) or verify (AH) datagrams whose on-wire SPI matches it
+    /// (RFC 4303 §3.4, RFC 4302 §3.4).
+    ///
+    /// The default built-in registry carries no SA, so ESP/AH decode opaquely:
+    /// the SPI/Sequence are exposed and the encrypted body (ESP) or ICV (AH) is
+    /// preserved verbatim. A caller that holds keys registers the matching SA on
+    /// its own registry; the ESP/AH bindings then look the SA up by the SPI read
+    /// from the wire and drive the SA-aware decode path
+    /// ([`Packet::decode_from_l3_with_registry`] with this registry decrypts ESP
+    /// and verifies AH). An SA is keyed by its [`SecurityAssociation::spi`]; a
+    /// later registration for the same SPI takes precedence (it is matched
+    /// first), mirroring how a later binding overrides an earlier one.
+    ///
+    /// [`Packet::decode_from_l3_with_registry`]: crate::packet::Packet::decode_from_l3_with_registry
+    pub fn register_security_association(&mut self, sa: SecurityAssociation) -> &mut Self {
+        self.security_associations.push(sa);
+        self
+    }
+
+    /// Register a [`SecurityAssociation`] and return the owned registry, for
+    /// fluent one-expression construction.
+    ///
+    /// This is the consuming counterpart to
+    /// [`ProtocolRegistry::register_security_association`]:
+    ///
+    /// ```
+    /// use crafter::{ProtocolRegistry, SecurityAssociation};
+    /// use crafter::protocols::ipsec::sa::EncryptionAlgorithm;
+    ///
+    /// let registry = ProtocolRegistry::new().with_security_association(
+    ///     SecurityAssociation::new(0x0000_2000)
+    ///         .encryption(EncryptionAlgorithm::AesGcm16, vec![0u8; 16])
+    ///         .salt(vec![0u8; 4]),
+    /// );
+    /// let _ = registry;
+    /// ```
+    #[must_use]
+    pub fn with_security_association(mut self, sa: SecurityAssociation) -> Self {
+        self.security_associations.push(sa);
+        self
+    }
+
+    /// Find a registered [`SecurityAssociation`] by its SPI, most-recently
+    /// registered first (so a later registration overrides an earlier one).
+    pub(crate) fn security_association_for_spi(&self, spi: u32) -> Option<&SecurityAssociation> {
+        self.security_associations
+            .iter()
+            .rev()
+            .find(|sa| sa.spi == spi)
     }
 
     /// Bind an exact Ethernet type to a decoder.
@@ -728,6 +788,55 @@ fn append_raw_if_needed(packet: Packet, payload: &[u8]) -> Result<Packet> {
     } else {
         Ok(packet.push(Raw::from_bytes(payload)))
     }
+}
+
+/// Decode an ESP datagram, consulting the registry's registered SAs (RFC 4303).
+///
+/// The ESP Security Parameters Index is the leading four octets of the datagram
+/// (RFC 4303 §2.1). When a [`SecurityAssociation`] registered with
+/// [`ProtocolRegistry::register_security_association`] matches that SPI, the
+/// SA-aware path verifies the ICV, decrypts, strips the RFC 4303 §2.4 padding,
+/// and dispatches the inner protocol (transport) or inner IP (tunnel); an
+/// integrity failure surfaces a structured error and the decode fails closed.
+/// When no SA matches — the default SA-less registry — the opaque path runs:
+/// the SPI/Sequence are exposed and the encrypted body is preserved verbatim.
+/// A buffer too short to even hold the SPI falls through to the opaque decode,
+/// which reports the structured truncation error.
+fn decode_esp_with_registry_sa(
+    registry: &ProtocolRegistry,
+    packet: Packet,
+    payload: &[u8],
+) -> Result<Packet> {
+    let sa = read_u32_be(payload.get(0..4).unwrap_or(payload))
+        .ok()
+        .and_then(|spi| registry.security_association_for_spi(spi));
+    append_esp_packet_with_registry_sa(registry, packet, payload, sa)
+}
+
+/// Decode an AH datagram, consulting the registry's registered SAs (RFC 4302).
+///
+/// The AH Security Parameters Index follows the Next Header, Payload Len, and
+/// Reserved fields, occupying octets 4..8 of the datagram (RFC 4302 §2.4). When
+/// a [`SecurityAssociation`] registered with
+/// [`ProtocolRegistry::register_security_association`] matches that SPI, the
+/// SA-aware path verifies the ICV over the canonicalized immutable IP fields,
+/// the ICV-zeroed AH header, and the cleartext upper-layer data, recording the
+/// verified status on the recovered [`Ah`] layer; a mismatch fails closed with a
+/// structured error. When no SA matches — the default SA-less registry — the
+/// opaque path recovers the typed header and inner protocol without verifying.
+/// AH never encrypts, so the inner layers are recovered the same either way.
+///
+/// [`Ah`]: crate::protocols::ipsec::ah::Ah
+fn decode_ah_with_registry_sa(
+    registry: &ProtocolRegistry,
+    packet: Packet,
+    payload: &[u8],
+) -> Result<Packet> {
+    let sa = payload
+        .get(4..8)
+        .and_then(|spi_bytes| read_u32_be(spi_bytes).ok())
+        .and_then(|spi| registry.security_association_for_spi(spi));
+    append_ah_packet_with_registry_sa(registry, packet, payload, sa)
 }
 
 #[cfg(test)]
