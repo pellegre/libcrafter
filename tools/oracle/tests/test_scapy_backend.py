@@ -686,5 +686,281 @@ class ScapyIcmpLiveMaterializationTest(unittest.TestCase):
         self.assertEqual(decoded.fields["payload"]["hex"], "01020304")
 
 
+# Pinned ESP/AH/IKEv2 crypto material mirroring the generator determinism seam
+# (engine.generator._ipsec_pinned_crypto). Both backends seal/verify with these
+# exact values so the ciphertext and ICV are byte-reproducible.
+_IPSEC_PINNED_CRYPTO = {
+    "pinned": True,
+    "encryption_key": {"hex": "b0b0b0b0a1a1a1a1c2c2c2c2d3d3d3d3"},
+    "salt": {"hex": "00010203"},
+    "iv": {"hex": "0001020304050607"},
+    "cbc_iv": {"hex": "101112131415161718191a1b1c1d1e1f"},
+    "integrity_key": {
+        "hex": "4a4b4c4d4e4f505152535455565758595a5b5c5d5e5f60616263646566676869"
+    },
+}
+
+
+def _ipsec_plan(
+    *,
+    stack: list[str],
+    fields: dict,
+    family: str,
+    feature: str,
+    feature_behavior: str,
+    case: str,
+) -> PacketPlan:
+    return PacketPlan(
+        stack=stack,
+        fields=fields,
+        profile=family,
+        seed=1,
+        index=0,
+        direction="reference_to_libcrafter",
+        family=family,
+        feature_tags=["baseline", family],
+        case=case,
+        strict_bytes=True,
+        metadata={
+            "root": "l3:ipv4",
+            "root_decoder": "l3:ipv4",
+            "stack_name": "ipsec_unit",
+            "feature": feature,
+            "feature_behavior": feature_behavior,
+        },
+    )
+
+
+class ScapyIpsecMaterializationTest(unittest.TestCase):
+    """ESP/AH/IKEv2 plans materialize through Scapy and decode to the model."""
+
+    def test_layer_and_protocol_maps_register_ipsec(self) -> None:
+        self.assertEqual(packets._SCAPY_LAYER_BY_LAYER["esp"], "ESP")
+        self.assertEqual(packets._SCAPY_LAYER_BY_LAYER["ah"], "AH")
+        self.assertEqual(packets._SCAPY_LAYER_BY_LAYER["ikev2"], "ISAKMP")
+        self.assertEqual(packets._IP_PROTOCOLS["esp"], 50)
+        self.assertEqual(packets._IP_PROTOCOLS["ah"], 51)
+
+    def test_esp_aead_transport_materializes_and_decodes(self) -> None:
+        plan = _ipsec_plan(
+            stack=["ipv4", "esp", "payload"],
+            family="esp",
+            feature="esp_aead",
+            feature_behavior="aead-transport",
+            case="esp-aead-transport",
+            fields={
+                "ipv4": {
+                    "src": "192.0.2.1",
+                    "dst": "198.51.100.1",
+                    "ttl": 64,
+                    "flags": "none",
+                    "identification": 1,
+                    "protocol": "esp",
+                },
+                "esp": {
+                    "spi": 0x10001001,
+                    "sequence": 1,
+                    "next_header": "payload",
+                    "crypto": _IPSEC_PINNED_CRYPTO,
+                },
+                "payload": {"hex": "deadbeef", "length": 4},
+            },
+        )
+        vector = packets.encode_packet_plan(plan)
+        raw = vector.to_bytes()
+        # IP proto 50 (ESP) and the 8-octet AEAD explicit IV in the payload.
+        self.assertEqual(raw[9], 50)
+        self.assertEqual(raw[28:36].hex(), "0001020304050607")
+        # Materialization is deterministic for the pinned key/salt/IV.
+        self.assertEqual(packets.encode_packet_plan(plan).to_bytes(), raw)
+        decoded = normalize.decode_bytes(raw, root="l3:ipv4", source_hex=vector.raw_hex)
+        self.assertIn("esp", decoded.layers)
+        self.assertEqual(decoded.fields["esp"]["spi"], 0x10001001)
+        self.assertEqual(decoded.fields["esp"]["sequence"], 1)
+
+    def test_esp_cbc_hmac_transport_uses_cbc_iv(self) -> None:
+        plan = _ipsec_plan(
+            stack=["ipv4", "esp", "payload"],
+            family="esp",
+            feature="esp_cbc",
+            feature_behavior="cbc-hmac-transport",
+            case="esp-cbc-hmac-transport",
+            fields={
+                "ipv4": {
+                    "src": "192.0.2.1",
+                    "dst": "198.51.100.1",
+                    "ttl": 64,
+                    "flags": "none",
+                    "identification": 1,
+                    "protocol": "esp",
+                },
+                "esp": {
+                    "spi": 0x10001001,
+                    "sequence": 1,
+                    "next_header": "payload",
+                    "crypto": _IPSEC_PINNED_CRYPTO,
+                },
+                "payload": {"hex": "deadbeef", "length": 4},
+            },
+        )
+        vector = packets.encode_packet_plan(plan)
+        raw = vector.to_bytes()
+        self.assertEqual(raw[9], 50)
+        # CBC uses the 16-octet explicit IV from the crypto block.
+        self.assertEqual(raw[28:44].hex(), "101112131415161718191a1b1c1d1e1f")
+        self.assertEqual(
+            vector.metadata["ipsec_sa_materialization"]["crypt_algo"], "AES-CBC"
+        )
+
+    def test_esp_null_opaque_builds_raw_layer(self) -> None:
+        plan = _ipsec_plan(
+            stack=["ipv4", "esp", "payload"],
+            family="esp",
+            feature="esp_cbc",
+            feature_behavior="null-opaque",
+            case="esp-null-opaque",
+            fields={
+                "ipv4": {
+                    "src": "192.0.2.1",
+                    "dst": "198.51.100.1",
+                    "ttl": 64,
+                    "flags": "none",
+                    "identification": 1,
+                    "protocol": "esp",
+                },
+                "esp": {
+                    "spi": 0x10001001,
+                    "sequence": 1,
+                    "next_header": "payload",
+                    "crypto": _IPSEC_PINNED_CRYPTO,
+                },
+                "payload": {"hex": "cafebabe", "length": 4},
+            },
+        )
+        self.assertFalse(packets._is_ipsec_sa_stack(plan, packets._canonical_stack(plan.stack)))
+        vector = packets.encode_packet_plan(plan)
+        raw = vector.to_bytes()
+        self.assertEqual(raw[9], 50)
+        # SPI || Seq, then the opaque body preserved verbatim.
+        self.assertEqual(raw[20:28].hex(), "1000100100000001")
+        self.assertEqual(raw[28:32].hex(), "cafebabe")
+
+    def test_ah_hmac_transport_materializes_and_decodes(self) -> None:
+        plan = _ipsec_plan(
+            stack=["ipv4", "ah", "tcp", "payload"],
+            family="ah",
+            feature="ah_integrity",
+            feature_behavior="hmac-transport",
+            case="ah-hmac-transport",
+            fields={
+                "ipv4": {
+                    "src": "192.0.2.1",
+                    "dst": "198.51.100.1",
+                    "ttl": 64,
+                    "flags": "none",
+                    "identification": 1,
+                    "protocol": "ah",
+                },
+                "ah": {
+                    "spi": 0x10001001,
+                    "sequence": 1,
+                    "next_header": "tcp",
+                    "crypto": _IPSEC_PINNED_CRYPTO,
+                },
+                "tcp": {
+                    "src_port": 1234,
+                    "dst_port": 80,
+                    "flags": "syn",
+                    "sequence": 0,
+                    "acknowledgement": 0,
+                    "window": 8192,
+                    "reserved": 0,
+                },
+                "payload": {"hex": "0011", "length": 2},
+            },
+        )
+        vector = packets.encode_packet_plan(plan)
+        raw = vector.to_bytes()
+        self.assertEqual(raw[9], 51)  # IP proto 51 (AH).
+        decoded = normalize.decode_bytes(raw, root="l3:ipv4", source_hex=vector.raw_hex)
+        self.assertIn("ah", decoded.layers)
+        self.assertEqual(decoded.fields["ah"]["spi"], 0x10001001)
+        self.assertEqual(decoded.fields["ah"]["sequence"], 1)
+        self.assertIn("icv", decoded.fields["ah"])
+        self.assertNotIn("padding", decoded.fields["ah"])
+
+    def test_ikev2_header_materializes_and_decodes(self) -> None:
+        plan = _ipsec_plan(
+            stack=["ipv4", "udp", "ikev2", "payload"],
+            family="ikev2",
+            feature="ikev2_header",
+            feature_behavior="sa-init",
+            case="ikev2-sa-init",
+            fields={
+                "ipv4": {
+                    "src": "192.0.2.1",
+                    "dst": "198.51.100.1",
+                    "ttl": 64,
+                    "flags": "none",
+                    "identification": 1,
+                    "protocol": "udp",
+                },
+                "udp": {"src_port": 500, "dst_port": 500},
+                "ikev2": {
+                    "initiator_spi": {"hex": "1122334455667788"},
+                    "responder_spi": {"hex": "0000000000000000"},
+                    "next_payload": "sa",
+                    "version": 0x20,
+                    "exchange_type": "ike_sa_init",
+                    "flags": ["initiator"],
+                    "message_id": 0,
+                    "crypto": _IPSEC_PINNED_CRYPTO,
+                },
+                "payload": {"hex": "21202320", "length": 4},
+            },
+        )
+        vector = packets.encode_packet_plan(plan)
+        raw = vector.to_bytes()
+        decoded = normalize.decode_bytes(raw, root="l3:ipv4", source_hex=vector.raw_hex)
+        self.assertIn("ikev2", decoded.layers)
+        ike = decoded.fields["ikev2"]
+        self.assertEqual(ike["initiator_spi"]["hex"], "1122334455667788")
+        self.assertEqual(ike["exchange_type"], 34)
+        self.assertEqual(ike["flags"], ["initiator"])
+        self.assertEqual(ike["message_id"], 0)
+
+    def test_natt_udp_encapsulated_esp_inserts_udp(self) -> None:
+        plan = _ipsec_plan(
+            stack=["ipv4", "udp", "esp", "payload"],
+            family="esp",
+            feature="esp_aead",
+            feature_behavior="aead-transport",
+            case="crafter-esp-aead-transport",
+            fields={
+                "ipv4": {
+                    "src": "192.0.2.1",
+                    "dst": "198.51.100.1",
+                    "ttl": 64,
+                    "flags": "none",
+                    "identification": 1,
+                    "protocol": "udp",
+                },
+                "udp": {"src_port": 4500, "dst_port": 4500},
+                "esp": {
+                    "spi": 0x10001001,
+                    "sequence": 1,
+                    "next_header": "payload",
+                    "crypto": _IPSEC_PINNED_CRYPTO,
+                },
+                "payload": {"hex": "deadbeef", "length": 4},
+            },
+        )
+        vector = packets.encode_packet_plan(plan)
+        raw = vector.to_bytes()
+        # IP proto 17 (UDP) wraps the ESP per RFC 3948.
+        self.assertEqual(raw[9], 17)
+        self.assertTrue(vector.metadata["ipsec_sa_materialization"]["nat_traversal"])
+
+
 if __name__ == "__main__":
     unittest.main()
