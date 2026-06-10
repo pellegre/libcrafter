@@ -67,6 +67,9 @@ roots:
       - transport
       - icmp
       - dns
+      - esp
+      - ah
+      - ikev2
   - name: "l2:ipv4"
     layers:
       - ipv4
@@ -83,6 +86,9 @@ roots:
       - udp
       - transport
       - icmp
+      - esp
+      - ah
+      - ikev2
 
 families:
   - name: ipv4
@@ -123,6 +129,42 @@ families:
       - payload
     feature_tags:
       - udp
+      - payload
+  # esp / ah / ikev2: IPSec families. ESP and AH ride directly over IPv4 and
+  # IPv6 (IP protocol 50 / 51); IKEv2 rides over UDP (UDP/500, and UDP/4500
+  # after the non-ESP marker). These families let the deterministic generator
+  # sample the IPSec stacks declared below while keeping ESP/AH/IKEv2 offline
+  # and dry-run only (documentation address space, pinned keys/IV/SPI).
+  - name: esp
+    default_stack:
+      - ipv4
+      - esp
+      - payload
+    feature_tags:
+      - ipv4
+      - esp
+      - payload
+  - name: ah
+    default_stack:
+      - ipv4
+      - ah
+      - tcp
+      - payload
+    feature_tags:
+      - ipv4
+      - ah
+      - tcp
+      - payload
+  - name: ikev2
+    default_stack:
+      - ipv4
+      - udp
+      - ikev2
+      - payload
+    feature_tags:
+      - ipv4
+      - udp
+      - ikev2
       - payload
   - name: dot11
     default_stack:
@@ -724,6 +766,106 @@ stacks:
     coverage_cases:
       - ipv6-routing-icmpv6
       - crafter-ipv6-routing-icmpv6
+  # ipv4 / esp / payload: ESP (RFC 4303, IP protocol 50) transport mode over
+  # IPv4. The AEAD (AES-GCM-16) and CBC+HMAC suites and the NULL-cipher opaque
+  # shape are byte-pinned (key/salt/IV/SPI) so the IV || ciphertext || ICV is
+  # deterministic and byte-comparable against the Scapy reference backend. These
+  # are offline/dry-run only; documentation address space.
+  - name: ipv4_esp_payload
+    root: "l3:ipv4"
+    layers:
+      - ipv4
+      - esp
+      - payload
+    coverage_cases:
+      - esp-aead-transport
+      - esp-cbc-hmac-transport
+      - esp-null-opaque
+      - esp-sequence-boundary
+      - crafter-esp-aead-transport
+      - crafter-esp-cbc-hmac-transport
+  # ipv4 / esp / ipv4 / payload: ESP tunnel mode over IPv4 carrying an inner
+  # IPv4 datagram (ESP next-header 4). The inner IP datagram is encrypted under
+  # the SA and dispatched as nested typed layers on decode.
+  - name: ipv4_esp_tunnel_ipv4
+    root: "l3:ipv4"
+    layers:
+      - ipv4
+      - esp
+      - ipv4
+      - payload
+    coverage_cases:
+      - esp-tunnel-inner-ip
+  # ipv6 / esp / payload: ESP transport mode over IPv6 (next-header 50),
+  # exercising the IPv6 ESP path with the same pinned AEAD/CBC suites.
+  - name: ipv6_esp_payload
+    root: "l3:ipv6"
+    layers:
+      - ipv6
+      - esp
+      - payload
+    coverage_cases:
+      - esp-aead-transport
+      - esp-cbc-hmac-transport
+  # ipv4 / ah / tcp / payload: AH (RFC 4302, IP protocol 51) transport mode over
+  # IPv4 authenticating a TCP segment. The ICV is computed over the canonical
+  # immutable IPv4 fields, the ICV-zeroed AH header, and the upper-layer data
+  # with a pinned integrity key so the appended ICV is byte-comparable.
+  - name: ipv4_ah_tcp
+    root: "l3:ipv4"
+    layers:
+      - ipv4
+      - ah
+      - tcp
+      - payload
+    coverage_cases:
+      - ah-hmac-transport
+      - ah-sequence-boundary
+      - crafter-ah-hmac-transport
+  # ipv6 / ah / tcp / payload: AH transport mode over IPv6 authenticating a TCP
+  # segment, exercising IPv6 canonicalization (traffic class, flow label, hop
+  # limit zeroed) and the 64-bit ICV alignment.
+  - name: ipv6_ah_tcp
+    root: "l3:ipv6"
+    layers:
+      - ipv6
+      - ah
+      - tcp
+      - payload
+    coverage_cases:
+      - ah-ipv6-transport
+  # ipv4 / udp / ikev2 / payload: IKEv2 (RFC 7296) message over UDP/500. The
+  # IKE_SA_INIT and IKE_AUTH chains, the SK (Encrypted) payload, and the
+  # unknown-payload-raw contract are byte-comparable against the Scapy ISAKMP
+  # reference backend with pinned SPIs and payload bodies.
+  - name: ipv4_udp_ikev2
+    root: "l3:ipv4"
+    layers:
+      - ipv4
+      - udp
+      - ikev2
+      - payload
+    coverage_cases:
+      - ikev2-sa-init
+      - ikev2-auth
+      - ikev2-sk-encrypted
+      - ikev2-unknown-payload-raw
+      - crafter-ikev2-sa-init
+      - crafter-ikev2-auth
+  # ipv4 / udp / esp / payload: NAT-T UDP-encapsulated ESP over UDP/4500
+  # (RFC 3948). Traffic that does not begin with the 4-byte non-ESP (zero)
+  # marker is UDP-encapsulated ESP; the marker routes to IKEv2 instead. The ESP
+  # body uses the same pinned suites as the bare-IP ESP stacks.
+  - name: ipv4_udp4500_esp
+    root: "l3:ipv4"
+    layers:
+      - ipv4
+      - udp
+      - esp
+      - payload
+    coverage_cases:
+      - esp-aead-transport
+      - crafter-esp-aead-transport
 
 constraints:
   - name: ethernet_children
@@ -754,6 +896,8 @@ constraints:
       - tcp
       - icmp
       - dns
+      - esp
+      - ah
       - payload
   - name: ipv6_children
     parent: ipv6
@@ -763,6 +907,43 @@ constraints:
       - icmpv6
       - ipv6_fragment
       - ipv6_routing
+      - esp
+      - ah
+      - payload
+  # ESP and AH (IP protocol 50 / 51) carry an inner upper-layer protocol in
+  # transport mode (tcp / udp / icmp / payload) or an inner IP datagram in
+  # tunnel mode (ipv4 / ipv6). The esp/ah layer specs already declare these
+  # children; this constraint keeps the adjacency explicit alongside the ESP/AH
+  # stacks above.
+  - name: esp_children
+    parent: esp
+    children:
+      - payload
+      - ipv4
+      - ipv6
+      - tcp
+      - udp
+      - icmp
+  - name: ah_children
+    parent: ah
+    children:
+      - payload
+      - ipv4
+      - ipv6
+      - tcp
+      - udp
+      - icmp
+  # UDP carries IKEv2 (UDP/500, and UDP/4500 after the non-ESP marker) and, for
+  # NAT-T, UDP-encapsulated ESP (UDP/4500, RFC 3948). The dns/dhcp/payload
+  # children come from the udp layer spec; this constraint unions in the IPSec
+  # children.
+  - name: udp_children
+    parent: udp
+    children:
+      - dns
+      - dhcp
+      - ikev2
+      - esp
       - payload
 
 backend_support:
