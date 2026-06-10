@@ -2375,6 +2375,14 @@ def _sample_ipv4_field(
             return "mf"
         if any(layer in ctx.stack for layer in ("tcp", "udp", "icmp", "dns", "dhcp")):
             return "none"
+        # ESP/AH/IKEv2 datagrams are never carried as IP fragments in the oracle
+        # corpus: libcrafter (correctly) leaves a non-first fragment body opaque
+        # and does not dispatch the inner protocol on a fragment, while Scapy
+        # binds the IP protocol number regardless of fragmentation. Pin the outer
+        # (and inner tunnel) IP to non-fragmented so both backends dissect the
+        # ESP/AH/IKEv2 layer and the decoded models agree.
+        if any(layer in ctx.stack for layer in ("esp", "ah", "ikev2")):
+            return "none"
         if ctx.profile == "smoke":
             return "none"
         return str(domain)
@@ -2382,6 +2390,8 @@ def _sample_ipv4_field(
         if "fragment-mf-offset" in ctx.case:
             return 1
         if any(layer in ctx.stack for layer in ("tcp", "udp", "icmp", "dns", "dhcp")):
+            return 0
+        if any(layer in ctx.stack for layer in ("esp", "ah", "ikev2")):
             return 0
         if domain == "non_initial":
             return 1
@@ -2531,12 +2541,24 @@ _IKEV2_NEXT_PAYLOAD = {
 }
 
 
-def _ipsec_spi_for_domain(ctx: _SamplingContext, domain: object, *, bits: int = 32) -> int:
+def _ipsec_spi_for_domain(
+    ctx: _SamplingContext,
+    domain: object,
+    *,
+    bits: int = 32,
+    allow_zero: bool = True,
+) -> int:
     """Map an SPI domain to a deterministic value.
 
     ``spi_sender`` / ``spi_responder`` are fixed non-zero SPIs; ``zero`` is the
     reserved 0 SPI; ``boundary`` is 0 or the field maximum. The values never come
     from the seed so both backends share the same SPI in the AEAD AAD / AH ICV.
+
+    ``allow_zero`` gates the reserved zero SPI. ESP must set it ``False``: a
+    proto-50 datagram whose SPI is 0 begins with four zero octets, which is the
+    RFC 3948 non-ESP marker, so Scapy dissects it as NON_ESP / ISAKMP instead of
+    ESP and the decoded model diverges from libcrafter's typed ESP layer. AH has
+    no such marker collision, so it keeps the zero SPI as a real boundary.
     """
 
     maximum = (1 << bits) - 1
@@ -2545,9 +2567,14 @@ def _ipsec_spi_for_domain(ctx: _SamplingContext, domain: object, *, bits: int = 
     if domain == "spi_responder":
         return _IPSEC_SPI_RESPONDER & maximum
     if domain == "zero":
-        return 0
+        # ESP cannot use the reserved zero SPI offline (Scapy's non-ESP marker
+        # heuristic); fall back to the fixed sender SPI so the case still
+        # exercises the SPI path with a comparable decoded model.
+        return 0 if allow_zero else (_IPSEC_SPI_SENDER & maximum)
     if domain == "boundary":
-        return weighted_choice(ctx.rng, ((0, 1), (maximum, 1)))
+        if allow_zero:
+            return weighted_choice(ctx.rng, ((0, 1), (maximum, 1)))
+        return maximum
     return _integer_domain_value(ctx, domain, "spi", bits=bits)
 
 
@@ -2590,7 +2617,9 @@ def _sample_esp_field(
     field_spec: JSONObject,
 ) -> object:
     if field_name == "spi":
-        return _ipsec_spi_for_domain(ctx, domain, bits=_field_bits(field_spec))
+        return _ipsec_spi_for_domain(
+            ctx, domain, bits=_field_bits(field_spec), allow_zero=False
+        )
     if field_name == "sequence":
         return _ipsec_sequence_for_domain(ctx, domain, bits=_field_bits(field_spec))
     if field_name == "next_header":
