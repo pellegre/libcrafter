@@ -68,6 +68,29 @@ _ARP_PROVIDER_MAC_CAPABILITIES = [
 # Backwards-compatible alias: the unicast case introduced this list.
 _ARP_UNICAST_CAPABILITIES = _ARP_PROVIDER_MAC_CAPABILITIES
 
+# IPSec behavioral cases drive a controlled IPSec-capable peer: a libcrafter
+# ESP/AH datagram or IKE_SA_INIT is placed on the wire and the peer's protected
+# reply, ICV-accepting response, or IKE_SA_INIT answer is decoded and validated.
+# ESP and AH need a peer that holds the matching Security Association (the same
+# SPI, mode, algorithms, and keys libcrafter seals/verifies with), so they carry
+# ``ipsec_esp`` / ``ipsec_ah`` beyond the unicast IPv4 substrate; IKEv2 only
+# needs the peer to run an IKE responder on UDP/500, so it carries ``ikev2``.
+# These capability names match the probe capability derivation in
+# :mod:`tools.probe.engine.lab`, so providers without an IPSec-capable peer skip
+# the cases with stable reasons rather than failing. The tunnel-mode ESP case
+# additionally needs a peer configured for tunnel-mode SAs (inner IP), recorded
+# with the ``requires_tunnel`` metadata flag the way NDP records
+# ``requires_router_target``.
+_IPSEC_ESP_CAPABILITIES = ["ipsec_esp"]
+_IPSEC_AH_CAPABILITIES = ["ipsec_ah"]
+_IKEV2_CAPABILITIES = ["ikev2"]
+# Aggregate alias for callers that want the full IPSec capability surface.
+_IPSEC_CAPABILITIES = [
+    *_IPSEC_ESP_CAPABILITIES,
+    *_IPSEC_AH_CAPABILITIES,
+    *_IKEV2_CAPABILITIES,
+]
+
 
 def _behavior_case(
     *,
@@ -566,6 +589,84 @@ BEHAVIOR_UDP_CASES: tuple[ProbeCase, ...] = (
 )
 
 
+# IPSec behavioral cases (RFC 4303 ESP, RFC 4302 AH, RFC 7296 IKEv2) against a
+# controlled IPSec-capable peer that holds the matching Security Association.
+# Each case is a stateful request/response exchange: libcrafter seals or
+# authenticates a datagram (or builds an IKE_SA_INIT), the peer accepts it
+# (decrypts/verifies the ICV, or parses the IKE header), and its protected reply
+# or IKE_SA_INIT response is captured and decoded. The ``stateful`` metadata
+# flag mirrors the DHCP precedent (an exchange whose response depends on shared
+# per-exchange state -- here the SA / IKE SPI pair -- rather than a stateless
+# echo); ``requires_tunnel`` marks the tunnel-mode ESP case the way NDP marks
+# ``requires_router_target``, so a peer without tunnel-mode SAs can skip it
+# cleanly while transport-mode cases still plan.
+BEHAVIOR_IPSEC_CASES: tuple[ProbeCase, ...] = (
+    _behavior_case(
+        name="esp-transport-echo",
+        description=(
+            "Send an ESP-protected (transport-mode) ICMP echo request to the "
+            "peer and validate the peer's ESP-protected echo reply."
+        ),
+        stimulus="esp_transport_echo_request",
+        expected_response="esp_transport_echo_reply",
+        required_capabilities=_IPSEC_ESP_CAPABILITIES,
+        protocol="ipsec",
+        metadata={"ipsec_protocol": "esp", "mode": "transport", "stateful": True},
+    ),
+    _behavior_case(
+        name="esp-tunnel-echo",
+        description=(
+            "Send a tunnel-mode ESP-encapsulated ICMP echo request (inner IP "
+            "inside ESP) to the peer and validate the tunnel-mode ESP echo "
+            "reply."
+        ),
+        # Tunnel mode needs the peer to hold a tunnel-mode SA (inner IP), which
+        # not every IPSec-capable peer exposes; ``requires_tunnel`` lets such a
+        # peer skip this case while the transport-mode ESP case still runs.
+        stimulus="esp_tunnel_echo_request",
+        expected_response="esp_tunnel_echo_reply",
+        required_capabilities=_IPSEC_ESP_CAPABILITIES,
+        protocol="ipsec",
+        metadata={
+            "ipsec_protocol": "esp",
+            "mode": "tunnel",
+            "stateful": True,
+            "requires_tunnel": True,
+            "notes": (
+                "Needs the peer to hold a tunnel-mode ESP SA (inner IP); a "
+                "transport-only peer skips this case. Live runners configure a "
+                "tunnel-mode SA or skip."
+            ),
+        },
+    ),
+    _behavior_case(
+        name="ah-transport-verify",
+        description=(
+            "Send an AH-protected (transport-mode) datagram to the peer and "
+            "validate that the peer accepts it (the ICV verifies) and responds."
+        ),
+        stimulus="ah_transport_request",
+        expected_response="ah_transport_response",
+        required_capabilities=_IPSEC_AH_CAPABILITIES,
+        protocol="ipsec",
+        metadata={"ipsec_protocol": "ah", "mode": "transport", "stateful": True},
+    ),
+    _behavior_case(
+        name="ikev2-sa-init",
+        description=(
+            "Send an IKE_SA_INIT request (header + SA + KE + Ni) over UDP/500 "
+            "and validate a well-formed IKE_SA_INIT response from the peer's "
+            "IKE responder."
+        ),
+        stimulus="ikev2_sa_init_request",
+        expected_response="ikev2_sa_init_response",
+        required_capabilities=_IKEV2_CAPABILITIES,
+        protocol="ipsec",
+        metadata={"ipsec_protocol": "ikev2", "exchange": "IKE_SA_INIT", "stateful": True},
+    ),
+)
+
+
 PROBE_CASES: tuple[ProbeCase, ...] = (
     ProbeCase(
         name="icmp-echo",
@@ -647,6 +748,7 @@ PROBE_CASES: tuple[ProbeCase, ...] = (
     *BEHAVIOR_ARP_CASES,
     *BEHAVIOR_NDP_CASES,
     *BEHAVIOR_UDP_CASES,
+    *BEHAVIOR_IPSEC_CASES,
 )
 
 PROBE_CASE_BY_NAME: dict[str, ProbeCase] = {case.name: case for case in PROBE_CASES}
@@ -735,6 +837,7 @@ DEFAULT_PROFILE = "smoke"
 SMOKE_PROFILE = "smoke"
 BEHAVIOR_PROFILE = "behavior"
 TCP_SMOKE_PROFILE = "tcp-smoke"
+IPSEC_PROFILE = "ipsec"
 
 # Legacy default count used by the smoke profile and any profile without an
 # explicit default; preserves the pre-behavior-suite CLI behavior.
@@ -779,6 +882,17 @@ BEHAVIOR_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
     for case in group
 )
 
+# The ipsec profile selects the IPSec behavioral catalog (ESP transport/tunnel,
+# AH transport, IKE_SA_INIT) in declaration order. It is kept out of the general
+# ``behavior`` profile because the cases need an IPSec-capable peer that holds
+# the matching Security Association (or an IKE responder), so an agent inspects
+# the planned IPSec exchange in isolation before any provider-backed run. The
+# default count covers every case so a bare ``--profile ipsec`` plans the whole
+# IPSec suite.
+IPSEC_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
+    case.name for case in BEHAVIOR_IPSEC_CASES
+)
+
 
 # Profiles that select an explicit ordered case subset. A profile not listed
 # here selects the full catalog. ``smoke`` is pinned to the legacy case set so
@@ -787,13 +901,15 @@ _PROFILE_CASE_NAMES: dict[str, tuple[str, ...]] = {
     SMOKE_PROFILE: SMOKE_PROFILE_CASE_NAMES,
     BEHAVIOR_PROFILE: BEHAVIOR_PROFILE_CASE_NAMES,
     TCP_SMOKE_PROFILE: TCP_SMOKE_PROFILE_CASE_NAMES,
+    IPSEC_PROFILE: IPSEC_PROFILE_CASE_NAMES,
 }
 
 # Per-profile default counts used when no explicit ``--count`` is supplied. The
-# behavior profile defaults to its full case suite; every other profile keeps the
-# legacy default.
+# behavior and ipsec profiles default to their full case suites; every other
+# profile keeps the legacy default.
 _PROFILE_DEFAULT_COUNTS: dict[str, int] = {
     BEHAVIOR_PROFILE: len(BEHAVIOR_PROFILE_CASE_NAMES),
+    IPSEC_PROFILE: len(IPSEC_PROFILE_CASE_NAMES),
 }
 
 
