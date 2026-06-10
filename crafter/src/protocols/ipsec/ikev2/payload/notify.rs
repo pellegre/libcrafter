@@ -29,7 +29,6 @@ use crate::protocols::ipsec::ikev2::payload::{
     write_generic_payload_header, IkePayload, PayloadHeaderFields, PayloadType,
 };
 use crate::protocols::transport::common::{impl_layer_div, impl_layer_object};
-#[cfg(test)]
 use crate::CrafterError;
 use crate::Result;
 
@@ -438,8 +437,7 @@ impl_layer_div!(IkeNotifyPayload);
 /// Data is the remainder of the body. Decoded fields are stored with
 /// `Field::user`, and the on-wire SPI Size is pinned so a re-compile reproduces
 /// the bytes exactly even when it disagrees with the SPI length.
-#[cfg(test)]
-fn parse_notify_payload_body(bytes: &[u8]) -> Result<IkeNotifyPayload> {
+pub(crate) fn parse_notify_payload_body(bytes: &[u8]) -> Result<IkeNotifyPayload> {
     if bytes.len() < NOTIFY_FIXED_LEN {
         return Err(CrafterError::buffer_too_short(
             "ikev2.notify",

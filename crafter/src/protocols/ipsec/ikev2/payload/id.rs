@@ -36,7 +36,6 @@ use crate::protocols::ipsec::ikev2::payload::{
     write_generic_payload_header, IkePayload, PayloadHeaderFields, PayloadType,
 };
 use crate::protocols::transport::common::{impl_layer_div, impl_layer_object};
-#[cfg(test)]
 use crate::CrafterError;
 use crate::Result;
 
@@ -399,8 +398,7 @@ impl_layer_div!(IkeIdPayload);
 /// the fixed body header is a structured error rather than a panic. Decoded
 /// fields are stored with `Field::user` so a re-compile reproduces the bytes
 /// exactly.
-#[cfg(test)]
-fn parse_id_payload_body(role: IdRole, bytes: &[u8]) -> Result<IkeIdPayload> {
+pub(crate) fn parse_id_payload_body(role: IdRole, bytes: &[u8]) -> Result<IkeIdPayload> {
     if bytes.len() < ID_FIXED_LEN {
         return Err(CrafterError::buffer_too_short(
             "ikev2.id",

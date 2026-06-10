@@ -31,7 +31,6 @@ use crate::protocols::ipsec::ikev2::payload::{
     write_generic_payload_header, IkePayload, PayloadHeaderFields, PayloadType,
 };
 use crate::protocols::transport::common::{impl_layer_div, impl_layer_object};
-#[cfg(test)]
 use crate::CrafterError;
 use crate::Result;
 
@@ -376,8 +375,7 @@ impl_layer_div!(IkeConfigPayload);
 /// body header, or an attribute whose Length runs past the end, is a structured
 /// error rather than a panic. The reserved high bit of each attribute type word
 /// is masked off on decode.
-#[cfg(test)]
-fn parse_config_payload_body(bytes: &[u8]) -> Result<IkeConfigPayload> {
+pub(crate) fn parse_config_payload_body(bytes: &[u8]) -> Result<IkeConfigPayload> {
     if bytes.len() < CONFIG_FIXED_LEN {
         return Err(CrafterError::buffer_too_short(
             "ikev2.config",

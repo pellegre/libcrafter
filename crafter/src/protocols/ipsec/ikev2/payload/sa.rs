@@ -37,7 +37,6 @@ use crate::protocols::ipsec::ikev2::payload::{
     write_generic_payload_header, IkePayload, PayloadHeaderFields, PayloadType,
 };
 use crate::protocols::transport::common::{impl_layer_div, impl_layer_object};
-#[cfg(test)]
 use crate::CrafterError;
 use crate::Result;
 
@@ -669,8 +668,7 @@ impl_layer_div!(IkeSaPayload);
 /// A parsed Transform Attribute and the number of octets it consumed
 /// (RFC 7296 §3.3.5). Local to this step; the full payload-chain decode is
 /// added by Step 45.
-#[cfg(test)]
-fn parse_transform_attribute(bytes: &[u8]) -> Result<(TransformAttribute, usize)> {
+pub(crate) fn parse_transform_attribute(bytes: &[u8]) -> Result<(TransformAttribute, usize)> {
     if bytes.len() < 4 {
         return Err(CrafterError::buffer_too_short(
             "ikev2.sa.attribute",
@@ -701,8 +699,7 @@ fn parse_transform_attribute(bytes: &[u8]) -> Result<(TransformAttribute, usize)
 }
 
 /// A parsed Transform and the number of octets it consumed (RFC 7296 §3.3.2).
-#[cfg(test)]
-fn parse_transform(bytes: &[u8]) -> Result<(Transform, usize)> {
+pub(crate) fn parse_transform(bytes: &[u8]) -> Result<(Transform, usize)> {
     if bytes.len() < TRANSFORM_FIXED_LEN {
         return Err(CrafterError::buffer_too_short(
             "ikev2.sa.transform",
@@ -732,8 +729,7 @@ fn parse_transform(bytes: &[u8]) -> Result<(Transform, usize)> {
 }
 
 /// A parsed Proposal and the number of octets it consumed (RFC 7296 §3.3.1).
-#[cfg(test)]
-fn parse_proposal(bytes: &[u8]) -> Result<(Proposal, usize)> {
+pub(crate) fn parse_proposal(bytes: &[u8]) -> Result<(Proposal, usize)> {
     if bytes.len() < PROPOSAL_FIXED_LEN {
         return Err(CrafterError::buffer_too_short(
             "ikev2.sa.proposal",
@@ -777,8 +773,7 @@ fn parse_proposal(bytes: &[u8]) -> Result<(Proposal, usize)> {
 /// Parse the proposal substructures of an SA payload **body** (the bytes after
 /// the 4-octet generic header), per RFC 7296 §3.3. Local to this step; the
 /// registry-driven chain decode lands in Step 45.
-#[cfg(test)]
-fn parse_sa_payload_body(bytes: &[u8]) -> Result<IkeSaPayload> {
+pub(crate) fn parse_sa_payload_body(bytes: &[u8]) -> Result<IkeSaPayload> {
     let mut payload = IkeSaPayload::new();
     let mut offset = 0;
     while offset < bytes.len() {
