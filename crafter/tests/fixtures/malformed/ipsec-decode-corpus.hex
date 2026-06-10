@@ -1,0 +1,83 @@
+# Malformed IPSec decode corpus (ESP / AH / IKEv2).
+#
+# Line-oriented, mirroring `malformed/core-decode-corpus.hex`:
+#
+#   name | target | classification | context-or-field | hex
+#
+# `target` selects how the raw IPSec bytes in `hex` are reached through a
+# *public* decode entrypoint (`resilience.rs` wraps them in the documented
+# envelope before decoding):
+#
+#   ipv4-esp  -> Ipv4(protocol 50) / <hex>, decoded via decode_from_l3(Ipv4)
+#   ipv6-esp  -> Ipv6(next-header 50) / <hex>, decoded via decode_from_l3(Ipv6)
+#   ipv4-ah   -> Ipv4(protocol 51) / <hex>, decoded via decode_from_l3(Ipv4)
+#   ipv6-ah   -> Ipv6(next-header 51) / <hex>, decoded via decode_from_l3(Ipv6)
+#   ikev2     -> Ipv4 / Udp(500) / <hex>, decoded via decode_from_l3(Ipv4)
+#
+# `classification` is the decode contract the crate guarantees for the case:
+#
+#   structured-error  -> truncation is detectable from the buffer alone, so the
+#                        decode MUST return a structured CrafterError (never a
+#                        panic). `context-or-field` is the exact BufferTooShort
+#                        `context` or InvalidFieldValue `field`.
+#   lenient-no-panic  -> the input is "malformed" only in a sense the *opaque*
+#                        (no-SA) decode cannot detect (e.g. a bad ESP pad length
+#                        living inside the still-encrypted body, or extra
+#                        trailing ciphertext). The decode is allowed to succeed
+#                        opaquely OR error, but it MUST NOT panic.
+#                        `context-or-field` is a free-form note.
+#
+# All SPIs/keys are documentation-only placeholder bytes; no real key material.
+
+# --- ESP: truncated below the 8-octet SPI||Seq fixed header (RFC 4303 §2) ---
+# Detectable truncation -> the opaque ESP decode rejects it with `esp header`.
+esp-truncated-header-1 | ipv4-esp | structured-error | esp header | 11
+esp-truncated-header-5 | ipv4-esp | structured-error | esp header | 1122334455
+esp-truncated-header-7 | ipv4-esp | structured-error | esp header | 11223344556677
+esp-truncated-header-7-v6 | ipv6-esp | structured-error | esp header | aabbccdd000000
+
+# --- ESP: full 8-octet header present, opaque body (no SA) ---
+# The opaque decode keeps SPI||Seq and preserves the remaining (encrypted) body
+# verbatim. A bad ESP pad length and oversized trailing ICV both live *inside*
+# the encrypted body, so the no-SA path cannot see them: it must not panic, and
+# decoding opaquely is correct. The SA path that *can* see them is exercised by
+# the `esp_decode_with_sa_*` unit/integration tests.
+esp-opaque-empty-body | ipv4-esp | lenient-no-panic | opaque spi+seq, empty body | aabbccdd00000001
+esp-opaque-bad-pad-length-in-body | ipv4-esp | lenient-no-panic | pad length lives inside encrypted body | aabbccdd00000001ff00000000000000ff
+esp-opaque-short-icv-tail | ipv6-esp | lenient-no-panic | icv shorter than algorithm needs (encrypted) | aabbccdd0000000112345678
+
+# --- AH: truncated below the 12-octet fixed header (RFC 4302 §2.2) ---
+ah-truncated-header-4 | ipv4-ah | structured-error | ah header | 3b000000
+ah-truncated-header-11 | ipv4-ah | structured-error | ah header | 3b00000aaabbccdd000000
+ah-truncated-header-8-v6 | ipv6-ah | structured-error | ah header | 3b000000aabbccdd
+
+# --- AH: oversized Payload Length declares an ICV the buffer cannot hold ---
+# Payload Len 0x0a -> header (0x0a+2)*4 = 48 octets, ICV 36 octets, but only the
+# 12 fixed octets are present, so the declared ICV runs off the end -> `ah icv`.
+ah-oversized-payload-len | ipv4-ah | structured-error | ah icv | 3b0a0000aabbccdd00000001
+ah-oversized-payload-len-v6 | ipv6-ah | structured-error | ah icv | 3bff0000aabbccdd00000001
+
+# --- IKEv2: truncated below the 28-octet header (RFC 7296 §3.1) ---
+# The IKE decoder is reached through the UDP/500 application dispatch, which only
+# fires for a non-empty UDP payload, so the smallest reachable truncation is a
+# 1-octet buffer; a 27-octet buffer is one short of the fixed header.
+ike-truncated-header-1 | ikev2 | structured-error | ikev2.header | 11
+ike-truncated-header-27 | ikev2 | structured-error | ikev2.header | 111111111111111122222222222222220020220800000000000000
+
+# --- IKEv2: header Length field shorter than the 28-octet fixed header ---
+# Length = 0x0000000a (10) < 28 -> `ikev2.header.length`.
+ike-length-below-header | ikev2 | structured-error | ikev2.header.length | 1111111111111111222222222222222200202208000000000000000a
+
+# --- IKEv2: header Length claims more bytes than the buffer holds ---
+# Length = 0x000000ff (255) but only 28 octets present -> `ikev2.message`.
+ike-length-exceeds-buffer | ikev2 | structured-error | ikev2.message | 111111111111111122222222222222220020220800000000000000ff
+
+# --- IKEv2: Next Payload chain runs off the end of the message ---
+# NextPayload 33 (SA) with Length 0x0000001e (30): two trailing octets cannot
+# even hold a 4-octet generic payload header -> `ikev2.payload.header`.
+ike-next-payload-header-off-end | ikev2 | structured-error | ikev2.payload.header | 1111111111111111222222222222222221202208000000000000001e0000
+
+# NextPayload 33 (SA) with Length 0x00000020 (32): the 4-octet generic header is
+# present but declares its own Length 0x00ff (255), running past the buffer ->
+# `ikev2.payload.length`.
+ike-next-payload-length-off-end | ikev2 | structured-error | ikev2.payload.length | 11111111111111112222222222222222212022080000000000000020000000ff
