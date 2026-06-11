@@ -258,6 +258,50 @@ impl BgpNotification {
     }
 }
 
+/// BGP ROUTE-REFRESH message body (RFC 2918).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BgpRouteRefresh {
+    /// Address Family Identifier.
+    pub(crate) afi: Field<u16>,
+    /// Reserved byte in RFC 2918, used as subtype by RFC 7313.
+    pub(crate) subtype: Field<u8>,
+    /// Subsequent Address Family Identifier.
+    pub(crate) safi: Field<u8>,
+}
+
+impl BgpRouteRefresh {
+    /// Create a ROUTE-REFRESH body for the given AFI/SAFI pair.
+    pub(crate) fn new(afi: u16, safi: u8) -> Self {
+        Self {
+            afi: Field::user(afi),
+            subtype: Field::defaulted(0),
+            safi: Field::user(safi),
+        }
+    }
+
+    /// Construct a ROUTE-REFRESH body from decoded wire fields, preserving the
+    /// RFC 2918 reserved / RFC 7313 subtype byte exactly.
+    pub(crate) fn from_decoded_parts(afi: u16, subtype: u8, safi: u8) -> Self {
+        Self {
+            afi: Field::user(afi),
+            subtype: Field::user(subtype),
+            safi: Field::user(safi),
+        }
+    }
+
+    /// The on-wire ROUTE-REFRESH body length, excluding the shared BGP header.
+    pub(crate) fn body_len(&self) -> usize {
+        4
+    }
+
+    /// Append the RFC 2918 ROUTE-REFRESH body to `out`.
+    pub(crate) fn write_body(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.afi.value().copied().unwrap_or(0).to_be_bytes());
+        out.push(self.subtype.value().copied().unwrap_or(0));
+        out.push(self.safi.value().copied().unwrap_or(0));
+    }
+}
+
 #[allow(dead_code)]
 pub(crate) fn notification_name(code: u8, subcode: u8) -> String {
     let Some(code_name) = notification_code_name(code) else {
