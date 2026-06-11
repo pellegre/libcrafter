@@ -124,3 +124,31 @@ fn bgp_golden_notification() {
     );
     assert_roundtrip(with_data.as_bytes());
 }
+
+// ---------------------------------------------------------------------------
+// ROUTE-REFRESH (RFC 2918): IPv4-unicast has AFI 0x0001, a reserved byte of
+// 0x00, SAFI 0x01, and total Length 23.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn bgp_golden_route_refresh() {
+    let bytes = Packet::from_layer(Bgp::route_refresh(1, 1))
+        .compile()
+        .expect("compile");
+    maybe_dump("ROUTE_REFRESH", bytes.as_bytes());
+    assert_eq!(
+        bytes.as_bytes(),
+        hex("ffffffffffffffffffffffffffffffff00170500010001").as_slice()
+    );
+    assert_eq!(bytes.as_bytes()[21], 0, "reserved/subtype byte defaults to zero");
+    assert_roundtrip(bytes.as_bytes());
+
+    let enhanced = Packet::from_layer(Bgp::route_refresh(1, 1).subtype(1))
+        .compile()
+        .expect("compile enhanced route refresh");
+    assert_eq!(
+        enhanced.as_bytes(),
+        hex("ffffffffffffffffffffffffffffffff00170500010101").as_slice()
+    );
+    assert_roundtrip(enhanced.as_bytes());
+}
