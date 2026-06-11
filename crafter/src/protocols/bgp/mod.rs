@@ -21,6 +21,22 @@ use crate::Result;
 
 use self::message::BgpHeader;
 
+/// Human-readable name for a BGP message Type code (IANA `bgp-parameters-1`).
+///
+/// Maps the `BGP_TYPE_*` constants to their canonical names for `summary()` and
+/// inspection output. An unmodelled or reserved code resolves to `"UNKNOWN"` so
+/// decoded messages stay inspectable rather than surfacing a bare number.
+fn message_type_name(message_type: u8) -> &'static str {
+    match message_type {
+        BGP_TYPE_OPEN => "OPEN",
+        BGP_TYPE_UPDATE => "UPDATE",
+        BGP_TYPE_NOTIFICATION => "NOTIFICATION",
+        BGP_TYPE_KEEPALIVE => "KEEPALIVE",
+        BGP_TYPE_ROUTE_REFRESH => "ROUTE-REFRESH",
+        _ => "UNKNOWN",
+    }
+}
+
 /// The body of a BGP-4 message (RFC 4271 §4), following the shared 19-octet
 /// header.
 ///
@@ -96,6 +112,41 @@ impl Layer for Bgp {
         "BGP"
     }
 
+    fn summary(&self) -> String {
+        // The effective length over the current body — auto-filled from the body
+        // size unless the caller pinned it. Dispatch on the body variant so later
+        // message types extend this with their own fields.
+        let len = self.header.effective_length(self.body.encoded_len());
+        match &self.body {
+            BgpBody::Keepalive => {
+                format!("BGP {} len={len}", message_type_name(BGP_TYPE_KEEPALIVE))
+            }
+            BgpBody::Unknown { type_code, .. } => {
+                format!("BGP {} len={len}", message_type_name(*type_code))
+            }
+        }
+    }
+
+    fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        // Report the marker presence (all-ones per RFC 4271 §4.1, or modified for
+        // a deliberately malformed message), the effective on-wire length, and the
+        // message type name so decoded messages are readable without log-fishing.
+        let marker = if self.header.effective_marker() == [0xFF; BGP_MARKER_LEN] {
+            "all-ones".to_string()
+        } else {
+            "modified".to_string()
+        };
+        let len = self.header.effective_length(self.body.encoded_len());
+        vec![
+            ("marker", marker),
+            ("length", len.to_string()),
+            (
+                "type",
+                message_type_name(self.header.effective_type()).to_string(),
+            ),
+        ]
+    }
+
     fn encoded_len(&self) -> usize {
         BGP_HEADER_LEN + self.body.encoded_len()
     }
@@ -158,6 +209,37 @@ mod tests {
         assert_eq!(bgp.name(), "BGP");
         assert!(matches!(bgp.body, BgpBody::Keepalive));
         assert_eq!(bgp.encoded_len(), BGP_HEADER_LEN);
+    }
+
+    #[test]
+    fn message_type_name_maps_known_and_unknown_codes() {
+        assert_eq!(message_type_name(BGP_TYPE_OPEN), "OPEN");
+        assert_eq!(message_type_name(BGP_TYPE_UPDATE), "UPDATE");
+        assert_eq!(message_type_name(BGP_TYPE_NOTIFICATION), "NOTIFICATION");
+        assert_eq!(message_type_name(BGP_TYPE_KEEPALIVE), "KEEPALIVE");
+        assert_eq!(message_type_name(BGP_TYPE_ROUTE_REFRESH), "ROUTE-REFRESH");
+        assert_eq!(message_type_name(0), "UNKNOWN");
+        assert_eq!(message_type_name(99), "UNKNOWN");
+    }
+
+    #[test]
+    fn keepalive_summary_reports_type_and_length() {
+        let summary = Bgp::keepalive().summary();
+        assert_eq!(summary, "BGP KEEPALIVE len=19");
+    }
+
+    #[test]
+    fn keepalive_show_contains_keepalive() {
+        let shown = Packet::from_layer(Bgp::keepalive()).show();
+
+        // The inspection fields surface the marker presence, length, and the
+        // message type name, so the rendered tree names the KEEPALIVE message.
+        assert!(
+            shown.contains("KEEPALIVE"),
+            "show() should name the KEEPALIVE message, got:\n{shown}"
+        );
+        assert!(shown.contains("marker: all-ones"));
+        assert!(shown.contains("length: 19"));
     }
 
     #[test]
