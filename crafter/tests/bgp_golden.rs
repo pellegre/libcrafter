@@ -35,18 +35,15 @@ fn hex(s: &str) -> Vec<u8> {
         .collect()
 }
 
-/// Round-trip half of the behavior pin: re-derive the BGP message from the
-/// pinned bytes and assert it re-compiles to the identical buffer.
-///
-/// The public bare-BGP decode path (TCP/179 registry dispatch) is wired in a
-/// later plan step and the message decoder is `pub(crate)`, so no public decode
-/// of a standalone BGP message is reachable from this integration test yet.
-/// Until it is, the round-trip rebuilds the same KEEPALIVE via the builder and
-/// asserts byte-equality with the input, which still locks the emitted bytes.
+/// Round-trip half of the behavior pin: decode the BGP message from the pinned
+/// bytes, recompile it, and assert the bytes are identical.
 fn assert_roundtrip(golden: &[u8]) {
-    let rebuilt = Packet::from_layer(Bgp::keepalive())
+    let (decoded, consumed) =
+        crafter::protocols::bgp::decode::decode_bgp_message(golden).expect("decode BGP golden");
+    assert_eq!(consumed, golden.len(), "decoder must consume one full message");
+    let rebuilt = Packet::from_layer(decoded)
         .compile()
-        .expect("recompile rebuilt KEEPALIVE");
+        .expect("recompile decoded BGP");
     assert_eq!(
         rebuilt.as_bytes(),
         golden,
@@ -68,5 +65,37 @@ fn bgp_golden_keepalive() {
         .expect("compile");
     maybe_dump("KEEPALIVE", bytes.as_bytes());
     assert_eq!(bytes.as_bytes(), hex(GOLDEN_KEEPALIVE).as_slice());
+    assert_roundtrip(bytes.as_bytes());
+}
+
+// ---------------------------------------------------------------------------
+// OPEN (RFC 4271 §4.2): version 4, AS 65000, hold time 180, BGP identifier
+// 192.0.2.1, and one capabilities optional parameter containing MP-BGP
+// IPv4-unicast, 4-octet-ASN(65000), and Route-Refresh.
+// ---------------------------------------------------------------------------
+
+const GOLDEN_OPEN: &str =
+    "ffffffffffffffffffffffffffffffff002d0104fde800b4c000020110020e01040001000141040000fde80200";
+
+fn build_open() -> Packet {
+    Packet::from_layer(
+        Bgp::open()
+            .version(4)
+            .my_as(65000)
+            .hold_time(180)
+            .bgp_id([192, 0, 2, 1])
+            .capabilities([
+                BgpCapability::ipv4_unicast(),
+                BgpCapability::four_octet_as(65000),
+                BgpCapability::route_refresh(),
+            ]),
+    )
+}
+
+#[test]
+fn bgp_golden_open() {
+    let bytes = build_open().compile().expect("compile");
+    maybe_dump("OPEN", bytes.as_bytes());
+    assert_eq!(bytes.as_bytes(), hex(GOLDEN_OPEN).as_slice());
     assert_roundtrip(bytes.as_bytes());
 }
