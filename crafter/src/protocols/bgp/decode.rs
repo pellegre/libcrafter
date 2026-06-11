@@ -21,9 +21,15 @@
 //!   (through [`take`]), so truncation can only ever produce an `Err`, not an
 //!   out-of-bounds index.
 
+use std::net::Ipv4Addr;
+
 use crate::error::{CrafterError, Result};
 
-use super::constants::{BGP_HEADER_LEN, BGP_MARKER_LEN, BGP_MAX_MESSAGE_LEN, BGP_TYPE_KEEPALIVE};
+use super::capability::{decode_capabilities, BgpOptParam, BGP_OPT_PARAM_CAPABILITIES};
+use super::constants::{
+    BGP_HEADER_LEN, BGP_MARKER_LEN, BGP_MAX_MESSAGE_LEN, BGP_TYPE_KEEPALIVE, BGP_TYPE_OPEN,
+};
+use super::message::BgpOpen;
 use super::{Bgp, BgpBody};
 
 /// Build the structured truncation error BGP decode uses for a short buffer.
@@ -112,6 +118,7 @@ pub(crate) fn decode_bgp_message(bytes: &[u8]) -> Result<(Bgp, usize)> {
     // message length.
     let body_bytes = &bytes[BGP_HEADER_LEN..length_usize];
     let body = match message_type {
+        BGP_TYPE_OPEN => BgpBody::Open(decode_open_body(body_bytes)?),
         BGP_TYPE_KEEPALIVE => BgpBody::Keepalive,
         // Other message types are preserved verbatim for now; later steps
         // replace this with the typed OPEN/UPDATE/NOTIFICATION bodies.
@@ -125,10 +132,55 @@ pub(crate) fn decode_bgp_message(bytes: &[u8]) -> Result<(Bgp, usize)> {
     Ok((bgp, length_usize))
 }
 
+fn decode_open_body(body_bytes: &[u8]) -> Result<BgpOpen> {
+    let (version, rest) = take(body_bytes, 1, "bgp open version")?;
+    let (my_as, rest) = take(rest, 2, "bgp open my_as")?;
+    let (hold_time, rest) = take(rest, 2, "bgp open hold_time")?;
+    let (bgp_id, rest) = take(rest, 4, "bgp open bgp_id")?;
+    let (opt_params_len, rest) = take(rest, 1, "bgp open optional parameters length")?;
+    let opt_params_len = opt_params_len[0];
+    let (param_bytes, trailing) = take(
+        rest,
+        opt_params_len as usize,
+        "bgp open optional parameters",
+    )?;
+
+    if !trailing.is_empty() {
+        return Err(CrafterError::invalid_field_value(
+            "bgp.open.length",
+            "OPEN body has trailing bytes after optional parameters",
+        ));
+    }
+
+    let mut params = Vec::new();
+    let mut capabilities = Vec::new();
+    let mut rest = param_bytes;
+    while !rest.is_empty() {
+        let (param, remaining) = BgpOptParam::decode(rest)?;
+        if param.param_type == BGP_OPT_PARAM_CAPABILITIES {
+            capabilities.extend(decode_capabilities(&param.value)?);
+        }
+        params.push(param);
+        rest = remaining;
+    }
+
+    Ok(BgpOpen::from_decoded_parts(
+        version[0],
+        u16::from_be_bytes([my_as[0], my_as[1]]),
+        u16::from_be_bytes([hold_time[0], hold_time[1]]),
+        Ipv4Addr::new(bgp_id[0], bgp_id[1], bgp_id[2], bgp_id[3]),
+        opt_params_len,
+        params,
+        capabilities,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::packet::Layer;
+    use crate::packet::{Layer, Packet};
+    use crate::protocols::bgp::capability::BGP_MP_IPV4_UNICAST;
+    use crate::protocols::bgp::BgpCapability;
 
     #[test]
     fn take_splits_when_enough_bytes() {
@@ -171,6 +223,88 @@ mod tests {
         let (bgp, consumed) = decode_bgp_message(&bytes).expect("valid keepalive decodes");
         assert_eq!(consumed, BGP_HEADER_LEN);
         assert_eq!(bgp.summary(), "BGP KEEPALIVE len=19");
+    }
+
+    #[test]
+    fn decode_open_with_known_capabilities() {
+        let expected_capabilities = vec![
+            BgpCapability::ipv4_unicast(),
+            BgpCapability::four_octet_as(4_200_000_000),
+            BgpCapability::route_refresh(),
+        ];
+        let bytes = Packet::from_layer(
+            Bgp::open()
+                .my_as(23456)
+                .hold_time(180)
+                .bgp_id([192, 0, 2, 1])
+                .capabilities(expected_capabilities.clone()),
+        )
+        .compile()
+        .expect("OPEN compiles");
+
+        let (bgp, consumed) = decode_bgp_message(&bytes).expect("OPEN decodes");
+        assert_eq!(consumed, bytes.len());
+
+        match &bgp.body {
+            BgpBody::Open(open) => {
+                assert_eq!(open.version.value(), Some(&4));
+                assert_eq!(open.my_as.value(), Some(&23456));
+                assert_eq!(open.hold_time.value(), Some(&180));
+                assert_eq!(open.bgp_id.value(), Some(&Ipv4Addr::new(192, 0, 2, 1)));
+                assert_eq!(open.params.len(), 1);
+                assert_eq!(open.capabilities, expected_capabilities);
+                assert_eq!(
+                    open.capabilities[0]
+                        .multiprotocol_afi_safi()
+                        .expect("MP-BGP parses"),
+                    BGP_MP_IPV4_UNICAST
+                );
+                assert_eq!(
+                    open.capabilities[1]
+                        .four_octet_asn()
+                        .expect("four-octet AS parses"),
+                    4_200_000_000
+                );
+                assert_eq!(open.capabilities[2], BgpCapability::route_refresh());
+            }
+            other => panic!("expected OPEN body, got {other:?}"),
+        }
+
+        let recompiled = Packet::from_layer(bgp)
+            .compile()
+            .expect("recompile succeeds");
+        assert_eq!(recompiled, bytes);
+    }
+
+    #[test]
+    fn decode_open_preserves_unknown_capability() {
+        let unknown = BgpCapability::raw(200, vec![0xaa, 0xbb, 0xcc]);
+        let bytes = Packet::from_layer(
+            Bgp::open()
+                .my_as(65000)
+                .hold_time(90)
+                .bgp_id([192, 0, 2, 2])
+                .capabilities([unknown.clone()]),
+        )
+        .compile()
+        .expect("OPEN compiles");
+
+        let (bgp, consumed) = decode_bgp_message(&bytes).expect("OPEN decodes");
+        assert_eq!(consumed, bytes.len());
+
+        match &bgp.body {
+            BgpBody::Open(open) => {
+                assert_eq!(open.capabilities, vec![unknown.clone()]);
+                assert_eq!(open.params.len(), 1);
+                assert_eq!(open.params[0].value, [200, 3, 0xaa, 0xbb, 0xcc]);
+            }
+            other => panic!("expected OPEN body, got {other:?}"),
+        }
+
+        let recompiled = Packet::from_layer(bgp)
+            .compile()
+            .expect("recompile succeeds");
+        assert_eq!(recompiled, bytes);
     }
 
     /// A 10-byte buffer cannot even hold the 16-octet marker, so decode surfaces

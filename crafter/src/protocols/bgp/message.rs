@@ -4,7 +4,10 @@ use std::net::Ipv4Addr;
 
 use crate::field::Field;
 
-use super::capability::{encode_capabilities, BgpCapability, BgpOptParam};
+use super::capability::{
+    decode_capabilities, encode_capabilities, BgpCapability, BgpOptParam,
+    BGP_OPT_PARAM_CAPABILITIES,
+};
 use super::constants::{BGP_HEADER_LEN, BGP_MARKER_LEN, BGP_VERSION};
 
 /// The shared 19-octet BGP message header (RFC 4271 §4.1).
@@ -119,6 +122,8 @@ pub struct BgpOpen {
     pub(crate) opt_params_len: Field<u8>,
     /// OPEN optional parameters.
     pub(crate) params: Vec<BgpOptParam>,
+    /// Decoded capabilities collected from type-2 optional parameters.
+    pub(crate) capabilities: Vec<BgpCapability>,
 }
 
 impl BgpOpen {
@@ -132,11 +137,39 @@ impl BgpOpen {
             bgp_id: Field::unset(),
             opt_params_len: Field::unset(),
             params: Vec::new(),
+            capabilities: Vec::new(),
+        }
+    }
+
+    /// Construct an OPEN body from decoded wire fields, marking scalar fields as
+    /// user-supplied so re-compilation preserves the decoded values.
+    pub(crate) fn from_decoded_parts(
+        version: u8,
+        my_as: u16,
+        hold_time: u16,
+        bgp_id: Ipv4Addr,
+        opt_params_len: u8,
+        params: Vec<BgpOptParam>,
+        capabilities: Vec<BgpCapability>,
+    ) -> Self {
+        Self {
+            version: Field::user(version),
+            my_as: Field::user(my_as),
+            hold_time: Field::user(hold_time),
+            bgp_id: Field::user(bgp_id),
+            opt_params_len: Field::user(opt_params_len),
+            params,
+            capabilities,
         }
     }
 
     /// Append a typed optional parameter to this OPEN body.
     pub fn push_param(&mut self, param: BgpOptParam) {
+        if param.param_type == BGP_OPT_PARAM_CAPABILITIES {
+            if let Ok(capabilities) = decode_capabilities(&param.value) {
+                self.capabilities.extend(capabilities);
+            }
+        }
         self.params.push(param);
     }
 
