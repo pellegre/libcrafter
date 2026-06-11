@@ -1,11 +1,21 @@
 //! BGP-4 (RFC 4271) capability negotiation types.
 
-use crate::Result;
+use crate::{CrafterError, Result};
 
+use super::constants::{AFI_IPV4, AFI_IPV6, CAP_MULTIPROTOCOL, SAFI_UNICAST};
 use super::decode::take;
 
 /// OPEN optional-parameter type for RFC 5492 capabilities.
 pub const BGP_OPT_PARAM_CAPABILITIES: u8 = 2;
+
+/// RFC 4760 Multiprotocol capability value length.
+pub const BGP_CAP_MULTIPROTOCOL_VALUE_LEN: usize = 4;
+
+/// IPv4 unicast AFI/SAFI pair for the MP-BGP capability.
+pub const BGP_MP_IPV4_UNICAST: (u16, u8) = (AFI_IPV4, SAFI_UNICAST);
+
+/// IPv6 unicast AFI/SAFI pair for the MP-BGP capability.
+pub const BGP_MP_IPV6_UNICAST: (u16, u8) = (AFI_IPV6, SAFI_UNICAST);
 
 /// BGP capability advertisement (RFC 5492 §4).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,6 +33,51 @@ impl BgpCapability {
             code,
             value: value.into(),
         }
+    }
+
+    /// Create the RFC 4760 Multiprotocol capability for one AFI/SAFI pair.
+    pub fn multiprotocol(afi: u16, safi: u8) -> Self {
+        let mut value = Vec::with_capacity(BGP_CAP_MULTIPROTOCOL_VALUE_LEN);
+        value.extend_from_slice(&afi.to_be_bytes());
+        value.push(0);
+        value.push(safi);
+        Self::raw(CAP_MULTIPROTOCOL, value)
+    }
+
+    /// Create an MP-BGP capability advertising IPv4 unicast.
+    pub fn ipv4_unicast() -> Self {
+        Self::multiprotocol(AFI_IPV4, SAFI_UNICAST)
+    }
+
+    /// Create an MP-BGP capability advertising IPv6 unicast.
+    pub fn ipv6_unicast() -> Self {
+        Self::multiprotocol(AFI_IPV6, SAFI_UNICAST)
+    }
+
+    /// Parse this RFC 4760 Multiprotocol capability into its AFI/SAFI pair.
+    pub fn multiprotocol_afi_safi(&self) -> Result<(u16, u8)> {
+        if self.code != CAP_MULTIPROTOCOL {
+            return Err(CrafterError::invalid_field_value(
+                "bgp.capability.code",
+                "not a multiprotocol capability",
+            ));
+        }
+
+        let (value, rest) = take(
+            &self.value,
+            BGP_CAP_MULTIPROTOCOL_VALUE_LEN,
+            "bgp multiprotocol capability value",
+        )?;
+        if !rest.is_empty() {
+            return Err(CrafterError::invalid_field_value(
+                "bgp.capability.multiprotocol.length",
+                "expected 4 octets",
+            ));
+        }
+
+        let afi = u16::from_be_bytes([value[0], value[1]]);
+        let safi = value[3];
+        Ok((afi, safi))
     }
 
     /// Append `Code | Length | Value` to `out`.
@@ -140,5 +195,29 @@ mod tests {
 
         let decoded = decode_capabilities(&encoded).expect("capabilities decode");
         assert_eq!(decoded, capabilities);
+    }
+
+    #[test]
+    fn multiprotocol_capability_encodes_and_parses() {
+        let capability = BgpCapability::multiprotocol(2, 1);
+
+        let mut encoded = Vec::new();
+        capability.encode(&mut encoded);
+
+        assert_eq!(encoded, [1, 4, 0x00, 0x02, 0x00, 0x01]);
+        assert_eq!(
+            capability
+                .multiprotocol_afi_safi()
+                .expect("MP-BGP capability parses"),
+            (2, 1)
+        );
+        assert_eq!(
+            BgpCapability::ipv4_unicast().multiprotocol_afi_safi(),
+            Ok(BGP_MP_IPV4_UNICAST)
+        );
+        assert_eq!(
+            BgpCapability::ipv6_unicast().multiprotocol_afi_safi(),
+            Ok(BGP_MP_IPV6_UNICAST)
+        );
     }
 }
