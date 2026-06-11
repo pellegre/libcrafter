@@ -73,7 +73,10 @@ impl BgpHeader {
 
     /// The Marker to emit: the caller/default value if set, else all ones.
     pub(crate) fn effective_marker(&self) -> [u8; BGP_MARKER_LEN] {
-        self.marker.value().copied().unwrap_or([0xFF; BGP_MARKER_LEN])
+        self.marker
+            .value()
+            .copied()
+            .unwrap_or([0xFF; BGP_MARKER_LEN])
     }
 
     /// The Length to emit: the caller value if set, otherwise the header
@@ -111,6 +114,8 @@ pub struct BgpOpen {
     pub(crate) hold_time: Field<u16>,
     /// BGP identifier carried as an IPv4 address.
     pub(crate) bgp_id: Field<Ipv4Addr>,
+    /// Length of the raw optional-parameters bytes.
+    pub(crate) opt_params_len: Field<u8>,
     /// Raw optional parameters. Capabilities are typed in later steps.
     pub(crate) opt_params: Vec<u8>,
 }
@@ -124,6 +129,7 @@ impl BgpOpen {
             my_as: Field::unset(),
             hold_time: Field::unset(),
             bgp_id: Field::unset(),
+            opt_params_len: Field::unset(),
             opt_params: Vec::new(),
         }
     }
@@ -131,6 +137,31 @@ impl BgpOpen {
     /// The on-wire OPEN body length, excluding the shared BGP header.
     pub(crate) fn body_len(&self) -> usize {
         10 + self.opt_params.len()
+    }
+
+    /// The optional-parameters length to emit.
+    pub(crate) fn effective_opt_params_len(&self) -> u8 {
+        self.opt_params_len
+            .value()
+            .copied()
+            .unwrap_or(self.opt_params.len() as u8)
+    }
+
+    /// Append the RFC 4271 §4.2 OPEN body to `out`.
+    pub(crate) fn write_body(&self, out: &mut Vec<u8>) {
+        out.push(self.version.value().copied().unwrap_or(BGP_VERSION));
+        out.extend_from_slice(&self.my_as.value().copied().unwrap_or(0).to_be_bytes());
+        out.extend_from_slice(&self.hold_time.value().copied().unwrap_or(0).to_be_bytes());
+        out.extend_from_slice(
+            &self
+                .bgp_id
+                .value()
+                .copied()
+                .unwrap_or(Ipv4Addr::UNSPECIFIED)
+                .octets(),
+        );
+        out.push(self.effective_opt_params_len());
+        out.extend_from_slice(&self.opt_params);
     }
 }
 
