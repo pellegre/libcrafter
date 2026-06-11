@@ -79,7 +79,7 @@ pub(crate) fn take<'a>(
 /// bytes (the `length - BGP_HEADER_LEN` octets after the header); the real
 /// typed bodies arrive in later steps.
 #[allow(dead_code)]
-pub(crate) fn decode_bgp_message(bytes: &[u8]) -> Result<(Bgp, usize)> {
+pub fn decode_bgp_message(bytes: &[u8]) -> Result<(Bgp, usize)> {
     // The fixed 19-octet header: Marker (16), Length (2), Type (1). Each field
     // is length-checked through `take` so truncation can only yield an `Err`.
     let (marker_bytes, rest) = take(bytes, BGP_MARKER_LEN, "bgp header")?;
