@@ -3,7 +3,8 @@
 //! This module provides packet-layer construction and decoding for BGP-4
 //! messages. Types and constants are added in subsequent steps; for now the
 //! [`Bgp`] layer implements the [`Layer`] trait with KEEPALIVE — the
-//! header-only message (RFC 4271 §4.4) — as the first working body.
+//! header-only message (RFC 4271 §4.4) — and the OPEN builder as the first
+//! working bodies.
 
 mod constants;
 
@@ -14,6 +15,7 @@ pub mod message;
 
 // Re-export the populated BGP codepoint constants at the module root.
 pub use constants::*;
+pub use message::BgpOpen;
 
 use crate::packet::{Layer, LayerContext};
 use crate::protocols::transport::common::{impl_layer_div, impl_layer_object};
@@ -41,12 +43,16 @@ fn message_type_name(message_type: u8) -> &'static str {
 /// header.
 ///
 /// KEEPALIVE (RFC 4271 §4.4) is header-only, so its variant carries no fields.
-/// The remaining message bodies — OPEN, UPDATE, NOTIFICATION, ROUTE-REFRESH —
-/// are added in later steps. The [`BgpBody::Unknown`] variant preserves the raw
-/// body of a message type the builder/decoder does not model, keeping the
-/// bytes verbatim rather than discarding them.
+/// OPEN carries its fixed RFC 4271 §4.2 fields and raw optional parameters for
+/// now; typed capabilities are added in later steps. The remaining message
+/// bodies — UPDATE, NOTIFICATION, ROUTE-REFRESH — are added in later steps. The
+/// [`BgpBody::Unknown`] variant preserves the raw body of a message type the
+/// builder/decoder does not model, keeping the bytes verbatim rather than
+/// discarding them.
 #[derive(Debug, Clone)]
 pub(crate) enum BgpBody {
+    /// OPEN message (RFC 4271 §4.2).
+    Open(BgpOpen),
     /// KEEPALIVE message (RFC 4271 §4.4): the header alone, no body.
     Keepalive,
     /// A message body the layer does not (yet) model, preserved verbatim.
@@ -63,6 +69,7 @@ impl BgpBody {
     /// The on-wire length of this body, in octets (the bytes after the header).
     fn encoded_len(&self) -> usize {
         match self {
+            BgpBody::Open(open) => open.body_len(),
             BgpBody::Keepalive => 0,
             BgpBody::Unknown { body, .. } => body.len(),
         }
@@ -71,6 +78,7 @@ impl BgpBody {
     /// Append this body's bytes to `out` (none for KEEPALIVE).
     fn write_body(&self, out: &mut Vec<u8>) {
         match self {
+            BgpBody::Open(_) => {}
             BgpBody::Keepalive => {}
             BgpBody::Unknown { body, .. } => out.extend_from_slice(body),
         }
@@ -93,6 +101,18 @@ pub struct Bgp {
 }
 
 impl Bgp {
+    /// Build an OPEN message (RFC 4271 §4.2).
+    ///
+    /// The header Type defaults to [`BGP_TYPE_OPEN`]. The body defaults to
+    /// BGP-4 and empty optional parameters; other OPEN fields are filled through
+    /// the chainable setters.
+    pub fn open() -> Self {
+        Self {
+            header: BgpHeader::new(BGP_TYPE_OPEN),
+            body: BgpBody::Open(BgpOpen::new()),
+        }
+    }
+
     /// Build a KEEPALIVE message (RFC 4271 §4.4).
     ///
     /// The header Type defaults to [`BGP_TYPE_KEEPALIVE`] and the Length is left
@@ -104,6 +124,38 @@ impl Bgp {
             header: BgpHeader::new(BGP_TYPE_KEEPALIVE),
             body: BgpBody::Keepalive,
         }
+    }
+
+    /// Set the OPEN version field.
+    pub fn version(mut self, version: u8) -> Self {
+        if let BgpBody::Open(open) = &mut self.body {
+            open.version.set_user(version);
+        }
+        self
+    }
+
+    /// Set the OPEN My Autonomous System field.
+    pub fn my_as(mut self, my_as: u16) -> Self {
+        if let BgpBody::Open(open) = &mut self.body {
+            open.my_as.set_user(my_as);
+        }
+        self
+    }
+
+    /// Set the OPEN Hold Time field, in seconds.
+    pub fn hold_time(mut self, hold_time: u16) -> Self {
+        if let BgpBody::Open(open) = &mut self.body {
+            open.hold_time.set_user(hold_time);
+        }
+        self
+    }
+
+    /// Set the OPEN BGP Identifier field.
+    pub fn bgp_id(mut self, bgp_id: impl Into<std::net::Ipv4Addr>) -> Self {
+        if let BgpBody::Open(open) = &mut self.body {
+            open.bgp_id.set_user(bgp_id.into());
+        }
+        self
     }
 
     /// Build a `Bgp` layer from decoded wire fields.
@@ -137,6 +189,9 @@ impl Layer for Bgp {
         // message types extend this with their own fields.
         let len = self.header.effective_length(self.body.encoded_len());
         match &self.body {
+            BgpBody::Open(_) => {
+                format!("BGP {} len={len}", message_type_name(BGP_TYPE_OPEN))
+            }
             BgpBody::Keepalive => {
                 format!("BGP {} len={len}", message_type_name(BGP_TYPE_KEEPALIVE))
             }
@@ -190,10 +245,6 @@ impl_layer_div!(Bgp);
 // real message types. `#[allow(dead_code)]` keeps clippy quiet while the bodies
 // are still empty.
 
-/// BGP OPEN message (RFC 4271 §4.2). Placeholder stub; filled in a later step.
-#[allow(dead_code)]
-pub struct BgpOpen;
-
 /// BGP UPDATE message (RFC 4271 §4.3). Placeholder stub; filled in a later step.
 #[allow(dead_code)]
 pub struct BgpUpdate;
@@ -228,6 +279,35 @@ mod tests {
         assert_eq!(bgp.name(), "BGP");
         assert!(matches!(bgp.body, BgpBody::Keepalive));
         assert_eq!(bgp.encoded_len(), BGP_HEADER_LEN);
+    }
+
+    #[test]
+    fn open_builder_stores_values() {
+        let bgp = Bgp::open()
+            .version(4)
+            .my_as(65000)
+            .hold_time(90)
+            .bgp_id([192, 0, 2, 1]);
+
+        assert_eq!(bgp.header.effective_type(), BGP_TYPE_OPEN);
+        match bgp.body {
+            BgpBody::Open(open) => {
+                assert_eq!(open.version.value(), Some(&BGP_VERSION));
+                assert!(open.version.is_user_set());
+                assert_eq!(open.my_as.value(), Some(&65000));
+                assert!(open.my_as.is_user_set());
+                assert_eq!(open.hold_time.value(), Some(&90));
+                assert!(open.hold_time.is_user_set());
+                assert_eq!(
+                    open.bgp_id.value(),
+                    Some(&std::net::Ipv4Addr::new(192, 0, 2, 1))
+                );
+                assert!(open.bgp_id.is_user_set());
+                assert!(open.opt_params.is_empty());
+                assert_eq!(open.body_len(), 10);
+            }
+            other => panic!("expected OPEN body, got {other:?}"),
+        }
     }
 
     #[test]
