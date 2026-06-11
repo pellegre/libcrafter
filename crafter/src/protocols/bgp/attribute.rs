@@ -14,12 +14,22 @@ use super::constants::{
     ATTR_MP_REACH_NLRI_FLAGS, ATTR_MP_UNREACH_NLRI, ATTR_MP_UNREACH_NLRI_FLAGS,
     ATTR_MULTI_EXIT_DISC, ATTR_MULTI_EXIT_DISC_FLAGS, ATTR_NEXT_HOP, ATTR_NEXT_HOP_FLAGS,
     ATTR_ORIGIN, ATTR_ORIGIN_FLAGS, BGP_ATTR_FLAG_EXTENDED_LENGTH, BGP_ATTR_FLAG_OPTIONAL,
+    ORIGIN_EGP, ORIGIN_IGP, ORIGIN_INCOMPLETE,
 };
 use super::decode::take;
+
+/// ORIGIN = IGP. RFC 4271 §5.1.1.
+pub const BGP_ORIGIN_IGP: u8 = ORIGIN_IGP;
+/// ORIGIN = EGP. RFC 4271 §5.1.1.
+pub const BGP_ORIGIN_EGP: u8 = ORIGIN_EGP;
+/// ORIGIN = INCOMPLETE. RFC 4271 §5.1.1.
+pub const BGP_ORIGIN_INCOMPLETE: u8 = ORIGIN_INCOMPLETE;
 
 /// BGP path-attribute value bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BgpAttrValue {
+    /// ORIGIN path attribute (RFC 4271 §5.1.1).
+    Origin(u8),
     /// A value whose type-specific structure is not modeled yet.
     Unknown(Vec<u8>),
 }
@@ -28,6 +38,7 @@ impl BgpAttrValue {
     /// Encoded attribute value length, in octets.
     pub fn encoded_len(&self) -> usize {
         match self {
+            Self::Origin(_) => 1,
             Self::Unknown(value) => value.len(),
         }
     }
@@ -35,6 +46,7 @@ impl BgpAttrValue {
     /// Append the raw attribute value bytes to `out`.
     pub fn encode(&self, out: &mut Vec<u8>) {
         match self {
+            Self::Origin(origin) => out.push(*origin),
             Self::Unknown(value) => out.extend_from_slice(value),
         }
     }
@@ -52,6 +64,15 @@ pub struct BgpPathAttribute {
 }
 
 impl BgpPathAttribute {
+    /// Build an ORIGIN path attribute (RFC 4271 §5.1.1).
+    pub fn origin(origin: u8) -> Self {
+        Self {
+            flags: Field::defaulted(ATTR_ORIGIN_FLAGS),
+            type_code: ATTR_ORIGIN,
+            value: BgpAttrValue::Origin(origin),
+        }
+    }
+
     /// Build a raw path attribute with canonical flags inferred from type code.
     pub fn unknown(type_code: u8, value: impl Into<Vec<u8>>) -> Self {
         Self {
@@ -91,6 +112,14 @@ impl BgpPathAttribute {
             out.push(value_len as u8);
         }
         self.value.encode(out);
+    }
+
+    /// Human-readable path-attribute summary.
+    pub fn summary(&self) -> String {
+        match &self.value {
+            BgpAttrValue::Origin(origin) => format!("ORIGIN={}", origin_value_name(*origin)),
+            BgpAttrValue::Unknown(value) => format!("attr-{} len={}", self.type_code, value.len()),
+        }
     }
 
     fn effective_flags(&self) -> u8 {
@@ -143,15 +172,39 @@ pub fn decode_attribute(buf: &[u8]) -> Result<(BgpPathAttribute, usize)> {
         (length[0] as usize, rest, 1)
     };
     let (value, _) = take(rest, length, "bgp path attribute value")?;
+    let value = match type_code {
+        ATTR_ORIGIN => decode_origin_value(value)?,
+        _ => BgpAttrValue::Unknown(value.to_vec()),
+    };
 
     Ok((
         BgpPathAttribute {
             flags: Field::user(flags),
             type_code,
-            value: BgpAttrValue::Unknown(value.to_vec()),
+            value,
         },
         2 + length_len + length,
     ))
+}
+
+fn decode_origin_value(value: &[u8]) -> Result<BgpAttrValue> {
+    let (origin, rest) = take(value, 1, "bgp origin attribute value")?;
+    if !rest.is_empty() {
+        return Err(CrafterError::invalid_field_value(
+            "bgp.attribute.origin.length",
+            "ORIGIN attribute value must be exactly one octet",
+        ));
+    }
+    Ok(BgpAttrValue::Origin(origin[0]))
+}
+
+fn origin_value_name(origin: u8) -> String {
+    match origin {
+        BGP_ORIGIN_IGP => "IGP".to_string(),
+        BGP_ORIGIN_EGP => "EGP".to_string(),
+        BGP_ORIGIN_INCOMPLETE => "INCOMPLETE".to_string(),
+        other => format!("origin-{other}"),
+    }
 }
 
 /// A BGP network-layer reachability prefix.
@@ -304,12 +357,13 @@ mod tests {
     }
 
     #[test]
-    fn short_path_attribute_uses_one_octet_length_and_round_trips() {
-        let attr = BgpPathAttribute::unknown(ATTR_ORIGIN, vec![0]);
+    fn origin_attribute_encodes_and_round_trips() {
+        let attr = BgpPathAttribute::origin(BGP_ORIGIN_IGP);
         let mut encoded = Vec::new();
         attr.encode(&mut encoded);
 
-        assert_eq!(encoded, [ATTR_ORIGIN_FLAGS, ATTR_ORIGIN, 1, 0]);
+        assert_eq!(encoded, [ATTR_ORIGIN_FLAGS, ATTR_ORIGIN, 1, BGP_ORIGIN_IGP]);
+        assert_eq!(attr.summary(), "ORIGIN=IGP");
 
         let (decoded, consumed) = decode_attribute(&encoded).expect("attribute decodes");
         assert_eq!(consumed, encoded.len());
@@ -318,7 +372,32 @@ mod tests {
             BgpPathAttribute {
                 flags: Field::user(ATTR_ORIGIN_FLAGS),
                 type_code: ATTR_ORIGIN,
-                value: BgpAttrValue::Unknown(vec![0]),
+                value: BgpAttrValue::Origin(BGP_ORIGIN_IGP),
+            }
+        );
+        assert_eq!(decoded.summary(), "ORIGIN=IGP");
+
+        let mut reencoded = Vec::new();
+        decoded.encode(&mut reencoded);
+        assert_eq!(reencoded, encoded);
+    }
+
+    #[test]
+    fn short_unknown_path_attribute_uses_one_octet_length_and_round_trips() {
+        let attr = BgpPathAttribute::unknown(99, vec![0xaa]);
+        let mut encoded = Vec::new();
+        attr.encode(&mut encoded);
+
+        assert_eq!(encoded, [BGP_ATTR_FLAG_OPTIONAL, 99, 1, 0xaa]);
+
+        let (decoded, consumed) = decode_attribute(&encoded).expect("attribute decodes");
+        assert_eq!(consumed, encoded.len());
+        assert_eq!(
+            decoded,
+            BgpPathAttribute {
+                flags: Field::user(BGP_ATTR_FLAG_OPTIONAL),
+                type_code: 99,
+                value: BgpAttrValue::Unknown(vec![0xaa]),
             }
         );
 
