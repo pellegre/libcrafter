@@ -14,12 +14,13 @@ pub mod message;
 // Re-export the populated BGP codepoint constants at the module root.
 pub use capability::{BgpCapability, BgpOptParam, BGP_OPT_PARAM_CAPABILITIES};
 pub use constants::*;
-pub use message::{BgpNotification, BgpOpen, BgpRouteRefresh};
+pub use message::{BgpNotification, BgpOpen, BgpRouteRefresh, BgpUpdate};
 
 use crate::packet::{Layer, LayerContext};
 use crate::protocols::transport::common::{impl_layer_div, impl_layer_object};
 use crate::Result;
 
+use self::attribute::{BgpPathAttribute, BgpPrefix};
 use self::message::{notification_name, BgpHeader};
 
 /// Human-readable name for a BGP message Type code (IANA `bgp-parameters-1`).
@@ -93,6 +94,8 @@ pub(crate) enum BgpBody {
     Open(BgpOpen),
     /// NOTIFICATION message (RFC 4271 §4.5).
     Notification(BgpNotification),
+    /// UPDATE message (RFC 4271 §4.3).
+    Update(BgpUpdate),
     /// ROUTE-REFRESH message (RFC 2918).
     RouteRefresh(BgpRouteRefresh),
     /// KEEPALIVE message (RFC 4271 §4.4): the header alone, no body.
@@ -113,6 +116,7 @@ impl BgpBody {
         match self {
             BgpBody::Open(open) => open.body_len(),
             BgpBody::Notification(notification) => notification.body_len(),
+            BgpBody::Update(update) => update.body_len(),
             BgpBody::RouteRefresh(route_refresh) => route_refresh.body_len(),
             BgpBody::Keepalive => 0,
             BgpBody::Unknown { body, .. } => body.len(),
@@ -124,6 +128,7 @@ impl BgpBody {
         match self {
             BgpBody::Open(open) => open.write_body(out),
             BgpBody::Notification(notification) => notification.write_body(out),
+            BgpBody::Update(update) => update.write_body(out),
             BgpBody::RouteRefresh(route_refresh) => route_refresh.write_body(out),
             BgpBody::Keepalive => {}
             BgpBody::Unknown { body, .. } => out.extend_from_slice(body),
@@ -181,6 +186,17 @@ impl Bgp {
         Self {
             header: BgpHeader::new(BGP_TYPE_NOTIFICATION),
             body: BgpBody::Notification(BgpNotification::new(error_code, error_subcode)),
+        }
+    }
+
+    /// Build an UPDATE message (RFC 4271 §4.3).
+    ///
+    /// The header Type defaults to [`BGP_TYPE_UPDATE`]. The body starts empty:
+    /// zero withdrawn routes, zero path attributes, and zero NLRI prefixes.
+    pub fn update() -> Self {
+        Self {
+            header: BgpHeader::new(BGP_TYPE_UPDATE),
+            body: BgpBody::Update(BgpUpdate::new()),
         }
     }
 
@@ -272,6 +288,52 @@ impl Bgp {
         self
     }
 
+    /// Append a withdrawn-route prefix to an UPDATE.
+    pub fn withdraw(mut self, prefix: BgpPrefix) -> Self {
+        if let BgpBody::Update(update) = &mut self.body {
+            update.withdrawn.push(prefix);
+        }
+        self
+    }
+
+    /// Force the UPDATE Withdrawn Routes Length field.
+    ///
+    /// This preserves malformed-on-purpose UPDATEs whose declared withdrawn
+    /// routes length differs from the emitted withdrawn route bytes.
+    pub fn withdrawn_len(mut self, withdrawn_len: u16) -> Self {
+        if let BgpBody::Update(update) = &mut self.body {
+            update.withdrawn_len.set_user(withdrawn_len);
+        }
+        self
+    }
+
+    /// Append a path attribute to an UPDATE.
+    pub fn attribute(mut self, attribute: BgpPathAttribute) -> Self {
+        if let BgpBody::Update(update) = &mut self.body {
+            update.attributes.push(attribute);
+        }
+        self
+    }
+
+    /// Force the UPDATE Total Path Attribute Length field.
+    ///
+    /// This preserves malformed-on-purpose UPDATEs whose declared attribute
+    /// length differs from the emitted path attribute bytes.
+    pub fn attr_len(mut self, attr_len: u16) -> Self {
+        if let BgpBody::Update(update) = &mut self.body {
+            update.attr_len.set_user(attr_len);
+        }
+        self
+    }
+
+    /// Append an NLRI prefix to an UPDATE.
+    pub fn nlri(mut self, prefix: BgpPrefix) -> Self {
+        if let BgpBody::Update(update) = &mut self.body {
+            update.nlri.push(prefix);
+        }
+        self
+    }
+
     /// Set the ROUTE-REFRESH reserved byte / RFC 7313 subtype.
     pub fn subtype(mut self, subtype: u8) -> Self {
         if let BgpBody::RouteRefresh(route_refresh) = &mut self.body {
@@ -336,6 +398,13 @@ impl Layer for Bgp {
                     notification.data.len()
                 )
             }
+            BgpBody::Update(update) => format!(
+                "BGP {} withdrawn={} attrs={} nlri={}",
+                message_type_name(BGP_TYPE_UPDATE),
+                update.withdrawn.len(),
+                update.attributes.len(),
+                update.nlri.len()
+            ),
             BgpBody::RouteRefresh(route_refresh) => format!(
                 "BGP {} afi={} safi={}",
                 message_type_name(BGP_TYPE_ROUTE_REFRESH),
@@ -406,6 +475,14 @@ impl Layer for Bgp {
             fields.push(("error", notification_name(code, subcode)));
         }
 
+        if let BgpBody::Update(update) = &self.body {
+            fields.push(("withdrawn_routes", update.withdrawn.len().to_string()));
+            fields.push(("withdrawn_length", update.withdrawn_len().to_string()));
+            fields.push(("path_attributes", update.attributes.len().to_string()));
+            fields.push(("path_attribute_length", update.attributes_len().to_string()));
+            fields.push(("nlri", update.nlri.len().to_string()));
+        }
+
         if let BgpBody::RouteRefresh(route_refresh) = &self.body {
             fields.push((
                 "afi",
@@ -447,15 +524,6 @@ impl Layer for Bgp {
 }
 
 impl_layer_div!(Bgp);
-
-// Minimal compiling stubs for the remaining message type names so the public
-// API contract stays stable; later steps replace these placeholders with the
-// real message types. `#[allow(dead_code)]` keeps clippy quiet while the bodies
-// are still empty.
-
-/// BGP UPDATE message (RFC 4271 §4.3). Placeholder stub; filled in a later step.
-#[allow(dead_code)]
-pub struct BgpUpdate;
 
 /// BGP KEEPALIVE message (RFC 4271 §4.4). Placeholder stub; filled in a later step.
 #[allow(dead_code)]
@@ -615,6 +683,30 @@ mod tests {
         );
         assert_eq!(bytes[BGP_MARKER_LEN + 2], BGP_TYPE_NOTIFICATION);
         assert_eq!(&bytes[BGP_HEADER_LEN..], &[NOTIFY_CEASE, 0]);
+    }
+
+    #[test]
+    fn empty_update_compiles_to_twenty_three_bytes() {
+        let packet = Packet::from_layer(Bgp::update());
+        let bytes = packet.compile().unwrap();
+
+        assert_eq!(bytes.len(), 23);
+        assert_eq!(&bytes[..BGP_MARKER_LEN], &[0xFF; BGP_MARKER_LEN]);
+        assert_eq!(
+            &bytes[BGP_MARKER_LEN..BGP_MARKER_LEN + 2],
+            &(23u16).to_be_bytes()
+        );
+        assert_eq!(bytes[BGP_MARKER_LEN + 2], BGP_TYPE_UPDATE);
+        assert_eq!(&bytes[BGP_HEADER_LEN..], &[0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn update_internal_length_overrides_are_preserved() {
+        let packet = Packet::from_layer(Bgp::update().withdrawn_len(7).attr_len(9));
+        let bytes = packet.compile().unwrap();
+
+        assert_eq!(bytes.len(), 23);
+        assert_eq!(&bytes[BGP_HEADER_LEN..], &[0, 7, 0, 9]);
     }
 
     #[test]

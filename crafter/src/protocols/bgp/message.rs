@@ -4,6 +4,7 @@ use std::net::Ipv4Addr;
 
 use crate::field::Field;
 
+use super::attribute::{BgpPathAttribute, BgpPrefix};
 use super::capability::{
     decode_capabilities, encode_capabilities, BgpCapability, BgpOptParam,
     BGP_OPT_PARAM_CAPABILITIES,
@@ -222,6 +223,95 @@ impl BgpOpen {
             param.encode(out);
         }
     }
+}
+
+/// BGP UPDATE message body (RFC 4271 §4.3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BgpUpdate {
+    /// Withdrawn Routes, encoded as BGP prefixes.
+    pub(crate) withdrawn: Vec<BgpPrefix>,
+    /// Withdrawn Routes Length field.
+    pub(crate) withdrawn_len: Field<u16>,
+    /// Path Attributes.
+    pub(crate) attributes: Vec<BgpPathAttribute>,
+    /// Total Path Attribute Length field.
+    pub(crate) attr_len: Field<u16>,
+    /// Network Layer Reachability Information.
+    pub(crate) nlri: Vec<BgpPrefix>,
+}
+
+impl BgpUpdate {
+    /// Create an empty UPDATE body.
+    pub(crate) fn new() -> Self {
+        Self {
+            withdrawn: Vec::new(),
+            withdrawn_len: Field::unset(),
+            attributes: Vec::new(),
+            attr_len: Field::unset(),
+            nlri: Vec::new(),
+        }
+    }
+
+    /// The encoded Withdrawn Routes byte length.
+    pub(crate) fn withdrawn_len(&self) -> usize {
+        prefixes_len(&self.withdrawn)
+    }
+
+    /// The encoded Path Attributes byte length.
+    pub(crate) fn attributes_len(&self) -> usize {
+        self.attributes
+            .iter()
+            .map(BgpPathAttribute::encoded_len)
+            .sum()
+    }
+
+    /// The encoded NLRI byte length.
+    pub(crate) fn nlri_len(&self) -> usize {
+        prefixes_len(&self.nlri)
+    }
+
+    /// The on-wire UPDATE body length, excluding the shared BGP header.
+    pub(crate) fn body_len(&self) -> usize {
+        2 + self.withdrawn_len() + 2 + self.attributes_len() + self.nlri_len()
+    }
+
+    /// The Withdrawn Routes Length value to emit.
+    pub(crate) fn effective_withdrawn_len(&self, encoded_len: usize) -> u16 {
+        self.withdrawn_len
+            .value()
+            .copied()
+            .unwrap_or(encoded_len as u16)
+    }
+
+    /// The Total Path Attribute Length value to emit.
+    pub(crate) fn effective_attr_len(&self, encoded_len: usize) -> u16 {
+        self.attr_len.value().copied().unwrap_or(encoded_len as u16)
+    }
+
+    /// Append the RFC 4271 §4.3 UPDATE body to `out`.
+    pub(crate) fn write_body(&self, out: &mut Vec<u8>) {
+        let mut withdrawn = Vec::new();
+        for prefix in &self.withdrawn {
+            prefix.encode_prefix(&mut withdrawn);
+        }
+
+        let mut attributes = Vec::new();
+        for attribute in &self.attributes {
+            attribute.encode(&mut attributes);
+        }
+
+        out.extend_from_slice(&self.effective_withdrawn_len(withdrawn.len()).to_be_bytes());
+        out.extend_from_slice(&withdrawn);
+        out.extend_from_slice(&self.effective_attr_len(attributes.len()).to_be_bytes());
+        out.extend_from_slice(&attributes);
+        for prefix in &self.nlri {
+            prefix.encode_prefix(out);
+        }
+    }
+}
+
+fn prefixes_len(prefixes: &[BgpPrefix]) -> usize {
+    prefixes.iter().map(|prefix| 1 + prefix.prefix.len()).sum()
 }
 
 /// BGP NOTIFICATION message body (RFC 4271 §4.5).
