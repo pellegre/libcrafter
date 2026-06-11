@@ -105,6 +105,25 @@ impl Bgp {
             body: BgpBody::Keepalive,
         }
     }
+
+    /// Build a `Bgp` layer from decoded wire fields.
+    ///
+    /// The header is reconstructed from the observed marker, length, and type
+    /// (every field marked caller-supplied so re-compiling preserves the bytes
+    /// exactly), and the typed `body` is the decoded message body. Used by the
+    /// decode path so a round-trip through `decode_bgp_message` reproduces the
+    /// original bytes.
+    pub(crate) fn from_decoded_parts(
+        marker: [u8; BGP_MARKER_LEN],
+        length: u16,
+        message_type: u8,
+        body: BgpBody,
+    ) -> Self {
+        Self {
+            header: BgpHeader::from_decoded_parts(marker, length, message_type),
+            body,
+        }
+    }
 }
 
 impl Layer for Bgp {
