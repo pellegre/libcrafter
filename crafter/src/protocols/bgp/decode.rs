@@ -1,0 +1,1 @@
+//! BGP-4 (RFC 4271) decode entrypoints.
