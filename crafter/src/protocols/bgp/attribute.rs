@@ -6,15 +6,16 @@ use crate::field::Field;
 use crate::{CrafterError, Result};
 
 use super::constants::{
-    ATTR_AGGREGATOR, ATTR_AGGREGATOR_FLAGS, ATTR_AS4_AGGREGATOR, ATTR_AS4_AGGREGATOR_FLAGS,
-    ATTR_AS4_PATH, ATTR_AS4_PATH_FLAGS, ATTR_AS_PATH, ATTR_AS_PATH_FLAGS, ATTR_ATOMIC_AGGREGATE,
-    ATTR_ATOMIC_AGGREGATE_FLAGS, ATTR_COMMUNITIES, ATTR_COMMUNITIES_FLAGS,
-    ATTR_EXTENDED_COMMUNITIES, ATTR_EXTENDED_COMMUNITIES_FLAGS, ATTR_LARGE_COMMUNITY,
-    ATTR_LARGE_COMMUNITY_FLAGS, ATTR_LOCAL_PREF, ATTR_LOCAL_PREF_FLAGS, ATTR_MP_REACH_NLRI,
-    ATTR_MP_REACH_NLRI_FLAGS, ATTR_MP_UNREACH_NLRI, ATTR_MP_UNREACH_NLRI_FLAGS,
-    ATTR_MULTI_EXIT_DISC, ATTR_MULTI_EXIT_DISC_FLAGS, ATTR_NEXT_HOP, ATTR_NEXT_HOP_FLAGS,
-    ATTR_ORIGIN, ATTR_ORIGIN_FLAGS, BGP_ATTR_FLAG_EXTENDED_LENGTH, BGP_ATTR_FLAG_OPTIONAL,
-    ORIGIN_EGP, ORIGIN_IGP, ORIGIN_INCOMPLETE,
+    AS_PATH_SEG_AS_SEQUENCE, AS_PATH_SEG_AS_SET, ATTR_AGGREGATOR, ATTR_AGGREGATOR_FLAGS,
+    ATTR_AS4_AGGREGATOR, ATTR_AS4_AGGREGATOR_FLAGS, ATTR_AS4_PATH, ATTR_AS4_PATH_FLAGS,
+    ATTR_AS_PATH, ATTR_AS_PATH_FLAGS, ATTR_ATOMIC_AGGREGATE, ATTR_ATOMIC_AGGREGATE_FLAGS,
+    ATTR_COMMUNITIES, ATTR_COMMUNITIES_FLAGS, ATTR_EXTENDED_COMMUNITIES,
+    ATTR_EXTENDED_COMMUNITIES_FLAGS, ATTR_LARGE_COMMUNITY, ATTR_LARGE_COMMUNITY_FLAGS,
+    ATTR_LOCAL_PREF, ATTR_LOCAL_PREF_FLAGS, ATTR_MP_REACH_NLRI, ATTR_MP_REACH_NLRI_FLAGS,
+    ATTR_MP_UNREACH_NLRI, ATTR_MP_UNREACH_NLRI_FLAGS, ATTR_MULTI_EXIT_DISC,
+    ATTR_MULTI_EXIT_DISC_FLAGS, ATTR_NEXT_HOP, ATTR_NEXT_HOP_FLAGS, ATTR_ORIGIN, ATTR_ORIGIN_FLAGS,
+    BGP_ATTR_FLAG_EXTENDED_LENGTH, BGP_ATTR_FLAG_OPTIONAL, ORIGIN_EGP, ORIGIN_IGP,
+    ORIGIN_INCOMPLETE,
 };
 use super::decode::take;
 
@@ -25,11 +26,32 @@ pub const BGP_ORIGIN_EGP: u8 = ORIGIN_EGP;
 /// ORIGIN = INCOMPLETE. RFC 4271 §5.1.1.
 pub const BGP_ORIGIN_INCOMPLETE: u8 = ORIGIN_INCOMPLETE;
 
+/// AS_SET segment type. RFC 4271 §4.3.
+pub const BGP_AS_SEGMENT_SET: u8 = AS_PATH_SEG_AS_SET;
+/// AS_SEQUENCE segment type. RFC 4271 §4.3.
+pub const BGP_AS_SEGMENT_SEQUENCE: u8 = AS_PATH_SEG_AS_SEQUENCE;
+
+/// One AS_PATH segment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AsPathSegment {
+    /// Segment type, such as AS_SET or AS_SEQUENCE.
+    pub kind: u8,
+    /// AS numbers carried by this segment.
+    pub asns: Vec<u32>,
+}
+
 /// BGP path-attribute value bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BgpAttrValue {
     /// ORIGIN path attribute (RFC 4271 §5.1.1).
     Origin(u8),
+    /// AS_PATH path attribute (RFC 4271 §5.1.2).
+    AsPath {
+        /// Whether AS numbers are encoded as four octets instead of two.
+        four_octet: bool,
+        /// Ordered AS_PATH segments.
+        segments: Vec<AsPathSegment>,
+    },
     /// A value whose type-specific structure is not modeled yet.
     Unknown(Vec<u8>),
 }
@@ -39,6 +61,10 @@ impl BgpAttrValue {
     pub fn encoded_len(&self) -> usize {
         match self {
             Self::Origin(_) => 1,
+            Self::AsPath {
+                four_octet,
+                segments,
+            } => as_path_encoded_len(segments, *four_octet),
             Self::Unknown(value) => value.len(),
         }
     }
@@ -47,6 +73,10 @@ impl BgpAttrValue {
     pub fn encode(&self, out: &mut Vec<u8>) {
         match self {
             Self::Origin(origin) => out.push(*origin),
+            Self::AsPath {
+                four_octet,
+                segments,
+            } => encode_as_path(segments, *four_octet, out),
             Self::Unknown(value) => out.extend_from_slice(value),
         }
     }
@@ -71,6 +101,16 @@ impl BgpPathAttribute {
             type_code: ATTR_ORIGIN,
             value: BgpAttrValue::Origin(origin),
         }
+    }
+
+    /// Build an AS_PATH attribute containing one AS_SEQUENCE segment.
+    pub fn as_sequence(asns: &[u32]) -> Self {
+        Self::as_path_segment(BGP_AS_SEGMENT_SEQUENCE, asns)
+    }
+
+    /// Build an AS_PATH attribute containing one AS_SET segment.
+    pub fn as_set(asns: &[u32]) -> Self {
+        Self::as_path_segment(BGP_AS_SEGMENT_SET, asns)
     }
 
     /// Build a raw path attribute with canonical flags inferred from type code.
@@ -118,6 +158,7 @@ impl BgpPathAttribute {
     pub fn summary(&self) -> String {
         match &self.value {
             BgpAttrValue::Origin(origin) => format!("ORIGIN={}", origin_value_name(*origin)),
+            BgpAttrValue::AsPath { segments, .. } => as_path_summary(segments),
             BgpAttrValue::Unknown(value) => format!("attr-{} len={}", self.type_code, value.len()),
         }
     }
@@ -132,6 +173,20 @@ impl BgpPathAttribute {
             flags |= BGP_ATTR_FLAG_EXTENDED_LENGTH;
         }
         flags
+    }
+
+    fn as_path_segment(kind: u8, asns: &[u32]) -> Self {
+        Self {
+            flags: Field::defaulted(ATTR_AS_PATH_FLAGS),
+            type_code: ATTR_AS_PATH,
+            value: BgpAttrValue::AsPath {
+                four_octet: false,
+                segments: vec![AsPathSegment {
+                    kind,
+                    asns: asns.to_vec(),
+                }],
+            },
+        }
     }
 }
 
@@ -174,6 +229,7 @@ pub fn decode_attribute(buf: &[u8]) -> Result<(BgpPathAttribute, usize)> {
     let (value, _) = take(rest, length, "bgp path attribute value")?;
     let value = match type_code {
         ATTR_ORIGIN => decode_origin_value(value)?,
+        ATTR_AS_PATH => decode_as_path_value(value, false)?,
         _ => BgpAttrValue::Unknown(value.to_vec()),
     };
 
@@ -196,6 +252,94 @@ fn decode_origin_value(value: &[u8]) -> Result<BgpAttrValue> {
         ));
     }
     Ok(BgpAttrValue::Origin(origin[0]))
+}
+
+fn decode_as_path_value(mut value: &[u8], four_octet: bool) -> Result<BgpAttrValue> {
+    let as_width = as_path_as_width(four_octet);
+    let mut segments = Vec::new();
+
+    while !value.is_empty() {
+        let (kind, rest) = take(value, 1, "bgp as_path segment kind")?;
+        let (count, rest) = take(rest, 1, "bgp as_path segment count")?;
+        let count = count[0] as usize;
+        let (asn_bytes, rest) = take(rest, count * as_width, "bgp as_path segment asns")?;
+
+        let mut asns = Vec::with_capacity(count);
+        for asn in asn_bytes.chunks_exact(as_width) {
+            let asn = if four_octet {
+                u32::from_be_bytes([asn[0], asn[1], asn[2], asn[3]])
+            } else {
+                u16::from_be_bytes([asn[0], asn[1]]) as u32
+            };
+            asns.push(asn);
+        }
+
+        segments.push(AsPathSegment {
+            kind: kind[0],
+            asns,
+        });
+        value = rest;
+    }
+
+    Ok(BgpAttrValue::AsPath {
+        four_octet,
+        segments,
+    })
+}
+
+fn as_path_encoded_len(segments: &[AsPathSegment], four_octet: bool) -> usize {
+    let as_width = as_path_as_width(four_octet);
+    segments
+        .iter()
+        .map(|segment| 2 + segment.asns.len() * as_width)
+        .sum()
+}
+
+fn encode_as_path(segments: &[AsPathSegment], four_octet: bool, out: &mut Vec<u8>) {
+    for segment in segments {
+        out.push(segment.kind);
+        out.push(segment.asns.len() as u8);
+        for asn in &segment.asns {
+            if four_octet {
+                out.extend_from_slice(&asn.to_be_bytes());
+            } else {
+                out.extend_from_slice(&(*asn as u16).to_be_bytes());
+            }
+        }
+    }
+}
+
+fn as_path_as_width(four_octet: bool) -> usize {
+    if four_octet {
+        4
+    } else {
+        2
+    }
+}
+
+fn as_path_summary(segments: &[AsPathSegment]) -> String {
+    if segments.is_empty() {
+        return "AS_PATH=<empty>".to_string();
+    }
+
+    let parts = segments
+        .iter()
+        .map(|segment| {
+            let asns = segment
+                .asns
+                .iter()
+                .map(u32::to_string)
+                .collect::<Vec<_>>()
+                .join(" ");
+            match segment.kind {
+                BGP_AS_SEGMENT_SET => format!("{{{}}}", asns.replace(' ', ",")),
+                BGP_AS_SEGMENT_SEQUENCE => asns,
+                other => format!("seg-{other}[{asns}]"),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!("AS_PATH={parts}")
 }
 
 fn origin_value_name(origin: u8) -> String {
@@ -376,6 +520,50 @@ mod tests {
             }
         );
         assert_eq!(decoded.summary(), "ORIGIN=IGP");
+
+        let mut reencoded = Vec::new();
+        decoded.encode(&mut reencoded);
+        assert_eq!(reencoded, encoded);
+    }
+
+    #[test]
+    fn as_sequence_attribute_encodes_and_round_trips() {
+        let attr = BgpPathAttribute::as_sequence(&[65000, 65001]);
+        let mut encoded = Vec::new();
+        attr.encode(&mut encoded);
+
+        assert_eq!(
+            encoded,
+            [
+                ATTR_AS_PATH_FLAGS,
+                ATTR_AS_PATH,
+                6,
+                BGP_AS_SEGMENT_SEQUENCE,
+                2,
+                0xfd,
+                0xe8,
+                0xfd,
+                0xe9,
+            ]
+        );
+        assert_eq!(attr.summary(), "AS_PATH=65000 65001");
+
+        let (decoded, consumed) = decode_attribute(&encoded).expect("attribute decodes");
+        assert_eq!(consumed, encoded.len());
+        assert_eq!(
+            decoded,
+            BgpPathAttribute {
+                flags: Field::user(ATTR_AS_PATH_FLAGS),
+                type_code: ATTR_AS_PATH,
+                value: BgpAttrValue::AsPath {
+                    four_octet: false,
+                    segments: vec![AsPathSegment {
+                        kind: BGP_AS_SEGMENT_SEQUENCE,
+                        asns: vec![65000, 65001],
+                    }],
+                },
+            }
+        );
 
         let mut reencoded = Vec::new();
         decoded.encode(&mut reencoded);
