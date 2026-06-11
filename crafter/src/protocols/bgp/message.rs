@@ -8,7 +8,7 @@ use super::capability::{
     decode_capabilities, encode_capabilities, BgpCapability, BgpOptParam,
     BGP_OPT_PARAM_CAPABILITIES,
 };
-use super::constants::{BGP_HEADER_LEN, BGP_MARKER_LEN, BGP_VERSION};
+use super::constants::{self, BGP_HEADER_LEN, BGP_MARKER_LEN, BGP_VERSION};
 
 /// The shared 19-octet BGP message header (RFC 4271 §4.1).
 ///
@@ -224,6 +224,179 @@ impl BgpOpen {
     }
 }
 
+#[allow(dead_code)]
+pub(crate) fn notification_name(code: u8, subcode: u8) -> String {
+    let Some(code_name) = notification_code_name(code) else {
+        return unknown_notification_name(code, subcode);
+    };
+    let Some(subcode_name) = notification_subcode_name(code, subcode) else {
+        return unknown_notification_name(code, subcode);
+    };
+
+    format!("{code_name}/{subcode_name}")
+}
+
+fn unknown_notification_name(code: u8, subcode: u8) -> String {
+    format!("code-{code}/subcode-{subcode}")
+}
+
+fn notification_code_name(code: u8) -> Option<&'static str> {
+    const CODES: &[(u8, &str)] = &[
+        (constants::NOTIFY_MESSAGE_HEADER_ERROR, "MessageHeaderError"),
+        (constants::NOTIFY_OPEN_MESSAGE_ERROR, "OpenMessageError"),
+        (constants::NOTIFY_UPDATE_MESSAGE_ERROR, "UpdateMessageError"),
+        (constants::NOTIFY_HOLD_TIMER_EXPIRED, "HoldTimerExpired"),
+        (constants::NOTIFY_FSM_ERROR, "FSMError"),
+        (constants::NOTIFY_CEASE, "Cease"),
+        (
+            constants::NOTIFY_ROUTE_REFRESH_MESSAGE_ERROR,
+            "RouteRefreshMessageError",
+        ),
+        (
+            constants::NOTIFY_SEND_HOLD_TIMER_EXPIRED,
+            "SendHoldTimerExpired",
+        ),
+        (constants::NOTIFY_LOSS_OF_LSDB_SYNC, "LossOfLSDBSync"),
+    ];
+
+    lookup_name(CODES, code)
+}
+
+fn notification_subcode_name(code: u8, subcode: u8) -> Option<&'static str> {
+    const MESSAGE_HEADER_ERROR_SUBCODES: &[(u8, &str)] = &[
+        (
+            constants::MSG_HEADER_ERR_CONNECTION_NOT_SYNCHRONIZED,
+            "ConnectionNotSynchronized",
+        ),
+        (
+            constants::MSG_HEADER_ERR_BAD_MESSAGE_LENGTH,
+            "BadMessageLength",
+        ),
+        (constants::MSG_HEADER_ERR_BAD_MESSAGE_TYPE, "BadMessageType"),
+    ];
+    const OPEN_MESSAGE_ERROR_SUBCODES: &[(u8, &str)] = &[
+        (
+            constants::OPEN_ERR_UNSUPPORTED_VERSION_NUMBER,
+            "UnsupportedVersionNumber",
+        ),
+        (constants::OPEN_ERR_BAD_PEER_AS, "BadPeerAS"),
+        (constants::OPEN_ERR_BAD_BGP_IDENTIFIER, "BadBgpIdentifier"),
+        (
+            constants::OPEN_ERR_UNSUPPORTED_OPTIONAL_PARAMETER,
+            "UnsupportedOptionalParameter",
+        ),
+        (
+            constants::OPEN_ERR_UNACCEPTABLE_HOLD_TIME,
+            "UnacceptableHoldTime",
+        ),
+        (
+            constants::OPEN_ERR_UNSUPPORTED_CAPABILITY,
+            "UnsupportedCapability",
+        ),
+        (constants::OPEN_ERR_ROLE_MISMATCH, "RoleMismatch"),
+    ];
+    const UPDATE_MESSAGE_ERROR_SUBCODES: &[(u8, &str)] = &[
+        (
+            constants::UPDATE_ERR_MALFORMED_ATTRIBUTE_LIST,
+            "MalformedAttributeList",
+        ),
+        (
+            constants::UPDATE_ERR_UNRECOGNIZED_WELL_KNOWN_ATTRIBUTE,
+            "UnrecognizedWellKnownAttribute",
+        ),
+        (
+            constants::UPDATE_ERR_MISSING_WELL_KNOWN_ATTRIBUTE,
+            "MissingWellKnownAttribute",
+        ),
+        (
+            constants::UPDATE_ERR_ATTRIBUTE_FLAGS_ERROR,
+            "AttributeFlagsError",
+        ),
+        (
+            constants::UPDATE_ERR_ATTRIBUTE_LENGTH_ERROR,
+            "AttributeLengthError",
+        ),
+        (
+            constants::UPDATE_ERR_INVALID_ORIGIN_ATTRIBUTE,
+            "InvalidOriginAttribute",
+        ),
+        (
+            constants::UPDATE_ERR_INVALID_NEXT_HOP_ATTRIBUTE,
+            "InvalidNextHopAttribute",
+        ),
+        (
+            constants::UPDATE_ERR_OPTIONAL_ATTRIBUTE_ERROR,
+            "OptionalAttributeError",
+        ),
+        (
+            constants::UPDATE_ERR_INVALID_NETWORK_FIELD,
+            "InvalidNetworkField",
+        ),
+        (constants::UPDATE_ERR_MALFORMED_AS_PATH, "MalformedAsPath"),
+    ];
+    const FSM_ERROR_SUBCODES: &[(u8, &str)] = &[
+        (constants::FSM_ERR_UNSPECIFIED, "Unspecified"),
+        (
+            constants::FSM_ERR_UNEXPECTED_MESSAGE_IN_OPENSENT,
+            "UnexpectedMessageInOpenSent",
+        ),
+        (
+            constants::FSM_ERR_UNEXPECTED_MESSAGE_IN_OPENCONFIRM,
+            "UnexpectedMessageInOpenConfirm",
+        ),
+        (
+            constants::FSM_ERR_UNEXPECTED_MESSAGE_IN_ESTABLISHED,
+            "UnexpectedMessageInEstablished",
+        ),
+    ];
+    const CEASE_SUBCODES: &[(u8, &str)] = &[
+        (
+            constants::CEASE_MAX_PREFIXES_REACHED,
+            "MaximumPrefixesReached",
+        ),
+        (
+            constants::CEASE_ADMINISTRATIVE_SHUTDOWN,
+            "AdministrativeShutdown",
+        ),
+        (constants::CEASE_PEER_DECONFIGURED, "PeerDeconfigured"),
+        (constants::CEASE_ADMINISTRATIVE_RESET, "AdministrativeReset"),
+        (constants::CEASE_CONNECTION_REJECTED, "ConnectionRejected"),
+        (
+            constants::CEASE_OTHER_CONFIGURATION_CHANGE,
+            "OtherConfigurationChange",
+        ),
+        (
+            constants::CEASE_CONNECTION_COLLISION_RESOLUTION,
+            "ConnectionCollisionResolution",
+        ),
+        (constants::CEASE_OUT_OF_RESOURCES, "OutOfResources"),
+        (constants::CEASE_HARD_RESET, "HardReset"),
+        (constants::CEASE_BFD_DOWN, "BfdDown"),
+    ];
+    const ROUTE_REFRESH_ERROR_SUBCODES: &[(u8, &str)] = &[(
+        constants::ROUTE_REFRESH_ERR_INVALID_MESSAGE_LENGTH,
+        "InvalidMessageLength",
+    )];
+
+    let subcodes = match code {
+        constants::NOTIFY_MESSAGE_HEADER_ERROR => MESSAGE_HEADER_ERROR_SUBCODES,
+        constants::NOTIFY_OPEN_MESSAGE_ERROR => OPEN_MESSAGE_ERROR_SUBCODES,
+        constants::NOTIFY_UPDATE_MESSAGE_ERROR => UPDATE_MESSAGE_ERROR_SUBCODES,
+        constants::NOTIFY_FSM_ERROR => FSM_ERROR_SUBCODES,
+        constants::NOTIFY_CEASE => CEASE_SUBCODES,
+        constants::NOTIFY_ROUTE_REFRESH_MESSAGE_ERROR => ROUTE_REFRESH_ERROR_SUBCODES,
+        _ => return None,
+    };
+
+    lookup_name(subcodes, subcode)
+}
+
+fn lookup_name(table: &[(u8, &'static str)], value: u8) -> Option<&'static str> {
+    table
+        .iter()
+        .find_map(|(code, name)| (*code == value).then_some(*name))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -293,5 +466,24 @@ mod tests {
         // User-set length ignores body size.
         assert_eq!(header.effective_length(1000), 23);
         assert_eq!(header.effective_type(), 2);
+    }
+
+    #[test]
+    fn notification_name_maps_known_pair() {
+        assert_eq!(
+            notification_name(
+                constants::NOTIFY_CEASE,
+                constants::CEASE_ADMINISTRATIVE_SHUTDOWN
+            ),
+            "Cease/AdministrativeShutdown"
+        );
+    }
+
+    #[test]
+    fn notification_name_preserves_unknown_pair_as_codes() {
+        assert_eq!(
+            notification_name(constants::NOTIFY_CEASE, 200),
+            "code-6/subcode-200"
+        );
     }
 }
