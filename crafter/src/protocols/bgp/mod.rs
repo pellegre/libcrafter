@@ -78,7 +78,7 @@ impl BgpBody {
     /// Append this body's bytes to `out` (none for KEEPALIVE).
     fn write_body(&self, out: &mut Vec<u8>) {
         match self {
-            BgpBody::Open(_) => {}
+            BgpBody::Open(open) => open.write_body(out),
             BgpBody::Keepalive => {}
             BgpBody::Unknown { body, .. } => out.extend_from_slice(body),
         }
@@ -154,6 +154,17 @@ impl Bgp {
     pub fn bgp_id(mut self, bgp_id: impl Into<std::net::Ipv4Addr>) -> Self {
         if let BgpBody::Open(open) = &mut self.body {
             open.bgp_id.set_user(bgp_id.into());
+        }
+        self
+    }
+
+    /// Force the OPEN optional-parameters length field.
+    ///
+    /// This preserves malformed-on-purpose OPEN messages whose declared
+    /// optional-parameters length differs from the emitted parameter bytes.
+    pub fn opt_params_len(mut self, opt_params_len: u8) -> Self {
+        if let BgpBody::Open(open) = &mut self.body {
+            open.opt_params_len.set_user(opt_params_len);
         }
         self
     }
@@ -303,6 +314,7 @@ mod tests {
                     Some(&std::net::Ipv4Addr::new(192, 0, 2, 1))
                 );
                 assert!(open.bgp_id.is_user_set());
+                assert_eq!(open.opt_params_len.value(), None);
                 assert!(open.opt_params.is_empty());
                 assert_eq!(open.body_len(), 10);
             }
@@ -355,5 +367,41 @@ mod tests {
             &(BGP_HEADER_LEN as u16).to_be_bytes()
         );
         assert_eq!(bytes[BGP_MARKER_LEN + 2], BGP_TYPE_KEEPALIVE);
+    }
+
+    #[test]
+    fn minimal_open_compiles_with_auto_lengths() {
+        let packet = Packet::from_layer(
+            Bgp::open()
+                .version(4)
+                .my_as(65000)
+                .hold_time(180)
+                .bgp_id([192, 0, 2, 1]),
+        );
+        let bytes = packet.compile().unwrap();
+
+        assert_eq!(bytes.len(), 29);
+        assert_eq!(&bytes[..BGP_MARKER_LEN], &[0xFF; BGP_MARKER_LEN]);
+        assert_eq!(&bytes[BGP_MARKER_LEN..BGP_MARKER_LEN + 2], &[0x00, 0x1d]);
+        assert_eq!(bytes[BGP_MARKER_LEN + 2], BGP_TYPE_OPEN);
+        assert_eq!(
+            &bytes[BGP_HEADER_LEN..],
+            &[4, 0xfd, 0xe8, 0x00, 0xb4, 192, 0, 2, 1, 0]
+        );
+        assert_eq!(bytes[BGP_HEADER_LEN + 9], 0);
+    }
+
+    #[test]
+    fn open_optional_parameters_length_override_is_preserved() {
+        let packet = Packet::from_layer(
+            Bgp::open()
+                .my_as(65000)
+                .hold_time(180)
+                .bgp_id([192, 0, 2, 1])
+                .opt_params_len(7),
+        );
+        let bytes = packet.compile().unwrap();
+
+        assert_eq!(bytes[BGP_HEADER_LEN + 9], 7);
     }
 }
