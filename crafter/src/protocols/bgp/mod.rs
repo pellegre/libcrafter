@@ -14,7 +14,7 @@ pub mod decode;
 pub mod message;
 
 // Re-export the populated BGP codepoint constants at the module root.
-pub use capability::{BgpOptParam, BGP_OPT_PARAM_CAPABILITIES};
+pub use capability::{BgpCapability, BgpOptParam, BGP_OPT_PARAM_CAPABILITIES};
 pub use constants::*;
 pub use message::BgpOpen;
 
@@ -182,6 +182,14 @@ impl Bgp {
     pub fn raw_param(mut self, param_type: u8, value: Vec<u8>) -> Self {
         if let BgpBody::Open(open) = &mut self.body {
             open.raw_param(param_type, value);
+        }
+        self
+    }
+
+    /// Append one OPEN capabilities optional parameter.
+    pub fn capabilities(mut self, capabilities: impl IntoIterator<Item = BgpCapability>) -> Self {
+        if let BgpBody::Open(open) = &mut self.body {
+            open.capabilities(capabilities);
         }
         self
     }

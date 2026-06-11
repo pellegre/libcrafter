@@ -4,7 +4,7 @@ use std::net::Ipv4Addr;
 
 use crate::field::Field;
 
-use super::capability::BgpOptParam;
+use super::capability::{encode_capabilities, BgpCapability, BgpOptParam};
 use super::constants::{BGP_HEADER_LEN, BGP_MARKER_LEN, BGP_VERSION};
 
 /// The shared 19-octet BGP message header (RFC 4271 §4.1).
@@ -143,6 +143,14 @@ impl BgpOpen {
     /// Append an optional parameter with a raw type code and value.
     pub fn raw_param(&mut self, param_type: u8, value: Vec<u8>) {
         self.push_param(BgpOptParam::raw(param_type, value));
+    }
+
+    /// Append one RFC 5492 capabilities optional parameter.
+    pub fn capabilities(&mut self, capabilities: impl IntoIterator<Item = BgpCapability>) {
+        let capabilities = capabilities.into_iter().collect::<Vec<_>>();
+        self.push_param(BgpOptParam::capabilities(encode_capabilities(
+            &capabilities,
+        )));
     }
 
     /// Encoded length of all optional parameters.
