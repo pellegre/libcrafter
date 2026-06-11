@@ -314,9 +314,10 @@ impl Layer for Bgp {
                 let code = notification.error_code.value().copied().unwrap_or(0);
                 let subcode = notification.error_subcode.value().copied().unwrap_or(0);
                 format!(
-                    "BGP {} {} len={len}",
+                    "BGP {} {} data={} bytes",
                     message_type_name(BGP_TYPE_NOTIFICATION),
-                    notification_name(code, subcode)
+                    notification_name(code, subcode),
+                    notification.data.len()
                 )
             }
             BgpBody::Unknown { type_code, .. } => {
@@ -379,6 +380,7 @@ impl Layer for Bgp {
             let subcode = notification.error_subcode.value().copied().unwrap_or(0);
             fields.push(("error_code", code.to_string()));
             fields.push(("error_subcode", subcode.to_string()));
+            fields.push(("data_length", notification.data.len().to_string()));
             fields.push(("error", notification_name(code, subcode)));
         }
 
