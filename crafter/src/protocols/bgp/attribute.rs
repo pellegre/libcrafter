@@ -2,9 +2,157 @@
 
 use std::net::{Ipv4Addr, Ipv6Addr};
 
+use crate::field::Field;
 use crate::{CrafterError, Result};
 
+use super::constants::{
+    ATTR_AGGREGATOR, ATTR_AGGREGATOR_FLAGS, ATTR_AS4_AGGREGATOR, ATTR_AS4_AGGREGATOR_FLAGS,
+    ATTR_AS4_PATH, ATTR_AS4_PATH_FLAGS, ATTR_AS_PATH, ATTR_AS_PATH_FLAGS, ATTR_ATOMIC_AGGREGATE,
+    ATTR_ATOMIC_AGGREGATE_FLAGS, ATTR_COMMUNITIES, ATTR_COMMUNITIES_FLAGS,
+    ATTR_EXTENDED_COMMUNITIES, ATTR_EXTENDED_COMMUNITIES_FLAGS, ATTR_LARGE_COMMUNITY,
+    ATTR_LARGE_COMMUNITY_FLAGS, ATTR_LOCAL_PREF, ATTR_LOCAL_PREF_FLAGS, ATTR_MP_REACH_NLRI,
+    ATTR_MP_REACH_NLRI_FLAGS, ATTR_MP_UNREACH_NLRI, ATTR_MP_UNREACH_NLRI_FLAGS,
+    ATTR_MULTI_EXIT_DISC, ATTR_MULTI_EXIT_DISC_FLAGS, ATTR_NEXT_HOP, ATTR_NEXT_HOP_FLAGS,
+    ATTR_ORIGIN, ATTR_ORIGIN_FLAGS, BGP_ATTR_FLAG_EXTENDED_LENGTH, BGP_ATTR_FLAG_OPTIONAL,
+};
 use super::decode::take;
+
+/// BGP path-attribute value bytes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BgpAttrValue {
+    /// A value whose type-specific structure is not modeled yet.
+    Unknown(Vec<u8>),
+}
+
+impl BgpAttrValue {
+    /// Encoded attribute value length, in octets.
+    pub fn encoded_len(&self) -> usize {
+        match self {
+            Self::Unknown(value) => value.len(),
+        }
+    }
+
+    /// Append the raw attribute value bytes to `out`.
+    pub fn encode(&self, out: &mut Vec<u8>) {
+        match self {
+            Self::Unknown(value) => out.extend_from_slice(value),
+        }
+    }
+}
+
+/// Generic BGP path attribute frame (RFC 4271 §4.3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BgpPathAttribute {
+    /// Attribute Flags octet.
+    pub flags: Field<u8>,
+    /// Attribute Type Code.
+    pub type_code: u8,
+    /// Attribute Value.
+    pub value: BgpAttrValue,
+}
+
+impl BgpPathAttribute {
+    /// Build a raw path attribute with canonical flags inferred from type code.
+    pub fn unknown(type_code: u8, value: impl Into<Vec<u8>>) -> Self {
+        Self {
+            flags: Field::unset(),
+            type_code,
+            value: BgpAttrValue::Unknown(value.into()),
+        }
+    }
+
+    /// Force a specific Attribute Flags octet.
+    pub fn with_flags(mut self, flags: u8) -> Self {
+        self.flags.set_user(flags);
+        self
+    }
+
+    /// Encoded path-attribute length, including flags, type, length, and value.
+    pub fn encoded_len(&self) -> usize {
+        let flags = self.effective_flags();
+        let length_len = if flags & BGP_ATTR_FLAG_EXTENDED_LENGTH != 0 {
+            2
+        } else {
+            1
+        };
+        2 + length_len + self.value.encoded_len()
+    }
+
+    /// Append `Flags | Type Code | Length | Value` to `out`.
+    pub fn encode(&self, out: &mut Vec<u8>) {
+        let flags = self.effective_flags();
+        let value_len = self.value.encoded_len();
+
+        out.push(flags);
+        out.push(self.type_code);
+        if flags & BGP_ATTR_FLAG_EXTENDED_LENGTH != 0 {
+            out.extend_from_slice(&(value_len as u16).to_be_bytes());
+        } else {
+            out.push(value_len as u8);
+        }
+        self.value.encode(out);
+    }
+
+    fn effective_flags(&self) -> u8 {
+        let mut flags = self
+            .flags
+            .value()
+            .copied()
+            .unwrap_or_else(|| well_known_flags(self.type_code));
+        if !self.flags.is_user_set() && self.value.encoded_len() > u8::MAX as usize {
+            flags |= BGP_ATTR_FLAG_EXTENDED_LENGTH;
+        }
+        flags
+    }
+}
+
+/// Canonical default flags for known BGP path-attribute type codes.
+pub fn well_known_flags(type_code: u8) -> u8 {
+    match type_code {
+        ATTR_ORIGIN => ATTR_ORIGIN_FLAGS,
+        ATTR_AS_PATH => ATTR_AS_PATH_FLAGS,
+        ATTR_NEXT_HOP => ATTR_NEXT_HOP_FLAGS,
+        ATTR_MULTI_EXIT_DISC => ATTR_MULTI_EXIT_DISC_FLAGS,
+        ATTR_LOCAL_PREF => ATTR_LOCAL_PREF_FLAGS,
+        ATTR_ATOMIC_AGGREGATE => ATTR_ATOMIC_AGGREGATE_FLAGS,
+        ATTR_AGGREGATOR => ATTR_AGGREGATOR_FLAGS,
+        ATTR_COMMUNITIES => ATTR_COMMUNITIES_FLAGS,
+        ATTR_MP_REACH_NLRI => ATTR_MP_REACH_NLRI_FLAGS,
+        ATTR_MP_UNREACH_NLRI => ATTR_MP_UNREACH_NLRI_FLAGS,
+        ATTR_EXTENDED_COMMUNITIES => ATTR_EXTENDED_COMMUNITIES_FLAGS,
+        ATTR_AS4_PATH => ATTR_AS4_PATH_FLAGS,
+        ATTR_AS4_AGGREGATOR => ATTR_AS4_AGGREGATOR_FLAGS,
+        ATTR_LARGE_COMMUNITY => ATTR_LARGE_COMMUNITY_FLAGS,
+        _ => BGP_ATTR_FLAG_OPTIONAL,
+    }
+}
+
+/// Decode one RFC 4271 path attribute from the front of `buf`.
+pub fn decode_attribute(buf: &[u8]) -> Result<(BgpPathAttribute, usize)> {
+    let (flags, rest) = take(buf, 1, "bgp path attribute flags")?;
+    let (type_code, rest) = take(rest, 1, "bgp path attribute type")?;
+    let flags = flags[0];
+    let type_code = type_code[0];
+
+    let extended = flags & BGP_ATTR_FLAG_EXTENDED_LENGTH != 0;
+    let (length, rest, length_len) = if extended {
+        let (length, rest) = take(rest, 2, "bgp path attribute length")?;
+        (u16::from_be_bytes([length[0], length[1]]) as usize, rest, 2)
+    } else {
+        let (length, rest) = take(rest, 1, "bgp path attribute length")?;
+        (length[0] as usize, rest, 1)
+    };
+    let (value, _) = take(rest, length, "bgp path attribute value")?;
+
+    Ok((
+        BgpPathAttribute {
+            flags: Field::user(flags),
+            type_code,
+            value: BgpAttrValue::Unknown(value.to_vec()),
+        },
+        2 + length_len + length,
+    ))
+}
 
 /// A BGP network-layer reachability prefix.
 ///
@@ -153,5 +301,72 @@ mod tests {
 
         assert_eq!(prefix.length, 128);
         assert_eq!(prefix.prefix.len(), 16);
+    }
+
+    #[test]
+    fn short_path_attribute_uses_one_octet_length_and_round_trips() {
+        let attr = BgpPathAttribute::unknown(ATTR_ORIGIN, vec![0]);
+        let mut encoded = Vec::new();
+        attr.encode(&mut encoded);
+
+        assert_eq!(encoded, [ATTR_ORIGIN_FLAGS, ATTR_ORIGIN, 1, 0]);
+
+        let (decoded, consumed) = decode_attribute(&encoded).expect("attribute decodes");
+        assert_eq!(consumed, encoded.len());
+        assert_eq!(
+            decoded,
+            BgpPathAttribute {
+                flags: Field::user(ATTR_ORIGIN_FLAGS),
+                type_code: ATTR_ORIGIN,
+                value: BgpAttrValue::Unknown(vec![0]),
+            }
+        );
+
+        let mut reencoded = Vec::new();
+        decoded.encode(&mut reencoded);
+        assert_eq!(reencoded, encoded);
+    }
+
+    #[test]
+    fn long_path_attribute_auto_uses_extended_length_and_round_trips() {
+        let value = (0..300).map(|n| n as u8).collect::<Vec<_>>();
+        let attr = BgpPathAttribute::unknown(ATTR_COMMUNITIES, value.clone());
+        let mut encoded = Vec::new();
+        attr.encode(&mut encoded);
+
+        assert_eq!(
+            encoded[0],
+            ATTR_COMMUNITIES_FLAGS | BGP_ATTR_FLAG_EXTENDED_LENGTH
+        );
+        assert_eq!(encoded[1], ATTR_COMMUNITIES);
+        assert_eq!(&encoded[2..4], &(300u16).to_be_bytes());
+        assert_eq!(&encoded[4..], value.as_slice());
+
+        let (decoded, consumed) = decode_attribute(&encoded).expect("attribute decodes");
+        assert_eq!(consumed, encoded.len());
+        assert_eq!(
+            decoded.flags.value(),
+            Some(&(ATTR_COMMUNITIES_FLAGS | BGP_ATTR_FLAG_EXTENDED_LENGTH))
+        );
+        assert_eq!(decoded.type_code, ATTR_COMMUNITIES);
+        assert_eq!(decoded.value, BgpAttrValue::Unknown(value));
+
+        let mut reencoded = Vec::new();
+        decoded.encode(&mut reencoded);
+        assert_eq!(reencoded, encoded);
+    }
+
+    #[test]
+    fn caller_fixed_flags_are_not_extended_automatically() {
+        let value = vec![0xaa; 300];
+        let attr = BgpPathAttribute::unknown(ATTR_COMMUNITIES, value.clone())
+            .with_flags(ATTR_COMMUNITIES_FLAGS);
+        let mut encoded = Vec::new();
+        attr.encode(&mut encoded);
+
+        assert_eq!(encoded[0], ATTR_COMMUNITIES_FLAGS);
+        assert_eq!(encoded[1], ATTR_COMMUNITIES);
+        assert_eq!(encoded[2], value.len() as u8);
+        assert_eq!(&encoded[3..], value.as_slice());
     }
 }
