@@ -1,8 +1,10 @@
 //! BGP-4 (RFC 4271) message layers.
 
+use std::net::Ipv4Addr;
+
 use crate::field::Field;
 
-use super::constants::{BGP_HEADER_LEN, BGP_MARKER_LEN};
+use super::constants::{BGP_HEADER_LEN, BGP_MARKER_LEN, BGP_VERSION};
 
 /// The shared 19-octet BGP message header (RFC 4271 §4.1).
 ///
@@ -95,6 +97,40 @@ impl BgpHeader {
         out.extend_from_slice(&self.effective_marker());
         out.extend_from_slice(&self.effective_length(body_len).to_be_bytes());
         out.push(self.effective_type());
+    }
+}
+
+/// BGP OPEN message body (RFC 4271 §4.2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BgpOpen {
+    /// Protocol version. Defaults to BGP-4.
+    pub(crate) version: Field<u8>,
+    /// Peer's 2-octet AS number.
+    pub(crate) my_as: Field<u16>,
+    /// Hold time in seconds.
+    pub(crate) hold_time: Field<u16>,
+    /// BGP identifier carried as an IPv4 address.
+    pub(crate) bgp_id: Field<Ipv4Addr>,
+    /// Raw optional parameters. Capabilities are typed in later steps.
+    pub(crate) opt_params: Vec<u8>,
+}
+
+impl BgpOpen {
+    /// Create an OPEN body with BGP-4 as the default version and no optional
+    /// parameters.
+    pub(crate) fn new() -> Self {
+        Self {
+            version: Field::defaulted(BGP_VERSION),
+            my_as: Field::unset(),
+            hold_time: Field::unset(),
+            bgp_id: Field::unset(),
+            opt_params: Vec::new(),
+        }
+    }
+
+    /// The on-wire OPEN body length, excluding the shared BGP header.
+    pub(crate) fn body_len(&self) -> usize {
+        10 + self.opt_params.len()
     }
 }
 
