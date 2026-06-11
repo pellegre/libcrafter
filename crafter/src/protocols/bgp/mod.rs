@@ -11,9 +11,7 @@ pub mod capability;
 pub mod decode;
 pub mod message;
 
-// `constants` is empty until later steps populate it; allow the glob re-export
-// now so the scaffold compiles warning-free.
-#[allow(unused_imports)]
+// Re-export the populated BGP codepoint constants at the module root.
 pub use constants::*;
 
 // Minimal compiling stubs so the public type names resolve through
