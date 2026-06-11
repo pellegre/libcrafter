@@ -2,7 +2,10 @@
 
 use crate::{CrafterError, Result};
 
-use super::constants::{AFI_IPV4, AFI_IPV6, CAP_MULTIPROTOCOL, SAFI_UNICAST};
+use super::constants::{
+    AFI_IPV4, AFI_IPV6, CAP_ADD_PATH, CAP_FOUR_OCTET_AS, CAP_GRACEFUL_RESTART,
+    CAP_MULTIPROTOCOL, CAP_ROUTE_REFRESH, SAFI_UNICAST,
+};
 use super::decode::take;
 
 /// OPEN optional-parameter type for RFC 5492 capabilities.
@@ -10,6 +13,9 @@ pub const BGP_OPT_PARAM_CAPABILITIES: u8 = 2;
 
 /// RFC 4760 Multiprotocol capability value length.
 pub const BGP_CAP_MULTIPROTOCOL_VALUE_LEN: usize = 4;
+
+/// RFC 6793 Four-octet AS Number capability value length.
+pub const BGP_CAP_FOUR_OCTET_AS_VALUE_LEN: usize = 4;
 
 /// IPv4 unicast AFI/SAFI pair for the MP-BGP capability.
 pub const BGP_MP_IPV4_UNICAST: (u16, u8) = (AFI_IPV4, SAFI_UNICAST);
@@ -54,6 +60,39 @@ impl BgpCapability {
         Self::multiprotocol(AFI_IPV6, SAFI_UNICAST)
     }
 
+    /// Create the RFC 2918 Route Refresh capability.
+    pub fn route_refresh() -> Self {
+        Self::raw(CAP_ROUTE_REFRESH, Vec::new())
+    }
+
+    /// Create the RFC 6793 Four-octet AS Number capability.
+    pub fn four_octet_as(asn: u32) -> Self {
+        Self::raw(CAP_FOUR_OCTET_AS, asn.to_be_bytes())
+    }
+
+    /// Create the RFC 4724 Graceful Restart capability.
+    pub fn graceful_restart(flags_time: u16, tuples: &[(u16, u8, u8)]) -> Self {
+        let mut value = Vec::with_capacity(2 + tuples.len() * 4);
+        value.extend_from_slice(&flags_time.to_be_bytes());
+        for &(afi, safi, flags) in tuples {
+            value.extend_from_slice(&afi.to_be_bytes());
+            value.push(safi);
+            value.push(flags);
+        }
+        Self::raw(CAP_GRACEFUL_RESTART, value)
+    }
+
+    /// Create the RFC 7911 ADD-PATH capability.
+    pub fn add_path(entries: &[(u16, u8, u8)]) -> Self {
+        let mut value = Vec::with_capacity(entries.len() * 4);
+        for &(afi, safi, send_receive) in entries {
+            value.extend_from_slice(&afi.to_be_bytes());
+            value.push(safi);
+            value.push(send_receive);
+        }
+        Self::raw(CAP_ADD_PATH, value)
+    }
+
     /// Parse this RFC 4760 Multiprotocol capability into its AFI/SAFI pair.
     pub fn multiprotocol_afi_safi(&self) -> Result<(u16, u8)> {
         if self.code != CAP_MULTIPROTOCOL {
@@ -78,6 +117,30 @@ impl BgpCapability {
         let afi = u16::from_be_bytes([value[0], value[1]]);
         let safi = value[3];
         Ok((afi, safi))
+    }
+
+    /// Parse this RFC 6793 Four-octet AS Number capability into its AS value.
+    pub fn four_octet_asn(&self) -> Result<u32> {
+        if self.code != CAP_FOUR_OCTET_AS {
+            return Err(CrafterError::invalid_field_value(
+                "bgp.capability.code",
+                "not a four-octet AS capability",
+            ));
+        }
+
+        let (value, rest) = take(
+            &self.value,
+            BGP_CAP_FOUR_OCTET_AS_VALUE_LEN,
+            "bgp four-octet AS capability value",
+        )?;
+        if !rest.is_empty() {
+            return Err(CrafterError::invalid_field_value(
+                "bgp.capability.four_octet_as.length",
+                "expected 4 octets",
+            ));
+        }
+
+        Ok(u32::from_be_bytes([value[0], value[1], value[2], value[3]]))
     }
 
     /// Append `Code | Length | Value` to `out`.
@@ -218,6 +281,22 @@ mod tests {
         assert_eq!(
             BgpCapability::ipv6_unicast().multiprotocol_afi_safi(),
             Ok(BGP_MP_IPV6_UNICAST)
+        );
+    }
+
+    #[test]
+    fn four_octet_as_capability_encodes_and_parses() {
+        let capability = BgpCapability::four_octet_as(4_200_000_000);
+
+        let mut encoded = Vec::new();
+        capability.encode(&mut encoded);
+
+        assert_eq!(encoded, [65, 4, 0xfa, 0x56, 0xea, 0x00]);
+        assert_eq!(
+            capability
+                .four_octet_asn()
+                .expect("four-octet AS capability parses"),
+            4_200_000_000
         );
     }
 }
