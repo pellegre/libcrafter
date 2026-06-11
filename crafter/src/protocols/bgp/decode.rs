@@ -27,9 +27,10 @@ use crate::error::{CrafterError, Result};
 
 use super::capability::{decode_capabilities, BgpOptParam, BGP_OPT_PARAM_CAPABILITIES};
 use super::constants::{
-    BGP_HEADER_LEN, BGP_MARKER_LEN, BGP_MAX_MESSAGE_LEN, BGP_TYPE_KEEPALIVE, BGP_TYPE_OPEN,
+    BGP_HEADER_LEN, BGP_MARKER_LEN, BGP_MAX_MESSAGE_LEN, BGP_TYPE_KEEPALIVE, BGP_TYPE_NOTIFICATION,
+    BGP_TYPE_OPEN,
 };
-use super::message::BgpOpen;
+use super::message::{BgpNotification, BgpOpen};
 use super::{Bgp, BgpBody};
 
 /// Build the structured truncation error BGP decode uses for a short buffer.
@@ -119,6 +120,7 @@ pub fn decode_bgp_message(bytes: &[u8]) -> Result<(Bgp, usize)> {
     let body_bytes = &bytes[BGP_HEADER_LEN..length_usize];
     let body = match message_type {
         BGP_TYPE_OPEN => BgpBody::Open(decode_open_body(body_bytes)?),
+        BGP_TYPE_NOTIFICATION => BgpBody::Notification(decode_notification_body(body_bytes)?),
         BGP_TYPE_KEEPALIVE => BgpBody::Keepalive,
         // Other message types are preserved verbatim for now; later steps
         // replace this with the typed OPEN/UPDATE/NOTIFICATION bodies.
@@ -130,6 +132,22 @@ pub fn decode_bgp_message(bytes: &[u8]) -> Result<(Bgp, usize)> {
 
     let bgp = Bgp::from_decoded_parts(marker, length, message_type, body);
     Ok((bgp, length_usize))
+}
+
+fn decode_notification_body(body_bytes: &[u8]) -> Result<BgpNotification> {
+    if body_bytes.len() < 2 {
+        return Err(CrafterError::invalid_field_value(
+            "bgp.notification.length",
+            "NOTIFICATION message Length is below the 21-octet minimum",
+        ));
+    }
+
+    let (error_code, rest) = take(body_bytes, 1, "bgp notification error_code")?;
+    let (error_subcode, data) = take(rest, 1, "bgp notification error_subcode")?;
+
+    let mut notification = BgpNotification::new(error_code[0], error_subcode[0]);
+    notification.data = data.to_vec();
+    Ok(notification)
 }
 
 fn decode_open_body(body_bytes: &[u8]) -> Result<BgpOpen> {
@@ -300,6 +318,40 @@ mod tests {
             }
             other => panic!("expected OPEN body, got {other:?}"),
         }
+
+        let recompiled = Packet::from_layer(bgp)
+            .compile()
+            .expect("recompile succeeds");
+        assert_eq!(recompiled, bytes);
+    }
+
+    #[test]
+    fn decode_notification_preserves_data_and_summary() {
+        let bytes = Packet::from_layer(Bgp::cease().data(vec![0xde, 0xad, 0xbe]))
+            .compile()
+            .expect("NOTIFICATION compiles");
+
+        let (bgp, consumed) = decode_bgp_message(&bytes).expect("NOTIFICATION decodes");
+        assert_eq!(consumed, bytes.len());
+
+        match &bgp.body {
+            BgpBody::Notification(notification) => {
+                assert_eq!(notification.error_code.value(), Some(&6));
+                assert_eq!(notification.error_subcode.value(), Some(&0));
+                assert_eq!(notification.data, vec![0xde, 0xad, 0xbe]);
+            }
+            other => panic!("expected NOTIFICATION body, got {other:?}"),
+        }
+
+        let summary = bgp.summary();
+        assert!(
+            summary.contains("NOTIFICATION"),
+            "summary should name NOTIFICATION, got: {summary}"
+        );
+        assert!(
+            summary.contains("data=3 bytes"),
+            "summary should report data length, got: {summary}"
+        );
 
         let recompiled = Packet::from_layer(bgp)
             .compile()
