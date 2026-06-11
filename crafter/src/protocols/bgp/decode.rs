@@ -23,9 +23,7 @@
 
 use crate::error::{CrafterError, Result};
 
-use super::constants::{
-    BGP_HEADER_LEN, BGP_MARKER_LEN, BGP_MAX_MESSAGE_LEN, BGP_TYPE_KEEPALIVE,
-};
+use super::constants::{BGP_HEADER_LEN, BGP_MARKER_LEN, BGP_MAX_MESSAGE_LEN, BGP_TYPE_KEEPALIVE};
 use super::{Bgp, BgpBody};
 
 /// Build the structured truncation error BGP decode uses for a short buffer.
@@ -47,7 +45,11 @@ fn need(context: &'static str, required: usize, available: usize) -> CrafterErro
 /// this helper so a truncated buffer can only ever yield an `Err`, never an
 /// out-of-bounds panic.
 #[allow(dead_code)]
-fn take<'a>(buf: &'a [u8], n: usize, context: &'static str) -> Result<(&'a [u8], &'a [u8])> {
+pub(crate) fn take<'a>(
+    buf: &'a [u8],
+    n: usize,
+    context: &'static str,
+) -> Result<(&'a [u8], &'a [u8])> {
     if buf.len() < n {
         return Err(need(context, n, buf.len()));
     }
