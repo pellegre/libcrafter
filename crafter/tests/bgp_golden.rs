@@ -99,3 +99,28 @@ fn bgp_golden_open() {
     assert_eq!(bytes.as_bytes(), hex(GOLDEN_OPEN).as_slice());
     assert_roundtrip(bytes.as_bytes());
 }
+
+// ---------------------------------------------------------------------------
+// NOTIFICATION (RFC 4271 §4.5): Cease with subcode 0 and no diagnostic data.
+// The body is exactly the error code/subcode pair, so the Length is 21.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn bgp_golden_notification() {
+    let bytes = Packet::from_layer(Bgp::cease()).compile().expect("compile");
+    maybe_dump("NOTIFICATION", bytes.as_bytes());
+    assert_eq!(
+        bytes.as_bytes(),
+        hex("ffffffffffffffffffffffffffffffff0015030600").as_slice()
+    );
+    assert_roundtrip(bytes.as_bytes());
+
+    let with_data = Packet::from_layer(Bgp::cease().data(vec![0xde, 0xad]))
+        .compile()
+        .expect("compile notification with data");
+    assert_eq!(
+        with_data.as_bytes(),
+        hex("ffffffffffffffffffffffffffffffff0017030600dead").as_slice()
+    );
+    assert_roundtrip(with_data.as_bytes());
+}
