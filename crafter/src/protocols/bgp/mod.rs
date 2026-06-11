@@ -1,10 +1,8 @@
 //! Border Gateway Protocol version 4 (BGP-4, RFC 4271) support.
 //!
 //! This module provides packet-layer construction and decoding for BGP-4
-//! messages. Types and constants are added in subsequent steps; for now the
-//! [`Bgp`] layer implements the [`Layer`] trait with KEEPALIVE — the
-//! header-only message (RFC 4271 §4.4) — and the OPEN builder as the first
-//! working bodies.
+//! messages. Types and constants are added incrementally; the [`Bgp`] layer
+//! implements the [`Layer`] trait for the currently modeled BGP message bodies.
 
 mod constants;
 
@@ -16,7 +14,7 @@ pub mod message;
 // Re-export the populated BGP codepoint constants at the module root.
 pub use capability::{BgpCapability, BgpOptParam, BGP_OPT_PARAM_CAPABILITIES};
 pub use constants::*;
-pub use message::{BgpNotification, BgpOpen};
+pub use message::{BgpNotification, BgpOpen, BgpRouteRefresh};
 
 use crate::packet::{Layer, LayerContext};
 use crate::protocols::transport::common::{impl_layer_div, impl_layer_object};
@@ -86,17 +84,17 @@ fn capability_list_summary(capabilities: &[BgpCapability]) -> String {
 ///
 /// KEEPALIVE (RFC 4271 §4.4) is header-only, so its variant carries no fields.
 /// OPEN carries its fixed RFC 4271 §4.2 fields and raw optional parameters for
-/// now; typed capabilities are added in later steps. The remaining message
-/// bodies — UPDATE, NOTIFICATION, ROUTE-REFRESH — are added in later steps. The
-/// [`BgpBody::Unknown`] variant preserves the raw body of a message type the
-/// builder/decoder does not model, keeping the bytes verbatim rather than
-/// discarding them.
+/// capabilities. UPDATE is added in later steps. The [`BgpBody::Unknown`]
+/// variant preserves the raw body of a message type the builder/decoder does
+/// not model, keeping the bytes verbatim rather than discarding them.
 #[derive(Debug, Clone)]
 pub(crate) enum BgpBody {
     /// OPEN message (RFC 4271 §4.2).
     Open(BgpOpen),
     /// NOTIFICATION message (RFC 4271 §4.5).
     Notification(BgpNotification),
+    /// ROUTE-REFRESH message (RFC 2918).
+    RouteRefresh(BgpRouteRefresh),
     /// KEEPALIVE message (RFC 4271 §4.4): the header alone, no body.
     Keepalive,
     /// A message body the layer does not (yet) model, preserved verbatim.
@@ -115,6 +113,7 @@ impl BgpBody {
         match self {
             BgpBody::Open(open) => open.body_len(),
             BgpBody::Notification(notification) => notification.body_len(),
+            BgpBody::RouteRefresh(route_refresh) => route_refresh.body_len(),
             BgpBody::Keepalive => 0,
             BgpBody::Unknown { body, .. } => body.len(),
         }
@@ -125,6 +124,7 @@ impl BgpBody {
         match self {
             BgpBody::Open(open) => open.write_body(out),
             BgpBody::Notification(notification) => notification.write_body(out),
+            BgpBody::RouteRefresh(route_refresh) => route_refresh.write_body(out),
             BgpBody::Keepalive => {}
             BgpBody::Unknown { body, .. } => out.extend_from_slice(body),
         }
@@ -187,6 +187,14 @@ impl Bgp {
     /// Build a Cease NOTIFICATION with no subcode-specific detail.
     pub fn cease() -> Self {
         Self::notification(NOTIFY_CEASE, 0)
+    }
+
+    /// Build a ROUTE-REFRESH message (RFC 2918) for the given AFI/SAFI pair.
+    pub fn route_refresh(afi: u16, safi: u8) -> Self {
+        Self {
+            header: BgpHeader::new(BGP_TYPE_ROUTE_REFRESH),
+            body: BgpBody::RouteRefresh(BgpRouteRefresh::new(afi, safi)),
+        }
     }
 
     /// Set the OPEN version field.
@@ -264,6 +272,14 @@ impl Bgp {
         self
     }
 
+    /// Set the ROUTE-REFRESH reserved byte / RFC 7313 subtype.
+    pub fn subtype(mut self, subtype: u8) -> Self {
+        if let BgpBody::RouteRefresh(route_refresh) = &mut self.body {
+            route_refresh.subtype.set_user(subtype);
+        }
+        self
+    }
+
     /// Build a `Bgp` layer from decoded wire fields.
     ///
     /// The header is reconstructed from the observed marker, length, and type
@@ -320,6 +336,12 @@ impl Layer for Bgp {
                     notification.data.len()
                 )
             }
+            BgpBody::RouteRefresh(route_refresh) => format!(
+                "BGP {} afi={} safi={}",
+                message_type_name(BGP_TYPE_ROUTE_REFRESH),
+                route_refresh.afi.value().copied().unwrap_or(0),
+                route_refresh.safi.value().copied().unwrap_or(0)
+            ),
             BgpBody::Unknown { type_code, .. } => {
                 format!("BGP {} len={len}", message_type_name(*type_code))
             }
@@ -384,6 +406,26 @@ impl Layer for Bgp {
             fields.push(("error", notification_name(code, subcode)));
         }
 
+        if let BgpBody::RouteRefresh(route_refresh) = &self.body {
+            fields.push((
+                "afi",
+                route_refresh.afi.value().copied().unwrap_or(0).to_string(),
+            ));
+            fields.push((
+                "subtype",
+                route_refresh
+                    .subtype
+                    .value()
+                    .copied()
+                    .unwrap_or(0)
+                    .to_string(),
+            ));
+            fields.push((
+                "safi",
+                route_refresh.safi.value().copied().unwrap_or(0).to_string(),
+            ));
+        }
+
         fields
     }
 
@@ -418,10 +460,6 @@ pub struct BgpUpdate;
 /// BGP KEEPALIVE message (RFC 4271 §4.4). Placeholder stub; filled in a later step.
 #[allow(dead_code)]
 pub struct BgpKeepalive;
-
-/// BGP ROUTE-REFRESH message (RFC 2918). Placeholder stub; filled in a later step.
-#[allow(dead_code)]
-pub struct BgpRouteRefresh;
 
 #[cfg(test)]
 mod tests {

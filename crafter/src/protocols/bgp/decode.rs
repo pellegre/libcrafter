@@ -28,9 +28,9 @@ use crate::error::{CrafterError, Result};
 use super::capability::{decode_capabilities, BgpOptParam, BGP_OPT_PARAM_CAPABILITIES};
 use super::constants::{
     BGP_HEADER_LEN, BGP_MARKER_LEN, BGP_MAX_MESSAGE_LEN, BGP_TYPE_KEEPALIVE, BGP_TYPE_NOTIFICATION,
-    BGP_TYPE_OPEN,
+    BGP_TYPE_OPEN, BGP_TYPE_ROUTE_REFRESH,
 };
-use super::message::{BgpNotification, BgpOpen};
+use super::message::{BgpNotification, BgpOpen, BgpRouteRefresh};
 use super::{Bgp, BgpBody};
 
 /// Build the structured truncation error BGP decode uses for a short buffer.
@@ -121,6 +121,7 @@ pub fn decode_bgp_message(bytes: &[u8]) -> Result<(Bgp, usize)> {
     let body = match message_type {
         BGP_TYPE_OPEN => BgpBody::Open(decode_open_body(body_bytes)?),
         BGP_TYPE_NOTIFICATION => BgpBody::Notification(decode_notification_body(body_bytes)?),
+        BGP_TYPE_ROUTE_REFRESH => BgpBody::RouteRefresh(decode_route_refresh_body(body_bytes)?),
         BGP_TYPE_KEEPALIVE => BgpBody::Keepalive,
         // Other message types are preserved verbatim for now; later steps
         // replace this with the typed OPEN/UPDATE/NOTIFICATION bodies.
@@ -148,6 +149,25 @@ fn decode_notification_body(body_bytes: &[u8]) -> Result<BgpNotification> {
     let mut notification = BgpNotification::new(error_code[0], error_subcode[0]);
     notification.data = data.to_vec();
     Ok(notification)
+}
+
+fn decode_route_refresh_body(body_bytes: &[u8]) -> Result<BgpRouteRefresh> {
+    let (afi, rest) = take(body_bytes, 2, "bgp route refresh afi")?;
+    let (subtype, rest) = take(rest, 1, "bgp route refresh subtype")?;
+    let (safi, trailing) = take(rest, 1, "bgp route refresh safi")?;
+
+    if !trailing.is_empty() {
+        return Err(CrafterError::invalid_field_value(
+            "bgp.route_refresh.length",
+            "ROUTE-REFRESH body has trailing bytes after AFI/subtype/SAFI",
+        ));
+    }
+
+    Ok(BgpRouteRefresh::from_decoded_parts(
+        u16::from_be_bytes([afi[0], afi[1]]),
+        subtype[0],
+        safi[0],
+    ))
 }
 
 fn decode_open_body(body_bytes: &[u8]) -> Result<BgpOpen> {
@@ -198,7 +218,7 @@ mod tests {
     use super::*;
     use crate::packet::{Layer, Packet};
     use crate::protocols::bgp::capability::BGP_MP_IPV4_UNICAST;
-    use crate::protocols::bgp::BgpCapability;
+    use crate::protocols::bgp::{BgpCapability, AFI_IPV4, SAFI_UNICAST};
 
     #[test]
     fn take_splits_when_enough_bytes() {
@@ -352,6 +372,32 @@ mod tests {
             summary.contains("data=3 bytes"),
             "summary should report data length, got: {summary}"
         );
+
+        let recompiled = Packet::from_layer(bgp)
+            .compile()
+            .expect("recompile succeeds");
+        assert_eq!(recompiled, bytes);
+    }
+
+    #[test]
+    fn decode_route_refresh_round_trips_ipv4_unicast() {
+        let bytes = Packet::from_layer(Bgp::route_refresh(AFI_IPV4, SAFI_UNICAST))
+            .compile()
+            .expect("ROUTE-REFRESH compiles");
+        assert_eq!(bytes.len(), 23);
+
+        let (bgp, consumed) = decode_bgp_message(&bytes).expect("ROUTE-REFRESH decodes");
+        assert_eq!(consumed, bytes.len());
+        assert_eq!(bgp.summary(), "BGP ROUTE-REFRESH afi=1 safi=1");
+
+        match &bgp.body {
+            BgpBody::RouteRefresh(route_refresh) => {
+                assert_eq!(route_refresh.afi.value(), Some(&AFI_IPV4));
+                assert_eq!(route_refresh.subtype.value(), Some(&0));
+                assert_eq!(route_refresh.safi.value(), Some(&SAFI_UNICAST));
+            }
+            other => panic!("expected ROUTE-REFRESH body, got {other:?}"),
+        }
 
         let recompiled = Packet::from_layer(bgp)
             .compile()
