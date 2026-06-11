@@ -14,6 +14,7 @@ pub mod decode;
 pub mod message;
 
 // Re-export the populated BGP codepoint constants at the module root.
+pub use capability::{BgpOptParam, BGP_OPT_PARAM_CAPABILITIES};
 pub use constants::*;
 pub use message::BgpOpen;
 
@@ -169,6 +170,22 @@ impl Bgp {
         self
     }
 
+    /// Append an OPEN optional parameter.
+    pub fn push_param(mut self, param: BgpOptParam) -> Self {
+        if let BgpBody::Open(open) = &mut self.body {
+            open.push_param(param);
+        }
+        self
+    }
+
+    /// Append an OPEN optional parameter with a raw type code and value.
+    pub fn raw_param(mut self, param_type: u8, value: Vec<u8>) -> Self {
+        if let BgpBody::Open(open) = &mut self.body {
+            open.raw_param(param_type, value);
+        }
+        self
+    }
+
     /// Build a `Bgp` layer from decoded wire fields.
     ///
     /// The header is reconstructed from the observed marker, length, and type
@@ -315,7 +332,7 @@ mod tests {
                 );
                 assert!(open.bgp_id.is_user_set());
                 assert_eq!(open.opt_params_len.value(), None);
-                assert!(open.opt_params.is_empty());
+                assert!(open.params.is_empty());
                 assert_eq!(open.body_len(), 10);
             }
             other => panic!("expected OPEN body, got {other:?}"),
@@ -403,5 +420,20 @@ mod tests {
         let bytes = packet.compile().unwrap();
 
         assert_eq!(bytes[BGP_HEADER_LEN + 9], 7);
+    }
+
+    #[test]
+    fn open_raw_optional_parameter_compiles_with_framing() {
+        let packet = Packet::from_layer(
+            Bgp::open()
+                .my_as(65000)
+                .hold_time(180)
+                .bgp_id([192, 0, 2, 1])
+                .raw_param(99, vec![0xaa, 0xbb, 0xcc]),
+        );
+        let bytes = packet.compile().unwrap();
+
+        assert_eq!(bytes[BGP_HEADER_LEN + 9], 5);
+        assert_eq!(&bytes[BGP_HEADER_LEN + 10..], &[99, 3, 0xaa, 0xbb, 0xcc]);
     }
 }

@@ -4,6 +4,7 @@ use std::net::Ipv4Addr;
 
 use crate::field::Field;
 
+use super::capability::BgpOptParam;
 use super::constants::{BGP_HEADER_LEN, BGP_MARKER_LEN, BGP_VERSION};
 
 /// The shared 19-octet BGP message header (RFC 4271 §4.1).
@@ -114,10 +115,10 @@ pub struct BgpOpen {
     pub(crate) hold_time: Field<u16>,
     /// BGP identifier carried as an IPv4 address.
     pub(crate) bgp_id: Field<Ipv4Addr>,
-    /// Length of the raw optional-parameters bytes.
+    /// Length of the encoded optional-parameters bytes.
     pub(crate) opt_params_len: Field<u8>,
-    /// Raw optional parameters. Capabilities are typed in later steps.
-    pub(crate) opt_params: Vec<u8>,
+    /// OPEN optional parameters.
+    pub(crate) params: Vec<BgpOptParam>,
 }
 
 impl BgpOpen {
@@ -130,13 +131,28 @@ impl BgpOpen {
             hold_time: Field::unset(),
             bgp_id: Field::unset(),
             opt_params_len: Field::unset(),
-            opt_params: Vec::new(),
+            params: Vec::new(),
         }
+    }
+
+    /// Append a typed optional parameter to this OPEN body.
+    pub fn push_param(&mut self, param: BgpOptParam) {
+        self.params.push(param);
+    }
+
+    /// Append an optional parameter with a raw type code and value.
+    pub fn raw_param(&mut self, param_type: u8, value: Vec<u8>) {
+        self.push_param(BgpOptParam::raw(param_type, value));
+    }
+
+    /// Encoded length of all optional parameters.
+    pub(crate) fn params_len(&self) -> usize {
+        self.params.iter().map(BgpOptParam::encoded_len).sum()
     }
 
     /// The on-wire OPEN body length, excluding the shared BGP header.
     pub(crate) fn body_len(&self) -> usize {
-        10 + self.opt_params.len()
+        10 + self.params_len()
     }
 
     /// The optional-parameters length to emit.
@@ -144,7 +160,7 @@ impl BgpOpen {
         self.opt_params_len
             .value()
             .copied()
-            .unwrap_or(self.opt_params.len() as u8)
+            .unwrap_or(self.params_len() as u8)
     }
 
     /// Append the RFC 4271 §4.2 OPEN body to `out`.
@@ -161,7 +177,9 @@ impl BgpOpen {
                 .octets(),
         );
         out.push(self.effective_opt_params_len());
-        out.extend_from_slice(&self.opt_params);
+        for param in &self.params {
+            param.encode(out);
+        }
     }
 }
 
