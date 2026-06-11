@@ -40,6 +40,47 @@ fn message_type_name(message_type: u8) -> &'static str {
     }
 }
 
+fn afi_name(afi: u16) -> String {
+    match afi {
+        AFI_IPV4 => "ipv4".to_string(),
+        AFI_IPV6 => "ipv6".to_string(),
+        _ => format!("afi-{afi}"),
+    }
+}
+
+fn safi_name(safi: u8) -> String {
+    match safi {
+        SAFI_UNICAST => "unicast".to_string(),
+        SAFI_MULTICAST => "multicast".to_string(),
+        _ => format!("safi-{safi}"),
+    }
+}
+
+fn capability_name(capability: &BgpCapability) -> String {
+    match capability.code {
+        CAP_MULTIPROTOCOL => match capability.multiprotocol_afi_safi() {
+            Ok((afi, safi)) => format!("mp-{}-{}", afi_name(afi), safi_name(safi)),
+            Err(_) => "multiprotocol".to_string(),
+        },
+        CAP_ROUTE_REFRESH => "route-refresh".to_string(),
+        CAP_GRACEFUL_RESTART => "graceful-restart".to_string(),
+        CAP_FOUR_OCTET_AS => "4-octet-as".to_string(),
+        CAP_ADD_PATH => "add-path".to_string(),
+        CAP_ENHANCED_ROUTE_REFRESH => "enhanced-route-refresh".to_string(),
+        CAP_ROUTE_REFRESH_OLD => "route-refresh-old".to_string(),
+        code => format!("cap-{code}"),
+    }
+}
+
+fn capability_list_summary(capabilities: &[BgpCapability]) -> String {
+    let names = capabilities
+        .iter()
+        .map(capability_name)
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[{names}]")
+}
+
 /// The body of a BGP-4 message (RFC 4271 §4), following the shared 19-octet
 /// header.
 ///
@@ -225,9 +266,18 @@ impl Layer for Bgp {
         // message types extend this with their own fields.
         let len = self.header.effective_length(self.body.encoded_len());
         match &self.body {
-            BgpBody::Open(_) => {
-                format!("BGP {} len={len}", message_type_name(BGP_TYPE_OPEN))
-            }
+            BgpBody::Open(open) => format!(
+                "BGP {} version={} as={} hold={} id={} caps={}",
+                message_type_name(BGP_TYPE_OPEN),
+                open.version.value().copied().unwrap_or(BGP_VERSION),
+                open.my_as.value().copied().unwrap_or(0),
+                open.hold_time.value().copied().unwrap_or(0),
+                open.bgp_id
+                    .value()
+                    .copied()
+                    .unwrap_or(std::net::Ipv4Addr::UNSPECIFIED),
+                capability_list_summary(&open.capabilities)
+            ),
             BgpBody::Keepalive => {
                 format!("BGP {} len={len}", message_type_name(BGP_TYPE_KEEPALIVE))
             }
@@ -247,14 +297,46 @@ impl Layer for Bgp {
             "modified".to_string()
         };
         let len = self.header.effective_length(self.body.encoded_len());
-        vec![
+        let mut fields = vec![
             ("marker", marker),
             ("length", len.to_string()),
             (
                 "type",
                 message_type_name(self.header.effective_type()).to_string(),
             ),
-        ]
+        ];
+
+        if let BgpBody::Open(open) = &self.body {
+            fields.push((
+                "version",
+                open.version
+                    .value()
+                    .copied()
+                    .unwrap_or(BGP_VERSION)
+                    .to_string(),
+            ));
+            fields.push((
+                "my_as",
+                open.my_as.value().copied().unwrap_or(0).to_string(),
+            ));
+            fields.push((
+                "hold_time",
+                open.hold_time.value().copied().unwrap_or(0).to_string(),
+            ));
+            fields.push((
+                "bgp_id",
+                open.bgp_id
+                    .value()
+                    .copied()
+                    .unwrap_or(std::net::Ipv4Addr::UNSPECIFIED)
+                    .to_string(),
+            ));
+            for capability in &open.capabilities {
+                fields.push(("capability", capability_name(capability)));
+            }
+        }
+
+        fields
     }
 
     fn encoded_len(&self) -> usize {
@@ -362,6 +444,50 @@ mod tests {
     fn keepalive_summary_reports_type_and_length() {
         let summary = Bgp::keepalive().summary();
         assert_eq!(summary, "BGP KEEPALIVE len=19");
+    }
+
+    #[test]
+    fn open_summary_reports_as_and_capability_names() {
+        let summary = Bgp::open()
+            .my_as(65000)
+            .hold_time(180)
+            .bgp_id([192, 0, 2, 1])
+            .capabilities([
+                BgpCapability::ipv4_unicast(),
+                BgpCapability::four_octet_as(65000),
+                BgpCapability::route_refresh(),
+            ])
+            .summary();
+
+        assert!(summary.contains("BGP OPEN"), "summary was: {summary}");
+        assert!(summary.contains("as=65000"), "summary was: {summary}");
+        assert!(
+            summary.contains("mp-ipv4-unicast"),
+            "summary was: {summary}"
+        );
+        assert!(summary.contains("4-octet-as"), "summary was: {summary}");
+        assert!(summary.contains("route-refresh"), "summary was: {summary}");
+    }
+
+    #[test]
+    fn open_inspection_fields_report_body_and_capabilities() {
+        let fields = Bgp::open()
+            .my_as(65000)
+            .hold_time(180)
+            .bgp_id([192, 0, 2, 1])
+            .capabilities([
+                BgpCapability::route_refresh(),
+                BgpCapability::raw(200, Vec::new()),
+            ])
+            .inspection_fields();
+
+        assert!(fields.contains(&("type", "OPEN".to_string())));
+        assert!(fields.contains(&("version", "4".to_string())));
+        assert!(fields.contains(&("my_as", "65000".to_string())));
+        assert!(fields.contains(&("hold_time", "180".to_string())));
+        assert!(fields.contains(&("bgp_id", "192.0.2.1".to_string())));
+        assert!(fields.contains(&("capability", "route-refresh".to_string())));
+        assert!(fields.contains(&("capability", "cap-200".to_string())));
     }
 
     #[test]
