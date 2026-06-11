@@ -14,6 +14,7 @@ pub mod rsn;
 pub mod transport;
 
 pub use crate::packet::Raw;
+pub use bgp::{Bgp, BgpKeepalive, BgpNotification, BgpOpen, BgpRouteRefresh, BgpUpdate};
 pub use dhcp::{
     decode_tftp_server_addresses, option_meta, option_name, option_status,
     scan_dhcp_option_segments, typed_option_value, ClientNetworkDeviceInterface,
