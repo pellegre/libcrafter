@@ -16,13 +16,13 @@ pub mod message;
 // Re-export the populated BGP codepoint constants at the module root.
 pub use capability::{BgpCapability, BgpOptParam, BGP_OPT_PARAM_CAPABILITIES};
 pub use constants::*;
-pub use message::BgpOpen;
+pub use message::{BgpNotification, BgpOpen};
 
 use crate::packet::{Layer, LayerContext};
 use crate::protocols::transport::common::{impl_layer_div, impl_layer_object};
 use crate::Result;
 
-use self::message::BgpHeader;
+use self::message::{notification_name, BgpHeader};
 
 /// Human-readable name for a BGP message Type code (IANA `bgp-parameters-1`).
 ///
@@ -95,6 +95,8 @@ fn capability_list_summary(capabilities: &[BgpCapability]) -> String {
 pub(crate) enum BgpBody {
     /// OPEN message (RFC 4271 §4.2).
     Open(BgpOpen),
+    /// NOTIFICATION message (RFC 4271 §4.5).
+    Notification(BgpNotification),
     /// KEEPALIVE message (RFC 4271 §4.4): the header alone, no body.
     Keepalive,
     /// A message body the layer does not (yet) model, preserved verbatim.
@@ -112,6 +114,7 @@ impl BgpBody {
     fn encoded_len(&self) -> usize {
         match self {
             BgpBody::Open(open) => open.body_len(),
+            BgpBody::Notification(notification) => notification.body_len(),
             BgpBody::Keepalive => 0,
             BgpBody::Unknown { body, .. } => body.len(),
         }
@@ -121,6 +124,7 @@ impl BgpBody {
     fn write_body(&self, out: &mut Vec<u8>) {
         match self {
             BgpBody::Open(open) => open.write_body(out),
+            BgpBody::Notification(notification) => notification.write_body(out),
             BgpBody::Keepalive => {}
             BgpBody::Unknown { body, .. } => out.extend_from_slice(body),
         }
@@ -166,6 +170,23 @@ impl Bgp {
             header: BgpHeader::new(BGP_TYPE_KEEPALIVE),
             body: BgpBody::Keepalive,
         }
+    }
+
+    /// Build a NOTIFICATION message (RFC 4271 §4.5).
+    ///
+    /// The header Type defaults to [`BGP_TYPE_NOTIFICATION`]. The body carries
+    /// the caller-supplied error code and subcode, followed by optional data
+    /// set through [`Bgp::data`].
+    pub fn notification(error_code: u8, error_subcode: u8) -> Self {
+        Self {
+            header: BgpHeader::new(BGP_TYPE_NOTIFICATION),
+            body: BgpBody::Notification(BgpNotification::new(error_code, error_subcode)),
+        }
+    }
+
+    /// Build a Cease NOTIFICATION with no subcode-specific detail.
+    pub fn cease() -> Self {
+        Self::notification(NOTIFY_CEASE, 0)
     }
 
     /// Set the OPEN version field.
@@ -235,6 +256,14 @@ impl Bgp {
         self
     }
 
+    /// Set the NOTIFICATION data field.
+    pub fn data(mut self, data: Vec<u8>) -> Self {
+        if let BgpBody::Notification(notification) = &mut self.body {
+            notification.data = data;
+        }
+        self
+    }
+
     /// Build a `Bgp` layer from decoded wire fields.
     ///
     /// The header is reconstructed from the observed marker, length, and type
@@ -280,6 +309,15 @@ impl Layer for Bgp {
             ),
             BgpBody::Keepalive => {
                 format!("BGP {} len={len}", message_type_name(BGP_TYPE_KEEPALIVE))
+            }
+            BgpBody::Notification(notification) => {
+                let code = notification.error_code.value().copied().unwrap_or(0);
+                let subcode = notification.error_subcode.value().copied().unwrap_or(0);
+                format!(
+                    "BGP {} {} len={len}",
+                    message_type_name(BGP_TYPE_NOTIFICATION),
+                    notification_name(code, subcode)
+                )
             }
             BgpBody::Unknown { type_code, .. } => {
                 format!("BGP {} len={len}", message_type_name(*type_code))
@@ -336,6 +374,14 @@ impl Layer for Bgp {
             }
         }
 
+        if let BgpBody::Notification(notification) = &self.body {
+            let code = notification.error_code.value().copied().unwrap_or(0);
+            let subcode = notification.error_subcode.value().copied().unwrap_or(0);
+            fields.push(("error_code", code.to_string()));
+            fields.push(("error_subcode", subcode.to_string()));
+            fields.push(("error", notification_name(code, subcode)));
+        }
+
         fields
     }
 
@@ -366,10 +412,6 @@ impl_layer_div!(Bgp);
 /// BGP UPDATE message (RFC 4271 §4.3). Placeholder stub; filled in a later step.
 #[allow(dead_code)]
 pub struct BgpUpdate;
-
-/// BGP NOTIFICATION message (RFC 4271 §4.5). Placeholder stub; filled in a later step.
-#[allow(dead_code)]
-pub struct BgpNotification;
 
 /// BGP KEEPALIVE message (RFC 4271 §4.4). Placeholder stub; filled in a later step.
 #[allow(dead_code)]
@@ -518,6 +560,21 @@ mod tests {
             &(BGP_HEADER_LEN as u16).to_be_bytes()
         );
         assert_eq!(bytes[BGP_MARKER_LEN + 2], BGP_TYPE_KEEPALIVE);
+    }
+
+    #[test]
+    fn cease_notification_compiles_to_twenty_one_bytes() {
+        let packet = Packet::from_layer(Bgp::cease());
+        let bytes = packet.compile().unwrap();
+
+        assert_eq!(bytes.len(), 21);
+        assert_eq!(&bytes[..BGP_MARKER_LEN], &[0xFF; BGP_MARKER_LEN]);
+        assert_eq!(
+            &bytes[BGP_MARKER_LEN..BGP_MARKER_LEN + 2],
+            &(21u16).to_be_bytes()
+        );
+        assert_eq!(bytes[BGP_MARKER_LEN + 2], BGP_TYPE_NOTIFICATION);
+        assert_eq!(&bytes[BGP_HEADER_LEN..], &[NOTIFY_CEASE, 0]);
     }
 
     #[test]

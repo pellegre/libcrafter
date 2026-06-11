@@ -224,6 +224,40 @@ impl BgpOpen {
     }
 }
 
+/// BGP NOTIFICATION message body (RFC 4271 §4.5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BgpNotification {
+    /// NOTIFICATION Error Code.
+    pub(crate) error_code: Field<u8>,
+    /// NOTIFICATION Error Subcode.
+    pub(crate) error_subcode: Field<u8>,
+    /// Optional diagnostic data carried after the code/subcode pair.
+    pub(crate) data: Vec<u8>,
+}
+
+impl BgpNotification {
+    /// Create a NOTIFICATION body with caller-supplied code and subcode.
+    pub(crate) fn new(error_code: u8, error_subcode: u8) -> Self {
+        Self {
+            error_code: Field::user(error_code),
+            error_subcode: Field::user(error_subcode),
+            data: Vec::new(),
+        }
+    }
+
+    /// The on-wire NOTIFICATION body length, excluding the shared BGP header.
+    pub(crate) fn body_len(&self) -> usize {
+        2 + self.data.len()
+    }
+
+    /// Append the RFC 4271 §4.5 NOTIFICATION body to `out`.
+    pub(crate) fn write_body(&self, out: &mut Vec<u8>) {
+        out.push(self.error_code.value().copied().unwrap_or(0));
+        out.push(self.error_subcode.value().copied().unwrap_or(0));
+        out.extend_from_slice(&self.data);
+    }
+}
+
 #[allow(dead_code)]
 pub(crate) fn notification_name(code: u8, subcode: u8) -> String {
     let Some(code_name) = notification_code_name(code) else {
