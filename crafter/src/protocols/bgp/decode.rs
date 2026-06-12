@@ -24,6 +24,8 @@
 use std::net::Ipv4Addr;
 
 use crate::error::{CrafterError, Result};
+use crate::packet::{Packet, Raw};
+use crate::registry::ProtocolRegistry;
 
 use super::attribute::{decode_attribute, BgpPathAttribute, BgpPrefix};
 use super::capability::{decode_capabilities, BgpOptParam, BGP_OPT_PARAM_CAPABILITIES};
@@ -45,6 +47,22 @@ fn need(context: &'static str, required: usize, available: usize) -> CrafterErro
     CrafterError::buffer_too_short(context, required, available)
 }
 
+fn invalid_bgp_length(length: usize) -> Option<CrafterError> {
+    if length < BGP_HEADER_LEN {
+        Some(CrafterError::invalid_field_value(
+            "bgp.header.length",
+            "BGP message Length is below the 19-octet header minimum",
+        ))
+    } else if length > BGP_MAX_MESSAGE_LEN {
+        Some(CrafterError::invalid_field_value(
+            "bgp.header.length",
+            "BGP message Length exceeds the 4096-octet maximum",
+        ))
+    } else {
+        None
+    }
+}
+
 /// Split `n` bytes off the front of `buf`, returning `(head, rest)`.
 ///
 /// Returns `Ok((&buf[..n], &buf[n..]))` when the buffer holds at least `n`
@@ -62,6 +80,65 @@ pub(crate) fn take<'a>(
         return Err(need(context, n, buf.len()));
     }
     Ok(buf.split_at(n))
+}
+
+/// Decode one or more BGP messages from a TCP payload into the packet stack.
+///
+/// Complete messages are appended as typed [`Bgp`] layers. A trailing partial
+/// message is preserved as [`Raw`] so stream-oriented callers can keep the bytes
+/// inspectable without losing synchronization. A malformed length in the first
+/// header is still a structured decode error because there is no earlier valid
+/// BGP frame to anchor a raw tail.
+#[allow(dead_code)]
+pub(crate) fn append_bgp_packet_with_registry(
+    _registry: &ProtocolRegistry,
+    mut packet: Packet,
+    bytes: &[u8],
+) -> Result<Packet> {
+    let mut remaining = bytes;
+    let mut decoded_any = false;
+
+    while !remaining.is_empty() {
+        if remaining.len() < BGP_HEADER_LEN {
+            packet = packet.push(Raw::from_bytes(remaining));
+            break;
+        }
+
+        let length =
+            u16::from_be_bytes([remaining[BGP_MARKER_LEN], remaining[BGP_MARKER_LEN + 1]]) as usize;
+
+        if let Some(err) = invalid_bgp_length(length) {
+            if decoded_any {
+                packet = packet.push(Raw::from_bytes(remaining));
+                break;
+            }
+            return Err(err);
+        }
+
+        if remaining.len() < length {
+            packet = packet.push(Raw::from_bytes(remaining));
+            break;
+        }
+
+        match decode_bgp_message(remaining) {
+            Ok((bgp, consumed)) => {
+                packet = packet.push(bgp);
+                remaining = &remaining[consumed..];
+                decoded_any = true;
+            }
+            Err(CrafterError::BufferTooShort { .. }) if decoded_any => {
+                packet = packet.push(Raw::from_bytes(remaining));
+                break;
+            }
+            Err(_err) if decoded_any => {
+                packet = packet.push(Raw::from_bytes(remaining));
+                break;
+            }
+            Err(err) => return Err(err),
+        }
+    }
+
+    Ok(packet)
 }
 
 /// Decode a single BGP message (RFC 4271 §4.1) from the front of `bytes`.
@@ -97,17 +174,8 @@ pub fn decode_bgp_message(bytes: &[u8]) -> Result<(Bgp, usize)> {
     // [19, 4096]. A value outside that range is a malformed header, not a
     // truncation, so it is a structured InvalidFieldValue.
     let length_usize = length as usize;
-    if length_usize < BGP_HEADER_LEN {
-        return Err(CrafterError::invalid_field_value(
-            "bgp.header.length",
-            "BGP message Length is below the 19-octet header minimum",
-        ));
-    }
-    if length_usize > BGP_MAX_MESSAGE_LEN {
-        return Err(CrafterError::invalid_field_value(
-            "bgp.header.length",
-            "BGP message Length exceeds the 4096-octet maximum",
-        ));
+    if let Some(err) = invalid_bgp_length(length_usize) {
+        return Err(err);
     }
 
     // The buffer must hold the whole declared message; a short buffer here is a
@@ -259,7 +327,7 @@ mod tests {
     use super::*;
     use std::net::Ipv6Addr;
 
-    use crate::packet::{Layer, Packet};
+    use crate::packet::{Layer, Packet, Raw};
     use crate::protocols::bgp::attribute::{
         BgpAttrValue, BgpPathAttribute, BgpPrefix, BGP_ORIGIN_IGP,
     };
@@ -267,6 +335,7 @@ mod tests {
     use crate::protocols::bgp::{
         BgpCapability, AFI_IPV4, AFI_IPV6, ATTR_MP_REACH_NLRI, SAFI_UNICAST,
     };
+    use crate::registry::ProtocolRegistry;
 
     #[test]
     fn take_splits_when_enough_bytes() {
@@ -309,6 +378,46 @@ mod tests {
         let (bgp, consumed) = decode_bgp_message(&bytes).expect("valid keepalive decodes");
         assert_eq!(consumed, BGP_HEADER_LEN);
         assert_eq!(bgp.summary(), "BGP KEEPALIVE len=19");
+    }
+
+    #[test]
+    fn append_bgp_packet_with_registry_decodes_two_keepalives() {
+        let keepalive = Packet::from_layer(Bgp::keepalive())
+            .compile()
+            .expect("KEEPALIVE compiles");
+        let bytes = [keepalive.as_bytes(), keepalive.as_bytes()].concat();
+
+        let packet =
+            append_bgp_packet_with_registry(&ProtocolRegistry::new(), Packet::new(), &bytes)
+                .expect("concatenated KEEPALIVEs decode");
+
+        let bgp_layers: Vec<_> = packet.layers::<Bgp>().collect();
+        assert_eq!(bgp_layers.len(), 2);
+        assert!(bgp_layers
+            .iter()
+            .all(|bgp| matches!(&bgp.body, BgpBody::Keepalive)));
+        assert_eq!(packet.layers::<Raw>().count(), 0);
+    }
+
+    #[test]
+    fn append_bgp_packet_with_registry_preserves_trailing_partial_as_raw() {
+        let keepalive = Packet::from_layer(Bgp::keepalive())
+            .compile()
+            .expect("KEEPALIVE compiles");
+        let trailing = [0xde, 0xad, 0xbe, 0xef, 0x00];
+        let bytes = [keepalive.as_bytes(), &trailing].concat();
+
+        let packet =
+            append_bgp_packet_with_registry(&ProtocolRegistry::new(), Packet::new(), &bytes)
+                .expect("KEEPALIVE plus trailing bytes decodes");
+
+        let bgp_layers: Vec<_> = packet.layers::<Bgp>().collect();
+        assert_eq!(bgp_layers.len(), 1);
+        assert!(matches!(&bgp_layers[0].body, BgpBody::Keepalive));
+
+        let raw_layers: Vec<_> = packet.layers::<Raw>().collect();
+        assert_eq!(raw_layers.len(), 1);
+        assert_eq!(raw_layers[0].as_bytes(), trailing);
     }
 
     #[test]
