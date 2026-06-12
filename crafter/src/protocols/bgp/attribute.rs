@@ -71,6 +71,8 @@ pub enum BgpAttrValue {
     Communities(Vec<u32>),
     /// EXTENDED COMMUNITIES path attribute (RFC 4360).
     ExtendedCommunities(Vec<[u8; 8]>),
+    /// LARGE_COMMUNITIES path attribute (RFC 8092).
+    LargeCommunities(Vec<[u32; 3]>),
     /// A value whose type-specific structure is not modeled yet.
     Unknown(Vec<u8>),
 }
@@ -90,6 +92,7 @@ impl BgpAttrValue {
             Self::Aggregator { .. } => 6,
             Self::Communities(communities) => communities.len() * 4,
             Self::ExtendedCommunities(communities) => communities.len() * 8,
+            Self::LargeCommunities(communities) => communities.len() * 12,
             Self::Unknown(value) => value.len(),
         }
     }
@@ -119,6 +122,13 @@ impl BgpAttrValue {
             Self::ExtendedCommunities(communities) => {
                 for community in communities {
                     out.extend_from_slice(community);
+                }
+            }
+            Self::LargeCommunities(communities) => {
+                for [global, local1, local2] in communities {
+                    out.extend_from_slice(&global.to_be_bytes());
+                    out.extend_from_slice(&local1.to_be_bytes());
+                    out.extend_from_slice(&local2.to_be_bytes());
                 }
             }
             Self::Unknown(value) => out.extend_from_slice(value),
@@ -223,6 +233,15 @@ impl BgpPathAttribute {
         }
     }
 
+    /// Build a LARGE_COMMUNITIES path attribute.
+    pub fn large_communities(communities: &[[u32; 3]]) -> Self {
+        Self {
+            flags: Field::defaulted(ATTR_LARGE_COMMUNITY_FLAGS),
+            type_code: ATTR_LARGE_COMMUNITY,
+            value: BgpAttrValue::LargeCommunities(communities.to_vec()),
+        }
+    }
+
     /// Build a raw path attribute with canonical flags inferred from type code.
     pub fn unknown(type_code: u8, value: impl Into<Vec<u8>>) -> Self {
         Self {
@@ -278,6 +297,7 @@ impl BgpPathAttribute {
             BgpAttrValue::ExtendedCommunities(communities) => {
                 extended_communities_summary(communities)
             }
+            BgpAttrValue::LargeCommunities(communities) => large_communities_summary(communities),
             BgpAttrValue::Unknown(value) => format!("attr-{} len={}", self.type_code, value.len()),
         }
     }
@@ -356,6 +376,7 @@ pub fn decode_attribute(buf: &[u8]) -> Result<(BgpPathAttribute, usize)> {
         ATTR_AGGREGATOR => decode_aggregator_value(value)?,
         ATTR_COMMUNITIES => decode_communities_value(value)?,
         ATTR_EXTENDED_COMMUNITIES => decode_extended_communities_value(value)?,
+        ATTR_LARGE_COMMUNITY => decode_large_communities_value(value)?,
         _ => BgpAttrValue::Unknown(value.to_vec()),
     };
 
@@ -470,6 +491,27 @@ fn decode_extended_communities_value(value: &[u8]) -> Result<BgpAttrValue> {
         })
         .collect();
     Ok(BgpAttrValue::ExtendedCommunities(communities))
+}
+
+fn decode_large_communities_value(value: &[u8]) -> Result<BgpAttrValue> {
+    if value.len() % 12 != 0 {
+        return Err(CrafterError::invalid_field_value(
+            "bgp.attribute.large_communities.length",
+            "LARGE_COMMUNITIES attribute value length must be a multiple of twelve octets",
+        ));
+    }
+
+    let communities = value
+        .chunks_exact(12)
+        .map(|chunk| {
+            [
+                u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]),
+                u32::from_be_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]),
+                u32::from_be_bytes([chunk[8], chunk[9], chunk[10], chunk[11]]),
+            ]
+        })
+        .collect();
+    Ok(BgpAttrValue::LargeCommunities(communities))
 }
 
 fn decode_u32_attribute_value(
@@ -624,6 +666,19 @@ fn extended_communities_summary(communities: &[[u8; 8]]) -> String {
         .collect::<Vec<_>>()
         .join(" ");
     format!("EXTENDED_COMMUNITIES={parts}")
+}
+
+fn large_communities_summary(communities: &[[u32; 3]]) -> String {
+    if communities.is_empty() {
+        return "LARGE_COMMUNITIES=<empty>".to_string();
+    }
+
+    let parts = communities
+        .iter()
+        .map(|[global, local1, local2]| format!("{global}:{local1}:{local2}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!("LARGE_COMMUNITIES={parts}")
 }
 
 fn hex_bytes(bytes: &[u8]) -> String {
@@ -1154,6 +1209,81 @@ mod tests {
             err,
             CrafterError::InvalidFieldValue {
                 field: "bgp.attribute.extended_communities.length",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn large_communities_attribute_encodes_and_round_trips() {
+        let communities = [[65000, 1, 2]];
+        let attr = BgpPathAttribute::large_communities(&communities);
+        let mut encoded = Vec::new();
+        attr.encode(&mut encoded);
+
+        assert_eq!(
+            encoded,
+            [
+                ATTR_LARGE_COMMUNITY_FLAGS,
+                ATTR_LARGE_COMMUNITY,
+                12,
+                0x00,
+                0x00,
+                0xfd,
+                0xe8,
+                0x00,
+                0x00,
+                0x00,
+                0x01,
+                0x00,
+                0x00,
+                0x00,
+                0x02
+            ]
+        );
+        assert_eq!(attr.summary(), "LARGE_COMMUNITIES=65000:1:2");
+
+        let (decoded, consumed) = decode_attribute(&encoded).expect("attribute decodes");
+        assert_eq!(consumed, encoded.len());
+        assert_eq!(
+            decoded,
+            BgpPathAttribute {
+                flags: Field::user(ATTR_LARGE_COMMUNITY_FLAGS),
+                type_code: ATTR_LARGE_COMMUNITY,
+                value: BgpAttrValue::LargeCommunities(communities.to_vec()),
+            }
+        );
+        assert_eq!(decoded.summary(), "LARGE_COMMUNITIES=65000:1:2");
+
+        let mut reencoded = Vec::new();
+        decoded.encode(&mut reencoded);
+        assert_eq!(reencoded, encoded);
+    }
+
+    #[test]
+    fn malformed_large_communities_length_errors() {
+        let err = decode_attribute(&[
+            ATTR_LARGE_COMMUNITY_FLAGS,
+            ATTR_LARGE_COMMUNITY,
+            11,
+            0,
+            0,
+            0,
+            1,
+            0,
+            0,
+            0,
+            2,
+            0,
+            0,
+            0,
+        ])
+        .expect_err("large communities must use twelve-octet values");
+
+        assert!(matches!(
+            err,
+            CrafterError::InvalidFieldValue {
+                field: "bgp.attribute.large_communities.length",
                 ..
             }
         ));
