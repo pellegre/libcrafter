@@ -14,6 +14,10 @@ pub mod rsn;
 pub mod transport;
 
 pub use crate::packet::Raw;
+pub use bgp::attribute::{
+    AsPathSegment, BgpAttrValue, BgpPathAttribute, BgpPrefix, BGP_AS_SEGMENT_SEQUENCE,
+    BGP_AS_SEGMENT_SET, BGP_ORIGIN_EGP, BGP_ORIGIN_IGP, BGP_ORIGIN_INCOMPLETE,
+};
 pub use bgp::{
     Bgp, BgpCapability, BgpKeepalive, BgpNotification, BgpOpen, BgpRouteRefresh, BgpUpdate,
 };
