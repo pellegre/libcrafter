@@ -1,0 +1,73 @@
+version: 1
+kind: layer
+name: bgp
+summary: >-
+  BGP-4 message framing (RFC 4271) over TCP, carrying the marker, declared
+  length, and message type for OPEN, UPDATE, NOTIFICATION, KEEPALIVE, and
+  ROUTE-REFRESH messages. This layer spec covers core message framing and
+  stacking in a TCP payload; detailed capability and path-attribute behavior is
+  covered by feature specs so raw or preserve-only cases are not claimed here as
+  structured behavior.
+
+roots: []
+parents:
+  - tcp
+children:
+  - payload
+  - bgp
+
+fields:
+  - name: marker
+    type: bytes
+    required: true
+    domains:
+      - default
+      - all_ones
+      - malformed_override
+  - name: length
+    type: uint16
+    required: true
+    domains:
+      - derived
+      - boundary
+      - malformed_override
+  - name: type
+    type: uint8
+    required: true
+    domains:
+      - open
+      - update
+      - notification
+      - keepalive
+      - route_refresh
+      - unknown
+
+coverage_cases:
+  - bgp-open
+  - bgp-update
+  - bgp-notification
+  - bgp-keepalive
+  - bgp-route-refresh
+  - bgp-mp-reach
+  - bgp-communities
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - BGPHeader
+      - BGPOpen
+      - BGPUpdate
+      - BGPNotification
+      - BGPKeepAlive
+      - BGPRouteRefresh
+    encode: true
+    decode: true
+    notes:
+      - Supported here for core message framing; feature specs own structured capability and path-attribute caveats.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    notes:
+      - Supports core message framing and stacked BGP messages in TCP payloads.
