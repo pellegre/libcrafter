@@ -58,6 +58,15 @@ pub enum BgpAttrValue {
     MultiExitDisc(u32),
     /// LOCAL_PREF path attribute (RFC 4271 §5.1.5).
     LocalPref(u32),
+    /// ATOMIC_AGGREGATE path attribute (RFC 4271 §5.1.6).
+    AtomicAggregate,
+    /// AGGREGATOR path attribute (RFC 4271 §5.1.7).
+    Aggregator {
+        /// Last AS number that formed the aggregate route.
+        asn: u32,
+        /// BGP speaker address that formed the aggregate route.
+        addr: Ipv4Addr,
+    },
     /// A value whose type-specific structure is not modeled yet.
     Unknown(Vec<u8>),
 }
@@ -73,6 +82,8 @@ impl BgpAttrValue {
             } => as_path_encoded_len(segments, *four_octet),
             Self::NextHop(_) => 4,
             Self::MultiExitDisc(_) | Self::LocalPref(_) => 4,
+            Self::AtomicAggregate => 0,
+            Self::Aggregator { .. } => 6,
             Self::Unknown(value) => value.len(),
         }
     }
@@ -88,6 +99,11 @@ impl BgpAttrValue {
             Self::NextHop(next_hop) => out.extend_from_slice(&next_hop.octets()),
             Self::MultiExitDisc(metric) | Self::LocalPref(metric) => {
                 out.extend_from_slice(&metric.to_be_bytes());
+            }
+            Self::AtomicAggregate => {}
+            Self::Aggregator { asn, addr } => {
+                out.extend_from_slice(&(*asn as u16).to_be_bytes());
+                out.extend_from_slice(&addr.octets());
             }
             Self::Unknown(value) => out.extend_from_slice(value),
         }
@@ -152,6 +168,27 @@ impl BgpPathAttribute {
         }
     }
 
+    /// Build an ATOMIC_AGGREGATE path attribute.
+    pub fn atomic_aggregate() -> Self {
+        Self {
+            flags: Field::defaulted(ATTR_ATOMIC_AGGREGATE_FLAGS),
+            type_code: ATTR_ATOMIC_AGGREGATE,
+            value: BgpAttrValue::AtomicAggregate,
+        }
+    }
+
+    /// Build an AGGREGATOR path attribute.
+    pub fn aggregator(asn: u16, addr: impl Into<Ipv4Addr>) -> Self {
+        Self {
+            flags: Field::defaulted(ATTR_AGGREGATOR_FLAGS),
+            type_code: ATTR_AGGREGATOR,
+            value: BgpAttrValue::Aggregator {
+                asn: asn as u32,
+                addr: addr.into(),
+            },
+        }
+    }
+
     /// Build a raw path attribute with canonical flags inferred from type code.
     pub fn unknown(type_code: u8, value: impl Into<Vec<u8>>) -> Self {
         Self {
@@ -201,6 +238,8 @@ impl BgpPathAttribute {
             BgpAttrValue::NextHop(next_hop) => format!("NEXT_HOP={next_hop}"),
             BgpAttrValue::MultiExitDisc(metric) => format!("MULTI_EXIT_DISC={metric}"),
             BgpAttrValue::LocalPref(preference) => format!("LOCAL_PREF={preference}"),
+            BgpAttrValue::AtomicAggregate => "ATOMIC_AGGREGATE".to_string(),
+            BgpAttrValue::Aggregator { asn, addr } => format!("AGGREGATOR={asn} {addr}"),
             BgpAttrValue::Unknown(value) => format!("attr-{} len={}", self.type_code, value.len()),
         }
     }
@@ -275,6 +314,8 @@ pub fn decode_attribute(buf: &[u8]) -> Result<(BgpPathAttribute, usize)> {
         ATTR_NEXT_HOP => decode_next_hop_value(value)?,
         ATTR_MULTI_EXIT_DISC => decode_multi_exit_disc_value(value)?,
         ATTR_LOCAL_PREF => decode_local_pref_value(value)?,
+        ATTR_ATOMIC_AGGREGATE => decode_atomic_aggregate_value(value)?,
+        ATTR_AGGREGATOR => decode_aggregator_value(value)?,
         _ => BgpAttrValue::Unknown(value.to_vec()),
     };
 
@@ -330,6 +371,31 @@ fn decode_local_pref_value(value: &[u8]) -> Result<BgpAttrValue> {
         "LOCAL_PREF attribute value must be exactly four octets",
         BgpAttrValue::LocalPref,
     )
+}
+
+fn decode_atomic_aggregate_value(value: &[u8]) -> Result<BgpAttrValue> {
+    if !value.is_empty() {
+        return Err(CrafterError::invalid_field_value(
+            "bgp.attribute.atomic_aggregate.length",
+            "ATOMIC_AGGREGATE attribute value must be empty",
+        ));
+    }
+    Ok(BgpAttrValue::AtomicAggregate)
+}
+
+fn decode_aggregator_value(value: &[u8]) -> Result<BgpAttrValue> {
+    let (asn, rest) = take(value, 2, "bgp aggregator attribute asn")?;
+    let (addr, rest) = take(rest, 4, "bgp aggregator attribute address")?;
+    if !rest.is_empty() {
+        return Err(CrafterError::invalid_field_value(
+            "bgp.attribute.aggregator.length",
+            "AGGREGATOR attribute value must be exactly six octets",
+        ));
+    }
+    Ok(BgpAttrValue::Aggregator {
+        asn: u16::from_be_bytes([asn[0], asn[1]]) as u32,
+        addr: Ipv4Addr::new(addr[0], addr[1], addr[2], addr[3]),
+    })
 }
 
 fn decode_u32_attribute_value(
@@ -756,6 +822,75 @@ mod tests {
                 flags: Field::user(ATTR_LOCAL_PREF_FLAGS),
                 type_code: ATTR_LOCAL_PREF,
                 value: BgpAttrValue::LocalPref(100),
+            }
+        );
+
+        let mut reencoded = Vec::new();
+        decoded.encode(&mut reencoded);
+        assert_eq!(reencoded, encoded);
+    }
+
+    #[test]
+    fn atomic_aggregate_attribute_encodes_and_round_trips() {
+        let attr = BgpPathAttribute::atomic_aggregate();
+        let mut encoded = Vec::new();
+        attr.encode(&mut encoded);
+
+        assert_eq!(
+            encoded,
+            [ATTR_ATOMIC_AGGREGATE_FLAGS, ATTR_ATOMIC_AGGREGATE, 0]
+        );
+        assert_eq!(attr.summary(), "ATOMIC_AGGREGATE");
+
+        let (decoded, consumed) = decode_attribute(&encoded).expect("attribute decodes");
+        assert_eq!(consumed, encoded.len());
+        assert_eq!(
+            decoded,
+            BgpPathAttribute {
+                flags: Field::user(ATTR_ATOMIC_AGGREGATE_FLAGS),
+                type_code: ATTR_ATOMIC_AGGREGATE,
+                value: BgpAttrValue::AtomicAggregate,
+            }
+        );
+
+        let mut reencoded = Vec::new();
+        decoded.encode(&mut reencoded);
+        assert_eq!(reencoded, encoded);
+    }
+
+    #[test]
+    fn aggregator_attribute_encodes_and_round_trips() {
+        let attr = BgpPathAttribute::aggregator(65000, Ipv4Addr::new(192, 0, 2, 1));
+        let mut encoded = Vec::new();
+        attr.encode(&mut encoded);
+
+        assert_eq!(
+            encoded,
+            [
+                ATTR_AGGREGATOR_FLAGS,
+                ATTR_AGGREGATOR,
+                6,
+                0xfd,
+                0xe8,
+                0xc0,
+                0x00,
+                0x02,
+                0x01
+            ]
+        );
+        assert_eq!(attr.summary(), "AGGREGATOR=65000 192.0.2.1");
+
+        let (decoded, consumed) = decode_attribute(&encoded).expect("attribute decodes");
+        assert_eq!(consumed, encoded.len());
+        assert_eq!(
+            decoded,
+            BgpPathAttribute {
+                flags: Field::user(ATTR_AGGREGATOR_FLAGS),
+                type_code: ATTR_AGGREGATOR,
+                value: BgpAttrValue::Aggregator {
+                    asn: 65000,
+                    addr: Ipv4Addr::new(192, 0, 2, 1),
+                },
             }
         );
 
