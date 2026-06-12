@@ -235,5 +235,35 @@ class Ipv6EnrichmentProfileTest(unittest.TestCase):
         self.assertNotIn("malformed-ipv6-extensions", {plan.case for plan in plans})
 
 
+class BgpSmokeProfileTest(unittest.TestCase):
+    def test_first_twenty_cover_only_bgp_message_cases(self) -> None:
+        plans = generate_plans(
+            seed=1,
+            profile="bgp-smoke",
+            count=20,
+            backend=_BACKEND,
+        )
+
+        self.assertEqual(len(plans), 20)
+        self.assertTrue({plan.case for plan in plans})
+        for plan in plans:
+            with self.subTest(case=plan.case, stack=plan.stack):
+                self.assertEqual(plan.family, "bgp")
+                self.assertTrue(plan.case.startswith("bgp-"))
+                self.assertIn("bgp", plan.stack)
+                self.assertNotIn("pcap", plan.feature_tags)
+                self.assertNotIn("live", plan.feature_tags)
+                self.assertNotIn("malformed", plan.feature_tags)
+
+                bgp = plan.fields.get("bgp")
+                self.assertIsInstance(bgp, dict)
+                self.assertIn("message_type", bgp)
+                self.assertEqual(bgp.get("marker"), {"hex": "ff" * 16})
+                self.assertEqual(plan.fields.get("tcp", {}).get("dst_port"), 179)
+                self.assertEqual(plan.fields.get("payload"), {"hex": "", "length": 0})
+                if bgp.get("message_type") != "keepalive":
+                    self.assertIn("body", bgp)
+
+
 if __name__ == "__main__":
     unittest.main()
