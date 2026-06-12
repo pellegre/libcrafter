@@ -1,6 +1,8 @@
 mod common;
 
-use common::{arg_value, flag_present, parse_u16_arg, print_help_if_requested, ExampleResult};
+use common::{
+    arg_value, flag_present, parse_u16_arg, parse_usize_arg, print_help_if_requested, ExampleResult,
+};
 use crafter::core::protocols::bgp::{
     BGP_HEADER_LEN, BGP_MARKER_LEN, BGP_MAX_MESSAGE_LEN, BGP_PORT, BGP_TYPE_KEEPALIVE,
     BGP_TYPE_NOTIFICATION, BGP_TYPE_OPEN, BGP_TYPE_UPDATE,
@@ -11,7 +13,7 @@ use std::io::{ErrorKind, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const DEFAULT_LOCAL_AS: u16 = 65_000;
 const DEFAULT_PEER_AS: u16 = 65_001;
@@ -25,12 +27,14 @@ const INITIAL_READ_TIMEOUT: Duration = Duration::from_secs(10);
 const MIN_HOLD_READ_TIMEOUT: Duration = Duration::from_secs(3);
 const MAX_HOLD_READ_TIMEOUT: Duration = Duration::from_secs(30);
 const POST_UPDATE_READ_TIMEOUT: Duration = Duration::from_secs(2);
+const LINGER_READ_TIMEOUT: Duration = Duration::from_millis(500);
 const POST_UPDATE_READ_LIMIT: usize = 8;
-const SHORT_HOLD: Duration = Duration::from_secs(1);
+const LINGER_POLL_INTERVAL: Duration = Duration::from_secs(1);
+const DEFAULT_LINGER_SECONDS: usize = 1;
 
 fn main() -> ExampleResult<()> {
     if print_help_if_requested(
-        "usage: cargo run --example bgp_session -- [--peer IP:PORT] [--local-as ASN] [--peer-as ASN] [--announce PREFIX] [--ipv6] [--out DIR]\n\nBuild an offline BGP session message plan by default. --peer opens a live TCP session to an explicitly provided BGP peer and writes a transcript under --out.",
+        "usage: cargo run --example bgp_session -- [--peer IP:PORT] [--local-as ASN] [--peer-as ASN] [--announce PREFIX] [--ipv6] [--linger-seconds SECONDS] [--out DIR]\n\nBuild an offline BGP session message plan by default. --peer opens a live TCP session to an explicitly provided BGP peer and writes a transcript under --out.",
     ) {
         return Ok(());
     }
@@ -70,9 +74,11 @@ struct Config {
     local_as: u16,
     peer_as: u16,
     bgp_id: Ipv4Addr,
+    ipv4_next_hop: Ipv4Addr,
     ipv4_prefix: (Ipv4Addr, u8),
     ipv6_prefix: (Ipv6Addr, u8),
     ipv6: bool,
+    linger: Duration,
     out_dir: PathBuf,
 }
 
@@ -83,9 +89,13 @@ impl Config {
             local_as: parse_u16_arg("--local-as", DEFAULT_LOCAL_AS)?,
             peer_as: parse_u16_arg("--peer-as", DEFAULT_PEER_AS)?,
             bgp_id: DEFAULT_BGP_ID,
+            ipv4_next_hop: DEFAULT_BGP_ID,
             ipv4_prefix: (DEFAULT_IPV4_PREFIX, 24),
             ipv6_prefix: (DEFAULT_IPV6_PREFIX, 32),
             ipv6: flag_present("--ipv6"),
+            linger: Duration::from_secs(
+                parse_usize_arg("--linger-seconds", DEFAULT_LINGER_SECONDS)? as u64,
+            ),
             out_dir: arg_value("--out")
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from(DEFAULT_OUT_DIR)),
@@ -108,9 +118,11 @@ impl Config {
             local_as: DEFAULT_LOCAL_AS,
             peer_as: DEFAULT_PEER_AS,
             bgp_id: DEFAULT_BGP_ID,
+            ipv4_next_hop: DEFAULT_BGP_ID,
             ipv4_prefix: (DEFAULT_IPV4_PREFIX, 24),
             ipv6_prefix: (DEFAULT_IPV6_PREFIX, 32),
             ipv6: false,
+            linger: Duration::from_secs(DEFAULT_LINGER_SECONDS as u64),
             out_dir: PathBuf::from(DEFAULT_OUT_DIR),
         }
     }
@@ -179,8 +191,8 @@ fn bgp_message_plan(config: &Config) -> ExampleResult<Vec<PlannedMessage>> {
             packet: Packet::from_layer(
                 Bgp::update()
                     .attribute(BgpPathAttribute::origin(BGP_ORIGIN_IGP))
-                    .attribute(BgpPathAttribute::as_sequence(&[config.local_as as u32]))
-                    .attribute(BgpPathAttribute::next_hop(config.bgp_id))
+                    .attribute(BgpPathAttribute::as_sequence4(&[config.local_as as u32]))
+                    .attribute(BgpPathAttribute::next_hop(config.ipv4_next_hop))
                     .nlri(ipv4_prefix),
             ),
         },
@@ -192,7 +204,7 @@ fn bgp_message_plan(config: &Config) -> ExampleResult<Vec<PlannedMessage>> {
             packet: Packet::from_layer(
                 Bgp::update()
                     .attribute(BgpPathAttribute::origin(BGP_ORIGIN_IGP))
-                    .attribute(BgpPathAttribute::as_sequence(&[config.local_as as u32]))
+                    .attribute(BgpPathAttribute::as_sequence4(&[config.local_as as u32]))
                     .attribute(BgpPathAttribute::mp_reach_ipv6(
                         DEFAULT_IPV6_NEXT_HOP,
                         &[ipv6_prefix],
@@ -221,9 +233,10 @@ fn print_message(index: usize, label: &str, packet: &Packet) -> ExampleResult<()
 }
 
 fn run_live(config: &Config) -> ExampleResult<()> {
+    let mut config = config.clone();
     let mut transcript = Transcript::new();
-    let result = run_live_inner(config, &mut transcript);
-    let write_result = transcript.write(&config.out_dir, config);
+    let result = run_live_inner(&mut config, &mut transcript);
+    let write_result = transcript.write(&config.out_dir, &config);
 
     match write_result {
         Ok(path) => println!("transcript: {}", path.display()),
@@ -234,7 +247,7 @@ fn run_live(config: &Config) -> ExampleResult<()> {
     result
 }
 
-fn run_live_inner(config: &Config, transcript: &mut Transcript) -> ExampleResult<()> {
+fn run_live_inner(config: &mut Config, transcript: &mut Transcript) -> ExampleResult<()> {
     let peer = config.peer.expect("live mode requires peer");
     println!("example: bgp_session");
     println!("mode: live");
@@ -248,6 +261,10 @@ fn run_live_inner(config: &Config, transcript: &mut Transcript) -> ExampleResult
     stream.set_nodelay(true)?;
     stream.set_read_timeout(Some(INITIAL_READ_TIMEOUT))?;
     stream.set_write_timeout(Some(CONNECT_TIMEOUT))?;
+    if let IpAddr::V4(addr) = stream.local_addr()?.ip() {
+        config.ipv4_next_hop = addr;
+    }
+    println!("IPv4 next hop: {}", config.ipv4_next_hop);
 
     let plan = bgp_message_plan(config)?;
     let open = find_planned(&plan, "OPEN")?;
@@ -276,8 +293,8 @@ fn run_live_inner(config: &Config, transcript: &mut Transcript) -> ExampleResult
     }
 
     stream.set_read_timeout(Some(POST_UPDATE_READ_TIMEOUT))?;
-    drain_inbound(&mut stream, transcript)?;
-    thread::sleep(SHORT_HOLD);
+    drain_inbound_with_label(&mut stream, transcript, "post-update inbound")?;
+    linger_established(&mut stream, transcript, config.linger)?;
 
     let cease = find_planned(&plan, "NOTIFICATION Cease")?;
     send_planned(&mut stream, transcript, cease)?;
@@ -351,16 +368,40 @@ fn receive_optional(
     Ok(Some(message))
 }
 
-fn drain_inbound(stream: &mut TcpStream, transcript: &mut Transcript) -> ExampleResult<()> {
+fn drain_inbound_with_label(
+    stream: &mut TcpStream,
+    transcript: &mut Transcript,
+    label: &'static str,
+) -> ExampleResult<()> {
     for _ in 0..POST_UPDATE_READ_LIMIT {
-        let Some(message) = receive_optional(stream, transcript, "inbound")? else {
+        let Some(message) = receive_optional(stream, transcript, label)? else {
             break;
         };
 
         if message.message_type == BGP_TYPE_NOTIFICATION {
-            break;
+            return Err(format!("peer sent NOTIFICATION while reading {label}").into());
         }
     }
+    Ok(())
+}
+
+fn linger_established(
+    stream: &mut TcpStream,
+    transcript: &mut Transcript,
+    duration: Duration,
+) -> ExampleResult<()> {
+    if duration.is_zero() {
+        return Ok(());
+    }
+
+    println!("linger: {}s", duration.as_secs());
+    stream.set_read_timeout(Some(LINGER_READ_TIMEOUT))?;
+    let deadline = Instant::now() + duration;
+    while Instant::now() < deadline {
+        drain_inbound_with_label(stream, transcript, "linger inbound")?;
+        thread::sleep(LINGER_POLL_INTERVAL);
+    }
+
     Ok(())
 }
 
@@ -475,6 +516,7 @@ impl Transcript {
         body.push_str(&format!("local_as: {}\n", config.local_as));
         body.push_str(&format!("peer_as: {}\n", config.peer_as));
         body.push_str(&format!("bgp_id: {}\n", config.bgp_id));
+        body.push_str(&format!("ipv4_next_hop: {}\n", config.ipv4_next_hop));
         body.push_str(&format!(
             "ipv4_announce: {}/{}\n",
             config.ipv4_prefix.0, config.ipv4_prefix.1
@@ -485,6 +527,7 @@ impl Transcript {
                 config.ipv6_prefix.0, config.ipv6_prefix.1
             ));
         }
+        body.push_str(&format!("linger_seconds: {}\n", config.linger.as_secs()));
         body.push('\n');
 
         for (index, entry) in self.entries.iter().enumerate() {
