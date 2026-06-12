@@ -333,9 +333,20 @@ mod tests {
     };
     use crate::protocols::bgp::capability::BGP_MP_IPV4_UNICAST;
     use crate::protocols::bgp::{
-        BgpCapability, AFI_IPV4, AFI_IPV6, ATTR_MP_REACH_NLRI, SAFI_UNICAST,
+        BgpCapability, AFI_IPV4, AFI_IPV6, ATTR_MP_REACH_NLRI, ATTR_MP_REACH_NLRI_FLAGS,
+        SAFI_UNICAST,
     };
     use crate::registry::ProtocolRegistry;
+
+    fn bgp_update_bytes(body: &[u8]) -> Vec<u8> {
+        [
+            [0xff; BGP_MARKER_LEN].as_slice(),
+            &((BGP_HEADER_LEN + body.len()) as u16).to_be_bytes(),
+            &[BGP_TYPE_UPDATE],
+            body,
+        ]
+        .concat()
+    }
 
     #[test]
     fn take_splits_when_enough_bytes() {
@@ -769,14 +780,107 @@ mod tests {
     }
 
     #[test]
+    fn decode_update_nlri_prefix_overrun_is_structured_error() {
+        let bytes = bgp_update_bytes(&[0x00, 0x00, 0x00, 0x00, 24, 203, 0]);
+
+        let err = decode_bgp_message(&bytes).expect_err("NLRI prefix overruns NLRI region");
+        match err {
+            CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            } => {
+                assert_eq!(context, "bgp prefix");
+                assert_eq!(required, 3);
+                assert_eq!(available, 2);
+            }
+            other => panic!("expected buffer_too_short, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn decode_update_rejects_overlong_ipv4_nlri_prefix() {
+        let bytes = bgp_update_bytes(&[0x00, 0x00, 0x00, 0x00, 33, 203, 0, 113, 0, 0]);
+
+        let err = decode_bgp_message(&bytes).expect_err("IPv4 NLRI max is 32 bits");
+        assert!(matches!(
+            err,
+            CrafterError::InvalidFieldValue {
+                field: "bgp.prefix.length",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn decode_update_rejects_overlong_ipv6_mp_nlri_prefix() {
+        let next_hop = Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 1);
+        let mut value = vec![0x00, 0x02, SAFI_UNICAST, 16];
+        value.extend_from_slice(&next_hop.octets());
+        value.extend_from_slice(&[0x00, 129]);
+
+        let mut attribute = vec![
+            ATTR_MP_REACH_NLRI_FLAGS,
+            ATTR_MP_REACH_NLRI,
+            value.len() as u8,
+        ];
+        attribute.extend_from_slice(&value);
+
+        let mut body = vec![0x00, 0x00];
+        body.extend_from_slice(&(attribute.len() as u16).to_be_bytes());
+        body.extend_from_slice(&attribute);
+
+        let bytes = bgp_update_bytes(&body);
+        let err = decode_bgp_message(&bytes).expect_err("IPv6 MP NLRI max is 128 bits");
+        assert!(matches!(
+            err,
+            CrafterError::InvalidFieldValue {
+                field: "bgp.prefix.length",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn decode_update_withdrawn_prefix_overrun_is_structured_error() {
+        let bytes = bgp_update_bytes(&[0x00, 0x03, 24, 203, 0, 0x00, 0x00]);
+
+        let err = decode_bgp_message(&bytes).expect_err("withdrawn route prefix overruns block");
+        match err {
+            CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            } => {
+                assert_eq!(context, "bgp prefix");
+                assert_eq!(required, 3);
+                assert_eq!(available, 2);
+            }
+            other => panic!("expected buffer_too_short, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn update_compile_preserves_malformed_prefix_octet_count() {
+        let malformed_prefix = BgpPrefix {
+            length: 24,
+            prefix: vec![203],
+        };
+
+        let bytes = Packet::from_layer(Bgp::update().nlri(malformed_prefix))
+            .compile()
+            .expect("malformed-on-purpose prefix compiles");
+
+        assert_eq!(
+            &bytes[BGP_MARKER_LEN..BGP_MARKER_LEN + 2],
+            &25u16.to_be_bytes()
+        );
+        assert_eq!(&bytes[BGP_HEADER_LEN..], &[0, 0, 0, 0, 24, 203]);
+    }
+
+    #[test]
     fn decode_update_attribute_length_overrun_is_structured_error() {
-        let bytes = [
-            [0xff; BGP_MARKER_LEN].as_slice(),
-            &(25u16).to_be_bytes(),
-            &[BGP_TYPE_UPDATE],
-            &[0x00, 0x00, 0x00, 0x04, 0x40, 0x01],
-        ]
-        .concat();
+        let bytes = bgp_update_bytes(&[0x00, 0x00, 0x00, 0x04, 0x40, 0x01]);
 
         let err = decode_bgp_message(&bytes).expect_err("attribute length overruns message body");
         match err {
