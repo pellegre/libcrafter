@@ -271,7 +271,7 @@ impl BgpUpdate {
     }
 
     /// The on-wire UPDATE body length, excluding the shared BGP header.
-    pub(crate) fn body_len(&self) -> usize {
+    pub(crate) fn encoded_len(&self) -> usize {
         2 + self.withdrawn_len() + 2 + self.attributes_len() + self.nlri_len()
     }
 
