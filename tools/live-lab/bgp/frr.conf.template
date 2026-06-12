@@ -1,0 +1,23 @@
+frr defaults traditional
+hostname crafter-bgp-peer
+log syslog informational
+service integrated-vtysh-config
+ip forwarding
+ipv6 forwarding
+ip route {{PEER_ORIGINATE_PREFIX}} Null0
+!
+router bgp {{PEER_AS}}
+ bgp router-id {{PEER_ROUTER_ID}}
+ no bgp ebgp-requires-policy
+ neighbor {{DRIVER_IP}} remote-as {{DRIVER_AS}}
+ !
+ address-family ipv4 unicast
+  network {{PEER_ORIGINATE_PREFIX}}
+  neighbor {{DRIVER_IP}} activate
+ exit-address-family
+ !
+ address-family ipv6 unicast
+  neighbor {{DRIVER_IP}} activate
+ exit-address-family
+!
+line vty
