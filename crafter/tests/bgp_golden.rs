@@ -15,9 +15,11 @@
 
 use crafter::prelude::*;
 use crafter::protocols::bgp::attribute::{
-    BgpAttrValue, BgpPathAttribute, BgpPrefix, BGP_ORIGIN_IGP,
+    well_known_flags, BgpAttrValue, BgpPathAttribute, BgpPrefix, BGP_ORIGIN_IGP,
 };
-use crafter::protocols::bgp::{AS_TRANS, COMMUNITY_NO_EXPORT};
+use crafter::protocols::bgp::{
+    AS_TRANS, ATTR_ORIGIN, BGP_HEADER_LEN, BGP_MARKER_LEN, BGP_TYPE_KEEPALIVE, COMMUNITY_NO_EXPORT,
+};
 use std::net::{Ipv4Addr, Ipv6Addr};
 
 const AS4_ASN: u32 = 4_200_000_000;
@@ -572,4 +574,82 @@ fn bgp_golden_update_withdraw() {
     assert_eq!(&bytes.as_bytes()[21..25], &[0x18, 0xcb, 0x00, 0x71]);
     assert_eq!(&bytes.as_bytes()[25..27], &[0x00, 0x00]);
     assert_roundtrip(bytes.as_bytes());
+}
+
+// ---------------------------------------------------------------------------
+// Malformed-on-purpose compile overrides: generated tools sometimes need to
+// emit invalid BGP while preserving exactly what the caller asked for. These
+// tests assert compile-time preservation only; malformed decode is separate.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn bgp_compile_preserves_forced_open_message_length() {
+    let forced_length = 31u16;
+    let bytes = Packet::from_layer(
+        Bgp::open()
+            .my_as(65000)
+            .hold_time(180)
+            .bgp_id([192, 0, 2, 1])
+            .length(forced_length),
+    )
+    .compile()
+    .expect("compile OPEN with malformed length override");
+
+    assert_eq!(bytes.len(), BGP_HEADER_LEN + 10);
+    assert_ne!(forced_length as usize, bytes.len());
+    assert_eq!(
+        &bytes.as_bytes()[BGP_MARKER_LEN..BGP_MARKER_LEN + 2],
+        &forced_length.to_be_bytes()
+    );
+}
+
+#[test]
+fn bgp_compile_preserves_forced_keepalive_marker() {
+    let bytes = Packet::from_layer(Bgp::keepalive().marker([0x00; BGP_MARKER_LEN]))
+        .compile()
+        .expect("compile KEEPALIVE with malformed marker override");
+
+    assert_eq!(&bytes.as_bytes()[..BGP_MARKER_LEN], &[0x00; BGP_MARKER_LEN]);
+    assert_eq!(
+        &bytes.as_bytes()[BGP_MARKER_LEN..BGP_MARKER_LEN + 2],
+        &(BGP_HEADER_LEN as u16).to_be_bytes()
+    );
+    assert_eq!(bytes.as_bytes()[BGP_MARKER_LEN + 2], BGP_TYPE_KEEPALIVE);
+}
+
+#[test]
+fn bgp_compile_preserves_forced_update_withdrawn_length() {
+    let forced_withdrawn_len = 9u16;
+    let bytes = Packet::from_layer(
+        Bgp::update()
+            .withdraw(
+                BgpPrefix::from_ipv4(Ipv4Addr::new(203, 0, 113, 0), 24).expect("valid IPv4 prefix"),
+            )
+            .withdrawn_len(forced_withdrawn_len),
+    )
+    .compile()
+    .expect("compile UPDATE with malformed withdrawn length override");
+
+    let body = &bytes.as_bytes()[BGP_HEADER_LEN..];
+    assert_eq!(&body[..2], &forced_withdrawn_len.to_be_bytes());
+    assert_eq!(&body[2..6], &[0x18, 0xcb, 0x00, 0x71]);
+    assert_eq!(&body[6..8], &[0x00, 0x00]);
+    assert_ne!(forced_withdrawn_len as usize, 4);
+}
+
+#[test]
+fn bgp_compile_preserves_forced_attribute_flags() {
+    let forced_flags = 0x80;
+    assert_ne!(forced_flags, well_known_flags(ATTR_ORIGIN));
+
+    let bytes = Packet::from_layer(
+        Bgp::update().attribute(BgpPathAttribute::origin(BGP_ORIGIN_IGP).with_flags(forced_flags)),
+    )
+    .compile()
+    .expect("compile UPDATE with malformed attribute flags override");
+
+    let body = &bytes.as_bytes()[BGP_HEADER_LEN..];
+    let attr_len = u16::from_be_bytes([body[2], body[3]]) as usize;
+    let attrs = &body[4..4 + attr_len];
+    assert_eq!(attrs, &[forced_flags, ATTR_ORIGIN, 1, BGP_ORIGIN_IGP]);
 }
