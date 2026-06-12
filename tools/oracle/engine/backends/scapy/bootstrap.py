@@ -40,6 +40,7 @@ def import_scapy() -> dict[str, Any]:
     try:
         import scapy  # type: ignore[import-untyped]
         import scapy.all as scapy_all  # type: ignore[import-untyped]
+        import scapy.contrib.bgp as scapy_bgp  # type: ignore[import-untyped]
         from scapy.all import conf  # type: ignore[import-untyped]
     except ModuleNotFoundError as exc:
         if exc.name != "scapy":
@@ -51,6 +52,7 @@ def import_scapy() -> dict[str, Any]:
     return {
         "module": scapy,
         "all": scapy_all,
+        "bgp": scapy_bgp,
         "version": _scapy_version(scapy),
         "metadata": scapy_report_metadata(scapy),
     }

@@ -30,6 +30,12 @@ _IPV6_OPTION_REGION_KEY = "__ipv6_option_region_hex__"
 _LAYER_ALIASES: dict[str, str] = {
     "AH": "ah",
     "ARP": "arp",
+    "BGPHeader": "bgp",
+    "BGPKeepAlive": "bgp",
+    "BGPNotification": "bgp",
+    "BGPOpen": "bgp",
+    "BGPRouteRefresh": "bgp",
+    "BGPUpdate": "bgp",
     "BOOTP": "dhcp",
     "CookedLinux": "linux_sll",
     "DHCP": "dhcp",
@@ -86,6 +92,14 @@ _LAYER_FIELD_ALIASES: dict[str, dict[str, str]] = {
         "hwlen": "hardware_length",
         "hwtype": "hardware_type",
         "plen": "protocol_length",
+    },
+    "bgp": {
+        "bgp_id": "bgp_identifier",
+        "len": "length",
+        "my_as": "asn",
+        "opt_param_len": "optional_parameter_length",
+        "opt_params": "optional_parameters",
+        "path_attr": "path_attributes",
     },
     "esp": {
         "seq": "sequence",
@@ -309,7 +323,8 @@ def normalize_packet(
     normalized_layers: list[str] = []
     normalized_fields: dict[str, JSONObject] = {}
     for occurrence, layer in enumerate(layers):
-        normalized_layer = _normalize_layer_name(_text(layer["name"]))
+        native_layer = _text(layer["name"])
+        normalized_layer = _normalize_layer_name(native_layer)
         if normalized_layer == "padding":
             continue
         layer_fields = _normalize_fields(
@@ -319,6 +334,11 @@ def normalize_packet(
         if normalized_layer == "dhcp" and "dhcp" in normalized_fields:
             normalized_fields["dhcp"].update(layer_fields)
             continue
+        if normalized_layer == "bgp" and _is_bgp_body_layer(native_layer):
+            key = _last_layer_field_key(normalized_fields, "bgp")
+            if key is not None:
+                normalized_fields[key].update(layer_fields)
+                continue
         key = _field_key(normalized_fields, normalized_layer)
         normalized_fields[key] = layer_fields
         normalized_layers.append(normalized_layer)
@@ -470,6 +490,22 @@ def _normalize_layer_name(native_name: str) -> str:
     return _LAYER_ALIASES.get(native_name, native_name.lower())
 
 
+def _is_bgp_body_layer(native_name: str) -> bool:
+    return native_name in {"BGPOpen", "BGPUpdate", "BGPNotification", "BGPRouteRefresh"}
+
+
+def _last_layer_field_key(fields: Mapping[str, JSONObject], layer_name: str) -> str | None:
+    if layer_name in fields:
+        key = layer_name
+    else:
+        key = None
+    index = 2
+    while f"{layer_name}#{index}" in fields:
+        key = f"{layer_name}#{index}"
+        index += 1
+    return key
+
+
 def _normalize_root_name(root: str | None) -> str | None:
     if root is None:
         return None
@@ -483,6 +519,8 @@ def _normalize_fields(layer_name: str, fields: JSONObject) -> JSONObject:
         return _normalize_dns_fields(fields)
     if layer_name == "dhcp":
         return _normalize_dhcp_fields(fields)
+    if layer_name == "bgp":
+        return _normalize_bgp_fields(fields)
 
     output: JSONObject = {}
     for native_name, value in fields.items():
@@ -555,6 +593,35 @@ def _normalize_ikev2_flags(value: JSONValue) -> JSONValue:
     if isinstance(value, int) and not isinstance(value, bool):
         return [name for bit, name in sorted(_IKEV2_FLAG_NAMES.items()) if value & bit]
     return value
+
+
+_BGP_MESSAGE_TYPE_NAMES: dict[int, str] = {
+    1: "open",
+    2: "update",
+    3: "notification",
+    4: "keepalive",
+    5: "route_refresh",
+}
+
+
+def _normalize_bgp_fields(fields: JSONObject) -> JSONObject:
+    output: JSONObject = {}
+    for native_name, value in fields.items():
+        normalized_name = _normalize_field_name("bgp", native_name)
+        output[normalized_name] = _normalize_field_value("bgp", normalized_name, value)
+
+    marker = output.get("marker")
+    if isinstance(marker, int) and not isinstance(marker, bool):
+        output["marker"] = {"hex": marker.to_bytes(16, "big").hex()}
+
+    message_type = output.get("type")
+    if isinstance(message_type, int) and not isinstance(message_type, bool):
+        output["message_type"] = _BGP_MESSAGE_TYPE_NAMES.get(message_type, message_type)
+
+    for name in ("optional_parameters", "withdrawn_routes", "path_attributes", "nlri"):
+        if output.get(name) == []:
+            output[name] = {"hex": ""}
+    return output
 
 
 def _normalize_dns_fields(fields: JSONObject) -> JSONObject:
