@@ -111,7 +111,8 @@ fn attribute_summary(attribute: &BgpPathAttribute) -> String {
         | BgpAttrValue::Communities(_)
         | BgpAttrValue::ExtendedCommunities(_)
         | BgpAttrValue::LargeCommunities(_)
-        | BgpAttrValue::MpReachNlri { .. } => attribute.summary(),
+        | BgpAttrValue::MpReachNlri { .. }
+        | BgpAttrValue::MpUnreachNlri { .. } => attribute.summary(),
         BgpAttrValue::Unknown(value) => format!("attr-{}({}b)", attribute.type_code, value.len()),
     }
 }
