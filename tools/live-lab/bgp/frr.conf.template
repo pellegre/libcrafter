@@ -10,6 +10,7 @@ router bgp {{PEER_AS}}
  bgp router-id {{PEER_ROUTER_ID}}
  no bgp ebgp-requires-policy
  neighbor {{DRIVER_IP}} remote-as {{DRIVER_AS}}
+{{EBGP_MULTIHOP_LINE}}
  !
  address-family ipv4 unicast
   network {{PEER_ORIGINATE_PREFIX}}
