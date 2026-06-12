@@ -107,7 +107,8 @@ fn attribute_summary(attribute: &BgpPathAttribute) -> String {
         | BgpAttrValue::MultiExitDisc(_)
         | BgpAttrValue::LocalPref(_)
         | BgpAttrValue::AtomicAggregate
-        | BgpAttrValue::Aggregator { .. } => attribute.summary(),
+        | BgpAttrValue::Aggregator { .. }
+        | BgpAttrValue::Communities(_) => attribute.summary(),
         BgpAttrValue::Unknown(value) => format!("attr-{}({}b)", attribute.type_code, value.len()),
     }
 }
