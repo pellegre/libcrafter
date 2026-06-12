@@ -303,6 +303,58 @@ fn bgp_golden_update_ext_communities() {
 }
 
 // ---------------------------------------------------------------------------
+// UPDATE announcement with LARGE_COMMUNITIES (RFC 8092): announces
+// 203.0.113.0/24 with ORIGIN=IGP, AS_PATH sequence containing AS 65000,
+// NEXT_HOP 192.0.2.1, and one large community 65000:1:2.
+// ---------------------------------------------------------------------------
+
+const GOLDEN_UPDATE_LARGE_COMMUNITIES: &str =
+    "ffffffffffffffffffffffffffffffff003c0200000021400101004002040201fde8400304c0000201c0200c0000fde8000000010000000218cb0071";
+
+fn build_update_large_communities() -> Packet {
+    Packet::from_layer(
+        Bgp::update()
+            .attribute(BgpPathAttribute::origin(BGP_ORIGIN_IGP))
+            .attribute(BgpPathAttribute::as_sequence(&[65000]))
+            .attribute(BgpPathAttribute::next_hop(Ipv4Addr::new(192, 0, 2, 1)))
+            .attribute(BgpPathAttribute::large_communities(&[[65000, 1, 2]]))
+            .nlri(
+                BgpPrefix::from_ipv4(Ipv4Addr::new(203, 0, 113, 0), 24).expect("valid IPv4 prefix"),
+            ),
+    )
+}
+
+#[test]
+fn bgp_golden_update_large_communities() {
+    let large_communities = [[65000, 1, 2]];
+    let bytes = build_update_large_communities()
+        .compile()
+        .expect("compile");
+    maybe_dump("UPDATE_LARGE_COMMUNITIES", bytes.as_bytes());
+    assert_eq!(
+        bytes.as_bytes(),
+        hex(GOLDEN_UPDATE_LARGE_COMMUNITIES).as_slice()
+    );
+
+    let body = &bytes.as_bytes()[19..];
+    let attr_len = u16::from_be_bytes([body[2], body[3]]) as usize;
+    let attrs = &body[4..4 + attr_len];
+    let large_communities_offset = attrs.len() - 15;
+    let large_communities_bytes = &attrs[large_communities_offset..];
+    assert_eq!(&large_communities_bytes[..2], &[0xC0, 0x20]);
+
+    let (decoded, consumed) =
+        crafter::protocols::bgp::attribute::decode_attribute(large_communities_bytes)
+            .expect("decode large communities attribute");
+    assert_eq!(consumed, large_communities_bytes.len());
+    assert_eq!(
+        decoded.value,
+        BgpAttrValue::LargeCommunities(large_communities.to_vec())
+    );
+    assert_roundtrip(bytes.as_bytes());
+}
+
+// ---------------------------------------------------------------------------
 // UPDATE with unknown path attribute: preserves optional/transitive flags,
 // unknown type 99, raw value bytes, and NLRI 203.0.113.0/24.
 // ---------------------------------------------------------------------------
