@@ -6,16 +6,17 @@ use crate::field::Field;
 use crate::{CrafterError, Result};
 
 use super::constants::{
-    AS_PATH_SEG_AS_SEQUENCE, AS_PATH_SEG_AS_SET, ATTR_AGGREGATOR, ATTR_AGGREGATOR_FLAGS,
-    ATTR_AS4_AGGREGATOR, ATTR_AS4_AGGREGATOR_FLAGS, ATTR_AS4_PATH, ATTR_AS4_PATH_FLAGS,
-    ATTR_AS_PATH, ATTR_AS_PATH_FLAGS, ATTR_ATOMIC_AGGREGATE, ATTR_ATOMIC_AGGREGATE_FLAGS,
-    ATTR_COMMUNITIES, ATTR_COMMUNITIES_FLAGS, ATTR_EXTENDED_COMMUNITIES,
-    ATTR_EXTENDED_COMMUNITIES_FLAGS, ATTR_LARGE_COMMUNITY, ATTR_LARGE_COMMUNITY_FLAGS,
-    ATTR_LOCAL_PREF, ATTR_LOCAL_PREF_FLAGS, ATTR_MP_REACH_NLRI, ATTR_MP_REACH_NLRI_FLAGS,
-    ATTR_MP_UNREACH_NLRI, ATTR_MP_UNREACH_NLRI_FLAGS, ATTR_MULTI_EXIT_DISC,
-    ATTR_MULTI_EXIT_DISC_FLAGS, ATTR_NEXT_HOP, ATTR_NEXT_HOP_FLAGS, ATTR_ORIGIN, ATTR_ORIGIN_FLAGS,
-    BGP_ATTR_FLAG_EXTENDED_LENGTH, BGP_ATTR_FLAG_OPTIONAL, COMMUNITY_NO_ADVERTISE,
-    COMMUNITY_NO_EXPORT, COMMUNITY_NO_EXPORT_SUBCONFED, ORIGIN_EGP, ORIGIN_IGP, ORIGIN_INCOMPLETE,
+    AFI_IPV4, AFI_IPV6, AS_PATH_SEG_AS_SEQUENCE, AS_PATH_SEG_AS_SET, ATTR_AGGREGATOR,
+    ATTR_AGGREGATOR_FLAGS, ATTR_AS4_AGGREGATOR, ATTR_AS4_AGGREGATOR_FLAGS, ATTR_AS4_PATH,
+    ATTR_AS4_PATH_FLAGS, ATTR_AS_PATH, ATTR_AS_PATH_FLAGS, ATTR_ATOMIC_AGGREGATE,
+    ATTR_ATOMIC_AGGREGATE_FLAGS, ATTR_COMMUNITIES, ATTR_COMMUNITIES_FLAGS,
+    ATTR_EXTENDED_COMMUNITIES, ATTR_EXTENDED_COMMUNITIES_FLAGS, ATTR_LARGE_COMMUNITY,
+    ATTR_LARGE_COMMUNITY_FLAGS, ATTR_LOCAL_PREF, ATTR_LOCAL_PREF_FLAGS, ATTR_MP_REACH_NLRI,
+    ATTR_MP_REACH_NLRI_FLAGS, ATTR_MP_UNREACH_NLRI, ATTR_MP_UNREACH_NLRI_FLAGS,
+    ATTR_MULTI_EXIT_DISC, ATTR_MULTI_EXIT_DISC_FLAGS, ATTR_NEXT_HOP, ATTR_NEXT_HOP_FLAGS,
+    ATTR_ORIGIN, ATTR_ORIGIN_FLAGS, BGP_ATTR_FLAG_EXTENDED_LENGTH, BGP_ATTR_FLAG_OPTIONAL,
+    COMMUNITY_NO_ADVERTISE, COMMUNITY_NO_EXPORT, COMMUNITY_NO_EXPORT_SUBCONFED, ORIGIN_EGP,
+    ORIGIN_IGP, ORIGIN_INCOMPLETE, SAFI_UNICAST,
 };
 use super::decode::take;
 
@@ -73,6 +74,17 @@ pub enum BgpAttrValue {
     ExtendedCommunities(Vec<[u8; 8]>),
     /// LARGE_COMMUNITIES path attribute (RFC 8092).
     LargeCommunities(Vec<[u32; 3]>),
+    /// MP_REACH_NLRI path attribute (RFC 4760 §3).
+    MpReachNlri {
+        /// Address Family Identifier.
+        afi: u16,
+        /// Subsequent Address Family Identifier.
+        safi: u8,
+        /// Network address of next hop.
+        next_hop: Vec<u8>,
+        /// Network Layer Reachability Information.
+        nlri: Vec<BgpPrefix>,
+    },
     /// A value whose type-specific structure is not modeled yet.
     Unknown(Vec<u8>),
 }
@@ -93,6 +105,9 @@ impl BgpAttrValue {
             Self::Communities(communities) => communities.len() * 4,
             Self::ExtendedCommunities(communities) => communities.len() * 8,
             Self::LargeCommunities(communities) => communities.len() * 12,
+            Self::MpReachNlri { next_hop, nlri, .. } => {
+                5 + next_hop.len() + prefixes_encoded_len(nlri)
+            }
             Self::Unknown(value) => value.len(),
         }
     }
@@ -129,6 +144,21 @@ impl BgpAttrValue {
                     out.extend_from_slice(&global.to_be_bytes());
                     out.extend_from_slice(&local1.to_be_bytes());
                     out.extend_from_slice(&local2.to_be_bytes());
+                }
+            }
+            Self::MpReachNlri {
+                afi,
+                safi,
+                next_hop,
+                nlri,
+            } => {
+                out.extend_from_slice(&afi.to_be_bytes());
+                out.push(*safi);
+                out.push(next_hop.len() as u8);
+                out.extend_from_slice(next_hop);
+                out.push(0);
+                for prefix in nlri {
+                    prefix.encode_prefix(out);
                 }
             }
             Self::Unknown(value) => out.extend_from_slice(value),
@@ -242,6 +272,20 @@ impl BgpPathAttribute {
         }
     }
 
+    /// Build an MP_REACH_NLRI path attribute for IPv6 unicast NLRI.
+    pub fn mp_reach_ipv6(next_hop: Ipv6Addr, nlri: &[BgpPrefix]) -> Self {
+        Self {
+            flags: Field::defaulted(ATTR_MP_REACH_NLRI_FLAGS),
+            type_code: ATTR_MP_REACH_NLRI,
+            value: BgpAttrValue::MpReachNlri {
+                afi: AFI_IPV6,
+                safi: SAFI_UNICAST,
+                next_hop: next_hop.octets().to_vec(),
+                nlri: nlri.to_vec(),
+            },
+        }
+    }
+
     /// Build a raw path attribute with canonical flags inferred from type code.
     pub fn unknown(type_code: u8, value: impl Into<Vec<u8>>) -> Self {
         Self {
@@ -298,6 +342,12 @@ impl BgpPathAttribute {
                 extended_communities_summary(communities)
             }
             BgpAttrValue::LargeCommunities(communities) => large_communities_summary(communities),
+            BgpAttrValue::MpReachNlri {
+                afi,
+                safi,
+                next_hop,
+                nlri,
+            } => mp_reach_summary(*afi, *safi, next_hop, nlri),
             BgpAttrValue::Unknown(value) => format!("attr-{} len={}", self.type_code, value.len()),
         }
     }
@@ -377,6 +427,7 @@ pub fn decode_attribute(buf: &[u8]) -> Result<(BgpPathAttribute, usize)> {
         ATTR_COMMUNITIES => decode_communities_value(value)?,
         ATTR_EXTENDED_COMMUNITIES => decode_extended_communities_value(value)?,
         ATTR_LARGE_COMMUNITY => decode_large_communities_value(value)?,
+        ATTR_MP_REACH_NLRI => decode_mp_reach_nlri_value(value)?,
         _ => BgpAttrValue::Unknown(value.to_vec()),
     };
 
@@ -512,6 +563,31 @@ fn decode_large_communities_value(value: &[u8]) -> Result<BgpAttrValue> {
         })
         .collect();
     Ok(BgpAttrValue::LargeCommunities(communities))
+}
+
+fn decode_mp_reach_nlri_value(mut value: &[u8]) -> Result<BgpAttrValue> {
+    let (afi, rest) = take(value, 2, "bgp mp_reach_nlri afi")?;
+    let afi = u16::from_be_bytes([afi[0], afi[1]]);
+    let (safi, rest) = take(rest, 1, "bgp mp_reach_nlri safi")?;
+    let safi = safi[0];
+    let (next_hop_len, rest) = take(rest, 1, "bgp mp_reach_nlri next hop length")?;
+    let (next_hop, rest) = take(rest, next_hop_len[0] as usize, "bgp mp_reach_nlri next hop")?;
+    let (_reserved, rest) = take(rest, 1, "bgp mp_reach_nlri reserved")?;
+
+    value = rest;
+    let mut nlri = Vec::new();
+    while !value.is_empty() {
+        let (prefix, consumed) = BgpPrefix::decode_prefix_with_max(value, 128)?;
+        nlri.push(prefix);
+        value = &value[consumed..];
+    }
+
+    Ok(BgpAttrValue::MpReachNlri {
+        afi,
+        safi,
+        next_hop: next_hop.to_vec(),
+        nlri,
+    })
 }
 
 fn decode_u32_attribute_value(
@@ -681,12 +757,56 @@ fn large_communities_summary(communities: &[[u32; 3]]) -> String {
     format!("LARGE_COMMUNITIES={parts}")
 }
 
+fn mp_reach_summary(afi: u16, safi: u8, next_hop: &[u8], nlri: &[BgpPrefix]) -> String {
+    let nlri = nlri
+        .iter()
+        .map(|prefix| mp_prefix_summary(afi, prefix))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "MP_REACH_NLRI afi={afi} safi={safi} next_hop={} nlri=[{nlri}]",
+        mp_next_hop_summary(afi, next_hop)
+    )
+}
+
+fn mp_next_hop_summary(afi: u16, next_hop: &[u8]) -> String {
+    match (afi, next_hop) {
+        (AFI_IPV4, [a, b, c, d]) => Ipv4Addr::new(*a, *b, *c, *d).to_string(),
+        (AFI_IPV6, bytes) if bytes.len() == 16 => {
+            let mut octets = [0; 16];
+            octets.copy_from_slice(bytes);
+            Ipv6Addr::from(octets).to_string()
+        }
+        _ => format!("0x{}", hex_bytes(next_hop)),
+    }
+}
+
+fn mp_prefix_summary(afi: u16, prefix: &BgpPrefix) -> String {
+    match afi {
+        AFI_IPV4 if prefix.length <= 32 && prefix.prefix.len() <= 4 => {
+            let mut octets = [0; 4];
+            octets[..prefix.prefix.len()].copy_from_slice(&prefix.prefix);
+            format!("{}/{}", Ipv4Addr::from(octets), prefix.length)
+        }
+        AFI_IPV6 if prefix.length <= 128 && prefix.prefix.len() <= 16 => {
+            let mut octets = [0; 16];
+            octets[..prefix.prefix.len()].copy_from_slice(&prefix.prefix);
+            format!("{}/{}", Ipv6Addr::from(octets), prefix.length)
+        }
+        _ => format!("prefix-{}({}b)", prefix.length, prefix.prefix.len()),
+    }
+}
+
 fn hex_bytes(bytes: &[u8]) -> String {
     let mut hex = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
         hex.push_str(&format!("{byte:02x}"));
     }
     hex
+}
+
+fn prefixes_encoded_len(prefixes: &[BgpPrefix]) -> usize {
+    prefixes.iter().map(|prefix| 1 + prefix.prefix.len()).sum()
 }
 
 /// A BGP network-layer reachability prefix.
@@ -1287,6 +1407,57 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn mp_reach_ipv6_attribute_encodes_and_round_trips() {
+        let nlri = [
+            BgpPrefix::from_ipv6(Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0), 32)
+                .expect("valid IPv6 prefix"),
+        ];
+        let next_hop = Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 1);
+        let attr = BgpPathAttribute::mp_reach_ipv6(next_hop, &nlri);
+        let mut encoded = Vec::new();
+        attr.encode(&mut encoded);
+
+        assert_eq!(encoded[0], 0x80);
+        assert_eq!(encoded[1], 0x0e);
+        let mut expected = vec![
+            ATTR_MP_REACH_NLRI_FLAGS,
+            ATTR_MP_REACH_NLRI,
+            26,
+            0x00,
+            0x02,
+            0x01,
+            16,
+        ];
+        expected.extend_from_slice(&next_hop.octets());
+        expected.extend_from_slice(&[0x00, 32, 0x20, 0x01, 0x0d, 0xb8]);
+        assert_eq!(encoded, expected);
+        assert_eq!(
+            attr.summary(),
+            "MP_REACH_NLRI afi=2 safi=1 next_hop=2001:db8::1 nlri=[2001:db8::/32]"
+        );
+
+        let (decoded, consumed) = decode_attribute(&encoded).expect("attribute decodes");
+        assert_eq!(consumed, encoded.len());
+        assert_eq!(
+            decoded,
+            BgpPathAttribute {
+                flags: Field::user(ATTR_MP_REACH_NLRI_FLAGS),
+                type_code: ATTR_MP_REACH_NLRI,
+                value: BgpAttrValue::MpReachNlri {
+                    afi: AFI_IPV6,
+                    safi: SAFI_UNICAST,
+                    next_hop: next_hop.octets().to_vec(),
+                    nlri: nlri.to_vec(),
+                },
+            }
+        );
+
+        let mut reencoded = Vec::new();
+        decoded.encode(&mut reencoded);
+        assert_eq!(reencoded, encoded);
     }
 
     #[test]
