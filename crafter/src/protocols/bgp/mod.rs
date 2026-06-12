@@ -108,7 +108,8 @@ fn attribute_summary(attribute: &BgpPathAttribute) -> String {
         | BgpAttrValue::LocalPref(_)
         | BgpAttrValue::AtomicAggregate
         | BgpAttrValue::Aggregator { .. }
-        | BgpAttrValue::Communities(_) => attribute.summary(),
+        | BgpAttrValue::Communities(_)
+        | BgpAttrValue::ExtendedCommunities(_) => attribute.summary(),
         BgpAttrValue::Unknown(value) => format!("attr-{}({}b)", attribute.type_code, value.len()),
     }
 }
