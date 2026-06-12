@@ -252,6 +252,57 @@ fn bgp_golden_update_communities() {
 }
 
 // ---------------------------------------------------------------------------
+// UPDATE announcement with EXTENDED COMMUNITIES (RFC 4360): announces
+// 203.0.113.0/24 with ORIGIN=IGP, AS_PATH sequence containing AS 65000,
+// NEXT_HOP 192.0.2.1, and one two-octet-AS Route Target extended community.
+// ---------------------------------------------------------------------------
+
+const GOLDEN_UPDATE_EXT_COMMUNITIES: &str =
+    "ffffffffffffffffffffffffffffffff0038020000001d400101004002040201fde8400304c0000201c010080002fde80000006418cb0071";
+
+fn build_update_ext_communities() -> Packet {
+    let route_target = [0x00, 0x02, 0xfd, 0xe8, 0x00, 0x00, 0x00, 0x64];
+    Packet::from_layer(
+        Bgp::update()
+            .attribute(BgpPathAttribute::origin(BGP_ORIGIN_IGP))
+            .attribute(BgpPathAttribute::as_sequence(&[65000]))
+            .attribute(BgpPathAttribute::next_hop(Ipv4Addr::new(192, 0, 2, 1)))
+            .attribute(BgpPathAttribute::extended_communities(&[route_target]))
+            .nlri(
+                BgpPrefix::from_ipv4(Ipv4Addr::new(203, 0, 113, 0), 24).expect("valid IPv4 prefix"),
+            ),
+    )
+}
+
+#[test]
+fn bgp_golden_update_ext_communities() {
+    let route_target = [0x00, 0x02, 0xfd, 0xe8, 0x00, 0x00, 0x00, 0x64];
+    let bytes = build_update_ext_communities().compile().expect("compile");
+    maybe_dump("UPDATE_EXT_COMMUNITIES", bytes.as_bytes());
+    assert_eq!(
+        bytes.as_bytes(),
+        hex(GOLDEN_UPDATE_EXT_COMMUNITIES).as_slice()
+    );
+
+    let body = &bytes.as_bytes()[19..];
+    let attr_len = u16::from_be_bytes([body[2], body[3]]) as usize;
+    let attrs = &body[4..4 + attr_len];
+    let ext_communities_offset = attrs.len() - 11;
+    let ext_communities_bytes = &attrs[ext_communities_offset..];
+    assert_eq!(&ext_communities_bytes[..2], &[0xC0, 0x10]);
+
+    let (decoded, consumed) =
+        crafter::protocols::bgp::attribute::decode_attribute(ext_communities_bytes)
+            .expect("decode extended communities attribute");
+    assert_eq!(consumed, ext_communities_bytes.len());
+    assert_eq!(
+        decoded.value,
+        BgpAttrValue::ExtendedCommunities(vec![route_target])
+    );
+    assert_roundtrip(bytes.as_bytes());
+}
+
+// ---------------------------------------------------------------------------
 // UPDATE with unknown path attribute: preserves optional/transitive flags,
 // unknown type 99, raw value bytes, and NLRI 203.0.113.0/24.
 // ---------------------------------------------------------------------------
