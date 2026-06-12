@@ -14,7 +14,9 @@
 //! no live target surface in this file.
 
 use crafter::prelude::*;
-use crafter::protocols::bgp::attribute::{BgpPathAttribute, BgpPrefix, BGP_ORIGIN_IGP};
+use crafter::protocols::bgp::attribute::{
+    BgpAttrValue, BgpPathAttribute, BgpPrefix, BGP_ORIGIN_IGP,
+};
 use std::net::Ipv4Addr;
 
 /// Helper used once to mint the golden constants below. Set
@@ -190,6 +192,54 @@ fn bgp_golden_update_announce() {
     assert_eq!(
         &bytes.as_bytes()[bytes.as_bytes().len() - 4..],
         &[0x18, 0xcb, 0x00, 0x71]
+    );
+    assert_roundtrip(bytes.as_bytes());
+}
+
+// ---------------------------------------------------------------------------
+// UPDATE with unknown path attribute: preserves optional/transitive flags,
+// unknown type 99, raw value bytes, and NLRI 203.0.113.0/24.
+// ---------------------------------------------------------------------------
+
+const GOLDEN_UPDATE_UNKNOWN_ATTR: &str =
+    "ffffffffffffffffffffffffffffffff00330200000018400101004002040201fde8400304c0000201c06303aabbcc18cb0071";
+
+fn build_update_unknown_attr() -> Packet {
+    Packet::from_layer(
+        Bgp::update()
+            .attribute(BgpPathAttribute::origin(BGP_ORIGIN_IGP))
+            .attribute(BgpPathAttribute::as_sequence(&[65000]))
+            .attribute(BgpPathAttribute::next_hop(Ipv4Addr::new(192, 0, 2, 1)))
+            .attribute(BgpPathAttribute::unknown(99, vec![0xaa, 0xbb, 0xcc]).with_flags(0xc0))
+            .nlri(
+                BgpPrefix::from_ipv4(Ipv4Addr::new(203, 0, 113, 0), 24)
+                    .expect("valid IPv4 prefix"),
+            ),
+    )
+}
+
+#[test]
+fn bgp_golden_update_unknown_attr() {
+    let bytes = build_update_unknown_attr().compile().expect("compile");
+    maybe_dump("UPDATE_UNKNOWN_ATTR", bytes.as_bytes());
+    assert_eq!(
+        bytes.as_bytes(),
+        hex(GOLDEN_UPDATE_UNKNOWN_ATTR).as_slice()
+    );
+
+    let body = &bytes.as_bytes()[19..];
+    let attr_len = u16::from_be_bytes([body[2], body[3]]) as usize;
+    let attrs = &body[4..4 + attr_len];
+    let unknown_offset = attrs.len() - 6;
+    let (unknown, consumed) =
+        crafter::protocols::bgp::attribute::decode_attribute(&attrs[unknown_offset..])
+            .expect("decode unknown attribute");
+    assert_eq!(consumed, 6);
+    assert_eq!(unknown.flags.value(), Some(&0xc0));
+    assert_eq!(unknown.type_code, 99);
+    assert_eq!(
+        unknown.value,
+        BgpAttrValue::Unknown(vec![0xaa, 0xbb, 0xcc])
     );
     assert_roundtrip(bytes.as_bytes());
 }
