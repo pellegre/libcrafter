@@ -84,7 +84,6 @@ enum ExpectedLayer {
     Tcp,
     Udp,
     UdpOptions,
-    #[allow(dead_code)]
     Bgp,
     Dns,
     Dhcp,
@@ -114,6 +113,7 @@ enum CoverageFamily {
     Ipv4Fragment,
     Ipv4Options,
     Ipv4TcpOptions,
+    Ipv4TcpBgp,
     Ipv4UdpDnsQuery,
     Ipv4UdpDnsResponse,
     Ipv4UdpDnsSoaSrv,
@@ -673,6 +673,86 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Tcp, ExpectedLayer::Raw],
         preserve_exact_bytes: true,
         summary_path: Some("summaries/ipv4-tcp-syn-rich-options.summary.txt"),
+    },
+    ValidFixtureCase {
+        name: "ipv4-tcp-bgp-open",
+        path: "bytes/ipv4-tcp-bgp-open.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-tcp-bgp-open.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Tcp, ExpectedLayer::Bgp],
+        preserve_exact_bytes: true,
+        summary_path: Some("summaries/ipv4-tcp-bgp-open.summary.txt"),
+    },
+    ValidFixtureCase {
+        name: "ipv4-tcp-bgp-update-announce",
+        path: "bytes/ipv4-tcp-bgp-update-announce.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-tcp-bgp-update-announce.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Tcp, ExpectedLayer::Bgp],
+        preserve_exact_bytes: true,
+        summary_path: Some("summaries/ipv4-tcp-bgp-update-announce.summary.txt"),
+    },
+    ValidFixtureCase {
+        name: "ipv4-tcp-bgp-notification",
+        path: "bytes/ipv4-tcp-bgp-notification.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-tcp-bgp-notification.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Tcp, ExpectedLayer::Bgp],
+        preserve_exact_bytes: true,
+        summary_path: Some("summaries/ipv4-tcp-bgp-notification.summary.txt"),
+    },
+    ValidFixtureCase {
+        name: "ipv4-tcp-bgp-keepalive",
+        path: "bytes/ipv4-tcp-bgp-keepalive.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-tcp-bgp-keepalive.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Tcp, ExpectedLayer::Bgp],
+        preserve_exact_bytes: true,
+        summary_path: Some("summaries/ipv4-tcp-bgp-keepalive.summary.txt"),
+    },
+    ValidFixtureCase {
+        name: "ethernet-ipv4-tcp-bgp-open",
+        path: "bytes/ethernet-ipv4-tcp-bgp-open.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ethernet-ipv4-tcp-bgp-open.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::Link(LinkType::Ethernet)),
+        expected_layers: &[
+            ExpectedLayer::Ethernet,
+            ExpectedLayer::Ipv4,
+            ExpectedLayer::Tcp,
+            ExpectedLayer::Bgp,
+        ],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ethernet-ipv4-tcp-bgp-keepalive",
+        path: "bytes/ethernet-ipv4-tcp-bgp-keepalive.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ethernet-ipv4-tcp-bgp-keepalive.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::Link(LinkType::Ethernet)),
+        expected_layers: &[
+            ExpectedLayer::Ethernet,
+            ExpectedLayer::Ipv4,
+            ExpectedLayer::Tcp,
+            ExpectedLayer::Bgp,
+        ],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ethernet-ipv4-tcp-bgp-update-announce",
+        path: "bytes/ethernet-ipv4-tcp-bgp-update-announce.hex",
+        contents: FixtureContents::Hex(fixture_str!(
+            "bytes/ethernet-ipv4-tcp-bgp-update-announce.hex"
+        )),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::Link(LinkType::Ethernet)),
+        expected_layers: &[
+            ExpectedLayer::Ethernet,
+            ExpectedLayer::Ipv4,
+            ExpectedLayer::Tcp,
+            ExpectedLayer::Bgp,
+        ],
+        preserve_exact_bytes: true,
+        summary_path: None,
     },
     ValidFixtureCase {
         name: "ipv4-udp-dns-query-example-com",
@@ -1313,6 +1393,32 @@ const PCAP_FIXTURES: &[PcapFixtureCase] = &[
         }],
     },
     PcapFixtureCase {
+        name: "ipv4-tcp-bgp-session",
+        path: "pcaps/ipv4-tcp-bgp-session.pcap",
+        contents: fixture_bytes!("pcaps/ipv4-tcp-bgp-session.pcap"),
+        pcap_link_type: PcapLinkType::Ethernet,
+        link_type: LinkType::Ethernet,
+        timestamp_precision: TimestampPrecision::Microseconds,
+        coverage: PcapCoverageFamily::Ethernet,
+        records: &[
+            PcapFixtureRecord {
+                seconds: 61,
+                fractional: 101,
+                fixture_name: "ethernet-ipv4-tcp-bgp-open",
+            },
+            PcapFixtureRecord {
+                seconds: 61,
+                fractional: 202,
+                fixture_name: "ethernet-ipv4-tcp-bgp-keepalive",
+            },
+            PcapFixtureRecord {
+                seconds: 61,
+                fractional: 303,
+                fixture_name: "ethernet-ipv4-tcp-bgp-update-announce",
+            },
+        ],
+    },
+    PcapFixtureCase {
         name: "raw-ipv4-icmp-echo-request",
         path: "pcaps/raw-ipv4-icmp-echo-request.pcap",
         contents: fixture_bytes!("pcaps/raw-ipv4-icmp-echo-request.pcap"),
@@ -1546,6 +1652,7 @@ const REQUIRED_VALID_COVERAGE: &[(CoverageFamily, &str)] = &[
         "IPv4 route or traceroute options",
     ),
     (CoverageFamily::Ipv4TcpOptions, "IPv4 TCP SYN options"),
+    (CoverageFamily::Ipv4TcpBgp, "IPv4 TCP BGP messages"),
     (CoverageFamily::Ipv4UdpDnsQuery, "IPv4 UDP DNS query"),
     (CoverageFamily::Ipv4UdpDnsResponse, "IPv4 UDP DNS response"),
     (
@@ -1712,6 +1819,13 @@ fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
         | "ipv4-fragment-ipfragment-generated-final" => &[CoverageFamily::Ipv4Fragment],
         "ipv4-options-traceroute-udp-raw" => &[CoverageFamily::Ipv4Options],
         "ipv4-tcp-syn-options" | "ipv4-tcp-syn-rich-options" => &[CoverageFamily::Ipv4TcpOptions],
+        "ipv4-tcp-bgp-open"
+        | "ipv4-tcp-bgp-update-announce"
+        | "ipv4-tcp-bgp-notification"
+        | "ipv4-tcp-bgp-keepalive"
+        | "ethernet-ipv4-tcp-bgp-open"
+        | "ethernet-ipv4-tcp-bgp-keepalive"
+        | "ethernet-ipv4-tcp-bgp-update-announce" => &[CoverageFamily::Ipv4TcpBgp],
         "ipv4-udp-dns-query-example-com" => &[CoverageFamily::Ipv4UdpDnsQuery],
         "ipv4-udp-dns-response-example-com" => &[CoverageFamily::Ipv4UdpDnsResponse],
         "ipv4-udp-dns-soa-srv-response" => &[CoverageFamily::Ipv4UdpDnsSoaSrv],
@@ -2398,9 +2512,77 @@ fn assert_dot11_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
     }
 }
 
+fn assert_bgp_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
+    assert_exact_layer_stack(case, packet);
+
+    let ipv4 = expect_layer::<Ipv4>(case, packet);
+    assert!(is_documentation_ip(IpAddr::V4(ipv4.source())));
+    assert!(is_documentation_ip(IpAddr::V4(ipv4.destination())));
+    assert_eq!(ipv4.protocol_value(), IPPROTO_TCP);
+
+    let tcp = expect_layer::<Tcp>(case, packet);
+    assert!(
+        tcp.source_port_value() == 179 || tcp.destination_port_value() == 179,
+        "fixture {} should use TCP/179 for BGP, got sport={} dport={}",
+        case.path,
+        tcp.source_port_value(),
+        tcp.destination_port_value()
+    );
+
+    if case.name.starts_with("ethernet-ipv4-tcp-bgp-") {
+        let ethernet = expect_layer::<Ethernet>(case, packet);
+        assert_eq!(ethernet.ethertype_value(), Some(ETHERTYPE_IPV4));
+        match case.name {
+            "ethernet-ipv4-tcp-bgp-open" => {
+                assert_eq!(
+                    ethernet.source(),
+                    Some(MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0x01]))
+                );
+                assert_eq!(
+                    ethernet.destination(),
+                    Some(MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0x02]))
+                );
+            }
+            "ethernet-ipv4-tcp-bgp-keepalive" | "ethernet-ipv4-tcp-bgp-update-announce" => {
+                assert_eq!(
+                    ethernet.source(),
+                    Some(MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0x02]))
+                );
+                assert_eq!(
+                    ethernet.destination(),
+                    Some(MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0x01]))
+                );
+            }
+            _ => unreachable!("BGP Ethernet fixture names are matched by prefix"),
+        }
+    }
+
+    assert_eq!(packet.layers::<Bgp>().count(), 1);
+    let summary = expect_layer::<Bgp>(case, packet).summary();
+    match case.name {
+        "ipv4-tcp-bgp-open" | "ethernet-ipv4-tcp-bgp-open" => {
+            assert!(summary.starts_with("BGP OPEN "), "{summary}");
+        }
+        "ipv4-tcp-bgp-update-announce" | "ethernet-ipv4-tcp-bgp-update-announce" => {
+            assert!(summary.starts_with("BGP UPDATE "), "{summary}");
+            assert!(summary.contains("203.0.113.0/24"), "{summary}");
+        }
+        "ipv4-tcp-bgp-notification" => {
+            assert!(summary.starts_with("BGP NOTIFICATION "), "{summary}");
+        }
+        "ipv4-tcp-bgp-keepalive" | "ethernet-ipv4-tcp-bgp-keepalive" => {
+            assert_eq!(summary, "BGP KEEPALIVE len=19");
+        }
+        _ => unreachable!("BGP fixture names are matched before dispatch"),
+    }
+}
+
 fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
     match case.name {
         name if name.starts_with("dot11-") => assert_dot11_fixture_fields(case, packet),
+        name if name.starts_with("ipv4-tcp-bgp-") || name.starts_with("ethernet-ipv4-tcp-bgp-") => {
+            assert_bgp_fixture_fields(case, packet)
+        }
         name if name.starts_with("ipv4-fragment-defrag-") => {
             assert_ipv4_fragment_defrag_fixture_fields(case, packet)
         }
