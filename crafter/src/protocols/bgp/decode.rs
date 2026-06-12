@@ -18,7 +18,7 @@
 //!   [`CrafterError`] with the field's `context`, the bytes it `required`, and
 //!   the bytes `available` — the same shape every other decoder emits.
 //! - **Never panic.** Every slice into the buffer is length-checked first
-//!   (through [`take`]), so truncation can only ever produce an `Err`, not an
+//!   (through the local `take` helper), so truncation can only ever produce an `Err`, not an
 //!   out-of-bounds index.
 
 use std::net::Ipv4Addr;
@@ -144,7 +144,7 @@ pub(crate) fn append_bgp_packet_with_registry(
 /// Decode a single BGP message (RFC 4271 §4.1) from the front of `bytes`.
 ///
 /// Reads the shared 19-octet header — the 16-octet Marker, the 2-octet Length,
-/// and the 1-octet Type — through [`take`] so a buffer too short for any header
+/// and the 1-octet Type - through the local `take` helper so a buffer too short for any header
 /// field surfaces a structured [`CrafterError::BufferTooShort`] (context
 /// `"bgp header"`) rather than a panic. The declared Length is then validated
 /// against the RFC 4271 §4.1 bounds (`[BGP_HEADER_LEN, BGP_MAX_MESSAGE_LEN]`)
@@ -154,7 +154,7 @@ pub(crate) fn append_bgp_packet_with_registry(
 /// On success the returned [`Bgp`] carries the observed marker/length/type so a
 /// round-trip re-compiles byte-for-byte, and the `usize` is the number of bytes
 /// consumed (the message Length). KEEPALIVE (RFC 4271 §4.4) is header-only.
-/// Every other type is preserved as a [`BgpBody::Unknown`] holding the raw body
+/// Every other type is preserved as an internal unknown body holding the raw body
 /// bytes (the `length - BGP_HEADER_LEN` octets after the header); the real
 /// typed bodies arrive in later steps.
 #[allow(dead_code)]
