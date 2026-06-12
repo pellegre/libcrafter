@@ -1,0 +1,63 @@
+version: 1
+kind: feature
+name: bgp_route_refresh
+summary: >-
+  BGP ROUTE-REFRESH message body over TCP/179, covering the RFC 2918 AFI,
+  subtype/reserved octet, and SAFI fields for IPv4 unicast refreshes.
+
+layers:
+  - bgp
+  - tcp
+  - ipv4
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: ipv4_unicast
+    rfc:
+      - RFC 2918 Section 3
+      - RFC 7313 Section 2
+      - RFC 4760
+    message_type: route_refresh
+    afi: ipv4
+    safi: unicast
+    checks:
+      - marker_all_ones
+      - length_covers_message
+      - type_is_route_refresh
+      - route_refresh_afi_ipv4
+      - route_refresh_subtype_preserved
+      - route_refresh_safi_unicast
+
+coverage_cases:
+  - bgp-route-refresh
+
+supported_cases:
+  - name: bgp-route-refresh
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - BGPHeader
+      - BGPRouteRefresh
+    encode: true
+    decode: true
+    notes:
+      - Scapy 2.7.0 natively exposes afi, subtype, safi, and orf_data for
+        ROUTE-REFRESH. This feature uses normal subtype 0 for IPv4 unicast; BoRR
+        and EoRR subtypes are byte-supported but not sampled here.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    notes:
+      - ROUTE-REFRESH compile emits AFI, subtype, and SAFI exactly and derives
+        the enclosing BGP message length.

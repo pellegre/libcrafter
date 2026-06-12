@@ -1,0 +1,103 @@
+version: 1
+kind: feature
+name: bgp_communities
+summary: >-
+  BGP standard, extended, and large community path attributes in UPDATE
+  messages over TCP/179, using strict byte comparison for RFC 1997, RFC 4360,
+  and RFC 8092 encodings.
+
+layers:
+  - bgp
+  - tcp
+  - ipv4
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: standard_communities
+    rfc:
+      - RFC 1997
+    path_attributes:
+      - communities
+    checks:
+      - attr_flags_optional_transitive
+      - attr_length_multiple_of_4
+      - standard_community_values_roundtrip
+      - well_known_community_values_preserved
+  - name: extended_communities
+    rfc:
+      - RFC 4360 Section 2
+    path_attributes:
+      - extended_communities
+    checks:
+      - attr_flags_optional_transitive
+      - attr_length_multiple_of_8
+      - extended_community_raw_items_roundtrip
+  - name: large_communities
+    rfc:
+      - RFC 8092 Section 3
+      - RFC 8092 Section 9
+    path_attributes:
+      - large_communities
+    checks:
+      - attr_flags_optional_transitive
+      - attr_length_multiple_of_12
+      - large_community_triples_roundtrip
+
+coverage_cases:
+  - bgp-communities
+  - bgp-standard-communities
+  - bgp-extended-communities
+  - bgp-large-communities
+
+supported_cases:
+  - name: bgp-communities
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: bgp-standard-communities
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: bgp-extended-communities
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: bgp-large-communities
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - BGPHeader
+      - BGPUpdate
+      - BGPPACommunity
+      - BGPPAExtComms
+      - BGPPALargeCommunity
+    encode: true
+    decode: true
+    notes:
+      - Scapy 2.7.0 natively round-trips standard communities, extended
+        communities, and large communities. The oracle treats extended-community
+        subtypes as raw 8-octet items and does not assert Scapy subtype-specific
+        field names.
+      - Large communities are marked supported because this environment exposes
+        BGPPALargeCommunity and verified byte-identical round trips.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    notes:
+      - Standard communities preserve 32-bit values, extended communities
+        preserve raw 8-octet items, and large communities preserve RFC 8092
+        12-octet global-administrator/local-data triples.

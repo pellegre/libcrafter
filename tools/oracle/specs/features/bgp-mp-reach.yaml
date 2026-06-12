@@ -1,0 +1,76 @@
+version: 1
+kind: feature
+name: bgp_mp_reach
+summary: >-
+  BGP MP_REACH_NLRI path attribute for IPv6 unicast NLRI, carried in a BGP
+  UPDATE over TCP/179 and compared with strict byte parity against RFC 4760.
+
+layers:
+  - bgp
+  - tcp
+  - ipv4
+  - ipv6
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: ipv6_unicast_reachability
+    rfc:
+      - RFC 4760 Section 3
+      - RFC 4760 Section 5
+      - RFC 2545
+    path_attributes:
+      - mp_reach_nlri
+    afi: ipv6
+    safi: unicast
+    checks:
+      - attr_flags_optional_non_transitive
+      - attr_length_covers_mp_reach_body
+      - mp_reach_afi_ipv6
+      - mp_reach_safi_unicast
+      - mp_reach_next_hop_length_matches_value
+      - mp_reach_next_hop_ipv6_roundtrip
+      - mp_reach_reserved_octet_zero
+      - mp_reach_nlri_roundtrip
+
+coverage_cases:
+  - bgp-mp-reach
+  - bgp-mp-reach-ipv6
+
+supported_cases:
+  - name: bgp-mp-reach
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: bgp-mp-reach-ipv6
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - BGPHeader
+      - BGPUpdate
+      - BGPPAMPReachNLRI
+      - BGPNLRI_IPv6
+    encode: true
+    decode: true
+    notes:
+      - Scapy 2.7.0 natively round-trips MP_REACH_NLRI and IPv6 NLRI for AFI 2,
+        SAFI 1. ADD-PATH variants are intentionally excluded because Scapy only
+        provides raw capability coverage for ADD-PATH negotiation.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    notes:
+      - MP_REACH_NLRI preserves the IPv6 next-hop bytes, reserved octet, and
+        IPv6 NLRI prefix codec while the enclosing UPDATE derives attribute and
+        message lengths.
