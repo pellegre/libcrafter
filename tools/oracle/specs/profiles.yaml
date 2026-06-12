@@ -185,6 +185,25 @@ profiles:
       malformed: 0
       pcap: 0
       live: 0
+  # bgp-smoke: focused offline BGP message smoke coverage over TCP. It keeps
+  # live, pcap, and malformed sampling disabled; BGP wire behavior here is
+  # represented by baseline and boundary message shapes using documentation
+  # address space through the l3 IPv4/IPv6 roots.
+  - name: bgp-smoke
+    purpose: focused offline BGP over TCP smoke coverage
+    default_count: 10
+    family_weights:
+      - name: bgp
+        weight: 1
+    payload_length:
+      min: 0
+      max: 128
+    feature_weights:
+      baseline: 10
+      boundary: 4
+      malformed: 0
+      pcap: 0
+      live: 0
   # ipv4-enrichment: focused offline coverage of the enriched IPv4 header
   # domains declared in layers/ipv4.yaml. The generator narrows stack/case and
   # feature selection to that layer's coverage cases when this profile is active,

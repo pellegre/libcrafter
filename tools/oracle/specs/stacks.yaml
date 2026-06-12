@@ -70,6 +70,7 @@ roots:
       - esp
       - ah
       - ikev2
+      - bgp
   - name: "l2:ipv4"
     layers:
       - ipv4
@@ -89,6 +90,7 @@ roots:
       - esp
       - ah
       - ikev2
+      - bgp
 
 families:
   - name: ipv4
@@ -129,6 +131,18 @@ families:
       - payload
     feature_tags:
       - udp
+      - payload
+  - name: bgp
+    default_stack:
+      - ipv4
+      - tcp
+      - bgp
+      - payload
+    feature_tags:
+      - ipv4
+      - ipv6
+      - tcp
+      - bgp
       - payload
   # esp / ah / ikev2: IPSec families. ESP and AH ride directly over IPv4 and
   # IPv6 (IP protocol 50 / 51); IKEv2 rides over UDP (UDP/500, and UDP/4500
@@ -461,6 +475,27 @@ stacks:
       - tcp-option-accurate-ecn
       - tcp-option-experimental
       - tcp-option-malformed-length
+  - name: ipv4_tcp_bgp_payload
+    root: "l3:ipv4"
+    layers:
+      - ipv4
+      - tcp
+      - bgp
+      - payload
+    coverage_cases:
+      - bgp-open
+      - bgp-open-capabilities
+      - bgp-update
+      - bgp-update-withdraw
+      - bgp-update-announce
+      - bgp-notification
+      - bgp-keepalive
+      - bgp-route-refresh
+      - bgp-mp-reach
+      - bgp-communities
+      - bgp-standard-communities
+      - bgp-extended-communities
+      - bgp-large-communities
   - name: ipv6_tcp_payload
     root: "l3:ipv6"
     layers:
@@ -487,6 +522,28 @@ stacks:
       - tcp-option-accurate-ecn
       - tcp-option-experimental
       - tcp-option-malformed-length
+  - name: ipv6_tcp_bgp_payload
+    root: "l3:ipv6"
+    layers:
+      - ipv6
+      - tcp
+      - bgp
+      - payload
+    coverage_cases:
+      - bgp-open
+      - bgp-open-capabilities
+      - bgp-update
+      - bgp-update-withdraw
+      - bgp-update-announce
+      - bgp-notification
+      - bgp-keepalive
+      - bgp-route-refresh
+      - bgp-mp-reach
+      - bgp-mp-reach-ipv6
+      - bgp-communities
+      - bgp-standard-communities
+      - bgp-extended-communities
+      - bgp-large-communities
   - name: ipv4_icmp_payload
     root: "l3:ipv4"
     layers:
@@ -909,6 +966,16 @@ constraints:
       - ipv6_routing
       - esp
       - ah
+      - payload
+  - name: tcp_children
+    parent: tcp
+    children:
+      - bgp
+      - payload
+  - name: bgp_children
+    parent: bgp
+    children:
+      - bgp
       - payload
   # ESP and AH (IP protocol 50 / 51) carry an inner upper-layer protocol in
   # transport mode (tcp / udp / icmp / payload) or an inner IP datagram in
