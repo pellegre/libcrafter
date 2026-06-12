@@ -7,6 +7,16 @@
 #![allow(dead_code)]
 
 use crafter::prelude::*;
+use crafter::protocols::bgp::attribute::{decode_attribute, BgpPathAttribute, BgpPrefix};
+use crafter::protocols::bgp::{
+    BgpOptParam, AFI_IPV4, AFI_IPV6, ATTR_AGGREGATOR, ATTR_AS4_AGGREGATOR, ATTR_AS4_PATH,
+    ATTR_AS_PATH, ATTR_ATOMIC_AGGREGATE, ATTR_COMMUNITIES, ATTR_EXTENDED_COMMUNITIES,
+    ATTR_LARGE_COMMUNITY, ATTR_LOCAL_PREF, ATTR_MP_REACH_NLRI, ATTR_MP_UNREACH_NLRI,
+    ATTR_MULTI_EXIT_DISC, ATTR_NEXT_HOP, ATTR_ORIGIN, BGP_MARKER_LEN, BGP_PORT, BGP_TYPE_KEEPALIVE,
+    BGP_TYPE_NOTIFICATION, BGP_TYPE_OPEN, BGP_TYPE_ROUTE_REFRESH, BGP_TYPE_UPDATE, CAP_ADD_PATH,
+    CAP_ENHANCED_ROUTE_REFRESH, CAP_FOUR_OCTET_AS, CAP_GRACEFUL_RESTART, CAP_MULTIPROTOCOL,
+    CAP_ROUTE_REFRESH, CAP_ROUTE_REFRESH_OLD, SAFI_MULTICAST, SAFI_UNICAST,
+};
 use crafter::protocols::link::{RadiotapChannel, RadiotapFlags, RadiotapRxFlags, RadiotapTxFlags};
 use serde_json::{json, Map, Value};
 use std::env;
@@ -193,6 +203,8 @@ pub fn build_packet(plan: &Value) -> ExampleResult<Packet> {
         } else if layer == "ipv6" && matches!(next_layer, Some("esp" | "ah")) {
             let proto = ipsec_protocol_for_next(next_layer);
             Box::new(ipv6_layer(plan)?.nh(proto))
+        } else if layer == "tcp" {
+            Box::new(tcp_layer(plan, next_layer)?)
         } else {
             build_layer(plan, layer)?
         };
@@ -226,11 +238,12 @@ fn build_layer(plan: &Value, layer: &str) -> ExampleResult<Box<dyn Layer>> {
         "ipv6_routing" => ipv6_routing_layer(plan),
         "udp" => Ok(Box::new(udp_layer(plan)?)),
         "udp_options" => Ok(Box::new(udp_options_layer(plan)?)),
-        "tcp" => Ok(Box::new(tcp_layer(plan)?)),
+        "tcp" => Ok(Box::new(tcp_layer(plan, None)?)),
         "icmp" => Ok(Box::new(icmp_layer(plan)?)),
         "icmpv6" => Ok(Box::new(icmpv6_layer(plan)?)),
         "dns" => Ok(Box::new(dns_layer(plan)?)),
         "dhcp" => Ok(Box::new(dhcp_layer(plan)?)),
+        "bgp" => Ok(Box::new(bgp_layer(plan)?)),
         "radiotap" => Ok(Box::new(radiotap_layer(plan)?)),
         "dot11" => Ok(Box::new(dot11_layer(plan)?)),
         "llc_snap" => Ok(Box::new(llc_snap_layer(plan)?)),
@@ -1545,11 +1558,18 @@ fn udp_option_item_data(kind: u8, item: &Map<String, Value>) -> ExampleResult<Ve
     })
 }
 
-fn tcp_layer(plan: &Value) -> ExampleResult<Tcp> {
+fn tcp_layer(plan: &Value, next_layer: Option<&str>) -> ExampleResult<Tcp> {
     let fields = layer_fields(plan, "tcp")?;
+    let source_port = u16_value(required(fields, &["src_port", "sport"])?)?;
+    let mut destination_port = u16_value(required(fields, &["dst_port", "dport"])?)?;
+    if next_layer == Some("bgp") {
+        if source_port != BGP_PORT && destination_port != BGP_PORT {
+            destination_port = BGP_PORT;
+        }
+    }
     let mut layer = Tcp::new()
-        .sport(u16_value(required(fields, &["src_port", "sport"])?)?)
-        .dport(u16_value(required(fields, &["dst_port", "dport"])?)?)
+        .sport(source_port)
+        .dport(destination_port)
         .seq(u32_value(required(fields, &["sequence", "seq"])?)?)
         .ack(u32_value(required(fields, &["acknowledgement", "ack"])?)?)
         .reserved(u8_value(required(fields, &["reserved"])?)?)
@@ -1566,6 +1586,758 @@ fn tcp_layer(plan: &Value) -> ExampleResult<Tcp> {
         layer = layer.options(option_bytes(value)?);
     }
     Ok(layer)
+}
+
+fn bgp_layer(plan: &Value) -> ExampleResult<Bgp> {
+    let fields = layer_fields(plan, "bgp")?;
+    let message_type = bgp_message_type(required(fields, &["message_type", "type"])?)?;
+    let mut layer = match message_type {
+        BGP_TYPE_OPEN => bgp_open_layer(fields)?,
+        BGP_TYPE_UPDATE => bgp_update_layer(fields)?,
+        BGP_TYPE_NOTIFICATION => bgp_notification_layer(fields)?,
+        BGP_TYPE_KEEPALIVE => Bgp::keepalive(),
+        BGP_TYPE_ROUTE_REFRESH => bgp_route_refresh_layer(fields)?,
+        other => {
+            return Err(format!(
+                "unsupported BGP message type {other}; raw unknown BGP bodies are not constructible through the public Bgp layer"
+            )
+            .into())
+        }
+    };
+
+    if let Some(value) = optional(fields, &["marker"]) {
+        layer = layer.marker(bgp_marker(value)?);
+    }
+    if let Some(value) = optional(fields, &["length", "len"]) {
+        layer = layer.length(u16_value(value)?);
+    }
+    Ok(layer)
+}
+
+fn bgp_open_layer(fields: &Map<String, Value>) -> ExampleResult<Bgp> {
+    if let Some(body) = optional(fields, &["body", "body_hex", "raw_body", "raw"]) {
+        return bgp_open_from_body(&option_bytes(body)?);
+    }
+
+    let mut layer = Bgp::open()
+        .version(
+            optional(fields, &["version"])
+                .map(u8_value)
+                .transpose()?
+                .unwrap_or(4),
+        )
+        .my_as(
+            optional(fields, &["my_as", "asn"])
+                .map(u16_value)
+                .transpose()?
+                .unwrap_or(0),
+        )
+        .hold_time(
+            optional(fields, &["hold_time"])
+                .map(u16_value)
+                .transpose()?
+                .unwrap_or(0),
+        )
+        .bgp_id(
+            optional(fields, &["bgp_id", "bgp_identifier"])
+                .map(ipv4_text)
+                .transpose()?
+                .unwrap_or(Ipv4Addr::UNSPECIFIED),
+        );
+
+    if let Some(value) = optional(
+        fields,
+        &[
+            "optional_parameters",
+            "optional_parameters_hex",
+            "opt_params",
+            "capabilities",
+        ],
+    ) {
+        if let Some(items) = value.as_array() {
+            layer = layer.capabilities(bgp_capabilities(items)?);
+        } else {
+            for param in bgp_opt_params_from_bytes(&option_bytes(value)?)? {
+                layer = layer.push_param(param);
+            }
+        }
+    }
+    if let Some(value) = optional(fields, &["opt_param_len"]) {
+        layer = layer.opt_params_len(u8_value(value)?);
+    }
+    Ok(layer)
+}
+
+fn bgp_open_from_body(body: &[u8]) -> ExampleResult<Bgp> {
+    if body.len() < 10 {
+        return Err(format!(
+            "BGP OPEN body must be at least 10 bytes, got {}",
+            body.len()
+        )
+        .into());
+    }
+    let mut layer = Bgp::open()
+        .version(body[0])
+        .my_as(u16::from_be_bytes([body[1], body[2]]))
+        .hold_time(u16::from_be_bytes([body[3], body[4]]))
+        .bgp_id(Ipv4Addr::new(body[5], body[6], body[7], body[8]))
+        .opt_params_len(body[9]);
+    for param in bgp_opt_params_from_bytes(&body[10..])? {
+        layer = layer.push_param(param);
+    }
+    Ok(layer)
+}
+
+fn bgp_update_layer(fields: &Map<String, Value>) -> ExampleResult<Bgp> {
+    if let Some(body) = optional(fields, &["body", "body_hex", "raw_body", "raw"]) {
+        return bgp_update_from_body(&option_bytes(body)?);
+    }
+
+    let mut layer = Bgp::update();
+    if let Some(value) = optional(fields, &["withdrawn_routes", "withdrawn_routes_hex"]) {
+        for prefix in bgp_prefixes(value, 32)? {
+            layer = layer.withdraw(prefix);
+        }
+    }
+    if let Some(value) = optional(
+        fields,
+        &["path_attributes", "path_attributes_hex", "path_attr"],
+    ) {
+        for attr in bgp_path_attributes(value)? {
+            layer = layer.attribute(attr);
+        }
+    }
+    if let Some(value) = optional(fields, &["nlri", "nlri_hex"]) {
+        for prefix in bgp_prefixes(value, 32)? {
+            layer = layer.nlri(prefix);
+        }
+    }
+    if let Some(value) = optional(fields, &["withdrawn_routes_len"]) {
+        layer = layer.withdrawn_len(u16_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["path_attr_len"]) {
+        layer = layer.attr_len(u16_value(value)?);
+    }
+    Ok(layer)
+}
+
+fn bgp_update_from_body(body: &[u8]) -> ExampleResult<Bgp> {
+    if body.len() < 4 {
+        return Err(format!(
+            "BGP UPDATE body must be at least 4 bytes, got {}",
+            body.len()
+        )
+        .into());
+    }
+    let withdrawn_len = u16::from_be_bytes([body[0], body[1]]) as usize;
+    if body.len() < 2 + withdrawn_len + 2 {
+        return Err("BGP UPDATE body is truncated before path-attribute length".into());
+    }
+    let withdrawn = &body[2..2 + withdrawn_len];
+    let attr_len_offset = 2 + withdrawn_len;
+    let attr_len = u16::from_be_bytes([body[attr_len_offset], body[attr_len_offset + 1]]) as usize;
+    let attrs_start = attr_len_offset + 2;
+    if body.len() < attrs_start + attr_len {
+        return Err("BGP UPDATE body is truncated inside path attributes".into());
+    }
+    let attrs = &body[attrs_start..attrs_start + attr_len];
+    let nlri = &body[attrs_start + attr_len..];
+
+    let mut layer = Bgp::update()
+        .withdrawn_len(withdrawn_len as u16)
+        .attr_len(attr_len as u16);
+    for prefix in bgp_prefixes_from_bytes(withdrawn, 32)? {
+        layer = layer.withdraw(prefix);
+    }
+    for attr in bgp_path_attributes_from_bytes(attrs)? {
+        layer = layer.attribute(attr);
+    }
+    for prefix in bgp_prefixes_from_bytes(nlri, 32)? {
+        layer = layer.nlri(prefix);
+    }
+    Ok(layer)
+}
+
+fn bgp_notification_layer(fields: &Map<String, Value>) -> ExampleResult<Bgp> {
+    if let Some(body) = optional(fields, &["body", "body_hex", "raw_body", "raw"]) {
+        let bytes = option_bytes(body)?;
+        if bytes.len() < 2 {
+            return Err("BGP NOTIFICATION body must contain code and subcode".into());
+        }
+        return Ok(Bgp::notification(bytes[0], bytes[1]).data(bytes[2..].to_vec()));
+    }
+
+    let code = optional(fields, &["error_code", "code"])
+        .map(u8_value)
+        .transpose()?
+        .unwrap_or(0);
+    let subcode = optional(fields, &["error_subcode", "subcode"])
+        .map(u8_value)
+        .transpose()?
+        .unwrap_or(0);
+    let mut layer = Bgp::notification(code, subcode);
+    if let Some(value) = optional(fields, &["data"]) {
+        layer = layer.data(option_bytes(value)?);
+    }
+    Ok(layer)
+}
+
+fn bgp_route_refresh_layer(fields: &Map<String, Value>) -> ExampleResult<Bgp> {
+    if let Some(body) = optional(fields, &["body", "body_hex", "raw_body", "raw"]) {
+        let bytes = option_bytes(body)?;
+        if bytes.len() != 4 {
+            return Err(format!(
+                "BGP ROUTE-REFRESH body must contain exactly 4 bytes, got {}",
+                bytes.len()
+            )
+            .into());
+        }
+        return Ok(
+            Bgp::route_refresh(u16::from_be_bytes([bytes[0], bytes[1]]), bytes[3])
+                .subtype(bytes[2]),
+        );
+    }
+    if optional(fields, &["orf_data"]).is_some() {
+        return Err(
+            "BGP ROUTE-REFRESH orf_data is not constructible through the public Bgp layer".into(),
+        );
+    }
+    let afi = optional(fields, &["afi"])
+        .map(bgp_afi)
+        .transpose()?
+        .unwrap_or(AFI_IPV4);
+    let safi = optional(fields, &["safi"])
+        .map(bgp_safi)
+        .transpose()?
+        .unwrap_or(SAFI_UNICAST);
+    let subtype = optional(fields, &["subtype"])
+        .map(u8_value)
+        .transpose()?
+        .unwrap_or(0);
+    Ok(Bgp::route_refresh(afi, safi).subtype(subtype))
+}
+
+fn bgp_message_type(value: &Value) -> ExampleResult<u8> {
+    if let Some(text) = value.as_str() {
+        return match text.to_ascii_lowercase().replace('_', "-").as_str() {
+            "open" => Ok(BGP_TYPE_OPEN),
+            "update" => Ok(BGP_TYPE_UPDATE),
+            "notification" => Ok(BGP_TYPE_NOTIFICATION),
+            "keepalive" | "keep-alive" => Ok(BGP_TYPE_KEEPALIVE),
+            "route-refresh" => Ok(BGP_TYPE_ROUTE_REFRESH),
+            _ => u8_text(text),
+        };
+    }
+    u8_value(value)
+}
+
+fn bgp_marker(value: &Value) -> ExampleResult<[u8; BGP_MARKER_LEN]> {
+    if let Some(number) = value.as_u64() {
+        let mut marker = [0u8; BGP_MARKER_LEN];
+        marker[8..].copy_from_slice(&number.to_be_bytes());
+        return Ok(marker);
+    }
+    fixed_16_bytes(value, "bgp.marker")
+}
+
+fn bgp_afi(value: &Value) -> ExampleResult<u16> {
+    if let Some(text) = value.as_str() {
+        return match text.to_ascii_lowercase().replace('_', "-").as_str() {
+            "ipv4" | "ip" => Ok(AFI_IPV4),
+            "ipv6" => Ok(AFI_IPV6),
+            _ => u16_text(text),
+        };
+    }
+    u16_value(value)
+}
+
+fn bgp_safi(value: &Value) -> ExampleResult<u8> {
+    if let Some(text) = value.as_str() {
+        return match text.to_ascii_lowercase().replace('_', "-").as_str() {
+            "unicast" | "nlri-unicast" => Ok(SAFI_UNICAST),
+            "multicast" => Ok(SAFI_MULTICAST),
+            _ => u8_text(text),
+        };
+    }
+    u8_value(value)
+}
+
+fn bgp_opt_params_from_bytes(bytes: &[u8]) -> ExampleResult<Vec<BgpOptParam>> {
+    let mut params = Vec::new();
+    let mut rest = bytes;
+    while !rest.is_empty() {
+        let (param, remaining) = BgpOptParam::decode(rest)?;
+        params.push(param);
+        rest = remaining;
+    }
+    Ok(params)
+}
+
+fn bgp_capabilities(items: &[Value]) -> ExampleResult<Vec<BgpCapability>> {
+    items.iter().map(bgp_capability).collect()
+}
+
+fn bgp_capability(value: &Value) -> ExampleResult<BgpCapability> {
+    if let Some(text) = value.as_str() {
+        return match text.to_ascii_lowercase().replace('_', "-").as_str() {
+            "ipv4-unicast" | "multiprotocol-ipv4-unicast" | "mp-ipv4-unicast" => {
+                Ok(BgpCapability::ipv4_unicast())
+            }
+            "ipv6-unicast" | "multiprotocol-ipv6-unicast" | "mp-ipv6-unicast" => {
+                Ok(BgpCapability::ipv6_unicast())
+            }
+            "route-refresh" => Ok(BgpCapability::route_refresh()),
+            _ => Ok(BgpCapability::raw(u8_text(text)?, Vec::new())),
+        };
+    }
+
+    let object = value
+        .as_object()
+        .ok_or_else(|| format!("BGP capability must be an object/string, got {value:?}"))?;
+    if let Some(kind) = optional(object, &["name", "kind", "type"]) {
+        if let Some(text) = kind.as_str() {
+            match text.to_ascii_lowercase().replace('_', "-").as_str() {
+                "multiprotocol" | "mp" => {
+                    let afi = bgp_afi(required(object, &["afi"])?)?;
+                    let safi = bgp_safi(required(object, &["safi"])?)?;
+                    return Ok(BgpCapability::multiprotocol(afi, safi));
+                }
+                "four-octet-as" | "four-byte-as" | "4-octet-as" => {
+                    let asn = u32_value(required(object, &["asn", "as"])?)?;
+                    return Ok(BgpCapability::four_octet_as(asn));
+                }
+                "route-refresh" => return Ok(BgpCapability::route_refresh()),
+                "graceful-restart" => {
+                    let flags_time = optional(object, &["flags_time", "restart_time"])
+                        .map(u16_value)
+                        .transpose()?
+                        .unwrap_or(0);
+                    return Ok(BgpCapability::graceful_restart(flags_time, &[]));
+                }
+                "add-path" => {
+                    return Ok(BgpCapability::raw(
+                        CAP_ADD_PATH,
+                        optional(object, &["value", "data", "cap_data"])
+                            .map(option_bytes)
+                            .transpose()?
+                            .unwrap_or_default(),
+                    ));
+                }
+                _ => {}
+            }
+        }
+    }
+    let code = optional(object, &["code", "capability_code"])
+        .map(bgp_capability_code)
+        .transpose()?
+        .unwrap_or(CAP_MULTIPROTOCOL);
+    let value = optional(object, &["value", "data", "cap_data"])
+        .map(option_bytes)
+        .transpose()?
+        .unwrap_or_default();
+    Ok(BgpCapability::raw(code, value))
+}
+
+fn bgp_capability_code(value: &Value) -> ExampleResult<u8> {
+    if let Some(text) = value.as_str() {
+        return match text.to_ascii_lowercase().replace('_', "-").as_str() {
+            "multiprotocol" | "mp" => Ok(CAP_MULTIPROTOCOL),
+            "route-refresh" => Ok(CAP_ROUTE_REFRESH),
+            "graceful-restart" => Ok(CAP_GRACEFUL_RESTART),
+            "four-octet-as" | "four-byte-as" | "4-octet-as" => Ok(CAP_FOUR_OCTET_AS),
+            "add-path" => Ok(CAP_ADD_PATH),
+            "enhanced-route-refresh" => Ok(CAP_ENHANCED_ROUTE_REFRESH),
+            "route-refresh-old" | "old-route-refresh" => Ok(CAP_ROUTE_REFRESH_OLD),
+            _ => u8_text(text),
+        };
+    }
+    u8_value(value)
+}
+
+fn bgp_prefixes(value: &Value, max_length: u8) -> ExampleResult<Vec<BgpPrefix>> {
+    if value.as_array().is_some()
+        && !value
+            .as_object()
+            .is_some_and(|object| object.contains_key("hex"))
+    {
+        return array_values(value)?
+            .iter()
+            .map(|item| bgp_prefix(item, max_length))
+            .collect();
+    }
+    bgp_prefixes_from_bytes(&option_bytes(value)?, max_length)
+}
+
+fn bgp_prefixes_from_bytes(mut bytes: &[u8], max_length: u8) -> ExampleResult<Vec<BgpPrefix>> {
+    let mut prefixes = Vec::new();
+    while !bytes.is_empty() {
+        let (prefix, consumed) = BgpPrefix::decode_prefix_with_max(bytes, max_length)?;
+        prefixes.push(prefix);
+        bytes = &bytes[consumed..];
+    }
+    Ok(prefixes)
+}
+
+fn bgp_prefix(value: &Value, max_length: u8) -> ExampleResult<BgpPrefix> {
+    if let Some(text) = value.as_str() {
+        return bgp_prefix_text(text, max_length);
+    }
+    let object = value
+        .as_object()
+        .ok_or_else(|| format!("BGP prefix must be an object/string, got {value:?}"))?;
+    if object.contains_key("hex") {
+        let prefixes = bgp_prefixes_from_bytes(&option_bytes(value)?, max_length)?;
+        return prefixes
+            .into_iter()
+            .next()
+            .ok_or_else(|| "BGP prefix hex value is empty".into());
+    }
+    let prefix = text_value(required(object, &["prefix", "network", "address"])?)?;
+    let length = optional(object, &["length", "prefix_len", "prefix_length"])
+        .map(u8_value)
+        .transpose()?;
+    let text = if prefix.contains('/') {
+        prefix.to_string()
+    } else {
+        format!(
+            "{prefix}/{}",
+            length.ok_or("BGP prefix object without / requires length")?
+        )
+    };
+    bgp_prefix_text(&text, max_length)
+}
+
+fn bgp_prefix_text(text: &str, max_length: u8) -> ExampleResult<BgpPrefix> {
+    let (address, length) = text
+        .split_once('/')
+        .ok_or_else(|| format!("BGP prefix must be address/length, got {text:?}"))?;
+    let length = u8_text(length)?;
+    if address.contains(':') {
+        if max_length < 128 {
+            return Err("IPv6 BGP prefix is not valid in IPv4 NLRI fields".into());
+        }
+        return Ok(BgpPrefix::from_ipv6(Ipv6Addr::from_str(address)?, length)?);
+    }
+    Ok(BgpPrefix::from_ipv4(Ipv4Addr::from_str(address)?, length)?)
+}
+
+fn bgp_path_attributes(value: &Value) -> ExampleResult<Vec<BgpPathAttribute>> {
+    if value.as_array().is_some()
+        && !value
+            .as_object()
+            .is_some_and(|object| object.contains_key("hex"))
+    {
+        return array_values(value)?
+            .iter()
+            .map(bgp_path_attribute)
+            .collect();
+    }
+    bgp_path_attributes_from_bytes(&option_bytes(value)?)
+}
+
+fn bgp_path_attributes_from_bytes(mut bytes: &[u8]) -> ExampleResult<Vec<BgpPathAttribute>> {
+    let mut attributes = Vec::new();
+    while !bytes.is_empty() {
+        let before = bytes.len();
+        let (attribute, consumed) = decode_attribute(bytes)?;
+        if consumed == 0 || consumed > before {
+            return Err("BGP path attribute decoder made no progress".into());
+        }
+        attributes.push(attribute);
+        bytes = &bytes[consumed..];
+    }
+    Ok(attributes)
+}
+
+fn bgp_path_attribute(value: &Value) -> ExampleResult<BgpPathAttribute> {
+    if let Some(text) = value.as_str() {
+        return match text.to_ascii_lowercase().replace('_', "-").as_str() {
+            "origin" => Ok(BgpPathAttribute::origin(0)),
+            "as-path" => Ok(BgpPathAttribute::as_sequence(&[])),
+            "next-hop" => Ok(BgpPathAttribute::next_hop(Ipv4Addr::UNSPECIFIED)),
+            "atomic-aggregate" => Ok(BgpPathAttribute::atomic_aggregate()),
+            other => Err(format!("unsupported BGP path attribute shorthand: {other}").into()),
+        };
+    }
+    let object = value
+        .as_object()
+        .ok_or_else(|| format!("BGP path attribute must be an object/string, got {value:?}"))?;
+    if object.contains_key("hex") {
+        return bgp_path_attributes_from_bytes(&option_bytes(value)?)?
+            .into_iter()
+            .next()
+            .ok_or_else(|| "BGP path attribute hex value is empty".into());
+    }
+
+    let type_code = bgp_attribute_type(required(object, &["type", "type_code", "kind"])?)?;
+    let mut attribute = match type_code {
+        ATTR_ORIGIN => BgpPathAttribute::origin(
+            optional(object, &["origin", "value"])
+                .map(bgp_origin)
+                .transpose()?
+                .unwrap_or(0),
+        ),
+        ATTR_AS_PATH => BgpPathAttribute::as_sequence(&bgp_asns(object)?),
+        ATTR_NEXT_HOP => BgpPathAttribute::next_hop(
+            optional(object, &["next_hop", "value", "address"])
+                .map(ipv4_text)
+                .transpose()?
+                .unwrap_or(Ipv4Addr::UNSPECIFIED),
+        ),
+        ATTR_MULTI_EXIT_DISC => BgpPathAttribute::multi_exit_disc(
+            optional(object, &["metric", "value"])
+                .map(u32_value)
+                .transpose()?
+                .unwrap_or(0),
+        ),
+        ATTR_LOCAL_PREF => BgpPathAttribute::local_pref(
+            optional(object, &["preference", "value"])
+                .map(u32_value)
+                .transpose()?
+                .unwrap_or(0),
+        ),
+        ATTR_ATOMIC_AGGREGATE => BgpPathAttribute::atomic_aggregate(),
+        ATTR_AGGREGATOR => BgpPathAttribute::aggregator(
+            optional(object, &["asn", "as"])
+                .map(u16_value)
+                .transpose()?
+                .unwrap_or(0),
+            optional(object, &["address", "addr", "bgp_id", "bgp_identifier"])
+                .map(ipv4_text)
+                .transpose()?
+                .unwrap_or(Ipv4Addr::UNSPECIFIED),
+        ),
+        ATTR_COMMUNITIES => BgpPathAttribute::communities(&bgp_communities(object)?),
+        ATTR_EXTENDED_COMMUNITIES => {
+            BgpPathAttribute::extended_communities(&bgp_extended_communities(object)?)
+        }
+        ATTR_LARGE_COMMUNITY => {
+            BgpPathAttribute::large_communities(&bgp_large_communities(object)?)
+        }
+        ATTR_AS4_PATH => BgpPathAttribute::as_sequence4(&bgp_asns(object)?),
+        ATTR_AS4_AGGREGATOR => BgpPathAttribute::as4_aggregator(
+            optional(object, &["asn", "as"])
+                .map(u32_value)
+                .transpose()?
+                .unwrap_or(0),
+            optional(object, &["address", "addr", "bgp_id", "bgp_identifier"])
+                .map(ipv4_text)
+                .transpose()?
+                .unwrap_or(Ipv4Addr::UNSPECIFIED),
+        ),
+        ATTR_MP_REACH_NLRI => bgp_mp_reach_attribute(object)?,
+        ATTR_MP_UNREACH_NLRI => bgp_mp_unreach_attribute(object)?,
+        other => BgpPathAttribute::unknown(
+            other,
+            optional(object, &["value", "data", "raw"])
+                .map(option_bytes)
+                .transpose()?
+                .unwrap_or_default(),
+        ),
+    };
+    if let Some(flags) = optional(object, &["flags"]) {
+        attribute = attribute.with_flags(u8_value(flags)?);
+    }
+    Ok(attribute)
+}
+
+fn bgp_attribute_type(value: &Value) -> ExampleResult<u8> {
+    if let Some(text) = value.as_str() {
+        return match text.to_ascii_lowercase().replace('_', "-").as_str() {
+            "origin" => Ok(ATTR_ORIGIN),
+            "as-path" => Ok(ATTR_AS_PATH),
+            "next-hop" => Ok(ATTR_NEXT_HOP),
+            "multi-exit-disc" | "med" => Ok(ATTR_MULTI_EXIT_DISC),
+            "local-pref" => Ok(ATTR_LOCAL_PREF),
+            "atomic-aggregate" => Ok(ATTR_ATOMIC_AGGREGATE),
+            "aggregator" => Ok(ATTR_AGGREGATOR),
+            "communities" | "community" => Ok(ATTR_COMMUNITIES),
+            "mp-reach-nlri" => Ok(ATTR_MP_REACH_NLRI),
+            "mp-unreach-nlri" => Ok(ATTR_MP_UNREACH_NLRI),
+            "extended-communities" => Ok(ATTR_EXTENDED_COMMUNITIES),
+            "as4-path" => Ok(ATTR_AS4_PATH),
+            "as4-aggregator" => Ok(ATTR_AS4_AGGREGATOR),
+            "large-communities" | "large-community" => Ok(ATTR_LARGE_COMMUNITY),
+            _ => u8_text(text),
+        };
+    }
+    u8_value(value)
+}
+
+fn bgp_origin(value: &Value) -> ExampleResult<u8> {
+    if let Some(text) = value.as_str() {
+        return match text.to_ascii_lowercase().as_str() {
+            "igp" => Ok(0),
+            "egp" => Ok(1),
+            "incomplete" => Ok(2),
+            _ => u8_text(text),
+        };
+    }
+    u8_value(value)
+}
+
+fn bgp_mp_reach_attribute(object: &Map<String, Value>) -> ExampleResult<BgpPathAttribute> {
+    if let Some(value) = optional(object, &["value", "data", "raw"]) {
+        return Ok(BgpPathAttribute::unknown(
+            ATTR_MP_REACH_NLRI,
+            option_bytes(value)?,
+        ));
+    }
+    let afi = optional(object, &["afi"])
+        .map(bgp_afi)
+        .transpose()?
+        .unwrap_or(AFI_IPV6);
+    let safi = optional(object, &["safi"])
+        .map(bgp_safi)
+        .transpose()?
+        .unwrap_or(SAFI_UNICAST);
+    let next_hop = optional(object, &["next_hop", "gateway"])
+        .map(bgp_next_hop_bytes)
+        .transpose()?
+        .unwrap_or_else(|| Ipv6Addr::UNSPECIFIED.octets().to_vec());
+    let nlri = optional(object, &["nlri"])
+        .map(|value| bgp_prefixes(value, if afi == AFI_IPV6 { 128 } else { 32 }))
+        .transpose()?
+        .unwrap_or_default();
+    if afi == AFI_IPV6 && safi == SAFI_UNICAST && next_hop.len() == 16 {
+        let mut octets = [0u8; 16];
+        octets.copy_from_slice(&next_hop);
+        return Ok(BgpPathAttribute::mp_reach_ipv6(
+            Ipv6Addr::from(octets),
+            &nlri,
+        ));
+    }
+
+    let mut value = Vec::new();
+    value.extend_from_slice(&afi.to_be_bytes());
+    value.push(safi);
+    value.push(next_hop.len() as u8);
+    value.extend_from_slice(&next_hop);
+    value.push(0);
+    for prefix in nlri {
+        prefix.encode_prefix(&mut value);
+    }
+    Ok(BgpPathAttribute::unknown(ATTR_MP_REACH_NLRI, value))
+}
+
+fn bgp_mp_unreach_attribute(object: &Map<String, Value>) -> ExampleResult<BgpPathAttribute> {
+    if let Some(value) = optional(object, &["value", "data", "raw"]) {
+        return Ok(BgpPathAttribute::unknown(
+            ATTR_MP_UNREACH_NLRI,
+            option_bytes(value)?,
+        ));
+    }
+    let afi = optional(object, &["afi"])
+        .map(bgp_afi)
+        .transpose()?
+        .unwrap_or(AFI_IPV6);
+    let safi = optional(object, &["safi"])
+        .map(bgp_safi)
+        .transpose()?
+        .unwrap_or(SAFI_UNICAST);
+    let withdrawn = optional(object, &["withdrawn", "withdrawn_routes", "nlri"])
+        .map(|value| bgp_prefixes(value, if afi == AFI_IPV6 { 128 } else { 32 }))
+        .transpose()?
+        .unwrap_or_default();
+    if afi == AFI_IPV6 && safi == SAFI_UNICAST {
+        return Ok(BgpPathAttribute::mp_unreach_ipv6(&withdrawn));
+    }
+
+    let mut value = Vec::new();
+    value.extend_from_slice(&afi.to_be_bytes());
+    value.push(safi);
+    for prefix in withdrawn {
+        prefix.encode_prefix(&mut value);
+    }
+    Ok(BgpPathAttribute::unknown(ATTR_MP_UNREACH_NLRI, value))
+}
+
+fn bgp_next_hop_bytes(value: &Value) -> ExampleResult<Vec<u8>> {
+    if let Some(text) = value.as_str() {
+        if text.contains(':') {
+            return Ok(Ipv6Addr::from_str(text)?.octets().to_vec());
+        }
+        return Ok(Ipv4Addr::from_str(text)?.octets().to_vec());
+    }
+    option_bytes(value)
+}
+
+fn bgp_asns(object: &Map<String, Value>) -> ExampleResult<Vec<u32>> {
+    let Some(value) = optional(object, &["asns", "asn", "as_path", "value"]) else {
+        return Ok(Vec::new());
+    };
+    if let Some(items) = value.as_array() {
+        return items.iter().map(u32_value).collect();
+    }
+    Ok(vec![u32_value(value)?])
+}
+
+fn bgp_communities(object: &Map<String, Value>) -> ExampleResult<Vec<u32>> {
+    let Some(value) = optional(object, &["communities", "community", "value"]) else {
+        return Ok(Vec::new());
+    };
+    if let Some(items) = value.as_array() {
+        return items.iter().map(u32_value).collect();
+    }
+    Ok(vec![u32_value(value)?])
+}
+
+fn bgp_extended_communities(object: &Map<String, Value>) -> ExampleResult<Vec<[u8; 8]>> {
+    let Some(value) = optional(object, &["communities", "community", "value"]) else {
+        return Ok(Vec::new());
+    };
+    let items = if let Some(items) = value.as_array() {
+        items
+            .iter()
+            .map(|item| fixed_8_bytes(item, "bgp.extended_community"))
+            .collect::<ExampleResult<Vec<_>>>()?
+    } else {
+        vec![fixed_8_bytes(value, "bgp.extended_community")?]
+    };
+    Ok(items)
+}
+
+fn bgp_large_communities(object: &Map<String, Value>) -> ExampleResult<Vec<[u32; 3]>> {
+    let Some(value) = optional(object, &["communities", "community", "value"]) else {
+        return Ok(Vec::new());
+    };
+    let values = if let Some(items) = value.as_array() {
+        let mut out = Vec::new();
+        for item in items {
+            if let Some(parts) = item.as_array() {
+                if parts.len() != 3 {
+                    return Err("BGP large community array items must have 3 integers".into());
+                }
+                out.push([
+                    u32_value(&parts[0])?,
+                    u32_value(&parts[1])?,
+                    u32_value(&parts[2])?,
+                ]);
+            } else {
+                let bytes = option_bytes(item)?;
+                if bytes.len() != 12 {
+                    return Err("BGP large community byte values must be 12 bytes".into());
+                }
+                out.push([
+                    u32::from_be_bytes(bytes[0..4].try_into()?),
+                    u32::from_be_bytes(bytes[4..8].try_into()?),
+                    u32::from_be_bytes(bytes[8..12].try_into()?),
+                ]);
+            }
+        }
+        out
+    } else {
+        let bytes = option_bytes(value)?;
+        if bytes.len() != 12 {
+            return Err("BGP large community byte value must be 12 bytes".into());
+        }
+        vec![[
+            u32::from_be_bytes(bytes[0..4].try_into()?),
+            u32::from_be_bytes(bytes[4..8].try_into()?),
+            u32::from_be_bytes(bytes[8..12].try_into()?),
+        ]]
+    };
+    Ok(values)
 }
 
 fn icmp_layer(plan: &Value) -> ExampleResult<Icmpv4> {
@@ -3351,6 +4123,60 @@ fn hex_bytes(bytes: &[u8]) -> String {
         output.push_str(&format!("{byte:02x}"));
     }
     output
+}
+
+#[cfg(test)]
+mod bgp_materializer_tests {
+    use super::{decode_hex, materialize_plan, BGP_PORT};
+    use crafter::prelude::*;
+    use serde_json::{json, Value};
+
+    #[test]
+    fn ipv4_tcp_bgp_keepalive_pins_bgp_port_and_decodes() {
+        let plan = json!({
+            "stack": ["ipv4", "tcp", "bgp"],
+            "metadata": {"root_decoder": "l3:ipv4", "root": "l3:ipv4"},
+            "fields": {
+                "ipv4": {
+                    "src": "192.0.2.10",
+                    "dst": "198.51.100.20",
+                    "identification": 4660,
+                    "ttl": 64,
+                    "flags": "df",
+                    "protocol": "tcp"
+                },
+                "tcp": {
+                    "src_port": 49152,
+                    "dst_port": 65000,
+                    "sequence": 1,
+                    "acknowledgement": 0,
+                    "reserved": 0,
+                    "flags": "pa",
+                    "window": 4096,
+                    "urgent_pointer": 0
+                },
+                "bgp": {
+                    "message_type": "keepalive"
+                }
+            }
+        });
+
+        let vector = materialize_plan(&plan).expect("BGP keepalive plan must materialize");
+        let raw_hex = vector
+            .get("raw_hex")
+            .and_then(Value::as_str)
+            .expect("materialized vector must carry raw_hex");
+        let bytes = decode_hex(raw_hex).expect("raw_hex must decode");
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, &bytes)
+            .expect("materialized IPv4/TCP/BGP vector must re-decode");
+        let tcp = decoded
+            .layer::<Tcp>()
+            .expect("decoded packet must expose TCP");
+        assert_eq!(tcp.destination_port_value(), BGP_PORT);
+        decoded
+            .layer::<Bgp>()
+            .expect("decoded packet must expose BGP through TCP/179");
+    }
 }
 
 /// Native DHCPv4 oracle fixtures.
