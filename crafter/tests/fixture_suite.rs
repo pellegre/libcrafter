@@ -7,7 +7,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::{Path, PathBuf};
 
 use crafter::core::{
-    Ah, Arp, Dhcp, DhcpMessageType, DhcpOption, DhcpRelayAgentInfo, DhcpRelaySuboption, Dns,
+    Ah, Arp, Bgp, Dhcp, DhcpMessageType, DhcpOption, DhcpRelayAgentInfo, DhcpRelaySuboption, Dns,
     DnsName, DnsRecord, DnsRecordData, Dot11, Dot11DataSubtype, Dot11ManagementSubtype, Dscp,
     Eapol, EapolKey, Ecn, EdnsOption, Esp, Ethernet, IcmpKind, Icmpv4, Icmpv6, IkeHeader,
     IkeKePayload, IkeNoncePayload, IkeSaPayload, Ipv4, Ipv4ChecksumStatus, Ipv4Option, Ipv6,
@@ -84,6 +84,8 @@ enum ExpectedLayer {
     Tcp,
     Udp,
     UdpOptions,
+    #[allow(dead_code)]
+    Bgp,
     Dns,
     Dhcp,
     Esp,
@@ -1972,6 +1974,9 @@ fn assert_expected_layers(case: &ValidFixtureCase, packet: &Packet) {
             ExpectedLayer::UdpOptions => {
                 let _ = expect_layer::<UdpOptions>(case, packet);
             }
+            ExpectedLayer::Bgp => {
+                let _ = expect_layer::<Bgp>(case, packet);
+            }
             ExpectedLayer::Dns => {
                 let _ = expect_layer::<Dns>(case, packet);
             }
@@ -2044,6 +2049,7 @@ fn expected_layer_name(expected: ExpectedLayer) -> &'static str {
         ExpectedLayer::Tcp => "Tcp",
         ExpectedLayer::Udp => "Udp",
         ExpectedLayer::UdpOptions => "UdpOptions",
+        ExpectedLayer::Bgp => "BGP",
         ExpectedLayer::Dns => "Dns",
         ExpectedLayer::Dhcp => "Dhcp",
         ExpectedLayer::Esp => "Esp",
