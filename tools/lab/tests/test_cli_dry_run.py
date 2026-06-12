@@ -183,6 +183,43 @@ class LabCliPlanTest(unittest.TestCase):
             ["10.77.0.88", "10.77.0.99"],
         )
 
+    def test_bgp_smoke_plan_wires_driver_and_peer_provisioning_roles(self) -> None:
+        fake = _FakeEndpointClient()
+
+        with patch("tools.lab.engine.endpoint_client.EndpointClient", return_value=fake):
+            exit_code, stdout, stderr = _run_cli(
+                "plan",
+                "--provider",
+                "qemu",
+                "--profile",
+                "bgp-smoke",
+                "--seed",
+                "1",
+                "--role",
+                "stimulus",
+                "--role",
+                "target",
+                "--dry-run",
+                "--json",
+            )
+
+        self.assertEqual(exit_code, 0, stderr)
+        session = json.loads(stdout)
+        roles = {role["name"]: role for role in session["roles"]}
+        self.assertEqual(roles["stimulus"]["workload_metadata"]["driver"], "bgp_session")
+        self.assertEqual(
+            roles["stimulus"]["bootstrap_metadata"]["driver_source"],
+            "crafter/examples/bgp_session.rs",
+        )
+        self.assertEqual(
+            roles["target"]["workload_metadata"]["provision_script"],
+            "tools/live-lab/bgp/provision-peer.sh",
+        )
+        self.assertEqual(
+            roles["target"]["bootstrap_metadata"]["frr_template"],
+            "tools/live-lab/bgp/frr.conf.template",
+        )
+
 
 class LabCliCreateDryRunTest(unittest.TestCase):
     def test_create_dry_run_uses_default_roles_without_persisting_manifest(self) -> None:
