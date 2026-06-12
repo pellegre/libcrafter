@@ -193,3 +193,35 @@ fn bgp_golden_update_announce() {
     );
     assert_roundtrip(bytes.as_bytes());
 }
+
+// ---------------------------------------------------------------------------
+// UPDATE withdraw (RFC 4271 §4.3): one withdrawn route for 203.0.113.0/24,
+// no path attributes, and no NLRI.
+// ---------------------------------------------------------------------------
+
+const GOLDEN_UPDATE_WITHDRAW: &str =
+    "ffffffffffffffffffffffffffffffff001b02000418cb00710000";
+
+fn build_update_withdraw() -> Packet {
+    Packet::from_layer(
+        Bgp::update().withdraw(
+            BgpPrefix::from_ipv4(Ipv4Addr::new(203, 0, 113, 0), 24)
+                .expect("valid IPv4 prefix"),
+        ),
+    )
+}
+
+#[test]
+fn bgp_golden_update_withdraw() {
+    let bytes = build_update_withdraw().compile().expect("compile");
+    maybe_dump("UPDATE_WITHDRAW", bytes.as_bytes());
+    assert_eq!(
+        bytes.as_bytes(),
+        hex(GOLDEN_UPDATE_WITHDRAW).as_slice()
+    );
+    assert_eq!(&bytes.as_bytes()[16..18], &[0x00, 0x1b]);
+    assert_eq!(&bytes.as_bytes()[19..21], &[0x00, 0x04]);
+    assert_eq!(&bytes.as_bytes()[21..25], &[0x18, 0xcb, 0x00, 0x71]);
+    assert_eq!(&bytes.as_bytes()[25..27], &[0x00, 0x00]);
+    assert_roundtrip(bytes.as_bytes());
+}
