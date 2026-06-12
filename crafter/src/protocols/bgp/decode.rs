@@ -257,12 +257,16 @@ fn decode_open_body(body_bytes: &[u8]) -> Result<BgpOpen> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::Ipv6Addr;
+
     use crate::packet::{Layer, Packet};
     use crate::protocols::bgp::attribute::{
         BgpAttrValue, BgpPathAttribute, BgpPrefix, BGP_ORIGIN_IGP,
     };
     use crate::protocols::bgp::capability::BGP_MP_IPV4_UNICAST;
-    use crate::protocols::bgp::{BgpCapability, AFI_IPV4, SAFI_UNICAST};
+    use crate::protocols::bgp::{
+        BgpCapability, AFI_IPV4, AFI_IPV6, ATTR_MP_REACH_NLRI, SAFI_UNICAST,
+    };
 
     #[test]
     fn take_splits_when_enough_bytes() {
@@ -515,6 +519,51 @@ mod tests {
                 assert_eq!(
                     update.attributes[0].value,
                     BgpAttrValue::Unknown(vec![0xaa, 0xbb])
+                );
+            }
+            other => panic!("expected UPDATE body, got {other:?}"),
+        }
+
+        let recompiled = Packet::from_layer(bgp)
+            .compile()
+            .expect("recompile succeeds");
+        assert_eq!(recompiled, bytes);
+    }
+
+    #[test]
+    fn decode_update_mp_reach_attribute_is_typed_and_round_trips() {
+        let next_hop = Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 1);
+        let nlri = [
+            BgpPrefix::from_ipv6(Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0), 32)
+                .expect("valid IPv6 prefix"),
+        ];
+        let bytes = Packet::from_layer(
+            Bgp::update().attribute(BgpPathAttribute::mp_reach_ipv6(next_hop, &nlri)),
+        )
+        .compile()
+        .expect("UPDATE compiles");
+
+        let (bgp, consumed) = decode_bgp_message(&bytes).expect("UPDATE decodes");
+        assert_eq!(consumed, bytes.len());
+        assert!(
+            bgp.summary()
+                .contains("MP_REACH afi=2 safi=1 nh=2001:db8::1 nlri=[2001:db8::/32]"),
+            "summary was: {}",
+            bgp.summary()
+        );
+
+        match &bgp.body {
+            BgpBody::Update(update) => {
+                assert_eq!(update.attributes.len(), 1);
+                assert_eq!(update.attributes[0].type_code, ATTR_MP_REACH_NLRI);
+                assert_eq!(
+                    update.attributes[0].value,
+                    BgpAttrValue::MpReachNlri {
+                        afi: AFI_IPV6,
+                        safi: SAFI_UNICAST,
+                        next_hop: next_hop.octets().to_vec(),
+                        nlri: nlri.to_vec(),
+                    }
                 );
             }
             other => panic!("expected UPDATE body, got {other:?}"),

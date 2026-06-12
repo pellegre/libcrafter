@@ -825,7 +825,7 @@ fn mp_reach_summary(afi: u16, safi: u8, next_hop: &[u8], nlri: &[BgpPrefix]) -> 
         .collect::<Vec<_>>()
         .join(", ");
     format!(
-        "MP_REACH_NLRI afi={afi} safi={safi} next_hop={} nlri=[{nlri}]",
+        "MP_REACH afi={afi} safi={safi} nh={} nlri=[{nlri}]",
         mp_next_hop_summary(afi, next_hop)
     )
 }
@@ -836,7 +836,7 @@ fn mp_unreach_summary(afi: u16, safi: u8, withdrawn: &[BgpPrefix]) -> String {
         .map(|prefix| mp_prefix_summary(afi, prefix))
         .collect::<Vec<_>>()
         .join(", ");
-    format!("MP_UNREACH_NLRI afi={afi} safi={safi} withdrawn=[{withdrawn}]")
+    format!("MP_UNREACH afi={afi} safi={safi} withdrawn=[{withdrawn}]")
 }
 
 fn mp_next_hop_summary(afi: u16, next_hop: &[u8]) -> String {
@@ -1506,7 +1506,7 @@ mod tests {
         assert_eq!(encoded, expected);
         assert_eq!(
             attr.summary(),
-            "MP_REACH_NLRI afi=2 safi=1 next_hop=2001:db8::1 nlri=[2001:db8::/32]"
+            "MP_REACH afi=2 safi=1 nh=2001:db8::1 nlri=[2001:db8::/32]"
         );
 
         let (decoded, consumed) = decode_attribute(&encoded).expect("attribute decodes");
@@ -1560,7 +1560,7 @@ mod tests {
         );
         assert_eq!(
             attr.summary(),
-            "MP_UNREACH_NLRI afi=2 safi=1 withdrawn=[2001:db8::/32]"
+            "MP_UNREACH afi=2 safi=1 withdrawn=[2001:db8::/32]"
         );
 
         let (decoded, consumed) = decode_attribute(&encoded).expect("attribute decodes");
