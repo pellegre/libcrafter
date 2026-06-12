@@ -261,6 +261,24 @@ impl Bgp {
         }
     }
 
+    /// Force the shared BGP Marker field.
+    ///
+    /// This preserves malformed-on-purpose messages whose Marker is not the
+    /// default all-ones value.
+    pub fn marker(mut self, marker: [u8; BGP_MARKER_LEN]) -> Self {
+        self.header.set_marker(marker);
+        self
+    }
+
+    /// Force the shared BGP message Length field.
+    ///
+    /// This preserves malformed-on-purpose messages whose declared length
+    /// disagrees with the emitted body bytes.
+    pub fn length(mut self, length: u16) -> Self {
+        self.header.set_length(length);
+        self
+    }
+
     /// Set the OPEN version field.
     pub fn version(mut self, version: u8) -> Self {
         if let BgpBody::Open(open) = &mut self.body {
