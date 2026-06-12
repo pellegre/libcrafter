@@ -24,6 +24,9 @@ COMMANDS = (
 )
 
 DEFAULT_LAB_ROLE_SPECS = ("stimulus", "target")
+BGP_SMOKE_PROFILE = "bgp-smoke"
+BGP_STIMULUS_ROLE = "stimulus"
+BGP_TARGET_ROLE = "target"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -250,6 +253,7 @@ def _run_plan(args: argparse.Namespace) -> int:
             seed=args.seed,
             roles=_lab_roles_from_args(
                 provider=adapter.name,
+                profile=args.profile,
                 role_specs=args.roles,
                 address_specs=args.role_addresses,
             ),
@@ -298,6 +302,7 @@ def _run_create(args: argparse.Namespace) -> int:
             seed=args.seed,
             roles=_lab_roles_from_args(
                 provider=adapter.name,
+                profile=args.profile,
                 role_specs=args.roles,
                 address_specs=args.role_addresses,
             ),
@@ -427,6 +432,7 @@ def _cleanup_status(session: LabSession) -> str:
 def _lab_roles_from_args(
     *,
     provider: str,
+    profile: str,
     role_specs: Sequence[str] | None,
     address_specs: Sequence[str],
 ) -> list[LabRole]:
@@ -449,11 +455,62 @@ def _lab_roles_from_args(
     roles: list[LabRole] = []
     for role_name in role_names:
         address = addresses.get(role_name)
+        role_kwargs = _profile_role_metadata(profile=profile, role_name=role_name)
         if provider == "virtualbox":
-            roles.append(LabRole(name=role_name, planned_ipv4=address))
+            roles.append(LabRole(name=role_name, planned_ipv4=address, **role_kwargs))
         else:
-            roles.append(LabRole(name=role_name, requested_private_ipv4=address))
+            roles.append(
+                LabRole(name=role_name, requested_private_ipv4=address, **role_kwargs)
+            )
     return roles
+
+
+def _profile_role_metadata(*, profile: str, role_name: str) -> dict[str, object]:
+    if profile != BGP_SMOKE_PROFILE:
+        return {}
+    if role_name == BGP_STIMULUS_ROLE:
+        return {
+            "capabilities": [
+                "bgp_session_driver",
+                "tcp_client",
+                "artifact_output",
+            ],
+            "bootstrap_metadata": {
+                "cargo_example": "bgp_session",
+                "driver_source": "crafter/examples/bgp_session.rs",
+            },
+            "workload_metadata": {
+                "workload": "bgp-live",
+                "role": BGP_STIMULUS_ROLE,
+                "driver": "bgp_session",
+                "driver_source": "crafter/examples/bgp_session.rs",
+                "peer_role": BGP_TARGET_ROLE,
+                "artifact_subdir": "bgp",
+            },
+        }
+    if role_name == BGP_TARGET_ROLE:
+        return {
+            "capabilities": [
+                "frr_bgp_peer",
+                "controlled_service",
+                "rib_inspection",
+            ],
+            "bootstrap_metadata": {
+                "service": "frr",
+                "provision_script": "tools/live-lab/bgp/provision-peer.sh",
+                "frr_template": "tools/live-lab/bgp/frr.conf.template",
+            },
+            "workload_metadata": {
+                "workload": "bgp-live",
+                "role": BGP_TARGET_ROLE,
+                "peer": "frr",
+                "provision_script": "tools/live-lab/bgp/provision-peer.sh",
+                "frr_template": "tools/live-lab/bgp/frr.conf.template",
+                "peer_role": BGP_STIMULUS_ROLE,
+                "rib_command": "vtysh -c 'show bgp ipv4 unicast'",
+            },
+        }
+    return {}
 
 
 def _parse_role_spec(value: str) -> tuple[str, str | None]:
