@@ -9,6 +9,10 @@ use crafter::core::{
     DNS_FLAG_QR_RESPONSE, DNS_FLAG_RECURSION_AVAILABLE, DNS_FLAG_RECURSION_DESIRED,
     DNS_FLAG_TRUNCATED,
 };
+use crafter::protocols::bgp::{
+    Bgp, BGP_HEADER_LEN, BGP_MARKER_LEN, BGP_TYPE_KEEPALIVE, BGP_TYPE_NOTIFICATION, BGP_TYPE_OPEN,
+    BGP_TYPE_ROUTE_REFRESH, BGP_TYPE_UPDATE,
+};
 use crafter::protocols::link::RadiotapFcsStatus;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -435,6 +439,8 @@ fn normalized_layer_name(layer: &dyn Layer) -> String {
         "UdpOptions"
     } else if layer.as_any().is::<Tcp>() {
         "tcp"
+    } else if layer.as_any().is::<Bgp>() {
+        "bgp"
     } else if layer.as_any().is::<Icmpv4>() {
         "icmp"
     } else if layer.as_any().is::<Icmpv6>() {
@@ -540,6 +546,9 @@ fn normalized_layer_fields(
     }
     if let Some(layer) = layer.as_any().downcast_ref::<Tcp>() {
         return tcp_fields(layer);
+    }
+    if let Some(layer) = layer.as_any().downcast_ref::<Bgp>() {
+        return bgp_fields(layer);
     }
     if let Some(layer) = layer.as_any().downcast_ref::<Icmpv4>() {
         return icmp_fields(layer);
@@ -1327,6 +1336,114 @@ fn tcp_fields(layer: &Tcp) -> BTreeMap<String, Value> {
         fields.insert("checksum".to_string(), json!(value));
     }
     fields
+}
+
+fn bgp_fields(layer: &Bgp) -> BTreeMap<String, Value> {
+    let mut fields = BTreeMap::new();
+    let Ok(compiled) = Packet::from_layer(layer.clone()).compile() else {
+        return inspection_fields(layer);
+    };
+    let raw = compiled.as_bytes();
+    if raw.len() < BGP_HEADER_LEN {
+        return inspection_fields(layer);
+    }
+
+    let length = u16::from_be_bytes([raw[BGP_MARKER_LEN], raw[BGP_MARKER_LEN + 1]]);
+    let message_type = raw[BGP_MARKER_LEN + 2];
+    fields.insert(
+        "marker".to_string(),
+        json!({"hex": hex_bytes(&raw[..BGP_MARKER_LEN])}),
+    );
+    fields.insert("length".to_string(), json!(length));
+    fields.insert("type".to_string(), json!(message_type));
+    fields.insert(
+        "message_type".to_string(),
+        json!(bgp_message_type_name(message_type)),
+    );
+
+    let body = &raw[BGP_HEADER_LEN..];
+    match message_type {
+        BGP_TYPE_OPEN if body.len() >= 10 => {
+            fields.insert("version".to_string(), json!(body[0]));
+            fields.insert(
+                "asn".to_string(),
+                json!(u16::from_be_bytes([body[1], body[2]])),
+            );
+            fields.insert(
+                "hold_time".to_string(),
+                json!(u16::from_be_bytes([body[3], body[4]])),
+            );
+            fields.insert(
+                "bgp_identifier".to_string(),
+                json!(format!("{}.{}.{}.{}", body[5], body[6], body[7], body[8])),
+            );
+            fields.insert("opt_param_len".to_string(), json!(body[9]));
+            fields.insert(
+                "optional_parameters".to_string(),
+                json!({"hex": hex_bytes(&body[10..])}),
+            );
+        }
+        BGP_TYPE_UPDATE if body.len() >= 4 => {
+            let withdrawn_len = u16::from_be_bytes([body[0], body[1]]) as usize;
+            let withdrawn_end = 2usize.saturating_add(withdrawn_len).min(body.len());
+            fields.insert("withdrawn_routes_len".to_string(), json!(withdrawn_len));
+            fields.insert(
+                "withdrawn_routes".to_string(),
+                json!({"hex": hex_bytes(&body[2..withdrawn_end])}),
+            );
+            if body.len() >= withdrawn_end + 2 {
+                let attr_len =
+                    u16::from_be_bytes([body[withdrawn_end], body[withdrawn_end + 1]]) as usize;
+                let attr_start = withdrawn_end + 2;
+                let attr_end = attr_start.saturating_add(attr_len).min(body.len());
+                fields.insert("path_attr_len".to_string(), json!(attr_len));
+                fields.insert(
+                    "path_attributes".to_string(),
+                    json!({"hex": hex_bytes(&body[attr_start..attr_end])}),
+                );
+                fields.insert(
+                    "nlri".to_string(),
+                    json!({"hex": hex_bytes(&body[attr_end..])}),
+                );
+            }
+        }
+        BGP_TYPE_NOTIFICATION if body.len() >= 2 => {
+            fields.insert("error_code".to_string(), json!(body[0]));
+            fields.insert("error_subcode".to_string(), json!(body[1]));
+            fields.insert("data".to_string(), json!({"hex": hex_bytes(&body[2..])}));
+        }
+        BGP_TYPE_KEEPALIVE => {}
+        BGP_TYPE_ROUTE_REFRESH if body.len() >= 4 => {
+            fields.insert(
+                "afi".to_string(),
+                json!(u16::from_be_bytes([body[0], body[1]])),
+            );
+            fields.insert("subtype".to_string(), json!(body[2]));
+            fields.insert("safi".to_string(), json!(body[3]));
+            if body.len() > 4 {
+                fields.insert(
+                    "orf_data".to_string(),
+                    json!({"hex": hex_bytes(&body[4..])}),
+                );
+            }
+        }
+        _ if !body.is_empty() => {
+            fields.insert("body".to_string(), json!({"hex": hex_bytes(body)}));
+        }
+        _ => {}
+    }
+    fields
+}
+
+fn bgp_message_type_name(message_type: u8) -> Value {
+    match message_type {
+        BGP_TYPE_OPEN => json!("open"),
+        BGP_TYPE_UPDATE => json!("update"),
+        BGP_TYPE_NOTIFICATION => json!("notification"),
+        BGP_TYPE_KEEPALIVE => json!("keepalive"),
+        BGP_TYPE_ROUTE_REFRESH => json!("route_refresh"),
+        other => json!(other),
+    }
 }
 
 fn icmp_fields(layer: &Icmpv4) -> BTreeMap<String, Value> {
