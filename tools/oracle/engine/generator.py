@@ -172,6 +172,7 @@ _SUPPORTED_FIELDS: dict[str, set[str]] = {
         "iv",
         "icv",
     },
+    "bgp": {"marker", "length", "type"},
     "ethernet": {"dst", "src", "ethertype"},
     "icmp": {
         "type",
@@ -336,6 +337,7 @@ _SCAPY_MATERIALIZED_LAYERS = {
     "tcp",
     "udp",
     "vlan",
+    "bgp",
 }
 
 
@@ -688,6 +690,8 @@ class PacketGenerator:
                 case=selected_case,
                 behavior=behavior,
             )
+        elif _is_bgp_smoke_case(selected_case) and "bgp" in fields:
+            _apply_bgp_behavior(fields, stack=stack, case=selected_case, behavior="")
         live_behavior = self._apply_icmp_live_fields(
             rng,
             fields,
@@ -885,6 +889,7 @@ class PacketGenerator:
                     "dot11-pcap",
                     "eapol-smoke",
                     "rsn-smoke",
+                    "bgp-smoke",
                     *_IPSEC_SMOKE_PROFILES,
                 }
             ):
@@ -912,6 +917,13 @@ class PacketGenerator:
                 and case is None
                 and self.profile == "tcp-smoke"
                 and not _has_tcp_smoke_case(coverage_cases)
+            ):
+                continue
+            if (
+                feature is None
+                and case is None
+                and self.profile == "bgp-smoke"
+                and not _has_bgp_smoke_case(coverage_cases)
             ):
                 continue
             if (
@@ -1117,6 +1129,10 @@ class PacketGenerator:
             # tcp-header-* and tcp-option-* cases so case selection stays on TCP
             # behavior and never falls through to unrelated cases.
             coverage_cases = [case for case in coverage_cases if _has_tcp_smoke_case([case])]
+        if feature is None and self.profile == "bgp-smoke":
+            # Focused BGP smoke set: keep case selection on BGP message cases so
+            # a default/raw payload case is never paired with a BGP stack.
+            coverage_cases = [case for case in coverage_cases if _is_bgp_smoke_case(case)]
         if feature is None and self.profile == "ipv6-enrichment":
             # Focused IPv6 enrichment profile: restrict to stack-declared
             # base/unknown-next-header and strict-byte extension cases. This
@@ -1177,6 +1193,12 @@ class PacketGenerator:
         # tcp-option-* coverage cases (filtered above) so the smoke run stays on
         # TCP behavior. The cross-feature case expansion below is skipped.
         if feature is None and self.profile == "tcp-smoke":
+            if not choices:
+                return "default"
+            return weighted_choice(rng, choices)
+        # bgp-smoke profile: select only from stack-declared BGP message cases
+        # and skip the generic cross-feature expansion below.
+        if feature is None and self.profile == "bgp-smoke":
             if not choices:
                 return "default"
             return weighted_choice(rng, choices)
@@ -1317,6 +1339,10 @@ class PacketGenerator:
             # selection materializes a mix of TCP header and TCP option cases
             # without mixing in unrelated features.
             if self.profile == "tcp-smoke" and name not in ("tcp_header", "tcp_options"):
+                continue
+            # The BGP smoke profile auto-samples only BGP feature specs, keeping
+            # pcap/IPsec/fragment features off the BGP TCP stacks.
+            if self.profile == "bgp-smoke" and not name.startswith("bgp_"):
                 continue
             # The IPv4 enrichment profile auto-samples only the IPv4 option
             # feature; all non-option IPv4 layer cases remain plain header cases.
@@ -1522,6 +1548,8 @@ class PacketGenerator:
                     "type": 0,
                     "segments_left": 0,
                 }
+            elif layer == "payload" and "bgp" in stack:
+                sampled = {"hex": "", "length": 0}
             else:
                 spec = self._layer_spec(layer)
                 self._validate_layer_backend_support(layer, spec)
@@ -1647,6 +1675,8 @@ class PacketGenerator:
                 else:
                     routing["type"] = 0
                     routing["segments_left"] = 0
+        elif feature is not None and feature.startswith("bgp_") and "bgp" in fields:
+            _apply_bgp_behavior(fields, stack=stack, case=case, behavior=behavior)
         elif feature == "icmpv4_errors" and "icmp" in fields:
             self._apply_icmpv4_error_behavior(
                 fields,
@@ -1975,6 +2005,8 @@ class PacketGenerator:
             return _sample_udp_field(ctx, field_name, domain)
         if layer == "tcp":
             return _sample_tcp_field(ctx, field_name, domain, field_spec)
+        if layer == "bgp":
+            return _sample_bgp_field(ctx, field_name, domain)
         if layer == "icmp":
             return _sample_icmp_field(ctx, field_name, domain)
         if layer == "icmpv6":
@@ -2491,6 +2523,16 @@ def _sample_tcp_field(
     if field_name == "options":
         return {"hex": _tcp_options_hex(ctx.case, str(domain))}
     raise ValueError(f"spec error: unsupported tcp field sampler: {field_name}")
+
+
+def _sample_bgp_field(ctx: _SamplingContext, field_name: str, domain: object) -> object:
+    if field_name == "marker":
+        return {"hex": "ff" * 16}
+    if field_name == "length":
+        return _SKIP_FIELD
+    if field_name == "type":
+        return _bgp_message_type_for_case(ctx.case)
+    raise ValueError(f"spec error: unsupported bgp field sampler: {field_name}")
 
 
 def _sample_icmp_field(ctx: _SamplingContext, field_name: str, domain: object) -> object:
@@ -4205,6 +4247,98 @@ def _dns_answers_for_domain(ctx: _SamplingContext, domain: object) -> list[JSONO
     return [{"name": "example.com.", "type": "A", "ttl": 60, "address": ctx.dst_ipv4}]
 
 
+def _apply_bgp_behavior(
+    fields: dict[str, JSONObject],
+    *,
+    stack: Sequence[str],
+    case: str,
+    behavior: str,
+) -> None:
+    bgp = fields["bgp"]
+    bgp["marker"] = {"hex": "ff" * 16}
+    bgp["type"] = _bgp_message_type_for_case(case)
+    bgp["message_type"] = bgp["type"]
+
+    if "tcp" in fields:
+        fields["tcp"]["dst_port"] = 179
+    if "payload" in fields:
+        fields["payload"] = {"hex": "", "length": 0}
+
+    if bgp["type"] == "keepalive":
+        bgp.pop("body", None)
+        return
+
+    if bgp["type"] == "open":
+        bgp["body"] = {"hex": _bgp_open_body_hex(case)}
+        return
+
+    if bgp["type"] == "notification":
+        bgp["body"] = {"hex": "0203deadbeef"}
+        return
+
+    if bgp["type"] == "route_refresh":
+        bgp["body"] = {"hex": "00010001"}
+        return
+
+    if bgp["type"] == "update":
+        bgp["body"] = {"hex": _bgp_update_body_hex(stack=stack, case=case, behavior=behavior)}
+
+
+def _bgp_message_type_for_case(case: str) -> str:
+    normalized = case.replace("_", "-")
+    if "keepalive" in normalized:
+        return "keepalive"
+    if "notification" in normalized:
+        return "notification"
+    if "route-refresh" in normalized:
+        return "route_refresh"
+    if "open" in normalized:
+        return "open"
+    return "update"
+
+
+def _bgp_open_body_hex(case: str) -> str:
+    base = "04fc00005ac0000201"
+    if "capabilities" not in case.replace("_", "-"):
+        return base + "00"
+    capabilities = (
+        "010400010001"  # Multiprotocol IPv4 unicast.
+        "010400020001"  # Multiprotocol IPv6 unicast.
+        "41040000fc00"  # Four-octet AS 64512.
+        "0200"          # Route refresh.
+    )
+    optional_parameters = "02" + f"{len(bytes.fromhex(capabilities)):02x}" + capabilities
+    return base + f"{len(bytes.fromhex(optional_parameters)):02x}" + optional_parameters
+
+
+def _bgp_update_body_hex(*, stack: Sequence[str], case: str, behavior: str) -> str:
+    normalized = f"{case} {behavior}".replace("_", "-")
+    if "withdraw" in normalized:
+        return "000418c000020000"
+    if "mp-reach" in normalized:
+        mp_reach_value = "00020110" + "20010db8000000000000000000000001" + "00" + "2020010db8"
+        attrs = "800e" + f"{len(bytes.fromhex(mp_reach_value)):02x}" + mp_reach_value
+        return "0000" + len(bytes.fromhex(attrs)).to_bytes(2, "big").hex() + attrs
+    if "extended-communities" in normalized:
+        attrs = "c01010" + "0002fc0000000064" + "0002fc00000000c8"
+        return "0000" + len(bytes.fromhex(attrs)).to_bytes(2, "big").hex() + attrs
+    if "large-communities" in normalized:
+        attrs = (
+            "c02018"
+            "0000fc000000006400000001"
+            "0000fc000000006400000002"
+        )
+        return "0000" + len(bytes.fromhex(attrs)).to_bytes(2, "big").hex() + attrs
+    if "communities" in normalized:
+        attrs = "c00808ffffff0100fc0064"
+        return "0000" + len(bytes.fromhex(attrs)).to_bytes(2, "big").hex() + attrs
+    attrs = "40010100" + "4002040201fc00" + "400304c0000201"
+    nlri = "18c63364"
+    if "announce" not in normalized and "ipv6" in stack:
+        nlri = ""
+    return "0000" + len(bytes.fromhex(attrs)).to_bytes(2, "big").hex() + attrs + nlri
+
+
 # Backend-neutral DHCP option kinds that materialize byte-for-byte through both
 # the Scapy reference backend and the libcrafter adapter, in fixed option order.
 # Kinds the dhcp_behavior option_matrix lists that Scapy cannot encode
@@ -4507,6 +4641,18 @@ def _has_tcp_smoke_case(cases: Sequence[str]) -> bool:
     """
 
     return _has_tcp_header_case(cases) or _has_tcp_options_case(cases)
+
+
+def _is_bgp_smoke_case(case: str) -> bool:
+    """Whether ``case`` is sampled by the focused bgp-smoke profile."""
+
+    return case.replace("_", "-").startswith("bgp-")
+
+
+def _has_bgp_smoke_case(cases: Sequence[str]) -> bool:
+    """Whether ``cases`` contains a BGP smoke coverage case."""
+
+    return any(_is_bgp_smoke_case(case) for case in cases)
 
 
 def _ipv4_enrichment_cases(cases: Sequence[str], grammar: Mapping[str, object]) -> list[str]:

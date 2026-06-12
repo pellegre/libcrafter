@@ -97,7 +97,6 @@ _LAYER_FIELD_ALIASES: dict[str, dict[str, str]] = {
         "bgp_id": "bgp_identifier",
         "len": "length",
         "my_as": "asn",
-        "opt_param_len": "optional_parameter_length",
         "opt_params": "optional_parameters",
         "path_attr": "path_attributes",
     },
@@ -344,6 +343,8 @@ def normalize_packet(
         normalized_layers.append(normalized_layer)
 
     _canonicalize_icmpv4(packet, normalized_layers, normalized_fields)
+    if source_hex is not None:
+        _canonicalize_bgp_from_wire(source_hex, normalized_fields)
 
     metadata: JSONObject = {
         "native": {
@@ -622,6 +623,91 @@ def _normalize_bgp_fields(fields: JSONObject) -> JSONObject:
         if output.get(name) == []:
             output[name] = {"hex": ""}
     return output
+
+
+_BGP_HEADER_LEN = 19
+_BGP_MARKER_LEN = 16
+_BGP_TYPE_OPEN = 1
+_BGP_TYPE_UPDATE = 2
+_BGP_TYPE_NOTIFICATION = 3
+_BGP_TYPE_KEEPALIVE = 4
+_BGP_TYPE_ROUTE_REFRESH = 5
+
+
+def _canonicalize_bgp_from_wire(source_hex: str, fields: dict[str, JSONObject]) -> None:
+    key = _last_layer_field_key(fields, "bgp")
+    if key is None:
+        return
+    try:
+        raw = bytes.fromhex(source_hex)
+    except ValueError:
+        return
+    offset = _bgp_offset(raw)
+    if offset is None or len(raw) < offset + _BGP_HEADER_LEN:
+        return
+    length = int.from_bytes(raw[offset + _BGP_MARKER_LEN : offset + _BGP_MARKER_LEN + 2], "big")
+    if length < _BGP_HEADER_LEN or len(raw) < offset + length:
+        return
+
+    message_type = raw[offset + _BGP_MARKER_LEN + 2]
+    body = raw[offset + _BGP_HEADER_LEN : offset + length]
+    bgp = fields[key]
+    bgp["marker"] = {"hex": raw[offset : offset + _BGP_MARKER_LEN].hex()}
+    bgp["length"] = length
+    bgp["type"] = message_type
+    bgp["message_type"] = _BGP_MESSAGE_TYPE_NAMES.get(message_type, message_type)
+
+    if message_type == _BGP_TYPE_OPEN and len(body) >= 10:
+        bgp["version"] = body[0]
+        bgp["asn"] = int.from_bytes(body[1:3], "big")
+        bgp["hold_time"] = int.from_bytes(body[3:5], "big")
+        bgp["bgp_identifier"] = ".".join(str(octet) for octet in body[5:9])
+        bgp["opt_param_len"] = body[9]
+        bgp["optional_parameters"] = {"hex": body[10:].hex()}
+    elif message_type == _BGP_TYPE_UPDATE and len(body) >= 4:
+        withdrawn_len = int.from_bytes(body[0:2], "big")
+        withdrawn_end = min(2 + withdrawn_len, len(body))
+        bgp["withdrawn_routes_len"] = withdrawn_len
+        bgp["withdrawn_routes"] = {"hex": body[2:withdrawn_end].hex()}
+        if len(body) >= withdrawn_end + 2:
+            path_attr_len = int.from_bytes(body[withdrawn_end : withdrawn_end + 2], "big")
+            attr_start = withdrawn_end + 2
+            attr_end = min(attr_start + path_attr_len, len(body))
+            bgp["path_attr_len"] = path_attr_len
+            bgp["path_attributes"] = {"hex": body[attr_start:attr_end].hex()}
+            bgp["nlri"] = {"hex": body[attr_end:].hex()}
+    elif message_type == _BGP_TYPE_NOTIFICATION and len(body) >= 2:
+        bgp["error_code"] = body[0]
+        bgp["error_subcode"] = body[1]
+        bgp["data"] = {"hex": body[2:].hex()}
+    elif message_type == _BGP_TYPE_ROUTE_REFRESH and len(body) >= 4:
+        bgp["afi"] = int.from_bytes(body[0:2], "big")
+        bgp["subtype"] = body[2]
+        bgp["safi"] = body[3]
+        if len(body) > 4:
+            bgp["orf_data"] = {"hex": body[4:].hex()}
+
+
+def _bgp_offset(raw: bytes) -> int | None:
+    if not raw:
+        return None
+    version = raw[0] >> 4
+    if version == 4:
+        if len(raw) < 20:
+            return None
+        ip_header_len = (raw[0] & 0x0F) * 4
+        tcp_offset_index = ip_header_len + 12
+        if len(raw) <= tcp_offset_index:
+            return None
+        tcp_header_len = (raw[tcp_offset_index] >> 4) * 4
+        return ip_header_len + tcp_header_len
+    if version == 6:
+        tcp_offset_index = 40 + 12
+        if len(raw) <= tcp_offset_index:
+            return None
+        tcp_header_len = (raw[tcp_offset_index] >> 4) * 4
+        return 40 + tcp_header_len
+    return None
 
 
 def _normalize_dns_fields(fields: JSONObject) -> JSONObject:
