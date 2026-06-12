@@ -116,7 +116,7 @@ impl BgpBody {
         match self {
             BgpBody::Open(open) => open.body_len(),
             BgpBody::Notification(notification) => notification.body_len(),
-            BgpBody::Update(update) => update.body_len(),
+            BgpBody::Update(update) => update.encoded_len(),
             BgpBody::RouteRefresh(route_refresh) => route_refresh.body_len(),
             BgpBody::Keepalive => 0,
             BgpBody::Unknown { body, .. } => body.len(),
@@ -698,6 +698,66 @@ mod tests {
         );
         assert_eq!(bytes[BGP_MARKER_LEN + 2], BGP_TYPE_UPDATE);
         assert_eq!(&bytes[BGP_HEADER_LEN..], &[0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn update_announcement_compiles_with_attribute_lengths_and_order() {
+        let origin = super::attribute::BgpPathAttribute::origin(super::attribute::BGP_ORIGIN_IGP);
+        let as_path = super::attribute::BgpPathAttribute::as_sequence(&[65000]);
+        let next_hop =
+            super::attribute::BgpPathAttribute::next_hop(std::net::Ipv4Addr::new(192, 0, 2, 1));
+        let nlri =
+            super::attribute::BgpPrefix::from_ipv4(std::net::Ipv4Addr::new(203, 0, 113, 0), 24)
+                .expect("valid documentation prefix");
+
+        let mut attr_bytes = Vec::new();
+        origin.encode(&mut attr_bytes);
+        as_path.encode(&mut attr_bytes);
+        next_hop.encode(&mut attr_bytes);
+        assert_eq!(
+            attr_bytes,
+            [
+                0x40, 0x01, 0x01, 0x00, 0x40, 0x02, 0x04, 0x02, 0x01, 0xfd, 0xe8, 0x40, 0x03, 0x04,
+                0xc0, 0x00, 0x02, 0x01,
+            ]
+        );
+
+        let mut nlri_bytes = Vec::new();
+        nlri.encode_prefix(&mut nlri_bytes);
+        assert_eq!(nlri_bytes, [0x18, 0xcb, 0x00, 0x71]);
+
+        let bgp = Bgp::update()
+            .attribute(origin)
+            .attribute(as_path)
+            .attribute(next_hop)
+            .nlri(nlri);
+        let expected_body_len = 2 + 2 + attr_bytes.len() + nlri_bytes.len();
+        let expected_total_len = BGP_HEADER_LEN + expected_body_len;
+
+        match &bgp.body {
+            BgpBody::Update(update) => {
+                assert_eq!(update.withdrawn_len(), 0);
+                assert_eq!(update.attributes_len(), attr_bytes.len());
+                assert_eq!(update.nlri_len(), nlri_bytes.len());
+                assert_eq!(update.encoded_len(), expected_body_len);
+            }
+            other => panic!("expected UPDATE body, got {other:?}"),
+        }
+        assert_eq!(bgp.encoded_len(), expected_total_len);
+
+        let bytes = Packet::from_layer(bgp).compile().unwrap();
+        assert_eq!(bytes.len(), expected_total_len);
+        assert_eq!(
+            &bytes[BGP_MARKER_LEN..BGP_MARKER_LEN + 2],
+            &(expected_total_len as u16).to_be_bytes()
+        );
+        assert_eq!(bytes[BGP_MARKER_LEN + 2], BGP_TYPE_UPDATE);
+
+        let body = &bytes[BGP_HEADER_LEN..];
+        assert_eq!(&body[..2], &0u16.to_be_bytes());
+        assert_eq!(&body[2..4], &(attr_bytes.len() as u16).to_be_bytes());
+        assert_eq!(&body[4..4 + attr_bytes.len()], attr_bytes.as_slice());
+        assert_eq!(&body[4 + attr_bytes.len()..], nlri_bytes.as_slice());
     }
 
     #[test]
