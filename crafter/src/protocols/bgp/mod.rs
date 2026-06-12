@@ -20,7 +20,7 @@ use crate::packet::{Layer, LayerContext};
 use crate::protocols::transport::common::{impl_layer_div, impl_layer_object};
 use crate::Result;
 
-use self::attribute::{BgpPathAttribute, BgpPrefix};
+use self::attribute::{BgpAttrValue, BgpPathAttribute, BgpPrefix};
 use self::message::{notification_name, BgpHeader};
 
 /// Human-readable name for a BGP message Type code (IANA `bgp-parameters-1`).
@@ -78,6 +78,47 @@ fn capability_list_summary(capabilities: &[BgpCapability]) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!("[{names}]")
+}
+
+fn prefix_summary(prefix: &BgpPrefix) -> String {
+    if prefix.length <= 32 && prefix.prefix.len() <= 4 {
+        let mut octets = [0; 4];
+        octets[..prefix.prefix.len()].copy_from_slice(&prefix.prefix);
+        return format!("{}/{}", std::net::Ipv4Addr::from(octets), prefix.length);
+    }
+
+    format!("prefix-{}({}b)", prefix.length, prefix.prefix.len())
+}
+
+fn prefix_list_summary(prefixes: &[BgpPrefix]) -> String {
+    let values = prefixes
+        .iter()
+        .map(prefix_summary)
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[{values}]")
+}
+
+fn attribute_summary(attribute: &BgpPathAttribute) -> String {
+    match &attribute.value {
+        BgpAttrValue::Origin(_)
+        | BgpAttrValue::AsPath { .. }
+        | BgpAttrValue::NextHop(_)
+        | BgpAttrValue::MultiExitDisc(_)
+        | BgpAttrValue::LocalPref(_)
+        | BgpAttrValue::AtomicAggregate
+        | BgpAttrValue::Aggregator { .. } => attribute.summary(),
+        BgpAttrValue::Unknown(value) => format!("attr-{}({}b)", attribute.type_code, value.len()),
+    }
+}
+
+fn attribute_list_summary(attributes: &[BgpPathAttribute]) -> String {
+    let values = attributes
+        .iter()
+        .map(attribute_summary)
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[{values}]")
 }
 
 /// The body of a BGP-4 message (RFC 4271 §4), following the shared 19-octet
@@ -399,11 +440,11 @@ impl Layer for Bgp {
                 )
             }
             BgpBody::Update(update) => format!(
-                "BGP {} withdrawn={} attrs={} nlri={}",
+                "BGP {} nlri={} withdrawn={} attrs={}",
                 message_type_name(BGP_TYPE_UPDATE),
-                update.withdrawn.len(),
-                update.attributes.len(),
-                update.nlri.len()
+                prefix_list_summary(&update.nlri),
+                prefix_list_summary(&update.withdrawn),
+                attribute_list_summary(&update.attributes)
             ),
             BgpBody::RouteRefresh(route_refresh) => format!(
                 "BGP {} afi={} safi={}",
@@ -478,9 +519,18 @@ impl Layer for Bgp {
         if let BgpBody::Update(update) = &self.body {
             fields.push(("withdrawn_routes", update.withdrawn.len().to_string()));
             fields.push(("withdrawn_length", update.withdrawn_len().to_string()));
+            for prefix in &update.withdrawn {
+                fields.push(("withdrawn_prefix", prefix_summary(prefix)));
+            }
             fields.push(("path_attributes", update.attributes.len().to_string()));
             fields.push(("path_attribute_length", update.attributes_len().to_string()));
+            for attribute in &update.attributes {
+                fields.push(("path_attribute", attribute_summary(attribute)));
+            }
             fields.push(("nlri", update.nlri.len().to_string()));
+            for prefix in &update.nlri {
+                fields.push(("nlri_prefix", prefix_summary(prefix)));
+            }
         }
 
         if let BgpBody::RouteRefresh(route_refresh) = &self.body {
@@ -758,6 +808,36 @@ mod tests {
         assert_eq!(&body[2..4], &(attr_bytes.len() as u16).to_be_bytes());
         assert_eq!(&body[4..4 + attr_bytes.len()], attr_bytes.as_slice());
         assert_eq!(&body[4 + attr_bytes.len()..], nlri_bytes.as_slice());
+    }
+
+    #[test]
+    fn update_summary_reports_prefixes_and_attributes() {
+        let bgp = Bgp::update()
+            .attribute(super::attribute::BgpPathAttribute::origin(
+                super::attribute::BGP_ORIGIN_IGP,
+            ))
+            .attribute(super::attribute::BgpPathAttribute::as_sequence(&[65000]))
+            .attribute(super::attribute::BgpPathAttribute::next_hop(
+                std::net::Ipv4Addr::new(192, 0, 2, 1),
+            ))
+            .nlri(
+                super::attribute::BgpPrefix::from_ipv4(std::net::Ipv4Addr::new(203, 0, 113, 0), 24)
+                    .expect("valid documentation prefix"),
+            );
+
+        let summary = bgp.summary();
+        assert!(summary.contains("203.0.113.0/24"), "summary was: {summary}");
+        assert!(summary.contains("AS_PATH"), "summary was: {summary}");
+        assert!(
+            summary.contains("NEXT_HOP=192.0.2.1"),
+            "summary was: {summary}"
+        );
+
+        let fields = bgp.inspection_fields();
+        assert!(fields.contains(&("nlri", "1".to_string())));
+        assert!(fields.contains(&("path_attributes", "3".to_string())));
+        assert!(fields.contains(&("nlri_prefix", "203.0.113.0/24".to_string())));
+        assert!(fields.contains(&("path_attribute", "AS_PATH=65000".to_string())));
     }
 
     #[test]
