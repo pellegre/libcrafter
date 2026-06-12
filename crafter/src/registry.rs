@@ -3,6 +3,7 @@
 use crate::endian::read_u32_be;
 use crate::error::Result;
 use crate::packet::{LinkType, NetworkLayer, Packet, Raw};
+use crate::protocols::bgp::{decode::append_bgp_packet_with_registry, BGP_PORT};
 use crate::protocols::dhcp::{append_dhcp_packet, is_dhcp_port_pair, looks_like_dhcp_payload};
 use crate::protocols::dns::{append_dns_packet, DNS_PORT};
 use crate::protocols::eapol::append_eapol_packet;
@@ -298,6 +299,10 @@ impl ProtocolRegistry {
             },
             |_registry, packet, payload| append_dhcp_packet(packet, payload),
         );
+
+        registry.bind_tcp_port_with_registry(BGP_PORT, |registry, packet, payload| {
+            append_bgp_packet_with_registry(registry, packet, payload)
+        });
 
         registry
     }
@@ -760,6 +765,19 @@ impl ProtocolRegistry {
         self
     }
 
+    pub(crate) fn bind_tcp_port_with_registry<D>(&mut self, port: u16, decoder: D) -> &mut Self
+    where
+        D: for<'a> Fn(&'a ProtocolRegistry, Packet, &'a [u8]) -> Result<Packet>
+            + Send
+            + Sync
+            + 'static,
+    {
+        self.bind_tcp_with_registry(
+            move |ctx| ctx.source_port == port || ctx.destination_port == port,
+            decoder,
+        )
+    }
+
     pub(crate) fn bind_tcp_with_registry<P, D>(&mut self, predicate: P, decoder: D) -> &mut Self
     where
         P: for<'a> Fn(TcpBindingContext<'a>) -> bool + Send + Sync + 'static,
@@ -1214,5 +1232,37 @@ mod dns_udp_binding {
             decoded.layer::<Raw>().unwrap().as_bytes(),
             b"custom-dns-like"
         );
+    }
+}
+
+#[cfg(test)]
+mod bgp_tcp_binding {
+    use crate::protocols::bgp::BGP_PORT;
+    use crate::{Bgp, Ipv4, NetworkLayer, Packet, Raw, Tcp};
+
+    #[test]
+    fn default_registry_decodes_bgp_on_tcp_179_and_preserves_other_tcp_payloads() {
+        let bgp_bytes = (Ipv4::new() / Tcp::new().sport(49_152).dport(BGP_PORT) / Bgp::keepalive())
+            .compile()
+            .unwrap();
+
+        let bgp_decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bgp_bytes.as_bytes()).unwrap();
+
+        assert!(bgp_decoded.layer::<Bgp>().is_some());
+        assert!(bgp_decoded.layer::<Raw>().is_none());
+
+        let keepalive = Packet::from_layer(Bgp::keepalive())
+            .compile()
+            .unwrap()
+            .into_bytes();
+        let raw_bytes =
+            (Ipv4::new() / Tcp::new().sport(49_152).dport(80) / Raw::from_bytes(keepalive.clone()))
+                .compile()
+                .unwrap();
+
+        let raw_decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, raw_bytes.as_bytes()).unwrap();
+
+        assert!(raw_decoded.layer::<Bgp>().is_none());
+        assert_eq!(raw_decoded.layer::<Raw>().unwrap().as_bytes(), keepalive);
     }
 }
