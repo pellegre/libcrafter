@@ -17,8 +17,10 @@ use crafter::prelude::*;
 use crafter::protocols::bgp::attribute::{
     BgpAttrValue, BgpPathAttribute, BgpPrefix, BGP_ORIGIN_IGP,
 };
-use crafter::protocols::bgp::COMMUNITY_NO_EXPORT;
+use crafter::protocols::bgp::{AS_TRANS, COMMUNITY_NO_EXPORT};
 use std::net::{Ipv4Addr, Ipv6Addr};
+
+const AS4_ASN: u32 = 4_200_000_000;
 
 /// Helper used once to mint the golden constants below. Set
 /// `CRAFTER_BGP_GOLDEN_DUMP=1` and run with `--nocapture` to print the
@@ -106,6 +108,54 @@ fn bgp_golden_open() {
     let bytes = build_open().compile().expect("compile");
     maybe_dump("OPEN", bytes.as_bytes());
     assert_eq!(bytes.as_bytes(), hex(GOLDEN_OPEN).as_slice());
+    assert_roundtrip(bytes.as_bytes());
+}
+
+// ---------------------------------------------------------------------------
+// OPEN with RFC 6793 4-octet-ASN capability: AS_TRANS (23456) is carried in
+// the RFC 4271 two-octet My Autonomous System field while the real 4-octet AS
+// value is advertised in the capability block.
+// ---------------------------------------------------------------------------
+
+const GOLDEN_OPEN_AS4: &str =
+    "ffffffffffffffffffffffffffffffff002d01045ba000b4c000020110020e0104000100014104fa56ea000200";
+
+fn build_open_as4() -> Packet {
+    Packet::from_layer(
+        Bgp::open()
+            .version(4)
+            .my_as(AS_TRANS)
+            .hold_time(180)
+            .bgp_id([192, 0, 2, 1])
+            .capabilities([
+                BgpCapability::ipv4_unicast(),
+                BgpCapability::four_octet_as(AS4_ASN),
+                BgpCapability::route_refresh(),
+            ]),
+    )
+}
+
+#[test]
+fn bgp_golden_open_as4() {
+    let bytes = build_open_as4().compile().expect("compile");
+    maybe_dump("OPEN_AS4", bytes.as_bytes());
+    assert_eq!(bytes.as_bytes(), hex(GOLDEN_OPEN_AS4).as_slice());
+    assert_eq!(&bytes.as_bytes()[20..22], &AS_TRANS.to_be_bytes());
+
+    let opt_params_len = bytes.as_bytes()[28] as usize;
+    assert_eq!(opt_params_len, 16);
+    assert_eq!(&bytes.as_bytes()[29..31], &[2, 14]);
+    let capabilities =
+        crafter::protocols::bgp::capability::decode_capabilities(&bytes.as_bytes()[31..31 + 14])
+            .expect("decode OPEN capabilities");
+    assert_eq!(capabilities.len(), 3);
+    assert_eq!(
+        capabilities[1]
+            .four_octet_asn()
+            .expect("four-octet AS capability parses"),
+        AS4_ASN
+    );
+    assert_eq!(capabilities[2], BgpCapability::route_refresh());
     assert_roundtrip(bytes.as_bytes());
 }
 
@@ -198,6 +248,48 @@ fn bgp_golden_update_announce() {
         &bytes.as_bytes()[bytes.as_bytes().len() - 4..],
         &[0x18, 0xcb, 0x00, 0x71]
     );
+    assert_roundtrip(bytes.as_bytes());
+}
+
+// ---------------------------------------------------------------------------
+// UPDATE announcement with a 4-octet AS_PATH: announces 203.0.113.0/24 with
+// ORIGIN=IGP, AS_PATH sequence containing AS 4200000000 as a four-octet AS,
+// and NEXT_HOP 192.0.2.1.
+// ---------------------------------------------------------------------------
+
+const GOLDEN_UPDATE_AS4_PATH: &str =
+    "ffffffffffffffffffffffffffffffff002f0200000014400101004002060201fa56ea00400304c000020118cb0071";
+
+fn build_update_as4_path() -> Packet {
+    Packet::from_layer(
+        Bgp::update()
+            .attribute(BgpPathAttribute::origin(BGP_ORIGIN_IGP))
+            .attribute(BgpPathAttribute::as_sequence4(&[AS4_ASN]))
+            .attribute(BgpPathAttribute::next_hop(Ipv4Addr::new(192, 0, 2, 1)))
+            .nlri(
+                BgpPrefix::from_ipv4(Ipv4Addr::new(203, 0, 113, 0), 24).expect("valid IPv4 prefix"),
+            ),
+    )
+}
+
+#[test]
+fn bgp_golden_update_as4_path() {
+    let bytes = build_update_as4_path().compile().expect("compile");
+    maybe_dump("UPDATE_AS4_PATH", bytes.as_bytes());
+    assert_eq!(bytes.as_bytes(), hex(GOLDEN_UPDATE_AS4_PATH).as_slice());
+
+    let body = &bytes.as_bytes()[19..];
+    assert_eq!(&body[..2], &[0x00, 0x00]);
+    let attr_len = u16::from_be_bytes([body[2], body[3]]) as usize;
+    let attrs = &body[4..4 + attr_len];
+    let (_origin, origin_len) =
+        crafter::protocols::bgp::attribute::decode_attribute(attrs).expect("decode ORIGIN");
+    let as_path_bytes = &attrs[origin_len..origin_len + 9];
+    assert_eq!(
+        as_path_bytes,
+        &[0x40, 0x02, 0x06, 0x02, 0x01, 0xfa, 0x56, 0xea, 0x00]
+    );
+    assert_eq!(&as_path_bytes[5..9], &AS4_ASN.to_be_bytes());
     assert_roundtrip(bytes.as_bytes());
 }
 
@@ -327,9 +419,7 @@ fn build_update_large_communities() -> Packet {
 #[test]
 fn bgp_golden_update_large_communities() {
     let large_communities = [[65000, 1, 2]];
-    let bytes = build_update_large_communities()
-        .compile()
-        .expect("compile");
+    let bytes = build_update_large_communities().compile().expect("compile");
     maybe_dump("UPDATE_LARGE_COMMUNITIES", bytes.as_bytes());
     assert_eq!(
         bytes.as_bytes(),
@@ -365,11 +455,10 @@ const GOLDEN_UPDATE_MP_REACH: &str =
 
 fn build_update_mp_reach() -> Packet {
     let next_hop = Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 1);
-    let nlri = [BgpPrefix::from_ipv6(
-        Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0),
-        32,
-    )
-    .expect("valid IPv6 prefix")];
+    let nlri = [
+        BgpPrefix::from_ipv6(Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0), 32)
+            .expect("valid IPv6 prefix"),
+    ];
 
     Packet::from_layer(
         Bgp::update()
@@ -382,11 +471,10 @@ fn build_update_mp_reach() -> Packet {
 #[test]
 fn bgp_golden_update_mp_reach() {
     let next_hop = Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 1);
-    let nlri = [BgpPrefix::from_ipv6(
-        Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0),
-        32,
-    )
-    .expect("valid IPv6 prefix")];
+    let nlri = [
+        BgpPrefix::from_ipv6(Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0), 32)
+            .expect("valid IPv6 prefix"),
+    ];
     let bytes = build_update_mp_reach().compile().expect("compile");
     maybe_dump("UPDATE_MP_REACH", bytes.as_bytes());
     assert_eq!(bytes.as_bytes(), hex(GOLDEN_UPDATE_MP_REACH).as_slice());
@@ -405,9 +493,8 @@ fn bgp_golden_update_mp_reach() {
     let mp_reach_bytes = &attrs[origin_len + as_path_len..];
     assert_eq!(&mp_reach_bytes[..2], &[0x80, 0x0e]);
 
-    let (decoded, consumed) =
-        crafter::protocols::bgp::attribute::decode_attribute(mp_reach_bytes)
-            .expect("decode MP_REACH_NLRI attribute");
+    let (decoded, consumed) = crafter::protocols::bgp::attribute::decode_attribute(mp_reach_bytes)
+        .expect("decode MP_REACH_NLRI attribute");
     assert_eq!(consumed, mp_reach_bytes.len());
     assert_eq!(
         decoded.value,
