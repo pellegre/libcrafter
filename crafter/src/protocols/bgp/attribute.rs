@@ -506,7 +506,7 @@ pub fn decode_attribute(buf: &[u8]) -> Result<(BgpPathAttribute, usize)> {
     let (value, _) = take(rest, length, "bgp path attribute value")?;
     let value = match type_code {
         ATTR_ORIGIN => decode_origin_value(value)?,
-        ATTR_AS_PATH => decode_as_path_value(value, false)?,
+        ATTR_AS_PATH => decode_as_path_auto_value(value)?,
         ATTR_AS4_PATH => decode_as4_path_value(value)?,
         ATTR_NEXT_HOP => decode_next_hop_value(value)?,
         ATTR_MULTI_EXIT_DISC => decode_multi_exit_disc_value(value)?,
@@ -738,6 +738,16 @@ fn decode_as_path_value(value: &[u8], four_octet: bool) -> Result<BgpAttrValue> 
         four_octet,
         segments: decode_as_path_segments(value, four_octet)?,
     })
+}
+
+fn decode_as_path_auto_value(value: &[u8]) -> Result<BgpAttrValue> {
+    match decode_as_path_value(value, false) {
+        Ok(decoded) => Ok(decoded),
+        Err(two_octet_error) => match decode_as_path_value(value, true) {
+            Ok(decoded) => Ok(decoded),
+            Err(_) => Err(two_octet_error),
+        },
+    }
 }
 
 fn decode_as4_path_value(value: &[u8]) -> Result<BgpAttrValue> {
@@ -1209,6 +1219,34 @@ mod tests {
         let mut reencoded = Vec::new();
         decoded.encode(&mut reencoded);
         assert_eq!(reencoded, encoded[3..]);
+    }
+
+    #[test]
+    fn as_path_attribute_decodes_four_octet_segments_when_two_octet_framing_fails() {
+        let attr = BgpPathAttribute::as_sequence4(&[65001]);
+        let mut encoded = Vec::new();
+        attr.encode(&mut encoded);
+
+        let (decoded, consumed) = decode_attribute(&encoded).expect("attribute decodes");
+        assert_eq!(consumed, encoded.len());
+        assert_eq!(
+            decoded,
+            BgpPathAttribute {
+                flags: Field::user(ATTR_AS_PATH_FLAGS),
+                type_code: ATTR_AS_PATH,
+                value: BgpAttrValue::AsPath {
+                    four_octet: true,
+                    segments: vec![AsPathSegment {
+                        kind: BGP_AS_SEGMENT_SEQUENCE,
+                        asns: vec![65001],
+                    }],
+                },
+            }
+        );
+
+        let mut reencoded = Vec::new();
+        decoded.encode(&mut reencoded);
+        assert_eq!(reencoded, encoded);
     }
 
     #[test]
