@@ -1,0 +1,1 @@
+Ipv4(src=192.0.2.1, dst=192.0.2.2, proto=tcp(6)) / Tcp(sport=49152, dport=179, flags=ACK) / BGP OPEN version=4 as=65000 hold=180 id=192.0.2.1 caps=[mp-ipv4-unicast, 4-octet-as, route-refresh]

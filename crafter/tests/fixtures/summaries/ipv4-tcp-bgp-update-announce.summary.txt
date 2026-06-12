@@ -1,0 +1,1 @@
+Ipv4(src=192.0.2.1, dst=192.0.2.2, proto=tcp(6)) / Tcp(sport=49152, dport=179, flags=ACK) / BGP UPDATE nlri=[203.0.113.0/24] withdrawn=[] attrs=[ORIGIN=IGP, AS_PATH=65000, NEXT_HOP=192.0.2.1]
