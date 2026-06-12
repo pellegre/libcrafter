@@ -1679,6 +1679,51 @@ mod tests {
     }
 
     #[test]
+    fn path_attribute_value_length_overrun_is_structured_error() {
+        let err = decode_attribute(&[BGP_ATTR_FLAG_OPTIONAL, 99, 3, 0xaa])
+            .expect_err("declared path attribute value length exceeds remaining bytes");
+
+        match err {
+            CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            } => {
+                assert_eq!(context, "bgp path attribute value");
+                assert_eq!(required, 3);
+                assert_eq!(available, 1);
+            }
+            other => panic!("expected buffer_too_short, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn extended_length_attribute_value_overrun_is_structured_error() {
+        let err = decode_attribute(&[
+            BGP_ATTR_FLAG_OPTIONAL | BGP_ATTR_FLAG_EXTENDED_LENGTH,
+            99,
+            0x01,
+            0x00,
+            0xaa,
+            0xbb,
+        ])
+        .expect_err("declared extended-length value exceeds remaining bytes");
+
+        match err {
+            CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            } => {
+                assert_eq!(context, "bgp path attribute value");
+                assert_eq!(required, 256);
+                assert_eq!(available, 2);
+            }
+            other => panic!("expected buffer_too_short, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn mp_reach_ipv6_attribute_encodes_and_round_trips() {
         let nlri = [
             BgpPrefix::from_ipv6(Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0), 32)
@@ -1836,6 +1881,58 @@ mod tests {
     }
 
     #[test]
+    fn unknown_attribute_with_255_byte_value_uses_one_octet_length_and_round_trips() {
+        let value = (0..255).map(|n| n as u8).collect::<Vec<_>>();
+        let attr = BgpPathAttribute::unknown(99, value.clone());
+        let mut encoded = Vec::new();
+        attr.encode(&mut encoded);
+
+        assert_eq!(encoded[0], BGP_ATTR_FLAG_OPTIONAL);
+        assert_eq!(encoded[1], 99);
+        assert_eq!(encoded[2], 255);
+        assert_eq!(&encoded[3..], value.as_slice());
+
+        let (decoded, consumed) = decode_attribute(&encoded).expect("attribute decodes");
+        assert_eq!(consumed, encoded.len());
+        assert_eq!(decoded.flags.value(), Some(&BGP_ATTR_FLAG_OPTIONAL));
+        assert_eq!(decoded.type_code, 99);
+        assert_eq!(decoded.value, BgpAttrValue::Unknown(value));
+
+        let mut reencoded = Vec::new();
+        decoded.encode(&mut reencoded);
+        assert_eq!(reencoded, encoded);
+    }
+
+    #[test]
+    fn unknown_attribute_with_256_byte_value_uses_extended_length_and_round_trips() {
+        let value = (0..256).map(|n| n as u8).collect::<Vec<_>>();
+        let attr = BgpPathAttribute::unknown(99, value.clone());
+        let mut encoded = Vec::new();
+        attr.encode(&mut encoded);
+
+        assert_eq!(
+            encoded[0],
+            BGP_ATTR_FLAG_OPTIONAL | BGP_ATTR_FLAG_EXTENDED_LENGTH
+        );
+        assert_eq!(encoded[1], 99);
+        assert_eq!(&encoded[2..4], &(256u16).to_be_bytes());
+        assert_eq!(&encoded[4..], value.as_slice());
+
+        let (decoded, consumed) = decode_attribute(&encoded).expect("attribute decodes");
+        assert_eq!(consumed, encoded.len());
+        assert_eq!(
+            decoded.flags.value(),
+            Some(&(BGP_ATTR_FLAG_OPTIONAL | BGP_ATTR_FLAG_EXTENDED_LENGTH))
+        );
+        assert_eq!(decoded.type_code, 99);
+        assert_eq!(decoded.value, BgpAttrValue::Unknown(value));
+
+        let mut reencoded = Vec::new();
+        decoded.encode(&mut reencoded);
+        assert_eq!(reencoded, encoded);
+    }
+
+    #[test]
     fn caller_fixed_flags_are_not_extended_automatically() {
         let value = vec![0xaa; 300];
         let attr = BgpPathAttribute::unknown(ATTR_COMMUNITIES, value.clone())
@@ -1843,7 +1940,9 @@ mod tests {
         let mut encoded = Vec::new();
         attr.encode(&mut encoded);
 
+        assert_eq!(attr.encoded_len(), 2 + 1 + value.len());
         assert_eq!(encoded[0], ATTR_COMMUNITIES_FLAGS);
+        assert_eq!(encoded[0] & BGP_ATTR_FLAG_EXTENDED_LENGTH, 0);
         assert_eq!(encoded[1], ATTR_COMMUNITIES);
         assert_eq!(encoded[2], value.len() as u8);
         assert_eq!(&encoded[3..], value.as_slice());
