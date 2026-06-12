@@ -103,11 +103,13 @@ fn attribute_summary(attribute: &BgpPathAttribute) -> String {
     match &attribute.value {
         BgpAttrValue::Origin(_)
         | BgpAttrValue::AsPath { .. }
+        | BgpAttrValue::As4Path(_)
         | BgpAttrValue::NextHop(_)
         | BgpAttrValue::MultiExitDisc(_)
         | BgpAttrValue::LocalPref(_)
         | BgpAttrValue::AtomicAggregate
         | BgpAttrValue::Aggregator { .. }
+        | BgpAttrValue::As4Aggregator { .. }
         | BgpAttrValue::Communities(_)
         | BgpAttrValue::ExtendedCommunities(_)
         | BgpAttrValue::LargeCommunities(_)

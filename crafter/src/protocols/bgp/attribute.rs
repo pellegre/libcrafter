@@ -53,6 +53,8 @@ pub enum BgpAttrValue {
         /// Ordered AS_PATH segments.
         segments: Vec<AsPathSegment>,
     },
+    /// AS4_PATH path attribute (RFC 6793 §3).
+    As4Path(Vec<AsPathSegment>),
     /// NEXT_HOP path attribute (RFC 4271 §5.1.3).
     NextHop(Ipv4Addr),
     /// MULTI_EXIT_DISC path attribute (RFC 4271 §5.1.4).
@@ -63,6 +65,13 @@ pub enum BgpAttrValue {
     AtomicAggregate,
     /// AGGREGATOR path attribute (RFC 4271 §5.1.7).
     Aggregator {
+        /// Last AS number that formed the aggregate route.
+        asn: u32,
+        /// BGP speaker address that formed the aggregate route.
+        addr: Ipv4Addr,
+    },
+    /// AS4_AGGREGATOR path attribute (RFC 6793 §3).
+    As4Aggregator {
         /// Last AS number that formed the aggregate route.
         asn: u32,
         /// BGP speaker address that formed the aggregate route.
@@ -107,10 +116,12 @@ impl BgpAttrValue {
                 four_octet,
                 segments,
             } => as_path_encoded_len(segments, *four_octet),
+            Self::As4Path(segments) => as_path_encoded_len(segments, true),
             Self::NextHop(_) => 4,
             Self::MultiExitDisc(_) | Self::LocalPref(_) => 4,
             Self::AtomicAggregate => 0,
             Self::Aggregator { .. } => 6,
+            Self::As4Aggregator { .. } => 8,
             Self::Communities(communities) => communities.len() * 4,
             Self::ExtendedCommunities(communities) => communities.len() * 8,
             Self::LargeCommunities(communities) => communities.len() * 12,
@@ -130,6 +141,7 @@ impl BgpAttrValue {
                 four_octet,
                 segments,
             } => encode_as_path(segments, *four_octet, out),
+            Self::As4Path(segments) => encode_as_path(segments, true, out),
             Self::NextHop(next_hop) => out.extend_from_slice(&next_hop.octets()),
             Self::MultiExitDisc(metric) | Self::LocalPref(metric) => {
                 out.extend_from_slice(&metric.to_be_bytes());
@@ -137,6 +149,10 @@ impl BgpAttrValue {
             Self::AtomicAggregate => {}
             Self::Aggregator { asn, addr } => {
                 out.extend_from_slice(&(*asn as u16).to_be_bytes());
+                out.extend_from_slice(&addr.octets());
+            }
+            Self::As4Aggregator { asn, addr } => {
+                out.extend_from_slice(&asn.to_be_bytes());
                 out.extend_from_slice(&addr.octets());
             }
             Self::Communities(communities) => {
@@ -210,12 +226,31 @@ impl BgpPathAttribute {
 
     /// Build an AS_PATH attribute containing one AS_SEQUENCE segment.
     pub fn as_sequence(asns: &[u32]) -> Self {
-        Self::as_path_segment(BGP_AS_SEGMENT_SEQUENCE, asns)
+        Self::as_path_segment(BGP_AS_SEGMENT_SEQUENCE, asns, false)
     }
 
     /// Build an AS_PATH attribute containing one AS_SET segment.
     pub fn as_set(asns: &[u32]) -> Self {
-        Self::as_path_segment(BGP_AS_SEGMENT_SET, asns)
+        Self::as_path_segment(BGP_AS_SEGMENT_SET, asns, false)
+    }
+
+    /// Build an AS_PATH attribute containing one 4-octet AS_SEQUENCE segment.
+    pub fn as_sequence4(asns: &[u32]) -> Self {
+        Self::as_path_segment(BGP_AS_SEGMENT_SEQUENCE, asns, true)
+    }
+
+    /// Build an AS_PATH attribute containing one 4-octet AS_SET segment.
+    pub fn as_set4(asns: &[u32]) -> Self {
+        Self::as_path_segment(BGP_AS_SEGMENT_SET, asns, true)
+    }
+
+    /// Build an AS4_PATH path attribute.
+    pub fn as4_path(segments: &[AsPathSegment]) -> Self {
+        Self {
+            flags: Field::defaulted(ATTR_AS4_PATH_FLAGS),
+            type_code: ATTR_AS4_PATH,
+            value: BgpAttrValue::As4Path(segments.to_vec()),
+        }
     }
 
     /// Build a NEXT_HOP path attribute carrying an IPv4 next hop.
@@ -261,6 +296,18 @@ impl BgpPathAttribute {
             type_code: ATTR_AGGREGATOR,
             value: BgpAttrValue::Aggregator {
                 asn: asn as u32,
+                addr: addr.into(),
+            },
+        }
+    }
+
+    /// Build an AS4_AGGREGATOR path attribute.
+    pub fn as4_aggregator(asn: u32, addr: impl Into<Ipv4Addr>) -> Self {
+        Self {
+            flags: Field::defaulted(ATTR_AS4_AGGREGATOR_FLAGS),
+            type_code: ATTR_AS4_AGGREGATOR,
+            value: BgpAttrValue::As4Aggregator {
+                asn,
                 addr: addr.into(),
             },
         }
@@ -365,12 +412,14 @@ impl BgpPathAttribute {
     pub fn summary(&self) -> String {
         match &self.value {
             BgpAttrValue::Origin(origin) => format!("ORIGIN={}", origin_value_name(*origin)),
-            BgpAttrValue::AsPath { segments, .. } => as_path_summary(segments),
+            BgpAttrValue::AsPath { segments, .. } => as_path_summary("AS_PATH", segments),
+            BgpAttrValue::As4Path(segments) => as_path_summary("AS4_PATH", segments),
             BgpAttrValue::NextHop(next_hop) => format!("NEXT_HOP={next_hop}"),
             BgpAttrValue::MultiExitDisc(metric) => format!("MULTI_EXIT_DISC={metric}"),
             BgpAttrValue::LocalPref(preference) => format!("LOCAL_PREF={preference}"),
             BgpAttrValue::AtomicAggregate => "ATOMIC_AGGREGATE".to_string(),
             BgpAttrValue::Aggregator { asn, addr } => format!("AGGREGATOR={asn} {addr}"),
+            BgpAttrValue::As4Aggregator { asn, addr } => format!("AS4_AGGREGATOR={asn} {addr}"),
             BgpAttrValue::Communities(communities) => communities_summary(communities),
             BgpAttrValue::ExtendedCommunities(communities) => {
                 extended_communities_summary(communities)
@@ -403,12 +452,12 @@ impl BgpPathAttribute {
         flags
     }
 
-    fn as_path_segment(kind: u8, asns: &[u32]) -> Self {
+    fn as_path_segment(kind: u8, asns: &[u32], four_octet: bool) -> Self {
         Self {
             flags: Field::defaulted(ATTR_AS_PATH_FLAGS),
             type_code: ATTR_AS_PATH,
             value: BgpAttrValue::AsPath {
-                four_octet: false,
+                four_octet,
                 segments: vec![AsPathSegment {
                     kind,
                     asns: asns.to_vec(),
@@ -458,11 +507,13 @@ pub fn decode_attribute(buf: &[u8]) -> Result<(BgpPathAttribute, usize)> {
     let value = match type_code {
         ATTR_ORIGIN => decode_origin_value(value)?,
         ATTR_AS_PATH => decode_as_path_value(value, false)?,
+        ATTR_AS4_PATH => decode_as4_path_value(value)?,
         ATTR_NEXT_HOP => decode_next_hop_value(value)?,
         ATTR_MULTI_EXIT_DISC => decode_multi_exit_disc_value(value)?,
         ATTR_LOCAL_PREF => decode_local_pref_value(value)?,
         ATTR_ATOMIC_AGGREGATE => decode_atomic_aggregate_value(value)?,
         ATTR_AGGREGATOR => decode_aggregator_value(value)?,
+        ATTR_AS4_AGGREGATOR => decode_as4_aggregator_value(value)?,
         ATTR_COMMUNITIES => decode_communities_value(value)?,
         ATTR_EXTENDED_COMMUNITIES => decode_extended_communities_value(value)?,
         ATTR_LARGE_COMMUNITY => decode_large_communities_value(value)?,
@@ -546,6 +597,21 @@ fn decode_aggregator_value(value: &[u8]) -> Result<BgpAttrValue> {
     }
     Ok(BgpAttrValue::Aggregator {
         asn: u16::from_be_bytes([asn[0], asn[1]]) as u32,
+        addr: Ipv4Addr::new(addr[0], addr[1], addr[2], addr[3]),
+    })
+}
+
+fn decode_as4_aggregator_value(value: &[u8]) -> Result<BgpAttrValue> {
+    let (asn, rest) = take(value, 4, "bgp as4_aggregator attribute asn")?;
+    let (addr, rest) = take(rest, 4, "bgp as4_aggregator attribute address")?;
+    if !rest.is_empty() {
+        return Err(CrafterError::invalid_field_value(
+            "bgp.attribute.as4_aggregator.length",
+            "AS4_AGGREGATOR attribute value must be exactly eight octets",
+        ));
+    }
+    Ok(BgpAttrValue::As4Aggregator {
+        asn: u32::from_be_bytes([asn[0], asn[1], asn[2], asn[3]]),
         addr: Ipv4Addr::new(addr[0], addr[1], addr[2], addr[3]),
     })
 }
@@ -667,7 +733,18 @@ fn decode_u32_attribute_value(
     ])))
 }
 
-fn decode_as_path_value(mut value: &[u8], four_octet: bool) -> Result<BgpAttrValue> {
+fn decode_as_path_value(value: &[u8], four_octet: bool) -> Result<BgpAttrValue> {
+    Ok(BgpAttrValue::AsPath {
+        four_octet,
+        segments: decode_as_path_segments(value, four_octet)?,
+    })
+}
+
+fn decode_as4_path_value(value: &[u8]) -> Result<BgpAttrValue> {
+    Ok(BgpAttrValue::As4Path(decode_as_path_segments(value, true)?))
+}
+
+fn decode_as_path_segments(mut value: &[u8], four_octet: bool) -> Result<Vec<AsPathSegment>> {
     let as_width = as_path_as_width(four_octet);
     let mut segments = Vec::new();
 
@@ -694,10 +771,7 @@ fn decode_as_path_value(mut value: &[u8], four_octet: bool) -> Result<BgpAttrVal
         value = rest;
     }
 
-    Ok(BgpAttrValue::AsPath {
-        four_octet,
-        segments,
-    })
+    Ok(segments)
 }
 
 fn as_path_encoded_len(segments: &[AsPathSegment], four_octet: bool) -> usize {
@@ -730,9 +804,9 @@ fn as_path_as_width(four_octet: bool) -> usize {
     }
 }
 
-fn as_path_summary(segments: &[AsPathSegment]) -> String {
+fn as_path_summary(name: &str, segments: &[AsPathSegment]) -> String {
     if segments.is_empty() {
-        return "AS_PATH=<empty>".to_string();
+        return format!("{name}=<empty>");
     }
 
     let parts = segments
@@ -752,7 +826,7 @@ fn as_path_summary(segments: &[AsPathSegment]) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ");
-    format!("AS_PATH={parts}")
+    format!("{name}={parts}")
 }
 
 fn origin_value_name(origin: u8) -> String {
@@ -1099,6 +1173,88 @@ mod tests {
     }
 
     #[test]
+    fn as_sequence4_attribute_encodes_with_four_octet_asns() {
+        let attr = BgpPathAttribute::as_sequence4(&[4_200_000_000]);
+        let mut encoded = Vec::new();
+        attr.encode(&mut encoded);
+
+        assert_eq!(
+            encoded,
+            [
+                ATTR_AS_PATH_FLAGS,
+                ATTR_AS_PATH,
+                6,
+                BGP_AS_SEGMENT_SEQUENCE,
+                1,
+                0xfa,
+                0x56,
+                0xea,
+                0x00,
+            ]
+        );
+        assert_eq!(attr.summary(), "AS_PATH=4200000000");
+
+        let decoded = decode_as_path_value(&encoded[3..], true).expect("AS_PATH value decodes");
+        assert_eq!(
+            decoded,
+            BgpAttrValue::AsPath {
+                four_octet: true,
+                segments: vec![AsPathSegment {
+                    kind: BGP_AS_SEGMENT_SEQUENCE,
+                    asns: vec![4_200_000_000],
+                }],
+            }
+        );
+
+        let mut reencoded = Vec::new();
+        decoded.encode(&mut reencoded);
+        assert_eq!(reencoded, encoded[3..]);
+    }
+
+    #[test]
+    fn as4_path_attribute_encodes_and_round_trips() {
+        let segments = [AsPathSegment {
+            kind: BGP_AS_SEGMENT_SEQUENCE,
+            asns: vec![4_200_000_000],
+        }];
+        let attr = BgpPathAttribute::as4_path(&segments);
+        let mut encoded = Vec::new();
+        attr.encode(&mut encoded);
+
+        assert_eq!(
+            encoded,
+            [
+                ATTR_AS4_PATH_FLAGS,
+                ATTR_AS4_PATH,
+                6,
+                BGP_AS_SEGMENT_SEQUENCE,
+                1,
+                0xfa,
+                0x56,
+                0xea,
+                0x00,
+            ]
+        );
+        assert_eq!(attr.summary(), "AS4_PATH=4200000000");
+
+        let (decoded, consumed) = decode_attribute(&encoded).expect("attribute decodes");
+        assert_eq!(consumed, encoded.len());
+        assert_eq!(
+            decoded,
+            BgpPathAttribute {
+                flags: Field::user(ATTR_AS4_PATH_FLAGS),
+                type_code: ATTR_AS4_PATH,
+                value: BgpAttrValue::As4Path(segments.to_vec()),
+            }
+        );
+        assert_eq!(decoded.summary(), "AS4_PATH=4200000000");
+
+        let mut reencoded = Vec::new();
+        decoded.encode(&mut reencoded);
+        assert_eq!(reencoded, encoded);
+    }
+
+    #[test]
     fn next_hop_attribute_encodes_and_round_trips() {
         let attr = BgpPathAttribute::next_hop(Ipv4Addr::new(192, 0, 2, 1));
         let mut encoded = Vec::new();
@@ -1257,6 +1413,49 @@ mod tests {
                 type_code: ATTR_AGGREGATOR,
                 value: BgpAttrValue::Aggregator {
                     asn: 65000,
+                    addr: Ipv4Addr::new(192, 0, 2, 1),
+                },
+            }
+        );
+
+        let mut reencoded = Vec::new();
+        decoded.encode(&mut reencoded);
+        assert_eq!(reencoded, encoded);
+    }
+
+    #[test]
+    fn as4_aggregator_attribute_encodes_and_round_trips() {
+        let attr = BgpPathAttribute::as4_aggregator(4_200_000_000, Ipv4Addr::new(192, 0, 2, 1));
+        let mut encoded = Vec::new();
+        attr.encode(&mut encoded);
+
+        assert_eq!(
+            encoded,
+            [
+                ATTR_AS4_AGGREGATOR_FLAGS,
+                ATTR_AS4_AGGREGATOR,
+                8,
+                0xfa,
+                0x56,
+                0xea,
+                0x00,
+                0xc0,
+                0x00,
+                0x02,
+                0x01
+            ]
+        );
+        assert_eq!(attr.summary(), "AS4_AGGREGATOR=4200000000 192.0.2.1");
+
+        let (decoded, consumed) = decode_attribute(&encoded).expect("attribute decodes");
+        assert_eq!(consumed, encoded.len());
+        assert_eq!(
+            decoded,
+            BgpPathAttribute {
+                flags: Field::user(ATTR_AS4_AGGREGATOR_FLAGS),
+                type_code: ATTR_AS4_AGGREGATOR,
+                value: BgpAttrValue::As4Aggregator {
+                    asn: 4_200_000_000,
                     addr: Ipv4Addr::new(192, 0, 2, 1),
                 },
             }
