@@ -25,12 +25,13 @@ use std::net::Ipv4Addr;
 
 use crate::error::{CrafterError, Result};
 
+use super::attribute::{decode_attribute, BgpPathAttribute, BgpPrefix};
 use super::capability::{decode_capabilities, BgpOptParam, BGP_OPT_PARAM_CAPABILITIES};
 use super::constants::{
     BGP_HEADER_LEN, BGP_MARKER_LEN, BGP_MAX_MESSAGE_LEN, BGP_TYPE_KEEPALIVE, BGP_TYPE_NOTIFICATION,
-    BGP_TYPE_OPEN, BGP_TYPE_ROUTE_REFRESH,
+    BGP_TYPE_OPEN, BGP_TYPE_ROUTE_REFRESH, BGP_TYPE_UPDATE,
 };
-use super::message::{BgpNotification, BgpOpen, BgpRouteRefresh};
+use super::message::{BgpNotification, BgpOpen, BgpRouteRefresh, BgpUpdate};
 use super::{Bgp, BgpBody};
 
 /// Build the structured truncation error BGP decode uses for a short buffer.
@@ -120,6 +121,7 @@ pub fn decode_bgp_message(bytes: &[u8]) -> Result<(Bgp, usize)> {
     let body_bytes = &bytes[BGP_HEADER_LEN..length_usize];
     let body = match message_type {
         BGP_TYPE_OPEN => BgpBody::Open(decode_open_body(body_bytes)?),
+        BGP_TYPE_UPDATE => BgpBody::Update(decode_update_body(body_bytes)?),
         BGP_TYPE_NOTIFICATION => BgpBody::Notification(decode_notification_body(body_bytes)?),
         BGP_TYPE_ROUTE_REFRESH => BgpBody::RouteRefresh(decode_route_refresh_body(body_bytes)?),
         BGP_TYPE_KEEPALIVE => BgpBody::Keepalive,
@@ -133,6 +135,45 @@ pub fn decode_bgp_message(bytes: &[u8]) -> Result<(Bgp, usize)> {
 
     let bgp = Bgp::from_decoded_parts(marker, length, message_type, body);
     Ok((bgp, length_usize))
+}
+
+fn decode_update_body(body_bytes: &[u8]) -> Result<BgpUpdate> {
+    let (withdrawn_len, rest) = take(body_bytes, 2, "bgp update withdrawn routes length")?;
+    let withdrawn_len = u16::from_be_bytes([withdrawn_len[0], withdrawn_len[1]]);
+    let (withdrawn_bytes, rest) =
+        take(rest, withdrawn_len as usize, "bgp update withdrawn routes")?;
+
+    let (attr_len, rest) = take(rest, 2, "bgp update path attributes length")?;
+    let attr_len = u16::from_be_bytes([attr_len[0], attr_len[1]]);
+    let (attr_bytes, nlri_bytes) = take(rest, attr_len as usize, "bgp update path attributes")?;
+
+    Ok(BgpUpdate::from_decoded_parts(
+        decode_ipv4_prefixes(withdrawn_bytes)?,
+        withdrawn_len,
+        decode_path_attributes(attr_bytes)?,
+        attr_len,
+        decode_ipv4_prefixes(nlri_bytes)?,
+    ))
+}
+
+fn decode_ipv4_prefixes(mut bytes: &[u8]) -> Result<Vec<BgpPrefix>> {
+    let mut prefixes = Vec::new();
+    while !bytes.is_empty() {
+        let (prefix, consumed) = BgpPrefix::decode_prefix(bytes)?;
+        prefixes.push(prefix);
+        bytes = &bytes[consumed..];
+    }
+    Ok(prefixes)
+}
+
+fn decode_path_attributes(mut bytes: &[u8]) -> Result<Vec<BgpPathAttribute>> {
+    let mut attributes = Vec::new();
+    while !bytes.is_empty() {
+        let (attribute, consumed) = decode_attribute(bytes)?;
+        attributes.push(attribute);
+        bytes = &bytes[consumed..];
+    }
+    Ok(attributes)
 }
 
 fn decode_notification_body(body_bytes: &[u8]) -> Result<BgpNotification> {
@@ -217,6 +258,9 @@ fn decode_open_body(body_bytes: &[u8]) -> Result<BgpOpen> {
 mod tests {
     use super::*;
     use crate::packet::{Layer, Packet};
+    use crate::protocols::bgp::attribute::{
+        BgpAttrValue, BgpPathAttribute, BgpPrefix, BGP_ORIGIN_IGP,
+    };
     use crate::protocols::bgp::capability::BGP_MP_IPV4_UNICAST;
     use crate::protocols::bgp::{BgpCapability, AFI_IPV4, SAFI_UNICAST};
 
@@ -403,6 +447,108 @@ mod tests {
             .compile()
             .expect("recompile succeeds");
         assert_eq!(recompiled, bytes);
+    }
+
+    #[test]
+    fn decode_update_announcement_round_trips_attributes_and_nlri() {
+        let origin = BgpPathAttribute::origin(BGP_ORIGIN_IGP);
+        let as_path = BgpPathAttribute::as_sequence(&[65000]);
+        let next_hop = BgpPathAttribute::next_hop(Ipv4Addr::new(192, 0, 2, 1));
+        let nlri =
+            BgpPrefix::from_ipv4(Ipv4Addr::new(203, 0, 113, 0), 24).expect("valid IPv4 prefix");
+        let bytes = Packet::from_layer(
+            Bgp::update()
+                .attribute(origin.clone())
+                .attribute(as_path.clone())
+                .attribute(next_hop.clone())
+                .nlri(nlri.clone()),
+        )
+        .compile()
+        .expect("UPDATE compiles");
+
+        let (bgp, consumed) = decode_bgp_message(&bytes).expect("UPDATE decodes");
+        assert_eq!(consumed, bytes.len());
+
+        match &bgp.body {
+            BgpBody::Update(update) => {
+                assert!(update.withdrawn.is_empty());
+                assert_eq!(update.withdrawn_len.value(), Some(&0));
+                assert_eq!(
+                    update.attr_len.value(),
+                    Some(&(update.attributes_len() as u16))
+                );
+                assert_eq!(update.attributes.len(), 3);
+                assert_eq!(update.attributes[0].type_code, origin.type_code);
+                assert_eq!(update.attributes[0].value, origin.value);
+                assert_eq!(update.attributes[1].type_code, as_path.type_code);
+                assert_eq!(update.attributes[1].value, as_path.value);
+                assert_eq!(update.attributes[2].type_code, next_hop.type_code);
+                assert_eq!(update.attributes[2].value, next_hop.value);
+                assert_eq!(update.nlri, vec![nlri]);
+            }
+            other => panic!("expected UPDATE body, got {other:?}"),
+        }
+
+        let recompiled = Packet::from_layer(bgp)
+            .compile()
+            .expect("recompile succeeds");
+        assert_eq!(recompiled, bytes);
+    }
+
+    #[test]
+    fn decode_update_preserves_unknown_attribute_flags_and_value() {
+        let bytes = Packet::from_layer(
+            Bgp::update()
+                .attribute(BgpPathAttribute::unknown(99, vec![0xaa, 0xbb]).with_flags(0xe0)),
+        )
+        .compile()
+        .expect("UPDATE compiles");
+
+        let (bgp, consumed) = decode_bgp_message(&bytes).expect("UPDATE decodes");
+        assert_eq!(consumed, bytes.len());
+
+        match &bgp.body {
+            BgpBody::Update(update) => {
+                assert_eq!(update.attributes.len(), 1);
+                assert_eq!(update.attributes[0].flags.value(), Some(&0xe0));
+                assert_eq!(update.attributes[0].type_code, 99);
+                assert_eq!(
+                    update.attributes[0].value,
+                    BgpAttrValue::Unknown(vec![0xaa, 0xbb])
+                );
+            }
+            other => panic!("expected UPDATE body, got {other:?}"),
+        }
+
+        let recompiled = Packet::from_layer(bgp)
+            .compile()
+            .expect("recompile succeeds");
+        assert_eq!(recompiled, bytes);
+    }
+
+    #[test]
+    fn decode_update_attribute_length_overrun_is_structured_error() {
+        let bytes = [
+            [0xff; BGP_MARKER_LEN].as_slice(),
+            &(25u16).to_be_bytes(),
+            &[BGP_TYPE_UPDATE],
+            &[0x00, 0x00, 0x00, 0x04, 0x40, 0x01],
+        ]
+        .concat();
+
+        let err = decode_bgp_message(&bytes).expect_err("attribute length overruns message body");
+        match err {
+            CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            } => {
+                assert_eq!(context, "bgp update path attributes");
+                assert_eq!(required, 4);
+                assert_eq!(available, 2);
+            }
+            other => panic!("expected buffer_too_short, got {other:?}"),
+        }
     }
 
     /// A 10-byte buffer cannot even hold the 16-octet marker, so decode surfaces

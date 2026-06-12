@@ -252,6 +252,24 @@ impl BgpUpdate {
         }
     }
 
+    /// Construct an UPDATE body from decoded wire fields, preserving the
+    /// declared sub-length fields exactly for byte-for-byte re-compilation.
+    pub(crate) fn from_decoded_parts(
+        withdrawn: Vec<BgpPrefix>,
+        withdrawn_len: u16,
+        attributes: Vec<BgpPathAttribute>,
+        attr_len: u16,
+        nlri: Vec<BgpPrefix>,
+    ) -> Self {
+        Self {
+            withdrawn,
+            withdrawn_len: Field::user(withdrawn_len),
+            attributes,
+            attr_len: Field::user(attr_len),
+            nlri,
+        }
+    }
+
     /// The encoded Withdrawn Routes byte length.
     pub(crate) fn withdrawn_len(&self) -> usize {
         prefixes_len(&self.withdrawn)
