@@ -85,6 +85,15 @@ pub enum BgpAttrValue {
         /// Network Layer Reachability Information.
         nlri: Vec<BgpPrefix>,
     },
+    /// MP_UNREACH_NLRI path attribute (RFC 4760 §4).
+    MpUnreachNlri {
+        /// Address Family Identifier.
+        afi: u16,
+        /// Subsequent Address Family Identifier.
+        safi: u8,
+        /// Withdrawn Network Layer Reachability Information.
+        withdrawn: Vec<BgpPrefix>,
+    },
     /// A value whose type-specific structure is not modeled yet.
     Unknown(Vec<u8>),
 }
@@ -108,6 +117,7 @@ impl BgpAttrValue {
             Self::MpReachNlri { next_hop, nlri, .. } => {
                 5 + next_hop.len() + prefixes_encoded_len(nlri)
             }
+            Self::MpUnreachNlri { withdrawn, .. } => 3 + prefixes_encoded_len(withdrawn),
             Self::Unknown(value) => value.len(),
         }
     }
@@ -158,6 +168,17 @@ impl BgpAttrValue {
                 out.extend_from_slice(next_hop);
                 out.push(0);
                 for prefix in nlri {
+                    prefix.encode_prefix(out);
+                }
+            }
+            Self::MpUnreachNlri {
+                afi,
+                safi,
+                withdrawn,
+            } => {
+                out.extend_from_slice(&afi.to_be_bytes());
+                out.push(*safi);
+                for prefix in withdrawn {
                     prefix.encode_prefix(out);
                 }
             }
@@ -286,6 +307,19 @@ impl BgpPathAttribute {
         }
     }
 
+    /// Build an MP_UNREACH_NLRI path attribute for IPv6 unicast withdrawn NLRI.
+    pub fn mp_unreach_ipv6(withdrawn: &[BgpPrefix]) -> Self {
+        Self {
+            flags: Field::defaulted(ATTR_MP_UNREACH_NLRI_FLAGS),
+            type_code: ATTR_MP_UNREACH_NLRI,
+            value: BgpAttrValue::MpUnreachNlri {
+                afi: AFI_IPV6,
+                safi: SAFI_UNICAST,
+                withdrawn: withdrawn.to_vec(),
+            },
+        }
+    }
+
     /// Build a raw path attribute with canonical flags inferred from type code.
     pub fn unknown(type_code: u8, value: impl Into<Vec<u8>>) -> Self {
         Self {
@@ -348,6 +382,11 @@ impl BgpPathAttribute {
                 next_hop,
                 nlri,
             } => mp_reach_summary(*afi, *safi, next_hop, nlri),
+            BgpAttrValue::MpUnreachNlri {
+                afi,
+                safi,
+                withdrawn,
+            } => mp_unreach_summary(*afi, *safi, withdrawn),
             BgpAttrValue::Unknown(value) => format!("attr-{} len={}", self.type_code, value.len()),
         }
     }
@@ -428,6 +467,7 @@ pub fn decode_attribute(buf: &[u8]) -> Result<(BgpPathAttribute, usize)> {
         ATTR_EXTENDED_COMMUNITIES => decode_extended_communities_value(value)?,
         ATTR_LARGE_COMMUNITY => decode_large_communities_value(value)?,
         ATTR_MP_REACH_NLRI => decode_mp_reach_nlri_value(value)?,
+        ATTR_MP_UNREACH_NLRI => decode_mp_unreach_nlri_value(value)?,
         _ => BgpAttrValue::Unknown(value.to_vec()),
     };
 
@@ -587,6 +627,27 @@ fn decode_mp_reach_nlri_value(mut value: &[u8]) -> Result<BgpAttrValue> {
         safi,
         next_hop: next_hop.to_vec(),
         nlri,
+    })
+}
+
+fn decode_mp_unreach_nlri_value(mut value: &[u8]) -> Result<BgpAttrValue> {
+    let (afi, rest) = take(value, 2, "bgp mp_unreach_nlri afi")?;
+    let afi = u16::from_be_bytes([afi[0], afi[1]]);
+    let (safi, rest) = take(rest, 1, "bgp mp_unreach_nlri safi")?;
+    let safi = safi[0];
+
+    value = rest;
+    let mut withdrawn = Vec::new();
+    while !value.is_empty() {
+        let (prefix, consumed) = BgpPrefix::decode_prefix_with_max(value, 128)?;
+        withdrawn.push(prefix);
+        value = &value[consumed..];
+    }
+
+    Ok(BgpAttrValue::MpUnreachNlri {
+        afi,
+        safi,
+        withdrawn,
     })
 }
 
@@ -767,6 +828,15 @@ fn mp_reach_summary(afi: u16, safi: u8, next_hop: &[u8], nlri: &[BgpPrefix]) -> 
         "MP_REACH_NLRI afi={afi} safi={safi} next_hop={} nlri=[{nlri}]",
         mp_next_hop_summary(afi, next_hop)
     )
+}
+
+fn mp_unreach_summary(afi: u16, safi: u8, withdrawn: &[BgpPrefix]) -> String {
+    let withdrawn = withdrawn
+        .iter()
+        .map(|prefix| mp_prefix_summary(afi, prefix))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("MP_UNREACH_NLRI afi={afi} safi={safi} withdrawn=[{withdrawn}]")
 }
 
 fn mp_next_hop_summary(afi: u16, next_hop: &[u8]) -> String {
@@ -1451,6 +1521,59 @@ mod tests {
                     safi: SAFI_UNICAST,
                     next_hop: next_hop.octets().to_vec(),
                     nlri: nlri.to_vec(),
+                },
+            }
+        );
+
+        let mut reencoded = Vec::new();
+        decoded.encode(&mut reencoded);
+        assert_eq!(reencoded, encoded);
+    }
+
+    #[test]
+    fn mp_unreach_ipv6_attribute_encodes_and_round_trips() {
+        let withdrawn = [
+            BgpPrefix::from_ipv6(Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0), 32)
+                .expect("valid IPv6 prefix"),
+        ];
+        let attr = BgpPathAttribute::mp_unreach_ipv6(&withdrawn);
+        let mut encoded = Vec::new();
+        attr.encode(&mut encoded);
+
+        assert_eq!(encoded[0], 0x80);
+        assert_eq!(encoded[1], 0x0f);
+        assert_eq!(
+            encoded,
+            [
+                ATTR_MP_UNREACH_NLRI_FLAGS,
+                ATTR_MP_UNREACH_NLRI,
+                8,
+                0x00,
+                0x02,
+                0x01,
+                32,
+                0x20,
+                0x01,
+                0x0d,
+                0xb8,
+            ]
+        );
+        assert_eq!(
+            attr.summary(),
+            "MP_UNREACH_NLRI afi=2 safi=1 withdrawn=[2001:db8::/32]"
+        );
+
+        let (decoded, consumed) = decode_attribute(&encoded).expect("attribute decodes");
+        assert_eq!(consumed, encoded.len());
+        assert_eq!(
+            decoded,
+            BgpPathAttribute {
+                flags: Field::user(ATTR_MP_UNREACH_NLRI_FLAGS),
+                type_code: ATTR_MP_UNREACH_NLRI,
+                value: BgpAttrValue::MpUnreachNlri {
+                    afi: AFI_IPV6,
+                    safi: SAFI_UNICAST,
+                    withdrawn: withdrawn.to_vec(),
                 },
             }
         );
