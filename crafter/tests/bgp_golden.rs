@@ -18,7 +18,7 @@ use crafter::protocols::bgp::attribute::{
     BgpAttrValue, BgpPathAttribute, BgpPrefix, BGP_ORIGIN_IGP,
 };
 use crafter::protocols::bgp::COMMUNITY_NO_EXPORT;
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, Ipv6Addr};
 
 /// Helper used once to mint the golden constants below. Set
 /// `CRAFTER_BGP_GOLDEN_DUMP=1` and run with `--nocapture` to print the
@@ -350,6 +350,73 @@ fn bgp_golden_update_large_communities() {
     assert_eq!(
         decoded.value,
         BgpAttrValue::LargeCommunities(large_communities.to_vec())
+    );
+    assert_roundtrip(bytes.as_bytes());
+}
+
+// ---------------------------------------------------------------------------
+// UPDATE announcement with MP_REACH_NLRI (RFC 4760): carries IPv6-unicast
+// reachability for 2001:db8::/32 with next hop 2001:db8::1, alongside ORIGIN
+// and AS_PATH, and intentionally no top-level IPv4 NLRI bytes.
+// ---------------------------------------------------------------------------
+
+const GOLDEN_UPDATE_MP_REACH: &str =
+    "ffffffffffffffffffffffffffffffff003f0200000028400101004002040201fde8800e1a0002011020010db8000000000000000000000001002020010db8";
+
+fn build_update_mp_reach() -> Packet {
+    let next_hop = Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 1);
+    let nlri = [BgpPrefix::from_ipv6(
+        Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0),
+        32,
+    )
+    .expect("valid IPv6 prefix")];
+
+    Packet::from_layer(
+        Bgp::update()
+            .attribute(BgpPathAttribute::origin(BGP_ORIGIN_IGP))
+            .attribute(BgpPathAttribute::as_sequence(&[65000]))
+            .attribute(BgpPathAttribute::mp_reach_ipv6(next_hop, &nlri)),
+    )
+}
+
+#[test]
+fn bgp_golden_update_mp_reach() {
+    let next_hop = Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 1);
+    let nlri = [BgpPrefix::from_ipv6(
+        Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0),
+        32,
+    )
+    .expect("valid IPv6 prefix")];
+    let bytes = build_update_mp_reach().compile().expect("compile");
+    maybe_dump("UPDATE_MP_REACH", bytes.as_bytes());
+    assert_eq!(bytes.as_bytes(), hex(GOLDEN_UPDATE_MP_REACH).as_slice());
+
+    let body = &bytes.as_bytes()[19..];
+    assert_eq!(&body[..2], &[0x00, 0x00]);
+    let attr_len = u16::from_be_bytes([body[2], body[3]]) as usize;
+    let attrs = &body[4..4 + attr_len];
+    assert_eq!(body.len(), 4 + attr_len, "expected no top-level IPv4 NLRI");
+
+    let (_origin, origin_len) =
+        crafter::protocols::bgp::attribute::decode_attribute(attrs).expect("decode ORIGIN");
+    let (_as_path, as_path_len) =
+        crafter::protocols::bgp::attribute::decode_attribute(&attrs[origin_len..])
+            .expect("decode AS_PATH");
+    let mp_reach_bytes = &attrs[origin_len + as_path_len..];
+    assert_eq!(&mp_reach_bytes[..2], &[0x80, 0x0e]);
+
+    let (decoded, consumed) =
+        crafter::protocols::bgp::attribute::decode_attribute(mp_reach_bytes)
+            .expect("decode MP_REACH_NLRI attribute");
+    assert_eq!(consumed, mp_reach_bytes.len());
+    assert_eq!(
+        decoded.value,
+        BgpAttrValue::MpReachNlri {
+            afi: 2,
+            safi: 1,
+            next_hop: next_hop.octets().to_vec(),
+            nlri: nlri.to_vec(),
+        }
     );
     assert_roundtrip(bytes.as_bytes());
 }
