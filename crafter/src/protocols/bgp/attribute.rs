@@ -52,6 +52,8 @@ pub enum BgpAttrValue {
         /// Ordered AS_PATH segments.
         segments: Vec<AsPathSegment>,
     },
+    /// NEXT_HOP path attribute (RFC 4271 §5.1.3).
+    NextHop(Ipv4Addr),
     /// A value whose type-specific structure is not modeled yet.
     Unknown(Vec<u8>),
 }
@@ -65,6 +67,7 @@ impl BgpAttrValue {
                 four_octet,
                 segments,
             } => as_path_encoded_len(segments, *four_octet),
+            Self::NextHop(_) => 4,
             Self::Unknown(value) => value.len(),
         }
     }
@@ -77,6 +80,7 @@ impl BgpAttrValue {
                 four_octet,
                 segments,
             } => encode_as_path(segments, *four_octet, out),
+            Self::NextHop(next_hop) => out.extend_from_slice(&next_hop.octets()),
             Self::Unknown(value) => out.extend_from_slice(value),
         }
     }
@@ -111,6 +115,15 @@ impl BgpPathAttribute {
     /// Build an AS_PATH attribute containing one AS_SET segment.
     pub fn as_set(asns: &[u32]) -> Self {
         Self::as_path_segment(BGP_AS_SEGMENT_SET, asns)
+    }
+
+    /// Build a NEXT_HOP path attribute carrying an IPv4 next hop.
+    pub fn next_hop(next_hop: impl Into<Ipv4Addr>) -> Self {
+        Self {
+            flags: Field::defaulted(ATTR_NEXT_HOP_FLAGS),
+            type_code: ATTR_NEXT_HOP,
+            value: BgpAttrValue::NextHop(next_hop.into()),
+        }
     }
 
     /// Build a raw path attribute with canonical flags inferred from type code.
@@ -159,6 +172,7 @@ impl BgpPathAttribute {
         match &self.value {
             BgpAttrValue::Origin(origin) => format!("ORIGIN={}", origin_value_name(*origin)),
             BgpAttrValue::AsPath { segments, .. } => as_path_summary(segments),
+            BgpAttrValue::NextHop(next_hop) => format!("NEXT_HOP={next_hop}"),
             BgpAttrValue::Unknown(value) => format!("attr-{} len={}", self.type_code, value.len()),
         }
     }
@@ -230,6 +244,7 @@ pub fn decode_attribute(buf: &[u8]) -> Result<(BgpPathAttribute, usize)> {
     let value = match type_code {
         ATTR_ORIGIN => decode_origin_value(value)?,
         ATTR_AS_PATH => decode_as_path_value(value, false)?,
+        ATTR_NEXT_HOP => decode_next_hop_value(value)?,
         _ => BgpAttrValue::Unknown(value.to_vec()),
     };
 
@@ -252,6 +267,19 @@ fn decode_origin_value(value: &[u8]) -> Result<BgpAttrValue> {
         ));
     }
     Ok(BgpAttrValue::Origin(origin[0]))
+}
+
+fn decode_next_hop_value(value: &[u8]) -> Result<BgpAttrValue> {
+    let (octets, rest) = take(value, 4, "bgp next_hop attribute value")?;
+    if !rest.is_empty() {
+        return Err(CrafterError::invalid_field_value(
+            "bgp.attribute.next_hop.length",
+            "NEXT_HOP attribute value must be exactly four octets",
+        ));
+    }
+    Ok(BgpAttrValue::NextHop(Ipv4Addr::new(
+        octets[0], octets[1], octets[2], octets[3],
+    )))
 }
 
 fn decode_as_path_value(mut value: &[u8], four_octet: bool) -> Result<BgpAttrValue> {
@@ -562,6 +590,42 @@ mod tests {
                         asns: vec![65000, 65001],
                     }],
                 },
+            }
+        );
+
+        let mut reencoded = Vec::new();
+        decoded.encode(&mut reencoded);
+        assert_eq!(reencoded, encoded);
+    }
+
+    #[test]
+    fn next_hop_attribute_encodes_and_round_trips() {
+        let attr = BgpPathAttribute::next_hop(Ipv4Addr::new(192, 0, 2, 1));
+        let mut encoded = Vec::new();
+        attr.encode(&mut encoded);
+
+        assert_eq!(
+            encoded,
+            [
+                ATTR_NEXT_HOP_FLAGS,
+                ATTR_NEXT_HOP,
+                4,
+                0xc0,
+                0x00,
+                0x02,
+                0x01
+            ]
+        );
+        assert_eq!(attr.summary(), "NEXT_HOP=192.0.2.1");
+
+        let (decoded, consumed) = decode_attribute(&encoded).expect("attribute decodes");
+        assert_eq!(consumed, encoded.len());
+        assert_eq!(
+            decoded,
+            BgpPathAttribute {
+                flags: Field::user(ATTR_NEXT_HOP_FLAGS),
+                type_code: ATTR_NEXT_HOP,
+                value: BgpAttrValue::NextHop(Ipv4Addr::new(192, 0, 2, 1)),
             }
         );
 
