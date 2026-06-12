@@ -14,6 +14,8 @@
 //! no live target surface in this file.
 
 use crafter::prelude::*;
+use crafter::protocols::bgp::attribute::{BgpPathAttribute, BgpPrefix, BGP_ORIGIN_IGP};
+use std::net::Ipv4Addr;
 
 /// Helper used once to mint the golden constants below. Set
 /// `CRAFTER_BGP_GOLDEN_DUMP=1` and run with `--nocapture` to print the
@@ -151,4 +153,43 @@ fn bgp_golden_route_refresh() {
         hex("ffffffffffffffffffffffffffffffff00170500010101").as_slice()
     );
     assert_roundtrip(enhanced.as_bytes());
+}
+
+// ---------------------------------------------------------------------------
+// UPDATE announcement (RFC 4271 §4.3): no withdrawn routes, ORIGIN=IGP,
+// AS_PATH sequence containing AS 65000, NEXT_HOP 192.0.2.1, and NLRI
+// 203.0.113.0/24.
+// ---------------------------------------------------------------------------
+
+const GOLDEN_UPDATE_ANNOUNCE: &str =
+    "ffffffffffffffffffffffffffffffff002d0200000012400101004002040201fde8400304c000020118cb0071";
+
+fn build_update_announce() -> Packet {
+    Packet::from_layer(
+        Bgp::update()
+            .attribute(BgpPathAttribute::origin(BGP_ORIGIN_IGP))
+            .attribute(BgpPathAttribute::as_sequence(&[65000]))
+            .attribute(BgpPathAttribute::next_hop(Ipv4Addr::new(192, 0, 2, 1)))
+            .nlri(
+                BgpPrefix::from_ipv4(Ipv4Addr::new(203, 0, 113, 0), 24)
+                    .expect("valid IPv4 prefix"),
+            ),
+    )
+}
+
+#[test]
+fn bgp_golden_update_announce() {
+    let bytes = build_update_announce().compile().expect("compile");
+    maybe_dump("UPDATE_ANNOUNCE", bytes.as_bytes());
+    assert_eq!(
+        bytes.as_bytes(),
+        hex(GOLDEN_UPDATE_ANNOUNCE).as_slice()
+    );
+    assert_eq!(&bytes.as_bytes()[19..21], &[0x00, 0x00]);
+    assert_eq!(&bytes.as_bytes()[21..23], &[0x00, 0x12]);
+    assert_eq!(
+        &bytes.as_bytes()[bytes.as_bytes().len() - 4..],
+        &[0x18, 0xcb, 0x00, 0x71]
+    );
+    assert_roundtrip(bytes.as_bytes());
 }
