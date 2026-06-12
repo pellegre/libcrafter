@@ -381,6 +381,90 @@ mod tests {
     }
 
     #[test]
+    fn decode_length_below_header_minimum_is_structured_error() {
+        let mut bytes = [0u8; BGP_HEADER_LEN];
+        bytes[..BGP_MARKER_LEN].copy_from_slice(&[0xFF; BGP_MARKER_LEN]);
+        bytes[BGP_MARKER_LEN..BGP_MARKER_LEN + 2]
+            .copy_from_slice(&((BGP_HEADER_LEN - 1) as u16).to_be_bytes());
+        bytes[BGP_MARKER_LEN + 2] = BGP_TYPE_KEEPALIVE;
+
+        let err = decode_bgp_message(&bytes).expect_err("short declared length is invalid");
+        match err {
+            CrafterError::InvalidFieldValue { field, reason } => {
+                assert_eq!(field, "bgp.header.length");
+                assert!(
+                    reason.contains("19-octet header minimum"),
+                    "reason should mention the minimum, got: {reason}"
+                );
+            }
+            other => panic!("expected invalid_field_value, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn decode_length_above_maximum_is_structured_error() {
+        let mut bytes = [0u8; BGP_HEADER_LEN];
+        bytes[..BGP_MARKER_LEN].copy_from_slice(&[0xFF; BGP_MARKER_LEN]);
+        bytes[BGP_MARKER_LEN..BGP_MARKER_LEN + 2]
+            .copy_from_slice(&((BGP_MAX_MESSAGE_LEN + 1) as u16).to_be_bytes());
+        bytes[BGP_MARKER_LEN + 2] = BGP_TYPE_KEEPALIVE;
+
+        let err = decode_bgp_message(&bytes).expect_err("oversized declared length is invalid");
+        match err {
+            CrafterError::InvalidFieldValue { field, reason } => {
+                assert_eq!(field, "bgp.header.length");
+                assert!(
+                    reason.contains("4096-octet maximum"),
+                    "reason should mention the maximum, got: {reason}"
+                );
+            }
+            other => panic!("expected invalid_field_value, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn decode_declared_length_past_buffer_is_truncation_error() {
+        let declared_len = BGP_HEADER_LEN + 8;
+        let mut bytes = vec![0u8; BGP_HEADER_LEN + 3];
+        bytes[..BGP_MARKER_LEN].copy_from_slice(&[0xFF; BGP_MARKER_LEN]);
+        bytes[BGP_MARKER_LEN..BGP_MARKER_LEN + 2]
+            .copy_from_slice(&(declared_len as u16).to_be_bytes());
+        bytes[BGP_MARKER_LEN + 2] = BGP_TYPE_KEEPALIVE;
+
+        let err = decode_bgp_message(&bytes).expect_err("declared length overruns buffer");
+        match err {
+            CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            } => {
+                assert_eq!(context, "bgp message");
+                assert_eq!(required, declared_len);
+                assert_eq!(available, bytes.len());
+            }
+            other => panic!("expected buffer_too_short, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn decode_preserves_non_all_ones_marker_on_round_trip() {
+        let mut bytes = [0u8; BGP_HEADER_LEN];
+        bytes[..BGP_MARKER_LEN].copy_from_slice(&[0xA5; BGP_MARKER_LEN]);
+        bytes[BGP_MARKER_LEN..BGP_MARKER_LEN + 2]
+            .copy_from_slice(&(BGP_HEADER_LEN as u16).to_be_bytes());
+        bytes[BGP_MARKER_LEN + 2] = BGP_TYPE_KEEPALIVE;
+
+        let (bgp, consumed) = decode_bgp_message(&bytes).expect("modified marker decodes");
+        assert_eq!(consumed, bytes.len());
+        assert!(matches!(&bgp.body, BgpBody::Keepalive));
+
+        let recompiled = Packet::from_layer(bgp)
+            .compile()
+            .expect("modified marker re-compiles");
+        assert_eq!(recompiled.as_bytes(), bytes);
+    }
+
+    #[test]
     fn append_bgp_packet_with_registry_decodes_two_keepalives() {
         let keepalive = Packet::from_layer(Bgp::keepalive())
             .compile()
