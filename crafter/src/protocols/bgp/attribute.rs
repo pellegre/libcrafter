@@ -54,6 +54,10 @@ pub enum BgpAttrValue {
     },
     /// NEXT_HOP path attribute (RFC 4271 §5.1.3).
     NextHop(Ipv4Addr),
+    /// MULTI_EXIT_DISC path attribute (RFC 4271 §5.1.4).
+    MultiExitDisc(u32),
+    /// LOCAL_PREF path attribute (RFC 4271 §5.1.5).
+    LocalPref(u32),
     /// A value whose type-specific structure is not modeled yet.
     Unknown(Vec<u8>),
 }
@@ -68,6 +72,7 @@ impl BgpAttrValue {
                 segments,
             } => as_path_encoded_len(segments, *four_octet),
             Self::NextHop(_) => 4,
+            Self::MultiExitDisc(_) | Self::LocalPref(_) => 4,
             Self::Unknown(value) => value.len(),
         }
     }
@@ -81,6 +86,9 @@ impl BgpAttrValue {
                 segments,
             } => encode_as_path(segments, *four_octet, out),
             Self::NextHop(next_hop) => out.extend_from_slice(&next_hop.octets()),
+            Self::MultiExitDisc(metric) | Self::LocalPref(metric) => {
+                out.extend_from_slice(&metric.to_be_bytes());
+            }
             Self::Unknown(value) => out.extend_from_slice(value),
         }
     }
@@ -123,6 +131,24 @@ impl BgpPathAttribute {
             flags: Field::defaulted(ATTR_NEXT_HOP_FLAGS),
             type_code: ATTR_NEXT_HOP,
             value: BgpAttrValue::NextHop(next_hop.into()),
+        }
+    }
+
+    /// Build a MULTI_EXIT_DISC path attribute.
+    pub fn multi_exit_disc(metric: u32) -> Self {
+        Self {
+            flags: Field::defaulted(ATTR_MULTI_EXIT_DISC_FLAGS),
+            type_code: ATTR_MULTI_EXIT_DISC,
+            value: BgpAttrValue::MultiExitDisc(metric),
+        }
+    }
+
+    /// Build a LOCAL_PREF path attribute.
+    pub fn local_pref(preference: u32) -> Self {
+        Self {
+            flags: Field::defaulted(ATTR_LOCAL_PREF_FLAGS),
+            type_code: ATTR_LOCAL_PREF,
+            value: BgpAttrValue::LocalPref(preference),
         }
     }
 
@@ -173,6 +199,8 @@ impl BgpPathAttribute {
             BgpAttrValue::Origin(origin) => format!("ORIGIN={}", origin_value_name(*origin)),
             BgpAttrValue::AsPath { segments, .. } => as_path_summary(segments),
             BgpAttrValue::NextHop(next_hop) => format!("NEXT_HOP={next_hop}"),
+            BgpAttrValue::MultiExitDisc(metric) => format!("MULTI_EXIT_DISC={metric}"),
+            BgpAttrValue::LocalPref(preference) => format!("LOCAL_PREF={preference}"),
             BgpAttrValue::Unknown(value) => format!("attr-{} len={}", self.type_code, value.len()),
         }
     }
@@ -245,6 +273,8 @@ pub fn decode_attribute(buf: &[u8]) -> Result<(BgpPathAttribute, usize)> {
         ATTR_ORIGIN => decode_origin_value(value)?,
         ATTR_AS_PATH => decode_as_path_value(value, false)?,
         ATTR_NEXT_HOP => decode_next_hop_value(value)?,
+        ATTR_MULTI_EXIT_DISC => decode_multi_exit_disc_value(value)?,
+        ATTR_LOCAL_PREF => decode_local_pref_value(value)?,
         _ => BgpAttrValue::Unknown(value.to_vec()),
     };
 
@@ -280,6 +310,42 @@ fn decode_next_hop_value(value: &[u8]) -> Result<BgpAttrValue> {
     Ok(BgpAttrValue::NextHop(Ipv4Addr::new(
         octets[0], octets[1], octets[2], octets[3],
     )))
+}
+
+fn decode_multi_exit_disc_value(value: &[u8]) -> Result<BgpAttrValue> {
+    decode_u32_attribute_value(
+        value,
+        "bgp multi_exit_disc attribute value",
+        "bgp.attribute.multi_exit_disc.length",
+        "MULTI_EXIT_DISC attribute value must be exactly four octets",
+        BgpAttrValue::MultiExitDisc,
+    )
+}
+
+fn decode_local_pref_value(value: &[u8]) -> Result<BgpAttrValue> {
+    decode_u32_attribute_value(
+        value,
+        "bgp local_pref attribute value",
+        "bgp.attribute.local_pref.length",
+        "LOCAL_PREF attribute value must be exactly four octets",
+        BgpAttrValue::LocalPref,
+    )
+}
+
+fn decode_u32_attribute_value(
+    value: &[u8],
+    context: &'static str,
+    field: &'static str,
+    message: &'static str,
+    build: impl FnOnce(u32) -> BgpAttrValue,
+) -> Result<BgpAttrValue> {
+    let (octets, rest) = take(value, 4, context)?;
+    if !rest.is_empty() {
+        return Err(CrafterError::invalid_field_value(field, message));
+    }
+    Ok(build(u32::from_be_bytes([
+        octets[0], octets[1], octets[2], octets[3],
+    ])))
 }
 
 fn decode_as_path_value(mut value: &[u8], four_octet: bool) -> Result<BgpAttrValue> {
@@ -626,6 +692,70 @@ mod tests {
                 flags: Field::user(ATTR_NEXT_HOP_FLAGS),
                 type_code: ATTR_NEXT_HOP,
                 value: BgpAttrValue::NextHop(Ipv4Addr::new(192, 0, 2, 1)),
+            }
+        );
+
+        let mut reencoded = Vec::new();
+        decoded.encode(&mut reencoded);
+        assert_eq!(reencoded, encoded);
+    }
+
+    #[test]
+    fn multi_exit_disc_attribute_encodes_and_round_trips() {
+        let attr = BgpPathAttribute::multi_exit_disc(100);
+        let mut encoded = Vec::new();
+        attr.encode(&mut encoded);
+
+        assert_eq!(
+            encoded,
+            [
+                ATTR_MULTI_EXIT_DISC_FLAGS,
+                ATTR_MULTI_EXIT_DISC,
+                4,
+                0,
+                0,
+                0,
+                100
+            ]
+        );
+        assert_eq!(attr.summary(), "MULTI_EXIT_DISC=100");
+
+        let (decoded, consumed) = decode_attribute(&encoded).expect("attribute decodes");
+        assert_eq!(consumed, encoded.len());
+        assert_eq!(
+            decoded,
+            BgpPathAttribute {
+                flags: Field::user(ATTR_MULTI_EXIT_DISC_FLAGS),
+                type_code: ATTR_MULTI_EXIT_DISC,
+                value: BgpAttrValue::MultiExitDisc(100),
+            }
+        );
+
+        let mut reencoded = Vec::new();
+        decoded.encode(&mut reencoded);
+        assert_eq!(reencoded, encoded);
+    }
+
+    #[test]
+    fn local_pref_attribute_encodes_and_round_trips() {
+        let attr = BgpPathAttribute::local_pref(100);
+        let mut encoded = Vec::new();
+        attr.encode(&mut encoded);
+
+        assert_eq!(
+            encoded,
+            [ATTR_LOCAL_PREF_FLAGS, ATTR_LOCAL_PREF, 4, 0, 0, 0, 100]
+        );
+        assert_eq!(attr.summary(), "LOCAL_PREF=100");
+
+        let (decoded, consumed) = decode_attribute(&encoded).expect("attribute decodes");
+        assert_eq!(consumed, encoded.len());
+        assert_eq!(
+            decoded,
+            BgpPathAttribute {
+                flags: Field::user(ATTR_LOCAL_PREF_FLAGS),
+                type_code: ATTR_LOCAL_PREF,
+                value: BgpAttrValue::LocalPref(100),
             }
         );
 
