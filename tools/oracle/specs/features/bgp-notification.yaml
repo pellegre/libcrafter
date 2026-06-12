@@ -1,0 +1,61 @@
+version: 1
+kind: feature
+name: bgp_notification
+summary: >-
+  BGP NOTIFICATION message code, subcode, and trailing diagnostic data over
+  TCP/179, with RFC 4271 header and body lengths compared byte-for-byte.
+
+layers:
+  - bgp
+  - tcp
+  - ipv4
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: code_subcode_data
+    rfc:
+      - RFC 4271 Section 4.5
+      - RFC 4271 Section 6
+    message_type: notification
+    checks:
+      - marker_all_ones
+      - length_covers_message
+      - type_is_notification
+      - notification_code_preserved
+      - notification_subcode_preserved
+      - notification_data_length_matches_remainder
+      - notification_data_roundtrip
+
+coverage_cases:
+  - bgp-notification
+
+supported_cases:
+  - name: bgp-notification
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - BGPHeader
+      - BGPNotification
+    encode: true
+    decode: true
+    notes:
+      - Scapy 2.7.0 natively round-trips NOTIFICATION code, subcode, and data
+        bytes. Newer numeric codes 8 and 9 encode at the byte level but do not
+        have Scapy labels, so this feature asserts numeric values.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    notes:
+      - NOTIFICATION decode preserves unknown code and subcode values as numeric
+        fields and treats trailing diagnostic data as exact bytes.

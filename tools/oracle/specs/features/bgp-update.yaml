@@ -1,0 +1,100 @@
+version: 1
+kind: feature
+name: bgp_update
+summary: >-
+  BGP UPDATE withdrawn routes, path attributes, and IPv4 NLRI over TCP/179 with
+  strict byte comparison against RFC 4271 field lengths, flags, and prefix
+  encoding.
+
+layers:
+  - bgp
+  - tcp
+  - ipv4
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: withdrawn_routes
+    rfc:
+      - RFC 4271 Section 4.3
+    checks:
+      - marker_all_ones
+      - length_covers_message
+      - type_is_update
+      - withdrawn_routes_length_covers_prefixes
+      - withdrawn_prefixes_roundtrip
+  - name: core_path_attributes
+    rfc:
+      - RFC 4271 Section 4.3
+      - RFC 4271 Section 5.1.1
+      - RFC 4271 Section 5.1.2
+      - RFC 4271 Section 5.1.3
+    path_attributes:
+      - origin
+      - as_path
+      - next_hop
+    checks:
+      - path_attribute_total_length_covers_attributes
+      - attr_flags_canonical
+      - attr_lengths_canonical
+      - origin_value_preserved
+      - as_path_segments_roundtrip
+      - next_hop_ipv4_preserved
+  - name: announced_nlri
+    rfc:
+      - RFC 4271 Section 4.3
+    checks:
+      - nlri_prefix_length_in_bits
+      - nlri_uses_minimal_octets
+      - nlri_roundtrip
+
+coverage_cases:
+  - bgp-update
+  - bgp-update-withdraw
+  - bgp-update-announce
+
+supported_cases:
+  - name: bgp-update
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: bgp-update-withdraw
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: bgp-update-announce
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - BGPHeader
+      - BGPUpdate
+      - BGPPAOrigin
+      - BGPPAASPath
+      - BGPPANextHop
+      - BGPNLRI_IPv4
+    encode: true
+    decode: true
+    notes:
+      - Scapy 2.7.0 natively round-trips UPDATE, ORIGIN, AS_PATH, NEXT_HOP, and
+        IPv4 NLRI. AS_PATH byte width depends on Scapy's module-global
+        use_2_bytes_asn setting, so four-octet-AS cases must set that switch
+        explicitly before byte assertions.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    notes:
+      - UPDATE compile derives the withdrawn-route length, total path-attribute
+        length, attribute value lengths, and canonical flags for known
+        attributes while preserving explicit malformed overrides when requested.

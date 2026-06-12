@@ -1,0 +1,92 @@
+version: 1
+kind: feature
+name: bgp_open
+summary: >-
+  BGP OPEN message framing and capability advertisement over TCP/179, including
+  RFC 4271 OPEN fields and RFC 5492 capability parameters that are supported by
+  both the Scapy reference backend and libcrafter.
+
+layers:
+  - bgp
+  - tcp
+  - ipv4
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: header_and_open_fields
+    rfc:
+      - RFC 4271 Section 4.1
+      - RFC 4271 Section 4.2
+    message_type: open
+    checks:
+      - marker_all_ones
+      - length_covers_message
+      - type_is_open
+      - version_4
+      - my_autonomous_system_preserved
+      - hold_time_preserved
+      - bgp_identifier_preserved
+      - optional_parameter_length_matches_body
+  - name: capabilities
+    rfc:
+      - RFC 5492 Section 4
+      - RFC 4760 Section 8
+      - RFC 6793 Section 3
+      - RFC 2918
+    optional_parameters:
+      - capabilities
+    capabilities:
+      - multiprotocol_ipv4_unicast
+      - multiprotocol_ipv6_unicast
+      - four_octet_as
+      - route_refresh
+    checks:
+      - capability_tlv_lengths
+      - multiprotocol_capability_afi_safi
+      - four_octet_as_capability_value
+      - route_refresh_capability_zero_length
+
+coverage_cases:
+  - bgp-open
+  - bgp-open-capabilities
+
+supported_cases:
+  - name: bgp-open
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: bgp-open-capabilities
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - BGPHeader
+      - BGPOpen
+      - BGPOptParam
+      - BGPCapMultiprotocol
+      - BGPCapFourBytesASN
+      - BGPCapGeneric
+    encode: true
+    decode: true
+    notes:
+      - Scapy 2.7.0 natively round-trips OPEN, MP-BGP capability, four-octet-AS
+        capability, and the zero-length route-refresh capability. ADD-PATH is
+        intentionally absent here because Scapy carries it as raw cap_data only.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    notes:
+      - OPEN compile derives the RFC 4271 message length and optional-parameter
+        length unless the caller deliberately overrides fields; decode preserves
+        supported capability TLVs and unknown TLVs as raw capability data.
