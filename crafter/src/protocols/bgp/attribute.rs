@@ -69,6 +69,8 @@ pub enum BgpAttrValue {
     },
     /// COMMUNITIES path attribute (RFC 1997).
     Communities(Vec<u32>),
+    /// EXTENDED COMMUNITIES path attribute (RFC 4360).
+    ExtendedCommunities(Vec<[u8; 8]>),
     /// A value whose type-specific structure is not modeled yet.
     Unknown(Vec<u8>),
 }
@@ -87,6 +89,7 @@ impl BgpAttrValue {
             Self::AtomicAggregate => 0,
             Self::Aggregator { .. } => 6,
             Self::Communities(communities) => communities.len() * 4,
+            Self::ExtendedCommunities(communities) => communities.len() * 8,
             Self::Unknown(value) => value.len(),
         }
     }
@@ -111,6 +114,11 @@ impl BgpAttrValue {
             Self::Communities(communities) => {
                 for community in communities {
                     out.extend_from_slice(&community.to_be_bytes());
+                }
+            }
+            Self::ExtendedCommunities(communities) => {
+                for community in communities {
+                    out.extend_from_slice(community);
                 }
             }
             Self::Unknown(value) => out.extend_from_slice(value),
@@ -206,6 +214,15 @@ impl BgpPathAttribute {
         }
     }
 
+    /// Build an EXTENDED COMMUNITIES path attribute.
+    pub fn extended_communities(communities: &[[u8; 8]]) -> Self {
+        Self {
+            flags: Field::defaulted(ATTR_EXTENDED_COMMUNITIES_FLAGS),
+            type_code: ATTR_EXTENDED_COMMUNITIES,
+            value: BgpAttrValue::ExtendedCommunities(communities.to_vec()),
+        }
+    }
+
     /// Build a raw path attribute with canonical flags inferred from type code.
     pub fn unknown(type_code: u8, value: impl Into<Vec<u8>>) -> Self {
         Self {
@@ -258,6 +275,9 @@ impl BgpPathAttribute {
             BgpAttrValue::AtomicAggregate => "ATOMIC_AGGREGATE".to_string(),
             BgpAttrValue::Aggregator { asn, addr } => format!("AGGREGATOR={asn} {addr}"),
             BgpAttrValue::Communities(communities) => communities_summary(communities),
+            BgpAttrValue::ExtendedCommunities(communities) => {
+                extended_communities_summary(communities)
+            }
             BgpAttrValue::Unknown(value) => format!("attr-{} len={}", self.type_code, value.len()),
         }
     }
@@ -335,6 +355,7 @@ pub fn decode_attribute(buf: &[u8]) -> Result<(BgpPathAttribute, usize)> {
         ATTR_ATOMIC_AGGREGATE => decode_atomic_aggregate_value(value)?,
         ATTR_AGGREGATOR => decode_aggregator_value(value)?,
         ATTR_COMMUNITIES => decode_communities_value(value)?,
+        ATTR_EXTENDED_COMMUNITIES => decode_extended_communities_value(value)?,
         _ => BgpAttrValue::Unknown(value.to_vec()),
     };
 
@@ -430,6 +451,25 @@ fn decode_communities_value(value: &[u8]) -> Result<BgpAttrValue> {
         .map(|chunk| u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
         .collect();
     Ok(BgpAttrValue::Communities(communities))
+}
+
+fn decode_extended_communities_value(value: &[u8]) -> Result<BgpAttrValue> {
+    if value.len() % 8 != 0 {
+        return Err(CrafterError::invalid_field_value(
+            "bgp.attribute.extended_communities.length",
+            "EXTENDED_COMMUNITIES attribute value length must be a multiple of eight octets",
+        ));
+    }
+
+    let communities = value
+        .chunks_exact(8)
+        .map(|chunk| {
+            let mut community = [0; 8];
+            community.copy_from_slice(chunk);
+            community
+        })
+        .collect();
+    Ok(BgpAttrValue::ExtendedCommunities(communities))
 }
 
 fn decode_u32_attribute_value(
@@ -565,6 +605,33 @@ fn community_name(community: u32) -> String {
         COMMUNITY_NO_EXPORT_SUBCONFED => "NO_EXPORT_SUBCONFED".to_string(),
         other => format!("{}:{}", other >> 16, other & 0xffff),
     }
+}
+
+fn extended_communities_summary(communities: &[[u8; 8]]) -> String {
+    if communities.is_empty() {
+        return "EXTENDED_COMMUNITIES=<empty>".to_string();
+    }
+
+    let parts = communities
+        .iter()
+        .map(|community| {
+            format!(
+                "type=0x{:02x} value=0x{}",
+                community[0],
+                hex_bytes(&community[1..])
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!("EXTENDED_COMMUNITIES={parts}")
+}
+
+fn hex_bytes(bytes: &[u8]) -> String {
+    let mut hex = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        hex.push_str(&format!("{byte:02x}"));
+    }
+    hex
 }
 
 /// A BGP network-layer reachability prefix.
@@ -1012,6 +1079,87 @@ mod tests {
     }
 
     #[test]
+    fn extended_communities_attribute_encodes_and_round_trips() {
+        let communities = [
+            [0x00, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08],
+            [0x40, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77],
+        ];
+        let attr = BgpPathAttribute::extended_communities(&communities);
+        let mut encoded = Vec::new();
+        attr.encode(&mut encoded);
+
+        assert_eq!(
+            encoded,
+            [
+                ATTR_EXTENDED_COMMUNITIES_FLAGS,
+                ATTR_EXTENDED_COMMUNITIES,
+                16,
+                0x00,
+                0x02,
+                0x03,
+                0x04,
+                0x05,
+                0x06,
+                0x07,
+                0x08,
+                0x40,
+                0x11,
+                0x22,
+                0x33,
+                0x44,
+                0x55,
+                0x66,
+                0x77
+            ]
+        );
+        assert_eq!(
+            attr.summary(),
+            "EXTENDED_COMMUNITIES=type=0x00 value=0x02030405060708 type=0x40 value=0x11223344556677"
+        );
+
+        let (decoded, consumed) = decode_attribute(&encoded).expect("attribute decodes");
+        assert_eq!(consumed, encoded.len());
+        assert_eq!(
+            decoded,
+            BgpPathAttribute {
+                flags: Field::user(ATTR_EXTENDED_COMMUNITIES_FLAGS),
+                type_code: ATTR_EXTENDED_COMMUNITIES,
+                value: BgpAttrValue::ExtendedCommunities(communities.to_vec()),
+            }
+        );
+        assert_eq!(decoded.summary(), attr.summary());
+
+        let mut reencoded = Vec::new();
+        decoded.encode(&mut reencoded);
+        assert_eq!(reencoded, encoded);
+    }
+
+    #[test]
+    fn malformed_extended_communities_length_errors() {
+        let err = decode_attribute(&[
+            ATTR_EXTENDED_COMMUNITIES_FLAGS,
+            ATTR_EXTENDED_COMMUNITIES,
+            7,
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+        ])
+        .expect_err("extended communities must use eight-octet values");
+
+        assert!(matches!(
+            err,
+            CrafterError::InvalidFieldValue {
+                field: "bgp.attribute.extended_communities.length",
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn short_unknown_path_attribute_uses_one_octet_length_and_round_trips() {
         let attr = BgpPathAttribute::unknown(99, vec![0xaa]);
         let mut encoded = Vec::new();
@@ -1038,15 +1186,15 @@ mod tests {
     #[test]
     fn long_path_attribute_auto_uses_extended_length_and_round_trips() {
         let value = (0..300).map(|n| n as u8).collect::<Vec<_>>();
-        let attr = BgpPathAttribute::unknown(ATTR_EXTENDED_COMMUNITIES, value.clone());
+        let attr = BgpPathAttribute::unknown(99, value.clone());
         let mut encoded = Vec::new();
         attr.encode(&mut encoded);
 
         assert_eq!(
             encoded[0],
-            ATTR_EXTENDED_COMMUNITIES_FLAGS | BGP_ATTR_FLAG_EXTENDED_LENGTH
+            BGP_ATTR_FLAG_OPTIONAL | BGP_ATTR_FLAG_EXTENDED_LENGTH
         );
-        assert_eq!(encoded[1], ATTR_EXTENDED_COMMUNITIES);
+        assert_eq!(encoded[1], 99);
         assert_eq!(&encoded[2..4], &(300u16).to_be_bytes());
         assert_eq!(&encoded[4..], value.as_slice());
 
@@ -1054,9 +1202,9 @@ mod tests {
         assert_eq!(consumed, encoded.len());
         assert_eq!(
             decoded.flags.value(),
-            Some(&(ATTR_EXTENDED_COMMUNITIES_FLAGS | BGP_ATTR_FLAG_EXTENDED_LENGTH))
+            Some(&(BGP_ATTR_FLAG_OPTIONAL | BGP_ATTR_FLAG_EXTENDED_LENGTH))
         );
-        assert_eq!(decoded.type_code, ATTR_EXTENDED_COMMUNITIES);
+        assert_eq!(decoded.type_code, 99);
         assert_eq!(decoded.value, BgpAttrValue::Unknown(value));
 
         let mut reencoded = Vec::new();
