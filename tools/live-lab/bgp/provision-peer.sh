@@ -8,6 +8,7 @@ DRIVER_AS="${DRIVER_AS:-65000}"
 PEER_AS="${PEER_AS:-65001}"
 PEER_ROUTER_ID="${PEER_ROUTER_ID:-192.0.2.1}"
 PEER_ORIGINATE_PREFIX="${PEER_ORIGINATE_PREFIX:-198.51.100.0/24}"
+EBGP_MULTIHOP_TTL="${EBGP_MULTIHOP_TTL:-}"
 
 FRR_CONF="${FRR_CONF:-/etc/frr/frr.conf}"
 FRR_DAEMONS="${FRR_DAEMONS:-/etc/frr/daemons}"
@@ -40,6 +41,9 @@ require_value PEER_ROUTER_ID "$PEER_ROUTER_ID"
 require_value PEER_ORIGINATE_PREFIX "$PEER_ORIGINATE_PREFIX"
 require_integer DRIVER_AS "$DRIVER_AS"
 require_integer PEER_AS "$PEER_AS"
+if [[ -n "$EBGP_MULTIHOP_TTL" ]]; then
+    require_integer EBGP_MULTIHOP_TTL "$EBGP_MULTIHOP_TTL"
+fi
 [[ -f "$FRR_TEMPLATE" ]] || die "template not found: $FRR_TEMPLATE"
 
 SUDO=()
@@ -112,13 +116,17 @@ sed_escape() {
 }
 
 render_config() {
-    local driver_ip driver_as peer_as peer_router_id peer_origin_prefix
+    local driver_ip driver_as peer_as peer_router_id peer_origin_prefix ebgp_multihop_line
 
     driver_ip="$(sed_escape "$DRIVER_IP")"
     driver_as="$(sed_escape "$DRIVER_AS")"
     peer_as="$(sed_escape "$PEER_AS")"
     peer_router_id="$(sed_escape "$PEER_ROUTER_ID")"
     peer_origin_prefix="$(sed_escape "$PEER_ORIGINATE_PREFIX")"
+    ebgp_multihop_line=""
+    if [[ -n "$EBGP_MULTIHOP_TTL" ]]; then
+        ebgp_multihop_line=" neighbor ${driver_ip} ebgp-multihop ${EBGP_MULTIHOP_TTL}"
+    fi
 
     sed \
         -e "s|{{DRIVER_IP}}|${driver_ip}|g" \
@@ -126,6 +134,7 @@ render_config() {
         -e "s|{{PEER_AS}}|${peer_as}|g" \
         -e "s|{{PEER_ROUTER_ID}}|${peer_router_id}|g" \
         -e "s|{{PEER_ORIGINATE_PREFIX}}|${peer_origin_prefix}|g" \
+        -e "s|{{EBGP_MULTIHOP_LINE}}|${ebgp_multihop_line}|g" \
         "$FRR_TEMPLATE"
 }
 

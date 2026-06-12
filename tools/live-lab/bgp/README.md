@@ -11,6 +11,8 @@ Defaults use documentation addresses and private ASNs:
 - `PEER_AS=65001`
 - `PEER_ROUTER_ID=192.0.2.1`
 - `PEER_ORIGINATE_PREFIX=198.51.100.0/24`
+- `EBGP_MULTIHOP_TTL=` (unset by default; use `2` for provider-routed private
+  networks)
 - `FRR_CONF=/etc/frr/frr.conf`
 - `FRR_DAEMONS=/etc/frr/daemons`
 - `FRR_TEMPLATE=tools/live-lab/bgp/frr.conf.template`
