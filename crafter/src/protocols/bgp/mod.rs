@@ -186,8 +186,8 @@ impl BgpBody {
 
 /// BGP-4 message layer (RFC 4271).
 ///
-/// A `Bgp` layer is the shared 19-octet message header ([`BgpHeader`]) followed
-/// by a typed [`BgpBody`]. `compile()` writes the header — auto-filling the
+/// A `Bgp` layer is the shared 19-octet message header followed by a typed
+/// body. `compile()` writes the header - auto-filling the
 /// Length field from the body size unless the caller pinned it — then the body
 /// bytes. KEEPALIVE (RFC 4271 §4.4) is header-only, so `Bgp::keepalive()`
 /// compiles to exactly the 19-octet header.
