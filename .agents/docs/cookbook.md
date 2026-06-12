@@ -611,6 +611,151 @@ fn budget(path_mtu: usize) {
 }
 ```
 
+## Build BGP Messages
+
+BGP is a TCP application payload. Generated tools should build individual BGP
+messages with `Bgp` and keep any session state, negotiated capabilities, RIB
+state, or policy outside `crafter`. The crate builds and decodes wire messages;
+it is not a BGP finite state machine.
+
+The BGP layer and helper types are available through `crafter::prelude::*`:
+`Bgp`, `BgpCapability`, `BgpPathAttribute`, `BgpPrefix`, `AsPathSegment`, and
+the origin/AS-path helper constants. Defaults use documentation prefixes and
+private ASNs.
+
+```rust
+use crafter::prelude::*;
+use std::net::{Ipv4Addr, Ipv6Addr};
+
+fn main() -> crafter::Result<()> {
+    let ipv4 = BgpPrefix::from_ipv4(Ipv4Addr::new(203, 0, 113, 0), 24)?;
+    let ipv6 = BgpPrefix::from_ipv6("2001:db8::".parse::<Ipv6Addr>()?, 32)?;
+
+    let open = Packet::from_layer(
+        Bgp::open()
+            .my_as(65000)
+            .hold_time(90)
+            .bgp_id(Ipv4Addr::new(192, 0, 2, 1))
+            .capabilities([
+                BgpCapability::ipv4_unicast(),
+                BgpCapability::ipv6_unicast(),
+                BgpCapability::route_refresh(),
+                BgpCapability::four_octet_as(65000),
+            ]),
+    );
+
+    let update = Packet::from_layer(
+        Bgp::update()
+            .attribute(BgpPathAttribute::origin(BGP_ORIGIN_IGP))
+            .attribute(BgpPathAttribute::as_sequence(&[65000]))
+            .attribute(BgpPathAttribute::next_hop(Ipv4Addr::new(192, 0, 2, 1)))
+            .nlri(ipv4),
+    );
+
+    let mp_update = Packet::from_layer(
+        Bgp::update()
+            .attribute(BgpPathAttribute::origin(BGP_ORIGIN_IGP))
+            .attribute(BgpPathAttribute::as_sequence4(&[65000]))
+            .attribute(BgpPathAttribute::mp_reach_ipv6(
+                "2001:db8::1".parse::<Ipv6Addr>()?,
+                &[ipv6],
+            )),
+    );
+
+    for packet in [open, Packet::from_layer(Bgp::keepalive()), update, mp_update] {
+        let bytes = packet.compile()?;
+        println!("{}", packet.summary());
+        println!("{}", bytes.hexdump());
+    }
+
+    Ok(())
+}
+```
+
+Use `BgpCapability::raw` and `BgpPathAttribute::unknown(...).with_flags(...)`
+when a tool needs to preserve an unknown codepoint or deliberately emit unusual
+bytes. Use `marker`, `length`, `opt_params_len`, `withdrawn_len`, and `attr_len`
+only for malformed-on-purpose tests; the normal path should let `compile()`
+fill them.
+
+BGP decode goes through the default TCP registry when either TCP port is 179:
+
+```rust
+use crafter::prelude::*;
+use std::net::Ipv4Addr;
+
+let packet = Ipv4::new()
+    .src(Ipv4Addr::new(192, 0, 2, 10))
+    .dst(Ipv4Addr::new(198, 51, 100, 20))
+    / Tcp::new().sport(49152).dport(179).ack_segment()
+    / Bgp::keepalive();
+
+let bytes = packet.compile()?;
+let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes())?;
+for bgp in decoded.layers::<Bgp>() {
+    println!("{}", bgp.summary());
+}
+```
+
+### BGP Session Example
+
+Use the `bgp_session` example as the generated-tool reference for sequencing
+OPEN, KEEPALIVE, UPDATE, inbound decode, and Cease teardown. With no `--peer`,
+it is offline and only prints the planned documentation-safe messages:
+
+```sh
+cargo run -p crafter --example bgp_session
+cargo run -p crafter --example bgp_session -- --ipv6
+```
+
+The live form is opt-in and belongs only inside a disposable lab endpoint:
+
+```sh
+cargo run -p crafter --example bgp_session -- \
+  --peer 192.0.2.20:179 \
+  --ipv6 \
+  --linger-seconds 45 \
+  --out target/lab/bgp/manual
+```
+
+Do not use a real internet peer in generated defaults. Do not write live public
+IPs, provider IDs, credentials, or packet captures into tracked files.
+
+### BGP Lab Flow
+
+For live validation, use the provider-backed lab session and FRR peer asset,
+not raw traffic from the developer machine. Plan first:
+
+```sh
+tools/lab/run plan --provider qemu --dry-run --profile bgp-smoke --seed 1 --role stimulus --role target
+```
+
+Then create a session only after explicit authorization:
+
+```sh
+tools/lab/run create --provider qemu --profile bgp-smoke --seed 1 --role stimulus --role target --confirm-live-run --json
+```
+
+Inside the target endpoint, run `tools/live-lab/bgp/provision-peer.sh` with
+runtime-only environment values for the driver address, peer AS, driver AS, and
+optional `EBGP_MULTIHOP_TTL`. Inside the stimulus endpoint, run the
+`bgp_session` example with `--peer <target-private-ip>:179 --ipv6 --out
+target/lab/bgp/<provider>`, capture `tcp port 179`, and save the FRR RIB output
+beside the transcript. The smoke validates:
+
+- the target RIB contains `203.0.113.0/24`;
+- the target RIB contains `2001:db8::/32`;
+- the driver transcript decoded the peer-originated `198.51.100.0/24` UPDATE;
+- a non-empty port-179 pcap and transcript were collected.
+
+Always destroy the scoped session, including on failure:
+
+```sh
+tools/lab/run destroy --session <session-id> --json
+```
+
+For user-facing BGP coverage, see [`docs/bgp.md`](../../docs/bgp.md).
+
 ## Build IPSec (ESP, AH, IKEv2)
 
 IPSec is a set of ordinary layers: `Esp`, `Ah`, the `IkeHeader` plus the typed

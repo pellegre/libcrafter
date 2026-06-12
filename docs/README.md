@@ -13,6 +13,8 @@ This directory contains user and contributor documentation for the Rust
   source-backed [IPv4 RFC manifest](ipv4-rfc-manifest.md).
 - [DNS wire coverage](dns.md) describes the supported DNS wire-message
   primitives, planned typed records, and known deferrals.
+- [BGP wire coverage](bgp.md) describes BGP message construction, UPDATE path
+  attributes, MP-BGP, TCP/179 decode dispatch, and the offline/live surfaces.
 - [TCP wire coverage](tcp.md) describes the supported TCP segment construction,
   typed options, checksums, decode, inspection, and sizing helpers, and links
   the source-backed [TCP RFC manifest](tcp-rfc-manifest.md).
