@@ -1,0 +1,57 @@
+version: 1
+kind: feature
+name: bgp_keepalive
+summary: >-
+  BGP KEEPALIVE message framing over TCP/179, asserting the RFC 4271 header-only
+  length and absence of message body.
+
+layers:
+  - bgp
+  - tcp
+  - ipv4
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: header_only
+    rfc:
+      - RFC 4271 Section 4.1
+      - RFC 4271 Section 4.4
+    message_type: keepalive
+    checks:
+      - marker_all_ones
+      - length_is_19
+      - type_is_keepalive
+      - no_message_body
+
+coverage_cases:
+  - bgp-keepalive
+
+supported_cases:
+  - name: bgp-keepalive
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - BGPHeader
+      - BGPKeepAlive
+    encode: true
+    decode: true
+    notes:
+      - Scapy 2.7.0 natively round-trips KEEPALIVE as a BGP header with length
+        19 and no body.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    notes:
+      - KEEPALIVE compile emits only the RFC 4271 header and decode rejects a
+        declared KEEPALIVE length that includes a body.
