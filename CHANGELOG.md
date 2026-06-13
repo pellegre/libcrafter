@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.0.0 - Packet-Level Network Interaction
+## 0.3.0 - Packet-Level Network Interaction
 
 This is the first public release of the Rust packet-level network interaction
 workspace, released as one public crate: `crafter`.
@@ -31,7 +31,7 @@ workspace, released as one public crate: `crafter`.
 
 ### Known Boundaries
 
-- The 0.1.x Rust API may evolve as protocol and wire workflow coverage grows.
+- The 0.x Rust API may evolve as protocol and wire workflow coverage grows.
 - The decoder is intentionally smaller than a full packet analyzer and focuses
   on the current example surface.
 - TCP stream reassembly, packet fragmentation/reassembly, full pcapng support,
@@ -40,7 +40,7 @@ workspace, released as one public crate: `crafter`.
   compressed names.
 - Live packet sends and captures require platform privileges and should run only
   in authorized wire environments.
-- QEMU and VirtualBox wire providers are not included in 2.0.0.
+- QEMU and VirtualBox wire providers are not included in 0.3.0.
 
 ### Safety
 
