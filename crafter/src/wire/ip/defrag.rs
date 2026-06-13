@@ -503,10 +503,11 @@ impl IpDefrag {
                 Ipv4DefragObservation::Complete(state)
             }
             Ipv4DefragObservationKind::Conflict => {
-                let state = self
-                    .ipv4_datagrams
-                    .remove(&key)
-                    .expect("conflicting IPv4 defrag state must remain in the map");
+                let Some(state) = self.ipv4_datagrams.remove(&key) else {
+                    return Ipv4DefragObservation::Error(defrag_transform_error(
+                        "conflicting IPv4 defrag state disappeared",
+                    ));
+                };
                 Ipv4DefragObservation::Conflict(state)
             }
         }
