@@ -211,7 +211,7 @@ pub(crate) fn verify_eapol_mic(
         *byte = 0;
     }
 
-    let expected_mic = wpa2_eapol_mic(ptk.kck(), &mic_input);
+    let expected_mic = wpa2_eapol_mic(ptk.kck(), &mic_input)?;
     Ok(constant_time_eq(observed_mic, &expected_mic))
 }
 
@@ -375,14 +375,19 @@ fn wpa_prf_sha1(key: &[u8], label: &[u8], data: &[u8], output: &mut [u8]) {
     }
 }
 
-fn wpa2_eapol_mic(kck: &[u8; WPA_PTK_KCK_LEN], mic_input: &[u8]) -> [u8; EAPOL_KEY_MIC_LEN] {
-    let mut mac = <HmacSha1 as Mac>::new_from_slice(kck).expect("HMAC accepts WPA KCK material");
+fn wpa2_eapol_mic(
+    kck: &[u8; WPA_PTK_KCK_LEN],
+    mic_input: &[u8],
+) -> Result<[u8; EAPOL_KEY_MIC_LEN]> {
+    let mut mac = <HmacSha1 as Mac>::new_from_slice(kck).map_err(|_| {
+        CrafterError::invalid_field_value("wpa.kck", "WPA KCK must be valid HMAC key material")
+    })?;
     mac.update(mic_input);
 
     let digest = mac.finalize().into_bytes();
     let mut mic = [0u8; EAPOL_KEY_MIC_LEN];
     mic.copy_from_slice(&digest[..EAPOL_KEY_MIC_LEN]);
-    mic
+    Ok(mic)
 }
 
 fn aes_decrypt_block(cipher: &Aes128, block: [u8; AES_BLOCK_LEN]) -> [u8; AES_BLOCK_LEN] {
@@ -614,7 +619,7 @@ mod tests {
     fn mic_verifies_wpa2_eapol_key_frame() {
         let ptk = PairwiseTransientKey::new([0x4a; WPA_PTK_CCMP128_LEN]);
         let mut frame = eapol_key_frame([0; EAPOL_KEY_MIC_LEN], 2);
-        let mic = wpa2_eapol_mic(ptk.kck(), &frame);
+        let mic = wpa2_eapol_mic(ptk.kck(), &frame).unwrap();
         frame[EAPOL_KEY_MIC_OFFSET_FROM_EAPOL..EAPOL_KEY_MIC_OFFSET_FROM_EAPOL + EAPOL_KEY_MIC_LEN]
             .copy_from_slice(&mic);
 
@@ -628,7 +633,7 @@ mod tests {
     fn mic_zeroes_eapol_key_mic_field_before_verification() {
         let ptk = PairwiseTransientKey::new([0x33; WPA_PTK_CCMP128_LEN]);
         let mut frame = eapol_key_frame([0; EAPOL_KEY_MIC_LEN], 2);
-        let mic = wpa2_eapol_mic(ptk.kck(), &frame);
+        let mic = wpa2_eapol_mic(ptk.kck(), &frame).unwrap();
         frame[EAPOL_KEY_MIC_OFFSET_FROM_EAPOL..EAPOL_KEY_MIC_OFFSET_FROM_EAPOL + EAPOL_KEY_MIC_LEN]
             .copy_from_slice(&mic);
 
@@ -636,7 +641,7 @@ mod tests {
         zeroed_input
             [EAPOL_KEY_MIC_OFFSET_FROM_EAPOL..EAPOL_KEY_MIC_OFFSET_FROM_EAPOL + EAPOL_KEY_MIC_LEN]
             .fill(0);
-        assert_eq!(wpa2_eapol_mic(ptk.kck(), &zeroed_input), mic);
+        assert_eq!(wpa2_eapol_mic(ptk.kck(), &zeroed_input).unwrap(), mic);
         assert!(verify_eapol_mic(&ptk, &frame).unwrap());
     }
 
@@ -644,7 +649,7 @@ mod tests {
     fn mic_rejects_unsupported_descriptor_version() {
         let ptk = PairwiseTransientKey::new([0x4a; WPA_PTK_CCMP128_LEN]);
         let mut frame = eapol_key_frame([0; EAPOL_KEY_MIC_LEN], 1);
-        let mic = wpa2_eapol_mic(ptk.kck(), &frame);
+        let mic = wpa2_eapol_mic(ptk.kck(), &frame).unwrap();
         frame[EAPOL_KEY_MIC_OFFSET_FROM_EAPOL..EAPOL_KEY_MIC_OFFSET_FROM_EAPOL + EAPOL_KEY_MIC_LEN]
             .copy_from_slice(&mic);
 
