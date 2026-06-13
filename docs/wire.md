@@ -4,9 +4,10 @@
 normal `Packet` model at the center while adding stream primitives for capture,
 transform, and transmit.
 
-Use `crafter::pcap` for low-level pcap file records and pcap codec work. Use
-`crafter::wire` when application code wants a stream of `PacketRecord` values
-from a backend or wants to write packet records through a backend.
+Application code should enter through `PacketWire` when it wants a stream of
+`PacketRecord` values from a backend or wants to write packet records through a
+backend. The pcap codec and libpcap integration are owned by the pcap wire
+backend rather than a separate public crate module.
 
 ## Model
 
@@ -89,7 +90,7 @@ Use a pcap recorder when the output should be deterministic and inspectable.
 ```rust
 use crafter::prelude::*;
 
-let writer = PacketWire::pcap_recorder("target/out.pcap", PcapLinkType::Ethernet)
+let writer = PacketWire::pcap_recorder("target/out.pcap", LinkType::Ethernet)
     .open()?
     .writer()?;
 

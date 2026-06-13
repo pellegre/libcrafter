@@ -225,7 +225,7 @@ Offline (no privileges, no live traffic) is the default validation path.
 | --- | --- |
 | Ethernet ARP request/reply pcap round trip | Covered (`pcaps/ethernet-arp-request-reply.pcap`). |
 | Linux cooked capture (SLL) ARP pcap round trip | Covered (`pcaps/linux-sll-arp-who-has.pcap`). |
-| BPF filter selecting ARP (e.g. `icmp or arp`) | Covered by pcap tests (`read_pcap_filtered` selecting `arp` from a mixed capture). |
+| BPF filter selecting ARP (e.g. `icmp or arp`) | Covered by pcap tests using `PacketWire::pcap_file(...).filter("arp")` on a mixed capture. |
 | Nonstandard / variable-length ARP pcap fixtures | Covered (`pcaps/ethernet-arp-nonstandard.pcap`: InfiniBand HRD, IPv6 Ethertype, HLN=8/PLN=16 raw addresses, unknown opcode), write→read→write byte-stable. |
 
 ## Live QEMU coverage
