@@ -363,9 +363,15 @@ fn wpa_prf_sha1(key: &[u8], label: &[u8], data: &[u8], output: &mut [u8]) {
         let take = remaining.min(block.len());
         output[written..written + take].copy_from_slice(&block[..take]);
         written += take;
-        counter = counter
-            .checked_add(1)
-            .expect("WPA PRF output length fits one-octet counter");
+        if written < output.len() {
+            let Some(next_counter) = counter.checked_add(1) else {
+                // Current PTK output fits easily; this keeps larger future
+                // requests deterministic and non-panicking.
+                output[written..].fill(0);
+                return;
+            };
+            counter = next_counter;
+        }
     }
 }
 
