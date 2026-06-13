@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use crate::net::send::validated_interface;
 use crate::net::{SendMode, SendOptions};
-use crate::pcap::PcapLinkType;
+use crate::wire::backend::pcap::PcapLinkType;
 
 use super::backend::pcap::{
     filter_trimmed, OfflinePcapSource, PcapFileWriter, PcapInterfaceSource, PcapInterfaceWriter,

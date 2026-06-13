@@ -835,7 +835,7 @@ mod tests {
     use super::super::config::IP_FRAGMENT_MIN_MTU;
     use super::super::ipv6::IPV6_FRAGMENT_UNSUPPORTED_EXTENSION_SCOPE_NOTE;
     use super::*;
-    use crate::pcap::PcapLinkType;
+    use crate::wire::backend::pcap::PcapLinkType;
     use crate::wire::record::{BackendKind, PacketOrigin, PacketRecord};
     use crate::wire::WireError;
     use crate::{CrafterError, Ipv6, Raw, IPPROTO_IPV6_AH, IPPROTO_IPV6_FRAGMENT, IPPROTO_UDP};

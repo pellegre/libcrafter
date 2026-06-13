@@ -40,7 +40,7 @@ mod ipv6_extension_scope {
         IPV6_FRAGMENT_UNSUPPORTED_EXTENSION_SCOPE_NOTE,
     };
     use super::{IpDefrag, IpFragment};
-    use crate::pcap::PcapLinkType;
+    use crate::wire::backend::pcap::PcapLinkType;
     use crate::wire::record::PacketRecord;
     use crate::{
         Ipv6, Ipv6DestinationOptionsHeader, Ipv6FragmentHeader, Ipv6HopByHopOptionsHeader,

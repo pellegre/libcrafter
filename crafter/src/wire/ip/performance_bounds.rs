@@ -1,5 +1,5 @@
 use super::{IpDefrag, IpDefragConfig};
-use crate::pcap::PcapTimestamp;
+use crate::wire::backend::pcap::PcapTimestamp;
 use crate::wire::record::{BackendKind, PacketRecord};
 use crate::{Ipv4, Ipv6, Ipv6FragmentHeader, Raw, IPPROTO_UDP};
 use std::net::{Ipv4Addr, Ipv6Addr};
