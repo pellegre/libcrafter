@@ -15,7 +15,7 @@ Defaults use documentation addresses and private ASNs:
   networks)
 - `FRR_CONF=/etc/frr/frr.conf`
 - `FRR_DAEMONS=/etc/frr/daemons`
-- `FRR_TEMPLATE=tools/live-lab/bgp/frr.conf.template`
+- `FRR_TEMPLATE=tools/lab/workloads/bgp/frr.conf.template`
 
 Example lab-endpoint use:
 

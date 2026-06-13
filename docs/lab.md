@@ -49,6 +49,10 @@ the bootstrap context passed to workload hooks, records command metadata, tracks
 artifacts, and writes cleanup records. Workload bootstrap happens after this
 repository bootstrap step.
 
+Profile-specific lab workload assets live under `tools/lab/workloads/`. They
+are repository-owned fixtures for lab profiles, but they are executed only
+inside disposable lab endpoints as part of an explicit lab workflow.
+
 Oracle owns the `libcrafter` and `reference_backend` workload setup. Probe owns
 the `stimulus` and `target` workload setup. Docker does not change that
 boundary: the Docker lab adapter owns only the constrained private endpoint
