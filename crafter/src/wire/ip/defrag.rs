@@ -567,10 +567,11 @@ impl IpDefrag {
                 Ipv6DefragObservation::Complete(state)
             }
             Ipv6DefragObservationKind::Conflict => {
-                let state = self
-                    .ipv6_datagrams
-                    .remove(&key)
-                    .expect("conflicting IPv6 defrag state must remain in the map");
+                let Some(state) = self.ipv6_datagrams.remove(&key) else {
+                    return Ipv6DefragObservation::Error(defrag_transform_error(
+                        "conflicting IPv6 defrag state disappeared",
+                    ));
+                };
                 Ipv6DefragObservation::Conflict(state)
             }
         }
