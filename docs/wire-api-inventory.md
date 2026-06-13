@@ -6,15 +6,17 @@ document fixes the API boundary and backend responsibilities.
 
 ## Boundary
 
-`crafter::wire` is the high-level packet stream API. Every stream item is a
+`crafter::wire` is the user-facing packet stream API. Every stream item is a
 `PacketRecord`, which always contains a `Packet`. Opaque or undecoded bytes stay
 inside that packet as `Raw` layers instead of becoming a separate non-packet
-event type.
+event type. Application code that wants a packet stream should enter through
+`PacketWire`, `Sniffer`, or `Transmitter`.
 
-`crafter::pcap` remains the low-level pcap file format, record, timestamp, link
-type, reader, writer, and libpcap support module. Application code that wants a
-packet stream should usually enter through `PacketWire`, `Sniffer`, or
-`Transmitter`; backend implementations can still use `crafter::pcap` directly.
+`crafter::wire::backend::pcap` is the backend implementation and API boundary
+for pcap-specific internals such as file format parsing, timestamps, pcap link
+types, readers, writers, libpcap filtering, and live libpcap capture/write
+support. Those details are no longer exposed as a top-level public crate
+module.
 
 ## Public Types
 

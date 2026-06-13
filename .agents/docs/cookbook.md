@@ -385,7 +385,11 @@ fn main() -> crafter::Result<()> {
     assert!(decoded.layer::<Dot11>().is_some());
     assert!(decoded.layer::<LlcSnap>().is_some());
 
-    dump_pcap("target/dot11-agent-dry-run.pcap", [&packet], LinkType::Radiotap)?;
+    let writer = PacketWire::pcap_recorder("target/dot11-agent-dry-run.pcap", LinkType::Radiotap)
+        .open()?
+        .writer()?;
+    let mut tx = Transmitter::new(writer);
+    tx.send(packet.clone())?;
 
     let plan = packet.send_dry_run(
         SendOptions::new()
@@ -986,18 +990,23 @@ match Packet::decode_from_l3(NetworkLayer::Ipv4, bytes) {
 
 ## Read A pcap
 
-Use `read_pcap` for full offline reads and `read_pcap_filtered` when a libpcap
-BPF filter should be applied while reading.
+Use `PacketWire` with `Sniffer` for full offline reads. Add `.filter(...)`
+before opening when a libpcap BPF filter should be applied while reading.
 
 ```rust
 use crafter::prelude::*;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let packets = read_pcap_filtered("capture.pcap", "tcp or udp")?;
-    for captured in packets {
+    let source = PacketWire::pcap_file("capture.pcap")
+        .filter("tcp or udp")
+        .open()?
+        .source()?;
+
+    let records = Sniffer::new(source).collect_records()?;
+    for captured in records {
         println!(
-            "ts={} summary={}",
-            captured.timestamp().seconds(),
+            "metadata={:?} summary={}",
+            captured.metadata(),
             captured.packet().summary()
         );
     }
@@ -1007,8 +1016,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Write A pcap
 
-Use `dump_pcap` for deterministic fixtures. Use an explicit link type so the
-file can be decoded later without guessing.
+Use a packet wire recorder for deterministic fixtures. Use an explicit link
+type so the file can be decoded later without guessing.
 
 ```rust
 use crafter::prelude::*;
@@ -1024,7 +1033,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         / Udp::new().sport(53000).dport(33434)
         / Raw::from("payload");
 
-    dump_pcap("target/agent-fixture.pcap", [&packet], LinkType::Ethernet)?;
+    let writer = PacketWire::pcap_recorder("target/agent-fixture.pcap", LinkType::Ethernet)
+        .open()?
+        .writer()?;
+    let mut tx = Transmitter::new(writer);
+    tx.send(packet)?;
     Ok(())
 }
 ```

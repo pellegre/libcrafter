@@ -20,7 +20,6 @@ modules inside the one crate:
 | --- | --- |
 | `crafter::prelude` | Common imports for examples and agent-written tools. |
 | `crafter::core` | Packet model, layer model, encode/decode, checksums, formatting, and protocol registry. |
-| `crafter::pcap` | Low-level pcap reader/writer helpers, records, timestamps, link types, and libpcap backend support. |
 | `crafter::wire` | Wire packet I/O through `PacketWire`, `PacketRecord`, packet sources, packet writers, sniffers, transmitters, and transform chains. |
 | `crafter::net` | Interfaces, raw sockets, send, send-receive, routing helpers, and address helpers. |
 
@@ -123,28 +122,36 @@ for layer in packet.iter() {
 `summary` should be compact and stable enough for snapshot tests. `show` can be
 more verbose and field-oriented.
 
-## Pcap Helpers
+## Pcap Through Packet Wire
 
 ```rust
-let packets = PcapReader::open("input.pcap")?.collect_packets()?;
+let source = PacketWire::pcap_file("input.pcap")
+    .filter("tcp or udp")
+    .open()?
+    .source()?;
 
-PcapWriter::create("out.pcap", LinkType::Ethernet)?
-    .write_packet(&packet)?
-    .flush()?;
-```
+let records = Sniffer::new(source).collect_records()?;
 
-Lower-level streaming APIs:
-
-```rust
-let mut reader = PcapReader::open("input.pcap")?;
-while let Some(record) = reader.next_record()? {
-    let packet = Packet::decode_from_link(record.link_type(), record.data())?;
-    println!("{}", packet.summary());
+for record in records {
+    println!("{}", record.packet().summary());
+    println!("{:?}", record.metadata());
 }
 ```
 
-Pcap helpers are exposed under `crafter::pcap` and through the prelude where
-appropriate.
+Deterministic pcap output uses a recorder backend and `Transmitter`:
+
+```rust
+let writer = PacketWire::pcap_recorder("out.pcap", LinkType::Ethernet)
+    .open()?
+    .writer()?;
+
+let mut tx = Transmitter::new(writer);
+let reports = tx.send(packet)?;
+```
+
+Low-level pcap codec details are owned by the packet wire backend. User code
+should enter through `PacketWire`, `Sniffer`, and `Transmitter` so reads yield
+packet records with pcap metadata and writes consume packets or packet records.
 
 ## Wire Packet I/O
 
@@ -168,9 +175,9 @@ The public stream shape is:
 
 `PacketWire::source()`, `PacketWire::writer()`, and `PacketWire::split()`
 consume the opened wire and return typed `WireError::UnsupportedCapability`
-errors when the backend cannot satisfy the requested direction. `pcap` remains
-the low-level file format and libpcap backend module; `wire` is the packet
-stream abstraction built on top.
+errors when the backend cannot satisfy the requested direction. The pcap codec
+and libpcap integration live behind the wire backend boundary; `wire` is the
+user-facing packet stream abstraction.
 
 WPA decryption is available as the stateful `WpaDecrypt` inbound
 `PacketTransform`. It observes beacons and EAPOL handshakes, keeps per-network
@@ -213,7 +220,7 @@ let records = Sniffer::new(source)
 Offline pcap output and raw socket dry-run writing use `Transmitter`:
 
 ```rust
-let writer = PacketWire::pcap_recorder("out.pcap", PcapLinkType::Ethernet)
+let writer = PacketWire::pcap_recorder("out.pcap", LinkType::Ethernet)
     .open()?
     .writer()?;
 
@@ -669,7 +676,7 @@ in [ICMPv6 message coverage](icmpv6-coverage.md).
 | `interface_helpers` | Documentation-safe interface metadata and address helper output. |
 | `ip_ranges` | IPv4 CIDR, range, and list parsing. |
 | `pcap_write` | Generated Ethernet/IPv4/TCP packets written to a pcap file. |
-| `pcap_read` | Pcap metadata inspection, packet collection, and streaming `PcapReader` workflows. |
+| `pcap_read` | Pcap metadata inspection, packet collection, and bounded `PacketWire` source workflows. |
 | `sniffer_offline` | Offline `PacketWire` pcap input, `PacketRecord` metadata, and bounded `Sniffer` iteration. |
 | `capture_pcap` | Bounded `PacketWire` pcap interface capture and pcap writing after isolated-lab opt-in. |
 | `arp_who_has` | Explicit Ethernet broadcast ARP who-has construction from known MAC and IPv4 values. |
