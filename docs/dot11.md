@@ -306,13 +306,13 @@ association, channel hopping, AP behavior, or supplicant behavior.
 
 Classic pcap support includes both new Wi-Fi link types:
 
-- `PcapLinkType::Ieee80211` maps to `DLT_IEEE802_11` (`105`) for bare Dot11
-  records.
-- `PcapLinkType::Ieee80211Radiotap` maps to `DLT_IEEE802_11_RADIO` (`127`) for
-  radiotap-wrapped Dot11 records.
+- `LinkType::Ieee80211` maps to `DLT_IEEE802_11` (`105`) for bare Dot11
+  records when used with a pcap wire recorder.
+- `LinkType::Radiotap` maps to `DLT_IEEE802_11_RADIO` (`127`) for
+  radiotap-wrapped Dot11 records when used with a pcap wire recorder.
 
-Use `PcapReader` to preserve and decode existing files. Use `PcapWriter` with
-the link type that matches the packet root:
+Use `PacketWire` and `Sniffer` to preserve and decode existing files. Use a
+pcap recorder with `Transmitter` and the link type that matches the packet root:
 
 ```rust
 use crafter::prelude::*;
@@ -325,13 +325,16 @@ fn main() -> crafter::Result<()> {
             .addr3(MacAddr::new([0x00, 0x00, 0x5e, 0x00, 0x53, 0x02]))
         / Raw::from("synthetic-pcap-record");
 
-    let mut pcap = Vec::new();
-    PcapWriter::from_writer(&mut pcap, PcapLinkType::Ieee80211Radiotap)?
-        .write_packet(&packet)?
-        .flush()?;
+    let writer = PacketWire::pcap_recorder("target/dot11-radiotap.pcap", LinkType::Radiotap)
+        .open()?
+        .writer()?;
+    Transmitter::new(writer).send(packet.clone())?;
 
-    let decoded = PcapReader::from_reader(pcap.as_slice())?.collect_packets()?;
-    assert_eq!(decoded[0].summary(), packet.summary());
+    let source = PacketWire::pcap_file("target/dot11-radiotap.pcap")
+        .open()?
+        .source()?;
+    let decoded = Sniffer::new(source).collect_records()?;
+    assert_eq!(decoded[0].packet().summary(), packet.summary());
     Ok(())
 }
 ```
