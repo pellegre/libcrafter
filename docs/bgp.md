@@ -258,7 +258,7 @@ cargo run -p crafter --example bgp_session -- \
 
 That live form is intended for disposable provider-backed lab endpoints, not
 the developer host. The BGP lab flow provisions an FRR peer with
-`tools/live-lab/bgp/provision-peer.sh`, runs the example from the stimulus
+`tools/lab/workloads/bgp/provision-peer.sh`, runs the example from the stimulus
 endpoint, captures port 179 traffic, reads the peer RIB, saves artifacts under
 `target/lab/bgp/<provider>/`, and destroys the session. Never commit live public
 IPs, endpoint identifiers, credentials, or packet captures.

@@ -213,11 +213,11 @@ class LabCliPlanTest(unittest.TestCase):
         )
         self.assertEqual(
             roles["target"]["workload_metadata"]["provision_script"],
-            "tools/live-lab/bgp/provision-peer.sh",
+            "tools/lab/workloads/bgp/provision-peer.sh",
         )
         self.assertEqual(
             roles["target"]["bootstrap_metadata"]["frr_template"],
-            "tools/live-lab/bgp/frr.conf.template",
+            "tools/lab/workloads/bgp/frr.conf.template",
         )
 
 
