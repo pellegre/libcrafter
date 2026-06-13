@@ -52,6 +52,7 @@ const AES_KEY_WRAP_SEMIBLOCK_LEN: usize = 8;
 const AES_KEY_WRAP_ROUNDS: usize = 6;
 const AES_KEY_WRAP_DEFAULT_IV: [u8; AES_KEY_WRAP_SEMIBLOCK_LEN] =
     [0xa6; AES_KEY_WRAP_SEMIBLOCK_LEN];
+const EMPTY_PTK_KCK: [u8; WPA_PTK_KCK_LEN] = [0; WPA_PTK_KCK_LEN];
 
 /// WPA/WPA2-Personal pairwise master key material.
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -108,9 +109,7 @@ impl PairwiseTransientKey {
 
     /// Borrow the key confirmation key slice.
     pub fn kck(&self) -> &[u8; WPA_PTK_KCK_LEN] {
-        self.0[..WPA_PTK_KCK_LEN]
-            .try_into()
-            .expect("WPA KCK slice length is fixed")
+        self.0.first_chunk().unwrap_or(&EMPTY_PTK_KCK)
     }
 
     /// Borrow the key encryption key slice.
