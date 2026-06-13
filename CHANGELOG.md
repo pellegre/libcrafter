@@ -22,6 +22,9 @@ workspace, released as one public crate: `crafter`.
   sniffer iteration, callbacks, and background capture handles.
 - Raw send planning, live send backends, send/receive matching, batch
   workflows, interface helpers, address range helpers, and ARP resolution.
+- Transmit-side IP fragmentation (`IpFragment`) and receive-side IP reassembly
+  (`IpDefrag`) as explicit `wire` transforms with configurable limits and
+  statistics.
 - Safe-by-default Rust examples for basic, intermediate, and gated advanced
   packet workflows.
 - Provider-agnostic wire endpoint tooling with local dry-run and Hetzner
@@ -34,8 +37,10 @@ workspace, released as one public crate: `crafter`.
 - The 0.x Rust API may evolve as protocol and wire workflow coverage grows.
 - The decoder is intentionally smaller than a full packet analyzer and focuses
   on the current example surface.
-- TCP stream reassembly, packet fragmentation/reassembly, full pcapng support,
-  full BPF parsing, and full TCP/IP stack behavior are not included.
+- TCP stream reassembly, full pcapng support, full BPF parsing, and full
+  TCP/IP stack behavior are not included. IP fragmentation and reassembly are
+  available as explicit `IpFragment`/`IpDefrag` wire transforms, not as
+  automatic decode-time behavior.
 - DNS encoding is deterministic and uncompressed; DNS decoding accepts
   compressed names.
 - Live packet sends and captures require platform privileges and should run only

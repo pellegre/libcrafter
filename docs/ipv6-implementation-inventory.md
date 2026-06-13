@@ -286,6 +286,6 @@ upper-layer decode when the complete header chain is present. Non-initial
 fragments preserve remaining bytes as `Raw` because there is no reassembly
 context.
 
-These exclusions are intentional for the 2.x packet primitive. Future generated
+These exclusions are intentional for the 0.x packet primitive. Future generated
 tools may build workflows on top, but the crate remains a protocol-correct
 packet construction and decode library rather than an IPv6 stack.

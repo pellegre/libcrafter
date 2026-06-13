@@ -525,7 +525,7 @@ with `/`, so the same `compile`, `decode_from_l3`, `summary`, and `show` surface
 applies to ICMPv4 as to every other protocol.
 
 `Icmp` is now a deprecated alias for `Icmpv4`; existing code that imports `Icmp`
-keeps compiling within the 2.x line with a deprecation warning that points at
+keeps compiling within the 0.x line with a deprecation warning that points at
 the v4-explicit name. The ICMPv4 body layers below renamed alongside it, each
 with a deprecated alias under its old name: `IcmpQuotedIpv4` → `Icmpv4QuotedIp`,
 `IcmpTimestamp` → `Icmpv4Timestamp`, `IcmpAddressMask` → `Icmpv4AddressMask`,
