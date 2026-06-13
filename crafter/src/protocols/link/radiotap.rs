@@ -1534,7 +1534,7 @@ pub(crate) fn decode_radiotap_field(bit: u16, bytes: &[u8]) -> Result<RadiotapFi
             RadiotapField::Mcs(radiotap_field_array("radiotap.field.mcs", bytes)?)
         }
         bit if bit == u16::from(RADIOTAP_FIELD_A_MPDU_STATUS) => {
-            RadiotapField::AMpduStatus(bytes.try_into().expect("A-MPDU status size"))
+            RadiotapField::AMpduStatus(radiotap_field_array("radiotap.field.a_mpdu_status", bytes)?)
         }
         bit if bit == u16::from(RADIOTAP_FIELD_VHT) => {
             RadiotapField::Vht(bytes.try_into().expect("VHT size"))
