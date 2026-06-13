@@ -162,16 +162,20 @@ fn ipv6_option_summary(option: &Ipv6Option) -> String {
                 option.data().len()
             ),
         },
-        Ipv6Option::RouterAlert { .. } => {
-            let value = option
-                .router_alert_value()
-                .expect("Router Alert option carries two value bytes");
-            format!(
-                "Router Alert(0x{:02x},value={})",
+        Ipv6Option::RouterAlert { .. } => match option.router_alert_value() {
+            Some(value) => {
+                format!(
+                    "Router Alert(0x{:02x},value={})",
+                    option.option_type(),
+                    ipv6_router_alert_value_summary(value)
+                )
+            }
+            None => format!(
+                "Router Alert(0x{:02x},malformed_length={})",
                 option.option_type(),
-                ipv6_router_alert_value_summary(value)
-            )
-        }
+                option.data().len()
+            ),
+        },
         Ipv6Option::HomeAddress { .. } => {
             let address = option
                 .home_address_value()
