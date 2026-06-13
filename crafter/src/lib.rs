@@ -4,19 +4,18 @@
 //! examples, generated tools, and agent-directed packet workflows:
 //!
 //! - packet construction, decode, checksums, and protocol layers
-//! - classic pcap read/write helpers and libpcap-backed wire adapters
+//! - classic pcap file input/output and libpcap-backed wire adapters
 //! - interface, send, send/receive, batch, and address helpers
 //! - `PacketWire` source/writer backends, `PacketRecord` metadata,
 //!   `Sniffer`/`Transmitter` pipelines, and packet transforms
 //! - Ethernet, IEEE 802.11/radiotap, LLC/SNAP, IP, transport, and selected
 //!   application protocol primitives
 //!
-//! Public modules are organized as `crafter::core`, `crafter::pcap`,
-//! `crafter::net`, `crafter::wire`, and `crafter::prelude`. The `pcap`
-//! module is the low-level classic pcap file format and libpcap adapter layer.
-//! The `wire` module is the packet-stream API that generated tools should use
-//! for backend-neutral capture, transforms, and transmission. Most examples
-//! should start with `use crafter::prelude::*;`.
+//! Public modules are organized as `crafter::core`, `crafter::net`,
+//! `crafter::wire`, and `crafter::prelude`. The `wire` module is the
+//! packet-stream API that generated tools should use for backend-neutral
+//! capture, transforms, pcap file I/O, and transmission. Most examples should
+//! start with `use crafter::prelude::*;`.
 //!
 //! Local examples use dry-run send plans or offline pcaps unless live behavior
 //! is explicitly requested.
@@ -96,7 +95,6 @@ pub mod protocols;
 pub mod registry;
 
 pub mod net;
-pub mod pcap;
 pub mod wire;
 
 pub use error::{CrafterError, Result};
@@ -427,11 +425,6 @@ pub use net::{
     Ipv4Range, NetError, PacketBatchSendExt, PacketBatchSendRecvExt, PacketSendExt,
     PacketSendRecvExt, RawSender, ReplyMatcher, SendMode, SendOptions, SendPlan, SendRecv,
     SendRecvOptions, SendRecvReport, SendReport, SendTarget, SocketSend, SocketSender,
-};
-pub use pcap::{
-    dump_pcap, read_pcap, read_pcap_filtered, PcapError, PcapHeader, PcapLinkType, PcapPacket,
-    PcapReader, PcapRecord, PcapRecords, PcapTimestamp, PcapWriter, PcapWriterOptions,
-    TimestampPrecision,
 };
 pub use wire::Sniffer;
 pub use wire::{
@@ -784,28 +777,25 @@ pub mod core {
 
 /// Common imports for generated packet tools and examples.
 ///
-/// The prelude includes packet construction and decode types, low-level pcap
-/// file helpers, and the high-level wire primitives: [`PacketWire`],
-/// [`PacketRecord`], [`PacketTransform`], [`Sniffer`], and [`Transmitter`].
+/// The prelude includes packet construction and decode types plus the
+/// high-level wire primitives: [`PacketWire`], [`PacketRecord`],
+/// [`PacketTransform`], [`Sniffer`], and [`Transmitter`].
 pub mod prelude {
     pub use crate::core::*;
     pub use crate::{
         default_interface, default_interface_in, default_interface_name, derive_pmk, derive_ptk,
-        dump_pcap, find_interface, find_interface_in, get_ip_strings, get_ips, get_my_ip,
-        get_my_ip_in, get_my_ipv6, get_my_ipv6_in, get_my_mac, get_my_mac_in, interface_for,
-        interface_for_in, interfaces, parse_ip_range, parse_numbers, read_pcap, read_pcap_filtered,
-        reply_filter, reply_matches, send_packet, send_packets, send_plan, send_recv_packet,
-        send_recv_packets, BatchSend, BatchSendEntry, BatchSendRecv, BatchSendRecvEntry,
-        BatchSendRecvReport, BatchSendReport, Dot11Metadata, InterfaceAddress, InterfaceInfo,
-        Ipv4Range, NetError, PacketBatchSendExt, PacketBatchSendRecvExt, PacketSendExt,
-        PacketSendRecvExt, PairwiseTransientKey, PcapError, PcapHeader, PcapLinkType, PcapPacket,
-        PcapReader, PcapRecord, PcapRecords, PcapTimestamp, PcapWriter, PcapWriterOptions, Pmk,
+        find_interface, find_interface_in, get_ip_strings, get_ips, get_my_ip, get_my_ip_in,
+        get_my_ipv6, get_my_ipv6_in, get_my_mac, get_my_mac_in, interface_for, interface_for_in,
+        interfaces, parse_ip_range, parse_numbers, reply_filter, reply_matches, send_packet,
+        send_packets, send_plan, send_recv_packet, send_recv_packets, BatchSend, BatchSendEntry,
+        BatchSendRecv, BatchSendRecvEntry, BatchSendRecvReport, BatchSendReport, Dot11Metadata,
+        InterfaceAddress, InterfaceInfo, Ipv4Range, NetError, PacketBatchSendExt,
+        PacketBatchSendRecvExt, PacketSendExt, PacketSendRecvExt, PairwiseTransientKey, Pmk,
         RawSender, ReplyMatcher, SendMode, SendOptions, SendPlan, SendRecv, SendRecvOptions,
-        SendRecvReport, SendReport, SendTarget, Sniffer, SocketSend, SocketSender,
-        TimestampPrecision, Transmitter, VecPacketSource, WifiDecryptState, WifiMetadata,
-        WifiProtectionStatus, WireError, WpaAkm, WpaCipher, WpaCredentialStatus, WpaDecrypt,
-        WpaDecryptConfig, WpaDecryptReason, WpaHandshakeStatus, WpaKeyKind, WpaMetadata,
-        WpaNetwork, WriteReport,
+        SendRecvReport, SendReport, SendTarget, Sniffer, SocketSend, SocketSender, Transmitter,
+        VecPacketSource, WifiDecryptState, WifiMetadata, WifiProtectionStatus, WireError, WpaAkm,
+        WpaCipher, WpaCredentialStatus, WpaDecrypt, WpaDecryptConfig, WpaDecryptReason,
+        WpaHandshakeStatus, WpaKeyKind, WpaMetadata, WpaNetwork, WriteReport,
     };
     pub use crate::{
         BackendKind, BluetoothMetadata, DropAllTransform, DuplicateTransform, IpDefrag,

@@ -572,7 +572,8 @@ mod tests {
     use super::super::source::VecPacketSource;
     use super::super::writer::MemoryPacketWriter;
     use super::*;
-    use crate::{LinkType, PcapWriter, Raw};
+    use crate::wire::backend::pcap::PcapWriter;
+    use crate::{LinkType, Raw};
 
     static NEXT_TEMP_PCAP: AtomicUsize = AtomicUsize::new(0);
 

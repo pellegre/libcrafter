@@ -1,7 +1,7 @@
 use std::fmt;
 use std::io;
 
-use crate::pcap::PcapError;
+use crate::wire::backend::pcap::PcapError;
 use crate::CrafterError;
 
 use super::send::{SendMode, SendTarget};
