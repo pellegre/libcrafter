@@ -189,17 +189,3 @@ where
         Ok(self)
     }
 }
-
-pub fn dump_pcap<I, P>(
-    path: impl AsRef<Path>,
-    packets: I,
-    link_type: impl Into<PcapLinkType>,
-) -> Result<()>
-where
-    I: IntoIterator<Item = P>,
-    P: Borrow<Packet>,
-{
-    let mut writer = PcapWriter::create(path, link_type)?;
-    writer.write_packets(packets)?;
-    writer.flush()
-}
