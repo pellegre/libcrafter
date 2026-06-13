@@ -793,7 +793,7 @@ fn decode_decrypted_plaintext(dot11: &Dot11, plaintext: &[u8]) -> Packet {
         }
     }
 
-    Packet::decode_raw(plaintext).expect("raw packet decode is infallible")
+    Packet::new().push(Raw::from_bytes(plaintext))
 }
 
 fn plaintext_llc_snap(plaintext: &[u8]) -> Option<(u16, &[u8])> {
