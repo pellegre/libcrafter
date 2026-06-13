@@ -63,18 +63,16 @@ fn main() -> ExampleResult<()> {
         .metadata()
         .pcap_link_type()
         .ok_or("capture record is missing pcap link type")?;
-    let mut writer = PcapWriter::create(&out, link_type)?;
+    let writer = PacketWire::pcap_recorder(&out, link_type)
+        .open()?
+        .writer()?;
+    let mut transmitter = Transmitter::new(writer);
     for record in &packets {
         if record.metadata().pcap_link_type() != Some(link_type) {
             return Err("capture returned mixed pcap link types".into());
         }
-        let timestamp = record
-            .metadata()
-            .timestamp()
-            .ok_or("capture record is missing pcap timestamp")?;
-        writer.write_packet_with_timestamp(record.packet(), timestamp)?;
+        transmitter.send_record(record.clone())?;
     }
-    writer.flush()?;
 
     println!("packets: {}", packets.len());
     println!("link_type: {:?}", link_type);

@@ -9,7 +9,7 @@ use crate::{
 
 use super::codec::{PCAP_HEADER_LEN, PCAP_RECORD_HEADER_LEN};
 use super::{
-    dump_pcap, PcapLinkType, PcapReader, PcapTimestamp, PcapWriter, PcapWriterOptions,
+    PcapLinkType, PcapPacket, PcapReader, PcapTimestamp, PcapWriter, PcapWriterOptions,
     TimestampPrecision, DLT_EN10MB, DLT_IEEE802_11, DLT_IEEE802_11_RADIO, LINKTYPE_IEEE802_11,
     LINKTYPE_IEEE802_11_RADIOTAP,
 };
@@ -74,6 +74,22 @@ fn radiotap_dot11_llc_unknown_ethertype_bytes() -> Vec<u8> {
 
 fn read_le_u32(bytes: &[u8]) -> u32 {
     u32::from_le_bytes(bytes.try_into().unwrap())
+}
+
+fn collect_filtered_packets(path: &PathBuf, filter: &str) -> Vec<PcapPacket> {
+    let mut capture = super::LibpcapOfflineCapture::open(path, Some(filter)).unwrap();
+    let mut packets = Vec::new();
+    while let Some(record) = capture.next_record().unwrap() {
+        let packet = record.decode().unwrap();
+        packets.push(PcapPacket::new(
+            record.timestamp(),
+            record.original_len(),
+            record.data(),
+            record.pcap_link_type(),
+            packet,
+        ));
+    }
+    packets
 }
 
 fn tcp_packet(source_port: u16, destination_port: u16) -> Packet {
@@ -481,7 +497,7 @@ fn pcap_read_filter_uses_libpcap_bpf() {
     let two = tcp_packet(11, 443);
     let path = write_temp_pcap("read-filter", &[one, two]);
 
-    let packets = super::read_pcap_filtered(&path, "tcp and port 10").unwrap();
+    let packets = collect_filtered_packets(&path, "tcp and port 10");
 
     assert_eq!(packets.len(), 1);
     assert_eq!(
@@ -509,8 +525,7 @@ fn pcap_read_filter_supports_bpf_host_and_ether_proto() {
     let path = write_temp_pcap("read-filter-host", &[packet]);
 
     let packets =
-        super::read_pcap_filtered(&path, "ip and src host 192.0.2.10 and ether proto 0x0800")
-            .unwrap();
+        collect_filtered_packets(&path, "ip and src host 192.0.2.10 and ether proto 0x0800");
 
     assert_eq!(packets.len(), 1);
     std::fs::remove_file(path).unwrap();
@@ -556,8 +571,10 @@ fn pcap_roundtrip_dump_and_read_helpers() {
     ));
     let packet = ethernet_arp_packet();
 
-    dump_pcap(&path, [&packet], LinkType::Ethernet).unwrap();
-    let packets = super::read_pcap(&path).unwrap();
+    let mut writer = PcapWriter::create(&path, LinkType::Ethernet).unwrap();
+    writer.write_packet(&packet).unwrap();
+    writer.flush().unwrap();
+    let packets = PcapReader::open(&path).unwrap().collect_packets().unwrap();
     std::fs::remove_file(&path).unwrap();
 
     assert_eq!(packets.len(), 1);
@@ -724,7 +741,7 @@ fn pcap_read_filter_selects_arp_with_libpcap_bpf() {
     let arp = ethernet_arp_packet();
     let path = write_temp_pcap("read-filter-arp", &[tcp, arp]);
 
-    let packets = super::read_pcap_filtered(&path, "arp").unwrap();
+    let packets = collect_filtered_packets(&path, "arp");
 
     assert_eq!(packets.len(), 1);
     let decoded = packets[0].packet();

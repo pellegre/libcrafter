@@ -30,7 +30,7 @@ pub const LOCAL_MAC: MacAddr = MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0x01]
 /// Documentation-safe remote MAC address: 02:00:5e:00:53:02.
 pub const REMOTE_MAC: MacAddr = MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0x02]);
 /// Link type used by generated offline pcap examples.
-pub const EXAMPLE_PCAP_LINK_TYPE: PcapLinkType = PcapLinkType::Ethernet;
+pub const EXAMPLE_PCAP_LINK_TYPE: LinkType = LinkType::Ethernet;
 
 pub const fn local_ipv4() -> Ipv4Addr {
     LOCAL_IPV4
@@ -343,11 +343,12 @@ pub fn write_example_pcap(path: &Path, count: usize) -> ExampleResult<Vec<Packet
     ensure_parent(path)?;
 
     let packets = example_pcap_packets(count)?;
-    let mut writer = PcapWriter::create(path, EXAMPLE_PCAP_LINK_TYPE)?;
+    let mut writer = PacketWire::pcap_recorder(path, EXAMPLE_PCAP_LINK_TYPE)
+        .open()?
+        .writer()?;
     for packet in &packets {
-        writer.write_packet(packet)?;
+        writer.write_record(&PacketRecord::new(packet.clone()))?;
     }
-    writer.flush()?;
 
     Ok(packets)
 }

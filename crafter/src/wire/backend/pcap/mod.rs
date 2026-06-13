@@ -19,13 +19,13 @@ pub mod writer;
 
 pub use error::{PcapError, Result};
 pub(crate) use libpcap::{LibpcapCapture, LibpcapOfflineCapture};
-pub use reader::{read_pcap, read_pcap_filtered, PcapReader, PcapRecords};
+pub use reader::{PcapReader, PcapRecords};
 pub use types::{
     PcapHeader, PcapLinkType, PcapPacket, PcapRecord, PcapTimestamp, TimestampPrecision,
     DLT_EN10MB, DLT_IEEE802_11, DLT_IEEE802_11_RADIO, DLT_LINUX_SLL, DLT_LOOP, DLT_NULL, DLT_RAW,
     LINKTYPE_IEEE802_11, LINKTYPE_IEEE802_11_RADIOTAP,
 };
-pub use writer::{dump_pcap, PcapWriter, PcapWriterOptions};
+pub use writer::{PcapWriter, PcapWriterOptions};
 
 use std::fs::File;
 use std::io::BufReader;

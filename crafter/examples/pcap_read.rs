@@ -5,20 +5,24 @@ use common::{
 };
 use crafter::prelude::*;
 
-fn print_packet(label: &str, index: usize, packet: &PcapPacket) {
-    let timestamp = packet.timestamp();
+fn print_record(label: &str, index: usize, record: &PacketRecord) {
+    let metadata = record.metadata();
+    let timestamp = metadata.timestamp();
     println!(
-        "{label}[{index}] ts_sec={} ts_fractional={} link_type={:?} summary={}",
-        timestamp.seconds(),
-        timestamp.fractional(),
-        packet.pcap_link_type(),
-        packet.packet().summary()
+        "{label}[{index}] ts_sec={} ts_fractional={} captured_len={:?} original_len={:?} link_type={:?} file={} summary={}",
+        timestamp.map(|ts| ts.seconds()).unwrap_or(0),
+        timestamp.map(|ts| ts.fractional()).unwrap_or(0),
+        metadata.captured_len(),
+        metadata.original_len(),
+        metadata.link_type(),
+        metadata.file().map(|path| path.display().to_string()).unwrap_or_else(|| "-".to_string()),
+        record.packet().summary()
     );
 }
 
 fn main() -> ExampleResult<()> {
     if print_help_if_requested(
-        "usage: cargo run --example pcap_read -- [--in FILE]\n\nRead an offline pcap through PcapReader collection and streaming APIs.",
+        "usage: cargo run --example pcap_read -- [--in FILE]\n\nRead an offline pcap through PacketWire and Sniffer.",
     ) {
         return Ok(());
     }
@@ -36,33 +40,11 @@ fn main() -> ExampleResult<()> {
     println!("mode: offline");
     println!("pcap: {}", path.display());
 
-    let reader = PcapReader::open(&path)?;
-    let header = reader.header();
-    println!(
-        "pcap_reader header: link_type={:?} snaplen={} precision={:?}",
-        header.pcap_link_type(),
-        header.snaplen(),
-        header.precision()
-    );
-
-    let packets = PcapReader::open(&path)?.collect_packets()?;
-    println!("collected packets: {}", packets.len());
-    for (index, packet) in packets.iter().enumerate() {
-        print_packet("collected", index, packet);
-    }
-
-    for (index, record) in reader.records().enumerate() {
-        let record = record?;
-        let timestamp = record.timestamp();
-        let decoded = record.decode()?;
-        println!(
-            "record[{index}] ts_sec={} ts_fractional={} captured_len={} original_len={} summary={}",
-            timestamp.seconds(),
-            timestamp.fractional(),
-            record.captured_len(),
-            record.original_len(),
-            decoded.summary()
-        );
+    let source = PacketWire::pcap_file(&path).open()?.source()?;
+    let records = Sniffer::new(source).collect_records()?;
+    println!("collected records: {}", records.len());
+    for (index, record) in records.iter().enumerate() {
+        print_record("record", index, record);
     }
 
     Ok(())
