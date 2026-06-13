@@ -27,13 +27,17 @@ use crate::registry::ProtocolRegistry;
 use crate::wire::backend::pcap::PcapTimestamp;
 use crate::wire::record::{PacketMetadata, PacketOrigin, PacketRecord, TransformTrace};
 use crate::wire::transform::{PacketTransform, TransformOutput};
-use crate::wire::Result;
+use crate::wire::{Result, WireError};
 use crate::{CrafterError, Ipv4, Ipv6FragmentHeaderStatus, LinkType, NetworkLayer, Packet, Raw};
 
 const IPV4_MIN_HEADER_LEN: usize = 20;
 const IPV6_HEADER_LEN: usize = 40;
 const IPV6_ATOMIC_FRAGMENT_NORMALIZED_NOTE: &str = "atomic fragment normalized";
 const IPV6_ATOMIC_FRAGMENT_PASSTHROUGH_NOTE: &str = "atomic fragment pass-through";
+
+fn defrag_transform_error(reason: &'static str) -> WireError {
+    WireError::transform("ip-defrag", reason)
+}
 
 /// Receive-side IP defragmentation transform.
 ///
@@ -402,10 +406,11 @@ impl IpDefrag {
             .collect::<Vec<_>>();
 
         for key in keys {
-            let state = self
-                .ipv4_datagrams
-                .remove(&key)
-                .expect("expired IPv4 defrag state must remain in the map");
+            let Some(state) = self.ipv4_datagrams.remove(&key) else {
+                return Err(defrag_transform_error(
+                    "expired IPv4 defrag state disappeared",
+                ));
+            };
             self.evict_ipv4_state(state, IpDefragEvictionReason::Timeout, emit)?;
         }
 
