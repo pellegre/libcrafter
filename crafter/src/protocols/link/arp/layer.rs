@@ -10,8 +10,8 @@ use crate::packet::{IntoPacket, Layer, LayerContext, Packet};
 
 use super::super::{address_summary_mac, hex_bytes, mac_from_bytes, value_or_copy};
 use super::address::{
-    address_summary_ipv4, ipv4_from_bytes, parse_ipv4, saturating_len_u8, validate_len,
-    value_or_vec,
+    address_summary_ipv4, extend_value_or_zeros, ipv4_from_bytes, parse_ipv4, saturating_len_u8,
+    validate_len, value_or_vec, ArpAddressBytes,
 };
 use super::constants::{ARP_FIXED_HEADER_LEN, ARP_HRD_ETHERNET, ARP_PRO_IPV4};
 use super::labels::{
@@ -28,10 +28,10 @@ pub struct Arp {
     pub(super) hardware_len: Field<u8>,
     pub(super) protocol_len: Field<u8>,
     pub(super) operation: Field<u16>,
-    pub(super) sender_hardware_addr: Field<Vec<u8>>,
-    pub(super) sender_protocol_addr: Field<Vec<u8>>,
-    pub(super) target_hardware_addr: Field<Vec<u8>>,
-    pub(super) target_protocol_addr: Field<Vec<u8>>,
+    pub(super) sender_hardware_addr: Field<ArpAddressBytes>,
+    pub(super) sender_protocol_addr: Field<ArpAddressBytes>,
+    pub(super) target_hardware_addr: Field<ArpAddressBytes>,
+    pub(super) target_protocol_addr: Field<ArpAddressBytes>,
 }
 
 impl Arp {
@@ -43,10 +43,18 @@ impl Arp {
             hardware_len: Field::defaulted(6),
             protocol_len: Field::defaulted(4),
             operation: Field::defaulted(ArpOperation::Request.into()),
-            sender_hardware_addr: Field::defaulted(MacAddr::ZERO.octets().to_vec()),
-            sender_protocol_addr: Field::defaulted(Ipv4Addr::LOCALHOST.octets().to_vec()),
-            target_hardware_addr: Field::defaulted(MacAddr::ZERO.octets().to_vec()),
-            target_protocol_addr: Field::defaulted(Ipv4Addr::LOCALHOST.octets().to_vec()),
+            sender_hardware_addr: Field::defaulted(ArpAddressBytes::from_len6(
+                MacAddr::ZERO.octets(),
+            )),
+            sender_protocol_addr: Field::defaulted(ArpAddressBytes::from_len4(
+                Ipv4Addr::LOCALHOST.octets(),
+            )),
+            target_hardware_addr: Field::defaulted(ArpAddressBytes::from_len6(
+                MacAddr::ZERO.octets(),
+            )),
+            target_protocol_addr: Field::defaulted(ArpAddressBytes::from_len4(
+                Ipv4Addr::LOCALHOST.octets(),
+            )),
         }
     }
 
@@ -117,8 +125,9 @@ impl Arp {
 
     /// Set the sender hardware address to a MAC address.
     pub fn sender_hardware_addr(mut self, address: impl Into<MacAddr>) -> Self {
+        let octets = address.into().octets();
         self.sender_hardware_addr
-            .set_user(address.into().octets().to_vec());
+            .set_user(ArpAddressBytes::from_len6(octets));
         self.hardware_len.set_default_if_unset(6);
         self
     }
@@ -135,8 +144,9 @@ impl Arp {
 
     /// Set the target hardware address to a MAC address.
     pub fn target_hardware_addr(mut self, address: impl Into<MacAddr>) -> Self {
+        let octets = address.into().octets();
         self.target_hardware_addr
-            .set_user(address.into().octets().to_vec());
+            .set_user(ArpAddressBytes::from_len6(octets));
         self.hardware_len.set_default_if_unset(6);
         self
     }
@@ -154,7 +164,7 @@ impl Arp {
     /// Set the sender protocol address to an IPv4 address.
     pub fn sender_protocol_addr(mut self, address: Ipv4Addr) -> Self {
         self.sender_protocol_addr
-            .set_user(address.octets().to_vec());
+            .set_user(ArpAddressBytes::from_len4(address.octets()));
         self.protocol_len.set_default_if_unset(4);
         self.protocol_type.set_default_if_unset(ARP_PRO_IPV4);
         self
@@ -173,7 +183,7 @@ impl Arp {
     /// Set the target protocol address to an IPv4 address.
     pub fn target_protocol_addr(mut self, address: Ipv4Addr) -> Self {
         self.target_protocol_addr
-            .set_user(address.octets().to_vec());
+            .set_user(ArpAddressBytes::from_len4(address.octets()));
         self.protocol_len.set_default_if_unset(4);
         self.protocol_type.set_default_if_unset(ARP_PRO_IPV4);
         self
@@ -191,25 +201,29 @@ impl Arp {
 
     /// Set raw sender hardware address bytes.
     pub fn sender_hardware_bytes(mut self, address: impl Into<Vec<u8>>) -> Self {
-        self.sender_hardware_addr.set_user(address.into());
+        self.sender_hardware_addr
+            .set_user(ArpAddressBytes::from_vec(address.into()));
         self
     }
 
     /// Set raw sender protocol address bytes.
     pub fn sender_protocol_bytes(mut self, address: impl Into<Vec<u8>>) -> Self {
-        self.sender_protocol_addr.set_user(address.into());
+        self.sender_protocol_addr
+            .set_user(ArpAddressBytes::from_vec(address.into()));
         self
     }
 
     /// Set raw target hardware address bytes.
     pub fn target_hardware_bytes(mut self, address: impl Into<Vec<u8>>) -> Self {
-        self.target_hardware_addr.set_user(address.into());
+        self.target_hardware_addr
+            .set_user(ArpAddressBytes::from_vec(address.into()));
         self
     }
 
     /// Set raw target protocol address bytes.
     pub fn target_protocol_bytes(mut self, address: impl Into<Vec<u8>>) -> Self {
-        self.target_protocol_addr.set_user(address.into());
+        self.target_protocol_addr
+            .set_user(ArpAddressBytes::from_vec(address.into()));
         self
     }
 
@@ -225,7 +239,8 @@ impl Arp {
     pub fn sender_hardware(mut self, address: impl Into<Vec<u8>>) -> Self {
         let bytes = address.into();
         self.fill_hardware_len_from(&bytes);
-        self.sender_hardware_addr.set_user(bytes);
+        self.sender_hardware_addr
+            .set_user(ArpAddressBytes::from_vec(bytes));
         self
     }
 
@@ -236,7 +251,8 @@ impl Arp {
     pub fn target_hardware(mut self, address: impl Into<Vec<u8>>) -> Self {
         let bytes = address.into();
         self.fill_hardware_len_from(&bytes);
-        self.target_hardware_addr.set_user(bytes);
+        self.target_hardware_addr
+            .set_user(ArpAddressBytes::from_vec(bytes));
         self
     }
 
@@ -251,7 +267,8 @@ impl Arp {
     pub fn sender_protocol(mut self, address: impl Into<Vec<u8>>) -> Self {
         let bytes = address.into();
         self.fill_protocol_len_from(&bytes);
-        self.sender_protocol_addr.set_user(bytes);
+        self.sender_protocol_addr
+            .set_user(ArpAddressBytes::from_vec(bytes));
         self
     }
 
@@ -262,7 +279,8 @@ impl Arp {
     pub fn target_protocol(mut self, address: impl Into<Vec<u8>>) -> Self {
         let bytes = address.into();
         self.fill_protocol_len_from(&bytes);
-        self.target_protocol_addr.set_user(bytes);
+        self.target_protocol_addr
+            .set_user(ArpAddressBytes::from_vec(bytes));
         self
     }
 
@@ -478,10 +496,10 @@ impl Layer for Arp {
         out.push(self.hardware_len_value());
         out.push(self.protocol_len_value());
         out.extend_from_slice(&self.opcode_value().to_be_bytes());
-        out.extend_from_slice(&self.sender_hardware_bytes_value());
-        out.extend_from_slice(&self.sender_protocol_bytes_value());
-        out.extend_from_slice(&self.target_hardware_bytes_value());
-        out.extend_from_slice(&self.target_protocol_bytes_value());
+        extend_value_or_zeros(out, &self.sender_hardware_addr, self.hardware_len_value());
+        extend_value_or_zeros(out, &self.sender_protocol_addr, self.protocol_len_value());
+        extend_value_or_zeros(out, &self.target_hardware_addr, self.hardware_len_value());
+        extend_value_or_zeros(out, &self.target_protocol_addr, self.protocol_len_value());
         Ok(())
     }
 

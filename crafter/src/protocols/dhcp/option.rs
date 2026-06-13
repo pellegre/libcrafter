@@ -2759,18 +2759,73 @@ impl DhcpOption {
                 out.push(DHCP_OPTION_END);
                 Ok(())
             }
-            _ => {
-                if matches!(self.code(), DHCP_OPTION_PAD | DHCP_OPTION_END) {
-                    return Err(CrafterError::invalid_field_value(
-                        "dhcp.option.code",
-                        "pad and end options do not carry a length byte",
-                    ));
-                }
+            Self::MessageType(message_type) => {
+                encode_split_option(DHCP_OPTION_MESSAGE_TYPE, &[message_type.code()], out);
+                Ok(())
+            }
+            Self::OptionOverload(overload) => {
+                encode_split_option(DHCP_OPTION_OVERLOAD, &[overload.code()], out);
+                Ok(())
+            }
+            Self::SubnetMask(address) => {
+                encode_split_option(DHCP_OPTION_SUBNET_MASK, &address.octets(), out);
+                Ok(())
+            }
+            Self::BroadcastAddress(address) => {
+                encode_split_option(DHCP_OPTION_BROADCAST_ADDRESS, &address.octets(), out);
+                Ok(())
+            }
+            Self::RequestedIpAddress(address) => {
+                encode_split_option(DHCP_OPTION_REQUESTED_IP_ADDRESS, &address.octets(), out);
+                Ok(())
+            }
+            Self::ServerIdentifier(address) => {
+                encode_split_option(DHCP_OPTION_SERVER_IDENTIFIER, &address.octets(), out);
+                Ok(())
+            }
+            Self::HostName(host_name) => {
+                encode_split_option(DHCP_OPTION_HOST_NAME, host_name.as_bytes(), out);
+                Ok(())
+            }
+            Self::DomainName(domain_name) => {
+                encode_split_option(DHCP_OPTION_DOMAIN_NAME, domain_name.as_bytes(), out);
+                Ok(())
+            }
+            Self::DhcpMessage(message) => {
+                encode_split_option(DHCP_OPTION_MESSAGE, message.as_bytes(), out);
+                Ok(())
+            }
+            Self::IpAddressLeaseTime(seconds) => {
+                encode_split_option(
+                    DHCP_OPTION_IP_ADDRESS_LEASE_TIME,
+                    &seconds.to_be_bytes(),
+                    out,
+                );
+                Ok(())
+            }
+            Self::RenewalTime(seconds) => {
+                encode_split_option(DHCP_OPTION_RENEWAL_TIME, &seconds.to_be_bytes(), out);
+                Ok(())
+            }
+            Self::RebindingTime(seconds) => {
+                encode_split_option(DHCP_OPTION_REBINDING_TIME, &seconds.to_be_bytes(), out);
+                Ok(())
+            }
+            Self::ParameterRequestList(requests) => {
+                encode_split_option(DHCP_OPTION_PARAMETER_REQUEST_LIST, requests, out);
+                Ok(())
+            }
+            Self::ClientIdentifier(identifier) => {
+                encode_split_option(DHCP_OPTION_CLIENT_IDENTIFIER, identifier, out);
+                Ok(())
+            }
+            Self::Generic { code, data } => {
+                validate_data_option_code(*code)?;
+                encode_split_option(*code, data, out);
+                Ok(())
+            }
+            Self::Router(_) | Self::DomainNameServer(_) => {
                 let data = self.payload_bytes()?;
-                // RFC 3396: the option length field is a single octet, so a
-                // logical value longer than 255 bytes is encoded as repeated
-                // instances of the same option code, split into <=255-byte
-                // segments in order. Empty payloads still emit one segment.
                 encode_split_option(self.code(), &data, out);
                 Ok(())
             }
@@ -2812,8 +2867,85 @@ impl DhcpOption {
     }
 }
 
+fn validate_data_option_code(code: u8) -> Result<()> {
+    if matches!(code, DHCP_OPTION_PAD | DHCP_OPTION_END) {
+        return Err(CrafterError::invalid_field_value(
+            "dhcp.option.code",
+            "pad and end options do not carry a length byte",
+        ));
+    }
+    Ok(())
+}
+
 pub(super) fn decode_dhcp_options(bytes: &[u8]) -> Result<Vec<DhcpOption>> {
-    decode_segments_to_options(&scan_dhcp_option_segments(DhcpOptionArea::Options, bytes)?)
+    let mut options = Vec::with_capacity(8);
+    let mut seen_content = [false; 256];
+    let mut saw_end = false;
+    let mut offset = 0usize;
+
+    while offset < bytes.len() {
+        let code = bytes[offset];
+        offset += 1;
+
+        match code {
+            DHCP_OPTION_PAD => options.push(DhcpOption::Pad),
+            DHCP_OPTION_END if !saw_end => {
+                options.push(DhcpOption::End);
+                saw_end = true;
+            }
+            DHCP_OPTION_END => {
+                return Err(CrafterError::invalid_field_value(
+                    "dhcp.option.end",
+                    "non-padding data follows DHCP end option",
+                ));
+            }
+            _ => {
+                if saw_end {
+                    return Err(CrafterError::invalid_field_value(
+                        "dhcp.option.end",
+                        "non-padding data follows DHCP end option",
+                    ));
+                }
+                if offset >= bytes.len() {
+                    return Err(CrafterError::buffer_too_short(
+                        "dhcp option length",
+                        offset + 1,
+                        bytes.len(),
+                    ));
+                }
+
+                let len = bytes[offset] as usize;
+                offset += 1;
+                let end = offset + len;
+                if end > bytes.len() {
+                    return Err(CrafterError::buffer_too_short(
+                        "dhcp option data",
+                        end,
+                        bytes.len(),
+                    ));
+                }
+
+                if seen_content[code as usize] {
+                    return decode_segments_to_options(&scan_dhcp_option_segments(
+                        DhcpOptionArea::Options,
+                        bytes,
+                    )?);
+                }
+                seen_content[code as usize] = true;
+                options.push(decode_dhcp_option(code, &bytes[offset..end])?);
+                offset = end;
+            }
+        }
+    }
+
+    if !saw_end {
+        return Err(CrafterError::invalid_field_value(
+            "dhcp.options",
+            "DHCP options are missing an end marker",
+        ));
+    }
+
+    Ok(options)
 }
 
 /// Find the option-overload value (option 52) carried in a normal-area option

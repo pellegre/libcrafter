@@ -1,17 +1,17 @@
-use crate::endian::read_u16_be;
 use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::packet::{Packet, Raw};
 
+use super::address::ArpAddressBytes;
 use super::constants::ARP_FIXED_HEADER_LEN;
 use super::layer::Arp;
 
 /// Append a decoded ARP packet to an existing packet stack.
 pub(crate) fn append_arp_packet(mut packet: Packet, payload: &[u8]) -> Result<Packet> {
     let (arp, rest) = decode_arp(payload)?;
-    packet = packet.push(arp);
+    packet.push_mut(arp);
     if !rest.is_empty() {
-        packet = packet.push(Raw::from_bytes(rest));
+        packet.push_mut(Raw::from_bytes(rest));
     }
     Ok(packet)
 }
@@ -36,25 +36,53 @@ fn decode_arp(bytes: &[u8]) -> Result<(Arp, &[u8])> {
         ));
     }
 
-    let mut offset = ARP_FIXED_HEADER_LEN;
-    let sender_hardware_addr = bytes[offset..offset + hardware_len].to_vec();
-    offset += hardware_len;
-    let sender_protocol_addr = bytes[offset..offset + protocol_len].to_vec();
-    offset += protocol_len;
-    let target_hardware_addr = bytes[offset..offset + hardware_len].to_vec();
-    offset += hardware_len;
-    let target_protocol_addr = bytes[offset..offset + protocol_len].to_vec();
+    if hardware_len == 6 && protocol_len == 4 {
+        let arp = Arp {
+            hardware_type: Field::user(u16::from_be_bytes([bytes[0], bytes[1]])),
+            protocol_type: Field::user(u16::from_be_bytes([bytes[2], bytes[3]])),
+            hardware_len: Field::user(bytes[4]),
+            protocol_len: Field::user(bytes[5]),
+            operation: Field::user(u16::from_be_bytes([bytes[6], bytes[7]])),
+            sender_hardware_addr: Field::user(ArpAddressBytes::from_len6([
+                bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13],
+            ])),
+            sender_protocol_addr: Field::user(ArpAddressBytes::from_len4([
+                bytes[14], bytes[15], bytes[16], bytes[17],
+            ])),
+            target_hardware_addr: Field::user(ArpAddressBytes::from_len6([
+                bytes[18], bytes[19], bytes[20], bytes[21], bytes[22], bytes[23],
+            ])),
+            target_protocol_addr: Field::user(ArpAddressBytes::from_len4([
+                bytes[24], bytes[25], bytes[26], bytes[27],
+            ])),
+        };
+
+        return Ok((arp, &bytes[total_len..]));
+    }
+
+    let sender_hardware_start = ARP_FIXED_HEADER_LEN;
+    let sender_protocol_start = sender_hardware_start + hardware_len;
+    let target_hardware_start = sender_protocol_start + protocol_len;
+    let target_protocol_start = target_hardware_start + hardware_len;
 
     let arp = Arp {
-        hardware_type: Field::user(read_u16_be(&bytes[0..2])?),
-        protocol_type: Field::user(read_u16_be(&bytes[2..4])?),
+        hardware_type: Field::user(u16::from_be_bytes([bytes[0], bytes[1]])),
+        protocol_type: Field::user(u16::from_be_bytes([bytes[2], bytes[3]])),
         hardware_len: Field::user(bytes[4]),
         protocol_len: Field::user(bytes[5]),
-        operation: Field::user(read_u16_be(&bytes[6..8])?),
-        sender_hardware_addr: Field::user(sender_hardware_addr),
-        sender_protocol_addr: Field::user(sender_protocol_addr),
-        target_hardware_addr: Field::user(target_hardware_addr),
-        target_protocol_addr: Field::user(target_protocol_addr),
+        operation: Field::user(u16::from_be_bytes([bytes[6], bytes[7]])),
+        sender_hardware_addr: Field::user(ArpAddressBytes::from_slice(
+            &bytes[sender_hardware_start..sender_protocol_start],
+        )),
+        sender_protocol_addr: Field::user(ArpAddressBytes::from_slice(
+            &bytes[sender_protocol_start..target_hardware_start],
+        )),
+        target_hardware_addr: Field::user(ArpAddressBytes::from_slice(
+            &bytes[target_hardware_start..target_protocol_start],
+        )),
+        target_protocol_addr: Field::user(ArpAddressBytes::from_slice(
+            &bytes[target_protocol_start..total_len],
+        )),
     };
 
     Ok((arp, &bytes[total_len..]))

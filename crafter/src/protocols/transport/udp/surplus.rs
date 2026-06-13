@@ -477,6 +477,9 @@ fn udp_options_surplus_offset_in_ip_datagram(ctx: LayerContext<'_>) -> usize {
         .skip(start)
         .take(ctx.index().saturating_sub(start))
         .map(|(index, layer)| {
+            if layer.as_any().is::<Udp>() {
+                return layer.encoded_len();
+            }
             let layer_ctx = LayerContext::new(packet, index);
             layer.encoded_len_with_context(&layer_ctx)
         })

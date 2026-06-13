@@ -243,20 +243,35 @@ impl Layer for Udp {
         UDP_HEADER_LEN
     }
 
+    fn encoded_len_with_context(&self, ctx: &LayerContext<'_>) -> usize {
+        let following = udp_following_lens_after(*ctx);
+        UDP_HEADER_LEN + following.user_payload + following.surplus
+    }
+
     fn compile(&self, ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
-        let payload = udp_user_payload_bytes_after(*ctx)?;
-        self.validate(payload.len())?;
+        let following = udp_following_bytes_after(*ctx)?;
+        self.validate(following.user_payload.len())?;
 
         let mut header = Vec::with_capacity(UDP_HEADER_LEN);
         header.extend_from_slice(&self.source_port_value().to_be_bytes());
         header.extend_from_slice(&self.destination_port_value().to_be_bytes());
-        header.extend_from_slice(&self.effective_length(payload.len())?.to_be_bytes());
+        header.extend_from_slice(
+            &self
+                .effective_length(following.user_payload.len())?
+                .to_be_bytes(),
+        );
         header.extend_from_slice(&0u16.to_be_bytes());
 
-        let checksum = self.effective_checksum(*ctx, &header, &payload);
+        let checksum = self.effective_checksum(*ctx, &header, &following.user_payload);
         header[6..8].copy_from_slice(&checksum.to_be_bytes());
         out.extend_from_slice(&header);
+        out.extend_from_slice(&following.user_payload);
+        out.extend_from_slice(&following.surplus);
         Ok(())
+    }
+
+    fn consumes_following(&self) -> bool {
+        true
     }
 
     impl_layer_object!(Udp);
@@ -369,17 +384,68 @@ pub(super) fn decoded_udp_checksum_status(
     }
 }
 
-fn udp_user_payload_bytes_after(ctx: LayerContext<'_>) -> Result<Vec<u8>> {
-    let mut payload = Vec::new();
+#[derive(Debug, Default)]
+struct UdpFollowingLens {
+    user_payload: usize,
+    surplus: usize,
+}
+
+#[derive(Debug, Default)]
+struct UdpFollowingBytes {
+    user_payload: Vec<u8>,
+    surplus: Vec<u8>,
+}
+
+fn udp_following_lens_after(ctx: LayerContext<'_>) -> UdpFollowingLens {
+    let mut lens = UdpFollowingLens::default();
     let mut seen_application_layer = false;
+    let mut in_surplus = false;
 
     for (index, layer) in ctx.packet().iter().enumerate().skip(ctx.index() + 1) {
-        if is_current_udp_surplus_layer(layer, seen_application_layer) {
+        let layer_ctx = LayerContext::new(ctx.packet(), index);
+        let layer_len = layer.encoded_len_with_context(&layer_ctx);
+        let current_is_surplus =
+            in_surplus || is_current_udp_surplus_layer(layer, seen_application_layer);
+
+        if current_is_surplus {
+            lens.surplus += layer_len;
+            in_surplus = true;
+        } else {
+            lens.user_payload += layer_len;
+        }
+
+        if layer.consumes_following() {
             break;
         }
 
+        if !current_is_surplus && is_udp_application_layer(layer) {
+            seen_application_layer = true;
+        }
+    }
+
+    lens
+}
+
+fn udp_following_bytes_after(ctx: LayerContext<'_>) -> Result<UdpFollowingBytes> {
+    let lens = udp_following_lens_after(ctx);
+    let mut following = UdpFollowingBytes {
+        user_payload: Vec::with_capacity(lens.user_payload),
+        surplus: Vec::with_capacity(lens.surplus),
+    };
+    let mut seen_application_layer = false;
+    let mut in_surplus = false;
+
+    for (index, layer) in ctx.packet().iter().enumerate().skip(ctx.index() + 1) {
         let layer_ctx = LayerContext::new(ctx.packet(), index);
-        layer.compile(&layer_ctx, &mut payload)?;
+        let current_is_surplus =
+            in_surplus || is_current_udp_surplus_layer(layer, seen_application_layer);
+
+        if current_is_surplus {
+            layer.compile(&layer_ctx, &mut following.surplus)?;
+            in_surplus = true;
+        } else {
+            layer.compile(&layer_ctx, &mut following.user_payload)?;
+        }
 
         // An encapsulating layer (e.g. UDP-encapsulated ESP, RFC 3948) already
         // embeds every following layer in its own compiled body. The packet
@@ -390,12 +456,12 @@ fn udp_user_payload_bytes_after(ctx: LayerContext<'_>) -> Result<Vec<u8>> {
             break;
         }
 
-        if is_udp_application_layer(layer) {
+        if !current_is_surplus && is_udp_application_layer(layer) {
             seen_application_layer = true;
         }
     }
 
-    Ok(payload)
+    Ok(following)
 }
 
 pub(super) fn is_udp_application_layer(layer: &dyn Layer) -> bool {
