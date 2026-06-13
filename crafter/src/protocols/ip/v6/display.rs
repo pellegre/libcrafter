@@ -176,15 +176,19 @@ fn ipv6_option_summary(option: &Ipv6Option) -> String {
                 option.data().len()
             ),
         },
-        Ipv6Option::HomeAddress { .. } => {
-            let address = option
-                .home_address_value()
-                .expect("Home Address option carries sixteen address bytes");
-            format!(
-                "Home Address(0x{:02x},address={address})",
-                option.option_type()
-            )
-        }
+        Ipv6Option::HomeAddress { .. } => match option.home_address_value() {
+            Some(address) => {
+                format!(
+                    "Home Address(0x{:02x},address={address})",
+                    option.option_type()
+                )
+            }
+            None => format!(
+                "Home Address(0x{:02x},malformed_length={})",
+                option.option_type(),
+                option.data().len()
+            ),
+        },
         Ipv6Option::Generic { option_type, data } => {
             let data_summary = if data.is_empty() {
                 "empty".to_string()
