@@ -1311,20 +1311,30 @@ impl Layer for Radiotap {
     }
 
     fn inspection_fields(&self) -> Vec<(&'static str, String)> {
-        let present = self
-            .present()
-            .expect("radiotap field bits are validated before storage");
-        let length = self
-            .compiled_header_len()
-            .map(usize::from)
-            .unwrap_or_else(|_| self.header_len_with_present(&present));
+        let present = self.present();
+        let length = match &present {
+            Ok(present) => self
+                .compiled_header_len()
+                .map(usize::from)
+                .unwrap_or_else(|_| self.header_len_with_present(present)),
+            Err(_) => self
+                .length_value()
+                .map(usize::from)
+                .unwrap_or_else(|| self.fallback_header_len()),
+        };
         let mut fields = vec![
             ("version", self.effective_version().to_string()),
             ("pad", format!("0x{:02x}", self.effective_pad())),
             ("length", length.to_string()),
-            ("present", radiotap_present_summary(&present)),
             ("field_count", self.fields.len().to_string()),
         ];
+        match present {
+            Ok(present) => fields.push(("present", radiotap_present_summary(&present))),
+            Err(err) => {
+                fields.push(("present", "malformed".to_string()));
+                fields.push(("present_error", err.to_string()));
+            }
+        }
 
         for field in self.fields_in_present_order() {
             fields.push((field.inspection_name(), field.inspection_value()));
