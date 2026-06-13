@@ -735,12 +735,8 @@ impl Dhcp {
     /// Client Ethernet MAC address, when the hardware address contains at least six bytes.
     pub fn client_mac_value(&self) -> Option<MacAddr> {
         let bytes = self.client_hardware_address_value();
-        if bytes.len() < 6 {
-            return None;
-        }
-        Some(MacAddr::new(
-            <[u8; 6]>::try_from(&bytes[..6]).expect("slice length already checked"),
-        ))
+        let octets: [u8; 6] = bytes.get(..6)?.try_into().ok()?;
+        Some(MacAddr::new(octets))
     }
 
     /// Full stored client hardware address fixed-field bytes.
@@ -1829,6 +1825,15 @@ mod dhcp_tests {
 
     fn mac() -> MacAddr {
         MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x00, 0x01])
+    }
+
+    #[test]
+    fn client_mac_accessor_handles_short_and_full_hardware_addresses() {
+        let short = Dhcp::new().chaddr([0x02, 0x00, 0x5e, 0x10, 0x00]).hlen(5);
+        assert_eq!(short.client_mac_value(), None);
+
+        let full = Dhcp::new().chaddr(mac().octets()).hlen(6);
+        assert_eq!(full.client_mac_value(), Some(mac()));
     }
 
     #[test]
