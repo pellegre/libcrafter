@@ -7,11 +7,27 @@ pub mod eapol;
 pub mod icmp;
 pub mod ip;
 pub mod ipsec;
-pub mod ipv4;
-pub mod ipv6;
 pub mod link;
 pub mod rsn;
 pub mod transport;
+
+/// Compatibility re-exports for the IPv4 protocol implementation.
+///
+/// The canonical IPv4 module lives at [`crate::protocols::ip::v4`]. This
+/// module keeps the original `crate::protocols::ipv4` public path working for
+/// existing callers without carrying a separate shim file.
+pub mod ipv4 {
+    pub use crate::protocols::ip::v4::*;
+}
+
+/// Compatibility re-exports for the IPv6 protocol implementation.
+///
+/// The IPv6 implementation lives in [`crate::protocols::ip::v6`]. This module
+/// preserves the original `crate::protocols::ipv6` import path for downstream
+/// callers without carrying a separate shim file.
+pub mod ipv6 {
+    pub use crate::protocols::ip::v6::*;
+}
 
 pub use crate::packet::Raw;
 pub use bgp::attribute::{
