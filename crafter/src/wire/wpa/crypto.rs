@@ -347,8 +347,12 @@ fn wpa_prf_sha1(key: &[u8], label: &[u8], data: &[u8], output: &mut [u8]) {
     let mut counter = 0u8;
 
     while written < output.len() {
-        let mut mac =
-            <HmacSha1 as Mac>::new_from_slice(key).expect("HMAC accepts WPA key material");
+        let Ok(mut mac) = <HmacSha1 as Mac>::new_from_slice(key) else {
+            // HMAC accepts arbitrary key lengths; if a backend ever rejects one,
+            // keep derive_ptk deterministic and non-panicking.
+            output[written..].fill(0);
+            return;
+        };
         mac.update(label);
         mac.update(&[0]);
         mac.update(data);
