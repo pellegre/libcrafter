@@ -438,10 +438,11 @@ impl IpDefrag {
             .collect::<Vec<_>>();
 
         for key in keys {
-            let state = self
-                .ipv6_datagrams
-                .remove(&key)
-                .expect("expired IPv6 defrag state must remain in the map");
+            let Some(state) = self.ipv6_datagrams.remove(&key) else {
+                return Err(defrag_transform_error(
+                    "expired IPv6 defrag state disappeared",
+                ));
+            };
             self.evict_ipv6_state(state, IpDefragEvictionReason::Timeout, emit)?;
         }
 
