@@ -3,7 +3,7 @@ use crafter::core::{
     Ipv6FragmentHeader, Ipv6MobileRoutingHeader, Ipv6RoutingHeader, Ipv6SegmentRoutingHeader,
     Layer, LinuxSll, LlcSnap, NullLoopback, Radiotap, Raw, Tcp, Udp, Vlan,
 };
-use crafter::pcap::{
+use crafter::wire::backend::pcap::{
     PcapLinkType, PcapReader, PcapRecord, PcapTimestamp, PcapWriter, TimestampPrecision,
 };
 use serde::Deserialize;
