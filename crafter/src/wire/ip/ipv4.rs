@@ -5,8 +5,8 @@ use core::borrow::Borrow;
 use core::net::Ipv4Addr;
 
 use crate::endian::{read_u16_be, read_u32_be, read_u32_le};
-use crate::pcap::PcapLinkType;
 use crate::protocols::{ETHERTYPE_IPV4, ETHERTYPE_VLAN};
+use crate::wire::backend::pcap::PcapLinkType;
 use crate::wire::record::PacketRecord;
 use crate::IPV4_FLAG_DONT_FRAGMENT;
 use crate::{CrafterError, Ethernet, Ipv4, LinkType, LinuxSll, NullLoopback, Packet, Result, Vlan};
@@ -526,7 +526,7 @@ mod tests {
         extract_ipv4_fragment, Ipv4FragmentExtract, Ipv4FragmentPassThroughReason,
         Ipv4FragmentWrapperKind,
     };
-    use crate::pcap::{PcapLinkType, PcapTimestamp};
+    use crate::wire::backend::pcap::{PcapLinkType, PcapTimestamp};
     use crate::wire::record::PacketRecord;
     use crate::{
         CrafterError, Ethernet, Ipv4, LinkType, LinuxSll, NullLoopback, Packet, Raw, Vlan,

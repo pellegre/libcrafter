@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use super::ip::{IpDefragMetadata, IpFragmentMetadata};
 use super::wpa::WpaMetadata;
-use crate::pcap::{PcapLinkType, PcapPacket, PcapRecord, PcapTimestamp};
+use crate::wire::backend::pcap::{PcapLinkType, PcapPacket, PcapRecord, PcapTimestamp};
 use crate::{
     Dot11ControlSubtype, Dot11DataSubtype, Dot11FrameType, Dot11ManagementSubtype, IntoPacket,
     LinkType, MacAddr, Packet,
