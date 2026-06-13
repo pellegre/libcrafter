@@ -430,9 +430,13 @@ pub(super) fn decode_record_data(
                     "AAAA records must contain sixteen bytes",
                 ));
             }
-            Ok(DnsRecordData::Aaaa(Ipv6Addr::from(
-                <[u8; 16]>::try_from(rdata).expect("slice length already checked"),
-            )))
+            let address = <[u8; 16]>::try_from(rdata).map_err(|_| {
+                CrafterError::invalid_field_value(
+                    "dns.aaaa.rdlength",
+                    "AAAA records must contain sixteen bytes",
+                )
+            })?;
+            Ok(DnsRecordData::Aaaa(Ipv6Addr::from(address)))
         }
         DNS_TYPE_CNAME | DNS_TYPE_NS | DNS_TYPE_PTR => {
             let (name, consumed) = decode_dns_name_typed(message, rdata_start)?;
