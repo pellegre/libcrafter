@@ -77,7 +77,7 @@ fn parse_ike_header(bytes: &[u8]) -> Result<IkeHeader> {
     }
 
     let initiator_spi = read_u64_be_field(bytes, 0..8, "ikev2.header.initiator_spi")?;
-    let responder_spi = u64::from_be_bytes(bytes[8..16].try_into().unwrap());
+    let responder_spi = read_u64_be_field(bytes, 8..16, "ikev2.header.responder_spi")?;
     let next_payload = bytes[16];
     let version = bytes[17];
     let exchange_type = bytes[18];
