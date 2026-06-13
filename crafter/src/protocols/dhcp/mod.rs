@@ -489,7 +489,8 @@ impl Dhcp {
     /// Set the fixed client hardware address field.
     pub fn chaddr(mut self, address: impl AsRef<[u8]>) -> Self {
         let address = address.as_ref();
-        self.client_hardware_address = address.to_vec();
+        self.client_hardware_address.clear();
+        self.client_hardware_address.extend_from_slice(address);
         if !self.hardware_len.is_user_set() {
             self.hardware_len = Field::defaulted(address.len().min(DHCP_CHADDR_LEN) as u8);
         }
@@ -1485,19 +1486,19 @@ impl Dhcp {
     /// emitted normal options describe the overloaded fields (RFC 2132 section
     /// 9.3).
     pub fn encoded_options(&self) -> Result<Vec<u8>> {
-        encode_dhcp_options(&self.effective_normal_options())
+        if self.synthetic_option_overload().is_none() {
+            encode_dhcp_options(&self.options)
+        } else {
+            encode_dhcp_options(&self.effective_normal_options())
+        }
     }
 
     /// Normal-area options with an auto-inserted option-overload option (52)
     /// when overloaded fields carry options and the caller did not set one.
     fn effective_normal_options(&self) -> Vec<DhcpOption> {
-        let Some(overload) = self.option_overload() else {
+        let Some(overload) = self.synthetic_option_overload() else {
             return self.options.clone();
         };
-        if find_option_overload(&self.options).is_some() {
-            // The caller set option 52 explicitly; honor it untouched.
-            return self.options.clone();
-        }
 
         let mut options = self.options.clone();
         let overload_option = DhcpOption::option_overload(overload);
@@ -1506,6 +1507,20 @@ impl Dhcp {
             None => options.push(overload_option),
         }
         options
+    }
+
+    fn synthetic_option_overload(&self) -> Option<OptionOverload> {
+        let overload = match (self.file_options.is_empty(), self.sname_options.is_empty()) {
+            (false, false) => OptionOverload::Both,
+            (false, true) => OptionOverload::File,
+            (true, false) => OptionOverload::Sname,
+            (true, true) => return None,
+        };
+
+        // The caller set option 52 explicitly; honor it untouched.
+        find_option_overload(&self.options)
+            .is_none()
+            .then_some(overload)
     }
 
     /// Render the `file` fixed-field bytes for the wire (RFC 2131 section 2).
@@ -1536,7 +1551,7 @@ impl Dhcp {
         )?))
     }
 
-    fn validate(&self) -> Result<()> {
+    fn validate_fixed_fields(&self) -> Result<()> {
         if self.hardware_len_value() as usize > DHCP_CHADDR_LEN {
             return Err(CrafterError::invalid_field_value(
                 "dhcp.hlen",
@@ -1574,14 +1589,16 @@ impl Dhcp {
                 "server name string and overloaded sname options are mutually exclusive",
             ));
         }
-        self.encoded_options()?;
-        self.encoded_file_field()?;
-        self.encoded_sname_field()?;
         Ok(())
     }
 
     fn encoded_dhcp_len(&self) -> usize {
-        DHCP_MIN_LEN + encoded_options_len_lossy(&self.effective_normal_options())
+        DHCP_MIN_LEN
+            + if self.synthetic_option_overload().is_none() {
+                encoded_options_len_lossy(&self.options)
+            } else {
+                encoded_options_len_lossy(&self.effective_normal_options())
+            }
     }
 }
 
@@ -1644,9 +1661,12 @@ impl Layer for Dhcp {
     }
 
     fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
-        self.validate()?;
+        self.validate_fixed_fields()?;
+        let options = self.encoded_options()?;
+        let file_field = self.encoded_file_field()?;
+        let sname_field = self.encoded_sname_field()?;
 
-        out.reserve(self.encoded_dhcp_len());
+        out.reserve(DHCP_MIN_LEN + options.len());
         out.push(self.op_value());
         out.push(self.hardware_type_value());
         out.push(self.hardware_len_value());
@@ -1662,16 +1682,16 @@ impl Layer for Dhcp {
         // RFC 2131 section 4.1: when overloaded, `sname`/`file` carry their
         // option list (already padded to the fixed width); otherwise they hold
         // the host name / boot file name string.
-        match self.encoded_sname_field()? {
+        match sname_field {
             Some(bytes) => out.extend_from_slice(&bytes),
             None => append_fixed_field(out, &self.server_name, DHCP_SNAME_LEN),
         }
-        match self.encoded_file_field()? {
+        match file_field {
             Some(bytes) => out.extend_from_slice(&bytes),
             None => append_fixed_field(out, &self.boot_file_name, DHCP_FILE_LEN),
         }
         out.extend_from_slice(&self.magic_cookie_value().to_be_bytes());
-        out.extend_from_slice(&self.encoded_options()?);
+        out.extend_from_slice(&options);
         Ok(())
     }
 

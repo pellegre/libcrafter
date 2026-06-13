@@ -78,16 +78,18 @@ pub fn ipv4_pseudo_header_checksum(
 ) -> u16 {
     let source = source.octets();
     let destination = destination.octets();
-    let length = (transport.len() as u16).to_be_bytes();
-    let protocol = [0, protocol];
-    let pseudo = [
-        source.as_slice(),
-        destination.as_slice(),
-        protocol.as_slice(),
-        length.as_slice(),
-    ];
+    let length = transport.len() as u16;
+    let mut sum = 0u32;
 
-    internet_checksum_chunks(pseudo.into_iter().chain([transport]))
+    sum += u16::from_be_bytes([source[0], source[1]]) as u32;
+    sum += u16::from_be_bytes([source[2], source[3]]) as u32;
+    sum += u16::from_be_bytes([destination[0], destination[1]]) as u32;
+    sum += u16::from_be_bytes([destination[2], destination[3]]) as u32;
+    sum += protocol as u32;
+    sum += length as u32;
+    sum += ones_complement_sum(transport);
+
+    finalize_checksum(sum)
 }
 
 /// Compute the checksum for an IPv6 pseudo-header plus transport payload.
@@ -99,16 +101,30 @@ pub fn ipv6_pseudo_header_checksum(
 ) -> u16 {
     let source = source.octets();
     let destination = destination.octets();
-    let length = (transport.len() as u32).to_be_bytes();
-    let next = [0, 0, 0, next_header];
-    let pseudo = [
-        source.as_slice(),
-        destination.as_slice(),
-        length.as_slice(),
-        next.as_slice(),
-    ];
+    let length = transport.len() as u32;
+    let mut sum = 0u32;
 
-    internet_checksum_chunks(pseudo.into_iter().chain([transport]))
+    sum += u16::from_be_bytes([source[0], source[1]]) as u32;
+    sum += u16::from_be_bytes([source[2], source[3]]) as u32;
+    sum += u16::from_be_bytes([source[4], source[5]]) as u32;
+    sum += u16::from_be_bytes([source[6], source[7]]) as u32;
+    sum += u16::from_be_bytes([source[8], source[9]]) as u32;
+    sum += u16::from_be_bytes([source[10], source[11]]) as u32;
+    sum += u16::from_be_bytes([source[12], source[13]]) as u32;
+    sum += u16::from_be_bytes([source[14], source[15]]) as u32;
+    sum += u16::from_be_bytes([destination[0], destination[1]]) as u32;
+    sum += u16::from_be_bytes([destination[2], destination[3]]) as u32;
+    sum += u16::from_be_bytes([destination[4], destination[5]]) as u32;
+    sum += u16::from_be_bytes([destination[6], destination[7]]) as u32;
+    sum += u16::from_be_bytes([destination[8], destination[9]]) as u32;
+    sum += u16::from_be_bytes([destination[10], destination[11]]) as u32;
+    sum += u16::from_be_bytes([destination[12], destination[13]]) as u32;
+    sum += u16::from_be_bytes([destination[14], destination[15]]) as u32;
+    sum += (length >> 16) + (length & 0xffff);
+    sum += next_header as u32;
+    sum += ones_complement_sum(transport);
+
+    finalize_checksum(sum)
 }
 
 /// Compute CRC-32C/Castagnoli over `data`.

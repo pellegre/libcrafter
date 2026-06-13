@@ -128,9 +128,13 @@ struct TcpBinding {
 /// that value. There is no mutable global registry.
 pub struct ProtocolRegistry {
     ethertype_bindings: Vec<EthertypeBinding>,
+    builtin_ethertype_dispatch: bool,
     ipv4_bindings: Vec<Ipv4ProtocolBinding>,
+    builtin_ipv4_protocol_dispatch: bool,
     ipv6_bindings: Vec<Ipv6NextHeaderBinding>,
+    builtin_ipv6_next_header_dispatch: bool,
     udp_bindings: Vec<UdpBinding>,
+    builtin_udp_application_dispatch: bool,
     tcp_bindings: Vec<TcpBinding>,
     security_associations: Vec<SecurityAssociation>,
 }
@@ -147,13 +151,24 @@ impl ProtocolRegistry {
         BUILTIN_REGISTRY.get_or_init(Self::with_builtin_bindings)
     }
 
+    /// Shared transport-only registry used by shallow ICMP quoted-datagram
+    /// decode.
+    pub(crate) fn transport_only_builtin() -> &'static Self {
+        static TRANSPORT_ONLY_REGISTRY: OnceLock<ProtocolRegistry> = OnceLock::new();
+        TRANSPORT_ONLY_REGISTRY.get_or_init(Self::transport_only)
+    }
+
     /// Create a registry with no bindings.
     pub fn empty() -> Self {
         Self {
             ethertype_bindings: Vec::new(),
+            builtin_ethertype_dispatch: false,
             ipv4_bindings: Vec::new(),
+            builtin_ipv4_protocol_dispatch: false,
             ipv6_bindings: Vec::new(),
+            builtin_ipv6_next_header_dispatch: false,
             udp_bindings: Vec::new(),
+            builtin_udp_application_dispatch: false,
             tcp_bindings: Vec::new(),
             security_associations: Vec::new(),
         }
@@ -178,6 +193,7 @@ impl ProtocolRegistry {
         registry.bind_ethertype_with_registry(ETHERTYPE_EAPOL, |_registry, packet, payload| {
             append_eapol_packet(packet, payload)
         });
+        registry.builtin_ethertype_dispatch = true;
 
         registry.bind_ipv4_protocol_with_registry(IPPROTO_ICMP, |_registry, packet, payload| {
             append_icmp_packet(packet, payload)
@@ -311,6 +327,10 @@ impl ProtocolRegistry {
         registry.bind_tcp_port_with_registry(BGP_PORT, |registry, packet, payload| {
             append_bgp_packet_with_registry(registry, packet, payload)
         });
+
+        registry.builtin_ipv4_protocol_dispatch = true;
+        registry.builtin_ipv6_next_header_dispatch = true;
+        registry.builtin_udp_application_dispatch = true;
 
         registry
     }
@@ -546,6 +566,17 @@ impl ProtocolRegistry {
         ethertype: u16,
         payload: &[u8],
     ) -> Result<Packet> {
+        if self.builtin_ethertype_dispatch {
+            return match ethertype {
+                ETHERTYPE_ARP => append_arp_packet(packet, payload),
+                ETHERTYPE_VLAN => append_vlan_packet_with_registry(self, packet, payload),
+                ETHERTYPE_IPV4 => append_ipv4_packet_with_registry(self, packet, payload),
+                ETHERTYPE_IPV6 => append_ipv6_packet_with_registry(self, packet, payload),
+                ETHERTYPE_EAPOL => append_eapol_packet(packet, payload),
+                _ => Ok(packet.push(Raw::from_bytes(payload))),
+            };
+        }
+
         let ctx = EthertypeBindingContext { ethertype, payload };
         if let Some(binding) = self
             .ethertype_bindings
@@ -564,6 +595,17 @@ impl ProtocolRegistry {
         protocol: u8,
         payload: &[u8],
     ) -> Result<Packet> {
+        if self.builtin_ipv4_protocol_dispatch {
+            return match protocol {
+                IPPROTO_ICMP => append_icmp_packet(packet, payload),
+                IPPROTO_TCP => append_tcp_packet_with_registry(self, packet, payload),
+                IPPROTO_UDP => append_udp_packet_with_registry(self, packet, payload),
+                IPPROTO_ESP => decode_esp_with_registry_sa(self, packet, payload),
+                IPPROTO_AH => decode_ah_with_registry_sa(self, packet, payload),
+                _ => append_raw_if_needed(packet, payload),
+            };
+        }
+
         let ctx = Ipv4ProtocolBindingContext { protocol, payload };
         if let Some(binding) = self
             .ipv4_bindings
@@ -582,6 +624,17 @@ impl ProtocolRegistry {
         next_header: u8,
         payload: &[u8],
     ) -> Result<Packet> {
+        if self.builtin_ipv6_next_header_dispatch {
+            return match next_header {
+                IPPROTO_ICMPV6 => append_icmpv6_packet(packet, payload),
+                IPPROTO_TCP => append_tcp_packet_with_registry(self, packet, payload),
+                IPPROTO_UDP => append_udp_packet_with_registry(self, packet, payload),
+                IPPROTO_IPV6_ESP => decode_esp_with_registry_sa(self, packet, payload),
+                IPPROTO_IPV6_AH => decode_ah_with_registry_sa(self, packet, payload),
+                _ => append_raw_if_needed(packet, payload),
+            };
+        }
+
         let ctx = Ipv6NextHeaderBindingContext {
             next_header,
             payload,
@@ -604,6 +657,39 @@ impl ProtocolRegistry {
         destination_port: u16,
         payload: &[u8],
     ) -> Result<Packet> {
+        if self.builtin_udp_application_dispatch {
+            if is_dhcp_port_pair(source_port, destination_port) && looks_like_dhcp_payload(payload)
+            {
+                return append_dhcp_packet(packet, payload);
+            }
+
+            if (source_port == NATT_UDP_PORT || destination_port == NATT_UDP_PORT)
+                && payload.len() >= ESP_HEADER_LEN
+            {
+                if is_non_esp_marker(payload) {
+                    let marker =
+                        NatTraversal::marker().bytes(payload[..NON_ESP_MARKER_LEN].to_vec());
+                    let packet = packet.push(marker);
+                    return append_ikev2_packet_with_registry(
+                        self,
+                        packet,
+                        &payload[NON_ESP_MARKER_LEN..],
+                    );
+                }
+                return decode_esp_with_registry_sa(self, packet, payload);
+            }
+
+            if source_port == IKEV2_UDP_PORT || destination_port == IKEV2_UDP_PORT {
+                return append_ikev2_packet_with_registry(self, packet, payload);
+            }
+
+            if source_port == DNS_PORT || destination_port == DNS_PORT {
+                return append_dns_packet(packet, payload);
+            }
+
+            return append_raw_if_needed(packet, payload);
+        }
+
         let ctx = UdpBindingContext {
             source_port,
             destination_port,
@@ -669,6 +755,7 @@ impl ProtocolRegistry {
             + Sync
             + 'static,
     {
+        self.builtin_ethertype_dispatch = false;
         self.ethertype_bindings.push(EthertypeBinding {
             predicate: Box::new(predicate),
             decoder: Box::new(decoder),
@@ -706,6 +793,7 @@ impl ProtocolRegistry {
             predicate: Box::new(predicate),
             decoder: Box::new(decoder),
         });
+        self.builtin_ipv4_protocol_dispatch = false;
         self
     }
 
@@ -742,6 +830,7 @@ impl ProtocolRegistry {
             predicate: Box::new(predicate),
             decoder: Box::new(decoder),
         });
+        self.builtin_ipv6_next_header_dispatch = false;
         self
     }
 
@@ -770,6 +859,7 @@ impl ProtocolRegistry {
             predicate: Box::new(predicate),
             decoder: Box::new(decoder),
         });
+        self.builtin_udp_application_dispatch = false;
         self
     }
 

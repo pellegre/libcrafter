@@ -679,15 +679,25 @@ pub(crate) fn decode_ethernet_with_registry(
         ));
     }
 
+    let ethertype = u16::from_be_bytes([bytes[12], bytes[13]]);
     let ethernet = Ethernet {
-        destination: Field::user(MacAddr::new(copy_array_6(&bytes[0..6]))),
-        source: Field::user(MacAddr::new(copy_array_6(&bytes[6..12]))),
-        ethertype: Field::user(read_u16_be(&bytes[12..14])?),
+        destination: Field::user(MacAddr::new([
+            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5],
+        ])),
+        source: Field::user(MacAddr::new([
+            bytes[6], bytes[7], bytes[8], bytes[9], bytes[10], bytes[11],
+        ])),
+        ethertype: Field::user(ethertype),
     };
 
+    let packet_capacity = match ethertype {
+        ETHERTYPE_ARP => 2,
+        ETHERTYPE_VLAN => 5,
+        _ => 4,
+    };
     registry.decode_ethertype(
-        Packet::new().push(ethernet),
-        read_u16_be(&bytes[12..14])?,
+        Packet::with_capacity(packet_capacity).push(ethernet),
+        ethertype,
         &bytes[ETHERNET_HEADER_LEN..],
     )
 }
@@ -780,12 +790,12 @@ fn decode_vlan(bytes: &[u8]) -> Result<(Vlan, &[u8])> {
         ));
     }
 
-    let tci = read_u16_be(&bytes[0..2])?;
+    let tci = u16::from_be_bytes([bytes[0], bytes[1]]);
     let vlan = Vlan {
         pcp: Field::user((tci >> 13) as u8),
         dei: Field::user(((tci >> 12) & 1) != 0),
         vlan_id: Field::user(tci & 0x0fff),
-        ethertype: Field::user(read_u16_be(&bytes[2..4])?),
+        ethertype: Field::user(u16::from_be_bytes([bytes[2], bytes[3]])),
     };
 
     Ok((vlan, &bytes[VLAN_HEADER_LEN..]))
