@@ -6,6 +6,10 @@ for workloads such as `oracle` and `probe`, records provider capabilities and
 command metadata, persists session manifests, and owns repository
 push/bootstrap, artifact collection, and cleanup.
 
+Profile-specific lab workload assets live under `tools/lab/workloads/`. Those
+files are still run inside disposable lab endpoints, not from the repository
+host.
+
 ```sh
 tools/lab/run --help
 tools/lab/run providers --help
