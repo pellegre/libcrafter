@@ -152,19 +152,20 @@ kernel-delivered payload hashes with `IpDefrag` transform output hashes. The
 workload owns those commands; providers own only endpoint creation,
 connectivity, capability reporting, artifact transfer, and teardown.
 
-Plan provider capability and topology before any live packet exchange:
+Plan provider capability and topology before any live packet exchange.
+`ORACLE_BACKEND` should name the oracle backend being validated:
 
 ```sh
 tools/lab/run plan --provider qemu --dry-run --profile ip-fragment-smoke --seed 1204 --role stimulus --role target --workload-label ip-fragment-smoke --json
 tools/lab/run plan --provider virtualbox --dry-run --profile ip-fragment-smoke --seed 1204 --role stimulus --role target --workload-label ip-fragment-smoke --json
-tools/oracle/run live --backend scapy --provider qemu --dry-run --family ip --profile ip-fragment-smoke --seed 1204 --count 20 --out target/lab/ip-fragment-qemu-dry-run
+tools/oracle/run live --backend "$ORACLE_BACKEND" --provider qemu --dry-run --family ip --profile ip-fragment-smoke --seed 1204 --count 20 --out target/lab/ip-fragment-qemu-dry-run
 ```
 
 Real fragment validation must be explicitly confirmed and artifacted under a
 fresh `target/lab/ip-fragment-*` directory:
 
 ```sh
-tools/oracle/run live --backend scapy --provider qemu --confirm-live-run --family ip --profile fragmentation-smoke --seed 1205 --count 20 --out target/lab/ip-fragment-qemu-live
+tools/oracle/run live --backend "$ORACLE_BACKEND" --provider qemu --confirm-live-run --family ip --profile fragmentation-smoke --seed 1205 --count 20 --out target/lab/ip-fragment-qemu-live
 ```
 
 Each live run must leave enough evidence for review: provider manifests,

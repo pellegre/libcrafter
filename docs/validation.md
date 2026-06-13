@@ -241,13 +241,14 @@ addresses and dry-run or pcap writers unless a protected provider workflow has
 been selected.
 
 Run the offline transform and fixture checks first. They do not create
-infrastructure and keep artifacts under `target/oracle/` or `target/examples/`:
+infrastructure and keep artifacts under `target/oracle/` or `target/examples/`.
+`ORACLE_BACKEND` should name the oracle backend being validated:
 
 ```sh
 cargo test -p crafter wire::ip
 cargo test -p crafter --test fixture_suite ip_fragment
-tools/oracle/run offline --backend scapy --family ip --profile fragmentation-smoke --seed 1201 --count 50 --out target/oracle/ip-fragment-offline
-tools/oracle/run pcap --backend scapy --family ip --profile fragmentation-smoke --seed 1203 --count 50 --out target/oracle/ip-fragment-pcap
+tools/oracle/run offline --backend "$ORACLE_BACKEND" --family ip --profile fragmentation-smoke --seed 1201 --count 50 --out target/oracle/ip-fragment-offline
+tools/oracle/run pcap --backend "$ORACLE_BACKEND" --family ip --profile fragmentation-smoke --seed 1203 --count 50 --out target/oracle/ip-fragment-pcap
 cargo run -p crafter --example ip_defrag_pcap_summary -- --out target/examples/ip-defrag-pcap-summary.json
 ```
 
@@ -265,8 +266,8 @@ small MTU setup, offload handling, oversized/crafted fragment traffic, pcap
 capture, and payload hash comparison. Start with provider dry-runs:
 
 ```sh
-tools/oracle/run live --backend scapy --provider qemu --dry-run --family ip --profile ip-fragment-smoke --seed 1204 --count 20 --out target/lab/ip-fragment-qemu-dry-run
-python3 tools/oracle/engine/live_provider_matrix.py --providers hetzner,qemu,virtualbox,docker --backend scapy --profile ip-fragment-smoke --seed 1204 --count 20 --dry-run --out target/lab/ip-fragment-provider-matrix-dry-run
+tools/oracle/run live --backend "$ORACLE_BACKEND" --provider qemu --dry-run --family ip --profile ip-fragment-smoke --seed 1204 --count 20 --out target/lab/ip-fragment-qemu-dry-run
+python3 tools/oracle/engine/live_provider_matrix.py --providers hetzner,qemu,virtualbox,docker --backend "$ORACLE_BACKEND" --profile ip-fragment-smoke --seed 1204 --count 20 --dry-run --out target/lab/ip-fragment-provider-matrix-dry-run
 ```
 
 Real provider-backed fragment behavior is a protected workflow. It must use
@@ -277,8 +278,8 @@ provider lacks the needed capability or prerequisite, the run should write a
 structured skip artifact under the same directory instead of silently passing:
 
 ```sh
-tools/oracle/run live --backend scapy --provider qemu --confirm-live-run --family ip --profile ip-fragment-smoke --seed 1205 --count 20 --out target/lab/ip-fragment-qemu-live
-python3 tools/oracle/engine/live_provider_matrix.py --providers qemu,virtualbox --backend scapy --profile ip-fragment-smoke --seed 1205 --count 5 --real --confirm-live-run --skip-unavailable --out target/lab/ip-fragment-vm-live
+tools/oracle/run live --backend "$ORACLE_BACKEND" --provider qemu --confirm-live-run --family ip --profile ip-fragment-smoke --seed 1205 --count 20 --out target/lab/ip-fragment-qemu-live
+python3 tools/oracle/engine/live_provider_matrix.py --providers qemu,virtualbox --backend "$ORACLE_BACKEND" --profile ip-fragment-smoke --seed 1205 --count 5 --real --confirm-live-run --skip-unavailable --out target/lab/ip-fragment-vm-live
 ```
 
 Do not keep live endpoints after fragment validation except for an explicit

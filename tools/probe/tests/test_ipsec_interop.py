@@ -4,8 +4,8 @@ The interop check is the OPEN-direction counterpart of the oracle byte parity:
 each implementation must consume the packet the other sealed. The structural
 tests (case matrix, operation shape, the CLI dry-run wiring predicate) run with
 no external tools. The end-to-end test actually seals/opens ESP/AH/SK both ways
-with libcrafter and the reference crypto (Scapy + cryptography); it is skipped
-when ``cargo`` or ``uv`` are unavailable.
+with libcrafter and the oracle-owned reference crypto; it is skipped when
+``cargo`` or ``uv`` are unavailable.
 """
 
 from __future__ import annotations
@@ -13,7 +13,8 @@ from __future__ import annotations
 import shutil
 import unittest
 
-from tools.probe.engine import cli, ipsec_interop
+from tools.oracle.engine import ipsec_interop
+from tools.probe.engine import cli
 from tools.probe.engine.model import ProbeCase
 
 

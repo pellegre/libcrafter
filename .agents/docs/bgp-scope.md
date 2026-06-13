@@ -86,7 +86,7 @@ Unknown capability codes round-trip verbatim (RFC 5492 §5).
 | BGP-bearing TCP stream decode (pipelined messages as stacked layers, partial tail preserved as raw) | spec Requirements; RFC 4271 §4.1 | 55, 57 |
 | TCP/179 registry dispatch (source or destination port) | spec Requirements; RFC 4271 §1 (BGP_PORT = 179) | 56 |
 | Golden hex / summary / pcap fixture suite | spec Acceptance | 58-62 |
-| Oracle validation (layer + feature specs, profiles, scapy backend, libcrafter adapter, offline + pcap runs) | spec Acceptance | 68-74 |
+| Oracle validation (layer + feature specs, profiles, reference backend, libcrafter adapter, offline + pcap runs) | spec Acceptance | 68-74 |
 | Live session establishment + documentation-prefix announcement against a real peer | spec Acceptance | 75-82 |
 
 Live work uses disposable lab/endpoint providers (QEMU step 79, VirtualBox step
