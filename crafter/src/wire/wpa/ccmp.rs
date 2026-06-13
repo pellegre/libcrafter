@@ -325,8 +325,7 @@ fn decrypt_parsed_ccmp(
     let tag_offset = encrypted_payload.len() - CCMP_MIC_LEN;
     let (ciphertext, tag) = encrypted_payload.split_at(tag_offset);
     let mut plaintext = ciphertext.to_vec();
-    let cipher = Aes128Ccmp::new_from_slice(temporal_key)
-        .expect("WPA2-PSK CCMP temporal key length is AES-128");
+    let cipher = Aes128Ccmp::new(GenericArray::from_slice(temporal_key));
 
     if cipher
         .decrypt_in_place_detached(
@@ -553,8 +552,7 @@ pub(crate) fn encrypt_unicast_for_tests(
     let ccmp = CcmpHeader::parse(&header_body).unwrap();
     let nonce = ccmp_nonce(dot11, &ccmp).unwrap();
     let aad = ccmp_aad(dot11).unwrap();
-    let cipher = Aes128Ccmp::new_from_slice(temporal_key)
-        .expect("WPA2-PSK CCMP temporal key length is AES-128");
+    let cipher = Aes128Ccmp::new(GenericArray::from_slice(temporal_key));
     let mut encrypted = plaintext.to_vec();
     let tag = cipher
         .encrypt_in_place_detached(GenericArray::from_slice(&nonce), &aad, &mut encrypted)
