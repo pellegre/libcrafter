@@ -1,5 +1,7 @@
 //! Explicit protocol binding and decode dispatch.
 
+use std::sync::OnceLock;
+
 use crate::endian::read_u32_be;
 use crate::error::Result;
 use crate::packet::{LinkType, NetworkLayer, Packet, Raw};
@@ -137,6 +139,12 @@ impl ProtocolRegistry {
     /// Create a registry with the built-in protocol bindings installed.
     pub fn new() -> Self {
         Self::with_builtin_bindings()
+    }
+
+    /// Shared built-in registry used by default decode entrypoints.
+    pub(crate) fn builtin() -> &'static Self {
+        static BUILTIN_REGISTRY: OnceLock<ProtocolRegistry> = OnceLock::new();
+        BUILTIN_REGISTRY.get_or_init(Self::with_builtin_bindings)
     }
 
     /// Create a registry with no bindings.
