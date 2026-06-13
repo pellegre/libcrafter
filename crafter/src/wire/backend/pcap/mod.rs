@@ -1,26 +1,43 @@
-//! Pcap packet wire backend adapters.
+//! Pcap packet wire backend.
 //!
-//! This module adapts the low-level [`crate::pcap`] reader/writer/libpcap
-//! primitives into [`crate::wire::PacketSource`] and
-//! [`crate::wire::PacketWriter`] implementations. Application code should
-//! normally construct these through [`crate::wire::PacketWire`] instead of
-//! naming the backend types directly.
+//! This module owns the classic pcap codec, record metadata, file readers and
+//! writers, libpcap filtering/capture glue, and the packet wire adapters that
+//! expose those pieces through [`crate::wire::PacketSource`] and
+//! [`crate::wire::PacketWriter`]. Application code should normally construct
+//! these through [`crate::wire::PacketWire`] instead of naming backend types
+//! directly.
+
+#![forbid(unsafe_code)]
+
+mod codec;
+mod error;
+mod libpcap;
+mod types;
+
+pub mod reader;
+pub mod writer;
+
+pub use error::{PcapError, Result};
+pub(crate) use libpcap::{LibpcapCapture, LibpcapOfflineCapture};
+pub use reader::{read_pcap, read_pcap_filtered, PcapReader, PcapRecords};
+pub use types::{
+    PcapHeader, PcapLinkType, PcapPacket, PcapRecord, PcapTimestamp, TimestampPrecision,
+    DLT_EN10MB, DLT_IEEE802_11, DLT_IEEE802_11_RADIO, DLT_LINUX_SLL, DLT_LOOP, DLT_NULL, DLT_RAW,
+    LINKTYPE_IEEE802_11, LINKTYPE_IEEE802_11_RADIOTAP,
+};
+pub use writer::{dump_pcap, PcapWriter, PcapWriterOptions};
 
 use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::pcap::{
-    LibpcapCapture, LibpcapOfflineCapture, PcapError, PcapLinkType, PcapReader, PcapRecord,
-    PcapTimestamp, PcapWriter,
-};
 use crate::{Dot11, Ethernet, Ipv4, Ipv6, LinuxSll, NullLoopback, Radiotap};
 
 use super::super::record::{BackendKind, PacketRecord};
 use super::super::source::PacketSource;
 use super::super::writer::{PacketWriter, WriteReport};
-use super::super::Result;
+use super::super::Result as WireResult;
 
 pub(crate) const DEFAULT_INTERFACE_TIMEOUT: Duration = Duration::from_secs(10);
 pub(crate) const DEFAULT_INTERFACE_SNAPLEN: u32 = 65_535;
@@ -44,19 +61,19 @@ enum OfflinePcapSourceInner {
 
 impl OfflinePcapSource {
     /// Open an offline pcap file source with no filter.
-    pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+    pub fn open(path: impl AsRef<Path>) -> WireResult<Self> {
         Self::open_with_optional_filter(path, None)
     }
 
     /// Open an offline pcap file source with a libpcap BPF filter.
-    pub fn open_filtered(path: impl AsRef<Path>, filter: impl AsRef<str>) -> Result<Self> {
+    pub fn open_filtered(path: impl AsRef<Path>, filter: impl AsRef<str>) -> WireResult<Self> {
         Self::open_with_optional_filter(path, Some(filter.as_ref()))
     }
 
     pub(crate) fn open_with_optional_filter(
         path: impl AsRef<Path>,
         filter: Option<&str>,
-    ) -> Result<Self> {
+    ) -> WireResult<Self> {
         let path = path.as_ref().to_path_buf();
         let filter = filter
             .map(str::trim)
@@ -86,7 +103,7 @@ impl OfflinePcapSource {
         self.filter.as_deref()
     }
 
-    fn next_pcap_record(&mut self) -> Result<Option<PcapRecord>> {
+    fn next_pcap_record(&mut self) -> WireResult<Option<PcapRecord>> {
         match &mut self.inner {
             OfflinePcapSourceInner::Reader(reader) => reader.next_record().map_err(Into::into),
             OfflinePcapSourceInner::Filtered(capture) => capture.next_record().map_err(Into::into),
@@ -95,7 +112,7 @@ impl OfflinePcapSource {
 }
 
 impl PacketSource for OfflinePcapSource {
-    fn next_record(&mut self) -> Result<Option<PacketRecord>> {
+    fn next_record(&mut self) -> WireResult<Option<PacketRecord>> {
         self.next_pcap_record()?
             .map(|record| pcap_record_to_packet_record(self.path(), record))
             .transpose()
@@ -218,7 +235,7 @@ impl PcapInterfaceSourceBuilder {
     }
 
     /// Open this live pcap interface source.
-    pub fn open(self) -> Result<PcapInterfaceSource> {
+    pub fn open(self) -> WireResult<PcapInterfaceSource> {
         let inner = LibpcapCapture::open(
             &self.interface,
             self.filter.as_deref(),
@@ -262,7 +279,7 @@ impl PcapInterfaceSource {
     }
 
     /// Open a live pcap interface source with default options.
-    pub fn open(interface: impl Into<String>) -> Result<Self> {
+    pub fn open(interface: impl Into<String>) -> WireResult<Self> {
         Self::builder(interface).open()
     }
 
@@ -303,7 +320,7 @@ impl PcapInterfaceSource {
 }
 
 impl PacketSource for PcapInterfaceSource {
-    fn next_record(&mut self) -> Result<Option<PacketRecord>> {
+    fn next_record(&mut self) -> WireResult<Option<PacketRecord>> {
         self.inner
             .next_record()?
             .map(|record| pcap_interface_record_to_packet_record(self.interface(), record))
@@ -407,7 +424,7 @@ impl PcapInterfaceWriterBuilder {
     }
 
     /// Open this live pcap interface writer.
-    pub fn open(self) -> Result<PcapInterfaceWriter> {
+    pub fn open(self) -> WireResult<PcapInterfaceWriter> {
         let inner = LibpcapCapture::open(
             &self.interface,
             None,
@@ -452,7 +469,7 @@ impl PcapInterfaceWriter {
     }
 
     /// Open a live pcap interface writer with default options.
-    pub fn open(interface: impl Into<String>) -> Result<Self> {
+    pub fn open(interface: impl Into<String>) -> WireResult<Self> {
         Self::builder(interface).open()
     }
 
@@ -493,7 +510,7 @@ impl PcapInterfaceWriter {
 }
 
 impl PacketWriter for PcapInterfaceWriter {
-    fn write_record(&mut self, record: &PacketRecord) -> Result<WriteReport> {
+    fn write_record(&mut self, record: &PacketRecord) -> WireResult<WriteReport> {
         ensure_record_link_type(record, self.link_type)?;
 
         let compiled = record.packet().compile()?;
@@ -518,7 +535,7 @@ pub struct PcapFileWriter {
 
 impl PcapFileWriter {
     /// Create a pcap file writer with the supplied pcap data-link type.
-    pub fn create(path: impl AsRef<Path>, link_type: impl Into<PcapLinkType>) -> Result<Self> {
+    pub fn create(path: impl AsRef<Path>, link_type: impl Into<PcapLinkType>) -> WireResult<Self> {
         let path = path.as_ref().to_path_buf();
         let link_type = link_type.into();
         let inner = PcapWriter::create(&path, link_type)?;
@@ -540,13 +557,13 @@ impl PcapFileWriter {
     }
 
     /// Flush buffered pcap output.
-    pub fn flush(&mut self) -> Result<()> {
+    pub fn flush(&mut self) -> WireResult<()> {
         self.inner.flush().map_err(Into::into)
     }
 }
 
 impl PacketWriter for PcapFileWriter {
-    fn write_record(&mut self, record: &PacketRecord) -> Result<WriteReport> {
+    fn write_record(&mut self, record: &PacketRecord) -> WireResult<WriteReport> {
         ensure_record_link_type(record, self.link_type)?;
 
         let compiled = record.packet().compile()?;
@@ -573,7 +590,7 @@ impl PacketWriter for PcapFileWriter {
     }
 }
 
-fn pcap_record_to_packet_record(path: &Path, record: PcapRecord) -> Result<PacketRecord> {
+fn pcap_record_to_packet_record(path: &Path, record: PcapRecord) -> WireResult<PacketRecord> {
     Ok(PacketRecord::try_from_pcap_record(record)?
         .with_backend(BackendKind::PcapFile)
         .with_file(path.to_path_buf()))
@@ -582,7 +599,7 @@ fn pcap_record_to_packet_record(path: &Path, record: PcapRecord) -> Result<Packe
 fn pcap_interface_record_to_packet_record(
     interface: &str,
     record: PcapRecord,
-) -> Result<PacketRecord> {
+) -> WireResult<PacketRecord> {
     Ok(PacketRecord::try_from_pcap_record(record)?
         .with_backend(BackendKind::PcapInterface)
         .with_interface(interface))
@@ -615,7 +632,7 @@ fn packet_pcap_link_type(record: &PacketRecord) -> Option<PcapLinkType> {
     }
 }
 
-fn ensure_record_link_type(record: &PacketRecord, link_type: PcapLinkType) -> Result<()> {
+fn ensure_record_link_type(record: &PacketRecord, link_type: PcapLinkType) -> WireResult<()> {
     if let Some(record_link_type) = record_pcap_link_type(record) {
         if record_link_type != link_type {
             return Err(
@@ -634,12 +651,14 @@ pub(crate) fn filter_trimmed(filter: impl Into<String>) -> Option<String> {
 }
 
 #[cfg(test)]
+mod codec_tests;
+
+#[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
     use super::*;
-    use crate::pcap::{PcapError, PcapLinkType, PcapRecord, PcapTimestamp, PcapWriter};
     use crate::{
         Dot11, Ethernet, Ipv4, LinkType, MacAddr, Packet, PacketOrigin, PacketWire, Radiotap, Raw,
         Sniffer, Tcp, Transmitter, WireError,
@@ -1273,7 +1292,7 @@ mod tests {
         }
     }
 
-    fn assert_empty_interface_error<T>(result: Result<T>) {
+    fn assert_empty_interface_error<T>(result: WireResult<T>) {
         let err = match result {
             Ok(_) => panic!("expected empty interface to fail"),
             Err(err) => err,

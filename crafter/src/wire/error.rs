@@ -5,7 +5,7 @@ use std::io;
 
 use crate::error::CrafterError;
 use crate::net::NetError;
-use crate::pcap::PcapError;
+use crate::wire::backend::pcap::PcapError;
 
 /// Convenient result alias used by wire packet I/O primitives.
 pub type Result<T> = std::result::Result<T, WireError>;

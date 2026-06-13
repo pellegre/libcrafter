@@ -5,13 +5,13 @@ use core::borrow::Borrow;
 use core::net::Ipv6Addr;
 
 use crate::endian::{read_u16_be, read_u32_be, read_u32_le};
-use crate::pcap::PcapLinkType;
 use crate::protocols::{
     ETHERTYPE_IPV6, ETHERTYPE_VLAN, IPPROTO_IPV6_AH, IPPROTO_IPV6_DSTOPTS, IPPROTO_IPV6_ESP,
     IPPROTO_IPV6_EXPERIMENTAL_1, IPPROTO_IPV6_EXPERIMENTAL_2, IPPROTO_IPV6_FRAGMENT,
     IPPROTO_IPV6_HIP, IPPROTO_IPV6_HOPOPTS, IPPROTO_IPV6_MOBILITY, IPPROTO_IPV6_ROUTE,
     IPPROTO_IPV6_SHIM6,
 };
+use crate::wire::backend::pcap::PcapLinkType;
 use crate::wire::record::PacketRecord;
 use crate::{
     CrafterError, Ethernet, Ipv6, Ipv6FragmentHeaderStatus, LinkType, LinuxSll, NullLoopback,
@@ -938,7 +938,7 @@ mod tests {
         extract_ipv6_fragment, Ipv6FragmentExtract, Ipv6FragmentPassThroughReason,
         Ipv6FragmentWrapperKind,
     };
-    use crate::pcap::{PcapLinkType, PcapTimestamp};
+    use crate::wire::backend::pcap::{PcapLinkType, PcapTimestamp};
     use crate::wire::record::PacketRecord;
     use crate::{
         CrafterError, Ethernet, Ipv6, Ipv6DestinationOptionsHeader, Ipv6FragmentHeader,

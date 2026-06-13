@@ -18,13 +18,13 @@ use super::{
     IpDefragConfig, IpDefragEvictionReason, IpDefragMetadata, IpDefragOverlapPolicy,
     IpFragmentFamily, IpFragmentRange, Ipv6AtomicFragmentPolicy,
 };
-use crate::pcap::PcapTimestamp;
 use crate::protocols::ipv4::append_ipv4_packet_with_registry;
 use crate::protocols::ipv6::append_ipv6_packet_with_registry;
 use crate::protocols::link::{
     append_vlan_packet_with_registry, ETHERTYPE_IPV4, ETHERTYPE_IPV6, ETHERTYPE_VLAN,
 };
 use crate::registry::ProtocolRegistry;
+use crate::wire::backend::pcap::PcapTimestamp;
 use crate::wire::record::{PacketMetadata, PacketOrigin, PacketRecord, TransformTrace};
 use crate::wire::transform::{PacketTransform, TransformOutput};
 use crate::wire::Result;
@@ -2095,7 +2095,7 @@ mod ipv4_pass_through {
 #[cfg(test)]
 mod ipv4_reassembles {
     use super::*;
-    use crate::pcap::PcapTimestamp;
+    use crate::wire::backend::pcap::PcapTimestamp;
     use crate::wire::ip::{IpDefragOverlapStatus, IpFragmentFamily, IpFragmentRange};
     use crate::wire::record::{BackendKind, PacketOrigin, PacketRecord};
     use crate::{Ipv4, Ipv4ChecksumStatus, Raw};
@@ -2621,7 +2621,7 @@ mod ipv4_limits {
 #[cfg(test)]
 mod ipv6_reassembles {
     use super::*;
-    use crate::pcap::PcapTimestamp;
+    use crate::wire::backend::pcap::PcapTimestamp;
     use crate::wire::ip::{IpDefragOverlapStatus, IpFragmentFamily, IpFragmentRange};
     use crate::wire::record::{BackendKind, PacketOrigin, PacketRecord};
     use crate::{
@@ -3008,7 +3008,7 @@ mod ipv6_limits {
     use super::*;
     use std::time::Duration;
 
-    use crate::pcap::PcapTimestamp;
+    use crate::wire::backend::pcap::PcapTimestamp;
     use crate::wire::ip::{IpFragmentFamily, IpFragmentRange};
     use crate::wire::record::{BackendKind, PacketRecord};
     use crate::{Ipv6, Ipv6FragmentHeader, Raw, IPPROTO_UDP};
@@ -3411,7 +3411,7 @@ mod ipv6_state {
 #[cfg(test)]
 mod ipv6_atomic {
     use super::*;
-    use crate::pcap::PcapTimestamp;
+    use crate::wire::backend::pcap::PcapTimestamp;
     use crate::wire::ip::{IpDefragOverlapStatus, IpFragmentFamily, IpFragmentRange};
     use crate::wire::record::{BackendKind, PacketOrigin, PacketRecord};
     use crate::{
