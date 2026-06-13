@@ -482,10 +482,11 @@ impl IpDefrag {
                 Ipv4DefragObservation::Buffered
             }
             Ipv4DefragObservationKind::ByteLimit => {
-                let state = self
-                    .ipv4_datagrams
-                    .remove(&key)
-                    .expect("byte-limited IPv4 defrag state must remain in the map");
+                let Some(state) = self.ipv4_datagrams.remove(&key) else {
+                    return Ipv4DefragObservation::Error(defrag_transform_error(
+                        "byte-limited IPv4 defrag state disappeared",
+                    ));
+                };
                 if let Err(error) =
                     self.evict_ipv4_state(state, IpDefragEvictionReason::ByteLimit, emit)
                 {
