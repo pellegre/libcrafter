@@ -528,7 +528,7 @@ impl Packet {
 
     /// Decode bytes from a link-layer entrypoint.
     pub fn decode_from_link(link_type: LinkType, bytes: impl AsRef<[u8]>) -> Result<Self> {
-        ProtocolRegistry::new().decode_from_link(link_type, bytes)
+        ProtocolRegistry::builtin().decode_from_link(link_type, bytes)
     }
 
     /// Decode bytes from a link-layer entrypoint using an explicit registry.
@@ -542,7 +542,7 @@ impl Packet {
 
     /// Decode bytes from a network-layer entrypoint.
     pub fn decode_from_l3(network_layer: NetworkLayer, bytes: impl AsRef<[u8]>) -> Result<Self> {
-        ProtocolRegistry::new().decode_from_l3(network_layer, bytes)
+        ProtocolRegistry::builtin().decode_from_l3(network_layer, bytes)
     }
 
     /// Decode bytes from a network-layer entrypoint using an explicit registry.
