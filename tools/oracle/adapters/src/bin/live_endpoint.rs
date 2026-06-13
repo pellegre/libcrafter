@@ -2797,6 +2797,7 @@ mod ipv4_dhcp_live_endpoint {
 mod l2_ipv4_root {
     use super::materialize_core::build_packet;
     use super::*;
+    use crafter::wire::backend::pcap::{PcapLinkType, PcapPacket, PcapTimestamp};
 
     #[test]
     fn l2_ipv4_send_root_is_accepted_as_network_layer() {
