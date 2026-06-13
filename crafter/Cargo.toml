@@ -11,6 +11,7 @@ documentation.workspace = true
 readme.workspace = true
 keywords.workspace = true
 categories.workspace = true
+exclude = ["tests/fixtures/**"]
 
 [lib]
 path = "src/lib.rs"
