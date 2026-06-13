@@ -325,6 +325,8 @@ fn public_api_dot11_phase15_eapol_key_and_rsn_builders() -> crafter::Result<()> 
 
 #[test]
 fn public_api_dot11_phase15_pcap_link_types_decode() -> crafter::Result<()> {
+    use crafter::wire::backend::pcap::PcapLinkType;
+
     let station = documentation_mac(0x21);
     let access_point = documentation_mac(0x22);
     let bare_packet = Dot11::data()
@@ -580,11 +582,30 @@ fn public_module_paths_expose_representative_items() -> crafter::Result<()> {
     let packet = crafter::core::Packet::from_layer(crafter::core::Raw::from("core"));
     assert_eq!(packet.compile()?.as_bytes(), b"core");
 
-    let pcap_header = crafter::pcap::PcapHeader::new(crafter::pcap::PcapLinkType::RawIp);
+    let pcap_input = crafter::wire::PacketWire::pcap_file("fixtures/input.pcap");
     assert_eq!(
-        pcap_header.precision(),
-        crafter::pcap::TimestampPrecision::Microseconds
+        pcap_input.target().path(),
+        Some(std::path::Path::new("fixtures/input.pcap"))
     );
+
+    let pcap_recorder =
+        crafter::wire::PacketWire::pcap_recorder("fixtures/output.pcap", crafter::LinkType::Raw);
+    assert_eq!(
+        pcap_recorder.target().pcap_link_type(),
+        Some(crafter::wire::backend::pcap::PcapLinkType::RawIp)
+    );
+
+    let timestamp = crafter::wire::backend::pcap::PcapTimestamp::micros(7, 11).unwrap();
+    let record = crafter::wire::PacketRecord::new(crafter::Raw::from("wire")).with_pcap_metadata(
+        timestamp,
+        4,
+        4,
+        crafter::wire::backend::pcap::PcapLinkType::RawIp,
+    );
+    assert_eq!(record.metadata().timestamp(), Some(timestamp));
+    assert_eq!(record.metadata().original_len(), Some(4));
+    assert_eq!(record.metadata().captured_len(), Some(4));
+    assert_eq!(record.metadata().link_type(), Some(crafter::LinkType::Raw));
 
     let send_options = crafter::net::SendOptions::new()
         .iface("dry-run0")
