@@ -1241,6 +1241,16 @@ impl Radiotap {
             + self.encoded_fields_len_from_offset(fields_offset)
     }
 
+    fn fallback_header_len(&self) -> usize {
+        let present_len = self
+            .present
+            .value()
+            .map(RadiotapPresent::encoded_len)
+            .unwrap_or(RADIOTAP_PRESENT_WORD_LEN);
+        let fields_offset = RADIOTAP_FIXED_HEADER_LEN + present_len;
+        RADIOTAP_FIXED_HEADER_LEN + present_len + self.encoded_fields_len_from_offset(fields_offset)
+    }
+
     fn compiled_header_len(&self) -> Result<u16> {
         let present = self.present()?;
         let header_len = self.header_len_with_present(&present);
@@ -1265,19 +1275,29 @@ impl Layer for Radiotap {
     }
 
     fn summary(&self) -> String {
-        let present = self
-            .present()
-            .expect("radiotap field bits are validated before storage");
-        let length = self
-            .compiled_header_len()
-            .map(usize::from)
-            .unwrap_or_else(|_| self.header_len_with_present(&present));
+        let present = self.present();
+        let length = match &present {
+            Ok(present) => self
+                .compiled_header_len()
+                .map(usize::from)
+                .unwrap_or_else(|_| self.header_len_with_present(present)),
+            Err(_) => self
+                .length_value()
+                .map(usize::from)
+                .unwrap_or_else(|| self.fallback_header_len()),
+        };
         let mut fields = vec![
             format!("version={}", self.effective_version()),
             format!("len={length}"),
-            format!("present={}", radiotap_present_summary(&present)),
             format!("fields={}", self.fields.len()),
         ];
+        match present {
+            Ok(present) => fields.push(format!("present={}", radiotap_present_summary(&present))),
+            Err(err) => {
+                fields.push("present=malformed".to_string());
+                fields.push(format!("present_error={err}"));
+            }
+        }
 
         if !self.raw_fields.is_empty() {
             fields.push(format!("raw_fields_len={}", self.raw_fields.len()));
