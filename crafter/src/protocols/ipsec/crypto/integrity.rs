@@ -96,7 +96,7 @@ impl IntegrityTransform {
             Self::HmacSha1_96 => hmac_sha1(key, message, self.icv_len()),
             Self::HmacSha2_256_128 => hmac_sha256(key, message, self.icv_len()),
             Self::HmacSha2_384_192 => hmac_sha384(key, message, self.icv_len()),
-            Self::HmacSha2_512_256 => Ok(hmac_sha512(key, message, self.icv_len())),
+            Self::HmacSha2_512_256 => hmac_sha512(key, message, self.icv_len()),
             Self::AesXcbcMac96 => {
                 let mac = aes_xcbc_mac(key, message)?;
                 Ok(mac[..self.icv_len()].to_vec())
@@ -156,10 +156,15 @@ fn hmac_sha384(key: &[u8], message: &[u8], icv_len: usize) -> Result<Vec<u8>> {
 }
 
 /// Compute HMAC-SHA-512 and truncate to `icv_len` octets.
-fn hmac_sha512(key: &[u8], message: &[u8], icv_len: usize) -> Vec<u8> {
-    let mut mac = <Hmac<Sha512> as Mac>::new_from_slice(key).expect("HMAC accepts any key length");
+fn hmac_sha512(key: &[u8], message: &[u8], icv_len: usize) -> Result<Vec<u8>> {
+    let mut mac = <Hmac<Sha512> as Mac>::new_from_slice(key).map_err(|_| {
+        CrafterError::invalid_field_value(
+            "ipsec.integrity.hmac_sha512.key",
+            "HMAC-SHA512 key is invalid",
+        )
+    })?;
     mac.update(message);
-    mac.finalize().into_bytes()[..icv_len].to_vec()
+    Ok(mac.finalize().into_bytes()[..icv_len].to_vec())
 }
 
 /// AES-XCBC-MAC (RFC 3566 §4): the full 16-octet MAC, before ICV truncation.
