@@ -3,7 +3,6 @@
 use core::net::Ipv4Addr;
 
 use crate::checksum::ipv4_header_checksum;
-use crate::endian::read_u16_be;
 use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::packet::{Packet, Raw};
@@ -57,7 +56,7 @@ fn decode_ipv4_parts(bytes: &[u8]) -> Result<(Ipv4, &[u8], &[u8])> {
         ));
     }
 
-    let total_length = read_u16_be(&bytes[2..4])? as usize;
+    let total_length = u16::from_be_bytes([bytes[2], bytes[3]]) as usize;
     if total_length < header_len {
         return Err(CrafterError::invalid_field_value(
             "ipv4.total_length",
@@ -72,7 +71,7 @@ fn decode_ipv4_parts(bytes: &[u8]) -> Result<(Ipv4, &[u8], &[u8])> {
         ));
     }
 
-    let flags_fragment = read_u16_be(&bytes[6..8])?;
+    let flags_fragment = u16::from_be_bytes([bytes[6], bytes[7]]);
     let options = if header_len > IPV4_MIN_HEADER_LEN {
         bytes[IPV4_MIN_HEADER_LEN..header_len].to_vec()
     } else {
@@ -86,12 +85,12 @@ fn decode_ipv4_parts(bytes: &[u8]) -> Result<(Ipv4, &[u8], &[u8])> {
         ihl: Field::user(ihl),
         tos: Field::user(bytes[1]),
         total_length: Field::user(total_length as u16),
-        identification: Field::user(read_u16_be(&bytes[4..6])?),
+        identification: Field::user(u16::from_be_bytes([bytes[4], bytes[5]])),
         flags: Field::user(flags_from_flags_fragment(flags_fragment)),
         fragment_offset: Field::user(fragment_offset_from_flags_fragment(flags_fragment)),
         ttl: Field::user(bytes[8]),
         protocol: Field::user(bytes[9]),
-        checksum: Field::user(read_u16_be(&bytes[10..12])?),
+        checksum: Field::user(u16::from_be_bytes([bytes[10], bytes[11]])),
         checksum_status,
         source: Field::user(Ipv4Addr::new(bytes[12], bytes[13], bytes[14], bytes[15])),
         destination: Field::user(Ipv4Addr::new(bytes[16], bytes[17], bytes[18], bytes[19])),
@@ -187,7 +186,7 @@ pub(crate) fn decode_quoted_ipv4(bytes: &[u8]) -> Option<(Packet, usize)> {
         return None;
     }
 
-    let total_length = read_u16_be(&bytes[2..4]).ok()? as usize;
+    let total_length = u16::from_be_bytes([bytes[2], bytes[3]]) as usize;
     // Trust `total_length` only when it is internally consistent and fully
     // present; otherwise treat every available byte as part of the quote so a
     // truncated datagram still round-trips.
@@ -198,7 +197,7 @@ pub(crate) fn decode_quoted_ipv4(bytes: &[u8]) -> Option<(Packet, usize)> {
     };
     let datagram = &bytes[..consumed];
 
-    let flags_fragment = read_u16_be(&datagram[6..8]).ok()?;
+    let flags_fragment = u16::from_be_bytes([datagram[6], datagram[7]]);
     let options = if header_len > IPV4_MIN_HEADER_LEN {
         datagram[IPV4_MIN_HEADER_LEN..header_len].to_vec()
     } else {
@@ -214,12 +213,12 @@ pub(crate) fn decode_quoted_ipv4(bytes: &[u8]) -> Option<(Packet, usize)> {
         ihl: Field::user(ihl),
         tos: Field::user(datagram[1]),
         total_length: Field::user(total_length as u16),
-        identification: Field::user(read_u16_be(&datagram[4..6]).ok()?),
+        identification: Field::user(u16::from_be_bytes([datagram[4], datagram[5]])),
         flags: Field::user(flags_from_flags_fragment(flags_fragment)),
         fragment_offset: Field::user(fragment_offset_from_flags_fragment(flags_fragment)),
         ttl: Field::user(datagram[8]),
         protocol: Field::user(datagram[9]),
-        checksum: Field::user(read_u16_be(&datagram[10..12]).ok()?),
+        checksum: Field::user(u16::from_be_bytes([datagram[10], datagram[11]])),
         checksum_status,
         source: Field::user(Ipv4Addr::new(
             datagram[12],
@@ -239,7 +238,7 @@ pub(crate) fn decode_quoted_ipv4(bytes: &[u8]) -> Option<(Packet, usize)> {
     let protocol = ipv4.protocol_value();
     let fragment_offset = ipv4.fragment_offset_value();
     let payload = &datagram[header_len..];
-    let mut packet = Packet::new().push(ipv4);
+    let mut packet = Packet::with_capacity(3).push(ipv4);
 
     // Best-effort typed transport decode. A strict failure (truncated quote or
     // unknown next protocol) keeps the remaining bytes raw-compatible. A
@@ -250,7 +249,7 @@ pub(crate) fn decode_quoted_ipv4(bytes: &[u8]) -> Option<(Packet, usize)> {
             packet = packet.push(Raw::from_bytes(payload));
         }
     } else {
-        let registry = ProtocolRegistry::transport_only();
+        let registry = ProtocolRegistry::transport_only_builtin();
         packet = match registry.decode_ipv4_protocol(packet.clone(), protocol, payload) {
             Ok(typed) => typed,
             Err(_) => {

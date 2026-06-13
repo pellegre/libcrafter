@@ -344,6 +344,13 @@ impl Packet {
         Self { layers: Vec::new() }
     }
 
+    /// Create an empty packet with room for `capacity` layers.
+    pub(crate) fn with_capacity(capacity: usize) -> Self {
+        Self {
+            layers: Vec::with_capacity(capacity),
+        }
+    }
+
     /// Create a packet containing one layer.
     pub fn from_layer<L>(layer: L) -> Self
     where
