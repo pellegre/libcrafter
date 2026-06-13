@@ -1457,6 +1457,13 @@ fn decode_radiotap(bytes: &[u8]) -> Result<(Radiotap, &[u8])> {
     Ok((radiotap, &bytes[header_len..]))
 }
 
+fn radiotap_field_array<const N: usize>(context: &'static str, bytes: &[u8]) -> Result<[u8; N]> {
+    bytes
+        .get(..N)
+        .and_then(|bytes| bytes.try_into().ok())
+        .ok_or_else(|| CrafterError::buffer_too_short(context, N, bytes.len()))
+}
+
 pub(crate) fn decode_radiotap_field(bit: u16, bytes: &[u8]) -> Result<RadiotapField> {
     let Some(metadata) = radiotap_field_metadata(bit) else {
         return Err(CrafterError::invalid_field_value(
@@ -1474,9 +1481,9 @@ pub(crate) fn decode_radiotap_field(bit: u16, bytes: &[u8]) -> Result<RadiotapFi
     let bytes = &bytes[..metadata.size()];
 
     let field = match bit {
-        bit if bit == u16::from(RADIOTAP_FIELD_TSFT) => {
-            RadiotapField::Tsft(u64::from_le_bytes(bytes.try_into().expect("TSFT size")))
-        }
+        bit if bit == u16::from(RADIOTAP_FIELD_TSFT) => RadiotapField::Tsft(u64::from_le_bytes(
+            radiotap_field_array("radiotap.field.tsft", bytes)?,
+        )),
         bit if bit == u16::from(RADIOTAP_FIELD_FLAGS) => {
             RadiotapField::Flags(RadiotapFlags::from_bits(bytes[0]))
         }
