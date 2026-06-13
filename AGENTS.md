@@ -10,7 +10,7 @@ import `crafter::prelude::*`.
 
 ## Current status
 
-`crafter` 2.0.0 is the first public release. The core surface is in place:
+`crafter` 0.3.0 is the first public release. The core surface is in place:
 layered packet construction with auto-filled lengths and checksums, decode
 entrypoints for Ethernet, Linux cooked capture, null/loopback, and raw IPv4 /
 IPv6 inputs, classic pcap read/write with libpcap BPF filters, raw send and
@@ -18,9 +18,11 @@ send/receive matching, provider-backed endpoints, and multi-endpoint lab
 sessions (Hetzner, QEMU, VirtualBox) for traffic that cannot live on a
 developer machine.
 
-TCP stream reassembly, fragmentation/reassembly, full pcapng, full BPF parsing,
-and a complete TCP/IP stack are not in scope yet. The 2.x Rust API may still
-evolve as protocol and wire coverage grows.
+TCP stream reassembly, full pcapng, full BPF parsing, and a complete TCP/IP
+stack are not in scope yet; IP fragmentation and reassembly ship as explicit
+`IpFragment`/`IpDefrag` wire transforms rather than automatic decode-time
+behavior. The 0.x Rust API may still evolve as protocol and wire coverage
+grows.
 
 ## Preserve the packet abstraction
 

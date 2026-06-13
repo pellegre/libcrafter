@@ -5,7 +5,7 @@
 //! under `v4/`. The body type names follow the explicit version convention
 //! ([`Icmpv4QuotedIp`], [`Icmpv4Timestamp`], [`Icmpv4AddressMask`],
 //! [`Icmpv4RouterAdvertisementEntry`]); each keeps a `#[deprecated]` alias under
-//! its old `Icmp*` name so downstream code keeps compiling within the 2.x line.
+//! its old `Icmp*` name so downstream code keeps compiling within the 0.x line.
 //! Nothing here changes wire behavior or defaults, and `icmp/mod.rs` re-exports
 //! both the new names and the aliases so the `protocols::mod.rs` names and the
 //! prelude keep resolving. Shared compile/auto-fill helpers, the version-neutral
