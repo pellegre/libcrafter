@@ -466,7 +466,14 @@ pub fn decode_sk_payload_with_sa(bytes: &[u8], sa: &SecurityAssociation) -> Resu
             0,
         ));
     }
-    let pad_len = *plaintext.last().unwrap() as usize;
+    let Some(&pad_len_byte) = plaintext.last() else {
+        return Err(CrafterError::buffer_too_short(
+            "ikev2.sk.plaintext",
+            SK_PAD_LENGTH_FIELD_LEN,
+            0,
+        ));
+    };
+    let pad_len = usize::from(pad_len_byte);
     let inner_end = plaintext.len() - SK_PAD_LENGTH_FIELD_LEN;
     if pad_len > inner_end {
         return Err(CrafterError::invalid_field_value(
