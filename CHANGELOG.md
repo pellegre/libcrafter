@@ -13,9 +13,24 @@ workspace, released as one public crate: `crafter`.
   preserving explicitly set field values.
 - Decode entrypoints for Ethernet, Linux cooked capture, null/loopback, raw
   IPv4, and raw IPv6 inputs.
-- Protocol coverage for Ethernet, VLAN, ARP, IPv4, IPv4 options, IPv6, selected
-  IPv6 extension headers, TCP, TCP options, UDP, ICMP, ICMPv6, DNS, DHCP, and
-  raw payloads.
+- Link-layer coverage for Ethernet, 802.1Q VLAN, Linux cooked capture,
+  null/loopback, IEEE 802.11 (management, control, and data frames) with
+  radiotap and LLC/SNAP, and EAPOL/RSN (802.11i) key-exchange fields.
+- Network and control coverage for ARP, IPv4 (DSCP/ECN, typed options,
+  checksum status, and fragment fields), IPv6 with hop-by-hop, destination,
+  fragment, routing, mobile-routing, and segment-routing extension headers,
+  ICMPv4 (with the `Icmp` deprecated alias), ICMP extensions (RFC 4884), and
+  ICMPv6 including Neighbor Discovery (RFC 4861), Multicast Listener Discovery
+  v1/v2, Extended Echo, and experimental Node Information.
+- Transport coverage for TCP with options and UDP with options and checksum
+  status.
+- Application and payload coverage for DNS (EDNS(0), SVCB/HTTPS, and DNSSEC
+  record types), DHCPv4 (option overload, RFC 3396 long options, relay agent
+  option 82, client identifiers, authentication, and leasequery fields), BGP
+  (OPEN, UPDATE, KEEPALIVE, NOTIFICATION, ROUTE-REFRESH, path attributes, and
+  capabilities), and raw payloads.
+- IPsec coverage for ESP, AH, and IKEv2 (IKE header and payload set) with
+  security-association and transform primitives.
 - Protocol registry hooks for custom link, network, transport, and application
   decode bindings.
 - Classic pcap read/write helpers, libpcap BPF filters, offline
@@ -25,6 +40,8 @@ workspace, released as one public crate: `crafter`.
 - Transmit-side IP fragmentation (`IpFragment`) and receive-side IP reassembly
   (`IpDefrag`) as explicit `wire` transforms with configurable limits and
   statistics.
+- Receive-side WPA2 CCMP decryption (`WpaDecrypt`) as an explicit `wire`
+  transform driven by captured EAPOL key exchanges.
 - Safe-by-default Rust examples for basic, intermediate, and gated advanced
   packet workflows.
 - Provider-agnostic wire endpoint tooling with local dry-run and Hetzner
