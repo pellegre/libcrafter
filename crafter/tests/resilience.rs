@@ -11,7 +11,8 @@ use crafter::core::{
     LinuxSll, MacAddr, NetworkLayer, NullLoopback, OptionOverload, Packet, Raw, Tcp, TcpOption,
     Udp, UdpOptionStatus, UdpOptions, Vlan, DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT,
     IPPROTO_IPV6_EXPERIMENTAL_1, IPPROTO_IPV6_EXPERIMENTAL_2, IPPROTO_IPV6_FRAGMENT,
-    IPPROTO_IPV6_HIP, IPPROTO_IPV6_MOBILITY, IPPROTO_IPV6_ROUTE, IPPROTO_IPV6_SHIM6, IPPROTO_UDP,
+    IPPROTO_IPV6_HIP, IPPROTO_IPV6_HOPOPTS, IPPROTO_IPV6_MOBILITY, IPPROTO_IPV6_NO_NEXT,
+    IPPROTO_IPV6_ROUTE, IPPROTO_IPV6_SHIM6, IPPROTO_UDP, IPV6_OPTION_JUMBO_PAYLOAD,
     IPV6_ROUTING_TYPE_EXPERIMENTAL_1, IPV6_ROUTING_TYPE_EXPERIMENTAL_2, IPV6_ROUTING_TYPE_MOBILE,
     IPV6_ROUTING_TYPE_NIMROD, IPV6_ROUTING_TYPE_RH0, TCP_FLAG_ACK, TCP_FLAG_PSH, TCP_FLAG_SYN,
 };
@@ -867,6 +868,37 @@ fn malformed_ipv6_mobile_routing_reports_structured_error() {
         }
         other => panic!("malformed IPv6 mobile routing expected structured error, got {other:?}"),
     }
+}
+
+#[test]
+fn malformed_ipv6_jumbo_payload_option_summary_is_inspectable() -> crafter::core::Result<()> {
+    let hop_by_hop = [
+        IPPROTO_IPV6_NO_NEXT,
+        0,
+        IPV6_OPTION_JUMBO_PAYLOAD,
+        3,
+        0x00,
+        0x01,
+        0x00,
+        0,
+    ];
+    let bytes = (ipv6_resilience_base(58).next_header(IPPROTO_IPV6_HOPOPTS)
+        / Raw::from_bytes(&hop_by_hop))
+    .compile()?;
+    let decoded = decode_packet(PacketDecodeTarget::L3(NetworkLayer::Ipv6), bytes.as_bytes())?;
+
+    let summary = decoded.summary();
+    assert!(
+        summary.contains("Generic(kind=0xc2"),
+        "malformed Jumbo Payload option type should remain visible in summary: {summary}"
+    );
+    let show = decoded.show();
+    assert!(
+        show.contains("Generic(kind=0xc2"),
+        "malformed Jumbo Payload option type should remain visible in show output: {show}"
+    );
+
+    Ok(())
 }
 
 /// Malformed DHCP option payloads whose typed views are only decoded lazily
