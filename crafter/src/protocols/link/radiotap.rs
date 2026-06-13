@@ -1353,10 +1353,9 @@ impl Layer for Radiotap {
     }
 
     fn encoded_len(&self) -> usize {
-        let present = self
-            .present()
-            .expect("radiotap field bits are validated before storage");
-        self.header_len_with_present(&present)
+        self.present()
+            .map(|present| self.header_len_with_present(&present))
+            .unwrap_or_else(|_| self.fallback_header_len())
     }
 
     fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
