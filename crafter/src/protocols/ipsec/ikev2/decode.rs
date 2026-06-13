@@ -46,6 +46,20 @@ use super::payload::ts::{parse_ts_payload_body, TsRole};
 use super::payload::vendor::parse_vendor_id_payload_body;
 use super::payload::{PayloadType, GENERIC_PAYLOAD_HEADER_LEN};
 
+fn read_u64_be_field(
+    bytes: &[u8],
+    range: std::ops::Range<usize>,
+    context: &'static str,
+) -> Result<u64> {
+    let field = bytes
+        .get(range.clone())
+        .ok_or_else(|| CrafterError::buffer_too_short(context, range.end, bytes.len()))?;
+    let field: [u8; 8] = field
+        .try_into()
+        .map_err(|_| CrafterError::buffer_too_short(context, range.end, bytes.len()))?;
+    Ok(u64::from_be_bytes(field))
+}
+
 /// Read the 28-octet IKE header (RFC 7296 §3.1) into an [`IkeHeader`] layer.
 ///
 /// Every field is stored with `Field::user` (through the builder setters) so a
@@ -62,7 +76,7 @@ fn parse_ike_header(bytes: &[u8]) -> Result<IkeHeader> {
         ));
     }
 
-    let initiator_spi = u64::from_be_bytes(bytes[0..8].try_into().unwrap());
+    let initiator_spi = read_u64_be_field(bytes, 0..8, "ikev2.header.initiator_spi")?;
     let responder_spi = u64::from_be_bytes(bytes[8..16].try_into().unwrap());
     let next_payload = bytes[16];
     let version = bytes[17];
