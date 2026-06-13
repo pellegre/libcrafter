@@ -585,10 +585,11 @@ impl IpDefrag {
         while self.pending_datagram_count() > max_datagrams {
             match self.oldest_datagram_key() {
                 Some(DefragDatagramKey::Ipv4(key)) => {
-                    let state = self
-                        .ipv4_datagrams
-                        .remove(&key)
-                        .expect("datagram-limited IPv4 defrag state must remain in the map");
+                    let Some(state) = self.ipv4_datagrams.remove(&key) else {
+                        return Err(defrag_transform_error(
+                            "datagram-limited IPv4 defrag state disappeared",
+                        ));
+                    };
                     self.evict_ipv4_state(state, IpDefragEvictionReason::DatagramLimit, emit)?;
                 }
                 Some(DefragDatagramKey::Ipv6(key)) => {
