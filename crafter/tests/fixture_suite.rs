@@ -30,11 +30,14 @@ use crafter::core::{
     IPV6_ROUTING_TYPE_SEGMENT, TCP_FLAG_ACK, TCP_FLAG_PSH, TCP_FLAG_SYN, UDP_HEADER_LEN,
     UDP_OPTION_EOL, UDP_OPTION_NOP,
 };
+use crafter::wire::backend::pcap::{
+    PcapError, PcapLinkType, PcapReader, PcapTimestamp, PcapWriter, PcapWriterOptions,
+    TimestampPrecision,
+};
 use crafter::{
     BackendKind, CrafterError, Dot11Metadata, IpDefrag, IpDefragOverlapStatus, IpFragment,
     IpFragmentConfig, IpFragmentFamily, IpFragmentRange, IpFragmentReason, PacketOrigin,
-    PacketRecord, PacketWire, PcapError, PcapLinkType, PcapReader, PcapTimestamp, PcapWriter,
-    PcapWriterOptions, Sniffer, TimestampPrecision, WifiDecryptState, WireError, WpaAkm, WpaCipher,
+    PacketRecord, PacketWire, Sniffer, WifiDecryptState, WireError, WpaAkm, WpaCipher,
     WpaCredentialStatus, WpaDecrypt, WpaDecryptReason, WpaHandshakeStatus, WpaKeyKind,
     IPV4_OPTION_NOP,
 };

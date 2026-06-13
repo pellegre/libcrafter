@@ -15,6 +15,7 @@ use crafter::core::{
     IPV6_ROUTING_TYPE_EXPERIMENTAL_1, IPV6_ROUTING_TYPE_EXPERIMENTAL_2, IPV6_ROUTING_TYPE_MOBILE,
     IPV6_ROUTING_TYPE_NIMROD, IPV6_ROUTING_TYPE_RH0, TCP_FLAG_ACK, TCP_FLAG_PSH, TCP_FLAG_SYN,
 };
+use crafter::wire::backend::pcap::PcapLinkType;
 use crafter::wire::{IpDefrag, IpFragment, PacketRecord, WireError};
 use proptest::prelude::*;
 
@@ -1897,11 +1898,11 @@ fn segment_routing_malformed_decode_entrypoints_report_structured_errors() {
 
 fn captured_raw_ip_record(bytes: Vec<u8>) -> PacketRecord {
     PacketRecord::new(Raw::from_bytes(&bytes))
-        .with_pcap_link_type(crafter::PcapLinkType::RawIp)
+        .with_pcap_link_type(PcapLinkType::RawIp)
         .with_captured_bytes(bytes)
 }
 
-fn captured_pcap_record(bytes: Vec<u8>, link_type: crafter::PcapLinkType) -> PacketRecord {
+fn captured_pcap_record(bytes: Vec<u8>, link_type: PcapLinkType) -> PacketRecord {
     PacketRecord::new(Raw::from_bytes(&bytes))
         .with_pcap_link_type(link_type)
         .with_captured_bytes(bytes)
@@ -2051,7 +2052,7 @@ fn fragment_malformed_transforms_report_structured_errors() {
 #[test]
 fn fragment_unsupported_wrappers_pass_through_without_panic() {
     let bytes = ipv4_fragment_resilience_bytes(0x2000, 28, &[0xaa; 8]);
-    let record = captured_pcap_record(bytes.clone(), crafter::PcapLinkType::Ieee80211);
+    let record = captured_pcap_record(bytes.clone(), PcapLinkType::Ieee80211);
 
     let mut defrag = IpDefrag::new();
     let output = defrag.defrag_record(record.clone()).unwrap();
