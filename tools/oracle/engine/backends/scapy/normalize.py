@@ -1272,8 +1272,9 @@ def _normalize_flags(value: JSONValue) -> JSONValue:
 
 def _normalize_ipv4_flags(value: JSONValue) -> JSONValue:
     normalized = _normalize_flags(value)
-    if normalized == "evil":
-        return "reserved"
+    if isinstance(normalized, str):
+        tokens = ["reserved" if token == "evil" else token for token in normalized.split("|")]
+        return "|".join(tokens)
     return normalized
 
 
