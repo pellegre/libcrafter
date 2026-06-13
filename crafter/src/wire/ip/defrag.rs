@@ -546,10 +546,11 @@ impl IpDefrag {
                 Ipv6DefragObservation::Buffered
             }
             Ipv6DefragObservationKind::ByteLimit => {
-                let state = self
-                    .ipv6_datagrams
-                    .remove(&key)
-                    .expect("byte-limited IPv6 defrag state must remain in the map");
+                let Some(state) = self.ipv6_datagrams.remove(&key) else {
+                    return Ipv6DefragObservation::Error(defrag_transform_error(
+                        "byte-limited IPv6 defrag state disappeared",
+                    ));
+                };
                 if let Err(error) =
                     self.evict_ipv6_state(state, IpDefragEvictionReason::ByteLimit, emit)
                 {
