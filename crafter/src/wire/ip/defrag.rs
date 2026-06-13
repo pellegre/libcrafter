@@ -593,10 +593,11 @@ impl IpDefrag {
                     self.evict_ipv4_state(state, IpDefragEvictionReason::DatagramLimit, emit)?;
                 }
                 Some(DefragDatagramKey::Ipv6(key)) => {
-                    let state = self
-                        .ipv6_datagrams
-                        .remove(&key)
-                        .expect("datagram-limited IPv6 defrag state must remain in the map");
+                    let Some(state) = self.ipv6_datagrams.remove(&key) else {
+                        return Err(defrag_transform_error(
+                            "datagram-limited IPv6 defrag state disappeared",
+                        ));
+                    };
                     self.evict_ipv6_state(state, IpDefragEvictionReason::DatagramLimit, emit)?;
                 }
                 None => break,
