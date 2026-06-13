@@ -136,8 +136,9 @@ tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10
 ```
 
 The endpoint provider layer is separate from the crate-level packet wire API:
-`tools/endpoint/run` manages provider lifecycle, while future Rust packet I/O
-will live under `crafter::wire`.
+`tools/endpoint/run` manages provider lifecycle, while `crafter::wire` is the
+Rust packet I/O API for packet wires, sources, writers, sniffers, transmitters,
+and transforms.
 
 ## Crate And Modules
 
@@ -147,7 +148,7 @@ will live under `crafter::wire`.
 | `crafter::core` | Packet model, layer composition, encode/decode, checksums, protocol registry, formatting. |
 | `crafter::pcap` | Classic pcap read/write, libpcap BPF filters, offline sniffing, bounded live capture hooks. |
 | `crafter::net` | Interface helpers, raw send planning, live send backends, send/receive matching, batch workflows. |
-| `crafter::wire` | Reserved for the future crate-level packet I/O API: packet wires, sources, writers, sniffers, transmitters, and transforms. |
+| `crafter::wire` | Crate-level packet I/O API: packet wires, sources, writers, sniffers, transmitters, and transforms. |
 
 ## Protocol Coverage
 
