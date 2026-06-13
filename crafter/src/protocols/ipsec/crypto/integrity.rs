@@ -93,7 +93,7 @@ impl IntegrityTransform {
     /// form the 12-octet GCM nonce (RFC 4543 §3 / RFC 4106 nonce construction).
     pub fn compute(self, key: &[u8], message: &[u8]) -> Result<Vec<u8>> {
         match self {
-            Self::HmacSha1_96 => Ok(hmac_sha1(key, message, self.icv_len())),
+            Self::HmacSha1_96 => hmac_sha1(key, message, self.icv_len()),
             Self::HmacSha2_256_128 => Ok(hmac_sha256(key, message, self.icv_len())),
             Self::HmacSha2_384_192 => Ok(hmac_sha384(key, message, self.icv_len())),
             Self::HmacSha2_512_256 => Ok(hmac_sha512(key, message, self.icv_len())),
@@ -120,10 +120,15 @@ impl IntegrityTransform {
 }
 
 /// Compute HMAC-SHA-1 and truncate to `icv_len` octets.
-fn hmac_sha1(key: &[u8], message: &[u8], icv_len: usize) -> Vec<u8> {
-    let mut mac = <Hmac<Sha1> as Mac>::new_from_slice(key).expect("HMAC accepts any key length");
+fn hmac_sha1(key: &[u8], message: &[u8], icv_len: usize) -> Result<Vec<u8>> {
+    let mut mac = <Hmac<Sha1> as Mac>::new_from_slice(key).map_err(|_| {
+        CrafterError::invalid_field_value(
+            "ipsec.integrity.hmac_sha1.key",
+            "HMAC-SHA1 key is invalid",
+        )
+    })?;
     mac.update(message);
-    mac.finalize().into_bytes()[..icv_len].to_vec()
+    Ok(mac.finalize().into_bytes()[..icv_len].to_vec())
 }
 
 /// Compute HMAC-SHA-256 and truncate to `icv_len` octets.
