@@ -53,12 +53,12 @@ addresses, or live host identifiers.
 
 - `cargo test --workspace`
 - `cargo doc --workspace --no-deps`
-- `tools/oracle/run offline --backend scapy --family ip --profile fragmentation-smoke --seed 1201 --count 50 --out target/oracle/ip-fragment-final-offline`
-- `tools/oracle/run pcap --backend scapy --family ip --profile fragmentation-smoke --seed 1203 --count 50 --out target/oracle/ip-fragment-final-pcap`
-- `python3 tools/oracle/engine/live_provider_matrix.py --providers qemu --backend scapy --profile ip-fragment-smoke --seed 1302 --count 2 --real --skip-unavailable --allow-vm-create --confirm-live-run --out target/oracle/ip-fragment-qemu-live`
-- `python3 tools/oracle/engine/live_provider_matrix.py --providers virtualbox --backend scapy --profile ip-fragment-smoke --seed 1303 --count 2 --real --skip-unavailable --allow-vm-create --confirm-live-run --out target/oracle/ip-fragment-virtualbox-live`
-- `tools/oracle/run live --backend scapy --provider hetzner --dry-run --profile ip-fragment-smoke --seed 1304 --count 2 --out target/oracle/ip-fragment-hetzner-dry-run`
-- `python3 tools/oracle/engine/live_provider_matrix.py --providers hetzner --backend scapy --profile ip-fragment-smoke --seed 1305 --count 2 --real --skip-unavailable --confirm-live-run --out target/oracle/ip-fragment-hetzner-live`
+- `tools/oracle/run offline --backend "$ORACLE_BACKEND" --family ip --profile fragmentation-smoke --seed 1201 --count 50 --out target/oracle/ip-fragment-final-offline`
+- `tools/oracle/run pcap --backend "$ORACLE_BACKEND" --family ip --profile fragmentation-smoke --seed 1203 --count 50 --out target/oracle/ip-fragment-final-pcap`
+- `python3 tools/oracle/engine/live_provider_matrix.py --providers qemu --backend "$ORACLE_BACKEND" --profile ip-fragment-smoke --seed 1302 --count 2 --real --skip-unavailable --allow-vm-create --confirm-live-run --out target/oracle/ip-fragment-qemu-live`
+- `python3 tools/oracle/engine/live_provider_matrix.py --providers virtualbox --backend "$ORACLE_BACKEND" --profile ip-fragment-smoke --seed 1303 --count 2 --real --skip-unavailable --allow-vm-create --confirm-live-run --out target/oracle/ip-fragment-virtualbox-live`
+- `tools/oracle/run live --backend "$ORACLE_BACKEND" --provider hetzner --dry-run --profile ip-fragment-smoke --seed 1304 --count 2 --out target/oracle/ip-fragment-hetzner-dry-run`
+- `python3 tools/oracle/engine/live_provider_matrix.py --providers hetzner --backend "$ORACLE_BACKEND" --profile ip-fragment-smoke --seed 1305 --count 2 --real --skip-unavailable --confirm-live-run --out target/oracle/ip-fragment-hetzner-live`
 - `.agents/scripts/check-crafter-release --static`
 
 ## Offline And Pcap Artifacts

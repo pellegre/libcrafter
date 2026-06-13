@@ -50,7 +50,7 @@ UDP/500 (the `ikev2` capability). All three derive from IPv4 unicast plus a
 controlled service, so a substrate without a configurable peer skips the cases
 with the stable `requires_ipsec_peer` / `requires_ikev2_responder` reasons. The
 peer is realized live as the Linux kernel xfrm / strongSwan stack or a
-Scapy-driven reference peer on the disposable target endpoint; the dry-run plans
+oracle reference peer on the disposable target endpoint; the dry-run plans
 the exchange shape (ESP/AH protocol numbers, IKEv2 UDP port, per-exchange SPI,
 peer addresses) without provisioning the peer or sending any traffic. The live
 path is opt-in through `lab-session` / providers — provision the peer, run from

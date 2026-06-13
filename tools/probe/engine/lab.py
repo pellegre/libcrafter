@@ -42,7 +42,7 @@ PROBE_CAPABILITY_NAMES = (
     "repeated_response",
     # IPSec behavioral capabilities. An IPSec-capable peer holds the matching
     # Security Association (ESP/AH) or runs an IKEv2 responder. The peer is the
-    # Linux kernel xfrm / strongSwan stack or a Scapy-driven reference peer
+    # Linux kernel xfrm / strongSwan stack or an oracle reference peer
     # configured on the controlled target endpoint; none of this is required for
     # a dry-run, which plans the exchange without provisioning the peer.
     "ipsec_esp",
@@ -198,7 +198,7 @@ def probe_capabilities_from_lab_capabilities(
     # controlled target endpoint that holds the matching Security Association
     # (the same SPI, mode, algorithms, and keys libcrafter seals/verifies with);
     # the IKEv2 case needs that peer to run an IKE responder on UDP/500. The peer
-    # is realized as the Linux kernel xfrm / strongSwan stack or a Scapy-driven
+    # is realized as the Linux kernel xfrm / strongSwan stack or an oracle
     # reference peer configured on the target VM, so the capabilities derive from
     # the same IPv4-unicast + controlled-services substrate the DNS/UDP services
     # use: a substrate that can carry IPv4 unicast and host a controlled service

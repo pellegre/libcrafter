@@ -13,7 +13,7 @@
 //! serialization, the crypto driver, or the IKEv2 payload chain that changes
 //! these bytes will fail this test on purpose. If a pin fails after an
 //! *intended* change, only update the literal when the new bytes are
-//! RFC-correct (cross-check against the oracle Scapy parity); otherwise the
+//! RFC-correct (cross-check against oracle reference parity); otherwise the
 //! code regressed and must be fixed.
 //!
 //! Everything here stays offline and uses documentation address space only

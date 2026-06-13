@@ -61,7 +61,7 @@ identifiers; every illustrative address is documentation address space.
   HMAC-SHA-256, IKE_SA_INIT); integration tests across ESP/AH transport+tunnel
   on v4/v6, IKE_AUTH with SK, NAT-T, tamper detection, and no-key-leak;
   malformed-corpus and proptest resilience; oracle byte-and-decode parity with
-  the Scapy reference backend (ESP, AH, and IKEv2 offline at 50/50 each in both
+  the oracle reference backend (ESP, AH, and IKEv2 offline at 50/50 each in both
   directions, plus a pcap roundtrip); and a behavioral probe `ipsec` profile
   with cross-crypto interop (6/6 in both directions, libcrafter-sealed opened by
   the reference crypto and vice versa).
@@ -86,10 +86,10 @@ identifiers; every illustrative address is documentation address space.
 
 - `cargo test --workspace`
 - `env RUSTDOCFLAGS="-D warnings" cargo doc -p crafter --no-deps`
-- `tools/oracle/run offline --backend scapy --family esp --profile esp --seed 1601 --count 50 --out target/oracle/ipsec-esp-offline`
-- `tools/oracle/run offline --backend scapy --family ah --profile ah --seed 1602 --count 50 --out target/oracle/ipsec-ah-offline`
-- `tools/oracle/run offline --backend scapy --family ikev2 --profile ikev2 --seed 1603 --count 50 --out target/oracle/ipsec-ikev2-offline`
-- `tools/oracle/run pcap --backend scapy --profile ipsec-smoke --seed 1604 --count 40 --out target/oracle/ipsec-pcap`
+- `tools/oracle/run offline --backend "$ORACLE_BACKEND" --family esp --profile esp --seed 1601 --count 50 --out target/oracle/ipsec-esp-offline`
+- `tools/oracle/run offline --backend "$ORACLE_BACKEND" --family ah --profile ah --seed 1602 --count 50 --out target/oracle/ipsec-ah-offline`
+- `tools/oracle/run offline --backend "$ORACLE_BACKEND" --family ikev2 --profile ikev2 --seed 1603 --count 50 --out target/oracle/ipsec-ikev2-offline`
+- `tools/oracle/run pcap --backend "$ORACLE_BACKEND" --profile ipsec-smoke --seed 1604 --count 40 --out target/oracle/ipsec-pcap`
 - `tools/probe/run --dry-run --profile ipsec --out target/probe/ipsec-local-dry-run`
 - `tools/probe/run --dry-run --provider qemu --profile ipsec --out target/probe/ipsec-qemu-dry-run`
 - `.agents/scripts/check-crafter-release --static`
@@ -124,7 +124,7 @@ identifiers; every illustrative address is documentation address space.
   Same case and interop outcome with no infrastructure created; the qemu
   provider was exercised in planning mode only.
 - Cross-crypto interop artifacts are under `target/probe/ipsec-interop`
-  (libcrafter-sealed ESP/AH/SK opened by the Scapy / pyca reference crypto and
+  (libcrafter-sealed ESP/AH/SK opened by the oracle reference crypto and
   the reverse, plus tamper rejection), feeding the dry-run report metadata.
 - No live provider VM was created and no live IPSec packets were placed on any
   network during this readiness work.
@@ -136,7 +136,7 @@ identifiers; every illustrative address is documentation address space.
   RFC 7296 §3.14 requires the ICV to cover the whole message from the IKE
   header through the SK payload. This gap is not exercised by the oracle:
   the `ikev2` profile uses opaque Raw payloads, not real SK payloads, so byte
-  parity with Scapy ISAKMP holds. Mitigation: the no-SA chain decode path and
+  parity with oracle backend ISAKMP holds. Mitigation: the no-SA chain decode path and
   the cross-crypto SK interop case both pass; a full-message-AAD revision is a
   contained follow-up if real-SK oracle parity is later required.
 - **AH behind an IPv6 extension header is not byte-exact on the build side.**

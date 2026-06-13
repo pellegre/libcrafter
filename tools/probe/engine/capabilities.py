@@ -40,7 +40,7 @@ SKIP_REQUIRES_PROVIDER_MAC = "requires_provider_mac"
 SKIP_REQUIRES_PRIVILEGED_PORT = "requires_privileged_port"
 SKIP_REQUIRES_CONTROLLED_SERVICE = "requires_controlled_service"
 # IPSec ESP/AH cases need a peer that holds the matching Security Association
-# (Linux xfrm / strongSwan / Scapy reference peer); the IKEv2 case needs that
+# (Linux xfrm / strongSwan / oracle reference peer); the IKEv2 case needs that
 # peer to run an IKE responder on UDP/500. A provider without the peer skips with
 # these stable reasons rather than the generic capability-unavailable catch-all.
 SKIP_REQUIRES_IPSEC_PEER = "requires_ipsec_peer"
