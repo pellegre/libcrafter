@@ -7,7 +7,6 @@ use crate::LinkType;
 use super::codec::{
     parse_header, read_exact_or_eof, read_u32, Endian, PCAP_HEADER_LEN, PCAP_RECORD_HEADER_LEN,
 };
-use super::libpcap::LibpcapOfflineCapture;
 use super::{PcapError, PcapHeader, PcapLinkType, PcapPacket, PcapRecord, PcapTimestamp, Result};
 
 /// Offline pcap file reader.
@@ -179,24 +178,3 @@ where
 /// Prefer [`crate::wire::Sniffer`] with `PacketWire::pcap_file(...)` for
 /// packet-stream capture and transform pipelines.
 pub type FileSniffer = PcapReader<BufReader<File>>;
-
-pub fn read_pcap(path: impl AsRef<Path>) -> Result<Vec<PcapPacket>> {
-    PcapReader::open(path)?.collect_packets()
-}
-
-/// Read and decode all packets from a pcap file with an offline filter.
-pub fn read_pcap_filtered(path: impl AsRef<Path>, filter: &str) -> Result<Vec<PcapPacket>> {
-    let mut capture = LibpcapOfflineCapture::open(path, Some(filter))?;
-    let mut packets = Vec::new();
-    while let Some(record) = capture.next_record()? {
-        let packet = record.decode()?;
-        packets.push(PcapPacket::new(
-            record.timestamp(),
-            record.original_len(),
-            record.data(),
-            record.pcap_link_type(),
-            packet,
-        ));
-    }
-    Ok(packets)
-}

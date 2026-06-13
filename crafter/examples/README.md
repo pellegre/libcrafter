@@ -32,7 +32,7 @@ values use `Ipv4Protocol`.
 | `interface_helpers` | Net workflows | Offline | Documentation-safe interface metadata and address helper output. | `cargo run -p crafter --example interface_helpers` |
 | `ip_ranges` | Net workflows | Offline | IPv4 CIDR, range, and list parsing. | `cargo run -p crafter --example ip_ranges` |
 | `pcap_write` | Pcap and sniffing | Offline | Generated Ethernet/IPv4/TCP packets written to a pcap file. | `cargo run -p crafter --example pcap_write` |
-| `pcap_read` | Pcap and sniffing | Offline | Pcap metadata inspection, packet collection, and streaming `PcapReader` workflows. | `cargo run -p crafter --example pcap_read` |
+| `pcap_read` | Pcap and sniffing | Offline | Pcap metadata inspection through `PacketWire` and `Sniffer`. | `cargo run -p crafter --example pcap_read` |
 | `wire_pcap_sniffer` | Pcap and sniffing | Offline | Generated pcap records read through `PacketWire` and `Sniffer` with packet metadata. | `cargo run -p crafter --example wire_pcap_sniffer` |
 | `wire_pcap_recorder` | Pcap and sniffing | Offline | Generated packet records written through `PacketWire` and `Transmitter`, then verified through pcap readback. | `cargo run -p crafter --example wire_pcap_recorder` |
 | `wire_transform_chain` | Pcap and sniffing | Offline | In-memory `Sniffer` transform chain with zero, one, and many packet-record outputs. | `cargo run -p crafter --example wire_transform_chain` |

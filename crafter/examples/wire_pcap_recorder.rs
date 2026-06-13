@@ -29,7 +29,7 @@ fn main() -> ExampleResult<()> {
         let mut reports = Vec::with_capacity(packets.len());
 
         for packet in packets.iter().cloned() {
-            let record = PacketRecord::new(packet).with_pcap_link_type(EXAMPLE_PCAP_LINK_TYPE);
+            let record = PacketRecord::new(packet).with_link_type(EXAMPLE_PCAP_LINK_TYPE);
             let mut packet_reports = transmitter.send_record(record)?;
             if packet_reports.len() != 1 {
                 return Err(format!(
@@ -56,11 +56,11 @@ fn main() -> ExampleResult<()> {
     }
 
     for record in &records {
-        if record.metadata().pcap_link_type() != Some(EXAMPLE_PCAP_LINK_TYPE) {
+        if record.metadata().link_type() != Some(EXAMPLE_PCAP_LINK_TYPE) {
             return Err(format!(
                 "expected readback link type {:?}, got {:?}",
                 EXAMPLE_PCAP_LINK_TYPE,
-                record.metadata().pcap_link_type()
+                record.metadata().link_type()
             )
             .into());
         }
