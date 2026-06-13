@@ -8,7 +8,7 @@ use core::fmt;
 
 #[cfg(test)]
 use aes::cipher::BlockEncrypt;
-use aes::cipher::{BlockDecrypt, KeyInit as AesKeyInit};
+use aes::cipher::{generic_array::GenericArray, BlockDecrypt, KeyInit as AesKeyInit};
 use aes::Aes128;
 use hmac::{Hmac, Mac};
 use pbkdf2::pbkdf2;
@@ -252,7 +252,7 @@ pub(crate) fn unwrap_key_data(
         })
         .collect();
 
-    let cipher = Aes128::new_from_slice(kek).expect("WPA2 KEK length is AES-128");
+    let cipher = Aes128::new(GenericArray::from_slice(kek));
     for j in (0..AES_KEY_WRAP_ROUNDS).rev() {
         for i in (1..=n).rev() {
             let t = (n * j + i) as u64;
