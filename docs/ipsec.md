@@ -554,7 +554,7 @@ oracle parity suite, and a behavioral probe profile:
   tamper cases.
 - `tools/oracle/specs/layers/{esp,ah,ikev2}.yaml` and
   `tools/oracle/specs/features/{esp-aead,esp-cbc,ah-integrity,ikev2-header,ikev2-payloads,*-malformed}.yaml`
-  drive offline byte/decode parity and pcap round-trip against the Scapy
+  drive offline byte/decode parity and pcap round-trip against the oracle
   reference backend; the `esp`, `ah`, `ikev2`, and `ipsec-smoke` profiles in
   `tools/oracle/specs/profiles.yaml` select them. Malformed cases are excluded
   from byte comparison as `structured_error`.

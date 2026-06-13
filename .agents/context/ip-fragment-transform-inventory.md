@@ -178,16 +178,15 @@ new public API.
   shapes used by generated oracle plans.
 - `tools/oracle/specs/features/{icmpv4-errors.yaml,icmpv6-errors.yaml}` are
   relevant MTU-feedback validation context, not transform implementation scope.
-- `tools/oracle/engine/backends/scapy/{packets,normalize,pcap,live}.py` are the
-  Scapy reference backend surfaces for packet generation, normalization, pcap,
-  and live exchange.
+- The oracle reference backend surfaces under `tools/oracle/engine/backends/`
+  cover packet generation, normalization, pcap, and live exchange.
 - `tools/oracle/engine/backends/wireshark/{normalize,pcap}.py` are parser-only
   reference surfaces for decode and pcap comparisons.
 - `tools/oracle/adapters/src/bin/vectors/cases.rs` contains current
   libcrafter-generated vector cases for IPv4 and IPv6 fragment-field examples.
 - `tools/oracle/tests/test_generator.py`,
   `tools/oracle/tests/test_ipv6_normalize.py`,
-  `tools/oracle/tests/test_scapy_backend.py`,
+  oracle backend tests,
   `tools/oracle/tests/test_pcap_cli.py`, and
   `tools/oracle/tests/test_live_provider_matrix.py` are existing test surfaces
   likely to need extension when new transform oracle specs are added.
@@ -216,9 +215,9 @@ new public API.
   `tools/lab/run plan --provider hetzner --dry-run --profile smoke --seed 1 --role stimulus --role target --json`,
   `tools/lab/run plan --provider qemu --dry-run --profile smoke --seed 1 --role stimulus --role target --json`,
   `tools/lab/run plan --provider virtualbox --dry-run --profile smoke --seed 1 --role stimulus --role target --json`,
-  `tools/oracle/run live --backend scapy --provider hetzner --dry-run --profile smoke --seed 12345 --count 10`,
-  `tools/oracle/run live --backend scapy --provider qemu --dry-run --profile smoke --seed 12345 --count 10`,
-  and `tools/oracle/run live --backend scapy --provider virtualbox --dry-run --profile smoke --seed 12345 --count 10`.
+  `tools/oracle/run live --backend "$ORACLE_BACKEND" --provider hetzner --dry-run --profile smoke --seed 12345 --count 10`,
+  `tools/oracle/run live --backend "$ORACLE_BACKEND" --provider qemu --dry-run --profile smoke --seed 12345 --count 10`,
+  and `tools/oracle/run live --backend "$ORACLE_BACKEND" --provider virtualbox --dry-run --profile smoke --seed 12345 --count 10`.
 
 ## Integration Constraints For Later Steps
 

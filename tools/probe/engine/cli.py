@@ -20,6 +20,7 @@ from tools.lab.engine.model import LabRequest, LabRole, LabSession
 from tools.lab.engine import repo as lab_repo
 from tools.lab.engine import session as lab_session_state
 from tools.lab.engine import endpoint_client as lab_endpoint_client
+from tools.oracle.engine import ipsec_interop as _ipsec_interop
 
 from .capabilities import (
     SKIP_CAPABILITY_UNAVAILABLE,
@@ -126,7 +127,6 @@ from .report import DEFAULT_OUTPUT_ROOT, REPO_ROOT
 from .target_services import (
     target_service_setup_plan as _target_service_setup_plan,
 )
-from . import ipsec_interop as _ipsec_interop
 
 
 PROBE_SELECTED_SPECS = ("probe-contracts",)
@@ -347,8 +347,8 @@ def _dry_run_report(
 
 
 # Probe case names whose dry-run plan is an ESP / AH / IKEv2 IPSec exchange. When
-# the profile selects any of these, the dry-run runs the cross-crypto interop
-# check (see :mod:`tools.probe.engine.ipsec_interop`).
+# the profile selects any of these, the dry-run runs the oracle-owned
+# cross-crypto interop check.
 _IPSEC_PROBE_CASES: frozenset[str] = frozenset(
     {
         "esp-transport-echo",

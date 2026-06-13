@@ -883,7 +883,7 @@ fn inspect_esp(bytes: &[u8], sa: SecurityAssociation) -> Result<(), CrafterError
 ```
 
 Keep generated IPSec validation offline first. The oracle compares libcrafter
-bytes and the decode model against the Scapy reference backend, and the `ipsec`
+bytes and the decode model against the oracle reference backend, and the `ipsec`
 probe profile plans the ESP/AH/IKEv2 behavioral exchange plus an engine-level
 cross-crypto parity check — all without a network:
 

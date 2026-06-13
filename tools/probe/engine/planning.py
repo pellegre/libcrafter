@@ -5593,7 +5593,7 @@ def _ipsec_probe_plan(
     """Plan an IPSec behavioral case (ESP transport/tunnel, AH, IKE_SA_INIT).
 
     The IPSec cases drive a controlled IPSec-capable peer (Linux xfrm /
-    strongSwan / Scapy reference peer) and need libcrafter to seal/authenticate
+    strongSwan / an oracle reference peer) and need libcrafter to seal/authenticate
     a datagram or build an IKE_SA_INIT against the Security Association the peer
     holds. The crate-side stimulus/response *builders* (and the cross-crypto
     parity assertion) land in the later probe steps; until then the dry-run plan
@@ -5674,7 +5674,7 @@ def _ipsec_probe_plan(
         "expected_response_packet_shape": response_shape,
         # The peer that opens/answers the exchange. ESP/AH need it to hold the
         # matching SA; IKEv2 needs it to run an IKE responder. The peer is the
-        # Linux xfrm / strongSwan stack or a Scapy reference peer configured on
+        # Linux xfrm / strongSwan stack or an oracle reference peer configured on
         # the controlled target endpoint -- provisioned only on the opt-in live
         # path (lab-session / providers), never for the dry-run.
         "ipsec_peer": {
@@ -5688,13 +5688,13 @@ def _ipsec_probe_plan(
             "peer_options": [
                 "linux-xfrm",
                 "strongswan",
-                "scapy-reference-peer",
+                "oracle-reference-peer",
             ],
             "live_only": True,
         },
         "live_path": (
             "Opt-in via lab-session / providers: provision an IPSec-capable peer "
-            "(Linux xfrm / strongSwan / Scapy reference peer) holding the "
+            "(Linux xfrm / strongSwan / an oracle reference peer) holding the "
             "matching SA (or running an IKE responder), run from there, collect "
             "artifacts, and tear it down. The dry-run plans this exchange without "
             "any live traffic."
