@@ -559,10 +559,11 @@ impl IpDefrag {
                 Ipv6DefragObservation::Evicted
             }
             Ipv6DefragObservationKind::Complete => {
-                let state = self
-                    .ipv6_datagrams
-                    .remove(&key)
-                    .expect("complete IPv6 defrag state must remain in the map");
+                let Some(state) = self.ipv6_datagrams.remove(&key) else {
+                    return Ipv6DefragObservation::Error(defrag_transform_error(
+                        "complete IPv6 defrag state disappeared",
+                    ));
+                };
                 Ipv6DefragObservation::Complete(state)
             }
             Ipv6DefragObservationKind::Conflict => {
