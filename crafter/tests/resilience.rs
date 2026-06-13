@@ -10,12 +10,12 @@ use crafter::core::{
     Ipv6MobileRoutingHeader, Ipv6Option, Ipv6RoutingHeader, Ipv6SegmentRoutingHeader, LinkType,
     LinuxSll, MacAddr, NetworkLayer, NullLoopback, OptionOverload, Packet, Raw, Tcp, TcpOption,
     Udp, UdpOptionStatus, UdpOptions, Vlan, DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT,
-    IPPROTO_IPV6_EXPERIMENTAL_1, IPPROTO_IPV6_EXPERIMENTAL_2, IPPROTO_IPV6_FRAGMENT,
-    IPPROTO_IPV6_HIP, IPPROTO_IPV6_HOPOPTS, IPPROTO_IPV6_MOBILITY, IPPROTO_IPV6_NO_NEXT,
-    IPPROTO_IPV6_ROUTE, IPPROTO_IPV6_SHIM6, IPPROTO_UDP, IPV6_OPTION_JUMBO_PAYLOAD,
-    IPV6_OPTION_ROUTER_ALERT, IPV6_ROUTING_TYPE_EXPERIMENTAL_1, IPV6_ROUTING_TYPE_EXPERIMENTAL_2,
-    IPV6_ROUTING_TYPE_MOBILE, IPV6_ROUTING_TYPE_NIMROD, IPV6_ROUTING_TYPE_RH0, TCP_FLAG_ACK,
-    TCP_FLAG_PSH, TCP_FLAG_SYN,
+    IPPROTO_IPV6_DSTOPTS, IPPROTO_IPV6_EXPERIMENTAL_1, IPPROTO_IPV6_EXPERIMENTAL_2,
+    IPPROTO_IPV6_FRAGMENT, IPPROTO_IPV6_HIP, IPPROTO_IPV6_HOPOPTS, IPPROTO_IPV6_MOBILITY,
+    IPPROTO_IPV6_NO_NEXT, IPPROTO_IPV6_ROUTE, IPPROTO_IPV6_SHIM6, IPPROTO_UDP,
+    IPV6_OPTION_HOME_ADDRESS, IPV6_OPTION_JUMBO_PAYLOAD, IPV6_OPTION_ROUTER_ALERT,
+    IPV6_ROUTING_TYPE_EXPERIMENTAL_1, IPV6_ROUTING_TYPE_EXPERIMENTAL_2, IPV6_ROUTING_TYPE_MOBILE,
+    IPV6_ROUTING_TYPE_NIMROD, IPV6_ROUTING_TYPE_RH0, TCP_FLAG_ACK, TCP_FLAG_PSH, TCP_FLAG_SYN,
 };
 use crafter::wire::backend::pcap::PcapLinkType;
 use crafter::wire::{IpDefrag, IpFragment, PacketRecord, WireError};
@@ -928,6 +928,31 @@ fn malformed_ipv6_router_alert_option_summary_is_inspectable() -> crafter::core:
     assert!(
         show.contains("Generic(kind=0x05"),
         "malformed Router Alert option type should remain visible in show output: {show}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn malformed_ipv6_home_address_option_summary_is_inspectable() -> crafter::core::Result<()> {
+    let mut destination_options = vec![IPPROTO_IPV6_NO_NEXT, 2, IPV6_OPTION_HOME_ADDRESS, 15];
+    destination_options
+        .extend_from_slice(&[0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    destination_options.extend_from_slice(&[0; 5]);
+    let bytes = (ipv6_resilience_base(59).next_header(IPPROTO_IPV6_DSTOPTS)
+        / Raw::from_bytes(&destination_options))
+    .compile()?;
+    let decoded = decode_packet(PacketDecodeTarget::L3(NetworkLayer::Ipv6), bytes.as_bytes())?;
+
+    let summary = decoded.summary();
+    assert!(
+        summary.contains("Generic(kind=0xc9"),
+        "malformed Home Address option type should remain visible in summary: {summary}"
+    );
+    let show = decoded.show();
+    assert!(
+        show.contains("Generic(kind=0xc9"),
+        "malformed Home Address option type should remain visible in show output: {show}"
     );
 
     Ok(())
