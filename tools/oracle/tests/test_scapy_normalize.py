@@ -51,6 +51,12 @@ class ScapyIpv4FlagNormalizeTest(unittest.TestCase):
             "reserved",
         )
 
+    def test_ipv4_reserved_flag_uses_libcrafter_name_inside_combinations(self) -> None:
+        self.assertEqual(
+            normalize._normalize_field_value("ipv4", "flags", "MF+DF+evil"),
+            "mf|df|reserved",
+        )
+
 
 # Native Scapy ICMP rest-of-header field names that must never survive
 # normalization; libcrafter folds them into rest_of_header / payload.
