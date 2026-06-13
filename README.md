@@ -14,12 +14,12 @@ and pcap capabilities. Instead of calling only fixed protocol clients, agents
 can generate the packets themselves and decide how to interact with the network
 at the protocol level.
 
-## Version 2.0.0
+## Version 0.3.0
 
 The public crate is `crafter`:
 
 ```toml
-crafter = "2.0.0"
+crafter = "0.3.0"
 ```
 
 Most generated tools and examples should import the prelude:
@@ -226,7 +226,7 @@ live host IDs, or packet captures from sensitive networks in tracked files.
   behavior probes.
 - [docs/endpoint.md](docs/endpoint.md) covers provider endpoint setup, credentials,
   artifacts, and cleanup.
-- [CHANGELOG.md](CHANGELOG.md) records the version 2.0.0 scope.
+- [CHANGELOG.md](CHANGELOG.md) records the version 0.3.0 scope.
 
 ## Publishing
 
