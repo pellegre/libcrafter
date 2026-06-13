@@ -1,7 +1,7 @@
 # Rust API Guide
 
 This document summarizes the public Rust surface for generated packet tools.
-Version 2.0.0 focuses on explicit builders, deterministic compile/decode
+Version 0.3.0 focuses on explicit builders, deterministic compile/decode
 behavior, bounded pcap workflows, and packet-level wire workflows. The only
 public crate is `crafter`.
 
