@@ -1495,7 +1495,7 @@ pub(crate) fn decode_radiotap_field(bit: u16, bytes: &[u8]) -> Result<RadiotapFi
             ))
         }
         bit if bit == u16::from(RADIOTAP_FIELD_FHSS) => {
-            RadiotapField::Fhss(bytes.try_into().expect("FHSS size"))
+            RadiotapField::Fhss(radiotap_field_array("radiotap.field.fhss", bytes)?)
         }
         bit if bit == u16::from(RADIOTAP_FIELD_ANTENNA_SIGNAL) => {
             RadiotapField::AntennaSignal(bytes[0] as i8)
