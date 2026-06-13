@@ -149,15 +149,19 @@ pub(super) fn ipv6_options_summary(options: &[Ipv6Option]) -> String {
 
 fn ipv6_option_summary(option: &Ipv6Option) -> String {
     match option {
-        Ipv6Option::JumboPayload { .. } => {
-            let length = option
-                .jumbo_payload_length()
-                .expect("Jumbo Payload option carries four length bytes");
-            format!(
-                "Jumbo Payload(0x{:02x},length={length})",
-                option.option_type()
-            )
-        }
+        Ipv6Option::JumboPayload { .. } => match option.jumbo_payload_length() {
+            Some(length) => {
+                format!(
+                    "Jumbo Payload(0x{:02x},length={length})",
+                    option.option_type()
+                )
+            }
+            None => format!(
+                "Jumbo Payload(0x{:02x},malformed_length={})",
+                option.option_type(),
+                option.data().len()
+            ),
+        },
         Ipv6Option::RouterAlert { .. } => {
             let value = option
                 .router_alert_value()
