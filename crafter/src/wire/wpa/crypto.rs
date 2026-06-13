@@ -54,6 +54,7 @@ const AES_KEY_WRAP_DEFAULT_IV: [u8; AES_KEY_WRAP_SEMIBLOCK_LEN] =
     [0xa6; AES_KEY_WRAP_SEMIBLOCK_LEN];
 const EMPTY_PTK_KCK: [u8; WPA_PTK_KCK_LEN] = [0; WPA_PTK_KCK_LEN];
 const EMPTY_PTK_KEK: [u8; WPA_PTK_KEK_LEN] = [0; WPA_PTK_KEK_LEN];
+const EMPTY_PTK_TEMPORAL_KEY: [u8; WPA_PTK_TEMPORAL_KEY_LEN] = [0; WPA_PTK_TEMPORAL_KEY_LEN];
 
 /// WPA/WPA2-Personal pairwise master key material.
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -123,9 +124,10 @@ impl PairwiseTransientKey {
 
     /// Borrow the CCMP temporal key slice.
     pub fn temporal_key(&self) -> &[u8; WPA_PTK_TEMPORAL_KEY_LEN] {
-        self.0[WPA_PTK_KCK_LEN + WPA_PTK_KEK_LEN..]
-            .try_into()
-            .expect("WPA temporal key slice length is fixed")
+        self.0
+            .get(WPA_PTK_KCK_LEN + WPA_PTK_KEK_LEN..WPA_PTK_CCMP128_LEN)
+            .and_then(<[u8]>::first_chunk)
+            .unwrap_or(&EMPTY_PTK_TEMPORAL_KEY)
     }
 }
 
