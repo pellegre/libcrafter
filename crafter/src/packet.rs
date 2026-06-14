@@ -196,129 +196,33 @@ pub enum NetworkLayer {
     Ipv6,
 }
 
-const RAW_INLINE_CAP: usize = 64;
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum RawBytes {
-    Inline {
-        len: u8,
-        bytes: [u8; RAW_INLINE_CAP],
-    },
-    Heap(Vec<u8>),
-}
-
-impl RawBytes {
-    const fn new() -> Self {
-        Self::Inline {
-            len: 0,
-            bytes: [0; RAW_INLINE_CAP],
-        }
-    }
-
-    fn from_slice(bytes: &[u8]) -> Self {
-        if bytes.len() <= RAW_INLINE_CAP {
-            let mut inline = [0; RAW_INLINE_CAP];
-            inline[..bytes.len()].copy_from_slice(bytes);
-            Self::Inline {
-                len: bytes.len() as u8,
-                bytes: inline,
-            }
-        } else {
-            Self::Heap(bytes.to_vec())
-        }
-    }
-
-    fn from_vec(bytes: Vec<u8>) -> Self {
-        if bytes.len() <= RAW_INLINE_CAP {
-            Self::from_slice(&bytes)
-        } else {
-            Self::Heap(bytes)
-        }
-    }
-
-    fn as_slice(&self) -> &[u8] {
-        match self {
-            Self::Inline { len, bytes } => &bytes[..*len as usize],
-            Self::Heap(bytes) => bytes,
-        }
-    }
-
-    fn as_vec_mut(&mut self) -> &mut Vec<u8> {
-        if let Self::Inline { .. } = self {
-            let bytes = self.as_slice().to_vec();
-            *self = Self::Heap(bytes);
-        }
-        match self {
-            Self::Heap(bytes) => bytes,
-            Self::Inline { .. } => unreachable!("inline raw bytes were materialized"),
-        }
-    }
-
-    fn extend_from_slice(&mut self, bytes: &[u8]) {
-        match self {
-            Self::Inline { len, bytes: inline } => {
-                let current_len = *len as usize;
-                let next_len = current_len + bytes.len();
-                if next_len <= RAW_INLINE_CAP {
-                    inline[current_len..next_len].copy_from_slice(bytes);
-                    *len = next_len as u8;
-                    return;
-                }
-
-                let mut heap = Vec::with_capacity(next_len);
-                heap.extend_from_slice(&inline[..current_len]);
-                heap.extend_from_slice(bytes);
-                *self = Self::Heap(heap);
-            }
-            Self::Heap(heap) => heap.extend_from_slice(bytes),
-        }
-    }
-
-    fn into_vec(self) -> Vec<u8> {
-        match self {
-            Self::Inline { len, bytes } => bytes[..len as usize].to_vec(),
-            Self::Heap(bytes) => bytes,
-        }
-    }
-
-    fn len(&self) -> usize {
-        self.as_slice().len()
-    }
-
-    fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-}
-
 /// Raw payload bytes or an unsupported decoded tail.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct Raw {
-    bytes: RawBytes,
+    bytes: Vec<u8>,
 }
 
 impl Raw {
     /// Create an empty raw layer.
     pub const fn new() -> Self {
-        Self {
-            bytes: RawBytes::new(),
-        }
+        Self { bytes: Vec::new() }
     }
 
     /// Create a raw layer by copying bytes.
     pub fn from_bytes(bytes: impl AsRef<[u8]>) -> Self {
         Self {
-            bytes: RawBytes::from_slice(bytes.as_ref()),
+            bytes: bytes.as_ref().to_vec(),
         }
     }
 
     /// Borrow the raw bytes.
     pub fn as_bytes(&self) -> &[u8] {
-        self.bytes.as_slice()
+        &self.bytes
     }
 
     /// Mutably borrow the raw bytes.
     pub fn as_bytes_mut(&mut self) -> &mut Vec<u8> {
-        self.bytes.as_vec_mut()
+        &mut self.bytes
     }
 
     /// Append bytes to this raw layer.
@@ -329,7 +233,7 @@ impl Raw {
 
     /// Consume the layer and return its bytes.
     pub fn into_bytes(self) -> Vec<u8> {
-        self.bytes.into_vec()
+        self.bytes
     }
 
     /// Number of raw bytes.
@@ -359,23 +263,23 @@ impl Layer for Raw {
     }
 
     fn summary(&self) -> String {
-        format!("Raw(len={})", self.len())
+        format!("Raw(len={})", self.bytes.len())
     }
 
     fn inspection_fields(&self) -> Vec<(&'static str, String)> {
         vec![
-            ("len", self.len().to_string()),
-            ("bytes", hex_bytes(self.as_bytes())),
+            ("len", self.bytes.len().to_string()),
+            ("bytes", hex_bytes(&self.bytes)),
             ("text_lossy", quoted_lossy_text(self.as_bytes())),
         ]
     }
 
     fn encoded_len(&self) -> usize {
-        self.len()
+        self.bytes.len()
     }
 
     fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
-        out.extend_from_slice(self.as_bytes());
+        out.extend_from_slice(&self.bytes);
         Ok(())
     }
 
@@ -398,9 +302,7 @@ impl Layer for Raw {
 
 impl From<Vec<u8>> for Raw {
     fn from(bytes: Vec<u8>) -> Self {
-        Self {
-            bytes: RawBytes::from_vec(bytes),
-        }
+        Self { bytes }
     }
 }
 
@@ -430,13 +332,7 @@ impl From<&str> for Raw {
 
 impl From<String> for Raw {
     fn from(value: String) -> Self {
-        Self::from(value.into_bytes())
-    }
-}
-
-impl Default for Raw {
-    fn default() -> Self {
-        Self::new()
+        Self::from_bytes(value.as_bytes())
     }
 }
 
