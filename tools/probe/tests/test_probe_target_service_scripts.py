@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import json
 import unittest
+from pathlib import Path
 
 from tools.probe.engine import target_services as ts
 
 
-OLD_LAB_BGP_PATH = "/".join(("tools", "lab", "workloads", "bgp"))
+PROBE_BGP_PATH = "tools/probe/target_services/bgp"
 
 
 def _dns_plan(*, port: int = 53, sequence: int = 0) -> dict[str, object]:
@@ -177,14 +178,16 @@ class TargetServiceSetupPlanTest(unittest.TestCase):
         self.assertIn("2001:db8::/32", service["documentation_prefixes"])
         self.assertEqual(
             service["provision_script"],
-            "tools/probe/target_services/bgp/provision-peer.sh",
+            f"{PROBE_BGP_PATH}/provision-peer.sh",
         )
+        self.assertTrue(Path(service["provision_script"]).is_file())
         self.assertEqual(
             service["frr_template"],
-            "tools/probe/target_services/bgp/frr.conf.template",
+            f"{PROBE_BGP_PATH}/frr.conf.template",
         )
+        self.assertTrue(Path(service["frr_template"]).is_file())
         self.assertEqual(service["rib_command"], "vtysh -c 'show bgp ipv4 unicast'")
-        self.assertNotIn(OLD_LAB_BGP_PATH, json.dumps(plan, sort_keys=True))
+        self.assertIn(PROBE_BGP_PATH, json.dumps(plan, sort_keys=True))
 
     def test_dry_run_plan_includes_bgp_peer_service_from_case_name(self) -> None:
         plan = ts.target_service_setup_plan(
@@ -252,13 +255,15 @@ class TargetServiceDescriptorTest(unittest.TestCase):
         self.assertEqual(descriptor.metadata["peer_as"], 65001)
         self.assertEqual(
             descriptor.metadata["provision_script"],
-            "tools/probe/target_services/bgp/provision-peer.sh",
+            f"{PROBE_BGP_PATH}/provision-peer.sh",
         )
+        self.assertTrue(Path(descriptor.metadata["provision_script"]).is_file())
         self.assertEqual(
             descriptor.metadata["frr_template"],
-            "tools/probe/target_services/bgp/frr.conf.template",
+            f"{PROBE_BGP_PATH}/frr.conf.template",
         )
-        self.assertNotIn(OLD_LAB_BGP_PATH, json.dumps(descriptor.metadata))
+        self.assertTrue(Path(descriptor.metadata["frr_template"]).is_file())
+        self.assertIn(PROBE_BGP_PATH, json.dumps(descriptor.metadata))
 
     def test_closed_udp_port_descriptor_verifies_free(self) -> None:
         descriptor = ts.closed_udp_port_descriptor(

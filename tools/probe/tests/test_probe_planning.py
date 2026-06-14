@@ -193,12 +193,24 @@ class ProbePlanningRegistryTest(unittest.TestCase):
                 sequence=1,
             )
             if name in planning.PLANNED_ONLY_REGISTERED_CASES:
-                # The IPSec builder routes through the dispatcher (not the bare
-                # fallback): it emits a planned-only plan that still carries the
-                # builder-specific exchange shape.
+                # Planned-only builders route through the dispatcher (not the
+                # bare fallback): they still emit builder-specific shape.
                 self.assertIs(plan["planned_only"], True, name)
-                self.assertIn("ipsec_protocol", plan, name)
-                self.assertIn("stimulus_packet_shape", plan, name)
+                if name == "bgp-session-smoke":
+                    self.assertEqual(plan["stimulus"], "bgp_session", name)
+                    self.assertEqual(
+                        plan["target_service"]["kind"],
+                        "frr-bgp-peer",
+                        name,
+                    )
+                    self.assertEqual(
+                        plan["target_service"]["provision_script"],
+                        "tools/probe/target_services/bgp/provision-peer.sh",
+                        name,
+                    )
+                else:
+                    self.assertIn("ipsec_protocol", plan, name)
+                    self.assertIn("stimulus_packet_shape", plan, name)
             else:
                 self.assertNotIn("planned_only", plan, name)
 

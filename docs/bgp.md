@@ -257,16 +257,18 @@ cargo run -p crafter --example bgp_session -- \
 ```
 
 That live form is intended for disposable provider-backed lab endpoints, not
-the developer host. The BGP lab flow provisions an FRR peer with
-`tools/lab/workloads/bgp/provision-peer.sh`, runs the example from the stimulus
-endpoint, captures port 179 traffic, reads the peer RIB, saves artifacts under
-`target/lab/bgp/<provider>/`, and destroys the session. Never commit live public
-IPs, endpoint identifiers, credentials, or packet captures.
+the developer host. Probe owns the BGP provider workflow: it plans the
+`bgp_session` stimulus, provisions the target FRR peer from
+`tools/probe/target_services/bgp/`, captures port 179 traffic, reads the peer
+RIB, saves artifacts under `target/probe/bgp/<provider>/`, and destroys the
+session. Never commit live public IPs, endpoint identifiers, credentials, or
+packet captures.
 
-Use dry-run planning before any provider run:
+Use probe dry-run planning before any provider run:
 
 ```sh
-tools/lab/run plan --provider qemu --dry-run --profile bgp-smoke --seed 1 --role stimulus --role target
+tools/probe/run --provider local-dry-run --dry-run --profile bgp-smoke
+tools/probe/run --provider qemu --dry-run --profile bgp-smoke --seed 1
 ```
 
 For the agent-facing live procedure and generated-tool guidance, see

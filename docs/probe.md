@@ -210,10 +210,29 @@ Controlled target behavior is intentionally local to the lab segment:
 - ARP relies on the target kernel, with probe-owned setup for aliases, sysctls,
   neighbor-cache flushes, alternate sender addresses, and decoy events where a
   case needs them.
+- BGP uses a probe-owned FRR peer service for `bgp-smoke` under
+  `tools/probe/target_services/bgp/`, including `provision-peer.sh` and
+  `frr.conf.template`.
 
 Dry-runs never start services or send packets. Live runs run setup and cleanup
 on disposable lab endpoints and collect responder stdout, stderr, pid files,
 packet artifacts, and report JSON under the configured output directory.
+
+The BGP smoke profile exposes the FRR peer setup in the probe target-service
+plan. Use a local dry-run when only the service metadata and generated stimulus
+intent need inspection:
+
+```sh
+tools/probe/run --provider local-dry-run --dry-run --profile bgp-smoke
+```
+
+Use a lab-backed provider dry-run to verify endpoint roles and provider
+capabilities without installing FRR or opening TCP sessions:
+
+```sh
+tools/probe/run --provider qemu --dry-run --profile bgp-smoke --seed 1
+tools/probe/run --provider docker --dry-run --profile bgp-smoke --seed 1
+```
 
 ## Protected Lab Runs
 
