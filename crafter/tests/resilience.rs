@@ -8,14 +8,18 @@ use crafter::core::{
     DhcpOptionArea, Dns, Ethernet, Icmpv4, Icmpv6, Ipv4, Ipv4Option, Ipv4Protocol, Ipv6,
     Ipv6DestinationOptionsHeader, Ipv6FragmentHeader, Ipv6HopByHopOptionsHeader,
     Ipv6MobileRoutingHeader, Ipv6Option, Ipv6RoutingHeader, Ipv6SegmentRoutingHeader, LinkType,
-    LinuxSll, MacAddr, NetworkLayer, NullLoopback, OptionOverload, Packet, Raw, Tcp, TcpOption,
-    Udp, UdpOptionStatus, UdpOptions, Vlan, DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT,
+    LinuxSll, MacAddr, NetworkLayer, NullLoopback, Packet, Raw, Tcp, TcpOption, Udp,
+    UdpOptionStatus, UdpOptions, Vlan, DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT,
     IPPROTO_IPV6_DSTOPTS, IPPROTO_IPV6_EXPERIMENTAL_1, IPPROTO_IPV6_EXPERIMENTAL_2,
     IPPROTO_IPV6_FRAGMENT, IPPROTO_IPV6_HIP, IPPROTO_IPV6_HOPOPTS, IPPROTO_IPV6_MOBILITY,
     IPPROTO_IPV6_NO_NEXT, IPPROTO_IPV6_ROUTE, IPPROTO_IPV6_SHIM6, IPPROTO_UDP,
     IPV6_OPTION_HOME_ADDRESS, IPV6_OPTION_JUMBO_PAYLOAD, IPV6_OPTION_ROUTER_ALERT,
     IPV6_ROUTING_TYPE_EXPERIMENTAL_1, IPV6_ROUTING_TYPE_EXPERIMENTAL_2, IPV6_ROUTING_TYPE_MOBILE,
     IPV6_ROUTING_TYPE_NIMROD, IPV6_ROUTING_TYPE_RH0, TCP_FLAG_ACK, TCP_FLAG_PSH, TCP_FLAG_SYN,
+};
+use crafter::protocols::dhcp::{
+    DHCP_FIXED_HEADER_LEN, DHCP_MAGIC_COOKIE, DHCP_MIN_LEN, DHCP_OPTION_END,
+    DHCP_OPTION_MESSAGE_TYPE,
 };
 use crafter::wire::backend::pcap::PcapLinkType;
 use crafter::wire::{IpDefrag, IpFragment, PacketRecord, WireError};
@@ -90,6 +94,24 @@ fn exercise_ipv4_like_decode(bytes: &[u8]) {
     if let Some(options) = ipv4_declared_option_slice(bytes) {
         let _ = Ipv4Option::decode_all(options);
     }
+}
+
+fn compile_dhcp_payload(dhcp: Dhcp) -> Vec<u8> {
+    Packet::from_layer(dhcp)
+        .compile()
+        .expect("DHCP test frame should compile")
+        .as_bytes()
+        .to_vec()
+}
+
+fn dhcp_payload_with_options(options: impl AsRef<[u8]>) -> Vec<u8> {
+    let mut bytes = vec![0u8; DHCP_MIN_LEN];
+    bytes[0] = 1; // BOOTREQUEST
+    bytes[1] = 1; // Ethernet
+    bytes[2] = 6; // Ethernet MAC length
+    bytes[DHCP_FIXED_HEADER_LEN..DHCP_MIN_LEN].copy_from_slice(&DHCP_MAGIC_COOKIE.to_be_bytes());
+    bytes.extend_from_slice(options.as_ref());
+    bytes
 }
 
 fn ipv4_declared_option_slice(bytes: &[u8]) -> Option<&[u8]> {
@@ -970,7 +992,7 @@ fn malformed_dhcp_typed_option_views_report_structured_errors() {
     let relay = Dhcp::discover(dhcp_client_mac())
         .transaction_id(0x0102_0304)
         .option(DhcpOption::generic(82, vec![0x01, 0x20, 0x00]));
-    let bytes = relay.malformed().to_bytes();
+    let bytes = compile_dhcp_payload(relay);
     let decoded = Dhcp::decode(&bytes).expect("relay frame must decode structurally");
     match decoded.relay_agent_information() {
         Some(Err(CrafterError::BufferTooShort { context, .. })) => {
@@ -995,7 +1017,7 @@ fn malformed_dhcp_typed_option_views_report_structured_errors() {
         Ipv4Addr::new(192, 0, 2, 1),
     )
     .option(DhcpOption::generic(121, vec![24, 192, 0]));
-    let bytes = route.malformed().to_bytes();
+    let bytes = compile_dhcp_payload(route);
     let decoded = Dhcp::decode(&bytes).expect("classless route frame must decode structurally");
     match decoded.classless_static_routes() {
         Some(Err(CrafterError::BufferTooShort { context, .. })) => {
@@ -1014,7 +1036,7 @@ fn malformed_dhcp_typed_option_views_report_structured_errors() {
         Ipv4Addr::new(192, 0, 2, 1),
     )
     .option(DhcpOption::generic(119, vec![7, 101, 120]));
-    let bytes = domain.malformed().to_bytes();
+    let bytes = compile_dhcp_payload(domain);
     let decoded = Dhcp::decode(&bytes).expect("domain search frame must decode structurally");
     match decoded.domain_search() {
         Some(Err(CrafterError::BufferTooShort { context, .. })) => {
@@ -1055,7 +1077,7 @@ fn malformed_dhcp_leasequery_option_views_report_structured_errors() {
         let frame = Dhcp::lease_query_by_ip(Ipv4Addr::new(192, 0, 2, 50))
             .transaction_id(0x0102_0304)
             .option(DhcpOption::generic(code, payload));
-        let bytes = frame.malformed().to_bytes();
+        let bytes = compile_dhcp_payload(frame);
         Dhcp::decode(&bytes).expect("leasequery frame must decode structurally")
     }
 
@@ -1122,7 +1144,7 @@ fn malformed_dhcp_leasequery_option_views_report_structured_errors() {
         .option(DhcpOption::generic(STATUS_CODE, vec![0x40, 0xff, 0x00]))
         .option(DhcpOption::generic(DHCP_STATE, vec![0x55]))
         .option(DhcpOption::generic(DATA_SOURCE, vec![0xFE]));
-    let bytes = good.malformed().to_bytes();
+    let bytes = compile_dhcp_payload(good);
     let decoded = Dhcp::decode(&bytes).expect("leasequery frame must decode structurally");
     let status = decoded
         .status_code()
@@ -1259,24 +1281,20 @@ fn malformed_dhcp_corpus_errors_carry_structured_fields() {
     }
 }
 
-/// Malformed DHCP vectors built through the public [`DhcpMalformed`] surface
-/// (rather than raw corpus hex) must also decode to structured `CrafterError`s
-/// with the `required`/`available`/`reason` fields populated and never panic.
+/// Malformed DHCP vectors built from test-local raw bytes must decode to
+/// structured `CrafterError`s with the `required`/`available`/`reason` fields
+/// populated and never panic. The public crate intentionally has no
+/// DHCP-specific malformed builder; these fixtures keep decoder coverage
+/// without exposing a one-off API.
 ///
-/// This exercises the same required dimensions through the typed builder so the
-/// malformation knobs themselves stay covered: short fixed header (truncation),
-/// missing magic cookie, truncated trailing option, missing end marker,
-/// non-padding after the end marker, invalid hardware length, an oversized
-/// (length-truncated) option payload, and a malformed option-overload file
-/// area.
+/// This exercises short fixed header (truncation), missing magic cookie,
+/// truncated trailing option, missing end marker, non-padding after the end
+/// marker, invalid hardware length, an oversized (length-truncated) option
+/// payload, and a malformed option-overload file area.
 #[test]
-fn malformed_dhcp_builder_vectors_report_structured_errors() {
-    use crafter::core::DhcpMalformed;
-
-    let base = || Dhcp::discover(dhcp_client_mac()).transaction_id(0x0102_0304);
-
+fn raw_malformed_dhcp_vectors_report_structured_errors() {
     // Short fixed header: a complete DHCP frame truncated below DHCP_MIN_LEN.
-    let full = DhcpMalformed::from_valid(base()).to_bytes();
+    let full = dhcp_payload_with_options([DHCP_OPTION_MESSAGE_TYPE, 1, 1, DHCP_OPTION_END]);
     let short = &full[..8.min(full.len())];
     match Dhcp::decode(short) {
         Err(CrafterError::BufferTooShort {
@@ -1295,9 +1313,8 @@ fn malformed_dhcp_builder_vectors_report_structured_errors() {
     }
 
     // Missing magic cookie: a full-length frame whose cookie is corrupted.
-    let bytes = DhcpMalformed::from_valid(base())
-        .invalid_magic_cookie(0x0000_0000)
-        .to_bytes();
+    let mut bytes = dhcp_payload_with_options([DHCP_OPTION_MESSAGE_TYPE, 1, 1, DHCP_OPTION_END]);
+    bytes[DHCP_FIXED_HEADER_LEN..DHCP_MIN_LEN].copy_from_slice(&0u32.to_be_bytes());
     match Dhcp::decode(&bytes) {
         Err(CrafterError::InvalidFieldValue { field, reason }) => {
             assert_eq!(field, "dhcp.magic_cookie");
@@ -1308,9 +1325,7 @@ fn malformed_dhcp_builder_vectors_report_structured_errors() {
 
     // Truncated option: a message-type option declares length 1 but supplies no
     // payload octet.
-    let bytes = DhcpMalformed::from_valid(base())
-        .option_with_declared_len(53, 1, [])
-        .to_bytes();
+    let bytes = dhcp_payload_with_options([DHCP_OPTION_MESSAGE_TYPE, 1]);
     match Dhcp::decode(&bytes) {
         Err(CrafterError::BufferTooShort {
             context,
@@ -1325,9 +1340,8 @@ fn malformed_dhcp_builder_vectors_report_structured_errors() {
 
     // Invalid fixed option length: message-type (53) declares length 2 but the
     // option is a fixed single octet.
-    let bytes = DhcpMalformed::from_valid(base())
-        .option_with_declared_len(53, 2, [0x01, 0x00])
-        .to_bytes();
+    let bytes =
+        dhcp_payload_with_options([DHCP_OPTION_MESSAGE_TYPE, 2, 0x01, 0x00, DHCP_OPTION_END]);
     match Dhcp::decode(&bytes) {
         Err(CrafterError::InvalidFieldValue { field, reason }) => {
             assert_eq!(field, "dhcp.option.message_type");
@@ -1340,9 +1354,7 @@ fn malformed_dhcp_builder_vectors_report_structured_errors() {
 
     // Missing end marker: a non-empty options area without the trailing end
     // option.
-    let bytes = DhcpMalformed::from_valid(base())
-        .raw_options([0x35, 0x01, 0x01])
-        .to_bytes();
+    let bytes = dhcp_payload_with_options([DHCP_OPTION_MESSAGE_TYPE, 0x01, 0x01]);
     match Dhcp::decode(&bytes) {
         Err(CrafterError::InvalidFieldValue { field, reason }) => {
             assert_eq!(field, "dhcp.options");
@@ -1352,9 +1364,15 @@ fn malformed_dhcp_builder_vectors_report_structured_errors() {
     }
 
     // Non-padding after end: a complete option segment follows the end option.
-    let bytes = DhcpMalformed::from_valid(base())
-        .trailing_after_end([0x35, 0x01, 0x01])
-        .to_bytes();
+    let bytes = dhcp_payload_with_options([
+        DHCP_OPTION_MESSAGE_TYPE,
+        0x01,
+        0x01,
+        DHCP_OPTION_END,
+        DHCP_OPTION_MESSAGE_TYPE,
+        0x01,
+        0x01,
+    ]);
     match Dhcp::decode(&bytes) {
         Err(CrafterError::InvalidFieldValue { field, reason }) => {
             assert_eq!(field, "dhcp.option.end");
@@ -1364,7 +1382,8 @@ fn malformed_dhcp_builder_vectors_report_structured_errors() {
     }
 
     // Invalid hardware length: hlen 32 exceeds the 16-byte chaddr field.
-    let bytes = DhcpMalformed::from_valid(base().hardware_len(32)).to_bytes();
+    let mut bytes = dhcp_payload_with_options([DHCP_OPTION_MESSAGE_TYPE, 1, 1, DHCP_OPTION_END]);
+    bytes[2] = 32;
     match Dhcp::decode(&bytes) {
         Err(CrafterError::InvalidFieldValue { field, reason }) => {
             assert_eq!(field, "dhcp.hlen");
@@ -1375,9 +1394,9 @@ fn malformed_dhcp_builder_vectors_report_structured_errors() {
 
     // Malformed typed option payload via oversized payload: a 300-octet payload
     // with a length-truncated (300 % 256 = 44) length byte overruns the option.
-    let bytes = DhcpMalformed::from_valid(base())
-        .oversized_option_payload(43, vec![0u8; 300])
-        .to_bytes();
+    let mut options = vec![43, 44];
+    options.extend(vec![0u8; 300]);
+    let bytes = dhcp_payload_with_options(options);
     // The decoder must not panic; it may surface a structured error or preserve
     // the bytes as a raw generic segment depending on the truncated length, but
     // it must never panic.
@@ -1386,13 +1405,11 @@ fn malformed_dhcp_builder_vectors_report_structured_errors() {
     // Malformed option overload: option 52 (in the normal options area) marks
     // the file area overloaded, but the file area carries a truncated option
     // (declared length overruns the 128-byte field) and no end marker.
-    let mut file_area = vec![0u8; 128];
+    let mut bytes = dhcp_payload_with_options([52, 1, 1, DHCP_OPTION_END]);
+    let mut file_area = [0u8; 128];
     file_area[0] = 0x43; // option 67 (bootfile name)
     file_area[1] = 200; // declared length overruns the 128-byte file area
-    let bytes =
-        DhcpMalformed::from_valid(base().option(DhcpOption::option_overload(OptionOverload::File)))
-            .raw_file(file_area)
-            .to_bytes();
+    bytes[108..236].copy_from_slice(&file_area);
     let _ = Dhcp::decode(&bytes); // must not panic; structured error or raw preservation
 }
 
@@ -2402,22 +2419,17 @@ proptest! {
     fn ipv4_udp_dhcp_boundary_decode_never_panics(
         option_bytes in prop::collection::vec(any::<u8>(), 0..200),
     ) {
-        use crafter::core::DhcpMalformed;
-
         // A valid BOOTP fixed header + magic cookie keeps the registry gate
         // (`is_dhcp_port_pair` && `looks_like_dhcp_payload`) satisfied so the
         // arbitrary option-region bytes reach the DHCP decoder through the real
         // boundary rather than being dropped as non-DHCP UDP traffic.
-        let dhcp = DhcpMalformed::from_valid(
-            Dhcp::discover(dhcp_client_mac()).transaction_id(0x0102_0304),
-        )
-        .raw_options(option_bytes);
+        let dhcp_payload = dhcp_payload_with_options(option_bytes);
 
         let frame = Ipv4::with_addresses(Ipv4Addr::UNSPECIFIED, Ipv4Addr::BROADCAST)
             / Udp::new()
                 .source_port(DHCP_CLIENT_PORT)
                 .destination_port(DHCP_SERVER_PORT)
-            / dhcp;
+            / Raw::from_bytes(&dhcp_payload);
 
         // The fuzzed options never make the fixed header invalid, so the frame
         // always compiles to wire bytes carrying a real DHCP magic cookie.
