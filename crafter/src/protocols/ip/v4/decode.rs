@@ -267,7 +267,15 @@ pub(crate) fn decode_quoted_ipv4(bytes: &[u8], validate_checksum: bool) -> Optio
     };
 
     let payload = &datagram[header_len..];
-    let mut packet = Packet::with_capacity(3).push_ipv4(ipv4);
+    let can_decode_transport = fragment_offset == 0
+        && !payload.is_empty()
+        && quoted_transport_decode_can_succeed(protocol, payload);
+    let packet_capacity = match (payload.is_empty(), can_decode_transport) {
+        (true, _) => 1,
+        (_, true) => 3,
+        _ => 2,
+    };
+    let mut packet = Packet::with_capacity(packet_capacity).push_ipv4(ipv4);
 
     // Best-effort typed transport decode. A strict failure (truncated quote or
     // unknown next protocol) keeps the remaining bytes raw-compatible. A
@@ -279,7 +287,7 @@ pub(crate) fn decode_quoted_ipv4(bytes: &[u8], validate_checksum: bool) -> Optio
         }
     } else if payload.is_empty() {
         // No quoted transport bytes to type.
-    } else if quoted_transport_decode_can_succeed(protocol, payload) {
+    } else if can_decode_transport {
         let registry = ProtocolRegistry::transport_only_builtin();
         packet = match registry.decode_ipv4_protocol(packet.clone(), protocol, payload) {
             Ok(typed) => typed,

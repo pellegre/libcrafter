@@ -414,6 +414,10 @@ impl ProtocolRegistry {
         self.decode_applications
     }
 
+    pub(crate) const fn uses_builtin_ethertype_dispatch(&self) -> bool {
+        self.builtin_ethertype_dispatch
+    }
+
     /// Decode bytes from a link-layer entrypoint.
     pub fn decode_from_link(&self, link_type: LinkType, bytes: impl AsRef<[u8]>) -> Result<Packet> {
         let bytes = bytes.as_ref();

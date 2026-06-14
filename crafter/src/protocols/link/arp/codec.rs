@@ -18,7 +18,7 @@ pub(crate) fn append_arp_packet(mut packet: Packet, payload: &[u8]) -> Result<Pa
     Ok(packet)
 }
 
-fn decode_arp(bytes: &[u8]) -> Result<(Arp, &[u8])> {
+pub(crate) fn decode_arp(bytes: &[u8]) -> Result<(Arp, &[u8])> {
     if bytes.len() < ARP_FIXED_HEADER_LEN {
         return Err(CrafterError::buffer_too_short(
             "arp header",

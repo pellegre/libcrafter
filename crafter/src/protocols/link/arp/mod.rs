@@ -10,7 +10,7 @@ mod operation;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use self::codec::append_arp_packet;
+pub(crate) use self::codec::{append_arp_packet, decode_arp};
 pub use self::constants::{
     ARP_HRD_ATM, ARP_HRD_ETHERNET, ARP_HRD_FIBRE_CHANNEL, ARP_HRD_IEEE_802, ARP_HRD_INFINIBAND,
     ARP_HRD_MAPOS, ARP_OP_ARP_NAK, ARP_OP_DRARP_ERROR, ARP_OP_DRARP_REPLY, ARP_OP_DRARP_REQUEST,
