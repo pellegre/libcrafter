@@ -647,6 +647,18 @@ impl Packet {
         self.layers.get_mut(index).map(PacketLayer::as_layer_mut)
     }
 
+    pub(crate) fn single_raw_layer_after(&self, index: usize) -> Option<&Raw> {
+        let next = index.checked_add(1)?;
+        if self.layers.len() != next.checked_add(1)? {
+            return None;
+        }
+        match self.layers.get(next)? {
+            PacketLayer::Raw(raw) => Some(raw),
+            PacketLayer::Boxed(layer) => layer.as_any().downcast_ref::<Raw>(),
+            _ => None,
+        }
+    }
+
     /// First layer of type `T`.
     pub fn layer<T>(&self) -> Option<&T>
     where
