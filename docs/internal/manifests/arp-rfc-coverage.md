@@ -8,7 +8,7 @@ that drive the work; those generated artifacts live under `target/arp-rfc/`
 as the concise reviewer-facing summary.
 
 Operational guidance for agents building ARP tools on top of the crate belongs
-in [`.agents/docs/cookbook.md`](../.agents/docs/cookbook.md), not here. This
+in [`.agents/docs/cookbook.md`](../../../.agents/docs/cookbook.md), not here. This
 page describes the crate's coverage boundary; it is not a how-to.
 
 ## Source authority

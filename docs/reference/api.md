@@ -158,7 +158,7 @@ packet records with pcap metadata and writes consume packets or packet records.
 The crate-level packet I/O surface lives under `crafter::wire`. See
 [docs/wire.md](wire.md) for the full guide to `PacketWire`, `PacketRecord`
 metadata, `PacketTransform`, `Sniffer`, and `Transmitter`.
-See [docs/wire-api-inventory.md](wire-api-inventory.md) for the inspectable
+See [docs/wire-api-inventory.md](../internal/inventories/wire-api-inventory.md) for the inspectable
 API inventory and backend responsibility map.
 
 The public stream shape is:
@@ -504,14 +504,14 @@ let targets = Ipv4Range::parse("192.0.2.1-20")?;
 | Linux cooked capture | `LinuxSll` |
 
 IPv4-specific construction and decode behavior is covered in
-[IPv4 wire coverage](ipv4.md). The `Ipv4` layer exposes DSCP/ECN helpers,
+[IPv4 wire coverage](../guide/ipv4.md). The `Ipv4` layer exposes DSCP/ECN helpers,
 protocol-number labels and constants, decode-time checksum status, typed IPv4
 options, fragment metadata fields, `IpDefrag` / `IpFragment` packet-stream
 transforms, enriched `summary()` / `show()` output, and `Raw` fallback for
 unknown or unsupported payloads.
 
 IPv6 base-header and extension-header details live in
-[IPv6 wire coverage](ipv6.md), including source manifests, fixture coverage,
+[IPv6 wire coverage](../guide/ipv6.md), including source manifests, fixture coverage,
 and the offline `ipv6-enrichment` oracle profile. IPv6 examples should use
 documentation address space (`2001:db8::/32`) and dry-run or offline flows
 unless a provider-backed live workflow is explicitly selected.
@@ -654,7 +654,7 @@ unknown types are preserved as `Icmpv6Body::Unknown` with a trailing `Raw` body.
 
 The codepoint coverage, the experimental status of Node Information, and the
 deferred families (Router Renumbering, Inverse Neighbor Discovery) are detailed
-in [ICMPv6 message coverage](icmpv6-coverage.md).
+in [ICMPv6 message coverage](../internal/manifests/icmpv6-coverage.md).
 
 ## Example Map
 

@@ -15,7 +15,7 @@ fragment generation and reassembly live in the packet-stream `IpFragment` and
 
 All wire facts on this page trace to reviewed RFC text and IANA registries. The
 authoritative source record is
-[`docs/ipv4-rfc-manifest.md`](ipv4-rfc-manifest.md); this guide summarizes the
+[`docs/ipv4-rfc-manifest.md`](../internal/manifests/ipv4-rfc-manifest.md); this guide summarizes the
 user-facing API built on top of that manifest.
 
 ## Coverage at a glance
@@ -477,7 +477,7 @@ that decide when to send them belong outside the crate primitive.
 ## Evidence
 
 Protocol facts above come from
-[`docs/ipv4-rfc-manifest.md`](ipv4-rfc-manifest.md). The source set, in brief:
+[`docs/ipv4-rfc-manifest.md`](../internal/manifests/ipv4-rfc-manifest.md). The source set, in brief:
 
 - **RFC 791** - IPv4 base header, options, checksum, and fragmentation model.
 - **RFC 1122** - host requirements for IPv4 validation, TTL, options, and

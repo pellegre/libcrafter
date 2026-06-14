@@ -139,7 +139,7 @@ Mobile IPv6 (RFC 6275) and the SEND certificate options (RFC 3971 CGA/RSA/cert)
 are likewise out of scope and preserved as unknown options/messages. The named
 `Type` constants (`ICMPV6_ROUTER_RENUMBERING`, `ICMPV6_INVERSE_ND_*`) exist so a
 future effort can add typed bodies behind them. Full deferral rationale lives in
-[`docs/icmpv6-coverage.md`](../icmpv6-coverage.md).
+[`docs/icmpv6-coverage.md`](../manifests/icmpv6-coverage.md).
 
 ## 3. Reference interop direction coverage
 

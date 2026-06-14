@@ -13,7 +13,7 @@ channel manager, password-cracking tool, deauthentication workflow, or complete
 Wi-Fi stack.
 
 Protocol facts here are source-backed. The authority record is
-[`docs/protocols/dot11-source-manifest.md`](protocols/dot11-source-manifest.md).
+[`docs/protocols/dot11-source-manifest.md`](../internal/source/dot11-source-manifest.md).
 The current branch also has offline examples under `crafter/examples/`:
 `dot11_radiotap_ipv4`, `dot11_beacon_rsn`, `eapol_key_parse`, and
 `wpa_decrypt_offline`.
@@ -395,7 +395,7 @@ Current radiotap live support is limited to dry-run send planning. A
 `SendOptions::new().iface("dot11-monitor-dry-run").link_layer()`, but built-in
 automatic live injection is intentionally unsupported and is not part of
 automated validation. Manual dongle guidance lives in
-[`docs/dot11-live-manual.md`](dot11-live-manual.md).
+[`docs/dot11-live-manual.md`](../operations/dot11-live-manual.md).
 
 Examples, docs, fixtures, and tests should use documentation MAC addresses from
 the `00:00:5e:00:53:00` range, documentation IP address space such as

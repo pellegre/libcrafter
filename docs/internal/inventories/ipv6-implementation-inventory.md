@@ -100,7 +100,7 @@ Implemented Fragment Header behavior includes:
 ## Source evidence
 
 The source-backed behavior is anchored in
-[`docs/ipv6-rfc-manifest.md`](ipv6-rfc-manifest.md). That manifest remains the
+[`docs/ipv6-rfc-manifest.md`](../manifests/ipv6-rfc-manifest.md). That manifest remains the
 authority for future protocol changes and reconciles the implementation with
 RFC 8200, RFC 2474, RFC 3168, RFC 2675, RFC 2711, RFC 5095, RFC 6275, RFC 6946,
 RFC 7045, RFC 7112, RFC 8754, RFC 9673, RFC 9800 notes, and the relevant IANA
@@ -231,7 +231,7 @@ workflow.
 
 ## Docs and examples
 
-User-facing IPv6 documentation now exists at [`docs/ipv6.md`](ipv6.md). It
+User-facing IPv6 documentation now exists at [`docs/ipv6.md`](../../guide/ipv6.md). It
 documents base-header fields, DSCP/ECN helpers, Flow Label behavior, Payload
 Length and Jumbo Payload caveats, Next Header constants, Hop-by-Hop and
 Destination Options, routing headers, SRH, Fragment Header classification,
