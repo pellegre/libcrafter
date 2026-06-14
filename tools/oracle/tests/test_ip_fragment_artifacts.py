@@ -1,4 +1,4 @@
-"""Coverage for IP fragmentation lab artifact audit reports."""
+"""Coverage for IP fragmentation oracle artifact audit reports."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tools.lab import ip_fragment_artifacts
+from tools.oracle.engine import ip_fragment_artifacts
 from tools.oracle.engine.model import write_json
 
 
