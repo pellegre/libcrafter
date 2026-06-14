@@ -404,6 +404,10 @@ impl ProtocolRegistry {
         self
     }
 
+    pub(crate) const fn decodes_applications(&self) -> bool {
+        self.decode_applications
+    }
+
     /// Decode bytes from a link-layer entrypoint.
     pub fn decode_from_link(&self, link_type: LinkType, bytes: impl AsRef<[u8]>) -> Result<Packet> {
         let bytes = bytes.as_ref();
