@@ -7,7 +7,7 @@ use core::ops::Div;
 
 use crate::checksum::{ipv4_pseudo_header_checksum, ipv6_pseudo_header_checksum};
 use crate::error::Result;
-use crate::protocols::icmp::{Icmpv4, Icmpv6, NeighborSolicitation};
+use crate::protocols::icmp::{Icmpv4, Icmpv4QuotedIp, Icmpv6, NeighborSolicitation};
 use crate::protocols::ip::{v4::Ipv4, v6::Ipv6};
 use crate::protocols::link::{Arp, Ethernet, Vlan};
 use crate::protocols::transport::{Tcp, Udp};
@@ -348,6 +348,7 @@ enum PacketLayer {
     Tcp(Tcp),
     Udp(Udp),
     Icmpv4(Icmpv4),
+    Icmpv4QuotedIp(Icmpv4QuotedIp),
     Icmpv6(Icmpv6),
     NeighborSolicitation(NeighborSolicitation),
 }
@@ -365,6 +366,7 @@ impl PacketLayer {
             Self::Tcp(layer) => layer,
             Self::Udp(layer) => layer,
             Self::Icmpv4(layer) => layer,
+            Self::Icmpv4QuotedIp(layer) => layer,
             Self::Icmpv6(layer) => layer,
             Self::NeighborSolicitation(layer) => layer,
         }
@@ -382,6 +384,7 @@ impl PacketLayer {
             Self::Tcp(layer) => layer,
             Self::Udp(layer) => layer,
             Self::Icmpv4(layer) => layer,
+            Self::Icmpv4QuotedIp(layer) => layer,
             Self::Icmpv6(layer) => layer,
             Self::NeighborSolicitation(layer) => layer,
         }
@@ -399,6 +402,7 @@ impl PacketLayer {
             Self::Tcp(layer) => Box::new(layer),
             Self::Udp(layer) => Box::new(layer),
             Self::Icmpv4(layer) => Box::new(layer),
+            Self::Icmpv4QuotedIp(layer) => Box::new(layer),
             Self::Icmpv6(layer) => Box::new(layer),
             Self::NeighborSolicitation(layer) => Box::new(layer),
         }
@@ -416,6 +420,7 @@ impl PacketLayer {
             Self::Tcp(layer) => layer.encoded_len_with_context(ctx),
             Self::Udp(layer) => layer.encoded_len_with_context(ctx),
             Self::Icmpv4(layer) => layer.encoded_len_with_context(ctx),
+            Self::Icmpv4QuotedIp(layer) => layer.encoded_len_with_context(ctx),
             Self::Icmpv6(layer) => layer.encoded_len_with_context(ctx),
             Self::NeighborSolicitation(layer) => layer.encoded_len_with_context(ctx),
         }
@@ -433,6 +438,7 @@ impl PacketLayer {
             Self::Tcp(layer) => layer.compile(ctx, out),
             Self::Udp(layer) => layer.compile(ctx, out),
             Self::Icmpv4(layer) => layer.compile(ctx, out),
+            Self::Icmpv4QuotedIp(layer) => layer.compile(ctx, out),
             Self::Icmpv6(layer) => layer.compile(ctx, out),
             Self::NeighborSolicitation(layer) => layer.compile(ctx, out),
         }
@@ -450,6 +456,7 @@ impl PacketLayer {
             Self::Tcp(layer) => layer.consumes_following(),
             Self::Udp(layer) => layer.consumes_following(),
             Self::Icmpv4(layer) => layer.consumes_following(),
+            Self::Icmpv4QuotedIp(layer) => layer.consumes_following(),
             Self::Icmpv6(layer) => layer.consumes_following(),
             Self::NeighborSolicitation(layer) => layer.consumes_following(),
         }
@@ -555,6 +562,11 @@ impl Packet {
 
     pub(crate) fn push_icmpv4(mut self, layer: Icmpv4) -> Self {
         self.layers.push(PacketLayer::Icmpv4(layer));
+        self
+    }
+
+    pub(crate) fn push_icmpv4_quoted_ip(mut self, layer: Icmpv4QuotedIp) -> Self {
+        self.layers.push(PacketLayer::Icmpv4QuotedIp(layer));
         self
     }
 
@@ -705,6 +717,29 @@ impl Packet {
             }
         }
         Ok(())
+    }
+
+    pub(crate) fn compile_layers_after_into(&self, index: usize, out: &mut Vec<u8>) -> Result<()> {
+        for (layer_index, layer) in self.layers.iter().enumerate().skip(index + 1) {
+            let ctx = LayerContext::new(self, layer_index);
+            layer.compile(&ctx, out)?;
+            if layer.consumes_following() {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn encoded_len_after(&self, index: usize) -> usize {
+        let mut total = 0;
+        for (layer_index, layer) in self.layers.iter().enumerate().skip(index + 1) {
+            let ctx = LayerContext::new(self, layer_index);
+            total += layer.encoded_len_with_context(&ctx);
+            if layer.consumes_following() {
+                break;
+            }
+        }
+        total
     }
 
     /// Decode bytes as raw payload.

@@ -42,7 +42,7 @@ pub(crate) fn append_icmp_packet(mut packet: Packet, bytes: &[u8]) -> Result<Pac
     // stays raw-compatible so the bytes are never dropped.
     if icmpv4_type_is_error(icmp_type) {
         if let Some((quoted, consumed)) = decode_quoted_ipv4(payload) {
-            packet = packet.push(Icmpv4QuotedIp { datagram: quoted });
+            packet = packet.push_icmpv4_quoted_ip(Icmpv4QuotedIp { datagram: quoted });
             let trailing = &payload[consumed..];
             if trailing.is_empty() {
                 return Ok(packet);

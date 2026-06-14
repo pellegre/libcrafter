@@ -307,26 +307,11 @@ fn payload_bytes_after(ctx: LayerContext<'_>) -> Result<Vec<u8>> {
 }
 
 fn compile_payload_after_into(ctx: LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
-    for (index, layer) in ctx.packet().iter().enumerate().skip(ctx.index() + 1) {
-        let layer_ctx = LayerContext::new(ctx.packet(), index);
-        layer.compile(&layer_ctx, out)?;
-        if layer.consumes_following() {
-            break;
-        }
-    }
-    Ok(())
+    ctx.packet().compile_layers_after_into(ctx.index(), out)
 }
 
 fn payload_len_after(ctx: LayerContext<'_>) -> usize {
-    let mut total = 0;
-    for (index, layer) in ctx.packet().iter().enumerate().skip(ctx.index() + 1) {
-        let layer_ctx = LayerContext::new(ctx.packet(), index);
-        total += layer.encoded_len_with_context(&layer_ctx);
-        if layer.consumes_following() {
-            break;
-        }
-    }
-    total
+    ctx.packet().encoded_len_after(ctx.index())
 }
 
 fn router_advertisement_entry_count(ctx: LayerContext<'_>) -> usize {
