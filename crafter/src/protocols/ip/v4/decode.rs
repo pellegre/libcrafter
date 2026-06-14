@@ -222,6 +222,9 @@ pub(crate) fn decode_quoted_ipv4(bytes: &[u8], validate_checksum: bool) -> Optio
     let datagram = &bytes[..consumed];
 
     let flags_fragment = u16::from_be_bytes([datagram[6], datagram[7]]);
+    let flags = flags_from_flags_fragment(flags_fragment);
+    let fragment_offset = fragment_offset_from_flags_fragment(flags_fragment);
+    let protocol = datagram[9];
     let options = if header_len > IPV4_MIN_HEADER_LEN {
         datagram[IPV4_MIN_HEADER_LEN..header_len].to_vec()
     } else {
@@ -242,10 +245,10 @@ pub(crate) fn decode_quoted_ipv4(bytes: &[u8], validate_checksum: bool) -> Optio
         tos: Field::user(datagram[1]),
         total_length: Field::user(total_length as u16),
         identification: Field::user(u16::from_be_bytes([datagram[4], datagram[5]])),
-        flags: Field::user(flags_from_flags_fragment(flags_fragment)),
-        fragment_offset: Field::user(fragment_offset_from_flags_fragment(flags_fragment)),
+        flags: Field::user(flags),
+        fragment_offset: Field::user(fragment_offset),
         ttl: Field::user(datagram[8]),
-        protocol: Field::user(datagram[9]),
+        protocol: Field::user(protocol),
         checksum: Field::user(u16::from_be_bytes([datagram[10], datagram[11]])),
         checksum_status,
         source: Field::user(Ipv4Addr::new(
@@ -263,8 +266,6 @@ pub(crate) fn decode_quoted_ipv4(bytes: &[u8], validate_checksum: bool) -> Optio
         options,
     };
 
-    let protocol = datagram[9];
-    let fragment_offset = fragment_offset_from_flags_fragment(flags_fragment);
     let payload = &datagram[header_len..];
     let mut packet = Packet::with_capacity(3).push_ipv4(ipv4);
 

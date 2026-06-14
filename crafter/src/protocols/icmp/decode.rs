@@ -9,7 +9,7 @@ use core::net::Ipv4Addr;
 
 use super::*;
 use crate::checksum::internet_checksum;
-use crate::endian::{read_u16_be, read_u32_be};
+use crate::endian::read_u32_be;
 use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::packet::{Layer, Packet, Raw};
@@ -368,7 +368,7 @@ fn decode_icmp_parts(bytes: &[u8]) -> Result<(Icmpv4, &[u8])> {
     let icmp = Icmpv4 {
         icmp_type: Field::user(icmp_type),
         code: Field::user(bytes[1]),
-        checksum: Field::user(read_u16_be(&bytes[2..4])?),
+        checksum: Field::user(u16::from_be_bytes([bytes[2], bytes[3]])),
         rest_of_header: Field::user(rest),
         identifier,
         sequence_number,
