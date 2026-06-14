@@ -1,10 +1,10 @@
 # Lab Sessions
 
-`tools/lab` is the standalone multi-endpoint substrate tool for libcrafter
-provider-backed work. It composes lower-level provider endpoints into named
-roles, persists a lab session manifest, records provider workflow and command
-metadata, and owns repository archive transfer, remote unpack, bootstrap
-context, artifact collection, and cleanup records.
+`tools/lab` is the standalone, protocol-agnostic multi-endpoint substrate tool
+for libcrafter provider-backed work. It composes lower-level provider endpoints
+into named roles, persists a lab session manifest, records provider workflow
+and command metadata, and owns repository archive transfer, remote unpack,
+bootstrap context, artifact collection, and cleanup records.
 
 Oracle and probe use lab sessions so their live behavior is independent of the
 machine where libcrafter or an agent is running. Oracle still owns reference
@@ -49,9 +49,12 @@ the bootstrap context passed to workload hooks, records command metadata, tracks
 artifacts, and writes cleanup records. Workload bootstrap happens after this
 repository bootstrap step.
 
-Profile-specific lab workload assets live under `tools/lab/workloads/`. They
-are repository-owned fixtures for lab profiles, but they are executed only
-inside disposable lab endpoints as part of an explicit lab workflow.
+Protocol and service-specific assets live with the runner that owns the
+workload. Oracle and probe may pass role, bootstrap, workload, and metadata
+fields through lab requests, and lab records that metadata for providers and
+reports. Lab treats profile and workload labels as opaque caller-supplied
+strings; it must not infer service setup or protocol behavior from profile
+names.
 
 Oracle owns the `libcrafter` and `reference_backend` workload setup. Probe owns
 the `stimulus` and `target` workload setup. Docker does not change that
@@ -158,21 +161,22 @@ Plan provider capability and topology before any live packet exchange.
 ```sh
 tools/lab/run plan --provider qemu --dry-run --profile ip-fragment-smoke --seed 1204 --role stimulus --role target --workload-label ip-fragment-smoke --json
 tools/lab/run plan --provider virtualbox --dry-run --profile ip-fragment-smoke --seed 1204 --role stimulus --role target --workload-label ip-fragment-smoke --json
-tools/oracle/run live --backend "$ORACLE_BACKEND" --provider qemu --dry-run --family ip --profile ip-fragment-smoke --seed 1204 --count 20 --out target/lab/ip-fragment-qemu-dry-run
+tools/oracle/run live --backend "$ORACLE_BACKEND" --provider qemu --dry-run --family ip --profile ip-fragment-smoke --seed 1204 --count 20 --out target/oracle/ip-fragment-qemu-dry-run
 ```
 
 Real fragment validation must be explicitly confirmed and artifacted under a
-fresh `target/lab/ip-fragment-*` directory:
+fresh `target/oracle/ip-fragment-*` directory:
 
 ```sh
-tools/oracle/run live --backend "$ORACLE_BACKEND" --provider qemu --confirm-live-run --family ip --profile fragmentation-smoke --seed 1205 --count 20 --out target/lab/ip-fragment-qemu-live
+tools/oracle/run live --backend "$ORACLE_BACKEND" --provider qemu --confirm-live-run --family ip --profile fragmentation-smoke --seed 1205 --count 20 --out target/oracle/ip-fragment-qemu-live
 ```
 
 Each live run must leave enough evidence for review: provider manifests,
 session metadata, command logs, pcaps, decoded summaries, transform JSON,
 payload-hash comparisons, final reports, and teardown records. A provider that
 cannot satisfy the fragment workload should write a structured skip artifact
-under the requested `target/lab/ip-fragment-*` directory. A supported provider
+under the requested `target/oracle/ip-fragment-*` directory. The artifact audit
+entrypoint is `tools/oracle/engine/ip_fragment_artifacts.py`. A supported provider
 that creates endpoints must tear them down before the run is considered
 complete; use `--keep-wire-endpoints` only for an operator-approved debugging
 session and record the manual cleanup plan.
