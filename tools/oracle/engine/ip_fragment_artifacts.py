@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Audit lab IP fragmentation artifacts without running live traffic."""
+"""Audit oracle IP fragmentation artifacts without running live traffic."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from typing import Any
 
 
 _SCRIPT_PATH = Path(__file__).resolve()
-_REPO_ROOT = _SCRIPT_PATH.parents[2]
+_REPO_ROOT = _SCRIPT_PATH.parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
@@ -21,7 +21,7 @@ from tools.oracle.engine.model import JSONValue, read_json, write_json
 
 
 TOOL_NAME = "ip_fragment_artifacts"
-DEFAULT_OUTPUT_ROOT = "target/lab/ip-fragment-artifact-audit"
+DEFAULT_OUTPUT_ROOT = "target/oracle/ip-fragment-artifact-audit"
 IP_FRAGMENT_PROFILE = "ip-fragment-smoke"
 
 
