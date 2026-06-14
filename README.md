@@ -14,20 +14,6 @@ and pcap capabilities. Instead of calling only fixed protocol clients, agents
 can generate the packets themselves and decide how to interact with the network
 at the protocol level.
 
-## Version 0.3.0
-
-The public crate is `crafter`:
-
-```toml
-crafter = "0.3.0"
-```
-
-Most generated tools and examples should import the prelude:
-
-```rust
-use crafter::prelude::*;
-```
-
 ## What Agents Can Do
 
 - Generate packet stacks across link, network, transport, control, and
