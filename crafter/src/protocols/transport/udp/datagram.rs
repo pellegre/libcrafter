@@ -243,11 +243,32 @@ impl Layer for Udp {
     }
 
     fn encoded_len_with_context(&self, ctx: &LayerContext<'_>) -> usize {
+        if let Some(raw) = ctx.packet().single_raw_layer_after(ctx.index()) {
+            return UDP_HEADER_LEN + raw.len();
+        }
         let following = udp_following_lens_after(*ctx);
         UDP_HEADER_LEN + following.user_payload + following.surplus
     }
 
     fn compile(&self, ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
+        if let Some(raw) = ctx.packet().single_raw_layer_after(ctx.index()) {
+            let user_payload_len = raw.len();
+            self.validate(user_payload_len)?;
+
+            let start = out.len();
+            out.extend_from_slice(&self.source_port_value().to_be_bytes());
+            out.extend_from_slice(&self.destination_port_value().to_be_bytes());
+            out.extend_from_slice(&self.effective_length(user_payload_len)?.to_be_bytes());
+            out.extend_from_slice(&0u16.to_be_bytes());
+
+            let payload_start = out.len();
+            out.extend_from_slice(raw.as_bytes());
+            let checksum =
+                self.effective_checksum(*ctx, &out[start..payload_start], raw.as_bytes());
+            out[start + 6..start + 8].copy_from_slice(&checksum.to_be_bytes());
+            return Ok(());
+        }
+
         let following = udp_following_lens_after(*ctx);
         self.validate(following.user_payload)?;
 
