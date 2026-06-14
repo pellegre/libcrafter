@@ -6,12 +6,17 @@ use crate::checksum::ipv4_header_checksum;
 use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::packet::{Packet, Raw};
+use crate::protocols::ip::shared::{IPPROTO_ICMP, IPPROTO_TCP, IPPROTO_UDP};
 use crate::registry::ProtocolRegistry;
 
 use super::constants::IPV4_MIN_HEADER_LEN;
 use super::fragment::{flags_from_flags_fragment, fragment_offset_from_flags_fragment};
 use super::header::{Ipv4, Ipv4ChecksumStatus};
 use super::options::validate_ipv4_options;
+
+const QUOTED_ICMP_HEADER_LEN: usize = 8;
+const QUOTED_TCP_MIN_HEADER_LEN: usize = 20;
+const QUOTED_UDP_HEADER_LEN: usize = 8;
 
 /// Append a decoded IPv4 packet using an explicit registry.
 pub(crate) fn append_ipv4_packet_with_registry(
@@ -253,7 +258,9 @@ pub(crate) fn decode_quoted_ipv4(bytes: &[u8]) -> Option<(Packet, usize)> {
         if !payload.is_empty() {
             packet = packet.push_raw(Raw::from_bytes(payload));
         }
-    } else {
+    } else if payload.is_empty() {
+        // No quoted transport bytes to type.
+    } else if quoted_transport_decode_can_succeed(protocol, payload) {
         let registry = ProtocolRegistry::transport_only_builtin();
         packet = match registry.decode_ipv4_protocol(packet.clone(), protocol, payload) {
             Ok(typed) => typed,
@@ -265,9 +272,32 @@ pub(crate) fn decode_quoted_ipv4(bytes: &[u8]) -> Option<(Packet, usize)> {
                 }
             }
         };
+    } else {
+        packet = packet.push_raw(Raw::from_bytes(payload));
     }
 
     Some((packet, consumed))
+}
+
+fn quoted_transport_decode_can_succeed(protocol: u8, payload: &[u8]) -> bool {
+    match protocol {
+        IPPROTO_TCP => {
+            if payload.len() < QUOTED_TCP_MIN_HEADER_LEN {
+                return false;
+            }
+            let data_offset = payload[12] >> 4;
+            data_offset >= 5 && payload.len() >= (data_offset as usize) * 4
+        }
+        IPPROTO_UDP => {
+            if payload.len() < QUOTED_UDP_HEADER_LEN {
+                return false;
+            }
+            let length = u16::from_be_bytes([payload[4], payload[5]]) as usize;
+            length >= QUOTED_UDP_HEADER_LEN && payload.len() >= length
+        }
+        IPPROTO_ICMP => payload.len() >= QUOTED_ICMP_HEADER_LEN,
+        _ => true,
+    }
 }
 
 fn decoded_ipv4_checksum_status(header: &[u8]) -> Ipv4ChecksumStatus {
@@ -275,5 +305,68 @@ fn decoded_ipv4_checksum_status(header: &[u8]) -> Ipv4ChecksumStatus {
         Ipv4ChecksumStatus::Valid
     } else {
         Ipv4ChecksumStatus::Invalid
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decode_quoted_ipv4;
+    use crate::{Raw, Udp};
+
+    fn quoted_udp_prefix(total_len: u16, udp_len: u16, udp_payload: &[u8]) -> Vec<u8> {
+        let mut bytes = vec![
+            0x45,
+            0,
+            (total_len >> 8) as u8,
+            total_len as u8,
+            0x12,
+            0x34,
+            0,
+            0,
+            64,
+            17,
+            0,
+            0,
+            192,
+            0,
+            2,
+            1,
+            198,
+            51,
+            100,
+            1,
+            0x9c,
+            0x40,
+            0,
+            53,
+            (udp_len >> 8) as u8,
+            udp_len as u8,
+            0,
+            0,
+        ];
+        bytes.extend_from_slice(udp_payload);
+        bytes
+    }
+
+    #[test]
+    fn quoted_ipv4_keeps_truncated_udp_header_raw() {
+        let quoted = quoted_udp_prefix(34, 14, &[]);
+
+        let (packet, consumed) = decode_quoted_ipv4(&quoted).unwrap();
+
+        assert_eq!(consumed, quoted.len());
+        assert!(packet.layer::<Udp>().is_none());
+        assert_eq!(packet.layer::<Raw>().unwrap().as_bytes(), &quoted[20..]);
+    }
+
+    #[test]
+    fn quoted_ipv4_still_types_complete_udp_datagram() {
+        let quoted = quoted_udp_prefix(34, 14, b"quoted");
+
+        let (packet, consumed) = decode_quoted_ipv4(&quoted).unwrap();
+
+        assert_eq!(consumed, quoted.len());
+        assert!(packet.layer::<Udp>().is_some());
+        assert_eq!(packet.layer::<Raw>().unwrap().as_bytes(), b"quoted");
     }
 }
