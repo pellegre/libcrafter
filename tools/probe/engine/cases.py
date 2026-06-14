@@ -862,7 +862,7 @@ DEFAULT_PROFILE = "smoke"
 SMOKE_PROFILE = "smoke"
 BEHAVIOR_PROFILE = "behavior"
 TCP_SMOKE_PROFILE = "tcp-smoke"
-BGP_SMOKE_PROFILE = "bgp-smoke"
+BGP_SESSION_PROFILE = "bgp-smoke"
 IPSEC_PROFILE = "ipsec"
 
 # Legacy default count used by the smoke profile and any profile without an
@@ -922,7 +922,7 @@ IPSEC_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
 # The BGP smoke profile plans the probe-owned FRR peer target service and the
 # bgp_session stimulus driver intent without asking lab to infer workload
 # metadata from the profile label.
-BGP_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
+BGP_SESSION_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
     case.name for case in BGP_SMOKE_CASES
 )
 
@@ -934,7 +934,7 @@ _PROFILE_CASE_NAMES: dict[str, tuple[str, ...]] = {
     SMOKE_PROFILE: SMOKE_PROFILE_CASE_NAMES,
     BEHAVIOR_PROFILE: BEHAVIOR_PROFILE_CASE_NAMES,
     TCP_SMOKE_PROFILE: TCP_SMOKE_PROFILE_CASE_NAMES,
-    BGP_SMOKE_PROFILE: BGP_SMOKE_PROFILE_CASE_NAMES,
+    BGP_SESSION_PROFILE: BGP_SESSION_PROFILE_CASE_NAMES,
     IPSEC_PROFILE: IPSEC_PROFILE_CASE_NAMES,
 }
 
@@ -943,7 +943,7 @@ _PROFILE_CASE_NAMES: dict[str, tuple[str, ...]] = {
 # profile keeps the legacy default.
 _PROFILE_DEFAULT_COUNTS: dict[str, int] = {
     BEHAVIOR_PROFILE: len(BEHAVIOR_PROFILE_CASE_NAMES),
-    BGP_SMOKE_PROFILE: len(BGP_SMOKE_PROFILE_CASE_NAMES),
+    BGP_SESSION_PROFILE: len(BGP_SESSION_PROFILE_CASE_NAMES),
     IPSEC_PROFILE: len(IPSEC_PROFILE_CASE_NAMES),
 }
 
