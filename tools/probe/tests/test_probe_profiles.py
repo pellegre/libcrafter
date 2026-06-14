@@ -27,7 +27,7 @@ _LEGACY_CASE_NAMES = (
 # dns, dhcp, arp, ndp, udp. Derive the count from the catalog so the suite can
 # grow without re-pinning a literal here.
 _BEHAVIOR_CASE_COUNT = len(cases.BEHAVIOR_PROFILE_CASE_NAMES)
-_BGP_CASE_COUNT = len(cases.BGP_SMOKE_PROFILE_CASE_NAMES)
+_BGP_CASE_COUNT = len(cases.BGP_SESSION_PROFILE_CASE_NAMES)
 _BEHAVIOR_PROTOCOL_COMPOSITION = {"dns": 10, "dhcp": 10, "arp": 10, "ndp": 3, "udp": 10}
 _BEHAVIOR_PROTOCOL_ORDER = (
     ["dns"] * 10 + ["dhcp"] * 10 + ["arp"] * 10 + ["ndp"] * 3 + ["udp"] * 10
@@ -196,7 +196,7 @@ class ProbeProfileDefaultCountTest(unittest.TestCase):
         self.assertEqual(cases.profile_default_count("bgp-smoke"), _BGP_CASE_COUNT)
         self.assertEqual(
             cases.profile_default_count("bgp-smoke"),
-            len(cases.BGP_SMOKE_PROFILE_CASE_NAMES),
+            len(cases.BGP_SESSION_PROFILE_CASE_NAMES),
         )
 
     def test_unknown_profile_default_count_is_legacy_five(self) -> None:
