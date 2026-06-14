@@ -1,8 +1,8 @@
-# BGP Lab Peer Provisioning
+# BGP Probe Peer Provisioning
 
-`provision-peer.sh` is run on a disposable lab endpoint to install FRR and
-configure a BGP peer for the `crafter` BGP session driver. It is intentionally
-not run from the repository host.
+`provision-peer.sh` is run by probe-owned target-service setup on a disposable
+lab endpoint to install FRR and configure a BGP peer for the `crafter` BGP
+session driver. It is intentionally not run from the repository host.
 
 Defaults use documentation addresses and private ASNs:
 
@@ -15,7 +15,7 @@ Defaults use documentation addresses and private ASNs:
   networks)
 - `FRR_CONF=/etc/frr/frr.conf`
 - `FRR_DAEMONS=/etc/frr/daemons`
-- `FRR_TEMPLATE=tools/lab/workloads/bgp/frr.conf.template`
+- `FRR_TEMPLATE=tools/probe/target_services/bgp/frr.conf.template`
 
 Example lab-endpoint use:
 

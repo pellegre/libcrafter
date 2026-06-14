@@ -7,9 +7,13 @@ independently of any lab provider.
 
 from __future__ import annotations
 
+import json
 import unittest
 
 from tools.probe.engine import target_services as ts
+
+
+OLD_LAB_BGP_PATH = "/".join(("tools", "lab", "workloads", "bgp"))
 
 
 def _dns_plan(*, port: int = 53, sequence: int = 0) -> dict[str, object]:
@@ -42,6 +46,27 @@ def _tcp_plan(*, case: str, port: int, sequence: int = 0) -> dict[str, object]:
         "destination_ipv4": "10.77.0.20",
         "source_ipv4": "10.77.0.10",
         "target_service": {
+            "bind_ipv4": "10.77.0.20",
+            "source_ipv4": "10.77.0.10",
+        },
+    }
+
+
+def _bgp_plan(
+    *,
+    case: str = "bgp-smoke",
+    kind: str = "frr-bgp-peer",
+) -> dict[str, object]:
+    return {
+        "case": case,
+        "sequence": 0,
+        "destination_port": 179,
+        "source_port": 42000,
+        "destination_ipv4": "10.77.0.20",
+        "source_ipv4": "10.77.0.10",
+        "target_service": {
+            "required": True,
+            "kind": kind,
             "bind_ipv4": "10.77.0.20",
             "source_ipv4": "10.77.0.10",
         },
@@ -134,6 +159,41 @@ class TargetServiceSetupPlanTest(unittest.TestCase):
         self.assertTrue(plan["starts_services"])
         self.assertEqual(plan["closed_tcp_ports"][0]["state"], "verified-unbound")
 
+    def test_dry_run_plan_includes_bgp_peer_service_from_kind(self) -> None:
+        plan = ts.target_service_setup_plan(
+            probe_plans=[_bgp_plan(case="custom-peer-case")],
+            dry_run=True,
+        )
+        self.assertFalse(plan["starts_services"])
+        self.assertEqual(len(plan["services"]), 1)
+        service = plan["services"][0]
+        self.assertEqual(service["kind"], "frr-bgp-peer")
+        self.assertEqual(service["protocol"], "tcp")
+        self.assertEqual(service["port"], 179)
+        self.assertEqual(service["runtime"], "frr")
+        self.assertEqual(service["driver_as"], 65000)
+        self.assertEqual(service["peer_as"], 65001)
+        self.assertIn("198.51.100.0/24", service["documentation_prefixes"])
+        self.assertIn("2001:db8::/32", service["documentation_prefixes"])
+        self.assertEqual(
+            service["provision_script"],
+            "tools/probe/target_services/bgp/provision-peer.sh",
+        )
+        self.assertEqual(
+            service["frr_template"],
+            "tools/probe/target_services/bgp/frr.conf.template",
+        )
+        self.assertEqual(service["rib_command"], "vtysh -c 'show bgp ipv4 unicast'")
+        self.assertNotIn(OLD_LAB_BGP_PATH, json.dumps(plan, sort_keys=True))
+
+    def test_dry_run_plan_includes_bgp_peer_service_from_case_name(self) -> None:
+        plan = ts.target_service_setup_plan(
+            probe_plans=[_bgp_plan(kind="manual-service")],
+            dry_run=True,
+        )
+        self.assertFalse(plan["starts_services"])
+        self.assertEqual(plan["services"][0]["kind"], "frr-bgp-peer")
+
 
 class TargetServiceDescriptorTest(unittest.TestCase):
     def test_dns_responder_descriptor(self) -> None:
@@ -178,6 +238,27 @@ class TargetServiceDescriptorTest(unittest.TestCase):
         self.assertEqual(descriptor.purpose, "udp-echo")
         self.assertTrue(descriptor.setup_commands)
         self.assertTrue(descriptor.cleanup_commands)
+
+    def test_frr_bgp_peer_descriptor_uses_probe_owned_assets(self) -> None:
+        descriptor = ts.frr_bgp_peer_descriptor(
+            bind_ipv4="10.77.0.20",
+            source_ipv4="10.77.0.10",
+        )
+        self.assertEqual(descriptor.name, "frr-bgp-peer")
+        self.assertEqual(descriptor.protocol, "tcp")
+        self.assertEqual(descriptor.port, 179)
+        self.assertEqual(descriptor.metadata["runtime"], "frr")
+        self.assertEqual(descriptor.metadata["driver_as"], 65000)
+        self.assertEqual(descriptor.metadata["peer_as"], 65001)
+        self.assertEqual(
+            descriptor.metadata["provision_script"],
+            "tools/probe/target_services/bgp/provision-peer.sh",
+        )
+        self.assertEqual(
+            descriptor.metadata["frr_template"],
+            "tools/probe/target_services/bgp/frr.conf.template",
+        )
+        self.assertNotIn(OLD_LAB_BGP_PATH, json.dumps(descriptor.metadata))
 
     def test_closed_udp_port_descriptor_verifies_free(self) -> None:
         descriptor = ts.closed_udp_port_descriptor(
