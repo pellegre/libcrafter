@@ -138,6 +138,7 @@ pub struct ProtocolRegistry {
     tcp_bindings: Vec<TcpBinding>,
     security_associations: Vec<SecurityAssociation>,
     validate_checksums: bool,
+    decode_applications: bool,
 }
 
 impl ProtocolRegistry {
@@ -173,6 +174,7 @@ impl ProtocolRegistry {
             tcp_bindings: Vec::new(),
             security_associations: Vec::new(),
             validate_checksums: true,
+            decode_applications: true,
         }
     }
 
@@ -383,6 +385,23 @@ impl ProtocolRegistry {
 
     pub(crate) const fn validates_checksums(&self) -> bool {
         self.validate_checksums
+    }
+
+    /// Enable or disable UDP/TCP application-layer decoding.
+    ///
+    /// When disabled, transport headers still decode normally but application
+    /// payload bytes are preserved as `Raw`, bypassing built-in and custom
+    /// application decoders.
+    #[must_use]
+    pub fn application_decoding(mut self, enabled: bool) -> Self {
+        self.decode_applications = enabled;
+        self
+    }
+
+    /// Mutably enable or disable UDP/TCP application-layer decoding.
+    pub fn set_application_decoding(&mut self, enabled: bool) -> &mut Self {
+        self.decode_applications = enabled;
+        self
     }
 
     /// Decode bytes from a link-layer entrypoint.
@@ -682,6 +701,10 @@ impl ProtocolRegistry {
         destination_port: u16,
         payload: &[u8],
     ) -> Result<Packet> {
+        if !self.decode_applications {
+            return append_raw_if_needed(packet, payload);
+        }
+
         if self.builtin_udp_application_dispatch {
             if is_dhcp_port_pair(source_port, destination_port) && looks_like_dhcp_payload(payload)
             {
@@ -738,6 +761,10 @@ impl ProtocolRegistry {
         destination_port: u16,
         payload: &[u8],
     ) -> Result<Packet> {
+        if !self.decode_applications {
+            return append_raw_if_needed(packet, payload);
+        }
+
         let ctx = TcpBindingContext {
             source_port,
             destination_port,
@@ -1026,6 +1053,28 @@ mod protocol_registry {
         assert!(custom.layer::<crate::Dns>().is_none());
         assert!(custom.layer::<Raw>().is_some());
         assert!(builtin.layer::<crate::Dns>().is_some());
+    }
+
+    #[test]
+    fn registry_can_skip_application_decoding() {
+        let bytes = (Ipv4::new()
+            / crate::Udp::new().sport(53001).dport(crate::DNS_PORT)
+            / crate::Dns::a_query("example.com."))
+        .compile()
+        .unwrap();
+        let registry = ProtocolRegistry::new().application_decoding(false);
+
+        let decoded = registry
+            .decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes())
+            .unwrap();
+
+        assert!(decoded.layer::<crate::Udp>().is_some());
+        assert!(decoded.layer::<crate::Dns>().is_none());
+        assert!(decoded.layer::<Raw>().is_some());
+        assert!(Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes())
+            .unwrap()
+            .layer::<crate::Dns>()
+            .is_some());
     }
 
     #[test]
