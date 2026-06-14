@@ -560,23 +560,23 @@ impl Layer for Ipv4 {
             compose_flags_fragment(self.flags_value(), self.fragment_offset_value());
         let protocol = self.effective_protocol(ctx.next());
 
-        let mut header = Vec::with_capacity(header_len);
-        header.push((self.version_value() << 4) | ihl);
-        header.push(self.tos_value());
-        header.extend_from_slice(&total_length.to_be_bytes());
-        header.extend_from_slice(&self.identification_value().to_be_bytes());
-        header.extend_from_slice(&flags_fragment.to_be_bytes());
-        header.push(self.ttl_value());
-        header.push(protocol);
-        header.extend_from_slice(&0u16.to_be_bytes());
-        header.extend_from_slice(&self.source().octets());
-        header.extend_from_slice(&self.destination().octets());
-        header.extend_from_slice(&self.options);
-        header.resize(header_len, 0);
+        let start = out.len();
+        out.reserve(header_len);
+        out.push((self.version_value() << 4) | ihl);
+        out.push(self.tos_value());
+        out.extend_from_slice(&total_length.to_be_bytes());
+        out.extend_from_slice(&self.identification_value().to_be_bytes());
+        out.extend_from_slice(&flags_fragment.to_be_bytes());
+        out.push(self.ttl_value());
+        out.push(protocol);
+        out.extend_from_slice(&0u16.to_be_bytes());
+        out.extend_from_slice(&self.source().octets());
+        out.extend_from_slice(&self.destination().octets());
+        out.extend_from_slice(&self.options);
+        out.resize(start + header_len, 0);
 
-        let checksum = self.effective_checksum(&header);
-        header[10..12].copy_from_slice(&checksum.to_be_bytes());
-        out.extend_from_slice(&header);
+        let checksum = self.effective_checksum(&out[start..start + header_len]);
+        out[start + 10..start + 12].copy_from_slice(&checksum.to_be_bytes());
         Ok(())
     }
 
