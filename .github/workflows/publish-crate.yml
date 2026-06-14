@@ -1,0 +1,204 @@
+name: publish-crate
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Crafter crate version to publish, for example 0.3.1."
+        required: true
+        type: string
+      confirm_publish:
+        description: "Type run to publish the crate."
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  VERSION: ${{ github.event.inputs.version }}
+
+jobs:
+  publish:
+    name: publish crate
+    runs-on: ubuntu-latest
+    environment: crates-io
+
+    steps:
+      - name: Authorize maintainer
+        env:
+          WORKFLOW_ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$WORKFLOW_ACTOR" != "pellegre" ]]; then
+            echo "::error::only pellegre may publish crafter releases"
+            exit 1
+          fi
+
+      - name: Confirm publish intent
+        env:
+          CONFIRM_PUBLISH: ${{ github.event.inputs.confirm_publish }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$CONFIRM_PUBLISH" != "run" ]]; then
+            echo "::error::confirm_publish must be exactly 'run'"
+            exit 1
+          fi
+
+      - name: Checkout default branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends curl libpcap-dev pkg-config python3
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup component add rustfmt clippy
+
+      - name: Verify requested version and release tag
+        run: |
+          set -euo pipefail
+
+          actual_version="$(
+            python3 <<'PY'
+          import re
+          from pathlib import Path
+
+          lines = Path("Cargo.toml").read_text(encoding="utf-8").splitlines()
+          in_workspace_package = False
+          for line in lines:
+              stripped = line.strip()
+              if stripped.startswith("[") and stripped.endswith("]"):
+                  in_workspace_package = stripped == "[workspace.package]"
+                  continue
+
+              if in_workspace_package and re.match(r"^\s*version\s*=", line):
+                  match = re.match(r'^\s*version\s*=\s*"([^"]+)"', line)
+                  if not match:
+                      raise SystemExit("workspace package version is not a quoted string")
+                  print(match.group(1))
+                  raise SystemExit(0)
+
+          raise SystemExit("missing [workspace.package] version in Cargo.toml")
+          PY
+          )"
+
+          if [[ "$actual_version" != "$VERSION" ]]; then
+            echo "::error::Cargo.toml version is ${actual_version}, not requested version ${VERSION}"
+            exit 1
+          fi
+
+          current_sha="$(git rev-parse HEAD)"
+          tag="v${VERSION}"
+          remote_tag_sha="$(
+            git ls-remote --tags origin "refs/tags/${tag}" "refs/tags/${tag}^{}" |
+            awk '
+              $2 ~ /\^\{\}$/ { peeled = $1 }
+              $2 !~ /\^\{\}$/ { direct = $1 }
+              END {
+                if (peeled != "") print peeled
+                else print direct
+              }
+            '
+          )"
+
+          if [[ -n "$remote_tag_sha" && "$remote_tag_sha" != "$current_sha" ]]; then
+            echo "::error::${tag} already points to ${remote_tag_sha}, not current default-branch commit ${current_sha}"
+            exit 1
+          fi
+
+      - name: Publish crate
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          LIBCRAFTER_CONFIRM_PUBLISH: run
+        run: .agents/scripts/publish-crafter-release "$VERSION"
+
+      - name: Create release tag and GitHub Release
+        run: |
+          set -euo pipefail
+
+          current_sha="$(git rev-parse HEAD)"
+          tag="v${VERSION}"
+          remote_tag_sha="$(
+            git ls-remote --tags origin "refs/tags/${tag}" "refs/tags/${tag}^{}" |
+            awk '
+              $2 ~ /\^\{\}$/ { peeled = $1 }
+              $2 !~ /\^\{\}$/ { direct = $1 }
+              END {
+                if (peeled != "") print peeled
+                else print direct
+              }
+            '
+          )"
+
+          if [[ -n "$remote_tag_sha" && "$remote_tag_sha" != "$current_sha" ]]; then
+            echo "::error::${tag} points to ${remote_tag_sha}, not current default-branch commit ${current_sha}"
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if [[ -z "$remote_tag_sha" ]]; then
+            if git show-ref --verify --quiet "refs/tags/${tag}"; then
+              local_tag_sha="$(git rev-list -n 1 "$tag")"
+              if [[ "$local_tag_sha" != "$current_sha" ]]; then
+                echo "::error::local ${tag} points to ${local_tag_sha}, not ${current_sha}"
+                exit 1
+              fi
+            else
+              git tag "$tag" "$current_sha"
+            fi
+
+            git push origin "refs/tags/${tag}"
+          fi
+
+          python3 <<'PY' > "$RUNNER_TEMP/release-notes.md"
+          import os
+          import re
+          from pathlib import Path
+
+          version = os.environ["VERSION"]
+          text = Path("CHANGELOG.md").read_text(encoding="utf-8")
+          heading = re.compile(
+              rf"^##\s+(?:\[?v?{re.escape(version)}\]?)(?:\s|$)",
+              re.MULTILINE,
+          )
+          match = heading.search(text)
+          if match:
+              body_start = text.find("\n", match.end())
+              if body_start == -1:
+                  body_start = match.end()
+              else:
+                  body_start += 1
+              next_heading = re.search(r"^##\s+", text[body_start:], re.MULTILINE)
+              body_end = body_start + next_heading.start() if next_heading else len(text)
+              notes = text[body_start:body_end].strip()
+              if notes:
+                  print(notes)
+                  raise SystemExit(0)
+
+          print(f"See CHANGELOG.md for crafter v{version}.")
+          PY
+
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release edit "$tag" \
+              --title "crafter v${VERSION}" \
+              --notes-file "$RUNNER_TEMP/release-notes.md"
+          else
+            gh release create "$tag" \
+              --title "crafter v${VERSION}" \
+              --notes-file "$RUNNER_TEMP/release-notes.md" \
+              --verify-tag
+          fi
