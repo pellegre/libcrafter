@@ -194,7 +194,7 @@ fn append_ipv4_payload_with_registry(
 ///
 /// Returns `None` when `bytes` does not begin with a parseable IPv4 header, so
 /// the caller can keep the whole ICMP payload as raw bytes.
-pub(crate) fn decode_quoted_ipv4(bytes: &[u8]) -> Option<(Packet, usize)> {
+pub(crate) fn decode_quoted_ipv4(bytes: &[u8], validate_checksum: bool) -> Option<(Packet, usize)> {
     if bytes.len() < IPV4_MIN_HEADER_LEN {
         return None;
     }
@@ -230,7 +230,11 @@ pub(crate) fn decode_quoted_ipv4(bytes: &[u8]) -> Option<(Packet, usize)> {
     if !options.is_empty() && validate_ipv4_options(&options).is_err() {
         return None;
     }
-    let checksum_status = decoded_ipv4_checksum_status(&datagram[..header_len]);
+    let checksum_status = if validate_checksum {
+        decoded_ipv4_checksum_status(&datagram[..header_len])
+    } else {
+        Ipv4ChecksumStatus::NotChecked
+    };
 
     let ipv4 = Ipv4 {
         version: Field::user(version),
@@ -366,7 +370,7 @@ mod tests {
     fn quoted_ipv4_keeps_truncated_udp_header_raw() {
         let quoted = quoted_udp_prefix(34, 14, &[]);
 
-        let (packet, consumed) = decode_quoted_ipv4(&quoted).unwrap();
+        let (packet, consumed) = decode_quoted_ipv4(&quoted, true).unwrap();
 
         assert_eq!(consumed, quoted.len());
         assert!(packet.layer::<Udp>().is_none());
@@ -377,7 +381,7 @@ mod tests {
     fn quoted_ipv4_still_types_complete_udp_datagram() {
         let quoted = quoted_udp_prefix(34, 14, b"quoted");
 
-        let (packet, consumed) = decode_quoted_ipv4(&quoted).unwrap();
+        let (packet, consumed) = decode_quoted_ipv4(&quoted, true).unwrap();
 
         assert_eq!(consumed, quoted.len());
         assert!(packet.layer::<Udp>().is_some());
