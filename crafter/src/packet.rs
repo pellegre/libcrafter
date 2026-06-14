@@ -12,6 +12,7 @@ use crate::protocols::ip::{v4::Ipv4, v6::Ipv6};
 use crate::protocols::link::{Arp, Ethernet, Vlan};
 use crate::protocols::transport::{Tcp, Udp};
 use crate::registry::ProtocolRegistry;
+use smallvec::SmallVec;
 
 /// Pseudo-header context used by transport layers when auto-filling checksums.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -348,7 +349,7 @@ enum PacketLayer {
     Tcp(Tcp),
     Udp(Udp),
     Icmpv4(Icmpv4),
-    Icmpv4QuotedIp(Icmpv4QuotedIp),
+    Icmpv4QuotedIp(Box<Icmpv4QuotedIp>),
     Icmpv6(Icmpv6),
     NeighborSolicitation(NeighborSolicitation),
 }
@@ -366,7 +367,7 @@ impl PacketLayer {
             Self::Tcp(layer) => layer,
             Self::Udp(layer) => layer,
             Self::Icmpv4(layer) => layer,
-            Self::Icmpv4QuotedIp(layer) => layer,
+            Self::Icmpv4QuotedIp(layer) => layer.as_ref(),
             Self::Icmpv6(layer) => layer,
             Self::NeighborSolicitation(layer) => layer,
         }
@@ -384,7 +385,7 @@ impl PacketLayer {
             Self::Tcp(layer) => layer,
             Self::Udp(layer) => layer,
             Self::Icmpv4(layer) => layer,
-            Self::Icmpv4QuotedIp(layer) => layer,
+            Self::Icmpv4QuotedIp(layer) => layer.as_mut(),
             Self::Icmpv6(layer) => layer,
             Self::NeighborSolicitation(layer) => layer,
         }
@@ -402,7 +403,7 @@ impl PacketLayer {
             Self::Tcp(layer) => Box::new(layer),
             Self::Udp(layer) => Box::new(layer),
             Self::Icmpv4(layer) => Box::new(layer),
-            Self::Icmpv4QuotedIp(layer) => Box::new(layer),
+            Self::Icmpv4QuotedIp(layer) => layer,
             Self::Icmpv6(layer) => Box::new(layer),
             Self::NeighborSolicitation(layer) => Box::new(layer),
         }
@@ -466,19 +467,21 @@ impl PacketLayer {
 /// Ordered stack of packet layers.
 #[derive(Debug, Clone, Default)]
 pub struct Packet {
-    layers: Vec<PacketLayer>,
+    layers: SmallVec<[PacketLayer; 6]>,
 }
 
 impl Packet {
     /// Create an empty packet.
-    pub const fn new() -> Self {
-        Self { layers: Vec::new() }
+    pub fn new() -> Self {
+        Self {
+            layers: SmallVec::new(),
+        }
     }
 
     /// Create an empty packet with room for `capacity` layers.
     pub(crate) fn with_capacity(capacity: usize) -> Self {
         Self {
-            layers: Vec::with_capacity(capacity),
+            layers: SmallVec::with_capacity(capacity),
         }
     }
 
@@ -566,7 +569,8 @@ impl Packet {
     }
 
     pub(crate) fn push_icmpv4_quoted_ip(mut self, layer: Icmpv4QuotedIp) -> Self {
-        self.layers.push(PacketLayer::Icmpv4QuotedIp(layer));
+        self.layers
+            .push(PacketLayer::Icmpv4QuotedIp(Box::new(layer)));
         self
     }
 
