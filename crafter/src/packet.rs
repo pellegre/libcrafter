@@ -530,6 +530,11 @@ impl Packet {
         self
     }
 
+    pub(crate) fn push_ethernet_mut(&mut self, layer: Ethernet) -> &mut Self {
+        self.layers.push(PacketLayer::Ethernet(layer));
+        self
+    }
+
     pub(crate) fn push_vlan(mut self, layer: Vlan) -> Self {
         self.layers.push(PacketLayer::Vlan(layer));
         self
