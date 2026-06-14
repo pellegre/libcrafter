@@ -183,7 +183,7 @@ class LabCliPlanTest(unittest.TestCase):
             ["10.77.0.88", "10.77.0.99"],
         )
 
-    def test_bgp_smoke_plan_wires_driver_and_peer_provisioning_roles(self) -> None:
+    def test_profile_label_remains_provider_neutral_for_lab_plan(self) -> None:
         fake = _FakeEndpointClient()
 
         with patch("tools.lab.engine.endpoint_client.EndpointClient", return_value=fake):
@@ -206,19 +206,10 @@ class LabCliPlanTest(unittest.TestCase):
         self.assertEqual(exit_code, 0, stderr)
         session = json.loads(stdout)
         roles = {role["name"]: role for role in session["roles"]}
-        self.assertEqual(roles["stimulus"]["workload_metadata"]["driver"], "bgp_session")
-        self.assertEqual(
-            roles["stimulus"]["bootstrap_metadata"]["driver_source"],
-            "crafter/examples/bgp_session.rs",
-        )
-        self.assertEqual(
-            roles["target"]["workload_metadata"]["provision_script"],
-            "tools/lab/workloads/bgp/provision-peer.sh",
-        )
-        self.assertEqual(
-            roles["target"]["bootstrap_metadata"]["frr_template"],
-            "tools/lab/workloads/bgp/frr.conf.template",
-        )
+        for role in roles.values():
+            self.assertEqual(role["workload_metadata"], {})
+            self.assertEqual(role["bootstrap_metadata"], {})
+            self.assertEqual(role["capabilities"], [])
 
 
 class LabCliCreateDryRunTest(unittest.TestCase):
