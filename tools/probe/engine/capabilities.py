@@ -39,6 +39,7 @@ SKIP_REQUIRES_BROADCAST = "requires_broadcast"
 SKIP_REQUIRES_PROVIDER_MAC = "requires_provider_mac"
 SKIP_REQUIRES_PRIVILEGED_PORT = "requires_privileged_port"
 SKIP_REQUIRES_CONTROLLED_SERVICE = "requires_controlled_service"
+SKIP_REQUIRES_BGP_PEER = "requires_bgp_peer"
 # IPSec ESP/AH cases need a peer that holds the matching Security Association
 # (Linux xfrm / strongSwan / oracle reference peer); the IKEv2 case needs that
 # peer to run an IKE responder on UDP/500. A provider without the peer skips with
@@ -76,6 +77,7 @@ _CAPABILITY_SKIP_REASONS = {
     "provider_mac": SKIP_REQUIRES_PROVIDER_MAC,
     "privileged_udp_port": SKIP_REQUIRES_PRIVILEGED_PORT,
     "controlled_services": SKIP_REQUIRES_CONTROLLED_SERVICE,
+    "bgp_peer": SKIP_REQUIRES_BGP_PEER,
     # An IPSec-capable peer is missing: ESP/AH need the matching SA, IKEv2 needs
     # the IKE responder.
     "ipsec_esp": SKIP_REQUIRES_IPSEC_PEER,
@@ -244,6 +246,7 @@ __all__ = [
     "SKIP_CAPABILITY_UNAVAILABLE",
     "SKIP_CONFIRMATION_REQUIRED",
     "SKIP_REQUIRES_BROADCAST",
+    "SKIP_REQUIRES_BGP_PEER",
     "SKIP_REQUIRES_CONTROLLED_ROUTER",
     "SKIP_REQUIRES_CONTROLLED_SERVICE",
     "SKIP_REQUIRES_IKEV2_RESPONDER",

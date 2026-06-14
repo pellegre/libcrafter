@@ -62,6 +62,7 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
             "link_layer_arp",
             "provider_mac",
             "repeated_response",
+            "bgp_peer",
             "ipsec_esp",
             "ipsec_ah",
             "ikev2",
@@ -87,6 +88,7 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
             "link_layer_arp",
             "provider_mac",
             "repeated_response",
+            "bgp_peer",
             # An IPSec-capable peer rides the controlled-services substrate.
             "ipsec_esp",
             "ipsec_ah",
@@ -111,6 +113,7 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
             "udp_options_surplus",
             "privileged_udp_port",
             "repeated_response",
+            "bgp_peer",
             # IPSec rides IPv4 unicast + a controlled peer, not the link layer,
             # so an L3-only-but-controlled substrate still grants it.
             "ipsec_esp",
@@ -194,8 +197,21 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
             dry_run=True,
         )
 
-        for denied in ("ipsec_esp", "ipsec_ah", "ikev2"):
+        for denied in ("bgp_peer", "ipsec_esp", "ipsec_ah", "ikev2"):
             self.assertIs(derived[denied], False, denied)
+
+    def test_explicit_bgp_peer_denial_disables_bgp_only(self) -> None:
+        substrate = dict(_LINK_LAYER_SUBSTRATE)
+        substrate["bgp_peer"] = False
+
+        derived = probe_capabilities_from_lab_capabilities(
+            "qemu",
+            substrate,
+            dry_run=True,
+        )
+
+        self.assertIs(derived["bgp_peer"], False)
+        self.assertIs(derived["dns_service"], True)
 
     def test_explicit_ipsec_peer_denial_disables_esp_and_ah(self) -> None:
         # A controlled substrate that cannot configure the xfrm/strongSwan SA can
@@ -387,6 +403,13 @@ class ProbeSkipReasonTest(unittest.TestCase):
             capabilities.SKIP_REQUIRES_IKEV2_RESPONDER,
         )
 
+    def test_bgp_peer_maps_to_stable_reason(self) -> None:
+        case = cases.PROBE_CASE_BY_NAME["bgp-session-smoke"]
+        self.assertEqual(
+            capabilities.skip_reason_for_missing_capability(case, "bgp_peer"),
+            capabilities.SKIP_REQUIRES_BGP_PEER,
+        )
+
     def test_unknown_capability_falls_back_to_unavailable(self) -> None:
         case = cases.PROBE_CASE_BY_NAME["icmp-echo"]
         self.assertEqual(
@@ -513,6 +536,10 @@ class ProbeCapabilityBackwardCompatTest(unittest.TestCase):
         self.assertEqual(
             cli.SKIP_REQUIRES_LINK_LAYER,
             capabilities.SKIP_REQUIRES_LINK_LAYER,
+        )
+        self.assertEqual(
+            cli.SKIP_REQUIRES_BGP_PEER,
+            capabilities.SKIP_REQUIRES_BGP_PEER,
         )
 
 

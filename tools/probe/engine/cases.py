@@ -35,6 +35,7 @@ _UDP_OPTIONS_SURPLUS_CAPABILITIES = [
     *_UDP_CAPABILITIES,
     "udp_options_surplus",
 ]
+_BGP_CAPABILITIES = ["bgp_peer"]
 _ARP_CAPABILITIES = [
     "arp_resolution",
     "link_layer_send",
@@ -589,6 +590,29 @@ BEHAVIOR_UDP_CASES: tuple[ProbeCase, ...] = (
 )
 
 
+# BGP smoke cases. Probe owns controlled target-service setup for the FRR peer;
+# the current stimulus is planned-only until the endpoint driver executes the
+# bgp_session example.
+BGP_SMOKE_CASES: tuple[ProbeCase, ...] = (
+    _behavior_case(
+        name="bgp-session-smoke",
+        description=(
+            "Plan a BGP session exchange against a probe-owned FRR peer target "
+            "service."
+        ),
+        stimulus="bgp_session",
+        expected_response="bgp_peer_session",
+        required_capabilities=_BGP_CAPABILITIES,
+        protocol="bgp",
+        metadata={
+            "service": "frr-bgp-peer",
+            "stateful": True,
+            "planned_only": True,
+        },
+    ),
+)
+
+
 # IPSec behavioral cases (RFC 4303 ESP, RFC 4302 AH, RFC 7296 IKEv2) against a
 # controlled IPSec-capable peer that holds the matching Security Association.
 # Each case is a stateful request/response exchange: libcrafter seals or
@@ -748,6 +772,7 @@ PROBE_CASES: tuple[ProbeCase, ...] = (
     *BEHAVIOR_ARP_CASES,
     *BEHAVIOR_NDP_CASES,
     *BEHAVIOR_UDP_CASES,
+    *BGP_SMOKE_CASES,
     *BEHAVIOR_IPSEC_CASES,
 )
 
@@ -837,6 +862,7 @@ DEFAULT_PROFILE = "smoke"
 SMOKE_PROFILE = "smoke"
 BEHAVIOR_PROFILE = "behavior"
 TCP_SMOKE_PROFILE = "tcp-smoke"
+BGP_SMOKE_PROFILE = "bgp-smoke"
 IPSEC_PROFILE = "ipsec"
 
 # Legacy default count used by the smoke profile and any profile without an
@@ -893,6 +919,13 @@ IPSEC_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
     case.name for case in BEHAVIOR_IPSEC_CASES
 )
 
+# The BGP smoke profile plans the probe-owned FRR peer target service and the
+# bgp_session stimulus driver intent without asking lab to infer workload
+# metadata from the profile label.
+BGP_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
+    case.name for case in BGP_SMOKE_CASES
+)
+
 
 # Profiles that select an explicit ordered case subset. A profile not listed
 # here selects the full catalog. ``smoke`` is pinned to the legacy case set so
@@ -901,6 +934,7 @@ _PROFILE_CASE_NAMES: dict[str, tuple[str, ...]] = {
     SMOKE_PROFILE: SMOKE_PROFILE_CASE_NAMES,
     BEHAVIOR_PROFILE: BEHAVIOR_PROFILE_CASE_NAMES,
     TCP_SMOKE_PROFILE: TCP_SMOKE_PROFILE_CASE_NAMES,
+    BGP_SMOKE_PROFILE: BGP_SMOKE_PROFILE_CASE_NAMES,
     IPSEC_PROFILE: IPSEC_PROFILE_CASE_NAMES,
 }
 
@@ -909,6 +943,7 @@ _PROFILE_CASE_NAMES: dict[str, tuple[str, ...]] = {
 # profile keeps the legacy default.
 _PROFILE_DEFAULT_COUNTS: dict[str, int] = {
     BEHAVIOR_PROFILE: len(BEHAVIOR_PROFILE_CASE_NAMES),
+    BGP_SMOKE_PROFILE: len(BGP_SMOKE_PROFILE_CASE_NAMES),
     IPSEC_PROFILE: len(IPSEC_PROFILE_CASE_NAMES),
 }
 
