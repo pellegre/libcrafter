@@ -6,6 +6,8 @@ use super::address::ArpAddressBytes;
 use super::constants::ARP_FIXED_HEADER_LEN;
 use super::layer::Arp;
 
+const ARP_ETHERNET_IPV4_LEN: usize = ARP_FIXED_HEADER_LEN + 6 + 4 + 6 + 4;
+
 /// Append a decoded ARP packet to an existing packet stack.
 pub(crate) fn append_arp_packet(mut packet: Packet, payload: &[u8]) -> Result<Packet> {
     let (arp, rest) = decode_arp(payload)?;
@@ -37,27 +39,29 @@ fn decode_arp(bytes: &[u8]) -> Result<(Arp, &[u8])> {
     }
 
     if hardware_len == 6 && protocol_len == 4 {
+        let fixed = <&[u8; ARP_ETHERNET_IPV4_LEN]>::try_from(&bytes[..ARP_ETHERNET_IPV4_LEN])
+            .expect("standard ARP length was checked before fixed decode");
         let arp = Arp {
-            hardware_type: Field::user(u16::from_be_bytes([bytes[0], bytes[1]])),
-            protocol_type: Field::user(u16::from_be_bytes([bytes[2], bytes[3]])),
-            hardware_len: Field::user(bytes[4]),
-            protocol_len: Field::user(bytes[5]),
-            operation: Field::user(u16::from_be_bytes([bytes[6], bytes[7]])),
+            hardware_type: Field::user(u16::from_be_bytes([fixed[0], fixed[1]])),
+            protocol_type: Field::user(u16::from_be_bytes([fixed[2], fixed[3]])),
+            hardware_len: Field::user(fixed[4]),
+            protocol_len: Field::user(fixed[5]),
+            operation: Field::user(u16::from_be_bytes([fixed[6], fixed[7]])),
             sender_hardware_addr: Field::user(ArpAddressBytes::from_len6([
-                bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13],
+                fixed[8], fixed[9], fixed[10], fixed[11], fixed[12], fixed[13],
             ])),
             sender_protocol_addr: Field::user(ArpAddressBytes::from_len4([
-                bytes[14], bytes[15], bytes[16], bytes[17],
+                fixed[14], fixed[15], fixed[16], fixed[17],
             ])),
             target_hardware_addr: Field::user(ArpAddressBytes::from_len6([
-                bytes[18], bytes[19], bytes[20], bytes[21], bytes[22], bytes[23],
+                fixed[18], fixed[19], fixed[20], fixed[21], fixed[22], fixed[23],
             ])),
             target_protocol_addr: Field::user(ArpAddressBytes::from_len4([
-                bytes[24], bytes[25], bytes[26], bytes[27],
+                fixed[24], fixed[25], fixed[26], fixed[27],
             ])),
         };
 
-        return Ok((arp, &bytes[total_len..]));
+        return Ok((arp, &bytes[ARP_ETHERNET_IPV4_LEN..]));
     }
 
     let sender_hardware_start = ARP_FIXED_HEADER_LEN;
