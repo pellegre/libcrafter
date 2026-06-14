@@ -727,36 +727,36 @@ IPs, provider IDs, credentials, or packet captures into tracked files.
 
 ### BGP Lab Flow
 
-For live validation, use the provider-backed lab session and FRR peer asset,
-not raw traffic from the developer machine. Plan first:
+For live validation, use the probe-owned provider workflow and FRR peer assets,
+not raw traffic from the developer machine. The BGP target-service assets live
+under `tools/probe/target_services/bgp/`. Plan first:
 
 ```sh
-tools/lab/run plan --provider qemu --dry-run --profile bgp-smoke --seed 1 --role stimulus --role target
+tools/probe/run --provider local-dry-run --dry-run --profile bgp-smoke
+tools/probe/run --provider qemu --dry-run --profile bgp-smoke --seed 1
 ```
 
-Then create a session only after explicit authorization:
+Run a provider-backed live session only after explicit authorization:
 
 ```sh
-tools/lab/run create --provider qemu --profile bgp-smoke --seed 1 --role stimulus --role target --confirm-live-run --json
+tools/probe/run --provider qemu --confirm-live-run --profile bgp-smoke --seed 1 --out target/probe/bgp/qemu
 ```
 
-Inside the target endpoint, run `tools/live-lab/bgp/provision-peer.sh` with
-runtime-only environment values for the driver address, peer AS, driver AS, and
-optional `EBGP_MULTIHOP_TTL`. Inside the stimulus endpoint, run the
-`bgp_session` example with `--peer <target-private-ip>:179 --ipv6 --out
-target/lab/bgp/<provider>`, capture `tcp port 179`, and save the FRR RIB output
-beside the transcript. The smoke validates:
+Probe renders the target setup from
+`tools/probe/target_services/bgp/provision-peer.sh` and
+`tools/probe/target_services/bgp/frr.conf.template`, using runtime-only values
+for the driver address, peer AS, driver AS, and optional `EBGP_MULTIHOP_TTL`.
+The stimulus endpoint runs the `bgp_session` example with
+`--peer <target-private-ip>:179 --ipv6`, captures `tcp port 179`, and saves the
+FRR RIB output beside the transcript. The smoke validates:
 
 - the target RIB contains `203.0.113.0/24`;
 - the target RIB contains `2001:db8::/32`;
 - the driver transcript decoded the peer-originated `198.51.100.0/24` UPDATE;
 - a non-empty port-179 pcap and transcript were collected.
 
-Always destroy the scoped session, including on failure:
-
-```sh
-tools/lab/run destroy --session <session-id> --json
-```
+Probe uses lab-backed endpoints for provider runs and tears down the scoped
+session, including on failure.
 
 For user-facing BGP coverage, see [`docs/bgp.md`](../../docs/bgp.md).
 

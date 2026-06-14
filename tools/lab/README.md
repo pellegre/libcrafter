@@ -1,14 +1,17 @@
 # Lab
 
-`lab` is the standalone multi-endpoint session tool for libcrafter live
-validation. It composes lower-level `wire` endpoints into role-based sessions
-for workloads such as `oracle` and `probe`, records provider capabilities and
-command metadata, persists session manifests, and owns repository
-push/bootstrap, artifact collection, and cleanup.
+`lab` is the standalone protocol-agnostic multi-endpoint session tool for
+libcrafter live validation. It composes lower-level `wire` endpoints into
+role-based sessions for workloads such as `oracle` and `probe`, records
+provider capabilities and command metadata, persists session manifests, and owns
+repository push/bootstrap, artifact collection, and cleanup.
 
-Profile-specific lab workload assets live under `tools/lab/workloads/`. Those
-files are still run inside disposable lab endpoints, not from the repository
-host.
+Protocol and service-specific setup belongs to the runner that requests the lab
+session. Most validation should enter through `tools/oracle/run` or
+`tools/probe/run`; those tools own packet validation, target services, and
+workload bootstrap. Lab passes caller-supplied profile, role, bootstrap,
+workload, and metadata fields through without inferring behavior from profile
+names.
 
 ```sh
 tools/lab/run --help

@@ -260,26 +260,28 @@ traces as JSON.
 Live IP fragmentation validation must not originate as raw traffic from the
 developer machine. Use lab-backed providers only, with disposable `stimulus`
 and `target` roles, constrained MTUs, offloads disabled where the provider
-supports it, and artifacts rooted at `target/lab/ip-fragment-*`. The
+supports it, and oracle-owned artifacts rooted at
+`target/oracle/ip-fragment-*`. The
 `ip-fragment-smoke` provider dry-run profile writes an oracle workload plan for
 small MTU setup, offload handling, oversized/crafted fragment traffic, pcap
-capture, and payload hash comparison. Start with provider dry-runs:
+capture, and payload hash comparison. Artifact audits live in
+`tools/oracle/engine/ip_fragment_artifacts.py`. Start with provider dry-runs:
 
 ```sh
-tools/oracle/run live --backend "$ORACLE_BACKEND" --provider qemu --dry-run --family ip --profile ip-fragment-smoke --seed 1204 --count 20 --out target/lab/ip-fragment-qemu-dry-run
-python3 tools/oracle/engine/live_provider_matrix.py --providers hetzner,qemu,virtualbox,docker --backend "$ORACLE_BACKEND" --profile ip-fragment-smoke --seed 1204 --count 20 --dry-run --out target/lab/ip-fragment-provider-matrix-dry-run
+tools/oracle/run live --backend "$ORACLE_BACKEND" --provider qemu --dry-run --family ip --profile ip-fragment-smoke --seed 1204 --count 20 --out target/oracle/ip-fragment-qemu-dry-run
+python3 tools/oracle/engine/live_provider_matrix.py --providers hetzner,qemu,virtualbox,docker --backend "$ORACLE_BACKEND" --profile ip-fragment-smoke --seed 1204 --count 20 --dry-run --out target/oracle/ip-fragment-provider-matrix-dry-run
 ```
 
 Real provider-backed fragment behavior is a protected workflow. It must use
 `--confirm-live-run`, write pcaps, decoded summaries, transform JSON, provider
 manifests, command logs, and `report.json` under a fresh
-`target/lab/ip-fragment-*` directory, and finish with teardown records. When a
+`target/oracle/ip-fragment-*` directory, and finish with teardown records. When a
 provider lacks the needed capability or prerequisite, the run should write a
 structured skip artifact under the same directory instead of silently passing:
 
 ```sh
-tools/oracle/run live --backend "$ORACLE_BACKEND" --provider qemu --confirm-live-run --family ip --profile ip-fragment-smoke --seed 1205 --count 20 --out target/lab/ip-fragment-qemu-live
-python3 tools/oracle/engine/live_provider_matrix.py --providers qemu,virtualbox --backend "$ORACLE_BACKEND" --profile ip-fragment-smoke --seed 1205 --count 5 --real --confirm-live-run --skip-unavailable --out target/lab/ip-fragment-vm-live
+tools/oracle/run live --backend "$ORACLE_BACKEND" --provider qemu --confirm-live-run --family ip --profile ip-fragment-smoke --seed 1205 --count 20 --out target/oracle/ip-fragment-qemu-live
+python3 tools/oracle/engine/live_provider_matrix.py --providers qemu,virtualbox --backend "$ORACLE_BACKEND" --profile ip-fragment-smoke --seed 1205 --count 5 --real --confirm-live-run --skip-unavailable --out target/oracle/ip-fragment-vm-live
 ```
 
 Do not keep live endpoints after fragment validation except for an explicit
