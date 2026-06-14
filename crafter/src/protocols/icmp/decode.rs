@@ -38,7 +38,7 @@ pub(crate) fn append_icmp_packet_with_checksum_validation(
     } else {
         0
     };
-    packet = packet.push_icmpv4(icmp);
+    packet.push_icmpv4_mut(icmp);
 
     if payload.is_empty() {
         return Ok(packet);
@@ -50,7 +50,7 @@ pub(crate) fn append_icmp_packet_with_checksum_validation(
     // stays raw-compatible so the bytes are never dropped.
     if icmpv4_type_is_error(icmp_type) {
         if let Some((quoted, consumed)) = decode_quoted_ipv4(payload, validate_quoted_checksum) {
-            packet = packet.push_icmpv4_quoted_ip(Icmpv4QuotedIp { datagram: quoted });
+            packet.push_icmpv4_quoted_ip_mut(Icmpv4QuotedIp { datagram: quoted });
             let trailing = &payload[consumed..];
             if trailing.is_empty() {
                 return Ok(packet);
@@ -67,7 +67,7 @@ pub(crate) fn append_icmp_packet_with_checksum_validation(
                     }
                 }
                 None => {
-                    packet = packet.push_raw(Raw::from_bytes(trailing));
+                    packet.push_raw_mut(Raw::from_bytes(trailing));
                 }
             }
             return Ok(packet);
@@ -146,7 +146,7 @@ pub(crate) fn append_icmp_packet_with_checksum_validation(
         return Ok(packet);
     }
 
-    packet = packet.push_raw(Raw::from_bytes(payload));
+    packet.push_raw_mut(Raw::from_bytes(payload));
     Ok(packet)
 }
 
