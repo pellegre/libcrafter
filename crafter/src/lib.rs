@@ -82,7 +82,6 @@
 
 #[cfg(test)]
 #[macro_use]
-#[path = "../tests/support/mod.rs"]
 mod test_support;
 
 pub mod checksum;
