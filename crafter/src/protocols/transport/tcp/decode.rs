@@ -14,17 +14,27 @@ pub(crate) fn append_tcp_packet_with_registry(
     mut packet: Packet,
     bytes: &[u8],
 ) -> Result<Packet> {
-    let (tcp, payload) = decode_tcp_parts(bytes)?;
-    let source_port = tcp.source_port_value();
-    let destination_port = tcp.destination_port_value();
-    packet = packet.push_tcp(tcp);
-    if !payload.is_empty() {
-        packet = registry.decode_tcp_application(packet, source_port, destination_port, payload)?;
+    let decoded = decode_tcp_parts(bytes)?;
+    packet = packet.push_tcp(decoded.tcp);
+    if !decoded.payload.is_empty() {
+        packet = registry.decode_tcp_application(
+            packet,
+            decoded.source_port,
+            decoded.destination_port,
+            decoded.payload,
+        )?;
     }
     Ok(packet)
 }
 
-fn decode_tcp_parts(bytes: &[u8]) -> Result<(Tcp, &[u8])> {
+struct DecodedTcpSegment<'a> {
+    tcp: Tcp,
+    source_port: u16,
+    destination_port: u16,
+    payload: &'a [u8],
+}
+
+fn decode_tcp_parts(bytes: &[u8]) -> Result<DecodedTcpSegment<'_>> {
     if bytes.len() < TCP_MIN_HEADER_LEN {
         return Err(CrafterError::buffer_too_short(
             "tcp header",
@@ -49,12 +59,17 @@ fn decode_tcp_parts(bytes: &[u8]) -> Result<(Tcp, &[u8])> {
             bytes.len(),
         ));
     }
-    validate_tcp_options(&bytes[TCP_MIN_HEADER_LEN..header_len])?;
+    let options = &bytes[TCP_MIN_HEADER_LEN..header_len];
+    if !options.is_empty() {
+        validate_tcp_options(options)?;
+    }
 
     let flags = (((bytes[12] & 1) as u16) << 8) | bytes[13] as u16;
+    let source_port = u16::from_be_bytes([bytes[0], bytes[1]]);
+    let destination_port = u16::from_be_bytes([bytes[2], bytes[3]]);
     let tcp = Tcp::from_decoded_parts(
-        u16::from_be_bytes([bytes[0], bytes[1]]),
-        u16::from_be_bytes([bytes[2], bytes[3]]),
+        source_port,
+        destination_port,
         u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]),
         u32::from_be_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]),
         data_offset,
@@ -63,8 +78,13 @@ fn decode_tcp_parts(bytes: &[u8]) -> Result<(Tcp, &[u8])> {
         u16::from_be_bytes([bytes[14], bytes[15]]),
         u16::from_be_bytes([bytes[16], bytes[17]]),
         u16::from_be_bytes([bytes[18], bytes[19]]),
-        bytes[TCP_MIN_HEADER_LEN..header_len].to_vec(),
+        options.to_vec(),
     );
 
-    Ok((tcp, &bytes[header_len..]))
+    Ok(DecodedTcpSegment {
+        tcp,
+        source_port,
+        destination_port,
+        payload: &bytes[header_len..],
+    })
 }
