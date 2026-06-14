@@ -66,7 +66,7 @@ def _dry_run_report_and_request() -> tuple[ProbeReport, JSONObject]:
 
 class GuardedBehaviorCommandDocsTest(unittest.TestCase):
     def test_docs_show_env_guarded_behavior_suite_command(self) -> None:
-        docs = (REPO_ROOT / "docs" / "probe.md").read_text(encoding="utf-8")
+        docs = (REPO_ROOT / "docs" / "operations" / "probe.md").read_text(encoding="utf-8")
         self.assertIn("LIBCRAFTER_PROBE_LIVE_PROVIDER", docs)
         self.assertIn('--provider "$LIBCRAFTER_PROBE_LIVE_PROVIDER"', docs)
         self.assertIn("--confirm-live-run --profile behavior --seed 1051 --count 43", docs)
