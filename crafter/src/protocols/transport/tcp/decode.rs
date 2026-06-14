@@ -1,7 +1,7 @@
 //! TCP header splitting and registry-driven segment decode.
 
 use crate::error::{CrafterError, Result};
-use crate::packet::Packet;
+use crate::packet::{Packet, Raw};
 use crate::registry::ProtocolRegistry;
 
 use super::constants::{TCP_MAX_RESERVED, TCP_MIN_HEADER_LEN};
@@ -17,12 +17,16 @@ pub(crate) fn append_tcp_packet_with_registry(
     let decoded = decode_tcp_parts(bytes)?;
     packet = packet.push_tcp(decoded.tcp);
     if !decoded.payload.is_empty() {
-        packet = registry.decode_tcp_application(
-            packet,
-            decoded.source_port,
-            decoded.destination_port,
-            decoded.payload,
-        )?;
+        packet = if registry.decodes_applications() {
+            registry.decode_tcp_application(
+                packet,
+                decoded.source_port,
+                decoded.destination_port,
+                decoded.payload,
+            )?
+        } else {
+            packet.push_raw(Raw::from_bytes(decoded.payload))
+        };
     }
     Ok(packet)
 }

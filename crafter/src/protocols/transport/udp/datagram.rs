@@ -302,13 +302,22 @@ pub(crate) fn append_udp_packet_with_registry(
     if registry.validates_checksums() {
         udp.checksum_status = decoded_udp_checksum_status(&packet, bytes, udp_length, udp_checksum);
     }
-    let surplus_offset = udp_decoded_surplus_offset_in_ip_datagram(&packet, udp_length);
+    let surplus_offset = if surplus.is_empty() {
+        None
+    } else {
+        Some(udp_decoded_surplus_offset_in_ip_datagram(
+            &packet, udp_length,
+        ))
+    };
     packet = packet.push_udp(udp);
     if !user_payload.is_empty() {
-        packet =
-            registry.decode_udp_application(packet, source_port, destination_port, user_payload)?;
+        packet = if registry.decodes_applications() {
+            registry.decode_udp_application(packet, source_port, destination_port, user_payload)?
+        } else {
+            packet.push_raw(Raw::from_bytes(user_payload))
+        };
     }
-    if !surplus.is_empty() {
+    if let Some(surplus_offset) = surplus_offset {
         packet = packet.push(UdpOptions::from_decoded_surplus(
             surplus,
             user_payload,
