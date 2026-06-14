@@ -265,7 +265,7 @@ pub use self::v6::{
 // `protocols::mod.rs` re-export names resolve unchanged.
 
 mod decode;
-pub(crate) use self::decode::append_icmp_packet;
+pub(crate) use self::decode::{append_icmp_packet, append_icmp_packet_with_checksum_validation};
 // The RFC 4884 extension-structure decoder for an RFC 8335 extended echo request
 // is version-neutral (the same structure rides under ICMPv4 type 42 and ICMPv6
 // type 160). Surface it at the `icmp` root so the ICMPv6 decode path in
