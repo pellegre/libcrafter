@@ -730,6 +730,10 @@ impl Layer for Icmpv6 {
         ICMP_HEADER_LEN
     }
 
+    fn encoded_len_with_context(&self, ctx: &LayerContext<'_>) -> usize {
+        ICMP_HEADER_LEN + payload_len_after(*ctx)
+    }
+
     fn compile(&self, ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
         let payload = payload_bytes_after(*ctx)?;
         let mut header = Vec::with_capacity(ICMP_HEADER_LEN);
@@ -741,7 +745,12 @@ impl Layer for Icmpv6 {
         let checksum = self.effective_checksum(*ctx, &header, &payload);
         header[2..4].copy_from_slice(&checksum.to_be_bytes());
         out.extend_from_slice(&header);
+        out.extend_from_slice(&payload);
         Ok(())
+    }
+
+    fn consumes_following(&self) -> bool {
+        true
     }
 
     impl_layer_object!(Icmpv6);
