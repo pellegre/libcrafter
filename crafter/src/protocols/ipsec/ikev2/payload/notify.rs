@@ -495,7 +495,7 @@ mod tests {
 
     #[test]
     fn notify_constants_match_manifest() {
-        // docs/ipsec-rfc-manifest.md "IKEv2 Notify Message Types" /
+        // docs/internal/manifests/ipsec-rfc-manifest.md "IKEv2 Notify Message Types" /
         // RFC 7296 §3.10.1 / IANA. The manifest's error-range codepoints match
         // IANA exactly; these are the authoritative values used here.
         assert_eq!(NOTIFY_INVALID_SYNTAX, 7);

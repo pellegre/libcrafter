@@ -439,7 +439,7 @@ mod tests {
 
     #[test]
     fn payload_type_codepoints_match_manifest() {
-        // docs/ipsec-rfc-manifest.md "IKEv2 Payload Types" table / RFC 7296 §3.2.
+        // docs/internal/manifests/ipsec-rfc-manifest.md "IKEv2 Payload Types" table / RFC 7296 §3.2.
         assert_eq!(PayloadType::None.codepoint(), 0);
         assert_eq!(PayloadType::SecurityAssociation.codepoint(), 33);
         assert_eq!(PayloadType::KeyExchange.codepoint(), 34);

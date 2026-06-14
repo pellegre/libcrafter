@@ -1,7 +1,7 @@
 //! Radiotap link metadata scaffolding.
 //!
 //! Field IDs and layout metadata follow the radiotap source entries recorded in
-//! `docs/protocols/dot11-source-manifest.md`.
+//! `docs/internal/source/dot11-source-manifest.md`.
 
 use core::any::Any;
 use core::ops::Div;

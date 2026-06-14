@@ -4,7 +4,7 @@
 //! correct TCP segments and document fragmentation-adjacent facts (MSS, option
 //! budgeting, effective payload sizing) without implementing fragmentation,
 //! path-MTU probing, reassembly, or any state machine. Every constant is backed
-//! by an RFC and `docs/tcp-rfc-manifest.md`, "Segment Sizing And
+//! by an RFC and `docs/internal/manifests/tcp-rfc-manifest.md`, "Segment Sizing And
 //! Fragmentation-Adjacent Guidance (Documentation Only)".
 //!
 //! Source anchors:
@@ -52,7 +52,7 @@ pub const fn tcp_header_len(option_bytes: usize) -> usize {
 /// Data Offset is 4 bits, capping the TCP header at 15 32-bit words (60 octets);
 /// after the 20-octet fixed header that leaves 40 octets for options. This is
 /// the hard ceiling shared by MSS, Window Scale, SACK-Permitted, Timestamps, and
-/// every other option on a SYN (see `docs/tcp-rfc-manifest.md`).
+/// every other option on a SYN (see `docs/internal/manifests/tcp-rfc-manifest.md`).
 pub const fn option_budget() -> usize {
     TCP_MAX_OPTION_BYTES
 }
@@ -233,7 +233,7 @@ pub const fn max_tcp_payload(
 /// [`max_tcp_payload`] directly.
 ///
 /// Pure guidance: it never sizes below the default, never probes, and never
-/// fragments. Backed by `docs/tcp-rfc-manifest.md`.
+/// fragments. Backed by `docs/internal/manifests/tcp-rfc-manifest.md`.
 pub const fn effective_mss_ipv4(path_mtu: Option<usize>) -> u16 {
     match path_mtu {
         None => TCP_DEFAULT_IPV4_MSS,
@@ -262,7 +262,7 @@ pub const fn effective_mss_ipv4(path_mtu: Option<usize>) -> u16 {
 /// octets, so guidance never drops below the minimum-MTU MSS.
 ///
 /// Pure guidance: it never probes a path MTU and never fragments. Backed by
-/// `docs/tcp-rfc-manifest.md`.
+/// `docs/internal/manifests/tcp-rfc-manifest.md`.
 pub const fn effective_mss_ipv6(path_mtu: Option<usize>) -> u16 {
     let mtu = match path_mtu {
         None => IPV6_MINIMUM_MTU,
