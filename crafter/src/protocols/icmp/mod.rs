@@ -302,14 +302,19 @@ pub use self::v4::{IcmpAddressMask, IcmpQuotedIpv4, IcmpRouterAdvertisementEntry
 
 fn payload_bytes_after(ctx: LayerContext<'_>) -> Result<Vec<u8>> {
     let mut payload = Vec::new();
+    compile_payload_after_into(ctx, &mut payload)?;
+    Ok(payload)
+}
+
+fn compile_payload_after_into(ctx: LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
     for (index, layer) in ctx.packet().iter().enumerate().skip(ctx.index() + 1) {
         let layer_ctx = LayerContext::new(ctx.packet(), index);
-        layer.compile(&layer_ctx, &mut payload)?;
+        layer.compile(&layer_ctx, out)?;
         if layer.consumes_following() {
             break;
         }
     }
-    Ok(payload)
+    Ok(())
 }
 
 fn payload_len_after(ctx: LayerContext<'_>) -> usize {
