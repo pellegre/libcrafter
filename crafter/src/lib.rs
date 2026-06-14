@@ -81,8 +81,28 @@
 #![forbid(unsafe_code)]
 
 #[cfg(test)]
-#[macro_use]
-mod test_support;
+#[allow(unused_macros)]
+macro_rules! fixture_bytes {
+    ($path:literal) => {
+        include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/",
+            $path
+        ))
+    };
+}
+
+#[cfg(test)]
+#[allow(unused_macros)]
+macro_rules! fixture_str {
+    ($path:literal) => {
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/",
+            $path
+        ))
+    };
+}
 
 pub mod checksum;
 pub mod endian;
