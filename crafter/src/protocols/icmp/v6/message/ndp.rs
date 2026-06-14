@@ -162,7 +162,7 @@ impl Layer for RouterSolicitation {
     }
 
     fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
-        out.extend_from_slice(&self.options.encode()?);
+        self.options.encode_into(out)?;
         Ok(())
     }
 
@@ -410,7 +410,7 @@ impl Layer for RouterAdvertisement {
     fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
         out.extend_from_slice(&self.reachable_time.to_be_bytes());
         out.extend_from_slice(&self.retrans_timer.to_be_bytes());
-        out.extend_from_slice(&self.options.encode()?);
+        self.options.encode_into(out)?;
         Ok(())
     }
 
@@ -676,7 +676,7 @@ impl Layer for NeighborSolicitation {
 
     fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
         out.extend_from_slice(&self.target_address.octets());
-        out.extend_from_slice(&self.options.encode()?);
+        self.options.encode_into(out)?;
         Ok(())
     }
 
@@ -904,7 +904,7 @@ impl Layer for NeighborAdvertisement {
 
     fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
         out.extend_from_slice(&self.target_address.octets());
-        out.extend_from_slice(&self.options.encode()?);
+        self.options.encode_into(out)?;
         Ok(())
     }
 
@@ -1178,7 +1178,7 @@ impl Layer for Redirect {
     fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
         out.extend_from_slice(&self.target_address.octets());
         out.extend_from_slice(&self.destination_address.octets());
-        out.extend_from_slice(&self.options.encode()?);
+        self.options.encode_into(out)?;
         Ok(())
     }
 

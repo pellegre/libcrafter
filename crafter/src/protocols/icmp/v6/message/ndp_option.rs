@@ -1490,14 +1490,21 @@ impl NdpOption {
     /// pinned length is emitted verbatim and the value is padded (or, for a too
     /// small pinned length, truncated) to match, so the wrong value survives.
     pub fn encode(&self) -> Result<Vec<u8>> {
+        let mut bytes = Vec::with_capacity(self.encoded_len()?.max(NDP_OPTION_HEADER_LEN));
+        self.encode_into(&mut bytes)?;
+        Ok(bytes)
+    }
+
+    /// Append this single encoded option to an existing buffer.
+    pub fn encode_into(&self, out: &mut Vec<u8>) -> Result<()> {
         let length = self.effective_length()?;
         let ty = self.option_type();
         let value = self.value();
 
         let total = length as usize * NDP_OPTION_LENGTH_UNIT;
-        let mut bytes = Vec::with_capacity(total.max(NDP_OPTION_HEADER_LEN));
-        bytes.push(ty);
-        bytes.push(length);
+        let start = out.len();
+        out.push(ty);
+        out.push(length);
 
         // The value occupies whatever space the (header + value) leaves inside
         // the length-declared total, padded with zeros to the boundary. When a
@@ -1506,13 +1513,16 @@ impl NdpOption {
         // source of truth (honored overrides).
         let value_capacity = total.saturating_sub(NDP_OPTION_HEADER_LEN);
         if value.len() >= value_capacity {
-            bytes.extend_from_slice(&value[..value_capacity]);
+            out.extend_from_slice(&value[..value_capacity]);
         } else {
-            bytes.extend_from_slice(value);
-            bytes.resize(total, 0);
+            out.extend_from_slice(value);
+            let target = start + total;
+            if out.len() < target {
+                out.resize(target, 0);
+            }
         }
 
-        Ok(bytes)
+        Ok(())
     }
 
     /// Decode a single option from the front of `bytes`, returning the option
@@ -1650,11 +1660,17 @@ impl NdpOptions {
 
     /// Encode every option in order into a single option-area byte buffer.
     pub fn encode(&self) -> Result<Vec<u8>> {
-        let mut bytes = Vec::new();
-        for option in &self.options {
-            bytes.extend_from_slice(&option.encode()?);
-        }
+        let mut bytes = Vec::with_capacity(self.encoded_len()?);
+        self.encode_into(&mut bytes)?;
         Ok(bytes)
+    }
+
+    /// Append every option in order to an existing buffer.
+    pub fn encode_into(&self, out: &mut Vec<u8>) -> Result<()> {
+        for option in &self.options {
+            option.encode_into(out)?;
+        }
+        Ok(())
     }
 
     /// Decode an entire NDP option area into an ordered list.
