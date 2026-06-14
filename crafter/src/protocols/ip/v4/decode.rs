@@ -9,7 +9,7 @@ use crate::packet::{Packet, Raw};
 use crate::protocols::ip::shared::{IPPROTO_ICMP, IPPROTO_TCP, IPPROTO_UDP};
 use crate::registry::ProtocolRegistry;
 
-use super::constants::IPV4_MIN_HEADER_LEN;
+use super::constants::{IPV4_FLAG_MORE_FRAGMENTS, IPV4_MIN_HEADER_LEN};
 use super::fragment::{flags_from_flags_fragment, fragment_offset_from_flags_fragment};
 use super::header::{Ipv4, Ipv4ChecksumStatus};
 use super::options::validate_ipv4_options;
@@ -24,22 +24,28 @@ pub(crate) fn append_ipv4_packet_with_registry(
     packet: Packet,
     bytes: &[u8],
 ) -> Result<Packet> {
-    let (ipv4, payload, rest) = decode_ipv4_parts(bytes, registry.validates_checksums())?;
-    let protocol = ipv4.protocol_value();
-    let fragment_offset = ipv4.fragment_offset_value();
-    let has_more_fragments = ipv4.has_more_fragments();
+    let decoded = decode_ipv4_parts(bytes, registry.validates_checksums())?;
     append_ipv4_payload_with_registry(
         registry,
-        packet.push_ipv4(ipv4),
-        protocol,
-        fragment_offset,
-        has_more_fragments,
-        payload,
-        rest,
+        packet.push_ipv4(decoded.ipv4),
+        decoded.protocol,
+        decoded.fragment_offset,
+        decoded.has_more_fragments,
+        decoded.payload,
+        decoded.rest,
     )
 }
 
-fn decode_ipv4_parts(bytes: &[u8], validate_checksum: bool) -> Result<(Ipv4, &[u8], &[u8])> {
+struct DecodedIpv4Packet<'a> {
+    ipv4: Ipv4,
+    protocol: u8,
+    fragment_offset: u16,
+    has_more_fragments: bool,
+    payload: &'a [u8],
+    rest: &'a [u8],
+}
+
+fn decode_ipv4_parts(bytes: &[u8], validate_checksum: bool) -> Result<DecodedIpv4Packet<'_>> {
     if bytes.len() < IPV4_MIN_HEADER_LEN {
         return Err(CrafterError::buffer_too_short(
             "ipv4 header",
@@ -88,17 +94,22 @@ fn decode_ipv4_parts(bytes: &[u8], validate_checksum: bool) -> Result<(Ipv4, &[u
     }
 
     let flags_fragment = u16::from_be_bytes([bytes[6], bytes[7]]);
+    let flags = flags_from_flags_fragment(flags_fragment);
+    let fragment_offset = fragment_offset_from_flags_fragment(flags_fragment);
     let options = if header_len > IPV4_MIN_HEADER_LEN {
         bytes[IPV4_MIN_HEADER_LEN..header_len].to_vec()
     } else {
         Vec::new()
     };
-    validate_ipv4_options(&options)?;
+    if !options.is_empty() {
+        validate_ipv4_options(&options)?;
+    }
     let checksum_status = if validate_checksum {
         decoded_ipv4_checksum_status(&bytes[..header_len])
     } else {
         Ipv4ChecksumStatus::NotChecked
     };
+    let protocol = bytes[9];
 
     let ipv4 = Ipv4 {
         version: Field::user(version),
@@ -106,10 +117,10 @@ fn decode_ipv4_parts(bytes: &[u8], validate_checksum: bool) -> Result<(Ipv4, &[u
         tos: Field::user(bytes[1]),
         total_length: Field::user(total_length as u16),
         identification: Field::user(u16::from_be_bytes([bytes[4], bytes[5]])),
-        flags: Field::user(flags_from_flags_fragment(flags_fragment)),
-        fragment_offset: Field::user(fragment_offset_from_flags_fragment(flags_fragment)),
+        flags: Field::user(flags),
+        fragment_offset: Field::user(fragment_offset),
         ttl: Field::user(bytes[8]),
-        protocol: Field::user(bytes[9]),
+        protocol: Field::user(protocol),
         checksum: Field::user(u16::from_be_bytes([bytes[10], bytes[11]])),
         checksum_status,
         source: Field::user(Ipv4Addr::new(bytes[12], bytes[13], bytes[14], bytes[15])),
@@ -117,11 +128,14 @@ fn decode_ipv4_parts(bytes: &[u8], validate_checksum: bool) -> Result<(Ipv4, &[u
         options,
     };
 
-    Ok((
+    Ok(DecodedIpv4Packet {
         ipv4,
-        &bytes[header_len..total_length],
-        &bytes[total_length..],
-    ))
+        protocol,
+        fragment_offset,
+        has_more_fragments: flags & IPV4_FLAG_MORE_FRAGMENTS != 0,
+        payload: &bytes[header_len..total_length],
+        rest: &bytes[total_length..],
+    })
 }
 
 fn append_ipv4_payload_with_registry(
@@ -213,7 +227,7 @@ pub(crate) fn decode_quoted_ipv4(bytes: &[u8]) -> Option<(Packet, usize)> {
     } else {
         Vec::new()
     };
-    if validate_ipv4_options(&options).is_err() {
+    if !options.is_empty() && validate_ipv4_options(&options).is_err() {
         return None;
     }
     let checksum_status = decoded_ipv4_checksum_status(&datagram[..header_len]);
@@ -245,8 +259,8 @@ pub(crate) fn decode_quoted_ipv4(bytes: &[u8]) -> Option<(Packet, usize)> {
         options,
     };
 
-    let protocol = ipv4.protocol_value();
-    let fragment_offset = ipv4.fragment_offset_value();
+    let protocol = datagram[9];
+    let fragment_offset = fragment_offset_from_flags_fragment(flags_fragment);
     let payload = &datagram[header_len..];
     let mut packet = Packet::with_capacity(3).push_ipv4(ipv4);
 

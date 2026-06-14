@@ -35,12 +35,24 @@ pub(crate) fn append_ipv6_packet_with_registry(
     packet: Packet,
     bytes: &[u8],
 ) -> Result<Packet> {
-    let (ipv6, payload, rest) = decode_ipv6_parts(bytes)?;
-    let next_header = ipv6.next_header_value();
-    append_ipv6_payload_with_registry(registry, packet.push_ipv6(ipv6), next_header, payload, rest)
+    let decoded = decode_ipv6_parts(bytes)?;
+    append_ipv6_payload_with_registry(
+        registry,
+        packet.push_ipv6(decoded.ipv6),
+        decoded.next_header,
+        decoded.payload,
+        decoded.rest,
+    )
 }
 
-fn decode_ipv6_parts(bytes: &[u8]) -> Result<(Ipv6, &[u8], &[u8])> {
+struct DecodedIpv6Packet<'a> {
+    ipv6: Ipv6,
+    next_header: u8,
+    payload: &'a [u8],
+    rest: &'a [u8],
+}
+
+fn decode_ipv6_parts(bytes: &[u8]) -> Result<DecodedIpv6Packet<'_>> {
     if bytes.len() < IPV6_HEADER_LEN {
         return Err(CrafterError::buffer_too_short(
             "ipv6 header",
@@ -68,22 +80,24 @@ fn decode_ipv6_parts(bytes: &[u8]) -> Result<(Ipv6, &[u8], &[u8])> {
         ));
     }
 
+    let next_header = bytes[6];
     let ipv6 = Ipv6 {
         version: Field::user(version),
         traffic_class: Field::user(((version_class_flow >> 20) & 0xff) as u8),
         flow_label: Field::user(version_class_flow & IPV6_MAX_FLOW_LABEL),
         payload_length: Field::user(payload_length as u16),
-        next_header: Field::user(bytes[6]),
+        next_header: Field::user(next_header),
         hop_limit: Field::user(bytes[7]),
         source: Field::user(Ipv6Addr::from(copy_array_16(&bytes[8..24]))),
         destination: Field::user(Ipv6Addr::from(copy_array_16(&bytes[24..40]))),
     };
 
-    Ok((
+    Ok(DecodedIpv6Packet {
         ipv6,
-        &bytes[IPV6_HEADER_LEN..total_length],
-        &bytes[total_length..],
-    ))
+        next_header,
+        payload: &bytes[IPV6_HEADER_LEN..total_length],
+        rest: &bytes[total_length..],
+    })
 }
 
 fn append_ipv6_payload_with_registry(
