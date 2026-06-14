@@ -10,13 +10,12 @@ import `crafter::prelude::*`.
 
 ## Current status
 
-`crafter` 0.3.0 is the first public release. The core surface is in place:
-layered packet construction with auto-filled lengths and checksums, decode
-entrypoints for Ethernet, Linux cooked capture, null/loopback, and raw IPv4 /
-IPv6 inputs, classic pcap read/write with libpcap BPF filters, raw send and
-send/receive matching, provider-backed endpoints, and multi-endpoint lab
-sessions (Hetzner, QEMU, VirtualBox) for traffic that cannot live on a
-developer machine.
+The core surface is in place: layered packet construction with auto-filled
+lengths and checksums, decode entrypoints for Ethernet, Linux cooked capture,
+null/loopback, and raw IPv4 / IPv6 inputs, classic pcap read/write with
+libpcap BPF filters, raw send and send/receive matching, provider-backed
+endpoints, and multi-endpoint lab sessions (Hetzner, QEMU, VirtualBox) for
+traffic that cannot live on a developer machine.
 
 TCP stream reassembly, full pcapng, full BPF parsing, and a complete TCP/IP
 stack are not in scope yet; IP fragmentation and reassembly ship as explicit
