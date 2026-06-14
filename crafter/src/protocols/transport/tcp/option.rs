@@ -1394,10 +1394,127 @@ impl Iterator for TcpOptionIter<'_> {
 }
 
 pub(crate) fn validate_tcp_options(options: &[u8]) -> Result<()> {
-    for option in TcpOptionIter::new(options) {
-        option?;
+    let mut offset = 0;
+    while offset < options.len() {
+        let kind = options[offset];
+        match kind {
+            TCP_OPTION_EOL => return Ok(()),
+            TCP_OPTION_NOP => {
+                offset += 1;
+            }
+            _ => {
+                if offset + 2 > options.len() {
+                    return Err(CrafterError::buffer_too_short(
+                        "tcp option",
+                        offset + 2,
+                        options.len(),
+                    ));
+                }
+                let len = options[offset + 1] as usize;
+                if len < 2 {
+                    return Err(CrafterError::invalid_field_value(
+                        "tcp.option.length",
+                        "option length must be at least 2 bytes",
+                    ));
+                }
+                if offset + len > options.len() {
+                    return Err(CrafterError::buffer_too_short(
+                        "tcp option",
+                        offset + len,
+                        options.len(),
+                    ));
+                }
+                validate_tcp_option_shape(kind, len)?;
+                offset += len;
+            }
+        }
     }
     Ok(())
+}
+
+fn validate_tcp_option_shape(kind: u8, len: usize) -> Result<()> {
+    match kind {
+        TCP_OPTION_MSS => validate_tcp_option_len("tcp.option.mss", len, 4),
+        TCP_OPTION_WINDOW_SCALE => validate_tcp_option_len("tcp.option.window_scale", len, 3),
+        TCP_OPTION_SACK_PERMITTED => validate_tcp_option_len("tcp.option.sack_permitted", len, 2),
+        TCP_OPTION_SACK => validate_tcp_sack_shape(len),
+        TCP_OPTION_TIMESTAMP => validate_tcp_option_len("tcp.option.timestamp", len, 10),
+        TCP_OPTION_MPTCP => {
+            if len <= 2 {
+                Err(CrafterError::invalid_field_value(
+                    "tcp.option.mptcp",
+                    "MPTCP option must include a subtype byte",
+                ))
+            } else {
+                Ok(())
+            }
+        }
+        TCP_OPTION_USER_TIMEOUT => validate_tcp_option_len(
+            "tcp.option.user_timeout",
+            len,
+            TCP_OPTION_USER_TIMEOUT_LEN as usize,
+        ),
+        TCP_OPTION_TCP_AUTHENTICATION => validate_tcp_min_len(
+            "tcp.option.authentication.length",
+            len,
+            TCP_OPTION_TCP_AUTHENTICATION_MIN_LEN as usize,
+            "RFC 5925 TCP-AO option must be at least 4 bytes (kind, length, KeyID, RNextKeyID)",
+        ),
+        TCP_OPTION_TCP_ENO => validate_tcp_min_len(
+            "tcp.option.eno.length",
+            len,
+            TCP_OPTION_TCP_ENO_MIN_LEN as usize,
+            "RFC 8547 TCP-ENO option must be at least 2 bytes (kind, length)",
+        ),
+        TCP_OPTION_ACCURATE_ECN_ORDER_0 | TCP_OPTION_ACCURATE_ECN_ORDER_1 => validate_tcp_min_len(
+            "tcp.option.accurate_ecn.length",
+            len,
+            TCP_OPTION_ACCURATE_ECN_MIN_LEN as usize,
+            "RFC 9768 AccECN option must be at least 2 bytes (kind, length)",
+        ),
+        TCP_OPTION_EDO => validate_tcp_edo_shape(len),
+        TCP_OPTION_EXPERIMENTAL_1 | TCP_OPTION_EXPERIMENTAL_2 => validate_tcp_min_len(
+            "tcp.option.experimental.length",
+            len,
+            TCP_OPTION_EXPERIMENTAL_MIN_LEN as usize,
+            "RFC 6994 experimental option must be at least 4 bytes (kind, length, 16-bit ExID)",
+        ),
+        TCP_OPTION_FAST_OPEN | TCP_OPTION_MD5_SIGNATURE => Ok(()),
+        _ => Ok(()),
+    }
+}
+
+fn validate_tcp_min_len(
+    context: &'static str,
+    len: usize,
+    minimum: usize,
+    message: &'static str,
+) -> Result<()> {
+    if len < minimum {
+        Err(CrafterError::invalid_field_value(context, message))
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_tcp_sack_shape(len: usize) -> Result<()> {
+    if len < 10 || (len - 2) % 8 != 0 {
+        return Err(CrafterError::invalid_field_value(
+            "tcp.option.sack",
+            "SACK option payload must contain one or more 8-byte blocks",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_tcp_edo_shape(len: usize) -> Result<()> {
+    match len as u8 {
+        TCP_EDO_REQUEST_LEN | TCP_EDO_HEADER_LEN | TCP_EDO_HEADER_AND_SEGMENT_LEN => Ok(()),
+        _ => Err(CrafterError::invalid_field_value(
+            "tcp.option.edo.length",
+            "EDO length must be 2, 4, or 6 bytes",
+        )),
+    }
 }
 
 fn decode_tcp_option(bytes: &[u8]) -> Result<TcpOption> {
