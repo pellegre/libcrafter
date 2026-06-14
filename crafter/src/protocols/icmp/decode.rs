@@ -351,6 +351,28 @@ fn decode_icmp_parts(bytes: &[u8]) -> Result<(Icmpv4, &[u8])> {
 
     let rest = copy_array_4(&bytes[4..8]);
     let icmp_type = bytes[0];
+    if icmp_type == ICMP_DESTINATION_UNREACHABLE {
+        return Ok((
+            Icmpv4 {
+                icmp_type: Field::user(icmp_type),
+                code: Field::user(bytes[1]),
+                checksum: Field::user(u16::from_be_bytes([bytes[2], bytes[3]])),
+                rest_of_header: Field::user(rest),
+                identifier: Field::unset(),
+                sequence_number: Field::unset(),
+                pointer: Field::unset(),
+                gateway: Field::unset(),
+                length: Field::user(rest[1]),
+                mtu_next_hop: Field::user(u16::from_be_bytes([rest[2], rest[3]])),
+                num_addrs: Field::unset(),
+                addr_entry_size: Field::unset(),
+                lifetime: Field::unset(),
+                extended_flags: Field::unset(),
+            },
+            &bytes[ICMP_HEADER_LEN..],
+        ));
+    }
+
     // RFC 8335 extended echo: identifier (bytes 0-1), an 8-bit sequence number
     // (byte 2, zero-extended into the u16 sequence field), and a flag byte
     // (byte 3). RFC 792/RFC 950 query families keep their 16-bit sequence.
