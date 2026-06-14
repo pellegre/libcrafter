@@ -2863,7 +2863,7 @@ def _tcp_options_hex(case: str, behavior: str) -> str:
 # kind 4, SACK kind 5), RFC 7413 (Fast Open kind 34), RFC 8684 (MPTCP kind 30),
 # RFC 5482 (User Timeout kind 28), RFC 5925 (TCP-AO kind 29), RFC 8547
 # (TCP-ENO kind 69), RFC 9768 (Accurate ECN kinds 172/174), and RFC 6994
-# (experimental ExID kinds 253/254). See docs/tcp-rfc-manifest.md.
+# (experimental ExID kinds 253/254). See docs/internal/manifests/tcp-rfc-manifest.md.
 _TCP_OPTION_CASE_HEX: dict[str, str] = {
     # Comparable kinds: Scapy builds these byte-identically to libcrafter.
     "mss": "020405b4",  # kind 2, len 4: MSS 1460
@@ -3138,7 +3138,7 @@ def _apply_dns_behavior(fields: JSONObject, *, case: str, behavior: str) -> None
         # A response carrying record types this crate intentionally keeps as
         # DnsRecordData::Raw: an unknown private-use numeric TYPE plus the
         # deferred NSEC3PARAM (51), TLSA (52), KEY (25), and NAPTR (35) types
-        # from docs/dns.md. Each RDATA is a deterministic opaque blob carried as
+        # from docs/guide/dns.md. Each RDATA is a deterministic opaque blob carried as
         # hex so neither backend reinterprets it, and the TYPE is given as a
         # numeric IANA codepoint so both the Scapy DNSRR(type=N) reference and the
         # libcrafter DnsRecordData::Raw materializer agree byte-for-byte. The
@@ -3161,7 +3161,7 @@ def _apply_dns_behavior(fields: JSONObject, *, case: str, behavior: str) -> None
                 "data": {"hex": "deadbeef"},
             },
             {
-                # NSEC3PARAM (51): deferred to Raw (docs/dns.md). Bytes look like a
+                # NSEC3PARAM (51): deferred to Raw (docs/guide/dns.md). Bytes look like a
                 # plausible NSEC3PARAM RDATA but are never parsed into typed fields.
                 "name": "example.com.",
                 "type": 51,
