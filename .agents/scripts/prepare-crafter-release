@@ -1,0 +1,225 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+usage: .agents/scripts/prepare-crafter-release [--validate] <version> [changelog-summary]
+
+Prepares local release metadata without publishing.
+
+  --validate  after editing metadata, generate an ephemeral lockfile, run the
+              static release gate, and run cargo publish dry-run
+
+The changelog summary can also be supplied with LIBCRAFTER_CHANGELOG_SUMMARY.
+USAGE
+}
+
+die() {
+  printf 'error: %s\n' "$*" >&2
+  exit 1
+}
+
+run() {
+  printf '\n==> %s\n' "$*"
+  "$@"
+}
+
+validate_version() {
+  local version="$1"
+  local semver_re='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-([0-9A-Za-z][0-9A-Za-z-]*)(\.([0-9A-Za-z][0-9A-Za-z-]*))*)?$'
+
+  [[ "$version" =~ $semver_re ]] || die "invalid SemVer version: $version"
+}
+
+crates_io_version_exists() {
+  local version="$1"
+  local status
+
+  status="$(curl -sS -A "libcrafter-release-script" -o /dev/null -w "%{http_code}" \
+    "https://crates.io/api/v1/crates/crafter/${version}" || true)"
+
+  case "$status" in
+    200)
+      return 0
+      ;;
+    404)
+      return 1
+      ;;
+    *)
+      die "crates.io version check failed for crafter ${version} (HTTP ${status})"
+      ;;
+  esac
+}
+
+changelog_contains_version() {
+  local version="$1"
+
+  python3 - "$version" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+version = sys.argv[1]
+text = Path("CHANGELOG.md").read_text(encoding="utf-8")
+pattern = rf"^##\s+{re.escape(version)}(?:\s|$|-)"
+sys.exit(0 if re.search(pattern, text, re.MULTILINE) else 1)
+PY
+}
+
+update_workspace_version() {
+  local version="$1"
+
+  python3 - "$version" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+version = sys.argv[1]
+path = Path("Cargo.toml")
+lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+
+in_workspace_package = False
+replaced = False
+for index, line in enumerate(lines):
+    stripped = line.strip()
+    if stripped.startswith("[") and stripped.endswith("]"):
+        in_workspace_package = stripped == "[workspace.package]"
+        continue
+
+    if in_workspace_package and re.match(r"^\s*version\s*=", line):
+        match = re.match(r'^(\s*version\s*=\s*)"[^"]*"(.*)$', line)
+        if not match:
+            raise SystemExit("workspace package version is not a quoted string")
+        lines[index] = f'{match.group(1)}"{version}"{match.group(2)}'
+        replaced = True
+        break
+
+if not replaced:
+    raise SystemExit("missing [workspace.package] version in Cargo.toml")
+
+new_text = "".join(lines)
+old_text = path.read_text(encoding="utf-8")
+if new_text != old_text:
+    path.write_text(new_text, encoding="utf-8")
+PY
+}
+
+insert_changelog_section() {
+  local version="$1"
+  local release_date="$2"
+  local summary="$3"
+
+  python3 - "$version" "$release_date" "$summary" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+version, release_date, summary = sys.argv[1:4]
+path = Path("CHANGELOG.md")
+text = path.read_text(encoding="utf-8")
+
+pattern = rf"^##\s+{re.escape(version)}(?:\s|$|-)"
+if re.search(pattern, text, re.MULTILINE):
+    raise SystemExit(f"CHANGELOG.md already contains version {version}")
+
+header = re.match(r"(?s)^(# .*\n\n)", text)
+if not header:
+    raise SystemExit("CHANGELOG.md must start with a level-1 heading followed by a blank line")
+
+entries = [line.strip() for line in summary.replace("\r\n", "\n").split("\n") if line.strip()]
+bullets = []
+for entry in entries:
+    bullets.append(entry if entry.startswith("- ") else f"- {entry}")
+
+new_section = (
+    f"## {version} - {release_date}\n\n"
+    "### Changed\n\n"
+    f"{chr(10).join(bullets)}\n\n"
+)
+
+new_text = text[:header.end()] + new_section + text[header.end():]
+path.write_text(new_text, encoding="utf-8")
+PY
+}
+
+lockfile_existed=0
+cleanup_lockfile() {
+  if [[ "$lockfile_existed" -eq 0 && -f Cargo.lock ]]; then
+    rm -f Cargo.lock
+  fi
+}
+
+ensure_ephemeral_lockfile() {
+  if [[ -f Cargo.lock ]]; then
+    lockfile_existed=1
+  fi
+
+  trap cleanup_lockfile EXIT
+  run cargo generate-lockfile
+  run cargo fetch --locked
+}
+
+run_validation_gate() {
+  ensure_ephemeral_lockfile
+  run .agents/scripts/check-crafter-release --static
+  run cargo publish -p crafter --dry-run --locked
+}
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$repo_root"
+
+run_validation=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --validate)
+      run_validation=1
+      shift
+      ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    --)
+      shift
+      break
+      ;;
+    --*)
+      usage >&2
+      exit 2
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+if [[ $# -lt 1 || $# -gt 2 ]]; then
+  usage >&2
+  exit 2
+fi
+
+version="$1"
+summary="${2:-${LIBCRAFTER_CHANGELOG_SUMMARY:-}}"
+
+validate_version "$version"
+
+if [[ -z "$summary" ]]; then
+  summary="Prepared crafter ${version} release metadata."
+fi
+
+if changelog_contains_version "$version"; then
+  die "CHANGELOG.md already contains version ${version}"
+fi
+
+if crates_io_version_exists "$version"; then
+  die "crafter ${version} already exists on crates.io"
+fi
+
+update_workspace_version "$version"
+insert_changelog_section "$version" "$(date -u +%Y-%m-%d)" "$summary"
+
+if [[ "$run_validation" -eq 1 ]]; then
+  run_validation_gate
+fi
+
+printf 'prepared crafter %s release metadata\n' "$version"

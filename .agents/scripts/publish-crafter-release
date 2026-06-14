@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+usage: .agents/scripts/publish-crafter-release <version>
+
+Publishes the crafter crate after guarded validation. This command requires:
+
+  LIBCRAFTER_CONFIRM_PUBLISH=run
+  CARGO_REGISTRY_TOKEN=<crates.io token>
+USAGE
+}
+
+die() {
+  printf 'error: %s\n' "$*" >&2
+  exit 1
+}
+
+run() {
+  printf '\n==> %s\n' "$*"
+  "$@"
+}
+
+validate_version() {
+  local version="$1"
+  local semver_re='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-([0-9A-Za-z][0-9A-Za-z-]*)(\.([0-9A-Za-z][0-9A-Za-z-]*))*)?$'
+
+  [[ "$version" =~ $semver_re ]] || die "invalid SemVer version: $version"
+}
+
+workspace_version() {
+  python3 <<'PY'
+import re
+from pathlib import Path
+
+lines = Path("Cargo.toml").read_text(encoding="utf-8").splitlines()
+in_workspace_package = False
+for line in lines:
+    stripped = line.strip()
+    if stripped.startswith("[") and stripped.endswith("]"):
+        in_workspace_package = stripped == "[workspace.package]"
+        continue
+
+    if in_workspace_package and re.match(r"^\s*version\s*=", line):
+        match = re.match(r'^\s*version\s*=\s*"([^"]+)"', line)
+        if not match:
+            raise SystemExit("workspace package version is not a quoted string")
+        print(match.group(1))
+        raise SystemExit(0)
+
+raise SystemExit("missing [workspace.package] version in Cargo.toml")
+PY
+}
+
+crates_io_version_exists() {
+  local version="$1"
+  local status
+
+  status="$(curl -sS -A "libcrafter-release-script" -o /dev/null -w "%{http_code}" \
+    "https://crates.io/api/v1/crates/crafter/${version}" || true)"
+
+  case "$status" in
+    200)
+      return 0
+      ;;
+    404)
+      return 1
+      ;;
+    *)
+      die "crates.io version check failed for crafter ${version} (HTTP ${status})"
+      ;;
+  esac
+}
+
+lockfile_existed=0
+cleanup_lockfile() {
+  if [[ "$lockfile_existed" -eq 0 && -f Cargo.lock ]]; then
+    rm -f Cargo.lock
+  fi
+}
+
+ensure_ephemeral_lockfile() {
+  if [[ -f Cargo.lock ]]; then
+    lockfile_existed=1
+  fi
+
+  trap cleanup_lockfile EXIT
+  run cargo generate-lockfile
+  run cargo fetch --locked
+}
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$repo_root"
+
+if [[ $# -eq 1 && ( "$1" == "-h" || "$1" == "--help" ) ]]; then
+  usage
+  exit 0
+fi
+
+if [[ $# -ne 1 ]]; then
+  usage >&2
+  exit 2
+fi
+
+version="$1"
+validate_version "$version"
+
+if [[ "${LIBCRAFTER_CONFIRM_PUBLISH:-}" != "run" ]]; then
+  die "set LIBCRAFTER_CONFIRM_PUBLISH=run to publish crafter ${version}"
+fi
+
+current_version="$(workspace_version)"
+if [[ "$current_version" != "$version" ]]; then
+  die "workspace version is ${current_version}, not requested version ${version}"
+fi
+
+if crates_io_version_exists "$version"; then
+  die "crafter ${version} already exists on crates.io"
+fi
+
+ensure_ephemeral_lockfile
+run .agents/scripts/check-crafter-release --static
+run cargo publish -p crafter --dry-run --locked
+
+if [[ -z "${CARGO_REGISTRY_TOKEN:-}" ]]; then
+  die "CARGO_REGISTRY_TOKEN is required for publishing"
+fi
+
+run cargo publish -p crafter --locked
+
+printf '\npublished crafter %s\n' "$version"
+printf 'crates.io: https://crates.io/crates/crafter/%s\n' "$version"
+printf 'docs.rs: https://docs.rs/crafter/%s/crafter/\n' "$version"
+printf 'docs.rs may not be ready immediately; use the expected URL above for verification.\n'
