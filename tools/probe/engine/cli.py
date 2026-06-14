@@ -25,6 +25,7 @@ from tools.oracle.engine import ipsec_interop as _ipsec_interop
 from .capabilities import (
     SKIP_CAPABILITY_UNAVAILABLE,
     SKIP_CONFIRMATION_REQUIRED,
+    SKIP_REQUIRES_BGP_PEER,
     SKIP_REQUIRES_BROADCAST,
     SKIP_REQUIRES_CONTROLLED_ROUTER,
     SKIP_REQUIRES_CONTROLLED_SERVICE,

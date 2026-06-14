@@ -27,6 +27,7 @@ _LEGACY_CASE_NAMES = (
 # dns, dhcp, arp, ndp, udp. Derive the count from the catalog so the suite can
 # grow without re-pinning a literal here.
 _BEHAVIOR_CASE_COUNT = len(cases.BEHAVIOR_PROFILE_CASE_NAMES)
+_BGP_CASE_COUNT = len(cases.BGP_SMOKE_PROFILE_CASE_NAMES)
 _BEHAVIOR_PROTOCOL_COMPOSITION = {"dns": 10, "dhcp": 10, "arp": 10, "ndp": 3, "udp": 10}
 _BEHAVIOR_PROTOCOL_ORDER = (
     ["dns"] * 10 + ["dhcp"] * 10 + ["arp"] * 10 + ["ndp"] * 3 + ["udp"] * 10
@@ -100,8 +101,19 @@ class ProbeProfileMembershipTest(unittest.TestCase):
 
     def test_known_profiles_listed_sorted(self) -> None:
         self.assertEqual(
-            cases.known_profiles(), ("behavior", "ipsec", "smoke", "tcp-smoke")
+            cases.known_profiles(),
+            ("behavior", "bgp-smoke", "ipsec", "smoke", "tcp-smoke"),
         )
+
+    def test_bgp_smoke_profile_selects_bgp_case(self) -> None:
+        names = cases.profile_case_names("bgp-smoke")
+
+        self.assertEqual(names, ("bgp-session-smoke",))
+        selected = cases.profile_selected_cases("bgp-smoke", [])
+        self.assertEqual([case.name for case in selected], ["bgp-session-smoke"])
+        self.assertEqual(selected[0].metadata["protocol"], "bgp")
+        self.assertEqual(selected[0].metadata["service"], "frr-bgp-peer")
+        self.assertIs(selected[0].metadata["stateful"], True)
 
     def test_tcp_smoke_profile_selects_tcp_cases_with_options(self) -> None:
         names = cases.profile_case_names("tcp-smoke")
@@ -141,6 +153,31 @@ class ProbeProfileMembershipTest(unittest.TestCase):
         window_scale = next(o for o in plan["tcp_options"] if o["kind"] == "window_scale")
         self.assertLessEqual(window_scale["window_scale_shift"], 14)
 
+    def test_bgp_smoke_plan_uses_probe_owned_target_service(self) -> None:
+        plan = planning.probe_plan_for_case(
+            request=_request(profile="bgp-smoke", count=_BGP_CASE_COUNT),
+            case=cases.PROBE_CASE_BY_NAME["bgp-session-smoke"],
+            sequence=0,
+        )
+
+        self.assertTrue(plan["planned_only"])
+        self.assertEqual(plan["stimulus_driver"]["name"], "bgp_session")
+        service = plan["target_service"]
+        self.assertEqual(service["kind"], "frr-bgp-peer")
+        self.assertEqual(service["protocol"], "tcp")
+        self.assertEqual(service["port"], 179)
+        self.assertEqual(service["driver_as"], 65000)
+        self.assertEqual(service["peer_as"], 65001)
+        self.assertEqual(
+            service["provision_script"],
+            "tools/probe/target_services/bgp/provision-peer.sh",
+        )
+        self.assertEqual(
+            service["frr_template"],
+            "tools/probe/target_services/bgp/frr.conf.template",
+        )
+        self.assertIn("198.51.100.0/24", service["documentation_prefixes"])
+
 
 class ProbeProfileDefaultCountTest(unittest.TestCase):
     def test_behavior_profile_default_count_is_full_suite(self) -> None:
@@ -154,6 +191,13 @@ class ProbeProfileDefaultCountTest(unittest.TestCase):
 
     def test_smoke_profile_default_count_is_legacy_five(self) -> None:
         self.assertEqual(cases.profile_default_count("smoke"), 5)
+
+    def test_bgp_smoke_profile_default_count_is_full_suite(self) -> None:
+        self.assertEqual(cases.profile_default_count("bgp-smoke"), _BGP_CASE_COUNT)
+        self.assertEqual(
+            cases.profile_default_count("bgp-smoke"),
+            len(cases.BGP_SMOKE_PROFILE_CASE_NAMES),
+        )
 
     def test_unknown_profile_default_count_is_legacy_five(self) -> None:
         self.assertEqual(cases.profile_default_count("ghost"), 5)
