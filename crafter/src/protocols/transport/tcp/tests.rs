@@ -2534,7 +2534,7 @@ mod header_error_context {
             .src(src())
             .dst(dst())
             .ipv4_protocol(Ipv4Protocol::Tcp)
-            / Raw::from_bytes(tcp.as_ref().to_vec()))
+            / Raw::from_bytes(tcp.as_ref()))
         .compile()
         .expect("ipv4/raw frame must compile");
         Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes())

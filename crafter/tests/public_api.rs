@@ -209,8 +209,8 @@ fn public_api_dot11_phase15_radiotap_llc_and_send_plan() -> crafter::Result<()> 
     assert_eq!(radiotap.version_value(), Some(0));
     assert_eq!(radiotap.rate_value(), Some(12));
     assert_eq!(radiotap.antenna_signal_value(), Some(-42));
-    assert_eq!(radiotap.fcs_status().unwrap().present(), true);
-    assert_eq!(radiotap.fcs_status().unwrap().failed(), true);
+    assert!(radiotap.fcs_status().unwrap().present());
+    assert!(radiotap.fcs_status().unwrap().failed());
     assert_eq!(dot11.frame_type(), Dot11FrameType::Data);
     assert_eq!(dot11.data_subtype(), Some(Dot11DataSubtype::Data));
     assert_eq!(dot11.source(), Some(station));
@@ -427,7 +427,7 @@ fn public_api_dot11() -> crafter::Result<()> {
 
     assert_eq!(ssid.id(), 0);
     assert_eq!(ssid.data(), b"test");
-    assert_eq!(beacon.tagged_parameters(), &[ssid.clone()]);
+    assert_eq!(beacon.tagged_parameters(), std::slice::from_ref(&ssid));
     assert_eq!(
         beacon.management_subtype(),
         Some(Dot11ManagementSubtype::Beacon)

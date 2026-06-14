@@ -74,24 +74,27 @@ deliberately shaped packets.
 
 ## Decode, Capture, And Pcap
 
-Decode raw bytes from explicit link or network contexts:
+Decode raw bytes from explicit link or network contexts, or inspect pcap files
+through the packet-wire API:
 
 ```rust
 use crafter::prelude::*;
 
 fn inspect(path: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let reader = PcapReader::open(path)?;
-    for record in reader.records() {
-        let packet = record?.decode()?;
-        println!("{}", packet.summary());
+    let source = PacketWire::pcap_file(path).open()?.source()?;
+    let mut sniffer = Sniffer::new(source);
+
+    while let Some(record) = sniffer.next_record()? {
+        println!("{}", record.packet().summary());
+        println!("{:?}", record.metadata());
     }
     Ok(())
 }
 ```
 
-The pcap APIs support classic pcap read/write, libpcap BPF filters, offline
-sniffing, bounded live capture hooks, and stable packet summaries for tests and
-agent logs.
+The packet-wire pcap APIs support classic pcap read/write, libpcap BPF filters,
+offline sniffing, bounded live capture hooks, and stable packet summaries for
+tests and agent logs.
 
 ## Send And Receive
 
@@ -146,7 +149,6 @@ and transforms.
 | --- | --- |
 | `crafter::prelude` | Common imports for examples and agent-written tools. |
 | `crafter::core` | Packet model, layer composition, encode/decode, checksums, protocol registry, formatting. |
-| `crafter::pcap` | Classic pcap read/write, libpcap BPF filters, offline sniffing, bounded live capture hooks. |
 | `crafter::net` | Interface helpers, raw send planning, live send backends, send/receive matching, batch workflows. |
 | `crafter::wire` | Crate-level packet I/O API: packet wires, sources, writers, sniffers, transmitters, and transforms. |
 

@@ -1664,7 +1664,17 @@ fn atomic_fragment_decode_continues_to_terminal_layer_and_roundtrips() -> crafte
 
 #[test]
 fn noninitial_fragment_raw_stops_transport_decode() -> crafter::Result<()> {
-    let cases: [(&str, u8, &str, &[u8], u16, bool, u32); 4] = [
+    type NoninitialCase = (
+        &'static str,
+        u8,
+        &'static str,
+        &'static [u8],
+        u16,
+        bool,
+        u32,
+    );
+
+    let cases: [NoninitialCase; 4] = [
         (
             "udp",
             IPPROTO_UDP,
@@ -4189,7 +4199,7 @@ fn mobile_routing_decode_wrong_length_and_truncation_are_structured() -> crafter
         0,
     ];
     let wrong_length_packet =
-        (base_ipv6(100).nh(IPPROTO_IPV6_ROUTE) / Raw::from_bytes(&wrong_length_wire)).compile()?;
+        (base_ipv6(100).nh(IPPROTO_IPV6_ROUTE) / Raw::from_bytes(wrong_length_wire)).compile()?;
     let decode_err = Packet::decode_from_l3(NetworkLayer::Ipv6, wrong_length_packet.as_bytes())
         .expect_err("Type 2 routing header length 1 is source-backed invalid");
     assert_invalid_field_value_error(
@@ -6138,10 +6148,10 @@ fn traffic_class_ecn_helpers_roundtrip_and_preserve_dscp() -> crafter::Result<()
 
     let dscp = Dscp::cs5();
     let cases = [
-        (Ecn::not_ect(), 0b101000_00),
-        (Ecn::ect1(), 0b101000_01),
-        (Ecn::ect0(), 0b101000_10),
-        (Ecn::ce(), 0b101000_11),
+        (Ecn::not_ect(), 0b1010_0000),
+        (Ecn::ect1(), 0b1010_0001),
+        (Ecn::ect0(), 0b1010_0010),
+        (Ecn::ce(), 0b1010_0011),
     ];
 
     for (ecn, expected_traffic_class) in cases {
@@ -6160,13 +6170,13 @@ fn traffic_class_ecn_helpers_roundtrip_and_preserve_dscp() -> crafter::Result<()
 
 #[test]
 fn traffic_class_api_sets_preserves_and_raw_overrides_bits() -> crafter::Result<()> {
-    let dscp_preserves_ecn = Ipv6::new().traffic_class(0b000000_11).dscp(Dscp::ef());
-    assert_eq!(dscp_preserves_ecn.traffic_class_value(), 0b101110_11);
+    let dscp_preserves_ecn = Ipv6::new().traffic_class(0b0000_0011).dscp(Dscp::ef());
+    assert_eq!(dscp_preserves_ecn.traffic_class_value(), 0b1011_1011);
     assert_eq!(dscp_preserves_ecn.dscp_value(), Dscp::ef());
     assert_eq!(dscp_preserves_ecn.ecn_value(), Ecn::ce());
 
     let ecn_preserves_dscp = dscp_preserves_ecn.ecn(Ecn::capable_0());
-    assert_eq!(ecn_preserves_dscp.traffic_class_value(), 0b101110_10);
+    assert_eq!(ecn_preserves_dscp.traffic_class_value(), 0b1011_1010);
     assert_eq!(ecn_preserves_dscp.dscp_value(), Dscp::ef());
     assert_eq!(ecn_preserves_dscp.ecn_value(), Ecn::ect0());
 

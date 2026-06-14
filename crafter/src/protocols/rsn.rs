@@ -1385,21 +1385,17 @@ mod tests {
 
     #[test]
     fn rsn_suite_selectors_public_exports_resolve() {
-        use crate::core::{
-            RsnAkmSuite as CoreAkm, RsnCapabilities as CoreCapabilities,
-            RSN_AKM_SUITE_PSK as CORE_PSK,
-        };
+        use crate::core::{RsnCapabilities as CoreCapabilities, RSN_AKM_SUITE_PSK as CORE_PSK};
         use crate::prelude::{
-            RsnCapabilities as PreludeCapabilities, RsnCipherSuite as PreludeCipher,
-            RSN_CIPHER_SUITE_CCMP_128 as PRELUDE_CCMP,
+            RsnCapabilities as PreludeCapabilities, RSN_CIPHER_SUITE_CCMP_128 as PRELUDE_CCMP,
         };
         use crate::protocols::{
             rsn_akm_suite_label as protocols_akm_label, RsnCapabilities as ProtocolsCapabilities,
             RsnSuiteSelector as ProtocolsSelector,
         };
 
-        assert_eq!(CoreAkm::from(CORE_PSK).label(), Some("psk"));
-        assert_eq!(PreludeCipher::from(PRELUDE_CCMP).label(), Some("ccmp-128"));
+        assert_eq!(CORE_PSK.label(), Some("psk"));
+        assert_eq!(PRELUDE_CCMP.label(), Some("ccmp-128"));
         assert!(CoreCapabilities::new()
             .with_pre_authentication(true)
             .pre_authentication());

@@ -93,6 +93,7 @@ pub struct IpFragmentMetadata {
 
 impl IpFragmentMetadata {
     /// Create metadata for one emitted fragment.
+    #[allow(clippy::too_many_arguments)]
     pub const fn new(
         family: IpFragmentFamily,
         mtu: usize,
