@@ -5,7 +5,8 @@ behavior the stimulus endpoint exercises. This module owns:
 
 - the dry-run/live ``target_service_setup`` plan,
 - typed service descriptors for the DNS responder, DHCP responder, UDP
-  responder, ARP alias/sysctl setup, and closed UDP port validation,
+  responder, FRR BGP peer, ARP alias/sysctl setup, and closed UDP port
+  validation,
 - the deterministic, artifact-producing setup script for the live target,
 - the cleanup script invocation that tears those services down.
 
@@ -48,6 +49,17 @@ EndpointIpv4Resolver = Callable[..., str]
 EndpointInterfaceResolver = Callable[..., str]
 # A lab-wire helper that runs a wire command response and records its artifacts.
 WireCommandRunner = Callable[..., JSONObject]
+
+BGP_SERVICE_KIND = "frr-bgp-peer"
+BGP_SERVICE_PORT = 179
+BGP_RUNTIME = "frr"
+BGP_DRIVER_AS = 65000
+BGP_PEER_AS = 65001
+BGP_DOCUMENTATION_IPV4_PREFIX = "198.51.100.0/24"
+BGP_DOCUMENTATION_IPV6_PREFIX = "2001:db8::/32"
+BGP_PROVISION_SCRIPT = "tools/probe/target_services/bgp/provision-peer.sh"
+BGP_FRR_TEMPLATE = "tools/probe/target_services/bgp/frr.conf.template"
+BGP_RIB_COMMAND = "vtysh -c 'show bgp ipv4 unicast'"
 
 
 # --------------------------------------------------------------------------- #
@@ -204,6 +216,49 @@ def udp_responder_descriptor(
     )
 
 
+def frr_bgp_peer_descriptor(
+    *,
+    bind_ipv4: str,
+    source_ipv4: str,
+) -> TargetServiceDescriptor:
+    """Describe the probe-owned FRR BGP peer target service."""
+
+    return TargetServiceDescriptor(
+        name=BGP_SERVICE_KIND,
+        protocol="tcp",
+        purpose="bgp-peer",
+        bind_ipv4=bind_ipv4,
+        source_ipv4=source_ipv4,
+        port=BGP_SERVICE_PORT,
+        requires=[BGP_RUNTIME, SKIP_REQUIRES_CONTROLLED_SERVICE],
+        setup_commands=[
+            f"run {BGP_PROVISION_SCRIPT} with DRIVER_IP={source_ipv4}",
+            f"inspect RIB with {BGP_RIB_COMMAND}",
+        ],
+        cleanup_commands=[
+            "stop FRR BGP peer service through provider cleanup",
+        ],
+        artifacts=[
+            "live-artifacts/probe/target-services/bgp-provision.stdout.txt",
+            "live-artifacts/probe/target-services/bgp-provision.stderr.txt",
+        ],
+        metadata={
+            "kind": BGP_SERVICE_KIND,
+            "runtime": BGP_RUNTIME,
+            "deterministic": True,
+            "driver_as": BGP_DRIVER_AS,
+            "peer_as": BGP_PEER_AS,
+            "documentation_prefixes": [
+                BGP_DOCUMENTATION_IPV4_PREFIX,
+                BGP_DOCUMENTATION_IPV6_PREFIX,
+            ],
+            "provision_script": BGP_PROVISION_SCRIPT,
+            "frr_template": BGP_FRR_TEMPLATE,
+            "rib_command": BGP_RIB_COMMAND,
+        },
+    )
+
+
 def closed_udp_port_descriptor(
     *,
     bind_ipv4: str,
@@ -315,13 +370,18 @@ def target_service_setup_plan(
     udp_plans_by_port = plans_by_destination_port(udp_plans)
     closed_udp_plans = closed_udp_probe_plans(probe_plans)
     closed_udp_plans_by_port = plans_by_destination_port(closed_udp_plans)
+    bgp_plans = bgp_peer_probe_plans(probe_plans)
     arp_plans = arp_probe_plans(probe_plans)
     return {
         "role": "target",
         "planned": True,
         "starts_services": not dry_run
         and bool(
-            tcp_open_plans or dns_plans_by_port or dhcp_plans_by_port or udp_plans_by_port
+            tcp_open_plans
+            or dns_plans_by_port
+            or dhcp_plans_by_port
+            or udp_plans_by_port
+            or bgp_plans
         ),
         "dry_run_starts_services": False,
         "services": [
@@ -397,6 +457,7 @@ def target_service_setup_plan(
                 }
                 for port, plan in udp_plans_by_port.items()
             ],
+            *bgp_peer_service_plans(bgp_plans),
         ],
         "closed_tcp_ports": [
             {
@@ -461,6 +522,31 @@ def target_service_address_fields(plan: Mapping[str, JSONValue]) -> JSONObject:
     if source_ipv4:
         fields["source_ipv4"] = source_ipv4
     return fields
+
+
+def bgp_peer_service_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
+    """Return the FRR BGP peer service plan, if any probe plan requests it."""
+
+    if not probe_plans:
+        return []
+    plan = probe_plans[0]
+    addresses = target_service_address_fields(plan)
+    descriptor = frr_bgp_peer_descriptor(
+        bind_ipv4=_string_or(addresses.get("bind_ipv4"), ""),
+        source_ipv4=_string_or(addresses.get("source_ipv4"), ""),
+    )
+    service: JSONObject = {
+        "name": descriptor.name,
+        "kind": descriptor.name,
+        "protocol": descriptor.protocol,
+        "port": descriptor.port,
+        "purpose": descriptor.purpose,
+        "deterministic": True,
+        "requires": list(descriptor.requires),
+        **addresses,
+        **descriptor.metadata,
+    }
+    return [service]
 
 
 def probe_plan_send_count(plan: Mapping[str, JSONValue]) -> int:
@@ -574,6 +660,25 @@ def dns_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
     """Return the DNS-query probe plans in order."""
 
     return [plan for plan in probe_plans if plan.get("case") in _DNS_RESPONDER_CASES]
+
+
+def bgp_peer_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
+    """Return probe plans that require the probe-owned FRR BGP peer."""
+
+    return [plan for plan in probe_plans if probe_plan_requires_bgp_peer(plan)]
+
+
+def probe_plan_requires_bgp_peer(plan: Mapping[str, JSONValue]) -> bool:
+    """Return whether a probe plan requests FRR BGP peer target setup."""
+
+    target_service = _json_mapping(
+        plan.get("target_service", {}),
+        "probe_plan.target_service",
+    )
+    if target_service.get("kind") == BGP_SERVICE_KIND:
+        return True
+    case_name = plan.get("case")
+    return isinstance(case_name, str) and case_name.startswith("bgp-")
 
 
 # Probe cases that drive the controlled DHCP/BOOTP responder on a private L2
