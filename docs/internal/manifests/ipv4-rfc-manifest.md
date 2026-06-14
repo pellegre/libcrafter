@@ -10,7 +10,7 @@ fragment generation, fragment reassembly, fragment caches, timers, overlap
 handling, or stack delivery semantics.
 
 Packet-stream `IpFragment` and `IpDefrag` transform behavior is governed by
-[`docs/protocols/ip-fragment-source-manifest.md`](protocols/ip-fragment-source-manifest.md).
+[`docs/protocols/ip-fragment-source-manifest.md`](../source/ip-fragment-source-manifest.md).
 The exclusion above remains the scope of this base IPv4 header manifest.
 
 Date checked: 2026-06-04 (RFC Editor, IANA Assigned Internet Protocol Numbers,

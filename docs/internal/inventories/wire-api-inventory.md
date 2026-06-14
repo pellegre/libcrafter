@@ -1,7 +1,7 @@
 # Packet Wire API Inventory
 
 This inventory records the public packet wire abstraction for generated tools
-and future backend work. The guide in [wire.md](wire.md) explains usage; this
+and future backend work. The guide in [wire.md](../../reference/wire.md) explains usage; this
 document fixes the API boundary and backend responsibilities.
 
 ## Boundary

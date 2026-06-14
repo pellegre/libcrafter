@@ -22,7 +22,7 @@ caller. See [Explicit exclusions](#explicit-exclusions).
 
 All wire facts on this page trace to reviewed RFC text and IANA registries. The
 authoritative source record is
-[`docs/ipsec-rfc-manifest.md`](ipsec-rfc-manifest.md); this guide summarizes the
+[`docs/ipsec-rfc-manifest.md`](../internal/manifests/ipsec-rfc-manifest.md); this guide summarizes the
 user-facing API built on top of that manifest.
 
 ## Coverage at a glance
@@ -591,7 +591,7 @@ workflows that decide when to send them belong outside the crate primitive.
 ## Evidence
 
 Protocol facts above come from
-[`docs/ipsec-rfc-manifest.md`](ipsec-rfc-manifest.md). The source set, in brief:
+[`docs/ipsec-rfc-manifest.md`](../internal/manifests/ipsec-rfc-manifest.md). The source set, in brief:
 
 - **RFC 4303** — ESP header/trailer format, padding (§2.4), ICV placement, and
   transport/tunnel framing.

@@ -1,7 +1,7 @@
 # TCP Implementation Inventory
 
 This inventory maps the current `crafter` TCP implementation to the
-source-backed facts recorded in [`docs/tcp-rfc-manifest.md`](tcp-rfc-manifest.md)
+source-backed facts recorded in [`docs/tcp-rfc-manifest.md`](../manifests/tcp-rfc-manifest.md)
 and to the enrich-tcp-stack plan. It is the durable map the reorganization and
 enrichment steps work against. Every gap row points at the manifest source that
 justifies the work.
