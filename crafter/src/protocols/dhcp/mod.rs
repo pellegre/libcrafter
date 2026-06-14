@@ -35,11 +35,9 @@
 //!
 //! Authentication and leasequery are packet data only: the crate never derives,
 //! signs, or verifies authentication, and never runs a leasequery state
-//! machine. Intentionally malformed packets are built through the explicit
-//! [`Dhcp::malformed`] surface rather than by weakening the typed builders.
+//! machine.
 
 mod constants;
-mod malformed;
 mod message;
 mod option;
 mod registry;
@@ -97,7 +95,6 @@ pub use constants::{
     DHCP_RELAY_SUBOPTION_VSS, DHCP_RELAY_SUBOPTION_VSS_CONTROL, DHCP_RELEASE, DHCP_REQUEST,
     DHCP_SERVER_PORT, DHCP_VSS_TYPE_GLOBAL_DEFAULT, DHCP_VSS_TYPE_NVT_ASCII, DHCP_VSS_TYPE_VPN_ID,
 };
-pub use malformed::DhcpMalformed;
 pub use message::DhcpMessageType;
 pub use option::{
     decode_tftp_server_addresses, scan_dhcp_option_segments, typed_option_value,
@@ -367,17 +364,6 @@ impl Dhcp {
     /// Decode a DHCP packet payload.
     pub fn decode(bytes: &[u8]) -> Result<Self> {
         decode_dhcp(bytes)
-    }
-
-    /// Begin building an intentionally malformed DHCP packet from this one.
-    ///
-    /// The returned [`DhcpMalformed`] builder emits raw bytes and skips the
-    /// structural validation [`Dhcp::compile`] enforces, so it can craft
-    /// invalid packets (bad magic cookie, oversized fields, malformed option
-    /// lengths, missing end markers) on purpose. The typed `Dhcp` builder stays
-    /// valid by default; malformation is opt-in only through this surface.
-    pub fn malformed(self) -> DhcpMalformed {
-        DhcpMalformed::from_valid(self)
     }
 
     /// Set the BOOTP opcode.
@@ -1991,6 +1977,19 @@ mod dhcp_malformed {
     }
 
     #[test]
+    fn invalid_magic_cookie_is_rejected() {
+        let mut payload = valid_minimal_payload(&[DHCP_OPTION_MESSAGE_TYPE, 1, 1, DHCP_OPTION_END]);
+        let bogus_cookie = 0xdead_beefu32;
+        payload[DHCP_FIXED_HEADER_LEN..DHCP_MIN_LEN].copy_from_slice(&bogus_cookie.to_be_bytes());
+
+        let error = Dhcp::decode(&payload).unwrap_err();
+        assert!(matches!(
+            error,
+            crate::error::CrafterError::InvalidFieldValue { field, .. } if field == "dhcp.magic_cookie"
+        ));
+    }
+
+    #[test]
     fn malformed_option_lengths_are_rejected() {
         let payload = valid_minimal_payload(&[DHCP_OPTION_MESSAGE_TYPE, 2, 1, DHCP_OPTION_END]);
 
@@ -2045,8 +2044,7 @@ mod dhcp_malformed {
 #[cfg(test)]
 mod dhcp_fixed_header {
     use super::{
-        Dhcp, DhcpMalformed, DhcpMessageType, BOOTP_REPLY, DHCP_FIXED_HEADER_LEN,
-        DHCP_MAGIC_COOKIE, DHCP_MIN_LEN, DHCP_OPTION_MESSAGE_TYPE,
+        Dhcp, DhcpMessageType, BOOTP_REPLY, DHCP_FIXED_HEADER_LEN, DHCP_MAGIC_COOKIE, DHCP_MIN_LEN,
     };
     use crate::error::CrafterError;
     use crate::{MacAddr, Packet};
@@ -2186,98 +2184,6 @@ mod dhcp_fixed_header {
             decode_error,
             CrafterError::InvalidFieldValue { field, .. } if field == "dhcp.hlen"
         ));
-    }
-
-    #[test]
-    fn dhcp_malformed_builder_can_emit_invalid_magic_cookie() {
-        // The normal builder is valid by default and decodes cleanly.
-        let valid = Dhcp::new()
-            .client_mac(mac())
-            .message_type(DhcpMessageType::Discover);
-        let valid_bytes = Packet::from_layer(valid.clone()).compile().unwrap();
-        assert!(Dhcp::decode(valid_bytes.as_bytes()).is_ok());
-
-        // The visibly-named malformed builder overrides the magic cookie with a
-        // value RFC 2131 forbids. Construction is opt-in and emits the bad
-        // bytes verbatim.
-        let bogus_cookie = 0xdead_beef;
-        let malformed = valid.clone().malformed().invalid_magic_cookie(bogus_cookie);
-        let bytes = malformed.to_bytes();
-
-        // The cookie is written at the documented offset and is the bad value.
-        assert_eq!(
-            &bytes[DHCP_FIXED_HEADER_LEN..DHCP_MIN_LEN],
-            &bogus_cookie.to_be_bytes()
-        );
-
-        // The normal decoder rejects it as a structured magic-cookie error and
-        // never panics.
-        let error = Dhcp::decode(&bytes).unwrap_err();
-        assert!(matches!(
-            error,
-            CrafterError::InvalidFieldValue { field, .. } if field == "dhcp.magic_cookie"
-        ));
-
-        // The malformed builder also composes as a layer through `/`.
-        let layered = DhcpMalformed::from_valid(valid)
-            .invalid_magic_cookie(bogus_cookie)
-            .to_bytes();
-        assert_eq!(layered, bytes);
-    }
-
-    #[test]
-    fn dhcp_malformed_builder_emits_structural_violations() {
-        let base = Dhcp::new().message_type(DhcpMessageType::Discover);
-
-        // Oversized option payload: the length byte cannot describe more than
-        // 255 octets, so the segment is unrecoverable and decode fails.
-        let oversized = base
-            .clone()
-            .malformed()
-            .oversized_option_payload(DHCP_OPTION_MESSAGE_TYPE, vec![0u8; 300])
-            .to_bytes();
-        assert!(Dhcp::decode(&oversized).is_err());
-
-        // Malformed option length: a declared length that overruns the data.
-        let bad_len = base
-            .clone()
-            .malformed()
-            .option_with_declared_len(DHCP_OPTION_MESSAGE_TYPE, 5, [0x01])
-            .to_bytes();
-        assert!(Dhcp::decode(&bad_len).is_err());
-
-        // Missing end marker.
-        let no_end = base
-            .clone()
-            .malformed()
-            .raw_options([DHCP_OPTION_MESSAGE_TYPE, 1, 1])
-            .to_bytes();
-        let no_end_error = Dhcp::decode(&no_end).unwrap_err();
-        assert!(matches!(
-            no_end_error,
-            CrafterError::InvalidFieldValue { field, .. } if field == "dhcp.options"
-        ));
-
-        // Non-padding bytes after the end marker.
-        let trailing = base
-            .clone()
-            .malformed()
-            .trailing_after_end([DHCP_OPTION_MESSAGE_TYPE, 1, 1])
-            .to_bytes();
-        let trailing_error = Dhcp::decode(&trailing).unwrap_err();
-        assert!(matches!(
-            trailing_error,
-            CrafterError::InvalidFieldValue { field, .. } if field == "dhcp.option.end"
-        ));
-
-        // Oversized fixed field: a chaddr longer than the 16-octet field is
-        // only reachable through the raw malformed hook, never the typed
-        // builder.
-        let oversized_chaddr = base.malformed().raw_chaddr(vec![0xffu8; 20]).to_bytes();
-        // The packet is longer than a minimal DHCP packet because the field
-        // overflowed, and the raw bytes are preserved verbatim.
-        assert!(oversized_chaddr.len() > DHCP_MIN_LEN);
-        assert_eq!(&oversized_chaddr[28..48], &[0xffu8; 20]);
     }
 }
 

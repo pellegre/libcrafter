@@ -466,10 +466,9 @@ values (`DhcpStatusCodeOption`, `DhcpState`, `DhcpDataSource`) read back through
 ### Raw and opaque cases
 
 Some registered codepoints are intentionally kept raw (for example PCP server
-158, DNR 162, 6RD 212, and ambiguous historical codes), and intentionally
-malformed packets are built through the explicit `Dhcp::malformed()` surface
-rather than by weakening the typed builders. In all cases the option code and
-payload bytes are preserved so they remain inspectable and re-encodable.
+158, DNR 162, 6RD 212, and ambiguous historical codes). In all cases the option
+code and payload bytes are preserved so they remain inspectable and
+re-encodable.
 
 ## Address And Range Helpers
 
