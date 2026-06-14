@@ -44,10 +44,8 @@ pub(crate) use impl_layer_object;
 
 pub(crate) fn payload_bytes_after(ctx: LayerContext<'_>) -> Result<Vec<u8>> {
     let mut payload = Vec::new();
-    for (index, layer) in ctx.packet().iter().enumerate().skip(ctx.index() + 1) {
-        let layer_ctx = LayerContext::new(ctx.packet(), index);
-        layer.compile(&layer_ctx, &mut payload)?;
-    }
+    ctx.packet()
+        .compile_all_layers_after_into(ctx.index(), &mut payload)?;
     Ok(payload)
 }
 
