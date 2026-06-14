@@ -224,8 +224,8 @@ checks, and pcap checks before any live workflow. Live fragment behavior must go
 through a disposable lab provider session with `--confirm-live-run`, artifacts
 under `target/lab/ip-fragment-*`, and teardown or skip artifacts that explain
 what happened. Do not validate IP fragmentation by sending raw live traffic from
-the developer machine; use the lab-backed workflow in [validation.md](validation.md)
-and [lab.md](lab.md).
+the developer machine; use the lab-backed workflow in [validation.md](../operations/validation.md)
+and [lab.md](../operations/lab.md).
 
 `WpaDecrypt` is an inbound transform. It accepts one or more configured SSIDs
 with either passphrases or pre-derived PMKs, observes beacons, RSN information,

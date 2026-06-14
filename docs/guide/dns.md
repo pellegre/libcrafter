@@ -270,7 +270,7 @@ The DNS wire layer is validated against the oracle reference backend through the
 `tools/oracle/` boundary. The suite validates packet construction, decode, and
 capture behavior, not DNS client, resolver, or server semantics. All cases use
 documentation address space and reserved names; offline is the default path and
-real live exchange is opt-in. See [Oracle validation](validation.md) for the
+real live exchange is opt-in. See [Oracle validation](../operations/validation.md) for the
 boundary and command shapes.
 
 The oracle cases and the deterministic crate fixtures together cover every

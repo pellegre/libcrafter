@@ -14,7 +14,7 @@ controller, a scanner, or a fuzzer. See
 
 All protocol facts on this page trace to reviewed RFC text and IANA registries,
 not model memory. The authoritative, citation-by-citation source record is
-[`docs/tcp-rfc-manifest.md`](tcp-rfc-manifest.md); this guide summarizes the
+[`docs/tcp-rfc-manifest.md`](../internal/manifests/tcp-rfc-manifest.md); this guide summarizes the
 user-facing API built on top of it. See [Evidence](#evidence) for the source
 set.
 
@@ -186,7 +186,7 @@ options first:
   `extended_data_offset_ext(...)` — the existing `TcpExtendedDataOffset` API. EDO
   (draft-ietf-tcpm-tcp-edo, kind 237) is **not** an RFC-published assigned kind;
   the API is preserved for compatibility and its draft status is documented in
-  the [manifest](tcp-rfc-manifest.md).
+  the [manifest](../internal/manifests/tcp-rfc-manifest.md).
 - `generic(kind, data)` — any other kind, preserved as raw bytes.
 
 ### Reading options back
@@ -406,7 +406,7 @@ TCP segmentation and TCP reassembly remain future work. IP fragmentation and IP
 datagram reassembly are implemented only by the packet-stream transforms. See
 [PMTUD / PLPMTUD and fragmentation (guidance only)](#pmtud--plpmtud-and-fragmentation-guidance-only).
 These boundaries mirror the spec's "what not to do" and the manifest's
-[Explicit Exclusions](tcp-rfc-manifest.md#explicit-exclusions).
+[Explicit Exclusions](../internal/manifests/tcp-rfc-manifest.md#explicit-exclusions).
 
 ## Validation coverage
 
@@ -415,12 +415,12 @@ path tests, the malformed decode corpus, and the `resilience` structured-error
 suite. All cases use documentation address space (`192.0.2.0/24`,
 `198.51.100.0/24`, `2001:db8::/32`) and offline or dry-run workflows by default;
 live provider runs are opt-in and start with `--dry-run`. See
-[Oracle validation](validation.md) for the boundary and command shapes.
+[Oracle validation](../operations/validation.md) for the boundary and command shapes.
 
 ## Evidence
 
 Protocol facts above come from the sources recorded, citation by citation, in
-[`docs/tcp-rfc-manifest.md`](tcp-rfc-manifest.md). The source set, in brief:
+[`docs/tcp-rfc-manifest.md`](../internal/manifests/tcp-rfc-manifest.md). The source set, in brief:
 
 - **RFC 9293** — base TCP (header layout, Data Offset, control bits, checksum,
   EOL/NOP/MSS options). Obsoletes RFC 793 and others.

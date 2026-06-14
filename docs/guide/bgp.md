@@ -272,7 +272,7 @@ tools/probe/run --provider qemu --dry-run --profile bgp-smoke --seed 1
 ```
 
 For the agent-facing live procedure and generated-tool guidance, see
-[`.agents/docs/cookbook.md`](../.agents/docs/cookbook.md).
+[`.agents/docs/cookbook.md`](../../.agents/docs/cookbook.md).
 
 ## Explicit Exclusions
 

@@ -150,7 +150,7 @@ model (libcrafter re-encodes uncompressed); SVCB/HTTPS RDATA is supplied as
 backend-owned raw bytes because the high-level SvcParam encoder re-interprets
 known keys; `\DDD` name escapes are flattened by the high-level encode; and malformed
 inputs are covered by the crate corpus and `resilience.rs`, not an offline oracle
-comparison. See [DNS wire coverage](dns.md) for the per-record contract.
+comparison. See [DNS wire coverage](../guide/dns.md) for the per-record contract.
 
 ### IPv6 Enrichment Offline Profile
 
