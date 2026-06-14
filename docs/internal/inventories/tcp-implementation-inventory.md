@@ -1,7 +1,7 @@
 # TCP Implementation Inventory
 
 This inventory maps the current `crafter` TCP implementation to the
-source-backed facts recorded in [`docs/tcp-rfc-manifest.md`](../manifests/tcp-rfc-manifest.md)
+source-backed facts recorded in [`docs/internal/manifests/tcp-rfc-manifest.md`](../manifests/tcp-rfc-manifest.md)
 and to the enrich-tcp-stack plan. It is the durable map the reorganization and
 enrichment steps work against. Every gap row points at the manifest source that
 justifies the work.
@@ -25,7 +25,7 @@ Each item is marked with exactly one status:
 - **out of scope** — explicitly excluded by the spec and manifest; must not be
   added to the crate.
 
-Date checked: 2026-06-02 (against `docs/tcp-rfc-manifest.md`, reviewed the same
+Date checked: 2026-06-02 (against `docs/internal/manifests/tcp-rfc-manifest.md`, reviewed the same
 date against RFC Editor, IANA TCP Parameters, and Datatracker).
 
 ## Current `Tcp` layer (`segment.rs` target)
@@ -85,7 +85,7 @@ experimental codepoints should use the RFC 6994 ExID options, not the
 draft-derived EDO kind. The preserved EDO API is exercised end-to-end by the
 `tcp_edo_compatibility_public_api` test (tcp/tests.rs), which proves constructors,
 constants, the `ExtendedDataOffset` variant encode/decode, and byte-exact
-round-trip still work. See `docs/tcp-rfc-manifest.md` "Extended Data Offset (EDO)
+round-trip still work. See `docs/internal/manifests/tcp-rfc-manifest.md` "Extended Data Offset (EDO)
 Status Reconciliation".
 
 ## Flag constants (`flags.rs` target)
@@ -183,7 +183,7 @@ registry coverage, typed helpers, sizing, fixtures, docs, validation).
 5. **Fixtures** — add round-trip fixtures and summaries for the new typed
    options and AccECN, using documentation address space, alongside the existing
    `ipv4-tcp-syn-options` and `ipv6-tcp-raw` fixtures.
-6. **Docs** — keep `docs/tcp-rfc-manifest.md` and this inventory in sync, record
+6. **Docs** — keep `docs/internal/manifests/tcp-rfc-manifest.md` and this inventory in sync, record
    the EDO draft-status reconciliation and the AE/NS naming note, and cite the
    manifest rather than model memory.
 7. **Validation** — extend `crafter/tests/resilience.rs`, the fixture suite, and

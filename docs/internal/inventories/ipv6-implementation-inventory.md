@@ -100,7 +100,7 @@ Implemented Fragment Header behavior includes:
 ## Source evidence
 
 The source-backed behavior is anchored in
-[`docs/ipv6-rfc-manifest.md`](../manifests/ipv6-rfc-manifest.md). That manifest remains the
+[`docs/internal/manifests/ipv6-rfc-manifest.md`](../manifests/ipv6-rfc-manifest.md). That manifest remains the
 authority for future protocol changes and reconciles the implementation with
 RFC 8200, RFC 2474, RFC 3168, RFC 2675, RFC 2711, RFC 5095, RFC 6275, RFC 6946,
 RFC 7045, RFC 7112, RFC 8754, RFC 9673, RFC 9800 notes, and the relevant IANA
@@ -116,8 +116,8 @@ Current implementation evidence is in:
   through root, `core`, `prelude`, and protocol module paths.
 - `crafter/src/registry.rs` for IPv6 child dispatch and raw fallback after the
   extension-chain traversal.
-- `docs/ipv6.md` for the new user-facing IPv6 wire coverage page.
-- `docs/api.md`, `docs/README.md`, `README.md`, and
+- `docs/guide/ipv6.md` for the new user-facing IPv6 wire coverage page.
+- `docs/reference/api.md`, `docs/README.md`, `README.md`, and
   `crafter/examples/README.md` for links into the IPv6 coverage.
 - `crafter/examples/ipv6_extensions.rs` for offline examples covering Traffic
   Class helpers, Flow Label, Hop-by-Hop Options, Destination Options, generic
@@ -231,7 +231,7 @@ workflow.
 
 ## Docs and examples
 
-User-facing IPv6 documentation now exists at [`docs/ipv6.md`](../../guide/ipv6.md). It
+User-facing IPv6 documentation now exists at [`docs/guide/ipv6.md`](../../guide/ipv6.md). It
 documents base-header fields, DSCP/ECN helpers, Flow Label behavior, Payload
 Length and Jumbo Payload caveats, Next Header constants, Hop-by-Hop and
 Destination Options, routing headers, SRH, Fragment Header classification,
@@ -239,7 +239,7 @@ malformed decode policy, fixtures, the `ipv6-enrichment` oracle profile, and
 explicit unsupported behavior.
 
 The `ipv6_extensions` example is offline and demonstrates the enriched API
-without raw sockets or live targets. Other docs point to `docs/ipv6.md` rather
+without raw sockets or live targets. Other docs point to `docs/guide/ipv6.md` rather
 than duplicating the packet-layer behavior map.
 
 ## Unsupported behavior that remains known

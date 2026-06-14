@@ -14,7 +14,7 @@ controller, a scanner, or a fuzzer. See
 
 All protocol facts on this page trace to reviewed RFC text and IANA registries,
 not model memory. The authoritative, citation-by-citation source record is
-[`docs/tcp-rfc-manifest.md`](../internal/manifests/tcp-rfc-manifest.md); this guide summarizes the
+[`docs/internal/manifests/tcp-rfc-manifest.md`](../internal/manifests/tcp-rfc-manifest.md); this guide summarizes the
 user-facing API built on top of it. See [Evidence](#evidence) for the source
 set.
 
@@ -420,7 +420,7 @@ live provider runs are opt-in and start with `--dry-run`. See
 ## Evidence
 
 Protocol facts above come from the sources recorded, citation by citation, in
-[`docs/tcp-rfc-manifest.md`](../internal/manifests/tcp-rfc-manifest.md). The source set, in brief:
+[`docs/internal/manifests/tcp-rfc-manifest.md`](../internal/manifests/tcp-rfc-manifest.md). The source set, in brief:
 
 - **RFC 9293** — base TCP (header layout, Data Offset, control bits, checksum,
   EOL/NOP/MSS options). Obsoletes RFC 793 and others.

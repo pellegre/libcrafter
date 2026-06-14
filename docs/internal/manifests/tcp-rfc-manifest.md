@@ -10,7 +10,7 @@ congestion control, TCP segmentation, TCP stream reassembly, or application
 reconstruction. IP fragmentation and IP datagram reassembly are implemented
 only by the packet-stream `IpFragment` and `IpDefrag` transforms; they are not
 TCP behavior and are governed by
-[`docs/protocols/ip-fragment-source-manifest.md`](../source/ip-fragment-source-manifest.md).
+[`docs/internal/source/ip-fragment-source-manifest.md`](../source/ip-fragment-source-manifest.md).
 The fragmentation-adjacent facts recorded here (TCP MSS, payload sizing, option
 budgeting, Don't Fragment guidance, IPv6 minimum MTU, PMTUD/PLPMTUD) are
 modeled only to size and document correct TCP segments, never to perform TCP
