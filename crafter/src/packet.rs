@@ -730,6 +730,18 @@ impl Packet {
         Ok(())
     }
 
+    pub(crate) fn compile_all_layers_after_into(
+        &self,
+        index: usize,
+        out: &mut Vec<u8>,
+    ) -> Result<()> {
+        for (layer_index, layer) in self.layers.iter().enumerate().skip(index + 1) {
+            let ctx = LayerContext::new(self, layer_index);
+            layer.compile(&ctx, out)?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn encoded_len_after(&self, index: usize) -> usize {
         let mut total = 0;
         for (layer_index, layer) in self.layers.iter().enumerate().skip(index + 1) {
