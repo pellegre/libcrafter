@@ -64,7 +64,7 @@ Source read for this matrix:
 - `crafter/src/protocols/dns/svcb.rs` — `SvcParam` / `SvcParams` and the
   SVCB/HTTPS RDATA codec.
 - `crafter/src/protocols/dns/constants.rs` — codepoints.
-- `docs/dns.md` — the user-facing coverage statement this matrix matches.
+- `docs/guide/dns.md` — the user-facing coverage statement this matrix matches.
 
 ## 1. Header / flags
 

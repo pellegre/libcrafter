@@ -10,7 +10,7 @@ Oracle and probe use lab sessions so their live behavior is independent of the
 machine where libcrafter or an agent is running. Oracle still owns reference
 packet validation. Probe still owns kernel and controlled-service behavior
 validation. The endpoint provider layer still owns one endpoint and transport
-operations; see [docs/endpoint.md](endpoint.md) for the single-endpoint
+operations; see [docs/operations/endpoint.md](endpoint.md) for the single-endpoint
 provider lifecycle.
 
 ## Tool Split

@@ -2,7 +2,7 @@
 
 This is the final handoff inventory for the IPv4 enrichment work. It maps the
 implemented `crafter` IPv4 surface to the source-backed behavior recorded in
-[`docs/ipv4-rfc-manifest.md`](../manifests/ipv4-rfc-manifest.md), and points future
+[`docs/internal/manifests/ipv4-rfc-manifest.md`](../manifests/ipv4-rfc-manifest.md), and points future
 maintainers to the validation commands, fixtures, docs, examples, and known
 exclusions.
 
@@ -111,10 +111,10 @@ Implemented fragmentation field support:
 
 Implemented docs and examples:
 
-- [`docs/ipv4.md`](../../guide/ipv4.md) is the user-facing IPv4 guide.
-- [`docs/validation.md`](../../operations/validation.md) records the offline IPv4 behavioral
+- [`docs/guide/ipv4.md`](../../guide/ipv4.md) is the user-facing IPv4 guide.
+- [`docs/operations/validation.md`](../../operations/validation.md) records the offline IPv4 behavioral
   suite.
-- [`docs/README.md`](../../README.md), [`docs/api.md`](../../reference/api.md), and the top-level
+- [`docs/README.md`](../../README.md), [`docs/reference/api.md`](../../reference/api.md), and the top-level
   [`README.md`](../../../README.md) link the IPv4 guide.
 - `crafter/examples/ipv4_enrichment.rs` demonstrates DSCP/ECN helpers, typed
   Router Alert, checksum status, and fragment metadata inspection offline.

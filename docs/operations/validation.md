@@ -340,7 +340,7 @@ artifacts, and cleanup records. Oracle owns the `libcrafter` and
 repository. Packet generation, endpoint protocol comparison, report assembly,
 and the generic provider execution flow remain in the oracle runner.
 `tools/endpoint` owns one endpoint and artifact transport; see
-[docs/endpoint.md](endpoint.md) for endpoint provider credentials, lifecycle
+[docs/operations/endpoint.md](endpoint.md) for endpoint provider credentials, lifecycle
 commands, artifacts, and cleanup.
 
 Docker is available as a lab-backed oracle provider through the constrained
@@ -400,7 +400,7 @@ private group `oracle-live-private`; VirtualBox uses `virtualbox/lan` with the
 bridged interface discovered by `VBoxManage` or requested through
 `LIBCRAFTER_VBOX_BRIDGE_IFACE`.
 
-See [lab.md](lab.md) for lab session metadata and [docs/endpoint.md](endpoint.md)
+See [lab.md](lab.md) for lab session metadata and [docs/operations/endpoint.md](endpoint.md)
 for single-endpoint provider credentials, artifacts, and cleanup.
 
 ## ICMPv4 Live Matrix

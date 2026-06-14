@@ -1301,19 +1301,19 @@ const DOT11_FIXTURES: &[ValidFixtureCase] = &[
 
 const DOT11_TEXT_ARTIFACTS: &[Dot11TextArtifact] = &[
     Dot11TextArtifact {
-        path: "docs/dot11.md",
+        path: "docs/guide/dot11.md",
         section_start: None,
     },
     Dot11TextArtifact {
-        path: "docs/dot11-live-manual.md",
+        path: "docs/operations/dot11-live-manual.md",
         section_start: None,
     },
     Dot11TextArtifact {
-        path: "docs/protocols/dot11-source-manifest.md",
+        path: "docs/internal/source/dot11-source-manifest.md",
         section_start: None,
     },
     Dot11TextArtifact {
-        path: "docs/protocols/dot11-api-inventory.md",
+        path: "docs/internal/inventories/dot11-api-inventory.md",
         section_start: None,
     },
     Dot11TextArtifact {
@@ -1338,15 +1338,15 @@ const ALLOWED_DOT11_SYNTHETIC_SSID_PREFIXES: &[&str] = &["dot11-agent-"];
 
 const IP_FRAGMENT_TEXT_ARTIFACTS: &[IpFragmentTextArtifact] = &[
     IpFragmentTextArtifact {
-        path: "docs/wire.md",
+        path: "docs/reference/wire.md",
         section_start: Some("Built-in transform shapes include:"),
     },
     IpFragmentTextArtifact {
-        path: "docs/lab.md",
+        path: "docs/operations/lab.md",
         section_start: Some("## IP Fragment Lab Safety"),
     },
     IpFragmentTextArtifact {
-        path: "docs/validation.md",
+        path: "docs/operations/validation.md",
         section_start: Some("## IP Fragment Transform Validation"),
     },
     IpFragmentTextArtifact {
