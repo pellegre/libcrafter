@@ -15,8 +15,8 @@ transforms: use `IpDefrag` on `Sniffer` sources and `IpFragment` on
 `Transmitter` writers.
 
 Protocol facts here are source-backed. The source record is
-[`docs/ipv6-rfc-manifest.md`](../internal/manifests/ipv6-rfc-manifest.md), and the implementation
-map is [`docs/ipv6-implementation-inventory.md`](../internal/inventories/ipv6-implementation-inventory.md).
+[`docs/internal/manifests/ipv6-rfc-manifest.md`](../internal/manifests/ipv6-rfc-manifest.md), and the implementation
+map is [`docs/internal/inventories/ipv6-implementation-inventory.md`](../internal/inventories/ipv6-implementation-inventory.md).
 The current branch also has focused oracle specs for the enriched IPv6 surface
 under `tools/oracle/specs/layers/ipv6.yaml` and
 `tools/oracle/specs/features/ipv6-fragment-routing.yaml`.
@@ -386,7 +386,7 @@ The packet-stream `IpDefrag` and `IpFragment` transforms use a deliberately
 narrow IPv6 extension scope for Fragment Header handling. Source authority is
 RFC 8200 for the Fragment Header and extension-chain repair rules, RFC 6946 for
 atomic fragments, RFC 7112 for first-fragment header-chain requirements, and
-[`docs/protocols/ip-fragment-source-manifest.md`](../internal/source/ip-fragment-source-manifest.md)
+[`docs/internal/source/ip-fragment-source-manifest.md`](../internal/source/ip-fragment-source-manifest.md)
 for the transform-specific manifest.
 
 Supported scope:
