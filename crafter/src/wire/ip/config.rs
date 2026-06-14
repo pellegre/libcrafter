@@ -17,9 +17,10 @@ pub const IP_DEFRAG_DEFAULT_MAX_AGE: Duration = Duration::from_secs(60);
 pub const IP_FRAGMENT_MIN_MTU: usize = 28;
 
 /// How `IpDefrag` handles conflicting overlapping fragment bytes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum IpDefragOverlapPolicy {
     /// Return a structured error instead of emitting an ambiguous datagram.
+    #[default]
     RejectConflicting,
     /// Drop the ambiguous datagram state and keep processing later records.
     DropConflicting,
@@ -27,33 +28,23 @@ pub enum IpDefragOverlapPolicy {
     PassThroughConflicting,
 }
 
-impl Default for IpDefragOverlapPolicy {
-    fn default() -> Self {
-        Self::RejectConflicting
-    }
-}
-
 /// How `IpDefrag` handles IPv6 atomic fragments.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum Ipv6AtomicFragmentPolicy {
     /// Emit atomic fragments unchanged, optionally with pass-through trace data.
     PassThrough,
     /// Normalize atomic fragments by removing the Fragment Header.
+    #[default]
     Normalize,
     /// Drop atomic fragments without emitting an output record.
     Drop,
 }
 
-impl Default for Ipv6AtomicFragmentPolicy {
-    fn default() -> Self {
-        Self::Normalize
-    }
-}
-
 /// How `IpFragment` handles IPv4 packets with Don't Fragment set.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum Ipv4DontFragmentPolicy {
     /// Return a structured error when fragmentation would be required.
+    #[default]
     Error,
     /// Emit the original record unchanged with explicit trace metadata.
     PassThrough,
@@ -61,16 +52,11 @@ pub enum Ipv4DontFragmentPolicy {
     FragmentAnyway,
 }
 
-impl Default for Ipv4DontFragmentPolicy {
-    fn default() -> Self {
-        Self::Error
-    }
-}
-
 /// How `IpFragment` chooses an IPv4 Identification value when it emits fragments.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum Ipv4FragmentIdentificationPolicy {
     /// Preserve an explicit packet ID, otherwise generate one.
+    #[default]
     PreserveOrGenerate,
     /// Require the input packet to carry the ID that should be used.
     PreserveOnly,
@@ -78,25 +64,14 @@ pub enum Ipv4FragmentIdentificationPolicy {
     Fixed(u16),
 }
 
-impl Default for Ipv4FragmentIdentificationPolicy {
-    fn default() -> Self {
-        Self::PreserveOrGenerate
-    }
-}
-
 /// How `IpFragment` chooses an IPv6 Fragment Identification value.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum Ipv6FragmentIdentificationPolicy {
     /// Generate an identification value for each emitted IPv6 fragment set.
+    #[default]
     Generate,
     /// Use one fixed ID for every emitted IPv6 fragment set.
     Fixed(u32),
-}
-
-impl Default for Ipv6FragmentIdentificationPolicy {
-    fn default() -> Self {
-        Self::Generate
-    }
 }
 
 /// Configuration for the receive-side IP defragmentation transform.

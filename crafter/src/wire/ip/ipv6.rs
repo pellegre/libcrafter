@@ -34,6 +34,7 @@ pub(crate) const IPV6_FRAGMENT_UNSUPPORTED_EXTENSION_SCOPE_NOTE: &str =
 
 /// Result of inspecting a packet record for an IPv6 Fragment Header.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum Ipv6FragmentExtract {
     /// The record contains an IPv6 packet with a Fragment Header.
     View(Ipv6FragmentView),
@@ -62,6 +63,7 @@ impl Ipv6FragmentExtract {
 /// Result of inspecting a packet record as a source-side IPv6 fragmentation
 /// candidate.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum Ipv6FragmentableExtract {
     /// The record contains an IPv6 packet in the supported source-fragmentation scope.
     View(Ipv6FragmentableView),

@@ -798,7 +798,7 @@ fn ipv6_curated_resilience_decode_surfaces_are_inspectable() -> crafter::core::R
                     .fragment_offset(3)
                     .more_fragments(true)
                     .identification(0x4800_0002)
-                / Raw::from_bytes(&[0x12, 0x34, 0x56, 0x78, 0xaa, 0xbb, 0xcc, 0xdd]),
+                / Raw::from_bytes([0x12, 0x34, 0x56, 0x78, 0xaa, 0xbb, 0xcc, 0xdd]),
         ),
         (
             "extension-chain",
@@ -884,7 +884,7 @@ fn malformed_ipv6_jumbo_payload_option_summary_is_inspectable() -> crafter::core
         0,
     ];
     let bytes = (ipv6_resilience_base(58).next_header(IPPROTO_IPV6_HOPOPTS)
-        / Raw::from_bytes(&hop_by_hop))
+        / Raw::from_bytes(hop_by_hop))
     .compile()?;
     let decoded = decode_packet(PacketDecodeTarget::L3(NetworkLayer::Ipv6), bytes.as_bytes())?;
 
@@ -915,7 +915,7 @@ fn malformed_ipv6_router_alert_option_summary_is_inspectable() -> crafter::core:
         0,
     ];
     let bytes = (ipv6_resilience_base(58).next_header(IPPROTO_IPV6_HOPOPTS)
-        / Raw::from_bytes(&hop_by_hop))
+        / Raw::from_bytes(hop_by_hop))
     .compile()?;
     let decoded = decode_packet(PacketDecodeTarget::L3(NetworkLayer::Ipv6), bytes.as_bytes())?;
 

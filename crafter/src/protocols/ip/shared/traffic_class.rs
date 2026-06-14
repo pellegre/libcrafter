@@ -127,10 +127,11 @@ impl From<Dscp> for u8 {
 ///
 /// RFC 3168 defines the two least significant bits as Not-ECT, ECT(1),
 /// ECT(0), and CE.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum Ecn {
     /// Not ECN-capable transport.
+    #[default]
     NotEct = 0,
     /// ECN-capable transport, ECT(1).
     Ect1 = 1,
@@ -202,12 +203,6 @@ impl Ecn {
     /// Congestion Experienced (CE, 0b11).
     pub const fn ce() -> Self {
         Self::Ce
-    }
-}
-
-impl Default for Ecn {
-    fn default() -> Self {
-        Self::NotEct
     }
 }
 

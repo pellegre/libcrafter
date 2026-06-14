@@ -1087,8 +1087,8 @@ mod ipv4_experimental_options {
         const KIND: Ipv4OptionKind = Ipv4OptionKind::new(IPV4_OPTION_EXPERIMENTAL_4);
         const IS_EXPERIMENTAL: bool = KIND.is_experimental();
         const LABEL: Option<&'static str> = KIND.experimental_label();
+        const _: () = assert!(IS_EXPERIMENTAL);
 
-        assert!(IS_EXPERIMENTAL);
         assert_eq!(LABEL, Some("RFC3692-style Experiment"));
     }
 }

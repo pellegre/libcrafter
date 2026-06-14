@@ -3016,15 +3016,21 @@ fn dot11_encoded_mac_header_len(dot11: &Dot11) -> usize {
 
     if frame_control.frame_type_value() == Dot11FrameType::Control {
         return DOT11_CONTROL_ONE_ADDRESS_HEADER_LEN
-            + dot11_control_emit_addr2(dot11)
-                .then_some(DOT11_ADDRESS_LEN)
-                .unwrap_or_default()
-            + dot11_control_emit_addr3(dot11)
-                .then_some(DOT11_ADDRESS_LEN)
-                .unwrap_or_default()
-            + dot11_control_emit_sequence_control(dot11)
-                .then_some(DOT11_SEQUENCE_CONTROL_LEN)
-                .unwrap_or_default()
+            + if dot11_control_emit_addr2(dot11) {
+                DOT11_ADDRESS_LEN
+            } else {
+                0
+            }
+            + if dot11_control_emit_addr3(dot11) {
+                DOT11_ADDRESS_LEN
+            } else {
+                0
+            }
+            + if dot11_control_emit_sequence_control(dot11) {
+                DOT11_SEQUENCE_CONTROL_LEN
+            } else {
+                0
+            }
             + dot11
                 .addr4
                 .value()
@@ -4973,8 +4979,7 @@ mod tests {
 
         assert_eq!(
             frame_control.bits(),
-            0xffff
-                & !DOT11_FC_PROTOCOL_VERSION_MASK
+            !DOT11_FC_PROTOCOL_VERSION_MASK
                 & !DOT11_FC_TYPE_MASK
                 & !DOT11_FC_SUBTYPE_MASK
                 & !DOT11_FC_TO_DS

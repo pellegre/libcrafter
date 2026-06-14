@@ -16,6 +16,19 @@ mod ipv6;
 mod metadata;
 mod range;
 
+pub use config::{
+    IpDefragConfig, IpDefragOverlapPolicy, IpFragmentConfig, Ipv4DontFragmentPolicy,
+    Ipv4FragmentIdentificationPolicy, Ipv6AtomicFragmentPolicy, Ipv6FragmentIdentificationPolicy,
+    IP_DEFRAG_DEFAULT_MAX_AGE, IP_DEFRAG_DEFAULT_MAX_BYTES_PER_DATAGRAM,
+    IP_DEFRAG_DEFAULT_MAX_DATAGRAMS, IP_FRAGMENT_MIN_MTU,
+};
+pub use defrag::{IpDefrag, IpDefragStats};
+pub use fragmentation::{IpFragment, IpFragmentStats};
+pub use metadata::{
+    IpDefragEvictionReason, IpDefragMetadata, IpDefragOverlapStatus, IpFragmentFamily,
+    IpFragmentMetadata, IpFragmentRange, IpFragmentReason,
+};
+
 #[cfg(test)]
 mod defrag_contract;
 #[cfg(test)]
@@ -177,16 +190,3 @@ mod ipv6_extension_scope {
         );
     }
 }
-
-pub use config::{
-    IpDefragConfig, IpDefragOverlapPolicy, IpFragmentConfig, Ipv4DontFragmentPolicy,
-    Ipv4FragmentIdentificationPolicy, Ipv6AtomicFragmentPolicy, Ipv6FragmentIdentificationPolicy,
-    IP_DEFRAG_DEFAULT_MAX_AGE, IP_DEFRAG_DEFAULT_MAX_BYTES_PER_DATAGRAM,
-    IP_DEFRAG_DEFAULT_MAX_DATAGRAMS, IP_FRAGMENT_MIN_MTU,
-};
-pub use defrag::{IpDefrag, IpDefragStats};
-pub use fragmentation::{IpFragment, IpFragmentStats};
-pub use metadata::{
-    IpDefragEvictionReason, IpDefragMetadata, IpDefragOverlapStatus, IpFragmentFamily,
-    IpFragmentMetadata, IpFragmentRange, IpFragmentReason,
-};
