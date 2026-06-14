@@ -9,7 +9,9 @@ use crate::protocols::bgp::{decode::append_bgp_packet_with_registry, BGP_PORT};
 use crate::protocols::dhcp::{append_dhcp_packet, is_dhcp_port_pair, looks_like_dhcp_payload};
 use crate::protocols::dns::{append_dns_packet, DNS_PORT};
 use crate::protocols::eapol::append_eapol_packet;
-use crate::protocols::icmp::{append_icmp_packet, append_icmpv6_packet};
+use crate::protocols::icmp::{
+    append_icmp_packet, append_icmp_packet_with_checksum_validation, append_icmpv6_packet,
+};
 use crate::protocols::ipsec::ah::decode::append_ah_packet_with_registry_sa;
 use crate::protocols::ipsec::esp::decode::append_esp_packet_with_registry_sa;
 use crate::protocols::ipsec::esp::header::ESP_HEADER_LEN;
@@ -199,8 +201,12 @@ impl ProtocolRegistry {
         });
         registry.builtin_ethertype_dispatch = true;
 
-        registry.bind_ipv4_protocol_with_registry(IPPROTO_ICMP, |_registry, packet, payload| {
-            append_icmp_packet(packet, payload)
+        registry.bind_ipv4_protocol_with_registry(IPPROTO_ICMP, |registry, packet, payload| {
+            append_icmp_packet_with_checksum_validation(
+                packet,
+                payload,
+                registry.validates_checksums(),
+            )
         });
         registry.bind_ipv4_protocol_with_registry(IPPROTO_TCP, |registry, packet, payload| {
             append_tcp_packet_with_registry(registry, packet, payload)
@@ -645,7 +651,11 @@ impl ProtocolRegistry {
     ) -> Result<Packet> {
         if self.builtin_ipv4_protocol_dispatch {
             return match protocol {
-                IPPROTO_ICMP => append_icmp_packet(packet, payload),
+                IPPROTO_ICMP => append_icmp_packet_with_checksum_validation(
+                    packet,
+                    payload,
+                    self.validates_checksums(),
+                ),
                 IPPROTO_TCP => append_tcp_packet_with_registry(self, packet, payload),
                 IPPROTO_UDP => append_udp_packet_with_registry(self, packet, payload),
                 IPPROTO_ESP => decode_esp_with_registry_sa(self, packet, payload),

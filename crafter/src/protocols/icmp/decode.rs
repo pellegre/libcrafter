@@ -16,7 +16,15 @@ use crate::packet::{Layer, Packet, Raw};
 use crate::protocols::ipv4::decode_quoted_ipv4;
 
 /// Append a decoded ICMP packet to an existing packet stack.
-pub(crate) fn append_icmp_packet(mut packet: Packet, bytes: &[u8]) -> Result<Packet> {
+pub(crate) fn append_icmp_packet(packet: Packet, bytes: &[u8]) -> Result<Packet> {
+    append_icmp_packet_with_checksum_validation(packet, bytes, true)
+}
+
+pub(crate) fn append_icmp_packet_with_checksum_validation(
+    mut packet: Packet,
+    bytes: &[u8],
+    validate_quoted_checksum: bool,
+) -> Result<Packet> {
     let (icmp, payload) = decode_icmp_parts(bytes)?;
     let icmp_type = icmp.icmp_type_value();
     // RFC 1256 router advertisement fields are read from the fixed header before
@@ -41,7 +49,7 @@ pub(crate) fn append_icmp_packet(mut packet: Packet, bytes: &[u8]) -> Result<Pac
     // parseable IPv4 header; anything left over (or an unparseable quote)
     // stays raw-compatible so the bytes are never dropped.
     if icmpv4_type_is_error(icmp_type) {
-        if let Some((quoted, consumed)) = decode_quoted_ipv4(payload) {
+        if let Some((quoted, consumed)) = decode_quoted_ipv4(payload, validate_quoted_checksum) {
             packet = packet.push_icmpv4_quoted_ip(Icmpv4QuotedIp { datagram: quoted });
             let trailing = &payload[consumed..];
             if trailing.is_empty() {
