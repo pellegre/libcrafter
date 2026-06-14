@@ -1,0 +1,145 @@
+name: prepare-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Crafter crate version to prepare, for example 0.3.1."
+        required: true
+        type: string
+      changelog_summary:
+        description: "Optional changelog summary. Separate multiple entries with new lines."
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  CARGO_TERM_COLOR: always
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  VERSION: ${{ github.event.inputs.version }}
+
+jobs:
+  prepare:
+    name: release preparation PR
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout default branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends curl libpcap-dev pkg-config python3
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup component add rustfmt clippy
+
+      - name: Prepare release metadata
+        env:
+          LIBCRAFTER_CHANGELOG_SUMMARY: ${{ github.event.inputs.changelog_summary }}
+        run: .agents/scripts/prepare-crafter-release "$VERSION"
+
+      - name: Generate ephemeral lockfile
+        run: |
+          cargo generate-lockfile
+          cargo fetch --locked
+
+      - name: Run release gate
+        run: .agents/scripts/check-crafter-release --static
+
+      - name: Run crates.io dry run
+        run: cargo publish -p crafter --dry-run --locked
+
+      - name: Commit release metadata
+        id: release_branch
+        run: |
+          set -euo pipefail
+
+          branch_version="${VERSION//./-}"
+          branch="release/crafter-${branch_version}"
+          subject="chore(crafter): prepare v${VERSION}"
+
+          # The plan example release(crafter): prepare v${VERSION} is not used
+          # as the commit subject because this repository's conventional commit
+          # checker does not allow release as a commit type.
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$branch"
+          git add Cargo.toml CHANGELOG.md
+
+          if git diff --cached --quiet -- Cargo.toml CHANGELOG.md; then
+            echo "::error::release preparation produced no Cargo.toml or CHANGELOG.md changes"
+            exit 1
+          fi
+
+          git commit -m "$subject" -- Cargo.toml CHANGELOG.md
+          git push --force-with-lease origin "HEAD:$branch"
+
+          {
+            echo "branch=$branch"
+            echo "subject=$subject"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Write pull request body
+        run: |
+          cat > "$RUNNER_TEMP/release-pr-body.md" <<BODY
+          ## Summary
+
+          - Prepare crafter v${VERSION} release metadata.
+          - Update Cargo.toml and CHANGELOG.md only.
+
+          ## Title
+
+          Use \`chore(crafter): prepare v${VERSION}\`.
+
+          ## Validation
+
+          - \`.agents/scripts/prepare-crafter-release "$VERSION"\`: passed
+          - \`cargo generate-lockfile && cargo fetch --locked\`: passed
+          - \`.agents/scripts/check-crafter-release --static\`: passed
+          - \`cargo publish -p crafter --dry-run --locked\`: passed
+
+          ## Notes
+
+          - This workflow does not publish and does not read \`CARGO_REGISTRY_TOKEN\`.
+          - \`Cargo.lock\` is generated only as an ignored ephemeral file for locked commands.
+          BODY
+
+      - name: Create or update release pull request
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          RELEASE_BRANCH: ${{ steps.release_branch.outputs.branch }}
+          RELEASE_TITLE: ${{ steps.release_branch.outputs.subject }}
+        run: |
+          set -euo pipefail
+
+          pr_number="$(
+            gh pr list \
+              --head "$RELEASE_BRANCH" \
+              --base "$DEFAULT_BRANCH" \
+              --state open \
+              --json number \
+              --jq '.[0].number // empty'
+          )"
+
+          if [[ -z "$pr_number" ]]; then
+            gh pr create \
+              --base "$DEFAULT_BRANCH" \
+              --head "$RELEASE_BRANCH" \
+              --title "$RELEASE_TITLE" \
+              --body-file "$RUNNER_TEMP/release-pr-body.md"
+          else
+            gh pr edit "$pr_number" \
+              --title "$RELEASE_TITLE" \
+              --body-file "$RUNNER_TEMP/release-pr-body.md"
+          fi
