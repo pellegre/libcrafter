@@ -525,6 +525,11 @@ impl Packet {
         self
     }
 
+    pub(crate) fn push_raw_mut(&mut self, layer: Raw) -> &mut Self {
+        self.layers.push(PacketLayer::Raw(layer));
+        self
+    }
+
     pub(crate) fn push_ethernet(mut self, layer: Ethernet) -> Self {
         self.layers.push(PacketLayer::Ethernet(layer));
         self
@@ -550,6 +555,11 @@ impl Packet {
         self
     }
 
+    pub(crate) fn push_ipv4_mut(&mut self, layer: Ipv4) -> &mut Self {
+        self.layers.push(PacketLayer::Ipv4(layer));
+        self
+    }
+
     pub(crate) fn push_ipv6(mut self, layer: Ipv6) -> Self {
         self.layers.push(PacketLayer::Ipv6(layer));
         self
@@ -565,12 +575,12 @@ impl Packet {
         self
     }
 
-    pub(crate) fn push_icmpv4(mut self, layer: Icmpv4) -> Self {
+    pub(crate) fn push_icmpv4_mut(&mut self, layer: Icmpv4) -> &mut Self {
         self.layers.push(PacketLayer::Icmpv4(layer));
         self
     }
 
-    pub(crate) fn push_icmpv4_quoted_ip(mut self, layer: Icmpv4QuotedIp) -> Self {
+    pub(crate) fn push_icmpv4_quoted_ip_mut(&mut self, layer: Icmpv4QuotedIp) -> &mut Self {
         self.layers.push(PacketLayer::Icmpv4QuotedIp(layer));
         self
     }

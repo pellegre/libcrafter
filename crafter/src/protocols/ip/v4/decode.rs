@@ -275,7 +275,8 @@ pub(crate) fn decode_quoted_ipv4(bytes: &[u8], validate_checksum: bool) -> Optio
         (_, true) => 3,
         _ => 2,
     };
-    let mut packet = Packet::with_capacity(packet_capacity).push_ipv4(ipv4);
+    let mut packet = Packet::with_capacity(packet_capacity);
+    packet.push_ipv4_mut(ipv4);
 
     // Best-effort typed transport decode. A strict failure (truncated quote or
     // unknown next protocol) keeps the remaining bytes raw-compatible. A
@@ -283,7 +284,7 @@ pub(crate) fn decode_quoted_ipv4(bytes: &[u8], validate_checksum: bool) -> Optio
     // application-layer decoder (DNS, DHCP) and discards the typed L4 header.
     if fragment_offset != 0 {
         if !payload.is_empty() {
-            packet = packet.push_raw(Raw::from_bytes(payload));
+            packet.push_raw_mut(Raw::from_bytes(payload));
         }
     } else if payload.is_empty() {
         // No quoted transport bytes to type.
@@ -300,7 +301,7 @@ pub(crate) fn decode_quoted_ipv4(bytes: &[u8], validate_checksum: bool) -> Optio
             }
         };
     } else {
-        packet = packet.push_raw(Raw::from_bytes(payload));
+        packet.push_raw_mut(Raw::from_bytes(payload));
     }
 
     Some((packet, consumed))
