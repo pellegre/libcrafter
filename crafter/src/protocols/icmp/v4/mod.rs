@@ -897,17 +897,6 @@ impl Icmpv4 {
             )
         })
     }
-
-    fn effective_checksum(&self, header: &[u8], payload: &[u8]) -> u16 {
-        if let Some(checksum) = self.checksum.value().copied() {
-            return checksum;
-        }
-
-        let mut segment = Vec::with_capacity(header.len() + payload.len());
-        segment.extend_from_slice(header);
-        segment.extend_from_slice(payload);
-        internet_checksum(&segment)
-    }
 }
 
 impl Default for Icmpv4 {
@@ -1059,17 +1048,23 @@ impl Layer for Icmpv4 {
     }
 
     fn compile(&self, ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
-        let payload = payload_bytes_after(*ctx)?;
-        let mut header = Vec::with_capacity(ICMP_HEADER_LEN);
-        header.push(self.icmp_type_value());
-        header.push(self.code_value());
-        header.extend_from_slice(&0u16.to_be_bytes());
-        header.extend_from_slice(&self.effective_rest_of_header(Some(*ctx), 4)?);
+        let rest_of_header = self.effective_rest_of_header(Some(*ctx), 4)?;
+        let start = out.len();
+        out.push(self.icmp_type_value());
+        out.push(self.code_value());
+        out.extend_from_slice(&0u16.to_be_bytes());
+        out.extend_from_slice(&rest_of_header);
 
-        let checksum = self.effective_checksum(&header, &payload);
-        header[2..4].copy_from_slice(&checksum.to_be_bytes());
-        out.extend_from_slice(&header);
-        out.extend_from_slice(&payload);
+        if let Err(err) = compile_payload_after_into(*ctx, out) {
+            out.truncate(start);
+            return Err(err);
+        }
+        let checksum = self
+            .checksum
+            .value()
+            .copied()
+            .unwrap_or_else(|| internet_checksum(&out[start..]));
+        out[start + 2..start + 4].copy_from_slice(&checksum.to_be_bytes());
         Ok(())
     }
 
