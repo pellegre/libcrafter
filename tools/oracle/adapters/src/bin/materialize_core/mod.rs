@@ -1,9 +1,8 @@
 // Shared packet/DNS materializer used by BOTH the `materialize_plans` bin (the
 // offline oracle vector generator) and the `live_endpoint` bin (the on-endpoint
-// live sender/receiver), included into each via `#[path] mod materialize_core`.
-// One source of truth prevents the live endpoint from drifting behind the
-// offline materializer. Some items are used by only one bin, so dead code is
-// allowed module-wide.
+// live sender/receiver). One source of truth prevents the live endpoint from
+// drifting behind the offline materializer. Some items are used by only one bin,
+// so dead code is allowed module-wide.
 #![allow(dead_code)]
 
 use crafter::prelude::*;

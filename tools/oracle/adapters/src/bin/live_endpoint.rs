@@ -21,7 +21,6 @@ use std::time::{Duration, Instant};
 // Shared packet/DNS materializer — the exact code the offline `materialize_plans`
 // bin uses — so the live endpoint builds packets identically and never drifts
 // behind the offline materializer.
-#[path = "../materialize_core.rs"]
 mod materialize_core;
 
 type ExampleResult<T> = std::result::Result<T, Box<dyn Error>>;
