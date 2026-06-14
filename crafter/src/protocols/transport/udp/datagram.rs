@@ -1,4 +1,3 @@
-use crate::endian::read_u16_be;
 use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::packet::{Layer, LayerContext, Packet, Raw, TransportChecksumContext};
@@ -295,9 +294,11 @@ pub(crate) fn append_udp_packet_with_registry(
     let destination_port = udp.destination_port_value();
     let udp_length = udp.length_value().unwrap_or(UDP_HEADER_LEN as u16) as usize;
     let udp_checksum = udp.checksum_value().unwrap_or(0);
-    udp.checksum_status = decoded_udp_checksum_status(&packet, bytes, udp_length, udp_checksum);
+    if registry.validates_checksums() {
+        udp.checksum_status = decoded_udp_checksum_status(&packet, bytes, udp_length, udp_checksum);
+    }
     let surplus_offset = udp_decoded_surplus_offset_in_ip_datagram(&packet, udp_length);
-    packet = packet.push(udp);
+    packet = packet.push_udp(udp);
     if !user_payload.is_empty() {
         packet =
             registry.decode_udp_application(packet, source_port, destination_port, user_payload)?;
@@ -328,7 +329,7 @@ pub(super) fn decode_udp_parts(bytes: &[u8]) -> Result<DecodedUdpDatagram<'_>> {
         ));
     }
 
-    let length = read_u16_be(&bytes[4..6])? as usize;
+    let length = u16::from_be_bytes([bytes[4], bytes[5]]) as usize;
     if length < UDP_HEADER_LEN {
         return Err(CrafterError::invalid_field_value(
             "udp.length",
@@ -344,10 +345,10 @@ pub(super) fn decode_udp_parts(bytes: &[u8]) -> Result<DecodedUdpDatagram<'_>> {
     }
 
     let udp = Udp {
-        source_port: Field::user(read_u16_be(&bytes[0..2])?),
-        destination_port: Field::user(read_u16_be(&bytes[2..4])?),
+        source_port: Field::user(u16::from_be_bytes([bytes[0], bytes[1]])),
+        destination_port: Field::user(u16::from_be_bytes([bytes[2], bytes[3]])),
         length: Field::user(length as u16),
-        checksum: Field::user(read_u16_be(&bytes[6..8])?),
+        checksum: Field::user(u16::from_be_bytes([bytes[6], bytes[7]])),
         checksum_status: UdpChecksumStatus::NotChecked,
     };
 
