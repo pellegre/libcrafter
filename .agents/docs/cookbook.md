@@ -119,7 +119,7 @@ tools/oracle/run offline --profile ipv6-enrichment --seed 2 --count 20 --root l3
 ```
 
 For the user-facing IPv6 coverage boundary, see
-[`docs/ipv6.md`](../../docs/ipv6.md).
+[`docs/guide/ipv6.md`](../../docs/guide/ipv6.md).
 
 ## Build ARP
 
@@ -199,7 +199,7 @@ VirtualBox lab sessions with `link_layer_send` + `link_layer_capture`
 capability checks, protected confirmation, artifact collection, and teardown.
 When authorization or VM prerequisites are absent, plan with `--dry-run` and
 record a skip artifact rather than faking a live run. The user-facing coverage
-boundary lives in [`docs/arp-rfc-coverage.md`](../../docs/arp-rfc-coverage.md).
+boundary lives in [`docs/internal/manifests/arp-rfc-coverage.md`](../../docs/internal/manifests/arp-rfc-coverage.md).
 
 ## Build IPv6 Neighbor Discovery (NDP)
 
@@ -344,7 +344,7 @@ on endpoints without link-layer access. A real exchange needs
 `--confirm-live-run` plus a provisioned two-endpoint lab session; collect
 artifacts and tear the session down afterward (see Live-Lab Sending and the
 `lab-session` skill). The user-facing NDP/ICMPv6 coverage boundary lives in
-[`docs/icmpv6-coverage.md`](../../docs/icmpv6-coverage.md).
+[`docs/internal/manifests/icmpv6-coverage.md`](../../docs/internal/manifests/icmpv6-coverage.md).
 
 ## Build Dot11 Stacks
 
@@ -443,7 +443,7 @@ Live radiotap injection is a manual gate, not an automatic generated-tool path.
 The built-in sender can produce dry-run link-layer plans for `Radiotap / Dot11`,
 but current live radiotap transmission returns an unsupported-send error. Do
 not add a generated `--live` mode that assumes monitor-mode injection works.
-Use the manual gate in [`docs/dot11-live-manual.md`](../../docs/dot11-live-manual.md)
+Use the manual gate in [`docs/operations/dot11-live-manual.md`](../../docs/operations/dot11-live-manual.md)
 only after human authorization, isolated RF setup, dry-run byte review, artifact
 cleanup, and explicit live confirmation.
 
@@ -758,7 +758,7 @@ FRR RIB output beside the transcript. The smoke validates:
 Probe uses lab-backed endpoints for provider runs and tears down the scoped
 session, including on failure.
 
-For user-facing BGP coverage, see [`docs/bgp.md`](../../docs/bgp.md).
+For user-facing BGP coverage, see [`docs/guide/bgp.md`](../../docs/guide/bgp.md).
 
 ## Build IPSec (ESP, AH, IKEv2)
 
@@ -903,7 +903,7 @@ infrastructure, never raw from the developer host. Start with the probe dry-run
 above, then provision a controlled IPSec-capable peer through a `lab-session`
 (see Live-Lab Sending and the `lab-session` skill); collect artifacts and tear
 the session down afterward. For the user-facing coverage boundary, see
-[`docs/ipsec.md`](../../docs/ipsec.md).
+[`docs/guide/ipsec.md`](../../docs/guide/ipsec.md).
 
 ## Validate TCP: Dry-Run First, Provider Live Opt-In
 

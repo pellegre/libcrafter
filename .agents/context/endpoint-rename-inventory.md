@@ -111,7 +111,7 @@ Command-definition sites found:
 
 - `tools/endpoint/engine/cli.py`
 - `tools/endpoint/README.md`
-- `docs/wire.md`
+- `docs/reference/wire.md`
 - `.github/workflows/wire.yml`
 - `.agents/skills/endpoint-provider/SKILL.md`
 - `tools/lab/engine/wire_client.py`
@@ -161,10 +161,10 @@ Environment variable sites found:
 ## Docs
 
 Intended replacement: the current provider lifecycle guide becomes
-`docs/endpoint.md`; a later step can create a new `docs/wire.md` for
+`docs/operations/endpoint.md`; a later step can create a new `docs/reference/wire.md` for
 `crafter::wire` packet I/O.
 
-- `docs/wire.md` -> `docs/endpoint.md` for current provider lifecycle content
+- `docs/reference/wire.md` -> `docs/operations/endpoint.md` for current provider lifecycle content
 - references to `tools/endpoint` -> `tools/endpoint`
 - provider lifecycle wording uses "endpoint provider"
 - provider lifecycle resources use "endpoint" terminology
@@ -179,12 +179,12 @@ Doc files with lifecycle references:
 - `AGENTS.md`
 - `.github/SECURITY.md`
 - `.github/ISSUE_TEMPLATE/bug_report.yml`
-- `docs/wire.md`
-- `docs/lab.md`
-- `docs/probe.md`
-- `docs/validation.md`
-- `docs/examples.md`
-- `docs/api.md`
+- `docs/reference/wire.md`
+- `docs/operations/lab.md`
+- `docs/operations/probe.md`
+- `docs/operations/validation.md`
+- `docs/reference/examples.md`
+- `docs/reference/api.md`
 - `tools/lab/README.md`
 - `tools/oracle/README.md`
 - `tools/oracle/LIVE.md`

@@ -102,7 +102,7 @@ mod tcp {
         // RFC 9768 (Accurate ECN) assigns the 0x100 control bit to AE; the
         // older `NS` name (ECN-nonce, deprecated by RFC 8311) stays as a
         // compatibility alias for the same bit. Both names must compile and
-        // resolve to the same value. See docs/tcp-rfc-manifest.md.
+        // resolve to the same value. See docs/internal/manifests/tcp-rfc-manifest.md.
         assert_eq!(TCP_FLAG_AE, 0x100);
         assert_eq!(TCP_FLAG_NS, 0x100);
         assert_eq!(TCP_FLAG_AE, TCP_FLAG_NS);
@@ -115,7 +115,7 @@ mod tcp {
         // RFC 9768 assigns the 0x100 control bit to AE (Accurate ECN); the
         // older ECN-nonce `NS` name (deprecated by RFC 8311) remains a
         // compatibility alias for the same bit. Both names must resolve to the
-        // same value. See docs/tcp-rfc-manifest.md.
+        // same value. See docs/internal/manifests/tcp-rfc-manifest.md.
         assert_eq!(TCP_FLAG_AE, TCP_FLAG_NS);
 
         // A segment built with the current `AE` name must serialize to the same
@@ -155,7 +155,7 @@ mod tcp {
         // raw flag escape hatches `flags()` and `flag()`. They must compose with
         // raw flag control and must not disturb unrelated bits. Classic ECN
         // (CWR/ECE) is RFC 3168; the AE bit is RFC 9768. See
-        // docs/tcp-rfc-manifest.md.
+        // docs/internal/manifests/tcp-rfc-manifest.md.
 
         // Starting from a raw flag word, the ECN setters only touch their own
         // bit and preserve every explicitly-set raw flag (here SYN | ACK | URG).
@@ -1872,7 +1872,7 @@ mod mss_sizing_helpers {
         // path MTU, fragment, or reassemble (RFC 1191 / RFC 8201 / RFC 8899 are
         // guidance only; the caller supplies the path MTU). They size correct
         // TCP segments from manifest-backed constants
-        // (docs/tcp-rfc-manifest.md, "Segment Sizing And Fragmentation-Adjacent
+        // (docs/internal/manifests/tcp-rfc-manifest.md, "Segment Sizing And Fragmentation-Adjacent
         // Guidance").
 
         // --- TCP header length from option bytes (RFC 9293 section 3.1). ---
@@ -2735,7 +2735,7 @@ mod inspection_fields {
         //  - a concise classified option summary (registry names + kinds), and
         //  - current IANA flag names,
         // while still preserving the raw option bytes verbatim for exact
-        // inspection. See docs/tcp-rfc-manifest.md for the option/flag names.
+        // inspection. See docs/internal/manifests/tcp-rfc-manifest.md for the option/flag names.
         let tcp = segment_with_options();
         let fields = tcp.inspection_fields();
 
@@ -2827,8 +2827,8 @@ mod edo_compatibility {
     // compatibility: option kind 237 is draft-derived and is NOT a current IANA
     // Option-Kind assignment, so it classifies as Unassigned even though the
     // typed API is retained. The source-backed additive current path is RFC 6994
-    // experimental ExID support (step 17). See docs/tcp-rfc-manifest.md and
-    // docs/tcp-implementation-inventory.md. This test only exercises the existing
+    // experimental ExID support (step 17). See docs/internal/manifests/tcp-rfc-manifest.md and
+    // docs/internal/inventories/tcp-implementation-inventory.md. This test only exercises the existing
     // API; it must not require any new or redefined EDO symbol.
     #[test]
     fn tcp_edo_compatibility_public_api() {
