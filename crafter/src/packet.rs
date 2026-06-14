@@ -403,6 +403,57 @@ impl PacketLayer {
             Self::NeighborSolicitation(layer) => Box::new(layer),
         }
     }
+
+    fn encoded_len_with_context(&self, ctx: &LayerContext<'_>) -> usize {
+        match self {
+            Self::Boxed(layer) => layer.encoded_len_with_context(ctx),
+            Self::Raw(layer) => layer.encoded_len_with_context(ctx),
+            Self::Ethernet(layer) => layer.encoded_len_with_context(ctx),
+            Self::Vlan(layer) => layer.encoded_len_with_context(ctx),
+            Self::Arp(layer) => layer.encoded_len_with_context(ctx),
+            Self::Ipv4(layer) => layer.encoded_len_with_context(ctx),
+            Self::Ipv6(layer) => layer.encoded_len_with_context(ctx),
+            Self::Tcp(layer) => layer.encoded_len_with_context(ctx),
+            Self::Udp(layer) => layer.encoded_len_with_context(ctx),
+            Self::Icmpv4(layer) => layer.encoded_len_with_context(ctx),
+            Self::Icmpv6(layer) => layer.encoded_len_with_context(ctx),
+            Self::NeighborSolicitation(layer) => layer.encoded_len_with_context(ctx),
+        }
+    }
+
+    fn compile(&self, ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
+        match self {
+            Self::Boxed(layer) => layer.compile(ctx, out),
+            Self::Raw(layer) => layer.compile(ctx, out),
+            Self::Ethernet(layer) => layer.compile(ctx, out),
+            Self::Vlan(layer) => layer.compile(ctx, out),
+            Self::Arp(layer) => layer.compile(ctx, out),
+            Self::Ipv4(layer) => layer.compile(ctx, out),
+            Self::Ipv6(layer) => layer.compile(ctx, out),
+            Self::Tcp(layer) => layer.compile(ctx, out),
+            Self::Udp(layer) => layer.compile(ctx, out),
+            Self::Icmpv4(layer) => layer.compile(ctx, out),
+            Self::Icmpv6(layer) => layer.compile(ctx, out),
+            Self::NeighborSolicitation(layer) => layer.compile(ctx, out),
+        }
+    }
+
+    fn consumes_following(&self) -> bool {
+        match self {
+            Self::Boxed(layer) => layer.consumes_following(),
+            Self::Raw(layer) => layer.consumes_following(),
+            Self::Ethernet(layer) => layer.consumes_following(),
+            Self::Vlan(layer) => layer.consumes_following(),
+            Self::Arp(layer) => layer.consumes_following(),
+            Self::Ipv4(layer) => layer.consumes_following(),
+            Self::Ipv6(layer) => layer.consumes_following(),
+            Self::Tcp(layer) => layer.consumes_following(),
+            Self::Udp(layer) => layer.consumes_following(),
+            Self::Icmpv4(layer) => layer.consumes_following(),
+            Self::Icmpv6(layer) => layer.consumes_following(),
+            Self::NeighborSolicitation(layer) => layer.consumes_following(),
+        }
+    }
 }
 
 /// Ordered stack of packet layers.
@@ -563,7 +614,6 @@ impl Packet {
     pub fn encoded_len(&self) -> usize {
         let mut total = 0;
         for (index, layer) in self.layers.iter().enumerate() {
-            let layer = layer.as_layer();
             let ctx = LayerContext::new(self, index);
             total += layer.encoded_len_with_context(&ctx);
             // An encapsulating layer accounts for the following layers inside its
@@ -645,7 +695,6 @@ impl Packet {
     /// Append compiled bytes into an existing buffer.
     pub fn compile_into(&self, out: &mut Vec<u8>) -> Result<()> {
         for (index, layer) in self.layers.iter().enumerate() {
-            let layer = layer.as_layer();
             let ctx = LayerContext::new(self, index);
             layer.compile(&ctx, out)?;
             // An encapsulating layer (e.g. ESP) emits all following layers inside
