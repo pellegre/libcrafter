@@ -696,7 +696,7 @@ pub(crate) fn decode_ethernet_with_registry(
         _ => 4,
     };
     registry.decode_ethertype(
-        Packet::with_capacity(packet_capacity).push(ethernet),
+        Packet::with_capacity(packet_capacity).push_ethernet(ethernet),
         ethertype,
         &bytes[ETHERNET_HEADER_LEN..],
     )
@@ -766,7 +766,7 @@ pub(crate) fn decode_null_loopback_with_registry(
         }
     }
 
-    packet = packet.push(Raw::from_bytes(payload));
+    packet = packet.push_raw(Raw::from_bytes(payload));
     Ok(packet)
 }
 
@@ -778,7 +778,7 @@ pub(crate) fn append_vlan_packet_with_registry(
 ) -> Result<Packet> {
     let (vlan, rest) = decode_vlan(payload)?;
     let inner = vlan.ethertype_value();
-    registry.decode_ethertype(packet.push(vlan), inner, rest)
+    registry.decode_ethertype(packet.push_vlan(vlan), inner, rest)
 }
 
 fn decode_vlan(bytes: &[u8]) -> Result<(Vlan, &[u8])> {

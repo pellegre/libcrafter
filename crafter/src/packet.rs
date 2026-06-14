@@ -7,6 +7,10 @@ use core::ops::Div;
 
 use crate::checksum::{ipv4_pseudo_header_checksum, ipv6_pseudo_header_checksum};
 use crate::error::Result;
+use crate::protocols::icmp::{Icmpv4, Icmpv6, NeighborSolicitation};
+use crate::protocols::ip::{v4::Ipv4, v6::Ipv6};
+use crate::protocols::link::{Arp, Ethernet, Vlan};
+use crate::protocols::transport::{Tcp, Udp};
 use crate::registry::ProtocolRegistry;
 
 /// Pseudo-header context used by transport layers when auto-filling checksums.
@@ -332,10 +336,79 @@ impl From<String> for Raw {
     }
 }
 
+#[derive(Debug, Clone)]
+enum PacketLayer {
+    Boxed(Box<dyn Layer>),
+    Raw(Raw),
+    Ethernet(Ethernet),
+    Vlan(Vlan),
+    Arp(Arp),
+    Ipv4(Ipv4),
+    Ipv6(Ipv6),
+    Tcp(Tcp),
+    Udp(Udp),
+    Icmpv4(Icmpv4),
+    Icmpv6(Icmpv6),
+    NeighborSolicitation(NeighborSolicitation),
+}
+
+impl PacketLayer {
+    fn as_layer(&self) -> &dyn Layer {
+        match self {
+            Self::Boxed(layer) => layer.as_ref(),
+            Self::Raw(layer) => layer,
+            Self::Ethernet(layer) => layer,
+            Self::Vlan(layer) => layer,
+            Self::Arp(layer) => layer,
+            Self::Ipv4(layer) => layer,
+            Self::Ipv6(layer) => layer,
+            Self::Tcp(layer) => layer,
+            Self::Udp(layer) => layer,
+            Self::Icmpv4(layer) => layer,
+            Self::Icmpv6(layer) => layer,
+            Self::NeighborSolicitation(layer) => layer,
+        }
+    }
+
+    fn as_layer_mut(&mut self) -> &mut dyn Layer {
+        match self {
+            Self::Boxed(layer) => layer.as_mut(),
+            Self::Raw(layer) => layer,
+            Self::Ethernet(layer) => layer,
+            Self::Vlan(layer) => layer,
+            Self::Arp(layer) => layer,
+            Self::Ipv4(layer) => layer,
+            Self::Ipv6(layer) => layer,
+            Self::Tcp(layer) => layer,
+            Self::Udp(layer) => layer,
+            Self::Icmpv4(layer) => layer,
+            Self::Icmpv6(layer) => layer,
+            Self::NeighborSolicitation(layer) => layer,
+        }
+    }
+
+    fn into_box(self) -> Box<dyn Layer> {
+        match self {
+            Self::Boxed(layer) => layer,
+            Self::Raw(layer) => Box::new(layer),
+            Self::Ethernet(layer) => Box::new(layer),
+            Self::Vlan(layer) => Box::new(layer),
+            Self::Arp(layer) => Box::new(layer),
+            Self::Ipv4(layer) => Box::new(layer),
+            Self::Ipv6(layer) => Box::new(layer),
+            Self::Tcp(layer) => Box::new(layer),
+            Self::Udp(layer) => Box::new(layer),
+            Self::Icmpv4(layer) => Box::new(layer),
+            Self::Icmpv6(layer) => Box::new(layer),
+            Self::NeighborSolicitation(layer) => Box::new(layer),
+        }
+    }
+}
+
 /// Ordered stack of packet layers.
 #[derive(Debug, Clone, Default)]
 pub struct Packet {
-    layers: Vec<Box<dyn Layer>>,
+    layers: Vec<PacketLayer>,
 }
 
 impl Packet {
@@ -364,13 +437,13 @@ impl Packet {
     where
         L: Layer,
     {
-        self.layers.push(Box::new(layer));
+        self.layers.push(PacketLayer::Boxed(Box::new(layer)));
         self
     }
 
     /// Append a boxed layer and return the packet for builder chaining.
     pub fn push_box(mut self, layer: Box<dyn Layer>) -> Self {
-        self.layers.push(layer);
+        self.layers.push(PacketLayer::Boxed(layer));
         self
     }
 
@@ -379,13 +452,68 @@ impl Packet {
     where
         L: Layer,
     {
-        self.layers.push(Box::new(layer));
+        self.layers.push(PacketLayer::Boxed(Box::new(layer)));
         self
     }
 
     /// Mutably append a boxed layer.
     pub fn push_box_mut(&mut self, layer: Box<dyn Layer>) -> &mut Self {
-        self.layers.push(layer);
+        self.layers.push(PacketLayer::Boxed(layer));
+        self
+    }
+
+    pub(crate) fn push_raw(mut self, layer: Raw) -> Self {
+        self.layers.push(PacketLayer::Raw(layer));
+        self
+    }
+
+    pub(crate) fn push_ethernet(mut self, layer: Ethernet) -> Self {
+        self.layers.push(PacketLayer::Ethernet(layer));
+        self
+    }
+
+    pub(crate) fn push_vlan(mut self, layer: Vlan) -> Self {
+        self.layers.push(PacketLayer::Vlan(layer));
+        self
+    }
+
+    pub(crate) fn push_arp_mut(&mut self, layer: Arp) -> &mut Self {
+        self.layers.push(PacketLayer::Arp(layer));
+        self
+    }
+
+    pub(crate) fn push_ipv4(mut self, layer: Ipv4) -> Self {
+        self.layers.push(PacketLayer::Ipv4(layer));
+        self
+    }
+
+    pub(crate) fn push_ipv6(mut self, layer: Ipv6) -> Self {
+        self.layers.push(PacketLayer::Ipv6(layer));
+        self
+    }
+
+    pub(crate) fn push_tcp(mut self, layer: Tcp) -> Self {
+        self.layers.push(PacketLayer::Tcp(layer));
+        self
+    }
+
+    pub(crate) fn push_udp(mut self, layer: Udp) -> Self {
+        self.layers.push(PacketLayer::Udp(layer));
+        self
+    }
+
+    pub(crate) fn push_icmpv4(mut self, layer: Icmpv4) -> Self {
+        self.layers.push(PacketLayer::Icmpv4(layer));
+        self
+    }
+
+    pub(crate) fn push_icmpv6(mut self, layer: Icmpv6) -> Self {
+        self.layers.push(PacketLayer::Icmpv6(layer));
+        self
+    }
+
+    pub(crate) fn push_neighbor_solicitation(mut self, layer: NeighborSolicitation) -> Self {
+        self.layers.push(PacketLayer::NeighborSolicitation(layer));
         self
     }
 
@@ -403,7 +531,7 @@ impl Packet {
 
     /// Remove and return the final layer.
     pub fn pop(&mut self) -> Option<Box<dyn Layer>> {
-        self.layers.pop()
+        self.layers.pop().map(PacketLayer::into_box)
     }
 
     /// Remove and return the final layer when it has type `T`.
@@ -416,7 +544,7 @@ impl Packet {
             let any = layer.into_any();
             Some(*any.downcast::<T>().ok()?)
         } else {
-            self.layers.push(layer);
+            self.layers.push(PacketLayer::Boxed(layer));
             None
         }
     }
@@ -435,6 +563,7 @@ impl Packet {
     pub fn encoded_len(&self) -> usize {
         let mut total = 0;
         for (index, layer) in self.layers.iter().enumerate() {
+            let layer = layer.as_layer();
             let ctx = LayerContext::new(self, index);
             total += layer.encoded_len_with_context(&ctx);
             // An encapsulating layer accounts for the following layers inside its
@@ -448,12 +577,12 @@ impl Packet {
 
     /// Positional layer access.
     pub fn get(&self, index: usize) -> Option<&dyn Layer> {
-        self.layers.get(index).map(|layer| layer.as_ref())
+        self.layers.get(index).map(PacketLayer::as_layer)
     }
 
     /// Mutable positional layer access.
     pub fn get_mut(&mut self, index: usize) -> Option<&mut dyn Layer> {
-        self.layers.get_mut(index).map(|layer| layer.as_mut())
+        self.layers.get_mut(index).map(PacketLayer::as_layer_mut)
     }
 
     /// First layer of type `T`.
@@ -463,7 +592,7 @@ impl Packet {
     {
         self.layers
             .iter()
-            .find_map(|layer| layer.as_any().downcast_ref::<T>())
+            .find_map(|layer| layer.as_layer().as_any().downcast_ref::<T>())
     }
 
     /// First mutable layer of type `T`.
@@ -473,7 +602,7 @@ impl Packet {
     {
         self.layers
             .iter_mut()
-            .find_map(|layer| layer.as_any_mut().downcast_mut::<T>())
+            .find_map(|layer| layer.as_layer_mut().as_any_mut().downcast_mut::<T>())
     }
 
     /// All layers of type `T`, preserving packet order.
@@ -483,7 +612,7 @@ impl Packet {
     {
         self.layers
             .iter()
-            .filter_map(|layer| layer.as_any().downcast_ref::<T>())
+            .filter_map(|layer| layer.as_layer().as_any().downcast_ref::<T>())
     }
 
     /// All mutable layers of type `T`, preserving packet order.
@@ -493,17 +622,17 @@ impl Packet {
     {
         self.layers
             .iter_mut()
-            .filter_map(|layer| layer.as_any_mut().downcast_mut::<T>())
+            .filter_map(|layer| layer.as_layer_mut().as_any_mut().downcast_mut::<T>())
     }
 
     /// Ordered layer iteration.
     pub fn iter(&self) -> impl Iterator<Item = &dyn Layer> {
-        self.layers.iter().map(|layer| layer.as_ref())
+        self.layers.iter().map(PacketLayer::as_layer)
     }
 
     /// Ordered mutable layer iteration.
     pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut dyn Layer> {
-        self.layers.iter_mut().map(|layer| layer.as_mut())
+        self.layers.iter_mut().map(PacketLayer::as_layer_mut)
     }
 
     /// Compile the packet into deterministic bytes.
@@ -516,6 +645,7 @@ impl Packet {
     /// Append compiled bytes into an existing buffer.
     pub fn compile_into(&self, out: &mut Vec<u8>) -> Result<()> {
         for (index, layer) in self.layers.iter().enumerate() {
+            let layer = layer.as_layer();
             let ctx = LayerContext::new(self, index);
             layer.compile(&ctx, out)?;
             // An encapsulating layer (e.g. ESP) emits all following layers inside
@@ -568,7 +698,7 @@ impl Packet {
         } else {
             self.layers
                 .iter()
-                .map(|layer| layer.summary())
+                .map(|layer| layer.as_layer().summary())
                 .collect::<Vec<_>>()
                 .join(" / ")
         }
@@ -586,6 +716,7 @@ impl Packet {
             self.layers.len()
         );
         for (index, layer) in self.layers.iter().enumerate() {
+            let layer = layer.as_layer();
             output.push_str(&format!("\n  [{index}] {}", layer.name()));
             for (name, value) in layer.inspection_fields() {
                 output.push_str(&format!("\n      {name}: {value}"));

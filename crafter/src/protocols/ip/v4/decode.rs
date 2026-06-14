@@ -19,11 +19,22 @@ pub(crate) fn append_ipv4_packet_with_registry(
     packet: Packet,
     bytes: &[u8],
 ) -> Result<Packet> {
-    let (ipv4, payload, rest) = decode_ipv4_parts(bytes)?;
-    append_ipv4_payload_with_registry(registry, packet.push(ipv4), payload, rest)
+    let (ipv4, payload, rest) = decode_ipv4_parts(bytes, registry.validates_checksums())?;
+    let protocol = ipv4.protocol_value();
+    let fragment_offset = ipv4.fragment_offset_value();
+    let has_more_fragments = ipv4.has_more_fragments();
+    append_ipv4_payload_with_registry(
+        registry,
+        packet.push_ipv4(ipv4),
+        protocol,
+        fragment_offset,
+        has_more_fragments,
+        payload,
+        rest,
+    )
 }
 
-fn decode_ipv4_parts(bytes: &[u8]) -> Result<(Ipv4, &[u8], &[u8])> {
+fn decode_ipv4_parts(bytes: &[u8], validate_checksum: bool) -> Result<(Ipv4, &[u8], &[u8])> {
     if bytes.len() < IPV4_MIN_HEADER_LEN {
         return Err(CrafterError::buffer_too_short(
             "ipv4 header",
@@ -78,7 +89,11 @@ fn decode_ipv4_parts(bytes: &[u8]) -> Result<(Ipv4, &[u8], &[u8])> {
         Vec::new()
     };
     validate_ipv4_options(&options)?;
-    let checksum_status = decoded_ipv4_checksum_status(&bytes[..header_len]);
+    let checksum_status = if validate_checksum {
+        decoded_ipv4_checksum_status(&bytes[..header_len])
+    } else {
+        Ipv4ChecksumStatus::NotChecked
+    };
 
     let ipv4 = Ipv4 {
         version: Field::user(version),
@@ -107,25 +122,15 @@ fn decode_ipv4_parts(bytes: &[u8]) -> Result<(Ipv4, &[u8], &[u8])> {
 fn append_ipv4_payload_with_registry(
     registry: &ProtocolRegistry,
     mut packet: Packet,
+    protocol: u8,
+    fragment_offset: u16,
+    has_more_fragments: bool,
     payload: &[u8],
     rest: &[u8],
 ) -> Result<Packet> {
-    let protocol = packet
-        .layer::<Ipv4>()
-        .map(Ipv4::protocol_value)
-        .unwrap_or_default();
-    let fragment_offset = packet
-        .layer::<Ipv4>()
-        .map(Ipv4::fragment_offset_value)
-        .unwrap_or_default();
-    let has_more_fragments = packet
-        .layer::<Ipv4>()
-        .map(Ipv4::has_more_fragments)
-        .unwrap_or_default();
-
     if fragment_offset != 0 {
         if !payload.is_empty() {
-            packet = packet.push(Raw::from_bytes(payload));
+            packet = packet.push_raw(Raw::from_bytes(payload));
         }
     } else if has_more_fragments {
         packet = match registry.decode_ipv4_protocol(packet.clone(), protocol, payload) {
@@ -134,7 +139,7 @@ fn append_ipv4_payload_with_registry(
                 if payload.is_empty() {
                     packet
                 } else {
-                    packet.push(Raw::from_bytes(payload))
+                    packet.push_raw(Raw::from_bytes(payload))
                 }
             }
         };
@@ -143,7 +148,7 @@ fn append_ipv4_payload_with_registry(
     }
 
     if !rest.is_empty() {
-        packet = packet.push(Raw::from_bytes(rest));
+        packet = packet.push_raw(Raw::from_bytes(rest));
     }
 
     Ok(packet)
@@ -238,7 +243,7 @@ pub(crate) fn decode_quoted_ipv4(bytes: &[u8]) -> Option<(Packet, usize)> {
     let protocol = ipv4.protocol_value();
     let fragment_offset = ipv4.fragment_offset_value();
     let payload = &datagram[header_len..];
-    let mut packet = Packet::with_capacity(3).push(ipv4);
+    let mut packet = Packet::with_capacity(3).push_ipv4(ipv4);
 
     // Best-effort typed transport decode. A strict failure (truncated quote or
     // unknown next protocol) keeps the remaining bytes raw-compatible. A
@@ -246,7 +251,7 @@ pub(crate) fn decode_quoted_ipv4(bytes: &[u8]) -> Option<(Packet, usize)> {
     // application-layer decoder (DNS, DHCP) and discards the typed L4 header.
     if fragment_offset != 0 {
         if !payload.is_empty() {
-            packet = packet.push(Raw::from_bytes(payload));
+            packet = packet.push_raw(Raw::from_bytes(payload));
         }
     } else {
         let registry = ProtocolRegistry::transport_only_builtin();
@@ -256,7 +261,7 @@ pub(crate) fn decode_quoted_ipv4(bytes: &[u8]) -> Option<(Packet, usize)> {
                 if payload.is_empty() {
                     packet
                 } else {
-                    packet.push(Raw::from_bytes(payload))
+                    packet.push_raw(Raw::from_bytes(payload))
                 }
             }
         };

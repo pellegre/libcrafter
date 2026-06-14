@@ -36,7 +36,8 @@ pub(crate) fn append_ipv6_packet_with_registry(
     bytes: &[u8],
 ) -> Result<Packet> {
     let (ipv6, payload, rest) = decode_ipv6_parts(bytes)?;
-    append_ipv6_payload_with_registry(registry, packet.push(ipv6), payload, rest)
+    let next_header = ipv6.next_header_value();
+    append_ipv6_payload_with_registry(registry, packet.push_ipv6(ipv6), next_header, payload, rest)
 }
 
 fn decode_ipv6_parts(bytes: &[u8]) -> Result<(Ipv6, &[u8], &[u8])> {
@@ -48,7 +49,7 @@ fn decode_ipv6_parts(bytes: &[u8]) -> Result<(Ipv6, &[u8], &[u8])> {
         ));
     }
 
-    let version_class_flow = read_u32_be(&bytes[0..4])?;
+    let version_class_flow = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
     let version = (version_class_flow >> 28) as u8;
     if version != 6 {
         return Err(CrafterError::invalid_field_value(
@@ -57,7 +58,7 @@ fn decode_ipv6_parts(bytes: &[u8]) -> Result<(Ipv6, &[u8], &[u8])> {
         ));
     }
 
-    let payload_length = read_u16_be(&bytes[4..6])? as usize;
+    let payload_length = u16::from_be_bytes([bytes[4], bytes[5]]) as usize;
     let total_length = IPV6_HEADER_LEN + payload_length;
     if bytes.len() < total_length {
         return Err(CrafterError::buffer_too_short(
@@ -88,18 +89,14 @@ fn decode_ipv6_parts(bytes: &[u8]) -> Result<(Ipv6, &[u8], &[u8])> {
 fn append_ipv6_payload_with_registry(
     registry: &ProtocolRegistry,
     mut packet: Packet,
+    next_header: u8,
     payload: &[u8],
     rest: &[u8],
 ) -> Result<Packet> {
-    let next_header = packet
-        .layer::<Ipv6>()
-        .map(Ipv6::next_header_value)
-        .unwrap_or_default();
-
     packet = append_ipv6_next_with_registry(registry, packet, next_header, payload)?;
 
     if !rest.is_empty() {
-        packet = packet.push(Raw::from_bytes(rest));
+        packet = packet.push_raw(Raw::from_bytes(rest));
     }
 
     Ok(packet)
@@ -142,7 +139,7 @@ fn append_ipv6_next_with_registry(
                 packet = packet.push(fragment);
                 if is_non_initial_fragment {
                     if !remaining.is_empty() {
-                        packet = packet.push(Raw::from_bytes(remaining));
+                        packet = packet.push_raw(Raw::from_bytes(remaining));
                     }
                     return Ok(packet);
                 }

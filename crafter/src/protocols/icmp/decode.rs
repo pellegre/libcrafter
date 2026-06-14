@@ -30,7 +30,7 @@ pub(crate) fn append_icmp_packet(mut packet: Packet, bytes: &[u8]) -> Result<Pac
     } else {
         0
     };
-    packet = packet.push(icmp);
+    packet = packet.push_icmpv4(icmp);
 
     if payload.is_empty() {
         return Ok(packet);
@@ -59,7 +59,7 @@ pub(crate) fn append_icmp_packet(mut packet: Packet, bytes: &[u8]) -> Result<Pac
                     }
                 }
                 None => {
-                    packet = packet.push(Raw::from_bytes(trailing));
+                    packet = packet.push_raw(Raw::from_bytes(trailing));
                 }
             }
             return Ok(packet);
@@ -138,7 +138,7 @@ pub(crate) fn append_icmp_packet(mut packet: Packet, bytes: &[u8]) -> Result<Pac
         return Ok(packet);
     }
 
-    packet = packet.push(Raw::from_bytes(payload));
+    packet = packet.push_raw(Raw::from_bytes(payload));
     Ok(packet)
 }
 
