@@ -1,6 +1,5 @@
 //! TCP header splitting and registry-driven segment decode.
 
-use crate::endian::{read_u16_be, read_u32_be};
 use crate::error::{CrafterError, Result};
 use crate::packet::Packet;
 use crate::registry::ProtocolRegistry;
@@ -18,7 +17,7 @@ pub(crate) fn append_tcp_packet_with_registry(
     let (tcp, payload) = decode_tcp_parts(bytes)?;
     let source_port = tcp.source_port_value();
     let destination_port = tcp.destination_port_value();
-    packet = packet.push(tcp);
+    packet = packet.push_tcp(tcp);
     if !payload.is_empty() {
         packet = registry.decode_tcp_application(packet, source_port, destination_port, payload)?;
     }
@@ -54,16 +53,16 @@ fn decode_tcp_parts(bytes: &[u8]) -> Result<(Tcp, &[u8])> {
 
     let flags = (((bytes[12] & 1) as u16) << 8) | bytes[13] as u16;
     let tcp = Tcp::from_decoded_parts(
-        read_u16_be(&bytes[0..2])?,
-        read_u16_be(&bytes[2..4])?,
-        read_u32_be(&bytes[4..8])?,
-        read_u32_be(&bytes[8..12])?,
+        u16::from_be_bytes([bytes[0], bytes[1]]),
+        u16::from_be_bytes([bytes[2], bytes[3]]),
+        u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]),
+        u32::from_be_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]),
         data_offset,
         (bytes[12] >> 1) & TCP_MAX_RESERVED,
         flags,
-        read_u16_be(&bytes[14..16])?,
-        read_u16_be(&bytes[16..18])?,
-        read_u16_be(&bytes[18..20])?,
+        u16::from_be_bytes([bytes[14], bytes[15]]),
+        u16::from_be_bytes([bytes[16], bytes[17]]),
+        u16::from_be_bytes([bytes[18], bytes[19]]),
         bytes[TCP_MIN_HEADER_LEN..header_len].to_vec(),
     );
 

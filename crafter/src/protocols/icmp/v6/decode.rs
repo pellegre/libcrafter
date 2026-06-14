@@ -112,7 +112,7 @@ fn decode_icmpv6_parts(bytes: &[u8]) -> Result<(Icmpv6, &[u8])> {
 pub(crate) fn append_icmpv6_packet(mut packet: Packet, bytes: &[u8]) -> Result<Packet> {
     let (icmpv6, payload) = decode_icmpv6_parts(bytes)?;
     let icmp_type = icmpv6.icmp_type_value();
-    packet = packet.push(icmpv6);
+    packet = packet.push_icmpv6(icmpv6);
 
     // RFC 3810/9777 section 5.1 MLDv2 Query: a type-130 message reuses the MLDv1
     // Query type byte but carries a longer body — the 16-byte Multicast Address
@@ -194,7 +194,7 @@ pub(crate) fn append_icmpv6_packet(mut packet: Packet, bytes: &[u8]) -> Result<P
     // `Raw` payload (no panic, nothing dropped).
     if icmp_type == ICMPV6_NEIGHBOR_SOLICITATION {
         if let Ok(ns) = decode_neighbor_solicitation(payload) {
-            return Ok(packet.push(ns));
+            return Ok(packet.push_neighbor_solicitation(ns));
         }
     }
 
@@ -261,7 +261,7 @@ pub(crate) fn append_icmpv6_packet(mut packet: Packet, bytes: &[u8]) -> Result<P
     // per-message decoder above returns an error (never a panic) on a bad body and
     // the dispatch falls through to here.
     if !payload.is_empty() {
-        packet = packet.push(Raw::from_bytes(payload));
+        packet = packet.push_raw(Raw::from_bytes(payload));
     }
     Ok(packet)
 }

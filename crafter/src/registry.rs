@@ -137,6 +137,7 @@ pub struct ProtocolRegistry {
     builtin_udp_application_dispatch: bool,
     tcp_bindings: Vec<TcpBinding>,
     security_associations: Vec<SecurityAssociation>,
+    validate_checksums: bool,
 }
 
 impl ProtocolRegistry {
@@ -171,6 +172,7 @@ impl ProtocolRegistry {
             builtin_udp_application_dispatch: false,
             tcp_bindings: Vec::new(),
             security_associations: Vec::new(),
+            validate_checksums: true,
         }
     }
 
@@ -358,6 +360,29 @@ impl ProtocolRegistry {
         });
 
         registry
+    }
+
+    /// Enable or disable decode-time checksum validation for this registry.
+    ///
+    /// The default registry validates inspectable checksums while decoding, so
+    /// decoded IPv4 and UDP layers report `Valid` or `Invalid` when enough
+    /// context is present. Benchmark and header-classification workflows can
+    /// opt out when they need to compare only parsing/materialization cost
+    /// against decoders that do not validate checksums during parse.
+    #[must_use]
+    pub fn checksum_validation(mut self, enabled: bool) -> Self {
+        self.validate_checksums = enabled;
+        self
+    }
+
+    /// Mutably enable or disable decode-time checksum validation.
+    pub fn set_checksum_validation(&mut self, enabled: bool) -> &mut Self {
+        self.validate_checksums = enabled;
+        self
+    }
+
+    pub(crate) const fn validates_checksums(&self) -> bool {
+        self.validate_checksums
     }
 
     /// Decode bytes from a link-layer entrypoint.
@@ -573,7 +598,7 @@ impl ProtocolRegistry {
                 ETHERTYPE_IPV4 => append_ipv4_packet_with_registry(self, packet, payload),
                 ETHERTYPE_IPV6 => append_ipv6_packet_with_registry(self, packet, payload),
                 ETHERTYPE_EAPOL => append_eapol_packet(packet, payload),
-                _ => Ok(packet.push(Raw::from_bytes(payload))),
+                _ => Ok(packet.push_raw(Raw::from_bytes(payload))),
             };
         }
 
@@ -586,7 +611,7 @@ impl ProtocolRegistry {
         {
             return (binding.decoder)(self, packet, payload);
         }
-        Ok(packet.push(Raw::from_bytes(payload)))
+        Ok(packet.push_raw(Raw::from_bytes(payload)))
     }
 
     pub(crate) fn decode_ipv4_protocol(
@@ -902,7 +927,7 @@ fn append_raw_if_needed(packet: Packet, payload: &[u8]) -> Result<Packet> {
     if payload.is_empty() {
         Ok(packet)
     } else {
-        Ok(packet.push(Raw::from_bytes(payload)))
+        Ok(packet.push_raw(Raw::from_bytes(payload)))
     }
 }
 
@@ -958,7 +983,7 @@ fn decode_ah_with_registry_sa(
 #[cfg(test)]
 mod protocol_registry {
     use super::ProtocolRegistry;
-    use crate::{Ipv4, NetworkLayer, Packet, Raw};
+    use crate::{Ipv4, Ipv4ChecksumStatus, NetworkLayer, Packet, Raw, Udp, UdpChecksumStatus};
 
     #[test]
     fn custom_ipv4_protocol_binding_decodes_without_global_state() {
@@ -1001,6 +1026,35 @@ mod protocol_registry {
         assert!(custom.layer::<crate::Dns>().is_none());
         assert!(custom.layer::<Raw>().is_some());
         assert!(builtin.layer::<crate::Dns>().is_some());
+    }
+
+    #[test]
+    fn registry_can_skip_decode_checksum_validation() {
+        let bytes = (Ipv4::new() / Udp::new().sport(53001).dport(9000) / Raw::from("payload"))
+            .compile()
+            .unwrap();
+        let registry = ProtocolRegistry::new().checksum_validation(false);
+
+        let decoded = registry
+            .decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes())
+            .unwrap();
+
+        assert_eq!(
+            decoded.layer::<Ipv4>().unwrap().checksum_status(),
+            Ipv4ChecksumStatus::NotChecked
+        );
+        assert_eq!(
+            decoded.layer::<Udp>().unwrap().checksum_status(),
+            UdpChecksumStatus::NotChecked
+        );
+        assert_eq!(
+            Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes())
+                .unwrap()
+                .layer::<Udp>()
+                .unwrap()
+                .checksum_status(),
+            UdpChecksumStatus::Valid
+        );
     }
 }
 

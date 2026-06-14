@@ -9,7 +9,7 @@ use super::layer::Arp;
 /// Append a decoded ARP packet to an existing packet stack.
 pub(crate) fn append_arp_packet(mut packet: Packet, payload: &[u8]) -> Result<Packet> {
     let (arp, rest) = decode_arp(payload)?;
-    packet.push_mut(arp);
+    packet.push_arp_mut(arp);
     if !rest.is_empty() {
         packet.push_mut(Raw::from_bytes(rest));
     }
