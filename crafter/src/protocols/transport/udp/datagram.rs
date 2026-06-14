@@ -292,13 +292,13 @@ pub(crate) fn append_udp_packet_with_registry(
     let decoded = decode_udp_parts(bytes)?;
     let DecodedUdpDatagram {
         mut udp,
+        source_port,
+        destination_port,
+        udp_length,
+        udp_checksum,
         user_payload,
         surplus,
     } = decoded;
-    let source_port = udp.source_port_value();
-    let destination_port = udp.destination_port_value();
-    let udp_length = udp.length_value().unwrap_or(UDP_HEADER_LEN as u16) as usize;
-    let udp_checksum = udp.checksum_value().unwrap_or(0);
     if registry.validates_checksums() {
         udp.checksum_status = decoded_udp_checksum_status(&packet, bytes, udp_length, udp_checksum);
     }
@@ -321,6 +321,10 @@ pub(crate) fn append_udp_packet_with_registry(
 
 pub(super) struct DecodedUdpDatagram<'a> {
     pub(super) udp: Udp,
+    pub(super) source_port: u16,
+    pub(super) destination_port: u16,
+    pub(super) udp_length: usize,
+    pub(super) udp_checksum: u16,
     pub(super) user_payload: &'a [u8],
     pub(super) surplus: &'a [u8],
 }
@@ -349,16 +353,23 @@ pub(super) fn decode_udp_parts(bytes: &[u8]) -> Result<DecodedUdpDatagram<'_>> {
         ));
     }
 
+    let source_port = u16::from_be_bytes([bytes[0], bytes[1]]);
+    let destination_port = u16::from_be_bytes([bytes[2], bytes[3]]);
+    let checksum = u16::from_be_bytes([bytes[6], bytes[7]]);
     let udp = Udp {
-        source_port: Field::user(u16::from_be_bytes([bytes[0], bytes[1]])),
-        destination_port: Field::user(u16::from_be_bytes([bytes[2], bytes[3]])),
+        source_port: Field::user(source_port),
+        destination_port: Field::user(destination_port),
         length: Field::user(length as u16),
-        checksum: Field::user(u16::from_be_bytes([bytes[6], bytes[7]])),
+        checksum: Field::user(checksum),
         checksum_status: UdpChecksumStatus::NotChecked,
     };
 
     Ok(DecodedUdpDatagram {
         udp,
+        source_port,
+        destination_port,
+        udp_length: length,
+        udp_checksum: checksum,
         user_payload: &bytes[UDP_HEADER_LEN..length],
         surplus: &bytes[length..],
     })
