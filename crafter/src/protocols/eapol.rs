@@ -1994,12 +1994,14 @@ mod tests {
 
     #[test]
     fn eapol_key_information_flag_boundaries_cover_each_source_backed_flag() {
-        let cases: &[(
-            &str,
+        type FlagCase = (
+            &'static str,
             u16,
             fn(EapolKeyInformation, bool) -> EapolKeyInformation,
             fn(&EapolKeyInformation) -> bool,
-        )] = &[
+        );
+
+        let cases: &[FlagCase] = &[
             (
                 "key_type",
                 EAPOL_KEY_INFO_KEY_TYPE,
@@ -2070,7 +2072,7 @@ mod tests {
             assert!(!getter(&cleared), "{name} getter observed a cleared bit");
             assert_eq!(
                 cleared.bits() & !mask,
-                u16::MAX & !mask,
+                !mask,
                 "{name} setter disturbed neighboring bits"
             );
         }

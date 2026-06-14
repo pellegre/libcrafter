@@ -4639,7 +4639,7 @@ fn scan_dot11_packet(label: &str, packet: &Packet, violations: &mut Vec<String>)
             ("bssid", dot11.bssid()),
         ] {
             if let Some(mac) = mac {
-                assert_allowed_dot11_mac(&label, None, mac, field, violations);
+                assert_allowed_dot11_mac(label, None, mac, field, violations);
             }
         }
 
@@ -4648,27 +4648,27 @@ fn scan_dot11_packet(label: &str, packet: &Packet, violations: &mut Vec<String>)
                 let ssid = std::str::from_utf8(tag.data()).unwrap_or_else(|_| {
                     add_dot11_violation(
                         violations,
-                        &label,
+                        label,
                         None,
                         "SSID tag contains non-UTF-8 bytes",
                     );
                     ""
                 });
-                assert_allowed_dot11_ssid(&label, None, ssid, violations);
+                assert_allowed_dot11_ssid(label, None, ssid, violations);
             }
         }
     }
 
     if let Some(ipv4) = packet.layer::<Ipv4>() {
         assert_allowed_dot11_ip(
-            &label,
+            label,
             None,
             IpAddr::V4(ipv4.source()),
             "IPv4 source",
             violations,
         );
         assert_allowed_dot11_ip(
-            &label,
+            label,
             None,
             IpAddr::V4(ipv4.destination()),
             "IPv4 destination",
@@ -4678,14 +4678,14 @@ fn scan_dot11_packet(label: &str, packet: &Packet, violations: &mut Vec<String>)
 
     if let Some(ipv6) = packet.layer::<Ipv6>() {
         assert_allowed_dot11_ip(
-            &label,
+            label,
             None,
             IpAddr::V6(ipv6.source()),
             "IPv6 source",
             violations,
         );
         assert_allowed_dot11_ip(
-            &label,
+            label,
             None,
             IpAddr::V6(ipv6.destination()),
             "IPv6 destination",
@@ -5938,7 +5938,7 @@ fn ipv6_fragment_emit_boundary_fixture_rows_decode_and_reconstruct() {
     let mut unsupported_extension_transform =
         IpFragment::with_config(IpFragmentConfig::new(72).ipv6_identification(0x5174_0001));
     let unsupported_extension_output = unsupported_extension_transform
-        .fragment_record(ipv6_unsupported_extension_emit_record(&vec![0u8; 96]))
+        .fragment_record(ipv6_unsupported_extension_emit_record(&[0u8; 96]))
         .unwrap();
     assert_eq!(
         unsupported_extension_output.len(),

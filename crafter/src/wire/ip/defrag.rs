@@ -398,11 +398,8 @@ impl IpDefrag {
         let keys = self
             .ipv4_datagrams
             .iter()
-            .filter_map(|(key, state)| {
-                state
-                    .exceeds_max_age(timestamp, max_age)
-                    .then(|| key.clone())
-            })
+            .filter(|(_, state)| state.exceeds_max_age(timestamp, max_age))
+            .map(|(key, _)| key.clone())
             .collect::<Vec<_>>();
 
         for key in keys {
@@ -430,11 +427,8 @@ impl IpDefrag {
         let keys = self
             .ipv6_datagrams
             .iter()
-            .filter_map(|(key, state)| {
-                state
-                    .exceeds_max_age(timestamp, max_age)
-                    .then(|| key.clone())
-            })
+            .filter(|(_, state)| state.exceeds_max_age(timestamp, max_age))
+            .map(|(key, _)| key.clone())
             .collect::<Vec<_>>();
 
         for key in keys {

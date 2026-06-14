@@ -594,7 +594,7 @@ fn udp_option_mds_encode_decode_fixed_length_and_display() {
 
     let udp_options = UdpOptions::from_bytes([UDP_OPTION_MDS, 4, 0x05, 0xdc]);
     assert_eq!(udp_options.status(), UdpOptionStatus::Valid);
-    assert_eq!(udp_options.options(), &[mds.clone()]);
+    assert_eq!(udp_options.options(), std::slice::from_ref(&mds));
     assert!(udp_options
         .inspection_fields()
         .iter()
@@ -642,7 +642,7 @@ fn udp_option_mrds_encode_decode_fixed_length_and_display() {
 
     let udp_options = UdpOptions::from_bytes([UDP_OPTION_MRDS, 5, 0x23, 0x28, 0x20]);
     assert_eq!(udp_options.status(), UdpOptionStatus::Valid);
-    assert_eq!(udp_options.options(), &[mrds.clone()]);
+    assert_eq!(udp_options.options(), std::slice::from_ref(&mrds));
     assert!(udp_options
         .inspection_fields()
         .iter()
@@ -693,7 +693,7 @@ fn udp_option_req_encode_decode_fixed_length_and_display() {
 
     let udp_options = UdpOptions::from_bytes([UDP_OPTION_REQ, 6, 0x01, 0x02, 0x03, 0x04]);
     assert_eq!(udp_options.status(), UdpOptionStatus::Valid);
-    assert_eq!(udp_options.options(), &[req.clone()]);
+    assert_eq!(udp_options.options(), std::slice::from_ref(&req));
     assert!(udp_options
         .inspection_fields()
         .iter()
@@ -747,7 +747,7 @@ fn udp_option_res_encode_decode_fixed_length_and_display() {
 
     let udp_options = UdpOptions::from_bytes([UDP_OPTION_RES, 6, 0x0a, 0x0b, 0x0c, 0x0d]);
     assert_eq!(udp_options.status(), UdpOptionStatus::Valid);
-    assert_eq!(udp_options.options(), &[res.clone()]);
+    assert_eq!(udp_options.options(), std::slice::from_ref(&res));
     assert!(udp_options
         .inspection_fields()
         .iter()
@@ -831,7 +831,7 @@ fn udp_option_time_encode_decode_fixed_length_and_display() {
         0x0d,
     ]);
     assert_eq!(udp_options.status(), UdpOptionStatus::Valid);
-    assert_eq!(udp_options.options(), &[time.clone()]);
+    assert_eq!(udp_options.options(), std::slice::from_ref(&time));
     assert!(udp_options.inspection_fields().iter().any(|(name, value)| {
         *name == "options" && value == "TIME(tsval=0x01020304,tsecr=0x0a0b0c0d)"
     }));
@@ -955,7 +955,7 @@ fn udp_option_exp_encode_decode_variable_length_and_display() {
     let udp_options =
         UdpOptions::from_bytes([UDP_OPTION_EXP, 8, 0xab, 0xcd, 0xde, 0xad, 0xbe, 0xef]);
     assert_eq!(udp_options.status(), UdpOptionStatus::Valid);
-    assert_eq!(udp_options.options(), &[non_empty.clone()]);
+    assert_eq!(udp_options.options(), std::slice::from_ref(&non_empty));
     assert!(udp_options.inspection_fields().iter().any(|(name, value)| {
         *name == "options" && value == "EXP(exid=0xabcd,data=de ad be ef,safety=SAFE)"
     }));
@@ -1039,7 +1039,7 @@ fn udp_option_uexp_encode_decode_variable_length_and_safety() {
 
     let udp_options = UdpOptions::from_bytes([UDP_OPTION_UEXP, 7, 0xca, 0xfe, 0x01, 0x02, 0x03]);
     assert_eq!(udp_options.status(), UdpOptionStatus::Valid);
-    assert_eq!(udp_options.options(), &[non_empty.clone()]);
+    assert_eq!(udp_options.options(), std::slice::from_ref(&non_empty));
     assert!(udp_options.inspection_fields().iter().any(|(name, value)| {
         *name == "options" && value == "UEXP(exid=0xcafe,data=01 02 03,safety=UNSAFE)"
     }));
@@ -1135,7 +1135,7 @@ fn udp_option_unknown_unsafe_roundtrips_and_reports_unsupported_metadata() {
 
     let udp_options = UdpOptions::from_bytes(encoded);
     assert_eq!(udp_options.status(), UdpOptionStatus::UnknownUnsafe);
-    assert_eq!(udp_options.options(), &[option.clone()]);
+    assert_eq!(udp_options.options(), std::slice::from_ref(&option));
     assert_eq!(udp_options.as_bytes(), &encoded);
     assert!(udp_options.summary().contains("status=UnknownUnsafe"));
     assert!(udp_options.summary().contains("UnassignedUnsafe"));
@@ -1182,7 +1182,7 @@ fn udp_option_frag_unsupported_preserves_valid_and_malformed_bytes() {
 
     let valid10 = UdpOptions::from_options(vec![frag10.clone()]).unwrap();
     assert_eq!(valid10.status(), UdpOptionStatus::UnsupportedFragmentation);
-    assert_eq!(valid10.options(), &[frag10.clone()]);
+    assert_eq!(valid10.options(), std::slice::from_ref(&frag10));
     assert_eq!(
         valid10.as_bytes(),
         &[
@@ -1201,7 +1201,7 @@ fn udp_option_frag_unsupported_preserves_valid_and_malformed_bytes() {
 
     let valid12 = UdpOptions::from_options(vec![frag12.clone()]).unwrap();
     assert_eq!(valid12.status(), UdpOptionStatus::UnsupportedFragmentation);
-    assert_eq!(valid12.options(), &[frag12.clone()]);
+    assert_eq!(valid12.options(), std::slice::from_ref(&frag12));
 
     let malformed_short = [UDP_OPTION_FRAG, 9, 0x00, 0x01, 0x00, 0x03, 0xaa, 0xbb, 0xcc];
     let malformed = UdpOptions::from_bytes(malformed_short);

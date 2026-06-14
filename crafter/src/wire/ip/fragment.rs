@@ -1851,6 +1851,7 @@ mod ipv6_emit {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn assert_plain_ipv6_fragment(
         record: &PacketRecord,
         payload: &[u8],
