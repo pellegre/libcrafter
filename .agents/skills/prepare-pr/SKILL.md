@@ -1,6 +1,6 @@
 ---
 name: prepare-pr
-description: Open, update, title, review, or prepare libcrafter pull requests so squash commits inherit compliant titles and required validation is documented.
+description: Open, update, title, review, or prepare libcrafter pull requests so commits are ready for rebase-and-fast-forward landing and required validation is documented.
 ---
 
 # Prepare PR
@@ -21,7 +21,7 @@ Use typed names such as `feature/complete-oracle` or
 
 ## PR Title
 
-The PR title becomes the squash commit subject, so it must follow the same
+The PR title summarizes the preserved commit series and must follow the same
 Conventional Commits policy as regular commits:
 
 ```text
@@ -47,12 +47,19 @@ Do not mention internal agent workflow unless the user explicitly asks for it.
 
 ## Merge Expectations
 
-PRs should be squash-merged. The squash title must be the PR title. Intermediate
-commits should also pass:
+PRs should be rebased onto the latest protected base branch and then landed by
+fast-forwarding the base branch to the PR head. Do not use GitHub squash merge
+for normal PR landing.
+
+Every commit in the PR range must pass:
 
 ```sh
 .agents/scripts/check-conventional-commits --range origin/master..HEAD
 ```
 
-If a PR accumulates noisy work-in-progress commits, squash or reword them before
-marking the PR ready.
+If a PR targets a renamed default branch such as `main`, substitute that base in
+the range.
+
+If a PR accumulates noisy work-in-progress commits, fix up, squash, or reword
+them before marking the PR ready, then rebase again onto the latest protected
+base.
