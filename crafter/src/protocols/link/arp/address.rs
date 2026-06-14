@@ -17,7 +17,7 @@ pub(super) enum ArpAddressBytes {
         len: u8,
         bytes: [u8; INLINE_ADDRESS_CAP],
     },
-    Heap(Vec<u8>),
+    Heap(Box<[u8]>),
 }
 
 impl ArpAddressBytes {
@@ -59,7 +59,7 @@ impl ArpAddressBytes {
                     bytes: inline,
                 }
             }
-            _ => Self::Heap(bytes.to_vec()),
+            _ => Self::Heap(bytes.to_vec().into_boxed_slice()),
         }
     }
 
@@ -67,7 +67,7 @@ impl ArpAddressBytes {
         if bytes.len() <= INLINE_ADDRESS_CAP {
             Self::from_slice(&bytes)
         } else {
-            Self::Heap(bytes)
+            Self::Heap(bytes.into_boxed_slice())
         }
     }
 
