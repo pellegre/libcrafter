@@ -20,7 +20,7 @@ pub const TCP_FLAG_CWR: u16 = 0x080;
 ///
 /// The `0x100` control-bit position is assigned by IANA to AE (Accurate ECN)
 /// per RFC 9768 (More Accurate ECN Feedback in TCP); see
-/// `docs/tcp-rfc-manifest.md`. This bit was historically the ECN-nonce sum bit
+/// `docs/internal/manifests/tcp-rfc-manifest.md`. This bit was historically the ECN-nonce sum bit
 /// exported as [`TCP_FLAG_NS`], which RFC 8311 deprecated. `TCP_FLAG_AE` is the
 /// current source-backed name; `TCP_FLAG_NS` remains a compatibility alias for
 /// the same bit value.

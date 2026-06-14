@@ -19,7 +19,7 @@ use super::sizing::TcpOptionBudget;
 /// IANA registry classification for a TCP option kind.
 ///
 /// Backed by the IANA TCP Option Kind Numbers registry (under IANA TCP
-/// Parameters) and `docs/tcp-rfc-manifest.md`. Unknown, obsolete, reserved,
+/// Parameters) and `docs/internal/manifests/tcp-rfc-manifest.md`. Unknown, obsolete, reserved,
 /// and unassigned kinds stay inspectable through this classification rather
 /// than being silently discarded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -492,7 +492,7 @@ impl TcpOption {
 
     /// Return the Maximum Segment Size value, if this option is MSS.
     ///
-    /// Backed by RFC 9293 and `docs/tcp-rfc-manifest.md`.
+    /// Backed by RFC 9293 and `docs/internal/manifests/tcp-rfc-manifest.md`.
     pub const fn maximum_segment_size_value(&self) -> Option<u16> {
         match self {
             Self::MaximumSegmentSize(mss) => Some(*mss),
@@ -502,7 +502,7 @@ impl TcpOption {
 
     /// Return the Window Scale shift count, if this option is Window Scale.
     ///
-    /// Backed by RFC 7323 and `docs/tcp-rfc-manifest.md`.
+    /// Backed by RFC 7323 and `docs/internal/manifests/tcp-rfc-manifest.md`.
     pub const fn window_scale_shift(&self) -> Option<u8> {
         match self {
             Self::WindowScale(shift) => Some(*shift),
@@ -519,7 +519,7 @@ impl TcpOption {
     /// out-of-range shifts are still constructible and encodable for stack
     /// testing (see [`valid_window_scale`]).
     ///
-    /// Backed by RFC 7323 section 2.3 and `docs/tcp-rfc-manifest.md`.
+    /// Backed by RFC 7323 section 2.3 and `docs/internal/manifests/tcp-rfc-manifest.md`.
     pub const fn window_scale_shift_is_valid(&self) -> Option<bool> {
         match self {
             Self::WindowScale(shift) => Some(valid_window_scale(*shift)),
@@ -529,14 +529,14 @@ impl TcpOption {
 
     /// Return true when this option is the SACK Permitted option.
     ///
-    /// Backed by RFC 2018 and `docs/tcp-rfc-manifest.md`.
+    /// Backed by RFC 2018 and `docs/internal/manifests/tcp-rfc-manifest.md`.
     pub const fn is_sack_permitted(&self) -> bool {
         matches!(self, Self::SackPermitted)
     }
 
     /// Return the SACK blocks, if this option is a SACK option.
     ///
-    /// Backed by RFC 2018 / RFC 2883 and `docs/tcp-rfc-manifest.md`.
+    /// Backed by RFC 2018 / RFC 2883 and `docs/internal/manifests/tcp-rfc-manifest.md`.
     pub fn sack_blocks(&self) -> Option<&[TcpSackBlock]> {
         match self {
             Self::Sack(blocks) => Some(blocks),
@@ -546,7 +546,7 @@ impl TcpOption {
 
     /// Return the number of SACK blocks, if this option is a SACK option.
     ///
-    /// Backed by RFC 2018 and `docs/tcp-rfc-manifest.md`.
+    /// Backed by RFC 2018 and `docs/internal/manifests/tcp-rfc-manifest.md`.
     pub fn sack_block_count(&self) -> Option<usize> {
         self.sack_blocks().map(<[TcpSackBlock]>::len)
     }
@@ -558,7 +558,7 @@ impl TcpOption {
     /// duplicate-range report when one is present; see
     /// [`is_potential_dsack_first_block`](Self::is_potential_dsack_first_block).
     ///
-    /// Backed by RFC 2018 / RFC 2883 and `docs/tcp-rfc-manifest.md`.
+    /// Backed by RFC 2018 / RFC 2883 and `docs/internal/manifests/tcp-rfc-manifest.md`.
     pub fn first_sack_block(&self) -> Option<TcpSackBlock> {
         self.sack_blocks()
             .and_then(|blocks| blocks.first().copied())
@@ -571,7 +571,7 @@ impl TcpOption {
     /// duplicate range, these remaining blocks carry the ordinary (RFC 2018)
     /// SACK report.
     ///
-    /// Backed by RFC 2018 / RFC 2883 and `docs/tcp-rfc-manifest.md`.
+    /// Backed by RFC 2018 / RFC 2883 and `docs/internal/manifests/tcp-rfc-manifest.md`.
     pub fn remaining_sack_blocks(&self) -> Option<&[TcpSackBlock]> {
         self.sack_blocks()
             .map(|blocks| blocks.get(1..).unwrap_or(&[]))
@@ -598,7 +598,7 @@ impl TcpOption {
     /// arithmetic (RFC 1982 / RFC 9293) so they are correct across the 32-bit
     /// wrap.
     ///
-    /// Backed by RFC 2883 (section 4) and `docs/tcp-rfc-manifest.md`.
+    /// Backed by RFC 2883 (section 4) and `docs/internal/manifests/tcp-rfc-manifest.md`.
     pub fn is_potential_dsack_first_block(&self, cumulative_ack: u32) -> Option<bool> {
         let blocks = self.sack_blocks()?;
         let first = blocks.first()?;
@@ -620,7 +620,7 @@ impl TcpOption {
 
     /// Return the Timestamp TSval and TSecr values, if this option is Timestamp.
     ///
-    /// Backed by RFC 7323 and `docs/tcp-rfc-manifest.md`.
+    /// Backed by RFC 7323 and `docs/internal/manifests/tcp-rfc-manifest.md`.
     pub const fn timestamp_values(&self) -> Option<(u32, u32)> {
         match self {
             Self::Timestamp { value, echo_reply } => Some((*value, *echo_reply)),
@@ -633,7 +633,7 @@ impl TcpOption {
     /// TSval is the sender's current timestamp clock value (RFC 7323 section
     /// 3.2). This is the first half of [`timestamp_values`](Self::timestamp_values).
     ///
-    /// Backed by RFC 7323 section 3.2 and `docs/tcp-rfc-manifest.md`.
+    /// Backed by RFC 7323 section 3.2 and `docs/internal/manifests/tcp-rfc-manifest.md`.
     pub const fn timestamp_value(&self) -> Option<u32> {
         match self {
             Self::Timestamp { value, .. } => Some(*value),
@@ -650,7 +650,7 @@ impl TcpOption {
     /// echo value as inspectable data only; it does not perform PAWS or RTT
     /// estimation.
     ///
-    /// Backed by RFC 7323 section 3.2 and `docs/tcp-rfc-manifest.md`.
+    /// Backed by RFC 7323 section 3.2 and `docs/internal/manifests/tcp-rfc-manifest.md`.
     pub const fn timestamp_echo_reply(&self) -> Option<u32> {
         match self {
             Self::Timestamp { echo_reply, .. } => Some(*echo_reply),
@@ -660,7 +660,7 @@ impl TcpOption {
 
     /// Return the MPTCP subtype nibble, if this option is MPTCP.
     ///
-    /// Backed by RFC 8684 and `docs/tcp-rfc-manifest.md`.
+    /// Backed by RFC 8684 and `docs/internal/manifests/tcp-rfc-manifest.md`.
     pub const fn mptcp_subtype(&self) -> Option<u8> {
         match self {
             Self::MultipathTcp { subtype, .. } => Some(*subtype),
@@ -676,7 +676,7 @@ impl TcpOption {
     /// see [`mptcp_flags`](Self::mptcp_flags) and
     /// [`mptcp_subtype_data`](Self::mptcp_subtype_data) for the split views.
     ///
-    /// Backed by RFC 8684 and `docs/tcp-rfc-manifest.md`.
+    /// Backed by RFC 8684 and `docs/internal/manifests/tcp-rfc-manifest.md`.
     pub fn mptcp_data(&self) -> Option<&[u8]> {
         match self {
             Self::MultipathTcp { data, .. } => Some(data),
@@ -686,7 +686,7 @@ impl TcpOption {
 
     /// Return true when this option is a generic MPTCP option.
     ///
-    /// Backed by RFC 8684 and `docs/tcp-rfc-manifest.md`.
+    /// Backed by RFC 8684 and `docs/internal/manifests/tcp-rfc-manifest.md`.
     pub const fn is_multipath_tcp(&self) -> bool {
         matches!(self, Self::MultipathTcp { .. })
     }
@@ -699,7 +699,7 @@ impl TcpOption {
     /// (flags for MP_CAPABLE, MP_JOIN, and others). This accessor exposes that
     /// nibble generically without interpreting any particular subtype layout.
     ///
-    /// Backed by RFC 8684 and `docs/tcp-rfc-manifest.md`.
+    /// Backed by RFC 8684 and `docs/internal/manifests/tcp-rfc-manifest.md`.
     pub fn mptcp_flags(&self) -> Option<u8> {
         match self {
             Self::MultipathTcp { data, .. } => data.first().map(|first| first & 0x0f),
@@ -714,7 +714,7 @@ impl TcpOption {
     /// byte stripped, leaving the subtype-specific payload verbatim. Returns an
     /// empty slice when the option carries only the subtype byte.
     ///
-    /// Backed by RFC 8684 and `docs/tcp-rfc-manifest.md`.
+    /// Backed by RFC 8684 and `docs/internal/manifests/tcp-rfc-manifest.md`.
     pub fn mptcp_subtype_data(&self) -> Option<&[u8]> {
         match self {
             Self::MultipathTcp { data, .. } => {
@@ -736,7 +736,7 @@ impl TcpOption {
     /// inspectable data; it implements no MPTCP connection recovery or subflow
     /// policy in response to it.
     ///
-    /// Backed by RFC 8684 section 3.6 and `docs/tcp-rfc-manifest.md`.
+    /// Backed by RFC 8684 section 3.6 and `docs/internal/manifests/tcp-rfc-manifest.md`.
     pub fn mptcp_tcprst_reason(&self) -> Option<u8> {
         match self {
             Self::MultipathTcp { subtype, data } if *subtype == MPTCP_SUBTYPE_TCPRST => {
@@ -748,7 +748,7 @@ impl TcpOption {
 
     /// Return the Extended Data Offset value, if this option is EDO.
     ///
-    /// EDO is draft-status; see the EDO note in `docs/tcp-rfc-manifest.md`.
+    /// EDO is draft-status; see the EDO note in `docs/internal/manifests/tcp-rfc-manifest.md`.
     pub const fn extended_data_offset_value(&self) -> Option<TcpExtendedDataOffset> {
         match self {
             Self::ExtendedDataOffset(edo) => Some(*edo),
@@ -758,7 +758,7 @@ impl TcpOption {
 
     /// Return the TCP Fast Open cookie bytes, if this option is Fast Open.
     ///
-    /// Backed by RFC 7413 and `docs/tcp-rfc-manifest.md`.
+    /// Backed by RFC 7413 and `docs/internal/manifests/tcp-rfc-manifest.md`.
     pub fn fast_open_cookie(&self) -> Option<&[u8]> {
         match self {
             Self::FastOpen(cookie) => Some(cookie),
@@ -769,7 +769,7 @@ impl TcpOption {
     /// Return `true` when this option is a TCP Fast Open cookie REQUEST: a Fast
     /// Open option carrying an empty (zero-length) cookie (RFC 7413 section 3).
     ///
-    /// Backed by RFC 7413 and `docs/tcp-rfc-manifest.md`.
+    /// Backed by RFC 7413 and `docs/internal/manifests/tcp-rfc-manifest.md`.
     pub fn is_fast_open_cookie_request(&self) -> bool {
         matches!(self, Self::FastOpen(cookie) if cookie.is_empty())
     }
@@ -777,7 +777,7 @@ impl TcpOption {
     /// Return the RFC 6994 Experiment Identifier (ExID), if this option is an
     /// experimental option.
     ///
-    /// Backed by RFC 6994 and `docs/tcp-rfc-manifest.md`.
+    /// Backed by RFC 6994 and `docs/internal/manifests/tcp-rfc-manifest.md`.
     pub const fn experiment_id(&self) -> Option<u16> {
         match self {
             Self::Experimental { experiment_id, .. } => Some(*experiment_id),
@@ -788,7 +788,7 @@ impl TcpOption {
     /// Return the RFC 6994 experiment data bytes (after the 16-bit ExID), if
     /// this option is an experimental option.
     ///
-    /// Backed by RFC 6994 and `docs/tcp-rfc-manifest.md`.
+    /// Backed by RFC 6994 and `docs/internal/manifests/tcp-rfc-manifest.md`.
     pub fn experiment_data(&self) -> Option<&[u8]> {
         match self {
             Self::Experimental { data, .. } => Some(data),
@@ -798,7 +798,7 @@ impl TcpOption {
 
     /// Return true when this option is an RFC 6994 experimental option.
     ///
-    /// Backed by RFC 6994 and `docs/tcp-rfc-manifest.md`.
+    /// Backed by RFC 6994 and `docs/internal/manifests/tcp-rfc-manifest.md`.
     pub const fn is_experimental(&self) -> bool {
         matches!(self, Self::Experimental { .. })
     }
@@ -807,7 +807,7 @@ impl TcpOption {
     /// this option is a User Timeout option.
     ///
     /// `granularity` is the Granularity (G) flag and `value` is the 15-bit User
-    /// Timeout value. Backed by RFC 5482 and `docs/tcp-rfc-manifest.md`.
+    /// Timeout value. Backed by RFC 5482 and `docs/internal/manifests/tcp-rfc-manifest.md`.
     pub const fn user_timeout_value(&self) -> Option<(bool, u16)> {
         match self {
             Self::UserTimeout { granularity, value } => Some((*granularity, *value)),
@@ -821,7 +821,7 @@ impl TcpOption {
     /// The MAC bytes are returned exactly as preserved on the wire; libcrafter
     /// never computes or validates them. Named with a `_value` suffix to avoid
     /// colliding with the [`TcpOption::tcp_authentication`] constructor. Backed
-    /// by RFC 5925 and `docs/tcp-rfc-manifest.md`.
+    /// by RFC 5925 and `docs/internal/manifests/tcp-rfc-manifest.md`.
     pub fn tcp_authentication_value(&self) -> Option<(u8, u8, &[u8])> {
         match self {
             Self::AuthenticationOption {
@@ -835,7 +835,7 @@ impl TcpOption {
 
     /// Return the TCP-AO KeyID, if this option is a TCP Authentication Option.
     ///
-    /// Backed by RFC 5925 and `docs/tcp-rfc-manifest.md`.
+    /// Backed by RFC 5925 and `docs/internal/manifests/tcp-rfc-manifest.md`.
     pub const fn key_id(&self) -> Option<u8> {
         match self {
             Self::AuthenticationOption { key_id, .. } => Some(*key_id),
@@ -846,7 +846,7 @@ impl TcpOption {
     /// Return the TCP-AO RNextKeyID, if this option is a TCP Authentication
     /// Option.
     ///
-    /// Backed by RFC 5925 and `docs/tcp-rfc-manifest.md`.
+    /// Backed by RFC 5925 and `docs/internal/manifests/tcp-rfc-manifest.md`.
     pub const fn rnext_key_id(&self) -> Option<u8> {
         match self {
             Self::AuthenticationOption { rnext_key_id, .. } => Some(*rnext_key_id),
@@ -858,7 +858,7 @@ impl TcpOption {
     /// option is a TCP Authentication Option.
     ///
     /// The bytes are the verbatim wire MAC; libcrafter never computes or
-    /// validates them. Backed by RFC 5925 and `docs/tcp-rfc-manifest.md`.
+    /// validates them. Backed by RFC 5925 and `docs/internal/manifests/tcp-rfc-manifest.md`.
     pub fn authentication_mac(&self) -> Option<&[u8]> {
         match self {
             Self::AuthenticationOption { mac, .. } => Some(mac),
@@ -872,7 +872,7 @@ impl TcpOption {
     /// The bytes are the verbatim wire suboption sequence; libcrafter never
     /// negotiates, parses, or validates them. Named with a `_suboptions` suffix
     /// to avoid colliding with the [`TcpOption::tcp_eno`] constructor. Backed by
-    /// RFC 8547 and `docs/tcp-rfc-manifest.md`.
+    /// RFC 8547 and `docs/internal/manifests/tcp-rfc-manifest.md`.
     pub fn tcp_eno_suboptions(&self) -> Option<&[u8]> {
         match self {
             Self::TcpEno { suboptions } => Some(suboptions),
@@ -887,7 +887,7 @@ impl TcpOption {
     ///
     /// The kind byte is wire-significant because it selects the order in which
     /// the ECN byte counters appear. Backed by RFC 9768 and
-    /// `docs/tcp-rfc-manifest.md`.
+    /// `docs/internal/manifests/tcp-rfc-manifest.md`.
     pub const fn accurate_ecn_order(&self) -> Option<u8> {
         match self {
             Self::AccurateEcn { kind, .. } => Some(*kind),
@@ -900,7 +900,7 @@ impl TcpOption {
     ///
     /// The bytes are the verbatim wire counters; libcrafter never parses,
     /// interprets, or reacts to them. Backed by RFC 9768 and
-    /// `docs/tcp-rfc-manifest.md`.
+    /// `docs/internal/manifests/tcp-rfc-manifest.md`.
     pub fn accurate_ecn_data(&self) -> Option<&[u8]> {
         match self {
             Self::AccurateEcn { data, .. } => Some(data),
@@ -914,7 +914,7 @@ impl TcpOption {
     /// `order_kind` is the AccECN0/AccECN1 kind encoding the counter order and
     /// `data` is the verbatim counter/payload byte slice. Named with a `_value`
     /// suffix to avoid colliding with the [`TcpOption::accurate_ecn`]
-    /// constructor. Backed by RFC 9768 and `docs/tcp-rfc-manifest.md`.
+    /// constructor. Backed by RFC 9768 and `docs/internal/manifests/tcp-rfc-manifest.md`.
     pub fn accurate_ecn_value(&self) -> Option<(u8, &[u8])> {
         match self {
             Self::AccurateEcn { kind, data } => Some((*kind, data)),
@@ -924,7 +924,7 @@ impl TcpOption {
 
     /// Return true when this option is an RFC 9768 Accurate ECN (AccECN) option.
     ///
-    /// Backed by RFC 9768 and `docs/tcp-rfc-manifest.md`.
+    /// Backed by RFC 9768 and `docs/internal/manifests/tcp-rfc-manifest.md`.
     pub const fn is_accurate_ecn(&self) -> bool {
         matches!(self, Self::AccurateEcn { .. })
     }
@@ -1143,7 +1143,7 @@ impl TcpOption {
 /// [`TcpOptionBudget`] report) and decides what to do when it
 /// [`exceeds`](TcpOptionBudget::exceeds) — the builder never decides for them.
 ///
-/// Source anchors (see `docs/tcp-rfc-manifest.md`): RFC 9293 (base TCP and the
+/// Source anchors (see `docs/internal/manifests/tcp-rfc-manifest.md`): RFC 9293 (base TCP and the
 /// option budget), RFC 7323 (Window Scale and Timestamps), RFC 2018
 /// (SACK-Permitted), RFC 7413 (Fast Open), RFC 8684 (Multipath TCP), RFC 9768
 /// (Accurate ECN option).
@@ -1714,7 +1714,7 @@ fn validate_tcp_option_len(field: &'static str, actual: usize, expected: usize) 
 /// Return the IANA registry classification for a TCP option kind.
 ///
 /// The assigned set follows the IANA TCP Option Kind Numbers registry (under
-/// IANA TCP Parameters) and the kind table in `docs/tcp-rfc-manifest.md`:
+/// IANA TCP Parameters) and the kind table in `docs/internal/manifests/tcp-rfc-manifest.md`:
 /// kinds 0-15, 18, 19, 27-30, 34, 69, 172, and 174 carry current registry
 /// names. Kinds 253 and 254 are the RFC 6994 / RFC 3692-style experimental
 /// kinds. Every other kind (for example the draft-only EDO kind 237) is
@@ -1725,7 +1725,7 @@ fn validate_tcp_option_len(field: &'static str, actual: usize, expected: usize) 
 /// as `Assigned` and preserved through the generic representation. `crafter`
 /// performs no signing, key management, or signature validation for this legacy
 /// option; it only classifies and round-trips its bytes (see the "Legacy
-/// Security Options" note in `docs/tcp-rfc-manifest.md`).
+/// Security Options" note in `docs/internal/manifests/tcp-rfc-manifest.md`).
 ///
 /// ```rust
 /// use crafter::prelude::*;
@@ -1784,7 +1784,7 @@ pub const fn tcp_option_kind_class(kind: u8) -> TcpOptionKindClass {
 /// Return a short, source-backed display name for a TCP option kind.
 ///
 /// Names follow the IANA TCP Option Kind Numbers registry (under IANA TCP
-/// Parameters) and `docs/tcp-rfc-manifest.md`. Assigned-but-unmodeled and
+/// Parameters) and `docs/internal/manifests/tcp-rfc-manifest.md`. Assigned-but-unmodeled and
 /// unassigned kinds return the generic `"opt"` token so the caller can still
 /// pair the name with the numeric kind and registry class for inspection. This
 /// is a display helper for `summary()`/`show()` only; it performs no
@@ -1844,7 +1844,7 @@ pub const fn tcp_option_kind_is_experimental(kind: u8) -> bool {
 /// [`TcpOption::window_scale_shift_is_valid`]) to check a shift, not to gate
 /// construction.
 ///
-/// Backed by RFC 7323 section 2.3 and `docs/tcp-rfc-manifest.md`.
+/// Backed by RFC 7323 section 2.3 and `docs/internal/manifests/tcp-rfc-manifest.md`.
 pub const fn valid_window_scale(shift: u8) -> bool {
     shift <= TCP_WINDOW_SCALE_MAX_SHIFT
 }

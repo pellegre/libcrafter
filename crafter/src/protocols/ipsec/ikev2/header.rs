@@ -408,14 +408,14 @@ mod tests {
 
     #[test]
     fn version_octet_matches_manifest() {
-        // RFC 7296 §3.1 / docs/ipsec-rfc-manifest.md: IKEv2 is 0x20 (major 2,
+        // RFC 7296 §3.1 / docs/internal/manifests/ipsec-rfc-manifest.md: IKEv2 is 0x20 (major 2,
         // minor 0).
         assert_eq!(IKE_VERSION_2, 0x20);
     }
 
     #[test]
     fn exchange_types_match_iana_values() {
-        // IANA IKEv2 Parameters / docs/ipsec-rfc-manifest.md exchange-type table.
+        // IANA IKEv2 Parameters / docs/internal/manifests/ipsec-rfc-manifest.md exchange-type table.
         assert_eq!(IKE_SA_INIT, 34);
         assert_eq!(IKE_AUTH, 35);
         assert_eq!(CREATE_CHILD_SA, 36);
@@ -424,7 +424,7 @@ mod tests {
 
     #[test]
     fn flag_bits_match_manifest() {
-        // RFC 7296 §3.1 / docs/ipsec-rfc-manifest.md: bit 3 Initiator, bit 4
+        // RFC 7296 §3.1 / docs/internal/manifests/ipsec-rfc-manifest.md: bit 3 Initiator, bit 4
         // Version, bit 5 Response.
         assert_eq!(IKE_FLAG_INITIATOR, 0x08);
         assert_eq!(IKE_FLAG_VERSION, 0x10);

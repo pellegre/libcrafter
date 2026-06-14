@@ -621,7 +621,7 @@ mod dns_dnssec {
         const RAW_TYPE_CASES: &[(u16, &[u8])] = &[
             // Private-use unknown TYPE 65280 (RFC 6895 Section 3.1).
             (65280, &[0xde, 0xad, 0xbe, 0xef]),
-            // NSEC3PARAM (51): deferred to Raw (docs/dns.md).
+            // NSEC3PARAM (51): deferred to Raw (docs/guide/dns.md).
             (51, &[0x01, 0x00, 0x00, 0x0a, 0x04, 0xaa, 0xbb, 0xcc, 0xdd]),
             // TLSA (52): deferred certificate-association record.
             (52, &[0x03, 0x01, 0x01, 0xa1, 0xb2, 0xc3, 0xd4, 0xe5, 0xf6]),

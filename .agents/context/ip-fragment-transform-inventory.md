@@ -7,19 +7,19 @@ new public API.
 
 ## Source And Scope Anchors
 
-- `docs/protocols/ip-fragment-source-manifest.md` records the source-backed
+- `docs/internal/source/ip-fragment-source-manifest.md` records the source-backed
   facts for the transform work, including the correction that IPv6 reassembly
   identity is source address, destination address, and Fragment Identification.
-- `docs/ipv4-implementation-inventory.md` and `docs/ipv4.md` describe current
+- `docs/internal/inventories/ipv4-implementation-inventory.md` and `docs/guide/ipv4.md` describe current
   IPv4 field support and explicitly state that base IPv4 generation and decode
   do not split or reassemble datagrams today.
-- `docs/ipv6-implementation-inventory.md` and `docs/ipv6.md` describe current
+- `docs/internal/inventories/ipv6-implementation-inventory.md` and `docs/guide/ipv6.md` describe current
   IPv6 base and extension-header support and state that base IPv6 does not
   generate fragments or maintain fragment queues today.
-- `docs/wire-api-inventory.md` and `docs/wire.md` describe the packet-stream
+- `docs/internal/inventories/wire-api-inventory.md` and `docs/reference/wire.md` describe the packet-stream
   abstraction that the transforms must preserve: each stream item is a
   `PacketRecord`, and `PacketTransform` is the stateful extension point.
-- `docs/validation.md`, `docs/lab.md`, and `tools/oracle/README.md` document
+- `docs/operations/validation.md`, `docs/operations/lab.md`, and `tools/oracle/README.md` document
   the offline-first and provider-backed validation boundaries relevant to this
   work.
 
