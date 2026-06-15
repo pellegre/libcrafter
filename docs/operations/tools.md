@@ -63,8 +63,8 @@ tools/lab/run doctor --help
 
 `oracle` answers "do libcrafter's bytes and decoded model match a reference
 backend?" It generates a packet corpus from executable specs and compares
-libcrafter against Scapy (full read/write/live reference) or Wireshark/tshark
-(parser-only) across offline, pcap, and live modes. Run it after changing
+libcrafter against a full read/write/live reference backend or a parser-only
+backend (Wireshark/tshark) across offline, pcap, and live modes. Run it after changing
 builders, decoders, or pcap I/O, to catch wire-level regressions before they
 ship. Offline and pcap modes need no provider; live modes plan through `lab`.
 See the [oracle validation guide](validation.md) and
@@ -73,9 +73,9 @@ See the [oracle validation guide](validation.md) and
 Safe dry-run / offline examples:
 
 ```sh
-tools/oracle/run offline --backend scapy --profile smoke --seed 1 --count 10
-tools/oracle/run pcap --backend scapy --profile smoke --seed 1 --count 10
-tools/oracle/run live --backend scapy --provider local-dry-run --profile smoke --seed 1 --count 10
+tools/oracle/run offline --profile smoke --seed 1 --count 10
+tools/oracle/run pcap --profile smoke --seed 1 --count 10
+tools/oracle/run live --provider local-dry-run --profile smoke --seed 1 --count 10
 ```
 
 ## probe
