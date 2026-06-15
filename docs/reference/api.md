@@ -654,7 +654,7 @@ unknown types are preserved as `Icmpv6Body::Unknown` with a trailing `Raw` body.
 
 The codepoint coverage, the experimental status of Node Information, and the
 deferred families (Router Renumbering, Inverse Neighbor Discovery) are detailed
-in [ICMPv6 message coverage](../internal/manifests/icmpv6-coverage.md).
+in the [ICMPv6 guide](../guide/icmpv6.md).
 
 ## Example Map
 
