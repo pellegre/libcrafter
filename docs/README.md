@@ -2,15 +2,14 @@
 
 This directory contains user and contributor documentation for the Rust
 `crafter` crate and its validation workflow. It is organized into role-based
-areas so end-user material stays separate from maintainer and agent artifacts:
+areas:
 
-- **[`guide/`](guide/)** — per-protocol wire coverage for everyday packet work.
+- **[`guide/`](guide/)** — per-protocol wire coverage for everyday packet work,
+  each with the explicit list of RFCs/standards the library implements.
 - **[`reference/`](reference/)** — the API surface, the wire I/O layer, and how
   to run the bundled examples.
 - **[`operations/`](operations/)** — live, provider-backed, and manual testing
   workflows (validation, probes, lab sessions, endpoints).
-- **[`internal/`](internal/)** — maintainer/agent material: RFC manifests,
-  implementation and API inventories, source manifests, and validation reports.
 
 ## Guides
 
@@ -23,6 +22,12 @@ Per-protocol wire coverage for building and decoding packets.
   source-backed manifests, offline fixtures, and oracle coverage.
 - [TCP wire coverage](guide/tcp.md) — TCP segment construction, typed options,
   checksums, decode, inspection, and sizing helpers.
+- [UDP wire coverage](guide/udp.md) — UDP datagram construction, length and
+  checksum auto-fill, decode dispatch, and the implemented RFCs.
+- [ARP wire coverage](guide/arp.md) — ARP request/reply construction over
+  Ethernet, IPv4 address resolution, decode, and the implemented RFCs.
+- [ICMPv6 wire coverage](guide/icmpv6.md) — ICMPv6 error/informational messages,
+  Neighbor Discovery, checksum handling, decode, and the implemented RFCs.
 - [DNS wire coverage](guide/dns.md) — supported DNS wire-message primitives,
   planned typed records, and known deferrals.
 - [BGP wire coverage](guide/bgp.md) — BGP message construction, UPDATE path
@@ -55,20 +60,6 @@ Live, provider-backed, and manual testing workflows.
   provider setup, credentials, artifacts, and cleanup for one endpoint.
 - [Dot11 live manual](operations/dot11-live-manual.md) — manual procedure for
   the IEEE 802.11 live testing boundary.
-
-## Internal / maintainer
-
-Maintainer and agent material. These documents back the guides above with
-source evidence and validation history; they are not user-facing.
-
-- [`internal/manifests/`](internal/manifests/) — source-backed RFC manifests and
-  coverage checklists (IPv4, IPv6, TCP, UDP, IPsec, ARP, ICMPv6).
-- [`internal/inventories/`](internal/inventories/) — implementation and API
-  inventories (IPv4, IPv6, TCP, wire, Dot11).
-- [`internal/source/`](internal/source/) — protocol source manifests (Dot11,
-  IP fragment, WPA decryptor).
-- [`internal/validation/`](internal/validation/) — validation reports, including
-  the [ICMPv6 / NDP validation report](internal/validation/icmpv6-ndp-report.md).
 
 Agent operating guidance belongs under
 [`.agents/docs/cookbook.md`](../.agents/docs/cookbook.md), not here.
