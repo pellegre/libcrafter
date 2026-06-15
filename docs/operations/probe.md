@@ -21,6 +21,43 @@ plan the `stimulus` and `target` roles and rewrite probe plans with lab
 endpoint addresses. Dry-run remains the default safety boundary; live provider
 runs require `--confirm-live-run`.
 
+## Profiles and cases
+
+`tools/probe/run` selects cases through `--profile`; `--count` bounds how many
+of the profile's ordered cases run, and `--case` runs a named subset under any
+profile. The flags are `--provider`, `--profile`, `--seed`, `--count`, `--case`,
+`--dry-run`, `--confirm-live-run`, and `--out`. The profiles are:
+
+- `smoke` (default, default `--count` 5) — the legacy ICMP/TCP/DNS/TTL/ARP
+  sample: `icmp-echo`, `tcp-syn-open`, `tcp-syn-closed`, `dns-query`,
+  `ttl-expired`, `arp-resolution`.
+- `behavior` (default `--count` 43) — the full DNS/DHCP/ARP/NDP/UDP behavioral
+  suite in deterministic DNS → DHCP → ARP → NDP → UDP order: ten DNS cases, ten
+  DHCP cases, ten ARP cases, three NDP cases, and ten UDP cases.
+- `bgp-smoke` (default `--count` 1) — the `bgp-session-smoke` case, which plans a
+  BGP session exchange against a probe-owned FRR peer target service.
+- `ipsec` (default `--count` 4) — the IPSec behavioral suite (`esp-transport-echo`,
+  `esp-tunnel-echo`, `ah-transport-verify`, `ikev2-sa-init`) against a controlled
+  IPSec-capable peer.
+
+A provider-capability skip is the only way a supported case becomes a skip.
+Hetzner plans the IPv4 unicast DNS and UDP service cases but skips the DHCP, ARP,
+and NDP link-layer cases (and `ttl-expired`, which needs a controlled router);
+QEMU, VirtualBox, and Docker private sessions plan the full private-lab behavior
+suite when local prerequisites are available, though Docker advertises no IPv6 so
+it skips the NDP cases. Skips stay in the report and never count as failures when
+the provider lacks the declared capability.
+
+Inspect the profiles with dry-run plans, which need no provider credentials and
+send no packets:
+
+```sh
+tools/probe/run --provider qemu --dry-run --profile smoke --seed 1 --count 10
+tools/probe/run --provider qemu --dry-run --profile behavior --seed 1052 --count 43
+tools/probe/run --provider local-dry-run --dry-run --profile bgp-smoke
+tools/probe/run --provider qemu --dry-run --profile ipsec --seed 1
+```
+
 ## Bootstrap Boundary
 
 Lab provider adapters own substrate lifecycle only. They plan, create, connect,
