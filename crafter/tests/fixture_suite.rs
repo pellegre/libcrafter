@@ -1309,14 +1309,6 @@ const DOT11_TEXT_ARTIFACTS: &[Dot11TextArtifact] = &[
         section_start: None,
     },
     Dot11TextArtifact {
-        path: "docs/internal/source/dot11-source-manifest.md",
-        section_start: None,
-    },
-    Dot11TextArtifact {
-        path: "docs/internal/inventories/dot11-api-inventory.md",
-        section_start: None,
-    },
-    Dot11TextArtifact {
         path: "crafter/tests/fixtures/dot11/README.md",
         section_start: None,
     },
