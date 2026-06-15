@@ -51,6 +51,49 @@ come from a missing declared capability; a supported case that fails to build,
 send, capture, decode, or validate is a failure to fix in libcrafter or probe
 infrastructure.
 
+## Oracle CLI modes
+
+`tools/oracle/run` is the single entrypoint for every oracle mode. Each mode is
+a subcommand; the generation/validation modes share `--backend {scapy,wireshark}`
+(default `scapy`), `--profile` (default `smoke`), `--seed`, `--count`,
+`--family`, `--root`, `--case`, `--feature`, `--index`, and `--out`. The modes
+are:
+
+- `corpus` — generate a reusable packet corpus artifact (`plans.json`) that the
+  other modes can replay with `--corpus`. Flags: generation options + `--out`,
+  `--direction`.
+- `offline` — compare libcrafter raw vectors and normalized decode models
+  against the reference backend without root, pcap files, or live traffic.
+  Flags: generation options + `--direction`, `--corpus`, `--dry-plan`,
+  `--emit-vectors`, `--emit-decoded`, `--keep-artifacts`.
+- `pcap` — exercise classic pcap write/read, link-type selection, and roundtrip
+  decoding. Flags: generation options + `--direction`, `--corpus`, `--dry-plan`
+  (alias `--dry-run`), `--keep-artifacts`.
+- `live` — route provider-backed packet exchange through lab-backed oracle
+  provider adapters; the default is a planned run and real traffic is gated.
+  Flags: generation options + `--provider` (required; `local-dry-run` or a
+  registered provider), `--direction`, `--corpus`, `--dry-run`,
+  `--confirm-live-run`, `--keep-wire-endpoints`.
+- `generate` — emit deterministic packet plans as metadata only, no backend.
+  Flags: common + generation options + `--direction`.
+- `report` — run final oracle validation and write a summary. Flags: `--out`.
+- `specs` — inspect executable oracle specs: `specs validate` loads and
+  validates all specs (`--json`, `--strict`), `specs suite` emits the
+  reproducible offline case suite for a `--family` (`--backend`, `--profile`,
+  `--seed`, `--out`, `--json`, `--run`).
+- `backend-info` — print backend dependency and version metadata. Flags:
+  `--backend`.
+- `self-check` — run lightweight oracle engine self checks. No flags.
+
+Safe offline and provider dry-run examples (no root, no credentials, no live
+traffic):
+
+```sh
+tools/oracle/run offline --backend scapy --profile smoke --seed 1 --count 10
+tools/oracle/run pcap --backend scapy --profile smoke --seed 1 --count 10
+tools/oracle/run live --backend scapy --provider local-dry-run --profile smoke --seed 1 --count 10
+```
+
 ## Corpus Generation
 
 Corpus generation writes the ordered packet plans shared by validation modes:
