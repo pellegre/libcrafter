@@ -12,8 +12,9 @@ other protocol: `/` composition, `compile()`, `decode_from_link`, `summary()`,
 channel manager, password-cracking tool, deauthentication workflow, or complete
 Wi-Fi stack.
 
-Protocol facts here are source-backed. The authority record is
-[`docs/internal/source/dot11-source-manifest.md`](../internal/source/dot11-source-manifest.md).
+Protocol facts here are source-backed; the
+[Standards and RFCs implemented](#standards-and-rfcs-implemented) section below
+lists the exact source set.
 The current branch also has offline examples under `crafter/examples/`:
 `dot11_radiotap_ipv4`, `dot11_beacon_rsn`, `eapol_key_parse`, and
 `wpa_decrypt_offline`.
@@ -302,6 +303,28 @@ traffic from networks you are not authorized to observe. `WpaDecrypt` is not a
 password cracker and does not perform active deauthentication, scanning,
 association, channel hopping, AP behavior, or supplicant behavior.
 
+### WPA decrypt standards
+
+The passive decrypt path is source-backed and scoped to WPA2-PSK with CCMP-128
+on unicast data frames (and group-addressed data frames once GTK material is
+learned from supported encrypted key data). WPA3/SAE, enterprise authentication,
+TKIP, WEP, GCMP, CCMP-256, active deauthentication, password cracking, and
+fragmentation/reassembly are explicitly out of scope. The standards it implements:
+
+- **IEEE Std 802.11-2020** — MAC frame layout, address roles, the protected
+  frame bit, RSN information elements, the RSNA key hierarchy, the four-way
+  handshake, and the CCMP profile (header, packet number, AAD, nonce, MIC).
+- **IEEE Std 802.1X-2020** — EAPOL LAN encapsulation carrying the EAPOL-Key
+  records (LLC/SNAP EtherType `0x888e`); `crafter` observes them passively and
+  implements no supplicant/authenticator.
+- **RFC 8018** — PBKDF2, used as PBKDF2-HMAC-SHA1 with the SSID bytes as salt for
+  passphrase-to-PMK derivation.
+- **RFC 3394** — AES Key Wrap, used to unwrap supported WPA2 encrypted GTK key
+  data.
+- **FIPS 197** — the AES block cipher.
+- **NIST SP 800-38C** — the CCM mode underlying CCMP. CCMP authentication failure
+  is a decrypt-failure state, never a panic or a falsely decrypted packet.
+
 ## Pcap Usage
 
 Classic pcap support includes both new Wi-Fi link types:
@@ -429,3 +452,39 @@ Provider-backed or hardware-backed live work must start with dry-run planning
 and remain behind explicit live confirmation. Automated validation must not
 require a Wi-Fi dongle, monitor mode, root privileges, provider credentials, or
 real network identifiers.
+
+## Standards and RFCs implemented
+
+The IEEE 802.11 wire facts above trace to reviewed IEEE standards, IETF RFCs,
+and the radiotap/libpcap/IANA registries. The source set that `crafter`
+implements for 802.11:
+
+- **IEEE Std 802.11-2024** — the MAC header layout, frame-control fields,
+  type/subtype codepoints and minimum header lengths, Duration/ID, the four
+  address slots, Sequence Control, QoS Control, the management fixed fields and
+  tagged parameters, the RSN information element, and RSN cipher/AKM suite
+  selectors (OUI + one-octet suite type).
+- **IEEE Std 802.2 (ISO/IEC 8802-2)** — the LLC PDU structure (DSAP, SSAP,
+  Control) and the Type 1 unnumbered-information service used to carry SNAP.
+- **IEEE Std 802.1X-2020** — the EAPOL base header (version, packet type, body
+  length), the EAPOL packet types (EAP-Packet, EAPOL-Start, EAPOL-Logoff,
+  EAPOL-Key), and the `0x888e` EtherType.
+- **RFC 1042** — IP/ARP transmission over IEEE 802 networks: SNAP over LLC with
+  DSAP/SSAP `0xaa`, Control `0x03`, the all-zero OUI, and a two-octet EtherType.
+- **RFC 9542** — IANA considerations and IETF usage for IEEE 802 parameters: the
+  general OUI-based protocol-identifier shape and documentation guidance.
+- **Radiotap** (radiotap.org defined-fields registry) — the base header, the
+  little-endian present bitmap with extended-present chaining, present-bit field
+  ordering and alignment, and the selected typed fields (TSFT, Flags, Rate,
+  Channel, antenna signal, antenna, RX flags, TX flags), including the FCS-present
+  (`0x10`) and failed-FCS (`0x40`) Flags bits.
+- **IANA IEEE 802 Numbers** (EtherTypes registry) — IPv4 `0x0800`, ARP `0x0806`,
+  IPv6 `0x86dd`, and EAPOL `0x888e`.
+- **libpcap LINKTYPE / DLT values** — `DLT_IEEE802_11` (`105`) for bare 802.11
+  and `DLT_IEEE802_11_RADIO` (`127`) for radiotap-wrapped 802.11.
+
+Deferred / out of scope for this phase: FCS generation and validation (FCS
+metadata stays observable through radiotap), fragment and A-MSDU reassembly,
+mesh address semantics, multi-link operation, and EHT/802.11be-specific fields.
+See the [WPA decrypt standards](#wpa-decrypt-standards) above for the WPA2-PSK
+CCMP decrypt source set.
