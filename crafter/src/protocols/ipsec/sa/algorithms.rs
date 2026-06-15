@@ -7,7 +7,7 @@
 //! ESP/AH/SK crypto.
 //!
 //! The numeric IDs come from the IANA "Internet Key Exchange Version 2 (IKEv2)
-//! Parameters" registry as recorded in `docs/internal/manifests/ipsec-rfc-manifest.md` (Step 01):
+//! Parameters" registry as recorded in `docs/guide/ipsec.md` (Step 01):
 //!
 //! Encryption (Transform Type 1):
 //! - `ENCR_NULL` = 11 (RFC 2410)
@@ -365,7 +365,7 @@ impl From<IntegrityAlgorithm> for u16 {
 mod tests {
     use super::*;
 
-    // --- Encryption transform IDs (IANA / docs/internal/manifests/ipsec-rfc-manifest.md) -------
+    // --- Encryption transform IDs (IANA / docs/guide/ipsec.md) -------
 
     #[test]
     fn encryption_transform_ids_match_iana() {
@@ -539,7 +539,7 @@ mod tests {
         }
     }
 
-    // --- Integrity transform IDs (IANA / docs/internal/manifests/ipsec-rfc-manifest.md) --------
+    // --- Integrity transform IDs (IANA / docs/guide/ipsec.md) --------
 
     #[test]
     fn integrity_transform_ids_match_iana() {

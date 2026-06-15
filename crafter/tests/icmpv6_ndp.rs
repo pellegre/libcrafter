@@ -559,7 +559,7 @@ fn router_advertisement_round_trips_with_unknown_option() {
 // RFC 4620 (experimental) Node Information Query / Response (types 139 / 140),
 // and the niche-family deferral: Router Renumbering (RFC 2894, type 138) and
 // Inverse Neighbor Discovery (RFC 3122, types 141 / 142) are deferred and must
-// decode to an Unknown body / Raw tail without panic. See docs/internal/manifests/icmpv6-coverage.md.
+// decode to an Unknown body / Raw tail without panic. See docs/guide/icmpv6.md.
 // ===========================================================================
 
 /// A documentation IPv6 address used as a Node Information Query Subject /
@@ -658,7 +658,7 @@ fn node_information_response_round_trips() {
 
 // The deferred niche families — Router Renumbering (138, RFC 2894) and Inverse
 // Neighbor Discovery Solicitation / Advertisement (141 / 142, RFC 3122) — are
-// not modeled with typed bodies (see docs/internal/manifests/icmpv6-coverage.md). The default
+// not modeled with typed bodies (see docs/guide/icmpv6.md). The default
 // ICMPv6 decode path must preserve them: a valid Icmpv6 header, the body
 // classified as Icmpv6Body::Unknown with the rest-of-header preserved, and the
 // trailing payload kept as a single Raw layer — never a panic and never a

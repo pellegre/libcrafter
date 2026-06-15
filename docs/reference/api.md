@@ -158,7 +158,7 @@ packet records with pcap metadata and writes consume packets or packet records.
 The crate-level packet I/O surface lives under `crafter::wire`. See
 [docs/reference/wire.md](wire.md) for the full guide to `PacketWire`, `PacketRecord`
 metadata, `PacketTransform`, `Sniffer`, and `Transmitter`.
-See [docs/internal/inventories/wire-api-inventory.md](../internal/inventories/wire-api-inventory.md) for the inspectable
+See [docs/reference/wire.md](wire.md) for the inspectable
 API inventory and backend responsibility map.
 
 The public stream shape is:
