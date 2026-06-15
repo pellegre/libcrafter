@@ -14,9 +14,9 @@ fragment generation and reassembly live in the packet-stream `IpFragment` and
 [Explicit exclusions](#explicit-exclusions).
 
 All wire facts on this page trace to reviewed RFC text and IANA registries. The
-authoritative source record is
-[`docs/internal/manifests/ipv4-rfc-manifest.md`](../internal/manifests/ipv4-rfc-manifest.md); this guide summarizes the
-user-facing API built on top of that manifest.
+RFCs and registries the IPv4 layer implements are listed in
+[Standards and RFCs implemented](#standards-and-rfcs-implemented) at the end of
+this guide.
 
 ## Coverage at a glance
 
@@ -362,6 +362,21 @@ Examples use documentation address space and offline or dry-run writers. Do not
 turn fragment examples into live traffic instructions; provider-backed lab
 workflows are the explicit live path.
 
+The `IpFragment` and `IpDefrag` transforms are source-backed for IPv4 by:
+
+- **RFC 791** - the IPv4 fragmentation and reassembly model: 8-octet fragment
+  offsets, DF and MF behavior, the source/destination/protocol/identification
+  reassembly identity, and the header fields (IHL, Total Length, Header
+  Checksum) recomputed per fragment.
+- **RFC 6864** - the atomic versus non-atomic distinction. For atomic datagrams
+  (`DF=1`, `MF=0`, offset `0`) the Identification value carries no fragmentation
+  meaning; the transforms do not invent uniqueness requirements for those
+  packets. Non-atomic fragmentation preserves the RFC 791 identity tuple.
+
+`IpDefrag` does not silently emit ambiguous bytes for conflicting overlaps, and
+`IpFragment` honors DF rather than splitting a DF-set datagram. Live PMTUD,
+fragment caches, and stack delivery stay out of scope.
+
 ## Decode behavior
 
 Use `Packet::decode_from_l3(NetworkLayer::Ipv4, bytes)` for raw IPv4 datagrams.
@@ -474,21 +489,40 @@ capture, provider, and lab-session APIs.
 The fields needed to build or inspect those packets are present; the workflows
 that decide when to send them belong outside the crate primitive.
 
-## Evidence
+## Standards and RFCs implemented
 
-Protocol facts above come from
-[`docs/internal/manifests/ipv4-rfc-manifest.md`](../internal/manifests/ipv4-rfc-manifest.md). The source set, in brief:
+The IPv4 layer traces every wire fact to reviewed RFC text and IANA registries.
+The library implements the following for IPv4 (deferred or out-of-scope items
+are marked):
 
-- **RFC 791** - IPv4 base header, options, checksum, and fragmentation model.
-- **RFC 1122** - host requirements for IPv4 validation, TTL, options, and
-  robustness.
-- **RFC 2474** - DS field and DSCP layout.
-- **RFC 3168** - ECN codepoints.
-- **RFC 6864** - updated IPv4 Identification field semantics.
-- **IANA Assigned Internet Protocol Numbers** - Protocol field assignments.
-- **IANA IPv4 Parameters** - option numbers, Router Alert values, and default
-  TTL guidance.
-- **IANA DSCP/ECN registries** - DSCP and ECN registry authority.
-- **RFC 2113**, **RFC 1393**, **RFC 4727**, and **RFC 7126** - option-specific
-  support and operational guidance for Router Alert, Traceroute, experiment
-  values, and IPv4 options.
+- **RFC 791 - Internet Protocol** - the IPv4 base header, option encoding,
+  header checksum, and the fragmentation/reassembly model.
+- **RFC 1122 - Requirements for Internet Hosts** - host requirements for version
+  handling, checksum validation, TTL guidance, option robustness, and
+  fragmentation/reassembly expectations.
+- **RFC 2474 - Differentiated Services (DS) Field** - the six-bit DSCP layout
+  that replaces the historical TOS octet.
+- **RFC 3168 - Explicit Congestion Notification (ECN)** - the two ECN bits and
+  the Not-ECT, ECT(1), ECT(0), and CE codepoints.
+- **RFC 6864 - Updated IPv4 ID Field** - atomic versus non-atomic datagram
+  semantics for the Identification field.
+- **RFC 2113 - IP Router Alert Option** - the Router Alert option wire format
+  (option value 148; value 0 means routers examine the packet).
+- **RFC 1393 - Traceroute Using an IP Option** - the Traceroute option data
+  layout.
+- **RFC 4727 - Experimental Values** - the RFC 3692-style IPv4 option experiment
+  values, classified for inspection (never a production default).
+- **RFC 7126 - Filtering of IPv4 Packets Containing IPv4 Options** - operational
+  guidance for option handling; informs documentation and test scope, adds no
+  new wire encoding.
+- **IANA Assigned Internet Protocol Numbers** - authority for the Protocol field
+  numeric assignments, names, and reserved/experimental ranges.
+- **IANA Internet Protocol Version 4 (IPv4) Parameters** - authority for IPv4
+  option numbers, Router Alert values, and the recommended default TTL (64).
+- **IANA Differentiated Services Field Codepoints (DSCP)** - authority for DSCP
+  codepoint names and ECN field registrations.
+
+Out of scope for the IPv4 layer: routing, forwarding, TTL decrement, ICMP
+generation from forwarding, global Identification allocation, Path MTU
+Discovery, and fragment generation/reassembly outside the explicit `IpFragment`
+and `IpDefrag` transforms.
