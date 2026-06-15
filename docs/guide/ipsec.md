@@ -21,9 +21,9 @@ only**: round-trip construction and decoding. Keys are always supplied by the
 caller. See [Explicit exclusions](#explicit-exclusions).
 
 All wire facts on this page trace to reviewed RFC text and IANA registries. The
-authoritative source record is
-[`docs/internal/manifests/ipsec-rfc-manifest.md`](../internal/manifests/ipsec-rfc-manifest.md); this guide summarizes the
-user-facing API built on top of that manifest.
+[Standards and RFCs implemented](#standards-and-rfcs-implemented) section below
+lists the exact source set; this guide summarizes the user-facing API built on
+top of it.
 
 ## Coverage at a glance
 
@@ -588,25 +588,51 @@ through the crate's live send, capture, provider, and lab-session APIs.
 The fields and crypto needed to build or inspect these packets are present; the
 workflows that decide when to send them belong outside the crate primitive.
 
-## Evidence
+## Standards and RFCs implemented
 
-Protocol facts above come from
-[`docs/internal/manifests/ipsec-rfc-manifest.md`](../internal/manifests/ipsec-rfc-manifest.md). The source set, in brief:
+Every wire fact above traces to reviewed RFC text and IANA registries. The
+source set that `crafter` implements for IPSec:
 
-- **RFC 4303** — ESP header/trailer format, padding (§2.4), ICV placement, and
+**Architecture and core protocols**
+
+- **RFC 4301** — Security Architecture for IP: transport vs. tunnel mode, the SA
+  concept, and the SPI. (`crafter` models packets, not the SAD/SPD it describes.)
+- **RFC 4302** — IP Authentication Header (AH): header format, Payload Length
+  encoding, ICV scope, and the mutable-field canonicalization (§3.3.3.1).
+- **RFC 4303** — IP Encapsulating Security Payload (ESP): header/trailer format,
+  padding rules (§2.4), Pad/Pad Length/Next Header trailer, ICV placement, and
   transport/tunnel framing.
-- **RFC 4302** — AH header format, Payload Length encoding, ICV scope, and the
-  immutable-field canonicalization (§3.3.3.1).
-- **RFC 7296** — the IKE header, generic payload header, payload set, and the
-  Encrypted (SK) payload.
-- **RFC 3948** — NAT-T: UDP/4500, the non-ESP marker, and UDP-encapsulated ESP.
-- **RFC 4301** — transport vs. tunnel mode, the SA concept, and the SPI.
-- **RFC 8221** — the current MUST/SHOULD/MAY algorithm requirements that select
-  the transform coverage.
-- **RFC 4106 / 4309 / 7634 / 3602 / 3686 / 2410** — the encryption and AEAD
-  transforms (AES-GCM, AES-CCM, ChaCha20-Poly1305, AES-CBC, AES-CTR, NULL).
-- **RFC 4868 / 2404 / 3566 / 4543** — the integrity transforms (HMAC-SHA-2,
-  HMAC-SHA1-96, AES-XCBC-96, AES-GMAC).
-- **IANA IKEv2 Parameters** and **IANA Assigned Internet Protocol Numbers** —
-  the transform IDs, payload types, and ESP/AH protocol numbers (50 / 51).
+- **RFC 7296** — Internet Key Exchange Version 2 (IKEv2): the 28-byte IKE header,
+  the 4-byte generic payload header, the payload set, and the Encrypted (SK)
+  payload. Wire format only.
+- **RFC 3948** — UDP Encapsulation of IPsec ESP: NAT-T framing on UDP/4500, the
+  4-byte non-ESP marker, and UDP-encapsulated ESP disambiguation.
+
+**Algorithm requirements**
+
+- **RFC 8221** — Cryptographic Algorithm Implementation Requirements and Usage
+  Guidance for ESP and AH: the current MUST/SHOULD/MAY status that selects the
+  transform coverage (updates RFC 7321).
+
+**Cryptographic transforms**
+
+- **RFC 4106** — AES-GCM AEAD (`ENCR_AES_GCM_16`, 16-byte ICV).
+- **RFC 4309** — AES-CCM AEAD (`ENCR_AES_CCM_8`, 8-byte ICV).
+- **RFC 3602** — AES-CBC (explicit IV, block padding, separate integrity).
+- **RFC 3686** — AES-CTR (explicit IV/counter block, separate integrity).
+- **RFC 3566** — AES-XCBC-MAC-96 integrity (`AUTH_AES_XCBC_96`).
+- **RFC 4543** — AES-GMAC integrity (`AUTH_AES_GMAC`).
+- **RFC 4868** — HMAC-SHA-2 integrity: SHA-256→128, SHA-384→192, SHA-512→256.
+- **RFC 2404** — HMAC-SHA-1-96 integrity (legacy `AUTH_HMAC_SHA1_96`).
+- **RFC 2410** — NULL encryption (`ENCR_NULL`: no confidentiality, 1-byte block).
+- **RFC 7634** — ChaCha20-Poly1305 AEAD (`ENCR_CHACHA20_POLY1305`).
+
+**Registries**
+
+- **IANA, Internet Key Exchange Version 2 (IKEv2) Parameters** — authority for
+  IKEv2 Exchange Types, Payload Types, Transform Type / Transform ID values, and
+  Notify Message Types.
+- **IANA, Assigned Internet Protocol Numbers** — authority for the IP protocol
+  numbers **50 (ESP)** and **51 (AH)**, used in the IPv4 `Protocol` field and the
+  IPv6 `Next Header` field.
 ```
