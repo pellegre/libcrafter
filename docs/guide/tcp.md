@@ -13,10 +13,9 @@ controller, a scanner, or a fuzzer. See
 [Explicit exclusions](#explicit-exclusions).
 
 All protocol facts on this page trace to reviewed RFC text and IANA registries,
-not model memory. The authoritative, citation-by-citation source record is
-[`docs/internal/manifests/tcp-rfc-manifest.md`](../internal/manifests/tcp-rfc-manifest.md); this guide summarizes the
-user-facing API built on top of it. See [Evidence](#evidence) for the source
-set.
+not model memory. The RFCs and registries the TCP layer implements are listed in
+[Standards and RFCs implemented](#standards-and-rfcs-implemented) at the end of
+this guide.
 
 ## Coverage at a glance
 
@@ -186,7 +185,7 @@ options first:
   `extended_data_offset_ext(...)` — the existing `TcpExtendedDataOffset` API. EDO
   (draft-ietf-tcpm-tcp-edo, kind 237) is **not** an RFC-published assigned kind;
   the API is preserved for compatibility and its draft status is documented in
-  the [manifest](../internal/manifests/tcp-rfc-manifest.md).
+  [Standards and RFCs implemented](#standards-and-rfcs-implemented).
 - `generic(kind, data)` — any other kind, preserved as raw bytes.
 
 ### Reading options back
@@ -405,8 +404,8 @@ modeled as sizing guidance only; `crafter` never probes a path MTU, and
 TCP segmentation and TCP reassembly remain future work. IP fragmentation and IP
 datagram reassembly are implemented only by the packet-stream transforms. See
 [PMTUD / PLPMTUD and fragmentation (guidance only)](#pmtud--plpmtud-and-fragmentation-guidance-only).
-These boundaries mirror the spec's "what not to do" and the manifest's
-[Explicit Exclusions](../internal/manifests/tcp-rfc-manifest.md#explicit-exclusions).
+These boundaries mirror the spec's "what not to do" and this guide's own
+[Explicit exclusions](#explicit-exclusions).
 
 ## Validation coverage
 
@@ -417,26 +416,44 @@ suite. All cases use documentation address space (`192.0.2.0/24`,
 live provider runs are opt-in and start with `--dry-run`. See
 [Oracle validation](../operations/validation.md) for the boundary and command shapes.
 
-## Evidence
+## Standards and RFCs implemented
 
-Protocol facts above come from the sources recorded, citation by citation, in
-[`docs/internal/manifests/tcp-rfc-manifest.md`](../internal/manifests/tcp-rfc-manifest.md). The source set, in brief:
+The TCP layer traces every wire fact to reviewed RFC text and IANA registries.
+The library implements the following for TCP (draft and guidance-only items are
+marked):
 
-- **RFC 9293** — base TCP (header layout, Data Offset, control bits, checksum,
-  EOL/NOP/MSS options). Obsoletes RFC 793 and others.
-- **IANA TCP Parameters** — current TCP Option Kind Numbers and TCP Header Flags
-  registries.
-- **RFC 2018 / RFC 2883** — SACK and D-SACK.
-- **RFC 3168 / RFC 8311** — classic ECN bits (CWR, ECE) and ECN-nonce
-  deprecation (the bit historically named `NS`).
-- **RFC 7323** — Window Scale and Timestamps.
-- **RFC 5482** — User Timeout.
-- **RFC 5925 / RFC 5926** — TCP-AO wire format and algorithms (bytes preserved
-  only).
-- **RFC 6994** — experimental option ExIDs (kinds 253 / 254).
-- **RFC 7413** — TCP Fast Open.
-- **RFC 8547 / RFC 8548** — TCP-ENO and tcpcrypt (bytes preserved only).
-- **RFC 8684** — MPTCP v1 option and subtype registries.
-- **RFC 9768** — Accurate ECN feedback, the AE flag, and AccECN options
-  (kinds 172 / 174).
-- **RFC 1191 / RFC 8201 / RFC 8899** — PMTUD / PLPMTUD sizing guidance only.
+- **RFC 9293 — Transmission Control Protocol** — the base TCP header layout, Data
+  Offset, control bits, the pseudo-header checksum, and the EOL (0) / NOP (1) /
+  MSS (2) options. Obsoletes RFC 793 and others.
+- **IANA TCP Parameters** — authority for the current TCP Option Kind Numbers and
+  TCP Header Flags registries.
+- **RFC 2018 / RFC 2883 — SACK and D-SACK** — SACK-Permitted (4) and SACK (5)
+  with 32-bit left/right-edge blocks; D-SACK is represented at the SACK-block
+  level.
+- **RFC 3168 / RFC 8311 — ECN bits** — the classic ECN control bits (CWR, ECE)
+  and the ECN-nonce deprecation that freed the bit historically named `NS`.
+- **RFC 7323 — TCP Extensions for High Performance** — Window Scale (3) and
+  Timestamps (8). Obsoletes RFC 1323.
+- **RFC 5482 — TCP User Timeout Option** — User Timeout (28): a granularity flag
+  plus a 15-bit value.
+- **RFC 5925 / RFC 5926 — TCP-AO** — the TCP Authentication Option (29) wire
+  format and algorithm references. Option bytes are preserved only; no MAC is
+  computed or verified.
+- **RFC 6994 — Shared Use of Experimental TCP Options** — the 16-bit Experiment
+  Identifier (ExID) for experimental kinds 253 / 254.
+- **RFC 7413 — TCP Fast Open** — the Fast Open Cookie option (34).
+- **RFC 8547 / RFC 8548 — TCP-ENO and tcpcrypt** — the Encryption Negotiation
+  Option (69). Suboption bytes are preserved only; no negotiation or tcpcrypt
+  session behavior is implemented.
+- **RFC 8684 — MPTCP v1** — the Multipath TCP option (30), its subtype nibble,
+  and the IANA MPTCP subtype and MP_TCPRST reason registries. Subtype bytes are
+  preserved; no multipath connection logic is implemented.
+- **RFC 9768 — Accurate ECN (AccECN)** — the AE flag (the `0x100` bit) and the
+  AccECN options (kinds 172 / 174).
+- **draft-ietf-tcpm-tcp-edo — Extended Data Offset (EDO)** — kind 237 is
+  **draft-derived and not an IANA-assigned kind**; the `TcpExtendedDataOffset`
+  API is preserved for backward compatibility, while the RFC 6994 experimental
+  ExID options are the source-backed current path.
+- **RFC 1191 / RFC 8201 / RFC 8899 — PMTUD / PLPMTUD** — modeled as MSS and
+  segment-sizing **guidance only**; `crafter` builds the DF bit and the
+  ICMP/ICMPv6 messages but never probes a path MTU.
