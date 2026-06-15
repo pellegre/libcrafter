@@ -14,11 +14,11 @@ Fragment Header reassembly and source-side fragmentation are packet-stream
 transforms: use `IpDefrag` on `Sniffer` sources and `IpFragment` on
 `Transmitter` writers.
 
-Protocol facts here are source-backed. The source record is
-[`docs/internal/manifests/ipv6-rfc-manifest.md`](../internal/manifests/ipv6-rfc-manifest.md), and the implementation
-map is [`docs/internal/inventories/ipv6-implementation-inventory.md`](../internal/inventories/ipv6-implementation-inventory.md).
-The current branch also has focused oracle specs for the enriched IPv6 surface
-under `tools/oracle/specs/layers/ipv6.yaml` and
+Protocol facts here are source-backed. The RFCs and registries the IPv6 layer
+implements are listed in
+[Standards and RFCs implemented](#standards-and-rfcs-implemented) at the end of
+this guide. The current branch also has focused oracle specs for the enriched
+IPv6 surface under `tools/oracle/specs/layers/ipv6.yaml` and
 `tools/oracle/specs/features/ipv6-fragment-routing.yaml`.
 
 ## Coverage At A Glance
@@ -383,11 +383,23 @@ for offline examples, tests, and generated tooling, not live traffic.
 ## Fragment Header Extension Scope
 
 The packet-stream `IpDefrag` and `IpFragment` transforms use a deliberately
-narrow IPv6 extension scope for Fragment Header handling. Source authority is
-RFC 8200 for the Fragment Header and extension-chain repair rules, RFC 6946 for
-atomic fragments, RFC 7112 for first-fragment header-chain requirements, and
-[`docs/internal/source/ip-fragment-source-manifest.md`](../internal/source/ip-fragment-source-manifest.md)
-for the transform-specific manifest.
+narrow IPv6 extension scope for Fragment Header handling. The IPv6 fragment
+behavior is source-backed by:
+
+- **RFC 8200** - the 8-octet Fragment Header layout (Next Header, reserved
+  field, 13-bit Fragment Offset, M flag, 32-bit Identification), source-only
+  fragmentation, the per-fragment header and fragmentable-part rules, and the
+  reassembly identity of source address, destination address, and Fragment
+  Identification only.
+- **RFC 6946** - atomic fragments (Fragment Offset zero with M flag clear) are
+  processed in isolation and are never merged with other fragments that share a
+  source, destination, and identification.
+- **RFC 7112** - the first fragment must contain the complete header chain
+  through the upper-layer header; the transform reports an unsupported or
+  too-small MTU rather than emitting a nonconformant first fragment.
+- **RFC 8201 / RFC 4443** - PMTUD and ICMPv6 Packet Too Big are MTU-feedback
+  context only; the transforms consume an explicit MTU and do not learn, cache,
+  or probe path MTU.
 
 Supported scope:
 
@@ -501,3 +513,49 @@ primitive:
   verification, or live SR domain operation.
 - Treating generated examples, fixtures, oracle, or probe defaults as live
   network actions.
+
+## Standards and RFCs implemented
+
+Every IPv6 wire fact traces to reviewed RFC text and IANA registries. The
+library implements the following for IPv6 (deferred or out-of-scope items are
+marked):
+
+- **RFC 8200 - Internet Protocol, Version 6 (IPv6) Specification** (STD 86) -
+  the 40-octet base header, Traffic Class, Flow Label, Payload Length, Next
+  Header, Hop Limit, the extension-header chain (Hop-by-Hop Options, Destination
+  Options, Routing Header, Fragment Header), and malformed/truncated decode
+  expectations.
+- **RFC 8201 - Path MTU Discovery for IPv6** (STD 87) - PMTUD and minimum-MTU
+  guidance used for docs, examples, and sizing; live PMTUD probing stays out of
+  scope.
+- **RFC 2675 - IPv6 Jumbograms** - the Jumbo Payload Hop-by-Hop option and the
+  payload-length-zero condition; full jumbogram transport behavior is out of
+  scope.
+- **RFC 2711 - IPv6 Router Alert Option** - the Router Alert Hop-by-Hop option,
+  parsed/built/preserved as explicit-only data (IANA deprecates it for new
+  protocols).
+- **RFC 5095 - Deprecation of Type 0 Routing Headers** - RH0 is decoded and
+  preserved for inspection but marked deprecated and never emitted by default.
+- **RFC 6946 - Processing of IPv6 "Atomic" Fragments** - Fragment Header
+  inspection when Fragment Offset is zero and the M flag is clear.
+- **RFC 7045 - Transmission and Processing of IPv6 Extension Headers** - the
+  registry split that keeps unknown Next Header values from being treated as
+  structured extension headers.
+- **RFC 7112 - Implications of Oversized IPv6 Header Chains** - the
+  first-fragment header-chain requirement exposed to the fragment transforms.
+- **RFC 6275 - Mobility Support in IPv6** - packet-layer parse/build of the
+  Mobility Header protocol number 135, the Home Address Destination Option, and
+  the Type 2 Routing Header; Mobile IPv6 state machines are out of scope.
+- **RFC 8754 - IPv6 Segment Routing Header (SRH)** - Routing Type 4, SRH fields,
+  Segment List, and SRH TLV shape; SRv6 endpoint behavior and TLV semantics are
+  out of scope.
+- **IANA Assigned Internet Protocol Numbers** - authority for the Next Header
+  number space (TCP 6, UDP 17, IPv6-ICMP 58, No Next Header 59, and others).
+- **IANA Internet Protocol Version 6 (IPv6) Parameters** - authority for
+  IPv6 Extension Header Types, Hop-by-Hop and Destination Option types, Routing
+  Types, and the Segment Routing Header Flags/TLV registries.
+
+Out of scope for the IPv6 layer: a full IPv6 stack, routing, live PMTUD,
+fragment reassembly outside the explicit `IpFragment`/`IpDefrag` transforms,
+automatic Flow Label or extension-header ordering policy, AH/ESP cryptography,
+Mobile IPv6 control workflows, and SRv6 endpoint operation.
