@@ -51,6 +51,8 @@ The public API and wire I/O surface, plus example instructions.
 
 Live, provider-backed, and manual testing workflows.
 
+- [Tools overview](operations/tools.md) — the endpoint/lab/oracle/probe stack,
+  when to reach for each tool, and safe dry-run examples.
 - [Oracle validation](operations/validation.md) — corpus, offline, pcap, and
   provider-backed reference validation.
 - [Probe validation](operations/probe.md) — kernel and service behavior probes.
