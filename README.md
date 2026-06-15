@@ -169,25 +169,39 @@ Live raw sends and captures require platform privileges, and you must be
 authorized to send and capture on the target network. Keep live work off the
 developer host — provision a disposable endpoint instead.
 
-## Endpoint and lab runs
+## Tools: endpoint, lab, oracle, probe
 
-The live path does not have to originate from your machine. An endpoint provider
-provisions a disposable network position, runs packet work from it, collects
-artifacts, and destroys the underlying resources when the run is done:
+The live path does not have to originate from your machine. Four modules under
+`tools/` provision disposable network positions, run packet work from them,
+collect artifacts, and tear the resources down when the run is done:
+
+- **endpoint** — one disposable endpoint: doctor, create, exec, upload,
+  download, collect artifacts, destroy.
+- **lab** — multi-endpoint lab sessions that coordinate several endpoints for
+  one run.
+- **oracle** — packet-equivalence validation against reference backends
+  (offline, pcap, and live modes).
+- **probe** — peer-behavior validation against a live peer using seeded
+  profiles.
+
+The stack layers as endpoint ← lab ← oracle/probe. Every invocation is offline
+by default; live traffic is an explicit opt-in. Start every provider-backed run
+with `--dry-run`:
 
 ```sh
 tools/endpoint/run doctor --provider hetzner --exposure wan --dry-run
+tools/lab/run doctor --provider hetzner --dry-run
 tools/oracle/run live --provider hetzner --dry-run --profile smoke --seed 1 --count 10
 tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10
 ```
 
-Start every provider-backed run with `--dry-run`, then opt into live traffic
-only when an authorized human or agent has said so. Running the same primitive
-across several endpoints in parallel is the same idea at width — a multi-endpoint
-lab session. The Hetzner provider reads `HETZNER_API_TOKEN` or `HCLOUD_TOKEN`
-from the environment; never commit credentials, public IPs, or captures from
-sensitive networks.
+Opt into live traffic only when an authorized human or agent has said so. The
+Hetzner provider reads `HETZNER_API_TOKEN` or `HCLOUD_TOKEN` from the
+environment; never commit credentials, public IPs, or captures from sensitive
+networks.
 
+- [docs/operations/tools.md](docs/operations/tools.md) — the four-tool stack,
+  when to use which, and safe dry-run examples (start here).
 - [docs/operations/endpoint.md](docs/operations/endpoint.md) — disposable
   endpoint setup, credentials, artifacts, and cleanup.
 - [docs/operations/lab.md](docs/operations/lab.md) — provider-backed
@@ -203,12 +217,12 @@ preserved as `Raw` payloads when the enclosing header is valid.
 | --- | --- | --- |
 | Ethernet / VLAN | Ethernet II and 802.1Q VLAN, Linux cooked capture, null/loopback | — |
 | IEEE 802.11 | Management, control, and data frames with radiotap and LLC/SNAP, EAPOL and RSN (802.11i) key-exchange fields | [dot11](docs/guide/dot11.md) |
-| ARP | Request/reply construction and decode | — |
+| ARP | Request/reply construction and decode | [arp](docs/guide/arp.md) |
 | IPv4 | DSCP/ECN, protocol labels, checksum status, typed options, fragment fields (no automatic reassembly) | [ipv4](docs/guide/ipv4.md) |
 | IPv6 | Base header plus hop-by-hop, destination, fragment, routing, mobile-routing, and segment-routing extension headers | [ipv6](docs/guide/ipv6.md) |
-| ICMPv4 / ICMPv6 | ICMPv4 (with `Icmp` deprecated alias) and ICMP extensions (RFC 4884); ICMPv6 echo/errors, Neighbor Discovery (RFC 4861), MLD v1/v2, Extended Echo, experimental Node Information | — |
+| ICMPv4 / ICMPv6 | ICMPv4 (with `Icmp` deprecated alias) and ICMP extensions (RFC 4884); ICMPv6 echo/errors, Neighbor Discovery (RFC 4861), MLD v1/v2, Extended Echo, experimental Node Information | [icmpv6](docs/guide/icmpv6.md) |
 | TCP | Segment construction, typed options, checksums | [tcp](docs/guide/tcp.md) |
-| UDP | UDP with options (RFC 9868) and checksum status | — |
+| UDP | UDP with options (RFC 9868) and checksum status | [udp](docs/guide/udp.md) |
 | DNS | EDNS(0), SVCB/HTTPS, DNSSEC record types | [dns](docs/guide/dns.md) |
 | DHCPv4 | Option overload, RFC 3396 long options, relay agent option 82, client identifiers, authentication, leasequery fields | — |
 | BGP | OPEN, UPDATE, KEEPALIVE, NOTIFICATION, ROUTE-REFRESH, path attributes, capabilities | [bgp](docs/guide/bgp.md) |
@@ -253,13 +267,16 @@ The full annotated table, with safety modes and commands, is in
 
 - [docs/README.md](docs/README.md) is the documentation index.
 - [docs/guide/](docs/guide/) — per-protocol wire coverage for everyday packet
-  work (IPv4, IPv6, TCP, DNS, BGP, 802.11, IPsec).
+  work (IPv4, IPv6, TCP, UDP, ARP, ICMPv6, DNS, BGP, 802.11, IPsec); UDP, ARP,
+  and ICMPv6 now have their own guides.
 - [docs/reference/](docs/reference/) — the public API
   ([api.md](docs/reference/api.md)), the wire I/O layer
   ([wire.md](docs/reference/wire.md)), and the example catalog
   ([examples.md](docs/reference/examples.md)).
 - [docs/operations/](docs/operations/) — live, provider-backed, and manual
   testing workflows (validation, probes, lab sessions, endpoints).
+- [docs/operations/tools.md](docs/operations/tools.md) — tools overview tying
+  the endpoint, lab, oracle, and probe modules together.
 - [CHANGELOG.md](CHANGELOG.md) records the version 0.3.0 scope and boundaries.
 
 ## Validation
