@@ -54,8 +54,9 @@ infrastructure.
 ## Oracle CLI modes
 
 `tools/oracle/run` is the single entrypoint for every oracle mode. Each mode is
-a subcommand; the generation/validation modes share `--backend {scapy,wireshark}`
-(default `scapy`), `--profile` (default `smoke`), `--seed`, `--count`,
+a subcommand; the generation/validation modes share `--backend` (the reference
+backend; defaults to the full read/write backend, with a Wireshark/tshark
+parser-only option), `--profile` (default `smoke`), `--seed`, `--count`,
 `--family`, `--root`, `--case`, `--feature`, `--index`, and `--out`. The modes
 are:
 
@@ -89,9 +90,9 @@ Safe offline and provider dry-run examples (no root, no credentials, no live
 traffic):
 
 ```sh
-tools/oracle/run offline --backend scapy --profile smoke --seed 1 --count 10
-tools/oracle/run pcap --backend scapy --profile smoke --seed 1 --count 10
-tools/oracle/run live --backend scapy --provider local-dry-run --profile smoke --seed 1 --count 10
+tools/oracle/run offline --profile smoke --seed 1 --count 10
+tools/oracle/run pcap --profile smoke --seed 1 --count 10
+tools/oracle/run live --provider local-dry-run --profile smoke --seed 1 --count 10
 ```
 
 ## Corpus Generation
