@@ -199,7 +199,7 @@ VirtualBox lab sessions with `link_layer_send` + `link_layer_capture`
 capability checks, protected confirmation, artifact collection, and teardown.
 When authorization or VM prerequisites are absent, plan with `--dry-run` and
 record a skip artifact rather than faking a live run. The user-facing coverage
-boundary lives in [`docs/internal/manifests/arp-rfc-coverage.md`](../../docs/internal/manifests/arp-rfc-coverage.md).
+boundary lives in [`docs/guide/arp.md`](../../docs/guide/arp.md).
 
 ## Build IPv6 Neighbor Discovery (NDP)
 
@@ -344,7 +344,7 @@ on endpoints without link-layer access. A real exchange needs
 `--confirm-live-run` plus a provisioned two-endpoint lab session; collect
 artifacts and tear the session down afterward (see Live-Lab Sending and the
 `lab-session` skill). The user-facing NDP/ICMPv6 coverage boundary lives in
-[`docs/internal/manifests/icmpv6-coverage.md`](../../docs/internal/manifests/icmpv6-coverage.md).
+[`docs/guide/icmpv6.md`](../../docs/guide/icmpv6.md).
 
 ## Build Dot11 Stacks
 

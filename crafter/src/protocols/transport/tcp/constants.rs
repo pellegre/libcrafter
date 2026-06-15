@@ -28,7 +28,7 @@ pub const TCP_OPTION_TIMESTAMP: u8 = 8;
 /// This is a legacy security option. `crafter` preserves and classifies its
 /// bytes for inspection and round-trip; it implements no signing, key
 /// management, or signature validation. See the "Legacy Security Options" note
-/// in `docs/internal/manifests/tcp-rfc-manifest.md`.
+/// in `docs/guide/tcp.md`.
 pub const TCP_OPTION_MD5_SIGNATURE: u8 = 19;
 /// TCP User Timeout (UTO) option kind (RFC 5482).
 pub const TCP_OPTION_USER_TIMEOUT: u8 = 28;
@@ -159,7 +159,7 @@ pub const TCP_FIXED_HEADER_LEN: usize = 20;
 /// (60 octets); subtracting the 20-octet fixed header leaves a 40-octet option
 /// budget (RFC 9293 section 3.1, "Data Offset"). This is the hard cap on the
 /// space shared by MSS, Window Scale, SACK-Permitted, Timestamps, and every
-/// other SYN-time option (see `docs/internal/manifests/tcp-rfc-manifest.md`, "Segment Sizing And
+/// other SYN-time option (see `docs/guide/tcp.md`, "Segment Sizing And
 /// Fragmentation-Adjacent Guidance").
 pub const TCP_MAX_OPTION_BYTES: usize = 40;
 
@@ -169,7 +169,7 @@ pub const TCP_MAX_OPTION_BYTES: usize = 40;
 /// option is received and the path is unknown; this is the classic 576-octet
 /// IPv4 minimum datagram (RFC 1122 / RFC 879) minus the 20-octet IPv4 header
 /// and the 20-octet fixed TCP header (576 - 20 - 20 = 536). See
-/// `docs/internal/manifests/tcp-rfc-manifest.md`, "Segment Sizing And Fragmentation-Adjacent
+/// `docs/guide/tcp.md`, "Segment Sizing And Fragmentation-Adjacent
 /// Guidance".
 pub const TCP_DEFAULT_IPV4_MSS: u16 = 536;
 
@@ -177,7 +177,7 @@ pub const TCP_DEFAULT_IPV4_MSS: u16 = 536;
 ///
 /// Every IPv6 link must support an MTU of at least 1280 octets, which bounds
 /// the minimum IPv6 TCP payload-sizing guidance. See
-/// `docs/internal/manifests/tcp-rfc-manifest.md`, "Segment Sizing And Fragmentation-Adjacent
+/// `docs/guide/tcp.md`, "Segment Sizing And Fragmentation-Adjacent
 /// Guidance".
 pub const IPV6_MINIMUM_MTU: usize = 1280;
 
