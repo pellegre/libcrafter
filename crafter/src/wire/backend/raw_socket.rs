@@ -14,8 +14,8 @@ use super::super::Result;
 ///
 /// The adapter delegates planning, dry-run behavior, live transmission,
 /// interface validation, send-mode handling, and unsupported target checks to
-/// `SocketSender`. In particular, live radiotap injection remains unsupported
-/// here instead of being silently routed through a raw Ethernet or IP socket.
+/// `SocketSender`. In particular, live radiotap injection is routed through the
+/// same Layer-2 datalink writer `SocketSender` uses for Ethernet frames.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RawSocketWriter {
     sender: SocketSender,
@@ -272,7 +272,7 @@ mod raw_socket_writer {
     }
 
     #[test]
-    fn raw_socket_writer_live_radiotap_uses_socket_sender_validation() {
+    fn raw_socket_writer_live_radiotap_routes_to_layer2_via_socket_sender() {
         let mut writer =
             RawSocketWriter::new(SendOptions::new().interface("missing-crafter-wifi0").live());
         let error = writer
@@ -280,17 +280,10 @@ mod raw_socket_writer {
             .unwrap_err();
 
         match error {
-            WireError::Net(NetError::UnsupportedSendTarget { target, reason }) => {
-                assert_eq!(
-                    target,
-                    SendTarget::LinkLayer {
-                        link_type: LinkType::Radiotap
-                    }
-                );
-                assert!(reason.contains("live radiotap Wi-Fi injection is not implemented"));
-                assert!(reason.contains("monitor-mode radiotap backend"));
+            WireError::Net(NetError::InterfaceNotFound { name }) => {
+                assert_eq!(name, "missing-crafter-wifi0");
             }
-            other => panic!("expected raw socket radiotap validation error, got {other:?}"),
+            other => panic!("expected raw socket radiotap missing-interface error, got {other:?}"),
         }
     }
 
