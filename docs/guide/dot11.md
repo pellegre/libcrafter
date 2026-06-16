@@ -446,7 +446,7 @@ fn main() -> crafter::Result<()> {
     // Live: transmit on an already-configured monitor interface. Only run this
     // behind the project's explicit live gate on an isolated, authorized lab.
     // send_packet(&packet, SendOptions::new()
-    //     .iface("wlan0mon")
+    //     .iface("dot11-monitor0")
     //     .link_layer()
     //     .live())?;
     Ok(())
