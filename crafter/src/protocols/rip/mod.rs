@@ -18,6 +18,7 @@ pub mod constants;
 pub mod entry;
 pub mod message;
 pub mod registry;
+pub mod ripng;
 
 pub use auth::{
     verify, RipAuth, RipAuthPayload, RipAuthVerification, RipDigestAlgorithm, RipKeyedDigestHeader,
@@ -213,7 +214,10 @@ impl Rip {
 
     /// Effective command wire code (caller-set or default).
     pub fn command_value(&self) -> u8 {
-        self.command.value().copied().unwrap_or(RIP_COMMAND_RESPONSE)
+        self.command
+            .value()
+            .copied()
+            .unwrap_or(RIP_COMMAND_RESPONSE)
     }
 
     /// Effective command as a typed [`RipCommand`] (caller-set or default).
@@ -910,10 +914,8 @@ mod rip_whole_table_request_helpers {
     #[test]
     fn rip_whole_table_requests_build() {
         // RIPv1 whole-table request to a documentation unicast destination.
-        let v1 = rip_v1_whole_table_request(
-            Ipv4Addr::new(192, 0, 2, 1),
-            Ipv4Addr::new(192, 0, 2, 2),
-        );
+        let v1 =
+            rip_v1_whole_table_request(Ipv4Addr::new(192, 0, 2, 1), Ipv4Addr::new(192, 0, 2, 2));
         let v1_decoded = assert_whole_table_request(v1);
         let v1_rip = v1_decoded
             .layer::<Rip>()
@@ -982,7 +984,10 @@ mod rip_layer_auth_integration {
 
         // The leading entry is the AFI-0xFFFF / type-3 keyed-digest header entry.
         assert_eq!(&bytes[RIP_HEADER_LEN..RIP_HEADER_LEN + 2], &[0xFF, 0xFF]);
-        assert_eq!(&bytes[RIP_HEADER_LEN + 2..RIP_HEADER_LEN + 4], &[0x00, 0x03]);
+        assert_eq!(
+            &bytes[RIP_HEADER_LEN + 2..RIP_HEADER_LEN + 4],
+            &[0x00, 0x03]
+        );
 
         // The auto-filled digest verifies for the correct key.
         assert_eq!(verify(&bytes, key), RipAuthVerification::DigestOk);
