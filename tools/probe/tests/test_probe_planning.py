@@ -222,6 +222,20 @@ class ProbePlanningRegistryTest(unittest.TestCase):
                         "vtysh -c 'show ip rip'",
                         name,
                     )
+                elif name == "ripng-update":
+                    self.assertEqual(plan["stimulus"], "ripng_request", name)
+                    self.assertEqual(plan["destination_port"], 521, name)
+                    self.assertEqual(plan["multicast_group"], "ff02::9", name)
+                    self.assertEqual(
+                        plan["target_service"]["kind"],
+                        "frr-ripngd",
+                        name,
+                    )
+                    self.assertEqual(
+                        plan["target_service"]["rib_command"],
+                        "vtysh -c 'show ipv6 ripng'",
+                        name,
+                    )
                 else:
                     self.assertIn("ipsec_protocol", plan, name)
                     self.assertIn("stimulus_packet_shape", plan, name)

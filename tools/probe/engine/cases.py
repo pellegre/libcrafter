@@ -616,7 +616,9 @@ BGP_SMOKE_CASES: tuple[ProbeCase, ...] = (
 
 # RIP smoke cases. Probe owns controlled target-service setup for the FRR ripd
 # daemon; the current stimulus is planned-only until the endpoint driver
-# executes the RIP stimulus example.
+# executes the RIP stimulus example. The RIPng variant rides UDP/521 to the
+# IPv6 all-RIPng-routers multicast group (ff02::9) and reuses the same FRR
+# runtime (the ``ripngd`` daemon) so the live path covers IPv6 too.
 RIP_SMOKE_CASES: tuple[ProbeCase, ...] = (
     _behavior_case(
         name="rip-update-v2",
@@ -629,6 +631,22 @@ RIP_SMOKE_CASES: tuple[ProbeCase, ...] = (
         protocol="rip",
         metadata={
             "service": "frr-ripd",
+            "stateful": True,
+            "planned_only": True,
+        },
+    ),
+    _behavior_case(
+        name="ripng-update",
+        description=(
+            "Plan a RIPng update exchange against a probe-owned RIPng daemon "
+            "over UDP/521 to the ff02::9 multicast group."
+        ),
+        stimulus="ripng_request",
+        expected_response="ripng_peer_update",
+        required_capabilities=_RIP_CAPABILITIES,
+        protocol="ripng",
+        metadata={
+            "service": "frr-ripngd",
             "stateful": True,
             "planned_only": True,
         },
