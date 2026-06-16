@@ -1,0 +1,129 @@
+version: 1
+kind: feature
+name: ripng_header
+summary: RIPng (RFC 2080) header command/version round-trip over IPv6 UDP port 521 and structured-error handling for a truncated header, validated through the wireshark parser backend decode and the libcrafter internal round-trip because Scapy has no native RIPng dissector.
+
+# Offline RIPng header compile/decode coverage over IPv6 UDP port 521. RIPng has
+# no native Scapy layer (see tools/oracle/specs/layers/ripng.yaml: the Scapy
+# backend is partial with encode/decode false), so these cases do not run the
+# Scapy reference encoder. Instead they lean on the wireshark/tshark parser
+# backend for decode and on the libcrafter internal round-trip, the way DNS
+# records its Scapy gaps. The scapy-unsupported direction is marked normalized
+# with a documented note rather than being silently skipped.
+#
+# The request case is the whole-table request sentinel (command 1, version 1,
+# prefix ::/0, metric infinity 16); the response case carries a single RIPng
+# route table entry (command 2, version 1).
+#
+# The truncated-header case is declared coverage but carries
+# byte_policy: structured_error: a header shorter than the 4-octet RIPng header
+# is a structured decode error, not a comparable packet, so it is excluded from
+# the offline encode/decode sampling pathway (the oracle has no offline malformed
+# comparison path; see tools/oracle/engine/generator.py _case_supported_in_direction).
+# It stays declared coverage and feeds the resilience path; the crate's own
+# resilience and fixture suites assert the BufferTooShort behavior.
+
+layers:
+  - ripng
+directions:
+  - libcrafter_to_reference
+  - reference_to_libcrafter
+strict_bytes: true
+malformed: false
+
+behaviors:
+  # Command/version matrix. The behavior name is matched against the case id by
+  # the generator, which sets the RIPng command, version, and RTE layout for the
+  # selected case. Because Scapy has no native RIPng layer, the
+  # reference_to_libcrafter direction is decoded by the wireshark parser backend
+  # and cross-checked against the libcrafter internal round-trip rather than a
+  # native Scapy encode.
+  - name: request
+    command: 1
+    version: 1
+    checks:
+      - whole_table_request_sentinel
+  - name: response
+    command: 2
+    version: 1
+    checks:
+      - ripng_route_rte_round_trip
+  # Deliberately truncated header: fewer than 4 octets, which is a structured
+  # length error rather than a comparable packet (byte_policy: structured_error).
+  - name: truncated-header
+    fields:
+      - header
+
+coverage_cases:
+  - ripng-header-request
+  - ripng-header-response
+  - ripng-header-truncated-header
+
+supported_cases:
+  # Well-formed cases. Scapy cannot natively encode/decode RIPng, so the
+  # reference_to_libcrafter direction is parsed by the wireshark parser backend
+  # and validated against the libcrafter internal round-trip; this direction is
+  # marked normalized rather than skipped. The libcrafter_to_reference direction
+  # keeps the libcrafter-internal strict-byte round-trip.
+  - name: ripng-header-request
+    directions:
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: ripng-header-request-reference-decode
+    directions:
+      - reference_to_libcrafter
+    byte_policy: normalized
+    note: >-
+      Scapy has no native RIPng dissector; the reference_to_libcrafter direction
+      is decoded by the wireshark parser backend and cross-checked against the
+      libcrafter internal round-trip, marked normalized rather than skipped.
+  - name: ripng-header-response
+    directions:
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: ripng-header-response-reference-decode
+    directions:
+      - reference_to_libcrafter
+    byte_policy: normalized
+    note: >-
+      Scapy has no native RIPng dissector; the reference_to_libcrafter direction
+      is decoded by the wireshark parser backend and cross-checked against the
+      libcrafter internal round-trip, marked normalized rather than skipped.
+  # Truncated header (fewer than 4 octets). A header past the available bytes is
+  # a structured decode error rather than a comparable packet, so this case is
+  # excluded from offline encode/decode sampling (byte_policy: structured_error).
+  # It stays declared coverage; the crate's resilience/fixture suites assert the
+  # typed BufferTooShort error.
+  - name: ripng-header-truncated-header
+    directions:
+      - libcrafter_to_reference
+      - reference_to_libcrafter
+    byte_policy: structured_error
+    offline_byte_comparison: excluded
+
+backend_support:
+  scapy:
+    status: partial
+    notes:
+      - Scapy has no native RIPng layer, so RIPng header bytes are not produced
+        by a native Scapy dissector; the reference direction falls back to the
+        wireshark parser backend and the libcrafter internal round-trip and is
+        marked normalized rather than silently skipped.
+      - The truncated-header case is malformed input with no clean strict-byte
+        comparison, so it is excluded from offline sampling and exercised by the
+        crate's resilience path instead.
+  wireshark:
+    status: partial
+    native_layers:
+      - ripng
+    notes:
+      - Parser-only decode of the RIPng header (command, version, reserved) over
+        IPv6 UDP port 521; used for the reference_to_libcrafter decode direction
+        when tshark is available and skipped cleanly otherwise.
+  libcrafter:
+    status: supported
+    notes:
+      - Encodes and decodes the RIPng 4-octet header (command, version, reserved)
+        over IPv6 UDP port 521, the whole-table request sentinel, and surfaces a
+        header shorter than 4 octets as a structured length error rather than
+        rewriting or panicking.
