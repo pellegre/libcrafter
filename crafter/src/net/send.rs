@@ -533,6 +533,10 @@ fn transmit_link(plan: &SendPlan, options: &SendOptions, link_type: LinkType) ->
         });
     }
 
+    transmit_layer2(plan, options)
+}
+
+fn transmit_layer2(plan: &SendPlan, options: &SendOptions) -> Result<usize> {
     let interface = datalink::interfaces()
         .into_iter()
         .find(|candidate| candidate.name == plan.interface)
