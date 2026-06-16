@@ -1,0 +1,148 @@
+version: 1
+kind: feature
+name: rip_entries
+summary: RIPv1/RIPv2 route-entry layout — address family, route tag, address, subnet mask, next hop, and metric — round-trip, multi-entry messages, the whole-table request sentinel, and preserved unknown address families.
+
+# Offline RIP route-entry compile/decode coverage over IPv4 UDP port 520. Each
+# offline-sampled case is materialized by both the Scapy reference backend
+# (RIP / RIPEntry) and the libcrafter adapter from the same packet plan, then
+# decoded and compared octet-for-octet (byte_policy: strict_bytes).
+#
+# The route-entry surface splits into:
+#
+#   * v1-route, v2-route, multi-entry, and request-sentinel: well-formed RIP
+#     route entries that compile to byte-identical 20-octet entries across both
+#     backends and are compared octet-for-octet (byte_policy: strict_bytes). A
+#     RIPv1 entry leaves route tag, subnet mask, and next hop at their reserved
+#     zero defaults and carries address family 2 (IP) with an address and metric;
+#     a RIPv2 entry populates route tag, subnet mask, and next hop; multi-entry
+#     stacks several route entries up to the RFC 2453 limit of 25; the request
+#     sentinel is the whole-table request entry (address family 0, metric 16).
+#
+#   * unknown-afi: a route entry carrying an unknown/preserved-other address
+#     family. The entry round-trips as a preserved value rather than being
+#     rewritten; both backends emit the same 20 octets, so the case stays a
+#     comparable strict-byte packet (byte_policy: strict_bytes) and the crate's
+#     resilience suite asserts the preserved-unknown-AFI behavior.
+#
+# The malformed/odd entry cases (an entry body that is not a multiple of 20
+# octets) carry byte_policy: structured_error: a non-multiple-of-20 RIP body is
+# a structured length error, not a comparable packet, so it is excluded from the
+# offline encode/decode sampling pathway (the oracle has no offline malformed
+# comparison path; see tools/oracle/engine/generator.py
+# _case_supported_in_direction). It stays declared coverage and feeds the
+# resilience path; the crate's own resilience and fixture suites assert the
+# BufferTooShort behavior over a truncated/odd-length entry region.
+
+layers:
+  - rip
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: true
+malformed: false
+
+behaviors:
+  # Route-entry layout matrix. The behavior name is matched against the case id
+  # by the generator, which sets the RIP entry layout (address family, route
+  # tag, address, subnet mask, next hop, metric) for the selected case.
+  - name: v1-route
+    address_family: 2
+    fields:
+      - address
+      - metric
+    checks:
+      - ripv1_route_entry_round_trip
+  - name: v2-route
+    address_family: 2
+    fields:
+      - address
+      - subnet_mask
+      - next_hop
+      - route_tag
+      - metric
+    checks:
+      - ripv2_route_entry_round_trip
+  # Several route entries up to the RFC 2453 limit of 25 entries. The limit is a
+  # generation guideline, not a decode-time rejection; the multi-entry case stays
+  # within the limit and compares octet-for-octet across both backends.
+  - name: multi-entry
+    address_family: 2
+    checks:
+      - multi_entry_round_trip
+  # Whole-table request sentinel entry: address family 0, metric infinity (16).
+  - name: request-sentinel
+    address_family: 0
+    fields:
+      - metric
+    checks:
+      - whole_table_request_sentinel
+  # Preserved-other address family: an unknown AFI that must round-trip as a
+  # preserved value rather than being rewritten. Both backends emit the same 20
+  # octets, so the case stays a comparable strict-byte packet.
+  - name: unknown-afi
+    fields:
+      - address_family
+
+coverage_cases:
+  - rip-entries-v1-route
+  - rip-entries-v2-route
+  - rip-entries-multi-entry
+  - rip-entries-request-sentinel
+  - rip-entries-unknown-afi
+
+supported_cases:
+  # Well-formed route-entry cases keep strict byte comparison in both offline
+  # directions.
+  - name: rip-entries-v1-route
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: rip-entries-v2-route
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: rip-entries-multi-entry
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: rip-entries-request-sentinel
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  # Preserved unknown address family. The AFI round-trips as a preserved value,
+  # and both backends emit byte-identical entries, so the case keeps strict byte
+  # comparison. The crate's resilience/fixture suites additionally assert the
+  # preserved-unknown-AFI behavior.
+  - name: rip-entries-unknown-afi
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - RIP
+      - RIPEntry
+    notes:
+      - The v1-route, v2-route, multi-entry, request-sentinel, and unknown-afi
+        cases compile to byte-identical RIP route entries across both backends
+        and are compared octet-for-octet.
+      - Non-multiple-of-20 entry bodies are malformed input with no clean
+        strict-byte comparison, so they are excluded from offline sampling and
+        exercised by the crate's resilience path instead.
+  libcrafter:
+    status: supported
+    notes:
+      - Encodes and decodes the RIPv1/RIPv2 20-octet route entry — address
+        family, route tag, address, subnet mask, next hop, and metric — multiple
+        entries up to the RFC 2453 limit, and the whole-table request sentinel,
+        and preserves unknown address families rather than rewriting them.
+      - Surfaces a non-multiple-of-20 entry region as a structured length error
+        (BufferTooShort) rather than panicking.
