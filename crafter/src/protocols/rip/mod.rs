@@ -243,6 +243,43 @@ impl Rip {
         self
     }
 
+    /// Record a demand-RIP Sequence Number into the header (RFC 2091 §2.3).
+    ///
+    /// On demand circuits (RFC 2091), the Update Request / Update Response /
+    /// Update Acknowledge messages carry a Sequence Number used to match
+    /// retransmitted updates with their acknowledgements. RFC 2091 §2.3 places
+    /// that 2-octet Sequence Number in the header field RIP otherwise reserves
+    /// (the 2 octets following the command/version octets), so this builder
+    /// records the sequence there via the [`reserved`](Self::reserved) field's
+    /// `set_user`. Because the value is caller-set, `compile()` serializes it
+    /// exactly as given and a subsequent `decode()` reproduces it byte-for-byte.
+    ///
+    /// This view is meaningful only for the demand/triggered Update* commands;
+    /// see [`demand_sequence_value`](Self::demand_sequence_value), which returns
+    /// `None` for a plain Request/Response message.
+    pub fn demand_sequence(mut self, sequence: u16) -> Rip {
+        self.reserved.set_user(sequence);
+        self
+    }
+
+    /// The demand-RIP Sequence Number, if this is a demand message (RFC 2091 §2.3).
+    ///
+    /// Returns `Some(sequence)` only for the demand/triggered Update* commands
+    /// ([`RipCommand::UpdateRequest`], [`RipCommand::UpdateResponse`],
+    /// [`RipCommand::UpdateAcknowledge`]), reading the value back out of the
+    /// header field RFC 2091 §2.3 reuses for the Sequence Number (the 2 octets
+    /// RIP otherwise reserves). For a plain RFC 1058 / RFC 2453 Request or
+    /// Response — where those octets are simply the reserved field — it returns
+    /// `None`, since the bytes do not carry a demand sequence number there.
+    pub fn demand_sequence_value(&self) -> Option<u16> {
+        match self.command() {
+            RipCommand::UpdateRequest
+            | RipCommand::UpdateResponse
+            | RipCommand::UpdateAcknowledge => Some(self.reserved_value()),
+            _ => None,
+        }
+    }
+
     /// Effective command wire code (caller-set or default).
     pub fn command_value(&self) -> u8 {
         self.command
@@ -1031,6 +1068,51 @@ mod tests {
             // Re-compiling the decoded layer is byte-identical.
             assert_eq!(compile_bytes(&decoded), bytes);
         }
+    }
+}
+
+#[cfg(test)]
+mod rip_demand_sequence {
+    use super::*;
+    use crate::packet::LayerContext;
+
+    fn compile_bytes(rip: &Rip) -> Vec<u8> {
+        let packet = Packet::from_layer(rip.clone());
+        let ctx = LayerContext::new(&packet, 0);
+        let mut out = Vec::new();
+        rip.compile(&ctx, &mut out).expect("rip compiles");
+        out
+    }
+
+    #[test]
+    fn rip_demand_sequence_roundtrips() {
+        // RFC 2091 §2.3: a demand Update Request carries a Sequence Number in
+        // the header field RIP otherwise reserves. demand_sequence() records it
+        // there (caller-set), so compile() serializes it verbatim and decode()
+        // reproduces it byte-for-byte.
+        let rip = Rip::update_request().demand_sequence(0x0102);
+
+        // The typed view reports the demand sequence for an Update* command.
+        assert_eq!(rip.demand_sequence_value(), Some(0x0102));
+
+        // compile() places the sequence in the 2 octets after command/version.
+        let bytes = compile_bytes(&rip);
+        assert_eq!(bytes[0], RIP_COMMAND_UPDATE_REQUEST, "command octet");
+        assert_eq!(bytes[1], RIP_VERSION_2, "version octet");
+        assert_eq!(&bytes[2..4], &0x0102u16.to_be_bytes(), "sequence octets");
+
+        // decode() round-trips the sequence bytes exactly and re-compiles
+        // byte-identically.
+        let decoded = decode(&bytes).expect("demand update request decodes");
+        assert_eq!(decoded.command(), RipCommand::UpdateRequest);
+        assert_eq!(decoded.demand_sequence_value(), Some(0x0102));
+        assert_eq!(decoded.reserved_value(), 0x0102);
+        assert_eq!(compile_bytes(&decoded), bytes);
+
+        // For a plain Request/Response the same header octets are simply the
+        // reserved field, so the demand view returns None.
+        assert_eq!(Rip::request().demand_sequence_value(), None);
+        assert_eq!(Rip::response().demand_sequence_value(), None);
     }
 }
 
