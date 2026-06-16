@@ -15,6 +15,7 @@
 
 pub mod constants;
 pub mod entry;
+pub mod message;
 pub mod registry;
 
 pub use constants::*;
