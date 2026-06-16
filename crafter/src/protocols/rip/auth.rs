@@ -23,6 +23,8 @@
 
 use std::net::Ipv4Addr;
 
+use md5::{Digest, Md5};
+
 use crate::field::Field;
 
 use super::constants::RIP_AFI_AUTH;
@@ -93,6 +95,15 @@ pub struct RipKeyedDigestHeader {
     pub reserved1: Field<u32>,
     /// Second reserved 4-octet word, must be zero (RFC 4822 §3.1).
     pub reserved2: Field<u32>,
+    /// Caller-pinned trailing digest, if any (RFC 2082 §3.2.1).
+    ///
+    /// When `Some`, this is the exact 16-octet Keyed-MD5 digest the caller wants
+    /// emitted; `compile()` honors it untouched, so a caller may deliberately pin
+    /// a wrong digest to exercise a verifier. When `None`, `compile()` computes
+    /// the digest with [`compute_md5_digest`] over the message and key. The
+    /// digest itself rides in the trailing authentication block, not in this
+    /// header entry's octets.
+    pub digest: Option<[u8; 16]>,
 }
 
 impl RipKeyedDigestHeader {
@@ -106,6 +117,7 @@ impl RipKeyedDigestHeader {
             sequence: Field::defaulted(0),
             reserved1: Field::defaulted(0),
             reserved2: Field::defaulted(0),
+            digest: None,
         }
     }
 
@@ -339,6 +351,48 @@ pub fn decode_auth_entry(entry: &RipEntry) -> Option<RipAuth> {
     Some(RipAuth::simple_password(&password))
 }
 
+/// Length, in octets, of an RFC 2082 Keyed-MD5 digest.
+pub const RIP_MD5_DIGEST_LEN: usize = 16;
+
+/// Compute the RFC 2082 §3.2.1 Keyed-MD5 authentication digest.
+///
+/// `message_with_key_region` is the complete RIP message to authenticate —
+/// header, route entries, the leading keyed-digest authentication entry, and the
+/// 4-octet trailing authentication block introduction (AFI 0xFFFF, trailer type
+/// 0x0001) — followed by a trailing 16-octet region reserved for the digest.
+/// Per RFC 2082 §3.2.1, that trailing region is filled with the authentication
+/// `key` (right-padded with zeros, or truncated, to 16 octets) before MD5 is
+/// computed over the whole buffer; the resulting 16-octet digest then replaces
+/// the key region on the wire.
+///
+/// The returned `[u8; 16]` is the digest to place in the trailing block via
+/// [`RipAuth::trailing_digest_block`]. The input is not mutated; the key is laid
+/// into a working copy. If `message_with_key_region` is shorter than 16 octets
+/// the whole buffer is treated as the key region.
+pub(crate) fn compute_md5_digest(
+    message_with_key_region: &[u8],
+    key: &[u8],
+) -> [u8; RIP_MD5_DIGEST_LEN] {
+    // RFC 2082 §3.2.1: the trailing 16-octet digest region is overwritten with
+    // the authentication key (zero-padded / truncated to 16 octets) before
+    // hashing.
+    let mut buf = message_with_key_region.to_vec();
+    let region_start = buf.len().saturating_sub(RIP_MD5_DIGEST_LEN);
+    let region = &mut buf[region_start..];
+    let key_take = key.len().min(region.len());
+    for byte in region.iter_mut() {
+        *byte = 0;
+    }
+    region[..key_take].copy_from_slice(&key[..key_take]);
+
+    let mut hasher = Md5::new();
+    hasher.update(&buf);
+    let out = hasher.finalize();
+    let mut digest = [0u8; RIP_MD5_DIGEST_LEN];
+    digest.copy_from_slice(&out);
+    digest
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -482,5 +536,43 @@ mod tests {
         assert_eq!(&block[0..2], &[0xFF, 0xFF]);
         assert_eq!(&block[2..4], &[0x00, 0x01]);
         assert_eq!(&block[4..], &digest);
+    }
+
+    #[test]
+    fn rip_auth_md5_known_vector() {
+        // RFC 2082 §3.2.1 Keyed-MD5: the trailing 16-octet digest region is
+        // filled with the authentication key (zero-padded to 16 octets) and MD5
+        // is computed over the whole message. Fixed message: a 4-octet RIP
+        // header (command 2, version 2, reserved 0) followed by the 16-octet
+        // digest region. The expected digest was computed once with this exact
+        // construction and pinned here as a self-consistent golden constant.
+        let message_with_key_region: Vec<u8> = {
+            let mut m = vec![0x02, 0x02, 0x00, 0x00];
+            m.extend_from_slice(&[0u8; RIP_MD5_DIGEST_LEN]);
+            m
+        };
+        let key = b"rip-md5-key";
+
+        // Golden digest: MD5 over the header plus the key (zero-padded to 16
+        // octets) in the trailing region.
+        let expected: [u8; RIP_MD5_DIGEST_LEN] = [
+            0x81, 0xe1, 0xbb, 0x86, 0xc7, 0x27, 0x6e, 0x81, 0xfa, 0x30, 0xdf, 0x78, 0x48, 0xe0,
+            0x00, 0x97,
+        ];
+
+        let digest = compute_md5_digest(&message_with_key_region, key);
+        assert_eq!(digest, expected);
+
+        // The construction is deterministic.
+        assert_eq!(
+            compute_md5_digest(&message_with_key_region, key),
+            expected
+        );
+
+        // A different key yields a different digest.
+        assert_ne!(
+            compute_md5_digest(&message_with_key_region, b"other-key"),
+            expected
+        );
     }
 }
