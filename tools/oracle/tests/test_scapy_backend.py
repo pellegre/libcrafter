@@ -1117,5 +1117,88 @@ class ScapyRipMaterializationTest(unittest.TestCase):
         )
 
 
+@unittest.skipUnless(_HAS_SCAPY_RIP, "scapy RIP layer is not available")
+class ScapyRipNormalizeRoundTripTest(unittest.TestCase):
+    """A materialized RIP plan decodes/normalizes back to its planned fields.
+
+    The normalized ``rip`` layer collapses Scapy's typed RIP/RIPEntry/RIPAuth
+    decode into the single libcrafter-shaped layer: ``command``/``version``/
+    ``reserved`` plus an ``entries`` list and an optional ``auth`` sub-object.
+    """
+
+    def _decode(self, plan: PacketPlan):
+        vector = packets.encode_packet_plan(plan)
+        decoded = normalize.decode_bytes(
+            vector.to_bytes(), root="l3:ipv4", source_hex=vector.raw_hex
+        )
+        self.assertIn("rip", decoded.layers)
+        return decoded.fields["rip"]
+
+    def test_v1_request_round_trips_command_version_and_entry_count(self) -> None:
+        plan = _rip_plan(
+            command="request",
+            version=1,
+            entries=[{"address_family": 0, "address": "0.0.0.0", "metric": 16}],
+        )
+        rip = self._decode(plan)
+        self.assertEqual(rip["command"], 1)
+        self.assertEqual(rip["version"], 1)
+        self.assertEqual(len(rip["entries"]), 1)
+        self.assertEqual(rip["entries"][0]["address_family"], 0)
+        self.assertEqual(rip["entries"][0]["metric"], 16)
+        # Standalone Scapy entry sub-layers are folded into the rip layer.
+        self.assertNotIn("ripentry", plan.fields)
+
+    def test_v2_response_round_trips_entry_fields(self) -> None:
+        plan = _rip_plan(
+            command="response",
+            version=2,
+            entries=[
+                {
+                    "address_family": 2,
+                    "route_tag": 7,
+                    "address": "198.51.100.0",
+                    "subnet_mask": "255.255.255.0",
+                    "next_hop": "192.0.2.2",
+                    "metric": 1,
+                },
+                {
+                    "address_family": 2,
+                    "address": "203.0.113.0",
+                    "subnet_mask": "255.255.255.0",
+                    "metric": 2,
+                },
+            ],
+        )
+        rip = self._decode(plan)
+        self.assertEqual(rip["command"], 2)
+        self.assertEqual(rip["version"], 2)
+        self.assertEqual(len(rip["entries"]), 2)
+        first = rip["entries"][0]
+        self.assertEqual(first["address_family"], 2)
+        self.assertEqual(first["route_tag"], 7)
+        self.assertEqual(first["address"], "198.51.100.0")
+        self.assertEqual(first["subnet_mask"], "255.255.255.0")
+        self.assertEqual(first["next_hop"], "192.0.2.2")
+        self.assertEqual(first["metric"], 1)
+
+    def test_simple_password_auth_round_trips_as_auth_sub_object(self) -> None:
+        plan = _rip_plan(
+            command="response",
+            version=2,
+            entries=[{"address_family": 2, "address": "198.51.100.1", "metric": 1}],
+            auth={"type": 2, "simple_password": "rip-doc-secret"},
+        )
+        rip = self._decode(plan)
+        self.assertEqual(rip["command"], 2)
+        self.assertEqual(rip["version"], 2)
+        # The AFI 0xFFFF auth entry is surfaced under "auth", not in "entries".
+        self.assertEqual(len(rip["entries"]), 1)
+        self.assertIn("auth", rip)
+        self.assertEqual(rip["auth"]["address_family"], 0xFFFF)
+        self.assertEqual(rip["auth"]["auth_type"], 2)
+        self.assertIn("simple_password", rip["auth"])
+
+
 if __name__ == "__main__":
     unittest.main()
