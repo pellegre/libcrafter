@@ -20,10 +20,50 @@ pub mod registry;
 
 pub use constants::*;
 
+use core::any::Any;
+use core::ops::Div;
+
+use crate::error::Result;
 use crate::field::Field;
+use crate::packet::{IntoPacket, Layer, LayerContext, Packet};
 
 use entry::RipEntry;
 use message::RipCommand;
+
+macro_rules! impl_layer_object {
+    ($type:ty) => {
+        fn clone_layer(&self) -> Box<dyn Layer> {
+            Box::new(self.clone())
+        }
+
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+
+        fn as_any_mut(&mut self) -> &mut dyn Any {
+            self
+        }
+
+        fn into_any(self: Box<Self>) -> Box<dyn Any> {
+            self
+        }
+    };
+}
+
+macro_rules! impl_layer_div {
+    ($type:ty) => {
+        impl<R> Div<R> for $type
+        where
+            R: IntoPacket,
+        {
+            type Output = Packet;
+
+            fn div(self, rhs: R) -> Self::Output {
+                Packet::from_layer(self).concat(rhs)
+            }
+        }
+    };
+}
 
 /// A Routing Information Protocol message over IPv4/UDP 520 (RFC 1058,
 /// RFC 2453).
@@ -152,6 +192,11 @@ impl Rip {
         self.version.value().copied().unwrap_or(RIP_VERSION_2)
     }
 
+    /// Effective reserved header field (caller-set or default).
+    pub fn reserved_value(&self) -> u16 {
+        self.reserved.value().copied().unwrap_or(0)
+    }
+
     /// The route table entries that follow the header.
     pub fn entries(&self) -> &[RipEntry] {
         &self.entries
@@ -163,6 +208,35 @@ impl Default for Rip {
         Self::new()
     }
 }
+
+impl Layer for Rip {
+    fn name(&self) -> &'static str {
+        "Rip"
+    }
+
+    fn encoded_len(&self) -> usize {
+        RIP_HEADER_LEN + self.entries.len() * RIP_ENTRY_LEN
+    }
+
+    fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
+        // RFC 1058 §3.1: 4-octet header (command, version, 2-octet reserved)
+        // followed by each route entry's 20 octets. Effective values are used
+        // as-is, so caller-set command/version/reserved (including deliberately
+        // wrong ones) serialize exactly as set.
+        out.reserve(self.encoded_len());
+        out.push(self.command_value());
+        out.push(self.version_value());
+        out.extend_from_slice(&self.reserved_value().to_be_bytes());
+        for entry in &self.entries {
+            entry.encode(out);
+        }
+        Ok(())
+    }
+
+    impl_layer_object!(Rip);
+}
+
+impl_layer_div!(Rip);
 
 #[cfg(test)]
 mod rip_layer_builder {
@@ -198,5 +272,48 @@ mod rip_layer_builder {
         let with_two = Rip::response().with_entries(vec![route.clone(), second.clone()]);
         assert_eq!(with_two.entries().len(), 2);
         assert_eq!(with_two.entries()[1], second);
+    }
+}
+
+#[cfg(test)]
+mod rip_layer_compiles {
+    use super::*;
+    use crate::packet::LayerContext;
+    use crate::protocols::transport::Udp;
+    use std::net::Ipv4Addr;
+
+    #[test]
+    fn rip_layer_compiles_header_and_entries() {
+        let rip = Rip::response().entry(RipEntry::ipv2_route(
+            Ipv4Addr::new(192, 0, 2, 0),
+            Ipv4Addr::new(255, 255, 255, 0),
+            1,
+        ));
+
+        // Compile the layer in isolation via a single-layer packet context.
+        let packet = Packet::from_layer(rip.clone());
+        let ctx = LayerContext::new(&packet, 0);
+        let mut out = Vec::new();
+        rip.compile(&ctx, &mut out).expect("rip compiles");
+
+        // RFC 1058 §3.1 header: command=Response(2), version=2, reserved=0.
+        assert_eq!(&out[..RIP_HEADER_LEN], &[0x02, 0x02, 0x00, 0x00]);
+        // Header plus one 20-octet entry.
+        assert_eq!(out.len(), RIP_HEADER_LEN + RIP_ENTRY_LEN);
+        assert_eq!(rip.encoded_len(), RIP_HEADER_LEN + RIP_ENTRY_LEN);
+    }
+
+    #[test]
+    fn rip_layer_div_composes_into_packet() {
+        let rip = Rip::response().entry(RipEntry::ipv2_route(
+            Ipv4Addr::new(192, 0, 2, 0),
+            Ipv4Addr::new(255, 255, 255, 0),
+            1,
+        ));
+
+        // The `/` operator composes a Udp datagram and a Rip layer into a Packet
+        // whose layer stack includes the Rip layer.
+        let packet = Udp::new() / rip;
+        assert!(packet.layer::<Rip>().is_some());
     }
 }
