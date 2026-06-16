@@ -253,6 +253,34 @@ pub fn decode(bytes: &[u8]) -> Result<Rip> {
     Ok(rip)
 }
 
+/// Append a decoded RIP message to an existing packet stack.
+///
+/// Mirrors the DHCP UDP-application decode entry: [`decode`] parses the UDP
+/// payload into a [`Rip`] layer, which is then pushed onto the packet. Used by
+/// the protocol registry's conservative UDP/520 binding.
+pub(crate) fn append_rip_packet(packet: Packet, bytes: &[u8]) -> Result<Packet> {
+    Ok(packet.push(decode(bytes)?))
+}
+
+/// Return true when bytes have enough RIP structure to bind on UDP/520.
+///
+/// The check is deliberately conservative so unrelated traffic on port 520
+/// falls through to `Raw` rather than misdecoding as `Rip`: the payload must be
+/// at least the 4-octet header ([`RIP_HEADER_LEN`]), the command must be a known
+/// RIP command (Request/Response 1/2 or the RFC 2091 demand commands 9/10/11),
+/// the version must be 1 or 2, and the bytes after the header must be a whole
+/// multiple of the 20-octet entry length ([`RIP_ENTRY_LEN`]).
+pub(crate) fn looks_like_rip_payload(bytes: &[u8]) -> bool {
+    if bytes.len() < RIP_HEADER_LEN {
+        return false;
+    }
+    let command = bytes[0];
+    let version = bytes[1];
+    matches!(command, 1 | 2 | 9 | 10 | 11)
+        && matches!(version, RIP_VERSION_1 | RIP_VERSION_2)
+        && (bytes.len() - RIP_HEADER_LEN) % RIP_ENTRY_LEN == 0
+}
+
 impl Layer for Rip {
     fn name(&self) -> &'static str {
         "Rip"
@@ -521,5 +549,73 @@ mod rip_decode_partial_entry_is_error {
             }
             other => panic!("expected BufferTooShort, got {other:?}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod rip_udp_binding {
+    use super::*;
+    use crate::packet::{NetworkLayer, Raw};
+    use crate::protocols::ip::v4::Ipv4;
+    use crate::protocols::transport::Udp;
+    use std::net::Ipv4Addr;
+
+    #[test]
+    fn rip_decodes_from_udp_520() {
+        // An IPv4/UDP(520)/Rip Response with one route entry.
+        let rip = Rip::response().entry(RipEntry::ipv2_route(
+            Ipv4Addr::new(192, 0, 2, 0),
+            Ipv4Addr::new(255, 255, 255, 0),
+            1,
+        ));
+        let packet = Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 10))
+            .dst(Ipv4Addr::new(198, 51, 100, 20))
+            / Udp::new().sport(RIP_UDP_PORT).dport(RIP_UDP_PORT)
+            / rip;
+
+        let compiled = packet.compile().expect("rip stack compiles");
+
+        // The conservative UDP/520 binding routes the payload to the Rip decoder.
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes())
+            .expect("ipv4/udp/rip decodes");
+
+        let decoded_rip = decoded
+            .layer::<Rip>()
+            .expect("decoded packet includes a Rip layer");
+        assert_eq!(decoded_rip.command(), RipCommand::Response);
+        assert_eq!(decoded_rip.entries().len(), 1);
+        assert!(decoded.layer::<Raw>().is_none());
+    }
+
+    #[test]
+    fn rip_non_rip_udp_520_stays_raw() {
+        // A UDP/520 datagram whose payload fails looks_like_rip_payload: an
+        // unknown command (0xFF) with a non-multiple-of-20 trailing length, so it
+        // must fall through to Raw rather than decode as Rip.
+        let payload = vec![0xFFu8, 0xFF, 0x00, 0x00, 0x01, 0x02, 0x03];
+        assert!(
+            !looks_like_rip_payload(&payload),
+            "fixture payload must not look like RIP"
+        );
+
+        let packet = Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 10))
+            .dst(Ipv4Addr::new(198, 51, 100, 20))
+            / Udp::new().sport(RIP_UDP_PORT).dport(RIP_UDP_PORT)
+            / Raw::from_bytes(&payload);
+
+        let compiled = packet.compile().expect("udp/raw stack compiles");
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes())
+            .expect("ipv4/udp/raw decodes");
+
+        assert!(
+            decoded.layer::<Rip>().is_none(),
+            "non-RIP port-520 payload must not decode as Rip"
+        );
+        assert!(
+            decoded.layer::<Raw>().is_some(),
+            "non-RIP port-520 payload must remain Raw"
+        );
     }
 }
