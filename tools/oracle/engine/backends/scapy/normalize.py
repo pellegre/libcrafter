@@ -343,6 +343,7 @@ def normalize_packet(
         normalized_layers.append(normalized_layer)
 
     _canonicalize_icmpv4(packet, normalized_layers, normalized_fields)
+    _canonicalize_rip(packet, normalized_layers, normalized_fields)
     if source_hex is not None:
         _canonicalize_bgp_from_wire(source_hex, normalized_fields)
 
@@ -1447,6 +1448,137 @@ def _canonicalize_icmpv4(
         payload_key = _field_key(fields, "payload")
         fields[payload_key] = _payload_fields_from_bytes(body)
         layers.append("payload")
+
+
+# RIP authentication entries use the reserved address-family identifier 0xFFFF
+# (RFC 2453 §4.1). Everything else in a RIP message is a route entry.
+_RIP_AFI_AUTH = 0xFFFF
+# RFC 2453 §4.1 simple-password authentication type.
+_RIP_AUTH_TYPE_SIMPLE = 2
+
+
+def _canonicalize_rip(
+    packet: Any,
+    layers: list[str],
+    fields: dict[str, JSONObject],
+) -> None:
+    """Collapse Scapy's typed RIP decode into libcrafter's single ``rip`` layer.
+
+    Scapy dissects a RIP message into a ``RIP`` header layer followed by one
+    ``RIPEntry``/``RIPAuth`` payload layer per 20-octet entry, so the generic
+    layer loop emits ``rip`` plus standalone ``ripentry``/``ripauth`` layers.
+    libcrafter exposes a single ``Rip`` layer whose route entries live under an
+    ``entries`` list and whose AFI 0xFFFF authentication entry lives under
+    ``auth``. This rebuilds the normalized ``rip`` layer directly from the Scapy
+    sub-layers (using the spec field names ``command``/``version``/``reserved``
+    and per-entry ``address_family``/``route_tag``/``address``/``subnet_mask``/
+    ``next_hop``/``metric``) and drops the standalone entry layers so both
+    backends compare cleanly.
+    """
+
+    if "rip" not in layers:
+        return
+    rip_layer = _scapy_layer(packet, "RIP")
+    if rip_layer is None:
+        return
+
+    rip_fields: JSONObject = {
+        "command": _rip_int(getattr(rip_layer, "cmd", 0)),
+        "version": _rip_int(getattr(rip_layer, "version", 0)),
+        "reserved": _rip_int(getattr(rip_layer, "null", 0)),
+    }
+
+    entries: list[JSONObject] = []
+    auth: JSONObject | None = None
+    current = getattr(rip_layer, "payload", None)
+    while current is not None and current.__class__.__name__ != "NoPayload":
+        class_name = current.__class__.__name__
+        if class_name == "RIPEntry":
+            entries.append(_normalize_rip_entry(current))
+        elif class_name == "RIPAuth":
+            auth = _normalize_rip_auth(current)
+        else:
+            break
+        current = getattr(current, "payload", None)
+
+    rip_fields["entries"] = entries
+    if auth is not None:
+        rip_fields["auth"] = auth
+
+    rip_index = layers.index("rip")
+    rip_key = _layer_key_at(layers, rip_index)
+
+    # Drop the standalone ripentry/ripauth layers Scapy parsed after the RIP
+    # header; libcrafter keeps a single rip layer carrying the same entries.
+    for offset in range(rip_index + 1, len(layers)):
+        if layers[offset] in {"ripentry", "ripauth"}:
+            fields.pop(_layer_key_at(layers, offset), None)
+        else:
+            break
+    trailing_start = rip_index + 1
+    while trailing_start < len(layers) and layers[trailing_start] in {
+        "ripentry",
+        "ripauth",
+    }:
+        trailing_start += 1
+    del layers[rip_index + 1 : trailing_start]
+
+    fields[rip_key] = rip_fields
+
+
+def _normalize_rip_entry(entry: Any) -> JSONObject:
+    return {
+        "address_family": _rip_int(getattr(entry, "AF", 0)),
+        "route_tag": _rip_int(getattr(entry, "RouteTag", 0)),
+        "address": _text(getattr(entry, "addr", "0.0.0.0")),
+        "subnet_mask": _text(getattr(entry, "mask", "0.0.0.0")),
+        "next_hop": _text(getattr(entry, "nextHop", "0.0.0.0")),
+        "metric": _rip_int(getattr(entry, "metric", 0)),
+    }
+
+
+def _normalize_rip_auth(auth: Any) -> JSONObject:
+    auth_type = _rip_int(getattr(auth, "authtype", 0))
+    normalized: JSONObject = {
+        "address_family": _RIP_AFI_AUTH,
+        "auth_type": auth_type,
+    }
+    if auth_type == _RIP_AUTH_TYPE_SIMPLE:
+        normalized["simple_password"] = {
+            "hex": _rip_bytes(getattr(auth, "password", b"")).hex()
+        }
+    else:
+        # Keyed message digest (RFC 2082 / RFC 4822): the AFI 0xFFFF leading
+        # entry is a digest header carrying the digest offset, key id, auth-data
+        # length, and sequence number.
+        normalized["digest_offset"] = _rip_int(getattr(auth, "digestoffset", 0))
+        normalized["key_id"] = _rip_int(getattr(auth, "keyid", 0))
+        normalized["auth_data_len"] = _rip_int(getattr(auth, "authdatalen", 0))
+        normalized["sequence"] = _rip_int(getattr(auth, "seqnum", 0))
+    return normalized
+
+
+def _rip_int(value: Any) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if value is None:
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _rip_bytes(value: Any) -> bytes:
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value)
+    if value is None:
+        return b""
+    if isinstance(value, str):
+        return value.encode("utf-8", "surrogateescape")
+    return _text(value).encode("utf-8", "surrogateescape")
 
 
 def _scapy_layer(packet: Any, class_name: str) -> Any:
