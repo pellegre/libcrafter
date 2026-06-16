@@ -342,25 +342,17 @@ mod send_plan {
     }
 
     #[test]
-    fn radiotap_live_send_gate_rejects_live_send_without_interface_lookup() {
+    fn radiotap_live_send_routes_to_layer2_and_reports_missing_interface() {
         let packet = radiotap_dot11_packet();
         let error = SocketSender::new(SendOptions::new().iface("missing-crafter-wifi0"))
             .send(&packet)
             .unwrap_err();
 
         match error {
-            NetError::UnsupportedSendTarget { target, reason } => {
-                assert_eq!(
-                    target,
-                    SendTarget::LinkLayer {
-                        link_type: crate::LinkType::Radiotap
-                    }
-                );
-                assert!(reason.contains("live radiotap Wi-Fi injection is not implemented"));
-                assert!(reason.contains("dry-run"));
-                assert!(reason.contains("monitor-mode radiotap backend"));
+            NetError::InterfaceNotFound { name } => {
+                assert_eq!(name, "missing-crafter-wifi0");
             }
-            other => panic!("expected unsupported radiotap live send target, got {other}"),
+            other => panic!("expected radiotap live send to report missing interface, got {other}"),
         }
     }
 
