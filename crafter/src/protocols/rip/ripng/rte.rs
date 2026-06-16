@@ -19,7 +19,7 @@ use std::net::Ipv6Addr;
 use crate::error::{CrafterError, Result};
 use crate::field::Field;
 
-use super::constants::RIPNG_RTE_LEN;
+use super::constants::{RIPNG_NEXT_HOP_METRIC, RIPNG_RTE_LEN};
 
 /// A single 20-octet RIPng route table entry (RFC 2080 §2.1).
 ///
@@ -64,6 +64,44 @@ impl RipngRte {
         rte.prefix_len.set_user(prefix_len);
         rte.metric.set_user(metric);
         rte
+    }
+
+    /// Build a RIPng next-hop RTE (RFC 2080 §2.1.1).
+    ///
+    /// RFC 2080 §2.1.1 defines a special RTE that specifies the next hop for the
+    /// RTEs that immediately follow it: its metric field is `0xFF`
+    /// ([`RIPNG_NEXT_HOP_METRIC`]), the prefix field holds the IPv6 next-hop
+    /// address, and the Route Tag and Prefix Length fields must be zero. This
+    /// constructor sets the `prefix` to `address`, the `route_tag` and
+    /// `prefix_len` to `0`, and the `metric` to `RIPNG_NEXT_HOP_METRIC`, all as
+    /// caller-set values so the RTE serializes byte-exact.
+    pub fn next_hop(address: Ipv6Addr) -> Self {
+        let mut rte = Self::new();
+        rte.prefix.set_user(address);
+        rte.route_tag.set_user(0);
+        rte.prefix_len.set_user(0);
+        rte.metric.set_user(RIPNG_NEXT_HOP_METRIC);
+        rte
+    }
+
+    /// Report whether this RTE is a next-hop RTE (RFC 2080 §2.1.1).
+    ///
+    /// A next-hop RTE is identified solely by a metric of `0xFF`
+    /// ([`RIPNG_NEXT_HOP_METRIC`]).
+    pub fn is_next_hop(&self) -> bool {
+        self.metric_value() == RIPNG_NEXT_HOP_METRIC
+    }
+
+    /// IPv6 next-hop address carried by a next-hop RTE (RFC 2080 §2.1.1).
+    ///
+    /// Returns the prefix field interpreted as the next-hop address when
+    /// [`is_next_hop()`](Self::is_next_hop) is true, and `None` otherwise.
+    pub fn next_hop_address(&self) -> Option<Ipv6Addr> {
+        if self.is_next_hop() {
+            Some(self.prefix_value())
+        } else {
+            None
+        }
     }
 
     /// Set the IPv6 prefix (caller-set).
@@ -331,5 +369,50 @@ mod ripng_rte_decode_truncated_is_error {
             }
             other => panic!("expected BufferTooShort, got {other:?}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod ripng_next_hop_rte {
+    use super::*;
+
+    #[test]
+    fn next_hop_encodes_marker_round_trips_and_classifies() {
+        let address = "2001:db8::1".parse::<Ipv6Addr>().expect("valid address");
+
+        let rte = RipngRte::next_hop(address);
+
+        // RFC 2080 §2.1.1: metric octet is 0xFF, prefix carries the next hop,
+        // route tag and prefix length are zero.
+        let mut bytes = Vec::new();
+        rte.encode(&mut bytes);
+        assert_eq!(bytes.len(), RIPNG_RTE_LEN);
+        assert_eq!(bytes[19], 0xFF, "metric octet marks a next-hop RTE");
+
+        // Classifier and accessor agree with the next-hop semantics.
+        assert!(rte.is_next_hop());
+        assert_eq!(rte.next_hop_address(), Some(address));
+        assert_eq!(rte.prefix_value(), address);
+        assert_eq!(rte.route_tag_value(), 0);
+        assert_eq!(rte.prefix_len_value(), 0);
+        assert_eq!(rte.metric_value(), RIPNG_NEXT_HOP_METRIC);
+
+        // Round-trips through decode with the next-hop fields intact.
+        let decoded = RipngRte::decode(&bytes).expect("20 octets decode");
+        assert!(decoded.is_next_hop());
+        assert_eq!(decoded.next_hop_address(), Some(address));
+        let mut reencoded = Vec::new();
+        decoded.encode(&mut reencoded);
+        assert_eq!(reencoded, bytes);
+    }
+
+    #[test]
+    fn normal_route_is_not_a_next_hop() {
+        let prefix = "2001:db8:1::".parse::<Ipv6Addr>().expect("valid prefix");
+
+        let rte = RipngRte::route(prefix, 48, 3);
+
+        assert!(!rte.is_next_hop());
+        assert_eq!(rte.next_hop_address(), None);
     }
 }
