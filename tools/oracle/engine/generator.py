@@ -173,6 +173,8 @@ _SUPPORTED_FIELDS: dict[str, set[str]] = {
         "icv",
     },
     "bgp": {"marker", "length", "type"},
+    "rip": {"command", "version", "reserved"},
+    "ripng": {"command", "version", "reserved"},
     "ethernet": {"dst", "src", "ethertype"},
     "icmp": {
         "type",
@@ -692,6 +694,10 @@ class PacketGenerator:
             )
         elif _is_bgp_smoke_case(selected_case) and "bgp" in fields:
             _apply_bgp_behavior(fields, stack=stack, case=selected_case, behavior="")
+        elif _is_rip_smoke_case(selected_case) and "rip" in fields:
+            _apply_rip_behavior(fields, stack=stack, case=selected_case, behavior="")
+        elif _is_rip_smoke_case(selected_case) and "ripng" in fields:
+            _apply_ripng_behavior(fields, stack=stack, case=selected_case, behavior="")
         live_behavior = self._apply_icmp_live_fields(
             rng,
             fields,
@@ -929,6 +935,13 @@ class PacketGenerator:
             if (
                 feature is None
                 and case is None
+                and self.profile == "rip-smoke"
+                and not _has_rip_smoke_case(coverage_cases)
+            ):
+                continue
+            if (
+                feature is None
+                and case is None
                 and self.profile == "ipv4-enrichment"
                 and not _has_ipv4_enrichment_case(coverage_cases, self.grammar)
             ):
@@ -1133,6 +1146,11 @@ class PacketGenerator:
             # Focused BGP smoke set: keep case selection on BGP message cases so
             # a default/raw payload case is never paired with a BGP stack.
             coverage_cases = [case for case in coverage_cases if _is_bgp_smoke_case(case)]
+        if feature is None and self.profile == "rip-smoke":
+            # Focused RIP/RIPng smoke set: keep case selection on the RIP and
+            # RIPng message cases so a default/raw payload case is never paired
+            # with a RIP/RIPng stack.
+            coverage_cases = [case for case in coverage_cases if _is_rip_smoke_case(case)]
         if feature is None and self.profile == "ipv6-enrichment":
             # Focused IPv6 enrichment profile: restrict to stack-declared
             # base/unknown-next-header and strict-byte extension cases. This
@@ -1199,6 +1217,12 @@ class PacketGenerator:
         # bgp-smoke profile: select only from stack-declared BGP message cases
         # and skip the generic cross-feature expansion below.
         if feature is None and self.profile == "bgp-smoke":
+            if not choices:
+                return "default"
+            return weighted_choice(rng, choices)
+        # rip-smoke profile: select only from stack-declared RIP/RIPng message
+        # cases and skip the generic cross-feature expansion below.
+        if feature is None and self.profile == "rip-smoke":
             if not choices:
                 return "default"
             return weighted_choice(rng, choices)
@@ -1343,6 +1367,11 @@ class PacketGenerator:
             # The BGP smoke profile auto-samples only BGP feature specs, keeping
             # pcap/IPsec/fragment features off the BGP TCP stacks.
             if self.profile == "bgp-smoke" and not name.startswith("bgp_"):
+                continue
+            # The RIP smoke profile auto-samples only RIP/RIPng feature specs
+            # (rip_header, rip_entries, rip_auth, ripng_header, ripng_rtes),
+            # keeping pcap/IPsec/fragment features off the RIP/RIPng UDP stacks.
+            if self.profile == "rip-smoke" and not name.startswith("rip"):
                 continue
             # The IPv4 enrichment profile auto-samples only the IPv4 option
             # feature; all non-option IPv4 layer cases remain plain header cases.
@@ -1677,6 +1706,10 @@ class PacketGenerator:
                     routing["segments_left"] = 0
         elif feature is not None and feature.startswith("bgp_") and "bgp" in fields:
             _apply_bgp_behavior(fields, stack=stack, case=case, behavior=behavior)
+        elif feature is not None and feature.startswith("ripng_") and "ripng" in fields:
+            _apply_ripng_behavior(fields, stack=stack, case=case, behavior=behavior)
+        elif feature is not None and feature.startswith("rip_") and "rip" in fields:
+            _apply_rip_behavior(fields, stack=stack, case=case, behavior=behavior)
         elif feature == "icmpv4_errors" and "icmp" in fields:
             self._apply_icmpv4_error_behavior(
                 fields,
@@ -2007,6 +2040,10 @@ class PacketGenerator:
             return _sample_tcp_field(ctx, field_name, domain, field_spec)
         if layer == "bgp":
             return _sample_bgp_field(ctx, field_name, domain)
+        if layer == "rip":
+            return _sample_rip_field(ctx, field_name, domain)
+        if layer == "ripng":
+            return _sample_ripng_field(ctx, field_name, domain)
         if layer == "icmp":
             return _sample_icmp_field(ctx, field_name, domain)
         if layer == "icmpv6":
@@ -2478,6 +2515,12 @@ def _sample_udp_field(ctx: _SamplingContext, field_name: str, domain: object) ->
             return 68
         if "dns" in ctx.stack:
             return ephemeral_port(ctx.rng)
+        # RIP (UDP/520, RFC 1058 §3.4) and RIPng (UDP/521, RFC 2080 §2) are
+        # exchanged from the well-known port, not an ephemeral one.
+        if "rip" in ctx.stack:
+            return 520
+        if "ripng" in ctx.stack:
+            return 521
         if domain in {"bootpc", "dns_client", "dynamic"}:
             return _integer_domain_value(ctx, domain, field_name, bits=16)
         return ctx.src_port
@@ -2486,6 +2529,10 @@ def _sample_udp_field(ctx: _SamplingContext, field_name: str, domain: object) ->
             return 67
         if "dns" in ctx.stack:
             return 53
+        if "rip" in ctx.stack:
+            return 520
+        if "ripng" in ctx.stack:
+            return 521
         if domain in {"bootps", "dns_server"}:
             return ctx.dst_port
         if domain == "dynamic":
@@ -2533,6 +2580,29 @@ def _sample_bgp_field(ctx: _SamplingContext, field_name: str, domain: object) ->
     if field_name == "type":
         return _bgp_message_type_for_case(ctx.case)
     raise ValueError(f"spec error: unsupported bgp field sampler: {field_name}")
+
+
+def _sample_rip_field(ctx: _SamplingContext, field_name: str, domain: object) -> object:
+    # The RIP header scalars (command/version/reserved) seed the layer so it
+    # survives the empty-dict drop in _fields; the per-case entries/auth values
+    # are attached by _apply_rip_behavior, mirroring how BGP body bytes attach.
+    if field_name == "command":
+        return _rip_command_for_case(ctx.case)
+    if field_name == "version":
+        return _rip_version_for_case(ctx.case)
+    if field_name == "reserved":
+        return 0
+    raise ValueError(f"spec error: unsupported rip field sampler: {field_name}")
+
+
+def _sample_ripng_field(ctx: _SamplingContext, field_name: str, domain: object) -> object:
+    if field_name == "command":
+        return _rip_command_for_case(ctx.case)
+    if field_name == "version":
+        return 1
+    if field_name == "reserved":
+        return 0
+    raise ValueError(f"spec error: unsupported ripng field sampler: {field_name}")
 
 
 def _sample_icmp_field(ctx: _SamplingContext, field_name: str, domain: object) -> object:
@@ -4339,6 +4409,198 @@ def _bgp_update_body_hex(*, stack: Sequence[str], case: str, behavior: str) -> s
     return "0000" + len(bytes.fromhex(attrs)).to_bytes(2, "big").hex() + attrs + nlri
 
 
+# --------------------------------------------------------------------------
+# RIP / RIPng behavior enrichment.
+#
+# Like BGP, the RIP/RIPng header scalars are seeded by the field sampler and the
+# per-case message body (route entries, the AFI 0xFFFF authentication entry, and
+# the RIPng RTEs) is attached here. The libcrafter adapter and the Scapy
+# reference backend read the same plan field names (command/version/reserved,
+# entries[*].{address_family,route_tag,address,subnet_mask,next_hop,metric},
+# auth.{type,simple_password}, rtes[*].{prefix,route_tag,prefix_len,metric,
+# next_hop}), so a single field block materializes byte-identically on both
+# backends. Every address lives in documentation space (RFC 5737 / RFC 3849).
+# The authentication case uses simple-password (RFC 2453 §4.1) because that is
+# the byte-safe form the Scapy RIPAuth reference can reproduce; keyed message
+# digest is covered by the feature-spec / native-fixture path, not the smoke
+# cross-backend run.
+
+
+def _rip_command_for_case(case: str) -> str:
+    """RIP/RIPng command for a coverage case: request vs response (RFC 1058 §4)."""
+
+    if "request" in case.replace("_", "-"):
+        return "request"
+    return "response"
+
+
+def _rip_version_for_case(case: str) -> int:
+    """RIP version for a coverage case: v1 only for the explicit v1 cases."""
+
+    return 1 if "v1" in case.replace("_", "-") else 2
+
+
+def _apply_rip_behavior(
+    fields: dict[str, JSONObject],
+    *,
+    stack: Sequence[str],
+    case: str,
+    behavior: str,
+) -> None:
+    rip = fields["rip"]
+    rip["command"] = _rip_command_for_case(case)
+    rip["version"] = _rip_version_for_case(case)
+    rip.setdefault("reserved", 0)
+    rip.pop("auth", None)
+    rip.pop("entries", None)
+
+    if "udp" in fields:
+        fields["udp"]["src_port"] = 520
+        fields["udp"]["dst_port"] = 520
+    if "payload" in fields:
+        fields["payload"] = {"hex": "", "length": 0}
+
+    normalized = case.replace("_", "-")
+
+    if rip["command"] == "request":
+        # Request-whole-table sentinel (RFC 2453 §3.4.1 / RFC 1058 §3.4.1):
+        # one AFI 0 entry with metric 16 (infinity).
+        rip["entries"] = [
+            {
+                "address_family": 0,
+                "route_tag": 0,
+                "address": "0.0.0.0",
+                "subnet_mask": "0.0.0.0",
+                "next_hop": "0.0.0.0",
+                "metric": 16,
+            }
+        ]
+        return
+
+    if "auth" in normalized:
+        # Simple-password authenticated response (RFC 2453 §4.1): the AFI 0xFFFF
+        # leading entry carries a 16-octet cleartext password, followed by a
+        # single v2 route entry.
+        rip["auth"] = {"type": 2, "simple_password": "oraclesecret"}
+        rip["entries"] = [_rip_v2_entry()]
+        return
+
+    if rip["version"] == 1:
+        # RFC 1058 v1 route entry: AFI IP, address + metric only (route tag,
+        # subnet mask, and next hop are reserved-zero on the wire).
+        rip["entries"] = [
+            {
+                "address_family": 2,
+                "route_tag": 0,
+                "address": "192.0.2.0",
+                "subnet_mask": "0.0.0.0",
+                "next_hop": "0.0.0.0",
+                "metric": 1,
+            }
+        ]
+        return
+
+    # RFC 2453 v2 response: a route entry carrying route tag, subnet mask, and
+    # next hop. The matrix case adds a second entry so a multi-entry message is
+    # exercised by the smoke run.
+    entries = [_rip_v2_entry()]
+    if "matrix" in normalized:
+        entries.append(
+            {
+                "address_family": 2,
+                "route_tag": 64512,
+                "address": "198.51.100.0",
+                "subnet_mask": "255.255.255.0",
+                "next_hop": "192.0.2.1",
+                "metric": 2,
+            }
+        )
+    rip["entries"] = entries
+
+
+def _rip_v2_entry() -> dict[str, object]:
+    """A canonical RFC 2453 v2 route entry in documentation address space."""
+
+    return {
+        "address_family": 2,
+        "route_tag": 0,
+        "address": "192.0.2.0",
+        "subnet_mask": "255.255.255.0",
+        "next_hop": "0.0.0.0",
+        "metric": 1,
+    }
+
+
+def _apply_ripng_behavior(
+    fields: dict[str, JSONObject],
+    *,
+    stack: Sequence[str],
+    case: str,
+    behavior: str,
+) -> None:
+    ripng = fields["ripng"]
+    ripng["command"] = _rip_command_for_case(case)
+    ripng["version"] = 1
+    ripng.setdefault("reserved", 0)
+    ripng.pop("rtes", None)
+    ripng.pop("entries", None)
+
+    if "udp" in fields:
+        fields["udp"]["src_port"] = 521
+        fields["udp"]["dst_port"] = 521
+    if "payload" in fields:
+        fields["payload"] = {"hex": "", "length": 0}
+
+    normalized = case.replace("_", "-")
+
+    if ripng["command"] == "request":
+        # Request-whole-table sentinel (RFC 2080 §2.4.1): one RTE with prefix ::,
+        # prefix length 0, metric 16 (infinity).
+        ripng["rtes"] = [
+            {
+                "prefix": "::",
+                "route_tag": 0,
+                "prefix_len": 0,
+                "metric": 16,
+            }
+        ]
+        return
+
+    route_rte = {
+        "prefix": "2001:db8::",
+        "route_tag": 0,
+        "prefix_len": 64,
+        "metric": 1,
+    }
+
+    if "next-hop" in normalized:
+        # Next-hop RTE (RFC 2080 §2.1.1): metric 0xFF, route tag and prefix
+        # length zero, immediately followed by the route RTEs it applies to.
+        ripng["rtes"] = [
+            {
+                "prefix": "fe80::1",
+                "route_tag": 0,
+                "prefix_len": 0,
+                "metric": 255,
+                "next_hop": True,
+            },
+            route_rte,
+        ]
+        return
+
+    rtes = [route_rte]
+    if "matrix" in normalized:
+        rtes.append(
+            {
+                "prefix": "2001:db8:1::",
+                "route_tag": 64512,
+                "prefix_len": 48,
+                "metric": 2,
+            }
+        )
+    ripng["rtes"] = rtes
+
+
 # Backend-neutral DHCP option kinds that materialize byte-for-byte through both
 # the Scapy reference backend and the libcrafter adapter, in fixed option order.
 # Kinds the dhcp_behavior option_matrix lists that Scapy cannot encode
@@ -4653,6 +4915,28 @@ def _has_bgp_smoke_case(cases: Sequence[str]) -> bool:
     """Whether ``cases`` contains a BGP smoke coverage case."""
 
     return any(_is_bgp_smoke_case(case) for case in cases)
+
+
+def _is_rip_smoke_case(case: str) -> bool:
+    """Whether ``case`` is sampled by the focused rip-smoke profile.
+
+    Covers the RIP (UDP/520) and RIPng (UDP/521) coverage cases declared on the
+    ``ipv4_udp_rip`` / ``ipv6_udp_ripng`` stacks and the ``rip-`` / ``ripng-``
+    feature cases, including the ``crafter-rip-*`` / ``crafter-ripng-*`` matrix
+    cases. The ``crafter-`` materialize/decode prefix is stripped first so those
+    matrix cases match the same ``rip-`` / ``ripng-`` prefixes.
+    """
+
+    normalized = case.replace("_", "-")
+    if normalized.startswith("crafter-"):
+        normalized = normalized[len("crafter-") :]
+    return normalized.startswith("rip-") or normalized.startswith("ripng-")
+
+
+def _has_rip_smoke_case(cases: Sequence[str]) -> bool:
+    """Whether ``cases`` contains a RIP/RIPng smoke coverage case."""
+
+    return any(_is_rip_smoke_case(case) for case in cases)
 
 
 def _ipv4_enrichment_cases(cases: Sequence[str], grammar: Mapping[str, object]) -> list[str]:

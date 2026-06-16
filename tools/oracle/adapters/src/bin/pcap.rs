@@ -1,7 +1,7 @@
 use crafter::core::{
     Ah, Arp, Bgp, Dhcp, Dns, Dot11, Eapol, EapolKey, Esp, Ethernet, Icmpv4, Icmpv6, Ipv4, Ipv6,
     Ipv6FragmentHeader, Ipv6MobileRoutingHeader, Ipv6RoutingHeader, Ipv6SegmentRoutingHeader,
-    Layer, LinuxSll, LlcSnap, NullLoopback, Radiotap, Raw, Tcp, Udp, Vlan,
+    Layer, LinuxSll, LlcSnap, NullLoopback, Radiotap, Raw, Rip, Ripng, Tcp, Udp, Vlan,
 };
 use crafter::wire::backend::pcap::{
     PcapLinkType, PcapReader, PcapRecord, PcapTimestamp, PcapWriter, TimestampPrecision,
@@ -423,6 +423,13 @@ fn normalized_layer_name(layer: &dyn Layer) -> String {
         "tcp"
     } else if layer.as_any().is::<Bgp>() {
         "bgp"
+    } else if layer.as_any().is::<Rip>() {
+        // The Scapy reference and the decode adapter normalize RIP/RIPng to the
+        // lowercase oracle layer names; mirror them so the pcap-roundtrip decoded
+        // layer lists match (libcrafter's Layer::name is "Rip"/"Ripng").
+        "rip"
+    } else if layer.as_any().is::<Ripng>() {
+        "ripng"
     } else if layer.as_any().is::<Icmpv4>() {
         "icmp"
     } else if layer.as_any().is::<Icmpv6>() {
