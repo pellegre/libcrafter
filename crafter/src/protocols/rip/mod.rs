@@ -282,6 +282,70 @@ pub fn rip_v2_multicast_response(
         / Rip::response().version(RIP_VERSION_2).with_entries(entries)
 }
 
+/// Build a complete RIPv1 whole-table request packet (RFC 1058 §3.4.1).
+///
+/// A RIP node asks a neighbor for its full routing table by sending a Request
+/// message carrying a single special entry: address family 0 with metric 16
+/// (infinity), the whole-table sentinel (RFC 1058 §3.4.1, RFC 2453 §3.9.1).
+/// Step 11's [`RipEntry::whole_table_request`] builds that sentinel entry.
+///
+/// This convenience assembles the request stack with the project's layer
+/// composition idiom and returns a typed [`Packet`]:
+///
+/// - an [`Ipv4`](crate::protocols::ip::v4::Ipv4) layer whose source is `source`
+///   and whose destination is `destination`,
+/// - a [`Udp`](crate::protocols::transport::Udp) datagram with source and
+///   destination port [`RIP_UDP_PORT`] (520), and
+/// - a [`Rip::request`] message pinned to [`RIP_VERSION_1`] carrying the single
+///   whole-table sentinel entry.
+///
+/// Lengths and checksums are left for [`Packet::compile`] to fill. Callers
+/// supply documentation-range addresses (`192.0.2.0/24`, `198.51.100.0/24`).
+pub fn rip_v1_whole_table_request(
+    source: std::net::Ipv4Addr,
+    destination: std::net::Ipv4Addr,
+) -> Packet {
+    use crate::protocols::ip::v4::Ipv4;
+    use crate::protocols::transport::Udp;
+
+    Ipv4::new().src(source).dst(destination)
+        / Udp::new().sport(RIP_UDP_PORT).dport(RIP_UDP_PORT)
+        / Rip::request()
+            .version(RIP_VERSION_1)
+            .entry(RipEntry::whole_table_request())
+}
+
+/// Build a complete RIPv2 whole-table request packet (RFC 2453 §3.9.1).
+///
+/// Like [`rip_v1_whole_table_request`] but pinned to [`RIP_VERSION_2`] and
+/// addressed to the well-known RIPv2 multicast group [`RIP_V2_MULTICAST`]
+/// (`224.0.0.9`). The single entry is the whole-table sentinel (address
+/// family 0, metric 16) of RFC 1058 §3.4.1 / RFC 2453 §3.9.1.
+///
+/// This convenience assembles the request stack with the project's layer
+/// composition idiom and returns a typed [`Packet`]:
+///
+/// - an [`Ipv4`](crate::protocols::ip::v4::Ipv4) layer whose source is `source`
+///   and whose destination is [`RIP_V2_MULTICAST`],
+/// - a [`Udp`](crate::protocols::transport::Udp) datagram with source and
+///   destination port [`RIP_UDP_PORT`] (520), and
+/// - a [`Rip::request`] message at [`RIP_VERSION_2`] carrying the single
+///   whole-table sentinel entry.
+///
+/// Lengths and checksums are left for [`Packet::compile`] to fill. Callers
+/// supply a documentation-range source address (`192.0.2.0/24`,
+/// `198.51.100.0/24`); the destination is fixed to the RIPv2 multicast group.
+pub fn rip_v2_whole_table_request(source: std::net::Ipv4Addr) -> Packet {
+    use crate::protocols::ip::v4::Ipv4;
+    use crate::protocols::transport::Udp;
+
+    Ipv4::new().src(source).dst(RIP_V2_MULTICAST)
+        / Udp::new().sport(RIP_UDP_PORT).dport(RIP_UDP_PORT)
+        / Rip::request()
+            .version(RIP_VERSION_2)
+            .entry(RipEntry::whole_table_request())
+}
+
 /// Append a decoded RIP message to an existing packet stack.
 ///
 /// Mirrors the DHCP UDP-application decode entry: [`decode`] parses the UDP
@@ -691,5 +755,62 @@ mod rip_v2_multicast_response_helper {
             decoded.layer::<Rip>().is_some(),
             "decoded packet must include a Rip layer"
         );
+    }
+}
+
+#[cfg(test)]
+mod rip_whole_table_request_helpers {
+    use super::*;
+    use crate::packet::NetworkLayer;
+    use std::net::Ipv4Addr;
+
+    // Decode the helper-built packet and return its Rip layer, asserting the
+    // command is Request and the single entry is the whole-table sentinel
+    // (RFC 1058 §3.4.1, RFC 2453 §3.9.1).
+    fn assert_whole_table_request(packet: Packet) -> Packet {
+        let compiled = packet.compile().expect("whole-table request compiles");
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes())
+            .expect("ipv4/udp/rip whole-table request decodes");
+
+        let rip = decoded
+            .layer::<Rip>()
+            .expect("decoded packet includes a Rip layer");
+        assert_eq!(rip.command(), RipCommand::Request);
+        assert_eq!(rip.entries().len(), 1, "request carries a single entry");
+        assert!(
+            rip.entries()[0].is_whole_table_request(),
+            "the single entry is the whole-table sentinel"
+        );
+
+        decoded
+    }
+
+    #[test]
+    fn rip_whole_table_requests_build() {
+        // RIPv1 whole-table request to a documentation unicast destination.
+        let v1 = rip_v1_whole_table_request(
+            Ipv4Addr::new(192, 0, 2, 1),
+            Ipv4Addr::new(192, 0, 2, 2),
+        );
+        let v1_decoded = assert_whole_table_request(v1);
+        let v1_rip = v1_decoded
+            .layer::<Rip>()
+            .expect("v1 decoded packet includes a Rip layer");
+        assert_eq!(v1_rip.version_value(), RIP_VERSION_1);
+
+        // RIPv2 whole-table request to the well-known multicast group.
+        let v2 = rip_v2_whole_table_request(Ipv4Addr::new(192, 0, 2, 1));
+        let v2_decoded = assert_whole_table_request(v2);
+        let v2_rip = v2_decoded
+            .layer::<Rip>()
+            .expect("v2 decoded packet includes a Rip layer");
+        assert_eq!(v2_rip.version_value(), RIP_VERSION_2);
+
+        // The v2 helper targets the RIPv2 multicast group 224.0.0.9.
+        let v2_ipv4 = v2_decoded
+            .layer::<crate::protocols::ip::v4::Ipv4>()
+            .expect("v2 decoded packet includes an Ipv4 layer");
+        assert_eq!(v2_ipv4.destination(), RIP_V2_MULTICAST);
+        assert_eq!(v2_ipv4.destination(), Ipv4Addr::new(224, 0, 0, 9));
     }
 }
