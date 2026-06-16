@@ -1,0 +1,1 @@
+Ipv4(src=192.0.2.10, dst=224.0.0.9, proto=udp(17)) / Udp(sport=520, dport=520, len=92, checksum_status=Valid) / Rip v2 Response (4 entries)
