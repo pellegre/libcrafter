@@ -20,7 +20,8 @@ use std::net::Ipv4Addr;
 use crate::error::{CrafterError, Result};
 use crate::field::Field;
 
-use super::constants::{RIP_AFI_IP, RIP_ENTRY_LEN};
+use super::constants::{RIP_AFI_IP, RIP_ENTRY_LEN, RIP_METRIC_INFINITY};
+use super::registry::is_rip_auth_marker;
 
 /// A single 20-octet RIP route table entry (RFC 1058 §3.1, RFC 2453 §4).
 ///
@@ -59,6 +60,32 @@ impl RipEntry {
             next_hop: Field::defaulted(Ipv4Addr::UNSPECIFIED),
             metric: Field::defaulted(0),
         }
+    }
+
+    /// Build a RIPv1 route entry (RFC 1058 §3.1).
+    ///
+    /// Sets the address family to [`RIP_AFI_IP`], the destination `address`, and
+    /// the `metric`. The route tag, subnet mask, and next hop are left at their
+    /// zero defaults, matching the RIPv1 entry layout where those fields must be
+    /// zero.
+    pub fn ipv1_route(address: Ipv4Addr, metric: u32) -> Self {
+        Self::new()
+            .address_family(RIP_AFI_IP)
+            .address(address)
+            .metric(metric)
+    }
+
+    /// Build a RIPv2 route entry (RFC 2453 §4).
+    ///
+    /// Sets the address family to [`RIP_AFI_IP`], the destination `address`, the
+    /// subnet `mask`, and the `metric`. The next hop defaults to `0.0.0.0`
+    /// (RFC 2453 §4: a next hop of 0.0.0.0 means the originator of the route).
+    pub fn ipv2_route(address: Ipv4Addr, mask: Ipv4Addr, metric: u32) -> Self {
+        Self::new()
+            .address_family(RIP_AFI_IP)
+            .address(address)
+            .subnet_mask(mask)
+            .metric(metric)
     }
 
     /// Set the address family identifier (caller-set).
@@ -131,6 +158,22 @@ impl RipEntry {
     /// Effective metric (caller-set or default).
     pub fn metric_value(&self) -> u32 {
         self.metric.value().copied().unwrap_or(0)
+    }
+
+    /// Whether this entry's metric marks the destination as unreachable.
+    ///
+    /// A metric of [`RIP_METRIC_INFINITY`] (16) or greater means the
+    /// destination is unreachable (RFC 1058 §3.1).
+    pub fn is_unreachable(&self) -> bool {
+        self.metric_value() >= RIP_METRIC_INFINITY
+    }
+
+    /// Whether this entry is a RIPv2 authentication marker entry.
+    ///
+    /// Returns `true` when the address family is the AFI 0xFFFF authentication
+    /// marker (RFC 2453 §4.1).
+    pub fn is_auth_marker(&self) -> bool {
+        is_rip_auth_marker(self.address_family_value())
     }
 
     /// Serialize this route entry to its 20-octet big-endian wire form.
@@ -359,5 +402,54 @@ mod rip_entry_decode_truncated_is_error {
             }
             other => panic!("expected BufferTooShort, got {other:?}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod rip_entry_v1_v2_constructors {
+    use super::*;
+
+    #[test]
+    fn ipv1_route_leaves_mask_and_next_hop_zero() {
+        let address = Ipv4Addr::new(192, 0, 2, 1);
+        let entry = RipEntry::ipv1_route(address, 5);
+
+        assert_eq!(entry.address_family_value(), RIP_AFI_IP);
+        assert_eq!(entry.address_value(), address);
+        assert_eq!(entry.metric_value(), 5);
+        // RIPv1 leaves route tag, subnet mask, and next hop at zero.
+        assert_eq!(entry.route_tag_value(), 0);
+        assert_eq!(entry.subnet_mask_value(), Ipv4Addr::UNSPECIFIED);
+        assert_eq!(entry.next_hop_value(), Ipv4Addr::UNSPECIFIED);
+    }
+
+    #[test]
+    fn ipv2_route_sets_mask_and_defaults_next_hop() {
+        let address = Ipv4Addr::new(192, 0, 2, 1);
+        let mask = Ipv4Addr::new(255, 255, 255, 0);
+        let entry = RipEntry::ipv2_route(address, mask, 7);
+
+        assert_eq!(entry.address_family_value(), RIP_AFI_IP);
+        assert_eq!(entry.address_value(), address);
+        assert_eq!(entry.subnet_mask_value(), mask);
+        assert_eq!(entry.metric_value(), 7);
+        // Next hop defaults to 0.0.0.0 (the route originator).
+        assert_eq!(entry.next_hop_value(), Ipv4Addr::UNSPECIFIED);
+    }
+}
+
+#[cfg(test)]
+mod rip_entry_reachability {
+    use super::*;
+
+    #[test]
+    fn is_unreachable_at_infinity_metric() {
+        let address = Ipv4Addr::new(192, 0, 2, 1);
+
+        let reachable = RipEntry::ipv1_route(address, RIP_METRIC_INFINITY - 1);
+        assert!(!reachable.is_unreachable());
+
+        let unreachable = RipEntry::ipv1_route(address, RIP_METRIC_INFINITY);
+        assert!(unreachable.is_unreachable());
     }
 }
