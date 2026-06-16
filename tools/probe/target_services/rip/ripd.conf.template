@@ -1,0 +1,17 @@
+frr defaults traditional
+hostname crafter-rip-peer
+log syslog informational
+service integrated-vtysh-config
+ip forwarding
+ip route {{RIP_ORIGINATE_PREFIX}} Null0
+!
+router rip
+ version 2
+ network {{RIP_NETWORK}}
+{{RIP_INTERFACE_LINE}}
+ redistribute static
+!
+interface eth0
+{{RIP_AUTH_BLOCK}}
+!
+line vty
