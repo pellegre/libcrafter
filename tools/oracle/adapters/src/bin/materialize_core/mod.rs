@@ -18,6 +18,7 @@ use crafter::protocols::bgp::{
 };
 use crafter::protocols::link::{RadiotapChannel, RadiotapFlags, RadiotapRxFlags, RadiotapTxFlags};
 use crafter::protocols::rip::{RipAuth, RipDigestAlgorithm};
+use crafter::protocols::rip::ripng::{Ripng, RipngRte};
 use serde_json::{json, Map, Value};
 use std::env;
 use std::error::Error;
@@ -244,6 +245,7 @@ fn build_layer(plan: &Value, layer: &str) -> ExampleResult<Box<dyn Layer>> {
         "dns" => Ok(Box::new(dns_layer(plan)?)),
         "dhcp" => Ok(Box::new(dhcp_layer(plan)?)),
         "rip" => Ok(Box::new(rip_layer(plan)?)),
+        "ripng" => Ok(Box::new(ripng_layer(plan)?)),
         "bgp" => Ok(Box::new(bgp_layer(plan)?)),
         "radiotap" => Ok(Box::new(radiotap_layer(plan)?)),
         "dot11" => Ok(Box::new(dot11_layer(plan)?)),
@@ -2750,6 +2752,69 @@ fn rip_digest_key(value: Option<&Value>) -> ExampleResult<Vec<u8>> {
     }
 }
 
+/// Build a RIPng layer (RFC 2080) from a packet plan.
+///
+/// The plan's `fields.ripng` object mirrors the oracle RIPng layer spec (step 47)
+/// and the parser-backend RIPng normalization (step 55): the 4-octet header
+/// (`command`/`version`/`reserved`) and an `rtes` list of 20-octet route table
+/// entries (`prefix`/`route_tag`/`prefix_len`/`metric`), including next-hop RTEs
+/// (metric `0xFF`). Every field the plan provides is honored through the public
+/// `Ripng`/`RipngRte` builders; anything it omits stays at the protocol-correct
+/// `Ripng::new()` default (Response command, version 1, reserved 0). The composed
+/// `Ripng` rides the plan's UDP/IPv6 stack and `compile()` (driven by
+/// `build_packet`) auto-fills lengths and ports when the caller left them unset.
+fn ripng_layer(plan: &Value) -> ExampleResult<Ripng> {
+    let fields = layer_fields(plan, "ripng")?;
+    let mut layer = Ripng::new();
+
+    // The command is required (RFC 2080 §2.1); accept a named command
+    // ("request"/"response") or a numeric code, reusing the RIP command mapping.
+    layer = layer.command_code(rip_command_code(required(fields, &["command", "cmd"])?)?);
+    if let Some(value) = optional(fields, &["version"]) {
+        layer = layer.version(u8_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["reserved", "null"]) {
+        layer = layer.reserved(u16_value(value)?);
+    }
+
+    if let Some(value) = optional(fields, &["rtes", "entries"]) {
+        for rte in array_values(value)? {
+            layer = layer.rte(ripng_rte(rte)?);
+        }
+    }
+
+    Ok(layer)
+}
+
+/// Build one 20-octet RIPng route table entry from a plan RTE object
+/// (RFC 2080 §2.1).
+///
+/// Reads the per-RTE keys the RIPng layer spec and parser normalization use
+/// (`prefix`/`route_tag`/`prefix_len`/`metric`, with short aliases) and applies
+/// each through the caller-set `RipngRte` field setters so the compiled RTE
+/// matches the plan. A next-hop RTE (RFC 2080 §2.1.1) is just an RTE whose metric
+/// is `0xFF`; the plan carries that explicitly via `metric`, so no special-casing
+/// is needed here.
+fn ripng_rte(value: &Value) -> ExampleResult<RipngRte> {
+    let rte = value
+        .as_object()
+        .ok_or_else(|| format!("RIPng RTE must be an object, got {value:?}"))?;
+    let mut entry = RipngRte::new();
+    if let Some(value) = optional(rte, &["prefix", "address", "addr", "ip"]) {
+        entry = entry.prefix(ipv6_text(value)?);
+    }
+    if let Some(value) = optional(rte, &["route_tag", "tag", "routetag"]) {
+        entry = entry.route_tag(u16_value(value)?);
+    }
+    if let Some(value) = optional(rte, &["prefix_len", "prefix_length", "plen"]) {
+        entry = entry.prefix_len(u8_value(value)?);
+    }
+    if let Some(value) = optional(rte, &["metric"]) {
+        entry = entry.metric(u8_value(value)?);
+    }
+    Ok(entry)
+}
+
 fn radiotap_flags(fields: &Map<String, Value>) -> ExampleResult<u8> {
     let mut flags = 0u8;
     if let Some(value) = optional(fields, &["flags"]) {
@@ -4219,6 +4284,10 @@ fn fixed_4_bytes(value: &Value, field: &str) -> ExampleResult<[u8; 4]> {
 
 fn ipv4_text(value: &Value) -> ExampleResult<Ipv4Addr> {
     Ok(Ipv4Addr::from_str(text_value(value)?)?)
+}
+
+fn ipv6_text(value: &Value) -> ExampleResult<Ipv6Addr> {
+    Ok(Ipv6Addr::from_str(text_value(value)?)?)
 }
 
 fn bytes_value(value: &Value) -> ExampleResult<Vec<u8>> {

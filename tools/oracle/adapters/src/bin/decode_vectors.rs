@@ -14,6 +14,7 @@ use crafter::protocols::bgp::{
     BGP_TYPE_ROUTE_REFRESH, BGP_TYPE_UPDATE,
 };
 use crafter::protocols::link::RadiotapFcsStatus;
+use crafter::protocols::rip::ripng::{Ripng, RipngRte};
 use crafter::protocols::rip::{Rip, RipAuth, RipAuthPayload, RipEntry, RIP_AFI_AUTH};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -444,6 +445,8 @@ fn normalized_layer_name(layer: &dyn Layer) -> String {
         "bgp"
     } else if layer.as_any().is::<Rip>() {
         "rip"
+    } else if layer.as_any().is::<Ripng>() {
+        "ripng"
     } else if layer.as_any().is::<Icmpv4>() {
         "icmp"
     } else if layer.as_any().is::<Icmpv6>() {
@@ -555,6 +558,9 @@ fn normalized_layer_fields(
     }
     if let Some(layer) = layer.as_any().downcast_ref::<Rip>() {
         return rip_fields(layer);
+    }
+    if let Some(layer) = layer.as_any().downcast_ref::<Ripng>() {
+        return ripng_fields(layer);
     }
     if let Some(layer) = layer.as_any().downcast_ref::<Icmpv4>() {
         return icmp_fields(layer);
@@ -1533,6 +1539,42 @@ fn rip_auth_fields(auth: &RipAuth) -> Value {
         }
     }
     Value::Object(fields.into_iter().collect())
+}
+
+/// Normalize a decoded RIPng layer into the backend-neutral oracle model.
+///
+/// Mirrors the parser-backend RIPng normalization (step 55) and the RIPng layer
+/// spec (step 47): the 4-octet header (`command`/`version`/`reserved`) and an
+/// `rtes` list of 20-octet route table entries (`prefix`/`route_tag`/
+/// `prefix_len`/`metric`). All values are read through the public `Ripng`/
+/// `RipngRte` accessors rather than re-parsing the wire bytes; a `next_hop`
+/// boolean per RTE surfaces the RFC 2080 §2.1.1 next-hop RTE (metric `0xFF`) so
+/// the libcrafter decode exposes the distinction the wireshark parser does not.
+fn ripng_fields(layer: &Ripng) -> BTreeMap<String, Value> {
+    let mut fields = map([
+        ("command", json!(layer.command_value())),
+        ("version", json!(layer.version_value())),
+        ("reserved", json!(layer.reserved_value())),
+    ]);
+
+    let rtes: Vec<Value> = layer.rtes().iter().map(ripng_rte_fields).collect();
+    fields.insert("rtes".to_string(), json!(rtes));
+    fields
+}
+
+/// Normalize one 20-octet RIPng route table entry (RFC 2080 §2.1), using the
+/// same field names as the parser-backend `_normalize_ripng` (`prefix`/
+/// `route_tag`/`prefix_len`/`metric`). The IPv6 prefix renders as a canonical
+/// string and a `next_hop` boolean marks the next-hop RTE (metric `0xFF`,
+/// RFC 2080 §2.1.1).
+fn ripng_rte_fields(rte: &RipngRte) -> Value {
+    json!({
+        "prefix": rte.prefix_value().to_string(),
+        "route_tag": rte.route_tag_value(),
+        "prefix_len": rte.prefix_len_value(),
+        "metric": rte.metric_value(),
+        "next_hop": rte.is_next_hop(),
+    })
 }
 
 fn icmp_fields(layer: &Icmpv4) -> BTreeMap<String, Value> {
