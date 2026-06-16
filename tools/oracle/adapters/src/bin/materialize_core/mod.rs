@@ -17,8 +17,8 @@ use crafter::protocols::bgp::{
     CAP_ROUTE_REFRESH, CAP_ROUTE_REFRESH_OLD, SAFI_MULTICAST, SAFI_UNICAST,
 };
 use crafter::protocols::link::{RadiotapChannel, RadiotapFlags, RadiotapRxFlags, RadiotapTxFlags};
-use crafter::protocols::rip::{RipAuth, RipDigestAlgorithm};
 use crafter::protocols::rip::ripng::{Ripng, RipngRte};
+use crafter::protocols::rip::{RipAuth, RipDigestAlgorithm};
 use serde_json::{json, Map, Value};
 use std::env;
 use std::error::Error;
@@ -2662,7 +2662,8 @@ fn rip_auth(value: &Value) -> ExampleResult<(RipAuth, Vec<u8>)> {
         .unwrap_or(2);
 
     if auth_type == 2 {
-        let password = rip_password_bytes(optional(auth, &["simple_password", "password", "secret"]))?;
+        let password =
+            rip_password_bytes(optional(auth, &["simple_password", "password", "secret"]))?;
         return Ok((RipAuth::simple_password(&password), Vec::new()));
     }
 
@@ -2688,7 +2689,10 @@ fn rip_auth(value: &Value) -> ExampleResult<(RipAuth, Vec<u8>)> {
 /// sequence (the oracle pins it for reproducible digests) and any explicit
 /// offset / auth-data length are set caller-set here. Anything the plan omits
 /// stays defaulted and is auto-filled at compile() time.
-fn rip_apply_keyed_digest_fields(auth: &mut RipAuth, fields: &Map<String, Value>) -> ExampleResult<()> {
+fn rip_apply_keyed_digest_fields(
+    auth: &mut RipAuth,
+    fields: &Map<String, Value>,
+) -> ExampleResult<()> {
     use crafter::protocols::rip::RipAuthPayload;
     let RipAuthPayload::KeyedDigest(header) = &mut auth.payload else {
         return Ok(());

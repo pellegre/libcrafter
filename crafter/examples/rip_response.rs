@@ -54,7 +54,9 @@ fn main() -> ExampleResult<()> {
     ];
     let v1_response = Ipv4::new().src(RIP_SOURCE).dst(Ipv4Addr::BROADCAST)
         / Udp::new().sport(RIP_UDP_PORT).dport(RIP_UDP_PORT)
-        / Rip::response().version(RIP_VERSION_1).with_entries(v1_entries);
+        / Rip::response()
+            .version(RIP_VERSION_1)
+            .with_entries(v1_entries);
     print_plan("v1-response", "RIPv1 broadcast response", &v1_response)?;
 
     // 2. RIPv2 multicast response (RFC 2453 §3.5, §4): per-entry route tag,

@@ -230,9 +230,7 @@ pub fn rip_packet(plan: &ProbePlan) -> ExampleResult<Packet> {
     let source_port = plan.source_port.unwrap_or(RIP_UDP_PORT);
     let destination_port = plan.destination_port.unwrap_or(RIP_UDP_PORT);
     Ok(Ipv4::new().src(source).dst(destination)
-        / Udp::new()
-            .sport(source_port)
-            .dport(destination_port)
+        / Udp::new().sport(source_port).dport(destination_port)
         / Rip::request()
             .version(RIP_VERSION_2)
             .entry(RipEntry::whole_table_request()))
@@ -422,11 +420,13 @@ mod tests {
             .src("192.0.2.20".parse::<Ipv4Addr>().unwrap())
             .dst("192.0.2.10".parse::<Ipv4Addr>().unwrap())
             / Udp::new().sport(RIP_UDP_PORT).dport(42000)
-            / Rip::response().version(RIP_VERSION_2).entry(RipEntry::ipv2_route(
-                "198.51.100.0".parse::<Ipv4Addr>().unwrap(),
-                "255.255.255.0".parse::<Ipv4Addr>().unwrap(),
-                1,
-            )))
+            / Rip::response()
+                .version(RIP_VERSION_2)
+                .entry(RipEntry::ipv2_route(
+                    "198.51.100.0".parse::<Ipv4Addr>().unwrap(),
+                    "255.255.255.0".parse::<Ipv4Addr>().unwrap(),
+                    1,
+                )))
         .compile()
         .unwrap();
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, response.as_bytes()).unwrap();
