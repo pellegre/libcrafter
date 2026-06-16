@@ -14,6 +14,7 @@ use crafter::protocols::bgp::{
     BGP_TYPE_ROUTE_REFRESH, BGP_TYPE_UPDATE,
 };
 use crafter::protocols::link::RadiotapFcsStatus;
+use crafter::protocols::rip::{Rip, RipAuth, RipAuthPayload, RipEntry, RIP_AFI_AUTH};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -441,6 +442,8 @@ fn normalized_layer_name(layer: &dyn Layer) -> String {
         "tcp"
     } else if layer.as_any().is::<Bgp>() {
         "bgp"
+    } else if layer.as_any().is::<Rip>() {
+        "rip"
     } else if layer.as_any().is::<Icmpv4>() {
         "icmp"
     } else if layer.as_any().is::<Icmpv6>() {
@@ -549,6 +552,9 @@ fn normalized_layer_fields(
     }
     if let Some(layer) = layer.as_any().downcast_ref::<Bgp>() {
         return bgp_fields(layer);
+    }
+    if let Some(layer) = layer.as_any().downcast_ref::<Rip>() {
+        return rip_fields(layer);
     }
     if let Some(layer) = layer.as_any().downcast_ref::<Icmpv4>() {
         return icmp_fields(layer);
@@ -1444,6 +1450,89 @@ fn bgp_message_type_name(message_type: u8) -> Value {
         BGP_TYPE_ROUTE_REFRESH => json!("route_refresh"),
         other => json!(other),
     }
+}
+
+/// Normalize a decoded RIP layer into the backend-neutral oracle model.
+///
+/// Mirrors the Scapy reference `_canonicalize_rip` (step 54): the 4-octet header
+/// (`command`/`version`/`reserved`), an `entries` list of 20-octet route entries
+/// (`address_family`/`route_tag`/`address`/`subnet_mask`/`next_hop`/`metric`),
+/// and an optional `auth` sub-object for the AFI-0xFFFF authentication entry. All
+/// values are read through the public `Rip`/`RipEntry`/`RipAuth` accessors rather
+/// than re-parsing the wire bytes; unknown command and address-family codes are
+/// surfaced as their raw numeric values so preservation stays observable.
+///
+/// When the message carries authentication, libcrafter's decode keeps the leading
+/// AFI-0xFFFF auth entry in `entries()` while also exposing it on `auth_config()`;
+/// the Scapy reference reports that entry only under `auth`, so the leading auth
+/// marker entry is dropped from the normalized `entries` list to match.
+fn rip_fields(layer: &Rip) -> BTreeMap<String, Value> {
+    let mut fields = map([
+        ("command", json!(layer.command_value())),
+        ("version", json!(layer.version_value())),
+        ("reserved", json!(layer.reserved_value())),
+    ]);
+
+    let auth = layer.auth_config();
+    let entries: Vec<Value> = layer
+        .entries()
+        .iter()
+        .enumerate()
+        .filter(|(index, entry)| !(*index == 0 && auth.is_some() && entry.is_auth_marker()))
+        .map(|(_, entry)| rip_entry_fields(entry))
+        .collect();
+    fields.insert("entries".to_string(), json!(entries));
+
+    if let Some(auth) = auth {
+        fields.insert("auth".to_string(), rip_auth_fields(auth));
+    }
+    fields
+}
+
+/// Normalize one 20-octet RIP route entry, using the same field names as the
+/// Scapy reference `_normalize_rip_entry`. Addresses render as dotted-quad
+/// strings and the address family is surfaced as its raw numeric value.
+fn rip_entry_fields(entry: &RipEntry) -> Value {
+    json!({
+        "address_family": entry.address_family_value(),
+        "route_tag": entry.route_tag_value(),
+        "address": entry.address_value().to_string(),
+        "subnet_mask": entry.subnet_mask_value().to_string(),
+        "next_hop": entry.next_hop_value().to_string(),
+        "metric": entry.metric_value(),
+    })
+}
+
+/// Normalize the AFI-0xFFFF RIPv2 authentication entry, mirroring the Scapy
+/// reference `_normalize_rip_auth`: a simple-password entry carries the 16-octet
+/// password (`{hex}`); a keyed-message-digest entry carries the digest header
+/// (offset, key id, auth-data length, sequence). libcrafter's decode reconstructs
+/// the simple-password form; the keyed-digest header fields are read from the
+/// parsed `RipKeyedDigestHeader` accessors when present.
+fn rip_auth_fields(auth: &RipAuth) -> Value {
+    let auth_type = auth.auth_type_value();
+    let mut fields = map([
+        ("address_family", json!(RIP_AFI_AUTH)),
+        ("auth_type", json!(auth_type)),
+    ]);
+    match &auth.payload {
+        RipAuthPayload::SimplePassword(password) => {
+            fields.insert(
+                "simple_password".to_string(),
+                json!({"hex": hex_bytes(password)}),
+            );
+        }
+        RipAuthPayload::KeyedDigest(header) => {
+            fields.insert("digest_offset".to_string(), json!(header.offset_value()));
+            fields.insert("key_id".to_string(), json!(header.key_id_value()));
+            fields.insert(
+                "auth_data_len".to_string(),
+                json!(header.auth_data_len_value()),
+            );
+            fields.insert("sequence".to_string(), json!(header.sequence_value()));
+        }
+    }
+    Value::Object(fields.into_iter().collect())
 }
 
 fn icmp_fields(layer: &Icmpv4) -> BTreeMap<String, Value> {
