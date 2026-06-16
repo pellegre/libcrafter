@@ -17,6 +17,7 @@ use crafter::protocols::bgp::{
     CAP_ROUTE_REFRESH, CAP_ROUTE_REFRESH_OLD, SAFI_MULTICAST, SAFI_UNICAST,
 };
 use crafter::protocols::link::{RadiotapChannel, RadiotapFlags, RadiotapRxFlags, RadiotapTxFlags};
+use crafter::protocols::rip::{RipAuth, RipDigestAlgorithm};
 use serde_json::{json, Map, Value};
 use std::env;
 use std::error::Error;
@@ -242,6 +243,7 @@ fn build_layer(plan: &Value, layer: &str) -> ExampleResult<Box<dyn Layer>> {
         "icmpv6" => Ok(Box::new(icmpv6_layer(plan)?)),
         "dns" => Ok(Box::new(dns_layer(plan)?)),
         "dhcp" => Ok(Box::new(dhcp_layer(plan)?)),
+        "rip" => Ok(Box::new(rip_layer(plan)?)),
         "bgp" => Ok(Box::new(bgp_layer(plan)?)),
         "radiotap" => Ok(Box::new(radiotap_layer(plan)?)),
         "dot11" => Ok(Box::new(dot11_layer(plan)?)),
@@ -2539,6 +2541,213 @@ fn dhcp_layer(plan: &Value) -> ExampleResult<Dhcp> {
         layer = layer.options(dhcp_options(options)?);
     }
     Ok(layer)
+}
+
+/// Materialize a RIP message (RFC 1058 / RFC 2453, IPv4 UDP port 520) from a
+/// plan.
+///
+/// The plan's `fields.rip` object mirrors the oracle RIP layer spec and the
+/// Scapy reference backend's key names: the 4-octet header
+/// (`command`/`version`/`reserved`), a `entries` list of 20-octet route entries
+/// (`address_family`/`route_tag`/`address`/`subnet_mask`/`next_hop`/`metric`),
+/// and an optional `auth` block (AFI 0xFFFF) for simple-password or keyed
+/// message-digest authentication. Every field the plan provides is honored
+/// through the public `Rip`/`RipEntry`/`RipAuth` builders; anything it omits
+/// stays at the protocol-correct `Rip::new()` default (Response command,
+/// version 2, reserved 0). The composed `Rip` rides the plan's UDP/IPv4 stack
+/// and `compile()` (driven by `build_packet`) auto-fills lengths, ports, and the
+/// keyed digest when the caller left them unset.
+fn rip_layer(plan: &Value) -> ExampleResult<Rip> {
+    let fields = layer_fields(plan, "rip")?;
+    let mut layer = Rip::new();
+
+    // The command is required (RFC 1058 §3.1); accept a named command
+    // ("request"/"response"/…) or a numeric code, mirroring the Scapy backend.
+    layer = layer.command_code(rip_command_code(required(fields, &["command", "cmd"])?)?);
+    if let Some(value) = optional(fields, &["version"]) {
+        layer = layer.version(u8_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["reserved", "null"]) {
+        layer = layer.reserved(u16_value(value)?);
+    }
+
+    // Authentication (AFI 0xFFFF) precedes the route entries on the wire; attach
+    // it through the public `Rip::auth` builder so compile() lays the leading
+    // auth entry (and, for keyed digest, the trailing digest block) in order.
+    if let Some(value) = optional(fields, &["auth"]) {
+        let (auth, key) = rip_auth(value)?;
+        layer = layer.auth(auth, key);
+    }
+
+    if let Some(value) = optional(fields, &["entries"]) {
+        for entry in array_values(value)? {
+            layer = layer.entry(rip_entry(entry)?);
+        }
+    }
+
+    Ok(layer)
+}
+
+/// Resolve a RIP command (named string or numeric) to its wire octet.
+///
+/// Mirrors the Scapy `_rip_command` mapping so a named command materializes to
+/// the same code; unknown strings parse as a numeric literal and numeric values
+/// pass through.
+fn rip_command_code(value: &Value) -> ExampleResult<u8> {
+    if let Some(text) = value.as_str() {
+        let lowered = text.to_ascii_lowercase().replace([' ', '-'], "_");
+        return match lowered.as_str() {
+            "request" => Ok(1),
+            "response" => Ok(2),
+            "update_request" => Ok(9),
+            "update_response" => Ok(10),
+            "update_ack" | "update_acknowledge" => Ok(11),
+            _ => u8_text(text),
+        };
+    }
+    u8_value(value)
+}
+
+/// Build one 20-octet RIP route entry from a plan entry object.
+///
+/// Reads the same per-entry keys as the Scapy reference `_rip_entry`
+/// (`address_family`/`route_tag`/`address`/`subnet_mask`/`next_hop`/`metric`,
+/// with the short aliases the backend accepts) and applies each through the
+/// caller-set `RipEntry` field setters so the compiled entry matches the plan.
+fn rip_entry(value: &Value) -> ExampleResult<RipEntry> {
+    let entry = value
+        .as_object()
+        .ok_or_else(|| format!("RIP entry must be an object, got {value:?}"))?;
+    let mut route = RipEntry::new();
+    if let Some(value) = optional(entry, &["address_family", "af"]) {
+        route = route.address_family(u16_value(value)?);
+    }
+    if let Some(value) = optional(entry, &["route_tag", "tag", "routetag"]) {
+        route = route.route_tag(u16_value(value)?);
+    }
+    if let Some(value) = optional(entry, &["address", "addr"]) {
+        route = route.address(ipv4_text(value)?);
+    }
+    if let Some(value) = optional(entry, &["subnet_mask", "mask"]) {
+        route = route.subnet_mask(ipv4_text(value)?);
+    }
+    if let Some(value) = optional(entry, &["next_hop", "nexthop"]) {
+        route = route.next_hop(ipv4_text(value)?);
+    }
+    if let Some(value) = optional(entry, &["metric"]) {
+        route = route.metric(u32_value(value)?);
+    }
+    Ok(route)
+}
+
+/// Build a RIPv2 authentication block and its digest key from a plan `auth`
+/// object (RFC 2453 §4.1 / RFC 2082 / RFC 4822 §3).
+///
+/// Authentication type 2 is a simple password (the 16-octet cleartext entry);
+/// any other type is the keyed message-digest layout, whose algorithm is chosen
+/// from the plan (`keyed-md5` / `hmac-sha1` / `hmac-sha256`) and whose key id /
+/// sequence are pinned from the plan. The returned key is the shared secret
+/// `Rip::auth` uses to auto-compute the trailing digest on compile(); the Scapy
+/// reference omits it (it does not derive the digest), so it is read from the
+/// libcrafter-only `key_value`/`key`/`secret` plan keys and defaults to empty.
+fn rip_auth(value: &Value) -> ExampleResult<(RipAuth, Vec<u8>)> {
+    let auth = value
+        .as_object()
+        .ok_or_else(|| format!("RIP auth entry must be an object, got {value:?}"))?;
+    let auth_type = optional(auth, &["type", "authtype", "auth_type"])
+        .map(u16_value)
+        .transpose()?
+        .unwrap_or(2);
+
+    if auth_type == 2 {
+        let password = rip_password_bytes(optional(auth, &["simple_password", "password", "secret"]))?;
+        return Ok((RipAuth::simple_password(&password), Vec::new()));
+    }
+
+    // Keyed message digest (type 3): the leading 0xFFFF entry is a digest header
+    // and a trailing digest block follows. The algorithm fixes the digest length
+    // and the hash used when compile() computes the digest from the key.
+    let algorithm = rip_digest_algorithm(optional(auth, &["algorithm", "alg"]))?;
+    let key_id = optional(auth, &["key_id", "keyid"])
+        .map(u8_value)
+        .transpose()?
+        .unwrap_or(0);
+    let mut keyed = RipAuth::keyed_digest_with(algorithm, key_id);
+    rip_apply_keyed_digest_fields(&mut keyed, auth)?;
+    let key = rip_digest_key(optional(auth, &["key_value", "key", "secret", "key_hex"]))?;
+    Ok((keyed, key))
+}
+
+/// Apply the pinned keyed-digest header fields (sequence, offset, and an
+/// explicit auth-data length) the plan provides onto a keyed-digest `RipAuth`.
+///
+/// `RipAuth::keyed_digest_with` seeds the algorithm and key id; the remaining
+/// RFC 4822 §3.1 header fields are public on `RipKeyedDigestHeader`, so a pinned
+/// sequence (the oracle pins it for reproducible digests) and any explicit
+/// offset / auth-data length are set caller-set here. Anything the plan omits
+/// stays defaulted and is auto-filled at compile() time.
+fn rip_apply_keyed_digest_fields(auth: &mut RipAuth, fields: &Map<String, Value>) -> ExampleResult<()> {
+    use crafter::protocols::rip::RipAuthPayload;
+    let RipAuthPayload::KeyedDigest(header) = &mut auth.payload else {
+        return Ok(());
+    };
+    if let Some(value) = optional(fields, &["sequence", "seqnum"]) {
+        header.sequence.set_user(u32_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["digest_offset", "digestoffset"]) {
+        header.offset.set_user(u16_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["auth_data_len", "authdatalen"]) {
+        header.auth_data_len.set_user(u8_value(value)?);
+    }
+    Ok(())
+}
+
+/// Resolve a RIP keyed-digest algorithm (named string or numeric) from the plan.
+///
+/// Defaults to Keyed-MD5 (RFC 2082) — the type the spec pins for strict
+/// cross-backend comparison — and accepts the RFC 4822 HMAC-SHA variants.
+fn rip_digest_algorithm(value: Option<&Value>) -> ExampleResult<RipDigestAlgorithm> {
+    let Some(value) = value else {
+        return Ok(RipDigestAlgorithm::KeyedMd5);
+    };
+    if let Some(text) = value.as_str() {
+        let lowered = text.to_ascii_lowercase().replace([' ', '_'], "-");
+        return match lowered.as_str() {
+            "keyed-md5" | "md5" => Ok(RipDigestAlgorithm::KeyedMd5),
+            "hmac-sha1" | "sha1" | "hmac-sha-1" => Ok(RipDigestAlgorithm::HmacSha1),
+            "hmac-sha256" | "sha256" | "hmac-sha-256" => Ok(RipDigestAlgorithm::HmacSha256),
+            other => Err(format!("unsupported RIP digest algorithm: {other}").into()),
+        };
+    }
+    Err(format!("unsupported RIP digest algorithm value: {value:?}").into())
+}
+
+/// Decode the up-to-16-octet RIP simple password from a plan value.
+///
+/// Accepts a cleartext string, a `{"hex": ...}` byte object, or a hex string,
+/// mirroring the Scapy backend's `_rip_password_bytes`. `RipAuth::simple_password`
+/// right-pads or truncates to the fixed 16-octet field, so the raw bytes are
+/// passed through unpadded here.
+fn rip_password_bytes(value: Option<&Value>) -> ExampleResult<Vec<u8>> {
+    match value {
+        None => Ok(Vec::new()),
+        Some(Value::String(text)) => Ok(text.as_bytes().to_vec()),
+        Some(value) => option_bytes(value),
+    }
+}
+
+/// Decode the keyed-digest shared key from a plan value.
+///
+/// Accepts a cleartext string, a `{"hex": ...}` byte object, or a hex string.
+/// This is the libcrafter-only key the Scapy reference does not carry; when the
+/// plan omits it the key is empty and compile() derives the digest accordingly.
+fn rip_digest_key(value: Option<&Value>) -> ExampleResult<Vec<u8>> {
+    match value {
+        None => Ok(Vec::new()),
+        Some(Value::String(text)) => Ok(text.as_bytes().to_vec()),
+        Some(value) => option_bytes(value),
+    }
 }
 
 fn radiotap_flags(fields: &Map<String, Value>) -> ExampleResult<u8> {
