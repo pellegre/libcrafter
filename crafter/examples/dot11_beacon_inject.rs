@@ -1,6 +1,9 @@
 mod common;
 
-use common::{arg_or, parse_usize_arg, print_help_if_requested, ExampleResult};
+use common::{
+    arg_or, live_mode, parse_usize_arg, print_help_if_requested, print_send_report, ExampleResult,
+    ADVANCED_LIVE_ACK_FLAG, LIVE_WIRE_ENV,
+};
 use crafter::prelude::*;
 
 /// Documentation-safe monitor interface name. The crate never configures
@@ -32,10 +35,14 @@ fn example_bssid(index: usize) -> MacAddr {
 
 fn main() -> ExampleResult<()> {
     if print_help_if_requested(
-        "usage: cargo run --example dot11_beacon_inject -- [--iface IFACE] [--channel CHANNEL] [--count COUNT] [--prefix PREFIX]\n\nBuild synthetic monitor-mode beacon frames and print a dry-run injection plan. No frames are transmitted.",
+        "usage: cargo run --example dot11_beacon_inject -- [--live] [--iface IFACE] [--channel CHANNEL] [--count COUNT] [--prefix PREFIX]\n\nBuild synthetic monitor-mode beacon frames and print a dry-run injection plan by default. Live transmission requires --live, the isolated-lab acknowledgement, and the wire-endpoint environment marker, plus an interface the operator has already placed into monitor mode.",
     ) {
         return Ok(());
     }
+
+    // Gate live transmission behind the project's explicit live markers. Returns
+    // true only with --live AND --i-understand-isolated-lab AND LIBCRAFTER_ENDPOINT=1.
+    let live = live_mode("dot11_beacon_inject")?;
 
     let iface = arg_or("--iface", EXAMPLE_MONITOR_IFACE);
     let channel: u8 = arg_or("--channel", "6").parse()?;
@@ -45,8 +52,21 @@ fn main() -> ExampleResult<()> {
     let ssids: Vec<String> = (0..count).map(|index| format!("{prefix}-{index}")).collect();
 
     println!("example: dot11_beacon_inject");
-    println!("mode: dry-run");
-    println!("safety: no frames are transmitted; this prints a dry-run injection plan only");
+    println!("mode: {}", if live { "live" } else { "dry-run" });
+    if live {
+        println!(
+            "safety: --live, {ADVANCED_LIVE_ACK_FLAG}, and {LIVE_WIRE_ENV}=1 were required; \
+             transmitting on the operator-configured monitor interface"
+        );
+    } else {
+        println!(
+            "safety: no frames are transmitted; this prints a dry-run injection plan only. \
+             Live transmission requires --live {ADVANCED_LIVE_ACK_FLAG} and {LIVE_WIRE_ENV}=1"
+        );
+    }
+    // The crate never configures monitor mode: the operator must place the
+    // interface into monitor mode on the chosen channel before a live run.
+    println!("note: the interface must already be in monitor mode on the chosen channel; this example does not configure monitor mode");
     println!("interface: {iface}");
     println!("channel: {channel}");
     println!("beacons: {count}");
@@ -69,7 +89,17 @@ fn main() -> ExampleResult<()> {
 
     for (index, ssid) in ssids.iter().enumerate() {
         let beacon = build_beacon(ssid, example_bssid(index), channel, index as u16);
-        println!("beacon {index} ssid {ssid}: {}", beacon.summary());
+
+        if live {
+            // Transmit through the crate's now-enabled radiotap injection on the
+            // operator-configured monitor interface, via the same public send
+            // entry point used by send_packet.rs.
+            let options = SendOptions::new().iface(&iface).link_layer().live();
+            let report = send_packet(&beacon, options)?;
+            print_send_report(&format!("dot11_beacon_inject beacon {index} ssid {ssid}"), &beacon, &report);
+        } else {
+            println!("beacon {index} ssid {ssid}: {}", beacon.summary());
+        }
     }
 
     Ok(())
