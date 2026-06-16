@@ -61,6 +61,15 @@ BGP_PROVISION_SCRIPT = "tools/probe/target_services/bgp/provision-peer.sh"
 BGP_FRR_TEMPLATE = "tools/probe/target_services/bgp/frr.conf.template"
 BGP_RIB_COMMAND = "vtysh -c 'show bgp ipv4 unicast'"
 
+RIP_SERVICE_KIND = "frr-ripd"
+RIP_SERVICE_PORTS = [520]
+RIP_RUNTIME = "frr"
+RIP_MULTICAST_GROUP = "224.0.0.9"
+RIP_DOCUMENTATION_IPV4_PREFIX = "198.51.100.0/24"
+RIP_PROVISION_SCRIPT = "tools/probe/target_services/rip/provision-daemon.sh"
+RIP_CONFIG_TEMPLATE = "tools/probe/target_services/rip/ripd.conf.template"
+RIP_RIB_COMMAND = "vtysh -c 'show ip rip'"
+
 
 # --------------------------------------------------------------------------- #
 # Typed service descriptors
@@ -255,6 +264,54 @@ def frr_bgp_peer_descriptor(
             "provision_script": BGP_PROVISION_SCRIPT,
             "frr_template": BGP_FRR_TEMPLATE,
             "rib_command": BGP_RIB_COMMAND,
+        },
+    )
+
+
+def rip_peer_service_descriptor(
+    *,
+    bind_ipv4: str,
+    source_ipv4: str,
+) -> TargetServiceDescriptor:
+    """Describe the probe-owned FRR ``ripd`` target service.
+
+    Mirrors :func:`frr_bgp_peer_descriptor` for the RIP smoke profile: an FRR
+    runtime serving RIPv2 on UDP/520, advertising documentation-range prefixes
+    to the all-RIP-routers multicast group, provisioned from probe-owned assets
+    and inspected through ``vtysh``.
+    """
+
+    return TargetServiceDescriptor(
+        name=RIP_SERVICE_KIND,
+        protocol="udp",
+        purpose="rip-peer",
+        bind_ipv4=bind_ipv4,
+        source_ipv4=source_ipv4,
+        port=RIP_SERVICE_PORTS[0],
+        requires=[RIP_RUNTIME, SKIP_REQUIRES_CONTROLLED_SERVICE],
+        setup_commands=[
+            f"run {RIP_PROVISION_SCRIPT} with DRIVER_IP={source_ipv4}",
+            f"inspect RIB with {RIP_RIB_COMMAND}",
+        ],
+        cleanup_commands=[
+            "stop FRR ripd peer service through provider cleanup",
+        ],
+        artifacts=[
+            "live-artifacts/probe/target-services/rip-provision.stdout.txt",
+            "live-artifacts/probe/target-services/rip-provision.stderr.txt",
+        ],
+        metadata={
+            "kind": RIP_SERVICE_KIND,
+            "runtime": RIP_RUNTIME,
+            "deterministic": True,
+            "ports": list(RIP_SERVICE_PORTS),
+            "multicast_group": RIP_MULTICAST_GROUP,
+            "documentation_prefixes": [
+                RIP_DOCUMENTATION_IPV4_PREFIX,
+            ],
+            "provision_script": RIP_PROVISION_SCRIPT,
+            "config_template": RIP_CONFIG_TEMPLATE,
+            "rib_command": RIP_RIB_COMMAND,
         },
     )
 

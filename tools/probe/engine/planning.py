@@ -31,6 +31,15 @@ from .target_services import (
     BGP_RUNTIME,
     BGP_SERVICE_KIND,
     BGP_SERVICE_PORT,
+    RIP_CONFIG_TEMPLATE,
+    RIP_DOCUMENTATION_IPV4_PREFIX,
+    RIP_MULTICAST_GROUP,
+    RIP_PROVISION_SCRIPT,
+    RIP_RIB_COMMAND,
+    RIP_RUNTIME,
+    RIP_SERVICE_KIND,
+    RIP_SERVICE_PORTS,
+    rip_peer_service_descriptor,
 )
 
 
@@ -5602,11 +5611,16 @@ _IKEV2_UDP_PORT = 500
 # ``show ip rip``. These are recorded in the dry-run plan so an inspecting agent
 # sees the wire port, multicast group, and RIB command without consulting the
 # crate. No packets are sent: the plan is planned-only.
-_RIP_UDP_PORT = 520
-_RIP_MULTICAST_GROUP = "224.0.0.9"
-_RIP_SERVICE_KIND = "frr-ripd"
-_RIP_RUNTIME = "frr"
-_RIP_RIB_COMMAND = "vtysh -c 'show ip rip'"
+# RIP target-service constants are owned by :mod:`target_services` (the same
+# module that owns the BGP service constants the BGP plan references); the plan
+# pulls them in so the wire port, multicast group, runtime, provision assets,
+# and RIB command match the ``rip_peer_service_descriptor`` the live target
+# setup renders.
+_RIP_UDP_PORT = RIP_SERVICE_PORTS[0]
+_RIP_MULTICAST_GROUP = RIP_MULTICAST_GROUP
+_RIP_SERVICE_KIND = RIP_SERVICE_KIND
+_RIP_RUNTIME = RIP_RUNTIME
+_RIP_RIB_COMMAND = RIP_RIB_COMMAND
 
 
 def _bgp_session_smoke_probe_plan(
@@ -5719,8 +5733,15 @@ def _rip_update_probe_plan(
     stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
     source_port = 42000 + int.from_bytes(digest[0:2], "big") % 10000
     documentation_prefixes = [
-        BGP_DOCUMENTATION_IPV4_PREFIX,
+        RIP_DOCUMENTATION_IPV4_PREFIX,
     ]
+    # The plan references the same probe-owned FRR ``ripd`` descriptor the live
+    # target setup renders (mirroring how the BGP plan references its peer
+    # descriptor), so the provision script and config template stay in sync.
+    rip_service = rip_peer_service_descriptor(
+        bind_ipv4=target_ipv4,
+        source_ipv4=stimulus_ipv4,
+    )
     return {
         "schema_version": 1,
         "case": case_name,
@@ -5757,6 +5778,8 @@ def _rip_update_probe_plan(
             "source_ipv4": stimulus_ipv4,
             "runtime": _RIP_RUNTIME,
             "documentation_prefixes": documentation_prefixes,
+            "provision_script": rip_service.metadata["provision_script"],
+            "config_template": rip_service.metadata["config_template"],
             "rib_command": _RIP_RIB_COMMAND,
             "deterministic": True,
         },
