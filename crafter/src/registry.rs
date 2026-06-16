@@ -29,9 +29,7 @@ use crate::protocols::link::{
     decode_null_loopback_with_registry, decode_radiotap_with_registry, ETHERTYPE_ARP,
     ETHERTYPE_EAPOL, ETHERTYPE_IPV4, ETHERTYPE_IPV6, ETHERTYPE_VLAN,
 };
-use crate::protocols::rip::ripng::{
-    append_ripng_packet, looks_like_ripng_payload, RIPNG_UDP_PORT,
-};
+use crate::protocols::rip::ripng::{append_ripng_packet, looks_like_ripng_payload, RIPNG_UDP_PORT};
 use crate::protocols::rip::{append_rip_packet, looks_like_rip_payload, RIP_UDP_PORT};
 use crate::protocols::transport::{
     append_tcp_packet_with_registry, append_udp_packet_with_registry,

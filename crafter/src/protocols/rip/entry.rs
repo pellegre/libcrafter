@@ -199,7 +199,10 @@ impl RipEntry {
 
     /// Effective IPv4 destination address (caller-set or default).
     pub fn address_value(&self) -> Ipv4Addr {
-        self.address.value().copied().unwrap_or(Ipv4Addr::UNSPECIFIED)
+        self.address
+            .value()
+            .copied()
+            .unwrap_or(Ipv4Addr::UNSPECIFIED)
     }
 
     /// Effective subnet mask (caller-set or default).

@@ -34,8 +34,8 @@ use crate::field::Field;
 use super::constants::{RIP_AFI_AUTH, RIP_ENTRY_LEN, RIP_HEADER_LEN};
 use super::entry::RipEntry;
 use super::registry::{
-    is_rip_auth_marker, rip_auth_type, rip_auth_type_code, RipAuthType,
-    RIP_AUTH_TYPE_KEYED_DIGEST, RIP_AUTH_TYPE_SIMPLE,
+    is_rip_auth_marker, rip_auth_type, rip_auth_type_code, RipAuthType, RIP_AUTH_TYPE_KEYED_DIGEST,
+    RIP_AUTH_TYPE_SIMPLE,
 };
 
 /// Simple-password authentication carries up to 16 octets of plaintext password.
@@ -258,7 +258,10 @@ impl RipAuth {
 
     /// Effective authentication type wire code (caller-set or default).
     pub fn auth_type_value(&self) -> u16 {
-        self.auth_type.value().copied().unwrap_or(RIP_AUTH_TYPE_SIMPLE)
+        self.auth_type
+            .value()
+            .copied()
+            .unwrap_or(RIP_AUTH_TYPE_SIMPLE)
     }
 
     /// Effective authentication type as a typed [`RipAuthType`] (caller-set or
@@ -375,18 +378,11 @@ impl RipAuth {
                 // (4..8), next hop (8..12), metric (12..16). Lay the octets in
                 // verbatim, big-endian, via the caller-set builders so the
                 // entry re-encodes byte-for-byte (RFC 2453 §4.1).
-                let address =
-                    Ipv4Addr::new(password[0], password[1], password[2], password[3]);
-                let subnet_mask =
-                    Ipv4Addr::new(password[4], password[5], password[6], password[7]);
-                let next_hop =
-                    Ipv4Addr::new(password[8], password[9], password[10], password[11]);
-                let metric = u32::from_be_bytes([
-                    password[12],
-                    password[13],
-                    password[14],
-                    password[15],
-                ]);
+                let address = Ipv4Addr::new(password[0], password[1], password[2], password[3]);
+                let subnet_mask = Ipv4Addr::new(password[4], password[5], password[6], password[7]);
+                let next_hop = Ipv4Addr::new(password[8], password[9], password[10], password[11]);
+                let metric =
+                    u32::from_be_bytes([password[12], password[13], password[14], password[15]]);
                 entry
                     .address(address)
                     .subnet_mask(subnet_mask)
@@ -481,24 +477,18 @@ pub(crate) fn compute_md5_digest(
 /// For [`RipDigestAlgorithm::KeyedMd5`] this delegates to [`compute_md5_digest`]
 /// over a `message` that already carries the 16-octet trailing key region, so a
 /// single call site can compute either family from the same algorithm selector.
-pub(crate) fn compute_hmac_digest(
-    alg: RipDigestAlgorithm,
-    message: &[u8],
-    key: &[u8],
-) -> Vec<u8> {
+pub(crate) fn compute_hmac_digest(alg: RipDigestAlgorithm, message: &[u8], key: &[u8]) -> Vec<u8> {
     match alg {
         RipDigestAlgorithm::KeyedMd5 => compute_md5_digest(message, key).to_vec(),
         RipDigestAlgorithm::HmacSha1 => {
             // hmac 0.12 / sha1 0.10: keyed HMAC-SHA-1 (RFC 2104 / RFC 4822 §3).
             // `new_from_slice` accepts any key length, so this never fails.
-            let mut mac = Hmac::<Sha1>::new_from_slice(key)
-                .expect("HMAC accepts any key length");
+            let mut mac = Hmac::<Sha1>::new_from_slice(key).expect("HMAC accepts any key length");
             mac.update(message);
             mac.finalize().into_bytes().to_vec()
         }
         RipDigestAlgorithm::HmacSha256 => {
-            let mut mac = Hmac::<Sha256>::new_from_slice(key)
-                .expect("HMAC accepts any key length");
+            let mut mac = Hmac::<Sha256>::new_from_slice(key).expect("HMAC accepts any key length");
             mac.update(message);
             mac.finalize().into_bytes().to_vec()
         }
@@ -621,9 +611,7 @@ pub fn verify(message_bytes: &[u8], key: &[u8]) -> RipAuthVerification {
             // §3.2.1) for Keyed-MD5, or HMAC keyed by `key` over the message up
             // to the digest region (RFC 4822 §3) for the HMAC-SHA family.
             let recomputed = match alg {
-                RipDigestAlgorithm::KeyedMd5 => {
-                    compute_md5_digest(message_bytes, key).to_vec()
-                }
+                RipDigestAlgorithm::KeyedMd5 => compute_md5_digest(message_bytes, key).to_vec(),
                 RipDigestAlgorithm::HmacSha1 | RipDigestAlgorithm::HmacSha256 => {
                     compute_hmac_digest(alg, &message_bytes[..digest_start], key)
                 }
@@ -651,10 +639,7 @@ mod tests {
         assert_eq!(simple.auth_type_value(), RIP_AUTH_TYPE_SIMPLE);
         assert_eq!(simple.auth_type_value(), 2);
         assert_eq!(simple.auth_type(), RipAuthType::SimplePassword);
-        assert!(matches!(
-            simple.payload,
-            RipAuthPayload::SimplePassword(_)
-        ));
+        assert!(matches!(simple.payload, RipAuthPayload::SimplePassword(_)));
 
         // Keyed message digest (RFC 2082 / RFC 4822 §3) is authentication type 3.
         let keyed = RipAuth::keyed_digest(1, 16);
@@ -810,10 +795,7 @@ mod tests {
         assert_eq!(digest, expected);
 
         // The construction is deterministic.
-        assert_eq!(
-            compute_md5_digest(&message_with_key_region, key),
-            expected
-        );
+        assert_eq!(compute_md5_digest(&message_with_key_region, key), expected);
 
         // A different key yields a different digest.
         assert_ne!(
