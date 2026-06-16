@@ -1,0 +1,98 @@
+version: 1
+kind: layer
+name: ripng
+summary: >-
+  RIPng (RFC 2080) over IPv6 UDP port 521, carrying the 4-octet header (command,
+  version, reserved) and fixed 20-octet route table entries (RTEs): IPv6 prefix,
+  route tag, prefix length, and metric. A next-hop RTE is signalled by metric
+  0xFF and the request-whole-table sentinel uses prefix ::/0 with metric
+  infinity (16). RIPng has no per-entry authentication of its own; integrity is
+  delegated to IPsec, so this layer mirrors the IPv4 RIP header/RTE shape without
+  the AFI/authentication fields.
+
+roots: []
+parents:
+  - udp
+children:
+  - payload
+
+fields:
+  - name: command
+    type: uint8
+    required: true
+    domains:
+      - request
+      - response
+      - unknown
+  - name: version
+    type: uint8
+    required: true
+    domains:
+      - v1
+  - name: reserved
+    type: uint16
+    required: false
+    domains:
+      - zero
+      - malformed_override
+  - name: prefix
+    type: ipv6
+    required: true
+    domains:
+      - unspecified
+      - documentation_ipv6
+  - name: route_tag
+    type: uint16
+    required: false
+    domains:
+      - zero
+      - boundary
+  - name: prefix_len
+    type: uint8
+    required: true
+    domains:
+      - zero
+      - host
+      - boundary
+  - name: metric
+    type: uint8
+    required: true
+    domains:
+      - reachable
+      - infinity
+      - next_hop
+
+coverage_cases:
+  - ripng-response
+  - ripng-next-hop
+  - ripng-request
+  - crafter-ripng-message-matrix
+
+notes:
+  - Field names mirror the libcrafter Ripng/RipngRte accessor names (command,
+    version, reserved, prefix, route_tag, prefix_len, metric) so cross-backend
+    normalization can align the parser-backend RIPng decode with the libcrafter
+    Ripng surface.
+  - The next-hop RTE sets metric to 0xFF (255) with route_tag and prefix_len at
+    zero; the request-whole-table sentinel uses prefix ::/0, prefix_len 0, and
+    metric infinity (16). Reachable RTE metrics range 1..16.
+
+backend_support:
+  scapy:
+    status: partial
+    encode: false
+    decode: false
+    notes:
+      - Scapy has no native RIPng layer, so RIPng reference bytes are built
+        manually rather than through a native dissector.
+      - RIPng cross-validation falls back to the wireshark parser backend for
+        decode plus the libcrafter internal round-trip, the way DNS records its
+        scapy gaps; these cases are marked, never silently skipped.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    notes:
+      - Encodes and decodes the RIPng header and 20-octet route table entries
+        (IPv6 prefix, route tag, prefix length, metric), the next-hop RTE
+        (metric 0xFF), and the request-whole-table sentinel.
