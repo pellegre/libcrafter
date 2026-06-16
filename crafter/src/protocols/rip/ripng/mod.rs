@@ -335,6 +335,35 @@ pub(crate) fn looks_like_ripng_payload(bytes: &[u8]) -> bool {
         && (bytes.len() - RIPNG_HEADER_LEN) % RIPNG_RTE_LEN == 0
 }
 
+/// Build a RIPng whole-table-request message (RFC 2080 §2.4.1).
+///
+/// RFC 2080 §2.4.1 specifies that a request for the peer's complete routing
+/// table is a Request message carrying exactly one RTE whose prefix is `::`,
+/// prefix length is `0`, route tag is `0`, and metric is infinity (16) — the
+/// [`RipngRte::whole_table_request`] sentinel.
+///
+/// This convenience assembles the request stack with the project's layer
+/// composition idiom and returns a typed [`Packet`]:
+///
+/// - an [`Ipv6`](crate::protocols::ip::v6::Ipv6) layer whose source is `source`
+///   and whose destination is the well-known RIPng multicast group
+///   [`RIPNG_MULTICAST`] (`ff02::9`),
+/// - a [`Udp`](crate::protocols::transport::Udp) datagram with source and
+///   destination port [`RIPNG_UDP_PORT`] (521), and
+/// - a [`Ripng::request`] message carrying the single whole-table sentinel RTE.
+///
+/// Lengths and checksums are left for [`Packet::compile`] to fill. Callers
+/// supply a documentation-range source address (`2001:db8::/32`); the
+/// destination is fixed to the RIPng multicast group.
+pub fn ripng_whole_table_request(source: std::net::Ipv6Addr) -> Packet {
+    use crate::protocols::ip::v6::Ipv6;
+    use crate::protocols::transport::Udp;
+
+    Ipv6::new().src(source).dst(RIPNG_MULTICAST)
+        / Udp::new().sport(RIPNG_UDP_PORT).dport(RIPNG_UDP_PORT)
+        / Ripng::request().rte(RipngRte::whole_table_request())
+}
+
 #[cfg(test)]
 mod ripng_decode_roundtrips_response {
     use super::*;
@@ -625,6 +654,44 @@ mod ripng_udp_binding {
         assert!(
             decoded.layer::<Raw>().is_some(),
             "non-RIPng port-521 payload must remain Raw"
+        );
+    }
+}
+
+#[cfg(test)]
+mod ripng_whole_table_request_builds {
+    use super::*;
+    use crate::packet::NetworkLayer;
+    use crate::protocols::ip::v6::Ipv6;
+    use std::net::Ipv6Addr;
+
+    #[test]
+    fn ripng_whole_table_request_builds() {
+        let source = "2001:db8::1".parse::<Ipv6Addr>().expect("valid source");
+        let packet = ripng_whole_table_request(source);
+
+        // The stack compiles and decodes back to a Ripng layer.
+        let compiled = packet.compile().expect("ripng request stack compiles");
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, compiled.as_bytes())
+            .expect("ipv6/udp/ripng request decodes");
+
+        // The IPv6 layer targets the well-known RIPng multicast group ff02::9.
+        let ipv6 = decoded
+            .layer::<Ipv6>()
+            .expect("decoded packet includes an Ipv6 layer");
+        assert_eq!(ipv6.destination(), RIPNG_MULTICAST);
+        assert_eq!(RIPNG_MULTICAST, "ff02::9".parse::<Ipv6Addr>().expect("ff02::9"));
+
+        // The Ripng layer is a Request carrying exactly one whole-table sentinel
+        // RTE (RFC 2080 §2.4.1).
+        let ripng = decoded
+            .layer::<Ripng>()
+            .expect("decoded packet includes a Ripng layer");
+        assert_eq!(ripng.command(), RipCommand::Request);
+        assert_eq!(ripng.rtes().len(), 1);
+        assert!(
+            ripng.rtes()[0].is_whole_table_request(),
+            "the single RTE must be the whole-table-request sentinel"
         );
     }
 }
