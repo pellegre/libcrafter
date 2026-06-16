@@ -19,6 +19,9 @@ pub mod message;
 pub mod registry;
 
 pub use constants::*;
+pub use entry::RipEntry;
+pub use message::RipCommand;
+pub use registry::{RipAddressFamily, RipAuthType, RipCommandMeta, RipCommandStatus};
 
 use core::any::Any;
 use core::ops::Div;
@@ -26,9 +29,6 @@ use core::ops::Div;
 use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::packet::{IntoPacket, Layer, LayerContext, Packet};
-
-use entry::RipEntry;
-use message::RipCommand;
 
 macro_rules! impl_layer_object {
     ($type:ty) => {
