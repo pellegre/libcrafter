@@ -216,7 +216,7 @@ preserved as `Raw` payloads when the enclosing header is valid.
 | Layer | Coverage | Guide |
 | --- | --- | --- |
 | Ethernet / VLAN | Ethernet II and 802.1Q VLAN, Linux cooked capture, null/loopback | — |
-| IEEE 802.11 | Management, control, and data frames with radiotap and LLC/SNAP, EAPOL and RSN (802.11i) key-exchange fields | [dot11](docs/guide/dot11.md) |
+| IEEE 802.11 | Management, control, and data frames with radiotap and LLC/SNAP, EAPOL and RSN (802.11i) key-exchange fields; monitor-mode radiotap injection (transmit on the air) supported behind explicit live gates | [dot11](docs/guide/dot11.md) |
 | ARP | Request/reply construction and decode | [arp](docs/guide/arp.md) |
 | IPv4 | DSCP/ECN, protocol labels, checksum status, typed options, fragment fields (no automatic reassembly) | [ipv4](docs/guide/ipv4.md) |
 | IPv6 | Base header plus hop-by-hop, destination, fragment, routing, mobile-routing, and segment-routing extension headers | [ipv6](docs/guide/ipv6.md) |

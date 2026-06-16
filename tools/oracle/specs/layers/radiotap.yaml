@@ -149,4 +149,4 @@ backend_support:
     encode: true
     decode: true
     notes:
-      - Live endpoint eligibility remains false until explicit monitor-mode injection support is added.
+      - Monitor-mode radiotap injection is crate-supported behind explicit live gates; it is intentionally kept out of automated live validation for now, so live endpoint eligibility remains false here.
