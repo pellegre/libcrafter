@@ -614,6 +614,28 @@ BGP_SMOKE_CASES: tuple[ProbeCase, ...] = (
 )
 
 
+# RIP smoke cases. Probe owns controlled target-service setup for the FRR ripd
+# daemon; the current stimulus is planned-only until the endpoint driver
+# executes the RIP stimulus example.
+RIP_SMOKE_CASES: tuple[ProbeCase, ...] = (
+    _behavior_case(
+        name="rip-update-v2",
+        description=(
+            "Plan a RIPv2 update exchange against a probe-owned RIP daemon."
+        ),
+        stimulus="rip_request",
+        expected_response="rip_peer_update",
+        required_capabilities=_RIP_CAPABILITIES,
+        protocol="rip",
+        metadata={
+            "service": "frr-ripd",
+            "stateful": True,
+            "planned_only": True,
+        },
+    ),
+)
+
+
 # IPSec behavioral cases (RFC 4303 ESP, RFC 4302 AH, RFC 7296 IKEv2) against a
 # controlled IPSec-capable peer that holds the matching Security Association.
 # Each case is a stateful request/response exchange: libcrafter seals or
@@ -774,6 +796,7 @@ PROBE_CASES: tuple[ProbeCase, ...] = (
     *BEHAVIOR_NDP_CASES,
     *BEHAVIOR_UDP_CASES,
     *BGP_SMOKE_CASES,
+    *RIP_SMOKE_CASES,
     *BEHAVIOR_IPSEC_CASES,
 )
 
@@ -864,6 +887,7 @@ SMOKE_PROFILE = "smoke"
 BEHAVIOR_PROFILE = "behavior"
 TCP_SMOKE_PROFILE = "tcp-smoke"
 BGP_SESSION_PROFILE = "bgp-smoke"
+RIP_SMOKE_PROFILE = "rip-smoke"
 IPSEC_PROFILE = "ipsec"
 
 # Legacy default count used by the smoke profile and any profile without an
@@ -927,6 +951,13 @@ BGP_SESSION_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
     case.name for case in BGP_SMOKE_CASES
 )
 
+# The RIP smoke profile plans the probe-owned FRR ripd target service and the
+# RIP stimulus driver intent without asking lab to infer workload metadata from
+# the profile label.
+RIP_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
+    case.name for case in RIP_SMOKE_CASES
+)
+
 
 # Profiles that select an explicit ordered case subset. A profile not listed
 # here selects the full catalog. ``smoke`` is pinned to the legacy case set so
@@ -936,6 +967,7 @@ _PROFILE_CASE_NAMES: dict[str, tuple[str, ...]] = {
     BEHAVIOR_PROFILE: BEHAVIOR_PROFILE_CASE_NAMES,
     TCP_SMOKE_PROFILE: TCP_SMOKE_PROFILE_CASE_NAMES,
     BGP_SESSION_PROFILE: BGP_SESSION_PROFILE_CASE_NAMES,
+    RIP_SMOKE_PROFILE: RIP_SMOKE_PROFILE_CASE_NAMES,
     IPSEC_PROFILE: IPSEC_PROFILE_CASE_NAMES,
 }
 
@@ -945,6 +977,7 @@ _PROFILE_CASE_NAMES: dict[str, tuple[str, ...]] = {
 _PROFILE_DEFAULT_COUNTS: dict[str, int] = {
     BEHAVIOR_PROFILE: len(BEHAVIOR_PROFILE_CASE_NAMES),
     BGP_SESSION_PROFILE: len(BGP_SESSION_PROFILE_CASE_NAMES),
+    RIP_SMOKE_PROFILE: len(RIP_SMOKE_PROFILE_CASE_NAMES),
     IPSEC_PROFILE: len(IPSEC_PROFILE_CASE_NAMES),
 }
 
