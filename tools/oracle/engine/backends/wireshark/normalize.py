@@ -69,6 +69,8 @@ _PROTOCOL_LAYER_ALIASES: dict[str, str | None] = {
     "null": "null_loopback",
     "radiotap": "radiotap",
     "raw": None,
+    "rip": "rip",
+    "ripng": "ripng",
     "sll": "linux_sll",
     "wlan": "dot11",
     "wlan_radio": None,
@@ -357,6 +359,8 @@ def _normalize_protocol_fields(
         return _normalize_icmp(_layer(layers, "icmp"))
     if layer_name == "icmpv6":
         return _normalize_icmp(_layer(layers, "icmpv6"))
+    if layer_name == "ripng":
+        return _normalize_ripng(_layer(layers, "ripng"))
     if layer_name == "payload":
         return _normalize_payload(_layer(layers, "data"))
     if layer_name == "vlan":
@@ -1229,6 +1233,52 @@ def _normalize_icmp(layer: JSONObject) -> JSONObject:
     sequence = output.get("sequence")
     if isinstance(identifier, int) and isinstance(sequence, int):
         output["rest_of_header"] = f"{identifier:04x}{sequence:04x}"
+    return output
+
+
+def _normalize_ripng(layer: JSONObject) -> JSONObject:
+    """Normalize a tshark RIPng layer to the shared oracle field names.
+
+    Scapy has no native RIPng dissector, so the parser (tshark) backend supplies
+    the RIPng cross-validation decode. The normalized names mirror the libcrafter
+    Ripng/RipngRte accessor names (``command``/``version``/``reserved`` plus an
+    ``rtes`` list of ``prefix``/``route_tag``/``prefix_len``/``metric``) so the
+    parser decode aligns with the libcrafter surface. Wireshark's RIPng dissector
+    (``packet-ripng.c``) exposes ``ripng.cmd``/``ripng.version``/``ripng.ip``/
+    ``ripng.route_tag``/``ripng.prefix_length``/``ripng.metric``; the alternate
+    ``ripng.command`` prefix is accepted defensively.
+    """
+
+    output = _fields_from_aliases(
+        layer,
+        {
+            "command": ("ripng.cmd", "ripng.command"),
+            "version": ("ripng.version",),
+            "reserved": ("ripng.reserved", "ripng.null"),
+        },
+    )
+    _parse_int_fields(output, "command", "version", "reserved")
+
+    prefixes = [str(item) for item in _field_list(layer, "ripng.ip", "ripng.prefix")]
+    route_tags = [_parse_int(item) for item in _field_list(layer, "ripng.route_tag", "ripng.tag")]
+    prefix_lens = [
+        _parse_int(item)
+        for item in _field_list(layer, "ripng.prefix_length", "ripng.prefix_len")
+    ]
+    metrics = [_parse_int(item) for item in _field_list(layer, "ripng.metric")]
+
+    rtes: list[JSONObject] = []
+    for index, prefix in enumerate(prefixes):
+        rte: JSONObject = {"prefix": prefix}
+        if index < len(route_tags) and route_tags[index] is not None:
+            rte["route_tag"] = route_tags[index]
+        if index < len(prefix_lens) and prefix_lens[index] is not None:
+            rte["prefix_len"] = prefix_lens[index]
+        if index < len(metrics) and metrics[index] is not None:
+            rte["metric"] = metrics[index]
+        rtes.append(rte)
+    if rtes:
+        output["rtes"] = rtes
     return output
 
 
