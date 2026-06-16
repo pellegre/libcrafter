@@ -15,20 +15,20 @@ use crafter::core::{
     Ipv6HopByHopOptionsHeader, Ipv6MobileRoutingHeader, Ipv6MobileRoutingHeaderStatus, Ipv6Option,
     Ipv6RoutingHeader, Ipv6RoutingTypeStatus, Ipv6SegmentRoutingHeader, Layer, LinkType, LinuxSll,
     LlcSnap, MacAddr, NetworkLayer, NullByteOrder, NullLoopback, OptionOverload, Packet, Radiotap,
-    Raw, Tcp, TcpOption, TcpSackBlock, Udp, UdpChecksumStatus, UdpOption, UdpOptionStatus,
-    UdpOptions, Vlan, ARP_HRD_INFINIBAND, BOOTP_REQUEST, DHCP_CLIENT_PORT, DHCP_SERVER_PORT,
-    DNS_CLASS_IN, DNS_EDNS_DEFAULT_UDP_PAYLOAD_SIZE, DNS_EDNS_OPTION_COOKIE, DNS_EDNS_OPTION_NSID,
-    DNS_FLAG_AUTHORITATIVE, DNS_FLAG_QR_RESPONSE, DNS_FLAG_RECURSION_DESIRED, DNS_SVCB_KEY_ALPN,
-    DNS_SVCB_KEY_IPV4HINT, DNS_SVCB_KEY_IPV6HINT, DNS_SVCB_KEY_PORT, DNS_TYPE_A, DNS_TYPE_AAAA,
-    DNS_TYPE_CNAME, DNS_TYPE_DNSKEY, DNS_TYPE_DS, DNS_TYPE_HTTPS, DNS_TYPE_NS, DNS_TYPE_NSEC,
-    DNS_TYPE_NSEC3, DNS_TYPE_OPT, DNS_TYPE_RRSIG, DNS_TYPE_SOA, DNS_TYPE_SRV, DNS_TYPE_SVCB,
-    ETHERTYPE_ARP, ETHERTYPE_EAPOL, ETHERTYPE_IPV4, ETHERTYPE_VLAN, ICMPV6_ECHO_REQUEST,
-    ICMPV6_TIME_EXCEEDED, ICMP_DESTINATION_UNREACHABLE, ICMP_ECHO_REQUEST, IPPROTO_ICMP,
-    IPPROTO_ICMPV6, IPPROTO_IPV6_DSTOPTS, IPPROTO_IPV6_EXPERIMENTAL_1, IPPROTO_IPV6_FRAGMENT,
-    IPPROTO_IPV6_HOPOPTS, IPPROTO_IPV6_ROUTE, IPPROTO_TCP, IPPROTO_UDP, IPV4_FLAG_DONT_FRAGMENT,
-    IPV4_FLAG_MORE_FRAGMENTS, IPV4_FLAG_RESERVED, IPV6_ROUTING_TYPE_MOBILE,
-    IPV6_ROUTING_TYPE_SEGMENT, TCP_FLAG_ACK, TCP_FLAG_PSH, TCP_FLAG_SYN, UDP_HEADER_LEN,
-    UDP_OPTION_EOL, UDP_OPTION_NOP,
+    Raw, Rip, Ripng, Tcp, TcpOption, TcpSackBlock, Udp, UdpChecksumStatus, UdpOption,
+    UdpOptionStatus, UdpOptions, Vlan, ARP_HRD_INFINIBAND, BOOTP_REQUEST, DHCP_CLIENT_PORT,
+    DHCP_SERVER_PORT, DNS_CLASS_IN, DNS_EDNS_DEFAULT_UDP_PAYLOAD_SIZE, DNS_EDNS_OPTION_COOKIE,
+    DNS_EDNS_OPTION_NSID, DNS_FLAG_AUTHORITATIVE, DNS_FLAG_QR_RESPONSE, DNS_FLAG_RECURSION_DESIRED,
+    DNS_SVCB_KEY_ALPN, DNS_SVCB_KEY_IPV4HINT, DNS_SVCB_KEY_IPV6HINT, DNS_SVCB_KEY_PORT, DNS_TYPE_A,
+    DNS_TYPE_AAAA, DNS_TYPE_CNAME, DNS_TYPE_DNSKEY, DNS_TYPE_DS, DNS_TYPE_HTTPS, DNS_TYPE_NS,
+    DNS_TYPE_NSEC, DNS_TYPE_NSEC3, DNS_TYPE_OPT, DNS_TYPE_RRSIG, DNS_TYPE_SOA, DNS_TYPE_SRV,
+    DNS_TYPE_SVCB, ETHERTYPE_ARP, ETHERTYPE_EAPOL, ETHERTYPE_IPV4, ETHERTYPE_VLAN,
+    ICMPV6_ECHO_REQUEST, ICMPV6_TIME_EXCEEDED, ICMP_DESTINATION_UNREACHABLE, ICMP_ECHO_REQUEST,
+    IPPROTO_ICMP, IPPROTO_ICMPV6, IPPROTO_IPV6_DSTOPTS, IPPROTO_IPV6_EXPERIMENTAL_1,
+    IPPROTO_IPV6_FRAGMENT, IPPROTO_IPV6_HOPOPTS, IPPROTO_IPV6_ROUTE, IPPROTO_TCP, IPPROTO_UDP,
+    IPV4_FLAG_DONT_FRAGMENT, IPV4_FLAG_MORE_FRAGMENTS, IPV4_FLAG_RESERVED,
+    IPV6_ROUTING_TYPE_MOBILE, IPV6_ROUTING_TYPE_SEGMENT, TCP_FLAG_ACK, TCP_FLAG_PSH, TCP_FLAG_SYN,
+    UDP_HEADER_LEN, UDP_OPTION_EOL, UDP_OPTION_NOP,
 };
 use crafter::wire::backend::pcap::{
     PcapError, PcapLinkType, PcapReader, PcapTimestamp, PcapWriter, PcapWriterOptions,
@@ -88,6 +88,8 @@ enum ExpectedLayer {
     Udp,
     UdpOptions,
     Bgp,
+    Rip,
+    Ripng,
     Dns,
     Dhcp,
     Esp,
@@ -146,6 +148,8 @@ enum CoverageFamily {
     IpsecEsp,
     IpsecAh,
     IpsecIkev2,
+    Ipv4UdpRip,
+    Ipv6UdpRipng,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -712,6 +716,37 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Tcp, ExpectedLayer::Bgp],
         preserve_exact_bytes: true,
         summary_path: Some("summaries/ipv4-tcp-bgp-keepalive.summary.txt"),
+    },
+    ValidFixtureCase {
+        name: "ipv4-udp-rip-v1-request",
+        path: "bytes/ipv4-udp-rip-v1-request.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-udp-rip-v1-request.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Udp, ExpectedLayer::Rip],
+        preserve_exact_bytes: true,
+        summary_path: Some("summaries/ipv4-udp-rip-v1-request.summary.txt"),
+    },
+    ValidFixtureCase {
+        name: "ipv4-udp-rip-v2-auth-response",
+        path: "bytes/ipv4-udp-rip-v2-auth-response.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-udp-rip-v2-auth-response.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Udp, ExpectedLayer::Rip],
+        preserve_exact_bytes: true,
+        summary_path: Some("summaries/ipv4-udp-rip-v2-auth-response.summary.txt"),
+    },
+    ValidFixtureCase {
+        name: "ipv6-udp-ripng-response",
+        path: "bytes/ipv6-udp-ripng-response.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv6-udp-ripng-response.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv6)),
+        expected_layers: &[
+            ExpectedLayer::Ipv6,
+            ExpectedLayer::Udp,
+            ExpectedLayer::Ripng,
+        ],
+        preserve_exact_bytes: true,
+        summary_path: Some("summaries/ipv6-udp-ripng-response.summary.txt"),
     },
     ValidFixtureCase {
         name: "ethernet-ipv4-tcp-bgp-open",
@@ -1413,6 +1448,53 @@ const PCAP_FIXTURES: &[PcapFixtureCase] = &[
             },
         ],
     },
+    // RawIp pcap fixtures carrying the RIP / RIPng UDP fixtures so the full
+    // read -> decode -> summary path is exercised: a RIPv1 whole-table request
+    // (Ipv4/Udp 520), a RIPv2 simple-password authenticated response
+    // (Ipv4/Udp 520), and a RIPng response with a next-hop RTE plus route RTEs
+    // (Ipv6/Udp 521). All addresses are documentation space.
+    PcapFixtureCase {
+        name: "rip-v1-request",
+        path: "pcaps/rip-v1-request.pcap",
+        contents: fixture_bytes!("pcaps/rip-v1-request.pcap"),
+        pcap_link_type: PcapLinkType::RawIp,
+        link_type: LinkType::Raw,
+        timestamp_precision: TimestampPrecision::Microseconds,
+        coverage: PcapCoverageFamily::RawIpIpv4,
+        records: &[PcapFixtureRecord {
+            seconds: 80,
+            fractional: 1,
+            fixture_name: "ipv4-udp-rip-v1-request",
+        }],
+    },
+    PcapFixtureCase {
+        name: "rip-v2-auth-response",
+        path: "pcaps/rip-v2-auth-response.pcap",
+        contents: fixture_bytes!("pcaps/rip-v2-auth-response.pcap"),
+        pcap_link_type: PcapLinkType::RawIp,
+        link_type: LinkType::Raw,
+        timestamp_precision: TimestampPrecision::Microseconds,
+        coverage: PcapCoverageFamily::RawIpIpv4,
+        records: &[PcapFixtureRecord {
+            seconds: 80,
+            fractional: 2,
+            fixture_name: "ipv4-udp-rip-v2-auth-response",
+        }],
+    },
+    PcapFixtureCase {
+        name: "ripng-response",
+        path: "pcaps/ripng-response.pcap",
+        contents: fixture_bytes!("pcaps/ripng-response.pcap"),
+        pcap_link_type: PcapLinkType::RawIp,
+        link_type: LinkType::Raw,
+        timestamp_precision: TimestampPrecision::Microseconds,
+        coverage: PcapCoverageFamily::RawIpIpv6,
+        records: &[PcapFixtureRecord {
+            seconds: 80,
+            fractional: 3,
+            fixture_name: "ipv6-udp-ripng-response",
+        }],
+    },
     PcapFixtureCase {
         name: "raw-ipv4-icmp-echo-request",
         path: "pcaps/raw-ipv4-icmp-echo-request.pcap",
@@ -1852,6 +1934,10 @@ fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
         "ipv4-esp-aead-gcm-opaque" | "ipv4-esp-cbc-hmac-opaque" => &[CoverageFamily::IpsecEsp],
         "ipv4-ah-hmac-sha256-transport" => &[CoverageFamily::IpsecAh],
         "ipv4-udp-ikev2-sa-init" => &[CoverageFamily::IpsecIkev2],
+        "ipv4-udp-rip-v1-request" | "ipv4-udp-rip-v2-auth-response" => {
+            &[CoverageFamily::Ipv4UdpRip]
+        }
+        "ipv6-udp-ripng-response" => &[CoverageFamily::Ipv6UdpRipng],
         other => panic!("fixture {other} has no coverage-family mapping"),
     }
 }
@@ -2086,6 +2172,12 @@ fn assert_expected_layers(case: &ValidFixtureCase, packet: &Packet) {
             ExpectedLayer::Bgp => {
                 let _ = expect_layer::<Bgp>(case, packet);
             }
+            ExpectedLayer::Rip => {
+                let _ = expect_layer::<Rip>(case, packet);
+            }
+            ExpectedLayer::Ripng => {
+                let _ = expect_layer::<Ripng>(case, packet);
+            }
             ExpectedLayer::Dns => {
                 let _ = expect_layer::<Dns>(case, packet);
             }
@@ -2159,6 +2251,8 @@ fn expected_layer_name(expected: ExpectedLayer) -> &'static str {
         ExpectedLayer::Udp => "Udp",
         ExpectedLayer::UdpOptions => "UdpOptions",
         ExpectedLayer::Bgp => "BGP",
+        ExpectedLayer::Rip => "Rip",
+        ExpectedLayer::Ripng => "Ripng",
         ExpectedLayer::Dns => "Dns",
         ExpectedLayer::Dhcp => "Dhcp",
         ExpectedLayer::Esp => "Esp",
@@ -4007,6 +4101,115 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
             // The KE payload preserves the D-H group it was built with (group 14).
             assert_eq!(ke.dh_group_num(), 14);
             let _ = expect_layer::<IkeNoncePayload>(case, packet);
+        }
+        "ipv4-udp-rip-v1-request" => {
+            let ipv4 = expect_layer::<Ipv4>(case, packet);
+            assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 10));
+            assert_eq!(ipv4.destination(), Ipv4Addr::new(192, 0, 2, 1));
+            assert_eq!(ipv4.protocol_value(), IPPROTO_UDP);
+
+            let udp = expect_layer::<Udp>(case, packet);
+            assert_eq!(udp.source_port_value(), 520);
+            assert_eq!(udp.destination_port_value(), 520);
+
+            // RFC 1058 §3.4.1 whole-table request: command Request (1), version 1,
+            // a single AFI-0 sentinel entry with metric infinity (16).
+            let rip = expect_layer::<Rip>(case, packet);
+            assert_eq!(rip.command_value(), 1);
+            assert_eq!(rip.version_value(), 1);
+            assert_eq!(rip.entries().len(), 1);
+            let entry = &rip.entries()[0];
+            assert_eq!(entry.address_family_value(), 0);
+            assert_eq!(entry.metric_value(), 16);
+        }
+        "ipv4-udp-rip-v2-auth-response" => {
+            let ipv4 = expect_layer::<Ipv4>(case, packet);
+            assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 10));
+            assert_eq!(ipv4.destination(), Ipv4Addr::new(224, 0, 0, 9));
+            assert_eq!(ipv4.protocol_value(), IPPROTO_UDP);
+
+            let udp = expect_layer::<Udp>(case, packet);
+            assert_eq!(udp.source_port_value(), 520);
+            assert_eq!(udp.destination_port_value(), 520);
+
+            // RFC 2082 Keyed-MD5 authenticated response: command Response (2),
+            // version 2. On the wire the keyed-digest form is a leading AFI-0xFFFF
+            // header entry, the two RIPv2 route entries (tag/mask/metric), and a
+            // trailing AFI-0xFFFF digest block (also a 20-octet entry slot), all of
+            // which decode as plain entries and round-trip byte-for-byte. (The
+            // decode-side digest verifier is exercised by rip_golden.rs against the
+            // freshly-compiled message; the keyed-digest fixture here covers the
+            // read -> decode -> summary path.)
+            let rip = expect_layer::<Rip>(case, packet);
+            assert_eq!(rip.command_value(), 2);
+            assert_eq!(rip.version_value(), 2);
+            assert_eq!(rip.entries().len(), 4);
+            let auth_header = &rip.entries()[0];
+            assert_eq!(auth_header.address_family_value(), 0xffff);
+            let first_route = &rip.entries()[1];
+            assert_eq!(first_route.address_value(), Ipv4Addr::new(198, 51, 100, 0));
+            assert_eq!(
+                first_route.subnet_mask_value(),
+                Ipv4Addr::new(255, 255, 255, 0)
+            );
+            assert_eq!(first_route.route_tag_value(), 64512);
+            assert_eq!(first_route.metric_value(), 1);
+            let second_route = &rip.entries()[2];
+            assert_eq!(
+                second_route.address_value(),
+                Ipv4Addr::new(198, 51, 100, 128)
+            );
+            assert_eq!(
+                second_route.subnet_mask_value(),
+                Ipv4Addr::new(255, 255, 255, 128)
+            );
+            assert_eq!(second_route.route_tag_value(), 64513);
+            assert_eq!(second_route.metric_value(), 2);
+            let digest_trailer = &rip.entries()[3];
+            assert_eq!(digest_trailer.address_family_value(), 0xffff);
+        }
+        "ipv6-udp-ripng-response" => {
+            let ipv6 = expect_layer::<Ipv6>(case, packet);
+            assert_eq!(
+                ipv6.source(),
+                Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0x0010)
+            );
+            assert_eq!(
+                ipv6.destination(),
+                Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0x0009)
+            );
+            assert_eq!(ipv6.next_header_value(), IPPROTO_UDP);
+
+            let udp = expect_layer::<Udp>(case, packet);
+            assert_eq!(udp.source_port_value(), 521);
+            assert_eq!(udp.destination_port_value(), 521);
+
+            // RFC 2080 §2.1.1 / §2.2 response: command Response (2), a next-hop RTE
+            // (metric 0xFF) followed by two route RTEs over documentation prefixes.
+            let ripng = expect_layer::<Ripng>(case, packet);
+            assert_eq!(ripng.command_value(), 2);
+            assert_eq!(ripng.rtes().len(), 3);
+            let next_hop = &ripng.rtes()[0];
+            assert!(next_hop.is_next_hop());
+            assert_eq!(
+                next_hop.next_hop_address(),
+                Some(Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0x00fe))
+            );
+            let first_route = &ripng.rtes()[1];
+            assert!(!first_route.is_next_hop());
+            assert_eq!(
+                first_route.prefix_value(),
+                Ipv6Addr::new(0x2001, 0x0db8, 1, 0, 0, 0, 0, 0)
+            );
+            assert_eq!(first_route.prefix_len_value(), 48);
+            assert_eq!(first_route.metric_value(), 1);
+            let second_route = &ripng.rtes()[2];
+            assert_eq!(
+                second_route.prefix_value(),
+                Ipv6Addr::new(0x2001, 0x0db8, 2, 0, 0, 0, 0, 0)
+            );
+            assert_eq!(second_route.prefix_len_value(), 48);
+            assert_eq!(second_route.metric_value(), 2);
         }
         other => panic!("fixture {other} is missing typed field assertions"),
     }

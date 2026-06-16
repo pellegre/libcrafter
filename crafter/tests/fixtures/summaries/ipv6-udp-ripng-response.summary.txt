@@ -1,0 +1,1 @@
+Ipv6(src=2001:db8::10, dst=ff02::9, next=udp(17)) / Udp(sport=521, dport=521, len=72, checksum_status=Valid) / Ripng v1 Response (3 RTEs)
