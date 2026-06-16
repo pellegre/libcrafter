@@ -357,6 +357,31 @@ mod send_plan {
     }
 
     #[test]
+    fn link_send_refuses_unsupported_link_types_with_clear_reason() {
+        let packet = crate::NullLoopback::ipv4() / ipv4_packet();
+        let error = SocketSender::new(SendOptions::new().iface("dry-run0").link_layer())
+            .send(&packet)
+            .unwrap_err();
+
+        match error {
+            NetError::UnsupportedSendTarget { target, reason } => {
+                assert_eq!(
+                    target,
+                    SendTarget::LinkLayer {
+                        link_type: crate::LinkType::NullLoopback
+                    }
+                );
+                assert_eq!(
+                    reason,
+                    "live link-layer send supports Ethernet and radiotap Wi-Fi frames only"
+                );
+                assert!(!reason.contains("not implemented"));
+            }
+            other => panic!("expected unsupported send target for null/loopback link send, got {other}"),
+        }
+    }
+
+    #[test]
     fn radiotap_live_send_gate_preserves_dry_run_report() {
         let packet = radiotap_dot11_packet();
         let report = SocketSender::new(SendOptions::new().iface("wifi-dryrun0").dry_run())
