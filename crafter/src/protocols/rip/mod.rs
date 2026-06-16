@@ -475,6 +475,108 @@ pub fn rip_v2_whole_table_request(source: std::net::Ipv4Addr) -> Packet {
             .entry(RipEntry::whole_table_request())
 }
 
+/// Build a complete demand-RIP Update Request packet (RFC 2091 §2.3).
+///
+/// Demand RIP (RFC 2091) runs over *unicast* on demand circuits rather than the
+/// RIPv2 multicast group: the Update Request → Update Response → Update
+/// Acknowledge exchange is addressed directly between the two endpoints, and
+/// each message carries a Sequence Number used to match retransmitted updates
+/// with their acknowledgements (RFC 2091 §2.3). This convenience assembles the
+/// Update Request stack with the project's layer composition idiom over the
+/// existing [`Rip`] layer and returns a typed [`Packet`]:
+///
+/// - an [`Ipv4`](crate::protocols::ip::v4::Ipv4) layer whose source is `source`
+///   and whose destination is the unicast `destination`,
+/// - a [`Udp`](crate::protocols::transport::Udp) datagram with source and
+///   destination port [`RIP_UDP_PORT`] (520), and
+/// - a [`Rip::update_request`] message (command 9, version 2) carrying the
+///   demand `sequence` recorded via [`Rip::demand_sequence`].
+///
+/// Lengths and checksums are left for [`Packet::compile`] to fill. Callers
+/// supply documentation-range unicast addresses (`192.0.2.0/24`,
+/// `198.51.100.0/24`).
+pub fn rip_update_request(
+    source: std::net::Ipv4Addr,
+    destination: std::net::Ipv4Addr,
+    sequence: u16,
+) -> Packet {
+    use crate::protocols::ip::v4::Ipv4;
+    use crate::protocols::transport::Udp;
+
+    Ipv4::new().src(source).dst(destination)
+        / Udp::new().sport(RIP_UDP_PORT).dport(RIP_UDP_PORT)
+        / Rip::update_request().demand_sequence(sequence)
+}
+
+/// Build a complete demand-RIP Update Response packet (RFC 2091 §2.3).
+///
+/// Like [`rip_update_request`] but for the Update Response message (command 10),
+/// which carries the route `entries` being advertised in reply to an Update
+/// Request. Demand RIP (RFC 2091) is unicast on demand circuits, so the response
+/// is addressed directly back to the requesting peer rather than to the RIPv2
+/// multicast group, and it echoes the matching demand `sequence`. This
+/// convenience assembles the Update Response stack over the existing [`Rip`]
+/// layer and returns a typed [`Packet`]:
+///
+/// - an [`Ipv4`](crate::protocols::ip::v4::Ipv4) layer whose source is `source`
+///   and whose destination is the unicast `destination`,
+/// - a [`Udp`](crate::protocols::transport::Udp) datagram with source and
+///   destination port [`RIP_UDP_PORT`] (520), and
+/// - a [`Rip::update_response`] message (command 10, version 2) carrying the
+///   demand `sequence` and the supplied route `entries`.
+///
+/// Lengths and checksums are left for [`Packet::compile`] to fill. Callers
+/// supply documentation-range unicast addresses (`192.0.2.0/24`,
+/// `198.51.100.0/24`).
+pub fn rip_update_response(
+    source: std::net::Ipv4Addr,
+    destination: std::net::Ipv4Addr,
+    sequence: u16,
+    entries: impl Into<Vec<RipEntry>>,
+) -> Packet {
+    use crate::protocols::ip::v4::Ipv4;
+    use crate::protocols::transport::Udp;
+
+    Ipv4::new().src(source).dst(destination)
+        / Udp::new().sport(RIP_UDP_PORT).dport(RIP_UDP_PORT)
+        / Rip::update_response()
+            .demand_sequence(sequence)
+            .with_entries(entries)
+}
+
+/// Build a complete demand-RIP Update Acknowledge packet (RFC 2091 §2.3).
+///
+/// Like [`rip_update_request`] but for the Update Acknowledge message
+/// (command 11), which a peer sends to acknowledge a received Update Response,
+/// echoing its demand `sequence` so the exchange can be matched (RFC 2091 §2.3).
+/// Demand RIP (RFC 2091) is unicast on demand circuits, so the acknowledgement
+/// is addressed directly back to the responder rather than to the RIPv2
+/// multicast group. This convenience assembles the Update Acknowledge stack over
+/// the existing [`Rip`] layer and returns a typed [`Packet`]:
+///
+/// - an [`Ipv4`](crate::protocols::ip::v4::Ipv4) layer whose source is `source`
+///   and whose destination is the unicast `destination`,
+/// - a [`Udp`](crate::protocols::transport::Udp) datagram with source and
+///   destination port [`RIP_UDP_PORT`] (520), and
+/// - a [`Rip::update_acknowledge`] message (command 11, version 2) carrying the
+///   demand `sequence` recorded via [`Rip::demand_sequence`].
+///
+/// Lengths and checksums are left for [`Packet::compile`] to fill. Callers
+/// supply documentation-range unicast addresses (`192.0.2.0/24`,
+/// `198.51.100.0/24`).
+pub fn rip_update_acknowledge(
+    source: std::net::Ipv4Addr,
+    destination: std::net::Ipv4Addr,
+    sequence: u16,
+) -> Packet {
+    use crate::protocols::ip::v4::Ipv4;
+    use crate::protocols::transport::Udp;
+
+    Ipv4::new().src(source).dst(destination)
+        / Udp::new().sport(RIP_UDP_PORT).dport(RIP_UDP_PORT)
+        / Rip::update_acknowledge().demand_sequence(sequence)
+}
+
 /// Append a decoded RIP message to an existing packet stack.
 ///
 /// Mirrors the DHCP UDP-application decode entry: [`decode`] parses the UDP
@@ -1211,6 +1313,103 @@ mod rip_layer_auth_integration {
         assert_eq!(
             verify(&bytes, b"rip-md5-key"),
             RipAuthVerification::DigestMismatch
+        );
+    }
+}
+
+#[cfg(test)]
+mod rip_demand_exchange_helpers {
+    use super::*;
+    use crate::packet::NetworkLayer;
+    use std::net::Ipv4Addr;
+
+    // Compile the helper-built packet and decode it back to its addressing and
+    // Rip layer, asserting the demand exchange runs over unicast UDP/520
+    // (RFC 2091 §2.3): the IPv4 destination is the supplied unicast peer (not the
+    // 224.0.0.9 multicast group) and the UDP destination port is 520.
+    fn decode_demand(packet: Packet, destination: Ipv4Addr) -> Rip {
+        let compiled = packet.compile().expect("demand packet compiles");
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes())
+            .expect("ipv4/udp/rip demand packet decodes");
+
+        // Unicast destination, not the RIPv2 multicast group.
+        let ipv4 = decoded
+            .layer::<crate::protocols::ip::v4::Ipv4>()
+            .expect("decoded packet includes an Ipv4 layer");
+        assert_eq!(ipv4.destination(), destination);
+        assert_ne!(ipv4.destination(), RIP_V2_MULTICAST);
+
+        // UDP/520, both directions of the exchange.
+        let udp = decoded
+            .layer::<crate::protocols::transport::Udp>()
+            .expect("decoded packet includes a Udp layer");
+        assert_eq!(udp.destination_port_value(), RIP_UDP_PORT);
+        assert_eq!(udp.destination_port_value(), 520);
+
+        decoded
+            .layer::<Rip>()
+            .expect("decoded packet includes a Rip layer")
+            .clone()
+    }
+
+    #[test]
+    fn rip_demand_exchange_helpers_build() {
+        // RFC 2091 §2.3 demand exchange: Update Request → Update Response →
+        // Update Acknowledge, unicast on a demand circuit, each carrying a
+        // matching Sequence Number. The three helpers assemble the complete
+        // Ipv4 / Udp(520) / Rip stack; each decodes back to a Rip layer with the
+        // right command and demand sequence, and the response carries the
+        // supplied route entries.
+        let source = Ipv4Addr::new(192, 0, 2, 1);
+        let destination = Ipv4Addr::new(198, 51, 100, 2);
+        let sequence = 0x1234u16;
+
+        // Update Request (command 9).
+        let request = rip_update_request(source, destination, sequence);
+        let request_rip = decode_demand(request, destination);
+        assert_eq!(request_rip.command(), RipCommand::UpdateRequest);
+        assert_eq!(request_rip.demand_sequence_value(), Some(sequence));
+        assert!(
+            request_rip.entries().is_empty(),
+            "an update request carries no route entries"
+        );
+
+        // Update Response (command 10), carrying the supplied route entries.
+        let entries = vec![
+            RipEntry::ipv2_route(
+                Ipv4Addr::new(192, 0, 2, 0),
+                Ipv4Addr::new(255, 255, 255, 0),
+                1,
+            ),
+            RipEntry::ipv2_route(
+                Ipv4Addr::new(198, 51, 100, 0),
+                Ipv4Addr::new(255, 255, 255, 0),
+                2,
+            ),
+        ];
+        let response = rip_update_response(source, destination, sequence, entries.clone());
+        let response_rip = decode_demand(response, destination);
+        assert_eq!(response_rip.command(), RipCommand::UpdateResponse);
+        assert_eq!(response_rip.demand_sequence_value(), Some(sequence));
+        assert_eq!(
+            response_rip.entries().len(),
+            entries.len(),
+            "response carries the supplied entries"
+        );
+        for (got, want) in response_rip.entries().iter().zip(&entries) {
+            assert_eq!(got.address_value(), want.address_value());
+            assert_eq!(got.subnet_mask_value(), want.subnet_mask_value());
+            assert_eq!(got.metric_value(), want.metric_value());
+        }
+
+        // Update Acknowledge (command 11).
+        let acknowledge = rip_update_acknowledge(source, destination, sequence);
+        let acknowledge_rip = decode_demand(acknowledge, destination);
+        assert_eq!(acknowledge_rip.command(), RipCommand::UpdateAcknowledge);
+        assert_eq!(acknowledge_rip.demand_sequence_value(), Some(sequence));
+        assert!(
+            acknowledge_rip.entries().is_empty(),
+            "an update acknowledge carries no route entries"
         );
     }
 }
