@@ -269,7 +269,7 @@ impl_layer_div!(Ripng);
 /// followed by a whole number of 20-octet route table entries. The header
 /// command, version, and reserved fields are marked caller-set (`set_user`) so
 /// the decoded layer re-`compile()`s byte-for-byte, and each RTE is parsed with
-/// [`RipngRte::decode`].
+/// `RipngRte::decode`.
 ///
 /// Decoding never panics on a short or partial buffer. A body shorter than
 /// [`RIPNG_HEADER_LEN`] yields the crate's structured
