@@ -32,7 +32,7 @@ pub mod ipv6 {
 
 /// Curated protocol symbols exported by both `crate::protocols` and the crate root.
 pub mod exports {
-    use super::{bgp, dhcp, dns, eapol, icmp, ip, ipsec, ipv4, ipv6, link, rsn, transport};
+    use super::{bgp, dhcp, dns, eapol, icmp, ip, ipsec, ipv4, ipv6, link, rip, rsn, transport};
 
     pub use crate::packet::Raw;
     pub use bgp::attribute::{
@@ -351,6 +351,11 @@ pub mod exports {
         DOT11_SEQUENCE_FRAGMENT_NUMBER_MASK, DOT11_SEQUENCE_FRAGMENT_NUMBER_SHIFT,
         DOT11_SEQUENCE_NUMBER_MASK, DOT11_SEQUENCE_NUMBER_SHIFT, DOT11_TAG_DS_PARAMETER_SET,
         DOT11_TAG_RSN, DOT11_TAG_SSID, DOT11_TAG_SUPPORTED_RATES, DOT11_TAG_TIM,
+    };
+    pub use rip::{
+        Rip, RipAddressFamily, RipAuthType, RipCommand, RipCommandMeta, RipCommandStatus, RipEntry,
+        RIP_AFI_AUTH, RIP_AFI_IP, RIP_COMMAND_REQUEST, RIP_COMMAND_RESPONSE, RIP_MAX_ENTRIES,
+        RIP_METRIC_INFINITY, RIP_UDP_PORT, RIP_V2_MULTICAST, RIP_VERSION_1, RIP_VERSION_2,
     };
     pub use rsn::{
         rsn_akm_suite_label, rsn_cipher_suite_label, RsnAkmSuite, RsnCapabilities, RsnCipherSuite,
