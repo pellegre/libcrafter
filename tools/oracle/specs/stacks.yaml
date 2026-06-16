@@ -702,6 +702,24 @@ stacks:
       - dhcp-force-renew
       - dhcp-lease-query
       - dhcp-option-matrix
+  # ipv4 / udp / rip: the Routing Information Protocol message under test
+  # (RFC 1058 RIPv1 and RFC 2453 RIPv2, plus RFC 2453/2082/4822 authentication
+  # entries) over UDP/520. Rooted at IPv4 unicast it is offline byte-equivalence
+  # and round-trip focused; case selection stays on the rip layer coverage cases
+  # declared in layers/rip.yaml. Scapy is the reference backend (native
+  # RIP/RIPEntry/RIPAuth); the libcrafter Rip surface is the adapter backend.
+  - name: ipv4_udp_rip
+    root: "l3:ipv4"
+    layers:
+      - ipv4
+      - udp
+      - rip
+    coverage_cases:
+      - rip-v1-request
+      - rip-v1-response
+      - rip-v2-response
+      - rip-v2-auth
+      - crafter-rip-message-matrix
   - name: ipv6_udp_payload
     root: "l3:ipv6"
     layers:
@@ -718,6 +736,23 @@ stacks:
       - udp-options-unknown-unsafe
       - udp-options-unsupported-frag
       - udp-options-surplus-application-boundary
+  # ipv6 / udp / ripng: the RIPng message under test (RFC 2080) over UDP/521.
+  # Rooted at IPv6 it mirrors the IPv4 RIP stack shape; case selection stays on
+  # the ripng layer coverage cases declared in layers/ripng.yaml. Scapy has no
+  # native RIPng dissector, so RIPng cross-validation falls back to the parser
+  # backend for decode plus the libcrafter Ripng internal round-trip, as recorded
+  # in layers/ripng.yaml; the libcrafter Ripng surface is the adapter backend.
+  - name: ipv6_udp_ripng
+    root: "l3:ipv6"
+    layers:
+      - ipv6
+      - udp
+      - ripng
+    coverage_cases:
+      - ripng-response
+      - ripng-next-hop
+      - ripng-request
+      - crafter-ripng-message-matrix
   - name: ipv6_payload
     root: "l3:ipv6"
     layers:
@@ -1001,9 +1036,10 @@ constraints:
       - udp
       - icmp
   # UDP carries IKEv2 (UDP/500, and UDP/4500 after the non-ESP marker) and, for
-  # NAT-T, UDP-encapsulated ESP (UDP/4500, RFC 3948). The dns/dhcp/payload
+  # NAT-T, UDP-encapsulated ESP (UDP/4500, RFC 3948). It also carries RIP
+  # (UDP/520, RFC 1058/2453) and RIPng (UDP/521, RFC 2080). The dns/dhcp/payload
   # children come from the udp layer spec; this constraint unions in the IPSec
-  # children.
+  # and RIP children.
   - name: udp_children
     parent: udp
     children:
@@ -1011,6 +1047,8 @@ constraints:
       - dhcp
       - ikev2
       - esp
+      - rip
+      - ripng
       - payload
 
 backend_support:
