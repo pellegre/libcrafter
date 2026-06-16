@@ -2154,8 +2154,9 @@ mod tests {
         assert_eq!(RadiotapTxFlags::NO_SEQ.bits(), 0x0010);
         assert_eq!(RadiotapTxFlags::FIXED_RATE.bits(), 0x0020);
 
-        let combined =
-            RadiotapTxFlags::from_bits(RadiotapTxFlags::NO_ACK.bits() | RadiotapTxFlags::NO_SEQ.bits());
+        let combined = RadiotapTxFlags::from_bits(
+            RadiotapTxFlags::NO_ACK.bits() | RadiotapTxFlags::NO_SEQ.bits(),
+        );
         assert!(combined.contains(RadiotapTxFlags::NO_ACK));
         assert!(combined.contains(RadiotapTxFlags::NO_SEQ));
         assert!(!combined.contains(RadiotapTxFlags::FIXED_RATE));
@@ -2171,10 +2172,7 @@ mod tests {
         let decoded = Packet::decode_from_link(LinkType::Radiotap, bytes.as_bytes()).unwrap();
         let radiotap = decoded.layer::<Radiotap>().unwrap();
 
-        assert_eq!(
-            radiotap.tx_flags_value(),
-            Some(RadiotapTxFlags::NO_ACK)
-        );
+        assert_eq!(radiotap.tx_flags_value(), Some(RadiotapTxFlags::NO_ACK));
         assert_eq!(
             radiotap.tx_flags_value().map(|flags| flags.bits()),
             Some(0x0008)
@@ -2269,7 +2267,10 @@ mod tests {
         assert_eq!(decoded_channel.frequency(), 2437);
         let decoded_tx_flags = radiotap.tx_flags_value().unwrap();
         assert!(decoded_tx_flags.contains(RadiotapTxFlags::NO_ACK));
-        assert_eq!(decoded_tx_flags.bits() & RadiotapTxFlags::NO_ACK.bits(), 0x0008);
+        assert_eq!(
+            decoded_tx_flags.bits() & RadiotapTxFlags::NO_ACK.bits(),
+            0x0008
+        );
     }
 
     #[test]

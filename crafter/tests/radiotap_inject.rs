@@ -27,7 +27,11 @@ fn inject_beacon_packet() -> Packet {
 fn radiotap_injection_dry_run_plan_is_inspectable() {
     let packet = inject_beacon_packet();
     let plan = packet
-        .send_dry_run(SendOptions::new().iface("dot11-monitor-dry-run").link_layer())
+        .send_dry_run(
+            SendOptions::new()
+                .iface("dot11-monitor-dry-run")
+                .link_layer(),
+        )
         .unwrap();
 
     assert_eq!(plan.interface(), "dot11-monitor-dry-run");
