@@ -100,6 +100,21 @@ impl RipEntry {
         self
     }
 
+    /// Set the route tag (caller-set), fluent v2 alias of [`route_tag`].
+    ///
+    /// The Route Tag (RFC 2453 §3.1) is a 2-octet field in each RIPv2 entry
+    /// used to carry information — for example, an autonomous-system number —
+    /// that is opaque to RIP itself and must be preserved unchanged. It
+    /// occupies the two octets after the address family that are reserved/zero
+    /// in RIPv1. This is an explicit, discoverable alias of [`route_tag`] for
+    /// fluent RIPv2 entry construction.
+    ///
+    /// [`route_tag`]: RipEntry::route_tag
+    pub fn with_route_tag(mut self, tag: u16) -> RipEntry {
+        self.route_tag.set_user(tag);
+        self
+    }
+
     /// Set the IPv4 destination address (caller-set).
     pub fn address(mut self, value: Ipv4Addr) -> Self {
         self.address.set_user(value);
@@ -523,5 +538,53 @@ mod rip_entry_whole_table_request {
         );
 
         assert!(!route.is_whole_table_request());
+    }
+}
+
+#[cfg(test)]
+mod rip_entry_route_tag_roundtrips {
+    use super::*;
+
+    #[test]
+    fn nonzero_tag_round_trips_through_encode_decode() {
+        // RFC 2453 §3.1: the 2-octet route tag is opaque to RIP and must be
+        // carried unchanged. Build a RIPv2 route and set a distinctive tag.
+        let entry = RipEntry::ipv2_route(
+            Ipv4Addr::new(192, 0, 2, 0),
+            Ipv4Addr::new(255, 255, 255, 0),
+            3,
+        )
+        .with_route_tag(0xABCD);
+
+        assert_eq!(entry.route_tag_value(), 0xABCD);
+
+        let mut bytes = Vec::new();
+        entry.encode(&mut bytes);
+
+        // Route tag occupies the two octets after the address family
+        // (RFC 2453 §4): bytes 2..4 of the 20-octet entry.
+        assert_eq!(&bytes[2..4], &[0xAB, 0xCD]);
+
+        let decoded = RipEntry::decode(&bytes).expect("20 octets decode");
+        assert_eq!(decoded.route_tag_value(), 0xABCD);
+    }
+}
+
+#[cfg(test)]
+mod rip_entry_v1_route_tag_zero {
+    use super::*;
+
+    #[test]
+    fn ipv1_route_encodes_zero_route_tag() {
+        // RFC 1058: RIPv1 entries leave the route-tag octets zero.
+        let entry = RipEntry::ipv1_route(Ipv4Addr::new(192, 0, 2, 1), 5);
+
+        assert_eq!(entry.route_tag_value(), 0);
+
+        let mut bytes = Vec::new();
+        entry.encode(&mut bytes);
+
+        // Bytes 2..4 (the route-tag field) must be zero in RIPv1.
+        assert_eq!(&bytes[2..4], &[0x00, 0x00]);
     }
 }
