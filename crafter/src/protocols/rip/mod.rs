@@ -253,6 +253,35 @@ pub fn decode(bytes: &[u8]) -> Result<Rip> {
     Ok(rip)
 }
 
+/// Build a complete RIPv2 multicast response packet (RFC 2453 §3.5).
+///
+/// RIPv2 sends its periodic and triggered routing updates to the well-known
+/// multicast group [`RIP_V2_MULTICAST`] (`224.0.0.9`) over UDP port
+/// [`RIP_UDP_PORT`] (520). This convenience assembles that stack with the
+/// project's layer composition idiom and returns a typed [`Packet`]:
+///
+/// - an [`Ipv4`](crate::protocols::ip::v4::Ipv4) layer whose source is `source`
+///   and whose destination is the well-known RIPv2 multicast group
+///   [`RIP_V2_MULTICAST`],
+/// - a [`Udp`](crate::protocols::transport::Udp) datagram with source and
+///   destination port [`RIP_UDP_PORT`], and
+/// - a [`Rip::response`] message at [`RIP_VERSION_2`] carrying `entries`.
+///
+/// Lengths and checksums are left for [`Packet::compile`] to fill. Callers
+/// supply a documentation-range source address (`192.0.2.0/24`,
+/// `198.51.100.0/24`); the destination is fixed to the RIPv2 multicast group.
+pub fn rip_v2_multicast_response(
+    source: std::net::Ipv4Addr,
+    entries: impl Into<Vec<RipEntry>>,
+) -> Packet {
+    use crate::protocols::ip::v4::Ipv4;
+    use crate::protocols::transport::Udp;
+
+    Ipv4::new().src(source).dst(RIP_V2_MULTICAST)
+        / Udp::new().sport(RIP_UDP_PORT).dport(RIP_UDP_PORT)
+        / Rip::response().version(RIP_VERSION_2).with_entries(entries)
+}
+
 /// Append a decoded RIP message to an existing packet stack.
 ///
 /// Mirrors the DHCP UDP-application decode entry: [`decode`] parses the UDP
@@ -616,6 +645,51 @@ mod rip_udp_binding {
         assert!(
             decoded.layer::<Raw>().is_some(),
             "non-RIP port-520 payload must remain Raw"
+        );
+    }
+}
+
+#[cfg(test)]
+mod rip_v2_multicast_response_helper {
+    use super::*;
+    use crate::packet::NetworkLayer;
+    use std::net::Ipv4Addr;
+
+    #[test]
+    fn rip_v2_multicast_response_targets_group() {
+        // Build a RIPv2 multicast response from a documentation source address,
+        // carrying a single IPv4 route entry.
+        let packet = rip_v2_multicast_response(
+            Ipv4Addr::new(192, 0, 2, 1),
+            vec![RipEntry::ipv2_route(
+                Ipv4Addr::new(192, 0, 2, 0),
+                Ipv4Addr::new(255, 255, 255, 0),
+                1,
+            )],
+        );
+
+        let compiled = packet.compile().expect("multicast response compiles");
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes())
+            .expect("ipv4/udp/rip multicast response decodes");
+
+        // The IPv4 destination is the well-known RIPv2 multicast group.
+        let ipv4 = decoded
+            .layer::<crate::protocols::ip::v4::Ipv4>()
+            .expect("decoded packet includes an Ipv4 layer");
+        assert_eq!(ipv4.destination(), RIP_V2_MULTICAST);
+        assert_eq!(ipv4.destination(), Ipv4Addr::new(224, 0, 0, 9));
+
+        // The UDP destination port is the RIP port (520).
+        let udp = decoded
+            .layer::<crate::protocols::transport::Udp>()
+            .expect("decoded packet includes a Udp layer");
+        assert_eq!(udp.destination_port_value(), RIP_UDP_PORT);
+        assert_eq!(udp.destination_port_value(), 520);
+
+        // A Rip layer is present in the decoded stack.
+        assert!(
+            decoded.layer::<Rip>().is_some(),
+            "decoded packet must include a Rip layer"
         );
     }
 }
