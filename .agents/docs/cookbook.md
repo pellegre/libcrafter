@@ -760,6 +760,159 @@ session, including on failure.
 
 For user-facing BGP coverage, see [`docs/guide/bgp.md`](../../docs/guide/bgp.md).
 
+## Build RIP / RIPng Messages
+
+RIP is a UDP application payload: RIPv1/RIPv2 ride over UDP/520
+(`Ipv4 / Udp / Rip`), and RIPng rides over UDP/521 and IPv6
+(`Ipv6 / Udp / Ripng`). Generated tools should build individual RIP messages
+with the typed `Rip`/`Ripng` builders and keep any route table, distance-vector
+convergence, split-horizon, or timer state outside `crafter`. The crate builds
+and decodes wire messages; it is not a routing engine.
+
+The layers and route-entry types are available through `crafter::prelude::*`:
+`Rip`, `RipEntry`, `RipCommand`, `Ripng`, `RipngRte`, plus the codepoint
+constants (`RIP_UDP_PORT`, `RIP_V2_MULTICAST`, `RIP_METRIC_INFINITY`,
+`RIPNG_UDP_PORT`, `RIPNG_MULTICAST`, ...). The whole-table-request and multicast
+convenience helpers (`rip_v2_whole_table_request`, `rip_v2_multicast_response`)
+and the authentication types (`RipAuth`, `RipDigestAlgorithm`) are reached
+through the `crafter::protocols::rip` module path. Defaults use documentation
+addresses.
+
+```rust
+use crafter::prelude::*;
+use crafter::protocols::rip::{rip_v2_multicast_response, rip_v2_whole_table_request};
+use std::net::Ipv4Addr;
+
+fn main() -> crafter::Result<()> {
+    // RIPv2 whole-table request: a single AFI-0 / metric-16 sentinel entry
+    // addressed to the 224.0.0.9 multicast group.
+    let request = rip_v2_whole_table_request(Ipv4Addr::new(192, 0, 2, 10));
+
+    // RIPv2 response advertising documentation-range routes with route tag,
+    // subnet mask, and next hop set per entry.
+    let response = rip_v2_multicast_response(
+        Ipv4Addr::new(192, 0, 2, 10),
+        vec![
+            RipEntry::ipv2_route(
+                Ipv4Addr::new(198, 51, 100, 0),
+                Ipv4Addr::new(255, 255, 255, 0),
+                1,
+            )
+            .with_route_tag(0xABCD)
+            .with_next_hop(Ipv4Addr::new(192, 0, 2, 1)),
+            RipEntry::ipv2_route(
+                Ipv4Addr::new(198, 51, 100, 128),
+                Ipv4Addr::new(255, 255, 255, 128),
+                2,
+            ),
+        ],
+    );
+
+    for packet in [request, response] {
+        let bytes = packet.compile()?;
+        println!("{}", packet.summary());
+        println!("{}", bytes.hexdump());
+    }
+
+    Ok(())
+}
+```
+
+Attach RIPv2 authentication with the `Rip::auth(auth, key)` builder. Build the
+`RipAuth` either as a simple password (`RipAuth::simple_password`) or as a keyed
+message digest (`RipAuth::keyed_digest_with(RipDigestAlgorithm::KeyedMd5, key_id)`,
+or an HMAC-SHA variant). When the caller does not pin a digest, `compile()`
+computes it over the message; a caller-set digest survives untouched.
+**Authentication keys are caller-supplied test material — fixed bytes in
+examples and fixtures, never a real secret, and never committed.**
+
+```rust
+use crafter::prelude::*;
+use crafter::protocols::rip::{RipAuth, RipDigestAlgorithm};
+use std::net::Ipv4Addr;
+
+fn main() -> crafter::Result<()> {
+    // Keyed-MD5 (RFC 2082): a leading auth header entry plus a trailing digest
+    // block that compile() fills. The key here is documentation-only.
+    let authed = Packet::from_layer(
+        Rip::response()
+            .version(RIP_VERSION_2)
+            .with_entries(vec![RipEntry::ipv2_route(
+                Ipv4Addr::new(198, 51, 100, 0),
+                Ipv4Addr::new(255, 255, 255, 0),
+                1,
+            )])
+            .auth(
+                RipAuth::keyed_digest_with(RipDigestAlgorithm::KeyedMd5, 7),
+                b"md5-test-key".to_vec(),
+            ),
+    );
+
+    let bytes = authed.compile()?;
+    println!("{}", authed.summary()); // key bytes are never printed
+    println!("{}", bytes.hexdump());
+    Ok(())
+}
+```
+
+RIPng builds the same way over IPv6: compose `Ipv6 / Udp / Ripng`, push
+`RipngRte` route entries, and mark a next-hop RTE with `RipngRte::next_hop(...)`
+(metric 0xFF). `RipngRte::whole_table_request()` is the RIPng sentinel.
+
+RIP and RIPng decode goes through the default UDP registry when the port is 520
+(RIP) or 521 (RIPng); unrelated traffic on those ports falls through to `Raw`.
+Decode a captured datagram with `decode_from_l3` and inspect with
+`summary()`/`show()`:
+
+```rust
+use crafter::prelude::*;
+
+fn inspect_rip(bytes: &[u8]) -> crafter::Result<()> {
+    let packet = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes)?;
+    println!("{}", packet.show());
+
+    if let Some(rip) = packet.layer::<Rip>() {
+        println!("rip command={:?} version={}", rip.command(), rip.version_value());
+        for entry in rip.entries() {
+            println!(
+                "  route {} mask {} metric {}",
+                entry.address_value(),
+                entry.subnet_mask_value(),
+                entry.metric_value(),
+            );
+        }
+    }
+    Ok(())
+}
+```
+
+Use `command(u8)`, `version(u8)`, `reserved(u16)`, and the per-entry raw setters
+only for malformed-on-purpose tests; the normal path lets `compile()` fill the
+reserved fields, version, address families, and digest. A truncated or
+non-multiple-of-20 body decodes to a structured `CrafterError::BufferTooShort`
+(`context`/`required`/`available`), never a panic, and unknown commands or
+address families round-trip as preserved values.
+
+Keep generated RIP validation offline first. The `rip-smoke` oracle profile
+covers RIP and RIPng byte vectors and decode models, and the `rip-smoke` probe
+profile plans the live exchange against an FRR `ripd` target service — all
+without a network:
+
+```sh
+tools/oracle/run offline --profile rip-smoke --seed 1 --count 10 --out target/oracle/rip-agent-offline
+tools/oracle/run pcap --profile rip-smoke --seed 1 --count 10 --out target/oracle/rip-agent-pcap
+tools/probe/run --provider local-dry-run --dry-run --profile rip-smoke
+```
+
+A real RIP exchange is opt-in only and must run from disposable infrastructure,
+never raw from the developer host. Start with the probe dry-run above, then
+provision a provider-backed routing daemon through a `lab-session` (see Live-Lab
+Sending and the `lab-session` skill); collect artifacts and tear the session
+down afterward. The RIP target-service assets live under
+`tools/probe/target_services/rip/`. For the user-facing coverage boundary, see
+[`docs/rip.md`](../../docs/rip.md), and for the RFC/IANA source mapping see
+[`.agents/docs/rip-manifest.md`](rip-manifest.md).
+
 ## Build IPSec (ESP, AH, IKEv2)
 
 IPSec is a set of ordinary layers: `Esp`, `Ah`, the `IkeHeader` plus the typed
