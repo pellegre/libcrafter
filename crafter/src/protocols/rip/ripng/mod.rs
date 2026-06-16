@@ -15,8 +15,48 @@ pub mod rte;
 pub use constants::*;
 pub use rte::RipngRte;
 
+use core::any::Any;
+use core::ops::Div;
+
+use crate::error::Result;
 use crate::field::Field;
+use crate::packet::{IntoPacket, Layer, LayerContext, Packet};
 use crate::protocols::rip::message::RipCommand;
+
+macro_rules! impl_layer_object {
+    ($type:ty) => {
+        fn clone_layer(&self) -> Box<dyn Layer> {
+            Box::new(self.clone())
+        }
+
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+
+        fn as_any_mut(&mut self) -> &mut dyn Any {
+            self
+        }
+
+        fn into_any(self: Box<Self>) -> Box<dyn Any> {
+            self
+        }
+    };
+}
+
+macro_rules! impl_layer_div {
+    ($type:ty) => {
+        impl<R> Div<R> for $type
+        where
+            R: IntoPacket,
+        {
+            type Output = Packet;
+
+            fn div(self, rhs: R) -> Self::Output {
+                Packet::from_layer(self).concat(rhs)
+            }
+        }
+    };
+}
 
 /// A RIPng message over IPv6/UDP 521 (RFC 2080 §2).
 ///
@@ -166,6 +206,63 @@ impl Default for Ripng {
     }
 }
 
+impl Layer for Ripng {
+    fn name(&self) -> &'static str {
+        "Ripng"
+    }
+
+    fn encoded_len(&self) -> usize {
+        // RFC 2080 §2: 4-octet header plus 20 octets per route table entry.
+        RIPNG_HEADER_LEN + self.rtes.len() * RIPNG_RTE_LEN
+    }
+
+    fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
+        // RFC 2080 §2: 4-octet header (command, version, 2-octet reserved)
+        // followed by each route table entry's 20 octets. Effective values are
+        // used as-is, so caller-set command/version/reserved (including
+        // deliberately wrong ones) serialize exactly as set.
+        out.reserve(self.encoded_len());
+        out.push(self.command_value());
+        out.push(self.version_value());
+        out.extend_from_slice(&self.reserved_value().to_be_bytes());
+
+        for rte in &self.rtes {
+            rte.encode(out);
+        }
+        Ok(())
+    }
+
+    fn summary(&self) -> String {
+        // Compact one-line summary: command name, version, and RTE count, e.g.
+        // "Ripng v1 Response (2 RTEs)". Uses effective values so a decoded or
+        // caller-set message reads correctly.
+        let count = self.rtes.len();
+        let plural = if count == 1 { "RTE" } else { "RTEs" };
+        format!(
+            "Ripng v{} {} ({} {})",
+            self.version_value(),
+            self.command().name(),
+            count,
+            plural
+        )
+    }
+
+    fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        // Surface the header fields and RTE count so decoded messages are
+        // readable via show()/summary() without log-fishing.
+        vec![
+            ("command", self.command().name().to_string()),
+            ("version", self.version_value().to_string()),
+            ("reserved", self.reserved_value().to_string()),
+            ("rtes", self.rtes.len().to_string()),
+        ]
+    }
+
+    impl_layer_object!(Ripng);
+}
+
+impl_layer_div!(Ripng);
+
 #[cfg(test)]
 mod ripng_layer_builder {
     use super::*;
@@ -209,5 +306,53 @@ mod ripng_layer_builder {
         let with_two = Ripng::response().with_rtes(vec![route.clone(), second.clone()]);
         assert_eq!(with_two.rtes().len(), 2);
         assert_eq!(with_two.rtes()[1], second);
+    }
+}
+
+#[cfg(test)]
+mod ripng_layer_compiles {
+    use super::*;
+    use crate::packet::LayerContext;
+    use std::net::Ipv6Addr;
+
+    #[test]
+    fn ripng_layer_compiles_header_and_rtes() {
+        let prefix = "2001:db8::".parse::<Ipv6Addr>().expect("valid prefix");
+        let ripng = Ripng::response().rte(RipngRte::route(prefix, 64, 1));
+
+        // Compile the layer in isolation via a single-layer packet context.
+        let packet = Packet::from_layer(ripng.clone());
+        let ctx = LayerContext::new(&packet, 0);
+        let mut out = Vec::new();
+        ripng.compile(&ctx, &mut out).expect("ripng compiles");
+
+        // RFC 2080 §2 header: command=Response(2), version=1, reserved=0.
+        assert_eq!(&out[..RIPNG_HEADER_LEN], &[0x02, 0x01, 0x00, 0x00]);
+        // Header plus one 20-octet RTE.
+        assert_eq!(out.len(), RIPNG_HEADER_LEN + RIPNG_RTE_LEN);
+        assert_eq!(ripng.encoded_len(), RIPNG_HEADER_LEN + RIPNG_RTE_LEN);
+    }
+}
+
+#[cfg(test)]
+mod ripng_layer_div {
+    use super::*;
+    use crate::protocols::ip::v6::Ipv6;
+    use crate::protocols::transport::Udp;
+    use std::net::Ipv6Addr;
+
+    #[test]
+    fn ripng_layer_div_composes_into_packet() {
+        let prefix = "2001:db8::".parse::<Ipv6Addr>().expect("valid prefix");
+        let ripng = Ripng::response().rte(RipngRte::route(prefix, 64, 1));
+
+        // The `/` operator composes an IPv6/UDP stack and a Ripng layer into a
+        // Packet whose layer stack includes the Ripng layer.
+        let packet = Ipv6::new()
+            .src("2001:db8::1".parse::<Ipv6Addr>().expect("valid source"))
+            .dst(RIPNG_MULTICAST)
+            / Udp::new().sport(RIPNG_UDP_PORT).dport(RIPNG_UDP_PORT)
+            / ripng;
+        assert!(packet.layer::<Ripng>().is_some());
     }
 }
