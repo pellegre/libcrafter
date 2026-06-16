@@ -34,7 +34,9 @@ Per-protocol wire coverage for building and decoding packets.
   attributes, MP-BGP, TCP/179 decode dispatch, and the offline/live surfaces.
 - [RIP wire coverage](rip.md) — RIPv1/RIPv2 and RIPng message construction,
   route entries, authentication, UDP/520 and UDP/521 decode dispatch, and the
-  offline/live surfaces.
+  offline/live surfaces. Source mapping:
+  [RIP RFC manifest](rip-rfc-manifest.md) and
+  [RIP implementation inventory](rip-implementation-inventory.md).
 - [Dot11 wire coverage](guide/dot11.md) — bare IEEE 802.11, radiotap, LLC/SNAP,
   EAPOL, RSN foundations, pcap link types, and the dry-run/manual live boundary.
 - [IPsec wire coverage](guide/ipsec.md) — AH/ESP construction, transforms, and
