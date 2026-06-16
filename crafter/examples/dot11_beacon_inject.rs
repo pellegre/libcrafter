@@ -49,7 +49,9 @@ fn main() -> ExampleResult<()> {
     let count = parse_usize_arg("--count", 5)?;
     let prefix = arg_or("--prefix", "lcftest");
 
-    let ssids: Vec<String> = (0..count).map(|index| format!("{prefix}-{index}")).collect();
+    let ssids: Vec<String> = (0..count)
+        .map(|index| format!("{prefix}-{index}"))
+        .collect();
 
     println!("example: dot11_beacon_inject");
     println!("mode: {}", if live { "live" } else { "dry-run" });
@@ -84,7 +86,10 @@ fn main() -> ExampleResult<()> {
         println!("plan interface: {}", plan.interface());
         println!("plan len: {}", plan.len());
         println!("first beacon summary: {}", first.summary());
-        println!("first beacon hexdump:\n{}", plan.compiled_packet().hexdump());
+        println!(
+            "first beacon hexdump:\n{}",
+            plan.compiled_packet().hexdump()
+        );
     }
 
     for (index, ssid) in ssids.iter().enumerate() {
@@ -96,7 +101,11 @@ fn main() -> ExampleResult<()> {
             // entry point used by send_packet.rs.
             let options = SendOptions::new().iface(&iface).link_layer().live();
             let report = send_packet(&beacon, options)?;
-            print_send_report(&format!("dot11_beacon_inject beacon {index} ssid {ssid}"), &beacon, &report);
+            print_send_report(
+                &format!("dot11_beacon_inject beacon {index} ssid {ssid}"),
+                &beacon,
+                &report,
+            );
         } else {
             println!("beacon {index} ssid {ssid}: {}", beacon.summary());
         }
