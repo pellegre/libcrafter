@@ -1,0 +1,116 @@
+version: 1
+kind: feature
+name: rip_header
+summary: RIP header command/version matrix, route-entry round-trip, and structured-error handling for malformed commands and truncated headers.
+
+# Offline RIP header compile/decode coverage over IPv4 UDP port 520. Every
+# offline-sampled case is materialized by both the Scapy reference backend
+# (RIP / RIPEntry) and the libcrafter adapter from the same packet plan, then
+# decoded and compared octet-for-octet (byte_policy: strict_bytes).
+#
+# The v1-request case is the whole-table request sentinel (command 1, version 1,
+# address family 0, metric infinity); the v2-response case carries a single
+# RIPv2 route entry (command 2, version 2).
+#
+# The malformed cases (invalid-command, truncated-header) are declared coverage
+# but carry byte_policy: structured_error: an unknown/invalid command or a header
+# shorter than the 4-octet RIP header is a structured decode error, not a
+# comparable packet, so they are excluded from the offline encode/decode sampling
+# pathway (the oracle has no offline malformed comparison path; see
+# tools/oracle/engine/generator.py _case_supported_in_direction). They stay
+# declared coverage and feed the resilience path; the crate's own resilience and
+# fixture suites assert the BufferTooShort / preserved-unknown-command behavior.
+
+layers:
+  - rip
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: true
+malformed: false
+
+behaviors:
+  # Command/version matrix. The behavior name is matched against the case id by
+  # the generator, which sets the RIP command, version, and entry layout for the
+  # selected case.
+  - name: v1-request
+    command: 1
+    version: 1
+    checks:
+      - whole_table_request_sentinel
+  - name: v2-response
+    command: 2
+    version: 2
+    checks:
+      - ripv2_route_entry_round_trip
+  # Deliberately malformed header: an unknown command value that must be
+  # preserved rather than rewritten. Excluded from offline strict comparison
+  # (byte_policy: structured_error); the crate resilience suite asserts the
+  # preserved-unknown-command behavior.
+  - name: invalid-command
+    fields:
+      - command
+  # Deliberately truncated header: fewer than 4 octets, which is a structured
+  # length error rather than a comparable packet (byte_policy: structured_error).
+  - name: truncated-header
+    fields:
+      - header
+
+coverage_cases:
+  - rip-header-v1-request
+  - rip-header-v2-response
+  - rip-header-invalid-command
+  - rip-header-truncated-header
+
+supported_cases:
+  # Well-formed cases keep strict byte comparison in both offline directions.
+  - name: rip-header-v1-request
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: rip-header-v2-response
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  # Deliberately unknown command. An unknown command round-trips as a preserved
+  # value rather than a comparable strict-byte packet, so this case is excluded
+  # from offline encode/decode sampling (byte_policy: structured_error). It stays
+  # declared coverage; the crate's resilience/fixture suites assert the preserved
+  # unknown command.
+  - name: rip-header-invalid-command
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: structured_error
+  # Truncated header (fewer than 4 octets). A header past the available bytes is
+  # a structured decode error rather than a comparable packet, so this case is
+  # excluded from offline encode/decode sampling (byte_policy: structured_error).
+  # It stays declared coverage; the crate's resilience/fixture suites assert the
+  # typed BufferTooShort error.
+  - name: rip-header-truncated-header
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: structured_error
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - RIP
+      - RIPEntry
+    notes:
+      - The v1-request and v2-response cases compile to byte-identical RIP
+        messages across both backends and are compared octet-for-octet.
+      - The invalid-command and truncated-header cases are malformed input with no
+        clean strict-byte comparison, so they are excluded from offline sampling
+        and exercised by the crate's resilience path instead.
+  libcrafter:
+    status: supported
+    notes:
+      - Encodes and decodes the RIPv1/RIPv2 4-octet header and 20-octet route
+        entries, the whole-table request sentinel, and preserves unknown commands
+        and surfaces truncated headers as structured length errors rather than
+        rewriting or panicking.
