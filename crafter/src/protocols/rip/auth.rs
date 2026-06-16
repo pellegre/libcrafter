@@ -21,13 +21,15 @@
 //!
 //! [`Rip`]: super::Rip
 
+use std::net::Ipv4Addr;
+
 use crate::field::Field;
 
 use super::constants::RIP_AFI_AUTH;
 use super::entry::RipEntry;
 use super::registry::{
-    rip_auth_type, rip_auth_type_code, RipAuthType, RIP_AUTH_TYPE_KEYED_DIGEST,
-    RIP_AUTH_TYPE_SIMPLE,
+    is_rip_auth_marker, rip_auth_type, rip_auth_type_code, RipAuthType,
+    RIP_AUTH_TYPE_KEYED_DIGEST, RIP_AUTH_TYPE_SIMPLE,
 };
 
 /// Simple-password authentication carries up to 16 octets of plaintext password.
@@ -178,16 +180,76 @@ impl RipAuth {
     /// The returned entry carries the authentication marker AFI
     /// [`RIP_AFI_AUTH`] (0xFFFF) in its address-family octets and the
     /// authentication type in the route-tag octets, so it can sit in a [`Rip`]
-    /// message's entry list. The remaining payload octets (the password or the
-    /// keyed-digest header) are filled by the full simple-password and
-    /// keyed-digest wire encodings added in later steps.
+    /// message's entry list.
+    ///
+    /// For the simple-password form (RFC 2453 §4.1) the 16-octet plaintext
+    /// password is laid into the entry's remaining 16 octets — the address,
+    /// subnet-mask, next-hop, and metric slots — so the entry's existing
+    /// [`RipEntry::encode`] emits the password right-padded with zeros after the
+    /// AFI and type octets. The remaining payload octets for the keyed-digest
+    /// form are filled by the keyed-digest wire encoding added in a later step.
     ///
     /// [`Rip`]: super::Rip
     pub fn as_entry(&self) -> RipEntry {
-        RipEntry::new()
+        let entry = RipEntry::new()
             .address_family(RIP_AFI_AUTH)
-            .route_tag(rip_auth_type_code(self.auth_type()))
+            .route_tag(rip_auth_type_code(self.auth_type()));
+
+        match &self.payload {
+            RipAuthPayload::SimplePassword(password) => {
+                // The 16-octet password occupies the four 4-octet slots that
+                // follow the AFI and type octets: address (0..4), subnet mask
+                // (4..8), next hop (8..12), metric (12..16). Lay the octets in
+                // verbatim, big-endian, via the caller-set builders so the
+                // entry re-encodes byte-for-byte (RFC 2453 §4.1).
+                let address =
+                    Ipv4Addr::new(password[0], password[1], password[2], password[3]);
+                let subnet_mask =
+                    Ipv4Addr::new(password[4], password[5], password[6], password[7]);
+                let next_hop =
+                    Ipv4Addr::new(password[8], password[9], password[10], password[11]);
+                let metric = u32::from_be_bytes([
+                    password[12],
+                    password[13],
+                    password[14],
+                    password[15],
+                ]);
+                entry
+                    .address(address)
+                    .subnet_mask(subnet_mask)
+                    .next_hop(next_hop)
+                    .metric(metric)
+            }
+            RipAuthPayload::KeyedDigest(_) => entry,
+        }
     }
+}
+
+/// Decode a RIPv2 authentication entry into a [`RipAuth`] (RFC 2453 §4.1).
+///
+/// Returns `Some` only when `entry` is an authentication marker entry (AFI
+/// [`RIP_AFI_AUTH`], 0xFFFF) whose authentication type — carried in the
+/// route-tag octets — is the simple-password type
+/// [`RIP_AUTH_TYPE_SIMPLE`] (2). The 16-octet plaintext password is
+/// reconstructed verbatim from the entry's address, subnet-mask, next-hop, and
+/// metric slots, the inverse of [`RipAuth::as_entry`]. Any other AFI or
+/// authentication type yields `None` (keyed-digest decode lands in a later
+/// step).
+pub fn decode_auth_entry(entry: &RipEntry) -> Option<RipAuth> {
+    if !is_rip_auth_marker(entry.address_family_value()) {
+        return None;
+    }
+    if entry.route_tag_value() != RIP_AUTH_TYPE_SIMPLE {
+        return None;
+    }
+
+    let mut password = [0u8; RIP_SIMPLE_PASSWORD_LEN];
+    password[0..4].copy_from_slice(&entry.address_value().octets());
+    password[4..8].copy_from_slice(&entry.subnet_mask_value().octets());
+    password[8..12].copy_from_slice(&entry.next_hop_value().octets());
+    password[12..16].copy_from_slice(&entry.metric_value().to_be_bytes());
+
+    Some(RipAuth::simple_password(&password))
 }
 
 #[cfg(test)]
@@ -250,6 +312,37 @@ mod tests {
         match long.payload {
             RipAuthPayload::SimplePassword(bytes) => {
                 assert_eq!(&bytes, b"0123456789ABCDEF");
+            }
+            other => panic!("expected SimplePassword payload, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rip_auth_simple_password_roundtrips() {
+        // RFC 2453 §4.1: a simple-password auth entry is AFI 0xFFFF, type 2,
+        // then 16 octets of plaintext password right-padded with zeros.
+        let auth = RipAuth::simple_password(b"secret");
+        let entry = auth.as_entry();
+
+        let mut bytes = Vec::new();
+        entry.encode(&mut bytes);
+        assert_eq!(bytes.len(), 20);
+
+        // AFI 0xFFFF (bytes 0..2) and Authentication Type 2 (bytes 2..4).
+        assert_eq!(&bytes[0..2], &[0xFF, 0xFF]);
+        assert_eq!(&bytes[2..4], &[0x00, 0x02]);
+
+        // The remaining 16 octets are "secret" followed by zero padding.
+        let mut expected_password = [0u8; RIP_SIMPLE_PASSWORD_LEN];
+        expected_password[..b"secret".len()].copy_from_slice(b"secret");
+        assert_eq!(&bytes[4..20], &expected_password);
+
+        // decode_auth_entry recovers the password from the rendered entry.
+        let recovered = decode_auth_entry(&entry).expect("simple-password auth entry decodes");
+        assert_eq!(recovered.auth_type_value(), RIP_AUTH_TYPE_SIMPLE);
+        match recovered.payload {
+            RipAuthPayload::SimplePassword(bytes) => {
+                assert_eq!(&bytes, &expected_password);
             }
             other => panic!("expected SimplePassword payload, got {other:?}"),
         }
