@@ -5623,6 +5623,20 @@ _RIP_RUNTIME = RIP_RUNTIME
 _RIP_RIB_COMMAND = RIP_RIB_COMMAND
 
 
+# RIPng (RFC 2080) rides UDP/521 and advertises to the all-RIPng-routers IPv6
+# multicast group ff02::9 (RFC 2080 sec. 2.1). It reuses the same FRR runtime as
+# the IPv4 RIP target service (FRR's ``ripngd`` daemon), inspected with
+# ``show ipv6 ripng``. The documentation prefix stays in the RFC 3849 block
+# (2001:db8::/32). These mirror the IPv4 RIP plan constants for the IPv6 path so
+# an inspecting agent sees the wire port, multicast group, and RIB command
+# without consulting the crate; the plan is planned-only and sends no packets.
+_RIPNG_UDP_PORT = 521
+_RIPNG_MULTICAST_GROUP = "ff02::9"
+_RIPNG_SERVICE_KIND = "frr-ripngd"
+_RIPNG_RIB_COMMAND = "vtysh -c 'show ipv6 ripng'"
+_RIPNG_DOCUMENTATION_IPV6_PREFIX = "2001:db8::/32"
+
+
 def _bgp_session_smoke_probe_plan(
     *,
     case_name: str = "bgp-session-smoke",
@@ -5805,6 +5819,107 @@ def _rip_update_probe_plan(
                 "RIP smoke dry-run exposes the rip_request stimulus intent and "
                 "probe-owned FRR ripd target-service setup without sending "
                 "UDP/520 datagrams or installing FRR."
+            ),
+        },
+        "digest_hex": digest.hex()[:16],
+    }
+
+
+def _ripng_update_probe_plan(
+    *,
+    case_name: str = "ripng-update",
+    profile: str,
+    seed: int,
+    sequence: int,
+) -> JSONObject:
+    """Plan a probe-owned RIPng update exchange against an FRR ``ripngd`` service.
+
+    The IPv6 analog of :func:`_rip_update_probe_plan`: the probe sends a RIPng
+    request on UDP/521 to the documentation-range unicast target running the
+    RIPng daemon and expects the daemon's RIPng response (advertised to the
+    all-RIPng-routers multicast group ``ff02::9`` per RFC 2080). The crate-side
+    ``ripng_request`` stimulus driver lands with the endpoint runner; until then
+    the dry-run plan is ``planned_only`` -- it records the stimulus driver
+    intent, the FRR ``ripngd`` target-service setup, the UDP port, multicast
+    group, and the ``show ipv6 ripng`` RIB command, but builds no packet bytes
+    and sends nothing.
+    """
+
+    digest = deterministic_bytes(case_name, profile, seed, sequence)
+    stimulus_ipv6 = deterministic_documentation_ipv6(digest)
+    target_ipv6 = deterministic_documentation_ipv6(digest[::-1])
+    source_port = 42000 + int.from_bytes(digest[0:2], "big") % 10000
+    documentation_prefixes = [
+        _RIPNG_DOCUMENTATION_IPV6_PREFIX,
+    ]
+    # The RIPng path reuses the same probe-owned FRR runtime assets as the IPv4
+    # RIP target service (FRR's ``ripngd`` daemon shares the ``ripd.conf``
+    # runtime), so the provision script and config template stay in sync with
+    # the IPv4 plan while the wire details (port, multicast group, RIB command)
+    # are IPv6-specific.
+    return {
+        "schema_version": 1,
+        "case": case_name,
+        "sequence": sequence,
+        "index": sequence,
+        "profile": profile,
+        "seed": seed,
+        "stimulus": "ripng_request",
+        "expected_response": "ripng_peer_update",
+        "planned_only": True,
+        "protocol": "ripng",
+        "source_ipv6": stimulus_ipv6,
+        "destination_ipv6": target_ipv6,
+        "multicast_group": _RIPNG_MULTICAST_GROUP,
+        "expected_reply_source_ipv6": target_ipv6,
+        "expected_reply_destination_ipv6": stimulus_ipv6,
+        "source_port": source_port,
+        "destination_port": _RIPNG_UDP_PORT,
+        "documentation_prefixes": documentation_prefixes,
+        "stimulus_driver": {
+            "name": "ripng_request",
+            "cargo_example": "ripng_request",
+            "driver_source": "crafter/examples/ripng_request.rs",
+            "state": "planned-only",
+            "planned_only": True,
+        },
+        "target_service": {
+            "required": True,
+            "kind": _RIPNG_SERVICE_KIND,
+            "protocol": "udp",
+            "port": _RIPNG_UDP_PORT,
+            "multicast_group": _RIPNG_MULTICAST_GROUP,
+            "bind_ipv6": target_ipv6,
+            "source_ipv6": stimulus_ipv6,
+            "runtime": _RIP_RUNTIME,
+            "documentation_prefixes": documentation_prefixes,
+            "provision_script": RIP_PROVISION_SCRIPT,
+            "config_template": RIP_CONFIG_TEMPLATE,
+            "rib_command": _RIPNG_RIB_COMMAND,
+            "deterministic": True,
+        },
+        "capture_filter": (
+            f"udp and src host {target_ipv6} "
+            f"and src port {_RIPNG_UDP_PORT} and dst port {_RIPNG_UDP_PORT}"
+        ),
+        "validation": {
+            "planned_only": True,
+            "driver": "ripng_request",
+            "source_ipv6": target_ipv6,
+            "destination_ipv6": stimulus_ipv6,
+            "source_port": _RIPNG_UDP_PORT,
+            "destination_port": _RIPNG_UDP_PORT,
+            "multicast_group": _RIPNG_MULTICAST_GROUP,
+            "rib_command": _RIPNG_RIB_COMMAND,
+        },
+        "wire_requirements": {
+            "requires_ipv6_unicast": True,
+            "requires_controlled_service": True,
+            "requires_rip_peer": True,
+            "note": (
+                "RIPng smoke dry-run exposes the ripng_request stimulus intent "
+                "and probe-owned FRR ripngd target-service setup without sending "
+                "UDP/521 datagrams or installing FRR."
             ),
         },
         "digest_hex": digest.hex()[:16],
@@ -6000,6 +6115,7 @@ PLAN_BUILDERS: dict[str, PlanBuilder] = {
     "udp-options-surplus-echo": _udp_options_surplus_echo_probe_plan,
     "bgp-session-smoke": _bgp_session_smoke_probe_plan,
     "rip-update-v2": _rip_update_probe_plan,
+    "ripng-update": _ripng_update_probe_plan,
     "esp-transport-echo": _ipsec_probe_plan,
     "esp-tunnel-echo": _ipsec_probe_plan,
     "ah-transport-verify": _ipsec_probe_plan,
@@ -6021,6 +6137,7 @@ PLANNED_ONLY_REGISTERED_CASES: frozenset[str] = frozenset(
         "ikev2-sa-init",
         "bgp-session-smoke",
         "rip-update-v2",
+        "ripng-update",
     }
 )
 
