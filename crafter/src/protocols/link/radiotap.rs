@@ -2217,6 +2217,62 @@ mod tests {
     }
 
     #[test]
+    fn radiotap_monitor_tx_header_bytes_pin_present_bitmap_and_round_trip() {
+        let channel = RadiotapChannel::channel_2ghz(6);
+        let radiotap = Radiotap::monitor_tx(2, channel, RadiotapTxFlags::NO_ACK);
+        let bytes = Packet::from_layer(radiotap).compile().unwrap();
+        let header = bytes.as_bytes();
+
+        // version + pad lead the radiotap header.
+        assert_eq!(header[0], 0x00);
+        assert_eq!(header[1], 0x00);
+
+        // The little-endian it_len field equals the actual header length.
+        // Rate (bit 2, align 1, size 1), Channel (bit 3, align 2, size 4),
+        // TX flags (bit 15, align 2, size 2) compile to a 16-byte header:
+        // 4 fixed + 4 present word + Rate(1) + pad(1) + Channel(4) + TX flags(2).
+        let it_len = u16::from_le_bytes([header[2], header[3]]);
+        assert_eq!(it_len, 16);
+        assert_eq!(usize::from(it_len), header.len());
+
+        // The present bitmap has Rate, Channel, and TX flags set, and nothing else.
+        let present_word = u32::from_le_bytes([header[4], header[5], header[6], header[7]]);
+        assert_eq!(
+            present_word,
+            RADIOTAP_PRESENT_RATE | RADIOTAP_PRESENT_CHANNEL | RADIOTAP_PRESENT_TX_FLAGS
+        );
+        assert_ne!(present_word & RADIOTAP_PRESENT_RATE, 0);
+        assert_ne!(present_word & RADIOTAP_PRESENT_CHANNEL, 0);
+        assert_ne!(present_word & RADIOTAP_PRESENT_TX_FLAGS, 0);
+
+        // Decoded present mask agrees on exactly those three field bits.
+        let decoded = Packet::decode_from_link(LinkType::Radiotap, header).unwrap();
+        let radiotap = decoded.layer::<Radiotap>().unwrap();
+        let present = radiotap.present().unwrap();
+        assert!(present.is_field_present(RADIOTAP_FIELD_RATE.into()));
+        assert!(present.is_field_present(RADIOTAP_FIELD_CHANNEL.into()));
+        assert!(present.is_field_present(RADIOTAP_FIELD_TX_FLAGS.into()));
+        assert_eq!(
+            present.field_bits().collect::<Vec<_>>(),
+            vec![
+                RADIOTAP_FIELD_RATE.into(),
+                RADIOTAP_FIELD_CHANNEL.into(),
+                RADIOTAP_FIELD_TX_FLAGS.into(),
+            ]
+        );
+
+        // The declared length round-trips and the field values decode back.
+        assert_eq!(radiotap.length_value(), Some(16));
+        assert_eq!(radiotap.rate_value(), Some(2));
+        let decoded_channel = radiotap.channel_value().unwrap();
+        assert_eq!(decoded_channel, channel);
+        assert_eq!(decoded_channel.frequency(), 2437);
+        let decoded_tx_flags = radiotap.tx_flags_value().unwrap();
+        assert!(decoded_tx_flags.contains(RadiotapTxFlags::NO_ACK));
+        assert_eq!(decoded_tx_flags.bits() & RadiotapTxFlags::NO_ACK.bits(), 0x0008);
+    }
+
+    #[test]
     fn radiotap_fields_unknown_preserves_present_bit_alignment_and_bytes() {
         let radiotap = Radiotap::new()
             .unknown_field(32, 4, [0xde, 0xad, 0xbe, 0xef])
