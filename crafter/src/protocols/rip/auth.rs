@@ -36,6 +36,12 @@ use super::registry::{
 /// RFC 2453 §4.1.
 pub const RIP_SIMPLE_PASSWORD_LEN: usize = 16;
 
+/// Authentication Type carried in the trailing keyed-digest authentication
+/// block (RFC 4822 §3.1, originally RFC 2082): the trailer entry that follows
+/// the last route entry uses the marker AFI 0xFFFF and this `0x0001` trailer
+/// type, then carries the raw digest octets.
+pub const RIP_AUTH_TRAILER_MARKER: u16 = 0x0001;
+
 /// A RIPv2 authentication entry (AFI 0xFFFF; RFC 2453 §4.1, RFC 4822 §3).
 ///
 /// The `auth_type` field is held in a [`Field`] wrapper so a later `compile()`
@@ -175,6 +181,87 @@ impl RipAuth {
         rip_auth_type(self.auth_type_value())
     }
 
+    /// Effective Authentication Data Length, in octets (RFC 4822 §3.1).
+    ///
+    /// For the keyed-digest form this is the configured length of the trailing
+    /// digest (for example, 16 for Keyed-MD5 or 20 for HMAC-SHA-1); for the
+    /// simple-password form, which carries no digest, this is `0`.
+    pub fn auth_data_len(&self) -> u8 {
+        match &self.payload {
+            RipAuthPayload::KeyedDigest(header) => header.auth_data_len_value(),
+            RipAuthPayload::SimplePassword(_) => 0,
+        }
+    }
+
+    /// Render the keyed-digest leading authentication entry as a [`RipEntry`]
+    /// (RFC 4822 §3.1, originally RFC 2082).
+    ///
+    /// The returned 20-octet entry carries, in wire order: the authentication
+    /// marker AFI [`RIP_AFI_AUTH`] (0xFFFF) in its address-family octets, the
+    /// keyed-message-digest authentication type
+    /// [`RIP_AUTH_TYPE_KEYED_DIGEST`] (3) in its route-tag octets, then the
+    /// 16-octet keyed-digest header laid into the entry's remaining slots: the
+    /// offset to the trailing digest (u16), the Key Identifier (u8), the
+    /// Authentication Data Length (u8), the 32-bit Sequence Number, and 8
+    /// reserved octets (RFC 4822 §3.1's two reserved words).
+    ///
+    /// These follow the same slot-mapping technique as the simple-password form
+    /// in [`RipAuth::as_entry`]: the header octets are laid verbatim, big-endian,
+    /// into the address (offset/key id/auth data length), subnet-mask (sequence),
+    /// next-hop (first reserved word), and metric (second reserved word) slots
+    /// via the caller-set builders, so the existing [`RipEntry::encode`] emits
+    /// them byte-for-byte. The digest itself is not part of this entry; it is
+    /// framed separately by [`RipAuth::trailing_digest_block`]. For a
+    /// simple-password payload this falls back to [`RipAuth::as_entry`].
+    pub fn keyed_digest_header_entry(&self) -> RipEntry {
+        let header = match &self.payload {
+            RipAuthPayload::KeyedDigest(header) => header,
+            RipAuthPayload::SimplePassword(_) => return self.as_entry(),
+        };
+
+        let offset = header.offset_value().to_be_bytes();
+        let sequence = header.sequence_value();
+
+        // Lay the 16-octet keyed-digest header into the entry's four 4-octet
+        // slots that follow the AFI and type octets (RFC 4822 §3.1):
+        //   address    (bytes 4..8):  offset hi, offset lo, key id, auth data len
+        //   subnet mask(bytes 8..12): 32-bit sequence number
+        //   next hop   (bytes 12..16): first reserved word (zero)
+        //   metric     (bytes 16..20): second reserved word (zero)
+        let address = Ipv4Addr::new(
+            offset[0],
+            offset[1],
+            header.key_id_value(),
+            header.auth_data_len_value(),
+        );
+
+        RipEntry::new()
+            .address_family(RIP_AFI_AUTH)
+            .route_tag(RIP_AUTH_TYPE_KEYED_DIGEST)
+            .address(address)
+            .subnet_mask(Ipv4Addr::from(sequence))
+            .next_hop(Ipv4Addr::UNSPECIFIED)
+            .metric(0)
+    }
+
+    /// Frame the trailing keyed-digest authentication block (RFC 4822 §3.1,
+    /// originally RFC 2082).
+    ///
+    /// The digest is carried after the last route entry in a trailing
+    /// authentication block introduced by the marker AFI [`RIP_AFI_AUTH`]
+    /// (0xFFFF) and the trailer type `0x0001`, immediately followed by the raw
+    /// `digest` octets. The caller supplies the digest verbatim here;
+    /// auto-computation of the RFC 2082 Keyed-MD5 / RFC 4822 HMAC-SHA digest is
+    /// added in later steps. The returned `Vec` is `4 + digest.len()` octets:
+    /// two octets of AFI, two of trailer type, then the digest.
+    pub fn trailing_digest_block(digest: &[u8]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(4 + digest.len());
+        out.extend_from_slice(&RIP_AFI_AUTH.to_be_bytes());
+        out.extend_from_slice(&RIP_AUTH_TRAILER_MARKER.to_be_bytes());
+        out.extend_from_slice(digest);
+        out
+    }
+
     /// Render this authentication entry as a [`RipEntry`] (RFC 2453 §4.1).
     ///
     /// The returned entry carries the authentication marker AFI
@@ -255,6 +342,7 @@ pub fn decode_auth_entry(entry: &RipEntry) -> Option<RipAuth> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocols::rip::constants::RIP_ENTRY_LEN;
 
     #[test]
     fn rip_auth_builders_set_type() {
@@ -346,5 +434,53 @@ mod tests {
             }
             other => panic!("expected SimplePassword payload, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn rip_auth_keyed_digest_layout() {
+        // RFC 4822 §3.1 (originally RFC 2082): the keyed-digest leading entry is
+        // AFI 0xFFFF, type 3, then offset (u16), key id (u8), auth data length
+        // (u8), sequence (u32), and two reserved words (8 octets). The digest
+        // itself follows the last route entry as a trailing block introduced by
+        // AFI 0xFFFF and the 0x0001 trailer marker.
+        let mut auth = RipAuth::keyed_digest(7, 16);
+        match &mut auth.payload {
+            RipAuthPayload::KeyedDigest(header) => {
+                header.sequence.set_user(42);
+            }
+            other => panic!("expected KeyedDigest payload, got {other:?}"),
+        }
+
+        assert_eq!(auth.auth_data_len(), 16);
+
+        // The leading header entry encodes to 20 octets in RFC 4822 §3.1 order.
+        let header_entry = auth.keyed_digest_header_entry();
+        let mut header_bytes = Vec::new();
+        header_entry.encode(&mut header_bytes);
+        assert_eq!(header_bytes.len(), RIP_ENTRY_LEN);
+
+        // AFI 0xFFFF (bytes 0..2) and Authentication Type 3 (bytes 2..4).
+        assert_eq!(&header_bytes[0..2], &[0xFF, 0xFF]);
+        assert_eq!(&header_bytes[2..4], &[0x00, 0x03]);
+
+        // Offset (bytes 4..6), Key ID (byte 6), Auth Data Length (byte 7).
+        assert_eq!(&header_bytes[4..6], &[0x00, 0x00]);
+        assert_eq!(header_bytes[6], 0x07);
+        assert_eq!(header_bytes[7], 16);
+
+        // Sequence number occupies bytes 8..12 (RFC 4822 §3.1).
+        assert_eq!(&header_bytes[8..12], &42u32.to_be_bytes());
+
+        // The two reserved words (bytes 12..20) are zero.
+        assert!(header_bytes[12..20].iter().all(|&b| b == 0));
+
+        // The trailing digest block is AFI 0xFFFF, trailer marker 0x0001, then
+        // the 16 supplied digest octets.
+        let digest = [0xAB_u8; 16];
+        let block = RipAuth::trailing_digest_block(&digest);
+        assert_eq!(block.len(), 4 + digest.len());
+        assert_eq!(&block[0..2], &[0xFF, 0xFF]);
+        assert_eq!(&block[2..4], &[0x00, 0x01]);
+        assert_eq!(&block[4..], &digest);
     }
 }
