@@ -17,6 +17,7 @@
 
 use std::net::Ipv4Addr;
 
+use crate::error::{CrafterError, Result};
 use crate::field::Field;
 
 use super::constants::{RIP_AFI_IP, RIP_ENTRY_LEN};
@@ -151,6 +152,44 @@ impl RipEntry {
     pub const fn encoded_len(&self) -> usize {
         RIP_ENTRY_LEN
     }
+
+    /// Parse a 20-octet route entry from the front of `bytes`.
+    ///
+    /// Reads the six fields in RFC 2453 §4 order (big-endian): Address Family
+    /// (u16), Route Tag (u16), IPv4 Address (4 octets), Subnet Mask (4 octets),
+    /// Next Hop (4 octets), Metric (u32). Every field is marked caller-set via
+    /// `set_user`, so a decoded entry re-`encode`s byte-for-byte.
+    ///
+    /// A buffer shorter than [`RIP_ENTRY_LEN`] yields the crate's structured
+    /// [`CrafterError::buffer_too_short`] (context `"RIP route entry"`,
+    /// `required = RIP_ENTRY_LEN`, `available = bytes.len()`) rather than
+    /// panicking.
+    #[allow(dead_code)]
+    pub(crate) fn decode(bytes: &[u8]) -> Result<RipEntry> {
+        if bytes.len() < RIP_ENTRY_LEN {
+            return Err(CrafterError::buffer_too_short(
+                "RIP route entry",
+                RIP_ENTRY_LEN,
+                bytes.len(),
+            ));
+        }
+
+        let address_family = u16::from_be_bytes([bytes[0], bytes[1]]);
+        let route_tag = u16::from_be_bytes([bytes[2], bytes[3]]);
+        let address = Ipv4Addr::new(bytes[4], bytes[5], bytes[6], bytes[7]);
+        let subnet_mask = Ipv4Addr::new(bytes[8], bytes[9], bytes[10], bytes[11]);
+        let next_hop = Ipv4Addr::new(bytes[12], bytes[13], bytes[14], bytes[15]);
+        let metric = u32::from_be_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]);
+
+        let mut entry = RipEntry::new();
+        entry.address_family.set_user(address_family);
+        entry.route_tag.set_user(route_tag);
+        entry.address.set_user(address);
+        entry.subnet_mask.set_user(subnet_mask);
+        entry.next_hop.set_user(next_hop);
+        entry.metric.set_user(metric);
+        Ok(entry)
+    }
 }
 
 impl Default for RipEntry {
@@ -259,5 +298,66 @@ mod rip_entry_preserves_user_values {
         // Metric occupies the final 4 octets of the 20-octet entry.
         assert_eq!(&out[16..20], &[0xDE, 0xAD, 0xBE, 0xEF]);
         assert_eq!(out.len(), RIP_ENTRY_LEN);
+    }
+}
+
+#[cfg(test)]
+mod rip_entry_decode_roundtrip {
+    use super::*;
+
+    #[test]
+    fn decode_reproduces_fields_and_reencodes_identically() {
+        let entry = RipEntry::new()
+            .address_family(2)
+            .route_tag(0x1234)
+            .address(Ipv4Addr::new(192, 0, 2, 1))
+            .subnet_mask(Ipv4Addr::new(255, 255, 255, 0))
+            .next_hop(Ipv4Addr::new(192, 0, 2, 254))
+            .metric(3);
+
+        let mut bytes = Vec::new();
+        entry.encode(&mut bytes);
+
+        let decoded = RipEntry::decode(&bytes).expect("20 octets decode");
+
+        assert_eq!(decoded.address_family_value(), entry.address_family_value());
+        assert_eq!(decoded.route_tag_value(), entry.route_tag_value());
+        assert_eq!(decoded.address_value(), entry.address_value());
+        assert_eq!(decoded.subnet_mask_value(), entry.subnet_mask_value());
+        assert_eq!(decoded.next_hop_value(), entry.next_hop_value());
+        assert_eq!(decoded.metric_value(), entry.metric_value());
+
+        // Every decoded field is marked caller-set, so re-encoding is exact.
+        let mut reencoded = Vec::new();
+        decoded.encode(&mut reencoded);
+        assert_eq!(reencoded, bytes);
+    }
+}
+
+#[cfg(test)]
+mod rip_entry_decode_truncated_is_error {
+    use super::*;
+
+    #[test]
+    fn short_slice_returns_structured_error_without_panic() {
+        let short = [0u8; 10];
+
+        let err = RipEntry::decode(&short).expect_err("10 octets is too short");
+
+        match err {
+            CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            } => {
+                assert!(
+                    context.contains("entry"),
+                    "context should mention the entry, got {context:?}"
+                );
+                assert_eq!(required, RIP_ENTRY_LEN);
+                assert_eq!(available, short.len());
+            }
+            other => panic!("expected BufferTooShort, got {other:?}"),
+        }
     }
 }
