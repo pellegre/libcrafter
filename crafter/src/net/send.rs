@@ -523,7 +523,7 @@ fn transmit_link(plan: &SendPlan, options: &SendOptions, link_type: LinkType) ->
         LinkType::Ethernet | LinkType::Radiotap => transmit_layer2(plan, options),
         _ => Err(NetError::UnsupportedSendTarget {
             target: plan.target,
-            reason: "live link-layer send currently supports Ethernet frames only",
+            reason: "live link-layer send supports Ethernet and radiotap Wi-Fi frames only",
         }),
     }
 }
