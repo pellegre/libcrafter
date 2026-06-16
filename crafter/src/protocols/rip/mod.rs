@@ -14,6 +14,7 @@
 //! empty scaffold so the rest of the crate has a stable home to build against.
 
 pub mod constants;
+pub mod entry;
 pub mod registry;
 
 pub use constants::*;
