@@ -19,7 +19,7 @@ use std::net::Ipv6Addr;
 use crate::error::{CrafterError, Result};
 use crate::field::Field;
 
-use super::constants::{RIPNG_NEXT_HOP_METRIC, RIPNG_RTE_LEN};
+use super::constants::{RIPNG_METRIC_INFINITY, RIPNG_NEXT_HOP_METRIC, RIPNG_RTE_LEN};
 
 /// A single 20-octet RIPng route table entry (RFC 2080 §2.1).
 ///
@@ -102,6 +102,36 @@ impl RipngRte {
         } else {
             None
         }
+    }
+
+    /// Build the RIPng whole-table-request sentinel RTE (RFC 2080 §2.4.1).
+    ///
+    /// RFC 2080 §2.4.1 specifies that a request for the peer's complete routing
+    /// table is a Request message carrying exactly one RTE whose prefix is `::`,
+    /// prefix length is `0`, route tag is `0`, and metric is infinity
+    /// ([`RIPNG_METRIC_INFINITY`], 16). This constructor sets the `prefix` to
+    /// `::`, the `route_tag` and `prefix_len` to `0`, and the `metric` to
+    /// `RIPNG_METRIC_INFINITY`, all as caller-set values so the sentinel
+    /// serializes byte-exact.
+    pub fn whole_table_request() -> Self {
+        let mut rte = Self::new();
+        rte.prefix.set_user(Ipv6Addr::UNSPECIFIED);
+        rte.route_tag.set_user(0);
+        rte.prefix_len.set_user(0);
+        rte.metric.set_user(RIPNG_METRIC_INFINITY);
+        rte
+    }
+
+    /// Report whether this RTE is the whole-table-request sentinel
+    /// (RFC 2080 §2.4.1).
+    ///
+    /// True when the prefix is `::`, the prefix length is `0`, and the metric is
+    /// infinity ([`RIPNG_METRIC_INFINITY`], 16). The route tag is not part of the
+    /// sentinel test.
+    pub fn is_whole_table_request(&self) -> bool {
+        self.prefix_value() == Ipv6Addr::UNSPECIFIED
+            && self.prefix_len_value() == 0
+            && self.metric_value() == RIPNG_METRIC_INFINITY
     }
 
     /// Set the IPv6 prefix (caller-set).
