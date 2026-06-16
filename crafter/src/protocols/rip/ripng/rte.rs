@@ -160,7 +160,10 @@ impl RipngRte {
 
     /// Effective IPv6 prefix (caller-set or default).
     pub fn prefix_value(&self) -> Ipv6Addr {
-        self.prefix.value().copied().unwrap_or(Ipv6Addr::UNSPECIFIED)
+        self.prefix
+            .value()
+            .copied()
+            .unwrap_or(Ipv6Addr::UNSPECIFIED)
     }
 
     /// Effective route tag (caller-set or default).

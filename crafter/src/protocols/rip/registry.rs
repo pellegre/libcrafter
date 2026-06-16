@@ -231,7 +231,10 @@ mod tests {
     #[test]
     fn rip_auth_type_roundtrips() {
         // Simple password (RFC 2453 §4.1) round-trips through value 2.
-        assert_eq!(rip_auth_type(RIP_AUTH_TYPE_SIMPLE), RipAuthType::SimplePassword);
+        assert_eq!(
+            rip_auth_type(RIP_AUTH_TYPE_SIMPLE),
+            RipAuthType::SimplePassword
+        );
         assert_eq!(
             rip_auth_type_code(RipAuthType::SimplePassword),
             RIP_AUTH_TYPE_SIMPLE
