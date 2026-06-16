@@ -121,6 +121,61 @@ pub const fn is_rip_auth_marker(afi: u16) -> bool {
     afi == RIP_AFI_AUTH
 }
 
+// ---------------------------------------------------------------------------
+// Authentication Type classification
+// (RFC 2453 §4.1 simple password; RFC 2082 / RFC 4822 §3 keyed message digest)
+// ---------------------------------------------------------------------------
+
+/// RIPv2 authentication-entry Authentication Type, the 2-octet field that
+/// follows the AFI 0xFFFF marker (RFC 2453 §4.1).
+///
+/// Type 2 is simple password authentication (RFC 2453 §4.1); type 3 is keyed
+/// message-digest authentication (RFC 2082, obsoleted by RFC 4822 §3). Type 1
+/// historically marked the entry as carrying an IP route and is kept reserved,
+/// so it (and every other value) is preserved as `Other(value)` rather than
+/// rejected, mirroring the command/address-family registries' preserve-don't-
+/// reject policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RipAuthType {
+    /// Simple password authentication (RFC 2453 §4.1).
+    SimplePassword,
+    /// Keyed message-digest authentication (RFC 2082 / RFC 4822 §3).
+    KeyedMessageDigest,
+    /// Any other Authentication Type, preserved verbatim.
+    Other(u16),
+}
+
+/// Authentication Type 2: simple password (RFC 2453 §4.1).
+pub const RIP_AUTH_TYPE_SIMPLE: u16 = 2;
+/// Authentication Type 3: keyed message digest (RFC 2082 / RFC 4822 §3).
+pub const RIP_AUTH_TYPE_KEYED_DIGEST: u16 = 3;
+
+/// Classify a RIPv2 authentication-entry Authentication Type.
+///
+/// Maps `2 => SimplePassword` (RFC 2453 §4.1),
+/// `3 => KeyedMessageDigest` (RFC 2082 / RFC 4822 §3), and every other value to
+/// `Other(value)` so unknown auth types round-trip instead of being rejected.
+pub const fn rip_auth_type(value: u16) -> RipAuthType {
+    match value {
+        RIP_AUTH_TYPE_SIMPLE => RipAuthType::SimplePassword,
+        RIP_AUTH_TYPE_KEYED_DIGEST => RipAuthType::KeyedMessageDigest,
+        other => RipAuthType::Other(other),
+    }
+}
+
+/// Wire codepoint for a RIPv2 Authentication Type.
+///
+/// Reverse of [`rip_auth_type`]: `SimplePassword => 2` (RFC 2453 §4.1),
+/// `KeyedMessageDigest => 3` (RFC 2082 / RFC 4822 §3), and `Other(value)`
+/// back to its preserved `value`.
+pub const fn rip_auth_type_code(kind: RipAuthType) -> u16 {
+    match kind {
+        RipAuthType::SimplePassword => RIP_AUTH_TYPE_SIMPLE,
+        RipAuthType::KeyedMessageDigest => RIP_AUTH_TYPE_KEYED_DIGEST,
+        RipAuthType::Other(value) => value,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -171,5 +226,32 @@ mod tests {
         assert_eq!(rip_address_family(7), RipAddressFamily::Other(7));
         // The auth-marker predicate recognizes AFI 0xFFFF.
         assert!(is_rip_auth_marker(0xFFFF));
+    }
+
+    #[test]
+    fn rip_auth_type_roundtrips() {
+        // Simple password (RFC 2453 §4.1) round-trips through value 2.
+        assert_eq!(rip_auth_type(RIP_AUTH_TYPE_SIMPLE), RipAuthType::SimplePassword);
+        assert_eq!(
+            rip_auth_type_code(RipAuthType::SimplePassword),
+            RIP_AUTH_TYPE_SIMPLE
+        );
+        assert_eq!(rip_auth_type_code(rip_auth_type(2)), 2);
+
+        // Keyed message digest (RFC 2082 / RFC 4822 §3) round-trips through 3.
+        assert_eq!(
+            rip_auth_type(RIP_AUTH_TYPE_KEYED_DIGEST),
+            RipAuthType::KeyedMessageDigest
+        );
+        assert_eq!(
+            rip_auth_type_code(RipAuthType::KeyedMessageDigest),
+            RIP_AUTH_TYPE_KEYED_DIGEST
+        );
+        assert_eq!(rip_auth_type_code(rip_auth_type(3)), 3);
+
+        // An unknown auth type is preserved as Other and round-trips verbatim.
+        assert_eq!(rip_auth_type(42), RipAuthType::Other(42));
+        assert_eq!(rip_auth_type_code(RipAuthType::Other(42)), 42);
+        assert_eq!(rip_auth_type_code(rip_auth_type(42)), 42);
     }
 }
