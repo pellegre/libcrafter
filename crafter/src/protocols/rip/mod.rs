@@ -23,7 +23,7 @@ pub use constants::*;
 use core::any::Any;
 use core::ops::Div;
 
-use crate::error::Result;
+use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::packet::{IntoPacket, Layer, LayerContext, Packet};
 
@@ -209,6 +209,50 @@ impl Default for Rip {
     }
 }
 
+/// Decode a UDP payload into a [`Rip`] layer (RFC 1058 §3.1, RFC 2453 §4).
+///
+/// A RIP message is the 4-octet header (command, version, 2-octet reserved)
+/// followed by a whole number of 20-octet route table entries. The header
+/// command, version, and reserved fields are marked caller-set (`set_user`) so
+/// the decoded layer re-`compile()`s byte-for-byte, and each entry is parsed
+/// with [`RipEntry::decode`].
+///
+/// Decoding never panics on a short or partial buffer. A body shorter than
+/// [`RIP_HEADER_LEN`] yields the crate's structured
+/// [`CrafterError::buffer_too_short`] with context `"RIP header"`; a trailing
+/// run of bytes that is not a whole multiple of [`RIP_ENTRY_LEN`] yields the
+/// same structured error for the partial entry rather than dropping bytes.
+///
+/// The RFC 2453 §4 25-entry limit is a generation guideline, not a decode-time
+/// rejection: every present entry is decoded.
+pub fn decode(bytes: &[u8]) -> Result<Rip> {
+    if bytes.len() < RIP_HEADER_LEN {
+        return Err(CrafterError::buffer_too_short(
+            "RIP header",
+            RIP_HEADER_LEN,
+            bytes.len(),
+        ));
+    }
+
+    let command = bytes[0];
+    let version = bytes[1];
+    let reserved = u16::from_be_bytes([bytes[2], bytes[3]]);
+
+    let mut rip = Rip::new();
+    rip.command.set_user(command);
+    rip.version.set_user(version);
+    rip.reserved.set_user(reserved);
+
+    let mut rest = &bytes[RIP_HEADER_LEN..];
+    while !rest.is_empty() {
+        let entry = RipEntry::decode(rest)?;
+        rip.entries.push(entry);
+        rest = &rest[RIP_ENTRY_LEN..];
+    }
+
+    Ok(rip)
+}
+
 impl Layer for Rip {
     fn name(&self) -> &'static str {
         "Rip"
@@ -391,5 +435,91 @@ mod rip_layer_summary {
             fields.iter().any(|(key, _)| *key == "entries"),
             "expected an \"entries\" field: {fields:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod rip_decode_roundtrips_response {
+    use super::*;
+    use crate::packet::LayerContext;
+    use std::net::Ipv4Addr;
+
+    fn compile_bytes(rip: &Rip) -> Vec<u8> {
+        let packet = Packet::from_layer(rip.clone());
+        let ctx = LayerContext::new(&packet, 0);
+        let mut out = Vec::new();
+        rip.compile(&ctx, &mut out).expect("rip compiles");
+        out
+    }
+
+    #[test]
+    fn decode_reproduces_header_and_entries_and_recompiles_identically() {
+        // A two-entry Response, compiled to wire bytes.
+        let rip = Rip::response().with_entries(vec![
+            RipEntry::ipv2_route(
+                Ipv4Addr::new(192, 0, 2, 0),
+                Ipv4Addr::new(255, 255, 255, 0),
+                1,
+            ),
+            RipEntry::ipv2_route(
+                Ipv4Addr::new(198, 51, 100, 0),
+                Ipv4Addr::new(255, 255, 255, 0),
+                2,
+            ),
+        ]);
+        let bytes = compile_bytes(&rip);
+
+        // Decode reproduces the header fields and the two entries.
+        let decoded = decode(&bytes).expect("two-entry response decodes");
+        assert_eq!(decoded.command(), rip.command());
+        assert_eq!(decoded.command_value(), rip.command_value());
+        assert_eq!(decoded.version_value(), rip.version_value());
+        assert_eq!(decoded.reserved_value(), rip.reserved_value());
+
+        // Entries round-trip by effective value. (Derived PartialEq on RipEntry
+        // is Field-variant-sensitive: decode marks every field caller-set, while
+        // the built entries leave route_tag/next_hop defaulted, so compare the
+        // effective values rather than the wrapper variants.)
+        assert_eq!(decoded.entries().len(), rip.entries().len());
+        for (got, want) in decoded.entries().iter().zip(rip.entries()) {
+            assert_eq!(got.address_family_value(), want.address_family_value());
+            assert_eq!(got.route_tag_value(), want.route_tag_value());
+            assert_eq!(got.address_value(), want.address_value());
+            assert_eq!(got.subnet_mask_value(), want.subnet_mask_value());
+            assert_eq!(got.next_hop_value(), want.next_hop_value());
+            assert_eq!(got.metric_value(), want.metric_value());
+        }
+
+        // Re-compiling the decoded layer yields byte-identical output.
+        let recompiled = compile_bytes(&decoded);
+        assert_eq!(recompiled, bytes);
+    }
+}
+
+#[cfg(test)]
+mod rip_decode_partial_entry_is_error {
+    use super::*;
+
+    #[test]
+    fn header_plus_partial_entry_returns_structured_error_without_panic() {
+        // 4-octet header followed by 10 octets: a partial (non-multiple-of-20)
+        // trailing entry must surface a structured length error, not a panic.
+        let mut bytes = vec![RIP_COMMAND_RESPONSE, RIP_VERSION_2, 0x00, 0x00];
+        bytes.extend_from_slice(&[0u8; 10]);
+
+        let err = decode(&bytes).expect_err("partial trailing entry is an error");
+
+        match err {
+            CrafterError::BufferTooShort {
+                required,
+                available,
+                ..
+            } => {
+                // The partial entry needs a full 20 octets but only 10 remain.
+                assert_eq!(required, RIP_ENTRY_LEN);
+                assert_eq!(available, 10);
+            }
+            other => panic!("expected BufferTooShort, got {other:?}"),
+        }
     }
 }
