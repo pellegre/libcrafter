@@ -204,6 +204,32 @@ profiles:
       malformed: 0
       pcap: 0
       live: 0
+  # rip-smoke: focused offline RIP/RIPng message smoke coverage over UDP. It is
+  # the RIP analogue of the focused dns / bgp-smoke profiles: it keeps the RIP
+  # (UDP/520, RFC 1058/2453) and RIPng (UDP/521, RFC 2080) stacks eligible
+  # through the IPv4/IPv6 families so a small deterministic run materializes a
+  # representative mix of the rip / ripng layer coverage cases. live, pcap, and
+  # malformed sampling stay disabled; baseline and boundary message shapes use
+  # documentation address space through the l3 IPv4/IPv6 roots.
+  - name: rip-smoke
+    purpose: focused offline RIP and RIPng message smoke coverage over UDP
+    default_count: 10
+    family_weights:
+      - name: ipv4
+        weight: 2
+      - name: ipv6
+        weight: 2
+      - name: udp
+        weight: 1
+    payload_length:
+      min: 0
+      max: 32
+    feature_weights:
+      baseline: 10
+      boundary: 3
+      malformed: 0
+      pcap: 0
+      live: 0
   # ipv4-enrichment: focused offline coverage of the enriched IPv4 header
   # domains declared in layers/ipv4.yaml. The generator narrows stack/case and
   # feature selection to that layer's coverage cases when this profile is active,
