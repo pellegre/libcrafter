@@ -534,6 +534,29 @@ pub struct RadiotapTxFlags {
 }
 
 impl RadiotapTxFlags {
+    /// TX flags bit: transmission used CTS-to-self / RTS-CTS ordering hint.
+    ///
+    /// Bit `0x0001` of the radiotap TX_FLAGS field. mac80211 treats this as the
+    /// "don't reorder" hint, so it doubles as [`Self::ORDER`].
+    pub const ORDER: Self = Self::from_bits(0x0001);
+    /// TX flags bit: do not reorder this frame relative to others.
+    ///
+    /// Bit `0x0002` of the radiotap TX_FLAGS field.
+    pub const NO_REORDER: Self = Self::from_bits(0x0002);
+    /// TX flags bit: do not expect an ACK for this frame.
+    ///
+    /// Bit `0x0008` of the radiotap TX_FLAGS field. Commonly set for injected
+    /// frames so the stack does not wait for an acknowledgement.
+    pub const NO_ACK: Self = Self::from_bits(0x0008);
+    /// TX flags bit: the sequence number is already set; do not overwrite it.
+    ///
+    /// Bit `0x0010` of the radiotap TX_FLAGS field.
+    pub const NO_SEQ: Self = Self::from_bits(0x0010);
+    /// TX flags bit: use the rate carried in the radiotap header verbatim.
+    ///
+    /// Bit `0x0020` of the radiotap TX_FLAGS field.
+    pub const FIXED_RATE: Self = Self::from_bits(0x0020);
+
     /// Build TX flags from the raw field bits.
     pub const fn from_bits(bits: u16) -> Self {
         Self { bits }
@@ -542,6 +565,11 @@ impl RadiotapTxFlags {
     /// Raw TX flags bits.
     pub const fn bits(&self) -> u16 {
         self.bits
+    }
+
+    /// Return true when every bit in `other` is set in this flag set.
+    pub const fn contains(&self, other: Self) -> bool {
+        self.bits & other.bits == other.bits
     }
 }
 
@@ -2046,6 +2074,41 @@ mod tests {
             ]
             .into_iter()
             .collect()
+        );
+    }
+
+    #[test]
+    fn radiotap_tx_flag_constants_match_spec_bits_and_round_trip() {
+        assert_eq!(RadiotapTxFlags::ORDER.bits(), 0x0001);
+        assert_eq!(RadiotapTxFlags::NO_REORDER.bits(), 0x0002);
+        assert_eq!(RadiotapTxFlags::NO_ACK.bits(), 0x0008);
+        assert_eq!(RadiotapTxFlags::NO_SEQ.bits(), 0x0010);
+        assert_eq!(RadiotapTxFlags::FIXED_RATE.bits(), 0x0020);
+
+        let combined =
+            RadiotapTxFlags::from_bits(RadiotapTxFlags::NO_ACK.bits() | RadiotapTxFlags::NO_SEQ.bits());
+        assert!(combined.contains(RadiotapTxFlags::NO_ACK));
+        assert!(combined.contains(RadiotapTxFlags::NO_SEQ));
+        assert!(!combined.contains(RadiotapTxFlags::FIXED_RATE));
+
+        let dot11 = Dot11::data()
+            .addr1(MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x00, 0x01]))
+            .addr2(MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x00, 0x02]))
+            .addr3(MacAddr::new([0x02, 0x00, 0x5e, 0x10, 0x00, 0x03]))
+            .sequence_number(7);
+        let radiotap = Radiotap::new().tx_flags(RadiotapTxFlags::NO_ACK);
+        let bytes = (Packet::from_layer(radiotap) / dot11).compile().unwrap();
+
+        let decoded = Packet::decode_from_link(LinkType::Radiotap, bytes.as_bytes()).unwrap();
+        let radiotap = decoded.layer::<Radiotap>().unwrap();
+
+        assert_eq!(
+            radiotap.tx_flags_value(),
+            Some(RadiotapTxFlags::NO_ACK)
+        );
+        assert_eq!(
+            radiotap.tx_flags_value().map(|flags| flags.bits()),
+            Some(0x0008)
         );
     }
 
