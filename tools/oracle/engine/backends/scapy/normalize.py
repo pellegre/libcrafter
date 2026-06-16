@@ -344,6 +344,7 @@ def normalize_packet(
 
     _canonicalize_icmpv4(packet, normalized_layers, normalized_fields)
     _canonicalize_rip(packet, normalized_layers, normalized_fields)
+    _canonicalize_ripng(packet, normalized_layers, normalized_fields)
     if source_hex is not None:
         _canonicalize_bgp_from_wire(source_hex, normalized_fields)
 
@@ -687,6 +688,75 @@ def _canonicalize_bgp_from_wire(source_hex: str, fields: dict[str, JSONObject]) 
         bgp["safi"] = body[3]
         if len(body) > 4:
             bgp["orf_data"] = {"hex": body[4:].hex()}
+
+
+# RIPng (RFC 2080) over UDP port 521. Scapy has no native RIPng dissector, so a
+# RIPng message rides Scapy as an opaque ``Raw`` payload; the generic layer loop
+# therefore emits ``ipv6 / udp / payload`` instead of the ``ripng`` layer that
+# libcrafter decodes. This canonicalizer reconstructs the neutral ``ripng`` layer
+# (matching the libcrafter ``Ripng``/``RipngRte`` decode field shape) directly
+# from the wire bytes so the offline ``reference_to_libcrafter`` decode compares
+# cleanly, mirroring how ``_canonicalize_bgp_from_wire`` rebuilds BGP from bytes.
+# This is the documented backend-limitation fallback (parser decode from wire +
+# libcrafter round-trip), not a silent skip; the IPv4 RIP path (``_canonicalize_
+# rip``) is untouched because Scapy dissects RIP natively.
+_RIPNG_UDP_PORT = 521
+_RIPNG_RTE_LEN = 20
+_RIPNG_NEXT_HOP_METRIC = 0xFF
+
+
+def _canonicalize_ripng(
+    packet: Any,
+    layers: list[str],
+    fields: dict[str, JSONObject],
+) -> None:
+    udp_layer = _scapy_layer(packet, "UDP")
+    if udp_layer is None:
+        return
+    if (
+        _rip_int(getattr(udp_layer, "dport", 0)) != _RIPNG_UDP_PORT
+        and _rip_int(getattr(udp_layer, "sport", 0)) != _RIPNG_UDP_PORT
+    ):
+        return
+    if not layers or layers[-1] != "payload":
+        return
+
+    raw_layer = _scapy_layer(packet, "Raw")
+    body = _rip_bytes(getattr(raw_layer, "load", b"")) if raw_layer is not None else b""
+    if len(body) < 4:
+        return
+
+    ripng_fields: JSONObject = {
+        "command": body[0],
+        "version": body[1],
+        "reserved": int.from_bytes(body[2:4], "big"),
+    }
+    rtes: list[JSONObject] = []
+    offset = 4
+    while offset + _RIPNG_RTE_LEN <= len(body):
+        rte = body[offset : offset + _RIPNG_RTE_LEN]
+        metric = rte[19]
+        rtes.append(
+            {
+                "prefix": ipaddress.IPv6Address(rte[0:16]).compressed,
+                "route_tag": int.from_bytes(rte[16:18], "big"),
+                "prefix_len": rte[18],
+                "metric": metric,
+                "next_hop": metric == _RIPNG_NEXT_HOP_METRIC,
+            }
+        )
+        offset += _RIPNG_RTE_LEN
+    ripng_fields["rtes"] = rtes
+
+    # Rename the trailing payload layer to ripng so the decoded layer lists match
+    # ([ipv6, udp, ripng]); drop the old payload field entry and attach the
+    # reconstructed ripng fields under the recomputed key.
+    payload_index = len(layers) - 1
+    payload_key = _layer_key_at(layers, payload_index)
+    fields.pop(payload_key, None)
+    layers[payload_index] = "ripng"
+    ripng_key = _layer_key_at(layers, payload_index)
+    fields[ripng_key] = ripng_fields
 
 
 def _bgp_offset(raw: bytes) -> int | None:
