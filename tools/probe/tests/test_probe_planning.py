@@ -208,6 +208,20 @@ class ProbePlanningRegistryTest(unittest.TestCase):
                         "tools/probe/target_services/bgp/provision-peer.sh",
                         name,
                     )
+                elif name == "rip-update-v2":
+                    self.assertEqual(plan["stimulus"], "rip_request", name)
+                    self.assertEqual(plan["destination_port"], 520, name)
+                    self.assertEqual(plan["multicast_group"], "224.0.0.9", name)
+                    self.assertEqual(
+                        plan["target_service"]["kind"],
+                        "frr-ripd",
+                        name,
+                    )
+                    self.assertEqual(
+                        plan["target_service"]["rib_command"],
+                        "vtysh -c 'show ip rip'",
+                        name,
+                    )
                 else:
                     self.assertIn("ipsec_protocol", plan, name)
                     self.assertIn("stimulus_packet_shape", plan, name)

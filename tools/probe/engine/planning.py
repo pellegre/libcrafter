@@ -5595,6 +5595,20 @@ _IPSEC_AH_PROTOCOL = 51
 _IKEV2_UDP_PORT = 500
 
 
+# RIPv2 rides UDP/520 (RFC 2453 sec. 3.9.1) and advertises to the all-RIP-routers
+# multicast group 224.0.0.9 (RFC 2453 sec. 3.5). The unicast target stays in
+# documentation address space; the probe-owned RIP daemon is FRR ``ripd`` (the
+# same FRR/vtysh runtime as the BGP target service), inspected with
+# ``show ip rip``. These are recorded in the dry-run plan so an inspecting agent
+# sees the wire port, multicast group, and RIB command without consulting the
+# crate. No packets are sent: the plan is planned-only.
+_RIP_UDP_PORT = 520
+_RIP_MULTICAST_GROUP = "224.0.0.9"
+_RIP_SERVICE_KIND = "frr-ripd"
+_RIP_RUNTIME = "frr"
+_RIP_RIB_COMMAND = "vtysh -c 'show ip rip'"
+
+
 def _bgp_session_smoke_probe_plan(
     *,
     case_name: str = "bgp-session-smoke",
@@ -5676,6 +5690,98 @@ def _bgp_session_smoke_probe_plan(
                 "BGP smoke dry-run exposes the bgp_session stimulus intent and "
                 "probe-owned FRR target-service setup without opening TCP "
                 "sessions or installing FRR."
+            ),
+        },
+        "digest_hex": digest.hex()[:16],
+    }
+
+
+def _rip_update_probe_plan(
+    *,
+    case_name: str = "rip-update-v2",
+    profile: str,
+    seed: int,
+    sequence: int,
+) -> JSONObject:
+    """Plan a probe-owned RIPv2 update exchange against an FRR ``ripd`` service.
+
+    The probe sends a RIPv2 request on UDP/520 to the documentation-range
+    unicast target running the RIP daemon and expects the daemon's RIPv2
+    response (advertised to the all-RIP-routers multicast group 224.0.0.9 per
+    RFC 2453). The crate-side ``rip_request`` stimulus driver lands with the
+    endpoint runner; until then the dry-run plan is ``planned_only`` -- it
+    records the stimulus driver intent, the FRR ``ripd`` target-service setup,
+    the UDP port, multicast group, and the ``show ip rip`` RIB command, but
+    builds no packet bytes and sends nothing.
+    """
+
+    digest = deterministic_bytes(case_name, profile, seed, sequence)
+    stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
+    source_port = 42000 + int.from_bytes(digest[0:2], "big") % 10000
+    documentation_prefixes = [
+        BGP_DOCUMENTATION_IPV4_PREFIX,
+    ]
+    return {
+        "schema_version": 1,
+        "case": case_name,
+        "sequence": sequence,
+        "index": sequence,
+        "profile": profile,
+        "seed": seed,
+        "stimulus": "rip_request",
+        "expected_response": "rip_peer_update",
+        "planned_only": True,
+        "protocol": "rip",
+        "source_ipv4": stimulus_ipv4,
+        "destination_ipv4": target_ipv4,
+        "multicast_group": _RIP_MULTICAST_GROUP,
+        "expected_reply_source_ipv4": target_ipv4,
+        "expected_reply_destination_ipv4": stimulus_ipv4,
+        "source_port": source_port,
+        "destination_port": _RIP_UDP_PORT,
+        "documentation_prefixes": documentation_prefixes,
+        "stimulus_driver": {
+            "name": "rip_request",
+            "cargo_example": "rip_request",
+            "driver_source": "crafter/examples/rip_request.rs",
+            "state": "planned-only",
+            "planned_only": True,
+        },
+        "target_service": {
+            "required": True,
+            "kind": _RIP_SERVICE_KIND,
+            "protocol": "udp",
+            "port": _RIP_UDP_PORT,
+            "multicast_group": _RIP_MULTICAST_GROUP,
+            "bind_ipv4": target_ipv4,
+            "source_ipv4": stimulus_ipv4,
+            "runtime": _RIP_RUNTIME,
+            "documentation_prefixes": documentation_prefixes,
+            "rib_command": _RIP_RIB_COMMAND,
+            "deterministic": True,
+        },
+        "capture_filter": (
+            f"udp and src host {target_ipv4} "
+            f"and src port {_RIP_UDP_PORT} and dst port {_RIP_UDP_PORT}"
+        ),
+        "validation": {
+            "planned_only": True,
+            "driver": "rip_request",
+            "source_ipv4": target_ipv4,
+            "destination_ipv4": stimulus_ipv4,
+            "source_port": _RIP_UDP_PORT,
+            "destination_port": _RIP_UDP_PORT,
+            "multicast_group": _RIP_MULTICAST_GROUP,
+            "rib_command": _RIP_RIB_COMMAND,
+        },
+        "wire_requirements": {
+            "requires_ipv4_unicast": True,
+            "requires_controlled_service": True,
+            "requires_rip_peer": True,
+            "note": (
+                "RIP smoke dry-run exposes the rip_request stimulus intent and "
+                "probe-owned FRR ripd target-service setup without sending "
+                "UDP/520 datagrams or installing FRR."
             ),
         },
         "digest_hex": digest.hex()[:16],
@@ -5870,6 +5976,7 @@ PLAN_BUILDERS: dict[str, PlanBuilder] = {
     "udp-zero-checksum-ipv4": _udp_zero_checksum_ipv4_probe_plan,
     "udp-options-surplus-echo": _udp_options_surplus_echo_probe_plan,
     "bgp-session-smoke": _bgp_session_smoke_probe_plan,
+    "rip-update-v2": _rip_update_probe_plan,
     "esp-transport-echo": _ipsec_probe_plan,
     "esp-tunnel-echo": _ipsec_probe_plan,
     "ah-transport-verify": _ipsec_probe_plan,
@@ -5890,6 +5997,7 @@ PLANNED_ONLY_REGISTERED_CASES: frozenset[str] = frozenset(
         "ah-transport-verify",
         "ikev2-sa-init",
         "bgp-session-smoke",
+        "rip-update-v2",
     }
 )
 
