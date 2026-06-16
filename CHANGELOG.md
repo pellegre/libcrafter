@@ -37,6 +37,14 @@ workspace, released as one public crate: `crafter`.
   sniffer iteration, callbacks, and background capture handles.
 - Raw send planning, live send backends, send/receive matching, batch
   workflows, interface helpers, address range helpers, and ARP resolution.
+- Monitor-mode radiotap Wi-Fi injection: `Radiotap / Dot11` frames now
+  transmit on a monitor-mode interface through the live send API, with the
+  `Radiotap::monitor_tx` TX-header convenience, named `RadiotapTxFlags`
+  constants (`NO_ACK`, `NO_SEQ`, `FIXED_RATE`, `ORDER`, `NO_REORDER`), and the
+  `RadiotapChannel::channel_2ghz` channel-number helper. Putting the interface
+  into monitor mode (channel and regulatory domain) stays an operator
+  prerequisite, and live transmission keeps the existing `--live`,
+  `--i-understand-isolated-lab`, and `LIBCRAFTER_ENDPOINT=1` gates.
 - Transmit-side IP fragmentation (`IpFragment`) and receive-side IP reassembly
   (`IpDefrag`) as explicit `wire` transforms with configurable limits and
   statistics.
