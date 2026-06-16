@@ -1200,5 +1200,161 @@ class ScapyRipNormalizeRoundTripTest(unittest.TestCase):
         self.assertIn("simple_password", rip["auth"])
 
 
+def _scapy_available() -> bool:
+    """Return True only when Scapy imports cleanly.
+
+    The manual RIPng materializer wraps its hand-built header/RTE octets in a
+    Scapy ``IPv6/UDP/Raw`` stack, so it needs Scapy itself but not a native
+    RIPng layer (Scapy has none). The guard does a plain ``import`` rather than
+    going through ``import_scapy()`` so a missing Scapy skips the test cleanly.
+    """
+
+    try:
+        import scapy  # type: ignore[import-untyped]  # noqa: F401
+    except Exception:  # pragma: no cover - environment dependent
+        return False
+    return True
+
+
+_HAS_SCAPY = _scapy_available()
+
+
+def _ripng_plan(*, command: object, version: int, rtes: list) -> PacketPlan:
+    return PacketPlan(
+        stack=["ipv6", "udp", "ripng"],
+        fields={
+            "ipv6": {
+                "src": "2001:db8::1",
+                "dst": "ff02::9",
+                "hop_limit": 255,
+                "next_header": "udp",
+            },
+            "udp": {"src_port": 521, "dst_port": 521},
+            "ripng": {"command": command, "version": version, "rtes": rtes},
+        },
+        profile="smoke",
+        seed=55,
+        index=0,
+        direction="reference_to_libcrafter",
+        family="ipv6",
+        feature_tags=["baseline", "ipv6", "udp", "ripng"],
+        case="ripng-unit",
+        strict_bytes=True,
+        metadata={
+            "root": "l3:ipv6",
+            "root_decoder": "l3:ipv6",
+            "stack_name": "ipv6_udp_ripng",
+        },
+    )
+
+
+# RIPng rides on IPv6 (40 octets) + UDP (8 octets); the RIPng message begins at
+# offset 48 and its first octet is the command.
+_RIPNG_MESSAGE_OFFSET = 48
+
+
+class RipngRteByteEncodingTest(unittest.TestCase):
+    """The manual RIPng RTE encoder emits the RFC 2080 §2.1 20-octet layout.
+
+    These checks build raw octets and do not import Scapy, so they run even
+    when the backend dependency is absent.
+    """
+
+    def test_ripng_layer_maps_to_raw(self) -> None:
+        self.assertEqual(packets._SCAPY_LAYER_BY_LAYER["ripng"], "Raw")
+        self.assertEqual(packets._scapy_layer_name("ripng"), "Raw")
+
+    def test_ripng_supported_fields_cover_header_and_rtes(self) -> None:
+        supported = packets._SUPPORTED_FIELDS_BY_LAYER["ripng"]
+        self.assertIn("command", supported)
+        self.assertIn("version", supported)
+        self.assertIn("rtes", supported)
+
+    def test_route_rte_encodes_prefix_tag_prefix_len_and_metric(self) -> None:
+        raw = packets._ripng_rte_bytes(
+            {
+                "prefix": "2001:db8::",
+                "route_tag": 7,
+                "prefix_len": 64,
+                "metric": 1,
+            }
+        )
+        self.assertEqual(len(raw), 20)
+        # 16-octet prefix.
+        self.assertEqual(raw[:16], bytes.fromhex("20010db8000000000000000000000000"))
+        # 2-octet route tag, 1-octet prefix length, 1-octet metric.
+        self.assertEqual(raw[16:18], b"\x00\x07")
+        self.assertEqual(raw[18], 64)
+        self.assertEqual(raw[19], 1)
+
+    def test_next_hop_rte_defaults_metric_to_0xff(self) -> None:
+        raw = packets._ripng_rte_bytes({"prefix": "2001:db8::99", "next_hop": True})
+        self.assertEqual(len(raw), 20)
+        # A next-hop RTE carries metric 0xFF with route tag and prefix length 0.
+        self.assertEqual(raw[16:18], b"\x00\x00")
+        self.assertEqual(raw[18], 0)
+        self.assertEqual(raw[19], 0xFF)
+
+
+@unittest.skipUnless(_HAS_SCAPY, "scapy is not available")
+class ScapyRipngMaterializationTest(unittest.TestCase):
+    """A RIPng plan materializes to manually-built header + RTE bytes.
+
+    Scapy has no native RIPng dissector, so the RIPng header (command, version,
+    reserved) and 20-octet RTEs are encoded directly and wrapped in a Scapy
+    ``Raw`` layer carried on IPv6/UDP-521.
+    """
+
+    def test_response_first_octets_match_command_and_version(self) -> None:
+        plan = _ripng_plan(
+            command="response",
+            version=1,
+            rtes=[
+                {
+                    "prefix": "2001:db8::",
+                    "route_tag": 0,
+                    "prefix_len": 64,
+                    "metric": 1,
+                }
+            ],
+        )
+        vector = packets.encode_packet_plan(plan)
+        raw = vector.to_bytes()
+        self.assertEqual(vector.metadata["scapy_stack"][-1], "Raw")
+        # First octet of the RIPng message is the command (response == 2).
+        self.assertEqual(raw[_RIPNG_MESSAGE_OFFSET], 2)
+        # version octet follows the command (RIPng version 1).
+        self.assertEqual(raw[_RIPNG_MESSAGE_OFFSET + 1], 1)
+        # Header (4) + one route RTE (20) octets.
+        self.assertEqual(len(raw) - _RIPNG_MESSAGE_OFFSET, 24)
+
+    def test_numeric_command_first_octet_matches(self) -> None:
+        plan = _ripng_plan(
+            command=1,
+            version=1,
+            rtes=[{"prefix": "2001:db8::1", "prefix_len": 128, "metric": 16}],
+        )
+        raw = packets.encode_packet_plan(plan).to_bytes()
+        # First octet of the RIPng message is the command (request == 1).
+        self.assertEqual(raw[_RIPNG_MESSAGE_OFFSET], 1)
+        self.assertEqual(raw[_RIPNG_MESSAGE_OFFSET + 1], 1)
+
+    def test_next_hop_rte_metric_octet_is_0xff(self) -> None:
+        plan = _ripng_plan(
+            command="response",
+            version=1,
+            rtes=[
+                {"prefix": "2001:db8::99", "next_hop": True},
+                {"prefix": "2001:db8::", "prefix_len": 64, "metric": 1},
+            ],
+        )
+        raw = packets.encode_packet_plan(plan).to_bytes()
+        # Header (4) + next-hop RTE (20) + route RTE (20) octets.
+        self.assertEqual(len(raw) - _RIPNG_MESSAGE_OFFSET, 44)
+        # The next-hop RTE's metric octet (last octet of the first RTE) is 0xFF.
+        next_hop_metric_index = _RIPNG_MESSAGE_OFFSET + 4 + 19
+        self.assertEqual(raw[next_hop_metric_index], 0xFF)
+
+
 if __name__ == "__main__":
     unittest.main()
