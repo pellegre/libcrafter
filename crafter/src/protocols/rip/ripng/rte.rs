@@ -16,6 +16,7 @@
 
 use std::net::Ipv6Addr;
 
+use crate::error::{CrafterError, Result};
 use crate::field::Field;
 
 use super::constants::RIPNG_RTE_LEN;
@@ -125,6 +126,42 @@ impl RipngRte {
     /// Encoded length of a RIPng RTE, in octets. Always [`RIPNG_RTE_LEN`].
     pub const fn encoded_len(&self) -> usize {
         RIPNG_RTE_LEN
+    }
+
+    /// Parse a 20-octet RIPng RTE from the front of `bytes` (RFC 2080 §2.1).
+    ///
+    /// Reads the four fields in RFC 2080 §2.1 order (big-endian): IPv6 prefix
+    /// (16 octets), Route Tag (u16), Prefix Length (u8), Metric (u8). Every
+    /// field is marked caller-set via `set_user`, so a decoded RTE re-`encode`s
+    /// byte-for-byte.
+    ///
+    /// A buffer shorter than [`RIPNG_RTE_LEN`] yields the crate's structured
+    /// [`CrafterError::buffer_too_short`] (context `"RIPng route table entry"`,
+    /// `required = RIPNG_RTE_LEN`, `available = bytes.len()`) rather than
+    /// panicking.
+    #[allow(dead_code)]
+    pub(crate) fn decode(bytes: &[u8]) -> Result<RipngRte> {
+        if bytes.len() < RIPNG_RTE_LEN {
+            return Err(CrafterError::buffer_too_short(
+                "RIPng route table entry",
+                RIPNG_RTE_LEN,
+                bytes.len(),
+            ));
+        }
+
+        let mut prefix_octets = [0u8; 16];
+        prefix_octets.copy_from_slice(&bytes[0..16]);
+        let prefix = Ipv6Addr::from(prefix_octets);
+        let route_tag = u16::from_be_bytes([bytes[16], bytes[17]]);
+        let prefix_len = bytes[18];
+        let metric = bytes[19];
+
+        let mut rte = RipngRte::new();
+        rte.prefix.set_user(prefix);
+        rte.route_tag.set_user(route_tag);
+        rte.prefix_len.set_user(prefix_len);
+        rte.metric.set_user(metric);
+        Ok(rte)
     }
 }
 
@@ -238,5 +275,61 @@ mod ripng_rte_preserves_user_values {
         // Prefix length occupies octet 18 of the 20-octet RTE (RFC 2080 §2.1).
         assert_eq!(out[18], 0xC8);
         assert_eq!(out.len(), RIPNG_RTE_LEN);
+    }
+}
+
+#[cfg(test)]
+mod ripng_rte_decode_roundtrip {
+    use super::*;
+
+    #[test]
+    fn decode_reproduces_fields_and_reencodes_identically() {
+        let prefix = "2001:db8::".parse::<Ipv6Addr>().expect("valid prefix");
+
+        let rte = RipngRte::route(prefix, 32, 3).route_tag(0x1234);
+
+        let mut bytes = Vec::new();
+        rte.encode(&mut bytes);
+
+        let decoded = RipngRte::decode(&bytes).expect("20 octets decode");
+
+        assert_eq!(decoded.prefix_value(), rte.prefix_value());
+        assert_eq!(decoded.route_tag_value(), rte.route_tag_value());
+        assert_eq!(decoded.prefix_len_value(), rte.prefix_len_value());
+        assert_eq!(decoded.metric_value(), rte.metric_value());
+
+        // Every decoded field is marked caller-set, so re-encoding is exact.
+        let mut reencoded = Vec::new();
+        decoded.encode(&mut reencoded);
+        assert_eq!(reencoded, bytes);
+    }
+}
+
+#[cfg(test)]
+mod ripng_rte_decode_truncated_is_error {
+    use super::*;
+
+    #[test]
+    fn short_slice_returns_structured_error_without_panic() {
+        // 12 octets is fewer than the fixed 20-octet RTE (RFC 2080 §2.1).
+        let short = [0u8; 12];
+
+        let err = RipngRte::decode(&short).expect_err("12 octets is too short");
+
+        match err {
+            CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            } => {
+                assert!(
+                    context.contains("RIPng"),
+                    "context should mention the RIPng RTE, got {context:?}"
+                );
+                assert_eq!(required, RIPNG_RTE_LEN);
+                assert_eq!(available, short.len());
+            }
+            other => panic!("expected BufferTooShort, got {other:?}"),
+        }
     }
 }
