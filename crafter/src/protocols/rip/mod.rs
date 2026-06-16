@@ -13,6 +13,7 @@
 //! Types and constants are populated in later steps; this module starts as an
 //! empty scaffold so the rest of the crate has a stable home to build against.
 
+pub mod auth;
 pub mod constants;
 pub mod entry;
 pub mod message;
