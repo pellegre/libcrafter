@@ -18,7 +18,7 @@ pub use rte::RipngRte;
 use core::any::Any;
 use core::ops::Div;
 
-use crate::error::Result;
+use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::packet::{IntoPacket, Layer, LayerContext, Packet};
 use crate::protocols::rip::message::RipCommand;
@@ -262,6 +262,185 @@ impl Layer for Ripng {
 }
 
 impl_layer_div!(Ripng);
+
+/// Decode a UDP payload into a [`Ripng`] layer (RFC 2080 §2).
+///
+/// A RIPng message is the 4-octet header (command, version, 2-octet reserved)
+/// followed by a whole number of 20-octet route table entries. The header
+/// command, version, and reserved fields are marked caller-set (`set_user`) so
+/// the decoded layer re-`compile()`s byte-for-byte, and each RTE is parsed with
+/// [`RipngRte::decode`].
+///
+/// Decoding never panics on a short or partial buffer. A body shorter than
+/// [`RIPNG_HEADER_LEN`] yields the crate's structured
+/// [`CrafterError::buffer_too_short`] with context `"RIPng header"`; a trailing
+/// run of bytes that is not a whole multiple of [`RIPNG_RTE_LEN`] yields the
+/// same structured error for the partial RTE rather than dropping bytes.
+///
+/// The RFC 2080 §2.1 25-RTE limit is a generation guideline, not a decode-time
+/// rejection: every present RTE is decoded.
+pub fn decode(bytes: &[u8]) -> Result<Ripng> {
+    if bytes.len() < RIPNG_HEADER_LEN {
+        return Err(CrafterError::buffer_too_short(
+            "RIPng header",
+            RIPNG_HEADER_LEN,
+            bytes.len(),
+        ));
+    }
+
+    let command = bytes[0];
+    let version = bytes[1];
+    let reserved = u16::from_be_bytes([bytes[2], bytes[3]]);
+
+    let mut ripng = Ripng::new();
+    ripng.command.set_user(command);
+    ripng.version.set_user(version);
+    ripng.reserved.set_user(reserved);
+
+    let mut rest = &bytes[RIPNG_HEADER_LEN..];
+    while !rest.is_empty() {
+        let rte = RipngRte::decode(rest)?;
+        ripng.rtes.push(rte);
+        rest = &rest[RIPNG_RTE_LEN..];
+    }
+
+    Ok(ripng)
+}
+
+#[cfg(test)]
+mod ripng_decode_roundtrips_response {
+    use super::*;
+    use crate::packet::LayerContext;
+    use std::net::Ipv6Addr;
+
+    #[test]
+    fn ripng_decode_roundtrips_response() {
+        // A two-RTE Response message.
+        let first = RipngRte::route(
+            "2001:db8::".parse::<Ipv6Addr>().expect("valid prefix"),
+            64,
+            1,
+        );
+        let second = RipngRte::route(
+            "2001:db8:1::".parse::<Ipv6Addr>().expect("valid prefix"),
+            48,
+            3,
+        )
+        .route_tag(0x1234);
+        let ripng = Ripng::response().with_rtes(vec![first.clone(), second.clone()]);
+
+        // Compile the layer to its wire bytes via a single-layer packet context.
+        let packet = Packet::from_layer(ripng.clone());
+        let ctx = LayerContext::new(&packet, 0);
+        let mut bytes = Vec::new();
+        ripng.compile(&ctx, &mut bytes).expect("ripng compiles");
+
+        // Decode reproduces equal command, version, and RTE field values.
+        let decoded = decode(&bytes).expect("two-RTE response decodes");
+        assert_eq!(decoded.command(), RipCommand::Response);
+        assert_eq!(decoded.command_value(), ripng.command_value());
+        assert_eq!(decoded.version_value(), ripng.version_value());
+        assert_eq!(decoded.rtes().len(), 2);
+
+        // Compare RTEs via their effective values (derived PartialEq on Field is
+        // user-vs-default sensitive; decode marks all fields caller-set).
+        for (got, want) in decoded.rtes().iter().zip([&first, &second]) {
+            assert_eq!(got.prefix_value(), want.prefix_value());
+            assert_eq!(got.route_tag_value(), want.route_tag_value());
+            assert_eq!(got.prefix_len_value(), want.prefix_len_value());
+            assert_eq!(got.metric_value(), want.metric_value());
+        }
+
+        // The decoded layer re-compiles to byte-identical wire form.
+        let repacket = Packet::from_layer(decoded.clone());
+        let rectx = LayerContext::new(&repacket, 0);
+        let mut recompiled = Vec::new();
+        decoded
+            .compile(&rectx, &mut recompiled)
+            .expect("decoded ripng recompiles");
+        assert_eq!(recompiled, bytes);
+    }
+
+    #[test]
+    fn short_header_returns_structured_error_without_panic() {
+        // 3 octets is fewer than the fixed 4-octet header (RFC 2080 §2).
+        let short = [0u8; 3];
+        let err = decode(&short).expect_err("3 octets is too short");
+        match err {
+            CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            } => {
+                assert!(
+                    context.contains("RIPng"),
+                    "context should mention RIPng, got {context:?}"
+                );
+                assert_eq!(required, RIPNG_HEADER_LEN);
+                assert_eq!(available, short.len());
+            }
+            other => panic!("expected BufferTooShort, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn partial_trailing_rte_returns_structured_error() {
+        // Valid 4-octet header plus 12 octets: not a whole multiple of 20.
+        let mut bytes = vec![0x02, 0x01, 0x00, 0x00];
+        bytes.extend_from_slice(&[0u8; 12]);
+        let err = decode(&bytes).expect_err("partial RTE is too short");
+        match err {
+            CrafterError::BufferTooShort {
+                required,
+                available,
+                ..
+            } => {
+                assert_eq!(required, RIPNG_RTE_LEN);
+                assert_eq!(available, 12);
+            }
+            other => panic!("expected BufferTooShort, got {other:?}"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod ripng_summary_mentions_command_and_count {
+    use super::*;
+    use std::net::Ipv6Addr;
+
+    #[test]
+    fn ripng_summary_mentions_command_and_count() {
+        // A Response message carrying three RTEs.
+        let rtes = vec![
+            RipngRte::route("2001:db8::".parse::<Ipv6Addr>().expect("valid prefix"), 64, 1),
+            RipngRte::route(
+                "2001:db8:1::".parse::<Ipv6Addr>().expect("valid prefix"),
+                48,
+                2,
+            ),
+            RipngRte::route(
+                "2001:db8:2::".parse::<Ipv6Addr>().expect("valid prefix"),
+                56,
+                3,
+            ),
+        ];
+        let summary = Ripng::response().with_rtes(rtes).summary();
+
+        // The one-line summary names the command, the version, and the RTE count.
+        assert!(
+            summary.contains("Response"),
+            "summary should name the command, got {summary:?}"
+        );
+        assert!(
+            summary.contains("v1"),
+            "summary should name the version, got {summary:?}"
+        );
+        assert!(
+            summary.contains('3'),
+            "summary should report the RTE count, got {summary:?}"
+        );
+    }
+}
 
 #[cfg(test)]
 mod ripng_layer_builder {
