@@ -307,6 +307,34 @@ pub fn decode(bytes: &[u8]) -> Result<Ripng> {
     Ok(ripng)
 }
 
+/// Append a decoded RIPng message to an existing packet stack.
+///
+/// Mirrors the RIP UDP-application decode entry: [`decode`] parses the UDP
+/// payload into a [`Ripng`] layer, which is then pushed onto the packet. Used by
+/// the protocol registry's conservative UDP/521 binding.
+pub(crate) fn append_ripng_packet(packet: Packet, bytes: &[u8]) -> Result<Packet> {
+    Ok(packet.push(decode(bytes)?))
+}
+
+/// Return true when bytes have enough RIPng structure to bind on UDP/521.
+///
+/// The check is deliberately conservative so unrelated traffic on port 521
+/// falls through to `Raw` rather than misdecoding as `Ripng`: the payload must
+/// be at least the 4-octet header ([`RIPNG_HEADER_LEN`]), the command must be a
+/// known RIPng command (Request/Response 1/2), the version must be 1, and the
+/// bytes after the header must be a whole multiple of the 20-octet RTE length
+/// ([`RIPNG_RTE_LEN`]).
+pub(crate) fn looks_like_ripng_payload(bytes: &[u8]) -> bool {
+    if bytes.len() < RIPNG_HEADER_LEN {
+        return false;
+    }
+    let command = bytes[0];
+    let version = bytes[1];
+    matches!(command, RIPNG_COMMAND_REQUEST | RIPNG_COMMAND_RESPONSE)
+        && version == RIPNG_VERSION_1
+        && (bytes.len() - RIPNG_HEADER_LEN) % RIPNG_RTE_LEN == 0
+}
+
 #[cfg(test)]
 mod ripng_decode_roundtrips_response {
     use super::*;
@@ -533,5 +561,70 @@ mod ripng_layer_div {
             / Udp::new().sport(RIPNG_UDP_PORT).dport(RIPNG_UDP_PORT)
             / ripng;
         assert!(packet.layer::<Ripng>().is_some());
+    }
+}
+
+#[cfg(test)]
+mod ripng_udp_binding {
+    use super::*;
+    use crate::packet::{NetworkLayer, Raw};
+    use crate::protocols::ip::v6::Ipv6;
+    use crate::protocols::transport::Udp;
+    use std::net::Ipv6Addr;
+
+    #[test]
+    fn ripng_decodes_from_udp_521() {
+        // An IPv6/UDP(521)/Ripng Response with one route table entry.
+        let prefix = "2001:db8::".parse::<Ipv6Addr>().expect("valid prefix");
+        let ripng = Ripng::response().rte(RipngRte::route(prefix, 64, 1));
+        let packet = Ipv6::new()
+            .src("2001:db8::1".parse::<Ipv6Addr>().expect("valid source"))
+            .dst(RIPNG_MULTICAST)
+            / Udp::new().sport(RIPNG_UDP_PORT).dport(RIPNG_UDP_PORT)
+            / ripng;
+
+        let compiled = packet.compile().expect("ripng stack compiles");
+
+        // The conservative UDP/521 binding routes the payload to the Ripng decoder.
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, compiled.as_bytes())
+            .expect("ipv6/udp/ripng decodes");
+
+        let decoded_ripng = decoded
+            .layer::<Ripng>()
+            .expect("decoded packet includes a Ripng layer");
+        assert_eq!(decoded_ripng.command(), RipCommand::Response);
+        assert_eq!(decoded_ripng.rtes().len(), 1);
+        assert!(decoded.layer::<Raw>().is_none());
+    }
+
+    #[test]
+    fn ripng_non_ripng_udp_521_stays_raw() {
+        // A UDP/521 datagram whose payload fails looks_like_ripng_payload: an
+        // unknown command (0xFF) with a non-multiple-of-20 trailing length, so it
+        // must fall through to Raw rather than decode as Ripng.
+        let payload = vec![0xFFu8, 0xFF, 0x00, 0x00, 0x01, 0x02, 0x03];
+        assert!(
+            !looks_like_ripng_payload(&payload),
+            "fixture payload must not look like RIPng"
+        );
+
+        let packet = Ipv6::new()
+            .src("2001:db8::1".parse::<Ipv6Addr>().expect("valid source"))
+            .dst("2001:db8::2".parse::<Ipv6Addr>().expect("valid dest"))
+            / Udp::new().sport(RIPNG_UDP_PORT).dport(RIPNG_UDP_PORT)
+            / Raw::from_bytes(&payload);
+
+        let compiled = packet.compile().expect("udp/raw stack compiles");
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, compiled.as_bytes())
+            .expect("ipv6/udp/raw decodes");
+
+        assert!(
+            decoded.layer::<Ripng>().is_none(),
+            "non-RIPng port-521 payload must not decode as Ripng"
+        );
+        assert!(
+            decoded.layer::<Raw>().is_some(),
+            "non-RIPng port-521 payload must remain Raw"
+        );
     }
 }
