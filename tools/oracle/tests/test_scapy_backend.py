@@ -962,5 +962,160 @@ class ScapyIpsecMaterializationTest(unittest.TestCase):
         self.assertTrue(vector.metadata["ipsec_sa_materialization"]["nat_traversal"])
 
 
+def _scapy_rip_available() -> bool:
+    """Return True only when Scapy and its native RIP layer import cleanly.
+
+    The guard does a plain ``import`` rather than going through
+    ``import_scapy()`` so a missing Scapy skips the test cleanly instead of
+    triggering the backend's bootstrap/re-exec path.
+    """
+
+    try:
+        import scapy  # type: ignore[import-untyped]  # noqa: F401
+        from scapy.layers.rip import (  # type: ignore[import-untyped]  # noqa: F401
+            RIP,
+            RIPAuth,
+            RIPEntry,
+        )
+    except Exception:  # pragma: no cover - environment dependent
+        return False
+    return True
+
+
+_HAS_SCAPY_RIP = _scapy_rip_available()
+
+
+class ScapyRipLayerMappingTest(unittest.TestCase):
+    """The rip layer maps to Scapy's native RIP and declares its plan fields.
+
+    These checks do not import Scapy, so they run even when the backend
+    dependency is absent.
+    """
+
+    def test_rip_layer_maps_to_native_rip(self) -> None:
+        self.assertEqual(packets._SCAPY_LAYER_BY_LAYER["rip"], "RIP")
+        self.assertEqual(packets._scapy_layer_name("rip"), "RIP")
+
+    def test_rip_supported_fields_cover_header_and_entries(self) -> None:
+        supported = packets._SUPPORTED_FIELDS_BY_LAYER["rip"]
+        self.assertIn("command", supported)
+        self.assertIn("version", supported)
+        self.assertIn("entries", supported)
+        self.assertIn("auth", supported)
+
+    def test_rip_command_resolves_named_and_numeric_commands(self) -> None:
+        self.assertEqual(packets._rip_command("request"), 1)
+        self.assertEqual(packets._rip_command("response"), 2)
+        self.assertEqual(packets._rip_command(2), 2)
+        self.assertEqual(packets._rip_command("0x02"), 2)
+
+
+def _rip_plan(*, command: object, version: int, entries: list, auth=None) -> PacketPlan:
+    rip_fields: dict = {"command": command, "version": version, "entries": entries}
+    if auth is not None:
+        rip_fields["auth"] = auth
+    return PacketPlan(
+        stack=["ipv4", "udp", "rip"],
+        fields={
+            "ipv4": {
+                "src": "192.0.2.1",
+                "dst": "224.0.0.9",
+                "ttl": 1,
+                "flags": "none",
+                "identification": 1,
+                "protocol": "udp",
+            },
+            "udp": {"src_port": 520, "dst_port": 520},
+            "rip": rip_fields,
+        },
+        profile="smoke",
+        seed=53,
+        index=0,
+        direction="reference_to_libcrafter",
+        family="ipv4",
+        feature_tags=["baseline", "ipv4", "udp", "rip"],
+        case="rip-unit",
+        strict_bytes=True,
+        metadata={
+            "root": "l3:ipv4",
+            "root_decoder": "l3:ipv4",
+            "stack_name": "ipv4_udp_rip",
+        },
+    )
+
+
+# RIP rides on IPv4 (20 octets) + UDP (8 octets); the RIP message begins at
+# offset 28 and its first octet is the command.
+_RIP_MESSAGE_OFFSET = 28
+
+
+@unittest.skipUnless(_HAS_SCAPY_RIP, "scapy RIP layer is not available")
+class ScapyRipMaterializationTest(unittest.TestCase):
+    """A RIP plan materializes to Scapy RIP/RIPEntry/RIPAuth bytes."""
+
+    def test_v1_request_first_octet_is_command(self) -> None:
+        plan = _rip_plan(
+            command="request",
+            version=1,
+            entries=[{"address_family": 0, "address": "0.0.0.0", "metric": 16}],
+        )
+        vector = packets.encode_packet_plan(plan)
+        raw = vector.to_bytes()
+        self.assertEqual(vector.metadata["scapy_stack"][-1], "RIP")
+        # First octet of the RIP message is the command (request == 1).
+        self.assertEqual(raw[_RIP_MESSAGE_OFFSET], 1)
+        # version octet follows the command.
+        self.assertEqual(raw[_RIP_MESSAGE_OFFSET + 1], 1)
+
+    def test_v2_response_route_entry_first_octet_is_command(self) -> None:
+        plan = _rip_plan(
+            command="response",
+            version=2,
+            entries=[
+                {
+                    "address_family": 2,
+                    "route_tag": 7,
+                    "address": "198.51.100.0",
+                    "subnet_mask": "255.255.255.0",
+                    "next_hop": "192.0.2.2",
+                    "metric": 1,
+                }
+            ],
+        )
+        vector = packets.encode_packet_plan(plan)
+        raw = vector.to_bytes()
+        # First octet of the RIP message is the command (response == 2).
+        self.assertEqual(raw[_RIP_MESSAGE_OFFSET], 2)
+        self.assertEqual(raw[_RIP_MESSAGE_OFFSET + 1], 2)
+        # A RIPv2 message with one route entry is 4 header + 20 entry octets.
+        self.assertEqual(len(raw) - _RIP_MESSAGE_OFFSET, 24)
+
+    def test_numeric_command_first_octet_matches(self) -> None:
+        plan = _rip_plan(
+            command=2,
+            version=2,
+            entries=[{"address_family": 2, "address": "198.51.100.1", "metric": 1}],
+        )
+        raw = packets.encode_packet_plan(plan).to_bytes()
+        self.assertEqual(raw[_RIP_MESSAGE_OFFSET], 2)
+
+    def test_simple_password_auth_entry_materializes(self) -> None:
+        plan = _rip_plan(
+            command="response",
+            version=2,
+            entries=[{"address_family": 2, "address": "198.51.100.1", "metric": 1}],
+            auth={"type": 2, "simple_password": "rip-doc-secret"},
+        )
+        raw = packets.encode_packet_plan(plan).to_bytes()
+        # Command octet is unchanged by the leading auth entry.
+        self.assertEqual(raw[_RIP_MESSAGE_OFFSET], 2)
+        # Header (4) + AFI 0xFFFF auth entry (20) + route entry (20).
+        self.assertEqual(len(raw) - _RIP_MESSAGE_OFFSET, 44)
+        # The auth entry's address-family identifier is 0xFFFF.
+        self.assertEqual(
+            raw[_RIP_MESSAGE_OFFSET + 4 : _RIP_MESSAGE_OFFSET + 6], b"\xff\xff"
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
