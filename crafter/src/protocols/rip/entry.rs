@@ -155,6 +155,32 @@ impl RipEntry {
         self
     }
 
+    /// Set the next hop (caller-set), fluent v2 alias of [`next_hop`].
+    ///
+    /// The Next Hop (RFC 2453 §4.4) is the 4-octet immediate next-hop IP
+    /// address to which packets for the entry should be forwarded. A value of
+    /// `0.0.0.0` is the default and means "use the originator of this
+    /// advertisement" as the next hop. It occupies the four octets after the
+    /// subnet mask that are reserved/zero in RIPv1. This is an explicit,
+    /// discoverable alias of [`next_hop`] for fluent RIPv2 entry construction.
+    ///
+    /// [`next_hop`]: RipEntry::next_hop
+    pub fn with_next_hop(mut self, next_hop: Ipv4Addr) -> RipEntry {
+        self.next_hop.set_user(next_hop);
+        self
+    }
+
+    /// Whether this entry's next hop is the RFC 2453 §4.4 default (`0.0.0.0`).
+    ///
+    /// Returns `true` when [`next_hop_value`] equals [`Ipv4Addr::UNSPECIFIED`]
+    /// (`0.0.0.0`), which RFC 2453 §4.4 defines as meaning the originator of the
+    /// advertisement is the next hop.
+    ///
+    /// [`next_hop_value`]: RipEntry::next_hop_value
+    pub fn next_hop_is_default(&self) -> bool {
+        self.next_hop_value() == Ipv4Addr::UNSPECIFIED
+    }
+
     /// Set the metric (caller-set).
     pub fn metric(mut self, value: u32) -> Self {
         self.metric.set_user(value);
@@ -671,5 +697,53 @@ mod rip_entry_noncontiguous_mask_preserved {
 
         // Subnet mask occupies bytes 8..12 of the 20-octet entry (RFC 2453 §4).
         assert_eq!(&bytes[8..12], &[255, 0, 255, 0]);
+    }
+}
+
+#[cfg(test)]
+mod rip_entry_next_hop_roundtrips {
+    use super::*;
+
+    #[test]
+    fn next_hop_octets_round_trip_through_encode_decode() {
+        // RFC 2453 §4.4: the 4-octet next hop carries the immediate next-hop IP.
+        let next_hop = Ipv4Addr::new(192, 0, 2, 254);
+        let entry = RipEntry::ipv2_route(
+            Ipv4Addr::new(192, 0, 2, 0),
+            Ipv4Addr::new(255, 255, 255, 0),
+            3,
+        )
+        .with_next_hop(next_hop);
+
+        assert_eq!(entry.next_hop_value(), next_hop);
+        assert!(!entry.next_hop_is_default());
+
+        let mut bytes = Vec::new();
+        entry.encode(&mut bytes);
+
+        // Next hop occupies bytes 12..16 of the 20-octet entry (RFC 2453 §4).
+        assert_eq!(&bytes[12..16], &[192, 0, 2, 254]);
+
+        let decoded = RipEntry::decode(&bytes).expect("20 octets decode");
+        assert_eq!(decoded.next_hop_value(), next_hop);
+        assert!(!decoded.next_hop_is_default());
+    }
+}
+
+#[cfg(test)]
+mod rip_entry_next_hop_default {
+    use super::*;
+
+    #[test]
+    fn fresh_ipv2_route_reports_default_next_hop() {
+        // RFC 2453 §4.4: a next hop of 0.0.0.0 is the default (route originator).
+        let entry = RipEntry::ipv2_route(
+            Ipv4Addr::new(192, 0, 2, 0),
+            Ipv4Addr::new(255, 255, 255, 0),
+            3,
+        );
+
+        assert_eq!(entry.next_hop_value(), Ipv4Addr::UNSPECIFIED);
+        assert!(entry.next_hop_is_default());
     }
 }
