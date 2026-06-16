@@ -456,6 +456,37 @@ impl RadiotapFcsStatus {
     }
 }
 
+/// Channel flags bit: turbo channel.
+///
+/// Bit `0x0010` of the radiotap Channel `flags` field.
+pub const RADIOTAP_CHANNEL_TURBO: u16 = 0x0010;
+/// Channel flags bit: CCK (complementary code keying) modulation.
+///
+/// Bit `0x0020` of the radiotap Channel `flags` field. The classic 802.11b/g
+/// 2.4 GHz modulation used for injected beacon frames.
+pub const RADIOTAP_CHANNEL_CCK: u16 = 0x0020;
+/// Channel flags bit: OFDM (orthogonal frequency-division multiplexing) modulation.
+///
+/// Bit `0x0040` of the radiotap Channel `flags` field.
+pub const RADIOTAP_CHANNEL_OFDM: u16 = 0x0040;
+/// Channel flags bit: 2 GHz spectrum (802.11b/g).
+///
+/// Bit `0x0080` of the radiotap Channel `flags` field.
+pub const RADIOTAP_CHANNEL_2GHZ: u16 = 0x0080;
+/// Channel flags bit: 5 GHz spectrum (802.11a).
+///
+/// Bit `0x0100` of the radiotap Channel `flags` field.
+pub const RADIOTAP_CHANNEL_5GHZ: u16 = 0x0100;
+/// Channel flags for a 2.4 GHz CCK channel.
+///
+/// Combines [`RADIOTAP_CHANNEL_2GHZ`] and [`RADIOTAP_CHANNEL_CCK`]; the
+/// TX-suitable Channel flags for injecting classic 802.11b/g beacon frames.
+pub const RADIOTAP_CHANNEL_2GHZ_CCK: u16 = RADIOTAP_CHANNEL_2GHZ | RADIOTAP_CHANNEL_CCK;
+/// Channel flags for a 5 GHz OFDM channel.
+///
+/// Combines [`RADIOTAP_CHANNEL_5GHZ`] and [`RADIOTAP_CHANNEL_OFDM`].
+pub const RADIOTAP_CHANNEL_5GHZ_OFDM: u16 = RADIOTAP_CHANNEL_5GHZ | RADIOTAP_CHANNEL_OFDM;
+
 /// Raw radiotap Channel field.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct RadiotapChannel {
@@ -467,6 +498,22 @@ impl RadiotapChannel {
     /// Build a Channel field from frequency and channel flags.
     pub const fn new(frequency: u16, flags: u16) -> Self {
         Self { frequency, flags }
+    }
+
+    /// Build a 2.4 GHz Channel field from a Wi-Fi channel number.
+    ///
+    /// Maps channels 1..=13 with the standard `2407 + channel * 5` MHz formula
+    /// and special-cases channel 14 to 2484 MHz. The result uses the
+    /// [`RADIOTAP_CHANNEL_2GHZ_CCK`] flags, suitable for injecting classic
+    /// 802.11b/g frames. Channel numbers outside 1..=14 are still mapped with
+    /// the linear formula, which callers should avoid for off-band values.
+    pub const fn channel_2ghz(channel: u8) -> Self {
+        let frequency = if channel == 14 {
+            2484
+        } else {
+            2407 + channel as u16 * 5
+        };
+        Self::new(frequency, RADIOTAP_CHANNEL_2GHZ_CCK)
     }
 
     /// Channel frequency in MHz.
@@ -2110,6 +2157,27 @@ mod tests {
             radiotap.tx_flags_value().map(|flags| flags.bits()),
             Some(0x0008)
         );
+    }
+
+    #[test]
+    fn radiotap_channel_helpers_map_channel_numbers_and_expose_flag_bits() {
+        assert_eq!(RADIOTAP_CHANNEL_TURBO, 0x0010);
+        assert_eq!(RADIOTAP_CHANNEL_CCK, 0x0020);
+        assert_eq!(RADIOTAP_CHANNEL_OFDM, 0x0040);
+        assert_eq!(RADIOTAP_CHANNEL_2GHZ, 0x0080);
+        assert_eq!(RADIOTAP_CHANNEL_5GHZ, 0x0100);
+        assert_eq!(RADIOTAP_CHANNEL_2GHZ_CCK, 0x00a0);
+        assert_eq!(RADIOTAP_CHANNEL_5GHZ_OFDM, 0x0140);
+
+        assert_eq!(RadiotapChannel::channel_2ghz(1).frequency(), 2412);
+        assert_eq!(RadiotapChannel::channel_2ghz(6).frequency(), 2437);
+        assert_eq!(RadiotapChannel::channel_2ghz(11).frequency(), 2462);
+        assert_eq!(RadiotapChannel::channel_2ghz(14).frequency(), 2484);
+
+        let channel = RadiotapChannel::channel_2ghz(6);
+        assert_eq!(channel.flags(), RADIOTAP_CHANNEL_2GHZ_CCK);
+        assert_eq!(channel, RadiotapChannel::new(2437, 0x00a0));
+        assert_eq!(channel.to_bytes(), [0x85, 0x09, 0xa0, 0x00]);
     }
 
     #[test]
