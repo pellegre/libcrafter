@@ -36,6 +36,7 @@ _UDP_OPTIONS_SURPLUS_CAPABILITIES = [
     "udp_options_surplus",
 ]
 _BGP_CAPABILITIES = ["bgp_peer"]
+_RIP_CAPABILITIES = ["rip_peer"]
 _ARP_CAPABILITIES = [
     "arp_resolution",
     "link_layer_send",

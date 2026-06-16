@@ -41,6 +41,7 @@ PROBE_CAPABILITY_NAMES = (
     "provider_mac",
     "repeated_response",
     "bgp_peer",
+    "rip_peer",
     # IPSec behavioral capabilities. An IPSec-capable peer holds the matching
     # Security Association (ESP/AH) or runs an IKEv2 responder. The peer is the
     # Linux kernel xfrm / strongSwan stack or an oracle reference peer
@@ -203,6 +204,14 @@ def probe_capabilities_from_lab_capabilities(
         and controlled_services
         and _capability_default_true(substrate, "bgp_peer")
     )
+    # RIP smoke drives a controlled FRR ripd peer on the target endpoint. Like
+    # BGP, it needs the IPv4-unicast + controlled-service substrate, with an
+    # optional provider flag to deny RIP peer provisioning.
+    rip_peer = (
+        ipv4_unicast
+        and controlled_services
+        and _capability_default_true(substrate, "rip_peer")
+    )
     # IPSec behavioral capabilities. The ESP/AH cases need a peer on the
     # controlled target endpoint that holds the matching Security Association
     # (the same SPI, mode, algorithms, and keys libcrafter seals/verifies with);
@@ -272,6 +281,7 @@ def probe_capabilities_from_lab_capabilities(
         "link_layer_arp": link_layer_arp,
         "repeated_response": repeated_response,
         "bgp_peer": bgp_peer,
+        "rip_peer": rip_peer,
         "ipsec_esp": ipsec_esp,
         "ipsec_ah": ipsec_ah,
         "ikev2": ikev2,
@@ -328,6 +338,7 @@ def probe_capabilities_from_lab_capabilities(
             ],
             "repeated_response": ["ipv4_unicast", "controlled_services"],
             "bgp_peer": ["ipv4_unicast", "controlled_services", "bgp_peer"],
+            "rip_peer": ["ipv4_unicast", "controlled_services", "rip_peer"],
             "ipsec_esp": ["ipv4_unicast", "controlled_services", "ipsec_peer"],
             "ipsec_ah": ["ipv4_unicast", "controlled_services", "ipsec_peer"],
             "ikev2": [
