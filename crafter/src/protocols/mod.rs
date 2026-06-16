@@ -358,8 +358,10 @@ pub mod exports {
     };
     pub use rip::{
         Rip, RipAddressFamily, RipAuthType, RipCommand, RipCommandMeta, RipCommandStatus, RipEntry,
-        RIP_AFI_AUTH, RIP_AFI_IP, RIP_COMMAND_REQUEST, RIP_COMMAND_RESPONSE, RIP_MAX_ENTRIES,
-        RIP_METRIC_INFINITY, RIP_UDP_PORT, RIP_V2_MULTICAST, RIP_VERSION_1, RIP_VERSION_2,
+        RIP_AFI_AUTH, RIP_AFI_IP, RIP_COMMAND_REQUEST, RIP_COMMAND_RESPONSE,
+        RIP_COMMAND_UPDATE_ACK, RIP_COMMAND_UPDATE_REQUEST, RIP_COMMAND_UPDATE_RESPONSE,
+        RIP_MAX_ENTRIES, RIP_METRIC_INFINITY, RIP_UDP_PORT, RIP_V2_MULTICAST, RIP_VERSION_1,
+        RIP_VERSION_2,
     };
     pub use rsn::{
         rsn_akm_suite_label, rsn_cipher_suite_label, RsnAkmSuite, RsnCapabilities, RsnCipherSuite,

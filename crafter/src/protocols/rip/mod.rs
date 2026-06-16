@@ -153,6 +153,37 @@ impl Rip {
             .version(RIP_VERSION_2)
     }
 
+    /// Build a demand-RIP Update Request message (RFC 2091 §2.3).
+    ///
+    /// Sets the command to [`RipCommand::UpdateRequest`] (code 9) and the
+    /// version to [`RIP_VERSION_2`]; both are marked caller-set. Demand RIP
+    /// (RFC 2091) layers on the RIPv2 core, so the version is pinned to 2.
+    pub fn update_request() -> Self {
+        Self::new()
+            .with_command(RipCommand::UpdateRequest)
+            .version(RIP_VERSION_2)
+    }
+
+    /// Build a demand-RIP Update Response message (RFC 2091 §2.3).
+    ///
+    /// Sets the command to [`RipCommand::UpdateResponse`] (code 10) and the
+    /// version to [`RIP_VERSION_2`]; both are marked caller-set.
+    pub fn update_response() -> Self {
+        Self::new()
+            .with_command(RipCommand::UpdateResponse)
+            .version(RIP_VERSION_2)
+    }
+
+    /// Build a demand-RIP Update Acknowledge message (RFC 2091 §2.3).
+    ///
+    /// Sets the command to [`RipCommand::UpdateAcknowledge`] (code 11) and the
+    /// version to [`RIP_VERSION_2`]; both are marked caller-set.
+    pub fn update_acknowledge() -> Self {
+        Self::new()
+            .with_command(RipCommand::UpdateAcknowledge)
+            .version(RIP_VERSION_2)
+    }
+
     /// Set the command from a typed [`RipCommand`] (caller-set).
     ///
     /// Stores the command's wire code via [`RipCommand::code`].
@@ -936,6 +967,70 @@ mod rip_whole_table_request_helpers {
             .expect("v2 decoded packet includes an Ipv4 layer");
         assert_eq!(v2_ipv4.destination(), RIP_V2_MULTICAST);
         assert_eq!(v2_ipv4.destination(), Ipv4Addr::new(224, 0, 0, 9));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::packet::LayerContext;
+
+    fn compile_bytes(rip: &Rip) -> Vec<u8> {
+        let packet = Packet::from_layer(rip.clone());
+        let ctx = LayerContext::new(&packet, 0);
+        let mut out = Vec::new();
+        rip.compile(&ctx, &mut out).expect("rip compiles");
+        out
+    }
+
+    #[test]
+    fn rip_demand_commands_roundtrip() {
+        // RFC 2091 §2.3 demand/triggered-RIP commands. Each builder reports the
+        // right typed RipCommand variant and wire code, pins version 2, and
+        // survives a compile/decode round-trip with the command preserved.
+        let cases = [
+            (
+                Rip::update_request(),
+                RipCommand::UpdateRequest,
+                RIP_COMMAND_UPDATE_REQUEST,
+                9u8,
+            ),
+            (
+                Rip::update_response(),
+                RipCommand::UpdateResponse,
+                RIP_COMMAND_UPDATE_RESPONSE,
+                10,
+            ),
+            (
+                Rip::update_acknowledge(),
+                RipCommand::UpdateAcknowledge,
+                RIP_COMMAND_UPDATE_ACK,
+                11,
+            ),
+        ];
+
+        for (rip, want_variant, want_const, want_code) in cases {
+            // The constants name the RFC 2091 §2.3 codepoints.
+            assert_eq!(want_const, want_code, "constant matches RFC codepoint");
+
+            // The builder reports the typed variant, the wire code, and version 2.
+            assert_eq!(rip.command(), want_variant);
+            assert_eq!(rip.command_value(), want_code);
+            assert_eq!(rip.version_value(), RIP_VERSION_2);
+
+            // compile() emits the command octet verbatim and decode() preserves it.
+            let bytes = compile_bytes(&rip);
+            assert_eq!(bytes[0], want_code, "header command octet");
+            assert_eq!(bytes[1], RIP_VERSION_2, "header version octet");
+
+            let decoded = decode(&bytes).expect("demand command decodes");
+            assert_eq!(decoded.command(), want_variant);
+            assert_eq!(decoded.command_value(), want_code);
+            assert_eq!(decoded.version_value(), RIP_VERSION_2);
+
+            // Re-compiling the decoded layer is byte-identical.
+            assert_eq!(compile_bytes(&decoded), bytes);
+        }
     }
 }
 
