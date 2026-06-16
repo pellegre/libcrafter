@@ -55,9 +55,10 @@ pub const RIP_AUTH_TRAILER_MARKER: u16 = 0x0001;
 /// authentication to the HMAC-SHA family while keeping the same trailing-entry
 /// framing. The selected algorithm fixes the length of the trailing digest
 /// (see [`RipDigestAlgorithm::digest_len`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RipDigestAlgorithm {
     /// RFC 2082 §3.2.1 Keyed-MD5 (16-octet digest).
+    #[default]
     KeyedMd5,
     /// RFC 4822 §3 HMAC-SHA-1 (20-octet digest).
     HmacSha1,
@@ -75,12 +76,6 @@ impl RipDigestAlgorithm {
             RipDigestAlgorithm::HmacSha1 => 20,
             RipDigestAlgorithm::HmacSha256 => 32,
         }
-    }
-}
-
-impl Default for RipDigestAlgorithm {
-    fn default() -> Self {
-        RipDigestAlgorithm::KeyedMd5
     }
 }
 
@@ -144,7 +139,7 @@ pub struct RipKeyedDigestHeader {
     /// When `Some`, this is the exact 16-octet Keyed-MD5 digest the caller wants
     /// emitted; `compile()` honors it untouched, so a caller may deliberately pin
     /// a wrong digest to exercise a verifier. When `None`, `compile()` computes
-    /// the digest with [`compute_md5_digest`] over the message and key. The
+    /// the digest with `compute_md5_digest` over the message and key. The
     /// digest itself rides in the trailing authentication block, not in this
     /// header entry's octets.
     pub digest: Option<[u8; 16]>,
@@ -298,7 +293,7 @@ impl RipAuth {
     /// in [`RipAuth::as_entry`]: the header octets are laid verbatim, big-endian,
     /// into the address (offset/key id/auth data length), subnet-mask (sequence),
     /// next-hop (first reserved word), and metric (second reserved word) slots
-    /// via the caller-set builders, so the existing [`RipEntry::encode`] emits
+    /// via the caller-set builders, so the existing `RipEntry::encode` emits
     /// them byte-for-byte. The digest itself is not part of this entry; it is
     /// framed separately by [`RipAuth::trailing_digest_block`]. For a
     /// simple-password payload this falls back to [`RipAuth::as_entry`].
@@ -361,7 +356,7 @@ impl RipAuth {
     /// For the simple-password form (RFC 2453 §4.1) the 16-octet plaintext
     /// password is laid into the entry's remaining 16 octets — the address,
     /// subnet-mask, next-hop, and metric slots — so the entry's existing
-    /// [`RipEntry::encode`] emits the password right-padded with zeros after the
+    /// `RipEntry::encode` emits the password right-padded with zeros after the
     /// AFI and type octets. The remaining payload octets for the keyed-digest
     /// form are filled by the keyed-digest wire encoding added in a later step.
     ///
@@ -474,7 +469,7 @@ pub(crate) fn compute_md5_digest(
 /// digest to place in the trailing block via [`RipAuth::trailing_digest_block`];
 /// its length is `alg.digest_len()` (20 for HMAC-SHA-1, 32 for HMAC-SHA-256).
 ///
-/// For [`RipDigestAlgorithm::KeyedMd5`] this delegates to [`compute_md5_digest`]
+/// For [`RipDigestAlgorithm::KeyedMd5`] this delegates to `compute_md5_digest`
 /// over a `message` that already carries the 16-octet trailing key region, so a
 /// single call site can compute either family from the same algorithm selector.
 pub(crate) fn compute_hmac_digest(alg: RipDigestAlgorithm, message: &[u8], key: &[u8]) -> Vec<u8> {
