@@ -19,3 +19,184 @@ pub mod message;
 pub mod registry;
 
 pub use constants::*;
+
+use crate::field::Field;
+
+use entry::RipEntry;
+use message::RipCommand;
+
+/// A Routing Information Protocol message over IPv4/UDP 520 (RFC 1058,
+/// RFC 2453).
+///
+/// A `Rip` is the 4-octet RIP header (command, version, 2-octet reserved)
+/// followed by zero or more fixed 20-octet route table entries
+/// ([`RipEntry`]). The same layer covers RIP version 1 (RFC 1058) and
+/// version 2 (RFC 2453): both share the header and the 20-octet entry slot
+/// and differ only in how the previously-reserved entry fields are
+/// interpreted, selected by the `version` field.
+///
+/// Header fields are held in [`Field`] wrappers so a later `compile()` step
+/// can fill defaults (version, reserved) only when the caller left a field
+/// unset and leave caller-set values — including deliberately wrong ones —
+/// untouched. The builders mark touched fields caller-set via `set_user`.
+///
+/// The `command`/`entries` builders use `with_`-prefixed names so they do not
+/// collide with the same-named [`Rip::command`]/[`Rip::entries`] accessors
+/// (Rust rejects two inherent methods with the same name).
+#[derive(Debug, Clone)]
+pub struct Rip {
+    /// RIP command octet (RFC 1058 §3.1); modeled as a raw code so unknown
+    /// commands round-trip. Read it as a typed [`RipCommand`] via
+    /// [`Rip::command`].
+    pub command: Field<u8>,
+    /// RIP version octet (RFC 1058 §3.1 / RFC 2453 §4).
+    pub version: Field<u8>,
+    /// Reserved 2-octet header field, must be zero (RFC 1058 §3.1).
+    pub reserved: Field<u16>,
+    /// Route table entries that follow the header (RFC 2453 §4).
+    pub entries: Vec<RipEntry>,
+}
+
+impl Rip {
+    /// Create a RIP message with library defaults.
+    ///
+    /// The command defaults to [`RipCommand::Response`], the version to
+    /// [`RIP_VERSION_2`], the reserved field to `0`, and the entry list is
+    /// empty. None of these defaults are marked caller-set, so a later
+    /// `compile()` step may overwrite them.
+    pub fn new() -> Self {
+        Self {
+            command: Field::defaulted(RIP_COMMAND_RESPONSE),
+            version: Field::defaulted(RIP_VERSION_2),
+            reserved: Field::defaulted(0),
+            entries: Vec::new(),
+        }
+    }
+
+    /// Build a RIP version 2 Request message (RFC 2453 §3.9.1).
+    ///
+    /// Sets the command to [`RipCommand::Request`] and the version to 2; both
+    /// are marked caller-set.
+    pub fn request() -> Self {
+        Self::new()
+            .with_command(RipCommand::Request)
+            .version(RIP_VERSION_2)
+    }
+
+    /// Build a RIP version 2 Response message (RFC 2453 §3.9.2).
+    ///
+    /// Sets the command to [`RipCommand::Response`] and the version to 2; both
+    /// are marked caller-set.
+    pub fn response() -> Self {
+        Self::new()
+            .with_command(RipCommand::Response)
+            .version(RIP_VERSION_2)
+    }
+
+    /// Set the command from a typed [`RipCommand`] (caller-set).
+    ///
+    /// Stores the command's wire code via [`RipCommand::code`].
+    pub fn with_command(mut self, command: RipCommand) -> Self {
+        self.command.set_user(command.code());
+        self
+    }
+
+    /// Set the command from a raw wire code (caller-set).
+    ///
+    /// Use this to emit an unrecognized command octet verbatim.
+    pub fn command_code(mut self, code: u8) -> Self {
+        self.command.set_user(code);
+        self
+    }
+
+    /// Set the version octet (caller-set).
+    pub fn version(mut self, version: u8) -> Self {
+        self.version.set_user(version);
+        self
+    }
+
+    /// Set the reserved header field (caller-set).
+    ///
+    /// The reserved field must be zero on the wire (RFC 1058 §3.1); this
+    /// builder exists so generated tools can emit a deliberately non-zero
+    /// value.
+    pub fn reserved(mut self, reserved: u16) -> Self {
+        self.reserved.set_user(reserved);
+        self
+    }
+
+    /// Append a single route table entry.
+    pub fn entry(mut self, entry: RipEntry) -> Self {
+        self.entries.push(entry);
+        self
+    }
+
+    /// Replace the route table entries with the given list.
+    pub fn with_entries(mut self, entries: impl Into<Vec<RipEntry>>) -> Self {
+        self.entries = entries.into();
+        self
+    }
+
+    /// Effective command wire code (caller-set or default).
+    pub fn command_value(&self) -> u8 {
+        self.command.value().copied().unwrap_or(RIP_COMMAND_RESPONSE)
+    }
+
+    /// Effective command as a typed [`RipCommand`] (caller-set or default).
+    pub fn command(&self) -> RipCommand {
+        RipCommand::from_code(self.command_value())
+    }
+
+    /// Effective version octet (caller-set or default).
+    pub fn version_value(&self) -> u8 {
+        self.version.value().copied().unwrap_or(RIP_VERSION_2)
+    }
+
+    /// The route table entries that follow the header.
+    pub fn entries(&self) -> &[RipEntry] {
+        &self.entries
+    }
+}
+
+impl Default for Rip {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod rip_layer_builder {
+    use super::*;
+    use std::net::Ipv4Addr;
+
+    #[test]
+    fn rip_layer_builder_sets_header_and_entries() {
+        // Request() reports a typed Request command and the default version 2.
+        let request = Rip::request();
+        assert_eq!(request.command(), RipCommand::Request);
+        assert_eq!(request.command_value(), RIP_COMMAND_REQUEST);
+        assert_eq!(request.version_value(), RIP_VERSION_2);
+        assert!(request.entries().is_empty());
+
+        // new() defaults to a Response command, version 2, reserved 0, no entries.
+        let default = Rip::new();
+        assert_eq!(default.command(), RipCommand::Response);
+        assert_eq!(default.version_value(), RIP_VERSION_2);
+
+        // .entry(..) appends entries in order.
+        let route = RipEntry::ipv2_route(
+            Ipv4Addr::new(192, 0, 2, 0),
+            Ipv4Addr::new(255, 255, 255, 0),
+            3,
+        );
+        let with_one = Rip::response().entry(route.clone());
+        assert_eq!(with_one.entries().len(), 1);
+        assert_eq!(with_one.entries()[0], route);
+
+        // with_entries(..) replaces the entry list.
+        let second = RipEntry::ipv1_route(Ipv4Addr::new(198, 51, 100, 1), 5);
+        let with_two = Rip::response().with_entries(vec![route.clone(), second.clone()]);
+        assert_eq!(with_two.entries().len(), 2);
+        assert_eq!(with_two.entries()[1], second);
+    }
+}
