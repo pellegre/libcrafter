@@ -845,6 +845,28 @@ impl Radiotap {
         }
     }
 
+    /// Build a TX-suitable radiotap header for monitor-mode injection.
+    ///
+    /// Chains [`Radiotap::rate`], [`Radiotap::channel`], and
+    /// [`Radiotap::tx_flags`] into one call so injection callers do not
+    /// hand-assemble the three TX-relevant fields each time. The `rate` is in
+    /// 500 kbit/s units, `channel` accepts anything convertible into a
+    /// [`RadiotapChannel`] (such as [`RadiotapChannel::channel_2ghz`]), and
+    /// `tx_flags` accepts anything convertible into [`RadiotapTxFlags`]
+    /// (such as [`RadiotapTxFlags::NO_ACK`]).
+    ///
+    /// The present bitmap is auto-inferred from the set fields. The result is a
+    /// header suitable for monitor-mode injection; the interface must already be
+    /// in monitor mode (this crate does not configure monitor mode, channel, or
+    /// regulatory domain).
+    pub fn monitor_tx(
+        rate: u8,
+        channel: impl Into<RadiotapChannel>,
+        tx_flags: impl Into<RadiotapTxFlags>,
+    ) -> Self {
+        Self::new().rate(rate).channel(channel).tx_flags(tx_flags)
+    }
+
     /// Set the radiotap version byte.
     pub fn version(mut self, version: u8) -> Self {
         self.version.set_user(version);
@@ -2178,6 +2200,20 @@ mod tests {
         assert_eq!(channel.flags(), RADIOTAP_CHANNEL_2GHZ_CCK);
         assert_eq!(channel, RadiotapChannel::new(2437, 0x00a0));
         assert_eq!(channel.to_bytes(), [0x85, 0x09, 0xa0, 0x00]);
+    }
+
+    #[test]
+    fn radiotap_monitor_tx_round_trips_rate_channel_and_tx_flags() {
+        let channel = RadiotapChannel::channel_2ghz(6);
+        let radiotap = Radiotap::monitor_tx(2, channel, RadiotapTxFlags::NO_ACK);
+        let bytes = Packet::from_layer(radiotap).compile().unwrap();
+
+        let decoded = Packet::decode_from_link(LinkType::Radiotap, bytes.as_bytes()).unwrap();
+        let radiotap = decoded.layer::<Radiotap>().unwrap();
+
+        assert_eq!(radiotap.rate_value(), Some(2));
+        assert_eq!(radiotap.channel_value(), Some(channel));
+        assert_eq!(radiotap.tx_flags_value(), Some(RadiotapTxFlags::NO_ACK));
     }
 
     #[test]
