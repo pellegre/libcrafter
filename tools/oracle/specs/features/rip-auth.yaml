@@ -1,0 +1,159 @@
+version: 1
+kind: feature
+name: rip_auth
+summary: RIPv2 authentication — the AFI 0xFFFF simple-password entry (RFC 2453 §4.1) and the keyed message-digest layout (leading digest header entry plus trailing digest block) for Keyed-MD5 (RFC 2082) and HMAC-SHA-1 (RFC 4822), with the password / key id / sequence / key value pinned so digests are reproducible across backends.
+
+# Offline RIPv2 authentication compile/decode coverage over IPv4 UDP port 520.
+# RIPv2 carries authentication in a leading route-entry slot whose address family
+# identifier is 0xFFFF (RIP_AFI_AUTH). The authentication type selects the layout:
+#
+#   * type 2 (simple password): the 0xFFFF entry carries up to 16 octets of
+#     cleartext password mapped onto the entry's address/mask/next-hop/metric
+#     slots. The password is fixed, so both backends emit byte-identical entries
+#     and the case is compared octet-for-octet (byte_policy: strict_bytes).
+#
+#   * type 3 (keyed message digest, RFC 2082 / RFC 4822): the leading 0xFFFF
+#     entry is a digest header (key id, auth-data length, sequence number, and the
+#     offset of the trailing digest), the route entries follow, and a trailing
+#     0xFFFF entry (trailer marker 0x0001) carries the digest itself. The digest
+#     is auto-computed on compile() over the message with the trailing digest
+#     region replaced by the zero-padded key, per RFC 2082. With the key id,
+#     sequence number, and key value pinned (see the pinned-secret block below)
+#     the digest is deterministic.
+#
+# Determinism: the digest only round-trips byte-for-byte when the key id,
+# sequence number, and key bytes are identical on both sides. Those values are
+# pinned in this spec (test-only documentation secrets) so the materialized
+# message is reproducible. The pinned key/password values are documentation-only
+# test vectors and carry no operational meaning.
+#
+# Backend reproduction:
+#
+#   * simple-password and keyed-md5 (Keyed-MD5, RFC 2082) are reproduced by both
+#     the Scapy reference backend (RIP / RIPEntry / RIPAuth) and the libcrafter
+#     adapter from the same pinned packet plan and compared octet-for-octet
+#     (byte_policy: strict_bytes).
+#
+#   * keyed-sha1 (HMAC-SHA-1, RFC 4822) has no native digest computation in the
+#     Scapy RIPAuth model (RIPAuth carries the auth-data region as an opaque
+#     field and does not derive an HMAC-SHA-1 trailer), so the reference backend
+#     cannot reproduce the SHA-1 digest from the key. This case falls back to a
+#     libcrafter-internal round-trip (byte_policy: normalized) and is excluded
+#     from strict cross-backend byte comparison, mirroring how DNS handles its
+#     Scapy gaps. The crate's own auth unit tests assert the RFC 4822 HMAC-SHA-1
+#     digest and the verification helper.
+
+layers:
+  - rip
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: true
+malformed: false
+
+# Pinned test-only documentation secrets. These values are pinned so the
+# keyed-digest cases compute a deterministic, reproducible digest across
+# backends. They are documentation test vectors with no operational meaning and
+# must never be reused for real authentication.
+pinned_secret:
+  simple_password: "rip-doc-secret"   # <= 16 octets, type-2 simple password
+  key_id: 1                           # RFC 2082/4822 key identifier
+  sequence: 1                         # monotonic sequence number, pinned
+  key_value: "0123456789abcdef"       # 16-octet shared key, hex-or-ascii test vector
+
+behaviors:
+  # Authentication-type matrix. The behavior name is matched against the case id
+  # by the generator, which selects the RIPv2 authentication layout (AFI 0xFFFF
+  # leading entry, authentication type, and — for keyed digest — the trailing
+  # digest block) for the selected case.
+  - name: simple-password
+    auth_type: 2
+    fields:
+      - simple_password
+    checks:
+      - simple_password_round_trip
+  # Keyed-MD5 (RFC 2082): leading digest header entry + route entries + trailing
+  # digest block. Key id / sequence / key are pinned so the auto-computed digest
+  # is deterministic and byte-comparable across backends.
+  - name: keyed-md5
+    auth_type: 3
+    algorithm: keyed-md5
+    fields:
+      - key_id
+      - sequence
+      - digest
+    checks:
+      - keyed_md5_digest_round_trip
+  # HMAC-SHA-1 (RFC 4822): same keyed-digest layout with a 20-octet SHA-1 digest.
+  # Scapy has no native HMAC-SHA-1 digest computation, so this case is a
+  # libcrafter-internal round-trip (byte_policy: normalized), not a strict
+  # cross-backend byte comparison.
+  - name: keyed-sha1
+    auth_type: 3
+    algorithm: hmac-sha1
+    fields:
+      - key_id
+      - sequence
+      - digest
+    checks:
+      - keyed_sha1_digest_round_trip
+
+coverage_cases:
+  - rip-auth-simple-password
+  - rip-auth-keyed-md5
+  - rip-auth-keyed-sha1
+
+supported_cases:
+  # Simple password (type 2). A fixed 16-octet password makes both backends emit
+  # byte-identical AFI 0xFFFF entries, so the case keeps strict byte comparison
+  # in both offline directions.
+  - name: rip-auth-simple-password
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  # Keyed-MD5 (type 3, RFC 2082). With the key id, sequence number, and key value
+  # pinned, the auto-computed MD5 digest is deterministic, so both backends emit
+  # byte-identical messages and the case keeps strict byte comparison.
+  - name: rip-auth-keyed-md5
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  # Keyed-SHA-1 (type 3, RFC 4822). Scapy cannot derive the HMAC-SHA-1 digest
+  # from the key, so this case is a libcrafter-internal round-trip
+  # (byte_policy: normalized) and is excluded from strict cross-backend byte
+  # comparison. The crate's auth unit tests assert the RFC 4822 digest and the
+  # decode-side verification helper.
+  - name: rip-auth-keyed-sha1
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: normalized
+
+backend_support:
+  scapy:
+    status: partial
+    native_layers:
+      - RIP
+      - RIPEntry
+      - RIPAuth
+    notes:
+      - Reproduces the simple-password (type 2) and Keyed-MD5 (type 3, RFC 2082)
+        cases byte-for-byte from the pinned key id / sequence / key, so they are
+        compared octet-for-octet against the libcrafter adapter.
+      - Has no native HMAC-SHA-1 (RFC 4822) digest computation — the RIPAuth model
+        carries the auth-data region opaquely and does not derive a SHA-1 trailer
+        from the key — so the keyed-sha1 case is excluded from strict cross-backend
+        comparison and validated by the libcrafter internal round-trip instead.
+  libcrafter:
+    status: supported
+    notes:
+      - Encodes and decodes the AFI 0xFFFF simple-password entry and the keyed
+        message-digest layout (leading digest header entry, route entries, and the
+        trailing digest block) for both Keyed-MD5 (RFC 2082) and HMAC-SHA-1
+        (RFC 4822).
+      - Auto-computes the digest on compile() over the zero-/key-padded trailing
+        region when the caller did not set it and preserves a caller-set digest
+        untouched, and the decode-side verification helper accepts the digest for
+        the correct pinned key and rejects it for a wrong key.
