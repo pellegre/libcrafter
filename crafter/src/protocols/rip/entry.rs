@@ -127,6 +127,28 @@ impl RipEntry {
         self
     }
 
+    /// Set the subnet mask (caller-set) to the contiguous mask for `len`.
+    ///
+    /// `len` is a CIDR prefix length (`0..=32`); `len` values greater than 32
+    /// are clamped to 32. The resulting mask is the contiguous big-endian mask
+    /// with `len` leading one-bits (for example, `with_prefix_len(24)` sets
+    /// `255.255.255.0` and `with_prefix_len(0)` sets `0.0.0.0`). This is a
+    /// convenience over [`subnet_mask`] for the common contiguous case; callers
+    /// that need a non-contiguous (deliberately malformed) mask set it directly
+    /// via [`subnet_mask`].
+    ///
+    /// [`subnet_mask`]: RipEntry::subnet_mask
+    pub fn with_prefix_len(mut self, len: u8) -> RipEntry {
+        let len = len.min(32);
+        let mask_bits: u32 = if len == 0 {
+            0
+        } else {
+            u32::MAX << (32 - u32::from(len))
+        };
+        self.subnet_mask.set_user(Ipv4Addr::from(mask_bits));
+        self
+    }
+
     /// Set the next hop (caller-set).
     pub fn next_hop(mut self, value: Ipv4Addr) -> Self {
         self.next_hop.set_user(value);
@@ -160,6 +182,21 @@ impl RipEntry {
             .value()
             .copied()
             .unwrap_or(Ipv4Addr::UNSPECIFIED)
+    }
+
+    /// Best-effort CIDR prefix length derived from the effective subnet mask.
+    ///
+    /// Returns the number of one-bits in [`subnet_mask_value`] read as a
+    /// big-endian 32-bit integer. This is purely derived and does **not** assume
+    /// the mask is contiguous: a non-contiguous mask (for example `255.0.255.0`,
+    /// which a generated tool may set on purpose) still returns its raw set-bit
+    /// count, so the value is a best-effort length rather than a validated CIDR
+    /// prefix. For a contiguous mask the result is the conventional prefix length
+    /// (`255.255.255.0` yields `24`, `0.0.0.0` yields `0`).
+    ///
+    /// [`subnet_mask_value`]: RipEntry::subnet_mask_value
+    pub fn prefix_len(&self) -> u8 {
+        u32::from(self.subnet_mask_value()).count_ones() as u8
     }
 
     /// Effective next hop (caller-set or default).
@@ -586,5 +623,53 @@ mod rip_entry_v1_route_tag_zero {
 
         // Bytes 2..4 (the route-tag field) must be zero in RIPv1.
         assert_eq!(&bytes[2..4], &[0x00, 0x00]);
+    }
+}
+
+#[cfg(test)]
+mod rip_entry_prefix_len_helpers {
+    use super::*;
+
+    #[test]
+    fn with_prefix_len_and_prefix_len_round_trip_contiguous_masks() {
+        // RFC 2453 §4: a /24 is the contiguous mask 255.255.255.0.
+        let slash24 = RipEntry::new().with_prefix_len(24);
+        assert_eq!(slash24.subnet_mask_value(), Ipv4Addr::new(255, 255, 255, 0));
+        assert_eq!(slash24.prefix_len(), 24);
+        assert!(slash24.subnet_mask.is_user_set());
+
+        // A /0 is the all-zero mask 0.0.0.0.
+        let slash0 = RipEntry::new().with_prefix_len(0);
+        assert_eq!(slash0.subnet_mask_value(), Ipv4Addr::UNSPECIFIED);
+        assert_eq!(slash0.prefix_len(), 0);
+
+        // A /32 is the all-ones mask 255.255.255.255.
+        let slash32 = RipEntry::new().with_prefix_len(32);
+        assert_eq!(
+            slash32.subnet_mask_value(),
+            Ipv4Addr::new(255, 255, 255, 255)
+        );
+        assert_eq!(slash32.prefix_len(), 32);
+    }
+}
+
+#[cfg(test)]
+mod rip_entry_noncontiguous_mask_preserved {
+    use super::*;
+
+    #[test]
+    fn noncontiguous_mask_octets_serialize_exactly() {
+        // A deliberately non-contiguous mask (honored override for malformed
+        // packets) must serialize byte-for-byte as set, not be normalized.
+        let mask = Ipv4Addr::new(255, 0, 255, 0);
+        let entry = RipEntry::new().subnet_mask(mask);
+
+        assert_eq!(entry.subnet_mask_value(), mask);
+
+        let mut bytes = Vec::new();
+        entry.encode(&mut bytes);
+
+        // Subnet mask occupies bytes 8..12 of the 20-octet entry (RFC 2453 §4).
+        assert_eq!(&bytes[8..12], &[255, 0, 255, 0]);
     }
 }
