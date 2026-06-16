@@ -3,12 +3,19 @@ hostname crafter-rip-peer
 log syslog informational
 service integrated-vtysh-config
 ip forwarding
+ipv6 forwarding
 ip route {{RIP_ORIGINATE_PREFIX}} Null0
+ipv6 route {{RIPNG_ORIGINATE_PREFIX}} Null0
 !
 router rip
  version 2
  network {{RIP_NETWORK}}
 {{RIP_INTERFACE_LINE}}
+ redistribute static
+!
+router ripng
+ network {{RIPNG_NETWORK}}
+{{RIPNG_INTERFACE_LINE}}
  redistribute static
 !
 interface eth0
