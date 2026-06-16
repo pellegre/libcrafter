@@ -18,6 +18,8 @@ use std::net::Ipv6Addr;
 
 use crate::field::Field;
 
+use super::constants::RIPNG_RTE_LEN;
+
 /// A single 20-octet RIPng route table entry (RFC 2080 §2.1).
 ///
 /// Every field is held in a [`Field`] wrapper so that the builders mark values
@@ -106,6 +108,24 @@ impl RipngRte {
     pub fn metric_value(&self) -> u8 {
         self.metric.value().copied().unwrap_or(0)
     }
+
+    /// Serialize this RTE to its 20-octet big-endian wire form (RFC 2080 §2.1).
+    ///
+    /// Appends, in order: the IPv6 prefix (16 octets), Route Tag (u16), Prefix
+    /// Length (u8), Metric (u8). Effective values are used as-is, so caller-set
+    /// overrides (including deliberately wrong prefix lengths) serialize exactly
+    /// as set.
+    pub(crate) fn encode(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.prefix_value().octets());
+        out.extend_from_slice(&self.route_tag_value().to_be_bytes());
+        out.push(self.prefix_len_value());
+        out.push(self.metric_value());
+    }
+
+    /// Encoded length of a RIPng RTE, in octets. Always [`RIPNG_RTE_LEN`].
+    pub const fn encoded_len(&self) -> usize {
+        RIPNG_RTE_LEN
+    }
 }
 
 impl Default for RipngRte {
@@ -171,5 +191,52 @@ mod ripng_rte_builder_sets_fields {
         assert!(rte.metric.is_user_set());
         // Route tag is left at its zero default by the route() constructor.
         assert!(rte.route_tag.is_defaulted());
+    }
+}
+
+#[cfg(test)]
+mod ripng_rte_encodes_20_octets_be {
+    use super::*;
+
+    #[test]
+    fn encodes_fields_in_big_endian_order() {
+        let prefix = "2001:db8::".parse::<Ipv6Addr>().expect("valid prefix");
+
+        let rte = RipngRte::route(prefix, 32, 3).route_tag(0x1234);
+
+        let mut out = Vec::new();
+        rte.encode(&mut out);
+
+        // RFC 2080 §2.1: IPv6 prefix (16), Route Tag (u16 be), Prefix Length
+        // (u8), Metric (u8).
+        let mut expected = Vec::new();
+        expected.extend_from_slice(&prefix.octets()); // 16 prefix octets
+        expected.extend_from_slice(&[0x12, 0x34]); // route tag = 0x1234
+        expected.push(0x20); // prefix length = 32
+        expected.push(0x03); // metric = 3
+
+        assert_eq!(out, expected);
+        assert_eq!(out.len(), RIPNG_RTE_LEN);
+        assert_eq!(rte.encoded_len(), RIPNG_RTE_LEN);
+    }
+}
+
+#[cfg(test)]
+mod ripng_rte_preserves_user_values {
+    use super::*;
+
+    #[test]
+    fn out_of_range_prefix_len_serializes_exactly() {
+        // A prefix length of 200 is invalid but caller-set; the serializer must
+        // honor the override and emit it byte-for-byte (0xC8), not clamp it.
+        let prefix = "2001:db8::".parse::<Ipv6Addr>().expect("valid prefix");
+        let rte = RipngRte::route(prefix, 200, 3);
+
+        let mut out = Vec::new();
+        rte.encode(&mut out);
+
+        // Prefix length occupies octet 18 of the 20-octet RTE (RFC 2080 §2.1).
+        assert_eq!(out[18], 0xC8);
+        assert_eq!(out.len(), RIPNG_RTE_LEN);
     }
 }
