@@ -176,6 +176,33 @@ impl RipEntry {
         is_rip_auth_marker(self.address_family_value())
     }
 
+    /// Build the request-whole-table sentinel entry (RFC 1058 §3.4.1,
+    /// RFC 2453 §3.9.1).
+    ///
+    /// A RIP Request that asks for the entire routing table is encoded as a
+    /// single route entry whose Address Family Identifier is `0` and whose
+    /// Metric is [`RIP_METRIC_INFINITY`] (16), with all addresses `0.0.0.0`.
+    /// This is the sole-entry sentinel for a complete-table request, not an
+    /// ordinary route. The address family is marked caller-set so the
+    /// distinguished `0` survives `compile()` instead of being defaulted to
+    /// [`RIP_AFI_IP`].
+    pub fn whole_table_request() -> Self {
+        let mut entry = Self::new();
+        entry.address_family.set_user(0);
+        entry.metric.set_user(RIP_METRIC_INFINITY);
+        entry
+    }
+
+    /// Whether this entry is the request-whole-table sentinel (RFC 1058
+    /// §3.4.1, RFC 2453 §3.9.1).
+    ///
+    /// Returns `true` when the address family is `0` and the metric is
+    /// [`RIP_METRIC_INFINITY`] (16), the distinguished encoding of a
+    /// complete-table request carried as the sole route entry.
+    pub fn is_whole_table_request(&self) -> bool {
+        self.address_family_value() == 0 && self.metric_value() == RIP_METRIC_INFINITY
+    }
+
     /// Serialize this route entry to its 20-octet big-endian wire form.
     ///
     /// Appends, in RFC 2453 §4 order: Address Family (u16), Route Tag (u16),
@@ -451,5 +478,50 @@ mod rip_entry_reachability {
 
         let unreachable = RipEntry::ipv1_route(address, RIP_METRIC_INFINITY);
         assert!(unreachable.is_unreachable());
+    }
+}
+
+#[cfg(test)]
+mod rip_entry_whole_table_request {
+    use super::*;
+
+    #[test]
+    fn sentinel_round_trips_and_is_recognized() {
+        let sentinel = RipEntry::whole_table_request();
+
+        // RFC 1058 §3.4.1 / RFC 2453 §3.9.1: AFI 0, metric 16, addresses 0.
+        assert_eq!(sentinel.address_family_value(), 0);
+        assert_eq!(sentinel.metric_value(), RIP_METRIC_INFINITY);
+        assert_eq!(sentinel.address_value(), Ipv4Addr::UNSPECIFIED);
+        assert_eq!(sentinel.subnet_mask_value(), Ipv4Addr::UNSPECIFIED);
+        assert_eq!(sentinel.next_hop_value(), Ipv4Addr::UNSPECIFIED);
+
+        // The predicate recognizes the sentinel.
+        assert!(sentinel.is_whole_table_request());
+
+        // Round-trips byte-for-byte through encode/decode and stays recognized.
+        let mut bytes = Vec::new();
+        sentinel.encode(&mut bytes);
+        assert_eq!(bytes.len(), RIP_ENTRY_LEN);
+
+        let decoded = RipEntry::decode(&bytes).expect("20 octets decode");
+        assert_eq!(decoded.address_family_value(), 0);
+        assert_eq!(decoded.metric_value(), RIP_METRIC_INFINITY);
+        assert!(decoded.is_whole_table_request());
+
+        let mut reencoded = Vec::new();
+        decoded.encode(&mut reencoded);
+        assert_eq!(reencoded, bytes);
+    }
+
+    #[test]
+    fn normal_route_is_not_a_whole_table_request() {
+        let route = RipEntry::ipv2_route(
+            Ipv4Addr::new(192, 0, 2, 0),
+            Ipv4Addr::new(255, 255, 255, 0),
+            3,
+        );
+
+        assert!(!route.is_whole_table_request());
     }
 }
