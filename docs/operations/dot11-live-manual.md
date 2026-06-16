@@ -6,12 +6,18 @@ or the default offline workflow. Automated validation must pass without a
 dongle, monitor-mode interface, root privileges, provider credentials, real
 network identifiers, or packet captures.
 
-Current libcrafter live radiotap transmission is intentionally gated as
-unsupported. The supported path today is dry-run send planning: build the
-radiotap-wrapped packet, compile it, inspect the resolved link-layer target,
-and verify the emitted bytes without transmitting. Real injection belongs to a
-future explicit monitor-mode radiotap backend or a separate human-controlled
-manual tool that keeps the same live gates.
+libcrafter now injects radiotap frames on the air: a `Radiotap / Dot11` packet
+sent through the live send API is routed to the same Layer-2 datalink writer
+that transmits Ethernet frames, so the crate puts 802.11 frames on the air over
+an operator-configured monitor-mode interface. Injection stays behind the
+project's explicit live gates — `--live`, the `--i-understand-isolated-lab`
+acknowledgement, and `LIBCRAFTER_ENDPOINT=1` — the same gates the
+`crafter/examples/dot11_beacon_inject.rs` example uses. The crate intentionally
+does not configure the radio: putting the interface into monitor mode, pinning
+the channel, and setting the regulatory domain are operator steps that this
+manual covers as prerequisites. The default, ungated path remains dry-run send
+planning: build the radiotap-wrapped packet, compile it, inspect the resolved
+link-layer target, and verify the emitted bytes without transmitting.
 
 ## Prerequisites
 
@@ -163,17 +169,27 @@ channel-hopping instructions.
 
 ## Manual Live Gates
 
-Any future manual dongle runner or backend must keep live transmission behind
-explicit live flags. Use the same project convention as other live-capable
-examples and provider tools: a dry-run default plus an explicit marker such as
-`--live` with a safety acknowledgement, or `--confirm-live-run` for provider
-style runners.
+Live transmission stays behind explicit live flags. Use the same project
+convention as other live-capable examples and provider tools: a dry-run default
+plus the explicit `--live` marker, the `--i-understand-isolated-lab`
+acknowledgement, and the `LIBCRAFTER_ENDPOINT=1` environment marker. The
+`crafter/examples/dot11_beacon_inject.rs` example follows exactly this gate, and
+any tool you build on top should keep it.
 
-The live request must name the monitor-mode interface and the radiotap backend.
-It must refuse managed interfaces, missing monitor mode, missing radiotap
-support, and absent live confirmation. In the current crate, trying to send a
-`Radiotap / Dot11` packet through the built-in live socket sender returns an
-unsupported-send error instead of transmitting.
+The live request must name the monitor-mode interface created and configured per
+this manual. The crate refuses an interface that is missing or that does not
+resolve to a usable Layer-2 datalink channel, surfacing an interface-not-found
+or datalink-channel error rather than transmitting. Putting the interface into
+monitor mode, disconnecting managed network services from it, and pinning the
+channel and regulatory domain remain the operator's responsibility; the crate
+writes only to an already-configured interface.
+
+The full flow is: build the `Radiotap / Dot11` frames with crafter, set the
+interface to monitor mode and pin the channel per this manual, then run the
+`dot11_beacon_inject` example (or your own tool) with `--live
+--i-understand-isolated-lab` and `LIBCRAFTER_ENDPOINT=1` to put the frames on
+the air. Without those gates the example defaults to dry-run and transmits
+nothing.
 
 ## Manual Dongle Checklist
 
@@ -184,8 +200,9 @@ unsupported-send error instead of transmitting.
 4. Build the exact `Radiotap / Dot11` packet with documentation MAC addresses
    and synthetic payload bytes.
 5. Run dry-run planning and inspect the compiled bytes.
-6. If using a future explicit backend, run it only with the required live flags
-   and only in the authorized RF environment.
+6. To inject, run the `dot11_beacon_inject` example (or your own tool) with
+   `--live --i-understand-isolated-lab` and `LIBCRAFTER_ENDPOINT=1`, only in the
+   authorized RF environment.
 7. Record manual observations outside tracked files unless the artifact is
    synthetic, sanitized, and intentionally added.
 
