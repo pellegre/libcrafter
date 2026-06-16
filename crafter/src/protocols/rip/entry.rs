@@ -19,7 +19,7 @@ use std::net::Ipv4Addr;
 
 use crate::field::Field;
 
-use super::constants::RIP_AFI_IP;
+use super::constants::{RIP_AFI_IP, RIP_ENTRY_LEN};
 
 /// A single 20-octet RIP route table entry (RFC 1058 §3.1, RFC 2453 §4).
 ///
@@ -131,6 +131,26 @@ impl RipEntry {
     pub fn metric_value(&self) -> u32 {
         self.metric.value().copied().unwrap_or(0)
     }
+
+    /// Serialize this route entry to its 20-octet big-endian wire form.
+    ///
+    /// Appends, in RFC 2453 §4 order: Address Family (u16), Route Tag (u16),
+    /// IPv4 Address (4 octets), Subnet Mask (4 octets), Next Hop (4 octets),
+    /// Metric (u32). Effective values are used as-is, so caller-set overrides
+    /// (including deliberately wrong ones) serialize exactly as set.
+    pub(crate) fn encode(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.address_family_value().to_be_bytes());
+        out.extend_from_slice(&self.route_tag_value().to_be_bytes());
+        out.extend_from_slice(&self.address_value().octets());
+        out.extend_from_slice(&self.subnet_mask_value().octets());
+        out.extend_from_slice(&self.next_hop_value().octets());
+        out.extend_from_slice(&self.metric_value().to_be_bytes());
+    }
+
+    /// Encoded length of a route entry, in octets. Always [`RIP_ENTRY_LEN`].
+    pub const fn encoded_len(&self) -> usize {
+        RIP_ENTRY_LEN
+    }
 }
 
 impl Default for RipEntry {
@@ -190,5 +210,54 @@ mod rip_entry_builder_sets_fields {
         assert!(entry.subnet_mask.is_defaulted());
         assert!(entry.next_hop.is_defaulted());
         assert!(entry.metric.is_defaulted());
+    }
+}
+
+#[cfg(test)]
+mod rip_entry_encodes_20_octets_be {
+    use super::*;
+
+    #[test]
+    fn encodes_fields_in_big_endian_order() {
+        let entry = RipEntry::new()
+            .address_family(2)
+            .route_tag(0x1234)
+            .address(Ipv4Addr::new(192, 0, 2, 1))
+            .subnet_mask(Ipv4Addr::new(255, 255, 255, 0))
+            .next_hop(Ipv4Addr::new(192, 0, 2, 254))
+            .metric(3);
+
+        let mut out = Vec::new();
+        entry.encode(&mut out);
+
+        let expected: [u8; 20] = [
+            0x00, 0x02, // address family = 2
+            0x12, 0x34, // route tag = 0x1234
+            192, 0, 2, 1, // address = 192.0.2.1
+            255, 255, 255, 0, // subnet mask = 255.255.255.0
+            192, 0, 2, 254, // next hop = 192.0.2.254
+            0x00, 0x00, 0x00, 0x03, // metric = 3
+        ];
+
+        assert_eq!(out, expected);
+        assert_eq!(out.len(), RIP_ENTRY_LEN);
+        assert_eq!(entry.encoded_len(), RIP_ENTRY_LEN);
+    }
+}
+
+#[cfg(test)]
+mod rip_entry_preserves_user_values {
+    use super::*;
+
+    #[test]
+    fn out_of_range_metric_serializes_exactly() {
+        let entry = RipEntry::new().metric(0xDEAD_BEEF);
+
+        let mut out = Vec::new();
+        entry.encode(&mut out);
+
+        // Metric occupies the final 4 octets of the 20-octet entry.
+        assert_eq!(&out[16..20], &[0xDE, 0xAD, 0xBE, 0xEF]);
+        assert_eq!(out.len(), RIP_ENTRY_LEN);
     }
 }
