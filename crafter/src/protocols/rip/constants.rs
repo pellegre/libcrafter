@@ -35,6 +35,20 @@ pub const RIP_COMMAND_REQUEST: u8 = 1;
 pub const RIP_COMMAND_RESPONSE: u8 = 2;
 
 // ---------------------------------------------------------------------------
+// Demand/triggered-RIP command codes (RFC 2091 §2.3)
+// ---------------------------------------------------------------------------
+
+/// Update Request command: demand-RIP request for routes on an on-demand
+/// circuit. RFC 2091 §2.3.
+pub const RIP_COMMAND_UPDATE_REQUEST: u8 = 9;
+/// Update Response command: demand-RIP routing update on an on-demand circuit.
+/// RFC 2091 §2.3.
+pub const RIP_COMMAND_UPDATE_RESPONSE: u8 = 10;
+/// Update Acknowledge command: demand-RIP acknowledgement of an Update
+/// Response. RFC 2091 §2.3.
+pub const RIP_COMMAND_UPDATE_ACK: u8 = 11;
+
+// ---------------------------------------------------------------------------
 // Version numbers (RFC 1058 §3.1, RFC 2453 §4)
 // ---------------------------------------------------------------------------
 
@@ -78,6 +92,11 @@ mod tests {
         assert_eq!(RIP_UDP_PORT, 520);
         assert_eq!(RIP_COMMAND_REQUEST, 1);
         assert_eq!(RIP_COMMAND_RESPONSE, 2);
+
+        // Demand/triggered-RIP command codes (RFC 2091 §2.3).
+        assert_eq!(RIP_COMMAND_UPDATE_REQUEST, 9);
+        assert_eq!(RIP_COMMAND_UPDATE_RESPONSE, 10);
+        assert_eq!(RIP_COMMAND_UPDATE_ACK, 11);
         assert_eq!(RIP_VERSION_1, 1);
         assert_eq!(RIP_VERSION_2, 2);
         assert_eq!(RIP_AFI_IP, 2);
