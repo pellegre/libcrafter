@@ -233,6 +233,32 @@ impl Layer for Rip {
         Ok(())
     }
 
+    fn summary(&self) -> String {
+        // Compact one-line summary: command name, version, and entry count, e.g.
+        // "Rip v2 Response (2 entries)". Uses effective values so a decoded or
+        // caller-set message reads correctly.
+        let count = self.entries.len();
+        let plural = if count == 1 { "entry" } else { "entries" };
+        format!(
+            "Rip v{} {} ({} {})",
+            self.version_value(),
+            self.command().name(),
+            count,
+            plural
+        )
+    }
+
+    fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        // Surface the header fields and entry count so decoded messages are
+        // readable via show()/summary() without log-fishing.
+        vec![
+            ("command", self.command().name().to_string()),
+            ("version", self.version_value().to_string()),
+            ("reserved", self.reserved_value().to_string()),
+            ("entries", self.entries.len().to_string()),
+        ]
+    }
+
     impl_layer_object!(Rip);
 }
 
@@ -315,5 +341,55 @@ mod rip_layer_compiles {
         // whose layer stack includes the Rip layer.
         let packet = Udp::new() / rip;
         assert!(packet.layer::<Rip>().is_some());
+    }
+}
+
+#[cfg(test)]
+mod rip_layer_summary {
+    use super::*;
+    use std::net::Ipv4Addr;
+
+    #[test]
+    fn rip_layer_summary_mentions_command_and_count() {
+        // A Response with two entries reports its command name, version, and the
+        // entry count in the summary line.
+        let rip = Rip::response().with_entries(vec![
+            RipEntry::ipv2_route(
+                Ipv4Addr::new(192, 0, 2, 0),
+                Ipv4Addr::new(255, 255, 255, 0),
+                1,
+            ),
+            RipEntry::ipv2_route(
+                Ipv4Addr::new(198, 51, 100, 0),
+                Ipv4Addr::new(255, 255, 255, 0),
+                2,
+            ),
+        ]);
+
+        let summary = rip.summary();
+        assert!(summary.contains("Response"), "summary: {summary}");
+        assert!(summary.contains("v2"), "summary: {summary}");
+        assert!(summary.contains('2'), "summary: {summary}");
+    }
+
+    #[test]
+    fn rip_layer_inspection_fields_present() {
+        // inspection_fields() exposes the header fields and entry count, keyed by
+        // name like other layers.
+        let rip = Rip::response().entry(RipEntry::ipv2_route(
+            Ipv4Addr::new(192, 0, 2, 0),
+            Ipv4Addr::new(255, 255, 255, 0),
+            1,
+        ));
+
+        let fields = rip.inspection_fields();
+        assert!(
+            fields.iter().any(|(key, _)| *key == "command"),
+            "expected a \"command\" field: {fields:?}"
+        );
+        assert!(
+            fields.iter().any(|(key, _)| *key == "entries"),
+            "expected an \"entries\" field: {fields:?}"
+        );
     }
 }
