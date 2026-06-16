@@ -99,7 +99,10 @@ mod tests {
         // An unknown command round-trips through Other(code).
         assert_eq!(RipCommand::from_code(200), RipCommand::Other(200));
         assert_eq!(RipCommand::Other(200).code(), 200);
-        assert_eq!(RipCommand::from_code(RipCommand::Other(200).code()), RipCommand::Other(200));
+        assert_eq!(
+            RipCommand::from_code(RipCommand::Other(200).code()),
+            RipCommand::Other(200)
+        );
 
         // Named variants expose their registry names; unknowns fall back.
         assert_eq!(RipCommand::Request.name(), "Request");

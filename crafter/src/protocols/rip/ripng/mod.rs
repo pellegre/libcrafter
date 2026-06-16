@@ -469,7 +469,11 @@ mod ripng_summary_mentions_command_and_count {
     fn ripng_summary_mentions_command_and_count() {
         // A Response message carrying three RTEs.
         let rtes = vec![
-            RipngRte::route("2001:db8::".parse::<Ipv6Addr>().expect("valid prefix"), 64, 1),
+            RipngRte::route(
+                "2001:db8::".parse::<Ipv6Addr>().expect("valid prefix"),
+                64,
+                1,
+            ),
             RipngRte::route(
                 "2001:db8:1::".parse::<Ipv6Addr>().expect("valid prefix"),
                 48,
@@ -680,7 +684,10 @@ mod ripng_whole_table_request_builds {
             .layer::<Ipv6>()
             .expect("decoded packet includes an Ipv6 layer");
         assert_eq!(ipv6.destination(), RIPNG_MULTICAST);
-        assert_eq!(RIPNG_MULTICAST, "ff02::9".parse::<Ipv6Addr>().expect("ff02::9"));
+        assert_eq!(
+            RIPNG_MULTICAST,
+            "ff02::9".parse::<Ipv6Addr>().expect("ff02::9")
+        );
 
         // The Ripng layer is a Request carrying exactly one whole-table sentinel
         // RTE (RFC 2080 §2.4.1).
