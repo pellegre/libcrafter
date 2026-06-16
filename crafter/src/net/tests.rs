@@ -377,7 +377,9 @@ mod send_plan {
                 );
                 assert!(!reason.contains("not implemented"));
             }
-            other => panic!("expected unsupported send target for null/loopback link send, got {other}"),
+            other => {
+                panic!("expected unsupported send target for null/loopback link send, got {other}")
+            }
         }
     }
 
