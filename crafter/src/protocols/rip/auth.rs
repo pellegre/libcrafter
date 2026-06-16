@@ -23,7 +23,10 @@
 
 use std::net::Ipv4Addr;
 
+use hmac::{Hmac, Mac};
 use md5::{Digest, Md5};
+use sha1::Sha1;
+use sha2::Sha256;
 
 use crate::field::Field;
 
@@ -43,6 +46,42 @@ pub const RIP_SIMPLE_PASSWORD_LEN: usize = 16;
 /// the last route entry uses the marker AFI 0xFFFF and this `0x0001` trailer
 /// type, then carries the raw digest octets.
 pub const RIP_AUTH_TRAILER_MARKER: u16 = 0x0001;
+
+/// The keyed-message-digest algorithm used by a RIPv2 keyed authentication
+/// entry (RFC 2082 / RFC 4822 §3).
+///
+/// RFC 2082 defined Keyed-MD5; RFC 4822 §3 generalized RIPv2 cryptographic
+/// authentication to the HMAC-SHA family while keeping the same trailing-entry
+/// framing. The selected algorithm fixes the length of the trailing digest
+/// (see [`RipDigestAlgorithm::digest_len`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RipDigestAlgorithm {
+    /// RFC 2082 §3.2.1 Keyed-MD5 (16-octet digest).
+    KeyedMd5,
+    /// RFC 4822 §3 HMAC-SHA-1 (20-octet digest).
+    HmacSha1,
+    /// RFC 4822 §3 HMAC-SHA-256 (32-octet digest).
+    HmacSha256,
+}
+
+impl RipDigestAlgorithm {
+    /// Length, in octets, of this algorithm's trailing authentication digest
+    /// (RFC 2082 §3.2.1, RFC 4822 §3): 16 for Keyed-MD5, 20 for HMAC-SHA-1, 32
+    /// for HMAC-SHA-256.
+    pub fn digest_len(self) -> usize {
+        match self {
+            RipDigestAlgorithm::KeyedMd5 => 16,
+            RipDigestAlgorithm::HmacSha1 => 20,
+            RipDigestAlgorithm::HmacSha256 => 32,
+        }
+    }
+}
+
+impl Default for RipDigestAlgorithm {
+    fn default() -> Self {
+        RipDigestAlgorithm::KeyedMd5
+    }
+}
 
 /// A RIPv2 authentication entry (AFI 0xFFFF; RFC 2453 §4.1, RFC 4822 §3).
 ///
@@ -80,6 +119,10 @@ pub enum RipAuthPayload {
 /// authentication-data length) only when the caller left them unset.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RipKeyedDigestHeader {
+    /// Keyed-message-digest algorithm (RFC 2082 / RFC 4822 §3), defaulting to
+    /// [`RipDigestAlgorithm::KeyedMd5`]. It fixes the trailing digest length and
+    /// selects the hash used when `compile()` auto-computes the digest.
+    pub algorithm: RipDigestAlgorithm,
     /// Offset, in octets from the start of the RIP message, to the trailing
     /// digest entry (the "RIP packet length" / offset field; RFC 4822 §3.1).
     pub offset: Field<u16>,
@@ -111,6 +154,7 @@ impl RipKeyedDigestHeader {
     /// which are marked caller-set.
     pub fn new() -> Self {
         Self {
+            algorithm: RipDigestAlgorithm::default(),
             offset: Field::defaulted(0),
             key_id: Field::defaulted(0),
             auth_data_len: Field::defaulted(0),
@@ -131,9 +175,19 @@ impl RipKeyedDigestHeader {
         self.key_id.value().copied().unwrap_or(0)
     }
 
-    /// Effective Authentication Data Length (caller-set or default).
+    /// Effective Authentication Data Length (caller-set or, when unset, the
+    /// trailing digest length implied by [`Self::algorithm`]).
+    ///
+    /// When the caller pinned an explicit length it survives untouched
+    /// (including deliberately wrong values); otherwise this reflects the
+    /// selected algorithm's digest length (16 Keyed-MD5, 20 HMAC-SHA-1, 32
+    /// HMAC-SHA-256) per RFC 2082 §3.2.1 / RFC 4822 §3.
     pub fn auth_data_len_value(&self) -> u8 {
-        self.auth_data_len.value().copied().unwrap_or(0)
+        if self.auth_data_len.is_user_set() {
+            self.auth_data_len.value().copied().unwrap_or(0)
+        } else {
+            self.algorithm.digest_len() as u8
+        }
     }
 
     /// Effective Sequence Number (caller-set or default).
@@ -176,6 +230,25 @@ impl RipAuth {
         let mut header = RipKeyedDigestHeader::new();
         header.key_id.set_user(key_id);
         header.auth_data_len.set_user(auth_data_len);
+        Self {
+            auth_type: Field::user(RIP_AUTH_TYPE_KEYED_DIGEST),
+            payload: RipAuthPayload::KeyedDigest(header),
+        }
+    }
+
+    /// Build a keyed message-digest authentication entry for a specific digest
+    /// algorithm (RFC 2082 Keyed-MD5 / RFC 4822 §3 HMAC-SHA).
+    ///
+    /// Sets the authentication type (caller-set) to
+    /// [`RIP_AUTH_TYPE_KEYED_DIGEST`] (3), records `alg` on the trailing-entry
+    /// header, and seeds the Key Identifier. The Authentication Data Length is
+    /// left unset so it reflects `alg`'s digest length (16 Keyed-MD5, 20
+    /// HMAC-SHA-1, 32 HMAC-SHA-256) until a caller overrides it; the offset,
+    /// sequence, and reserved words default to zero.
+    pub fn keyed_digest_with(alg: RipDigestAlgorithm, key_id: u8) -> Self {
+        let mut header = RipKeyedDigestHeader::new();
+        header.algorithm = alg;
+        header.key_id.set_user(key_id);
         Self {
             auth_type: Field::user(RIP_AUTH_TYPE_KEYED_DIGEST),
             payload: RipAuthPayload::KeyedDigest(header),
@@ -393,6 +466,44 @@ pub(crate) fn compute_md5_digest(
     digest
 }
 
+/// Compute the RFC 4822 §3 cryptographic authentication digest for `alg` over
+/// `message` keyed by `key`.
+///
+/// RFC 4822 §3 replaces the RFC 2082 Keyed-MD5 construction with the standard
+/// HMAC of the selected SHA algorithm (HMAC-SHA-1, HMAC-SHA-256, …) computed
+/// over the full RIP message (header, route entries, the leading keyed-digest
+/// authentication entry, and the 4-octet trailing authentication block
+/// introduction), returning the full-length MAC. The returned `Vec` is the
+/// digest to place in the trailing block via [`RipAuth::trailing_digest_block`];
+/// its length is `alg.digest_len()` (20 for HMAC-SHA-1, 32 for HMAC-SHA-256).
+///
+/// For [`RipDigestAlgorithm::KeyedMd5`] this delegates to [`compute_md5_digest`]
+/// over a `message` that already carries the 16-octet trailing key region, so a
+/// single call site can compute either family from the same algorithm selector.
+pub(crate) fn compute_hmac_digest(
+    alg: RipDigestAlgorithm,
+    message: &[u8],
+    key: &[u8],
+) -> Vec<u8> {
+    match alg {
+        RipDigestAlgorithm::KeyedMd5 => compute_md5_digest(message, key).to_vec(),
+        RipDigestAlgorithm::HmacSha1 => {
+            // hmac 0.12 / sha1 0.10: keyed HMAC-SHA-1 (RFC 2104 / RFC 4822 §3).
+            // `new_from_slice` accepts any key length, so this never fails.
+            let mut mac = Hmac::<Sha1>::new_from_slice(key)
+                .expect("HMAC accepts any key length");
+            mac.update(message);
+            mac.finalize().into_bytes().to_vec()
+        }
+        RipDigestAlgorithm::HmacSha256 => {
+            let mut mac = Hmac::<Sha256>::new_from_slice(key)
+                .expect("HMAC accepts any key length");
+            mac.update(message);
+            mac.finalize().into_bytes().to_vec()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -573,6 +684,85 @@ mod tests {
         assert_ne!(
             compute_md5_digest(&message_with_key_region, b"other-key"),
             expected
+        );
+    }
+
+    #[test]
+    fn rip_auth_hmac_sha_lengths() {
+        // RFC 4822 §3: HMAC-SHA digests are the full MAC length of the chosen
+        // hash — 20 octets for HMAC-SHA-1, 32 for HMAC-SHA-256. The selected
+        // algorithm fixes both the trailing digest length and the auth-data
+        // length reported by the keyed-digest header.
+        let message = b"\x02\x02\x00\x00rip-hmac-sample-message";
+        let key = b"rip-hmac-key";
+
+        let sha1 = compute_hmac_digest(RipDigestAlgorithm::HmacSha1, message, key);
+        assert_eq!(sha1.len(), 20);
+        assert_eq!(sha1.len(), RipDigestAlgorithm::HmacSha1.digest_len());
+
+        let sha256 = compute_hmac_digest(RipDigestAlgorithm::HmacSha256, message, key);
+        assert_eq!(sha256.len(), 32);
+        assert_eq!(sha256.len(), RipDigestAlgorithm::HmacSha256.digest_len());
+
+        // Keyed-MD5 stays 16 octets via the same selector.
+        let md5 = compute_hmac_digest(RipDigestAlgorithm::KeyedMd5, message, key);
+        assert_eq!(md5.len(), 16);
+        assert_eq!(md5.len(), RipDigestAlgorithm::KeyedMd5.digest_len());
+
+        // keyed_digest_with leaves the auth-data length unset so it reflects the
+        // selected algorithm's digest length until a caller overrides it.
+        let auth = RipAuth::keyed_digest_with(RipDigestAlgorithm::HmacSha1, 5);
+        assert_eq!(auth.auth_data_len(), 20);
+        match &auth.payload {
+            RipAuthPayload::KeyedDigest(header) => {
+                assert_eq!(header.algorithm, RipDigestAlgorithm::HmacSha1);
+                assert_eq!(header.key_id_value(), 5);
+            }
+            other => panic!("expected KeyedDigest payload, got {other:?}"),
+        }
+
+        let auth256 = RipAuth::keyed_digest_with(RipDigestAlgorithm::HmacSha256, 9);
+        assert_eq!(auth256.auth_data_len(), 32);
+
+        // The default keyed-digest builder stays Keyed-MD5 (16 octets).
+        let md5_auth = RipAuth::keyed_digest(1, 16);
+        assert_eq!(md5_auth.auth_data_len(), 16);
+        match &md5_auth.payload {
+            RipAuthPayload::KeyedDigest(header) => {
+                assert_eq!(header.algorithm, RipDigestAlgorithm::KeyedMd5);
+            }
+            other => panic!("expected KeyedDigest payload, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rip_auth_hmac_sha1_known_vector() {
+        // RFC 4822 §3 HMAC-SHA-1: a deterministic, self-consistent golden vector.
+        // Fixed message: a 4-octet RIP header (command 2, version 2, reserved 0)
+        // followed by a short ASCII tail; fixed key. The expected MAC was
+        // computed once with this exact construction and pinned here.
+        let message = b"\x02\x02\x00\x00rip-hmac-sha1-known-vector";
+        let key = b"rip-sha1-key";
+
+        let expected: [u8; 20] = [
+            0x05, 0x36, 0x0e, 0x18, 0xb1, 0x19, 0x7f, 0xbe, 0xa6, 0x00, 0x00, 0xd1, 0x66, 0x52,
+            0x6c, 0x8d, 0xd7, 0x77, 0x15, 0x8d,
+        ];
+
+        let digest = compute_hmac_digest(RipDigestAlgorithm::HmacSha1, message, key);
+        assert_eq!(digest.len(), 20);
+        assert_eq!(digest.as_slice(), &expected);
+
+        // The construction is deterministic.
+        assert_eq!(
+            compute_hmac_digest(RipDigestAlgorithm::HmacSha1, message, key),
+            digest
+        );
+
+        // A different key yields a different MAC.
+        assert_ne!(
+            compute_hmac_digest(RipDigestAlgorithm::HmacSha1, message, b"other-key"),
+            digest
         );
     }
 }
