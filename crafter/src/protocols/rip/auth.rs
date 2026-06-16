@@ -27,10 +27,11 @@ use hmac::{Hmac, Mac};
 use md5::{Digest, Md5};
 use sha1::Sha1;
 use sha2::Sha256;
+use subtle::ConstantTimeEq;
 
 use crate::field::Field;
 
-use super::constants::RIP_AFI_AUTH;
+use super::constants::{RIP_AFI_AUTH, RIP_ENTRY_LEN, RIP_HEADER_LEN};
 use super::entry::RipEntry;
 use super::registry::{
     is_rip_auth_marker, rip_auth_type, rip_auth_type_code, RipAuthType,
@@ -504,10 +505,144 @@ pub(crate) fn compute_hmac_digest(
     }
 }
 
+/// Outcome of verifying a RIPv2 authenticated message against a key
+/// (RFC 2453 §4.1, RFC 4822 §4).
+///
+/// The variants distinguish the two authentication forms and, within each, a
+/// match from a mismatch. `Unauthenticated` is returned when the message's
+/// leading entry is not a RIPv2 authentication entry (its Address Family
+/// Identifier is not the AFI 0xFFFF marker), so there is nothing to verify.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RipAuthVerification {
+    /// The leading entry is not an authentication entry (AFI != 0xFFFF), so the
+    /// message carries no authentication to verify.
+    Unauthenticated,
+    /// Simple-password authentication (RFC 2453 §4.1) whose 16-octet password
+    /// matches the supplied key (right-padded with zeros to 16 octets).
+    SimplePasswordOk,
+    /// Simple-password authentication whose 16-octet password does not match the
+    /// supplied key.
+    SimplePasswordMismatch,
+    /// Keyed message-digest authentication (RFC 2082 / RFC 4822 §3) whose
+    /// recomputed digest matches the trailing digest on the wire.
+    DigestOk,
+    /// Keyed message-digest authentication whose recomputed digest does not match
+    /// the trailing digest on the wire.
+    DigestMismatch,
+}
+
+/// Verify a RIPv2 authenticated message against a key (RFC 2453 §4.1,
+/// RFC 4822 §4).
+///
+/// `message_bytes` is the complete RIP message as it appears on the wire: the
+/// 4-octet header, the leading authentication entry, any route entries, and —
+/// for keyed message digest — the trailing authentication block (AFI 0xFFFF,
+/// trailer type 0x0001, then the digest octets). `key` is the authentication
+/// key shared with the sender.
+///
+/// The function inspects the leading entry that follows the header:
+///
+/// - If its Address Family Identifier is not the AFI 0xFFFF authentication
+///   marker, the message is not authenticated and [`RipAuthVerification::
+///   Unauthenticated`] is returned.
+/// - For Authentication Type 2 (simple password, RFC 2453 §4.1) the 16-octet
+///   password carried in the entry is compared, in constant time, to `key`
+///   right-padded with zeros (or truncated) to 16 octets, yielding
+///   [`RipAuthVerification::SimplePasswordOk`] or
+///   [`RipAuthVerification::SimplePasswordMismatch`].
+/// - For Authentication Type 3 (keyed message digest, RFC 2082 / RFC 4822 §3)
+///   the digest is recomputed over the message with the trailing digest region
+///   replaced by the key, exactly as on `compile()`, using the algorithm implied
+///   by the Authentication Data Length carried in the header entry (16 octets
+///   Keyed-MD5, 20 HMAC-SHA-1, 32 HMAC-SHA-256). The recomputed digest is
+///   compared, in constant time, to the trailing digest on the wire, yielding
+///   [`RipAuthVerification::DigestOk`] or [`RipAuthVerification::DigestMismatch`].
+///
+/// A truncated or structurally invalid message (too short to hold the header and
+/// a leading authentication entry, an unrecognized authentication type, or a
+/// trailing digest block that does not fit) verifies as a mismatch for its
+/// implied form rather than panicking; an entirely absent authentication entry
+/// reads as [`RipAuthVerification::Unauthenticated`].
+pub fn verify(message_bytes: &[u8], key: &[u8]) -> RipAuthVerification {
+    // The leading authentication entry follows the 4-octet header. Without a
+    // full header plus one 20-octet entry there is nothing to inspect.
+    if message_bytes.len() < RIP_HEADER_LEN + RIP_ENTRY_LEN {
+        return RipAuthVerification::Unauthenticated;
+    }
+    let entry = &message_bytes[RIP_HEADER_LEN..RIP_HEADER_LEN + RIP_ENTRY_LEN];
+
+    // AFI (entry bytes 0..2) must be the 0xFFFF authentication marker.
+    let afi = u16::from_be_bytes([entry[0], entry[1]]);
+    if !is_rip_auth_marker(afi) {
+        return RipAuthVerification::Unauthenticated;
+    }
+
+    // Authentication Type rides in the entry's route-tag octets (bytes 2..4).
+    let auth_type = u16::from_be_bytes([entry[2], entry[3]]);
+    match rip_auth_type(auth_type) {
+        RipAuthType::SimplePassword => {
+            // The 16-octet plaintext password occupies the entry's remaining
+            // octets (bytes 4..20). Compare it, in constant time, to the key
+            // right-padded with zeros / truncated to 16 octets (RFC 2453 §4.1).
+            let mut expected = [0u8; RIP_SIMPLE_PASSWORD_LEN];
+            let take = key.len().min(RIP_SIMPLE_PASSWORD_LEN);
+            expected[..take].copy_from_slice(&key[..take]);
+            let matches: bool = entry[4..RIP_ENTRY_LEN].ct_eq(&expected).into();
+            if matches {
+                RipAuthVerification::SimplePasswordOk
+            } else {
+                RipAuthVerification::SimplePasswordMismatch
+            }
+        }
+        RipAuthType::KeyedMessageDigest => {
+            // The keyed-digest header entry carries the Authentication Data
+            // Length (entry byte 7), which fixes the trailing digest length and,
+            // here, the algorithm (RFC 2082 / RFC 4822 §3).
+            let auth_data_len = entry[7] as usize;
+            let alg = match auth_data_len {
+                20 => RipDigestAlgorithm::HmacSha1,
+                32 => RipDigestAlgorithm::HmacSha256,
+                // Keyed-MD5 is the RFC 2082 default; any other length falls back
+                // to its 16-octet construction.
+                _ => RipDigestAlgorithm::KeyedMd5,
+            };
+
+            // The trailing digest sits at the tail of the message after the
+            // 4-octet trailing-block introduction (AFI 0xFFFF + trailer 0x0001).
+            // It must fit; otherwise the message is malformed and cannot match.
+            if message_bytes.len() < auth_data_len {
+                return RipAuthVerification::DigestMismatch;
+            }
+            let digest_start = message_bytes.len() - auth_data_len;
+            let transmitted = &message_bytes[digest_start..];
+
+            // Recompute the digest the same way `compile()` does: the trailing
+            // digest region is replaced by the key before hashing (RFC 2082
+            // §3.2.1) for Keyed-MD5, or HMAC keyed by `key` over the message up
+            // to the digest region (RFC 4822 §3) for the HMAC-SHA family.
+            let recomputed = match alg {
+                RipDigestAlgorithm::KeyedMd5 => {
+                    compute_md5_digest(message_bytes, key).to_vec()
+                }
+                RipDigestAlgorithm::HmacSha1 | RipDigestAlgorithm::HmacSha256 => {
+                    compute_hmac_digest(alg, &message_bytes[..digest_start], key)
+                }
+            };
+
+            let matches: bool = recomputed.as_slice().ct_eq(transmitted).into();
+            if matches {
+                RipAuthVerification::DigestOk
+            } else {
+                RipAuthVerification::DigestMismatch
+            }
+        }
+        RipAuthType::Other(_) => RipAuthVerification::DigestMismatch,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocols::rip::constants::RIP_ENTRY_LEN;
 
     #[test]
     fn rip_auth_builders_set_type() {
@@ -763,6 +898,104 @@ mod tests {
         assert_ne!(
             compute_hmac_digest(RipDigestAlgorithm::HmacSha1, message, b"other-key"),
             digest
+        );
+    }
+
+    #[test]
+    fn rip_auth_verify_simple_password() {
+        // RFC 2453 §4.1: a simple-password authenticated message is the 4-octet
+        // header followed by the AFI 0xFFFF / type 2 authentication entry whose
+        // remaining 16 octets carry the password. Build that message and verify it.
+        let key = b"rip-pass";
+        let auth = RipAuth::simple_password(key);
+
+        let mut message = vec![
+            crate::protocols::rip::constants::RIP_COMMAND_RESPONSE,
+            crate::protocols::rip::constants::RIP_VERSION_2,
+            0x00,
+            0x00,
+        ];
+        auth.as_entry().encode(&mut message);
+
+        // The correct key (padded to 16 octets) verifies as a match.
+        assert_eq!(verify(&message, key), RipAuthVerification::SimplePasswordOk);
+
+        // A wrong key is reported as a mismatch, not a panic.
+        assert_eq!(
+            verify(&message, b"wrong-pass"),
+            RipAuthVerification::SimplePasswordMismatch
+        );
+
+        // A message whose leading entry is an ordinary IP route (AFI 2) is not
+        // authenticated, so there is nothing to verify.
+        let mut unauthenticated = vec![
+            crate::protocols::rip::constants::RIP_COMMAND_RESPONSE,
+            crate::protocols::rip::constants::RIP_VERSION_2,
+            0x00,
+            0x00,
+        ];
+        RipEntry::ipv2_route(
+            std::net::Ipv4Addr::new(192, 0, 2, 0),
+            std::net::Ipv4Addr::new(255, 255, 255, 0),
+            1,
+        )
+        .encode(&mut unauthenticated);
+        assert_eq!(
+            verify(&unauthenticated, key),
+            RipAuthVerification::Unauthenticated
+        );
+    }
+
+    #[test]
+    fn rip_auth_verify_keyed_md5() {
+        // RFC 2082 §3.2.1 Keyed-MD5: build the authenticated message directly
+        // from the auth layout helpers (the Rip-compile auto-fill integration is
+        // a later step). The on-wire message is:
+        //   header(4) | keyed-digest header entry(20) | route entry(20)
+        //            | trailing block intro(4: AFI 0xFFFF, trailer 0x0001) | digest(16)
+        // The digest is MD5 over the same message with the trailing 16-octet
+        // region replaced by the key (zero-padded to 16 octets).
+        let key = b"rip-md5-key";
+        let auth = RipAuth::keyed_digest(1, RIP_MD5_DIGEST_LEN as u8);
+
+        // Header (Response, v2, reserved 0) + leading keyed-digest header entry.
+        let mut message: Vec<u8> = vec![
+            crate::protocols::rip::constants::RIP_COMMAND_RESPONSE,
+            crate::protocols::rip::constants::RIP_VERSION_2,
+            0x00,
+            0x00,
+        ];
+        auth.keyed_digest_header_entry().encode(&mut message);
+
+        // One ordinary RIPv2 route entry.
+        RipEntry::ipv2_route(
+            std::net::Ipv4Addr::new(192, 0, 2, 0),
+            std::net::Ipv4Addr::new(255, 255, 255, 0),
+            1,
+        )
+        .encode(&mut message);
+
+        // Trailing authentication block introduction (AFI 0xFFFF, trailer 0x0001),
+        // then the 16-octet digest region.
+        message.extend_from_slice(&RIP_AFI_AUTH.to_be_bytes());
+        message.extend_from_slice(&RIP_AUTH_TRAILER_MARKER.to_be_bytes());
+
+        // Build the message-with-key-region (the digest region starts as zeros)
+        // and compute the RFC 2082 Keyed-MD5 digest over it.
+        let mut message_with_key_region = message.clone();
+        message_with_key_region.extend_from_slice(&[0u8; RIP_MD5_DIGEST_LEN]);
+        let digest = compute_md5_digest(&message_with_key_region, key);
+
+        // Place the computed digest on the wire after the trailing block intro.
+        message.extend_from_slice(&digest);
+
+        // The correct key recomputes the same digest and verifies as a match.
+        assert_eq!(verify(&message, key), RipAuthVerification::DigestOk);
+
+        // A wrong key recomputes a different digest and is a mismatch.
+        assert_eq!(
+            verify(&message, b"other-key"),
+            RipAuthVerification::DigestMismatch
         );
     }
 }
