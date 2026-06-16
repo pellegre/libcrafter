@@ -32,7 +32,7 @@ The current branch also has offline examples under `crafter/examples/`:
 | WPA2-PSK CCMP decrypt | Supported through `WpaDecrypt` | Passive transform observes SSID/RSN/EAPOL state and emits decrypted packet records for supported WPA2-Personal CCMP-128 traffic. |
 | Protected data frames | Preserved as Raw by direct decode | The protected bit remains visible. Unsupported or not-ready protected frames stay packet-shaped and carry inspectable WPA metadata when processed by `WpaDecrypt`. |
 | Classic pcap | Supported | Bare IEEE 802.11 (`DLT_IEEE802_11`) and radiotap (`DLT_IEEE802_11_RADIO`) read/write and decode. |
-| Live radiotap send | Dry-run/manual boundary | Dry-run planning is supported. Built-in automatic live injection is not part of automated validation. |
+| Live radiotap send | Supported behind live gates | A `Radiotap / Dot11` frame can be transmitted on a monitor-mode interface through the live send API. Dry-run planning is the default-safe path; live injection requires the explicit live gate and is not exercised by automated validation. |
 
 ## Bare Dot11
 
@@ -413,11 +413,66 @@ are the normal path. Live Wi-Fi work has a stricter boundary than ordinary
 packet compilation because an RF interface can affect networks outside the
 developer machine.
 
-Current radiotap live support is limited to dry-run send planning. A
-`Radiotap / Dot11` packet can produce a link-layer send plan with
-`SendOptions::new().iface("dot11-monitor-dry-run").link_layer()`, but built-in
-automatic live injection is intentionally unsupported and is not part of
-automated validation. Manual dongle guidance lives in
+`crafter` can transmit a `Radiotap / Dot11` frame on a monitor-mode interface
+through the live send API. The radiotap header leads the frame and the same
+Layer-2 datalink writer that already sends Ethernet frames puts the bytes on the
+air. Dry-run send planning stays the default-safe path: it produces an
+inspectable link-layer send plan and never touches an interface.
+
+Build a TX-suitable radiotap header with `Radiotap::monitor_tx(...)`, prefix the
+802.11 frame, and request a live link-layer send:
+
+```rust
+use crafter::prelude::*;
+
+fn main() -> crafter::Result<()> {
+    let ap = MacAddr::new([0x00, 0x00, 0x5e, 0x00, 0x53, 0x02]);
+    let packet = Radiotap::monitor_tx(
+        2,
+        RadiotapChannel::channel_2ghz(6),
+        RadiotapTxFlags::NO_ACK,
+    ) / Dot11::beacon()
+        .addr1(MacAddr::BROADCAST)
+        .addr2(ap)
+        .addr3(ap)
+        .ssid(b"dot11-agent-beacon");
+
+    // Default-safe: plan the send without transmitting.
+    let plan = send_dry_run(&packet, SendOptions::new()
+        .iface("dot11-monitor-dry-run")
+        .link_layer())?;
+    println!("{plan:?}");
+
+    // Live: transmit on an already-configured monitor interface. Only run this
+    // behind the project's explicit live gate on an isolated, authorized lab.
+    // send_packet(&packet, SendOptions::new()
+    //     .iface("wlan0mon")
+    //     .link_layer()
+    //     .live())?;
+    Ok(())
+}
+# Ok::<(), crafter::CrafterError>(())
+```
+
+The interface must already be in monitor mode on the chosen channel before the
+live send: `crafter` writes to an already-configured Layer-2 channel and does
+not configure monitor mode, set the channel, or manage the regulatory domain. A
+missing interface fails with an interface-not-found error and transmits nothing;
+an interface that is not a usable Layer-2 channel surfaces a clear
+datalink-channel error.
+
+Live transmission is opt-in only. The default and example invocations never
+transmit; live injection requires the explicit live gate (the project's `--live`
+flag plus the isolated-lab acknowledgement and environment marker), and is not
+part of automated validation. The `dot11_beacon_inject` example demonstrates the
+full build-and-inject flow in dry-run by default and only transmits behind that
+gate:
+
+```sh
+cargo run -p crafter --example dot11_beacon_inject
+```
+
+Monitor-mode dongle setup and the manual injection checklist live in
 [`docs/operations/dot11-live-manual.md`](../operations/dot11-live-manual.md).
 
 Examples, docs, fixtures, and tests should use documentation MAC addresses from
