@@ -1,0 +1,110 @@
+version: 1
+kind: layer
+name: rip
+summary: >-
+  Routing Information Protocol over IPv4 UDP port 520, carrying the RIPv1
+  (RFC 1058) and RIPv2 (RFC 2453) 4-octet header (command, version, reserved)
+  and fixed 20-octet route entries (address family, route tag, address, subnet
+  mask, next hop, metric). RIPv2 authentication entries (AFI 0xFFFF) are covered
+  here through the address-family field and the auth coverage cases; structured
+  per-entry authentication behavior is owned by feature specs.
+
+roots: []
+parents:
+  - udp
+children:
+  - payload
+
+fields:
+  - name: command
+    type: uint8
+    required: true
+    domains:
+      - request
+      - response
+      - unknown
+  - name: version
+    type: uint8
+    required: true
+    domains:
+      - v1
+      - v2
+  - name: reserved
+    type: uint16
+    required: false
+    domains:
+      - zero
+      - malformed_override
+  - name: address_family
+    type: uint16
+    required: true
+    domains:
+      - ip
+      - request_all
+      - authentication
+      - unknown
+  - name: route_tag
+    type: uint16
+    required: false
+    domains:
+      - zero
+      - boundary
+  - name: address
+    type: ipv4
+    required: true
+    domains:
+      - zero
+      - documentation_ipv4
+  - name: subnet_mask
+    type: ipv4
+    required: false
+    domains:
+      - zero
+      - documentation_ipv4
+  - name: next_hop
+    type: ipv4
+    required: false
+    domains:
+      - zero
+      - documentation_ipv4
+  - name: metric
+    type: uint32
+    required: true
+    domains:
+      - reachable
+      - infinity
+
+coverage_cases:
+  - rip-v1-request
+  - rip-v1-response
+  - rip-v2-response
+  - rip-v2-auth
+  - crafter-rip-message-matrix
+
+notes:
+  - Field names mirror the libcrafter accessor names (command, version,
+    reserved, address_family, route_tag, address, subnet_mask, next_hop,
+    metric) so cross-backend normalization can align Scapy RIP/RIPEntry/RIPAuth
+    layers with the libcrafter Rip/RipEntry surface.
+  - RIPv1 leaves route_tag, subnet_mask, and next_hop at their reserved
+    defaults; RIPv2 populates them. The request-whole-table sentinel uses
+    address_family 0 with metric infinity (16). Authentication entries use
+    address_family 0xFFFF and are detailed in the RIP feature specs.
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - RIP
+      - RIPEntry
+      - RIPAuth
+    encode: true
+    decode: true
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    notes:
+      - Encodes and decodes the RIPv1/RIPv2 header and 20-octet route entries,
+        the RIPv2 route tag, subnet mask, and next hop, the request-whole-table
+        sentinel, and AFI 0xFFFF authentication entries.
