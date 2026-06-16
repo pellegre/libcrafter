@@ -19,6 +19,9 @@ pub mod entry;
 pub mod message;
 pub mod registry;
 
+pub use auth::{
+    verify, RipAuth, RipAuthPayload, RipAuthVerification, RipDigestAlgorithm, RipKeyedDigestHeader,
+};
 pub use constants::*;
 pub use entry::RipEntry;
 pub use message::RipCommand;
@@ -96,6 +99,19 @@ pub struct Rip {
     pub reserved: Field<u16>,
     /// Route table entries that follow the header (RFC 2453 §4).
     pub entries: Vec<RipEntry>,
+    /// Optional RIPv2 authentication configuration (RFC 2453 §4.1, RFC 4822 §3).
+    ///
+    /// When set, `compile()` emits the leading AFI-0xFFFF authentication entry
+    /// before the route entries and — for the keyed-digest form — appends the
+    /// trailing digest block after them, auto-computing the digest from
+    /// [`Self::auth_key`] unless the caller pinned one.
+    pub auth: Option<RipAuth>,
+    /// The authentication key used to compute the keyed digest on `compile()`.
+    ///
+    /// The key is never serialized onto the wire (except where the RFC 2082
+    /// Keyed-MD5 construction folds it into the digest region before hashing);
+    /// it is held only so `compile()` can derive the trailing digest.
+    pub auth_key: Vec<u8>,
 }
 
 impl Rip {
@@ -111,6 +127,8 @@ impl Rip {
             version: Field::defaulted(RIP_VERSION_2),
             reserved: Field::defaulted(0),
             entries: Vec::new(),
+            auth: None,
+            auth_key: Vec::new(),
         }
     }
 
@@ -178,6 +196,21 @@ impl Rip {
         self
     }
 
+    /// Attach RIPv2 authentication to the message (RFC 2453 §4.1, RFC 4822 §3).
+    ///
+    /// Stores the [`RipAuth`] configuration and the authentication `key`. On
+    /// [`compile()`](Layer::compile) the leading AFI-0xFFFF authentication entry
+    /// is emitted before the route entries; for the keyed-digest form, the
+    /// trailing digest block is appended after them with the digest computed from
+    /// `key` (RFC 2082 Keyed-MD5 / RFC 4822 HMAC-SHA) unless the caller pinned an
+    /// explicit digest, in which case the pinned digest survives untouched. The
+    /// key is used only for digest computation and is not otherwise serialized.
+    pub fn auth(mut self, auth: RipAuth, key: impl Into<Vec<u8>>) -> Self {
+        self.auth = Some(auth);
+        self.auth_key = key.into();
+        self
+    }
+
     /// Effective command wire code (caller-set or default).
     pub fn command_value(&self) -> u8 {
         self.command.value().copied().unwrap_or(RIP_COMMAND_RESPONSE)
@@ -201,6 +234,19 @@ impl Rip {
     /// The route table entries that follow the header.
     pub fn entries(&self) -> &[RipEntry] {
         &self.entries
+    }
+
+    /// The attached RIPv2 authentication configuration, if any (RFC 2453 §4.1).
+    ///
+    /// Returns `Some` when the message carries authentication — either set by the
+    /// [`Rip::auth`] builder or recognized from a leading AFI-0xFFFF entry on
+    /// [`decode`]. For a decoded keyed-digest message this exposes the parsed
+    /// header; verification of the trailing digest is via [`verify`] on the raw
+    /// message bytes. (Named `auth_config` so it does not collide with the
+    /// same-named [`Rip::auth`] builder; Rust rejects two inherent methods with
+    /// the same name.)
+    pub fn auth_config(&self) -> Option<&RipAuth> {
+        self.auth.as_ref()
     }
 }
 
@@ -249,6 +295,16 @@ pub fn decode(bytes: &[u8]) -> Result<Rip> {
         let entry = RipEntry::decode(rest)?;
         rip.entries.push(entry);
         rest = &rest[RIP_ENTRY_LEN..];
+    }
+
+    // RFC 2453 §4.1 / RFC 4822 §3: when the leading entry is an AFI-0xFFFF
+    // authentication entry, recognize and expose it on the layer. The route
+    // entries still round-trip byte-for-byte (they remain in `entries`); digest
+    // verification is via the [`verify`] helper on the raw message bytes.
+    if let Some(first) = rip.entries.first() {
+        if first.is_auth_marker() {
+            rip.auth = auth::decode_auth_entry(first);
+        }
     }
 
     Ok(rip)
@@ -381,7 +437,18 @@ impl Layer for Rip {
     }
 
     fn encoded_len(&self) -> usize {
-        RIP_HEADER_LEN + self.entries.len() * RIP_ENTRY_LEN
+        // 4-octet header plus 20 octets per route entry. When authentication is
+        // attached, add the leading AFI-0xFFFF authentication entry and — for the
+        // keyed-digest form — the trailing digest block (4-octet introduction
+        // plus the digest itself, RFC 4822 §3.1).
+        let mut len = RIP_HEADER_LEN + self.entries.len() * RIP_ENTRY_LEN;
+        if let Some(auth) = &self.auth {
+            len += RIP_ENTRY_LEN;
+            if let RipAuthPayload::KeyedDigest(header) = &auth.payload {
+                len += 4 + header.algorithm.digest_len();
+            }
+        }
+        len
     }
 
     fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
@@ -393,8 +460,62 @@ impl Layer for Rip {
         out.push(self.command_value());
         out.push(self.version_value());
         out.extend_from_slice(&self.reserved_value().to_be_bytes());
-        for entry in &self.entries {
-            entry.encode(out);
+
+        match &self.auth {
+            // RFC 2453 §4.1 / RFC 4822 §3: the leading authentication entry
+            // (AFI 0xFFFF) precedes the route entries. Simple-password emits only
+            // that entry; keyed-digest emits the header entry and a trailing
+            // digest block after the route entries.
+            Some(auth) => match &auth.payload {
+                auth::RipAuthPayload::SimplePassword(_) => {
+                    auth.as_entry().encode(out);
+                    for entry in &self.entries {
+                        entry.encode(out);
+                    }
+                }
+                auth::RipAuthPayload::KeyedDigest(header) => {
+                    // Leading keyed-digest header entry, then the route entries.
+                    auth.keyed_digest_header_entry().encode(out);
+                    for entry in &self.entries {
+                        entry.encode(out);
+                    }
+
+                    // Trailing block introduction (AFI 0xFFFF, trailer 0x0001),
+                    // then the digest. A caller-pinned digest survives untouched;
+                    // otherwise it is computed over the assembled message with the
+                    // trailing digest region replaced by the key (RFC 2082 §3.2.1
+                    // Keyed-MD5 / RFC 4822 §3 HMAC-SHA), exactly as verify()
+                    // recomputes it.
+                    out.extend_from_slice(&RIP_AFI_AUTH.to_be_bytes());
+                    out.extend_from_slice(&auth::RIP_AUTH_TRAILER_MARKER.to_be_bytes());
+
+                    if let Some(pinned) = header.digest {
+                        out.extend_from_slice(&pinned);
+                    } else {
+                        let digest = match header.algorithm {
+                            RipDigestAlgorithm::KeyedMd5 => {
+                                // RFC 2082 §3.2.1: append a zeroed 16-octet digest
+                                // region, then let compute_md5_digest fold the key
+                                // into it before hashing the whole message.
+                                let mut message = out.clone();
+                                message.extend_from_slice(&[0u8; auth::RIP_MD5_DIGEST_LEN]);
+                                auth::compute_md5_digest(&message, &self.auth_key).to_vec()
+                            }
+                            RipDigestAlgorithm::HmacSha1 | RipDigestAlgorithm::HmacSha256 => {
+                                // RFC 4822 §3: HMAC over the message up to (not
+                                // including) the digest region.
+                                auth::compute_hmac_digest(header.algorithm, out, &self.auth_key)
+                            }
+                        };
+                        out.extend_from_slice(&digest);
+                    }
+                }
+            },
+            None => {
+                for entry in &self.entries {
+                    entry.encode(out);
+                }
+            }
         }
         Ok(())
     }
@@ -813,5 +934,101 @@ mod rip_whole_table_request_helpers {
             .expect("v2 decoded packet includes an Ipv4 layer");
         assert_eq!(v2_ipv4.destination(), RIP_V2_MULTICAST);
         assert_eq!(v2_ipv4.destination(), Ipv4Addr::new(224, 0, 0, 9));
+    }
+}
+
+#[cfg(test)]
+mod rip_layer_auth_integration {
+    use super::*;
+    use crate::packet::LayerContext;
+    use std::net::Ipv4Addr;
+
+    fn compile_bytes(rip: &Rip) -> Vec<u8> {
+        let packet = Packet::from_layer(rip.clone());
+        let ctx = LayerContext::new(&packet, 0);
+        let mut out = Vec::new();
+        rip.compile(&ctx, &mut out).expect("rip compiles");
+        out
+    }
+
+    #[test]
+    fn rip_layer_keyed_md5_autofills_and_verifies() {
+        // RFC 2082 §3.2.1: a keyed-MD5 authenticated Response with one route
+        // entry and no pinned digest. compile() must emit the leading auth header
+        // entry, the route entry, the trailing block (AFI 0xFFFF, trailer 0x0001),
+        // and the auto-computed 16-octet digest — in the exact byte layout the
+        // decode-side verify() helper expects.
+        let key = b"rip-md5-key";
+        let rip = Rip::response()
+            .entry(RipEntry::ipv2_route(
+                Ipv4Addr::new(192, 0, 2, 0),
+                Ipv4Addr::new(255, 255, 255, 0),
+                1,
+            ))
+            .auth(
+                RipAuth::keyed_digest(1, auth::RIP_MD5_DIGEST_LEN as u8),
+                key.to_vec(),
+            );
+
+        let bytes = compile_bytes(&rip);
+
+        // Layout: header(4) + leading auth entry(20) + route entry(20)
+        //   + trailing block intro(4) + digest(16).
+        assert_eq!(
+            bytes.len(),
+            RIP_HEADER_LEN + RIP_ENTRY_LEN + RIP_ENTRY_LEN + 4 + auth::RIP_MD5_DIGEST_LEN
+        );
+        assert_eq!(rip.encoded_len(), bytes.len());
+
+        // The leading entry is the AFI-0xFFFF / type-3 keyed-digest header entry.
+        assert_eq!(&bytes[RIP_HEADER_LEN..RIP_HEADER_LEN + 2], &[0xFF, 0xFF]);
+        assert_eq!(&bytes[RIP_HEADER_LEN + 2..RIP_HEADER_LEN + 4], &[0x00, 0x03]);
+
+        // The auto-filled digest verifies for the correct key.
+        assert_eq!(verify(&bytes, key), RipAuthVerification::DigestOk);
+
+        // A wrong key recomputes a different digest and is a mismatch (no panic).
+        assert_eq!(
+            verify(&bytes, b"wrong-key"),
+            RipAuthVerification::DigestMismatch
+        );
+    }
+
+    #[test]
+    fn rip_layer_pinned_digest_preserved() {
+        // RFC 2082 §3.2.1: a caller may pin an explicit (here deliberately
+        // arbitrary) digest; compile() must emit it verbatim rather than
+        // recomputing it, so generated tools can exercise a verifier with a
+        // wrong-on-purpose digest.
+        let pinned = [0xAB_u8; auth::RIP_MD5_DIGEST_LEN];
+        let mut keyed = RipAuth::keyed_digest(1, auth::RIP_MD5_DIGEST_LEN as u8);
+        match &mut keyed.payload {
+            RipAuthPayload::KeyedDigest(header) => {
+                header.digest = Some(pinned);
+            }
+            other => panic!("expected KeyedDigest payload, got {other:?}"),
+        }
+
+        let rip = Rip::response()
+            .entry(RipEntry::ipv2_route(
+                Ipv4Addr::new(192, 0, 2, 0),
+                Ipv4Addr::new(255, 255, 255, 0),
+                1,
+            ))
+            .auth(keyed, b"rip-md5-key".to_vec());
+
+        let bytes = compile_bytes(&rip);
+
+        // The trailing 16 octets are exactly the pinned digest, untouched.
+        let digest_start = bytes.len() - auth::RIP_MD5_DIGEST_LEN;
+        assert_eq!(&bytes[digest_start..], &pinned);
+
+        // Because the pinned digest is arbitrary (not the real MD5), verify()
+        // reports a mismatch — proving compile() did not overwrite it with a
+        // freshly computed digest.
+        assert_eq!(
+            verify(&bytes, b"rip-md5-key"),
+            RipAuthVerification::DigestMismatch
+        );
     }
 }
