@@ -17,7 +17,7 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::{arp, dhcp, dns, icmp, ndp, tcp, udp};
+use crate::{arp, dhcp, dns, icmp, ndp, rip, tcp, udp};
 
 pub type ExampleResult<T> = std::result::Result<T, Box<dyn Error>>;
 
@@ -1079,6 +1079,8 @@ fn dispatch_case(
             | "ndp-router-solicitation"
             | "ndp-duplicate-address-detection",
         ) => ndp::run_ndp_live(request, plan),
+        (RunMode::DryRun, "rip-update-v2") => rip::run_rip_dry_run(request, plan),
+        (RunMode::Live, "rip-update-v2") => rip::run_rip_live(request, plan),
         (
             RunMode::DryRun,
             "udp-echo-empty"
