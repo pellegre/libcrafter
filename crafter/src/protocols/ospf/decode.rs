@@ -22,8 +22,16 @@ use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::packet::Packet;
 
-use super::constants::{OSPF_AUTH_LEN, OSPF_AUTYPE_CRYPTOGRAPHIC, OSPF_HEADER_LEN};
+use super::constants::{
+    OSPF_AUTH_LEN, OSPF_AUTYPE_CRYPTOGRAPHIC, OSPF_HEADER_LEN, OSPF_TYPE_HELLO,
+};
+use super::packet::OspfHello;
 use super::{OspfBody, OspfChecksumStatus, Ospfv2};
+
+/// The fixed (pre-neighbor-list) length of the Hello body, in octets (RFC 2328
+/// §A.3.2): Network Mask(4) + HelloInterval(2) + Options(1) + Rtr Pri(1) +
+/// RouterDeadInterval(4) + Designated Router(4) + Backup Designated Router(4).
+const OSPF_HELLO_FIXED_LEN: usize = 20;
 
 /// Append a decoded OSPFv2 packet to an existing packet stack.
 ///
@@ -95,7 +103,20 @@ pub(crate) fn append_ospf_packet_with_checksum_validation(
     } else {
         bytes.len()
     };
-    let body = bytes[OSPF_HEADER_LEN..body_end].to_vec();
+    let body_bytes = &bytes[OSPF_HEADER_LEN..body_end];
+
+    // Dispatch the body by packet Type (RFC 2328 §A.3.1), mirroring the BGP
+    // message-type dispatch (see `crate::protocols::bgp::decode`). Recognized
+    // types parse into a typed `OspfBody`; everything else is preserved verbatim
+    // in `OspfBody::Unknown` so it round-trips byte-for-byte (later steps add the
+    // remaining typed bodies).
+    let body = match packet_type {
+        OSPF_TYPE_HELLO => OspfBody::Hello(decode_hello_body(body_bytes)?),
+        other => OspfBody::Unknown {
+            type_code: other,
+            body: body_bytes.to_vec(),
+        },
+    };
 
     // Decode-time checksum validation status (RFC 2328 §A.3.1), gated by the
     // registry's checksum-validation setting. The OSPF checksum is the standard
@@ -135,21 +156,78 @@ pub(crate) fn append_ospf_packet_with_checksum_validation(
         autype: Field::user(autype),
         authentication: Field::user(authentication),
         checksum_status,
-        body: OspfBody::Unknown {
-            type_code: packet_type,
-            body,
-        },
+        body,
     };
 
     packet = packet.push(ospf);
     Ok(packet)
 }
 
+/// Parse the OSPFv2 Hello body (RFC 2328 §A.3.2) from `body` into an
+/// [`OspfHello`].
+///
+/// The Hello body is a fixed 20 octets — Network Mask(4), HelloInterval(2),
+/// Options(1), Rtr Pri(1), RouterDeadInterval(4), Designated Router(4), Backup
+/// Designated Router(4) — followed by zero or more 4-octet neighbor Router IDs.
+///
+/// A buffer shorter than the fixed 20 octets is a structured truncation error
+/// (context `"ospf hello"`); a neighbor region whose length is not a multiple of
+/// 4 is a structured [`CrafterError::invalid_field_value`]
+/// (`"ospf.hello.neighbors"`). Every recovered field is marked user-set (through
+/// [`OspfHello::from_decoded_parts`]) so the decoded body re-compiles
+/// byte-for-byte.
+fn decode_hello_body(body: &[u8]) -> Result<OspfHello> {
+    if body.len() < OSPF_HELLO_FIXED_LEN {
+        return Err(CrafterError::buffer_too_short(
+            "ospf hello",
+            OSPF_HELLO_FIXED_LEN,
+            body.len(),
+        ));
+    }
+
+    // Fixed 20-octet portion (RFC 2328 §A.3.2), read from fixed offsets. The
+    // length check above keeps every slice in bounds, so this cannot panic.
+    let network_mask = Ipv4Addr::new(body[0], body[1], body[2], body[3]);
+    let hello_interval = u16::from_be_bytes([body[4], body[5]]);
+    let options = body[6];
+    let router_priority = body[7];
+    let router_dead_interval = u32::from_be_bytes([body[8], body[9], body[10], body[11]]);
+    let designated_router = Ipv4Addr::new(body[12], body[13], body[14], body[15]);
+    let backup_designated_router = Ipv4Addr::new(body[16], body[17], body[18], body[19]);
+
+    // The remaining octets are the neighbor list: zero or more 4-octet Router
+    // IDs. A region not a multiple of 4 is a malformed body, not a truncation.
+    let neighbor_region = &body[OSPF_HELLO_FIXED_LEN..];
+    if neighbor_region.len() % 4 != 0 {
+        return Err(CrafterError::invalid_field_value(
+            "ospf.hello.neighbors",
+            "neighbor list length must be a multiple of 4",
+        ));
+    }
+    let neighbors = neighbor_region
+        .chunks_exact(4)
+        .map(|chunk| Ipv4Addr::new(chunk[0], chunk[1], chunk[2], chunk[3]))
+        .collect();
+
+    Ok(OspfHello::from_decoded_parts(
+        network_mask,
+        hello_interval,
+        options,
+        router_priority,
+        router_dead_interval,
+        designated_router,
+        backup_designated_router,
+        neighbors,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::error::CrafterError;
-    use crate::protocols::ospf::constants::{OSPF_TYPE_HELLO, OSPF_VERSION_2};
+    use crate::protocols::ospf::constants::{
+        OSPF_TYPE_HELLO, OSPF_TYPE_LINK_STATE_ACK, OSPF_VERSION_2,
+    };
     use crate::protocols::ospf::Ospfv2;
 
     /// A buffer one octet short of the 24-octet common header is a structured
@@ -175,12 +253,15 @@ mod tests {
     }
 
     /// A full 24-octet common header (no body) decodes into a typed `Ospfv2`
-    /// layer whose fields equal the bytes, and re-compiles byte-for-byte.
+    /// layer whose fields equal the bytes, and re-compiles byte-for-byte. A
+    /// body-less packet type (LSAck, which carries an empty body when no LSA
+    /// headers are present) is used so the header-only case stays valid now that
+    /// type 1 (Hello) dispatches to a typed body that requires a 20-octet body.
     #[test]
     fn ospf_decode_header_only_round_trips() {
         let bytes = Packet::from_layer(
             Ospfv2::new()
-                .packet_type(OSPF_TYPE_HELLO)
+                .packet_type(OSPF_TYPE_LINK_STATE_ACK)
                 .router_id([192, 0, 2, 1])
                 .area_id([0, 0, 0, 0]),
         )
@@ -195,11 +276,100 @@ mod tests {
             .expect("the decoded packet exposes a typed Ospfv2 layer");
 
         assert_eq!(ospf.version_value(), OSPF_VERSION_2);
-        assert_eq!(ospf.packet_type_value(), OSPF_TYPE_HELLO);
+        assert_eq!(ospf.packet_type_value(), OSPF_TYPE_LINK_STATE_ACK);
         assert_eq!(ospf.router_id_value(), Ipv4Addr::new(192, 0, 2, 1));
         assert_eq!(ospf.area_id_value(), Ipv4Addr::new(0, 0, 0, 0));
 
         let recompiled = decoded.compile().expect("decoded OSPF re-compiles");
         assert_eq!(recompiled.as_bytes(), bytes.as_bytes());
+    }
+
+    /// A Hello built with three neighbors and an explicit Designated Router,
+    /// once compiled, decodes (type 1) into a typed Hello body that exposes the
+    /// three neighbors and the DR, and re-compiles byte-for-byte (RFC 2328
+    /// §A.3.2).
+    #[test]
+    fn ospf_decode_hello_with_three_neighbors_round_trips() {
+        use crate::protocols::ospf::OspfBody;
+
+        let dr = Ipv4Addr::new(192, 0, 2, 1);
+        let neighbors = [
+            Ipv4Addr::new(192, 0, 2, 10),
+            Ipv4Addr::new(192, 0, 2, 11),
+            Ipv4Addr::new(192, 0, 2, 12),
+        ];
+
+        let bytes = Packet::from_layer(
+            Ospfv2::hello()
+                .router_id([192, 0, 2, 1])
+                .area_id([0, 0, 0, 0])
+                .with_hello(|h| {
+                    *h = h
+                        .clone()
+                        .network_mask(Ipv4Addr::new(255, 255, 255, 0))
+                        .options(0x02)
+                        .router_priority(1)
+                        .designated_router(dr)
+                        .backup_designated_router(Ipv4Addr::new(192, 0, 2, 2))
+                        .neighbors(neighbors);
+                }),
+        )
+        .compile()
+        .expect("a Hello with three neighbors compiles");
+
+        let decoded = append_ospf_packet(Packet::new(), bytes.as_bytes())
+            .expect("the Hello decodes");
+        let ospf = decoded
+            .layer::<Ospfv2>()
+            .expect("the decoded packet exposes a typed Ospfv2 layer");
+        assert_eq!(ospf.packet_type_value(), OSPF_TYPE_HELLO);
+
+        let hello = match &ospf.body {
+            OspfBody::Hello(hello) => hello,
+            other => panic!("expected a typed Hello body, got {other:?}"),
+        };
+        assert_eq!(hello.neighbors_value(), neighbors.as_slice());
+        assert_eq!(hello.designated_router_value(), dr);
+
+        let recompiled = decoded.compile().expect("decoded Hello re-compiles");
+        assert_eq!(recompiled.as_bytes(), bytes.as_bytes());
+    }
+
+    /// A Hello body truncated to 19 octets (one short of the fixed 20) is a
+    /// structured truncation error (context `"ospf hello"`), never a panic
+    /// (RFC 2328 §A.3.2).
+    #[test]
+    fn ospf_decode_hello_body_truncated_is_truncation_error() {
+        let err = decode_hello_body(&[0u8; OSPF_HELLO_FIXED_LEN - 1])
+            .expect_err("a 19-octet Hello body is too short for the fixed fields");
+        match err {
+            CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            } => {
+                assert_eq!(context, "ospf hello");
+                assert_eq!(required, OSPF_HELLO_FIXED_LEN);
+                assert_eq!(available, OSPF_HELLO_FIXED_LEN - 1);
+            }
+            other => panic!("expected buffer_too_short, got {other:?}"),
+        }
+    }
+
+    /// A Hello whose neighbor region is 6 trailing bytes (not a multiple of 4)
+    /// is a structured invalid-field error (`"ospf.hello.neighbors"`), never a
+    /// panic (RFC 2328 §A.3.2).
+    #[test]
+    fn ospf_decode_hello_misaligned_neighbors_is_invalid_field() {
+        // 20 fixed octets plus 6 trailing octets: a malformed neighbor region.
+        let body = [0u8; OSPF_HELLO_FIXED_LEN + 6];
+        let err = decode_hello_body(&body)
+            .expect_err("a 6-octet neighbor region is not a multiple of 4");
+        match err {
+            CrafterError::InvalidFieldValue { field, .. } => {
+                assert_eq!(field, "ospf.hello.neighbors");
+            }
+            other => panic!("expected invalid_field_value, got {other:?}"),
+        }
     }
 }

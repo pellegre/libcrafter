@@ -1162,7 +1162,6 @@ mod protocol_registry {
     fn default_registry_decodes_ospf_over_ipv4() {
         use core::net::Ipv4Addr;
 
-        use crate::protocols::ospf::constants::OSPF_TYPE_HELLO;
         use crate::protocols::ospf::decode::{
             append_ospf_packet, append_ospf_packet_with_checksum_validation,
         };
@@ -1171,7 +1170,7 @@ mod protocol_registry {
         let bytes = (Ipv4::new()
             .src(Ipv4Addr::new(192, 0, 2, 1))
             .dst(Ipv4Addr::new(192, 0, 2, 2))
-            / Ospfv2::new().packet_type(OSPF_TYPE_HELLO))
+            / Ospfv2::hello())
         .compile()
         .expect("Ipv4 / Ospfv2 Hello compiles");
 

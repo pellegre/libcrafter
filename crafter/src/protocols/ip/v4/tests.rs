@@ -94,14 +94,14 @@ mod ipv4_protocol {
 
     #[test]
     fn ip_protocol_source_backed_unsupported_values_decode_as_raw_payload() {
-        // ESP (protocol 50) and AH (protocol 51) are intentionally absent: the
-        // built-in registry now decodes them to typed IPSec layers (an opaque
-        // `Esp` with an 8-octet minimum, an `Ah` with its 12-octet fixed header),
-        // not a `Raw` fallback. Their decode is covered by the ESP/AH registry
-        // tests.
+        // ESP (protocol 50), AH (protocol 51), and OSPF (protocol 89) are
+        // intentionally absent: the built-in registry now decodes them to typed
+        // layers (an opaque `Esp` with an 8-octet minimum, an `Ah` with its
+        // 12-octet fixed header, an `Ospfv2` with a 24-octet common header that
+        // surfaces a structured truncation error on short input), not a `Raw`
+        // fallback. Their decode is covered by the ESP/AH and OSPF registry tests.
         let cases = [
             Ipv4Protocol::Gre,
-            Ipv4Protocol::Ospf,
             Ipv4Protocol::Sctp,
             Ipv4Protocol::Experimental1,
             Ipv4Protocol::Experimental2,
@@ -126,14 +126,18 @@ mod ipv4_protocol {
 
     #[test]
     fn ipv4_autoderives_ospf_protocol_for_ospfv2_layer() {
-        use crate::protocols::ospf::constants::OSPF_TYPE_HELLO;
+        use crate::protocols::ospf::constants::OSPF_TYPE_LINK_STATE_ACK;
         use crate::protocols::ospf::Ospfv2;
 
         // No explicit IPv4 protocol is set: the following `Ospfv2` layer must
-        // auto-derive protocol 89 (RFC 2328 §A.1 runs OSPF directly over IP).
+        // auto-derive protocol 89 (RFC 2328 §A.1 runs OSPF directly over IP). A
+        // non-Hello packet type with a raw body keeps this auto-derive case
+        // independent of typed-body decoding (type 1 dispatches to a Hello body).
         let body = [0xde, 0xad, 0xbe, 0xef];
-        let packet =
-            Ipv4::new().src(src()).dst(dst()) / Ospfv2::new().packet_type(OSPF_TYPE_HELLO).raw_body(body);
+        let packet = Ipv4::new().src(src()).dst(dst())
+            / Ospfv2::new()
+                .packet_type(OSPF_TYPE_LINK_STATE_ACK)
+                .raw_body(body);
 
         let bytes = packet.compile().unwrap();
 
