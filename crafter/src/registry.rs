@@ -20,9 +20,15 @@ use crate::protocols::ipsec::natt::{is_non_esp_marker, NatTraversal, NON_ESP_MAR
 use crate::protocols::ipsec::sa::SecurityAssociation;
 use crate::protocols::ipv4::{
     append_ipv4_packet_with_registry, IPPROTO_AH, IPPROTO_ESP, IPPROTO_ICMP, IPPROTO_ICMPV6,
-    IPPROTO_TCP, IPPROTO_UDP,
+    IPPROTO_OSPF, IPPROTO_TCP, IPPROTO_UDP,
 };
 use crate::protocols::ipv6::{append_ipv6_packet_with_registry, IPPROTO_IPV6_AH, IPPROTO_IPV6_ESP};
+use crate::protocols::ospf::decode::append_ospf_packet_with_checksum_validation;
+// Re-export the checksum-agnostic OSPF entrypoint alongside the registry so
+// callers wiring custom dispatch can decode an OSPF payload without opting into
+// decode-time checksum validation (RFC 2328 §A.3.1).
+#[allow(unused_imports)]
+pub(crate) use crate::protocols::ospf::decode::append_ospf_packet;
 use crate::protocols::link::{
     append_arp_packet, append_vlan_packet_with_registry, decode_dot11_with_registry,
     decode_ethernet_with_registry, decode_linux_sll_with_registry,
@@ -235,6 +241,16 @@ impl ProtocolRegistry {
         // SA-less registry — the ICV is preserved verbatim rather than verified.
         registry.bind_ipv4_protocol_with_registry(IPPROTO_AH, |registry, packet, payload| {
             decode_ah_with_registry_sa(registry, packet, payload)
+        });
+        // OSPFv2 (IP protocol 89, RFC 2328). OSPF runs directly over IP, so the
+        // IPv4 payload is the OSPF common header plus its body; the decoder is
+        // handed the registry checksum policy for decode-time checksum status.
+        registry.bind_ipv4_protocol_with_registry(IPPROTO_OSPF, |registry, packet, payload| {
+            append_ospf_packet_with_checksum_validation(
+                packet,
+                payload,
+                registry.validates_checksums(),
+            )
         });
 
         registry
@@ -691,6 +707,11 @@ impl ProtocolRegistry {
                 IPPROTO_UDP => append_udp_packet_with_registry(self, packet, payload),
                 IPPROTO_ESP => decode_esp_with_registry_sa(self, packet, payload),
                 IPPROTO_AH => decode_ah_with_registry_sa(self, packet, payload),
+                IPPROTO_OSPF => append_ospf_packet_with_checksum_validation(
+                    packet,
+                    payload,
+                    self.validates_checksums(),
+                ),
                 _ => append_raw_if_needed(packet, payload),
             };
         }
@@ -1132,6 +1153,53 @@ mod protocol_registry {
             .unwrap()
             .layer::<crate::Dns>()
             .is_some());
+    }
+
+    /// IP protocol 89 dispatches to the OSPF decoder through the default
+    /// registry: an `Ipv4 / Ospfv2` Hello round-trips byte-for-byte and exposes
+    /// a typed `Ospfv2` layer when decoded via the public `Packet` entrypoint.
+    #[test]
+    fn default_registry_decodes_ospf_over_ipv4() {
+        use core::net::Ipv4Addr;
+
+        use crate::protocols::ospf::constants::OSPF_TYPE_HELLO;
+        use crate::protocols::ospf::decode::{
+            append_ospf_packet, append_ospf_packet_with_checksum_validation,
+        };
+        use crate::protocols::ospf::Ospfv2;
+
+        let bytes = (Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 1))
+            .dst(Ipv4Addr::new(192, 0, 2, 2))
+            / Ospfv2::new().packet_type(OSPF_TYPE_HELLO))
+        .compile()
+        .expect("Ipv4 / Ospfv2 Hello compiles");
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes())
+            .expect("the default registry decodes OSPF over IPv4");
+        assert!(
+            decoded.layer::<Ospfv2>().is_some(),
+            "the decoded packet exposes a typed Ospfv2 layer"
+        );
+
+        let recompiled = decoded.compile().expect("decoded OSPF re-compiles");
+        assert_eq!(recompiled.as_bytes(), bytes.as_bytes());
+
+        // The checksum-aware and plain decode entrypoints are both reachable
+        // from the registry module: feed the OSPF payload (after the IPv4
+        // header) to each and confirm both surface the typed layer.
+        let ipv4_header_len = (bytes.as_bytes()[0] & 0x0f) as usize * 4;
+        let ospf_payload = &bytes.as_bytes()[ipv4_header_len..];
+        assert!(append_ospf_packet(Packet::new(), ospf_payload)
+            .expect("append_ospf_packet decodes the payload")
+            .layer::<Ospfv2>()
+            .is_some());
+        assert!(
+            append_ospf_packet_with_checksum_validation(Packet::new(), ospf_payload, false)
+                .expect("append_ospf_packet_with_checksum_validation decodes the payload")
+                .layer::<Ospfv2>()
+                .is_some()
+        );
     }
 
     #[test]
