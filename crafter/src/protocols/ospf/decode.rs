@@ -17,12 +17,13 @@
 
 use core::net::Ipv4Addr;
 
+use crate::checksum::internet_checksum_chunks;
 use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::packet::Packet;
 
-use super::constants::{OSPF_AUTH_LEN, OSPF_HEADER_LEN};
-use super::{OspfBody, Ospfv2};
+use super::constants::{OSPF_AUTH_LEN, OSPF_AUTYPE_CRYPTOGRAPHIC, OSPF_HEADER_LEN};
+use super::{OspfBody, OspfChecksumStatus, Ospfv2};
 
 /// Append a decoded OSPFv2 packet to an existing packet stack.
 ///
@@ -49,19 +50,21 @@ pub(crate) fn append_ospf_packet(packet: Packet, bytes: &[u8]) -> Result<Packet>
 /// [`OspfBody::Unknown`] for now; later steps dispatch it by packet type.
 ///
 /// Every recovered field is marked user-set so the decoded packet re-compiles
-/// byte-for-byte. `validate_checksum` is plumbed through for a later step that
-/// records decode-time checksum status; this block does not yet act on it.
+/// byte-for-byte. When `validate_checksum` is true and the packet does not use
+/// cryptographic authentication (AuType 2, [`OSPF_AUTYPE_CRYPTOGRAPHIC`]), the
+/// standard Internet checksum is recomputed over the OSPF packet excluding the
+/// 8-octet authentication field (with the checksum field treated as zero) and
+/// compared against the stored checksum to record an
+/// [`OspfChecksumStatus`]; when `validate_checksum` is false, or the AuType is
+/// cryptographic (whose checksum field is zero, RFC 2328 §D.3), the status is
+/// [`OspfChecksumStatus::NotChecked`]. This status is decode metadata only and
+/// never affects the re-compiled bytes.
 #[allow(dead_code)]
 pub(crate) fn append_ospf_packet_with_checksum_validation(
     mut packet: Packet,
     bytes: &[u8],
     validate_checksum: bool,
 ) -> Result<Packet> {
-    // The checksum-validation flag is consumed by a later step (decode-time
-    // checksum status); reference it here so the plumbed-through parameter is
-    // not flagged as unused before then.
-    let _ = validate_checksum;
-
     if bytes.len() < OSPF_HEADER_LEN {
         return Err(CrafterError::buffer_too_short(
             "ospf header",
@@ -94,6 +97,34 @@ pub(crate) fn append_ospf_packet_with_checksum_validation(
     };
     let body = bytes[OSPF_HEADER_LEN..body_end].to_vec();
 
+    // Decode-time checksum validation status (RFC 2328 §A.3.1), gated by the
+    // registry's checksum-validation setting. The OSPF checksum is the standard
+    // Internet checksum over the whole OSPF packet (the declared/bounded extent
+    // `bytes[..body_end]`) EXCLUDING the 8-octet authentication field (octets
+    // 16..24), computed with the checksum field itself zeroed. Cryptographic
+    // authentication (AuType 2) carries a zero checksum field instead (RFC 2328
+    // §D.3), so it is reported as NotChecked rather than compared.
+    let checksum_status = if validate_checksum && autype != OSPF_AUTYPE_CRYPTOGRAPHIC {
+        // Recompute over the header up to the checksum field, a zeroed checksum
+        // field, the AuType, then the body — i.e. octets [0..12], two zero
+        // octets for the checksum, octets [14..16] (AuType), and the body. The
+        // 8-octet auth field (16..24) is excluded.
+        let zero_checksum = [0u8; 2];
+        let computed = internet_checksum_chunks([
+            &bytes[..12],
+            &zero_checksum[..],
+            &bytes[14..16],
+            &bytes[OSPF_HEADER_LEN..body_end],
+        ]);
+        if computed == checksum {
+            OspfChecksumStatus::Valid
+        } else {
+            OspfChecksumStatus::Invalid
+        }
+    } else {
+        OspfChecksumStatus::NotChecked
+    };
+
     let ospf = Ospfv2 {
         version: Field::user(version),
         packet_type: Field::user(packet_type),
@@ -103,6 +134,7 @@ pub(crate) fn append_ospf_packet_with_checksum_validation(
         checksum: Field::user(checksum),
         autype: Field::user(autype),
         authentication: Field::user(authentication),
+        checksum_status,
         body: OspfBody::Unknown {
             type_code: packet_type,
             body,
