@@ -94,7 +94,7 @@ the RIPv2 core; the on-demand-circuit state machine is **not** in scope.
 | Prelude exports | spec Requirements | 18, 41 |
 | Golden hex / summary / pcap fixture suite | spec Acceptance | 76, 78, 80 |
 | Examples (request, response, auth, RIPng) | spec Requirements | 67, 71, 73-75 |
-| Oracle validation (layer + feature specs, profiles, scapy + libcrafter backends, offline + pcap runs) | spec Acceptance | 46-61 |
+| Oracle validation (layer + feature specs, profiles, reference + libcrafter backends, offline + pcap runs) | spec Acceptance | 46-61 |
 | Live validation (probe profile, FRR `ripd`/`ripngd` target service, dry-run-first) | spec Acceptance | 62-72 |
 | User + agent docs and the final release gate | spec Acceptance | 81-85 |
 
@@ -126,4 +126,4 @@ tools on top of `crafter`.
 | Deferred item | Note |
 | --- | --- |
 | HMAC-SHA digest algorithms beyond SHA-1 / SHA-256 | RFC 4822 §3 generalizes the keyed-digest algorithm; the crate models Keyed-MD5 (RFC 2082), HMAC-SHA-1, and HMAC-SHA-256. Other HMAC families are deferred but the shared authentication-entry layout already accommodates them. |
-| RIPng native reference-backend cross-validation | The reference oracle backend (scapy) has no native RIPng dissector; RIPng cross-validation falls back to parser-backend decode plus libcrafter internal round-trip, recorded explicitly rather than silently skipped (spec Edge Cases). |
+| RIPng native reference-backend cross-validation | The reference oracle backend has no native RIPng dissector; RIPng cross-validation falls back to parser-backend decode plus libcrafter internal round-trip, recorded explicitly rather than silently skipped (spec Edge Cases). |
