@@ -45,3 +45,21 @@ pub const OSPF_AUTYPE_NULL: u16 = 0;
 pub const OSPF_AUTYPE_SIMPLE: u16 = 1;
 /// Cryptographic authentication (AuType 2). RFC 2328 §D.3.
 pub const OSPF_AUTYPE_CRYPTOGRAPHIC: u16 = 2;
+
+// ---------------------------------------------------------------------------
+// Display helpers
+// ---------------------------------------------------------------------------
+
+/// Short human-readable name for an OSPF packet Type code (RFC 2328 §A.3.1),
+/// used by `summary()` and `inspection_fields()`. Unrecognized codes map to
+/// `"Unknown"`.
+pub fn ospf_type_name(packet_type: u8) -> &'static str {
+    match packet_type {
+        OSPF_TYPE_HELLO => "Hello",
+        OSPF_TYPE_DATABASE_DESCRIPTION => "DBDesc",
+        OSPF_TYPE_LINK_STATE_REQUEST => "LSRequest",
+        OSPF_TYPE_LINK_STATE_UPDATE => "LSUpdate",
+        OSPF_TYPE_LINK_STATE_ACK => "LSAck",
+        _ => "Unknown",
+    }
+}
