@@ -123,6 +123,34 @@ mod ipv4_protocol {
             assert_eq!(raw.as_bytes(), payload);
         }
     }
+
+    #[test]
+    fn ipv4_autoderives_ospf_protocol_for_ospfv2_layer() {
+        use crate::protocols::ospf::constants::OSPF_TYPE_HELLO;
+        use crate::protocols::ospf::Ospfv2;
+
+        // No explicit IPv4 protocol is set: the following `Ospfv2` layer must
+        // auto-derive protocol 89 (RFC 2328 §A.1 runs OSPF directly over IP).
+        let body = [0xde, 0xad, 0xbe, 0xef];
+        let packet =
+            Ipv4::new().src(src()).dst(dst()) / Ospfv2::new().packet_type(OSPF_TYPE_HELLO).raw_body(body);
+
+        let bytes = packet.compile().unwrap();
+
+        // The IPv4 protocol octet (offset 9) is 89.
+        assert_eq!(bytes.as_bytes()[9], IPPROTO_OSPF);
+
+        // Decoding the IPv4 header recovers the auto-derived protocol number and
+        // the total length covers the 20-octet IPv4 header plus the OSPF packet
+        // (24-octet common header + 4-octet body).
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let ipv4 = decoded.layer::<Ipv4>().unwrap();
+        assert_eq!(ipv4.protocol_value(), IPPROTO_OSPF);
+
+        let expected_total = 20 + 24 + body.len();
+        assert_eq!(&bytes.as_bytes()[2..4], &(expected_total as u16).to_be_bytes());
+        assert_eq!(ipv4.total_length_value(), Some(expected_total as u16));
+    }
 }
 
 #[cfg(test)]
