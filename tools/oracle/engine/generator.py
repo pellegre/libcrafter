@@ -5667,6 +5667,13 @@ def _udp_option_cases_for_stack(stack: Sequence[str], cases: Sequence[str]) -> l
     stack_set = set(stack)
     if "udp" not in stack_set or "payload" not in stack_set:
         return []
+    # UDP surplus options model the application payload as the bytes UDP carries
+    # directly, so they only apply when UDP terminates in a payload layer. When an
+    # intermediate protocol (e.g. ESP) sits between UDP and payload, the declared
+    # application payload no longer equals the materialized UDP payload, so skip
+    # the pairing rather than emit a plan that cannot round-trip.
+    if _next_layer_after(stack, "udp") != "payload":
+        return []
 
     output: list[str] = []
     for case in cases:
