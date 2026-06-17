@@ -309,6 +309,51 @@ impl Layer for Ospfv2 {
         "Ospf"
     }
 
+    fn summary(&self) -> String {
+        // The effective Packet Length is the caller value, else the total OSPF
+        // byte count (24-octet header + body) that `compile()` would emit.
+        let len = self
+            .packet_length_value()
+            .map(usize::from)
+            .unwrap_or(OSPF_HEADER_LEN + self.body.encoded_len());
+        format!(
+            "Ospf(type={}, rid={}, area={}, len={})",
+            ospf_type_name(self.packet_type_value()),
+            self.router_id_value(),
+            self.area_id_value(),
+            len
+        )
+    }
+
+    fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        // Stable field/value pairs for `show()`. Auto-filled Packet Length and
+        // Checksum print as `auto` when the caller left them unset; the checksum
+        // and authentication fields print as hex.
+        vec![
+            ("version", self.version_value().to_string()),
+            ("type", ospf_type_name(self.packet_type_value()).to_string()),
+            (
+                "length",
+                self.packet_length_value()
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "auto".to_string()),
+            ),
+            ("router_id", self.router_id_value().to_string()),
+            ("area_id", self.area_id_value().to_string()),
+            (
+                "checksum",
+                self.checksum_value()
+                    .map(|value| format!("0x{value:04x}"))
+                    .unwrap_or_else(|| "auto".to_string()),
+            ),
+            ("autype", self.autype_value().to_string()),
+            (
+                "authentication",
+                format!("0x{}", hex_bytes(&self.authentication_value())),
+            ),
+        ]
+    }
+
     fn encoded_len(&self) -> usize {
         OSPF_HEADER_LEN + self.body.encoded_len()
     }
@@ -372,6 +417,16 @@ impl_layer_div!(Ospfv2);
 /// distinct `Ospfv3` layer is added in a later block.
 #[deprecated(note = "renamed to Ospfv2")]
 pub type Ospf = Ospfv2;
+
+/// Render bytes as a continuous lowercase hex string (no separators), used for
+/// the authentication field in `inspection_fields()`.
+fn hex_bytes(bytes: &[u8]) -> String {
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        output.push_str(&format!("{byte:02x}"));
+    }
+    output
+}
 
 #[cfg(test)]
 mod tests {
@@ -460,6 +515,40 @@ mod tests {
 
         let bytes = Packet::from_layer(ospf).compile().unwrap();
         assert_eq!(&bytes[2..4], &0xbeefu16.to_be_bytes());
+    }
+
+    /// `summary()` reads the header at a glance and `inspection_fields()`
+    /// exposes a stable `type` entry equal to the type name, so the OSPF common
+    /// header is inspectable through `Packet::summary()` and `Packet::show()`.
+    #[test]
+    fn ospf_summary_and_inspection_expose_the_common_header() {
+        let ospf = Ospfv2::new()
+            .packet_type(OSPF_TYPE_HELLO)
+            .router_id([192, 0, 2, 1])
+            .area_id([0, 0, 0, 0]);
+
+        // The one-line summary carries the type name and router id.
+        let summary = ospf.summary();
+        assert!(summary.contains("Hello"), "summary missing type name: {summary}");
+        assert!(
+            summary.contains("192.0.2.1"),
+            "summary missing router id: {summary}"
+        );
+
+        // `inspection_fields` carries a `type` entry equal to the expected name.
+        let fields = ospf.inspection_fields();
+        let type_field = fields
+            .iter()
+            .find(|(name, _)| *name == "type")
+            .map(|(_, value)| value.as_str());
+        assert_eq!(type_field, Some(ospf_type_name(OSPF_TYPE_HELLO)));
+        assert_eq!(type_field, Some("Hello"));
+
+        // Unset length/checksum print as `auto`.
+        let length = fields.iter().find(|(name, _)| *name == "length");
+        assert_eq!(length.map(|(_, v)| v.as_str()), Some("auto"));
+        let checksum = fields.iter().find(|(name, _)| *name == "checksum");
+        assert_eq!(checksum.map(|(_, v)| v.as_str()), Some("auto"));
     }
 
     /// The `Ospfv2` layer, `OspfBody`, and the OSPF constants are reachable
