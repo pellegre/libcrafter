@@ -27,8 +27,11 @@ pub mod constants;
 
 pub(crate) mod decode;
 
+pub mod packet;
+
 #[allow(unused_imports)]
 pub use constants::*;
+pub use packet::OspfHello;
 
 macro_rules! impl_layer_object {
     ($type:ty) => {
@@ -92,13 +95,15 @@ pub enum OspfChecksumStatus {
 /// The body of an OSPFv2 packet (RFC 2328 §A.3), following the shared 24-octet
 /// common header.
 ///
-/// This block models only the [`OspfBody::Unknown`] variant, which preserves the
-/// raw body bytes of a packet type the builder/decoder does not (yet) model so
-/// the bytes round-trip verbatim. The typed Hello, Database Description, Link
-/// State Request, Link State Update, and Link State Acknowledgment bodies are
-/// added in later steps.
+/// This block models the typed [`OspfBody::Hello`] body (RFC 2328 §A.3.2) and
+/// the [`OspfBody::Unknown`] variant, which preserves the raw body bytes of a
+/// packet type the builder/decoder does not (yet) model so the bytes round-trip
+/// verbatim. The Database Description, Link State Request, Link State Update,
+/// and Link State Acknowledgment bodies are added in later steps.
 #[derive(Debug, Clone)]
 pub enum OspfBody {
+    /// The OSPFv2 Hello packet body (RFC 2328 §A.3.2).
+    Hello(OspfHello),
     /// A packet body the layer does not (yet) model, preserved verbatim.
     Unknown {
         /// The OSPF packet Type code this body belongs to.
@@ -112,6 +117,7 @@ impl OspfBody {
     /// The on-wire length of this body, in octets (the bytes after the header).
     fn encoded_len(&self) -> usize {
         match self {
+            OspfBody::Hello(hello) => hello.encoded_len(),
             OspfBody::Unknown { body, .. } => body.len(),
         }
     }
@@ -119,6 +125,7 @@ impl OspfBody {
     /// Append this body's bytes to `out`.
     fn encode(&self, out: &mut Vec<u8>) {
         match self {
+            OspfBody::Hello(hello) => hello.encode(out),
             OspfBody::Unknown { body, .. } => out.extend_from_slice(body),
         }
     }
@@ -126,14 +133,20 @@ impl OspfBody {
     /// The OSPF packet Type code this body carries.
     fn type_code(&self) -> u8 {
         match self {
+            OspfBody::Hello(_) => OSPF_TYPE_HELLO,
             OspfBody::Unknown { type_code, .. } => *type_code,
         }
     }
 
     /// Track the OSPF packet Type code on the body so the header and body agree
     /// by default.
+    ///
+    /// The typed [`OspfBody::Hello`] body owns its packet type (Hello) and so
+    /// ignores type-code changes; only the opaque [`OspfBody::Unknown`] body
+    /// tracks the header's type.
     fn set_type_code(&mut self, type_code: u8) {
         match self {
+            OspfBody::Hello(_) => {}
             OspfBody::Unknown { type_code: tc, .. } => *tc = type_code,
         }
     }
@@ -272,6 +285,52 @@ impl Ospfv2 {
             body: body.into(),
         };
         self
+    }
+
+    /// Build an OSPFv2 Hello packet (RFC 2328 §A.3.2).
+    ///
+    /// Sets the packet Type to [`OSPF_TYPE_HELLO`] and installs a default
+    /// [`OspfHello`] body. Set the Hello fields fluently with
+    /// [`Ospfv2::with_hello`] or replace the whole body with
+    /// [`Ospfv2::hello_body`].
+    pub fn hello() -> Self {
+        Self::new()
+            .packet_type(OSPF_TYPE_HELLO)
+            .hello_body(OspfHello::new())
+    }
+
+    /// Replace the packet body with the given [`OspfHello`] body and set the
+    /// packet Type to [`OSPF_TYPE_HELLO`].
+    pub fn hello_body(mut self, hello: OspfHello) -> Self {
+        self.packet_type.set_user(OSPF_TYPE_HELLO);
+        self.body = OspfBody::Hello(hello);
+        self
+    }
+
+    /// Mutate the Hello body in place through a closure, returning `self` for
+    /// fluent chaining (e.g. `Ospfv2::hello().with_hello(|h| ...)`).
+    ///
+    /// If the current body is not a Hello it is replaced with a default one
+    /// (and the packet Type set to [`OSPF_TYPE_HELLO`]) before the closure runs,
+    /// so the accessor always yields a Hello body to configure.
+    pub fn with_hello(mut self, configure: impl FnOnce(&mut OspfHello)) -> Self {
+        configure(self.hello_mut());
+        self
+    }
+
+    /// Borrow the Hello body mutably, installing a default Hello body (and
+    /// setting the packet Type to [`OSPF_TYPE_HELLO`]) when the current body is
+    /// not already a Hello.
+    pub fn hello_mut(&mut self) -> &mut OspfHello {
+        if !matches!(self.body, OspfBody::Hello(_)) {
+            self.packet_type.set_user(OSPF_TYPE_HELLO);
+            self.body = OspfBody::Hello(OspfHello::new());
+        }
+        match &mut self.body {
+            OspfBody::Hello(hello) => hello,
+            // Unreachable: the body was just normalized to a Hello above.
+            _ => unreachable!("hello body installed above"),
+        }
     }
 
     /// The effective OSPF Version (the caller value, else [`OSPF_VERSION_2`]).
