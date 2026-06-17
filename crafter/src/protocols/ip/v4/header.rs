@@ -10,7 +10,9 @@ use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::packet::{IntoPacket, Layer, LayerContext, Packet, TransportChecksumContext};
 use crate::protocols::icmp::Icmpv4;
-use crate::protocols::ip::shared::{Dscp, Ecn, DSCP_SHIFT, IPPROTO_ICMP, IPPROTO_TCP, IPPROTO_UDP};
+use crate::protocols::ip::shared::{
+    Dscp, Ecn, DSCP_SHIFT, IPPROTO_ICMP, IPPROTO_OSPF, IPPROTO_TCP, IPPROTO_UDP,
+};
 use crate::protocols::transport::{Tcp, Udp};
 
 use super::constants::{
@@ -611,6 +613,8 @@ fn layer_ipv4_protocol(layer: &dyn Layer) -> Option<u8> {
         Some(IPPROTO_UDP)
     } else if layer.as_any().is::<Icmpv4>() {
         Some(IPPROTO_ICMP)
+    } else if layer.as_any().is::<crate::protocols::ospf::Ospfv2>() {
+        Some(IPPROTO_OSPF)
     } else {
         None
     }
