@@ -127,6 +127,66 @@ pub fn ipv6_pseudo_header_checksum(
     finalize_checksum(sum)
 }
 
+/// Compute the two Fletcher-16 check octets for an OSPF link-state advertisement.
+///
+/// Implements the Fletcher checksum placement algorithm from RFC 905 Annex B
+/// (also described in RFC 1008 and used by OSPF in RFC 2328 §12.1.7 / §D). The
+/// caller passes the bytes to be protected in `data` with the two-octet checksum
+/// field already zeroed, plus `checksum_offset`, the index of that field within
+/// `data`. The returned pair is stored at `checksum_offset` so that
+/// [`fletcher16_valid`] over the resulting buffer reduces to zero.
+///
+/// `c0` and `c1` are two running 8-bit sums kept modulo 255. The check octets
+/// are derived from `c0`, `c1`, and the distance of the checksum field from the
+/// end of `data`, following the RFC 905 Annex B placement formula.
+pub fn fletcher16_checkbytes(data: &[u8], checksum_offset: usize) -> [u8; 2] {
+    let mut c0: i32 = 0;
+    let mut c1: i32 = 0;
+
+    for &byte in data {
+        c0 = (c0 + byte as i32) % 255;
+        c1 = (c1 + c0) % 255;
+    }
+
+    // RFC 905 Annex B expresses the placement in terms of the checksum field's
+    // position measured from the start of the protected region, counted so the
+    // inserted octets cancel the running sums during verification. `offset` here
+    // is the one-based position of the first checksum octet (RFC notation), which
+    // is `checksum_offset + 1` for the zero-based `checksum_offset` argument.
+    let length = data.len() as i32;
+    let offset = checksum_offset as i32 + 1;
+
+    let mut x = ((length - offset) * c0 - c1) % 255;
+    if x <= 0 {
+        x += 255;
+    }
+
+    let mut y = 510 - c0 - x;
+    if y > 255 {
+        y -= 255;
+    }
+
+    [x as u8, y as u8]
+}
+
+/// Return true when the Fletcher-16 sums over `data` reduce to zero.
+///
+/// Used for decode-time validation: `data` must include the stored two-octet
+/// checksum in place. Per RFC 905 Annex B a correctly checksummed buffer yields
+/// `c0 == 0` and `c1 == 0` when both running 8-bit sums are taken modulo 255
+/// over the whole buffer.
+pub fn fletcher16_valid(data: &[u8]) -> bool {
+    let mut c0: i32 = 0;
+    let mut c1: i32 = 0;
+
+    for &byte in data {
+        c0 = (c0 + byte as i32) % 255;
+        c1 = (c1 + c0) % 255;
+    }
+
+    c0 == 0 && c1 == 0
+}
+
 /// Compute CRC-32C/Castagnoli over `data`.
 pub(crate) fn crc32c(data: &[u8]) -> u32 {
     const POLY_REFLECTED: u32 = 0x82f6_3b78;
@@ -147,9 +207,10 @@ pub(crate) fn crc32c(data: &[u8]) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        crc32c, finalize_checksum, fold_sum, internet_checksum, internet_checksum_chunks,
-        ipv4_header_checksum, ipv4_pseudo_header_checksum, ipv6_pseudo_header_checksum,
-        ones_complement_sum, verify_internet_checksum,
+        crc32c, finalize_checksum, fletcher16_checkbytes, fletcher16_valid, fold_sum,
+        internet_checksum, internet_checksum_chunks, ipv4_header_checksum,
+        ipv4_pseudo_header_checksum, ipv6_pseudo_header_checksum, ones_complement_sum,
+        verify_internet_checksum,
     };
     use core::net::{Ipv4Addr, Ipv6Addr};
 
@@ -232,6 +293,59 @@ mod tests {
         );
 
         assert_eq!(checksum, 0x9200);
+    }
+
+    #[test]
+    fn fletcher16_round_trips_a_zeroed_field() {
+        // A small LSA-shaped buffer with a two-octet checksum field at offset 16
+        // (mirroring the LSA checksum field that follows LS age + options +
+        // type + id + advertising router + sequence). The field is zeroed before
+        // computing the check octets, then the octets are stored back in place.
+        let mut buffer = [
+            0x00, 0x02, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c,
+            0x0d, 0x0e, 0x00, 0x00, 0x10, 0x11,
+        ];
+        let offset = 16;
+
+        let check = fletcher16_checkbytes(&buffer, offset);
+        buffer[offset] = check[0];
+        buffer[offset + 1] = check[1];
+
+        assert!(fletcher16_valid(&buffer));
+    }
+
+    #[test]
+    fn fletcher16_detects_a_corrupted_octet() {
+        let mut buffer = [
+            0xde, 0xad, 0xbe, 0xef, 0x00, 0x01, 0x02, 0x03, 0x00, 0x00, 0x55, 0x66,
+        ];
+        let offset = 8;
+
+        let check = fletcher16_checkbytes(&buffer, offset);
+        buffer[offset] = check[0];
+        buffer[offset + 1] = check[1];
+        assert!(fletcher16_valid(&buffer));
+
+        buffer[2] ^= 0x01;
+        assert!(!fletcher16_valid(&buffer));
+    }
+
+    #[test]
+    fn fletcher16_pins_a_deterministic_pair() {
+        // A fixed input with a known check-octet pair so the algorithm stays
+        // pinned. The pair was computed once with this implementation and then
+        // confirmed to verify.
+        let mut buffer = [
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x00, 0x00, 0x09, 0x0a,
+        ];
+        let offset = 8;
+
+        let check = fletcher16_checkbytes(&buffer, offset);
+        assert_eq!(check, [0x80, 0x48]);
+
+        buffer[offset] = check[0];
+        buffer[offset + 1] = check[1];
+        assert!(fletcher16_valid(&buffer));
     }
 
     #[test]
