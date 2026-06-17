@@ -25,7 +25,7 @@ use crate::Result;
 #[allow(unused_imports)]
 pub mod constants;
 
-mod decode;
+pub(crate) mod decode;
 
 #[allow(unused_imports)]
 pub use constants::*;
