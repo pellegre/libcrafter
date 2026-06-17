@@ -363,6 +363,16 @@ impl Layer for Ospfv2 {
 
 impl_layer_div!(Ospfv2);
 
+/// Deprecated neutral alias for the OSPFv2 layer struct, renamed to [`Ospfv2`].
+///
+/// Per the repo's version-suffix naming convention (mirroring `Icmp` ->
+/// `Icmpv4`), the OSPF layer is the version-explicit [`Ospfv2`]. This alias is
+/// kept so downstream code that imported the neutral `Ospf` name keeps compiling
+/// (with a deprecation warning). Prefer the version-explicit [`Ospfv2`] name; a
+/// distinct `Ospfv3` layer is added in a later block.
+#[deprecated(note = "renamed to Ospfv2")]
+pub type Ospf = Ospfv2;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -450,5 +460,50 @@ mod tests {
 
         let bytes = Packet::from_layer(ospf).compile().unwrap();
         assert_eq!(&bytes[2..4], &0xbeefu16.to_be_bytes());
+    }
+
+    /// The `Ospfv2` layer, `OspfBody`, and the OSPF constants are reachable
+    /// through the curated `crafter::prelude` exports (the crate's public
+    /// surface), not just the crate-internal module path.
+    #[test]
+    fn ospf_types_and_constants_reach_the_prelude() {
+        use crate::prelude::*;
+
+        // Build an OSPF Hello using only prelude-surfaced symbols and confirm the
+        // constants are reachable as named values.
+        let ospf = Ospfv2::new()
+            .packet_type(OSPF_TYPE_HELLO)
+            .router_id([192, 0, 2, 1])
+            .area_id([0, 0, 0, 0])
+            .autype(OSPF_AUTYPE_NULL);
+
+        assert_eq!(ospf.version_value(), OSPF_VERSION_2);
+        assert_eq!(ospf.packet_type_value(), OSPF_TYPE_HELLO);
+        assert_eq!(ospf.autype_value(), OSPF_AUTYPE_NULL);
+
+        // The remaining packet-type, length, and AuType constants are reachable.
+        let _ = (
+            OSPF_TYPE_DATABASE_DESCRIPTION,
+            OSPF_TYPE_LINK_STATE_REQUEST,
+            OSPF_TYPE_LINK_STATE_UPDATE,
+            OSPF_TYPE_LINK_STATE_ACK,
+            OSPF_HEADER_LEN,
+            OSPF_AUTH_LEN,
+            OSPF_AUTYPE_SIMPLE,
+            OSPF_AUTYPE_CRYPTOGRAPHIC,
+        );
+
+        // The `OspfBody` enum and the deprecated neutral `Ospf` alias surface too.
+        let body = OspfBody::Unknown {
+            type_code: OSPF_TYPE_HELLO,
+            body: Vec::new(),
+        };
+        assert_eq!(body.type_code(), OSPF_TYPE_HELLO);
+        #[allow(deprecated)]
+        let _alias: Ospf = Ospfv2::new();
+
+        // The packet compiles through the public `Packet` surface.
+        let bytes = Packet::from_layer(ospf).compile().unwrap();
+        assert_eq!(bytes[1], OSPF_TYPE_HELLO);
     }
 }

@@ -33,7 +33,9 @@ pub mod ipv6 {
 
 /// Curated protocol symbols exported by both `crate::protocols` and the crate root.
 pub mod exports {
-    use super::{bgp, dhcp, dns, eapol, icmp, ip, ipsec, ipv4, ipv6, link, rip, rsn, transport};
+    use super::{
+        bgp, dhcp, dns, eapol, icmp, ip, ipsec, ipv4, ipv6, link, ospf, rip, rsn, transport,
+    };
 
     pub use crate::packet::Raw;
     pub use bgp::attribute::{
@@ -353,6 +355,18 @@ pub mod exports {
         DOT11_SEQUENCE_NUMBER_MASK, DOT11_SEQUENCE_NUMBER_SHIFT, DOT11_TAG_DS_PARAMETER_SET,
         DOT11_TAG_RSN, DOT11_TAG_SSID, DOT11_TAG_SUPPORTED_RATES, DOT11_TAG_TIM,
     };
+    pub use ospf::{
+        Ospfv2, OspfBody, OSPF_AUTH_LEN, OSPF_AUTYPE_CRYPTOGRAPHIC, OSPF_AUTYPE_NULL,
+        OSPF_AUTYPE_SIMPLE, OSPF_HEADER_LEN, OSPF_TYPE_DATABASE_DESCRIPTION, OSPF_TYPE_HELLO,
+        OSPF_TYPE_LINK_STATE_ACK, OSPF_TYPE_LINK_STATE_REQUEST, OSPF_TYPE_LINK_STATE_UPDATE,
+        OSPF_VERSION_2,
+    };
+    // Re-export the deprecated neutral `Ospf` alias separately so the
+    // `#[allow(deprecated)]` scope stays narrow: only the alias is exempt from the
+    // deprecation warning, while the rest of the ospf surface keeps full lint
+    // coverage (mirroring the deprecated `Icmp` alias re-export above).
+    #[allow(deprecated)]
+    pub use ospf::Ospf;
     pub use rip::ripng::{
         Ripng, RipngRte, RIPNG_COMMAND_REQUEST, RIPNG_COMMAND_RESPONSE, RIPNG_METRIC_INFINITY,
         RIPNG_MULTICAST, RIPNG_NEXT_HOP_METRIC, RIPNG_UDP_PORT, RIPNG_VERSION_1,
