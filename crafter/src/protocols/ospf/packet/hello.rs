@@ -91,7 +91,6 @@ impl OspfHello {
     /// Construct a Hello body from decoded wire fields, marking every scalar
     /// field as caller-supplied so re-compilation preserves the decoded values
     /// byte-for-byte.
-    #[allow(dead_code)]
     pub(crate) fn from_decoded_parts(
         network_mask: Ipv4Addr,
         hello_interval: u16,
