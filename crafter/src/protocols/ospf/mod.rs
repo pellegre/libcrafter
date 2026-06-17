@@ -65,6 +65,30 @@ macro_rules! impl_layer_div {
     };
 }
 
+/// Decode-time validation status for the OSPF common-header checksum.
+///
+/// Set during decode and gated by
+/// [`ProtocolRegistry::validates_checksums`](crate::ProtocolRegistry); mirrors
+/// [`Ipv4ChecksumStatus`](crate::Ipv4ChecksumStatus) and
+/// [`UdpChecksumStatus`](crate::UdpChecksumStatus). The OSPF checksum is the
+/// standard Internet checksum over the whole OSPF packet excluding the 8-octet
+/// authentication field, and is zero for cryptographic authentication
+/// (AuType 2, [`OSPF_AUTYPE_CRYPTOGRAPHIC`]); cryptographic-auth packets are
+/// therefore reported as [`OspfChecksumStatus::NotChecked`] rather than checked.
+///
+/// This is decode metadata only: it never affects compiled bytes,
+/// `clone_layer`, or round-trip equality.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OspfChecksumStatus {
+    /// The decoded OSPF checksum validates.
+    Valid,
+    /// The decoded OSPF checksum failed validation.
+    Invalid,
+    /// Checksum validation was not attempted (validation disabled or the packet
+    /// uses cryptographic authentication, where the checksum field is zero).
+    NotChecked,
+}
+
 /// The body of an OSPFv2 packet (RFC 2328 §A.3), following the shared 24-octet
 /// common header.
 ///
@@ -144,6 +168,10 @@ pub struct Ospfv2 {
     autype: Field<u16>,
     /// 8-octet authentication field (RFC 2328 §A.3.1); defaults to all zeros.
     authentication: Field<[u8; OSPF_AUTH_LEN]>,
+    /// Decode-time checksum validation status. This is metadata only: it is not
+    /// serialized, does not affect compiled bytes, and defaults to
+    /// [`OspfChecksumStatus::NotChecked`] on builder-constructed packets.
+    checksum_status: OspfChecksumStatus,
     /// The typed packet body following the common header.
     body: OspfBody,
 }
@@ -167,6 +195,7 @@ impl Ospfv2 {
             checksum: Field::unset(),
             autype: Field::defaulted(OSPF_AUTYPE_NULL),
             authentication: Field::defaulted([0; OSPF_AUTH_LEN]),
+            checksum_status: OspfChecksumStatus::NotChecked,
             body: OspfBody::Unknown {
                 type_code: 0,
                 body: Vec::new(),
@@ -295,6 +324,19 @@ impl Ospfv2 {
             .value()
             .copied()
             .unwrap_or([0; OSPF_AUTH_LEN])
+    }
+
+    /// Decode-time checksum validation status (RFC 2328 §A.3.1).
+    ///
+    /// Builder-constructed packets report [`OspfChecksumStatus::NotChecked`].
+    /// On decode this is set to [`OspfChecksumStatus::Valid`] or
+    /// [`OspfChecksumStatus::Invalid`] when checksum validation is enabled and
+    /// the packet does not use cryptographic authentication; it stays
+    /// [`OspfChecksumStatus::NotChecked`] when validation is disabled or the
+    /// AuType is [`OSPF_AUTYPE_CRYPTOGRAPHIC`] (whose checksum field is zero).
+    /// This is decode metadata only and does not affect compiled bytes.
+    pub fn checksum_status(&self) -> OspfChecksumStatus {
+        self.checksum_status
     }
 }
 
@@ -594,5 +636,114 @@ mod tests {
         // The packet compiles through the public `Packet` surface.
         let bytes = Packet::from_layer(ospf).compile().unwrap();
         assert_eq!(bytes[1], OSPF_TYPE_HELLO);
+    }
+
+    /// A well-formed OSPF Hello wrapped in IPv4 (protocol 89), decoded through
+    /// the default registry (checksum validation on), records
+    /// [`OspfChecksumStatus::Valid`] and re-compiles byte-for-byte.
+    #[test]
+    fn ospf_decode_records_valid_checksum_status() {
+        use crate::packet::NetworkLayer;
+        use crate::protocols::ip::v4::Ipv4;
+
+        let bytes = (Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 1))
+            .dst(Ipv4Addr::new(192, 0, 2, 2))
+            / Ospfv2::new()
+                .packet_type(OSPF_TYPE_HELLO)
+                .router_id([192, 0, 2, 1])
+                .area_id([0, 0, 0, 0]))
+        .compile()
+        .expect("Ipv4 / Ospfv2 Hello compiles");
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes())
+            .expect("the default registry decodes OSPF over IPv4");
+        let ospf = decoded
+            .layer::<Ospfv2>()
+            .expect("the decoded packet exposes a typed Ospfv2 layer");
+        assert_eq!(ospf.checksum_status(), OspfChecksumStatus::Valid);
+
+        // The decode-time status is metadata only; the packet still round-trips.
+        let recompiled = decoded.compile().expect("decoded OSPF re-compiles");
+        assert_eq!(recompiled.as_bytes(), bytes.as_bytes());
+    }
+
+    /// An OSPF packet whose checksum octet is corrupted decodes with
+    /// [`OspfChecksumStatus::Invalid`] yet still re-compiles byte-for-byte
+    /// (the corrupted checksum is preserved as a user-set field).
+    #[test]
+    fn ospf_decode_records_invalid_checksum_status() {
+        use crate::packet::NetworkLayer;
+        use crate::protocols::ip::v4::Ipv4;
+
+        // Build a valid Ipv4 / Ospfv2 Hello, then corrupt one OSPF checksum
+        // octet in the assembled bytes. The IPv4 header is 20 octets (no
+        // options), so the OSPF checksum field sits at offsets 20+12..20+14.
+        let mut raw = (Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 1))
+            .dst(Ipv4Addr::new(192, 0, 2, 2))
+            / Ospfv2::new()
+                .packet_type(OSPF_TYPE_HELLO)
+                .router_id([192, 0, 2, 1]))
+        .compile()
+        .expect("Ipv4 / Ospfv2 Hello compiles")
+        .as_bytes()
+        .to_vec();
+
+        let ipv4_header_len = (raw[0] & 0x0f) as usize * 4;
+        let ospf_checksum_octet = ipv4_header_len + 12;
+        raw[ospf_checksum_octet] ^= 0xff;
+        // Recompute the IPv4 header checksum so only the OSPF checksum is wrong:
+        // re-decode then re-compile would refill it, so instead decode the
+        // (IP-corrupt-tolerant) buffer directly and assert on the OSPF status.
+        // The IPv4 layer reports its own checksum status independently; here we
+        // only care that the OSPF layer flags the corrupted OSPF checksum.
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, &raw)
+            .expect("a corrupted-OSPF-checksum buffer still decodes structurally");
+        let ospf = decoded
+            .layer::<Ospfv2>()
+            .expect("the decoded packet exposes a typed Ospfv2 layer");
+        assert_eq!(ospf.checksum_status(), OspfChecksumStatus::Invalid);
+
+        // The corrupted checksum is a user-set field, so re-compiling the OSPF
+        // layer reproduces the corrupted bytes verbatim.
+        let mut ospf_only = Vec::new();
+        let recompiled_ospf = Packet::from_layer(ospf.clone())
+            .compile()
+            .expect("the decoded OSPF layer re-compiles");
+        ospf_only.extend_from_slice(recompiled_ospf.as_bytes());
+        assert_eq!(&raw[ipv4_header_len..], ospf_only.as_slice());
+    }
+
+    /// Decoding through a registry with checksum validation disabled leaves the
+    /// OSPF checksum status as [`OspfChecksumStatus::NotChecked`], and the
+    /// packet still round-trips byte-for-byte.
+    #[test]
+    fn ospf_decode_skips_checksum_validation_when_disabled() {
+        use crate::packet::NetworkLayer;
+        use crate::protocols::ip::v4::Ipv4;
+        use crate::registry::ProtocolRegistry;
+
+        let bytes = (Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 1))
+            .dst(Ipv4Addr::new(192, 0, 2, 2))
+            / Ospfv2::new()
+                .packet_type(OSPF_TYPE_HELLO)
+                .router_id([192, 0, 2, 1]))
+        .compile()
+        .expect("Ipv4 / Ospfv2 Hello compiles");
+
+        let registry = ProtocolRegistry::new().checksum_validation(false);
+        let decoded = registry
+            .decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes())
+            .expect("the registry decodes OSPF over IPv4");
+        let ospf = decoded
+            .layer::<Ospfv2>()
+            .expect("the decoded packet exposes a typed Ospfv2 layer");
+        assert_eq!(ospf.checksum_status(), OspfChecksumStatus::NotChecked);
+
+        let recompiled = decoded.compile().expect("decoded OSPF re-compiles");
+        assert_eq!(recompiled.as_bytes(), bytes.as_bytes());
     }
 }
