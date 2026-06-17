@@ -8,6 +8,7 @@ pub mod icmp;
 pub mod ip;
 pub mod ipsec;
 pub mod link;
+pub mod ospf;
 pub mod rip;
 pub mod rsn;
 pub mod transport;
