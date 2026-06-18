@@ -841,6 +841,15 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         summary_path: None,
     },
     ValidFixtureCase {
+        name: "ospf-nssa-lsa",
+        path: "bytes/ospf-nssa-lsa.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ospf-nssa-lsa.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Ospf],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
         name: "ospf-hello-simple-auth",
         path: "bytes/ospf-hello-simple-auth.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/ospf-hello-simple-auth.hex")),
@@ -2032,6 +2041,7 @@ fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
         | "ospf-summary-lsa-ip"
         | "ospf-summary-lsa-asbr"
         | "ospf-as-external-lsa"
+        | "ospf-nssa-lsa"
         | "ospf-hello-simple-auth"
         | "ospf-hello-crypto-md5" => &[CoverageFamily::Ipv4Ospf],
         "ipv4-udp-options-known" | "ipv4-udp-options-unknown-safe" => {
@@ -4796,6 +4806,65 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
                     "type=E1 metric=10 fwd=0.0.0.0 tag=0x00000000",
                     "type=E2 metric=20 fwd=192.0.2.9 tag=0xdeadbeef",
                 ]
+            );
+        }
+        "ospf-nssa-lsa" => {
+            // OSPF rides directly on IPv4 protocol 89 (RFC 2328).
+            let ipv4 = expect_layer::<Ipv4>(case, packet);
+            assert_eq!(ipv4.protocol_value(), 89);
+            assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 1));
+            assert_eq!(ipv4.destination(), Ipv4Addr::new(224, 0, 0, 5));
+
+            // Common header: a version 2 Link State Update (type 4) from a
+            // documentation router id in the backbone area (0.0.0.0).
+            let ospf = expect_layer::<Ospfv2>(case, packet);
+            assert_eq!(ospf.version_value(), 2);
+            assert_eq!(ospf.packet_type_value(), 4); // Link State Update
+            assert_eq!(ospf.router_id_value(), Ipv4Addr::new(192, 0, 2, 1));
+            assert_eq!(ospf.area_id_value(), Ipv4Addr::new(0, 0, 0, 0));
+
+            // The Link State Update carries one type 7 NSSA-LSA (LS type 7, RFC
+            // 3101 §2.2) describing an external route within a not-so-stubby
+            // area: the 4-octet network mask followed by a single 12-octet
+            // external metric entry (Type 2 / E2), a 16-octet body after the
+            // 20-octet header. The N/P-bit is set in the enclosing LSA header
+            // Options field (RFC 3101 §2.5) so the area's translating border
+            // router propagates the route as a Type-5 AS-External-LSA. The typed
+            // NSSA body is private, so it is surfaced through the public
+            // inspection surface: `num_lsas`/`lsa_count` report one LSA, the
+            // `lsa` entry renders the 20-octet header summary plus the 16-octet
+            // NSSA body, an `nssa_lsa` pair reports the P-bit, the mask, the
+            // TOS 0 metric and its metric type, and the entry count, and one
+            // `nssa_tos` pair per external metric entry naming the metric type,
+            // metric, forwarding address, and external route tag.
+            let fields = ospf.inspection_fields();
+            let value_of = |name: &str| {
+                fields
+                    .iter()
+                    .find(|(field, _)| *field == name)
+                    .map(|(_, value)| value.as_str())
+            };
+            assert_eq!(value_of("num_lsas"), Some("1"));
+            assert_eq!(value_of("lsa_count"), Some("1"));
+            assert_eq!(
+                value_of("lsa"),
+                Some(concat!(
+                    "LSA(type=NSSA, id=198.51.100.0, adv=192.0.2.1, ",
+                    "seq=0x80000001, age=0, len=36) body=16B",
+                ))
+            );
+            assert_eq!(
+                value_of("nssa_lsa"),
+                Some("P=set mask=255.255.255.0 metric=658188 type=E2 tos=1")
+            );
+            let nssa_tos: Vec<&str> = fields
+                .iter()
+                .filter(|(field, _)| *field == "nssa_tos")
+                .map(|(_, value)| value.as_str())
+                .collect();
+            assert_eq!(
+                nssa_tos,
+                vec!["type=E2 metric=658188 fwd=0.0.0.0 tag=0x00000000"]
             );
         }
         "ospf-hello-simple-auth" => {
