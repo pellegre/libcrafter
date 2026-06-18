@@ -37,10 +37,12 @@ use crate::checksum::fletcher16_checkbytes;
 use crate::field::Field;
 use crate::{CrafterError, Result};
 
+pub mod external;
 pub mod network;
 pub mod router;
 pub mod summary;
 
+pub use external::{OspfAsExternalLsa, OspfExternalTos, OSPF_AS_EXTERNAL_FLAG_E};
 pub use network::OspfNetworkLsa;
 pub use router::{
     ospf_router_link_type_name, OspfRouterLink, OspfRouterLinkTos, OspfRouterLsa,
@@ -440,11 +442,13 @@ pub enum OspfLsaBody {
     /// boundary router), the network mask plus one or more TOS/metric entries
     /// (RFC 2328 §A.4.4). Both LS types share this identical body layout.
     Summary(OspfSummaryLsa),
+    /// An AS-External-LSA body (LS type 5), the network mask of an external
+    /// destination plus one or more external metric entries (RFC 2328 §A.4.5).
+    AsExternal(OspfAsExternalLsa),
     /// An LSA body the container does not (yet) model, preserved verbatim. The
     /// bytes are everything after the 20-octet LSA header.
     Raw(Vec<u8>),
-    // The remaining typed LSA bodies (AS-External, NSSA, Opaque) arrive in later
-    // steps.
+    // The remaining typed LSA bodies (NSSA, Opaque) arrive in later steps.
 }
 
 impl OspfLsaBody {
@@ -455,6 +459,7 @@ impl OspfLsaBody {
             OspfLsaBody::Router(router) => router.encoded_len(),
             OspfLsaBody::Network(network) => network.encoded_len(),
             OspfLsaBody::Summary(summary) => summary.encoded_len(),
+            OspfLsaBody::AsExternal(external) => external.encoded_len(),
             OspfLsaBody::Raw(body) => body.len(),
         }
     }
@@ -467,6 +472,7 @@ impl OspfLsaBody {
             OspfLsaBody::Router(router) => router.encode(out),
             OspfLsaBody::Network(network) => network.encode(out),
             OspfLsaBody::Summary(summary) => summary.encode(out),
+            OspfLsaBody::AsExternal(external) => external.encode(out),
             OspfLsaBody::Raw(body) => out.extend_from_slice(body),
         }
     }
