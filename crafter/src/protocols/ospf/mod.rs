@@ -33,7 +33,9 @@ pub mod packet;
 
 #[allow(unused_imports)]
 pub use constants::*;
-pub use packet::{OspfDatabaseDescription, OspfHello};
+pub use packet::{
+    OspfDatabaseDescription, OspfHello, OspfLinkStateRequest, OspfLinkStateRequestEntry,
+};
 
 macro_rules! impl_layer_object {
     ($type:ty) => {
@@ -98,17 +100,20 @@ pub enum OspfChecksumStatus {
 /// common header.
 ///
 /// This block models the typed [`OspfBody::Hello`] body (RFC 2328 §A.3.2), the
-/// [`OspfBody::DatabaseDescription`] body (RFC 2328 §A.3.3), and the
+/// [`OspfBody::DatabaseDescription`] body (RFC 2328 §A.3.3), the
+/// [`OspfBody::LinkStateRequest`] body (RFC 2328 §A.3.4), and the
 /// [`OspfBody::Unknown`] variant, which preserves the raw body bytes of a
 /// packet type the builder/decoder does not (yet) model so the bytes round-trip
-/// verbatim. The Link State Request, Link State Update, and Link State
-/// Acknowledgment bodies are added in later steps.
+/// verbatim. The Link State Update and Link State Acknowledgment bodies are
+/// added in later steps.
 #[derive(Debug, Clone)]
 pub enum OspfBody {
     /// The OSPFv2 Hello packet body (RFC 2328 §A.3.2).
     Hello(OspfHello),
     /// The OSPFv2 Database Description packet body (RFC 2328 §A.3.3).
     DatabaseDescription(OspfDatabaseDescription),
+    /// The OSPFv2 Link State Request packet body (RFC 2328 §A.3.4).
+    LinkStateRequest(OspfLinkStateRequest),
     /// A packet body the layer does not (yet) model, preserved verbatim.
     Unknown {
         /// The OSPF packet Type code this body belongs to.
@@ -124,6 +129,7 @@ impl OspfBody {
         match self {
             OspfBody::Hello(hello) => hello.encoded_len(),
             OspfBody::DatabaseDescription(dd) => dd.encoded_len(),
+            OspfBody::LinkStateRequest(lsr) => lsr.encoded_len(),
             OspfBody::Unknown { body, .. } => body.len(),
         }
     }
@@ -133,6 +139,7 @@ impl OspfBody {
         match self {
             OspfBody::Hello(hello) => hello.encode(out),
             OspfBody::DatabaseDescription(dd) => dd.encode(out),
+            OspfBody::LinkStateRequest(lsr) => lsr.encode(out),
             OspfBody::Unknown { body, .. } => out.extend_from_slice(body),
         }
     }
@@ -142,6 +149,7 @@ impl OspfBody {
         match self {
             OspfBody::Hello(_) => OSPF_TYPE_HELLO,
             OspfBody::DatabaseDescription(_) => OSPF_TYPE_DATABASE_DESCRIPTION,
+            OspfBody::LinkStateRequest(_) => OSPF_TYPE_LINK_STATE_REQUEST,
             OspfBody::Unknown { type_code, .. } => *type_code,
         }
     }
@@ -149,13 +157,14 @@ impl OspfBody {
     /// Track the OSPF packet Type code on the body so the header and body agree
     /// by default.
     ///
-    /// The typed bodies own their packet type (Hello, Database Description) and
-    /// so ignore type-code changes; only the opaque [`OspfBody::Unknown`] body
-    /// tracks the header's type.
+    /// The typed bodies own their packet type (Hello, Database Description, Link
+    /// State Request) and so ignore type-code changes; only the opaque
+    /// [`OspfBody::Unknown`] body tracks the header's type.
     fn set_type_code(&mut self, type_code: u8) {
         match self {
             OspfBody::Hello(_) => {}
             OspfBody::DatabaseDescription(_) => {}
+            OspfBody::LinkStateRequest(_) => {}
             OspfBody::Unknown { type_code: tc, .. } => *tc = type_code,
         }
     }
@@ -394,6 +403,58 @@ impl Ospfv2 {
         }
     }
 
+    /// Build an OSPFv2 Link State Request packet (RFC 2328 §A.3.4).
+    ///
+    /// Sets the packet Type to [`OSPF_TYPE_LINK_STATE_REQUEST`] and installs a
+    /// default (empty) [`OspfLinkStateRequest`] body. Add request entries
+    /// fluently with [`Ospfv2::with_link_state_request`] or replace the whole
+    /// body with [`Ospfv2::link_state_request_body`].
+    pub fn link_state_request() -> Self {
+        Self::new()
+            .packet_type(OSPF_TYPE_LINK_STATE_REQUEST)
+            .link_state_request_body(OspfLinkStateRequest::new())
+    }
+
+    /// Replace the packet body with the given [`OspfLinkStateRequest`] body and
+    /// set the packet Type to [`OSPF_TYPE_LINK_STATE_REQUEST`].
+    pub fn link_state_request_body(mut self, lsr: OspfLinkStateRequest) -> Self {
+        self.packet_type.set_user(OSPF_TYPE_LINK_STATE_REQUEST);
+        self.body = OspfBody::LinkStateRequest(lsr);
+        self
+    }
+
+    /// Mutate the Link State Request body in place through a closure, returning
+    /// `self` for fluent chaining (e.g.
+    /// `Ospfv2::link_state_request().with_link_state_request(|r| ...)`).
+    ///
+    /// If the current body is not a Link State Request it is replaced with a
+    /// default one (and the packet Type set to
+    /// [`OSPF_TYPE_LINK_STATE_REQUEST`]) before the closure runs, so the
+    /// accessor always yields a Link State Request body to configure.
+    pub fn with_link_state_request(
+        mut self,
+        configure: impl FnOnce(&mut OspfLinkStateRequest),
+    ) -> Self {
+        configure(self.link_state_request_mut());
+        self
+    }
+
+    /// Borrow the Link State Request body mutably, installing a default Link
+    /// State Request body (and setting the packet Type to
+    /// [`OSPF_TYPE_LINK_STATE_REQUEST`]) when the current body is not already a
+    /// Link State Request.
+    pub fn link_state_request_mut(&mut self) -> &mut OspfLinkStateRequest {
+        if !matches!(self.body, OspfBody::LinkStateRequest(_)) {
+            self.packet_type.set_user(OSPF_TYPE_LINK_STATE_REQUEST);
+            self.body = OspfBody::LinkStateRequest(OspfLinkStateRequest::new());
+        }
+        match &mut self.body {
+            OspfBody::LinkStateRequest(lsr) => lsr,
+            // Unreachable: the body was just normalized to an LSR above.
+            _ => unreachable!("link state request body installed above"),
+        }
+    }
+
     /// The effective OSPF Version (the caller value, else [`OSPF_VERSION_2`]).
     pub fn version_value(&self) -> u8 {
         self.version.value().copied().unwrap_or(OSPF_VERSION_2)
@@ -503,6 +564,13 @@ impl Layer for Ospfv2 {
                 dd.flags_value(),
                 dd.lsa_headers_value().len()
             ),
+            OspfBody::LinkStateRequest(lsr) => format!(
+                "Ospf(type={}, rid={}, area={}, requests={})",
+                ospf_type_name(self.packet_type_value()),
+                self.router_id_value(),
+                self.area_id_value(),
+                lsr.entries_value().len()
+            ),
             OspfBody::Unknown { .. } => format!(
                 "Ospf(type={}, rid={}, area={}, len={})",
                 ospf_type_name(self.packet_type_value()),
@@ -587,6 +655,23 @@ impl Layer for Ospfv2 {
             fields.push(("lsa_header_count", dd.lsa_headers_value().len().to_string()));
             for header in dd.lsa_headers_value() {
                 fields.push(("lsa_header", header.summary()));
+            }
+        }
+
+        // The Link State Request body adds its request count and one `request`
+        // line per entry (LS type, Link State ID, Advertising Router).
+        if let OspfBody::LinkStateRequest(lsr) = &self.body {
+            fields.push(("request_count", lsr.entries_value().len().to_string()));
+            for entry in lsr.entries_value() {
+                fields.push((
+                    "request",
+                    format!(
+                        "ls_type=0x{:08x}, id={}, adv={}",
+                        entry.ls_type_value(),
+                        entry.link_state_id_value(),
+                        entry.advertising_router_value()
+                    ),
+                ));
             }
         }
 
