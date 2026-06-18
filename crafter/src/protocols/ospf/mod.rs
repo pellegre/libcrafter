@@ -999,7 +999,7 @@ impl Layer for Ospfv2 {
         if let OspfBody::DatabaseDescription(dd) = &self.body {
             fields.push(("interface_mtu", dd.interface_mtu_value().to_string()));
             fields.push(("options", format_options(dd.options_value())));
-            fields.push(("dd_flags", format!("0x{:02x}", dd.flags_value())));
+            fields.push(("dd_flags", format_dd_flags(dd)));
             fields.push((
                 "dd_sequence_number",
                 format!("0x{:08x}", dd.dd_sequence_number_value()),
@@ -1292,6 +1292,20 @@ fn format_options(options: u8) -> String {
         format!("0x{options:02x}")
     } else {
         format!("0x{options:02x} ({labels})")
+    }
+}
+
+/// Render a Database Description flags octet (RFC 2328 §A.3.3) for
+/// `inspection_fields()`: the raw hex value, with the decoded `I|M|MS` labels in
+/// parentheses when any recognized bit is set (e.g. `0x07 (I|M|MS)`). A value
+/// with no recognized bits (including `0x00`) renders as the bare hex value.
+fn format_dd_flags(dd: &OspfDatabaseDescription) -> String {
+    let flags = dd.flags_value();
+    let labels = dd.dd_flags_summary();
+    if labels.is_empty() {
+        format!("0x{flags:02x}")
+    } else {
+        format!("0x{flags:02x} ({labels})")
     }
 }
 

@@ -242,6 +242,43 @@ impl OspfDatabaseDescription {
         self.flags_value() & OSPF_DD_FLAG_MS != 0
     }
 
+    /// Whether the I (Init) flag bit is set (RFC 2328 §A.3.3): this is the first
+    /// Database Description packet of the exchange.
+    pub fn is_init(&self) -> bool {
+        self.init_value()
+    }
+
+    /// Whether the M (More) flag bit is set (RFC 2328 §A.3.3): more Database
+    /// Description packets follow.
+    pub fn is_more(&self) -> bool {
+        self.more_value()
+    }
+
+    /// Whether the MS (Master/Slave) flag bit is set (RFC 2328 §A.3.3): this
+    /// router is the master of the exchange.
+    pub fn is_master(&self) -> bool {
+        self.master_value()
+    }
+
+    /// Render the set Database Description flag bits (RFC 2328 §A.3.3) as their
+    /// `I`, `M`, and `MS` labels joined by `|`, in I/M/MS order, for
+    /// `summary()` / `inspection_fields()`. Returns an empty string when no
+    /// recognized flag bit is set.
+    pub fn dd_flags_summary(&self) -> String {
+        let flags = self.flags_value();
+        let mut labels: Vec<&str> = Vec::new();
+        if flags & OSPF_DD_FLAG_I != 0 {
+            labels.push("I");
+        }
+        if flags & OSPF_DD_FLAG_M != 0 {
+            labels.push("M");
+        }
+        if flags & OSPF_DD_FLAG_MS != 0 {
+            labels.push("MS");
+        }
+        labels.join("|")
+    }
+
     /// The effective DD sequence number (the caller value, else 0).
     pub fn dd_sequence_number_value(&self) -> u32 {
         self.dd_sequence_number.value().copied().unwrap_or(0)
@@ -358,5 +395,30 @@ mod tests {
         // `Layer::encoded_len` agrees with the emitted length.
         let layer = Ospfv2::database_description().with_database_description(|d| *d = dd);
         assert_eq!(layer.encoded_len(), total);
+    }
+
+    /// The DD flag helpers agree with the raw flags octet, and
+    /// `dd_flags_summary()` renders the set bits in I/M/MS order: for I+MS the
+    /// summary is `I|MS` and the boolean accessors track the underlying bits.
+    #[test]
+    fn ospf_dd_flags_summary_and_accessors_agree_for_init_master() {
+        let dd = OspfDatabaseDescription::new().init(true).master(true);
+
+        // The raw flags octet carries exactly the I and MS bits.
+        assert_eq!(dd.flags_value(), OSPF_DD_FLAG_I | OSPF_DD_FLAG_MS);
+
+        // The boolean accessors agree with the raw bits.
+        assert!(dd.is_init());
+        assert!(!dd.is_more());
+        assert!(dd.is_master());
+        assert_eq!(dd.is_init(), dd.flags_value() & OSPF_DD_FLAG_I != 0);
+        assert_eq!(dd.is_more(), dd.flags_value() & OSPF_DD_FLAG_M != 0);
+        assert_eq!(dd.is_master(), dd.flags_value() & OSPF_DD_FLAG_MS != 0);
+
+        // The summary lists the set labels in I/M/MS order, joined by `|`.
+        assert_eq!(dd.dd_flags_summary(), "I|MS");
+
+        // No flags set renders an empty summary.
+        assert_eq!(OspfDatabaseDescription::new().dd_flags_summary(), "");
     }
 }
