@@ -107,7 +107,6 @@ impl OspfLinkStateRequest {
     }
 
     /// Construct a Link State Request body from decoded wire entries.
-    #[allow(dead_code)]
     pub(crate) fn from_decoded_parts(entries: Vec<OspfLinkStateRequestEntry>) -> Self {
         Self { entries }
     }
