@@ -27,6 +27,8 @@ pub mod constants;
 
 pub(crate) mod decode;
 
+pub mod lsa;
+
 pub mod packet;
 
 #[allow(unused_imports)]
