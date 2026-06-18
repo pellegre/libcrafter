@@ -47,7 +47,13 @@ pub mod summary;
 pub use external::{OspfAsExternalLsa, OspfExternalTos, OSPF_AS_EXTERNAL_FLAG_E};
 pub use network::OspfNetworkLsa;
 pub use nssa::{OspfNssaLsa, OSPF_OPTIONS_NP};
-pub use opaque::{opaque_id, opaque_link_state_id, opaque_type, OspfOpaqueLsa, OspfOpaqueTlv};
+pub use opaque::{
+    opaque_id, opaque_link_state_id, opaque_type, OspfOpaqueLsa, OspfOpaqueTlv, OspfTeLinkTlv,
+    OSPF_TE_LINK_TYPE_MULTI_ACCESS, OSPF_TE_LINK_TYPE_POINT_TO_POINT, OSPF_TE_OPAQUE_TYPE,
+    OSPF_TE_SUBTLV_LINK_ID, OSPF_TE_SUBTLV_LINK_TYPE, OSPF_TE_SUBTLV_LOCAL_INTERFACE_IP,
+    OSPF_TE_SUBTLV_MAX_BANDWIDTH, OSPF_TE_SUBTLV_REMOTE_INTERFACE_IP, OSPF_TE_SUBTLV_TE_METRIC,
+    OSPF_TE_TLV_LINK, OSPF_TE_TLV_ROUTER_ADDRESS,
+};
 pub use router::{
     ospf_router_link_type_name, OspfRouterLink, OspfRouterLinkTos, OspfRouterLsa,
     OSPF_ROUTER_LINK_POINT_TO_POINT, OSPF_ROUTER_LINK_STUB, OSPF_ROUTER_LINK_TRANSIT,
