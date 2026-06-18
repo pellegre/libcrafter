@@ -17,8 +17,10 @@ pub mod database_description;
 pub mod hello;
 pub mod link_state_ack;
 pub mod link_state_request;
+pub mod link_state_update;
 
 pub use database_description::OspfDatabaseDescription;
 pub use hello::OspfHello;
 pub use link_state_ack::OspfLinkStateAck;
 pub use link_state_request::{OspfLinkStateRequest, OspfLinkStateRequestEntry};
+pub use link_state_update::OspfLinkStateUpdate;

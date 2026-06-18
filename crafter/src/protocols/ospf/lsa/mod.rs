@@ -406,6 +406,86 @@ impl Default for OspfLsaHeader {
     }
 }
 
+/// The type-specific body of a link-state advertisement, following the 20-octet
+/// [`OspfLsaHeader`] (RFC 2328 §A.4).
+///
+/// This block starts with only the [`OspfLsaBody::Raw`] variant, which carries
+/// the LSA body bytes verbatim for an LSA type the builder/decoder does not
+/// (yet) model so they round-trip byte-for-byte (mirroring how
+/// [`OspfBody`](crate::protocols::ospf::OspfBody) started with only
+/// `Unknown`). The typed bodies (Router, Network, Summary, AS-External, NSSA,
+/// Opaque) are added by subsequent steps.
+#[derive(Debug, Clone)]
+pub enum OspfLsaBody {
+    /// An LSA body the container does not (yet) model, preserved verbatim. The
+    /// bytes are everything after the 20-octet LSA header.
+    Raw(Vec<u8>),
+    // Typed LSA bodies (Router, Network, Summary, AS-External, NSSA, Opaque)
+    // arrive in later steps.
+}
+
+impl OspfLsaBody {
+    /// The on-wire length of this LSA body, in octets (the bytes after the
+    /// 20-octet header).
+    pub(crate) fn encoded_len(&self) -> usize {
+        match self {
+            OspfLsaBody::Raw(body) => body.len(),
+        }
+    }
+
+    /// Append this LSA body's bytes to `out`. The [`OspfLsaBody::Raw`] variant
+    /// writes its bytes verbatim.
+    pub(crate) fn encode(&self, out: &mut Vec<u8>) {
+        match self {
+            OspfLsaBody::Raw(body) => out.extend_from_slice(body),
+        }
+    }
+}
+
+/// A complete link-state advertisement: the 20-octet [`OspfLsaHeader`]
+/// (RFC 2328 §A.4.1) immediately followed by its type-specific
+/// [`OspfLsaBody`].
+///
+/// The header's `length` field spans the header plus the body, and the LS
+/// checksum is the Fletcher-16 checksum over the header (from the Options
+/// octet) plus the body. [`OspfLsa::encode`] auto-fills both over header + body
+/// unless the caller pinned them, so an LSA built with the crate is
+/// protocol-correct by default while deliberately malformed length/checksum
+/// values survive untouched.
+#[derive(Debug, Clone)]
+pub struct OspfLsa {
+    /// The 20-octet LSA header (RFC 2328 §A.4.1).
+    pub header: OspfLsaHeader,
+    /// The type-specific LSA body following the header.
+    pub body: OspfLsaBody,
+}
+
+impl OspfLsa {
+    /// Build an LSA from its header and body.
+    pub fn new(header: OspfLsaHeader, body: OspfLsaBody) -> Self {
+        Self { header, body }
+    }
+
+    /// The on-wire length of this LSA, in octets: the 20-octet header plus the
+    /// body.
+    pub(crate) fn encoded_len(&self) -> usize {
+        OSPF_LSA_HEADER_LEN + self.body.encoded_len()
+    }
+
+    /// Append the complete LSA (header + body) to `out`.
+    ///
+    /// The body is serialized to a scratch buffer first, then the header is
+    /// emitted via [`OspfLsaHeader::encode_with_body`] so the `length` field is
+    /// filled with `20 + body.len()` and the LS Fletcher checksum is filled over
+    /// the header (from the Options octet) plus the body — each unless the caller
+    /// pinned it.
+    pub(crate) fn encode(&self, out: &mut Vec<u8>) {
+        let mut body_bytes = Vec::with_capacity(self.body.encoded_len());
+        self.body.encode(&mut body_bytes);
+        self.header.encode_with_body(&body_bytes, out);
+    }
+}
+
 /// Decode a trailing list of bare 20-octet LSA headers.
 ///
 /// The Database Description (RFC 2328 §A.3.3) and Link State Acknowledgment
