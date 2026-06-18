@@ -122,6 +122,27 @@ pub const OSPF_TE_LINK_TYPE_POINT_TO_POINT: u8 = 1;
 /// TE Link Type — multi-access (RFC 3630 §2.5.1).
 pub const OSPF_TE_LINK_TYPE_MULTI_ACCESS: u8 = 2;
 
+// ---------------------------------------------------------------------------
+// Router Information Opaque-LSA TLVs (RFC 7770)
+// ---------------------------------------------------------------------------
+
+/// Router Information Opaque Type (RFC 7770 §2.1): the 8-bit Opaque Type octet in
+/// the Link State ID that identifies a Router Information (RI) Opaque-LSA. RI LSAs
+/// are link-local-scope (LS type [`OSPF_LSA_OPAQUE_LINK_LOCAL`], 9), area-scope
+/// (LS type [`OSPF_LSA_OPAQUE_AREA`], 10), or AS-scope (LS type
+/// [`OSPF_LSA_OPAQUE_AS`], 11) Opaque-LSAs carrying this Opaque Type.
+pub const OSPF_OPAQUE_TYPE_ROUTER_INFORMATION: u8 = 4;
+
+/// RI Router Functional Capabilities TLV (RFC 7770 §2.3, originally RFC 4970): a
+/// 4-octet bit vector describing optional OSPF functional capabilities the router
+/// supports.
+pub const OSPF_RI_TLV_ROUTER_FUNCTIONAL_CAPABILITIES: u16 = 1;
+
+/// RI Router Informational Capabilities TLV (RFC 7770 §2.3): a variable-length
+/// bit vector describing informational (non-functional) capabilities the router
+/// advertises.
+pub const OSPF_RI_TLV_ROUTER_INFORMATIONAL_CAPABILITIES: u16 = 2;
+
 /// Read the 8-bit Opaque Type from an LSA header's Link State ID (RFC 5250 §3):
 /// the first octet of the 32-bit Link State ID.
 pub fn opaque_type(header: &OspfLsaHeader) -> u8 {
@@ -196,6 +217,22 @@ impl OspfOpaqueTlv {
         Self::new(
             OSPF_TE_TLV_ROUTER_ADDRESS,
             router_address.into().octets().to_vec(),
+        )
+    }
+
+    /// Build the Router Information Router Functional Capabilities TLV (RFC 7770
+    /// §2.3): a TLV of type [`OSPF_RI_TLV_ROUTER_FUNCTIONAL_CAPABILITIES`] whose
+    /// 4-octet value is the given capability bit vector, encoded big-endian.
+    ///
+    /// This is a thin convenience over [`OspfOpaqueTlv::new`] that fixes the type
+    /// code and encodes the 32-bit `capabilities` bits as the value; the generic
+    /// encode/decode path handles it like any other TLV, so an RI LSA built from
+    /// this constructor round-trips byte-for-byte through the generic Opaque-LSA
+    /// decode.
+    pub fn ri_router_functional_capabilities(capabilities: u32) -> Self {
+        Self::new(
+            OSPF_RI_TLV_ROUTER_FUNCTIONAL_CAPABILITIES,
+            capabilities.to_be_bytes().to_vec(),
         )
     }
 
@@ -456,6 +493,62 @@ impl OspfOpaqueLsa {
             .advertising_router(advertising_router.into());
         OspfLsa::new(header, OspfLsaBody::Opaque(opaque))
     }
+
+    /// Build a complete Router Information Opaque-LSA (RFC 7770 §2.1) at the
+    /// chosen flooding scope carrying `tlvs`, ready to drop into a Link State
+    /// Update.
+    ///
+    /// `ls_type` selects the flooding scope — link-local
+    /// ([`OSPF_LSA_OPAQUE_LINK_LOCAL`](crate::protocols::ospf::lsa::OSPF_LSA_OPAQUE_LINK_LOCAL),
+    /// 9), area
+    /// ([`OSPF_LSA_OPAQUE_AREA`](crate::protocols::ospf::lsa::OSPF_LSA_OPAQUE_AREA),
+    /// 10), or AS
+    /// ([`OSPF_LSA_OPAQUE_AS`](crate::protocols::ospf::lsa::OSPF_LSA_OPAQUE_AS),
+    /// 11). The returned [`OspfLsa`] has an Opaque-LSA header whose Link State ID
+    /// packs the RI Opaque Type ([`OSPF_OPAQUE_TYPE_ROUTER_INFORMATION`], 4) and
+    /// the given 24-bit `opaque_id` (RFC 5250 §3), the supplied
+    /// `advertising_router`, and an [`OspfLsaBody::Opaque`] body holding the RI
+    /// TLVs. The LSA `length` and the Fletcher-16 checksum auto-fill when the LSA
+    /// is encoded, and the TLVs are stored as generic [`OspfOpaqueTlv`]s so the
+    /// LSA round-trips byte-for-byte through the generic Opaque-LSA decode.
+    ///
+    /// `tlvs` are the top-level RI TLVs, for example a Router Functional
+    /// Capabilities TLV ([`OspfOpaqueTlv::ri_router_functional_capabilities`]).
+    pub fn ri_lsa(
+        ls_type: u8,
+        advertising_router: impl Into<Ipv4Addr>,
+        opaque_id: u32,
+        tlvs: impl IntoIterator<Item = OspfOpaqueTlv>,
+    ) -> OspfLsa {
+        let mut opaque = OspfOpaqueLsa::new();
+        for tlv in tlvs {
+            opaque = opaque.tlv(tlv);
+        }
+        let header = OspfLsaHeader::new()
+            .ls_type(ls_type)
+            .opaque_link_state_id(OSPF_OPAQUE_TYPE_ROUTER_INFORMATION, opaque_id)
+            .advertising_router(advertising_router.into());
+        OspfLsa::new(header, OspfLsaBody::Opaque(opaque))
+    }
+
+    /// Build a complete area-scope Router Information Opaque-LSA (RFC 7770 §2.1)
+    /// carrying `tlvs`, ready to drop into a Link State Update.
+    ///
+    /// This is the area-scope ([`OSPF_LSA_OPAQUE_AREA`], 10) shorthand for
+    /// [`OspfOpaqueLsa::ri_lsa`], mirroring
+    /// [`OspfOpaqueLsa::te_area_lsa`]; use `ri_lsa` to select a different flooding
+    /// scope. The Link State ID packs the RI Opaque Type
+    /// ([`OSPF_OPAQUE_TYPE_ROUTER_INFORMATION`], 4) and the given 24-bit
+    /// `opaque_id`, the LSA `length` and Fletcher-16 checksum auto-fill, and the
+    /// TLVs are stored as generic [`OspfOpaqueTlv`]s so the LSA round-trips
+    /// byte-for-byte through the generic Opaque-LSA decode.
+    pub fn ri_area_lsa(
+        advertising_router: impl Into<Ipv4Addr>,
+        opaque_id: u32,
+        tlvs: impl IntoIterator<Item = OspfOpaqueTlv>,
+    ) -> OspfLsa {
+        Self::ri_lsa(OSPF_LSA_OPAQUE_AREA, advertising_router, opaque_id, tlvs)
+    }
 }
 
 #[cfg(test)]
@@ -702,6 +795,106 @@ mod tests {
         let recompiled = decoded
             .compile()
             .expect("the decoded TE Link State Update re-compiles");
+        assert_eq!(recompiled.as_bytes(), bytes.as_bytes());
+    }
+
+    /// An area-scope Router Information Opaque-LSA (RFC 7770) built from the typed
+    /// convenience constructors — a Router Functional Capabilities TLV — emits the
+    /// RFC 7770 TLV layout, packs the RI Opaque Type (4) into the Link State ID,
+    /// and round-trips byte-for-byte through the generic Opaque-LSA decode. The
+    /// decoded TLV comes back as a generic Opaque TLV.
+    #[test]
+    fn ospf_ri_area_opaque_lsa_round_trips_through_generic_decode() {
+        use crate::protocols::ospf::decode::append_ospf_packet;
+        use crate::protocols::ospf::lsa::opaque_type as lsa_opaque_type;
+        use crate::protocols::ospf::packet::link_state_update::OspfLinkStateUpdate;
+        use crate::protocols::ospf::{OspfBody, Ospfv2};
+        use crate::Packet;
+
+        // Router Functional Capabilities TLV (type 1): a 4-octet capability bit
+        // vector.
+        let capabilities = 0x0000_002au32;
+        let caps_tlv = OspfOpaqueTlv::ri_router_functional_capabilities(capabilities);
+        assert_eq!(
+            caps_tlv.tlv_type(),
+            OSPF_RI_TLV_ROUTER_FUNCTIONAL_CAPABILITIES
+        );
+        assert_eq!(caps_tlv.value(), &capabilities.to_be_bytes());
+
+        // Assemble the complete area-scope RI Opaque-LSA carrying the TLV.
+        let advertising_router = Ipv4Addr::new(192, 0, 2, 1);
+        let opaque_id = 0x0000_0007u32;
+        let lsa = OspfOpaqueLsa::ri_area_lsa(advertising_router, opaque_id, [caps_tlv.clone()]);
+
+        // The header carries the area-scope LS type and packs the RI Opaque Type
+        // (4) and the 24-bit Opaque ID into the Link State ID.
+        assert_eq!(lsa.header.ls_type_value(), OSPF_LSA_OPAQUE_AREA);
+        assert_eq!(
+            opaque_type_of(&lsa.header),
+            OSPF_OPAQUE_TYPE_ROUTER_INFORMATION
+        );
+        assert_eq!(opaque_id_of(&lsa.header), opaque_id);
+
+        // Compile the LSA inside a Link State Update packet.
+        let bytes = Packet::from_layer(
+            Ospfv2::link_state_update()
+                .router_id([192, 0, 2, 1])
+                .area_id([0, 0, 0, 0])
+                .with_link_state_update(|u| {
+                    *u = OspfLinkStateUpdate::new().lsa(lsa.clone());
+                }),
+        )
+        .compile()
+        .expect("a Link State Update with an RI Opaque-LSA compiles");
+
+        // The encoded LSA bytes carry the RI Opaque Type (4) in the first octet of
+        // the Link State ID and the 24-bit Opaque ID in the next three octets, and
+        // the LSA's Fletcher-16 checksum validates over the whole LSA.
+        let lsu_payload = &bytes.as_bytes()[crate::protocols::ospf::OSPF_HEADER_LEN..];
+        let lsa_bytes = &lsu_payload[4..];
+        assert_eq!(lsa_bytes[3], OSPF_LSA_OPAQUE_AREA);
+        assert_eq!(lsa_bytes[4], OSPF_OPAQUE_TYPE_ROUTER_INFORMATION);
+        assert_eq!(&lsa_bytes[5..8], &[0x00, 0x00, 0x07]);
+        assert!(
+            fletcher16_valid(lsa_bytes),
+            "auto-filled Fletcher checksum should validate over the RI Opaque-LSA"
+        );
+
+        // Decode through the generic OSPF decode path: the RI TLV comes back as a
+        // generic Opaque TLV (the decode path has no RI-specific knowledge).
+        let decoded = append_ospf_packet(Packet::new(), bytes.as_bytes())
+            .expect("the RI Link State Update decodes");
+        let ospf = decoded
+            .layer::<Ospfv2>()
+            .expect("the decoded packet exposes a typed Ospfv2 layer");
+        let lsu = match &ospf.body {
+            OspfBody::LinkStateUpdate(lsu) => lsu,
+            other => panic!("expected a Link State Update body, got {other:?}"),
+        };
+        let decoded_lsas = lsu.lsas_value();
+        assert_eq!(decoded_lsas.len(), 1);
+        let decoded_lsa = &decoded_lsas[0];
+        assert_eq!(decoded_lsa.header.ls_type_value(), OSPF_LSA_OPAQUE_AREA);
+        assert_eq!(
+            lsa_opaque_type(&decoded_lsa.header),
+            OSPF_OPAQUE_TYPE_ROUTER_INFORMATION
+        );
+
+        let opaque = match &decoded_lsa.body {
+            OspfLsaBody::Opaque(opaque) => opaque,
+            other => panic!("expected an Opaque-LSA body, got {other:?}"),
+        };
+        let tlvs = opaque.tlvs_value();
+        assert_eq!(tlvs.len(), 1);
+
+        // The decoded top-level TLV equals the built Router Functional
+        // Capabilities TLV.
+        assert_eq!(tlvs[0], caps_tlv);
+
+        // The whole packet re-compiles byte-for-byte through the generic path.
+        let recompiled = decoded
+            .compile()
+            .expect("the decoded RI Link State Update re-compiles");
         assert_eq!(recompiled.as_bytes(), bytes.as_bytes());
     }
 
