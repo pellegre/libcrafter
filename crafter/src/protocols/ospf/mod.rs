@@ -35,7 +35,7 @@ pub mod packet;
 pub use constants::*;
 pub use packet::{
     OspfDatabaseDescription, OspfHello, OspfLinkStateAck, OspfLinkStateRequest,
-    OspfLinkStateRequestEntry,
+    OspfLinkStateRequestEntry, OspfLinkStateUpdate,
 };
 
 macro_rules! impl_layer_object {
@@ -103,10 +103,11 @@ pub enum OspfChecksumStatus {
 /// This block models the typed [`OspfBody::Hello`] body (RFC 2328 §A.3.2), the
 /// [`OspfBody::DatabaseDescription`] body (RFC 2328 §A.3.3), the
 /// [`OspfBody::LinkStateRequest`] body (RFC 2328 §A.3.4), the
+/// [`OspfBody::LinkStateUpdate`] body (RFC 2328 §A.3.5), the
 /// [`OspfBody::LinkStateAck`] body (RFC 2328 §A.3.6), and the
 /// [`OspfBody::Unknown`] variant, which preserves the raw body bytes of a
 /// packet type the builder/decoder does not (yet) model so the bytes round-trip
-/// verbatim. The Link State Update body is added in a later step.
+/// verbatim.
 #[derive(Debug, Clone)]
 pub enum OspfBody {
     /// The OSPFv2 Hello packet body (RFC 2328 §A.3.2).
@@ -115,6 +116,8 @@ pub enum OspfBody {
     DatabaseDescription(OspfDatabaseDescription),
     /// The OSPFv2 Link State Request packet body (RFC 2328 §A.3.4).
     LinkStateRequest(OspfLinkStateRequest),
+    /// The OSPFv2 Link State Update packet body (RFC 2328 §A.3.5).
+    LinkStateUpdate(OspfLinkStateUpdate),
     /// The OSPFv2 Link State Acknowledgment packet body (RFC 2328 §A.3.6).
     LinkStateAck(OspfLinkStateAck),
     /// A packet body the layer does not (yet) model, preserved verbatim.
@@ -133,6 +136,7 @@ impl OspfBody {
             OspfBody::Hello(hello) => hello.encoded_len(),
             OspfBody::DatabaseDescription(dd) => dd.encoded_len(),
             OspfBody::LinkStateRequest(lsr) => lsr.encoded_len(),
+            OspfBody::LinkStateUpdate(lsu) => lsu.encoded_len(),
             OspfBody::LinkStateAck(ack) => ack.encoded_len(),
             OspfBody::Unknown { body, .. } => body.len(),
         }
@@ -144,6 +148,7 @@ impl OspfBody {
             OspfBody::Hello(hello) => hello.encode(out),
             OspfBody::DatabaseDescription(dd) => dd.encode(out),
             OspfBody::LinkStateRequest(lsr) => lsr.encode(out),
+            OspfBody::LinkStateUpdate(lsu) => lsu.encode(out),
             OspfBody::LinkStateAck(ack) => ack.encode(out),
             OspfBody::Unknown { body, .. } => out.extend_from_slice(body),
         }
@@ -155,6 +160,7 @@ impl OspfBody {
             OspfBody::Hello(_) => OSPF_TYPE_HELLO,
             OspfBody::DatabaseDescription(_) => OSPF_TYPE_DATABASE_DESCRIPTION,
             OspfBody::LinkStateRequest(_) => OSPF_TYPE_LINK_STATE_REQUEST,
+            OspfBody::LinkStateUpdate(_) => OSPF_TYPE_LINK_STATE_UPDATE,
             OspfBody::LinkStateAck(_) => OSPF_TYPE_LINK_STATE_ACK,
             OspfBody::Unknown { type_code, .. } => *type_code,
         }
@@ -171,6 +177,7 @@ impl OspfBody {
             OspfBody::Hello(_) => {}
             OspfBody::DatabaseDescription(_) => {}
             OspfBody::LinkStateRequest(_) => {}
+            OspfBody::LinkStateUpdate(_) => {}
             OspfBody::LinkStateAck(_) => {}
             OspfBody::Unknown { type_code: tc, .. } => *tc = type_code,
         }
@@ -462,6 +469,58 @@ impl Ospfv2 {
         }
     }
 
+    /// Build an OSPFv2 Link State Update packet (RFC 2328 §A.3.5).
+    ///
+    /// Sets the packet Type to [`OSPF_TYPE_LINK_STATE_UPDATE`] and installs a
+    /// default (empty) [`OspfLinkStateUpdate`] body. Add LSAs fluently with
+    /// [`Ospfv2::with_link_state_update`] or replace the whole body with
+    /// [`Ospfv2::link_state_update_body`].
+    pub fn link_state_update() -> Self {
+        Self::new()
+            .packet_type(OSPF_TYPE_LINK_STATE_UPDATE)
+            .link_state_update_body(OspfLinkStateUpdate::new())
+    }
+
+    /// Replace the packet body with the given [`OspfLinkStateUpdate`] body and
+    /// set the packet Type to [`OSPF_TYPE_LINK_STATE_UPDATE`].
+    pub fn link_state_update_body(mut self, lsu: OspfLinkStateUpdate) -> Self {
+        self.packet_type.set_user(OSPF_TYPE_LINK_STATE_UPDATE);
+        self.body = OspfBody::LinkStateUpdate(lsu);
+        self
+    }
+
+    /// Mutate the Link State Update body in place through a closure, returning
+    /// `self` for fluent chaining (e.g.
+    /// `Ospfv2::link_state_update().with_link_state_update(|u| ...)`).
+    ///
+    /// If the current body is not a Link State Update it is replaced with a
+    /// default one (and the packet Type set to [`OSPF_TYPE_LINK_STATE_UPDATE`])
+    /// before the closure runs, so the accessor always yields a Link State Update
+    /// body to configure.
+    pub fn with_link_state_update(
+        mut self,
+        configure: impl FnOnce(&mut OspfLinkStateUpdate),
+    ) -> Self {
+        configure(self.link_state_update_mut());
+        self
+    }
+
+    /// Borrow the Link State Update body mutably, installing a default Link State
+    /// Update body (and setting the packet Type to
+    /// [`OSPF_TYPE_LINK_STATE_UPDATE`]) when the current body is not already a
+    /// Link State Update.
+    pub fn link_state_update_mut(&mut self) -> &mut OspfLinkStateUpdate {
+        if !matches!(self.body, OspfBody::LinkStateUpdate(_)) {
+            self.packet_type.set_user(OSPF_TYPE_LINK_STATE_UPDATE);
+            self.body = OspfBody::LinkStateUpdate(OspfLinkStateUpdate::new());
+        }
+        match &mut self.body {
+            OspfBody::LinkStateUpdate(lsu) => lsu,
+            // Unreachable: the body was just normalized to an LSU above.
+            _ => unreachable!("link state update body installed above"),
+        }
+    }
+
     /// Build an OSPFv2 Link State Acknowledgment packet (RFC 2328 §A.3.6).
     ///
     /// Sets the packet Type to [`OSPF_TYPE_LINK_STATE_ACK`] and installs a
@@ -630,6 +689,14 @@ impl Layer for Ospfv2 {
                 self.area_id_value(),
                 lsr.entries_value().len()
             ),
+            OspfBody::LinkStateUpdate(lsu) => format!(
+                "Ospf(type={}, rid={}, area={}, num_lsas={}, lsas={})",
+                ospf_type_name(self.packet_type_value()),
+                self.router_id_value(),
+                self.area_id_value(),
+                lsu.num_lsas_value(),
+                lsu.lsas_value().len()
+            ),
             OspfBody::LinkStateAck(ack) => format!(
                 "Ospf(type={}, rid={}, area={}, lsa_headers={})",
                 ospf_type_name(self.packet_type_value()),
@@ -738,6 +805,16 @@ impl Layer for Ospfv2 {
                         entry.advertising_router_value()
                     ),
                 ));
+            }
+        }
+
+        // The Link State Update body adds its `# LSAs` count, its carried-LSA
+        // count, and one `lsa` summary (the LSA header) per carried LSA.
+        if let OspfBody::LinkStateUpdate(lsu) = &self.body {
+            fields.push(("num_lsas", lsu.num_lsas_value().to_string()));
+            fields.push(("lsa_count", lsu.lsas_value().len().to_string()));
+            for lsa in lsu.lsas_value() {
+                fields.push(("lsa", lsa.header.summary()));
             }
         }
 
