@@ -29,9 +29,9 @@ use super::constants::{
 };
 use super::lsa::{
     decode_lsa_headers, OspfAsExternalLsa, OspfExternalTos, OspfLsa, OspfLsaBody, OspfLsaHeader,
-    OspfNetworkLsa, OspfRouterLink, OspfRouterLinkTos, OspfRouterLsa, OspfSummaryLsa,
+    OspfNetworkLsa, OspfNssaLsa, OspfRouterLink, OspfRouterLinkTos, OspfRouterLsa, OspfSummaryLsa,
     OspfSummaryTos, OSPF_AS_EXTERNAL_FLAG_E, OSPF_LSA_AS_EXTERNAL, OSPF_LSA_HEADER_LEN,
-    OSPF_LSA_NETWORK, OSPF_LSA_ROUTER, OSPF_LSA_SUMMARY_ASBR, OSPF_LSA_SUMMARY_IP,
+    OSPF_LSA_NETWORK, OSPF_LSA_NSSA, OSPF_LSA_ROUTER, OSPF_LSA_SUMMARY_ASBR, OSPF_LSA_SUMMARY_IP,
 };
 use super::packet::{
     OspfDatabaseDescription, OspfHello, OspfLinkStateAck, OspfLinkStateRequest,
@@ -94,6 +94,16 @@ const OSPF_AS_EXTERNAL_LSA_MASK_LEN: usize = 4;
 /// 1-octet combined E/TOS octet, a 3-octet (24-bit) metric, a 4-octet
 /// forwarding address, and a 4-octet external route tag (RFC 2328 §A.4.5).
 const OSPF_AS_EXTERNAL_LSA_ENTRY_LEN: usize = 12;
+
+/// The length of the NSSA-LSA network mask field, in octets. The NSSA-LSA body
+/// (RFC 3101 §2.2) shares the AS-External-LSA layout (RFC 2328 §A.4.5).
+const OSPF_NSSA_LSA_MASK_LEN: usize = 4;
+
+/// The length of a single NSSA-LSA external metric entry, in octets. Identical
+/// to the AS-External-LSA external metric entry (RFC 3101 §2.2, RFC 2328
+/// §A.4.5): a 1-octet combined E/TOS octet, a 3-octet (24-bit) metric, a 4-octet
+/// forwarding address, and a 4-octet external route tag.
+const OSPF_NSSA_LSA_ENTRY_LEN: usize = 12;
 
 /// Append a decoded OSPFv2 packet to an existing packet stack.
 ///
@@ -497,6 +507,7 @@ fn decode_lsa_body(ls_type: u8, body: &[u8]) -> Result<OspfLsaBody> {
             Ok(OspfLsaBody::Summary(decode_summary_lsa_body(body)?))
         }
         OSPF_LSA_AS_EXTERNAL => Ok(OspfLsaBody::AsExternal(decode_as_external_lsa_body(body)?)),
+        OSPF_LSA_NSSA => Ok(OspfLsaBody::Nssa(decode_nssa_lsa_body(body)?)),
         _ => Ok(OspfLsaBody::Raw(body.to_vec())),
     }
 }
@@ -744,6 +755,73 @@ fn decode_as_external_lsa_body(body: &[u8]) -> Result<OspfAsExternalLsa> {
         .collect();
 
     Ok(OspfAsExternalLsa::from_decoded_parts(network_mask, entries))
+}
+
+/// Parse the OSPFv2 NSSA-LSA body (RFC 3101 §2.2) from `body` into an
+/// [`OspfNssaLsa`].
+///
+/// `body` is the LSA bytes after the 20-octet header. The NSSA-LSA body shares
+/// the AS-External-LSA layout (RFC 2328 §A.4.5): a 4-octet Network Mask followed
+/// by one or more 12-octet external metric entries, each a combined E/TOS octet
+/// (the high bit, [`OSPF_AS_EXTERNAL_FLAG_E`], is the E bit and the low 7 bits
+/// the TOS code), a 24-bit (3-octet, big-endian) metric, a 4-octet forwarding
+/// address, and a 4-octet external route tag. The distinguishing NSSA semantics
+/// — the LS type (7) and the P-bit ([`OSPF_OPTIONS_NP`](super::lsa::OSPF_OPTIONS_NP))
+/// in the enclosing LSA header Options field — live on the header, not in this
+/// body.
+///
+/// A body shorter than the 4-octet network mask is a structured
+/// [`CrafterError::buffer_too_short`] (context `"ospf nssa-lsa"`); an
+/// external-metric region whose length is not a multiple of 12 is a structured
+/// [`CrafterError::invalid_field_value`] (`"ospf.nssa_lsa.entries"`), never a
+/// panic. The network mask is recovered and marked user-set (through
+/// [`OspfNssaLsa::from_decoded_parts`]) so the NSSA-LSA re-compiles
+/// byte-for-byte.
+fn decode_nssa_lsa_body(body: &[u8]) -> Result<OspfNssaLsa> {
+    if body.len() < OSPF_NSSA_LSA_MASK_LEN {
+        return Err(CrafterError::buffer_too_short(
+            "ospf nssa-lsa",
+            OSPF_NSSA_LSA_MASK_LEN,
+            body.len(),
+        ));
+    }
+
+    // Network Mask (octets 0..4). The length check above keeps this slice in
+    // bounds, so it cannot panic.
+    let network_mask = Ipv4Addr::new(body[0], body[1], body[2], body[3]);
+
+    // The remaining octets are the external metric list: one or more 12-octet
+    // entries, identical to the AS-External-LSA layout (RFC 3101 §2.2, RFC 2328
+    // §A.4.5). A region not a multiple of 12 is a malformed list, not a
+    // truncation.
+    let entry_region = &body[OSPF_NSSA_LSA_MASK_LEN..];
+    if entry_region.len() % OSPF_NSSA_LSA_ENTRY_LEN != 0 {
+        return Err(CrafterError::invalid_field_value(
+            "ospf.nssa_lsa.entries",
+            "external metric list length must be a multiple of 12",
+        ));
+    }
+
+    // Each 12-octet entry is a combined E/TOS octet, a 24-bit big-endian metric,
+    // a 4-octet forwarding address, and a 4-octet external route tag (RFC 3101
+    // §2.2, RFC 2328 §A.4.5). The exact-multiple check above keeps every chunk
+    // full, so this cannot panic. The E bit is the high bit of the first octet
+    // ([`OSPF_AS_EXTERNAL_FLAG_E`]); the TOS code is its low 7 bits.
+    let entries = entry_region
+        .chunks_exact(OSPF_NSSA_LSA_ENTRY_LEN)
+        .map(|chunk| {
+            let e_bit = chunk[0] & OSPF_AS_EXTERNAL_FLAG_E != 0;
+            let tos = chunk[0] & 0x7f;
+            let metric =
+                (u32::from(chunk[1]) << 16) | (u32::from(chunk[2]) << 8) | u32::from(chunk[3]);
+            let forwarding_address = Ipv4Addr::new(chunk[4], chunk[5], chunk[6], chunk[7]);
+            let external_route_tag =
+                u32::from_be_bytes([chunk[8], chunk[9], chunk[10], chunk[11]]);
+            OspfExternalTos::new(e_bit, tos, metric, forwarding_address, external_route_tag)
+        })
+        .collect();
+
+    Ok(OspfNssaLsa::from_decoded_parts(network_mask, entries))
 }
 
 /// Parse the OSPFv2 Link State Acknowledgment body (RFC 2328 §A.3.6) from `body`
