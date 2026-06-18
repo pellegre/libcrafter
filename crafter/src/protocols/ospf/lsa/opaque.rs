@@ -53,7 +53,7 @@
 
 use core::net::Ipv4Addr;
 
-use super::OspfLsaHeader;
+use super::{OspfLsa, OspfLsaBody, OspfLsaHeader, OSPF_LSA_OPAQUE_AREA};
 use crate::{CrafterError, Result};
 
 // ---------------------------------------------------------------------------
@@ -71,6 +71,56 @@ const OSPF_OPAQUE_TLV_ALIGNMENT: usize = 4;
 fn padded_value_len(len: usize) -> usize {
     len.div_ceil(OSPF_OPAQUE_TLV_ALIGNMENT) * OSPF_OPAQUE_TLV_ALIGNMENT
 }
+
+// ---------------------------------------------------------------------------
+// Traffic Engineering Opaque-LSA TLVs (RFC 3630)
+// ---------------------------------------------------------------------------
+
+/// Traffic Engineering Opaque Type (RFC 3630 §2.1): the 8-bit Opaque Type octet
+/// in the Link State ID that identifies a TE Opaque-LSA. TE LSAs are area-scope
+/// (LS type [`OSPF_LSA_OPAQUE_AREA`], 10) Opaque-LSAs carrying this Opaque Type.
+pub const OSPF_TE_OPAQUE_TYPE: u8 = 1;
+
+/// TE top-level Router Address TLV (RFC 3630 §2.4.1): a single 4-octet stable
+/// IPv4 address (typically a loopback) reachable for the originating router.
+pub const OSPF_TE_TLV_ROUTER_ADDRESS: u16 = 1;
+
+/// TE top-level Link TLV (RFC 3630 §2.4.2): describes a single link and nests
+/// the link sub-TLVs (Link Type, Link ID, interface addresses, metrics,
+/// bandwidth) as its value.
+pub const OSPF_TE_TLV_LINK: u16 = 2;
+
+/// TE Link sub-TLV — Link Type (RFC 3630 §2.5.1): a 1-octet value, either
+/// point-to-point (1) or multi-access (2).
+pub const OSPF_TE_SUBTLV_LINK_TYPE: u16 = 1;
+
+/// TE Link sub-TLV — Link ID (RFC 3630 §2.5.2): the Router ID of the neighbor on
+/// a point-to-point link, or the interface address of the designated router on a
+/// multi-access link.
+pub const OSPF_TE_SUBTLV_LINK_ID: u16 = 2;
+
+/// TE Link sub-TLV — Local Interface IP Address (RFC 3630 §2.5.3): one or more
+/// 4-octet local interface IPv4 addresses.
+pub const OSPF_TE_SUBTLV_LOCAL_INTERFACE_IP: u16 = 3;
+
+/// TE Link sub-TLV — Remote Interface IP Address (RFC 3630 §2.5.4): one or more
+/// 4-octet remote (neighbor) interface IPv4 addresses.
+pub const OSPF_TE_SUBTLV_REMOTE_INTERFACE_IP: u16 = 4;
+
+/// TE Link sub-TLV — Traffic Engineering Metric (RFC 3630 §2.5.5): a 4-octet
+/// link metric used for traffic-engineering path computation, distinct from the
+/// standard OSPF link metric.
+pub const OSPF_TE_SUBTLV_TE_METRIC: u16 = 5;
+
+/// TE Link sub-TLV — Maximum Bandwidth (RFC 3630 §2.5.6): the maximum bandwidth
+/// of the link, a 4-octet IEEE-754 single-precision value in bytes per second.
+pub const OSPF_TE_SUBTLV_MAX_BANDWIDTH: u16 = 6;
+
+/// TE Link Type — point-to-point (RFC 3630 §2.5.1).
+pub const OSPF_TE_LINK_TYPE_POINT_TO_POINT: u8 = 1;
+
+/// TE Link Type — multi-access (RFC 3630 §2.5.1).
+pub const OSPF_TE_LINK_TYPE_MULTI_ACCESS: u8 = 2;
 
 /// Read the 8-bit Opaque Type from an LSA header's Link State ID (RFC 5250 §3):
 /// the first octet of the 32-bit Link State ID.
@@ -132,6 +182,21 @@ impl OspfOpaqueTlv {
             tlv_type,
             value: value.into(),
         }
+    }
+
+    /// Build the Traffic Engineering top-level Router Address TLV (RFC 3630
+    /// §2.4.1): a TLV of type [`OSPF_TE_TLV_ROUTER_ADDRESS`] whose 4-octet value
+    /// is the given stable IPv4 router address (typically a loopback).
+    ///
+    /// This is a thin convenience over [`OspfOpaqueTlv::new`] that fixes the type
+    /// code and encodes the address as the value; the generic encode/decode path
+    /// handles it like any other TLV, so a TE LSA built from these constructors
+    /// round-trips byte-for-byte through the generic Opaque-LSA decode.
+    pub fn te_router_address(router_address: impl Into<Ipv4Addr>) -> Self {
+        Self::new(
+            OSPF_TE_TLV_ROUTER_ADDRESS,
+            router_address.into().octets().to_vec(),
+        )
     }
 
     /// The TLV type code (RFC 5250 §3).
@@ -196,6 +261,109 @@ impl OspfOpaqueTlv {
     }
 }
 
+/// Builder for the Traffic Engineering top-level Link TLV (RFC 3630 §2.4.2).
+///
+/// A TE Link TLV (type [`OSPF_TE_TLV_LINK`]) describes a single link, and its
+/// value is itself a sequence of sub-TLVs (Link Type, Link ID, local/remote
+/// interface addresses, TE metric, maximum bandwidth) encoded with the same
+/// Type/Length/Value/pad-to-4 rule as a top-level TLV. This builder collects the
+/// sub-TLVs as [`OspfOpaqueTlv`]s and, on [`build`](OspfTeLinkTlv::build),
+/// concatenates their encodings into a single Link TLV `OspfOpaqueTlv`.
+///
+/// Reusing [`OspfOpaqueTlv`] for the sub-TLVs keeps the padding rule identical at
+/// every nesting level, so a Link TLV produced here re-parses through the generic
+/// [`OspfOpaqueTlv::decode`] and the whole TE LSA round-trips byte-for-byte
+/// through the generic Opaque-LSA decode.
+#[derive(Debug, Clone, Default)]
+pub struct OspfTeLinkTlv {
+    /// The Link sub-TLVs, in the order they were added.
+    sub_tlvs: Vec<OspfOpaqueTlv>,
+}
+
+impl OspfTeLinkTlv {
+    /// Build an empty Link TLV with no sub-TLVs.
+    pub fn new() -> Self {
+        Self {
+            sub_tlvs: Vec::new(),
+        }
+    }
+
+    /// Append an arbitrary sub-TLV, for sub-TLV types this builder does not model
+    /// with a named setter (the value is encoded with the same TLV padding rule).
+    pub fn sub_tlv(mut self, sub_tlv: OspfOpaqueTlv) -> Self {
+        self.sub_tlvs.push(sub_tlv);
+        self
+    }
+
+    /// Add the Link Type sub-TLV (RFC 3630 §2.5.1): a 1-octet link type, either
+    /// [`OSPF_TE_LINK_TYPE_POINT_TO_POINT`] or [`OSPF_TE_LINK_TYPE_MULTI_ACCESS`].
+    pub fn link_type(self, link_type: u8) -> Self {
+        self.sub_tlv(OspfOpaqueTlv::new(OSPF_TE_SUBTLV_LINK_TYPE, vec![link_type]))
+    }
+
+    /// Add the Link ID sub-TLV (RFC 3630 §2.5.2): the 4-octet neighbor Router ID
+    /// (point-to-point) or designated-router interface address (multi-access).
+    pub fn link_id(self, link_id: impl Into<Ipv4Addr>) -> Self {
+        self.sub_tlv(OspfOpaqueTlv::new(
+            OSPF_TE_SUBTLV_LINK_ID,
+            link_id.into().octets().to_vec(),
+        ))
+    }
+
+    /// Add the Local Interface IP Address sub-TLV (RFC 3630 §2.5.3): one 4-octet
+    /// local interface IPv4 address.
+    pub fn local_interface_ip(self, address: impl Into<Ipv4Addr>) -> Self {
+        self.sub_tlv(OspfOpaqueTlv::new(
+            OSPF_TE_SUBTLV_LOCAL_INTERFACE_IP,
+            address.into().octets().to_vec(),
+        ))
+    }
+
+    /// Add the Remote Interface IP Address sub-TLV (RFC 3630 §2.5.4): one 4-octet
+    /// remote (neighbor) interface IPv4 address.
+    pub fn remote_interface_ip(self, address: impl Into<Ipv4Addr>) -> Self {
+        self.sub_tlv(OspfOpaqueTlv::new(
+            OSPF_TE_SUBTLV_REMOTE_INTERFACE_IP,
+            address.into().octets().to_vec(),
+        ))
+    }
+
+    /// Add the Traffic Engineering Metric sub-TLV (RFC 3630 §2.5.5): a 4-octet
+    /// big-endian TE metric.
+    pub fn te_metric(self, metric: u32) -> Self {
+        self.sub_tlv(OspfOpaqueTlv::new(
+            OSPF_TE_SUBTLV_TE_METRIC,
+            metric.to_be_bytes().to_vec(),
+        ))
+    }
+
+    /// Add the Maximum Bandwidth sub-TLV (RFC 3630 §2.5.6): a 4-octet IEEE-754
+    /// single-precision bandwidth value, in bytes per second, encoded big-endian.
+    pub fn max_bandwidth(self, bytes_per_second: f32) -> Self {
+        self.sub_tlv(OspfOpaqueTlv::new(
+            OSPF_TE_SUBTLV_MAX_BANDWIDTH,
+            bytes_per_second.to_be_bytes().to_vec(),
+        ))
+    }
+
+    /// Finish the builder, returning a top-level Link TLV (type
+    /// [`OSPF_TE_TLV_LINK`]) whose value is the concatenation of the collected
+    /// sub-TLV encodings (RFC 3630 §2.4.2).
+    ///
+    /// Each sub-TLV is encoded with [`OspfOpaqueTlv::encode`], so it carries the
+    /// same Type/Length/Value/pad-to-4 layout as a top-level TLV; the resulting
+    /// bytes become the value of a single `OspfOpaqueTlv` of type
+    /// [`OSPF_TE_TLV_LINK`]. The generic decode path re-reads the Link TLV's value
+    /// as a sequence of sub-TLVs.
+    pub fn build(&self) -> OspfOpaqueTlv {
+        let mut value = Vec::new();
+        for sub_tlv in &self.sub_tlvs {
+            sub_tlv.encode(&mut value);
+        }
+        OspfOpaqueTlv::new(OSPF_TE_TLV_LINK, value)
+    }
+}
+
 /// OSPFv2 Opaque-LSA body as a generic TLV list (RFC 5250 §3).
 ///
 /// Models the Opaque-LSA body (LS types 9, 10, 11) as an ordered list of
@@ -256,6 +424,37 @@ impl OspfOpaqueLsa {
         for tlv in &self.tlvs {
             tlv.encode(out);
         }
+    }
+
+    /// Build a complete area-scope Traffic Engineering Opaque-LSA (RFC 3630 §2.3)
+    /// carrying `tlvs`, ready to drop into a Link State Update.
+    ///
+    /// The returned [`OspfLsa`] has an area-scope Opaque-LSA header (LS type
+    /// [`OSPF_LSA_OPAQUE_AREA`], 10) whose Link State ID packs the TE Opaque Type
+    /// ([`OSPF_TE_OPAQUE_TYPE`], 1) and the given 24-bit `opaque_id`
+    /// (RFC 5250 §3), the supplied `advertising_router`, and an
+    /// [`OspfLsaBody::Opaque`] body holding the TE TLVs. The LSA `length` and the
+    /// Fletcher-16 checksum auto-fill when the LSA is encoded, and the TLVs are
+    /// stored as generic [`OspfOpaqueTlv`]s so the LSA round-trips byte-for-byte
+    /// through the generic Opaque-LSA decode.
+    ///
+    /// `tlvs` are the top-level TE TLVs, for example a Router Address TLV
+    /// ([`OspfOpaqueTlv::te_router_address`]) and one or more Link TLVs built with
+    /// [`OspfTeLinkTlv`].
+    pub fn te_area_lsa(
+        advertising_router: impl Into<Ipv4Addr>,
+        opaque_id: u32,
+        tlvs: impl IntoIterator<Item = OspfOpaqueTlv>,
+    ) -> OspfLsa {
+        let mut opaque = OspfOpaqueLsa::new();
+        for tlv in tlvs {
+            opaque = opaque.tlv(tlv);
+        }
+        let header = OspfLsaHeader::new()
+            .ls_type(OSPF_LSA_OPAQUE_AREA)
+            .opaque_link_state_id(OSPF_TE_OPAQUE_TYPE, opaque_id)
+            .advertising_router(advertising_router.into());
+        OspfLsa::new(header, OspfLsaBody::Opaque(opaque))
     }
 }
 
@@ -378,6 +577,132 @@ mod tests {
             fletcher16_valid(lsa_bytes),
             "auto-filled Fletcher checksum should validate over the Opaque-LSA"
         );
+    }
+
+    /// An area-scope Traffic Engineering Opaque-LSA (RFC 3630) built from the
+    /// typed convenience constructors — a top-level Router Address TLV plus a Link
+    /// TLV nesting Link Type and Link ID sub-TLVs — emits the RFC 3630 TLV layout,
+    /// packs the TE Opaque Type into the Link State ID, and round-trips
+    /// byte-for-byte through the generic Opaque-LSA decode. The decoded Link TLV's
+    /// value re-parses into the original sub-TLVs.
+    #[test]
+    fn ospf_te_area_opaque_lsa_round_trips_through_generic_decode() {
+        use crate::protocols::ospf::decode::append_ospf_packet;
+        use crate::protocols::ospf::lsa::opaque_type as lsa_opaque_type;
+        use crate::protocols::ospf::packet::link_state_update::OspfLinkStateUpdate;
+        use crate::protocols::ospf::{OspfBody, Ospfv2};
+        use crate::Packet;
+
+        // Top-level Router Address TLV (type 1): the originating router's stable
+        // address (a documentation address).
+        let router_address = Ipv4Addr::new(192, 0, 2, 1);
+        let router_tlv = OspfOpaqueTlv::te_router_address(router_address);
+        assert_eq!(router_tlv.tlv_type(), OSPF_TE_TLV_ROUTER_ADDRESS);
+        assert_eq!(router_tlv.value(), &[192, 0, 2, 1]);
+
+        // Top-level Link TLV (type 2): nests a Link Type sub-TLV (point-to-point)
+        // and a Link ID sub-TLV (the neighbor Router ID), each padded to a 4-octet
+        // boundary like a top-level TLV.
+        let link_id = Ipv4Addr::new(198, 51, 100, 7);
+        let link_tlv = OspfTeLinkTlv::new()
+            .link_type(OSPF_TE_LINK_TYPE_POINT_TO_POINT)
+            .link_id(link_id)
+            .build();
+        assert_eq!(link_tlv.tlv_type(), OSPF_TE_TLV_LINK);
+
+        // The Link TLV's value is the concatenation of the two sub-TLV encodings:
+        //   Link Type sub-TLV: type 1, length 1, value 0x01, 3 octets of pad.
+        //   Link ID sub-TLV:   type 2, length 4, value 198.51.100.7, no pad.
+        let expected_link_value: Vec<u8> = vec![
+            // Link Type sub-TLV (type 1, length 1, padded to 4).
+            0x00, 0x01, 0x00, 0x01, //
+            OSPF_TE_LINK_TYPE_POINT_TO_POINT, 0x00, 0x00, 0x00, //
+            // Link ID sub-TLV (type 2, length 4, no padding).
+            0x00, 0x02, 0x00, 0x04, //
+            198, 51, 100, 7,
+        ];
+        assert_eq!(link_tlv.value(), expected_link_value.as_slice());
+
+        // Re-parsing the Link TLV value as a sequence of sub-TLVs recovers the two
+        // nested sub-TLVs verbatim through the generic TLV decode.
+        let (link_type_sub, consumed) =
+            OspfOpaqueTlv::decode(link_tlv.value()).expect("the Link Type sub-TLV decodes");
+        assert_eq!(link_type_sub.tlv_type(), OSPF_TE_SUBTLV_LINK_TYPE);
+        assert_eq!(link_type_sub.value(), &[OSPF_TE_LINK_TYPE_POINT_TO_POINT]);
+        let (link_id_sub, _) = OspfOpaqueTlv::decode(&link_tlv.value()[consumed..])
+            .expect("the Link ID sub-TLV decodes");
+        assert_eq!(link_id_sub.tlv_type(), OSPF_TE_SUBTLV_LINK_ID);
+        assert_eq!(link_id_sub.value(), &link_id.octets());
+
+        // Assemble the complete area-scope TE Opaque-LSA carrying both TLVs.
+        let opaque_id = 0x0000_002au32;
+        let lsa = OspfOpaqueLsa::te_area_lsa(
+            router_address,
+            opaque_id,
+            [router_tlv.clone(), link_tlv.clone()],
+        );
+
+        // The header carries the area-scope LS type and packs the TE Opaque Type
+        // (1) and the 24-bit Opaque ID into the Link State ID.
+        assert_eq!(lsa.header.ls_type_value(), OSPF_LSA_OPAQUE_AREA);
+        assert_eq!(opaque_type_of(&lsa.header), OSPF_TE_OPAQUE_TYPE);
+        assert_eq!(opaque_id_of(&lsa.header), opaque_id);
+
+        // Compile the LSA inside a Link State Update packet.
+        let bytes = Packet::from_layer(
+            Ospfv2::link_state_update()
+                .router_id([192, 0, 2, 1])
+                .area_id([0, 0, 0, 0])
+                .with_link_state_update(|u| {
+                    *u = OspfLinkStateUpdate::new().lsa(lsa.clone());
+                }),
+        )
+        .compile()
+        .expect("a Link State Update with a TE Opaque-LSA compiles");
+
+        // Decode through the generic OSPF decode path: the TE TLVs come back as
+        // generic Opaque TLVs (the decode path has no TE-specific knowledge).
+        let decoded = append_ospf_packet(Packet::new(), bytes.as_bytes())
+            .expect("the TE Link State Update decodes");
+        let ospf = decoded
+            .layer::<Ospfv2>()
+            .expect("the decoded packet exposes a typed Ospfv2 layer");
+        let lsu = match &ospf.body {
+            OspfBody::LinkStateUpdate(lsu) => lsu,
+            other => panic!("expected a Link State Update body, got {other:?}"),
+        };
+        let decoded_lsas = lsu.lsas_value();
+        assert_eq!(decoded_lsas.len(), 1);
+        let decoded_lsa = &decoded_lsas[0];
+        assert_eq!(decoded_lsa.header.ls_type_value(), OSPF_LSA_OPAQUE_AREA);
+        assert_eq!(lsa_opaque_type(&decoded_lsa.header), OSPF_TE_OPAQUE_TYPE);
+
+        let opaque = match &decoded_lsa.body {
+            OspfLsaBody::Opaque(opaque) => opaque,
+            other => panic!("expected an Opaque-LSA body, got {other:?}"),
+        };
+        let tlvs = opaque.tlvs_value();
+        assert_eq!(tlvs.len(), 2);
+
+        // The decoded top-level TLVs equal the built ones: the Router Address TLV
+        // and the Link TLV (whose value is the nested sub-TLV byte sequence).
+        assert_eq!(tlvs[0], router_tlv);
+        assert_eq!(tlvs[1], link_tlv);
+
+        // The decoded Link TLV's value still re-parses into the two sub-TLVs,
+        // confirming the nesting survived the generic decode.
+        let (decoded_link_type_sub, consumed) =
+            OspfOpaqueTlv::decode(tlvs[1].value()).expect("decoded Link Type sub-TLV re-parses");
+        assert_eq!(decoded_link_type_sub, link_type_sub);
+        let (decoded_link_id_sub, _) = OspfOpaqueTlv::decode(&tlvs[1].value()[consumed..])
+            .expect("decoded Link ID sub-TLV re-parses");
+        assert_eq!(decoded_link_id_sub, link_id_sub);
+
+        // The whole packet re-compiles byte-for-byte through the generic path.
+        let recompiled = decoded
+            .compile()
+            .expect("the decoded TE Link State Update re-compiles");
+        assert_eq!(recompiled.as_bytes(), bytes.as_bytes());
     }
 
     // The free functions are named `opaque_type`/`opaque_id` at module scope;
