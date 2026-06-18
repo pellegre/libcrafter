@@ -230,6 +230,10 @@ pub(crate) fn append_ospf_packet_with_checksum_validation(
         autype: Field::user(autype),
         authentication: Field::user(authentication),
         checksum_status,
+        // Decoded packets carry no recorded secret key: a cryptographic-auth
+        // packet's appended digest trailer is preserved within the decoded body
+        // bytes, so `compile()` reproduces them without re-deriving a digest.
+        crypto_auth: None,
         body,
     };
 
