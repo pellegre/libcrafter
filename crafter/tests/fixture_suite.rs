@@ -4434,8 +4434,9 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
             // The Options octet renders its raw hex plus the decoded RFC 2328
             // §A.2 capability labels (0x02 sets the E-bit).
             assert_eq!(value_of("options"), Some("0x02 (E)"));
-            // flags carry the I, M, and MS bits (0x04 | 0x02 | 0x01).
-            assert_eq!(value_of("dd_flags"), Some("0x07"));
+            // flags carry the I, M, and MS bits (0x04 | 0x02 | 0x01); the
+            // inspection rendering shows the raw hex plus the decoded labels.
+            assert_eq!(value_of("dd_flags"), Some("0x07 (I|M|MS)"));
             assert_eq!(value_of("dd_sequence_number"), Some("0x00001a2b"));
             assert_eq!(value_of("lsa_header_count"), Some("2"));
             let lsa_headers: Vec<&str> = fields
