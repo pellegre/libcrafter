@@ -417,20 +417,36 @@ impl Layer for Ospfv2 {
             .packet_length_value()
             .map(usize::from)
             .unwrap_or(OSPF_HEADER_LEN + self.body.encoded_len());
-        format!(
-            "Ospf(type={}, rid={}, area={}, len={})",
-            ospf_type_name(self.packet_type_value()),
-            self.router_id_value(),
-            self.area_id_value(),
-            len
-        )
+        // Dispatch on the body variant so each typed body extends the header
+        // one-liner with its own at-a-glance detail (mirroring BGP). The Hello
+        // body reports the network mask, DR/BDR, and neighbor count; other
+        // bodies fall back to the common-header summary with the Packet Length.
+        match &self.body {
+            OspfBody::Hello(hello) => format!(
+                "Ospf(type={}, rid={}, area={}, mask={}, dr={}, bdr={}, neighbors={})",
+                ospf_type_name(self.packet_type_value()),
+                self.router_id_value(),
+                self.area_id_value(),
+                hello.network_mask_value(),
+                hello.designated_router_value(),
+                hello.backup_designated_router_value(),
+                hello.neighbors_value().len()
+            ),
+            OspfBody::Unknown { .. } => format!(
+                "Ospf(type={}, rid={}, area={}, len={})",
+                ospf_type_name(self.packet_type_value()),
+                self.router_id_value(),
+                self.area_id_value(),
+                len
+            ),
+        }
     }
 
     fn inspection_fields(&self) -> Vec<(&'static str, String)> {
         // Stable field/value pairs for `show()`. Auto-filled Packet Length and
         // Checksum print as `auto` when the caller left them unset; the checksum
         // and authentication fields print as hex.
-        vec![
+        let mut fields = vec![
             ("version", self.version_value().to_string()),
             ("type", ospf_type_name(self.packet_type_value()).to_string()),
             (
@@ -452,7 +468,42 @@ impl Layer for Ospfv2 {
                 "authentication",
                 format!("0x{}", hex_bytes(&self.authentication_value())),
             ),
-        ]
+        ];
+
+        // Each typed body contributes its own stable pairs after the common
+        // header (mirroring BGP). The Hello body adds its intervals, options,
+        // priority, mask, DR/BDR, neighbor count, and one `neighbor` per
+        // neighbor Router ID.
+        if let OspfBody::Hello(hello) = &self.body {
+            fields.push(("hello_interval", hello.hello_interval_value().to_string()));
+            fields.push((
+                "dead_interval",
+                hello.router_dead_interval_value().to_string(),
+            ));
+            fields.push((
+                "options",
+                format!("0x{:02x}", hello.options_value()),
+            ));
+            fields.push(("priority", hello.router_priority_value().to_string()));
+            fields.push(("network_mask", hello.network_mask_value().to_string()));
+            fields.push((
+                "designated_router",
+                hello.designated_router_value().to_string(),
+            ));
+            fields.push((
+                "backup_designated_router",
+                hello.backup_designated_router_value().to_string(),
+            ));
+            fields.push((
+                "neighbor_count",
+                hello.neighbors_value().len().to_string(),
+            ));
+            for neighbor in hello.neighbors_value() {
+                fields.push(("neighbor", neighbor.to_string()));
+            }
+        }
+
+        fields
     }
 
     fn encoded_len(&self) -> usize {
@@ -650,6 +701,70 @@ mod tests {
         assert_eq!(length.map(|(_, v)| v.as_str()), Some("auto"));
         let checksum = fields.iter().find(|(name, _)| *name == "checksum");
         assert_eq!(checksum.map(|(_, v)| v.as_str()), Some("auto"));
+    }
+
+    /// A Hello packet's `summary()` extends the common-header one-liner with the
+    /// network mask, DR/BDR, and `neighbors=` count, and `inspection_fields()`
+    /// contributes one stable `neighbor` pair per neighbor Router ID, so the
+    /// Hello body is inspectable through `Packet::summary()` / `Packet::show()`.
+    #[test]
+    fn ospf_hello_summary_and_inspection_describe_the_body() {
+        let ospf = Ospfv2::hello()
+            .router_id([192, 0, 2, 1])
+            .area_id([0, 0, 0, 0])
+            .with_hello(|h| {
+                *h = OspfHello::new()
+                    .network_mask(Ipv4Addr::new(255, 255, 255, 0))
+                    .designated_router(Ipv4Addr::new(192, 0, 2, 1))
+                    .backup_designated_router(Ipv4Addr::new(192, 0, 2, 2))
+                    .neighbor(Ipv4Addr::new(192, 0, 2, 3))
+                    .neighbor(Ipv4Addr::new(192, 0, 2, 4))
+                    .neighbor(Ipv4Addr::new(192, 0, 2, 5));
+            });
+
+        // The one-line summary carries the Hello detail: type, mask, DR/BDR, and
+        // the neighbor count.
+        let summary = ospf.summary();
+        assert!(summary.contains("type=Hello"), "summary missing type: {summary}");
+        assert!(
+            summary.contains("mask=255.255.255.0"),
+            "summary missing network mask: {summary}"
+        );
+        assert!(summary.contains("dr=192.0.2.1"), "summary missing DR: {summary}");
+        assert!(
+            summary.contains("bdr=192.0.2.2"),
+            "summary missing BDR: {summary}"
+        );
+        assert!(
+            summary.contains("neighbors=3"),
+            "summary missing neighbor count: {summary}"
+        );
+
+        // `inspection_fields` carries the stable Hello pairs, including the
+        // neighbor count and one `neighbor` entry per neighbor Router ID.
+        let fields = ospf.inspection_fields();
+        let value_of = |name: &str| {
+            fields
+                .iter()
+                .find(|(field, _)| *field == name)
+                .map(|(_, value)| value.as_str())
+        };
+        assert_eq!(value_of("network_mask"), Some("255.255.255.0"));
+        assert_eq!(value_of("designated_router"), Some("192.0.2.1"));
+        assert_eq!(value_of("backup_designated_router"), Some("192.0.2.2"));
+        assert_eq!(value_of("hello_interval"), Some("10"));
+        assert_eq!(value_of("dead_interval"), Some("40"));
+        assert_eq!(value_of("priority"), Some("0"));
+        assert_eq!(value_of("options"), Some("0x00"));
+        assert_eq!(value_of("neighbor_count"), Some("3"));
+
+        // Every neighbor Router ID appears as its own `neighbor` pair.
+        let neighbors: Vec<&str> = fields
+            .iter()
+            .filter(|(field, _)| *field == "neighbor")
+            .map(|(_, value)| value.as_str())
+            .collect();
+        assert_eq!(neighbors, vec!["192.0.2.3", "192.0.2.4", "192.0.2.5"]);
     }
 
     /// The `Ospfv2` layer, `OspfBody`, and the OSPF constants are reachable
