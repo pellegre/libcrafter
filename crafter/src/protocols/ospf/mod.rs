@@ -33,7 +33,7 @@ pub mod packet;
 
 #[allow(unused_imports)]
 pub use constants::*;
-pub use packet::OspfHello;
+pub use packet::{OspfDatabaseDescription, OspfHello};
 
 macro_rules! impl_layer_object {
     ($type:ty) => {
@@ -97,15 +97,18 @@ pub enum OspfChecksumStatus {
 /// The body of an OSPFv2 packet (RFC 2328 §A.3), following the shared 24-octet
 /// common header.
 ///
-/// This block models the typed [`OspfBody::Hello`] body (RFC 2328 §A.3.2) and
-/// the [`OspfBody::Unknown`] variant, which preserves the raw body bytes of a
+/// This block models the typed [`OspfBody::Hello`] body (RFC 2328 §A.3.2), the
+/// [`OspfBody::DatabaseDescription`] body (RFC 2328 §A.3.3), and the
+/// [`OspfBody::Unknown`] variant, which preserves the raw body bytes of a
 /// packet type the builder/decoder does not (yet) model so the bytes round-trip
-/// verbatim. The Database Description, Link State Request, Link State Update,
-/// and Link State Acknowledgment bodies are added in later steps.
+/// verbatim. The Link State Request, Link State Update, and Link State
+/// Acknowledgment bodies are added in later steps.
 #[derive(Debug, Clone)]
 pub enum OspfBody {
     /// The OSPFv2 Hello packet body (RFC 2328 §A.3.2).
     Hello(OspfHello),
+    /// The OSPFv2 Database Description packet body (RFC 2328 §A.3.3).
+    DatabaseDescription(OspfDatabaseDescription),
     /// A packet body the layer does not (yet) model, preserved verbatim.
     Unknown {
         /// The OSPF packet Type code this body belongs to.
@@ -120,6 +123,7 @@ impl OspfBody {
     fn encoded_len(&self) -> usize {
         match self {
             OspfBody::Hello(hello) => hello.encoded_len(),
+            OspfBody::DatabaseDescription(dd) => dd.encoded_len(),
             OspfBody::Unknown { body, .. } => body.len(),
         }
     }
@@ -128,6 +132,7 @@ impl OspfBody {
     fn encode(&self, out: &mut Vec<u8>) {
         match self {
             OspfBody::Hello(hello) => hello.encode(out),
+            OspfBody::DatabaseDescription(dd) => dd.encode(out),
             OspfBody::Unknown { body, .. } => out.extend_from_slice(body),
         }
     }
@@ -136,6 +141,7 @@ impl OspfBody {
     fn type_code(&self) -> u8 {
         match self {
             OspfBody::Hello(_) => OSPF_TYPE_HELLO,
+            OspfBody::DatabaseDescription(_) => OSPF_TYPE_DATABASE_DESCRIPTION,
             OspfBody::Unknown { type_code, .. } => *type_code,
         }
     }
@@ -143,12 +149,13 @@ impl OspfBody {
     /// Track the OSPF packet Type code on the body so the header and body agree
     /// by default.
     ///
-    /// The typed [`OspfBody::Hello`] body owns its packet type (Hello) and so
-    /// ignores type-code changes; only the opaque [`OspfBody::Unknown`] body
+    /// The typed bodies own their packet type (Hello, Database Description) and
+    /// so ignore type-code changes; only the opaque [`OspfBody::Unknown`] body
     /// tracks the header's type.
     fn set_type_code(&mut self, type_code: u8) {
         match self {
             OspfBody::Hello(_) => {}
+            OspfBody::DatabaseDescription(_) => {}
             OspfBody::Unknown { type_code: tc, .. } => *tc = type_code,
         }
     }
@@ -335,6 +342,58 @@ impl Ospfv2 {
         }
     }
 
+    /// Build an OSPFv2 Database Description packet (RFC 2328 §A.3.3).
+    ///
+    /// Sets the packet Type to [`OSPF_TYPE_DATABASE_DESCRIPTION`] and installs a
+    /// default [`OspfDatabaseDescription`] body. Set the DD fields fluently with
+    /// [`Ospfv2::with_database_description`] or replace the whole body with
+    /// [`Ospfv2::database_description_body`].
+    pub fn database_description() -> Self {
+        Self::new()
+            .packet_type(OSPF_TYPE_DATABASE_DESCRIPTION)
+            .database_description_body(OspfDatabaseDescription::new())
+    }
+
+    /// Replace the packet body with the given [`OspfDatabaseDescription`] body
+    /// and set the packet Type to [`OSPF_TYPE_DATABASE_DESCRIPTION`].
+    pub fn database_description_body(mut self, dd: OspfDatabaseDescription) -> Self {
+        self.packet_type.set_user(OSPF_TYPE_DATABASE_DESCRIPTION);
+        self.body = OspfBody::DatabaseDescription(dd);
+        self
+    }
+
+    /// Mutate the Database Description body in place through a closure, returning
+    /// `self` for fluent chaining (e.g.
+    /// `Ospfv2::database_description().with_database_description(|d| ...)`).
+    ///
+    /// If the current body is not a Database Description it is replaced with a
+    /// default one (and the packet Type set to
+    /// [`OSPF_TYPE_DATABASE_DESCRIPTION`]) before the closure runs, so the
+    /// accessor always yields a Database Description body to configure.
+    pub fn with_database_description(
+        mut self,
+        configure: impl FnOnce(&mut OspfDatabaseDescription),
+    ) -> Self {
+        configure(self.database_description_mut());
+        self
+    }
+
+    /// Borrow the Database Description body mutably, installing a default
+    /// Database Description body (and setting the packet Type to
+    /// [`OSPF_TYPE_DATABASE_DESCRIPTION`]) when the current body is not already
+    /// a Database Description.
+    pub fn database_description_mut(&mut self) -> &mut OspfDatabaseDescription {
+        if !matches!(self.body, OspfBody::DatabaseDescription(_)) {
+            self.packet_type.set_user(OSPF_TYPE_DATABASE_DESCRIPTION);
+            self.body = OspfBody::DatabaseDescription(OspfDatabaseDescription::new());
+        }
+        match &mut self.body {
+            OspfBody::DatabaseDescription(dd) => dd,
+            // Unreachable: the body was just normalized to a DD above.
+            _ => unreachable!("database description body installed above"),
+        }
+    }
+
     /// The effective OSPF Version (the caller value, else [`OSPF_VERSION_2`]).
     pub fn version_value(&self) -> u8 {
         self.version.value().copied().unwrap_or(OSPF_VERSION_2)
@@ -434,6 +493,16 @@ impl Layer for Ospfv2 {
                 hello.backup_designated_router_value(),
                 hello.neighbors_value().len()
             ),
+            OspfBody::DatabaseDescription(dd) => format!(
+                "Ospf(type={}, rid={}, area={}, mtu={}, seq=0x{:08x}, flags=0x{:02x}, lsa_headers={})",
+                ospf_type_name(self.packet_type_value()),
+                self.router_id_value(),
+                self.area_id_value(),
+                dd.interface_mtu_value(),
+                dd.dd_sequence_number_value(),
+                dd.flags_value(),
+                dd.lsa_headers_value().len()
+            ),
             OspfBody::Unknown { .. } => format!(
                 "Ospf(type={}, rid={}, area={}, len={})",
                 ospf_type_name(self.packet_type_value()),
@@ -502,6 +571,22 @@ impl Layer for Ospfv2 {
             ));
             for neighbor in hello.neighbors_value() {
                 fields.push(("neighbor", neighbor.to_string()));
+            }
+        }
+
+        // The Database Description body adds its MTU, options, flags, DD
+        // sequence number, and one `lsa_header` summary per carried LSA header.
+        if let OspfBody::DatabaseDescription(dd) = &self.body {
+            fields.push(("interface_mtu", dd.interface_mtu_value().to_string()));
+            fields.push(("options", format!("0x{:02x}", dd.options_value())));
+            fields.push(("dd_flags", format!("0x{:02x}", dd.flags_value())));
+            fields.push((
+                "dd_sequence_number",
+                format!("0x{:08x}", dd.dd_sequence_number_value()),
+            ));
+            fields.push(("lsa_header_count", dd.lsa_headers_value().len().to_string()));
+            for header in dd.lsa_headers_value() {
+                fields.push(("lsa_header", header.summary()));
             }
         }
 
