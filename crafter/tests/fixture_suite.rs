@@ -760,6 +760,15 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         summary_path: None,
     },
     ValidFixtureCase {
+        name: "ospf-database-description",
+        path: "bytes/ospf-database-description.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ospf-database-description.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Ospf],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
         name: "ethernet-ipv4-tcp-bgp-open",
         path: "bytes/ethernet-ipv4-tcp-bgp-open.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/ethernet-ipv4-tcp-bgp-open.hex")),
@@ -1923,7 +1932,7 @@ fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
         "ipv4-udp-dns-raw-unknown-records-response" => &[CoverageFamily::Ipv4UdpDnsRawUnknown],
         "ipv4-udp-dns-section-placement-response" => &[CoverageFamily::Ipv4UdpDnsSectionPlacement],
         "ipv4-udp-dhcp-discover" => &[CoverageFamily::Ipv4UdpDhcp],
-        "ospf-hello-single-neighbor" => &[CoverageFamily::Ipv4Ospf],
+        "ospf-hello-single-neighbor" | "ospf-database-description" => &[CoverageFamily::Ipv4Ospf],
         "ipv4-udp-options-known" | "ipv4-udp-options-unknown-safe" => {
             &[CoverageFamily::Ipv4UdpOptions]
         }
@@ -4264,6 +4273,44 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
                 .map(|(_, value)| value.as_str())
                 .collect();
             assert_eq!(neighbors, vec!["192.0.2.2"]);
+        }
+        "ospf-database-description" => {
+            // OSPF rides directly on IPv4 protocol 89 (RFC 2328).
+            let ipv4 = expect_layer::<Ipv4>(case, packet);
+            assert_eq!(ipv4.protocol_value(), 89);
+            assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 1));
+            assert_eq!(ipv4.destination(), Ipv4Addr::new(224, 0, 0, 5));
+
+            // Common header: a version 2 Database Description (type 2) from a
+            // documentation router id in the backbone area (0.0.0.0).
+            let ospf = expect_layer::<Ospfv2>(case, packet);
+            assert_eq!(ospf.version_value(), 2);
+            assert_eq!(ospf.packet_type_value(), 2); // Database Description
+            assert_eq!(ospf.router_id_value(), Ipv4Addr::new(192, 0, 2, 1));
+            assert_eq!(ospf.area_id_value(), Ipv4Addr::new(0, 0, 0, 0));
+
+            // The Database Description body and its two carried LSA headers are
+            // surfaced through the public inspection surface (the typed body is
+            // private).
+            let fields = ospf.inspection_fields();
+            let value_of = |name: &str| {
+                fields
+                    .iter()
+                    .find(|(field, _)| *field == name)
+                    .map(|(_, value)| value.as_str())
+            };
+            assert_eq!(value_of("interface_mtu"), Some("1500"));
+            assert_eq!(value_of("options"), Some("0x02"));
+            // flags carry the I, M, and MS bits (0x04 | 0x02 | 0x01).
+            assert_eq!(value_of("dd_flags"), Some("0x07"));
+            assert_eq!(value_of("dd_sequence_number"), Some("0x00001a2b"));
+            assert_eq!(value_of("lsa_header_count"), Some("2"));
+            let lsa_headers: Vec<&str> = fields
+                .iter()
+                .filter(|(field, _)| *field == "lsa_header")
+                .map(|(_, value)| value.as_str())
+                .collect();
+            assert_eq!(lsa_headers.len(), 2);
         }
         other => panic!("fixture {other} is missing typed field assertions"),
     }
