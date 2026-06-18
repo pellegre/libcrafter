@@ -54,9 +54,8 @@ impl OspfLinkStateAck {
 
     /// Construct a Link State Acknowledgment body from decoded wire headers.
     ///
-    /// Consumed by the Link State Acknowledgment decoder added in a later step;
-    /// staged here alongside the builder so the body type is complete.
-    #[allow(dead_code)]
+    /// Consumed by the Link State Acknowledgment decoder
+    /// (`decode_link_state_ack_body`) so a decoded ack re-compiles byte-for-byte.
     pub(crate) fn from_decoded_parts(lsa_headers: Vec<OspfLsaHeader>) -> Self {
         Self { lsa_headers }
     }
