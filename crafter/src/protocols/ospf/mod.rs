@@ -1134,6 +1134,30 @@ impl Layer for Ospfv2 {
                         ));
                     }
                 }
+                // A typed Opaque-LSA body (RFC 5250 §3, LS type 9 link-local, 10
+                // area, or 11 AS) adds an `opaque_lsa` pair (the Opaque Type read
+                // from the enclosing LSA header Link State ID, plus the TLV count)
+                // followed by one `opaque_tlv` pair per TLV (the TLV type and its
+                // value byte length). The Opaque Type/Opaque ID live in the LSA
+                // header Link State ID, not in the body, so the Opaque Type is read
+                // from the header here. Other LSA body variants contribute only the
+                // `lsa` header summary above.
+                if let crate::protocols::ospf::lsa::OspfLsaBody::Opaque(opaque) = &lsa.body {
+                    fields.push((
+                        "opaque_lsa",
+                        format!(
+                            "type={} {}",
+                            crate::protocols::ospf::lsa::opaque_type(&lsa.header),
+                            opaque.summary()
+                        ),
+                    ));
+                    for tlv in opaque.tlvs_value() {
+                        fields.push((
+                            "opaque_tlv",
+                            format!("type={} value={}B", tlv.tlv_type(), tlv.value().len()),
+                        ));
+                    }
+                }
             }
         }
 

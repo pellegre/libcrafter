@@ -221,8 +221,7 @@ impl OspfOpaqueLsa {
     }
 
     /// Construct an Opaque-LSA body from a decoded list of TLVs, used by the
-    /// Opaque-LSA decode arm added in a later step.
-    #[allow(dead_code)]
+    /// Opaque-LSA decode arm in `decode.rs`.
     pub(crate) fn from_decoded_parts(tlvs: Vec<OspfOpaqueTlv>) -> Self {
         Self { tlvs }
     }

@@ -29,9 +29,10 @@ use super::constants::{
 };
 use super::lsa::{
     decode_lsa_headers, OspfAsExternalLsa, OspfExternalTos, OspfLsa, OspfLsaBody, OspfLsaHeader,
-    OspfNetworkLsa, OspfNssaLsa, OspfRouterLink, OspfRouterLinkTos, OspfRouterLsa, OspfSummaryLsa,
-    OspfSummaryTos, OSPF_AS_EXTERNAL_FLAG_E, OSPF_LSA_AS_EXTERNAL, OSPF_LSA_HEADER_LEN,
-    OSPF_LSA_NETWORK, OSPF_LSA_NSSA, OSPF_LSA_ROUTER, OSPF_LSA_SUMMARY_ASBR, OSPF_LSA_SUMMARY_IP,
+    OspfNetworkLsa, OspfNssaLsa, OspfOpaqueLsa, OspfOpaqueTlv, OspfRouterLink, OspfRouterLinkTos,
+    OspfRouterLsa, OspfSummaryLsa, OspfSummaryTos, OSPF_AS_EXTERNAL_FLAG_E, OSPF_LSA_AS_EXTERNAL,
+    OSPF_LSA_HEADER_LEN, OSPF_LSA_NETWORK, OSPF_LSA_NSSA, OSPF_LSA_OPAQUE_AREA, OSPF_LSA_OPAQUE_AS,
+    OSPF_LSA_OPAQUE_LINK_LOCAL, OSPF_LSA_ROUTER, OSPF_LSA_SUMMARY_ASBR, OSPF_LSA_SUMMARY_IP,
 };
 use super::packet::{
     OspfDatabaseDescription, OspfHello, OspfLinkStateAck, OspfLinkStateRequest,
@@ -508,8 +509,50 @@ fn decode_lsa_body(ls_type: u8, body: &[u8]) -> Result<OspfLsaBody> {
         }
         OSPF_LSA_AS_EXTERNAL => Ok(OspfLsaBody::AsExternal(decode_as_external_lsa_body(body)?)),
         OSPF_LSA_NSSA => Ok(OspfLsaBody::Nssa(decode_nssa_lsa_body(body)?)),
+        OSPF_LSA_OPAQUE_LINK_LOCAL | OSPF_LSA_OPAQUE_AREA | OSPF_LSA_OPAQUE_AS => {
+            Ok(OspfLsaBody::Opaque(decode_opaque_lsa_body(body)?))
+        }
         _ => Ok(OspfLsaBody::Raw(body.to_vec())),
     }
+}
+
+/// Parse the OSPFv2 Opaque-LSA body (RFC 5250 §3) from `body` into an
+/// [`OspfOpaqueLsa`]. Shared by all three Opaque flooding scopes: LS type 9
+/// (link-local), 10 (area), and 11 (AS), which carry the identical generic
+/// TLV body.
+///
+/// `body` is the LSA bytes after the 20-octet header. The body is a sequence of
+/// 4-octet-aligned TLVs, each a 2-octet Type, a 2-octet Length (the length of
+/// the value alone), the value, and zero padding to the next 4-octet boundary.
+/// The Opaque Type and Opaque ID live in the enclosing LSA header Link State ID
+/// (read via [`opaque_type`](super::lsa::opaque_type) /
+/// [`opaque_id`](super::lsa::opaque_id)), not in this body. Unknown TLV types
+/// are preserved verbatim by the generic [`OspfOpaqueTlv`] so an Opaque-LSA
+/// round-trips byte-for-byte.
+///
+/// A partial trailing TLV header (fewer than 4 octets) or a TLV whose declared
+/// (padded) value runs past the remaining bytes is a structured
+/// [`CrafterError::buffer_too_short`] (context `"ospf opaque tlv"` /
+/// `"ospf opaque tlv value"`) surfaced by [`OspfOpaqueTlv::decode`], never a
+/// panic. An empty body decodes to a TLV-less Opaque-LSA. Every TLV is recovered
+/// and reattached (through [`OspfOpaqueLsa::from_decoded_parts`]) so the
+/// Opaque-LSA re-compiles byte-for-byte.
+fn decode_opaque_lsa_body(body: &[u8]) -> Result<OspfOpaqueLsa> {
+    // The body is a concatenation of 4-octet-aligned TLVs with no fixed prefix
+    // (RFC 5250 §3). Decode one TLV per iteration, advancing by the octets it
+    // consumed (the 4-octet Type/Length prefix plus the value padded to a
+    // 4-octet boundary), until the slice is exhausted. A partial header or a
+    // value running past the end surfaces the structured truncation error
+    // `OspfOpaqueTlv::decode` returns.
+    let mut rest = body;
+    let mut tlvs = Vec::new();
+    while !rest.is_empty() {
+        let (tlv, consumed) = OspfOpaqueTlv::decode(rest)?;
+        tlvs.push(tlv);
+        rest = &rest[consumed..];
+    }
+
+    Ok(OspfOpaqueLsa::from_decoded_parts(tlvs))
 }
 
 /// Parse the OSPFv2 Router-LSA body (RFC 2328 §A.4.2) from `body` into an
@@ -1953,5 +1996,146 @@ mod tests {
             }
             other => panic!("expected invalid_field_value, got {other:?}"),
         }
+    }
+
+    /// A Link State Update carrying a single area-scope Opaque-LSA (LS type 10)
+    /// with two TLVs — one 4-octet-aligned value and one whose value needs
+    /// padding — once compiled, decodes (type 4) into a typed
+    /// [`OspfLsaBody::Opaque`] body that exposes both TLV types and their values,
+    /// and re-compiles byte-for-byte (RFC 5250 §3). The Opaque Type and Opaque ID
+    /// are recovered from the enclosing LSA header Link State ID.
+    #[test]
+    fn ospf_decode_link_state_update_opaque_lsa_area_scope_round_trips() {
+        use crate::protocols::ospf::lsa::{
+            opaque_id, opaque_type, OspfLsa, OspfLsaBody, OspfLsaHeader, OspfOpaqueLsa,
+            OspfOpaqueTlv, OSPF_LSA_OPAQUE_AREA,
+        };
+        use crate::protocols::ospf::OspfBody;
+        use crate::protocols::ospf::OSPF_TYPE_LINK_STATE_UPDATE;
+
+        // Two TLVs: type 1 with a 4-octet (already aligned) value, and type 2 with
+        // a 5-octet value that needs 3 octets of padding to the next 4-octet
+        // boundary. Decoding must recover both verbatim, including the padded one.
+        let tlv_aligned = OspfOpaqueTlv::new(0x0001, vec![0xaa, 0xbb, 0xcc, 0xdd]);
+        let tlv_padded = OspfOpaqueTlv::new(0x0002, vec![0x11, 0x22, 0x33, 0x44, 0x55]);
+        let opaque = OspfOpaqueLsa::new()
+            .tlv(tlv_aligned.clone())
+            .tlv(tlv_padded.clone());
+
+        // The Opaque Type (10) and a 24-bit Opaque ID (0x010203) are packed into
+        // the LSA header Link State ID (RFC 5250 §3), not the body.
+        let opaque_type_code = 10u8;
+        let opaque_id_value = 0x0001_0203u32;
+        let lsa = OspfLsa::new(
+            OspfLsaHeader::new()
+                .ls_type(OSPF_LSA_OPAQUE_AREA)
+                .opaque_link_state_id(opaque_type_code, opaque_id_value)
+                .advertising_router(Ipv4Addr::new(192, 0, 2, 1))
+                .ls_sequence_number(0x8000_0001),
+            OspfLsaBody::Opaque(opaque),
+        );
+
+        let bytes = Packet::from_layer(
+            Ospfv2::link_state_update()
+                .router_id([192, 0, 2, 1])
+                .area_id([0, 0, 0, 0])
+                .with_link_state_update(|u| {
+                    *u = u.clone().lsa(lsa.clone());
+                }),
+        )
+        .compile()
+        .expect("a Link State Update with an area-scope Opaque-LSA compiles");
+
+        let decoded = append_ospf_packet(Packet::new(), bytes.as_bytes())
+            .expect("the Link State Update decodes");
+        let ospf = decoded
+            .layer::<Ospfv2>()
+            .expect("the decoded packet exposes a typed Ospfv2 layer");
+        assert_eq!(ospf.packet_type_value(), OSPF_TYPE_LINK_STATE_UPDATE);
+
+        let lsu = match &ospf.body {
+            OspfBody::LinkStateUpdate(lsu) => lsu,
+            other => panic!("expected a typed Link State Update body, got {other:?}"),
+        };
+        let decoded_lsas = lsu.lsas_value();
+        assert_eq!(decoded_lsas.len(), 1);
+        assert_eq!(decoded_lsas[0].header.ls_type_value(), OSPF_LSA_OPAQUE_AREA);
+
+        // The Opaque Type and Opaque ID are recovered from the LSA header Link
+        // State ID.
+        assert_eq!(opaque_type(&decoded_lsas[0].header), opaque_type_code);
+        assert_eq!(opaque_id(&decoded_lsas[0].header), opaque_id_value);
+
+        // The Opaque-LSA body decoded into a typed `Opaque` variant with both TLVs
+        // recovered in order, exposing both TLV types and their verbatim values
+        // (the padding is consumed but excluded from the value).
+        let opaque = match &decoded_lsas[0].body {
+            OspfLsaBody::Opaque(opaque) => opaque,
+            other => panic!("expected a typed Opaque-LSA body, got {other:?}"),
+        };
+        let tlvs = opaque.tlvs_value();
+        assert_eq!(tlvs.len(), 2);
+        assert_eq!(tlvs[0].tlv_type(), 0x0001);
+        assert_eq!(tlvs[0].value(), &[0xaa, 0xbb, 0xcc, 0xdd]);
+        assert_eq!(tlvs[1].tlv_type(), 0x0002);
+        assert_eq!(tlvs[1].value(), &[0x11, 0x22, 0x33, 0x44, 0x55]);
+        assert_eq!(tlvs[0], tlv_aligned);
+        assert_eq!(tlvs[1], tlv_padded);
+
+        // The decoded Opaque-LSA re-compiles byte-for-byte.
+        let recompiled = decoded
+            .compile()
+            .expect("decoded Link State Update re-compiles");
+        assert_eq!(recompiled.as_bytes(), bytes.as_bytes());
+    }
+
+    /// An Opaque-LSA body whose final TLV declares a value longer than the bytes
+    /// that remain is a structured truncation error (context
+    /// `"ospf opaque tlv value"`), surfaced from the TLV loop, never a panic
+    /// (RFC 5250 §3).
+    #[test]
+    fn ospf_decode_opaque_lsa_truncated_tlv_value_is_truncation_error() {
+        // A TLV header declaring a 5-octet value (8 padded) but only 2 trailing
+        // octets present after the 4-octet prefix.
+        let body = [0x00, 0x02, 0x00, 0x05, 0x11, 0x22];
+        let err = decode_opaque_lsa_body(&body)
+            .expect_err("a TLV value running past the body is a truncation error");
+        match err {
+            CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            } => {
+                assert_eq!(context, "ospf opaque tlv value");
+                // 4-octet prefix plus 8 padded value octets.
+                assert_eq!(required, 12);
+                assert_eq!(available, body.len());
+            }
+            other => panic!("expected buffer_too_short, got {other:?}"),
+        }
+    }
+
+    /// An Opaque-LSA body carrying a TLV whose type is not assigned to any modeled
+    /// TLV family is preserved verbatim by the generic [`OspfOpaqueTlv`]: the
+    /// decoded TLV exposes the unknown type and its value unchanged, so the
+    /// Opaque-LSA round-trips byte-for-byte (RFC 5250 §3).
+    #[test]
+    fn ospf_decode_opaque_lsa_unknown_tlv_type_is_preserved() {
+        use crate::protocols::ospf::lsa::OspfOpaqueTlv;
+
+        // Encode a single TLV with an arbitrary (unmodeled) type code and a
+        // 3-octet value that needs one octet of padding.
+        let unknown = OspfOpaqueTlv::new(0xbeef, vec![0xde, 0xad, 0xbe]);
+        let mut body = Vec::new();
+        unknown.encode(&mut body);
+
+        let opaque = decode_opaque_lsa_body(&body).expect("an unknown-type TLV body decodes");
+        let tlvs = opaque.tlvs_value();
+        assert_eq!(tlvs.len(), 1);
+        // The unknown type and the value survive verbatim; the equality check
+        // confirms the round-trip preserves it exactly.
+        assert_eq!(tlvs[0].tlv_type(), 0xbeef);
+        assert_eq!(tlvs[0].value(), &[0xde, 0xad, 0xbe]);
+        assert_eq!(tlvs[0], unknown);
     }
 }
