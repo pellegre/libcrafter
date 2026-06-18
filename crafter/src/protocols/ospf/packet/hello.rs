@@ -31,6 +31,7 @@
 use core::net::Ipv4Addr;
 
 use crate::field::Field;
+use crate::protocols::ospf::constants::{OSPF_OPTIONS_E, OSPF_OPTIONS_O};
 
 /// The fixed (pre-neighbor-list) length of the Hello body, in octets:
 /// Network Mask(4) + HelloInterval(2) + Options(1) + Rtr Pri(1) +
@@ -129,6 +130,34 @@ impl OspfHello {
     pub fn options(mut self, options: u8) -> Self {
         self.options.set_user(options);
         self
+    }
+
+    /// Toggle the E-bit ([`OSPF_OPTIONS_E`](crate::protocols::ospf::OSPF_OPTIONS_E),
+    /// 0x02) in the Options field (RFC 2328 §A.2): when set the router accepts
+    /// and forwards AS-External-LSAs. Leaves the other Options bits untouched.
+    pub fn external_capable(mut self, external_capable: bool) -> Self {
+        self.set_options_bit(OSPF_OPTIONS_E, external_capable);
+        self
+    }
+
+    /// Toggle the O-bit ([`OSPF_OPTIONS_O`](crate::protocols::ospf::OSPF_OPTIONS_O),
+    /// 0x40) in the Options field (RFC 5250 §2.1): when set the router is
+    /// opaque-LSA capable. Leaves the other Options bits untouched.
+    pub fn opaque_capable(mut self, opaque_capable: bool) -> Self {
+        self.set_options_bit(OSPF_OPTIONS_O, opaque_capable);
+        self
+    }
+
+    /// Set or clear a single Options bit, marking the Options field as
+    /// caller-supplied while preserving the other bits.
+    fn set_options_bit(&mut self, bit: u8, set: bool) {
+        let mut options = self.options_value();
+        if set {
+            options |= bit;
+        } else {
+            options &= !bit;
+        }
+        self.options.set_user(options);
     }
 
     /// Set the Router Priority field used in DR election.
@@ -327,5 +356,72 @@ mod tests {
         // `Layer::encoded_len` agrees with the emitted length.
         let layer = Ospfv2::hello().with_hello(|h| *h = hello);
         assert_eq!(layer.encoded_len(), total);
+    }
+
+    /// The `external_capable` / `opaque_capable` convenience setters toggle the
+    /// individual Options bits (RFC 2328 §A.2 E-bit 0x02, RFC 5250 O-bit 0x40)
+    /// without disturbing the others, and a Hello built with
+    /// `external_capable(true)` sets bit 0x02 on the wire and round-trips
+    /// byte-for-byte through a compile/decode cycle.
+    #[test]
+    fn ospf_hello_external_capable_sets_options_bit_and_round_trips() {
+        use crate::packet::Packet;
+        use crate::protocols::ospf::constants::{OSPF_OPTIONS_E, OSPF_OPTIONS_O};
+        use crate::protocols::ospf::decode::append_ospf_packet;
+        use crate::protocols::ospf::{OspfBody, Ospfv2, OSPF_HEADER_LEN};
+
+        // The convenience setters toggle just their own bit, preserving the rest.
+        let hello = OspfHello::new()
+            .external_capable(true)
+            .opaque_capable(true);
+        assert_eq!(
+            hello.options_value(),
+            OSPF_OPTIONS_E | OSPF_OPTIONS_O,
+            "both convenience setters compose without clobbering each other"
+        );
+        // Clearing one bit leaves the other untouched.
+        let cleared = hello.clone().external_capable(false);
+        assert_eq!(cleared.options_value(), OSPF_OPTIONS_O);
+
+        // A Hello with just external_capable(true) sets the E-bit (0x02).
+        let hello = OspfHello::new()
+            .network_mask(Ipv4Addr::new(255, 255, 255, 0))
+            .external_capable(true)
+            .neighbor(Ipv4Addr::new(192, 0, 2, 3));
+        assert_eq!(hello.options_value() & OSPF_OPTIONS_E, OSPF_OPTIONS_E);
+
+        let bytes = Packet::from_layer(
+            Ospfv2::hello()
+                .router_id([192, 0, 2, 1])
+                .area_id([0, 0, 0, 0])
+                .with_hello(|h| *h = hello.clone()),
+        )
+        .compile()
+        .expect("a Hello with external_capable compiles");
+
+        // The Options octet (the 3rd octet of the 20-octet Hello fixed portion,
+        // after Network Mask(4) + HelloInterval(2)) carries the E-bit on the
+        // wire.
+        let options_octet = bytes.as_bytes()[OSPF_HEADER_LEN + 6];
+        assert_eq!(options_octet & OSPF_OPTIONS_E, OSPF_OPTIONS_E);
+
+        // The packet decodes to a typed Hello whose Options expose the E-bit.
+        let decoded = append_ospf_packet(Packet::new(), bytes.as_bytes())
+            .expect("the Hello decodes");
+        let ospf = decoded
+            .layer::<Ospfv2>()
+            .expect("the decoded packet exposes a typed Ospfv2 layer");
+        let decoded_hello = match &ospf.body {
+            OspfBody::Hello(hello) => hello,
+            other => panic!("expected a typed Hello body, got {other:?}"),
+        };
+        assert_eq!(
+            decoded_hello.options_value() & OSPF_OPTIONS_E,
+            OSPF_OPTIONS_E
+        );
+
+        // The decoded Hello re-compiles byte-for-byte.
+        let recompiled = decoded.compile().expect("the decoded Hello re-compiles");
+        assert_eq!(recompiled.as_bytes(), bytes.as_bytes());
     }
 }

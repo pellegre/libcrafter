@@ -4431,7 +4431,9 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
                     .map(|(_, value)| value.as_str())
             };
             assert_eq!(value_of("interface_mtu"), Some("1500"));
-            assert_eq!(value_of("options"), Some("0x02"));
+            // The Options octet renders its raw hex plus the decoded RFC 2328
+            // §A.2 capability labels (0x02 sets the E-bit).
+            assert_eq!(value_of("options"), Some("0x02 (E)"));
             // flags carry the I, M, and MS bits (0x04 | 0x02 | 0x01).
             assert_eq!(value_of("dd_flags"), Some("0x07"));
             assert_eq!(value_of("dd_sequence_number"), Some("0x00001a2b"));

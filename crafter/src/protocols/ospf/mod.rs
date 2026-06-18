@@ -974,10 +974,7 @@ impl Layer for Ospfv2 {
                 "dead_interval",
                 hello.router_dead_interval_value().to_string(),
             ));
-            fields.push((
-                "options",
-                format!("0x{:02x}", hello.options_value()),
-            ));
+            fields.push(("options", format_options(hello.options_value())));
             fields.push(("priority", hello.router_priority_value().to_string()));
             fields.push(("network_mask", hello.network_mask_value().to_string()));
             fields.push((
@@ -1001,7 +998,7 @@ impl Layer for Ospfv2 {
         // sequence number, and one `lsa_header` summary per carried LSA header.
         if let OspfBody::DatabaseDescription(dd) = &self.body {
             fields.push(("interface_mtu", dd.interface_mtu_value().to_string()));
-            fields.push(("options", format!("0x{:02x}", dd.options_value())));
+            fields.push(("options", format_options(dd.options_value())));
             fields.push(("dd_flags", format!("0x{:02x}", dd.flags_value())));
             fields.push((
                 "dd_sequence_number",
@@ -1283,6 +1280,19 @@ fn hex_bytes(bytes: &[u8]) -> String {
         output.push_str(&format!("{byte:02x}"));
     }
     output
+}
+
+/// Render an OSPFv2 Options octet (RFC 2328 §A.2) for `inspection_fields()`: the
+/// raw hex value, with the decoded capability labels in parentheses when any
+/// recognized bit is set (e.g. `0x42 (E|O)`). A value with no recognized bits
+/// (including `0x00`) renders as the bare hex value.
+fn format_options(options: u8) -> String {
+    let labels = ospf_options_summary(options);
+    if labels.is_empty() {
+        format!("0x{options:02x}")
+    } else {
+        format!("0x{options:02x} ({labels})")
+    }
 }
 
 #[cfg(test)]
