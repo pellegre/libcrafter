@@ -356,6 +356,43 @@ impl OspfRouterLsa {
         self.flags.value().copied().unwrap_or(0)
     }
 
+    /// Whether the V flag bit is set (RFC 2328 §A.4.2): the router is an endpoint
+    /// of one or more fully adjacent virtual links.
+    pub fn is_virtual(&self) -> bool {
+        self.flags_value() & OSPF_ROUTER_LSA_FLAG_V != 0
+    }
+
+    /// Whether the E flag bit is set (RFC 2328 §A.4.2): the router is an AS
+    /// boundary router.
+    pub fn is_external(&self) -> bool {
+        self.flags_value() & OSPF_ROUTER_LSA_FLAG_E != 0
+    }
+
+    /// Whether the B flag bit is set (RFC 2328 §A.4.2): the router is an area
+    /// border router.
+    pub fn is_border(&self) -> bool {
+        self.flags_value() & OSPF_ROUTER_LSA_FLAG_B != 0
+    }
+
+    /// Render the set router-description flag bits (RFC 2328 §A.4.2) as their
+    /// `V`, `E`, and `B` labels joined by `|`, in V/E/B order, for `summary()` /
+    /// `inspection_fields()`. Returns an empty string when no recognized flag
+    /// bit is set.
+    pub fn router_flags_summary(&self) -> String {
+        let flags = self.flags_value();
+        let mut labels: Vec<&str> = Vec::new();
+        if flags & OSPF_ROUTER_LSA_FLAG_V != 0 {
+            labels.push("V");
+        }
+        if flags & OSPF_ROUTER_LSA_FLAG_E != 0 {
+            labels.push("E");
+        }
+        if flags & OSPF_ROUTER_LSA_FLAG_B != 0 {
+            labels.push("B");
+        }
+        labels.join("|")
+    }
+
     /// The effective `# links` count: the caller value, else the number of
     /// carried links.
     pub fn num_links_value(&self) -> u16 {
@@ -371,27 +408,15 @@ impl OspfRouterLsa {
     }
 
     /// A one-line summary of the Router-LSA body for `summary()` /
-    /// `inspection_fields()`, like `flags=VEB links=2`.
+    /// `inspection_fields()`, like `flags=V|E|B links=2`.
     ///
     /// The `flags` field lists the set router-description bits in V/E/B order
-    /// (RFC 2328 §A.4.2), rendering `-` when none are set, and `links` reports
-    /// the effective `# links` count (the caller value, else the number of
-    /// carried links).
+    /// joined by `|` (RFC 2328 §A.4.2) via [`router_flags_summary`](Self::router_flags_summary),
+    /// rendering `-` when none are set, and `links` reports the effective
+    /// `# links` count (the caller value, else the number of carried links).
     pub fn summary(&self) -> String {
-        let flags = self.flags_value();
-        let mut labels = String::new();
-        if flags & OSPF_ROUTER_LSA_FLAG_V != 0 {
-            labels.push('V');
-        }
-        if flags & OSPF_ROUTER_LSA_FLAG_E != 0 {
-            labels.push('E');
-        }
-        if flags & OSPF_ROUTER_LSA_FLAG_B != 0 {
-            labels.push('B');
-        }
-        if labels.is_empty() {
-            labels.push('-');
-        }
+        let labels = self.router_flags_summary();
+        let labels = if labels.is_empty() { "-".to_string() } else { labels };
         format!("flags={} links={}", labels, self.num_links_value())
     }
 
@@ -580,7 +605,7 @@ mod tests {
             "router_lsa missing link count: {router_lsa}"
         );
         assert!(
-            router_lsa.contains("flags=EB"),
+            router_lsa.contains("flags=E|B"),
             "router_lsa missing flags: {router_lsa}"
         );
 
@@ -601,5 +626,39 @@ mod tests {
             "second router_link missing the link type name: {}",
             router_links[1]
         );
+    }
+
+    /// The Router-LSA flag helpers agree with the raw flags octet, and
+    /// `router_flags_summary()` renders the set bits in V/E/B order: for E+B the
+    /// summary is `E|B` and the boolean accessors track the underlying bits.
+    #[test]
+    fn ospf_router_flags_summary_and_accessors_agree_for_external_border() {
+        let router = OspfRouterLsa::new().external().border();
+
+        // The raw flags octet carries exactly the E and B bits.
+        assert_eq!(router.flags_value(), OSPF_ROUTER_LSA_FLAG_E | OSPF_ROUTER_LSA_FLAG_B);
+
+        // The boolean accessors agree with the raw bits.
+        assert!(!router.is_virtual());
+        assert!(router.is_external());
+        assert!(router.is_border());
+        assert_eq!(
+            router.is_virtual(),
+            router.flags_value() & OSPF_ROUTER_LSA_FLAG_V != 0
+        );
+        assert_eq!(
+            router.is_external(),
+            router.flags_value() & OSPF_ROUTER_LSA_FLAG_E != 0
+        );
+        assert_eq!(
+            router.is_border(),
+            router.flags_value() & OSPF_ROUTER_LSA_FLAG_B != 0
+        );
+
+        // The summary lists the set labels in V/E/B order, joined by `|`.
+        assert_eq!(router.router_flags_summary(), "E|B");
+
+        // No flags set renders an empty summary.
+        assert_eq!(OspfRouterLsa::new().router_flags_summary(), "");
     }
 }
