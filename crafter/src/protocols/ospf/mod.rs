@@ -2004,4 +2004,176 @@ mod tests {
             assert_eq!(&bytes[2..4], &(packet_len as u16).to_be_bytes());
         }
     }
+
+    /// The three RFC 2328 §D length/checksum invariants hold together for every
+    /// authentication type when an OSPF Hello is wrapped in IPv4 (protocol 89):
+    ///
+    /// 1. the OSPF Packet Length field covers only the 24-octet common header plus
+    ///    the body and excludes any appended cryptographic digest trailer;
+    /// 2. the enclosing IPv4 total length covers the 20-octet IPv4 header plus the
+    ///    OSPF header, body, and the digest trailer (the trailer is OSPF bytes on
+    ///    the wire, just not in the OSPF Packet Length field);
+    /// 3. the OSPF header Checksum is the standard Internet checksum for null and
+    ///    simple-password auth (decoded as [`OspfChecksumStatus::Valid`]) and is
+    ///    zero for cryptographic auth (decoded as [`OspfChecksumStatus::NotChecked`]).
+    ///
+    /// Every variant also round-trips byte-for-byte through the default registry.
+    #[test]
+    fn ospf_auth_length_and_checksum_invariants_hold_across_all_auth_types() {
+        use crate::packet::NetworkLayer;
+        use crate::protocols::ip::v4::Ipv4;
+
+        // The IPv4 header is 20 octets (no options) for every case below.
+        const IPV4_HEADER_LEN: usize = 20;
+
+        // Each case: a label, the OSPF Hello layer, the expected digest-trailer
+        // length (0 for non-crypto), whether the OSPF checksum is the Internet
+        // checksum (so it validates) or a zeroed crypto checksum.
+        enum Check {
+            /// Internet-checksum auth: the decoded checksum status is `Valid`.
+            Validated,
+            /// Cryptographic auth: the OSPF checksum field is zero and the decoded
+            /// status is `NotChecked`.
+            Crypto,
+        }
+
+        let cases: Vec<(&str, Ospfv2, usize, Check)> = vec![
+            (
+                "null",
+                Ospfv2::hello()
+                    .router_id([192, 0, 2, 1])
+                    .area_id([0, 0, 0, 0])
+                    .null_auth(),
+                0,
+                Check::Validated,
+            ),
+            (
+                "simple",
+                Ospfv2::hello()
+                    .router_id([192, 0, 2, 1])
+                    .area_id([0, 0, 0, 0])
+                    .simple_password(b"secret"),
+                0,
+                Check::Validated,
+            ),
+            (
+                "keyed-md5",
+                Ospfv2::hello()
+                    .router_id([192, 0, 2, 1])
+                    .area_id([0, 0, 0, 0])
+                    .crypto_md5_auth(7, 0x0000_002a, b"ospf-secret-key".to_vec()),
+                OSPF_MD5_DIGEST_LEN as usize,
+                Check::Crypto,
+            ),
+            (
+                "hmac-sha256",
+                Ospfv2::hello()
+                    .router_id([192, 0, 2, 1])
+                    .area_id([0, 0, 0, 0])
+                    .crypto_auth(OspfCryptoAlgorithm::HmacSha256, 3, 0x0000_0010, b"sha256-key"),
+                OSPF_HMAC_SHA256_DIGEST_LEN as usize,
+                Check::Crypto,
+            ),
+        ];
+
+        for (label, ospf, trailer_len, check) in cases {
+            // Body length is the same for every Hello here, but read it from the
+            // built layer so the assertions stay independent of that detail.
+            let body_len = ospf.body.encoded_len();
+            // Invariant (1): OSPF Packet Length = 24-octet header + body, trailer
+            // excluded.
+            let ospf_packet_len = OSPF_HEADER_LEN + body_len;
+
+            let bytes = (Ipv4::new()
+                .src(Ipv4Addr::new(192, 0, 2, 1))
+                .dst(Ipv4Addr::new(192, 0, 2, 2))
+                / ospf)
+                .compile()
+                .unwrap_or_else(|e| panic!("{label}: Ipv4 / Ospfv2 Hello compiles: {e}"));
+            let raw = bytes.as_bytes();
+
+            // The OSPF layer begins right after the 20-octet IPv4 header.
+            let ipv4_header_len = (raw[0] & 0x0f) as usize * 4;
+            assert_eq!(ipv4_header_len, IPV4_HEADER_LEN, "{label}: IPv4 header len");
+
+            // Invariant (1): the OSPF Packet Length field (header octets 2..4)
+            // covers only header+body, never the trailer.
+            assert_eq!(
+                &raw[ipv4_header_len + 2..ipv4_header_len + 4],
+                &(ospf_packet_len as u16).to_be_bytes(),
+                "{label}: OSPF Packet Length must equal header+body"
+            );
+
+            // The on-wire OSPF region (header + body + trailer) is what IPv4 must
+            // count, so the appended trailer is part of the OSPF bytes.
+            let ospf_on_wire_len = ospf_packet_len + trailer_len;
+            assert_eq!(
+                raw.len() - ipv4_header_len,
+                ospf_on_wire_len,
+                "{label}: OSPF on-wire length includes the digest trailer"
+            );
+
+            // Invariant (2): the IPv4 total length field (octets 2..4) equals
+            // 20 + header + body + trailer.
+            let expected_ipv4_total = IPV4_HEADER_LEN + ospf_on_wire_len;
+            assert_eq!(
+                &raw[2..4],
+                &(expected_ipv4_total as u16).to_be_bytes(),
+                "{label}: IPv4 total length must include the digest trailer"
+            );
+            assert_eq!(
+                raw.len(),
+                expected_ipv4_total,
+                "{label}: total emitted bytes match the IPv4 total length"
+            );
+
+            // Invariant (3): the OSPF header Checksum field (octets 12..14).
+            let ospf_checksum = &raw[ipv4_header_len + 12..ipv4_header_len + 14];
+            match check {
+                Check::Validated => {
+                    // Null/simple auth carries the (nonzero) Internet checksum.
+                    assert_ne!(
+                        ospf_checksum,
+                        &[0u8, 0u8],
+                        "{label}: Internet checksum must be filled"
+                    );
+                }
+                Check::Crypto => {
+                    // Cryptographic auth zeroes the checksum field (RFC 2328 §D.3).
+                    assert_eq!(
+                        ospf_checksum,
+                        &[0u8, 0u8],
+                        "{label}: crypto-auth checksum field must be zero"
+                    );
+                }
+            }
+
+            // Decode through the default registry (checksum validation on) and
+            // confirm the decode-time checksum status matches the auth class.
+            let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, raw)
+                .unwrap_or_else(|e| panic!("{label}: default registry decodes OSPF: {e}"));
+            let layer = decoded
+                .layer::<Ospfv2>()
+                .unwrap_or_else(|| panic!("{label}: decoded packet exposes a typed Ospfv2 layer"));
+            let expected_status = match check {
+                Check::Validated => OspfChecksumStatus::Valid,
+                Check::Crypto => OspfChecksumStatus::NotChecked,
+            };
+            assert_eq!(
+                layer.checksum_status(),
+                expected_status,
+                "{label}: decode-time checksum status"
+            );
+
+            // Every variant round-trips byte-for-byte.
+            let recompiled = decoded
+                .compile()
+                .unwrap_or_else(|e| panic!("{label}: decoded OSPF re-compiles: {e}"));
+            assert_eq!(
+                recompiled.as_bytes(),
+                raw,
+                "{label}: OSPF re-compiles byte-for-byte"
+            );
+        }
+    }
 }
