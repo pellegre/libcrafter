@@ -179,8 +179,7 @@ impl OspfAsExternalLsa {
     /// network mask as caller-supplied so re-compilation preserves the decoded
     /// values byte-for-byte (RFC 2328 §A.4.5).
     ///
-    /// Used by the AS-External-LSA decode arm added in a later step.
-    #[allow(dead_code)]
+    /// Used by the AS-External-LSA decode arm.
     pub(crate) fn from_decoded_parts(
         network_mask: Ipv4Addr,
         entries: Vec<OspfExternalTos>,
