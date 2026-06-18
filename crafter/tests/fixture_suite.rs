@@ -14,8 +14,8 @@ use crafter::core::{
     Ipv6DestinationOptionsHeader, Ipv6FragmentHeader, Ipv6FragmentHeaderStatus,
     Ipv6HopByHopOptionsHeader, Ipv6MobileRoutingHeader, Ipv6MobileRoutingHeaderStatus, Ipv6Option,
     Ipv6RoutingHeader, Ipv6RoutingTypeStatus, Ipv6SegmentRoutingHeader, Layer, LinkType, LinuxSll,
-    LlcSnap, MacAddr, NetworkLayer, NullByteOrder, NullLoopback, OptionOverload, Packet, Radiotap,
-    Raw, Rip, Ripng, Tcp, TcpOption, TcpSackBlock, Udp, UdpChecksumStatus, UdpOption,
+    LlcSnap, MacAddr, NetworkLayer, NullByteOrder, NullLoopback, OptionOverload, Ospfv2, Packet,
+    Radiotap, Raw, Rip, Ripng, Tcp, TcpOption, TcpSackBlock, Udp, UdpChecksumStatus, UdpOption,
     UdpOptionStatus, UdpOptions, Vlan, ARP_HRD_INFINIBAND, BOOTP_REQUEST, DHCP_CLIENT_PORT,
     DHCP_SERVER_PORT, DNS_CLASS_IN, DNS_EDNS_DEFAULT_UDP_PAYLOAD_SIZE, DNS_EDNS_OPTION_COOKIE,
     DNS_EDNS_OPTION_NSID, DNS_FLAG_AUTHORITATIVE, DNS_FLAG_QR_RESPONSE, DNS_FLAG_RECURSION_DESIRED,
@@ -92,6 +92,7 @@ enum ExpectedLayer {
     Ripng,
     Dns,
     Dhcp,
+    Ospf,
     Esp,
     Ah,
     IkeHeader,
@@ -128,6 +129,7 @@ enum CoverageFamily {
     Ipv4UdpDnsRawUnknown,
     Ipv4UdpDnsSectionPlacement,
     Ipv4UdpDhcp,
+    Ipv4Ospf,
     Ipv4UdpOptions,
     Ipv6IcmpEcho,
     Ipv6IcmpError,
@@ -747,6 +749,15 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         ],
         preserve_exact_bytes: true,
         summary_path: Some("summaries/ipv6-udp-ripng-response.summary.txt"),
+    },
+    ValidFixtureCase {
+        name: "ospf-hello-single-neighbor",
+        path: "bytes/ospf-hello-single-neighbor.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ospf-hello-single-neighbor.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Ospf],
+        preserve_exact_bytes: true,
+        summary_path: None,
     },
     ValidFixtureCase {
         name: "ethernet-ipv4-tcp-bgp-open",
@@ -1912,6 +1923,7 @@ fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
         "ipv4-udp-dns-raw-unknown-records-response" => &[CoverageFamily::Ipv4UdpDnsRawUnknown],
         "ipv4-udp-dns-section-placement-response" => &[CoverageFamily::Ipv4UdpDnsSectionPlacement],
         "ipv4-udp-dhcp-discover" => &[CoverageFamily::Ipv4UdpDhcp],
+        "ospf-hello-single-neighbor" => &[CoverageFamily::Ipv4Ospf],
         "ipv4-udp-options-known" | "ipv4-udp-options-unknown-safe" => {
             &[CoverageFamily::Ipv4UdpOptions]
         }
@@ -2184,6 +2196,9 @@ fn assert_expected_layers(case: &ValidFixtureCase, packet: &Packet) {
             ExpectedLayer::Dhcp => {
                 let _ = expect_layer::<Dhcp>(case, packet);
             }
+            ExpectedLayer::Ospf => {
+                let _ = expect_layer::<Ospfv2>(case, packet);
+            }
             ExpectedLayer::Esp => {
                 let _ = expect_layer::<Esp>(case, packet);
             }
@@ -2255,6 +2270,7 @@ fn expected_layer_name(expected: ExpectedLayer) -> &'static str {
         ExpectedLayer::Ripng => "Ripng",
         ExpectedLayer::Dns => "Dns",
         ExpectedLayer::Dhcp => "Dhcp",
+        ExpectedLayer::Ospf => "Ospf",
         ExpectedLayer::Esp => "Esp",
         ExpectedLayer::Ah => "Ah",
         ExpectedLayer::IkeHeader => "IkeHeader",
@@ -4210,6 +4226,44 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
             );
             assert_eq!(second_route.prefix_len_value(), 48);
             assert_eq!(second_route.metric_value(), 2);
+        }
+        "ospf-hello-single-neighbor" => {
+            // OSPF rides directly on IPv4 protocol 89 (RFC 2328).
+            let ipv4 = expect_layer::<Ipv4>(case, packet);
+            assert_eq!(ipv4.protocol_value(), 89);
+            assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 1));
+            assert_eq!(ipv4.destination(), Ipv4Addr::new(224, 0, 0, 5));
+
+            // Common header: version 2 Hello from a documentation router id in
+            // the backbone area (0.0.0.0).
+            let ospf = expect_layer::<Ospfv2>(case, packet);
+            assert_eq!(ospf.version_value(), 2);
+            assert_eq!(ospf.packet_type_value(), 1); // Hello
+            assert_eq!(ospf.router_id_value(), Ipv4Addr::new(192, 0, 2, 1));
+            assert_eq!(ospf.area_id_value(), Ipv4Addr::new(0, 0, 0, 0));
+
+            // The Hello body fields are surfaced through the public inspection
+            // surface (the typed body is private), including the single neighbor.
+            let fields = ospf.inspection_fields();
+            let value_of = |name: &str| {
+                fields
+                    .iter()
+                    .find(|(field, _)| *field == name)
+                    .map(|(_, value)| value.as_str())
+            };
+            assert_eq!(value_of("network_mask"), Some("255.255.255.0"));
+            assert_eq!(value_of("hello_interval"), Some("10"));
+            assert_eq!(value_of("dead_interval"), Some("40"));
+            assert_eq!(value_of("priority"), Some("1"));
+            assert_eq!(value_of("designated_router"), Some("192.0.2.1"));
+            assert_eq!(value_of("backup_designated_router"), Some("192.0.2.2"));
+            assert_eq!(value_of("neighbor_count"), Some("1"));
+            let neighbors: Vec<&str> = fields
+                .iter()
+                .filter(|(field, _)| *field == "neighbor")
+                .map(|(_, value)| value.as_str())
+                .collect();
+            assert_eq!(neighbors, vec!["192.0.2.2"]);
         }
         other => panic!("fixture {other} is missing typed field assertions"),
     }
