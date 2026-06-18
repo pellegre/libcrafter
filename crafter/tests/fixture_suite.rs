@@ -832,6 +832,15 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         summary_path: None,
     },
     ValidFixtureCase {
+        name: "ospf-as-external-lsa",
+        path: "bytes/ospf-as-external-lsa.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ospf-as-external-lsa.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Ospf],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
         name: "ethernet-ipv4-tcp-bgp-open",
         path: "bytes/ethernet-ipv4-tcp-bgp-open.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/ethernet-ipv4-tcp-bgp-open.hex")),
@@ -2003,7 +2012,8 @@ fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
         | "ospf-router-lsa"
         | "ospf-network-lsa"
         | "ospf-summary-lsa-ip"
-        | "ospf-summary-lsa-asbr" => &[CoverageFamily::Ipv4Ospf],
+        | "ospf-summary-lsa-asbr"
+        | "ospf-as-external-lsa" => &[CoverageFamily::Ipv4Ospf],
         "ipv4-udp-options-known" | "ipv4-udp-options-unknown-safe" => {
             &[CoverageFamily::Ipv4UdpOptions]
         }
@@ -4707,6 +4717,66 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
                 .map(|(_, value)| value.as_str())
                 .collect();
             assert_eq!(summary_tos, vec!["tos=0 metric=20"]);
+        }
+        "ospf-as-external-lsa" => {
+            // OSPF rides directly on IPv4 protocol 89 (RFC 2328).
+            let ipv4 = expect_layer::<Ipv4>(case, packet);
+            assert_eq!(ipv4.protocol_value(), 89);
+            assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 1));
+            assert_eq!(ipv4.destination(), Ipv4Addr::new(224, 0, 0, 5));
+
+            // Common header: a version 2 Link State Update (type 4) from a
+            // documentation router id in the backbone area (0.0.0.0).
+            let ospf = expect_layer::<Ospfv2>(case, packet);
+            assert_eq!(ospf.version_value(), 2);
+            assert_eq!(ospf.packet_type_value(), 4); // Link State Update
+            assert_eq!(ospf.router_id_value(), Ipv4Addr::new(192, 0, 2, 1));
+            assert_eq!(ospf.area_id_value(), Ipv4Addr::new(0, 0, 0, 0));
+
+            // The Link State Update carries one type 5 AS-External-LSA (LS type
+            // 5, RFC 2328 §A.4.5) describing an external route: the 4-octet
+            // network mask followed by two 12-octet external metric entries (one
+            // Type 1 / E1, one Type 2 / E2), a 28-octet body after the 20-octet
+            // header. The typed AS-External body is private, so it is surfaced
+            // through the public inspection surface: `num_lsas`/`lsa_count`
+            // report one LSA, the `lsa` entry renders the 20-octet header summary
+            // plus the 28-octet AS-External body, an `as_external_lsa` pair
+            // reports the mask, the TOS 0 metric and its metric type, and the
+            // entry count, and one `as_external_tos` pair per external metric
+            // entry naming the metric type, metric, forwarding address, and
+            // external route tag.
+            let fields = ospf.inspection_fields();
+            let value_of = |name: &str| {
+                fields
+                    .iter()
+                    .find(|(field, _)| *field == name)
+                    .map(|(_, value)| value.as_str())
+            };
+            assert_eq!(value_of("num_lsas"), Some("1"));
+            assert_eq!(value_of("lsa_count"), Some("1"));
+            assert_eq!(
+                value_of("lsa"),
+                Some(concat!(
+                    "LSA(type=AS-External, id=198.51.100.0, adv=192.0.2.1, ",
+                    "seq=0x80000001, age=0, len=48) body=28B",
+                ))
+            );
+            assert_eq!(
+                value_of("as_external_lsa"),
+                Some("mask=255.255.255.0 metric=10 type=E1 tos=2")
+            );
+            let as_external_tos: Vec<&str> = fields
+                .iter()
+                .filter(|(field, _)| *field == "as_external_tos")
+                .map(|(_, value)| value.as_str())
+                .collect();
+            assert_eq!(
+                as_external_tos,
+                vec![
+                    "type=E1 metric=10 fwd=0.0.0.0 tag=0x00000000",
+                    "type=E2 metric=20 fwd=192.0.2.9 tag=0xdeadbeef",
+                ]
+            );
         }
         other => panic!("fixture {other} is missing typed field assertions"),
     }
