@@ -126,20 +126,15 @@ mod ipv4_protocol {
 
     #[test]
     fn ipv4_autoderives_ospf_protocol_for_ospfv2_layer() {
-        use crate::protocols::ospf::constants::OSPF_TYPE_LINK_STATE_UPDATE;
         use crate::protocols::ospf::Ospfv2;
 
         // No explicit IPv4 protocol is set: the following `Ospfv2` layer must
         // auto-derive protocol 89 (RFC 2328 §A.1 runs OSPF directly over IP). A
-        // not-yet-dispatched packet type with a raw body keeps this auto-derive
-        // case independent of typed-body decoding (type 4, Link State Update, is
-        // still preserved verbatim as an unknown body at this point, so a short
-        // raw body round-trips; types 1/2/3/5 now dispatch to typed bodies).
-        let body = [0xde, 0xad, 0xbe, 0xef];
-        let packet = Ipv4::new().src(src()).dst(dst())
-            / Ospfv2::new()
-                .packet_type(OSPF_TYPE_LINK_STATE_UPDATE)
-                .raw_body(body);
+        // well-formed Hello keeps this auto-derive case valid now that every
+        // OSPFv2 packet type (including type 4, Link State Update) dispatches to
+        // a typed body during decode; the Hello body is a fixed 20 octets
+        // (RFC 2328 §A.3.2) with no neighbors.
+        let packet = Ipv4::new().src(src()).dst(dst()) / Ospfv2::hello();
 
         let bytes = packet.compile().unwrap();
 
@@ -148,12 +143,12 @@ mod ipv4_protocol {
 
         // Decoding the IPv4 header recovers the auto-derived protocol number and
         // the total length covers the 20-octet IPv4 header plus the OSPF packet
-        // (24-octet common header + 4-octet body).
+        // (24-octet common header + the fixed 20-octet Hello body).
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
         let ipv4 = decoded.layer::<Ipv4>().unwrap();
         assert_eq!(ipv4.protocol_value(), IPPROTO_OSPF);
 
-        let expected_total = 20 + 24 + body.len();
+        let expected_total = 20 + 24 + 20;
         assert_eq!(&bytes.as_bytes()[2..4], &(expected_total as u16).to_be_bytes());
         assert_eq!(ipv4.total_length_value(), Some(expected_total as u16));
     }
