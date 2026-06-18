@@ -60,6 +60,24 @@ pub const OSPF_LSA_OPAQUE_AREA: u8 = 10;
 /// AS-scope Opaque-LSA (type 11). RFC 5250 §3.
 pub const OSPF_LSA_OPAQUE_AS: u8 = 11;
 
+/// Short human-readable name for an OSPF LS type code (RFC 2328 §A.4.1,
+/// RFC 3101 §2.4, RFC 5250 §3), used by `summary()` and `inspection_fields()`.
+/// Unrecognized codes map to `"Unknown"`.
+pub fn ospf_lsa_type_name(ls_type: u8) -> &'static str {
+    match ls_type {
+        OSPF_LSA_ROUTER => "Router",
+        OSPF_LSA_NETWORK => "Network",
+        OSPF_LSA_SUMMARY_IP => "Summary-IP",
+        OSPF_LSA_SUMMARY_ASBR => "Summary-ASBR",
+        OSPF_LSA_AS_EXTERNAL => "AS-External",
+        OSPF_LSA_NSSA => "NSSA",
+        OSPF_LSA_OPAQUE_LINK_LOCAL => "Opaque-LinkLocal",
+        OSPF_LSA_OPAQUE_AREA => "Opaque-Area",
+        OSPF_LSA_OPAQUE_AS => "Opaque-AS",
+        _ => "Unknown",
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Fixed lengths (RFC 2328 §A.4.1)
 // ---------------------------------------------------------------------------
@@ -263,6 +281,29 @@ impl OspfLsaHeader {
         self.length.value().copied()
     }
 
+    /// A one-line summary of the LSA header for `summary()` /
+    /// `inspection_fields()`, like
+    /// `LSA(type=Router, id=192.0.2.1, adv=192.0.2.1, seq=0x80000001, age=0, len=...)`.
+    ///
+    /// The LS type renders through [`ospf_lsa_type_name`]; the length shows the
+    /// pinned value when the caller set one and `auto` otherwise (the effective
+    /// length depends on the LSA body, which the header alone does not hold).
+    pub fn summary(&self) -> String {
+        let length = match self.length_value() {
+            Some(length) => length.to_string(),
+            None => "auto".to_string(),
+        };
+        format!(
+            "LSA(type={}, id={}, adv={}, seq=0x{:08x}, age={}, len={})",
+            ospf_lsa_type_name(self.ls_type_value()),
+            self.link_state_id_value(),
+            self.advertising_router_value(),
+            self.ls_sequence_number_value(),
+            self.ls_age_value(),
+            length,
+        )
+    }
+
     /// Append the 20-octet LSA header followed by `body` to `out`.
     ///
     /// The `length` field is filled with `20 + body.len()` unless the caller
@@ -464,5 +505,42 @@ mod tests {
             }
             other => panic!("expected BufferTooShort, got {other:?}"),
         }
+    }
+
+    /// `ospf_lsa_type_name` maps each LSA type constant to its short label and
+    /// unknown codes to `"Unknown"`, and the header summary contains the type
+    /// name and the advertising router.
+    #[test]
+    fn ospf_lsa_type_name_and_summary_render_expected_labels() {
+        assert_eq!(ospf_lsa_type_name(OSPF_LSA_ROUTER), "Router");
+        assert_eq!(ospf_lsa_type_name(OSPF_LSA_NETWORK), "Network");
+        assert_eq!(ospf_lsa_type_name(OSPF_LSA_SUMMARY_IP), "Summary-IP");
+        assert_eq!(ospf_lsa_type_name(OSPF_LSA_SUMMARY_ASBR), "Summary-ASBR");
+        assert_eq!(ospf_lsa_type_name(OSPF_LSA_AS_EXTERNAL), "AS-External");
+        assert_eq!(ospf_lsa_type_name(OSPF_LSA_NSSA), "NSSA");
+        assert_eq!(
+            ospf_lsa_type_name(OSPF_LSA_OPAQUE_LINK_LOCAL),
+            "Opaque-LinkLocal"
+        );
+        assert_eq!(ospf_lsa_type_name(OSPF_LSA_OPAQUE_AREA), "Opaque-Area");
+        assert_eq!(ospf_lsa_type_name(OSPF_LSA_OPAQUE_AS), "Opaque-AS");
+        assert_eq!(ospf_lsa_type_name(0), "Unknown");
+        assert_eq!(ospf_lsa_type_name(6), "Unknown");
+
+        let header = OspfLsaHeader::new()
+            .ls_type(OSPF_LSA_ROUTER)
+            .link_state_id(Ipv4Addr::new(192, 0, 2, 1))
+            .advertising_router(Ipv4Addr::new(198, 51, 100, 7))
+            .ls_sequence_number(0x8000_0001)
+            .ls_age(0);
+        let summary = header.summary();
+        assert!(
+            summary.contains("Router"),
+            "summary should contain the LS type name: {summary}"
+        );
+        assert!(
+            summary.contains("198.51.100.7"),
+            "summary should contain the advertising router: {summary}"
+        );
     }
 }
