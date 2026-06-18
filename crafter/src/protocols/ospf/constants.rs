@@ -63,3 +63,15 @@ pub fn ospf_type_name(packet_type: u8) -> &'static str {
         _ => "Unknown",
     }
 }
+
+/// Short human-readable name for an OSPF Authentication Type (AuType) code
+/// (RFC 2328 §A.3.1, §D), used by `inspection_fields()`. Unrecognized codes map
+/// to `"Unknown"`.
+pub fn ospf_autype_name(autype: u16) -> &'static str {
+    match autype {
+        OSPF_AUTYPE_NULL => "Null",
+        OSPF_AUTYPE_SIMPLE => "Simple",
+        OSPF_AUTYPE_CRYPTOGRAPHIC => "Cryptographic",
+        _ => "Unknown",
+    }
+}
