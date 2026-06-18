@@ -7,9 +7,12 @@
 //! rather than as a separate [`Layer`](crate::packet::Layer); the body struct
 //! provides `encoded_len()`/`encode()` that the layer's `compile()` routes to.
 //!
-//! This block adds the Hello body ([`OspfHello`], RFC 2328 §A.3.2); the other
-//! bodies are added by subsequent steps.
+//! This block adds the Hello body ([`OspfHello`], RFC 2328 §A.3.2) and the
+//! Database Description body ([`OspfDatabaseDescription`], RFC 2328 §A.3.3);
+//! the other bodies are added by subsequent steps.
 
+pub mod database_description;
 pub mod hello;
 
+pub use database_description::OspfDatabaseDescription;
 pub use hello::OspfHello;
