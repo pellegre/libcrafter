@@ -933,9 +933,11 @@ mod tests {
         assert_eq!(decoded_lsas[1].header.ls_type_value(), OSPF_LSA_NETWORK);
         match &decoded_lsas[0].body {
             OspfLsaBody::Raw(raw) => assert_eq!(raw.as_slice(), first_body.as_slice()),
+            other => panic!("expected a raw LSA body, got {other:?}"),
         }
         match &decoded_lsas[1].body {
             OspfLsaBody::Raw(raw) => assert_eq!(raw.as_slice(), second_body.as_slice()),
+            other => panic!("expected a raw LSA body, got {other:?}"),
         }
 
         let recompiled = decoded
