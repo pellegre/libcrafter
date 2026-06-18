@@ -27,7 +27,10 @@ use super::constants::{
     OSPF_TYPE_HELLO, OSPF_TYPE_LINK_STATE_ACK, OSPF_TYPE_LINK_STATE_REQUEST,
     OSPF_TYPE_LINK_STATE_UPDATE,
 };
-use super::lsa::{decode_lsa_headers, OspfLsa, OspfLsaBody, OspfLsaHeader, OSPF_LSA_HEADER_LEN};
+use super::lsa::{
+    decode_lsa_headers, OspfLsa, OspfLsaBody, OspfLsaHeader, OspfRouterLink, OspfRouterLinkTos,
+    OspfRouterLsa, OSPF_LSA_HEADER_LEN, OSPF_LSA_ROUTER,
+};
 use super::packet::{
     OspfDatabaseDescription, OspfHello, OspfLinkStateAck, OspfLinkStateRequest,
     OspfLinkStateRequestEntry, OspfLinkStateUpdate,
@@ -51,6 +54,19 @@ const OSPF_LSR_ENTRY_LEN: usize = 12;
 /// The on-wire length of the Link State Update `# LSAs` count field, in octets
 /// (RFC 2328 §A.3.5).
 const OSPF_LSU_COUNT_LEN: usize = 4;
+
+/// The fixed (pre-link-list) length of a Router-LSA body, in octets (RFC 2328
+/// §A.4.2): flags(1) + reserved(1) + # links(2).
+const OSPF_ROUTER_LSA_FIXED_LEN: usize = 4;
+
+/// The fixed portion of a single Router-LSA link description, in octets
+/// (RFC 2328 §A.4.2): Link ID(4) + Link Data(4) + Type(1) + # TOS(1) +
+/// metric(2).
+const OSPF_ROUTER_LINK_FIXED_LEN: usize = 12;
+
+/// The length of a single Router-LSA per-TOS entry, in octets (RFC 2328
+/// §A.4.2): TOS(1) + reserved(1) + TOS metric(2).
+const OSPF_ROUTER_LINK_TOS_LEN: usize = 4;
 
 /// Append a decoded OSPFv2 packet to an existing packet stack.
 ///
@@ -393,16 +409,117 @@ fn decode_link_state_update_body(body: &[u8]) -> Result<OspfLinkStateUpdate> {
             return Err(CrafterError::buffer_too_short("ospf lsa", length, rest.len()));
         }
 
-        // The LSA body is the `length - 20` octets after the header, preserved
-        // verbatim so an unknown LSA type round-trips byte-for-byte.
-        let lsa_body = rest[OSPF_LSA_HEADER_LEN..length].to_vec();
-        lsas.push(OspfLsa::new(header, OspfLsaBody::Raw(lsa_body)));
+        // The LSA body is the `length - 20` octets after the header. Dispatch on
+        // the LSA header's LS type: a typed body is parsed for the types this
+        // decoder models, and every other type is preserved verbatim as
+        // `OspfLsaBody::Raw` so an unknown LSA round-trips byte-for-byte.
+        let lsa_body = &rest[OSPF_LSA_HEADER_LEN..length];
+        let body = decode_lsa_body(header.ls_type_value(), lsa_body)?;
+        lsas.push(OspfLsa::new(header, body));
 
         rest = &rest[length..];
         parsed += 1;
     }
 
     Ok(OspfLinkStateUpdate::from_decoded_parts(num_lsas, lsas))
+}
+
+/// Dispatch an LSA body by its LS type (RFC 2328 §A.4.1), parsing the typed
+/// bodies this decoder models and preserving every other type verbatim.
+///
+/// `body` is the LSA bytes after the 20-octet header (`length - 20` octets). For
+/// a modeled LS type the matching typed [`OspfLsaBody`] variant is parsed (with
+/// structured errors on a short body); for any other type the bytes are
+/// preserved as [`OspfLsaBody::Raw`] so the LSA round-trips byte-for-byte
+/// (mirroring the BGP decoder's unknown-attribute preservation in
+/// `crate::protocols::bgp::decode`). Later steps add the remaining typed bodies
+/// to the `match` below.
+fn decode_lsa_body(ls_type: u8, body: &[u8]) -> Result<OspfLsaBody> {
+    match ls_type {
+        OSPF_LSA_ROUTER => Ok(OspfLsaBody::Router(decode_router_lsa_body(body)?)),
+        _ => Ok(OspfLsaBody::Raw(body.to_vec())),
+    }
+}
+
+/// Parse the OSPFv2 Router-LSA body (RFC 2328 §A.4.2) from `body` into an
+/// [`OspfRouterLsa`].
+///
+/// `body` is the LSA bytes after the 20-octet header. The body is a 4-octet
+/// fixed prefix (the router-description flags, a reserved octet, and the `#
+/// links` count) followed by that many link descriptions, each a 12-octet fixed
+/// portion (Link ID, Link Data, Type, `# TOS`, metric) plus `# TOS` 4-octet
+/// per-TOS entries.
+///
+/// A body shorter than the 4-octet fixed prefix, or a link region (12 octets
+/// plus `# TOS * 4`) that runs past the bytes that remain, is a structured
+/// [`CrafterError::buffer_too_short`] (context `"ospf router-lsa link"` for a
+/// short link/TOS region) rather than a panic. The flags octet and the on-wire
+/// `# links` count are recovered and marked user-set (through
+/// [`OspfRouterLsa::from_decoded_parts`]) so the Router-LSA re-compiles
+/// byte-for-byte even when the declared count disagrees with the number of
+/// parsed links.
+fn decode_router_lsa_body(body: &[u8]) -> Result<OspfRouterLsa> {
+    if body.len() < OSPF_ROUTER_LSA_FIXED_LEN {
+        return Err(CrafterError::buffer_too_short(
+            "ospf router-lsa",
+            OSPF_ROUTER_LSA_FIXED_LEN,
+            body.len(),
+        ));
+    }
+
+    // Fixed prefix: flags(1), a reserved octet (1), then the `# links` count (2).
+    let flags = body[0];
+    let num_links = u16::from_be_bytes([body[2], body[3]]);
+
+    // Parse `num_links` link descriptions from the bytes after the fixed prefix.
+    let mut rest = &body[OSPF_ROUTER_LSA_FIXED_LEN..];
+    let mut links = Vec::with_capacity(num_links as usize);
+    for _ in 0..num_links {
+        // The 12-octet fixed portion must fit, then `# TOS` 4-octet entries.
+        if rest.len() < OSPF_ROUTER_LINK_FIXED_LEN {
+            return Err(CrafterError::buffer_too_short(
+                "ospf router-lsa link",
+                OSPF_ROUTER_LINK_FIXED_LEN,
+                rest.len(),
+            ));
+        }
+
+        let link_id = Ipv4Addr::new(rest[0], rest[1], rest[2], rest[3]);
+        let link_data = Ipv4Addr::new(rest[4], rest[5], rest[6], rest[7]);
+        let link_type = rest[8];
+        let num_tos = rest[9] as usize;
+        let metric = u16::from_be_bytes([rest[10], rest[11]]);
+
+        // The full link spans the 12-octet fixed portion plus `# TOS` 4-octet
+        // per-TOS entries; the whole region must be present.
+        let link_len = OSPF_ROUTER_LINK_FIXED_LEN + num_tos * OSPF_ROUTER_LINK_TOS_LEN;
+        if rest.len() < link_len {
+            return Err(CrafterError::buffer_too_short(
+                "ospf router-lsa link",
+                link_len,
+                rest.len(),
+            ));
+        }
+
+        // Each per-TOS entry is TOS(1), a reserved octet (1), then the TOS
+        // metric (2 octets).
+        let mut tos_entries = Vec::with_capacity(num_tos);
+        let mut tos_bytes = &rest[OSPF_ROUTER_LINK_FIXED_LEN..link_len];
+        for _ in 0..num_tos {
+            let tos = tos_bytes[0];
+            let tos_metric = u16::from_be_bytes([tos_bytes[2], tos_bytes[3]]);
+            tos_entries.push(OspfRouterLinkTos::new(tos, tos_metric));
+            tos_bytes = &tos_bytes[OSPF_ROUTER_LINK_TOS_LEN..];
+        }
+
+        links.push(
+            OspfRouterLink::new(link_id, link_data, link_type, metric).tos_entries(tos_entries),
+        );
+
+        rest = &rest[link_len..];
+    }
+
+    Ok(OspfRouterLsa::from_decoded_parts(flags, num_links, links))
 }
 
 /// Parse the OSPFv2 Link State Acknowledgment body (RFC 2328 §A.3.6) from `body`
@@ -869,16 +986,22 @@ mod tests {
         }
     }
 
-    /// A Link State Update built with two raw-body LSAs, once compiled, decodes
-    /// (type 4) into a typed Link State Update body that exposes both LSAs with
-    /// their raw bodies, and re-compiles byte-for-byte (RFC 2328 §A.3.5).
+    /// A Link State Update built with two raw-body LSAs (both unmodeled LS
+    /// types), once compiled, decodes (type 4) into a typed Link State Update
+    /// body that exposes both LSAs with their raw bodies, and re-compiles
+    /// byte-for-byte (RFC 2328 §A.3.5).
     #[test]
     fn ospf_decode_link_state_update_with_two_raw_lsas_round_trips() {
         use crate::protocols::ospf::lsa::{
-            OspfLsa, OspfLsaBody, OspfLsaHeader, OSPF_LSA_NETWORK, OSPF_LSA_ROUTER,
+            OspfLsa, OspfLsaBody, OspfLsaHeader, OSPF_LSA_NETWORK,
         };
         use crate::protocols::ospf::OspfBody;
         use crate::protocols::ospf::OSPF_TYPE_LINK_STATE_UPDATE;
+
+        // An unmodeled LS type so the body is preserved verbatim as `Raw`; the
+        // Router-LSA type (1) now decodes typed and is covered by the dedicated
+        // round-trip test below.
+        const OSPF_LSA_UNKNOWN_TYPE: u8 = 99;
 
         let first_body = [0xde, 0xad, 0xbe, 0xef, 0x01, 0x02];
         let second_body = [0x00, 0x11, 0x22, 0x33];
@@ -886,7 +1009,7 @@ mod tests {
         let lsas = [
             OspfLsa::new(
                 OspfLsaHeader::new()
-                    .ls_type(OSPF_LSA_ROUTER)
+                    .ls_type(OSPF_LSA_UNKNOWN_TYPE)
                     .link_state_id(Ipv4Addr::new(192, 0, 2, 1))
                     .advertising_router(Ipv4Addr::new(192, 0, 2, 1))
                     .ls_sequence_number(0x8000_0001),
@@ -929,7 +1052,7 @@ mod tests {
         assert_eq!(lsu.num_lsas_value(), 2);
         let decoded_lsas = lsu.lsas_value();
         assert_eq!(decoded_lsas.len(), 2);
-        assert_eq!(decoded_lsas[0].header.ls_type_value(), OSPF_LSA_ROUTER);
+        assert_eq!(decoded_lsas[0].header.ls_type_value(), OSPF_LSA_UNKNOWN_TYPE);
         assert_eq!(decoded_lsas[1].header.ls_type_value(), OSPF_LSA_NETWORK);
         match &decoded_lsas[0].body {
             OspfLsaBody::Raw(raw) => assert_eq!(raw.as_slice(), first_body.as_slice()),
@@ -996,6 +1119,159 @@ mod tests {
                 assert_eq!(context, "ospf lsa");
                 assert_eq!(required, 40);
                 assert_eq!(available, OSPF_LSA_HEADER_LEN);
+            }
+            other => panic!("expected buffer_too_short, got {other:?}"),
+        }
+    }
+
+    /// A Link State Update carrying a single Router-LSA (LS type 1) with two
+    /// links — one of them with a per-TOS entry — once compiled, decodes (type 4)
+    /// into a typed [`OspfLsaBody::Router`] body whose flags, `# links`, links,
+    /// and per-TOS entries equal the built ones, and re-compiles byte-for-byte
+    /// (RFC 2328 §A.3.5, §A.4.2).
+    #[test]
+    fn ospf_decode_link_state_update_router_lsa_two_links_round_trips() {
+        use crate::protocols::ospf::lsa::{
+            OspfLsa, OspfLsaBody, OspfLsaHeader, OspfRouterLink, OspfRouterLinkTos, OspfRouterLsa,
+            OSPF_LSA_ROUTER, OSPF_ROUTER_LINK_POINT_TO_POINT, OSPF_ROUTER_LINK_STUB,
+            OSPF_ROUTER_LSA_FLAG_B,
+        };
+        use crate::protocols::ospf::OspfBody;
+        use crate::protocols::ospf::OSPF_TYPE_LINK_STATE_UPDATE;
+
+        // Router-LSA: B flag set, link 1 point-to-point (no TOS), link 2 stub
+        // with one per-TOS entry.
+        let router = OspfRouterLsa::new()
+            .border()
+            .link(OspfRouterLink::new(
+                Ipv4Addr::new(192, 0, 2, 2),
+                Ipv4Addr::new(198, 51, 100, 1),
+                OSPF_ROUTER_LINK_POINT_TO_POINT,
+                10,
+            ))
+            .link(
+                OspfRouterLink::new(
+                    Ipv4Addr::new(198, 51, 100, 0),
+                    Ipv4Addr::new(255, 255, 255, 0),
+                    OSPF_ROUTER_LINK_STUB,
+                    20,
+                )
+                .tos(OspfRouterLinkTos::new(2, 30)),
+            );
+
+        let lsa = OspfLsa::new(
+            OspfLsaHeader::new()
+                .ls_type(OSPF_LSA_ROUTER)
+                .link_state_id(Ipv4Addr::new(192, 0, 2, 1))
+                .advertising_router(Ipv4Addr::new(192, 0, 2, 1))
+                .ls_sequence_number(0x8000_0001),
+            OspfLsaBody::Router(router),
+        );
+
+        let bytes = Packet::from_layer(
+            Ospfv2::link_state_update()
+                .router_id([192, 0, 2, 1])
+                .area_id([0, 0, 0, 0])
+                .with_link_state_update(|u| {
+                    *u = u.clone().lsa(lsa.clone());
+                }),
+        )
+        .compile()
+        .expect("a Link State Update with a Router-LSA compiles");
+
+        let decoded = append_ospf_packet(Packet::new(), bytes.as_bytes())
+            .expect("the Link State Update decodes");
+        let ospf = decoded
+            .layer::<Ospfv2>()
+            .expect("the decoded packet exposes a typed Ospfv2 layer");
+        assert_eq!(ospf.packet_type_value(), OSPF_TYPE_LINK_STATE_UPDATE);
+
+        let lsu = match &ospf.body {
+            OspfBody::LinkStateUpdate(lsu) => lsu,
+            other => panic!("expected a typed Link State Update body, got {other:?}"),
+        };
+        let decoded_lsas = lsu.lsas_value();
+        assert_eq!(decoded_lsas.len(), 1);
+        assert_eq!(decoded_lsas[0].header.ls_type_value(), OSPF_LSA_ROUTER);
+
+        // The Router-LSA body decoded into a typed `Router` variant with both
+        // links and the per-TOS entry recovered.
+        let router = match &decoded_lsas[0].body {
+            OspfLsaBody::Router(router) => router,
+            other => panic!("expected a typed Router-LSA body, got {other:?}"),
+        };
+        assert_eq!(router.flags_value(), OSPF_ROUTER_LSA_FLAG_B);
+        assert_eq!(router.num_links_value(), 2);
+
+        let links = router.links_value();
+        assert_eq!(links.len(), 2);
+
+        // Link 1: point-to-point, metric 10, no per-TOS entries.
+        assert_eq!(links[0].link_id_value(), Ipv4Addr::new(192, 0, 2, 2));
+        assert_eq!(links[0].link_data_value(), Ipv4Addr::new(198, 51, 100, 1));
+        assert_eq!(links[0].link_type_value(), OSPF_ROUTER_LINK_POINT_TO_POINT);
+        assert_eq!(links[0].metric_value(), 10);
+        assert!(links[0].tos_value().is_empty());
+
+        // Link 2: stub, metric 20, one per-TOS entry (TOS 2, metric 30).
+        assert_eq!(links[1].link_id_value(), Ipv4Addr::new(198, 51, 100, 0));
+        assert_eq!(links[1].link_data_value(), Ipv4Addr::new(255, 255, 255, 0));
+        assert_eq!(links[1].link_type_value(), OSPF_ROUTER_LINK_STUB);
+        assert_eq!(links[1].metric_value(), 20);
+        assert_eq!(links[1].tos_value().len(), 1);
+        assert_eq!(links[1].tos_value()[0].tos_value(), 2);
+        assert_eq!(links[1].tos_value()[0].metric_value(), 30);
+
+        // The decoded Router-LSA re-compiles byte-for-byte.
+        let recompiled = decoded
+            .compile()
+            .expect("decoded Link State Update re-compiles");
+        assert_eq!(recompiled.as_bytes(), bytes.as_bytes());
+    }
+
+    /// A Router-LSA whose declared `# links` count exceeds the bytes that remain
+    /// is a structured truncation error (context `"ospf router-lsa link"`), never
+    /// a panic (RFC 2328 §A.4.2).
+    #[test]
+    fn ospf_decode_link_state_update_router_lsa_too_many_links_is_truncation_error() {
+        use crate::protocols::ospf::lsa::{OSPF_LSA_ROUTER, OSPF_ROUTER_LINK_POINT_TO_POINT};
+
+        // Build the Router-LSA body by hand: flags 0, reserved 0, `# links` 2,
+        // but only one full 12-octet link description follows.
+        let mut router_body = Vec::new();
+        router_body.extend_from_slice(&[0x00, 0x00]); // flags, reserved
+        router_body.extend_from_slice(&2u16.to_be_bytes()); // # links = 2
+        // One complete link: Link ID, Link Data, Type, # TOS 0, metric.
+        router_body.extend_from_slice(&[192, 0, 2, 2]); // Link ID
+        router_body.extend_from_slice(&[198, 51, 100, 1]); // Link Data
+        router_body.push(OSPF_ROUTER_LINK_POINT_TO_POINT); // Type
+        router_body.push(0); // # TOS
+        router_body.extend_from_slice(&10u16.to_be_bytes()); // metric
+        // No second link description, so the declared count of 2 runs past the
+        // body.
+
+        // 4-octet count (1 LSA) followed by a 20-octet header whose declared
+        // length covers the header plus the Router body.
+        let lsa_len = OSPF_LSA_HEADER_LEN + router_body.len();
+        let mut body = Vec::new();
+        body.extend_from_slice(&1u32.to_be_bytes());
+        let mut header = vec![0u8; OSPF_LSA_HEADER_LEN];
+        header[3] = OSPF_LSA_ROUTER; // LS type (octet 3 of the header)
+        header[18..20].copy_from_slice(&(lsa_len as u16).to_be_bytes());
+        body.extend_from_slice(&header);
+        body.extend_from_slice(&router_body);
+
+        let err = decode_link_state_update_body(&body)
+            .expect_err("a Router-LSA declaring 2 links but carrying 1 must error");
+        match err {
+            CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            } => {
+                assert_eq!(context, "ospf router-lsa link");
+                assert_eq!(required, OSPF_ROUTER_LINK_FIXED_LEN);
+                assert_eq!(available, 0);
             }
             other => panic!("expected buffer_too_short, got {other:?}"),
         }

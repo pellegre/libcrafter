@@ -247,6 +247,25 @@ impl OspfRouterLsa {
         }
     }
 
+    /// Construct a Router-LSA body from decoded wire fields, marking the flags
+    /// octet and the `# links` count as caller-supplied so re-compilation
+    /// preserves the decoded values byte-for-byte (RFC 2328 §A.4.2).
+    ///
+    /// The on-wire `# links` count is pinned with [`Field::user`] independently
+    /// of the carried link list, so an LSA whose declared count disagrees with
+    /// the number of parsed links round-trips exactly.
+    pub(crate) fn from_decoded_parts(
+        flags: u8,
+        num_links: u16,
+        links: Vec<OspfRouterLink>,
+    ) -> Self {
+        Self {
+            flags: Field::user(flags),
+            num_links: Field::user(num_links),
+            links,
+        }
+    }
+
     /// Set the V flag, marking the router as a virtual-link endpoint
     /// ([`OSPF_ROUTER_LSA_FLAG_V`]).
     pub fn virtual_link(mut self) -> Self {
