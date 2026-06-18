@@ -40,9 +40,10 @@ use crate::{CrafterError, Result};
 pub mod router;
 
 pub use router::{
-    OspfRouterLink, OspfRouterLinkTos, OspfRouterLsa, OSPF_ROUTER_LINK_POINT_TO_POINT,
-    OSPF_ROUTER_LINK_STUB, OSPF_ROUTER_LINK_TRANSIT, OSPF_ROUTER_LINK_VIRTUAL,
-    OSPF_ROUTER_LSA_FLAG_B, OSPF_ROUTER_LSA_FLAG_E, OSPF_ROUTER_LSA_FLAG_V,
+    ospf_router_link_type_name, OspfRouterLink, OspfRouterLinkTos, OspfRouterLsa,
+    OSPF_ROUTER_LINK_POINT_TO_POINT, OSPF_ROUTER_LINK_STUB, OSPF_ROUTER_LINK_TRANSIT,
+    OSPF_ROUTER_LINK_VIRTUAL, OSPF_ROUTER_LSA_FLAG_B, OSPF_ROUTER_LSA_FLAG_E,
+    OSPF_ROUTER_LSA_FLAG_V,
 };
 
 // ---------------------------------------------------------------------------

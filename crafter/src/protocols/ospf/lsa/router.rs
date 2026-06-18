@@ -61,6 +61,19 @@ pub const OSPF_ROUTER_LINK_STUB: u8 = 3;
 /// Virtual link (RFC 2328 §A.4.2).
 pub const OSPF_ROUTER_LINK_VIRTUAL: u8 = 4;
 
+/// Short human-readable name for a Router-LSA link type code (RFC 2328 §A.4.2),
+/// used by `summary()` and `inspection_fields()`. Unrecognized codes map to
+/// `"Unknown"`.
+pub fn ospf_router_link_type_name(link_type: u8) -> &'static str {
+    match link_type {
+        OSPF_ROUTER_LINK_POINT_TO_POINT => "PointToPoint",
+        OSPF_ROUTER_LINK_TRANSIT => "Transit",
+        OSPF_ROUTER_LINK_STUB => "Stub",
+        OSPF_ROUTER_LINK_VIRTUAL => "Virtual",
+        _ => "Unknown",
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Fixed lengths (RFC 2328 §A.4.2)
 // ---------------------------------------------------------------------------
@@ -192,6 +205,21 @@ impl OspfRouterLink {
     /// The additional per-TOS metric entries.
     pub fn tos_value(&self) -> &[OspfRouterLinkTos] {
         &self.tos
+    }
+
+    /// A one-line summary of this link description for `summary()` /
+    /// `inspection_fields()`, like
+    /// `type=PointToPoint, id=192.0.2.2, data=198.51.100.1, metric=10`.
+    ///
+    /// The link type renders through [`ospf_router_link_type_name`].
+    pub fn summary(&self) -> String {
+        format!(
+            "type={}, id={}, data={}, metric={}",
+            ospf_router_link_type_name(self.link_type),
+            self.link_id,
+            self.link_data,
+            self.metric,
+        )
     }
 
     /// The on-wire length of this link description, in octets: the 12-octet fixed
@@ -342,6 +370,31 @@ impl OspfRouterLsa {
         &self.links
     }
 
+    /// A one-line summary of the Router-LSA body for `summary()` /
+    /// `inspection_fields()`, like `flags=VEB links=2`.
+    ///
+    /// The `flags` field lists the set router-description bits in V/E/B order
+    /// (RFC 2328 §A.4.2), rendering `-` when none are set, and `links` reports
+    /// the effective `# links` count (the caller value, else the number of
+    /// carried links).
+    pub fn summary(&self) -> String {
+        let flags = self.flags_value();
+        let mut labels = String::new();
+        if flags & OSPF_ROUTER_LSA_FLAG_V != 0 {
+            labels.push('V');
+        }
+        if flags & OSPF_ROUTER_LSA_FLAG_E != 0 {
+            labels.push('E');
+        }
+        if flags & OSPF_ROUTER_LSA_FLAG_B != 0 {
+            labels.push('B');
+        }
+        if labels.is_empty() {
+            labels.push('-');
+        }
+        format!("flags={} links={}", labels, self.num_links_value())
+    }
+
     /// The on-wire length of this Router-LSA body, in octets: the fixed 4 octets
     /// plus the total size of every carried link (each 12-octet fixed portion
     /// plus its per-TOS entries).
@@ -468,6 +521,85 @@ mod tests {
         assert!(
             fletcher16_valid(lsa_bytes),
             "auto-filled Fletcher checksum should validate over the Router-LSA"
+        );
+    }
+
+    /// A Link State Update carrying a Router-LSA exposes typed Router detail
+    /// through `inspection_fields()`: a `router_lsa` pair reports the V/E/B flags
+    /// and the link count, and one `router_link` pair per link names the link
+    /// type, so the Router-LSA body is inspectable through `Packet::show()`.
+    #[test]
+    fn ospf_router_lsa_inspection_describes_flags_and_links() {
+        use crate::packet::Layer;
+        use crate::protocols::ospf::Ospfv2;
+
+        let router = OspfRouterLsa::new()
+            .border()
+            .external()
+            // Link 1: point-to-point.
+            .link(OspfRouterLink::new(
+                Ipv4Addr::new(192, 0, 2, 2),
+                Ipv4Addr::new(198, 51, 100, 1),
+                OSPF_ROUTER_LINK_POINT_TO_POINT,
+                10,
+            ))
+            // Link 2: stub network.
+            .link(OspfRouterLink::new(
+                Ipv4Addr::new(198, 51, 100, 0),
+                Ipv4Addr::new(255, 255, 255, 0),
+                OSPF_ROUTER_LINK_STUB,
+                20,
+            ));
+
+        let lsa = OspfLsa::new(
+            OspfLsaHeader::new()
+                .ls_type(OSPF_LSA_ROUTER)
+                .link_state_id(Ipv4Addr::new(192, 0, 2, 1))
+                .advertising_router(Ipv4Addr::new(192, 0, 2, 1)),
+            OspfLsaBody::Router(router),
+        );
+
+        let ospf = Ospfv2::link_state_update()
+            .router_id([192, 0, 2, 1])
+            .area_id([0, 0, 0, 0])
+            .with_link_state_update(|u| {
+                *u = OspfLinkStateUpdate::new().lsa(lsa);
+            });
+
+        let fields = ospf.inspection_fields();
+
+        // The `router_lsa` pair reports the set flags (E and B here) and the
+        // link count.
+        let router_lsa = fields
+            .iter()
+            .find(|(field, _)| *field == "router_lsa")
+            .map(|(_, value)| value.as_str())
+            .expect("inspection output should carry a router_lsa pair");
+        assert!(
+            router_lsa.contains("links=2"),
+            "router_lsa missing link count: {router_lsa}"
+        );
+        assert!(
+            router_lsa.contains("flags=EB"),
+            "router_lsa missing flags: {router_lsa}"
+        );
+
+        // One `router_link` pair per link, the first naming its link type.
+        let router_links: Vec<&str> = fields
+            .iter()
+            .filter(|(field, _)| *field == "router_link")
+            .map(|(_, value)| value.as_str())
+            .collect();
+        assert_eq!(router_links.len(), 2);
+        assert!(
+            router_links[0].contains("type=PointToPoint"),
+            "first router_link missing the link type name: {}",
+            router_links[0]
+        );
+        assert!(
+            router_links[1].contains("type=Stub"),
+            "second router_link missing the link type name: {}",
+            router_links[1]
         );
     }
 }

@@ -821,6 +821,17 @@ impl Layer for Ospfv2 {
                     "lsa",
                     format!("{} body={}B", lsa.header.summary(), lsa.body.encoded_len()),
                 ));
+                // A typed Router-LSA body (RFC 2328 §A.4.2) adds a `router_lsa`
+                // pair (the V/E/B flags and link count) followed by one
+                // `router_link` pair per link (type name, Link ID, Link Data,
+                // metric). Other LSA body variants contribute only the `lsa`
+                // header summary above.
+                if let crate::protocols::ospf::lsa::OspfLsaBody::Router(router) = &lsa.body {
+                    fields.push(("router_lsa", router.summary()));
+                    for link in router.links_value() {
+                        fields.push(("router_link", link.summary()));
+                    }
+                }
             }
         }
 
