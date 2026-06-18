@@ -406,6 +406,48 @@ impl Default for OspfLsaHeader {
     }
 }
 
+/// Decode a trailing list of bare 20-octet LSA headers.
+///
+/// The Database Description (RFC 2328 §A.3.3) and Link State Acknowledgment
+/// (RFC 2328 §A.3.6) bodies carry a sequence of LSA headers with no body, so
+/// every entry is exactly [`OSPF_LSA_HEADER_LEN`] octets regardless of the
+/// declared `length` field (which describes the full LSA only in a Link State
+/// Update). This loops while `bytes` is non-empty, decoding one header and
+/// advancing the cursor by 20 octets each iteration, mirroring the
+/// `decode_path_attributes` list-loop in the BGP decoder. A remainder shorter
+/// than 20 octets yields a structured
+/// [`buffer_too_short`](CrafterError::buffer_too_short) error rather than a
+/// panic.
+pub(crate) fn decode_lsa_headers(mut bytes: &[u8]) -> Result<Vec<OspfLsaHeader>> {
+    let mut headers = Vec::new();
+    while !bytes.is_empty() {
+        if bytes.len() < OSPF_LSA_HEADER_LEN {
+            return Err(CrafterError::buffer_too_short(
+                "ospf lsa header",
+                OSPF_LSA_HEADER_LEN,
+                bytes.len(),
+            ));
+        }
+        let (header, _declared_len) = OspfLsaHeader::decode(bytes)?;
+        headers.push(header);
+        bytes = &bytes[OSPF_LSA_HEADER_LEN..];
+    }
+    Ok(headers)
+}
+
+/// Encode a list of bare LSA headers, each as a header-only 20-octet record.
+///
+/// Each header is emitted with an empty body via
+/// [`OspfLsaHeader::encode_with_body`], so every entry is exactly
+/// [`OSPF_LSA_HEADER_LEN`] octets. Shared by the Database Description and Link
+/// State Acknowledgment encoders, which carry only LSA headers (RFC 2328
+/// §A.3.3, §A.3.6).
+pub(crate) fn encode_lsa_headers(headers: &[OspfLsaHeader], out: &mut Vec<u8>) {
+    for header in headers {
+        header.encode_with_body(&[], out);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -542,5 +584,76 @@ mod tests {
             summary.contains("198.51.100.7"),
             "summary should contain the advertising router: {summary}"
         );
+    }
+
+    /// A list of three bare LSA headers encodes to 60 octets and round-trips
+    /// through `encode_lsa_headers` / `decode_lsa_headers`: the parsed list has
+    /// three entries whose fields equal the built ones, and a 50-octet buffer
+    /// (two full 20-octet headers plus a 10-octet partial third) yields a
+    /// structured buffer-too-short error rather than a panic.
+    #[test]
+    fn ospf_lsa_headers_list_round_trips_and_rejects_partial_trailer() {
+        let headers = [
+            OspfLsaHeader::new()
+                .ls_type(OSPF_LSA_ROUTER)
+                .link_state_id(Ipv4Addr::new(192, 0, 2, 1))
+                .advertising_router(Ipv4Addr::new(192, 0, 2, 1))
+                .ls_sequence_number(0x8000_0001),
+            OspfLsaHeader::new()
+                .ls_type(OSPF_LSA_NETWORK)
+                .link_state_id(Ipv4Addr::new(192, 0, 2, 2))
+                .advertising_router(Ipv4Addr::new(198, 51, 100, 7))
+                .ls_sequence_number(0x8000_0002),
+            OspfLsaHeader::new()
+                .ls_type(OSPF_LSA_SUMMARY_IP)
+                .link_state_id(Ipv4Addr::new(198, 51, 100, 0))
+                .advertising_router(Ipv4Addr::new(192, 0, 2, 1))
+                .ls_sequence_number(0x8000_0003),
+        ];
+
+        let mut out = Vec::new();
+        encode_lsa_headers(&headers, &mut out);
+
+        // Three header-only records, 20 octets each.
+        assert_eq!(out.len(), 3 * OSPF_LSA_HEADER_LEN);
+
+        let decoded = decode_lsa_headers(&out).expect("LSA header list decodes");
+        assert_eq!(decoded.len(), 3);
+
+        // Every field round-trips for each header.
+        for (original, parsed) in headers.iter().zip(decoded.iter()) {
+            assert_eq!(parsed.ls_age_value(), original.ls_age_value());
+            assert_eq!(parsed.options_value(), original.options_value());
+            assert_eq!(parsed.ls_type_value(), original.ls_type_value());
+            assert_eq!(parsed.link_state_id_value(), original.link_state_id_value());
+            assert_eq!(
+                parsed.advertising_router_value(),
+                original.advertising_router_value()
+            );
+            assert_eq!(
+                parsed.ls_sequence_number_value(),
+                original.ls_sequence_number_value()
+            );
+            // The declared length of a header-only record is 20 octets.
+            assert_eq!(parsed.length_value(), Some(OSPF_LSA_HEADER_LEN as u16));
+        }
+
+        // A 50-octet buffer (two full headers plus a 10-octet partial third)
+        // surfaces a structured error on the trailing remainder.
+        let partial = &out[..2 * OSPF_LSA_HEADER_LEN + 10];
+        assert_eq!(partial.len(), 50);
+        let err = decode_lsa_headers(partial).expect_err("a partial trailing header must error");
+        match err {
+            CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            } => {
+                assert_eq!(context, "ospf lsa header");
+                assert_eq!(required, OSPF_LSA_HEADER_LEN);
+                assert_eq!(available, 10);
+            }
+            other => panic!("expected BufferTooShort, got {other:?}"),
+        }
     }
 }
