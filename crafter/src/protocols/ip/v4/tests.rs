@@ -126,17 +126,19 @@ mod ipv4_protocol {
 
     #[test]
     fn ipv4_autoderives_ospf_protocol_for_ospfv2_layer() {
-        use crate::protocols::ospf::constants::OSPF_TYPE_LINK_STATE_ACK;
+        use crate::protocols::ospf::constants::OSPF_TYPE_LINK_STATE_UPDATE;
         use crate::protocols::ospf::Ospfv2;
 
         // No explicit IPv4 protocol is set: the following `Ospfv2` layer must
         // auto-derive protocol 89 (RFC 2328 §A.1 runs OSPF directly over IP). A
-        // non-Hello packet type with a raw body keeps this auto-derive case
-        // independent of typed-body decoding (type 1 dispatches to a Hello body).
+        // not-yet-dispatched packet type with a raw body keeps this auto-derive
+        // case independent of typed-body decoding (type 4, Link State Update, is
+        // still preserved verbatim as an unknown body at this point, so a short
+        // raw body round-trips; types 1/2/3/5 now dispatch to typed bodies).
         let body = [0xde, 0xad, 0xbe, 0xef];
         let packet = Ipv4::new().src(src()).dst(dst())
             / Ospfv2::new()
-                .packet_type(OSPF_TYPE_LINK_STATE_ACK)
+                .packet_type(OSPF_TYPE_LINK_STATE_UPDATE)
                 .raw_body(body);
 
         let bytes = packet.compile().unwrap();

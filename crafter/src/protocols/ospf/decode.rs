@@ -24,11 +24,12 @@ use crate::packet::Packet;
 
 use super::constants::{
     OSPF_AUTH_LEN, OSPF_AUTYPE_CRYPTOGRAPHIC, OSPF_HEADER_LEN, OSPF_TYPE_DATABASE_DESCRIPTION,
-    OSPF_TYPE_HELLO, OSPF_TYPE_LINK_STATE_REQUEST,
+    OSPF_TYPE_HELLO, OSPF_TYPE_LINK_STATE_ACK, OSPF_TYPE_LINK_STATE_REQUEST,
 };
 use super::lsa::decode_lsa_headers;
 use super::packet::{
-    OspfDatabaseDescription, OspfHello, OspfLinkStateRequest, OspfLinkStateRequestEntry,
+    OspfDatabaseDescription, OspfHello, OspfLinkStateAck, OspfLinkStateRequest,
+    OspfLinkStateRequestEntry,
 };
 use super::{OspfBody, OspfChecksumStatus, Ospfv2};
 
@@ -130,6 +131,9 @@ pub(crate) fn append_ospf_packet_with_checksum_validation(
         }
         OSPF_TYPE_LINK_STATE_REQUEST => {
             OspfBody::LinkStateRequest(decode_link_state_request_body(body_bytes)?)
+        }
+        OSPF_TYPE_LINK_STATE_ACK => {
+            OspfBody::LinkStateAck(decode_link_state_ack_body(body_bytes)?)
         }
         other => OspfBody::Unknown {
             type_code: other,
@@ -320,6 +324,22 @@ fn decode_link_state_request_body(body: &[u8]) -> Result<OspfLinkStateRequest> {
         .collect();
 
     Ok(OspfLinkStateRequest::from_decoded_parts(entries))
+}
+
+/// Parse the OSPFv2 Link State Acknowledgment body (RFC 2328 §A.3.6) from `body`
+/// into an [`OspfLinkStateAck`].
+///
+/// Unlike the Database Description body (RFC 2328 §A.3.3) the Link State
+/// Acknowledgment has no fixed prefix: the body is just the concatenation of
+/// bare 20-octet LSA headers (RFC 2328 §A.4.1), parsed by [`decode_lsa_headers`].
+/// An empty list is legal; a partial trailing header surfaces the structured
+/// truncation error [`decode_lsa_headers`] returns (context `"ospf lsa header"`)
+/// rather than a panic. Every recovered field is marked user-set (through
+/// [`OspfLinkStateAck::from_decoded_parts`]) so the decoded body re-compiles
+/// byte-for-byte.
+fn decode_link_state_ack_body(body: &[u8]) -> Result<OspfLinkStateAck> {
+    let lsa_headers = decode_lsa_headers(body)?;
+    Ok(OspfLinkStateAck::from_decoded_parts(lsa_headers))
 }
 
 #[cfg(test)]
@@ -663,6 +683,110 @@ mod tests {
                 assert_eq!(field, "ospf.link_state_request.entries");
             }
             other => panic!("expected invalid_field_value, got {other:?}"),
+        }
+    }
+
+    /// A Link State Acknowledgment built with three LSA headers, once compiled,
+    /// decodes (type 5) into a typed Link State Acknowledgment body that exposes
+    /// all three acknowledged LSA headers in order, and re-compiles
+    /// byte-for-byte (RFC 2328 §A.3.6).
+    #[test]
+    fn ospf_decode_link_state_ack_with_three_lsa_headers_round_trips() {
+        use crate::protocols::ospf::lsa::{
+            OspfLsaHeader, OSPF_LSA_NETWORK, OSPF_LSA_ROUTER, OSPF_LSA_SUMMARY_IP,
+        };
+        use crate::protocols::ospf::OspfBody;
+
+        let headers = [
+            OspfLsaHeader::new()
+                .ls_type(OSPF_LSA_ROUTER)
+                .link_state_id(Ipv4Addr::new(192, 0, 2, 1))
+                .advertising_router(Ipv4Addr::new(192, 0, 2, 1))
+                .ls_sequence_number(0x8000_0001),
+            OspfLsaHeader::new()
+                .ls_type(OSPF_LSA_NETWORK)
+                .link_state_id(Ipv4Addr::new(192, 0, 2, 2))
+                .advertising_router(Ipv4Addr::new(198, 51, 100, 7))
+                .ls_sequence_number(0x8000_0002),
+            OspfLsaHeader::new()
+                .ls_type(OSPF_LSA_SUMMARY_IP)
+                .link_state_id(Ipv4Addr::new(198, 51, 100, 0))
+                .advertising_router(Ipv4Addr::new(192, 0, 2, 3))
+                .ls_sequence_number(0x8000_0003),
+        ];
+
+        let bytes = Packet::from_layer(
+            Ospfv2::link_state_ack()
+                .router_id([192, 0, 2, 1])
+                .area_id([0, 0, 0, 0])
+                .with_link_state_ack(|a| {
+                    *a = a.clone().lsa_headers(headers.iter().cloned());
+                }),
+        )
+        .compile()
+        .expect("a Link State Acknowledgment with three LSA headers compiles");
+
+        let decoded = append_ospf_packet(Packet::new(), bytes.as_bytes())
+            .expect("the Link State Acknowledgment decodes");
+        let ospf = decoded
+            .layer::<Ospfv2>()
+            .expect("the decoded packet exposes a typed Ospfv2 layer");
+        assert_eq!(ospf.packet_type_value(), OSPF_TYPE_LINK_STATE_ACK);
+
+        let ack = match &ospf.body {
+            OspfBody::LinkStateAck(ack) => ack,
+            other => panic!("expected a typed Link State Acknowledgment body, got {other:?}"),
+        };
+
+        // All three acknowledged headers are exposed, in order, with their
+        // decoded fields.
+        let decoded_headers = ack.lsa_headers_value();
+        assert_eq!(decoded_headers.len(), 3);
+        for (decoded_header, expected) in decoded_headers.iter().zip(headers.iter()) {
+            assert_eq!(decoded_header.ls_type_value(), expected.ls_type_value());
+            assert_eq!(
+                decoded_header.link_state_id_value(),
+                expected.link_state_id_value()
+            );
+            assert_eq!(
+                decoded_header.advertising_router_value(),
+                expected.advertising_router_value()
+            );
+            assert_eq!(
+                decoded_header.ls_sequence_number_value(),
+                expected.ls_sequence_number_value()
+            );
+        }
+
+        let recompiled = decoded
+            .compile()
+            .expect("decoded Link State Acknowledgment re-compiles");
+        assert_eq!(recompiled.as_bytes(), bytes.as_bytes());
+    }
+
+    /// A Link State Acknowledgment body of 30 octets (one full 20-octet LSA
+    /// header plus 10 trailing octets) surfaces the structured truncation error
+    /// `decode_lsa_headers` returns on the partial trailing header (context
+    /// `"ospf lsa header"`), never a panic (RFC 2328 §A.3.6).
+    #[test]
+    fn ospf_decode_link_state_ack_partial_trailing_header_is_truncation_error() {
+        use crate::protocols::ospf::lsa::OSPF_LSA_HEADER_LEN;
+
+        // 30 octets: one full 20-octet header plus a 10-octet partial second.
+        let body = [0u8; OSPF_LSA_HEADER_LEN + 10];
+        let err = decode_link_state_ack_body(&body)
+            .expect_err("a 30-octet ack body has a partial trailing LSA header");
+        match err {
+            CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            } => {
+                assert_eq!(context, "ospf lsa header");
+                assert_eq!(required, OSPF_LSA_HEADER_LEN);
+                assert_eq!(available, 10);
+            }
+            other => panic!("expected buffer_too_short, got {other:?}"),
         }
     }
 }
