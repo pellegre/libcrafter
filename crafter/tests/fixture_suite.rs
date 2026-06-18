@@ -850,6 +850,24 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         summary_path: None,
     },
     ValidFixtureCase {
+        name: "ospf-opaque-lsa-area",
+        path: "bytes/ospf-opaque-lsa-area.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ospf-opaque-lsa-area.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Ospf],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ospf-te-lsa",
+        path: "bytes/ospf-te-lsa.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ospf-te-lsa.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Ospf],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
         name: "ospf-hello-simple-auth",
         path: "bytes/ospf-hello-simple-auth.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/ospf-hello-simple-auth.hex")),
@@ -2042,6 +2060,8 @@ fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
         | "ospf-summary-lsa-asbr"
         | "ospf-as-external-lsa"
         | "ospf-nssa-lsa"
+        | "ospf-opaque-lsa-area"
+        | "ospf-te-lsa"
         | "ospf-hello-simple-auth"
         | "ospf-hello-crypto-md5" => &[CoverageFamily::Ipv4Ospf],
         "ipv4-udp-options-known" | "ipv4-udp-options-unknown-safe" => {
@@ -4865,6 +4885,117 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
             assert_eq!(
                 nssa_tos,
                 vec!["type=E2 metric=658188 fwd=0.0.0.0 tag=0x00000000"]
+            );
+        }
+        "ospf-opaque-lsa-area" => {
+            // OSPF rides directly on IPv4 protocol 89 (RFC 2328).
+            let ipv4 = expect_layer::<Ipv4>(case, packet);
+            assert_eq!(ipv4.protocol_value(), 89);
+            assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 1));
+            assert_eq!(ipv4.destination(), Ipv4Addr::new(224, 0, 0, 5));
+
+            // Common header: a version 2 Link State Update (type 4) from a
+            // documentation router id in the backbone area (0.0.0.0).
+            let ospf = expect_layer::<Ospfv2>(case, packet);
+            assert_eq!(ospf.version_value(), 2);
+            assert_eq!(ospf.packet_type_value(), 4); // Link State Update
+            assert_eq!(ospf.router_id_value(), Ipv4Addr::new(192, 0, 2, 1));
+            assert_eq!(ospf.area_id_value(), Ipv4Addr::new(0, 0, 0, 0));
+
+            // The Link State Update carries one area-scope Opaque-LSA (LS type 10,
+            // RFC 5250 §3) whose Link State ID packs the Opaque Type (10) into the
+            // first octet and a 24-bit Opaque ID (0x010203) into the remaining
+            // three, rendering as 10.1.2.3. The body is two generic Opaque TLVs: a
+            // 4-octet (already aligned) value and a 5-octet value padded to the
+            // next 4-octet boundary, for a 20-octet body after the 20-octet header.
+            // The typed Opaque body is private, so it is surfaced through the
+            // public inspection surface: `num_lsas`/`lsa_count` report one LSA, the
+            // `lsa` entry renders the 20-octet header summary plus the 20-octet
+            // Opaque body, an `opaque_lsa` pair reports the Opaque Type read from
+            // the header Link State ID plus the TLV count, and one `opaque_tlv`
+            // pair per TLV naming the TLV type and its value byte length (the
+            // padding is not counted).
+            let fields = ospf.inspection_fields();
+            let value_of = |name: &str| {
+                fields
+                    .iter()
+                    .find(|(field, _)| *field == name)
+                    .map(|(_, value)| value.as_str())
+            };
+            assert_eq!(value_of("num_lsas"), Some("1"));
+            assert_eq!(value_of("lsa_count"), Some("1"));
+            assert_eq!(
+                value_of("lsa"),
+                Some(concat!(
+                    "LSA(type=Opaque-Area, id=10.1.2.3, adv=192.0.2.1, ",
+                    "seq=0x80000001, age=0, len=40) body=20B",
+                ))
+            );
+            assert_eq!(value_of("opaque_lsa"), Some("type=10 tlvs=2"));
+            let opaque_tlv: Vec<&str> = fields
+                .iter()
+                .filter(|(field, _)| *field == "opaque_tlv")
+                .map(|(_, value)| value.as_str())
+                .collect();
+            assert_eq!(
+                opaque_tlv,
+                vec!["type=1 value=4B", "type=2 value=5B"]
+            );
+        }
+        "ospf-te-lsa" => {
+            // OSPF rides directly on IPv4 protocol 89 (RFC 2328).
+            let ipv4 = expect_layer::<Ipv4>(case, packet);
+            assert_eq!(ipv4.protocol_value(), 89);
+            assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 1));
+            assert_eq!(ipv4.destination(), Ipv4Addr::new(224, 0, 0, 5));
+
+            // Common header: a version 2 Link State Update (type 4) from a
+            // documentation router id in the backbone area (0.0.0.0).
+            let ospf = expect_layer::<Ospfv2>(case, packet);
+            assert_eq!(ospf.version_value(), 2);
+            assert_eq!(ospf.packet_type_value(), 4); // Link State Update
+            assert_eq!(ospf.router_id_value(), Ipv4Addr::new(192, 0, 2, 1));
+            assert_eq!(ospf.area_id_value(), Ipv4Addr::new(0, 0, 0, 0));
+
+            // The Link State Update carries one area-scope Traffic Engineering
+            // Opaque-LSA (RFC 3630 §2): an area-scope Opaque-LSA (LS type 10) whose
+            // Link State ID packs the TE Opaque Type (1) into the first octet and a
+            // 24-bit Opaque ID (0x2a) into the remaining three, rendering as
+            // 1.0.0.42. The body is two top-level TE TLVs decoded as generic Opaque
+            // TLVs (the decode path has no TE-specific knowledge): a 4-octet Router
+            // Address TLV (type 1) and a 16-octet Link TLV (type 2) nesting a Link
+            // Type and a Link ID sub-TLV, for a 28-octet body after the 20-octet
+            // header. The typed Opaque body is private, so it is surfaced through
+            // the public inspection surface: `num_lsas`/`lsa_count` report one LSA,
+            // the `lsa` entry renders the header summary plus the 28-octet body, an
+            // `opaque_lsa` pair reports the TE Opaque Type read from the header plus
+            // the TLV count, and one `opaque_tlv` pair per TLV naming the TLV type
+            // and its value byte length.
+            let fields = ospf.inspection_fields();
+            let value_of = |name: &str| {
+                fields
+                    .iter()
+                    .find(|(field, _)| *field == name)
+                    .map(|(_, value)| value.as_str())
+            };
+            assert_eq!(value_of("num_lsas"), Some("1"));
+            assert_eq!(value_of("lsa_count"), Some("1"));
+            assert_eq!(
+                value_of("lsa"),
+                Some(concat!(
+                    "LSA(type=Opaque-Area, id=1.0.0.42, adv=192.0.2.1, ",
+                    "seq=0x80000001, age=0, len=48) body=28B",
+                ))
+            );
+            assert_eq!(value_of("opaque_lsa"), Some("type=1 tlvs=2"));
+            let opaque_tlv: Vec<&str> = fields
+                .iter()
+                .filter(|(field, _)| *field == "opaque_tlv")
+                .map(|(_, value)| value.as_str())
+                .collect();
+            assert_eq!(
+                opaque_tlv,
+                vec!["type=1 value=4B", "type=2 value=16B"]
             );
         }
         "ospf-hello-simple-auth" => {
