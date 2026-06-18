@@ -34,7 +34,10 @@ pub mod lsa;
 pub mod packet;
 
 #[allow(unused_imports)]
-pub use auth::{OspfCryptoAuth, OSPF_MD5_DIGEST_LEN};
+pub use auth::{
+    OspfCryptoAlgorithm, OspfCryptoAuth, OSPF_HMAC_SHA1_DIGEST_LEN, OSPF_HMAC_SHA256_DIGEST_LEN,
+    OSPF_HMAC_SHA384_DIGEST_LEN, OSPF_HMAC_SHA512_DIGEST_LEN, OSPF_MD5_DIGEST_LEN,
+};
 #[allow(unused_imports)]
 pub use constants::*;
 pub use packet::{
@@ -356,37 +359,59 @@ impl Ospfv2 {
         self
     }
 
-    /// Configure cryptographic (keyed-MD5) authentication (AuType 2, RFC 2328
-    /// §D.3).
+    /// Configure cryptographic authentication (AuType 2) with a chosen digest
+    /// `algorithm` — keyed-MD5 (RFC 2328 §D.3) or an HMAC-SHA variant (RFC 5709).
     ///
     /// Sets the AuType field to [`OSPF_AUTYPE_CRYPTOGRAPHIC`], encodes the
     /// structured 8-octet authentication field — Reserved (2 octets, zero),
-    /// Key ID, Authentication Data Length (16, the MD5 digest length), and the
-    /// Cryptographic sequence number — and records the secret `key` so
-    /// `compile()` can append the keyed-MD5 message-digest trailer. The trailer
-    /// is `MD5(ospf_packet_with_structured_auth || key_padded_to_16)` (RFC 1321).
+    /// Key ID, Authentication Data Length (the algorithm's digest size: 16 for
+    /// keyed-MD5, 20/32/48/64 for HMAC-SHA-1/256/384/512), and the Cryptographic
+    /// sequence number — and records the secret `key` so `compile()` can append
+    /// the message-digest trailer. For keyed-MD5 the trailer is
+    /// `MD5(ospf_packet_with_structured_auth || key_padded_to_16)` (RFC 1321);
+    /// for the HMAC-SHA variants it is `HMAC(key, ospf_packet_with_structured_auth)`
+    /// (RFC 5709 §3.3).
     ///
     /// For cryptographic authentication `compile()` writes the header Checksum as
     /// zero (RFC 2328 §D.3), the OSPF Packet Length covers only the header and
     /// body (the digest trailer is excluded but is still part of the IP payload),
-    /// and the 16-octet digest is appended after the packet bytes. The secret key
-    /// never appears on the wire — only the digest derived from it does.
+    /// and the digest is appended after the packet bytes. The secret key never
+    /// appears on the wire — only the digest derived from it does.
     ///
     /// Caller overrides are honored: pin the [`authentication`](Ospfv2::authentication)
     /// field to install a deliberately malformed structured auth field, or pin the
     /// [`checksum`](Ospfv2::checksum) to override the zero checksum; the recorded
     /// key still drives the appended trailer.
-    pub fn crypto_md5_auth(
+    pub fn crypto_auth(
         mut self,
+        algorithm: OspfCryptoAlgorithm,
         key_id: u8,
         sequence_number: u32,
         key: impl Into<Vec<u8>>,
     ) -> Self {
-        let crypto = OspfCryptoAuth::new(key_id, sequence_number, key);
+        let crypto = OspfCryptoAuth::with_algorithm(algorithm, key_id, sequence_number, key);
         self.autype.set_user(OSPF_AUTYPE_CRYPTOGRAPHIC);
         self.authentication.set_user(crypto.structured_auth_field());
         self.crypto_auth = Some(crypto);
         self
+    }
+
+    /// Configure cryptographic (keyed-MD5) authentication (AuType 2, RFC 2328
+    /// §D.3).
+    ///
+    /// A thin wrapper over [`Ospfv2::crypto_auth`] fixing the algorithm to
+    /// [`OspfCryptoAlgorithm::KeyedMd5`]: the structured authentication field's
+    /// Authentication Data Length is 16 (the MD5 digest length) and the appended
+    /// trailer is `MD5(ospf_packet_with_structured_auth || key_padded_to_16)`
+    /// (RFC 1321). See [`Ospfv2::crypto_auth`] for the checksum, Packet Length,
+    /// and override semantics.
+    pub fn crypto_md5_auth(
+        self,
+        key_id: u8,
+        sequence_number: u32,
+        key: impl Into<Vec<u8>>,
+    ) -> Self {
+        self.crypto_auth(OspfCryptoAlgorithm::KeyedMd5, key_id, sequence_number, key)
     }
 
     /// Replace the opaque body bytes that follow the common header.
@@ -721,15 +746,16 @@ impl Ospfv2 {
         self.checksum_status
     }
 
-    /// The cryptographic-authentication parameters (AuType 2, keyed-MD5) recorded
-    /// by [`Ospfv2::crypto_md5_auth`], if any.
+    /// The cryptographic-authentication parameters (AuType 2) recorded by
+    /// [`Ospfv2::crypto_auth`] or [`Ospfv2::crypto_md5_auth`], if any.
     ///
     /// Present only when cryptographic authentication was configured through the
     /// builder; `None` for null, simple-password, and decoded packets. When
-    /// present, `compile()` appends a keyed-MD5 message-digest trailer after the
-    /// OSPF packet (RFC 2328 §D.3). The secret key it holds never appears on the
-    /// wire.
-    pub fn crypto_auth(&self) -> Option<&OspfCryptoAuth> {
+    /// present, `compile()` appends the message-digest trailer after the OSPF
+    /// packet (RFC 2328 §D.3 keyed-MD5 or an RFC 5709 HMAC-SHA variant, as
+    /// selected by [`OspfCryptoAuth::algorithm`]). The secret key it holds never
+    /// appears on the wire.
+    pub fn crypto_auth_params(&self) -> Option<&OspfCryptoAuth> {
         self.crypto_auth.as_ref()
     }
 
@@ -815,12 +841,13 @@ impl Ospfv2 {
     ///
     /// When recorded [`crypto_auth`](Ospfv2::crypto_auth) parameters are present
     /// (and the AuType is cryptographic) the trailer is the freshly recomputed
-    /// keyed-MD5 digest ([`OSPF_MD5_DIGEST_LEN`] octets). Otherwise a non-empty
-    /// decoded [`auth_trailer`](Ospfv2::auth_trailer) is re-emitted verbatim, so
-    /// its captured length applies. Zero when neither is present.
+    /// digest, whose length is the recorded algorithm's digest size (16 for
+    /// keyed-MD5, 20/32/48/64 for the RFC 5709 HMAC-SHA variants). Otherwise a
+    /// non-empty decoded [`auth_trailer`](Ospfv2::auth_trailer) is re-emitted
+    /// verbatim, so its captured length applies. Zero when neither is present.
     fn crypto_trailer_len(&self) -> usize {
-        if self.crypto_auth_for_trailer().is_some() {
-            OSPF_MD5_DIGEST_LEN as usize
+        if let Some(crypto) = self.crypto_auth_for_trailer() {
+            usize::from(crypto.digest_len())
         } else {
             self.auth_trailer.len()
         }
@@ -1148,12 +1175,14 @@ impl Layer for Ospfv2 {
 
         if let Some(crypto) = crypto {
             // Cryptographic authentication: the header Checksum stays zero unless
-            // the caller pinned a (deliberately malformed) value, and a 16-octet
-            // keyed-MD5 digest over the packet-so-far concatenated with the secret
-            // key padded to 16 octets is appended after the OSPF packet (RFC 2328
-            // §D.3). The digest is excluded from the Packet Length but is part of
-            // the emitted bytes, so the enclosing IP payload counts it.
-            let digest = crypto.md5_digest(&out[start..]);
+            // the caller pinned a (deliberately malformed) value, and the
+            // message-digest trailer over the packet-so-far is appended after the
+            // OSPF packet. For keyed-MD5 it is `MD5(packet || key_padded_to_16)`
+            // (RFC 2328 §D.3); for the RFC 5709 HMAC-SHA variants it is
+            // `HMAC(key, packet)` (RFC 5709 §3.3). The trailer is excluded from the
+            // Packet Length but is part of the emitted bytes, so the enclosing IP
+            // payload counts it. Its length is the algorithm's digest size.
+            let digest = crypto.digest(&out[start..]);
             out.extend_from_slice(&digest);
         } else if !self.auth_trailer.is_empty() {
             // A decoded cryptographically authenticated packet carries no secret
@@ -1853,7 +1882,7 @@ mod tests {
 
         // The decoded packet re-compiles byte-for-byte without the secret key:
         // the decoder records no `crypto_auth` params, only the verbatim trailer.
-        assert!(ospf.crypto_auth().is_none());
+        assert!(ospf.crypto_auth_params().is_none());
         let recompiled = decoded.compile().expect("decoded crypto OSPF re-compiles");
         assert_eq!(recompiled.as_bytes(), bytes.as_bytes());
     }
@@ -1870,5 +1899,109 @@ mod tests {
         assert_eq!(simple.crypto_auth_data_length(), None);
         assert_eq!(simple.crypto_sequence_number(), None);
         assert!(simple.auth_trailer().is_empty());
+    }
+
+    /// HMAC-SHA-256 cryptographic authentication (RFC 5709) sets the structured
+    /// Auth Data Length to 32 and appends a 32-octet HMAC trailer after the OSPF
+    /// packet, leaving the OSPF Packet Length covering only the header and body.
+    #[test]
+    fn ospf_crypto_hmac_sha256_auth_yields_a_32_octet_trailer() {
+        let ospf = Ospfv2::hello()
+            .router_id([192, 0, 2, 1])
+            .area_id([0, 0, 0, 0])
+            .crypto_auth(OspfCryptoAlgorithm::HmacSha256, 3, 0x0000_0010, b"sha256-key");
+
+        // The structured authentication field carries Key ID 3 and Auth Data
+        // Length 32 (RFC 5709 §3.1).
+        assert_eq!(ospf.autype_value(), OSPF_AUTYPE_CRYPTOGRAPHIC);
+        assert_eq!(ospf.crypto_key_id(), Some(3));
+        assert_eq!(ospf.crypto_auth_data_length(), Some(32));
+        assert_eq!(ospf.crypto_sequence_number(), Some(0x0000_0010));
+
+        let packet_len = OSPF_HEADER_LEN + ospf.body.encoded_len();
+        let bytes = Packet::from_layer(ospf).compile().unwrap();
+
+        // The OSPF Packet Length field counts only header+body (RFC 2328 §D.3),
+        // while the emitted bytes carry the extra 32-octet HMAC-SHA-256 trailer.
+        assert_eq!(&bytes[2..4], &(packet_len as u16).to_be_bytes());
+        assert_eq!(bytes.len(), packet_len + 32);
+
+        // The checksum field is zero for cryptographic authentication.
+        assert_eq!(&bytes[12..14], &[0, 0]);
+
+        // The trailer is the HMAC-SHA-256 over the header+body (RFC 5709 §3.3),
+        // recomputed independently here to confirm the appended bytes.
+        let recomputed = OspfCryptoAuth::with_algorithm(
+            OspfCryptoAlgorithm::HmacSha256,
+            3,
+            0x0000_0010,
+            b"sha256-key".to_vec(),
+        )
+        .digest(&bytes[..packet_len]);
+        assert_eq!(&bytes[packet_len..], recomputed.as_slice());
+    }
+
+    /// An HMAC-SHA-256 crypto-authed Hello (RFC 5709) wrapped in IPv4
+    /// (protocol 89) round-trips byte-for-byte through the default registry: the
+    /// decoder captures the 32-octet trailer by the Auth Data Length octet and
+    /// re-emits it verbatim without the secret key.
+    #[test]
+    fn ospf_crypto_hmac_sha256_auth_round_trips_byte_for_byte() {
+        use crate::packet::NetworkLayer;
+        use crate::protocols::ip::v4::Ipv4;
+
+        let bytes = (Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 1))
+            .dst(Ipv4Addr::new(192, 0, 2, 2))
+            / Ospfv2::hello()
+                .router_id([192, 0, 2, 1])
+                .area_id([0, 0, 0, 0])
+                .crypto_auth(OspfCryptoAlgorithm::HmacSha256, 3, 0x0000_0010, b"sha256-key"))
+        .compile()
+        .expect("Ipv4 / HMAC-SHA-256 Hello compiles");
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes())
+            .expect("the default registry decodes the HMAC-SHA-256 Hello");
+        let ospf = decoded
+            .layer::<Ospfv2>()
+            .expect("the decoded packet exposes a typed Ospfv2 layer");
+
+        // The 32-octet trailer is captured by the structured Auth Data Length.
+        assert_eq!(ospf.crypto_auth_data_length(), Some(32));
+        assert_eq!(ospf.auth_trailer().len(), 32);
+        assert!(ospf.crypto_auth_params().is_none());
+
+        let recompiled = decoded.compile().expect("decoded HMAC OSPF re-compiles");
+        assert_eq!(recompiled.as_bytes(), bytes.as_bytes());
+    }
+
+    /// Each cryptographic-auth algorithm (RFC 2328 §D.3 keyed-MD5 and the
+    /// RFC 5709 HMAC-SHA family) appends a trailer of exactly its digest length
+    /// (16/20/32/48/64) and writes that length into the Auth Data Length octet.
+    #[test]
+    fn ospf_crypto_auth_each_algorithm_appends_its_digest_length() {
+        for (algorithm, digest_len) in [
+            (OspfCryptoAlgorithm::KeyedMd5, 16usize),
+            (OspfCryptoAlgorithm::HmacSha1, 20),
+            (OspfCryptoAlgorithm::HmacSha256, 32),
+            (OspfCryptoAlgorithm::HmacSha384, 48),
+            (OspfCryptoAlgorithm::HmacSha512, 64),
+        ] {
+            let ospf = Ospfv2::hello()
+                .router_id([192, 0, 2, 1])
+                .area_id([0, 0, 0, 0])
+                .crypto_auth(algorithm, 1, 0x0000_0001, b"shared-secret");
+
+            // The Auth Data Length octet records the algorithm's digest size.
+            assert_eq!(ospf.crypto_auth_data_length(), Some(digest_len as u8));
+
+            let packet_len = OSPF_HEADER_LEN + ospf.body.encoded_len();
+            let bytes = Packet::from_layer(ospf).compile().unwrap();
+
+            // The emitted bytes are the OSPF packet plus exactly the algorithm's
+            // digest-length trailer (RFC 2328 §D.3 / RFC 5709 §3.1).
+            assert_eq!(bytes.len(), packet_len + digest_len);
+            assert_eq!(&bytes[2..4], &(packet_len as u16).to_be_bytes());
+        }
     }
 }
