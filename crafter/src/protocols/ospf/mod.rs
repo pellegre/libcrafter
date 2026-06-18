@@ -842,6 +842,24 @@ impl Layer for Ospfv2 {
                         fields.push(("attached_router", router.to_string()));
                     }
                 }
+                // A typed Summary-LSA body (RFC 2328 §A.4.4, LS type 3 and 4)
+                // adds a `summary_lsa` pair (the network mask and TOS/metric-entry
+                // count) followed by one `summary_tos` pair per TOS/metric entry
+                // (the TOS code and its 24-bit metric). Other LSA body variants
+                // contribute only the `lsa` header summary above.
+                if let crate::protocols::ospf::lsa::OspfLsaBody::Summary(summary) = &lsa.body {
+                    fields.push(("summary_lsa", summary.summary()));
+                    for entry in summary.entries_value() {
+                        fields.push((
+                            "summary_tos",
+                            format!(
+                                "tos={} metric={}",
+                                entry.tos_value(),
+                                entry.metric_value()
+                            ),
+                        ));
+                    }
+                }
             }
         }
 

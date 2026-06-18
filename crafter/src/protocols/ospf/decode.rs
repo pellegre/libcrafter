@@ -29,7 +29,8 @@ use super::constants::{
 };
 use super::lsa::{
     decode_lsa_headers, OspfLsa, OspfLsaBody, OspfLsaHeader, OspfNetworkLsa, OspfRouterLink,
-    OspfRouterLinkTos, OspfRouterLsa, OSPF_LSA_HEADER_LEN, OSPF_LSA_NETWORK, OSPF_LSA_ROUTER,
+    OspfRouterLinkTos, OspfRouterLsa, OspfSummaryLsa, OspfSummaryTos, OSPF_LSA_HEADER_LEN,
+    OSPF_LSA_NETWORK, OSPF_LSA_ROUTER, OSPF_LSA_SUMMARY_ASBR, OSPF_LSA_SUMMARY_IP,
 };
 use super::packet::{
     OspfDatabaseDescription, OspfHello, OspfLinkStateAck, OspfLinkStateRequest,
@@ -75,6 +76,14 @@ const OSPF_NETWORK_LSA_MASK_LEN: usize = 4;
 /// The length of a single Network-LSA attached-router entry, in octets: a
 /// 4-octet Router ID (RFC 2328 §A.4.3).
 const OSPF_NETWORK_LSA_ROUTER_LEN: usize = 4;
+
+/// The length of the Summary-LSA network mask field, in octets (RFC 2328
+/// §A.4.4).
+const OSPF_SUMMARY_LSA_MASK_LEN: usize = 4;
+
+/// The length of a single Summary-LSA TOS/metric entry, in octets: a 1-octet
+/// TOS code plus a 3-octet (24-bit) metric (RFC 2328 §A.4.4).
+const OSPF_SUMMARY_LSA_TOS_LEN: usize = 4;
 
 /// Append a decoded OSPFv2 packet to an existing packet stack.
 ///
@@ -446,6 +455,9 @@ fn decode_lsa_body(ls_type: u8, body: &[u8]) -> Result<OspfLsaBody> {
     match ls_type {
         OSPF_LSA_ROUTER => Ok(OspfLsaBody::Router(decode_router_lsa_body(body)?)),
         OSPF_LSA_NETWORK => Ok(OspfLsaBody::Network(decode_network_lsa_body(body)?)),
+        OSPF_LSA_SUMMARY_IP | OSPF_LSA_SUMMARY_ASBR => {
+            Ok(OspfLsaBody::Summary(decode_summary_lsa_body(body)?))
+        }
         _ => Ok(OspfLsaBody::Raw(body.to_vec())),
     }
 }
@@ -577,6 +589,60 @@ fn decode_network_lsa_body(body: &[u8]) -> Result<OspfNetworkLsa> {
         network_mask,
         attached_routers,
     ))
+}
+
+/// Parse the OSPFv2 Summary-LSA body (RFC 2328 §A.4.4) from `body` into an
+/// [`OspfSummaryLsa`]. Shared by LS type 3 (IP network) and LS type 4 (AS
+/// boundary router), which have the identical body layout.
+///
+/// `body` is the LSA bytes after the 20-octet header. The body is a 4-octet
+/// Network Mask followed by one or more 4-octet TOS/metric entries, each a
+/// 1-octet TOS code plus a 24-bit (3-octet, big-endian) metric.
+///
+/// A body shorter than the 4-octet network mask is a structured
+/// [`CrafterError::buffer_too_short`] (context `"ospf summary-lsa"`); a
+/// TOS/metric region whose length is not a multiple of 4 is a structured
+/// [`CrafterError::invalid_field_value`] (`"ospf.summary_lsa.entries"`), never a
+/// panic. The network mask is recovered and marked user-set (through
+/// [`OspfSummaryLsa::from_decoded_parts`]) so the Summary-LSA re-compiles
+/// byte-for-byte.
+fn decode_summary_lsa_body(body: &[u8]) -> Result<OspfSummaryLsa> {
+    if body.len() < OSPF_SUMMARY_LSA_MASK_LEN {
+        return Err(CrafterError::buffer_too_short(
+            "ospf summary-lsa",
+            OSPF_SUMMARY_LSA_MASK_LEN,
+            body.len(),
+        ));
+    }
+
+    // Network Mask (octets 0..4). The length check above keeps this slice in
+    // bounds, so it cannot panic.
+    let network_mask = Ipv4Addr::new(body[0], body[1], body[2], body[3]);
+
+    // The remaining octets are the TOS/metric list: one or more 4-octet entries.
+    // A region not a multiple of 4 is a malformed list, not a truncation.
+    let tos_region = &body[OSPF_SUMMARY_LSA_MASK_LEN..];
+    if tos_region.len() % OSPF_SUMMARY_LSA_TOS_LEN != 0 {
+        return Err(CrafterError::invalid_field_value(
+            "ospf.summary_lsa.entries",
+            "TOS metric list length must be a multiple of 4",
+        ));
+    }
+
+    // Each 4-octet entry is a 1-octet TOS code followed by a 24-bit big-endian
+    // metric (RFC 2328 §A.4.4). The exact-multiple check above keeps every chunk
+    // full, so this cannot panic.
+    let entries = tos_region
+        .chunks_exact(OSPF_SUMMARY_LSA_TOS_LEN)
+        .map(|chunk| {
+            let tos = chunk[0];
+            let metric =
+                (u32::from(chunk[1]) << 16) | (u32::from(chunk[2]) << 8) | u32::from(chunk[3]);
+            OspfSummaryTos::new(tos, metric)
+        })
+        .collect();
+
+    Ok(OspfSummaryLsa::from_decoded_parts(network_mask, entries))
 }
 
 /// Parse the OSPFv2 Link State Acknowledgment body (RFC 2328 §A.3.6) from `body`
@@ -1419,6 +1485,170 @@ mod tests {
         match err {
             CrafterError::InvalidFieldValue { field, .. } => {
                 assert_eq!(field, "ospf.network_lsa.attached_routers");
+            }
+            other => panic!("expected invalid_field_value, got {other:?}"),
+        }
+    }
+
+    /// A Link State Update carrying a single type 3 Summary-LSA with a network
+    /// mask and two TOS/metric entries, once compiled, decodes (type 4) into a
+    /// typed [`OspfLsaBody::Summary`] body whose mask and entries equal the built
+    /// ones, and re-compiles byte-for-byte (RFC 2328 §A.3.5, §A.4.4).
+    #[test]
+    fn ospf_decode_link_state_update_summary_lsa_two_entries_round_trips() {
+        use crate::protocols::ospf::lsa::{
+            OspfLsa, OspfLsaBody, OspfLsaHeader, OspfSummaryLsa, OSPF_LSA_SUMMARY_IP,
+        };
+        use crate::protocols::ospf::OspfBody;
+        use crate::protocols::ospf::OSPF_TYPE_LINK_STATE_UPDATE;
+
+        // Summary-LSA: a /24 mask, the mandatory TOS 0 metric, plus a second
+        // TOS/metric entry. 0x0a0b0c exercises all three metric octets.
+        let summary = OspfSummaryLsa::new()
+            .network_mask(Ipv4Addr::new(255, 255, 255, 0))
+            .metric(10)
+            .tos_entry(2, 0x000a_0b0c);
+
+        let lsa = OspfLsa::new(
+            OspfLsaHeader::new()
+                .ls_type(OSPF_LSA_SUMMARY_IP)
+                .link_state_id(Ipv4Addr::new(198, 51, 100, 0))
+                .advertising_router(Ipv4Addr::new(192, 0, 2, 1))
+                .ls_sequence_number(0x8000_0001),
+            OspfLsaBody::Summary(summary),
+        );
+
+        let bytes = Packet::from_layer(
+            Ospfv2::link_state_update()
+                .router_id([192, 0, 2, 1])
+                .area_id([0, 0, 0, 0])
+                .with_link_state_update(|u| {
+                    *u = u.clone().lsa(lsa.clone());
+                }),
+        )
+        .compile()
+        .expect("a Link State Update with a Summary-LSA compiles");
+
+        let decoded = append_ospf_packet(Packet::new(), bytes.as_bytes())
+            .expect("the Link State Update decodes");
+        let ospf = decoded
+            .layer::<Ospfv2>()
+            .expect("the decoded packet exposes a typed Ospfv2 layer");
+        assert_eq!(ospf.packet_type_value(), OSPF_TYPE_LINK_STATE_UPDATE);
+
+        let lsu = match &ospf.body {
+            OspfBody::LinkStateUpdate(lsu) => lsu,
+            other => panic!("expected a typed Link State Update body, got {other:?}"),
+        };
+        let decoded_lsas = lsu.lsas_value();
+        assert_eq!(decoded_lsas.len(), 1);
+        assert_eq!(decoded_lsas[0].header.ls_type_value(), OSPF_LSA_SUMMARY_IP);
+
+        // The Summary-LSA body decoded into a typed `Summary` variant with the
+        // mask and both TOS/metric entries recovered, in order, including the
+        // 24-bit metric.
+        let summary = match &decoded_lsas[0].body {
+            OspfLsaBody::Summary(summary) => summary,
+            other => panic!("expected a typed Summary-LSA body, got {other:?}"),
+        };
+        assert_eq!(summary.network_mask_value(), Ipv4Addr::new(255, 255, 255, 0));
+        let entries = summary.entries_value();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].tos_value(), 0);
+        assert_eq!(entries[0].metric_value(), 10);
+        assert_eq!(entries[1].tos_value(), 2);
+        assert_eq!(entries[1].metric_value(), 0x000a_0b0c);
+
+        // The decoded Summary-LSA re-compiles byte-for-byte.
+        let recompiled = decoded
+            .compile()
+            .expect("decoded Link State Update re-compiles");
+        assert_eq!(recompiled.as_bytes(), bytes.as_bytes());
+    }
+
+    /// A Link State Update carrying a single type 4 Summary-LSA (AS boundary
+    /// router) with a zero network mask and a TOS 0 metric, once compiled,
+    /// decodes (type 4) into a typed [`OspfLsaBody::Summary`] body and re-compiles
+    /// byte-for-byte (RFC 2328 §A.3.5, §A.4.4).
+    #[test]
+    fn ospf_decode_link_state_update_summary_asbr_lsa_round_trips() {
+        use crate::protocols::ospf::lsa::{
+            OspfLsa, OspfLsaBody, OspfLsaHeader, OspfSummaryLsa, OSPF_LSA_SUMMARY_ASBR,
+        };
+        use crate::protocols::ospf::OspfBody;
+        use crate::protocols::ospf::OSPF_TYPE_LINK_STATE_UPDATE;
+
+        // A type 4 Summary-LSA: the Network Mask is not meaningful and is zero;
+        // the body carries the mandatory TOS 0 metric.
+        let summary = OspfSummaryLsa::new()
+            .network_mask(Ipv4Addr::UNSPECIFIED)
+            .metric(42);
+
+        let lsa = OspfLsa::new(
+            OspfLsaHeader::new()
+                .ls_type(OSPF_LSA_SUMMARY_ASBR)
+                .link_state_id(Ipv4Addr::new(192, 0, 2, 9))
+                .advertising_router(Ipv4Addr::new(192, 0, 2, 1))
+                .ls_sequence_number(0x8000_0001),
+            OspfLsaBody::Summary(summary),
+        );
+
+        let bytes = Packet::from_layer(
+            Ospfv2::link_state_update()
+                .router_id([192, 0, 2, 1])
+                .area_id([0, 0, 0, 0])
+                .with_link_state_update(|u| {
+                    *u = u.clone().lsa(lsa.clone());
+                }),
+        )
+        .compile()
+        .expect("a Link State Update with a type 4 Summary-LSA compiles");
+
+        let decoded = append_ospf_packet(Packet::new(), bytes.as_bytes())
+            .expect("the Link State Update decodes");
+        let ospf = decoded
+            .layer::<Ospfv2>()
+            .expect("the decoded packet exposes a typed Ospfv2 layer");
+        assert_eq!(ospf.packet_type_value(), OSPF_TYPE_LINK_STATE_UPDATE);
+
+        let lsu = match &ospf.body {
+            OspfBody::LinkStateUpdate(lsu) => lsu,
+            other => panic!("expected a typed Link State Update body, got {other:?}"),
+        };
+        let decoded_lsas = lsu.lsas_value();
+        assert_eq!(decoded_lsas.len(), 1);
+        assert_eq!(decoded_lsas[0].header.ls_type_value(), OSPF_LSA_SUMMARY_ASBR);
+
+        let summary = match &decoded_lsas[0].body {
+            OspfLsaBody::Summary(summary) => summary,
+            other => panic!("expected a typed Summary-LSA body, got {other:?}"),
+        };
+        assert_eq!(summary.network_mask_value(), Ipv4Addr::UNSPECIFIED);
+        let entries = summary.entries_value();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].tos_value(), 0);
+        assert_eq!(entries[0].metric_value(), 42);
+
+        let recompiled = decoded
+            .compile()
+            .expect("decoded Link State Update re-compiles");
+        assert_eq!(recompiled.as_bytes(), bytes.as_bytes());
+    }
+
+    /// A Summary-LSA body of 10 octets — the 4-octet network mask plus a 6-octet
+    /// TOS/metric region (not a multiple of 4, a trailing partial entry) — is a
+    /// structured invalid-field error (`"ospf.summary_lsa.entries"`), never a
+    /// panic (RFC 2328 §A.4.4).
+    #[test]
+    fn ospf_decode_summary_lsa_trailing_partial_entry_is_invalid_field() {
+        // 4 mask octets plus 6 trailing octets: one full 4-octet TOS/metric entry
+        // followed by a 2-octet partial second entry.
+        let body = [0u8; OSPF_SUMMARY_LSA_MASK_LEN + 6];
+        let err = decode_summary_lsa_body(&body)
+            .expect_err("a 6-octet TOS/metric region is not a multiple of 4");
+        match err {
+            CrafterError::InvalidFieldValue { field, .. } => {
+                assert_eq!(field, "ospf.summary_lsa.entries");
             }
             other => panic!("expected invalid_field_value, got {other:?}"),
         }
