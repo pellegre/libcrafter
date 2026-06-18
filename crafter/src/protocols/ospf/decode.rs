@@ -24,10 +24,12 @@ use crate::packet::Packet;
 
 use super::constants::{
     OSPF_AUTH_LEN, OSPF_AUTYPE_CRYPTOGRAPHIC, OSPF_HEADER_LEN, OSPF_TYPE_DATABASE_DESCRIPTION,
-    OSPF_TYPE_HELLO,
+    OSPF_TYPE_HELLO, OSPF_TYPE_LINK_STATE_REQUEST,
 };
 use super::lsa::decode_lsa_headers;
-use super::packet::{OspfDatabaseDescription, OspfHello};
+use super::packet::{
+    OspfDatabaseDescription, OspfHello, OspfLinkStateRequest, OspfLinkStateRequestEntry,
+};
 use super::{OspfBody, OspfChecksumStatus, Ospfv2};
 
 /// The fixed (pre-neighbor-list) length of the Hello body, in octets (RFC 2328
@@ -39,6 +41,10 @@ const OSPF_HELLO_FIXED_LEN: usize = 20;
 /// octets (RFC 2328 §A.3.3): Interface MTU(2) + Options(1) + flags(1) + DD
 /// sequence number(4).
 const OSPF_DD_FIXED_LEN: usize = 8;
+
+/// The on-wire length of a single Link State Request entry, in octets (RFC 2328
+/// §A.3.4): LS type(4) + Link State ID(4) + Advertising Router(4).
+const OSPF_LSR_ENTRY_LEN: usize = 12;
 
 /// Append a decoded OSPFv2 packet to an existing packet stack.
 ///
@@ -121,6 +127,9 @@ pub(crate) fn append_ospf_packet_with_checksum_validation(
         OSPF_TYPE_HELLO => OspfBody::Hello(decode_hello_body(body_bytes)?),
         OSPF_TYPE_DATABASE_DESCRIPTION => {
             OspfBody::DatabaseDescription(decode_database_description_body(body_bytes)?)
+        }
+        OSPF_TYPE_LINK_STATE_REQUEST => {
+            OspfBody::LinkStateRequest(decode_link_state_request_body(body_bytes)?)
         }
         other => OspfBody::Unknown {
             type_code: other,
@@ -272,6 +281,45 @@ fn decode_database_description_body(body: &[u8]) -> Result<OspfDatabaseDescripti
         dd_sequence_number,
         lsa_headers,
     ))
+}
+
+/// Parse the OSPFv2 Link State Request body (RFC 2328 §A.3.4) from `body` into
+/// an [`OspfLinkStateRequest`].
+///
+/// The Link State Request body is zero or more 12-octet entries — LS type(4),
+/// Link State ID(4), Advertising Router(4) — with no fixed prefix; an empty
+/// request list is legal. Unlike the 1-octet LS Type in the LSA header (RFC 2328
+/// §A.4.1), the request's LS type is a full 4-octet field.
+///
+/// A body whose length is not a multiple of 12 is a structured
+/// [`CrafterError::invalid_field_value`] (`"ospf.link_state_request.entries"`),
+/// never a panic. Every recovered field is marked user-set (through
+/// [`OspfLinkStateRequest::from_decoded_parts`]) so the decoded body re-compiles
+/// byte-for-byte.
+fn decode_link_state_request_body(body: &[u8]) -> Result<OspfLinkStateRequest> {
+    // The body is a concatenation of fixed 12-octet entries with no prefix. A
+    // remainder is a malformed request list, not a truncation.
+    if body.len() % OSPF_LSR_ENTRY_LEN != 0 {
+        return Err(CrafterError::invalid_field_value(
+            "ospf.link_state_request.entries",
+            "request list length must be a multiple of 12",
+        ));
+    }
+
+    // Each 12-octet chunk is LS type(4), Link State ID(4), Advertising Router(4),
+    // big-endian. The exact-multiple check above keeps every chunk full, so this
+    // cannot panic.
+    let entries = body
+        .chunks_exact(OSPF_LSR_ENTRY_LEN)
+        .map(|chunk| {
+            let ls_type = u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+            let link_state_id = Ipv4Addr::new(chunk[4], chunk[5], chunk[6], chunk[7]);
+            let advertising_router = Ipv4Addr::new(chunk[8], chunk[9], chunk[10], chunk[11]);
+            OspfLinkStateRequestEntry::new(ls_type, link_state_id, advertising_router)
+        })
+        .collect();
+
+    Ok(OspfLinkStateRequest::from_decoded_parts(entries))
 }
 
 #[cfg(test)]
@@ -535,6 +583,86 @@ mod tests {
                 assert_eq!(available, OSPF_DD_FIXED_LEN - 1);
             }
             other => panic!("expected buffer_too_short, got {other:?}"),
+        }
+    }
+
+    /// A Link State Request built with three entries, once compiled, decodes
+    /// (type 3) into a typed Link State Request body that exposes all three
+    /// request triples in order, and re-compiles byte-for-byte (RFC 2328
+    /// §A.3.4).
+    #[test]
+    fn ospf_decode_link_state_request_with_three_entries_round_trips() {
+        use crate::protocols::ospf::lsa::{OSPF_LSA_NETWORK, OSPF_LSA_ROUTER, OSPF_LSA_SUMMARY_IP};
+        use crate::protocols::ospf::OspfBody;
+        use crate::protocols::ospf::{OspfLinkStateRequestEntry, OSPF_TYPE_LINK_STATE_REQUEST};
+
+        let entries = [
+            OspfLinkStateRequestEntry::new(
+                u32::from(OSPF_LSA_ROUTER),
+                Ipv4Addr::new(192, 0, 2, 1),
+                Ipv4Addr::new(192, 0, 2, 1),
+            ),
+            OspfLinkStateRequestEntry::new(
+                u32::from(OSPF_LSA_NETWORK),
+                Ipv4Addr::new(192, 0, 2, 2),
+                Ipv4Addr::new(198, 51, 100, 7),
+            ),
+            OspfLinkStateRequestEntry::new(
+                u32::from(OSPF_LSA_SUMMARY_IP),
+                Ipv4Addr::new(198, 51, 100, 0),
+                Ipv4Addr::new(192, 0, 2, 3),
+            ),
+        ];
+
+        let bytes = Packet::from_layer(
+            Ospfv2::link_state_request()
+                .router_id([192, 0, 2, 1])
+                .area_id([0, 0, 0, 0])
+                .with_link_state_request(|r| {
+                    *r = r.clone().requests(entries.iter().cloned());
+                }),
+        )
+        .compile()
+        .expect("a Link State Request with three entries compiles");
+
+        let decoded = append_ospf_packet(Packet::new(), bytes.as_bytes())
+            .expect("the Link State Request decodes");
+        let ospf = decoded
+            .layer::<Ospfv2>()
+            .expect("the decoded packet exposes a typed Ospfv2 layer");
+        assert_eq!(ospf.packet_type_value(), OSPF_TYPE_LINK_STATE_REQUEST);
+
+        let lsr = match &ospf.body {
+            OspfBody::LinkStateRequest(lsr) => lsr,
+            other => panic!("expected a typed Link State Request body, got {other:?}"),
+        };
+
+        // All three request triples are exposed, in order.
+        let decoded_entries = lsr.entries_value();
+        assert_eq!(decoded_entries.len(), 3);
+        for (decoded_entry, expected) in decoded_entries.iter().zip(entries.iter()) {
+            assert_eq!(decoded_entry, expected);
+        }
+
+        let recompiled = decoded
+            .compile()
+            .expect("decoded Link State Request re-compiles");
+        assert_eq!(recompiled.as_bytes(), bytes.as_bytes());
+    }
+
+    /// A Link State Request body whose length is 10 trailing octets (not a
+    /// multiple of the 12-octet entry size) is a structured invalid-field error
+    /// (`"ospf.link_state_request.entries"`), never a panic (RFC 2328 §A.3.4).
+    #[test]
+    fn ospf_decode_link_state_request_misaligned_entries_is_invalid_field() {
+        // 10 trailing octets: not a multiple of the 12-octet entry size.
+        let err = decode_link_state_request_body(&[0u8; 10])
+            .expect_err("a 10-octet request body is not a multiple of 12");
+        match err {
+            CrafterError::InvalidFieldValue { field, .. } => {
+                assert_eq!(field, "ospf.link_state_request.entries");
+            }
+            other => panic!("expected invalid_field_value, got {other:?}"),
         }
     }
 }
