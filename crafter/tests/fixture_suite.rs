@@ -805,6 +805,15 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         summary_path: None,
     },
     ValidFixtureCase {
+        name: "ospf-network-lsa",
+        path: "bytes/ospf-network-lsa.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ospf-network-lsa.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Ospf],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
         name: "ethernet-ipv4-tcp-bgp-open",
         path: "bytes/ethernet-ipv4-tcp-bgp-open.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/ethernet-ipv4-tcp-bgp-open.hex")),
@@ -1973,7 +1982,8 @@ fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
         | "ospf-link-state-request"
         | "ospf-link-state-ack"
         | "ospf-link-state-update"
-        | "ospf-router-lsa" => &[CoverageFamily::Ipv4Ospf],
+        | "ospf-router-lsa"
+        | "ospf-network-lsa" => &[CoverageFamily::Ipv4Ospf],
         "ipv4-udp-options-known" | "ipv4-udp-options-unknown-safe" => {
             &[CoverageFamily::Ipv4UdpOptions]
         }
@@ -4529,6 +4539,54 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
                     "type=Stub, id=198.51.100.0, data=255.255.255.0, metric=20",
                 ]
             );
+        }
+        "ospf-network-lsa" => {
+            // OSPF rides directly on IPv4 protocol 89 (RFC 2328).
+            let ipv4 = expect_layer::<Ipv4>(case, packet);
+            assert_eq!(ipv4.protocol_value(), 89);
+            assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 1));
+            assert_eq!(ipv4.destination(), Ipv4Addr::new(224, 0, 0, 5));
+
+            // Common header: a version 2 Link State Update (type 4) from a
+            // documentation router id in the backbone area (0.0.0.0).
+            let ospf = expect_layer::<Ospfv2>(case, packet);
+            assert_eq!(ospf.version_value(), 2);
+            assert_eq!(ospf.packet_type_value(), 4); // Link State Update
+            assert_eq!(ospf.router_id_value(), Ipv4Addr::new(192, 0, 2, 1));
+            assert_eq!(ospf.area_id_value(), Ipv4Addr::new(0, 0, 0, 0));
+
+            // The Link State Update carries one Network-LSA (LS type 2, RFC 2328
+            // §A.4.3) for a transit network: the 4-octet network mask followed by
+            // two attached Router IDs (8 octets), a 12-octet body after the
+            // 20-octet header. The typed Network body is private, so it is
+            // surfaced through the public inspection surface:
+            // `num_lsas`/`lsa_count` report one LSA, the `lsa` entry renders the
+            // 20-octet header summary plus the 12-octet Network body, a
+            // `network_lsa` pair reports the mask and the attached-router count,
+            // and one `attached_router` pair per attached Router ID.
+            let fields = ospf.inspection_fields();
+            let value_of = |name: &str| {
+                fields
+                    .iter()
+                    .find(|(field, _)| *field == name)
+                    .map(|(_, value)| value.as_str())
+            };
+            assert_eq!(value_of("num_lsas"), Some("1"));
+            assert_eq!(value_of("lsa_count"), Some("1"));
+            assert_eq!(
+                value_of("lsa"),
+                Some(concat!(
+                    "LSA(type=Network, id=192.0.2.1, adv=192.0.2.1, ",
+                    "seq=0x80000001, age=0, len=32) body=12B",
+                ))
+            );
+            assert_eq!(value_of("network_lsa"), Some("mask=255.255.255.0 routers=2"));
+            let attached_routers: Vec<&str> = fields
+                .iter()
+                .filter(|(field, _)| *field == "attached_router")
+                .map(|(_, value)| value.as_str())
+                .collect();
+            assert_eq!(attached_routers, vec!["192.0.2.1", "198.51.100.7"]);
         }
         other => panic!("fixture {other} is missing typed field assertions"),
     }
