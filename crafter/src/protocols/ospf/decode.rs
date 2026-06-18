@@ -220,6 +220,29 @@ pub(crate) fn append_ospf_packet_with_checksum_validation(
         OspfChecksumStatus::NotChecked
     };
 
+    // Cryptographic authentication (AuType 2, RFC 2328 §D.3) appends a
+    // message-digest trailer after the OSPF packet, inside the IP payload but
+    // excluded from the OSPF Packet Length. So when the AuType is cryptographic
+    // and the declared Packet Length bounded the body (leaving trailing octets),
+    // those `available - packet_length` octets are the digest trailer. The
+    // structured 8-octet authentication field carries the trailer's length in its
+    // Auth Data Length octet (octet 3); the trailer is captured only when at least
+    // that many octets remain, so a short or malformed length never claims bytes
+    // it cannot back. The trailer is preserved verbatim so the packet re-compiles
+    // byte-for-byte even though the decoder holds no secret key (`crypto_auth` is
+    // therefore `None`). Non-cryptographic packets carry no trailer.
+    let auth_trailer = if autype == OSPF_AUTYPE_CRYPTOGRAPHIC && body_end < bytes.len() {
+        let trailing = &bytes[body_end..];
+        let auth_data_len = usize::from(authentication[3]);
+        if trailing.len() >= auth_data_len {
+            trailing.to_vec()
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
     let ospf = Ospfv2 {
         version: Field::user(version),
         packet_type: Field::user(packet_type),
@@ -231,9 +254,10 @@ pub(crate) fn append_ospf_packet_with_checksum_validation(
         authentication: Field::user(authentication),
         checksum_status,
         // Decoded packets carry no recorded secret key: a cryptographic-auth
-        // packet's appended digest trailer is preserved within the decoded body
-        // bytes, so `compile()` reproduces them without re-deriving a digest.
+        // packet's appended digest trailer is captured verbatim in `auth_trailer`,
+        // so `compile()` reproduces it without re-deriving a digest.
         crypto_auth: None,
+        auth_trailer,
         body,
     };
 
