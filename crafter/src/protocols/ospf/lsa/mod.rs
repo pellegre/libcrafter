@@ -39,6 +39,7 @@ use crate::{CrafterError, Result};
 
 pub mod network;
 pub mod router;
+pub mod summary;
 
 pub use network::OspfNetworkLsa;
 pub use router::{
@@ -47,6 +48,7 @@ pub use router::{
     OSPF_ROUTER_LINK_VIRTUAL, OSPF_ROUTER_LSA_FLAG_B, OSPF_ROUTER_LSA_FLAG_E,
     OSPF_ROUTER_LSA_FLAG_V,
 };
+pub use summary::{OspfSummaryLsa, OspfSummaryTos};
 
 // ---------------------------------------------------------------------------
 // LSA types (RFC 2328 §A.4.1, RFC 3101 §2.4, RFC 5250 §3)
@@ -434,11 +436,15 @@ pub enum OspfLsaBody {
     /// A Network-LSA body (LS type 2), the network mask plus the Router IDs of
     /// each router attached to a transit network (RFC 2328 §A.4.3).
     Network(OspfNetworkLsa),
+    /// A Summary-LSA body (LS type 3 for an IP network or LS type 4 for an AS
+    /// boundary router), the network mask plus one or more TOS/metric entries
+    /// (RFC 2328 §A.4.4). Both LS types share this identical body layout.
+    Summary(OspfSummaryLsa),
     /// An LSA body the container does not (yet) model, preserved verbatim. The
     /// bytes are everything after the 20-octet LSA header.
     Raw(Vec<u8>),
-    // The remaining typed LSA bodies (Summary, AS-External, NSSA, Opaque) arrive
-    // in later steps.
+    // The remaining typed LSA bodies (AS-External, NSSA, Opaque) arrive in later
+    // steps.
 }
 
 impl OspfLsaBody {
@@ -448,6 +454,7 @@ impl OspfLsaBody {
         match self {
             OspfLsaBody::Router(router) => router.encoded_len(),
             OspfLsaBody::Network(network) => network.encoded_len(),
+            OspfLsaBody::Summary(summary) => summary.encoded_len(),
             OspfLsaBody::Raw(body) => body.len(),
         }
     }
@@ -459,6 +466,7 @@ impl OspfLsaBody {
         match self {
             OspfLsaBody::Router(router) => router.encode(out),
             OspfLsaBody::Network(network) => network.encode(out),
+            OspfLsaBody::Summary(summary) => summary.encode(out),
             OspfLsaBody::Raw(body) => out.extend_from_slice(body),
         }
     }
