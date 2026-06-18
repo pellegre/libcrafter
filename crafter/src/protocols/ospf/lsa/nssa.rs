@@ -94,7 +94,6 @@ impl OspfNssaLsa {
     /// byte-for-byte (RFC 3101 §2.2, RFC 2328 §A.4.5).
     ///
     /// Used by the NSSA-LSA decode arm.
-    #[allow(dead_code)]
     pub(crate) fn from_decoded_parts(
         network_mask: Ipv4Addr,
         entries: Vec<OspfExternalTos>,
@@ -290,5 +289,154 @@ mod tests {
             fletcher16_valid(lsa_bytes),
             "auto-filled Fletcher checksum should validate over the NSSA-LSA"
         );
+    }
+
+    /// An NSSA-LSA built with the P-bit set in the enclosing LSA header Options
+    /// field and one external metric entry, wrapped in a Link State Update,
+    /// round-trips byte-for-byte through a full build/compile/decode cycle: the
+    /// decoded LSA decodes (LS type 7) to a typed NSSA-LSA body whose mask and
+    /// entry match the built ones, the decoded LSA header Options expose the
+    /// P-bit ([`OSPF_OPTIONS_NP`], RFC 3101 §2.5), and the decoded Link State
+    /// Update re-compiles to the original bytes (RFC 3101 §2.2).
+    #[test]
+    fn ospf_nssa_lsa_with_p_bit_decodes_and_round_trips_byte_for_byte() {
+        use crate::protocols::ospf::decode::append_ospf_packet;
+        use crate::protocols::ospf::{OspfBody, Ospfv2};
+        use crate::Packet;
+
+        // A single-entry NSSA-LSA body with the default TOS 0 entry replaced by
+        // an E2 metric.
+        let nssa = OspfNssaLsa::new()
+            .network_mask(Ipv4Addr::new(255, 255, 255, 0))
+            .metric(0x000a_0b0c, true);
+
+        // Wrap it in an OspfLsa (LS type 7) with the P-bit set in the header
+        // Options field, then a Link State Update.
+        let lsa = OspfLsa::new(
+            OspfLsaHeader::new()
+                .ls_type(OSPF_LSA_NSSA)
+                .options(OSPF_OPTIONS_NP)
+                .link_state_id(Ipv4Addr::new(198, 51, 100, 0))
+                .advertising_router(Ipv4Addr::new(192, 0, 2, 1))
+                .ls_sequence_number(0x8000_0001),
+            OspfLsaBody::Nssa(nssa),
+        );
+
+        let bytes = Packet::from_layer(
+            Ospfv2::link_state_update()
+                .router_id([192, 0, 2, 1])
+                .area_id([0, 0, 0, 0])
+                .with_link_state_update(|u| {
+                    *u = u.clone().lsa(lsa.clone());
+                }),
+        )
+        .compile()
+        .expect("a Link State Update with a P-bit NSSA-LSA compiles");
+
+        let decoded = append_ospf_packet(Packet::new(), bytes.as_bytes())
+            .expect("the Link State Update decodes");
+        let ospf = decoded
+            .layer::<Ospfv2>()
+            .expect("the decoded packet exposes a typed Ospfv2 layer");
+
+        let lsu = match &ospf.body {
+            OspfBody::LinkStateUpdate(lsu) => lsu,
+            other => panic!("expected a typed Link State Update body, got {other:?}"),
+        };
+        let decoded_lsas = lsu.lsas_value();
+        assert_eq!(decoded_lsas.len(), 1);
+
+        // The LSA decoded (LS type 7) to a typed NSSA-LSA body.
+        assert_eq!(decoded_lsas[0].header.ls_type_value(), OSPF_LSA_NSSA);
+        let decoded_nssa = match &decoded_lsas[0].body {
+            OspfLsaBody::Nssa(nssa) => nssa,
+            other => panic!("expected a typed NSSA-LSA body, got {other:?}"),
+        };
+
+        // The decoded LSA header Options expose the P-bit (RFC 3101 §2.5).
+        let options = decoded_lsas[0].header.options_value();
+        assert_eq!(options & OSPF_OPTIONS_NP, OSPF_OPTIONS_NP);
+
+        // The decoded NSSA-LSA body matches the built one.
+        assert_eq!(
+            decoded_nssa.network_mask_value(),
+            Ipv4Addr::new(255, 255, 255, 0)
+        );
+        assert_eq!(decoded_nssa.entries_value().len(), 1);
+        let entry = &decoded_nssa.entries_value()[0];
+        assert!(entry.e_bit_value());
+        assert_eq!(entry.tos_value(), 0);
+        assert_eq!(entry.metric_value(), 0x000a_0b0c);
+
+        // The decoded Link State Update re-compiles byte-for-byte.
+        let recompiled = decoded
+            .compile()
+            .expect("decoded Link State Update re-compiles");
+        assert_eq!(recompiled.as_bytes(), bytes.as_bytes());
+    }
+
+    /// An NSSA-LSA body whose external metric region carries a trailing partial
+    /// entry (a length that is not a multiple of 12 after the 4-octet network
+    /// mask) is a structured invalid-field error (`"ospf.nssa_lsa.entries"`),
+    /// never a panic (RFC 3101 §2.2, RFC 2328 §A.4.5).
+    #[test]
+    fn ospf_nssa_lsa_trailing_partial_entry_is_invalid_field() {
+        use crate::error::CrafterError;
+        use crate::protocols::ospf::decode::append_ospf_packet;
+        use crate::protocols::ospf::Ospfv2;
+        use crate::Packet;
+
+        // Hand-build a malformed NSSA-LSA body: the 4-octet network mask plus an
+        // 8-octet partial external metric entry. The entry region (8 octets) is
+        // not a multiple of the 12-octet entry stride, so the NSSA-LSA decoder
+        // must reject it as a trailing partial entry rather than panic. The body
+        // is carried verbatim as `OspfLsaBody::Raw` and the enclosing LSA
+        // `length` is pinned to cover the 20-octet header plus this 12-octet
+        // body, so the LSU decoder slices out exactly `raw_body` and dispatches
+        // it (by LS type 7) to the NSSA-LSA decoder.
+        let raw_body = vec![
+            // Network Mask 255.255.255.0
+            255, 255, 255, 0, //
+            // partial external metric entry: 8 octets (a full entry needs 12).
+            // E bit set | TOS 0, then a 24-bit metric and four trailing octets.
+            0x80, 0x0a, 0x0b, 0x0c, 0, 0, 0, 0,
+        ];
+        assert_eq!(raw_body.len(), 12);
+
+        // The header declares LS type 7 (NSSA) with an explicit length covering
+        // the 20-octet header plus the 12-octet raw body, so the LSU decoder
+        // slices out exactly `raw_body` and dispatches it to the NSSA decoder.
+        let lsa = OspfLsa::new(
+            OspfLsaHeader::new()
+                .ls_type(OSPF_LSA_NSSA)
+                .link_state_id(Ipv4Addr::new(198, 51, 100, 0))
+                .advertising_router(Ipv4Addr::new(192, 0, 2, 1))
+                .ls_sequence_number(0x8000_0001)
+                .length((OSPF_LSA_HEADER_LEN + raw_body.len()) as u16),
+            OspfLsaBody::Raw(raw_body),
+        );
+
+        let bytes = Packet::from_layer(
+            Ospfv2::link_state_update()
+                .router_id([192, 0, 2, 1])
+                .area_id([0, 0, 0, 0])
+                .with_link_state_update(|u| {
+                    *u = u.clone().lsa(lsa.clone());
+                }),
+        )
+        .compile()
+        .expect("a Link State Update with a malformed NSSA-LSA body compiles");
+
+        // The build path preserves the raw body verbatim, but the decode path
+        // dispatches LS type 7 to the NSSA decoder, which rejects the trailing
+        // partial entry with a structured invalid-field error.
+        let err = append_ospf_packet(Packet::new(), bytes.as_bytes())
+            .expect_err("a trailing partial NSSA-LSA entry must error");
+        match err {
+            CrafterError::InvalidFieldValue { field, .. } => {
+                assert_eq!(field, "ospf.nssa_lsa.entries");
+            }
+            other => panic!("expected invalid_field_value, got {other:?}"),
+        }
     }
 }

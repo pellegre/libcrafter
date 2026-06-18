@@ -1103,6 +1103,37 @@ impl Layer for Ospfv2 {
                         ));
                     }
                 }
+                // A typed NSSA-LSA body (RFC 3101 §2.2, LS type 7) adds an
+                // `nssa_lsa` pair (the P-bit translation flag read from the
+                // enclosing LSA header Options field, plus the network mask and a
+                // summary of the mandatory TOS 0 entry) followed by one `nssa_tos`
+                // pair per external metric entry (the E bit / external metric
+                // type, 24-bit metric, forwarding address, and external route
+                // tag). The NSSA body shares the AS-External-LSA layout; the P-bit
+                // lives on the LSA header, not in the body, so it is read from the
+                // header Options octet here. Other LSA body variants contribute
+                // only the `lsa` header summary above.
+                if let crate::protocols::ospf::lsa::OspfLsaBody::Nssa(nssa) = &lsa.body {
+                    let p_bit = lsa.header.options_value()
+                        & crate::protocols::ospf::lsa::OSPF_OPTIONS_NP
+                        != 0;
+                    fields.push((
+                        "nssa_lsa",
+                        format!("P={} {}", if p_bit { "set" } else { "clear" }, nssa.summary()),
+                    ));
+                    for entry in nssa.entries_value() {
+                        fields.push((
+                            "nssa_tos",
+                            format!(
+                                "type={} metric={} fwd={} tag=0x{:08x}",
+                                if entry.e_bit_value() { "E2" } else { "E1" },
+                                entry.metric_value(),
+                                entry.forwarding_address_value(),
+                                entry.external_route_tag_value()
+                            ),
+                        ));
+                    }
+                }
             }
         }
 
