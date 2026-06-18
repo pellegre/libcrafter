@@ -71,7 +71,6 @@ impl OspfNetworkLsa {
     /// Construct a Network-LSA body from decoded wire fields, marking the network
     /// mask as caller-supplied so re-compilation preserves the decoded values
     /// byte-for-byte (RFC 2328 §A.4.3).
-    #[allow(dead_code)]
     pub(crate) fn from_decoded_parts(
         network_mask: Ipv4Addr,
         attached_routers: Vec<Ipv4Addr>,
