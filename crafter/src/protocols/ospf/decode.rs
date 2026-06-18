@@ -25,11 +25,12 @@ use crate::packet::Packet;
 use super::constants::{
     OSPF_AUTH_LEN, OSPF_AUTYPE_CRYPTOGRAPHIC, OSPF_HEADER_LEN, OSPF_TYPE_DATABASE_DESCRIPTION,
     OSPF_TYPE_HELLO, OSPF_TYPE_LINK_STATE_ACK, OSPF_TYPE_LINK_STATE_REQUEST,
+    OSPF_TYPE_LINK_STATE_UPDATE,
 };
-use super::lsa::decode_lsa_headers;
+use super::lsa::{decode_lsa_headers, OspfLsa, OspfLsaBody, OspfLsaHeader, OSPF_LSA_HEADER_LEN};
 use super::packet::{
     OspfDatabaseDescription, OspfHello, OspfLinkStateAck, OspfLinkStateRequest,
-    OspfLinkStateRequestEntry,
+    OspfLinkStateRequestEntry, OspfLinkStateUpdate,
 };
 use super::{OspfBody, OspfChecksumStatus, Ospfv2};
 
@@ -46,6 +47,10 @@ const OSPF_DD_FIXED_LEN: usize = 8;
 /// The on-wire length of a single Link State Request entry, in octets (RFC 2328
 /// §A.3.4): LS type(4) + Link State ID(4) + Advertising Router(4).
 const OSPF_LSR_ENTRY_LEN: usize = 12;
+
+/// The on-wire length of the Link State Update `# LSAs` count field, in octets
+/// (RFC 2328 §A.3.5).
+const OSPF_LSU_COUNT_LEN: usize = 4;
 
 /// Append a decoded OSPFv2 packet to an existing packet stack.
 ///
@@ -131,6 +136,9 @@ pub(crate) fn append_ospf_packet_with_checksum_validation(
         }
         OSPF_TYPE_LINK_STATE_REQUEST => {
             OspfBody::LinkStateRequest(decode_link_state_request_body(body_bytes)?)
+        }
+        OSPF_TYPE_LINK_STATE_UPDATE => {
+            OspfBody::LinkStateUpdate(decode_link_state_update_body(body_bytes)?)
         }
         OSPF_TYPE_LINK_STATE_ACK => {
             OspfBody::LinkStateAck(decode_link_state_ack_body(body_bytes)?)
@@ -324,6 +332,77 @@ fn decode_link_state_request_body(body: &[u8]) -> Result<OspfLinkStateRequest> {
         .collect();
 
     Ok(OspfLinkStateRequest::from_decoded_parts(entries))
+}
+
+/// Parse the OSPFv2 Link State Update body (RFC 2328 §A.3.5) from `body` into an
+/// [`OspfLinkStateUpdate`].
+///
+/// The Link State Update body is a 4-octet `# LSAs` count followed by that many
+/// complete LSAs. Each LSA is a 20-octet header (RFC 2328 §A.4.1, decoded by
+/// [`OspfLsaHeader::decode`]) plus a body of `length - 20` octets, where
+/// `length` is the LSA header's declared length field. Unknown LSA types are
+/// preserved verbatim as [`OspfLsaBody::Raw`] (mirroring the BGP decoder's
+/// unknown-attribute preservation in `crate::protocols::bgp::decode`) so the
+/// update round-trips byte-for-byte; typed LSA bodies arrive in later steps.
+///
+/// A buffer shorter than the 4-octet count is a structured truncation error
+/// (context `"ospf link state update"`). A declared LSA `length` below the
+/// 20-octet header minimum is a structured
+/// [`CrafterError::invalid_field_value`] (`"ospf.lsa.length"`); a `length`
+/// beyond the remaining bytes is a structured truncation error (context
+/// `"ospf lsa"`). The loop stops once the byte slice is exhausted (or the
+/// declared count is reached), so every body octet is consumed into an LSA and
+/// no trailing bytes are dropped. The on-wire `# LSAs` count is recovered and
+/// marked user-set (through [`OspfLinkStateUpdate::from_decoded_parts`]) so the
+/// update re-compiles byte-for-byte even when the declared count disagrees with
+/// the number of parsed LSAs.
+fn decode_link_state_update_body(body: &[u8]) -> Result<OspfLinkStateUpdate> {
+    if body.len() < OSPF_LSU_COUNT_LEN {
+        return Err(CrafterError::buffer_too_short(
+            "ospf link state update",
+            OSPF_LSU_COUNT_LEN,
+            body.len(),
+        ));
+    }
+
+    // The `# LSAs` count (octets 0..4). The length check above keeps this slice
+    // in bounds, so it cannot panic.
+    let num_lsas = u32::from_be_bytes([body[0], body[1], body[2], body[3]]);
+
+    // The LSAs follow the count. Parse one LSA per iteration, advancing by each
+    // LSA's declared `length` field, until the slice is exhausted or the declared
+    // count is reached. Each LSA's body is preserved verbatim as `OspfLsaBody::Raw`
+    // (later steps dispatch typed LSA bodies).
+    let mut rest = &body[OSPF_LSU_COUNT_LEN..];
+    let mut lsas = Vec::with_capacity(num_lsas as usize);
+    let mut parsed: u64 = 0;
+    while !rest.is_empty() && parsed < u64::from(num_lsas) {
+        // Decode the 20-octet header and read its declared LSA length, which
+        // spans the header plus the body.
+        let (header, length) = OspfLsaHeader::decode(rest)?;
+
+        // The declared length must cover at least the 20-octet header and must
+        // not run past the bytes that remain.
+        if length < OSPF_LSA_HEADER_LEN {
+            return Err(CrafterError::invalid_field_value(
+                "ospf.lsa.length",
+                "LSA length is below the 20-octet header minimum",
+            ));
+        }
+        if length > rest.len() {
+            return Err(CrafterError::buffer_too_short("ospf lsa", length, rest.len()));
+        }
+
+        // The LSA body is the `length - 20` octets after the header, preserved
+        // verbatim so an unknown LSA type round-trips byte-for-byte.
+        let lsa_body = rest[OSPF_LSA_HEADER_LEN..length].to_vec();
+        lsas.push(OspfLsa::new(header, OspfLsaBody::Raw(lsa_body)));
+
+        rest = &rest[length..];
+        parsed += 1;
+    }
+
+    Ok(OspfLinkStateUpdate::from_decoded_parts(num_lsas, lsas))
 }
 
 /// Parse the OSPFv2 Link State Acknowledgment body (RFC 2328 §A.3.6) from `body`
@@ -785,6 +864,136 @@ mod tests {
                 assert_eq!(context, "ospf lsa header");
                 assert_eq!(required, OSPF_LSA_HEADER_LEN);
                 assert_eq!(available, 10);
+            }
+            other => panic!("expected buffer_too_short, got {other:?}"),
+        }
+    }
+
+    /// A Link State Update built with two raw-body LSAs, once compiled, decodes
+    /// (type 4) into a typed Link State Update body that exposes both LSAs with
+    /// their raw bodies, and re-compiles byte-for-byte (RFC 2328 §A.3.5).
+    #[test]
+    fn ospf_decode_link_state_update_with_two_raw_lsas_round_trips() {
+        use crate::protocols::ospf::lsa::{
+            OspfLsa, OspfLsaBody, OspfLsaHeader, OSPF_LSA_NETWORK, OSPF_LSA_ROUTER,
+        };
+        use crate::protocols::ospf::OspfBody;
+        use crate::protocols::ospf::OSPF_TYPE_LINK_STATE_UPDATE;
+
+        let first_body = [0xde, 0xad, 0xbe, 0xef, 0x01, 0x02];
+        let second_body = [0x00, 0x11, 0x22, 0x33];
+
+        let lsas = [
+            OspfLsa::new(
+                OspfLsaHeader::new()
+                    .ls_type(OSPF_LSA_ROUTER)
+                    .link_state_id(Ipv4Addr::new(192, 0, 2, 1))
+                    .advertising_router(Ipv4Addr::new(192, 0, 2, 1))
+                    .ls_sequence_number(0x8000_0001),
+                OspfLsaBody::Raw(first_body.to_vec()),
+            ),
+            OspfLsa::new(
+                OspfLsaHeader::new()
+                    .ls_type(OSPF_LSA_NETWORK)
+                    .link_state_id(Ipv4Addr::new(192, 0, 2, 2))
+                    .advertising_router(Ipv4Addr::new(198, 51, 100, 7))
+                    .ls_sequence_number(0x8000_0002),
+                OspfLsaBody::Raw(second_body.to_vec()),
+            ),
+        ];
+
+        let bytes = Packet::from_layer(
+            Ospfv2::link_state_update()
+                .router_id([192, 0, 2, 1])
+                .area_id([0, 0, 0, 0])
+                .with_link_state_update(|u| {
+                    *u = u.clone().lsas(lsas.iter().cloned());
+                }),
+        )
+        .compile()
+        .expect("a Link State Update with two raw LSAs compiles");
+
+        let decoded = append_ospf_packet(Packet::new(), bytes.as_bytes())
+            .expect("the Link State Update decodes");
+        let ospf = decoded
+            .layer::<Ospfv2>()
+            .expect("the decoded packet exposes a typed Ospfv2 layer");
+        assert_eq!(ospf.packet_type_value(), OSPF_TYPE_LINK_STATE_UPDATE);
+
+        let lsu = match &ospf.body {
+            OspfBody::LinkStateUpdate(lsu) => lsu,
+            other => panic!("expected a typed Link State Update body, got {other:?}"),
+        };
+
+        // The on-wire count and both LSAs are recovered, in order.
+        assert_eq!(lsu.num_lsas_value(), 2);
+        let decoded_lsas = lsu.lsas_value();
+        assert_eq!(decoded_lsas.len(), 2);
+        assert_eq!(decoded_lsas[0].header.ls_type_value(), OSPF_LSA_ROUTER);
+        assert_eq!(decoded_lsas[1].header.ls_type_value(), OSPF_LSA_NETWORK);
+        match &decoded_lsas[0].body {
+            OspfLsaBody::Raw(raw) => assert_eq!(raw.as_slice(), first_body.as_slice()),
+        }
+        match &decoded_lsas[1].body {
+            OspfLsaBody::Raw(raw) => assert_eq!(raw.as_slice(), second_body.as_slice()),
+        }
+
+        let recompiled = decoded
+            .compile()
+            .expect("decoded Link State Update re-compiles");
+        assert_eq!(recompiled.as_bytes(), bytes.as_bytes());
+    }
+
+    /// A Link State Update whose single LSA declares a `length` of 10 (below the
+    /// 20-octet header minimum) is a structured invalid-field error
+    /// (`"ospf.lsa.length"`), never a panic (RFC 2328 §A.3.5, §A.4.1).
+    #[test]
+    fn ospf_decode_link_state_update_lsa_length_below_minimum_is_invalid_field() {
+        // 4-octet count (1 LSA) followed by a 20-octet header whose declared
+        // length field (octets 18..20 of the header) is 10.
+        let mut body = Vec::new();
+        body.extend_from_slice(&1u32.to_be_bytes());
+        body.extend_from_slice(&[0u8; OSPF_LSA_HEADER_LEN]);
+        // The declared length sits at octets 18..20 of the LSA header, i.e.
+        // octets 22..24 of the body (after the 4-octet count).
+        let length_offset = OSPF_LSU_COUNT_LEN + (OSPF_LSA_HEADER_LEN - 2);
+        body[length_offset..length_offset + 2].copy_from_slice(&10u16.to_be_bytes());
+
+        let err = decode_link_state_update_body(&body)
+            .expect_err("an LSA length of 10 is below the 20-octet header minimum");
+        match err {
+            CrafterError::InvalidFieldValue { field, .. } => {
+                assert_eq!(field, "ospf.lsa.length");
+            }
+            other => panic!("expected invalid_field_value, got {other:?}"),
+        }
+    }
+
+    /// A Link State Update whose single LSA declares a `length` larger than the
+    /// bytes that remain is a structured truncation error (context
+    /// `"ospf lsa"`), never a panic (RFC 2328 §A.3.5, §A.4.1).
+    #[test]
+    fn ospf_decode_link_state_update_lsa_length_beyond_buffer_is_truncation_error() {
+        // 4-octet count (1 LSA) followed by exactly one 20-octet header (no
+        // body) whose declared length field claims a 40-octet LSA. Only 20 LSA
+        // octets remain, so the declared length runs past the buffer.
+        let mut body = Vec::new();
+        body.extend_from_slice(&1u32.to_be_bytes());
+        body.extend_from_slice(&[0u8; OSPF_LSA_HEADER_LEN]);
+        let length_offset = OSPF_LSU_COUNT_LEN + (OSPF_LSA_HEADER_LEN - 2);
+        body[length_offset..length_offset + 2].copy_from_slice(&40u16.to_be_bytes());
+
+        let err = decode_link_state_update_body(&body)
+            .expect_err("a declared LSA length of 40 exceeds the 20 remaining octets");
+        match err {
+            CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            } => {
+                assert_eq!(context, "ospf lsa");
+                assert_eq!(required, 40);
+                assert_eq!(available, OSPF_LSA_HEADER_LEN);
             }
             other => panic!("expected buffer_too_short, got {other:?}"),
         }
