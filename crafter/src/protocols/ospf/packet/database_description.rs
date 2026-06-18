@@ -34,6 +34,7 @@
 //! pinned while filling sensible RFC defaults for the rest.
 
 use crate::field::Field;
+use crate::protocols::ospf::constants::{OSPF_OPTIONS_E, OSPF_OPTIONS_O};
 use crate::protocols::ospf::lsa::{encode_lsa_headers, OspfLsaHeader};
 
 /// The fixed (pre-LSA-header-list) length of the Database Description body, in
@@ -116,6 +117,35 @@ impl OspfDatabaseDescription {
     pub fn options(mut self, options: u8) -> Self {
         self.options.set_user(options);
         self
+    }
+
+    /// Toggle the E-bit ([`OSPF_OPTIONS_E`](crate::protocols::ospf::OSPF_OPTIONS_E),
+    /// 0x02) in the Options field (RFC 2328 §A.2): when set the router accepts
+    /// and forwards AS-External-LSAs. Leaves the other Options bits untouched.
+    pub fn external_capable(mut self, external_capable: bool) -> Self {
+        self.set_options_bit(OSPF_OPTIONS_E, external_capable);
+        self
+    }
+
+    /// Toggle the O-bit ([`OSPF_OPTIONS_O`](crate::protocols::ospf::OSPF_OPTIONS_O),
+    /// 0x40) in the Options field (RFC 5250 §2.1): when set the router is
+    /// opaque-LSA capable. The O-bit is advertised in Database Description
+    /// packets. Leaves the other Options bits untouched.
+    pub fn opaque_capable(mut self, opaque_capable: bool) -> Self {
+        self.set_options_bit(OSPF_OPTIONS_O, opaque_capable);
+        self
+    }
+
+    /// Set or clear a single Options bit, marking the Options field as
+    /// caller-supplied while preserving the other bits.
+    fn set_options_bit(&mut self, bit: u8, set: bool) {
+        let mut options = self.options_value();
+        if set {
+            options |= bit;
+        } else {
+            options &= !bit;
+        }
+        self.options.set_user(options);
     }
 
     /// Set the whole flags octet (RFC 2328 §A.3.3).
