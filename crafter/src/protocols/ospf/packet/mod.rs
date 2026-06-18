@@ -8,14 +8,17 @@
 //! provides `encoded_len()`/`encode()` that the layer's `compile()` routes to.
 //!
 //! This block adds the Hello body ([`OspfHello`], RFC 2328 §A.3.2), the
-//! Database Description body ([`OspfDatabaseDescription`], RFC 2328 §A.3.3), and
-//! the Link State Request body ([`OspfLinkStateRequest`], RFC 2328 §A.3.4); the
+//! Database Description body ([`OspfDatabaseDescription`], RFC 2328 §A.3.3), the
+//! Link State Request body ([`OspfLinkStateRequest`], RFC 2328 §A.3.4), and the
+//! Link State Acknowledgment body ([`OspfLinkStateAck`], RFC 2328 §A.3.6); the
 //! other bodies are added by subsequent steps.
 
 pub mod database_description;
 pub mod hello;
+pub mod link_state_ack;
 pub mod link_state_request;
 
 pub use database_description::OspfDatabaseDescription;
 pub use hello::OspfHello;
+pub use link_state_ack::OspfLinkStateAck;
 pub use link_state_request::{OspfLinkStateRequest, OspfLinkStateRequestEntry};
