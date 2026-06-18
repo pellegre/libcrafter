@@ -58,7 +58,13 @@ use super::external::{OspfAsExternalLsa, OspfExternalTos};
 /// This bit lives on the LSA header's Options octet, not in the NSSA-LSA body,
 /// so it is set via
 /// [`OspfLsaHeader::options`](crate::protocols::ospf::lsa::OspfLsaHeader::options).
-pub const OSPF_OPTIONS_NP: u8 = 0x08;
+///
+/// The canonical definition lives in the OSPF
+/// [`constants`](crate::protocols::ospf::constants) module alongside the rest of
+/// the OSPFv2 Options bits; it is re-exported here (and through
+/// [`lsa`](crate::protocols::ospf::lsa)) so existing callers keep resolving to a
+/// single definition.
+pub use crate::protocols::ospf::constants::OSPF_OPTIONS_NP;
 
 /// OSPFv2 NSSA-LSA body (RFC 3101 §2.2).
 ///
