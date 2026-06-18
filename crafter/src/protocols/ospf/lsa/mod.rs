@@ -39,11 +39,13 @@ use crate::{CrafterError, Result};
 
 pub mod external;
 pub mod network;
+pub mod nssa;
 pub mod router;
 pub mod summary;
 
 pub use external::{OspfAsExternalLsa, OspfExternalTos, OSPF_AS_EXTERNAL_FLAG_E};
 pub use network::OspfNetworkLsa;
+pub use nssa::{OspfNssaLsa, OSPF_OPTIONS_NP};
 pub use router::{
     ospf_router_link_type_name, OspfRouterLink, OspfRouterLinkTos, OspfRouterLsa,
     OSPF_ROUTER_LINK_POINT_TO_POINT, OSPF_ROUTER_LINK_STUB, OSPF_ROUTER_LINK_TRANSIT,
@@ -445,10 +447,16 @@ pub enum OspfLsaBody {
     /// An AS-External-LSA body (LS type 5), the network mask of an external
     /// destination plus one or more external metric entries (RFC 2328 §A.4.5).
     AsExternal(OspfAsExternalLsa),
+    /// An NSSA-LSA body (LS type 7), the network mask of an external destination
+    /// plus one or more external metric entries, originated within a
+    /// not-so-stubby area (RFC 3101 §2.2). Shares the AS-External-LSA body
+    /// layout; the P-bit lives on the LSA header Options field
+    /// ([`OSPF_OPTIONS_NP`](nssa::OSPF_OPTIONS_NP)).
+    Nssa(OspfNssaLsa),
     /// An LSA body the container does not (yet) model, preserved verbatim. The
     /// bytes are everything after the 20-octet LSA header.
     Raw(Vec<u8>),
-    // The remaining typed LSA bodies (NSSA, Opaque) arrive in later steps.
+    // The remaining typed LSA bodies (Opaque) arrive in later steps.
 }
 
 impl OspfLsaBody {
@@ -460,6 +468,7 @@ impl OspfLsaBody {
             OspfLsaBody::Network(network) => network.encoded_len(),
             OspfLsaBody::Summary(summary) => summary.encoded_len(),
             OspfLsaBody::AsExternal(external) => external.encoded_len(),
+            OspfLsaBody::Nssa(nssa) => nssa.encoded_len(),
             OspfLsaBody::Raw(body) => body.len(),
         }
     }
@@ -473,6 +482,7 @@ impl OspfLsaBody {
             OspfLsaBody::Network(network) => network.encode(out),
             OspfLsaBody::Summary(summary) => summary.encode(out),
             OspfLsaBody::AsExternal(external) => external.encode(out),
+            OspfLsaBody::Nssa(nssa) => nssa.encode(out),
             OspfLsaBody::Raw(body) => out.extend_from_slice(body),
         }
     }
