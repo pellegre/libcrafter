@@ -778,6 +778,15 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         summary_path: None,
     },
     ValidFixtureCase {
+        name: "ospf-link-state-ack",
+        path: "bytes/ospf-link-state-ack.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ospf-link-state-ack.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Ospf],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
         name: "ethernet-ipv4-tcp-bgp-open",
         path: "bytes/ethernet-ipv4-tcp-bgp-open.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/ethernet-ipv4-tcp-bgp-open.hex")),
@@ -1943,7 +1952,8 @@ fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
         "ipv4-udp-dhcp-discover" => &[CoverageFamily::Ipv4UdpDhcp],
         "ospf-hello-single-neighbor"
         | "ospf-database-description"
-        | "ospf-link-state-request" => &[CoverageFamily::Ipv4Ospf],
+        | "ospf-link-state-request"
+        | "ospf-link-state-ack" => &[CoverageFamily::Ipv4Ospf],
         "ipv4-udp-options-known" | "ipv4-udp-options-unknown-safe" => {
             &[CoverageFamily::Ipv4UdpOptions]
         }
@@ -4361,6 +4371,46 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
                 vec![
                     "ls_type=0x00000001, id=192.0.2.1, adv=192.0.2.1",
                     "ls_type=0x00000002, id=192.0.2.2, adv=198.51.100.7",
+                ]
+            );
+        }
+        "ospf-link-state-ack" => {
+            // OSPF rides directly on IPv4 protocol 89 (RFC 2328).
+            let ipv4 = expect_layer::<Ipv4>(case, packet);
+            assert_eq!(ipv4.protocol_value(), 89);
+            assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 1));
+            assert_eq!(ipv4.destination(), Ipv4Addr::new(224, 0, 0, 5));
+
+            // Common header: a version 2 Link State Acknowledgment (type 5) from
+            // a documentation router id in the backbone area (0.0.0.0).
+            let ospf = expect_layer::<Ospfv2>(case, packet);
+            assert_eq!(ospf.version_value(), 2);
+            assert_eq!(ospf.packet_type_value(), 5); // Link State Acknowledgment
+            assert_eq!(ospf.router_id_value(), Ipv4Addr::new(192, 0, 2, 1));
+            assert_eq!(ospf.area_id_value(), Ipv4Addr::new(0, 0, 0, 0));
+
+            // The Link State Acknowledgment body and its two carried LSA headers
+            // are surfaced through the public inspection surface (the typed body
+            // is private). The body is just the concatenation of bare 20-octet
+            // LSA headers (RFC 2328 §A.3.6).
+            let fields = ospf.inspection_fields();
+            let value_of = |name: &str| {
+                fields
+                    .iter()
+                    .find(|(field, _)| *field == name)
+                    .map(|(_, value)| value.as_str())
+            };
+            assert_eq!(value_of("lsa_header_count"), Some("2"));
+            let lsa_headers: Vec<&str> = fields
+                .iter()
+                .filter(|(field, _)| *field == "lsa_header")
+                .map(|(_, value)| value.as_str())
+                .collect();
+            assert_eq!(
+                lsa_headers,
+                vec![
+                    "LSA(type=Router, id=192.0.2.1, adv=192.0.2.1, seq=0x80000001, age=0, len=20)",
+                    "LSA(type=Network, id=192.0.2.2, adv=198.51.100.7, seq=0x80000002, age=0, len=20)",
                 ]
             );
         }
