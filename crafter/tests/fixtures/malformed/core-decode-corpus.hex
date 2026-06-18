@@ -141,3 +141,5 @@ dhcp-overload-file-missing-end|dhcp|invalid-field-value|dhcp.file.options|010106
 ospf-truncated-header|ipv4|buffer-too-short|ospf header|45000018000100004059d885c0000201e000000502010004
 # ospf truncated database description body: a full 24-octet common header (type 2) whose declared Packet Length names a 4-octet DD body, below the 8-octet fixed Database Description portion (RFC 2328 A.3.3).
 ospf-truncated-database-description|ipv4|buffer-too-short|ospf database description|45000030000100004059d871c0000201e00000050202001cc0000201000000003be10000000000000000000005dc0207
+# ospf misaligned link state request body: a full 24-octet common header (type 3) whose declared Packet Length names an 8-octet request body, which is not a multiple of the 12-octet Link State Request entry (RFC 2328 A.3.4).
+ospf-link-state-request-misaligned-body|ipv4|invalid-field-value|ospf.link_state_request.entries|45000034000100004059d869c0000201e000000502030020c00002010000000079d80000000000000000000000000001c0000201
