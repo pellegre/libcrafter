@@ -860,6 +860,27 @@ impl Layer for Ospfv2 {
                         ));
                     }
                 }
+                // A typed AS-External-LSA body (RFC 2328 §A.4.5, LS type 5) adds
+                // an `as_external_lsa` pair (the network mask and a summary of the
+                // mandatory TOS 0 entry) followed by one `as_external_tos` pair per
+                // external metric entry (the E bit / external metric type, 24-bit
+                // metric, forwarding address, and external route tag). Other LSA
+                // body variants contribute only the `lsa` header summary above.
+                if let crate::protocols::ospf::lsa::OspfLsaBody::AsExternal(external) = &lsa.body {
+                    fields.push(("as_external_lsa", external.summary()));
+                    for entry in external.entries_value() {
+                        fields.push((
+                            "as_external_tos",
+                            format!(
+                                "type={} metric={} fwd={} tag=0x{:08x}",
+                                if entry.e_bit_value() { "E2" } else { "E1" },
+                                entry.metric_value(),
+                                entry.forwarding_address_value(),
+                                entry.external_route_tag_value()
+                            ),
+                        ));
+                    }
+                }
             }
         }
 

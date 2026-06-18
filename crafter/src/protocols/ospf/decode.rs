@@ -28,8 +28,9 @@ use super::constants::{
     OSPF_TYPE_LINK_STATE_UPDATE,
 };
 use super::lsa::{
-    decode_lsa_headers, OspfLsa, OspfLsaBody, OspfLsaHeader, OspfNetworkLsa, OspfRouterLink,
-    OspfRouterLinkTos, OspfRouterLsa, OspfSummaryLsa, OspfSummaryTos, OSPF_LSA_HEADER_LEN,
+    decode_lsa_headers, OspfAsExternalLsa, OspfExternalTos, OspfLsa, OspfLsaBody, OspfLsaHeader,
+    OspfNetworkLsa, OspfRouterLink, OspfRouterLinkTos, OspfRouterLsa, OspfSummaryLsa,
+    OspfSummaryTos, OSPF_AS_EXTERNAL_FLAG_E, OSPF_LSA_AS_EXTERNAL, OSPF_LSA_HEADER_LEN,
     OSPF_LSA_NETWORK, OSPF_LSA_ROUTER, OSPF_LSA_SUMMARY_ASBR, OSPF_LSA_SUMMARY_IP,
 };
 use super::packet::{
@@ -84,6 +85,15 @@ const OSPF_SUMMARY_LSA_MASK_LEN: usize = 4;
 /// The length of a single Summary-LSA TOS/metric entry, in octets: a 1-octet
 /// TOS code plus a 3-octet (24-bit) metric (RFC 2328 §A.4.4).
 const OSPF_SUMMARY_LSA_TOS_LEN: usize = 4;
+
+/// The length of the AS-External-LSA network mask field, in octets (RFC 2328
+/// §A.4.5).
+const OSPF_AS_EXTERNAL_LSA_MASK_LEN: usize = 4;
+
+/// The length of a single AS-External-LSA external metric entry, in octets: a
+/// 1-octet combined E/TOS octet, a 3-octet (24-bit) metric, a 4-octet
+/// forwarding address, and a 4-octet external route tag (RFC 2328 §A.4.5).
+const OSPF_AS_EXTERNAL_LSA_ENTRY_LEN: usize = 12;
 
 /// Append a decoded OSPFv2 packet to an existing packet stack.
 ///
@@ -458,6 +468,7 @@ fn decode_lsa_body(ls_type: u8, body: &[u8]) -> Result<OspfLsaBody> {
         OSPF_LSA_SUMMARY_IP | OSPF_LSA_SUMMARY_ASBR => {
             Ok(OspfLsaBody::Summary(decode_summary_lsa_body(body)?))
         }
+        OSPF_LSA_AS_EXTERNAL => Ok(OspfLsaBody::AsExternal(decode_as_external_lsa_body(body)?)),
         _ => Ok(OspfLsaBody::Raw(body.to_vec())),
     }
 }
@@ -643,6 +654,68 @@ fn decode_summary_lsa_body(body: &[u8]) -> Result<OspfSummaryLsa> {
         .collect();
 
     Ok(OspfSummaryLsa::from_decoded_parts(network_mask, entries))
+}
+
+/// Parse the OSPFv2 AS-External-LSA body (RFC 2328 §A.4.5) from `body` into an
+/// [`OspfAsExternalLsa`].
+///
+/// `body` is the LSA bytes after the 20-octet header. The body is a 4-octet
+/// Network Mask followed by one or more 12-octet external metric entries, each a
+/// combined E/TOS octet (the high bit, [`OSPF_AS_EXTERNAL_FLAG_E`], is the E bit
+/// and the low 7 bits the TOS code), a 24-bit (3-octet, big-endian) metric, a
+/// 4-octet forwarding address, and a 4-octet external route tag.
+///
+/// A body shorter than the 4-octet network mask is a structured
+/// [`CrafterError::buffer_too_short`] (context `"ospf as-external-lsa"`); an
+/// external-metric region whose length is not a multiple of 12 is a structured
+/// [`CrafterError::invalid_field_value`] (`"ospf.as_external_lsa.entries"`),
+/// never a panic. The network mask is recovered and marked user-set (through
+/// [`OspfAsExternalLsa::from_decoded_parts`]) so the AS-External-LSA re-compiles
+/// byte-for-byte.
+fn decode_as_external_lsa_body(body: &[u8]) -> Result<OspfAsExternalLsa> {
+    if body.len() < OSPF_AS_EXTERNAL_LSA_MASK_LEN {
+        return Err(CrafterError::buffer_too_short(
+            "ospf as-external-lsa",
+            OSPF_AS_EXTERNAL_LSA_MASK_LEN,
+            body.len(),
+        ));
+    }
+
+    // Network Mask (octets 0..4). The length check above keeps this slice in
+    // bounds, so it cannot panic.
+    let network_mask = Ipv4Addr::new(body[0], body[1], body[2], body[3]);
+
+    // The remaining octets are the external metric list: one or more 12-octet
+    // entries. A region not a multiple of 12 is a malformed list, not a
+    // truncation.
+    let entry_region = &body[OSPF_AS_EXTERNAL_LSA_MASK_LEN..];
+    if entry_region.len() % OSPF_AS_EXTERNAL_LSA_ENTRY_LEN != 0 {
+        return Err(CrafterError::invalid_field_value(
+            "ospf.as_external_lsa.entries",
+            "external metric list length must be a multiple of 12",
+        ));
+    }
+
+    // Each 12-octet entry is a combined E/TOS octet, a 24-bit big-endian metric,
+    // a 4-octet forwarding address, and a 4-octet external route tag (RFC 2328
+    // §A.4.5). The exact-multiple check above keeps every chunk full, so this
+    // cannot panic. The E bit is the high bit of the first octet
+    // ([`OSPF_AS_EXTERNAL_FLAG_E`]); the TOS code is its low 7 bits.
+    let entries = entry_region
+        .chunks_exact(OSPF_AS_EXTERNAL_LSA_ENTRY_LEN)
+        .map(|chunk| {
+            let e_bit = chunk[0] & OSPF_AS_EXTERNAL_FLAG_E != 0;
+            let tos = chunk[0] & 0x7f;
+            let metric =
+                (u32::from(chunk[1]) << 16) | (u32::from(chunk[2]) << 8) | u32::from(chunk[3]);
+            let forwarding_address = Ipv4Addr::new(chunk[4], chunk[5], chunk[6], chunk[7]);
+            let external_route_tag =
+                u32::from_be_bytes([chunk[8], chunk[9], chunk[10], chunk[11]]);
+            OspfExternalTos::new(e_bit, tos, metric, forwarding_address, external_route_tag)
+        })
+        .collect();
+
+    Ok(OspfAsExternalLsa::from_decoded_parts(network_mask, entries))
 }
 
 /// Parse the OSPFv2 Link State Acknowledgment body (RFC 2328 §A.3.6) from `body`
@@ -1649,6 +1722,128 @@ mod tests {
         match err {
             CrafterError::InvalidFieldValue { field, .. } => {
                 assert_eq!(field, "ospf.summary_lsa.entries");
+            }
+            other => panic!("expected invalid_field_value, got {other:?}"),
+        }
+    }
+
+    /// A Link State Update carrying a single AS-External-LSA (LS type 5) with a
+    /// network mask and one E2 external metric entry (a non-zero forwarding
+    /// address and route tag), once compiled, decodes (type 4) into a typed
+    /// [`OspfLsaBody::AsExternal`] body whose mask, E bit, metric, forwarding
+    /// address, and route tag equal the built ones, and re-compiles byte-for-byte
+    /// (RFC 2328 §A.3.5, §A.4.5).
+    #[test]
+    fn ospf_decode_link_state_update_as_external_lsa_round_trips() {
+        use crate::protocols::ospf::lsa::{
+            OspfAsExternalLsa, OspfLsa, OspfLsaBody, OspfLsaHeader, OSPF_LSA_AS_EXTERNAL,
+        };
+        use crate::protocols::ospf::OspfBody;
+        use crate::protocols::ospf::OSPF_TYPE_LINK_STATE_UPDATE;
+
+        // AS-External-LSA: a /24 mask. `OspfAsExternalLsa::new()` seeds the
+        // mandatory default TOS 0 entry (E1, metric 0, unspecified forwarding
+        // address, route tag 0); `external_entry(..)` appends a second E2 entry
+        // (0x0a0b0c exercises all three metric octets) with a non-zero forwarding
+        // address and external route tag set explicitly. The round-trip exercises
+        // the E bit and the forwarding address on the appended entry.
+        let external = OspfAsExternalLsa::new()
+            .network_mask(Ipv4Addr::new(255, 255, 255, 0))
+            .external_entry(
+                true,
+                5,
+                0x000a_0b0c,
+                Ipv4Addr::new(192, 0, 2, 9),
+                0x1234_5678,
+            );
+
+        let lsa = OspfLsa::new(
+            OspfLsaHeader::new()
+                .ls_type(OSPF_LSA_AS_EXTERNAL)
+                .link_state_id(Ipv4Addr::new(198, 51, 100, 0))
+                .advertising_router(Ipv4Addr::new(192, 0, 2, 1))
+                .ls_sequence_number(0x8000_0001),
+            OspfLsaBody::AsExternal(external),
+        );
+
+        let bytes = Packet::from_layer(
+            Ospfv2::link_state_update()
+                .router_id([192, 0, 2, 1])
+                .area_id([0, 0, 0, 0])
+                .with_link_state_update(|u| {
+                    *u = u.clone().lsa(lsa.clone());
+                }),
+        )
+        .compile()
+        .expect("a Link State Update with an AS-External-LSA compiles");
+
+        let decoded = append_ospf_packet(Packet::new(), bytes.as_bytes())
+            .expect("the Link State Update decodes");
+        let ospf = decoded
+            .layer::<Ospfv2>()
+            .expect("the decoded packet exposes a typed Ospfv2 layer");
+        assert_eq!(ospf.packet_type_value(), OSPF_TYPE_LINK_STATE_UPDATE);
+
+        let lsu = match &ospf.body {
+            OspfBody::LinkStateUpdate(lsu) => lsu,
+            other => panic!("expected a typed Link State Update body, got {other:?}"),
+        };
+        let decoded_lsas = lsu.lsas_value();
+        assert_eq!(decoded_lsas.len(), 1);
+        assert_eq!(decoded_lsas[0].header.ls_type_value(), OSPF_LSA_AS_EXTERNAL);
+
+        // The AS-External-LSA body decoded into a typed `AsExternal` variant with
+        // the mask and both external metric entries recovered, in order: the
+        // mandatory default TOS 0 entry (E1) followed by the appended E2 entry,
+        // which exposes the E bit and the forwarding address.
+        let external = match &decoded_lsas[0].body {
+            OspfLsaBody::AsExternal(external) => external,
+            other => panic!("expected a typed AS-External-LSA body, got {other:?}"),
+        };
+        assert_eq!(external.network_mask_value(), Ipv4Addr::new(255, 255, 255, 0));
+        let entries = external.entries_value();
+        assert_eq!(entries.len(), 2);
+        // The default TOS 0 entry: E1, metric 0, unspecified forwarding address.
+        assert!(!entries[0].e_bit_value());
+        assert_eq!(entries[0].tos_value(), 0);
+        assert_eq!(entries[0].metric_value(), 0);
+        assert_eq!(
+            entries[0].forwarding_address_value(),
+            Ipv4Addr::UNSPECIFIED
+        );
+        assert_eq!(entries[0].external_route_tag_value(), 0);
+        // The appended entry exposes the E bit (E2), TOS, metric, forwarding
+        // address, and route tag.
+        assert!(entries[1].e_bit_value());
+        assert_eq!(entries[1].tos_value(), 5);
+        assert_eq!(entries[1].metric_value(), 0x000a_0b0c);
+        assert_eq!(
+            entries[1].forwarding_address_value(),
+            Ipv4Addr::new(192, 0, 2, 9)
+        );
+        assert_eq!(entries[1].external_route_tag_value(), 0x1234_5678);
+
+        // The decoded AS-External-LSA re-compiles byte-for-byte.
+        let recompiled = decoded
+            .compile()
+            .expect("decoded Link State Update re-compiles");
+        assert_eq!(recompiled.as_bytes(), bytes.as_bytes());
+    }
+
+    /// An AS-External-LSA body of 18 octets — the 4-octet network mask plus a
+    /// 14-octet external-metric region (not a multiple of 12, a trailing partial
+    /// entry) — is a structured invalid-field error
+    /// (`"ospf.as_external_lsa.entries"`), never a panic (RFC 2328 §A.4.5).
+    #[test]
+    fn ospf_decode_as_external_lsa_trailing_partial_entry_is_invalid_field() {
+        // 4 mask octets plus 14 trailing octets: one full 12-octet external
+        // metric entry followed by a 2-octet partial second entry.
+        let body = [0u8; OSPF_AS_EXTERNAL_LSA_MASK_LEN + 14];
+        let err = decode_as_external_lsa_body(&body)
+            .expect_err("a 14-octet external-metric region is not a multiple of 12");
+        match err {
+            CrafterError::InvalidFieldValue { field, .. } => {
+                assert_eq!(field, "ospf.as_external_lsa.entries");
             }
             other => panic!("expected invalid_field_value, got {other:?}"),
         }
