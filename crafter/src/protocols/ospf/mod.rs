@@ -34,6 +34,8 @@ pub mod lsa;
 pub mod packet;
 
 #[allow(unused_imports)]
+pub use auth::{OspfCryptoAuth, OSPF_MD5_DIGEST_LEN};
+#[allow(unused_imports)]
 pub use constants::*;
 pub use packet::{
     OspfDatabaseDescription, OspfHello, OspfLinkStateAck, OspfLinkStateRequest,
@@ -219,6 +221,12 @@ pub struct Ospfv2 {
     /// serialized, does not affect compiled bytes, and defaults to
     /// [`OspfChecksumStatus::NotChecked`] on builder-constructed packets.
     checksum_status: OspfChecksumStatus,
+    /// Cryptographic-authentication parameters (AuType 2, keyed-MD5, RFC 2328
+    /// §D.3) installed by [`Ospfv2::crypto_md5_auth`]. This is `compile()`
+    /// metadata: when present (and the AuType is cryptographic) it drives the
+    /// appended message-digest trailer; the secret key it holds never appears on
+    /// the wire. `None` for null and simple-password authentication.
+    crypto_auth: Option<OspfCryptoAuth>,
     /// The typed packet body following the common header.
     body: OspfBody,
 }
@@ -243,6 +251,7 @@ impl Ospfv2 {
             autype: Field::defaulted(OSPF_AUTYPE_NULL),
             authentication: Field::defaulted([0; OSPF_AUTH_LEN]),
             checksum_status: OspfChecksumStatus::NotChecked,
+            crypto_auth: None,
             body: OspfBody::Unknown {
                 type_code: 0,
                 body: Vec::new(),
@@ -333,6 +342,39 @@ impl Ospfv2 {
         self.autype.set_user(OSPF_AUTYPE_SIMPLE);
         self.authentication
             .set_user(auth::simple_password_field(password));
+        self
+    }
+
+    /// Configure cryptographic (keyed-MD5) authentication (AuType 2, RFC 2328
+    /// §D.3).
+    ///
+    /// Sets the AuType field to [`OSPF_AUTYPE_CRYPTOGRAPHIC`], encodes the
+    /// structured 8-octet authentication field — Reserved (2 octets, zero),
+    /// Key ID, Authentication Data Length (16, the MD5 digest length), and the
+    /// Cryptographic sequence number — and records the secret `key` so
+    /// `compile()` can append the keyed-MD5 message-digest trailer. The trailer
+    /// is `MD5(ospf_packet_with_structured_auth || key_padded_to_16)` (RFC 1321).
+    ///
+    /// For cryptographic authentication `compile()` writes the header Checksum as
+    /// zero (RFC 2328 §D.3), the OSPF Packet Length covers only the header and
+    /// body (the digest trailer is excluded but is still part of the IP payload),
+    /// and the 16-octet digest is appended after the packet bytes. The secret key
+    /// never appears on the wire — only the digest derived from it does.
+    ///
+    /// Caller overrides are honored: pin the [`authentication`](Ospfv2::authentication)
+    /// field to install a deliberately malformed structured auth field, or pin the
+    /// [`checksum`](Ospfv2::checksum) to override the zero checksum; the recorded
+    /// key still drives the appended trailer.
+    pub fn crypto_md5_auth(
+        mut self,
+        key_id: u8,
+        sequence_number: u32,
+        key: impl Into<Vec<u8>>,
+    ) -> Self {
+        let crypto = OspfCryptoAuth::new(key_id, sequence_number, key);
+        self.autype.set_user(OSPF_AUTYPE_CRYPTOGRAPHIC);
+        self.authentication.set_user(crypto.structured_auth_field());
+        self.crypto_auth = Some(crypto);
         self
     }
 
@@ -667,6 +709,39 @@ impl Ospfv2 {
     pub fn checksum_status(&self) -> OspfChecksumStatus {
         self.checksum_status
     }
+
+    /// The cryptographic-authentication parameters (AuType 2, keyed-MD5) recorded
+    /// by [`Ospfv2::crypto_md5_auth`], if any.
+    ///
+    /// Present only when cryptographic authentication was configured through the
+    /// builder; `None` for null, simple-password, and decoded packets. When
+    /// present, `compile()` appends a keyed-MD5 message-digest trailer after the
+    /// OSPF packet (RFC 2328 §D.3). The secret key it holds never appears on the
+    /// wire.
+    pub fn crypto_auth(&self) -> Option<&OspfCryptoAuth> {
+        self.crypto_auth.as_ref()
+    }
+
+    /// The recorded cryptographic-authentication parameters that `compile()`
+    /// should use to append a keyed-MD5 trailer, if any.
+    ///
+    /// A trailer is appended only when both the recorded parameters are present
+    /// (set via [`Ospfv2::crypto_md5_auth`]) and the effective AuType is
+    /// [`OSPF_AUTYPE_CRYPTOGRAPHIC`]. Overriding the AuType away from
+    /// cryptographic after configuring crypto auth therefore suppresses the
+    /// trailer, keeping the AuType field authoritative.
+    fn crypto_auth_for_trailer(&self) -> Option<&OspfCryptoAuth> {
+        match &self.crypto_auth {
+            Some(crypto) if self.autype_value() == OSPF_AUTYPE_CRYPTOGRAPHIC => Some(crypto),
+            _ => None,
+        }
+    }
+
+    /// Whether `compile()` appends a keyed-MD5 message-digest trailer for this
+    /// packet (RFC 2328 §D.3), so length accounting can include it.
+    fn appends_crypto_trailer(&self) -> bool {
+        self.crypto_auth_for_trailer().is_some()
+    }
 }
 
 impl Default for Ospfv2 {
@@ -937,12 +1012,29 @@ impl Layer for Ospfv2 {
     }
 
     fn encoded_len(&self) -> usize {
-        OSPF_HEADER_LEN + self.body.encoded_len()
+        // The OSPF packet is the 24-octet common header plus the body. When
+        // cryptographic authentication is active, `compile()` also appends a
+        // keyed-MD5 message-digest trailer after the packet (RFC 2328 §D.3): the
+        // trailer is excluded from the OSPF Packet Length field but is part of the
+        // emitted bytes, so the enclosing IP payload length must count it.
+        let mut len = OSPF_HEADER_LEN + self.body.encoded_len();
+        if self.appends_crypto_trailer() {
+            len += OSPF_MD5_DIGEST_LEN as usize;
+        }
+        len
     }
 
     fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
         let start = out.len();
+        // The OSPF Packet Length field covers the common header plus the body. The
+        // cryptographic message-digest trailer (if any) is appended after the
+        // packet and is deliberately NOT counted here (RFC 2328 §D.3).
         let total_len = OSPF_HEADER_LEN + self.body.encoded_len();
+
+        // Cryptographic authentication (AuType 2, RFC 2328 §D.3) zeroes the header
+        // Checksum and appends a keyed-MD5 trailer; null/simple authentication use
+        // the standard Internet checksum.
+        let crypto = self.crypto_auth_for_trailer();
 
         // Common header (RFC 2328 §A.3.1). The Packet Length and Checksum are
         // written as placeholders first, then back-filled below unless pinned.
@@ -962,6 +1054,8 @@ impl Layer for Ospfv2 {
 
         // Checksum placeholder (octets 12..14): zeroed so the auto-fill below can
         // compute over the header-with-hole; a pinned checksum is written verbatim.
+        // For cryptographic authentication the checksum field is left zero and is
+        // never auto-filled (RFC 2328 §D.3).
         let pinned_checksum = self.checksum.value().copied();
         out.extend_from_slice(&pinned_checksum.unwrap_or(0).to_be_bytes());
 
@@ -971,12 +1065,20 @@ impl Layer for Ospfv2 {
         // Body bytes follow the 24-octet common header.
         self.body.encode(out);
 
-        // Auto-fill the Checksum unless the caller pinned it. The OSPF checksum is
-        // the standard Internet checksum over the whole packet EXCLUDING the
-        // 8-octet authentication field (octets 16..24), computed with the checksum
-        // field itself zeroed (RFC 2328 §A.3.1). The placeholder above already
-        // wrote zero for the checksum when it is unset.
-        if pinned_checksum.is_none() {
+        if let Some(crypto) = crypto {
+            // Cryptographic authentication: the header Checksum stays zero unless
+            // the caller pinned a (deliberately malformed) value, and a 16-octet
+            // keyed-MD5 digest over the packet-so-far concatenated with the secret
+            // key padded to 16 octets is appended after the OSPF packet (RFC 2328
+            // §D.3). The digest is excluded from the Packet Length but is part of
+            // the emitted bytes, so the enclosing IP payload counts it.
+            let digest = crypto.md5_digest(&out[start..]);
+            out.extend_from_slice(&digest);
+        } else if pinned_checksum.is_none() {
+            // Null/simple authentication: auto-fill the standard Internet checksum
+            // over the whole packet EXCLUDING the 8-octet authentication field
+            // (octets 16..24), computed with the checksum field itself zeroed
+            // (RFC 2328 §A.3.1). The placeholder above already wrote zero.
             let checksum =
                 internet_checksum_chunks([&out[start..start + 16], &out[start + 24..]]);
             out[start + 12..start + 14].copy_from_slice(&checksum.to_be_bytes());
@@ -1532,5 +1634,82 @@ mod tests {
             .find(|(name, _)| *name == "autype")
             .map(|(_, value)| value);
         assert_eq!(null_autype.as_deref(), Some("0 (Null)"));
+    }
+
+    /// A Hello built with `crypto_md5_auth(...)` (AuType 2, RFC 2328 §D.3)
+    /// compiles with a zero header Checksum, an OSPF Packet Length equal to the
+    /// header+body (excluding the appended digest), the structured 8-octet
+    /// authentication field, and a 16-octet keyed-MD5 digest trailer that
+    /// recomputing with the same key reproduces.
+    #[test]
+    fn ospf_crypto_md5_auth_zeroes_checksum_and_appends_digest_trailer() {
+        let key = b"ospf-secret-key".to_vec();
+        let ospf = Ospfv2::hello()
+            .router_id([192, 0, 2, 1])
+            .area_id([0, 0, 0, 0])
+            .crypto_md5_auth(7, 0x0000_002a, key.clone());
+
+        // The AuType is cryptographic and the structured auth field carries the
+        // Reserved/Key ID/Auth Data Length/Crypto-sequence layout.
+        assert_eq!(ospf.autype_value(), OSPF_AUTYPE_CRYPTOGRAPHIC);
+        assert_eq!(
+            ospf.authentication_value(),
+            [0x00, 0x00, 0x07, OSPF_MD5_DIGEST_LEN, 0x00, 0x00, 0x00, 0x2a]
+        );
+
+        // The body-only OSPF packet length (header + Hello body) excludes the
+        // 16-octet digest trailer.
+        let packet_len = OSPF_HEADER_LEN + ospf.body.encoded_len();
+
+        let bytes = Packet::from_layer(ospf).compile().unwrap();
+
+        // The emitted bytes are the packet plus the 16-octet digest trailer.
+        assert_eq!(bytes.len(), packet_len + OSPF_MD5_DIGEST_LEN as usize);
+
+        // The OSPF Packet Length field (octets 2..4) covers only the header+body.
+        assert_eq!(&bytes[2..4], &(packet_len as u16).to_be_bytes());
+
+        // The header Checksum field (octets 12..14) is zero for cryptographic
+        // authentication (it is not the Internet checksum).
+        assert_eq!(&bytes[12..14], &[0u8, 0u8]);
+
+        // The 8-octet authentication field (octets 16..24) is the structured form.
+        assert_eq!(
+            &bytes[16..24],
+            &[0x00, 0x00, 0x07, OSPF_MD5_DIGEST_LEN, 0x00, 0x00, 0x00, 0x2a]
+        );
+
+        // The trailing 16 octets are the keyed-MD5 digest. Recomputing the digest
+        // over the packet bytes (everything before the trailer) with the same key
+        // reproduces the trailer exactly.
+        let trailer = &bytes.as_bytes()[packet_len..];
+        assert_eq!(trailer.len(), OSPF_MD5_DIGEST_LEN as usize);
+        let recomputed =
+            OspfCryptoAuth::new(7, 0x0000_002a, key).md5_digest(&bytes.as_bytes()[..packet_len]);
+        assert_eq!(trailer, recomputed);
+    }
+
+    /// A crypto-authed Hello honors caller overrides: a pinned (deliberately
+    /// malformed) Checksum survives instead of being zeroed, and a pinned
+    /// authentication field replaces the structured form, while the recorded key
+    /// still drives the appended digest trailer.
+    #[test]
+    fn ospf_crypto_md5_auth_honors_pinned_checksum_and_authentication() {
+        let ospf = Ospfv2::hello()
+            .router_id([192, 0, 2, 1])
+            .area_id([0, 0, 0, 0])
+            .crypto_md5_auth(3, 1, b"k".to_vec())
+            .checksum(0xbeef)
+            .authentication([0xaa; OSPF_AUTH_LEN]);
+
+        let packet_len = OSPF_HEADER_LEN + ospf.body.encoded_len();
+        let bytes = Packet::from_layer(ospf).compile().unwrap();
+
+        // The pinned checksum is written verbatim (not zeroed by crypto auth).
+        assert_eq!(&bytes[12..14], &0xbeefu16.to_be_bytes());
+        // The pinned authentication field is written verbatim.
+        assert_eq!(&bytes[16..24], &[0xaau8; OSPF_AUTH_LEN]);
+        // The digest trailer is still appended after the packet body.
+        assert_eq!(bytes.len(), packet_len + OSPF_MD5_DIGEST_LEN as usize);
     }
 }
