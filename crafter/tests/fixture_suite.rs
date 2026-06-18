@@ -14,21 +14,21 @@ use crafter::core::{
     Ipv6DestinationOptionsHeader, Ipv6FragmentHeader, Ipv6FragmentHeaderStatus,
     Ipv6HopByHopOptionsHeader, Ipv6MobileRoutingHeader, Ipv6MobileRoutingHeaderStatus, Ipv6Option,
     Ipv6RoutingHeader, Ipv6RoutingTypeStatus, Ipv6SegmentRoutingHeader, Layer, LinkType, LinuxSll,
-    LlcSnap, MacAddr, NetworkLayer, NullByteOrder, NullLoopback, OptionOverload, Ospfv2, Packet,
-    Radiotap, Raw, Rip, Ripng, Tcp, TcpOption, TcpSackBlock, Udp, UdpChecksumStatus, UdpOption,
-    UdpOptionStatus, UdpOptions, Vlan, ARP_HRD_INFINIBAND, BOOTP_REQUEST, DHCP_CLIENT_PORT,
-    DHCP_SERVER_PORT, DNS_CLASS_IN, DNS_EDNS_DEFAULT_UDP_PAYLOAD_SIZE, DNS_EDNS_OPTION_COOKIE,
-    DNS_EDNS_OPTION_NSID, DNS_FLAG_AUTHORITATIVE, DNS_FLAG_QR_RESPONSE, DNS_FLAG_RECURSION_DESIRED,
-    DNS_SVCB_KEY_ALPN, DNS_SVCB_KEY_IPV4HINT, DNS_SVCB_KEY_IPV6HINT, DNS_SVCB_KEY_PORT, DNS_TYPE_A,
-    DNS_TYPE_AAAA, DNS_TYPE_CNAME, DNS_TYPE_DNSKEY, DNS_TYPE_DS, DNS_TYPE_HTTPS, DNS_TYPE_NS,
-    DNS_TYPE_NSEC, DNS_TYPE_NSEC3, DNS_TYPE_OPT, DNS_TYPE_RRSIG, DNS_TYPE_SOA, DNS_TYPE_SRV,
-    DNS_TYPE_SVCB, ETHERTYPE_ARP, ETHERTYPE_EAPOL, ETHERTYPE_IPV4, ETHERTYPE_VLAN,
-    ICMPV6_ECHO_REQUEST, ICMPV6_TIME_EXCEEDED, ICMP_DESTINATION_UNREACHABLE, ICMP_ECHO_REQUEST,
-    IPPROTO_ICMP, IPPROTO_ICMPV6, IPPROTO_IPV6_DSTOPTS, IPPROTO_IPV6_EXPERIMENTAL_1,
-    IPPROTO_IPV6_FRAGMENT, IPPROTO_IPV6_HOPOPTS, IPPROTO_IPV6_ROUTE, IPPROTO_TCP, IPPROTO_UDP,
-    IPV4_FLAG_DONT_FRAGMENT, IPV4_FLAG_MORE_FRAGMENTS, IPV4_FLAG_RESERVED,
-    IPV6_ROUTING_TYPE_MOBILE, IPV6_ROUTING_TYPE_SEGMENT, TCP_FLAG_ACK, TCP_FLAG_PSH, TCP_FLAG_SYN,
-    UDP_HEADER_LEN, UDP_OPTION_EOL, UDP_OPTION_NOP,
+    LlcSnap, MacAddr, NetworkLayer, NullByteOrder, NullLoopback, OptionOverload, OspfChecksumStatus,
+    Ospfv2, Packet, Radiotap, Raw, Rip, Ripng, Tcp, TcpOption, TcpSackBlock, Udp, UdpChecksumStatus,
+    UdpOption, UdpOptionStatus, UdpOptions, Vlan, ARP_HRD_INFINIBAND, BOOTP_REQUEST,
+    DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_CLASS_IN, DNS_EDNS_DEFAULT_UDP_PAYLOAD_SIZE,
+    DNS_EDNS_OPTION_COOKIE, DNS_EDNS_OPTION_NSID, DNS_FLAG_AUTHORITATIVE, DNS_FLAG_QR_RESPONSE,
+    DNS_FLAG_RECURSION_DESIRED, DNS_SVCB_KEY_ALPN, DNS_SVCB_KEY_IPV4HINT, DNS_SVCB_KEY_IPV6HINT,
+    DNS_SVCB_KEY_PORT, DNS_TYPE_A, DNS_TYPE_AAAA, DNS_TYPE_CNAME, DNS_TYPE_DNSKEY, DNS_TYPE_DS,
+    DNS_TYPE_HTTPS, DNS_TYPE_NS, DNS_TYPE_NSEC, DNS_TYPE_NSEC3, DNS_TYPE_OPT, DNS_TYPE_RRSIG,
+    DNS_TYPE_SOA, DNS_TYPE_SRV, DNS_TYPE_SVCB, ETHERTYPE_ARP, ETHERTYPE_EAPOL, ETHERTYPE_IPV4,
+    ETHERTYPE_VLAN, ICMPV6_ECHO_REQUEST, ICMPV6_TIME_EXCEEDED, ICMP_DESTINATION_UNREACHABLE,
+    ICMP_ECHO_REQUEST, IPPROTO_ICMP, IPPROTO_ICMPV6, IPPROTO_IPV6_DSTOPTS,
+    IPPROTO_IPV6_EXPERIMENTAL_1, IPPROTO_IPV6_FRAGMENT, IPPROTO_IPV6_HOPOPTS, IPPROTO_IPV6_ROUTE,
+    IPPROTO_TCP, IPPROTO_UDP, IPV4_FLAG_DONT_FRAGMENT, IPV4_FLAG_MORE_FRAGMENTS,
+    IPV4_FLAG_RESERVED, IPV6_ROUTING_TYPE_MOBILE, IPV6_ROUTING_TYPE_SEGMENT, TCP_FLAG_ACK,
+    TCP_FLAG_PSH, TCP_FLAG_SYN, UDP_HEADER_LEN, UDP_OPTION_EOL, UDP_OPTION_NOP,
 };
 use crafter::wire::backend::pcap::{
     PcapError, PcapLinkType, PcapReader, PcapTimestamp, PcapWriter, PcapWriterOptions,
@@ -835,6 +835,24 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         name: "ospf-as-external-lsa",
         path: "bytes/ospf-as-external-lsa.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/ospf-as-external-lsa.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Ospf],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ospf-hello-simple-auth",
+        path: "bytes/ospf-hello-simple-auth.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ospf-hello-simple-auth.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Ospf],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ospf-hello-crypto-md5",
+        path: "bytes/ospf-hello-crypto-md5.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ospf-hello-crypto-md5.hex")),
         target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
         expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Ospf],
         preserve_exact_bytes: true,
@@ -2013,7 +2031,9 @@ fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
         | "ospf-network-lsa"
         | "ospf-summary-lsa-ip"
         | "ospf-summary-lsa-asbr"
-        | "ospf-as-external-lsa" => &[CoverageFamily::Ipv4Ospf],
+        | "ospf-as-external-lsa"
+        | "ospf-hello-simple-auth"
+        | "ospf-hello-crypto-md5" => &[CoverageFamily::Ipv4Ospf],
         "ipv4-udp-options-known" | "ipv4-udp-options-unknown-safe" => {
             &[CoverageFamily::Ipv4UdpOptions]
         }
@@ -4777,6 +4797,94 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
                     "type=E2 metric=20 fwd=192.0.2.9 tag=0xdeadbeef",
                 ]
             );
+        }
+        "ospf-hello-simple-auth" => {
+            // OSPF rides directly on IPv4 protocol 89 (RFC 2328).
+            let ipv4 = expect_layer::<Ipv4>(case, packet);
+            assert_eq!(ipv4.protocol_value(), 89);
+            assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 1));
+            assert_eq!(ipv4.destination(), Ipv4Addr::new(224, 0, 0, 5));
+
+            // Common header: a version 2 Hello (type 1) authenticated with the
+            // simple-password scheme (AuType 1, RFC 2328 §D.2).
+            let ospf = expect_layer::<Ospfv2>(case, packet);
+            assert_eq!(ospf.version_value(), 2);
+            assert_eq!(ospf.packet_type_value(), 1); // Hello
+            assert_eq!(ospf.router_id_value(), Ipv4Addr::new(192, 0, 2, 1));
+            assert_eq!(ospf.area_id_value(), Ipv4Addr::new(0, 0, 0, 0));
+
+            // AuType 1 carries the cleartext password right-padded into the
+            // 8-octet authentication field; the auth field is excluded from the
+            // OSPF checksum so the checksum decodes as valid.
+            assert_eq!(ospf.autype_value(), 1);
+            assert_eq!(
+                ospf.authentication_value(),
+                [b's', b'e', b'c', b'r', b'e', b't', 0, 0]
+            );
+            assert_eq!(ospf.checksum_status(), OspfChecksumStatus::Valid);
+            assert!(ospf.auth_trailer().is_empty());
+
+            // The auth type is surfaced in the inspection fields as "<n> (<Name>)".
+            let fields = ospf.inspection_fields();
+            let value_of = |name: &str| {
+                fields
+                    .iter()
+                    .find(|(field, _)| *field == name)
+                    .map(|(_, value)| value.as_str())
+            };
+            assert_eq!(value_of("autype"), Some("1 (Simple)"));
+            assert_eq!(value_of("neighbor_count"), Some("1"));
+        }
+        "ospf-hello-crypto-md5" => {
+            // OSPF rides directly on IPv4 protocol 89 (RFC 2328).
+            let ipv4 = expect_layer::<Ipv4>(case, packet);
+            assert_eq!(ipv4.protocol_value(), 89);
+            assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 1));
+            assert_eq!(ipv4.destination(), Ipv4Addr::new(224, 0, 0, 5));
+
+            // Common header: a version 2 Hello (type 1) authenticated with the
+            // cryptographic keyed-MD5 scheme (AuType 2, RFC 2328 §D.3).
+            let ospf = expect_layer::<Ospfv2>(case, packet);
+            assert_eq!(ospf.version_value(), 2);
+            assert_eq!(ospf.packet_type_value(), 1); // Hello
+            assert_eq!(ospf.router_id_value(), Ipv4Addr::new(192, 0, 2, 1));
+            assert_eq!(ospf.area_id_value(), Ipv4Addr::new(0, 0, 0, 0));
+
+            // The structured authentication field exposes the Key ID, Auth Data
+            // Length (16 for keyed-MD5), and cryptographic sequence number.
+            assert_eq!(ospf.autype_value(), 2);
+            assert_eq!(ospf.crypto_key_id(), Some(7));
+            assert_eq!(ospf.crypto_auth_data_length(), Some(16));
+            assert_eq!(ospf.crypto_sequence_number(), Some(0x0000_002a));
+
+            // The OSPF checksum field is zero for cryptographic auth, so the
+            // decoded checksum status is NotChecked.
+            assert_eq!(ospf.checksum_status(), OspfChecksumStatus::NotChecked);
+
+            // The appended 16-octet keyed-MD5 digest is captured verbatim as the
+            // auth trailer and round-trips byte-for-byte (the decoder holds no
+            // secret key). `preserve_exact_bytes` already verifies the full
+            // re-compile, but assert the trailer explicitly here.
+            let trailer = ospf.auth_trailer();
+            assert_eq!(trailer.len(), 16);
+            assert_eq!(
+                trailer,
+                &[
+                    0x54, 0x2a, 0x38, 0x62, 0xa2, 0x76, 0x1d, 0x79, 0x68, 0x48, 0x86, 0xa9, 0xd2,
+                    0x7e, 0x39, 0x95,
+                ]
+            );
+
+            // The auth type is surfaced in the inspection fields as "<n> (<Name>)".
+            let fields = ospf.inspection_fields();
+            let value_of = |name: &str| {
+                fields
+                    .iter()
+                    .find(|(field, _)| *field == name)
+                    .map(|(_, value)| value.as_str())
+            };
+            assert_eq!(value_of("autype"), Some("2 (Cryptographic)"));
+            assert_eq!(value_of("neighbor_count"), Some("1"));
         }
         other => panic!("fixture {other} is missing typed field assertions"),
     }
