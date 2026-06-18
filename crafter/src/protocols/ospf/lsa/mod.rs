@@ -37,8 +37,10 @@ use crate::checksum::fletcher16_checkbytes;
 use crate::field::Field;
 use crate::{CrafterError, Result};
 
+pub mod network;
 pub mod router;
 
+pub use network::OspfNetworkLsa;
 pub use router::{
     ospf_router_link_type_name, OspfRouterLink, OspfRouterLinkTos, OspfRouterLsa,
     OSPF_ROUTER_LINK_POINT_TO_POINT, OSPF_ROUTER_LINK_STUB, OSPF_ROUTER_LINK_TRANSIT,
@@ -429,11 +431,14 @@ pub enum OspfLsaBody {
     /// A Router-LSA body (LS type 1), the collected states of a router's
     /// interfaces to an area (RFC 2328 §A.4.2).
     Router(OspfRouterLsa),
+    /// A Network-LSA body (LS type 2), the network mask plus the Router IDs of
+    /// each router attached to a transit network (RFC 2328 §A.4.3).
+    Network(OspfNetworkLsa),
     /// An LSA body the container does not (yet) model, preserved verbatim. The
     /// bytes are everything after the 20-octet LSA header.
     Raw(Vec<u8>),
-    // The remaining typed LSA bodies (Network, Summary, AS-External, NSSA,
-    // Opaque) arrive in later steps.
+    // The remaining typed LSA bodies (Summary, AS-External, NSSA, Opaque) arrive
+    // in later steps.
 }
 
 impl OspfLsaBody {
@@ -442,6 +447,7 @@ impl OspfLsaBody {
     pub(crate) fn encoded_len(&self) -> usize {
         match self {
             OspfLsaBody::Router(router) => router.encoded_len(),
+            OspfLsaBody::Network(network) => network.encoded_len(),
             OspfLsaBody::Raw(body) => body.len(),
         }
     }
@@ -452,6 +458,7 @@ impl OspfLsaBody {
     pub(crate) fn encode(&self, out: &mut Vec<u8>) {
         match self {
             OspfLsaBody::Router(router) => router.encode(out),
+            OspfLsaBody::Network(network) => network.encode(out),
             OspfLsaBody::Raw(body) => out.extend_from_slice(body),
         }
     }
