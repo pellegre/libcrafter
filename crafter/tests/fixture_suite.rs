@@ -814,6 +814,24 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         summary_path: None,
     },
     ValidFixtureCase {
+        name: "ospf-summary-lsa-ip",
+        path: "bytes/ospf-summary-lsa-ip.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ospf-summary-lsa-ip.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Ospf],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ospf-summary-lsa-asbr",
+        path: "bytes/ospf-summary-lsa-asbr.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ospf-summary-lsa-asbr.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Ospf],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
         name: "ethernet-ipv4-tcp-bgp-open",
         path: "bytes/ethernet-ipv4-tcp-bgp-open.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/ethernet-ipv4-tcp-bgp-open.hex")),
@@ -1983,7 +2001,9 @@ fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
         | "ospf-link-state-ack"
         | "ospf-link-state-update"
         | "ospf-router-lsa"
-        | "ospf-network-lsa" => &[CoverageFamily::Ipv4Ospf],
+        | "ospf-network-lsa"
+        | "ospf-summary-lsa-ip"
+        | "ospf-summary-lsa-asbr" => &[CoverageFamily::Ipv4Ospf],
         "ipv4-udp-options-known" | "ipv4-udp-options-unknown-safe" => {
             &[CoverageFamily::Ipv4UdpOptions]
         }
@@ -4587,6 +4607,106 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
                 .map(|(_, value)| value.as_str())
                 .collect();
             assert_eq!(attached_routers, vec!["192.0.2.1", "198.51.100.7"]);
+        }
+        "ospf-summary-lsa-ip" => {
+            // OSPF rides directly on IPv4 protocol 89 (RFC 2328).
+            let ipv4 = expect_layer::<Ipv4>(case, packet);
+            assert_eq!(ipv4.protocol_value(), 89);
+            assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 1));
+            assert_eq!(ipv4.destination(), Ipv4Addr::new(224, 0, 0, 5));
+
+            // Common header: a version 2 Link State Update (type 4) from a
+            // documentation router id in the backbone area (0.0.0.0).
+            let ospf = expect_layer::<Ospfv2>(case, packet);
+            assert_eq!(ospf.version_value(), 2);
+            assert_eq!(ospf.packet_type_value(), 4); // Link State Update
+            assert_eq!(ospf.router_id_value(), Ipv4Addr::new(192, 0, 2, 1));
+            assert_eq!(ospf.area_id_value(), Ipv4Addr::new(0, 0, 0, 0));
+
+            // The Link State Update carries one type 3 Summary-LSA (LS type 3,
+            // RFC 2328 §A.4.4) describing a route to an IP network: the 4-octet
+            // network mask followed by two TOS/metric entries (8 octets), a
+            // 12-octet body after the 20-octet header. The typed Summary body is
+            // private, so it is surfaced through the public inspection surface:
+            // `num_lsas`/`lsa_count` report one LSA, the `lsa` entry renders the
+            // 20-octet header summary plus the 12-octet Summary body, a
+            // `summary_lsa` pair reports the mask, the TOS 0 metric, and the
+            // entry count, and one `summary_tos` pair per TOS/metric entry.
+            let fields = ospf.inspection_fields();
+            let value_of = |name: &str| {
+                fields
+                    .iter()
+                    .find(|(field, _)| *field == name)
+                    .map(|(_, value)| value.as_str())
+            };
+            assert_eq!(value_of("num_lsas"), Some("1"));
+            assert_eq!(value_of("lsa_count"), Some("1"));
+            assert_eq!(
+                value_of("lsa"),
+                Some(concat!(
+                    "LSA(type=Summary-IP, id=198.51.100.0, adv=192.0.2.1, ",
+                    "seq=0x80000001, age=0, len=32) body=12B",
+                ))
+            );
+            assert_eq!(value_of("summary_lsa"), Some("mask=255.255.255.0 metric=10 tos=2"));
+            let summary_tos: Vec<&str> = fields
+                .iter()
+                .filter(|(field, _)| *field == "summary_tos")
+                .map(|(_, value)| value.as_str())
+                .collect();
+            assert_eq!(
+                summary_tos,
+                vec!["tos=0 metric=10", "tos=2 metric=30"]
+            );
+        }
+        "ospf-summary-lsa-asbr" => {
+            // OSPF rides directly on IPv4 protocol 89 (RFC 2328).
+            let ipv4 = expect_layer::<Ipv4>(case, packet);
+            assert_eq!(ipv4.protocol_value(), 89);
+            assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 1));
+            assert_eq!(ipv4.destination(), Ipv4Addr::new(224, 0, 0, 5));
+
+            // Common header: a version 2 Link State Update (type 4) from a
+            // documentation router id in the backbone area (0.0.0.0).
+            let ospf = expect_layer::<Ospfv2>(case, packet);
+            assert_eq!(ospf.version_value(), 2);
+            assert_eq!(ospf.packet_type_value(), 4); // Link State Update
+            assert_eq!(ospf.router_id_value(), Ipv4Addr::new(192, 0, 2, 1));
+            assert_eq!(ospf.area_id_value(), Ipv4Addr::new(0, 0, 0, 0));
+
+            // The Link State Update carries one type 4 Summary-LSA (LS type 4,
+            // RFC 2328 §A.4.4) describing a route to an AS boundary router: the
+            // network mask is not meaningful and is zero, followed by a single
+            // TOS 0 metric entry, an 8-octet body after the 20-octet header. The
+            // typed Summary body is private, so it is surfaced through the public
+            // inspection surface: `num_lsas`/`lsa_count` report one LSA, the
+            // `lsa` entry renders the 20-octet header summary plus the 8-octet
+            // Summary body, a `summary_lsa` pair reports the zero mask, the
+            // TOS 0 metric, and the single entry, and one `summary_tos` pair
+            // names the TOS 0 metric.
+            let fields = ospf.inspection_fields();
+            let value_of = |name: &str| {
+                fields
+                    .iter()
+                    .find(|(field, _)| *field == name)
+                    .map(|(_, value)| value.as_str())
+            };
+            assert_eq!(value_of("num_lsas"), Some("1"));
+            assert_eq!(value_of("lsa_count"), Some("1"));
+            assert_eq!(
+                value_of("lsa"),
+                Some(concat!(
+                    "LSA(type=Summary-ASBR, id=192.0.2.9, adv=192.0.2.1, ",
+                    "seq=0x80000001, age=0, len=28) body=8B",
+                ))
+            );
+            assert_eq!(value_of("summary_lsa"), Some("mask=0.0.0.0 metric=20 tos=1"));
+            let summary_tos: Vec<&str> = fields
+                .iter()
+                .filter(|(field, _)| *field == "summary_tos")
+                .map(|(_, value)| value.as_str())
+                .collect();
+            assert_eq!(summary_tos, vec!["tos=0 metric=20"]);
         }
         other => panic!("fixture {other} is missing typed field assertions"),
     }
