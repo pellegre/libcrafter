@@ -22,6 +22,8 @@ use crate::field::Field;
 use crate::packet::{IntoPacket, Layer, LayerContext, Packet};
 use crate::Result;
 
+pub mod auth;
+
 #[allow(unused_imports)]
 pub mod constants;
 
@@ -303,6 +305,34 @@ impl Ospfv2 {
     /// Set the 8-octet Authentication field (RFC 2328 §A.3.1).
     pub fn authentication(mut self, authentication: [u8; OSPF_AUTH_LEN]) -> Self {
         self.authentication.set_user(authentication);
+        self
+    }
+
+    /// Configure null authentication (AuType 0, RFC 2328 §D.1).
+    ///
+    /// Sets the AuType field to [`OSPF_AUTYPE_NULL`] and the 8-octet
+    /// authentication field to all zeros. The standard Internet checksum (which
+    /// excludes the authentication field) still protects the packet. This is an
+    /// ergonomic shorthand over [`Ospfv2::autype`] / [`Ospfv2::authentication`].
+    pub fn null_auth(mut self) -> Self {
+        self.autype.set_user(OSPF_AUTYPE_NULL);
+        self.authentication.set_user([0; OSPF_AUTH_LEN]);
+        self
+    }
+
+    /// Configure simple-password authentication (AuType 1, RFC 2328 §D.2).
+    ///
+    /// Sets the AuType field to [`OSPF_AUTYPE_SIMPLE`] and copies up to 8 octets
+    /// of the cleartext `password` into the 8-octet authentication field,
+    /// right-padded with zeros. A password longer than 8 octets is truncated to
+    /// its first 8 octets — the only 8 the field can carry. The checksum
+    /// auto-fill excludes the authentication field, so setting a password never
+    /// changes the computed checksum. Use [`Ospfv2::authentication`] directly to
+    /// pin a deliberately malformed 8-octet authentication value.
+    pub fn simple_password(mut self, password: &[u8]) -> Self {
+        self.autype.set_user(OSPF_AUTYPE_SIMPLE);
+        self.authentication
+            .set_user(auth::simple_password_field(password));
         self
     }
 
@@ -735,7 +765,14 @@ impl Layer for Ospfv2 {
                     .map(|value| format!("0x{value:04x}"))
                     .unwrap_or_else(|| "auto".to_string()),
             ),
-            ("autype", self.autype_value().to_string()),
+            (
+                "autype",
+                format!(
+                    "{} ({})",
+                    self.autype_value(),
+                    ospf_autype_name(self.autype_value())
+                ),
+            ),
             (
                 "authentication",
                 format!("0x{}", hex_bytes(&self.authentication_value())),
@@ -1393,5 +1430,107 @@ mod tests {
 
         let recompiled = decoded.compile().expect("decoded OSPF re-compiles");
         assert_eq!(recompiled.as_bytes(), bytes.as_bytes());
+    }
+
+    /// A Hello built with `simple_password(b"secret")` carries AuType 1 and the
+    /// cleartext password right-padded into the 8-octet authentication field
+    /// (RFC 2328 §D.2), round-trips byte-for-byte through IPv4 decode, and still
+    /// reports a valid checksum (the auth field is excluded from the checksum).
+    #[test]
+    fn ospf_simple_password_encodes_into_the_auth_field_and_round_trips() {
+        use crate::packet::NetworkLayer;
+        use crate::protocols::ip::v4::Ipv4;
+
+        let ospf = Ospfv2::hello()
+            .router_id([192, 0, 2, 1])
+            .area_id([0, 0, 0, 0])
+            .simple_password(b"secret");
+
+        // AuType is simple password and the 8-octet field is the password
+        // right-padded with zeros.
+        assert_eq!(ospf.autype_value(), OSPF_AUTYPE_SIMPLE);
+        assert_eq!(
+            ospf.authentication_value(),
+            [b's', b'e', b'c', b'r', b'e', b't', 0, 0]
+        );
+
+        let bytes = (Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 1))
+            .dst(Ipv4Addr::new(192, 0, 2, 2))
+            / ospf)
+            .compile()
+            .expect("Ipv4 / simple-password Hello compiles");
+
+        // The AuType (octets 14..16 of the OSPF header) and the authentication
+        // field (octets 16..24) appear on the wire. The IPv4 header is 20 octets
+        // (no options), so the OSPF header starts at offset 20.
+        let raw = bytes.as_bytes();
+        let ipv4_header_len = (raw[0] & 0x0f) as usize * 4;
+        let ospf = ipv4_header_len;
+        assert_eq!(&raw[ospf + 14..ospf + 16], &OSPF_AUTYPE_SIMPLE.to_be_bytes());
+        assert_eq!(
+            &raw[ospf + 16..ospf + 24],
+            &[b's', b'e', b'c', b'r', b'e', b't', 0, 0]
+        );
+
+        // Decoding through the default registry (checksum validation on) recovers
+        // the AuType and authentication field, reports a valid checksum (the auth
+        // field is excluded from the OSPF checksum), and re-compiles byte-for-byte.
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, raw)
+            .expect("the default registry decodes the simple-password Hello");
+        let layer = decoded
+            .layer::<Ospfv2>()
+            .expect("the decoded packet exposes a typed Ospfv2 layer");
+        assert_eq!(layer.autype_value(), OSPF_AUTYPE_SIMPLE);
+        assert_eq!(
+            layer.authentication_value(),
+            [b's', b'e', b'c', b'r', b'e', b't', 0, 0]
+        );
+        assert_eq!(layer.checksum_status(), OspfChecksumStatus::Valid);
+
+        let recompiled = decoded.compile().expect("decoded OSPF re-compiles");
+        assert_eq!(recompiled.as_bytes(), raw);
+    }
+
+    /// A Hello built with `null_auth()` carries AuType 0 and a zero 8-octet
+    /// authentication field (RFC 2328 §D.1).
+    #[test]
+    fn ospf_null_auth_zeroes_the_auth_field() {
+        let ospf = Ospfv2::hello()
+            .router_id([192, 0, 2, 1])
+            .area_id([0, 0, 0, 0])
+            .null_auth();
+
+        assert_eq!(ospf.autype_value(), OSPF_AUTYPE_NULL);
+        assert_eq!(ospf.authentication_value(), [0; OSPF_AUTH_LEN]);
+
+        let bytes = Packet::from_layer(ospf).compile().unwrap();
+        // AuType (octets 14..16) and authentication field (octets 16..24) are zero.
+        assert_eq!(&bytes[14..16], &OSPF_AUTYPE_NULL.to_be_bytes());
+        assert_eq!(&bytes[16..24], &[0u8; OSPF_AUTH_LEN]);
+    }
+
+    /// The `autype` inspection field surfaces the AuType name (RFC 2328 §D)
+    /// alongside its numeric value, so the authentication type is inspectable
+    /// through `Packet::show()`.
+    #[test]
+    fn ospf_inspection_surfaces_the_autype_name() {
+        let ospf = Ospfv2::hello()
+            .router_id([192, 0, 2, 1])
+            .simple_password(b"secret");
+        let fields = ospf.inspection_fields();
+        let autype = fields
+            .iter()
+            .find(|(name, _)| *name == "autype")
+            .map(|(_, value)| value.as_str());
+        assert_eq!(autype, Some("1 (Simple)"));
+
+        let null = Ospfv2::hello().router_id([192, 0, 2, 1]).null_auth();
+        let null_autype = null
+            .inspection_fields()
+            .into_iter()
+            .find(|(name, _)| *name == "autype")
+            .map(|(_, value)| value);
+        assert_eq!(null_autype.as_deref(), Some("0 (Null)"));
     }
 }
