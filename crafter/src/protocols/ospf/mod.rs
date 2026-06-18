@@ -832,6 +832,16 @@ impl Layer for Ospfv2 {
                         fields.push(("router_link", link.summary()));
                     }
                 }
+                // A typed Network-LSA body (RFC 2328 §A.4.3) adds a `network_lsa`
+                // pair (the network mask and attached-router count) followed by
+                // one `attached_router` pair per attached Router ID. Other LSA
+                // body variants contribute only the `lsa` header summary above.
+                if let crate::protocols::ospf::lsa::OspfLsaBody::Network(network) = &lsa.body {
+                    fields.push(("network_lsa", network.summary()));
+                    for router in network.attached_routers_value() {
+                        fields.push(("attached_router", router.to_string()));
+                    }
+                }
             }
         }
 

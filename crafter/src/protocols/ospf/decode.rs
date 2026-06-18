@@ -28,8 +28,8 @@ use super::constants::{
     OSPF_TYPE_LINK_STATE_UPDATE,
 };
 use super::lsa::{
-    decode_lsa_headers, OspfLsa, OspfLsaBody, OspfLsaHeader, OspfRouterLink, OspfRouterLinkTos,
-    OspfRouterLsa, OSPF_LSA_HEADER_LEN, OSPF_LSA_ROUTER,
+    decode_lsa_headers, OspfLsa, OspfLsaBody, OspfLsaHeader, OspfNetworkLsa, OspfRouterLink,
+    OspfRouterLinkTos, OspfRouterLsa, OSPF_LSA_HEADER_LEN, OSPF_LSA_NETWORK, OSPF_LSA_ROUTER,
 };
 use super::packet::{
     OspfDatabaseDescription, OspfHello, OspfLinkStateAck, OspfLinkStateRequest,
@@ -67,6 +67,14 @@ const OSPF_ROUTER_LINK_FIXED_LEN: usize = 12;
 /// The length of a single Router-LSA per-TOS entry, in octets (RFC 2328
 /// §A.4.2): TOS(1) + reserved(1) + TOS metric(2).
 const OSPF_ROUTER_LINK_TOS_LEN: usize = 4;
+
+/// The length of the Network-LSA network mask field, in octets (RFC 2328
+/// §A.4.3).
+const OSPF_NETWORK_LSA_MASK_LEN: usize = 4;
+
+/// The length of a single Network-LSA attached-router entry, in octets: a
+/// 4-octet Router ID (RFC 2328 §A.4.3).
+const OSPF_NETWORK_LSA_ROUTER_LEN: usize = 4;
 
 /// Append a decoded OSPFv2 packet to an existing packet stack.
 ///
@@ -437,6 +445,7 @@ fn decode_link_state_update_body(body: &[u8]) -> Result<OspfLinkStateUpdate> {
 fn decode_lsa_body(ls_type: u8, body: &[u8]) -> Result<OspfLsaBody> {
     match ls_type {
         OSPF_LSA_ROUTER => Ok(OspfLsaBody::Router(decode_router_lsa_body(body)?)),
+        OSPF_LSA_NETWORK => Ok(OspfLsaBody::Network(decode_network_lsa_body(body)?)),
         _ => Ok(OspfLsaBody::Raw(body.to_vec())),
     }
 }
@@ -520,6 +529,54 @@ fn decode_router_lsa_body(body: &[u8]) -> Result<OspfRouterLsa> {
     }
 
     Ok(OspfRouterLsa::from_decoded_parts(flags, num_links, links))
+}
+
+/// Parse the OSPFv2 Network-LSA body (RFC 2328 §A.4.3) from `body` into an
+/// [`OspfNetworkLsa`].
+///
+/// `body` is the LSA bytes after the 20-octet header. The body is a 4-octet
+/// Network Mask followed by zero or more 4-octet attached Router IDs (the
+/// designated router includes its own Router ID).
+///
+/// A body shorter than the 4-octet network mask is a structured
+/// [`CrafterError::buffer_too_short`] (context `"ospf network-lsa"`); an
+/// attached-router region whose length is not a multiple of 4 is a structured
+/// [`CrafterError::invalid_field_value`]
+/// (`"ospf.network_lsa.attached_routers"`), never a panic. The network mask is
+/// recovered and marked user-set (through [`OspfNetworkLsa::from_decoded_parts`])
+/// so the Network-LSA re-compiles byte-for-byte.
+fn decode_network_lsa_body(body: &[u8]) -> Result<OspfNetworkLsa> {
+    if body.len() < OSPF_NETWORK_LSA_MASK_LEN {
+        return Err(CrafterError::buffer_too_short(
+            "ospf network-lsa",
+            OSPF_NETWORK_LSA_MASK_LEN,
+            body.len(),
+        ));
+    }
+
+    // Network Mask (octets 0..4). The length check above keeps this slice in
+    // bounds, so it cannot panic.
+    let network_mask = Ipv4Addr::new(body[0], body[1], body[2], body[3]);
+
+    // The remaining octets are the attached-router list: zero or more 4-octet
+    // Router IDs. A region not a multiple of 4 is a malformed list, not a
+    // truncation.
+    let router_region = &body[OSPF_NETWORK_LSA_MASK_LEN..];
+    if router_region.len() % OSPF_NETWORK_LSA_ROUTER_LEN != 0 {
+        return Err(CrafterError::invalid_field_value(
+            "ospf.network_lsa.attached_routers",
+            "attached router list length must be a multiple of 4",
+        ));
+    }
+    let attached_routers = router_region
+        .chunks_exact(OSPF_NETWORK_LSA_ROUTER_LEN)
+        .map(|chunk| Ipv4Addr::new(chunk[0], chunk[1], chunk[2], chunk[3]))
+        .collect();
+
+    Ok(OspfNetworkLsa::from_decoded_parts(
+        network_mask,
+        attached_routers,
+    ))
 }
 
 /// Parse the OSPFv2 Link State Acknowledgment body (RFC 2328 §A.3.6) from `body`
@@ -992,16 +1049,15 @@ mod tests {
     /// byte-for-byte (RFC 2328 §A.3.5).
     #[test]
     fn ospf_decode_link_state_update_with_two_raw_lsas_round_trips() {
-        use crate::protocols::ospf::lsa::{
-            OspfLsa, OspfLsaBody, OspfLsaHeader, OSPF_LSA_NETWORK,
-        };
+        use crate::protocols::ospf::lsa::{OspfLsa, OspfLsaBody, OspfLsaHeader};
         use crate::protocols::ospf::OspfBody;
         use crate::protocols::ospf::OSPF_TYPE_LINK_STATE_UPDATE;
 
-        // An unmodeled LS type so the body is preserved verbatim as `Raw`; the
-        // Router-LSA type (1) now decodes typed and is covered by the dedicated
-        // round-trip test below.
-        const OSPF_LSA_UNKNOWN_TYPE: u8 = 99;
+        // Two unmodeled LS types so both bodies are preserved verbatim as `Raw`;
+        // the Router-LSA type (1) and Network-LSA type (2) now decode typed and
+        // are covered by the dedicated round-trip tests below.
+        const OSPF_LSA_UNKNOWN_TYPE_A: u8 = 99;
+        const OSPF_LSA_UNKNOWN_TYPE_B: u8 = 98;
 
         let first_body = [0xde, 0xad, 0xbe, 0xef, 0x01, 0x02];
         let second_body = [0x00, 0x11, 0x22, 0x33];
@@ -1009,7 +1065,7 @@ mod tests {
         let lsas = [
             OspfLsa::new(
                 OspfLsaHeader::new()
-                    .ls_type(OSPF_LSA_UNKNOWN_TYPE)
+                    .ls_type(OSPF_LSA_UNKNOWN_TYPE_A)
                     .link_state_id(Ipv4Addr::new(192, 0, 2, 1))
                     .advertising_router(Ipv4Addr::new(192, 0, 2, 1))
                     .ls_sequence_number(0x8000_0001),
@@ -1017,7 +1073,7 @@ mod tests {
             ),
             OspfLsa::new(
                 OspfLsaHeader::new()
-                    .ls_type(OSPF_LSA_NETWORK)
+                    .ls_type(OSPF_LSA_UNKNOWN_TYPE_B)
                     .link_state_id(Ipv4Addr::new(192, 0, 2, 2))
                     .advertising_router(Ipv4Addr::new(198, 51, 100, 7))
                     .ls_sequence_number(0x8000_0002),
@@ -1052,8 +1108,8 @@ mod tests {
         assert_eq!(lsu.num_lsas_value(), 2);
         let decoded_lsas = lsu.lsas_value();
         assert_eq!(decoded_lsas.len(), 2);
-        assert_eq!(decoded_lsas[0].header.ls_type_value(), OSPF_LSA_UNKNOWN_TYPE);
-        assert_eq!(decoded_lsas[1].header.ls_type_value(), OSPF_LSA_NETWORK);
+        assert_eq!(decoded_lsas[0].header.ls_type_value(), OSPF_LSA_UNKNOWN_TYPE_A);
+        assert_eq!(decoded_lsas[1].header.ls_type_value(), OSPF_LSA_UNKNOWN_TYPE_B);
         match &decoded_lsas[0].body {
             OspfLsaBody::Raw(raw) => assert_eq!(raw.as_slice(), first_body.as_slice()),
             other => panic!("expected a raw LSA body, got {other:?}"),
@@ -1274,6 +1330,97 @@ mod tests {
                 assert_eq!(available, 0);
             }
             other => panic!("expected buffer_too_short, got {other:?}"),
+        }
+    }
+
+    /// A Link State Update carrying a single Network-LSA (LS type 2) with a
+    /// network mask and two attached routers, once compiled, decodes (type 4)
+    /// into a typed [`OspfLsaBody::Network`] body whose mask and attached-router
+    /// list equal the built ones, and re-compiles byte-for-byte (RFC 2328
+    /// §A.3.5, §A.4.3).
+    #[test]
+    fn ospf_decode_link_state_update_network_lsa_two_attached_routers_round_trips() {
+        use crate::protocols::ospf::lsa::{
+            OspfLsa, OspfLsaBody, OspfLsaHeader, OspfNetworkLsa, OSPF_LSA_NETWORK,
+        };
+        use crate::protocols::ospf::OspfBody;
+        use crate::protocols::ospf::OSPF_TYPE_LINK_STATE_UPDATE;
+
+        // Network-LSA: a /24 mask plus two attached Router IDs.
+        let network = OspfNetworkLsa::new()
+            .network_mask(Ipv4Addr::new(255, 255, 255, 0))
+            .attached_router(Ipv4Addr::new(192, 0, 2, 1))
+            .attached_router(Ipv4Addr::new(192, 0, 2, 2));
+
+        let lsa = OspfLsa::new(
+            OspfLsaHeader::new()
+                .ls_type(OSPF_LSA_NETWORK)
+                .link_state_id(Ipv4Addr::new(192, 0, 2, 1))
+                .advertising_router(Ipv4Addr::new(192, 0, 2, 1))
+                .ls_sequence_number(0x8000_0001),
+            OspfLsaBody::Network(network),
+        );
+
+        let bytes = Packet::from_layer(
+            Ospfv2::link_state_update()
+                .router_id([192, 0, 2, 1])
+                .area_id([0, 0, 0, 0])
+                .with_link_state_update(|u| {
+                    *u = u.clone().lsa(lsa.clone());
+                }),
+        )
+        .compile()
+        .expect("a Link State Update with a Network-LSA compiles");
+
+        let decoded = append_ospf_packet(Packet::new(), bytes.as_bytes())
+            .expect("the Link State Update decodes");
+        let ospf = decoded
+            .layer::<Ospfv2>()
+            .expect("the decoded packet exposes a typed Ospfv2 layer");
+        assert_eq!(ospf.packet_type_value(), OSPF_TYPE_LINK_STATE_UPDATE);
+
+        let lsu = match &ospf.body {
+            OspfBody::LinkStateUpdate(lsu) => lsu,
+            other => panic!("expected a typed Link State Update body, got {other:?}"),
+        };
+        let decoded_lsas = lsu.lsas_value();
+        assert_eq!(decoded_lsas.len(), 1);
+        assert_eq!(decoded_lsas[0].header.ls_type_value(), OSPF_LSA_NETWORK);
+
+        // The Network-LSA body decoded into a typed `Network` variant with the
+        // mask and both attached routers recovered, in order.
+        let network = match &decoded_lsas[0].body {
+            OspfLsaBody::Network(network) => network,
+            other => panic!("expected a typed Network-LSA body, got {other:?}"),
+        };
+        assert_eq!(network.network_mask_value(), Ipv4Addr::new(255, 255, 255, 0));
+        assert_eq!(
+            network.attached_routers_value(),
+            &[Ipv4Addr::new(192, 0, 2, 1), Ipv4Addr::new(192, 0, 2, 2)]
+        );
+
+        // The decoded Network-LSA re-compiles byte-for-byte.
+        let recompiled = decoded
+            .compile()
+            .expect("decoded Link State Update re-compiles");
+        assert_eq!(recompiled.as_bytes(), bytes.as_bytes());
+    }
+
+    /// A Network-LSA body of 10 octets — the 4-octet network mask plus a 6-octet
+    /// attached-router region (not a multiple of 4) — is a structured
+    /// invalid-field error (`"ospf.network_lsa.attached_routers"`), never a panic
+    /// (RFC 2328 §A.4.3).
+    #[test]
+    fn ospf_decode_network_lsa_misaligned_attached_routers_is_invalid_field() {
+        // 4 mask octets plus 6 trailing octets: a malformed attached-router list.
+        let body = [0u8; OSPF_NETWORK_LSA_MASK_LEN + 6];
+        let err = decode_network_lsa_body(&body)
+            .expect_err("a 6-octet attached-router region is not a multiple of 4");
+        match err {
+            CrafterError::InvalidFieldValue { field, .. } => {
+                assert_eq!(field, "ospf.network_lsa.attached_routers");
+            }
+            other => panic!("expected invalid_field_value, got {other:?}"),
         }
     }
 }
