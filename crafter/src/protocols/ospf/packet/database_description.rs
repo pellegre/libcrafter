@@ -90,7 +90,6 @@ impl OspfDatabaseDescription {
     /// Construct a Database Description body from decoded wire fields, marking
     /// every scalar field as caller-supplied so re-compilation preserves the
     /// decoded values byte-for-byte.
-    #[allow(dead_code)]
     pub(crate) fn from_decoded_parts(
         interface_mtu: u16,
         options: u8,

@@ -23,15 +23,22 @@ use crate::field::Field;
 use crate::packet::Packet;
 
 use super::constants::{
-    OSPF_AUTH_LEN, OSPF_AUTYPE_CRYPTOGRAPHIC, OSPF_HEADER_LEN, OSPF_TYPE_HELLO,
+    OSPF_AUTH_LEN, OSPF_AUTYPE_CRYPTOGRAPHIC, OSPF_HEADER_LEN, OSPF_TYPE_DATABASE_DESCRIPTION,
+    OSPF_TYPE_HELLO,
 };
-use super::packet::OspfHello;
+use super::lsa::decode_lsa_headers;
+use super::packet::{OspfDatabaseDescription, OspfHello};
 use super::{OspfBody, OspfChecksumStatus, Ospfv2};
 
 /// The fixed (pre-neighbor-list) length of the Hello body, in octets (RFC 2328
 /// §A.3.2): Network Mask(4) + HelloInterval(2) + Options(1) + Rtr Pri(1) +
 /// RouterDeadInterval(4) + Designated Router(4) + Backup Designated Router(4).
 const OSPF_HELLO_FIXED_LEN: usize = 20;
+
+/// The fixed (pre-LSA-header-list) length of the Database Description body, in
+/// octets (RFC 2328 §A.3.3): Interface MTU(2) + Options(1) + flags(1) + DD
+/// sequence number(4).
+const OSPF_DD_FIXED_LEN: usize = 8;
 
 /// Append a decoded OSPFv2 packet to an existing packet stack.
 ///
@@ -112,6 +119,9 @@ pub(crate) fn append_ospf_packet_with_checksum_validation(
     // remaining typed bodies).
     let body = match packet_type {
         OSPF_TYPE_HELLO => OspfBody::Hello(decode_hello_body(body_bytes)?),
+        OSPF_TYPE_DATABASE_DESCRIPTION => {
+            OspfBody::DatabaseDescription(decode_database_description_body(body_bytes)?)
+        }
         other => OspfBody::Unknown {
             type_code: other,
             body: body_bytes.to_vec(),
@@ -218,6 +228,49 @@ fn decode_hello_body(body: &[u8]) -> Result<OspfHello> {
         designated_router,
         backup_designated_router,
         neighbors,
+    ))
+}
+
+/// Parse the OSPFv2 Database Description body (RFC 2328 §A.3.3) from `body` into
+/// an [`OspfDatabaseDescription`].
+///
+/// The Database Description body is a fixed 8 octets — Interface MTU(2),
+/// Options(1), flags(1) (carrying the I/M/MS bits), DD sequence number(4) —
+/// followed by a list of zero or more bare 20-octet LSA headers (RFC 2328
+/// §A.4.1).
+///
+/// A buffer shorter than the fixed 8 octets is a structured truncation error
+/// (context `"ospf database description"`); the trailing LSA-header list is
+/// parsed by [`decode_lsa_headers`], which surfaces a structured
+/// truncation error for a partial trailing header. Every recovered field is
+/// marked user-set (through [`OspfDatabaseDescription::from_decoded_parts`]) so
+/// the decoded body re-compiles byte-for-byte.
+fn decode_database_description_body(body: &[u8]) -> Result<OspfDatabaseDescription> {
+    if body.len() < OSPF_DD_FIXED_LEN {
+        return Err(CrafterError::buffer_too_short(
+            "ospf database description",
+            OSPF_DD_FIXED_LEN,
+            body.len(),
+        ));
+    }
+
+    // Fixed 8-octet portion (RFC 2328 §A.3.3), read from fixed offsets. The
+    // length check above keeps every slice in bounds, so this cannot panic.
+    let interface_mtu = u16::from_be_bytes([body[0], body[1]]);
+    let options = body[2];
+    let flags = body[3];
+    let dd_sequence_number = u32::from_be_bytes([body[4], body[5], body[6], body[7]]);
+
+    // The remaining octets are the LSA-header list (RFC 2328 §A.4.1): zero or
+    // more bare 20-octet headers, parsed by the shared list helper.
+    let lsa_headers = decode_lsa_headers(&body[OSPF_DD_FIXED_LEN..])?;
+
+    Ok(OspfDatabaseDescription::from_decoded_parts(
+        interface_mtu,
+        options,
+        flags,
+        dd_sequence_number,
+        lsa_headers,
     ))
 }
 
@@ -370,6 +423,118 @@ mod tests {
                 assert_eq!(field, "ospf.hello.neighbors");
             }
             other => panic!("expected invalid_field_value, got {other:?}"),
+        }
+    }
+
+    /// A Database Description built with two LSA headers and the I+M+MS flags,
+    /// once compiled, decodes (type 2) into a typed Database Description body
+    /// that exposes both LSA headers and the flags, and re-compiles
+    /// byte-for-byte (RFC 2328 §A.3.3).
+    #[test]
+    fn ospf_decode_database_description_with_two_lsa_headers_round_trips() {
+        use crate::protocols::ospf::lsa::{OspfLsaHeader, OSPF_LSA_NETWORK, OSPF_LSA_ROUTER};
+        use crate::protocols::ospf::packet::database_description::{
+            OSPF_DD_FLAG_I, OSPF_DD_FLAG_M, OSPF_DD_FLAG_MS,
+        };
+        use crate::protocols::ospf::OspfBody;
+        use crate::protocols::ospf::OSPF_TYPE_DATABASE_DESCRIPTION;
+
+        let bytes = Packet::from_layer(
+            Ospfv2::database_description()
+                .router_id([192, 0, 2, 1])
+                .area_id([0, 0, 0, 0])
+                .with_database_description(|d| {
+                    *d = d
+                        .clone()
+                        .interface_mtu(1500)
+                        .options(0x02)
+                        .dd_sequence_number(0x0000_1a2b)
+                        .init(true)
+                        .more(true)
+                        .master(true)
+                        .lsa_header(
+                            OspfLsaHeader::new()
+                                .ls_type(OSPF_LSA_ROUTER)
+                                .link_state_id(Ipv4Addr::new(192, 0, 2, 1))
+                                .advertising_router(Ipv4Addr::new(192, 0, 2, 1))
+                                .ls_sequence_number(0x8000_0001),
+                        )
+                        .lsa_header(
+                            OspfLsaHeader::new()
+                                .ls_type(OSPF_LSA_NETWORK)
+                                .link_state_id(Ipv4Addr::new(192, 0, 2, 2))
+                                .advertising_router(Ipv4Addr::new(198, 51, 100, 7))
+                                .ls_sequence_number(0x8000_0002),
+                        );
+                }),
+        )
+        .compile()
+        .expect("a Database Description with two LSA headers compiles");
+
+        let decoded = append_ospf_packet(Packet::new(), bytes.as_bytes())
+            .expect("the Database Description decodes");
+        let ospf = decoded
+            .layer::<Ospfv2>()
+            .expect("the decoded packet exposes a typed Ospfv2 layer");
+        assert_eq!(ospf.packet_type_value(), OSPF_TYPE_DATABASE_DESCRIPTION);
+
+        let dd = match &ospf.body {
+            OspfBody::DatabaseDescription(dd) => dd,
+            other => panic!("expected a typed Database Description body, got {other:?}"),
+        };
+        assert_eq!(dd.interface_mtu_value(), 1500);
+        assert_eq!(dd.dd_sequence_number_value(), 0x0000_1a2b);
+        // The I+M+MS flags survive the round-trip in the low three bits.
+        assert_eq!(
+            dd.flags_value(),
+            OSPF_DD_FLAG_I | OSPF_DD_FLAG_M | OSPF_DD_FLAG_MS
+        );
+        assert!(dd.init_value());
+        assert!(dd.more_value());
+        assert!(dd.master_value());
+
+        // Both LSA headers are exposed with their decoded fields.
+        let headers = dd.lsa_headers_value();
+        assert_eq!(headers.len(), 2);
+        assert_eq!(headers[0].ls_type_value(), OSPF_LSA_ROUTER);
+        assert_eq!(headers[0].link_state_id_value(), Ipv4Addr::new(192, 0, 2, 1));
+        assert_eq!(
+            headers[0].advertising_router_value(),
+            Ipv4Addr::new(192, 0, 2, 1)
+        );
+        assert_eq!(headers[0].ls_sequence_number_value(), 0x8000_0001);
+        assert_eq!(headers[1].ls_type_value(), OSPF_LSA_NETWORK);
+        assert_eq!(headers[1].link_state_id_value(), Ipv4Addr::new(192, 0, 2, 2));
+        assert_eq!(
+            headers[1].advertising_router_value(),
+            Ipv4Addr::new(198, 51, 100, 7)
+        );
+        assert_eq!(headers[1].ls_sequence_number_value(), 0x8000_0002);
+
+        let recompiled = decoded
+            .compile()
+            .expect("decoded Database Description re-compiles");
+        assert_eq!(recompiled.as_bytes(), bytes.as_bytes());
+    }
+
+    /// A Database Description body truncated to 7 octets (one short of the fixed
+    /// 8) is a structured truncation error (context
+    /// `"ospf database description"`), never a panic (RFC 2328 §A.3.3).
+    #[test]
+    fn ospf_decode_database_description_body_truncated_is_truncation_error() {
+        let err = decode_database_description_body(&[0u8; OSPF_DD_FIXED_LEN - 1])
+            .expect_err("a 7-octet Database Description body is too short for the fixed fields");
+        match err {
+            CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            } => {
+                assert_eq!(context, "ospf database description");
+                assert_eq!(required, OSPF_DD_FIXED_LEN);
+                assert_eq!(available, OSPF_DD_FIXED_LEN - 1);
+            }
+            other => panic!("expected buffer_too_short, got {other:?}"),
         }
     }
 }
