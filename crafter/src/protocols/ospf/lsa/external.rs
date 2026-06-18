@@ -457,4 +457,201 @@ mod tests {
             "auto-filled Fletcher checksum should validate over the AS-External-LSA"
         );
     }
+
+    /// An AS-External-LSA carrying three external metric entries — mixing Type 1
+    /// (E1, E bit clear) and Type 2 (E2, E bit set) metrics with distinct TOS
+    /// values, forwarding addresses, and external route tags — round-trips
+    /// byte-for-byte through a full build/compile/decode cycle, and every decoded
+    /// entry matches the built entry in order (RFC 2328 §A.4.5). This exercises
+    /// the 12-octet entry stride and the independent E-bit / 7-bit-TOS packing
+    /// across multiple per-TOS entries.
+    #[test]
+    fn ospf_as_external_lsa_three_entries_round_trip_byte_for_byte() {
+        use crate::protocols::ospf::decode::append_ospf_packet;
+        use crate::protocols::ospf::{OspfBody, Ospfv2};
+        use crate::Packet;
+
+        // Build the body from three appended entries, replacing the seeded
+        // default TOS 0 entry first so the entry list is exactly the three we
+        // describe below. `metric(..)` mutates only the first (TOS 0) entry; the
+        // two `external_entry(..)` calls append after it without clobbering it.
+        //
+        //   entry 0: E1 (E bit clear), TOS 0, metric 0x0000_0a,  fwd 192.0.2.10, tag 0x0000_0001
+        //   entry 1: E2 (E bit set),   TOS 1, metric 0x00b1_b2b3, fwd 192.0.2.11, tag 0xdead_beef
+        //   entry 2: E1 (E bit clear), TOS 2, metric 0x00ff_ffff, fwd 192.0.2.12, tag 0x1234_5678
+        let external = OspfAsExternalLsa::new()
+            .network_mask(Ipv4Addr::new(255, 255, 255, 0))
+            .metric(0x0000_000a, false)
+            .external_entry(true, 1, 0x00b1_b2b3, Ipv4Addr::new(192, 0, 2, 11), 0xdead_beef)
+            .external_entry(false, 2, 0x00ff_ffff, Ipv4Addr::new(192, 0, 2, 12), 0x1234_5678);
+
+        // The first entry's TOS code stays 0 (metric(..) resets it) and the two
+        // later entries keep their own TOS values: metric(..) did not clobber
+        // them.
+        let built = external.entries_value();
+        assert_eq!(built.len(), 3);
+        assert!(!built[0].e_bit_value());
+        assert_eq!(built[0].tos_value(), 0);
+        assert_eq!(built[0].metric_value(), 0x0000_000a);
+        assert!(built[1].e_bit_value());
+        assert_eq!(built[1].tos_value(), 1);
+        assert_eq!(built[2].tos_value(), 2);
+
+        let lsa = OspfLsa::new(
+            OspfLsaHeader::new()
+                .ls_type(OSPF_LSA_AS_EXTERNAL)
+                .link_state_id(Ipv4Addr::new(198, 51, 100, 0))
+                .advertising_router(Ipv4Addr::new(192, 0, 2, 1))
+                .ls_sequence_number(0x8000_0001),
+            OspfLsaBody::AsExternal(external.clone()),
+        );
+
+        let bytes = Packet::from_layer(
+            Ospfv2::link_state_update()
+                .router_id([192, 0, 2, 1])
+                .area_id([0, 0, 0, 0])
+                .with_link_state_update(|u| {
+                    *u = u.clone().lsa(lsa.clone());
+                }),
+        )
+        .compile()
+        .expect("a Link State Update with a three-entry AS-External-LSA compiles");
+
+        let decoded = append_ospf_packet(Packet::new(), bytes.as_bytes())
+            .expect("the Link State Update decodes");
+        let ospf = decoded
+            .layer::<Ospfv2>()
+            .expect("the decoded packet exposes a typed Ospfv2 layer");
+
+        let lsu = match &ospf.body {
+            OspfBody::LinkStateUpdate(lsu) => lsu,
+            other => panic!("expected a typed Link State Update body, got {other:?}"),
+        };
+        let decoded_lsas = lsu.lsas_value();
+        assert_eq!(decoded_lsas.len(), 1);
+        assert_eq!(decoded_lsas[0].header.ls_type_value(), OSPF_LSA_AS_EXTERNAL);
+
+        let decoded_external = match &decoded_lsas[0].body {
+            OspfLsaBody::AsExternal(external) => external,
+            other => panic!("expected a typed AS-External-LSA body, got {other:?}"),
+        };
+        assert_eq!(
+            decoded_external.network_mask_value(),
+            Ipv4Addr::new(255, 255, 255, 0)
+        );
+
+        // Every decoded entry matches the built entry, in order: the E bit, the
+        // 7-bit TOS code, the 24-bit metric, the forwarding address, and the
+        // external route tag all round-trip independently across the three
+        // 12-octet entries.
+        let decoded_entries = decoded_external.entries_value();
+        assert_eq!(decoded_entries.len(), built.len());
+        for (decoded_entry, built_entry) in decoded_entries.iter().zip(built.iter()) {
+            assert_eq!(decoded_entry.e_bit_value(), built_entry.e_bit_value());
+            assert_eq!(decoded_entry.tos_value(), built_entry.tos_value());
+            assert_eq!(decoded_entry.metric_value(), built_entry.metric_value());
+            assert_eq!(
+                decoded_entry.forwarding_address_value(),
+                built_entry.forwarding_address_value()
+            );
+            assert_eq!(
+                decoded_entry.external_route_tag_value(),
+                built_entry.external_route_tag_value()
+            );
+        }
+
+        // The decoded Link State Update re-compiles byte-for-byte.
+        let recompiled = decoded
+            .compile()
+            .expect("decoded Link State Update re-compiles");
+        assert_eq!(recompiled.as_bytes(), bytes.as_bytes());
+    }
+
+    /// An external metric entry whose raw TOS octet has a value greater than
+    /// `0x7f` is encoded with only the low 7 bits (RFC 2328 §A.4.5 reserves the
+    /// high bit for the E bit), so the high bits are dropped on the wire and the
+    /// decoded entry reports the masked TOS value. The encode/decode round-trip
+    /// is byte-for-byte stable, and the honored-override discipline is preserved:
+    /// `compile()` does not refuse the wide value, it just emits the 7-bit field
+    /// the wire layout allows.
+    #[test]
+    fn ospf_as_external_lsa_tos_above_seven_bits_round_trips_masked() {
+        use crate::protocols::ospf::decode::append_ospf_packet;
+        use crate::protocols::ospf::{OspfBody, Ospfv2};
+        use crate::Packet;
+
+        // TOS 0xff with the E bit clear: the wire octet can hold only the low 7
+        // bits, so 0xff & 0x7f = 0x7f is what survives, independent of the E bit.
+        let raw_tos = 0xff_u8;
+        let masked_tos = raw_tos & 0x7f;
+
+        let external = OspfAsExternalLsa::new()
+            .network_mask(Ipv4Addr::new(255, 255, 255, 0))
+            .metric(0x0000_002a, false)
+            .external_entry(false, raw_tos, 0x0000_0064, Ipv4Addr::new(192, 0, 2, 13), 0);
+
+        // The appended entry retains the caller's raw TOS value in the typed
+        // builder (an honored override); only the wire octet is 7 bits wide.
+        assert_eq!(external.entries_value()[1].tos_value(), raw_tos);
+
+        // Encode the body directly: the appended entry's combined octet keeps the
+        // E bit clear and packs only the low 7 bits of the TOS.
+        let mut body = Vec::new();
+        external.encode(&mut body);
+        let entry_octet = body[OSPF_AS_EXTERNAL_LSA_MASK_LEN + OSPF_AS_EXTERNAL_LSA_ENTRY_LEN];
+        assert_eq!(entry_octet & OSPF_AS_EXTERNAL_FLAG_E, 0);
+        assert_eq!(entry_octet & 0x7f, masked_tos);
+        assert_eq!(entry_octet, masked_tos);
+
+        let lsa = OspfLsa::new(
+            OspfLsaHeader::new()
+                .ls_type(OSPF_LSA_AS_EXTERNAL)
+                .link_state_id(Ipv4Addr::new(198, 51, 100, 0))
+                .advertising_router(Ipv4Addr::new(192, 0, 2, 1))
+                .ls_sequence_number(0x8000_0001),
+            OspfLsaBody::AsExternal(external),
+        );
+
+        let bytes = Packet::from_layer(
+            Ospfv2::link_state_update()
+                .router_id([192, 0, 2, 1])
+                .area_id([0, 0, 0, 0])
+                .with_link_state_update(|u| {
+                    *u = u.clone().lsa(lsa.clone());
+                }),
+        )
+        .compile()
+        .expect("a Link State Update with a wide-TOS AS-External-LSA compiles");
+
+        let decoded = append_ospf_packet(Packet::new(), bytes.as_bytes())
+            .expect("the Link State Update decodes");
+        let ospf = decoded
+            .layer::<Ospfv2>()
+            .expect("the decoded packet exposes a typed Ospfv2 layer");
+        let lsu = match &ospf.body {
+            OspfBody::LinkStateUpdate(lsu) => lsu,
+            other => panic!("expected a typed Link State Update body, got {other:?}"),
+        };
+        let decoded_external = match &lsu.lsas_value()[0].body {
+            OspfLsaBody::AsExternal(external) => external,
+            other => panic!("expected a typed AS-External-LSA body, got {other:?}"),
+        };
+
+        // The decoded appended entry reports the masked 7-bit TOS value, the E bit
+        // is clear, and the rest of the entry survives.
+        let decoded_entry = &decoded_external.entries_value()[1];
+        assert!(!decoded_entry.e_bit_value());
+        assert_eq!(decoded_entry.tos_value(), masked_tos);
+        assert_eq!(decoded_entry.metric_value(), 0x0000_0064);
+        assert_eq!(
+            decoded_entry.forwarding_address_value(),
+            Ipv4Addr::new(192, 0, 2, 13)
+        );
+
+        // The decoded Link State Update re-compiles byte-for-byte.
+        let recompiled = decoded
+            .compile()
+            .expect("decoded Link State Update re-compiles");
+        assert_eq!(recompiled.as_bytes(), bytes.as_bytes());
+    }
 }
