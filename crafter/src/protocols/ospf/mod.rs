@@ -809,12 +809,18 @@ impl Layer for Ospfv2 {
         }
 
         // The Link State Update body adds its `# LSAs` count, its carried-LSA
-        // count, and one `lsa` summary (the LSA header) per carried LSA.
+        // count, and one `lsa` line per carried LSA: the LSA header summary plus
+        // the body byte length (e.g. `LSA(...) body=12B`). The body is still
+        // `Raw` here, so its length is the byte count after the 20-octet header;
+        // typed bodies (added in later steps) keep the same `body=NB` suffix.
         if let OspfBody::LinkStateUpdate(lsu) = &self.body {
             fields.push(("num_lsas", lsu.num_lsas_value().to_string()));
             fields.push(("lsa_count", lsu.lsas_value().len().to_string()));
             for lsa in lsu.lsas_value() {
-                fields.push(("lsa", lsa.header.summary()));
+                fields.push((
+                    "lsa",
+                    format!("{} body={}B", lsa.header.summary(), lsa.body.encoded_len()),
+                ));
             }
         }
 
@@ -1092,6 +1098,92 @@ mod tests {
             .map(|(_, value)| value.as_str())
             .collect();
         assert_eq!(neighbors, vec!["192.0.2.3", "192.0.2.4", "192.0.2.5"]);
+    }
+
+    /// A Link State Update packet's `summary()` reports the carried-LSA count
+    /// (`lsas=`), and `inspection_fields()` contributes a `lsa_count` pair plus
+    /// one `lsa` entry per carried LSA, each combining the LSA header summary with
+    /// the body byte length (`body=NB`), so the LSU and its LSAs are inspectable
+    /// through `Packet::summary()` / `Packet::show()`.
+    #[test]
+    fn ospf_link_state_update_summary_and_inspection_describe_each_lsa() {
+        use crate::protocols::ospf::lsa::{
+            OspfLsa, OspfLsaBody, OspfLsaHeader, OSPF_LSA_NETWORK, OSPF_LSA_ROUTER,
+        };
+
+        let router_lsa = OspfLsa::new(
+            OspfLsaHeader::new()
+                .ls_type(OSPF_LSA_ROUTER)
+                .link_state_id(Ipv4Addr::new(192, 0, 2, 1))
+                .advertising_router(Ipv4Addr::new(192, 0, 2, 1)),
+            // Six body octets after the 20-octet header.
+            OspfLsaBody::Raw(vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06]),
+        );
+        let network_lsa = OspfLsa::new(
+            OspfLsaHeader::new()
+                .ls_type(OSPF_LSA_NETWORK)
+                .link_state_id(Ipv4Addr::new(192, 0, 2, 2))
+                .advertising_router(Ipv4Addr::new(198, 51, 100, 7)),
+            // Four body octets after the 20-octet header.
+            OspfLsaBody::Raw(vec![0xaa, 0xbb, 0xcc, 0xdd]),
+        );
+
+        let ospf = Ospfv2::link_state_update()
+            .router_id([192, 0, 2, 1])
+            .area_id([0, 0, 0, 0])
+            .with_link_state_update(|u| {
+                *u = OspfLinkStateUpdate::new().lsa(router_lsa).lsa(network_lsa);
+            });
+
+        // The one-line summary reports the carried-LSA count via `lsas=`.
+        let summary = ospf.summary();
+        assert!(
+            summary.contains("type=LSUpdate"),
+            "summary missing type: {summary}"
+        );
+        assert!(
+            summary.contains("lsas=2"),
+            "summary missing carried-LSA count: {summary}"
+        );
+
+        // `inspection_fields` carries the `lsa_count` pair and one `lsa` entry per
+        // carried LSA.
+        let fields = ospf.inspection_fields();
+        let lsa_count = fields
+            .iter()
+            .find(|(field, _)| *field == "lsa_count")
+            .map(|(_, value)| value.as_str());
+        assert_eq!(lsa_count, Some("2"));
+
+        let lsa_entries: Vec<&str> = fields
+            .iter()
+            .filter(|(field, _)| *field == "lsa")
+            .map(|(_, value)| value.as_str())
+            .collect();
+        // One `lsa` entry per carried LSA.
+        assert_eq!(lsa_entries.len(), 2);
+
+        // Each entry combines the LSA header summary with the body byte length.
+        assert!(
+            lsa_entries[0].contains("type=Router"),
+            "first lsa entry missing header summary: {}",
+            lsa_entries[0]
+        );
+        assert!(
+            lsa_entries[0].contains("body=6B"),
+            "first lsa entry missing body byte length: {}",
+            lsa_entries[0]
+        );
+        assert!(
+            lsa_entries[1].contains("type=Network"),
+            "second lsa entry missing header summary: {}",
+            lsa_entries[1]
+        );
+        assert!(
+            lsa_entries[1].contains("body=4B"),
+            "second lsa entry missing body byte length: {}",
+            lsa_entries[1]
+        );
     }
 
     /// The `Ospfv2` layer, `OspfBody`, and the OSPF constants are reachable
