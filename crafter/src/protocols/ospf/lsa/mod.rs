@@ -37,6 +37,14 @@ use crate::checksum::fletcher16_checkbytes;
 use crate::field::Field;
 use crate::{CrafterError, Result};
 
+pub mod router;
+
+pub use router::{
+    OspfRouterLink, OspfRouterLinkTos, OspfRouterLsa, OSPF_ROUTER_LINK_POINT_TO_POINT,
+    OSPF_ROUTER_LINK_STUB, OSPF_ROUTER_LINK_TRANSIT, OSPF_ROUTER_LINK_VIRTUAL,
+    OSPF_ROUTER_LSA_FLAG_B, OSPF_ROUTER_LSA_FLAG_E, OSPF_ROUTER_LSA_FLAG_V,
+};
+
 // ---------------------------------------------------------------------------
 // LSA types (RFC 2328 §A.4.1, RFC 3101 §2.4, RFC 5250 §3)
 // ---------------------------------------------------------------------------
@@ -417,11 +425,14 @@ impl Default for OspfLsaHeader {
 /// Opaque) are added by subsequent steps.
 #[derive(Debug, Clone)]
 pub enum OspfLsaBody {
+    /// A Router-LSA body (LS type 1), the collected states of a router's
+    /// interfaces to an area (RFC 2328 §A.4.2).
+    Router(OspfRouterLsa),
     /// An LSA body the container does not (yet) model, preserved verbatim. The
     /// bytes are everything after the 20-octet LSA header.
     Raw(Vec<u8>),
-    // Typed LSA bodies (Router, Network, Summary, AS-External, NSSA, Opaque)
-    // arrive in later steps.
+    // The remaining typed LSA bodies (Network, Summary, AS-External, NSSA,
+    // Opaque) arrive in later steps.
 }
 
 impl OspfLsaBody {
@@ -429,14 +440,17 @@ impl OspfLsaBody {
     /// 20-octet header).
     pub(crate) fn encoded_len(&self) -> usize {
         match self {
+            OspfLsaBody::Router(router) => router.encoded_len(),
             OspfLsaBody::Raw(body) => body.len(),
         }
     }
 
-    /// Append this LSA body's bytes to `out`. The [`OspfLsaBody::Raw`] variant
-    /// writes its bytes verbatim.
+    /// Append this LSA body's bytes to `out`. The typed variants serialize their
+    /// fields per the RFC; the [`OspfLsaBody::Raw`] variant writes its bytes
+    /// verbatim.
     pub(crate) fn encode(&self, out: &mut Vec<u8>) {
         match self {
+            OspfLsaBody::Router(router) => router.encode(out),
             OspfLsaBody::Raw(body) => out.extend_from_slice(body),
         }
     }
