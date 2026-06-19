@@ -230,6 +230,31 @@ profiles:
       malformed: 0
       pcap: 0
       live: 0
+  # ospf-smoke: focused offline OSPFv2 packet smoke coverage carried directly
+  # over IPv4 (IP protocol 89). The generator narrows case selection to the
+  # ospf-* coverage cases when this profile is active (see the ospf-smoke
+  # branches in tools/oracle/engine/generator.py), so a run such as
+  # `offline --profile ospf-smoke --seed 1 --count 10` deterministically samples
+  # the five OSPFv2 packet types (Hello, Database Description, Link State
+  # Request, Link State Update, Link State Acknowledgment). It keeps live, pcap,
+  # and malformed sampling disabled; OSPF wire behavior here is represented by
+  # baseline and boundary packet shapes using documentation router IDs and area
+  # identifiers through the l3 IPv4 root.
+  - name: ospf-smoke
+    purpose: focused offline OSPFv2 over IPv4 smoke coverage
+    default_count: 10
+    family_weights:
+      - name: ospf
+        weight: 1
+    payload_length:
+      min: 0
+      max: 0
+    feature_weights:
+      baseline: 10
+      boundary: 4
+      malformed: 0
+      pcap: 0
+      live: 0
   # ipv4-enrichment: focused offline coverage of the enriched IPv4 header
   # domains declared in layers/ipv4.yaml. The generator narrows stack/case and
   # feature selection to that layer's coverage cases when this profile is active,
