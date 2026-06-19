@@ -360,11 +360,17 @@ pub mod exports {
         OSPF_DD_FLAG_I, OSPF_DD_FLAG_M, OSPF_DD_FLAG_MS,
     };
     pub use ospf::{
-        ospf_autype_name, ospf_options_summary, Ospfv2, Ospfv3, Ospfv3Body, OspfBody,
-        OspfChecksumStatus, OSPFV3_HEADER_LEN, OSPF_AUTH_LEN, OSPF_AUTYPE_CRYPTOGRAPHIC,
-        OSPF_AUTYPE_NULL, OSPF_AUTYPE_SIMPLE, OSPF_HEADER_LEN, OSPF_OPTIONS_DC, OSPF_OPTIONS_DN,
-        OSPF_OPTIONS_E, OSPF_OPTIONS_L, OSPF_OPTIONS_MC, OSPF_OPTIONS_MT, OSPF_OPTIONS_NP,
-        OSPF_OPTIONS_O, OSPF_TYPE_DATABASE_DESCRIPTION, OSPF_TYPE_HELLO, OSPF_TYPE_LINK_STATE_ACK,
+        ospf_autype_name, ospf_options_summary, ospf_type_name, OspfBody, OspfChecksumStatus,
+        Ospfv2, Ospfv3, Ospfv3Body, Ospfv3DatabaseDescription, Ospfv3Hello, Ospfv3LinkStateAck,
+        Ospfv3LinkStateRequest, Ospfv3LinkStateRequestEntry, Ospfv3LinkStateUpdate, Ospfv3Lsa,
+        Ospfv3LsaBody, Ospfv3LsaHeader, Ospfv3NetworkLsa, Ospfv3RouterInterface, Ospfv3RouterLsa,
+        OSPFV3_DD_FLAG_I, OSPFV3_DD_FLAG_M, OSPFV3_DD_FLAG_MS, OSPFV3_HEADER_LEN,
+        OSPFV3_LSA_HEADER_LEN, OSPFV3_TYPE_DATABASE_DESCRIPTION, OSPFV3_TYPE_HELLO,
+        OSPFV3_TYPE_LINK_STATE_ACK, OSPFV3_TYPE_LINK_STATE_REQUEST, OSPFV3_TYPE_LINK_STATE_UPDATE,
+        OSPF_AUTH_LEN, OSPF_AUTYPE_CRYPTOGRAPHIC, OSPF_AUTYPE_NULL, OSPF_AUTYPE_SIMPLE,
+        OSPF_HEADER_LEN, OSPF_OPTIONS_DC, OSPF_OPTIONS_DN, OSPF_OPTIONS_E, OSPF_OPTIONS_L,
+        OSPF_OPTIONS_MC, OSPF_OPTIONS_MT, OSPF_OPTIONS_NP, OSPF_OPTIONS_O,
+        OSPF_TYPE_DATABASE_DESCRIPTION, OSPF_TYPE_HELLO, OSPF_TYPE_LINK_STATE_ACK,
         OSPF_TYPE_LINK_STATE_REQUEST, OSPF_TYPE_LINK_STATE_UPDATE, OSPF_VERSION_2, OSPF_VERSION_3,
     };
     // Re-export the deprecated neutral `Ospf` alias separately so the
