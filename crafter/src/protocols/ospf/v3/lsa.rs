@@ -355,9 +355,8 @@ impl Default for Ospfv3LsaHeader {
 /// [`buffer_too_short`](CrafterError::buffer_too_short) error rather than a
 /// panic.
 ///
-/// The typed OSPFv3 body decoder consuming this parser lands in a later step;
-/// until then it is exercised only by the in-module round-trip tests.
-#[allow(dead_code)]
+/// The typed OSPFv3 Database Description and Link State Acknowledgment decoders
+/// (`crate::protocols::ospf::v3::decode`) consume this parser.
 pub(crate) fn decode_ospfv3_lsa_headers(mut bytes: &[u8]) -> Result<Vec<Ospfv3LsaHeader>> {
     let mut headers = Vec::new();
     while !bytes.is_empty() {
