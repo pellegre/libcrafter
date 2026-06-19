@@ -17,7 +17,7 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::{arp, dhcp, dns, icmp, ndp, rip, tcp, udp};
+use crate::{arp, dhcp, dns, icmp, ndp, ospf, rip, tcp, udp};
 
 pub type ExampleResult<T> = std::result::Result<T, Box<dyn Error>>;
 
@@ -474,6 +474,30 @@ pub struct ProbePlan {
     pub expected_reply_destination_ipv6: Option<String>,
     #[serde(default)]
     pub ndp_validation: Option<NdpValidation>,
+    // OSPFv2 behavioral case fields (`ospf-hello-exchange`). OSPF runs directly
+    // over IPv4 (protocol 89, no ports), so the stimulus builds an
+    // `Ipv4 / Ospfv2::hello()` from `source_ipv4` to `destination_ipv4` (the
+    // AllSPFRouters group 224.0.0.5 by default) carrying the plan-driven
+    // `ospf_router_id` and `ospf_area_id`. The validation contract names the
+    // OSPF packet type the peer must answer with (`expected_ospf_packet_type`,
+    // a Hello or Database Description) and the peer's router id and area id the
+    // decoded reply must carry. Non-OSPF cases leave these unset.
+    #[serde(default)]
+    pub ospf_router_id: Option<String>,
+    #[serde(default)]
+    pub ospf_area_id: Option<String>,
+    #[serde(default)]
+    pub ospf_hello_interval: Option<u16>,
+    #[serde(default)]
+    pub ospf_dead_interval: Option<u32>,
+    #[serde(default)]
+    pub ospf_network_mask: Option<String>,
+    #[serde(default)]
+    pub expected_ospf_packet_type: Option<u8>,
+    #[serde(default)]
+    pub expected_ospf_router_id: Option<String>,
+    #[serde(default)]
+    pub expected_ospf_area_id: Option<String>,
 }
 
 /// Validation contract for an NDP Neighbor/Router Advertisement reply.
@@ -1081,6 +1105,8 @@ fn dispatch_case(
         ) => ndp::run_ndp_live(request, plan),
         (RunMode::DryRun, "rip-update-v2") => rip::run_rip_dry_run(request, plan),
         (RunMode::Live, "rip-update-v2") => rip::run_rip_live(request, plan),
+        (RunMode::DryRun, "ospf-hello-exchange") => ospf::run_ospf_dry_run(request, plan),
+        (RunMode::Live, "ospf-hello-exchange") => ospf::run_ospf_live(request, plan),
         (
             RunMode::DryRun,
             "udp-echo-empty"
@@ -1352,6 +1378,30 @@ pub fn plan_json(plan: &ProbePlan) -> Value {
             "expected_reply_destination_ipv6".into(),
             json!(plan.expected_reply_destination_ipv6),
         );
+        // The OSPFv2 plan fields are merged here for the same reason as the NDP
+        // fields: keeping them out of the base `json!` literal holds it under
+        // serde_json's macro recursion limit. They render only for the OSPF case
+        // (every other case leaves them unset, so they serialize as null).
+        map.insert("ospf_router_id".into(), json!(plan.ospf_router_id));
+        map.insert("ospf_area_id".into(), json!(plan.ospf_area_id));
+        map.insert(
+            "ospf_hello_interval".into(),
+            json!(plan.ospf_hello_interval),
+        );
+        map.insert("ospf_dead_interval".into(), json!(plan.ospf_dead_interval));
+        map.insert("ospf_network_mask".into(), json!(plan.ospf_network_mask));
+        map.insert(
+            "expected_ospf_packet_type".into(),
+            json!(plan.expected_ospf_packet_type),
+        );
+        map.insert(
+            "expected_ospf_router_id".into(),
+            json!(plan.expected_ospf_router_id),
+        );
+        map.insert(
+            "expected_ospf_area_id".into(),
+            json!(plan.expected_ospf_area_id),
+        );
     }
     value
 }
@@ -1528,6 +1578,14 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
         "ndp-neighbor-solicitation" | "ndp-duplicate-address-detection" => {
             "icmp6 and ip6[40] = 136".to_string()
         }
+        // OSPF runs directly over IPv4 (protocol 89) and has no ports, so match
+        // the protocol plus the expected peer source. The peer Hello is sent to
+        // the AllSPFRouters group (224.0.0.5) the stimulus also targets, so the
+        // destination is not pinned in the filter.
+        "ospf-hello-exchange" => format!(
+            "ip proto 89 and src host {}",
+            plan.expected_reply_source_ipv4.as_deref().unwrap_or(""),
+        ),
         _ => String::new(),
     }
 }
@@ -1584,6 +1642,7 @@ pub fn expected_response(plan: &ProbePlan) -> &str {
                 "ndp_neighbor_advertisement"
             }
             "ndp-router-solicitation" => "ndp_router_advertisement",
+            "ospf-hello-exchange" => "ospf_hello",
             _ => "unknown",
         })
 }
@@ -2089,6 +2148,20 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
             "router_advertisements": true,
             "requires_router_target": plan.requires_router_target.unwrap_or(true),
             "ndp_sysctls": true,
+        }),
+        "ospf-hello-exchange" => json!({
+            "required": true,
+            // A peer Hello requires an OSPF speaker on the segment that forms an
+            // adjacency and emits Hellos to AllSPFRouters; a bare kernel does not
+            // answer OSPF, so live runners configure an OSPF daemon (or skip the
+            // case). The target area id must match the stimulus area for the peer
+            // to accept the Hello and answer.
+            "kind": "ospf-speaker",
+            "layer": "network",
+            "protocol_number": 89,
+            "area_id": plan.ospf_area_id,
+            "peer_router_id": plan.expected_ospf_router_id,
+            "expected_packet_type": plan.expected_ospf_packet_type,
         }),
         _ => json!({}),
     }
