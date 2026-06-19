@@ -159,3 +159,5 @@ ospf-as-external-lsa-misaligned-entries|ipv4|invalid-field-value|ospf.as_externa
 ospf-nssa-lsa-misaligned-entries|ipv4|invalid-field-value|ospf.nssa_lsa.entries|4500004e000100004059d84fc0000201e00000050204003ac00002010000000018e2000000000000000000000000000100000807c6336400c000020180000001ad75001effffff000000000a0200
 # ospf opaque-lsa with a truncated trailing tlv header: a full 24-octet common header (type 4) carries one area-scope Opaque-LSA (LS type 10) whose body holds one complete generic TLV followed by only two octets of the next TLV's 4-octet Type/Length header, so walking the trailing TLV underruns the body (RFC 5250 §3).
 ospf-opaque-lsa-truncated-tlv|ipv4|buffer-too-short|ospf opaque tlv|4500004e000100004059d84fc0000201e00000050204003ac000020100000000698c00000000000000000000000000010000000a0a010203c0000201800000010c62001e00010004aabbccdd0003
+# ospfv3 truncated common header: IPv6 (next header 89) carrying only four OSPFv3 octets, below the 16-octet OSPFv3 common header (RFC 5340 A.3.1).
+ospfv3-truncated-header|ipv6|buffer-too-short|ospfv3 header|600000000004594020010db800000000000000000000000120010db800000000000000000000000203010004
