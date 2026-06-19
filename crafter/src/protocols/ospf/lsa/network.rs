@@ -2,7 +2,8 @@
 //!
 //! The Network-LSA (LS type 2) is originated for every transit broadcast or
 //! NBMA network by its designated router. It follows the 20-octet
-//! [`OspfLsaHeader`] and is the network's address mask followed by the Router
+//! [`OspfLsaHeader`](crate::protocols::ospf::lsa::OspfLsaHeader) and is the
+//! network's address mask followed by the Router
 //! IDs of each router attached to the network (including the designated router
 //! itself):
 //!
@@ -21,7 +22,7 @@
 //! Like the other LSA bodies, [`OspfNetworkLsa`] rides inside an
 //! [`OspfLsa`](crate::protocols::ospf::lsa::OspfLsa) as an
 //! [`OspfLsaBody::Network`](crate::protocols::ospf::lsa::OspfLsaBody::Network)
-//! variant, and [`OspfLsa::encode`](crate::protocols::ospf::lsa::OspfLsa::encode)
+//! variant, and `OspfLsa::encode`
 //! auto-fills the enclosing LSA `length` and the Fletcher-16 checksum over the
 //! header plus this body. The network mask uses a [`Field`] member so
 //! `compile()` honors any value the caller pinned.

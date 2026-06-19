@@ -7,12 +7,12 @@
 //! a single subnet), 10 (area-local, a single area), 11 (AS-wide, the whole
 //! autonomous system) — matching the
 //! [`OSPF_LSA_OPAQUE_LINK_LOCAL`](crate::protocols::ospf::lsa::OSPF_LSA_OPAQUE_LINK_LOCAL),
-//! [`OSPF_LSA_OPAQUE_AREA`](crate::protocols::ospf::lsa::OSPF_LSA_OPAQUE_AREA),
+//! [`OSPF_LSA_OPAQUE_AREA`],
 //! and [`OSPF_LSA_OPAQUE_AS`](crate::protocols::ospf::lsa::OSPF_LSA_OPAQUE_AS)
 //! type constants.
 //!
 //! The 32-bit Link State ID of the enclosing 20-octet
-//! [`OspfLsaHeader`](crate::protocols::ospf::lsa::OspfLsaHeader) is reinterpreted
+//! [`OspfLsaHeader`] is reinterpreted
 //! (RFC 5250 §3) as an 8-bit Opaque Type followed by a 24-bit
 //! type-specific Opaque ID:
 //!
@@ -45,9 +45,9 @@
 //! ```
 //!
 //! [`OspfOpaqueLsa`] models this generic TLV body. Like the other LSA bodies, it
-//! rides inside an [`OspfLsa`](crate::protocols::ospf::lsa::OspfLsa) as an
-//! [`OspfLsaBody::Opaque`](crate::protocols::ospf::lsa::OspfLsaBody::Opaque)
-//! variant, and [`OspfLsa::encode`](crate::protocols::ospf::lsa::OspfLsa::encode)
+//! rides inside an [`OspfLsa`] as an
+//! [`OspfLsaBody::Opaque`]
+//! variant, and `OspfLsa::encode`
 //! auto-fills the enclosing LSA `length` and the Fletcher-16 checksum over the
 //! header plus this body.
 
@@ -128,9 +128,11 @@ pub const OSPF_TE_LINK_TYPE_MULTI_ACCESS: u8 = 2;
 
 /// Router Information Opaque Type (RFC 7770 §2.1): the 8-bit Opaque Type octet in
 /// the Link State ID that identifies a Router Information (RI) Opaque-LSA. RI LSAs
-/// are link-local-scope (LS type [`OSPF_LSA_OPAQUE_LINK_LOCAL`], 9), area-scope
-/// (LS type [`OSPF_LSA_OPAQUE_AREA`], 10), or AS-scope (LS type
-/// [`OSPF_LSA_OPAQUE_AS`], 11) Opaque-LSAs carrying this Opaque Type.
+/// are link-local-scope (LS type
+/// [`OSPF_LSA_OPAQUE_LINK_LOCAL`](crate::protocols::ospf::lsa::OSPF_LSA_OPAQUE_LINK_LOCAL),
+/// 9), area-scope (LS type [`OSPF_LSA_OPAQUE_AREA`], 10), or AS-scope (LS type
+/// [`OSPF_LSA_OPAQUE_AS`](crate::protocols::ospf::lsa::OSPF_LSA_OPAQUE_AS), 11)
+/// Opaque-LSAs carrying this Opaque Type.
 pub const OSPF_OPAQUE_TYPE_ROUTER_INFORMATION: u8 = 4;
 
 /// RI Router Functional Capabilities TLV (RFC 7770 §2.3, originally RFC 4970): a
@@ -414,8 +416,8 @@ impl OspfTeLinkTlv {
 /// carries only the TLVs. Specific TLV families (Traffic Engineering RFC 3630,
 /// Router Information RFC 7770) build on this generic framing in later steps.
 ///
-/// This rides inside an [`OspfLsa`](crate::protocols::ospf::lsa::OspfLsa) as an
-/// [`OspfLsaBody::Opaque`](crate::protocols::ospf::lsa::OspfLsaBody::Opaque)
+/// This rides inside an [`OspfLsa`] as an
+/// [`OspfLsaBody::Opaque`]
 /// variant.
 #[derive(Debug, Clone, Default)]
 pub struct OspfOpaqueLsa {
@@ -505,7 +507,7 @@ impl OspfOpaqueLsa {
     /// `ls_type` selects the flooding scope — link-local
     /// ([`OSPF_LSA_OPAQUE_LINK_LOCAL`](crate::protocols::ospf::lsa::OSPF_LSA_OPAQUE_LINK_LOCAL),
     /// 9), area
-    /// ([`OSPF_LSA_OPAQUE_AREA`](crate::protocols::ospf::lsa::OSPF_LSA_OPAQUE_AREA),
+    /// ([`OSPF_LSA_OPAQUE_AREA`],
     /// 10), or AS
     /// ([`OSPF_LSA_OPAQUE_AS`](crate::protocols::ospf::lsa::OSPF_LSA_OPAQUE_AS),
     /// 11). The returned [`OspfLsa`] has an Opaque-LSA header whose Link State ID

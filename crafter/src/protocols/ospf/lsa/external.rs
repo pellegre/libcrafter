@@ -2,7 +2,8 @@
 //!
 //! AS-External-LSAs (LS type 5) are originated by AS boundary routers and
 //! describe a route to a destination external to the OSPF autonomous system
-//! (or a default route). The body follows the 20-octet [`OspfLsaHeader`] and is
+//! (or a default route). The body follows the 20-octet
+//! [`OspfLsaHeader`](crate::protocols::ospf::lsa::OspfLsaHeader) and is
 //! the network mask of the advertised destination followed by one or more
 //! 12-octet external metric entries, each carrying an E bit and TOS code packed
 //! into one octet, a 24-bit metric, a forwarding address, and an external route
@@ -33,7 +34,7 @@
 //! Like the other LSA bodies, [`OspfAsExternalLsa`] rides inside an
 //! [`OspfLsa`](crate::protocols::ospf::lsa::OspfLsa) as an
 //! [`OspfLsaBody::AsExternal`](crate::protocols::ospf::lsa::OspfLsaBody::AsExternal)
-//! variant, and [`OspfLsa::encode`](crate::protocols::ospf::lsa::OspfLsa::encode)
+//! variant, and `OspfLsa::encode`
 //! auto-fills the enclosing LSA `length` and the Fletcher-16 checksum over the
 //! header plus this body. The network mask uses a [`Field`] member so
 //! `compile()` honors any value the caller pinned.

@@ -533,7 +533,7 @@ impl Ospfv3RouterInterface {
 /// ```
 ///
 /// Like the other LSA bodies, [`Ospfv3RouterLsa`] rides inside an [`Ospfv3Lsa`]
-/// as an [`Ospfv3LsaBody::Router`] variant, and [`Ospfv3Lsa::encode`] auto-fills
+/// as an [`Ospfv3LsaBody::Router`] variant, and `Ospfv3Lsa::encode` auto-fills
 /// the enclosing LSA `length` and the Fletcher-16 checksum over the header plus
 /// this body. The flags and 24-bit Options use [`Field`] members so `compile()`
 /// honors any value the caller pinned.
@@ -654,7 +654,7 @@ impl Default for Ospfv3RouterLsa {
 /// Unlike the OSPFv2 Network-LSA (RFC 2328 §A.4.3) there is no network-mask
 /// field — OSPFv3 addressing lives in separate Intra-Area-Prefix-LSAs. Like the
 /// other LSA bodies, [`Ospfv3NetworkLsa`] rides inside an [`Ospfv3Lsa`] as an
-/// [`Ospfv3LsaBody::Network`] variant, and [`Ospfv3Lsa::encode`] auto-fills the
+/// [`Ospfv3LsaBody::Network`] variant, and `Ospfv3Lsa::encode` auto-fills the
 /// enclosing LSA `length` and the Fletcher-16 checksum. The Reserved octet and
 /// 24-bit Options use [`Field`] members so `compile()` honors any pinned value.
 #[derive(Debug, Clone)]
@@ -805,7 +805,7 @@ impl Ospfv3LsaBody {
 ///
 /// The header's `length` field spans the header plus the body, and the LS
 /// checksum is the Fletcher-16 checksum over the LSA from octet 2 (LS age
-/// excluded) to the end. [`Ospfv3Lsa::encode`] auto-fills both over header +
+/// excluded) to the end. `Ospfv3Lsa::encode` auto-fills both over header +
 /// body unless the caller pinned them — exactly as the OSPFv2
 /// [`OspfLsa`](crate::protocols::ospf::lsa::OspfLsa) does — so an LSA built with
 /// the crate is protocol-correct by default while deliberately malformed

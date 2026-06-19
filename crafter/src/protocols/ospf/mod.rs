@@ -1,17 +1,97 @@
 //! OSPF (Open Shortest Path First) protocol support.
 //!
-//! This module hosts the OSPFv2 (RFC 2328) wire-level layer and, in later
-//! blocks, its packet bodies, link-state advertisements, authentication, and a
-//! base OSPFv3 layer. OSPF runs directly over IP (protocol 89).
+//! This module provides wire-level OSPF: protocol-correct construction, decode,
+//! and inspection of OSPF packets within the typed [`Packet`] abstraction. It
+//! covers the full OSPFv2 (RFC 2328) packet set and an OSPFv3 (RFC 5340) base
+//! layer:
 //!
-//! This block defines the [`Ospfv2`] layer: the 24-octet common header
-//! (RFC 2328 §A.3.1) plus an opaque [`OspfBody`]. `compile()` writes the header,
-//! appends the body, and auto-fills the Packet Length and Checksum fields unless
-//! the caller pinned them — so an OSPF packet built with the crate is
-//! protocol-correct by default while deliberately malformed values survive
-//! untouched. The decode entrypoint, registry wiring, typed packet bodies, and
-//! the curated exports (including the deprecated neutral `Ospf` alias) are added
-//! by subsequent steps.
+//! - [`Ospfv2`]: the OSPFv2 packet layer — the shared 24-octet common header
+//!   (RFC 2328 §A.3.1) plus a typed [`OspfBody`] for the five packet types
+//!   (Hello, Database Description, Link State Request, Link State Update, Link
+//!   State Acknowledgment). It carries the standard link-state advertisements
+//!   ([`OspfLsa`](crate::protocols::ospf::lsa::OspfLsa): Router, Network, Summary,
+//!   AS-External, NSSA, and Opaque) and supports null, simple-password, and
+//!   cryptographic (keyed-MD5 / HMAC-SHA) authentication.
+//! - [`Ospfv3`]: the OSPFv3 base packet layer — the 16-octet common header
+//!   (RFC 5340 §A.3.1) plus the v3 Hello and request/update/ack framing.
+//!
+//! OSPF runs directly over IP (protocol 89): OSPFv2 over IPv4 and OSPFv3 over
+//! IPv6 (next header 89). `compile()` writes each header, appends the body, and
+//! auto-fills the Packet Length, the common-header Checksum, the per-LSA length,
+//! and the Fletcher-16 LSA checksum unless the caller pinned them — so a packet
+//! built with the crate is protocol-correct by default while deliberately
+//! malformed values survive untouched. Decoding through the protocol registry
+//! recognizes OSPF from IPv4/IPv6 and preserves unknown packet, LSA, and opaque
+//! types verbatim so they round-trip byte-for-byte. The curated exports include
+//! the deprecated neutral `Ospf` alias for the OSPFv2 layer.
+//!
+//! This is a wire primitive, not a router: there is no neighbor/adjacency state
+//! machine, SPF/Dijkstra computation, link-state database, flooding, or
+//! routing-table construction. The module builds and decodes packets; protocol
+//! behavior is left to generated tools that build on it.
+//!
+//! The example below builds an OSPFv2 Hello over IPv4, compiles it, decodes it
+//! back through the default registry, and confirms the typed [`Ospfv2`] layer is
+//! present and the bytes round-trip exactly. It uses documentation address space
+//! (RFC 5737) and the OSPF AllSPFRouters multicast group.
+//!
+//! ```rust
+//! use crafter::prelude::*;
+//! use std::net::Ipv4Addr;
+//!
+//! # fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
+//! // OSPFv2 Hello (RFC 2328 §A.3.2) over IPv4, addressed to AllSPFRouters.
+//! let packet = Ipv4::new()
+//!     .src(Ipv4Addr::new(192, 0, 2, 1))
+//!     .dst(Ipv4Addr::new(224, 0, 0, 5))
+//!     / Ospfv2::hello()
+//!         .router_id(Ipv4Addr::new(192, 0, 2, 1))
+//!         .area_id(Ipv4Addr::new(0, 0, 0, 0))
+//!         .with_hello(|hello| {
+//!             *hello = hello
+//!                 .clone()
+//!                 .network_mask(Ipv4Addr::new(255, 255, 255, 0))
+//!                 .hello_interval(10)
+//!                 .router_dead_interval(40);
+//!         });
+//!
+//! // `compile()` fills the OSPF Packet Length and Checksum (and the IPv4 header).
+//! let compiled = packet.compile()?;
+//! println!("{}", packet.summary());
+//!
+//! // Decode the IPv4 payload back through the default registry (protocol 89).
+//! let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes())?;
+//! let ospf = decoded.layer::<Ospfv2>().expect("typed OSPFv2 layer present");
+//! assert_eq!(ospf.packet_type_value(), OSPF_TYPE_HELLO);
+//! assert_eq!(ospf.router_id_value(), Ipv4Addr::new(192, 0, 2, 1));
+//!
+//! // A decoded OSPF packet recompiles byte-for-byte.
+//! let recompiled = decoded.compile()?;
+//! assert_eq!(recompiled.as_bytes(), compiled.as_bytes());
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! The OSPFv3 base layer follows the same shape over IPv6:
+//!
+//! ```rust
+//! use crafter::prelude::*;
+//! use std::net::{Ipv4Addr, Ipv6Addr};
+//!
+//! # fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
+//! // OSPFv3 Hello (RFC 5340 §A.3.2) over IPv6, addressed to AllSPFRouters.
+//! let packet = Ipv6::new()
+//!     .src("2001:db8::1".parse::<Ipv6Addr>()?)
+//!     .dst("ff02::5".parse::<Ipv6Addr>()?)
+//!     / Ospfv3::hello().router_id(Ipv4Addr::new(192, 0, 2, 1));
+//!
+//! let compiled = packet.compile()?;
+//! let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, compiled.as_bytes())?;
+//! assert!(decoded.layer::<Ospfv3>().is_some());
+//! assert_eq!(decoded.compile()?.as_bytes(), compiled.as_bytes());
+//! # Ok(())
+//! # }
+//! ```
 
 use core::any::Any;
 use core::net::Ipv4Addr;

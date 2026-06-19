@@ -1,7 +1,8 @@
 //! OSPFv2 Router-LSA body (RFC 2328 §A.4.2).
 //!
 //! The Router-LSA (LS type 1) describes the collected states of a router's
-//! interfaces to an area. It follows the 20-octet [`OspfLsaHeader`] and is a
+//! interfaces to an area. It follows the 20-octet
+//! [`OspfLsaHeader`](crate::protocols::ospf::lsa::OspfLsaHeader) and is a
 //! 4-octet fixed prefix (the router-description flags, a reserved octet, and the
 //! number of links) followed by that many link descriptions, each of which may
 //! itself carry per-TOS metric entries:
@@ -26,7 +27,7 @@
 //! Like the other LSA bodies, [`OspfRouterLsa`] rides inside an
 //! [`OspfLsa`](crate::protocols::ospf::lsa::OspfLsa) as an
 //! [`OspfLsaBody::Router`](crate::protocols::ospf::lsa::OspfLsaBody::Router)
-//! variant, and [`OspfLsa::encode`](crate::protocols::ospf::lsa::OspfLsa::encode)
+//! variant, and `OspfLsa::encode`
 //! auto-fills the enclosing LSA `length` and the Fletcher-16 checksum over the
 //! header plus this body. The router-description flags and `# links` use
 //! [`Field`] members so `compile()` honors any value the caller pinned while
