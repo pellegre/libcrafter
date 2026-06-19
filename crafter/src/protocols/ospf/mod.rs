@@ -46,7 +46,7 @@ pub use packet::{
     OspfDatabaseDescription, OspfHello, OspfLinkStateAck, OspfLinkStateRequest,
     OspfLinkStateRequestEntry, OspfLinkStateUpdate,
 };
-pub use v3::{Ospfv3, Ospfv3Body, OSPF_VERSION_3, OSPFV3_HEADER_LEN};
+pub use v3::{Ospfv3, Ospfv3Body, Ospfv3Hello, OSPF_VERSION_3, OSPFV3_HEADER_LEN, OSPFV3_TYPE_HELLO};
 
 macro_rules! impl_layer_object {
     ($type:ty) => {

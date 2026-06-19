@@ -29,8 +29,10 @@ use crate::packet::{IntoPacket, Layer, LayerContext, Packet, TransportChecksumCo
 use crate::protocols::ip::shared::IPPROTO_OSPF;
 
 pub mod constants;
+pub mod hello;
 
 pub use constants::*;
+pub use hello::Ospfv3Hello;
 
 macro_rules! impl_layer_object {
     ($type:ty) => {
@@ -70,11 +72,14 @@ macro_rules! impl_layer_div {
 /// The body of an OSPFv3 packet (RFC 5340 §A.3), following the 16-octet common
 /// header.
 ///
-/// This block models only the [`Ospfv3Body::Unknown`] variant, which preserves
-/// the raw body bytes verbatim so a packet type the builder/decoder does not (yet)
-/// model round-trips byte-for-byte. Typed bodies are added by later steps.
+/// This block models the typed [`Ospfv3Body::Hello`] body (RFC 5340 §A.3.2) and
+/// the [`Ospfv3Body::Unknown`] variant, which preserves the raw body bytes
+/// verbatim so a packet type the builder/decoder does not (yet) model round-trips
+/// byte-for-byte. Further typed bodies are added by later steps.
 #[derive(Debug, Clone)]
 pub enum Ospfv3Body {
+    /// An OSPFv3 Hello body (RFC 5340 §A.3.2).
+    Hello(Ospfv3Hello),
     /// A packet body the layer does not (yet) model, preserved verbatim.
     Unknown {
         /// The OSPFv3 packet Type code this body belongs to.
@@ -88,6 +93,7 @@ impl Ospfv3Body {
     /// The on-wire length of this body, in octets (the bytes after the header).
     fn encoded_len(&self) -> usize {
         match self {
+            Ospfv3Body::Hello(hello) => hello.encoded_len(),
             Ospfv3Body::Unknown { body, .. } => body.len(),
         }
     }
@@ -95,6 +101,7 @@ impl Ospfv3Body {
     /// Append this body's bytes to `out`.
     fn encode(&self, out: &mut Vec<u8>) {
         match self {
+            Ospfv3Body::Hello(hello) => hello.encode(out),
             Ospfv3Body::Unknown { body, .. } => out.extend_from_slice(body),
         }
     }
@@ -102,14 +109,17 @@ impl Ospfv3Body {
     /// The OSPFv3 packet Type code this body carries.
     fn type_code(&self) -> u8 {
         match self {
+            Ospfv3Body::Hello(_) => OSPFV3_TYPE_HELLO,
             Ospfv3Body::Unknown { type_code, .. } => *type_code,
         }
     }
 
     /// Track the OSPFv3 packet Type code on the opaque body so the header and
-    /// body agree by default.
+    /// body agree by default. Typed bodies carry a fixed Type code, so this only
+    /// affects the opaque [`Ospfv3Body::Unknown`] variant.
     fn set_type_code(&mut self, type_code: u8) {
         match self {
+            Ospfv3Body::Hello(_) => {}
             Ospfv3Body::Unknown { type_code: tc, .. } => *tc = type_code,
         }
     }
@@ -245,6 +255,50 @@ impl Ospfv3 {
             body: body.into(),
         };
         self
+    }
+
+    /// Build an OSPFv3 Hello packet (RFC 5340 §A.3.2).
+    ///
+    /// Sets the packet Type to [`OSPFV3_TYPE_HELLO`] and installs a default
+    /// [`Ospfv3Hello`] body. Set the Hello fields fluently with
+    /// [`Ospfv3::with_hello`] or replace the whole body with
+    /// [`Ospfv3::hello_body`].
+    pub fn hello() -> Self {
+        Self::new().hello_body(Ospfv3Hello::new())
+    }
+
+    /// Replace the packet body with the given [`Ospfv3Hello`] body and set the
+    /// packet Type to [`OSPFV3_TYPE_HELLO`].
+    pub fn hello_body(mut self, hello: Ospfv3Hello) -> Self {
+        self.packet_type.set_user(OSPFV3_TYPE_HELLO);
+        self.body = Ospfv3Body::Hello(hello);
+        self
+    }
+
+    /// Mutate the Hello body in place through a closure, returning `self` for
+    /// fluent chaining (e.g. `Ospfv3::hello().with_hello(|h| ...)`).
+    ///
+    /// If the current body is not a Hello it is replaced with a default one
+    /// (and the packet Type set to [`OSPFV3_TYPE_HELLO`]) before the closure
+    /// runs, so the accessor always yields a Hello body to configure.
+    pub fn with_hello(mut self, configure: impl FnOnce(&mut Ospfv3Hello)) -> Self {
+        configure(self.hello_mut());
+        self
+    }
+
+    /// Borrow the Hello body mutably, installing a default Hello body (and
+    /// setting the packet Type to [`OSPFV3_TYPE_HELLO`]) when the current body
+    /// is not already a Hello.
+    pub fn hello_mut(&mut self) -> &mut Ospfv3Hello {
+        if !matches!(self.body, Ospfv3Body::Hello(_)) {
+            self.packet_type.set_user(OSPFV3_TYPE_HELLO);
+            self.body = Ospfv3Body::Hello(Ospfv3Hello::new());
+        }
+        match &mut self.body {
+            Ospfv3Body::Hello(hello) => hello,
+            // Unreachable: the body was just normalized to a Hello above.
+            _ => unreachable!("hello body installed above"),
+        }
     }
 
     /// The effective OSPF Version (the caller value, else [`OSPF_VERSION_3`]).
