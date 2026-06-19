@@ -35,7 +35,10 @@ pub mod packet;
 
 pub use constants::*;
 pub use hello::Ospfv3Hello;
-pub use lsa::{Ospfv3LsaHeader, OSPFV3_LSA_HEADER_LEN};
+pub use lsa::{
+    Ospfv3LinkStateUpdate, Ospfv3Lsa, Ospfv3LsaBody, Ospfv3LsaHeader, Ospfv3NetworkLsa,
+    Ospfv3RouterInterface, Ospfv3RouterLsa, OSPFV3_LSA_HEADER_LEN,
+};
 pub use packet::{
     Ospfv3DatabaseDescription, Ospfv3LinkStateAck, Ospfv3LinkStateRequest,
     Ospfv3LinkStateRequestEntry,
@@ -94,6 +97,8 @@ pub enum Ospfv3Body {
     DatabaseDescription(Ospfv3DatabaseDescription),
     /// An OSPFv3 Link State Request body (RFC 5340 §A.3.4).
     LinkStateRequest(Ospfv3LinkStateRequest),
+    /// An OSPFv3 Link State Update body (RFC 5340 §A.3.5).
+    LinkStateUpdate(Ospfv3LinkStateUpdate),
     /// An OSPFv3 Link State Acknowledgment body (RFC 5340 §A.3.6).
     LinkStateAck(Ospfv3LinkStateAck),
     /// A packet body the layer does not (yet) model, preserved verbatim.
@@ -112,6 +117,7 @@ impl Ospfv3Body {
             Ospfv3Body::Hello(hello) => hello.encoded_len(),
             Ospfv3Body::DatabaseDescription(dd) => dd.encoded_len(),
             Ospfv3Body::LinkStateRequest(lsr) => lsr.encoded_len(),
+            Ospfv3Body::LinkStateUpdate(lsu) => lsu.encoded_len(),
             Ospfv3Body::LinkStateAck(ack) => ack.encoded_len(),
             Ospfv3Body::Unknown { body, .. } => body.len(),
         }
@@ -123,6 +129,7 @@ impl Ospfv3Body {
             Ospfv3Body::Hello(hello) => hello.encode(out),
             Ospfv3Body::DatabaseDescription(dd) => dd.encode(out),
             Ospfv3Body::LinkStateRequest(lsr) => lsr.encode(out),
+            Ospfv3Body::LinkStateUpdate(lsu) => lsu.encode(out),
             Ospfv3Body::LinkStateAck(ack) => ack.encode(out),
             Ospfv3Body::Unknown { body, .. } => out.extend_from_slice(body),
         }
@@ -134,6 +141,7 @@ impl Ospfv3Body {
             Ospfv3Body::Hello(_) => OSPFV3_TYPE_HELLO,
             Ospfv3Body::DatabaseDescription(_) => OSPFV3_TYPE_DATABASE_DESCRIPTION,
             Ospfv3Body::LinkStateRequest(_) => OSPFV3_TYPE_LINK_STATE_REQUEST,
+            Ospfv3Body::LinkStateUpdate(_) => OSPFV3_TYPE_LINK_STATE_UPDATE,
             Ospfv3Body::LinkStateAck(_) => OSPFV3_TYPE_LINK_STATE_ACK,
             Ospfv3Body::Unknown { type_code, .. } => *type_code,
         }
@@ -147,6 +155,7 @@ impl Ospfv3Body {
             Ospfv3Body::Hello(_)
             | Ospfv3Body::DatabaseDescription(_)
             | Ospfv3Body::LinkStateRequest(_)
+            | Ospfv3Body::LinkStateUpdate(_)
             | Ospfv3Body::LinkStateAck(_) => {}
             Ospfv3Body::Unknown { type_code: tc, .. } => *tc = type_code,
         }
@@ -414,6 +423,50 @@ impl Ospfv3 {
             Ospfv3Body::LinkStateRequest(lsr) => lsr,
             // Unreachable: the body was just normalized above.
             _ => unreachable!("link state request body installed above"),
+        }
+    }
+
+    /// Build an OSPFv3 Link State Update packet (RFC 5340 §A.3.5).
+    ///
+    /// Sets the packet Type to [`OSPFV3_TYPE_LINK_STATE_UPDATE`] and installs a
+    /// default [`Ospfv3LinkStateUpdate`] body. Configure it fluently with
+    /// [`Ospfv3::with_link_state_update`] or replace the whole body with
+    /// [`Ospfv3::link_state_update_body`].
+    pub fn link_state_update() -> Self {
+        Self::new().link_state_update_body(Ospfv3LinkStateUpdate::new())
+    }
+
+    /// Replace the packet body with the given [`Ospfv3LinkStateUpdate`] body and
+    /// set the packet Type to [`OSPFV3_TYPE_LINK_STATE_UPDATE`].
+    pub fn link_state_update_body(mut self, lsu: Ospfv3LinkStateUpdate) -> Self {
+        self.packet_type.set_user(OSPFV3_TYPE_LINK_STATE_UPDATE);
+        self.body = Ospfv3Body::LinkStateUpdate(lsu);
+        self
+    }
+
+    /// Mutate the Link State Update body in place through a closure, returning
+    /// `self` for fluent chaining. Installs a default body (and sets the packet
+    /// Type) when the current body is not already a Link State Update.
+    pub fn with_link_state_update(
+        mut self,
+        configure: impl FnOnce(&mut Ospfv3LinkStateUpdate),
+    ) -> Self {
+        configure(self.link_state_update_mut());
+        self
+    }
+
+    /// Borrow the Link State Update body mutably, installing a default body (and
+    /// setting the packet Type to [`OSPFV3_TYPE_LINK_STATE_UPDATE`]) when the
+    /// current body is not already a Link State Update.
+    pub fn link_state_update_mut(&mut self) -> &mut Ospfv3LinkStateUpdate {
+        if !matches!(self.body, Ospfv3Body::LinkStateUpdate(_)) {
+            self.packet_type.set_user(OSPFV3_TYPE_LINK_STATE_UPDATE);
+            self.body = Ospfv3Body::LinkStateUpdate(Ospfv3LinkStateUpdate::new());
+        }
+        match &mut self.body {
+            Ospfv3Body::LinkStateUpdate(lsu) => lsu,
+            // Unreachable: the body was just normalized above.
+            _ => unreachable!("link state update body installed above"),
         }
     }
 
