@@ -132,7 +132,7 @@ impl OspfHello {
         self
     }
 
-    /// Toggle the E-bit ([`OSPF_OPTIONS_E`](crate::protocols::ospf::OSPF_OPTIONS_E),
+    /// Toggle the E-bit ([`OSPF_OPTIONS_E`],
     /// 0x02) in the Options field (RFC 2328 §A.2): when set the router accepts
     /// and forwards AS-External-LSAs. Leaves the other Options bits untouched.
     pub fn external_capable(mut self, external_capable: bool) -> Self {
@@ -140,7 +140,7 @@ impl OspfHello {
         self
     }
 
-    /// Toggle the O-bit ([`OSPF_OPTIONS_O`](crate::protocols::ospf::OSPF_OPTIONS_O),
+    /// Toggle the O-bit ([`OSPF_OPTIONS_O`],
     /// 0x40) in the Options field (RFC 5250 §2.1): when set the router is
     /// opaque-LSA capable. Leaves the other Options bits untouched.
     pub fn opaque_capable(mut self, opaque_capable: bool) -> Self {

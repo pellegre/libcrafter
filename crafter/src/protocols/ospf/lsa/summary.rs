@@ -4,7 +4,8 @@
 //! that share the identical body layout: the type 3 Summary-LSA describes a
 //! route to an IP network, and the type 4 Summary-LSA describes a route to an
 //! AS boundary router (for type 4 the Network Mask field is not meaningful and
-//! is set to zero). The body follows the 20-octet [`OspfLsaHeader`] and is the
+//! is set to zero). The body follows the 20-octet
+//! [`OspfLsaHeader`](crate::protocols::ospf::lsa::OspfLsaHeader) and is the
 //! network mask followed by one or more TOS/metric entries, each carrying a TOS
 //! code and a 24-bit metric:
 //!
@@ -24,7 +25,7 @@
 //! [`OspfLsa`](crate::protocols::ospf::lsa::OspfLsa) as an
 //! [`OspfLsaBody::Summary`](crate::protocols::ospf::lsa::OspfLsaBody::Summary)
 //! variant (used for both LS type 3 and LS type 4), and
-//! [`OspfLsa::encode`](crate::protocols::ospf::lsa::OspfLsa::encode) auto-fills
+//! `OspfLsa::encode` auto-fills
 //! the enclosing LSA `length` and the Fletcher-16 checksum over the header plus
 //! this body. The network mask uses a [`Field`] member so `compile()` honors any
 //! value the caller pinned.

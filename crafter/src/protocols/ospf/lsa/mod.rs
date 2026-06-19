@@ -459,7 +459,7 @@ pub enum OspfLsaBody {
     /// plus one or more external metric entries, originated within a
     /// not-so-stubby area (RFC 3101 §2.2). Shares the AS-External-LSA body
     /// layout; the P-bit lives on the LSA header Options field
-    /// ([`OSPF_OPTIONS_NP`](nssa::OSPF_OPTIONS_NP)).
+    /// ([`OSPF_OPTIONS_NP`]).
     Nssa(OspfNssaLsa),
     /// An Opaque-LSA body (LS type 9 link-local, 10 area, or 11 AS), a generic
     /// list of TLVs (RFC 5250 §3). The Opaque Type and Opaque ID are carried in
@@ -508,7 +508,7 @@ impl OspfLsaBody {
 ///
 /// The header's `length` field spans the header plus the body, and the LS
 /// checksum is the Fletcher-16 checksum over the header (from the Options
-/// octet) plus the body. [`OspfLsa::encode`] auto-fills both over header + body
+/// octet) plus the body. `OspfLsa::encode` auto-fills both over header + body
 /// unless the caller pinned them, so an LSA built with the crate is
 /// protocol-correct by default while deliberately malformed length/checksum
 /// values survive untouched.
