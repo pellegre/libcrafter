@@ -1,0 +1,117 @@
+version: 1
+kind: feature
+name: ospf_malformed
+summary: >-
+  OSPFv2 (RFC 2328) malformed-input contract: a datagram shorter than the
+  24-octet common header, a Hello whose neighbor region is not a multiple of the
+  4-octet neighbor Router ID, a Link State Request whose entry region is not a
+  multiple of the 12-octet request entry, and a Link State Update LSA whose
+  length field is below the 20-octet LSA header minimum. Each is a structured
+  decode error, never a panic.
+
+# Deliberately malformed OSPFv2 inputs. A truncated common header, a misaligned
+# Hello neighbor list, a misaligned Link State Request entry region, and an
+# undersized LSA length are all structured errors rather than comparable
+# packets, so every case carries byte_policy: structured_error and is excluded
+# from offline encode/decode sampling (the oracle has no offline malformed
+# comparison path; see tools/oracle/engine/generator.py
+# _case_supported_in_direction). The cases stay declared coverage; the crate's
+# resilience and fixture suites assert the BufferTooShort / InvalidFieldValue
+# structured errors for these shapes (see crafter/tests/resilience.rs and
+# crafter/tests/fixtures/malformed/core-decode-corpus.hex).
+
+layers:
+  - ospf
+  - ipv4
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: false
+malformed: true
+
+behaviors:
+  # Fewer than 24 bytes: cannot hold the OSPFv2 common header (Version | Type |
+  # Packet Length | Router ID | Area ID | Checksum | AuType | Authentication);
+  # BufferTooShort with context "ospf header".
+  - name: truncated-header
+    rfc:
+      - RFC 2328 Section A.3.1
+    context:
+      - ospf header
+  # A Hello neighbor region whose length is not a multiple of the 4-octet
+  # neighbor Router ID: the neighbor list cannot be split cleanly;
+  # InvalidFieldValue on field "ospf.hello.neighbors".
+  - name: hello-neighbor-misaligned
+    rfc:
+      - RFC 2328 Section A.3.2
+    message_type: hello
+    fields:
+      - ospf.hello.neighbors
+  # A Link State Request entry region whose length is not a multiple of the
+  # 12-octet request entry: the entry list cannot be split cleanly;
+  # InvalidFieldValue on field "ospf.link_state_request.entries".
+  - name: link-state-request-misaligned
+    rfc:
+      - RFC 2328 Section A.3.4
+    message_type: link_state_request
+    fields:
+      - ospf.link_state_request.entries
+  # A Link State Update carrying an LSA whose declared length field is below the
+  # 20-octet LSA header minimum: the LSA cannot hold its own header;
+  # InvalidFieldValue on field "ospf.lsa.length".
+  - name: lsa-length-below-minimum
+    rfc:
+      - RFC 2328 Section A.3.5
+      - RFC 2328 Section A.4.1
+    message_type: link_state_update
+    fields:
+      - ospf.lsa.length
+
+coverage_cases:
+  - ospf-malformed-truncated-header
+  - ospf-malformed-hello-neighbor-misaligned
+  - ospf-malformed-link-state-request-misaligned
+  - ospf-malformed-lsa-length-below-minimum
+
+supported_cases:
+  - name: ospf-malformed-truncated-header
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: structured_error
+  - name: ospf-malformed-hello-neighbor-misaligned
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: structured_error
+  - name: ospf-malformed-link-state-request-misaligned
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: structured_error
+  - name: ospf-malformed-lsa-length-below-minimum
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: structured_error
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - OSPF_Hdr
+    notes:
+      - Malformed OSPF shapes are not byte-compared; the Scapy reference backend
+        declares native OSPF support for the well-formed sibling features and
+        these cases are excluded from offline sampling as structured errors.
+  libcrafter:
+    status: supported
+    notes:
+      - A common header truncated below 24 octets surfaces as a BufferTooShort
+        structured error with context "ospf header"; a Hello neighbor region not
+        a multiple of 4 octets, a Link State Request entry region not a multiple
+        of 12 octets, and a Link State Update LSA length below 20 octets surface
+        as InvalidFieldValue structured errors on fields
+        "ospf.hello.neighbors", "ospf.link_state_request.entries", and
+        "ospf.lsa.length" respectively, each carrying context, required, and
+        available where applicable, never a panic.
