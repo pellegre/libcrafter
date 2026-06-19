@@ -1,0 +1,1 @@
+Ipv4(src=192.0.2.1, dst=224.0.0.5, proto=ospf(89)) / Ospf(type=Hello, rid=192.0.2.1, area=0.0.0.0, mask=255.255.255.0, dr=192.0.2.1, bdr=192.0.2.2, neighbors=1)
