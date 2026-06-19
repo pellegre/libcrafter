@@ -66,6 +66,7 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
             "ipsec_esp",
             "ipsec_ah",
             "ikev2",
+            "ospf_neighbor_peer",
         ):
             self.assertIn(name, PROBE_CAPABILITY_NAMES)
 
@@ -93,6 +94,8 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
             "ipsec_esp",
             "ipsec_ah",
             "ikev2",
+            # An OSPF-capable neighbor rides the controlled-services substrate.
+            "ospf_neighbor_peer",
         ):
             self.assertIs(derived[name], True, name)
 
@@ -119,6 +122,9 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
             "ipsec_esp",
             "ipsec_ah",
             "ikev2",
+            # OSPF rides IPv4 unicast + a controlled OSPF neighbor, not the link
+            # layer, so an L3-only-but-controlled substrate still grants it.
+            "ospf_neighbor_peer",
         ):
             self.assertIs(derived[granted], True, granted)
 
@@ -197,7 +203,13 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
             dry_run=True,
         )
 
-        for denied in ("bgp_peer", "ipsec_esp", "ipsec_ah", "ikev2"):
+        for denied in (
+            "bgp_peer",
+            "ipsec_esp",
+            "ipsec_ah",
+            "ikev2",
+            "ospf_neighbor_peer",
+        ):
             self.assertIs(derived[denied], False, denied)
 
     def test_explicit_bgp_peer_denial_disables_bgp_only(self) -> None:
@@ -212,6 +224,23 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
 
         self.assertIs(derived["bgp_peer"], False)
         self.assertIs(derived["dns_service"], True)
+
+    def test_explicit_ospf_peer_denial_disables_ospf_only(self) -> None:
+        # A controlled substrate that cannot stand up an OSPFv2 speaker in the
+        # documentation area can deny the peer explicitly; the OSPF neighbor
+        # capability is denied while other controlled services are unaffected.
+        substrate = dict(_LINK_LAYER_SUBSTRATE)
+        substrate["ospf_peer"] = False
+
+        derived = probe_capabilities_from_lab_capabilities(
+            "qemu",
+            substrate,
+            dry_run=True,
+        )
+
+        self.assertIs(derived["ospf_neighbor_peer"], False)
+        self.assertIs(derived["dns_service"], True)
+        self.assertIs(derived["bgp_peer"], True)
 
     def test_explicit_ipsec_peer_denial_disables_esp_and_ah(self) -> None:
         # A controlled substrate that cannot configure the xfrm/strongSwan SA can
@@ -408,6 +437,18 @@ class ProbeSkipReasonTest(unittest.TestCase):
         self.assertEqual(
             capabilities.skip_reason_for_missing_capability(case, "bgp_peer"),
             capabilities.SKIP_REQUIRES_BGP_PEER,
+        )
+
+    def test_ospf_neighbor_peer_maps_to_capability_unavailable(self) -> None:
+        # OSPF has no dedicated stable skip reason: a provider without an
+        # OSPF-capable neighbor skips the cases with the shared
+        # capability-unavailable reason rather than failing.
+        case = cases.PROBE_CASE_BY_NAME["ospf-hello-exchange"]
+        self.assertEqual(
+            capabilities.skip_reason_for_missing_capability(
+                case, "ospf_neighbor_peer"
+            ),
+            capabilities.SKIP_CAPABILITY_UNAVAILABLE,
         )
 
     def test_unknown_capability_falls_back_to_unavailable(self) -> None:
