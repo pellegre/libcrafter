@@ -760,7 +760,7 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
         expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Ospf],
         preserve_exact_bytes: true,
-        summary_path: None,
+        summary_path: Some("summaries/ospf-hello-single-neighbor.summary.txt"),
     },
     ValidFixtureCase {
         name: "ospf-database-description",
@@ -805,7 +805,7 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
         expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Ospf],
         preserve_exact_bytes: true,
-        summary_path: None,
+        summary_path: Some("summaries/ospf-router-lsa.summary.txt"),
     },
     ValidFixtureCase {
         name: "ospf-network-lsa",
@@ -895,7 +895,7 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv6)),
         expected_layers: &[ExpectedLayer::Ipv6, ExpectedLayer::Ospfv3],
         preserve_exact_bytes: true,
-        summary_path: None,
+        summary_path: Some("summaries/ospfv3-hello.summary.txt"),
     },
     ValidFixtureCase {
         name: "ospfv3-router-lsa",

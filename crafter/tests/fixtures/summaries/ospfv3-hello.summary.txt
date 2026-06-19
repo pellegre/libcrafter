@@ -1,0 +1,1 @@
+Ipv6(src=2001:db8::1, dst=2001:db8::2, next=unknown(89)) / Ospfv3(type=Hello, rid=192.0.2.1, area=0.0.0.0, inst=0, dr=192.0.2.1, bdr=192.0.2.2, neighbors=1)
