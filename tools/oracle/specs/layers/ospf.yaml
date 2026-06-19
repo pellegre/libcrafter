@@ -1,0 +1,105 @@
+version: 1
+kind: layer
+name: ospf
+summary: >-
+  OSPFv2 common header (RFC 2328) carried directly over IPv4 (IP protocol 89),
+  declaring the version, packet type, derived packet length, router and area
+  identifiers, the header checksum, and the authentication type and data for
+  Hello, Database Description, Link State Request, Link State Update, and Link
+  State Acknowledgment packets. The layer spec covers the common header framing
+  and stacking on IP; packet-body and link-state-advertisement detail is owned
+  by feature specs. The ipv6 parent reserves next-header 89 for the OSPFv3 base.
+
+roots: []
+parents:
+  - ipv4
+  - ipv6
+children:
+  - payload
+
+fields:
+  - name: version
+    type: uint8
+    required: true
+    domains:
+      - default
+      - malformed_override
+  - name: type
+    type: uint8
+    required: true
+    domains:
+      - hello
+      - database_description
+      - link_state_request
+      - link_state_update
+      - link_state_ack
+      - unknown
+  - name: packet_length
+    type: uint16
+    required: true
+    domains:
+      - derived
+      - boundary
+      - malformed_override
+  - name: router_id
+    type: ipv4
+    required: true
+    domains:
+      - deterministic
+  - name: area_id
+    type: ipv4
+    required: true
+    domains:
+      - deterministic
+      - backbone
+  - name: checksum
+    type: uint16
+    required: true
+    domains:
+      - derived
+      - override
+  - name: autype
+    type: uint16
+    required: true
+    domains:
+      - "null"
+      - simple
+      - cryptographic
+      - unknown
+  - name: authentication
+    type: bytes
+    required: true
+    domains:
+      - zero
+      - simple_password
+      - cryptographic
+      - raw
+
+coverage_cases:
+  - ospf-hello
+  - ospf-database-description
+  - ospf-link-state-request
+  - ospf-link-state-update
+  - ospf-link-state-ack
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - OSPF_Hdr
+      - OSPF_Hello
+      - OSPF_DBDesc
+      - OSPF_LSReq
+      - OSPF_LSUpd
+      - OSPF_LSAck
+    encode: true
+    decode: true
+    notes:
+      - Uses the scapy.contrib.ospf native layers for the OSPFv2 common header and packet bodies.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    notes:
+      - Typed OSPFv2 common header rides IPv4 protocol 89 and round-trips byte-for-byte.
+      - The five OSPFv2 packet types build and decode through the typed layer; unknown types stay raw.
