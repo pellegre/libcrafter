@@ -144,6 +144,20 @@ families:
       - tcp
       - bgp
       - payload
+  # ospf: OSPFv2 (RFC 2328) rides directly over IPv4 (IP protocol 89). The
+  # ipv6 feature tag reserves next-header 89 for the OSPFv3 base layer. OSPF
+  # is an IGP between routers, so the family stays offline/dry-run only and
+  # uses documentation router IDs/areas; live exchange is provider-backed.
+  - name: ospf
+    default_stack:
+      - ipv4
+      - ospf
+      - payload
+    feature_tags:
+      - ipv4
+      - ipv6
+      - ospf
+      - payload
   # esp / ah / ikev2: IPSec families. ESP and AH ride directly over IPv4 and
   # IPv6 (IP protocol 50 / 51); IKEv2 rides over UDP (UDP/500, and UDP/4500
   # after the non-ESP marker). These families let the deterministic generator
@@ -990,6 +1004,7 @@ constraints:
       - dns
       - esp
       - ah
+      - ospf
       - payload
   - name: ipv6_children
     parent: ipv6
@@ -1001,6 +1016,7 @@ constraints:
       - ipv6_routing
       - esp
       - ah
+      - ospf
       - payload
   - name: tcp_children
     parent: tcp
