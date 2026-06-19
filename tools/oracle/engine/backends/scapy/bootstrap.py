@@ -41,6 +41,7 @@ def import_scapy() -> dict[str, Any]:
         import scapy  # type: ignore[import-untyped]
         import scapy.all as scapy_all  # type: ignore[import-untyped]
         import scapy.contrib.bgp as scapy_bgp  # type: ignore[import-untyped]
+        import scapy.contrib.ospf as scapy_ospf  # type: ignore[import-untyped]
         import scapy.layers.rip as scapy_rip  # type: ignore[import-untyped]
         from scapy.all import conf  # type: ignore[import-untyped]
         # Load the RIP layer explicitly so RIP/RIPEntry/RIPAuth are available to
@@ -61,6 +62,7 @@ def import_scapy() -> dict[str, Any]:
         "module": scapy,
         "all": scapy_all,
         "bgp": scapy_bgp,
+        "ospf": scapy_ospf,
         "rip": scapy_rip,
         "version": _scapy_version(scapy),
         "metadata": scapy_report_metadata(scapy),
