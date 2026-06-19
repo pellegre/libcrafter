@@ -1,0 +1,67 @@
+version: 1
+kind: feature
+name: ospf_link_state_ack
+summary: >-
+  OSPFv2 Link State Acknowledgment packet framing over IPv4 (IP protocol 89),
+  covering the RFC 2328 Section A.3.6 list of LSA headers layered on the common
+  header, with strict-byte equivalence between the Scapy reference backend and
+  libcrafter in both offline directions.
+
+layers:
+  - ospf
+  - ipv4
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: common_header_fields
+    rfc:
+      - RFC 2328 Section A.3.1
+    message_type: link_state_ack
+    checks:
+      - version_2
+      - type_is_link_state_ack
+      - packet_length_covers_packet
+      - router_id_preserved
+      - area_id_preserved
+  - name: link_state_ack_fields
+    rfc:
+      - RFC 2328 Section A.3.6
+    message_type: link_state_ack
+    checks:
+      - lsa_header_list_round_trips
+
+coverage_cases:
+  - ospf-link-state-ack
+
+supported_cases:
+  - name: ospf-link-state-ack
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - OSPF_Hdr
+      - OSPF_LSAck
+    encode: true
+    decode: true
+    notes:
+      - Scapy 2.7.0 natively round-trips the OSPFv2 common header (OSPF_Hdr) and
+        the Link State Acknowledgment body (OSPF_LSAck), including the trailing
+        LSA-header list, via scapy.contrib.ospf.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    notes:
+      - Link State Acknowledgment compile derives the RFC 2328 packet length and
+        the common-header checksum unless the caller deliberately overrides them;
+        decode preserves the LSA-header list so the packet round-trips
+        byte-for-byte.
