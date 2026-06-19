@@ -1,0 +1,1 @@
+Ipv4(src=192.0.2.1, dst=224.0.0.5, proto=ospf(89)) / Ospf(type=LSUpdate, rid=192.0.2.1, area=0.0.0.0, num_lsas=1, lsas=1)
