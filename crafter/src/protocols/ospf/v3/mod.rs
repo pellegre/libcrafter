@@ -23,15 +23,19 @@ use core::any::Any;
 use core::net::Ipv4Addr;
 use core::ops::Div;
 
-use crate::error::{CrafterError, Result};
+use crate::error::Result;
 use crate::field::Field;
 use crate::packet::{IntoPacket, Layer, LayerContext, Packet, TransportChecksumContext};
 use crate::protocols::ip::shared::IPPROTO_OSPF;
+use crate::protocols::ospf::OspfChecksumStatus;
 
 pub mod constants;
+pub mod decode;
 pub mod hello;
 pub mod lsa;
 pub mod packet;
+
+pub(crate) use decode::append_ospfv3_packet_with_checksum_validation;
 
 pub use constants::*;
 pub use hello::Ospfv3Hello;
@@ -195,6 +199,13 @@ pub struct Ospfv3 {
     reserved: Field<u8>,
     /// The typed packet body following the common header.
     body: Ospfv3Body,
+    /// Decode-time IPv6 upper-layer checksum status (RFC 5340 §2.7).
+    ///
+    /// [`OspfChecksumStatus::NotChecked`] on builder-constructed packets; set on
+    /// decode to [`OspfChecksumStatus::Valid`] / [`OspfChecksumStatus::Invalid`]
+    /// when checksum validation is enabled and the enclosing IPv6 pseudo-header is
+    /// available. This is decode metadata only and never affects compiled bytes.
+    checksum_status: OspfChecksumStatus,
 }
 
 impl Ospfv3 {
@@ -220,6 +231,7 @@ impl Ospfv3 {
                 type_code: 0,
                 body: Vec::new(),
             },
+            checksum_status: OspfChecksumStatus::NotChecked,
         }
     }
 
@@ -561,6 +573,19 @@ impl Ospfv3 {
         self.reserved.value().copied().unwrap_or(0)
     }
 
+    /// The decode-time IPv6 upper-layer checksum status (RFC 5340 §2.7).
+    ///
+    /// Builder-constructed packets report [`OspfChecksumStatus::NotChecked`]. On
+    /// decode this is set to [`OspfChecksumStatus::Valid`] or
+    /// [`OspfChecksumStatus::Invalid`] when checksum validation is enabled and the
+    /// enclosing IPv6 pseudo-header is available, and stays
+    /// [`OspfChecksumStatus::NotChecked`] when validation is disabled or no IPv6
+    /// pseudo-header is in scope. This is decode metadata only and never affects
+    /// the re-compiled bytes.
+    pub fn checksum_status(&self) -> OspfChecksumStatus {
+        self.checksum_status
+    }
+
     /// Recover an enclosing IPv6 pseudo-header context for the OSPFv3 upper-layer
     /// checksum (RFC 5340 §2.7), walking outward from the OSPFv3 layer toward the
     /// network header, exactly as the UDP/ICMPv6 checksum path does.
@@ -690,134 +715,3 @@ impl Layer for Ospfv3 {
 }
 
 impl_layer_div!(Ospfv3);
-
-/// Decode an OSPFv3 packet (RFC 5340 §A.3.1) from the IPv6 payload at next-header
-/// 89, appending a typed [`Ospfv3`] layer.
-///
-/// This block parses only the 16-octet common header; the body bytes that follow
-/// are preserved verbatim in [`Ospfv3Body::Unknown`] so an unrecognized (or
-/// not-yet-typed) packet type round-trips byte-for-byte. Later steps dispatch the
-/// body by packet type. Every recovered header field is marked user-set
-/// (`Field::user(...)`) so a decoded packet re-compiles to the same bytes. A
-/// buffer shorter than the 16-octet common header surfaces a structured
-/// [`CrafterError::BufferTooShort`] rather than a panic.
-pub(crate) fn append_ospfv3_packet(mut packet: Packet, bytes: &[u8]) -> Result<Packet> {
-    if bytes.len() < OSPFV3_HEADER_LEN {
-        return Err(CrafterError::buffer_too_short(
-            "ospfv3 header",
-            OSPFV3_HEADER_LEN,
-            bytes.len(),
-        ));
-    }
-
-    // Common header (RFC 5340 §A.3.1), read from fixed offsets. The length check
-    // above guarantees every slice below is in bounds, so this cannot panic.
-    let version = bytes[0];
-    let packet_type = bytes[1];
-    let packet_length = u16::from_be_bytes([bytes[2], bytes[3]]);
-    let router_id = Ipv4Addr::new(bytes[4], bytes[5], bytes[6], bytes[7]);
-    let area_id = Ipv4Addr::new(bytes[8], bytes[9], bytes[10], bytes[11]);
-    let checksum = u16::from_be_bytes([bytes[12], bytes[13]]);
-    let instance_id = bytes[14];
-    let reserved = bytes[15];
-
-    // The body follows the 16-octet header. Prefer the declared Packet Length
-    // when it is within [OSPFV3_HEADER_LEN, bytes.len()]; otherwise fall back to
-    // the remaining bytes so a malformed length neither overruns the buffer nor
-    // discards trailing octets.
-    let declared = packet_length as usize;
-    let body_end = if (OSPFV3_HEADER_LEN..=bytes.len()).contains(&declared) {
-        declared
-    } else {
-        bytes.len()
-    };
-    let body_bytes = &bytes[OSPFV3_HEADER_LEN..body_end];
-
-    let ospfv3 = Ospfv3 {
-        version: Field::user(version),
-        packet_type: Field::user(packet_type),
-        packet_length: Field::user(packet_length),
-        router_id: Field::user(router_id),
-        area_id: Field::user(area_id),
-        checksum: Field::user(checksum),
-        instance_id: Field::user(instance_id),
-        reserved: Field::user(reserved),
-        body: Ospfv3Body::Unknown {
-            type_code: packet_type,
-            body: body_bytes.to_vec(),
-        },
-    };
-
-    packet = packet.push(ospfv3);
-    Ok(packet)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::packet::{NetworkLayer, Packet};
-    use crate::protocols::ip::v6::Ipv6;
-    use crate::protocols::ospf::OSPF_TYPE_HELLO;
-    use core::net::Ipv6Addr;
-
-    /// An `Ipv6 / Ospfv3` packet compiles with auto-filled Packet Length and the
-    /// IPv6 upper-layer checksum (RFC 5340 §2.7), decodes back through the default
-    /// registry into a typed `Ospfv3` layer over IPv6 next-header 89, and
-    /// round-trips byte-for-byte. Uses `2001:db8::/32` documentation addresses.
-    #[test]
-    fn ospfv3_over_ipv6_round_trips_through_the_registry() {
-        let src: Ipv6Addr = "2001:db8::1".parse().unwrap();
-        let dst: Ipv6Addr = "2001:db8::2".parse().unwrap();
-
-        let bytes = (Ipv6::new().src(src).dst(dst)
-            / Ospfv3::new()
-                .packet_type(OSPF_TYPE_HELLO)
-                .router_id([192, 0, 2, 1])
-                .area_id([0, 0, 0, 0]))
-        .compile()
-        .expect("Ipv6 / Ospfv3 compiles");
-
-        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, bytes.as_bytes())
-            .expect("the default registry decodes OSPFv3 over IPv6");
-
-        // The decoded packet exposes a typed Ospfv3 layer with version 3.
-        let ospfv3 = decoded
-            .layer::<Ospfv3>()
-            .expect("the decoded packet exposes a typed Ospfv3 layer");
-        assert_eq!(ospfv3.version_value(), OSPF_VERSION_3);
-        assert_eq!(ospfv3.version_value(), 3);
-        assert_eq!(ospfv3.packet_type_value(), OSPF_TYPE_HELLO);
-
-        // The IPv6 layer carries next header 89 (OSPF), auto-derived from the
-        // following Ospfv3 layer.
-        let ipv6 = decoded
-            .layer::<Ipv6>()
-            .expect("the decoded packet exposes a typed Ipv6 layer");
-        assert_eq!(ipv6.next_header_value(), IPPROTO_OSPF);
-        assert_eq!(ipv6.next_header_value(), 89);
-
-        // The decoded packet re-compiles byte-for-byte.
-        let recompiled = decoded.compile().expect("decoded OSPFv3 re-compiles");
-        assert_eq!(recompiled.as_bytes(), bytes.as_bytes());
-    }
-
-    /// A buffer shorter than the 16-octet OSPFv3 common header surfaces a
-    /// structured buffer-too-short error (RFC 5340 §A.3.1) rather than a panic.
-    #[test]
-    fn ospfv3_short_header_is_a_structured_error() {
-        let err = append_ospfv3_packet(Packet::new(), &[0u8; 8])
-            .expect_err("a short OSPFv3 header is rejected");
-        match err {
-            CrafterError::BufferTooShort {
-                context,
-                required,
-                available,
-            } => {
-                assert_eq!(context, "ospfv3 header");
-                assert_eq!(required, OSPFV3_HEADER_LEN);
-                assert_eq!(available, 8);
-            }
-            other => panic!("expected BufferTooShort, got {other:?}"),
-        }
-    }
-}
