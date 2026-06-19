@@ -15,20 +15,21 @@ use crafter::core::{
     Ipv6HopByHopOptionsHeader, Ipv6MobileRoutingHeader, Ipv6MobileRoutingHeaderStatus, Ipv6Option,
     Ipv6RoutingHeader, Ipv6RoutingTypeStatus, Ipv6SegmentRoutingHeader, Layer, LinkType, LinuxSll,
     LlcSnap, MacAddr, NetworkLayer, NullByteOrder, NullLoopback, OptionOverload, OspfChecksumStatus,
-    Ospfv2, Packet, Radiotap, Raw, Rip, Ripng, Tcp, TcpOption, TcpSackBlock, Udp, UdpChecksumStatus,
-    UdpOption, UdpOptionStatus, UdpOptions, Vlan, ARP_HRD_INFINIBAND, BOOTP_REQUEST,
-    DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_CLASS_IN, DNS_EDNS_DEFAULT_UDP_PAYLOAD_SIZE,
-    DNS_EDNS_OPTION_COOKIE, DNS_EDNS_OPTION_NSID, DNS_FLAG_AUTHORITATIVE, DNS_FLAG_QR_RESPONSE,
-    DNS_FLAG_RECURSION_DESIRED, DNS_SVCB_KEY_ALPN, DNS_SVCB_KEY_IPV4HINT, DNS_SVCB_KEY_IPV6HINT,
-    DNS_SVCB_KEY_PORT, DNS_TYPE_A, DNS_TYPE_AAAA, DNS_TYPE_CNAME, DNS_TYPE_DNSKEY, DNS_TYPE_DS,
-    DNS_TYPE_HTTPS, DNS_TYPE_NS, DNS_TYPE_NSEC, DNS_TYPE_NSEC3, DNS_TYPE_OPT, DNS_TYPE_RRSIG,
-    DNS_TYPE_SOA, DNS_TYPE_SRV, DNS_TYPE_SVCB, ETHERTYPE_ARP, ETHERTYPE_EAPOL, ETHERTYPE_IPV4,
-    ETHERTYPE_VLAN, ICMPV6_ECHO_REQUEST, ICMPV6_TIME_EXCEEDED, ICMP_DESTINATION_UNREACHABLE,
-    ICMP_ECHO_REQUEST, IPPROTO_ICMP, IPPROTO_ICMPV6, IPPROTO_IPV6_DSTOPTS,
-    IPPROTO_IPV6_EXPERIMENTAL_1, IPPROTO_IPV6_FRAGMENT, IPPROTO_IPV6_HOPOPTS, IPPROTO_IPV6_ROUTE,
-    IPPROTO_TCP, IPPROTO_UDP, IPV4_FLAG_DONT_FRAGMENT, IPV4_FLAG_MORE_FRAGMENTS,
-    IPV4_FLAG_RESERVED, IPV6_ROUTING_TYPE_MOBILE, IPV6_ROUTING_TYPE_SEGMENT, TCP_FLAG_ACK,
-    TCP_FLAG_PSH, TCP_FLAG_SYN, UDP_HEADER_LEN, UDP_OPTION_EOL, UDP_OPTION_NOP,
+    Ospfv2, Ospfv3, Packet, Radiotap, Raw, Rip, Ripng, Tcp, TcpOption, TcpSackBlock, Udp,
+    UdpChecksumStatus, UdpOption, UdpOptionStatus, UdpOptions, Vlan, ARP_HRD_INFINIBAND,
+    BOOTP_REQUEST, DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_CLASS_IN,
+    DNS_EDNS_DEFAULT_UDP_PAYLOAD_SIZE, DNS_EDNS_OPTION_COOKIE, DNS_EDNS_OPTION_NSID,
+    DNS_FLAG_AUTHORITATIVE, DNS_FLAG_QR_RESPONSE, DNS_FLAG_RECURSION_DESIRED, DNS_SVCB_KEY_ALPN,
+    DNS_SVCB_KEY_IPV4HINT, DNS_SVCB_KEY_IPV6HINT, DNS_SVCB_KEY_PORT, DNS_TYPE_A, DNS_TYPE_AAAA,
+    DNS_TYPE_CNAME, DNS_TYPE_DNSKEY, DNS_TYPE_DS, DNS_TYPE_HTTPS, DNS_TYPE_NS, DNS_TYPE_NSEC,
+    DNS_TYPE_NSEC3, DNS_TYPE_OPT, DNS_TYPE_RRSIG, DNS_TYPE_SOA, DNS_TYPE_SRV, DNS_TYPE_SVCB,
+    ETHERTYPE_ARP, ETHERTYPE_EAPOL, ETHERTYPE_IPV4, ETHERTYPE_VLAN, ICMPV6_ECHO_REQUEST,
+    ICMPV6_TIME_EXCEEDED, ICMP_DESTINATION_UNREACHABLE, ICMP_ECHO_REQUEST, IPPROTO_ICMP,
+    IPPROTO_ICMPV6, IPPROTO_IPV6_DSTOPTS, IPPROTO_IPV6_EXPERIMENTAL_1, IPPROTO_IPV6_FRAGMENT,
+    IPPROTO_IPV6_HOPOPTS, IPPROTO_IPV6_ROUTE, IPPROTO_TCP, IPPROTO_UDP, IPV4_FLAG_DONT_FRAGMENT,
+    IPV4_FLAG_MORE_FRAGMENTS, IPV4_FLAG_RESERVED, IPV6_ROUTING_TYPE_MOBILE,
+    IPV6_ROUTING_TYPE_SEGMENT, TCP_FLAG_ACK, TCP_FLAG_PSH, TCP_FLAG_SYN, UDP_HEADER_LEN,
+    UDP_OPTION_EOL, UDP_OPTION_NOP,
 };
 use crafter::wire::backend::pcap::{
     PcapError, PcapLinkType, PcapReader, PcapTimestamp, PcapWriter, PcapWriterOptions,
@@ -93,6 +94,7 @@ enum ExpectedLayer {
     Dns,
     Dhcp,
     Ospf,
+    Ospfv3,
     Esp,
     Ah,
     IkeHeader,
@@ -130,6 +132,7 @@ enum CoverageFamily {
     Ipv4UdpDnsSectionPlacement,
     Ipv4UdpDhcp,
     Ipv4Ospf,
+    Ipv6Ospfv3,
     Ipv4UdpOptions,
     Ipv6IcmpEcho,
     Ipv6IcmpError,
@@ -882,6 +885,24 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         contents: FixtureContents::Hex(fixture_str!("bytes/ospf-hello-crypto-md5.hex")),
         target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
         expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Ospf],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ospfv3-hello",
+        path: "bytes/ospfv3-hello.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ospfv3-hello.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv6)),
+        expected_layers: &[ExpectedLayer::Ipv6, ExpectedLayer::Ospfv3],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ospfv3-router-lsa",
+        path: "bytes/ospfv3-router-lsa.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ospfv3-router-lsa.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv6)),
+        expected_layers: &[ExpectedLayer::Ipv6, ExpectedLayer::Ospfv3],
         preserve_exact_bytes: true,
         summary_path: None,
     },
@@ -2064,6 +2085,7 @@ fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
         | "ospf-te-lsa"
         | "ospf-hello-simple-auth"
         | "ospf-hello-crypto-md5" => &[CoverageFamily::Ipv4Ospf],
+        "ospfv3-hello" | "ospfv3-router-lsa" => &[CoverageFamily::Ipv6Ospfv3],
         "ipv4-udp-options-known" | "ipv4-udp-options-unknown-safe" => {
             &[CoverageFamily::Ipv4UdpOptions]
         }
@@ -2339,6 +2361,9 @@ fn assert_expected_layers(case: &ValidFixtureCase, packet: &Packet) {
             ExpectedLayer::Ospf => {
                 let _ = expect_layer::<Ospfv2>(case, packet);
             }
+            ExpectedLayer::Ospfv3 => {
+                let _ = expect_layer::<Ospfv3>(case, packet);
+            }
             ExpectedLayer::Esp => {
                 let _ = expect_layer::<Esp>(case, packet);
             }
@@ -2411,6 +2436,7 @@ fn expected_layer_name(expected: ExpectedLayer) -> &'static str {
         ExpectedLayer::Dns => "Dns",
         ExpectedLayer::Dhcp => "Dhcp",
         ExpectedLayer::Ospf => "Ospf",
+        ExpectedLayer::Ospfv3 => "Ospfv3",
         ExpectedLayer::Esp => "Esp",
         ExpectedLayer::Ah => "Ah",
         ExpectedLayer::IkeHeader => "IkeHeader",
@@ -5088,6 +5114,108 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
             };
             assert_eq!(value_of("autype"), Some("2 (Cryptographic)"));
             assert_eq!(value_of("neighbor_count"), Some("1"));
+        }
+        "ospfv3-hello" => {
+            // OSPFv3 rides directly on IPv6 next header 89 (RFC 5340 §2.5).
+            let ipv6 = expect_layer::<Ipv6>(case, packet);
+            assert_eq!(ipv6.next_header_value(), 89);
+            assert_eq!(ipv6.source(), "2001:db8::1".parse::<Ipv6Addr>().unwrap());
+            assert_eq!(
+                ipv6.destination(),
+                "2001:db8::2".parse::<Ipv6Addr>().unwrap()
+            );
+
+            // Common header: a version 3 Hello (type 1) from a documentation
+            // router id in the backbone area (0.0.0.0), instance 0.
+            let ospfv3 = expect_layer::<Ospfv3>(case, packet);
+            assert_eq!(ospfv3.version_value(), 3);
+            assert_eq!(ospfv3.packet_type_value(), 1); // Hello
+            assert_eq!(ospfv3.router_id_value(), Ipv4Addr::new(192, 0, 2, 1));
+            assert_eq!(ospfv3.area_id_value(), Ipv4Addr::new(0, 0, 0, 0));
+            assert_eq!(ospfv3.instance_id_value(), 0);
+
+            // The Hello body fields are surfaced through the public inspection
+            // surface (the typed body is private). OSPFv3 carries no Network
+            // Mask and a 24-bit Options field rendered as raw hex.
+            let fields = ospfv3.inspection_fields();
+            let value_of = |name: &str| {
+                fields
+                    .iter()
+                    .find(|(field, _)| *field == name)
+                    .map(|(_, value)| value.as_str())
+            };
+            assert_eq!(value_of("type"), Some("Hello"));
+            assert_eq!(value_of("interface_id"), Some("5"));
+            assert_eq!(value_of("hello_interval"), Some("10"));
+            assert_eq!(value_of("dead_interval"), Some("40"));
+            assert_eq!(value_of("options"), Some("0x000013"));
+            assert_eq!(value_of("priority"), Some("1"));
+            assert_eq!(value_of("designated_router"), Some("192.0.2.1"));
+            assert_eq!(value_of("backup_designated_router"), Some("192.0.2.2"));
+            assert_eq!(value_of("neighbor_count"), Some("1"));
+            let neighbors: Vec<&str> = fields
+                .iter()
+                .filter(|(field, _)| *field == "neighbor")
+                .map(|(_, value)| value.as_str())
+                .collect();
+            assert_eq!(neighbors, vec!["192.0.2.2"]);
+        }
+        "ospfv3-router-lsa" => {
+            // OSPFv3 rides directly on IPv6 next header 89 (RFC 5340 §2.5).
+            let ipv6 = expect_layer::<Ipv6>(case, packet);
+            assert_eq!(ipv6.next_header_value(), 89);
+            assert_eq!(ipv6.source(), "2001:db8::1".parse::<Ipv6Addr>().unwrap());
+            assert_eq!(
+                ipv6.destination(),
+                "2001:db8::2".parse::<Ipv6Addr>().unwrap()
+            );
+
+            // Common header: a version 3 Link State Update (type 4) from a
+            // documentation router id in the backbone area (0.0.0.0).
+            let ospfv3 = expect_layer::<Ospfv3>(case, packet);
+            assert_eq!(ospfv3.version_value(), 3);
+            assert_eq!(ospfv3.packet_type_value(), 4); // Link State Update
+            assert_eq!(ospfv3.router_id_value(), Ipv4Addr::new(192, 0, 2, 1));
+            assert_eq!(ospfv3.area_id_value(), Ipv4Addr::new(0, 0, 0, 0));
+
+            // The Link State Update carries one OSPFv3 Router-LSA (LS type
+            // 0x2001, RFC 5340 §A.4.3) describing a single point-to-point
+            // interface. The typed body is private, so it is surfaced through the
+            // public inspection surface: `num_lsas`/`lsa_count` report one LSA,
+            // the `lsa` entry renders the 20-octet header summary plus the
+            // 20-octet Router body, a `router_lsa` pair reports the flags,
+            // options, and interface count, and one `router_interface` pair names
+            // the interface fields.
+            let fields = ospfv3.inspection_fields();
+            let value_of = |name: &str| {
+                fields
+                    .iter()
+                    .find(|(field, _)| *field == name)
+                    .map(|(_, value)| value.as_str())
+            };
+            assert_eq!(value_of("type"), Some("LSUpdate"));
+            assert_eq!(value_of("num_lsas"), Some("1"));
+            assert_eq!(value_of("lsa_count"), Some("1"));
+            assert_eq!(
+                value_of("lsa"),
+                Some(concat!(
+                    "LSAv3(type=0x2001, id=0.0.0.0, adv=192.0.2.1, ",
+                    "seq=0x80000001, age=0, len=40) body=20B",
+                ))
+            );
+            assert_eq!(
+                value_of("router_lsa"),
+                Some("flags=0x00 options=0x000013 interfaces=1")
+            );
+            let router_interfaces: Vec<&str> = fields
+                .iter()
+                .filter(|(field, _)| *field == "router_interface")
+                .map(|(_, value)| value.as_str())
+                .collect();
+            assert_eq!(
+                router_interfaces,
+                vec!["type=1 metric=10 if_id=5 nbr_if_id=6 nbr_rid=192.0.2.2"]
+            );
         }
         other => panic!("fixture {other} is missing typed field assertions"),
     }

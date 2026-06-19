@@ -27,7 +27,7 @@ use crate::error::Result;
 use crate::field::Field;
 use crate::packet::{IntoPacket, Layer, LayerContext, Packet, TransportChecksumContext};
 use crate::protocols::ip::shared::IPPROTO_OSPF;
-use crate::protocols::ospf::OspfChecksumStatus;
+use crate::protocols::ospf::{ospf_type_name, OspfChecksumStatus};
 
 pub mod constants;
 pub mod decode;
@@ -620,22 +620,58 @@ impl Layer for Ospfv3 {
             .packet_length_value()
             .map(usize::from)
             .unwrap_or(OSPFV3_HEADER_LEN + self.body.encoded_len());
-        format!(
-            "Ospfv3(type={}, rid={}, area={}, len={})",
-            self.packet_type_value(),
-            self.router_id_value(),
-            self.area_id_value(),
-            len
-        )
+        // Dispatch on the body variant so each typed body extends the header
+        // one-liner with its own at-a-glance detail (mirroring the OSPFv2
+        // summary). OSPFv3 reuses the OSPFv2 packet-type numbering (RFC 5340
+        // §A.3), so `ospf_type_name` names the type. The header carries the
+        // Instance ID (RFC 5340 §A.3.1) in place of the OSPFv2 authentication
+        // fields.
+        let type_name = ospf_type_name(self.packet_type_value());
+        let rid = self.router_id_value();
+        let area = self.area_id_value();
+        let inst = self.instance_id_value();
+        match &self.body {
+            Ospfv3Body::Hello(hello) => format!(
+                "Ospfv3(type={type_name}, rid={rid}, area={area}, inst={inst}, dr={}, bdr={}, neighbors={})",
+                hello.designated_router_value(),
+                hello.backup_designated_router_value(),
+                hello.neighbors_value().len()
+            ),
+            Ospfv3Body::DatabaseDescription(dd) => format!(
+                "Ospfv3(type={type_name}, rid={rid}, area={area}, inst={inst}, mtu={}, seq=0x{:08x}, flags=0x{:02x}, lsa_headers={})",
+                dd.interface_mtu_value(),
+                dd.dd_sequence_number_value(),
+                dd.flags_value(),
+                dd.lsa_headers_value().len()
+            ),
+            Ospfv3Body::LinkStateRequest(lsr) => format!(
+                "Ospfv3(type={type_name}, rid={rid}, area={area}, inst={inst}, requests={})",
+                lsr.entries_value().len()
+            ),
+            Ospfv3Body::LinkStateUpdate(lsu) => format!(
+                "Ospfv3(type={type_name}, rid={rid}, area={area}, inst={inst}, num_lsas={}, lsas={})",
+                lsu.num_lsas_value(),
+                lsu.lsas_value().len()
+            ),
+            Ospfv3Body::LinkStateAck(ack) => format!(
+                "Ospfv3(type={type_name}, rid={rid}, area={area}, inst={inst}, lsa_headers={})",
+                ack.lsa_headers_value().len()
+            ),
+            Ospfv3Body::Unknown { .. } => format!(
+                "Ospfv3(type={type_name}, rid={rid}, area={area}, inst={inst}, len={len})"
+            ),
+        }
     }
 
     fn inspection_fields(&self) -> Vec<(&'static str, String)> {
         // Stable field/value pairs for `show()`. Auto-filled Packet Length and
         // Checksum print as `auto` when the caller left them unset; the checksum
-        // prints as hex. Full body inspection is added by later steps.
-        vec![
+        // prints as hex. The common header carries the Instance ID and Reserved
+        // octet (RFC 5340 §A.3.1) in place of the OSPFv2 authentication fields.
+        // The `type` field renders the OSPFv2-shared type name (RFC 5340 §A.3).
+        let mut fields = vec![
             ("version", self.version_value().to_string()),
-            ("type", self.packet_type_value().to_string()),
+            ("type", ospf_type_name(self.packet_type_value()).to_string()),
             (
                 "length",
                 self.packet_length_value()
@@ -652,7 +688,132 @@ impl Layer for Ospfv3 {
             ),
             ("instance_id", self.instance_id_value().to_string()),
             ("reserved", self.reserved_value().to_string()),
-        ]
+        ];
+
+        // Each typed body contributes its own stable pairs after the common
+        // header (mirroring the OSPFv2 inspection surface). OSPFv3 has no
+        // Network Mask in the Hello (RFC 5340 §A.3.2) and carries a 24-bit
+        // Options field rendered as raw hex; the rest of the at-a-glance fields
+        // mirror their OSPFv2 names.
+        match &self.body {
+            Ospfv3Body::Hello(hello) => {
+                fields.push(("interface_id", hello.interface_id_value().to_string()));
+                fields.push(("hello_interval", hello.hello_interval_value().to_string()));
+                fields.push((
+                    "dead_interval",
+                    hello.router_dead_interval_value().to_string(),
+                ));
+                fields.push(("options", format!("0x{:06x}", hello.options_value())));
+                fields.push(("priority", hello.router_priority_value().to_string()));
+                fields.push((
+                    "designated_router",
+                    hello.designated_router_value().to_string(),
+                ));
+                fields.push((
+                    "backup_designated_router",
+                    hello.backup_designated_router_value().to_string(),
+                ));
+                fields.push(("neighbor_count", hello.neighbors_value().len().to_string()));
+                for neighbor in hello.neighbors_value() {
+                    fields.push(("neighbor", neighbor.to_string()));
+                }
+            }
+            Ospfv3Body::DatabaseDescription(dd) => {
+                fields.push(("interface_mtu", dd.interface_mtu_value().to_string()));
+                fields.push(("options", format!("0x{:06x}", dd.options_value())));
+                fields.push(("dd_flags", format_v3_dd_flags(dd)));
+                fields.push((
+                    "dd_sequence_number",
+                    format!("0x{:08x}", dd.dd_sequence_number_value()),
+                ));
+                fields.push(("lsa_header_count", dd.lsa_headers_value().len().to_string()));
+                for header in dd.lsa_headers_value() {
+                    fields.push(("lsa_header", header.summary()));
+                }
+            }
+            Ospfv3Body::LinkStateRequest(lsr) => {
+                fields.push(("request_count", lsr.entries_value().len().to_string()));
+                for entry in lsr.entries_value() {
+                    fields.push((
+                        "request",
+                        format!(
+                            "ls_type=0x{:04x}, id={}, adv={}",
+                            entry.ls_type_value(),
+                            entry.link_state_id_value(),
+                            entry.advertising_router_value()
+                        ),
+                    ));
+                }
+            }
+            Ospfv3Body::LinkStateUpdate(lsu) => {
+                fields.push(("num_lsas", lsu.num_lsas_value().to_string()));
+                fields.push(("lsa_count", lsu.lsas_value().len().to_string()));
+                for lsa in lsu.lsas_value() {
+                    fields.push((
+                        "lsa",
+                        format!("{} body={}B", lsa.header.summary(), lsa.body.encoded_len()),
+                    ));
+                    // A typed Router-LSA body (RFC 5340 §A.4.3) adds a
+                    // `router_lsa` pair (the flags octet and interface count)
+                    // followed by one `router_interface` pair per interface
+                    // description (the link type, ids, and metric). A typed
+                    // Network-LSA body (RFC 5340 §A.4.4) adds a `network_lsa`
+                    // pair (the attached-router count) followed by one
+                    // `attached_router` pair per attached Router ID. Other LSA
+                    // body variants contribute only the `lsa` header summary
+                    // above.
+                    match &lsa.body {
+                        Ospfv3LsaBody::Router(router) => {
+                            fields.push((
+                                "router_lsa",
+                                format!(
+                                    "flags=0x{:02x} options=0x{:06x} interfaces={}",
+                                    router.flags_value(),
+                                    router.options_value(),
+                                    router.interfaces_value().len()
+                                ),
+                            ));
+                            for interface in router.interfaces_value() {
+                                fields.push((
+                                    "router_interface",
+                                    format!(
+                                        "type={} metric={} if_id={} nbr_if_id={} nbr_rid={}",
+                                        interface.if_type_value(),
+                                        interface.metric_value(),
+                                        interface.interface_id_value(),
+                                        interface.neighbor_interface_id_value(),
+                                        interface.neighbor_router_id_value()
+                                    ),
+                                ));
+                            }
+                        }
+                        Ospfv3LsaBody::Network(network) => {
+                            fields.push((
+                                "network_lsa",
+                                format!(
+                                    "options=0x{:06x} attached_routers={}",
+                                    network.options_value(),
+                                    network.attached_routers_value().len()
+                                ),
+                            ));
+                            for router in network.attached_routers_value() {
+                                fields.push(("attached_router", router.to_string()));
+                            }
+                        }
+                        Ospfv3LsaBody::Raw(_) => {}
+                    }
+                }
+            }
+            Ospfv3Body::LinkStateAck(ack) => {
+                fields.push(("lsa_header_count", ack.lsa_headers_value().len().to_string()));
+                for header in ack.lsa_headers_value() {
+                    fields.push(("lsa_header", header.summary()));
+                }
+            }
+            Ospfv3Body::Unknown { .. } => {}
+        }
+
+        fields
     }
 
     fn encoded_len(&self) -> usize {
@@ -715,3 +876,18 @@ impl Layer for Ospfv3 {
 }
 
 impl_layer_div!(Ospfv3);
+
+/// Render an OSPFv3 Database Description flags octet (RFC 5340 §A.3.3) for
+/// `inspection_fields()`: the raw hex value, with the decoded `I|M|MS` labels in
+/// parentheses when any recognized bit is set (e.g. `0x07 (I|M|MS)`). A value
+/// with no recognized bits (including `0x00`) renders as the bare hex value.
+/// Mirrors the OSPFv2 `format_dd_flags` rendering.
+fn format_v3_dd_flags(dd: &Ospfv3DatabaseDescription) -> String {
+    let flags = dd.flags_value();
+    let labels = dd.dd_flags_summary();
+    if labels.is_empty() {
+        format!("0x{flags:02x}")
+    } else {
+        format!("0x{flags:02x} ({labels})")
+    }
+}
