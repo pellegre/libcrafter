@@ -71,6 +71,7 @@ roots:
       - ah
       - ikev2
       - bgp
+      - ospf
   - name: "l2:ipv4"
     layers:
       - ipv4
@@ -91,6 +92,7 @@ roots:
       - ah
       - ikev2
       - bgp
+      - ospf
 
 families:
   - name: ipv4
@@ -510,6 +512,22 @@ stacks:
       - bgp-standard-communities
       - bgp-extended-communities
       - bgp-large-communities
+  # OSPFv2 (RFC 2328) rides directly over IPv4 (IP protocol 89). The five
+  # OSPFv2 packet types are sampled by the focused ospf-smoke profile; the
+  # generator narrows case selection to these ospf-* cases when that profile is
+  # active. Documentation router IDs and area identifiers are used throughout.
+  - name: ipv4_ospf_payload
+    root: "l3:ipv4"
+    layers:
+      - ipv4
+      - ospf
+      - payload
+    coverage_cases:
+      - ospf-hello
+      - ospf-database-description
+      - ospf-link-state-request
+      - ospf-link-state-update
+      - ospf-link-state-ack
   - name: ipv6_tcp_payload
     root: "l3:ipv6"
     layers:
