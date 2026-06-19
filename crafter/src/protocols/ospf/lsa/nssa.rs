@@ -39,7 +39,7 @@
 //! other LSA bodies, it rides inside an
 //! [`OspfLsa`](crate::protocols::ospf::lsa::OspfLsa) as an
 //! [`OspfLsaBody::Nssa`](crate::protocols::ospf::lsa::OspfLsaBody::Nssa)
-//! variant, and [`OspfLsa::encode`](crate::protocols::ospf::lsa::OspfLsa::encode)
+//! variant, and `OspfLsa::encode`
 //! auto-fills the enclosing LSA `length` and the Fletcher-16 checksum over the
 //! header plus this body.
 
