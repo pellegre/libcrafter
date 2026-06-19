@@ -31,7 +31,7 @@ profile. The flags are `--provider`, `--profile`, `--seed`, `--count`, `--case`,
 - `smoke` (default, default `--count` 5) — the legacy ICMP/TCP/DNS/TTL/ARP
   sample: `icmp-echo`, `tcp-syn-open`, `tcp-syn-closed`, `dns-query`,
   `ttl-expired`, `arp-resolution`.
-- `behavior` (default `--count` 43) — the full DNS/DHCP/ARP/NDP/UDP behavioral
+- `behavior` (default `--count` 44) — the full DNS/DHCP/ARP/NDP/UDP/OSPF behavioral
   suite in deterministic DNS → DHCP → ARP → NDP → UDP order: ten DNS cases, ten
   DHCP cases, ten ARP cases, three NDP cases, and ten UDP cases.
 - `bgp-smoke` (default `--count` 1) — the `bgp-session-smoke` case, which plans a
@@ -53,7 +53,7 @@ send no packets:
 
 ```sh
 tools/probe/run --provider qemu --dry-run --profile smoke --seed 1 --count 10
-tools/probe/run --provider qemu --dry-run --profile behavior --seed 1052 --count 43
+tools/probe/run --provider qemu --dry-run --profile behavior --seed 1052 --count 44
 tools/probe/run --provider local-dry-run --dry-run --profile bgp-smoke
 tools/probe/run --provider qemu --dry-run --profile ipsec --seed 1
 ```
@@ -107,12 +107,12 @@ a controlled router.
 
 ### Behavior Profile
 
-The `behavior` profile is the full DNS/DHCP/ARP/NDP/UDP behavioral suite. It
+The `behavior` profile is the full DNS/DHCP/ARP/NDP/UDP/OSPF behavioral suite. It
 selects forty-three cases in deterministic DNS, DHCP, ARP, NDP, UDP order and
 defaults `--count` to all forty-three cases when no explicit count is supplied:
 
 ```sh
-tools/probe/run --provider qemu --dry-run --profile behavior --seed 1052 --count 43
+tools/probe/run --provider qemu --dry-run --profile behavior --seed 1052 --count 44
 tools/probe/run --provider qemu --dry-run --profile behavior --seed 1052 --case dns-a-success
 ```
 
@@ -226,7 +226,7 @@ Run the dry-run provider matrix to compare planning and skip reasons across
 providers without live traffic:
 
 ```sh
-python3 tools/probe/engine/provider_matrix.py --providers hetzner,qemu,virtualbox,docker --dry-run --profile behavior --seed 1052 --count 43 --out target/probe/provider-matrix
+python3 tools/probe/engine/provider_matrix.py --providers hetzner,qemu,virtualbox,docker --dry-run --profile behavior --seed 1052 --count 44 --out target/probe/provider-matrix
 ```
 
 ## Target Services
@@ -282,8 +282,8 @@ tools/probe/run --provider hetzner --dry-run --profile smoke --seed 1 --count 10
 tools/probe/run --provider qemu --dry-run --profile smoke --seed 1 --count 10
 tools/probe/run --provider virtualbox --dry-run --profile smoke --seed 1 --count 10
 tools/probe/run --provider docker --dry-run --profile smoke --seed 1 --count 10
-tools/probe/run --provider qemu --dry-run --profile behavior --seed 1052 --count 43
-python3 tools/probe/engine/provider_matrix.py --providers hetzner,qemu,virtualbox,docker --dry-run --profile behavior --seed 1052 --count 43 --out target/probe/provider-matrix
+tools/probe/run --provider qemu --dry-run --profile behavior --seed 1052 --count 44
+python3 tools/probe/engine/provider_matrix.py --providers hetzner,qemu,virtualbox,docker --dry-run --profile behavior --seed 1052 --count 44 --out target/probe/provider-matrix
 tools/lab/run plan --provider hetzner --dry-run --profile smoke --seed 1 --role stimulus --role target --json
 tools/lab/run plan --provider qemu --dry-run --profile smoke --seed 1 --role stimulus --role target --json
 tools/lab/run plan --provider virtualbox --dry-run --profile smoke --seed 1 --role stimulus --role target --json
@@ -317,9 +317,9 @@ keeps the default dry-run boundary:
 
 ```sh
 if [ -n "${LIBCRAFTER_PROBE_LIVE_PROVIDER:-}" ]; then
-  tools/probe/run --provider "$LIBCRAFTER_PROBE_LIVE_PROVIDER" --confirm-live-run --profile behavior --seed 1051 --count 43 --out target/probe/acceptance/51-live-behavior-suite
+  tools/probe/run --provider "$LIBCRAFTER_PROBE_LIVE_PROVIDER" --confirm-live-run --profile behavior --seed 1051 --count 44 --out target/probe/acceptance/51-live-behavior-suite
 else
-  tools/probe/run --provider qemu --dry-run --profile behavior --seed 1051 --count 43 --out target/probe/acceptance/51-live-behavior-suite-dry-run
+  tools/probe/run --provider qemu --dry-run --profile behavior --seed 1051 --count 44 --out target/probe/acceptance/51-live-behavior-suite-dry-run
 fi
 ```
 

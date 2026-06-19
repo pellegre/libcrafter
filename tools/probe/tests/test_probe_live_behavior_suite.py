@@ -1,9 +1,12 @@
 """Guarded live behavior-suite coverage.
 
-The full DNS/DHCP/ARP/NDP/UDP behavior suite must stay dry-run safe by default,
-but when a live provider is explicitly selected it must route through the
-protected lab-backed execution path. These tests pin that command contract and
-the target setup pieces required by the supported live cases.
+The full DNS/DHCP/ARP/NDP/UDP behavior suite -- plus the live-capable OSPF Hello
+exchange -- must stay dry-run safe by default, but when a live provider is
+explicitly selected it must route through the protected lab-backed execution
+path. Because every behavior-profile case is live-routable (the planned-only
+OSPF Database Description exchange is deliberately excluded), the confirmed live
+run never short-circuits to STATUS_UNSUPPORTED. These tests pin that command
+contract and the target setup pieces required by the supported live cases.
 """
 
 from __future__ import annotations
@@ -69,8 +72,8 @@ class GuardedBehaviorCommandDocsTest(unittest.TestCase):
         docs = (REPO_ROOT / "docs" / "operations" / "probe.md").read_text(encoding="utf-8")
         self.assertIn("LIBCRAFTER_PROBE_LIVE_PROVIDER", docs)
         self.assertIn('--provider "$LIBCRAFTER_PROBE_LIVE_PROVIDER"', docs)
-        self.assertIn("--confirm-live-run --profile behavior --seed 1051 --count 43", docs)
-        self.assertIn("--provider qemu --dry-run --profile behavior --seed 1051 --count 43", docs)
+        self.assertIn("--confirm-live-run --profile behavior --seed 1051 --count 44", docs)
+        self.assertIn("--provider qemu --dry-run --profile behavior --seed 1051 --count 44", docs)
 
 
 class BehaviorDryRunSetupTest(unittest.TestCase):
@@ -132,6 +135,15 @@ class BehaviorLiveRoutingTest(unittest.TestCase):
     def test_confirmed_behavior_suite_routes_to_lab_live_helper(self) -> None:
         request, selected, planned, probe_plans = _planned_behavior(dry_run=False)
         sentinel = object()
+
+        # The behavior profile must contain no planned-only case (e.g. the OSPF
+        # Database Description exchange); a planned-only case would short-circuit
+        # the confirmed live run to STATUS_UNSUPPORTED instead of routing to the
+        # lab live helper.
+        self.assertFalse(
+            any(case.metadata.get("planned_only") for case in selected),
+            "behavior profile must stay fully live-routable",
+        )
 
         with mock.patch.object(
             cli,
