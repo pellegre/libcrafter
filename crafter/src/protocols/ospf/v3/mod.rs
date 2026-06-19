@@ -30,9 +30,16 @@ use crate::protocols::ip::shared::IPPROTO_OSPF;
 
 pub mod constants;
 pub mod hello;
+pub mod lsa;
+pub mod packet;
 
 pub use constants::*;
 pub use hello::Ospfv3Hello;
+pub use lsa::{Ospfv3LsaHeader, OSPFV3_LSA_HEADER_LEN};
+pub use packet::{
+    Ospfv3DatabaseDescription, Ospfv3LinkStateAck, Ospfv3LinkStateRequest,
+    Ospfv3LinkStateRequestEntry,
+};
 
 macro_rules! impl_layer_object {
     ($type:ty) => {
@@ -72,14 +79,23 @@ macro_rules! impl_layer_div {
 /// The body of an OSPFv3 packet (RFC 5340 §A.3), following the 16-octet common
 /// header.
 ///
-/// This block models the typed [`Ospfv3Body::Hello`] body (RFC 5340 §A.3.2) and
-/// the [`Ospfv3Body::Unknown`] variant, which preserves the raw body bytes
-/// verbatim so a packet type the builder/decoder does not (yet) model round-trips
+/// This block models the typed [`Ospfv3Body::Hello`] body (RFC 5340 §A.3.2), the
+/// [`Ospfv3Body::DatabaseDescription`] (RFC 5340 §A.3.3), the
+/// [`Ospfv3Body::LinkStateRequest`] (RFC 5340 §A.3.4), and the
+/// [`Ospfv3Body::LinkStateAck`] (RFC 5340 §A.3.6) bodies, plus the
+/// [`Ospfv3Body::Unknown`] variant, which preserves the raw body bytes verbatim
+/// so a packet type the builder/decoder does not (yet) model round-trips
 /// byte-for-byte. Further typed bodies are added by later steps.
 #[derive(Debug, Clone)]
 pub enum Ospfv3Body {
     /// An OSPFv3 Hello body (RFC 5340 §A.3.2).
     Hello(Ospfv3Hello),
+    /// An OSPFv3 Database Description body (RFC 5340 §A.3.3).
+    DatabaseDescription(Ospfv3DatabaseDescription),
+    /// An OSPFv3 Link State Request body (RFC 5340 §A.3.4).
+    LinkStateRequest(Ospfv3LinkStateRequest),
+    /// An OSPFv3 Link State Acknowledgment body (RFC 5340 §A.3.6).
+    LinkStateAck(Ospfv3LinkStateAck),
     /// A packet body the layer does not (yet) model, preserved verbatim.
     Unknown {
         /// The OSPFv3 packet Type code this body belongs to.
@@ -94,6 +110,9 @@ impl Ospfv3Body {
     fn encoded_len(&self) -> usize {
         match self {
             Ospfv3Body::Hello(hello) => hello.encoded_len(),
+            Ospfv3Body::DatabaseDescription(dd) => dd.encoded_len(),
+            Ospfv3Body::LinkStateRequest(lsr) => lsr.encoded_len(),
+            Ospfv3Body::LinkStateAck(ack) => ack.encoded_len(),
             Ospfv3Body::Unknown { body, .. } => body.len(),
         }
     }
@@ -102,6 +121,9 @@ impl Ospfv3Body {
     fn encode(&self, out: &mut Vec<u8>) {
         match self {
             Ospfv3Body::Hello(hello) => hello.encode(out),
+            Ospfv3Body::DatabaseDescription(dd) => dd.encode(out),
+            Ospfv3Body::LinkStateRequest(lsr) => lsr.encode(out),
+            Ospfv3Body::LinkStateAck(ack) => ack.encode(out),
             Ospfv3Body::Unknown { body, .. } => out.extend_from_slice(body),
         }
     }
@@ -110,6 +132,9 @@ impl Ospfv3Body {
     fn type_code(&self) -> u8 {
         match self {
             Ospfv3Body::Hello(_) => OSPFV3_TYPE_HELLO,
+            Ospfv3Body::DatabaseDescription(_) => OSPFV3_TYPE_DATABASE_DESCRIPTION,
+            Ospfv3Body::LinkStateRequest(_) => OSPFV3_TYPE_LINK_STATE_REQUEST,
+            Ospfv3Body::LinkStateAck(_) => OSPFV3_TYPE_LINK_STATE_ACK,
             Ospfv3Body::Unknown { type_code, .. } => *type_code,
         }
     }
@@ -119,7 +144,10 @@ impl Ospfv3Body {
     /// affects the opaque [`Ospfv3Body::Unknown`] variant.
     fn set_type_code(&mut self, type_code: u8) {
         match self {
-            Ospfv3Body::Hello(_) => {}
+            Ospfv3Body::Hello(_)
+            | Ospfv3Body::DatabaseDescription(_)
+            | Ospfv3Body::LinkStateRequest(_)
+            | Ospfv3Body::LinkStateAck(_) => {}
             Ospfv3Body::Unknown { type_code: tc, .. } => *tc = type_code,
         }
     }
@@ -298,6 +326,139 @@ impl Ospfv3 {
             Ospfv3Body::Hello(hello) => hello,
             // Unreachable: the body was just normalized to a Hello above.
             _ => unreachable!("hello body installed above"),
+        }
+    }
+
+    /// Build an OSPFv3 Database Description packet (RFC 5340 §A.3.3).
+    ///
+    /// Sets the packet Type to [`OSPFV3_TYPE_DATABASE_DESCRIPTION`] and installs a
+    /// default [`Ospfv3DatabaseDescription`] body. Configure it fluently with
+    /// [`Ospfv3::with_database_description`] or replace the whole body with
+    /// [`Ospfv3::database_description_body`].
+    pub fn database_description() -> Self {
+        Self::new().database_description_body(Ospfv3DatabaseDescription::new())
+    }
+
+    /// Replace the packet body with the given [`Ospfv3DatabaseDescription`] body
+    /// and set the packet Type to [`OSPFV3_TYPE_DATABASE_DESCRIPTION`].
+    pub fn database_description_body(mut self, dd: Ospfv3DatabaseDescription) -> Self {
+        self.packet_type.set_user(OSPFV3_TYPE_DATABASE_DESCRIPTION);
+        self.body = Ospfv3Body::DatabaseDescription(dd);
+        self
+    }
+
+    /// Mutate the Database Description body in place through a closure, returning
+    /// `self` for fluent chaining. Installs a default body (and sets the packet
+    /// Type) when the current body is not already a Database Description.
+    pub fn with_database_description(
+        mut self,
+        configure: impl FnOnce(&mut Ospfv3DatabaseDescription),
+    ) -> Self {
+        configure(self.database_description_mut());
+        self
+    }
+
+    /// Borrow the Database Description body mutably, installing a default body
+    /// (and setting the packet Type to [`OSPFV3_TYPE_DATABASE_DESCRIPTION`]) when
+    /// the current body is not already a Database Description.
+    pub fn database_description_mut(&mut self) -> &mut Ospfv3DatabaseDescription {
+        if !matches!(self.body, Ospfv3Body::DatabaseDescription(_)) {
+            self.packet_type.set_user(OSPFV3_TYPE_DATABASE_DESCRIPTION);
+            self.body = Ospfv3Body::DatabaseDescription(Ospfv3DatabaseDescription::new());
+        }
+        match &mut self.body {
+            Ospfv3Body::DatabaseDescription(dd) => dd,
+            // Unreachable: the body was just normalized above.
+            _ => unreachable!("database description body installed above"),
+        }
+    }
+
+    /// Build an OSPFv3 Link State Request packet (RFC 5340 §A.3.4).
+    ///
+    /// Sets the packet Type to [`OSPFV3_TYPE_LINK_STATE_REQUEST`] and installs a
+    /// default [`Ospfv3LinkStateRequest`] body. Configure it fluently with
+    /// [`Ospfv3::with_link_state_request`] or replace the whole body with
+    /// [`Ospfv3::link_state_request_body`].
+    pub fn link_state_request() -> Self {
+        Self::new().link_state_request_body(Ospfv3LinkStateRequest::new())
+    }
+
+    /// Replace the packet body with the given [`Ospfv3LinkStateRequest`] body and
+    /// set the packet Type to [`OSPFV3_TYPE_LINK_STATE_REQUEST`].
+    pub fn link_state_request_body(mut self, lsr: Ospfv3LinkStateRequest) -> Self {
+        self.packet_type.set_user(OSPFV3_TYPE_LINK_STATE_REQUEST);
+        self.body = Ospfv3Body::LinkStateRequest(lsr);
+        self
+    }
+
+    /// Mutate the Link State Request body in place through a closure, returning
+    /// `self` for fluent chaining. Installs a default body (and sets the packet
+    /// Type) when the current body is not already a Link State Request.
+    pub fn with_link_state_request(
+        mut self,
+        configure: impl FnOnce(&mut Ospfv3LinkStateRequest),
+    ) -> Self {
+        configure(self.link_state_request_mut());
+        self
+    }
+
+    /// Borrow the Link State Request body mutably, installing a default body (and
+    /// setting the packet Type to [`OSPFV3_TYPE_LINK_STATE_REQUEST`]) when the
+    /// current body is not already a Link State Request.
+    pub fn link_state_request_mut(&mut self) -> &mut Ospfv3LinkStateRequest {
+        if !matches!(self.body, Ospfv3Body::LinkStateRequest(_)) {
+            self.packet_type.set_user(OSPFV3_TYPE_LINK_STATE_REQUEST);
+            self.body = Ospfv3Body::LinkStateRequest(Ospfv3LinkStateRequest::new());
+        }
+        match &mut self.body {
+            Ospfv3Body::LinkStateRequest(lsr) => lsr,
+            // Unreachable: the body was just normalized above.
+            _ => unreachable!("link state request body installed above"),
+        }
+    }
+
+    /// Build an OSPFv3 Link State Acknowledgment packet (RFC 5340 §A.3.6).
+    ///
+    /// Sets the packet Type to [`OSPFV3_TYPE_LINK_STATE_ACK`] and installs a
+    /// default [`Ospfv3LinkStateAck`] body. Configure it fluently with
+    /// [`Ospfv3::with_link_state_ack`] or replace the whole body with
+    /// [`Ospfv3::link_state_ack_body`].
+    pub fn link_state_ack() -> Self {
+        Self::new().link_state_ack_body(Ospfv3LinkStateAck::new())
+    }
+
+    /// Replace the packet body with the given [`Ospfv3LinkStateAck`] body and set
+    /// the packet Type to [`OSPFV3_TYPE_LINK_STATE_ACK`].
+    pub fn link_state_ack_body(mut self, ack: Ospfv3LinkStateAck) -> Self {
+        self.packet_type.set_user(OSPFV3_TYPE_LINK_STATE_ACK);
+        self.body = Ospfv3Body::LinkStateAck(ack);
+        self
+    }
+
+    /// Mutate the Link State Acknowledgment body in place through a closure,
+    /// returning `self` for fluent chaining. Installs a default body (and sets
+    /// the packet Type) when the current body is not already a Link State
+    /// Acknowledgment.
+    pub fn with_link_state_ack(
+        mut self,
+        configure: impl FnOnce(&mut Ospfv3LinkStateAck),
+    ) -> Self {
+        configure(self.link_state_ack_mut());
+        self
+    }
+
+    /// Borrow the Link State Acknowledgment body mutably, installing a default
+    /// body (and setting the packet Type to [`OSPFV3_TYPE_LINK_STATE_ACK`]) when
+    /// the current body is not already a Link State Acknowledgment.
+    pub fn link_state_ack_mut(&mut self) -> &mut Ospfv3LinkStateAck {
+        if !matches!(self.body, Ospfv3Body::LinkStateAck(_)) {
+            self.packet_type.set_user(OSPFV3_TYPE_LINK_STATE_ACK);
+            self.body = Ospfv3Body::LinkStateAck(Ospfv3LinkStateAck::new());
+        }
+        match &mut self.body {
+            Ospfv3Body::LinkStateAck(ack) => ack,
+            // Unreachable: the body was just normalized above.
+            _ => unreachable!("link state ack body installed above"),
         }
     }
 

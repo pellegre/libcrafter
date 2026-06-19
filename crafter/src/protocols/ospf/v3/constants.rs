@@ -40,3 +40,21 @@ pub const OSPFV3_TYPE_LINK_STATE_ACK: u8 = 5;
 /// + Packet Length(2) + Router ID(4) + Area ID(4) + Checksum(2) + Instance ID(1)
 /// + Reserved(1).
 pub const OSPFV3_HEADER_LEN: usize = 16;
+
+// ---------------------------------------------------------------------------
+// Database Description flags (RFC 5340 §A.3.3)
+// ---------------------------------------------------------------------------
+//
+// OSPFv3 reuses the OSPFv2 Database Description I/M/MS flag bits (RFC 5340
+// §A.3.3, mirroring RFC 2328 §A.3.3); they live in the low three bits of the
+// flags octet.
+
+/// Master/Slave bit (MS) in the OSPFv3 Database Description flags octet
+/// (RFC 5340 §A.3.3): set when the router is the master.
+pub const OSPFV3_DD_FLAG_MS: u8 = 0x01;
+/// More bit (M) in the OSPFv3 Database Description flags octet (RFC 5340
+/// §A.3.3): set when more Database Description packets follow.
+pub const OSPFV3_DD_FLAG_M: u8 = 0x02;
+/// Init bit (I) in the OSPFv3 Database Description flags octet (RFC 5340
+/// §A.3.3): set on the first Database Description packet of an exchange.
+pub const OSPFV3_DD_FLAG_I: u8 = 0x04;
