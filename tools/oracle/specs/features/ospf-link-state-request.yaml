@@ -1,0 +1,71 @@
+version: 1
+kind: feature
+name: ospf_link_state_request
+summary: >-
+  OSPFv2 Link State Request packet framing over IPv4 (IP protocol 89), covering
+  the RFC 2328 Section A.3.4 list of 12-octet request entries layered on the
+  common header, with strict-byte equivalence between the Scapy reference
+  backend and libcrafter in both offline directions.
+
+layers:
+  - ospf
+  - ipv4
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: common_header_fields
+    rfc:
+      - RFC 2328 Section A.3.1
+    message_type: link_state_request
+    checks:
+      - version_2
+      - type_is_link_state_request
+      - packet_length_covers_packet
+      - router_id_preserved
+      - area_id_preserved
+  - name: link_state_request_fields
+    rfc:
+      - RFC 2328 Section A.3.4
+    message_type: link_state_request
+    checks:
+      - request_entry_ls_type_preserved
+      - request_entry_link_state_id_preserved
+      - request_entry_advertising_router_preserved
+      - request_entry_list_round_trips
+
+coverage_cases:
+  - ospf-link-state-request
+
+supported_cases:
+  - name: ospf-link-state-request
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - OSPF_Hdr
+      - OSPF_LSReq
+    encode: true
+    decode: true
+    notes:
+      - Scapy 2.7.0 natively round-trips the OSPFv2 common header (OSPF_Hdr) and
+        the Link State Request body (OSPF_LSReq), including each 12-octet request
+        entry's LS type, link state id, and advertising router, via
+        scapy.contrib.ospf.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    notes:
+      - Link State Request compile derives the RFC 2328 packet length and the
+        common-header checksum unless the caller deliberately overrides them;
+        decode preserves each 12-octet request entry so the packet round-trips
+        byte-for-byte.
