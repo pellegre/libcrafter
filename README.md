@@ -226,6 +226,7 @@ preserved as `Raw` payloads when the enclosing header is valid.
 | DNS | EDNS(0), SVCB/HTTPS, DNSSEC record types | [dns](docs/guide/dns.md) |
 | DHCPv4 | Option overload, RFC 3396 long options, relay agent option 82, client identifiers, authentication, leasequery fields | — |
 | BGP | OPEN, UPDATE, KEEPALIVE, NOTIFICATION, ROUTE-REFRESH, path attributes, capabilities | [bgp](docs/guide/bgp.md) |
+| OSPF | OSPFv2 Hello/DD/LSR/LSU/LSAck packets, Router/Network/Summary/AS-External/NSSA/Opaque (TE, RI) LSAs, null/simple/keyed-MD5/HMAC-SHA authentication, plus an OSPFv3 base layer; wire-level build and decode only (no state machine, SPF, or LSDB) | [ospf](docs/guide/ospf.md) |
 | IPsec | ESP, AH, and IKEv2 (IKE header and payload set) with SA and transform primitives | [ipsec](docs/guide/ipsec.md) |
 
 IP fragmentation and reassembly are explicit `IpFragment` / `IpDefrag` wire
@@ -267,8 +268,8 @@ The full annotated table, with safety modes and commands, is in
 
 - [docs/README.md](docs/README.md) is the documentation index.
 - [docs/guide/](docs/guide/) — per-protocol wire coverage for everyday packet
-  work (IPv4, IPv6, TCP, UDP, ARP, ICMPv6, DNS, BGP, 802.11, IPsec); UDP, ARP,
-  and ICMPv6 now have their own guides.
+  work (IPv4, IPv6, TCP, UDP, ARP, ICMPv6, DNS, BGP, OSPF, 802.11, IPsec); UDP,
+  ARP, and ICMPv6 now have their own guides.
 - [docs/reference/](docs/reference/) — the public API
   ([api.md](docs/reference/api.md)), the wire I/O layer
   ([wire.md](docs/reference/wire.md)), and the example catalog
