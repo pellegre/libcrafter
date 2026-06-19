@@ -135,7 +135,9 @@ mod tests {
     use super::*;
     use crate::checksum::fletcher16_valid;
     use crate::packet::{Layer, Packet};
-    use crate::protocols::ospf::lsa::{OspfLsaBody, OspfLsaHeader, OSPF_LSA_HEADER_LEN, OSPF_LSA_ROUTER};
+    use crate::protocols::ospf::lsa::{
+        OspfLsaBody, OspfLsaHeader, OSPF_LSA_HEADER_LEN, OSPF_LSA_ROUTER,
+    };
     use crate::protocols::ospf::{Ospfv2, OSPF_HEADER_LEN, OSPF_TYPE_LINK_STATE_UPDATE};
     use core::net::Ipv4Addr;
 

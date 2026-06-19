@@ -168,10 +168,7 @@ mod tests {
 
         // Multiple bits join in ascending bit-value order regardless of the
         // order the bits were OR-ed together.
-        assert_eq!(
-            ospf_options_summary(OSPF_OPTIONS_O | OSPF_OPTIONS_E),
-            "E|O"
-        );
+        assert_eq!(ospf_options_summary(OSPF_OPTIONS_O | OSPF_OPTIONS_E), "E|O");
         assert_eq!(ospf_options_summary(0xff), "MT|E|MC|NP|L|DC|O|DN");
     }
 

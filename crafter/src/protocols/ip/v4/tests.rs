@@ -149,7 +149,10 @@ mod ipv4_protocol {
         assert_eq!(ipv4.protocol_value(), IPPROTO_OSPF);
 
         let expected_total = 20 + 24 + 20;
-        assert_eq!(&bytes.as_bytes()[2..4], &(expected_total as u16).to_be_bytes());
+        assert_eq!(
+            &bytes.as_bytes()[2..4],
+            &(expected_total as u16).to_be_bytes()
+        );
         assert_eq!(ipv4.total_length_value(), Some(expected_total as u16));
     }
 }

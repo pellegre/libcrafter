@@ -200,8 +200,7 @@ impl OspfHello {
         I: IntoIterator<Item = A>,
         A: Into<Ipv4Addr>,
     {
-        self.neighbors
-            .extend(neighbors.into_iter().map(Into::into));
+        self.neighbors.extend(neighbors.into_iter().map(Into::into));
         self
     }
 
@@ -346,10 +345,7 @@ mod tests {
         assert_eq!(bytes.len(), total);
         assert_eq!(&bytes[2..4], &(total as u16).to_be_bytes());
         // The header Type octet carries the Hello type code.
-        assert_eq!(
-            bytes[1],
-            crate::protocols::ospf::OSPF_TYPE_HELLO
-        );
+        assert_eq!(bytes[1], crate::protocols::ospf::OSPF_TYPE_HELLO);
         // The body bytes follow the 24-octet header verbatim.
         assert_eq!(&bytes[OSPF_HEADER_LEN..], expected.as_slice());
 
@@ -371,9 +367,7 @@ mod tests {
         use crate::protocols::ospf::{OspfBody, Ospfv2, OSPF_HEADER_LEN};
 
         // The convenience setters toggle just their own bit, preserving the rest.
-        let hello = OspfHello::new()
-            .external_capable(true)
-            .opaque_capable(true);
+        let hello = OspfHello::new().external_capable(true).opaque_capable(true);
         assert_eq!(
             hello.options_value(),
             OSPF_OPTIONS_E | OSPF_OPTIONS_O,
@@ -406,8 +400,8 @@ mod tests {
         assert_eq!(options_octet & OSPF_OPTIONS_E, OSPF_OPTIONS_E);
 
         // The packet decodes to a typed Hello whose Options expose the E-bit.
-        let decoded = append_ospf_packet(Packet::new(), bytes.as_bytes())
-            .expect("the Hello decodes");
+        let decoded =
+            append_ospf_packet(Packet::new(), bytes.as_bytes()).expect("the Hello decodes");
         let ospf = decoded
             .layer::<Ospfv2>()
             .expect("the decoded packet exposes a typed Ospfv2 layer");

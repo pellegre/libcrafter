@@ -1144,15 +1144,16 @@ mod tests {
     fn ospfv3_router_lsa_one_interface_layout_and_checksum() {
         // 0x000013 exercises the 24-bit Options packing; the high octet of the
         // u32 (0xff) must be masked off on the wire.
-        let router = Ospfv3RouterLsa::new().options(0x00ff_0013).interface(
-            Ospfv3RouterInterface::new(
-                1, // Type: point-to-point
-                10,
-                0x0000_0005,
-                0x0000_0006,
-                Ipv4Addr::new(192, 0, 2, 2),
-            ),
-        );
+        let router =
+            Ospfv3RouterLsa::new()
+                .options(0x00ff_0013)
+                .interface(Ospfv3RouterInterface::new(
+                    1, // Type: point-to-point
+                    10,
+                    0x0000_0005,
+                    0x0000_0006,
+                    Ipv4Addr::new(192, 0, 2, 2),
+                ));
 
         assert_eq!(router.options_value(), 0x00ff_0013);
         assert_eq!(router.interfaces_value().len(), 1);
@@ -1417,7 +1418,9 @@ mod tests {
         );
 
         // The decoded packet re-compiles byte-for-byte.
-        let recompiled = decoded.compile().expect("the decoded OSPFv3 LSU re-compiles");
+        let recompiled = decoded
+            .compile()
+            .expect("the decoded OSPFv3 LSU re-compiles");
         assert_eq!(recompiled.as_bytes(), bytes.as_bytes());
     }
 }

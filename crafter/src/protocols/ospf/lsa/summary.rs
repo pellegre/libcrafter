@@ -119,10 +119,7 @@ impl OspfSummaryLsa {
     /// Construct a Summary-LSA body from decoded wire fields, marking the network
     /// mask as caller-supplied so re-compilation preserves the decoded values
     /// byte-for-byte (RFC 2328 §A.4.4).
-    pub(crate) fn from_decoded_parts(
-        network_mask: Ipv4Addr,
-        entries: Vec<OspfSummaryTos>,
-    ) -> Self {
+    pub(crate) fn from_decoded_parts(network_mask: Ipv4Addr, entries: Vec<OspfSummaryTos>) -> Self {
         Self {
             network_mask: Field::user(network_mask),
             entries,
@@ -243,7 +240,10 @@ mod tests {
             .metric(metric);
 
         // The default TOS 0 entry carries the metric we set.
-        assert_eq!(summary.network_mask_value(), Ipv4Addr::new(255, 255, 255, 0));
+        assert_eq!(
+            summary.network_mask_value(),
+            Ipv4Addr::new(255, 255, 255, 0)
+        );
         assert_eq!(summary.entries_value().len(), 1);
         assert_eq!(summary.entries_value()[0].tos_value(), 0);
         assert_eq!(summary.entries_value()[0].metric_value(), metric);
