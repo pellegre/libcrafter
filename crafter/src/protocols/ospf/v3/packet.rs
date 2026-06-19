@@ -518,7 +518,9 @@ mod tests {
             expected_body
         );
 
-        let recompiled = decoded.compile().expect("the decoded OSPFv3 body re-compiles");
+        let recompiled = decoded
+            .compile()
+            .expect("the decoded OSPFv3 body re-compiles");
         assert_eq!(recompiled.as_bytes(), bytes.as_bytes());
 
         bytes.as_bytes().to_vec()
@@ -737,6 +739,9 @@ mod tests {
             .expect("the DD LSA-header list decodes");
         assert_eq!(headers.len(), 1);
         assert_eq!(headers[0].ls_type_value(), 0x2001);
-        assert_eq!(headers[0].link_state_id_value(), Ipv4Addr::new(192, 0, 2, 1));
+        assert_eq!(
+            headers[0].link_state_id_value(),
+            Ipv4Addr::new(192, 0, 2, 1)
+        );
     }
 }

@@ -227,8 +227,7 @@ impl OspfLsaHeader {
 
     /// Set the Advertising Router field.
     pub fn advertising_router(mut self, advertising_router: impl Into<Ipv4Addr>) -> Self {
-        self.advertising_router
-            .set_user(advertising_router.into());
+        self.advertising_router.set_user(advertising_router.into());
         self
     }
 
@@ -407,8 +406,7 @@ impl OspfLsaHeader {
         let ls_type = bytes[3];
         let link_state_id = Ipv4Addr::new(bytes[4], bytes[5], bytes[6], bytes[7]);
         let advertising_router = Ipv4Addr::new(bytes[8], bytes[9], bytes[10], bytes[11]);
-        let ls_sequence_number =
-            u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]);
+        let ls_sequence_number = u32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]);
         let ls_checksum = u16::from_be_bytes([bytes[16], bytes[17]]);
         let length = u16::from_be_bytes([bytes[18], bytes[19]]);
 
@@ -668,7 +666,10 @@ mod tests {
         assert_eq!(&out[16..18], &0xBEEFu16.to_be_bytes());
 
         // The length still auto-fills to cover the header plus the body.
-        assert_eq!(&out[18..20], &((OSPF_LSA_HEADER_LEN + body.len()) as u16).to_be_bytes());
+        assert_eq!(
+            &out[18..20],
+            &((OSPF_LSA_HEADER_LEN + body.len()) as u16).to_be_bytes()
+        );
     }
 
     /// A buffer shorter than the 20-octet LSA header yields a structured

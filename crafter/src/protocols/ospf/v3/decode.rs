@@ -485,7 +485,9 @@ fn decode_ospfv3_link_state_update(body: &[u8]) -> Result<Ospfv3LinkStateUpdate>
 fn decode_ospfv3_lsa_body(ls_type: u16, body: &[u8]) -> Result<Ospfv3LsaBody> {
     match ls_type {
         OSPFV3_LSA_ROUTER => Ok(Ospfv3LsaBody::Router(decode_ospfv3_router_lsa_body(body)?)),
-        OSPFV3_LSA_NETWORK => Ok(Ospfv3LsaBody::Network(decode_ospfv3_network_lsa_body(body)?)),
+        OSPFV3_LSA_NETWORK => Ok(Ospfv3LsaBody::Network(decode_ospfv3_network_lsa_body(
+            body,
+        )?)),
         _ => Ok(Ospfv3LsaBody::Raw(body.to_vec())),
     }
 }
@@ -637,7 +639,9 @@ mod tests {
         assert_eq!(layer.packet_type_value(), type_code);
         check_body(&layer.body);
 
-        let recompiled = decoded.compile().expect("the decoded OSPFv3 packet re-compiles");
+        let recompiled = decoded
+            .compile()
+            .expect("the decoded OSPFv3 packet re-compiles");
         assert_eq!(recompiled.as_bytes(), bytes.as_bytes());
     }
 
@@ -801,17 +805,15 @@ mod tests {
                 .link_state_id(Ipv4Addr::new(0, 0, 0, 0))
                 .advertising_router(Ipv4Addr::new(192, 0, 2, 1))
                 .ls_sequence_number(0x8000_0001),
-            Ospfv3LsaBody::Router(
-                Ospfv3RouterLsa::new()
-                    .options(0x0000_0013)
-                    .interface(Ospfv3RouterInterface::new(
-                        1,
-                        10,
-                        0x0000_0005,
-                        0x0000_0006,
-                        Ipv4Addr::new(192, 0, 2, 2),
-                    )),
-            ),
+            Ospfv3LsaBody::Router(Ospfv3RouterLsa::new().options(0x0000_0013).interface(
+                Ospfv3RouterInterface::new(
+                    1,
+                    10,
+                    0x0000_0005,
+                    0x0000_0006,
+                    Ipv4Addr::new(192, 0, 2, 2),
+                ),
+            )),
         );
 
         let ospfv3 = Ospfv3::link_state_update()

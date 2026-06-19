@@ -4689,7 +4689,10 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
                     "seq=0x80000001, age=0, len=32) body=12B",
                 ))
             );
-            assert_eq!(value_of("network_lsa"), Some("mask=255.255.255.0 routers=2"));
+            assert_eq!(
+                value_of("network_lsa"),
+                Some("mask=255.255.255.0 routers=2")
+            );
             let attached_routers: Vec<&str> = fields
                 .iter()
                 .filter(|(field, _)| *field == "attached_router")
@@ -4737,16 +4740,16 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
                     "seq=0x80000001, age=0, len=32) body=12B",
                 ))
             );
-            assert_eq!(value_of("summary_lsa"), Some("mask=255.255.255.0 metric=10 tos=2"));
+            assert_eq!(
+                value_of("summary_lsa"),
+                Some("mask=255.255.255.0 metric=10 tos=2")
+            );
             let summary_tos: Vec<&str> = fields
                 .iter()
                 .filter(|(field, _)| *field == "summary_tos")
                 .map(|(_, value)| value.as_str())
                 .collect();
-            assert_eq!(
-                summary_tos,
-                vec!["tos=0 metric=10", "tos=2 metric=30"]
-            );
+            assert_eq!(summary_tos, vec!["tos=0 metric=10", "tos=2 metric=30"]);
         }
         "ospf-summary-lsa-asbr" => {
             // OSPF rides directly on IPv4 protocol 89 (RFC 2328).
@@ -4789,7 +4792,10 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
                     "seq=0x80000001, age=0, len=28) body=8B",
                 ))
             );
-            assert_eq!(value_of("summary_lsa"), Some("mask=0.0.0.0 metric=20 tos=1"));
+            assert_eq!(
+                value_of("summary_lsa"),
+                Some("mask=0.0.0.0 metric=20 tos=1")
+            );
             let summary_tos: Vec<&str> = fields
                 .iter()
                 .filter(|(field, _)| *field == "summary_tos")
@@ -4966,10 +4972,7 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
                 .filter(|(field, _)| *field == "opaque_tlv")
                 .map(|(_, value)| value.as_str())
                 .collect();
-            assert_eq!(
-                opaque_tlv,
-                vec!["type=1 value=4B", "type=2 value=5B"]
-            );
+            assert_eq!(opaque_tlv, vec!["type=1 value=4B", "type=2 value=5B"]);
         }
         "ospf-te-lsa" => {
             // OSPF rides directly on IPv4 protocol 89 (RFC 2328).
@@ -5022,10 +5025,7 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
                 .filter(|(field, _)| *field == "opaque_tlv")
                 .map(|(_, value)| value.as_str())
                 .collect();
-            assert_eq!(
-                opaque_tlv,
-                vec!["type=1 value=4B", "type=2 value=16B"]
-            );
+            assert_eq!(opaque_tlv, vec!["type=1 value=4B", "type=2 value=16B"]);
         }
         "ospf-hello-simple-auth" => {
             // OSPF rides directly on IPv4 protocol 89 (RFC 2328).

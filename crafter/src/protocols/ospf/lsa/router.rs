@@ -416,7 +416,11 @@ impl OspfRouterLsa {
     /// `# links` count (the caller value, else the number of carried links).
     pub fn summary(&self) -> String {
         let labels = self.router_flags_summary();
-        let labels = if labels.is_empty() { "-".to_string() } else { labels };
+        let labels = if labels.is_empty() {
+            "-".to_string()
+        } else {
+            labels
+        };
         format!("flags={} links={}", labels, self.num_links_value())
     }
 
@@ -425,7 +429,11 @@ impl OspfRouterLsa {
     /// plus its per-TOS entries).
     pub(crate) fn encoded_len(&self) -> usize {
         OSPF_ROUTER_LSA_FIXED_LEN
-            + self.links.iter().map(OspfRouterLink::encoded_len).sum::<usize>()
+            + self
+                .links
+                .iter()
+                .map(OspfRouterLink::encoded_len)
+                .sum::<usize>()
     }
 
     /// Append the RFC 2328 §A.4.2 Router-LSA body to `out`: the flags octet, a
@@ -452,7 +460,9 @@ impl Default for OspfRouterLsa {
 mod tests {
     use super::*;
     use crate::checksum::fletcher16_valid;
-    use crate::protocols::ospf::lsa::{OspfLsa, OspfLsaBody, OspfLsaHeader, OSPF_LSA_HEADER_LEN, OSPF_LSA_ROUTER};
+    use crate::protocols::ospf::lsa::{
+        OspfLsa, OspfLsaBody, OspfLsaHeader, OSPF_LSA_HEADER_LEN, OSPF_LSA_ROUTER,
+    };
     use crate::protocols::ospf::packet::link_state_update::OspfLinkStateUpdate;
 
     /// A Router-LSA built with two links (one carrying a per-TOS entry) encodes
@@ -495,16 +505,12 @@ mod tests {
 
         let expected: Vec<u8> = vec![
             // flags 0x01 (B), reserved 0, # links 2
-            0x01, 0x00, 0x00, 0x02,
-            // Link 1: Link ID 192.0.2.2, Link Data 198.51.100.1
-            192, 0, 2, 2, 198, 51, 100, 1,
-            // Type 1 (point-to-point), # TOS 0, metric 10
+            0x01, 0x00, 0x00, 0x02, // Link 1: Link ID 192.0.2.2, Link Data 198.51.100.1
+            192, 0, 2, 2, 198, 51, 100, 1, // Type 1 (point-to-point), # TOS 0, metric 10
             0x01, 0x00, 0x00, 0x0a,
             // Link 2: Link ID 198.51.100.0, Link Data 255.255.255.0
-            198, 51, 100, 0, 255, 255, 255, 0,
-            // Type 3 (stub), # TOS 1, metric 20
-            0x03, 0x01, 0x00, 0x14,
-            // TOS entry: TOS 2, reserved 0, TOS metric 30
+            198, 51, 100, 0, 255, 255, 255, 0, // Type 3 (stub), # TOS 1, metric 20
+            0x03, 0x01, 0x00, 0x14, // TOS entry: TOS 2, reserved 0, TOS metric 30
             0x02, 0x00, 0x00, 0x1e,
         ];
         assert_eq!(body, expected);
@@ -636,7 +642,10 @@ mod tests {
         let router = OspfRouterLsa::new().external().border();
 
         // The raw flags octet carries exactly the E and B bits.
-        assert_eq!(router.flags_value(), OSPF_ROUTER_LSA_FLAG_E | OSPF_ROUTER_LSA_FLAG_B);
+        assert_eq!(
+            router.flags_value(),
+            OSPF_ROUTER_LSA_FLAG_E | OSPF_ROUTER_LSA_FLAG_B
+        );
 
         // The boolean accessors agree with the raw bits.
         assert!(!router.is_virtual());

@@ -504,10 +504,7 @@ impl Ospfv3 {
     /// returning `self` for fluent chaining. Installs a default body (and sets
     /// the packet Type) when the current body is not already a Link State
     /// Acknowledgment.
-    pub fn with_link_state_ack(
-        mut self,
-        configure: impl FnOnce(&mut Ospfv3LinkStateAck),
-    ) -> Self {
+    pub fn with_link_state_ack(mut self, configure: impl FnOnce(&mut Ospfv3LinkStateAck)) -> Self {
         configure(self.link_state_ack_mut());
         self
     }
@@ -555,7 +552,10 @@ impl Ospfv3 {
 
     /// The effective Area ID (the caller value, else the unspecified address).
     pub fn area_id_value(&self) -> Ipv4Addr {
-        self.area_id.value().copied().unwrap_or(Ipv4Addr::UNSPECIFIED)
+        self.area_id
+            .value()
+            .copied()
+            .unwrap_or(Ipv4Addr::UNSPECIFIED)
     }
 
     /// The pinned Checksum, if the caller set it.
@@ -805,7 +805,10 @@ impl Layer for Ospfv3 {
                 }
             }
             Ospfv3Body::LinkStateAck(ack) => {
-                fields.push(("lsa_header_count", ack.lsa_headers_value().len().to_string()));
+                fields.push((
+                    "lsa_header_count",
+                    ack.lsa_headers_value().len().to_string(),
+                ));
                 for header in ack.lsa_headers_value() {
                     fields.push(("lsa_header", header.summary()));
                 }

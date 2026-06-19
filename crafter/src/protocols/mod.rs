@@ -356,9 +356,7 @@ pub mod exports {
         DOT11_TAG_RSN, DOT11_TAG_SSID, DOT11_TAG_SUPPORTED_RATES, DOT11_TAG_TIM,
     };
     pub use ospf::lsa::{OSPF_ROUTER_LSA_FLAG_B, OSPF_ROUTER_LSA_FLAG_E, OSPF_ROUTER_LSA_FLAG_V};
-    pub use ospf::packet::database_description::{
-        OSPF_DD_FLAG_I, OSPF_DD_FLAG_M, OSPF_DD_FLAG_MS,
-    };
+    pub use ospf::packet::database_description::{OSPF_DD_FLAG_I, OSPF_DD_FLAG_M, OSPF_DD_FLAG_MS};
     pub use ospf::{
         ospf_autype_name, ospf_options_summary, ospf_type_name, OspfBody, OspfChecksumStatus,
         Ospfv2, Ospfv3, Ospfv3Body, Ospfv3DatabaseDescription, Ospfv3Hello, Ospfv3LinkStateAck,

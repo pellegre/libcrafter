@@ -50,9 +50,10 @@ pub use v3::{
     Ospfv3, Ospfv3Body, Ospfv3DatabaseDescription, Ospfv3Hello, Ospfv3LinkStateAck,
     Ospfv3LinkStateRequest, Ospfv3LinkStateRequestEntry, Ospfv3LinkStateUpdate, Ospfv3Lsa,
     Ospfv3LsaBody, Ospfv3LsaHeader, Ospfv3NetworkLsa, Ospfv3RouterInterface, Ospfv3RouterLsa,
-    OSPF_VERSION_3, OSPFV3_DD_FLAG_I, OSPFV3_DD_FLAG_M, OSPFV3_DD_FLAG_MS, OSPFV3_HEADER_LEN,
+    OSPFV3_DD_FLAG_I, OSPFV3_DD_FLAG_M, OSPFV3_DD_FLAG_MS, OSPFV3_HEADER_LEN,
     OSPFV3_LSA_HEADER_LEN, OSPFV3_TYPE_DATABASE_DESCRIPTION, OSPFV3_TYPE_HELLO,
     OSPFV3_TYPE_LINK_STATE_ACK, OSPFV3_TYPE_LINK_STATE_REQUEST, OSPFV3_TYPE_LINK_STATE_UPDATE,
+    OSPF_VERSION_3,
 };
 
 macro_rules! impl_layer_object {
@@ -667,10 +668,7 @@ impl Ospfv2 {
     /// a default one (and the packet Type set to [`OSPF_TYPE_LINK_STATE_ACK`])
     /// before the closure runs, so the accessor always yields a Link State
     /// Acknowledgment body to configure.
-    pub fn with_link_state_ack(
-        mut self,
-        configure: impl FnOnce(&mut OspfLinkStateAck),
-    ) -> Self {
+    pub fn with_link_state_ack(mut self, configure: impl FnOnce(&mut OspfLinkStateAck)) -> Self {
         configure(self.link_state_ack_mut());
         self
     }
@@ -995,10 +993,7 @@ impl Layer for Ospfv2 {
                 "backup_designated_router",
                 hello.backup_designated_router_value().to_string(),
             ));
-            fields.push((
-                "neighbor_count",
-                hello.neighbors_value().len().to_string(),
-            ));
+            fields.push(("neighbor_count", hello.neighbors_value().len().to_string()));
             for neighbor in hello.neighbors_value() {
                 fields.push(("neighbor", neighbor.to_string()));
             }
@@ -1081,11 +1076,7 @@ impl Layer for Ospfv2 {
                     for entry in summary.entries_value() {
                         fields.push((
                             "summary_tos",
-                            format!(
-                                "tos={} metric={}",
-                                entry.tos_value(),
-                                entry.metric_value()
-                            ),
+                            format!("tos={} metric={}", entry.tos_value(), entry.metric_value()),
                         ));
                     }
                 }
@@ -1126,7 +1117,11 @@ impl Layer for Ospfv2 {
                         != 0;
                     fields.push((
                         "nssa_lsa",
-                        format!("P={} {}", if p_bit { "set" } else { "clear" }, nssa.summary()),
+                        format!(
+                            "P={} {}",
+                            if p_bit { "set" } else { "clear" },
+                            nssa.summary()
+                        ),
                     ));
                     for entry in nssa.entries_value() {
                         fields.push((
@@ -1259,8 +1254,7 @@ impl Layer for Ospfv2 {
             // over the whole packet EXCLUDING the 8-octet authentication field
             // (octets 16..24), computed with the checksum field itself zeroed
             // (RFC 2328 §A.3.1). The placeholder above already wrote zero.
-            let checksum =
-                internet_checksum_chunks([&out[start..start + 16], &out[start + 24..]]);
+            let checksum = internet_checksum_chunks([&out[start..start + 16], &out[start + 24..]]);
             out[start + 12..start + 14].copy_from_slice(&checksum.to_be_bytes());
         }
 
@@ -1420,7 +1414,10 @@ mod tests {
 
         // The one-line summary carries the type name and router id.
         let summary = ospf.summary();
-        assert!(summary.contains("Hello"), "summary missing type name: {summary}");
+        assert!(
+            summary.contains("Hello"),
+            "summary missing type name: {summary}"
+        );
         assert!(
             summary.contains("192.0.2.1"),
             "summary missing router id: {summary}"
@@ -1464,12 +1461,18 @@ mod tests {
         // The one-line summary carries the Hello detail: type, mask, DR/BDR, and
         // the neighbor count.
         let summary = ospf.summary();
-        assert!(summary.contains("type=Hello"), "summary missing type: {summary}");
+        assert!(
+            summary.contains("type=Hello"),
+            "summary missing type: {summary}"
+        );
         assert!(
             summary.contains("mask=255.255.255.0"),
             "summary missing network mask: {summary}"
         );
-        assert!(summary.contains("dr=192.0.2.1"), "summary missing DR: {summary}");
+        assert!(
+            summary.contains("dr=192.0.2.1"),
+            "summary missing DR: {summary}"
+        );
         assert!(
             summary.contains("bdr=192.0.2.2"),
             "summary missing BDR: {summary}"
@@ -1776,7 +1779,10 @@ mod tests {
         let raw = bytes.as_bytes();
         let ipv4_header_len = (raw[0] & 0x0f) as usize * 4;
         let ospf = ipv4_header_len;
-        assert_eq!(&raw[ospf + 14..ospf + 16], &OSPF_AUTYPE_SIMPLE.to_be_bytes());
+        assert_eq!(
+            &raw[ospf + 14..ospf + 16],
+            &OSPF_AUTYPE_SIMPLE.to_be_bytes()
+        );
         assert_eq!(
             &raw[ospf + 16..ospf + 24],
             &[b's', b'e', b'c', b'r', b'e', b't', 0, 0]
@@ -1861,7 +1867,16 @@ mod tests {
         assert_eq!(ospf.autype_value(), OSPF_AUTYPE_CRYPTOGRAPHIC);
         assert_eq!(
             ospf.authentication_value(),
-            [0x00, 0x00, 0x07, OSPF_MD5_DIGEST_LEN, 0x00, 0x00, 0x00, 0x2a]
+            [
+                0x00,
+                0x00,
+                0x07,
+                OSPF_MD5_DIGEST_LEN,
+                0x00,
+                0x00,
+                0x00,
+                0x2a
+            ]
         );
 
         // The body-only OSPF packet length (header + Hello body) excludes the
@@ -1883,7 +1898,16 @@ mod tests {
         // The 8-octet authentication field (octets 16..24) is the structured form.
         assert_eq!(
             &bytes[16..24],
-            &[0x00, 0x00, 0x07, OSPF_MD5_DIGEST_LEN, 0x00, 0x00, 0x00, 0x2a]
+            &[
+                0x00,
+                0x00,
+                0x07,
+                OSPF_MD5_DIGEST_LEN,
+                0x00,
+                0x00,
+                0x00,
+                0x2a
+            ]
         );
 
         // The trailing 16 octets are the keyed-MD5 digest. Recomputing the digest
@@ -1998,7 +2022,12 @@ mod tests {
         let ospf = Ospfv2::hello()
             .router_id([192, 0, 2, 1])
             .area_id([0, 0, 0, 0])
-            .crypto_auth(OspfCryptoAlgorithm::HmacSha256, 3, 0x0000_0010, b"sha256-key");
+            .crypto_auth(
+                OspfCryptoAlgorithm::HmacSha256,
+                3,
+                0x0000_0010,
+                b"sha256-key",
+            );
 
         // The structured authentication field carries Key ID 3 and Auth Data
         // Length 32 (RFC 5709 §3.1).
@@ -2045,7 +2074,12 @@ mod tests {
             / Ospfv2::hello()
                 .router_id([192, 0, 2, 1])
                 .area_id([0, 0, 0, 0])
-                .crypto_auth(OspfCryptoAlgorithm::HmacSha256, 3, 0x0000_0010, b"sha256-key"))
+                .crypto_auth(
+                    OspfCryptoAlgorithm::HmacSha256,
+                    3,
+                    0x0000_0010,
+                    b"sha256-key",
+                ))
         .compile()
         .expect("Ipv4 / HMAC-SHA-256 Hello compiles");
 
@@ -2159,7 +2193,12 @@ mod tests {
                 Ospfv2::hello()
                     .router_id([192, 0, 2, 1])
                     .area_id([0, 0, 0, 0])
-                    .crypto_auth(OspfCryptoAlgorithm::HmacSha256, 3, 0x0000_0010, b"sha256-key"),
+                    .crypto_auth(
+                        OspfCryptoAlgorithm::HmacSha256,
+                        3,
+                        0x0000_0010,
+                        b"sha256-key",
+                    ),
                 OSPF_HMAC_SHA256_DIGEST_LEN as usize,
                 Check::Crypto,
             ),
@@ -2324,7 +2363,10 @@ mod tests {
         assert_eq!(hello_body.options_value(), options);
         assert_eq!(hello_body.options_value() & OSPF_OPTIONS_E, OSPF_OPTIONS_E);
         assert_eq!(hello_body.options_value() & OSPF_OPTIONS_O, OSPF_OPTIONS_O);
-        assert_eq!(hello_body.options_value() & OSPF_OPTIONS_DC, OSPF_OPTIONS_DC);
+        assert_eq!(
+            hello_body.options_value() & OSPF_OPTIONS_DC,
+            OSPF_OPTIONS_DC
+        );
         // The exported summary helper renders the bits in ascending order.
         assert_eq!(ospf_options_summary(hello_body.options_value()), "E|DC|O");
 

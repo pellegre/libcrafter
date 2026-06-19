@@ -292,7 +292,8 @@ impl OspfDatabaseDescription {
     /// The on-wire length of this Database Description body, in octets: the fixed
     /// 8 octets plus 20 octets per LSA header.
     pub(crate) fn encoded_len(&self) -> usize {
-        OSPF_DD_FIXED_LEN + self.lsa_headers.len() * crate::protocols::ospf::lsa::OSPF_LSA_HEADER_LEN
+        OSPF_DD_FIXED_LEN
+            + self.lsa_headers.len() * crate::protocols::ospf::lsa::OSPF_LSA_HEADER_LEN
     }
 
     /// Append the RFC 2328 §A.3.3 Database Description body to `out`: the fixed
