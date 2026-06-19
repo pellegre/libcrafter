@@ -22,6 +22,7 @@ pub mod dhcp;
 pub mod dns;
 pub mod icmp;
 pub mod ndp;
+pub mod ospf;
 pub mod rip;
 pub mod tcp;
 pub mod udp;
@@ -178,6 +179,14 @@ pub(crate) mod test_support {
             expected_reply_source_ipv6: None,
             expected_reply_destination_ipv6: None,
             ndp_validation: None,
+            ospf_router_id: None,
+            ospf_area_id: None,
+            ospf_hello_interval: None,
+            ospf_dead_interval: None,
+            ospf_network_mask: None,
+            expected_ospf_packet_type: None,
+            expected_ospf_router_id: None,
+            expected_ospf_area_id: None,
         }
     }
 }
