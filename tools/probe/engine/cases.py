@@ -93,6 +93,21 @@ _IPSEC_CAPABILITIES = [
     *_IKEV2_CAPABILITIES,
 ]
 
+# OSPF behavioral cases (RFC 2328) drive a controlled OSPFv2 neighbor: libcrafter
+# places an OSPF Hello (or Database Description) directly over IPv4 (protocol 89,
+# no ports) and the peer's Hello / Database Description reply is captured and
+# validated. OSPF needs a peer that runs an OSPFv2 speaker on the same area and
+# segment (FRR/Quagga ospfd or the oracle reference peer), so the cases carry
+# ``ospf_neighbor_peer`` beyond the unicast IPv4 substrate. The capability name
+# matches the probe capability derivation in :mod:`tools.probe.engine.lab`, so a
+# provider without an OSPF-capable neighbor skips the cases with the stable
+# capability-unavailable reason rather than failing; the offline dry-run path
+# plans the exchange regardless. The gated live exchange runs only when a human
+# passes ``--confirm-live-run`` and selects a real provider via
+# ``LIBCRAFTER_PROBE_LIVE_PROVIDER`` (see ``tools/probe/README.md``); the default
+# CI-safe path is the dry-run plan exercised here.
+_OSPF_CAPABILITIES = ["ospf_neighbor_peer"]
+
 
 def _behavior_case(
     *,
@@ -732,6 +747,72 @@ BEHAVIOR_IPSEC_CASES: tuple[ProbeCase, ...] = (
 )
 
 
+# OSPFv2 behavioral cases (RFC 2328) against a controlled OSPF neighbor peer.
+# OSPF runs directly over IPv4 (protocol 89) and has no ports: the Hello exchange
+# is the adjacency-forming primitive, and the Database Description exchange is the
+# first database-synchronization step. Each case is a stateful exchange whose
+# response depends on the peer's adjacency state, so it carries the ``stateful``
+# metadata flag the way the IPSec/BGP cases do.
+#
+# ``ospf-hello-exchange`` is wired end-to-end through the probe adapter
+# (``tools/probe/adapters/src/ospf.rs``), so it both plans in dry-run and runs as
+# a gated live exchange. ``ospf-dd-exchange`` plans in dry-run today and is marked
+# ``planned_only`` (mirroring ``bgp-session-smoke``) until its adapter dispatch
+# arm lands; the dry-run plan never sends packets regardless.
+#
+# Gated live invocation (NOT exercised by CI/default): a human selects a real
+# provider with ``LIBCRAFTER_PROBE_LIVE_PROVIDER`` and confirms the run with
+# ``--confirm-live-run``, e.g.::
+#
+#     LIBCRAFTER_PROBE_LIVE_PROVIDER=qemu \
+#       tools/probe/run --provider qemu --confirm-live-run \
+#         --profile behavior --case ospf-hello-exchange --out target/probe/ospf-live
+#
+# Without ``--confirm-live-run`` the run stays a dry-run plan over documentation
+# address space; the CI-safe default is the ``--dry-run`` plan.
+BEHAVIOR_OSPF_CASES: tuple[ProbeCase, ...] = (
+    _behavior_case(
+        name="ospf-hello-exchange",
+        description=(
+            "Send an OSPFv2 Hello (RFC 2328 §A.3.2) to the controlled neighbor "
+            "and validate the peer's Hello or Database Description reply that "
+            "forms the adjacency."
+        ),
+        stimulus="ospf_hello",
+        expected_response="ospf_hello_or_database_description",
+        required_capabilities=_OSPF_CAPABILITIES,
+        protocol="ospf",
+        metadata={"layer": "network", "stateful": True},
+    ),
+    _behavior_case(
+        name="ospf-dd-exchange",
+        description=(
+            "Send an OSPFv2 Database Description packet (RFC 2328 §A.3.3) to the "
+            "controlled neighbor and validate the peer's Database Description "
+            "reply that advances database synchronization."
+        ),
+        stimulus="ospf_database_description",
+        expected_response="ospf_database_description",
+        required_capabilities=_OSPF_CAPABILITIES,
+        protocol="ospf",
+        metadata={
+            "layer": "network",
+            "stateful": True,
+            # The adapter dispatch (tools/probe/adapters/src/common.rs) wires the
+            # ospf-hello-exchange case today; the DD exchange plans in dry-run and
+            # gains its live adapter arm in a later step, mirroring the
+            # bgp-session-smoke planned-only precedent.
+            "planned_only": True,
+            "notes": (
+                "Needs the peer to advance to the Database Description exchange "
+                "state; the dry-run plans the exchange and the live adapter arm "
+                "lands in a follow-on step."
+            ),
+        },
+    ),
+)
+
+
 PROBE_CASES: tuple[ProbeCase, ...] = (
     ProbeCase(
         name="icmp-echo",
@@ -813,6 +894,7 @@ PROBE_CASES: tuple[ProbeCase, ...] = (
     *BEHAVIOR_ARP_CASES,
     *BEHAVIOR_NDP_CASES,
     *BEHAVIOR_UDP_CASES,
+    *BEHAVIOR_OSPF_CASES,
     *BGP_SMOKE_CASES,
     *RIP_SMOKE_CASES,
     *BEHAVIOR_IPSEC_CASES,
@@ -935,10 +1017,10 @@ TCP_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = (
     "tcp-syn-closed",
 )
 
-# The behavior profile selects the full DNS/DHCP/ARP/NDP/UDP behavioral catalog
-# in a stable deterministic order: each protocol group in declaration order,
-# grouped DNS -> DHCP -> ARP -> NDP -> UDP. The default count covers every case
-# so a bare ``--profile behavior`` plans the complete suite.
+# The behavior profile selects the full DNS/DHCP/ARP/NDP/UDP/OSPF behavioral
+# catalog in a stable deterministic order: each protocol group in declaration
+# order, grouped DNS -> DHCP -> ARP -> NDP -> UDP -> OSPF. The default count
+# covers every case so a bare ``--profile behavior`` plans the complete suite.
 BEHAVIOR_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
     case.name
     for group in (
@@ -947,6 +1029,7 @@ BEHAVIOR_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
         BEHAVIOR_ARP_CASES,
         BEHAVIOR_NDP_CASES,
         BEHAVIOR_UDP_CASES,
+        BEHAVIOR_OSPF_CASES,
     )
     for case in group
 )
