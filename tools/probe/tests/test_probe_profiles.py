@@ -1,8 +1,10 @@
 """Unit coverage for probe sampling profiles.
 
 These tests pin the profile-to-case mapping (smoke stays the legacy set, behavior
-selects the full DNS/DHCP/ARP/NDP/UDP suite) and the deterministic seed/count
-planning the profile feeds into the planner.
+selects the full DNS/DHCP/ARP/NDP/UDP suite plus the live-capable OSPF Hello
+exchange, and the planned-only OSPF Database Description exchange is isolated in
+the dry-run ospf-smoke profile) and the deterministic seed/count planning the
+profile feeds into the planner.
 """
 
 from __future__ import annotations
@@ -22,15 +24,31 @@ _LEGACY_CASE_NAMES = (
     "arp-resolution",
 )
 
-# The behavior suite carries ten cases each for DNS, DHCP, ARP, and UDP plus the
-# three IPv6 Neighbor Discovery behavior cases (NS->NA, RS->RA, DAD), ordered
-# dns, dhcp, arp, ndp, udp. Derive the count from the catalog so the suite can
-# grow without re-pinning a literal here.
+# The behavior suite carries ten cases each for DNS, DHCP, ARP, and UDP, the
+# three IPv6 Neighbor Discovery behavior cases (NS->NA, RS->RA, DAD), and the
+# single live-capable OSPF case (the Hello exchange). It is ordered dns, dhcp,
+# arp, ndp, udp, ospf. The planned-only OSPF Database Description exchange is
+# kept out of this live profile (it lives in the dry-run ospf-smoke profile), so
+# the behavior profile stays fully live-routable. Derive the count from the
+# catalog so the suite can grow without re-pinning a literal here.
 _BEHAVIOR_CASE_COUNT = len(cases.BEHAVIOR_PROFILE_CASE_NAMES)
 _BGP_CASE_COUNT = len(cases.BGP_SESSION_PROFILE_CASE_NAMES)
-_BEHAVIOR_PROTOCOL_COMPOSITION = {"dns": 10, "dhcp": 10, "arp": 10, "ndp": 3, "udp": 10}
+_OSPF_SMOKE_CASE_COUNT = len(cases.OSPF_SMOKE_PROFILE_CASE_NAMES)
+_BEHAVIOR_PROTOCOL_COMPOSITION = {
+    "dns": 10,
+    "dhcp": 10,
+    "arp": 10,
+    "ndp": 3,
+    "udp": 10,
+    "ospf": 1,
+}
 _BEHAVIOR_PROTOCOL_ORDER = (
-    ["dns"] * 10 + ["dhcp"] * 10 + ["arp"] * 10 + ["ndp"] * 3 + ["udp"] * 10
+    ["dns"] * 10
+    + ["dhcp"] * 10
+    + ["arp"] * 10
+    + ["ndp"] * 3
+    + ["udp"] * 10
+    + ["ospf"] * 1
 )
 
 
@@ -65,7 +83,7 @@ class ProbeProfileMembershipTest(unittest.TestCase):
 
         self.assertEqual(by_protocol, _BEHAVIOR_PROTOCOL_COMPOSITION)
 
-    def test_behavior_profile_order_is_dns_dhcp_arp_ndp_udp(self) -> None:
+    def test_behavior_profile_order_is_dns_dhcp_arp_ndp_udp_ospf(self) -> None:
         selected = cases.profile_selected_cases("behavior", [])
         protocols = [str(case.metadata.get("protocol")) for case in selected]
 
@@ -74,6 +92,14 @@ class ProbeProfileMembershipTest(unittest.TestCase):
             [case.name for case in selected],
             list(cases.BEHAVIOR_PROFILE_CASE_NAMES),
         )
+        # Only the live-capable OSPF Hello exchange rides the behavior profile;
+        # the planned-only Database Description exchange must not, so the live
+        # routing path stays unbroken.
+        ospf_cases = [
+            case.name for case in selected if case.metadata.get("protocol") == "ospf"
+        ]
+        self.assertEqual(ospf_cases, ["ospf-hello-exchange"])
+        self.assertNotIn("ospf-dd-exchange", cases.BEHAVIOR_PROFILE_CASE_NAMES)
 
     def test_behavior_profile_cases_are_catalog_entries(self) -> None:
         for name in cases.BEHAVIOR_PROFILE_CASE_NAMES:
@@ -102,8 +128,22 @@ class ProbeProfileMembershipTest(unittest.TestCase):
     def test_known_profiles_listed_sorted(self) -> None:
         self.assertEqual(
             cases.known_profiles(),
-            ("behavior", "bgp-smoke", "ipsec", "rip-smoke", "smoke", "tcp-smoke"),
+            ("behavior", "bgp-smoke", "ipsec", "ospf-smoke", "rip-smoke", "smoke", "tcp-smoke"),
         )
+
+    def test_ospf_smoke_profile_selects_planned_only_dd_exchange(self) -> None:
+        # The planned-only OSPF Database Description exchange is kept out of the
+        # live behavior profile and surfaced through the dedicated dry-run
+        # ospf-smoke profile, mirroring how bgp-session-smoke sits in bgp-smoke.
+        names = cases.profile_case_names("ospf-smoke")
+
+        self.assertEqual(names, ("ospf-dd-exchange",))
+        selected = cases.profile_selected_cases("ospf-smoke", [])
+        self.assertEqual([case.name for case in selected], ["ospf-dd-exchange"])
+        self.assertEqual(selected[0].metadata["protocol"], "ospf")
+        self.assertIs(selected[0].metadata["planned_only"], True)
+        # It also stays name-selectable from the catalog for an isolated dry-run.
+        self.assertIn("ospf-dd-exchange", cases.PROBE_CASE_BY_NAME)
 
     def test_bgp_smoke_profile_selects_bgp_case(self) -> None:
         names = cases.profile_case_names("bgp-smoke")
@@ -197,6 +237,15 @@ class ProbeProfileDefaultCountTest(unittest.TestCase):
         self.assertEqual(
             cases.profile_default_count("bgp-smoke"),
             len(cases.BGP_SESSION_PROFILE_CASE_NAMES),
+        )
+
+    def test_ospf_smoke_profile_default_count_is_full_suite(self) -> None:
+        self.assertEqual(
+            cases.profile_default_count("ospf-smoke"), _OSPF_SMOKE_CASE_COUNT
+        )
+        self.assertEqual(
+            cases.profile_default_count("ospf-smoke"),
+            len(cases.OSPF_SMOKE_PROFILE_CASE_NAMES),
         )
 
     def test_unknown_profile_default_count_is_legacy_five(self) -> None:

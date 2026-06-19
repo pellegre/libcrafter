@@ -694,6 +694,11 @@ _STIMULUS_ENDPOINT_CASES = frozenset(
         "udp-closed-port-icmp",
         "udp-zero-checksum-ipv4",
         "udp-options-surplus-echo",
+        # Only the live-capable OSPF Hello exchange is wired through the stimulus
+        # endpoint adapter; the planned-only ospf-dd-exchange has no adapter arm
+        # yet and is intentionally absent (it stays a dry-run plan via the
+        # ospf-smoke profile).
+        "ospf-hello-exchange",
     }
 )
 
