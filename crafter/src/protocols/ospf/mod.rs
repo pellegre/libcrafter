@@ -48,10 +48,11 @@ pub use packet::{
 };
 pub use v3::{
     Ospfv3, Ospfv3Body, Ospfv3DatabaseDescription, Ospfv3Hello, Ospfv3LinkStateAck,
-    Ospfv3LinkStateRequest, Ospfv3LinkStateRequestEntry, Ospfv3LsaHeader, OSPF_VERSION_3,
-    OSPFV3_DD_FLAG_I, OSPFV3_DD_FLAG_M, OSPFV3_DD_FLAG_MS, OSPFV3_HEADER_LEN, OSPFV3_LSA_HEADER_LEN,
-    OSPFV3_TYPE_DATABASE_DESCRIPTION, OSPFV3_TYPE_HELLO, OSPFV3_TYPE_LINK_STATE_ACK,
-    OSPFV3_TYPE_LINK_STATE_REQUEST, OSPFV3_TYPE_LINK_STATE_UPDATE,
+    Ospfv3LinkStateRequest, Ospfv3LinkStateRequestEntry, Ospfv3LinkStateUpdate, Ospfv3Lsa,
+    Ospfv3LsaBody, Ospfv3LsaHeader, Ospfv3NetworkLsa, Ospfv3RouterInterface, Ospfv3RouterLsa,
+    OSPF_VERSION_3, OSPFV3_DD_FLAG_I, OSPFV3_DD_FLAG_M, OSPFV3_DD_FLAG_MS, OSPFV3_HEADER_LEN,
+    OSPFV3_LSA_HEADER_LEN, OSPFV3_TYPE_DATABASE_DESCRIPTION, OSPFV3_TYPE_HELLO,
+    OSPFV3_TYPE_LINK_STATE_ACK, OSPFV3_TYPE_LINK_STATE_REQUEST, OSPFV3_TYPE_LINK_STATE_UPDATE,
 };
 
 macro_rules! impl_layer_object {
