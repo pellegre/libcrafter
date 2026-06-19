@@ -32,10 +32,15 @@ profile. The flags are `--provider`, `--profile`, `--seed`, `--count`, `--case`,
   sample: `icmp-echo`, `tcp-syn-open`, `tcp-syn-closed`, `dns-query`,
   `ttl-expired`, `arp-resolution`.
 - `behavior` (default `--count` 44) — the full DNS/DHCP/ARP/NDP/UDP/OSPF behavioral
-  suite in deterministic DNS → DHCP → ARP → NDP → UDP order: ten DNS cases, ten
-  DHCP cases, ten ARP cases, three NDP cases, and ten UDP cases.
+  suite in deterministic DNS → DHCP → ARP → NDP → UDP → OSPF order: ten DNS cases,
+  ten DHCP cases, ten ARP cases, three NDP cases, ten UDP cases, and one
+  live-capable OSPF case (`ospf-hello-exchange`).
 - `bgp-smoke` (default `--count` 1) — the `bgp-session-smoke` case, which plans a
   BGP session exchange against a probe-owned FRR peer target service.
+- `ospf-smoke` (default `--count` 1) — the planned-only `ospf-dd-exchange` case,
+  which plans an OSPFv2 Database Description exchange against a probe-owned OSPF
+  neighbor peer. It is dry-run only (no live adapter arm yet), so it stays out of
+  the live `behavior` profile.
 - `ipsec` (default `--count` 4) — the IPSec behavioral suite (`esp-transport-echo`,
   `esp-tunnel-echo`, `ah-transport-verify`, `ikev2-sa-init`) against a controlled
   IPSec-capable peer.
@@ -55,6 +60,7 @@ send no packets:
 tools/probe/run --provider qemu --dry-run --profile smoke --seed 1 --count 10
 tools/probe/run --provider qemu --dry-run --profile behavior --seed 1052 --count 44
 tools/probe/run --provider local-dry-run --dry-run --profile bgp-smoke
+tools/probe/run --provider local-dry-run --dry-run --profile ospf-smoke
 tools/probe/run --provider qemu --dry-run --profile ipsec --seed 1
 ```
 
@@ -108,8 +114,8 @@ a controlled router.
 ### Behavior Profile
 
 The `behavior` profile is the full DNS/DHCP/ARP/NDP/UDP/OSPF behavioral suite. It
-selects forty-three cases in deterministic DNS, DHCP, ARP, NDP, UDP order and
-defaults `--count` to all forty-three cases when no explicit count is supplied:
+selects forty-four cases in deterministic DNS, DHCP, ARP, NDP, UDP, OSPF order and
+defaults `--count` to all forty-four cases when no explicit count is supplied:
 
 ```sh
 tools/probe/run --provider qemu --dry-run --profile behavior --seed 1052 --count 44
@@ -189,6 +195,31 @@ ordering, checksum status, and surplus option handling:
 - `udp-zero-checksum-ipv4`
 - `udp-options-surplus-echo`
 - `udp-length-boundary-echo`
+
+The OSPF behavior case rides IPv4 (protocol 89, no ports) to the OSPF link-local
+multicast group AllSPFRouters (`224.0.0.5`) from a documentation source address
+(`192.0.2.0/24`) and validates the controlled neighbor's adjacency-forming reply.
+It needs a peer that runs an OSPFv2 speaker on the same area and segment, so it
+carries the `ospf_neighbor_peer` capability beyond the unicast IPv4 substrate; a
+provider without an OSPF-capable neighbor skips it with a stable
+capability-unavailable reason. Only the live-routable `ospf-hello-exchange` case
+is in the `behavior` profile:
+
+- `ospf-hello-exchange`: send an OSPFv2 Hello (RFC 2328 §A.3.2) to the controlled
+  neighbor and validate the peer's Hello or Database Description reply that forms
+  the adjacency. Live-capable through the probe adapter
+  (`tools/probe/adapters/src/ospf.rs`); it both plans in dry-run and runs as a
+  gated live exchange.
+
+The planned-only OSPF Database Description case lives in the dedicated `ospf-smoke`
+profile, not in `behavior`, because it has no live adapter arm yet (mirroring the
+`bgp-session-smoke` precedent). It plans in dry-run and is selectable by name or
+`--profile ospf-smoke`:
+
+- `ospf-dd-exchange`: send an OSPFv2 Database Description packet (RFC 2328 §A.3.3)
+  to the controlled neighbor and validate the peer's Database Description reply
+  that advances database synchronization. Dry-run only; it gains a live adapter
+  arm in a follow-on step.
 
 ## Provider Capabilities
 
@@ -322,6 +353,42 @@ else
   tools/probe/run --provider qemu --dry-run --profile behavior --seed 1051 --count 44 --out target/probe/acceptance/51-live-behavior-suite-dry-run
 fi
 ```
+
+### Gated OSPF live exchange
+
+The OSPF Hello exchange follows the same guarded boundary. The offline/dry-run
+path is the default: `--dry-run` plans the OSPF exchange over documentation
+address space (`192.0.2.0/24` source, AllSPFRouters `224.0.0.5` destination)
+without sending packets, creating hosts, or starting an OSPF speaker, and needs
+no provider credentials. Inspect the dry-run plan first:
+
+```sh
+tools/probe/run --provider qemu --dry-run --profile behavior --seed 1 --count 44 --out target/probe/ospf-dry-run
+tools/probe/run --provider local-dry-run --dry-run --profile behavior --seed 1 --case ospf-hello-exchange --out target/probe/ospf-hello-dry-run
+tools/probe/run --provider local-dry-run --dry-run --profile ospf-smoke --out target/probe/ospf-smoke-dry-run
+```
+
+A real OSPF exchange is opt-in and runs only behind the explicit gate. It
+requires `--confirm-live-run` and a live provider selected through
+`LIBCRAFTER_PROBE_LIVE_PROVIDER`; without both, the run stays a dry-run plan. The
+traffic must originate from a disposable provider or lab endpoint that runs the
+controlled `ospf_neighbor_peer` speaker (FRR/Quagga `ospfd` or the oracle
+reference peer) — never from the developer machine — and the endpoints must be
+torn down after every run:
+
+```sh
+if [ -n "${LIBCRAFTER_PROBE_LIVE_PROVIDER:-}" ]; then
+  tools/probe/run --provider "$LIBCRAFTER_PROBE_LIVE_PROVIDER" --confirm-live-run --profile behavior --seed 1051 --case ospf-hello-exchange --out target/probe/acceptance/ospf-hello-live
+else
+  tools/probe/run --provider qemu --dry-run --profile behavior --seed 1051 --case ospf-hello-exchange --out target/probe/acceptance/ospf-hello-dry-run
+fi
+```
+
+The planned-only `ospf-dd-exchange` case has no live adapter arm yet, so it
+stays dry-run only under `--profile ospf-smoke`; do not run it live. The probe
+runner uses `tools/lab` to create and tear down the disposable endpoints; confirm
+teardown evidence after each gated run and do not keep endpoints alive except for
+an explicit operator-approved debugging session.
 
 The probe runner uses `tools/lab` to create both endpoints, transfer and unpack
 the repository, run probe-owned bootstrap hooks, collect artifacts, and clean
