@@ -149,6 +149,27 @@ class IcmpNormalizedModelTest(unittest.TestCase):
         self.assertTrue(payload_hex.startswith("45"))
         self.assertTrue(payload_hex.endswith("61626364"))
 
+    def test_destination_unreachable_payload_preserves_wire_bytes_after_scapy_subdecode(
+        self,
+    ) -> None:
+        raw_hex = (
+            "450000e212d10000400111d2c6336437c63364da03000b3700000000"
+            "45000028424200004011b464c000020ac00002149c40003500140000"
+            "71756f7465642d717565727920000000000800010102030405060708"
+            "28fceb12efea7f56c8dbe2b4cce87666aa9d68da3d56b20480593c"
+            "fec6b9dc19bfa376354abe35e29d07af0bfd1dc9d6f9d4e58a5012"
+            "7479caa0037c8323bc066088d92f8f524635cb6c096e2ac1c573d5"
+            "5d97acfb15c5254f3fec37bdef223a665ef42b4b457b679749e5ab"
+            "619af44365bab8340d1b0ccbd2a88da420b3be1a926105aeb3e58b"
+            "4502620b2e0ca3"
+        )
+        raw = bytes.fromhex(raw_hex)
+
+        decoded = normalize.decode_bytes(raw, root="l2:ipv4", source_hex=raw_hex)
+
+        self.assertEqual(decoded.layers, ["ipv4", "icmp", "payload"])
+        self.assertEqual(decoded.fields["payload"]["hex"], raw[28:].hex())
+
     def test_frag_needed_next_hop_mtu_in_rest_of_header(self) -> None:
         scapy = _scapy()
         decoded = self._icmp(_base_ip() / scapy.ICMP(type=3, code=4, nexthopmtu=1280))
