@@ -756,9 +756,16 @@ BEHAVIOR_IPSEC_CASES: tuple[ProbeCase, ...] = (
 #
 # ``ospf-hello-exchange`` is wired end-to-end through the probe adapter
 # (``tools/probe/adapters/src/ospf.rs``), so it both plans in dry-run and runs as
-# a gated live exchange. ``ospf-dd-exchange`` plans in dry-run today and is marked
+# a gated live exchange; it is the only OSPF case in the live ``behavior``
+# profile. ``ospf-dd-exchange`` plans in dry-run today and is marked
 # ``planned_only`` (mirroring ``bgp-session-smoke``) until its adapter dispatch
-# arm lands; the dry-run plan never sends packets regardless.
+# arm lands. Because a ``planned_only`` case cannot route a live run, the DD
+# exchange is kept OUT of the ``behavior`` profile (which must stay fully
+# live-routable) and lives in the dedicated dry-run ``ospf-smoke`` profile
+# instead, exactly the way ``bgp-session-smoke`` sits in ``bgp-smoke`` rather
+# than ``behavior``. It stays registered in ``PROBE_CASES`` so it remains
+# name-selectable for a dry-run plan; the dry-run plan never sends packets
+# regardless.
 #
 # Gated live invocation (NOT exercised by CI/default): a human selects a real
 # provider with ``LIBCRAFTER_PROBE_LIVE_PROVIDER`` and confirms the run with
@@ -784,6 +791,13 @@ BEHAVIOR_OSPF_CASES: tuple[ProbeCase, ...] = (
         protocol="ospf",
         metadata={"layer": "network", "stateful": True},
     ),
+)
+
+# Planned-only OSPF cases. These plan in dry-run but have no live adapter arm
+# yet, so -- like ``bgp-session-smoke`` -- they are registered in ``PROBE_CASES``
+# and selected only by the dedicated dry-run ``ospf-smoke`` profile, never by the
+# live ``behavior`` profile.
+OSPF_SMOKE_CASES: tuple[ProbeCase, ...] = (
     _behavior_case(
         name="ospf-dd-exchange",
         description=(
@@ -895,6 +909,7 @@ PROBE_CASES: tuple[ProbeCase, ...] = (
     *BEHAVIOR_NDP_CASES,
     *BEHAVIOR_UDP_CASES,
     *BEHAVIOR_OSPF_CASES,
+    *OSPF_SMOKE_CASES,
     *BGP_SMOKE_CASES,
     *RIP_SMOKE_CASES,
     *BEHAVIOR_IPSEC_CASES,
@@ -988,6 +1003,7 @@ BEHAVIOR_PROFILE = "behavior"
 TCP_SMOKE_PROFILE = "tcp-smoke"
 BGP_SESSION_PROFILE = "bgp-smoke"
 RIP_SMOKE_PROFILE = "rip-smoke"
+OSPF_SMOKE_PROFILE = "ospf-smoke"
 IPSEC_PROFILE = "ipsec"
 
 # Legacy default count used by the smoke profile and any profile without an
@@ -1017,10 +1033,14 @@ TCP_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = (
     "tcp-syn-closed",
 )
 
-# The behavior profile selects the full DNS/DHCP/ARP/NDP/UDP/OSPF behavioral
-# catalog in a stable deterministic order: each protocol group in declaration
-# order, grouped DNS -> DHCP -> ARP -> NDP -> UDP -> OSPF. The default count
-# covers every case so a bare ``--profile behavior`` plans the complete suite.
+# The behavior profile selects the full DNS/DHCP/ARP/NDP/UDP behavioral catalog
+# plus the live-capable OSPF case in a stable deterministic order: each protocol
+# group in declaration order, grouped DNS -> DHCP -> ARP -> NDP -> UDP -> OSPF.
+# Only the live-routable OSPF case (``ospf-hello-exchange`` in
+# ``BEHAVIOR_OSPF_CASES``) is included; the planned-only ``ospf-dd-exchange``
+# sits in the dry-run ``ospf-smoke`` profile so the behavior profile stays fully
+# live-routable. The default count covers every case so a bare
+# ``--profile behavior`` plans the complete suite.
 BEHAVIOR_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
     case.name
     for group in (
@@ -1059,6 +1079,15 @@ RIP_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
     case.name for case in RIP_SMOKE_CASES
 )
 
+# The OSPF smoke profile carries the planned-only OSPF cases (currently the
+# Database Description exchange). They plan in dry-run but have no live adapter
+# arm yet, so they are kept out of the live ``behavior`` profile -- the way
+# ``bgp-session-smoke`` lives in ``bgp-smoke`` -- and selected here for an
+# isolated dry-run plan until their adapter dispatch arm lands.
+OSPF_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
+    case.name for case in OSPF_SMOKE_CASES
+)
+
 
 # Profiles that select an explicit ordered case subset. A profile not listed
 # here selects the full catalog. ``smoke`` is pinned to the legacy case set so
@@ -1069,6 +1098,7 @@ _PROFILE_CASE_NAMES: dict[str, tuple[str, ...]] = {
     TCP_SMOKE_PROFILE: TCP_SMOKE_PROFILE_CASE_NAMES,
     BGP_SESSION_PROFILE: BGP_SESSION_PROFILE_CASE_NAMES,
     RIP_SMOKE_PROFILE: RIP_SMOKE_PROFILE_CASE_NAMES,
+    OSPF_SMOKE_PROFILE: OSPF_SMOKE_PROFILE_CASE_NAMES,
     IPSEC_PROFILE: IPSEC_PROFILE_CASE_NAMES,
 }
 
@@ -1079,6 +1109,7 @@ _PROFILE_DEFAULT_COUNTS: dict[str, int] = {
     BEHAVIOR_PROFILE: len(BEHAVIOR_PROFILE_CASE_NAMES),
     BGP_SESSION_PROFILE: len(BGP_SESSION_PROFILE_CASE_NAMES),
     RIP_SMOKE_PROFILE: len(RIP_SMOKE_PROFILE_CASE_NAMES),
+    OSPF_SMOKE_PROFILE: len(OSPF_SMOKE_PROFILE_CASE_NAMES),
     IPSEC_PROFILE: len(IPSEC_PROFILE_CASE_NAMES),
 }
 
