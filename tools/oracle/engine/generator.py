@@ -222,6 +222,20 @@ _SUPPORTED_FIELDS: dict[str, set[str]] = {
     "linux_cooked": {"packet_type", "address_type", "address_length", "source_address", "protocol"},
     "llc_snap": {"control", "dsap", "ethertype", "oui", "payload_length", "ssap"},
     "null_loopback": {"type"},
+    # OSPFv2 common-header fields declared in specs/layers/ospf.yaml. The
+    # per-type body (Hello/DD/LSR/LSU/LSAck neighbor and LSA lists) is injected
+    # by _apply_ospf_behavior AFTER field sampling, mirroring the BGP body path,
+    # so only the common-header fields appear here.
+    "ospf": {
+        "version",
+        "type",
+        "packet_length",
+        "router_id",
+        "area_id",
+        "checksum",
+        "autype",
+        "authentication",
+    },
     "payload": {"hex", "length"},
     "radiotap": {
         "antenna",
@@ -333,6 +347,7 @@ _SCAPY_MATERIALIZED_LAYERS = {
     "ipv4",
     "ipv6",
     "llc_snap",
+    "ospf",
     "payload",
     "radiotap",
     "rsn",
@@ -698,6 +713,8 @@ class PacketGenerator:
             _apply_rip_behavior(fields, stack=stack, case=selected_case, behavior="")
         elif _is_rip_smoke_case(selected_case) and "ripng" in fields:
             _apply_ripng_behavior(fields, stack=stack, case=selected_case, behavior="")
+        elif _is_ospf_smoke_case(selected_case) and "ospf" in fields:
+            _apply_ospf_behavior(fields, stack=stack, case=selected_case, behavior="")
         live_behavior = self._apply_icmp_live_fields(
             rng,
             fields,
@@ -896,6 +913,7 @@ class PacketGenerator:
                     "eapol-smoke",
                     "rsn-smoke",
                     "bgp-smoke",
+                    "ospf-smoke",
                     *_IPSEC_SMOKE_PROFILES,
                 }
             ):
@@ -937,6 +955,13 @@ class PacketGenerator:
                 and case is None
                 and self.profile == "rip-smoke"
                 and not _has_rip_smoke_case(coverage_cases)
+            ):
+                continue
+            if (
+                feature is None
+                and case is None
+                and self.profile == "ospf-smoke"
+                and not _has_ospf_smoke_case(coverage_cases)
             ):
                 continue
             if (
@@ -1151,6 +1176,11 @@ class PacketGenerator:
             # RIPng message cases so a default/raw payload case is never paired
             # with a RIP/RIPng stack.
             coverage_cases = [case for case in coverage_cases if _is_rip_smoke_case(case)]
+        if feature is None and self.profile == "ospf-smoke":
+            # Focused OSPF smoke set: keep case selection on the five OSPFv2
+            # packet-type cases so a default/raw payload case is never paired
+            # with the ipv4/ospf stack.
+            coverage_cases = [case for case in coverage_cases if _is_ospf_smoke_case(case)]
         if feature is None and self.profile == "ipv6-enrichment":
             # Focused IPv6 enrichment profile: restrict to stack-declared
             # base/unknown-next-header and strict-byte extension cases. This
@@ -1223,6 +1253,13 @@ class PacketGenerator:
         # rip-smoke profile: select only from stack-declared RIP/RIPng message
         # cases and skip the generic cross-feature expansion below.
         if feature is None and self.profile == "rip-smoke":
+            if not choices:
+                return "default"
+            return weighted_choice(rng, choices)
+        # ospf-smoke profile: select only from the stack-declared OSPFv2 packet
+        # cases and skip the generic cross-feature expansion below so an
+        # unrelated case is never paired with the ipv4/ospf stack.
+        if feature is None and self.profile == "ospf-smoke":
             if not choices:
                 return "default"
             return weighted_choice(rng, choices)
@@ -1372,6 +1409,14 @@ class PacketGenerator:
             # (rip_header, rip_entries, rip_auth, ripng_header, ripng_rtes),
             # keeping pcap/IPsec/fragment features off the RIP/RIPng UDP stacks.
             if self.profile == "rip-smoke" and not name.startswith("rip"):
+                continue
+            # The OSPF smoke profile materializes the OSPFv2 body through the
+            # smoke-case path (_apply_ospf_behavior), not the feature path: the
+            # Scapy reference backend builds the body from the ospf body fields,
+            # not from an ospf_* feature materialization. Keep every feature out
+            # of the automatic sampler so the case stays feature-less and the
+            # smoke body injection drives the packet.
+            if self.profile == "ospf-smoke":
                 continue
             # The IPv4 enrichment profile auto-samples only the IPv4 option
             # feature; all non-option IPv4 layer cases remain plain header cases.
@@ -1577,7 +1622,7 @@ class PacketGenerator:
                     "type": 0,
                     "segments_left": 0,
                 }
-            elif layer == "payload" and "bgp" in stack:
+            elif layer == "payload" and ("bgp" in stack or "ospf" in stack):
                 sampled = {"hex": "", "length": 0}
             else:
                 spec = self._layer_spec(layer)
@@ -2044,6 +2089,8 @@ class PacketGenerator:
             return _sample_rip_field(ctx, field_name, domain)
         if layer == "ripng":
             return _sample_ripng_field(ctx, field_name, domain)
+        if layer == "ospf":
+            return _sample_ospf_field(ctx, field_name, domain)
         if layer == "icmp":
             return _sample_icmp_field(ctx, field_name, domain)
         if layer == "icmpv6":
@@ -2603,6 +2650,52 @@ def _sample_ripng_field(ctx: _SamplingContext, field_name: str, domain: object) 
     if field_name == "reserved":
         return 0
     raise ValueError(f"spec error: unsupported ripng field sampler: {field_name}")
+
+
+def _sample_ospf_field(ctx: _SamplingContext, field_name: str, domain: object) -> object:
+    """Sample one OSPFv2 common-header field for the ipv4/ospf/payload stack.
+
+    Only the eight common-header fields are sampled here; the per-type body
+    (Hello neighbor list, DD/LSAck LSA headers, LSR requests, LSU LSAs) is
+    injected by ``_apply_ospf_behavior`` after sampling, mirroring the BGP body
+    path. ``packet_length`` and ``checksum`` are left unset (skipped) so both the
+    Scapy reference backend and the libcrafter adapter derive them, keeping the
+    offline byte comparison on the parts each backend fills identically.
+
+    ``autype`` is pinned to the null type and ``authentication`` to eight zero
+    octets for the smoke path: AuType 2 (cryptographic) needs the keyed-MD5 /
+    HMAC-SHA trailer split that ``scapy.contrib.ospf`` does not expose for an
+    offline byte-for-byte build, so it is covered by the crate's own auth
+    fixtures rather than this cross-backend smoke profile.
+    """
+
+    if field_name == "version":
+        return _int_or(domain, 2)
+    if field_name == "type":
+        return _ospf_packet_type_for_case(ctx.case)
+    if field_name in {"packet_length", "checksum"}:
+        return _SKIP_FIELD
+    if field_name == "router_id":
+        return documentation_ipv4(ctx.rng)
+    if field_name == "area_id":
+        # The backbone area (0.0.0.0) is the deterministic documentation area for
+        # the smoke path; OSPF documentation examples use the backbone.
+        return "0.0.0.0"
+    if field_name == "autype":
+        return "null"
+    if field_name == "authentication":
+        return {"hex": "00" * 8}
+    raise ValueError(f"spec error: unsupported ospf field sampler: {field_name}")
+
+
+def _int_or(domain: object, default: int) -> object:
+    """Return ``domain`` when it is a concrete int, otherwise ``default``."""
+
+    if isinstance(domain, bool):
+        return int(domain)
+    if isinstance(domain, int):
+        return domain
+    return default
 
 
 def _sample_icmp_field(ctx: _SamplingContext, field_name: str, domain: object) -> object:
@@ -4354,6 +4447,133 @@ def _apply_bgp_behavior(
         bgp["body"] = {"hex": _bgp_update_body_hex(stack=stack, case=case, behavior=behavior)}
 
 
+def _apply_ospf_behavior(
+    fields: dict[str, JSONObject],
+    *,
+    stack: Sequence[str],
+    case: str,
+    behavior: str,
+) -> None:
+    """Inject the per-type OSPFv2 body for a smoke case.
+
+    The body field names match the Scapy reference builder
+    (``tools/oracle/engine/backends/scapy/packets.py`` ``_ospf*``) so the
+    reference vector materializes a real Hello/DD/LSR/LSU/LSAck packet, and the
+    field shapes round-trip through the libcrafter typed OSPFv2 layer. Documentation
+    router IDs / area identifiers and a backbone area keep the packet in
+    documentation address space. ``packet_length`` and ``checksum`` stay unset so
+    both backends derive them.
+    """
+
+    del behavior  # Smoke cases carry no per-behavior variation.
+    ospf = fields["ospf"]
+    packet_type = _ospf_packet_type_for_case(case)
+    ospf["type"] = packet_type
+
+    if "payload" in fields:
+        fields["payload"] = {"hex": "", "length": 0}
+
+    # Drop any stray body fields so each case starts from the common header.
+    for key in (
+        "neighbors",
+        "network_mask",
+        "designated_router",
+        "backup_designated_router",
+        "interface_mtu",
+        "options",
+        "dd_flags",
+        "dd_sequence_number",
+        "lsa_headers",
+        "requests",
+        "lsas",
+        "num_lsas",
+        "body",
+    ):
+        ospf.pop(key, None)
+
+    if packet_type == "hello":
+        ospf["network_mask"] = "255.255.255.0"
+        ospf["hello_interval"] = 10
+        ospf["options"] = 0x02
+        ospf["router_priority"] = 1
+        ospf["router_dead_interval"] = 40
+        ospf["designated_router"] = "192.0.2.1"
+        ospf["backup_designated_router"] = "192.0.2.2"
+        ospf["neighbors"] = ["192.0.2.3"]
+        return
+
+    if packet_type == "database_description":
+        ospf["interface_mtu"] = 1500
+        ospf["options"] = 0x02
+        ospf["dd_flags"] = 0x07
+        ospf["dd_sequence_number"] = 0x1A2B
+        ospf["lsa_headers"] = [_ospf_smoke_lsa_header(0x99)]
+        return
+
+    if packet_type == "link_state_request":
+        ospf["requests"] = [
+            {
+                "ls_type": 1,
+                "link_state_id": "192.0.2.10",
+                "advertising_router": "192.0.2.1",
+            }
+        ]
+        return
+
+    if packet_type == "link_state_update":
+        ospf["num_lsas"] = 1
+        ospf["lsas"] = [
+            {
+                **_ospf_smoke_lsa_header(0x99),
+                "body": {"hex": "deadbeef"},
+            }
+        ]
+        return
+
+    if packet_type == "link_state_ack":
+        ospf["lsa_headers"] = [_ospf_smoke_lsa_header(0x99)]
+        return
+
+
+def _ospf_smoke_lsa_header(ls_type: int) -> dict[str, object]:
+    """Return a deterministic LSA header dict for the OSPF smoke cases.
+
+    An unknown LSA type (default 0x99) keeps the body raw so both the Scapy
+    reference backend and the libcrafter typed layer preserve it verbatim rather
+    than re-interpreting it as a typed LSA, which keeps the decoded models equal.
+    """
+
+    return {
+        "ls_age": 1,
+        "options": 0x02,
+        "ls_type": ls_type,
+        "link_state_id": "192.0.2.20",
+        "advertising_router": "192.0.2.1",
+        "ls_sequence_number": 0x80000001,
+    }
+
+
+def _ospf_packet_type_for_case(case: str) -> str:
+    """Map an ospf-* coverage case to the oracle-neutral OSPFv2 packet type."""
+
+    normalized = case.replace("_", "-")
+    if "database-description" in normalized:
+        return "database_description"
+    if "link-state-request" in normalized:
+        return "link_state_request"
+    if "link-state-update" in normalized:
+        return "link_state_update"
+    if "link-state-ack" in normalized:
+        return "link_state_ack"
+    return "hello"
+
+
+def _is_ospf_smoke_case(case: str) -> bool:
+    """Whether ``case`` is sampled by the focused ospf-smoke profile."""
+
+    return case.replace("_", "-").startswith("ospf-")
+
+
 def _bgp_message_type_for_case(case: str) -> str:
     normalized = case.replace("_", "-")
     if "keepalive" in normalized:
@@ -4937,6 +5157,12 @@ def _has_rip_smoke_case(cases: Sequence[str]) -> bool:
     """Whether ``cases`` contains a RIP/RIPng smoke coverage case."""
 
     return any(_is_rip_smoke_case(case) for case in cases)
+
+
+def _has_ospf_smoke_case(cases: Sequence[str]) -> bool:
+    """Whether ``cases`` contains an OSPF smoke coverage case."""
+
+    return any(_is_ospf_smoke_case(case) for case in cases)
 
 
 def _ipv4_enrichment_cases(cases: Sequence[str], grammar: Mapping[str, object]) -> list[str]:
