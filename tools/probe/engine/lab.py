@@ -50,6 +50,12 @@ PROBE_CAPABILITY_NAMES = (
     "ipsec_esp",
     "ipsec_ah",
     "ikev2",
+    # OSPF behavioral capability. An OSPF-capable peer runs an OSPFv2 speaker
+    # (FRR/Quagga ospfd or the oracle reference peer) on the same area and
+    # segment as the controlled target endpoint. Like the BGP/IPSec peers it
+    # rides the IPv4-unicast + controlled-services substrate and is not required
+    # for a dry-run, which plans the OSPF exchange without provisioning the peer.
+    "ospf_neighbor_peer",
 )
 
 
@@ -246,6 +252,21 @@ def probe_capabilities_from_lab_capabilities(
     ipsec_esp = ipsec_peer
     ipsec_ah = ipsec_peer
     ikev2 = ikev2_responder
+    # OSPF smoke drives a controlled OSPFv2 neighbor on the target endpoint. OSPF
+    # runs directly over IPv4 (protocol 89, no ports), so the peer needs the same
+    # IPv4-unicast + controlled-services substrate the DNS/UDP/BGP target services
+    # use: a substrate that can carry IPv4 unicast and host a controlled service
+    # can host the OSPF speaker too. An explicit ``ospf_peer`` substrate flag,
+    # when present, can deny the peer even where controlled services exist (e.g. a
+    # peer the lab cannot configure with an ospfd in the documentation area).
+    # Providers without a controlled service skip the OSPF cases cleanly with the
+    # stable capability-unavailable reason; the offline dry-run path plans the
+    # exchange regardless of whether the peer would be provisioned.
+    ospf_neighbor_peer = (
+        ipv4_unicast
+        and controlled_services
+        and _capability_default_true(substrate, "ospf_peer")
+    )
     derived_dry_run = (
         dry_run
         if dry_run is not None
@@ -285,6 +306,7 @@ def probe_capabilities_from_lab_capabilities(
         "ipsec_esp": ipsec_esp,
         "ipsec_ah": ipsec_ah,
         "ikev2": ikev2,
+        "ospf_neighbor_peer": ospf_neighbor_peer,
         "capability_names": list(PROBE_CAPABILITY_NAMES),
         "capability_sources": {
             "icmp_echo": ["ipv4_unicast"],
@@ -345,6 +367,11 @@ def probe_capabilities_from_lab_capabilities(
                 "ipv4_unicast",
                 "controlled_services",
                 "ikev2_responder",
+            ],
+            "ospf_neighbor_peer": [
+                "ipv4_unicast",
+                "controlled_services",
+                "ospf_peer",
             ],
         },
         "lab_capabilities": substrate,
