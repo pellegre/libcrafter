@@ -1,0 +1,118 @@
+version: 1
+kind: feature
+name: ospf_live
+summary: >-
+  OSPFv2 Hello live exchange coverage for provider-backed l2:ipv4 traffic
+  (IP protocol 89), recording the RFC 2328 Section 10 neighbor Hello exchange as
+  an intended live case validated against the Scapy reference backend. It is a
+  packet write/parse matrix only: each behavior compares the bytes libcrafter
+  emits and the normalized decoded model both backends report, canonicalized to
+  the IPv4 header. It deliberately does not validate OSPF adjacency state, the
+  neighbor finite-state machine, DR/BDR election, LSDB synchronization, or any
+  router-stack reaction beyond the Hello packet bytes on the wire.
+
+# This feature records the intended OSPFv2 Hello live coverage before any live
+# packet is sent. The intended live transport root is l2:ipv4 (link-layer
+# send/capture, IPv4 comparison root); the IPv4 header is the comparison root
+# for any cross-validated field. The non-provider local-dry-run planner exercises
+# this matrix without sending packets.
+intended_root: l2:ipv4
+comparison_root: l3:ipv4
+
+layers:
+  - ospf
+  - ipv4
+# The intended live transport direction is live_exchange (see the per-entry
+# directions in live_matrix below). The offline byte/decode parity gate runs the
+# same materialized plans through the reference encode/decode and the libcrafter
+# decode bridge, so the top-level feature also advertises the two offline
+# comparison directions. This keeps the live coverage matrix selectable from the
+# offline runner without weakening any comparison.
+directions:
+  - live_exchange
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: true
+malformed: false
+
+# Reference Scapy capability snapshot used to mark support in the matrix below.
+# Probed against the oracle's pinned requirement (scapy>=2.5,<3); the installed
+# development environment resolves scapy 2.7.0. The OSPFv2 common header and
+# Hello body classes live in scapy.contrib.ospf, not scapy.all.
+reference_capability:
+  backend: scapy
+  requirement: "scapy>=2.5,<3"
+  observed_version: "2.7.0"
+  native_ospf_layers:
+    - OSPF_Hdr
+    - OSPF_Hello
+
+# The live coverage matrix. Each entry is one intended live behavior with its
+# coverage case, the oracle direction(s) it exercises, whether the packet is
+# typed by both sides or only raw-compatible, whether the Scapy reference
+# backend supports it, and a stable skip reason when it is not eligible.
+#
+# representation:
+#   typed           -> both libcrafter and Scapy have typed field support.
+#   raw_compatible  -> deterministic bytes both sides can emit and parse, but at
+#                      least one side carries part of the message as raw bytes.
+# scapy_support:
+#   supported   -> reference backend represents the shape (typed or via stable
+#                  raw bytes) and the case is live-eligible.
+#   unsupported -> reference backend cannot represent the shape; the case is
+#                  skipped with the recorded skip_reason and counts no live pass.
+live_matrix:
+  - behavior: ospf_hello_exchange
+    coverage_case: ospf-hello
+    rfc:
+      - RFC 2328 Section 10
+    message_type: hello
+    directions:
+      - live_exchange
+    representation: typed
+    scapy_support: supported
+    skip_reason: none
+    notes:
+      - OSPF Hello packets are multicast to the AllSPFRouters group
+        (224.0.0.5) over the link-layer root; the local-dry-run planner marks
+        the broadcast/multicast Hello case wire-eligible only when the live
+        provider exposes a broadcast-capable endpoint, and plans it without
+        sending packets otherwise.
+
+coverage_cases:
+  - ospf-hello
+
+supported_cases:
+  - name: ospf-hello
+    directions:
+      - live_exchange
+    byte_policy: strict_bytes
+
+backend_support:
+  scapy:
+    status: supported
+    encode: true
+    decode: true
+    live_endpoint: true
+    native_layers:
+      - OSPF_Hdr
+      - OSPF_Hello
+    notes:
+      - Scapy 2.7.0 natively round-trips the OSPFv2 common header (OSPF_Hdr) and
+        the Hello body (OSPF_Hello) via scapy.contrib.ospf, so the Hello live
+        case is typed on both the reference and libcrafter sides.
+      - Live comparison canonicalizes to the IPv4 header; link-layer fields are
+        not part of OSPF pass/fail decisions.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    live_endpoint: true
+    notes:
+      - Hello compile derives the RFC 2328 packet length and the common-header
+        checksum unless the caller deliberately overrides them; decode preserves
+        the Hello fields and the neighbor list so the packet round-trips
+        byte-for-byte across the live exchange.
+      - The offline/dry-run path is the default; live OSPF exchange is opt-in
+        through an explicit live provider endpoint and documentation address
+        space, never originated from the developer machine.
