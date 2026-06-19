@@ -374,7 +374,13 @@ def normalize_packet(
         normalized_fields[key] = layer_fields
         normalized_layers.append(normalized_layer)
 
-    _canonicalize_icmpv4(packet, normalized_layers, normalized_fields)
+    _canonicalize_icmpv4(
+        packet,
+        normalized_layers,
+        normalized_fields,
+        root=root,
+        source_hex=source_hex,
+    )
     _canonicalize_rip(packet, normalized_layers, normalized_fields)
     _canonicalize_ripng(packet, normalized_layers, normalized_fields)
     if source_hex is not None:
@@ -1505,6 +1511,9 @@ def _canonicalize_icmpv4(
     packet: Any,
     layers: list[str],
     fields: dict[str, JSONObject],
+    *,
+    root: str | None = None,
+    source_hex: str | None = None,
 ) -> None:
     """Collapse Scapy's typed ICMPv4 decode into libcrafter's flat model.
 
@@ -1523,10 +1532,12 @@ def _canonicalize_icmpv4(
     icmp_layer = _scapy_layer(packet, "ICMP")
     if icmp_layer is None:
         return
-    try:
-        icmp_raw = bytes(import_scapy()["all"].raw(icmp_layer))
-    except Exception:  # pragma: no cover - Scapy exception types vary.
-        return
+    icmp_raw = _icmpv4_wire_bytes_from_source(source_hex, root)
+    if icmp_raw is None:
+        try:
+            icmp_raw = bytes(import_scapy()["all"].raw(icmp_layer))
+        except Exception:  # pragma: no cover - Scapy exception types vary.
+            return
     if len(icmp_raw) < 8:
         return
 
@@ -1562,6 +1573,71 @@ def _canonicalize_icmpv4(
         payload_key = _field_key(fields, "payload")
         fields[payload_key] = _payload_fields_from_bytes(body)
         layers.append("payload")
+
+
+def _icmpv4_wire_bytes_from_source(source_hex: str | None, root: str | None) -> bytes | None:
+    if source_hex is None:
+        return None
+    try:
+        raw = bytes.fromhex(source_hex)
+    except ValueError:
+        return None
+
+    ipv4_offset = _ipv4_offset_from_source(raw, root)
+    if ipv4_offset is None or len(raw) < ipv4_offset + 20:
+        return None
+    first = raw[ipv4_offset]
+    if first >> 4 != 4:
+        return None
+    ihl = (first & 0x0F) * 4
+    if ihl < 20 or len(raw) < ipv4_offset + ihl:
+        return None
+    if raw[ipv4_offset + 9] != _PROTOCOLS["icmp"]:
+        return None
+
+    total_length = int.from_bytes(raw[ipv4_offset + 2 : ipv4_offset + 4], "big")
+    available = len(raw) - ipv4_offset
+    if total_length < ihl:
+        return None
+    ipv4_end = ipv4_offset + min(total_length, available)
+    icmp_offset = ipv4_offset + ihl
+    if icmp_offset >= ipv4_end:
+        return None
+    return raw[icmp_offset:ipv4_end]
+
+
+def _ipv4_offset_from_source(raw: bytes, root: str | None) -> int | None:
+    canonical_root = _normalize_root_name(root) if root is not None else None
+    if root in {"IP", "l2:ipv4", "l3:ipv4"} or canonical_root == "l3:ipv4":
+        return 0
+    if canonical_root == "link:ethernet":
+        return _ethernet_ipv4_offset(raw)
+    if canonical_root == "link:linux-cooked":
+        if len(raw) >= 16 and int.from_bytes(raw[14:16], "big") == _ETHERTYPES["ipv4"]:
+            return 16
+        return None
+    if canonical_root == "link:null-loopback":
+        if len(raw) >= 5 and raw[4] >> 4 == 4:
+            return 4
+        return None
+    if raw and raw[0] >> 4 == 4:
+        return 0
+    return None
+
+
+def _ethernet_ipv4_offset(raw: bytes) -> int | None:
+    if len(raw) < 14:
+        return None
+    ethertype = int.from_bytes(raw[12:14], "big")
+    offset = 14
+    while ethertype in {0x8100, 0x88A8, 0x9100}:
+        if len(raw) < offset + 4:
+            return None
+        ethertype = int.from_bytes(raw[offset + 2 : offset + 4], "big")
+        offset += 4
+    if ethertype == _ETHERTYPES["ipv4"]:
+        return offset
+    return None
 
 
 # RIP authentication entries use the reserved address-family identifier 0xFFFF
