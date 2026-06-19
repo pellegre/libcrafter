@@ -293,7 +293,8 @@ impl OspfOpaqueTlv {
             ));
         }
 
-        let value = bytes[OSPF_OPAQUE_TLV_HEADER_LEN..OSPF_OPAQUE_TLV_HEADER_LEN + value_len].to_vec();
+        let value =
+            bytes[OSPF_OPAQUE_TLV_HEADER_LEN..OSPF_OPAQUE_TLV_HEADER_LEN + value_len].to_vec();
         Ok((OspfOpaqueTlv::new(tlv_type, value), consumed))
     }
 }
@@ -335,7 +336,10 @@ impl OspfTeLinkTlv {
     /// Add the Link Type sub-TLV (RFC 3630 §2.5.1): a 1-octet link type, either
     /// [`OSPF_TE_LINK_TYPE_POINT_TO_POINT`] or [`OSPF_TE_LINK_TYPE_MULTI_ACCESS`].
     pub fn link_type(self, link_type: u8) -> Self {
-        self.sub_tlv(OspfOpaqueTlv::new(OSPF_TE_SUBTLV_LINK_TYPE, vec![link_type]))
+        self.sub_tlv(OspfOpaqueTlv::new(
+            OSPF_TE_SUBTLV_LINK_TYPE,
+            vec![link_type],
+        ))
     }
 
     /// Add the Link ID sub-TLV (RFC 3630 §2.5.2): the 4-octet neighbor Router ID
@@ -708,11 +712,23 @@ mod tests {
         //   Link ID sub-TLV:   type 2, length 4, value 198.51.100.7, no pad.
         let expected_link_value: Vec<u8> = vec![
             // Link Type sub-TLV (type 1, length 1, padded to 4).
-            0x00, 0x01, 0x00, 0x01, //
-            OSPF_TE_LINK_TYPE_POINT_TO_POINT, 0x00, 0x00, 0x00, //
+            0x00,
+            0x01,
+            0x00,
+            0x01, //
+            OSPF_TE_LINK_TYPE_POINT_TO_POINT,
+            0x00,
+            0x00,
+            0x00, //
             // Link ID sub-TLV (type 2, length 4, no padding).
-            0x00, 0x02, 0x00, 0x04, //
-            198, 51, 100, 7,
+            0x00,
+            0x02,
+            0x00,
+            0x04, //
+            198,
+            51,
+            100,
+            7,
         ];
         assert_eq!(link_tlv.value(), expected_link_value.as_slice());
 

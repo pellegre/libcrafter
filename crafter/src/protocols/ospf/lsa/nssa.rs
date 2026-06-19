@@ -140,9 +140,13 @@ impl OspfNssaLsa {
         forwarding_address: impl Into<Ipv4Addr>,
         external_route_tag: u32,
     ) -> Self {
-        self.external = self
-            .external
-            .external_entry(e_bit, tos, metric, forwarding_address, external_route_tag);
+        self.external = self.external.external_entry(
+            e_bit,
+            tos,
+            metric,
+            forwarding_address,
+            external_route_tag,
+        );
         self
     }
 

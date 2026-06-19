@@ -28,14 +28,14 @@ use crate::protocols::ospf::v3::append_ospfv3_packet_with_checksum_validation;
 // Re-export the checksum-agnostic OSPF entrypoint alongside the registry so
 // callers wiring custom dispatch can decode an OSPF payload without opting into
 // decode-time checksum validation (RFC 2328 §A.3.1).
-#[allow(unused_imports)]
-pub(crate) use crate::protocols::ospf::decode::append_ospf_packet;
 use crate::protocols::link::{
     append_arp_packet, append_vlan_packet_with_registry, decode_dot11_with_registry,
     decode_ethernet_with_registry, decode_linux_sll_with_registry,
     decode_null_loopback_with_registry, decode_radiotap_with_registry, ETHERTYPE_ARP,
     ETHERTYPE_EAPOL, ETHERTYPE_IPV4, ETHERTYPE_IPV6, ETHERTYPE_VLAN,
 };
+#[allow(unused_imports)]
+pub(crate) use crate::protocols::ospf::decode::append_ospf_packet;
 use crate::protocols::rip::ripng::{append_ripng_packet, looks_like_ripng_payload, RIPNG_UDP_PORT};
 use crate::protocols::rip::{append_rip_packet, looks_like_rip_payload, RIP_UDP_PORT};
 use crate::protocols::transport::{

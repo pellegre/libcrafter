@@ -213,9 +213,13 @@ impl OspfAsExternalLsa {
                 entry.tos = 0;
                 entry.metric = metric;
             }
-            None => self
-                .entries
-                .push(OspfExternalTos::new(e_bit, 0, metric, Ipv4Addr::UNSPECIFIED, 0)),
+            None => self.entries.push(OspfExternalTos::new(
+                e_bit,
+                0,
+                metric,
+                Ipv4Addr::UNSPECIFIED,
+                0,
+            )),
         }
         self
     }
@@ -293,8 +297,11 @@ impl OspfAsExternalLsa {
     pub(crate) fn encode(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(&self.network_mask_value().octets());
         for entry in &self.entries {
-            let combined =
-                (if entry.e_bit { OSPF_AS_EXTERNAL_FLAG_E } else { 0 }) | (entry.tos & 0x7f);
+            let combined = (if entry.e_bit {
+                OSPF_AS_EXTERNAL_FLAG_E
+            } else {
+                0
+            }) | (entry.tos & 0x7f);
             out.push(combined);
             let metric = entry.metric & OSPF_AS_EXTERNAL_LSA_METRIC_MAX;
             out.push((metric >> 16) as u8);
@@ -335,16 +342,13 @@ mod tests {
         let metric = 0x000a_0b0c;
         let external = OspfAsExternalLsa::new()
             .network_mask(Ipv4Addr::new(255, 255, 255, 0))
-            .external_entry(
-                true,
-                5,
-                metric,
-                Ipv4Addr::new(192, 0, 2, 9),
-                0x1234_5678,
-            );
+            .external_entry(true, 5, metric, Ipv4Addr::new(192, 0, 2, 9), 0x1234_5678);
 
         // The default TOS 0 entry plus the appended entry.
-        assert_eq!(external.network_mask_value(), Ipv4Addr::new(255, 255, 255, 0));
+        assert_eq!(
+            external.network_mask_value(),
+            Ipv4Addr::new(255, 255, 255, 0)
+        );
         assert_eq!(external.entries_value().len(), 2);
 
         // The appended entry carries the E bit, TOS, metric, forwarding address,
@@ -353,7 +357,10 @@ mod tests {
         assert!(entry.e_bit_value());
         assert_eq!(entry.tos_value(), 5);
         assert_eq!(entry.metric_value(), metric);
-        assert_eq!(entry.forwarding_address_value(), Ipv4Addr::new(192, 0, 2, 9));
+        assert_eq!(
+            entry.forwarding_address_value(),
+            Ipv4Addr::new(192, 0, 2, 9)
+        );
         assert_eq!(entry.external_route_tag_value(), 0x1234_5678);
 
         // Build a single-entry body (default TOS 0 entry replaced via metric())
@@ -482,8 +489,20 @@ mod tests {
         let external = OspfAsExternalLsa::new()
             .network_mask(Ipv4Addr::new(255, 255, 255, 0))
             .metric(0x0000_000a, false)
-            .external_entry(true, 1, 0x00b1_b2b3, Ipv4Addr::new(192, 0, 2, 11), 0xdead_beef)
-            .external_entry(false, 2, 0x00ff_ffff, Ipv4Addr::new(192, 0, 2, 12), 0x1234_5678);
+            .external_entry(
+                true,
+                1,
+                0x00b1_b2b3,
+                Ipv4Addr::new(192, 0, 2, 11),
+                0xdead_beef,
+            )
+            .external_entry(
+                false,
+                2,
+                0x00ff_ffff,
+                Ipv4Addr::new(192, 0, 2, 12),
+                0x1234_5678,
+            );
 
         // The first entry's TOS code stays 0 (metric(..) resets it) and the two
         // later entries keep their own TOS values: metric(..) did not clobber

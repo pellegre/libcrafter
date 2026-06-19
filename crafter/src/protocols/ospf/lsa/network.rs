@@ -170,7 +170,10 @@ mod tests {
             .attached_router(Ipv4Addr::new(192, 0, 2, 2));
 
         // The effective fields report the mask and both attached routers.
-        assert_eq!(network.network_mask_value(), Ipv4Addr::new(255, 255, 255, 0));
+        assert_eq!(
+            network.network_mask_value(),
+            Ipv4Addr::new(255, 255, 255, 0)
+        );
         assert_eq!(network.attached_routers_value().len(), 2);
 
         // Encode the body alone and check the exact RFC 2328 §A.4.3 layout.

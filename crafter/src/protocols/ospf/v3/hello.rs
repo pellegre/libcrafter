@@ -331,7 +331,9 @@ mod tests {
         let body_start = ospfv3_start + OSPFV3_HEADER_LEN;
         assert_eq!(&bytes.as_bytes()[body_start..], expected.as_slice());
 
-        let recompiled = decoded.compile().expect("the decoded OSPFv3 Hello re-compiles");
+        let recompiled = decoded
+            .compile()
+            .expect("the decoded OSPFv3 Hello re-compiles");
         assert_eq!(recompiled.as_bytes(), bytes.as_bytes());
     }
 }

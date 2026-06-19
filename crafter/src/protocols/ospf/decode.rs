@@ -194,9 +194,7 @@ pub(crate) fn append_ospf_packet_with_checksum_validation(
         OSPF_TYPE_LINK_STATE_UPDATE => {
             OspfBody::LinkStateUpdate(decode_link_state_update_body(body_bytes)?)
         }
-        OSPF_TYPE_LINK_STATE_ACK => {
-            OspfBody::LinkStateAck(decode_link_state_ack_body(body_bytes)?)
-        }
+        OSPF_TYPE_LINK_STATE_ACK => OspfBody::LinkStateAck(decode_link_state_ack_body(body_bytes)?),
         other => OspfBody::Unknown {
             type_code: other,
             body: body_bytes.to_vec(),
@@ -472,7 +470,11 @@ fn decode_link_state_update_body(body: &[u8]) -> Result<OspfLinkStateUpdate> {
             ));
         }
         if length > rest.len() {
-            return Err(CrafterError::buffer_too_short("ospf lsa", length, rest.len()));
+            return Err(CrafterError::buffer_too_short(
+                "ospf lsa",
+                length,
+                rest.len(),
+            ));
         }
 
         // The LSA body is the `length - 20` octets after the header. Dispatch on
@@ -791,8 +793,7 @@ fn decode_as_external_lsa_body(body: &[u8]) -> Result<OspfAsExternalLsa> {
             let metric =
                 (u32::from(chunk[1]) << 16) | (u32::from(chunk[2]) << 8) | u32::from(chunk[3]);
             let forwarding_address = Ipv4Addr::new(chunk[4], chunk[5], chunk[6], chunk[7]);
-            let external_route_tag =
-                u32::from_be_bytes([chunk[8], chunk[9], chunk[10], chunk[11]]);
+            let external_route_tag = u32::from_be_bytes([chunk[8], chunk[9], chunk[10], chunk[11]]);
             OspfExternalTos::new(e_bit, tos, metric, forwarding_address, external_route_tag)
         })
         .collect();
@@ -858,8 +859,7 @@ fn decode_nssa_lsa_body(body: &[u8]) -> Result<OspfNssaLsa> {
             let metric =
                 (u32::from(chunk[1]) << 16) | (u32::from(chunk[2]) << 8) | u32::from(chunk[3]);
             let forwarding_address = Ipv4Addr::new(chunk[4], chunk[5], chunk[6], chunk[7]);
-            let external_route_tag =
-                u32::from_be_bytes([chunk[8], chunk[9], chunk[10], chunk[11]]);
+            let external_route_tag = u32::from_be_bytes([chunk[8], chunk[9], chunk[10], chunk[11]]);
             OspfExternalTos::new(e_bit, tos, metric, forwarding_address, external_route_tag)
         })
         .collect();
@@ -979,8 +979,8 @@ mod tests {
         .compile()
         .expect("a Hello with three neighbors compiles");
 
-        let decoded = append_ospf_packet(Packet::new(), bytes.as_bytes())
-            .expect("the Hello decodes");
+        let decoded =
+            append_ospf_packet(Packet::new(), bytes.as_bytes()).expect("the Hello decodes");
         let ospf = decoded
             .layer::<Ospfv2>()
             .expect("the decoded packet exposes a typed Ospfv2 layer");
@@ -1025,8 +1025,8 @@ mod tests {
     fn ospf_decode_hello_misaligned_neighbors_is_invalid_field() {
         // 20 fixed octets plus 6 trailing octets: a malformed neighbor region.
         let body = [0u8; OSPF_HELLO_FIXED_LEN + 6];
-        let err = decode_hello_body(&body)
-            .expect_err("a 6-octet neighbor region is not a multiple of 4");
+        let err =
+            decode_hello_body(&body).expect_err("a 6-octet neighbor region is not a multiple of 4");
         match err {
             CrafterError::InvalidFieldValue { field, .. } => {
                 assert_eq!(field, "ospf.hello.neighbors");
@@ -1106,14 +1106,20 @@ mod tests {
         let headers = dd.lsa_headers_value();
         assert_eq!(headers.len(), 2);
         assert_eq!(headers[0].ls_type_value(), OSPF_LSA_ROUTER);
-        assert_eq!(headers[0].link_state_id_value(), Ipv4Addr::new(192, 0, 2, 1));
+        assert_eq!(
+            headers[0].link_state_id_value(),
+            Ipv4Addr::new(192, 0, 2, 1)
+        );
         assert_eq!(
             headers[0].advertising_router_value(),
             Ipv4Addr::new(192, 0, 2, 1)
         );
         assert_eq!(headers[0].ls_sequence_number_value(), 0x8000_0001);
         assert_eq!(headers[1].ls_type_value(), OSPF_LSA_NETWORK);
-        assert_eq!(headers[1].link_state_id_value(), Ipv4Addr::new(192, 0, 2, 2));
+        assert_eq!(
+            headers[1].link_state_id_value(),
+            Ipv4Addr::new(192, 0, 2, 2)
+        );
         assert_eq!(
             headers[1].advertising_router_value(),
             Ipv4Addr::new(198, 51, 100, 7)
@@ -1396,8 +1402,14 @@ mod tests {
         assert_eq!(lsu.num_lsas_value(), 2);
         let decoded_lsas = lsu.lsas_value();
         assert_eq!(decoded_lsas.len(), 2);
-        assert_eq!(decoded_lsas[0].header.ls_type_value(), OSPF_LSA_UNKNOWN_TYPE_A);
-        assert_eq!(decoded_lsas[1].header.ls_type_value(), OSPF_LSA_UNKNOWN_TYPE_B);
+        assert_eq!(
+            decoded_lsas[0].header.ls_type_value(),
+            OSPF_LSA_UNKNOWN_TYPE_A
+        );
+        assert_eq!(
+            decoded_lsas[1].header.ls_type_value(),
+            OSPF_LSA_UNKNOWN_TYPE_B
+        );
         match &decoded_lsas[0].body {
             OspfLsaBody::Raw(raw) => assert_eq!(raw.as_slice(), first_body.as_slice()),
             other => panic!("expected a raw LSA body, got {other:?}"),
@@ -1585,14 +1597,14 @@ mod tests {
         let mut router_body = Vec::new();
         router_body.extend_from_slice(&[0x00, 0x00]); // flags, reserved
         router_body.extend_from_slice(&2u16.to_be_bytes()); // # links = 2
-        // One complete link: Link ID, Link Data, Type, # TOS 0, metric.
+                                                            // One complete link: Link ID, Link Data, Type, # TOS 0, metric.
         router_body.extend_from_slice(&[192, 0, 2, 2]); // Link ID
         router_body.extend_from_slice(&[198, 51, 100, 1]); // Link Data
         router_body.push(OSPF_ROUTER_LINK_POINT_TO_POINT); // Type
         router_body.push(0); // # TOS
         router_body.extend_from_slice(&10u16.to_be_bytes()); // metric
-        // No second link description, so the declared count of 2 runs past the
-        // body.
+                                                             // No second link description, so the declared count of 2 runs past the
+                                                             // body.
 
         // 4-octet count (1 LSA) followed by a 20-octet header whose declared
         // length covers the header plus the Router body.
@@ -1681,7 +1693,10 @@ mod tests {
             OspfLsaBody::Network(network) => network,
             other => panic!("expected a typed Network-LSA body, got {other:?}"),
         };
-        assert_eq!(network.network_mask_value(), Ipv4Addr::new(255, 255, 255, 0));
+        assert_eq!(
+            network.network_mask_value(),
+            Ipv4Addr::new(255, 255, 255, 0)
+        );
         assert_eq!(
             network.attached_routers_value(),
             &[Ipv4Addr::new(192, 0, 2, 1), Ipv4Addr::new(192, 0, 2, 2)]
@@ -1773,7 +1788,10 @@ mod tests {
             OspfLsaBody::Summary(summary) => summary,
             other => panic!("expected a typed Summary-LSA body, got {other:?}"),
         };
-        assert_eq!(summary.network_mask_value(), Ipv4Addr::new(255, 255, 255, 0));
+        assert_eq!(
+            summary.network_mask_value(),
+            Ipv4Addr::new(255, 255, 255, 0)
+        );
         let entries = summary.entries_value();
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].tos_value(), 0);
@@ -1839,7 +1857,10 @@ mod tests {
         };
         let decoded_lsas = lsu.lsas_value();
         assert_eq!(decoded_lsas.len(), 1);
-        assert_eq!(decoded_lsas[0].header.ls_type_value(), OSPF_LSA_SUMMARY_ASBR);
+        assert_eq!(
+            decoded_lsas[0].header.ls_type_value(),
+            OSPF_LSA_SUMMARY_ASBR
+        );
 
         let summary = match &decoded_lsas[0].body {
             OspfLsaBody::Summary(summary) => summary,
@@ -1949,17 +1970,17 @@ mod tests {
             OspfLsaBody::AsExternal(external) => external,
             other => panic!("expected a typed AS-External-LSA body, got {other:?}"),
         };
-        assert_eq!(external.network_mask_value(), Ipv4Addr::new(255, 255, 255, 0));
+        assert_eq!(
+            external.network_mask_value(),
+            Ipv4Addr::new(255, 255, 255, 0)
+        );
         let entries = external.entries_value();
         assert_eq!(entries.len(), 2);
         // The default TOS 0 entry: E1, metric 0, unspecified forwarding address.
         assert!(!entries[0].e_bit_value());
         assert_eq!(entries[0].tos_value(), 0);
         assert_eq!(entries[0].metric_value(), 0);
-        assert_eq!(
-            entries[0].forwarding_address_value(),
-            Ipv4Addr::UNSPECIFIED
-        );
+        assert_eq!(entries[0].forwarding_address_value(), Ipv4Addr::UNSPECIFIED);
         assert_eq!(entries[0].external_route_tag_value(), 0);
         // The appended entry exposes the E bit (E2), TOS, metric, forwarding
         // address, and route tag.
