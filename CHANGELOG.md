@@ -31,6 +31,20 @@ workspace, released as one public crate: `crafter`.
   capabilities), and raw payloads.
 - IPsec coverage for ESP, AH, and IKEv2 (IKE header and payload set) with
   security-association and transform primitives.
+- Routing coverage for OSPFv2 (IP protocol 89) as a wire-level primitive: the
+  five packet types (Hello, Database Description, Link State Request, Link State
+  Update, Link State Acknowledgment) over one shared common header with
+  auto-filled packet length and checksum; the link-state advertisement family
+  (Router, Network, Summary, AS-External, NSSA, and Opaque types 9/10/11
+  including TE and Router Information) with the auto-filled Fletcher LSA
+  checksum; authentication (null, simple password, keyed-MD5, and HMAC-SHA
+  cryptographic) with the matching checksum and digest-trailer semantics;
+  structured-error decode that preserves unknown packet/LSA/opaque types as raw
+  and surfaces truncated buffers as typed errors; and an OSPFv3 base layer (RFC
+  5340 common header with Hello and request/update/ack framing). No OSPF state
+  machine, SPF computation, or LSDB management is included. The work ships with
+  oracle layer/feature/malformed specs, gated dry-run-default live and probe
+  coverage, and the `docs/guide/ospf.md` guide.
 - Protocol registry hooks for custom link, network, transport, and application
   decode bindings.
 - Classic pcap read/write helpers, libpcap BPF filters, offline
