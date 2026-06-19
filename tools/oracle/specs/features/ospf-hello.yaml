@@ -1,0 +1,79 @@
+version: 1
+kind: feature
+name: ospf_hello
+summary: >-
+  OSPFv2 Hello packet framing over IPv4 (IP protocol 89), covering the RFC 2328
+  Section A.3.2 Hello fields layered on the common header, with strict-byte
+  equivalence between the Scapy reference backend and libcrafter in both offline
+  directions.
+
+layers:
+  - ospf
+  - ipv4
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: common_header_fields
+    rfc:
+      - RFC 2328 Section A.3.1
+    message_type: hello
+    checks:
+      - version_2
+      - type_is_hello
+      - packet_length_covers_packet
+      - router_id_preserved
+      - area_id_preserved
+  - name: hello_fields
+    rfc:
+      - RFC 2328 Section A.3.2
+    message_type: hello
+    checks:
+      - network_mask_preserved
+      - hello_interval_preserved
+      - router_dead_interval_preserved
+      - designated_router_preserved
+      - backup_designated_router_preserved
+      - neighbor_list_round_trips
+
+coverage_cases:
+  - ospf-hello
+  - ospf-hello-neighbors
+
+supported_cases:
+  - name: ospf-hello
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: ospf-hello-neighbors
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - OSPF_Hdr
+      - OSPF_Hello
+    encode: true
+    decode: true
+    notes:
+      - Scapy 2.7.0 natively round-trips the OSPFv2 common header (OSPF_Hdr) and
+        the Hello body (OSPF_Hello), including the network mask, hello and dead
+        intervals, designated and backup designated routers, and the neighbor
+        list, via scapy.contrib.ospf.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    notes:
+      - Hello compile derives the RFC 2328 packet length and the common-header
+        checksum unless the caller deliberately overrides them; decode preserves
+        the Hello fields and the neighbor list so the packet round-trips
+        byte-for-byte.
