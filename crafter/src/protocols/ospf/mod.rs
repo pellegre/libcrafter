@@ -2255,4 +2255,128 @@ mod tests {
             );
         }
     }
+
+    /// A combined options/flags round-trip: a Hello carrying several Options bits
+    /// (RFC 2328 §A.2), a Database Description carrying I+M+MS (RFC 2328 §A.3.3),
+    /// and a Router-LSA carrying V+E+B (RFC 2328 §A.4.2) each compile through
+    /// IPv4, decode through the default registry, round-trip byte-for-byte, and
+    /// preserve every option/flag bit with its `summary()` label intact.
+    #[test]
+    fn ospf_combined_options_and_flags_round_trip_with_labels() {
+        use crate::packet::NetworkLayer;
+        use crate::protocols::ip::v4::Ipv4;
+        use crate::protocols::ospf::lsa::{
+            OspfLsa, OspfLsaBody, OspfLsaHeader, OspfRouterLsa, OSPF_LSA_ROUTER,
+            OSPF_ROUTER_LSA_FLAG_B, OSPF_ROUTER_LSA_FLAG_E, OSPF_ROUTER_LSA_FLAG_V,
+        };
+        use crate::protocols::ospf::packet::database_description::{
+            OSPF_DD_FLAG_I, OSPF_DD_FLAG_M, OSPF_DD_FLAG_MS,
+        };
+
+        // Helper: wrap an OSPF layer in IPv4, compile, decode via the default
+        // registry, and assert a byte-for-byte round-trip, returning the decoded
+        // Ospfv2 layer for further field assertions.
+        fn round_trip(ospf: Ospfv2) -> Ospfv2 {
+            let bytes = (Ipv4::new()
+                .src(Ipv4Addr::new(192, 0, 2, 1))
+                .dst(Ipv4Addr::new(192, 0, 2, 2))
+                / ospf)
+                .compile()
+                .expect("Ipv4 / Ospfv2 compiles");
+            let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes())
+                .expect("the default registry decodes OSPF over IPv4");
+            let recompiled = decoded.compile().expect("decoded OSPF re-compiles");
+            assert_eq!(
+                recompiled.as_bytes(),
+                bytes.as_bytes(),
+                "OSPF re-compiles byte-for-byte"
+            );
+            decoded
+                .layer::<Ospfv2>()
+                .expect("the decoded packet exposes a typed Ospfv2 layer")
+                .clone()
+        }
+
+        // --- Hello: multiple Options bits (E | O | DC). ----------------------
+        let options = OSPF_OPTIONS_E | OSPF_OPTIONS_O | OSPF_OPTIONS_DC;
+        let hello = Ospfv2::hello()
+            .router_id([192, 0, 2, 1])
+            .area_id([0, 0, 0, 0])
+            .with_hello(|h| {
+                *h = h.clone().options(options);
+            });
+        let decoded_hello = round_trip(hello);
+        let hello_body = match &decoded_hello.body {
+            OspfBody::Hello(hello) => hello,
+            other => panic!("expected a typed Hello body, got {other:?}"),
+        };
+        // Every Options bit survives the round-trip.
+        assert_eq!(hello_body.options_value(), options);
+        assert_eq!(hello_body.options_value() & OSPF_OPTIONS_E, OSPF_OPTIONS_E);
+        assert_eq!(hello_body.options_value() & OSPF_OPTIONS_O, OSPF_OPTIONS_O);
+        assert_eq!(hello_body.options_value() & OSPF_OPTIONS_DC, OSPF_OPTIONS_DC);
+        // The exported summary helper renders the bits in ascending order.
+        assert_eq!(ospf_options_summary(hello_body.options_value()), "E|DC|O");
+
+        // --- Database Description: I + M + MS flags. -------------------------
+        let dd = Ospfv2::database_description()
+            .router_id([192, 0, 2, 1])
+            .area_id([0, 0, 0, 0])
+            .with_database_description(|d| {
+                *d = d.clone().init(true).more(true).master(true);
+            });
+        let decoded_dd = round_trip(dd);
+        let dd_body = match &decoded_dd.body {
+            OspfBody::DatabaseDescription(dd) => dd,
+            other => panic!("expected a typed Database Description body, got {other:?}"),
+        };
+        // Each DD flag bit round-trips.
+        assert_eq!(
+            dd_body.flags_value(),
+            OSPF_DD_FLAG_I | OSPF_DD_FLAG_M | OSPF_DD_FLAG_MS
+        );
+        assert!(dd_body.is_init());
+        assert!(dd_body.is_more());
+        assert!(dd_body.is_master());
+        // The DD flags summary renders I|M|MS.
+        assert_eq!(dd_body.dd_flags_summary(), "I|M|MS");
+
+        // --- Router-LSA: V + E + B flags. -----------------------------------
+        let router = OspfRouterLsa::new().virtual_link().external().border();
+        let lsa = OspfLsa::new(
+            OspfLsaHeader::new()
+                .ls_type(OSPF_LSA_ROUTER)
+                .link_state_id(Ipv4Addr::new(192, 0, 2, 1))
+                .advertising_router(Ipv4Addr::new(192, 0, 2, 1))
+                .ls_sequence_number(0x8000_0001),
+            OspfLsaBody::Router(router),
+        );
+        let lsu = Ospfv2::link_state_update()
+            .router_id([192, 0, 2, 1])
+            .area_id([0, 0, 0, 0])
+            .with_link_state_update(|u| {
+                *u = u.clone().lsa(lsa);
+            });
+        let decoded_lsu = round_trip(lsu);
+        let lsu_body = match &decoded_lsu.body {
+            OspfBody::LinkStateUpdate(lsu) => lsu,
+            other => panic!("expected a typed Link State Update body, got {other:?}"),
+        };
+        let decoded_lsas = lsu_body.lsas_value();
+        assert_eq!(decoded_lsas.len(), 1);
+        let decoded_router = match &decoded_lsas[0].body {
+            OspfLsaBody::Router(router) => router,
+            other => panic!("expected a typed Router-LSA body, got {other:?}"),
+        };
+        // Each Router-LSA flag bit round-trips.
+        assert_eq!(
+            decoded_router.flags_value(),
+            OSPF_ROUTER_LSA_FLAG_V | OSPF_ROUTER_LSA_FLAG_E | OSPF_ROUTER_LSA_FLAG_B
+        );
+        assert!(decoded_router.is_virtual());
+        assert!(decoded_router.is_external());
+        assert!(decoded_router.is_border());
+        // The Router-LSA flags summary renders V|E|B.
+        assert_eq!(decoded_router.router_flags_summary(), "V|E|B");
+    }
 }
