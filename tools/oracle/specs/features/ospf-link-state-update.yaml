@@ -1,0 +1,146 @@
+version: 1
+kind: feature
+name: ospf_link_state_update
+summary: >-
+  OSPFv2 Link State Update packet framing over IPv4 (IP protocol 89), covering
+  the RFC 2328 Section A.3.5 LSA count and carried link-state advertisements
+  layered on the common header. Each LSA carries the 20-octet LSA header with
+  the Fletcher LS checksum (RFC 2328 Section A.4.1) and a per-type body: Router
+  (Section A.4.2), Network (Section A.4.3), Summary (Section A.4.4), and
+  AS-External (Section A.4.5). Strict-byte equivalence holds between the Scapy
+  reference backend and libcrafter in both offline directions.
+
+layers:
+  - ospf
+  - ipv4
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: common_header_fields
+    rfc:
+      - RFC 2328 Section A.3.1
+    message_type: link_state_update
+    checks:
+      - version_2
+      - type_is_link_state_update
+      - packet_length_covers_packet
+      - router_id_preserved
+      - area_id_preserved
+  - name: lsa_count
+    rfc:
+      - RFC 2328 Section A.3.5
+    message_type: link_state_update
+    checks:
+      - num_lsas_matches_lsa_list
+      - lsa_list_round_trips
+  - name: lsa_header
+    rfc:
+      - RFC 2328 Section A.4.1
+    message_type: link_state_update
+    checks:
+      - lsa_header_is_twenty_octets
+      - ls_age_preserved
+      - options_preserved
+      - ls_type_preserved
+      - link_state_id_preserved
+      - advertising_router_preserved
+      - ls_sequence_number_preserved
+      - ls_checksum_is_fletcher
+      - lsa_length_covers_lsa
+  - name: router_lsa_body
+    rfc:
+      - RFC 2328 Section A.4.2
+    message_type: link_state_update
+    lsa_type: router
+    checks:
+      - router_lsa_flags_preserved
+      - router_lsa_link_list_round_trips
+  - name: network_lsa_body
+    rfc:
+      - RFC 2328 Section A.4.3
+    message_type: link_state_update
+    lsa_type: network
+    checks:
+      - network_lsa_mask_preserved
+      - network_lsa_attached_routers_round_trip
+  - name: summary_lsa_body
+    rfc:
+      - RFC 2328 Section A.4.4
+    message_type: link_state_update
+    lsa_type: summary
+    checks:
+      - summary_lsa_mask_preserved
+      - summary_lsa_metric_preserved
+  - name: as_external_lsa_body
+    rfc:
+      - RFC 2328 Section A.4.5
+    message_type: link_state_update
+    lsa_type: as_external
+    checks:
+      - as_external_lsa_mask_preserved
+      - as_external_lsa_tos_metrics_round_trip
+      - as_external_lsa_forwarding_address_preserved
+      - as_external_lsa_external_route_tag_preserved
+
+coverage_cases:
+  - ospf-lsu-router
+  - ospf-lsu-network
+  - ospf-lsu-summary
+  - ospf-lsu-external
+
+supported_cases:
+  - name: ospf-lsu-router
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: ospf-lsu-network
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: ospf-lsu-summary
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: ospf-lsu-external
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - OSPF_Hdr
+      - OSPF_LSUpd
+      - OSPF_LSA_Hdr
+    encode: true
+    decode: true
+    notes:
+      - Scapy 2.7.0 natively round-trips the OSPFv2 common header (OSPF_Hdr) and
+        the Link State Update framing (OSPF_LSUpd) with the LSA count and the
+        carried LSAs, via scapy.contrib.ospf.
+      - The reference backend builds each LSA as the 20-octet OSPF_LSA_Hdr
+        followed by the LSA body bytes, so Router, Network, Summary, and
+        AS-External bodies cross-validate byte-for-byte against the libcrafter
+        encoding. NSSA (type 7) and Opaque (types 9/10/11) LSAs are left for
+        follow-on feature coverage.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    notes:
+      - Link State Update compile derives the RFC 2328 packet length, the
+        common-header checksum, and the per-LSA length and Fletcher LS checksum
+        unless the caller deliberately overrides them; decode preserves the LSA
+        count and the carried LSAs so the packet round-trips byte-for-byte.
+      - The typed LSA bodies cover Router (A.4.2), Network (A.4.3), Summary
+        (A.4.4), and AS-External (A.4.5); NSSA and Opaque LSAs are owned by
+        follow-on feature coverage.
