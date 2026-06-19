@@ -17,7 +17,8 @@ use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::packet::{Layer, LayerContext};
 use crate::protocols::icmp::Icmpv6;
-use crate::protocols::ip::shared::{IPPROTO_ICMPV6, IPPROTO_TCP, IPPROTO_UDP};
+use crate::protocols::ip::shared::{IPPROTO_ICMPV6, IPPROTO_OSPF, IPPROTO_TCP, IPPROTO_UDP};
+use crate::protocols::ospf::Ospfv3;
 use crate::protocols::transport::{Tcp, Udp};
 
 pub use constants::{
@@ -69,6 +70,10 @@ fn layer_ipv6_next_header(layer: &dyn Layer) -> Option<u8> {
         Some(IPPROTO_UDP)
     } else if layer.as_any().is::<Icmpv6>() {
         Some(IPPROTO_ICMPV6)
+    } else if layer.as_any().is::<Ospfv3>() {
+        // OSPFv3 rides directly on IPv6 with next-header 89 (RFC 5340 §2.5),
+        // reusing the OSPF protocol number assigned for IPv4.
+        Some(IPPROTO_OSPF)
     } else {
         None
     }

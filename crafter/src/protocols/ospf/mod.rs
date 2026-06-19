@@ -33,6 +33,8 @@ pub mod lsa;
 
 pub mod packet;
 
+pub mod v3;
+
 #[allow(unused_imports)]
 pub use auth::{
     OspfCryptoAlgorithm, OspfCryptoAuth, OSPF_HMAC_SHA1_DIGEST_LEN, OSPF_HMAC_SHA256_DIGEST_LEN,
@@ -44,6 +46,7 @@ pub use packet::{
     OspfDatabaseDescription, OspfHello, OspfLinkStateAck, OspfLinkStateRequest,
     OspfLinkStateRequestEntry, OspfLinkStateUpdate,
 };
+pub use v3::{Ospfv3, Ospfv3Body, OSPF_VERSION_3, OSPFV3_HEADER_LEN};
 
 macro_rules! impl_layer_object {
     ($type:ty) => {

@@ -24,6 +24,7 @@ use crate::protocols::ipv4::{
 };
 use crate::protocols::ipv6::{append_ipv6_packet_with_registry, IPPROTO_IPV6_AH, IPPROTO_IPV6_ESP};
 use crate::protocols::ospf::decode::append_ospf_packet_with_checksum_validation;
+use crate::protocols::ospf::v3::append_ospfv3_packet;
 // Re-export the checksum-agnostic OSPF entrypoint alongside the registry so
 // callers wiring custom dispatch can decode an OSPF payload without opting into
 // decode-time checksum validation (RFC 2328 §A.3.1).
@@ -277,6 +278,12 @@ impl ProtocolRegistry {
             .bind_ipv6_next_header_with_registry(IPPROTO_IPV6_AH, |registry, packet, payload| {
                 decode_ah_with_registry_sa(registry, packet, payload)
             });
+        // OSPFv3 as an IPv6 next-header (RFC 5340 §2.5): next-header 89 carries
+        // the 16-octet OSPFv3 common header and its body. The decoder parses the
+        // header into a typed `Ospfv3` layer (the body stays opaque for now).
+        registry.bind_ipv6_next_header_with_registry(IPPROTO_OSPF, |_registry, packet, payload| {
+            append_ospfv3_packet(packet, payload)
+        });
 
         registry.bind_udp_port_with_registry(DNS_PORT, |_registry, packet, payload| {
             append_dns_packet(packet, payload)
@@ -741,6 +748,7 @@ impl ProtocolRegistry {
                 IPPROTO_UDP => append_udp_packet_with_registry(self, packet, payload),
                 IPPROTO_IPV6_ESP => decode_esp_with_registry_sa(self, packet, payload),
                 IPPROTO_IPV6_AH => decode_ah_with_registry_sa(self, packet, payload),
+                IPPROTO_OSPF => append_ospfv3_packet(packet, payload),
                 _ => append_raw_if_needed(packet, payload),
             };
         }
