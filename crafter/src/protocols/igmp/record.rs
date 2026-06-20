@@ -255,6 +255,15 @@ impl IgmpGroupRecord {
         }
     }
 
+    /// Build a group record from a raw Record Type byte.
+    ///
+    /// This preserves unassigned or experimental values as
+    /// [`IgmpRecordType::Unknown`] while still using the common IGMPv3 Group
+    /// Record builder surface.
+    pub fn raw(record_type: u8, multicast_address: Ipv4Addr) -> Self {
+        Self::new(IgmpRecordType::from_u8(record_type), multicast_address)
+    }
+
     /// Build a MODE_IS_INCLUDE record for `multicast_address`.
     pub fn mode_is_include(multicast_address: Ipv4Addr) -> Self {
         Self::new(IgmpRecordType::ModeIsInclude, multicast_address)
@@ -283,6 +292,36 @@ impl IgmpGroupRecord {
     /// Build a BLOCK_OLD_SOURCES record for `multicast_address`.
     pub fn block_old_sources(multicast_address: Ipv4Addr) -> Self {
         Self::new(IgmpRecordType::BlockOldSources, multicast_address)
+    }
+
+    /// Build a Current-State MODE_IS_INCLUDE record for `multicast_address`.
+    pub fn current_state_mode_is_include(multicast_address: Ipv4Addr) -> Self {
+        Self::mode_is_include(multicast_address)
+    }
+
+    /// Build a Current-State MODE_IS_EXCLUDE record for `multicast_address`.
+    pub fn current_state_mode_is_exclude(multicast_address: Ipv4Addr) -> Self {
+        Self::mode_is_exclude(multicast_address)
+    }
+
+    /// Build a Filter-Mode-Change CHANGE_TO_INCLUDE_MODE record.
+    pub fn filter_mode_change_to_include(multicast_address: Ipv4Addr) -> Self {
+        Self::change_to_include_mode(multicast_address)
+    }
+
+    /// Build a Filter-Mode-Change CHANGE_TO_EXCLUDE_MODE record.
+    pub fn filter_mode_change_to_exclude(multicast_address: Ipv4Addr) -> Self {
+        Self::change_to_exclude_mode(multicast_address)
+    }
+
+    /// Build a Source-List-Change ALLOW_NEW_SOURCES record.
+    pub fn source_list_allow_new_sources(multicast_address: Ipv4Addr) -> Self {
+        Self::allow_new_sources(multicast_address)
+    }
+
+    /// Build a Source-List-Change BLOCK_OLD_SOURCES record.
+    pub fn source_list_block_old_sources(multicast_address: Ipv4Addr) -> Self {
+        Self::block_old_sources(multicast_address)
     }
 
     /// Set the Record Type from source-backed metadata.

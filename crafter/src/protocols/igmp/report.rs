@@ -12,6 +12,7 @@ use crate::field::{Field, FieldState};
 use crate::packet::{IntoPacket, Layer, LayerContext, Packet};
 
 use super::constants::{IGMP_DEFAULT_GROUP_RECORD_COUNT, IGMP_DEFAULT_REPORT_FLAGS};
+use super::message::Igmp;
 use super::record::IgmpGroupRecord;
 
 const IGMP_V3_REPORT_BODY_MIN_LEN: usize = 4;
@@ -35,6 +36,14 @@ impl IgmpReport {
             number_of_group_records: Field::unset(),
             records: Vec::new(),
         }
+    }
+
+    /// Create an IGMPv3 membership report body with group records.
+    ///
+    /// The Number of Group Records field is derived from `records` unless the
+    /// caller later pins it with [`IgmpReport::with_number_of_group_records`].
+    pub fn from_group_records(records: impl Into<Vec<IgmpGroupRecord>>) -> Self {
+        Self::new().with_group_records(records)
     }
 
     /// Set the raw Reserved/Flags field, preserving every bit.
@@ -130,6 +139,23 @@ impl IgmpReport {
     /// Compatibility alias for the Number of Group Records field state.
     pub fn number_of_records_state(&self) -> FieldState {
         self.number_of_group_records_state()
+    }
+}
+
+impl Igmp {
+    /// Build an IGMPv3 Membership Report packet from a common IGMP header and a
+    /// report body.
+    pub fn v3_membership_report_with(report: IgmpReport) -> Packet {
+        Self::v3_membership_report() / report
+    }
+
+    /// Build an IGMPv3 Membership Report packet from group records.
+    ///
+    /// The report body derives the Number of Group Records field from
+    /// `records` unless the caller later uses [`IgmpReport`] directly and pins
+    /// the field explicitly.
+    pub fn v3_membership_report_with_records(records: impl Into<Vec<IgmpGroupRecord>>) -> Packet {
+        Self::v3_membership_report_with(IgmpReport::from_group_records(records))
     }
 }
 
@@ -251,9 +277,23 @@ mod igmp_report_model {
         core::net::Ipv4Addr::new(192, 0, 2, 90)
     }
 
+    fn doc_source_b() -> core::net::Ipv4Addr {
+        core::net::Ipv4Addr::new(198, 51, 100, 90)
+    }
+
     fn report_body_bytes(report: IgmpReport) -> crate::Result<Vec<u8>> {
         let bytes = (Igmp::v3_membership_report() / report).compile()?;
         Ok(bytes.as_bytes()[IGMP_FIXED_HEADER_LEN..].to_vec())
+    }
+
+    fn assert_record_types(report: &IgmpReport, expected: &[IgmpRecordType]) {
+        let actual = report
+            .group_records()
+            .iter()
+            .map(IgmpGroupRecord::record_type)
+            .collect::<Vec<_>>();
+
+        assert_eq!(actual, expected);
     }
 
     #[test]
@@ -313,6 +353,85 @@ mod igmp_report_model {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn igmp_report_builders_build_current_state_report() {
+        let include = IgmpGroupRecord::current_state_mode_is_include(doc_group())
+            .with_source_address(doc_source());
+        let exclude = IgmpGroupRecord::current_state_mode_is_exclude(doc_group())
+            .with_source_address(doc_source_b());
+        let report = IgmpReport::from_group_records(vec![include.clone(), exclude.clone()]);
+        let packet = Igmp::v3_membership_report_with(report.clone());
+
+        assert_eq!(report.number_of_group_records_value(), 2);
+        assert_record_types(
+            &report,
+            &[IgmpRecordType::ModeIsInclude, IgmpRecordType::ModeIsExclude],
+        );
+        assert_eq!(report.group_records(), &[include, exclude]);
+        assert_eq!(packet.layer::<IgmpReport>(), Some(&report));
+    }
+
+    #[test]
+    fn igmp_report_builders_build_filter_mode_change_report() {
+        let report = IgmpReport::from_group_records(vec![
+            IgmpGroupRecord::filter_mode_change_to_include(doc_group())
+                .with_source_address(doc_source()),
+            IgmpGroupRecord::filter_mode_change_to_exclude(doc_group())
+                .with_source_address(doc_source_b()),
+        ]);
+
+        assert_eq!(report.number_of_group_records_value(), 2);
+        assert_record_types(
+            &report,
+            &[
+                IgmpRecordType::ChangeToIncludeMode,
+                IgmpRecordType::ChangeToExcludeMode,
+            ],
+        );
+        assert_eq!(report.group_records()[0].number_of_sources_value(), 1);
+        assert_eq!(report.group_records()[1].number_of_sources_value(), 1);
+    }
+
+    #[test]
+    fn igmp_report_builders_build_source_list_change_report() {
+        let packet = Igmp::v3_membership_report_with_records(vec![
+            IgmpGroupRecord::source_list_allow_new_sources(doc_group())
+                .with_source_address(doc_source()),
+            IgmpGroupRecord::source_list_block_old_sources(doc_group())
+                .with_source_address(doc_source_b()),
+        ]);
+        let report = packet.layer::<IgmpReport>().expect("IGMPv3 report body");
+
+        assert_eq!(report.number_of_group_records_value(), 2);
+        assert_record_types(
+            report,
+            &[
+                IgmpRecordType::AllowNewSources,
+                IgmpRecordType::BlockOldSources,
+            ],
+        );
+        assert_eq!(
+            packet
+                .layer::<Igmp>()
+                .expect("IGMP header")
+                .igmp_type_value(),
+            IGMP_TYPE_V3_MEMBERSHIP_REPORT
+        );
+    }
+
+    #[test]
+    fn igmp_report_builders_preserve_raw_record_type_override() {
+        let report = IgmpReport::from_group_records(vec![
+            IgmpGroupRecord::raw(0xc8, doc_group()).with_source_address(doc_source())
+        ]);
+        let record = &report.group_records()[0];
+
+        assert_eq!(report.number_of_group_records_value(), 1);
+        assert_eq!(record.record_type(), IgmpRecordType::Unknown(0xc8));
+        assert_eq!(record.record_type_value(), 0xc8);
+        assert_eq!(record.source_addresses(), &[doc_source()]);
     }
 
     #[test]
