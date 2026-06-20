@@ -358,9 +358,10 @@ mod igmp_extension_model {
     use crate::checksum::verify_internet_checksum;
     use crate::protocols::igmp::constants::{
         IGMP_EXTENSION_TYPE_EXPERIMENTAL_FIRST, IGMP_FIXED_HEADER_LEN,
-        IGMP_TYPE_V3_MEMBERSHIP_REPORT,
+        IGMP_TYPE_MEMBERSHIP_QUERY, IGMP_TYPE_V3_MEMBERSHIP_REPORT,
     };
     use crate::protocols::igmp::message::Igmp;
+    use crate::protocols::igmp::query::IgmpQuery;
     use crate::protocols::igmp::registry::IgmpExtensionTypeStatus;
     use crate::protocols::igmp::report::IgmpReport;
 
@@ -486,5 +487,107 @@ mod igmp_extension_model {
         assert!(verify_internet_checksum(bytes.as_bytes()));
 
         Ok(())
+    }
+
+    #[test]
+    fn igmp_extension_encode_empty_query_tlv() -> crate::Result<()> {
+        let query = IgmpQuery::new().with_extension_flag(true);
+        let packet = Igmp::v3_membership_query(
+            100,
+            core::net::Ipv4Addr::new(233, 252, 0, 60),
+            query,
+        ) / IgmpExtension::noop();
+
+        let bytes = packet.compile()?;
+
+        assert_eq!(bytes.as_bytes()[0], IGMP_TYPE_MEMBERSHIP_QUERY);
+        assert_eq!(
+            &bytes.as_bytes()[IGMP_FIXED_HEADER_LEN..],
+            &[0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+        );
+        assert!(verify_internet_checksum(bytes.as_bytes()));
+
+        Ok(())
+    }
+
+    #[test]
+    fn igmp_extension_encode_non_empty_report_tlv_autofills_length() -> crate::Result<()> {
+        let report = IgmpReport::new().with_extension_flag(true);
+        let extension = IgmpExtension::raw(0x1234, [0xde, 0xad, 0xbe, 0xef]);
+        let packet = Igmp::v3_membership_report() / report / extension;
+
+        let bytes = packet.compile()?;
+
+        assert_eq!(bytes.as_bytes()[0], IGMP_TYPE_V3_MEMBERSHIP_REPORT);
+        assert_eq!(
+            &bytes.as_bytes()[IGMP_FIXED_HEADER_LEN..],
+            &[
+                0x80, 0x00, 0x00, 0x00, 0x12, 0x34, 0x00, 0x04, 0xde, 0xad, 0xbe, 0xef,
+            ]
+        );
+        assert!(verify_internet_checksum(bytes.as_bytes()));
+
+        Ok(())
+    }
+
+    #[test]
+    fn igmp_extension_encode_multiple_tlvs_are_byte_contiguous() -> crate::Result<()> {
+        let query = IgmpQuery::new().with_extension_flag(true);
+        let first = IgmpExtension::raw(0x0000, [0xaa]);
+        let second = IgmpExtension::raw(0xfffe, [0xbb, 0xcc]);
+        let packet = Igmp::v3_membership_query(
+            100,
+            core::net::Ipv4Addr::new(233, 252, 0, 61),
+            query,
+        ) / first
+            / second;
+
+        let bytes = packet.compile()?;
+
+        assert_eq!(
+            &bytes.as_bytes()[IGMP_FIXED_HEADER_LEN..],
+            &[
+                0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0xaa, 0xff, 0xfe, 0x00, 0x02,
+                0xbb, 0xcc,
+            ]
+        );
+        assert!(verify_internet_checksum(bytes.as_bytes()));
+
+        Ok(())
+    }
+
+    #[test]
+    fn igmp_extension_encode_preserves_representable_explicit_length() -> crate::Result<()> {
+        let extension = IgmpExtension::raw(0x1234, [1, 2, 3, 4]).with_extension_length(2);
+        let report = IgmpReport::new().with_extension_flag(true);
+        let packet = Igmp::v3_membership_report() / report / extension;
+
+        let bytes = packet.compile()?;
+
+        assert_eq!(
+            &bytes.as_bytes()[IGMP_FIXED_HEADER_LEN..],
+            &[0x80, 0x00, 0x00, 0x00, 0x12, 0x34, 0x00, 0x02, 1, 2]
+        );
+        assert!(verify_internet_checksum(bytes.as_bytes()));
+
+        Ok(())
+    }
+
+    #[test]
+    fn igmp_extension_encode_malformed_length_missing_value_is_structured_error() {
+        let extension = IgmpExtension::noop()
+            .with_value([0xaa, 0xbb])
+            .with_extension_length(3);
+        let report = IgmpReport::new().with_extension_flag(true);
+        let packet = Igmp::v3_membership_report() / report / extension;
+
+        assert_eq!(
+            packet.compile(),
+            Err(CrafterError::buffer_too_short(
+                "igmp.extension.value",
+                3,
+                2,
+            ))
+        );
     }
 }
