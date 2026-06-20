@@ -7,7 +7,13 @@
 #[macro_use]
 mod support;
 
+use std::net::Ipv4Addr;
+
 use crafter::prelude::*;
+
+const DOC_SRC: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 60);
+const DOC_MCAST: Ipv4Addr = Ipv4Addr::new(233, 252, 0, 60);
+const DOC_NON_MULTICAST: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 61);
 
 struct ErrorCase {
     name: &'static str,
@@ -70,6 +76,20 @@ fn parse_hex(name: &str, hex: &str) -> Vec<u8> {
 fn decode_l3_fixture(name: &str, hex: &str) -> crafter::Result<Packet> {
     let bytes = parse_hex(name, hex);
     Packet::decode_from_l3(NetworkLayer::Ipv4, bytes)
+}
+
+fn decode_l3_bytes(name: &str, bytes: &[u8]) -> crafter::Result<Packet> {
+    std::panic::catch_unwind(|| Packet::decode_from_l3(NetworkLayer::Ipv4, bytes))
+        .unwrap_or_else(|_| panic!("{name} panicked during decode"))
+}
+
+fn ipv4(id: u16, dst: Ipv4Addr) -> Ipv4 {
+    Ipv4::new()
+        .src(DOC_SRC)
+        .dst(dst)
+        .id(id)
+        .ttl(1)
+        .ipv4_protocol(Ipv4Protocol::Igmp)
 }
 
 fn assert_buffer_error(case: &ErrorCase) {
@@ -145,6 +165,33 @@ fn igmp_trailing_bytes_are_preserved_as_raw() -> crafter::Result<()> {
     )
 }
 
+fn assert_v2_override_roundtrip(
+    name: &str,
+    packet: Packet,
+    expected_type: IgmpType,
+    expected_code: u8,
+    expected_checksum: u16,
+    expected_group: Ipv4Addr,
+) -> crafter::Result<()> {
+    let bytes = packet.compile()?;
+    let decoded = decode_l3_bytes(name, bytes.as_bytes())?;
+    let igmp = decoded.layer::<Igmp>().expect("decoded IGMP v2 header");
+
+    assert_eq!(igmp.igmp_type(), expected_type);
+    assert_eq!(igmp.code_value(), expected_code);
+    assert_eq!(igmp.code_meta().status, IgmpTypeStatus::Unassigned);
+    assert_eq!(igmp.checksum_value(), Some(expected_checksum));
+    assert_eq!(igmp.checksum_state(), FieldState::User);
+    assert_eq!(igmp.group_address_value(), expected_group);
+    if expected_group == DOC_NON_MULTICAST {
+        assert_eq!(igmp.group_address_class_name(), "non-multicast");
+        assert!(!igmp.group_address_is_multicast());
+    }
+    assert_eq!(decoded.compile()?.as_bytes(), bytes.as_bytes());
+
+    Ok(())
+}
+
 #[test]
 fn igmp_unknown_type_payload_is_preserved_as_raw() -> crafter::Result<()> {
     assert_raw_tail_fixture(
@@ -153,4 +200,80 @@ fn igmp_unknown_type_payload_is_preserved_as_raw() -> crafter::Result<()> {
         IgmpType::Unassigned(IGMP_TYPE_UNASSIGNED_FIRST),
         &[0x01, 0x02, 0x03, 0x04],
     )
+}
+
+#[test]
+fn igmp_malformed_v2_report_overrides_are_inspectable() -> crafter::Result<()> {
+    let packet = ipv4(0x2701, DOC_NON_MULTICAST)
+        / Igmp::v2_membership_report(DOC_NON_MULTICAST)
+            .with_code(0x7f)
+            .checksum(0x1234);
+
+    assert_v2_override_roundtrip(
+        "igmp-v2-report-overrides",
+        packet,
+        IgmpType::V2MembershipReport,
+        0x7f,
+        0x1234,
+        DOC_NON_MULTICAST,
+    )
+}
+
+#[test]
+fn igmp_malformed_v2_leave_overrides_are_inspectable() -> crafter::Result<()> {
+    let packet = ipv4(0x2702, DOC_NON_MULTICAST)
+        / Igmp::v2_leave_group(DOC_NON_MULTICAST)
+            .with_code(0x80)
+            .checksum(0xabcd);
+
+    assert_v2_override_roundtrip(
+        "igmp-v2-leave-overrides",
+        packet,
+        IgmpType::V2LeaveGroup,
+        0x80,
+        0xabcd,
+        DOC_NON_MULTICAST,
+    )
+}
+
+#[test]
+fn igmp_malformed_v2_trailing_payload_is_preserved_as_raw() -> crafter::Result<()> {
+    let packet = ipv4(0x2703, DOC_MCAST)
+        / Igmp::v2_membership_report(DOC_MCAST)
+        / Raw::from_bytes([0xde, 0xad, 0xbe, 0xef]);
+    let bytes = packet.compile()?;
+
+    let decoded = decode_l3_bytes("igmp-v2-trailing-payload", bytes.as_bytes())?;
+    let igmp = decoded.layer::<Igmp>().expect("decoded IGMP v2 report");
+    let raw = decoded.layer::<Raw>().expect("decoded trailing raw bytes");
+
+    assert_eq!(decoded.len(), 3);
+    assert_eq!(igmp.igmp_type(), IgmpType::V2MembershipReport);
+    assert_eq!(igmp.group_address_value(), DOC_MCAST);
+    assert_eq!(raw.as_bytes(), &[0xde, 0xad, 0xbe, 0xef]);
+    assert_eq!(decoded.compile()?.as_bytes(), bytes.as_bytes());
+
+    Ok(())
+}
+
+#[test]
+fn igmp_malformed_v2_short_payload_is_structural_error() -> crafter::Result<()> {
+    let packet = ipv4(0x2704, DOC_MCAST)
+        / Raw::from_bytes([IGMP_TYPE_V2_MEMBERSHIP_REPORT, 0, 0, 0, 233, 252, 0]);
+    let bytes = packet.compile()?;
+
+    match decode_l3_bytes("igmp-v2-short-payload", bytes.as_bytes()) {
+        Err(CrafterError::BufferTooShort {
+            context,
+            required,
+            available,
+        }) => {
+            assert_eq!(context, "igmp header");
+            assert_eq!(required, IGMP_FIXED_HEADER_LEN);
+            assert_eq!(available, IGMP_FIXED_HEADER_LEN - 1);
+            Ok(())
+        }
+        Ok(packet) => panic!("igmp-v2-short-payload decoded as {}", packet.summary()),
+        Err(other) => panic!("igmp-v2-short-payload returned {other:?}"),
+    }
 }
