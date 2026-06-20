@@ -24,7 +24,8 @@ pub use self::message::Igmp;
 pub use self::query::IgmpQuery;
 pub use self::record::{
     igmp_record_type, igmp_record_type_meta, igmp_record_type_name, igmp_record_type_status,
-    igmp_record_type_summary, IgmpRecordType, IgmpRecordTypeMeta, IgmpRecordTypeStatus,
+    igmp_record_type_summary, IgmpGroupRecord, IgmpRecordType, IgmpRecordTypeMeta,
+    IgmpRecordTypeStatus,
 };
 pub use self::registry::{
     igmp_code_meta, igmp_code_name, igmp_code_status, igmp_query_flag, igmp_query_flag_meta,

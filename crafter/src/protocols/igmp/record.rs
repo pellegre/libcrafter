@@ -2,11 +2,18 @@
 //!
 //! Group records are populated during the IGMPv3 report steps.
 
+use core::net::Ipv4Addr;
+
+use crate::field::{Field, FieldState};
+
 use super::constants::{
-    IGMP_RECORD_TYPE_ALLOW_NEW_SOURCES, IGMP_RECORD_TYPE_BLOCK_OLD_SOURCES,
-    IGMP_RECORD_TYPE_CHANGE_TO_EXCLUDE_MODE, IGMP_RECORD_TYPE_CHANGE_TO_INCLUDE_MODE,
-    IGMP_RECORD_TYPE_MODE_IS_EXCLUDE, IGMP_RECORD_TYPE_MODE_IS_INCLUDE,
+    IGMP_DEFAULT_AUX_DATA_LEN, IGMP_DEFAULT_SOURCE_COUNT, IGMP_RECORD_TYPE_ALLOW_NEW_SOURCES,
+    IGMP_RECORD_TYPE_BLOCK_OLD_SOURCES, IGMP_RECORD_TYPE_CHANGE_TO_EXCLUDE_MODE,
+    IGMP_RECORD_TYPE_CHANGE_TO_INCLUDE_MODE, IGMP_RECORD_TYPE_MODE_IS_EXCLUDE,
+    IGMP_RECORD_TYPE_MODE_IS_INCLUDE, IGMP_V3_GROUP_RECORD_HEADER_LEN,
 };
+
+const IGMP_GROUP_RECORD_AUX_DATA_UNIT: usize = 4;
 
 /// Source-backed IGMPv3 Group Record Type value.
 ///
@@ -214,6 +221,462 @@ const fn record_type_meta(
         name,
         summary,
         status,
+    }
+}
+
+/// One IGMPv3 Group Record inside a Version 3 Membership Report.
+///
+/// RFC 9776 section 4.2 lays a group record out as Record Type (1 octet), Aux
+/// Data Len (1 octet, in 32-bit words), Number of Sources (2 octets),
+/// Multicast Address (4 octets), N Source Addresses, and then auxiliary data.
+/// The count fields auto-fill from the carried source and auxiliary-data bytes
+/// unless the caller pins them explicitly for malformed-packet construction.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IgmpGroupRecord {
+    record_type: IgmpRecordType,
+    auxiliary_data_len: Field<u8>,
+    number_of_sources: Field<u16>,
+    multicast_address: Ipv4Addr,
+    source_addresses: Vec<Ipv4Addr>,
+    auxiliary_data: Vec<u8>,
+}
+
+impl IgmpGroupRecord {
+    /// Create an IGMPv3 group record for `multicast_address`.
+    pub fn new(record_type: IgmpRecordType, multicast_address: Ipv4Addr) -> Self {
+        Self {
+            record_type,
+            auxiliary_data_len: Field::unset(),
+            number_of_sources: Field::unset(),
+            multicast_address,
+            source_addresses: Vec::new(),
+            auxiliary_data: Vec::new(),
+        }
+    }
+
+    /// Build a MODE_IS_INCLUDE record for `multicast_address`.
+    pub fn mode_is_include(multicast_address: Ipv4Addr) -> Self {
+        Self::new(IgmpRecordType::ModeIsInclude, multicast_address)
+    }
+
+    /// Build a MODE_IS_EXCLUDE record for `multicast_address`.
+    pub fn mode_is_exclude(multicast_address: Ipv4Addr) -> Self {
+        Self::new(IgmpRecordType::ModeIsExclude, multicast_address)
+    }
+
+    /// Build a CHANGE_TO_INCLUDE_MODE record for `multicast_address`.
+    pub fn change_to_include_mode(multicast_address: Ipv4Addr) -> Self {
+        Self::new(IgmpRecordType::ChangeToIncludeMode, multicast_address)
+    }
+
+    /// Build a CHANGE_TO_EXCLUDE_MODE record for `multicast_address`.
+    pub fn change_to_exclude_mode(multicast_address: Ipv4Addr) -> Self {
+        Self::new(IgmpRecordType::ChangeToExcludeMode, multicast_address)
+    }
+
+    /// Build an ALLOW_NEW_SOURCES record for `multicast_address`.
+    pub fn allow_new_sources(multicast_address: Ipv4Addr) -> Self {
+        Self::new(IgmpRecordType::AllowNewSources, multicast_address)
+    }
+
+    /// Build a BLOCK_OLD_SOURCES record for `multicast_address`.
+    pub fn block_old_sources(multicast_address: Ipv4Addr) -> Self {
+        Self::new(IgmpRecordType::BlockOldSources, multicast_address)
+    }
+
+    /// Set the Record Type from source-backed metadata.
+    pub fn with_record_type(mut self, record_type: IgmpRecordType) -> Self {
+        self.record_type = record_type;
+        self
+    }
+
+    /// Set the raw Record Type byte, preserving unknown values.
+    pub fn with_raw_record_type(self, record_type: u8) -> Self {
+        self.with_record_type(IgmpRecordType::from_u8(record_type))
+    }
+
+    /// Set the raw Aux Data Len field in 32-bit words.
+    pub fn with_auxiliary_data_len(mut self, words: u8) -> Self {
+        self.auxiliary_data_len.set_user(words);
+        self
+    }
+
+    /// Compatibility alias for the Aux Data Len field.
+    pub fn with_aux_data_len(self, words: u8) -> Self {
+        self.with_auxiliary_data_len(words)
+    }
+
+    /// Set the raw Number of Sources field.
+    pub fn with_number_of_sources(mut self, count: u16) -> Self {
+        self.number_of_sources.set_user(count);
+        self
+    }
+
+    /// Set the Multicast Address field.
+    pub fn with_multicast_address(mut self, multicast_address: Ipv4Addr) -> Self {
+        self.multicast_address = multicast_address;
+        self
+    }
+
+    /// Replace the source-address vector.
+    pub fn with_source_addresses(mut self, source_addresses: impl Into<Vec<Ipv4Addr>>) -> Self {
+        self.source_addresses = source_addresses.into();
+        self
+    }
+
+    /// Append one source address.
+    pub fn with_source_address(mut self, source_address: Ipv4Addr) -> Self {
+        self.source_addresses.push(source_address);
+        self
+    }
+
+    /// Replace the auxiliary-data bytes.
+    pub fn with_auxiliary_data(mut self, auxiliary_data: impl Into<Vec<u8>>) -> Self {
+        self.auxiliary_data = auxiliary_data.into();
+        self
+    }
+
+    /// Compatibility alias for auxiliary-data bytes.
+    pub fn with_aux_data(self, auxiliary_data: impl Into<Vec<u8>>) -> Self {
+        self.with_auxiliary_data(auxiliary_data)
+    }
+
+    /// Append one auxiliary-data byte.
+    pub fn with_auxiliary_data_byte(mut self, byte: u8) -> Self {
+        self.auxiliary_data.push(byte);
+        self
+    }
+
+    /// Source-backed Record Type classification.
+    pub fn record_type(&self) -> IgmpRecordType {
+        self.record_type
+    }
+
+    /// Raw Record Type byte.
+    pub fn record_type_value(&self) -> u8 {
+        self.record_type.code()
+    }
+
+    /// Raw Record Type byte.
+    pub fn raw_record_type_value(&self) -> u8 {
+        self.record_type_value()
+    }
+
+    /// Source-backed Record Type metadata.
+    pub fn record_type_meta(&self) -> IgmpRecordTypeMeta {
+        self.record_type.meta()
+    }
+
+    /// Aux Data Len field value in 32-bit words.
+    pub fn auxiliary_data_len_value(&self) -> u8 {
+        if self.auxiliary_data.is_empty() {
+            return value_or_copy(&self.auxiliary_data_len, IGMP_DEFAULT_AUX_DATA_LEN);
+        }
+        value_or_copy(
+            &self.auxiliary_data_len,
+            auxiliary_data_len_words(self.auxiliary_data.len()),
+        )
+    }
+
+    /// Compatibility alias for the Aux Data Len field.
+    pub fn aux_data_len_value(&self) -> u8 {
+        self.auxiliary_data_len_value()
+    }
+
+    /// Number of Sources field value, derived from the vector unless explicit.
+    pub fn number_of_sources_value(&self) -> u16 {
+        if self.source_addresses.is_empty() {
+            return value_or_copy(&self.number_of_sources, IGMP_DEFAULT_SOURCE_COUNT);
+        }
+        value_or_copy(&self.number_of_sources, self.source_addresses.len() as u16)
+    }
+
+    /// Multicast Address field.
+    pub fn multicast_address(&self) -> Ipv4Addr {
+        self.multicast_address
+    }
+
+    /// Multicast Address field.
+    pub fn multicast_address_value(&self) -> Ipv4Addr {
+        self.multicast_address
+    }
+
+    /// Source Address vector.
+    pub fn source_addresses(&self) -> &[Ipv4Addr] {
+        &self.source_addresses
+    }
+
+    /// Auxiliary-data bytes as supplied by the caller or decoder.
+    pub fn auxiliary_data(&self) -> &[u8] {
+        &self.auxiliary_data
+    }
+
+    /// Compatibility alias for auxiliary-data bytes.
+    pub fn aux_data(&self) -> &[u8] {
+        self.auxiliary_data()
+    }
+
+    /// Assignment state for the Aux Data Len field.
+    pub fn auxiliary_data_len_state(&self) -> FieldState {
+        self.auxiliary_data_len.state()
+    }
+
+    /// Compatibility alias for the Aux Data Len field state.
+    pub fn aux_data_len_state(&self) -> FieldState {
+        self.auxiliary_data_len_state()
+    }
+
+    /// Assignment state for the Number of Sources field.
+    pub fn number_of_sources_state(&self) -> FieldState {
+        self.number_of_sources.state()
+    }
+
+    /// One-line record summary.
+    pub fn summary(&self) -> String {
+        format!(
+            "IgmpGroupRecord(type={}, group={}, sources={}, aux_words={}, aux={}B)",
+            self.record_type,
+            self.multicast_address,
+            self.number_of_sources_value(),
+            self.auxiliary_data_len_value(),
+            self.auxiliary_data.len()
+        )
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            (
+                "record_type",
+                format!("{} (0x{:02x})", self.record_type, self.record_type_value()),
+            ),
+            (
+                "auxiliary_data_len",
+                self.auxiliary_data_len_value().to_string(),
+            ),
+            (
+                "number_of_sources",
+                self.number_of_sources_value().to_string(),
+            ),
+            ("multicast_address", self.multicast_address.to_string()),
+            (
+                "source_addresses",
+                self.source_addresses
+                    .iter()
+                    .map(Ipv4Addr::to_string)
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ),
+            ("auxiliary_data", hex_bytes(&self.auxiliary_data)),
+        ]
+    }
+
+    /// Serialized length in octets.
+    pub fn encoded_len(&self) -> usize {
+        IGMP_V3_GROUP_RECORD_HEADER_LEN
+            + self.source_addresses.len() * 4
+            + usize::from(self.auxiliary_data_len_value()) * IGMP_GROUP_RECORD_AUX_DATA_UNIT
+    }
+
+    /// Serialize this group record to its wire bytes.
+    pub fn compile(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(self.encoded_len());
+        self.encode_into(&mut bytes);
+        bytes
+    }
+
+    /// Append this group record's wire bytes to `out`.
+    pub(crate) fn encode_into(&self, out: &mut Vec<u8>) {
+        out.push(self.record_type_value());
+        out.push(self.auxiliary_data_len_value());
+        out.extend_from_slice(&self.number_of_sources_value().to_be_bytes());
+        out.extend_from_slice(&self.multicast_address.octets());
+        for source_address in &self.source_addresses {
+            out.extend_from_slice(&source_address.octets());
+        }
+
+        let auxiliary_len =
+            usize::from(self.auxiliary_data_len_value()) * IGMP_GROUP_RECORD_AUX_DATA_UNIT;
+        if self.auxiliary_data.len() >= auxiliary_len {
+            out.extend_from_slice(&self.auxiliary_data[..auxiliary_len]);
+        } else {
+            out.extend_from_slice(&self.auxiliary_data);
+            out.resize(out.len() + auxiliary_len - self.auxiliary_data.len(), 0);
+        }
+    }
+}
+
+impl Default for IgmpGroupRecord {
+    fn default() -> Self {
+        Self::new(IgmpRecordType::Reserved, Ipv4Addr::UNSPECIFIED)
+    }
+}
+
+impl core::fmt::Display for IgmpGroupRecord {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(&self.summary())
+    }
+}
+
+fn auxiliary_data_len_words(auxiliary_data_len: usize) -> u8 {
+    let words = auxiliary_data_len.div_ceil(IGMP_GROUP_RECORD_AUX_DATA_UNIT);
+    u8::try_from(words).unwrap_or(u8::MAX)
+}
+
+fn value_or_copy<T: Copy>(field: &Field<T>, default: T) -> T {
+    field.value().copied().unwrap_or(default)
+}
+
+fn hex_bytes(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+#[cfg(test)]
+mod igmp_group_record_model {
+    use super::*;
+
+    fn doc_group() -> Ipv4Addr {
+        Ipv4Addr::new(233, 252, 0, 80)
+    }
+
+    fn doc_source_a() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 10)
+    }
+
+    fn doc_source_b() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 20)
+    }
+
+    #[test]
+    fn igmp_group_record_model_defaults_to_empty_reserved_record() {
+        let record = IgmpGroupRecord::default();
+
+        assert_eq!(record.record_type(), IgmpRecordType::Reserved);
+        assert_eq!(record.record_type_value(), 0);
+        assert_eq!(record.raw_record_type_value(), 0);
+        assert_eq!(
+            record.record_type_meta().status,
+            IgmpRecordTypeStatus::Reserved
+        );
+        assert_eq!(record.auxiliary_data_len_value(), 0);
+        assert_eq!(record.number_of_sources_value(), 0);
+        assert_eq!(record.multicast_address(), Ipv4Addr::UNSPECIFIED);
+        assert_eq!(record.multicast_address_value(), Ipv4Addr::UNSPECIFIED);
+        assert!(record.source_addresses().is_empty());
+        assert!(record.auxiliary_data().is_empty());
+        assert!(record.aux_data().is_empty());
+        assert_eq!(record.auxiliary_data_len_state(), FieldState::Unset);
+        assert_eq!(record.aux_data_len_state(), FieldState::Unset);
+        assert_eq!(record.number_of_sources_state(), FieldState::Unset);
+        assert_eq!(record.encoded_len(), IGMP_V3_GROUP_RECORD_HEADER_LEN);
+        assert_eq!(record.compile(), vec![0, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(
+            record.summary(),
+            "IgmpGroupRecord(type=Reserved, group=0.0.0.0, sources=0, aux_words=0, aux=0B)"
+        );
+    }
+
+    #[test]
+    fn igmp_group_record_model_auto_fills_sources_and_known_record_type() {
+        let record = IgmpGroupRecord::mode_is_include(doc_group())
+            .with_source_address(doc_source_a())
+            .with_source_address(doc_source_b());
+
+        assert_eq!(record.record_type(), IgmpRecordType::ModeIsInclude);
+        assert_eq!(record.record_type_value(), IGMP_RECORD_TYPE_MODE_IS_INCLUDE);
+        assert_eq!(record.number_of_sources_value(), 2);
+        assert_eq!(record.number_of_sources_state(), FieldState::Unset);
+        assert_eq!(record.auxiliary_data_len_value(), 0);
+        assert_eq!(record.source_addresses(), &[doc_source_a(), doc_source_b()]);
+        assert_eq!(
+            record.summary(),
+            "IgmpGroupRecord(type=MODE_IS_INCLUDE, group=233.252.0.80, sources=2, aux_words=0, aux=0B)"
+        );
+        assert_eq!(
+            record.inspection_fields(),
+            vec![
+                ("record_type", "MODE_IS_INCLUDE (0x01)".to_string()),
+                ("auxiliary_data_len", "0".to_string()),
+                ("number_of_sources", "2".to_string()),
+                ("multicast_address", "233.252.0.80".to_string()),
+                ("source_addresses", "192.0.2.10,198.51.100.20".to_string()),
+                ("auxiliary_data", String::new()),
+            ]
+        );
+
+        assert_eq!(
+            record.compile(),
+            vec![0x01, 0x00, 0x00, 0x02, 233, 252, 0, 80, 192, 0, 2, 10, 198, 51, 100, 20,]
+        );
+    }
+
+    #[test]
+    fn igmp_group_record_model_preserves_unknown_record_type() {
+        let record = IgmpGroupRecord::new(IgmpRecordType::ModeIsExclude, doc_group())
+            .with_raw_record_type(0xc8);
+
+        assert_eq!(record.record_type(), IgmpRecordType::Unknown(0xc8));
+        assert_eq!(record.record_type_value(), 0xc8);
+        assert_eq!(
+            record.record_type_meta().status,
+            IgmpRecordTypeStatus::Unassigned
+        );
+        assert_eq!(record.compile()[0], 0xc8);
+    }
+
+    #[test]
+    fn igmp_group_record_model_auto_fills_auxiliary_data_length_and_padding() {
+        let record =
+            IgmpGroupRecord::allow_new_sources(doc_group()).with_auxiliary_data([0xde, 0xad, 0xbe]);
+
+        assert_eq!(record.auxiliary_data_len_value(), 1);
+        assert_eq!(record.auxiliary_data_len_state(), FieldState::Unset);
+        assert_eq!(record.encoded_len(), IGMP_V3_GROUP_RECORD_HEADER_LEN + 4);
+        assert_eq!(record.auxiliary_data(), &[0xde, 0xad, 0xbe]);
+        assert_eq!(
+            record.compile(),
+            vec![0x05, 0x01, 0x00, 0x00, 233, 252, 0, 80, 0xde, 0xad, 0xbe, 0x00]
+        );
+    }
+
+    #[test]
+    fn igmp_group_record_model_preserves_explicit_count_and_longer_aux_length() {
+        let record = IgmpGroupRecord::block_old_sources(doc_group())
+            .with_source_addresses(vec![doc_source_a(), doc_source_b()])
+            .with_number_of_sources(7)
+            .with_aux_data([1, 2, 3])
+            .with_aux_data_len(2);
+
+        assert_eq!(record.number_of_sources_value(), 7);
+        assert_eq!(record.number_of_sources_state(), FieldState::User);
+        assert_eq!(record.aux_data_len_value(), 2);
+        assert_eq!(record.aux_data_len_state(), FieldState::User);
+        assert_eq!(
+            record.compile(),
+            vec![
+                0x06, 0x02, 0x00, 0x07, 233, 252, 0, 80, 192, 0, 2, 10, 198, 51, 100, 20, 1, 2, 3,
+                0, 0, 0, 0, 0,
+            ]
+        );
+    }
+
+    #[test]
+    fn igmp_group_record_model_explicit_short_aux_length_truncates_encoded_aux_region() {
+        let record = IgmpGroupRecord::change_to_exclude_mode(doc_group())
+            .with_auxiliary_data([1, 2, 3, 4, 5, 6])
+            .with_auxiliary_data_len(1);
+
+        assert_eq!(record.auxiliary_data(), &[1, 2, 3, 4, 5, 6]);
+        assert_eq!(record.auxiliary_data_len_value(), 1);
+        assert_eq!(record.encoded_len(), IGMP_V3_GROUP_RECORD_HEADER_LEN + 4);
+        assert_eq!(
+            record.compile(),
+            vec![0x04, 0x01, 0x00, 0x00, 233, 252, 0, 80, 1, 2, 3, 4]
+        );
     }
 }
 
