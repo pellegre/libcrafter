@@ -83,6 +83,14 @@ impl Igmp {
             .with_group_address(group_address)
     }
 
+    /// Build an IGMPv2 Leave Group fixed header for `group_address`.
+    pub fn v2_leave_group(group_address: Ipv4Addr) -> Self {
+        Self::new()
+            .with_igmp_type(IgmpType::V2LeaveGroup)
+            .with_code(IGMP_DEFAULT_CODE)
+            .with_group_address(group_address)
+    }
+
     /// Build an IGMPv3 Membership Report leading header.
     ///
     /// Later report-body steps model group records. Until then this constructor
@@ -866,5 +874,110 @@ mod igmp_v2_membership_report {
 
         assert_eq!(bytes[8], 64);
         assert_eq!(&bytes[16..20], &Ipv4Addr::LOCALHOST.octets());
+    }
+}
+
+#[cfg(test)]
+mod igmp_v2_leave_group {
+    use super::*;
+    use crate::checksum::verify_internet_checksum;
+    use crate::field::FieldState;
+    use crate::packet::Packet;
+    use crate::protocols::igmp::constants::{
+        IGMP_DEFAULT_CODE, IGMP_TYPE_V2_LEAVE_GROUP,
+    };
+    use crate::protocols::igmp::decode::decode;
+    use crate::protocols::igmp::registry::IgmpTypeStatus;
+
+    const DOC_GROUP: Ipv4Addr = Ipv4Addr::new(233, 252, 0, 17);
+    const LEAVE_GROUP_FIXTURE: [u8; IGMP_FIXED_HEADER_LEN] = [
+        IGMP_TYPE_V2_LEAVE_GROUP,
+        IGMP_DEFAULT_CODE,
+        0xfe,
+        0xf1,
+        233,
+        252,
+        0,
+        17,
+    ];
+
+    fn compile_layer(igmp: Igmp) -> Vec<u8> {
+        Packet::from_layer(igmp)
+            .compile()
+            .expect("compile IGMPv2 leave group")
+            .as_bytes()
+            .to_vec()
+    }
+
+    #[test]
+    fn igmp_v2_leave_group_constructor_sets_leave_fields() {
+        let igmp = Igmp::v2_leave_group(DOC_GROUP);
+
+        assert_eq!(igmp.igmp_type_value(), IGMP_TYPE_V2_LEAVE_GROUP);
+        assert_eq!(igmp.igmp_type(), IgmpType::V2LeaveGroup);
+        assert_eq!(igmp.type_meta().name, "IGMPv2 Leave Group");
+        assert_eq!(igmp.type_meta().status, IgmpTypeStatus::Assigned);
+        assert_eq!(igmp.code_value(), IGMP_DEFAULT_CODE);
+        assert_eq!(igmp.code_meta().name, "No registered code");
+        assert_eq!(igmp.group_address_value(), DOC_GROUP);
+        assert_eq!(igmp.igmp_type_state(), FieldState::User);
+        assert_eq!(igmp.code_state(), FieldState::User);
+        assert_eq!(igmp.group_address_state(), FieldState::User);
+        assert_eq!(igmp.checksum_state(), FieldState::Unset);
+        assert_eq!(igmp.checksum_value(), None);
+    }
+
+    #[test]
+    fn igmp_v2_leave_group_compiles_to_documentation_fixture() {
+        let bytes = compile_layer(Igmp::v2_leave_group(DOC_GROUP));
+
+        assert_eq!(bytes, LEAVE_GROUP_FIXTURE);
+        assert!(verify_internet_checksum(&bytes));
+    }
+
+    #[test]
+    fn igmp_v2_leave_group_decodes_to_inspectable_fields() {
+        let checksum = u16::from_be_bytes([LEAVE_GROUP_FIXTURE[2], LEAVE_GROUP_FIXTURE[3]]);
+        let decoded = decode(&LEAVE_GROUP_FIXTURE).expect("decode IGMPv2 leave group");
+
+        assert_eq!(decoded.igmp_type(), IgmpType::V2LeaveGroup);
+        assert_eq!(decoded.type_meta().name, "IGMPv2 Leave Group");
+        assert_eq!(decoded.code_value(), IGMP_DEFAULT_CODE);
+        assert_eq!(decoded.group_address_value(), DOC_GROUP);
+        assert_eq!(decoded.checksum_value(), Some(checksum));
+        assert_eq!(decoded.igmp_type_state(), FieldState::User);
+        assert_eq!(decoded.code_state(), FieldState::User);
+        assert_eq!(decoded.checksum_state(), FieldState::User);
+        assert_eq!(decoded.group_address_state(), FieldState::User);
+        assert_eq!(compile_layer(decoded.clone()), LEAVE_GROUP_FIXTURE);
+
+        let packet = Packet::from_layer(decoded);
+        assert_eq!(
+            packet.summary(),
+            "Igmp(type=IGMPv2 Leave Group, code=No registered code, group=233.252.0.17)"
+        );
+        let show = packet.show();
+        assert!(
+            show.contains("type: IGMPv2 Leave Group (0x17)"),
+            "{show}"
+        );
+        assert!(show.contains("code: No registered code (0x00)"), "{show}");
+        assert!(show.contains("group_address: 233.252.0.17"), "{show}");
+        assert!(show.contains(&format!("checksum: 0x{checksum:04x}")), "{show}");
+    }
+
+    #[test]
+    fn igmp_v2_leave_group_preserves_explicit_code_and_checksum() {
+        let bytes = compile_layer(
+            Igmp::v2_leave_group(DOC_GROUP)
+                .with_code(0xaa)
+                .checksum(0x1234),
+        );
+
+        assert_eq!(
+            bytes.as_slice(),
+            &[IGMP_TYPE_V2_LEAVE_GROUP, 0xaa, 0x12, 0x34, 233, 252, 0, 17]
+        );
+        assert!(!verify_internet_checksum(&bytes));
     }
 }
