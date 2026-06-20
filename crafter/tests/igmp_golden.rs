@@ -1,9 +1,11 @@
 //! Golden byte fixtures pinning bootstrap IPv4/IGMP behavior.
 //!
 //! The cases here cover the source-backed fixed-header surface currently
-//! implemented for IGMP: a Membership Query and an IGMPv1 Membership Report.
-//! They stay offline and use RFC 5771's multicast documentation block
-//! (`233.252.0.0/24`) plus IPv4 documentation source addresses.
+//! implemented for IGMP: Membership Query, IGMPv1/v2 Membership Report, and
+//! IGMPv2 Leave Group. They stay offline and use RFC 5737 source addresses,
+//! RFC 5771 multicast documentation group addresses, and the source-backed
+//! all-systems/all-routers destinations where the IGMPv2 packet shape calls
+//! for them.
 
 #[macro_use]
 mod support;
@@ -17,15 +19,32 @@ use crafter::wire::backend::pcap::{
 
 const DOC_SRC_QUERY: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 10);
 const DOC_SRC_REPORT: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 20);
+const DOC_SRC_V2_QUERY: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 30);
+const DOC_SRC_V2_REPORT: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 40);
+const DOC_SRC_V2_LEAVE: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 50);
 const DOC_MCAST_QUERY: Ipv4Addr = Ipv4Addr::new(233, 252, 0, 1);
 const DOC_MCAST_REPORT: Ipv4Addr = Ipv4Addr::new(233, 252, 0, 42);
+const DOC_MCAST_V2_REPORT: Ipv4Addr = Ipv4Addr::new(233, 252, 0, 43);
+const DOC_MCAST_V2_LEAVE: Ipv4Addr = Ipv4Addr::new(233, 252, 0, 17);
+const ALL_SYSTEMS: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 1);
+const ALL_ROUTERS: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 2);
+const V2_QUERY_MAX_RESPONSE_TENTHS: u8 = 100;
 
 const QUERY_BYTES: &str = fixture_str!("bytes/ipv4-igmp-v1-query.hex");
 const REPORT_BYTES: &str = fixture_str!("bytes/ipv4-igmp-v1-report.hex");
+const V2_QUERY_BYTES: &str = fixture_str!("bytes/ipv4-igmp-v2-query.hex");
+const V2_REPORT_BYTES: &str = fixture_str!("bytes/ipv4-igmp-v2-report.hex");
+const V2_LEAVE_BYTES: &str = fixture_str!("bytes/ipv4-igmp-v2-leave.hex");
 const QUERY_SUMMARY: &str = fixture_str!("summaries/ipv4-igmp-v1-query.summary.txt");
 const REPORT_SUMMARY: &str = fixture_str!("summaries/ipv4-igmp-v1-report.summary.txt");
+const V2_QUERY_SUMMARY: &str = fixture_str!("summaries/ipv4-igmp-v2-query.summary.txt");
+const V2_REPORT_SUMMARY: &str = fixture_str!("summaries/ipv4-igmp-v2-report.summary.txt");
+const V2_LEAVE_SUMMARY: &str = fixture_str!("summaries/ipv4-igmp-v2-leave.summary.txt");
 const QUERY_SHOW: &str = fixture_str!("summaries/ipv4-igmp-v1-query-show.summary.txt");
 const REPORT_SHOW: &str = fixture_str!("summaries/ipv4-igmp-v1-report-show.summary.txt");
+const V2_QUERY_SHOW: &str = fixture_str!("summaries/ipv4-igmp-v2-query-show.summary.txt");
+const V2_REPORT_SHOW: &str = fixture_str!("summaries/ipv4-igmp-v2-report-show.summary.txt");
+const V2_LEAVE_SHOW: &str = fixture_str!("summaries/ipv4-igmp-v2-leave-show.summary.txt");
 const IGMP_PCAP: &[u8] = fixture_bytes!("pcaps/raw-ipv4-igmp-bootstrap.pcap");
 
 #[derive(Clone, Copy)]
@@ -55,6 +74,30 @@ const CASES: &[IgmpGoldenCase] = &[
         show_fixture: REPORT_SHOW,
         timestamp_micros: 2,
     },
+    IgmpGoldenCase {
+        name: "ipv4-igmp-v2-query",
+        build: build_v2_query,
+        bytes_fixture: V2_QUERY_BYTES,
+        summary_fixture: V2_QUERY_SUMMARY,
+        show_fixture: V2_QUERY_SHOW,
+        timestamp_micros: 3,
+    },
+    IgmpGoldenCase {
+        name: "ipv4-igmp-v2-report",
+        build: build_v2_report,
+        bytes_fixture: V2_REPORT_BYTES,
+        summary_fixture: V2_REPORT_SUMMARY,
+        show_fixture: V2_REPORT_SHOW,
+        timestamp_micros: 4,
+    },
+    IgmpGoldenCase {
+        name: "ipv4-igmp-v2-leave",
+        build: build_v2_leave,
+        bytes_fixture: V2_LEAVE_BYTES,
+        summary_fixture: V2_LEAVE_SUMMARY,
+        show_fixture: V2_LEAVE_SHOW,
+        timestamp_micros: 5,
+    },
 ];
 
 fn ipv4(src: Ipv4Addr, dst: Ipv4Addr, id: u16) -> Ipv4 {
@@ -71,8 +114,21 @@ fn build_query() -> Packet {
 }
 
 fn build_report() -> Packet {
-    ipv4(DOC_SRC_REPORT, DOC_MCAST_REPORT, 0x1702)
-        / Igmp::v1_membership_report(DOC_MCAST_REPORT)
+    ipv4(DOC_SRC_REPORT, DOC_MCAST_REPORT, 0x1702) / Igmp::v1_membership_report(DOC_MCAST_REPORT)
+}
+
+fn build_v2_query() -> Packet {
+    ipv4(DOC_SRC_V2_QUERY, ALL_SYSTEMS, 0x1703)
+        / Igmp::membership_query().with_v2_max_response_time_tenths(V2_QUERY_MAX_RESPONSE_TENTHS)
+}
+
+fn build_v2_report() -> Packet {
+    ipv4(DOC_SRC_V2_REPORT, DOC_MCAST_V2_REPORT, 0x1704)
+        / Igmp::v2_membership_report(DOC_MCAST_V2_REPORT)
+}
+
+fn build_v2_leave() -> Packet {
+    ipv4(DOC_SRC_V2_LEAVE, ALL_ROUTERS, 0x1705) / Igmp::v2_leave_group(DOC_MCAST_V2_LEAVE)
 }
 
 fn decode_hex(label: &str, text: &str) -> Vec<u8> {
@@ -125,7 +181,10 @@ fn assert_case(case: IgmpGoldenCase) -> crafter::Result<Packet> {
     assert_eq!(igmp.checksum_state(), FieldState::User);
 
     maybe_dump(case.name, compiled.as_bytes(), Some(&decoded));
-    assert_eq!(decoded.summary().trim_end(), case.summary_fixture.trim_end());
+    assert_eq!(
+        decoded.summary().trim_end(),
+        case.summary_fixture.trim_end()
+    );
     assert_eq!(decoded.show().trim_end(), case.show_fixture.trim_end());
 
     Ok(decoded)
@@ -164,6 +223,58 @@ fn igmp_golden_v1_membership_report() -> crafter::Result<()> {
     assert_eq!(igmp.igmp_type(), IgmpType::V1MembershipReport);
     assert_eq!(igmp.code_value(), IGMP_DEFAULT_CODE);
     assert_eq!(igmp.group_address_value(), DOC_MCAST_REPORT);
+
+    Ok(())
+}
+
+#[test]
+fn igmp_golden_v2_membership_query() -> crafter::Result<()> {
+    let decoded = assert_case(CASES[2])?;
+    let ipv4 = decoded.layer::<Ipv4>().expect("decoded IPv4 query");
+    let igmp = decoded.layer::<Igmp>().expect("decoded IGMP v2 query");
+
+    assert_eq!(ipv4.source(), DOC_SRC_V2_QUERY);
+    assert_eq!(ipv4.destination(), ALL_SYSTEMS);
+    assert_eq!(igmp.igmp_type(), IgmpType::MembershipQuery);
+    assert_eq!(igmp.code_value(), V2_QUERY_MAX_RESPONSE_TENTHS);
+    assert_eq!(
+        igmp.v2_max_response_time_tenths(),
+        V2_QUERY_MAX_RESPONSE_TENTHS
+    );
+    assert_eq!(igmp.group_address_value(), Ipv4Addr::UNSPECIFIED);
+    assert_eq!(igmp.checksum_value(), Some(0xee9b));
+
+    Ok(())
+}
+
+#[test]
+fn igmp_golden_v2_membership_report() -> crafter::Result<()> {
+    let decoded = assert_case(CASES[3])?;
+    let ipv4 = decoded.layer::<Ipv4>().expect("decoded IPv4 report");
+    let igmp = decoded.layer::<Igmp>().expect("decoded IGMP v2 report");
+
+    assert_eq!(ipv4.source(), DOC_SRC_V2_REPORT);
+    assert_eq!(ipv4.destination(), DOC_MCAST_V2_REPORT);
+    assert_eq!(igmp.igmp_type(), IgmpType::V2MembershipReport);
+    assert_eq!(igmp.code_value(), IGMP_DEFAULT_CODE);
+    assert_eq!(igmp.group_address_value(), DOC_MCAST_V2_REPORT);
+    assert_eq!(igmp.checksum_value(), Some(0xffd7));
+
+    Ok(())
+}
+
+#[test]
+fn igmp_golden_v2_leave_group() -> crafter::Result<()> {
+    let decoded = assert_case(CASES[4])?;
+    let ipv4 = decoded.layer::<Ipv4>().expect("decoded IPv4 leave");
+    let igmp = decoded.layer::<Igmp>().expect("decoded IGMP v2 leave");
+
+    assert_eq!(ipv4.source(), DOC_SRC_V2_LEAVE);
+    assert_eq!(ipv4.destination(), ALL_ROUTERS);
+    assert_eq!(igmp.igmp_type(), IgmpType::V2LeaveGroup);
+    assert_eq!(igmp.code_value(), IGMP_DEFAULT_CODE);
+    assert_eq!(igmp.group_address_value(), DOC_MCAST_V2_LEAVE);
+    assert_eq!(igmp.checksum_value(), Some(0xfef1));
 
     Ok(())
 }

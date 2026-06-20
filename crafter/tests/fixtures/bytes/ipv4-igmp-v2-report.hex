@@ -1,0 +1,7 @@
+# IPv4 / IGMPv2 Membership Report fixture.
+# IGMP fixed header: RFC 2236 Type 0x16, Code 0, checksum over the IGMP
+# message, and the reported multicast Group Address.
+# Addresses use RFC 5737 source space and RFC 5771 multicast documentation
+# destination/group space; this is not captured live traffic.
+45 00 00 1c 17 04 00 00 01 02 f6 8c c0 00 02 28 e9 fc 00 2b
+16 00 ff d7 e9 fc 00 2b

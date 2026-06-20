@@ -1,0 +1,25 @@
+Packet(len=28, layers=2)
+  [0] Ipv4
+      version: 4
+      ihl: 5
+      tos: 0
+      dscp: 0
+      ecn: Not-ECT
+      total_length: 28
+      id: 0x1703
+      flags: none
+      fragment_offset: 0
+      ttl: 1
+      protocol: igmp(2)
+      checksum: 0x00be
+      checksum_status: valid
+      src: 192.0.2.30
+      dst: 224.0.0.1
+      option_count: 0
+      options: 
+  [1] Igmp
+      type: IGMP Membership Query (0x11)
+      code: Max Response Time (0x64)
+      checksum: 0xee9b
+      group_address: 0.0.0.0
+      length: 8

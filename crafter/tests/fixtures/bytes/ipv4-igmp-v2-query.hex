@@ -1,0 +1,7 @@
+# IPv4 / IGMPv2 Membership Query fixture.
+# IGMP fixed header: RFC 2236/RFC 9776 Type 0x11, Max Response Time 100
+# tenths of a second, checksum over the IGMP message, and zero Group Address
+# for a General Query. The IPv4 destination is the RFC 1112 all-systems group.
+# Source uses RFC 5737 documentation space; this is not captured live traffic.
+45 00 00 1c 17 03 00 00 01 02 00 be c0 00 02 1e e0 00 00 01
+11 64 ee 9b 00 00 00 00
