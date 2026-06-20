@@ -15,6 +15,13 @@
       "198.51.100.20",
       "198.51.100.53",
       "203.0.113.1",
+      "224.0.0.1",
+      "224.0.0.2",
+      "224.0.0.22",
+      "224.0.0.106",
+      "233.252.0.1",
+      "233.252.0.2",
+      "233.252.0.17",
       "255.255.255.255"
     ],
       "ipv6": [
@@ -1241,6 +1248,466 @@
       "strict_bytes": true,
       "status": "implemented",
       "notes": "libcrafter Icmpv6::mldv2_query (RFC 3810 section 5.1) decodes in Scapy as IPv6/ICMPv6MLQuery2 with the same Multicast Address, Maximum Response Code, QRV, QQIC, and (empty) source list, byte-for-byte, and is selected as the MLDv2 query (type 130 longer body) rather than the MLDv1 query. Mirrors the scapy_to_libcrafter mldv2-general-query case."
+    },
+    {
+      "name": "igmp-membership-query",
+      "family": "igmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "IGMP"
+      ],
+      "strict_bytes": true,
+      "status": "planned",
+      "notes": "Planned IGMP Scapy case. IGMPv1 Membership Query over IPv4 protocol 2, TTL 1, and All-Systems destination. Scapy can use its native IGMP layer for the fixed 8-octet header; later materializer support owns exact bytes."
+    },
+    {
+      "name": "igmp-v2-membership-query",
+      "family": "igmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "IGMP"
+      ],
+      "strict_bytes": true,
+      "status": "planned",
+      "notes": "Planned IGMP Scapy case. IGMPv2 Membership Query with a nonzero Max Response Time and zero Group Address, using native Scapy IGMP fields where available."
+    },
+    {
+      "name": "igmp-v1-membership-report",
+      "family": "igmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "IGMP"
+      ],
+      "strict_bytes": true,
+      "status": "planned",
+      "notes": "Planned IGMP Scapy case. IGMPv1 Membership Report preserves the Type, Code zero, checksum, and RFC 5771 documentation multicast group address."
+    },
+    {
+      "name": "igmp-v2-membership-report",
+      "family": "igmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "IGMP"
+      ],
+      "strict_bytes": true,
+      "status": "planned",
+      "notes": "Planned IGMP Scapy case. IGMPv2 Membership Report over IPv4 with a deterministic documentation multicast group address."
+    },
+    {
+      "name": "igmp-v2-leave-group",
+      "family": "igmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "IGMP"
+      ],
+      "strict_bytes": true,
+      "status": "planned",
+      "notes": "Planned IGMP Scapy case. IGMPv2 Leave Group sent to the All-Routers destination and carrying a byte-stable group address."
+    },
+    {
+      "name": "igmp-checksum-explicit-invalid",
+      "family": "igmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "IGMP"
+      ],
+      "strict_bytes": true,
+      "status": "planned",
+      "notes": "Planned IGMP Scapy case. Explicitly invalid IGMP checksum bytes must be preserved rather than recalculated by the comparison path."
+    },
+    {
+      "name": "igmp-unknown-type-raw",
+      "family": "igmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "Raw"
+      ],
+      "strict_bytes": true,
+      "status": "planned",
+      "notes": "Planned IGMP Scapy case. Unknown IGMP Type value is supplied as Scapy-owned raw IPv4 protocol 2 bytes so libcrafter can decode the valid fixed header and preserve the payload as Raw."
+    },
+    {
+      "name": "igmp-unsupported-assigned-type-raw",
+      "family": "igmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "Raw"
+      ],
+      "strict_bytes": true,
+      "status": "planned",
+      "notes": "Planned IGMP Scapy case. Unsupported assigned IGMP Type value, such as DVMRP or PIMv1, remains byte-preserving raw payload data rather than gaining protocol behavior."
+    },
+    {
+      "name": "igmp-v3-query-general",
+      "family": "igmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "IGMPv3",
+        "IGMPv3mq"
+      ],
+      "strict_bytes": true,
+      "status": "planned",
+      "notes": "Planned IGMP Scapy case. IGMPv3 General Query with zero Group Address, QRV/QQIC fields, and an empty source list."
+    },
+    {
+      "name": "igmp-v3-query-group-specific",
+      "family": "igmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "IGMPv3",
+        "IGMPv3mq"
+      ],
+      "strict_bytes": true,
+      "status": "planned",
+      "notes": "Planned IGMP Scapy case. IGMPv3 Group-Specific Query carries a documentation multicast Group Address with zero sources."
+    },
+    {
+      "name": "igmp-v3-query-group-and-source-specific",
+      "family": "igmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "IGMPv3",
+        "IGMPv3mq"
+      ],
+      "strict_bytes": true,
+      "status": "planned",
+      "notes": "Planned IGMP Scapy case. IGMPv3 Group-and-Source-Specific Query carries a deterministic source list and auto-filled source count."
+    },
+    {
+      "name": "igmp-v3-query-source-count-override",
+      "family": "igmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "IGMPv3",
+        "Raw"
+      ],
+      "strict_bytes": true,
+      "status": "planned",
+      "notes": "Planned IGMP Scapy case. Explicit source-count override is compared as stable bytes because Scapy may normalize native source-list counts."
+    },
+    {
+      "name": "igmp-v3-query-checksum-explicit-invalid",
+      "family": "igmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "IGMPv3",
+        "IGMPv3mq"
+      ],
+      "strict_bytes": true,
+      "status": "planned",
+      "notes": "Planned IGMP Scapy case. IGMPv3 Query with an explicitly invalid checksum must remain byte-stable."
+    },
+    {
+      "name": "igmp-v3-query-ignored-extra-octets",
+      "family": "igmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "IGMPv3",
+        "IGMPv3mq",
+        "Raw"
+      ],
+      "strict_bytes": true,
+      "status": "planned",
+      "notes": "Planned IGMP Scapy case. Extra checksum-covered IGMPv3 Query octets remain visible as Raw after the declared source list."
+    },
+    {
+      "name": "igmp-v3-report-empty",
+      "family": "igmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "IGMPv3",
+        "IGMPv3mr"
+      ],
+      "strict_bytes": true,
+      "status": "planned",
+      "notes": "Planned IGMP Scapy case. IGMPv3 Membership Report with zero Group Records and strict checksum bytes."
+    },
+    {
+      "name": "igmp-v3-report-include-record",
+      "family": "igmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "IGMPv3",
+        "IGMPv3mr",
+        "IGMPv3gr"
+      ],
+      "strict_bytes": true,
+      "status": "planned",
+      "notes": "Planned IGMP Scapy case. IGMPv3 Report with one MODE_IS_INCLUDE group record and deterministic source list bytes."
+    },
+    {
+      "name": "igmp-v3-report-exclude-record",
+      "family": "igmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "IGMPv3",
+        "IGMPv3mr",
+        "IGMPv3gr"
+      ],
+      "strict_bytes": true,
+      "status": "planned",
+      "notes": "Planned IGMP Scapy case. IGMPv3 Report with one MODE_IS_EXCLUDE record and byte-stable empty or explicit source list fields."
+    },
+    {
+      "name": "igmp-v3-report-source-list-change-records",
+      "family": "igmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "IGMPv3",
+        "IGMPv3mr",
+        "IGMPv3gr",
+        "IGMPv3gr"
+      ],
+      "strict_bytes": true,
+      "status": "planned",
+      "notes": "Planned IGMP Scapy case. IGMPv3 Report covers source-list-change record types with multiple records and stable record ordering."
+    },
+    {
+      "name": "igmp-v3-report-auxiliary-data-record",
+      "family": "igmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "IGMPv3",
+        "IGMPv3mr",
+        "IGMPv3gr",
+        "Raw"
+      ],
+      "strict_bytes": true,
+      "status": "planned",
+      "notes": "Planned IGMP Scapy case. IGMPv3 Group Record auxiliary data is compared as raw bytes because Scapy may not expose typed aux-data helpers."
+    },
+    {
+      "name": "igmp-v3-report-unknown-record-type",
+      "family": "igmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "IGMPv3",
+        "IGMPv3mr",
+        "IGMPv3gr"
+      ],
+      "strict_bytes": true,
+      "status": "planned",
+      "notes": "Planned IGMP Scapy case. Unknown IGMPv3 Group Record Type remains numeric and byte-preserving."
+    },
+    {
+      "name": "igmp-v3-report-count-override",
+      "family": "igmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "IGMPv3",
+        "Raw"
+      ],
+      "strict_bytes": true,
+      "status": "planned",
+      "notes": "Planned IGMP Scapy case. Explicit report record-count override is supplied as raw stable bytes so normalization cannot hide the override."
+    },
+    {
+      "name": "igmp-v3-report-checksum-explicit-invalid",
+      "family": "igmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "IGMPv3",
+        "IGMPv3mr"
+      ],
+      "strict_bytes": true,
+      "status": "planned",
+      "notes": "Planned IGMP Scapy case. IGMPv3 Report with an intentionally invalid checksum stays byte-stable."
+    },
+    {
+      "name": "igmp-extension-query-noop",
+      "family": "igmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "IGMPv3",
+        "IGMPv3mq",
+        "Raw"
+      ],
+      "strict_bytes": true,
+      "status": "planned",
+      "notes": "Planned IGMP Scapy case. RFC 9279 No-op extension after an IGMPv3 Query is materialized as raw TLV bytes following Scapy's native query body."
+    },
+    {
+      "name": "igmp-extension-report-noop-zero-length",
+      "family": "igmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "IGMPv3",
+        "IGMPv3mr",
+        "Raw"
+      ],
+      "strict_bytes": true,
+      "status": "planned",
+      "notes": "Planned IGMP Scapy case. RFC 9279 zero-length No-op extension after an IGMPv3 Report is represented by explicit TLV bytes."
+    },
+    {
+      "name": "igmp-extension-unassigned-type",
+      "family": "igmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "IGMPv3",
+        "Raw"
+      ],
+      "strict_bytes": true,
+      "status": "planned",
+      "notes": "Planned IGMP Scapy case. RFC 9279 unassigned extension Type and value bytes remain inspectable and byte-preserving."
+    },
+    {
+      "name": "igmp-extension-experimental-type",
+      "family": "igmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "IGMPv3",
+        "Raw"
+      ],
+      "strict_bytes": true,
+      "status": "planned",
+      "notes": "Planned IGMP Scapy case. RFC 9279 experimental extension Type values 65534 and 65535 are raw TLV payloads for Scapy interop."
+    },
+    {
+      "name": "igmp-extension-ordered-tlvs",
+      "family": "igmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "IGMPv3",
+        "Raw"
+      ],
+      "strict_bytes": true,
+      "status": "planned",
+      "notes": "Planned IGMP Scapy case. Multiple RFC 9279 extension TLVs keep their declared order and value bytes."
+    },
+    {
+      "name": "igmp-extension-e-flag-clear-raw-tail",
+      "family": "igmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "IGMPv3",
+        "IGMPv3mq",
+        "Raw"
+      ],
+      "strict_bytes": true,
+      "status": "planned",
+      "notes": "Planned IGMP Scapy case. IGMPv3 E flag clear leaves following bytes as a raw tail instead of extension TLVs."
+    },
+    {
+      "name": "igmp-mrd-advertisement",
+      "family": "igmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "Raw"
+      ],
+      "strict_bytes": true,
+      "status": "planned",
+      "notes": "Planned IGMP Scapy case. RFC 4286 Multicast Router Advertisement uses raw IPv4 protocol 2 bytes because Scapy has no complete MRD typed helper."
+    },
+    {
+      "name": "igmp-mrd-solicitation",
+      "family": "igmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "Raw"
+      ],
+      "strict_bytes": true,
+      "status": "planned",
+      "notes": "Planned IGMP Scapy case. RFC 4286 Multicast Router Solicitation preserves the 4-octet message bytes and checksum."
+    },
+    {
+      "name": "igmp-mrd-termination",
+      "family": "igmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "Raw"
+      ],
+      "strict_bytes": true,
+      "status": "planned",
+      "notes": "Planned IGMP Scapy case. RFC 4286 Multicast Router Termination preserves the 4-octet message bytes and checksum."
+    },
+    {
+      "name": "igmp-mrd-explicit-checksum-invalid",
+      "family": "igmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "Raw"
+      ],
+      "strict_bytes": true,
+      "status": "planned",
+      "notes": "Planned IGMP Scapy case. MRD with an intentionally invalid checksum is compared as explicit raw bytes."
+    },
+    {
+      "name": "igmp-mrd-reserved-override",
+      "family": "igmp",
+      "direction": "scapy_to_libcrafter",
+      "root": "l3:ipv4",
+      "expected_stack": [
+        "IP",
+        "Raw"
+      ],
+      "strict_bytes": true,
+      "status": "planned",
+      "notes": "Planned IGMP Scapy case. MRD reserved field override survives unchanged and is represented as raw bytes on the Scapy side."
     },
     {
       "name": "icmpv6-extended-echo-request",
