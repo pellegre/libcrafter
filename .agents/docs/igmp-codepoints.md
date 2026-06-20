@@ -1,6 +1,6 @@
 # IGMP Codepoint Handoff
 
-Reviewed: 2026-06-19
+Reviewed: 2026-06-20
 
 This handoff records the source-backed IGMP codepoints that later implementation
 steps should use when adding constants, builders, decode labels, oracle specs,
@@ -109,10 +109,51 @@ Implementation guidance:
 
 - Do not model the `0x11` Code field as a generic enum only. In IGMPv2 and
   later query packets it carries the Max Response Time/Code byte.
+- For IGMPv2 Query packets, the Max Response Time byte is linear in tenths of
+  a second. A zero value is still representable because RFC 2236 uses it for
+  IGMPv1-query compatibility handling.
 - For IGMPv3 report Type `0x22`, the byte after Type is reserved in the base
   report format. Code Fields has no registered values for that Type.
+- For IGMPv2 Membership Report Type `0x16` and Leave Group Type `0x17`, RFC
+  2236 sends this byte as zero and receivers ignore it; `crafter` should still
+  preserve caller-supplied bytes for malformed or exploratory packets.
 - Preserve explicitly supplied Code bytes even when the current registry has no
   registration for the enclosing Type.
+
+## IGMPv2 Compatibility Scope
+
+RFC 2236 is the source for IGMPv2 packet compatibility, while RFC 9776 remains
+the current complete IGMP protocol authority. Implement IGMPv2 as compatibility
+message construction, decode, summary, fixture, and validation behavior rather
+than as a router or host state machine.
+
+Shared fixed-header fields:
+
+- Type selects Query (`0x11`), IGMPv1 Report (`0x12`), IGMPv2 Report (`0x16`),
+  or Leave Group (`0x17`).
+- Max Response Time/Code is interpreted as the IGMPv2 query response bound only
+  for Type `0x11`; reports and leave messages should default to zero but must
+  not reject explicit overrides.
+- Checksum covers the whole IGMP message/IP payload, including any trailing
+  bytes kept for forward compatibility.
+- Group Address is zero for General Query, the target group for Group-Specific
+  Query, and the affected group for report or leave messages.
+
+Newly supported IGMPv2 Type values:
+
+- `0x16`: Version 2 Membership Report.
+- `0x17`: Leave Group.
+
+Compatibility-only values and behavior:
+
+- `0x12` remains the IGMPv1 Membership Report form from RFC 1112.
+- Query Max Response Time `0` indicates IGMPv1-query compatibility in RFC 2236;
+  expose it as a byte-level value and do not force the operational 10-second
+  interpretation into packet construction.
+- All-systems `224.0.0.1`, all-routers `224.0.0.2`, TTL 1, Router Alert,
+  report suppression, leave transmission rules, querier election, timers, and
+  RFC 9776 compatibility-mode translation are operational or IPv4 composition
+  concerns outside the IGMP layer's codepoint surface.
 
 ## IGMPv3 Group Record Types
 

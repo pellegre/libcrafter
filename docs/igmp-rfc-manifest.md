@@ -1,6 +1,6 @@
 # IGMP RFC Manifest
 
-Reviewed: 2026-06-19
+Reviewed: 2026-06-20
 
 This manifest is the source handoff for implementing Internet Group Management
 Protocol support in `crafter`. It records which protocol sources are suitable
@@ -49,6 +49,13 @@ until the protocol-facts cache is refreshed with full documents and registries.
   - RFC 9776 updates RFC 2236. Keep RFC 2236 for v2 packet shape and
     compatibility review, but prefer RFC 9776 where it clarifies current IGMPv3
     interaction with v2 behavior.
+  - Packet-layer facts reviewed from the full RFC text: IGMPv2 keeps the
+    8-octet host/router fixed header with Type, Max Response Time, Checksum,
+    and Group Address; adds Type `0x16` Version 2 Membership Report and Type
+    `0x17` Leave Group; retains Type `0x11` Query and Type `0x12` Version 1
+    Membership Report compatibility; treats Max Response Time as meaningful
+    only for Query messages; and computes the checksum over the whole IGMP
+    message/IP payload, including any bytes beyond the fixed header.
 
 - RFC 9776, "Internet Group Management Protocol, Version 3":
   <https://www.rfc-editor.org/info/rfc9776/>
@@ -144,6 +151,44 @@ until the protocol-facts cache is refreshed with full documents and registries.
 - RFC 5501 and RFC 7028 remained ambiguous in protocol-facts and are not packet
   authorities for this plan.
 
+## IGMPv2 Compatibility Review
+
+RFC 2236 updates the RFC 1112 IGMPv1 host model by reusing the fixed 8-octet
+IGMP header and assigning the second octet as Max Response Time for membership
+queries. RFC 9776 is the current complete IGMP protocol specification, so
+`crafter` should treat RFC 2236 as compatibility packet-shape authority rather
+than as the final protocol behavior model.
+
+Fields shared with the base `Igmp` layer:
+
+- Type: `0x11` Membership Query, `0x12` IGMPv1 Membership Report, `0x16`
+  IGMPv2 Membership Report, and `0x17` Leave Group are all fixed-header message
+  forms.
+- Code/Max Response Time: for Type `0x11`, RFC 2236 uses this byte as a linear
+  Max Response Time in tenths of a second; for reports and leave messages it is
+  sent as zero and ignored by receivers. Preserve explicit caller values.
+- Checksum: computed over the whole IGMP message/IP payload. This matches the
+  existing crate rule that an IGMP layer owns following IGMP payload bytes for
+  checksum purposes.
+- Group Address: zero for a General Query, the queried group for a
+  Group-Specific Query, and the reported or left multicast group for report and
+  leave messages. Later validation should expose helpers but still preserve
+  representable overrides.
+
+Message types newly supported by the IGMPv2 phase are Type `0x16` Version 2
+Membership Report and Type `0x17` Leave Group. Type `0x11` Query gains the
+IGMPv2 Max Response Time interpretation, while Type `0x12` remains IGMPv1
+compatibility behavior.
+
+Operational behavior remains out of crate scope: querier election, host/router
+state machines, timers, report suppression, leave retransmission, v1/v2/v3
+compatibility-mode transitions, and the RFC 9776 translation of older reports
+and leaves into internal IGMPv3 state are generated-tool or stack concerns, not
+packet-layer primitives. IPv4 destination addresses such as all-systems
+`224.0.0.1` and all-routers `224.0.0.2`, TTL 1, and Router Alert composition
+belong in send-plan guidance, examples, and tests rather than implicit IGMP
+layer mutation.
+
 ## Unresolved Questions
 
 - The protocol-facts run reported missing full cached RFC documents for many
@@ -161,4 +206,3 @@ until the protocol-facts cache is refreshed with full documents and registries.
 - Provider-backed live IGMP validation may depend on multicast support,
   interface privileges, and lab topology. Live tests must remain dry-run or
   protected until those capabilities are explicit.
-
