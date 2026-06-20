@@ -17,3 +17,7 @@ mod record;
 mod registry;
 mod report;
 mod validation;
+
+#[cfg(test)]
+pub(crate) use self::decode::append_igmp_packet;
+pub(crate) use self::message::Igmp;

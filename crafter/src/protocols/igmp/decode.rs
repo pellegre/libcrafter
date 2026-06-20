@@ -25,7 +25,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<Igmp> {
 /// dispatch on the Type value before falling back to the same raw policy.
 pub(crate) fn append_igmp_packet(mut packet: Packet, bytes: &[u8]) -> Result<Packet> {
     let (igmp, payload) = decode_igmp_parts(bytes)?;
-    packet = packet.push(igmp);
+    packet = packet.push_igmp(igmp);
 
     if !payload.is_empty() {
         packet = packet.push_raw(Raw::from_bytes(payload));
