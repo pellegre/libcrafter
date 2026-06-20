@@ -13,7 +13,7 @@ use crate::packet::{IntoPacket, Layer, LayerContext, Packet};
 
 use super::constants::{IGMP_DEFAULT_GROUP_RECORD_COUNT, IGMP_DEFAULT_REPORT_FLAGS};
 use super::message::Igmp;
-use super::record::IgmpGroupRecord;
+use super::record::{IgmpGroupRecord, IgmpRecordType};
 
 const IGMP_V3_REPORT_BODY_MIN_LEN: usize = 4;
 
@@ -192,6 +192,28 @@ impl Layer for IgmpReport {
         ];
         for (index, record) in self.records.iter().enumerate() {
             fields.push((record_field_name(index), record.summary()));
+            if matches!(record.record_type(), IgmpRecordType::Unknown(_)) {
+                fields.push((
+                    record_type_field_name(index),
+                    format!(
+                        "{} (0x{:02x})",
+                        record.record_type(),
+                        record.record_type_value()
+                    ),
+                ));
+                fields.push((
+                    record_number_of_sources_field_name(index),
+                    record.number_of_sources_value().to_string(),
+                ));
+                fields.push((
+                    record_multicast_address_field_name(index),
+                    record.multicast_address().to_string(),
+                ));
+                fields.push((
+                    record_source_addresses_field_name(index),
+                    record_source_addresses(record),
+                ));
+            }
             if record.auxiliary_data_len_value() != 0 || !record.auxiliary_data().is_empty() {
                 fields.push((
                     record_auxiliary_data_len_field_name(index),
@@ -270,6 +292,74 @@ fn record_field_name(index: usize) -> &'static str {
     NAMES.get(index).copied().unwrap_or("record[*]")
 }
 
+fn record_type_field_name(index: usize) -> &'static str {
+    const NAMES: [&str; 8] = [
+        "record[0].record_type",
+        "record[1].record_type",
+        "record[2].record_type",
+        "record[3].record_type",
+        "record[4].record_type",
+        "record[5].record_type",
+        "record[6].record_type",
+        "record[7].record_type",
+    ];
+    NAMES
+        .get(index)
+        .copied()
+        .unwrap_or("record[*].record_type")
+}
+
+fn record_number_of_sources_field_name(index: usize) -> &'static str {
+    const NAMES: [&str; 8] = [
+        "record[0].number_of_sources",
+        "record[1].number_of_sources",
+        "record[2].number_of_sources",
+        "record[3].number_of_sources",
+        "record[4].number_of_sources",
+        "record[5].number_of_sources",
+        "record[6].number_of_sources",
+        "record[7].number_of_sources",
+    ];
+    NAMES
+        .get(index)
+        .copied()
+        .unwrap_or("record[*].number_of_sources")
+}
+
+fn record_multicast_address_field_name(index: usize) -> &'static str {
+    const NAMES: [&str; 8] = [
+        "record[0].multicast_address",
+        "record[1].multicast_address",
+        "record[2].multicast_address",
+        "record[3].multicast_address",
+        "record[4].multicast_address",
+        "record[5].multicast_address",
+        "record[6].multicast_address",
+        "record[7].multicast_address",
+    ];
+    NAMES
+        .get(index)
+        .copied()
+        .unwrap_or("record[*].multicast_address")
+}
+
+fn record_source_addresses_field_name(index: usize) -> &'static str {
+    const NAMES: [&str; 8] = [
+        "record[0].source_addresses",
+        "record[1].source_addresses",
+        "record[2].source_addresses",
+        "record[3].source_addresses",
+        "record[4].source_addresses",
+        "record[5].source_addresses",
+        "record[6].source_addresses",
+        "record[7].source_addresses",
+    ];
+    NAMES
+        .get(index)
+        .copied()
+        .unwrap_or("record[*].source_addresses")
+}
+
 fn record_auxiliary_data_len_field_name(index: usize) -> &'static str {
     const NAMES: [&str; 8] = [
         "record[0].auxiliary_data_len",
@@ -302,6 +392,15 @@ fn record_auxiliary_data_field_name(index: usize) -> &'static str {
         .get(index)
         .copied()
         .unwrap_or("record[*].auxiliary_data")
+}
+
+fn record_source_addresses(record: &IgmpGroupRecord) -> String {
+    record
+        .source_addresses()
+        .iter()
+        .map(core::net::Ipv4Addr::to_string)
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn hex_bytes(bytes: &[u8]) -> String {
