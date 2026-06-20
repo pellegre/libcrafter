@@ -510,3 +510,94 @@ mod igmp_v3_query_builders {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod igmp_v3_query_encode {
+    use super::*;
+    use crate::checksum::verify_internet_checksum;
+    use crate::protocols::igmp::constants::IGMP_FIXED_HEADER_LEN;
+
+    fn doc_group() -> Ipv4Addr {
+        Ipv4Addr::new(233, 252, 0, 33)
+    }
+
+    fn compile_query_body(query: IgmpQuery) -> crate::Result<Vec<u8>> {
+        let bytes = Igmp::v3_membership_query(100, doc_group(), query).compile()?;
+        assert!(verify_internet_checksum(bytes.as_bytes()));
+        Ok(bytes.as_bytes()[IGMP_FIXED_HEADER_LEN..].to_vec())
+    }
+
+    #[test]
+    fn igmp_v3_query_encode_empty_source_list_uses_zero_count() -> crate::Result<()> {
+        let body = compile_query_body(IgmpQuery::new())?;
+
+        assert_eq!(body, vec![0x00, 0x00, 0x00, 0x00]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn igmp_v3_query_encode_one_source_auto_fills_count() -> crate::Result<()> {
+        let source = Ipv4Addr::new(192, 0, 2, 10);
+        let body = compile_query_body(IgmpQuery::new().with_source_address(source))?;
+
+        assert_eq!(body, vec![0x00, 0x00, 0x00, 0x01, 192, 0, 2, 10]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn igmp_v3_query_encode_many_sources_auto_fills_count() -> crate::Result<()> {
+        let sources = (0..300)
+            .map(|index| {
+                if index < 256 {
+                    Ipv4Addr::new(198, 51, 100, index as u8)
+                } else {
+                    Ipv4Addr::new(203, 0, 113, (index - 256) as u8)
+                }
+            })
+            .collect::<Vec<_>>();
+        let body = compile_query_body(IgmpQuery::new().with_source_addresses(sources.clone()))?;
+
+        assert_eq!(body.len(), 4 + sources.len() * 4);
+        assert_eq!(&body[..4], &[0x00, 0x00, 0x01, 0x2c]);
+        assert_eq!(&body[4..8], &sources[0].octets());
+        assert_eq!(
+            &body[body.len() - 4..],
+            &sources[sources.len() - 1].octets()
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn igmp_v3_query_encode_preserves_explicit_wrong_source_count() -> crate::Result<()> {
+        let sources = vec![Ipv4Addr::new(192, 0, 2, 1), Ipv4Addr::new(198, 51, 100, 2)];
+        let body = compile_query_body(
+            IgmpQuery::new()
+                .with_source_addresses(sources)
+                .with_number_of_sources(7),
+        )?;
+
+        assert_eq!(
+            body,
+            vec![0x00, 0x00, 0x00, 0x07, 192, 0, 2, 1, 198, 51, 100, 2]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn igmp_v3_query_encode_preserves_reserved_flags_bits() -> crate::Result<()> {
+        let body = compile_query_body(
+            IgmpQuery::new()
+                .with_raw_flags_qrv(0xf8)
+                .with_qqic(0x7d)
+                .with_source_address(Ipv4Addr::new(192, 0, 2, 44)),
+        )?;
+
+        assert_eq!(body, vec![0xf8, 0x7d, 0x00, 0x01, 192, 0, 2, 44]);
+
+        Ok(())
+    }
+}
