@@ -529,6 +529,78 @@ profiles:
       malformed: 0
       pcap: 0
       live: 0
+  # igmp-smoke: tiny IPv4-only IGMP packet-layer smoke coverage. It keeps live,
+  # pcap, and malformed sampling disabled; MLD remains in the ICMPv6 family and
+  # is not eligible through this profile.
+  - name: igmp-smoke
+    purpose: focused offline IGMP over IPv4 smoke coverage
+    default_count: 10
+    family_weights:
+      - name: igmp
+        weight: 1
+    payload_length:
+      min: 0
+      max: 32
+    feature_weights:
+      baseline: 10
+      boundary: 3
+      malformed: 0
+      pcap: 0
+      live: 0
+  # igmp-ci: deterministic IGMP packet-layer PR coverage over the l3:ipv4 IGMP
+  # stack. Live remains disabled so provider credentials or multicast-capable
+  # lab endpoints are never required by CI sampling.
+  - name: igmp-ci
+    purpose: deterministic IGMP over IPv4 pull request coverage
+    default_count: 200
+    family_weights:
+      - name: igmp
+        weight: 1
+    payload_length:
+      min: 0
+      max: 128
+    feature_weights:
+      baseline: 10
+      boundary: 4
+      malformed: 1
+      pcap: 1
+      live: 0
+  # igmp-boundary: focused edge coverage for IGMP checksums, counts, flags,
+  # source lists, extension lengths, MRD fields, and structured malformed
+  # contracts. It is still offline-only.
+  - name: igmp-boundary
+    purpose: focused IGMP over IPv4 boundary and structured-error coverage
+    default_count: 100
+    family_weights:
+      - name: igmp
+        weight: 1
+    payload_length:
+      min: 0
+      max: 256
+    feature_weights:
+      baseline: 3
+      boundary: 10
+      malformed: 4
+      pcap: 0
+      live: 0
+  # igmp-live-dry-run: provider-neutral dry-run planning metadata for future
+  # IGMP live validation. The live weight stays zero; protected provider-backed
+  # confirmation and executable live materialization are owned by later steps.
+  - name: igmp-live-dry-run
+    purpose: provider-neutral IGMP live validation dry-run planning
+    default_count: 10
+    family_weights:
+      - name: igmp
+        weight: 1
+    payload_length:
+      min: 0
+      max: 64
+    feature_weights:
+      baseline: 2
+      boundary: 4
+      malformed: 0
+      pcap: 0
+      live: 0
 
 backend_support:
   scapy:
