@@ -1,0 +1,30 @@
+Packet(len=44, layers=3)
+  [0] Ipv4
+      version: 4
+      ihl: 5
+      tos: 0
+      dscp: 0
+      ecn: Not-ECT
+      total_length: 44
+      id: 0x170b
+      flags: none
+      fragment_offset: 0
+      ttl: 1
+      protocol: igmp(2)
+      checksum: 0x0069
+      checksum_status: valid
+      src: 192.0.2.70
+      dst: 224.0.0.22
+      option_count: 0
+      options: 
+  [1] Igmp
+      type: IGMPv3 Membership Report (0x22)
+      code: No registered code (0x00)
+      checksum: 0xc840
+      group_address: 0.0.0.0
+      length: 8
+  [2] IgmpReport
+      reserved_flags: 0x0000
+      number_of_group_records: 1
+      records: 1
+      record[0]: IgmpGroupRecord(type=MODE_IS_INCLUDE, group=233.252.0.70, sources=1, aux_words=0, aux=0B)

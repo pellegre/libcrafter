@@ -2,10 +2,11 @@
 //!
 //! The cases here cover the source-backed fixed-header surface currently
 //! implemented for IGMP: Membership Query, IGMPv1/v2 Membership Report,
-//! IGMPv2 Leave Group, and IGMPv3 Membership Query bodies. They stay offline
-//! and use RFC 5737 source addresses, RFC 5771 multicast documentation group
-//! addresses, and the source-backed all-systems/all-routers destinations where
-//! the packet shape calls for them.
+//! IGMPv2 Leave Group, IGMPv3 Membership Query bodies, and IGMPv3 Membership
+//! Report group-record bodies. They stay offline and use RFC 5737 source
+//! addresses, RFC 5771 multicast documentation group addresses, and the
+//! source-backed all-systems/all-routers destinations where the packet shape
+//! calls for them.
 
 #[macro_use]
 mod support;
@@ -27,6 +28,12 @@ const DOC_SRC_V3_GROUP: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 61);
 const DOC_SRC_V3_GROUP_SOURCE: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 62);
 const DOC_SRC_V3_TIMERS: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 63);
 const DOC_SRC_V3_RESERVED_FLAGS: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 64);
+const DOC_SRC_V3_REPORT_INCLUDE: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 70);
+const DOC_SRC_V3_REPORT_EXCLUDE: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 71);
+const DOC_SRC_V3_REPORT_STATE_CHANGE: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 72);
+const DOC_SRC_V3_REPORT_SOURCE_LIST: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 73);
+const DOC_SRC_V3_REPORT_AUX: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 74);
+const DOC_SRC_V3_REPORT_UNKNOWN: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 75);
 const DOC_MCAST_QUERY: Ipv4Addr = Ipv4Addr::new(233, 252, 0, 1);
 const DOC_MCAST_REPORT: Ipv4Addr = Ipv4Addr::new(233, 252, 0, 42);
 const DOC_MCAST_V2_REPORT: Ipv4Addr = Ipv4Addr::new(233, 252, 0, 43);
@@ -34,8 +41,17 @@ const DOC_MCAST_V2_LEAVE: Ipv4Addr = Ipv4Addr::new(233, 252, 0, 17);
 const DOC_MCAST_V3_GROUP: Ipv4Addr = Ipv4Addr::new(233, 252, 0, 60);
 const DOC_MCAST_V3_GROUP_SOURCE: Ipv4Addr = Ipv4Addr::new(233, 252, 0, 61);
 const DOC_MCAST_V3_RESERVED_FLAGS: Ipv4Addr = Ipv4Addr::new(233, 252, 0, 62);
+const DOC_MCAST_V3_REPORT_INCLUDE: Ipv4Addr = Ipv4Addr::new(233, 252, 0, 70);
+const DOC_MCAST_V3_REPORT_EXCLUDE: Ipv4Addr = Ipv4Addr::new(233, 252, 0, 71);
+const DOC_MCAST_V3_REPORT_CHANGE_INCLUDE: Ipv4Addr = Ipv4Addr::new(233, 252, 0, 72);
+const DOC_MCAST_V3_REPORT_CHANGE_EXCLUDE: Ipv4Addr = Ipv4Addr::new(233, 252, 0, 73);
+const DOC_MCAST_V3_REPORT_ALLOW: Ipv4Addr = Ipv4Addr::new(233, 252, 0, 74);
+const DOC_MCAST_V3_REPORT_BLOCK: Ipv4Addr = Ipv4Addr::new(233, 252, 0, 75);
+const DOC_MCAST_V3_REPORT_AUX: Ipv4Addr = Ipv4Addr::new(233, 252, 0, 76);
+const DOC_MCAST_V3_REPORT_UNKNOWN: Ipv4Addr = Ipv4Addr::new(233, 252, 0, 77);
 const ALL_SYSTEMS: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 1);
 const ALL_ROUTERS: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 2);
+const IGMPV3_REPORT_DESTINATION: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 22);
 const V2_QUERY_MAX_RESPONSE_TENTHS: u8 = 100;
 const V3_QUERY_MAX_RESPONSE_CODE: u8 = 100;
 const V3_QUERY_TIMER_MAX_RESPONSE_CODE: u8 = 0x91;
@@ -50,6 +66,34 @@ const DOC_V3_SOURCE_B: Ipv4Addr = Ipv4Addr::new(203, 0, 113, 20);
 const DOC_V3_SOURCE_RESERVED_FLAGS: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 65);
 const V3_GROUP_SOURCE_SOURCES: [Ipv4Addr; 2] = [DOC_V3_SOURCE_A, DOC_V3_SOURCE_B];
 const V3_RESERVED_FLAGS_SOURCES: [Ipv4Addr; 1] = [DOC_V3_SOURCE_RESERVED_FLAGS];
+const DOC_V3_REPORT_SOURCE_INCLUDE: Ipv4Addr = Ipv4Addr::new(198, 51, 100, 70);
+const DOC_V3_REPORT_SOURCE_EXCLUDE_A: Ipv4Addr = Ipv4Addr::new(198, 51, 100, 71);
+const DOC_V3_REPORT_SOURCE_EXCLUDE_B: Ipv4Addr = Ipv4Addr::new(203, 0, 113, 71);
+const DOC_V3_REPORT_SOURCE_CHANGE_INCLUDE: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 72);
+const DOC_V3_REPORT_SOURCE_CHANGE_EXCLUDE: Ipv4Addr = Ipv4Addr::new(198, 51, 100, 72);
+const DOC_V3_REPORT_SOURCE_ALLOW_A: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 73);
+const DOC_V3_REPORT_SOURCE_ALLOW_B: Ipv4Addr = Ipv4Addr::new(198, 51, 100, 73);
+const DOC_V3_REPORT_SOURCE_BLOCK: Ipv4Addr = Ipv4Addr::new(203, 0, 113, 73);
+const DOC_V3_REPORT_SOURCE_AUX: Ipv4Addr = Ipv4Addr::new(198, 51, 100, 74);
+const DOC_V3_REPORT_SOURCE_UNKNOWN_A: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 75);
+const DOC_V3_REPORT_SOURCE_UNKNOWN_B: Ipv4Addr = Ipv4Addr::new(198, 51, 100, 75);
+const V3_REPORT_INCLUDE_SOURCES: [Ipv4Addr; 1] = [DOC_V3_REPORT_SOURCE_INCLUDE];
+const V3_REPORT_EXCLUDE_SOURCES: [Ipv4Addr; 2] = [
+    DOC_V3_REPORT_SOURCE_EXCLUDE_A,
+    DOC_V3_REPORT_SOURCE_EXCLUDE_B,
+];
+const V3_REPORT_CHANGE_INCLUDE_SOURCES: [Ipv4Addr; 1] = [DOC_V3_REPORT_SOURCE_CHANGE_INCLUDE];
+const V3_REPORT_CHANGE_EXCLUDE_SOURCES: [Ipv4Addr; 1] = [DOC_V3_REPORT_SOURCE_CHANGE_EXCLUDE];
+const V3_REPORT_ALLOW_SOURCES: [Ipv4Addr; 2] =
+    [DOC_V3_REPORT_SOURCE_ALLOW_A, DOC_V3_REPORT_SOURCE_ALLOW_B];
+const V3_REPORT_BLOCK_SOURCES: [Ipv4Addr; 1] = [DOC_V3_REPORT_SOURCE_BLOCK];
+const V3_REPORT_AUX_SOURCES: [Ipv4Addr; 1] = [DOC_V3_REPORT_SOURCE_AUX];
+const V3_REPORT_UNKNOWN_SOURCES: [Ipv4Addr; 2] = [
+    DOC_V3_REPORT_SOURCE_UNKNOWN_A,
+    DOC_V3_REPORT_SOURCE_UNKNOWN_B,
+];
+const V3_REPORT_AUX_DATA: [u8; 4] = [0xde, 0xad, 0xbe, 0xef];
+const V3_REPORT_UNKNOWN_AUX_DATA: [u8; 4] = [0xca, 0xfe, 0xba, 0xbe];
 
 const QUERY_BYTES: &str = fixture_str!("bytes/ipv4-igmp-v1-query.hex");
 const REPORT_BYTES: &str = fixture_str!("bytes/ipv4-igmp-v1-report.hex");
@@ -84,11 +128,50 @@ const V3_RESERVED_FLAGS_QUERY_BYTES: &str = "\
 45 00 00 24 17 0a 00 00 01 02 f6 53 c0 00 02 40 e9 fc 00 3e
 11 64 4c a0 e9 fc 00 3e f5 7d 00 01 c0 00 02 41";
 
+// These IGMPv3 Membership Report fixtures are generated from RFC 9776 packet
+// shapes and documentation-space addresses, not from live captures.
+const V3_REPORT_INCLUDE_BYTES: &str = "\
+45 00 00 2c 17 0b 00 00 01 02 00 69 c0 00 02 46 e0 00 00 16
+22 00 c8 40 00 00 00 00 00 00 00 01 01 00 00 01 e9 fc 00 46
+c6 33 64 46";
+const V3_REPORT_EXCLUDE_BYTES: &str = "\
+45 00 00 30 17 0c 00 00 01 02 00 63 c0 00 02 47 e0 00 00 16
+22 00 8a f5 00 00 00 00 00 00 00 01 02 00 00 02 e9 fc 00 47
+c6 33 64 47 cb 00 71 47";
+const V3_REPORT_STATE_CHANGE_BYTES: &str = "\
+45 00 00 38 17 0d 00 00 01 02 00 59 c0 00 02 48 e0 00 00 16
+22 00 15 ac 00 00 00 00 00 00 00 02 03 00 00 01 e9 fc 00 48
+c0 00 02 48 04 00 00 01 e9 fc 00 49 c6 33 64 48";
+const V3_REPORT_SOURCE_LIST_BYTES: &str = "\
+45 00 00 3c 17 0e 00 00 01 02 00 53 c0 00 02 49 e0 00 00 16
+22 00 d5 5a 00 00 00 00 00 00 00 02 05 00 00 02 e9 fc 00 4a
+c0 00 02 49 c6 33 64 49 06 00 00 01 e9 fc 00 4b cb 00 71 49";
+const V3_REPORT_AUX_BYTES: &str = "\
+45 00 00 30 17 0f 00 00 01 02 00 5d c0 00 02 4a e0 00 00 16
+22 00 26 98 00 00 00 00 00 00 00 01 05 01 00 01 e9 fc 00 4c
+c6 33 64 4a de ad be ef";
+const V3_REPORT_UNKNOWN_BYTES: &str = "\
+45 00 00 34 17 10 00 00 01 02 00 57 c0 00 02 4b e0 00 00 16
+22 00 b9 28 00 00 00 00 00 00 00 01 c8 01 00 02 e9 fc 00 4d
+c0 00 02 4b c6 33 64 4b ca fe ba be";
+
 const V3_GENERAL_QUERY_SUMMARY: &str = "Ipv4(src=192.0.2.60, dst=224.0.0.1, proto=igmp(2)) / Igmp(type=IGMP Membership Query, code=Max Response Time, group=0.0.0.0) / IgmpQuery(flags=0x00, s=false, qrv=0, qqic=0, sources=0)";
 const V3_GROUP_QUERY_SUMMARY: &str = "Ipv4(src=192.0.2.61, dst=233.252.0.60, proto=igmp(2)) / Igmp(type=IGMP Membership Query, code=Max Response Time, group=233.252.0.60) / IgmpQuery(flags=0x00, s=false, qrv=0, qqic=0, sources=0)";
 const V3_GROUP_SOURCE_QUERY_SUMMARY: &str = "Ipv4(src=192.0.2.62, dst=233.252.0.61, proto=igmp(2)) / Igmp(type=IGMP Membership Query, code=Max Response Time, group=233.252.0.61) / IgmpQuery(flags=0x00, s=true, qrv=2, qqic=125, sources=2)";
 const V3_TIMER_QUERY_SUMMARY: &str = "Ipv4(src=192.0.2.63, dst=224.0.0.1, proto=igmp(2)) / Igmp(type=IGMP Membership Query, code=Max Response Time, group=0.0.0.0) / IgmpQuery(flags=0x00, s=false, qrv=2, qqic=255, sources=0)";
 const V3_RESERVED_FLAGS_QUERY_SUMMARY: &str = "Ipv4(src=192.0.2.64, dst=233.252.0.62, proto=igmp(2)) / Igmp(type=IGMP Membership Query, code=Max Response Time, group=233.252.0.62) / IgmpQuery(flags=0xf0, s=false, qrv=5, qqic=125, sources=1)";
+const V3_REPORT_INCLUDE_SUMMARY: &str =
+    fixture_str!("summaries/ipv4-igmp-v3-report-include.summary.txt");
+const V3_REPORT_EXCLUDE_SUMMARY: &str =
+    fixture_str!("summaries/ipv4-igmp-v3-report-exclude.summary.txt");
+const V3_REPORT_STATE_CHANGE_SUMMARY: &str =
+    fixture_str!("summaries/ipv4-igmp-v3-report-state-change.summary.txt");
+const V3_REPORT_SOURCE_LIST_SUMMARY: &str =
+    fixture_str!("summaries/ipv4-igmp-v3-report-source-list-change.summary.txt");
+const V3_REPORT_AUX_SUMMARY: &str =
+    fixture_str!("summaries/ipv4-igmp-v3-report-auxiliary-data.summary.txt");
+const V3_REPORT_UNKNOWN_SUMMARY: &str =
+    fixture_str!("summaries/ipv4-igmp-v3-report-unknown-record-type.summary.txt");
 
 const V3_GENERAL_QUERY_SHOW: &str = "\
 Packet(len=32, layers=3)
@@ -265,6 +348,18 @@ Packet(len=36, layers=3)
       qqic: 125
       number_of_sources: 1
       source_addresses: 192.0.2.65";
+const V3_REPORT_INCLUDE_SHOW: &str =
+    fixture_str!("summaries/ipv4-igmp-v3-report-include-show.summary.txt");
+const V3_REPORT_EXCLUDE_SHOW: &str =
+    fixture_str!("summaries/ipv4-igmp-v3-report-exclude-show.summary.txt");
+const V3_REPORT_STATE_CHANGE_SHOW: &str =
+    fixture_str!("summaries/ipv4-igmp-v3-report-state-change-show.summary.txt");
+const V3_REPORT_SOURCE_LIST_SHOW: &str =
+    fixture_str!("summaries/ipv4-igmp-v3-report-source-list-change-show.summary.txt");
+const V3_REPORT_AUX_SHOW: &str =
+    fixture_str!("summaries/ipv4-igmp-v3-report-auxiliary-data-show.summary.txt");
+const V3_REPORT_UNKNOWN_SHOW: &str =
+    fixture_str!("summaries/ipv4-igmp-v3-report-unknown-record-type-show.summary.txt");
 
 #[derive(Clone, Copy)]
 struct IgmpGoldenCase {
@@ -296,6 +391,27 @@ struct IgmpV3QueryGoldenCase {
     qqic: u8,
     query_interval_seconds: u32,
     sources: &'static [Ipv4Addr],
+}
+
+#[derive(Clone, Copy)]
+struct IgmpV3ReportRecordExpectation {
+    record_type: IgmpRecordType,
+    group: Ipv4Addr,
+    sources: &'static [Ipv4Addr],
+    auxiliary_data: &'static [u8],
+    auxiliary_data_len: u8,
+}
+
+#[derive(Clone, Copy)]
+struct IgmpV3ReportGoldenCase {
+    name: &'static str,
+    build: fn() -> Packet,
+    bytes_fixture: &'static str,
+    summary_fixture: &'static str,
+    show_fixture: &'static str,
+    source: Ipv4Addr,
+    checksum: u16,
+    records: &'static [IgmpV3ReportRecordExpectation],
 }
 
 const CASES: &[IgmpGoldenCase] = &[
@@ -444,6 +560,139 @@ const V3_QUERY_CASES: &[IgmpV3QueryGoldenCase] = &[
     },
 ];
 
+const V3_REPORT_INCLUDE_RECORDS: &[IgmpV3ReportRecordExpectation] =
+    &[IgmpV3ReportRecordExpectation {
+        record_type: IgmpRecordType::ModeIsInclude,
+        group: DOC_MCAST_V3_REPORT_INCLUDE,
+        sources: &V3_REPORT_INCLUDE_SOURCES,
+        auxiliary_data: &[],
+        auxiliary_data_len: 0,
+    }];
+
+const V3_REPORT_EXCLUDE_RECORDS: &[IgmpV3ReportRecordExpectation] =
+    &[IgmpV3ReportRecordExpectation {
+        record_type: IgmpRecordType::ModeIsExclude,
+        group: DOC_MCAST_V3_REPORT_EXCLUDE,
+        sources: &V3_REPORT_EXCLUDE_SOURCES,
+        auxiliary_data: &[],
+        auxiliary_data_len: 0,
+    }];
+
+const V3_REPORT_STATE_CHANGE_RECORDS: &[IgmpV3ReportRecordExpectation] = &[
+    IgmpV3ReportRecordExpectation {
+        record_type: IgmpRecordType::ChangeToIncludeMode,
+        group: DOC_MCAST_V3_REPORT_CHANGE_INCLUDE,
+        sources: &V3_REPORT_CHANGE_INCLUDE_SOURCES,
+        auxiliary_data: &[],
+        auxiliary_data_len: 0,
+    },
+    IgmpV3ReportRecordExpectation {
+        record_type: IgmpRecordType::ChangeToExcludeMode,
+        group: DOC_MCAST_V3_REPORT_CHANGE_EXCLUDE,
+        sources: &V3_REPORT_CHANGE_EXCLUDE_SOURCES,
+        auxiliary_data: &[],
+        auxiliary_data_len: 0,
+    },
+];
+
+const V3_REPORT_SOURCE_LIST_RECORDS: &[IgmpV3ReportRecordExpectation] = &[
+    IgmpV3ReportRecordExpectation {
+        record_type: IgmpRecordType::AllowNewSources,
+        group: DOC_MCAST_V3_REPORT_ALLOW,
+        sources: &V3_REPORT_ALLOW_SOURCES,
+        auxiliary_data: &[],
+        auxiliary_data_len: 0,
+    },
+    IgmpV3ReportRecordExpectation {
+        record_type: IgmpRecordType::BlockOldSources,
+        group: DOC_MCAST_V3_REPORT_BLOCK,
+        sources: &V3_REPORT_BLOCK_SOURCES,
+        auxiliary_data: &[],
+        auxiliary_data_len: 0,
+    },
+];
+
+const V3_REPORT_AUX_RECORDS: &[IgmpV3ReportRecordExpectation] =
+    &[IgmpV3ReportRecordExpectation {
+        record_type: IgmpRecordType::AllowNewSources,
+        group: DOC_MCAST_V3_REPORT_AUX,
+        sources: &V3_REPORT_AUX_SOURCES,
+        auxiliary_data: &V3_REPORT_AUX_DATA,
+        auxiliary_data_len: 1,
+    }];
+
+const V3_REPORT_UNKNOWN_RECORDS: &[IgmpV3ReportRecordExpectation] =
+    &[IgmpV3ReportRecordExpectation {
+        record_type: IgmpRecordType::Unknown(0xc8),
+        group: DOC_MCAST_V3_REPORT_UNKNOWN,
+        sources: &V3_REPORT_UNKNOWN_SOURCES,
+        auxiliary_data: &V3_REPORT_UNKNOWN_AUX_DATA,
+        auxiliary_data_len: 1,
+    }];
+
+const V3_REPORT_CASES: &[IgmpV3ReportGoldenCase] = &[
+    IgmpV3ReportGoldenCase {
+        name: "ipv4-igmp-v3-report-include",
+        build: build_v3_report_include,
+        bytes_fixture: V3_REPORT_INCLUDE_BYTES,
+        summary_fixture: V3_REPORT_INCLUDE_SUMMARY,
+        show_fixture: V3_REPORT_INCLUDE_SHOW,
+        source: DOC_SRC_V3_REPORT_INCLUDE,
+        checksum: 0xc840,
+        records: V3_REPORT_INCLUDE_RECORDS,
+    },
+    IgmpV3ReportGoldenCase {
+        name: "ipv4-igmp-v3-report-exclude",
+        build: build_v3_report_exclude,
+        bytes_fixture: V3_REPORT_EXCLUDE_BYTES,
+        summary_fixture: V3_REPORT_EXCLUDE_SUMMARY,
+        show_fixture: V3_REPORT_EXCLUDE_SHOW,
+        source: DOC_SRC_V3_REPORT_EXCLUDE,
+        checksum: 0x8af5,
+        records: V3_REPORT_EXCLUDE_RECORDS,
+    },
+    IgmpV3ReportGoldenCase {
+        name: "ipv4-igmp-v3-report-state-change",
+        build: build_v3_report_state_change,
+        bytes_fixture: V3_REPORT_STATE_CHANGE_BYTES,
+        summary_fixture: V3_REPORT_STATE_CHANGE_SUMMARY,
+        show_fixture: V3_REPORT_STATE_CHANGE_SHOW,
+        source: DOC_SRC_V3_REPORT_STATE_CHANGE,
+        checksum: 0x15ac,
+        records: V3_REPORT_STATE_CHANGE_RECORDS,
+    },
+    IgmpV3ReportGoldenCase {
+        name: "ipv4-igmp-v3-report-source-list-change",
+        build: build_v3_report_source_list_change,
+        bytes_fixture: V3_REPORT_SOURCE_LIST_BYTES,
+        summary_fixture: V3_REPORT_SOURCE_LIST_SUMMARY,
+        show_fixture: V3_REPORT_SOURCE_LIST_SHOW,
+        source: DOC_SRC_V3_REPORT_SOURCE_LIST,
+        checksum: 0xd55a,
+        records: V3_REPORT_SOURCE_LIST_RECORDS,
+    },
+    IgmpV3ReportGoldenCase {
+        name: "ipv4-igmp-v3-report-auxiliary-data",
+        build: build_v3_report_auxiliary_data,
+        bytes_fixture: V3_REPORT_AUX_BYTES,
+        summary_fixture: V3_REPORT_AUX_SUMMARY,
+        show_fixture: V3_REPORT_AUX_SHOW,
+        source: DOC_SRC_V3_REPORT_AUX,
+        checksum: 0x2698,
+        records: V3_REPORT_AUX_RECORDS,
+    },
+    IgmpV3ReportGoldenCase {
+        name: "ipv4-igmp-v3-report-unknown-record-type",
+        build: build_v3_report_unknown_record_type,
+        bytes_fixture: V3_REPORT_UNKNOWN_BYTES,
+        summary_fixture: V3_REPORT_UNKNOWN_SUMMARY,
+        show_fixture: V3_REPORT_UNKNOWN_SHOW,
+        source: DOC_SRC_V3_REPORT_UNKNOWN,
+        checksum: 0xb928,
+        records: V3_REPORT_UNKNOWN_RECORDS,
+    },
+];
+
 fn ipv4(src: Ipv4Addr, dst: Ipv4Addr, id: u16) -> Ipv4 {
     Ipv4::new()
         .src(src)
@@ -524,6 +773,72 @@ fn build_v3_reserved_flags_query() -> Packet {
         DOC_MCAST_V3_RESERVED_FLAGS,
         query,
     )
+}
+
+fn build_v3_report_include() -> Packet {
+    ipv4(DOC_SRC_V3_REPORT_INCLUDE, IGMPV3_REPORT_DESTINATION, 0x170b)
+        / Igmp::v3_membership_report()
+        / IgmpReport::from_group_records(vec![
+            IgmpGroupRecord::mode_is_include(DOC_MCAST_V3_REPORT_INCLUDE)
+                .with_source_addresses(V3_REPORT_INCLUDE_SOURCES),
+        ])
+}
+
+fn build_v3_report_exclude() -> Packet {
+    ipv4(DOC_SRC_V3_REPORT_EXCLUDE, IGMPV3_REPORT_DESTINATION, 0x170c)
+        / Igmp::v3_membership_report()
+        / IgmpReport::from_group_records(vec![
+            IgmpGroupRecord::mode_is_exclude(DOC_MCAST_V3_REPORT_EXCLUDE)
+                .with_source_addresses(V3_REPORT_EXCLUDE_SOURCES),
+        ])
+}
+
+fn build_v3_report_state_change() -> Packet {
+    ipv4(
+        DOC_SRC_V3_REPORT_STATE_CHANGE,
+        IGMPV3_REPORT_DESTINATION,
+        0x170d,
+    ) / Igmp::v3_membership_report()
+        / IgmpReport::from_group_records(vec![
+            IgmpGroupRecord::change_to_include_mode(DOC_MCAST_V3_REPORT_CHANGE_INCLUDE)
+                .with_source_addresses(V3_REPORT_CHANGE_INCLUDE_SOURCES),
+            IgmpGroupRecord::change_to_exclude_mode(DOC_MCAST_V3_REPORT_CHANGE_EXCLUDE)
+                .with_source_addresses(V3_REPORT_CHANGE_EXCLUDE_SOURCES),
+        ])
+}
+
+fn build_v3_report_source_list_change() -> Packet {
+    ipv4(
+        DOC_SRC_V3_REPORT_SOURCE_LIST,
+        IGMPV3_REPORT_DESTINATION,
+        0x170e,
+    ) / Igmp::v3_membership_report()
+        / IgmpReport::from_group_records(vec![
+            IgmpGroupRecord::allow_new_sources(DOC_MCAST_V3_REPORT_ALLOW)
+                .with_source_addresses(V3_REPORT_ALLOW_SOURCES),
+            IgmpGroupRecord::block_old_sources(DOC_MCAST_V3_REPORT_BLOCK)
+                .with_source_addresses(V3_REPORT_BLOCK_SOURCES),
+        ])
+}
+
+fn build_v3_report_auxiliary_data() -> Packet {
+    ipv4(DOC_SRC_V3_REPORT_AUX, IGMPV3_REPORT_DESTINATION, 0x170f)
+        / Igmp::v3_membership_report()
+        / IgmpReport::from_group_records(vec![
+            IgmpGroupRecord::allow_new_sources(DOC_MCAST_V3_REPORT_AUX)
+                .with_source_addresses(V3_REPORT_AUX_SOURCES)
+                .with_auxiliary_data(V3_REPORT_AUX_DATA),
+        ])
+}
+
+fn build_v3_report_unknown_record_type() -> Packet {
+    ipv4(DOC_SRC_V3_REPORT_UNKNOWN, IGMPV3_REPORT_DESTINATION, 0x1710)
+        / Igmp::v3_membership_report()
+        / IgmpReport::from_group_records(vec![
+            IgmpGroupRecord::raw(0xc8, DOC_MCAST_V3_REPORT_UNKNOWN)
+                .with_source_addresses(V3_REPORT_UNKNOWN_SOURCES)
+                .with_auxiliary_data(V3_REPORT_UNKNOWN_AUX_DATA),
+        ])
 }
 
 fn decode_hex(label: &str, text: &str) -> Vec<u8> {
@@ -646,6 +961,69 @@ fn assert_v3_query_case(case: IgmpV3QueryGoldenCase) -> crafter::Result<Packet> 
     Ok(decoded)
 }
 
+fn assert_v3_report_case(case: IgmpV3ReportGoldenCase) -> crafter::Result<Packet> {
+    let packet = (case.build)();
+    let compiled = packet.compile()?;
+    let expected = decode_hex(case.name, case.bytes_fixture);
+
+    maybe_dump(case.name, compiled.as_bytes(), None);
+    assert_eq!(compiled.as_bytes(), expected.as_slice());
+    assert_eq!(compiled.as_bytes()[9], IPPROTO_IGMP);
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes())?;
+    let recompiled = decoded.compile()?;
+    assert_eq!(
+        recompiled.as_bytes(),
+        expected.as_slice(),
+        "{} decode/recompile changed bytes",
+        case.name
+    );
+
+    let ipv4 = decoded.layer::<Ipv4>().expect("decoded IPv4 layer");
+    assert_eq!(ipv4.source(), case.source);
+    assert_eq!(ipv4.destination(), IGMPV3_REPORT_DESTINATION);
+
+    let igmp = decoded.layer::<Igmp>().expect("decoded IGMP layer");
+    assert_eq!(igmp.igmp_type(), IgmpType::V3MembershipReport);
+    assert_eq!(igmp.code_value(), IGMP_DEFAULT_CODE);
+    assert_eq!(igmp.group_address_value(), Ipv4Addr::UNSPECIFIED);
+    assert_eq!(igmp.checksum_value(), Some(case.checksum));
+    assert_eq!(igmp.checksum_state(), FieldState::User);
+
+    let report = decoded
+        .layer::<IgmpReport>()
+        .expect("decoded IGMPv3 report body");
+    assert_eq!(report.reserved_flags_value(), 0);
+    assert_eq!(
+        report.number_of_group_records_value(),
+        case.records.len() as u16
+    );
+    assert_eq!(report.group_records().len(), case.records.len());
+    assert_eq!(report.reserved_flags_state(), FieldState::User);
+    assert_eq!(report.number_of_group_records_state(), FieldState::User);
+
+    for (record, expected) in report.group_records().iter().zip(case.records) {
+        assert_eq!(record.record_type(), expected.record_type);
+        assert_eq!(record.record_type_value(), expected.record_type.code());
+        assert_eq!(record.multicast_address(), expected.group);
+        assert_eq!(record.source_addresses(), expected.sources);
+        assert_eq!(record.number_of_sources_value(), expected.sources.len() as u16);
+        assert_eq!(record.number_of_sources_state(), FieldState::User);
+        assert_eq!(record.auxiliary_data_len_value(), expected.auxiliary_data_len);
+        assert_eq!(record.auxiliary_data_len_state(), FieldState::User);
+        assert_eq!(record.auxiliary_data(), expected.auxiliary_data);
+    }
+
+    maybe_dump(case.name, compiled.as_bytes(), Some(&decoded));
+    assert_eq!(
+        decoded.summary().trim_end(),
+        case.summary_fixture.trim_end()
+    );
+    assert_eq!(decoded.show().trim_end(), case.show_fixture.trim_end());
+
+    Ok(decoded)
+}
+
 fn maybe_dump(name: &str, bytes: &[u8], packet: Option<&Packet>) {
     if std::env::var_os("CRAFTER_IGMP_GOLDEN_DUMP").is_none() {
         return;
@@ -657,6 +1035,92 @@ fn maybe_dump(name: &str, bytes: &[u8], packet: Option<&Packet>) {
         println!("SUMMARY {name}:\n{}", packet.summary());
         println!("SHOW {name}:\n{}", packet.show());
     }
+}
+
+#[test]
+fn igmp_golden_v3_report_include_mode_record() -> crafter::Result<()> {
+    assert_v3_report_case(V3_REPORT_CASES[0])?;
+    Ok(())
+}
+
+#[test]
+fn igmp_golden_v3_report_exclude_mode_record() -> crafter::Result<()> {
+    assert_v3_report_case(V3_REPORT_CASES[1])?;
+    Ok(())
+}
+
+#[test]
+fn igmp_golden_v3_report_state_change_records() -> crafter::Result<()> {
+    let decoded = assert_v3_report_case(V3_REPORT_CASES[2])?;
+    let report = decoded
+        .layer::<IgmpReport>()
+        .expect("decoded IGMPv3 state-change report");
+
+    assert_eq!(
+        report
+            .group_records()
+            .iter()
+            .map(IgmpGroupRecord::record_type)
+            .collect::<Vec<_>>(),
+        vec![
+            IgmpRecordType::ChangeToIncludeMode,
+            IgmpRecordType::ChangeToExcludeMode,
+        ]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn igmp_golden_v3_report_source_list_change_records() -> crafter::Result<()> {
+    let decoded = assert_v3_report_case(V3_REPORT_CASES[3])?;
+    let report = decoded
+        .layer::<IgmpReport>()
+        .expect("decoded IGMPv3 source-list-change report");
+
+    assert_eq!(
+        report
+            .group_records()
+            .iter()
+            .map(IgmpGroupRecord::record_type)
+            .collect::<Vec<_>>(),
+        vec![
+            IgmpRecordType::AllowNewSources,
+            IgmpRecordType::BlockOldSources,
+        ]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn igmp_golden_v3_report_auxiliary_data() -> crafter::Result<()> {
+    let decoded = assert_v3_report_case(V3_REPORT_CASES[4])?;
+    let report = decoded
+        .layer::<IgmpReport>()
+        .expect("decoded IGMPv3 auxiliary-data report");
+    let record = &report.group_records()[0];
+
+    assert_eq!(record.auxiliary_data_len_value(), 1);
+    assert_eq!(record.auxiliary_data(), V3_REPORT_AUX_DATA);
+    assert!(decoded.show().contains("record[0].auxiliary_data: de ad be ef"));
+
+    Ok(())
+}
+
+#[test]
+fn igmp_golden_v3_report_unknown_record_type() -> crafter::Result<()> {
+    let decoded = assert_v3_report_case(V3_REPORT_CASES[5])?;
+    let report = decoded
+        .layer::<IgmpReport>()
+        .expect("decoded IGMPv3 unknown-record report");
+    let record = &report.group_records()[0];
+
+    assert_eq!(record.record_type(), IgmpRecordType::Unknown(0xc8));
+    assert_eq!(record.record_type_meta().status, IgmpRecordTypeStatus::Unassigned);
+    assert!(decoded.show().contains("record[0].record_type: Unknown(200) (0xc8)"));
+
+    Ok(())
 }
 
 #[test]
