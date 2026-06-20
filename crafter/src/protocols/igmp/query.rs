@@ -15,6 +15,7 @@ use crate::packet::{IntoPacket, Layer, LayerContext, Packet};
 use super::constants::{
     IGMP_DEFAULT_QUERY_FLAGS, IGMP_V3_QUERY_FLAGS_MASK, IGMP_V3_QUERY_FLAG_EXTENSION,
 };
+use super::message::Igmp;
 
 const IGMP_V3_QUERY_BODY_MIN_LEN: usize = 4;
 const IGMP_V3_QUERY_SUPPRESS_ROUTER_SIDE_PROCESSING: u8 = 0x08;
@@ -42,6 +43,30 @@ impl IgmpQuery {
             number_of_sources: Field::unset(),
             sources: Vec::new(),
         }
+    }
+
+    /// Build an IGMPv3 General Query body.
+    ///
+    /// The common [`Igmp`] header carries the zero Group Address for a General
+    /// Query; use [`Igmp::v3_general_query`] to build both layers at once.
+    pub fn general() -> Self {
+        Self::new()
+    }
+
+    /// Build an IGMPv3 Group-Specific Query body.
+    ///
+    /// The group address lives in the common [`Igmp`] header; use
+    /// [`Igmp::v3_group_specific_query`] to build both layers at once.
+    pub fn group_specific() -> Self {
+        Self::new()
+    }
+
+    /// Build an IGMPv3 Group-and-Source-Specific Query body.
+    ///
+    /// The Number of Sources field is derived from `sources` unless the caller
+    /// later pins it with [`IgmpQuery::with_number_of_sources`].
+    pub fn group_and_source_specific(sources: impl Into<Vec<Ipv4Addr>>) -> Self {
+        Self::new().with_source_addresses(sources)
     }
 
     /// Set the raw Flags/S/QRV octet, preserving reserved and unknown bits.
@@ -153,6 +178,58 @@ impl IgmpQuery {
     }
 }
 
+impl Igmp {
+    /// Build an IGMPv3 Membership Query packet from a common IGMP header and an
+    /// IGMPv3 query body.
+    ///
+    /// `group_address` is `0.0.0.0` for a General Query and the target group for
+    /// Group-Specific or Group-and-Source-Specific Queries. `query` carries the
+    /// Flags/S/QRV, QQIC, and Source Address list. Source counts remain
+    /// auto-filled from the body unless `query` has an explicit Number of
+    /// Sources override.
+    pub fn v3_membership_query(
+        max_response_code: u8,
+        group_address: Ipv4Addr,
+        query: IgmpQuery,
+    ) -> Packet {
+        Self::membership_query()
+            .with_max_response_code(max_response_code)
+            .with_group_address(group_address)
+            / query
+    }
+
+    /// Build an IGMPv3 General Query packet.
+    pub fn v3_general_query(max_response_code: u8) -> Packet {
+        Self::v3_membership_query(
+            max_response_code,
+            Ipv4Addr::UNSPECIFIED,
+            IgmpQuery::general(),
+        )
+    }
+
+    /// Build an IGMPv3 Group-Specific Query packet for `group_address`.
+    pub fn v3_group_specific_query(max_response_code: u8, group_address: Ipv4Addr) -> Packet {
+        Self::v3_membership_query(
+            max_response_code,
+            group_address,
+            IgmpQuery::group_specific(),
+        )
+    }
+
+    /// Build an IGMPv3 Group-and-Source-Specific Query packet.
+    pub fn v3_group_and_source_specific_query(
+        max_response_code: u8,
+        group_address: Ipv4Addr,
+        sources: impl Into<Vec<Ipv4Addr>>,
+    ) -> Packet {
+        Self::v3_membership_query(
+            max_response_code,
+            group_address,
+            IgmpQuery::group_and_source_specific(sources),
+        )
+    }
+}
+
 impl Default for IgmpQuery {
     fn default() -> Self {
         Self::new()
@@ -256,7 +333,6 @@ fn value_or_copy<T: Copy>(field: &Field<T>, default: T) -> T {
 #[cfg(test)]
 mod igmp_v3_query_model {
     use super::*;
-    use crate::protocols::igmp::Igmp;
     use crate::IGMP_TYPE_MEMBERSHIP_QUERY;
 
     #[test]
@@ -313,6 +389,123 @@ mod igmp_v3_query_model {
         assert_eq!(bytes.as_bytes()[1], 100);
         assert_eq!(&bytes.as_bytes()[8..], &[0x0b, 125, 0, 1, 192, 0, 2, 10]);
         assert_eq!(packet.layer::<IgmpQuery>(), Some(&query));
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod igmp_v3_query_builders {
+    use super::*;
+    use crate::protocols::igmp::constants::{IGMP_FIXED_HEADER_LEN, IGMP_TYPE_MEMBERSHIP_QUERY};
+    use crate::protocols::igmp::registry::IgmpType;
+
+    fn doc_group() -> Ipv4Addr {
+        Ipv4Addr::new(233, 252, 0, 32)
+    }
+
+    fn doc_sources() -> Vec<Ipv4Addr> {
+        vec![Ipv4Addr::new(192, 0, 2, 1), Ipv4Addr::new(198, 51, 100, 2)]
+    }
+
+    #[test]
+    fn igmp_v3_query_builders_general_query_uses_zero_group_and_no_sources() -> crate::Result<()> {
+        assert_eq!(IgmpQuery::general(), IgmpQuery::new());
+
+        let packet = Igmp::v3_general_query(100);
+        let igmp = packet.layer::<Igmp>().expect("IGMP header layer");
+        let query = packet.layer::<IgmpQuery>().expect("IGMPv3 query body");
+
+        assert_eq!(igmp.igmp_type(), IgmpType::MembershipQuery);
+        assert_eq!(igmp.igmp_type_value(), IGMP_TYPE_MEMBERSHIP_QUERY);
+        assert_eq!(igmp.max_response_code_value(), 100);
+        assert_eq!(igmp.group_address_value(), Ipv4Addr::UNSPECIFIED);
+        assert_eq!(query.number_of_sources_value(), 0);
+        assert_eq!(query.number_of_sources_state(), FieldState::Unset);
+        assert!(query.source_addresses().is_empty());
+
+        let bytes = packet.compile()?;
+        assert_eq!(bytes.as_bytes()[0], IGMP_TYPE_MEMBERSHIP_QUERY);
+        assert_eq!(bytes.as_bytes()[1], 100);
+        assert_eq!(&bytes.as_bytes()[4..8], &Ipv4Addr::UNSPECIFIED.octets());
+        assert_eq!(&bytes.as_bytes()[IGMP_FIXED_HEADER_LEN..], &[0, 0, 0, 0]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn igmp_v3_query_builders_group_specific_query_uses_group_and_no_sources() -> crate::Result<()>
+    {
+        assert_eq!(IgmpQuery::group_specific(), IgmpQuery::new());
+
+        let packet = Igmp::v3_group_specific_query(10, doc_group());
+        let igmp = packet.layer::<Igmp>().expect("IGMP header layer");
+        let query = packet.layer::<IgmpQuery>().expect("IGMPv3 query body");
+
+        assert_eq!(igmp.igmp_type(), IgmpType::MembershipQuery);
+        assert_eq!(igmp.max_response_code_value(), 10);
+        assert_eq!(igmp.group_address_value(), doc_group());
+        assert_eq!(query.number_of_sources_value(), 0);
+        assert_eq!(query.number_of_sources_state(), FieldState::Unset);
+        assert!(query.source_addresses().is_empty());
+
+        let bytes = packet.compile()?;
+        assert_eq!(&bytes.as_bytes()[4..8], &doc_group().octets());
+        assert_eq!(&bytes.as_bytes()[IGMP_FIXED_HEADER_LEN..], &[0, 0, 0, 0]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn igmp_v3_query_builders_group_and_source_specific_query_auto_fills_count() -> crate::Result<()>
+    {
+        let sources = doc_sources();
+        let packet = Igmp::v3_group_and_source_specific_query(125, doc_group(), sources.clone());
+        let igmp = packet.layer::<Igmp>().expect("IGMP header layer");
+        let query = packet.layer::<IgmpQuery>().expect("IGMPv3 query body");
+
+        assert_eq!(igmp.igmp_type(), IgmpType::MembershipQuery);
+        assert_eq!(igmp.max_response_code_value(), 125);
+        assert_eq!(igmp.group_address_value(), doc_group());
+        assert_eq!(query.number_of_sources_value(), 2);
+        assert_eq!(query.number_of_sources_state(), FieldState::Unset);
+        assert_eq!(query.source_addresses(), sources.as_slice());
+
+        let bytes = packet.compile()?;
+        assert_eq!(&bytes.as_bytes()[4..8], &doc_group().octets());
+        assert_eq!(
+            &bytes.as_bytes()[IGMP_FIXED_HEADER_LEN..IGMP_FIXED_HEADER_LEN + 4],
+            &[0, 0, 0, 2]
+        );
+        assert_eq!(
+            &bytes.as_bytes()[IGMP_FIXED_HEADER_LEN + 4..],
+            &[192, 0, 2, 1, 198, 51, 100, 2]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn igmp_v3_query_builders_preserve_explicit_source_count_override() -> crate::Result<()> {
+        let sources = doc_sources();
+        let query = IgmpQuery::group_and_source_specific(sources.clone()).with_number_of_sources(7);
+        let packet = Igmp::v3_membership_query(125, doc_group(), query.clone());
+
+        let stored = packet.layer::<IgmpQuery>().expect("IGMPv3 query body");
+        assert_eq!(stored, &query);
+        assert_eq!(stored.number_of_sources_value(), 7);
+        assert_eq!(stored.number_of_sources_state(), FieldState::User);
+        assert_eq!(stored.source_addresses(), sources.as_slice());
+
+        let bytes = packet.compile()?;
+        assert_eq!(
+            &bytes.as_bytes()[IGMP_FIXED_HEADER_LEN + 2..IGMP_FIXED_HEADER_LEN + 4],
+            &7u16.to_be_bytes()
+        );
+        assert_eq!(
+            &bytes.as_bytes()[IGMP_FIXED_HEADER_LEN + 4..],
+            &[192, 0, 2, 1, 198, 51, 100, 2]
+        );
 
         Ok(())
     }
