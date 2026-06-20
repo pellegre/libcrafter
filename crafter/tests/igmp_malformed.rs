@@ -12,6 +12,8 @@ use std::net::Ipv4Addr;
 use crafter::prelude::*;
 
 const DOC_SRC: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 60);
+const DOC_QUERY_SOURCE: Ipv4Addr = Ipv4Addr::new(198, 51, 100, 60);
+const DOC_QUERY_SOURCE_ALT: Ipv4Addr = Ipv4Addr::new(203, 0, 113, 60);
 const DOC_MCAST: Ipv4Addr = Ipv4Addr::new(233, 252, 0, 60);
 const DOC_NON_MULTICAST: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 61);
 
@@ -90,6 +92,10 @@ fn decode_l3_bytes(name: &str, bytes: &[u8]) -> crafter::Result<Packet> {
         .unwrap_or_else(|_| panic!("{name} panicked during decode"))
 }
 
+fn write_u16_at(bytes: &mut [u8], offset: usize, value: u16) {
+    bytes[offset..offset + 2].copy_from_slice(&value.to_be_bytes());
+}
+
 fn ipv4(id: u16, dst: Ipv4Addr) -> Ipv4 {
     Ipv4::new()
         .src(DOC_SRC)
@@ -131,6 +137,38 @@ fn assert_buffer_error(case: &ErrorCase) {
         }
         Ok(packet) => panic!("{} decoded unexpectedly as {}", case.name, packet.summary()),
         Err(other) => panic!("{} expected BufferTooShort, got {other:?}", case.name),
+    }
+}
+
+fn assert_buffer_too_short_bytes(
+    name: &str,
+    bytes: &[u8],
+    expected_context: &'static str,
+    expected_required: usize,
+    expected_available: usize,
+) {
+    match decode_l3_bytes(name, bytes) {
+        Err(CrafterError::BufferTooShort {
+            context,
+            required,
+            available,
+        }) => {
+            assert_eq!(
+                context, expected_context,
+                "{name} returned the wrong buffer context"
+            );
+            assert_eq!(
+                required, expected_required,
+                "{name} returned the wrong required byte count"
+            );
+            assert_eq!(
+                available, expected_available,
+                "{name} returned the wrong available byte count"
+            );
+            assert!(required > available, "{name} should be a real underrun");
+        }
+        Ok(packet) => panic!("{name} decoded unexpectedly as {}", packet.summary()),
+        Err(other) => panic!("{name} expected BufferTooShort, got {other:?}"),
     }
 }
 
@@ -194,6 +232,24 @@ fn assert_v2_override_roundtrip(
 }
 
 #[test]
+fn igmp_v3_query_source_count_overrun_is_structural_error() -> crafter::Result<()> {
+    let query =
+        IgmpQuery::group_and_source_specific(vec![DOC_QUERY_SOURCE]).with_number_of_sources(2);
+    let packet = ipv4(0x2705, DOC_MCAST) / Igmp::v3_membership_query(100, DOC_MCAST, query);
+    let bytes = packet.compile()?;
+
+    assert_buffer_too_short_bytes(
+        "igmp-v3-query-source-count-too-large",
+        bytes.as_bytes(),
+        "igmp v3 query source list",
+        IGMP_V3_QUERY_MIN_LEN + 2 * 4,
+        IGMP_V3_QUERY_MIN_LEN + 4,
+    );
+
+    Ok(())
+}
+
+#[test]
 fn igmp_v3_query_extra_octets_are_preserved_as_raw() -> crafter::Result<()> {
     let packet = ipv4(0x2705, DOC_MCAST)
         / Igmp::v3_group_specific_query(100, DOC_MCAST)
@@ -212,6 +268,104 @@ fn igmp_v3_query_extra_octets_are_preserved_as_raw() -> crafter::Result<()> {
     assert_eq!(query.number_of_sources_value(), 0);
     assert!(query.source_addresses().is_empty());
     assert_eq!(raw.as_bytes(), &[0xde, 0xad, 0xbe, 0xef]);
+    assert_eq!(decoded.compile()?.as_bytes(), bytes.as_bytes());
+
+    Ok(())
+}
+
+#[test]
+fn igmp_v3_query_extra_source_tail_is_preserved_as_raw() -> crafter::Result<()> {
+    let packet = ipv4(0x2706, DOC_MCAST)
+        / Igmp::v3_group_and_source_specific_query(100, DOC_MCAST, vec![DOC_QUERY_SOURCE])
+        / Raw::from_bytes([0xde, 0xad, 0xbe, 0xef]);
+    let bytes = packet.compile()?;
+
+    let decoded = decode_l3_bytes("igmp-v3-query-extra-octets-after-sources", bytes.as_bytes())?;
+    let query = decoded
+        .layer::<IgmpQuery>()
+        .expect("decoded IGMPv3 query body");
+    let raw = decoded.layer::<Raw>().expect("decoded extra query bytes");
+
+    assert_eq!(decoded.len(), 4);
+    assert_eq!(query.number_of_sources_value(), 1);
+    assert_eq!(query.source_addresses(), &[DOC_QUERY_SOURCE]);
+    assert_eq!(raw.as_bytes(), &[0xde, 0xad, 0xbe, 0xef]);
+    assert_eq!(decoded.compile()?.as_bytes(), bytes.as_bytes());
+
+    Ok(())
+}
+
+#[test]
+fn igmp_v3_query_invalid_ipv4_wrapper_length_is_structural_error() -> crafter::Result<()> {
+    let packet = ipv4(0x2707, DOC_MCAST) / Igmp::v3_group_specific_query(100, DOC_MCAST);
+    let compiled = packet.compile()?;
+    let mut bytes = compiled.as_bytes().to_vec();
+    let declared_total_len = bytes.len() + 1;
+    write_u16_at(&mut bytes, 2, declared_total_len as u16);
+
+    assert_buffer_too_short_bytes(
+        "igmp-v3-query-invalid-ipv4-wrapper-length",
+        &bytes,
+        "ipv4 packet",
+        declared_total_len,
+        bytes.len(),
+    );
+
+    Ok(())
+}
+
+#[test]
+fn igmp_v3_query_explicit_wrong_checksum_is_inspectable() -> crafter::Result<()> {
+    let packet = ipv4(0x2708, DOC_MCAST)
+        / Igmp::membership_query()
+            .with_max_response_code(100)
+            .with_group_address(DOC_MCAST)
+            .checksum(0x1234)
+        / IgmpQuery::group_and_source_specific(vec![DOC_QUERY_SOURCE]);
+    let bytes = packet.compile()?;
+
+    let decoded = decode_l3_bytes("igmp-v3-query-explicit-wrong-checksum", bytes.as_bytes())?;
+    let igmp = decoded.layer::<Igmp>().expect("decoded IGMP header");
+    let query = decoded
+        .layer::<IgmpQuery>()
+        .expect("decoded IGMPv3 query body");
+
+    assert_eq!(decoded.len(), 3);
+    assert_eq!(igmp.igmp_type(), IgmpType::MembershipQuery);
+    assert_eq!(igmp.checksum_value(), Some(0x1234));
+    assert_eq!(igmp.checksum_state(), FieldState::User);
+    assert_eq!(query.source_addresses(), &[DOC_QUERY_SOURCE]);
+    assert_eq!(decoded.compile()?.as_bytes(), bytes.as_bytes());
+
+    Ok(())
+}
+
+#[test]
+fn igmp_v3_query_unknown_flag_bits_are_inspectable_and_preserved() -> crafter::Result<()> {
+    let query = IgmpQuery::group_and_source_specific(vec![DOC_QUERY_SOURCE_ALT])
+        .with_unassigned_query_flags(IGMP_V3_QUERY_FLAGS_UNASSIGNED_MASK)
+        .with_querier_robustness_variable(5);
+    let packet = ipv4(0x2709, DOC_MCAST) / Igmp::v3_membership_query(100, DOC_MCAST, query);
+    let bytes = packet.compile()?;
+
+    let decoded = decode_l3_bytes("igmp-v3-query-unknown-flag-bits", bytes.as_bytes())?;
+    let query = decoded
+        .layer::<IgmpQuery>()
+        .expect("decoded IGMPv3 query body");
+
+    assert_eq!(decoded.len(), 3);
+    assert_eq!(query.raw_flags_qrv_value(), 0x75);
+    assert_eq!(
+        query.query_flags_value(),
+        IGMP_V3_QUERY_FLAGS_UNASSIGNED_MASK
+    );
+    assert_eq!(
+        query.unassigned_query_flags_value(),
+        IGMP_V3_QUERY_FLAGS_UNASSIGNED_MASK
+    );
+    assert!(!query.extension_flag());
+    assert_eq!(query.querier_robustness_variable(), 5);
+    assert_eq!(query.source_addresses(), &[DOC_QUERY_SOURCE_ALT]);
     assert_eq!(decoded.compile()?.as_bytes(), bytes.as_bytes());
 
     Ok(())
