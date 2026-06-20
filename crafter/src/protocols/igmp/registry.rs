@@ -6,16 +6,18 @@
 //! steps can preserve as raw payloads.
 
 use super::constants::{
-    IGMP_QUERY_CODE_MAX_RESPONSE_FIRST, IGMP_QUERY_CODE_MAX_RESPONSE_LAST, IGMP_QUERY_CODE_V1,
-    IGMP_TYPE_CISCO_TRACE_MESSAGES, IGMP_TYPE_DVMRP, IGMP_TYPE_EXPERIMENTAL_FIRST,
-    IGMP_TYPE_EXPERIMENTAL_LAST, IGMP_TYPE_MEMBERSHIP_QUERY,
-    IGMP_TYPE_MULTICAST_ROUTER_ADVERTISEMENT, IGMP_TYPE_MULTICAST_ROUTER_SOLICITATION,
-    IGMP_TYPE_MULTICAST_ROUTER_TERMINATION, IGMP_TYPE_MULTICAST_TRACEROUTE,
-    IGMP_TYPE_MULTICAST_TRACEROUTE_RESPONSE, IGMP_TYPE_OBSOLETE_RESERVED_FIRST,
-    IGMP_TYPE_OBSOLETE_RESERVED_LAST, IGMP_TYPE_PIM_V1, IGMP_TYPE_RESERVED,
-    IGMP_TYPE_UNASSIGNED_FIRST, IGMP_TYPE_UNASSIGNED_LAST, IGMP_TYPE_V1_MEMBERSHIP_REPORT,
-    IGMP_TYPE_V2_LEAVE_GROUP, IGMP_TYPE_V2_MEMBERSHIP_REPORT, IGMP_TYPE_V3_MEMBERSHIP_REPORT,
-    IGMP_V3_QUERY_FLAG_EXTENSION, IGMP_V3_REPORT_FLAG_EXTENSION,
+    IGMP_EXTENSION_TYPE_EXPERIMENTAL_FIRST, IGMP_EXTENSION_TYPE_EXPERIMENTAL_LAST,
+    IGMP_EXTENSION_TYPE_NOOP, IGMP_EXTENSION_TYPE_UNASSIGNED_FIRST,
+    IGMP_EXTENSION_TYPE_UNASSIGNED_LAST, IGMP_QUERY_CODE_MAX_RESPONSE_FIRST,
+    IGMP_QUERY_CODE_MAX_RESPONSE_LAST, IGMP_QUERY_CODE_V1, IGMP_TYPE_CISCO_TRACE_MESSAGES,
+    IGMP_TYPE_DVMRP, IGMP_TYPE_EXPERIMENTAL_FIRST, IGMP_TYPE_EXPERIMENTAL_LAST,
+    IGMP_TYPE_MEMBERSHIP_QUERY, IGMP_TYPE_MULTICAST_ROUTER_ADVERTISEMENT,
+    IGMP_TYPE_MULTICAST_ROUTER_SOLICITATION, IGMP_TYPE_MULTICAST_ROUTER_TERMINATION,
+    IGMP_TYPE_MULTICAST_TRACEROUTE, IGMP_TYPE_MULTICAST_TRACEROUTE_RESPONSE,
+    IGMP_TYPE_OBSOLETE_RESERVED_FIRST, IGMP_TYPE_OBSOLETE_RESERVED_LAST, IGMP_TYPE_PIM_V1,
+    IGMP_TYPE_RESERVED, IGMP_TYPE_UNASSIGNED_FIRST, IGMP_TYPE_UNASSIGNED_LAST,
+    IGMP_TYPE_V1_MEMBERSHIP_REPORT, IGMP_TYPE_V2_LEAVE_GROUP, IGMP_TYPE_V2_MEMBERSHIP_REPORT,
+    IGMP_TYPE_V3_MEMBERSHIP_REPORT, IGMP_V3_QUERY_FLAG_EXTENSION, IGMP_V3_REPORT_FLAG_EXTENSION,
 };
 
 /// Source-backed IGMP Type value.
@@ -236,6 +238,86 @@ pub struct IgmpReportFlagMeta {
     pub name: &'static str,
     /// Registry assignment status.
     pub status: IgmpFlagStatus,
+}
+
+/// Source-backed IGMP/MLD extension type value.
+///
+/// RFC 9279 and the common IANA IGMP/MLD Extension Types registry currently
+/// assign only Type 0 (No-op). Unassigned and experimental-use values remain
+/// typed range variants carrying the original wire value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum IgmpExtensionType {
+    /// No-op Extension Type, value 0.
+    Noop,
+    /// Registry-managed but currently unassigned Extension Type.
+    Unassigned(u16),
+    /// Reserved for experimental use by RFC 9279 / IANA.
+    Experimental(u16),
+}
+
+impl IgmpExtensionType {
+    /// Return the raw wire Extension Type value.
+    pub const fn code(self) -> u16 {
+        match self {
+            Self::Noop => IGMP_EXTENSION_TYPE_NOOP,
+            Self::Unassigned(code) | Self::Experimental(code) => code,
+        }
+    }
+
+    /// Return the raw wire Extension Type value.
+    pub const fn raw(self) -> u16 {
+        self.code()
+    }
+
+    /// Return the raw wire Extension Type value.
+    pub const fn to_u16(self) -> u16 {
+        self.code()
+    }
+
+    /// Classify a raw Extension Type value without rejecting unknown values.
+    pub const fn from_u16(code: u16) -> Self {
+        igmp_extension_type(code)
+    }
+
+    /// Return source-backed metadata for this Extension Type.
+    pub const fn meta(self) -> IgmpExtensionTypeMeta {
+        igmp_extension_type_meta(self.code())
+    }
+}
+
+impl core::fmt::Display for IgmpExtensionType {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let meta = self.meta();
+        match meta.status {
+            IgmpExtensionTypeStatus::Unassigned => write!(f, "Unknown({})", meta.code),
+            _ => f.write_str(meta.name),
+        }
+    }
+}
+
+/// Registry assignment status for an IGMP/MLD extension type value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum IgmpExtensionTypeStatus {
+    /// Assigned by the reviewed extension type registry.
+    Assigned,
+    /// In the registry-managed range but not currently assigned.
+    Unassigned,
+    /// Reserved for experimental use.
+    Experimental,
+}
+
+/// One source-backed IGMP/MLD Extension Types registry entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct IgmpExtensionTypeMeta {
+    /// Raw wire Extension Type value.
+    pub code: u16,
+    /// Extension Type classification preserving raw range values.
+    pub extension_type: IgmpExtensionType,
+    /// Registered short name, or a status label for range-derived values.
+    pub name: &'static str,
+    /// Registry assignment status.
+    pub status: IgmpExtensionTypeStatus,
 }
 
 /// Classify an IGMP Type code without rejecting unassigned values.
@@ -535,6 +617,63 @@ pub const fn igmp_report_flag_name(bit: u8) -> Option<&'static str> {
     }
 }
 
+/// Classify an IGMP/MLD Extension Type value without rejecting unknown values.
+pub const fn igmp_extension_type(code: u16) -> IgmpExtensionType {
+    match code {
+        IGMP_EXTENSION_TYPE_NOOP => IgmpExtensionType::Noop,
+        IGMP_EXTENSION_TYPE_UNASSIGNED_FIRST..=IGMP_EXTENSION_TYPE_UNASSIGNED_LAST => {
+            IgmpExtensionType::Unassigned(code)
+        }
+        IGMP_EXTENSION_TYPE_EXPERIMENTAL_FIRST..=IGMP_EXTENSION_TYPE_EXPERIMENTAL_LAST => {
+            IgmpExtensionType::Experimental(code)
+        }
+    }
+}
+
+/// Return registry metadata for an IGMP/MLD Extension Type value.
+pub const fn igmp_extension_type_meta(code: u16) -> IgmpExtensionTypeMeta {
+    match code {
+        IGMP_EXTENSION_TYPE_NOOP => extension_type_meta(
+            code,
+            IgmpExtensionType::Noop,
+            "No-op",
+            IgmpExtensionTypeStatus::Assigned,
+        ),
+        IGMP_EXTENSION_TYPE_UNASSIGNED_FIRST..=IGMP_EXTENSION_TYPE_UNASSIGNED_LAST => {
+            extension_type_meta(
+                code,
+                IgmpExtensionType::Unassigned(code),
+                "Unassigned",
+                IgmpExtensionTypeStatus::Unassigned,
+            )
+        }
+        IGMP_EXTENSION_TYPE_EXPERIMENTAL_FIRST..=IGMP_EXTENSION_TYPE_EXPERIMENTAL_LAST => {
+            extension_type_meta(
+                code,
+                IgmpExtensionType::Experimental(code),
+                "Reserved for Experimental Use",
+                IgmpExtensionTypeStatus::Experimental,
+            )
+        }
+    }
+}
+
+/// Return the registry status for an IGMP/MLD Extension Type value.
+pub const fn igmp_extension_type_status(code: u16) -> IgmpExtensionTypeStatus {
+    igmp_extension_type_meta(code).status
+}
+
+/// Return a source-backed Extension Type name when the registry assigns one.
+pub const fn igmp_extension_type_name(code: u16) -> Option<&'static str> {
+    let meta = igmp_extension_type_meta(code);
+    match meta.status {
+        IgmpExtensionTypeStatus::Assigned | IgmpExtensionTypeStatus::Experimental => {
+            Some(meta.name)
+        }
+        IgmpExtensionTypeStatus::Unassigned => None,
+    }
+}
+
 const fn type_meta(
     code: u8,
     igmp_type: IgmpType,
@@ -607,6 +746,20 @@ const fn igmp_report_flag_mask(bit: u8) -> u16 {
     match bit {
         0..=15 => 0x8000 >> bit,
         _ => 0,
+    }
+}
+
+const fn extension_type_meta(
+    code: u16,
+    extension_type: IgmpExtensionType,
+    name: &'static str,
+    status: IgmpExtensionTypeStatus,
+) -> IgmpExtensionTypeMeta {
+    IgmpExtensionTypeMeta {
+        code,
+        extension_type,
+        name,
+        status,
     }
 }
 
@@ -758,7 +911,10 @@ mod tests {
         assert_eq!(query_extension.name, "Extension");
         assert_eq!(query_extension.status, IgmpFlagStatus::Assigned);
         assert_eq!(IgmpQueryFlag::Extension.bit(), 0);
-        assert_eq!(IgmpQueryFlag::Extension.mask(), IGMP_V3_QUERY_FLAG_EXTENSION);
+        assert_eq!(
+            IgmpQueryFlag::Extension.mask(),
+            IGMP_V3_QUERY_FLAG_EXTENSION
+        );
         assert_eq!(IgmpQueryFlag::Extension.meta(), query_extension);
         assert_eq!(igmp_query_flag(0), IgmpQueryFlag::Extension);
         assert_eq!(igmp_query_flag_name(0), Some("Extension"));
@@ -793,5 +949,98 @@ mod tests {
         assert_eq!(report_unassigned.status, IgmpFlagStatus::Unassigned);
         assert_eq!(igmp_report_flag_name(15), None);
         assert_eq!(igmp_report_flag_meta(16).flag, IgmpReportFlag::NotFlag(16));
+    }
+
+    #[test]
+    fn igmp_extension_type_metadata_names_known_noop() {
+        let noop = igmp_extension_type_meta(IGMP_EXTENSION_TYPE_NOOP);
+        assert_eq!(noop.code, 0);
+        assert_eq!(noop.extension_type, IgmpExtensionType::Noop);
+        assert_eq!(noop.name, "No-op");
+        assert_eq!(noop.status, IgmpExtensionTypeStatus::Assigned);
+        assert_eq!(
+            igmp_extension_type(IGMP_EXTENSION_TYPE_NOOP),
+            IgmpExtensionType::Noop
+        );
+        assert_eq!(
+            igmp_extension_type_status(IGMP_EXTENSION_TYPE_NOOP),
+            IgmpExtensionTypeStatus::Assigned
+        );
+        assert_eq!(
+            igmp_extension_type_name(IGMP_EXTENSION_TYPE_NOOP),
+            Some("No-op")
+        );
+        assert_eq!(IgmpExtensionType::Noop.code(), IGMP_EXTENSION_TYPE_NOOP);
+        assert_eq!(IgmpExtensionType::Noop.raw(), IGMP_EXTENSION_TYPE_NOOP);
+        assert_eq!(IgmpExtensionType::Noop.to_u16(), IGMP_EXTENSION_TYPE_NOOP);
+        assert_eq!(
+            IgmpExtensionType::from_u16(IGMP_EXTENSION_TYPE_NOOP),
+            IgmpExtensionType::Noop
+        );
+        assert_eq!(IgmpExtensionType::Noop.meta(), noop);
+        assert_eq!(IgmpExtensionType::Noop.to_string(), "No-op");
+    }
+
+    #[test]
+    fn igmp_extension_type_metadata_preserves_unknown_and_reserved_experimental_values() {
+        let first_unassigned = igmp_extension_type_meta(IGMP_EXTENSION_TYPE_UNASSIGNED_FIRST);
+        assert_eq!(
+            first_unassigned.extension_type,
+            IgmpExtensionType::Unassigned(IGMP_EXTENSION_TYPE_UNASSIGNED_FIRST)
+        );
+        assert_eq!(first_unassigned.name, "Unassigned");
+        assert_eq!(first_unassigned.status, IgmpExtensionTypeStatus::Unassigned);
+        assert_eq!(
+            igmp_extension_type_name(IGMP_EXTENSION_TYPE_UNASSIGNED_FIRST),
+            None
+        );
+        assert_eq!(
+            IgmpExtensionType::from_u16(IGMP_EXTENSION_TYPE_UNASSIGNED_LAST),
+            IgmpExtensionType::Unassigned(IGMP_EXTENSION_TYPE_UNASSIGNED_LAST)
+        );
+        assert_eq!(IgmpExtensionType::Unassigned(17).to_string(), "Unknown(17)");
+
+        let first_experimental = igmp_extension_type_meta(IGMP_EXTENSION_TYPE_EXPERIMENTAL_FIRST);
+        assert_eq!(
+            first_experimental.extension_type,
+            IgmpExtensionType::Experimental(IGMP_EXTENSION_TYPE_EXPERIMENTAL_FIRST)
+        );
+        assert_eq!(first_experimental.name, "Reserved for Experimental Use");
+        assert_eq!(
+            first_experimental.status,
+            IgmpExtensionTypeStatus::Experimental
+        );
+        assert_eq!(
+            igmp_extension_type_status(IGMP_EXTENSION_TYPE_EXPERIMENTAL_FIRST),
+            IgmpExtensionTypeStatus::Experimental
+        );
+        assert_eq!(
+            igmp_extension_type_name(IGMP_EXTENSION_TYPE_EXPERIMENTAL_FIRST),
+            Some("Reserved for Experimental Use")
+        );
+
+        let reserved_experimental = igmp_extension_type_meta(IGMP_EXTENSION_TYPE_EXPERIMENTAL_LAST);
+        assert_eq!(
+            reserved_experimental.extension_type,
+            IgmpExtensionType::Experimental(IGMP_EXTENSION_TYPE_EXPERIMENTAL_LAST)
+        );
+        assert_eq!(
+            reserved_experimental.status,
+            IgmpExtensionTypeStatus::Experimental
+        );
+        assert_eq!(
+            IgmpExtensionType::Experimental(IGMP_EXTENSION_TYPE_EXPERIMENTAL_LAST).to_string(),
+            "Reserved for Experimental Use"
+        );
+    }
+
+    #[test]
+    fn igmp_extension_type_metadata_covers_all_raw_values() {
+        for code in 0u16..=u16::MAX {
+            let meta = igmp_extension_type_meta(code);
+            assert_eq!(meta.code, code);
+            assert_eq!(meta.extension_type.code(), code);
+            assert!(!meta.name.is_empty());
+        }
     }
 }
