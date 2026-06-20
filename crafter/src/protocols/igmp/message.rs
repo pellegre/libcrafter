@@ -9,6 +9,7 @@ use core::any::Any;
 use core::net::Ipv4Addr;
 use core::ops::Div;
 
+use crate::checksum::internet_checksum;
 use crate::error::Result;
 use crate::field::Field;
 use crate::packet::{IntoPacket, Layer, LayerContext, Packet};
@@ -144,18 +145,34 @@ impl Layer for Igmp {
         IGMP_FIXED_HEADER_LEN
     }
 
-    fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
+    fn encoded_len_with_context(&self, ctx: &LayerContext<'_>) -> usize {
+        IGMP_FIXED_HEADER_LEN + ctx.packet().encoded_len_after(ctx.index())
+    }
+
+    fn compile(&self, ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
+        let start = out.len();
         out.reserve(IGMP_FIXED_HEADER_LEN);
         out.push(self.igmp_type_value());
         out.push(self.code_value());
-        out.extend_from_slice(
-            &self
-                .checksum_value()
-                .unwrap_or(IGMP_DEFAULT_CHECKSUM)
-                .to_be_bytes(),
-        );
+        out.extend_from_slice(&IGMP_DEFAULT_CHECKSUM.to_be_bytes());
         out.extend_from_slice(&self.group_address_value().octets());
+
+        if let Err(err) = ctx.packet().compile_layers_after_into(ctx.index(), out) {
+            out.truncate(start);
+            return Err(err);
+        }
+
+        let checksum = self
+            .checksum
+            .value()
+            .copied()
+            .unwrap_or_else(|| internet_checksum(&out[start..]));
+        out[start + 2..start + 4].copy_from_slice(&checksum.to_be_bytes());
         Ok(())
+    }
+
+    fn consumes_following(&self) -> bool {
+        true
     }
 
     fn clone_layer(&self) -> Box<dyn Layer> {
@@ -249,6 +266,7 @@ mod tests {
 #[cfg(test)]
 mod igmp_layer_impl {
     use super::*;
+    use crate::checksum::internet_checksum;
     use crate::packet::{Packet, Raw};
 
     #[test]
@@ -258,7 +276,7 @@ mod igmp_layer_impl {
         assert_eq!(packet.encoded_len(), IGMP_FIXED_HEADER_LEN);
         assert_eq!(
             packet.compile().expect("compile default IGMP").as_bytes(),
-            &[0x11, 0x00, 0x00, 0x00, 0, 0, 0, 0]
+            &[0x11, 0x00, 0xee, 0xff, 0, 0, 0, 0]
         );
     }
 
@@ -274,7 +292,10 @@ mod igmp_layer_impl {
         let show = packet.show();
         assert!(show.contains("Packet(len=8, layers=1)"), "{show}");
         assert!(show.contains("[0] Igmp"), "{show}");
-        assert!(show.contains("type: IGMP Membership Query (0x11)"), "{show}");
+        assert!(
+            show.contains("type: IGMP Membership Query (0x11)"),
+            "{show}"
+        );
         assert!(show.contains("code: IGMP Version 1 (0x00)"), "{show}");
         assert!(show.contains("checksum: auto"), "{show}");
         assert!(show.contains("group_address: 0.0.0.0"), "{show}");
@@ -282,13 +303,97 @@ mod igmp_layer_impl {
     }
 
     #[test]
-    fn composes_with_following_payload_without_consuming_it() {
+    fn composes_with_following_payload_and_checksums_it() {
         let packet = Igmp::default() / Raw::from_bytes([0xde, 0xad, 0xbe, 0xef]);
+        let mut expected = vec![0x11, 0x00, 0x00, 0x00, 0, 0, 0, 0, 0xde, 0xad, 0xbe, 0xef];
+        let checksum = internet_checksum(&expected);
+        expected[2..4].copy_from_slice(&checksum.to_be_bytes());
 
         assert_eq!(packet.encoded_len(), IGMP_FIXED_HEADER_LEN + 4);
         assert_eq!(
-            packet.compile().expect("compile IGMP with payload").as_bytes(),
-            &[0x11, 0x00, 0x00, 0x00, 0, 0, 0, 0, 0xde, 0xad, 0xbe, 0xef]
+            packet
+                .compile()
+                .expect("compile IGMP with payload")
+                .as_bytes(),
+            expected.as_slice()
         );
+    }
+}
+
+#[cfg(test)]
+mod igmp_checksum {
+    use super::*;
+    use crate::checksum::{internet_checksum, verify_internet_checksum};
+    use crate::packet::{Packet, Raw};
+
+    fn checksum_field(bytes: &[u8]) -> u16 {
+        u16::from_be_bytes([bytes[2], bytes[3]])
+    }
+
+    #[test]
+    fn igmp_checksum_auto_fills_fixed_header() {
+        let bytes = Packet::from_layer(Igmp::default())
+            .compile()
+            .expect("compile default IGMP");
+        let mut zeroed = bytes.as_bytes().to_vec();
+        zeroed[2] = 0;
+        zeroed[3] = 0;
+
+        assert_eq!(checksum_field(bytes.as_bytes()), internet_checksum(&zeroed));
+        assert!(verify_internet_checksum(bytes.as_bytes()));
+    }
+
+    #[test]
+    fn igmp_checksum_auto_fills_following_payload() {
+        let packet = Igmp::default() / Raw::from_bytes([0xde, 0xad, 0xbe, 0xef]);
+        let bytes = packet.compile().expect("compile IGMP with payload");
+        let mut zeroed = bytes.as_bytes().to_vec();
+        zeroed[2] = 0;
+        zeroed[3] = 0;
+
+        assert_eq!(bytes.len(), IGMP_FIXED_HEADER_LEN + 4);
+        assert_eq!(checksum_field(bytes.as_bytes()), internet_checksum(&zeroed));
+        assert!(verify_internet_checksum(bytes.as_bytes()));
+    }
+
+    #[test]
+    fn igmp_checksum_explicit_zero_is_preserved() {
+        let mut igmp = Igmp::default();
+        igmp.checksum.set_user(0);
+
+        let bytes = Packet::from_layer(igmp)
+            .compile()
+            .expect("compile explicit zero checksum");
+
+        assert_eq!(checksum_field(bytes.as_bytes()), 0);
+        assert!(!verify_internet_checksum(bytes.as_bytes()));
+    }
+
+    #[test]
+    fn igmp_checksum_explicit_nonzero_is_preserved() {
+        let mut igmp = Igmp::default();
+        igmp.checksum.set_user(0x1234);
+
+        let bytes = (igmp / Raw::from_bytes([0xde, 0xad]))
+            .compile()
+            .expect("compile explicit nonzero checksum");
+
+        assert_eq!(checksum_field(bytes.as_bytes()), 0x1234);
+        assert!(!verify_internet_checksum(bytes.as_bytes()));
+    }
+
+    #[test]
+    fn igmp_checksum_roundtrips_through_compile() {
+        let packet = Igmp::default() / Raw::from_bytes([0x01, 0x02, 0x03]);
+
+        let first = packet.compile().expect("first compile");
+        let second = packet.compile().expect("second compile");
+        let mut zeroed = first.as_bytes().to_vec();
+        zeroed[2] = 0;
+        zeroed[3] = 0;
+
+        assert_eq!(first, second);
+        assert_eq!(checksum_field(first.as_bytes()), internet_checksum(&zeroed));
+        assert!(verify_internet_checksum(first.as_bytes()));
     }
 }
