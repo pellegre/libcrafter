@@ -474,7 +474,8 @@ impl IgmpGroupRecord {
     /// One-line record summary.
     pub fn summary(&self) -> String {
         format!(
-            "IgmpGroupRecord(type={}, group={}, sources={}, aux_words={}, aux={}B)",
+            "IgmpGroupRecord(record_type=0x{:02x} {}, group={}, source_count={}, aux_words={}, aux_len={}B)",
+            self.record_type_value(),
             self.record_type,
             self.multicast_address,
             self.number_of_sources_value(),
@@ -488,7 +489,7 @@ impl IgmpGroupRecord {
         vec![
             (
                 "record_type",
-                format!("{} (0x{:02x})", self.record_type, self.record_type_value()),
+                format!("0x{:02x} ({})", self.record_type_value(), self.record_type),
             ),
             (
                 "auxiliary_data_len",
@@ -702,7 +703,7 @@ mod igmp_group_record_model {
         );
         assert_eq!(
             record.summary(),
-            "IgmpGroupRecord(type=Reserved, group=0.0.0.0, sources=0, aux_words=0, aux=0B)"
+            "IgmpGroupRecord(record_type=0x00 Reserved, group=0.0.0.0, source_count=0, aux_words=0, aux_len=0B)"
         );
     }
 
@@ -720,12 +721,12 @@ mod igmp_group_record_model {
         assert_eq!(record.source_addresses(), &[doc_source_a(), doc_source_b()]);
         assert_eq!(
             record.summary(),
-            "IgmpGroupRecord(type=MODE_IS_INCLUDE, group=233.252.0.80, sources=2, aux_words=0, aux=0B)"
+            "IgmpGroupRecord(record_type=0x01 MODE_IS_INCLUDE, group=233.252.0.80, source_count=2, aux_words=0, aux_len=0B)"
         );
         assert_eq!(
             record.inspection_fields(),
             vec![
-                ("record_type", "MODE_IS_INCLUDE (0x01)".to_string()),
+                ("record_type", "0x01 (MODE_IS_INCLUDE)".to_string()),
                 ("auxiliary_data_len", "0".to_string()),
                 ("number_of_sources", "2".to_string()),
                 ("multicast_address", "233.252.0.80".to_string()),
@@ -780,12 +781,12 @@ mod igmp_group_record_model {
 
         assert_eq!(
             record.summary(),
-            "IgmpGroupRecord(type=ALLOW_NEW_SOURCES, group=233.252.0.80, sources=1, aux_words=1, aux=4B)"
+            "IgmpGroupRecord(record_type=0x05 ALLOW_NEW_SOURCES, group=233.252.0.80, source_count=1, aux_words=1, aux_len=4B)"
         );
         assert_eq!(
             record.inspection_fields(),
             vec![
-                ("record_type", "ALLOW_NEW_SOURCES (0x05)".to_string()),
+                ("record_type", "0x05 (ALLOW_NEW_SOURCES)".to_string()),
                 ("auxiliary_data_len", "1".to_string()),
                 ("number_of_sources", "1".to_string()),
                 ("multicast_address", "233.252.0.80".to_string()),

@@ -18,8 +18,10 @@ Packet(len=28, layers=2)
       option_count: 0
       options: 
   [1] Igmp
-      type: IGMPv2 Membership Report (0x16)
-      code: No registered code (0x00)
+      version: IGMPv2
+      type: 0x16 (IGMPv2 Membership Report)
+      code: 0x00 (No registered code)
       checksum: 0xffd7
-      group_address: 233.252.0.43
+      checksum_status: valid
+      group_address: 233.252.0.43 (multicast)
       length: 8

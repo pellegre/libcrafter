@@ -40,6 +40,8 @@ pub struct Igmp {
     pub(crate) checksum: Field<u16>,
     /// Group Address field from the common IGMP fixed header.
     pub(crate) group_address: Field<Ipv4Addr>,
+    /// Decode-time checksum verification status for the whole IGMP message.
+    pub(crate) checksum_status: IgmpChecksumStatus,
 }
 
 impl Igmp {
@@ -55,6 +57,7 @@ impl Igmp {
             code: Field::defaulted(IGMP_DEFAULT_CODE),
             checksum: Field::unset(),
             group_address: Field::defaulted(Ipv4Addr::UNSPECIFIED),
+            checksum_status: IgmpChecksumStatus::NotChecked,
         }
     }
 
@@ -264,6 +267,11 @@ impl Igmp {
         self.checksum.value().copied()
     }
 
+    /// Decode-time checksum verification status.
+    pub fn checksum_status(&self) -> IgmpChecksumStatus {
+        self.checksum_status
+    }
+
     /// Raw Group Address field value.
     pub fn group_address_value(&self) -> Ipv4Addr {
         value_or_copy(&self.group_address, Ipv4Addr::UNSPECIFIED)
@@ -321,6 +329,28 @@ impl Default for Igmp {
     }
 }
 
+/// Decode-time checksum verification status for an IGMP message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum IgmpChecksumStatus {
+    /// Checksum has not been verified, usually because the packet was built in memory.
+    NotChecked,
+    /// The decoded checksum is valid for the IGMP message bytes.
+    Valid,
+    /// The decoded checksum is present but invalid for the IGMP message bytes.
+    Invalid,
+}
+
+impl IgmpChecksumStatus {
+    /// Stable label for summaries and inspection output.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::NotChecked => "not_checked",
+            Self::Valid => "valid",
+            Self::Invalid => "invalid",
+        }
+    }
+}
+
 impl Layer for Igmp {
     fn name(&self) -> &'static str {
         "Igmp"
@@ -328,24 +358,32 @@ impl Layer for Igmp {
 
     fn summary(&self) -> String {
         format!(
-            "Igmp(type={}, code={}, group={})",
-            self.type_meta().name,
-            self.code_meta().name,
-            self.group_address_value()
+            "Igmp(version={}, type={}, code={}, group={} ({}), checksum={}, checksum_status={})",
+            self.version_summary(),
+            igmp_type_summary(self.type_meta()),
+            igmp_code_summary(self.code_meta()),
+            self.group_address_value(),
+            self.group_address_class_name(),
+            self.checksum_summary(),
+            self.checksum_status.label()
         )
     }
 
     fn inspection_fields(&self) -> Vec<(&'static str, String)> {
         vec![
+            ("version", self.version_summary().to_string()),
             ("type", igmp_type_summary(self.type_meta())),
             ("code", igmp_code_summary(self.code_meta())),
+            ("checksum", self.checksum_summary()),
+            ("checksum_status", self.checksum_status.label().to_string()),
             (
-                "checksum",
-                self.checksum_value()
-                    .map(|value| format!("0x{value:04x}"))
-                    .unwrap_or_else(|| "auto".to_string()),
+                "group_address",
+                format!(
+                    "{} ({})",
+                    self.group_address_value(),
+                    self.group_address_class_name()
+                ),
             ),
-            ("group_address", self.group_address_value().to_string()),
             ("length", IGMP_FIXED_HEADER_LEN.to_string()),
         ]
     }
@@ -416,12 +454,31 @@ fn value_or_copy<T: Copy>(field: &Field<T>, default: T) -> T {
     field.value().copied().unwrap_or(default)
 }
 
+impl Igmp {
+    fn version_summary(&self) -> &'static str {
+        match self.igmp_type() {
+            IgmpType::MembershipQuery if self.code_value() == IGMP_DEFAULT_CODE => "IGMPv1 query",
+            IgmpType::MembershipQuery => "IGMPv2/v3 query",
+            IgmpType::V1MembershipReport => "IGMPv1",
+            IgmpType::V2MembershipReport | IgmpType::V2LeaveGroup => "IGMPv2",
+            IgmpType::V3MembershipReport => "IGMPv3",
+            _ => "unknown",
+        }
+    }
+
+    fn checksum_summary(&self) -> String {
+        self.checksum_value()
+            .map(|value| format!("0x{value:04x}"))
+            .unwrap_or_else(|| "auto".to_string())
+    }
+}
+
 fn igmp_type_summary(meta: IgmpTypeMeta) -> String {
-    format!("{} (0x{:02x})", meta.name, meta.code)
+    format!("0x{:02x} ({})", meta.code, meta.name)
 }
 
 fn igmp_code_summary(meta: IgmpCodeMeta) -> String {
-    format!("{} (0x{:02x})", meta.name, meta.code)
+    format!("0x{:02x} ({})", meta.code, meta.name)
 }
 
 #[cfg(test)]
@@ -495,19 +552,20 @@ mod igmp_layer_impl {
 
         assert_eq!(
             packet.summary(),
-            "Igmp(type=IGMP Membership Query, code=IGMP Version 1, group=0.0.0.0)"
+            "Igmp(version=IGMPv1 query, type=0x11 (IGMP Membership Query), code=0x00 (IGMP Version 1), group=0.0.0.0 (zero), checksum=auto, checksum_status=not_checked)"
         );
 
         let show = packet.show();
         assert!(show.contains("Packet(len=8, layers=1)"), "{show}");
         assert!(show.contains("[0] Igmp"), "{show}");
         assert!(
-            show.contains("type: IGMP Membership Query (0x11)"),
+            show.contains("type: 0x11 (IGMP Membership Query)"),
             "{show}"
         );
-        assert!(show.contains("code: IGMP Version 1 (0x00)"), "{show}");
+        assert!(show.contains("code: 0x00 (IGMP Version 1)"), "{show}");
         assert!(show.contains("checksum: auto"), "{show}");
-        assert!(show.contains("group_address: 0.0.0.0"), "{show}");
+        assert!(show.contains("checksum_status: not_checked"), "{show}");
+        assert!(show.contains("group_address: 0.0.0.0 (zero)"), "{show}");
         assert!(show.contains("length: 8"), "{show}");
     }
 
@@ -968,14 +1026,17 @@ mod igmp_v2_membership_report {
         let packet = Packet::from_layer(decoded);
         assert_eq!(
             packet.summary(),
-            "Igmp(type=IGMPv2 Membership Report, code=No registered code, group=224.0.0.251)"
+            format!("Igmp(version=IGMPv2, type=0x16 (IGMPv2 Membership Report), code=0x00 (No registered code), group=224.0.0.251 (multicast), checksum=0x{checksum:04x}, checksum_status=valid)")
         );
         let show = packet.show();
         assert!(
-            show.contains("type: IGMPv2 Membership Report (0x16)"),
+            show.contains("type: 0x16 (IGMPv2 Membership Report)"),
             "{show}"
         );
-        assert!(show.contains("group_address: 224.0.0.251"), "{show}");
+        assert!(
+            show.contains("group_address: 224.0.0.251 (multicast)"),
+            "{show}"
+        );
         assert!(
             show.contains(&format!("checksum: 0x{checksum:04x}")),
             "{show}"
@@ -1067,12 +1128,15 @@ mod igmp_v2_leave_group {
         let packet = Packet::from_layer(decoded);
         assert_eq!(
             packet.summary(),
-            "Igmp(type=IGMPv2 Leave Group, code=No registered code, group=233.252.0.17)"
+            "Igmp(version=IGMPv2, type=0x17 (IGMPv2 Leave Group), code=0x00 (No registered code), group=233.252.0.17 (multicast), checksum=0xfef1, checksum_status=valid)"
         );
         let show = packet.show();
-        assert!(show.contains("type: IGMPv2 Leave Group (0x17)"), "{show}");
-        assert!(show.contains("code: No registered code (0x00)"), "{show}");
-        assert!(show.contains("group_address: 233.252.0.17"), "{show}");
+        assert!(show.contains("type: 0x17 (IGMPv2 Leave Group)"), "{show}");
+        assert!(show.contains("code: 0x00 (No registered code)"), "{show}");
+        assert!(
+            show.contains("group_address: 233.252.0.17 (multicast)"),
+            "{show}"
+        );
         assert!(
             show.contains(&format!("checksum: 0x{checksum:04x}")),
             "{show}"

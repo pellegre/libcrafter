@@ -1,1 +1,1 @@
-Ipv4(src=192.0.2.10, dst=233.252.0.1, proto=igmp(2)) / Igmp(type=IGMP Membership Query, code=IGMP Version 1, group=0.0.0.0)
+Ipv4(src=192.0.2.10, dst=233.252.0.1, proto=igmp(2)) / Igmp(version=IGMPv1 query, type=0x11 (IGMP Membership Query), code=0x00 (IGMP Version 1), group=0.0.0.0 (zero), checksum=0xeeff, checksum_status=valid)

@@ -18,8 +18,10 @@ Packet(len=28, layers=2)
       option_count: 0
       options: 
   [1] Igmp
-      type: IGMPv2 Leave Group (0x17)
-      code: No registered code (0x00)
+      version: IGMPv2
+      type: 0x17 (IGMPv2 Leave Group)
+      code: 0x00 (No registered code)
       checksum: 0xfef1
-      group_address: 233.252.0.17
+      checksum_status: valid
+      group_address: 233.252.0.17 (multicast)
       length: 8

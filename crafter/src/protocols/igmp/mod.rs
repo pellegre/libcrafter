@@ -20,7 +20,7 @@ mod validation;
 
 pub use self::constants::*;
 pub(crate) use self::decode::append_igmp_packet;
-pub use self::message::Igmp;
+pub use self::message::{Igmp, IgmpChecksumStatus};
 pub use self::query::IgmpQuery;
 pub use self::record::{
     igmp_record_type, igmp_record_type_meta, igmp_record_type_name, igmp_record_type_status,

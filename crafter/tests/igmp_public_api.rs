@@ -79,7 +79,9 @@ fn igmp_unknown_records_decode_roundtrip_and_show_public_api() -> crafter::Resul
     let bytes = packet.compile()?;
 
     let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes())?;
-    let report = decoded.layer::<IgmpReport>().expect("decoded IGMPv3 report");
+    let report = decoded
+        .layer::<IgmpReport>()
+        .expect("decoded IGMPv3 report");
     let decoded_record = &report.group_records()[0];
 
     assert_eq!(decoded_record.record_type(), IgmpRecordType::Unknown(0xc8));
@@ -97,8 +99,8 @@ fn igmp_unknown_records_decode_roundtrip_and_show_public_api() -> crafter::Resul
     assert_eq!(
         decoded_record.compile()?,
         vec![
-            0xc8, 0x01, 0x00, 0x02, 233, 252, 0, 61, 192, 0, 2, 61, 198, 51, 100, 61, 0xde,
-            0xad, 0xbe, 0xef,
+            0xc8, 0x01, 0x00, 0x02, 233, 252, 0, 61, 192, 0, 2, 61, 198, 51, 100, 61, 0xde, 0xad,
+            0xbe, 0xef,
         ]
     );
     assert_eq!(decoded.compile()?.as_bytes(), bytes.as_bytes());
@@ -111,17 +113,26 @@ fn igmp_unknown_records_decode_roundtrip_and_show_public_api() -> crafter::Resul
     assert_ne!(changed_bytes, original_record_bytes);
 
     let record_summary =
-        "IgmpGroupRecord(type=Unknown(200), group=233.252.0.61, sources=2, aux_words=1, aux=4B)";
+        "IgmpGroupRecord(record_type=0xc8 Unknown(200), group=233.252.0.61, source_count=2, aux_words=1, aux_len=4B)";
     assert_eq!(decoded_record.summary(), record_summary);
     let show = decoded.show();
-    assert!(show.contains(&format!("record[0]: {record_summary}")), "{show}");
-    assert!(show.contains("record[0].record_type: Unknown(200) (0xc8)"), "{show}");
+    assert!(
+        show.contains(&format!("record[0]: {record_summary}")),
+        "{show}"
+    );
+    assert!(
+        show.contains("record[0].record_type: 0xc8 (Unknown(200))"),
+        "{show}"
+    );
     assert!(show.contains("record[0].number_of_sources: 2"), "{show}");
     assert!(
         show.contains("record[0].source_addresses: 192.0.2.61,198.51.100.61"),
         "{show}"
     );
-    assert!(show.contains("record[0].auxiliary_data: de ad be ef"), "{show}");
+    assert!(
+        show.contains("record[0].auxiliary_data: de ad be ef"),
+        "{show}"
+    );
 
     Ok(())
 }
