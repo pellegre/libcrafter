@@ -1,0 +1,1 @@
+Ipv4(src=192.0.2.74, dst=224.0.0.22, proto=igmp(2)) / Igmp(type=IGMPv3 Membership Report, code=No registered code, group=0.0.0.0) / IgmpReport(flags=0x0000, records=1)

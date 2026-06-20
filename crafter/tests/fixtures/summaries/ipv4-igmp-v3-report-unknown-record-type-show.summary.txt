@@ -1,0 +1,36 @@
+Packet(len=52, layers=3)
+  [0] Ipv4
+      version: 4
+      ihl: 5
+      tos: 0
+      dscp: 0
+      ecn: Not-ECT
+      total_length: 52
+      id: 0x1710
+      flags: none
+      fragment_offset: 0
+      ttl: 1
+      protocol: igmp(2)
+      checksum: 0x0057
+      checksum_status: valid
+      src: 192.0.2.75
+      dst: 224.0.0.22
+      option_count: 0
+      options: 
+  [1] Igmp
+      type: IGMPv3 Membership Report (0x22)
+      code: No registered code (0x00)
+      checksum: 0xb928
+      group_address: 0.0.0.0
+      length: 8
+  [2] IgmpReport
+      reserved_flags: 0x0000
+      number_of_group_records: 1
+      records: 1
+      record[0]: IgmpGroupRecord(type=Unknown(200), group=233.252.0.77, sources=2, aux_words=1, aux=4B)
+      record[0].record_type: Unknown(200) (0xc8)
+      record[0].number_of_sources: 2
+      record[0].multicast_address: 233.252.0.77
+      record[0].source_addresses: 192.0.2.75,198.51.100.75
+      record[0].auxiliary_data_len: 1
+      record[0].auxiliary_data: ca fe ba be
