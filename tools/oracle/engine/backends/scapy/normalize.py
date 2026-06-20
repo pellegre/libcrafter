@@ -47,6 +47,11 @@ _LAYER_ALIASES: dict[str, str] = {
     "Ether": "ethernet",
     "EAPOL": "eapol",
     "ICMP": "icmp",
+    "IGMP": "igmp",
+    "IGMPv3": "igmp",
+    "IGMPv3gr": "igmp_group_record",
+    "IGMPv3mq": "igmp_query",
+    "IGMPv3mr": "igmp_report",
     "IP": "ipv4",
     "IPv6": "ipv6",
     "ISAKMP": "ikev2",
@@ -213,6 +218,7 @@ _PROTOCOLS: dict[str, int] = {
     "hop-by-hop": 0,
     "hop_by_hop": 0,
     "icmp": 1,
+    "igmp": 2,
     "icmpv6": 58,
     "no-next": 59,
     "no_next": 59,
@@ -381,6 +387,7 @@ def normalize_packet(
         root=root,
         source_hex=source_hex,
     )
+    _canonicalize_igmp(packet, normalized_layers, normalized_fields)
     _canonicalize_rip(packet, normalized_layers, normalized_fields)
     _canonicalize_ripng(packet, normalized_layers, normalized_fields)
     if source_hex is not None:
@@ -1495,6 +1502,356 @@ def _bool_flag(value: JSONValue) -> bool:
     if isinstance(value, str):
         return value not in {"", "0", "false", "False"}
     return bool(value)
+
+
+# IGMP over IPv4 protocol number 2. Scapy does not expose all IGMP contrib
+# classes through scapy.all consistently, so normalize the IPv4 payload bytes
+# directly into the same backend-neutral layer names that libcrafter reports.
+_IGMP_PROTOCOL = 2
+_IGMP_TYPE_MEMBERSHIP_QUERY = 0x11
+_IGMP_TYPE_V3_MEMBERSHIP_REPORT = 0x22
+_IGMP_TYPE_MRD_ADVERTISEMENT = 0x30
+_IGMP_MRD_SHORT_TYPES = frozenset({0x31, 0x32})
+_IGMP_QUERY_EXTENSION_FLAG = 0x80
+_IGMP_QUERY_SUPPRESS_FLAG = 0x08
+_IGMP_REPORT_EXTENSION_FLAG = 0x8000
+
+_IGMP_TYPE_LABELS: dict[int, str] = {
+    0x00: "reserved",
+    0x11: "membership_query",
+    0x12: "v1_membership_report",
+    0x13: "dvmrp_unsupported_assigned",
+    0x14: "pim_v1_unsupported_assigned",
+    0x15: "cisco_trace_unsupported_assigned",
+    0x16: "v2_membership_report",
+    0x17: "v2_leave_group",
+    0x1E: "multicast_traceroute_response_unsupported_assigned",
+    0x1F: "multicast_traceroute_unsupported_assigned",
+    0x22: "v3_membership_report",
+    0x30: "multicast_router_advertisement",
+    0x31: "multicast_router_solicitation",
+    0x32: "multicast_router_termination",
+}
+_IGMP_RECORD_TYPE_LABELS: dict[int, str] = {
+    0: "reserved",
+    1: "mode_is_include",
+    2: "mode_is_exclude",
+    3: "change_to_include_mode",
+    4: "change_to_exclude_mode",
+    5: "allow_new_sources",
+    6: "block_old_sources",
+}
+
+
+def _canonicalize_igmp(
+    packet: Any,
+    layers: list[str],
+    fields: dict[str, JSONObject],
+) -> None:
+    """Rebuild Scapy's opaque IPv4 protocol-2 payload as IGMP layers."""
+
+    if "ipv4" not in layers:
+        return
+    igmp_raw = _igmp_payload_from_ipv4(packet)
+    if igmp_raw is None or len(igmp_raw) < 4:
+        return
+
+    ipv4_index = layers.index("ipv4")
+    for offset in range(ipv4_index + 1, len(layers)):
+        fields.pop(_layer_key_at(layers, offset), None)
+    del layers[ipv4_index + 1 :]
+
+    type_code = igmp_raw[0]
+    header_len = _igmp_header_len(type_code, len(igmp_raw))
+    igmp_fields = _igmp_base_fields(igmp_raw, header_len)
+    _append_normalized_layer(layers, fields, "igmp", igmp_fields)
+
+    if len(igmp_raw) < header_len:
+        return
+
+    body = igmp_raw[header_len:]
+    if type_code == _IGMP_TYPE_MEMBERSHIP_QUERY:
+        _append_igmp_query_layers(layers, fields, body)
+    elif type_code == _IGMP_TYPE_V3_MEMBERSHIP_REPORT:
+        _append_igmp_report_layers(layers, fields, body)
+    elif body:
+        _append_normalized_layer(layers, fields, "payload", _payload_fields_from_bytes(body))
+
+
+def _igmp_payload_from_ipv4(packet: Any) -> bytes | None:
+    ip_layer = _scapy_layer(packet, "IP")
+    if ip_layer is None or _igmp_int(getattr(ip_layer, "proto", None)) != _IGMP_PROTOCOL:
+        return None
+    try:
+        ip_raw = bytes(import_scapy()["all"].raw(ip_layer))
+    except Exception:  # pragma: no cover - Scapy exception types vary.
+        return None
+    if len(ip_raw) < 20:
+        return None
+    header_len = (ip_raw[0] & 0x0F) * 4
+    if header_len < 20 or len(ip_raw) < header_len:
+        return None
+    total_len = int.from_bytes(ip_raw[2:4], "big")
+    if total_len < header_len:
+        return None
+    if total_len == 0 or total_len > len(ip_raw):
+        total_len = len(ip_raw)
+    return ip_raw[header_len:total_len]
+
+
+def _igmp_header_len(type_code: int, available: int) -> int:
+    if type_code in _IGMP_MRD_SHORT_TYPES:
+        return 4
+    return 8 if available >= 8 else available
+
+
+def _igmp_base_fields(raw: bytes, header_len: int) -> JSONObject:
+    type_code = raw[0]
+    fields: JSONObject = {
+        "type": type_code,
+        "type_label": _igmp_type_label(type_code),
+        "code": raw[1],
+        "code_label": _igmp_code_label(type_code, raw[1]),
+        "checksum": int.from_bytes(raw[2:4], "big"),
+        "checksum_status": "valid" if _internet_checksum(raw) == 0 else "invalid",
+    }
+    if header_len >= 8:
+        if type_code == _IGMP_TYPE_MRD_ADVERTISEMENT:
+            fields["mrd_query_interval"] = int.from_bytes(raw[4:6], "big")
+            fields["mrd_robustness_variable"] = int.from_bytes(raw[6:8], "big")
+        else:
+            fields["group_address"] = _ipv4_text(raw[4:8])
+    return fields
+
+
+def _append_igmp_query_layers(
+    layers: list[str],
+    fields: dict[str, JSONObject],
+    body: bytes,
+) -> None:
+    if not body:
+        return
+    if len(body) < 4:
+        _append_normalized_layer(layers, fields, "payload", _payload_fields_from_bytes(body))
+        return
+
+    flags = body[0]
+    source_count = int.from_bytes(body[2:4], "big")
+    cursor = 4
+    sources: list[str] = []
+    for _ in range(source_count):
+        if cursor + 4 > len(body):
+            break
+        sources.append(_ipv4_text(body[cursor : cursor + 4]))
+        cursor += 4
+
+    query_fields: JSONObject = {
+        "query_flags": flags,
+        "query_flag_labels": _igmp_query_flag_labels(flags),
+        "suppress_router_side_processing": bool(flags & _IGMP_QUERY_SUPPRESS_FLAG),
+        "querier_robustness_variable": flags & 0x07,
+        "qqic": body[1],
+        "number_of_sources": source_count,
+        "source_addresses": sources,
+    }
+    _append_normalized_layer(layers, fields, "igmp_query", query_fields)
+
+    tail = body[cursor:]
+    if len(sources) != source_count:
+        if tail:
+            _append_normalized_layer(layers, fields, "payload", _payload_fields_from_bytes(tail))
+        return
+    if flags & _IGMP_QUERY_EXTENSION_FLAG:
+        _append_igmp_extensions_or_payload(layers, fields, tail)
+    elif tail:
+        _append_normalized_layer(layers, fields, "payload", _payload_fields_from_bytes(tail))
+
+
+def _append_igmp_report_layers(
+    layers: list[str],
+    fields: dict[str, JSONObject],
+    body: bytes,
+) -> None:
+    if len(body) < 4:
+        if body:
+            _append_normalized_layer(layers, fields, "payload", _payload_fields_from_bytes(body))
+        return
+
+    report_flags = int.from_bytes(body[0:2], "big")
+    record_count = int.from_bytes(body[2:4], "big")
+    cursor = 4
+    records: list[JSONObject] = []
+    complete = True
+    for _ in range(record_count):
+        record, next_cursor = _decode_igmp_group_record(body, cursor)
+        if record is None:
+            complete = False
+            break
+        records.append(record)
+        cursor = next_cursor
+
+    report_fields: JSONObject = {
+        "report_flags": report_flags,
+        "report_flag_labels": _igmp_report_flag_labels(report_flags),
+        "number_of_group_records": record_count,
+        "group_records": records,
+    }
+    _append_normalized_layer(layers, fields, "igmp_report", report_fields)
+
+    tail = body[cursor:]
+    if not complete:
+        if tail:
+            _append_normalized_layer(layers, fields, "payload", _payload_fields_from_bytes(tail))
+        return
+    if report_flags & _IGMP_REPORT_EXTENSION_FLAG:
+        _append_igmp_extensions_or_payload(layers, fields, tail)
+    elif tail:
+        _append_normalized_layer(layers, fields, "payload", _payload_fields_from_bytes(tail))
+
+
+def _decode_igmp_group_record(body: bytes, offset: int) -> tuple[JSONObject | None, int]:
+    if offset + 8 > len(body):
+        return None, offset
+    record_type = body[offset]
+    aux_words = body[offset + 1]
+    source_count = int.from_bytes(body[offset + 2 : offset + 4], "big")
+    multicast_address = _ipv4_text(body[offset + 4 : offset + 8])
+    cursor = offset + 8
+
+    sources: list[str] = []
+    for _ in range(source_count):
+        if cursor + 4 > len(body):
+            return None, offset
+        sources.append(_ipv4_text(body[cursor : cursor + 4]))
+        cursor += 4
+
+    auxiliary_len = aux_words * 4
+    if cursor + auxiliary_len > len(body):
+        return None, offset
+    auxiliary = body[cursor : cursor + auxiliary_len]
+    cursor += auxiliary_len
+    return (
+        {
+            "record_type": record_type,
+            "record_type_label": _igmp_record_type_label(record_type),
+            "auxiliary_data_len": aux_words,
+            "number_of_sources": source_count,
+            "multicast_address": multicast_address,
+            "source_addresses": sources,
+            "auxiliary_data": _igmp_bytes_fields(auxiliary),
+        },
+        cursor,
+    )
+
+
+def _append_igmp_extensions_or_payload(
+    layers: list[str],
+    fields: dict[str, JSONObject],
+    tail: bytes,
+) -> None:
+    cursor = 0
+    while cursor < len(tail):
+        if cursor + 4 > len(tail):
+            _append_normalized_layer(layers, fields, "payload", _payload_fields_from_bytes(tail[cursor:]))
+            return
+        extension_type = int.from_bytes(tail[cursor : cursor + 2], "big")
+        extension_length = int.from_bytes(tail[cursor + 2 : cursor + 4], "big")
+        value_start = cursor + 4
+        value_end = value_start + extension_length
+        if value_end > len(tail):
+            _append_normalized_layer(layers, fields, "payload", _payload_fields_from_bytes(tail[cursor:]))
+            return
+        value = tail[value_start:value_end]
+        _append_normalized_layer(
+            layers,
+            fields,
+            "igmp_extension",
+            {
+                "extension_type": extension_type,
+                "extension_type_label": _igmp_extension_type_label(extension_type),
+                "extension_length": extension_length,
+                "extension_value": _igmp_bytes_fields(value),
+            },
+        )
+        cursor = value_end
+
+
+def _igmp_type_label(type_code: int) -> str:
+    if type_code in _IGMP_TYPE_LABELS:
+        return _IGMP_TYPE_LABELS[type_code]
+    if 0xF0 <= type_code <= 0xFF:
+        return "experimental"
+    return "unassigned"
+
+
+def _igmp_code_label(type_code: int, code: int) -> str:
+    if type_code == _IGMP_TYPE_MEMBERSHIP_QUERY:
+        if code == 0:
+            return "v1_query_zero"
+        return "v2_or_v3_max_response_code"
+    if type_code == _IGMP_TYPE_MRD_ADVERTISEMENT:
+        return "mrd_advertisement_interval"
+    if type_code in _IGMP_MRD_SHORT_TYPES:
+        return "mrd_reserved" if code == 0 else "explicit_override"
+    return "reserved_zero" if code == 0 else "explicit_override"
+
+
+def _igmp_record_type_label(record_type: int) -> str:
+    return _IGMP_RECORD_TYPE_LABELS.get(record_type, "unknown")
+
+
+def _igmp_extension_type_label(extension_type: int) -> str:
+    if extension_type == 0:
+        return "noop"
+    if extension_type in {0xFFFE, 0xFFFF}:
+        return "experimental"
+    return "unassigned"
+
+
+def _igmp_query_flag_labels(flags: int) -> list[str]:
+    labels: list[str] = []
+    if flags & _IGMP_QUERY_EXTENSION_FLAG:
+        labels.append("extension")
+    if flags & 0x70:
+        labels.append("unassigned")
+    if flags & _IGMP_QUERY_SUPPRESS_FLAG:
+        labels.append("suppress_router_side_processing")
+    if flags & 0x07:
+        labels.append("qrv")
+    return labels
+
+
+def _igmp_report_flag_labels(flags: int) -> list[str]:
+    labels: list[str] = []
+    if flags & _IGMP_REPORT_EXTENSION_FLAG:
+        labels.append("extension")
+    if flags & 0x7FFF:
+        labels.append("unassigned")
+    return labels
+
+
+def _igmp_bytes_fields(value: bytes) -> JSONObject:
+    return {
+        "hex": value.hex(),
+        "length": len(value),
+    }
+
+
+def _ipv4_text(raw: bytes) -> str:
+    return ".".join(str(byte) for byte in raw)
+
+
+def _igmp_int(value: Any) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if value is None:
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
 
 
 # ICMPv4 query types (RFC 792/950) that carry a 16-bit identifier/sequence in

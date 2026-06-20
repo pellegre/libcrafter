@@ -1,4 +1,4 @@
-"""Normalized ICMPv4 decode coverage for the Scapy backend.
+"""Normalized Scapy decode coverage for control-protocol oracle models.
 
 These tests pin the backend-neutral oracle field names the Scapy normalizer
 must report for every supported ICMPv4 shape in the live coverage matrix. The
@@ -34,6 +34,11 @@ def _scapy():
 def _base_ip():
     scapy = _scapy()
     return scapy.IP(src="192.0.2.1", dst="198.51.100.1", id=4242, ttl=64)
+
+
+def _base_igmp_ip(dst: str = "224.0.0.1"):
+    scapy = _scapy()
+    return scapy.IP(src="192.0.2.1", dst=dst, id=4242, ttl=1, proto=2)
 
 
 def _normalize(packet):
@@ -296,6 +301,132 @@ class IcmpNormalizedModelTest(unittest.TestCase):
         self.assertNotIn("identifier", icmp)
 
 
+class IgmpNormalizedModelTest(unittest.TestCase):
+    """IPv4 protocol 2 Raw payloads normalize into stable IGMP layers."""
+
+    def _igmp(self, igmp_bytes: bytes, *, dst: str = "224.0.0.1"):
+        scapy = _scapy()
+        decoded = _normalize(_base_igmp_ip(dst) / scapy.Raw(igmp_bytes))
+        self.assertEqual(decoded.root, "l3:ipv4")
+        self.assertEqual(decoded.layers[0], "ipv4")
+        self.assertEqual(decoded.layers[1], "igmp")
+        igmp = decoded.fields["igmp"]
+        self.assertIn("type", igmp)
+        self.assertIn("type_label", igmp)
+        self.assertIn("code", igmp)
+        self.assertIn("checksum", igmp)
+        self.assertIn("checksum_status", igmp)
+        return decoded
+
+    def test_membership_query_fixed_header(self) -> None:
+        decoded = self._igmp(_igmp_packet(0x11, 0, bytes.fromhex("00000000")))
+        self.assertEqual(decoded.layers, ["ipv4", "igmp"])
+        igmp = decoded.fields["igmp"]
+        self.assertEqual(igmp["type"], 0x11)
+        self.assertEqual(igmp["type_label"], "membership_query")
+        self.assertEqual(igmp["code_label"], "v1_query_zero")
+        self.assertEqual(igmp["group_address"], "0.0.0.0")
+        self.assertEqual(igmp["checksum_status"], "valid")
+        self.assertNotIn("payload", decoded.fields)
+
+    def test_v3_query_sources_and_raw_tail(self) -> None:
+        body = (
+            bytes([0x0A, 0x7D])
+            + (2).to_bytes(2, "big")
+            + bytes([198, 51, 100, 10])
+            + bytes([203, 0, 113, 20])
+            + bytes.fromhex("deadbeef")
+        )
+        decoded = self._igmp(
+            _igmp_packet(0x11, 100, bytes([233, 252, 0, 61]), body),
+            dst="233.252.0.61",
+        )
+
+        self.assertEqual(decoded.layers, ["ipv4", "igmp", "igmp_query", "payload"])
+        igmp = decoded.fields["igmp"]
+        query = decoded.fields["igmp_query"]
+        self.assertEqual(igmp["group_address"], "233.252.0.61")
+        self.assertEqual(igmp["code_label"], "v2_or_v3_max_response_code")
+        self.assertEqual(query["query_flags"], 0x0A)
+        self.assertEqual(
+            query["query_flag_labels"],
+            ["suppress_router_side_processing", "qrv"],
+        )
+        self.assertTrue(query["suppress_router_side_processing"])
+        self.assertEqual(query["querier_robustness_variable"], 2)
+        self.assertEqual(query["qqic"], 0x7D)
+        self.assertEqual(query["number_of_sources"], 2)
+        self.assertEqual(query["source_addresses"], ["198.51.100.10", "203.0.113.20"])
+        self.assertEqual(decoded.fields["payload"]["hex"], "deadbeef")
+
+    def test_v3_report_record_auxiliary_data(self) -> None:
+        record = (
+            bytes([4, 1])
+            + (1).to_bytes(2, "big")
+            + bytes([233, 252, 0, 76])
+            + bytes([198, 51, 100, 74])
+            + bytes.fromhex("deadbeef")
+        )
+        body = (0).to_bytes(2, "big") + (1).to_bytes(2, "big") + record
+        decoded = self._igmp(
+            _igmp_packet(0x22, 0, bytes.fromhex("00000000"), body),
+            dst="224.0.0.22",
+        )
+
+        self.assertEqual(decoded.layers, ["ipv4", "igmp", "igmp_report"])
+        report = decoded.fields["igmp_report"]
+        self.assertEqual(report["report_flags"], 0)
+        self.assertEqual(report["report_flag_labels"], [])
+        self.assertEqual(report["number_of_group_records"], 1)
+        self.assertEqual(len(report["group_records"]), 1)
+        normalized_record = report["group_records"][0]
+        self.assertEqual(normalized_record["record_type"], 4)
+        self.assertEqual(normalized_record["record_type_label"], "change_to_exclude_mode")
+        self.assertEqual(normalized_record["auxiliary_data_len"], 1)
+        self.assertEqual(normalized_record["number_of_sources"], 1)
+        self.assertEqual(normalized_record["multicast_address"], "233.252.0.76")
+        self.assertEqual(normalized_record["source_addresses"], ["198.51.100.74"])
+        self.assertEqual(normalized_record["auxiliary_data"], {"hex": "deadbeef", "length": 4})
+
+    def test_extension_tlvs_parse_when_e_flag_set(self) -> None:
+        extension = (0).to_bytes(2, "big") + (4).to_bytes(2, "big") + bytes.fromhex("aabbccdd")
+        body = bytes([0x80, 0x7D]) + (0).to_bytes(2, "big") + extension
+        decoded = self._igmp(
+            _igmp_packet(0x11, 100, bytes([233, 252, 0, 61]), body),
+            dst="233.252.0.61",
+        )
+
+        self.assertEqual(decoded.layers, ["ipv4", "igmp", "igmp_query", "igmp_extension"])
+        query = decoded.fields["igmp_query"]
+        extension_fields = decoded.fields["igmp_extension"]
+        self.assertEqual(query["query_flags"], 0x80)
+        self.assertEqual(query["query_flag_labels"], ["extension"])
+        self.assertEqual(extension_fields["extension_type"], 0)
+        self.assertEqual(extension_fields["extension_type_label"], "noop")
+        self.assertEqual(extension_fields["extension_length"], 4)
+        self.assertEqual(extension_fields["extension_value"], {"hex": "aabbccdd", "length": 4})
+
+    def test_mrd_advertisement_and_unknown_type_values(self) -> None:
+        mrd = self._igmp(
+            _igmp_packet(0x30, 20, (125).to_bytes(2, "big") + (2).to_bytes(2, "big")),
+            dst="224.0.0.106",
+        )
+        self.assertEqual(mrd.layers, ["ipv4", "igmp"])
+        self.assertEqual(mrd.fields["igmp"]["type_label"], "multicast_router_advertisement")
+        self.assertEqual(mrd.fields["igmp"]["code_label"], "mrd_advertisement_interval")
+        self.assertEqual(mrd.fields["igmp"]["mrd_query_interval"], 125)
+        self.assertEqual(mrd.fields["igmp"]["mrd_robustness_variable"], 2)
+
+        unknown = self._igmp(
+            _igmp_packet(0x09, 0, bytes.fromhex("00000000"), bytes.fromhex("deadbeef")),
+            dst="233.252.0.1",
+        )
+        self.assertEqual(unknown.layers, ["ipv4", "igmp", "payload"])
+        self.assertEqual(unknown.fields["igmp"]["type"], 0x09)
+        self.assertEqual(unknown.fields["igmp"]["type_label"], "unassigned")
+        self.assertEqual(unknown.fields["payload"]["hex"], "deadbeef")
+
+
 class IcmpNormalizationContractTest(unittest.TestCase):
     """The normalizer's ICMPv4 type/field contract matches libcrafter's rules."""
 
@@ -345,6 +476,12 @@ def _icmp_checksum(data: bytes) -> int:
     total = (total >> 16) + (total & 0xFFFF)
     total += total >> 16
     return (~total) & 0xFFFF
+
+
+def _igmp_packet(type_code: int, code: int, rest: bytes, body: bytes = b"") -> bytes:
+    header = bytes([type_code, code, 0, 0]) + rest + body
+    checksum = _icmp_checksum(header)
+    return bytes([type_code, code]) + checksum.to_bytes(2, "big") + rest + body
 
 
 if __name__ == "__main__":
