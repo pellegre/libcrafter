@@ -4,6 +4,7 @@
 
 use core::net::Ipv4Addr;
 
+use crate::error::{CrafterError, Result};
 use crate::field::{Field, FieldState};
 
 use super::constants::{
@@ -479,14 +480,21 @@ impl IgmpGroupRecord {
     }
 
     /// Serialize this group record to its wire bytes.
-    pub fn compile(&self) -> Vec<u8> {
+    pub fn compile(&self) -> Result<Vec<u8>> {
+        self.try_compile()
+    }
+
+    /// Serialize this group record to its wire bytes.
+    pub fn try_compile(&self) -> Result<Vec<u8>> {
         let mut bytes = Vec::with_capacity(self.encoded_len());
-        self.encode_into(&mut bytes);
-        bytes
+        self.encode_into(&mut bytes)?;
+        Ok(bytes)
     }
 
     /// Append this group record's wire bytes to `out`.
-    pub(crate) fn encode_into(&self, out: &mut Vec<u8>) {
+    pub fn try_encode_into(&self, out: &mut Vec<u8>) -> Result<()> {
+        let auxiliary_len = self.auxiliary_wire_len()?;
+
         out.push(self.record_type_value());
         out.push(self.auxiliary_data_len_value());
         out.extend_from_slice(&self.number_of_sources_value().to_be_bytes());
@@ -495,14 +503,30 @@ impl IgmpGroupRecord {
             out.extend_from_slice(&source_address.octets());
         }
 
+        let emitted_auxiliary_len = auxiliary_len.min(self.auxiliary_data.len());
+        out.extend_from_slice(&self.auxiliary_data[..emitted_auxiliary_len]);
+        out.resize(out.len() + auxiliary_len - emitted_auxiliary_len, 0);
+
+        Ok(())
+    }
+
+    /// Append this group record's wire bytes to `out`.
+    pub(crate) fn encode_into(&self, out: &mut Vec<u8>) -> Result<()> {
+        self.try_encode_into(out)
+    }
+
+    fn auxiliary_wire_len(&self) -> Result<usize> {
         let auxiliary_len =
             usize::from(self.auxiliary_data_len_value()) * IGMP_GROUP_RECORD_AUX_DATA_UNIT;
-        if self.auxiliary_data.len() >= auxiliary_len {
-            out.extend_from_slice(&self.auxiliary_data[..auxiliary_len]);
-        } else {
-            out.extend_from_slice(&self.auxiliary_data);
-            out.resize(out.len() + auxiliary_len - self.auxiliary_data.len(), 0);
+        if self.auxiliary_data_len.is_user_set() && self.auxiliary_data.len() < auxiliary_len {
+            return Err(CrafterError::buffer_too_short(
+                "igmp.group_record.auxiliary_data",
+                auxiliary_len,
+                self.auxiliary_data.len(),
+            ));
         }
+
+        Ok(auxiliary_len)
     }
 }
 
@@ -573,7 +597,10 @@ mod igmp_group_record_model {
         assert_eq!(record.aux_data_len_state(), FieldState::Unset);
         assert_eq!(record.number_of_sources_state(), FieldState::Unset);
         assert_eq!(record.encoded_len(), IGMP_V3_GROUP_RECORD_HEADER_LEN);
-        assert_eq!(record.compile(), vec![0, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(
+            record.compile().expect("compile default record"),
+            vec![0, 0, 0, 0, 0, 0, 0, 0]
+        );
         assert_eq!(
             record.summary(),
             "IgmpGroupRecord(type=Reserved, group=0.0.0.0, sources=0, aux_words=0, aux=0B)"
@@ -609,7 +636,7 @@ mod igmp_group_record_model {
         );
 
         assert_eq!(
-            record.compile(),
+            record.compile().expect("compile source record"),
             vec![0x01, 0x00, 0x00, 0x02, 233, 252, 0, 80, 192, 0, 2, 10, 198, 51, 100, 20,]
         );
     }
@@ -625,7 +652,10 @@ mod igmp_group_record_model {
             record.record_type_meta().status,
             IgmpRecordTypeStatus::Unassigned
         );
-        assert_eq!(record.compile()[0], 0xc8);
+        assert_eq!(
+            record.compile().expect("compile unknown record type")[0],
+            0xc8
+        );
     }
 
     #[test]
@@ -638,17 +668,17 @@ mod igmp_group_record_model {
         assert_eq!(record.encoded_len(), IGMP_V3_GROUP_RECORD_HEADER_LEN + 4);
         assert_eq!(record.auxiliary_data(), &[0xde, 0xad, 0xbe]);
         assert_eq!(
-            record.compile(),
+            record.compile().expect("compile padded aux data"),
             vec![0x05, 0x01, 0x00, 0x00, 233, 252, 0, 80, 0xde, 0xad, 0xbe, 0x00]
         );
     }
 
     #[test]
-    fn igmp_group_record_model_preserves_explicit_count_and_longer_aux_length() {
+    fn igmp_group_record_model_preserves_explicit_count_and_aux_length() {
         let record = IgmpGroupRecord::block_old_sources(doc_group())
             .with_source_addresses(vec![doc_source_a(), doc_source_b()])
             .with_number_of_sources(7)
-            .with_aux_data([1, 2, 3])
+            .with_aux_data([1, 2, 3, 4, 5, 6, 7, 8])
             .with_aux_data_len(2);
 
         assert_eq!(record.number_of_sources_value(), 7);
@@ -656,10 +686,10 @@ mod igmp_group_record_model {
         assert_eq!(record.aux_data_len_value(), 2);
         assert_eq!(record.aux_data_len_state(), FieldState::User);
         assert_eq!(
-            record.compile(),
+            record.compile().expect("compile explicit aux length"),
             vec![
                 0x06, 0x02, 0x00, 0x07, 233, 252, 0, 80, 192, 0, 2, 10, 198, 51, 100, 20, 1, 2, 3,
-                0, 0, 0, 0, 0,
+                4, 5, 6, 7, 8,
             ]
         );
     }
@@ -674,9 +704,136 @@ mod igmp_group_record_model {
         assert_eq!(record.auxiliary_data_len_value(), 1);
         assert_eq!(record.encoded_len(), IGMP_V3_GROUP_RECORD_HEADER_LEN + 4);
         assert_eq!(
-            record.compile(),
+            record.compile().expect("compile truncated aux data"),
             vec![0x04, 0x01, 0x00, 0x00, 233, 252, 0, 80, 1, 2, 3, 4]
         );
+    }
+}
+
+#[cfg(test)]
+mod igmp_group_record_encode {
+    use super::*;
+
+    fn doc_group() -> Ipv4Addr {
+        Ipv4Addr::new(233, 252, 0, 80)
+    }
+
+    fn doc_source_a() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 10)
+    }
+
+    fn doc_source_b() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 20)
+    }
+
+    #[test]
+    fn igmp_group_record_encode_zero_sources_and_zero_auxiliary_data() -> crate::Result<()> {
+        let record = IgmpGroupRecord::mode_is_include(doc_group());
+
+        assert_eq!(record.number_of_sources_value(), 0);
+        assert_eq!(record.auxiliary_data_len_value(), 0);
+        assert_eq!(
+            record.try_compile()?,
+            vec![0x01, 0x00, 0x00, 0x00, 233, 252, 0, 80]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn igmp_group_record_encode_multiple_sources_auto_fills_count() -> crate::Result<()> {
+        let record = IgmpGroupRecord::mode_is_exclude(doc_group())
+            .with_source_address(doc_source_a())
+            .with_source_address(doc_source_b());
+
+        assert_eq!(record.number_of_sources_value(), 2);
+        assert_eq!(record.number_of_sources_state(), FieldState::Unset);
+        assert_eq!(
+            record.try_compile()?,
+            vec![0x02, 0x00, 0x00, 0x02, 233, 252, 0, 80, 192, 0, 2, 10, 198, 51, 100, 20,]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn igmp_group_record_encode_pads_unset_auxiliary_data_len() -> crate::Result<()> {
+        let record =
+            IgmpGroupRecord::allow_new_sources(doc_group()).with_auxiliary_data([0xaa, 0xbb]);
+
+        assert_eq!(record.auxiliary_data_len_value(), 1);
+        assert_eq!(record.auxiliary_data_len_state(), FieldState::Unset);
+        assert_eq!(
+            record.try_compile()?,
+            vec![0x05, 0x01, 0x00, 0x00, 233, 252, 0, 80, 0xaa, 0xbb, 0x00, 0x00]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn igmp_group_record_encode_preserves_explicit_malformed_source_count() -> crate::Result<()> {
+        let record = IgmpGroupRecord::block_old_sources(doc_group())
+            .with_source_addresses(vec![doc_source_a(), doc_source_b()])
+            .with_number_of_sources(7);
+
+        assert_eq!(record.number_of_sources_value(), 7);
+        assert_eq!(record.number_of_sources_state(), FieldState::User);
+        assert_eq!(
+            record.try_compile()?,
+            vec![0x06, 0x00, 0x00, 0x07, 233, 252, 0, 80, 192, 0, 2, 10, 198, 51, 100, 20,]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn igmp_group_record_encode_preserves_representable_explicit_auxiliary_length(
+    ) -> crate::Result<()> {
+        let record = IgmpGroupRecord::change_to_exclude_mode(doc_group())
+            .with_auxiliary_data([1, 2, 3, 4, 5, 6])
+            .with_auxiliary_data_len(1);
+
+        assert_eq!(record.auxiliary_data_len_value(), 1);
+        assert_eq!(record.auxiliary_data_len_state(), FieldState::User);
+        assert_eq!(
+            record.try_compile()?,
+            vec![0x04, 0x01, 0x00, 0x00, 233, 252, 0, 80, 1, 2, 3, 4]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn igmp_group_record_encode_errors_when_explicit_auxiliary_length_requires_missing_bytes() {
+        let record = IgmpGroupRecord::allow_new_sources(doc_group())
+            .with_auxiliary_data([1, 2, 3])
+            .with_auxiliary_data_len(2);
+
+        assert_eq!(
+            record.try_compile(),
+            Err(CrafterError::buffer_too_short(
+                "igmp.group_record.auxiliary_data",
+                8,
+                3,
+            ))
+        );
+    }
+
+    #[test]
+    fn igmp_group_record_encode_try_encode_into_appends_after_existing_bytes() -> crate::Result<()>
+    {
+        let record = IgmpGroupRecord::mode_is_include(doc_group());
+        let mut bytes = vec![0xfe, 0xed];
+
+        record.try_encode_into(&mut bytes)?;
+
+        assert_eq!(
+            bytes,
+            vec![0xfe, 0xed, 0x01, 0x00, 0x00, 0x00, 233, 252, 0, 80]
+        );
+
+        Ok(())
     }
 }
 
