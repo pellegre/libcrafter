@@ -773,6 +773,29 @@ mod igmp_group_record_model {
     }
 
     #[test]
+    fn igmp_aux_data_inspection_fields_include_hex_bytes() {
+        let record = IgmpGroupRecord::allow_new_sources(doc_group())
+            .with_source_address(doc_source_a())
+            .with_auxiliary_data([0xde, 0xad, 0xbe, 0xef]);
+
+        assert_eq!(
+            record.summary(),
+            "IgmpGroupRecord(type=ALLOW_NEW_SOURCES, group=233.252.0.80, sources=1, aux_words=1, aux=4B)"
+        );
+        assert_eq!(
+            record.inspection_fields(),
+            vec![
+                ("record_type", "ALLOW_NEW_SOURCES (0x05)".to_string()),
+                ("auxiliary_data_len", "1".to_string()),
+                ("number_of_sources", "1".to_string()),
+                ("multicast_address", "233.252.0.80".to_string()),
+                ("source_addresses", "192.0.2.10".to_string()),
+                ("auxiliary_data", "de ad be ef".to_string()),
+            ]
+        );
+    }
+
+    #[test]
     fn igmp_group_record_model_preserves_explicit_count_and_aux_length() {
         let record = IgmpGroupRecord::block_old_sources(doc_group())
             .with_source_addresses(vec![doc_source_a(), doc_source_b()])
@@ -871,6 +894,27 @@ mod igmp_group_record_encode {
     }
 
     #[test]
+    fn igmp_aux_data_unset_length_pads_to_32_bit_words_and_roundtrips_wire_bytes(
+    ) -> crate::Result<()> {
+        let record =
+            IgmpGroupRecord::allow_new_sources(doc_group()).with_auxiliary_data([0xde, 0xad, 0xbe]);
+
+        let bytes = record.try_compile()?;
+        assert_eq!(
+            bytes,
+            vec![0x05, 0x01, 0x00, 0x00, 233, 252, 0, 80, 0xde, 0xad, 0xbe, 0x00]
+        );
+
+        let decoded = IgmpGroupRecord::decode(&bytes)?;
+        assert_eq!(decoded.auxiliary_data_len_value(), 1);
+        assert_eq!(decoded.auxiliary_data_len_state(), FieldState::User);
+        assert_eq!(decoded.auxiliary_data(), &[0xde, 0xad, 0xbe, 0x00]);
+        assert_eq!(decoded.try_compile()?, bytes);
+
+        Ok(())
+    }
+
+    #[test]
     fn igmp_group_record_encode_preserves_explicit_malformed_source_count() -> crate::Result<()> {
         let record = IgmpGroupRecord::block_old_sources(doc_group())
             .with_source_addresses(vec![doc_source_a(), doc_source_b()])
@@ -904,9 +948,46 @@ mod igmp_group_record_encode {
     }
 
     #[test]
+    fn igmp_aux_data_explicit_length_override_preserves_declared_wire_region() -> crate::Result<()>
+    {
+        let record = IgmpGroupRecord::change_to_exclude_mode(doc_group())
+            .with_auxiliary_data([1, 2, 3, 4, 5, 6])
+            .with_auxiliary_data_len(1);
+
+        let bytes = record.try_compile()?;
+        assert_eq!(
+            bytes,
+            vec![0x04, 0x01, 0x00, 0x00, 233, 252, 0, 80, 1, 2, 3, 4]
+        );
+
+        let decoded = IgmpGroupRecord::decode(&bytes)?;
+        assert_eq!(decoded.auxiliary_data_len_value(), 1);
+        assert_eq!(decoded.auxiliary_data(), &[1, 2, 3, 4]);
+        assert_eq!(decoded.try_compile()?, bytes);
+
+        Ok(())
+    }
+
+    #[test]
     fn igmp_group_record_encode_errors_when_explicit_auxiliary_length_requires_missing_bytes() {
         let record = IgmpGroupRecord::allow_new_sources(doc_group())
             .with_auxiliary_data([1, 2, 3])
+            .with_auxiliary_data_len(2);
+
+        assert_eq!(
+            record.try_compile(),
+            Err(CrafterError::buffer_too_short(
+                "igmp.group_record.auxiliary_data",
+                8,
+                3,
+            ))
+        );
+    }
+
+    #[test]
+    fn igmp_aux_data_malformed_length_override_errors() {
+        let record = IgmpGroupRecord::block_old_sources(doc_group())
+            .with_auxiliary_data([0xaa, 0xbb, 0xcc])
             .with_auxiliary_data_len(2);
 
         assert_eq!(
