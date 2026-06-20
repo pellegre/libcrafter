@@ -6,6 +6,7 @@
 
 use std::net::Ipv4Addr;
 
+use crafter::protocols::igmp::IgmpChecksumStatus;
 use crafter::prelude::*;
 
 const DOC_SRC: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 10);
@@ -60,6 +61,55 @@ fn igmp_public_api_builds_via_prelude() -> crafter::Result<()> {
     assert_eq!(decoded_igmp.igmp_type(), IgmpType::MembershipQuery);
     assert_eq!(decoded_igmp.max_response_code_value(), 10);
     assert_eq!(decoded_igmp.group_address_value(), DOC_GROUP);
+
+    Ok(())
+}
+
+#[test]
+fn igmp_router_alert_ipv4_composition_roundtrips() -> crafter::Result<()> {
+    let ipv4 = Ipv4::new()
+        .src(DOC_SRC)
+        .dst(DOC_GROUP)
+        .ttl(1)
+        .ipv4_protocol(Ipv4Protocol::Igmp)
+        .ipv4_option(Ipv4Option::router_alert(0))?;
+    let packet = ipv4 / Igmp::membership_query().with_v2_max_response_time_tenths(10);
+    let compiled = packet.compile()?;
+    let bytes = compiled.as_bytes();
+
+    assert_eq!(bytes.len(), 32);
+    assert_eq!(bytes[0], 0x46);
+    assert_eq!(u16::from_be_bytes([bytes[2], bytes[3]]), 32);
+    assert_eq!(bytes[8], 1);
+    assert_eq!(bytes[9], IPPROTO_IGMP);
+    assert!(crafter::checksum::verify_internet_checksum(&bytes[..24]));
+    assert_eq!(&bytes[20..24], &[IPV4_OPTION_ROUTER_ALERT, 4, 0, 0]);
+    assert_eq!(bytes[24], IGMP_TYPE_MEMBERSHIP_QUERY);
+    assert_eq!(bytes[25], 10);
+    assert_ne!(&bytes[26..28], &[0, 0]);
+    assert!(crafter::checksum::verify_internet_checksum(&bytes[24..]));
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes)?;
+    let decoded_ipv4 = decoded.layer::<Ipv4>().expect("decoded IPv4 layer");
+
+    assert_eq!(decoded_ipv4.ihl_value(), 6);
+    assert_eq!(decoded_ipv4.header_len(), 24);
+    assert_eq!(decoded_ipv4.total_length_value(), Some(32));
+    assert_eq!(decoded_ipv4.ttl_value(), 1);
+    assert_eq!(decoded_ipv4.protocol_value(), IPPROTO_IGMP);
+    assert_eq!(decoded_ipv4.checksum_status(), Ipv4ChecksumStatus::Valid);
+    assert_eq!(decoded_ipv4.option_bytes(), &[IPV4_OPTION_ROUTER_ALERT, 4, 0, 0]);
+
+    let options = decoded_ipv4.parsed_options()?;
+    assert_eq!(options, vec![Ipv4Option::router_alert(0)]);
+    assert_eq!(options[0].router_alert_value(), Some(0));
+
+    let decoded_igmp = decoded.layer::<Igmp>().expect("decoded IGMP layer");
+    assert_eq!(decoded_igmp.igmp_type(), IgmpType::MembershipQuery);
+    assert_eq!(decoded_igmp.max_response_code_value(), 10);
+    assert_eq!(decoded_igmp.group_address_value(), Ipv4Addr::UNSPECIFIED);
+    assert_eq!(decoded_igmp.checksum_status(), IgmpChecksumStatus::Valid);
+    assert_eq!(decoded.compile()?.as_bytes(), bytes);
 
     Ok(())
 }
