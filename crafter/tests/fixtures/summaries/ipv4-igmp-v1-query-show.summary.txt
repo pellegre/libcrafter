@@ -18,8 +18,10 @@ Packet(len=28, layers=2)
       option_count: 0
       options: 
   [1] Igmp
-      type: IGMP Membership Query (0x11)
-      code: IGMP Version 1 (0x00)
+      version: IGMPv1 query
+      type: 0x11 (IGMP Membership Query)
+      code: 0x00 (IGMP Version 1)
       checksum: 0xeeff
-      group_address: 0.0.0.0
+      checksum_status: valid
+      group_address: 0.0.0.0 (zero)
       length: 8

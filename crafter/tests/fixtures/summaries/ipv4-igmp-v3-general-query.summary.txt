@@ -1,0 +1,1 @@
+Ipv4(src=192.0.2.60, dst=224.0.0.1, proto=igmp(2)) / Igmp(version=IGMPv2/v3 query, type=0x11 (IGMP Membership Query), code=0x64 (Max Response Time), group=0.0.0.0 (zero), checksum=0xee9b, checksum_status=valid) / IgmpQuery(version=IGMPv3, flags=0x00, s=false, qrv=0, qqic=0x00, interval=0s, source_count=0)

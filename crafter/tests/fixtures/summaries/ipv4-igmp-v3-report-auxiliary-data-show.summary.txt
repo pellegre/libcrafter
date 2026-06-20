@@ -18,15 +18,22 @@ Packet(len=48, layers=3)
       option_count: 0
       options: 
   [1] Igmp
-      type: IGMPv3 Membership Report (0x22)
-      code: No registered code (0x00)
+      version: IGMPv3
+      type: 0x22 (IGMPv3 Membership Report)
+      code: 0x00 (No registered code)
       checksum: 0x2698
-      group_address: 0.0.0.0
+      checksum_status: valid
+      group_address: 0.0.0.0 (zero)
       length: 8
   [2] IgmpReport
+      version: IGMPv3
       reserved_flags: 0x0000
       number_of_group_records: 1
       records: 1
-      record[0]: IgmpGroupRecord(type=ALLOW_NEW_SOURCES, group=233.252.0.76, sources=1, aux_words=1, aux=4B)
+      record[0]: IgmpGroupRecord(record_type=0x05 ALLOW_NEW_SOURCES, group=233.252.0.76, source_count=1, aux_words=1, aux_len=4B)
+      record[0].record_type: 0x05 (ALLOW_NEW_SOURCES)
       record[0].auxiliary_data_len: 1
+      record[0].number_of_sources: 1
+      record[0].multicast_address: 233.252.0.76
+      record[0].source_addresses: 198.51.100.74
       record[0].auxiliary_data: de ad be ef

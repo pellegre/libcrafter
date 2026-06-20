@@ -9,15 +9,16 @@ use std::path::{Path, PathBuf};
 use crafter::core::{
     Ah, Arp, Bgp, Dhcp, DhcpMessageType, DhcpOption, DhcpRelayAgentInfo, DhcpRelaySuboption, Dns,
     DnsName, DnsRecord, DnsRecordData, Dot11, Dot11DataSubtype, Dot11ManagementSubtype, Dscp,
-    Eapol, EapolKey, Ecn, EdnsOption, Esp, Ethernet, IcmpKind, Icmpv4, Icmpv6, Igmp, IgmpType,
-    IkeHeader, IkeKePayload, IkeNoncePayload, IkeSaPayload, Ipv4, Ipv4ChecksumStatus, Ipv4Option,
-    Ipv6, Ipv6DestinationOptionsHeader, Ipv6FragmentHeader, Ipv6FragmentHeaderStatus,
-    Ipv6HopByHopOptionsHeader, Ipv6MobileRoutingHeader, Ipv6MobileRoutingHeaderStatus, Ipv6Option,
-    Ipv6RoutingHeader, Ipv6RoutingTypeStatus, Ipv6SegmentRoutingHeader, Layer, LinkType, LinuxSll,
-    LlcSnap, MacAddr, NetworkLayer, NullByteOrder, NullLoopback, OptionOverload,
-    OspfChecksumStatus, Ospfv2, Ospfv3, Packet, Radiotap, Raw, Rip, Ripng, Tcp, TcpOption,
-    TcpSackBlock, Udp, UdpChecksumStatus, UdpOption, UdpOptionStatus, UdpOptions, Vlan,
-    ARP_HRD_INFINIBAND, BOOTP_REQUEST, DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_CLASS_IN,
+    Eapol, EapolKey, Ecn, EdnsOption, Esp, Ethernet, IcmpKind, Icmpv4, Icmpv6, Igmp,
+    IgmpGroupRecord, IgmpQuery, IgmpReport, IgmpType, IkeHeader, IkeKePayload, IkeNoncePayload,
+    IkeSaPayload, Ipv4, Ipv4ChecksumStatus, Ipv4Option, Ipv6, Ipv6DestinationOptionsHeader,
+    Ipv6FragmentHeader, Ipv6FragmentHeaderStatus, Ipv6HopByHopOptionsHeader,
+    Ipv6MobileRoutingHeader, Ipv6MobileRoutingHeaderStatus, Ipv6Option, Ipv6RoutingHeader,
+    Ipv6RoutingTypeStatus, Ipv6SegmentRoutingHeader, Layer, LinkType, LinuxSll, LlcSnap, MacAddr,
+    NetworkLayer, NullByteOrder, NullLoopback, OptionOverload, OspfChecksumStatus, Ospfv2, Ospfv3,
+    Packet, Radiotap, Raw, Rip, Ripng, Tcp, TcpOption, TcpSackBlock, Udp, UdpChecksumStatus,
+    UdpOption, UdpOptionStatus, UdpOptions, Vlan, ARP_HRD_INFINIBAND, BOOTP_REQUEST,
+    DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_CLASS_IN,
     DNS_EDNS_DEFAULT_UDP_PAYLOAD_SIZE, DNS_EDNS_OPTION_COOKIE, DNS_EDNS_OPTION_NSID,
     DNS_FLAG_AUTHORITATIVE, DNS_FLAG_QR_RESPONSE, DNS_FLAG_RECURSION_DESIRED, DNS_SVCB_KEY_ALPN,
     DNS_SVCB_KEY_IPV4HINT, DNS_SVCB_KEY_IPV6HINT, DNS_SVCB_KEY_PORT, DNS_TYPE_A, DNS_TYPE_AAAA,
@@ -8312,6 +8313,195 @@ fn summary_fixture_reader_matches_current_summary_fixture() {
     );
 
     assert_eq!(actual, expected);
+}
+
+#[test]
+fn igmp_summary_fixtures_cover_major_packet_shapes() -> Result<(), Box<dyn std::error::Error>> {
+    fn igmp_ipv4(src: Ipv4Addr, dst: Ipv4Addr, id: u16) -> Ipv4 {
+        Ipv4::new()
+            .src(src)
+            .dst(dst)
+            .id(id)
+            .ttl(1)
+            .protocol(IPPROTO_IGMP)
+    }
+
+    fn decoded(packet: Packet) -> Result<Packet, Box<dyn std::error::Error>> {
+        let bytes = packet.compile()?;
+        Ok(Packet::decode_from_l3(
+            NetworkLayer::Ipv4,
+            bytes.as_bytes(),
+        )?)
+    }
+
+    fn assert_snapshot(packet: Packet, summary_fixture: &str, show_fixture: &str) {
+        let expected_summary = read_summary_fixture(summary_fixture);
+        assert_eq!(packet.summary().trim_end(), expected_summary.trim_end());
+        assert_show_matches_fixture(summary_fixture, &packet, show_fixture);
+    }
+
+    for (case_name, show_fixture) in [
+        (
+            "ipv4-igmp-v1-query",
+            "summaries/ipv4-igmp-v1-query-show.summary.txt",
+        ),
+        (
+            "ipv4-igmp-v1-report",
+            "summaries/ipv4-igmp-v1-report-show.summary.txt",
+        ),
+        (
+            "ipv4-igmp-v2-query",
+            "summaries/ipv4-igmp-v2-query-show.summary.txt",
+        ),
+        (
+            "ipv4-igmp-v2-report",
+            "summaries/ipv4-igmp-v2-report-show.summary.txt",
+        ),
+        (
+            "ipv4-igmp-v2-leave",
+            "summaries/ipv4-igmp-v2-leave-show.summary.txt",
+        ),
+    ] {
+        let case = valid_fixture_case(case_name);
+        let bytes = fixture_bytes_for_case(case);
+        let packet = decode_packet(packet_target_for_case(case), bytes.as_slice())?;
+        assert_snapshot(
+            packet,
+            case.summary_path.expect("IGMP fixture has summary"),
+            show_fixture,
+        );
+    }
+
+    let all_systems = Ipv4Addr::new(224, 0, 0, 1);
+    let v3_group = Ipv4Addr::new(233, 252, 0, 60);
+    let v3_group_source = Ipv4Addr::new(233, 252, 0, 61);
+    let v3_reserved_group = Ipv4Addr::new(233, 252, 0, 62);
+    let v3_report_dst = Ipv4Addr::new(224, 0, 0, 22);
+
+    let v3_query_cases = [
+        (
+            decoded(
+                igmp_ipv4(Ipv4Addr::new(192, 0, 2, 60), all_systems, 0x1706)
+                    / Igmp::v3_general_query(100),
+            )?,
+            "summaries/ipv4-igmp-v3-general-query.summary.txt",
+            "summaries/ipv4-igmp-v3-general-query-show.summary.txt",
+        ),
+        (
+            decoded(
+                igmp_ipv4(Ipv4Addr::new(192, 0, 2, 61), v3_group, 0x1707)
+                    / Igmp::v3_group_specific_query(10, v3_group),
+            )?,
+            "summaries/ipv4-igmp-v3-group-query.summary.txt",
+            "summaries/ipv4-igmp-v3-group-query-show.summary.txt",
+        ),
+        (
+            decoded(
+                igmp_ipv4(Ipv4Addr::new(192, 0, 2, 62), v3_group_source, 0x1708)
+                    / Igmp::v3_membership_query(
+                        125,
+                        v3_group_source,
+                        IgmpQuery::group_and_source_specific([
+                            Ipv4Addr::new(198, 51, 100, 10),
+                            Ipv4Addr::new(203, 0, 113, 20),
+                        ])
+                        .with_suppress_router_side_processing(true)
+                        .with_querier_robustness_variable(2)
+                        .with_qqic(125),
+                    ),
+            )?,
+            "summaries/ipv4-igmp-v3-group-source-query.summary.txt",
+            "summaries/ipv4-igmp-v3-group-source-query-show.summary.txt",
+        ),
+        (
+            decoded(
+                igmp_ipv4(Ipv4Addr::new(192, 0, 2, 63), all_systems, 0x1709)
+                    / Igmp::v3_membership_query(
+                        0x91,
+                        Ipv4Addr::UNSPECIFIED,
+                        IgmpQuery::new()
+                            .with_querier_robustness_variable(2)
+                            .with_qqic(0xff),
+                    ),
+            )?,
+            "summaries/ipv4-igmp-v3-explicit-timer-query.summary.txt",
+            "summaries/ipv4-igmp-v3-explicit-timer-query-show.summary.txt",
+        ),
+        (
+            decoded(
+                igmp_ipv4(Ipv4Addr::new(192, 0, 2, 64), v3_reserved_group, 0x170a)
+                    / Igmp::v3_membership_query(
+                        100,
+                        v3_reserved_group,
+                        IgmpQuery::new()
+                            .with_raw_flags_qrv(0xf5)
+                            .with_qqic(125)
+                            .with_source_addresses([Ipv4Addr::new(192, 0, 2, 65)]),
+                    ),
+            )?,
+            "summaries/ipv4-igmp-v3-reserved-flags-query.summary.txt",
+            "summaries/ipv4-igmp-v3-reserved-flags-query-show.summary.txt",
+        ),
+    ];
+
+    for (packet, summary_fixture, show_fixture) in v3_query_cases {
+        assert_snapshot(packet, summary_fixture, show_fixture);
+    }
+
+    let v3_report_cases = [
+        (
+            decoded(
+                igmp_ipv4(Ipv4Addr::new(192, 0, 2, 70), v3_report_dst, 0x170b)
+                    / Igmp::v3_membership_report()
+                    / IgmpReport::from_group_records([IgmpGroupRecord::mode_is_include(
+                        Ipv4Addr::new(233, 252, 0, 70),
+                    )
+                    .with_source_address(Ipv4Addr::new(198, 51, 100, 70))]),
+            )?,
+            "summaries/ipv4-igmp-v3-report-include.summary.txt",
+            "summaries/ipv4-igmp-v3-report-include-show.summary.txt",
+        ),
+        (
+            decoded(
+                igmp_ipv4(Ipv4Addr::new(192, 0, 2, 73), v3_report_dst, 0x170e)
+                    / Igmp::v3_membership_report()
+                    / IgmpReport::from_group_records([
+                        IgmpGroupRecord::allow_new_sources(Ipv4Addr::new(233, 252, 0, 74))
+                            .with_source_addresses([
+                                Ipv4Addr::new(192, 0, 2, 73),
+                                Ipv4Addr::new(198, 51, 100, 73),
+                            ]),
+                        IgmpGroupRecord::block_old_sources(Ipv4Addr::new(233, 252, 0, 75))
+                            .with_source_address(Ipv4Addr::new(203, 0, 113, 73)),
+                    ]),
+            )?,
+            "summaries/ipv4-igmp-v3-report-source-list-change.summary.txt",
+            "summaries/ipv4-igmp-v3-report-source-list-change-show.summary.txt",
+        ),
+        (
+            decoded(
+                igmp_ipv4(Ipv4Addr::new(192, 0, 2, 75), v3_report_dst, 0x1710)
+                    / Igmp::v3_membership_report()
+                    / IgmpReport::from_group_records([IgmpGroupRecord::raw(
+                        0xc8,
+                        Ipv4Addr::new(233, 252, 0, 77),
+                    )
+                    .with_source_addresses([
+                        Ipv4Addr::new(192, 0, 2, 75),
+                        Ipv4Addr::new(198, 51, 100, 75),
+                    ])
+                    .with_auxiliary_data([0xca, 0xfe, 0xba, 0xbe])]),
+            )?,
+            "summaries/ipv4-igmp-v3-report-unknown-record-type.summary.txt",
+            "summaries/ipv4-igmp-v3-report-unknown-record-type-show.summary.txt",
+        ),
+    ];
+
+    for (packet, summary_fixture, show_fixture) in v3_report_cases {
+        assert_snapshot(packet, summary_fixture, show_fixture);
+    }
+
+    Ok(())
 }
 
 fn assert_show_matches_fixture(label: &str, packet: &Packet, show_fixture: &str) {

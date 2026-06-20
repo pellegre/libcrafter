@@ -155,11 +155,15 @@ const V3_REPORT_UNKNOWN_BYTES: &str = "\
 22 00 b9 28 00 00 00 00 00 00 00 01 c8 01 00 02 e9 fc 00 4d
 c0 00 02 4b c6 33 64 4b ca fe ba be";
 
-const V3_GENERAL_QUERY_SUMMARY: &str = "Ipv4(src=192.0.2.60, dst=224.0.0.1, proto=igmp(2)) / Igmp(type=IGMP Membership Query, code=Max Response Time, group=0.0.0.0) / IgmpQuery(flags=0x00, s=false, qrv=0, qqic=0, sources=0)";
-const V3_GROUP_QUERY_SUMMARY: &str = "Ipv4(src=192.0.2.61, dst=233.252.0.60, proto=igmp(2)) / Igmp(type=IGMP Membership Query, code=Max Response Time, group=233.252.0.60) / IgmpQuery(flags=0x00, s=false, qrv=0, qqic=0, sources=0)";
-const V3_GROUP_SOURCE_QUERY_SUMMARY: &str = "Ipv4(src=192.0.2.62, dst=233.252.0.61, proto=igmp(2)) / Igmp(type=IGMP Membership Query, code=Max Response Time, group=233.252.0.61) / IgmpQuery(flags=0x00, s=true, qrv=2, qqic=125, sources=2)";
-const V3_TIMER_QUERY_SUMMARY: &str = "Ipv4(src=192.0.2.63, dst=224.0.0.1, proto=igmp(2)) / Igmp(type=IGMP Membership Query, code=Max Response Time, group=0.0.0.0) / IgmpQuery(flags=0x00, s=false, qrv=2, qqic=255, sources=0)";
-const V3_RESERVED_FLAGS_QUERY_SUMMARY: &str = "Ipv4(src=192.0.2.64, dst=233.252.0.62, proto=igmp(2)) / Igmp(type=IGMP Membership Query, code=Max Response Time, group=233.252.0.62) / IgmpQuery(flags=0xf0, s=false, qrv=5, qqic=125, sources=1)";
+const V3_GENERAL_QUERY_SUMMARY: &str =
+    fixture_str!("summaries/ipv4-igmp-v3-general-query.summary.txt");
+const V3_GROUP_QUERY_SUMMARY: &str = fixture_str!("summaries/ipv4-igmp-v3-group-query.summary.txt");
+const V3_GROUP_SOURCE_QUERY_SUMMARY: &str =
+    fixture_str!("summaries/ipv4-igmp-v3-group-source-query.summary.txt");
+const V3_TIMER_QUERY_SUMMARY: &str =
+    fixture_str!("summaries/ipv4-igmp-v3-explicit-timer-query.summary.txt");
+const V3_RESERVED_FLAGS_QUERY_SUMMARY: &str =
+    fixture_str!("summaries/ipv4-igmp-v3-reserved-flags-query.summary.txt");
 const V3_REPORT_INCLUDE_SUMMARY: &str =
     fixture_str!("summaries/ipv4-igmp-v3-report-include.summary.txt");
 const V3_REPORT_EXCLUDE_SUMMARY: &str =
@@ -173,181 +177,16 @@ const V3_REPORT_AUX_SUMMARY: &str =
 const V3_REPORT_UNKNOWN_SUMMARY: &str =
     fixture_str!("summaries/ipv4-igmp-v3-report-unknown-record-type.summary.txt");
 
-const V3_GENERAL_QUERY_SHOW: &str = "\
-Packet(len=32, layers=3)
-  [0] Ipv4
-      version: 4
-      ihl: 5
-      tos: 0
-      dscp: 0
-      ecn: Not-ECT
-      total_length: 32
-      id: 0x1706
-      flags: none
-      fragment_offset: 0
-      ttl: 1
-      protocol: igmp(2)
-      checksum: 0x0099
-      checksum_status: valid
-      src: 192.0.2.60
-      dst: 224.0.0.1
-      option_count: 0
-      options: 
-  [1] Igmp
-      type: IGMP Membership Query (0x11)
-      code: Max Response Time (0x64)
-      checksum: 0xee9b
-      group_address: 0.0.0.0
-      length: 8
-  [2] IgmpQuery
-      flags_s_qrv: 0x00
-      query_flags: 0x00
-      extension_flag: false
-      suppress_router_side_processing: false
-      querier_robustness_variable: 0
-      qqic: 0
-      number_of_sources: 0
-      source_addresses: ";
-const V3_GROUP_QUERY_SHOW: &str = "\
-Packet(len=32, layers=3)
-  [0] Ipv4
-      version: 4
-      ihl: 5
-      tos: 0
-      dscp: 0
-      ecn: Not-ECT
-      total_length: 32
-      id: 0x1707
-      flags: none
-      fragment_offset: 0
-      ttl: 1
-      protocol: igmp(2)
-      checksum: 0xf65f
-      checksum_status: valid
-      src: 192.0.2.61
-      dst: 233.252.0.60
-      option_count: 0
-      options: 
-  [1] Igmp
-      type: IGMP Membership Query (0x11)
-      code: Max Response Time (0x0a)
-      checksum: 0x04bd
-      group_address: 233.252.0.60
-      length: 8
-  [2] IgmpQuery
-      flags_s_qrv: 0x00
-      query_flags: 0x00
-      extension_flag: false
-      suppress_router_side_processing: false
-      querier_robustness_variable: 0
-      qqic: 0
-      number_of_sources: 0
-      source_addresses: ";
-const V3_GROUP_SOURCE_QUERY_SHOW: &str = "\
-Packet(len=40, layers=3)
-  [0] Ipv4
-      version: 4
-      ihl: 5
-      tos: 0
-      dscp: 0
-      ecn: Not-ECT
-      total_length: 40
-      id: 0x1708
-      flags: none
-      fragment_offset: 0
-      ttl: 1
-      protocol: igmp(2)
-      checksum: 0xf654
-      checksum_status: valid
-      src: 192.0.2.62
-      dst: 233.252.0.61
-      option_count: 0
-      options: 
-  [1] Igmp
-      type: IGMP Membership Query (0x11)
-      code: Max Response Time (0x7d)
-      checksum: 0x9376
-      group_address: 233.252.0.61
-      length: 8
-  [2] IgmpQuery
-      flags_s_qrv: 0x0a
-      query_flags: 0x00
-      extension_flag: false
-      suppress_router_side_processing: true
-      querier_robustness_variable: 2
-      qqic: 125
-      number_of_sources: 2
-      source_addresses: 198.51.100.10,203.0.113.20";
-const V3_TIMER_QUERY_SHOW: &str = "\
-Packet(len=32, layers=3)
-  [0] Ipv4
-      version: 4
-      ihl: 5
-      tos: 0
-      dscp: 0
-      ecn: Not-ECT
-      total_length: 32
-      id: 0x1709
-      flags: none
-      fragment_offset: 0
-      ttl: 1
-      protocol: igmp(2)
-      checksum: 0x0093
-      checksum_status: valid
-      src: 192.0.2.63
-      dst: 224.0.0.1
-      option_count: 0
-      options: 
-  [1] Igmp
-      type: IGMP Membership Query (0x11)
-      code: Max Response Time (0x91)
-      checksum: 0xeb6f
-      group_address: 0.0.0.0
-      length: 8
-  [2] IgmpQuery
-      flags_s_qrv: 0x02
-      query_flags: 0x00
-      extension_flag: false
-      suppress_router_side_processing: false
-      querier_robustness_variable: 2
-      qqic: 255
-      number_of_sources: 0
-      source_addresses: ";
-const V3_RESERVED_FLAGS_QUERY_SHOW: &str = "\
-Packet(len=36, layers=3)
-  [0] Ipv4
-      version: 4
-      ihl: 5
-      tos: 0
-      dscp: 0
-      ecn: Not-ECT
-      total_length: 36
-      id: 0x170a
-      flags: none
-      fragment_offset: 0
-      ttl: 1
-      protocol: igmp(2)
-      checksum: 0xf653
-      checksum_status: valid
-      src: 192.0.2.64
-      dst: 233.252.0.62
-      option_count: 0
-      options: 
-  [1] Igmp
-      type: IGMP Membership Query (0x11)
-      code: Max Response Time (0x64)
-      checksum: 0x4ca0
-      group_address: 233.252.0.62
-      length: 8
-  [2] IgmpQuery
-      flags_s_qrv: 0xf5
-      query_flags: 0xf0
-      extension_flag: true
-      suppress_router_side_processing: false
-      querier_robustness_variable: 5
-      qqic: 125
-      number_of_sources: 1
-      source_addresses: 192.0.2.65";
+const V3_GENERAL_QUERY_SHOW: &str =
+    fixture_str!("summaries/ipv4-igmp-v3-general-query-show.summary.txt");
+const V3_GROUP_QUERY_SHOW: &str =
+    fixture_str!("summaries/ipv4-igmp-v3-group-query-show.summary.txt");
+const V3_GROUP_SOURCE_QUERY_SHOW: &str =
+    fixture_str!("summaries/ipv4-igmp-v3-group-source-query-show.summary.txt");
+const V3_TIMER_QUERY_SHOW: &str =
+    fixture_str!("summaries/ipv4-igmp-v3-explicit-timer-query-show.summary.txt");
+const V3_RESERVED_FLAGS_QUERY_SHOW: &str =
+    fixture_str!("summaries/ipv4-igmp-v3-reserved-flags-query-show.summary.txt");
 const V3_REPORT_INCLUDE_SHOW: &str =
     fixture_str!("summaries/ipv4-igmp-v3-report-include-show.summary.txt");
 const V3_REPORT_EXCLUDE_SHOW: &str =
@@ -612,14 +451,13 @@ const V3_REPORT_SOURCE_LIST_RECORDS: &[IgmpV3ReportRecordExpectation] = &[
     },
 ];
 
-const V3_REPORT_AUX_RECORDS: &[IgmpV3ReportRecordExpectation] =
-    &[IgmpV3ReportRecordExpectation {
-        record_type: IgmpRecordType::AllowNewSources,
-        group: DOC_MCAST_V3_REPORT_AUX,
-        sources: &V3_REPORT_AUX_SOURCES,
-        auxiliary_data: &V3_REPORT_AUX_DATA,
-        auxiliary_data_len: 1,
-    }];
+const V3_REPORT_AUX_RECORDS: &[IgmpV3ReportRecordExpectation] = &[IgmpV3ReportRecordExpectation {
+    record_type: IgmpRecordType::AllowNewSources,
+    group: DOC_MCAST_V3_REPORT_AUX,
+    sources: &V3_REPORT_AUX_SOURCES,
+    auxiliary_data: &V3_REPORT_AUX_DATA,
+    auxiliary_data_len: 1,
+}];
 
 const V3_REPORT_UNKNOWN_RECORDS: &[IgmpV3ReportRecordExpectation] =
     &[IgmpV3ReportRecordExpectation {
@@ -740,11 +578,7 @@ fn build_v3_group_source_query() -> Packet {
         .with_querier_robustness_variable(2)
         .with_qqic(V3_QUERY_QQIC_LINEAR);
     ipv4(DOC_SRC_V3_GROUP_SOURCE, DOC_MCAST_V3_GROUP_SOURCE, 0x1708)
-        / Igmp::v3_membership_query(
-            V3_QUERY_QQIC_LINEAR,
-            DOC_MCAST_V3_GROUP_SOURCE,
-            query,
-        )
+        / Igmp::v3_membership_query(V3_QUERY_QQIC_LINEAR, DOC_MCAST_V3_GROUP_SOURCE, query)
 }
 
 fn build_v3_timer_query() -> Packet {
@@ -778,19 +612,19 @@ fn build_v3_reserved_flags_query() -> Packet {
 fn build_v3_report_include() -> Packet {
     ipv4(DOC_SRC_V3_REPORT_INCLUDE, IGMPV3_REPORT_DESTINATION, 0x170b)
         / Igmp::v3_membership_report()
-        / IgmpReport::from_group_records(vec![
-            IgmpGroupRecord::mode_is_include(DOC_MCAST_V3_REPORT_INCLUDE)
-                .with_source_addresses(V3_REPORT_INCLUDE_SOURCES),
-        ])
+        / IgmpReport::from_group_records(vec![IgmpGroupRecord::mode_is_include(
+            DOC_MCAST_V3_REPORT_INCLUDE,
+        )
+        .with_source_addresses(V3_REPORT_INCLUDE_SOURCES)])
 }
 
 fn build_v3_report_exclude() -> Packet {
     ipv4(DOC_SRC_V3_REPORT_EXCLUDE, IGMPV3_REPORT_DESTINATION, 0x170c)
         / Igmp::v3_membership_report()
-        / IgmpReport::from_group_records(vec![
-            IgmpGroupRecord::mode_is_exclude(DOC_MCAST_V3_REPORT_EXCLUDE)
-                .with_source_addresses(V3_REPORT_EXCLUDE_SOURCES),
-        ])
+        / IgmpReport::from_group_records(vec![IgmpGroupRecord::mode_is_exclude(
+            DOC_MCAST_V3_REPORT_EXCLUDE,
+        )
+        .with_source_addresses(V3_REPORT_EXCLUDE_SOURCES)])
 }
 
 fn build_v3_report_state_change() -> Packet {
@@ -824,21 +658,22 @@ fn build_v3_report_source_list_change() -> Packet {
 fn build_v3_report_auxiliary_data() -> Packet {
     ipv4(DOC_SRC_V3_REPORT_AUX, IGMPV3_REPORT_DESTINATION, 0x170f)
         / Igmp::v3_membership_report()
-        / IgmpReport::from_group_records(vec![
-            IgmpGroupRecord::allow_new_sources(DOC_MCAST_V3_REPORT_AUX)
-                .with_source_addresses(V3_REPORT_AUX_SOURCES)
-                .with_auxiliary_data(V3_REPORT_AUX_DATA),
-        ])
+        / IgmpReport::from_group_records(vec![IgmpGroupRecord::allow_new_sources(
+            DOC_MCAST_V3_REPORT_AUX,
+        )
+        .with_source_addresses(V3_REPORT_AUX_SOURCES)
+        .with_auxiliary_data(V3_REPORT_AUX_DATA)])
 }
 
 fn build_v3_report_unknown_record_type() -> Packet {
     ipv4(DOC_SRC_V3_REPORT_UNKNOWN, IGMPV3_REPORT_DESTINATION, 0x1710)
         / Igmp::v3_membership_report()
-        / IgmpReport::from_group_records(vec![
-            IgmpGroupRecord::raw(0xc8, DOC_MCAST_V3_REPORT_UNKNOWN)
-                .with_source_addresses(V3_REPORT_UNKNOWN_SOURCES)
-                .with_auxiliary_data(V3_REPORT_UNKNOWN_AUX_DATA),
-        ])
+        / IgmpReport::from_group_records(vec![IgmpGroupRecord::raw(
+            0xc8,
+            DOC_MCAST_V3_REPORT_UNKNOWN,
+        )
+        .with_source_addresses(V3_REPORT_UNKNOWN_SOURCES)
+        .with_auxiliary_data(V3_REPORT_UNKNOWN_AUX_DATA)])
 }
 
 fn decode_hex(label: &str, text: &str) -> Vec<u8> {
@@ -925,10 +760,7 @@ fn assert_v3_query_case(case: IgmpV3QueryGoldenCase) -> crafter::Result<Packet> 
     let igmp = decoded.layer::<Igmp>().expect("decoded IGMP layer");
     assert_eq!(igmp.igmp_type(), IgmpType::MembershipQuery);
     assert_eq!(igmp.code_value(), case.max_response_code);
-    assert_eq!(
-        igmp.v3_max_response_time_tenths(),
-        case.max_response_tenths
-    );
+    assert_eq!(igmp.v3_max_response_time_tenths(), case.max_response_tenths);
     assert_eq!(igmp.group_address_value(), case.group_address);
     assert_eq!(igmp.checksum_value(), Some(case.checksum));
     assert_eq!(igmp.checksum_state(), FieldState::User);
@@ -1007,9 +839,15 @@ fn assert_v3_report_case(case: IgmpV3ReportGoldenCase) -> crafter::Result<Packet
         assert_eq!(record.record_type_value(), expected.record_type.code());
         assert_eq!(record.multicast_address(), expected.group);
         assert_eq!(record.source_addresses(), expected.sources);
-        assert_eq!(record.number_of_sources_value(), expected.sources.len() as u16);
+        assert_eq!(
+            record.number_of_sources_value(),
+            expected.sources.len() as u16
+        );
         assert_eq!(record.number_of_sources_state(), FieldState::User);
-        assert_eq!(record.auxiliary_data_len_value(), expected.auxiliary_data_len);
+        assert_eq!(
+            record.auxiliary_data_len_value(),
+            expected.auxiliary_data_len
+        );
         assert_eq!(record.auxiliary_data_len_state(), FieldState::User);
         assert_eq!(record.auxiliary_data(), expected.auxiliary_data);
     }
@@ -1103,7 +941,9 @@ fn igmp_golden_v3_report_auxiliary_data() -> crafter::Result<()> {
 
     assert_eq!(record.auxiliary_data_len_value(), 1);
     assert_eq!(record.auxiliary_data(), V3_REPORT_AUX_DATA);
-    assert!(decoded.show().contains("record[0].auxiliary_data: de ad be ef"));
+    assert!(decoded
+        .show()
+        .contains("record[0].auxiliary_data: de ad be ef"));
 
     Ok(())
 }
@@ -1117,8 +957,13 @@ fn igmp_golden_v3_report_unknown_record_type() -> crafter::Result<()> {
     let record = &report.group_records()[0];
 
     assert_eq!(record.record_type(), IgmpRecordType::Unknown(0xc8));
-    assert_eq!(record.record_type_meta().status, IgmpRecordTypeStatus::Unassigned);
-    assert!(decoded.show().contains("record[0].record_type: Unknown(200) (0xc8)"));
+    assert_eq!(
+        record.record_type_meta().status,
+        IgmpRecordTypeStatus::Unassigned
+    );
+    assert!(decoded
+        .show()
+        .contains("record[0].record_type: 0xc8 (Unknown(200))"));
 
     Ok(())
 }
@@ -1157,7 +1002,10 @@ fn igmp_golden_v3_query_explicit_timer_codes() -> crafter::Result<()> {
         .layer::<IgmpQuery>()
         .expect("decoded IGMPv3 timer query body");
 
-    assert_eq!(igmp.max_response_code_value(), V3_QUERY_TIMER_MAX_RESPONSE_CODE);
+    assert_eq!(
+        igmp.max_response_code_value(),
+        V3_QUERY_TIMER_MAX_RESPONSE_CODE
+    );
     assert_eq!(
         igmp.v3_max_response_time_tenths(),
         V3_QUERY_TIMER_MAX_RESPONSE_TENTHS
