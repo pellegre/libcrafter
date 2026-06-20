@@ -5,6 +5,8 @@ pub mod dhcp;
 pub mod dns;
 pub mod eapol;
 pub mod icmp;
+#[allow(dead_code)]
+pub(crate) mod igmp;
 pub mod ip;
 pub mod ipsec;
 pub mod link;
