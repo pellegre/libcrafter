@@ -10,9 +10,10 @@ use crafter::core::{
     Ah, Arp, Bgp, Dhcp, DhcpMessageType, DhcpOption, DhcpRelayAgentInfo, DhcpRelaySuboption, Dns,
     DnsName, DnsRecord, DnsRecordData, Dot11, Dot11DataSubtype, Dot11ManagementSubtype, Dscp,
     Eapol, EapolKey, Ecn, EdnsOption, Esp, Ethernet, IcmpKind, Icmpv4, Icmpv6, Igmp,
-    IgmpGroupRecord, IgmpQuery, IgmpReport, IgmpType, IkeHeader, IkeKePayload, IkeNoncePayload,
-    IkeSaPayload, Ipv4, Ipv4ChecksumStatus, Ipv4Option, Ipv6, Ipv6DestinationOptionsHeader,
-    Ipv6FragmentHeader, Ipv6FragmentHeaderStatus, Ipv6HopByHopOptionsHeader,
+    IgmpExtensionType, IgmpGroupRecord, IgmpQuery, IgmpRecordType, IgmpReport, IgmpType,
+    IkeHeader, IkeKePayload, IkeNoncePayload, IkeSaPayload, Ipv4, Ipv4ChecksumStatus,
+    Ipv4Option, Ipv6, Ipv6DestinationOptionsHeader, Ipv6FragmentHeader, Ipv6FragmentHeaderStatus,
+    Ipv6HopByHopOptionsHeader,
     Ipv6MobileRoutingHeader, Ipv6MobileRoutingHeaderStatus, Ipv6Option, Ipv6RoutingHeader,
     Ipv6RoutingTypeStatus, Ipv6SegmentRoutingHeader, Layer, LinkType, LinuxSll, LlcSnap, MacAddr,
     NetworkLayer, NullByteOrder, NullLoopback, OptionOverload, OspfChecksumStatus, Ospfv2, Ospfv3,
@@ -33,6 +34,7 @@ use crafter::core::{
     IPV6_ROUTING_TYPE_SEGMENT, TCP_FLAG_ACK, TCP_FLAG_PSH, TCP_FLAG_SYN, UDP_HEADER_LEN,
     UDP_OPTION_EOL, UDP_OPTION_NOP,
 };
+use crafter::protocols::igmp::IgmpExtension;
 use crafter::wire::backend::pcap::{
     PcapError, PcapLinkType, PcapReader, PcapTimestamp, PcapWriter, PcapWriterOptions,
     TimestampPrecision,
@@ -87,6 +89,9 @@ enum ExpectedLayer {
     Ipv6Fragment,
     Icmp,
     Igmp,
+    IgmpQuery,
+    IgmpReport,
+    IgmpExtension,
     Icmpv6,
     Tcp,
     Udp,
@@ -121,6 +126,7 @@ enum CoverageFamily {
     Ipv4IcmpEcho,
     Ipv4IcmpError,
     Ipv4IgmpBootstrap,
+    Ipv4IgmpExtension,
     Ipv4DscpEcn,
     Ipv4Fragment,
     Ipv4Options,
@@ -568,6 +574,34 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Igmp],
         preserve_exact_bytes: true,
         summary_path: Some("summaries/ipv4-igmp-v2-leave.summary.txt"),
+    },
+    ValidFixtureCase {
+        name: "ipv4-igmp-v3-query-extension",
+        path: "bytes/ipv4-igmp-v3-query-extension.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-igmp-v3-query-extension.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[
+            ExpectedLayer::Ipv4,
+            ExpectedLayer::Igmp,
+            ExpectedLayer::IgmpQuery,
+            ExpectedLayer::IgmpExtension,
+        ],
+        preserve_exact_bytes: true,
+        summary_path: Some("summaries/ipv4-igmp-v3-query-extension.summary.txt"),
+    },
+    ValidFixtureCase {
+        name: "ipv4-igmp-v3-report-extension",
+        path: "bytes/ipv4-igmp-v3-report-extension.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-igmp-v3-report-extension.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[
+            ExpectedLayer::Ipv4,
+            ExpectedLayer::Igmp,
+            ExpectedLayer::IgmpReport,
+            ExpectedLayer::IgmpExtension,
+        ],
+        preserve_exact_bytes: true,
+        summary_path: Some("summaries/ipv4-igmp-v3-report-extension.summary.txt"),
     },
     ValidFixtureCase {
         name: "ipv4-udp-dscp-ecn-raw",
@@ -1964,6 +1998,10 @@ const REQUIRED_VALID_COVERAGE: &[(CoverageFamily, &str)] = &[
         "IPv4 IGMP bootstrap query and report",
     ),
     (
+        CoverageFamily::Ipv4IgmpExtension,
+        "IPv4 IGMPv3 generic extension TLVs",
+    ),
+    (
         CoverageFamily::Ipv4DscpEcn,
         "IPv4 DSCP and ECN differentiated services field",
     ),
@@ -2133,6 +2171,9 @@ fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
         | "ipv4-igmp-v2-query"
         | "ipv4-igmp-v2-report"
         | "ipv4-igmp-v2-leave" => &[CoverageFamily::Ipv4IgmpBootstrap],
+        "ipv4-igmp-v3-query-extension" | "ipv4-igmp-v3-report-extension" => {
+            &[CoverageFamily::Ipv4IgmpExtension]
+        }
         "ipv4-udp-dscp-ecn-raw" => &[CoverageFamily::Ipv4DscpEcn],
         "ipv4-fragment-noninitial-raw"
         | "ipv4-fragment-defrag-complete-final"
@@ -2428,6 +2469,15 @@ fn assert_expected_layers(case: &ValidFixtureCase, packet: &Packet) {
             ExpectedLayer::Igmp => {
                 let _ = expect_layer::<Igmp>(case, packet);
             }
+            ExpectedLayer::IgmpQuery => {
+                let _ = expect_layer::<IgmpQuery>(case, packet);
+            }
+            ExpectedLayer::IgmpReport => {
+                let _ = expect_layer::<IgmpReport>(case, packet);
+            }
+            ExpectedLayer::IgmpExtension => {
+                let _ = expect_layer::<IgmpExtension>(case, packet);
+            }
             ExpectedLayer::Icmpv6 => {
                 let _ = expect_layer::<Icmpv6>(case, packet);
             }
@@ -2524,6 +2574,9 @@ fn expected_layer_name(expected: ExpectedLayer) -> &'static str {
         ExpectedLayer::Ipv6Fragment => "Ipv6FragmentHeader",
         ExpectedLayer::Icmp => "Icmpv4",
         ExpectedLayer::Igmp => "Igmp",
+        ExpectedLayer::IgmpQuery => "IgmpQuery",
+        ExpectedLayer::IgmpReport => "IgmpReport",
+        ExpectedLayer::IgmpExtension => "IgmpExtension",
         ExpectedLayer::Icmpv6 => "Icmpv6",
         ExpectedLayer::Tcp => "Tcp",
         ExpectedLayer::Udp => "Udp",
@@ -2989,6 +3042,49 @@ fn assert_igmp_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
             assert_eq!(igmp.igmp_type(), IgmpType::V2LeaveGroup);
             assert_eq!(igmp.code_value(), 0);
             assert_eq!(igmp.group_address_value(), Ipv4Addr::new(233, 252, 0, 17));
+        }
+        "ipv4-igmp-v3-query-extension" => {
+            assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 80));
+            assert_eq!(ipv4.destination(), Ipv4Addr::new(233, 252, 0, 80));
+            assert_eq!(igmp.igmp_type(), IgmpType::MembershipQuery);
+            assert_eq!(igmp.code_value(), 100);
+            assert_eq!(igmp.group_address_value(), Ipv4Addr::new(233, 252, 0, 80));
+
+            let query = expect_layer::<IgmpQuery>(case, packet);
+            assert_eq!(query.raw_flags_qrv_value(), 0x82);
+            assert!(query.extension_flag());
+            assert_eq!(query.querier_robustness_variable(), 2);
+            assert_eq!(query.qqic_value(), 0x7d);
+            assert_eq!(query.number_of_sources_value(), 1);
+            assert_eq!(query.source_addresses(), &[Ipv4Addr::new(198, 51, 100, 80)]);
+
+            let extension = expect_layer::<IgmpExtension>(case, packet);
+            assert_eq!(extension.extension_type(), IgmpExtensionType::Unassigned(0x1234));
+            assert_eq!(extension.extension_type_value(), 0x1234);
+            assert_eq!(extension.extension_length_value(), 4);
+            assert_eq!(extension.value_bytes(), &[0xde, 0xad, 0xbe, 0xef]);
+        }
+        "ipv4-igmp-v3-report-extension" => {
+            assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 81));
+            assert_eq!(ipv4.destination(), Ipv4Addr::new(224, 0, 0, 22));
+            assert_eq!(igmp.igmp_type(), IgmpType::V3MembershipReport);
+            assert_eq!(igmp.code_value(), 0);
+            assert_eq!(igmp.group_address_value(), Ipv4Addr::UNSPECIFIED);
+
+            let report = expect_layer::<IgmpReport>(case, packet);
+            assert_eq!(report.report_flags_value(), 0x8000);
+            assert!(report.extension_flag());
+            assert_eq!(report.number_of_group_records_value(), 1);
+            let record = &report.group_records()[0];
+            assert_eq!(record.record_type(), IgmpRecordType::ModeIsInclude);
+            assert_eq!(record.multicast_address(), Ipv4Addr::new(233, 252, 0, 81));
+            assert_eq!(record.source_addresses(), &[Ipv4Addr::new(203, 0, 113, 81)]);
+
+            let extension = expect_layer::<IgmpExtension>(case, packet);
+            assert_eq!(extension.extension_type(), IgmpExtensionType::Experimental(0xfffe));
+            assert_eq!(extension.extension_type_value(), 0xfffe);
+            assert_eq!(extension.extension_length_value(), 2);
+            assert_eq!(extension.value_bytes(), &[0xca, 0xfe]);
         }
         other => panic!("IGMP fixture {other} is missing typed field assertions"),
     }
@@ -6406,6 +6502,25 @@ fn igmp_fixture_suite_bootstrap_decodes_compile_and_summarizes() {
 }
 
 #[test]
+fn igmp_extension_fixture_suite_decodes_compile_and_summarizes() {
+    for name in [
+        "ipv4-igmp-v3-query-extension",
+        "ipv4-igmp-v3-report-extension",
+    ] {
+        let case = valid_fixture_case(name);
+        ensure_fixture_exists(case.path);
+        let bytes = fixture_bytes_for_case(case);
+        let target = packet_target_for_case(case);
+        let packet = decode_packet(target, &bytes)
+            .unwrap_or_else(|err| panic!("fixture {} should decode: {err}", case.path));
+
+        assert_packet_surface(case, &packet);
+        assert_fixture_fields(case, &packet);
+        assert_compile_decode_compile(case, target, &packet, &bytes);
+    }
+}
+
+#[test]
 fn fixture_dot11_corpus_decodes_layer_stacks() {
     for case in DOT11_FIXTURES {
         ensure_fixture_exists(case.path);
@@ -8127,6 +8242,46 @@ fn igmp_malformed_fixture_suite_reports_errors_and_preserves_raw_tails() {
             bytes.as_slice(),
             "{name} should preserve bytes"
         );
+    }
+}
+
+#[test]
+fn igmp_extension_malformed_fixture_suite_reports_truncation_errors() {
+    let error_cases: &[(&str, &str, &str, &str, usize, usize)] = &[
+        (
+            "ipv4-igmp-v3-query-extension-truncated-header",
+            "malformed/ipv4-igmp-v3-query-extension-truncated-header.hex",
+            fixture_str!("malformed/ipv4-igmp-v3-query-extension-truncated-header.hex"),
+            "igmp.extension.header",
+            4,
+            3,
+        ),
+        (
+            "ipv4-igmp-v3-report-extension-truncated-value",
+            "malformed/ipv4-igmp-v3-report-extension-truncated-value.hex",
+            fixture_str!("malformed/ipv4-igmp-v3-report-extension-truncated-value.hex"),
+            "igmp.extension.value",
+            8,
+            6,
+        ),
+    ];
+
+    for (name, path, hex, context, required, available) in error_cases {
+        ensure_fixture_exists(path);
+        let bytes = decode_hex(name, hex);
+        match Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_slice()) {
+            Err(CrafterError::BufferTooShort {
+                context: actual_context,
+                required: actual_required,
+                available: actual_available,
+            }) => {
+                assert_eq!(&actual_context, context, "{name} context");
+                assert_eq!(&actual_required, required, "{name} required");
+                assert_eq!(&actual_available, available, "{name} available");
+            }
+            Ok(packet) => panic!("{name} decoded unexpectedly as {}", packet.summary()),
+            Err(other) => panic!("{name} expected BufferTooShort, got {other:?}"),
+        }
     }
 }
 

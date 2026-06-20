@@ -1,0 +1,10 @@
+# IPv4 / IGMPv3 Membership Query fixture with generic RFC 9279 extension data.
+# RFC 9776 defines the IGMPv3 query body, RFC 9279 defines the E flag and
+# 16-bit Type / 16-bit Length / raw Value extension TLV area, and RFC 9778
+# delegates IGMP/MLD extension codepoint policy to the IANA registries. Type
+# 0x1234 is intentionally unassigned and byte-preserved. Source and multicast
+# group addresses use RFC 5737/RFC 5771 documentation space; this is not live
+# traffic.
+45 00 00 2c 17 11 00 00 01 02 f6 22 c0 00 02 50 e9 fc 00 50
+11 64 a7 76 e9 fc 00 50 82 7d 00 01 c6 33 64 50 12 34 00 04
+de ad be ef
