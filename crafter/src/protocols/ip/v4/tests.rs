@@ -7,6 +7,7 @@ mod ipv4_protocol {
         protocol_summary, Ipv4, Ipv4Protocol, IPPROTO_AH, IPPROTO_ESP, IPPROTO_EXPERIMENTAL_1,
         IPPROTO_EXPERIMENTAL_2, IPPROTO_GRE, IPPROTO_OSPF, IPPROTO_SCTP,
     };
+    use crate::protocols::ip::shared::protocol_numbers::IPPROTO_IGMP;
     use crate::{Layer, NetworkLayer, Packet, Raw};
     use core::net::Ipv4Addr;
 
@@ -46,6 +47,39 @@ mod ipv4_protocol {
 
     #[test]
     fn protocol_summary_uses_numeric_fallback_for_unknown_values() {
+        assert_eq!(protocol_summary(252), "252");
+    }
+
+    #[test]
+    fn ipproto_igmp_protocol_number_labels_as_named_ipv4_protocol() {
+        assert_eq!(IPPROTO_IGMP, 2);
+        assert_eq!(u8::from(Ipv4Protocol::Igmp), IPPROTO_IGMP);
+        assert_eq!(protocol_summary(IPPROTO_IGMP), "igmp(2)");
+    }
+
+    #[test]
+    fn ipproto_igmp_summary_string_uses_named_protocol_label() {
+        let ipv4 = Ipv4::new()
+            .src(src())
+            .dst(dst())
+            .ipv4_protocol(Ipv4Protocol::Igmp);
+
+        assert_eq!(
+            ipv4.summary(),
+            format!("Ipv4(src={}, dst={}, proto=igmp(2))", src(), dst())
+        );
+        assert_eq!(
+            ipv4.inspection_fields()
+                .iter()
+                .find(|(name, _)| *name == "protocol")
+                .map(|(_, value)| value.as_str()),
+            Some("igmp(2)")
+        );
+    }
+
+    #[test]
+    fn ipproto_igmp_registration_preserves_other_unknown_protocol_values() {
+        assert_eq!(protocol_summary(3), "3");
         assert_eq!(protocol_summary(252), "252");
     }
 
