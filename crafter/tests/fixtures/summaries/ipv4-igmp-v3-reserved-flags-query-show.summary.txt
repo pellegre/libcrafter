@@ -1,0 +1,38 @@
+Packet(len=36, layers=3)
+  [0] Ipv4
+      version: 4
+      ihl: 5
+      tos: 0
+      dscp: 0
+      ecn: Not-ECT
+      total_length: 36
+      id: 0x170a
+      flags: none
+      fragment_offset: 0
+      ttl: 1
+      protocol: igmp(2)
+      checksum: 0xf653
+      checksum_status: valid
+      src: 192.0.2.64
+      dst: 233.252.0.62
+      option_count: 0
+      options: 
+  [1] Igmp
+      version: IGMPv2/v3 query
+      type: 0x11 (IGMP Membership Query)
+      code: 0x64 (Max Response Time)
+      checksum: 0x4ca0
+      checksum_status: valid
+      group_address: 233.252.0.62 (multicast)
+      length: 8
+  [2] IgmpQuery
+      version: IGMPv3
+      flags_s_qrv: 0xf5
+      query_flags: 0xf0
+      extension_flag: true
+      suppress_router_side_processing: false
+      querier_robustness_variable: 5
+      qqic: 0x7d
+      querier_query_interval_seconds: 125
+      number_of_sources: 1
+      source_addresses: 192.0.2.65

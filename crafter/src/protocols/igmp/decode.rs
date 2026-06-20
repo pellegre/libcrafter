@@ -5,6 +5,7 @@
 
 use core::net::Ipv4Addr;
 
+use crate::checksum::verify_internet_checksum;
 use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::packet::{Packet, Raw};
@@ -13,7 +14,7 @@ use super::constants::{
     IGMP_FIXED_HEADER_LEN, IGMP_TYPE_MEMBERSHIP_QUERY, IGMP_TYPE_V3_MEMBERSHIP_REPORT,
     IGMP_V3_GROUP_RECORD_HEADER_LEN, IGMP_V3_QUERY_MIN_LEN,
 };
-use super::message::Igmp;
+use super::message::{Igmp, IgmpChecksumStatus};
 use super::query::IgmpQuery;
 use super::record::IgmpGroupRecord;
 use super::report::IgmpReport;
@@ -83,6 +84,11 @@ fn decode_igmp_parts(bytes: &[u8]) -> Result<(Igmp, &[u8])> {
         code: Field::user(bytes[1]),
         checksum: Field::user(u16::from_be_bytes([bytes[2], bytes[3]])),
         group_address: Field::user(Ipv4Addr::new(bytes[4], bytes[5], bytes[6], bytes[7])),
+        checksum_status: if verify_internet_checksum(bytes) {
+            IgmpChecksumStatus::Valid
+        } else {
+            IgmpChecksumStatus::Invalid
+        },
     };
 
     Ok((igmp, &bytes[IGMP_FIXED_HEADER_LEN..]))

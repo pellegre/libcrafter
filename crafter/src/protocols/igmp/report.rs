@@ -13,7 +13,7 @@ use crate::packet::{IntoPacket, Layer, LayerContext, Packet};
 
 use super::constants::{IGMP_DEFAULT_GROUP_RECORD_COUNT, IGMP_DEFAULT_REPORT_FLAGS};
 use super::message::Igmp;
-use super::record::{IgmpGroupRecord, IgmpRecordType};
+use super::record::IgmpGroupRecord;
 
 const IGMP_V3_REPORT_BODY_MIN_LEN: usize = 4;
 
@@ -172,7 +172,7 @@ impl Layer for IgmpReport {
 
     fn summary(&self) -> String {
         format!(
-            "IgmpReport(flags=0x{:04x}, records={})",
+            "IgmpReport(version=IGMPv3, flags=0x{:04x}, record_count={})",
             self.reserved_flags_value(),
             self.number_of_group_records_value()
         )
@@ -180,6 +180,7 @@ impl Layer for IgmpReport {
 
     fn inspection_fields(&self) -> Vec<(&'static str, String)> {
         let mut fields = vec![
+            ("version", "IGMPv3".to_string()),
             (
                 "reserved_flags",
                 format!("0x{:04x}", self.reserved_flags_value()),
@@ -192,33 +193,31 @@ impl Layer for IgmpReport {
         ];
         for (index, record) in self.records.iter().enumerate() {
             fields.push((record_field_name(index), record.summary()));
-            if matches!(record.record_type(), IgmpRecordType::Unknown(_)) {
-                fields.push((
-                    record_type_field_name(index),
-                    format!(
-                        "{} (0x{:02x})",
-                        record.record_type(),
-                        record.record_type_value()
-                    ),
-                ));
-                fields.push((
-                    record_number_of_sources_field_name(index),
-                    record.number_of_sources_value().to_string(),
-                ));
-                fields.push((
-                    record_multicast_address_field_name(index),
-                    record.multicast_address().to_string(),
-                ));
-                fields.push((
-                    record_source_addresses_field_name(index),
-                    record_source_addresses(record),
-                ));
-            }
+            fields.push((
+                record_type_field_name(index),
+                format!(
+                    "0x{:02x} ({})",
+                    record.record_type_value(),
+                    record.record_type()
+                ),
+            ));
+            fields.push((
+                record_auxiliary_data_len_field_name(index),
+                record.auxiliary_data_len_value().to_string(),
+            ));
+            fields.push((
+                record_number_of_sources_field_name(index),
+                record.number_of_sources_value().to_string(),
+            ));
+            fields.push((
+                record_multicast_address_field_name(index),
+                record.multicast_address().to_string(),
+            ));
+            fields.push((
+                record_source_addresses_field_name(index),
+                record_source_addresses(record),
+            ));
             if record.auxiliary_data_len_value() != 0 || !record.auxiliary_data().is_empty() {
-                fields.push((
-                    record_auxiliary_data_len_field_name(index),
-                    record.auxiliary_data_len_value().to_string(),
-                ));
                 fields.push((
                     record_auxiliary_data_field_name(index),
                     hex_bytes(record.auxiliary_data()),
@@ -303,10 +302,7 @@ fn record_type_field_name(index: usize) -> &'static str {
         "record[6].record_type",
         "record[7].record_type",
     ];
-    NAMES
-        .get(index)
-        .copied()
-        .unwrap_or("record[*].record_type")
+    NAMES.get(index).copied().unwrap_or("record[*].record_type")
 }
 
 fn record_number_of_sources_field_name(index: usize) -> &'static str {
@@ -712,14 +708,26 @@ mod igmp_report_model {
             .with_report_flags(0x8001)
             .with_group_record(record.clone());
 
-        assert_eq!(report.summary(), "IgmpReport(flags=0x8001, records=1)");
+        assert_eq!(
+            report.summary(),
+            "IgmpReport(version=IGMPv3, flags=0x8001, record_count=1)"
+        );
         assert_eq!(
             report.inspection_fields(),
             vec![
+                ("version", "IGMPv3".to_string()),
                 ("reserved_flags", "0x8001".to_string()),
                 ("number_of_group_records", "1".to_string()),
                 ("records", "1".to_string()),
                 ("record[0]", record.summary()),
+                (
+                    "record[0].record_type",
+                    "0x06 (BLOCK_OLD_SOURCES)".to_string()
+                ),
+                ("record[0].auxiliary_data_len", "0".to_string()),
+                ("record[0].number_of_sources", "0".to_string()),
+                ("record[0].multicast_address", "233.252.0.90".to_string()),
+                ("record[0].source_addresses", String::new()),
             ]
         );
     }
@@ -733,16 +741,16 @@ mod igmp_report_model {
 
         assert_eq!(
             record.summary(),
-            "IgmpGroupRecord(type=ALLOW_NEW_SOURCES, group=233.252.0.90, sources=1, aux_words=1, aux=4B)"
+            "IgmpGroupRecord(record_type=0x05 ALLOW_NEW_SOURCES, group=233.252.0.90, source_count=1, aux_words=1, aux_len=4B)"
         );
         assert_eq!(
             packet.summary(),
-            "Igmp(type=IGMPv3 Membership Report, code=No registered code, group=0.0.0.0) / IgmpReport(flags=0x0000, records=1)"
+            "Igmp(version=IGMPv3, type=0x22 (IGMPv3 Membership Report), code=0x00 (No registered code), group=0.0.0.0 (zero), checksum=auto, checksum_status=not_checked) / IgmpReport(version=IGMPv3, flags=0x0000, record_count=1)"
         );
 
         let show = packet.show();
         assert!(
-            show.contains("record[0]: IgmpGroupRecord(type=ALLOW_NEW_SOURCES, group=233.252.0.90, sources=1, aux_words=1, aux=4B)"),
+            show.contains("record[0]: IgmpGroupRecord(record_type=0x05 ALLOW_NEW_SOURCES, group=233.252.0.90, source_count=1, aux_words=1, aux_len=4B)"),
             "{show}"
         );
         assert!(show.contains("record[0].auxiliary_data_len: 1"), "{show}");

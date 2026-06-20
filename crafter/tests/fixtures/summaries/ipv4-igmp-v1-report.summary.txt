@@ -1,1 +1,1 @@
-Ipv4(src=192.0.2.20, dst=233.252.0.42, proto=igmp(2)) / Igmp(type=IGMPv1 Membership Report, code=No registered code, group=233.252.0.42)
+Ipv4(src=192.0.2.20, dst=233.252.0.42, proto=igmp(2)) / Igmp(version=IGMPv1, type=0x12 (IGMPv1 Membership Report), code=0x00 (No registered code), group=233.252.0.42 (multicast), checksum=0x03d9, checksum_status=valid)

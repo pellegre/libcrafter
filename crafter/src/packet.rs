@@ -1094,14 +1094,14 @@ mod igmp_packet_storage {
         assert_eq!(packet.get(0).expect("first layer").name(), "Igmp");
         assert_eq!(
             packet.summary(),
-            "Igmp(type=IGMPv2 Membership Report, code=No registered code, group=224.0.0.251)"
+            "Igmp(version=IGMPv2, type=0x16 (IGMPv2 Membership Report), code=0x05 (No registered code), group=224.0.0.251 (multicast), checksum=0x1234, checksum_status=not_checked)"
         );
 
         let show = packet.show();
         assert!(show.contains("Packet(len=8, layers=1)"), "{show}");
         assert!(show.contains("[0] Igmp"), "{show}");
         assert!(
-            show.contains("type: IGMPv2 Membership Report (0x16)"),
+            show.contains("type: 0x16 (IGMPv2 Membership Report)"),
             "{show}"
         );
         assert!(show.contains("checksum: 0x1234"), "{show}");
@@ -1140,7 +1140,10 @@ mod igmp_packet_storage {
         assert_eq!(igmp.group_address_value(), Ipv4Addr::new(224, 0, 0, 251));
         assert_eq!(raw.as_bytes(), &[0xde, 0xad]);
         assert_eq!(
-            decoded.compile().expect("roundtrip decoded IGMP").as_bytes(),
+            decoded
+                .compile()
+                .expect("roundtrip decoded IGMP")
+                .as_bytes(),
             &bytes
         );
     }

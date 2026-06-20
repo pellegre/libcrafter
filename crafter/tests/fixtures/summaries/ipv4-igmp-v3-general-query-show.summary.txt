@@ -1,19 +1,19 @@
-Packet(len=28, layers=2)
+Packet(len=32, layers=3)
   [0] Ipv4
       version: 4
       ihl: 5
       tos: 0
       dscp: 0
       ecn: Not-ECT
-      total_length: 28
-      id: 0x1703
+      total_length: 32
+      id: 0x1706
       flags: none
       fragment_offset: 0
       ttl: 1
       protocol: igmp(2)
-      checksum: 0x00be
+      checksum: 0x0099
       checksum_status: valid
-      src: 192.0.2.30
+      src: 192.0.2.60
       dst: 224.0.0.1
       option_count: 0
       options: 
@@ -25,3 +25,14 @@ Packet(len=28, layers=2)
       checksum_status: valid
       group_address: 0.0.0.0 (zero)
       length: 8
+  [2] IgmpQuery
+      version: IGMPv3
+      flags_s_qrv: 0x00
+      query_flags: 0x00
+      extension_flag: false
+      suppress_router_side_processing: false
+      querier_robustness_variable: 0
+      qqic: 0x00
+      querier_query_interval_seconds: 0
+      number_of_sources: 0
+      source_addresses: 

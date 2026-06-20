@@ -18,14 +18,27 @@ Packet(len=56, layers=3)
       option_count: 0
       options: 
   [1] Igmp
-      type: IGMPv3 Membership Report (0x22)
-      code: No registered code (0x00)
+      version: IGMPv3
+      type: 0x22 (IGMPv3 Membership Report)
+      code: 0x00 (No registered code)
       checksum: 0x15ac
-      group_address: 0.0.0.0
+      checksum_status: valid
+      group_address: 0.0.0.0 (zero)
       length: 8
   [2] IgmpReport
+      version: IGMPv3
       reserved_flags: 0x0000
       number_of_group_records: 2
       records: 2
-      record[0]: IgmpGroupRecord(type=CHANGE_TO_INCLUDE_MODE, group=233.252.0.72, sources=1, aux_words=0, aux=0B)
-      record[1]: IgmpGroupRecord(type=CHANGE_TO_EXCLUDE_MODE, group=233.252.0.73, sources=1, aux_words=0, aux=0B)
+      record[0]: IgmpGroupRecord(record_type=0x03 CHANGE_TO_INCLUDE_MODE, group=233.252.0.72, source_count=1, aux_words=0, aux_len=0B)
+      record[0].record_type: 0x03 (CHANGE_TO_INCLUDE_MODE)
+      record[0].auxiliary_data_len: 0
+      record[0].number_of_sources: 1
+      record[0].multicast_address: 233.252.0.72
+      record[0].source_addresses: 192.0.2.72
+      record[1]: IgmpGroupRecord(record_type=0x04 CHANGE_TO_EXCLUDE_MODE, group=233.252.0.73, source_count=1, aux_words=0, aux_len=0B)
+      record[1].record_type: 0x04 (CHANGE_TO_EXCLUDE_MODE)
+      record[1].auxiliary_data_len: 0
+      record[1].number_of_sources: 1
+      record[1].multicast_address: 233.252.0.73
+      record[1].source_addresses: 198.51.100.72

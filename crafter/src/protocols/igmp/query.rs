@@ -15,8 +15,7 @@ use crate::packet::{IntoPacket, Layer, LayerContext, Packet};
 
 use super::constants::{
     igmp_v3_timer_code_from_units_floor, igmp_v3_timer_code_units, IGMP_DEFAULT_QUERY_FLAGS,
-    IGMP_V3_QUERY_FLAGS_MASK, IGMP_V3_QUERY_FLAGS_UNASSIGNED_MASK,
-    IGMP_V3_QUERY_FLAG_EXTENSION,
+    IGMP_V3_QUERY_FLAGS_MASK, IGMP_V3_QUERY_FLAGS_UNASSIGNED_MASK, IGMP_V3_QUERY_FLAG_EXTENSION,
 };
 use super::message::Igmp;
 
@@ -323,17 +322,19 @@ impl Layer for IgmpQuery {
 
     fn summary(&self) -> String {
         format!(
-            "IgmpQuery(flags=0x{:02x}, s={}, qrv={}, qqic={}, sources={})",
-            self.query_flags_value(),
+            "IgmpQuery(version=IGMPv3, flags=0x{:02x}, s={}, qrv={}, qqic=0x{:02x}, interval={}s, source_count={})",
+            self.raw_flags_qrv_value(),
             self.suppress_router_side_processing(),
             self.querier_robustness_variable(),
             self.qqic_value(),
+            self.querier_query_interval_seconds(),
             self.number_of_sources_value()
         )
     }
 
     fn inspection_fields(&self) -> Vec<(&'static str, String)> {
         vec![
+            ("version", "IGMPv3".to_string()),
             (
                 "flags_s_qrv",
                 format!("0x{:02x}", self.raw_flags_qrv_value()),
@@ -348,7 +349,11 @@ impl Layer for IgmpQuery {
                 "querier_robustness_variable",
                 self.querier_robustness_variable().to_string(),
             ),
-            ("qqic", self.qqic_value().to_string()),
+            ("qqic", format!("0x{:02x}", self.qqic_value())),
+            (
+                "querier_query_interval_seconds",
+                self.querier_query_interval_seconds().to_string(),
+            ),
             (
                 "number_of_sources",
                 self.number_of_sources_value().to_string(),
@@ -736,7 +741,10 @@ mod igmp_v3_query_codes {
         let query = IgmpQuery::new().with_querier_query_interval_seconds(u32::MAX);
 
         assert_eq!(igmp.max_response_code_value(), u8::MAX);
-        assert_eq!(igmp.v3_max_response_time_tenths(), IGMP_V3_TIMER_CODE_MAX_UNITS);
+        assert_eq!(
+            igmp.v3_max_response_time_tenths(),
+            IGMP_V3_TIMER_CODE_MAX_UNITS
+        );
         assert_eq!(
             igmp.v3_max_response_time(),
             Duration::from_millis(u64::from(IGMP_V3_TIMER_CODE_MAX_UNITS) * 100)
@@ -899,7 +907,10 @@ mod igmp_v3_query_flags {
         assert_eq!(extension.name, "Extension");
         assert_eq!(extension.status, IgmpFlagStatus::Assigned);
         assert_eq!(IgmpQueryFlag::Extension.bit(), 0);
-        assert_eq!(IgmpQueryFlag::Extension.mask(), IGMP_V3_QUERY_FLAG_EXTENSION);
+        assert_eq!(
+            IgmpQueryFlag::Extension.mask(),
+            IGMP_V3_QUERY_FLAG_EXTENSION
+        );
         assert_eq!(IgmpQueryFlag::Extension.meta(), extension);
         assert_eq!(igmp_query_flag(0), IgmpQueryFlag::Extension);
         assert_eq!(igmp_query_flag_name(0), Some("Extension"));
@@ -954,10 +965,7 @@ mod igmp_v3_query_flags {
         assert_eq!(query.querier_robustness_variable(), 5);
         assert_eq!(query.qqic_value(), 0x7d);
         assert_eq!(query.number_of_sources_value(), 1);
-        assert_eq!(
-            query.source_addresses(),
-            &[Ipv4Addr::new(192, 0, 2, 55)]
-        );
+        assert_eq!(query.source_addresses(), &[Ipv4Addr::new(192, 0, 2, 55)]);
         assert_eq!(query.raw_flags_qrv_state(), FieldState::User);
         assert_eq!(decoded.compile().expect("roundtrip").as_bytes(), &bytes);
     }
