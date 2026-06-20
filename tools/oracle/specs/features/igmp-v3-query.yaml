@@ -1,0 +1,164 @@
+version: 1
+kind: feature
+name: igmp_v3_query
+summary: IGMPv3 Membership Query source-list, timer-code, checksum-override, raw-tail, and truncation behavior.
+
+# Current IGMPv3 query oracle coverage from RFC 9776 over IPv4 protocol number
+# 2. Well-formed comparable cases are strict-byte contracts for later Scapy and
+# libcrafter oracle adapter steps. Truncated query-body/source-list inputs are
+# structured-error coverage and are not comparable offline packets.
+
+layers:
+  - ipv4
+  - igmp
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: general-query
+    type: membership_query
+    group_address: 0.0.0.0
+    max_response_code: v3_max_response_code
+    query_flags: zero
+    qqic: linear_seconds
+    source_addresses: empty
+    checks:
+      - v3_query_body_present
+      - source_count_zero
+      - checksum_autofill
+  - name: group-specific-query
+    type: membership_query
+    group_address: documentation_multicast
+    max_response_code: v3_max_response_code
+    query_flags: suppress_router_side_processing
+    qqic: floating_timer_code
+    source_addresses: empty
+    checks:
+      - multicast_group_preserved
+      - flags_qrv_preserved
+      - source_count_zero
+  - name: group-and-source-specific-query
+    type: membership_query
+    group_address: ssm_documentation_multicast
+    max_response_code: v3_max_response_code
+    query_flags: qrv
+    qqic: linear_seconds
+    source_addresses: documentation_ipv4
+    checks:
+      - source_count_derived
+      - source_list_order_preserved
+      - checksum_covers_source_list
+  - name: query-source-count-override
+    fields:
+      - number_of_sources
+      - source_addresses
+    checks:
+      - explicit_source_count_preserved
+      - intentionally_malformed_count_inspectable
+  - name: checksum-explicit
+    fields:
+      - checksum
+    checks:
+      - explicit_checksum_preserved
+      - intentionally_invalid_checksum_inspectable
+  - name: ignored-extra-query-octets
+    raw_tail: ignored_extra_octets
+    checks:
+      - raw_tail_preserved
+      - checksum_covers_raw_tail
+  - name: truncated-query-body
+    malformed: true
+    fields:
+      - query_flags
+      - qqic
+      - number_of_sources
+    expected_error:
+      context: igmp v3 query
+      required: 12
+      available: fewer_than_required
+  - name: truncated-query-source-list
+    malformed: true
+    fields:
+      - source_addresses
+    expected_error:
+      context: igmp v3 query source list
+      required: declared_source_list_end
+      available: fewer_than_required
+
+coverage_cases:
+  - igmp-v3-query-general
+  - igmp-v3-query-group-specific
+  - igmp-v3-query-group-and-source-specific
+  - igmp-v3-query-source-count-override
+  - igmp-v3-query-checksum-explicit-invalid
+  - igmp-v3-query-ignored-extra-octets
+  - malformed-igmp-v3-query-truncated-body
+  - malformed-igmp-v3-query-truncated-source-list
+
+supported_cases:
+  - name: igmp-v3-query-general
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: igmp-v3-query-group-specific
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: igmp-v3-query-group-and-source-specific
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: igmp-v3-query-source-count-override
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: igmp-v3-query-checksum-explicit-invalid
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: igmp-v3-query-ignored-extra-octets
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: malformed-igmp-v3-query-truncated-body
+    directions:
+      - reference_to_libcrafter
+    byte_policy: structured_error
+  - name: malformed-igmp-v3-query-truncated-source-list
+    directions:
+      - reference_to_libcrafter
+    byte_policy: structured_error
+
+source_refs:
+  - RFC 9776
+  - RFC 9279
+  - RFC 9778
+  - IANA IGMP Type Numbers
+
+backend_support:
+  scapy:
+    status: planned
+    native_layers:
+      - IGMP
+      - IGMPv3
+      - IGMPv3mq
+    notes:
+      - Later Scapy backend steps own materialization and normalization for these IGMPv3 query cases.
+      - Structured-error cases are declared coverage only and are excluded from offline strict-byte comparison.
+  libcrafter:
+    status: planned
+    native_layers:
+      - Igmp
+      - IgmpQuery
+    notes:
+      - The public crate has IGMPv3 query packet-layer support; later oracle adapter steps own executable feature cases.
+      - IPv4 TTL, destination address, and Router Alert option remain explicit IPv4 composition choices.

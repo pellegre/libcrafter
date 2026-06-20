@@ -1,0 +1,231 @@
+version: 1
+kind: feature
+name: igmp_v3_report
+summary: IGMPv3 Membership Report group records, auxiliary data, unknown records, checksum override, and truncation behavior.
+
+# Current IGMPv3 report oracle coverage from RFC 9776 over IPv4 protocol number
+# 2. Well-formed report and group-record cases are strict-byte contracts for
+# later backend materializers. Truncated report/group-record inputs are
+# structured-error coverage and are excluded from offline strict-byte packet
+# comparison.
+
+layers:
+  - ipv4
+  - igmp
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: empty-report
+    type: v3_membership_report
+    report_flags: zero
+    group_records: empty
+    checks:
+      - report_body_present
+      - group_record_count_zero
+      - checksum_autofill
+  - name: include-record
+    type: v3_membership_report
+    group_records:
+      - record_type: mode_is_include
+        multicast_address: documentation_multicast
+        source_addresses: documentation_ipv4
+        auxiliary_data: empty
+    checks:
+      - record_count_derived
+      - source_count_derived
+      - source_list_order_preserved
+  - name: exclude-record
+    type: v3_membership_report
+    group_records:
+      - record_type: mode_is_exclude
+        multicast_address: documentation_multicast
+        source_addresses: documentation_ipv4
+        auxiliary_data: empty
+    checks:
+      - record_type_preserved
+      - multicast_address_preserved
+      - checksum_covers_record
+  - name: source-list-change-records
+    type: v3_membership_report
+    group_records:
+      - record_type: allow_new_sources
+        multicast_address: ssm_documentation_multicast
+        source_addresses: documentation_ipv4
+      - record_type: block_old_sources
+        multicast_address: documentation_multicast
+        source_addresses: documentation_ipv4
+    checks:
+      - multiple_records_preserved
+      - record_order_preserved
+      - source_lists_preserved
+  - name: auxiliary-data-record
+    type: v3_membership_report
+    group_records:
+      - record_type: change_to_exclude_mode
+        multicast_address: documentation_multicast
+        source_addresses: documentation_ipv4
+        auxiliary_data: padded_to_word
+    checks:
+      - auxiliary_data_len_derived
+      - auxiliary_data_preserved
+      - checksum_covers_auxiliary_data
+  - name: unknown-record-type
+    type: v3_membership_report
+    group_records:
+      - record_type: unknown
+        multicast_address: documentation_multicast
+        source_addresses: documentation_ipv4
+        auxiliary_data: raw
+    checks:
+      - unknown_record_type_preserved
+      - unknown_record_sources_inspectable
+      - unknown_record_auxiliary_data_preserved
+  - name: report-count-override
+    fields:
+      - number_of_group_records
+      - group_records
+    checks:
+      - explicit_group_record_count_preserved
+      - intentionally_malformed_count_inspectable
+  - name: checksum-explicit
+    fields:
+      - checksum
+    checks:
+      - explicit_checksum_preserved
+      - intentionally_invalid_checksum_inspectable
+  - name: truncated-report-body
+    malformed: true
+    fields:
+      - report_flags
+      - number_of_group_records
+    expected_error:
+      context: igmp v3 report
+      required: 12
+      available: fewer_than_required
+  - name: truncated-report-group-record
+    malformed: true
+    fields:
+      - group_records
+    expected_error:
+      context: igmp v3 report group record
+      required: declared_group_record_end
+      available: fewer_than_required
+  - name: truncated-record-source-list
+    malformed: true
+    fields:
+      - record_source_addresses
+    expected_error:
+      context: igmp.group_record.source_addresses
+      required: declared_source_list_end
+      available: fewer_than_required
+  - name: truncated-record-auxiliary-data
+    malformed: true
+    fields:
+      - auxiliary_data
+    expected_error:
+      context: igmp.group_record.auxiliary_data
+      required: declared_auxiliary_data_end
+      available: fewer_than_required
+
+coverage_cases:
+  - igmp-v3-report-empty
+  - igmp-v3-report-include-record
+  - igmp-v3-report-exclude-record
+  - igmp-v3-report-source-list-change-records
+  - igmp-v3-report-auxiliary-data-record
+  - igmp-v3-report-unknown-record-type
+  - igmp-v3-report-count-override
+  - igmp-v3-report-checksum-explicit-invalid
+  - malformed-igmp-v3-report-truncated-body
+  - malformed-igmp-v3-report-truncated-group-record
+  - malformed-igmp-v3-report-truncated-record-source-list
+  - malformed-igmp-v3-report-truncated-record-auxiliary-data
+
+supported_cases:
+  - name: igmp-v3-report-empty
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: igmp-v3-report-include-record
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: igmp-v3-report-exclude-record
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: igmp-v3-report-source-list-change-records
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: igmp-v3-report-auxiliary-data-record
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: igmp-v3-report-unknown-record-type
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: igmp-v3-report-count-override
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: igmp-v3-report-checksum-explicit-invalid
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: malformed-igmp-v3-report-truncated-body
+    directions:
+      - reference_to_libcrafter
+    byte_policy: structured_error
+  - name: malformed-igmp-v3-report-truncated-group-record
+    directions:
+      - reference_to_libcrafter
+    byte_policy: structured_error
+  - name: malformed-igmp-v3-report-truncated-record-source-list
+    directions:
+      - reference_to_libcrafter
+    byte_policy: structured_error
+  - name: malformed-igmp-v3-report-truncated-record-auxiliary-data
+    directions:
+      - reference_to_libcrafter
+    byte_policy: structured_error
+
+source_refs:
+  - RFC 9776
+  - RFC 9279
+  - RFC 9778
+  - IANA IGMP Type Numbers
+
+backend_support:
+  scapy:
+    status: planned
+    native_layers:
+      - IGMP
+      - IGMPv3
+      - IGMPv3mr
+      - IGMPv3gr
+    notes:
+      - Later Scapy backend steps own materialization and normalization for these IGMPv3 report cases.
+      - Structured-error cases are declared coverage only and are excluded from offline strict-byte comparison.
+  libcrafter:
+    status: planned
+    native_layers:
+      - Igmp
+      - IgmpReport
+      - IgmpGroupRecord
+    notes:
+      - The public crate has IGMPv3 report and group-record packet-layer support; later oracle adapter steps own executable feature cases.
+      - Unknown group record types and auxiliary data remain byte-preserving and inspectable.
