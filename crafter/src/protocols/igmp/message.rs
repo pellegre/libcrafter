@@ -5,11 +5,17 @@
 //! or Max Response Code, Checksum, and Group Address. Later steps add packet
 //! layer compilation, decode registration, and typed v3 bodies.
 
+use core::any::Any;
 use core::net::Ipv4Addr;
+use core::ops::Div;
 
+use crate::error::Result;
 use crate::field::Field;
+use crate::packet::{IntoPacket, Layer, LayerContext, Packet};
 
-use super::constants::{IGMP_DEFAULT_CODE, IGMP_TYPE_MEMBERSHIP_QUERY};
+use super::constants::{
+    IGMP_DEFAULT_CHECKSUM, IGMP_DEFAULT_CODE, IGMP_FIXED_HEADER_LEN, IGMP_TYPE_MEMBERSHIP_QUERY,
+};
 use super::registry::{
     igmp_code_meta, igmp_type, igmp_type_meta, IgmpCodeMeta, IgmpType, IgmpTypeMeta,
 };
@@ -105,8 +111,91 @@ impl Default for Igmp {
     }
 }
 
+impl Layer for Igmp {
+    fn name(&self) -> &'static str {
+        "Igmp"
+    }
+
+    fn summary(&self) -> String {
+        format!(
+            "Igmp(type={}, code={}, group={})",
+            self.type_meta().name,
+            self.code_meta().name,
+            self.group_address_value()
+        )
+    }
+
+    fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("type", igmp_type_summary(self.type_meta())),
+            ("code", igmp_code_summary(self.code_meta())),
+            (
+                "checksum",
+                self.checksum_value()
+                    .map(|value| format!("0x{value:04x}"))
+                    .unwrap_or_else(|| "auto".to_string()),
+            ),
+            ("group_address", self.group_address_value().to_string()),
+            ("length", IGMP_FIXED_HEADER_LEN.to_string()),
+        ]
+    }
+
+    fn encoded_len(&self) -> usize {
+        IGMP_FIXED_HEADER_LEN
+    }
+
+    fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
+        out.reserve(IGMP_FIXED_HEADER_LEN);
+        out.push(self.igmp_type_value());
+        out.push(self.code_value());
+        out.extend_from_slice(
+            &self
+                .checksum_value()
+                .unwrap_or(IGMP_DEFAULT_CHECKSUM)
+                .to_be_bytes(),
+        );
+        out.extend_from_slice(&self.group_address_value().octets());
+        Ok(())
+    }
+
+    fn clone_layer(&self) -> Box<dyn Layer> {
+        Box::new(self.clone())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn into_any(self: Box<Self>) -> Box<dyn Any> {
+        self
+    }
+}
+
+impl<R> Div<R> for Igmp
+where
+    R: IntoPacket,
+{
+    type Output = Packet;
+
+    fn div(self, rhs: R) -> Self::Output {
+        Packet::from_layer(self).concat(rhs)
+    }
+}
+
 fn value_or_copy<T: Copy>(field: &Field<T>, default: T) -> T {
     field.value().copied().unwrap_or(default)
+}
+
+fn igmp_type_summary(meta: IgmpTypeMeta) -> String {
+    format!("{} (0x{:02x})", meta.name, meta.code)
+}
+
+fn igmp_code_summary(meta: IgmpCodeMeta) -> String {
+    format!("{} (0x{:02x})", meta.name, meta.code)
 }
 
 #[cfg(test)]
@@ -154,5 +243,52 @@ mod tests {
         assert_eq!(igmp.code_meta().status, IgmpTypeStatus::Experimental);
         assert_eq!(igmp.checksum_value(), Some(0x1234));
         assert_eq!(igmp.group_address_value(), Ipv4Addr::new(239, 255, 0, 1));
+    }
+}
+
+#[cfg(test)]
+mod igmp_layer_impl {
+    use super::*;
+    use crate::packet::{Packet, Raw};
+
+    #[test]
+    fn compiles_base_layer_bytes() {
+        let packet = Packet::from_layer(Igmp::default());
+
+        assert_eq!(packet.encoded_len(), IGMP_FIXED_HEADER_LEN);
+        assert_eq!(
+            packet.compile().expect("compile default IGMP").as_bytes(),
+            &[0x11, 0x00, 0x00, 0x00, 0, 0, 0, 0]
+        );
+    }
+
+    #[test]
+    fn summary_and_show_fields_are_stable() {
+        let packet = Packet::from_layer(Igmp::default());
+
+        assert_eq!(
+            packet.summary(),
+            "Igmp(type=IGMP Membership Query, code=IGMP Version 1, group=0.0.0.0)"
+        );
+
+        let show = packet.show();
+        assert!(show.contains("Packet(len=8, layers=1)"), "{show}");
+        assert!(show.contains("[0] Igmp"), "{show}");
+        assert!(show.contains("type: IGMP Membership Query (0x11)"), "{show}");
+        assert!(show.contains("code: IGMP Version 1 (0x00)"), "{show}");
+        assert!(show.contains("checksum: auto"), "{show}");
+        assert!(show.contains("group_address: 0.0.0.0"), "{show}");
+        assert!(show.contains("length: 8"), "{show}");
+    }
+
+    #[test]
+    fn composes_with_following_payload_without_consuming_it() {
+        let packet = Igmp::default() / Raw::from_bytes([0xde, 0xad, 0xbe, 0xef]);
+
+        assert_eq!(packet.encoded_len(), IGMP_FIXED_HEADER_LEN + 4);
+        assert_eq!(
+            packet.compile().expect("compile IGMP with payload").as_bytes(),
+            &[0x11, 0x00, 0x00, 0x00, 0, 0, 0, 0, 0xde, 0xad, 0xbe, 0xef]
+        );
     }
 }
