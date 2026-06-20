@@ -1,0 +1,178 @@
+version: 1
+kind: feature
+name: igmp_mrd
+summary: RFC 4286 multicast router discovery advertisement, solicitation, and termination packet shapes.
+
+# MRD oracle coverage is packet-layer only. It declares the three RFC 4286 IGMP
+# Type values and field layouts without sampling router discovery workflows,
+# daemon state, response behavior, rate limiting, neighbor tracking, or live
+# multicast operations.
+
+layers:
+  - ipv4
+  - igmp
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: multicast-router-advertisement
+    type: multicast_router_advertisement
+    code: mrd_advertisement_interval
+    mrd_query_interval: deterministic
+    mrd_robustness_variable: deterministic
+    ipv4:
+      protocol: igmp
+      ttl: 1
+      router_alert: caller_explicit
+      destination: all_snoopers
+    checks:
+      - type_preserved
+      - advertisement_interval_preserved
+      - query_interval_preserved
+      - robustness_variable_preserved
+      - checksum_autofill
+  - name: multicast-router-solicitation
+    type: multicast_router_solicitation
+    code: mrd_reserved
+    ipv4:
+      protocol: igmp
+      ttl: 1
+      router_alert: caller_explicit
+      destination: all_routers
+    checks:
+      - type_preserved
+      - reserved_field_preserved
+      - checksum_autofill
+  - name: multicast-router-termination
+    type: multicast_router_termination
+    code: mrd_reserved
+    ipv4:
+      protocol: igmp
+      ttl: 1
+      router_alert: caller_explicit
+      destination: all_snoopers
+    checks:
+      - type_preserved
+      - reserved_field_preserved
+      - checksum_autofill
+  - name: mrd-explicit-checksum
+    fields:
+      - checksum
+    checks:
+      - explicit_checksum_preserved
+      - intentionally_invalid_checksum_inspectable
+  - name: mrd-reserved-override
+    type: multicast_router_solicitation
+    fields:
+      - code
+    checks:
+      - explicit_reserved_field_preserved
+      - intentionally_malformed_reserved_field_inspectable
+  - name: truncated-advertisement
+    malformed: true
+    fields:
+      - mrd_query_interval
+      - mrd_robustness_variable
+    expected_error:
+      context: igmp mrd advertisement
+      required: 8
+      available: fewer_than_required
+  - name: truncated-solicitation
+    malformed: true
+    fields:
+      - checksum
+    expected_error:
+      context: igmp mrd solicitation
+      required: 4
+      available: fewer_than_required
+  - name: truncated-termination
+    malformed: true
+    fields:
+      - checksum
+    expected_error:
+      context: igmp mrd termination
+      required: 4
+      available: fewer_than_required
+
+coverage_cases:
+  - igmp-mrd-advertisement
+  - igmp-mrd-solicitation
+  - igmp-mrd-termination
+  - igmp-mrd-explicit-checksum-invalid
+  - igmp-mrd-reserved-override
+  - malformed-igmp-mrd-truncated-advertisement
+  - malformed-igmp-mrd-truncated-solicitation
+  - malformed-igmp-mrd-truncated-termination
+
+supported_cases:
+  - name: igmp-mrd-advertisement
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: igmp-mrd-solicitation
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: igmp-mrd-termination
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: igmp-mrd-explicit-checksum-invalid
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: igmp-mrd-reserved-override
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: malformed-igmp-mrd-truncated-advertisement
+    directions:
+      - reference_to_libcrafter
+    byte_policy: structured_error
+  - name: malformed-igmp-mrd-truncated-solicitation
+    directions:
+      - reference_to_libcrafter
+    byte_policy: structured_error
+  - name: malformed-igmp-mrd-truncated-termination
+    directions:
+      - reference_to_libcrafter
+    byte_policy: structured_error
+
+documentation_only:
+  - topic: router_state
+    reason: RFC 4286 router discovery state, response behavior, neighbor tracking, and rate limiting are operational behavior outside the packet primitive.
+  - topic: live_multicast
+    reason: Real MRD traffic requires provider-backed lab/probe/oracle gates and is not sampled by this offline feature spec.
+  - topic: hidden_ipv4_defaults
+    reason: IPv4 TTL 1, Router Alert, and All-Snoopers/All-Routers destinations are source-backed composition guidance, not implicit mutation by the IGMP layer.
+
+source_refs:
+  - RFC 4286
+  - RFC 9778
+  - RFC 2113
+  - IANA IGMP Type Numbers
+
+backend_support:
+  scapy:
+    status: planned
+    native_layers:
+      - IGMP
+      - Raw
+    notes:
+      - Later Scapy backend steps own materialization and normalization for RFC 4286 MRD packet shapes.
+      - Operational router discovery behavior and live multicast exchange are not sampled by this feature.
+  libcrafter:
+    status: planned
+    native_layers:
+      - Igmp
+    notes:
+      - The public crate exposes MRD packet construction and decode; later oracle adapter steps own executable MRD cases.
+      - IPv4 protocol number, TTL, destination address, and Router Alert option remain explicit IPv4 composition choices.

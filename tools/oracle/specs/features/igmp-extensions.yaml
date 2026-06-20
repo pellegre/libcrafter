@@ -1,0 +1,226 @@
+version: 1
+kind: feature
+name: igmp_extensions
+summary: RFC 9279 IGMPv3 generic extension E-bit, TLV preservation, and structured-error behavior.
+
+# RFC 9279 extension coverage is intentionally generic. The only currently
+# assigned Extension Type is No-op; unassigned and experimental values are
+# byte-preserving TLVs until a future source review defines typed semantics.
+# The E-bit gates extension interpretation for IGMPv3 Query and IGMPv3
+# Membership Report only.
+
+layers:
+  - ipv4
+  - igmp
+  - igmp_query
+  - igmp_report
+  - igmp_extension
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: query-noop-extension
+    type: membership_query
+    query_flags: extension
+    extension_tlvs:
+      - extension_type: noop
+        extension_length: derived
+        extension_value: raw
+    checks:
+      - query_e_bit_preserved
+      - noop_extension_value_preserved
+      - checksum_covers_extension
+  - name: report-noop-extension
+    type: v3_membership_report
+    report_flags: extension
+    group_records: empty
+    extension_tlvs:
+      - extension_type: noop
+        extension_length: zero
+        extension_value: empty
+    checks:
+      - report_e_bit_preserved
+      - zero_length_extension_preserved
+      - checksum_covers_extension
+  - name: unassigned-extension-type
+    type: membership_query
+    query_flags: extension
+    extension_tlvs:
+      - extension_type: unassigned
+        extension_length: derived
+        extension_value: raw
+    checks:
+      - extension_type_preserved
+      - unsupported_extension_inspectable
+      - extension_value_preserved
+  - name: experimental-extension-type
+    type: v3_membership_report
+    report_flags: extension
+    group_records: empty
+    extension_tlvs:
+      - extension_type: experimental
+        extension_length: derived
+        extension_value: raw
+    checks:
+      - experimental_extension_type_preserved
+      - extension_value_preserved
+  - name: ordered-extension-tlvs
+    type: membership_query
+    query_flags: extension
+    extension_tlvs:
+      - extension_type: noop
+        extension_length: zero
+        extension_value: empty
+      - extension_type: unassigned
+        extension_length: derived
+        extension_value: raw
+      - extension_type: experimental
+        extension_length: derived
+        extension_value: raw
+    checks:
+      - extension_order_preserved
+      - extension_lengths_preserved
+      - no_alignment_padding_inserted
+  - name: e-flag-clear-extension-looking-bytes
+    type: membership_query
+    query_flags: zero
+    raw_tail: e_flag_clear_extension_bytes
+    checks:
+      - extension_decode_not_applied
+      - raw_tail_preserved
+      - checksum_covers_raw_tail
+  - name: e-flag-set-empty-extension-area
+    malformed: true
+    fields:
+      - query_flags
+      - extension_tlvs
+    expected_error:
+      context: igmp.extension.header
+      required: 4
+      available: 0
+  - name: truncated-extension-header
+    malformed: true
+    fields:
+      - extension_type
+      - extension_length
+    expected_error:
+      context: igmp.extension.header
+      required: 4
+      available: fewer_than_required
+  - name: truncated-extension-value
+    malformed: true
+    fields:
+      - extension_value
+    expected_error:
+      context: igmp.extension.value
+      required: declared_extension_value_end
+      available: fewer_than_required
+  - name: extension-length-overrun
+    malformed: true
+    fields:
+      - extension_length
+      - extension_value
+    expected_error:
+      context: igmp.extension.value
+      required: declared_extension_value_end
+      available: remaining_ip_payload
+
+coverage_cases:
+  - igmp-extension-query-noop
+  - igmp-extension-report-noop-zero-length
+  - igmp-extension-unassigned-type
+  - igmp-extension-experimental-type
+  - igmp-extension-ordered-tlvs
+  - igmp-extension-e-flag-clear-raw-tail
+  - malformed-igmp-extension-empty-area
+  - malformed-igmp-extension-truncated-header
+  - malformed-igmp-extension-truncated-value
+  - malformed-igmp-extension-length-overrun
+
+supported_cases:
+  - name: igmp-extension-query-noop
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: igmp-extension-report-noop-zero-length
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: igmp-extension-unassigned-type
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: igmp-extension-experimental-type
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: igmp-extension-ordered-tlvs
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: igmp-extension-e-flag-clear-raw-tail
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: malformed-igmp-extension-empty-area
+    directions:
+      - reference_to_libcrafter
+    byte_policy: structured_error
+  - name: malformed-igmp-extension-truncated-header
+    directions:
+      - reference_to_libcrafter
+    byte_policy: structured_error
+  - name: malformed-igmp-extension-truncated-value
+    directions:
+      - reference_to_libcrafter
+    byte_policy: structured_error
+  - name: malformed-igmp-extension-length-overrun
+    directions:
+      - reference_to_libcrafter
+    byte_policy: structured_error
+
+documentation_only:
+  - topic: mld
+    reason: RFC 9279 shares the extension registry with MLDv2, but MLD remains ICMPv6-family behavior outside the IGMP module.
+  - topic: non_v3_igmp_messages
+    reason: RFC 9279 does not apply extensions to IGMPv1, IGMPv2, MRD, DVMRP, PIMv1, Cisco trace, multicast traceroute, or experimental IGMP Type messages.
+  - topic: future_extension_semantics
+    reason: Future Extension Types must supply their own source-backed query/report applicability and semantic constraints before typed bodies are sampled.
+
+source_refs:
+  - RFC 9279
+  - RFC 9776
+  - RFC 9778
+  - IANA IGMP/MLD Extension Types
+
+backend_support:
+  scapy:
+    status: planned
+    native_layers:
+      - IGMP
+      - IGMPv3
+      - IGMPv3mq
+      - IGMPv3mr
+      - Raw
+    notes:
+      - Later Scapy backend steps own materialization and normalization for generic RFC 9279 TLVs.
+      - Structured-error cases are declared coverage only and are excluded from offline strict-byte comparison.
+  libcrafter:
+    status: planned
+    native_layers:
+      - Igmp
+      - IgmpQuery
+      - IgmpReport
+      - IgmpExtension
+    notes:
+      - The public crate preserves generic extension TLVs; later oracle adapter steps own executable extension cases.
+      - Extension processing is gated to IGMPv3 Query and IGMPv3 Membership Report E-bit cases only.
