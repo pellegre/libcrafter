@@ -12,6 +12,8 @@ use crate::protocols::eapol::append_eapol_packet;
 use crate::protocols::icmp::{
     append_icmp_packet, append_icmp_packet_with_checksum_validation, append_icmpv6_packet,
 };
+use crate::protocols::igmp::append_igmp_packet;
+use crate::protocols::ip::shared::IPPROTO_IGMP;
 use crate::protocols::ipsec::ah::decode::append_ah_packet_with_registry_sa;
 use crate::protocols::ipsec::esp::decode::append_esp_packet_with_registry_sa;
 use crate::protocols::ipsec::esp::header::ESP_HEADER_LEN;
@@ -222,6 +224,9 @@ impl ProtocolRegistry {
         });
         registry.bind_ipv4_protocol_with_registry(IPPROTO_UDP, |registry, packet, payload| {
             append_udp_packet_with_registry(registry, packet, payload)
+        });
+        registry.bind_ipv4_protocol_with_registry(IPPROTO_IGMP, |_registry, packet, payload| {
+            append_igmp_packet(packet, payload)
         });
         // ESP (IP protocol 50, RFC 4303). The decoder looks up a registered SA by
         // the on-wire SPI: when one is found it drives the SA-aware path (verify
@@ -718,6 +723,7 @@ impl ProtocolRegistry {
                 ),
                 IPPROTO_TCP => append_tcp_packet_with_registry(self, packet, payload),
                 IPPROTO_UDP => append_udp_packet_with_registry(self, packet, payload),
+                IPPROTO_IGMP => append_igmp_packet(packet, payload),
                 IPPROTO_ESP => decode_esp_with_registry_sa(self, packet, payload),
                 IPPROTO_AH => decode_ah_with_registry_sa(self, packet, payload),
                 IPPROTO_OSPF => append_ospf_packet_with_checksum_validation(
@@ -1106,6 +1112,8 @@ fn decode_ah_with_registry_sa(
 #[cfg(test)]
 mod protocol_registry {
     use super::ProtocolRegistry;
+    use crate::protocols::igmp::Igmp;
+    use crate::protocols::ip::shared::IPPROTO_IGMP;
     use crate::{Ipv4, Ipv4ChecksumStatus, NetworkLayer, Packet, Raw, Udp, UdpChecksumStatus};
 
     #[test]
@@ -1246,6 +1254,37 @@ mod protocol_registry {
                 .checksum_status(),
             UdpChecksumStatus::Valid
         );
+    }
+
+    #[test]
+    fn igmp_registry_binding_default_l3_decode_produces_ipv4_igmp() {
+        let bytes = (Ipv4::new().protocol(IPPROTO_IGMP) / Igmp::membership_query())
+            .compile()
+            .unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+
+        assert_eq!(decoded.len(), 2);
+        assert!(decoded.get(0).is_some_and(|layer| layer.as_any().is::<Ipv4>()));
+        assert!(decoded.get(1).is_some_and(|layer| layer.as_any().is::<Igmp>()));
+        assert!(decoded.layer::<Raw>().is_none());
+    }
+
+    #[test]
+    fn igmp_registry_binding_empty_registry_preserves_payload_as_raw() {
+        let bytes = (Ipv4::new().protocol(IPPROTO_IGMP) / Igmp::membership_query())
+            .compile()
+            .unwrap();
+        let registry = ProtocolRegistry::empty();
+
+        let decoded = registry
+            .decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes())
+            .unwrap();
+
+        let raw = decoded.layer::<Raw>().expect("empty registry raw IGMP payload");
+        assert_eq!(decoded.len(), 2);
+        assert!(decoded.layer::<Igmp>().is_none());
+        assert_eq!(raw.as_bytes(), &bytes.as_bytes()[20..]);
     }
 }
 
