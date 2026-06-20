@@ -24,7 +24,8 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<Igmp> {
 /// any remaining bytes as a single [`Raw`] tail. Later typed-body decoders can
 /// dispatch on the Type value before falling back to the same raw policy.
 pub(crate) fn append_igmp_packet(mut packet: Packet, bytes: &[u8]) -> Result<Packet> {
-    let (igmp, payload) = decode_igmp_parts(bytes)?;
+    let igmp = decode(bytes)?;
+    let payload = &bytes[IGMP_FIXED_HEADER_LEN..];
     packet = packet.push_igmp(igmp);
 
     if !payload.is_empty() {
