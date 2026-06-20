@@ -7,13 +7,15 @@
 use core::any::Any;
 use core::net::Ipv4Addr;
 use core::ops::Div;
+use core::time::Duration;
 
 use crate::error::Result;
 use crate::field::{Field, FieldState};
 use crate::packet::{IntoPacket, Layer, LayerContext, Packet};
 
 use super::constants::{
-    IGMP_DEFAULT_QUERY_FLAGS, IGMP_V3_QUERY_FLAGS_MASK, IGMP_V3_QUERY_FLAG_EXTENSION,
+    igmp_v3_timer_code_from_units_floor, igmp_v3_timer_code_units, IGMP_DEFAULT_QUERY_FLAGS,
+    IGMP_V3_QUERY_FLAGS_MASK, IGMP_V3_QUERY_FLAG_EXTENSION,
 };
 use super::message::Igmp;
 
@@ -104,6 +106,18 @@ impl IgmpQuery {
         self
     }
 
+    /// Set the QQIC field from an IGMPv3 Querier's Query Interval in seconds.
+    ///
+    /// RFC 9776 section 4.1.7 gives QQIC the same linear and floating
+    /// exponent/mantissa representation as Max Resp Code, with seconds as the
+    /// unit. Values that are not exactly representable use the nearest lower
+    /// wire code, and values above the wire maximum saturate.
+    pub fn with_querier_query_interval_seconds(mut self, seconds: u32) -> Self {
+        self.qqic
+            .set_user(igmp_v3_timer_code_from_units_floor(seconds));
+        self
+    }
+
     /// Set the raw Number of Sources field.
     pub fn with_number_of_sources(mut self, count: u16) -> Self {
         self.number_of_sources.set_user(count);
@@ -150,6 +164,18 @@ impl IgmpQuery {
     /// Raw QQIC byte.
     pub fn qqic_value(&self) -> u8 {
         value_or_copy(&self.qqic, 0)
+    }
+
+    /// IGMPv3 Querier's Query Interval decoded from QQIC, in seconds.
+    ///
+    /// Use [`IgmpQuery::qqic_value`] when the raw byte is needed.
+    pub fn querier_query_interval_seconds(&self) -> u32 {
+        igmp_v3_timer_code_units(self.qqic_value())
+    }
+
+    /// IGMPv3 Querier's Query Interval decoded as a [`Duration`].
+    pub fn querier_query_interval(&self) -> Duration {
+        Duration::from_secs(u64::from(self.querier_query_interval_seconds()))
     }
 
     /// Number of Sources field value, derived from the vector unless explicit.
@@ -599,5 +625,123 @@ mod igmp_v3_query_encode {
         assert_eq!(body, vec![0xf8, 0x7d, 0x00, 0x01, 192, 0, 2, 44]);
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod igmp_v3_query_codes {
+    use super::*;
+    use crate::field::FieldState;
+    use crate::packet::Packet;
+    use crate::protocols::igmp::constants::{
+        IGMP_TYPE_MEMBERSHIP_QUERY, IGMP_V3_TIMER_CODE_MAX_UNITS,
+    };
+    use crate::protocols::igmp::decode::append_igmp_packet;
+
+    #[test]
+    fn igmp_v3_query_codes_linear_range_stays_raw_and_interpreted() {
+        for units in [0, 1, 100, 127] {
+            let igmp = Igmp::membership_query().with_v3_max_response_time_tenths(units);
+            let query = IgmpQuery::new().with_querier_query_interval_seconds(units);
+
+            assert_eq!(igmp.max_response_code_value(), units as u8);
+            assert_eq!(igmp.v3_max_response_time_tenths(), units);
+            assert_eq!(
+                igmp.v3_max_response_time(),
+                Duration::from_millis(u64::from(units) * 100)
+            );
+
+            assert_eq!(query.qqic_value(), units as u8);
+            assert_eq!(query.querier_query_interval_seconds(), units);
+            assert_eq!(
+                query.querier_query_interval(),
+                Duration::from_secs(u64::from(units))
+            );
+        }
+    }
+
+    #[test]
+    fn igmp_v3_query_codes_floating_range_uses_rfc9776_encoding() {
+        let exact = Igmp::membership_query().with_v3_max_response_time_tenths(200);
+        let floored = Igmp::membership_query().with_v3_max_response_time_tenths(201);
+        let query = IgmpQuery::new().with_querier_query_interval_seconds(512);
+
+        assert_eq!(exact.max_response_code_value(), 0x89);
+        assert_eq!(exact.v3_max_response_time_tenths(), 200);
+        assert_eq!(floored.max_response_code_value(), 0x89);
+        assert_eq!(floored.v3_max_response_time_tenths(), 200);
+
+        assert_eq!(query.qqic_value(), 0xa0);
+        assert_eq!(query.querier_query_interval_seconds(), 512);
+        assert_eq!(query.querier_query_interval(), Duration::from_secs(512));
+    }
+
+    #[test]
+    fn igmp_v3_query_codes_maximum_values_saturate_to_max_wire_code() {
+        let igmp = Igmp::membership_query().with_v3_max_response_time_tenths(u32::MAX);
+        let query = IgmpQuery::new().with_querier_query_interval_seconds(u32::MAX);
+
+        assert_eq!(igmp.max_response_code_value(), u8::MAX);
+        assert_eq!(igmp.v3_max_response_time_tenths(), IGMP_V3_TIMER_CODE_MAX_UNITS);
+        assert_eq!(
+            igmp.v3_max_response_time(),
+            Duration::from_millis(u64::from(IGMP_V3_TIMER_CODE_MAX_UNITS) * 100)
+        );
+
+        assert_eq!(query.qqic_value(), u8::MAX);
+        assert_eq!(
+            query.querier_query_interval_seconds(),
+            IGMP_V3_TIMER_CODE_MAX_UNITS
+        );
+        assert_eq!(
+            query.querier_query_interval(),
+            Duration::from_secs(u64::from(IGMP_V3_TIMER_CODE_MAX_UNITS))
+        );
+    }
+
+    #[test]
+    fn igmp_v3_query_codes_decode_roundtrips_raw_bytes() {
+        let bytes = [
+            IGMP_TYPE_MEMBERSHIP_QUERY,
+            0x91,
+            0x12,
+            0x34,
+            233,
+            252,
+            0,
+            35,
+            0x00,
+            0xff,
+            0x00,
+            0x00,
+        ];
+
+        let decoded = append_igmp_packet(Packet::new(), &bytes).expect("decode IGMPv3 query code");
+        let igmp = decoded.layer::<Igmp>().expect("IGMP header");
+        let query = decoded.layer::<IgmpQuery>().expect("IGMPv3 query body");
+
+        assert_eq!(igmp.max_response_code_value(), 0x91);
+        assert_eq!(igmp.v3_max_response_time_tenths(), 272);
+        assert_eq!(igmp.max_response_code_state(), FieldState::User);
+        assert_eq!(query.qqic_value(), 0xff);
+        assert_eq!(
+            query.querier_query_interval_seconds(),
+            IGMP_V3_TIMER_CODE_MAX_UNITS
+        );
+        assert_eq!(query.qqic_state(), FieldState::User);
+
+        assert_eq!(
+            Igmp::membership_query()
+                .with_v3_max_response_time_tenths(igmp.v3_max_response_time_tenths())
+                .max_response_code_value(),
+            0x91
+        );
+        assert_eq!(
+            IgmpQuery::new()
+                .with_querier_query_interval_seconds(query.querier_query_interval_seconds())
+                .qqic_value(),
+            0xff
+        );
+        assert_eq!(decoded.compile().expect("roundtrip").as_bytes(), &bytes);
     }
 }

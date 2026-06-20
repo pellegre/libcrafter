@@ -134,6 +134,50 @@ pub const IGMP_V3_REPORT_FLAGS_MASK: u16 = u16::MAX;
 /// Mask for currently unassigned IGMPv3 Report flag bits.
 pub const IGMP_V3_REPORT_FLAGS_UNASSIGNED_MASK: u16 = 0x7fff;
 
+const IGMP_V3_TIMER_CODE_FLOATING_BIT: u8 = 0x80;
+const IGMP_V3_TIMER_CODE_EXP_MASK: u8 = 0x70;
+const IGMP_V3_TIMER_CODE_MANT_MASK: u8 = 0x0f;
+const IGMP_V3_TIMER_CODE_LINEAR_LIMIT: u32 = 128;
+
+/// Largest time value representable by the IGMPv3 timer-code format.
+pub(crate) const IGMP_V3_TIMER_CODE_MAX_UNITS: u32 = 31_744;
+
+/// Decode the RFC 9776 IGMPv3 Max Resp Code / QQIC floating timer format.
+///
+/// The caller supplies the units: Max Resp Code units are tenths of seconds,
+/// while QQIC units are seconds.
+pub(crate) fn igmp_v3_timer_code_units(code: u8) -> u32 {
+    if code < IGMP_V3_TIMER_CODE_FLOATING_BIT {
+        return u32::from(code);
+    }
+
+    let exp = (code & IGMP_V3_TIMER_CODE_EXP_MASK) >> 4;
+    let mant = code & IGMP_V3_TIMER_CODE_MANT_MASK;
+    u32::from(mant | 0x10) << (u32::from(exp) + 3)
+}
+
+/// Encode the nearest representable IGMPv3 timer code not greater than `units`.
+///
+/// RFC 9776 recommends using the exact value when possible, otherwise the next
+/// lower representable value for configured Max Resp Code timers. QQIC uses the
+/// same wire representation, so this helper applies the same floor behavior.
+pub(crate) fn igmp_v3_timer_code_from_units_floor(units: u32) -> u8 {
+    if units < IGMP_V3_TIMER_CODE_LINEAR_LIMIT {
+        return units as u8;
+    }
+
+    let target = units.min(IGMP_V3_TIMER_CODE_MAX_UNITS);
+    let mut encoded = IGMP_V3_TIMER_CODE_FLOATING_BIT;
+    for code in IGMP_V3_TIMER_CODE_FLOATING_BIT..=u8::MAX {
+        let value = igmp_v3_timer_code_units(code);
+        if value > target {
+            break;
+        }
+        encoded = code;
+    }
+    encoded
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
