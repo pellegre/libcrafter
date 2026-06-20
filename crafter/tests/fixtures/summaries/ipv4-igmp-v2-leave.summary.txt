@@ -1,0 +1,1 @@
+Ipv4(src=192.0.2.50, dst=224.0.0.2, proto=igmp(2)) / Igmp(type=IGMPv2 Leave Group, code=No registered code, group=233.252.0.17)

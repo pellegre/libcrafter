@@ -1,0 +1,25 @@
+Packet(len=28, layers=2)
+  [0] Ipv4
+      version: 4
+      ihl: 5
+      tos: 0
+      dscp: 0
+      ecn: Not-ECT
+      total_length: 28
+      id: 0x1705
+      flags: none
+      fragment_offset: 0
+      ttl: 1
+      protocol: igmp(2)
+      checksum: 0x00a7
+      checksum_status: valid
+      src: 192.0.2.50
+      dst: 224.0.0.2
+      option_count: 0
+      options: 
+  [1] Igmp
+      type: IGMPv2 Leave Group (0x17)
+      code: No registered code (0x00)
+      checksum: 0xfef1
+      group_address: 233.252.0.17
+      length: 8

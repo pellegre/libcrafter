@@ -1,0 +1,8 @@
+# IPv4 / IGMPv2 Leave Group fixture.
+# IGMP fixed header: RFC 2236 Type 0x17, Code 0, checksum over the IGMP
+# message, and the multicast Group Address being left. The IPv4 destination is
+# the RFC 2236 all-routers group.
+# Source uses RFC 5737 documentation space and the left group uses RFC 5771
+# multicast documentation space; this is not captured live traffic.
+45 00 00 1c 17 05 00 00 01 02 00 a7 c0 00 02 32 e0 00 00 02
+17 00 fe f1 e9 fc 00 11

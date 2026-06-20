@@ -74,8 +74,10 @@ Valid byte fixtures cover:
 - IPv4 ICMP echo and ICMP error:
   `ipv4-icmp-echo-request.bin`,
   `ipv4-icmp-destination-unreachable.hex`
-- IPv4 IGMP bootstrap query and report fixtures:
-  `ipv4-igmp-v1-query.hex`, `ipv4-igmp-v1-report.hex`
+- IPv4 IGMP bootstrap and v2 compatibility fixtures:
+  `ipv4-igmp-v1-query.hex`, `ipv4-igmp-v1-report.hex`,
+  `ipv4-igmp-v2-query.hex`, `ipv4-igmp-v2-report.hex`,
+  `ipv4-igmp-v2-leave.hex`
 - IPv4 DSCP and ECN decode, including the differentiated-services octet split
   into DSCP EF and ECN CE:
   `ipv4-udp-dscp-ecn-raw.hex`
@@ -130,8 +132,8 @@ Valid byte fixtures cover:
 
 Summary fixtures cover representative raw, ARP, Linux cooked, IPv4 options,
 IPv4 TCP options, IPv6 TCP options, IPv4 DNS response, IPv4 DHCP, UDP options,
-IGMP v1 query/report packets, IPv6 option-header stacks, and IPv6 fragment
-stacks.
+IGMP v1 query/report and IGMPv2 query/report/leave packets, IPv6 option-header
+stacks, and IPv6 fragment stacks.
 
 Pcap fixtures cover:
 
@@ -139,9 +141,11 @@ Pcap fixtures cover:
   nonstandard ARP frame (`ethernet-arp-nonstandard.pcap`) exercising variable
   address lengths and unknown codepoints.
 - RawIp link type with IPv4 and IPv6 packets, including
-  `raw-ipv4-igmp-bootstrap.pcap`: timestamped IGMP v1 query and report records
-  using RFC 5771 multicast documentation addresses and RFC 5737 source
-  addresses, decoded as IPv4/IGMP with no live capture data.
+  `raw-ipv4-igmp-bootstrap.pcap`: timestamped IGMP v1 query/report and
+  IGMPv2 query/report/leave records using RFC 5737 source addresses, RFC 5771
+  multicast documentation group addresses, and source-backed all-systems /
+  all-routers destinations where applicable. They decode as IPv4/IGMP with no
+  live capture data.
   `raw-ipv6-base-traffic-flow-udp-raw.pcap`: timestamp `20.000003`,
   DLT_RAW/RawIp, captured/original length 56, byte fixture
   `ipv6-base-traffic-flow-udp-raw.hex`, decoded as IPv6/UDP/Raw with Traffic

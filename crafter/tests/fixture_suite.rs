@@ -542,6 +542,33 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         summary_path: Some("summaries/ipv4-igmp-v1-report.summary.txt"),
     },
     ValidFixtureCase {
+        name: "ipv4-igmp-v2-query",
+        path: "bytes/ipv4-igmp-v2-query.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-igmp-v2-query.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Igmp],
+        preserve_exact_bytes: true,
+        summary_path: Some("summaries/ipv4-igmp-v2-query.summary.txt"),
+    },
+    ValidFixtureCase {
+        name: "ipv4-igmp-v2-report",
+        path: "bytes/ipv4-igmp-v2-report.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-igmp-v2-report.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Igmp],
+        preserve_exact_bytes: true,
+        summary_path: Some("summaries/ipv4-igmp-v2-report.summary.txt"),
+    },
+    ValidFixtureCase {
+        name: "ipv4-igmp-v2-leave",
+        path: "bytes/ipv4-igmp-v2-leave.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-igmp-v2-leave.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Igmp],
+        preserve_exact_bytes: true,
+        summary_path: Some("summaries/ipv4-igmp-v2-leave.summary.txt"),
+    },
+    ValidFixtureCase {
         name: "ipv4-udp-dscp-ecn-raw",
         path: "bytes/ipv4-udp-dscp-ecn-raw.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-udp-dscp-ecn-raw.hex")),
@@ -1707,6 +1734,21 @@ const PCAP_FIXTURES: &[PcapFixtureCase] = &[
                 fractional: 2,
                 fixture_name: "ipv4-igmp-v1-report",
             },
+            PcapFixtureRecord {
+                seconds: 17,
+                fractional: 3,
+                fixture_name: "ipv4-igmp-v2-query",
+            },
+            PcapFixtureRecord {
+                seconds: 17,
+                fractional: 4,
+                fixture_name: "ipv4-igmp-v2-report",
+            },
+            PcapFixtureRecord {
+                seconds: 17,
+                fractional: 5,
+                fixture_name: "ipv4-igmp-v2-leave",
+            },
         ],
     },
     PcapFixtureCase {
@@ -2085,7 +2127,11 @@ fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
         "null-loopback-ipv6-raw" => &[CoverageFamily::NullLoopbackIpv6],
         "ipv4-icmp-echo-request" => &[CoverageFamily::Ipv4IcmpEcho],
         "ipv4-icmp-destination-unreachable" => &[CoverageFamily::Ipv4IcmpError],
-        "ipv4-igmp-v1-query" | "ipv4-igmp-v1-report" => &[CoverageFamily::Ipv4IgmpBootstrap],
+        "ipv4-igmp-v1-query"
+        | "ipv4-igmp-v1-report"
+        | "ipv4-igmp-v2-query"
+        | "ipv4-igmp-v2-report"
+        | "ipv4-igmp-v2-leave" => &[CoverageFamily::Ipv4IgmpBootstrap],
         "ipv4-udp-dscp-ecn-raw" => &[CoverageFamily::Ipv4DscpEcn],
         "ipv4-fragment-noninitial-raw"
         | "ipv4-fragment-defrag-complete-final"
@@ -2920,6 +2966,28 @@ fn assert_igmp_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
             assert_eq!(igmp.igmp_type(), IgmpType::V1MembershipReport);
             assert_eq!(igmp.code_value(), 0);
             assert_eq!(igmp.group_address_value(), Ipv4Addr::new(233, 252, 0, 42));
+        }
+        "ipv4-igmp-v2-query" => {
+            assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 30));
+            assert_eq!(ipv4.destination(), Ipv4Addr::new(224, 0, 0, 1));
+            assert_eq!(igmp.igmp_type(), IgmpType::MembershipQuery);
+            assert_eq!(igmp.code_value(), 100);
+            assert_eq!(igmp.v2_max_response_time_tenths(), 100);
+            assert_eq!(igmp.group_address_value(), Ipv4Addr::UNSPECIFIED);
+        }
+        "ipv4-igmp-v2-report" => {
+            assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 40));
+            assert_eq!(ipv4.destination(), Ipv4Addr::new(233, 252, 0, 43));
+            assert_eq!(igmp.igmp_type(), IgmpType::V2MembershipReport);
+            assert_eq!(igmp.code_value(), 0);
+            assert_eq!(igmp.group_address_value(), Ipv4Addr::new(233, 252, 0, 43));
+        }
+        "ipv4-igmp-v2-leave" => {
+            assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 50));
+            assert_eq!(ipv4.destination(), Ipv4Addr::new(224, 0, 0, 2));
+            assert_eq!(igmp.igmp_type(), IgmpType::V2LeaveGroup);
+            assert_eq!(igmp.code_value(), 0);
+            assert_eq!(igmp.group_address_value(), Ipv4Addr::new(233, 252, 0, 17));
         }
         other => panic!("IGMP fixture {other} is missing typed field assertions"),
     }
@@ -6316,7 +6384,13 @@ fn valid_byte_fixtures_decode_compile_and_summarize() {
 
 #[test]
 fn igmp_fixture_suite_bootstrap_decodes_compile_and_summarizes() {
-    for name in ["ipv4-igmp-v1-query", "ipv4-igmp-v1-report"] {
+    for name in [
+        "ipv4-igmp-v1-query",
+        "ipv4-igmp-v1-report",
+        "ipv4-igmp-v2-query",
+        "ipv4-igmp-v2-report",
+        "ipv4-igmp-v2-leave",
+    ] {
         let case = valid_fixture_case(name);
         ensure_fixture_exists(case.path);
         let bytes = fixture_bytes_for_case(case);
@@ -7477,7 +7551,7 @@ fn pcap_fixture_corpus_decodes_supported_link_types() {
 #[test]
 fn igmp_fixture_suite_raw_ip_pcap_decodes_records() {
     let case = pcap_fixture_case("raw-ipv4-igmp-bootstrap");
-    assert_eq!(case.records.len(), 2);
+    assert_eq!(case.records.len(), 5);
 
     let packets = PcapReader::from_reader(case.contents)
         .unwrap_or_else(|err| panic!("pcap fixture {} should parse header: {err}", case.path))
