@@ -25,3 +25,7 @@ pub use self::registry::{
     igmp_code_meta, igmp_code_name, igmp_code_status, igmp_type, igmp_type_meta, igmp_type_name,
     igmp_type_status, IgmpCodeMeta, IgmpType, IgmpTypeMeta, IgmpTypeStatus,
 };
+pub use self::validation::{
+    igmp_group_address_class, igmp_group_address_class_name, IgmpGroupAddressClass,
+    IGMP_ALL_ROUTERS_GROUP, IGMP_ALL_SYSTEMS_GROUP,
+};
