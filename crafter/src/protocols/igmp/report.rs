@@ -263,6 +263,7 @@ fn record_field_name(index: usize) -> &'static str {
 #[cfg(test)]
 mod igmp_report_model {
     use super::*;
+    use crate::checksum::{internet_checksum, verify_internet_checksum};
     use crate::protocols::igmp::constants::{
         IGMP_FIXED_HEADER_LEN, IGMP_TYPE_V3_MEMBERSHIP_REPORT,
     };
@@ -271,6 +272,10 @@ mod igmp_report_model {
 
     fn doc_group() -> core::net::Ipv4Addr {
         core::net::Ipv4Addr::new(233, 252, 0, 90)
+    }
+
+    fn doc_group_b() -> core::net::Ipv4Addr {
+        core::net::Ipv4Addr::new(233, 252, 0, 91)
     }
 
     fn doc_source() -> core::net::Ipv4Addr {
@@ -286,6 +291,17 @@ mod igmp_report_model {
         Ok(bytes.as_bytes()[IGMP_FIXED_HEADER_LEN..].to_vec())
     }
 
+    fn report_packet_bytes(report: IgmpReport) -> crate::Result<Vec<u8>> {
+        Ok((Igmp::v3_membership_report() / report)
+            .compile()?
+            .as_bytes()
+            .to_vec())
+    }
+
+    fn checksum_field(bytes: &[u8]) -> u16 {
+        u16::from_be_bytes([bytes[2], bytes[3]])
+    }
+
     fn assert_record_types(report: &IgmpReport, expected: &[IgmpRecordType]) {
         let actual = report
             .group_records()
@@ -294,6 +310,93 @@ mod igmp_report_model {
             .collect::<Vec<_>>();
 
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn igmp_report_encode_empty_report_body() -> crate::Result<()> {
+        let bytes = report_packet_bytes(IgmpReport::new())?;
+
+        assert_eq!(bytes[0], IGMP_TYPE_V3_MEMBERSHIP_REPORT);
+        assert_eq!(&bytes[IGMP_FIXED_HEADER_LEN..], &[0, 0, 0, 0]);
+        assert_eq!(
+            bytes.len(),
+            IGMP_FIXED_HEADER_LEN + IGMP_V3_REPORT_BODY_MIN_LEN
+        );
+        assert!(verify_internet_checksum(&bytes));
+
+        Ok(())
+    }
+
+    #[test]
+    fn igmp_report_encode_one_record_auto_fills_count() -> crate::Result<()> {
+        let record =
+            IgmpGroupRecord::mode_is_include(doc_group()).with_source_address(doc_source());
+        let body = report_body_bytes(IgmpReport::from_group_records(vec![record]))?;
+
+        assert_eq!(
+            body,
+            vec![0x00, 0x00, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 233, 252, 0, 90, 192, 0, 2, 90,]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn igmp_report_encode_multiple_records_auto_fills_count() -> crate::Result<()> {
+        let first = IgmpGroupRecord::allow_new_sources(doc_group())
+            .with_source_addresses(vec![doc_source(), doc_source_b()]);
+        let second = IgmpGroupRecord::block_old_sources(doc_group_b());
+        let body = report_body_bytes(IgmpReport::from_group_records(vec![first, second]))?;
+
+        assert_eq!(
+            body,
+            vec![
+                0x00, 0x00, 0x00, 0x02, 0x05, 0x00, 0x00, 0x02, 233, 252, 0, 90, 192, 0, 2, 90,
+                198, 51, 100, 90, 0x06, 0x00, 0x00, 0x00, 233, 252, 0, 91,
+            ]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn igmp_report_encode_preserves_explicit_count_override() -> crate::Result<()> {
+        let record = IgmpGroupRecord::change_to_include_mode(doc_group());
+        let body = report_body_bytes(
+            IgmpReport::from_group_records(vec![record]).with_number_of_group_records(3),
+        )?;
+
+        assert_eq!(
+            body,
+            vec![0x00, 0x00, 0x00, 0x03, 0x03, 0x00, 0x00, 0x00, 233, 252, 0, 90,]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn igmp_report_encode_checksum_covers_record_bytes() -> crate::Result<()> {
+        let first = report_packet_bytes(IgmpReport::from_group_records(vec![
+            IgmpGroupRecord::mode_is_include(doc_group()).with_source_address(doc_source()),
+        ]))?;
+        let second = report_packet_bytes(IgmpReport::from_group_records(vec![
+            IgmpGroupRecord::mode_is_include(doc_group()).with_source_address(doc_source_b()),
+        ]))?;
+
+        let mut zeroed = first.clone();
+        zeroed[2] = 0;
+        zeroed[3] = 0;
+
+        assert_eq!(checksum_field(&first), internet_checksum(&zeroed));
+        assert_ne!(checksum_field(&first), checksum_field(&second));
+        assert!(verify_internet_checksum(&first));
+        assert!(verify_internet_checksum(&second));
+
+        let mut mutated = first;
+        *mutated.last_mut().expect("record source byte") ^= 0x01;
+        assert!(!verify_internet_checksum(&mutated));
+
+        Ok(())
     }
 
     #[test]
