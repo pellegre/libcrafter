@@ -1,0 +1,177 @@
+version: 1
+kind: feature
+name: igmp_header
+summary: IGMP fixed-header, checksum, IGMPv1/v2 compatibility, unknown-type preservation, and structured-error contract.
+
+# Bootstrap IGMP oracle coverage over IPv4 protocol number 2. The comparable
+# cases are declared as strict-byte contracts for the later Scapy materializer
+# and libcrafter adapter steps. Malformed/truncated inputs carry
+# byte_policy: structured_error, so the specs-suite planner excludes them from
+# offline strict-byte comparison until an explicit malformed oracle path exists.
+
+layers:
+  - ipv4
+  - igmp
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: v1-query
+    type: membership_query
+    code: 0
+    group_address: 0.0.0.0
+    checks:
+      - fixed_header_len
+      - checksum_autofill
+      - ipv4_protocol_igmp
+  - name: v2-query
+    type: membership_query
+    code: v2_max_response_time
+    group_address: documentation_multicast
+    checks:
+      - max_response_time_preserved
+      - checksum_autofill
+  - name: v1-membership-report
+    type: v1_membership_report
+    code: 0
+    group_address: documentation_multicast
+    checks:
+      - fixed_header_len
+      - checksum_autofill
+  - name: v2-membership-report
+    type: v2_membership_report
+    code: 0
+    group_address: documentation_multicast
+    checks:
+      - fixed_header_len
+      - checksum_autofill
+  - name: v2-leave-group
+    type: v2_leave_group
+    code: 0
+    group_address: documentation_multicast
+    checks:
+      - fixed_header_len
+      - checksum_autofill
+  - name: checksum-explicit
+    fields:
+      - checksum
+    checks:
+      - explicit_checksum_preserved
+      - intentionally_invalid_checksum_inspectable
+  - name: unknown-type-raw
+    type: unassigned
+    raw_tail: unknown_type
+    checks:
+      - type_preserved
+      - raw_tail_preserved
+      - checksum_covers_raw_tail
+  - name: unsupported-assigned-type-raw
+    type: dvmrp_unsupported_assigned
+    raw_tail: unsupported_assigned_type
+    checks:
+      - type_preserved
+      - raw_tail_preserved
+  - name: truncated-header
+    malformed: true
+    fields:
+      - header
+    expected_error:
+      context: igmp header
+      required: 8
+      available: fewer_than_required
+  - name: truncated-v2-group-address
+    malformed: true
+    fields:
+      - group_address
+    expected_error:
+      context: igmp header
+      required: 8
+      available: 7
+
+coverage_cases:
+  - igmp-membership-query
+  - igmp-v2-membership-query
+  - igmp-v1-membership-report
+  - igmp-v2-membership-report
+  - igmp-v2-leave-group
+  - igmp-checksum-explicit-invalid
+  - igmp-unknown-type-raw
+  - igmp-unsupported-assigned-type-raw
+  - malformed-igmp-truncated-header
+  - malformed-igmp-v2-truncated-group-address
+
+supported_cases:
+  - name: igmp-membership-query
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: igmp-v2-membership-query
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: igmp-v1-membership-report
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: igmp-v2-membership-report
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: igmp-v2-leave-group
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: igmp-checksum-explicit-invalid
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: igmp-unknown-type-raw
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: igmp-unsupported-assigned-type-raw
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: malformed-igmp-truncated-header
+    directions:
+      - reference_to_libcrafter
+    byte_policy: structured_error
+  - name: malformed-igmp-v2-truncated-group-address
+    directions:
+      - reference_to_libcrafter
+    byte_policy: structured_error
+
+source_refs:
+  - RFC 1112
+  - RFC 2236
+  - RFC 9776
+  - RFC 9778
+  - IANA IGMP Type Numbers
+
+backend_support:
+  scapy:
+    status: planned
+    native_layers:
+      - IGMP
+    notes:
+      - Later Scapy backend steps own materialization and normalization for these IGMP cases.
+      - Structured-error cases are declared coverage only and are excluded from offline strict-byte comparison.
+  libcrafter:
+    status: planned
+    native_layers:
+      - Igmp
+    notes:
+      - The public crate has IGMP packet-layer support; later oracle adapter steps own executable IGMP feature cases.
+      - IPv4 TTL, destination address, and Router Alert option remain explicit IPv4 composition choices.
