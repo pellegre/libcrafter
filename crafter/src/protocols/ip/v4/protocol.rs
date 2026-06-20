@@ -2,8 +2,8 @@
 
 use crate::protocols::ip::shared::{
     ip_protocol_summary, IPPROTO_AH, IPPROTO_ESP, IPPROTO_EXPERIMENTAL_1, IPPROTO_EXPERIMENTAL_2,
-    IPPROTO_GRE, IPPROTO_ICMP, IPPROTO_ICMPV6, IPPROTO_IPV6, IPPROTO_OSPF, IPPROTO_SCTP,
-    IPPROTO_TCP, IPPROTO_UDP,
+    IPPROTO_GRE, IPPROTO_ICMP, IPPROTO_ICMPV6, IPPROTO_IGMP, IPPROTO_IPV6, IPPROTO_OSPF,
+    IPPROTO_SCTP, IPPROTO_TCP, IPPROTO_UDP,
 };
 
 /// Common IPv4 protocol numbers.
@@ -14,6 +14,8 @@ pub enum Ipv4Protocol {
     HopByHop = 0,
     /// Internet Control Message Protocol for IPv4.
     Icmpv4 = IPPROTO_ICMP,
+    /// Internet Group Management Protocol.
+    Igmp = IPPROTO_IGMP,
     /// Transmission Control Protocol.
     Tcp = IPPROTO_TCP,
     /// User Datagram Protocol.

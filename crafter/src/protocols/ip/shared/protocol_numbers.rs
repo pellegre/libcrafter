@@ -7,6 +7,8 @@
 pub const IPPROTO_HOPOPTS: u8 = 0;
 /// IP protocol number for ICMP.
 pub const IPPROTO_ICMP: u8 = 1;
+/// IANA Assigned Internet Protocol number for IGMP.
+pub const IPPROTO_IGMP: u8 = 2;
 /// IP protocol number for TCP.
 pub const IPPROTO_TCP: u8 = 6;
 /// IP protocol number for UDP.
@@ -73,6 +75,7 @@ pub(crate) const fn ip_protocol_label(protocol: u8) -> Option<&'static str> {
     match protocol {
         IPPROTO_HOPOPTS => Some("hopopt"),
         IPPROTO_ICMP => Some("icmp"),
+        IPPROTO_IGMP => Some("igmp"),
         IPPROTO_TCP => Some("tcp"),
         IPPROTO_UDP => Some("udp"),
         IPPROTO_IPV6 => Some("ipv6"),
