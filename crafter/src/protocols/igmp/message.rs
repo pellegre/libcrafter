@@ -770,3 +770,101 @@ mod igmp_v2_max_response {
         assert_eq!(compile_layer(decoded_report), report);
     }
 }
+
+#[cfg(test)]
+mod igmp_v2_membership_report {
+    use super::*;
+    use crate::checksum::verify_internet_checksum;
+    use crate::field::FieldState;
+    use crate::packet::Packet;
+    use crate::protocols::igmp::constants::{
+        IGMP_DEFAULT_CODE, IGMP_TYPE_V2_MEMBERSHIP_REPORT,
+    };
+    use crate::protocols::igmp::decode::decode;
+    use crate::protocols::igmp::registry::IgmpTypeStatus;
+    use crate::protocols::ip::v4::Ipv4;
+
+    fn report_group() -> Ipv4Addr {
+        Ipv4Addr::new(224, 0, 0, 251)
+    }
+
+    fn compile_layer(igmp: Igmp) -> Vec<u8> {
+        Packet::from_layer(igmp)
+            .compile()
+            .expect("compile IGMPv2 membership report")
+            .as_bytes()
+            .to_vec()
+    }
+
+    #[test]
+    fn igmp_v2_membership_report_constructor_sets_report_fields() {
+        let group = report_group();
+        let igmp = Igmp::v2_membership_report(group);
+
+        assert_eq!(igmp.igmp_type_value(), IGMP_TYPE_V2_MEMBERSHIP_REPORT);
+        assert_eq!(igmp.igmp_type(), IgmpType::V2MembershipReport);
+        assert_eq!(igmp.type_meta().name, "IGMPv2 Membership Report");
+        assert_eq!(igmp.type_meta().status, IgmpTypeStatus::Assigned);
+        assert_eq!(igmp.code_value(), IGMP_DEFAULT_CODE);
+        assert_eq!(igmp.code_meta().name, "No registered code");
+        assert_eq!(igmp.group_address_value(), group);
+        assert_eq!(igmp.igmp_type_state(), FieldState::User);
+        assert_eq!(igmp.code_state(), FieldState::User);
+        assert_eq!(igmp.group_address_state(), FieldState::User);
+        assert_eq!(igmp.checksum_state(), FieldState::Unset);
+        assert_eq!(igmp.checksum_value(), None);
+    }
+
+    #[test]
+    fn igmp_v2_membership_report_compiles_with_autofilled_checksum() {
+        let group = report_group();
+        let bytes = compile_layer(Igmp::v2_membership_report(group));
+
+        assert_eq!(bytes.len(), IGMP_FIXED_HEADER_LEN);
+        assert_eq!(bytes[0], IGMP_TYPE_V2_MEMBERSHIP_REPORT);
+        assert_eq!(bytes[1], IGMP_DEFAULT_CODE);
+        assert_eq!(&bytes[4..8], &group.octets());
+        assert!(verify_internet_checksum(&bytes));
+    }
+
+    #[test]
+    fn igmp_v2_membership_report_decodes_to_inspectable_fields() {
+        let group = report_group();
+        let bytes = compile_layer(Igmp::v2_membership_report(group));
+        let checksum = u16::from_be_bytes([bytes[2], bytes[3]]);
+        let decoded = decode(&bytes).expect("decode IGMPv2 membership report");
+
+        assert_eq!(decoded.igmp_type(), IgmpType::V2MembershipReport);
+        assert_eq!(decoded.type_meta().name, "IGMPv2 Membership Report");
+        assert_eq!(decoded.code_value(), IGMP_DEFAULT_CODE);
+        assert_eq!(decoded.group_address_value(), group);
+        assert_eq!(decoded.checksum_value(), Some(checksum));
+        assert_eq!(decoded.igmp_type_state(), FieldState::User);
+        assert_eq!(decoded.code_state(), FieldState::User);
+        assert_eq!(decoded.checksum_state(), FieldState::User);
+        assert_eq!(decoded.group_address_state(), FieldState::User);
+        assert_eq!(compile_layer(decoded.clone()), bytes);
+
+        let packet = Packet::from_layer(decoded);
+        assert_eq!(
+            packet.summary(),
+            "Igmp(type=IGMPv2 Membership Report, code=No registered code, group=224.0.0.251)"
+        );
+        let show = packet.show();
+        assert!(
+            show.contains("type: IGMPv2 Membership Report (0x16)"),
+            "{show}"
+        );
+        assert!(show.contains("group_address: 224.0.0.251"), "{show}");
+        assert!(show.contains(&format!("checksum: 0x{checksum:04x}")), "{show}");
+    }
+
+    #[test]
+    fn igmp_v2_membership_report_does_not_force_ipv4_destination_or_ttl() {
+        let packet = Ipv4::new() / Igmp::v2_membership_report(report_group());
+        let bytes = packet.compile().expect("compile IPv4 / IGMPv2 report");
+
+        assert_eq!(bytes[8], 64);
+        assert_eq!(&bytes[16..20], &Ipv4Addr::LOCALHOST.octets());
+    }
+}
