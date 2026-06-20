@@ -27,6 +27,15 @@ or out of scope for crate primitives.
   - Datatracker/RFC text: <https://datatracker.ietf.org/doc/rfc9778/>
   - IANA IGMP registries:
     <https://www.iana.org/assignments/igmp-type-numbers/>
+- Focused RFC 9279 extension source review, performed on 2026-06-20:
+  - RFC Editor text: <https://www.rfc-editor.org/rfc/rfc9279.html>
+  - RFC Editor info: <https://www.rfc-editor.org/info/rfc9279/>
+  - IANA IGMP registries:
+    <https://www.iana.org/assignments/igmp-type-numbers/>
+  - A local protocol-facts manifest attempt for
+    `IGMP MLD RFC 9279 extension` timed out without usable output. This
+    extension handoff therefore cites the official RFC Editor and IANA pages
+    rather than generated artifact evidence.
 
 The generated manifest is useful for discovery, but it did not include full
 cached RFC document text or selected IANA registry records. Use the official
@@ -101,11 +110,25 @@ until the protocol-facts cache is refreshed with full documents and registries.
 - RFC 9279, "IGMPv3 and MLDv2 Message Extension":
   <https://www.rfc-editor.org/info/rfc9279/>
   - Role: generic extension mechanism for later IGMPv3 extension work.
-  - IANA snapshot: extension type `0` is No-op; `1..=65533` are unassigned;
-    `65534..=65535` are reserved for experimental use. Query and report flag
-    bit `0` is the extension flag; remaining bits are unassigned.
-  - Implement extension bytes conservatively and byte-preservingly until the
-    extension step performs a dedicated source review.
+  - Packet-layer facts reviewed from the full RFC text: RFC 9279 defines a
+    generic extension mechanism for IGMPv3 and MLDv2 using a list of TLVs in
+    the Additional Data area. The TLV wire format is 16-bit Extension Type,
+    16-bit Extension Length in octets, then Extension Value bytes. No alignment
+    or padding is required between TLVs.
+  - Applicability: the mechanism applies only to IGMPv3 and MLDv2, not older
+    IGMP or MLD message versions, and processing applies only when the E-bit
+    is set.
+  - Query and report flags: RFC 9279 diagrams set the E-bit to `1` when an
+    extension is present and `0` otherwise. For IGMPv3 Query, E is the top bit
+    of the Flags/S/QRV octet. For IGMPv3 Report, E is bit `0` in the 16-bit
+    report Flags field as mapped by RFC 9778 and IANA.
+  - Validation facts: when E is set, at least one TLV must be present, no data
+    may remain after the last TLV, and the total extension length must not
+    exceed the remaining IP payload. Unsupported Extension Types are ignored by
+    IGMP/MLD protocol implementations.
+  - IANA snapshot: the common IGMP/MLD Extension Types registry uses IETF
+    Review for `0..=65533`; type `0` is No-op; `1..=65533` are unassigned;
+    `65534..=65535` are Experimental Use / Reserved for Experimental Use.
 
 - RFC 4286, "Multicast Router Discovery":
   <https://www.rfc-editor.org/info/rfc4286/>
@@ -150,6 +173,9 @@ until the protocol-facts cache is refreshed with full documents and registries.
   in this manifest only after official RFC Editor/Datatracker confirmation.
 - RFC 9777, RFC 2710, and RFC 3810 are MLD/ICMPv6 sources. Keep them out of the
   IGMP module except when comparing shared IANA extension registries.
+- RFC 9279 is shared IGMPv3/MLDv2 extension evidence. Use it only for the
+  IGMPv3 packet-layer extension surface in this plan; it does not justify an
+  MLD implementation inside the IGMP module.
 - RFC 4541, RFC 4605, RFC 6636, RFC 8652, RFC 9166, RFC 9251, and RFC 9398 are
   operational, proxy, snooping, tuning, YANG, or management documents. They can
   inform generated tools or docs, but they do not justify router, proxy,
@@ -300,6 +326,85 @@ Out of crate scope:
   should expose the bytes, metadata, builders, decode results, summaries, and
   optional validation helpers those tools need.
 
+## RFC 9279 Extension Review
+
+RFC 9279 defines a generic extension mechanism for IGMPv3 and MLDv2 messages.
+For IGMP, the mechanism is packet-layer evidence for IGMPv3 Membership Query
+and IGMPv3 Membership Report only. It does not apply to IGMPv1, IGMPv2, MRD, or
+other registered IGMP Type values, and it does not bring MLD into the IGMP
+module.
+
+The extension payload is a byte sequence of TLVs carried in the Additional Data
+area after the normal IGMPv3 Query source list or after the normal IGMPv3
+Report group records. Each TLV is:
+
+- Extension Type: 16 bits, from the common IANA IGMP/MLD Extension Types
+  registry.
+- Extension Length: 16 bits, length in octets of the following Extension Value
+  field. Zero is representable.
+- Extension Value: exactly Extension Length octets.
+
+TLVs follow immediately after each other. RFC 9279 states that no alignment or
+padding is required between TLVs, so `crafter` must not insert padding or treat
+No-op as an alignment primitive.
+
+Extension presence is gated by the E-bit:
+
+- IGMPv3 Query: RFC 9279 places E as the top bit of the existing Flags/S/QRV
+  octet. The remaining query flag registry bits are bits `1..=3`; the S and
+  QRV bits remain the existing IGMPv3 fields, not registry-managed extension
+  flags.
+- IGMPv3 Report: RFC 9279 places E in the 16-bit Flags field. RFC 9778 and the
+  IANA registry map this as report flag bit `0`; report flag bits `1..=15`
+  remain unassigned.
+
+When the E-bit is `0`, RFC 9279 extension processing does not apply. Existing
+IGMPv3 behavior for extra Query or Report octets remains the source-backed
+baseline from RFC 9776: preserve those bytes as inspectable trailing data until
+a caller opts into extension interpretation. When the E-bit is `1`, the
+extension data is valid only if it contains at least one TLV, leaves no data
+after the last TLV, and does not declare a total extension length beyond the
+remaining IP payload. Later decode work must report TLV header/value truncation
+and length overrun through the crate's structured error path rather than
+panicking or silently dropping bytes.
+
+The IANA IGMP/MLD Extension Types registry is common to IGMP and MLD. Its
+current rows are:
+
+| Extension Type | Length | Name | Registration / status |
+| --- | --- | --- | --- |
+| `0` | variable | No-op | IETF Review; RFC 9279 |
+| `1..=65533` | not assigned | Unassigned | IETF Review |
+| `65534..=65535` | variable | Reserved for Experimental Use | Experimental Use |
+
+Minimal `crafter` surface for the following extension implementation steps:
+
+- Add a generic, byte-preserving extension block model that stores an ordered
+  list of raw TLVs: type, declared length, and value bytes.
+- Provide source-backed generic metadata for Extension Type `0` No-op and for
+  unassigned/experimental ranges. Do not add semantic subtypes beyond this
+  generic/no-op metadata without a future source review for a specific
+  Extension Type assignment.
+- Preserve unsupported Extension Types rather than rejecting them. RFC 9279
+  says IGMP/MLD implementations ignore unsupported types; `crafter` should keep
+  them inspectable.
+- Keep construction capable of intentionally malformed but representable TLVs
+  when the caller explicitly sets lengths or bytes. Structured truncation and
+  length-handling rules belong in the later extension decode/encode steps.
+- Do not implement MLD, MLDv2 Address Records, ICMPv6 dispatch, or shared
+  IGMP/MLD protocol state inside the IGMP module.
+
+Unsupported until more source evidence exists:
+
+- Semantic parsing for future Extension Type values other than generic No-op.
+- Message-type-specific rules for future TLVs, including query-only,
+  report-only, dependency, ordering, or combination constraints. RFC 9279
+  requires future documents defining new Extension Types to specify those
+  conditions.
+- Treating the E-bit as meaningful on older IGMP message versions or on
+  non-IGMPv3 Type values.
+- Treating extension bytes as aligned, padded, or word-length constrained.
+
 ## Unresolved Questions
 
 - The protocol-facts run reported missing full cached RFC documents for many
@@ -312,8 +417,9 @@ Out of crate scope:
 - DVMRP, PIMv1, Cisco trace, and multicast traceroute are registered in the
   IGMP Type space, but this plan has not yet decided whether they should be
   typed minimal messages, typed unknown metadata, or preserved `Raw` payloads.
-- RFC 9279 extension handling needs a dedicated review before any typed TLV
-  bodies beyond No-op and generic byte-preserving extension blocks are added.
+- RFC 9279 source review supports only generic/no-op extension metadata. Future
+  semantic Extension Type bodies require source evidence for their specific
+  registry assignments and message applicability.
 - Provider-backed live IGMP validation may depend on multicast support,
   interface privileges, and lab topology. Live tests must remain dry-run or
   protected until those capabilities are explicit.
