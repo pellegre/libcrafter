@@ -16,6 +16,7 @@ use crafter::protocols::bgp::{
     CAP_ENHANCED_ROUTE_REFRESH, CAP_FOUR_OCTET_AS, CAP_GRACEFUL_RESTART, CAP_MULTIPROTOCOL,
     CAP_ROUTE_REFRESH, CAP_ROUTE_REFRESH_OLD, SAFI_MULTICAST, SAFI_UNICAST,
 };
+use crafter::protocols::igmp::{IgmpExtension, IGMP_ALL_ROUTERS_GROUP, IGMP_ALL_SYSTEMS_GROUP};
 use crafter::protocols::link::{RadiotapChannel, RadiotapFlags, RadiotapRxFlags, RadiotapTxFlags};
 use crafter::protocols::rip::ripng::{Ripng, RipngRte};
 use crafter::protocols::rip::{RipAuth, RipDigestAlgorithm};
@@ -210,6 +211,11 @@ pub fn build_packet(plan: &Value) -> ExampleResult<Packet> {
             build_layer(plan, layer)?
         };
         packet.push_box_mut(piece);
+        if layer == "igmp" && !igmp_body_layers_follow(&canonical_stack, index) {
+            for piece in igmp_inferred_body_layers(plan)? {
+                packet.push_box_mut(piece);
+            }
+        }
         if layer == "eapol" && eapol_key_layer_is_present(plan)? {
             packet.push_box_mut(Box::new(eapol_key_layer(plan)?));
         }
@@ -242,6 +248,10 @@ fn build_layer(plan: &Value, layer: &str) -> ExampleResult<Box<dyn Layer>> {
         "tcp" => Ok(Box::new(tcp_layer(plan, None)?)),
         "icmp" => Ok(Box::new(icmp_layer(plan)?)),
         "icmpv6" => Ok(Box::new(icmpv6_layer(plan)?)),
+        "igmp" => Ok(Box::new(igmp_layer(plan)?)),
+        "igmp_query" => Ok(Box::new(igmp_query_layer(plan)?)),
+        "igmp_report" => Ok(Box::new(igmp_report_layer(plan)?)),
+        "igmp_extension" => Ok(Box::new(igmp_extension_layer(plan)?)),
         "dns" => Ok(Box::new(dns_layer(plan)?)),
         "dhcp" => Ok(Box::new(dhcp_layer(plan)?)),
         "rip" => Ok(Box::new(rip_layer(plan)?)),
@@ -2424,6 +2434,521 @@ fn icmpv6_layer(plan: &Value) -> ExampleResult<Icmpv6> {
     Ok(layer)
 }
 
+fn igmp_layer(plan: &Value) -> ExampleResult<Igmp> {
+    let fields = layer_fields(plan, "igmp")?;
+    let type_code = optional(fields, &["type", "type_code"])
+        .map(igmp_type_code)
+        .transpose()?
+        .unwrap_or(IGMP_TYPE_MEMBERSHIP_QUERY);
+    let mut layer = Igmp::new()
+        .type_code(type_code)
+        .with_code(igmp_code_value(fields)?);
+    if let Some(group_address) = igmp_group_address(fields, type_code)? {
+        layer = layer.with_group_address(group_address);
+    }
+    if let Some(checksum) = igmp_checksum_value(fields)? {
+        layer = layer.checksum(checksum);
+    }
+    Ok(layer)
+}
+
+fn igmp_query_layer(plan: &Value) -> ExampleResult<IgmpQuery> {
+    let igmp_fields = layer_fields(plan, "igmp")?;
+    let query_fields = optional_layer_fields(plan, "igmp_query")?;
+    igmp_query_layer_from_fields(igmp_fields, query_fields)
+}
+
+fn igmp_query_layer_from_fields(
+    igmp_fields: &Map<String, Value>,
+    query_fields: Option<&Map<String, Value>>,
+) -> ExampleResult<IgmpQuery> {
+    let mut query =
+        IgmpQuery::new().with_raw_flags_qrv(igmp_query_flags_value(igmp_fields, query_fields)?);
+    if let Some(value) = optional_igmp_child(igmp_fields, query_fields, &["qqic"]) {
+        query = query.with_qqic(u8_value(value)?);
+    }
+    if let Some(value) = optional_igmp_child(igmp_fields, query_fields, &["number_of_sources"]) {
+        query = query.with_number_of_sources(u16_value(value)?);
+    }
+    if let Some(value) = optional_igmp_child(igmp_fields, query_fields, &["source_addresses"]) {
+        query = query.with_source_addresses(igmp_ipv4_list(value)?);
+    }
+    Ok(query)
+}
+
+fn igmp_report_layer(plan: &Value) -> ExampleResult<IgmpReport> {
+    let igmp_fields = layer_fields(plan, "igmp")?;
+    let report_fields = optional_layer_fields(plan, "igmp_report")?;
+    igmp_report_layer_from_fields(igmp_fields, report_fields)
+}
+
+fn igmp_report_layer_from_fields(
+    igmp_fields: &Map<String, Value>,
+    report_fields: Option<&Map<String, Value>>,
+) -> ExampleResult<IgmpReport> {
+    let mut report =
+        IgmpReport::new().with_reserved_flags(igmp_report_flags_value(igmp_fields, report_fields)?);
+    if let Some(value) = optional_igmp_child(
+        igmp_fields,
+        report_fields,
+        &["number_of_group_records", "number_of_records"],
+    ) {
+        report = report.with_number_of_group_records(u16_value(value)?);
+    }
+    if let Some(value) =
+        optional_igmp_child(igmp_fields, report_fields, &["group_records", "records"])
+    {
+        report = report.with_group_records(igmp_group_records(value)?);
+    }
+    Ok(report)
+}
+
+fn igmp_extension_layer(plan: &Value) -> ExampleResult<IgmpExtension> {
+    let fields = layer_fields(plan, "igmp_extension")?;
+    igmp_extension_from_fields(fields)
+}
+
+fn igmp_inferred_body_layers(plan: &Value) -> ExampleResult<Vec<Box<dyn Layer>>> {
+    let igmp_fields = layer_fields(plan, "igmp")?;
+    if let Some(value) = optional(igmp_fields, &["raw_body", "raw"]) {
+        return Ok(vec![Box::new(Raw::from_bytes(igmp_bytes_value(value)?))]);
+    }
+
+    let type_code = optional(igmp_fields, &["type", "type_code"])
+        .map(igmp_type_code)
+        .transpose()?
+        .unwrap_or(IGMP_TYPE_MEMBERSHIP_QUERY);
+    let mut layers: Vec<Box<dyn Layer>> = Vec::new();
+    if igmp_has_query_body(plan, igmp_fields, type_code)? {
+        layers.push(Box::new(igmp_query_layer_from_fields(
+            igmp_fields,
+            optional_layer_fields(plan, "igmp_query")?,
+        )?));
+    } else if igmp_has_report_body(plan, igmp_fields, type_code)? {
+        layers.push(Box::new(igmp_report_layer_from_fields(
+            igmp_fields,
+            optional_layer_fields(plan, "igmp_report")?,
+        )?));
+    }
+
+    layers.extend(igmp_extension_layers(plan, igmp_fields)?);
+    if let Some(value) = optional(igmp_fields, &["raw_tail", "tail", "payload"]) {
+        layers.push(Box::new(Raw::from_bytes(igmp_bytes_value(value)?)));
+    }
+    Ok(layers)
+}
+
+fn igmp_body_layers_follow(stack: &[String], index: usize) -> bool {
+    stack[index + 1..].iter().any(|layer| {
+        matches!(
+            layer.as_str(),
+            "igmp_query" | "igmp_report" | "igmp_extension" | "payload"
+        )
+    })
+}
+
+fn igmp_has_query_body(
+    plan: &Value,
+    igmp_fields: &Map<String, Value>,
+    type_code: u8,
+) -> ExampleResult<bool> {
+    if type_code != IGMP_TYPE_MEMBERSHIP_QUERY {
+        return Ok(false);
+    }
+    if optional_layer_fields(plan, "igmp_query")?.is_some() {
+        return Ok(true);
+    }
+    Ok([
+        "flags_qrv",
+        "number_of_sources",
+        "qqic",
+        "query_flags",
+        "raw_flags_qrv",
+        "source_addresses",
+    ]
+    .iter()
+    .any(|name| igmp_fields.contains_key(*name)))
+}
+
+fn igmp_has_report_body(
+    plan: &Value,
+    igmp_fields: &Map<String, Value>,
+    type_code: u8,
+) -> ExampleResult<bool> {
+    if type_code == IGMP_TYPE_V3_MEMBERSHIP_REPORT {
+        return Ok(true);
+    }
+    if optional_layer_fields(plan, "igmp_report")?.is_some() {
+        return Ok(true);
+    }
+    Ok([
+        "group_records",
+        "number_of_group_records",
+        "number_of_records",
+        "report_flags",
+        "reserved_flags",
+    ]
+    .iter()
+    .any(|name| igmp_fields.contains_key(*name)))
+}
+
+fn igmp_extension_layers(
+    plan: &Value,
+    igmp_fields: &Map<String, Value>,
+) -> ExampleResult<Vec<Box<dyn Layer>>> {
+    if let Some(value) = optional(igmp_fields, &["extension_tlvs", "extensions"]) {
+        let mut layers: Vec<Box<dyn Layer>> = Vec::new();
+        for item in array_values(value)? {
+            let fields = item
+                .as_object()
+                .ok_or_else(|| format!("IGMP extension TLV must be an object, got {item:?}"))?;
+            layers.push(Box::new(igmp_extension_from_fields(fields)?));
+        }
+        return Ok(layers);
+    }
+
+    if let Some(fields) = optional_layer_fields(plan, "igmp_extension")? {
+        return Ok(vec![Box::new(igmp_extension_from_fields(fields)?)]);
+    }
+    Ok(Vec::new())
+}
+
+fn igmp_extension_from_fields(fields: &Map<String, Value>) -> ExampleResult<IgmpExtension> {
+    let extension_type = optional(fields, &["extension_type", "type"])
+        .map(igmp_extension_type_code)
+        .transpose()?
+        .unwrap_or(IGMP_EXTENSION_TYPE_NOOP);
+    let value = optional(fields, &["extension_value", "value", "value_hex"])
+        .map(igmp_bytes_value)
+        .transpose()?
+        .unwrap_or_default();
+    let mut extension = IgmpExtension::raw(extension_type, value);
+    if let Some(length) = optional(fields, &["extension_length", "length"]) {
+        extension = extension.with_extension_length(u16_value(length)?);
+    }
+    Ok(extension)
+}
+
+fn igmp_group_records(value: &Value) -> ExampleResult<Vec<IgmpGroupRecord>> {
+    array_values(value)?
+        .iter()
+        .map(igmp_group_record)
+        .collect::<ExampleResult<Vec<_>>>()
+}
+
+fn igmp_group_record(value: &Value) -> ExampleResult<IgmpGroupRecord> {
+    let fields = value
+        .as_object()
+        .ok_or_else(|| format!("IGMP group record must be an object, got {value:?}"))?;
+    let multicast_address = optional(fields, &["multicast_address", "group_address", "group"])
+        .map(igmp_ipv4_value)
+        .transpose()?
+        .unwrap_or(Ipv4Addr::UNSPECIFIED);
+    let mut record = IgmpGroupRecord::raw(
+        optional(fields, &["record_type", "type"])
+            .map(igmp_record_type_code)
+            .transpose()?
+            .unwrap_or(IGMP_RECORD_TYPE_MODE_IS_INCLUDE),
+        multicast_address,
+    );
+    if let Some(value) = optional(fields, &["source_addresses", "record_source_addresses"]) {
+        record = record.with_source_addresses(igmp_ipv4_list(value)?);
+    }
+    if let Some(value) = optional(fields, &["number_of_sources", "record_number_of_sources"]) {
+        record = record.with_number_of_sources(u16_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["auxiliary_data"]) {
+        record = record.with_auxiliary_data(igmp_bytes_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["auxiliary_data_len", "aux_data_len"]) {
+        record = record.with_auxiliary_data_len(u8_value(value)?);
+    }
+    Ok(record)
+}
+
+fn optional_igmp_child<'a>(
+    igmp_fields: &'a Map<String, Value>,
+    child_fields: Option<&'a Map<String, Value>>,
+    names: &[&str],
+) -> Option<&'a Value> {
+    child_fields
+        .and_then(|fields| optional(fields, names))
+        .or_else(|| optional(igmp_fields, names))
+}
+
+fn igmp_type_code(value: &Value) -> ExampleResult<u8> {
+    if let Some(text) = value.as_str() {
+        return match text.to_ascii_lowercase().replace(' ', "-").as_str() {
+            "reserved" => Ok(IGMP_TYPE_RESERVED),
+            "unassigned" => Ok(IGMP_TYPE_UNASSIGNED_FIRST),
+            "membership-query" | "membership_query" => Ok(IGMP_TYPE_MEMBERSHIP_QUERY),
+            "v1-membership-report" | "v1_membership_report" => Ok(IGMP_TYPE_V1_MEMBERSHIP_REPORT),
+            "dvmrp" | "dvmrp-unsupported-assigned" | "dvmrp_unsupported_assigned" => {
+                Ok(IGMP_TYPE_DVMRP)
+            }
+            "pim-v1" | "pim_v1" | "pim-v1-unsupported-assigned" | "pim_v1_unsupported_assigned" => {
+                Ok(IGMP_TYPE_PIM_V1)
+            }
+            "cisco-trace-unsupported-assigned" | "cisco_trace_unsupported_assigned" => {
+                Ok(IGMP_TYPE_CISCO_TRACE_MESSAGES)
+            }
+            "v2-membership-report" | "v2_membership_report" => Ok(IGMP_TYPE_V2_MEMBERSHIP_REPORT),
+            "v2-leave-group" | "v2_leave_group" => Ok(IGMP_TYPE_V2_LEAVE_GROUP),
+            "multicast-traceroute-response-unsupported-assigned"
+            | "multicast_traceroute_response_unsupported_assigned" => {
+                Ok(IGMP_TYPE_MULTICAST_TRACEROUTE_RESPONSE)
+            }
+            "multicast-traceroute-unsupported-assigned"
+            | "multicast_traceroute_unsupported_assigned" => Ok(IGMP_TYPE_MULTICAST_TRACEROUTE),
+            "v3-membership-report" | "v3_membership_report" => Ok(IGMP_TYPE_V3_MEMBERSHIP_REPORT),
+            "multicast-router-advertisement" | "multicast_router_advertisement" => {
+                Ok(IGMP_TYPE_MULTICAST_ROUTER_ADVERTISEMENT)
+            }
+            "multicast-router-solicitation" | "multicast_router_solicitation" => {
+                Ok(IGMP_TYPE_MULTICAST_ROUTER_SOLICITATION)
+            }
+            "multicast-router-termination" | "multicast_router_termination" => {
+                Ok(IGMP_TYPE_MULTICAST_ROUTER_TERMINATION)
+            }
+            "experimental" => Ok(IGMP_TYPE_EXPERIMENTAL_FIRST),
+            _ => u8_text(text),
+        };
+    }
+    u8_value(value)
+}
+
+fn igmp_code_value(fields: &Map<String, Value>) -> ExampleResult<u8> {
+    let Some(value) = optional(
+        fields,
+        &[
+            "code",
+            "max_response_code",
+            "max_response_time_tenths",
+            "v2_max_response_time_tenths",
+            "mrd_advertisement_interval",
+            "mrd_reserved",
+        ],
+    ) else {
+        return Ok(IGMP_DEFAULT_CODE);
+    };
+    if let Some(text) = value.as_str() {
+        return match text.to_ascii_lowercase().replace([' ', '-'], "_").as_str() {
+            "v1_query_zero" | "zero" | "reserved_zero" | "mrd_reserved" => Ok(0),
+            "v2_max_response_time" | "v3_max_response_code" => Ok(100),
+            "mrd_advertisement_interval" => Ok(20),
+            _ => u8_text(text),
+        };
+    }
+    u8_value(value)
+}
+
+fn igmp_checksum_value(fields: &Map<String, Value>) -> ExampleResult<Option<u16>> {
+    let Some(value) = optional(fields, &["checksum", "chksum"]) else {
+        return Ok(None);
+    };
+    if let Some(text) = value.as_str() {
+        return match text.to_ascii_lowercase().replace('-', "_").as_str() {
+            "derived" | "auto" => Ok(None),
+            "explicit" | "explicit_invalid" => Ok(Some(0x1234)),
+            "boundary" => Ok(Some(u16::MAX)),
+            _ => Ok(Some(u16_text(text)?)),
+        };
+    }
+    Ok(Some(u16_value(value)?))
+}
+
+fn igmp_group_address(
+    fields: &Map<String, Value>,
+    type_code: u8,
+) -> ExampleResult<Option<Ipv4Addr>> {
+    if let Some(value) = optional(fields, &["group_address", "group", "gaddr"]) {
+        return Ok(Some(igmp_ipv4_value(value)?));
+    }
+    if type_code == IGMP_TYPE_MULTICAST_ROUTER_ADVERTISEMENT
+        || optional(fields, &["mrd_query_interval", "mrd_robustness_variable"]).is_some()
+    {
+        let query_interval = optional(fields, &["mrd_query_interval"])
+            .map(u16_value)
+            .transpose()?
+            .unwrap_or(0);
+        let robustness = optional(fields, &["mrd_robustness_variable"])
+            .map(u16_value)
+            .transpose()?
+            .unwrap_or(0);
+        let query = query_interval.to_be_bytes();
+        let robustness = robustness.to_be_bytes();
+        return Ok(Some(Ipv4Addr::new(
+            query[0],
+            query[1],
+            robustness[0],
+            robustness[1],
+        )));
+    }
+    Ok(None)
+}
+
+fn igmp_query_flags_value(
+    igmp_fields: &Map<String, Value>,
+    query_fields: Option<&Map<String, Value>>,
+) -> ExampleResult<u8> {
+    if let Some(value) =
+        optional_igmp_child(igmp_fields, query_fields, &["raw_flags_qrv", "flags_qrv"])
+    {
+        return u8_value(value);
+    }
+    let mut flags = igmp_flags_value(
+        optional_igmp_child(igmp_fields, query_fields, &["query_flags"]),
+        &[
+            ("zero", 0),
+            ("none", 0),
+            ("extension", u16::from(IGMP_V3_QUERY_FLAG_EXTENSION)),
+            ("unassigned", u16::from(IGMP_V3_QUERY_FLAGS_UNASSIGNED_MASK)),
+            ("suppress_router_side_processing", 0x08),
+            ("qrv", 0x02),
+        ],
+    )? as u8;
+    if let Some(value) = optional_igmp_child(
+        igmp_fields,
+        query_fields,
+        &["suppress_router_side_processing", "s"],
+    ) {
+        if bool_value(value)? {
+            flags |= 0x08;
+        } else {
+            flags &= !0x08;
+        }
+    }
+    if let Some(value) = optional_igmp_child(
+        igmp_fields,
+        query_fields,
+        &["qrv", "querier_robustness_variable"],
+    ) {
+        flags = (flags & !0x07) | (u8_value(value)? & 0x07);
+    }
+    Ok(flags)
+}
+
+fn igmp_report_flags_value(
+    igmp_fields: &Map<String, Value>,
+    report_fields: Option<&Map<String, Value>>,
+) -> ExampleResult<u16> {
+    if let Some(value) = optional_igmp_child(igmp_fields, report_fields, &["reserved_flags"]) {
+        return u16_value(value);
+    }
+    igmp_flags_value(
+        optional_igmp_child(igmp_fields, report_fields, &["report_flags"]),
+        &[
+            ("zero", 0),
+            ("none", 0),
+            ("extension", IGMP_V3_REPORT_FLAG_EXTENSION),
+            ("unassigned", 0x0001),
+        ],
+    )
+}
+
+fn igmp_flags_value(value: Option<&Value>, mapping: &[(&str, u16)]) -> ExampleResult<u16> {
+    let Some(value) = value else {
+        return Ok(0);
+    };
+    if let Some(items) = value.as_array() {
+        let mut flags = 0u16;
+        for item in items {
+            flags |= igmp_flag_value(item, mapping)?;
+        }
+        return Ok(flags);
+    }
+    igmp_flag_value(value, mapping)
+}
+
+fn igmp_flag_value(value: &Value, mapping: &[(&str, u16)]) -> ExampleResult<u16> {
+    if let Some(text) = value.as_str() {
+        let normalized = text.to_ascii_lowercase().replace([' ', '-'], "_");
+        for (name, bit) in mapping {
+            if normalized == *name {
+                return Ok(*bit);
+            }
+        }
+        return u16_text(&normalized);
+    }
+    u16_value(value)
+}
+
+fn igmp_record_type_code(value: &Value) -> ExampleResult<u8> {
+    if let Some(text) = value.as_str() {
+        return match text.to_ascii_lowercase().replace([' ', '-'], "_").as_str() {
+            "reserved" => Ok(0),
+            "mode_is_include" => Ok(IGMP_RECORD_TYPE_MODE_IS_INCLUDE),
+            "mode_is_exclude" => Ok(IGMP_RECORD_TYPE_MODE_IS_EXCLUDE),
+            "change_to_include_mode" => Ok(IGMP_RECORD_TYPE_CHANGE_TO_INCLUDE_MODE),
+            "change_to_exclude_mode" => Ok(IGMP_RECORD_TYPE_CHANGE_TO_EXCLUDE_MODE),
+            "allow_new_sources" => Ok(IGMP_RECORD_TYPE_ALLOW_NEW_SOURCES),
+            "block_old_sources" => Ok(IGMP_RECORD_TYPE_BLOCK_OLD_SOURCES),
+            "unknown" => Ok(0xc8),
+            _ => u8_text(text),
+        };
+    }
+    u8_value(value)
+}
+
+fn igmp_extension_type_code(value: &Value) -> ExampleResult<u16> {
+    if let Some(text) = value.as_str() {
+        return match text.to_ascii_lowercase().replace([' ', '-'], "_").as_str() {
+            "noop" | "no_op" => Ok(IGMP_EXTENSION_TYPE_NOOP),
+            "unassigned" => Ok(IGMP_EXTENSION_TYPE_UNASSIGNED_FIRST),
+            "experimental" => Ok(IGMP_EXTENSION_TYPE_EXPERIMENTAL_FIRST),
+            _ => u16_text(text),
+        };
+    }
+    u16_value(value)
+}
+
+fn igmp_ipv4_list(value: &Value) -> ExampleResult<Vec<Ipv4Addr>> {
+    if let Some(text) = value.as_str() {
+        return parse_ipv4_list(text);
+    }
+    array_values(value)?
+        .iter()
+        .map(|item| {
+            if let Some(fields) = item.as_object() {
+                igmp_ipv4_value(required(fields, &["address", "ip", "value"])?)
+            } else {
+                igmp_ipv4_value(item)
+            }
+        })
+        .collect::<ExampleResult<Vec<_>>>()
+}
+
+fn igmp_ipv4_value(value: &Value) -> ExampleResult<Ipv4Addr> {
+    let text = text_value(value)?;
+    Ok(match text.to_ascii_lowercase().as_str() {
+        "zero" | "zero_general_query" => Ipv4Addr::UNSPECIFIED,
+        "all_systems" => IGMP_ALL_SYSTEMS_GROUP,
+        "all_routers" => IGMP_ALL_ROUTERS_GROUP,
+        "all_snoopers" => Ipv4Addr::new(224, 0, 0, 106),
+        "documentation_multicast" => Ipv4Addr::new(233, 252, 0, 17),
+        "ssm_documentation_multicast" => Ipv4Addr::new(232, 0, 0, 17),
+        "non_multicast_override" => Ipv4Addr::new(192, 0, 2, 99),
+        "documentation_ipv4" => Ipv4Addr::new(192, 0, 2, 44),
+        _ => Ipv4Addr::from_str(text)?,
+    })
+}
+
+fn igmp_bytes_value(value: &Value) -> ExampleResult<Vec<u8>> {
+    if let Some(text) = value.as_str() {
+        return match text.to_ascii_lowercase().as_str() {
+            "empty" => Ok(Vec::new()),
+            "raw" => Ok(vec![0xde, 0xad, 0xbe, 0xef]),
+            "padded_to_word" => Ok(vec![0xaa, 0xbb, 0xcc, 0xdd]),
+            "unknown_type" => Ok(vec![0x75, 0x6e, 0x6b, 0x6e]),
+            "unsupported_assigned_type" => Ok(vec![0x64, 0x76, 0x6d, 0x72]),
+            "ignored_extra_octets" => Ok(vec![0xaa, 0xbb, 0xcc, 0xdd]),
+            "e_flag_clear_extension_bytes" => Ok(vec![0x00, 0x00, 0x00, 0x00]),
+            _ => option_bytes(value),
+        };
+    }
+    option_bytes(value)
+}
+
 fn dns_layer(plan: &Value) -> ExampleResult<Dns> {
     let fields = layer_fields(plan, "dns")?;
     let transaction_id = optional(fields, &["transaction_id", "id"])
@@ -3927,6 +4452,9 @@ fn canonical_layer(layer: &str) -> String {
             "ipv6_destination_options".to_string()
         }
         "ipv6-hop-by-hop" | "ipv6-hop-by-hop-options" => "ipv6_hop_by_hop".to_string(),
+        "igmp-query" | "igmpquery" => "igmp_query".to_string(),
+        "igmp-report" | "igmpreport" => "igmp_report".to_string(),
+        "igmp-extension" | "igmpextension" => "igmp_extension".to_string(),
         "loopback" | "null-loopback" => "null_loopback".to_string(),
         "raw" => "payload".to_string(),
         "udpoptions" | "udp-options" => "udp_options".to_string(),
@@ -3992,6 +4520,7 @@ fn ip_protocol(value: &Value) -> ExampleResult<u8> {
     if let Some(text) = value.as_str() {
         return match text.to_ascii_lowercase().as_str() {
             "icmp" => Ok(IPPROTO_ICMP),
+            "igmp" => Ok(IPPROTO_IGMP),
             "tcp" => Ok(IPPROTO_TCP),
             "udp" => Ok(IPPROTO_UDP),
             "payload" | "raw" | "unknown" => Ok(253),
@@ -4979,5 +5508,109 @@ mod dot11_materialization {
             .expect("RSN tag must parse");
         assert_eq!(rsn.group_cipher_suite(), RSN_CIPHER_SUITE_CCMP_128);
         assert_eq!(rsn.akm_suites(), &[RSN_AKM_SUITE_PSK]);
+    }
+}
+
+#[cfg(test)]
+mod igmp_materialization {
+    use super::{decode_hex, materialize_plan};
+    use crafter::prelude::*;
+    use crafter::protocols::igmp::IgmpExtension;
+    use serde_json::{json, Value};
+
+    fn raw_bytes(vector: &Value) -> Vec<u8> {
+        let raw_hex = vector
+            .get("raw_hex")
+            .and_then(Value::as_str)
+            .expect("vector must carry raw_hex bytes");
+        decode_hex(raw_hex).expect("raw_hex must decode")
+    }
+
+    #[test]
+    fn compact_igmp_report_plan_infers_report_and_extension_layers() {
+        let plan = json!({
+            "stack": ["ipv4", "igmp"],
+            "metadata": {"root_decoder": "l3:ipv4", "root": "l3:ipv4"},
+            "feature_tags": ["igmp", "igmp_v3_report"],
+            "strict_bytes": true,
+            "fields": {
+                "ipv4": {
+                    "src": "192.0.2.10",
+                    "dst": "224.0.0.2",
+                    "identification": 4919,
+                    "ttl": 1,
+                    "flags": "none",
+                    "protocol": "igmp"
+                },
+                "igmp": {
+                    "type": "v3_membership_report",
+                    "report_flags": ["extension"],
+                    "group_records": [
+                        {
+                            "record_type": "mode_is_include",
+                            "multicast_address": "233.252.0.17",
+                            "source_addresses": ["192.0.2.44"]
+                        }
+                    ],
+                    "extension_tlvs": [
+                        {
+                            "extension_type": "unassigned",
+                            "extension_value": {"hex": "0102"}
+                        }
+                    ]
+                }
+            }
+        });
+
+        let vector = materialize_plan(&plan).expect("IGMP report plan must materialize");
+        assert_eq!(vector.get("root").and_then(Value::as_str), Some("l3:ipv4"));
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, &raw_bytes(&vector))
+            .expect("materialized IGMP report must decode from l3");
+
+        decoded.layer::<Igmp>().expect("IGMP fixed header");
+        let report = decoded.layer::<IgmpReport>().expect("IGMP report body");
+        assert_eq!(report.number_of_group_records_value(), 1);
+        decoded
+            .layer::<IgmpExtension>()
+            .expect("IGMP extension TLV");
+    }
+
+    #[test]
+    fn explicit_igmp_query_plan_uses_child_layer_fields() {
+        let plan = json!({
+            "stack": ["ipv4", "igmp", "igmp_query"],
+            "metadata": {"root_decoder": "l3:ipv4", "root": "l3:ipv4"},
+            "feature_tags": ["igmp", "igmp_v3_query"],
+            "strict_bytes": true,
+            "fields": {
+                "ipv4": {
+                    "src": "192.0.2.10",
+                    "dst": "232.0.0.17",
+                    "identification": 4920,
+                    "ttl": 1,
+                    "flags": "none",
+                    "protocol": "igmp"
+                },
+                "igmp": {
+                    "type": "membership_query",
+                    "code": 100,
+                    "group_address": "232.0.0.17"
+                },
+                "igmp_query": {
+                    "suppress_router_side_processing": true,
+                    "qrv": 2,
+                    "qqic": 125,
+                    "source_addresses": ["192.0.2.44", "198.51.100.44"]
+                }
+            }
+        });
+
+        let vector = materialize_plan(&plan).expect("IGMP query plan must materialize");
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, &raw_bytes(&vector))
+            .expect("materialized IGMP query must decode from l3");
+        let query = decoded.layer::<IgmpQuery>().expect("IGMP query body");
+        assert!(query.suppress_router_side_processing());
+        assert_eq!(query.querier_robustness_variable_value(), 2);
+        assert_eq!(query.number_of_sources_value(), 2);
     }
 }

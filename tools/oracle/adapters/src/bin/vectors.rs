@@ -205,6 +205,10 @@ fn normalize_layer_name(layer: &str) -> String {
         "Dot1Q" => "vlan",
         "Ether" => "ethernet",
         "ICMP" => "icmp",
+        "Igmp" => "igmp",
+        "IgmpExtension" => "igmp_extension",
+        "IgmpQuery" => "igmp_query",
+        "IgmpReport" => "igmp_report",
         "IP" => "ipv4",
         "IPv6" => "ipv6",
         "IPv6ExtHdrFragment" => "ipv6_fragment",
@@ -512,5 +516,85 @@ mod icmpv4_oracle {
             decoded.compile().expect("recompile").as_bytes(),
             bytes.as_slice()
         );
+    }
+}
+
+#[cfg(test)]
+mod igmp_oracle {
+    //! Offline validation for the IGMP oracle vectors. The cases stay rooted at
+    //! documentation IPv4 addresses and only exercise libcrafter decode and
+    //! compile paths; no live traffic is emitted.
+
+    use super::cases;
+    use crafter::prelude::*;
+    use crafter::protocols::igmp::IgmpExtension;
+
+    fn decode_hex(hex: &str) -> Vec<u8> {
+        assert!(hex.len() % 2 == 0, "raw_hex must be even length");
+        (0..hex.len())
+            .step_by(2)
+            .map(|index| u8::from_str_radix(&hex[index..index + 2], 16).expect("valid hex"))
+            .collect()
+    }
+
+    fn igmp_vectors() -> Vec<cases::Vector> {
+        cases::build_cases()
+            .expect("oracle cases build")
+            .into_iter()
+            .filter(|vector| vector.name.starts_with("crafter-igmp-"))
+            .collect()
+    }
+
+    #[test]
+    fn igmp_oracle_vectors_roundtrip_strict_bytes() {
+        let vectors = igmp_vectors();
+        assert_eq!(vectors.len(), 4, "expected IGMP oracle coverage");
+        for vector in vectors {
+            assert_eq!(vector.root_decoder, "l3:ipv4", "{}", vector.name);
+            assert!(vector.strict_bytes, "{}", vector.name);
+            let bytes = decode_hex(&vector.raw_hex);
+            let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, &bytes)
+                .unwrap_or_else(|error| panic!("decode {}: {error}", vector.name));
+            assert!(
+                decoded.layer::<Igmp>().is_some(),
+                "missing typed IGMP layer for {}",
+                vector.name
+            );
+            assert_eq!(
+                decoded
+                    .compile()
+                    .unwrap_or_else(|error| panic!("recompile {}: {error}", vector.name))
+                    .as_bytes(),
+                bytes.as_slice(),
+                "byte-for-byte roundtrip failed for {}",
+                vector.name
+            );
+        }
+    }
+
+    #[test]
+    fn igmp_oracle_vectors_expose_typed_bodies() {
+        let vectors = igmp_vectors();
+        let find = |name: &str| {
+            vectors
+                .iter()
+                .find(|vector| vector.name == name)
+                .unwrap_or_else(|| panic!("missing oracle vector {name}"))
+        };
+
+        let query = find("crafter-igmp-v3-query-with-sources");
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, &decode_hex(&query.raw_hex))
+            .expect("decode IGMP query");
+        let query = decoded.layer::<IgmpQuery>().expect("typed IGMP query body");
+        assert_eq!(query.number_of_sources_value(), 2);
+
+        let report = find("crafter-igmp-v3-report-with-extension");
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, &decode_hex(&report.raw_hex))
+            .expect("decode IGMP report");
+        let report = decoded
+            .layer::<IgmpReport>()
+            .expect("typed IGMP report body");
+        assert_eq!(report.number_of_group_records_value(), 1);
+        assert!(decoded.layer::<IgmpExtension>().is_some());
     }
 }
