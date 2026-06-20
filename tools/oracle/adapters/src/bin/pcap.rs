@@ -3,6 +3,8 @@ use crafter::core::{
     Ipv6FragmentHeader, Ipv6MobileRoutingHeader, Ipv6RoutingHeader, Ipv6SegmentRoutingHeader,
     Layer, LinuxSll, LlcSnap, NullLoopback, Radiotap, Raw, Rip, Ripng, Tcp, Udp, Vlan,
 };
+use crafter::prelude::*;
+use crafter::protocols::igmp::IgmpExtension;
 use crafter::wire::backend::pcap::{
     PcapLinkType, PcapReader, PcapRecord, PcapTimestamp, PcapWriter, TimestampPrecision,
 };
@@ -434,6 +436,14 @@ fn normalized_layer_name(layer: &dyn Layer) -> String {
         "icmp"
     } else if layer.as_any().is::<Icmpv6>() {
         "icmpv6"
+    } else if layer.as_any().is::<Igmp>() {
+        "igmp"
+    } else if layer.as_any().is::<IgmpQuery>() {
+        "igmp_query"
+    } else if layer.as_any().is::<IgmpReport>() {
+        "igmp_report"
+    } else if layer.as_any().is::<IgmpExtension>() {
+        "igmp_extension"
     } else if layer.as_any().is::<Dns>() {
         "dns"
     } else if layer.as_any().is::<Dhcp>() {

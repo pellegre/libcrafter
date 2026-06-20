@@ -9,10 +9,12 @@ use crafter::core::{
     DNS_FLAG_QR_RESPONSE, DNS_FLAG_RECURSION_AVAILABLE, DNS_FLAG_RECURSION_DESIRED,
     DNS_FLAG_TRUNCATED,
 };
+use crafter::prelude::*;
 use crafter::protocols::bgp::{
     Bgp, BGP_HEADER_LEN, BGP_MARKER_LEN, BGP_TYPE_KEEPALIVE, BGP_TYPE_NOTIFICATION, BGP_TYPE_OPEN,
     BGP_TYPE_ROUTE_REFRESH, BGP_TYPE_UPDATE,
 };
+use crafter::protocols::igmp::IgmpExtension;
 use crafter::protocols::link::RadiotapFcsStatus;
 use crafter::protocols::rip::ripng::{Ripng, RipngRte};
 use crafter::protocols::rip::{Rip, RipAuth, RipAuthPayload, RipEntry, RIP_AFI_AUTH};
@@ -451,6 +453,14 @@ fn normalized_layer_name(layer: &dyn Layer) -> String {
         "icmp"
     } else if layer.as_any().is::<Icmpv6>() {
         "icmpv6"
+    } else if layer.as_any().is::<Igmp>() {
+        "igmp"
+    } else if layer.as_any().is::<IgmpQuery>() {
+        "igmp_query"
+    } else if layer.as_any().is::<IgmpReport>() {
+        "igmp_report"
+    } else if layer.as_any().is::<IgmpExtension>() {
+        "igmp_extension"
     } else if layer.as_any().is::<Dns>() {
         "dns"
     } else if layer.as_any().is::<Dhcp>() {
@@ -567,6 +577,18 @@ fn normalized_layer_fields(
     }
     if let Some(layer) = layer.as_any().downcast_ref::<Icmpv6>() {
         return icmpv6_fields(layer);
+    }
+    if let Some(layer) = layer.as_any().downcast_ref::<Igmp>() {
+        return igmp_fields(layer);
+    }
+    if let Some(layer) = layer.as_any().downcast_ref::<IgmpQuery>() {
+        return igmp_query_fields(layer);
+    }
+    if let Some(layer) = layer.as_any().downcast_ref::<IgmpReport>() {
+        return igmp_report_fields(layer);
+    }
+    if let Some(layer) = layer.as_any().downcast_ref::<IgmpExtension>() {
+        return igmp_extension_fields(layer);
     }
     if let Some(layer) = layer.as_any().downcast_ref::<Dns>() {
         return dns_fields(layer);
@@ -1625,6 +1647,224 @@ fn icmpv6_fields(layer: &Icmpv6) -> BTreeMap<String, Value> {
     fields
 }
 
+fn igmp_fields(layer: &Igmp) -> BTreeMap<String, Value> {
+    let type_code = layer.igmp_type_value();
+    let mut fields = map([
+        ("type", json!(type_code)),
+        ("type_label", json!(igmp_type_label(type_code))),
+        ("code", json!(layer.code_value())),
+        (
+            "code_label",
+            json!(igmp_code_label(type_code, layer.code_value())),
+        ),
+        ("checksum_status", json!(layer.checksum_status().label())),
+    ]);
+    if let Some(value) = layer.checksum_value() {
+        fields.insert("checksum".to_string(), json!(value));
+    }
+    if type_code == IGMP_TYPE_MULTICAST_ROUTER_ADVERTISEMENT {
+        fields.insert(
+            "mrd_query_interval".to_string(),
+            json!(layer.mrd_query_interval_value()),
+        );
+        fields.insert(
+            "mrd_robustness_variable".to_string(),
+            json!(layer.mrd_robustness_variable_value()),
+        );
+    } else if !matches!(
+        type_code,
+        IGMP_TYPE_MULTICAST_ROUTER_SOLICITATION | IGMP_TYPE_MULTICAST_ROUTER_TERMINATION
+    ) {
+        fields.insert(
+            "group_address".to_string(),
+            json!(layer.group_address_value().to_string()),
+        );
+    }
+    fields
+}
+
+fn igmp_query_fields(layer: &IgmpQuery) -> BTreeMap<String, Value> {
+    let flags = layer.raw_flags_qrv_value();
+    map([
+        ("query_flags", json!(flags)),
+        ("query_flag_labels", json!(igmp_query_flag_labels(flags))),
+        (
+            "suppress_router_side_processing",
+            json!(layer.suppress_router_side_processing()),
+        ),
+        (
+            "querier_robustness_variable",
+            json!(layer.querier_robustness_variable_value()),
+        ),
+        ("qqic", json!(layer.qqic_value())),
+        ("number_of_sources", json!(layer.number_of_sources_value())),
+        (
+            "source_addresses",
+            json!(layer
+                .source_addresses()
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()),
+        ),
+    ])
+}
+
+fn igmp_report_fields(layer: &IgmpReport) -> BTreeMap<String, Value> {
+    let flags = layer.report_flags_value();
+    map([
+        ("report_flags", json!(flags)),
+        ("report_flag_labels", json!(igmp_report_flag_labels(flags))),
+        (
+            "number_of_group_records",
+            json!(layer.number_of_group_records_value()),
+        ),
+        (
+            "group_records",
+            json!(layer
+                .group_records()
+                .iter()
+                .map(igmp_group_record_fields)
+                .collect::<Vec<_>>()),
+        ),
+    ])
+}
+
+fn igmp_group_record_fields(record: &IgmpGroupRecord) -> Value {
+    json!({
+        "record_type": record.record_type_value(),
+        "record_type_label": igmp_record_type_label(record.record_type_value()),
+        "auxiliary_data_len": record.auxiliary_data_len_value(),
+        "number_of_sources": record.number_of_sources_value(),
+        "multicast_address": record.multicast_address_value().to_string(),
+        "source_addresses": record
+            .source_addresses()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>(),
+        "auxiliary_data": igmp_bytes_fields(record.auxiliary_data()),
+    })
+}
+
+fn igmp_extension_fields(layer: &IgmpExtension) -> BTreeMap<String, Value> {
+    map([
+        ("extension_type", json!(layer.extension_type_value())),
+        (
+            "extension_type_label",
+            json!(igmp_extension_type_label(layer.extension_type_value())),
+        ),
+        ("extension_length", json!(layer.extension_length_value())),
+        ("extension_value", igmp_bytes_fields(layer.value_bytes())),
+    ])
+}
+
+fn igmp_type_label(type_code: u8) -> &'static str {
+    match type_code {
+        IGMP_TYPE_RESERVED => "reserved",
+        IGMP_TYPE_MEMBERSHIP_QUERY => "membership_query",
+        IGMP_TYPE_V1_MEMBERSHIP_REPORT => "v1_membership_report",
+        IGMP_TYPE_DVMRP => "dvmrp_unsupported_assigned",
+        IGMP_TYPE_PIM_V1 => "pim_v1_unsupported_assigned",
+        IGMP_TYPE_CISCO_TRACE_MESSAGES => "cisco_trace_unsupported_assigned",
+        IGMP_TYPE_V2_MEMBERSHIP_REPORT => "v2_membership_report",
+        IGMP_TYPE_V2_LEAVE_GROUP => "v2_leave_group",
+        IGMP_TYPE_MULTICAST_TRACEROUTE_RESPONSE => {
+            "multicast_traceroute_response_unsupported_assigned"
+        }
+        IGMP_TYPE_MULTICAST_TRACEROUTE => "multicast_traceroute_unsupported_assigned",
+        IGMP_TYPE_V3_MEMBERSHIP_REPORT => "v3_membership_report",
+        IGMP_TYPE_MULTICAST_ROUTER_ADVERTISEMENT => "multicast_router_advertisement",
+        IGMP_TYPE_MULTICAST_ROUTER_SOLICITATION => "multicast_router_solicitation",
+        IGMP_TYPE_MULTICAST_ROUTER_TERMINATION => "multicast_router_termination",
+        IGMP_TYPE_EXPERIMENTAL_FIRST..=IGMP_TYPE_EXPERIMENTAL_LAST => "experimental",
+        _ => "unassigned",
+    }
+}
+
+fn igmp_code_label(type_code: u8, code: u8) -> &'static str {
+    if type_code == IGMP_TYPE_MEMBERSHIP_QUERY {
+        if code == 0 {
+            return "v1_query_zero";
+        }
+        return "v2_or_v3_max_response_code";
+    }
+    if type_code == IGMP_TYPE_MULTICAST_ROUTER_ADVERTISEMENT {
+        return "mrd_advertisement_interval";
+    }
+    if matches!(
+        type_code,
+        IGMP_TYPE_MULTICAST_ROUTER_SOLICITATION | IGMP_TYPE_MULTICAST_ROUTER_TERMINATION
+    ) {
+        return if code == 0 {
+            "mrd_reserved"
+        } else {
+            "explicit_override"
+        };
+    }
+    if code == 0 {
+        "reserved_zero"
+    } else {
+        "explicit_override"
+    }
+}
+
+fn igmp_record_type_label(record_type: u8) -> &'static str {
+    match record_type {
+        0 => "reserved",
+        IGMP_RECORD_TYPE_MODE_IS_INCLUDE => "mode_is_include",
+        IGMP_RECORD_TYPE_MODE_IS_EXCLUDE => "mode_is_exclude",
+        IGMP_RECORD_TYPE_CHANGE_TO_INCLUDE_MODE => "change_to_include_mode",
+        IGMP_RECORD_TYPE_CHANGE_TO_EXCLUDE_MODE => "change_to_exclude_mode",
+        IGMP_RECORD_TYPE_ALLOW_NEW_SOURCES => "allow_new_sources",
+        IGMP_RECORD_TYPE_BLOCK_OLD_SOURCES => "block_old_sources",
+        _ => "unknown",
+    }
+}
+
+fn igmp_extension_type_label(extension_type: u16) -> &'static str {
+    match extension_type {
+        IGMP_EXTENSION_TYPE_NOOP => "noop",
+        IGMP_EXTENSION_TYPE_EXPERIMENTAL_FIRST..=IGMP_EXTENSION_TYPE_EXPERIMENTAL_LAST => {
+            "experimental"
+        }
+        _ => "unassigned",
+    }
+}
+
+fn igmp_query_flag_labels(flags: u8) -> Vec<&'static str> {
+    let mut labels = Vec::new();
+    if flags & IGMP_V3_QUERY_FLAG_EXTENSION != 0 {
+        labels.push("extension");
+    }
+    if flags & IGMP_V3_QUERY_FLAGS_UNASSIGNED_MASK != 0 {
+        labels.push("unassigned");
+    }
+    if flags & 0x08 != 0 {
+        labels.push("suppress_router_side_processing");
+    }
+    if flags & 0x07 != 0 {
+        labels.push("qrv");
+    }
+    labels
+}
+
+fn igmp_report_flag_labels(flags: u16) -> Vec<&'static str> {
+    let mut labels = Vec::new();
+    if flags & IGMP_V3_REPORT_FLAG_EXTENSION != 0 {
+        labels.push("extension");
+    }
+    if flags & IGMP_V3_REPORT_FLAGS_UNASSIGNED_MASK != 0 {
+        labels.push("unassigned");
+    }
+    labels
+}
+
+fn igmp_bytes_fields(bytes: &[u8]) -> Value {
+    json!({
+        "hex": hex_bytes(bytes),
+        "length": bytes.len(),
+    })
+}
+
 fn dns_fields(layer: &Dns) -> BTreeMap<String, Value> {
     map([
         ("transaction_id", json!(layer.id_value())),
@@ -1991,4 +2231,98 @@ fn hex_bytes(bytes: &[u8]) -> String {
         out.push_str(&format!("{byte:02x}"));
     }
     out
+}
+
+#[cfg(test)]
+mod igmp_decode_tests {
+    use super::{hex_bytes, normalize_packet};
+    use crafter::prelude::*;
+    use crafter::protocols::igmp::{IgmpExtension, IGMP_ALL_ROUTERS_GROUP};
+    use serde_json::json;
+    use std::net::Ipv4Addr;
+
+    const SRC: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 10);
+    const IGMP_SSM_GROUP: Ipv4Addr = Ipv4Addr::new(232, 0, 0, 17);
+    const IGMP_SOURCE_A: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 44);
+    const IGMP_SOURCE_B: Ipv4Addr = Ipv4Addr::new(198, 51, 100, 44);
+
+    #[test]
+    fn igmp_query_layers_emit_normalized_fields() {
+        let packet = Ipv4::new()
+            .src(SRC)
+            .dst(IGMP_SSM_GROUP)
+            .ttl(1)
+            .protocol(IPPROTO_IGMP)
+            / Igmp::membership_query()
+                .with_max_response_code(100)
+                .with_group_address(IGMP_SSM_GROUP)
+            / IgmpQuery::new()
+                .with_suppress_router_side_processing(true)
+                .with_qrv(2)
+                .with_qqic(125)
+                .with_source_addresses(vec![IGMP_SOURCE_A, IGMP_SOURCE_B]);
+        let bytes = packet.compile().expect("compile IGMP query");
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes())
+            .expect("decode IGMP query");
+        let model = normalize_packet(
+            &decoded,
+            Some("l3:ipv4".to_string()),
+            hex_bytes(bytes.as_bytes()),
+            vec!["igmp".to_string()],
+        );
+
+        assert_eq!(model.layers, ["ipv4", "igmp", "igmp_query"]);
+        assert_eq!(
+            model.fields["igmp"]["type_label"],
+            json!("membership_query")
+        );
+        assert_eq!(model.fields["igmp_query"]["query_flags"], json!(10));
+        assert_eq!(
+            model.fields["igmp_query"]["source_addresses"],
+            json!(["192.0.2.44", "198.51.100.44"])
+        );
+    }
+
+    #[test]
+    fn igmp_report_and_extension_emit_nested_normalized_fields() {
+        let record = IgmpGroupRecord::allow_new_sources(IGMP_SSM_GROUP)
+            .with_source_addresses(vec![IGMP_SOURCE_A])
+            .with_auxiliary_data(vec![0xaa, 0xbb, 0xcc, 0xdd]);
+        let packet = Ipv4::new()
+            .src(SRC)
+            .dst(IGMP_ALL_ROUTERS_GROUP)
+            .ttl(1)
+            .protocol(IPPROTO_IGMP)
+            / Igmp::v3_membership_report()
+            / IgmpReport::new()
+                .with_extension_flag(true)
+                .with_group_record(record)
+            / IgmpExtension::raw(IGMP_EXTENSION_TYPE_UNASSIGNED_FIRST, vec![0x01, 0x02]);
+        let bytes = packet.compile().expect("compile IGMP report");
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes())
+            .expect("decode IGMP report");
+        let model = normalize_packet(
+            &decoded,
+            Some("l3:ipv4".to_string()),
+            hex_bytes(bytes.as_bytes()),
+            vec!["igmp".to_string()],
+        );
+
+        assert_eq!(
+            model.layers,
+            ["ipv4", "igmp", "igmp_report", "igmp_extension"]
+        );
+        assert_eq!(
+            model.fields["igmp_report"]["report_flag_labels"],
+            json!(["extension"])
+        );
+        assert_eq!(
+            model.fields["igmp_report"]["group_records"][0]["record_type_label"],
+            json!("allow_new_sources")
+        );
+        assert_eq!(
+            model.fields["igmp_extension"]["extension_value"],
+            json!({"hex": "0102", "length": 2})
+        );
+    }
 }

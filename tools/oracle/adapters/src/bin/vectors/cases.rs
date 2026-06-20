@@ -1,4 +1,5 @@
 use crafter::prelude::*;
+use crafter::protocols::igmp::{IgmpExtension, IGMP_ALL_ROUTERS_GROUP, IGMP_ALL_SYSTEMS_GROUP};
 use serde_json::{json, Value};
 use std::error::Error;
 use std::net::{Ipv4Addr, Ipv6Addr};
@@ -11,6 +12,11 @@ const SRC_IPV4: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 10);
 const DST_IPV4: Ipv4Addr = Ipv4Addr::new(198, 51, 100, 20);
 const GW_IPV4: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 1);
 const DNS_IPV4: Ipv4Addr = Ipv4Addr::new(198, 51, 100, 53);
+const IGMP_GROUP: Ipv4Addr = Ipv4Addr::new(233, 252, 0, 17);
+const IGMP_SSM_GROUP: Ipv4Addr = Ipv4Addr::new(232, 0, 0, 17);
+const IGMP_SOURCE_A: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 44);
+const IGMP_SOURCE_B: Ipv4Addr = Ipv4Addr::new(198, 51, 100, 44);
+const IGMP_ALL_SNOOPERS_GROUP: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 106);
 
 pub(crate) struct Vector {
     pub(crate) name: &'static str,
@@ -52,6 +58,10 @@ pub(crate) fn build_cases() -> ExampleResult<Vec<Vector>> {
         crafter_ipv4_ttl_255()?,
         crafter_ipv4_options()?,
         crafter_ipv4_source_route_traceroute()?,
+        crafter_igmp_v2_membership_query()?,
+        crafter_igmp_v3_query_with_sources()?,
+        crafter_igmp_v3_report_with_extension()?,
+        crafter_igmp_mrd_advertisement()?,
         crafter_ipv6_boundary_fields()?,
         crafter_ipv6_unknown_next_header_raw()?,
         crafter_ipv6_fragment_udp()?,
@@ -882,6 +892,182 @@ fn crafter_ipv4_source_route_traceroute() -> ExampleResult<Vector> {
                 "Raw",
                 json!({
                     "load": bytes_field(b"srtrace")
+                }),
+            ),
+        ],
+    )
+}
+
+fn igmp_ipv4(dst: Ipv4Addr, id: u16) -> Ipv4 {
+    Ipv4::new()
+        .src(SRC_IPV4)
+        .dst(dst)
+        .id(id)
+        .ttl(1)
+        .protocol(IPPROTO_IGMP)
+}
+
+fn crafter_igmp_v2_membership_query() -> ExampleResult<Vector> {
+    let packet = igmp_ipv4(IGMP_ALL_SYSTEMS_GROUP, 0x1320)
+        / Igmp::membership_query()
+            .with_max_response_code(100)
+            .with_group_address(Ipv4Addr::UNSPECIFIED);
+
+    vector(
+        "crafter-igmp-v2-membership-query",
+        "igmp",
+        "l3:ipv4",
+        vec!["IP", "Igmp"],
+        "IP / IGMP membership-query",
+        packet,
+        vec![
+            fields(
+                "IP",
+                json!({
+                    "ttl": 1,
+                    "proto": IPPROTO_IGMP,
+                    "dst": IGMP_ALL_SYSTEMS_GROUP.to_string()
+                }),
+            ),
+            fields(
+                "Igmp",
+                json!({
+                    "type": IGMP_TYPE_MEMBERSHIP_QUERY,
+                    "type_label": "membership_query",
+                    "code": 100,
+                    "code_label": "v2_or_v3_max_response_code",
+                    "group_address": Ipv4Addr::UNSPECIFIED.to_string()
+                }),
+            ),
+        ],
+    )
+}
+
+fn crafter_igmp_v3_query_with_sources() -> ExampleResult<Vector> {
+    let query = IgmpQuery::new()
+        .with_suppress_router_side_processing(true)
+        .with_qrv(2)
+        .with_qqic(125)
+        .with_source_addresses(vec![IGMP_SOURCE_A, IGMP_SOURCE_B]);
+    let packet = igmp_ipv4(IGMP_SSM_GROUP, 0x1321)
+        / Igmp::membership_query()
+            .with_max_response_code(100)
+            .with_group_address(IGMP_SSM_GROUP)
+        / query;
+
+    vector(
+        "crafter-igmp-v3-query-with-sources",
+        "igmp",
+        "l3:ipv4",
+        vec!["IP", "Igmp", "IgmpQuery"],
+        "IP / IGMPv3 membership-query with sources",
+        packet,
+        vec![
+            fields(
+                "Igmp",
+                json!({
+                    "type": IGMP_TYPE_MEMBERSHIP_QUERY,
+                    "code": 100,
+                    "group_address": IGMP_SSM_GROUP.to_string()
+                }),
+            ),
+            fields(
+                "IgmpQuery",
+                json!({
+                    "query_flags": 10,
+                    "query_flag_labels": ["suppress_router_side_processing", "qrv"],
+                    "suppress_router_side_processing": true,
+                    "querier_robustness_variable": 2,
+                    "qqic": 125,
+                    "number_of_sources": 2,
+                    "source_addresses": [
+                        IGMP_SOURCE_A.to_string(),
+                        IGMP_SOURCE_B.to_string()
+                    ]
+                }),
+            ),
+        ],
+    )
+}
+
+fn crafter_igmp_v3_report_with_extension() -> ExampleResult<Vector> {
+    let record = IgmpGroupRecord::allow_new_sources(IGMP_GROUP)
+        .with_source_addresses(vec![IGMP_SOURCE_A])
+        .with_auxiliary_data(vec![0xaa, 0xbb, 0xcc, 0xdd]);
+    let packet = igmp_ipv4(IGMP_ALL_ROUTERS_GROUP, 0x1322)
+        / Igmp::v3_membership_report()
+        / IgmpReport::new()
+            .with_extension_flag(true)
+            .with_group_record(record)
+        / IgmpExtension::raw(IGMP_EXTENSION_TYPE_UNASSIGNED_FIRST, vec![0x01, 0x02]);
+
+    vector(
+        "crafter-igmp-v3-report-with-extension",
+        "igmp",
+        "l3:ipv4",
+        vec!["IP", "Igmp", "IgmpReport", "IgmpExtension"],
+        "IP / IGMPv3 membership-report / IGMP extension",
+        packet,
+        vec![
+            fields(
+                "Igmp",
+                json!({
+                    "type": IGMP_TYPE_V3_MEMBERSHIP_REPORT,
+                    "type_label": "v3_membership_report"
+                }),
+            ),
+            fields(
+                "IgmpReport",
+                json!({
+                    "report_flags": IGMP_V3_REPORT_FLAG_EXTENSION,
+                    "report_flag_labels": ["extension"],
+                    "number_of_group_records": 1
+                }),
+            ),
+            fields(
+                "IgmpExtension",
+                json!({
+                    "extension_type": IGMP_EXTENSION_TYPE_UNASSIGNED_FIRST,
+                    "extension_type_label": "unassigned",
+                    "extension_length": 2,
+                    "extension_value": {
+                        "hex": "0102",
+                        "length": 2
+                    }
+                }),
+            ),
+        ],
+    )
+}
+
+fn crafter_igmp_mrd_advertisement() -> ExampleResult<Vector> {
+    let packet = igmp_ipv4(IGMP_ALL_SNOOPERS_GROUP, 0x1323) / Igmp::mrd_advertisement(20, 125, 2);
+
+    vector(
+        "crafter-igmp-mrd-advertisement",
+        "igmp",
+        "l3:ipv4",
+        vec!["IP", "Igmp"],
+        "IP / IGMP multicast-router-advertisement",
+        packet,
+        vec![
+            fields(
+                "IP",
+                json!({
+                    "ttl": 1,
+                    "proto": IPPROTO_IGMP,
+                    "dst": IGMP_ALL_SNOOPERS_GROUP.to_string()
+                }),
+            ),
+            fields(
+                "Igmp",
+                json!({
+                    "type": IGMP_TYPE_MULTICAST_ROUTER_ADVERTISEMENT,
+                    "type_label": "multicast_router_advertisement",
+                    "code": 20,
+                    "code_label": "mrd_advertisement_interval",
+                    "mrd_query_interval": 125,
+                    "mrd_robustness_variable": 2
                 }),
             ),
         ],
