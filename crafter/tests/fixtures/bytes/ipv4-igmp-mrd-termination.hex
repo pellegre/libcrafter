@@ -1,0 +1,6 @@
+# IPv4 / IGMP multicast router discovery Termination fixture.
+# RFC 4286 Type 0x32 with a zero Reserved field. IPv4 uses TTL 1 and the
+# All-Snoopers destination.
+# Source uses RFC 5737 documentation space; this is not captured live traffic.
+45 00 00 18 17 13 00 00 01 02 00 0b c0 00 02 5c e0 00 00 6a
+32 00 cd ff

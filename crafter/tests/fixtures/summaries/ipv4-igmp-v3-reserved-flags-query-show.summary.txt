@@ -21,15 +21,15 @@ Packet(len=36, layers=3)
       version: IGMPv2/v3 query
       type: 0x11 (IGMP Membership Query)
       code: 0x64 (Max Response Time)
-      checksum: 0x4ca0
-      checksum_status: valid
       group_address: 233.252.0.62 (multicast)
+      checksum: 0xcca0
+      checksum_status: valid
       length: 8
   [2] IgmpQuery
       version: IGMPv3
-      flags_s_qrv: 0xf5
-      query_flags: 0xf0
-      extension_flag: true
+      flags_s_qrv: 0x75
+      query_flags: 0x70
+      extension_flag: false
       suppress_router_side_processing: false
       querier_robustness_variable: 5
       qqic: 0x7d

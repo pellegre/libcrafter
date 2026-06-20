@@ -975,7 +975,7 @@ mod igmp_v3_query_flags {
             252,
             0,
             36,
-            0xf5,
+            0x75,
             0x7d,
             0x00,
             0x01,
@@ -988,13 +988,13 @@ mod igmp_v3_query_flags {
         let decoded = append_igmp_packet(Packet::new(), &bytes).expect("decode IGMPv3 query");
         let query = decoded.layer::<IgmpQuery>().expect("IGMPv3 query body");
 
-        assert_eq!(query.raw_flags_qrv_value(), 0xf5);
-        assert_eq!(query.query_flags_value(), IGMP_V3_QUERY_FLAGS_MASK);
+        assert_eq!(query.raw_flags_qrv_value(), 0x75);
+        assert_eq!(query.query_flags_value(), IGMP_V3_QUERY_FLAGS_UNASSIGNED_MASK);
         assert_eq!(
             query.unassigned_query_flags_value(),
             IGMP_V3_QUERY_FLAGS_UNASSIGNED_MASK
         );
-        assert!(query.extension_flag());
+        assert!(!query.extension_flag());
         assert!(!query.suppress_router_side_processing());
         assert_eq!(query.querier_robustness_variable(), 5);
         assert_eq!(query.qqic_value(), 0x7d);

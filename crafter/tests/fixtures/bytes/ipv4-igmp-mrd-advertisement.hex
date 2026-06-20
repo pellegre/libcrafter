@@ -1,0 +1,6 @@
+# IPv4 / IGMP multicast router discovery Advertisement fixture.
+# RFC 4286 Type 0x30 with Advertisement Interval 20s, Query Interval 125s,
+# and Robustness Variable 2. IPv4 uses TTL 1 and the All-Snoopers destination.
+# Source uses RFC 5737 documentation space; this is not captured live traffic.
+45 00 00 1c 17 11 00 00 01 02 00 0b c0 00 02 5a e0 00 00 6a
+30 14 cf 6c 00 7d 00 02

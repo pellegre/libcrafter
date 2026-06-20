@@ -1,0 +1,26 @@
+Packet(len=24, layers=2)
+  [0] Ipv4
+      version: 4
+      ihl: 5
+      tos: 0
+      dscp: 0
+      ecn: Not-ECT
+      total_length: 24
+      id: 0x1713
+      flags: none
+      fragment_offset: 0
+      ttl: 1
+      protocol: igmp(2)
+      checksum: 0x000b
+      checksum_status: valid
+      src: 192.0.2.92
+      dst: 224.0.0.106
+      option_count: 0
+      options: 
+  [1] Igmp
+      version: MRD
+      type: 0x32 (Multicast Router Termination)
+      reserved: 0x00
+      checksum: 0xcdff
+      checksum_status: valid
+      length: 4

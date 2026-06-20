@@ -6,22 +6,23 @@ Packet(len=28, layers=2)
       dscp: 0
       ecn: Not-ECT
       total_length: 28
-      id: 0x1703
+      id: 0x1711
       flags: none
       fragment_offset: 0
       ttl: 1
       protocol: igmp(2)
-      checksum: 0x00be
+      checksum: 0x000b
       checksum_status: valid
-      src: 192.0.2.30
-      dst: 224.0.0.1
+      src: 192.0.2.90
+      dst: 224.0.0.106
       option_count: 0
       options: 
   [1] Igmp
-      version: IGMPv2/v3 query
-      type: 0x11 (IGMP Membership Query)
-      code: 0x64 (Max Response Time)
-      group_address: 0.0.0.0 (zero)
-      checksum: 0xee9b
+      version: MRD
+      type: 0x30 (Multicast Router Advertisement)
+      advertisement_interval: 20s
+      query_interval: 125s
+      robustness_variable: 2
+      checksum: 0xcf6c
       checksum_status: valid
       length: 8

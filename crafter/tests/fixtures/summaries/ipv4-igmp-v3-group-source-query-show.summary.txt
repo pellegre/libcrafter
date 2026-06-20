@@ -21,9 +21,9 @@ Packet(len=40, layers=3)
       version: IGMPv2/v3 query
       type: 0x11 (IGMP Membership Query)
       code: 0x7d (Max Response Time)
+      group_address: 233.252.0.61 (multicast)
       checksum: 0x9376
       checksum_status: valid
-      group_address: 233.252.0.61 (multicast)
       length: 8
   [2] IgmpQuery
       version: IGMPv3
