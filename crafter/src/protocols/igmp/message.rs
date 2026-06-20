@@ -8,6 +8,7 @@
 use core::any::Any;
 use core::net::Ipv4Addr;
 use core::ops::Div;
+use core::time::Duration;
 
 use crate::checksum::internet_checksum;
 use crate::error::Result;
@@ -124,6 +125,21 @@ impl Igmp {
         self.with_code(max_response_code)
     }
 
+    /// Set the IGMPv2 Max Response Time in tenths of a second.
+    ///
+    /// RFC 2236 interprets the Membership Query second octet linearly in
+    /// tenths of a second. The value is still the raw Code/Max Response octet,
+    /// so every byte value remains representable for compatibility and
+    /// malformed-packet construction.
+    pub fn with_v2_max_response_time_tenths(self, tenths: u8) -> Self {
+        self.with_code(tenths)
+    }
+
+    /// Compatibility alias for IGMPv2 Max Response Time.
+    pub fn with_max_response_time_tenths(self, tenths: u8) -> Self {
+        self.with_v2_max_response_time_tenths(tenths)
+    }
+
     /// Set the IGMP checksum explicitly.
     pub fn checksum(mut self, checksum: u16) -> Self {
         self.checksum.set_user(checksum);
@@ -176,6 +192,25 @@ impl Igmp {
         self.code_value()
     }
 
+    /// IGMPv2 Max Response Time as the raw number of tenths of a second.
+    ///
+    /// This returns the common Code/Max Response octet for every Type. Reports,
+    /// leave messages, and intentionally malformed packets can therefore be
+    /// decoded and re-emitted without losing the raw byte.
+    pub fn v2_max_response_time_tenths(&self) -> u8 {
+        self.code_value()
+    }
+
+    /// Compatibility alias for the IGMPv2 Max Response Time raw tenths value.
+    pub fn max_response_time_tenths(&self) -> u8 {
+        self.v2_max_response_time_tenths()
+    }
+
+    /// IGMPv2 Max Response Time as a [`Duration`].
+    pub fn v2_max_response_time(&self) -> Duration {
+        Duration::from_millis(u64::from(self.v2_max_response_time_tenths()) * 100)
+    }
+
     /// Source-backed scoped Code registry metadata.
     pub fn code_meta(&self) -> IgmpCodeMeta {
         igmp_code_meta(self.igmp_type_value(), self.code_value())
@@ -203,6 +238,11 @@ impl Igmp {
 
     /// Assignment state for the Max Response Code alias of the Code field.
     pub fn max_response_code_state(&self) -> FieldState {
+        self.code_state()
+    }
+
+    /// Assignment state for the IGMPv2 Max Response Time alias of the Code field.
+    pub fn v2_max_response_time_state(&self) -> FieldState {
         self.code_state()
     }
 
@@ -616,5 +656,117 @@ mod igmp_builders {
         assert_eq!(&bytes[2..4], &0x1234u16.to_be_bytes());
         assert_eq!(&bytes[4..8], &group.octets());
         assert!(!verify_internet_checksum(&bytes));
+    }
+}
+
+#[cfg(test)]
+mod igmp_v2_max_response {
+    use super::*;
+    use crate::field::FieldState;
+    use crate::packet::Packet;
+    use crate::protocols::igmp::constants::{
+        IGMP_TYPE_MEMBERSHIP_QUERY, IGMP_TYPE_V2_MEMBERSHIP_REPORT,
+    };
+    use crate::protocols::igmp::decode::decode;
+
+    fn compile_layer(igmp: Igmp) -> Vec<u8> {
+        Packet::from_layer(igmp)
+            .compile()
+            .expect("compile IGMP max-response case")
+            .as_bytes()
+            .to_vec()
+    }
+
+    #[test]
+    fn igmp_v2_max_response_defaults_to_v1_compatibility_zero() {
+        let igmp = Igmp::default();
+
+        assert_eq!(igmp.code_value(), 0);
+        assert_eq!(igmp.max_response_code_value(), 0);
+        assert_eq!(igmp.v2_max_response_time_tenths(), 0);
+        assert_eq!(igmp.max_response_time_tenths(), 0);
+        assert_eq!(igmp.v2_max_response_time(), Duration::ZERO);
+        assert_eq!(igmp.v2_max_response_time_state(), FieldState::Defaulted);
+
+        let bytes = compile_layer(igmp);
+        assert_eq!(bytes[0], IGMP_TYPE_MEMBERSHIP_QUERY);
+        assert_eq!(bytes[1], 0);
+    }
+
+    #[test]
+    fn igmp_v2_max_response_explicit_time_sets_the_raw_octet() {
+        let igmp = Igmp::membership_query().with_v2_max_response_time_tenths(10);
+
+        assert_eq!(igmp.code_value(), 10);
+        assert_eq!(igmp.max_response_code_value(), 10);
+        assert_eq!(igmp.v2_max_response_time_tenths(), 10);
+        assert_eq!(igmp.max_response_time_tenths(), 10);
+        assert_eq!(igmp.v2_max_response_time(), Duration::from_secs(1));
+        assert_eq!(igmp.v2_max_response_time_state(), FieldState::User);
+
+        let bytes = compile_layer(igmp);
+        assert_eq!(bytes[0], IGMP_TYPE_MEMBERSHIP_QUERY);
+        assert_eq!(bytes[1], 10);
+    }
+
+    #[test]
+    fn igmp_v2_max_response_boundaries_remain_representable() {
+        let explicit_zero = Igmp::new().with_max_response_time_tenths(0);
+        let max = Igmp::new().with_v2_max_response_time_tenths(u8::MAX);
+
+        assert_eq!(explicit_zero.v2_max_response_time_tenths(), 0);
+        assert_eq!(explicit_zero.v2_max_response_time(), Duration::ZERO);
+        assert_eq!(explicit_zero.v2_max_response_time_state(), FieldState::User);
+
+        assert_eq!(max.code_value(), u8::MAX);
+        assert_eq!(max.max_response_code_value(), u8::MAX);
+        assert_eq!(max.v2_max_response_time_tenths(), u8::MAX);
+        assert_eq!(max.v2_max_response_time(), Duration::from_millis(25_500));
+
+        assert_eq!(compile_layer(explicit_zero)[1], 0);
+        assert_eq!(compile_layer(max)[1], u8::MAX);
+    }
+
+    #[test]
+    fn igmp_v2_max_response_decoded_values_preserve_raw_octet_for_any_type() {
+        let query = [
+            IGMP_TYPE_MEMBERSHIP_QUERY,
+            200,
+            0x00,
+            0x00,
+            239,
+            1,
+            2,
+            3,
+        ];
+        let report = [
+            IGMP_TYPE_V2_MEMBERSHIP_REPORT,
+            0xfe,
+            0x00,
+            0x00,
+            224,
+            0,
+            0,
+            22,
+        ];
+
+        let decoded_query = decode(&query).expect("decode query");
+        let decoded_report = decode(&report).expect("decode report");
+
+        assert_eq!(decoded_query.v2_max_response_time_tenths(), 200);
+        assert_eq!(
+            decoded_query.v2_max_response_time(),
+            Duration::from_millis(20_000)
+        );
+        assert_eq!(decoded_query.v2_max_response_time_state(), FieldState::User);
+
+        assert_eq!(decoded_report.igmp_type(), IgmpType::V2MembershipReport);
+        assert_eq!(decoded_report.code_value(), 0xfe);
+        assert_eq!(decoded_report.max_response_code_value(), 0xfe);
+        assert_eq!(decoded_report.v2_max_response_time_tenths(), 0xfe);
+        assert_eq!(decoded_report.v2_max_response_time_state(), FieldState::User);
+
+        assert_eq!(compile_layer(decoded_query), query);
+        assert_eq!(compile_layer(decoded_report), report);
     }
 }
