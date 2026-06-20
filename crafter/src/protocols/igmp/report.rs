@@ -11,7 +11,10 @@ use crate::error::Result;
 use crate::field::{Field, FieldState};
 use crate::packet::{IntoPacket, Layer, LayerContext, Packet};
 
-use super::constants::{IGMP_DEFAULT_GROUP_RECORD_COUNT, IGMP_DEFAULT_REPORT_FLAGS};
+use super::constants::{
+    IGMP_DEFAULT_GROUP_RECORD_COUNT, IGMP_DEFAULT_REPORT_FLAGS, IGMP_V3_REPORT_FLAGS_MASK,
+    IGMP_V3_REPORT_FLAGS_UNASSIGNED_MASK, IGMP_V3_REPORT_FLAG_EXTENSION,
+};
 use super::message::Igmp;
 use super::record::IgmpGroupRecord;
 
@@ -57,6 +60,34 @@ impl IgmpReport {
         self.with_reserved_flags(report_flags)
     }
 
+    /// Set or clear one report flag bit while preserving every other bit.
+    pub fn with_report_flag(self, flag: u16, enabled: bool) -> Self {
+        let flag = flag & IGMP_V3_REPORT_FLAGS_MASK;
+        let mut raw = self.report_flags_value();
+        if enabled {
+            raw |= flag;
+        } else {
+            raw &= !flag;
+        }
+        self.with_reserved_flags(raw)
+    }
+
+    /// Set or clear the RFC 9279 Extension flag bit.
+    pub fn with_extension_flag(self, enabled: bool) -> Self {
+        self.with_report_flag(IGMP_V3_REPORT_FLAG_EXTENSION, enabled)
+    }
+
+    /// Compatibility alias for setting the RFC 9279 Report Extension flag bit.
+    pub fn with_report_extension_flag(self, enabled: bool) -> Self {
+        self.with_extension_flag(enabled)
+    }
+
+    /// Set the currently unassigned report flag bits while preserving E.
+    pub fn with_unassigned_report_flags(self, flags: u16) -> Self {
+        let preserved = self.report_flags_value() & !IGMP_V3_REPORT_FLAGS_UNASSIGNED_MASK;
+        self.with_reserved_flags((flags & IGMP_V3_REPORT_FLAGS_UNASSIGNED_MASK) | preserved)
+    }
+
     /// Compatibility alias for the raw report Flags field.
     pub fn with_raw_flags(self, flags: u16) -> Self {
         self.with_reserved_flags(flags)
@@ -93,6 +124,26 @@ impl IgmpReport {
     /// Compatibility alias for the report Flags field.
     pub fn report_flags_value(&self) -> u16 {
         self.reserved_flags_value()
+    }
+
+    /// Whether a report flag bit is set.
+    pub fn has_report_flag(&self, flag: u16) -> bool {
+        self.report_flags_value() & (flag & IGMP_V3_REPORT_FLAGS_MASK) != 0
+    }
+
+    /// Whether the RFC 9279 extension flag bit is set.
+    pub fn extension_flag(&self) -> bool {
+        self.has_report_flag(IGMP_V3_REPORT_FLAG_EXTENSION)
+    }
+
+    /// Whether the RFC 9279 Report Extension flag bit is set.
+    pub fn report_extension_flag(&self) -> bool {
+        self.extension_flag()
+    }
+
+    /// Currently unassigned report flag bits.
+    pub fn unassigned_report_flags_value(&self) -> u16 {
+        self.report_flags_value() & IGMP_V3_REPORT_FLAGS_UNASSIGNED_MASK
     }
 
     /// Number of Group Records field value, derived from the vector unless explicit.
@@ -185,12 +236,27 @@ impl Layer for IgmpReport {
                 "reserved_flags",
                 format!("0x{:04x}", self.reserved_flags_value()),
             ),
+        ];
+        if self.report_flags_value() != 0 {
+            fields.extend([
+                (
+                    "report_flags",
+                    format!("0x{:04x}", self.report_flags_value()),
+                ),
+                ("extension_flag", self.extension_flag().to_string()),
+                (
+                    "unassigned_report_flags",
+                    format!("0x{:04x}", self.unassigned_report_flags_value()),
+                ),
+            ]);
+        }
+        fields.extend([
             (
                 "number_of_group_records",
                 self.number_of_group_records_value().to_string(),
             ),
             ("records", self.records.len().to_string()),
-        ];
+        ]);
         for (index, record) in self.records.iter().enumerate() {
             fields.push((record_field_name(index), record.summary()));
             fields.push((
@@ -572,6 +638,9 @@ mod igmp_report_model {
 
         assert_eq!(report.reserved_flags_value(), 0xa55a);
         assert_eq!(report.report_flags_value(), 0xa55a);
+        assert!(report.extension_flag());
+        assert!(report.report_extension_flag());
+        assert_eq!(report.unassigned_report_flags_value(), 0x255a);
         assert_eq!(report.reserved_flags_state(), FieldState::User);
         assert_eq!(report_body_bytes(report)?, vec![0xa5, 0x5a, 0, 0]);
 
@@ -717,6 +786,9 @@ mod igmp_report_model {
             vec![
                 ("version", "IGMPv3".to_string()),
                 ("reserved_flags", "0x8001".to_string()),
+                ("report_flags", "0x8001".to_string()),
+                ("extension_flag", "true".to_string()),
+                ("unassigned_report_flags", "0x0001".to_string()),
                 ("number_of_group_records", "1".to_string()),
                 ("records", "1".to_string()),
                 ("record[0]", record.summary()),
@@ -730,6 +802,50 @@ mod igmp_report_model {
                 ("record[0].source_addresses", String::new()),
             ]
         );
+    }
+
+    #[test]
+    fn igmp_extension_flags_report_helpers_preserve_raw_bits_and_show() -> crate::Result<()> {
+        let record = IgmpGroupRecord::block_old_sources(doc_group());
+        let report = IgmpReport::new()
+            .with_report_extension_flag(true)
+            .with_unassigned_report_flags(0x0005)
+            .with_group_record(record);
+
+        assert_eq!(report.reserved_flags_value(), 0x8005);
+        assert_eq!(report.report_flags_value(), 0x8005);
+        assert!(report.has_report_flag(IGMP_V3_REPORT_FLAG_EXTENSION));
+        assert!(report.extension_flag());
+        assert!(report.report_extension_flag());
+        assert_eq!(report.unassigned_report_flags_value(), 0x0005);
+        assert_eq!(report.reserved_flags_state(), FieldState::User);
+
+        let cleared = report.clone().with_extension_flag(false);
+        assert_eq!(cleared.report_flags_value(), 0x0005);
+        assert!(!cleared.extension_flag());
+        assert_eq!(cleared.unassigned_report_flags_value(), 0x0005);
+
+        let without_unassigned = report.clone().with_unassigned_report_flags(0);
+        assert_eq!(without_unassigned.report_flags_value(), 0x8000);
+        assert!(without_unassigned.extension_flag());
+        assert_eq!(without_unassigned.unassigned_report_flags_value(), 0);
+
+        assert_eq!(
+            report.summary(),
+            "IgmpReport(version=IGMPv3, flags=0x8005, record_count=1)"
+        );
+
+        let packet = Igmp::v3_membership_report() / report.clone();
+        let show = packet.show();
+        assert!(show.contains("reserved_flags: 0x8005"), "{show}");
+        assert!(show.contains("report_flags: 0x8005"), "{show}");
+        assert!(show.contains("extension_flag: true"), "{show}");
+        assert!(show.contains("unassigned_report_flags: 0x0005"), "{show}");
+
+        let body = report_body_bytes(report)?;
+        assert_eq!(&body[..4], &[0x80, 0x05, 0x00, 0x01]);
+
+        Ok(())
     }
 
     #[test]
