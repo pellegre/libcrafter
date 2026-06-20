@@ -9,9 +9,16 @@ use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::packet::{Packet, Raw};
 
-use super::constants::{IGMP_FIXED_HEADER_LEN, IGMP_TYPE_MEMBERSHIP_QUERY, IGMP_V3_QUERY_MIN_LEN};
+use super::constants::{
+    IGMP_FIXED_HEADER_LEN, IGMP_TYPE_MEMBERSHIP_QUERY, IGMP_TYPE_V3_MEMBERSHIP_REPORT,
+    IGMP_V3_GROUP_RECORD_HEADER_LEN, IGMP_V3_QUERY_MIN_LEN,
+};
 use super::message::Igmp;
 use super::query::IgmpQuery;
+use super::record::IgmpGroupRecord;
+use super::report::IgmpReport;
+
+const IGMP_V3_REPORT_BODY_HEADER_LEN: usize = 4;
 
 /// Decode the common IGMP fixed header into a typed layer.
 pub(crate) fn decode(bytes: &[u8]) -> Result<Igmp> {
@@ -30,6 +37,7 @@ pub(crate) fn append_igmp_packet(mut packet: Packet, bytes: &[u8]) -> Result<Pac
     let payload = &bytes[IGMP_FIXED_HEADER_LEN..];
     let is_v3_query = igmp.igmp_type_value() == IGMP_TYPE_MEMBERSHIP_QUERY
         && bytes.len() >= IGMP_V3_QUERY_MIN_LEN;
+    let is_v3_report = igmp.igmp_type_value() == IGMP_TYPE_V3_MEMBERSHIP_REPORT;
     packet = packet.push_igmp(igmp);
 
     if is_v3_query {
@@ -37,6 +45,17 @@ pub(crate) fn append_igmp_packet(mut packet: Packet, bytes: &[u8]) -> Result<Pac
         packet = packet.push(query);
         if !tail.is_empty() {
             // RFC 9776 says extra Query octets are checksum-covered and ignored;
+            // keeping them as Raw makes the bytes inspectable and roundtrippable.
+            packet = packet.push_raw(Raw::from_bytes(tail));
+        }
+        return Ok(packet);
+    }
+
+    if is_v3_report {
+        let (report, tail) = decode_v3_report(bytes)?;
+        packet = packet.push(report);
+        if !tail.is_empty() {
+            // RFC 9776 says extra Report octets are checksum-covered and ignored;
             // keeping them as Raw makes the bytes inspectable and roundtrippable.
             packet = packet.push_raw(Raw::from_bytes(tail));
         }
@@ -107,6 +126,48 @@ fn decode_v3_query(bytes: &[u8]) -> Result<(IgmpQuery, &[u8])> {
         .with_source_addresses(sources);
 
     Ok((query, &bytes[sources_end..]))
+}
+
+fn decode_v3_report(bytes: &[u8]) -> Result<(IgmpReport, &[u8])> {
+    let report_min_len = IGMP_FIXED_HEADER_LEN + IGMP_V3_REPORT_BODY_HEADER_LEN;
+    if bytes.len() < report_min_len {
+        return Err(CrafterError::buffer_too_short(
+            "igmp v3 report",
+            report_min_len,
+            bytes.len(),
+        ));
+    }
+
+    let body = &bytes[IGMP_FIXED_HEADER_LEN..];
+    let reserved_flags = u16::from_be_bytes([body[0], body[1]]);
+    let number_of_group_records = u16::from_be_bytes([body[2], body[3]]);
+    let mut records = Vec::with_capacity(usize::from(number_of_group_records));
+    let mut tail = &body[IGMP_V3_REPORT_BODY_HEADER_LEN..];
+    let mut record_offset = report_min_len;
+
+    for _ in 0..number_of_group_records {
+        if tail.len() < IGMP_V3_GROUP_RECORD_HEADER_LEN {
+            return Err(CrafterError::buffer_too_short(
+                "igmp v3 report group record",
+                record_offset + IGMP_V3_GROUP_RECORD_HEADER_LEN,
+                bytes.len(),
+            ));
+        }
+
+        let available_before = tail.len();
+        let (record, remaining) = IgmpGroupRecord::decode_with_tail(tail)?;
+        let consumed = available_before - remaining.len();
+        record_offset += consumed;
+        tail = remaining;
+        records.push(record);
+    }
+
+    let report = IgmpReport::new()
+        .with_reserved_flags(reserved_flags)
+        .with_number_of_group_records(number_of_group_records)
+        .with_group_records(records);
+
+    Ok((report, tail))
 }
 
 #[cfg(test)]
@@ -424,5 +485,238 @@ mod igmp_v3_query_decode {
         assert_eq!(query.source_addresses(), &[Ipv4Addr::new(192, 0, 2, 1)]);
         assert_eq!(raw.as_bytes(), &[0xde, 0xad, 0xbe, 0xef]);
         assert_eq!(decoded.compile().expect("roundtrip").as_bytes(), &bytes);
+    }
+}
+
+#[cfg(test)]
+mod igmp_report_decode {
+    use super::*;
+    use crate::field::FieldState;
+    use crate::protocols::igmp::record::{IgmpRecordType, IgmpRecordTypeStatus};
+
+    fn report_bytes(reserved_flags: u16, count: u16, records: &[u8]) -> Vec<u8> {
+        let mut bytes = vec![IGMP_TYPE_V3_MEMBERSHIP_REPORT, 0x00, 0x12, 0x34, 0, 0, 0, 0];
+        bytes.extend_from_slice(&reserved_flags.to_be_bytes());
+        bytes.extend_from_slice(&count.to_be_bytes());
+        bytes.extend_from_slice(records);
+        bytes
+    }
+
+    fn doc_group() -> Ipv4Addr {
+        Ipv4Addr::new(233, 252, 0, 80)
+    }
+
+    fn doc_group_b() -> Ipv4Addr {
+        Ipv4Addr::new(233, 252, 0, 81)
+    }
+
+    fn doc_source_a() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 10)
+    }
+
+    fn doc_source_b() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 20)
+    }
+
+    #[test]
+    fn igmp_report_decode_empty_report_body() {
+        let bytes = report_bytes(0xa55a, 0, &[]);
+
+        let decoded = append_igmp_packet(Packet::new(), &bytes).expect("decode empty report");
+        let igmp = decoded.layer::<Igmp>().expect("typed IGMP header");
+        let report = decoded.layer::<IgmpReport>().expect("typed report body");
+
+        assert_eq!(decoded.len(), 2);
+        assert_eq!(igmp.igmp_type_value(), IGMP_TYPE_V3_MEMBERSHIP_REPORT);
+        assert_eq!(igmp.code_value(), 0x00);
+        assert_eq!(igmp.checksum_value(), Some(0x1234));
+        assert_eq!(igmp.group_address_value(), Ipv4Addr::UNSPECIFIED);
+        assert_eq!(report.reserved_flags_value(), 0xa55a);
+        assert_eq!(report.reserved_flags_state(), FieldState::User);
+        assert_eq!(report.number_of_group_records_value(), 0);
+        assert_eq!(report.number_of_group_records_state(), FieldState::User);
+        assert!(report.group_records().is_empty());
+        assert!(decoded.layer::<Raw>().is_none());
+        assert_eq!(decoded.compile().expect("roundtrip").as_bytes(), &bytes);
+    }
+
+    #[test]
+    fn igmp_report_decode_known_record() {
+        let record = [0x01, 0x00, 0x00, 0x01, 233, 252, 0, 80, 192, 0, 2, 10];
+        let bytes = report_bytes(0, 1, &record);
+
+        let decoded = append_igmp_packet(Packet::new(), &bytes).expect("decode report record");
+        let report = decoded.layer::<IgmpReport>().expect("typed report body");
+        let decoded_record = &report.group_records()[0];
+
+        assert_eq!(report.number_of_group_records_value(), 1);
+        assert_eq!(decoded_record.record_type(), IgmpRecordType::ModeIsInclude);
+        assert_eq!(decoded_record.auxiliary_data_len_value(), 0);
+        assert_eq!(decoded_record.auxiliary_data_len_state(), FieldState::User);
+        assert_eq!(decoded_record.number_of_sources_value(), 1);
+        assert_eq!(decoded_record.number_of_sources_state(), FieldState::User);
+        assert_eq!(decoded_record.multicast_address(), doc_group());
+        assert_eq!(decoded_record.source_addresses(), &[doc_source_a()]);
+        assert!(decoded_record.auxiliary_data().is_empty());
+        assert_eq!(decoded.compile().expect("roundtrip").as_bytes(), &bytes);
+    }
+
+    #[test]
+    fn igmp_report_decode_multiple_records() {
+        let records = [
+            0x05, 0x00, 0x00, 0x02, 233, 252, 0, 80, 192, 0, 2, 10, 198, 51, 100, 20, 0x06, 0x00,
+            0x00, 0x00, 233, 252, 0, 81,
+        ];
+        let bytes = report_bytes(0x8001, 2, &records);
+
+        let decoded = append_igmp_packet(Packet::new(), &bytes).expect("decode report records");
+        let report = decoded.layer::<IgmpReport>().expect("typed report body");
+
+        assert_eq!(report.reserved_flags_value(), 0x8001);
+        assert_eq!(report.number_of_group_records_value(), 2);
+        assert_eq!(report.group_records().len(), 2);
+        assert_eq!(
+            report.group_records()[0].record_type(),
+            IgmpRecordType::AllowNewSources
+        );
+        assert_eq!(
+            report.group_records()[0].source_addresses(),
+            &[doc_source_a(), doc_source_b()]
+        );
+        assert_eq!(
+            report.group_records()[1].record_type(),
+            IgmpRecordType::BlockOldSources
+        );
+        assert_eq!(report.group_records()[1].multicast_address(), doc_group_b());
+        assert!(report.group_records()[1].source_addresses().is_empty());
+        assert_eq!(decoded.compile().expect("roundtrip").as_bytes(), &bytes);
+    }
+
+    #[test]
+    fn igmp_report_decode_unknown_record_type() {
+        let record = [0xc8, 0x00, 0x00, 0x00, 233, 252, 0, 80];
+        let bytes = report_bytes(0, 1, &record);
+
+        let decoded = append_igmp_packet(Packet::new(), &bytes).expect("decode unknown record");
+        let report = decoded.layer::<IgmpReport>().expect("typed report body");
+        let record = &report.group_records()[0];
+
+        assert_eq!(record.record_type(), IgmpRecordType::Unknown(0xc8));
+        assert_eq!(record.record_type_value(), 0xc8);
+        assert_eq!(
+            record.record_type_meta().status,
+            IgmpRecordTypeStatus::Unassigned
+        );
+        assert_eq!(decoded.compile().expect("roundtrip").as_bytes(), &bytes);
+    }
+
+    #[test]
+    fn igmp_report_decode_preserves_extra_report_octets_as_raw() {
+        let mut bytes = report_bytes(0, 0, &[0xde, 0xad, 0xbe, 0xef]);
+
+        let decoded = append_igmp_packet(Packet::new(), &bytes).expect("decode report tail");
+        let report = decoded.layer::<IgmpReport>().expect("typed report body");
+        let raw = decoded.layer::<Raw>().expect("extra report bytes");
+
+        assert_eq!(decoded.len(), 3);
+        assert_eq!(report.number_of_group_records_value(), 0);
+        assert_eq!(raw.as_bytes(), &[0xde, 0xad, 0xbe, 0xef]);
+        assert_eq!(decoded.compile().expect("roundtrip").as_bytes(), &bytes);
+
+        bytes.truncate(IGMP_FIXED_HEADER_LEN + IGMP_V3_REPORT_BODY_HEADER_LEN);
+        assert!(append_igmp_packet(Packet::new(), &bytes).is_ok());
+    }
+
+    #[test]
+    fn igmp_report_decode_short_report_header_returns_structured_error() {
+        let bytes = [
+            IGMP_TYPE_V3_MEMBERSHIP_REPORT,
+            0x00,
+            0x12,
+            0x34,
+            0,
+            0,
+            0,
+            0,
+            0xaa,
+            0xbb,
+        ];
+
+        let error = append_igmp_packet(Packet::new(), &bytes).expect_err("short report header");
+
+        assert_eq!(
+            error,
+            CrafterError::buffer_too_short(
+                "igmp v3 report",
+                IGMP_FIXED_HEADER_LEN + IGMP_V3_REPORT_BODY_HEADER_LEN,
+                bytes.len()
+            )
+        );
+    }
+
+    #[test]
+    fn igmp_report_decode_truncated_record_header_returns_structured_error() {
+        let bytes = report_bytes(0, 1, &[0x01, 0x00, 0x00]);
+
+        let error = append_igmp_packet(Packet::new(), &bytes).expect_err("short record header");
+
+        assert_eq!(
+            error,
+            CrafterError::buffer_too_short(
+                "igmp v3 report group record",
+                IGMP_FIXED_HEADER_LEN
+                    + IGMP_V3_REPORT_BODY_HEADER_LEN
+                    + IGMP_V3_GROUP_RECORD_HEADER_LEN,
+                bytes.len()
+            )
+        );
+    }
+
+    #[test]
+    fn igmp_report_decode_truncated_record_sources_uses_record_helper_error() {
+        let record = [0x01, 0x00, 0x00, 0x02, 233, 252, 0, 80, 192, 0, 2, 10, 198];
+        let bytes = report_bytes(0, 1, &record);
+
+        let error = append_igmp_packet(Packet::new(), &bytes).expect_err("short source list");
+
+        assert_eq!(
+            error,
+            CrafterError::buffer_too_short("igmp.group_record.source_addresses", 16, record.len())
+        );
+    }
+
+    #[test]
+    fn igmp_report_decode_truncated_record_auxiliary_uses_record_helper_error() {
+        let record = [
+            0x06, 0x02, 0x00, 0x01, 233, 252, 0, 80, 192, 0, 2, 10, 0xde, 0xad, 0xbe, 0xef, 0x00,
+        ];
+        let bytes = report_bytes(0, 1, &record);
+
+        let error = append_igmp_packet(Packet::new(), &bytes).expect_err("short auxiliary data");
+
+        assert_eq!(
+            error,
+            CrafterError::buffer_too_short("igmp.group_record.auxiliary_data", 20, record.len())
+        );
+    }
+
+    #[test]
+    fn igmp_report_decode_count_overrun_returns_structured_error() {
+        let record = [0x01, 0x00, 0x00, 0x00, 233, 252, 0, 80];
+        let bytes = report_bytes(0, 2, &record);
+
+        let error = append_igmp_packet(Packet::new(), &bytes).expect_err("count overrun");
+
+        assert_eq!(
+            error,
+            CrafterError::buffer_too_short(
+                "igmp v3 report group record",
+                IGMP_FIXED_HEADER_LEN
+                    + IGMP_V3_REPORT_BODY_HEADER_LEN
+                    + record.len()
+                    + IGMP_V3_GROUP_RECORD_HEADER_LEN,
+                bytes.len()
+            )
+        );
     }
 }
