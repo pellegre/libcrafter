@@ -15,7 +15,7 @@ use super::constants::{
     IGMP_TYPE_OBSOLETE_RESERVED_LAST, IGMP_TYPE_PIM_V1, IGMP_TYPE_RESERVED,
     IGMP_TYPE_UNASSIGNED_FIRST, IGMP_TYPE_UNASSIGNED_LAST, IGMP_TYPE_V1_MEMBERSHIP_REPORT,
     IGMP_TYPE_V2_LEAVE_GROUP, IGMP_TYPE_V2_MEMBERSHIP_REPORT, IGMP_TYPE_V3_MEMBERSHIP_REPORT,
-    IGMP_V3_QUERY_FLAG_EXTENSION,
+    IGMP_V3_QUERY_FLAG_EXTENSION, IGMP_V3_REPORT_FLAG_EXTENSION,
 };
 
 /// Source-backed IGMP Type value.
@@ -186,6 +186,52 @@ pub struct IgmpQueryFlagMeta {
     pub mask: u8,
     /// Flag classification preserving raw bit values.
     pub flag: IgmpQueryFlag,
+    /// Registered short name, status label, or non-flag label.
+    pub name: &'static str,
+    /// Registry assignment status.
+    pub status: IgmpFlagStatus,
+}
+
+/// Source-backed IGMPv3 Report flag bit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum IgmpReportFlag {
+    /// RFC 9279 Extension flag, registry bit 0.
+    Extension,
+    /// Registry-managed but currently unassigned report flag bit.
+    Unassigned(u8),
+    /// Bits outside the IGMP/MLD Report Message Flags registry.
+    NotFlag(u8),
+}
+
+impl IgmpReportFlag {
+    /// Return the IANA registry bit number.
+    pub const fn bit(self) -> u8 {
+        match self {
+            Self::Extension => 0,
+            Self::Unassigned(bit) | Self::NotFlag(bit) => bit,
+        }
+    }
+
+    /// Return the wire mask for this registry bit, or zero for non-flag bits.
+    pub const fn mask(self) -> u16 {
+        igmp_report_flag_mask(self.bit())
+    }
+
+    /// Return source-backed metadata for this report flag bit.
+    pub const fn meta(self) -> IgmpReportFlagMeta {
+        igmp_report_flag_meta(self.bit())
+    }
+}
+
+/// One source-backed IGMP/MLD Report Message Flags registry entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct IgmpReportFlagMeta {
+    /// IANA registry bit number.
+    pub bit: u8,
+    /// Wire mask in the IGMPv3 Report Flags field, or zero for non-flag bits.
+    pub mask: u16,
+    /// Flag classification preserving raw bit values.
+    pub flag: IgmpReportFlag,
     /// Registered short name, status label, or non-flag label.
     pub name: &'static str,
     /// Registry assignment status.
@@ -439,6 +485,56 @@ pub const fn igmp_query_flag_name(bit: u8) -> Option<&'static str> {
     }
 }
 
+/// Classify an IGMP/MLD Report Message Flags registry bit.
+pub const fn igmp_report_flag(bit: u8) -> IgmpReportFlag {
+    match bit {
+        0 => IgmpReportFlag::Extension,
+        1..=15 => IgmpReportFlag::Unassigned(bit),
+        other => IgmpReportFlag::NotFlag(other),
+    }
+}
+
+/// Return registry metadata for an IGMP/MLD Report Message Flags bit.
+pub const fn igmp_report_flag_meta(bit: u8) -> IgmpReportFlagMeta {
+    match bit {
+        0 => report_flag_meta(
+            bit,
+            IGMP_V3_REPORT_FLAG_EXTENSION,
+            IgmpReportFlag::Extension,
+            "Extension",
+            IgmpFlagStatus::Assigned,
+        ),
+        1..=15 => report_flag_meta(
+            bit,
+            igmp_report_flag_mask(bit),
+            IgmpReportFlag::Unassigned(bit),
+            "Unassigned",
+            IgmpFlagStatus::Unassigned,
+        ),
+        other => report_flag_meta(
+            other,
+            0,
+            IgmpReportFlag::NotFlag(other),
+            "Not a report flag",
+            IgmpFlagStatus::NotFlag,
+        ),
+    }
+}
+
+/// Return the registry status for an IGMP/MLD Report Message Flags bit.
+pub const fn igmp_report_flag_status(bit: u8) -> IgmpFlagStatus {
+    igmp_report_flag_meta(bit).status
+}
+
+/// Return a source-backed Report Message Flag name when the registry assigns it.
+pub const fn igmp_report_flag_name(bit: u8) -> Option<&'static str> {
+    let meta = igmp_report_flag_meta(bit);
+    match meta.status {
+        IgmpFlagStatus::Assigned => Some(meta.name),
+        _ => None,
+    }
+}
+
 const fn type_meta(
     code: u8,
     igmp_type: IgmpType,
@@ -484,9 +580,32 @@ const fn query_flag_meta(
     }
 }
 
+const fn report_flag_meta(
+    bit: u8,
+    mask: u16,
+    flag: IgmpReportFlag,
+    name: &'static str,
+    status: IgmpFlagStatus,
+) -> IgmpReportFlagMeta {
+    IgmpReportFlagMeta {
+        bit,
+        mask,
+        flag,
+        name,
+        status,
+    }
+}
+
 const fn igmp_query_flag_mask(bit: u8) -> u8 {
     match bit {
         0..=3 => 0x80 >> bit,
+        _ => 0,
+    }
+}
+
+const fn igmp_report_flag_mask(bit: u8) -> u16 {
+    match bit {
+        0..=15 => 0x8000 >> bit,
         _ => 0,
     }
 }
@@ -628,5 +747,51 @@ mod tests {
             assert_eq!(meta.igmp_type.code(), code);
             assert!(!meta.name.is_empty());
         }
+    }
+
+    #[test]
+    fn igmp_extension_flags_registry_names_query_and_report_bits() {
+        let query_extension = igmp_query_flag_meta(0);
+        assert_eq!(query_extension.bit, 0);
+        assert_eq!(query_extension.mask, IGMP_V3_QUERY_FLAG_EXTENSION);
+        assert_eq!(query_extension.flag, IgmpQueryFlag::Extension);
+        assert_eq!(query_extension.name, "Extension");
+        assert_eq!(query_extension.status, IgmpFlagStatus::Assigned);
+        assert_eq!(IgmpQueryFlag::Extension.bit(), 0);
+        assert_eq!(IgmpQueryFlag::Extension.mask(), IGMP_V3_QUERY_FLAG_EXTENSION);
+        assert_eq!(IgmpQueryFlag::Extension.meta(), query_extension);
+        assert_eq!(igmp_query_flag(0), IgmpQueryFlag::Extension);
+        assert_eq!(igmp_query_flag_name(0), Some("Extension"));
+        assert_eq!(igmp_query_flag_status(0), IgmpFlagStatus::Assigned);
+
+        let query_unassigned = igmp_query_flag_meta(3);
+        assert_eq!(query_unassigned.mask, 0x10);
+        assert_eq!(query_unassigned.flag, IgmpQueryFlag::Unassigned(3));
+        assert_eq!(query_unassigned.status, IgmpFlagStatus::Unassigned);
+        assert_eq!(igmp_query_flag_name(3), None);
+        assert_eq!(igmp_query_flag_meta(4).flag, IgmpQueryFlag::NotFlag(4));
+
+        let report_extension = igmp_report_flag_meta(0);
+        assert_eq!(report_extension.bit, 0);
+        assert_eq!(report_extension.mask, IGMP_V3_REPORT_FLAG_EXTENSION);
+        assert_eq!(report_extension.flag, IgmpReportFlag::Extension);
+        assert_eq!(report_extension.name, "Extension");
+        assert_eq!(report_extension.status, IgmpFlagStatus::Assigned);
+        assert_eq!(IgmpReportFlag::Extension.bit(), 0);
+        assert_eq!(
+            IgmpReportFlag::Extension.mask(),
+            IGMP_V3_REPORT_FLAG_EXTENSION
+        );
+        assert_eq!(IgmpReportFlag::Extension.meta(), report_extension);
+        assert_eq!(igmp_report_flag(0), IgmpReportFlag::Extension);
+        assert_eq!(igmp_report_flag_name(0), Some("Extension"));
+        assert_eq!(igmp_report_flag_status(0), IgmpFlagStatus::Assigned);
+
+        let report_unassigned = igmp_report_flag_meta(15);
+        assert_eq!(report_unassigned.mask, 0x0001);
+        assert_eq!(report_unassigned.flag, IgmpReportFlag::Unassigned(15));
+        assert_eq!(report_unassigned.status, IgmpFlagStatus::Unassigned);
+        assert_eq!(igmp_report_flag_name(15), None);
+        assert_eq!(igmp_report_flag_meta(16).flag, IgmpReportFlag::NotFlag(16));
     }
 }

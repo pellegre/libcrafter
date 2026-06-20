@@ -931,6 +931,40 @@ mod igmp_v3_query_flags {
     }
 
     #[test]
+    fn igmp_extension_flags_query_helpers_preserve_raw_bits_and_show() -> crate::Result<()> {
+        let query = IgmpQuery::new()
+            .with_extension_flag(true)
+            .with_unassigned_query_flags(IGMP_V3_QUERY_FLAGS_UNASSIGNED_MASK)
+            .with_qrv(3);
+
+        assert_eq!(query.raw_flags_qrv_value(), 0xf3);
+        assert_eq!(query.query_flags_value(), IGMP_V3_QUERY_FLAGS_MASK);
+        assert!(query.has_query_flag(IGMP_V3_QUERY_FLAG_EXTENSION));
+        assert!(query.extension_flag());
+        assert!(query.query_extension_flag());
+        assert_eq!(
+            query.unassigned_query_flags_value(),
+            IGMP_V3_QUERY_FLAGS_UNASSIGNED_MASK
+        );
+        assert_eq!(query.querier_robustness_variable(), 3);
+
+        let packet = Igmp::v3_membership_query(100, doc_group(), query.clone());
+        assert!(packet.summary().contains(
+            "IgmpQuery(version=IGMPv3, flags=0xf3, s=false, qrv=3, qqic=0x00, interval=0s, source_count=0)"
+        ));
+
+        let show = packet.show();
+        assert!(show.contains("flags_s_qrv: 0xf3"), "{show}");
+        assert!(show.contains("query_flags: 0xf0"), "{show}");
+        assert!(show.contains("extension_flag: true"), "{show}");
+
+        let bytes = packet.compile()?;
+        assert_eq!(&bytes.as_bytes()[IGMP_FIXED_HEADER_LEN..], &[0xf3, 0, 0, 0]);
+
+        Ok(())
+    }
+
+    #[test]
     fn igmp_v3_query_flags_raw_roundtrip_preserves_unknown_bits() {
         let bytes = [
             IGMP_TYPE_MEMBERSHIP_QUERY,
