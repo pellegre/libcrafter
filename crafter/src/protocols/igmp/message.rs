@@ -67,6 +67,16 @@ impl Igmp {
             .with_group_address(Ipv4Addr::UNSPECIFIED)
     }
 
+    /// Build an IGMPv1 Membership Query fixed header.
+    ///
+    /// IGMPv1 uses Code `0` for Membership Query. That value remains the raw
+    /// Code field and is surfaced through scoped registry metadata as
+    /// "IGMP Version 1" instead of being rewritten into a v2 max-response
+    /// timer during compile or decode.
+    pub fn v1_membership_query() -> Self {
+        Self::membership_query()
+    }
+
     /// Build an IGMPv1 Membership Report fixed header for `group_address`.
     pub fn v1_membership_report(group_address: Ipv4Addr) -> Self {
         Self::new()
@@ -979,5 +989,104 @@ mod igmp_v2_leave_group {
             &[IGMP_TYPE_V2_LEAVE_GROUP, 0xaa, 0x12, 0x34, 233, 252, 0, 17]
         );
         assert!(!verify_internet_checksum(&bytes));
+    }
+}
+
+#[cfg(test)]
+mod igmp_v1_compatibility {
+    use super::*;
+    use crate::checksum::verify_internet_checksum;
+    use crate::field::FieldState;
+    use crate::packet::Packet;
+    use crate::protocols::igmp::constants::{
+        IGMP_QUERY_CODE_V1, IGMP_TYPE_MEMBERSHIP_QUERY, IGMP_TYPE_V1_MEMBERSHIP_REPORT,
+    };
+    use crate::protocols::igmp::decode::decode;
+    use crate::protocols::igmp::registry::IgmpTypeStatus;
+
+    const DOC_GROUP: Ipv4Addr = Ipv4Addr::new(233, 252, 0, 18);
+
+    fn compile_layer(igmp: Igmp) -> Vec<u8> {
+        Packet::from_layer(igmp)
+            .compile()
+            .expect("compile IGMPv1 compatibility case")
+            .as_bytes()
+            .to_vec()
+    }
+
+    #[test]
+    fn igmp_v1_compatibility_query_constructor_keeps_code_zero_as_version_one() {
+        let igmp = Igmp::v1_membership_query();
+
+        assert_eq!(igmp.igmp_type_value(), IGMP_TYPE_MEMBERSHIP_QUERY);
+        assert_eq!(igmp.igmp_type(), IgmpType::MembershipQuery);
+        assert_eq!(igmp.code_value(), IGMP_QUERY_CODE_V1);
+        assert_eq!(igmp.max_response_code_value(), IGMP_QUERY_CODE_V1);
+        assert_eq!(igmp.code_meta().name, "IGMP Version 1");
+        assert_eq!(igmp.code_meta().status, IgmpTypeStatus::Assigned);
+        assert_eq!(igmp.igmp_type_state(), FieldState::User);
+        assert_eq!(igmp.code_state(), FieldState::User);
+        assert_eq!(igmp.group_address_state(), FieldState::User);
+
+        let bytes = compile_layer(igmp);
+        assert_eq!(bytes[0], IGMP_TYPE_MEMBERSHIP_QUERY);
+        assert_eq!(bytes[1], IGMP_QUERY_CODE_V1);
+        assert_eq!(&bytes[4..8], &Ipv4Addr::UNSPECIFIED.octets());
+        assert!(verify_internet_checksum(&bytes));
+
+        let decoded = decode(&bytes).expect("decode IGMPv1 query");
+        assert_eq!(decoded.code_value(), IGMP_QUERY_CODE_V1);
+        assert_eq!(decoded.code_meta().name, "IGMP Version 1");
+        assert_eq!(decoded.code_state(), FieldState::User);
+        assert_eq!(compile_layer(decoded), bytes);
+    }
+
+    #[test]
+    fn igmp_v1_compatibility_distinguishes_nonzero_query_response_code() {
+        let igmp = Igmp::membership_query().with_max_response_code(10);
+
+        assert_eq!(igmp.igmp_type_value(), IGMP_TYPE_MEMBERSHIP_QUERY);
+        assert_eq!(igmp.code_value(), 10);
+        assert_eq!(igmp.max_response_code_value(), 10);
+        assert_eq!(igmp.code_meta().name, "Max Response Time");
+        assert_eq!(igmp.v2_max_response_time_tenths(), 10);
+        assert_eq!(igmp.v2_max_response_time(), Duration::from_secs(1));
+
+        let bytes = compile_layer(igmp);
+        let decoded = decode(&bytes).expect("decode v2-or-later query");
+
+        assert_eq!(bytes[0], IGMP_TYPE_MEMBERSHIP_QUERY);
+        assert_eq!(bytes[1], 10);
+        assert_eq!(decoded.code_value(), 10);
+        assert_eq!(decoded.code_meta().name, "Max Response Time");
+        assert_eq!(decoded.v2_max_response_time_tenths(), 10);
+        assert_eq!(compile_layer(decoded), bytes);
+    }
+
+    #[test]
+    fn igmp_v1_compatibility_report_constructor_sets_v1_report_type() {
+        let igmp = Igmp::v1_membership_report(DOC_GROUP);
+
+        assert_eq!(igmp.igmp_type_value(), IGMP_TYPE_V1_MEMBERSHIP_REPORT);
+        assert_eq!(igmp.igmp_type(), IgmpType::V1MembershipReport);
+        assert_eq!(igmp.type_meta().name, "IGMPv1 Membership Report");
+        assert_eq!(igmp.type_meta().status, IgmpTypeStatus::Assigned);
+        assert_eq!(igmp.code_value(), IGMP_DEFAULT_CODE);
+        assert_eq!(igmp.code_meta().name, "No registered code");
+        assert_eq!(igmp.group_address_value(), DOC_GROUP);
+        assert_eq!(igmp.igmp_type_state(), FieldState::User);
+        assert_eq!(igmp.code_state(), FieldState::User);
+        assert_eq!(igmp.group_address_state(), FieldState::User);
+
+        let bytes = compile_layer(igmp);
+        let decoded = decode(&bytes).expect("decode IGMPv1 report");
+
+        assert_eq!(bytes[0], IGMP_TYPE_V1_MEMBERSHIP_REPORT);
+        assert_eq!(bytes[1], IGMP_DEFAULT_CODE);
+        assert_eq!(&bytes[4..8], &DOC_GROUP.octets());
+        assert!(verify_internet_checksum(&bytes));
+        assert_eq!(decoded.igmp_type(), IgmpType::V1MembershipReport);
+        assert_eq!(decoded.group_address_value(), DOC_GROUP);
+        assert_eq!(compile_layer(decoded), bytes);
     }
 }
