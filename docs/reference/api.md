@@ -55,6 +55,13 @@ Use `Ipv4Protocol` for known IPv4 protocol-field values and
 `Ipv4::protocol(u8)` only when a tool deliberately needs an arbitrary raw
 protocol byte.
 
+IGMP follows the same packet abstraction as every other IPv4 protocol body:
+compose the `Ipv4` envelope explicitly with protocol `Ipv4Protocol::Igmp`, the
+required TTL, destination, and Router Alert option when the packet shape needs
+them, then add `Igmp` and typed IGMP body layers with `/`. The crate exposes
+IGMP packet construction and decode; it is not a multicast router
+implementation, snooper, proxy, scanner, or state machine.
+
 ## Builder Conventions
 
 | Pattern | Meaning |
@@ -490,6 +497,7 @@ let targets = Ipv4Range::parse("192.0.2.1-20")?;
 | Ethernet | `Ethernet` |
 | ARP | `Arp` |
 | IPv4 | `Ipv4` |
+| IGMP | `Igmp`, `IgmpQuery`, `IgmpReport`, `IgmpGroupRecord`, `IgmpExtension` |
 | IPv6 | `Ipv6` |
 | TCP | `Tcp` |
 | UDP | `Udp` |
@@ -509,6 +517,16 @@ protocol-number labels and constants, decode-time checksum status, typed IPv4
 options, fragment metadata fields, `IpDefrag` / `IpFragment` packet-stream
 transforms, enriched `summary()` / `show()` output, and `Raw` fallback for
 unknown or unsupported payloads.
+
+IGMP-specific construction and decode behavior is covered in
+[IGMP wire coverage](../guide/igmp.md). `Igmp` is the fixed IGMP header that
+composes after an explicit `Ipv4` layer, with typed `IgmpQuery`, `IgmpReport`,
+`IgmpGroupRecord`, and `IgmpExtension` layers for supported IGMPv3 bodies and
+generic RFC 9279 extensions. `compile()` fills unset IGMP checksums and dependent
+counts or lengths while preserving explicit overrides, including intentionally
+malformed values. Decode supports IGMPv1, IGMPv2, IGMPv3, and multicast router
+discovery packet shapes, while unsupported registered or unknown valid payloads
+remain inspectable as raw bytes.
 
 IPv6 base-header and extension-header details live in
 [IPv6 wire coverage](../guide/ipv6.md), including source manifests, fixture coverage,
