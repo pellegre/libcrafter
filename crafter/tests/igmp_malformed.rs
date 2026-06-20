@@ -14,8 +14,11 @@ use crafter::prelude::*;
 const DOC_SRC: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 60);
 const DOC_QUERY_SOURCE: Ipv4Addr = Ipv4Addr::new(198, 51, 100, 60);
 const DOC_QUERY_SOURCE_ALT: Ipv4Addr = Ipv4Addr::new(203, 0, 113, 60);
+const DOC_REPORT_SOURCE: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 62);
 const DOC_MCAST: Ipv4Addr = Ipv4Addr::new(233, 252, 0, 60);
 const DOC_NON_MULTICAST: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 61);
+const IGMPV3_REPORT_DEST: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 22);
+const IGMP_V3_REPORT_BODY_HEADER_LEN: usize = 4;
 
 struct ErrorCase {
     name: &'static str,
@@ -103,6 +106,14 @@ fn ipv4(id: u16, dst: Ipv4Addr) -> Ipv4 {
         .id(id)
         .ttl(1)
         .ipv4_protocol(Ipv4Protocol::Igmp)
+}
+
+fn v3_report_ipv4(id: u16) -> Ipv4 {
+    ipv4(id, IGMPV3_REPORT_DEST)
+}
+
+fn v3_report_raw_packet(id: u16, igmp_payload: impl AsRef<[u8]>) -> Packet {
+    v3_report_ipv4(id) / Raw::from_bytes(igmp_payload)
 }
 
 fn assert_buffer_error(case: &ErrorCase) {
@@ -366,6 +377,230 @@ fn igmp_v3_query_unknown_flag_bits_are_inspectable_and_preserved() -> crafter::R
     assert!(!query.extension_flag());
     assert_eq!(query.querier_robustness_variable(), 5);
     assert_eq!(query.source_addresses(), &[DOC_QUERY_SOURCE_ALT]);
+    assert_eq!(decoded.compile()?.as_bytes(), bytes.as_bytes());
+
+    Ok(())
+}
+
+#[test]
+fn igmp_v3_report_count_overrun_is_structural_error() -> crafter::Result<()> {
+    let record = IgmpGroupRecord::mode_is_include(DOC_MCAST);
+    let report = IgmpReport::from_group_records(vec![record]).with_number_of_group_records(2);
+    let packet = v3_report_ipv4(0x2710) / Igmp::v3_membership_report() / report;
+    let bytes = packet.compile()?;
+
+    assert_buffer_too_short_bytes(
+        "igmp-v3-report-count-overrun",
+        bytes.as_bytes(),
+        "igmp v3 report group record",
+        IGMP_FIXED_HEADER_LEN
+            + IGMP_V3_REPORT_BODY_HEADER_LEN
+            + IGMP_V3_GROUP_RECORD_HEADER_LEN
+            + IGMP_V3_GROUP_RECORD_HEADER_LEN,
+        IGMP_FIXED_HEADER_LEN + IGMP_V3_REPORT_BODY_HEADER_LEN + IGMP_V3_GROUP_RECORD_HEADER_LEN,
+    );
+
+    Ok(())
+}
+
+#[test]
+fn igmp_v3_report_truncated_group_record_header_is_structural_error() -> crafter::Result<()> {
+    let packet = v3_report_raw_packet(
+        0x2711,
+        [
+            IGMP_TYPE_V3_MEMBERSHIP_REPORT,
+            0x00,
+            0x12,
+            0x34,
+            0,
+            0,
+            0,
+            0,
+            0x00,
+            0x00,
+            0x00,
+            0x01,
+            0x01,
+            0x00,
+            0x00,
+        ],
+    );
+    let bytes = packet.compile()?;
+
+    assert_buffer_too_short_bytes(
+        "igmp-v3-report-truncated-record-header",
+        bytes.as_bytes(),
+        "igmp v3 report group record",
+        IGMP_FIXED_HEADER_LEN + IGMP_V3_REPORT_BODY_HEADER_LEN + IGMP_V3_GROUP_RECORD_HEADER_LEN,
+        IGMP_FIXED_HEADER_LEN + IGMP_V3_REPORT_BODY_HEADER_LEN + 3,
+    );
+
+    Ok(())
+}
+
+#[test]
+fn igmp_v3_report_truncated_source_list_is_structural_error() -> crafter::Result<()> {
+    let packet = v3_report_raw_packet(
+        0x2712,
+        [
+            IGMP_TYPE_V3_MEMBERSHIP_REPORT,
+            0x00,
+            0x12,
+            0x34,
+            0,
+            0,
+            0,
+            0,
+            0x00,
+            0x00,
+            0x00,
+            0x01,
+            0x01,
+            0x00,
+            0x00,
+            0x02,
+            233,
+            252,
+            0,
+            60,
+            192,
+            0,
+            2,
+            62,
+            198,
+        ],
+    );
+    let bytes = packet.compile()?;
+
+    assert_buffer_too_short_bytes(
+        "igmp-v3-report-truncated-source-list",
+        bytes.as_bytes(),
+        "igmp.group_record.source_addresses",
+        IGMP_V3_GROUP_RECORD_HEADER_LEN + 2 * 4,
+        IGMP_V3_GROUP_RECORD_HEADER_LEN + 5,
+    );
+
+    Ok(())
+}
+
+#[test]
+fn igmp_v3_report_truncated_auxiliary_data_is_structural_error() -> crafter::Result<()> {
+    let packet = v3_report_raw_packet(
+        0x2713,
+        [
+            IGMP_TYPE_V3_MEMBERSHIP_REPORT,
+            0x00,
+            0x12,
+            0x34,
+            0,
+            0,
+            0,
+            0,
+            0x00,
+            0x00,
+            0x00,
+            0x01,
+            0x06,
+            0x02,
+            0x00,
+            0x01,
+            233,
+            252,
+            0,
+            60,
+            192,
+            0,
+            2,
+            62,
+            0xde,
+            0xad,
+            0xbe,
+            0xef,
+            0x00,
+        ],
+    );
+    let bytes = packet.compile()?;
+
+    assert_buffer_too_short_bytes(
+        "igmp-v3-report-truncated-auxiliary-data",
+        bytes.as_bytes(),
+        "igmp.group_record.auxiliary_data",
+        IGMP_V3_GROUP_RECORD_HEADER_LEN + 4 + 2 * 4,
+        IGMP_V3_GROUP_RECORD_HEADER_LEN + 4 + 5,
+    );
+
+    Ok(())
+}
+
+#[test]
+fn igmp_v3_report_invalid_ipv4_wrapper_length_is_structural_error() -> crafter::Result<()> {
+    let packet = v3_report_ipv4(0x2714) / Igmp::v3_membership_report() / IgmpReport::new();
+    let compiled = packet.compile()?;
+    let mut bytes = compiled.as_bytes().to_vec();
+    let declared_total_len = bytes.len() + 1;
+    write_u16_at(&mut bytes, 2, declared_total_len as u16);
+
+    assert_buffer_too_short_bytes(
+        "igmp-v3-report-invalid-ipv4-wrapper-length",
+        &bytes,
+        "ipv4 packet",
+        declared_total_len,
+        bytes.len(),
+    );
+
+    Ok(())
+}
+
+#[test]
+fn igmp_v3_report_explicit_wrong_checksum_is_inspectable() -> crafter::Result<()> {
+    let record =
+        IgmpGroupRecord::allow_new_sources(DOC_MCAST).with_source_address(DOC_REPORT_SOURCE);
+    let packet = v3_report_ipv4(0x2715)
+        / Igmp::v3_membership_report().checksum(0x1234)
+        / IgmpReport::from_group_records(vec![record]);
+    let bytes = packet.compile()?;
+
+    let decoded = decode_l3_bytes("igmp-v3-report-explicit-wrong-checksum", bytes.as_bytes())?;
+    let igmp = decoded.layer::<Igmp>().expect("decoded IGMP header");
+    let report = decoded
+        .layer::<IgmpReport>()
+        .expect("decoded IGMPv3 report body");
+
+    assert_eq!(decoded.len(), 3);
+    assert_eq!(igmp.igmp_type(), IgmpType::V3MembershipReport);
+    assert_eq!(igmp.checksum_value(), Some(0x1234));
+    assert_eq!(igmp.checksum_state(), FieldState::User);
+    assert_eq!(report.number_of_group_records_value(), 1);
+    assert_eq!(report.number_of_group_records_state(), FieldState::User);
+    assert_eq!(
+        report.group_records()[0].source_addresses(),
+        &[DOC_REPORT_SOURCE]
+    );
+    assert_eq!(decoded.compile()?.as_bytes(), bytes.as_bytes());
+
+    Ok(())
+}
+
+#[test]
+fn igmp_v3_report_trailing_bytes_are_preserved_as_raw() -> crafter::Result<()> {
+    let packet = v3_report_ipv4(0x2716)
+        / Igmp::v3_membership_report()
+        / IgmpReport::new()
+        / Raw::from_bytes([0xde, 0xad, 0xbe, 0xef]);
+    let bytes = packet.compile()?;
+
+    let decoded = decode_l3_bytes("igmp-v3-report-trailing-bytes", bytes.as_bytes())?;
+    let igmp = decoded.layer::<Igmp>().expect("decoded IGMP header");
+    let report = decoded
+        .layer::<IgmpReport>()
+        .expect("decoded IGMPv3 report body");
+    let raw = decoded.layer::<Raw>().expect("decoded extra report bytes");
+
+    assert_eq!(decoded.len(), 4);
+    assert_eq!(igmp.igmp_type(), IgmpType::V3MembershipReport);
+    assert_eq!(report.number_of_group_records_value(), 0);
+    assert!(report.group_records().is_empty());
+    assert_eq!(raw.as_bytes(), &[0xde, 0xad, 0xbe, 0xef]);
     assert_eq!(decoded.compile()?.as_bytes(), bytes.as_bytes());
 
     Ok(())
