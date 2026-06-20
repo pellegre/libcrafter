@@ -9,8 +9,9 @@ use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::packet::{Packet, Raw};
 
-use super::constants::IGMP_FIXED_HEADER_LEN;
+use super::constants::{IGMP_FIXED_HEADER_LEN, IGMP_TYPE_MEMBERSHIP_QUERY, IGMP_V3_QUERY_MIN_LEN};
 use super::message::Igmp;
+use super::query::IgmpQuery;
 
 /// Decode the common IGMP fixed header into a typed layer.
 pub(crate) fn decode(bytes: &[u8]) -> Result<Igmp> {
@@ -20,13 +21,27 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<Igmp> {
 
 /// Append a decoded IGMP packet to an existing packet stack.
 ///
-/// This bootstrap decoder always recovers the fixed IGMP header and preserves
-/// any remaining bytes as a single [`Raw`] tail. Later typed-body decoders can
-/// dispatch on the Type value before falling back to the same raw policy.
+/// This decoder recovers the fixed IGMP header, types source-backed bodies, and
+/// preserves unsupported or extension bytes as [`Raw`] where the RFC format
+/// permits them. A Membership Query with the IGMPv3 minimum length is decoded as
+/// an IGMPv3 query body; a short declared source list is a structured error.
 pub(crate) fn append_igmp_packet(mut packet: Packet, bytes: &[u8]) -> Result<Packet> {
     let igmp = decode(bytes)?;
     let payload = &bytes[IGMP_FIXED_HEADER_LEN..];
+    let is_v3_query = igmp.igmp_type_value() == IGMP_TYPE_MEMBERSHIP_QUERY
+        && bytes.len() >= IGMP_V3_QUERY_MIN_LEN;
     packet = packet.push_igmp(igmp);
+
+    if is_v3_query {
+        let (query, tail) = decode_v3_query(bytes)?;
+        packet = packet.push(query);
+        if !tail.is_empty() {
+            // RFC 9776 says extra Query octets are checksum-covered and ignored;
+            // keeping them as Raw makes the bytes inspectable and roundtrippable.
+            packet = packet.push_raw(Raw::from_bytes(tail));
+        }
+        return Ok(packet);
+    }
 
     if !payload.is_empty() {
         packet = packet.push_raw(Raw::from_bytes(payload));
@@ -54,6 +69,46 @@ fn decode_igmp_parts(bytes: &[u8]) -> Result<(Igmp, &[u8])> {
     Ok((igmp, &bytes[IGMP_FIXED_HEADER_LEN..]))
 }
 
+fn decode_v3_query(bytes: &[u8]) -> Result<(IgmpQuery, &[u8])> {
+    if bytes.len() < IGMP_V3_QUERY_MIN_LEN {
+        return Err(CrafterError::buffer_too_short(
+            "igmp v3 query",
+            IGMP_V3_QUERY_MIN_LEN,
+            bytes.len(),
+        ));
+    }
+
+    let flags_qrv = bytes[IGMP_FIXED_HEADER_LEN];
+    let qqic = bytes[IGMP_FIXED_HEADER_LEN + 1];
+    let number_of_sources = u16::from_be_bytes([
+        bytes[IGMP_FIXED_HEADER_LEN + 2],
+        bytes[IGMP_FIXED_HEADER_LEN + 3],
+    ]);
+    let sources_len = usize::from(number_of_sources) * 4;
+    let sources_end = IGMP_V3_QUERY_MIN_LEN + sources_len;
+    if bytes.len() < sources_end {
+        return Err(CrafterError::buffer_too_short(
+            "igmp v3 query source list",
+            sources_end,
+            bytes.len(),
+        ));
+    }
+
+    let mut sources = Vec::with_capacity(usize::from(number_of_sources));
+    let sources_bytes = &bytes[IGMP_V3_QUERY_MIN_LEN..sources_end];
+    for source in sources_bytes.chunks_exact(4) {
+        sources.push(Ipv4Addr::new(source[0], source[1], source[2], source[3]));
+    }
+
+    let query = IgmpQuery::new()
+        .with_raw_flags_qrv(flags_qrv)
+        .with_qqic(qqic)
+        .with_number_of_sources(number_of_sources)
+        .with_source_addresses(sources);
+
+    Ok((query, &bytes[sources_end..]))
+}
+
 #[cfg(test)]
 mod igmp_decode_fixed_header {
     use super::*;
@@ -67,16 +122,7 @@ mod igmp_decode_fixed_header {
 
     #[test]
     fn valid_query_bytes_decode_to_user_set_fields() {
-        let bytes = [
-            IGMP_TYPE_MEMBERSHIP_QUERY,
-            0x00,
-            0xee,
-            0xff,
-            0,
-            0,
-            0,
-            0,
-        ];
+        let bytes = [IGMP_TYPE_MEMBERSHIP_QUERY, 0x00, 0xee, 0xff, 0, 0, 0, 0];
 
         let igmp = decode(&bytes).expect("decode query fixed header");
 
@@ -191,16 +237,7 @@ mod igmp_decode_fixed_header {
 
     #[test]
     fn valid_fixed_header_without_payload_does_not_synthesize_raw() {
-        let bytes = [
-            IGMP_TYPE_MEMBERSHIP_QUERY,
-            0x00,
-            0xee,
-            0xff,
-            0,
-            0,
-            0,
-            0,
-        ];
+        let bytes = [IGMP_TYPE_MEMBERSHIP_QUERY, 0x00, 0xee, 0xff, 0, 0, 0, 0];
 
         let decoded = append_igmp_packet(Packet::new(), &bytes).expect("decode fixed header");
 
@@ -228,5 +265,164 @@ mod igmp_decode_fixed_header {
             err,
             CrafterError::buffer_too_short("igmp header", IGMP_FIXED_HEADER_LEN, 3)
         );
+    }
+}
+
+#[cfg(test)]
+mod igmp_v3_query_decode {
+    use super::*;
+    use crate::field::FieldState;
+    use crate::protocols::igmp::constants::IGMP_TYPE_MEMBERSHIP_QUERY;
+
+    fn doc_group() -> Ipv4Addr {
+        Ipv4Addr::new(233, 252, 0, 34)
+    }
+
+    #[test]
+    fn igmp_v3_query_decode_empty_source_list_into_typed_body() {
+        let bytes = [
+            IGMP_TYPE_MEMBERSHIP_QUERY,
+            100,
+            0x12,
+            0x34,
+            0,
+            0,
+            0,
+            0,
+            0x0b,
+            125,
+            0,
+            0,
+        ];
+
+        let decoded = append_igmp_packet(Packet::new(), &bytes).expect("decode IGMPv3 query");
+        let igmp = decoded.layer::<Igmp>().expect("typed IGMP header");
+        let query = decoded.layer::<IgmpQuery>().expect("typed query body");
+
+        assert_eq!(decoded.len(), 2);
+        assert_eq!(igmp.igmp_type_value(), IGMP_TYPE_MEMBERSHIP_QUERY);
+        assert_eq!(igmp.max_response_code_value(), 100);
+        assert_eq!(igmp.checksum_value(), Some(0x1234));
+        assert_eq!(igmp.group_address_value(), Ipv4Addr::UNSPECIFIED);
+        assert_eq!(query.raw_flags_qrv_value(), 0x0b);
+        assert!(query.suppress_router_side_processing());
+        assert_eq!(query.querier_robustness_variable(), 3);
+        assert_eq!(query.qqic_value(), 125);
+        assert_eq!(query.number_of_sources_value(), 0);
+        assert_eq!(query.number_of_sources_state(), FieldState::User);
+        assert!(query.source_addresses().is_empty());
+        assert!(decoded.layer::<Raw>().is_none());
+        assert_eq!(decoded.compile().expect("roundtrip").as_bytes(), &bytes);
+    }
+
+    #[test]
+    fn igmp_v3_query_decode_source_addresses_into_typed_body() {
+        let bytes = [
+            IGMP_TYPE_MEMBERSHIP_QUERY,
+            100,
+            0xab,
+            0xcd,
+            233,
+            252,
+            0,
+            34,
+            0x88,
+            0x7d,
+            0,
+            2,
+            192,
+            0,
+            2,
+            1,
+            198,
+            51,
+            100,
+            2,
+        ];
+
+        let decoded =
+            append_igmp_packet(Packet::new(), &bytes).expect("decode IGMPv3 query sources");
+        let igmp = decoded.layer::<Igmp>().expect("typed IGMP header");
+        let query = decoded.layer::<IgmpQuery>().expect("typed query body");
+
+        assert_eq!(decoded.len(), 2);
+        assert_eq!(igmp.group_address_value(), doc_group());
+        assert_eq!(query.raw_flags_qrv_value(), 0x88);
+        assert!(query.extension_flag());
+        assert!(query.suppress_router_side_processing());
+        assert_eq!(query.querier_robustness_variable(), 0);
+        assert_eq!(query.qqic_value(), 0x7d);
+        assert_eq!(query.number_of_sources_value(), 2);
+        assert_eq!(
+            query.source_addresses(),
+            &[Ipv4Addr::new(192, 0, 2, 1), Ipv4Addr::new(198, 51, 100, 2)]
+        );
+        assert_eq!(decoded.compile().expect("roundtrip").as_bytes(), &bytes);
+    }
+
+    #[test]
+    fn igmp_v3_query_decode_truncated_source_list_is_structured_error() {
+        let bytes = [
+            IGMP_TYPE_MEMBERSHIP_QUERY,
+            100,
+            0xab,
+            0xcd,
+            233,
+            252,
+            0,
+            34,
+            0x00,
+            0x7d,
+            0,
+            2,
+            192,
+            0,
+            2,
+            1,
+        ];
+
+        let err = append_igmp_packet(Packet::new(), &bytes).expect_err("source list is short");
+
+        assert_eq!(
+            err,
+            CrafterError::buffer_too_short("igmp v3 query source list", 20, 16)
+        );
+    }
+
+    #[test]
+    fn igmp_v3_query_decode_preserves_extra_query_octets_as_raw() {
+        let bytes = [
+            IGMP_TYPE_MEMBERSHIP_QUERY,
+            100,
+            0xab,
+            0xcd,
+            233,
+            252,
+            0,
+            34,
+            0x00,
+            0x7d,
+            0,
+            1,
+            192,
+            0,
+            2,
+            1,
+            0xde,
+            0xad,
+            0xbe,
+            0xef,
+        ];
+
+        let decoded =
+            append_igmp_packet(Packet::new(), &bytes).expect("decode IGMPv3 query with tail");
+        let query = decoded.layer::<IgmpQuery>().expect("typed query body");
+        let raw = decoded.layer::<Raw>().expect("extra query bytes");
+
+        assert_eq!(decoded.len(), 3);
+        assert_eq!(query.number_of_sources_value(), 1);
+        assert_eq!(query.source_addresses(), &[Ipv4Addr::new(192, 0, 2, 1)]);
+        assert_eq!(raw.as_bytes(), &[0xde, 0xad, 0xbe, 0xef]);
+        assert_eq!(decoded.compile().expect("roundtrip").as_bytes(), &bytes);
     }
 }
