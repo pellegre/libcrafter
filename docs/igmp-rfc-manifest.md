@@ -247,6 +247,32 @@ Compatibility and version distinctions:
   `crafter` should keep them representable and inspectable as typed metadata
   plus `Raw` payload where the fixed header can be parsed.
 
+IGMPv3 Membership Report implementation handoff:
+
+- RFC 9776 Sections 4.2 through 4.2.13 and Figures 4 and 5 are the packet
+  authority for report decoding and construction. A report body is Type
+  `0x22`, one reserved octet, 16-bit checksum, 16-bit report Flags, 16-bit
+  Number of Group Records (`M`), followed by exactly `M` Group Record blocks.
+- The report reserved octet defaults to zero on transmit and is ignored on
+  receive. The checksum covers the whole IGMP message / IPv4 payload, including
+  any preserved trailing report bytes.
+- A Group Record is Record Type (`u8`), Aux Data Len (`u8`), Number of Sources
+  (`u16`), Multicast Address (`Ipv4Addr`), `N` IPv4 Source Address entries,
+  then `Aux Data Len * 4` auxiliary octets. Its minimum wire length is
+  `8 + 4 * N + 4 * Aux Data Len` bytes.
+- RFC 9776 defines these Group Record Type values: `1` `MODE_IS_INCLUDE`, `2`
+  `MODE_IS_EXCLUDE`, `3` `CHANGE_TO_INCLUDE_MODE`, `4`
+  `CHANGE_TO_EXCLUDE_MODE`, `5` `ALLOW_NEW_SOURCES`, and `6`
+  `BLOCK_OLD_SOURCES`.
+- RFC 9776 defines no auxiliary data semantics for IGMPv3. Normal transmit
+  defaults should use Aux Data Len zero, but `crafter` must preserve decoded
+  auxiliary bytes and explicit caller-supplied auxiliary bytes for malformed,
+  extension, or exploratory packets.
+- Unrecognized Group Record Type values are silently ignored by IGMP
+  implementations. For `crafter`, they are not decode errors: parse the common
+  Group Record shape, preserve the unknown type byte, sources, auxiliary bytes,
+  and any report-level trailing data for inspection and round-trip work.
+
 Source-Specific Multicast guidance:
 
 - RFC 9776 adds source filtering through INCLUDE/EXCLUDE filter modes and
@@ -258,6 +284,10 @@ Source-Specific Multicast guidance:
   should not send EXCLUDE-mode records for SSM addresses because SSM-aware
   routers ignore them. The crate should preserve such packets when explicitly
   built or decoded, while later tools can flag them for probe expectations.
+- RFC 4604 is operational SSM guidance for host/router behavior and configured
+  SSM address ranges. Do not use it to reject otherwise well-formed report or
+  Group Record bytes at construction or decode time unless a later validation
+  step deliberately adds an opt-in diagnostic.
 
 Out of crate scope:
 
