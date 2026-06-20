@@ -34,6 +34,9 @@ const DOC_SRC_V3_REPORT_STATE_CHANGE: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 72);
 const DOC_SRC_V3_REPORT_SOURCE_LIST: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 73);
 const DOC_SRC_V3_REPORT_AUX: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 74);
 const DOC_SRC_V3_REPORT_UNKNOWN: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 75);
+const DOC_SRC_MRD_ADVERTISEMENT: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 90);
+const DOC_SRC_MRD_SOLICITATION: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 91);
+const DOC_SRC_MRD_TERMINATION: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 92);
 const DOC_MCAST_QUERY: Ipv4Addr = Ipv4Addr::new(233, 252, 0, 1);
 const DOC_MCAST_REPORT: Ipv4Addr = Ipv4Addr::new(233, 252, 0, 42);
 const DOC_MCAST_V2_REPORT: Ipv4Addr = Ipv4Addr::new(233, 252, 0, 43);
@@ -51,6 +54,7 @@ const DOC_MCAST_V3_REPORT_AUX: Ipv4Addr = Ipv4Addr::new(233, 252, 0, 76);
 const DOC_MCAST_V3_REPORT_UNKNOWN: Ipv4Addr = Ipv4Addr::new(233, 252, 0, 77);
 const ALL_SYSTEMS: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 1);
 const ALL_ROUTERS: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 2);
+const ALL_SNOOPERS: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 106);
 const IGMPV3_REPORT_DESTINATION: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 22);
 const V2_QUERY_MAX_RESPONSE_TENTHS: u8 = 100;
 const V3_QUERY_MAX_RESPONSE_CODE: u8 = 100;
@@ -59,7 +63,7 @@ const V3_QUERY_TIMER_MAX_RESPONSE_TENTHS: u32 = 272;
 const V3_QUERY_TIMER_QQIC: u8 = 0xff;
 const V3_QUERY_TIMER_INTERVAL_SECONDS: u32 = 31_744;
 const V3_QUERY_GROUP_SOURCE_FLAGS_QRV: u8 = 0x0a;
-const V3_QUERY_RESERVED_FLAGS_QRV: u8 = 0xf5;
+const V3_QUERY_RESERVED_FLAGS_QRV: u8 = 0x75;
 const V3_QUERY_QQIC_LINEAR: u8 = 125;
 const DOC_V3_SOURCE_A: Ipv4Addr = Ipv4Addr::new(198, 51, 100, 10);
 const DOC_V3_SOURCE_B: Ipv4Addr = Ipv4Addr::new(203, 0, 113, 20);
@@ -94,23 +98,42 @@ const V3_REPORT_UNKNOWN_SOURCES: [Ipv4Addr; 2] = [
 ];
 const V3_REPORT_AUX_DATA: [u8; 4] = [0xde, 0xad, 0xbe, 0xef];
 const V3_REPORT_UNKNOWN_AUX_DATA: [u8; 4] = [0xca, 0xfe, 0xba, 0xbe];
+const MRD_ADVERTISEMENT_INTERVAL_SECONDS: u8 = 20;
+const MRD_QUERY_INTERVAL_SECONDS: u16 = 125;
+const MRD_ROBUSTNESS_VARIABLE: u16 = 2;
 
 const QUERY_BYTES: &str = fixture_str!("bytes/ipv4-igmp-v1-query.hex");
 const REPORT_BYTES: &str = fixture_str!("bytes/ipv4-igmp-v1-report.hex");
 const V2_QUERY_BYTES: &str = fixture_str!("bytes/ipv4-igmp-v2-query.hex");
 const V2_REPORT_BYTES: &str = fixture_str!("bytes/ipv4-igmp-v2-report.hex");
 const V2_LEAVE_BYTES: &str = fixture_str!("bytes/ipv4-igmp-v2-leave.hex");
+const MRD_ADVERTISEMENT_BYTES: &str = fixture_str!("bytes/ipv4-igmp-mrd-advertisement.hex");
+const MRD_SOLICITATION_BYTES: &str = fixture_str!("bytes/ipv4-igmp-mrd-solicitation.hex");
+const MRD_TERMINATION_BYTES: &str = fixture_str!("bytes/ipv4-igmp-mrd-termination.hex");
 const QUERY_SUMMARY: &str = fixture_str!("summaries/ipv4-igmp-v1-query.summary.txt");
 const REPORT_SUMMARY: &str = fixture_str!("summaries/ipv4-igmp-v1-report.summary.txt");
 const V2_QUERY_SUMMARY: &str = fixture_str!("summaries/ipv4-igmp-v2-query.summary.txt");
 const V2_REPORT_SUMMARY: &str = fixture_str!("summaries/ipv4-igmp-v2-report.summary.txt");
 const V2_LEAVE_SUMMARY: &str = fixture_str!("summaries/ipv4-igmp-v2-leave.summary.txt");
+const MRD_ADVERTISEMENT_SUMMARY: &str =
+    fixture_str!("summaries/ipv4-igmp-mrd-advertisement.summary.txt");
+const MRD_SOLICITATION_SUMMARY: &str =
+    fixture_str!("summaries/ipv4-igmp-mrd-solicitation.summary.txt");
+const MRD_TERMINATION_SUMMARY: &str =
+    fixture_str!("summaries/ipv4-igmp-mrd-termination.summary.txt");
 const QUERY_SHOW: &str = fixture_str!("summaries/ipv4-igmp-v1-query-show.summary.txt");
 const REPORT_SHOW: &str = fixture_str!("summaries/ipv4-igmp-v1-report-show.summary.txt");
 const V2_QUERY_SHOW: &str = fixture_str!("summaries/ipv4-igmp-v2-query-show.summary.txt");
 const V2_REPORT_SHOW: &str = fixture_str!("summaries/ipv4-igmp-v2-report-show.summary.txt");
 const V2_LEAVE_SHOW: &str = fixture_str!("summaries/ipv4-igmp-v2-leave-show.summary.txt");
+const MRD_ADVERTISEMENT_SHOW: &str =
+    fixture_str!("summaries/ipv4-igmp-mrd-advertisement-show.summary.txt");
+const MRD_SOLICITATION_SHOW: &str =
+    fixture_str!("summaries/ipv4-igmp-mrd-solicitation-show.summary.txt");
+const MRD_TERMINATION_SHOW: &str =
+    fixture_str!("summaries/ipv4-igmp-mrd-termination-show.summary.txt");
 const IGMP_PCAP: &[u8] = fixture_bytes!("pcaps/raw-ipv4-igmp-bootstrap.pcap");
+const IGMP_MRD_PCAP: &[u8] = fixture_bytes!("pcaps/raw-ipv4-igmp-mrd.pcap");
 
 const V3_GENERAL_QUERY_BYTES: &str = "\
 45 00 00 20 17 06 00 00 01 02 00 99 c0 00 02 3c e0 00 00 01
@@ -126,7 +149,7 @@ const V3_TIMER_QUERY_BYTES: &str = "\
 11 91 eb 6f 00 00 00 00 02 ff 00 00";
 const V3_RESERVED_FLAGS_QUERY_BYTES: &str = "\
 45 00 00 24 17 0a 00 00 01 02 f6 53 c0 00 02 40 e9 fc 00 3e
-11 64 4c a0 e9 fc 00 3e f5 7d 00 01 c0 00 02 41";
+11 64 cc a0 e9 fc 00 3e 75 7d 00 01 c0 00 02 41";
 
 // These IGMPv3 Membership Report fixtures are generated from RFC 9776 packet
 // shapes and documentation-space addresses, not from live captures.
@@ -253,6 +276,20 @@ struct IgmpV3ReportGoldenCase {
     records: &'static [IgmpV3ReportRecordExpectation],
 }
 
+#[derive(Clone, Copy)]
+struct IgmpMrdGoldenCase {
+    name: &'static str,
+    build: fn() -> Packet,
+    bytes_fixture: &'static str,
+    summary_fixture: &'static str,
+    show_fixture: &'static str,
+    source: Ipv4Addr,
+    destination: Ipv4Addr,
+    igmp_type: IgmpType,
+    checksum: u16,
+    timestamp_micros: u32,
+}
+
 const CASES: &[IgmpGoldenCase] = &[
     IgmpGoldenCase {
         name: "ipv4-igmp-v1-query",
@@ -293,6 +330,45 @@ const CASES: &[IgmpGoldenCase] = &[
         summary_fixture: V2_LEAVE_SUMMARY,
         show_fixture: V2_LEAVE_SHOW,
         timestamp_micros: 5,
+    },
+];
+
+const MRD_CASES: &[IgmpMrdGoldenCase] = &[
+    IgmpMrdGoldenCase {
+        name: "ipv4-igmp-mrd-advertisement",
+        build: build_mrd_advertisement,
+        bytes_fixture: MRD_ADVERTISEMENT_BYTES,
+        summary_fixture: MRD_ADVERTISEMENT_SUMMARY,
+        show_fixture: MRD_ADVERTISEMENT_SHOW,
+        source: DOC_SRC_MRD_ADVERTISEMENT,
+        destination: ALL_SNOOPERS,
+        igmp_type: IgmpType::MulticastRouterAdvertisement,
+        checksum: 0xcf6c,
+        timestamp_micros: 1,
+    },
+    IgmpMrdGoldenCase {
+        name: "ipv4-igmp-mrd-solicitation",
+        build: build_mrd_solicitation,
+        bytes_fixture: MRD_SOLICITATION_BYTES,
+        summary_fixture: MRD_SOLICITATION_SUMMARY,
+        show_fixture: MRD_SOLICITATION_SHOW,
+        source: DOC_SRC_MRD_SOLICITATION,
+        destination: ALL_ROUTERS,
+        igmp_type: IgmpType::MulticastRouterSolicitation,
+        checksum: 0xceff,
+        timestamp_micros: 2,
+    },
+    IgmpMrdGoldenCase {
+        name: "ipv4-igmp-mrd-termination",
+        build: build_mrd_termination,
+        bytes_fixture: MRD_TERMINATION_BYTES,
+        summary_fixture: MRD_TERMINATION_SUMMARY,
+        show_fixture: MRD_TERMINATION_SHOW,
+        source: DOC_SRC_MRD_TERMINATION,
+        destination: ALL_SNOOPERS,
+        igmp_type: IgmpType::MulticastRouterTermination,
+        checksum: 0xcdff,
+        timestamp_micros: 3,
     },
 ];
 
@@ -388,9 +464,9 @@ const V3_QUERY_CASES: &[IgmpV3QueryGoldenCase] = &[
         group_address: DOC_MCAST_V3_RESERVED_FLAGS,
         max_response_code: V3_QUERY_MAX_RESPONSE_CODE,
         max_response_tenths: V3_QUERY_MAX_RESPONSE_CODE as u32,
-        checksum: 0x4ca0,
+        checksum: 0xcca0,
         raw_flags_qrv: V3_QUERY_RESERVED_FLAGS_QRV,
-        query_flags: 0xf0,
+        query_flags: 0x70,
         suppress: false,
         qrv: 5,
         qqic: V3_QUERY_QQIC_LINEAR,
@@ -562,6 +638,23 @@ fn build_v2_leave() -> Packet {
     ipv4(DOC_SRC_V2_LEAVE, ALL_ROUTERS, 0x1705) / Igmp::v2_leave_group(DOC_MCAST_V2_LEAVE)
 }
 
+fn build_mrd_advertisement() -> Packet {
+    ipv4(DOC_SRC_MRD_ADVERTISEMENT, ALL_SNOOPERS, 0x1711)
+        / Igmp::mrd_advertisement(
+            MRD_ADVERTISEMENT_INTERVAL_SECONDS,
+            MRD_QUERY_INTERVAL_SECONDS,
+            MRD_ROBUSTNESS_VARIABLE,
+        )
+}
+
+fn build_mrd_solicitation() -> Packet {
+    ipv4(DOC_SRC_MRD_SOLICITATION, ALL_ROUTERS, 0x1712) / Igmp::mrd_solicitation()
+}
+
+fn build_mrd_termination() -> Packet {
+    ipv4(DOC_SRC_MRD_TERMINATION, ALL_SNOOPERS, 0x1713) / Igmp::mrd_termination()
+}
+
 fn build_v3_general_query() -> Packet {
     ipv4(DOC_SRC_V3_GENERAL, ALL_SYSTEMS, 0x1706)
         / Igmp::v3_general_query(V3_QUERY_MAX_RESPONSE_CODE)
@@ -704,6 +797,10 @@ fn expected_bytes(case: IgmpGoldenCase) -> Vec<u8> {
     decode_hex(case.name, case.bytes_fixture)
 }
 
+fn expected_mrd_bytes(case: IgmpMrdGoldenCase) -> Vec<u8> {
+    decode_hex(case.name, case.bytes_fixture)
+}
+
 fn assert_case(case: IgmpGoldenCase) -> crafter::Result<Packet> {
     let packet = (case.build)();
     let compiled = packet.compile()?;
@@ -724,6 +821,62 @@ fn assert_case(case: IgmpGoldenCase) -> crafter::Result<Packet> {
 
     let igmp = decoded.layer::<Igmp>().expect("decoded IGMP layer");
     assert_eq!(igmp.checksum_state(), FieldState::User);
+
+    maybe_dump(case.name, compiled.as_bytes(), Some(&decoded));
+    assert_eq!(
+        decoded.summary().trim_end(),
+        case.summary_fixture.trim_end()
+    );
+    assert_eq!(decoded.show().trim_end(), case.show_fixture.trim_end());
+
+    Ok(decoded)
+}
+
+fn assert_mrd_case(case: IgmpMrdGoldenCase) -> crafter::Result<Packet> {
+    let packet = (case.build)();
+    let compiled = packet.compile()?;
+    let expected = expected_mrd_bytes(case);
+
+    maybe_dump(case.name, compiled.as_bytes(), None);
+    assert_eq!(compiled.as_bytes(), expected.as_slice());
+    assert_eq!(compiled.as_bytes()[9], IPPROTO_IGMP);
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes())?;
+    let recompiled = decoded.compile()?;
+    assert_eq!(
+        recompiled.as_bytes(),
+        expected.as_slice(),
+        "{} decode/recompile changed bytes",
+        case.name
+    );
+
+    let ipv4 = decoded.layer::<Ipv4>().expect("decoded IPv4 MRD packet");
+    assert_eq!(ipv4.source(), case.source);
+    assert_eq!(ipv4.destination(), case.destination);
+    assert_eq!(ipv4.ttl_value(), 1);
+
+    let igmp = decoded.layer::<Igmp>().expect("decoded IGMP MRD layer");
+    assert_eq!(igmp.igmp_type(), case.igmp_type);
+    assert_eq!(igmp.checksum_value(), Some(case.checksum));
+    assert_eq!(igmp.checksum_state(), FieldState::User);
+    match case.igmp_type {
+        IgmpType::MulticastRouterAdvertisement => {
+            assert_eq!(
+                igmp.mrd_advertisement_interval_value(),
+                MRD_ADVERTISEMENT_INTERVAL_SECONDS
+            );
+            assert_eq!(igmp.mrd_query_interval_value(), MRD_QUERY_INTERVAL_SECONDS);
+            assert_eq!(
+                igmp.mrd_robustness_variable_value(),
+                MRD_ROBUSTNESS_VARIABLE
+            );
+        }
+        IgmpType::MulticastRouterSolicitation | IgmpType::MulticastRouterTermination => {
+            assert_eq!(igmp.mrd_reserved_value(), 0);
+            assert_eq!(igmp.group_address_value(), Ipv4Addr::UNSPECIFIED);
+        }
+        other => panic!("unexpected MRD fixture type {other:?}"),
+    }
 
     maybe_dump(case.name, compiled.as_bytes(), Some(&decoded));
     assert_eq!(
@@ -1027,12 +1180,30 @@ fn igmp_golden_v3_query_reserved_flag_bits() -> crafter::Result<()> {
         .expect("decoded reserved-flags query body");
 
     assert_eq!(query.raw_flags_qrv_value(), V3_QUERY_RESERVED_FLAGS_QRV);
-    assert_eq!(query.query_flags_value(), 0xf0);
+    assert_eq!(query.query_flags_value(), 0x70);
     assert_eq!(query.unassigned_query_flags_value(), 0x70);
-    assert!(query.extension_flag());
+    assert!(!query.extension_flag());
     assert!(!query.suppress_router_side_processing());
     assert_eq!(query.source_addresses(), V3_RESERVED_FLAGS_SOURCES);
 
+    Ok(())
+}
+
+#[test]
+fn igmp_golden_mrd_advertisement() -> crafter::Result<()> {
+    assert_mrd_case(MRD_CASES[0])?;
+    Ok(())
+}
+
+#[test]
+fn igmp_golden_mrd_solicitation() -> crafter::Result<()> {
+    assert_mrd_case(MRD_CASES[1])?;
+    Ok(())
+}
+
+#[test]
+fn igmp_golden_mrd_termination() -> crafter::Result<()> {
+    assert_mrd_case(MRD_CASES[2])?;
     Ok(())
 }
 
@@ -1149,5 +1320,45 @@ fn igmp_golden_raw_ip_pcap_fixture() -> std::result::Result<(), Box<dyn std::err
     }
 
     assert_eq!(rewritten, IGMP_PCAP);
+    Ok(())
+}
+
+#[test]
+fn igmp_golden_mrd_raw_ip_pcap_fixture() -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let records = PcapReader::from_reader(IGMP_MRD_PCAP)?.collect_records()?;
+    assert_eq!(records.len(), MRD_CASES.len());
+
+    let packets = PcapReader::from_reader(IGMP_MRD_PCAP)?.collect_packets()?;
+    assert_eq!(packets.len(), MRD_CASES.len());
+
+    for ((record, packet), case) in records.iter().zip(packets.iter()).zip(MRD_CASES) {
+        let expected = expected_mrd_bytes(*case);
+        let timestamp = PcapTimestamp::micros(18, case.timestamp_micros)?;
+
+        assert_eq!(record.timestamp(), timestamp);
+        assert_eq!(record.pcap_link_type(), PcapLinkType::RawIp);
+        assert_eq!(record.data(), expected.as_slice());
+        assert_eq!(packet.timestamp(), timestamp);
+        assert_eq!(packet.pcap_link_type(), PcapLinkType::RawIp);
+        assert_eq!(packet.data(), expected.as_slice());
+        assert_eq!(packet.packet().compile()?.as_bytes(), expected.as_slice());
+    }
+
+    let mut rewritten = Vec::new();
+    {
+        let options =
+            PcapWriterOptions::new(PcapLinkType::RawIp).precision(TimestampPrecision::Microseconds);
+        let mut writer = PcapWriter::from_writer_with_options(&mut rewritten, options)?;
+        for case in MRD_CASES {
+            let packet = (case.build)();
+            writer.write_packet_with_timestamp(
+                &packet,
+                PcapTimestamp::micros(18, case.timestamp_micros)?,
+            )?;
+        }
+        writer.flush()?;
+    }
+
+    assert_eq!(rewritten, IGMP_MRD_PCAP);
     Ok(())
 }

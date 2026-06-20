@@ -1,0 +1,1 @@
+Ipv4(src=192.0.2.90, dst=224.0.0.106, proto=igmp(2)) / Igmp(version=MRD, type=0x30 (Multicast Router Advertisement), advertisement_interval=20s, query_interval=125s, robustness_variable=2, checksum=0xcf6c, checksum_status=valid)

@@ -21,9 +21,9 @@ Packet(len=60, layers=3)
       version: IGMPv3
       type: 0x22 (IGMPv3 Membership Report)
       code: 0x00 (No registered code)
+      group_address: 0.0.0.0 (zero)
       checksum: 0xd55a
       checksum_status: valid
-      group_address: 0.0.0.0 (zero)
       length: 8
   [2] IgmpReport
       version: IGMPv3

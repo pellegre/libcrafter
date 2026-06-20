@@ -1,27 +1,26 @@
-Packet(len=28, layers=2)
+Packet(len=24, layers=2)
   [0] Ipv4
       version: 4
       ihl: 5
       tos: 0
       dscp: 0
       ecn: Not-ECT
-      total_length: 28
-      id: 0x1705
+      total_length: 24
+      id: 0x1712
       flags: none
       fragment_offset: 0
       ttl: 1
       protocol: igmp(2)
-      checksum: 0x00a7
+      checksum: 0x0075
       checksum_status: valid
-      src: 192.0.2.50
+      src: 192.0.2.91
       dst: 224.0.0.2
       option_count: 0
       options: 
   [1] Igmp
-      version: IGMPv2
-      type: 0x17 (IGMPv2 Leave Group)
-      code: 0x00 (No registered code)
-      group_address: 233.252.0.17 (multicast)
-      checksum: 0xfef1
+      version: MRD
+      type: 0x31 (Multicast Router Solicitation)
+      reserved: 0x00
+      checksum: 0xceff
       checksum_status: valid
-      length: 8
+      length: 4
