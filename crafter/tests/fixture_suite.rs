@@ -9,9 +9,9 @@ use std::path::{Path, PathBuf};
 use crafter::core::{
     Ah, Arp, Bgp, Dhcp, DhcpMessageType, DhcpOption, DhcpRelayAgentInfo, DhcpRelaySuboption, Dns,
     DnsName, DnsRecord, DnsRecordData, Dot11, Dot11DataSubtype, Dot11ManagementSubtype, Dscp,
-    Eapol, EapolKey, Ecn, EdnsOption, Esp, Ethernet, IcmpKind, Icmpv4, Icmpv6, IkeHeader,
-    IkeKePayload, IkeNoncePayload, IkeSaPayload, Ipv4, Ipv4ChecksumStatus, Ipv4Option, Ipv6,
-    Ipv6DestinationOptionsHeader, Ipv6FragmentHeader, Ipv6FragmentHeaderStatus,
+    Eapol, EapolKey, Ecn, EdnsOption, Esp, Ethernet, IcmpKind, Icmpv4, Icmpv6, Igmp, IgmpType,
+    IkeHeader, IkeKePayload, IkeNoncePayload, IkeSaPayload, Ipv4, Ipv4ChecksumStatus, Ipv4Option,
+    Ipv6, Ipv6DestinationOptionsHeader, Ipv6FragmentHeader, Ipv6FragmentHeaderStatus,
     Ipv6HopByHopOptionsHeader, Ipv6MobileRoutingHeader, Ipv6MobileRoutingHeaderStatus, Ipv6Option,
     Ipv6RoutingHeader, Ipv6RoutingTypeStatus, Ipv6SegmentRoutingHeader, Layer, LinkType, LinuxSll,
     LlcSnap, MacAddr, NetworkLayer, NullByteOrder, NullLoopback, OptionOverload,
@@ -24,8 +24,9 @@ use crafter::core::{
     DNS_TYPE_CNAME, DNS_TYPE_DNSKEY, DNS_TYPE_DS, DNS_TYPE_HTTPS, DNS_TYPE_NS, DNS_TYPE_NSEC,
     DNS_TYPE_NSEC3, DNS_TYPE_OPT, DNS_TYPE_RRSIG, DNS_TYPE_SOA, DNS_TYPE_SRV, DNS_TYPE_SVCB,
     ETHERTYPE_ARP, ETHERTYPE_EAPOL, ETHERTYPE_IPV4, ETHERTYPE_VLAN, ICMPV6_ECHO_REQUEST,
-    ICMPV6_TIME_EXCEEDED, ICMP_DESTINATION_UNREACHABLE, ICMP_ECHO_REQUEST, IPPROTO_ICMP,
-    IPPROTO_ICMPV6, IPPROTO_IPV6_DSTOPTS, IPPROTO_IPV6_EXPERIMENTAL_1, IPPROTO_IPV6_FRAGMENT,
+    ICMPV6_TIME_EXCEEDED, ICMP_DESTINATION_UNREACHABLE, ICMP_ECHO_REQUEST, IGMP_FIXED_HEADER_LEN,
+    IGMP_QUERY_CODE_V1, IGMP_TYPE_UNASSIGNED_FIRST, IPPROTO_ICMP, IPPROTO_ICMPV6, IPPROTO_IGMP,
+    IPPROTO_IPV6_DSTOPTS, IPPROTO_IPV6_EXPERIMENTAL_1, IPPROTO_IPV6_FRAGMENT,
     IPPROTO_IPV6_HOPOPTS, IPPROTO_IPV6_ROUTE, IPPROTO_TCP, IPPROTO_UDP, IPV4_FLAG_DONT_FRAGMENT,
     IPV4_FLAG_MORE_FRAGMENTS, IPV4_FLAG_RESERVED, IPV6_ROUTING_TYPE_MOBILE,
     IPV6_ROUTING_TYPE_SEGMENT, TCP_FLAG_ACK, TCP_FLAG_PSH, TCP_FLAG_SYN, UDP_HEADER_LEN,
@@ -84,6 +85,7 @@ enum ExpectedLayer {
     Ipv6SegmentRouting,
     Ipv6Fragment,
     Icmp,
+    Igmp,
     Icmpv6,
     Tcp,
     Udp,
@@ -117,6 +119,7 @@ enum CoverageFamily {
     NullLoopbackIpv6,
     Ipv4IcmpEcho,
     Ipv4IcmpError,
+    Ipv4IgmpBootstrap,
     Ipv4DscpEcn,
     Ipv4Fragment,
     Ipv4Options,
@@ -519,6 +522,24 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Icmp, ExpectedLayer::Raw],
         preserve_exact_bytes: true,
         summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "ipv4-igmp-v1-query",
+        path: "bytes/ipv4-igmp-v1-query.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-igmp-v1-query.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Igmp],
+        preserve_exact_bytes: true,
+        summary_path: Some("summaries/ipv4-igmp-v1-query.summary.txt"),
+    },
+    ValidFixtureCase {
+        name: "ipv4-igmp-v1-report",
+        path: "bytes/ipv4-igmp-v1-report.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-igmp-v1-report.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Igmp],
+        preserve_exact_bytes: true,
+        summary_path: Some("summaries/ipv4-igmp-v1-report.summary.txt"),
     },
     ValidFixtureCase {
         name: "ipv4-udp-dscp-ecn-raw",
@@ -1668,6 +1689,27 @@ const PCAP_FIXTURES: &[PcapFixtureCase] = &[
         }],
     },
     PcapFixtureCase {
+        name: "raw-ipv4-igmp-bootstrap",
+        path: "pcaps/raw-ipv4-igmp-bootstrap.pcap",
+        contents: fixture_bytes!("pcaps/raw-ipv4-igmp-bootstrap.pcap"),
+        pcap_link_type: PcapLinkType::RawIp,
+        link_type: LinkType::Raw,
+        timestamp_precision: TimestampPrecision::Microseconds,
+        coverage: PcapCoverageFamily::RawIpIpv4,
+        records: &[
+            PcapFixtureRecord {
+                seconds: 17,
+                fractional: 1,
+                fixture_name: "ipv4-igmp-v1-query",
+            },
+            PcapFixtureRecord {
+                seconds: 17,
+                fractional: 2,
+                fixture_name: "ipv4-igmp-v1-report",
+            },
+        ],
+    },
+    PcapFixtureCase {
         name: "raw-ipv4-udp-dscp-ecn-raw",
         path: "pcaps/raw-ipv4-udp-dscp-ecn-raw.pcap",
         contents: fixture_bytes!("pcaps/raw-ipv4-udp-dscp-ecn-raw.pcap"),
@@ -1875,6 +1917,10 @@ const REQUIRED_VALID_COVERAGE: &[(CoverageFamily, &str)] = &[
     (CoverageFamily::Ipv4IcmpEcho, "IPv4 ICMP echo"),
     (CoverageFamily::Ipv4IcmpError, "IPv4 ICMP error message"),
     (
+        CoverageFamily::Ipv4IgmpBootstrap,
+        "IPv4 IGMP bootstrap query and report",
+    ),
+    (
         CoverageFamily::Ipv4DscpEcn,
         "IPv4 DSCP and ECN differentiated services field",
     ),
@@ -2039,6 +2085,7 @@ fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
         "null-loopback-ipv6-raw" => &[CoverageFamily::NullLoopbackIpv6],
         "ipv4-icmp-echo-request" => &[CoverageFamily::Ipv4IcmpEcho],
         "ipv4-icmp-destination-unreachable" => &[CoverageFamily::Ipv4IcmpError],
+        "ipv4-igmp-v1-query" | "ipv4-igmp-v1-report" => &[CoverageFamily::Ipv4IgmpBootstrap],
         "ipv4-udp-dscp-ecn-raw" => &[CoverageFamily::Ipv4DscpEcn],
         "ipv4-fragment-noninitial-raw"
         | "ipv4-fragment-defrag-complete-final"
@@ -2331,6 +2378,9 @@ fn assert_expected_layers(case: &ValidFixtureCase, packet: &Packet) {
             ExpectedLayer::Icmp => {
                 let _ = expect_layer::<Icmpv4>(case, packet);
             }
+            ExpectedLayer::Igmp => {
+                let _ = expect_layer::<Igmp>(case, packet);
+            }
             ExpectedLayer::Icmpv6 => {
                 let _ = expect_layer::<Icmpv6>(case, packet);
             }
@@ -2426,6 +2476,7 @@ fn expected_layer_name(expected: ExpectedLayer) -> &'static str {
         ExpectedLayer::Ipv6SegmentRouting => "Ipv6SegmentRoutingHeader",
         ExpectedLayer::Ipv6Fragment => "Ipv6FragmentHeader",
         ExpectedLayer::Icmp => "Icmpv4",
+        ExpectedLayer::Igmp => "Igmp",
         ExpectedLayer::Icmpv6 => "Icmpv6",
         ExpectedLayer::Tcp => "Tcp",
         ExpectedLayer::Udp => "Udp",
@@ -2848,6 +2899,32 @@ fn assert_bgp_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
     }
 }
 
+fn assert_igmp_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
+    assert_exact_layer_stack(case, packet);
+
+    let ipv4 = expect_layer::<Ipv4>(case, packet);
+    assert_eq!(ipv4.protocol_value(), IPPROTO_IGMP);
+
+    let igmp = expect_layer::<Igmp>(case, packet);
+    match case.name {
+        "ipv4-igmp-v1-query" => {
+            assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 10));
+            assert_eq!(ipv4.destination(), Ipv4Addr::new(233, 252, 0, 1));
+            assert_eq!(igmp.igmp_type(), IgmpType::MembershipQuery);
+            assert_eq!(igmp.code_value(), IGMP_QUERY_CODE_V1);
+            assert_eq!(igmp.group_address_value(), Ipv4Addr::UNSPECIFIED);
+        }
+        "ipv4-igmp-v1-report" => {
+            assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 20));
+            assert_eq!(ipv4.destination(), Ipv4Addr::new(233, 252, 0, 42));
+            assert_eq!(igmp.igmp_type(), IgmpType::V1MembershipReport);
+            assert_eq!(igmp.code_value(), 0);
+            assert_eq!(igmp.group_address_value(), Ipv4Addr::new(233, 252, 0, 42));
+        }
+        other => panic!("IGMP fixture {other} is missing typed field assertions"),
+    }
+}
+
 fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
     match case.name {
         name if name.starts_with("dot11-") => assert_dot11_fixture_fields(case, packet),
@@ -2863,6 +2940,7 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
         name if name.starts_with("ipv6-fragment-oracle-reference-") => {
             assert_ipv6_oracle_reference_fixture_fields(case, packet)
         }
+        name if name.starts_with("ipv4-igmp-") => assert_igmp_fixture_fields(case, packet),
         "arp-who-has" => {
             let ethernet = expect_layer::<Ethernet>(case, packet);
             assert_eq!(ethernet.destination(), Some(MacAddr::BROADCAST));
@@ -6237,6 +6315,22 @@ fn valid_byte_fixtures_decode_compile_and_summarize() {
 }
 
 #[test]
+fn igmp_fixture_suite_bootstrap_decodes_compile_and_summarizes() {
+    for name in ["ipv4-igmp-v1-query", "ipv4-igmp-v1-report"] {
+        let case = valid_fixture_case(name);
+        ensure_fixture_exists(case.path);
+        let bytes = fixture_bytes_for_case(case);
+        let target = packet_target_for_case(case);
+        let packet = decode_packet(target, &bytes)
+            .unwrap_or_else(|err| panic!("fixture {} should decode: {err}", case.path));
+
+        assert_packet_surface(case, &packet);
+        assert_fixture_fields(case, &packet);
+        assert_compile_decode_compile(case, target, &packet, &bytes);
+    }
+}
+
+#[test]
 fn fixture_dot11_corpus_decodes_layer_stacks() {
     for case in DOT11_FIXTURES {
         ensure_fixture_exists(case.path);
@@ -7381,6 +7475,46 @@ fn pcap_fixture_corpus_decodes_supported_link_types() {
 }
 
 #[test]
+fn igmp_fixture_suite_raw_ip_pcap_decodes_records() {
+    let case = pcap_fixture_case("raw-ipv4-igmp-bootstrap");
+    assert_eq!(case.records.len(), 2);
+
+    let packets = PcapReader::from_reader(case.contents)
+        .unwrap_or_else(|err| panic!("pcap fixture {} should parse header: {err}", case.path))
+        .collect_packets()
+        .unwrap_or_else(|err| panic!("pcap fixture {} should decode packets: {err}", case.path));
+    assert_eq!(packets.len(), case.records.len());
+
+    for (packet, expected) in packets.iter().zip(case.records) {
+        let expected_fixture = valid_fixture_case(expected.fixture_name);
+        let expected_bytes = fixture_bytes_for_case(expected_fixture);
+        let expected_timestamp = PcapTimestamp::new(
+            expected.seconds,
+            expected.fractional,
+            case.timestamp_precision,
+        )
+        .unwrap_or_else(|err| {
+            panic!(
+                "pcap fixture {} timestamp should be valid: {err}",
+                case.path
+            )
+        });
+
+        assert_eq!(packet.timestamp(), expected_timestamp);
+        assert_eq!(packet.pcap_link_type(), PcapLinkType::RawIp);
+        assert_eq!(packet.data(), expected_bytes.as_slice());
+        assert_packet_surface(expected_fixture, packet.packet());
+        assert_fixture_fields(expected_fixture, packet.packet());
+        assert_compile_decode_compile(
+            expected_fixture,
+            packet_target_for_case(expected_fixture),
+            packet.packet(),
+            &expected_bytes,
+        );
+    }
+}
+
+#[test]
 fn pcap_fixture_roundtrips() {
     let case = PCAP_FIXTURES
         .iter()
@@ -7833,6 +7967,92 @@ fn malformed_corpus_rows_are_well_formed() {
         if let Some(expected_kind) = &row.expected_kind {
             assert_lower_dash_name(expected_kind, &row.name);
         }
+    }
+}
+
+#[test]
+fn igmp_malformed_fixture_suite_reports_errors_and_preserves_raw_tails() {
+    let error_cases: &[(&str, &str, &str, &str, usize, usize)] = &[
+        (
+            "ipv4-igmp-empty-payload",
+            "malformed/ipv4-igmp-empty-payload.hex",
+            fixture_str!("malformed/ipv4-igmp-empty-payload.hex"),
+            "igmp header",
+            IGMP_FIXED_HEADER_LEN,
+            0,
+        ),
+        (
+            "ipv4-igmp-short-fixed-header",
+            "malformed/ipv4-igmp-short-fixed-header.hex",
+            fixture_str!("malformed/ipv4-igmp-short-fixed-header.hex"),
+            "igmp header",
+            IGMP_FIXED_HEADER_LEN,
+            3,
+        ),
+        (
+            "ipv4-igmp-invalid-wrapper-length",
+            "malformed/ipv4-igmp-invalid-wrapper-length.hex",
+            fixture_str!("malformed/ipv4-igmp-invalid-wrapper-length.hex"),
+            "ipv4 packet",
+            29,
+            27,
+        ),
+    ];
+
+    for (name, path, hex, context, required, available) in error_cases {
+        ensure_fixture_exists(path);
+        let bytes = decode_hex(name, hex);
+        match Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_slice()) {
+            Err(CrafterError::BufferTooShort {
+                context: actual_context,
+                required: actual_required,
+                available: actual_available,
+            }) => {
+                assert_eq!(&actual_context, context, "{name} context");
+                assert_eq!(&actual_required, required, "{name} required");
+                assert_eq!(&actual_available, available, "{name} available");
+            }
+            Ok(packet) => panic!("{name} decoded unexpectedly as {}", packet.summary()),
+            Err(other) => panic!("{name} expected BufferTooShort, got {other:?}"),
+        }
+    }
+
+    let raw_tail_cases: &[(&str, &str, &str, IgmpType, &[u8])] = &[
+        (
+            "ipv4-igmp-trailing-bytes",
+            "malformed/ipv4-igmp-trailing-bytes.hex",
+            fixture_str!("malformed/ipv4-igmp-trailing-bytes.hex"),
+            IgmpType::MembershipQuery,
+            &[0xde, 0xad, 0xbe, 0xef],
+        ),
+        (
+            "ipv4-igmp-unknown-type-payload",
+            "malformed/ipv4-igmp-unknown-type-payload.hex",
+            fixture_str!("malformed/ipv4-igmp-unknown-type-payload.hex"),
+            IgmpType::Unassigned(IGMP_TYPE_UNASSIGNED_FIRST),
+            &[0x01, 0x02, 0x03, 0x04],
+        ),
+    ];
+
+    for (name, path, hex, expected_type, expected_tail) in raw_tail_cases {
+        ensure_fixture_exists(path);
+        let bytes = decode_hex(name, hex);
+        let packet = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_slice())
+            .unwrap_or_else(|err| panic!("{name} should decode with a Raw tail: {err}"));
+        let igmp = packet.layer::<Igmp>().expect("decoded IGMP header");
+        let raw = packet.layer::<Raw>().expect("decoded raw IGMP tail");
+
+        assert_eq!(packet.len(), 3, "{name} should decode as IPv4 / IGMP / Raw");
+        assert_eq!(igmp.igmp_type(), *expected_type);
+        assert_eq!(raw.as_bytes(), *expected_tail);
+        assert_eq!(
+            packet
+                .compile()
+                .unwrap_or_else(|err| panic!("{name} should recompile: {err}"))
+                .as_bytes(),
+            bytes.as_slice(),
+            "{name} should preserve bytes"
+        );
     }
 }
 
