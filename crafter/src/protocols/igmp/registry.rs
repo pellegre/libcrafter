@@ -15,6 +15,7 @@ use super::constants::{
     IGMP_TYPE_OBSOLETE_RESERVED_LAST, IGMP_TYPE_PIM_V1, IGMP_TYPE_RESERVED,
     IGMP_TYPE_UNASSIGNED_FIRST, IGMP_TYPE_UNASSIGNED_LAST, IGMP_TYPE_V1_MEMBERSHIP_REPORT,
     IGMP_TYPE_V2_LEAVE_GROUP, IGMP_TYPE_V2_MEMBERSHIP_REPORT, IGMP_TYPE_V3_MEMBERSHIP_REPORT,
+    IGMP_V3_QUERY_FLAG_EXTENSION,
 };
 
 /// Source-backed IGMP Type value.
@@ -132,6 +133,63 @@ pub struct IgmpCodeMeta {
     pub name: &'static str,
     /// Scoped registry assignment status.
     pub status: IgmpTypeStatus,
+}
+
+/// Registry assignment status for an IGMP/MLD message flag bit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum IgmpFlagStatus {
+    /// Assigned by the reviewed IGMP/MLD flag registry.
+    Assigned,
+    /// In the registry-managed flag range but not currently assigned.
+    Unassigned,
+    /// Not part of this message's registry-managed flag field.
+    NotFlag,
+}
+
+/// Source-backed IGMPv3 Query flag bit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum IgmpQueryFlag {
+    /// RFC 9279 Extension flag, registry bit 0.
+    Extension,
+    /// Registry-managed but currently unassigned query flag bit.
+    Unassigned(u8),
+    /// Bits outside the IGMP/MLD Query Message Flags registry.
+    NotFlag(u8),
+}
+
+impl IgmpQueryFlag {
+    /// Return the IANA registry bit number.
+    pub const fn bit(self) -> u8 {
+        match self {
+            Self::Extension => 0,
+            Self::Unassigned(bit) | Self::NotFlag(bit) => bit,
+        }
+    }
+
+    /// Return the wire mask for this registry bit, or zero for non-flag bits.
+    pub const fn mask(self) -> u8 {
+        igmp_query_flag_mask(self.bit())
+    }
+
+    /// Return source-backed metadata for this query flag bit.
+    pub const fn meta(self) -> IgmpQueryFlagMeta {
+        igmp_query_flag_meta(self.bit())
+    }
+}
+
+/// One source-backed IGMP/MLD Query Message Flags registry entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct IgmpQueryFlagMeta {
+    /// IANA registry bit number.
+    pub bit: u8,
+    /// Wire mask in the IGMPv3 Flags/S/QRV octet, or zero for non-flag bits.
+    pub mask: u8,
+    /// Flag classification preserving raw bit values.
+    pub flag: IgmpQueryFlag,
+    /// Registered short name, status label, or non-flag label.
+    pub name: &'static str,
+    /// Registry assignment status.
+    pub status: IgmpFlagStatus,
 }
 
 /// Classify an IGMP Type code without rejecting unassigned values.
@@ -331,6 +389,56 @@ pub const fn igmp_code_name(type_code: u8, code: u8) -> Option<&'static str> {
     }
 }
 
+/// Classify an IGMP/MLD Query Message Flags registry bit.
+pub const fn igmp_query_flag(bit: u8) -> IgmpQueryFlag {
+    match bit {
+        0 => IgmpQueryFlag::Extension,
+        1..=3 => IgmpQueryFlag::Unassigned(bit),
+        other => IgmpQueryFlag::NotFlag(other),
+    }
+}
+
+/// Return registry metadata for an IGMP/MLD Query Message Flags bit.
+pub const fn igmp_query_flag_meta(bit: u8) -> IgmpQueryFlagMeta {
+    match bit {
+        0 => query_flag_meta(
+            bit,
+            IGMP_V3_QUERY_FLAG_EXTENSION,
+            IgmpQueryFlag::Extension,
+            "Extension",
+            IgmpFlagStatus::Assigned,
+        ),
+        1..=3 => query_flag_meta(
+            bit,
+            igmp_query_flag_mask(bit),
+            IgmpQueryFlag::Unassigned(bit),
+            "Unassigned",
+            IgmpFlagStatus::Unassigned,
+        ),
+        other => query_flag_meta(
+            other,
+            0,
+            IgmpQueryFlag::NotFlag(other),
+            "Not a query flag",
+            IgmpFlagStatus::NotFlag,
+        ),
+    }
+}
+
+/// Return the registry status for an IGMP/MLD Query Message Flags bit.
+pub const fn igmp_query_flag_status(bit: u8) -> IgmpFlagStatus {
+    igmp_query_flag_meta(bit).status
+}
+
+/// Return a source-backed Query Message Flag name when the registry assigns it.
+pub const fn igmp_query_flag_name(bit: u8) -> Option<&'static str> {
+    let meta = igmp_query_flag_meta(bit);
+    match meta.status {
+        IgmpFlagStatus::Assigned => Some(meta.name),
+        _ => None,
+    }
+}
+
 const fn type_meta(
     code: u8,
     igmp_type: IgmpType,
@@ -357,6 +465,29 @@ const fn code_meta(
         code,
         name,
         status,
+    }
+}
+
+const fn query_flag_meta(
+    bit: u8,
+    mask: u8,
+    flag: IgmpQueryFlag,
+    name: &'static str,
+    status: IgmpFlagStatus,
+) -> IgmpQueryFlagMeta {
+    IgmpQueryFlagMeta {
+        bit,
+        mask,
+        flag,
+        name,
+        status,
+    }
+}
+
+const fn igmp_query_flag_mask(bit: u8) -> u8 {
+    match bit {
+        0..=3 => 0x80 >> bit,
+        _ => 0,
     }
 }
 

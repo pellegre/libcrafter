@@ -15,7 +15,8 @@ use crate::packet::{IntoPacket, Layer, LayerContext, Packet};
 
 use super::constants::{
     igmp_v3_timer_code_from_units_floor, igmp_v3_timer_code_units, IGMP_DEFAULT_QUERY_FLAGS,
-    IGMP_V3_QUERY_FLAGS_MASK, IGMP_V3_QUERY_FLAG_EXTENSION,
+    IGMP_V3_QUERY_FLAGS_MASK, IGMP_V3_QUERY_FLAGS_UNASSIGNED_MASK,
+    IGMP_V3_QUERY_FLAG_EXTENSION,
 };
 use super::message::Igmp;
 
@@ -83,6 +84,29 @@ impl IgmpQuery {
         self.with_raw_flags_qrv((flags & IGMP_V3_QUERY_FLAGS_MASK) | preserved)
     }
 
+    /// Set or clear a registry-managed query flag bit while preserving S/QRV.
+    pub fn with_query_flag(self, flag: u8, enabled: bool) -> Self {
+        let flag = flag & IGMP_V3_QUERY_FLAGS_MASK;
+        let mut raw = self.raw_flags_qrv_value();
+        if enabled {
+            raw |= flag;
+        } else {
+            raw &= !flag;
+        }
+        self.with_raw_flags_qrv(raw)
+    }
+
+    /// Set or clear the RFC 9279 Extension flag bit.
+    pub fn with_extension_flag(self, enabled: bool) -> Self {
+        self.with_query_flag(IGMP_V3_QUERY_FLAG_EXTENSION, enabled)
+    }
+
+    /// Set the currently unassigned query flag bits while preserving E/S/QRV.
+    pub fn with_unassigned_query_flags(self, flags: u8) -> Self {
+        let preserved = self.raw_flags_qrv_value() & !IGMP_V3_QUERY_FLAGS_UNASSIGNED_MASK;
+        self.with_raw_flags_qrv((flags & IGMP_V3_QUERY_FLAGS_UNASSIGNED_MASK) | preserved)
+    }
+
     /// Set or clear the Suppress Router-Side Processing flag.
     pub fn with_suppress_router_side_processing(self, suppress: bool) -> Self {
         let mut raw = self.raw_flags_qrv_value();
@@ -98,6 +122,11 @@ impl IgmpQuery {
     pub fn with_querier_robustness_variable(self, qrv: u8) -> Self {
         let preserved = self.raw_flags_qrv_value() & !IGMP_V3_QUERY_QRV_MASK;
         self.with_raw_flags_qrv(preserved | (qrv & IGMP_V3_QUERY_QRV_MASK))
+    }
+
+    /// Compatibility alias for setting the Querier's Robustness Variable bits.
+    pub fn with_qrv(self, qrv: u8) -> Self {
+        self.with_querier_robustness_variable(qrv)
     }
 
     /// Set the raw QQIC byte.
@@ -146,9 +175,24 @@ impl IgmpQuery {
         self.raw_flags_qrv_value() & IGMP_V3_QUERY_FLAGS_MASK
     }
 
+    /// Whether a registry-managed query flag bit is set.
+    pub fn has_query_flag(&self, flag: u8) -> bool {
+        self.query_flags_value() & (flag & IGMP_V3_QUERY_FLAGS_MASK) != 0
+    }
+
     /// Whether the RFC 9279 extension flag bit is set.
     pub fn extension_flag(&self) -> bool {
-        self.query_flags_value() & IGMP_V3_QUERY_FLAG_EXTENSION != 0
+        self.has_query_flag(IGMP_V3_QUERY_FLAG_EXTENSION)
+    }
+
+    /// Whether the RFC 9279 Extension flag bit is set.
+    pub fn query_extension_flag(&self) -> bool {
+        self.extension_flag()
+    }
+
+    /// Currently unassigned query flag bits.
+    pub fn unassigned_query_flags_value(&self) -> u8 {
+        self.query_flags_value() & IGMP_V3_QUERY_FLAGS_UNASSIGNED_MASK
     }
 
     /// Suppress Router-Side Processing flag.
@@ -159,6 +203,16 @@ impl IgmpQuery {
     /// Querier's Robustness Variable low three bits.
     pub fn querier_robustness_variable(&self) -> u8 {
         self.raw_flags_qrv_value() & IGMP_V3_QUERY_QRV_MASK
+    }
+
+    /// Querier's Robustness Variable low three bits.
+    pub fn querier_robustness_variable_value(&self) -> u8 {
+        self.querier_robustness_variable()
+    }
+
+    /// Compatibility alias for the Querier's Robustness Variable bits.
+    pub fn qrv_value(&self) -> u8 {
+        self.querier_robustness_variable()
     }
 
     /// Raw QQIC byte.
@@ -742,6 +796,169 @@ mod igmp_v3_query_codes {
                 .qqic_value(),
             0xff
         );
+        assert_eq!(decoded.compile().expect("roundtrip").as_bytes(), &bytes);
+    }
+}
+
+#[cfg(test)]
+mod igmp_v3_query_flags {
+    use super::*;
+    use crate::field::FieldState;
+    use crate::packet::Packet;
+    use crate::protocols::igmp::constants::{
+        IGMP_FIXED_HEADER_LEN, IGMP_TYPE_MEMBERSHIP_QUERY, IGMP_V3_QUERY_FLAGS_MASK,
+        IGMP_V3_QUERY_FLAGS_UNASSIGNED_MASK, IGMP_V3_QUERY_FLAG_EXTENSION,
+    };
+    use crate::protocols::igmp::decode::append_igmp_packet;
+    use crate::protocols::igmp::registry::{
+        igmp_query_flag, igmp_query_flag_meta, igmp_query_flag_name, igmp_query_flag_status,
+        IgmpFlagStatus, IgmpQueryFlag,
+    };
+
+    fn doc_group() -> Ipv4Addr {
+        Ipv4Addr::new(233, 252, 0, 36)
+    }
+
+    fn compile_query_body(query: IgmpQuery) -> crate::Result<Vec<u8>> {
+        let bytes = Igmp::v3_membership_query(100, doc_group(), query).compile()?;
+        Ok(bytes.as_bytes()[IGMP_FIXED_HEADER_LEN..].to_vec())
+    }
+
+    #[test]
+    fn igmp_v3_query_flags_named_bits_preserve_s_and_qrv() -> crate::Result<()> {
+        let query = IgmpQuery::new()
+            .with_extension_flag(true)
+            .with_suppress_router_side_processing(true)
+            .with_qrv(5)
+            .with_qqic(125);
+
+        assert_eq!(query.raw_flags_qrv_value(), 0x8d);
+        assert_eq!(query.query_flags_value(), IGMP_V3_QUERY_FLAG_EXTENSION);
+        assert!(query.has_query_flag(IGMP_V3_QUERY_FLAG_EXTENSION));
+        assert!(query.extension_flag());
+        assert!(query.query_extension_flag());
+        assert_eq!(query.unassigned_query_flags_value(), 0);
+        assert!(query.suppress_router_side_processing());
+        assert_eq!(query.querier_robustness_variable(), 5);
+        assert_eq!(query.querier_robustness_variable_value(), 5);
+        assert_eq!(query.qrv_value(), 5);
+        assert_eq!(query.raw_flags_qrv_state(), FieldState::User);
+
+        let cleared = query.clone().with_extension_flag(false);
+        assert_eq!(cleared.raw_flags_qrv_value(), 0x0d);
+        assert!(!cleared.extension_flag());
+        assert!(cleared.suppress_router_side_processing());
+        assert_eq!(cleared.querier_robustness_variable(), 5);
+
+        let body = compile_query_body(query)?;
+        assert_eq!(body, vec![0x8d, 125, 0, 0]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn igmp_v3_query_flags_reserved_bits_are_visible_and_preserved() -> crate::Result<()> {
+        let query = IgmpQuery::new()
+            .with_extension_flag(true)
+            .with_unassigned_query_flags(IGMP_V3_QUERY_FLAGS_UNASSIGNED_MASK)
+            .with_suppress_router_side_processing(true)
+            .with_querier_robustness_variable(7);
+
+        assert_eq!(query.raw_flags_qrv_value(), 0xff);
+        assert_eq!(query.query_flags_value(), IGMP_V3_QUERY_FLAGS_MASK);
+        assert_eq!(
+            query.unassigned_query_flags_value(),
+            IGMP_V3_QUERY_FLAGS_UNASSIGNED_MASK
+        );
+        assert!(query.extension_flag());
+        assert!(query.suppress_router_side_processing());
+        assert_eq!(query.querier_robustness_variable(), 7);
+
+        let without_unassigned = query.clone().with_unassigned_query_flags(0);
+        assert_eq!(without_unassigned.raw_flags_qrv_value(), 0x8f);
+        assert_eq!(without_unassigned.unassigned_query_flags_value(), 0);
+        assert!(without_unassigned.extension_flag());
+        assert!(without_unassigned.suppress_router_side_processing());
+        assert_eq!(without_unassigned.querier_robustness_variable(), 7);
+
+        let rebuilt = IgmpQuery::new()
+            .with_raw_flags_qrv(0x0a)
+            .with_query_flags(IGMP_V3_QUERY_FLAGS_MASK);
+        assert_eq!(rebuilt.raw_flags_qrv_value(), 0xfa);
+        assert_eq!(compile_query_body(rebuilt)?, vec![0xfa, 0, 0, 0]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn igmp_v3_query_flags_registry_surface_names_extension_bit() {
+        let extension = igmp_query_flag_meta(0);
+        assert_eq!(extension.bit, 0);
+        assert_eq!(extension.mask, IGMP_V3_QUERY_FLAG_EXTENSION);
+        assert_eq!(extension.flag, IgmpQueryFlag::Extension);
+        assert_eq!(extension.name, "Extension");
+        assert_eq!(extension.status, IgmpFlagStatus::Assigned);
+        assert_eq!(IgmpQueryFlag::Extension.bit(), 0);
+        assert_eq!(IgmpQueryFlag::Extension.mask(), IGMP_V3_QUERY_FLAG_EXTENSION);
+        assert_eq!(IgmpQueryFlag::Extension.meta(), extension);
+        assert_eq!(igmp_query_flag(0), IgmpQueryFlag::Extension);
+        assert_eq!(igmp_query_flag_name(0), Some("Extension"));
+        assert_eq!(igmp_query_flag_status(0), IgmpFlagStatus::Assigned);
+
+        let unassigned = igmp_query_flag_meta(3);
+        assert_eq!(unassigned.bit, 3);
+        assert_eq!(unassigned.mask, 0x10);
+        assert_eq!(unassigned.flag, IgmpQueryFlag::Unassigned(3));
+        assert_eq!(unassigned.status, IgmpFlagStatus::Unassigned);
+        assert_eq!(igmp_query_flag_name(3), None);
+
+        let not_flag = igmp_query_flag_meta(4);
+        assert_eq!(not_flag.mask, 0);
+        assert_eq!(not_flag.flag, IgmpQueryFlag::NotFlag(4));
+        assert_eq!(not_flag.status, IgmpFlagStatus::NotFlag);
+        assert_eq!(igmp_query_flag_name(4), None);
+    }
+
+    #[test]
+    fn igmp_v3_query_flags_raw_roundtrip_preserves_unknown_bits() {
+        let bytes = [
+            IGMP_TYPE_MEMBERSHIP_QUERY,
+            0x64,
+            0x12,
+            0x34,
+            233,
+            252,
+            0,
+            36,
+            0xf5,
+            0x7d,
+            0x00,
+            0x01,
+            192,
+            0,
+            2,
+            55,
+        ];
+
+        let decoded = append_igmp_packet(Packet::new(), &bytes).expect("decode IGMPv3 query");
+        let query = decoded.layer::<IgmpQuery>().expect("IGMPv3 query body");
+
+        assert_eq!(query.raw_flags_qrv_value(), 0xf5);
+        assert_eq!(query.query_flags_value(), IGMP_V3_QUERY_FLAGS_MASK);
+        assert_eq!(
+            query.unassigned_query_flags_value(),
+            IGMP_V3_QUERY_FLAGS_UNASSIGNED_MASK
+        );
+        assert!(query.extension_flag());
+        assert!(!query.suppress_router_side_processing());
+        assert_eq!(query.querier_robustness_variable(), 5);
+        assert_eq!(query.qqic_value(), 0x7d);
+        assert_eq!(query.number_of_sources_value(), 1);
+        assert_eq!(
+            query.source_addresses(),
+            &[Ipv4Addr::new(192, 0, 2, 55)]
+        );
+        assert_eq!(query.raw_flags_qrv_state(), FieldState::User);
         assert_eq!(decoded.compile().expect("roundtrip").as_bytes(), &bytes);
     }
 }

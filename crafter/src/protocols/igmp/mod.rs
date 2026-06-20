@@ -23,8 +23,10 @@ pub(crate) use self::decode::append_igmp_packet;
 pub use self::message::Igmp;
 pub use self::query::IgmpQuery;
 pub use self::registry::{
-    igmp_code_meta, igmp_code_name, igmp_code_status, igmp_type, igmp_type_meta, igmp_type_name,
-    igmp_type_status, IgmpCodeMeta, IgmpType, IgmpTypeMeta, IgmpTypeStatus,
+    igmp_code_meta, igmp_code_name, igmp_code_status, igmp_query_flag, igmp_query_flag_meta,
+    igmp_query_flag_name, igmp_query_flag_status, igmp_type, igmp_type_meta, igmp_type_name,
+    igmp_type_status, IgmpCodeMeta, IgmpFlagStatus, IgmpQueryFlag, IgmpQueryFlagMeta, IgmpType,
+    IgmpTypeMeta, IgmpTypeStatus,
 };
 pub use self::validation::{
     igmp_group_address_class, igmp_group_address_class_name, IgmpGroupAddressClass,
