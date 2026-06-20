@@ -1,0 +1,412 @@
+version: 1
+kind: layer
+name: igmp
+summary: >-
+  Internet Group Management Protocol over IPv4 protocol number 2, covering the
+  common IGMP fixed header, IGMPv1/v2 compatibility messages, current IGMPv3
+  query and report packet shapes, RFC 9279 generic extension TLVs, and RFC 4286
+  multicast router discovery messages. IGMP is IPv4-only here; IPv6 MLD remains
+  ICMPv6-family behavior.
+
+roots: []
+parents:
+  - ipv4
+children:
+  - igmp_query
+  - igmp_report
+  - igmp_extension
+  - payload
+
+allowed_roots:
+  - "l3:ipv4"
+  - "l2:ipv4"
+  - "link:ethernet"
+  - "link:linux-cooked"
+  - "link:null-loopback"
+supported_parents:
+  - layer: ipv4
+    protocol_number: 2
+unsupported_parents:
+  - ipv6
+  - icmpv6
+  - mld
+supported_directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+  - roundtrip
+  - live_exchange
+live_eligibility: provider_gated
+live_gate: confirm_live_run_provider_lab_only
+live_defaults:
+  default_mode: dry_run
+  allowed_without_confirmation: false
+  developer_host_raw_send: false
+  provider_required: true
+  destination_scope:
+    - documentation_multicast
+    - all_systems
+    - all_routers
+    - all_snoopers
+default_values:
+  type: membership_query
+  code: 0
+  checksum: derived
+  group_address: 0.0.0.0
+  ipv4_protocol: 2
+  ipv4_ttl: caller_explicit
+  ipv4_router_alert: caller_explicit
+
+fields:
+  - name: type
+    type: uint8
+    required: true
+    domains:
+      - membership_query
+      - v1_membership_report
+      - dvmrp_unsupported_assigned
+      - pim_v1_unsupported_assigned
+      - cisco_trace_unsupported_assigned
+      - v2_membership_report
+      - v2_leave_group
+      - multicast_traceroute_response_unsupported_assigned
+      - multicast_traceroute_unsupported_assigned
+      - v3_membership_report
+      - multicast_router_advertisement
+      - multicast_router_solicitation
+      - multicast_router_termination
+      - reserved
+      - unassigned
+      - experimental
+  - name: code
+    type: uint8
+    required: true
+    domains:
+      - v1_query_zero
+      - v2_max_response_time
+      - v3_max_response_code
+      - mrd_advertisement_interval
+      - mrd_reserved
+      - reserved_zero
+      - explicit_override
+      - unsupported_assigned_code
+  - name: checksum
+    type: uint16
+    required: true
+    domains:
+      - derived
+      - explicit
+      - explicit_invalid
+      - boundary
+  - name: group_address
+    type: ipv4
+    required: false
+    domains:
+      - zero_general_query
+      - all_systems
+      - all_routers
+      - all_snoopers
+      - documentation_multicast
+      - ssm_documentation_multicast
+      - non_multicast_override
+  - name: query_flags
+    type: flags
+    required: false
+    domains:
+      - zero
+      - extension
+      - suppress_router_side_processing
+      - qrv
+      - unassigned
+      - raw_override
+  - name: qqic
+    type: uint8
+    required: false
+    domains:
+      - zero
+      - linear_seconds
+      - floating_timer_code
+      - explicit_override
+      - boundary
+  - name: number_of_sources
+    type: uint16
+    required: false
+    domains:
+      - derived
+      - zero
+      - explicit_override
+      - boundary
+  - name: source_addresses
+    type: ipv4_list
+    required: false
+    domains:
+      - empty
+      - documentation_ipv4
+      - documentation_multicast
+  - name: report_flags
+    type: flags
+    required: false
+    domains:
+      - zero
+      - extension
+      - unassigned
+      - raw_override
+  - name: number_of_group_records
+    type: uint16
+    required: false
+    domains:
+      - derived
+      - zero
+      - explicit_override
+      - boundary
+  - name: record_type
+    type: uint8
+    required: false
+    domains:
+      - mode_is_include
+      - mode_is_exclude
+      - change_to_include_mode
+      - change_to_exclude_mode
+      - allow_new_sources
+      - block_old_sources
+      - reserved
+      - unknown
+  - name: auxiliary_data_len
+    type: uint8
+    required: false
+    domains:
+      - derived
+      - zero
+      - explicit_override
+      - boundary
+  - name: record_number_of_sources
+    type: uint16
+    required: false
+    domains:
+      - derived
+      - zero
+      - explicit_override
+      - boundary
+  - name: multicast_address
+    type: ipv4
+    required: false
+    domains:
+      - documentation_multicast
+      - ssm_documentation_multicast
+      - non_multicast_override
+  - name: record_source_addresses
+    type: ipv4_list
+    required: false
+    domains:
+      - empty
+      - documentation_ipv4
+  - name: auxiliary_data
+    type: bytes
+    required: false
+    domains:
+      - empty
+      - padded_to_word
+      - raw
+  - name: extension_type
+    type: uint16
+    required: false
+    domains:
+      - noop
+      - unassigned
+      - experimental
+  - name: extension_length
+    type: uint16
+    required: false
+    domains:
+      - derived
+      - zero
+      - explicit_override
+      - boundary
+  - name: extension_value
+    type: bytes
+    required: false
+    domains:
+      - empty
+      - raw
+      - truncated_structured_error
+  - name: mrd_query_interval
+    type: uint16
+    required: false
+    domains:
+      - deterministic
+      - zero
+      - boundary
+  - name: mrd_robustness_variable
+    type: uint16
+    required: false
+    domains:
+      - deterministic
+      - zero
+      - boundary
+  - name: raw_tail
+    type: bytes
+    required: false
+    domains:
+      - absent
+      - unsupported_assigned_type
+      - unknown_type
+      - ignored_extra_octets
+      - e_flag_clear_extension_bytes
+
+extension_layers:
+  - name: igmp_query
+    summary: IGMPv3 Membership Query body after the common IGMP fixed header.
+    source: RFC 9776 section 4.1 and RFC 9279 query extension flag metadata.
+    fields:
+      - name: query_flags
+        type: flags
+        domains:
+          - extension
+          - suppress_router_side_processing
+          - qrv
+          - unassigned
+      - name: qqic
+        type: uint8
+        domains:
+          - linear_seconds
+          - floating_timer_code
+      - name: source_addresses
+        type: ipv4_list
+        domains:
+          - empty
+          - documentation_ipv4
+  - name: igmp_report
+    summary: IGMPv3 Membership Report body with ordered group records.
+    source: RFC 9776 section 4.2 and RFC 9279 report extension flag metadata.
+    fields:
+      - name: report_flags
+        type: flags
+        domains:
+          - extension
+          - unassigned
+      - name: group_records
+        type: igmp_group_record_list
+        domains:
+          - empty
+          - known_records
+          - unknown_records
+  - name: igmp_group_record
+    summary: IGMPv3 group record with source list and optional auxiliary data.
+    source: RFC 9776 section 4.2.13.
+    fields:
+      - name: record_type
+        type: uint8
+        domains:
+          - mode_is_include
+          - mode_is_exclude
+          - change_to_include_mode
+          - change_to_exclude_mode
+          - allow_new_sources
+          - block_old_sources
+          - reserved
+          - unknown
+      - name: multicast_address
+        type: ipv4
+        domains:
+          - documentation_multicast
+          - non_multicast_override
+      - name: source_addresses
+        type: ipv4_list
+        domains:
+          - empty
+          - documentation_ipv4
+      - name: auxiliary_data
+        type: bytes
+        domains:
+          - empty
+          - padded_to_word
+          - raw
+  - name: igmp_extension
+    summary: RFC 9279 generic IGMP/MLD extension TLV, decoded only when the IGMPv3 E flag is set.
+    source: RFC 9279 section 3 and IANA IGMP/MLD Extension Types registry.
+    fields:
+      - name: extension_type
+        type: uint16
+        domains:
+          - noop
+          - unassigned
+          - experimental
+      - name: extension_length
+        type: uint16
+        domains:
+          - derived
+          - explicit_override
+      - name: extension_value
+        type: bytes
+        domains:
+          - empty
+          - raw
+
+malformed_behavior:
+  - label: truncated_fixed_header
+    byte_policy: structured_error
+    context: igmp header
+  - label: truncated_v3_query_sources
+    byte_policy: structured_error
+    context: igmp v3 query source list
+  - label: truncated_v3_report_body
+    byte_policy: structured_error
+    context: igmp v3 report group record
+  - label: truncated_group_record
+    byte_policy: structured_error
+    context: igmp group record
+  - label: truncated_extension_header
+    byte_policy: structured_error
+    context: igmp.extension.header
+  - label: truncated_extension_value
+    byte_policy: structured_error
+    context: igmp.extension.value
+  - label: unsupported_or_unknown_valid_payload
+    byte_policy: raw_preserved
+
+coverage_cases:
+  - igmp-membership-query
+  - igmp-v1-membership-report
+  - igmp-v2-membership-report
+  - igmp-v2-leave-group
+  - igmp-v3-query
+  - igmp-v3-report
+  - igmp-extension-tlv
+  - igmp-mrd-advertisement
+  - igmp-mrd-solicitation
+  - igmp-mrd-termination
+  - igmp-unknown-type-raw
+  - malformed-igmp-truncated-header
+
+source_refs:
+  - RFC 1112
+  - RFC 2236
+  - RFC 9776
+  - RFC 9279
+  - RFC 4286
+  - RFC 9778
+  - IANA IGMP Type Numbers
+  - IANA IGMP/MLD Extension Types
+
+backend_support:
+  scapy:
+    status: planned
+    native_layers:
+      - IGMP
+      - IGMPv3
+      - IGMPv3mq
+      - IGMPv3mr
+      - IGMPv3gr
+    notes:
+      - Later Scapy backend steps own IGMP materialization and normalization.
+      - The layer spec is data-only at this step and does not enable IGMP oracle vectors yet.
+  libcrafter:
+    status: planned
+    native_layers:
+      - Igmp
+      - IgmpQuery
+      - IgmpReport
+      - IgmpGroupRecord
+      - IgmpExtension
+    notes:
+      - The public crate has IGMP packet-layer support; later oracle adapter steps own executable IGMP feature cases.
+      - IPv4 protocol number, TTL, destination address, and Router Alert option remain explicit IPv4 composition choices.

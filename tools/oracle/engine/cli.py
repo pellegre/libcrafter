@@ -8504,9 +8504,11 @@ def _self_check(args: argparse.Namespace) -> int:
 
 _SUITE_FEATURE_BY_FAMILY = {
     "dns": "dns_behavior",
+    "igmp": "igmp_header",
     "ip": "ip_fragment_transforms",
     "ipv6": "ipv6_fragment_routing",
 }
+_LAYER_ONLY_SUITE_FAMILIES = frozenset({"igmp"})
 _SUITE_OFFLINE_DIRECTIONS = (
     "reference_to_libcrafter",
     "libcrafter_to_reference",
@@ -8568,6 +8570,14 @@ def _suite_offline_cases(feature_name: str) -> list[JSONObject]:
     return entries
 
 
+def _suite_layer_exists(layer: str) -> bool:
+    from .generator import load_stack_grammar
+
+    grammar = load_stack_grammar()
+    layers = grammar.get("layers", {})
+    return isinstance(layers, Mapping) and layer in layers
+
+
 def _specs_suite(args: argparse.Namespace) -> int:
     family = args.family
     feature_name = _SUITE_FEATURE_BY_FAMILY.get(family)
@@ -8582,8 +8592,10 @@ def _specs_suite(args: argparse.Namespace) -> int:
     try:
         cases = _suite_offline_cases(feature_name)
     except ValueError as exc:
-        print(str(exc), file=sys.stderr)
-        return 2
+        if family not in _LAYER_ONLY_SUITE_FAMILIES or not _suite_layer_exists(family):
+            print(str(exc), file=sys.stderr)
+            return 2
+        cases = []
 
     out_root = posixpath.join(args.out, f"{family}-offline-suite")
     commands: list[JSONObject] = []
@@ -8642,6 +8654,9 @@ def _specs_suite(args: argparse.Namespace) -> int:
     if contract_cases:
         summary["contract_count"] = len(contract_cases)
         summary["contract_cases"] = contract_cases
+    if not commands and not contract_cases and family in _LAYER_ONLY_SUITE_FAMILIES:
+        summary["layer_only"] = True
+        summary["pending_feature"] = feature_name
 
     if args.run:
         return _run_specs_suite(summary, commands)
@@ -8653,6 +8668,8 @@ def _specs_suite(args: argparse.Namespace) -> int:
             f"offline suite: family={family} feature={feature_name} "
             f"backend={args.backend} profile={args.profile} cases={len(commands)}"
         )
+        if summary.get("layer_only") is True:
+            print(f"  layer-only suite; pending feature={feature_name}")
         for command in commands:
             print(
                 f"  {command['direction']:<26} {command['case']:<34} "
