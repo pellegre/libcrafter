@@ -260,6 +260,39 @@ impl IgmpExtension {
     }
 }
 
+pub(crate) fn decode_extensions(mut bytes: &[u8]) -> Result<Vec<IgmpExtension>> {
+    let mut extensions = Vec::new();
+
+    while !bytes.is_empty() {
+        if bytes.len() < IGMP_EXTENSION_HEADER_LEN {
+            return Err(CrafterError::buffer_too_short(
+                "igmp.extension.header",
+                IGMP_EXTENSION_HEADER_LEN,
+                bytes.len(),
+            ));
+        }
+
+        let extension_type = u16::from_be_bytes([bytes[0], bytes[1]]);
+        let extension_length = u16::from_be_bytes([bytes[2], bytes[3]]);
+        let value_end = IGMP_EXTENSION_HEADER_LEN + usize::from(extension_length);
+        if bytes.len() < value_end {
+            return Err(CrafterError::buffer_too_short(
+                "igmp.extension.value",
+                value_end,
+                bytes.len(),
+            ));
+        }
+
+        let value = &bytes[IGMP_EXTENSION_HEADER_LEN..value_end];
+        extensions.push(
+            IgmpExtension::raw(extension_type, value).with_extension_length(extension_length),
+        );
+        bytes = &bytes[value_end..];
+    }
+
+    Ok(extensions)
+}
+
 impl Default for IgmpExtension {
     fn default() -> Self {
         Self::new()

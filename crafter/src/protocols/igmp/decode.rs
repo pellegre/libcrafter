@@ -14,6 +14,7 @@ use super::constants::{
     IGMP_FIXED_HEADER_LEN, IGMP_TYPE_MEMBERSHIP_QUERY, IGMP_TYPE_V3_MEMBERSHIP_REPORT,
     IGMP_V3_GROUP_RECORD_HEADER_LEN, IGMP_V3_QUERY_MIN_LEN,
 };
+use super::extension::decode_extensions;
 use super::message::{Igmp, IgmpChecksumStatus};
 use super::query::IgmpQuery;
 use super::record::IgmpGroupRecord;
@@ -43,8 +44,11 @@ pub(crate) fn append_igmp_packet(mut packet: Packet, bytes: &[u8]) -> Result<Pac
 
     if is_v3_query {
         let (query, tail) = decode_v3_query(bytes)?;
+        let has_extensions = query.extension_flag();
         packet = packet.push(query);
-        if !tail.is_empty() {
+        if has_extensions {
+            packet = append_igmp_extensions(packet, tail)?;
+        } else if !tail.is_empty() {
             // RFC 9776 says extra Query octets are checksum-covered and ignored;
             // keeping them as Raw makes the bytes inspectable and roundtrippable.
             packet = packet.push_raw(Raw::from_bytes(tail));
@@ -54,8 +58,11 @@ pub(crate) fn append_igmp_packet(mut packet: Packet, bytes: &[u8]) -> Result<Pac
 
     if is_v3_report {
         let (report, tail) = decode_v3_report(bytes)?;
+        let has_extensions = report.extension_flag();
         packet = packet.push(report);
-        if !tail.is_empty() {
+        if has_extensions {
+            packet = append_igmp_extensions(packet, tail)?;
+        } else if !tail.is_empty() {
             // RFC 9776 says extra Report octets are checksum-covered and ignored;
             // keeping them as Raw makes the bytes inspectable and roundtrippable.
             packet = packet.push_raw(Raw::from_bytes(tail));
@@ -65,6 +72,23 @@ pub(crate) fn append_igmp_packet(mut packet: Packet, bytes: &[u8]) -> Result<Pac
 
     if !payload.is_empty() {
         packet = packet.push_raw(Raw::from_bytes(payload));
+    }
+
+    Ok(packet)
+}
+
+fn append_igmp_extensions(mut packet: Packet, tail: &[u8]) -> Result<Packet> {
+    let extensions = decode_extensions(tail)?;
+    if extensions.is_empty() {
+        return Err(CrafterError::buffer_too_short(
+            "igmp.extension.header",
+            super::constants::IGMP_EXTENSION_HEADER_LEN,
+            0,
+        ));
+    }
+
+    for extension in extensions {
+        packet = packet.push(extension);
     }
 
     Ok(packet)
@@ -393,7 +417,7 @@ mod igmp_v3_query_decode {
             252,
             0,
             34,
-            0x88,
+            0x08,
             0x7d,
             0,
             2,
@@ -414,8 +438,8 @@ mod igmp_v3_query_decode {
 
         assert_eq!(decoded.len(), 2);
         assert_eq!(igmp.group_address_value(), doc_group());
-        assert_eq!(query.raw_flags_qrv_value(), 0x88);
-        assert!(query.extension_flag());
+        assert_eq!(query.raw_flags_qrv_value(), 0x08);
+        assert!(!query.extension_flag());
         assert!(query.suppress_router_side_processing());
         assert_eq!(query.querier_robustness_variable(), 0);
         assert_eq!(query.qqic_value(), 0x7d);
@@ -573,12 +597,12 @@ mod igmp_report_decode {
             0x05, 0x00, 0x00, 0x02, 233, 252, 0, 80, 192, 0, 2, 10, 198, 51, 100, 20, 0x06, 0x00,
             0x00, 0x00, 233, 252, 0, 81,
         ];
-        let bytes = report_bytes(0x8001, 2, &records);
+        let bytes = report_bytes(0x0001, 2, &records);
 
         let decoded = append_igmp_packet(Packet::new(), &bytes).expect("decode report records");
         let report = decoded.layer::<IgmpReport>().expect("typed report body");
 
-        assert_eq!(report.reserved_flags_value(), 0x8001);
+        assert_eq!(report.reserved_flags_value(), 0x0001);
         assert_eq!(report.number_of_group_records_value(), 2);
         assert_eq!(report.group_records().len(), 2);
         assert_eq!(
@@ -723,6 +747,128 @@ mod igmp_report_decode {
                     + IGMP_V3_GROUP_RECORD_HEADER_LEN,
                 bytes.len()
             )
+        );
+    }
+}
+
+#[cfg(test)]
+mod igmp_extension_decode {
+    use super::*;
+    use crate::field::FieldState;
+    use crate::protocols::igmp::extension::IgmpExtension;
+    use crate::protocols::igmp::registry::IgmpExtensionType;
+
+    fn query_bytes(flags_qrv: u8, tail: &[u8]) -> Vec<u8> {
+        let mut bytes = vec![
+            IGMP_TYPE_MEMBERSHIP_QUERY,
+            100,
+            0x12,
+            0x34,
+            233,
+            252,
+            0,
+            90,
+            flags_qrv,
+            0x7d,
+            0,
+            0,
+        ];
+        bytes.extend_from_slice(tail);
+        bytes
+    }
+
+    fn report_bytes(flags: u16, tail: &[u8]) -> Vec<u8> {
+        let mut bytes = vec![IGMP_TYPE_V3_MEMBERSHIP_REPORT, 0, 0x12, 0x34, 0, 0, 0, 0];
+        bytes.extend_from_slice(&flags.to_be_bytes());
+        bytes.extend_from_slice(&0u16.to_be_bytes());
+        bytes.extend_from_slice(tail);
+        bytes
+    }
+
+    #[test]
+    fn igmp_extension_decode_query_tlv_when_e_flag_is_set() -> crate::Result<()> {
+        let tail = [0x00, 0x00, 0x00, 0x00];
+        let bytes = query_bytes(0x80, &tail);
+
+        let decoded = append_igmp_packet(Packet::new(), &bytes)?;
+        let query = decoded.layer::<IgmpQuery>().expect("typed query body");
+        let extension = decoded
+            .layer::<IgmpExtension>()
+            .expect("typed extension TLV");
+
+        assert_eq!(decoded.len(), 3);
+        assert!(query.extension_flag());
+        assert_eq!(extension.extension_type(), IgmpExtensionType::Noop);
+        assert_eq!(extension.extension_type_value(), 0);
+        assert_eq!(extension.extension_length_value(), 0);
+        assert_eq!(extension.extension_length_state(), FieldState::User);
+        assert!(extension.value_bytes().is_empty());
+        assert!(decoded.layer::<Raw>().is_none());
+        assert_eq!(decoded.compile()?.as_bytes(), bytes.as_slice());
+
+        Ok(())
+    }
+
+    #[test]
+    fn igmp_extension_decode_report_preserves_unknown_extension_type() -> crate::Result<()> {
+        let tail = [0x12, 0x34, 0x00, 0x03, 0xde, 0xad, 0xbe];
+        let bytes = report_bytes(0x8000, &tail);
+
+        let decoded = append_igmp_packet(Packet::new(), &bytes)?;
+        let report = decoded.layer::<IgmpReport>().expect("typed report body");
+        let extension = decoded
+            .layer::<IgmpExtension>()
+            .expect("typed extension TLV");
+
+        assert_eq!(decoded.len(), 3);
+        assert!(report.extension_flag());
+        assert_eq!(extension.extension_type(), IgmpExtensionType::Unassigned(0x1234));
+        assert_eq!(extension.extension_type_value(), 0x1234);
+        assert_eq!(extension.extension_length_value(), 3);
+        assert_eq!(extension.extension_length_state(), FieldState::User);
+        assert_eq!(extension.value_bytes(), &[0xde, 0xad, 0xbe]);
+        assert!(decoded.layer::<Raw>().is_none());
+        assert_eq!(decoded.compile()?.as_bytes(), bytes.as_slice());
+
+        Ok(())
+    }
+
+    #[test]
+    fn igmp_extension_decode_keeps_query_tail_raw_when_e_flag_is_clear() -> crate::Result<()> {
+        let tail = [0x00, 0x00, 0x00, 0x00];
+        let bytes = query_bytes(0x00, &tail);
+
+        let decoded = append_igmp_packet(Packet::new(), &bytes)?;
+        let raw = decoded.layer::<Raw>().expect("raw query tail");
+
+        assert!(decoded.layer::<IgmpExtension>().is_none());
+        assert_eq!(raw.as_bytes(), &tail);
+        assert_eq!(decoded.compile()?.as_bytes(), bytes.as_slice());
+
+        Ok(())
+    }
+
+    #[test]
+    fn igmp_extension_decode_truncated_query_header_is_structured_error() {
+        let bytes = query_bytes(0x80, &[0x00, 0x01, 0x00]);
+
+        let err = append_igmp_packet(Packet::new(), &bytes).expect_err("extension header is short");
+
+        assert_eq!(
+            err,
+            CrafterError::buffer_too_short("igmp.extension.header", 4, 3)
+        );
+    }
+
+    #[test]
+    fn igmp_extension_decode_truncated_report_value_is_structured_error() {
+        let bytes = report_bytes(0x8000, &[0x12, 0x34, 0x00, 0x04, 0xde, 0xad]);
+
+        let err = append_igmp_packet(Packet::new(), &bytes).expect_err("extension value is short");
+
+        assert_eq!(
+            err,
+            CrafterError::buffer_too_short("igmp.extension.value", 8, 6)
         );
     }
 }
