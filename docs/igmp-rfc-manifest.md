@@ -36,6 +36,17 @@ or out of scope for crate primitives.
     `IGMP MLD RFC 9279 extension` timed out without usable output. This
     extension handoff therefore cites the official RFC Editor and IANA pages
     rather than generated artifact evidence.
+- Focused RFC 4286 multicast router discovery source review, performed on
+  2026-06-20:
+  - RFC Editor text: <https://www.rfc-editor.org/rfc/rfc4286.html>
+  - RFC Editor info: <https://www.rfc-editor.org/info/rfc4286/>
+  - IANA IGMP registries:
+    <https://www.iana.org/assignments/igmp-type-numbers/>
+  - A local protocol-facts manifest attempt for
+    `IGMP multicast router discovery RFC 4286` timed out without usable
+    output after ambiguous discovery results. This MRD handoff therefore cites
+    the official RFC Editor and IANA pages rather than generated artifact
+    evidence.
 
 The generated manifest is useful for discovery, but it did not include full
 cached RFC document text or selected IANA registry records. Use the official
@@ -133,8 +144,23 @@ until the protocol-facts cache is refreshed with full documents and registries.
 - RFC 4286, "Multicast Router Discovery":
   <https://www.rfc-editor.org/info/rfc4286/>
   - Role: packet shapes behind IANA IGMP types `0x30..=0x32`.
-  - Use only for constructing and decoding MRD messages; do not implement
-    multicast router state, discovery workflows, or daemons in `crafter`.
+  - Scope decision: Multicast Router Advertisement, Multicast Router
+    Solicitation, and Multicast Router Termination are wire-level IGMP message
+    types that belong in `crafter` for construction, decode, inspection, and
+    byte-preserving round trips.
+  - Packet-layer facts reviewed from the full RFC text: IPv4 MRD messages use
+    IPv4 Protocol IGMP (`2`), TTL 1, and Router Alert. Advertisement uses Type
+    `0x30` with Advertisement Interval, Checksum, Query Interval, and
+    Robustness Variable fields. Solicitation uses Type `0x31` with Reserved
+    and Checksum fields. Termination uses Type `0x32` with Reserved and
+    Checksum fields.
+  - IPv4 destination guidance: Advertisement and Termination are sent to the
+    All-Snoopers group, while Solicitation is sent to the All-Routers group.
+    This belongs in builders, examples, send-plan guidance, and tests rather
+    than hidden live-send behavior.
+  - Use only for constructing and decoding MRD messages. Do not implement
+    multicast router state, discovery workflows, neighbor tracking, rate
+    limiting policy, response behavior, or daemons in `crafter`.
 
 - RFC 2113, "IP Router Alert Option":
   <https://www.rfc-editor.org/info/rfc2113/>
