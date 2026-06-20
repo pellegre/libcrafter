@@ -8071,6 +8071,14 @@ fn igmp_malformed_fixture_suite_reports_errors_and_preserves_raw_tails() {
             29,
             27,
         ),
+        (
+            "ipv4-igmp-trailing-bytes",
+            "malformed/ipv4-igmp-trailing-bytes.hex",
+            fixture_str!("malformed/ipv4-igmp-trailing-bytes.hex"),
+            "igmp v3 query source list",
+            195528,
+            12,
+        ),
     ];
 
     for (name, path, hex, context, required, available) in error_cases {
@@ -8091,22 +8099,13 @@ fn igmp_malformed_fixture_suite_reports_errors_and_preserves_raw_tails() {
         }
     }
 
-    let raw_tail_cases: &[(&str, &str, &str, IgmpType, &[u8])] = &[
-        (
-            "ipv4-igmp-trailing-bytes",
-            "malformed/ipv4-igmp-trailing-bytes.hex",
-            fixture_str!("malformed/ipv4-igmp-trailing-bytes.hex"),
-            IgmpType::MembershipQuery,
-            &[0xde, 0xad, 0xbe, 0xef],
-        ),
-        (
-            "ipv4-igmp-unknown-type-payload",
-            "malformed/ipv4-igmp-unknown-type-payload.hex",
-            fixture_str!("malformed/ipv4-igmp-unknown-type-payload.hex"),
-            IgmpType::Unassigned(IGMP_TYPE_UNASSIGNED_FIRST),
-            &[0x01, 0x02, 0x03, 0x04],
-        ),
-    ];
+    let raw_tail_cases: &[(&str, &str, &str, IgmpType, &[u8])] = &[(
+        "ipv4-igmp-unknown-type-payload",
+        "malformed/ipv4-igmp-unknown-type-payload.hex",
+        fixture_str!("malformed/ipv4-igmp-unknown-type-payload.hex"),
+        IgmpType::Unassigned(IGMP_TYPE_UNASSIGNED_FIRST),
+        &[0x01, 0x02, 0x03, 0x04],
+    )];
 
     for (name, path, hex, expected_type, expected_tail) in raw_tail_cases {
         ensure_fixture_exists(path);

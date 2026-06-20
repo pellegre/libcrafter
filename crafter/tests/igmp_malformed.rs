@@ -45,6 +45,13 @@ const ERROR_CASES: &[ErrorCase] = &[
         required: 29,
         available: 27,
     },
+    ErrorCase {
+        name: "ipv4-igmp-trailing-bytes",
+        hex: fixture_str!("malformed/ipv4-igmp-trailing-bytes.hex"),
+        context: "igmp v3 query source list",
+        required: 195528,
+        available: 12,
+    },
 ];
 
 fn parse_hex(name: &str, hex: &str) -> Vec<u8> {
@@ -116,7 +123,11 @@ fn assert_buffer_error(case: &ErrorCase) {
                 "{} returned the wrong available byte count",
                 case.name
             );
-            assert!(required > available, "{} should be a real underrun", case.name);
+            assert!(
+                required > available,
+                "{} should be a real underrun",
+                case.name
+            );
         }
         Ok(packet) => panic!("{} decoded unexpectedly as {}", case.name, packet.summary()),
         Err(other) => panic!("{} expected BufferTooShort, got {other:?}", case.name),
@@ -155,16 +166,6 @@ fn igmp_malformed_fixed_header_errors_are_structured() {
     }
 }
 
-#[test]
-fn igmp_trailing_bytes_are_preserved_as_raw() -> crafter::Result<()> {
-    assert_raw_tail_fixture(
-        "ipv4-igmp-trailing-bytes",
-        fixture_str!("malformed/ipv4-igmp-trailing-bytes.hex"),
-        IgmpType::MembershipQuery,
-        &[0xde, 0xad, 0xbe, 0xef],
-    )
-}
-
 fn assert_v2_override_roundtrip(
     name: &str,
     packet: Packet,
@@ -187,6 +188,30 @@ fn assert_v2_override_roundtrip(
         assert_eq!(igmp.group_address_class_name(), "non-multicast");
         assert!(!igmp.group_address_is_multicast());
     }
+    assert_eq!(decoded.compile()?.as_bytes(), bytes.as_bytes());
+
+    Ok(())
+}
+
+#[test]
+fn igmp_v3_query_extra_octets_are_preserved_as_raw() -> crafter::Result<()> {
+    let packet = ipv4(0x2705, DOC_MCAST)
+        / Igmp::v3_group_specific_query(100, DOC_MCAST)
+        / Raw::from_bytes([0xde, 0xad, 0xbe, 0xef]);
+    let bytes = packet.compile()?;
+
+    let decoded = decode_l3_bytes("igmp-v3-query-extra-octets", bytes.as_bytes())?;
+    let igmp = decoded.layer::<Igmp>().expect("decoded IGMP header");
+    let query = decoded
+        .layer::<IgmpQuery>()
+        .expect("decoded IGMPv3 query body");
+    let raw = decoded.layer::<Raw>().expect("decoded extra query bytes");
+
+    assert_eq!(decoded.len(), 4);
+    assert_eq!(igmp.igmp_type(), IgmpType::MembershipQuery);
+    assert_eq!(query.number_of_sources_value(), 0);
+    assert!(query.source_addresses().is_empty());
+    assert_eq!(raw.as_bytes(), &[0xde, 0xad, 0xbe, 0xef]);
     assert_eq!(decoded.compile()?.as_bytes(), bytes.as_bytes());
 
     Ok(())
