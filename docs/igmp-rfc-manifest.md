@@ -121,6 +121,17 @@ until the protocol-facts cache is refreshed with full documents and registries.
   - Use with the existing IPv4 option support. Do not make live Router Alert
     traffic the default path.
 
+- RFC 3569, "An Overview of Source-Specific Multicast (SSM)":
+  <https://www.rfc-editor.org/info/rfc3569/>
+  and RFC 4604, "Using IGMPv3 and MLDv2 for Source-Specific Multicast":
+  <https://www.rfc-editor.org/info/rfc4604/>
+  - Role: Source-Specific Multicast context and IGMPv3/MLDv2 behavior
+    guidance.
+  - Packet-layer relevance: use as source-filtering and SSM-awareness
+    guidance when interpreting IGMPv3 source lists and record types. Do not
+    promote SSM routing policy, host API behavior, or router compatibility
+    mode into `crafter` primitives.
+
 ## Rejected Obsolete Sources
 
 - RFC 988 and RFC 1054: older host extensions for IP multicasting, both
@@ -143,8 +154,9 @@ until the protocol-facts cache is refreshed with full documents and registries.
   operational, proxy, snooping, tuning, YANG, or management documents. They can
   inform generated tools or docs, but they do not justify router, proxy,
   snooping, or management-plane code in `crafter`.
-- RFC 4604 and RFC 5790 describe SSM or lightweight protocol behavior. Treat
-  them as later review inputs, not bootstrap packet format authority.
+- RFC 4604 describes SSM-aware IGMPv3/MLDv2 behavior and is retained here as
+  source-filtering guidance, not bootstrap packet format authority. RFC 5790
+  describes lightweight protocol behavior and remains a later review input.
 - RFC 8114 and RFC 8220 are multicast service mapping or PIM-over-VPLS
   documents. They are not initial IGMP packet-layer sources.
 - RFC 8507 is historic SIP material. It is not an IGMP source for this crate.
@@ -188,6 +200,75 @@ packet-layer primitives. IPv4 destination addresses such as all-systems
 `224.0.0.1` and all-routers `224.0.0.2`, TTL 1, and Router Alert composition
 belong in send-plan guidance, examples, and tests rather than implicit IGMP
 layer mutation.
+
+## IGMPv3 Packet-Shape Review
+
+RFC 9776 is the current Internet Standard for IGMPv3 and the source authority
+for the Version 3 packet shapes implemented by this plan. It obsoletes RFC
+3376 and updates RFC 2236; therefore RFC 3376 is historical context only, while
+RFC 2236 remains the compatibility source for Version 2 fixed-header messages
+and legacy interoperation. RFC 9776 still requires IGMPv3 implementations to
+support the legacy IGMPv1 Membership Report, IGMPv2 Membership Report, and
+IGMPv2 Leave Group message types for interoperation, but `crafter` models those
+as packet-layer compatibility formats rather than protocol state.
+
+In-scope IGMPv3 wire structures:
+
+- Membership Query, Type `0x11`, with the Version 3 query extension after the
+  shared fixed header: Max Resp Code, Checksum, Group Address, Flags/S/QRV,
+  QQIC, Number of Sources, and a vector of IPv4 unicast source addresses.
+- Query variants as packet shapes: General Query has zero Group Address and
+  zero sources; Group-Specific Query has a multicast Group Address and zero
+  sources; Group-and-Source Specific Query has a multicast Group Address and
+  one or more source addresses. IPv4 destination address selection is an IPv4
+  composition concern, not hidden mutation inside the IGMP layer.
+- IGMPv3 Membership Report, Type `0x22`, with Reserved, Checksum, Flags,
+  Number of Group Records, and a sequence of Group Records.
+- Group Records with Record Type, Aux Data Len, Number of Sources, Multicast
+  Address, source-address vector, and optional auxiliary bytes. RFC 9776
+  defines no auxiliary data semantics; preserve received bytes and expose
+  lengths rather than inventing typed bodies.
+- Source lists, Max Resp Code, QQIC, QRV, the S flag, and registry-managed
+  query/report flags as wire fields. Encoding, decoding, display, and optional
+  validation are in scope; timer scheduling and operational interpretation are
+  not.
+
+Compatibility and version distinctions:
+
+- RFC 9776 distinguishes Query versions by packet shape: an 8-octet Query with
+  Max Resp Code zero is IGMPv1-compatible, an 8-octet Query with nonzero Max
+  Resp Code is IGMPv2-compatible, and a Query of at least 12 octets is IGMPv3.
+- RFC 9776 says additional received Query or Report octets beyond the described
+  fields are included in checksum verification and otherwise ignored by an
+  implementation. For `crafter`, those bytes should remain inspectable and
+  byte-preserving; generated stacks or probes can decide whether to treat them
+  as operationally invalid.
+- Unrecognized IGMP message types are ignored by IGMP implementations, but
+  `crafter` should keep them representable and inspectable as typed metadata
+  plus `Raw` payload where the fixed header can be parsed.
+
+Source-Specific Multicast guidance:
+
+- RFC 9776 adds source filtering through INCLUDE/EXCLUDE filter modes and
+  source lists. RFC 3569 describes SSM as channel membership identified by a
+  source and group, and RFC 4604 provides SSM-aware IGMPv3/MLDv2 behavior
+  guidance.
+- For packet primitives, SSM guidance affects diagnostics and optional
+  validation helpers only. For example, RFC 9776 notes that SSM-aware hosts
+  should not send EXCLUDE-mode records for SSM addresses because SSM-aware
+  routers ignore them. The crate should preserve such packets when explicitly
+  built or decoded, while later tools can flag them for probe expectations.
+
+Out of crate scope:
+
+- Socket state, interface state, router group/source state, querier election,
+  response scheduling, report suppression, robustness-variable timers, and
+  v1/v2/v3 compatibility-mode transitions are host/router stack behavior.
+- Forwarding decisions, PIM/SSM routing policy, multicast router discovery
+  workflows, and live interoperability checks belong in generated tools,
+  oracle specs, probe specs, or provider-backed live validation. The crate
+  should expose the bytes, metadata, builders, decode results, summaries, and
+  optional validation helpers those tools need.
 
 ## Unresolved Questions
 
