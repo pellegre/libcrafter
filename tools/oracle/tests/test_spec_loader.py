@@ -16,6 +16,7 @@ from collections.abc import Mapping, Sequence
 from tools.oracle.engine.generator import case_byte_policy_index
 from tools.oracle.engine.spec_loader import (
     FeatureSpec,
+    LayerSpec,
     SpecValidationError,
     load_oracle_specs,
 )
@@ -28,6 +29,65 @@ DOT11_RADIOTAP_STRUCTURED_ERROR_TEST = (
     "malformed_dot11_and_radiotap_corpus_errors_carry_structured_fields"
 )
 MALFORMED_CORPUS_FIXTURE = "crafter/tests/fixtures/malformed/core-decode-corpus.hex"
+IGMP_FEATURE_NAMES = {
+    "igmp_header",
+    "igmp_v3_query",
+    "igmp_v3_report",
+    "igmp_extensions",
+    "igmp_mrd",
+}
+IGMP_STRICT_CASES = {
+    "igmp-membership-query",
+    "igmp-v2-membership-query",
+    "igmp-v1-membership-report",
+    "igmp-v2-membership-report",
+    "igmp-v2-leave-group",
+    "igmp-checksum-explicit-invalid",
+    "igmp-unknown-type-raw",
+    "igmp-unsupported-assigned-type-raw",
+    "igmp-v3-query-general",
+    "igmp-v3-query-group-specific",
+    "igmp-v3-query-group-and-source-specific",
+    "igmp-v3-query-source-count-override",
+    "igmp-v3-query-checksum-explicit-invalid",
+    "igmp-v3-query-ignored-extra-octets",
+    "igmp-v3-report-empty",
+    "igmp-v3-report-include-record",
+    "igmp-v3-report-exclude-record",
+    "igmp-v3-report-source-list-change-records",
+    "igmp-v3-report-auxiliary-data-record",
+    "igmp-v3-report-unknown-record-type",
+    "igmp-v3-report-count-override",
+    "igmp-v3-report-checksum-explicit-invalid",
+    "igmp-extension-query-noop",
+    "igmp-extension-report-noop-zero-length",
+    "igmp-extension-unassigned-type",
+    "igmp-extension-experimental-type",
+    "igmp-extension-ordered-tlvs",
+    "igmp-extension-e-flag-clear-raw-tail",
+    "igmp-mrd-advertisement",
+    "igmp-mrd-solicitation",
+    "igmp-mrd-termination",
+    "igmp-mrd-explicit-checksum-invalid",
+    "igmp-mrd-reserved-override",
+}
+IGMP_STRUCTURED_ERROR_CASES = {
+    "malformed-igmp-truncated-header",
+    "malformed-igmp-v2-truncated-group-address",
+    "malformed-igmp-v3-query-truncated-body",
+    "malformed-igmp-v3-query-truncated-source-list",
+    "malformed-igmp-v3-report-truncated-body",
+    "malformed-igmp-v3-report-truncated-group-record",
+    "malformed-igmp-v3-report-truncated-record-source-list",
+    "malformed-igmp-v3-report-truncated-record-auxiliary-data",
+    "malformed-igmp-extension-empty-area",
+    "malformed-igmp-extension-truncated-header",
+    "malformed-igmp-extension-truncated-value",
+    "malformed-igmp-extension-length-overrun",
+    "malformed-igmp-mrd-truncated-advertisement",
+    "malformed-igmp-mrd-truncated-solicitation",
+    "malformed-igmp-mrd-truncated-termination",
+}
 
 
 def _matrix_entries(value: object) -> Sequence[Mapping[str, object]]:
@@ -70,6 +130,81 @@ class SpecLoaderTest(unittest.TestCase):
         # no longer validates.
         self.assertGreater(len(self.specs.features), 0)
         self.assertIn("icmpv4_errors", self.specs.features)
+
+    def test_igmp_layer_spec_is_registered(self) -> None:
+        layer = self.specs.layers.get("igmp")
+        self.assertIsInstance(layer, LayerSpec)
+        assert layer is not None
+        self.assertEqual(layer.parents, ("ipv4",))
+        self.assertEqual(
+            layer.children,
+            ("igmp_query", "igmp_report", "igmp_extension", "payload"),
+        )
+        self.assertIn("l3:ipv4", layer.raw["allowed_roots"])
+        self.assertNotIn("ipv6", layer.parents)
+        self.assertTrue(IGMP_STRICT_CASES.intersection(layer.coverage_cases))
+        self.assertIn("malformed-igmp-truncated-header", layer.coverage_cases)
+        self.assertIn("tools/oracle/specs/layers/igmp.yaml", self.specs.source_paths)
+
+    def test_igmp_feature_specs_are_registered(self) -> None:
+        self.assertTrue(IGMP_FEATURE_NAMES.issubset(self.specs.features))
+        for feature_name in IGMP_FEATURE_NAMES:
+            with self.subTest(feature=feature_name):
+                feature = self.specs.features[feature_name]
+                self.assertIsInstance(feature, FeatureSpec)
+                self.assertIn("ipv4", feature.layers)
+                self.assertIn("igmp", feature.layers)
+                self.assertIn("reference_to_libcrafter", feature.directions)
+                self.assertIn("libcrafter_to_reference", feature.directions)
+                self.assertTrue(feature.strict_bytes)
+                self.assertFalse(feature.malformed)
+                self.assertIn("scapy", feature.backend_support)
+                self.assertIn("libcrafter", feature.backend_support)
+
+    def test_igmp_family_stack_and_profiles_are_registered(self) -> None:
+        family = self.specs.families["igmp"]
+        self.assertEqual(family.default_stack, ("ipv4", "igmp"))
+        self.assertEqual(family.feature_tags, ("ipv4", "igmp"))
+
+        stack = self.specs.stacks["ipv4_igmp"]
+        self.assertEqual(stack.root, "l3:ipv4")
+        self.assertEqual(stack.layers, ("ipv4", "igmp"))
+        self.assertTrue(IGMP_STRICT_CASES.issubset(set(stack.coverage_cases)))
+        self.assertTrue(IGMP_STRUCTURED_ERROR_CASES.issubset(set(stack.coverage_cases)))
+
+        for profile_name in (
+            "igmp-smoke",
+            "igmp-ci",
+            "igmp-boundary",
+            "igmp-live-dry-run",
+        ):
+            with self.subTest(profile=profile_name):
+                profile = self.specs.profiles[profile_name]
+                self.assertEqual(
+                    [(weight.name, weight.weight) for weight in profile.family_weights],
+                    [("igmp", 1)],
+                )
+                self.assertEqual(profile.feature_weights["live"], 0)
+
+    def test_igmp_supported_case_byte_policies_are_stable(self) -> None:
+        policy_index = case_byte_policy_index()
+        for case_name in IGMP_STRICT_CASES:
+            with self.subTest(case=case_name):
+                self.assertEqual(policy_index.get(case_name), "strict_bytes")
+        for case_name in IGMP_STRUCTURED_ERROR_CASES:
+            with self.subTest(case=case_name):
+                self.assertEqual(policy_index.get(case_name), "structured_error")
+
+        for feature_name in IGMP_FEATURE_NAMES:
+            feature = self.specs.features[feature_name]
+            supported = _supported_cases_by_name(feature)
+            for case_name, raw_case in supported.items():
+                with self.subTest(feature=feature_name, case=case_name):
+                    if case_name.startswith("malformed-igmp-"):
+                        self.assertEqual(raw_case["byte_policy"], "structured_error")
+                        self.assertNotEqual(raw_case["byte_policy"], "strict_bytes")
+                    else:
+                        self.assertEqual(raw_case["byte_policy"], "strict_bytes")
 
     def test_icmpv4_live_feature_is_registered(self) -> None:
         feature = self.specs.features.get("icmpv4_live")
