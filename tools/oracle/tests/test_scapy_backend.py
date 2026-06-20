@@ -400,6 +400,185 @@ def _write_and_read_scapy_pcap(vector):
         return pcap.read_pcap(path)
 
 
+def _igmp_plan(
+    igmp_fields: dict,
+    *,
+    case: str,
+    feature: str,
+    ipv4_fields: dict | None = None,
+    malformed: bool = False,
+) -> PacketPlan:
+    fields: dict = {
+        "ipv4": {
+            "src": "192.0.2.10",
+            "dst": "224.0.0.1",
+            "ttl": 1,
+            "protocol": "igmp",
+            "identification": 0x1701,
+            "flags": "none",
+        },
+        "igmp": dict(igmp_fields),
+    }
+    if ipv4_fields:
+        fields["ipv4"].update(ipv4_fields)
+    return PacketPlan(
+        stack=["ipv4", "igmp"],
+        fields=fields,
+        profile="igmp-unit",
+        seed=1,
+        index=0,
+        direction="reference_to_libcrafter",
+        family="igmp",
+        feature_tags=["igmp", feature],
+        case=case,
+        strict_bytes=True,
+        metadata={
+            "root": "l3:ipv4",
+            "root_decoder": "l3:ipv4",
+            "stack_name": "ipv4_igmp",
+            "feature": feature,
+            "malformed": malformed,
+        },
+    )
+
+
+class ScapyIgmpMaterializationTest(unittest.TestCase):
+    def test_igmp_features_protocol_and_layers_are_supported(self) -> None:
+        self.assertEqual(packets._IP_PROTOCOLS["igmp"], 2)
+        self.assertIn("igmp", packets._SCAPY_MATERIALIZED_LAYERS)
+        self.assertIn("igmp_query", packets._SCAPY_MATERIALIZED_LAYERS)
+        self.assertIn("igmp_report", packets._SCAPY_MATERIALIZED_LAYERS)
+        self.assertIn("igmp_extension", packets._SCAPY_MATERIALIZED_LAYERS)
+        for feature in {
+            "igmp_header",
+            "igmp_v3_query",
+            "igmp_v3_report",
+            "igmp_extensions",
+            "igmp_mrd",
+        }:
+            self.assertIn(feature, packets._SUPPORTED_FEATURES)
+
+    def test_igmp_membership_query_materializes_fixed_header_bytes(self) -> None:
+        plan = _igmp_plan(
+            {
+                "type": "membership_query",
+                "code": 0,
+                "group_address": "0.0.0.0",
+            },
+            case="igmp-membership-query",
+            feature="igmp_header",
+        )
+
+        vector = packets.encode_packet_plan(plan)
+        raw = vector.to_bytes()
+
+        self.assertEqual(raw[0] >> 4, 4)
+        self.assertEqual(raw[9], 2)
+        self.assertEqual(raw[20:].hex(), "1100eeff00000000")
+
+    def test_igmp_v3_query_extension_materializes_strict_bytes(self) -> None:
+        plan = _igmp_plan(
+            {
+                "type": "membership_query",
+                "max_response_code": 100,
+                "group_address": "233.252.0.61",
+                "query_flags": ["extension", "suppress_router_side_processing", "qrv"],
+                "qqic": 0x7D,
+                "number_of_sources": 7,
+                "source_addresses": ["198.51.100.10", "203.0.113.20"],
+                "extension_tlvs": [
+                    {
+                        "extension_type": "noop",
+                        "extension_value": {"hex": "aabbccdd"},
+                    }
+                ],
+            },
+            case="igmp-extension-query-noop",
+            feature="igmp_extensions",
+            ipv4_fields={"dst": "233.252.0.61", "identification": 0x1708},
+        )
+
+        vector = packets.encode_packet_plan(plan)
+
+        self.assertEqual(
+            vector.to_bytes()[20:].hex(),
+            "11649bece9fc003d8a7d0007c633640acb00711400000004aabbccdd",
+        )
+
+    def test_igmp_v3_report_record_auxiliary_data_materializes_strict_bytes(self) -> None:
+        plan = _igmp_plan(
+            {
+                "type": "v3_membership_report",
+                "report_flags": "extension",
+                "group_records": [
+                    {
+                        "record_type": "change_to_exclude_mode",
+                        "auxiliary_data_len": 1,
+                        "number_of_sources": 1,
+                        "multicast_address": "233.252.0.76",
+                        "source_addresses": ["198.51.100.74"],
+                        "auxiliary_data": {"hex": "deadbeef"},
+                    }
+                ],
+            },
+            case="igmp-v3-report-auxiliary-data-record",
+            feature="igmp_v3_report",
+            ipv4_fields={"dst": "224.0.0.22", "identification": 0x170F},
+        )
+
+        vector = packets.encode_packet_plan(plan)
+
+        self.assertEqual(
+            vector.to_bytes()[20:].hex(),
+            "2200a797000000008000000104010001e9fc004cc633644adeadbeef",
+        )
+
+    def test_igmp_mrd_and_unknown_raw_payloads_materialize(self) -> None:
+        mrd = packets.encode_packet_plan(
+            _igmp_plan(
+                {
+                    "type": "multicast_router_advertisement",
+                    "mrd_advertisement_interval": 20,
+                    "mrd_query_interval": 125,
+                    "mrd_robustness_variable": 2,
+                },
+                case="igmp-mrd-advertisement",
+                feature="igmp_mrd",
+                ipv4_fields={"dst": "224.0.0.106", "identification": 0x1711},
+            )
+        )
+        unknown = packets.encode_packet_plan(
+            _igmp_plan(
+                {
+                    "type": "unassigned",
+                    "code": 0,
+                    "raw_tail": {"hex": "deadbeef"},
+                },
+                case="igmp-unknown-type-raw",
+                feature="igmp_header",
+                ipv4_fields={"dst": "233.252.0.1", "identification": 0x1712},
+            )
+        )
+
+        self.assertEqual(mrd.to_bytes()[20:].hex(), "3014cf6c007d0002")
+        self.assertEqual(unknown.to_bytes()[20:].hex(), "0900596200000000deadbeef")
+
+    def test_igmp_structured_error_cases_are_not_strict_materialized(self) -> None:
+        plan = _igmp_plan(
+            {
+                "type": "membership_query",
+                "code": 0,
+                "group_address": "0.0.0.0",
+            },
+            case="malformed-igmp-truncated-header",
+            feature="igmp_header",
+            malformed=True,
+        )
+
+        with self.assertRaisesRegex(ValueError, "structured-error"):
+            packets.encode_packet_plan(plan)
+
+
 def _icmp_live_plan(icmp_fields: dict, *, case: str, payload_hex: str = "0102030405") -> PacketPlan:
     """Build an l2:ipv4 ICMP live-matrix plan with the given icmp body fields."""
 
