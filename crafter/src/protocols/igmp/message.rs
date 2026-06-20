@@ -16,7 +16,8 @@ use crate::field::{Field, FieldState};
 use crate::packet::{IntoPacket, Layer, LayerContext, Packet};
 
 use super::constants::{
-    IGMP_DEFAULT_CHECKSUM, IGMP_DEFAULT_CODE, IGMP_FIXED_HEADER_LEN, IGMP_TYPE_MEMBERSHIP_QUERY,
+    igmp_v3_timer_code_from_units_floor, igmp_v3_timer_code_units, IGMP_DEFAULT_CHECKSUM,
+    IGMP_DEFAULT_CODE, IGMP_FIXED_HEADER_LEN, IGMP_TYPE_MEMBERSHIP_QUERY,
 };
 use super::registry::{
     igmp_code_meta, igmp_type, igmp_type_meta, IgmpCodeMeta, IgmpType, IgmpTypeMeta,
@@ -159,6 +160,16 @@ impl Igmp {
         self.with_v2_max_response_time_tenths(tenths)
     }
 
+    /// Set the IGMPv3 Max Response Code from a time in tenths of seconds.
+    ///
+    /// RFC 9776 section 4.1.1 uses a linear range for values below 128 and a
+    /// floating exponent/mantissa range above it. Values that are not exactly
+    /// representable use the nearest lower wire code, matching the RFC's
+    /// configured-timer guidance, and values above the wire maximum saturate.
+    pub fn with_v3_max_response_time_tenths(self, tenths: u32) -> Self {
+        self.with_max_response_code(igmp_v3_timer_code_from_units_floor(tenths))
+    }
+
     /// Set the IGMP checksum explicitly.
     pub fn checksum(mut self, checksum: u16) -> Self {
         self.checksum.set_user(checksum);
@@ -228,6 +239,19 @@ impl Igmp {
     /// IGMPv2 Max Response Time as a [`Duration`].
     pub fn v2_max_response_time(&self) -> Duration {
         Duration::from_millis(u64::from(self.v2_max_response_time_tenths()) * 100)
+    }
+
+    /// IGMPv3 Max Response Time decoded from the Max Response Code.
+    ///
+    /// The returned value is in tenths of a second per RFC 9776 section 4.1.1.
+    /// Use [`Igmp::max_response_code_value`] when the raw byte is needed.
+    pub fn v3_max_response_time_tenths(&self) -> u32 {
+        igmp_v3_timer_code_units(self.max_response_code_value())
+    }
+
+    /// IGMPv3 Max Response Time decoded as a [`Duration`].
+    pub fn v3_max_response_time(&self) -> Duration {
+        Duration::from_millis(u64::from(self.v3_max_response_time_tenths()) * 100)
     }
 
     /// Source-backed scoped Code registry metadata.
