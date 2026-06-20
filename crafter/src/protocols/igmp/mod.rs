@@ -11,6 +11,7 @@
 
 pub mod constants;
 mod decode;
+pub mod extension;
 mod message;
 pub mod query;
 pub mod record;
@@ -20,6 +21,7 @@ mod validation;
 
 pub use self::constants::*;
 pub(crate) use self::decode::append_igmp_packet;
+pub use self::extension::{IgmpExtension, IgmpExtensionValue};
 pub use self::message::{Igmp, IgmpChecksumStatus};
 pub use self::query::IgmpQuery;
 pub use self::record::{
