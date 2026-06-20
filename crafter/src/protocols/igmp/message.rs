@@ -21,6 +21,7 @@ use super::constants::{
 use super::registry::{
     igmp_code_meta, igmp_type, igmp_type_meta, IgmpCodeMeta, IgmpType, IgmpTypeMeta,
 };
+use super::validation::{igmp_group_address_class, IgmpGroupAddressClass};
 
 /// Internet Group Management Protocol fixed header.
 ///
@@ -242,6 +243,21 @@ impl Igmp {
     /// Raw Group Address field value.
     pub fn group_address_value(&self) -> Ipv4Addr {
         value_or_copy(&self.group_address, Ipv4Addr::UNSPECIFIED)
+    }
+
+    /// Diagnostic classification for the Group Address field.
+    pub fn group_address_class(&self) -> IgmpGroupAddressClass {
+        igmp_group_address_class(self.group_address_value())
+    }
+
+    /// Stable diagnostic label for the Group Address field classification.
+    pub fn group_address_class_name(&self) -> &'static str {
+        self.group_address_class().name()
+    }
+
+    /// Whether the Group Address field is in IPv4 multicast address space.
+    pub fn group_address_is_multicast(&self) -> bool {
+        self.group_address_class().is_multicast()
     }
 
     /// Assignment state for the IGMP Type field.
@@ -568,6 +584,67 @@ mod igmp_checksum {
 }
 
 #[cfg(test)]
+mod igmp_group_address {
+    use super::*;
+    use crate::packet::Packet;
+
+    #[test]
+    fn igmp_group_address_helpers_classify_layer_field() {
+        let general_query = Igmp::membership_query();
+        assert_eq!(
+            general_query.group_address_class(),
+            IgmpGroupAddressClass::Zero
+        );
+        assert_eq!(general_query.group_address_class_name(), "zero");
+        assert!(!general_query.group_address_is_multicast());
+
+        let all_systems = Igmp::membership_query().with_group_address(Ipv4Addr::new(224, 0, 0, 1));
+        assert_eq!(
+            all_systems.group_address_class(),
+            IgmpGroupAddressClass::AllSystems
+        );
+        assert_eq!(all_systems.group_address_class_name(), "all-systems");
+        assert!(all_systems.group_address_is_multicast());
+
+        let all_routers = Igmp::v2_leave_group(Ipv4Addr::new(224, 0, 0, 2));
+        assert_eq!(
+            all_routers.group_address_class(),
+            IgmpGroupAddressClass::AllRouters
+        );
+        assert_eq!(all_routers.group_address_class_name(), "all-routers");
+        assert!(all_routers.group_address_is_multicast());
+
+        let multicast = Igmp::v2_membership_report(Ipv4Addr::new(233, 252, 0, 42));
+        assert_eq!(
+            multicast.group_address_class(),
+            IgmpGroupAddressClass::Multicast
+        );
+        assert_eq!(multicast.group_address_class_name(), "multicast");
+        assert!(multicast.group_address_is_multicast());
+    }
+
+    #[test]
+    fn igmp_group_address_non_multicast_override_is_preserved() {
+        let non_multicast = Ipv4Addr::new(192, 0, 2, 42);
+        let igmp = Igmp::v2_membership_report(non_multicast);
+
+        assert_eq!(igmp.group_address_value(), non_multicast);
+        assert_eq!(
+            igmp.group_address_class(),
+            IgmpGroupAddressClass::NonMulticast
+        );
+        assert_eq!(igmp.group_address_class_name(), "non-multicast");
+        assert!(!igmp.group_address_is_multicast());
+
+        let bytes = Packet::from_layer(igmp)
+            .compile()
+            .expect("compile IGMP with non-multicast group override");
+
+        assert_eq!(&bytes.as_bytes()[4..8], &non_multicast.octets());
+    }
+}
+
+#[cfg(test)]
 mod igmp_builders {
     use super::*;
     use crate::checksum::verify_internet_checksum;
@@ -654,7 +731,16 @@ mod igmp_builders {
 
         assert_eq!(
             bytes.as_slice(),
-            &[IGMP_TYPE_EXPERIMENTAL_FIRST, 0xaa, 0x00, 0x00, 239, 255, 0, 42]
+            &[
+                IGMP_TYPE_EXPERIMENTAL_FIRST,
+                0xaa,
+                0x00,
+                0x00,
+                239,
+                255,
+                0,
+                42
+            ]
         );
         assert!(!verify_internet_checksum(&bytes));
     }
@@ -747,16 +833,7 @@ mod igmp_v2_max_response {
 
     #[test]
     fn igmp_v2_max_response_decoded_values_preserve_raw_octet_for_any_type() {
-        let query = [
-            IGMP_TYPE_MEMBERSHIP_QUERY,
-            200,
-            0x00,
-            0x00,
-            239,
-            1,
-            2,
-            3,
-        ];
+        let query = [IGMP_TYPE_MEMBERSHIP_QUERY, 200, 0x00, 0x00, 239, 1, 2, 3];
         let report = [
             IGMP_TYPE_V2_MEMBERSHIP_REPORT,
             0xfe,
@@ -782,7 +859,10 @@ mod igmp_v2_max_response {
         assert_eq!(decoded_report.code_value(), 0xfe);
         assert_eq!(decoded_report.max_response_code_value(), 0xfe);
         assert_eq!(decoded_report.v2_max_response_time_tenths(), 0xfe);
-        assert_eq!(decoded_report.v2_max_response_time_state(), FieldState::User);
+        assert_eq!(
+            decoded_report.v2_max_response_time_state(),
+            FieldState::User
+        );
 
         assert_eq!(compile_layer(decoded_query), query);
         assert_eq!(compile_layer(decoded_report), report);
@@ -795,9 +875,7 @@ mod igmp_v2_membership_report {
     use crate::checksum::verify_internet_checksum;
     use crate::field::FieldState;
     use crate::packet::Packet;
-    use crate::protocols::igmp::constants::{
-        IGMP_DEFAULT_CODE, IGMP_TYPE_V2_MEMBERSHIP_REPORT,
-    };
+    use crate::protocols::igmp::constants::{IGMP_DEFAULT_CODE, IGMP_TYPE_V2_MEMBERSHIP_REPORT};
     use crate::protocols::igmp::decode::decode;
     use crate::protocols::igmp::registry::IgmpTypeStatus;
     use crate::protocols::ip::v4::Ipv4;
@@ -874,7 +952,10 @@ mod igmp_v2_membership_report {
             "{show}"
         );
         assert!(show.contains("group_address: 224.0.0.251"), "{show}");
-        assert!(show.contains(&format!("checksum: 0x{checksum:04x}")), "{show}");
+        assert!(
+            show.contains(&format!("checksum: 0x{checksum:04x}")),
+            "{show}"
+        );
     }
 
     #[test]
@@ -893,9 +974,7 @@ mod igmp_v2_leave_group {
     use crate::checksum::verify_internet_checksum;
     use crate::field::FieldState;
     use crate::packet::Packet;
-    use crate::protocols::igmp::constants::{
-        IGMP_DEFAULT_CODE, IGMP_TYPE_V2_LEAVE_GROUP,
-    };
+    use crate::protocols::igmp::constants::{IGMP_DEFAULT_CODE, IGMP_TYPE_V2_LEAVE_GROUP};
     use crate::protocols::igmp::decode::decode;
     use crate::protocols::igmp::registry::IgmpTypeStatus;
 
@@ -967,13 +1046,13 @@ mod igmp_v2_leave_group {
             "Igmp(type=IGMPv2 Leave Group, code=No registered code, group=233.252.0.17)"
         );
         let show = packet.show();
-        assert!(
-            show.contains("type: IGMPv2 Leave Group (0x17)"),
-            "{show}"
-        );
+        assert!(show.contains("type: IGMPv2 Leave Group (0x17)"), "{show}");
         assert!(show.contains("code: No registered code (0x00)"), "{show}");
         assert!(show.contains("group_address: 233.252.0.17"), "{show}");
-        assert!(show.contains(&format!("checksum: 0x{checksum:04x}")), "{show}");
+        assert!(
+            show.contains(&format!("checksum: 0x{checksum:04x}")),
+            "{show}"
+        );
     }
 
     #[test]
