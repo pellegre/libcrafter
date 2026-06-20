@@ -66,6 +66,7 @@ roots:
       - udp
       - transport
       - icmp
+      - igmp
       - dns
       - esp
       - ah
@@ -196,6 +197,17 @@ families:
       - udp
       - ikev2
       - payload
+  # igmp: IPv4-only Internet Group Management Protocol (IP protocol 2).
+  # The default root is network-layer IPv4/IGMP so focused profiles do not
+  # sample IPv6 MLD or ICMPv6-family behavior. Link-layer/provider-gated live
+  # validation is modeled by later oracle/probe/lab steps.
+  - name: igmp
+    default_stack:
+      - ipv4
+      - igmp
+    feature_tags:
+      - ipv4
+      - igmp
   - name: dot11
     default_stack:
       - dot11
@@ -585,6 +597,65 @@ stacks:
     coverage_cases:
       - ipv4-icmp
       - icmpv4-echo-reply
+  # ipv4 / igmp: IGMP over IPv4 protocol number 2. This stack is intentionally
+  # rooted at l3:ipv4 and does not include IPv6/ICMPv6/MLD cases. The case list
+  # keeps the fixed-header, IGMPv3 query/report, RFC 9279 extension, and RFC
+  # 4286 MRD feature specs discoverable while later backend steps own executable
+  # materialization and normalization.
+  - name: ipv4_igmp
+    root: "l3:ipv4"
+    layers:
+      - ipv4
+      - igmp
+    coverage_cases:
+      - igmp-membership-query
+      - igmp-v2-membership-query
+      - igmp-v1-membership-report
+      - igmp-v2-membership-report
+      - igmp-v2-leave-group
+      - igmp-checksum-explicit-invalid
+      - igmp-unknown-type-raw
+      - igmp-unsupported-assigned-type-raw
+      - malformed-igmp-truncated-header
+      - malformed-igmp-v2-truncated-group-address
+      - igmp-v3-query-general
+      - igmp-v3-query-group-specific
+      - igmp-v3-query-group-and-source-specific
+      - igmp-v3-query-source-count-override
+      - igmp-v3-query-checksum-explicit-invalid
+      - igmp-v3-query-ignored-extra-octets
+      - malformed-igmp-v3-query-truncated-body
+      - malformed-igmp-v3-query-truncated-source-list
+      - igmp-v3-report-empty
+      - igmp-v3-report-include-record
+      - igmp-v3-report-exclude-record
+      - igmp-v3-report-source-list-change-records
+      - igmp-v3-report-auxiliary-data-record
+      - igmp-v3-report-unknown-record-type
+      - igmp-v3-report-count-override
+      - igmp-v3-report-checksum-explicit-invalid
+      - malformed-igmp-v3-report-truncated-body
+      - malformed-igmp-v3-report-truncated-group-record
+      - malformed-igmp-v3-report-truncated-record-source-list
+      - malformed-igmp-v3-report-truncated-record-auxiliary-data
+      - igmp-extension-query-noop
+      - igmp-extension-report-noop-zero-length
+      - igmp-extension-unassigned-type
+      - igmp-extension-experimental-type
+      - igmp-extension-ordered-tlvs
+      - igmp-extension-e-flag-clear-raw-tail
+      - malformed-igmp-extension-empty-area
+      - malformed-igmp-extension-truncated-header
+      - malformed-igmp-extension-truncated-value
+      - malformed-igmp-extension-length-overrun
+      - igmp-mrd-advertisement
+      - igmp-mrd-solicitation
+      - igmp-mrd-termination
+      - igmp-mrd-explicit-checksum-invalid
+      - igmp-mrd-reserved-override
+      - malformed-igmp-mrd-truncated-advertisement
+      - malformed-igmp-mrd-truncated-solicitation
+      - malformed-igmp-mrd-truncated-termination
   - name: l2_ipv4_payload
     root: "l2:ipv4"
     layers:
@@ -1019,10 +1090,18 @@ constraints:
       - udp
       - tcp
       - icmp
+      - igmp
       - dns
       - esp
       - ah
       - ospf
+      - payload
+  - name: igmp_children
+    parent: igmp
+    children:
+      - igmp_query
+      - igmp_report
+      - igmp_extension
       - payload
   - name: ipv6_children
     parent: ipv6
