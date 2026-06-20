@@ -12,6 +12,12 @@ use crate::packet::{Packet, Raw};
 use super::constants::IGMP_FIXED_HEADER_LEN;
 use super::message::Igmp;
 
+/// Decode the common IGMP fixed header into a typed layer.
+pub(crate) fn decode(bytes: &[u8]) -> Result<Igmp> {
+    let (igmp, _) = decode_igmp_parts(bytes)?;
+    Ok(igmp)
+}
+
 /// Append a decoded IGMP packet to an existing packet stack.
 ///
 /// This bootstrap decoder always recovers the fixed IGMP header and preserves
@@ -48,14 +54,74 @@ fn decode_igmp_parts(bytes: &[u8]) -> Result<(Igmp, &[u8])> {
 }
 
 #[cfg(test)]
-mod igmp_unknown_raw {
+mod igmp_decode_fixed_header {
     use super::*;
     use crate::error::CrafterError;
     use crate::field::FieldState;
     use crate::protocols::igmp::constants::{
         IGMP_TYPE_DVMRP, IGMP_TYPE_MEMBERSHIP_QUERY, IGMP_TYPE_UNASSIGNED_FIRST,
+        IGMP_TYPE_V2_MEMBERSHIP_REPORT,
     };
     use crate::protocols::igmp::registry::{IgmpType, IgmpTypeStatus};
+
+    #[test]
+    fn valid_query_bytes_decode_to_user_set_fields() {
+        let bytes = [
+            IGMP_TYPE_MEMBERSHIP_QUERY,
+            0x00,
+            0xee,
+            0xff,
+            0,
+            0,
+            0,
+            0,
+        ];
+
+        let igmp = decode(&bytes).expect("decode query fixed header");
+
+        assert_eq!(igmp.igmp_type_value(), IGMP_TYPE_MEMBERSHIP_QUERY);
+        assert_eq!(igmp.igmp_type(), IgmpType::MembershipQuery);
+        assert_eq!(igmp.code_value(), 0x00);
+        assert_eq!(igmp.checksum_value(), Some(0xeeff));
+        assert_eq!(igmp.group_address_value(), Ipv4Addr::UNSPECIFIED);
+        assert_eq!(igmp.igmp_type_state(), FieldState::User);
+        assert_eq!(igmp.code_state(), FieldState::User);
+        assert_eq!(igmp.checksum_state(), FieldState::User);
+        assert_eq!(igmp.group_address_state(), FieldState::User);
+        assert_eq!(
+            Packet::new()
+                .push(igmp)
+                .compile()
+                .expect("roundtrip decoded query")
+                .as_bytes(),
+            &bytes
+        );
+    }
+
+    #[test]
+    fn valid_report_bytes_decode_to_user_set_fields() {
+        let bytes = [
+            IGMP_TYPE_V2_MEMBERSHIP_REPORT,
+            0x00,
+            0xab,
+            0xcd,
+            224,
+            0,
+            0,
+            251,
+        ];
+
+        let decoded = append_igmp_packet(Packet::new(), &bytes).expect("decode report");
+        let igmp = decoded.layer::<Igmp>().expect("typed IGMP header");
+
+        assert_eq!(igmp.igmp_type_value(), IGMP_TYPE_V2_MEMBERSHIP_REPORT);
+        assert_eq!(igmp.igmp_type(), IgmpType::V2MembershipReport);
+        assert_eq!(igmp.code_value(), 0x00);
+        assert_eq!(igmp.checksum_value(), Some(0xabcd));
+        assert_eq!(igmp.group_address_value(), Ipv4Addr::new(224, 0, 0, 251));
+        assert!(decoded.layer::<Raw>().is_none());
+        assert_eq!(decoded.compile().expect("roundtrip").as_bytes(), &bytes);
+    }
 
     #[test]
     fn unsupported_registered_type_preserves_raw_payload() {
@@ -140,6 +206,16 @@ mod igmp_unknown_raw {
         assert!(decoded.layer::<Igmp>().is_some());
         assert!(decoded.layer::<Raw>().is_none());
         assert_eq!(decoded.compile().expect("roundtrip").as_bytes(), &bytes);
+    }
+
+    #[test]
+    fn empty_input_returns_structured_error() {
+        let err = decode(&[]).unwrap_err();
+
+        assert_eq!(
+            err,
+            CrafterError::buffer_too_short("igmp header", IGMP_FIXED_HEADER_LEN, 0)
+        );
     }
 
     #[test]
