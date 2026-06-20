@@ -5,8 +5,7 @@ pub mod dhcp;
 pub mod dns;
 pub mod eapol;
 pub mod icmp;
-#[allow(dead_code)]
-pub(crate) mod igmp;
+pub mod igmp;
 pub mod ip;
 pub mod ipsec;
 pub mod link;
@@ -36,7 +35,7 @@ pub mod ipv6 {
 /// Curated protocol symbols exported by both `crate::protocols` and the crate root.
 pub mod exports {
     use super::{
-        bgp, dhcp, dns, eapol, icmp, ip, ipsec, ipv4, ipv6, link, ospf, rip, rsn, transport,
+        bgp, dhcp, dns, eapol, icmp, igmp, ip, ipsec, ipv4, ipv6, link, ospf, rip, rsn, transport,
     };
 
     pub use crate::packet::Raw;
@@ -219,6 +218,33 @@ pub mod exports {
     #[allow(deprecated)]
     pub use icmp::{
         Icmp, IcmpAddressMask, IcmpQuotedIpv4, IcmpRouterAdvertisementEntry, IcmpTimestamp,
+    };
+    pub use igmp::{
+        igmp_code_meta, igmp_code_name, igmp_code_status, igmp_type, igmp_type_meta,
+        igmp_type_name, igmp_type_status, Igmp, IgmpCodeMeta, IgmpType, IgmpTypeMeta,
+        IgmpTypeStatus, IGMP_DEFAULT_AUX_DATA_LEN, IGMP_DEFAULT_CHECKSUM, IGMP_DEFAULT_CODE,
+        IGMP_DEFAULT_EXTENSION_LENGTH, IGMP_DEFAULT_GROUP_RECORD_COUNT, IGMP_DEFAULT_QUERY_FLAGS,
+        IGMP_DEFAULT_REPORT_FLAGS, IGMP_DEFAULT_RESERVED_U16, IGMP_DEFAULT_RESERVED_U8,
+        IGMP_DEFAULT_SOURCE_COUNT, IGMP_EXTENSION_HEADER_LEN,
+        IGMP_EXTENSION_TYPE_EXPERIMENTAL_FIRST, IGMP_EXTENSION_TYPE_EXPERIMENTAL_LAST,
+        IGMP_EXTENSION_TYPE_NOOP, IGMP_EXTENSION_TYPE_UNASSIGNED_FIRST,
+        IGMP_EXTENSION_TYPE_UNASSIGNED_LAST, IGMP_FIXED_HEADER_LEN, IGMP_HEADER_LEN,
+        IGMP_QUERY_CODE_MAX_RESPONSE_FIRST, IGMP_QUERY_CODE_MAX_RESPONSE_LAST, IGMP_QUERY_CODE_V1,
+        IGMP_RECORD_TYPE_ALLOW_NEW_SOURCES, IGMP_RECORD_TYPE_BLOCK_OLD_SOURCES,
+        IGMP_RECORD_TYPE_CHANGE_TO_EXCLUDE_MODE, IGMP_RECORD_TYPE_CHANGE_TO_INCLUDE_MODE,
+        IGMP_RECORD_TYPE_MODE_IS_EXCLUDE, IGMP_RECORD_TYPE_MODE_IS_INCLUDE,
+        IGMP_TYPE_CISCO_TRACE_MESSAGES, IGMP_TYPE_DVMRP, IGMP_TYPE_EXPERIMENTAL_FIRST,
+        IGMP_TYPE_EXPERIMENTAL_LAST, IGMP_TYPE_MEMBERSHIP_QUERY,
+        IGMP_TYPE_MULTICAST_ROUTER_ADVERTISEMENT, IGMP_TYPE_MULTICAST_ROUTER_SOLICITATION,
+        IGMP_TYPE_MULTICAST_ROUTER_TERMINATION, IGMP_TYPE_MULTICAST_TRACEROUTE,
+        IGMP_TYPE_MULTICAST_TRACEROUTE_RESPONSE, IGMP_TYPE_OBSOLETE_RESERVED_FIRST,
+        IGMP_TYPE_OBSOLETE_RESERVED_LAST, IGMP_TYPE_PIM_V1, IGMP_TYPE_RESERVED,
+        IGMP_TYPE_UNASSIGNED_FIRST, IGMP_TYPE_UNASSIGNED_LAST, IGMP_TYPE_V1_MEMBERSHIP_REPORT,
+        IGMP_TYPE_V2_LEAVE_GROUP, IGMP_TYPE_V2_MEMBERSHIP_REPORT, IGMP_TYPE_V3_MEMBERSHIP_REPORT,
+        IGMP_V3_GROUP_RECORD_HEADER_LEN, IGMP_V3_QUERY_FLAGS_MASK,
+        IGMP_V3_QUERY_FLAGS_UNASSIGNED_MASK, IGMP_V3_QUERY_FLAG_EXTENSION, IGMP_V3_QUERY_MIN_LEN,
+        IGMP_V3_REPORT_FLAGS_MASK, IGMP_V3_REPORT_FLAGS_UNASSIGNED_MASK,
+        IGMP_V3_REPORT_FLAG_EXTENSION, IGMP_V3_REPORT_HEADER_LEN, IPPROTO_IGMP,
     };
     pub use ip::shared::{Dscp, Ecn};
     pub use ipsec::{

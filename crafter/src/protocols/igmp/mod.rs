@@ -9,14 +9,19 @@
 //! support must preserve unsupported IGMP types as raw payload bytes wherever
 //! the enclosing IGMP header can be parsed defensibly.
 
-mod constants;
+pub mod constants;
 mod decode;
 mod message;
-mod query;
-mod record;
-mod registry;
-mod report;
+pub mod query;
+pub mod record;
+pub mod registry;
+pub mod report;
 mod validation;
 
+pub use self::constants::*;
 pub(crate) use self::decode::append_igmp_packet;
-pub(crate) use self::message::Igmp;
+pub use self::message::Igmp;
+pub use self::registry::{
+    igmp_code_meta, igmp_code_name, igmp_code_status, igmp_type, igmp_type_meta, igmp_type_name,
+    igmp_type_status, IgmpCodeMeta, IgmpType, IgmpTypeMeta, IgmpTypeStatus,
+};
