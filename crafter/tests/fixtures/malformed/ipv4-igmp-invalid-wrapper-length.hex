@@ -1,0 +1,4 @@
+# IPv4 wrapper declares 29 total bytes, but only 27 bytes are available.
+# Decode should fail in the IPv4 wrapper before IGMP fixed-header decode.
+45 00 00 1d 18 02 00 00 01 02 f5 d5 c0 00 02 0a e9 fc 00 01
+11 00 00 00 00 00 00
