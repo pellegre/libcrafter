@@ -12,6 +12,15 @@ pub const IPPROTO_IGMP: u8 = 2;
 pub const IGMP_FIXED_HEADER_LEN: usize = 8;
 /// Compatibility name for the fixed IGMP header length.
 pub const IGMP_HEADER_LEN: usize = IGMP_FIXED_HEADER_LEN;
+/// Multicast Router Discovery Advertisement message length, in octets.
+/// RFC 4286 section 3.2.
+pub const IGMP_MRD_ADVERTISEMENT_LEN: usize = 8;
+/// Multicast Router Discovery Solicitation message length, in octets.
+/// RFC 4286 section 4.1.
+pub const IGMP_MRD_SOLICITATION_LEN: usize = 4;
+/// Multicast Router Discovery Termination message length, in octets.
+/// RFC 4286 section 5.1.
+pub const IGMP_MRD_TERMINATION_LEN: usize = 4;
 /// Minimum IGMPv3 Membership Query length, in octets. RFC 9776 section 4.1.
 pub const IGMP_V3_QUERY_MIN_LEN: usize = 12;
 /// IGMPv3 Membership Report header length before group records, in octets.
@@ -94,6 +103,8 @@ pub const IGMP_DEFAULT_QUERY_FLAGS: u8 = 0;
 pub const IGMP_DEFAULT_REPORT_FLAGS: u16 = 0;
 /// Default extension value length for an empty extension TLV.
 pub const IGMP_DEFAULT_EXTENSION_LENGTH: u16 = 0;
+/// Default zero-valued MRD Reserved field. RFC 4286 sections 4.1 and 5.1.
+pub const IGMP_MRD_DEFAULT_RESERVED: u8 = 0;
 
 /// IGMPv3 record type MODE_IS_INCLUDE. RFC 9776 section 4.2.13.
 pub const IGMP_RECORD_TYPE_MODE_IS_INCLUDE: u8 = 1;
@@ -187,6 +198,9 @@ mod tests {
         assert_eq!(IPPROTO_IGMP, 2);
         assert_eq!(IGMP_FIXED_HEADER_LEN, 8);
         assert_eq!(IGMP_HEADER_LEN, IGMP_FIXED_HEADER_LEN);
+        assert_eq!(IGMP_MRD_ADVERTISEMENT_LEN, 8);
+        assert_eq!(IGMP_MRD_SOLICITATION_LEN, 4);
+        assert_eq!(IGMP_MRD_TERMINATION_LEN, 4);
         assert_eq!(IGMP_V3_QUERY_MIN_LEN, 12);
         assert_eq!(IGMP_V3_REPORT_HEADER_LEN, 8);
         assert_eq!(IGMP_V3_GROUP_RECORD_HEADER_LEN, 8);
@@ -227,6 +241,7 @@ mod tests {
         assert_eq!(IGMP_DEFAULT_QUERY_FLAGS, 0);
         assert_eq!(IGMP_DEFAULT_REPORT_FLAGS, 0);
         assert_eq!(IGMP_DEFAULT_EXTENSION_LENGTH, 0);
+        assert_eq!(IGMP_MRD_DEFAULT_RESERVED, 0);
 
         assert_eq!(IGMP_RECORD_TYPE_MODE_IS_INCLUDE, 1);
         assert_eq!(IGMP_RECORD_TYPE_MODE_IS_EXCLUDE, 2);

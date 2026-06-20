@@ -11,7 +11,9 @@ use crate::field::Field;
 use crate::packet::{Packet, Raw};
 
 use super::constants::{
-    IGMP_FIXED_HEADER_LEN, IGMP_TYPE_MEMBERSHIP_QUERY, IGMP_TYPE_V3_MEMBERSHIP_REPORT,
+    IGMP_FIXED_HEADER_LEN, IGMP_MRD_SOLICITATION_LEN, IGMP_MRD_TERMINATION_LEN,
+    IGMP_TYPE_MEMBERSHIP_QUERY, IGMP_TYPE_MULTICAST_ROUTER_SOLICITATION,
+    IGMP_TYPE_MULTICAST_ROUTER_TERMINATION, IGMP_TYPE_V3_MEMBERSHIP_REPORT,
     IGMP_V3_GROUP_RECORD_HEADER_LEN, IGMP_V3_QUERY_MIN_LEN,
 };
 use super::extension::decode_extensions;
@@ -23,6 +25,7 @@ use super::report::IgmpReport;
 const IGMP_V3_REPORT_BODY_HEADER_LEN: usize = 4;
 
 /// Decode the common IGMP fixed header into a typed layer.
+#[cfg(test)]
 pub(crate) fn decode(bytes: &[u8]) -> Result<Igmp> {
     let (igmp, _) = decode_igmp_parts(bytes)?;
     Ok(igmp)
@@ -35,8 +38,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<Igmp> {
 /// permits them. A Membership Query with the IGMPv3 minimum length is decoded as
 /// an IGMPv3 query body; a short declared source list is a structured error.
 pub(crate) fn append_igmp_packet(mut packet: Packet, bytes: &[u8]) -> Result<Packet> {
-    let igmp = decode(bytes)?;
-    let payload = &bytes[IGMP_FIXED_HEADER_LEN..];
+    let (igmp, payload) = decode_igmp_parts(bytes)?;
     let is_v3_query = igmp.igmp_type_value() == IGMP_TYPE_MEMBERSHIP_QUERY
         && bytes.len() >= IGMP_V3_QUERY_MIN_LEN;
     let is_v3_report = igmp.igmp_type_value() == IGMP_TYPE_V3_MEMBERSHIP_REPORT;
@@ -95,10 +97,15 @@ fn append_igmp_extensions(mut packet: Packet, tail: &[u8]) -> Result<Packet> {
 }
 
 fn decode_igmp_parts(bytes: &[u8]) -> Result<(Igmp, &[u8])> {
-    if bytes.len() < IGMP_FIXED_HEADER_LEN {
+    let header_len = bytes
+        .first()
+        .copied()
+        .map(igmp_header_len_for_type)
+        .unwrap_or(IGMP_FIXED_HEADER_LEN);
+    if bytes.len() < header_len {
         return Err(CrafterError::buffer_too_short(
             "igmp header",
-            IGMP_FIXED_HEADER_LEN,
+            header_len,
             bytes.len(),
         ));
     }
@@ -107,7 +114,11 @@ fn decode_igmp_parts(bytes: &[u8]) -> Result<(Igmp, &[u8])> {
         igmp_type: Field::user(bytes[0]),
         code: Field::user(bytes[1]),
         checksum: Field::user(u16::from_be_bytes([bytes[2], bytes[3]])),
-        group_address: Field::user(Ipv4Addr::new(bytes[4], bytes[5], bytes[6], bytes[7])),
+        group_address: if header_len >= IGMP_FIXED_HEADER_LEN {
+            Field::user(Ipv4Addr::new(bytes[4], bytes[5], bytes[6], bytes[7]))
+        } else {
+            Field::defaulted(Ipv4Addr::UNSPECIFIED)
+        },
         checksum_status: if verify_internet_checksum(bytes) {
             IgmpChecksumStatus::Valid
         } else {
@@ -115,7 +126,15 @@ fn decode_igmp_parts(bytes: &[u8]) -> Result<(Igmp, &[u8])> {
         },
     };
 
-    Ok((igmp, &bytes[IGMP_FIXED_HEADER_LEN..]))
+    Ok((igmp, &bytes[header_len..]))
+}
+
+const fn igmp_header_len_for_type(type_code: u8) -> usize {
+    match type_code {
+        IGMP_TYPE_MULTICAST_ROUTER_SOLICITATION => IGMP_MRD_SOLICITATION_LEN,
+        IGMP_TYPE_MULTICAST_ROUTER_TERMINATION => IGMP_MRD_TERMINATION_LEN,
+        _ => IGMP_FIXED_HEADER_LEN,
+    }
 }
 
 fn decode_v3_query(bytes: &[u8]) -> Result<(IgmpQuery, &[u8])> {
@@ -822,7 +841,10 @@ mod igmp_extension_decode {
 
         assert_eq!(decoded.len(), 3);
         assert!(report.extension_flag());
-        assert_eq!(extension.extension_type(), IgmpExtensionType::Unassigned(0x1234));
+        assert_eq!(
+            extension.extension_type(),
+            IgmpExtensionType::Unassigned(0x1234)
+        );
         assert_eq!(extension.extension_type_value(), 0x1234);
         assert_eq!(extension.extension_length_value(), 3);
         assert_eq!(extension.extension_length_state(), FieldState::User);
