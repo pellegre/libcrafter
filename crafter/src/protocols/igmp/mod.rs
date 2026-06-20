@@ -21,6 +21,7 @@ mod validation;
 pub use self::constants::*;
 pub(crate) use self::decode::append_igmp_packet;
 pub use self::message::Igmp;
+pub use self::query::IgmpQuery;
 pub use self::registry::{
     igmp_code_meta, igmp_code_name, igmp_code_status, igmp_type, igmp_type_meta, igmp_type_name,
     igmp_type_status, IgmpCodeMeta, IgmpType, IgmpTypeMeta, IgmpTypeStatus,

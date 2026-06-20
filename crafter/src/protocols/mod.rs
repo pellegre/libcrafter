@@ -221,7 +221,7 @@ pub mod exports {
     };
     pub use igmp::{
         igmp_code_meta, igmp_code_name, igmp_code_status, igmp_type, igmp_type_meta,
-        igmp_type_name, igmp_type_status, Igmp, IgmpCodeMeta, IgmpType, IgmpTypeMeta,
+        igmp_type_name, igmp_type_status, Igmp, IgmpCodeMeta, IgmpQuery, IgmpType, IgmpTypeMeta,
         IgmpTypeStatus, IGMP_DEFAULT_AUX_DATA_LEN, IGMP_DEFAULT_CHECKSUM, IGMP_DEFAULT_CODE,
         IGMP_DEFAULT_EXTENSION_LENGTH, IGMP_DEFAULT_GROUP_RECORD_COUNT, IGMP_DEFAULT_QUERY_FLAGS,
         IGMP_DEFAULT_REPORT_FLAGS, IGMP_DEFAULT_RESERVED_U16, IGMP_DEFAULT_RESERVED_U8,
