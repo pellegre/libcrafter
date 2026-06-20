@@ -92,6 +92,73 @@ fn igmp_extension_type_metadata_is_public_api() {
 }
 
 #[test]
+fn igmp_mrd_types_public_metadata_and_raw_roundtrip() -> crafter::Result<()> {
+    let cases = [
+        (
+            IGMP_TYPE_MULTICAST_ROUTER_ADVERTISEMENT,
+            IgmpType::MulticastRouterAdvertisement,
+            "Multicast Router Advertisement",
+        ),
+        (
+            IGMP_TYPE_MULTICAST_ROUTER_SOLICITATION,
+            IgmpType::MulticastRouterSolicitation,
+            "Multicast Router Solicitation",
+        ),
+        (
+            IGMP_TYPE_MULTICAST_ROUTER_TERMINATION,
+            IgmpType::MulticastRouterTermination,
+            "Multicast Router Termination",
+        ),
+    ];
+
+    for (wire_type, typed, name) in cases {
+        let meta: IgmpTypeMeta = igmp_type_meta(wire_type);
+        assert_eq!(igmp_type(wire_type), typed);
+        assert_eq!(meta.code, wire_type);
+        assert_eq!(meta.igmp_type, typed);
+        assert_eq!(meta.name, name);
+        assert_eq!(meta.status, IgmpTypeStatus::Assigned);
+        assert_eq!(igmp_type_status(wire_type), IgmpTypeStatus::Assigned);
+        assert_eq!(igmp_type_name(wire_type), Some(name));
+        assert_eq!(typed.code(), wire_type);
+        assert_eq!(typed.meta(), meta);
+
+        let body = [wire_type, 0xde, 0xad, 0xbe, 0xef];
+        let packet = Ipv4::new()
+            .src(DOC_SRC)
+            .dst(DOC_GROUP)
+            .ttl(1)
+            .ipv4_protocol(Ipv4Protocol::Igmp)
+            / Igmp::new()
+                .with_igmp_type(typed)
+                .with_code(0)
+                .with_group_address(DOC_GROUP)
+            / Raw::from_bytes(body);
+        let bytes = packet.compile()?;
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes())?;
+        let decoded_igmp = decoded.layer::<Igmp>().expect("decoded MRD IGMP header");
+        let raw = decoded.layer::<Raw>().expect("decoded MRD raw body");
+
+        assert_eq!(decoded_igmp.igmp_type(), typed);
+        assert_eq!(decoded_igmp.type_meta(), meta);
+        assert_eq!(raw.as_bytes(), body);
+        assert!(decoded.layer::<IgmpQuery>().is_none());
+        assert!(decoded.layer::<IgmpReport>().is_none());
+        assert_eq!(decoded.compile()?.as_bytes(), bytes.as_bytes());
+        assert!(
+            decoded
+                .summary()
+                .contains(&format!("type=0x{wire_type:02x} ({name})")),
+            "{}",
+            decoded.summary()
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
 fn igmp_unknown_records_decode_roundtrip_and_show_public_api() -> crafter::Result<()> {
     let record = IgmpGroupRecord::raw(0xc8, DOC_REPORT_GROUP)
         .with_source_addresses(vec![DOC_REPORT_SOURCE_A, DOC_REPORT_SOURCE_B])
