@@ -1,0 +1,4 @@
+# IPv4 wrapper declaring protocol IGMP with no IGMP payload bytes.
+# The IGMP decoder sees an empty fixed-header input and should return a
+# structured BufferTooShort error with context "igmp header".
+45 00 00 14 18 00 00 00 01 02 f5 e0 c0 00 02 0a e9 fc 00 01
