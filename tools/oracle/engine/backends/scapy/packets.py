@@ -27,6 +27,7 @@ _IP_PROTOCOLS: dict[str, int] = {
     "ah": 51,
     "esp": 50,
     "icmp": 1,
+    "igmp": 2,
     "tcp": 6,
     "unknown": 253,
     "udp": 17,
@@ -70,6 +71,13 @@ _SCAPY_LAYER_BY_LAYER: dict[str, str] = {
     "esp": "ESP",
     "ethernet": "Ether",
     "icmp": "ICMP",
+    # IGMP contrib classes are not exposed through scapy.all consistently
+    # across supported Scapy versions. The oracle materializer emits exact
+    # IGMP bytes through Raw while preserving IPv4 protocol number 2.
+    "igmp": "Raw",
+    "igmp_extension": "Raw",
+    "igmp_query": "Raw",
+    "igmp_report": "Raw",
     "ikev2": "ISAKMP",
     "icmpv6": "ICMPv6EchoRequest",
     "ipv6_destination_options": "IPv6ExtHdrDestOpt",
@@ -142,6 +150,11 @@ _SUPPORTED_FEATURES = {
     "icmpv4_errors",
     "icmpv4_live",
     "icmpv6_errors",
+    "igmp_extensions",
+    "igmp_header",
+    "igmp_mrd",
+    "igmp_v3_query",
+    "igmp_v3_report",
     "ikev2_header",
     "ikev2_payloads",
     "ip_fragment_transforms",
@@ -354,6 +367,65 @@ _SUPPORTED_FIELDS_BY_LAYER: dict[str, set[str]] = {
         "embedded_header",
     },
     "icmpv6": {"checksum", "cksum", "code", "id", "identifier", "seq", "sequence", "type"},
+    "igmp": {
+        "checksum",
+        "chksum",
+        "code",
+        "extensions",
+        "extension_tlvs",
+        "group",
+        "group_address",
+        "group_records",
+        "gaddr",
+        "max_response_code",
+        "max_response_time_tenths",
+        "mrd_advertisement_interval",
+        "mrd_query_interval",
+        "mrd_reserved",
+        "mrd_robustness_variable",
+        "number_of_group_records",
+        "number_of_records",
+        "number_of_sources",
+        "payload",
+        "qqic",
+        "query_flags",
+        "raw",
+        "raw_body",
+        "raw_flags_qrv",
+        "raw_tail",
+        "report_flags",
+        "reserved_flags",
+        "source_addresses",
+        "tail",
+        "type",
+        "type_code",
+        "v2_max_response_time_tenths",
+    },
+    "igmp_extension": {
+        "extension_length",
+        "extension_type",
+        "extension_value",
+        "length",
+        "type",
+        "value",
+        "value_hex",
+    },
+    "igmp_query": {
+        "flags_qrv",
+        "number_of_sources",
+        "qqic",
+        "query_flags",
+        "raw_flags_qrv",
+        "source_addresses",
+    },
+    "igmp_report": {
+        "group_records",
+        "number_of_group_records",
+        "number_of_records",
+        "records",
+        "report_flags",
+        "reserved_flags",
+    },
     "ipv4": {
         "dst",
         "ds_field",
@@ -684,6 +756,14 @@ def _build_layer(plan: PacketPlan, stack: list[str], index: int, scapy_all: Any)
         return _icmp(fields, scapy_all)
     if layer == "icmpv6":
         return _icmpv6(fields, stack, scapy_all)
+    if layer == "igmp":
+        return _igmp(fields, stack, index, scapy_all)
+    if layer == "igmp_query":
+        return scapy_all.Raw(load=_igmp_query_bytes(fields))
+    if layer == "igmp_report":
+        return scapy_all.Raw(load=_igmp_report_bytes(fields))
+    if layer == "igmp_extension":
+        return scapy_all.Raw(load=_igmp_extension_layer_bytes(_layer_fields_for_stack_index(fields, stack, index)))
     if layer == "udp":
         return _udp(fields, stack, scapy_all)
     if layer == "tcp":
@@ -1740,6 +1820,499 @@ def _icmpv6(fields: Mapping[str, JSONObject], stack: list[str], scapy_all: Any) 
     return layer_factory(**kwargs)
 
 
+_IGMP_TYPE_CODES: dict[str, int] = {
+    "reserved": 0x00,
+    "unassigned": 0x09,
+    "membership-query": 0x11,
+    "membership_query": 0x11,
+    "v1-membership-report": 0x12,
+    "v1_membership_report": 0x12,
+    "dvmrp": 0x13,
+    "dvmrp-unsupported-assigned": 0x13,
+    "dvmrp_unsupported_assigned": 0x13,
+    "pim-v1": 0x14,
+    "pim_v1": 0x14,
+    "pim-v1-unsupported-assigned": 0x14,
+    "pim_v1_unsupported_assigned": 0x14,
+    "cisco-trace-unsupported-assigned": 0x15,
+    "cisco_trace_unsupported_assigned": 0x15,
+    "v2-membership-report": 0x16,
+    "v2_membership_report": 0x16,
+    "v2-leave-group": 0x17,
+    "v2_leave_group": 0x17,
+    "multicast-traceroute-response-unsupported-assigned": 0x1E,
+    "multicast_traceroute_response_unsupported_assigned": 0x1E,
+    "multicast-traceroute-unsupported-assigned": 0x1F,
+    "multicast_traceroute_unsupported_assigned": 0x1F,
+    "v3-membership-report": 0x22,
+    "v3_membership_report": 0x22,
+    "multicast-router-advertisement": 0x30,
+    "multicast_router_advertisement": 0x30,
+    "multicast-router-solicitation": 0x31,
+    "multicast_router_solicitation": 0x31,
+    "multicast-router-termination": 0x32,
+    "multicast_router_termination": 0x32,
+    "experimental": 0xF0,
+}
+_IGMP_RECORD_TYPES: dict[str, int] = {
+    "reserved": 0,
+    "mode-is-include": 1,
+    "mode_is_include": 1,
+    "mode-is-exclude": 2,
+    "mode_is_exclude": 2,
+    "change-to-include-mode": 3,
+    "change_to_include_mode": 3,
+    "change-to-exclude-mode": 4,
+    "change_to_exclude_mode": 4,
+    "allow-new-sources": 5,
+    "allow_new_sources": 5,
+    "block-old-sources": 6,
+    "block_old_sources": 6,
+    "unknown": 0xC8,
+}
+_IGMP_QUERY_FLAG_BITS: dict[str, int] = {
+    "zero": 0,
+    "none": 0,
+    "extension": 0x80,
+    "unassigned": 0x70,
+    "suppress-router-side-processing": 0x08,
+    "suppress_router_side_processing": 0x08,
+    "qrv": 0x02,
+}
+_IGMP_REPORT_FLAG_BITS: dict[str, int] = {
+    "zero": 0,
+    "none": 0,
+    "extension": 0x8000,
+    "unassigned": 0x0001,
+}
+_IGMP_EXTENSION_TYPES: dict[str, int] = {
+    "noop": 0,
+    "no-op": 0,
+    "unassigned": 1,
+    "experimental": 0xFFFE,
+}
+_IGMP_MRD_SHORT_TYPES = frozenset({0x31, 0x32})
+_IGMP_BODY_STACK_LAYERS = frozenset(
+    {"igmp_query", "igmp_report", "igmp_extension", "payload"}
+)
+
+
+def _igmp(
+    fields: Mapping[str, JSONObject],
+    stack: list[str],
+    index: int,
+    scapy_all: Any,
+) -> Any:
+    igmp_fields = _layer_fields(fields, "igmp")
+    body_is_in_following_layers = any(
+        layer in _IGMP_BODY_STACK_LAYERS for layer in stack[index + 1 :]
+    )
+    body = (
+        _igmp_following_body_bytes(fields, stack, index)
+        if body_is_in_following_layers
+        else _igmp_inferred_body_bytes(fields)
+    )
+    header = _igmp_header_bytes(igmp_fields, body)
+    return scapy_all.Raw(load=header if body_is_in_following_layers else header + body)
+
+
+def _igmp_header_bytes(igmp_fields: Mapping[str, object], body: bytes) -> bytes:
+    type_code = _igmp_type(
+        _optional_field(igmp_fields, "type", "type_code"),
+        default=0x11,
+    )
+    code = _igmp_code(igmp_fields, type_code)
+    header = bytearray([type_code & 0xFF, code & 0xFF, 0, 0])
+    if _igmp_base_header_len(igmp_fields, type_code) == 8:
+        header.extend(_igmp_group_address_bytes(igmp_fields, type_code))
+
+    checksum = _igmp_checksum(igmp_fields)
+    if checksum is None:
+        checksum = _internet_checksum(bytes(header) + body)
+    header[2:4] = (checksum & 0xFFFF).to_bytes(2, "big")
+    return bytes(header)
+
+
+def _igmp_base_header_len(igmp_fields: Mapping[str, object], type_code: int) -> int:
+    if type_code not in _IGMP_MRD_SHORT_TYPES:
+        return 8
+    if any(name in igmp_fields for name in ("group_address", "group", "gaddr")):
+        return 8
+    if any(name in igmp_fields for name in ("mrd_query_interval", "mrd_robustness_variable")):
+        return 8
+    return 4
+
+
+def _igmp_inferred_body_bytes(fields: Mapping[str, JSONObject]) -> bytes:
+    igmp_fields = _layer_fields(fields, "igmp")
+    type_code = _igmp_type(_optional_field(igmp_fields, "type", "type_code"), default=0x11)
+
+    raw_body = _optional_field(igmp_fields, "raw_body", "raw")
+    if raw_body is not None:
+        return _bytes_field(raw_body)
+
+    body = b""
+    if _igmp_has_query_body(fields, igmp_fields, type_code):
+        body += _igmp_query_bytes(fields)
+    elif _igmp_has_report_body(fields, igmp_fields, type_code):
+        body += _igmp_report_bytes(fields)
+
+    body += _igmp_extensions_bytes(fields)
+    body += _igmp_raw_tail_bytes(igmp_fields)
+    return body
+
+
+def _igmp_following_body_bytes(
+    fields: Mapping[str, JSONObject],
+    stack: Sequence[str],
+    index: int,
+) -> bytes:
+    body = b""
+    for child_index in range(index + 1, len(stack)):
+        layer = stack[child_index]
+        if layer == "igmp_query":
+            body += _igmp_query_bytes(fields)
+        elif layer == "igmp_report":
+            body += _igmp_report_bytes(fields)
+        elif layer == "igmp_extension":
+            body += _igmp_extension_layer_bytes(
+                _layer_fields_for_stack_index(fields, stack, child_index)
+            )
+        elif layer == "payload":
+            body += _payload_bytes(fields)
+    return body
+
+
+def _igmp_has_query_body(
+    fields: Mapping[str, JSONObject],
+    igmp_fields: Mapping[str, object],
+    type_code: int,
+) -> bool:
+    if type_code != 0x11:
+        return False
+    if _layer_fields(fields, "igmp_query"):
+        return True
+    return any(
+        name in igmp_fields
+        for name in (
+            "flags_qrv",
+            "number_of_sources",
+            "qqic",
+            "query_flags",
+            "raw_flags_qrv",
+            "source_addresses",
+        )
+    )
+
+
+def _igmp_has_report_body(
+    fields: Mapping[str, JSONObject],
+    igmp_fields: Mapping[str, object],
+    type_code: int,
+) -> bool:
+    if type_code == 0x22:
+        return True
+    if _layer_fields(fields, "igmp_report"):
+        return True
+    return any(
+        name in igmp_fields
+        for name in (
+            "group_records",
+            "number_of_group_records",
+            "number_of_records",
+            "report_flags",
+            "reserved_flags",
+        )
+    )
+
+
+def _igmp_query_bytes(fields: Mapping[str, JSONObject]) -> bytes:
+    igmp_fields = _layer_fields(fields, "igmp")
+    query_fields = {**igmp_fields, **_layer_fields(fields, "igmp_query")}
+    sources = _igmp_ipv4_list(_optional_field(query_fields, "source_addresses"))
+    count = _int(
+        _optional_field(query_fields, "number_of_sources"),
+        len(sources),
+    )
+    return (
+        bytes(
+            [
+                _igmp_query_flags(query_fields) & 0xFF,
+                _int(_optional_field(query_fields, "qqic"), 0) & 0xFF,
+            ]
+        )
+        + (count & 0xFFFF).to_bytes(2, "big")
+        + b"".join(_ipv4_address_bytes(source) for source in sources)
+    )
+
+
+def _igmp_report_bytes(fields: Mapping[str, JSONObject]) -> bytes:
+    igmp_fields = _layer_fields(fields, "igmp")
+    report_fields = {**igmp_fields, **_layer_fields(fields, "igmp_report")}
+    records = _igmp_group_records(report_fields)
+    count = _int(
+        _optional_field(report_fields, "number_of_group_records", "number_of_records"),
+        len(records),
+    )
+    body = bytearray()
+    body.extend((_igmp_report_flags(report_fields) & 0xFFFF).to_bytes(2, "big"))
+    body.extend((count & 0xFFFF).to_bytes(2, "big"))
+    for record in records:
+        body.extend(_igmp_group_record_bytes(record))
+    return bytes(body)
+
+
+def _igmp_group_records(report_fields: Mapping[str, object]) -> list[Mapping[str, object]]:
+    value = _optional_field(report_fields, "group_records", "records")
+    if value is None:
+        return []
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+        raise ValueError("IGMP group_records materialization requires a record list")
+    records: list[Mapping[str, object]] = []
+    for record in value:
+        if not isinstance(record, Mapping):
+            raise ValueError(f"IGMP group record must be an object, got {record!r}")
+        records.append(record)
+    return records
+
+
+def _igmp_group_record_bytes(record: Mapping[str, object]) -> bytes:
+    sources = _igmp_ipv4_list(
+        _optional_field(record, "source_addresses", "record_source_addresses")
+    )
+    auxiliary = _igmp_bytes_value(_optional_field(record, "auxiliary_data"))
+    aux_len = _int(
+        _optional_field(record, "auxiliary_data_len", "aux_data_len"),
+        (len(auxiliary) + 3) // 4,
+    )
+    wire_aux_len = aux_len * 4
+    if wire_aux_len > len(auxiliary) and _optional_field(record, "auxiliary_data_len", "aux_data_len") is not None:
+        raise ValueError(
+            "IGMP group record auxiliary_data_len exceeds supplied auxiliary_data bytes"
+        )
+    auxiliary = (auxiliary + b"\x00" * wire_aux_len)[:wire_aux_len]
+    count = _int(
+        _optional_field(record, "number_of_sources", "record_number_of_sources"),
+        len(sources),
+    )
+    raw = bytearray(
+        [
+            _igmp_record_type(_optional_field(record, "record_type", "type")) & 0xFF,
+            aux_len & 0xFF,
+        ]
+    )
+    raw.extend((count & 0xFFFF).to_bytes(2, "big"))
+    raw.extend(
+        _ipv4_address_bytes(
+            _optional_field(record, "multicast_address", "group_address", "group"),
+            "0.0.0.0",
+        )
+    )
+    for source in sources:
+        raw.extend(_ipv4_address_bytes(source))
+    raw.extend(auxiliary)
+    return bytes(raw)
+
+
+def _igmp_extensions_bytes(fields: Mapping[str, JSONObject]) -> bytes:
+    igmp_fields = _layer_fields(fields, "igmp")
+    value = _optional_field(igmp_fields, "extension_tlvs", "extensions")
+    if value is not None:
+        if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+            raise ValueError("IGMP extension_tlvs materialization requires a TLV list")
+        raw = b""
+        for item in value:
+            if not isinstance(item, Mapping):
+                raise ValueError(f"IGMP extension TLV must be an object, got {item!r}")
+            raw += _igmp_extension_layer_bytes(item)
+        return raw
+
+    extension_fields = _layer_fields(fields, "igmp_extension")
+    if extension_fields:
+        return _igmp_extension_layer_bytes(extension_fields)
+    return b""
+
+
+def _igmp_extension_layer_bytes(fields: Mapping[str, object]) -> bytes:
+    value = _igmp_bytes_value(_optional_field(fields, "extension_value", "value", "value_hex"))
+    length = _int(_optional_field(fields, "extension_length", "length"), len(value))
+    if length > len(value):
+        raise ValueError("IGMP extension_length exceeds supplied extension_value bytes")
+    return (
+        (_igmp_extension_type(_optional_field(fields, "extension_type", "type")) & 0xFFFF).to_bytes(2, "big")
+        + (length & 0xFFFF).to_bytes(2, "big")
+        + value[:length]
+    )
+
+
+def _igmp_group_address_bytes(igmp_fields: Mapping[str, object], type_code: int) -> bytes:
+    group_address = _optional_field(igmp_fields, "group_address", "group", "gaddr")
+    if group_address is not None:
+        return _ipv4_address_bytes(group_address, "0.0.0.0")
+    if type_code == 0x30:
+        query_interval = _int(_optional_field(igmp_fields, "mrd_query_interval"), 0)
+        robustness = _int(_optional_field(igmp_fields, "mrd_robustness_variable"), 0)
+        return (query_interval & 0xFFFF).to_bytes(2, "big") + (
+            robustness & 0xFFFF
+        ).to_bytes(2, "big")
+    return b"\x00\x00\x00\x00"
+
+
+def _igmp_code(igmp_fields: Mapping[str, object], type_code: int) -> int:
+    value = _optional_field(
+        igmp_fields,
+        "code",
+        "max_response_code",
+        "max_response_time_tenths",
+        "v2_max_response_time_tenths",
+        "mrd_advertisement_interval",
+        "mrd_reserved",
+    )
+    if value is None:
+        return 0
+    if isinstance(value, str):
+        normalized = value.lower().replace(" ", "_").replace("-", "_")
+        mapping = {
+            "v1_query_zero": 0,
+            "zero": 0,
+            "reserved_zero": 0,
+            "mrd_reserved": 0,
+            "v2_max_response_time": 100,
+            "v3_max_response_code": 100,
+            "mrd_advertisement_interval": 20,
+        }
+        if normalized in mapping:
+            return mapping[normalized]
+        return int(normalized, 0)
+    return _int(value, 0)
+
+
+def _igmp_checksum(igmp_fields: Mapping[str, object]) -> int | None:
+    value = _optional_field(igmp_fields, "checksum", "chksum")
+    if value is None:
+        return None
+    if isinstance(value, str):
+        normalized = value.lower().replace("-", "_")
+        if normalized in {"derived", "auto"}:
+            return None
+        if normalized in {"explicit", "explicit_invalid"}:
+            return 0x1234
+        if normalized == "boundary":
+            return 0xFFFF
+        return int(normalized, 0)
+    return _int(value, 0)
+
+
+def _igmp_type(value: object, *, default: int = 0x11) -> int:
+    if value is None:
+        return default
+    if isinstance(value, str):
+        normalized = value.lower().replace(" ", "-")
+        if normalized in _IGMP_TYPE_CODES:
+            return _IGMP_TYPE_CODES[normalized]
+        normalized = normalized.replace("-", "_")
+        if normalized in _IGMP_TYPE_CODES:
+            return _IGMP_TYPE_CODES[normalized]
+        return int(normalized, 0)
+    return _int(value, default)
+
+
+def _igmp_record_type(value: object) -> int:
+    if value is None:
+        return 1
+    if isinstance(value, str):
+        normalized = value.lower().replace(" ", "-")
+        if normalized in _IGMP_RECORD_TYPES:
+            return _IGMP_RECORD_TYPES[normalized]
+        normalized = normalized.replace("-", "_")
+        if normalized in _IGMP_RECORD_TYPES:
+            return _IGMP_RECORD_TYPES[normalized]
+        return int(normalized, 0)
+    return _int(value, 1)
+
+
+def _igmp_extension_type(value: object) -> int:
+    if value is None:
+        return 0
+    if isinstance(value, str):
+        normalized = value.lower().replace(" ", "-")
+        if normalized in _IGMP_EXTENSION_TYPES:
+            return _IGMP_EXTENSION_TYPES[normalized]
+        normalized = normalized.replace("-", "_")
+        if normalized in _IGMP_EXTENSION_TYPES:
+            return _IGMP_EXTENSION_TYPES[normalized]
+        return int(normalized, 0)
+    return _int(value, 0)
+
+
+def _igmp_query_flags(fields: Mapping[str, object]) -> int:
+    raw = _optional_field(fields, "raw_flags_qrv", "flags_qrv")
+    if raw is not None:
+        return _int(raw, 0)
+    flags = _igmp_flags_value(_optional_field(fields, "query_flags"), _IGMP_QUERY_FLAG_BITS)
+    suppress = _optional_field(fields, "suppress_router_side_processing", "s")
+    if suppress is not None:
+        if _bool_int(suppress, 0):
+            flags |= 0x08
+        else:
+            flags &= ~0x08
+    qrv = _optional_field(fields, "qrv", "querier_robustness_variable")
+    if qrv is not None:
+        flags = (flags & ~0x07) | (_int(qrv, 0) & 0x07)
+    return flags
+
+
+def _igmp_report_flags(fields: Mapping[str, object]) -> int:
+    raw = _optional_field(fields, "reserved_flags")
+    if raw is not None:
+        return _int(raw, 0)
+    return _igmp_flags_value(_optional_field(fields, "report_flags"), _IGMP_REPORT_FLAG_BITS)
+
+
+def _igmp_flags_value(value: object, mapping: Mapping[str, int]) -> int:
+    if value is None:
+        return 0
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    items = value if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)) else [value]
+    flags = 0
+    for item in items:
+        if isinstance(item, int) and not isinstance(item, bool):
+            flags |= item
+            continue
+        if isinstance(item, str):
+            normalized = item.lower().replace(" ", "_").replace("-", "_")
+            flags |= mapping.get(normalized, int(normalized, 0) if normalized.startswith("0") else 0)
+    return flags
+
+
+def _igmp_ipv4_list(value: object) -> list[object]:
+    if value is None:
+        return []
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+        raise ValueError("IGMP IPv4 address list requires a list")
+    addresses: list[object] = []
+    for item in value:
+        if isinstance(item, Mapping):
+            addresses.append(_optional_field(item, "address", "ip", "value"))
+        else:
+            addresses.append(item)
+    return addresses
+
+
+def _igmp_raw_tail_bytes(igmp_fields: Mapping[str, object]) -> bytes:
+    value = _optional_field(igmp_fields, "raw_tail", "tail", "payload")
+    if value is None:
+        return b""
+    return _igmp_bytes_value(value)
+
+
+def _igmp_bytes_value(value: object) -> bytes:
+    if value is None:
+        return b""
+    return _bytes_field(value)
+
+
 def _udp(fields: Mapping[str, JSONObject], stack: list[str], scapy_all: Any) -> Any:
     udp_fields = _layer_fields(fields, "udp")
     kwargs: dict[str, Any] = {
@@ -2523,6 +3096,13 @@ def _validate_plan_contract(plan: PacketPlan, stack: list[str], root: str) -> No
                 f"unsupported Scapy feature materialization: {feature!r}; "
                 f"supported features: {', '.join(sorted(_SUPPORTED_FEATURES))}"
             )
+
+    if "igmp" in stack and (
+        plan.case.startswith("malformed-igmp-") or plan.metadata.get("malformed") is True
+    ):
+        raise ValueError(
+            "IGMP structured-error cases are not materialized by the Scapy strict-byte path"
+        )
 
     for index, layer in enumerate(stack):
         if layer not in _SCAPY_MATERIALIZED_LAYERS:
