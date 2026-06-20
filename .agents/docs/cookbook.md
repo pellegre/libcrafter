@@ -62,6 +62,115 @@ read identification, reserved/DF/MF flags, `fragment_offset`, and
 `fragment_info()`, but `crafter` does not split payloads into fragments,
 reassemble fragments, or model fragment caches, overlap handling, or timers.
 
+## Build IGMP
+
+IGMP is an IPv4 packet layer. Generated tools should build it as `Ipv4 / Igmp`
+through `crafter::prelude::*`, set the enclosing IPv4 protocol explicitly to
+`Ipv4Protocol::Igmp`, and keep the first path offline or dry-run. The IGMP layer
+owns the IGMP Type, Code/Max Response Code, checksum, group address, v3 query
+body, v3 report records, generic extensions, and MRD packet bytes; it does not
+own the enclosing IPv4 TTL, destination address, or Router Alert option.
+
+Use documentation IPv4 sources and RFC 5771 documentation multicast group
+addresses such as `233.252.0.0/24` in generated defaults. Add
+`Ipv4Option::router_alert(0)` only when the packet shape needs Router Alert,
+and make that choice visible in the IPv4 layer instead of hiding it in an IGMP
+helper.
+
+```rust
+use crafter::prelude::*;
+use std::net::Ipv4Addr;
+
+fn main() -> crafter::Result<()> {
+    let group = Ipv4Addr::new(233, 252, 0, 42);
+    let query_body = IgmpQuery::group_and_source_specific(vec![
+        Ipv4Addr::new(192, 0, 2, 50),
+        Ipv4Addr::new(192, 0, 2, 51),
+    ])
+    .with_suppress_router_side_processing(true)
+    .with_querier_robustness_variable(2)
+    .with_querier_query_interval_seconds(125);
+
+    let ipv4 = Ipv4::new()
+        .src(Ipv4Addr::new(192, 0, 2, 10))
+        .dst(group)
+        .ttl(1)
+        .ipv4_protocol(Ipv4Protocol::Igmp)
+        .ipv4_option(Ipv4Option::router_alert(0))?;
+
+    let packet = ipv4 / Igmp::v3_membership_query(100, group, query_body);
+    let bytes = packet.compile()?;
+
+    println!("{}", packet.summary());
+    println!("{}", bytes.hexdump());
+    Ok(())
+}
+```
+
+For reports, compose the common IGMP report header and typed report body as
+separate layers. Let counts and checksums auto-fill unless the tool is
+deliberately emitting malformed bytes:
+
+```rust
+use crafter::prelude::*;
+use std::net::Ipv4Addr;
+
+let group = Ipv4Addr::new(233, 252, 0, 60);
+let report = Igmp::v3_membership_report()
+    / IgmpReport::from_group_records(vec![
+        IgmpGroupRecord::mode_is_include(group)
+            .with_source_address(Ipv4Addr::new(192, 0, 2, 60)),
+    ]);
+```
+
+Decode IGMP from the normal IPv4 entrypoints and expose packet state directly to
+the caller. Unknown valid IGMP payloads remain inspectable as `Raw`; malformed
+headers, source lists, records, auxiliary data, extension blocks, and IPv4
+wrappers surface as structured `CrafterError` values.
+
+```rust
+use crafter::prelude::*;
+
+let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes())?;
+if let Some(igmp) = decoded.layer::<Igmp>() {
+    println!("type={:?} checksum={:?}", igmp.igmp_type(), igmp.checksum_status());
+    println!("group_class={}", igmp_group_address_class_name(igmp.group_address_value()));
+}
+if let Some(query) = decoded.layer::<IgmpQuery>() {
+    println!("sources={}", query.source_addresses().len());
+}
+if decoded.layer::<Raw>().is_some() {
+    println!("raw_tail=true");
+}
+```
+
+Dry-run send planning is the generated-tool default. Use a documentation
+interface name, inspect the compiled bytes and derived filter, and do not send
+IGMP from the developer host:
+
+```rust
+use crafter::prelude::*;
+
+let plan = packet.send_dry_run(SendOptions::new().iface("dry-run0").network_layer())?;
+println!("target={:?}", plan.target());
+println!("filter={}", reply_filter(&packet).unwrap_or_default());
+println!("{}", plan.compiled_packet().hexdump());
+```
+
+Keep IGMP validation offline until the IGMP oracle/probe profiles are present in
+the repo, then start with deterministic offline, pcap, and local dry-run modes:
+
+```sh
+tools/oracle/run offline --profile igmp-smoke --seed 1 --count 20 --out target/oracle/igmp-agent-offline
+tools/oracle/run pcap --profile igmp-smoke --seed 1 --count 20 --out target/oracle/igmp-agent-pcap
+tools/probe/run --provider local-dry-run --dry-run --profile igmp-smoke --seed 1
+```
+
+Live IGMP belongs behind provider-backed lab, oracle, or probe runners with
+explicit confirmation, capability checks, artifact collection under `target/`,
+and teardown. Do not generate a multicast router, snooper, proxy, scanner, or
+state machine inside the crate or a default tool path.
+
 ## Build IPv6 Base And Extension Packets
 
 For general IPv6 packets, start with `Ipv6`, compose extension headers as normal
