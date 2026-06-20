@@ -123,16 +123,19 @@ fn igmp_mrd_types_public_metadata_and_raw_roundtrip() -> crafter::Result<()> {
         assert_eq!(typed.code(), wire_type);
         assert_eq!(typed.meta(), meta);
 
+        let igmp = match typed {
+            IgmpType::MulticastRouterAdvertisement => Igmp::mrd_advertisement(0, 0, 0),
+            IgmpType::MulticastRouterSolicitation => Igmp::mrd_solicitation(),
+            IgmpType::MulticastRouterTermination => Igmp::mrd_termination(),
+            _ => unreachable!("MRD test cases only include MRD types"),
+        };
         let body = [wire_type, 0xde, 0xad, 0xbe, 0xef];
         let packet = Ipv4::new()
             .src(DOC_SRC)
             .dst(DOC_GROUP)
             .ttl(1)
             .ipv4_protocol(Ipv4Protocol::Igmp)
-            / Igmp::new()
-                .with_igmp_type(typed)
-                .with_code(0)
-                .with_group_address(DOC_GROUP)
+            / igmp
             / Raw::from_bytes(body);
         let bytes = packet.compile()?;
 

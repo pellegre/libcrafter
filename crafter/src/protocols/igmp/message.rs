@@ -17,7 +17,9 @@ use crate::packet::{IntoPacket, Layer, LayerContext, Packet};
 
 use super::constants::{
     igmp_v3_timer_code_from_units_floor, igmp_v3_timer_code_units, IGMP_DEFAULT_CHECKSUM,
-    IGMP_DEFAULT_CODE, IGMP_FIXED_HEADER_LEN, IGMP_TYPE_MEMBERSHIP_QUERY,
+    IGMP_DEFAULT_CODE, IGMP_FIXED_HEADER_LEN, IGMP_MRD_ADVERTISEMENT_LEN,
+    IGMP_MRD_DEFAULT_RESERVED, IGMP_MRD_SOLICITATION_LEN, IGMP_MRD_TERMINATION_LEN,
+    IGMP_TYPE_MEMBERSHIP_QUERY,
 };
 use super::registry::{
     igmp_code_meta, igmp_type, igmp_type_meta, IgmpCodeMeta, IgmpType, IgmpTypeMeta,
@@ -117,6 +119,46 @@ impl Igmp {
             .with_group_address(Ipv4Addr::UNSPECIFIED)
     }
 
+    /// Build an RFC 4286 Multicast Router Advertisement.
+    ///
+    /// The common IGMP octets are interpreted as Type, Advertisement Interval,
+    /// Checksum, Query Interval, and Robustness Variable. The IPv4 TTL,
+    /// Router Alert option, and All-Snoopers destination remain explicit IPv4
+    /// composition choices for callers.
+    pub fn mrd_advertisement(
+        advertisement_interval: u8,
+        query_interval: u16,
+        robustness_variable: u16,
+    ) -> Self {
+        Self::new()
+            .with_igmp_type(IgmpType::MulticastRouterAdvertisement)
+            .with_mrd_advertisement_interval(advertisement_interval)
+            .with_mrd_query_interval(query_interval)
+            .with_mrd_robustness_variable(robustness_variable)
+    }
+
+    /// Build an RFC 4286 Multicast Router Solicitation.
+    ///
+    /// Solicitation has only Type, Reserved, and Checksum fields. Extra bytes
+    /// can still be attached as a following [`Raw`](crate::packet::Raw) layer;
+    /// the IGMP checksum covers those bytes and decode preserves them as raw.
+    pub fn mrd_solicitation() -> Self {
+        Self::new()
+            .with_igmp_type(IgmpType::MulticastRouterSolicitation)
+            .with_mrd_reserved(IGMP_MRD_DEFAULT_RESERVED)
+    }
+
+    /// Build an RFC 4286 Multicast Router Termination.
+    ///
+    /// Termination has only Type, Reserved, and Checksum fields. Extra bytes
+    /// can still be attached as a following [`Raw`](crate::packet::Raw) layer;
+    /// the IGMP checksum covers those bytes and decode preserves them as raw.
+    pub fn mrd_termination() -> Self {
+        Self::new()
+            .with_igmp_type(IgmpType::MulticastRouterTermination)
+            .with_mrd_reserved(IGMP_MRD_DEFAULT_RESERVED)
+    }
+
     /// Set the IGMP Type from source-backed registry metadata.
     pub fn with_igmp_type(mut self, igmp_type: IgmpType) -> Self {
         self.igmp_type.set_user(igmp_type.code());
@@ -138,6 +180,22 @@ impl Igmp {
     pub fn with_code(mut self, code: u8) -> Self {
         self.code.set_user(code);
         self
+    }
+
+    /// Set the RFC 4286 MRD Advertisement Interval field in seconds.
+    ///
+    /// This is the same wire octet as the raw IGMP Code field.
+    pub fn with_mrd_advertisement_interval(self, advertisement_interval: u8) -> Self {
+        self.with_code(advertisement_interval)
+    }
+
+    /// Set the RFC 4286 MRD Reserved field.
+    ///
+    /// This is the same wire octet as the raw IGMP Code field for
+    /// Solicitation and Termination messages, so nonzero malformed values
+    /// remain representable.
+    pub fn with_mrd_reserved(self, reserved: u8) -> Self {
+        self.with_code(reserved)
     }
 
     /// Set the Membership Query Max Response Code byte.
@@ -190,6 +248,22 @@ impl Igmp {
         self
     }
 
+    /// Set the RFC 4286 MRD Query Interval field in seconds.
+    pub fn with_mrd_query_interval(mut self, query_interval: u16) -> Self {
+        let robustness_variable = self.mrd_robustness_variable_value();
+        self.group_address
+            .set_user(mrd_advertisement_body(query_interval, robustness_variable));
+        self
+    }
+
+    /// Set the RFC 4286 MRD Robustness Variable field.
+    pub fn with_mrd_robustness_variable(mut self, robustness_variable: u16) -> Self {
+        let query_interval = self.mrd_query_interval_value();
+        self.group_address
+            .set_user(mrd_advertisement_body(query_interval, robustness_variable));
+        self
+    }
+
     /// Raw IGMP Type value.
     pub fn igmp_type_value(&self) -> u8 {
         value_or_copy(&self.igmp_type, IGMP_TYPE_MEMBERSHIP_QUERY)
@@ -222,6 +296,16 @@ impl Igmp {
     /// max-response timing semantics. For other Types this accessor still
     /// returns the raw byte so explicit overrides remain inspectable.
     pub fn max_response_code_value(&self) -> u8 {
+        self.code_value()
+    }
+
+    /// RFC 4286 MRD Advertisement Interval field in seconds.
+    pub fn mrd_advertisement_interval_value(&self) -> u8 {
+        self.code_value()
+    }
+
+    /// RFC 4286 MRD Reserved field for Solicitation and Termination messages.
+    pub fn mrd_reserved_value(&self) -> u8 {
         self.code_value()
     }
 
@@ -275,6 +359,18 @@ impl Igmp {
     /// Raw Group Address field value.
     pub fn group_address_value(&self) -> Ipv4Addr {
         value_or_copy(&self.group_address, Ipv4Addr::UNSPECIFIED)
+    }
+
+    /// RFC 4286 MRD Query Interval field in seconds.
+    pub fn mrd_query_interval_value(&self) -> u16 {
+        let octets = self.group_address_value().octets();
+        u16::from_be_bytes([octets[0], octets[1]])
+    }
+
+    /// RFC 4286 MRD Robustness Variable field.
+    pub fn mrd_robustness_variable_value(&self) -> u16 {
+        let octets = self.group_address_value().octets();
+        u16::from_be_bytes([octets[2], octets[3]])
     }
 
     /// Diagnostic classification for the Group Address field.
@@ -357,52 +453,99 @@ impl Layer for Igmp {
     }
 
     fn summary(&self) -> String {
-        format!(
-            "Igmp(version={}, type={}, code={}, group={} ({}), checksum={}, checksum_status={})",
-            self.version_summary(),
-            igmp_type_summary(self.type_meta()),
-            igmp_code_summary(self.code_meta()),
-            self.group_address_value(),
-            self.group_address_class_name(),
-            self.checksum_summary(),
-            self.checksum_status.label()
-        )
+        let type_summary = igmp_type_summary(self.type_meta());
+        match self.igmp_type() {
+            IgmpType::MulticastRouterAdvertisement => format!(
+                "Igmp(version=MRD, type={type_summary}, advertisement_interval={}s, query_interval={}s, robustness_variable={}, checksum={}, checksum_status={})",
+                self.mrd_advertisement_interval_value(),
+                self.mrd_query_interval_value(),
+                self.mrd_robustness_variable_value(),
+                self.checksum_summary(),
+                self.checksum_status.label()
+            ),
+            IgmpType::MulticastRouterSolicitation | IgmpType::MulticastRouterTermination => {
+                format!(
+                    "Igmp(version=MRD, type={type_summary}, reserved=0x{:02x}, checksum={}, checksum_status={})",
+                    self.mrd_reserved_value(),
+                    self.checksum_summary(),
+                    self.checksum_status.label()
+                )
+            }
+            _ => format!(
+                "Igmp(version={}, type={type_summary}, code={}, group={} ({}), checksum={}, checksum_status={})",
+                self.version_summary(),
+                igmp_code_summary(self.code_meta()),
+                self.group_address_value(),
+                self.group_address_class_name(),
+                self.checksum_summary(),
+                self.checksum_status.label()
+            ),
+        }
     }
 
     fn inspection_fields(&self) -> Vec<(&'static str, String)> {
-        vec![
+        let mut fields = vec![
             ("version", self.version_summary().to_string()),
             ("type", igmp_type_summary(self.type_meta())),
-            ("code", igmp_code_summary(self.code_meta())),
+        ];
+
+        match self.igmp_type() {
+            IgmpType::MulticastRouterAdvertisement => {
+                fields.push((
+                    "advertisement_interval",
+                    format!("{}s", self.mrd_advertisement_interval_value()),
+                ));
+                fields.push((
+                    "query_interval",
+                    format!("{}s", self.mrd_query_interval_value()),
+                ));
+                fields.push((
+                    "robustness_variable",
+                    self.mrd_robustness_variable_value().to_string(),
+                ));
+            }
+            IgmpType::MulticastRouterSolicitation | IgmpType::MulticastRouterTermination => {
+                fields.push(("reserved", format!("0x{:02x}", self.mrd_reserved_value())));
+            }
+            _ => {
+                fields.push(("code", igmp_code_summary(self.code_meta())));
+                fields.push((
+                    "group_address",
+                    format!(
+                        "{} ({})",
+                        self.group_address_value(),
+                        self.group_address_class_name()
+                    ),
+                ));
+            }
+        }
+
+        fields.extend([
             ("checksum", self.checksum_summary()),
             ("checksum_status", self.checksum_status.label().to_string()),
-            (
-                "group_address",
-                format!(
-                    "{} ({})",
-                    self.group_address_value(),
-                    self.group_address_class_name()
-                ),
-            ),
-            ("length", IGMP_FIXED_HEADER_LEN.to_string()),
-        ]
+            ("length", self.base_header_len().to_string()),
+        ]);
+        fields
     }
 
     fn encoded_len(&self) -> usize {
-        IGMP_FIXED_HEADER_LEN
+        self.base_header_len()
     }
 
     fn encoded_len_with_context(&self, ctx: &LayerContext<'_>) -> usize {
-        IGMP_FIXED_HEADER_LEN + ctx.packet().encoded_len_after(ctx.index())
+        self.base_header_len() + ctx.packet().encoded_len_after(ctx.index())
     }
 
     fn compile(&self, ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
         let start = out.len();
-        out.reserve(IGMP_FIXED_HEADER_LEN);
+        let base_header_len = self.base_header_len();
+        out.reserve(base_header_len);
         out.push(self.igmp_type_value());
         out.push(self.code_value());
         out.extend_from_slice(&IGMP_DEFAULT_CHECKSUM.to_be_bytes());
-        out.extend_from_slice(&self.group_address_value().octets());
+        if base_header_len > IGMP_MRD_SOLICITATION_LEN {
+            out.extend_from_slice(&self.group_address_value().octets());
+        }
 
         if let Err(err) = ctx.packet().compile_layers_after_into(ctx.index(), out) {
             out.truncate(start);
@@ -462,7 +605,23 @@ impl Igmp {
             IgmpType::V1MembershipReport => "IGMPv1",
             IgmpType::V2MembershipReport | IgmpType::V2LeaveGroup => "IGMPv2",
             IgmpType::V3MembershipReport => "IGMPv3",
+            IgmpType::MulticastRouterAdvertisement
+            | IgmpType::MulticastRouterSolicitation
+            | IgmpType::MulticastRouterTermination => "MRD",
             _ => "unknown",
+        }
+    }
+
+    fn base_header_len(&self) -> usize {
+        match self.igmp_type() {
+            IgmpType::MulticastRouterSolicitation => {
+                mrd_short_message_len(self.group_address.state(), IGMP_MRD_SOLICITATION_LEN)
+            }
+            IgmpType::MulticastRouterTermination => {
+                mrd_short_message_len(self.group_address.state(), IGMP_MRD_TERMINATION_LEN)
+            }
+            IgmpType::MulticastRouterAdvertisement => IGMP_MRD_ADVERTISEMENT_LEN,
+            _ => IGMP_FIXED_HEADER_LEN,
         }
     }
 
@@ -471,6 +630,20 @@ impl Igmp {
             .map(|value| format!("0x{value:04x}"))
             .unwrap_or_else(|| "auto".to_string())
     }
+}
+
+fn mrd_short_message_len(group_address_state: FieldState, default_len: usize) -> usize {
+    if group_address_state == FieldState::User {
+        IGMP_FIXED_HEADER_LEN
+    } else {
+        default_len
+    }
+}
+
+fn mrd_advertisement_body(query_interval: u16, robustness_variable: u16) -> Ipv4Addr {
+    let query = query_interval.to_be_bytes();
+    let robustness = robustness_variable.to_be_bytes();
+    Ipv4Addr::new(query[0], query[1], robustness[0], robustness[1])
 }
 
 fn igmp_type_summary(meta: IgmpTypeMeta) -> String {
@@ -1156,6 +1329,177 @@ mod igmp_v2_leave_group {
             &[IGMP_TYPE_V2_LEAVE_GROUP, 0xaa, 0x12, 0x34, 233, 252, 0, 17]
         );
         assert!(!verify_internet_checksum(&bytes));
+    }
+}
+
+#[cfg(test)]
+mod igmp_mrd_builders {
+    use super::*;
+    use crate::checksum::verify_internet_checksum;
+    use crate::field::FieldState;
+    use crate::packet::{Packet, Raw};
+    use crate::protocols::igmp::constants::{
+        IGMP_MRD_ADVERTISEMENT_LEN, IGMP_MRD_DEFAULT_RESERVED, IGMP_MRD_SOLICITATION_LEN,
+        IGMP_MRD_TERMINATION_LEN, IGMP_TYPE_MULTICAST_ROUTER_ADVERTISEMENT,
+        IGMP_TYPE_MULTICAST_ROUTER_SOLICITATION, IGMP_TYPE_MULTICAST_ROUTER_TERMINATION,
+    };
+    use crate::protocols::igmp::decode::{append_igmp_packet, decode};
+    use crate::protocols::igmp::registry::IgmpTypeStatus;
+
+    fn compile_layer(igmp: Igmp) -> crate::Result<Vec<u8>> {
+        Ok(Packet::from_layer(igmp).compile()?.as_bytes().to_vec())
+    }
+
+    #[test]
+    fn igmp_mrd_builders_advertisement_compiles_and_decodes() -> crate::Result<()> {
+        let igmp = Igmp::mrd_advertisement(20, 125, 2);
+
+        assert_eq!(igmp.igmp_type(), IgmpType::MulticastRouterAdvertisement);
+        assert_eq!(
+            igmp.igmp_type_value(),
+            IGMP_TYPE_MULTICAST_ROUTER_ADVERTISEMENT
+        );
+        assert_eq!(igmp.type_meta().name, "Multicast Router Advertisement");
+        assert_eq!(igmp.type_meta().status, IgmpTypeStatus::Assigned);
+        assert_eq!(igmp.mrd_advertisement_interval_value(), 20);
+        assert_eq!(igmp.mrd_query_interval_value(), 125);
+        assert_eq!(igmp.mrd_robustness_variable_value(), 2);
+        assert_eq!(igmp.igmp_type_state(), FieldState::User);
+        assert_eq!(igmp.code_state(), FieldState::User);
+        assert_eq!(igmp.group_address_state(), FieldState::User);
+        assert_eq!(igmp.checksum_state(), FieldState::Unset);
+
+        let bytes = compile_layer(igmp)?;
+
+        assert_eq!(bytes.len(), IGMP_MRD_ADVERTISEMENT_LEN);
+        assert_eq!(bytes[0], IGMP_TYPE_MULTICAST_ROUTER_ADVERTISEMENT);
+        assert_eq!(bytes[1], 20);
+        assert_eq!(&bytes[4..6], &125u16.to_be_bytes());
+        assert_eq!(&bytes[6..8], &2u16.to_be_bytes());
+        assert!(verify_internet_checksum(&bytes));
+
+        let decoded = decode(&bytes)?;
+        assert_eq!(decoded.igmp_type(), IgmpType::MulticastRouterAdvertisement);
+        assert_eq!(decoded.mrd_advertisement_interval_value(), 20);
+        assert_eq!(decoded.mrd_query_interval_value(), 125);
+        assert_eq!(decoded.mrd_robustness_variable_value(), 2);
+        assert_eq!(decoded.checksum_state(), FieldState::User);
+        assert_eq!(decoded.group_address_state(), FieldState::User);
+        assert_eq!(compile_layer(decoded)?, bytes);
+
+        Ok(())
+    }
+
+    #[test]
+    fn igmp_mrd_builders_solicitation_compiles_and_decodes() -> crate::Result<()> {
+        let igmp = Igmp::mrd_solicitation();
+
+        assert_eq!(igmp.igmp_type(), IgmpType::MulticastRouterSolicitation);
+        assert_eq!(
+            igmp.igmp_type_value(),
+            IGMP_TYPE_MULTICAST_ROUTER_SOLICITATION
+        );
+        assert_eq!(igmp.type_meta().name, "Multicast Router Solicitation");
+        assert_eq!(igmp.type_meta().status, IgmpTypeStatus::Assigned);
+        assert_eq!(igmp.mrd_reserved_value(), IGMP_MRD_DEFAULT_RESERVED);
+        assert_eq!(igmp.igmp_type_state(), FieldState::User);
+        assert_eq!(igmp.code_state(), FieldState::User);
+        assert_eq!(igmp.group_address_state(), FieldState::Defaulted);
+
+        let bytes = compile_layer(igmp)?;
+
+        assert_eq!(bytes.len(), IGMP_MRD_SOLICITATION_LEN);
+        assert_eq!(bytes[0], IGMP_TYPE_MULTICAST_ROUTER_SOLICITATION);
+        assert_eq!(bytes[1], IGMP_MRD_DEFAULT_RESERVED);
+        assert!(verify_internet_checksum(&bytes));
+
+        let decoded = decode(&bytes)?;
+        assert_eq!(decoded.igmp_type(), IgmpType::MulticastRouterSolicitation);
+        assert_eq!(decoded.mrd_reserved_value(), IGMP_MRD_DEFAULT_RESERVED);
+        assert_eq!(decoded.group_address_value(), Ipv4Addr::UNSPECIFIED);
+        assert_eq!(decoded.group_address_state(), FieldState::Defaulted);
+        assert_eq!(compile_layer(decoded)?, bytes);
+
+        Ok(())
+    }
+
+    #[test]
+    fn igmp_mrd_builders_termination_compiles_and_decodes() -> crate::Result<()> {
+        let igmp = Igmp::mrd_termination();
+
+        assert_eq!(igmp.igmp_type(), IgmpType::MulticastRouterTermination);
+        assert_eq!(
+            igmp.igmp_type_value(),
+            IGMP_TYPE_MULTICAST_ROUTER_TERMINATION
+        );
+        assert_eq!(igmp.type_meta().name, "Multicast Router Termination");
+        assert_eq!(igmp.type_meta().status, IgmpTypeStatus::Assigned);
+        assert_eq!(igmp.mrd_reserved_value(), IGMP_MRD_DEFAULT_RESERVED);
+        assert_eq!(igmp.igmp_type_state(), FieldState::User);
+        assert_eq!(igmp.code_state(), FieldState::User);
+        assert_eq!(igmp.group_address_state(), FieldState::Defaulted);
+
+        let bytes = compile_layer(igmp)?;
+
+        assert_eq!(bytes.len(), IGMP_MRD_TERMINATION_LEN);
+        assert_eq!(bytes[0], IGMP_TYPE_MULTICAST_ROUTER_TERMINATION);
+        assert_eq!(bytes[1], IGMP_MRD_DEFAULT_RESERVED);
+        assert!(verify_internet_checksum(&bytes));
+
+        let decoded = decode(&bytes)?;
+        assert_eq!(decoded.igmp_type(), IgmpType::MulticastRouterTermination);
+        assert_eq!(decoded.mrd_reserved_value(), IGMP_MRD_DEFAULT_RESERVED);
+        assert_eq!(decoded.group_address_value(), Ipv4Addr::UNSPECIFIED);
+        assert_eq!(decoded.group_address_state(), FieldState::Defaulted);
+        assert_eq!(compile_layer(decoded)?, bytes);
+
+        Ok(())
+    }
+
+    #[test]
+    fn igmp_mrd_builders_preserve_checksum_overrides_and_ignored_raw_tail() -> crate::Result<()> {
+        for igmp in [
+            Igmp::mrd_advertisement(20, 125, 2),
+            Igmp::mrd_solicitation(),
+            Igmp::mrd_termination(),
+        ] {
+            let bytes = compile_layer(igmp.checksum(0x1234))?;
+            assert_eq!(&bytes[2..4], &0x1234u16.to_be_bytes());
+            assert!(!verify_internet_checksum(&bytes));
+        }
+
+        let packet = Igmp::mrd_solicitation()
+            .with_mrd_reserved(0xa5)
+            .checksum(0x1234)
+            / Raw::from_bytes([0xde, 0xad]);
+        let bytes = packet.compile()?.as_bytes().to_vec();
+
+        assert_eq!(
+            bytes.as_slice(),
+            &[
+                IGMP_TYPE_MULTICAST_ROUTER_SOLICITATION,
+                0xa5,
+                0x12,
+                0x34,
+                0xde,
+                0xad,
+            ]
+        );
+
+        let decoded = append_igmp_packet(Packet::new(), &bytes)?;
+        let decoded_igmp = decoded.layer::<Igmp>().expect("decoded MRD solicitation");
+        let raw = decoded.layer::<Raw>().expect("ignored MRD tail");
+
+        assert_eq!(
+            decoded_igmp.igmp_type(),
+            IgmpType::MulticastRouterSolicitation
+        );
+        assert_eq!(decoded_igmp.mrd_reserved_value(), 0xa5);
+        assert_eq!(decoded_igmp.checksum_value(), Some(0x1234));
+        assert_eq!(raw.as_bytes(), &[0xde, 0xad]);
+        assert_eq!(decoded.compile()?.as_bytes(), bytes.as_slice());
+
+        Ok(())
     }
 }
 
