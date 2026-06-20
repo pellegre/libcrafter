@@ -1,0 +1,7 @@
+# IPv4 / IGMP Membership Query bootstrap fixture.
+# IGMP fixed header: RFC 1112/RFC 9776 Type 0x11, Code 0 (v1-compatible),
+# checksum over the IGMP message, and zero Group Address.
+# Addresses use RFC 5737 source space and RFC 5771 multicast documentation
+# destination space; this is not captured live traffic.
+45 00 00 1c 17 01 00 00 01 02 f6 d7 c0 00 02 0a e9 fc 00 01
+11 00 ee ff 00 00 00 00
