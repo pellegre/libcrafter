@@ -11,7 +11,7 @@ use core::ops::Div;
 
 use crate::checksum::internet_checksum;
 use crate::error::Result;
-use crate::field::Field;
+use crate::field::{Field, FieldState};
 use crate::packet::{IntoPacket, Layer, LayerContext, Packet};
 
 use super::constants::{
@@ -53,6 +53,92 @@ impl Igmp {
             checksum: Field::unset(),
             group_address: Field::defaulted(Ipv4Addr::UNSPECIFIED),
         }
+    }
+
+    /// Build an IGMP Membership Query fixed header.
+    ///
+    /// Sets the Type to Membership Query, the Code/Max Response Code to the
+    /// IGMPv1-compatible zero value, and the Group Address to `0.0.0.0`.
+    pub fn membership_query() -> Self {
+        Self::new()
+            .with_igmp_type(IgmpType::MembershipQuery)
+            .with_code(IGMP_DEFAULT_CODE)
+            .with_group_address(Ipv4Addr::UNSPECIFIED)
+    }
+
+    /// Build an IGMPv1 Membership Report fixed header for `group_address`.
+    pub fn v1_membership_report(group_address: Ipv4Addr) -> Self {
+        Self::new()
+            .with_igmp_type(IgmpType::V1MembershipReport)
+            .with_code(IGMP_DEFAULT_CODE)
+            .with_group_address(group_address)
+    }
+
+    /// Build an IGMPv2 Membership Report fixed header for `group_address`.
+    pub fn v2_membership_report(group_address: Ipv4Addr) -> Self {
+        Self::new()
+            .with_igmp_type(IgmpType::V2MembershipReport)
+            .with_code(IGMP_DEFAULT_CODE)
+            .with_group_address(group_address)
+    }
+
+    /// Build an IGMPv3 Membership Report leading header.
+    ///
+    /// Later report-body steps model group records. Until then this constructor
+    /// pins the registered Type and zero-valued reserved fields.
+    pub fn v3_membership_report() -> Self {
+        Self::new()
+            .with_igmp_type(IgmpType::V3MembershipReport)
+            .with_code(IGMP_DEFAULT_CODE)
+            .with_group_address(Ipv4Addr::UNSPECIFIED)
+    }
+
+    /// Set the IGMP Type from source-backed registry metadata.
+    pub fn with_igmp_type(mut self, igmp_type: IgmpType) -> Self {
+        self.igmp_type.set_user(igmp_type.code());
+        self
+    }
+
+    /// Set the raw IGMP Type byte.
+    pub fn type_code(mut self, type_code: u8) -> Self {
+        self.igmp_type.set_user(type_code);
+        self
+    }
+
+    /// Alias for generated code that wants the protocol field name.
+    pub fn type_(self, type_code: u8) -> Self {
+        self.type_code(type_code)
+    }
+
+    /// Set the raw IGMP Code byte.
+    pub fn with_code(mut self, code: u8) -> Self {
+        self.code.set_user(code);
+        self
+    }
+
+    /// Set the Membership Query Max Response Code byte.
+    ///
+    /// This is the same octet as the raw Code field and is exposed separately
+    /// so generated tools can use the RFC field name for query packets.
+    pub fn with_max_response_code(self, max_response_code: u8) -> Self {
+        self.with_code(max_response_code)
+    }
+
+    /// Set the IGMP checksum explicitly.
+    pub fn checksum(mut self, checksum: u16) -> Self {
+        self.checksum.set_user(checksum);
+        self
+    }
+
+    /// Compatibility alias for checksum.
+    pub fn chksum(self, checksum: u16) -> Self {
+        self.checksum(checksum)
+    }
+
+    /// Set the common IGMP Group Address field.
+    pub fn with_group_address(mut self, group_address: Ipv4Addr) -> Self {
+        self.group_address.set_user(group_address);
+        self
     }
 
     /// Raw IGMP Type value.
@@ -103,6 +189,31 @@ impl Igmp {
     /// Raw Group Address field value.
     pub fn group_address_value(&self) -> Ipv4Addr {
         value_or_copy(&self.group_address, Ipv4Addr::UNSPECIFIED)
+    }
+
+    /// Assignment state for the IGMP Type field.
+    pub fn igmp_type_state(&self) -> FieldState {
+        self.igmp_type.state()
+    }
+
+    /// Assignment state for the Code field.
+    pub fn code_state(&self) -> FieldState {
+        self.code.state()
+    }
+
+    /// Assignment state for the Max Response Code alias of the Code field.
+    pub fn max_response_code_state(&self) -> FieldState {
+        self.code_state()
+    }
+
+    /// Assignment state for the checksum field.
+    pub fn checksum_state(&self) -> FieldState {
+        self.checksum.state()
+    }
+
+    /// Assignment state for the Group Address field.
+    pub fn group_address_state(&self) -> FieldState {
+        self.group_address.state()
     }
 }
 
@@ -395,5 +506,115 @@ mod igmp_checksum {
         assert_eq!(first, second);
         assert_eq!(checksum_field(first.as_bytes()), internet_checksum(&zeroed));
         assert!(verify_internet_checksum(first.as_bytes()));
+    }
+}
+
+#[cfg(test)]
+mod igmp_builders {
+    use super::*;
+    use crate::checksum::verify_internet_checksum;
+    use crate::field::FieldState;
+    use crate::packet::Packet;
+    use crate::protocols::igmp::constants::{
+        IGMP_TYPE_EXPERIMENTAL_FIRST, IGMP_TYPE_MEMBERSHIP_QUERY, IGMP_TYPE_V1_MEMBERSHIP_REPORT,
+        IGMP_TYPE_V2_MEMBERSHIP_REPORT, IGMP_TYPE_V3_MEMBERSHIP_REPORT,
+    };
+
+    fn compile_layer(igmp: Igmp) -> Vec<u8> {
+        Packet::from_layer(igmp)
+            .compile()
+            .expect("compile IGMP builder")
+            .as_bytes()
+            .to_vec()
+    }
+
+    #[test]
+    fn igmp_builders_mark_query_fields_user_set() {
+        let group = Ipv4Addr::new(239, 1, 2, 3);
+        let igmp = Igmp::membership_query()
+            .with_max_response_code(10)
+            .with_group_address(group);
+
+        assert_eq!(igmp.igmp_type_value(), IGMP_TYPE_MEMBERSHIP_QUERY);
+        assert_eq!(igmp.igmp_type(), IgmpType::MembershipQuery);
+        assert_eq!(igmp.code_value(), 10);
+        assert_eq!(igmp.max_response_code_value(), 10);
+        assert_eq!(igmp.group_address_value(), group);
+        assert_eq!(igmp.igmp_type_state(), FieldState::User);
+        assert_eq!(igmp.code_state(), FieldState::User);
+        assert_eq!(igmp.max_response_code_state(), FieldState::User);
+        assert_eq!(igmp.group_address_state(), FieldState::User);
+        assert_eq!(igmp.checksum_state(), FieldState::Unset);
+
+        let bytes = compile_layer(igmp);
+
+        assert_eq!(bytes[0], IGMP_TYPE_MEMBERSHIP_QUERY);
+        assert_eq!(bytes[1], 10);
+        assert_eq!(&bytes[4..8], &group.octets());
+        assert!(verify_internet_checksum(&bytes));
+    }
+
+    #[test]
+    fn igmp_builders_create_source_backed_report_types() {
+        let v1_group = Ipv4Addr::new(224, 0, 0, 1);
+        let v2_group = Ipv4Addr::new(239, 255, 0, 1);
+
+        let v1 = Igmp::v1_membership_report(v1_group);
+        let v2 = Igmp::v2_membership_report(v2_group);
+        let v3 = Igmp::v3_membership_report();
+
+        assert_eq!(v1.igmp_type_value(), IGMP_TYPE_V1_MEMBERSHIP_REPORT);
+        assert_eq!(v1.igmp_type(), IgmpType::V1MembershipReport);
+        assert_eq!(v1.group_address_value(), v1_group);
+        assert_eq!(v1.igmp_type_state(), FieldState::User);
+        assert_eq!(v1.group_address_state(), FieldState::User);
+
+        assert_eq!(v2.igmp_type_value(), IGMP_TYPE_V2_MEMBERSHIP_REPORT);
+        assert_eq!(v2.igmp_type(), IgmpType::V2MembershipReport);
+        assert_eq!(v2.group_address_value(), v2_group);
+        assert_eq!(v2.igmp_type_state(), FieldState::User);
+        assert_eq!(v2.group_address_state(), FieldState::User);
+
+        assert_eq!(v3.igmp_type_value(), IGMP_TYPE_V3_MEMBERSHIP_REPORT);
+        assert_eq!(v3.igmp_type(), IgmpType::V3MembershipReport);
+        assert_eq!(v3.code_value(), IGMP_DEFAULT_CODE);
+        assert_eq!(v3.group_address_value(), Ipv4Addr::UNSPECIFIED);
+        assert_eq!(v3.igmp_type_state(), FieldState::User);
+        assert_eq!(v3.code_state(), FieldState::User);
+    }
+
+    #[test]
+    fn igmp_builders_user_set_overrides_survive_compile() {
+        let group = Ipv4Addr::new(239, 255, 0, 42);
+        let bytes = compile_layer(
+            Igmp::new()
+                .type_code(IGMP_TYPE_EXPERIMENTAL_FIRST)
+                .with_code(0xaa)
+                .checksum(0)
+                .with_group_address(group),
+        );
+
+        assert_eq!(
+            bytes.as_slice(),
+            &[IGMP_TYPE_EXPERIMENTAL_FIRST, 0xaa, 0x00, 0x00, 239, 255, 0, 42]
+        );
+        assert!(!verify_internet_checksum(&bytes));
+    }
+
+    #[test]
+    fn igmp_builders_typed_type_and_checksum_alias_survive_compile() {
+        let group = Ipv4Addr::new(224, 0, 0, 22);
+        let bytes = compile_layer(
+            Igmp::new()
+                .with_igmp_type(IgmpType::V2MembershipReport)
+                .chksum(0x1234)
+                .with_group_address(group),
+        );
+
+        assert_eq!(bytes[0], IGMP_TYPE_V2_MEMBERSHIP_REPORT);
+        assert_eq!(bytes[1], IGMP_DEFAULT_CODE);
+        assert_eq!(&bytes[2..4], &0x1234u16.to_be_bytes());
+        assert_eq!(&bytes[4..8], &group.octets());
+        assert!(!verify_internet_checksum(&bytes));
     }
 }
