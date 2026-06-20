@@ -219,6 +219,7 @@ preserved as `Raw` payloads when the enclosing header is valid.
 | IEEE 802.11 | Management, control, and data frames with radiotap and LLC/SNAP, EAPOL and RSN (802.11i) key-exchange fields; monitor-mode radiotap injection (transmit on the air) supported behind explicit live gates | [dot11](docs/guide/dot11.md) |
 | ARP | Request/reply construction and decode | [arp](docs/guide/arp.md) |
 | IPv4 | DSCP/ECN, protocol labels, checksum status, typed options, fragment fields (no automatic reassembly) | [ipv4](docs/guide/ipv4.md) |
+| IGMP | IPv4 packet-layer membership queries/reports, IGMPv1/v2 compatibility, IGMPv3 query/report records, generic extensions, and multicast router discovery packet shapes; not a router, snooper, proxy, or scanner | [igmp](docs/guide/igmp.md) |
 | IPv6 | Base header plus hop-by-hop, destination, fragment, routing, mobile-routing, and segment-routing extension headers | [ipv6](docs/guide/ipv6.md) |
 | ICMPv4 / ICMPv6 | ICMPv4 (with `Icmp` deprecated alias) and ICMP extensions (RFC 4884); ICMPv6 echo/errors, Neighbor Discovery (RFC 4861), MLD v1/v2, Extended Echo, experimental Node Information | [icmpv6](docs/guide/icmpv6.md) |
 | TCP | Segment construction, typed options, checksums | [tcp](docs/guide/tcp.md) |
@@ -268,8 +269,8 @@ The full annotated table, with safety modes and commands, is in
 
 - [docs/README.md](docs/README.md) is the documentation index.
 - [docs/guide/](docs/guide/) — per-protocol wire coverage for everyday packet
-  work (IPv4, IPv6, TCP, UDP, ARP, ICMPv6, DNS, BGP, OSPF, 802.11, IPsec); UDP,
-  ARP, and ICMPv6 now have their own guides.
+  work (IPv4, IGMP, IPv6, TCP, UDP, ARP, ICMPv6, DNS, BGP, OSPF, 802.11,
+  IPsec); UDP, ARP, ICMPv6, IGMP, and OSPF now have their own guides.
 - [docs/reference/](docs/reference/) — the public API
   ([api.md](docs/reference/api.md)), the wire I/O layer
   ([wire.md](docs/reference/wire.md)), and the example catalog

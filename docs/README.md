@@ -18,6 +18,10 @@ Per-protocol wire coverage for building and decoding packets.
 - [IPv4 wire coverage](guide/ipv4.md) — IPv4 construction, DSCP/ECN,
   protocol-number labels, checksum status, typed options, fragment fields
   without reassembly, decode policy, and validation coverage.
+- [IGMP wire coverage](guide/igmp.md) — IPv4 packet-layer IGMP construction,
+  decode, Router Alert envelope guidance, v1/v2/v3 membership packets, generic
+  extensions, multicast router discovery packet shapes, and the dry-run/live
+  boundary. IGMP is not a multicast router implementation or scanner.
 - [IPv6 wire coverage](guide/ipv6.md) — IPv6 base and extension headers,
   source-backed manifests, offline fixtures, and oracle coverage.
 - [TCP wire coverage](guide/tcp.md) — TCP segment construction, typed options,
