@@ -33,6 +33,7 @@ pub use self::registry::{
     igmp_type_status, IgmpCodeMeta, IgmpFlagStatus, IgmpQueryFlag, IgmpQueryFlagMeta, IgmpType,
     IgmpTypeMeta, IgmpTypeStatus,
 };
+pub use self::report::IgmpReport;
 pub use self::validation::{
     igmp_group_address_class, igmp_group_address_class_name, IgmpGroupAddressClass,
     IGMP_ALL_ROUTERS_GROUP, IGMP_ALL_SYSTEMS_GROUP,
