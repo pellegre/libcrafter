@@ -8,6 +8,7 @@ use core::ops::Div;
 use crate::checksum::{ipv4_pseudo_header_checksum, ipv6_pseudo_header_checksum};
 use crate::error::Result;
 use crate::protocols::icmp::{Icmpv4, Icmpv4QuotedIp, Icmpv6, NeighborSolicitation};
+use crate::protocols::igmp::Igmp;
 use crate::protocols::ip::{v4::Ipv4, v6::Ipv6};
 use crate::protocols::link::{Arp, Ethernet, Vlan};
 use crate::protocols::transport::{Tcp, Udp};
@@ -350,6 +351,7 @@ enum PacketLayer {
     Icmpv4(Icmpv4),
     Icmpv4QuotedIp(Icmpv4QuotedIp),
     Icmpv6(Icmpv6),
+    Igmp(Igmp),
     NeighborSolicitation(NeighborSolicitation),
 }
 
@@ -368,6 +370,7 @@ impl PacketLayer {
             Self::Icmpv4(layer) => layer,
             Self::Icmpv4QuotedIp(layer) => layer,
             Self::Icmpv6(layer) => layer,
+            Self::Igmp(layer) => layer,
             Self::NeighborSolicitation(layer) => layer,
         }
     }
@@ -386,6 +389,7 @@ impl PacketLayer {
             Self::Icmpv4(layer) => layer,
             Self::Icmpv4QuotedIp(layer) => layer,
             Self::Icmpv6(layer) => layer,
+            Self::Igmp(layer) => layer,
             Self::NeighborSolicitation(layer) => layer,
         }
     }
@@ -404,6 +408,7 @@ impl PacketLayer {
             Self::Icmpv4(layer) => Box::new(layer),
             Self::Icmpv4QuotedIp(layer) => Box::new(layer),
             Self::Icmpv6(layer) => Box::new(layer),
+            Self::Igmp(layer) => Box::new(layer),
             Self::NeighborSolicitation(layer) => Box::new(layer),
         }
     }
@@ -422,6 +427,7 @@ impl PacketLayer {
             Self::Icmpv4(layer) => layer.encoded_len_with_context(ctx),
             Self::Icmpv4QuotedIp(layer) => layer.encoded_len_with_context(ctx),
             Self::Icmpv6(layer) => layer.encoded_len_with_context(ctx),
+            Self::Igmp(layer) => layer.encoded_len_with_context(ctx),
             Self::NeighborSolicitation(layer) => layer.encoded_len_with_context(ctx),
         }
     }
@@ -440,6 +446,7 @@ impl PacketLayer {
             Self::Icmpv4(layer) => layer.compile(ctx, out),
             Self::Icmpv4QuotedIp(layer) => layer.compile(ctx, out),
             Self::Icmpv6(layer) => layer.compile(ctx, out),
+            Self::Igmp(layer) => layer.compile(ctx, out),
             Self::NeighborSolicitation(layer) => layer.compile(ctx, out),
         }
     }
@@ -458,6 +465,7 @@ impl PacketLayer {
             Self::Icmpv4(layer) => layer.consumes_following(),
             Self::Icmpv4QuotedIp(layer) => layer.consumes_following(),
             Self::Icmpv6(layer) => layer.consumes_following(),
+            Self::Igmp(layer) => layer.consumes_following(),
             Self::NeighborSolicitation(layer) => layer.consumes_following(),
         }
     }
@@ -587,6 +595,11 @@ impl Packet {
 
     pub(crate) fn push_icmpv6(mut self, layer: Icmpv6) -> Self {
         self.layers.push(PacketLayer::Icmpv6(layer));
+        self
+    }
+
+    pub(crate) fn push_igmp(mut self, layer: Igmp) -> Self {
+        self.layers.push(PacketLayer::Igmp(layer));
         self
     }
 
@@ -1057,6 +1070,79 @@ mod raw_layer {
 
         assert_eq!(decoded.len(), 1);
         assert_eq!(raw.as_bytes(), [0xde, 0xad, 0xbe, 0xef]);
+    }
+}
+
+#[cfg(test)]
+mod igmp_packet_storage {
+    use super::{Packet, Raw};
+    use crate::protocols::igmp::{append_igmp_packet, Igmp};
+    use core::net::Ipv4Addr;
+
+    #[test]
+    fn helper_storage_clones_downcasts_inspects_encodes_and_pops_igmp() {
+        let group = Ipv4Addr::new(224, 0, 0, 251);
+        let mut packet = Packet::new().push_igmp(
+            Igmp::v2_membership_report(group)
+                .with_code(0x05)
+                .checksum(0x1234),
+        );
+
+        let igmp = packet.layer::<Igmp>().expect("typed IGMP layer");
+        assert_eq!(igmp.group_address_value(), group);
+        assert_eq!(igmp.code_value(), 0x05);
+        assert_eq!(packet.get(0).expect("first layer").name(), "Igmp");
+        assert_eq!(
+            packet.summary(),
+            "Igmp(type=IGMPv2 Membership Report, code=No registered code, group=224.0.0.251)"
+        );
+
+        let show = packet.show();
+        assert!(show.contains("Packet(len=8, layers=1)"), "{show}");
+        assert!(show.contains("[0] Igmp"), "{show}");
+        assert!(
+            show.contains("type: IGMPv2 Membership Report (0x16)"),
+            "{show}"
+        );
+        assert!(show.contains("checksum: 0x1234"), "{show}");
+
+        let cloned = packet.clone();
+        assert_eq!(
+            cloned
+                .layer::<Igmp>()
+                .expect("cloned typed IGMP layer")
+                .checksum_value(),
+            Some(0x1234)
+        );
+        assert_eq!(
+            packet.compile().expect("compile stored IGMP").as_bytes(),
+            &[0x16, 0x05, 0x12, 0x34, 224, 0, 0, 251]
+        );
+
+        let popped = packet.pop_typed::<Igmp>().expect("pop typed IGMP");
+        assert_eq!(popped.group_address_value(), group);
+        assert!(packet.is_empty());
+    }
+
+    #[test]
+    fn decoded_igmp_uses_typed_storage_and_preserves_raw_tail() {
+        let bytes = [0x16, 0x00, 0xab, 0xcd, 224, 0, 0, 251, 0xde, 0xad];
+
+        let decoded =
+            append_igmp_packet(Packet::new(), &bytes).expect("append decoded IGMP packet");
+        let igmp = decoded.layer::<Igmp>().expect("typed decoded IGMP");
+        let raw = decoded.layer::<Raw>().expect("preserved raw IGMP tail");
+
+        assert_eq!(decoded.len(), 2);
+        assert_eq!(decoded.get(0).expect("first layer").name(), "Igmp");
+        assert_eq!(igmp.igmp_type_value(), 0x16);
+        assert_eq!(igmp.checksum_value(), Some(0xabcd));
+        assert_eq!(igmp.group_address_value(), Ipv4Addr::new(224, 0, 0, 251));
+        assert_eq!(raw.as_bytes(), &[0xde, 0xad]);
+        assert_eq!(
+            decoded.compile().expect("roundtrip decoded IGMP").as_bytes(),
+            &bytes
+        );
     }
 }
 
