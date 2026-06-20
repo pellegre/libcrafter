@@ -1,0 +1,4 @@
+# IPv4 / IGMPv3 query with RFC 9279 E flag set and only three extension header
+# octets. Decode should report igmp.extension.header as a structured underrun.
+45 00 00 23 27 13 00 00 01 02 e6 29 c0 00 02 50 e9 fc 00 50
+11 64 84 4d e9 fc 00 50 80 00 00 00 00 01 00

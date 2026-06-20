@@ -74,10 +74,11 @@ Valid byte fixtures cover:
 - IPv4 ICMP echo and ICMP error:
   `ipv4-icmp-echo-request.bin`,
   `ipv4-icmp-destination-unreachable.hex`
-- IPv4 IGMP bootstrap and v2 compatibility fixtures:
+- IPv4 IGMP bootstrap, v2 compatibility, and IGMPv3 RFC 9279 extension fixtures:
   `ipv4-igmp-v1-query.hex`, `ipv4-igmp-v1-report.hex`,
   `ipv4-igmp-v2-query.hex`, `ipv4-igmp-v2-report.hex`,
-  `ipv4-igmp-v2-leave.hex`
+  `ipv4-igmp-v2-leave.hex`, `ipv4-igmp-v3-query-extension.hex`,
+  `ipv4-igmp-v3-report-extension.hex`
 - IPv4 DSCP and ECN decode, including the differentiated-services octet split
   into DSCP EF and ECN CE:
   `ipv4-udp-dscp-ecn-raw.hex`
@@ -132,8 +133,9 @@ Valid byte fixtures cover:
 
 Summary fixtures cover representative raw, ARP, Linux cooked, IPv4 options,
 IPv4 TCP options, IPv6 TCP options, IPv4 DNS response, IPv4 DHCP, UDP options,
-IGMP v1 query/report and IGMPv2 query/report/leave packets, IPv6 option-header
-stacks, and IPv6 fragment stacks.
+IGMP v1 query/report, IGMPv2 query/report/leave packets, IGMPv3 query/report
+packets carrying RFC 9279 generic extension TLVs, IPv6 option-header stacks,
+and IPv6 fragment stacks.
 
 Pcap fixtures cover:
 
@@ -182,8 +184,8 @@ payload overruns, route-option length and pointer errors, malformed Timestamp
 data, and Router Alert bad-length handling.
 
 Malformed IGMP bootstrap fixtures cover empty and short IGMP payloads,
-inconsistent IPv4 wrapper length, surplus bytes preserved as Raw, and unknown
-IGMP type payload preservation.
+inconsistent IPv4 wrapper length, surplus bytes preserved as Raw, unknown IGMP
+type payload preservation, and RFC 9279 extension header/value truncation.
 
 Malformed pcap fixtures cover unknown magic, unsupported major version, zero
 snapshot length, partial record headers, captured length greater than snaplen,
