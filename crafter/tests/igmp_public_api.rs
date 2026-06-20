@@ -65,6 +65,33 @@ fn igmp_public_api_builds_via_prelude() -> crafter::Result<()> {
 }
 
 #[test]
+fn igmp_extension_type_metadata_is_public_api() {
+    let noop: IgmpExtensionTypeMeta = igmp_extension_type_meta(IGMP_EXTENSION_TYPE_NOOP);
+    assert_eq!(noop.extension_type, IgmpExtensionType::Noop);
+    assert_eq!(noop.status, IgmpExtensionTypeStatus::Assigned);
+    assert_eq!(
+        igmp_extension_type(IGMP_EXTENSION_TYPE_NOOP),
+        IgmpExtensionType::Noop
+    );
+    assert_eq!(
+        igmp_extension_type_name(IGMP_EXTENSION_TYPE_NOOP),
+        Some("No-op")
+    );
+    assert_eq!(
+        IgmpExtensionType::from_u16(IGMP_EXTENSION_TYPE_UNASSIGNED_FIRST),
+        IgmpExtensionType::Unassigned(IGMP_EXTENSION_TYPE_UNASSIGNED_FIRST)
+    );
+    assert_eq!(
+        igmp_extension_type_status(IGMP_EXTENSION_TYPE_UNASSIGNED_FIRST),
+        IgmpExtensionTypeStatus::Unassigned
+    );
+    assert_eq!(
+        igmp_extension_type_status(IGMP_EXTENSION_TYPE_EXPERIMENTAL_FIRST),
+        IgmpExtensionTypeStatus::Experimental
+    );
+}
+
+#[test]
 fn igmp_unknown_records_decode_roundtrip_and_show_public_api() -> crafter::Result<()> {
     let record = IgmpGroupRecord::raw(0xc8, DOC_REPORT_GROUP)
         .with_source_addresses(vec![DOC_REPORT_SOURCE_A, DOC_REPORT_SOURCE_B])

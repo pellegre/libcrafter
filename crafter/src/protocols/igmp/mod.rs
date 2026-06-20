@@ -28,11 +28,13 @@ pub use self::record::{
     IgmpRecordTypeStatus,
 };
 pub use self::registry::{
-    igmp_code_meta, igmp_code_name, igmp_code_status, igmp_query_flag, igmp_query_flag_meta,
-    igmp_query_flag_name, igmp_query_flag_status, igmp_report_flag, igmp_report_flag_meta,
-    igmp_report_flag_name, igmp_report_flag_status, igmp_type, igmp_type_meta, igmp_type_name,
-    igmp_type_status, IgmpCodeMeta, IgmpFlagStatus, IgmpQueryFlag, IgmpQueryFlagMeta,
-    IgmpReportFlag, IgmpReportFlagMeta, IgmpType, IgmpTypeMeta, IgmpTypeStatus,
+    igmp_code_meta, igmp_code_name, igmp_code_status, igmp_extension_type,
+    igmp_extension_type_meta, igmp_extension_type_name, igmp_extension_type_status,
+    igmp_query_flag, igmp_query_flag_meta, igmp_query_flag_name, igmp_query_flag_status,
+    igmp_report_flag, igmp_report_flag_meta, igmp_report_flag_name, igmp_report_flag_status,
+    igmp_type, igmp_type_meta, igmp_type_name, igmp_type_status, IgmpCodeMeta, IgmpExtensionType,
+    IgmpExtensionTypeMeta, IgmpExtensionTypeStatus, IgmpFlagStatus, IgmpQueryFlag,
+    IgmpQueryFlagMeta, IgmpReportFlag, IgmpReportFlagMeta, IgmpType, IgmpTypeMeta, IgmpTypeStatus,
 };
 pub use self::report::IgmpReport;
 pub use self::validation::{
