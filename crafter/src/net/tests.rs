@@ -167,11 +167,12 @@ mod send_plan {
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
     use crate::{
-        Dot11, Ethernet, Icmpv4, Ipv4, Ipv6, LlcSnap, NetworkLayer, Packet, Radiotap, Raw, Tcp, Udp,
+        Dot11, Ethernet, Icmpv4, Igmp, Ipv4, Ipv6, LlcSnap, NetworkLayer, Packet, Radiotap, Raw,
+        Tcp, Udp,
     };
 
     use crate::net::{
-        send_packet as one_shot_send_packet, send_plan as one_shot_send_plan, NetError,
+        reply_filter, send_packet as one_shot_send_packet, send_plan as one_shot_send_plan, NetError,
         PacketSendExt, SendMode, SendOptions, SendTarget, SocketSender,
     };
 
@@ -209,6 +210,44 @@ mod send_plan {
                 assert_eq!(network_layer, NetworkLayer::Ipv4);
                 assert_eq!(destination, IpAddr::V4(Ipv4Addr::new(198, 51, 100, 20)));
                 assert_eq!(protocol, crate::IPPROTO_UDP);
+            }
+            _ => panic!("expected network-layer send target"),
+        }
+    }
+
+    #[test]
+    fn igmp_send_plan_dry_run_network_layer_compiles_target_and_filter() {
+        let packet = Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 10))
+            .dst(Ipv4Addr::new(198, 51, 100, 20))
+            .ttl(1)
+            .protocol(crate::IPPROTO_IGMP)
+            / Igmp::membership_query().with_v2_max_response_time_tenths(100);
+        let plan = packet
+            .send_dry_run(SendOptions::new().iface("igmp-dryrun0").network_layer())
+            .unwrap();
+
+        assert_eq!(plan.interface(), "igmp-dryrun0");
+        assert_eq!(plan.requested_mode(), SendMode::NetworkLayer);
+        assert!(plan.target().is_network_layer());
+        assert_eq!(plan.bytes(), packet.compile().unwrap().as_bytes());
+        assert_eq!(plan.bytes()[9], crate::IPPROTO_IGMP);
+        assert_eq!(plan.bytes()[20], crate::IGMP_TYPE_MEMBERSHIP_QUERY);
+        assert_eq!(plan.bytes()[21], 100);
+        assert_eq!(
+            reply_filter(&packet).unwrap(),
+            "igmp and src host 198.51.100.20 and dst host 192.0.2.10"
+        );
+
+        match plan.target() {
+            SendTarget::NetworkLayer {
+                network_layer,
+                destination,
+                protocol,
+            } => {
+                assert_eq!(network_layer, NetworkLayer::Ipv4);
+                assert_eq!(destination, IpAddr::V4(Ipv4Addr::new(198, 51, 100, 20)));
+                assert_eq!(protocol, crate::IPPROTO_IGMP);
             }
             _ => panic!("expected network-layer send target"),
         }
