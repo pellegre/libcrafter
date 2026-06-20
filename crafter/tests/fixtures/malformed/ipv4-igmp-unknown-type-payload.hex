@@ -1,0 +1,4 @@
+# IPv4 / IGMP packet using an unassigned IGMP Type with an opaque payload.
+# The fixed header should decode and the payload should remain a Raw tail.
+45 00 00 20 18 04 00 00 01 02 f5 a7 c0 00 02 0a e9 fc 00 2a
+09 aa 08 29 e9 fc 00 2a 01 02 03 04
