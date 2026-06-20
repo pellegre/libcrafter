@@ -192,6 +192,16 @@ impl Layer for IgmpReport {
         ];
         for (index, record) in self.records.iter().enumerate() {
             fields.push((record_field_name(index), record.summary()));
+            if record.auxiliary_data_len_value() != 0 || !record.auxiliary_data().is_empty() {
+                fields.push((
+                    record_auxiliary_data_len_field_name(index),
+                    record.auxiliary_data_len_value().to_string(),
+                ));
+                fields.push((
+                    record_auxiliary_data_field_name(index),
+                    hex_bytes(record.auxiliary_data()),
+                ));
+            }
         }
         fields
     }
@@ -258,6 +268,48 @@ fn record_field_name(index: usize) -> &'static str {
         "record[7]",
     ];
     NAMES.get(index).copied().unwrap_or("record[*]")
+}
+
+fn record_auxiliary_data_len_field_name(index: usize) -> &'static str {
+    const NAMES: [&str; 8] = [
+        "record[0].auxiliary_data_len",
+        "record[1].auxiliary_data_len",
+        "record[2].auxiliary_data_len",
+        "record[3].auxiliary_data_len",
+        "record[4].auxiliary_data_len",
+        "record[5].auxiliary_data_len",
+        "record[6].auxiliary_data_len",
+        "record[7].auxiliary_data_len",
+    ];
+    NAMES
+        .get(index)
+        .copied()
+        .unwrap_or("record[*].auxiliary_data_len")
+}
+
+fn record_auxiliary_data_field_name(index: usize) -> &'static str {
+    const NAMES: [&str; 8] = [
+        "record[0].auxiliary_data",
+        "record[1].auxiliary_data",
+        "record[2].auxiliary_data",
+        "record[3].auxiliary_data",
+        "record[4].auxiliary_data",
+        "record[5].auxiliary_data",
+        "record[6].auxiliary_data",
+        "record[7].auxiliary_data",
+    ];
+    NAMES
+        .get(index)
+        .copied()
+        .unwrap_or("record[*].auxiliary_data")
+}
+
+fn hex_bytes(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[cfg(test)]
@@ -571,6 +623,36 @@ mod igmp_report_model {
                 ("record[0]", record.summary()),
             ]
         );
+    }
+
+    #[test]
+    fn igmp_aux_data_report_show_and_summary_output() -> crate::Result<()> {
+        let record = IgmpGroupRecord::allow_new_sources(doc_group())
+            .with_source_address(doc_source())
+            .with_auxiliary_data([0xde, 0xad, 0xbe, 0xef]);
+        let packet = Igmp::v3_membership_report_with_records(vec![record.clone()]);
+
+        assert_eq!(
+            record.summary(),
+            "IgmpGroupRecord(type=ALLOW_NEW_SOURCES, group=233.252.0.90, sources=1, aux_words=1, aux=4B)"
+        );
+        assert_eq!(
+            packet.summary(),
+            "Igmp(type=IGMPv3 Membership Report, code=No registered code, group=0.0.0.0) / IgmpReport(flags=0x0000, records=1)"
+        );
+
+        let show = packet.show();
+        assert!(
+            show.contains("record[0]: IgmpGroupRecord(type=ALLOW_NEW_SOURCES, group=233.252.0.90, sources=1, aux_words=1, aux=4B)"),
+            "{show}"
+        );
+        assert!(show.contains("record[0].auxiliary_data_len: 1"), "{show}");
+        assert!(
+            show.contains("record[0].auxiliary_data: de ad be ef"),
+            "{show}"
+        );
+
+        Ok(())
     }
 
     #[test]
