@@ -1,7 +1,7 @@
 use std::net::Ipv4Addr;
 
 use crate::{
-    Arp, ArpOperation, Dhcp, DhcpClientIdentifier, DhcpMessageType, Dns, Icmpv4, Icmpv6, Ipv4,
+    Arp, ArpOperation, Dhcp, DhcpClientIdentifier, DhcpMessageType, Dns, Icmpv4, Icmpv6, Igmp, Ipv4,
     Ipv6, Packet, Tcp, Udp, BOOTP_REPLY, DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT,
     ICMPV6_ECHO_REPLY, ICMPV6_ECHO_REQUEST, ICMP_ECHO_REPLY, ICMP_ECHO_REQUEST,
 };
@@ -59,6 +59,9 @@ fn request_reply_filter(packet: &Packet) -> Option<String> {
     }
     if let Some(arp) = packet.layer::<Arp>() {
         return Some(arp_filter(arp));
+    }
+    if packet.layer::<Igmp>().is_some() {
+        return Some(igmp_filter(packet));
     }
     if packet.layer::<Icmpv4>().is_some() {
         return Some(protocol_filter("icmp", packet));
@@ -140,6 +143,19 @@ fn arp_filter(arp: &Arp) -> String {
         }
         _ => "arp".to_string(),
     }
+}
+
+fn igmp_filter(packet: &Packet) -> String {
+    let mut terms = vec!["igmp".to_string()];
+    if let Some(ipv4) = packet.layer::<Ipv4>() {
+        let source = ipv4.source();
+        let destination = ipv4.destination();
+        if !source.is_unspecified() && !destination.is_unspecified() {
+            terms.push(format!("src host {destination}"));
+            terms.push(format!("dst host {source}"));
+        }
+    }
+    terms.join(" and ")
 }
 
 fn protocol_filter(protocol: &str, packet: &Packet) -> String {

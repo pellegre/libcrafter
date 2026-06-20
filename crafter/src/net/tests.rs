@@ -496,7 +496,7 @@ mod send_recv_filters {
     use std::net::{Ipv4Addr, Ipv6Addr};
     use std::time::Duration;
 
-    use crate::{Arp, Dns, Icmpv4, Icmpv6, IntoPacket, Ipv4, Ipv6, MacAddr, Tcp, Udp};
+    use crate::{Arp, Dns, Icmpv4, Icmpv6, Igmp, IntoPacket, Ipv4, Ipv6, MacAddr, Tcp, Udp};
 
     use crate::net::{PacketSendRecvExt, SendRecv};
 
@@ -524,6 +524,36 @@ mod send_recv_filters {
             packet.reply_filter().unwrap(),
             "icmp6 and src host 2001:db8::1 and dst host ::1"
         );
+    }
+
+    #[test]
+    fn reply_filter_for_igmp_reverses_ipv4_hosts() {
+        let packet = Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 10))
+            .dst(Ipv4Addr::new(198, 51, 100, 20))
+            / Igmp::membership_query();
+
+        assert_eq!(
+            packet.reply_filter().unwrap(),
+            "igmp and src host 198.51.100.20 and dst host 192.0.2.10"
+        );
+    }
+
+    #[test]
+    fn reply_filter_for_igmp_degrades_to_bare_filter_without_ipv4_hosts() {
+        let packet = Igmp::membership_query().into_packet();
+
+        assert_eq!(packet.reply_filter().unwrap(), "igmp");
+    }
+
+    #[test]
+    fn reply_filter_for_igmp_degrades_to_bare_filter_with_unspecified_ipv4_host() {
+        let packet = Ipv4::new()
+            .src(Ipv4Addr::UNSPECIFIED)
+            .dst(Ipv4Addr::new(224, 0, 0, 1))
+            / Igmp::membership_query();
+
+        assert_eq!(packet.reply_filter().unwrap(), "igmp");
     }
 
     #[test]
