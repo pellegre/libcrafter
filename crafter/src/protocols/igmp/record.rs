@@ -479,6 +479,66 @@ impl IgmpGroupRecord {
             + usize::from(self.auxiliary_data_len_value()) * IGMP_GROUP_RECORD_AUX_DATA_UNIT
     }
 
+    /// Decode one IGMPv3 group record and return the unconsumed tail.
+    ///
+    /// The Aux Data Len and Number of Sources fields are marked explicit so the
+    /// decoded wire counters survive even if builder vectors are changed later.
+    pub fn decode_with_tail(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        if bytes.len() < IGMP_V3_GROUP_RECORD_HEADER_LEN {
+            return Err(CrafterError::buffer_too_short(
+                "igmp.group_record",
+                IGMP_V3_GROUP_RECORD_HEADER_LEN,
+                bytes.len(),
+            ));
+        }
+
+        let record_type = IgmpRecordType::from_u8(bytes[0]);
+        let auxiliary_data_len = bytes[1];
+        let number_of_sources = u16::from_be_bytes([bytes[2], bytes[3]]);
+        let multicast_address = Ipv4Addr::new(bytes[4], bytes[5], bytes[6], bytes[7]);
+        let sources_len = usize::from(number_of_sources) * 4;
+        let sources_end = IGMP_V3_GROUP_RECORD_HEADER_LEN + sources_len;
+        if bytes.len() < sources_end {
+            return Err(CrafterError::buffer_too_short(
+                "igmp.group_record.source_addresses",
+                sources_end,
+                bytes.len(),
+            ));
+        }
+
+        let auxiliary_len = usize::from(auxiliary_data_len) * IGMP_GROUP_RECORD_AUX_DATA_UNIT;
+        let auxiliary_end = sources_end + auxiliary_len;
+        if bytes.len() < auxiliary_end {
+            return Err(CrafterError::buffer_too_short(
+                "igmp.group_record.auxiliary_data",
+                auxiliary_end,
+                bytes.len(),
+            ));
+        }
+
+        let mut source_addresses = Vec::with_capacity(usize::from(number_of_sources));
+        for source in bytes[IGMP_V3_GROUP_RECORD_HEADER_LEN..sources_end].chunks_exact(4) {
+            source_addresses.push(Ipv4Addr::new(source[0], source[1], source[2], source[3]));
+        }
+
+        let record = Self {
+            record_type,
+            auxiliary_data_len: Field::user(auxiliary_data_len),
+            number_of_sources: Field::user(number_of_sources),
+            multicast_address,
+            source_addresses,
+            auxiliary_data: bytes[sources_end..auxiliary_end].to_vec(),
+        };
+
+        Ok((record, &bytes[auxiliary_end..]))
+    }
+
+    /// Decode one IGMPv3 group record, ignoring any unconsumed tail bytes.
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        let (record, _) = Self::decode_with_tail(bytes)?;
+        Ok(record)
+    }
+
     /// Serialize this group record to its wire bytes.
     pub fn compile(&self) -> Result<Vec<u8>> {
         self.try_compile()
@@ -834,6 +894,139 @@ mod igmp_group_record_encode {
         );
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod igmp_group_record_decode {
+    use super::*;
+
+    fn doc_group() -> Ipv4Addr {
+        Ipv4Addr::new(233, 252, 0, 80)
+    }
+
+    fn doc_source_a() -> Ipv4Addr {
+        Ipv4Addr::new(192, 0, 2, 10)
+    }
+
+    fn doc_source_b() -> Ipv4Addr {
+        Ipv4Addr::new(198, 51, 100, 20)
+    }
+
+    #[test]
+    fn igmp_group_record_decode_known_record_with_sources_and_auxiliary_data() -> crate::Result<()>
+    {
+        let bytes = [
+            0x02, 0x01, 0x00, 0x02, 233, 252, 0, 80, 192, 0, 2, 10, 198, 51, 100, 20, 0xde, 0xad,
+            0xbe, 0xef,
+        ];
+
+        let record = IgmpGroupRecord::decode(&bytes)?;
+
+        assert_eq!(record.record_type(), IgmpRecordType::ModeIsExclude);
+        assert_eq!(record.record_type_value(), IGMP_RECORD_TYPE_MODE_IS_EXCLUDE);
+        assert_eq!(record.auxiliary_data_len_value(), 1);
+        assert_eq!(record.auxiliary_data_len_state(), FieldState::User);
+        assert_eq!(record.number_of_sources_value(), 2);
+        assert_eq!(record.number_of_sources_state(), FieldState::User);
+        assert_eq!(record.multicast_address(), doc_group());
+        assert_eq!(record.source_addresses(), &[doc_source_a(), doc_source_b()]);
+        assert_eq!(record.auxiliary_data(), &[0xde, 0xad, 0xbe, 0xef]);
+        assert_eq!(record.try_compile()?, bytes);
+
+        Ok(())
+    }
+
+    #[test]
+    fn igmp_group_record_decode_unknown_record_type_value() -> crate::Result<()> {
+        let bytes = [0xc8, 0x00, 0x00, 0x00, 233, 252, 0, 80];
+
+        let record = IgmpGroupRecord::decode(&bytes)?;
+
+        assert_eq!(record.record_type(), IgmpRecordType::Unknown(0xc8));
+        assert_eq!(record.record_type_value(), 0xc8);
+        assert_eq!(
+            record.record_type_meta().status,
+            IgmpRecordTypeStatus::Unassigned
+        );
+        assert_eq!(record.try_compile()?, bytes);
+
+        Ok(())
+    }
+
+    #[test]
+    fn igmp_group_record_decode_zero_source_record_marks_wire_counts_explicit() -> crate::Result<()>
+    {
+        let bytes = [0x01, 0x00, 0x00, 0x00, 233, 252, 0, 80];
+
+        let record = IgmpGroupRecord::decode(&bytes)?;
+
+        assert_eq!(record.record_type(), IgmpRecordType::ModeIsInclude);
+        assert_eq!(record.auxiliary_data_len_value(), 0);
+        assert_eq!(record.auxiliary_data_len_state(), FieldState::User);
+        assert_eq!(record.number_of_sources_value(), 0);
+        assert_eq!(record.number_of_sources_state(), FieldState::User);
+        assert!(record.source_addresses().is_empty());
+        assert!(record.auxiliary_data().is_empty());
+        assert_eq!(record.try_compile()?, bytes);
+
+        Ok(())
+    }
+
+    #[test]
+    fn igmp_group_record_decode_with_tail_preserves_remaining_bytes() -> crate::Result<()> {
+        let bytes = [
+            0x05, 0x00, 0x00, 0x01, 233, 252, 0, 80, 192, 0, 2, 10, 0xfa, 0xce,
+        ];
+
+        let (record, tail) = IgmpGroupRecord::decode_with_tail(&bytes)?;
+
+        assert_eq!(record.record_type(), IgmpRecordType::AllowNewSources);
+        assert_eq!(record.number_of_sources_value(), 1);
+        assert_eq!(record.source_addresses(), &[doc_source_a()]);
+        assert_eq!(tail, &[0xfa, 0xce]);
+        assert_eq!(
+            record.try_compile()?,
+            [0x05, 0x00, 0x00, 0x01, 233, 252, 0, 80, 192, 0, 2, 10]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn igmp_group_record_decode_short_header_returns_structured_error() {
+        let error = IgmpGroupRecord::decode(&[0x01, 0x00, 0x00]).expect_err("short header");
+
+        assert_eq!(
+            error,
+            CrafterError::buffer_too_short("igmp.group_record", IGMP_V3_GROUP_RECORD_HEADER_LEN, 3)
+        );
+    }
+
+    #[test]
+    fn igmp_group_record_decode_truncated_source_list_returns_structured_error() {
+        let bytes = [0x01, 0x00, 0x00, 0x02, 233, 252, 0, 80, 192, 0, 2, 10, 198];
+
+        let error = IgmpGroupRecord::decode(&bytes).expect_err("truncated source list");
+
+        assert_eq!(
+            error,
+            CrafterError::buffer_too_short("igmp.group_record.source_addresses", 16, bytes.len())
+        );
+    }
+
+    #[test]
+    fn igmp_group_record_decode_truncated_auxiliary_data_returns_structured_error() {
+        let bytes = [
+            0x06, 0x02, 0x00, 0x01, 233, 252, 0, 80, 192, 0, 2, 10, 0xde, 0xad, 0xbe, 0xef, 0x00,
+        ];
+
+        let error = IgmpGroupRecord::decode(&bytes).expect_err("truncated auxiliary data");
+
+        assert_eq!(
+            error,
+            CrafterError::buffer_too_short("igmp.group_record.auxiliary_data", 20, bytes.len())
+        );
     }
 }
 
