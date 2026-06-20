@@ -1,4 +1,5 @@
-# IPv4 / IGMP Membership Query with four extra IGMP payload bytes.
-# Bootstrap decode preserves the surplus IGMP-owned bytes as Raw.
+# IPv4 / IGMPv3 Membership Query with a declared source count of 0xbeef.
+# Decode reports a structured source-list underrun instead of treating the
+# Version 3 query body as opaque trailing bytes.
 45 00 00 20 18 03 00 00 01 02 f5 d1 c0 00 02 0a e9 fc 00 01
 11 00 51 62 00 00 00 00 de ad be ef
