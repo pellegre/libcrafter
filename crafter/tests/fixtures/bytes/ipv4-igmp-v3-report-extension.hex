@@ -1,0 +1,9 @@
+# IPv4 / IGMPv3 Membership Report fixture with generic RFC 9279 extension data.
+# RFC 9776 defines the report and group-record body, RFC 9279 defines the E flag
+# and 16-bit Type / 16-bit Length / raw Value extension TLV area, and RFC 9778
+# keeps IGMP/MLD extension codepoints under IANA policy. Type 0xfffe is
+# reserved for experimental use and remains byte-preserving. Source and group
+# addresses use documentation space; this is not live traffic.
+45 00 00 32 17 12 00 00 01 02 00 51 c0 00 02 51 e0 00 00 16
+22 00 6b 5d 00 00 00 00 80 00 00 01 01 00 00 01 e9 fc 00 51
+cb 00 71 51 ff fe 00 02 ca fe
