@@ -155,6 +155,44 @@ Compatibility-only values and behavior:
   RFC 9776 compatibility-mode translation are operational or IPv4 composition
   concerns outside the IGMP layer's codepoint surface.
 
+## IGMPv3 Membership Report Wire Layout
+
+RFC 9776 Sections 4.2 through 4.2.13 define the Type `0x22` Membership Report
+and the Group Record wire shape:
+
+| Field | Width | Implementation note |
+| --- | --- | --- |
+| Type | 8 bits | Fixed value `0x22` for IGMPv3 Membership Report |
+| Reserved | 8 bits | Default zero on transmit; ignore but preserve on receive |
+| Checksum | 16 bits | Covers the whole IGMP message / IPv4 payload |
+| Flags | 16 bits | IANA-managed report flags; preserve unassigned bits |
+| Number of Group Records (`M`) | 16 bits | Count of following Group Record blocks |
+| Group Record `[i]` | variable | Repeated `M` times, then optional trailing report bytes |
+
+Each Group Record has this common wire layout:
+
+| Field | Width | Implementation note |
+| --- | --- | --- |
+| Record Type | 8 bits | Values `1..=6` below; preserve unknown values |
+| Aux Data Len | 8 bits | Auxiliary data length in 32-bit words |
+| Number of Sources (`N`) | 16 bits | Count of IPv4 source addresses in this record |
+| Multicast Address | 32 bits | Multicast group address for this record |
+| Source Address `[i]` | `N * 32` bits | IPv4 source-address vector |
+| Auxiliary Data | `Aux Data Len * 32` bits | Untyped bytes; preserve exactly |
+
+Implementation guidance:
+
+- The base Group Record length is `8 + 4 * N + 4 * Aux Data Len` bytes. Treat a
+  shorter buffer as a structured truncation error.
+- RFC 9776 defines no IGMPv3 auxiliary data semantics and says IGMPv3
+  implementations set Aux Data Len to zero when sending and ignore auxiliary
+  data when receiving. `crafter` should default generated reports to no
+  auxiliary data while preserving explicit caller-supplied and decoded
+  auxiliary bytes.
+- RFC 9776 says additional received report octets beyond the last Group Record
+  are included in checksum verification and otherwise ignored. Keep those bytes
+  inspectable and byte-preserving rather than silently dropping them.
+
 ## IGMPv3 Group Record Types
 
 RFC 9776 Section 4.2.13 defines the IGMPv3 report Group Record Type values:
@@ -176,6 +214,9 @@ Implementation guidance:
   inspection.
 - Auxiliary data is not defined by IGMPv3 itself. Keep it byte-preserving until
   an extension source review defines typed semantics.
+- RFC 4604 SSM guidance is operational. It can inform optional diagnostics for
+  EXCLUDE-mode records in SSM ranges, but it should not become a construction or
+  decode-time rejection rule for otherwise well-formed bytes.
 
 ## IGMP/MLD Extension Types
 
