@@ -147,7 +147,10 @@ Pcap fixtures cover:
   IGMPv2 query/report/leave records using RFC 5737 source addresses, RFC 5771
   multicast documentation group addresses, and source-backed all-systems /
   all-routers destinations where applicable. They decode as IPv4/IGMP with no
-  live capture data.
+  live capture data. `raw-ipv4-igmp-mrd.pcap` adds deterministic RFC 4286
+  multicast router discovery Advertisement, Solicitation, and Termination
+  records with TTL 1 and the source-backed all-snoopers/all-routers
+  destinations; it is generated offline from fixture bytes, not captured live.
   `raw-ipv6-base-traffic-flow-udp-raw.pcap`: timestamp `20.000003`,
   DLT_RAW/RawIp, captured/original length 56, byte fixture
   `ipv6-base-traffic-flow-udp-raw.hex`, decoded as IPv6/UDP/Raw with Traffic

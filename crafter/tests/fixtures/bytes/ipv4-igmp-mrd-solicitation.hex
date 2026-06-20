@@ -1,0 +1,6 @@
+# IPv4 / IGMP multicast router discovery Solicitation fixture.
+# RFC 4286 Type 0x31 with a zero Reserved field. IPv4 uses TTL 1 and the
+# All-Routers destination.
+# Source uses RFC 5737 documentation space; this is not captured live traffic.
+45 00 00 18 17 12 00 00 01 02 00 75 c0 00 02 5b e0 00 00 02
+31 00 ce ff

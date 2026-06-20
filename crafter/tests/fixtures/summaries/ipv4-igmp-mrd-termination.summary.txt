@@ -1,0 +1,1 @@
+Ipv4(src=192.0.2.92, dst=224.0.0.106, proto=igmp(2)) / Igmp(version=MRD, type=0x32 (Multicast Router Termination), reserved=0x00, checksum=0xcdff, checksum_status=valid)

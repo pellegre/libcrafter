@@ -21,9 +21,9 @@ Packet(len=32, layers=3)
       version: IGMPv2/v3 query
       type: 0x11 (IGMP Membership Query)
       code: 0x91 (Max Response Time)
+      group_address: 0.0.0.0 (zero)
       checksum: 0xeb6f
       checksum_status: valid
-      group_address: 0.0.0.0 (zero)
       length: 8
   [2] IgmpQuery
       version: IGMPv3

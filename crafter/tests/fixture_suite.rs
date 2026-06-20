@@ -576,6 +576,33 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         summary_path: Some("summaries/ipv4-igmp-v2-leave.summary.txt"),
     },
     ValidFixtureCase {
+        name: "ipv4-igmp-mrd-advertisement",
+        path: "bytes/ipv4-igmp-mrd-advertisement.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-igmp-mrd-advertisement.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Igmp],
+        preserve_exact_bytes: true,
+        summary_path: Some("summaries/ipv4-igmp-mrd-advertisement.summary.txt"),
+    },
+    ValidFixtureCase {
+        name: "ipv4-igmp-mrd-solicitation",
+        path: "bytes/ipv4-igmp-mrd-solicitation.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-igmp-mrd-solicitation.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Igmp],
+        preserve_exact_bytes: true,
+        summary_path: Some("summaries/ipv4-igmp-mrd-solicitation.summary.txt"),
+    },
+    ValidFixtureCase {
+        name: "ipv4-igmp-mrd-termination",
+        path: "bytes/ipv4-igmp-mrd-termination.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-igmp-mrd-termination.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Igmp],
+        preserve_exact_bytes: true,
+        summary_path: Some("summaries/ipv4-igmp-mrd-termination.summary.txt"),
+    },
+    ValidFixtureCase {
         name: "ipv4-igmp-v3-query-extension",
         path: "bytes/ipv4-igmp-v3-query-extension.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-igmp-v3-query-extension.hex")),
@@ -1783,6 +1810,32 @@ const PCAP_FIXTURES: &[PcapFixtureCase] = &[
                 seconds: 17,
                 fractional: 5,
                 fixture_name: "ipv4-igmp-v2-leave",
+            },
+        ],
+    },
+    PcapFixtureCase {
+        name: "raw-ipv4-igmp-mrd",
+        path: "pcaps/raw-ipv4-igmp-mrd.pcap",
+        contents: fixture_bytes!("pcaps/raw-ipv4-igmp-mrd.pcap"),
+        pcap_link_type: PcapLinkType::RawIp,
+        link_type: LinkType::Raw,
+        timestamp_precision: TimestampPrecision::Microseconds,
+        coverage: PcapCoverageFamily::RawIpIpv4,
+        records: &[
+            PcapFixtureRecord {
+                seconds: 18,
+                fractional: 1,
+                fixture_name: "ipv4-igmp-mrd-advertisement",
+            },
+            PcapFixtureRecord {
+                seconds: 18,
+                fractional: 2,
+                fixture_name: "ipv4-igmp-mrd-solicitation",
+            },
+            PcapFixtureRecord {
+                seconds: 18,
+                fractional: 3,
+                fixture_name: "ipv4-igmp-mrd-termination",
             },
         ],
     },
@@ -3042,6 +3095,34 @@ fn assert_igmp_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
             assert_eq!(igmp.igmp_type(), IgmpType::V2LeaveGroup);
             assert_eq!(igmp.code_value(), 0);
             assert_eq!(igmp.group_address_value(), Ipv4Addr::new(233, 252, 0, 17));
+        }
+        "ipv4-igmp-mrd-advertisement" => {
+            assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 90));
+            assert_eq!(ipv4.destination(), Ipv4Addr::new(224, 0, 0, 106));
+            assert_eq!(ipv4.ttl_value(), 1);
+            assert_eq!(igmp.igmp_type(), IgmpType::MulticastRouterAdvertisement);
+            assert_eq!(igmp.mrd_advertisement_interval_value(), 20);
+            assert_eq!(igmp.mrd_query_interval_value(), 125);
+            assert_eq!(igmp.mrd_robustness_variable_value(), 2);
+            assert_eq!(igmp.checksum_value(), Some(0xcf6c));
+        }
+        "ipv4-igmp-mrd-solicitation" => {
+            assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 91));
+            assert_eq!(ipv4.destination(), Ipv4Addr::new(224, 0, 0, 2));
+            assert_eq!(ipv4.ttl_value(), 1);
+            assert_eq!(igmp.igmp_type(), IgmpType::MulticastRouterSolicitation);
+            assert_eq!(igmp.mrd_reserved_value(), 0);
+            assert_eq!(igmp.group_address_value(), Ipv4Addr::UNSPECIFIED);
+            assert_eq!(igmp.checksum_value(), Some(0xceff));
+        }
+        "ipv4-igmp-mrd-termination" => {
+            assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 92));
+            assert_eq!(ipv4.destination(), Ipv4Addr::new(224, 0, 0, 106));
+            assert_eq!(ipv4.ttl_value(), 1);
+            assert_eq!(igmp.igmp_type(), IgmpType::MulticastRouterTermination);
+            assert_eq!(igmp.mrd_reserved_value(), 0);
+            assert_eq!(igmp.group_address_value(), Ipv4Addr::UNSPECIFIED);
+            assert_eq!(igmp.checksum_value(), Some(0xcdff));
         }
         "ipv4-igmp-v3-query-extension" => {
             assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 80));
@@ -6502,6 +6583,26 @@ fn igmp_fixture_suite_bootstrap_decodes_compile_and_summarizes() {
 }
 
 #[test]
+fn igmp_mrd_fixture_suite_decodes_compile_and_summarizes() {
+    for name in [
+        "ipv4-igmp-mrd-advertisement",
+        "ipv4-igmp-mrd-solicitation",
+        "ipv4-igmp-mrd-termination",
+    ] {
+        let case = valid_fixture_case(name);
+        ensure_fixture_exists(case.path);
+        let bytes = fixture_bytes_for_case(case);
+        let target = packet_target_for_case(case);
+        let packet = decode_packet(target, &bytes)
+            .unwrap_or_else(|err| panic!("fixture {} should decode: {err}", case.path));
+
+        assert_packet_surface(case, &packet);
+        assert_fixture_fields(case, &packet);
+        assert_compile_decode_compile(case, target, &packet, &bytes);
+    }
+}
+
+#[test]
 fn igmp_extension_fixture_suite_decodes_compile_and_summarizes() {
     for name in [
         "ipv4-igmp-v3-query-extension",
@@ -7705,6 +7806,46 @@ fn igmp_fixture_suite_raw_ip_pcap_decodes_records() {
 }
 
 #[test]
+fn igmp_mrd_fixture_suite_raw_ip_pcap_decodes_records() {
+    let case = pcap_fixture_case("raw-ipv4-igmp-mrd");
+    assert_eq!(case.records.len(), 3);
+
+    let packets = PcapReader::from_reader(case.contents)
+        .unwrap_or_else(|err| panic!("pcap fixture {} should parse header: {err}", case.path))
+        .collect_packets()
+        .unwrap_or_else(|err| panic!("pcap fixture {} should decode packets: {err}", case.path));
+    assert_eq!(packets.len(), case.records.len());
+
+    for (packet, expected) in packets.iter().zip(case.records) {
+        let expected_fixture = valid_fixture_case(expected.fixture_name);
+        let expected_bytes = fixture_bytes_for_case(expected_fixture);
+        let expected_timestamp = PcapTimestamp::new(
+            expected.seconds,
+            expected.fractional,
+            case.timestamp_precision,
+        )
+        .unwrap_or_else(|err| {
+            panic!(
+                "pcap fixture {} timestamp should be valid: {err}",
+                case.path
+            )
+        });
+
+        assert_eq!(packet.timestamp(), expected_timestamp);
+        assert_eq!(packet.pcap_link_type(), PcapLinkType::RawIp);
+        assert_eq!(packet.data(), expected_bytes.as_slice());
+        assert_packet_surface(expected_fixture, packet.packet());
+        assert_fixture_fields(expected_fixture, packet.packet());
+        assert_compile_decode_compile(
+            expected_fixture,
+            packet_target_for_case(expected_fixture),
+            packet.packet(),
+            &expected_bytes,
+        );
+    }
+}
+
+#[test]
 fn pcap_fixture_roundtrips() {
     let case = PCAP_FIXTURES
         .iter()
@@ -8516,6 +8657,18 @@ fn igmp_summary_fixtures_cover_major_packet_shapes() -> Result<(), Box<dyn std::
             "ipv4-igmp-v2-leave",
             "summaries/ipv4-igmp-v2-leave-show.summary.txt",
         ),
+        (
+            "ipv4-igmp-mrd-advertisement",
+            "summaries/ipv4-igmp-mrd-advertisement-show.summary.txt",
+        ),
+        (
+            "ipv4-igmp-mrd-solicitation",
+            "summaries/ipv4-igmp-mrd-solicitation-show.summary.txt",
+        ),
+        (
+            "ipv4-igmp-mrd-termination",
+            "summaries/ipv4-igmp-mrd-termination-show.summary.txt",
+        ),
     ] {
         let case = valid_fixture_case(case_name);
         let bytes = fixture_bytes_for_case(case);
@@ -8589,7 +8742,7 @@ fn igmp_summary_fixtures_cover_major_packet_shapes() -> Result<(), Box<dyn std::
                         100,
                         v3_reserved_group,
                         IgmpQuery::new()
-                            .with_raw_flags_qrv(0xf5)
+                            .with_raw_flags_qrv(0x75)
                             .with_qqic(125)
                             .with_source_addresses([Ipv4Addr::new(192, 0, 2, 65)]),
                     ),
