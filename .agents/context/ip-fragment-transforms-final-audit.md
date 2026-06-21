@@ -38,9 +38,8 @@ addresses, or live host identifiers.
 
 - TCP stream reassembly, IP fragmentation across a full TCP/IP stack, and
   application-layer reconstruction remain unsupported.
-- IPv6 defrag and fragmentation outside the documented narrow extension-header
-  scope pass through or report explicit unsupported trace metadata instead of
-  guessing.
+- IPv6 packet shapes outside the documented narrow extension-header scope pass
+  through or report explicit unsupported trace metadata instead of guessing.
 - Ambiguous overlapping fragments with conflicting bytes are not silently
   emitted as reassembled datagrams.
 - Invalid MTUs, unsupported packet shapes, malformed buffers, and incomplete
