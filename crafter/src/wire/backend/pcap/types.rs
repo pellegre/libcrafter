@@ -25,6 +25,11 @@ pub const DLT_LINUX_SLL: u32 = 113;
 pub const DLT_IEEE802_11_RADIO: u32 = 127;
 /// Radiotap metadata followed by IEEE 802.11 MAC frame pcap link type.
 pub const LINKTYPE_IEEE802_11_RADIOTAP: u32 = DLT_IEEE802_11_RADIO;
+/// Bluetooth LE Link Layer with pseudo-header pcap data-link type
+/// (tcpdump LINKTYPE_BLUETOOTH_LE_LL_WITH_PHDR).
+pub const DLT_BLUETOOTH_LE_LL_WITH_PHDR: u32 = 256;
+/// Bluetooth LE Link Layer with pseudo-header pcap link type.
+pub const LINKTYPE_BLUETOOTH_LE_LL_WITH_PHDR: u32 = DLT_BLUETOOTH_LE_LL_WITH_PHDR;
 const DLT_RAW_BSD: u32 = 12;
 const DLT_IPV4: u32 = 228;
 const DLT_IPV6: u32 = 229;
