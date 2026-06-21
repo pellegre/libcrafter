@@ -1,0 +1,77 @@
+version: 1
+kind: layer
+name: ble_radio
+summary: Bluetooth Low Energy Link Layer pcap pseudo-header carrying radio metadata before an advertising LL packet.
+
+roots:
+  - "link:bluetooth-le-ll-with-phdr"
+parents:
+  - root
+children: []
+supported_directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+  - roundtrip
+live_eligibility: false
+live_gate: offline_pcap_link_type_only
+
+fields:
+  - name: rf_channel
+    type: uint8
+    required: true
+    domains:
+      - advertising_channel_37
+      - advertising_channel_38
+      - advertising_channel_39
+  - name: signal_power
+    type: int8
+    required: false
+    domains:
+      - absent
+      - rssi_metadata
+  - name: noise_power
+    type: int8
+    required: false
+    domains:
+      - absent
+      - noise_metadata
+  - name: access_address
+    type: uint32
+    required: true
+    domains:
+      - advertising_access_address
+      - explicit
+  - name: ref_access_address
+    type: uint32
+    required: false
+    domains:
+      - advertising_access_address
+      - explicit
+  - name: flags
+    type: flags
+    required: true
+    domains:
+      - default_advertising
+      - crc_valid
+      - phy_bits
+
+coverage_cases:
+  - ble-radio-default-advertising-phdr
+  - ble-radio-explicit-aa-channel
+  - malformed-ble-radio-truncated-phdr
+
+backend_support:
+  scapy:
+    status: supported
+    encode: true
+    decode: true
+    native_layers:
+      - BTLE_PHDR
+    notes:
+      - The Step 51 Scapy backend materializes and byte-normalizes the BLE LL-with-pseudo-header root.
+  libcrafter:
+    status: partial
+    encode: true
+    decode: true
+    notes:
+      - The crate exposes BleRadio encode/decode behavior; the offline oracle adapter BLE hooks are outside this spec step.
