@@ -7,5 +7,5 @@ mod adv;
 mod consts;
 mod radio;
 
-pub use adv::BleLlAdv;
+pub use adv::{BleAdvPduType, BleLlAdv};
 pub use radio::{BlePhy, BleRadio};

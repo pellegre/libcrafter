@@ -1,10 +1,13 @@
 //! BLE advertising-channel Link Layer PDU scaffolding.
 
+use core::any::Any;
+
 use crate::error::Result;
 use crate::field::Field;
 use crate::mac::MacAddr;
+use crate::packet::{IntoPacket, Layer, LayerContext, Packet};
 
-use super::consts::BleAdvPduType;
+pub use super::consts::BleAdvPduType;
 
 /// BLE advertising-channel Link Layer PDU.
 ///
@@ -182,11 +185,7 @@ impl BleLlAdv {
             | (u8::from(self.effective_ch_sel()) << 5)
             | (u8::from(self.effective_tx_add()) << 6)
             | (u8::from(self.effective_rx_add()) << 7);
-        let length = if self.length.is_user_set() {
-            self.length.value().copied().unwrap_or(payload.len() as u8)
-        } else {
-            payload.len() as u8
-        };
+        let length = self.effective_length();
 
         out.push(byte0);
         out.push(length);
@@ -250,11 +249,90 @@ impl BleLlAdv {
     fn effective_rx_add(&self) -> bool {
         self.rx_add.value().copied().unwrap_or(false)
     }
+
+    fn effective_length(&self) -> u8 {
+        if self.length.is_user_set() {
+            self.length
+                .value()
+                .copied()
+                .unwrap_or(self.payload_len() as u8)
+        } else {
+            self.payload_len() as u8
+        }
+    }
 }
 
 impl Default for BleLlAdv {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Layer for BleLlAdv {
+    fn name(&self) -> &'static str {
+        "BleLlAdv"
+    }
+
+    fn summary(&self) -> String {
+        let mut fields = vec![ble_adv_pdu_type_label(self.effective_pdu_type()).to_string()];
+
+        if let Some(adv_a) = self.adv_a_value() {
+            fields.push(format!("AdvA={}", format!("{adv_a}").to_uppercase()));
+        }
+
+        fields.push(format!("len={}", self.effective_length()));
+
+        format!("BleLlAdv({})", fields.join(", "))
+    }
+
+    fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        let mut fields = vec![
+            (
+                "pdu_type",
+                ble_adv_pdu_type_label(self.effective_pdu_type()).to_string(),
+            ),
+            ("tx_add", self.effective_tx_add().to_string()),
+            ("length", self.effective_length().to_string()),
+        ];
+
+        if let Some(adv_a) = self.adv_a_value() {
+            fields.push(("adv_a", format!("{adv_a}").to_uppercase()));
+        }
+
+        fields
+    }
+
+    fn encoded_len(&self) -> usize {
+        BleLlAdv::encoded_len(self)
+    }
+
+    fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
+        self.encode(out);
+        Ok(())
+    }
+
+    fn clone_layer(&self) -> Box<dyn Layer> {
+        Box::new(self.clone())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn into_any(self: Box<Self>) -> Box<dyn Any> {
+        self
+    }
+}
+
+impl<R: IntoPacket> core::ops::Div<R> for BleLlAdv {
+    type Output = Packet;
+
+    fn div(self, rhs: R) -> Self::Output {
+        Packet::from_layer(self).concat(rhs)
     }
 }
 
@@ -271,10 +349,23 @@ fn reverse_address(address: MacAddr) -> MacAddr {
     MacAddr::new([f, e, d, c, b, a])
 }
 
+fn ble_adv_pdu_type_label(pdu_type: BleAdvPduType) -> &'static str {
+    match pdu_type {
+        BleAdvPduType::AdvInd => "ADV_IND",
+        BleAdvPduType::AdvDirectInd => "ADV_DIRECT_IND",
+        BleAdvPduType::AdvNonconnInd => "ADV_NONCONN_IND",
+        BleAdvPduType::ScanReq => "SCAN_REQ",
+        BleAdvPduType::ScanRsp => "SCAN_RSP",
+        BleAdvPduType::ConnectInd => "CONNECT_IND",
+        BleAdvPduType::AdvScanInd => "ADV_SCAN_IND",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::field::FieldState;
 
+    use super::super::BleRadio;
     use super::*;
 
     #[test]
@@ -360,6 +451,38 @@ mod tests {
         assert_eq!(
             &out[2..],
             &[0x33, 0x22, 0x11, 0xee, 0xff, 0xc0, 0x02, 0x01, 0x06]
+        );
+    }
+
+    #[test]
+    fn ble_adv_layer_compiles_beneath_ble_radio() {
+        let packet =
+            BleRadio::advertising(37) / BleLlAdv::adv_ind().adv_a_str("C0:FF:EE:11:22:33").unwrap();
+        let bytes = packet.compile().expect("compile BLE advertising packet");
+
+        assert_eq!(bytes.len(), 18);
+        assert_eq!(
+            &bytes.as_bytes()[..10],
+            &[37, 0, 0, 0, 0xd6, 0xbe, 0x89, 0x8e, 0x11, 0x04]
+        );
+        assert_eq!(&bytes.as_bytes()[10..], &[0x40, 0x06, 0x33, 0x22, 0x11, 0xee, 0xff, 0xc0]);
+    }
+
+    #[test]
+    fn ble_adv_layer_summary_and_inspection_fields_expose_header_values() {
+        let adv = BleLlAdv::adv_ind()
+            .adv_a_str("C0:FF:EE:11:22:33")
+            .unwrap();
+
+        assert_eq!(adv.summary(), "BleLlAdv(ADV_IND, AdvA=C0:FF:EE:11:22:33, len=6)");
+        assert_eq!(
+            adv.inspection_fields(),
+            vec![
+                ("pdu_type", "ADV_IND".to_string()),
+                ("tx_add", "true".to_string()),
+                ("length", "6".to_string()),
+                ("adv_a", "C0:FF:EE:11:22:33".to_string()),
+            ]
         );
     }
 }
