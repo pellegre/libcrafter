@@ -82,6 +82,8 @@ jobs:
         run: |
           if [[ "$BEFORE" =~ ^0+$ ]] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
             range="$AFTER"
+          elif ! git merge-base --is-ancestor "$BEFORE" "$AFTER"; then
+            range="$AFTER"
           else
             range="$BEFORE..$AFTER"
           fi
