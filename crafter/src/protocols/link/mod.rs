@@ -1089,7 +1089,7 @@ mod link_layers {
             b's', b't', 0xaa, 0xbb, 0xcc,
         ];
 
-        let decoded = decode_ble_ll_with_registry(&ProtocolRegistry::builtin(), &frame).unwrap();
+        let decoded = decode_ble_ll_with_registry(ProtocolRegistry::builtin(), &frame).unwrap();
         let summary = decoded.summary();
 
         assert_eq!(decoded.iter().count(), 2);

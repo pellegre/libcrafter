@@ -16,6 +16,7 @@ use super::consts::{
 pub struct BleAdvFlags;
 
 impl BleAdvFlags {
+    #[cfg(test)]
     pub const LE_LIMITED_DISC: u8 = 0x01;
     pub const LE_GENERAL_DISC: u8 = 0x02;
     pub const BR_EDR_NOT_SUPPORTED: u8 = 0x04;
@@ -404,6 +405,7 @@ mod tests {
 
         assert_eq!(encoded, [0x02, 0x01, 0x06]);
         assert_eq!(structure.flags_value(), Some(0x06));
+        assert_eq!(BleAdvFlags::LE_LIMITED_DISC, 0x01);
     }
 
     #[test]

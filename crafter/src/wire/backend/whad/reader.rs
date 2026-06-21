@@ -35,14 +35,10 @@ impl<C: WhadByteChannel> WhadReader<C> {
     }
 
     /// Set the bounded receive timeout used for one WHAD frame poll.
+    #[cfg(test)]
     pub(crate) const fn with_recv_timeout(mut self, recv_timeout: Duration) -> Self {
         self.recv_timeout = recv_timeout;
         self
-    }
-
-    /// Consume the reader and return the underlying WHAD link.
-    pub(crate) fn into_link(self) -> WhadLink<C> {
-        self.link
     }
 }
 

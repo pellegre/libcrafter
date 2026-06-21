@@ -15,6 +15,8 @@ pub(crate) const WHAD_TARGET_PROTOCOL_VERSION: u32 = 3;
 
 pub(crate) mod proto {
     #![allow(dead_code)]
+    // The vendored WHAD protobuf schema owns its enum variant names.
+    #![allow(clippy::enum_variant_names)]
 
     include!(concat!(env!("OUT_DIR"), "/whad_proto.rs"));
 }

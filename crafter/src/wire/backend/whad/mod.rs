@@ -11,6 +11,7 @@ pub use capability::WhadBleMode;
 pub(crate) mod discovery;
 
 #[cfg(feature = "whad")]
+#[cfg(test)]
 pub(crate) mod duplex;
 
 #[cfg(feature = "whad")]
@@ -31,6 +32,8 @@ pub(crate) mod writer;
 #[cfg(feature = "whad")]
 pub(crate) mod proto {
     #![allow(dead_code)]
+    // The vendored WHAD protobuf schema owns its enum variant names.
+    #![allow(clippy::enum_variant_names)]
 
     include!(concat!(env!("OUT_DIR"), "/whad_proto.rs"));
 }

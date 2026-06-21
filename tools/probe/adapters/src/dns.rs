@@ -2155,7 +2155,6 @@ mod tests {
         version: u8,
         dnssec_ok: bool,
         nsid: &[u8],
-        query_id: u16,
     ) -> Vec<u8> {
         let opt = DnsRecord::opt(
             payload_size,
@@ -2165,7 +2164,7 @@ mod tests {
             vec![EdnsOption::nsid(nsid.to_vec())],
         );
         let dns = Dns::query(query_name, DNS_TYPE_A)
-            .id(query_id)
+            .id(0xed01)
             .response(true)
             .answer(DnsRecord::a(query_name, answer, ttl))
             .additional(opt);
@@ -2259,7 +2258,6 @@ mod tests {
             0,
             true,
             b"server",
-            0xed01,
         );
         let packet = Packet::decode_from_l3(NetworkLayer::Ipv4, &raw).unwrap();
 
@@ -2322,7 +2320,6 @@ mod tests {
             0,
             true,
             b"server",
-            0xed01,
         );
         let packet = Packet::decode_from_l3(NetworkLayer::Ipv4, &raw).unwrap();
         let plan = edns_plan(query, "203.0.113.7", 120, 4096, 0, true, b"server");
@@ -2344,7 +2341,6 @@ mod tests {
             0,
             false,
             b"server",
-            0xed01,
         );
         let packet = Packet::decode_from_l3(NetworkLayer::Ipv4, &raw).unwrap();
         let plan = edns_plan(query, "203.0.113.7", 120, 4096, 0, true, b"server");
@@ -2366,7 +2362,6 @@ mod tests {
             0,
             true,
             b"WRONG",
-            0xed01,
         );
         let packet = Packet::decode_from_l3(NetworkLayer::Ipv4, &raw).unwrap();
         let plan = edns_plan(query, "203.0.113.7", 120, 4096, 0, true, b"server");

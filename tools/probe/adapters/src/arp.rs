@@ -741,10 +741,7 @@ pub fn validate_arp_candidate(
     let expected_sender_protocols = expected_sender_protocol_addrs(validation)?;
     match arp.sender_ipv4() {
         Some(actual) => {
-            if !expected_sender_protocols
-                .iter()
-                .any(|expected| actual == *expected)
-            {
+            if !expected_sender_protocols.contains(&actual) {
                 mismatches.push(json!({
                     "field": "arp.sender_protocol_addr",
                     "expected": expected_sender_protocols
@@ -790,35 +787,38 @@ pub fn validate_arp_candidate(
 
     // Ethernet framing: the unicast reply is addressed from the resolved target
     // MAC back to the original sender MAC.
-    if let Some(ethernet) = packet.layer::<Ethernet>() {
-        if let Some(expected_source) = validation.ethernet_source.as_deref() {
-            let expected_source: MacAddr = expected_source.parse()?;
-            match ethernet.source() {
-                Some(actual) if actual == expected_source => {}
-                actual => mismatches.push(json!({
-                    "field": "ethernet.src",
-                    "expected": expected_source.to_string(),
-                    "actual": actual.map(|mac| mac.to_string()),
-                })),
+    match packet.layer::<Ethernet>() {
+        Some(ethernet) => {
+            if let Some(expected_source) = validation.ethernet_source.as_deref() {
+                let expected_source: MacAddr = expected_source.parse()?;
+                match ethernet.source() {
+                    Some(actual) if actual == expected_source => {}
+                    actual => mismatches.push(json!({
+                        "field": "ethernet.src",
+                        "expected": expected_source.to_string(),
+                        "actual": actual.map(|mac| mac.to_string()),
+                    })),
+                }
+            }
+            if let Some(expected_destination) = validation.ethernet_destination.as_deref() {
+                let expected_destination: MacAddr = expected_destination.parse()?;
+                match ethernet.destination() {
+                    Some(actual) if actual == expected_destination => {}
+                    actual => mismatches.push(json!({
+                        "field": "ethernet.dst",
+                        "expected": expected_destination.to_string(),
+                        "actual": actual.map(|mac| mac.to_string()),
+                    })),
+                }
             }
         }
-        if let Some(expected_destination) = validation.ethernet_destination.as_deref() {
-            let expected_destination: MacAddr = expected_destination.parse()?;
-            match ethernet.destination() {
-                Some(actual) if actual == expected_destination => {}
-                actual => mismatches.push(json!({
-                    "field": "ethernet.dst",
-                    "expected": expected_destination.to_string(),
-                    "actual": actual.map(|mac| mac.to_string()),
-                })),
-            }
+        None => {
+            mismatches.push(json!({
+                "field": "ethernet",
+                "expected": "present",
+                "actual": "missing",
+            }));
         }
-    } else {
-        mismatches.push(json!({
-            "field": "ethernet",
-            "expected": "present",
-            "actual": "missing",
-        }));
     }
 
     if mismatches.is_empty() {
