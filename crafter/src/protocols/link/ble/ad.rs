@@ -2,7 +2,10 @@
 
 use crate::error::{CrafterError, Result};
 
-use super::consts::{AD_COMPLETE_LOCAL_NAME, AD_FLAGS, AD_SHORTENED_LOCAL_NAME};
+use super::consts::{
+    AD_COMPLETE_16_BIT_SERVICE_UUIDS, AD_COMPLETE_LOCAL_NAME, AD_FLAGS,
+    AD_INCOMPLETE_16_BIT_SERVICE_UUIDS, AD_SHORTENED_LOCAL_NAME,
+};
 
 /// Flags AD structure bit values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -52,6 +55,22 @@ impl AdStructure {
         Self::new(AD_SHORTENED_LOCAL_NAME, name.as_bytes())
     }
 
+    pub fn complete_service_uuids16(uuids: &[u16]) -> Self {
+        Self::from_service_uuids16(AD_COMPLETE_16_BIT_SERVICE_UUIDS, uuids)
+    }
+
+    pub fn incomplete_service_uuids16(uuids: &[u16]) -> Self {
+        Self::from_service_uuids16(AD_INCOMPLETE_16_BIT_SERVICE_UUIDS, uuids)
+    }
+
+    fn from_service_uuids16(ad_type: u8, uuids: &[u16]) -> Self {
+        let mut data = Vec::with_capacity(uuids.len() * 2);
+        for uuid in uuids {
+            data.extend_from_slice(&uuid.to_le_bytes());
+        }
+        Self::new(ad_type, data)
+    }
+
     pub fn flags_value(&self) -> Option<u8> {
         if self.ad_type == AD_FLAGS && self.data.len() == 1 {
             Some(self.data[0])
@@ -69,6 +88,23 @@ impl AdStructure {
         } else {
             None
         }
+    }
+
+    pub fn service_uuids16(&self) -> Option<Vec<u16>> {
+        if !matches!(
+            self.ad_type,
+            AD_COMPLETE_16_BIT_SERVICE_UUIDS | AD_INCOMPLETE_16_BIT_SERVICE_UUIDS
+        ) || self.data.len() % 2 != 0
+        {
+            return None;
+        }
+
+        Some(
+            self.data
+                .chunks_exact(2)
+                .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+                .collect(),
+        )
     }
 
     pub(crate) fn encode(&self, out: &mut Vec<u8>) {
@@ -216,6 +252,33 @@ mod tests {
         assert_eq!(structure.data, b"crafter");
         assert_eq!(structure.local_name().as_deref(), Some("crafter"));
         assert_eq!(AdStructure::flags_general_disc().local_name(), None);
+    }
+
+    #[test]
+    fn ble_ad_uuid16_complete_encodes_little_endian_and_reads() {
+        let uuids = [0x180f];
+        let structure = AdStructure::complete_service_uuids16(&uuids);
+        let mut encoded = Vec::new();
+
+        structure.encode(&mut encoded);
+
+        assert_eq!(encoded, [0x03, 0x03, 0x0f, 0x18]);
+        assert_eq!(structure.service_uuids16(), Some(uuids.to_vec()));
+    }
+
+    #[test]
+    fn ble_ad_uuid16_incomplete_encodes_and_reads() {
+        let uuids = [0x180d, 0x180f];
+        let structure = AdStructure::incomplete_service_uuids16(&uuids);
+
+        assert_eq!(structure.ad_type, AD_INCOMPLETE_16_BIT_SERVICE_UUIDS);
+        assert_eq!(structure.data, [0x0d, 0x18, 0x0f, 0x18]);
+        assert_eq!(structure.service_uuids16(), Some(uuids.to_vec()));
+        assert_eq!(AdStructure::complete_local_name("x").service_uuids16(), None);
+        assert_eq!(
+            AdStructure::raw(AD_COMPLETE_16_BIT_SERVICE_UUIDS, [0x0f]).service_uuids16(),
+            None
+        );
     }
 
     #[test]
