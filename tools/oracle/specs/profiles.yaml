@@ -583,9 +583,9 @@ profiles:
       malformed: 4
       pcap: 0
       live: 0
-  # igmp-live-dry-run: provider-neutral dry-run planning metadata for future
-  # IGMP live validation. The live weight stays zero; protected provider-backed
-  # confirmation and executable live materialization are owned by later steps.
+  # igmp-live-dry-run: provider-neutral dry-run planning metadata for IGMP live
+  # validation. The live weight stays zero; real local-provider execution stays
+  # behind LIBCRAFTER_RUN_IGMP_VM_LIVE plus --confirm-live-run.
   - name: igmp-live-dry-run
     purpose: provider-neutral IGMP live validation dry-run planning
     default_count: 10

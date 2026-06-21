@@ -82,4 +82,23 @@ println!("compiled bytes: {}", plan.len());
 Live IGMP validation belongs behind the lab, oracle, or probe protected-live
 gates. A generated tool that needs real multicast traffic should first produce a
 dry-run plan, then run from an authorized provider-backed endpoint with explicit
-confirmation and artifact collection.
+confirmation and artifact collection. The guarded local-provider oracle smoke
+path is opt-in only:
+
+```sh
+if [ "${LIBCRAFTER_RUN_IGMP_VM_LIVE:-0}" = "1" ]; then
+  python3 tools/oracle/engine/live_provider_matrix.py \
+    --providers qemu,docker,virtualbox --backend scapy \
+    --family igmp --profile igmp-live-dry-run \
+    --seed 3601 --count 2 \
+    --real --skip-unavailable --confirm-live-run \
+    --out target/oracle/igmp-vm-live
+else
+  echo "skipping protected IGMP VM live run"
+fi
+```
+
+With `LIBCRAFTER_RUN_IGMP_VM_LIVE` unset, the command prints the skip message
+and does not create endpoints or send packets. When enabled, keep all provider
+artifacts and packet captures under `target/`; do not copy endpoint IDs,
+credentials, public IPs, or sensitive pcaps into tracked files.
