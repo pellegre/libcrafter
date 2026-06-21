@@ -263,9 +263,16 @@ class ProbePlanningRegistryTest(unittest.TestCase):
                         "vtysh -c 'show ipv6 ripng'",
                         name,
                     )
-                else:
+                elif case.metadata.get("protocol") == "igmp":
+                    self.assertEqual(plan["protocol"], "igmp", name)
+                    self.assertEqual(plan["ip_protocol"], 2, name)
+                    self.assertIn("stimulus_packet_shape", plan, name)
+                    self.assertIn("target_service", plan, name)
+                elif case.metadata.get("protocol") == "ipsec":
                     self.assertIn("ipsec_protocol", plan, name)
                     self.assertIn("stimulus_packet_shape", plan, name)
+                else:
+                    self.fail(f"unhandled planned-only registered case {name}")
             else:
                 self.assertNotIn("planned_only", plan, name)
 
