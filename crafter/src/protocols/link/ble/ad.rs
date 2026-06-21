@@ -3,9 +3,9 @@
 use crate::error::{CrafterError, Result};
 
 use super::consts::{
-    AD_COMPLETE_128_BIT_SERVICE_UUIDS, AD_COMPLETE_16_BIT_SERVICE_UUIDS,
+    AD_APPEARANCE, AD_COMPLETE_128_BIT_SERVICE_UUIDS, AD_COMPLETE_16_BIT_SERVICE_UUIDS,
     AD_COMPLETE_32_BIT_SERVICE_UUIDS, AD_COMPLETE_LOCAL_NAME, AD_FLAGS,
-    AD_APPEARANCE, AD_INCOMPLETE_128_BIT_SERVICE_UUIDS, AD_INCOMPLETE_16_BIT_SERVICE_UUIDS,
+    AD_INCOMPLETE_128_BIT_SERVICE_UUIDS, AD_INCOMPLETE_16_BIT_SERVICE_UUIDS,
     AD_INCOMPLETE_32_BIT_SERVICE_UUIDS, AD_MANUFACTURER_SPECIFIC_DATA,
     AD_SERVICE_DATA_128_BIT_UUID, AD_SERVICE_DATA_16_BIT_UUID, AD_SERVICE_DATA_32_BIT_UUID,
     AD_SHORTENED_LOCAL_NAME, AD_TX_POWER_LEVEL,
@@ -573,8 +573,14 @@ mod tests {
 
         assert_eq!(encoded, [0x03, 0x19, 0xc0, 0x03]);
         assert_eq!(structure.appearance_value(), Some(0x03c0));
-        assert_eq!(AdStructure::complete_local_name("x").appearance_value(), None);
-        assert_eq!(AdStructure::raw(AD_APPEARANCE, [0xc0]).appearance_value(), None);
+        assert_eq!(
+            AdStructure::complete_local_name("x").appearance_value(),
+            None
+        );
+        assert_eq!(
+            AdStructure::raw(AD_APPEARANCE, [0xc0]).appearance_value(),
+            None
+        );
     }
 
     #[test]
@@ -746,10 +752,7 @@ mod tests {
 
         assert_eq!(decoded.0.len(), 12);
         assert_eq!(decoded.0[0].ad_type, AD_FLAGS);
-        assert_eq!(
-            decoded.0[0].flags_value(),
-            Some(BleAdvFlags::GENERAL_DISC)
-        );
+        assert_eq!(decoded.0[0].flags_value(), Some(BleAdvFlags::GENERAL_DISC));
         assert_eq!(decoded.0[1].ad_type, AD_COMPLETE_LOCAL_NAME);
         assert_eq!(decoded.0[1].local_name().as_deref(), Some("crafter-ble"));
         assert_eq!(decoded.0[2].ad_type, AD_COMPLETE_16_BIT_SERVICE_UUIDS);
@@ -783,7 +786,10 @@ mod tests {
         assert_eq!(decoded.0[10].ad_type, AD_APPEARANCE);
         assert_eq!(decoded.0[10].appearance_value(), Some(0x03c0));
         assert_eq!(decoded.0[11].ad_type, 0x2a);
-        assert_eq!(decoded.0[11], AdStructure::raw(0x2a, [0xde, 0xad, 0xbe, 0xef]));
+        assert_eq!(
+            decoded.0[11],
+            AdStructure::raw(0x2a, [0xde, 0xad, 0xbe, 0xef])
+        );
 
         let mut malformed = encoded;
         malformed.extend_from_slice(&[0x03, AD_COMPLETE_LOCAL_NAME, b'x']);

@@ -76,14 +76,8 @@ fn whad_reexport_public_api_compile() {
         root_builder.mode(),
         crafter::WhadBleMode::SniffAdv { channel: 38 }
     );
-    assert_eq!(
-        wire_builder.mode(),
-        crafter::wire::WhadBleMode::Inject
-    );
-    assert_eq!(
-        prelude_mode,
-        PreludeWhadBleMode::SniffAdv { channel: 39 }
-    );
+    assert_eq!(wire_builder.mode(), crafter::wire::WhadBleMode::Inject);
+    assert_eq!(prelude_mode, PreludeWhadBleMode::SniffAdv { channel: 39 });
     assert_eq!(
         prelude_builder.mode(),
         PreludeWhadBleMode::SniffAdv { channel: 39 }

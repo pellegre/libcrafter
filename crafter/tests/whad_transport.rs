@@ -47,7 +47,9 @@ const DOC_BLE_FLAGS_AD: [u8; 3] = [0x02, 0x01, 0x06];
 #[test]
 fn whad_transport_loopback_discovers_enters_ble_and_receives_advertisement() {
     let channel = LoopbackChannel::default();
-    channel.queue_message(&device_info_response(vec![proto::discovery::Domain::BtLe as u32]));
+    channel.queue_message(&device_info_response(vec![
+        proto::discovery::Domain::BtLe as u32,
+    ]));
     channel.queue_message(&domain_response(
         proto::discovery::Domain::BtLe as u32,
         command_mask(&[
@@ -85,7 +87,9 @@ fn whad_transport_loopback_discovers_enters_ble_and_receives_advertisement() {
 #[test]
 fn whad_transport_loopback_enter_ble_rejects_non_ble_discovery() {
     let channel = LoopbackChannel::default();
-    channel.queue_message(&device_info_response(vec![proto::discovery::Domain::Phy as u32]));
+    channel.queue_message(&device_info_response(vec![
+        proto::discovery::Domain::Phy as u32,
+    ]));
     channel.queue_message(&domain_response(proto::discovery::Domain::Phy as u32, 0));
     let mut link = WhadLink::new(channel);
 
@@ -144,7 +148,10 @@ impl WhadByteChannel for LoopbackChannel {
         let mut state = self.state.borrow_mut();
         let n = buf.len().min(state.inbound.len());
         for slot in &mut buf[..n] {
-            *slot = state.inbound.pop_front().expect("loopback byte disappeared");
+            *slot = state
+                .inbound
+                .pop_front()
+                .expect("loopback byte disappeared");
         }
         Ok(n)
     }

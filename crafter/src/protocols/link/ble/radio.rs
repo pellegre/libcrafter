@@ -205,8 +205,7 @@ impl BleRadio {
             flags |= BLE_RADIO_FLAG_CRC_VALID;
         }
 
-        flags
-            | (Self::phy_bits(self.effective_phy()) << BLE_RADIO_FLAG_PHY_SHIFT)
+        flags | (Self::phy_bits(self.effective_phy()) << BLE_RADIO_FLAG_PHY_SHIFT)
     }
 
     fn effective_channel(&self) -> u8 {
@@ -360,7 +359,10 @@ mod tests {
 
         assert_eq!(radio.channel.state(), FieldState::Unset);
         assert_eq!(radio.access_address.state(), FieldState::Defaulted);
-        assert_eq!(radio.access_address.value(), Some(&ADVERTISING_ACCESS_ADDRESS));
+        assert_eq!(
+            radio.access_address.value(),
+            Some(&ADVERTISING_ACCESS_ADDRESS)
+        );
         assert_eq!(radio.phy.state(), FieldState::Defaulted);
         assert_eq!(radio.phy.value(), Some(&BlePhy::Le1M));
         assert_eq!(radio.whitening.state(), FieldState::Defaulted);
@@ -398,7 +400,10 @@ mod tests {
         assert_eq!(radio.channel.state(), FieldState::User);
         assert_eq!(radio.channel.value(), Some(&37));
         assert_eq!(radio.access_address.state(), FieldState::Defaulted);
-        assert_eq!(radio.access_address.value(), Some(&ADVERTISING_ACCESS_ADDRESS));
+        assert_eq!(
+            radio.access_address.value(),
+            Some(&ADVERTISING_ACCESS_ADDRESS)
+        );
     }
 
     #[test]
@@ -410,18 +415,7 @@ mod tests {
 
         assert_eq!(
             bytes,
-            [
-                ADV_CHANNEL_37,
-                0,
-                0,
-                0,
-                0xD6,
-                0xBE,
-                0x89,
-                0x8E,
-                0x11,
-                0x04,
-            ]
+            [ADV_CHANNEL_37, 0, 0, 0, 0xD6, 0xBE, 0x89, 0x8E, 0x11, 0x04,]
         );
         assert_eq!(bytes[0], ADV_CHANNEL_37);
         assert_eq!(&bytes[4..8], &ADVERTISING_ACCESS_ADDRESS.to_le_bytes());

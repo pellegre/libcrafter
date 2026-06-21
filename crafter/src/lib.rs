@@ -141,8 +141,6 @@ pub use net::{
     SendRecvOptions, SendRecvReport, SendReport, SendTarget, SocketSend, SocketSender,
 };
 pub use wire::Sniffer;
-#[cfg(feature = "whad")]
-pub use wire::{WhadBleMode, WhadWireBuilder};
 pub use wire::{
     derive_pmk, derive_ptk, BackendKind, BluetoothMetadata, Dot11Metadata, DropAllTransform,
     DuplicateTransform, IpDefrag, IpDefragConfig, IpDefragEvictionReason, IpDefragMetadata,
@@ -160,6 +158,8 @@ pub use wire::{
     WriteReport, IP_DEFRAG_DEFAULT_MAX_AGE, IP_DEFRAG_DEFAULT_MAX_BYTES_PER_DATAGRAM,
     IP_DEFRAG_DEFAULT_MAX_DATAGRAMS, IP_FRAGMENT_MIN_MTU,
 };
+#[cfg(feature = "whad")]
+pub use wire::{WhadBleMode, WhadWireBuilder};
 
 /// Core packet and protocol APIs.
 pub mod core {
@@ -190,8 +190,6 @@ pub mod core {
 /// [`PacketTransform`], [`Sniffer`], and [`Transmitter`].
 pub mod prelude {
     pub use crate::core::*;
-    #[cfg(feature = "whad")]
-    pub use crate::{WhadBleMode, WhadWireBuilder};
     pub use crate::{
         default_interface, default_interface_in, default_interface_name, derive_pmk, derive_ptk,
         find_interface, find_interface_in, get_ip_strings, get_ips, get_my_ip, get_my_ip_in,
@@ -221,4 +219,6 @@ pub mod prelude {
         IP_DEFRAG_DEFAULT_MAX_AGE, IP_DEFRAG_DEFAULT_MAX_BYTES_PER_DATAGRAM,
         IP_DEFRAG_DEFAULT_MAX_DATAGRAMS, IP_FRAGMENT_MIN_MTU,
     };
+    #[cfg(feature = "whad")]
+    pub use crate::{WhadBleMode, WhadWireBuilder};
 }
