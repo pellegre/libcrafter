@@ -186,6 +186,13 @@ class RipSpecLoadingTest(unittest.TestCase):
                 self.assertIn("scapy", feature.backend_support)
                 self.assertIn("libcrafter", feature.backend_support)
 
+    def test_scapy_backend_advertises_rip_feature_materialization(self) -> None:
+        from tools.oracle.engine.backends.scapy import packets
+
+        for name in ("rip_header", "rip_entries", "rip_auth", "ripng_rtes"):
+            with self.subTest(feature=name):
+                self.assertIn(name, packets._SUPPORTED_FEATURES)
+
     def test_rip_smoke_profile_is_registered(self) -> None:
         self.assertIn("rip-smoke", self.specs.profiles)
 
