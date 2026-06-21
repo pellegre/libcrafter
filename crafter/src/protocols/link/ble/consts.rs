@@ -8,21 +8,28 @@ pub const ADV_CRC_INIT: u32 = 0x55_5555;
 /// Primary advertising channel index 37.
 pub const ADV_CHANNEL_37: u8 = 37;
 /// Primary advertising channel index 38.
+#[cfg(test)]
 pub const ADV_CHANNEL_38: u8 = 38;
 /// Primary advertising channel index 39.
+#[cfg(test)]
 pub const ADV_CHANNEL_39: u8 = 39;
 
 /// Center frequency for advertising channel 37, in MHz.
+#[cfg(test)]
 pub const ADV_CHANNEL_37_FREQUENCY_MHZ: u16 = 2402;
 /// Center frequency for advertising channel 38, in MHz.
+#[cfg(test)]
 pub const ADV_CHANNEL_38_FREQUENCY_MHZ: u16 = 2426;
 /// Center frequency for advertising channel 39, in MHz.
+#[cfg(test)]
 pub const ADV_CHANNEL_39_FREQUENCY_MHZ: u16 = 2480;
 
 /// Primary advertising channels.
+#[cfg(test)]
 pub const ADVERTISING_CHANNELS: [u8; 3] = [ADV_CHANNEL_37, ADV_CHANNEL_38, ADV_CHANNEL_39];
 
 /// Return the center frequency, in MHz, for a primary advertising channel.
+#[cfg(test)]
 pub const fn advertising_channel_frequency_mhz(channel: u8) -> Option<u16> {
     match channel {
         ADV_CHANNEL_37 => Some(ADV_CHANNEL_37_FREQUENCY_MHZ),
@@ -33,6 +40,7 @@ pub const fn advertising_channel_frequency_mhz(channel: u8) -> Option<u16> {
 }
 
 /// Return the primary advertising channel for a center frequency in MHz.
+#[cfg(test)]
 pub const fn advertising_frequency_channel(frequency_mhz: u16) -> Option<u8> {
     match frequency_mhz {
         ADV_CHANNEL_37_FREQUENCY_MHZ => Some(ADV_CHANNEL_37),
@@ -110,8 +118,10 @@ pub const AD_MANUFACTURER_SPECIFIC_DATA: u8 = 0xFF;
 /// GAP Advertising Data type codepoint.
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg(test)]
 pub struct AdType(u8);
 
+#[cfg(test)]
 impl AdType {
     pub const FLAGS: Self = Self(AD_FLAGS);
     pub const INCOMPLETE_16_BIT_SERVICE_UUIDS: Self = Self(AD_INCOMPLETE_16_BIT_SERVICE_UUIDS);

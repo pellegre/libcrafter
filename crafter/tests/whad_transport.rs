@@ -15,6 +15,8 @@ pub(crate) const WHAD_TARGET_PROTOCOL_VERSION: u32 = 3;
 
 pub(crate) mod proto {
     #![allow(dead_code)]
+    // The vendored WHAD protobuf schema owns its enum variant names.
+    #![allow(clippy::enum_variant_names)]
 
     include!(concat!(env!("OUT_DIR"), "/whad_proto.rs"));
 }
@@ -25,6 +27,10 @@ mod framing;
 #[path = "../src/wire/backend/whad/messages.rs"]
 mod messages;
 
+// This integration test imports the production transport module but exercises
+// only the loopback channel; the serial channel remains covered by the library
+// build.
+#[allow(dead_code)]
 #[path = "../src/wire/backend/whad/transport.rs"]
 mod transport;
 
