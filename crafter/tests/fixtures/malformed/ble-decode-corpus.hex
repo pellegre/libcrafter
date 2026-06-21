@@ -1,0 +1,9 @@
+# name|expected-kind|expected-context-or-field|hex
+# Target is always LinkType::BluetoothLeLl.
+
+too-short-pseudo-header|buffer-too-short|ble.radio.pseudo_header|250000
+pdu-length-exceeds-buffer|buffer-too-short|ble.adv.payload|25000000d6be898e1104d6be898e4009332211
+ad-length-runs-past-buffer|buffer-too-short|ble.ad.structure|25000000d6be898e1104d6be898e4009332211eeffc005ffaa
+unknown-pdu-type-nibble|invalid-field-value|ble.adv.pdu_type|25000000d6be898e1104d6be898e0700
+unknown-ad-type-raw|decodes|unknown-ad-type|25000000d6be898e1104d6be898e400a332211eeffc0037faabb
+over-31-octet-ad-payload|decodes|over-31-ad-payload|25000000d6be898e1104d6be898e4028332211eeffc021ff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
