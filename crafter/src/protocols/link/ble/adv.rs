@@ -2,7 +2,7 @@
 
 use core::any::Any;
 
-use crate::error::Result;
+use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::mac::MacAddr;
 use crate::packet::{IntoPacket, Layer, LayerContext, Packet};
@@ -336,6 +336,86 @@ impl<R: IntoPacket> core::ops::Div<R> for BleLlAdv {
     }
 }
 
+/// Decode a BLE advertising-channel Link Layer PDU header and address fields.
+pub(crate) fn decode_ble_adv(bytes: &[u8]) -> Result<(BleLlAdv, &[u8])> {
+    if bytes.len() < 2 {
+        return Err(CrafterError::buffer_too_short(
+            "ble.adv.header",
+            2,
+            bytes.len(),
+        ));
+    }
+
+    let header0 = bytes[0];
+    let pdu_type = BleAdvPduType::from_u4(header0 & 0x0f).ok_or_else(|| {
+        CrafterError::invalid_field_value("ble.adv.pdu_type", "unknown advertising PDU type")
+    })?;
+    let length = bytes[1] as usize;
+    let available_payload = bytes.len() - 2;
+    if available_payload < length {
+        return Err(CrafterError::buffer_too_short(
+            "ble.adv.payload",
+            length,
+            available_payload,
+        ));
+    }
+
+    let payload = &bytes[2..2 + length];
+    let mut offset = 0;
+    let adv_a = read_ble_adv_address(payload, &mut offset, "ble.adv.adv_a")?;
+    let target_a = if ble_adv_pdu_type_has_target_address(pdu_type) {
+        read_ble_adv_address(payload, &mut offset, "ble.adv.target_a")?
+    } else {
+        Field::unset()
+    };
+
+    let adv = BleLlAdv {
+        pdu_type: Field::user(pdu_type),
+        ch_sel: Field::user((header0 & 0x20) != 0),
+        tx_add: Field::user((header0 & 0x40) != 0),
+        rx_add: Field::user((header0 & 0x80) != 0),
+        length: Field::user(bytes[1]),
+        adv_a,
+        target_a,
+        payload: Vec::new(),
+    };
+
+    Ok((adv, &payload[offset..]))
+}
+
+fn read_ble_adv_address(
+    payload: &[u8],
+    offset: &mut usize,
+    context: &'static str,
+) -> Result<Field<MacAddr>> {
+    let required = *offset + core::mem::size_of::<MacAddr>();
+    if payload.len() < required {
+        return Err(CrafterError::buffer_too_short(
+            context,
+            required,
+            payload.len(),
+        ));
+    }
+
+    let address = MacAddr::new([
+        payload[*offset],
+        payload[*offset + 1],
+        payload[*offset + 2],
+        payload[*offset + 3],
+        payload[*offset + 4],
+        payload[*offset + 5],
+    ]);
+    *offset = required;
+    Ok(Field::user(address))
+}
+
+fn ble_adv_pdu_type_has_target_address(pdu_type: BleAdvPduType) -> bool {
+    matches!(
+        pdu_type,
+        BleAdvPduType::AdvDirectInd | BleAdvPduType::ScanReq | BleAdvPduType::ConnectInd
+    )
+}
+
 fn display_to_on_air_address(address: MacAddr) -> MacAddr {
     reverse_address(address)
 }
@@ -483,6 +563,73 @@ mod tests {
                 ("length", "6".to_string()),
                 ("adv_a", "C0:FF:EE:11:22:33".to_string()),
             ]
+        );
+    }
+
+    #[test]
+    fn ble_adv_decode_adv_ind_returns_layer_and_ad_tail() {
+        let bytes = [
+            0x40, 0x09, 0x33, 0x22, 0x11, 0xee, 0xff, 0xc0, 0x02, 0x01, 0x06,
+        ];
+
+        let (adv, tail) = decode_ble_adv(&bytes).expect("decode ADV_IND");
+
+        assert_eq!(adv.pdu_type.state(), FieldState::User);
+        assert_eq!(adv.pdu_type.value(), Some(&BleAdvPduType::AdvInd));
+        assert_eq!(adv.ch_sel.value(), Some(&false));
+        assert_eq!(adv.tx_add.value(), Some(&true));
+        assert_eq!(adv.rx_add.value(), Some(&false));
+        assert_eq!(adv.length.value(), Some(&9));
+        assert_eq!(
+            adv.adv_a.value().copied().unwrap().octets(),
+            [0x33, 0x22, 0x11, 0xee, 0xff, 0xc0]
+        );
+        assert_eq!(
+            adv.adv_a_value().unwrap(),
+            MacAddr::new([0xc0, 0xff, 0xee, 0x11, 0x22, 0x33])
+        );
+        assert_eq!(tail, &[0x02, 0x01, 0x06]);
+    }
+
+    #[test]
+    fn ble_adv_decode_truncated_header_is_structured_error() {
+        let err = decode_ble_adv(&[0x40]).expect_err("must reject truncated header");
+
+        assert_eq!(
+            err,
+            CrafterError::BufferTooShort {
+                context: "ble.adv.header",
+                required: 2,
+                available: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn ble_adv_decode_overlong_length_is_structured_error() {
+        let err = decode_ble_adv(&[0x40, 0x09, 0x33, 0x22, 0x11])
+            .expect_err("must reject over-long payload length");
+
+        assert_eq!(
+            err,
+            CrafterError::BufferTooShort {
+                context: "ble.adv.payload",
+                required: 9,
+                available: 3,
+            }
+        );
+    }
+
+    #[test]
+    fn ble_adv_decode_unknown_pdu_type_is_invalid_field_value() {
+        let err = decode_ble_adv(&[0x07, 0x00]).expect_err("must reject unknown PDU type");
+
+        assert_eq!(
+            err,
+            CrafterError::InvalidFieldValue {
+                field: "ble.adv.pdu_type",
+                reason: "unknown advertising PDU type",
+            }
         );
     }
 }
