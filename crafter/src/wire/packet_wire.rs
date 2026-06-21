@@ -35,8 +35,7 @@ use super::{Result, WireError};
 #[cfg(not(feature = "whad"))]
 const WHAD_FEATURE_DISABLED_REASON: &str =
     "the whad feature is disabled; enable the whad feature to open WHAD serial targets";
-#[cfg(feature = "whad")]
-const WHAD_DEFAULT_INJECT_CHANNEL: u8 = 37;
+const WHAD_DEFAULT_BLE_CHANNEL: u8 = 37;
 
 /// Boxed packet source returned by an opened packet wire.
 ///
@@ -86,6 +85,8 @@ pub enum PacketWireTarget {
         port: String,
         /// BLE mode to enter after discovery.
         mode: WhadBleMode,
+        /// Whether opening this target must avoid serial I/O and live WHAD control frames.
+        dry_run: bool,
     },
 }
 
@@ -147,6 +148,7 @@ pub struct PacketWireBuilder {
     pcap_promisc: bool,
     pcap_immediate: bool,
     pcap_nonblocking: bool,
+    whad_channel: u8,
     source: Option<OpenedPacketSource>,
     writer: Option<OpenedPacketWriter>,
 }
@@ -161,6 +163,7 @@ impl PacketWireBuilder {
             pcap_promisc: DEFAULT_INTERFACE_PROMISC,
             pcap_immediate: DEFAULT_INTERFACE_IMMEDIATE,
             pcap_nonblocking: DEFAULT_INTERFACE_NONBLOCKING,
+            whad_channel: WHAD_DEFAULT_BLE_CHANNEL,
             source: None,
             writer: None,
         }
@@ -282,8 +285,12 @@ impl PacketWireBuilder {
                 }
                 PacketWireTarget::PcapRecorder { .. } => {}
                 PacketWireTarget::RawSocketInterface { .. } => {}
-                PacketWireTarget::WhadSerial { port, mode } => {
-                    self.source = open_whad_serial_source(port, *mode)?;
+                PacketWireTarget::WhadSerial {
+                    port,
+                    mode,
+                    dry_run,
+                } => {
+                    self.source = open_whad_serial_source(port, *mode, *dry_run)?;
                 }
             }
         }
@@ -308,8 +315,13 @@ impl PacketWireBuilder {
                 }
                 PacketWireTarget::PcapFile { .. } => {}
                 PacketWireTarget::RawSocketInterface { .. } => {}
-                PacketWireTarget::WhadSerial { port, mode } => {
-                    self.writer = open_whad_serial_writer(port, *mode)?;
+                PacketWireTarget::WhadSerial {
+                    port,
+                    mode,
+                    dry_run,
+                } => {
+                    self.writer =
+                        open_whad_serial_writer(port, *mode, *dry_run, self.whad_channel)?;
                 }
             }
         }
@@ -330,6 +342,11 @@ impl PacketWireBuilder {
     #[cfg(test)]
     fn with_writer(mut self, writer: impl PacketWriter + Send + 'static) -> Self {
         self.writer = Some(Box::new(writer));
+        self
+    }
+
+    fn whad_channel(mut self, channel: u8) -> Self {
+        self.whad_channel = channel;
         self
     }
 }
@@ -422,6 +439,98 @@ impl RawSocketWireBuilder {
     }
 }
 
+/// Builder for a WHAD-compatible BLE serial packet wire.
+///
+/// WHAD devices are live serial endpoints, so this builder defaults to a
+/// dry-run capability handle that records the requested port and BLE mode
+/// without opening the serial port or sending WHAD control frames. Call
+/// [`Self::live`] to explicitly opt in to serial discovery and BLE mode entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WhadWireBuilder {
+    port: String,
+    mode: WhadBleMode,
+    channel: u8,
+    live: bool,
+}
+
+impl WhadWireBuilder {
+    fn new(port: impl Into<String>) -> Self {
+        Self {
+            port: port.into(),
+            mode: WhadBleMode::SniffAdv {
+                channel: WHAD_DEFAULT_BLE_CHANNEL,
+            },
+            channel: WHAD_DEFAULT_BLE_CHANNEL,
+            live: false,
+        }
+    }
+
+    /// Serial port path or name selected for WHAD discovery and live traffic.
+    pub fn port(&self) -> &str {
+        self.port.as_str()
+    }
+
+    /// BLE mode this builder will request when opened live.
+    pub const fn mode(&self) -> WhadBleMode {
+        self.mode
+    }
+
+    /// Whether this builder will open the WHAD serial port.
+    pub const fn is_live(&self) -> bool {
+        self.live
+    }
+
+    /// Whether this builder will avoid serial I/O and live WHAD control frames.
+    pub const fn is_dry_run(&self) -> bool {
+        !self.live
+    }
+
+    /// Capture BLE advertising PDUs on the selected advertising channel.
+    pub const fn ble_sniff(mut self, channel: u8) -> Self {
+        self.channel = channel;
+        self.mode = WhadBleMode::SniffAdv { channel };
+        self
+    }
+
+    /// Inject BLE raw PDUs through WHAD's central/raw-PDU path.
+    pub const fn ble_inject(mut self) -> Self {
+        self.mode = WhadBleMode::Inject;
+        self
+    }
+
+    /// Set the BLE channel used by sniff mode and inject fallback writes.
+    pub const fn channel(mut self, channel: u8) -> Self {
+        self.channel = channel;
+        if let WhadBleMode::SniffAdv { .. } = self.mode {
+            self.mode = WhadBleMode::SniffAdv { channel };
+        }
+        self
+    }
+
+    /// Keep this WHAD target offline.
+    pub const fn dry_run(mut self) -> Self {
+        self.live = false;
+        self
+    }
+
+    /// Opt in to live WHAD serial discovery, mode entry, and packet I/O.
+    pub const fn live(mut self) -> Self {
+        self.live = true;
+        self
+    }
+
+    /// Open this WHAD serial target as one packet wire.
+    pub fn open(self) -> Result<PacketWire> {
+        PacketWireBuilder::new(PacketWireTarget::WhadSerial {
+            port: self.port,
+            mode: self.mode,
+            dry_run: !self.live,
+        })
+        .whad_channel(self.channel)
+        .open()
+    }
+}
+
 impl fmt::Debug for PacketWireBuilder {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PacketWireBuilder")
@@ -432,6 +541,7 @@ impl fmt::Debug for PacketWireBuilder {
             .field("pcap_promisc", &self.pcap_promisc)
             .field("pcap_immediate", &self.pcap_immediate)
             .field("pcap_nonblocking", &self.pcap_nonblocking)
+            .field("whad_channel", &self.whad_channel)
             .field("has_source", &self.source.is_some())
             .field("has_writer", &self.writer.is_some())
             .finish()
@@ -486,6 +596,16 @@ impl PacketWire {
     /// validation error rather than being rerouted through raw socket behavior.
     pub fn raw_socket_interface(interface: impl Into<String>) -> RawSocketWireBuilder {
         RawSocketWireBuilder::new(interface)
+    }
+
+    /// Build a WHAD-compatible BLE serial target.
+    ///
+    /// This constructor defaults to dry-run mode so opening the returned
+    /// builder does not touch the serial port. Call [`WhadWireBuilder::live`]
+    /// to explicitly opt in to WHAD serial discovery, BLE mode entry, and
+    /// packet I/O.
+    pub fn whad_serial(port: impl Into<String>) -> WhadWireBuilder {
+        WhadWireBuilder::new(port)
     }
 
     /// Inspect the single backend or interface opened by this wire.
@@ -614,7 +734,15 @@ fn unsupported_split(target: &PacketWireTarget, has_source: bool, has_writer: bo
 }
 
 #[cfg(feature = "whad")]
-fn open_whad_serial_source(port: &str, mode: WhadBleMode) -> Result<Option<OpenedPacketSource>> {
+fn open_whad_serial_source(
+    port: &str,
+    mode: WhadBleMode,
+    dry_run: bool,
+) -> Result<Option<OpenedPacketSource>> {
+    if dry_run {
+        return Ok(None);
+    }
+
     match mode {
         WhadBleMode::SniffAdv { .. } => {
             let (link, _) = open_whad_serial_link(port, mode)?;
@@ -625,28 +753,52 @@ fn open_whad_serial_source(port: &str, mode: WhadBleMode) -> Result<Option<Opene
 }
 
 #[cfg(not(feature = "whad"))]
-fn open_whad_serial_source(_port: &str, _mode: WhadBleMode) -> Result<Option<OpenedPacketSource>> {
-    Err(whad_feature_disabled())
+fn open_whad_serial_source(
+    _port: &str,
+    _mode: WhadBleMode,
+    dry_run: bool,
+) -> Result<Option<OpenedPacketSource>> {
+    if dry_run {
+        Ok(None)
+    } else {
+        Err(whad_feature_disabled())
+    }
 }
 
 #[cfg(feature = "whad")]
-fn open_whad_serial_writer(port: &str, mode: WhadBleMode) -> Result<Option<OpenedPacketWriter>> {
+fn open_whad_serial_writer(
+    port: &str,
+    mode: WhadBleMode,
+    dry_run: bool,
+    channel: u8,
+) -> Result<Option<OpenedPacketWriter>> {
+    if dry_run {
+        return Ok(None);
+    }
+
     match mode {
         WhadBleMode::Inject => {
             let (link, device) = open_whad_serial_link(port, mode)?;
-            Ok(Some(Box::new(WhadWriter::new(
-                link,
-                device,
-                WHAD_DEFAULT_INJECT_CHANNEL,
-            ))))
+            Ok(Some(Box::new(
+                WhadWriter::new(link, device, channel).with_dry_run(dry_run),
+            )))
         }
         WhadBleMode::SniffAdv { .. } => Ok(None),
     }
 }
 
 #[cfg(not(feature = "whad"))]
-fn open_whad_serial_writer(_port: &str, _mode: WhadBleMode) -> Result<Option<OpenedPacketWriter>> {
-    Err(whad_feature_disabled())
+fn open_whad_serial_writer(
+    _port: &str,
+    _mode: WhadBleMode,
+    dry_run: bool,
+    _channel: u8,
+) -> Result<Option<OpenedPacketWriter>> {
+    if dry_run {
+        Ok(None)
+    } else {
+        Err(whad_feature_disabled())
+    }
 }
 
 #[cfg(feature = "whad")]
@@ -763,6 +915,7 @@ mod tests {
         let target = PacketWireTarget::WhadSerial {
             port: "/dev/ttyACM0".to_string(),
             mode: WhadBleMode::SniffAdv { channel: 37 },
+            dry_run: true,
         };
 
         assert_eq!(target.path(), None);
@@ -778,12 +931,73 @@ mod tests {
             PacketWireBuilder::new(PacketWireTarget::WhadSerial {
                 port: "/dev/ttyACM0".to_string(),
                 mode: WhadBleMode::Inject,
+                dry_run: false,
             })
             .open(),
             "open",
             "whad",
             WHAD_FEATURE_DISABLED_REASON,
         );
+    }
+
+    #[cfg(all(test, feature = "whad"))]
+    #[test]
+    fn whad_builder_defaults_to_dry_run_without_opening_serial() {
+        let builder = PacketWire::whad_serial("/dev/ttyACM0");
+
+        assert_eq!(builder.port(), "/dev/ttyACM0");
+        assert_eq!(builder.mode(), WhadBleMode::SniffAdv { channel: 37 });
+        assert!(builder.is_dry_run());
+        assert!(!builder.is_live());
+
+        let wire = builder.open().unwrap();
+        assert_eq!(
+            wire.target(),
+            &PacketWireTarget::WhadSerial {
+                port: "/dev/ttyACM0".to_string(),
+                mode: WhadBleMode::SniffAdv { channel: 37 },
+                dry_run: true,
+            }
+        );
+        assert!(!wire.has_source());
+        assert!(!wire.has_writer());
+    }
+
+    #[cfg(all(test, feature = "whad"))]
+    #[test]
+    fn whad_builder_live_flips_target_to_live_without_opening_in_dry_run_path() {
+        let builder = PacketWire::whad_serial("/dev/ttyACM0").ble_inject().live();
+
+        assert_eq!(builder.mode(), WhadBleMode::Inject);
+        assert!(builder.is_live());
+        assert!(!builder.is_dry_run());
+
+        let target = PacketWireTarget::WhadSerial {
+            port: builder.port().to_string(),
+            mode: builder.mode(),
+            dry_run: builder.is_dry_run(),
+        };
+
+        assert_eq!(
+            target,
+            PacketWireTarget::WhadSerial {
+                port: "/dev/ttyACM0".to_string(),
+                mode: WhadBleMode::Inject,
+                dry_run: false,
+            }
+        );
+    }
+
+    #[cfg(all(test, feature = "whad"))]
+    #[test]
+    fn whad_builder_channel_updates_sniff_mode_and_preserves_inject_mode() {
+        let sniff = PacketWire::whad_serial("/dev/ttyACM0").channel(39);
+        assert_eq!(sniff.mode(), WhadBleMode::SniffAdv { channel: 39 });
+
+        let inject = PacketWire::whad_serial("/dev/ttyACM0")
+            .ble_inject()
+            .channel(38);
+        assert_eq!(inject.mode(), WhadBleMode::Inject);
     }
 
     #[test]
