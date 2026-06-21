@@ -24,6 +24,16 @@ fn prelude_builds_and_compiles_packet() -> crafter::Result<()> {
 }
 
 #[test]
+fn ble_prelude_reexports_compile() {
+    use crafter::prelude::{AdStructure, BleLlAdv, BleRadio};
+
+    let ad: AdStructure = AdStructure::flags_general_disc();
+    let _: BleRadio = BleRadio::advertising(37);
+    let _: BleLlAdv = BleLlAdv::adv_ind().push_ad(ad);
+    let _: crafter::prelude::LinkType = crafter::prelude::LinkType::BluetoothLeLl;
+}
+
+#[test]
 fn public_api_ip_fragment_exports() {
     use crafter::wire::{
         IpDefrag as WireIpDefrag, IpDefragConfig as WireIpDefragConfig,
