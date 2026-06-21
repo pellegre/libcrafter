@@ -46,6 +46,13 @@ the generic provider execution flow.
 registry. It is a CI-safe planning mode that does not create endpoints and
 does not represent a provider-backed live exchange.
 
+BLE advertising coverage is intentionally limited to this dry-run boundary in
+the oracle. The `smoke` corpus includes a BLE advertising plan so
+`local-dry-run` records that no network provider owns BLE radio traffic, and
+the plan is skipped for provider-backed exchange rather than transmitted. Real
+on-air BLE validation belongs to the ignored `.scratch/ble-whad-smoke` WHAD
+dongle harness, not to the Hetzner, QEMU, or VirtualBox live providers.
+
 The current provider-backed adapters share the same oracle execution path:
 
 | Oracle provider | Wire provider | Wire exposure | Packet exchange |

@@ -5,7 +5,7 @@ description: Seeded sampling profiles for offline, pcap, and live oracle runs.
 
 profiles:
   - name: smoke
-    purpose: tiny stable local and PR sanity coverage
+    purpose: tiny stable local, PR, and BLE dry-run boundary coverage
     default_count: 10
     family_weights:
       - name: ipv4
@@ -14,6 +14,8 @@ profiles:
         weight: 1
       - name: udp
         weight: 1
+      - name: ble
+        weight: 2
     payload_length:
       min: 0
       max: 32

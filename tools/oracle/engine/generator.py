@@ -974,7 +974,11 @@ class PacketGenerator:
                 and family is None
                 and self.profile == "smoke"
             ):
-                if stack_layers not in (["ipv4", "udp", "payload"], ["ipv6", "udp", "payload"]):
+                if stack_layers not in (
+                    ["ipv4", "udp", "payload"],
+                    ["ipv6", "udp", "payload"],
+                    ["ble_radio", "ble_adv"],
+                ):
                     continue
             if (
                 feature is None
@@ -1356,6 +1360,14 @@ class PacketGenerator:
         # Focused fragmentation smoke profile: select only stack-declared
         # fragment cases so dry-run plans stay packet-shape consistent.
         if feature is None and self.profile in _IP_FRAGMENT_SMOKE_PROFILES:
+            if not choices:
+                return "default"
+            return weighted_choice(rng, choices)
+        if (
+            feature is None
+            and self.profile == "smoke"
+            and stack_layers == ["ble_radio", "ble_adv"]
+        ):
             if not choices:
                 return "default"
             return weighted_choice(rng, choices)
