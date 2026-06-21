@@ -9,6 +9,9 @@ pub(crate) mod framing;
 #[cfg(feature = "whad")]
 pub(crate) mod messages;
 
+#[cfg(feature = "whad")]
+pub(crate) mod transport;
+
 pub(crate) mod proto {
     #![allow(dead_code)]
 
