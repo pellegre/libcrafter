@@ -33,7 +33,7 @@ use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::{Dot11, Ethernet, Ipv4, Ipv6, LinuxSll, NullLoopback, Radiotap};
+use crate::{BleRadio, Dot11, Ethernet, Ipv4, Ipv6, LinuxSll, NullLoopback, Radiotap};
 
 use super::super::record::{BackendKind, PacketRecord};
 use super::super::source::PacketSource;
@@ -622,6 +622,8 @@ fn packet_pcap_link_type(record: &PacketRecord) -> Option<PcapLinkType> {
         Some(PcapLinkType::Ieee80211)
     } else if first.as_any().is::<Radiotap>() {
         Some(PcapLinkType::Ieee80211Radiotap)
+    } else if first.as_any().is::<BleRadio>() {
+        Some(PcapLinkType::BluetoothLeLl)
     } else if first.as_any().is::<LinuxSll>() {
         Some(PcapLinkType::LinuxSll)
     } else if first.as_any().is::<NullLoopback>() {
@@ -661,8 +663,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        Dot11, Ethernet, Ipv4, LinkType, MacAddr, Packet, PacketOrigin, PacketWire, Radiotap, Raw,
-        Sniffer, Tcp, Transmitter, WireError,
+        AdStructure, BleLlAdv, BleRadio, Dot11, Ethernet, Ipv4, LinkType, MacAddr, Packet,
+        PacketOrigin, PacketWire, Radiotap, Raw, Sniffer, Tcp, Transmitter, WireError,
     };
 
     static NEXT_TEMP_PCAP: AtomicUsize = AtomicUsize::new(0);
@@ -1236,6 +1238,44 @@ mod tests {
 
         assert_eq!(actual_summaries, expected_summaries);
         assert_eq!(actual_timestamps, expected_timestamps);
+    }
+
+    #[test]
+    fn pcap_write_ble() {
+        let temp = TempPcap {
+            path: temp_pcap_path("write-ble"),
+        };
+        let packet = BleRadio::advertising(37)
+            / BleLlAdv::adv_ind()
+                .adv_a_str("C0:FF:EE:11:22:33")
+                .unwrap()
+                .push_ad(AdStructure::flags_general_disc());
+        let record = PacketRecord::new(packet);
+        assert_eq!(
+            record_pcap_link_type(&record),
+            Some(PcapLinkType::BluetoothLeLl)
+        );
+
+        {
+            let writer = PacketWire::pcap_recorder(temp.path(), LinkType::BluetoothLeLl)
+                .open()
+                .unwrap()
+                .writer()
+                .unwrap();
+            let mut transmitter = Transmitter::new(writer);
+            let reports = transmitter.write_record(record).unwrap();
+
+            assert_eq!(reports.len(), 1);
+            assert_eq!(reports[0].backend(), &BackendKind::PcapFile);
+            assert!(!reports[0].is_dry_run());
+        }
+
+        let reader = PcapReader::open(temp.path()).unwrap();
+        assert_eq!(reader.header().pcap_link_type(), PcapLinkType::BluetoothLeLl);
+        assert_eq!(
+            reader.header().pcap_link_type().datalink(),
+            DLT_BLUETOOTH_LE_LL_WITH_PHDR
+        );
     }
 
     #[test]
