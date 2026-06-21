@@ -1,6 +1,10 @@
 //! BLE radio pseudo-header metadata.
 
+use core::any::Any;
+
+use crate::error::Result;
 use crate::field::Field;
+use crate::packet::{Layer, LayerContext};
 
 use super::consts::{ADVERTISING_ACCESS_ADDRESS, ADV_CHANNEL_37, ADV_CRC_INIT};
 
@@ -27,6 +31,16 @@ pub enum BlePhy {
 impl Default for BlePhy {
     fn default() -> Self {
         Self::Le1M
+    }
+}
+
+impl BlePhy {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Le1M => "1M",
+            Self::Le2M => "2M",
+            Self::LeCoded => "Coded",
+        }
     }
 }
 
@@ -146,13 +160,9 @@ impl BleRadio {
 
     /// Encode the BLE LE Link-Layer pcap pseudo-header.
     pub(crate) fn encode(&self, out: &mut Vec<u8>) {
-        let channel = self.channel.value().copied().unwrap_or(ADV_CHANNEL_37);
+        let channel = self.effective_channel();
         let signal_power = self.rssi.value().copied().unwrap_or(0) as u8;
-        let access_address = self
-            .access_address
-            .value()
-            .copied()
-            .unwrap_or(ADVERTISING_ACCESS_ADDRESS);
+        let access_address = self.effective_access_address();
 
         out.push(channel);
         out.push(signal_power);
@@ -186,8 +196,26 @@ impl BleRadio {
         }
 
         flags
-            | (Self::phy_bits(self.phy.value().copied().unwrap_or_default())
-                << BLE_RADIO_FLAG_PHY_SHIFT)
+            | (Self::phy_bits(self.effective_phy()) << BLE_RADIO_FLAG_PHY_SHIFT)
+    }
+
+    fn effective_channel(&self) -> u8 {
+        self.channel.value().copied().unwrap_or(ADV_CHANNEL_37)
+    }
+
+    fn effective_access_address(&self) -> u32 {
+        self.access_address
+            .value()
+            .copied()
+            .unwrap_or(ADVERTISING_ACCESS_ADDRESS)
+    }
+
+    fn effective_phy(&self) -> BlePhy {
+        self.phy.value().copied().unwrap_or_default()
+    }
+
+    fn effective_whitening(&self) -> bool {
+        self.whitening.value().copied().unwrap_or(true)
     }
 
     fn phy_bits(phy: BlePhy) -> u16 {
@@ -205,9 +233,71 @@ impl Default for BleRadio {
     }
 }
 
+impl Layer for BleRadio {
+    fn name(&self) -> &'static str {
+        "BleRadio"
+    }
+
+    fn summary(&self) -> String {
+        format!(
+            "BleRadio(ch={}, aa=0x{:08x}, phy={})",
+            self.effective_channel(),
+            self.effective_access_address(),
+            self.effective_phy().label()
+        )
+    }
+
+    fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        let mut fields = vec![
+            ("channel", self.effective_channel().to_string()),
+            (
+                "access_address",
+                format!("0x{:08x}", self.effective_access_address()),
+            ),
+            ("phy", self.effective_phy().label().to_string()),
+            ("whitening", self.effective_whitening().to_string()),
+        ];
+
+        if let Some(rssi) = self.rssi.value() {
+            fields.push(("rssi", rssi.to_string()));
+        }
+        if let Some(crc_valid) = self.crc_valid.value() {
+            fields.push(("crc_valid", crc_valid.to_string()));
+        }
+
+        fields
+    }
+
+    fn encoded_len(&self) -> usize {
+        BleRadio::encoded_len(self)
+    }
+
+    fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
+        self.encode(out);
+        Ok(())
+    }
+
+    fn clone_layer(&self) -> Box<dyn Layer> {
+        Box::new(self.clone())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn into_any(self: Box<Self>) -> Box<dyn Any> {
+        self
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::field::FieldState;
+    use crate::packet::Packet;
 
     use super::*;
 
@@ -295,5 +385,14 @@ mod tests {
                 .encoded_len(),
             BLE_RADIO_PSEUDO_HEADER_LEN
         );
+    }
+
+    #[test]
+    fn ble_radio_layer_packet_summary_includes_radio_fields() {
+        let packet = Packet::from_layer(BleRadio::advertising(38));
+        let summary = packet.summary();
+
+        assert!(summary.contains("ch=38"));
+        assert!(summary.contains("aa=0x8e89bed6"));
     }
 }
