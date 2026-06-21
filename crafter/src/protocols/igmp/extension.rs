@@ -324,7 +324,10 @@ impl Layer for IgmpExtension {
                     self.extension_type
                 ),
             ),
-            ("extension_length", self.extension_length_value().to_string()),
+            (
+                "extension_length",
+                self.extension_length_value().to_string(),
+            ),
             ("value", hex_bytes(self.value.as_bytes())),
         ]
     }
@@ -390,8 +393,8 @@ mod igmp_extension_model {
     use super::*;
     use crate::checksum::verify_internet_checksum;
     use crate::protocols::igmp::constants::{
-        IGMP_EXTENSION_TYPE_EXPERIMENTAL_FIRST, IGMP_FIXED_HEADER_LEN,
-        IGMP_TYPE_MEMBERSHIP_QUERY, IGMP_TYPE_V3_MEMBERSHIP_REPORT,
+        IGMP_EXTENSION_TYPE_EXPERIMENTAL_FIRST, IGMP_FIXED_HEADER_LEN, IGMP_TYPE_MEMBERSHIP_QUERY,
+        IGMP_TYPE_V3_MEMBERSHIP_REPORT,
     };
     use crate::protocols::igmp::message::Igmp;
     use crate::protocols::igmp::query::IgmpQuery;
@@ -495,11 +498,7 @@ mod igmp_extension_model {
 
         assert_eq!(
             extension.try_compile(),
-            Err(CrafterError::buffer_too_short(
-                "igmp.extension.value",
-                3,
-                2,
-            ))
+            Err(CrafterError::buffer_too_short("igmp.extension.value", 3, 2,))
         );
     }
 
@@ -525,11 +524,9 @@ mod igmp_extension_model {
     #[test]
     fn igmp_extension_encode_empty_query_tlv() -> crate::Result<()> {
         let query = IgmpQuery::new().with_extension_flag(true);
-        let packet = Igmp::v3_membership_query(
-            100,
-            core::net::Ipv4Addr::new(233, 252, 0, 60),
-            query,
-        ) / IgmpExtension::noop();
+        let packet =
+            Igmp::v3_membership_query(100, core::net::Ipv4Addr::new(233, 252, 0, 60), query)
+                / IgmpExtension::noop();
 
         let bytes = packet.compile()?;
 
@@ -554,9 +551,7 @@ mod igmp_extension_model {
         assert_eq!(bytes.as_bytes()[0], IGMP_TYPE_V3_MEMBERSHIP_REPORT);
         assert_eq!(
             &bytes.as_bytes()[IGMP_FIXED_HEADER_LEN..],
-            &[
-                0x80, 0x00, 0x00, 0x00, 0x12, 0x34, 0x00, 0x04, 0xde, 0xad, 0xbe, 0xef,
-            ]
+            &[0x80, 0x00, 0x00, 0x00, 0x12, 0x34, 0x00, 0x04, 0xde, 0xad, 0xbe, 0xef,]
         );
         assert!(verify_internet_checksum(bytes.as_bytes()));
 
@@ -568,20 +563,18 @@ mod igmp_extension_model {
         let query = IgmpQuery::new().with_extension_flag(true);
         let first = IgmpExtension::raw(0x0000, [0xaa]);
         let second = IgmpExtension::raw(0xfffe, [0xbb, 0xcc]);
-        let packet = Igmp::v3_membership_query(
-            100,
-            core::net::Ipv4Addr::new(233, 252, 0, 61),
-            query,
-        ) / first
-            / second;
+        let packet =
+            Igmp::v3_membership_query(100, core::net::Ipv4Addr::new(233, 252, 0, 61), query)
+                / first
+                / second;
 
         let bytes = packet.compile()?;
 
         assert_eq!(
             &bytes.as_bytes()[IGMP_FIXED_HEADER_LEN..],
             &[
-                0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0xaa, 0xff, 0xfe, 0x00, 0x02,
-                0xbb, 0xcc,
+                0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0xaa, 0xff, 0xfe, 0x00, 0x02, 0xbb,
+                0xcc,
             ]
         );
         assert!(verify_internet_checksum(bytes.as_bytes()));
@@ -616,11 +609,7 @@ mod igmp_extension_model {
 
         assert_eq!(
             packet.compile(),
-            Err(CrafterError::buffer_too_short(
-                "igmp.extension.value",
-                3,
-                2,
-            ))
+            Err(CrafterError::buffer_too_short("igmp.extension.value", 3, 2,))
         );
     }
 }
