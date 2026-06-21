@@ -2,8 +2,8 @@
 
 #![allow(dead_code)]
 
-use crate::{CrafterError, Result};
 use crate::wire::{Result as WireResult, WireError};
+use crate::{CrafterError, Result};
 
 use super::proto;
 use super::WHAD_TARGET_PROTOCOL_VERSION;
@@ -453,8 +453,7 @@ mod tests {
 
     #[test]
     fn whad_version_compatible_device_minimum_passes() {
-        let device_info =
-            device_info_with_protocol_min_version(WHAD_TARGET_PROTOCOL_VERSION - 1);
+        let device_info = device_info_with_protocol_min_version(WHAD_TARGET_PROTOCOL_VERSION - 1);
 
         assert_eq!(
             negotiate_protocol_version(&device_info).expect("protocol version is compatible"),
@@ -464,8 +463,7 @@ mod tests {
 
     #[test]
     fn whad_version_incompatible_device_minimum_returns_backend_error() {
-        let device_info =
-            device_info_with_protocol_min_version(WHAD_TARGET_PROTOCOL_VERSION + 1);
+        let device_info = device_info_with_protocol_min_version(WHAD_TARGET_PROTOCOL_VERSION + 1);
         let err = negotiate_protocol_version(&device_info).expect_err("version mismatch errors");
 
         match err {
