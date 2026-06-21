@@ -686,12 +686,12 @@ impl WhadWireBuilder {
         builder
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "whad"))]
     fn with_source(self, source: impl PacketSource + Send + 'static) -> PacketWireBuilder {
         self.into_packet_wire_builder().with_source(source)
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "whad"))]
     fn with_writer(self, writer: impl PacketWriter + Send + 'static) -> PacketWireBuilder {
         self.into_packet_wire_builder().with_writer(writer)
     }
