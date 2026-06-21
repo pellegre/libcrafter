@@ -154,11 +154,13 @@ impl BleRadio {
     }
 
     /// Resolved BLE physical channel index for backend translators.
+    #[cfg(feature = "whad")]
     pub(crate) fn effective_channel_for_backend(&self) -> u8 {
         self.effective_channel()
     }
 
     /// Resolved BLE Link Layer access address for backend translators.
+    #[cfg(feature = "whad")]
     pub(crate) fn effective_access_address_for_backend(&self) -> u32 {
         self.effective_access_address()
     }
