@@ -418,7 +418,7 @@ mod tests {
                 // Real firmware ORs capability flags into the low byte; parse
                 // must mask them off to recover the domain IDs (regression).
                 capabilities: vec![
-                    proto::discovery::Domain::Phy as u32 | 0x01, // | Scan
+                    proto::discovery::Domain::Phy as u32 | 0x01,  // | Scan
                     proto::discovery::Domain::BtLe as u32 | 0x06, // | Inject | Sniff
                 ],
             },
