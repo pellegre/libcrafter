@@ -146,6 +146,24 @@ pub(crate) fn parse_received_pdu(message: &proto::Message) -> Option<WhadRxPdu> 
     }
 }
 
+/// WHAD packs the domain in the top byte of each `capabilities` entry and the
+/// capability flags (Scan/Sniff/Inject/...) in the low bits. The discovery flow
+/// queries domains by ID, so isolate the domain bits. The real firmware ORs in
+/// capability flags that the clean-value unit fixtures never exercised, which is
+/// why querying the raw entries made the device reject the bogus domain.
+const WHAD_DOMAIN_MASK: u32 = 0xFF00_0000;
+
+fn domains_from_capabilities(capabilities: &[u32]) -> Vec<u32> {
+    let mut domains = Vec::new();
+    for capability in capabilities {
+        let domain = capability & WHAD_DOMAIN_MASK;
+        if domain != 0 && !domains.contains(&domain) {
+            domains.push(domain);
+        }
+    }
+    domains
+}
+
 pub(crate) fn parse_device_info_response(message: &proto::Message) -> Result<WhadDeviceInfo> {
     let response = match discovery_payload(message)? {
         proto::discovery::message::Msg::InfoResp(response) => response,
@@ -169,7 +187,7 @@ pub(crate) fn parse_device_info_response(message: &proto::Message) -> Result<Wha
             minor: response.fw_version_minor,
             revision: response.fw_version_rev,
         },
-        supported_domains: response.capabilities.clone(),
+        supported_domains: domains_from_capabilities(&response.capabilities),
     })
 }
 
@@ -397,9 +415,11 @@ mod tests {
                 fw_version_major: 1,
                 fw_version_minor: 2,
                 fw_version_rev: 3,
+                // Real firmware ORs capability flags into the low byte; parse
+                // must mask them off to recover the domain IDs (regression).
                 capabilities: vec![
-                    proto::discovery::Domain::Phy as u32,
-                    proto::discovery::Domain::BtLe as u32,
+                    proto::discovery::Domain::Phy as u32 | 0x01, // | Scan
+                    proto::discovery::Domain::BtLe as u32 | 0x06, // | Inject | Sniff
                 ],
             },
         ));
