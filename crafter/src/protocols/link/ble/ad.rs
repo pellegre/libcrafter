@@ -3,8 +3,9 @@
 use crate::error::{CrafterError, Result};
 
 use super::consts::{
-    AD_COMPLETE_16_BIT_SERVICE_UUIDS, AD_COMPLETE_LOCAL_NAME, AD_FLAGS,
-    AD_INCOMPLETE_16_BIT_SERVICE_UUIDS, AD_SHORTENED_LOCAL_NAME,
+    AD_COMPLETE_16_BIT_SERVICE_UUIDS, AD_COMPLETE_32_BIT_SERVICE_UUIDS, AD_COMPLETE_LOCAL_NAME,
+    AD_FLAGS, AD_INCOMPLETE_16_BIT_SERVICE_UUIDS, AD_INCOMPLETE_32_BIT_SERVICE_UUIDS,
+    AD_SHORTENED_LOCAL_NAME,
 };
 
 /// Flags AD structure bit values.
@@ -63,8 +64,24 @@ impl AdStructure {
         Self::from_service_uuids16(AD_INCOMPLETE_16_BIT_SERVICE_UUIDS, uuids)
     }
 
+    pub fn complete_service_uuids32(uuids: &[u32]) -> Self {
+        Self::from_service_uuids32(AD_COMPLETE_32_BIT_SERVICE_UUIDS, uuids)
+    }
+
+    pub fn incomplete_service_uuids32(uuids: &[u32]) -> Self {
+        Self::from_service_uuids32(AD_INCOMPLETE_32_BIT_SERVICE_UUIDS, uuids)
+    }
+
     fn from_service_uuids16(ad_type: u8, uuids: &[u16]) -> Self {
         let mut data = Vec::with_capacity(uuids.len() * 2);
+        for uuid in uuids {
+            data.extend_from_slice(&uuid.to_le_bytes());
+        }
+        Self::new(ad_type, data)
+    }
+
+    fn from_service_uuids32(ad_type: u8, uuids: &[u32]) -> Self {
+        let mut data = Vec::with_capacity(uuids.len() * 4);
         for uuid in uuids {
             data.extend_from_slice(&uuid.to_le_bytes());
         }
@@ -107,13 +124,27 @@ impl AdStructure {
         )
     }
 
-    pub(crate) fn encode(&self, out: &mut Vec<u8>) {
-        let length = self.length_override.unwrap_or_else(|| {
+    pub fn service_uuids32(&self) -> Option<Vec<u32>> {
+        if !matches!(
+            self.ad_type,
+            AD_COMPLETE_32_BIT_SERVICE_UUIDS | AD_INCOMPLETE_32_BIT_SERVICE_UUIDS
+        ) || self.data.len() % 4 != 0
+        {
+            return None;
+        }
+
+        Some(
             self.data
-                .len()
-                .saturating_add(1)
-                .min(u8::MAX as usize) as u8
-        });
+                .chunks_exact(4)
+                .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                .collect(),
+        )
+    }
+
+    pub(crate) fn encode(&self, out: &mut Vec<u8>) {
+        let length = self
+            .length_override
+            .unwrap_or_else(|| self.data.len().saturating_add(1).min(u8::MAX as usize) as u8);
 
         out.push(length);
         out.push(self.ad_type);
@@ -158,11 +189,7 @@ pub(crate) fn decode_ad_list(bytes: &[u8]) -> Result<AdList> {
         }
 
         if offset >= bytes.len() {
-            return Err(CrafterError::buffer_too_short(
-                "ble.ad.structure",
-                1,
-                0,
-            ));
+            return Err(CrafterError::buffer_too_short("ble.ad.structure", 1, 0));
         }
 
         let ad_type = bytes[offset];
@@ -237,8 +264,8 @@ mod tests {
         assert_eq!(
             encoded,
             [
-                0x0f, 0x09, b'l', b'i', b'b', b'c', b'r', b'a', b'f', b't', b'e', b'r', b'-',
-                b'n', b'r', b'f',
+                0x0f, 0x09, b'l', b'i', b'b', b'c', b'r', b'a', b'f', b't', b'e', b'r', b'-', b'n',
+                b'r', b'f',
             ]
         );
         assert_eq!(structure.local_name().as_deref(), Some("libcrafter-nrf"));
@@ -274,7 +301,10 @@ mod tests {
         assert_eq!(structure.ad_type, AD_INCOMPLETE_16_BIT_SERVICE_UUIDS);
         assert_eq!(structure.data, [0x0d, 0x18, 0x0f, 0x18]);
         assert_eq!(structure.service_uuids16(), Some(uuids.to_vec()));
-        assert_eq!(AdStructure::complete_local_name("x").service_uuids16(), None);
+        assert_eq!(
+            AdStructure::complete_local_name("x").service_uuids16(),
+            None
+        );
         assert_eq!(
             AdStructure::raw(AD_COMPLETE_16_BIT_SERVICE_UUIDS, [0x0f]).service_uuids16(),
             None
@@ -282,9 +312,43 @@ mod tests {
     }
 
     #[test]
+    fn ble_ad_uuid32_complete_encodes_little_endian_and_reads() {
+        let uuids = [0x0000_1234];
+        let structure = AdStructure::complete_service_uuids32(&uuids);
+        let mut encoded = Vec::new();
+
+        structure.encode(&mut encoded);
+
+        assert_eq!(encoded, [0x05, 0x05, 0x34, 0x12, 0x00, 0x00]);
+        assert_eq!(structure.service_uuids32(), Some(uuids.to_vec()));
+    }
+
+    #[test]
+    fn ble_ad_uuid32_incomplete_encodes_and_reads() {
+        let uuids = [0x0000_180d, 0x0000_180f];
+        let structure = AdStructure::incomplete_service_uuids32(&uuids);
+
+        assert_eq!(structure.ad_type, AD_INCOMPLETE_32_BIT_SERVICE_UUIDS);
+        assert_eq!(
+            structure.data,
+            [0x0d, 0x18, 0x00, 0x00, 0x0f, 0x18, 0x00, 0x00]
+        );
+        assert_eq!(structure.service_uuids32(), Some(uuids.to_vec()));
+        assert_eq!(
+            AdStructure::complete_local_name("x").service_uuids32(),
+            None
+        );
+        assert_eq!(
+            AdStructure::raw(AD_COMPLETE_32_BIT_SERVICE_UUIDS, [0x34, 0x12, 0x00])
+                .service_uuids32(),
+            None
+        );
+    }
+
+    #[test]
     fn ble_ad_decode_preserves_unknown_types() {
-        let ad_list = decode_ad_list(&[0x02, 0x01, 0x06, 0x03, 0xff, 0xaa, 0xbb])
-            .expect("decode AD list");
+        let ad_list =
+            decode_ad_list(&[0x02, 0x01, 0x06, 0x03, 0xff, 0xaa, 0xbb]).expect("decode AD list");
 
         assert_eq!(
             ad_list,
@@ -297,8 +361,8 @@ mod tests {
 
     #[test]
     fn ble_ad_decode_truncated_structure_is_structured_error() {
-        let err = decode_ad_list(&[0x05, 0x09, 0x41])
-            .expect_err("must reject over-long AD structure");
+        let err =
+            decode_ad_list(&[0x05, 0x09, 0x41]).expect_err("must reject over-long AD structure");
 
         assert_eq!(
             err,
