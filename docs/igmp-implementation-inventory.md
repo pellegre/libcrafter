@@ -135,9 +135,9 @@ layouts.
 - `profiles.yaml` can add focused offline and dry-run profiles such as
   `igmp-smoke`, `igmp-boundary`, and `igmp-live-dry-run` once executable specs
   exist.
-- Scapy integration will need materialization and normalization updates under
-  `tools/oracle/engine/backends/scapy/`, plus case rows in
-  `tools/oracle/specs/fixtures/scapy-cases.json`.
+- Reference backend integration will need materialization and normalization
+  updates under the selected backend implementation in `tools/oracle/`, plus
+  backend-owned case rows under `tools/oracle/specs/fixtures/`.
 
 ## Intended IGMP Module Layout
 
@@ -199,13 +199,13 @@ extra files without the dedicated source-review steps.
   - `tools/oracle/specs/features/igmp-*.yaml`
   - `tools/oracle/specs/stacks.yaml`
   - `tools/oracle/specs/profiles.yaml`
-  - `tools/oracle/specs/fixtures/scapy-cases.json`
-- Oracle Scapy backend:
-  - `tools/oracle/engine/backends/scapy/packets.py` for materialization.
-  - `tools/oracle/engine/backends/scapy/normalize.py` for normalized layer and
-    field names.
-  - `tools/oracle/engine/backends/scapy/live.py` only for protected live
-    protocol detection and capture comparison.
+  - backend-owned case rows under `tools/oracle/specs/fixtures/`
+- Oracle reference backend:
+  - backend packet materialization under `tools/oracle/engine/backends/`.
+  - backend normalization under `tools/oracle/engine/backends/` for normalized
+    layer and field names.
+  - backend live support under `tools/oracle/engine/backends/` only for
+    protected live protocol detection and capture comparison.
 - Oracle loader and generator tests should validate new spec names before any
   live work. Malformed IGMP cases should use `byte_policy: structured_error`
   where strict byte comparison is not meaningful.
