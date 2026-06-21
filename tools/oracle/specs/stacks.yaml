@@ -233,9 +233,11 @@ families:
   - name: ble
     default_stack:
       - ble_radio
+      - ble_adv
     feature_tags:
       - ble
       - ble_radio
+      - ble_adv
   - name: llc_snap
     default_stack:
       - radiotap
@@ -387,6 +389,23 @@ stacks:
       - ble-radio-default-advertising-phdr
       - ble-radio-explicit-aa-channel
       - malformed-ble-radio-truncated-phdr
+  # BLE advertising-channel PDUs over the DLT 256 pseudo-header. The strict
+  # byte cases are declared as contract-only until runnable libcrafter offline
+  # adapter hooks grow BLE support.
+  - name: ble_radio_adv
+    root: "link:bluetooth-le-ll-with-phdr"
+    layers:
+      - ble_radio
+      - ble_adv
+    coverage_cases:
+      - ble-adv-ind-flags-name
+      - ble-adv-nonconn-uuid16
+      - ble-adv-nonconn-uuid128
+      - ble-scan-rsp-manufacturer-data
+      - ble-scan-rsp-service-data
+      - ble-adv-unknown-ad-raw
+      - malformed-ble-adv-overlong-length
+      - malformed-ble-ad-truncated
   # ethernet / arp: ARP over Ethernet. ARP is IPv4-era link-layer address
   # resolution (target/arp-rfc/scope.md: RFC 826 over media-generic
   # HRD/PRO/HLN/PLN), so it stays rooted at a link layer and is never eligible
@@ -1186,6 +1205,10 @@ constraints:
       - rip
       - ripng
       - payload
+  - name: ble_radio_children
+    parent: ble_radio
+    children:
+      - ble_adv
 
 backend_support:
   scapy:
