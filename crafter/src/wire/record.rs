@@ -587,10 +587,28 @@ pub enum BackendKind {
     RawSocket,
     /// Provider-backed endpoint backend.
     Endpoint,
+    /// WHAD Bluetooth radio backend.
+    Whad,
     /// In-memory test or synthetic backend.
     Memory,
     /// Caller-defined backend.
     Other(String),
+}
+
+impl BackendKind {
+    /// Stable backend identifier for diagnostics and tests.
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Unknown => "unknown",
+            Self::PcapFile => "pcap-file",
+            Self::PcapInterface => "pcap-interface",
+            Self::RawSocket => "raw-socket",
+            Self::Endpoint => "endpoint",
+            Self::Whad => "whad",
+            Self::Memory => "memory",
+            Self::Other(backend) => backend.as_str(),
+        }
+    }
 }
 
 /// Medium-specific annotations attached to a packet record.
@@ -900,6 +918,15 @@ impl BluetoothMetadata {
     /// Create empty Bluetooth metadata.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Create BLE metadata from scalar WHAD RX descriptor fields.
+    pub fn from_whad_rx_descriptor(channel: u8, rssi: i16, access_address: u32) -> Self {
+        Self::new()
+            .with_channel(u16::from(channel))
+            .with_signal_dbm(rssi)
+            .with_address(format!("0x{access_address:08x}"))
+            .with_protocol("ble")
     }
 
     /// Bluetooth address when known.
@@ -1336,6 +1363,25 @@ mod tests {
         assert_eq!(metadata.ip_fragment_metadata(), &[fragment]);
         assert_eq!(metadata.ip_defrag_metadata(), &[defrag]);
         assert!(matches!(metadata.medium(), Some(MediumMetadata::Wifi(_))));
+    }
+
+    #[test]
+    fn backendkind_whad_identifier_and_metadata_mapping() {
+        let bluetooth = BluetoothMetadata::from_whad_rx_descriptor(37, -42, 0x8E89_BED6);
+        let metadata = PacketMetadata::new()
+            .with_backend(BackendKind::Whad)
+            .with_medium(MediumMetadata::Bluetooth(bluetooth.clone()));
+
+        assert_eq!(BackendKind::Whad.as_str(), "whad");
+        assert_eq!(metadata.backend().as_str(), "whad");
+        assert_eq!(bluetooth.channel(), Some(37));
+        assert_eq!(bluetooth.signal_dbm(), Some(-42));
+        assert_eq!(bluetooth.address(), Some("0x8e89bed6"));
+        assert_eq!(bluetooth.protocol(), Some("ble"));
+        assert_eq!(
+            metadata.medium(),
+            Some(&MediumMetadata::Bluetooth(bluetooth))
+        );
     }
 
     #[test]
