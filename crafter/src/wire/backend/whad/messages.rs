@@ -49,6 +49,62 @@ pub(crate) fn build_domain_query(domain: u32) -> proto::Message {
     ))
 }
 
+pub(crate) fn build_device_reset_query() -> proto::Message {
+    build_discovery_message(proto::discovery::message::Msg::ResetQuery(
+        proto::discovery::DeviceResetQuery {},
+    ))
+}
+
+pub(crate) fn build_ble_domain_query() -> proto::Message {
+    build_domain_query(proto::discovery::Domain::BtLe as u32)
+}
+
+pub(crate) fn build_ble_sniff_adv(
+    use_extended_adv: bool,
+    channel: u32,
+    bd_address: impl Into<Vec<u8>>,
+) -> proto::Message {
+    build_ble_message(proto::ble::message::Msg::SniffAdv(
+        proto::ble::SniffAdvCmd {
+            use_extended_adv,
+            channel,
+            bd_address: bd_address.into(),
+        },
+    ))
+}
+
+pub(crate) fn build_ble_scan_mode(active_scan: bool) -> proto::Message {
+    build_ble_message(proto::ble::message::Msg::ScanMode(
+        proto::ble::ScanModeCmd { active_scan },
+    ))
+}
+
+pub(crate) fn build_ble_central_mode() -> proto::Message {
+    build_ble_message(proto::ble::message::Msg::CentralMode(
+        proto::ble::CentralModeCmd {},
+    ))
+}
+
+pub(crate) fn build_ble_peripheral_mode(
+    scan_data: impl Into<Vec<u8>>,
+    scanrsp_data: impl Into<Vec<u8>>,
+) -> proto::Message {
+    build_ble_message(proto::ble::message::Msg::PeriphMode(
+        proto::ble::PeripheralModeCmd {
+            scan_data: scan_data.into(),
+            scanrsp_data: scanrsp_data.into(),
+        },
+    ))
+}
+
+pub(crate) fn build_ble_start() -> proto::Message {
+    build_ble_message(proto::ble::message::Msg::Start(proto::ble::StartCmd {}))
+}
+
+pub(crate) fn build_ble_stop() -> proto::Message {
+    build_ble_message(proto::ble::message::Msg::Stop(proto::ble::StopCmd {}))
+}
+
 pub(crate) fn parse_device_info_response(message: &proto::Message) -> Result<WhadDeviceInfo> {
     let response = match discovery_payload(message)? {
         proto::discovery::message::Msg::InfoResp(response) => response,
@@ -116,6 +172,14 @@ fn build_discovery_message(msg: proto::discovery::message::Msg) -> proto::Messag
     }
 }
 
+fn build_ble_message(msg: proto::ble::message::Msg) -> proto::Message {
+    proto::Message {
+        msg: Some(proto::message::Msg::Ble(proto::ble::Message {
+            msg: Some(msg),
+        })),
+    }
+}
+
 fn discovery_payload(message: &proto::Message) -> Result<&proto::discovery::message::Msg> {
     let discovery = match message.msg.as_ref() {
         Some(proto::message::Msg::Discovery(discovery)) => discovery,
@@ -140,6 +204,7 @@ mod tests {
 
     fn decode_top_level(message: &proto::Message) -> proto::Message {
         let encoded = message.encode_to_vec();
+        assert!(!encoded.is_empty());
         proto::Message::decode(encoded.as_slice()).expect("WHAD message decodes")
     }
 
@@ -239,5 +304,107 @@ mod tests {
             .expect("domains response parses");
         assert_eq!(domains.supported_domains, device_info.supported_domains);
         assert_eq!(domains.commands, vec![domain]);
+    }
+
+    #[test]
+    fn whad_device_msgs_reset_and_ble_domain_encode() {
+        let decoded_reset = decode_top_level(&build_device_reset_query());
+        match decoded_reset.msg {
+            Some(proto::message::Msg::Discovery(discovery)) => match discovery.msg {
+                Some(proto::discovery::message::Msg::ResetQuery(_)) => {}
+                _ => panic!("expected discovery reset query"),
+            },
+            _ => panic!("expected top-level discovery message"),
+        }
+
+        let decoded_domain = decode_top_level(&build_ble_domain_query());
+        match decoded_domain.msg {
+            Some(proto::message::Msg::Discovery(discovery)) => match discovery.msg {
+                Some(proto::discovery::message::Msg::DomainQuery(query)) => {
+                    assert_eq!(query.domain, proto::discovery::Domain::BtLe as u32);
+                }
+                _ => panic!("expected discovery BLE domain query"),
+            },
+            _ => panic!("expected top-level discovery message"),
+        }
+    }
+
+    #[test]
+    fn whad_device_msgs_ble_sniff_and_scan_modes_encode() {
+        let decoded_sniff = decode_top_level(&build_ble_sniff_adv(
+            false,
+            37,
+            [0x06, 0x05, 0x04, 0x03, 0x02, 0x01],
+        ));
+        match decoded_sniff.msg {
+            Some(proto::message::Msg::Ble(ble)) => match ble.msg {
+                Some(proto::ble::message::Msg::SniffAdv(command)) => {
+                    assert!(!command.use_extended_adv);
+                    assert_eq!(command.channel, 37);
+                    assert_eq!(command.bd_address, vec![0x06, 0x05, 0x04, 0x03, 0x02, 0x01]);
+                }
+                _ => panic!("expected BLE sniff advertising command"),
+            },
+            _ => panic!("expected top-level BLE message"),
+        }
+
+        let decoded_scan = decode_top_level(&build_ble_scan_mode(true));
+        match decoded_scan.msg {
+            Some(proto::message::Msg::Ble(ble)) => match ble.msg {
+                Some(proto::ble::message::Msg::ScanMode(command)) => {
+                    assert!(command.active_scan);
+                }
+                _ => panic!("expected BLE scan mode command"),
+            },
+            _ => panic!("expected top-level BLE message"),
+        }
+    }
+
+    #[test]
+    fn whad_device_msgs_ble_inject_modes_encode() {
+        let decoded_central = decode_top_level(&build_ble_central_mode());
+        match decoded_central.msg {
+            Some(proto::message::Msg::Ble(ble)) => match ble.msg {
+                Some(proto::ble::message::Msg::CentralMode(_)) => {}
+                _ => panic!("expected BLE central mode command"),
+            },
+            _ => panic!("expected top-level BLE message"),
+        }
+
+        let decoded_peripheral = decode_top_level(&build_ble_peripheral_mode(
+            [0x02, 0x01, 0x06],
+            [0x03, 0x09, b'c'],
+        ));
+        match decoded_peripheral.msg {
+            Some(proto::message::Msg::Ble(ble)) => match ble.msg {
+                Some(proto::ble::message::Msg::PeriphMode(command)) => {
+                    assert_eq!(command.scan_data, vec![0x02, 0x01, 0x06]);
+                    assert_eq!(command.scanrsp_data, vec![0x03, 0x09, b'c']);
+                }
+                _ => panic!("expected BLE peripheral mode command"),
+            },
+            _ => panic!("expected top-level BLE message"),
+        }
+    }
+
+    #[test]
+    fn whad_device_msgs_ble_start_stop_encode() {
+        let decoded_start = decode_top_level(&build_ble_start());
+        match decoded_start.msg {
+            Some(proto::message::Msg::Ble(ble)) => match ble.msg {
+                Some(proto::ble::message::Msg::Start(_)) => {}
+                _ => panic!("expected BLE start command"),
+            },
+            _ => panic!("expected top-level BLE message"),
+        }
+
+        let decoded_stop = decode_top_level(&build_ble_stop());
+        match decoded_stop.msg {
+            Some(proto::message::Msg::Ble(ble)) => match ble.msg {
+                Some(proto::ble::message::Msg::Stop(_)) => {}
+                _ => panic!("expected BLE stop command"),
+            },
+            _ => panic!("expected top-level BLE message"),
+        }
     }
 }
