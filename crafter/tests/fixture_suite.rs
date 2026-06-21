@@ -6069,10 +6069,30 @@ fn assert_lower_dash_name(name: &str, label: &str) {
 }
 
 fn repository_path(path: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let repository_path = manifest_dir
         .parent()
         .unwrap_or_else(|| panic!("CARGO_MANIFEST_DIR should have a repository parent"))
-        .join(path)
+        .join(path);
+
+    if repository_path.exists() {
+        return repository_path;
+    }
+
+    if let Some(package_path) = path.strip_prefix("crafter/") {
+        let package_path = manifest_dir.join(package_path);
+        if package_path.exists() {
+            return package_path;
+        }
+    }
+
+    repository_path
+}
+
+fn is_packaged_crate_self_test() -> bool {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    manifest_dir.join(".cargo_vcs_info.json").is_file()
+        && manifest_dir.join("Cargo.toml.orig").is_file()
 }
 
 fn focused_repository_artifact_text(
@@ -6132,6 +6152,10 @@ fn add_dot11_violation(
 }
 
 fn scan_dot11_text_artifact(artifact: Dot11TextArtifact, violations: &mut Vec<String>) {
+    if is_packaged_crate_self_test() && !repository_path(artifact.path).is_file() {
+        return;
+    }
+
     let (text, first_line) = focused_dot11_artifact_text(artifact);
     for (line_index, line) in text.lines().enumerate() {
         scan_dot11_text_line(artifact.path, first_line + line_index, line, violations);
@@ -6550,6 +6574,10 @@ fn is_ip_fragment_case(name: &str) -> bool {
 }
 
 fn scan_ip_fragment_text_artifact(artifact: IpFragmentTextArtifact, violations: &mut Vec<String>) {
+    if is_packaged_crate_self_test() && !repository_path(artifact.path).is_file() {
+        return;
+    }
+
     let (text, first_line) = focused_ip_fragment_artifact_text(artifact);
     for (line_index, line) in text.lines().enumerate() {
         scan_ip_fragment_text_line(artifact.path, first_line + line_index, line, violations);
@@ -6642,6 +6670,10 @@ fn assert_allowed_ip_fragment_artifact_path(
 
 fn assert_ip_fragment_target_artifacts_are_ignored(violations: &mut Vec<String>) {
     let path = repository_path(".gitignore");
+    if is_packaged_crate_self_test() && !path.is_file() {
+        return;
+    }
+
     let text = fs::read_to_string(&path).unwrap_or_else(|err| {
         panic!(
             ".gitignore should be readable at {} for artifact hygiene checks: {err}",
