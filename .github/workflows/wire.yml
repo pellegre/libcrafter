@@ -102,7 +102,7 @@ jobs:
 
       - name: Upload wire dry-run artifacts
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: libcrafter-wire-dry-run-${{ github.run_id }}
           if-no-files-found: ignore
@@ -225,7 +225,7 @@ jobs:
 
       - name: Upload wire artifacts
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: libcrafter-wire-hetzner-${{ github.run_id }}
           if-no-files-found: ignore
@@ -281,7 +281,7 @@ jobs:
 
       - name: Upload VM DHCP artifacts
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: libcrafter-wire-vm-dhcp-${{ github.run_id }}
           if-no-files-found: ignore
