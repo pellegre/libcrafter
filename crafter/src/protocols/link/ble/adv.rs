@@ -592,6 +592,34 @@ mod tests {
     }
 
     #[test]
+    fn ble_adv_roundtrip_build_decode_reproduces_fields_and_tail() {
+        let ad_tail = [0x02, 0x01, 0x06];
+        let packet = Packet::from_layer(
+            BleLlAdv::adv_ind()
+                .adv_a_str("C0:FF:EE:11:22:33")
+                .unwrap()
+                .payload(ad_tail),
+        );
+
+        let bytes = packet.compile().expect("compile BLE advertising PDU");
+        let pdu = bytes.as_bytes();
+
+        assert_eq!(pdu[0], 0x40);
+        assert_eq!(pdu[1], 9);
+        assert_eq!(&pdu[2..8], &[0x33, 0x22, 0x11, 0xee, 0xff, 0xc0]);
+
+        let (adv, tail) = decode_ble_adv(pdu).expect("decode compiled ADV_IND");
+
+        assert_eq!(adv.pdu_type.value(), Some(&BleAdvPduType::AdvInd));
+        assert_eq!(adv.tx_add.value(), Some(&true));
+        assert_eq!(
+            adv.adv_a_value().unwrap().to_string().to_uppercase(),
+            "C0:FF:EE:11:22:33"
+        );
+        assert_eq!(tail, ad_tail);
+    }
+
+    #[test]
     fn ble_adv_decode_truncated_header_is_structured_error() {
         let err = decode_ble_adv(&[0x40]).expect_err("must reject truncated header");
 
