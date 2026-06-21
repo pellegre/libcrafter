@@ -9,5 +9,7 @@ mod consts;
 mod radio;
 
 pub use ad::{AdList, AdStructure};
+pub(crate) use adv::decode_ble_adv;
 pub use adv::{BleAdvPduType, BleLlAdv};
+pub(crate) use radio::decode_ble_radio;
 pub use radio::{BlePhy, BleRadio};

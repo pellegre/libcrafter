@@ -61,6 +61,7 @@ pub use self::arp::{
     ARP_OP_RARP_REQUEST, ARP_OP_REPLY, ARP_OP_REQUEST, ARP_OP_RESERVED, ARP_OP_RESERVED_MAX,
     ARP_PRO_IPV4,
 };
+use self::ble::{decode_ble_adv, decode_ble_radio};
 pub(crate) use self::dot11::decode_dot11_with_registry;
 pub use self::dot11::*;
 pub(crate) use self::llc::append_llc_snap_packet_with_registry;
@@ -83,6 +84,8 @@ const ETHERNET_HEADER_LEN: usize = 14;
 const VLAN_HEADER_LEN: usize = 4;
 const LINUX_SLL_HEADER_LEN: usize = 16;
 const NULL_LOOPBACK_HEADER_LEN: usize = 4;
+const BLE_LL_ACCESS_ADDRESS_LEN: usize = 4;
+const BLE_LL_CRC_LEN: usize = 3;
 
 macro_rules! impl_layer_object {
     ($type:ty) => {
@@ -782,6 +785,50 @@ pub(crate) fn decode_null_loopback_with_registry(
     Ok(packet)
 }
 
+/// Decode a BLE LE Link Layer frame with pcap pseudo-header metadata.
+pub(crate) fn decode_ble_ll_with_registry(
+    _registry: &ProtocolRegistry,
+    bytes: &[u8],
+) -> Result<Packet> {
+    let (radio, rest) = decode_ble_radio(bytes)?;
+    if rest.len() < BLE_LL_ACCESS_ADDRESS_LEN {
+        return Err(CrafterError::buffer_too_short(
+            "ble.ll.access_address",
+            BLE_LL_ACCESS_ADDRESS_LEN,
+            rest.len(),
+        ));
+    }
+
+    let radio_access_address = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+    let ll_access_address = u32::from_le_bytes([rest[0], rest[1], rest[2], rest[3]]);
+    if ll_access_address != radio_access_address {
+        return Err(CrafterError::invalid_field_value(
+            "ble.ll.access_address",
+            "does not match pseudo-header access address",
+        ));
+    }
+
+    let (adv, tail) = decode_ble_adv(&rest[BLE_LL_ACCESS_ADDRESS_LEN..])?;
+    match tail.len() {
+        0 | BLE_LL_CRC_LEN => {}
+        1..=2 => {
+            return Err(CrafterError::buffer_too_short(
+                "ble.ll.crc",
+                BLE_LL_CRC_LEN,
+                tail.len(),
+            ));
+        }
+        _ => {
+            return Err(CrafterError::invalid_field_value(
+                "ble.ll.trailer",
+                "expected optional 3-byte CRC",
+            ));
+        }
+    }
+
+    Ok(Packet::new().push(radio).push(adv))
+}
+
 /// Append a decoded VLAN layer and dispatch its inner Ethernet type.
 pub(crate) fn append_vlan_packet_with_registry(
     registry: &ProtocolRegistry,
@@ -933,7 +980,11 @@ mod ethernet {
 
 #[cfg(test)]
 mod link_layers {
-    use super::{Arp, Ethernet, LinuxSll, NullByteOrder, NullLoopback, Vlan, ETHERTYPE_IPV4};
+    use super::{
+        decode_ble_ll_with_registry, Arp, Ethernet, LinuxSll, NullByteOrder, NullLoopback, Vlan,
+        ETHERTYPE_IPV4,
+    };
+    use crate::registry::ProtocolRegistry;
     use crate::{Ipv4, Udp};
     use crate::{LinkType, MacAddr, Packet, Raw};
     use core::net::Ipv4Addr;
@@ -1026,5 +1077,21 @@ mod link_layers {
         let packet = Packet::new().push(NullLoopback::new().family(2).big_endian());
 
         assert_eq!(packet.compile().unwrap().as_bytes(), &[0, 0, 0, 2]);
+    }
+
+    #[test]
+    fn decode_ble_ll_builds_radio_and_advertising_layers() {
+        let frame = [
+            37, 0xc4, 0x00, 0x00, 0xd6, 0xbe, 0x89, 0x8e, 0x13, 0x0c, 0xd6, 0xbe, 0x89, 0x8e, 0x40,
+            0x0f, 0x01, 0x53, 0x00, 0x5e, 0x00, 0x02, 0x02, 0x01, 0x06, 0x05, 0x09, b't', b'e',
+            b's', b't', 0xaa, 0xbb, 0xcc,
+        ];
+
+        let decoded = decode_ble_ll_with_registry(&ProtocolRegistry::builtin(), &frame).unwrap();
+        let summary = decoded.summary();
+
+        assert_eq!(decoded.iter().count(), 2);
+        assert!(summary.contains("BleRadio"));
+        assert!(summary.contains("BleLlAdv"));
     }
 }
