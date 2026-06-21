@@ -1,0 +1,95 @@
+version: 1
+kind: layer
+name: ble_adv
+summary: Bluetooth Low Energy advertising-channel Link Layer PDU with AdvA and GAP Advertising Data structures.
+
+roots: []
+parents:
+  - ble_radio
+children: []
+supported_directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+  - roundtrip
+live_eligibility: false
+live_gate: whad_backend_not_yet_available
+
+fields:
+  - name: pdu_type
+    type: enum
+    required: true
+    domains:
+      - adv_ind
+      - adv_nonconn_ind
+      - scan_rsp
+  - name: tx_add
+    type: enum
+    required: false
+    domains:
+      - public
+      - random
+  - name: rx_add
+    type: enum
+    required: false
+    domains:
+      - public
+      - random
+  - name: channel_selection
+    type: bool
+    required: false
+    domains:
+      - false
+      - true
+  - name: length
+    type: uint8
+    required: false
+    domains:
+      - auto
+      - explicit
+      - over_long
+  - name: adv_a
+    type: macaddr
+    required: true
+    domains:
+      - documentation_safe
+      - public_device_address
+      - random_static_address
+  - name: ad_list
+    type: list
+    required: false
+    domains:
+      - flags
+      - complete_local_name
+      - complete_16_bit_service_uuids
+      - complete_128_bit_service_uuids
+      - manufacturer_specific_data
+      - service_data
+      - unknown_raw
+
+coverage_cases:
+  - ble-adv-ind-flags-name
+  - ble-adv-nonconn-uuid16
+  - ble-adv-nonconn-uuid128
+  - ble-scan-rsp-manufacturer-data
+  - ble-scan-rsp-service-data
+  - ble-adv-unknown-ad-raw
+  - malformed-ble-adv-overlong-length
+  - malformed-ble-ad-truncated
+
+backend_support:
+  scapy:
+    status: supported
+    encode: true
+    decode: true
+    native_layers:
+      - BTLE_ADV
+      - BTLE_ADV_IND
+      - EIR_Hdr
+    notes:
+      - The Scapy backend normalizes BLE advertising bytes through the byte-level BLE path and uses deterministic TLV bytes when native EIR helpers do not cover an AD type.
+  libcrafter:
+    status: partial
+    encode: true
+    decode: true
+    notes:
+      - The crate exposes BleLlAdv and AD encode/decode behavior; runnable offline adapter hooks remain outside this spec-registration step.
