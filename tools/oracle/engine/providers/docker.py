@@ -64,6 +64,12 @@ DOCKER_WIRE_POLICY: JSONObject = {
 }
 
 
+def _oracle_private_group() -> str:
+    """Return the per-run oracle private group used by the live CLI."""
+
+    return os.environ.get("ORACLE_LIVE_PRIVATE_GROUP", ORACLE_PRIVATE_GROUP)
+
+
 def docker_default_provider_capabilities(
     *,
     dry_run: bool,
@@ -304,9 +310,9 @@ def validate_docker_dry_run_exchange(
         errors.append("sender endpoint must use a private network")
     if not bool(exchange.receiver.metadata.get("private_network")):
         errors.append("receiver endpoint must use a private network")
-    if exchange.sender.metadata.get("private_group") != ORACLE_PRIVATE_GROUP:
+    if exchange.sender.metadata.get("private_group") != _oracle_private_group():
         errors.append("sender endpoint must use the Docker oracle private group")
-    if exchange.receiver.metadata.get("private_group") != ORACLE_PRIVATE_GROUP:
+    if exchange.receiver.metadata.get("private_group") != _oracle_private_group():
         errors.append("receiver endpoint must use the Docker oracle private group")
     if exchange.sender.metadata.get("provider") != PROVIDER_NAME:
         errors.append("sender endpoint must be a Docker endpoint")
@@ -335,7 +341,7 @@ def validate_docker_dry_run_exchange(
             "direction": exchange.direction,
             "packet_index": exchange.index,
             "private_network": True,
-            "private_group": ORACLE_PRIVATE_GROUP,
+            "private_group": _oracle_private_group(),
             "creates_infrastructure": False,
             "live_packet_exchange": False,
         },
