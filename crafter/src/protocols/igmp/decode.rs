@@ -12,9 +12,9 @@ use crate::packet::{Packet, Raw};
 
 use super::constants::{
     IGMP_FIXED_HEADER_LEN, IGMP_MRD_SOLICITATION_LEN, IGMP_MRD_TERMINATION_LEN,
-    IGMP_TYPE_MEMBERSHIP_QUERY, IGMP_TYPE_MULTICAST_ROUTER_SOLICITATION,
-    IGMP_TYPE_MULTICAST_ROUTER_TERMINATION, IGMP_TYPE_V3_MEMBERSHIP_REPORT,
-    IGMP_V3_GROUP_RECORD_HEADER_LEN, IGMP_V3_QUERY_MIN_LEN,
+    IGMP_TYPE_MEMBERSHIP_QUERY, IGMP_TYPE_MULTICAST_ROUTER_ADVERTISEMENT,
+    IGMP_TYPE_MULTICAST_ROUTER_SOLICITATION, IGMP_TYPE_MULTICAST_ROUTER_TERMINATION,
+    IGMP_TYPE_V3_MEMBERSHIP_REPORT, IGMP_V3_GROUP_RECORD_HEADER_LEN, IGMP_V3_QUERY_MIN_LEN,
 };
 use super::extension::decode_extensions;
 use super::message::{Igmp, IgmpChecksumStatus};
@@ -40,7 +40,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<Igmp> {
 pub(crate) fn append_igmp_packet(mut packet: Packet, bytes: &[u8]) -> Result<Packet> {
     let (igmp, payload) = decode_igmp_parts(bytes)?;
     let is_v3_query = igmp.igmp_type_value() == IGMP_TYPE_MEMBERSHIP_QUERY
-        && bytes.len() >= IGMP_V3_QUERY_MIN_LEN;
+        && (bytes.len() >= IGMP_V3_QUERY_MIN_LEN || !payload.is_empty());
     let is_v3_report = igmp.igmp_type_value() == IGMP_TYPE_V3_MEMBERSHIP_REPORT;
     packet = packet.push_igmp(igmp);
 
@@ -97,14 +97,14 @@ fn append_igmp_extensions(mut packet: Packet, tail: &[u8]) -> Result<Packet> {
 }
 
 fn decode_igmp_parts(bytes: &[u8]) -> Result<(Igmp, &[u8])> {
-    let header_len = bytes
+    let (header_context, header_len) = bytes
         .first()
         .copied()
-        .map(igmp_header_len_for_type)
-        .unwrap_or(IGMP_FIXED_HEADER_LEN);
+        .map(igmp_header_shape_for_type)
+        .unwrap_or(("igmp header", IGMP_FIXED_HEADER_LEN));
     if bytes.len() < header_len {
         return Err(CrafterError::buffer_too_short(
-            "igmp header",
+            header_context,
             header_len,
             bytes.len(),
         ));
@@ -129,11 +129,18 @@ fn decode_igmp_parts(bytes: &[u8]) -> Result<(Igmp, &[u8])> {
     Ok((igmp, &bytes[header_len..]))
 }
 
-const fn igmp_header_len_for_type(type_code: u8) -> usize {
+fn igmp_header_shape_for_type(type_code: u8) -> (&'static str, usize) {
     match type_code {
-        IGMP_TYPE_MULTICAST_ROUTER_SOLICITATION => IGMP_MRD_SOLICITATION_LEN,
-        IGMP_TYPE_MULTICAST_ROUTER_TERMINATION => IGMP_MRD_TERMINATION_LEN,
-        _ => IGMP_FIXED_HEADER_LEN,
+        IGMP_TYPE_MULTICAST_ROUTER_ADVERTISEMENT => {
+            ("igmp mrd advertisement", IGMP_FIXED_HEADER_LEN)
+        }
+        IGMP_TYPE_MULTICAST_ROUTER_SOLICITATION => {
+            ("igmp mrd solicitation", IGMP_MRD_SOLICITATION_LEN)
+        }
+        IGMP_TYPE_MULTICAST_ROUTER_TERMINATION => {
+            ("igmp mrd termination", IGMP_MRD_TERMINATION_LEN)
+        }
+        _ => ("igmp header", IGMP_FIXED_HEADER_LEN),
     }
 }
 
