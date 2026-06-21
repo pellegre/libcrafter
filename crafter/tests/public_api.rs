@@ -34,6 +34,24 @@ fn ble_prelude_reexports_compile() {
 }
 
 #[test]
+fn ble_root_reexports_compile() {
+    let _: crafter::BleRadio = crafter::BleRadio::default();
+    let _: crafter::BleLlAdv = crafter::BleLlAdv::new();
+
+    let ad: crafter::AdStructure = crafter::AdStructure::flags_general_disc();
+    let mut ad_list: crafter::AdList = crafter::AdList(vec![ad]);
+    ad_list.push(crafter::AdStructure::complete_local_name("crafter"));
+
+    let pdu_type: crafter::BleAdvPduType = crafter::BleAdvPduType::AdvInd;
+    assert_eq!(pdu_type.as_u4(), 0);
+    assert_eq!(ad_list.0.len(), 2);
+    assert!(matches!(
+        crafter::LinkType::BluetoothLeLl,
+        crafter::LinkType::BluetoothLeLl
+    ));
+}
+
+#[test]
 fn public_api_ip_fragment_exports() {
     use crafter::wire::{
         IpDefrag as WireIpDefrag, IpDefragConfig as WireIpDefragConfig,
