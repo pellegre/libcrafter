@@ -3,9 +3,10 @@
 use crate::error::{CrafterError, Result};
 
 use super::consts::{
-    AD_COMPLETE_16_BIT_SERVICE_UUIDS, AD_COMPLETE_32_BIT_SERVICE_UUIDS, AD_COMPLETE_LOCAL_NAME,
-    AD_FLAGS, AD_INCOMPLETE_16_BIT_SERVICE_UUIDS, AD_INCOMPLETE_32_BIT_SERVICE_UUIDS,
-    AD_SHORTENED_LOCAL_NAME,
+    AD_COMPLETE_128_BIT_SERVICE_UUIDS, AD_COMPLETE_16_BIT_SERVICE_UUIDS,
+    AD_COMPLETE_32_BIT_SERVICE_UUIDS, AD_COMPLETE_LOCAL_NAME, AD_FLAGS,
+    AD_INCOMPLETE_128_BIT_SERVICE_UUIDS, AD_INCOMPLETE_16_BIT_SERVICE_UUIDS,
+    AD_INCOMPLETE_32_BIT_SERVICE_UUIDS, AD_SHORTENED_LOCAL_NAME,
 };
 
 /// Flags AD structure bit values.
@@ -72,6 +73,22 @@ impl AdStructure {
         Self::from_service_uuids32(AD_INCOMPLETE_32_BIT_SERVICE_UUIDS, uuids)
     }
 
+    /// Builds a Complete List of 128-bit Service UUIDs AD structure.
+    ///
+    /// Input UUID arrays use canonical/MSB-first byte order; BLE AD encodes
+    /// each UUID on the wire in little-endian order.
+    pub fn complete_service_uuids128(uuids: &[[u8; 16]]) -> Self {
+        Self::from_service_uuids128(AD_COMPLETE_128_BIT_SERVICE_UUIDS, uuids)
+    }
+
+    /// Builds an Incomplete List of 128-bit Service UUIDs AD structure.
+    ///
+    /// Input UUID arrays use canonical/MSB-first byte order; BLE AD encodes
+    /// each UUID on the wire in little-endian order.
+    pub fn incomplete_service_uuids128(uuids: &[[u8; 16]]) -> Self {
+        Self::from_service_uuids128(AD_INCOMPLETE_128_BIT_SERVICE_UUIDS, uuids)
+    }
+
     fn from_service_uuids16(ad_type: u8, uuids: &[u16]) -> Self {
         let mut data = Vec::with_capacity(uuids.len() * 2);
         for uuid in uuids {
@@ -84,6 +101,14 @@ impl AdStructure {
         let mut data = Vec::with_capacity(uuids.len() * 4);
         for uuid in uuids {
             data.extend_from_slice(&uuid.to_le_bytes());
+        }
+        Self::new(ad_type, data)
+    }
+
+    fn from_service_uuids128(ad_type: u8, uuids: &[[u8; 16]]) -> Self {
+        let mut data = Vec::with_capacity(uuids.len() * 16);
+        for uuid in uuids {
+            data.extend(uuid.iter().rev().copied());
         }
         Self::new(ad_type, data)
     }
@@ -137,6 +162,29 @@ impl AdStructure {
             self.data
                 .chunks_exact(4)
                 .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                .collect(),
+        )
+    }
+
+    pub fn service_uuids128(&self) -> Option<Vec<[u8; 16]>> {
+        if !matches!(
+            self.ad_type,
+            AD_COMPLETE_128_BIT_SERVICE_UUIDS | AD_INCOMPLETE_128_BIT_SERVICE_UUIDS
+        ) || self.data.len() % 16 != 0
+        {
+            return None;
+        }
+
+        Some(
+            self.data
+                .chunks_exact(16)
+                .map(|chunk| {
+                    let mut uuid = [0u8; 16];
+                    for (dst, src) in uuid.iter_mut().zip(chunk.iter().rev()) {
+                        *dst = *src;
+                    }
+                    uuid
+                })
                 .collect(),
         )
     }
@@ -341,6 +389,54 @@ mod tests {
         assert_eq!(
             AdStructure::raw(AD_COMPLETE_32_BIT_SERVICE_UUIDS, [0x34, 0x12, 0x00])
                 .service_uuids32(),
+            None
+        );
+    }
+
+    #[test]
+    fn ble_ad_uuid128_complete_encodes_little_endian_and_reads() {
+        let uuid = [
+            0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd,
+            0xee, 0xff,
+        ];
+        let structure = AdStructure::complete_service_uuids128(&[uuid]);
+        let mut encoded = Vec::new();
+
+        structure.encode(&mut encoded);
+
+        assert_eq!(
+            encoded,
+            [
+                0x11, 0x07, 0xff, 0xee, 0xdd, 0xcc, 0xbb, 0xaa, 0x99, 0x88, 0x77, 0x66, 0x55, 0x44,
+                0x33, 0x22, 0x11, 0x00,
+            ]
+        );
+        assert_eq!(structure.service_uuids128(), Some(vec![uuid]));
+    }
+
+    #[test]
+    fn ble_ad_uuid128_incomplete_encodes_and_rejects_wrong_types_or_lengths() {
+        let uuid = [
+            0xf0, 0xe1, 0xd2, 0xc3, 0xb4, 0xa5, 0x96, 0x87, 0x78, 0x69, 0x5a, 0x4b, 0x3c, 0x2d,
+            0x1e, 0x0f,
+        ];
+        let structure = AdStructure::incomplete_service_uuids128(&[uuid]);
+
+        assert_eq!(structure.ad_type, AD_INCOMPLETE_128_BIT_SERVICE_UUIDS);
+        assert_eq!(
+            structure.data,
+            [
+                0x0f, 0x1e, 0x2d, 0x3c, 0x4b, 0x5a, 0x69, 0x78, 0x87, 0x96, 0xa5, 0xb4, 0xc3, 0xd2,
+                0xe1, 0xf0,
+            ]
+        );
+        assert_eq!(structure.service_uuids128(), Some(vec![uuid]));
+        assert_eq!(
+            AdStructure::complete_local_name("x").service_uuids128(),
+            None
+        );
+        assert_eq!(
+            AdStructure::raw(AD_COMPLETE_128_BIT_SERVICE_UUIDS, [0x00; 15]).service_uuids128(),
             None
         );
     }
