@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -480,6 +481,117 @@ class LiveProviderMatrixTest(unittest.TestCase):
             self.assertEqual(provider["status"], "skipped")
             self.assertIn("missing HETZNER_API_TOKEN", provider["skip_reason"])
             self.assertTrue(provider["no_live_packets_sent"])
+
+    def test_igmp_vm_live_gate_allows_real_qemu_matrix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp) / "matrix"
+            labels: list[str] = []
+            live_argv: list[str] = []
+
+            def fake_run_command(
+                argv: list[str],
+                *,
+                cwd: Path,
+                out_dir: Path,
+                label: str,
+                check: bool = True,
+            ) -> dict[str, object]:
+                del cwd, check
+                labels.append(label)
+                logs_dir = out_dir / "logs"
+                logs_dir.mkdir(parents=True, exist_ok=True)
+                stdout_path = logs_dir / f"{label}.stdout.txt"
+                stderr_path = logs_dir / f"{label}.stderr.txt"
+                stdout_path.write_text("", encoding="utf-8")
+                stderr_path.write_text("", encoding="utf-8")
+
+                if label == "corpus":
+                    corpus_out = Path(argv[argv.index("--out") + 1])
+                    corpus_out.mkdir(parents=True, exist_ok=True)
+                    (corpus_out / "plans.json").write_text(
+                        json.dumps({"corpus_id": "corpus-v1-test", "count": 2}),
+                        encoding="utf-8",
+                    )
+                elif label == "doctor-qemu":
+                    stdout_path.write_text(
+                        json.dumps({"ok": True, "failed_checks": []}),
+                        encoding="utf-8",
+                    )
+                elif label == "live-qemu":
+                    live_argv[:] = list(argv)
+                    live_out = Path(argv[argv.index("--out") + 1])
+                    corpus_path = Path(argv[argv.index("--corpus") + 1])
+                    live_out.mkdir(parents=True, exist_ok=True)
+                    adapter = resolve_live_provider("qemu")
+                    (live_out / "report.json").write_text(
+                        json.dumps(
+                            _live_report(
+                                provider="qemu",
+                                wire_provider=adapter.wire_provider,
+                                wire_exposure=adapter.wire_exposure,
+                                endpoint_roles=list(adapter.endpoint_roles),
+                                corpus_path=corpus_path,
+                                dry_run=False,
+                                status="passed",
+                            )
+                        ),
+                        encoding="utf-8",
+                    )
+
+                return {
+                    "label": label,
+                    "argv": list(argv),
+                    "exit_code": 0,
+                    "stdout_path": str(stdout_path),
+                    "stderr_path": str(stderr_path),
+                }
+
+            with patch.dict(
+                os.environ,
+                {
+                    live_provider_matrix.IGMP_VM_LIVE_ENV: "1",
+                    live_provider_matrix.ALLOW_VM_CREATE_ENV: "0",
+                },
+            ), patch.object(
+                live_provider_matrix,
+                "_run_command",
+                side_effect=fake_run_command,
+            ):
+                exit_code = live_provider_matrix.main(
+                    [
+                        "--providers",
+                        "qemu",
+                        "--backend",
+                        "scapy",
+                        "--family",
+                        "igmp",
+                        "--profile",
+                        "igmp-live-dry-run",
+                        "--seed",
+                        "3601",
+                        "--count",
+                        "2",
+                        "--real",
+                        "--skip-unavailable",
+                        "--confirm-live-run",
+                        "--out",
+                        str(out_dir),
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(labels, ["corpus", "offline", "pcap", "doctor-qemu", "live-qemu"])
+            self.assertIn("--confirm-live-run", live_argv)
+            self.assertIn("--family", live_argv)
+            self.assertIn("igmp", live_argv)
+            summary = json.loads((out_dir / "matrix-summary.json").read_text())
+            self.assertEqual(summary["family"], "igmp")
+            self.assertTrue(summary["allow_vm_create"])
+            provider = summary["providers"][0]
+            self.assertEqual(provider["provider"], "qemu")
+            self.assertEqual(provider["status"], "passed")
+            self.assertTrue(provider["lifecycle"]["artifact_collection"]["always_attempt"])
+            self.assertTrue(provider["lifecycle"]["teardown"]["always_attempt"])
 
 
 def _no_wire_eligible_live_report(

@@ -51,6 +51,7 @@ The current provider-backed adapters share the same oracle execution path:
 | Oracle provider | Wire provider | Wire exposure | Packet exchange |
 | --- | --- | --- | --- |
 | `hetzner` | `hetzner` | `private` | Routed private cloud segment |
+| `docker` | `docker` | `private` | Local container bridge |
 | `qemu` | `qemu` | `private` | Local private VM segment `oracle-live-private` |
 | `virtualbox` | `virtualbox` | `lan` | Bridged LAN guest interface |
 
@@ -82,6 +83,51 @@ fail the command.
 infrastructure unless `--confirm-live-run` is also passed. `--dry-run` never
 sends packets and never requires `--confirm-live-run`. This keeps real live
 exchange opt-in while leaving dry-run planning unconditionally safe.
+
+## IGMP Live Exchange Shape
+
+IGMP live validation is a packet-equivalence smoke for IPv4 protocol 2 traffic.
+It is not a multicast router, snooper, proxy, scanner, or IGMP state-machine
+test. The packet corpus stays rooted at IPv4/IGMP through `--family igmp` and
+the `igmp-live-dry-run` profile, which keeps ordinary validation dry-run and
+offline-safe unless a protected local-provider gate is explicitly enabled.
+
+Use the provider matrix in dry-run mode first. This creates no endpoints and
+sends no packets:
+
+```sh
+python3 tools/oracle/engine/live_provider_matrix.py --providers qemu,docker,virtualbox --backend scapy --family igmp --profile igmp-live-dry-run --seed 3601 --count 2 --dry-run --out target/oracle/igmp-vm-live-dry-run
+```
+
+### Guarded IGMP VM/Docker Live Exchange
+
+The real local-provider smoke path is intentionally wrapped in an environment
+gate so unattended acceptance takes the skip branch. The enabled path still
+requires `--confirm-live-run`, runs provider doctor checks first, skips
+unavailable providers through `--skip-unavailable`, validates the live report's
+capability, artifact, lifecycle, and teardown metadata, and writes all run
+artifacts below an ignored `target/oracle/` directory:
+
+```sh
+if [ "${LIBCRAFTER_RUN_IGMP_VM_LIVE:-0}" = "1" ]; then
+  python3 tools/oracle/engine/live_provider_matrix.py \
+    --providers qemu,docker,virtualbox --backend scapy \
+    --family igmp --profile igmp-live-dry-run \
+    --seed 3601 --count 2 \
+    --real --skip-unavailable --confirm-live-run \
+    --out target/oracle/igmp-vm-live
+else
+  echo "skipping protected IGMP VM live run"
+fi
+```
+
+For the IGMP family, `LIBCRAFTER_RUN_IGMP_VM_LIVE=1` is the family-specific
+approval for QEMU and VirtualBox VM creation in this guarded matrix. The generic
+`--allow-vm-create` and `LIBCRAFTER_ORACLE_VM_SMOKE_ALLOW_CREATE=1` controls
+remain available for other VM smoke runs. Do not commit endpoint IDs, provider
+account data, public IPs, live host identifiers, or packet captures from this
+run; keep them under the requested `--out` path and rely on the matrix summary
+for structured skip/pass evidence.
 
 ## DHCP Live Exchange Shape
 
