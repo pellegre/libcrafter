@@ -39,11 +39,11 @@ use crafter::wire::backend::pcap::{
     TimestampPrecision,
 };
 use crafter::{
-    BackendKind, CrafterError, Dot11Metadata, IpDefrag, IpDefragOverlapStatus, IpFragment,
-    IpFragmentConfig, IpFragmentFamily, IpFragmentRange, IpFragmentReason, PacketOrigin,
-    PacketRecord, PacketWire, Sniffer, WifiDecryptState, WireError, WpaAkm, WpaCipher,
-    WpaCredentialStatus, WpaDecrypt, WpaDecryptReason, WpaHandshakeStatus, WpaKeyKind,
-    IPV4_OPTION_NOP,
+    AdStructure, BackendKind, BleLlAdv, BleRadio, CrafterError, Dot11Metadata, IpDefrag,
+    IpDefragOverlapStatus, IpFragment, IpFragmentConfig, IpFragmentFamily, IpFragmentRange,
+    IpFragmentReason, PacketOrigin, PacketRecord, PacketWire, Sniffer, WifiDecryptState, WireError,
+    WpaAkm, WpaCipher, WpaCredentialStatus, WpaDecrypt, WpaDecryptReason, WpaHandshakeStatus,
+    WpaKeyKind, IPV4_OPTION_NOP,
 };
 use support::fixture_path;
 
@@ -170,6 +170,7 @@ enum CoverageFamily {
 enum PcapCoverageFamily {
     Ethernet,
     Ieee80211,
+    BluetoothLeLl,
     RawIpIpv4,
     RawIpIpv6,
     LinuxSll,
@@ -2016,6 +2017,20 @@ const PCAP_FIXTURES: &[PcapFixtureCase] = &[
             },
         ],
     },
+    PcapFixtureCase {
+        name: "ble-le-ll-adv",
+        path: "pcaps/ble-le-ll-adv.pcap",
+        contents: fixture_bytes!("pcaps/ble-le-ll-adv.pcap"),
+        pcap_link_type: PcapLinkType::BluetoothLeLl,
+        link_type: LinkType::BluetoothLeLl,
+        timestamp_precision: TimestampPrecision::Microseconds,
+        coverage: PcapCoverageFamily::BluetoothLeLl,
+        records: &[PcapFixtureRecord {
+            seconds: 46,
+            fractional: 37,
+            fixture_name: "ble-le-ll-adv-record",
+        }],
+    },
 ];
 
 const REQUIRED_VALID_COVERAGE: &[(CoverageFamily, &str)] = &[
@@ -2168,6 +2183,10 @@ const REQUIRED_PCAP_COVERAGE: &[(PcapCoverageFamily, &str)] = &[
         "IEEE 802.11 pcap with WPA2-PSK CCMP fixture",
     ),
     (
+        PcapCoverageFamily::BluetoothLeLl,
+        "Bluetooth LE LL pcap link type",
+    ),
+    (
         PcapCoverageFamily::RawIpIpv4,
         "RawIp pcap with IPv4 payload",
     ),
@@ -2313,11 +2332,15 @@ fn fixture_bytes_for_case(case: &ValidFixtureCase) -> Vec<u8> {
     }
 }
 
-fn valid_fixture_case(name: &str) -> &'static ValidFixtureCase {
+fn valid_fixture_case_opt(name: &str) -> Option<&'static ValidFixtureCase> {
     VALID_FIXTURES
         .iter()
         .chain(DOT11_FIXTURES.iter())
         .find(|case| case.name == name)
+}
+
+fn valid_fixture_case(name: &str) -> &'static ValidFixtureCase {
+    valid_fixture_case_opt(name)
         .unwrap_or_else(|| panic!("pcap fixture references unknown packet fixture {name}"))
 }
 
@@ -6908,6 +6931,83 @@ fn pcap_fixture_case(name: &str) -> &'static PcapFixtureCase {
         .unwrap_or_else(|| panic!("pcap fixture {name} should be cataloged"))
 }
 
+const BLE_PCAP_RECORD_FIXTURE_NAME: &str = "ble-le-ll-adv-record";
+const BLE_RADIO_PSEUDO_HEADER_LEN: usize = 10;
+const BLE_RADIO_ACCESS_ADDRESS_OFFSET: usize = 4;
+const BLE_LL_ACCESS_ADDRESS_LEN: usize = 4;
+
+fn pcap_record_expected_bytes(fixture_name: &str) -> Vec<u8> {
+    if fixture_name == BLE_PCAP_RECORD_FIXTURE_NAME {
+        ble_le_ll_adv_record_bytes()
+    } else {
+        fixture_bytes_for_case(valid_fixture_case(fixture_name))
+    }
+}
+
+fn pcap_record_valid_fixture(fixture_name: &str) -> Option<&'static ValidFixtureCase> {
+    if fixture_name == BLE_PCAP_RECORD_FIXTURE_NAME {
+        None
+    } else {
+        Some(valid_fixture_case(fixture_name))
+    }
+}
+
+fn ble_le_ll_adv_decoded_packet() -> Packet {
+    BleRadio::advertising(37).rssi(-40).crc_valid(true)
+        / BleLlAdv::adv_ind()
+            .tx_add(false)
+            .adv_a(MacAddr::new([0x00, 0x00, 0x5e, 0x00, 0x53, 0x46]))
+            .push_ad(AdStructure::flags_general_disc())
+            .push_ad(AdStructure::complete_local_name("crafter-ble"))
+}
+
+fn ble_le_ll_adv_record_bytes() -> Vec<u8> {
+    let compiled = ble_le_ll_adv_decoded_packet()
+        .compile()
+        .expect("BLE fixture packet should compile");
+    let packet_bytes = compiled.as_bytes();
+    let access_address = &packet_bytes[BLE_RADIO_ACCESS_ADDRESS_OFFSET
+        ..BLE_RADIO_ACCESS_ADDRESS_OFFSET + BLE_LL_ACCESS_ADDRESS_LEN];
+
+    let mut bytes = Vec::with_capacity(packet_bytes.len() + BLE_LL_ACCESS_ADDRESS_LEN);
+    bytes.extend_from_slice(&packet_bytes[..BLE_RADIO_PSEUDO_HEADER_LEN]);
+    bytes.extend_from_slice(access_address);
+    bytes.extend_from_slice(&packet_bytes[BLE_RADIO_PSEUDO_HEADER_LEN..]);
+    bytes
+}
+
+fn assert_ble_pcap_packet_surface(packet: &Packet) {
+    let layer_names = packet.iter().map(|layer| layer.name()).collect::<Vec<_>>();
+    assert_eq!(layer_names, vec!["BleRadio", "BleLlAdv"]);
+
+    let radio = packet.layer::<BleRadio>().expect("decoded BLE radio layer");
+    assert_eq!(radio.summary(), "BleRadio(ch=37, aa=0x8e89bed6, phy=1M)");
+
+    let adv = packet
+        .layer::<BleLlAdv>()
+        .expect("decoded BLE advertising layer");
+    assert_eq!(
+        adv.summary(),
+        "BleLlAdv(ADV_IND, AdvA=00:00:5E:00:53:46, len=22)"
+    );
+    assert_eq!(
+        adv.adv_a_value(),
+        Some(MacAddr::new([0x00, 0x00, 0x5e, 0x00, 0x53, 0x46]))
+    );
+
+    let adv_debug = format!("{adv:?}");
+    assert!(
+        adv_debug.contains("AdStructure { ad_type: 1, data: [6], length_override: None }"),
+        "{adv_debug}"
+    );
+    assert!(
+        adv_debug.contains(
+            "AdStructure { ad_type: 9, data: [99, 114, 97, 102, 116, 101, 114, 45, 98, 108, 101], length_override: None }"
+        ),
+        "{adv_debug}"
+    );
+}
+
 fn packet_records_from_pcap_fixture(case: &PcapFixtureCase) -> Vec<PacketRecord> {
     let path = fixture_path(case.path);
     let source = PacketWire::pcap_file(path.clone())
@@ -7728,8 +7828,8 @@ fn pcap_fixture_corpus_decodes_supported_link_types() {
         assert_eq!(packets.len(), records.len());
 
         for ((record, packet), expected) in records.iter().zip(packets.iter()).zip(case.records) {
-            let expected_fixture = valid_fixture_case(expected.fixture_name);
-            let expected_bytes = fixture_bytes_for_case(expected_fixture);
+            let expected_fixture = pcap_record_valid_fixture(expected.fixture_name);
+            let expected_bytes = pcap_record_expected_bytes(expected.fixture_name);
             let expected_timestamp = PcapTimestamp::new(
                 expected.seconds,
                 expected.fractional,
@@ -7754,14 +7854,18 @@ fn pcap_fixture_corpus_decodes_supported_link_types() {
             assert_eq!(packet.pcap_link_type(), case.pcap_link_type);
             assert_eq!(packet.link_type(), case.link_type);
 
-            assert_packet_surface(expected_fixture, packet.packet());
-            assert_fixture_fields(expected_fixture, packet.packet());
-            assert_compile_decode_compile(
-                expected_fixture,
-                packet_target_for_case(expected_fixture),
-                packet.packet(),
-                &expected_bytes,
-            );
+            if let Some(expected_fixture) = expected_fixture {
+                assert_packet_surface(expected_fixture, packet.packet());
+                assert_fixture_fields(expected_fixture, packet.packet());
+                assert_compile_decode_compile(
+                    expected_fixture,
+                    packet_target_for_case(expected_fixture),
+                    packet.packet(),
+                    &expected_bytes,
+                );
+            } else {
+                assert_ble_pcap_packet_surface(packet.packet());
+            }
         }
     }
 

@@ -168,6 +168,11 @@ Pcap fixtures cover:
   records, and one protected unicast data record. The fixture decrypts to an
   Ethernet-equivalent IPv4 raw payload through `WpaDecrypt` and uses only
   documentation-safe identifiers.
+- Bluetooth LE Link Layer with pseudo-header link type (DLT 256) with a
+  deterministic `ADV_IND` record in `ble-le-ll-adv.pcap`: channel 37,
+  advertising access address `0x8e89bed6`, documentation-safe advertiser
+  address `00:00:5E:00:53:46`, Flags AD `0x06`, and Complete Local Name
+  `crafter-ble`.
 
 The checked-in pcap fixtures currently exercise link type mapping, timestamps,
 record lengths, packet decoding, and IP fragment transform handoff for those
