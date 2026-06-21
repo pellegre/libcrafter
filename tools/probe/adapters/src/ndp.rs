@@ -379,10 +379,10 @@ pub fn validate_ndp_candidate(
     // Advertisement carries the router flags.
     match expected_type {
         NDP_NEIGHBOR_ADVERTISEMENT_TYPE => {
-            validate_neighbor_advertisement(packet, &icmpv6, validation, &mut mismatches);
+            validate_neighbor_advertisement(packet, icmpv6, validation, &mut mismatches);
         }
         NDP_ROUTER_ADVERTISEMENT_TYPE => {
-            validate_router_advertisement(packet, validation, &mut mismatches);
+            validate_router_advertisement(icmpv6, validation, &mut mismatches);
         }
         _ => {}
     }
@@ -482,12 +482,12 @@ fn validate_neighbor_advertisement(
 /// Validate a Router Advertisement body against the contract: the Managed (M) and
 /// Other (O) flags read from `Icmpv6::body()`.
 fn validate_router_advertisement(
-    packet: &Packet,
+    icmpv6: &Icmpv6,
     validation: &NdpValidation,
     mismatches: &mut Vec<Value>,
 ) {
-    if let Some(icmpv6) = packet.layer::<Icmpv6>() {
-        if let Icmpv6Body::RouterAdvertisement { managed, other, .. } = icmpv6.body() {
+    match icmpv6.body() {
+        Icmpv6Body::RouterAdvertisement { managed, other, .. } => {
             check_flag(
                 "ndp.ra.managed",
                 validation.managed_flag,
@@ -495,11 +495,12 @@ fn validate_router_advertisement(
                 mismatches,
             );
             check_flag("ndp.ra.other", validation.other_flag, other, mismatches);
-        } else {
+        }
+        body => {
             mismatches.push(json!({
                 "field": "ndp.ra.body",
                 "expected": "router-advertisement",
-                "actual": format!("{:?}", icmpv6.body()),
+                "actual": format!("{body:?}"),
             }));
         }
     }

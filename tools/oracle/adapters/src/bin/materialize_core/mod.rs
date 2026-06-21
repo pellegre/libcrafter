@@ -1575,10 +1575,8 @@ fn tcp_layer(plan: &Value, next_layer: Option<&str>) -> ExampleResult<Tcp> {
     let fields = layer_fields(plan, "tcp")?;
     let source_port = u16_value(required(fields, &["src_port", "sport"])?)?;
     let mut destination_port = u16_value(required(fields, &["dst_port", "dport"])?)?;
-    if next_layer == Some("bgp") {
-        if source_port != BGP_PORT && destination_port != BGP_PORT {
-            destination_port = BGP_PORT;
-        }
+    if next_layer == Some("bgp") && source_port != BGP_PORT && destination_port != BGP_PORT {
+        destination_port = BGP_PORT;
     }
     let mut layer = Tcp::new()
         .sport(source_port)
@@ -5456,7 +5454,7 @@ mod dot11_materialization {
             vector.get("decoder").and_then(Value::as_str),
             Some("link:dot11")
         );
-        let decoded = Packet::decode_from_link(LinkType::Ieee80211, &raw_bytes(&vector))
+        let decoded = Packet::decode_from_link(LinkType::Ieee80211, raw_bytes(&vector))
             .expect("materialized bare Dot11 vector must decode");
         let dot11 = decoded.layer::<Dot11>().expect("dot11 layer");
         assert_eq!(
@@ -5499,7 +5497,7 @@ mod dot11_materialization {
         });
 
         let vector = materialize_plan(&plan).expect("Dot11 RSN plan must materialize");
-        let decoded = Packet::decode_from_link(LinkType::Radiotap, &raw_bytes(&vector))
+        let decoded = Packet::decode_from_link(LinkType::Radiotap, raw_bytes(&vector))
             .expect("materialized Dot11 RSN vector must decode");
         let dot11 = decoded.layer::<Dot11>().expect("dot11 layer");
         let rsn = dot11
@@ -5564,7 +5562,7 @@ mod igmp_materialization {
 
         let vector = materialize_plan(&plan).expect("IGMP report plan must materialize");
         assert_eq!(vector.get("root").and_then(Value::as_str), Some("l3:ipv4"));
-        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, &raw_bytes(&vector))
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, raw_bytes(&vector))
             .expect("materialized IGMP report must decode from l3");
 
         decoded.layer::<Igmp>().expect("IGMP fixed header");
@@ -5606,7 +5604,7 @@ mod igmp_materialization {
         });
 
         let vector = materialize_plan(&plan).expect("IGMP query plan must materialize");
-        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, &raw_bytes(&vector))
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, raw_bytes(&vector))
             .expect("materialized IGMP query must decode from l3");
         let query = decoded.layer::<IgmpQuery>().expect("IGMP query body");
         assert!(query.suppress_router_side_processing());

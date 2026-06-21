@@ -959,9 +959,9 @@ pub fn validate_udp_candidate(
         }));
     }
 
-    let checksum_status = checksum_status_name(udp.checksum_status());
+    let checksum_status = checksum_status_name(udp.checksum_status()).to_string();
     if let Some(allowed) = plan.expected_udp_checksum_statuses.as_deref() {
-        if !allowed.iter().any(|item| item == checksum_status) {
+        if !allowed.contains(&checksum_status) {
             mismatches.push(json!({
                 "field": "udp.checksum_status",
                 "expected": allowed,

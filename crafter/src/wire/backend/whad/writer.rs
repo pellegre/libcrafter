@@ -25,21 +25,25 @@ pub(crate) struct WhadDryRunPlan {
 
 impl WhadDryRunPlan {
     /// BLE channel carried by the planned `SendRawPdu`.
+    #[cfg(test)]
     pub(crate) const fn channel(&self) -> u8 {
         self.channel
     }
 
     /// BLE access address carried by the planned `SendRawPdu`.
+    #[cfg(test)]
     pub(crate) const fn access_address(&self) -> u32 {
         self.access_address
     }
 
     /// Raw BLE PDU length carried by the planned `SendRawPdu`.
+    #[cfg(test)]
     pub(crate) const fn pdu_len(&self) -> usize {
         self.pdu_len
     }
 
     /// Complete framed WHAD `SendRawPdu` bytes that dry-run skipped sending.
+    #[cfg(test)]
     pub(crate) fn planned_frame(&self) -> &[u8] {
         &self.frame
     }
@@ -48,7 +52,6 @@ impl WhadDryRunPlan {
 /// WHAD packet writer translating packet records into BLE `SendRawPdu` messages.
 pub(crate) struct WhadWriter<C: WhadByteChannel> {
     link: WhadLink<C>,
-    device: WhadDevice,
     dry_run: bool,
     channel: u8,
     last_dry_run_plan: Option<WhadDryRunPlan>,
@@ -56,10 +59,9 @@ pub(crate) struct WhadWriter<C: WhadByteChannel> {
 
 impl<C: WhadByteChannel> WhadWriter<C> {
     /// Create a WHAD writer for a discovered device and default BLE channel.
-    pub(crate) fn new(link: WhadLink<C>, device: WhadDevice, channel: u8) -> Self {
+    pub(crate) fn new(link: WhadLink<C>, _device: WhadDevice, channel: u8) -> Self {
         Self {
             link,
-            device,
             dry_run: false,
             channel,
             last_dry_run_plan: None,
@@ -77,32 +79,20 @@ impl<C: WhadByteChannel> WhadWriter<C> {
         self
     }
 
-    /// Borrow the discovered WHAD device metadata associated with this writer.
-    pub(crate) const fn device(&self) -> &WhadDevice {
-        &self.device
-    }
-
-    /// Configured fallback BLE channel used when a packet has no radio layer.
-    pub(crate) const fn channel(&self) -> u8 {
-        self.channel
-    }
-
-    /// Return true when this writer only reports planned writes.
-    pub(crate) const fn is_dry_run(&self) -> bool {
-        self.dry_run
-    }
-
     /// Last dry-run frame this writer planned instead of transmitting.
+    #[cfg(test)]
     pub(crate) fn last_dry_run_plan(&self) -> Option<&WhadDryRunPlan> {
         self.last_dry_run_plan.as_ref()
     }
 
     /// Consume the writer and return the underlying WHAD link.
+    #[cfg(test)]
     pub(crate) fn into_link(self) -> WhadLink<C> {
         self.link
     }
 
     /// Mutably borrow the shared WHAD link.
+    #[cfg(test)]
     pub(crate) fn link_mut(&mut self) -> &mut WhadLink<C> {
         &mut self.link
     }

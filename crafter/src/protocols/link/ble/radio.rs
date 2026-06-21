@@ -18,20 +18,15 @@ const BLE_RADIO_FLAG_CRC_VALID: u16 = 0x0800;
 const BLE_RADIO_FLAG_PHY_SHIFT: u16 = 14;
 
 /// BLE physical-layer modulation used for the advertising PDU.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BlePhy {
     /// Bluetooth LE 1M PHY.
+    #[default]
     Le1M,
     /// Bluetooth LE 2M PHY.
     Le2M,
     /// Bluetooth LE Coded PHY.
     LeCoded,
-}
-
-impl Default for BlePhy {
-    fn default() -> Self {
-        Self::Le1M
-    }
 }
 
 impl BlePhy {

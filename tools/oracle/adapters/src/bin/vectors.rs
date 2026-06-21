@@ -484,18 +484,18 @@ mod icmpv4_oracle {
         };
 
         let mpls = find("crafter-icmpv4-extension-mpls");
-        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, &decode_hex(&mpls.raw_hex))
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, decode_hex(&mpls.raw_hex))
             .expect("decode mpls");
         assert!(decoded.layer::<IcmpExtension>().is_some());
         assert!(decoded.layer::<IcmpExtensionMpls>().is_some());
 
         let info = find("crafter-icmpv4-extension-interface-info");
-        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, &decode_hex(&info.raw_hex))
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, decode_hex(&info.raw_hex))
             .expect("decode interface info");
         assert!(decoded.layer::<IcmpExtensionInterfaceInfo>().is_some());
 
         let extended = find("crafter-icmpv4-extended-echo-request");
-        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, &decode_hex(&extended.raw_hex))
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, decode_hex(&extended.raw_hex))
             .expect("decode extended echo");
         assert!(decoded.layer::<IcmpExtensionInterfaceId>().is_some());
     }
@@ -583,13 +583,13 @@ mod igmp_oracle {
         };
 
         let query = find("crafter-igmp-v3-query-with-sources");
-        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, &decode_hex(&query.raw_hex))
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, decode_hex(&query.raw_hex))
             .expect("decode IGMP query");
         let query = decoded.layer::<IgmpQuery>().expect("typed IGMP query body");
         assert_eq!(query.number_of_sources_value(), 2);
 
         let report = find("crafter-igmp-v3-report-with-extension");
-        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, &decode_hex(&report.raw_hex))
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, decode_hex(&report.raw_hex))
             .expect("decode IGMP report");
         let report = decoded
             .layer::<IgmpReport>()
