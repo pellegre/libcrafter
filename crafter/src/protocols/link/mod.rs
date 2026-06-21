@@ -47,6 +47,7 @@ use crate::protocols::ipv6::Ipv6;
 use crate::registry::ProtocolRegistry;
 
 mod arp;
+mod ble;
 mod dot11;
 mod llc;
 mod radiotap;
