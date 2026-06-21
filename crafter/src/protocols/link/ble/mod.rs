@@ -5,3 +5,5 @@
 
 mod consts;
 mod radio;
+
+pub use radio::{BlePhy, BleRadio};
