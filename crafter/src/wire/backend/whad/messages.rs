@@ -3,8 +3,10 @@
 #![allow(dead_code)]
 
 use crate::{CrafterError, Result};
+use crate::wire::{Result as WireResult, WireError};
 
 use super::proto;
+use super::WHAD_TARGET_PROTOCOL_VERSION;
 
 const BLE_ADVERTISING_ACCESS_ADDRESS: u32 = 0x8E89_BED6;
 const BLE_ADDRESS_LEN: usize = 6;
@@ -171,6 +173,21 @@ pub(crate) fn parse_device_info_response(message: &proto::Message) -> Result<Wha
     })
 }
 
+pub(crate) fn negotiate_protocol_version(device_info: &WhadDeviceInfo) -> WireResult<u32> {
+    let device_min_version = device_info.protocol_min_version;
+    if device_min_version <= WHAD_TARGET_PROTOCOL_VERSION {
+        return Ok(device_min_version);
+    }
+
+    Err(WireError::backend(
+        "whad",
+        "protocol version negotiation",
+        format!(
+            "device requires WHAD protocol version {device_min_version} or newer; libcrafter is pinned to {WHAD_TARGET_PROTOCOL_VERSION}"
+        ),
+    ))
+}
+
 pub(crate) fn parse_domain_response(message: &proto::Message) -> Result<WhadDomainCommands> {
     let response = match discovery_payload(message)? {
         proto::discovery::message::Msg::DomainResp(response) => response,
@@ -319,6 +336,23 @@ mod tests {
         proto::Message::decode(encoded.as_slice()).expect("WHAD message decodes")
     }
 
+    fn device_info_with_protocol_min_version(protocol_min_version: u32) -> WhadDeviceInfo {
+        WhadDeviceInfo {
+            device_type: proto::discovery::DeviceType::Butterfly as u32,
+            device_id: vec![0x10, 0x20, 0x30, 0x40],
+            protocol_min_version,
+            max_speed: 1_000_000,
+            firmware_author: "whad-team".to_string(),
+            firmware_url: "https://example.invalid/firmware".to_string(),
+            firmware_version: WhadFirmwareVersion {
+                major: 1,
+                minor: 2,
+                revision: 3,
+            },
+            supported_domains: vec![proto::discovery::Domain::BtLe as u32],
+        }
+    }
+
     #[test]
     fn whad_discovery_device_info_query_round_trips() {
         let decoded = decode_top_level(&build_device_info_query(3));
@@ -415,6 +449,38 @@ mod tests {
             .expect("domains response parses");
         assert_eq!(domains.supported_domains, device_info.supported_domains);
         assert_eq!(domains.commands, vec![domain]);
+    }
+
+    #[test]
+    fn whad_version_compatible_device_minimum_passes() {
+        let device_info =
+            device_info_with_protocol_min_version(WHAD_TARGET_PROTOCOL_VERSION - 1);
+
+        assert_eq!(
+            negotiate_protocol_version(&device_info).expect("protocol version is compatible"),
+            WHAD_TARGET_PROTOCOL_VERSION - 1
+        );
+    }
+
+    #[test]
+    fn whad_version_incompatible_device_minimum_returns_backend_error() {
+        let device_info =
+            device_info_with_protocol_min_version(WHAD_TARGET_PROTOCOL_VERSION + 1);
+        let err = negotiate_protocol_version(&device_info).expect_err("version mismatch errors");
+
+        match err {
+            WireError::Backend {
+                backend,
+                operation,
+                reason,
+            } => {
+                assert_eq!(backend, "whad");
+                assert_eq!(operation, "protocol version negotiation");
+                assert!(reason.contains("device requires WHAD protocol version 4 or newer"));
+                assert!(reason.contains("libcrafter is pinned to 3"));
+            }
+            other => panic!("expected WHAD backend error, got {other:?}"),
+        }
     }
 
     #[test]
