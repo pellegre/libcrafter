@@ -5,7 +5,7 @@ use crate::error::{CrafterError, Result};
 use super::consts::{
     AD_COMPLETE_128_BIT_SERVICE_UUIDS, AD_COMPLETE_16_BIT_SERVICE_UUIDS,
     AD_COMPLETE_32_BIT_SERVICE_UUIDS, AD_COMPLETE_LOCAL_NAME, AD_FLAGS,
-    AD_INCOMPLETE_128_BIT_SERVICE_UUIDS, AD_INCOMPLETE_16_BIT_SERVICE_UUIDS,
+    AD_APPEARANCE, AD_INCOMPLETE_128_BIT_SERVICE_UUIDS, AD_INCOMPLETE_16_BIT_SERVICE_UUIDS,
     AD_INCOMPLETE_32_BIT_SERVICE_UUIDS, AD_MANUFACTURER_SPECIFIC_DATA,
     AD_SERVICE_DATA_128_BIT_UUID, AD_SERVICE_DATA_16_BIT_UUID, AD_SERVICE_DATA_32_BIT_UUID,
     AD_SHORTENED_LOCAL_NAME, AD_TX_POWER_LEVEL,
@@ -93,6 +93,10 @@ impl AdStructure {
 
     pub fn tx_power_level(dbm: i8) -> Self {
         Self::new(AD_TX_POWER_LEVEL, [dbm as u8])
+    }
+
+    pub fn appearance(value: u16) -> Self {
+        Self::new(AD_APPEARANCE, value.to_le_bytes())
     }
 
     pub fn manufacturer_data(company_id: u16, data: &[u8]) -> Self {
@@ -230,6 +234,14 @@ impl AdStructure {
     pub fn tx_power_level_value(&self) -> Option<i8> {
         if self.ad_type == AD_TX_POWER_LEVEL && self.data.len() == 1 {
             Some(self.data[0] as i8)
+        } else {
+            None
+        }
+    }
+
+    pub fn appearance_value(&self) -> Option<u16> {
+        if self.ad_type == AD_APPEARANCE && self.data.len() == 2 {
+            Some(u16::from_le_bytes([self.data[0], self.data[1]]))
         } else {
             None
         }
@@ -550,6 +562,19 @@ mod tests {
             AdStructure::raw(AD_TX_POWER_LEVEL, [0xfc, 0x00]).tx_power_level_value(),
             None
         );
+    }
+
+    #[test]
+    fn ble_ad_appearance_encodes_and_reads_value() {
+        let structure = AdStructure::appearance(0x03c0);
+        let mut encoded = Vec::new();
+
+        structure.encode(&mut encoded);
+
+        assert_eq!(encoded, [0x03, 0x19, 0xc0, 0x03]);
+        assert_eq!(structure.appearance_value(), Some(0x03c0));
+        assert_eq!(AdStructure::complete_local_name("x").appearance_value(), None);
+        assert_eq!(AdStructure::raw(AD_APPEARANCE, [0xc0]).appearance_value(), None);
     }
 
     #[test]
