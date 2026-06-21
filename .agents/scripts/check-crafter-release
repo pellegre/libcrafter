@@ -25,7 +25,19 @@ cleanup_temp_paths() {
     rm -rf "$path"
   done
 }
-trap cleanup_temp_paths EXIT
+
+lockfile_existed=0
+cleanup_lockfile() {
+  if [[ "$lockfile_existed" -eq 0 && -f Cargo.lock ]]; then
+    rm -f Cargo.lock
+  fi
+}
+
+cleanup() {
+  cleanup_temp_paths
+  cleanup_lockfile
+}
+trap cleanup EXIT
 
 run() {
   printf '\n==> %s\n' "$*"
@@ -56,6 +68,15 @@ esac
 
 crate_name="crafter"
 cargo_offline_flags=(--locked --offline)
+
+ensure_ephemeral_lockfile() {
+  if [[ -f Cargo.lock ]]; then
+    lockfile_existed=1
+  fi
+
+  run cargo generate-lockfile
+  run cargo fetch --locked
+}
 
 inspect_package_contents() {
   local crate_file="$1"
@@ -121,11 +142,15 @@ create_and_inspect_package() {
 }
 
 if [[ "$mode" == "--static" ]]; then
+  ensure_ephemeral_lockfile
+
   run cargo fmt --all -- --check
   run cargo clippy -p "$crate_name" --all-targets --all-features "${cargo_offline_flags[@]}"
   run cargo test -p "$crate_name" --all-targets "${cargo_offline_flags[@]}"
   run cargo build -p "$crate_name" --examples "${cargo_offline_flags[@]}"
   run env RUSTDOCFLAGS="${RUSTDOCFLAGS:-} -D warnings" cargo doc -p "$crate_name" --no-deps "${cargo_offline_flags[@]}"
+else
+  ensure_ephemeral_lockfile
 fi
 
 create_and_inspect_package
