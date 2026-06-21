@@ -31,9 +31,9 @@ pub mod transmitter;
 pub mod wpa;
 pub mod writer;
 
+pub use backend::raw_socket::RawSocketWriter;
 #[cfg(feature = "whad")]
 pub use backend::whad::WhadBleMode;
-pub use backend::raw_socket::RawSocketWriter;
 pub use dot11_metadata::Dot11Metadata;
 pub use error::{Result, WireError};
 pub use ip::{
@@ -44,12 +44,12 @@ pub use ip::{
     IP_DEFRAG_DEFAULT_MAX_AGE, IP_DEFRAG_DEFAULT_MAX_BYTES_PER_DATAGRAM,
     IP_DEFRAG_DEFAULT_MAX_DATAGRAMS, IP_FRAGMENT_MIN_MTU,
 };
+#[cfg(feature = "whad")]
+pub use packet_wire::WhadWireBuilder;
 pub use packet_wire::{
     OpenedPacketSource, OpenedPacketWriter, PacketWire, PacketWireBuilder, PacketWireTarget,
     RawSocketWireBuilder,
 };
-#[cfg(feature = "whad")]
-pub use packet_wire::WhadWireBuilder;
 pub use record::{
     BackendKind, BluetoothMetadata, MediumMetadata, PacketMetadata, PacketOrigin, PacketRecord,
     RadioMetadata, TransformTrace, WifiDecryptState, WifiMetadata, WifiProtectionStatus,
