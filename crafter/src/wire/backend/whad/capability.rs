@@ -36,7 +36,14 @@ pub(crate) fn enter_ble<C: WhadByteChannel>(
     link.send_message(&build_ble_domain_query())?;
     match mode {
         WhadBleMode::SniffAdv { channel } => {
-            link.send_message(&build_ble_sniff_adv(false, u32::from(channel), Vec::new()))?;
+            // FF:FF:FF:FF:FF:FF is the broadcast wildcard: report every
+            // advertiser. An empty filter makes the firmware match nothing,
+            // so no advertisements are ever streamed back.
+            link.send_message(&build_ble_sniff_adv(
+                false,
+                u32::from(channel),
+                vec![0xFF; 6],
+            ))?;
         }
         WhadBleMode::Inject => {
             link.send_message(&build_ble_central_mode())?;
@@ -254,7 +261,9 @@ mod tests {
                 Some(proto::ble::message::Msg::SniffAdv(command)) => {
                     assert!(!command.use_extended_adv);
                     assert_eq!(command.channel, channel);
-                    assert!(command.bd_address.is_empty());
+                    // Broadcast wildcard: report every advertiser (an empty
+                    // filter makes the firmware match nothing).
+                    assert_eq!(command.bd_address, vec![0xFF; 6]);
                 }
                 other => panic!("expected BLE advertising sniff command, got {other:?}"),
             },
