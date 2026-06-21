@@ -42,6 +42,8 @@ PROBE_CAPABILITY_NAMES = (
     "repeated_response",
     "bgp_peer",
     "rip_peer",
+    "ipv4_multicast",
+    "igmp_peer",
     # IPSec behavioral capabilities. An IPSec-capable peer holds the matching
     # Security Association (ESP/AH) or runs an IKEv2 responder. The peer is the
     # Linux kernel xfrm / strongSwan stack or an oracle reference peer
@@ -218,6 +220,27 @@ def probe_capabilities_from_lab_capabilities(
         and controlled_services
         and _capability_default_true(substrate, "rip_peer")
     )
+    # IGMP peer behavior needs a same-segment IPv4 multicast substrate plus a
+    # controlled peer/listener/router service on the target endpoint. Providers
+    # may explicitly deny either multicast delivery or the controlled IGMP peer;
+    # unsupported substrates then skip with stable IGMP-specific reasons.
+    ipv4_multicast = (
+        ipv4_unicast
+        and link_layer_send
+        and link_layer_capture
+        and broadcast
+        and _capability_default_true(substrate, "ipv4_multicast", "multicast")
+    )
+    igmp_peer = (
+        ipv4_multicast
+        and controlled_services
+        and _capability_default_true(
+            substrate,
+            "igmp_peer",
+            "igmp_listener",
+            "igmp_router",
+        )
+    )
     # IPSec behavioral capabilities. The ESP/AH cases need a peer on the
     # controlled target endpoint that holds the matching Security Association
     # (the same SPI, mode, algorithms, and keys libcrafter seals/verifies with);
@@ -303,6 +326,8 @@ def probe_capabilities_from_lab_capabilities(
         "repeated_response": repeated_response,
         "bgp_peer": bgp_peer,
         "rip_peer": rip_peer,
+        "ipv4_multicast": ipv4_multicast,
+        "igmp_peer": igmp_peer,
         "ipsec_esp": ipsec_esp,
         "ipsec_ah": ipsec_ah,
         "ikev2": ikev2,
@@ -361,6 +386,21 @@ def probe_capabilities_from_lab_capabilities(
             "repeated_response": ["ipv4_unicast", "controlled_services"],
             "bgp_peer": ["ipv4_unicast", "controlled_services", "bgp_peer"],
             "rip_peer": ["ipv4_unicast", "controlled_services", "rip_peer"],
+            "ipv4_multicast": [
+                "ipv4_unicast",
+                "link_layer_send",
+                "link_layer_capture",
+                "broadcast",
+                "ipv4_multicast",
+            ],
+            "igmp_peer": [
+                "ipv4_unicast",
+                "link_layer_send",
+                "link_layer_capture",
+                "broadcast",
+                "controlled_services",
+                "igmp_peer",
+            ],
             "ipsec_esp": ["ipv4_unicast", "controlled_services", "ipsec_peer"],
             "ipsec_ah": ["ipv4_unicast", "controlled_services", "ipsec_peer"],
             "ikev2": [

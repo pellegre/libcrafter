@@ -103,6 +103,38 @@ class ProbeCatalogTest(unittest.TestCase):
         self.assertIs(cli._selected_cases, cases.selected_cases)
         self.assertIs(cli._case_name_filters, cases.case_name_filters)
 
+    def test_igmp_profile_cases_are_focused_and_ordered(self) -> None:
+        self.assertEqual(
+            cases.IGMP_PROFILE_CASE_NAMES,
+            (
+                "igmp-membership-query-observation",
+                "igmp-v2-membership-report-emission",
+                "igmp-v2-leave-group-emission",
+                "igmp-v3-source-list-report",
+            ),
+        )
+
+        selected = cases.profile_selected_cases("igmp", [])
+        self.assertEqual(
+            [case.name for case in selected],
+            list(cases.IGMP_PROFILE_CASE_NAMES),
+        )
+        self.assertEqual(cases.profile_default_count("igmp"), len(selected))
+
+    def test_igmp_cases_carry_multicast_peer_capabilities(self) -> None:
+        for case in cases.IGMP_PROBE_CASES:
+            with self.subTest(case=case.name):
+                self.assertIn(case.name, cases.PROBE_CASE_BY_NAME)
+                self.assertEqual(case.metadata["protocol"], "igmp")
+                self.assertEqual(case.metadata["suite"], "behavior")
+                self.assertEqual(case.metadata["layer"], "network")
+                self.assertIs(case.metadata["ipv4_only"], True)
+                self.assertIs(case.metadata["planned_only"], True)
+                self.assertEqual(
+                    case.required_capabilities,
+                    ["ipv4_multicast", "igmp_peer"],
+                )
+
 
 if __name__ == "__main__":
     unittest.main()
