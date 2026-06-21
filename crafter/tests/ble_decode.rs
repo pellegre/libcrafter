@@ -1,6 +1,8 @@
 #[macro_use]
 mod support;
 
+use std::fs;
+
 use crafter::core::{CrafterError, LayerContext, LinkType, Packet, Result};
 use crafter::{BleLlAdv, Layer, MacAddr};
 
@@ -74,6 +76,25 @@ fn public_decode_from_link_decodes_ble_advertising_frame() -> Result<()> {
 }
 
 #[test]
+fn ble_summary_golden_snapshots_match_hex_fixtures() -> Result<()> {
+    assert_ble_summary_fixture(
+        "adv_ind_flags_name",
+        fixture_str!("ble/adv_ind_flags_name.hex"),
+        "summaries/ble-adv_ind_flags_name.summary.txt",
+    )?;
+    assert_ble_summary_fixture(
+        "adv_nonconn_ind_mfg_data",
+        fixture_str!("ble/adv_nonconn_ind_mfg_data.hex"),
+        "summaries/ble-adv_nonconn_ind_mfg_data.summary.txt",
+    )?;
+    assert_ble_summary_fixture(
+        "scan_rsp_name",
+        fixture_str!("ble/scan_rsp_name.hex"),
+        "summaries/ble-scan_rsp_name.summary.txt",
+    )
+}
+
+#[test]
 fn public_decode_from_link_reports_truncated_ble_access_address() {
     let frame = [
         37, 0xc4, 0x00, 0x00, 0xd6, 0xbe, 0x89, 0x8e, 0x13, 0x0c, 0xd6, 0xbe, 0x89,
@@ -141,6 +162,24 @@ fn assert_ble_fixture(
     }
 
     Ok(())
+}
+
+fn assert_ble_summary_fixture(label: &str, hex: &str, summary_path: &str) -> Result<()> {
+    let frame = decode_hex_fixture(label, hex);
+    let packet = Packet::decode_from_link(LinkType::BluetoothLeLl, &frame)?;
+    let expected = read_summary_fixture(summary_path);
+    assert_eq!(
+        expected.trim_end(),
+        packet.summary().trim_end(),
+        "{label} summary did not match {summary_path}"
+    );
+
+    Ok(())
+}
+
+fn read_summary_fixture(path: &str) -> String {
+    fs::read_to_string(support::fixture_path(path))
+        .unwrap_or_else(|err| panic!("summary fixture {path} should be readable: {err}"))
 }
 
 fn decode_hex_fixture(label: &str, text: &str) -> Vec<u8> {
