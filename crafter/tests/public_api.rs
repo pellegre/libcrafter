@@ -51,6 +51,48 @@ fn ble_root_reexports_compile() {
     ));
 }
 
+#[cfg(feature = "whad")]
+#[test]
+fn whad_reexport_public_api_compile() {
+    let root_mode: crafter::WhadBleMode = crafter::WhadBleMode::SniffAdv { channel: 37 };
+    let wire_mode: crafter::wire::WhadBleMode = crafter::wire::WhadBleMode::Inject;
+    let root_builder: crafter::WhadWireBuilder =
+        crafter::PacketWire::whad_serial("/dev/ttyFAKE0").ble_sniff(38);
+    let wire_builder: crafter::wire::WhadWireBuilder =
+        crafter::wire::PacketWire::whad_serial("/dev/ttyFAKE1").ble_inject();
+
+    use crafter::prelude::{
+        PacketWire as PreludePacketWire, WhadBleMode as PreludeWhadBleMode,
+        WhadWireBuilder as PreludeWhadWireBuilder,
+    };
+
+    let prelude_mode: PreludeWhadBleMode = PreludeWhadBleMode::SniffAdv { channel: 39 };
+    let prelude_builder: PreludeWhadWireBuilder =
+        PreludePacketWire::whad_serial("/dev/ttyFAKE2").channel(39);
+
+    assert_eq!(root_mode, crafter::WhadBleMode::SniffAdv { channel: 37 });
+    assert_eq!(wire_mode, crafter::wire::WhadBleMode::Inject);
+    assert_eq!(
+        root_builder.mode(),
+        crafter::WhadBleMode::SniffAdv { channel: 38 }
+    );
+    assert_eq!(
+        wire_builder.mode(),
+        crafter::wire::WhadBleMode::Inject
+    );
+    assert_eq!(
+        prelude_mode,
+        PreludeWhadBleMode::SniffAdv { channel: 39 }
+    );
+    assert_eq!(
+        prelude_builder.mode(),
+        PreludeWhadBleMode::SniffAdv { channel: 39 }
+    );
+    assert!(root_builder.is_dry_run());
+    assert!(wire_builder.is_dry_run());
+    assert!(prelude_builder.is_dry_run());
+}
+
 #[test]
 fn public_api_ip_fragment_exports() {
     use crafter::wire::{
