@@ -44,13 +44,21 @@ documentation on docs.rs for the published version.
 ## Public Upstream Migration
 
 The public upstream repository is `git@github.com:pellegre/libcrafter.git`.
-The Rust workspace preserves the project lineage locally, but it does not share
-commit hashes with current upstream `master`. Before replacing public upstream
-`master`, preserve the current upstream tip under a separate branch such as
-`legacy-cpp-master`.
+The public repository will be reset cleanly to the Rust workspace on `master`;
+do not create or preserve a public branch for the old C++ tip.
+
+Perform public ref cleanup and public `master` replacement before enabling
+rulesets. If they still exist, delete the legacy public branches `dev`,
+`pcap_filter`, and `testing`; delete the legacy public tags `version-0.1`,
+`version-0.2`, `version-0.3`, and `version-1.0`; and delete the legacy GitHub
+Release named `version 1.0` or any release attached to `version-1.0`.
 
 Any public upstream branch replacement must be an explicit maintainer action
-outside Clew execution. Use a reviewed manual sequence, preserve the legacy tip
-first, and prefer a guarded push such as `--force-with-lease` if a force push is
-approved. A public upstream force push, default-branch switch, tag push, or
-GitHub release creation is never part of unattended release automation.
+outside Clew execution. Use a reviewed manual sequence, verify the public ref
+state immediately before destructive changes, and prefer a guarded push such as
+`--force-with-lease` if a force push is approved. A public upstream force push,
+default-branch switch, tag push, or GitHub release creation is never part of
+unattended release automation.
+
+After the release, retarget local remotes so `origin` points to
+`git@github.com:pellegre/libcrafter.git` and remove the local `upstream` remote.
