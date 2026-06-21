@@ -18,6 +18,9 @@ pub(crate) mod messages;
 #[cfg(feature = "whad")]
 pub(crate) mod transport;
 
+#[cfg(feature = "whad")]
+pub(crate) mod writer;
+
 pub(crate) mod proto {
     #![allow(dead_code)]
 
