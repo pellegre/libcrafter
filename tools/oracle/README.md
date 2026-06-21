@@ -51,6 +51,11 @@ infrastructure:
 tools/oracle/run live --backend scapy --provider local-dry-run --profile smoke --seed 1 --count 10
 ```
 
+The `smoke` corpus includes a BLE advertising plan so this dry-run path records
+the BLE live boundary. BLE has no Hetzner, QEMU, VirtualBox, or other network
+provider live path in the oracle; on-air BLE behavior is validated with the
+ignored `.scratch/ble-whad-smoke` WHAD dongle harness.
+
 Provider-backed live planning is selected by a registered oracle live provider
 adapter and backed by `tools/lab` sessions. Hetzner, QEMU, and VirtualBox share
 the same oracle live runner and must stay dry-run unless a protected workflow
