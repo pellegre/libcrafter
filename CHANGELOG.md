@@ -70,8 +70,8 @@ workspace, released as one public crate: `crafter`.
   transform driven by captured EAPOL key exchanges.
 - Safe-by-default Rust examples for basic, intermediate, and gated advanced
   packet workflows.
-- Provider-agnostic wire endpoint tooling with local dry-run and Hetzner
-  providers for endpoint-backed packet workflows.
+- Provider-agnostic wire endpoint tooling with local dry-run and Hetzner,
+  QEMU, and VirtualBox providers for endpoint-backed packet workflows.
 - Reference fixture harnesses, malformed decode corpus, property tests,
   and GitHub Actions workflows.
 
@@ -88,7 +88,10 @@ workspace, released as one public crate: `crafter`.
   compressed names.
 - Live packet sends and captures require platform privileges and should run only
   in authorized wire environments.
-- QEMU and VirtualBox wire providers are not included in 0.3.0.
+- Provider-backed live traffic remains explicit opt-in, credential-gated, and
+  dry-run-first. It is intended for disposable provider endpoints and lab
+  sessions, not raw traffic from a developer host.
+- BLE live behavior remains dongle/manual rather than VM-provider-backed.
 
 ### Safety
 
