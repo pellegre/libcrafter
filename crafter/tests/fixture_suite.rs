@@ -69,6 +69,8 @@ enum FixtureContents {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ExpectedLayer {
     Radiotap,
+    BleRadio,
+    BleLlAdv,
     Dot11,
     LlcSnap,
     Eapol,
@@ -1602,6 +1604,36 @@ const DOT11_FIXTURES: &[ValidFixtureCase] = &[
     },
 ];
 
+const BLE_FIXTURES: &[ValidFixtureCase] = &[
+    ValidFixtureCase {
+        name: "ble-adv-ind-flags-name",
+        path: "ble/adv_ind_flags_name.hex",
+        contents: FixtureContents::Hex(fixture_str!("ble/adv_ind_flags_name.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::Link(LinkType::BluetoothLeLl)),
+        expected_layers: &[ExpectedLayer::BleRadio, ExpectedLayer::BleLlAdv],
+        preserve_exact_bytes: false,
+        summary_path: Some("summaries/ble-adv_ind_flags_name.summary.txt"),
+    },
+    ValidFixtureCase {
+        name: "ble-adv-nonconn-ind-mfg-data",
+        path: "ble/adv_nonconn_ind_mfg_data.hex",
+        contents: FixtureContents::Hex(fixture_str!("ble/adv_nonconn_ind_mfg_data.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::Link(LinkType::BluetoothLeLl)),
+        expected_layers: &[ExpectedLayer::BleRadio, ExpectedLayer::BleLlAdv],
+        preserve_exact_bytes: false,
+        summary_path: Some("summaries/ble-adv_nonconn_ind_mfg_data.summary.txt"),
+    },
+    ValidFixtureCase {
+        name: "ble-scan-rsp-name",
+        path: "ble/scan_rsp_name.hex",
+        contents: FixtureContents::Hex(fixture_str!("ble/scan_rsp_name.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::Link(LinkType::BluetoothLeLl)),
+        expected_layers: &[ExpectedLayer::BleRadio, ExpectedLayer::BleLlAdv],
+        preserve_exact_bytes: false,
+        summary_path: Some("summaries/ble-scan_rsp_name.summary.txt"),
+    },
+];
+
 const DOT11_TEXT_ARTIFACTS: &[Dot11TextArtifact] = &[
     Dot11TextArtifact {
         path: "docs/guide/dot11.md",
@@ -2336,6 +2368,7 @@ fn valid_fixture_case_opt(name: &str) -> Option<&'static ValidFixtureCase> {
     VALID_FIXTURES
         .iter()
         .chain(DOT11_FIXTURES.iter())
+        .chain(BLE_FIXTURES.iter())
         .find(|case| case.name == name)
 }
 
@@ -2438,7 +2471,8 @@ fn assert_compile_decode_compile(
         );
     }
 
-    let decoded_again = decode_packet(target, compiled.as_bytes()).unwrap_or_else(|err| {
+    let decode_bytes = compiled_decode_bytes_for_case(target, compiled.as_bytes());
+    let decoded_again = decode_packet(target, &decode_bytes).unwrap_or_else(|err| {
         panic!(
             "fixture {} should decode after compile/decode/compile setup: {err}",
             case.path
@@ -2453,6 +2487,30 @@ fn assert_compile_decode_compile(
         "fixture {} compile/decode/compile bytes changed",
         case.path
     );
+}
+
+fn compiled_decode_bytes_for_case(target: PacketDecodeTarget, compiled: &[u8]) -> Vec<u8> {
+    match target {
+        PacketDecodeTarget::Link(LinkType::BluetoothLeLl) => {
+            ble_link_decode_bytes_from_compiled(compiled)
+        }
+        _ => compiled.to_vec(),
+    }
+}
+
+fn ble_link_decode_bytes_from_compiled(compiled: &[u8]) -> Vec<u8> {
+    let access_address_end = BLE_RADIO_ACCESS_ADDRESS_OFFSET + BLE_LL_ACCESS_ADDRESS_LEN;
+    assert!(
+        compiled.len() >= BLE_RADIO_PSEUDO_HEADER_LEN && compiled.len() >= access_address_end,
+        "compiled BLE packet should contain the radio pseudo-header access address"
+    );
+
+    let access_address = &compiled[BLE_RADIO_ACCESS_ADDRESS_OFFSET..access_address_end];
+    let mut bytes = Vec::with_capacity(compiled.len() + BLE_LL_ACCESS_ADDRESS_LEN);
+    bytes.extend_from_slice(&compiled[..BLE_RADIO_PSEUDO_HEADER_LEN]);
+    bytes.extend_from_slice(access_address);
+    bytes.extend_from_slice(&compiled[BLE_RADIO_PSEUDO_HEADER_LEN..]);
+    bytes
 }
 
 fn assert_packet_surface(case: &ValidFixtureCase, packet: &Packet) {
@@ -2489,6 +2547,12 @@ fn assert_expected_layers(case: &ValidFixtureCase, packet: &Packet) {
         match expected {
             ExpectedLayer::Radiotap => {
                 let _ = expect_layer::<Radiotap>(case, packet);
+            }
+            ExpectedLayer::BleRadio => {
+                let _ = expect_layer::<BleRadio>(case, packet);
+            }
+            ExpectedLayer::BleLlAdv => {
+                let _ = expect_layer::<BleLlAdv>(case, packet);
             }
             ExpectedLayer::Dot11 => {
                 let _ = expect_layer::<Dot11>(case, packet);
@@ -2633,6 +2697,8 @@ fn assert_exact_layer_stack(case: &ValidFixtureCase, packet: &Packet) {
 fn expected_layer_name(expected: ExpectedLayer) -> &'static str {
     match expected {
         ExpectedLayer::Radiotap => "Radiotap",
+        ExpectedLayer::BleRadio => "BleRadio",
+        ExpectedLayer::BleLlAdv => "BleLlAdv",
         ExpectedLayer::Dot11 => "Dot11",
         ExpectedLayer::LlcSnap => "LlcSnap",
         ExpectedLayer::Eapol => "Eapol",
@@ -3012,6 +3078,74 @@ fn assert_dot11_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
     }
 }
 
+fn assert_ble_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
+    let (channel, pdu_type, adv_a, length, ad_debug): (&str, &str, MacAddr, &str, &[&str]) =
+        match case.name {
+            "ble-adv-ind-flags-name" => (
+                "37",
+                "ADV_IND",
+                MacAddr::new([0xc2, 0x00, 0x5e, 0x00, 0x53, 0x47]),
+                "22",
+                &[
+                    "AdStructure { ad_type: 1, data: [6], length_override: None }",
+                    "AdStructure { ad_type: 9, data: [99, 114, 97, 102, 116, 101, 114, 45, 97, 100, 118], length_override: None }",
+                ],
+            ),
+            "ble-adv-nonconn-ind-mfg-data" => (
+                "38",
+                "ADV_NONCONN_IND",
+                MacAddr::new([0xc2, 0x00, 0x5e, 0x00, 0x53, 0x48]),
+                "14",
+                &["AdStructure { ad_type: 255, data: [255, 255, 1, 2, 3, 4], length_override: None }"],
+            ),
+            "ble-scan-rsp-name" => (
+                "39",
+                "SCAN_RSP",
+                MacAddr::new([0xc2, 0x00, 0x5e, 0x00, 0x53, 0x49]),
+                "20",
+                &["AdStructure { ad_type: 9, data: [99, 114, 97, 102, 116, 101, 114, 45, 115, 99, 97, 110], length_override: None }"],
+            ),
+            other => panic!("BLE fixture {other} is missing typed field assertions"),
+        };
+
+    let radio = expect_layer::<BleRadio>(case, packet);
+    let radio_fields = radio.inspection_fields();
+    assert_eq!(
+        inspection_field_value(&radio_fields, "channel"),
+        Some(channel)
+    );
+    assert_eq!(
+        inspection_field_value(&radio_fields, "access_address"),
+        Some("0x8e89bed6")
+    );
+    assert_eq!(inspection_field_value(&radio_fields, "phy"), Some("1M"));
+
+    let adv = expect_layer::<BleLlAdv>(case, packet);
+    let adv_fields = adv.inspection_fields();
+    assert_eq!(
+        inspection_field_value(&adv_fields, "pdu_type"),
+        Some(pdu_type)
+    );
+    assert_eq!(inspection_field_value(&adv_fields, "length"), Some(length));
+    assert_eq!(adv.adv_a_value(), Some(adv_a));
+
+    let adv_debug = format!("{adv:?}");
+    for needle in ad_debug {
+        assert!(
+            adv_debug.contains(needle),
+            "fixture {} decoded AD fields should contain {needle}: {adv_debug}",
+            case.path
+        );
+    }
+}
+
+fn inspection_field_value<'a>(fields: &'a [(&'static str, String)], name: &str) -> Option<&'a str> {
+    fields
+        .iter()
+        .find(|(field, _)| *field == name)
+        .map(|(_, value)| value.as_str())
+}
+
 fn assert_bgp_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
     assert_exact_layer_stack(case, packet);
 
@@ -3204,6 +3338,7 @@ fn assert_igmp_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
 
 fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
     match case.name {
+        name if name.starts_with("ble-") => assert_ble_fixture_fields(case, packet),
         name if name.starts_with("dot11-") => assert_dot11_fixture_fields(case, packet),
         name if name.starts_with("ipv4-tcp-bgp-") || name.starts_with("ethernet-ipv4-tcp-bgp-") => {
             assert_bgp_fixture_fields(case, packet)
@@ -5880,12 +6015,20 @@ fn assert_fixture_filename_convention(relative: &Path) {
 
     let base_name = match category {
         "bytes" => strip_allowed_suffix(file_name, &[".bin", ".hex"]),
+        "ble" => strip_allowed_suffix(file_name, &[".hex"]),
         "dot11" => strip_allowed_suffix(file_name, &[".hex"]),
         "malformed" => strip_allowed_suffix(file_name, &[".bin", ".hex"]),
         "pcaps" => strip_allowed_suffix(file_name, &[".pcap", ".pcapng"]),
         "summaries" => strip_allowed_suffix(file_name, &[".summary.txt", ".summary.json"]),
         _ => panic!("fixture path {relative_str} uses unknown category {category}"),
     };
+
+    if category == "ble" && is_ble_fixture_base_name(base_name) {
+        return;
+    }
+    if category == "summaries" && is_ble_summary_base_name(base_name) {
+        return;
+    }
 
     assert_lower_dash_name(base_name, relative_str);
 }
@@ -5895,6 +6038,21 @@ fn strip_allowed_suffix<'a>(file_name: &'a str, suffixes: &[&str]) -> &'a str {
         .iter()
         .find_map(|suffix| file_name.strip_suffix(suffix))
         .unwrap_or_else(|| panic!("fixture file {file_name} uses an unsupported extension"))
+}
+
+fn is_ble_fixture_base_name(base_name: &str) -> bool {
+    BLE_FIXTURES.iter().any(|case| {
+        Path::new(case.path)
+            .file_stem()
+            .and_then(|name| name.to_str())
+            == Some(base_name)
+    })
+}
+
+fn is_ble_summary_base_name(base_name: &str) -> bool {
+    base_name
+        .strip_prefix("ble-")
+        .is_some_and(is_ble_fixture_base_name)
 }
 
 fn assert_lower_dash_name(name: &str, label: &str) {
@@ -6664,6 +6822,22 @@ fn fixture_dot11_corpus_decodes_layer_stacks() {
         assert_packet_surface(case, &packet);
         assert_exact_layer_stack(case, &packet);
         assert_dot11_fixture_fields(case, &packet);
+        assert_compile_decode_compile(case, target, &packet, &bytes);
+    }
+}
+
+#[test]
+fn fixture_ble_corpus_decodes_layer_stacks() {
+    for case in BLE_FIXTURES {
+        ensure_fixture_exists(case.path);
+        let bytes = fixture_bytes_for_case(case);
+        let target = packet_target_for_case(case);
+        let packet = decode_packet(target, &bytes)
+            .unwrap_or_else(|err| panic!("fixture {} should decode: {err}", case.path));
+
+        assert_packet_surface(case, &packet);
+        assert_exact_layer_stack(case, &packet);
+        assert_fixture_fields(case, &packet);
         assert_compile_decode_compile(case, target, &packet, &bytes);
     }
 }
@@ -7865,6 +8039,33 @@ fn pcap_fixture_corpus_decodes_supported_link_types() {
                 );
             } else {
                 assert_ble_pcap_packet_surface(packet.packet());
+                assert_eq!(
+                    case.records.len(),
+                    1,
+                    "BLE pcap fixture {} should carry one record",
+                    case.path
+                );
+                let mut rewritten = Vec::new();
+                {
+                    let options = PcapWriterOptions::new(case.pcap_link_type)
+                        .precision(case.timestamp_precision);
+                    let mut writer = PcapWriter::from_writer_with_options(&mut rewritten, options)
+                        .unwrap_or_else(|err| {
+                            panic!("pcap fixture {} writer should initialize: {err}", case.path)
+                        });
+                    writer.write_record(record).unwrap_or_else(|err| {
+                        panic!("pcap fixture {} record should rewrite: {err}", case.path)
+                    });
+                    writer.flush().unwrap_or_else(|err| {
+                        panic!("pcap fixture {} writer should flush: {err}", case.path)
+                    });
+                }
+                assert_eq!(
+                    rewritten.as_slice(),
+                    case.contents,
+                    "pcap fixture {} should roundtrip with deterministic header and record bytes",
+                    case.path
+                );
             }
         }
     }
@@ -8275,6 +8476,7 @@ fn fixture_tree_hygiene_matches_readme_conventions() {
     let catalog_paths = VALID_FIXTURES
         .iter()
         .chain(DOT11_FIXTURES.iter())
+        .chain(BLE_FIXTURES.iter())
         .map(|case| case.path)
         .collect::<HashSet<_>>();
     let mut cataloged_byte_fixture_paths = HashSet::new();
@@ -8294,7 +8496,7 @@ fn fixture_tree_hygiene_matches_readme_conventions() {
             .next()
             .and_then(|component| component.as_os_str().to_str());
         let is_readme = relative.file_name().and_then(|name| name.to_str()) == Some("README.md");
-        if !is_gitkeep && !is_readme && matches!(category, Some("bytes" | "dot11")) {
+        if !is_gitkeep && !is_readme && matches!(category, Some("bytes" | "dot11" | "ble")) {
             let path = relative
                 .to_str()
                 .unwrap_or_else(|| panic!("fixture path {relative:?} should be UTF-8"));
@@ -8316,6 +8518,15 @@ fn fixture_tree_hygiene_matches_readme_conventions() {
         assert!(
             cataloged_byte_fixture_paths.contains(case.path),
             "catalog entry {} must live under the fixture dot11/ directory",
+            case.path
+        );
+    }
+
+    for case in BLE_FIXTURES {
+        ensure_fixture_exists(case.path);
+        assert!(
+            cataloged_byte_fixture_paths.contains(case.path),
+            "catalog entry {} must live under the fixture ble/ directory",
             case.path
         );
     }
