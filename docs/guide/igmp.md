@@ -88,7 +88,7 @@ path is opt-in only:
 ```sh
 if [ "${LIBCRAFTER_RUN_IGMP_VM_LIVE:-0}" = "1" ]; then
   python3 tools/oracle/engine/live_provider_matrix.py \
-    --providers qemu,docker,virtualbox --backend scapy \
+    --providers qemu,docker,virtualbox \
     --family igmp --profile igmp-live-dry-run \
     --seed 3601 --count 2 \
     --real --skip-unavailable --confirm-live-run \
