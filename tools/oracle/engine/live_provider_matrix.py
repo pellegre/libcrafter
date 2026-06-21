@@ -729,6 +729,7 @@ def build_matrix_summary(
     *,
     status: str = "passed",
     backend: str,
+    family: str | None = None,
     profile: str,
     seed: int,
     count: int,
@@ -753,6 +754,7 @@ def build_matrix_summary(
         "allow_vm_create": allow_vm_create,
         "confirm_live_run": confirm_live_run,
         "backend": backend,
+        "family": family,
         "profile": profile,
         "seed": seed,
         "count": count,
@@ -784,6 +786,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--profile", default="smoke")
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--count", type=_positive_int, default=10)
+    parser.add_argument(
+        "--family",
+        default=None,
+        help="protocol family filter from stacks.yaml",
+    )
     parser.add_argument(
         "--case",
         dest="case_name",
@@ -892,6 +899,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             str(args.seed),
             "--count",
             str(args.count),
+            *(["--family", args.family] if args.family is not None else []),
             *(["--case", args.case_name] if args.case_name is not None else []),
             "--out",
             str(corpus_out),
@@ -1037,6 +1045,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         summary = build_matrix_summary(
             status=summary_status,
             backend=args.backend,
+            family=args.family,
             profile=args.profile,
             seed=args.seed,
             count=args.count,
@@ -1089,6 +1098,7 @@ def _oracle_command(
         str(args.seed),
         "--count",
         str(args.count),
+        *(["--family", args.family] if getattr(args, "family", None) is not None else []),
         *(["--case", case_name] if case_name is not None else []),
         "--corpus",
         str(corpus_path),
