@@ -22,9 +22,9 @@ pub(crate) use libpcap::{LibpcapCapture, LibpcapOfflineCapture};
 pub use reader::{PcapReader, PcapRecords};
 pub use types::{
     PcapHeader, PcapLinkType, PcapPacket, PcapRecord, PcapTimestamp, TimestampPrecision,
-    DLT_BLUETOOTH_LE_LL_WITH_PHDR, DLT_EN10MB, DLT_IEEE802_11, DLT_IEEE802_11_RADIO,
-    DLT_LINUX_SLL, DLT_LOOP, DLT_NULL, DLT_RAW, LINKTYPE_BLUETOOTH_LE_LL_WITH_PHDR,
-    LINKTYPE_IEEE802_11, LINKTYPE_IEEE802_11_RADIOTAP,
+    DLT_BLUETOOTH_LE_LL_WITH_PHDR, DLT_EN10MB, DLT_IEEE802_11, DLT_IEEE802_11_RADIO, DLT_LINUX_SLL,
+    DLT_LOOP, DLT_NULL, DLT_RAW, LINKTYPE_BLUETOOTH_LE_LL_WITH_PHDR, LINKTYPE_IEEE802_11,
+    LINKTYPE_IEEE802_11_RADIOTAP,
 };
 pub use writer::{PcapWriter, PcapWriterOptions};
 
@@ -1271,7 +1271,10 @@ mod tests {
         }
 
         let reader = PcapReader::open(temp.path()).unwrap();
-        assert_eq!(reader.header().pcap_link_type(), PcapLinkType::BluetoothLeLl);
+        assert_eq!(
+            reader.header().pcap_link_type(),
+            PcapLinkType::BluetoothLeLl
+        );
         assert_eq!(
             reader.header().pcap_link_type().datalink(),
             DLT_BLUETOOTH_LE_LL_WITH_PHDR
