@@ -418,6 +418,24 @@ mod tests {
     }
 
     #[test]
+    fn ble_radio_round_trips_compiled_pseudo_header() {
+        let access_address = 0x1234_5678;
+        let bytes = Packet::from_layer(BleRadio::advertising(37).access_address(access_address))
+            .compile()
+            .expect("compile BLE radio pseudo-header");
+
+        assert_eq!(bytes.len(), BLE_RADIO_PSEUDO_HEADER_LEN);
+        assert_eq!(&bytes[4..8], &access_address.to_le_bytes());
+
+        let (radio, tail) =
+            decode_ble_radio(bytes.as_bytes()).expect("decode BLE radio pseudo-header");
+
+        assert!(tail.is_empty());
+        assert_eq!(radio.channel.value(), Some(&37));
+        assert_eq!(radio.access_address.value(), Some(&access_address));
+    }
+
+    #[test]
     fn ble_radio_encode_encoded_len_is_constant() {
         assert_eq!(BleRadio::new().encoded_len(), BLE_RADIO_PSEUDO_HEADER_LEN);
         assert_eq!(
