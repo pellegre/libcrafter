@@ -10,16 +10,15 @@ use crafter::core::{
     Ah, Arp, Bgp, Dhcp, DhcpMessageType, DhcpOption, DhcpRelayAgentInfo, DhcpRelaySuboption, Dns,
     DnsName, DnsRecord, DnsRecordData, Dot11, Dot11DataSubtype, Dot11ManagementSubtype, Dscp,
     Eapol, EapolKey, Ecn, EdnsOption, Esp, Ethernet, IcmpKind, Icmpv4, Icmpv6, Igmp,
-    IgmpExtensionType, IgmpGroupRecord, IgmpQuery, IgmpRecordType, IgmpReport, IgmpType,
-    IkeHeader, IkeKePayload, IkeNoncePayload, IkeSaPayload, Ipv4, Ipv4ChecksumStatus,
-    Ipv4Option, Ipv6, Ipv6DestinationOptionsHeader, Ipv6FragmentHeader, Ipv6FragmentHeaderStatus,
-    Ipv6HopByHopOptionsHeader,
-    Ipv6MobileRoutingHeader, Ipv6MobileRoutingHeaderStatus, Ipv6Option, Ipv6RoutingHeader,
-    Ipv6RoutingTypeStatus, Ipv6SegmentRoutingHeader, Layer, LinkType, LinuxSll, LlcSnap, MacAddr,
-    NetworkLayer, NullByteOrder, NullLoopback, OptionOverload, OspfChecksumStatus, Ospfv2, Ospfv3,
-    Packet, Radiotap, Raw, Rip, Ripng, Tcp, TcpOption, TcpSackBlock, Udp, UdpChecksumStatus,
-    UdpOption, UdpOptionStatus, UdpOptions, Vlan, ARP_HRD_INFINIBAND, BOOTP_REQUEST,
-    DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_CLASS_IN,
+    IgmpExtensionType, IgmpGroupRecord, IgmpQuery, IgmpRecordType, IgmpReport, IgmpType, IkeHeader,
+    IkeKePayload, IkeNoncePayload, IkeSaPayload, Ipv4, Ipv4ChecksumStatus, Ipv4Option, Ipv6,
+    Ipv6DestinationOptionsHeader, Ipv6FragmentHeader, Ipv6FragmentHeaderStatus,
+    Ipv6HopByHopOptionsHeader, Ipv6MobileRoutingHeader, Ipv6MobileRoutingHeaderStatus, Ipv6Option,
+    Ipv6RoutingHeader, Ipv6RoutingTypeStatus, Ipv6SegmentRoutingHeader, Layer, LinkType, LinuxSll,
+    LlcSnap, MacAddr, NetworkLayer, NullByteOrder, NullLoopback, OptionOverload,
+    OspfChecksumStatus, Ospfv2, Ospfv3, Packet, Radiotap, Raw, Rip, Ripng, Tcp, TcpOption,
+    TcpSackBlock, Udp, UdpChecksumStatus, UdpOption, UdpOptionStatus, UdpOptions, Vlan,
+    ARP_HRD_INFINIBAND, BOOTP_REQUEST, DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_CLASS_IN,
     DNS_EDNS_DEFAULT_UDP_PAYLOAD_SIZE, DNS_EDNS_OPTION_COOKIE, DNS_EDNS_OPTION_NSID,
     DNS_FLAG_AUTHORITATIVE, DNS_FLAG_QR_RESPONSE, DNS_FLAG_RECURSION_DESIRED, DNS_SVCB_KEY_ALPN,
     DNS_SVCB_KEY_IPV4HINT, DNS_SVCB_KEY_IPV6HINT, DNS_SVCB_KEY_PORT, DNS_TYPE_A, DNS_TYPE_AAAA,
@@ -28,8 +27,8 @@ use crafter::core::{
     ETHERTYPE_ARP, ETHERTYPE_EAPOL, ETHERTYPE_IPV4, ETHERTYPE_VLAN, ICMPV6_ECHO_REQUEST,
     ICMPV6_TIME_EXCEEDED, ICMP_DESTINATION_UNREACHABLE, ICMP_ECHO_REQUEST, IGMP_FIXED_HEADER_LEN,
     IGMP_QUERY_CODE_V1, IGMP_TYPE_UNASSIGNED_FIRST, IPPROTO_ICMP, IPPROTO_ICMPV6, IPPROTO_IGMP,
-    IPPROTO_IPV6_DSTOPTS, IPPROTO_IPV6_EXPERIMENTAL_1, IPPROTO_IPV6_FRAGMENT,
-    IPPROTO_IPV6_HOPOPTS, IPPROTO_IPV6_ROUTE, IPPROTO_TCP, IPPROTO_UDP, IPV4_FLAG_DONT_FRAGMENT,
+    IPPROTO_IPV6_DSTOPTS, IPPROTO_IPV6_EXPERIMENTAL_1, IPPROTO_IPV6_FRAGMENT, IPPROTO_IPV6_HOPOPTS,
+    IPPROTO_IPV6_ROUTE, IPPROTO_TCP, IPPROTO_UDP, IPV4_FLAG_DONT_FRAGMENT,
     IPV4_FLAG_MORE_FRAGMENTS, IPV4_FLAG_RESERVED, IPV6_ROUTING_TYPE_MOBILE,
     IPV6_ROUTING_TYPE_SEGMENT, TCP_FLAG_ACK, TCP_FLAG_PSH, TCP_FLAG_SYN, UDP_HEADER_LEN,
     UDP_OPTION_EOL, UDP_OPTION_NOP,
@@ -2223,7 +2222,10 @@ fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
         | "ipv4-igmp-v1-report"
         | "ipv4-igmp-v2-query"
         | "ipv4-igmp-v2-report"
-        | "ipv4-igmp-v2-leave" => &[CoverageFamily::Ipv4IgmpBootstrap],
+        | "ipv4-igmp-v2-leave"
+        | "ipv4-igmp-mrd-advertisement"
+        | "ipv4-igmp-mrd-solicitation"
+        | "ipv4-igmp-mrd-termination" => &[CoverageFamily::Ipv4IgmpBootstrap],
         "ipv4-igmp-v3-query-extension" | "ipv4-igmp-v3-report-extension" => {
             &[CoverageFamily::Ipv4IgmpExtension]
         }
@@ -3140,7 +3142,10 @@ fn assert_igmp_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
             assert_eq!(query.source_addresses(), &[Ipv4Addr::new(198, 51, 100, 80)]);
 
             let extension = expect_layer::<IgmpExtension>(case, packet);
-            assert_eq!(extension.extension_type(), IgmpExtensionType::Unassigned(0x1234));
+            assert_eq!(
+                extension.extension_type(),
+                IgmpExtensionType::Unassigned(0x1234)
+            );
             assert_eq!(extension.extension_type_value(), 0x1234);
             assert_eq!(extension.extension_length_value(), 4);
             assert_eq!(extension.value_bytes(), &[0xde, 0xad, 0xbe, 0xef]);
@@ -3162,7 +3167,10 @@ fn assert_igmp_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
             assert_eq!(record.source_addresses(), &[Ipv4Addr::new(203, 0, 113, 81)]);
 
             let extension = expect_layer::<IgmpExtension>(case, packet);
-            assert_eq!(extension.extension_type(), IgmpExtensionType::Experimental(0xfffe));
+            assert_eq!(
+                extension.extension_type(),
+                IgmpExtensionType::Experimental(0xfffe)
+            );
             assert_eq!(extension.extension_type_value(), 0xfffe);
             assert_eq!(extension.extension_length_value(), 2);
             assert_eq!(extension.value_bytes(), &[0xca, 0xfe]);

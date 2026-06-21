@@ -576,7 +576,7 @@ mod igmp_report_decode {
 
     #[test]
     fn igmp_report_decode_empty_report_body() {
-        let bytes = report_bytes(0xa55a, 0, &[]);
+        let bytes = report_bytes(0x255a, 0, &[]);
 
         let decoded = append_igmp_packet(Packet::new(), &bytes).expect("decode empty report");
         let igmp = decoded.layer::<Igmp>().expect("typed IGMP header");
@@ -587,7 +587,7 @@ mod igmp_report_decode {
         assert_eq!(igmp.code_value(), 0x00);
         assert_eq!(igmp.checksum_value(), Some(0x1234));
         assert_eq!(igmp.group_address_value(), Ipv4Addr::UNSPECIFIED);
-        assert_eq!(report.reserved_flags_value(), 0xa55a);
+        assert_eq!(report.reserved_flags_value(), 0x255a);
         assert_eq!(report.reserved_flags_state(), FieldState::User);
         assert_eq!(report.number_of_group_records_value(), 0);
         assert_eq!(report.number_of_group_records_state(), FieldState::User);

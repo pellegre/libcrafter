@@ -44,6 +44,14 @@ fn raw_tail() -> impl Strategy<Value = Vec<u8>> {
     prop::collection::vec(any::<u8>(), 0..=8)
 }
 
+fn query_flags_without_extensions() -> impl Strategy<Value = u8> {
+    any::<u8>().prop_map(|flags| flags & !IGMP_V3_QUERY_FLAG_EXTENSION)
+}
+
+fn report_flags_without_extensions() -> impl Strategy<Value = u16> {
+    any::<u16>().prop_map(|flags| flags & !IGMP_V3_REPORT_FLAG_EXTENSION)
+}
+
 fn auxiliary_data_words() -> impl Strategy<Value = Vec<u8>> {
     prop::collection::vec(any::<u8>(), 0..=8)
         .prop_filter("auxiliary data is encoded in 32-bit words", |bytes| {
@@ -104,7 +112,7 @@ proptest! {
         src in doc_source_addr(),
         group in doc_multicast_group(),
         max_response_code in any::<u8>(),
-        raw_flags_qrv in any::<u8>(),
+        raw_flags_qrv in query_flags_without_extensions(),
         qqic in any::<u8>(),
         sources in prop::collection::vec(doc_source_addr(), 0..=4),
         tail in raw_tail(),
@@ -149,7 +157,7 @@ proptest! {
     #[test]
     fn igmp_v3_report_record_lists_roundtrip(
         src in doc_source_addr(),
-        reserved_flags in any::<u16>(),
+        reserved_flags in report_flags_without_extensions(),
         records in prop::collection::vec(report_record_input(), 0..=3),
         tail in raw_tail(),
     ) {
