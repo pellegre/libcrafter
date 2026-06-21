@@ -1,0 +1,17 @@
+// Regenerated WHAD top-level message envelope for the libcrafter WHAD backend.
+// Pin: whad-team/whad-protocol release/v3
+// Commit: 82dbbefe5c3a1b3bfa89f86829c8872985a7f27e
+
+syntax = "proto3";
+
+import "device.proto";
+import "generic.proto";
+import "ble.proto";
+
+message Message {
+  oneof msg {
+    generic.Message generic = 1;
+    discovery.Message discovery = 2;
+    ble.Message ble = 3;
+  }
+}
