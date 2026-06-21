@@ -162,17 +162,16 @@ source_refs:
 
 backend_support:
   scapy:
-    status: planned
+    status: supported
     native_layers:
-      - IGMP
       - Raw
     notes:
-      - Later Scapy backend steps own materialization and normalization for RFC 4286 MRD packet shapes.
+      - The Scapy backend materializes RFC 4286 MRD packet shapes as exact IPv4 protocol 2 Raw bytes and normalizes IGMP fields from the IPv4 payload.
       - Operational router discovery behavior and live multicast exchange are not sampled by this feature.
   libcrafter:
-    status: planned
+    status: supported
     native_layers:
       - Igmp
     notes:
-      - The public crate exposes MRD packet construction and decode; later oracle adapter steps own executable MRD cases.
+      - The public crate adapter materializes executable MRD packet construction and decode cases through the Packet abstraction.
       - IPv4 protocol number, TTL, destination address, and Router Alert option remain explicit IPv4 composition choices.

@@ -389,18 +389,14 @@ source_refs:
 
 backend_support:
   scapy:
-    status: planned
+    status: supported
     native_layers:
-      - IGMP
-      - IGMPv3
-      - IGMPv3mq
-      - IGMPv3mr
-      - IGMPv3gr
+      - Raw
     notes:
-      - Later Scapy backend steps own IGMP materialization and normalization.
-      - The layer spec is data-only at this step and does not enable IGMP oracle vectors yet.
+      - The Scapy backend materializes IGMP as exact IPv4 protocol 2 Raw bytes and normalizes IGMP fields from the IPv4 payload.
+      - Structured-error cases remain declared coverage only and are excluded from offline strict-byte comparison.
   libcrafter:
-    status: planned
+    status: supported
     native_layers:
       - Igmp
       - IgmpQuery
@@ -408,5 +404,5 @@ backend_support:
       - IgmpGroupRecord
       - IgmpExtension
     notes:
-      - The public crate has IGMP packet-layer support; later oracle adapter steps own executable IGMP feature cases.
+      - The public crate adapter materializes executable IGMP packet-layer oracle vectors through the Packet abstraction.
       - IPv4 protocol number, TTL, destination address, and Router Alert option remain explicit IPv4 composition choices.
