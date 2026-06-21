@@ -62,6 +62,7 @@ pub use self::arp::{
     ARP_PRO_IPV4,
 };
 use self::ble::{decode_ble_adv, decode_ble_radio};
+pub use self::ble::{AdList, AdStructure, BleAdvPduType, BleLlAdv, BlePhy, BleRadio};
 pub(crate) use self::dot11::decode_dot11_with_registry;
 pub use self::dot11::*;
 pub(crate) use self::llc::append_llc_snap_packet_with_registry;
@@ -1093,5 +1094,13 @@ mod link_layers {
         assert_eq!(decoded.iter().count(), 2);
         assert!(summary.contains("BleRadio"));
         assert!(summary.contains("BleLlAdv"));
+    }
+
+    #[test]
+    fn ble_public_exports_resolve_at_crate_root() {
+        let _radio: crate::BleRadio = crate::BleRadio::new().phy(crate::BlePhy::Le1M);
+        let _adv: crate::BleLlAdv = crate::BleLlAdv::new().pdu_type(crate::BleAdvPduType::AdvInd);
+        let ad: crate::AdStructure = crate::AdStructure::flags_general_disc();
+        let _ads: crate::AdList = crate::AdList(vec![ad]);
     }
 }
