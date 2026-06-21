@@ -6,7 +6,7 @@ use super::consts::{
     AD_COMPLETE_128_BIT_SERVICE_UUIDS, AD_COMPLETE_16_BIT_SERVICE_UUIDS,
     AD_COMPLETE_32_BIT_SERVICE_UUIDS, AD_COMPLETE_LOCAL_NAME, AD_FLAGS,
     AD_INCOMPLETE_128_BIT_SERVICE_UUIDS, AD_INCOMPLETE_16_BIT_SERVICE_UUIDS,
-    AD_INCOMPLETE_32_BIT_SERVICE_UUIDS, AD_SHORTENED_LOCAL_NAME,
+    AD_INCOMPLETE_32_BIT_SERVICE_UUIDS, AD_SHORTENED_LOCAL_NAME, AD_TX_POWER_LEVEL,
 };
 
 /// Flags AD structure bit values.
@@ -87,6 +87,10 @@ impl AdStructure {
     /// each UUID on the wire in little-endian order.
     pub fn incomplete_service_uuids128(uuids: &[[u8; 16]]) -> Self {
         Self::from_service_uuids128(AD_INCOMPLETE_128_BIT_SERVICE_UUIDS, uuids)
+    }
+
+    pub fn tx_power_level(dbm: i8) -> Self {
+        Self::new(AD_TX_POWER_LEVEL, [dbm as u8])
     }
 
     fn from_service_uuids16(ad_type: u8, uuids: &[u16]) -> Self {
@@ -187,6 +191,14 @@ impl AdStructure {
                 })
                 .collect(),
         )
+    }
+
+    pub fn tx_power_level_value(&self) -> Option<i8> {
+        if self.ad_type == AD_TX_POWER_LEVEL && self.data.len() == 1 {
+            Some(self.data[0] as i8)
+        } else {
+            None
+        }
     }
 
     pub(crate) fn encode(&self, out: &mut Vec<u8>) {
@@ -437,6 +449,25 @@ mod tests {
         );
         assert_eq!(
             AdStructure::raw(AD_COMPLETE_128_BIT_SERVICE_UUIDS, [0x00; 15]).service_uuids128(),
+            None
+        );
+    }
+
+    #[test]
+    fn ble_ad_tx_power_level_encodes_and_reads_signed_dbm() {
+        let structure = AdStructure::tx_power_level(-4);
+        let mut encoded = Vec::new();
+
+        structure.encode(&mut encoded);
+
+        assert_eq!(encoded, [0x02, 0x0a, 0xfc]);
+        assert_eq!(structure.tx_power_level_value(), Some(-4));
+        assert_eq!(
+            AdStructure::complete_local_name("x").tx_power_level_value(),
+            None
+        );
+        assert_eq!(
+            AdStructure::raw(AD_TX_POWER_LEVEL, [0xfc, 0x00]).tx_power_level_value(),
             None
         );
     }
