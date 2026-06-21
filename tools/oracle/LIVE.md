@@ -90,7 +90,7 @@ IGMP live validation is a packet-equivalence smoke for IPv4 protocol 2 traffic.
 It is not a multicast router, snooper, proxy, scanner, or IGMP state-machine
 test. The packet corpus stays rooted at IPv4/IGMP through `--family igmp` and
 the `igmp-live-dry-run` profile, which keeps ordinary validation dry-run and
-offline-safe unless a protected local-provider gate is explicitly enabled.
+offline-safe unless a protected provider gate is explicitly enabled.
 
 Use the provider matrix in dry-run mode first. This creates no endpoints and
 sends no packets:
@@ -128,6 +128,43 @@ remain available for other VM smoke runs. Do not commit endpoint IDs, provider
 account data, public IPs, live host identifiers, or packet captures from this
 run; keep them under the requested `--out` path and rely on the matrix summary
 for structured skip/pass evidence.
+
+### Guarded IGMP Hetzner Live Exchange
+
+The real Hetzner smoke path uses the same focused IPv4/IGMP packet corpus, but
+runs through `tools/oracle/run live --provider hetzner` so the endpoint provider
+owns provisioning, artifact collection, and teardown. Always plan the Hetzner
+path with `--dry-run` first; that command creates no cloud endpoints and sends
+no packets:
+
+```sh
+tools/oracle/run live --backend scapy --provider hetzner --dry-run --family igmp --profile igmp-live-dry-run --seed 3602 --count 2 --direction live_exchange --out target/oracle/igmp-hetzner-dry-run
+```
+
+Keep the real Hetzner path behind an IGMP-specific environment gate so
+unattended acceptance takes the skip branch:
+
+```sh
+if [ "${LIBCRAFTER_RUN_IGMP_HETZNER_LIVE:-0}" = "1" ]; then
+  tools/oracle/run live \
+    --backend scapy --provider hetzner --family igmp \
+    --profile igmp-live-dry-run --seed 3602 --count 2 \
+    --direction live_exchange --confirm-live-run \
+    --out target/oracle/igmp-hetzner-live
+else
+  echo "skipping protected IGMP Hetzner live run"
+fi
+```
+
+With `LIBCRAFTER_RUN_IGMP_HETZNER_LIVE` unset, no command beyond the echo branch
+runs. When it is `1`, the live runner still refuses non-dry-run provider
+execution without `--confirm-live-run`, and the Hetzner provider reads
+credentials only from `HETZNER_API_TOKEN` or `HCLOUD_TOKEN`. Confirmed runs
+provision disposable private Hetzner lab endpoints, execute the libcrafter and
+Scapy reference-backend roles over that lab network, collect artifacts under
+`target/oracle/igmp-hetzner-live`, and tear endpoints down on success, skip, or
+failure. Keep endpoint IDs, account data, public IPs, live host identifiers, and
+captures in the ignored `target/` artifact tree, not tracked files.
 
 ## DHCP Live Exchange Shape
 
