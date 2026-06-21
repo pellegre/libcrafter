@@ -303,26 +303,38 @@ expectations are documented in
 
 ## Publishing
 
-For package-content checks only:
+Run package-content checks before preparing a release:
 
 ```sh
 .agents/scripts/check-crafter-release --package-only
 ```
 
-For agent-assisted publishing, use the repo-local `agent-cargo-publish` skill:
-it runs the local release gate, performs a `cargo publish` dry run, summarizes
-the crate/version/commit and package contents, and requires explicit ask-tool
-approval before the real upload.
-
-For a fully manual publish:
+Run the full local release gate before declaring the branch ready:
 
 ```sh
-cargo publish -p crafter --dry-run
-cargo publish -p crafter
+.agents/scripts/check-crafter-release --static
 ```
 
-Publishing to crates.io is a final maintainer action — never run the real
-publish command from unattended automation.
+Prepare and validate a candidate version with the guarded release helper:
+
+```sh
+.agents/scripts/prepare-crafter-release --validate VERSION
+```
+
+For agent-assisted publishing, use the repo-local `agent-cargo-publish` skill.
+It runs the release gate, performs the guarded `cargo publish -p crafter
+--dry-run --locked`, summarizes the crate/version/commit and package contents,
+and requires explicit ask-tool approval before the real upload.
+
+The maintainer publish entrypoint is:
+
+```sh
+.agents/scripts/publish-crafter-release VERSION
+```
+
+Publishing to crates.io is a final maintainer action. The publish script and
+skill enforce confirmation; do not run a real publish from unattended
+automation.
 
 ## License
 
