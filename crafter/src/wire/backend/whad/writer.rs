@@ -102,6 +102,11 @@ impl<C: WhadByteChannel> WhadWriter<C> {
         self.link
     }
 
+    /// Mutably borrow the shared WHAD link.
+    pub(crate) fn link_mut(&mut self) -> &mut WhadLink<C> {
+        &mut self.link
+    }
+
     fn build_raw_pdu_message(&self, record: &PacketRecord) -> Result<WhadRawPduMessage> {
         let packet = record.packet();
         let (channel, access_address, pdu) = if let Some((index, radio)) = ble_radio_layer(packet) {

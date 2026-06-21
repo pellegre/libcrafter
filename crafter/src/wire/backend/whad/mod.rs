@@ -11,6 +11,9 @@ pub use capability::WhadBleMode;
 pub(crate) mod discovery;
 
 #[cfg(feature = "whad")]
+pub(crate) mod duplex;
+
+#[cfg(feature = "whad")]
 pub(crate) mod framing;
 
 #[cfg(feature = "whad")]
