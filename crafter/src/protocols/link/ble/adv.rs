@@ -167,6 +167,89 @@ impl BleLlAdv {
             .copied()
             .map(on_air_to_display_address)
     }
+
+    /// Encoded advertising PDU length including the two-octet LL header.
+    pub(crate) fn encoded_len(&self) -> usize {
+        2 + self.payload_len()
+    }
+
+    /// Encode the BLE advertising-channel Link Layer PDU.
+    pub(crate) fn encode(&self, out: &mut Vec<u8>) {
+        let mut payload = Vec::with_capacity(self.payload_len());
+        self.encode_payload(&mut payload);
+
+        let byte0 = self.effective_pdu_type().as_u4()
+            | (u8::from(self.effective_ch_sel()) << 5)
+            | (u8::from(self.effective_tx_add()) << 6)
+            | (u8::from(self.effective_rx_add()) << 7);
+        let length = if self.length.is_user_set() {
+            self.length.value().copied().unwrap_or(payload.len() as u8)
+        } else {
+            payload.len() as u8
+        };
+
+        out.push(byte0);
+        out.push(length);
+        out.extend_from_slice(&payload);
+    }
+
+    fn payload_len(&self) -> usize {
+        let adv_a_len = self
+            .adv_a
+            .value()
+            .map(|_| core::mem::size_of::<MacAddr>())
+            .unwrap_or(0);
+        let target_a_len = if self.requires_target_address() {
+            self.target_a
+                .value()
+                .map(|_| core::mem::size_of::<MacAddr>())
+                .unwrap_or(0)
+        } else {
+            0
+        };
+
+        adv_a_len + target_a_len + self.payload.len()
+    }
+
+    fn encode_payload(&self, out: &mut Vec<u8>) {
+        if let Some(adv_a) = self.adv_a.value() {
+            out.extend_from_slice(&adv_a.octets());
+        }
+
+        if self.requires_target_address() {
+            if let Some(target_a) = self.target_a.value() {
+                out.extend_from_slice(&target_a.octets());
+            }
+        }
+
+        out.extend_from_slice(&self.payload);
+    }
+
+    fn requires_target_address(&self) -> bool {
+        matches!(
+            self.effective_pdu_type(),
+            BleAdvPduType::AdvDirectInd | BleAdvPduType::ScanReq | BleAdvPduType::ConnectInd
+        )
+    }
+
+    fn effective_pdu_type(&self) -> BleAdvPduType {
+        self.pdu_type
+            .value()
+            .copied()
+            .unwrap_or(BleAdvPduType::AdvInd)
+    }
+
+    fn effective_ch_sel(&self) -> bool {
+        self.ch_sel.value().copied().unwrap_or(false)
+    }
+
+    fn effective_tx_add(&self) -> bool {
+        self.tx_add.value().copied().unwrap_or(true)
+    }
+
+    fn effective_rx_add(&self) -> bool {
+        self.rx_add.value().copied().unwrap_or(false)
+    }
 }
 
 impl Default for BleLlAdv {
@@ -244,6 +327,39 @@ mod tests {
         assert_eq!(
             adv.target_a_value().unwrap(),
             MacAddr::new([0xc0, 0xff, 0xee, 0x11, 0x22, 0x33])
+        );
+    }
+
+    #[test]
+    fn ble_adv_encode_auto_fills_payload_length() {
+        let adv = BleLlAdv::adv_ind()
+            .adv_a(MacAddr::new([0xc0, 0xff, 0xee, 0x11, 0x22, 0x33]))
+            .payload([0x02, 0x01, 0x06]);
+        let mut out = Vec::new();
+
+        adv.encode(&mut out);
+
+        assert_eq!(adv.encoded_len(), 11);
+        assert_eq!(
+            out,
+            vec![0x40, 0x09, 0x33, 0x22, 0x11, 0xee, 0xff, 0xc0, 0x02, 0x01, 0x06,]
+        );
+    }
+
+    #[test]
+    fn ble_adv_encode_honors_user_length_override() {
+        let adv = BleLlAdv::adv_ind()
+            .adv_a(MacAddr::new([0xc0, 0xff, 0xee, 0x11, 0x22, 0x33]))
+            .payload([0x02, 0x01, 0x06])
+            .length(0xff);
+        let mut out = Vec::new();
+
+        adv.encode(&mut out);
+
+        assert_eq!(out[1], 0xff);
+        assert_eq!(
+            &out[2..],
+            &[0x33, 0x22, 0x11, 0xee, 0xff, 0xc0, 0x02, 0x01, 0x06]
         );
     }
 }
