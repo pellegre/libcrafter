@@ -1,10 +1,13 @@
-//! Typed WHAD discovery message helpers.
+//! Typed WHAD message helpers.
 
 #![allow(dead_code)]
 
 use crate::{CrafterError, Result};
 
 use super::proto;
+
+const BLE_ADVERTISING_ACCESS_ADDRESS: u32 = 0x8E89_BED6;
+const BLE_ADDRESS_LEN: usize = 6;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct WhadFirmwareVersion {
@@ -35,6 +38,15 @@ pub(crate) struct WhadDomainCommands {
 pub(crate) struct WhadDomains {
     pub(crate) supported_domains: Vec<u32>,
     pub(crate) commands: Vec<WhadDomainCommands>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct WhadRxPdu {
+    pub(crate) channel: u8,
+    pub(crate) rssi: i16,
+    pub(crate) crc_valid: bool,
+    pub(crate) access_address: u32,
+    pub(crate) pdu: Vec<u8>,
 }
 
 pub(crate) fn build_device_info_query(proto_ver: u32) -> proto::Message {
@@ -103,6 +115,33 @@ pub(crate) fn build_ble_start() -> proto::Message {
 
 pub(crate) fn build_ble_stop() -> proto::Message {
     build_ble_message(proto::ble::message::Msg::Stop(proto::ble::StopCmd {}))
+}
+
+pub(crate) fn build_send_raw_pdu(channel: u8, access_address: u32, pdu: &[u8]) -> proto::Message {
+    build_ble_message(proto::ble::message::Msg::SendRawPdu(
+        proto::ble::SendRawPduCmd {
+            direction: proto::ble::BleDirection::Unknown as i32,
+            conn_handle: u32::from(channel),
+            access_address,
+            pdu: pdu.to_vec(),
+            crc: 0,
+            encrypt: false,
+            phy: None,
+        },
+    ))
+}
+
+pub(crate) fn parse_received_pdu(message: &proto::Message) -> Option<WhadRxPdu> {
+    let ble = match message.msg.as_ref()? {
+        proto::message::Msg::Ble(ble) => ble,
+        _ => return None,
+    };
+
+    match ble.msg.as_ref()? {
+        proto::ble::message::Msg::AdvPdu(received) => parse_adv_pdu_received(received),
+        proto::ble::message::Msg::RawPdu(received) => parse_raw_pdu_received(received),
+        _ => None,
+    }
 }
 
 pub(crate) fn parse_device_info_response(message: &proto::Message) -> Result<WhadDeviceInfo> {
@@ -178,6 +217,78 @@ fn build_ble_message(msg: proto::ble::message::Msg) -> proto::Message {
             msg: Some(msg),
         })),
     }
+}
+
+fn parse_adv_pdu_received(received: &proto::ble::AdvPduReceived) -> Option<WhadRxPdu> {
+    let channel = u8::try_from(received.channel).ok()?;
+    let mut pdu = Vec::with_capacity(2 + received.bd_address.len() + received.adv_data.len());
+    let payload_len = received
+        .bd_address
+        .len()
+        .checked_add(received.adv_data.len())?;
+    let payload_len = u8::try_from(payload_len).ok()?;
+
+    if received.bd_address.len() != BLE_ADDRESS_LEN {
+        return None;
+    }
+
+    let pdu_type = whad_adv_type_to_pdu_bits(received.adv_type)?;
+    let tx_add = whad_addr_type_is_random(received.addr_type)?;
+
+    pdu.push(pdu_type | (u8::from(tx_add) << 6));
+    pdu.push(payload_len);
+    pdu.extend_from_slice(&received.bd_address);
+    pdu.extend_from_slice(&received.adv_data);
+
+    // AdvPduReceived does not carry access-address or CRC-validity fields.
+    // WHAD firmware already accepted the advertisement, so the crate maps it
+    // to the advertising access address with a valid CRC. The reported PHY is
+    // also ignored here; WhadRxPdu is intentionally just radio metadata plus
+    // the Link Layer PDU bytes needed by the later backend step.
+    Some(WhadRxPdu {
+        channel,
+        rssi: saturating_i32_to_i16(received.rssi),
+        crc_valid: true,
+        access_address: BLE_ADVERTISING_ACCESS_ADDRESS,
+        pdu,
+    })
+}
+
+fn parse_raw_pdu_received(received: &proto::ble::RawPduReceived) -> Option<WhadRxPdu> {
+    // Direction, timestamps, connection handle, CRC bytes, processed/decrypted
+    // status, and PHY are firmware annotations outside this helper's descriptor
+    // plus raw-PDU contract.
+    Some(WhadRxPdu {
+        channel: u8::try_from(received.channel).ok()?,
+        rssi: saturating_i32_to_i16(received.rssi.unwrap_or(0)),
+        crc_valid: received.crc_validity.unwrap_or(false),
+        access_address: received.access_address,
+        pdu: received.pdu.clone(),
+    })
+}
+
+fn whad_adv_type_to_pdu_bits(adv_type: i32) -> Option<u8> {
+    match proto::ble::BleAdvType::try_from(adv_type).ok()? {
+        proto::ble::BleAdvType::AdvInd => Some(0x0),
+        proto::ble::BleAdvType::AdvDirectInd => Some(0x1),
+        proto::ble::BleAdvType::AdvNonconnInd => Some(0x2),
+        proto::ble::BleAdvType::AdvScanRsp => Some(0x4),
+        proto::ble::BleAdvType::AdvScanInd => Some(0x6),
+        proto::ble::BleAdvType::AdvUnknown
+        | proto::ble::BleAdvType::AdvExtInd
+        | proto::ble::BleAdvType::AdvDecisionInd => None,
+    }
+}
+
+fn whad_addr_type_is_random(addr_type: i32) -> Option<bool> {
+    match proto::ble::BleAddrType::try_from(addr_type).ok()? {
+        proto::ble::BleAddrType::Public => Some(false),
+        proto::ble::BleAddrType::Random | proto::ble::BleAddrType::Rpa => Some(true),
+    }
+}
+
+fn saturating_i32_to_i16(value: i32) -> i16 {
+    value.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16
 }
 
 fn discovery_payload(message: &proto::Message) -> Result<&proto::discovery::message::Msg> {
@@ -406,5 +517,59 @@ mod tests {
             },
             _ => panic!("expected top-level BLE message"),
         }
+    }
+
+    #[test]
+    fn whad_ble_msgs_send_raw_pdu_round_trips() {
+        let pdu = [0x42, 0x03, 0x02, 0x01, 0x06];
+        let decoded = decode_top_level(&build_send_raw_pdu(
+            38,
+            BLE_ADVERTISING_ACCESS_ADDRESS,
+            &pdu,
+        ));
+
+        match decoded.msg {
+            Some(proto::message::Msg::Ble(ble)) => match ble.msg {
+                Some(proto::ble::message::Msg::SendRawPdu(command)) => {
+                    assert_eq!(command.conn_handle, 38);
+                    assert_eq!(command.access_address, BLE_ADVERTISING_ACCESS_ADDRESS);
+                    assert_eq!(command.pdu, pdu);
+                    assert_eq!(command.direction, proto::ble::BleDirection::Unknown as i32);
+                    assert_eq!(command.crc, 0);
+                    assert!(!command.encrypt);
+                    assert_eq!(command.phy, None);
+                }
+                _ => panic!("expected BLE send raw PDU command"),
+            },
+            _ => panic!("expected top-level BLE message"),
+        }
+    }
+
+    #[test]
+    fn whad_ble_msgs_received_adv_pdu_parses() {
+        let message = build_ble_message(proto::ble::message::Msg::AdvPdu(
+            proto::ble::AdvPduReceived {
+                adv_type: proto::ble::BleAdvType::AdvNonconnInd as i32,
+                rssi: -42,
+                bd_address: vec![0x06, 0x05, 0x04, 0x03, 0x02, 0x01],
+                adv_data: vec![0x02, 0x01, 0x06],
+                addr_type: proto::ble::BleAddrType::Random as i32,
+                channel: 39,
+                phy: proto::ble::BlePhy::Le1m as i32,
+            },
+        ));
+
+        let received = parse_received_pdu(&message).expect("advertising PDU parses");
+
+        assert_eq!(
+            received,
+            WhadRxPdu {
+                channel: 39,
+                rssi: -42,
+                crc_valid: true,
+                access_address: BLE_ADVERTISING_ACCESS_ADDRESS,
+                pdu: vec![0x42, 0x09, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01, 0x02, 0x01, 0x06],
+            }
+        );
     }
 }
