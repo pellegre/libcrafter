@@ -1,0 +1,114 @@
+version: 1
+kind: feature
+name: ble-pcap-link-types
+summary: Classic pcap link-type coverage for Bluetooth Low Energy Link Layer packets with pseudo-header.
+
+layers:
+  - ble_radio
+  - ble_adv
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+  - roundtrip
+strict_bytes: true
+malformed: false
+
+link_types:
+  - name: bluetooth-le-ll-with-phdr
+    pcap_dlt: 256
+    linktype: LINKTYPE_BLUETOOTH_LE_LL_WITH_PHDR
+    tcpdump: LINKTYPE_BLUETOOTH_LE_LL_WITH_PHDR
+    whad: bluetooth-le-ll-with-phdr
+    libcrafter: BluetoothLeLl
+    expected_root: ble_radio
+
+behaviors:
+  - name: dlt-256-link-type-mapping
+    link_types:
+      - bluetooth-le-ll-with-phdr
+    file_formats:
+      - pcap
+    sources:
+      - .agents/docs/ble-manifest.md#Pcap-Link-Type
+    checks:
+      - pcap_dlt_256_maps_to_linktype_bluetooth_le_ll_with_phdr
+      - libcrafter_link_type_is_bluetooth_le_ll
+      - decoded_model_starts_with_ble_radio
+  - name: committed-ble-pcap-fixture-decode-root
+    file_formats:
+      - pcap
+    fixtures:
+      - crafter/tests/fixtures/pcaps/ble-le-ll-adv.pcap
+    checks:
+      - file_link_type_preserved
+      - packet_count
+      - decoded_model_starts_with_ble_radio
+
+coverage_cases:
+  - ble-pcap-dlt-256-link-type
+  - ble-pcap-fixture-decodes-root
+
+supported_cases:
+  - name: ble-pcap-dlt-256-link-type
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: strict_bytes
+    file_format: pcap
+    link_types:
+      - bluetooth-le-ll-with-phdr
+    roots:
+      - "link:bluetooth-le-ll-with-phdr"
+    contract_only: true
+    expected:
+      pcap_dlt: 256
+      linktype: LINKTYPE_BLUETOOTH_LE_LL_WITH_PHDR
+      libcrafter: BluetoothLeLl
+      root: ble_radio
+    required_checks:
+      - link_type
+      - decoded_model
+  - name: ble-pcap-fixture-decodes-root
+    directions:
+      - reference_to_libcrafter
+      - roundtrip
+    byte_policy: strict_bytes
+    file_format: pcap
+    link_types:
+      - bluetooth-le-ll-with-phdr
+    roots:
+      - "link:bluetooth-le-ll-with-phdr"
+    contract_only: true
+    fixture: crafter/tests/fixtures/pcaps/ble-le-ll-adv.pcap
+    expected:
+      packet_count: 1
+      pcap_dlt: 256
+      root: ble_radio
+      layers:
+        - ble_radio
+        - ble_adv
+    required_checks:
+      - file_format
+      - packet_count
+      - link_type
+      - decoded_model
+
+backend_support:
+  scapy:
+    status: supported
+    pcap_read: true
+    pcap_write: true
+    native_layers:
+      - BTLE_PHDR
+      - PcapReader
+      - PcapWriter
+    notes:
+      - The Scapy backend can materialize and normalize DLT 256 BLE pcap records.
+      - Runnable cross-backend pcap fixture execution is deferred until the pcap suite grows BLE case selection.
+  libcrafter:
+    status: partial
+    pcap_read: true
+    pcap_write: true
+    notes:
+      - The crate reads and writes LinkType::BluetoothLeLl pcaps; this oracle step records the contract without widening runnable adapters.
