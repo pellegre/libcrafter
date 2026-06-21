@@ -2,7 +2,16 @@
 
 use crate::field::Field;
 
-use super::consts::{ADVERTISING_ACCESS_ADDRESS, ADV_CRC_INIT};
+use super::consts::{ADVERTISING_ACCESS_ADDRESS, ADV_CHANNEL_37, ADV_CRC_INIT};
+
+const BLE_RADIO_PSEUDO_HEADER_LEN: usize = 10;
+
+const BLE_RADIO_FLAG_DEWHITENED: u16 = 0x0001;
+const BLE_RADIO_FLAG_SIGNAL_POWER_VALID: u16 = 0x0002;
+const BLE_RADIO_FLAG_REFERENCE_ACCESS_ADDRESS_VALID: u16 = 0x0010;
+const BLE_RADIO_FLAG_CRC_CHECKED: u16 = 0x0400;
+const BLE_RADIO_FLAG_CRC_VALID: u16 = 0x0800;
+const BLE_RADIO_FLAG_PHY_SHIFT: u16 = 14;
 
 /// BLE physical-layer modulation used for the advertising PDU.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -129,6 +138,65 @@ impl BleRadio {
         self.crc_valid.set_user(crc_valid);
         self
     }
+
+    /// Return the fixed BLE LE Link-Layer pcap pseudo-header length.
+    pub(crate) fn encoded_len(&self) -> usize {
+        BLE_RADIO_PSEUDO_HEADER_LEN
+    }
+
+    /// Encode the BLE LE Link-Layer pcap pseudo-header.
+    pub(crate) fn encode(&self, out: &mut Vec<u8>) {
+        let channel = self.channel.value().copied().unwrap_or(ADV_CHANNEL_37);
+        let signal_power = self.rssi.value().copied().unwrap_or(0) as u8;
+        let access_address = self
+            .access_address
+            .value()
+            .copied()
+            .unwrap_or(ADVERTISING_ACCESS_ADDRESS);
+
+        out.push(channel);
+        out.push(signal_power);
+        out.push(0);
+        out.push(0);
+        out.extend_from_slice(&access_address.to_le_bytes());
+        out.extend_from_slice(&self.flags().to_le_bytes());
+    }
+
+    fn flags(&self) -> u16 {
+        let mut flags = 0;
+
+        // Bit assignments follow the LINKTYPE_BLUETOOTH_LE_LL_WITH_PHDR
+        // pseudo-header cited from .agents/docs/ble-manifest.md:
+        // bit 0 de-whitened, bit 1 signal power valid, bit 4 reference
+        // access address valid, bits 10/11 CRC checked/valid, bits 14/15 PHY.
+        if self.whitening.value().copied().unwrap_or(true) {
+            flags |= BLE_RADIO_FLAG_DEWHITENED;
+        }
+        if self.rssi.value().is_some() {
+            flags |= BLE_RADIO_FLAG_SIGNAL_POWER_VALID;
+        }
+        if self.access_address.value().is_some() {
+            flags |= BLE_RADIO_FLAG_REFERENCE_ACCESS_ADDRESS_VALID;
+        }
+        if self.crc_valid.value().is_some() || self.crc_init.value().is_some() {
+            flags |= BLE_RADIO_FLAG_CRC_CHECKED;
+        }
+        if self.crc_valid.value().copied().unwrap_or(false) {
+            flags |= BLE_RADIO_FLAG_CRC_VALID;
+        }
+
+        flags
+            | (Self::phy_bits(self.phy.value().copied().unwrap_or_default())
+                << BLE_RADIO_FLAG_PHY_SHIFT)
+    }
+
+    fn phy_bits(phy: BlePhy) -> u16 {
+        match phy {
+            BlePhy::Le1M => 0,
+            BlePhy::Le2M => 1,
+            BlePhy::LeCoded => 2,
+        }
+    }
 }
 
 impl Default for BleRadio {
@@ -188,5 +256,44 @@ mod tests {
         assert_eq!(radio.channel.value(), Some(&37));
         assert_eq!(radio.access_address.state(), FieldState::Defaulted);
         assert_eq!(radio.access_address.value(), Some(&ADVERTISING_ACCESS_ADDRESS));
+    }
+
+    #[test]
+    fn ble_radio_encode_default_advertising_pseudo_header() {
+        let radio = BleRadio::new();
+        let mut bytes = Vec::new();
+
+        radio.encode(&mut bytes);
+
+        assert_eq!(
+            bytes,
+            [
+                ADV_CHANNEL_37,
+                0,
+                0,
+                0,
+                0xD6,
+                0xBE,
+                0x89,
+                0x8E,
+                0x11,
+                0x04,
+            ]
+        );
+        assert_eq!(bytes[0], ADV_CHANNEL_37);
+        assert_eq!(&bytes[4..8], &ADVERTISING_ACCESS_ADDRESS.to_le_bytes());
+    }
+
+    #[test]
+    fn ble_radio_encode_encoded_len_is_constant() {
+        assert_eq!(BleRadio::new().encoded_len(), BLE_RADIO_PSEUDO_HEADER_LEN);
+        assert_eq!(
+            BleRadio::advertising(39)
+                .phy(BlePhy::LeCoded)
+                .whitening(false)
+                .crc_valid(true)
+                .encoded_len(),
+            BLE_RADIO_PSEUDO_HEADER_LEN
+        );
     }
 }
