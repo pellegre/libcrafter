@@ -303,8 +303,7 @@ expectations are documented in
 
 ## Publishing
 
-The final maintainer release checklist, including crates.io guardrails and the
-manual public upstream migration step, is in
+The final maintainer release checklist, including crates.io guardrails, is in
 [docs/operations/release.md](docs/operations/release.md).
 
 Run package-content checks before preparing a release:
