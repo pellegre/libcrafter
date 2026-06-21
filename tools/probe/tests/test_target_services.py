@@ -12,6 +12,8 @@ from tools.probe.engine import cli
 from tools.probe.engine.lab import probe_address_context_from_lab_session
 from tools.probe.engine.model import ProbeRunRequest
 
+IGMP_TARGET_SERVICE_DIR = Path("tools/probe/target_services/igmp")
+
 
 class ProbeTargetServicesTest(unittest.TestCase):
     def test_service_probe_plans_use_lab_endpoint_addresses(self) -> None:
@@ -105,6 +107,31 @@ class ProbeTargetServicesTest(unittest.TestCase):
         self.assertIn('check_port_free "$tcp_bind_ipv4"', setup_script)
         self.assertIn("sock.bind((bind_ip, port))", setup_script)
         self.assertIn('"$tcp_bind_ipv4"', setup_script)
+
+
+class IgmpProbeTargetServiceTest(unittest.TestCase):
+    def test_igmp_target_service_assets_exist(self) -> None:
+        self.assertTrue((IGMP_TARGET_SERVICE_DIR / "README.md").is_file())
+        self.assertTrue((IGMP_TARGET_SERVICE_DIR / "provision-listener.sh").is_file())
+        self.assertTrue((IGMP_TARGET_SERVICE_DIR / "provision-router.sh").is_file())
+        self.assertTrue((IGMP_TARGET_SERVICE_DIR / "cleanup.sh").is_file())
+
+    def test_igmp_target_service_is_lab_only_and_dry_run_visible(self) -> None:
+        readme = (IGMP_TARGET_SERVICE_DIR / "README.md").read_text()
+        listener = (IGMP_TARGET_SERVICE_DIR / "provision-listener.sh").read_text()
+        router = (IGMP_TARGET_SERVICE_DIR / "provision-router.sh").read_text()
+        combined = "\n".join([readme, listener, router])
+
+        self.assertIn("lab-only", readme)
+        self.assertIn("--dry-run", combined)
+        self.assertIn("LIBCRAFTER_PROBE_LAB_TARGET=1", combined)
+        self.assertIn("target/probe/target-services/igmp", combined)
+        self.assertIn("listener-plan.json", combined)
+        self.assertIn("router-plan.json", combined)
+        self.assertIn("router-skip.json", combined)
+        self.assertIn("requires_controlled_router", router)
+        self.assertIn("requires_multicast", router)
+        self.assertIn("233.252.0.42", combined)
 
 
 class _FakeProcessResult:
