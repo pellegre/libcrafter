@@ -556,6 +556,101 @@ Use the manual gate in [`docs/operations/dot11-live-manual.md`](../../docs/opera
 only after human authorization, isolated RF setup, dry-run byte review, artifact
 cleanup, and explicit live confirmation.
 
+## Build BLE Advertising
+
+Generated BLE tools should use the public `crafter` facade:
+`crafter::prelude::*`, `BleRadio / BleLlAdv / AdStructure`, `PacketWire`,
+`Sniffer`, and `Transmitter`. Keep examples synthetic with documentation BLE
+addresses from `00:00:5e:00:53:*`, and do not commit real captures, device
+addresses, local names, dongle identifiers, or RF observations.
+
+```rust
+use crafter::prelude::*;
+
+fn main() -> crafter::Result<()> {
+    let packet = BleRadio::advertising(37)
+        / BleLlAdv::adv_ind()
+            .tx_add(false)
+            .adv_a_str("00:00:5e:00:53:46")?
+            .push_ad(AdStructure::flags_general_disc())
+            .push_ad(AdStructure::complete_local_name("crafter-ble"));
+
+    let bytes = packet.compile()?;
+    println!("{}", packet.summary());
+    println!("{}", bytes.hexdump());
+
+    let writer = PacketWire::pcap_recorder("target/ble-agent.pcap", LinkType::BluetoothLeLl)
+        .open()?
+        .writer()?;
+    let mut tx = Transmitter::new(writer);
+    tx.send(packet.clone())?;
+
+    let source = PacketWire::pcap_file("target/ble-agent.pcap")
+        .open()?
+        .source()?;
+    for record in Sniffer::new(source).collect_records()? {
+        println!("{}", record.packet().summary());
+    }
+
+    Ok(())
+}
+
+fn decode_sniffed_ble_record(sniffed_record: &[u8]) -> crafter::Result<()> {
+    let decoded = Packet::decode_from_link(LinkType::BluetoothLeLl, sniffed_record)?;
+    println!("{}", decoded.show());
+    Ok(())
+}
+```
+
+BLE pcap uses `LinkType::BluetoothLeLl`, the BLE LE Link Layer link type with
+pseudo-header. Treat pcap input and output as the default path for generated
+tools and tests; keep fixtures deterministic and sanitized.
+
+The WHAD serial backend is feature-gated and offline by default. A generated
+tool that offers live BLE injection or sniffing should compile `crafter` with
+the `whad` feature, expose a local `--live` opt-in, and otherwise stop after
+packet construction, decode, pcap work, or a dry-run WHAD target open.
+
+```rust
+use crafter::prelude::*;
+
+fn whad_ble_paths(packet: Packet, live: bool) -> crafter::Result<()> {
+    let port = "/dev/ttyACM0";
+    let channel = 37;
+
+    let dry_run = PacketWire::whad_serial(port)
+        .ble_inject()
+        .channel(channel);
+    assert!(dry_run.is_dry_run());
+    let dry_wire = dry_run.open()?;
+    assert!(!dry_wire.has_writer());
+
+    if live {
+        let inject = PacketWire::whad_serial(port)
+            .ble_inject()
+            .channel(channel)
+            .live()
+            .open()?;
+        let mut writer = inject.writer()?;
+        writer.write_record(&PacketRecord::new(packet))?;
+
+        let sniff = PacketWire::whad_serial(port)
+            .ble_sniff(channel)
+            .live()
+            .open()?;
+        for record in Sniffer::new(sniff.source()?).count(10).collect_records()? {
+            println!("{}", record.packet().summary());
+        }
+    }
+
+    Ok(())
+}
+```
+
+Only call `.live()` in an authorized RF environment with bounded sniff counts
+or timeouts. Live WHAD paths are for manual or operator-gated runs, not default
+generated-tool behavior.
+
 ## Build UDP Options
 
 Generated tools should build UDP options as a separate `UdpOptions` layer after
