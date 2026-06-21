@@ -524,5 +524,6 @@ are marked):
 
 Out of scope for the IPv4 layer: routing, forwarding, TTL decrement, ICMP
 generation from forwarding, global Identification allocation, Path MTU
-Discovery, and fragment generation/reassembly outside the explicit `IpFragment`
-and `IpDefrag` transforms.
+Discovery, automatic decode-time reassembly, and layer-owned fragmentation.
+Use the explicit `IpFragment` and `IpDefrag` wire transforms for packet-stream
+fragmentation and reassembly.

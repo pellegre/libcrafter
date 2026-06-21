@@ -556,6 +556,7 @@ marked):
   Types, and the Segment Routing Header Flags/TLV registries.
 
 Out of scope for the IPv6 layer: a full IPv6 stack, routing, live PMTUD,
-fragment reassembly outside the explicit `IpFragment`/`IpDefrag` transforms,
-automatic Flow Label or extension-header ordering policy, AH/ESP cryptography,
-Mobile IPv6 control workflows, and SRv6 endpoint operation.
+automatic decode-time reassembly, layer-owned fragmentation, automatic Flow
+Label or extension-header ordering policy, AH/ESP cryptography, Mobile IPv6
+control workflows, and SRv6 endpoint operation. Use the explicit `IpFragment`
+and `IpDefrag` wire transforms for packet-stream fragmentation and reassembly.

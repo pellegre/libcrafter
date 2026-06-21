@@ -57,10 +57,11 @@ Expose IPv4 checksum inspection as packet state, not as a decode failure.
 decoded packets report `Ipv4ChecksumStatus` through `checksum_status()` so
 invalid checksums remain inspectable.
 
-Fragment fields are metadata, not a reassembly API. Generated tools may set and
-read identification, reserved/DF/MF flags, `fragment_offset`, and
-`fragment_info()`, but `crafter` does not split payloads into fragments,
-reassemble fragments, or model fragment caches, overlap handling, or timers.
+Fragment fields are metadata on the IPv4 layer itself. Generated tools may set
+and read identification, reserved/DF/MF flags, `fragment_offset`, and
+`fragment_info()`. Use the packet-stream `IpFragment` and `IpDefrag` wire
+transforms when a tool needs fragmentation or reassembly; they keep bounded
+state, metadata, overlap policy, and timers out of the layer builder.
 
 ## Build IGMP
 
@@ -216,7 +217,8 @@ For Fragment Header work, build `Ipv6FragmentHeader::new()` with
 `fragment_offset(...)`, `more_fragments(...)`, and `identification(...)` (or the
 short aliases) and inspect `fragment_status()` / `fragment_status_label()`.
 The crate exposes fragment fields and atomic/initial/non-initial classification,
-but it does not split payloads or perform IPv6 reassembly.
+while packet-stream fragmentation and reassembly belong to `IpFragment` and
+`IpDefrag`.
 
 Focused IPv6 validation stays offline unless a human explicitly asks for a live
 provider run:
