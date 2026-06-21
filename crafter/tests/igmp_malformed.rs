@@ -10,6 +10,9 @@ mod support;
 use std::net::Ipv4Addr;
 
 use crafter::prelude::*;
+use crafter::protocols::igmp::{
+    IGMP_MRD_ADVERTISEMENT_LEN, IGMP_MRD_SOLICITATION_LEN, IGMP_MRD_TERMINATION_LEN,
+};
 
 const DOC_SRC: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 60);
 const DOC_QUERY_SOURCE: Ipv4Addr = Ipv4Addr::new(198, 51, 100, 60);
@@ -261,6 +264,35 @@ fn igmp_v3_query_source_count_overrun_is_structural_error() -> crafter::Result<(
 }
 
 #[test]
+fn igmp_v3_query_truncated_body_is_structural_error() -> crafter::Result<()> {
+    let packet = ipv4(0x270a, DOC_MCAST)
+        / Raw::from_bytes([
+            IGMP_TYPE_MEMBERSHIP_QUERY,
+            100,
+            0x12,
+            0x34,
+            233,
+            252,
+            0,
+            60,
+            IGMP_V3_QUERY_FLAG_EXTENSION,
+            0x7d,
+            0x00,
+        ]);
+    let bytes = packet.compile()?;
+
+    assert_buffer_too_short_bytes(
+        "igmp-v3-query-truncated-body",
+        bytes.as_bytes(),
+        "igmp v3 query",
+        IGMP_V3_QUERY_MIN_LEN,
+        IGMP_V3_QUERY_MIN_LEN - 1,
+    );
+
+    Ok(())
+}
+
+#[test]
 fn igmp_v3_query_extra_octets_are_preserved_as_raw() -> crafter::Result<()> {
     let packet = ipv4(0x2705, DOC_MCAST)
         / Igmp::v3_group_specific_query(100, DOC_MCAST)
@@ -378,6 +410,37 @@ fn igmp_v3_query_unknown_flag_bits_are_inspectable_and_preserved() -> crafter::R
     assert_eq!(query.querier_robustness_variable(), 5);
     assert_eq!(query.source_addresses(), &[DOC_QUERY_SOURCE_ALT]);
     assert_eq!(decoded.compile()?.as_bytes(), bytes.as_bytes());
+
+    Ok(())
+}
+
+#[test]
+fn igmp_v3_report_truncated_body_is_structural_error() -> crafter::Result<()> {
+    let packet = v3_report_raw_packet(
+        0x270f,
+        [
+            IGMP_TYPE_V3_MEMBERSHIP_REPORT,
+            0x00,
+            0x12,
+            0x34,
+            0,
+            0,
+            0,
+            0,
+            0x00,
+            0x01,
+            0x00,
+        ],
+    );
+    let bytes = packet.compile()?;
+
+    assert_buffer_too_short_bytes(
+        "igmp-v3-report-truncated-body",
+        bytes.as_bytes(),
+        "igmp v3 report",
+        IGMP_FIXED_HEADER_LEN + IGMP_V3_REPORT_BODY_HEADER_LEN,
+        IGMP_FIXED_HEADER_LEN + IGMP_V3_REPORT_BODY_HEADER_LEN - 1,
+    );
 
     Ok(())
 }
@@ -602,6 +665,139 @@ fn igmp_v3_report_trailing_bytes_are_preserved_as_raw() -> crafter::Result<()> {
     assert!(report.group_records().is_empty());
     assert_eq!(raw.as_bytes(), &[0xde, 0xad, 0xbe, 0xef]);
     assert_eq!(decoded.compile()?.as_bytes(), bytes.as_bytes());
+
+    Ok(())
+}
+
+#[test]
+fn igmp_extension_empty_area_is_structural_error() -> crafter::Result<()> {
+    let query = IgmpQuery::group_specific().with_extension_flag(true);
+    let packet = ipv4(0x2720, DOC_MCAST) / Igmp::v3_membership_query(100, DOC_MCAST, query);
+    let bytes = packet.compile()?;
+
+    assert_buffer_too_short_bytes(
+        "igmp-extension-empty-area",
+        bytes.as_bytes(),
+        "igmp.extension.header",
+        IGMP_EXTENSION_HEADER_LEN,
+        0,
+    );
+
+    Ok(())
+}
+
+#[test]
+fn igmp_extension_truncated_header_is_structural_error() -> crafter::Result<()> {
+    let query = IgmpQuery::group_specific().with_extension_flag(true);
+    let packet = ipv4(0x2721, DOC_MCAST)
+        / Igmp::v3_membership_query(100, DOC_MCAST, query)
+        / Raw::from_bytes([0x00, 0x01, 0x00]);
+    let bytes = packet.compile()?;
+
+    assert_buffer_too_short_bytes(
+        "igmp-extension-truncated-header",
+        bytes.as_bytes(),
+        "igmp.extension.header",
+        IGMP_EXTENSION_HEADER_LEN,
+        3,
+    );
+
+    Ok(())
+}
+
+#[test]
+fn igmp_extension_truncated_value_is_structural_error() -> crafter::Result<()> {
+    let packet = v3_report_ipv4(0x2722)
+        / Igmp::v3_membership_report()
+        / IgmpReport::new().with_extension_flag(true)
+        / Raw::from_bytes([0x12, 0x34, 0x00, 0x04, 0xde, 0xad]);
+    let bytes = packet.compile()?;
+
+    assert_buffer_too_short_bytes(
+        "igmp-extension-truncated-value",
+        bytes.as_bytes(),
+        "igmp.extension.value",
+        IGMP_EXTENSION_HEADER_LEN + 4,
+        IGMP_EXTENSION_HEADER_LEN + 2,
+    );
+
+    Ok(())
+}
+
+#[test]
+fn igmp_extension_length_overrun_is_structural_error() -> crafter::Result<()> {
+    let query = IgmpQuery::group_specific().with_extension_flag(true);
+    let packet = ipv4(0x2723, DOC_MCAST)
+        / Igmp::v3_membership_query(100, DOC_MCAST, query)
+        / Raw::from_bytes([0x00, 0x00, 0x00, 0x05, 0xaa]);
+    let bytes = packet.compile()?;
+
+    assert_buffer_too_short_bytes(
+        "igmp-extension-length-overrun",
+        bytes.as_bytes(),
+        "igmp.extension.value",
+        IGMP_EXTENSION_HEADER_LEN + 5,
+        IGMP_EXTENSION_HEADER_LEN + 1,
+    );
+
+    Ok(())
+}
+
+#[test]
+fn igmp_mrd_truncated_advertisement_is_structural_error() -> crafter::Result<()> {
+    let packet = ipv4(0x2730, DOC_MCAST)
+        / Raw::from_bytes([
+            IGMP_TYPE_MULTICAST_ROUTER_ADVERTISEMENT,
+            20,
+            0x12,
+            0x34,
+            0,
+            125,
+            0,
+        ]);
+    let bytes = packet.compile()?;
+
+    assert_buffer_too_short_bytes(
+        "igmp-mrd-truncated-advertisement",
+        bytes.as_bytes(),
+        "igmp mrd advertisement",
+        IGMP_MRD_ADVERTISEMENT_LEN,
+        IGMP_MRD_ADVERTISEMENT_LEN - 1,
+    );
+
+    Ok(())
+}
+
+#[test]
+fn igmp_mrd_truncated_solicitation_is_structural_error() -> crafter::Result<()> {
+    let packet = ipv4(0x2731, DOC_MCAST)
+        / Raw::from_bytes([IGMP_TYPE_MULTICAST_ROUTER_SOLICITATION, 0, 0x12]);
+    let bytes = packet.compile()?;
+
+    assert_buffer_too_short_bytes(
+        "igmp-mrd-truncated-solicitation",
+        bytes.as_bytes(),
+        "igmp mrd solicitation",
+        IGMP_MRD_SOLICITATION_LEN,
+        IGMP_MRD_SOLICITATION_LEN - 1,
+    );
+
+    Ok(())
+}
+
+#[test]
+fn igmp_mrd_truncated_termination_is_structural_error() -> crafter::Result<()> {
+    let packet = ipv4(0x2732, DOC_MCAST)
+        / Raw::from_bytes([IGMP_TYPE_MULTICAST_ROUTER_TERMINATION, 0, 0x12]);
+    let bytes = packet.compile()?;
+
+    assert_buffer_too_short_bytes(
+        "igmp-mrd-truncated-termination",
+        bytes.as_bytes(),
+        "igmp mrd termination",
+        IGMP_MRD_TERMINATION_LEN,
+        IGMP_MRD_TERMINATION_LEN - 1,
+    );
 
     Ok(())
 }
