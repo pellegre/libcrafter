@@ -308,9 +308,12 @@ fn locate_by_pcap_link_type(link_type: PcapLinkType, bytes: &[u8]) -> Result<Ipv
         PcapLinkType::Ethernet => locate_ethernet(bytes),
         PcapLinkType::LinuxSll => locate_linux_sll(bytes),
         PcapLinkType::NullLoopback => locate_null_loopback(bytes),
-        PcapLinkType::Ieee80211 | PcapLinkType::Ieee80211Radiotap | PcapLinkType::Unknown(_) => Ok(
-            Ipv4Location::PassThrough(Ipv4FragmentPassThroughReason::UnsupportedWrapper),
-        ),
+        PcapLinkType::Ieee80211
+        | PcapLinkType::Ieee80211Radiotap
+        | PcapLinkType::BluetoothLeLl
+        | PcapLinkType::Unknown(_) => Ok(Ipv4Location::PassThrough(
+            Ipv4FragmentPassThroughReason::UnsupportedWrapper,
+        )),
     }
 }
 
