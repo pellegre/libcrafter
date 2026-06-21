@@ -29,6 +29,7 @@ from tools.oracle.engine.providers.registry import (
 REAL_VM_PROVIDERS = ("qemu", "virtualbox")
 STRICT_VM_SMOKE_ENV = "LIBCRAFTER_ORACLE_VM_SMOKE_STRICT"
 ALLOW_VM_CREATE_ENV = "LIBCRAFTER_ORACLE_VM_SMOKE_ALLOW_CREATE"
+IGMP_VM_LIVE_ENV = "LIBCRAFTER_RUN_IGMP_VM_LIVE"
 REAL_MAX_COUNT_ENV = "LIBCRAFTER_ORACLE_VM_SMOKE_MAX_COUNT"
 DEFAULT_REAL_MAX_COUNT = 5
 IP_FRAGMENT_SMOKE_PROFILE = "ip-fragment-smoke"
@@ -857,7 +858,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.providers is None:
         args.providers = list(REAL_VM_PROVIDERS if args.real else registered_provider_names())
     strict_vm_smoke = bool(args.strict_vm_smoke or _env_flag(STRICT_VM_SMOKE_ENV))
-    allow_vm_create = bool(args.allow_vm_create or _env_flag(ALLOW_VM_CREATE_ENV))
+    allow_vm_create = bool(
+        args.allow_vm_create
+        or _env_flag(ALLOW_VM_CREATE_ENV)
+        or _igmp_vm_live_gate_allows_create(args)
+    )
     if args.real:
         if args.count > args.real_max_count:
             print(
@@ -1382,6 +1387,14 @@ def _positive_int(value: str) -> int:
 def _env_flag(name: str) -> bool:
     value = os.environ.get(name, "").strip().lower()
     return value in {"1", "true", "yes", "on", "strict"}
+
+
+def _igmp_vm_live_gate_allows_create(args: argparse.Namespace) -> bool:
+    return (
+        bool(args.real)
+        and args.family == "igmp"
+        and _env_flag(IGMP_VM_LIVE_ENV)
+    )
 
 
 def _default_real_max_count() -> int:
