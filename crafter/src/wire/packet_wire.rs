@@ -12,6 +12,7 @@ use std::time::Duration;
 use crate::net::send::validated_interface;
 use crate::net::{SendMode, SendOptions};
 use crate::wire::backend::pcap::PcapLinkType;
+use crate::wire::backend::whad::WhadBleMode;
 
 use super::backend::pcap::{
     filter_trimmed, OfflinePcapSource, PcapFileWriter, PcapInterfaceSource, PcapInterfaceWriter,
@@ -19,9 +20,23 @@ use super::backend::pcap::{
     DEFAULT_INTERFACE_SNAPLEN, DEFAULT_INTERFACE_TIMEOUT,
 };
 use super::backend::raw_socket::RawSocketWriter;
+#[cfg(feature = "whad")]
+use super::backend::whad::{
+    capability::enter_ble,
+    discovery::{discover, WhadDevice},
+    reader::WhadReader,
+    transport::{SerialChannel, WhadLink},
+    writer::WhadWriter,
+};
 use super::source::PacketSource;
 use super::writer::PacketWriter;
 use super::{Result, WireError};
+
+#[cfg(not(feature = "whad"))]
+const WHAD_FEATURE_DISABLED_REASON: &str =
+    "the whad feature is disabled; enable the whad feature to open WHAD serial targets";
+#[cfg(feature = "whad")]
+const WHAD_DEFAULT_INJECT_CHANNEL: u8 = 37;
 
 /// Boxed packet source returned by an opened packet wire.
 ///
@@ -65,6 +80,13 @@ pub enum PacketWireTarget {
         /// Interface name selected for raw socket send planning and live send.
         interface: String,
     },
+    /// WHAD-compatible serial dongle target for BLE sniffing or injection.
+    WhadSerial {
+        /// Serial port path or name, for example `/dev/ttyACM0` or `COM3`.
+        port: String,
+        /// BLE mode to enter after discovery.
+        mode: WhadBleMode,
+    },
 }
 
 impl PacketWireTarget {
@@ -72,7 +94,9 @@ impl PacketWireTarget {
     pub fn path(&self) -> Option<&Path> {
         match self {
             Self::PcapFile { path } | Self::PcapRecorder { path, .. } => Some(path.as_path()),
-            Self::PcapInterface { .. } | Self::RawSocketInterface { .. } => None,
+            Self::PcapInterface { .. }
+            | Self::RawSocketInterface { .. }
+            | Self::WhadSerial { .. } => None,
         }
     }
 
@@ -80,8 +104,9 @@ impl PacketWireTarget {
     pub fn interface(&self) -> Option<&str> {
         match self {
             Self::PcapInterface { interface } | Self::RawSocketInterface { interface } => {
-                Some(interface)
+                Some(interface.as_str())
             }
+            Self::WhadSerial { port, .. } => Some(port.as_str()),
             Self::PcapFile { .. } | Self::PcapRecorder { .. } => None,
         }
     }
@@ -92,7 +117,8 @@ impl PacketWireTarget {
             Self::PcapRecorder { link_type, .. } => Some(*link_type),
             Self::PcapFile { .. }
             | Self::PcapInterface { .. }
-            | Self::RawSocketInterface { .. } => None,
+            | Self::RawSocketInterface { .. }
+            | Self::WhadSerial { .. } => None,
         }
     }
 
@@ -102,6 +128,7 @@ impl PacketWireTarget {
             Self::PcapRecorder { path, .. } => format!("pcap-recorder:{}", path.display()),
             Self::PcapInterface { interface } => format!("pcap-interface:{interface}"),
             Self::RawSocketInterface { interface } => format!("raw-socket:{interface}"),
+            Self::WhadSerial { .. } => "whad".to_string(),
         }
     }
 }
@@ -255,6 +282,9 @@ impl PacketWireBuilder {
                 }
                 PacketWireTarget::PcapRecorder { .. } => {}
                 PacketWireTarget::RawSocketInterface { .. } => {}
+                PacketWireTarget::WhadSerial { port, mode } => {
+                    self.source = open_whad_serial_source(port, *mode)?;
+                }
             }
         }
 
@@ -278,6 +308,9 @@ impl PacketWireBuilder {
                 }
                 PacketWireTarget::PcapFile { .. } => {}
                 PacketWireTarget::RawSocketInterface { .. } => {}
+                PacketWireTarget::WhadSerial { port, mode } => {
+                    self.writer = open_whad_serial_writer(port, *mode)?;
+                }
             }
         }
 
@@ -527,9 +560,17 @@ fn unsupported_source_reason(target: &PacketWireTarget) -> &'static str {
         PacketWireTarget::RawSocketInterface { .. } => {
             "raw socket interface targets are write-only; use pcap_interface for capture"
         }
+        PacketWireTarget::WhadSerial {
+            mode: WhadBleMode::Inject,
+            ..
+        } => "WHAD serial inject targets are write-only; use SniffAdv mode for capture",
         PacketWireTarget::PcapFile { .. } | PacketWireTarget::PcapInterface { .. } => {
             "no packet source has been opened for this wire"
         }
+        PacketWireTarget::WhadSerial {
+            mode: WhadBleMode::SniffAdv { .. },
+            ..
+        } => "no WHAD packet source has been opened for this wire",
     }
 }
 
@@ -551,6 +592,14 @@ fn unsupported_writer_reason(target: &PacketWireTarget) -> &'static str {
         | PacketWireTarget::RawSocketInterface { .. } => {
             "no packet writer has been opened for this wire"
         }
+        PacketWireTarget::WhadSerial {
+            mode: WhadBleMode::SniffAdv { .. },
+            ..
+        } => "WHAD serial advertising sniff targets are read-only; use Inject mode for writing",
+        PacketWireTarget::WhadSerial {
+            mode: WhadBleMode::Inject,
+            ..
+        } => "no WHAD packet writer has been opened for this wire",
     }
 }
 
@@ -562,6 +611,59 @@ fn unsupported_split(target: &PacketWireTarget, has_source: bool, has_writer: bo
         (true, true) => unreachable!("split is only unsupported when a capability is missing"),
     };
     WireError::unsupported_capability("split", Some(target.backend_identifier()), reason)
+}
+
+#[cfg(feature = "whad")]
+fn open_whad_serial_source(port: &str, mode: WhadBleMode) -> Result<Option<OpenedPacketSource>> {
+    match mode {
+        WhadBleMode::SniffAdv { .. } => {
+            let (link, _) = open_whad_serial_link(port, mode)?;
+            Ok(Some(Box::new(WhadReader::new(link))))
+        }
+        WhadBleMode::Inject => Ok(None),
+    }
+}
+
+#[cfg(not(feature = "whad"))]
+fn open_whad_serial_source(_port: &str, _mode: WhadBleMode) -> Result<Option<OpenedPacketSource>> {
+    Err(whad_feature_disabled())
+}
+
+#[cfg(feature = "whad")]
+fn open_whad_serial_writer(port: &str, mode: WhadBleMode) -> Result<Option<OpenedPacketWriter>> {
+    match mode {
+        WhadBleMode::Inject => {
+            let (link, device) = open_whad_serial_link(port, mode)?;
+            Ok(Some(Box::new(WhadWriter::new(
+                link,
+                device,
+                WHAD_DEFAULT_INJECT_CHANNEL,
+            ))))
+        }
+        WhadBleMode::SniffAdv { .. } => Ok(None),
+    }
+}
+
+#[cfg(not(feature = "whad"))]
+fn open_whad_serial_writer(_port: &str, _mode: WhadBleMode) -> Result<Option<OpenedPacketWriter>> {
+    Err(whad_feature_disabled())
+}
+
+#[cfg(feature = "whad")]
+fn open_whad_serial_link(
+    port: &str,
+    mode: WhadBleMode,
+) -> Result<(WhadLink<SerialChannel>, WhadDevice)> {
+    let channel = SerialChannel::open(port)?;
+    let mut link = WhadLink::new(channel);
+    let device = discover(&mut link)?;
+    enter_ble(&mut link, &device, mode)?;
+    Ok((link, device))
+}
+
+#[cfg(not(feature = "whad"))]
+fn whad_feature_disabled() -> WireError {
+    WireError::unsupported_capability("open", Some("whad"), WHAD_FEATURE_DISABLED_REASON)
 }
 
 #[cfg(test)]
@@ -654,6 +756,34 @@ mod tests {
             .unwrap();
         assert_eq!(wire.target().interface(), Some("wlan0mon"));
         assert_eq!(wire.target().path(), None);
+    }
+
+    #[test]
+    fn whad_serial_target_reports_port_and_backend_metadata() {
+        let target = PacketWireTarget::WhadSerial {
+            port: "/dev/ttyACM0".to_string(),
+            mode: WhadBleMode::SniffAdv { channel: 37 },
+        };
+
+        assert_eq!(target.path(), None);
+        assert_eq!(target.interface(), Some("/dev/ttyACM0"));
+        assert_eq!(target.pcap_link_type(), None);
+        assert_eq!(target.backend_identifier(), "whad");
+    }
+
+    #[cfg(not(feature = "whad"))]
+    #[test]
+    fn whad_serial_open_without_feature_returns_typed_capability_error() {
+        assert_unsupported(
+            PacketWireBuilder::new(PacketWireTarget::WhadSerial {
+                port: "/dev/ttyACM0".to_string(),
+                mode: WhadBleMode::Inject,
+            })
+            .open(),
+            "open",
+            "whad",
+            WHAD_FEATURE_DISABLED_REASON,
+        );
     }
 
     #[test]

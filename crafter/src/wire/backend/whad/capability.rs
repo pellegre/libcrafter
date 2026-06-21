@@ -1,19 +1,31 @@
 //! WHAD BLE capability assertion and mode selection.
 
+#[cfg(feature = "whad")]
 use super::discovery::WhadDevice;
+#[cfg(feature = "whad")]
 use super::messages::{
     build_ble_central_mode, build_ble_domain_query, build_ble_sniff_adv, build_ble_start,
 };
+#[cfg(feature = "whad")]
 use super::proto;
+#[cfg(feature = "whad")]
 use super::transport::{WhadByteChannel, WhadLink};
+#[cfg(feature = "whad")]
 use crate::wire::{Result, WireError};
 
+/// BLE operating mode requested for a WHAD serial packet wire.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum WhadBleMode {
-    SniffAdv { channel: u8 },
+pub enum WhadBleMode {
+    /// Capture BLE advertising PDUs on one advertising channel.
+    SniffAdv {
+        /// BLE advertising channel, usually 37, 38, or 39.
+        channel: u8,
+    },
+    /// Inject BLE raw PDUs through WHAD's central/raw-PDU path.
     Inject,
 }
 
+#[cfg(feature = "whad")]
 pub(crate) fn enter_ble<C: WhadByteChannel>(
     link: &mut WhadLink<C>,
     device: &WhadDevice,
@@ -33,6 +45,7 @@ pub(crate) fn enter_ble<C: WhadByteChannel>(
     link.send_message(&build_ble_start())
 }
 
+#[cfg(feature = "whad")]
 fn assert_ble_capability(device: &WhadDevice, mode: WhadBleMode) -> Result<()> {
     let ble_domain = proto::discovery::Domain::BtLe as u32;
     if !device.domains.supported_domains.contains(&ble_domain) {
@@ -59,6 +72,7 @@ fn assert_ble_capability(device: &WhadDevice, mode: WhadBleMode) -> Result<()> {
     require_command(commands, proto::ble::BleCommand::Start, "Start")
 }
 
+#[cfg(feature = "whad")]
 fn require_command(
     commands: u64,
     command: proto::ble::BleCommand,
@@ -72,6 +86,7 @@ fn require_command(
     Ok(())
 }
 
+#[cfg(feature = "whad")]
 fn missing_capability(capability: &'static str) -> WireError {
     WireError::backend(
         "whad",
