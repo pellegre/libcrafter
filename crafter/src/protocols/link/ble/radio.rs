@@ -4,7 +4,7 @@ use core::any::Any;
 
 use crate::error::{CrafterError, Result};
 use crate::field::Field;
-use crate::packet::{Layer, LayerContext};
+use crate::packet::{IntoPacket, Layer, LayerContext, Packet};
 
 use super::consts::{ADVERTISING_ACCESS_ADDRESS, ADV_CHANNEL_37, ADV_CRC_INIT};
 
@@ -329,10 +329,18 @@ impl Layer for BleRadio {
     }
 }
 
+impl<R: IntoPacket> core::ops::Div<R> for BleRadio {
+    type Output = Packet;
+
+    fn div(self, rhs: R) -> Self::Output {
+        Packet::from_layer(self).concat(rhs)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::field::FieldState;
-    use crate::packet::Packet;
+    use crate::packet::{Packet, Raw};
 
     use super::*;
 
@@ -473,5 +481,14 @@ mod tests {
                 available: BLE_RADIO_PSEUDO_HEADER_LEN - 1,
             }
         );
+    }
+
+    #[test]
+    fn ble_radio_div_builds_two_layer_packet() {
+        let packet = BleRadio::advertising(37) / Raw::from_bytes([0u8; 4]);
+
+        assert_eq!(packet.len(), 2);
+        assert!(packet.layer::<BleRadio>().is_some());
+        assert!(packet.layer::<Raw>().is_some());
     }
 }
