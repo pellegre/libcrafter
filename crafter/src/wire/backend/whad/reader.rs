@@ -1,6 +1,6 @@
 //! Packet source for WHAD BLE receive messages.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use prost::Message as _;
 
@@ -48,40 +48,65 @@ impl<C: WhadByteChannel> WhadReader<C> {
 
 impl<C: WhadByteChannel> PacketSource for WhadReader<C> {
     fn next_record(&mut self) -> Result<Option<PacketRecord>> {
-        loop {
-            let message_bytes = match self.link.recv_message(self.recv_timeout) {
-                Ok(message_bytes) => message_bytes,
-                Err(err) if is_whad_timeout(&err) => return Ok(None),
-                Err(err) => return Err(err),
-            };
-
-            let message = proto::Message::decode(message_bytes.as_slice())
-                .map_err(|err| WireError::backend("whad", "receive PDU", err.to_string()))?;
-            let Some(rx) = parse_received_pdu(&message) else {
-                continue;
-            };
-
-            let (adv, tail) = decode_ble_adv(&rx.pdu)?;
-            let radio = BleRadio::advertising(rx.channel)
-                .access_address(rx.access_address)
-                .rssi(rx.rssi)
-                .crc_valid(rx.crc_valid);
-            let mut packet = radio / adv;
-            if !tail.is_empty() {
-                packet = packet.push(Raw::from_bytes(tail));
-            }
-
-            let bluetooth =
-                BluetoothMetadata::from_whad_rx_descriptor(rx.channel, rx.rssi, rx.access_address);
-            let record = PacketRecord::new(packet)
-                .with_origin(PacketOrigin::Captured)
-                .with_backend(BackendKind::Whad)
-                .with_link_type(LinkType::BluetoothLeLl)
-                .with_medium(MediumMetadata::Bluetooth(bluetooth));
-
-            return Ok(Some(record));
-        }
+        read_record_from_link(&mut self.link, self.recv_timeout)
     }
+}
+
+pub(crate) fn read_record_from_link<C: WhadByteChannel>(
+    link: &mut WhadLink<C>,
+    recv_timeout: Duration,
+) -> Result<Option<PacketRecord>> {
+    let start = Instant::now();
+    let deadline = start.checked_add(recv_timeout).unwrap_or(start);
+    read_record_from_link_until(link, deadline)
+}
+
+pub(crate) fn read_record_from_link_until<C: WhadByteChannel>(
+    link: &mut WhadLink<C>,
+    deadline: Instant,
+) -> Result<Option<PacketRecord>> {
+    loop {
+        let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+            return Ok(None);
+        };
+        if remaining == Duration::ZERO {
+            return Ok(None);
+        }
+
+        let message_bytes = match link.recv_message(remaining) {
+            Ok(message_bytes) => message_bytes,
+            Err(err) if is_whad_timeout(&err) => return Ok(None),
+            Err(err) => return Err(err),
+        };
+
+        let message = proto::Message::decode(message_bytes.as_slice())
+            .map_err(|err| WireError::backend("whad", "receive PDU", err.to_string()))?;
+        let Some(rx) = parse_received_pdu(&message) else {
+            continue;
+        };
+
+        return Ok(Some(record_from_rx(rx)?));
+    }
+}
+
+fn record_from_rx(rx: super::messages::WhadRxPdu) -> Result<PacketRecord> {
+    let (adv, tail) = decode_ble_adv(&rx.pdu)?;
+    let radio = BleRadio::advertising(rx.channel)
+        .access_address(rx.access_address)
+        .rssi(rx.rssi)
+        .crc_valid(rx.crc_valid);
+    let mut packet = radio / adv;
+    if !tail.is_empty() {
+        packet = packet.push(Raw::from_bytes(tail));
+    }
+
+    let bluetooth =
+        BluetoothMetadata::from_whad_rx_descriptor(rx.channel, rx.rssi, rx.access_address);
+    Ok(PacketRecord::new(packet)
+        .with_origin(PacketOrigin::Captured)
+        .with_backend(BackendKind::Whad)
+        .with_link_type(LinkType::BluetoothLeLl)
+        .with_medium(MediumMetadata::Bluetooth(bluetooth)))
 }
 
 fn is_whad_timeout(err: &WireError) -> bool {
