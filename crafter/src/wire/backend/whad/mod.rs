@@ -4,6 +4,9 @@
 pub(crate) const WHAD_TARGET_PROTOCOL_VERSION: u32 = 3;
 
 #[cfg(feature = "whad")]
+mod discovery;
+
+#[cfg(feature = "whad")]
 pub(crate) mod framing;
 
 #[cfg(feature = "whad")]
