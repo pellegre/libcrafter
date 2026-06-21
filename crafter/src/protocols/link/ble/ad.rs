@@ -6,8 +6,9 @@ use super::consts::{
     AD_COMPLETE_128_BIT_SERVICE_UUIDS, AD_COMPLETE_16_BIT_SERVICE_UUIDS,
     AD_COMPLETE_32_BIT_SERVICE_UUIDS, AD_COMPLETE_LOCAL_NAME, AD_FLAGS,
     AD_INCOMPLETE_128_BIT_SERVICE_UUIDS, AD_INCOMPLETE_16_BIT_SERVICE_UUIDS,
-    AD_INCOMPLETE_32_BIT_SERVICE_UUIDS, AD_MANUFACTURER_SPECIFIC_DATA, AD_SHORTENED_LOCAL_NAME,
-    AD_TX_POWER_LEVEL,
+    AD_INCOMPLETE_32_BIT_SERVICE_UUIDS, AD_MANUFACTURER_SPECIFIC_DATA,
+    AD_SERVICE_DATA_128_BIT_UUID, AD_SERVICE_DATA_16_BIT_UUID, AD_SERVICE_DATA_32_BIT_UUID,
+    AD_SHORTENED_LOCAL_NAME, AD_TX_POWER_LEVEL,
 };
 
 /// Flags AD structure bit values.
@@ -99,6 +100,31 @@ impl AdStructure {
         payload.extend_from_slice(&company_id.to_le_bytes());
         payload.extend_from_slice(data);
         Self::new(AD_MANUFACTURER_SPECIFIC_DATA, payload)
+    }
+
+    pub fn service_data_uuid16(uuid: u16, data: &[u8]) -> Self {
+        let mut payload = Vec::with_capacity(2 + data.len());
+        payload.extend_from_slice(&uuid.to_le_bytes());
+        payload.extend_from_slice(data);
+        Self::new(AD_SERVICE_DATA_16_BIT_UUID, payload)
+    }
+
+    pub fn service_data_uuid32(uuid: u32, data: &[u8]) -> Self {
+        let mut payload = Vec::with_capacity(4 + data.len());
+        payload.extend_from_slice(&uuid.to_le_bytes());
+        payload.extend_from_slice(data);
+        Self::new(AD_SERVICE_DATA_32_BIT_UUID, payload)
+    }
+
+    /// Builds a Service Data - 128-bit UUID AD structure.
+    ///
+    /// Input UUID arrays use canonical/MSB-first byte order; BLE AD encodes
+    /// the UUID on the wire in little-endian order before service data.
+    pub fn service_data_uuid128(uuid: [u8; 16], data: &[u8]) -> Self {
+        let mut payload = Vec::with_capacity(16 + data.len());
+        payload.extend(uuid.iter().rev().copied());
+        payload.extend_from_slice(data);
+        Self::new(AD_SERVICE_DATA_128_BIT_UUID, payload)
     }
 
     fn from_service_uuids16(ad_type: u8, uuids: &[u16]) -> Self {
@@ -218,6 +244,41 @@ impl AdStructure {
             u16::from_le_bytes([self.data[0], self.data[1]]),
             self.data[2..].to_vec(),
         ))
+    }
+
+    pub fn service_data_uuid16_value(&self) -> Option<(u16, Vec<u8>)> {
+        if self.ad_type != AD_SERVICE_DATA_16_BIT_UUID || self.data.len() < 2 {
+            return None;
+        }
+
+        Some((
+            u16::from_le_bytes([self.data[0], self.data[1]]),
+            self.data[2..].to_vec(),
+        ))
+    }
+
+    pub fn service_data_uuid32_value(&self) -> Option<(u32, Vec<u8>)> {
+        if self.ad_type != AD_SERVICE_DATA_32_BIT_UUID || self.data.len() < 4 {
+            return None;
+        }
+
+        Some((
+            u32::from_le_bytes([self.data[0], self.data[1], self.data[2], self.data[3]]),
+            self.data[4..].to_vec(),
+        ))
+    }
+
+    pub fn service_data_uuid128_value(&self) -> Option<([u8; 16], Vec<u8>)> {
+        if self.ad_type != AD_SERVICE_DATA_128_BIT_UUID || self.data.len() < 16 {
+            return None;
+        }
+
+        let mut uuid = [0u8; 16];
+        for (dst, src) in uuid.iter_mut().zip(self.data[..16].iter().rev()) {
+            *dst = *src;
+        }
+
+        Some((uuid, self.data[16..].to_vec()))
     }
 
     pub(crate) fn encode(&self, out: &mut Vec<u8>) {
@@ -513,6 +574,85 @@ mod tests {
         );
         assert_eq!(
             AdStructure::raw(AD_MANUFACTURER_SPECIFIC_DATA, [0xff]).manufacturer_data_value(),
+            None
+        );
+    }
+
+    #[test]
+    fn ble_ad_service_data_uuid16_encodes_and_reads_payload() {
+        let service_data = [0x01, 0x02];
+        let structure = AdStructure::service_data_uuid16(0xfef3, &service_data);
+        let mut encoded = Vec::new();
+
+        structure.encode(&mut encoded);
+
+        assert_eq!(encoded, [0x05, 0x16, 0xf3, 0xfe, 0x01, 0x02]);
+        assert_eq!(
+            structure.service_data_uuid16_value(),
+            Some((0xfef3, service_data.to_vec()))
+        );
+    }
+
+    #[test]
+    fn ble_ad_service_data_uuid32_encodes_and_reads_payload() {
+        let service_data = [0xaa, 0xbb, 0xcc];
+        let structure = AdStructure::service_data_uuid32(0x1234_5678, &service_data);
+        let mut encoded = Vec::new();
+
+        structure.encode(&mut encoded);
+
+        assert_eq!(
+            encoded,
+            [0x08, 0x20, 0x78, 0x56, 0x34, 0x12, 0xaa, 0xbb, 0xcc]
+        );
+        assert_eq!(
+            structure.service_data_uuid32_value(),
+            Some((0x1234_5678, service_data.to_vec()))
+        );
+    }
+
+    #[test]
+    fn ble_ad_service_data_uuid128_encodes_and_reads_canonical_uuid() {
+        let uuid = [
+            0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd,
+            0xee, 0xff,
+        ];
+        let service_data = [0x01, 0x02, 0x03];
+        let structure = AdStructure::service_data_uuid128(uuid, &service_data);
+        let mut encoded = Vec::new();
+
+        structure.encode(&mut encoded);
+
+        assert_eq!(
+            encoded,
+            [
+                0x14, 0x21, 0xff, 0xee, 0xdd, 0xcc, 0xbb, 0xaa, 0x99, 0x88, 0x77, 0x66, 0x55, 0x44,
+                0x33, 0x22, 0x11, 0x00, 0x01, 0x02, 0x03,
+            ]
+        );
+        assert_eq!(
+            structure.service_data_uuid128_value(),
+            Some((uuid, service_data.to_vec()))
+        );
+    }
+
+    #[test]
+    fn ble_ad_service_data_rejects_wrong_type_or_short_payloads() {
+        assert_eq!(
+            AdStructure::complete_local_name("x").service_data_uuid16_value(),
+            None
+        );
+        assert_eq!(
+            AdStructure::raw(AD_SERVICE_DATA_16_BIT_UUID, [0xff]).service_data_uuid16_value(),
+            None
+        );
+        assert_eq!(
+            AdStructure::raw(AD_SERVICE_DATA_32_BIT_UUID, [0x78, 0x56, 0x34])
+                .service_data_uuid32_value(),
+            None
+        );
+        assert_eq!(
+            AdStructure::raw(AD_SERVICE_DATA_128_BIT_UUID, [0x00; 15]).service_data_uuid128_value(),
             None
         );
     }
