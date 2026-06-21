@@ -4,3 +4,4 @@
 //! Link Layer PDU (`BleLlAdv`), and GAP Advertising Data structure layers.
 
 mod consts;
+mod radio;
