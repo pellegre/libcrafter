@@ -90,6 +90,30 @@ after decode rejects the malformed input.
 | MRD | `malformed-igmp-mrd-truncated-solicitation` | short MRD solicitation body |
 | MRD | `malformed-igmp-mrd-truncated-termination` | short MRD termination body |
 
+The executable Scapy matrix keeps these rows out of
+`tools/oracle/specs/fixtures/scapy-cases.json`: Scapy can only compare valid
+materialized packets here, while these cases assert the crate's structured
+decode error path. The paired crate coverage lives in
+`crafter/tests/igmp_malformed.rs`:
+
+| Case ID | Crate coverage |
+| --- | --- |
+| `malformed-igmp-truncated-header` | `igmp_malformed_fixed_header_errors_are_structured` |
+| `malformed-igmp-v2-truncated-group-address` | `igmp_malformed_v2_short_payload_is_structural_error` |
+| `malformed-igmp-v3-query-truncated-body` | `igmp_v3_query_truncated_body_is_structural_error` |
+| `malformed-igmp-v3-query-truncated-source-list` | `igmp_v3_query_source_count_overrun_is_structural_error` |
+| `malformed-igmp-v3-report-truncated-body` | `igmp_v3_report_truncated_body_is_structural_error` |
+| `malformed-igmp-v3-report-truncated-group-record` | `igmp_v3_report_truncated_group_record_header_is_structural_error` |
+| `malformed-igmp-v3-report-truncated-record-source-list` | `igmp_v3_report_truncated_source_list_is_structural_error` |
+| `malformed-igmp-v3-report-truncated-record-auxiliary-data` | `igmp_v3_report_truncated_auxiliary_data_is_structural_error` |
+| `malformed-igmp-extension-empty-area` | `igmp_extension_empty_area_is_structural_error` |
+| `malformed-igmp-extension-truncated-header` | `igmp_extension_truncated_header_is_structural_error` |
+| `malformed-igmp-extension-truncated-value` | `igmp_extension_truncated_value_is_structural_error` |
+| `malformed-igmp-extension-length-overrun` | `igmp_extension_length_overrun_is_structural_error` |
+| `malformed-igmp-mrd-truncated-advertisement` | `igmp_mrd_truncated_advertisement_is_structural_error` |
+| `malformed-igmp-mrd-truncated-solicitation` | `igmp_mrd_truncated_solicitation_is_structural_error` |
+| `malformed-igmp-mrd-truncated-termination` | `igmp_mrd_truncated_termination_is_structural_error` |
+
 ## Backend Limitations
 
 - Scapy native IGMP support is limited and version-sensitive. The executable
