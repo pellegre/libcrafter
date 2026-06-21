@@ -29,8 +29,10 @@ _LINK_TYPES: dict[int, str] = {
     127: "radiotap",
     228: "raw",
     229: "raw",
+    256: "bluetooth_le_ll_with_phdr",
 }
 _ROOTS_BY_LINK_TYPE: dict[str, str] = {
+    "bluetooth_le_ll_with_phdr": "link:bluetooth-le-ll-with-phdr",
     "ethernet": "link:ethernet",
     "ieee80211": "link:dot11",
     "linux_cooked": "link:linux-cooked",
@@ -40,6 +42,7 @@ _ROOTS_BY_LINK_TYPE: dict[str, str] = {
     "raw": "link:raw",
 }
 _DATALINK_BY_LINK_TYPE: dict[str, int] = {
+    "bluetooth_le_ll_with_phdr": 256,
     "ethernet": 1,
     "ieee80211": 105,
     "linux_cooked": 113,
@@ -99,14 +102,16 @@ def write_pcap(
 
     scapy_all = import_scapy()["all"]
     records: list[JSONObject] = []
-    decoded_packets: list[Any] = []
+    decoded_packets: list[tuple[Any, JSONObject]] = []
     for position, vector in enumerate(vectors):
         record = _vector_record(vector, position)
         root = vector.root or vector.decoder or record["root"]
         packet = _decode_packet_for_write(root, vector.to_bytes(), scapy_all)
-        packet.time = _decimal_timestamp(_object(record["timestamp"], "timestamp"))
+        timestamp = _object(record["timestamp"], "timestamp")
+        if not isinstance(packet, (bytes, bytearray)):
+            packet.time = _decimal_timestamp(timestamp)
         records.append(record)
-        decoded_packets.append(packet)
+        decoded_packets.append((packet, timestamp))
 
     output_path = Path(path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -117,8 +122,17 @@ def write_pcap(
         sync=True,
     )
     try:
-        for packet in decoded_packets:
-            writer.write(packet)
+        for packet, timestamp in decoded_packets:
+            if isinstance(packet, (bytes, bytearray)):
+                if not bool(getattr(writer, "header_present", False)):
+                    writer.write_header(packet)
+                writer.write_packet(
+                    bytes(packet),
+                    sec=int(timestamp["seconds"]),
+                    usec=int(timestamp["fractional"]),
+                )
+            else:
+                writer.write(packet)
     finally:
         writer.close()
     return records
@@ -143,7 +157,7 @@ def read_pcap(
     records: list[JSONObject] = []
     for position, packet in enumerate(packets):
         raw_hex = bytes(scapy_all.raw(packet)).hex()
-        if root in {"link:dot11", "link:radiotap"}:
+        if root in {"link:bluetooth-le-ll-with-phdr", "link:dot11", "link:radiotap"}:
             decoded = decode_bytes(bytes.fromhex(raw_hex), root=root, source_hex=raw_hex)
         else:
             decoded = normalize_packet(packet, root=root, source_hex=raw_hex)
@@ -222,6 +236,12 @@ def pcap_link_type_for_vectors(
 
 def _pcap_link_type_for_vector(vector: EncodedVector, requested: str) -> str:
     root = vector.root or vector.decoder
+    if root in {
+        "BTLE_PHDR",
+        "link:bluetooth-le-ll-with-phdr",
+        "link:bluetooth_le_ll_with_phdr",
+    }:
+        return "bluetooth_le_ll_with_phdr"
     if root in {"IP", "IPv6", "Raw", "l3:ipv4", "l3:ipv6", "link:raw"}:
         return "raw"
     if root in {"Ether", "link:ethernet"}:
@@ -253,6 +273,12 @@ def _datalink_for_link_type(link_type: str) -> int:
 
 
 def _decode_packet_for_write(root: str | None, raw: bytes, scapy_all: Any) -> Any:
+    if root in {
+        "BTLE_PHDR",
+        "link:bluetooth-le-ll-with-phdr",
+        "link:bluetooth_le_ll_with_phdr",
+    }:
+        return raw
     decoder_name = {
         "Ether": "Ether",
         "link:ethernet": "Ether",
@@ -352,6 +378,14 @@ def _root_for_link_type(link_type: str) -> str:
 
 def _canonical_link_type_name(name: str) -> str:
     normalized = name.replace("-", "_")
+    if normalized in {
+        "bluetooth_le_ll_with_phdr",
+        "btle_ll_with_phdr",
+        "btle_with_phdr",
+        "dlt_256",
+        "linktype_bluetooth_le_ll_with_phdr",
+    }:
+        return "bluetooth_le_ll_with_phdr"
     if normalized == "linux_cooked":
         return "linux_sll"
     if normalized in {"dot11", "ieee80211", "ieee802_11"}:
