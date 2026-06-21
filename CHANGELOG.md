@@ -16,6 +16,10 @@ workspace, released as one public crate: `crafter`.
 - Link-layer coverage for Ethernet, 802.1Q VLAN, Linux cooked capture,
   null/loopback, IEEE 802.11 (management, control, and data frames) with
   radiotap and LLC/SNAP, and EAPOL/RSN (802.11i) key-exchange fields.
+- BLE advertising coverage with `BleRadio` radio descriptors, `BleLlAdv`
+  advertising PDUs, GAP Advertising Data structures, `LinkType::BluetoothLeLl`
+  and pcap DLT 256 read/write support, plus a feature-gated `whad` dongle
+  backend for dry-run-default inject and sniff workflows.
 - Network and control coverage for ARP, IPv4 (DSCP/ECN, typed options,
   checksum status, and fragment fields), IPv6 with hop-by-hop, destination,
   fragment, routing, mobile-routing, and segment-routing extension headers,
