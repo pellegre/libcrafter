@@ -476,8 +476,8 @@ impl PcapPacket {
 
 #[cfg(test)]
 mod tests {
-    use super::{PcapLinkType, DLT_BLUETOOTH_LE_LL_WITH_PHDR};
-    use crate::LinkType;
+    use super::{PcapLinkType, PcapRecord, PcapTimestamp, DLT_BLUETOOTH_LE_LL_WITH_PHDR};
+    use crate::{BleRadio, LinkType};
 
     #[test]
     fn pcap_linktype_ble_datalink() {
@@ -501,5 +501,27 @@ mod tests {
             PcapLinkType::from(LinkType::BluetoothLeLl),
             PcapLinkType::BluetoothLeLl
         );
+    }
+
+    #[test]
+    fn pcap_decode_ble() {
+        let frame = [
+            37, 0xc4, 0x00, 0x00, 0xd6, 0xbe, 0x89, 0x8e, 0x13, 0x0c, 0xd6, 0xbe, 0x89, 0x8e,
+            0x40, 0x0f, 0x01, 0x53, 0x00, 0x5e, 0x00, 0x02, 0x02, 0x01, 0x06, 0x05, 0x09,
+            b't', b'e', b's', b't',
+        ];
+        let record = PcapRecord::new(
+            PcapTimestamp::zero(),
+            frame.len() as u32,
+            frame,
+            PcapLinkType::BluetoothLeLl,
+        )
+        .unwrap();
+
+        let packet = record.decode().unwrap();
+        let first = packet.get(0).unwrap();
+
+        assert!(first.as_any().is::<BleRadio>());
+        assert_eq!(first.name(), "BleRadio");
     }
 }
