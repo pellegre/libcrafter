@@ -7,6 +7,7 @@ use crate::field::Field;
 use crate::mac::MacAddr;
 use crate::packet::{IntoPacket, Layer, LayerContext, Packet};
 
+use super::ad::{decode_ad_list, AdList, AdStructure};
 pub use super::consts::BleAdvPduType;
 
 /// BLE advertising-channel Link Layer PDU.
@@ -30,6 +31,8 @@ pub struct BleLlAdv {
     adv_a: Field<MacAddr>,
     /// Target address (`TargetA`) for directed, scan, and connect PDUs.
     target_a: Field<MacAddr>,
+    /// Typed GAP Advertising Data structures carried after `AdvA`.
+    ad: AdList,
     /// Raw trailing payload when no typed Advertising Data list is used.
     payload: Vec<u8>,
 }
@@ -44,6 +47,7 @@ impl Clone for BleLlAdv {
             length: self.length.clone(),
             adv_a: self.adv_a.clone(),
             target_a: self.target_a.clone(),
+            ad: self.ad.clone(),
             payload: self.payload.clone(),
         }
     }
@@ -60,6 +64,7 @@ impl BleLlAdv {
             length: Field::unset(),
             adv_a: Field::unset(),
             target_a: Field::unset(),
+            ad: AdList(Vec::new()),
             payload: Vec::new(),
         }
     }
@@ -158,6 +163,18 @@ impl BleLlAdv {
         self
     }
 
+    /// Set a typed GAP Advertising Data list.
+    pub fn ad(mut self, ad: AdList) -> Self {
+        self.ad = ad;
+        self
+    }
+
+    /// Append one typed GAP Advertising Data structure.
+    pub fn push_ad(mut self, structure: AdStructure) -> Self {
+        self.ad.push(structure);
+        self
+    }
+
     /// Current advertiser address (`AdvA`) in MSB-first display order.
     pub fn adv_a_value(&self) -> Option<MacAddr> {
         self.adv_a.value().copied().map(on_air_to_display_address)
@@ -207,7 +224,7 @@ impl BleLlAdv {
             0
         };
 
-        adv_a_len + target_a_len + self.payload.len()
+        adv_a_len + target_a_len + self.trailing_payload_len()
     }
 
     fn encode_payload(&self, out: &mut Vec<u8>) {
@@ -221,7 +238,19 @@ impl BleLlAdv {
             }
         }
 
-        out.extend_from_slice(&self.payload);
+        if self.ad.0.is_empty() {
+            out.extend_from_slice(&self.payload);
+        } else {
+            self.ad.encode(out);
+        }
+    }
+
+    fn trailing_payload_len(&self) -> usize {
+        if self.ad.0.is_empty() {
+            self.payload.len()
+        } else {
+            self.ad.encoded_len()
+        }
     }
 
     fn requires_target_address(&self) -> bool {
@@ -369,6 +398,13 @@ pub(crate) fn decode_ble_adv(bytes: &[u8]) -> Result<(BleLlAdv, &[u8])> {
         Field::unset()
     };
 
+    let tail = &payload[offset..];
+    let (ad, payload) = if ble_adv_pdu_type_has_ad(pdu_type) {
+        (decode_ad_list(tail)?, Vec::new())
+    } else {
+        (AdList(Vec::new()), tail.to_vec())
+    };
+
     let adv = BleLlAdv {
         pdu_type: Field::user(pdu_type),
         ch_sel: Field::user((header0 & 0x20) != 0),
@@ -377,10 +413,11 @@ pub(crate) fn decode_ble_adv(bytes: &[u8]) -> Result<(BleLlAdv, &[u8])> {
         length: Field::user(bytes[1]),
         adv_a,
         target_a,
-        payload: Vec::new(),
+        ad,
+        payload,
     };
 
-    Ok((adv, &payload[offset..]))
+    Ok((adv, &bytes[2 + length..]))
 }
 
 fn read_ble_adv_address(
@@ -413,6 +450,16 @@ fn ble_adv_pdu_type_has_target_address(pdu_type: BleAdvPduType) -> bool {
     matches!(
         pdu_type,
         BleAdvPduType::AdvDirectInd | BleAdvPduType::ScanReq | BleAdvPduType::ConnectInd
+    )
+}
+
+fn ble_adv_pdu_type_has_ad(pdu_type: BleAdvPduType) -> bool {
+    matches!(
+        pdu_type,
+        BleAdvPduType::AdvInd
+            | BleAdvPduType::AdvNonconnInd
+            | BleAdvPduType::ScanRsp
+            | BleAdvPduType::AdvScanInd
     )
 }
 
@@ -535,6 +582,42 @@ mod tests {
     }
 
     #[test]
+    fn ble_adv_ad_list_build_decode_roundtrip() {
+        let packet = Packet::from_layer(
+            BleLlAdv::adv_ind()
+                .adv_a_str("C0:FF:EE:11:22:33")
+                .unwrap()
+                .push_ad(AdStructure::flags_general_disc())
+                .push_ad(AdStructure::complete_local_name("libcrafter-nrf")),
+        );
+
+        let bytes = packet.compile().expect("compile BLE advertising PDU");
+        let pdu = bytes.as_bytes();
+
+        assert_eq!(pdu[0], 0x40);
+        assert_eq!(pdu[1], 25);
+        assert_eq!(&pdu[2..8], &[0x33, 0x22, 0x11, 0xee, 0xff, 0xc0]);
+        assert_eq!(
+            &pdu[8..],
+            &[
+                0x02, 0x01, 0x06, 0x0f, 0x09, b'l', b'i', b'b', b'c', b'r', b'a', b'f', b't', b'e',
+                b'r', b'-', b'n', b'r', b'f',
+            ]
+        );
+
+        let (adv, tail) = decode_ble_adv(pdu).expect("decode compiled ADV_IND with AD list");
+
+        assert!(tail.is_empty());
+        assert_eq!(
+            adv.ad,
+            AdList(vec![
+                AdStructure::flags_general_disc(),
+                AdStructure::complete_local_name("libcrafter-nrf"),
+            ])
+        );
+    }
+
+    #[test]
     fn ble_adv_layer_compiles_beneath_ble_radio() {
         let packet =
             BleRadio::advertising(37) / BleLlAdv::adv_ind().adv_a_str("C0:FF:EE:11:22:33").unwrap();
@@ -545,16 +628,20 @@ mod tests {
             &bytes.as_bytes()[..10],
             &[37, 0, 0, 0, 0xd6, 0xbe, 0x89, 0x8e, 0x11, 0x04]
         );
-        assert_eq!(&bytes.as_bytes()[10..], &[0x40, 0x06, 0x33, 0x22, 0x11, 0xee, 0xff, 0xc0]);
+        assert_eq!(
+            &bytes.as_bytes()[10..],
+            &[0x40, 0x06, 0x33, 0x22, 0x11, 0xee, 0xff, 0xc0]
+        );
     }
 
     #[test]
     fn ble_adv_layer_summary_and_inspection_fields_expose_header_values() {
-        let adv = BleLlAdv::adv_ind()
-            .adv_a_str("C0:FF:EE:11:22:33")
-            .unwrap();
+        let adv = BleLlAdv::adv_ind().adv_a_str("C0:FF:EE:11:22:33").unwrap();
 
-        assert_eq!(adv.summary(), "BleLlAdv(ADV_IND, AdvA=C0:FF:EE:11:22:33, len=6)");
+        assert_eq!(
+            adv.summary(),
+            "BleLlAdv(ADV_IND, AdvA=C0:FF:EE:11:22:33, len=6)"
+        );
         assert_eq!(
             adv.inspection_fields(),
             vec![
@@ -567,7 +654,7 @@ mod tests {
     }
 
     #[test]
-    fn ble_adv_decode_adv_ind_returns_layer_and_ad_tail() {
+    fn ble_adv_decode_adv_ind_returns_layer_and_ad_list() {
         let bytes = [
             0x40, 0x09, 0x33, 0x22, 0x11, 0xee, 0xff, 0xc0, 0x02, 0x01, 0x06,
         ];
@@ -588,11 +675,12 @@ mod tests {
             adv.adv_a_value().unwrap(),
             MacAddr::new([0xc0, 0xff, 0xee, 0x11, 0x22, 0x33])
         );
-        assert_eq!(tail, &[0x02, 0x01, 0x06]);
+        assert_eq!(adv.ad, AdList(vec![AdStructure::flags_general_disc()]));
+        assert!(tail.is_empty());
     }
 
     #[test]
-    fn ble_adv_roundtrip_build_decode_reproduces_fields_and_tail() {
+    fn ble_adv_roundtrip_build_decode_reproduces_fields_and_ad_list() {
         let ad_tail = [0x02, 0x01, 0x06];
         let packet = Packet::from_layer(
             BleLlAdv::adv_ind()
@@ -616,7 +704,8 @@ mod tests {
             adv.adv_a_value().unwrap().to_string().to_uppercase(),
             "C0:FF:EE:11:22:33"
         );
-        assert_eq!(tail, ad_tail);
+        assert_eq!(adv.ad, AdList(vec![AdStructure::flags_general_disc()]));
+        assert!(tail.is_empty());
     }
 
     #[test]
