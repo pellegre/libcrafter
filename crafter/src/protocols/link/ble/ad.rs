@@ -2,7 +2,7 @@
 
 use crate::error::{CrafterError, Result};
 
-use super::consts::AD_FLAGS;
+use super::consts::{AD_COMPLETE_LOCAL_NAME, AD_FLAGS, AD_SHORTENED_LOCAL_NAME};
 
 /// Flags AD structure bit values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -44,9 +44,28 @@ impl AdStructure {
         Self::flags(BleAdvFlags::GENERAL_DISC)
     }
 
+    pub fn complete_local_name(name: &str) -> Self {
+        Self::new(AD_COMPLETE_LOCAL_NAME, name.as_bytes())
+    }
+
+    pub fn shortened_local_name(name: &str) -> Self {
+        Self::new(AD_SHORTENED_LOCAL_NAME, name.as_bytes())
+    }
+
     pub fn flags_value(&self) -> Option<u8> {
         if self.ad_type == AD_FLAGS && self.data.len() == 1 {
             Some(self.data[0])
+        } else {
+            None
+        }
+    }
+
+    pub fn local_name(&self) -> Option<String> {
+        if matches!(
+            self.ad_type,
+            AD_COMPLETE_LOCAL_NAME | AD_SHORTENED_LOCAL_NAME
+        ) {
+            Some(String::from_utf8_lossy(&self.data).into_owned())
         } else {
             None
         }
@@ -170,6 +189,33 @@ mod tests {
 
         assert_eq!(encoded, [0x02, 0x01, 0x06]);
         assert_eq!(structure.flags_value(), Some(0x06));
+    }
+
+    #[test]
+    fn ble_ad_local_name_complete_encodes_and_reads_name() {
+        let structure = AdStructure::complete_local_name("libcrafter-nrf");
+        let mut encoded = Vec::new();
+
+        structure.encode(&mut encoded);
+
+        assert_eq!(
+            encoded,
+            [
+                0x0f, 0x09, b'l', b'i', b'b', b'c', b'r', b'a', b'f', b't', b'e', b'r', b'-',
+                b'n', b'r', b'f',
+            ]
+        );
+        assert_eq!(structure.local_name().as_deref(), Some("libcrafter-nrf"));
+    }
+
+    #[test]
+    fn ble_ad_local_name_shortened_reads_name() {
+        let structure = AdStructure::shortened_local_name("crafter");
+
+        assert_eq!(structure.ad_type, AD_SHORTENED_LOCAL_NAME);
+        assert_eq!(structure.data, b"crafter");
+        assert_eq!(structure.local_name().as_deref(), Some("crafter"));
+        assert_eq!(AdStructure::flags_general_disc().local_name(), None);
     }
 
     #[test]
