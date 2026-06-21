@@ -2,7 +2,7 @@
 
 use core::any::Any;
 
-use crate::error::Result;
+use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::packet::{Layer, LayerContext};
 
@@ -225,12 +225,47 @@ impl BleRadio {
             BlePhy::LeCoded => 2,
         }
     }
+
+    fn phy_from_bits(bits: u16) -> BlePhy {
+        match bits & 0x0003 {
+            0 => BlePhy::Le1M,
+            1 => BlePhy::Le2M,
+            2 => BlePhy::LeCoded,
+            _ => BlePhy::Le1M,
+        }
+    }
 }
 
 impl Default for BleRadio {
     fn default() -> Self {
         Self::new()
     }
+}
+
+pub(crate) fn decode_ble_radio(bytes: &[u8]) -> Result<(BleRadio, &[u8])> {
+    if bytes.len() < BLE_RADIO_PSEUDO_HEADER_LEN {
+        return Err(CrafterError::buffer_too_short(
+            "ble.radio.pseudo_header",
+            BLE_RADIO_PSEUDO_HEADER_LEN,
+            bytes.len(),
+        ));
+    }
+
+    let access_address = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+    let flags = u16::from_le_bytes([bytes[8], bytes[9]]);
+    let phy = BleRadio::phy_from_bits(flags >> BLE_RADIO_FLAG_PHY_SHIFT);
+
+    let radio = BleRadio {
+        channel: Field::user(bytes[0]),
+        access_address: Field::user(access_address),
+        phy: Field::user(phy),
+        whitening: Field::user(flags & BLE_RADIO_FLAG_DEWHITENED != 0),
+        crc_init: Field::defaulted(ADV_CRC_INIT),
+        rssi: Field::user(i16::from(bytes[1] as i8)),
+        crc_valid: Field::user(flags & BLE_RADIO_FLAG_CRC_VALID != 0),
+    };
+
+    Ok((radio, &bytes[BLE_RADIO_PSEUDO_HEADER_LEN..]))
 }
 
 impl Layer for BleRadio {
@@ -394,5 +429,49 @@ mod tests {
 
         assert!(summary.contains("ch=38"));
         assert!(summary.contains("aa=0x8e89bed6"));
+    }
+
+    #[test]
+    fn ble_radio_decode_parses_pseudo_header_fields() {
+        let flags = BLE_RADIO_FLAG_DEWHITENED
+            | BLE_RADIO_FLAG_SIGNAL_POWER_VALID
+            | BLE_RADIO_FLAG_REFERENCE_ACCESS_ADDRESS_VALID
+            | BLE_RADIO_FLAG_CRC_CHECKED
+            | BLE_RADIO_FLAG_CRC_VALID
+            | (BleRadio::phy_bits(BlePhy::Le2M) << BLE_RADIO_FLAG_PHY_SHIFT);
+        let mut bytes = vec![38, (-42i8) as u8, 0, 0, 0x78, 0x56, 0x34, 0x12];
+        bytes.extend_from_slice(&flags.to_le_bytes());
+        bytes.extend_from_slice(&[0xaa, 0xbb]);
+
+        let (radio, tail) = decode_ble_radio(&bytes).expect("decode BLE radio pseudo-header");
+
+        assert_eq!(tail, &[0xaa, 0xbb]);
+        assert_eq!(radio.channel.state(), FieldState::User);
+        assert_eq!(radio.channel.value(), Some(&38));
+        assert_eq!(radio.access_address.state(), FieldState::User);
+        assert_eq!(radio.access_address.value(), Some(&0x1234_5678));
+        assert_eq!(radio.phy.state(), FieldState::User);
+        assert_eq!(radio.phy.value(), Some(&BlePhy::Le2M));
+        assert_eq!(radio.whitening.state(), FieldState::User);
+        assert_eq!(radio.whitening.value(), Some(&true));
+        assert_eq!(radio.rssi.state(), FieldState::User);
+        assert_eq!(radio.rssi.value(), Some(&-42));
+        assert_eq!(radio.crc_valid.state(), FieldState::User);
+        assert_eq!(radio.crc_valid.value(), Some(&true));
+    }
+
+    #[test]
+    fn ble_radio_decode_truncated_pseudo_header_is_structured_error() {
+        let err = decode_ble_radio(&[0; BLE_RADIO_PSEUDO_HEADER_LEN - 1])
+            .expect_err("must reject truncated BLE radio pseudo-header");
+
+        assert_eq!(
+            err,
+            CrafterError::BufferTooShort {
+                context: "ble.radio.pseudo_header",
+                required: BLE_RADIO_PSEUDO_HEADER_LEN,
+                available: BLE_RADIO_PSEUDO_HEADER_LEN - 1,
+            }
+        );
     }
 }
