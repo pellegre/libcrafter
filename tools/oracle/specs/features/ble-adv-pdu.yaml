@@ -1,0 +1,363 @@
+version: 1
+kind: feature
+name: ble-adv-pdu
+summary: Bluetooth Low Energy advertising PDU types, GAP Advertising Data TLVs, unknown AD raw preservation, and structured malformed-input errors.
+
+layers:
+  - ble_radio
+  - ble_adv
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+  - roundtrip
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: advertising-pdu-types
+    pdu_types:
+      - adv_ind
+      - adv_nonconn_ind
+      - scan_rsp
+    sources:
+      - .agents/docs/ble-codepoints.md#Advertising-PDU-Types-Core-Vol-6-Part-B-Section-23
+    checks:
+      - pdu_type_nibble_preserved
+      - adv_a_little_endian_on_wire
+      - ad_payload_boundary_preserved
+      - strict_bytes_preserved
+  - name: gap-ad-structures
+    ad_types:
+      - flags
+      - complete_local_name
+      - complete_16_bit_service_uuids
+      - complete_128_bit_service_uuids
+      - manufacturer_specific_data
+      - service_data_16_bit_uuid
+    sources:
+      - .agents/docs/ble-codepoints.md#GAP-AD-Types-Assigned-Numbers-Common-Data-Types
+      - .agents/docs/ble-codepoints.md#Flags-AD-Bitfield-CSS-v11-Part-A-Section-13
+    checks:
+      - ad_length_includes_type_and_value
+      - typed_ad_values_preserved
+      - strict_bytes_preserved
+  - name: unknown-ad-raw
+    ad_types:
+      - unknown:0x26
+    sources:
+      - .agents/docs/ble-codepoints.md#GAP-AD-Types-Assigned-Numbers-Common-Data-Types
+    checks:
+      - unknown_ad_type_preserved
+      - unknown_ad_value_preserved_as_raw
+      - normalized_as_raw_ad_structure
+  - name: structured-errors
+    checks:
+      - over_long_pdu_length_is_structured_error
+      - truncated_ad_is_structured_error
+      - excluded_from_offline_byte_comparison
+
+coverage_cases:
+  - ble-adv-ind-flags-name
+  - ble-adv-nonconn-uuid16
+  - ble-adv-nonconn-uuid128
+  - ble-scan-rsp-manufacturer-data
+  - ble-scan-rsp-service-data
+  - ble-adv-unknown-ad-raw
+  - malformed-ble-adv-overlong-length
+  - malformed-ble-ad-truncated
+
+supported_cases:
+  - name: ble-adv-ind-flags-name
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: strict_bytes
+    roots:
+      - "link:bluetooth-le-ll-with-phdr"
+    contract_only: true
+    fields:
+      ble_radio:
+        rf_channel: 37
+        access_address: 0x8e89bed6
+        ref_access_address: 0x8e89bed6
+        flags: 0x0411
+      ble_adv:
+        pdu_type: adv_ind
+        tx_add: public
+        rx_add: public
+        adv_a: a1:a2:a3:a4:a5:a6
+        ad_list:
+          - type: flags
+            value:
+              - le_general_discoverable_mode
+              - br_edr_not_supported
+          - type: complete_local_name
+            value: Crafter
+    expected:
+      pdu_type_code: 0x00
+      adv_payload_length: 18
+      ad_tlvs_hex: "020106080943726166746572"
+    sources:
+      - .agents/docs/ble-codepoints.md#Advertising-PDU-Types-Core-Vol-6-Part-B-Section-23
+      - .agents/docs/ble-codepoints.md#GAP-AD-Types-Assigned-Numbers-Common-Data-Types
+  - name: ble-adv-nonconn-uuid16
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: strict_bytes
+    roots:
+      - "link:bluetooth-le-ll-with-phdr"
+    contract_only: true
+    fields:
+      ble_radio:
+        rf_channel: 38
+        access_address: 0x8e89bed6
+        ref_access_address: 0x8e89bed6
+        flags: 0x0411
+      ble_adv:
+        pdu_type: adv_nonconn_ind
+        tx_add: public
+        rx_add: public
+        adv_a: b1:b2:b3:b4:b5:b6
+        ad_list:
+          - type_code: 0x03
+            type: complete_16_bit_service_uuids
+            data_hex: "0f180a18"
+    expected:
+      pdu_type_code: 0x02
+      adv_payload_length: 12
+      ad_tlvs_hex: "05030f180a18"
+    sources:
+      - .agents/docs/ble-codepoints.md#Advertising-PDU-Types-Core-Vol-6-Part-B-Section-23
+      - .agents/docs/ble-codepoints.md#GAP-AD-Types-Assigned-Numbers-Common-Data-Types
+  - name: ble-adv-nonconn-uuid128
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: strict_bytes
+    roots:
+      - "link:bluetooth-le-ll-with-phdr"
+    contract_only: true
+    fields:
+      ble_radio:
+        rf_channel: 39
+        access_address: 0x8e89bed6
+        ref_access_address: 0x8e89bed6
+        flags: 0x0411
+      ble_adv:
+        pdu_type: adv_nonconn_ind
+        tx_add: random
+        rx_add: public
+        adv_a: c1:c2:c3:c4:c5:c6
+        ad_list:
+          - type_code: 0x07
+            type: complete_128_bit_service_uuids
+            data_hex: "78563412f0debc9a7856341278563412"
+    expected:
+      pdu_type_code: 0x02
+      adv_payload_length: 24
+      ad_tlvs_hex: "110778563412f0debc9a7856341278563412"
+    sources:
+      - .agents/docs/ble-codepoints.md#Advertising-PDU-Types-Core-Vol-6-Part-B-Section-23
+      - .agents/docs/ble-codepoints.md#GAP-AD-Types-Assigned-Numbers-Common-Data-Types
+  - name: ble-scan-rsp-manufacturer-data
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: strict_bytes
+    roots:
+      - "link:bluetooth-le-ll-with-phdr"
+    contract_only: true
+    fields:
+      ble_radio:
+        rf_channel: 37
+        access_address: 0x8e89bed6
+        ref_access_address: 0x8e89bed6
+        flags: 0x0411
+      ble_adv:
+        pdu_type: scan_rsp
+        tx_add: public
+        rx_add: public
+        adv_a: d1:d2:d3:d4:d5:d6
+        ad_list:
+          - type_code: 0xff
+            type: manufacturer_specific_data
+            data_hex: "ffff010203"
+    expected:
+      pdu_type_code: 0x04
+      adv_payload_length: 13
+      ad_tlvs_hex: "06ffffff010203"
+    sources:
+      - .agents/docs/ble-codepoints.md#Advertising-PDU-Types-Core-Vol-6-Part-B-Section-23
+      - .agents/docs/ble-codepoints.md#GAP-AD-Types-Assigned-Numbers-Common-Data-Types
+  - name: ble-scan-rsp-service-data
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: strict_bytes
+    roots:
+      - "link:bluetooth-le-ll-with-phdr"
+    contract_only: true
+    fields:
+      ble_radio:
+        rf_channel: 38
+        access_address: 0x8e89bed6
+        ref_access_address: 0x8e89bed6
+        flags: 0x0411
+      ble_adv:
+        pdu_type: scan_rsp
+        tx_add: public
+        rx_add: public
+        adv_a: e1:e2:e3:e4:e5:e6
+        ad_list:
+          - type_code: 0x16
+            type: service_data_16_bit_uuid
+            data_hex: "0f1801020304"
+    expected:
+      pdu_type_code: 0x04
+      adv_payload_length: 14
+      ad_tlvs_hex: "07160f1801020304"
+    sources:
+      - .agents/docs/ble-codepoints.md#Advertising-PDU-Types-Core-Vol-6-Part-B-Section-23
+      - .agents/docs/ble-codepoints.md#GAP-AD-Types-Assigned-Numbers-Common-Data-Types
+  - name: ble-adv-unknown-ad-raw
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: strict_bytes
+    roots:
+      - "link:bluetooth-le-ll-with-phdr"
+    contract_only: true
+    fields:
+      ble_radio:
+        rf_channel: 39
+        access_address: 0x8e89bed6
+        ref_access_address: 0x8e89bed6
+        flags: 0x0411
+      ble_adv:
+        pdu_type: adv_ind
+        tx_add: public
+        rx_add: public
+        adv_a: f1:f2:f3:f4:f5:f6
+        ad_list:
+          - type_code: 0x26
+            type: unknown
+            data_hex: "01020304"
+    expected:
+      pdu_type_code: 0x00
+      adv_payload_length: 12
+      ad_tlvs_hex: "052601020304"
+      normalized_ad:
+        type: unknown:38
+        type_code: 0x26
+        data_hex: "01020304"
+    sources:
+      - .agents/docs/ble-codepoints.md#GAP-AD-Types-Assigned-Numbers-Common-Data-Types
+  - name: malformed-ble-adv-overlong-length
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: structured_error
+    offline_byte_comparison: excluded
+    roots:
+      - "link:bluetooth-le-ll-with-phdr"
+    generator_policy:
+      strict_byte_comparison: excluded
+      reason: structured_error
+    crate_test_coverage:
+      test: crafter/tests/ble_resilience.rs::ble_malformed_corpus_errors_are_structured_and_non_panicking
+      fixture: crafter/tests/fixtures/malformed/ble-decode-corpus.hex
+  - name: malformed-ble-ad-truncated
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: structured_error
+    offline_byte_comparison: excluded
+    roots:
+      - "link:bluetooth-le-ll-with-phdr"
+    generator_policy:
+      strict_byte_comparison: excluded
+      reason: structured_error
+    crate_test_coverage:
+      test: crafter/tests/ble_resilience.rs::ble_malformed_corpus_errors_are_structured_and_non_panicking
+      fixture: crafter/tests/fixtures/malformed/ble-decode-corpus.hex
+
+structured_error_cases:
+  - name: over-long-ble-adv-pdu-length
+    coverage_case: malformed-ble-adv-overlong-length
+    decode_target: link:bluetooth-le-ll-with-phdr
+    expected_error:
+      kind: buffer-too-short
+      context: ble.adv.payload
+      required: 37
+      available: 8
+    crate_test: crafter/tests/ble_resilience.rs::ble_malformed_corpus_errors_are_structured_and_non_panicking
+    fixture: crafter/tests/fixtures/malformed/ble-decode-corpus.hex
+  - name: truncated-ble-ad-structure
+    coverage_case: malformed-ble-ad-truncated
+    decode_target: link:bluetooth-le-ll-with-phdr
+    expected_error:
+      kind: buffer-too-short
+      context: ble.ad.structure
+      required: 5
+      available: 2
+    crate_test: crafter/tests/ble_resilience.rs::ble_malformed_corpus_errors_are_structured_and_non_panicking
+    fixture: crafter/tests/fixtures/malformed/ble-decode-corpus.hex
+
+normalized_model:
+  header:
+    - pdu_type
+    - pdu_type_code
+    - tx_add
+    - rx_add
+    - channel_selection
+    - rfu
+    - length
+  addresses:
+    - adv_a
+  ad_list:
+    shape: ordered_tlv_list
+    length_semantics: length_includes_ad_type_and_data
+    entries:
+      - type
+      - type_code
+      - length
+      - data_hex
+      - value
+      - flag_tokens
+    raw_preservation:
+      unknown_ad_type:
+        type: "unknown:<type_code>"
+        fields:
+          - type_code
+          - length
+          - data_hex
+  malformed:
+    - pdu_length_exceeds_available_payload
+    - ad_length_exceeds_remaining_bytes
+
+backend_support:
+  scapy:
+    status: supported
+    encode: true
+    decode: true
+    native_layers:
+      - BTLE
+      - BTLE_ADV
+      - BTLE_ADV_IND
+      - EIR_Hdr
+    notes:
+      - Native Scapy BLE support is used where byte-identical; the Step 51 backend emits deterministic bytes for AD types Scapy cannot natively build.
+      - Strict-byte BLE advertising cases are contract-only until the runnable libcrafter offline adapter hooks are widened for BLE.
+  libcrafter:
+    status: partial
+    encode: true
+    decode: true
+    notes:
+      - BleLlAdv and AD structures have crate tests and fixtures; runnable BLE offline comparisons remain deferred to adapter work.
