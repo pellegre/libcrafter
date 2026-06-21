@@ -58,6 +58,12 @@ roots:
       - ipv6
       - eapol
       - rsn
+  - name: "link:bluetooth-le-ll-with-phdr"
+    layers:
+      - ble_radio
+    families:
+      - link
+      - ble
   - name: "l3:ipv4"
     layers:
       - ipv4
@@ -224,6 +230,12 @@ families:
       - radiotap
       - dot11
       - payload
+  - name: ble
+    default_stack:
+      - ble_radio
+    feature_tags:
+      - ble
+      - ble_radio
   - name: llc_snap
     default_stack:
       - radiotap
@@ -364,6 +376,17 @@ stacks:
       - rsn-psk-ccmp
       - rsn-sae-management-protection
       - crafter-rsn-roundtrip
+  # BLE radio pseudo-header: the pcap DLT 256 / LINKTYPE_BLUETOOTH_LE_LL_WITH_PHDR
+  # metadata prefix. The Step 52 suite declares strict-byte contracts here; the
+  # runnable offline adapter hooks arrive separately.
+  - name: ble_radio_phdr
+    root: "link:bluetooth-le-ll-with-phdr"
+    layers:
+      - ble_radio
+    coverage_cases:
+      - ble-radio-default-advertising-phdr
+      - ble-radio-explicit-aa-channel
+      - malformed-ble-radio-truncated-phdr
   # ethernet / arp: ARP over Ethernet. ARP is IPv4-era link-layer address
   # resolution (target/arp-rfc/scope.md: RFC 826 over media-generic
   # HRD/PRO/HLN/PLN), so it stays rooted at a link layer and is never eligible

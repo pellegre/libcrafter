@@ -1,0 +1,131 @@
+version: 1
+kind: feature
+name: ble-radio-phdr
+summary: Bluetooth Low Energy Link Layer radio pseudo-header defaults, explicit channel/access-address overrides, and truncated-header structured errors.
+
+layers:
+  - ble_radio
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+  - roundtrip
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: default-advertising-descriptor
+    fields:
+      rf_channel: 37
+      access_address: 0x8e89bed6
+      flags: 0x0411
+    expected_pseudo_header_hex: "25000000d6be898e1104"
+    sources:
+      - .agents/docs/ble-manifest.md#Advertising-Channels
+      - .agents/docs/ble-manifest.md#Access-Address
+      - .agents/docs/ble-manifest.md#Pcap-Link-Type
+    checks:
+      - channel_defaults_to_primary_advertising_channel_37
+      - advertising_access_address_defaults_to_0x8e89bed6
+      - pseudo_header_is_10_octets
+      - strict_bytes_preserved
+  - name: explicit-access-address-channel
+    fields:
+      rf_channel: 38
+      access_address: 0x12345678
+      flags: 0x0411
+    expected_pseudo_header_hex: "26000000785634121104"
+    sources:
+      - .agents/docs/ble-manifest.md#Advertising-Channels
+      - .agents/docs/ble-manifest.md#Access-Address
+      - .agents/docs/ble-manifest.md#Pcap-Link-Type
+    checks:
+      - explicit_channel_is_preserved
+      - explicit_access_address_is_preserved
+      - pseudo_header_is_10_octets
+      - strict_bytes_preserved
+  - name: truncated-pseudo-header
+    checks:
+      - structured_error
+      - excluded_from_offline_byte_comparison
+
+coverage_cases:
+  - ble-radio-default-advertising-phdr
+  - ble-radio-explicit-aa-channel
+  - malformed-ble-radio-truncated-phdr
+
+supported_cases:
+  - name: ble-radio-default-advertising-phdr
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+    roots:
+      - "link:bluetooth-le-ll-with-phdr"
+    contract_only: true
+    expected_pseudo_header_hex: "25000000d6be898e1104"
+    expected:
+      rf_channel: 37
+      access_address: 0x8e89bed6
+      flags: 0x0411
+  - name: ble-radio-explicit-aa-channel
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+    roots:
+      - "link:bluetooth-le-ll-with-phdr"
+    contract_only: true
+    expected_pseudo_header_hex: "26000000785634121104"
+    expected:
+      rf_channel: 38
+      access_address: 0x12345678
+      flags: 0x0411
+  - name: malformed-ble-radio-truncated-phdr
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: structured_error
+    offline_byte_comparison: excluded
+    generator_policy:
+      strict_byte_comparison: excluded
+      reason: structured_error
+    crate_test_coverage:
+      test: crafter/src/protocols/link/ble/radio.rs::ble_radio_decode_truncated_pseudo_header_is_structured_error
+
+structured_error_cases:
+  - name: short-ble-radio-pseudo-header
+    coverage_case: malformed-ble-radio-truncated-phdr
+    decode_target: link:bluetooth-le-ll-with-phdr
+    expected_error:
+      kind: buffer-too-short
+      context: ble.radio.pseudo_header
+      required: 10
+      available: 9
+    crate_test: crafter/src/protocols/link/ble/radio.rs::ble_radio_decode_truncated_pseudo_header_is_structured_error
+
+normalized_model:
+  header:
+    - rf_channel
+    - signal_power
+    - noise_power
+    - access_address
+    - ref_access_address
+    - flags
+  raw_preservation:
+    - following_ble_ll_packet
+
+backend_support:
+  scapy:
+    status: supported
+    encode: true
+    decode: true
+    native_layers:
+      - BTLE_PHDR
+    notes:
+      - The Step 51 Scapy backend supports BTLE_PHDR materialization and byte-level normalization for this root.
+  libcrafter:
+    status: partial
+    encode: true
+    decode: true
+    notes:
+      - The crate has BleRadio pseudo-header encode/decode coverage; runnable offline adapter hooks are outside Step 52.
