@@ -126,6 +126,7 @@ const fn link_type_name(link_type: LinkType) -> &'static str {
         LinkType::Ethernet => "ethernet",
         LinkType::Ieee80211 => "ieee80211",
         LinkType::Radiotap => "radiotap",
+        LinkType::BluetoothLeLl => "bluetooth-le-ll",
         LinkType::LinuxCooked => "linux-cooked",
         LinkType::LinuxSll => "linux-sll",
         LinkType::NullLoopback => "null-loopback",

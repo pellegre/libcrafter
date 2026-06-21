@@ -247,6 +247,9 @@ impl From<LinkType> for PcapLinkType {
             LinkType::Ethernet => Self::Ethernet,
             LinkType::Ieee80211 => Self::Ieee80211,
             LinkType::Radiotap => Self::Ieee80211Radiotap,
+            LinkType::BluetoothLeLl => {
+                panic!("BluetoothLeLl pcap mapping is not wired yet")
+            }
             LinkType::LinuxCooked | LinkType::LinuxSll => Self::LinuxSll,
             LinkType::NullLoopback => Self::NullLoopback,
         }
