@@ -1,0 +1,87 @@
+// Regenerated WHAD discovery/device protocol subset.
+// Pin: whad-team/whad-protocol release/v3
+// Commit: 82dbbefe5c3a1b3bfa89f86829c8872985a7f27e
+
+syntax = "proto3";
+
+package discovery;
+
+enum Domain {
+  _DomainNone = 0x00000000;
+  Phy = 0x01000000;
+  BtClassic = 0x02000000;
+  BtLE = 0x03000000;
+  Dot15d4 = 0x04000000;
+  SixLowPan = 0x05000000;
+  Esb = 0x06000000;
+  LogitechUnifying = 0x07000000;
+  Mosart = 0x08000000;
+  ANT = 0x09000000;
+  ANT_Plus = 0x0A000000;
+  ANT_FS = 0x0B000000;
+}
+
+enum DeviceType {
+  Esp32BleFuzzer = 0;
+  Butterfly = 1;
+  BtleJack = 2;
+  VirtualDevice = 4;
+}
+
+enum Capability {
+  _CapNone = 0x00;
+  Scan = 0x01;
+  Sniff = 0x02;
+  Inject = 0x04;
+  Jam = 0x08;
+  Hijack = 0x10;
+  Hook = 0x20;
+  SimulateRole = 0x40;
+  NoRawData = 0x80;
+}
+
+message DeviceResetQuery {}
+
+message DeviceReadyResp {}
+
+message SetTransportSpeed {
+  uint32 speed = 1;
+}
+
+message DeviceInfoResp {
+  uint32 type = 1;
+  bytes devid = 2;
+  uint32 proto_min_ver = 3;
+  uint32 max_speed = 4;
+  bytes fw_author = 5;
+  bytes fw_url = 6;
+  uint32 fw_version_major = 7;
+  uint32 fw_version_minor = 8;
+  uint32 fw_version_rev = 9;
+  repeated uint32 capabilities = 10 [packed = true];
+}
+
+message DeviceDomainInfoResp {
+  uint32 domain = 1;
+  uint64 supported_commands = 2;
+}
+
+message DeviceInfoQuery {
+  uint32 proto_ver = 1;
+}
+
+message DeviceDomainInfoQuery {
+  uint32 domain = 1;
+}
+
+message Message {
+  oneof msg {
+    DeviceResetQuery reset_query = 1;
+    DeviceReadyResp ready_resp = 2;
+    DeviceInfoQuery info_query = 3;
+    DeviceInfoResp info_resp = 4;
+    DeviceDomainInfoQuery domain_query = 5;
+    DeviceDomainInfoResp domain_resp = 6;
+    SetTransportSpeed set_speed = 7;
+  }
+}

@@ -1,0 +1,9 @@
+WHAD protocol source: https://github.com/whad-team/whad-protocol
+Pinned ref: release/v3
+Pinned commit: 82dbbefe5c3a1b3bfa89f86829c8872985a7f27e
+Commit date: 2026-06-08T11:26:46Z
+
+This directory contains scope-reduced, regenerated protobuf definitions for
+the libcrafter WHAD backend. They preserve the field numbers, package names,
+enum values, and message wrappers needed by the host-side BLE raw inject/sniff
+backend, while omitting unrelated WHAD domains and command surfaces.
