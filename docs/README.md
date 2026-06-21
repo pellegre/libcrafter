@@ -43,6 +43,9 @@ Per-protocol wire coverage for building and decoding packets.
   [RIP implementation inventory](rip-implementation-inventory.md).
 - [Dot11 wire coverage](guide/dot11.md) — bare IEEE 802.11, radiotap, LLC/SNAP,
   EAPOL, RSN foundations, pcap link types, and the dry-run/manual live boundary.
+- [BLE advertising wire coverage](guide/ble.md) — BLE radio pseudo-header,
+  advertising Link Layer PDUs, GAP Advertising Data structures, pcap link type,
+  and the dry-run/live dongle boundary.
 - [IPsec wire coverage](guide/ipsec.md) — AH/ESP construction, transforms, and
   the supported offline and live surfaces.
 
