@@ -1,4 +1,36 @@
+#[macro_use]
+mod support;
+
 use crafter::core::{CrafterError, LayerContext, LinkType, Packet, Result};
+use crafter::{BleLlAdv, Layer, MacAddr};
+
+#[test]
+fn ble_hex_fixtures_decode_representative_advertisements() -> Result<()> {
+    assert_ble_fixture(
+        "adv_ind_flags_name",
+        fixture_str!("ble/adv_ind_flags_name.hex"),
+        "ADV_IND",
+        MacAddr::new([0xc2, 0x00, 0x5e, 0x00, 0x53, 0x47]),
+        &[
+            "AdStructure { ad_type: 1, data: [6], length_override: None }",
+            "AdStructure { ad_type: 9, data: [99, 114, 97, 102, 116, 101, 114, 45, 97, 100, 118], length_override: None }",
+        ],
+    )?;
+    assert_ble_fixture(
+        "adv_nonconn_ind_mfg_data",
+        fixture_str!("ble/adv_nonconn_ind_mfg_data.hex"),
+        "ADV_NONCONN_IND",
+        MacAddr::new([0xc2, 0x00, 0x5e, 0x00, 0x53, 0x48]),
+        &["AdStructure { ad_type: 255, data: [255, 255, 1, 2, 3, 4], length_override: None }"],
+    )?;
+    assert_ble_fixture(
+        "scan_rsp_name",
+        fixture_str!("ble/scan_rsp_name.hex"),
+        "SCAN_RSP",
+        MacAddr::new([0xc2, 0x00, 0x5e, 0x00, 0x53, 0x49]),
+        &["AdStructure { ad_type: 9, data: [99, 114, 97, 102, 116, 101, 114, 45, 115, 99, 97, 110], length_override: None }"],
+    )
+}
 
 #[test]
 fn public_decode_from_link_decodes_ble_advertising_frame() -> Result<()> {
@@ -81,4 +113,66 @@ fn field_value<'a>(fields: &'a [(&'static str, String)], name: &str) -> Option<&
         .iter()
         .find(|(field, _)| *field == name)
         .map(|(_, value)| value.as_str())
+}
+
+fn assert_ble_fixture(
+    label: &str,
+    hex: &str,
+    expected_pdu_type: &str,
+    expected_adv_a: MacAddr,
+    expected_ad_debug: &[&str],
+) -> Result<()> {
+    let frame = decode_hex_fixture(label, hex);
+    let packet = Packet::decode_from_link(LinkType::BluetoothLeLl, &frame)?;
+    let adv = packet
+        .layer::<BleLlAdv>()
+        .unwrap_or_else(|| panic!("{label} should decode a BleLlAdv layer"));
+
+    let fields = adv.inspection_fields();
+    assert_eq!(field_value(&fields, "pdu_type"), Some(expected_pdu_type));
+    assert_eq!(adv.adv_a_value(), Some(expected_adv_a));
+
+    let adv_debug = format!("{adv:?}");
+    for needle in expected_ad_debug {
+        assert!(
+            adv_debug.contains(needle),
+            "{label} decoded AD fields should contain {needle}: {adv_debug}"
+        );
+    }
+
+    Ok(())
+}
+
+fn decode_hex_fixture(label: &str, text: &str) -> Vec<u8> {
+    let mut compact = String::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        for ch in line.chars().filter(|ch| !ch.is_whitespace()) {
+            assert!(
+                ch.is_ascii_hexdigit(),
+                "hex fixture {label} contains non-hex character {ch:?}"
+            );
+            compact.push(ch);
+        }
+    }
+
+    assert!(
+        compact.len() % 2 == 0,
+        "hex fixture {label} has an odd hex length"
+    );
+
+    compact
+        .as_bytes()
+        .chunks(2)
+        .map(|chunk| {
+            let byte = std::str::from_utf8(chunk)
+                .unwrap_or_else(|_| panic!("hex fixture {label} contains non-UTF8 hex"));
+            u8::from_str_radix(byte, 16)
+                .unwrap_or_else(|_| panic!("hex fixture {label} has invalid hex byte {byte}"))
+        })
+        .collect()
 }
