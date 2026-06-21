@@ -1,11 +1,9 @@
 # IGMP Scapy Coverage Matrix
 
-This matrix records the IGMP oracle cases that later Scapy backend steps must
-materialize or normalize. It covers IGMP over IPv4 only; IPv6 MLD stays in the
-ICMPv6 family and is not part of these rows.
-
-This step records fixture intent only. No oracle materializer, normalizer, suite
-dispatcher, stack/profile spec, or feature spec code changed.
+This matrix records the IGMP oracle cases that the Scapy backend materializes
+as exact IPv4 protocol 2 bytes and normalizes from the IPv4 payload. It covers
+IGMP over IPv4 only; IPv6 MLD stays in the ICMPv6 family and is not part of
+these rows.
 
 ## How To Read This Matrix
 
@@ -15,10 +13,9 @@ dispatcher, stack/profile spec, or feature spec code changed.
   `reference_to_libcrafter` and `libcrafter_to_reference`.
 - **Byte policy** is `strict_bytes` for comparable packet bytes. There are no
   normalized IGMP cases in this matrix yet.
-- **Scapy path** is `native` when Scapy can use a typed IGMP layer, `raw` when
-  the case must be supplied as Scapy-owned IPv4 protocol 2 bytes, and `mixed`
-  when typed Scapy layers are usable only for the leading shape and the
-  remaining bytes must be raw.
+- **Scapy path** is `raw` for all current executable rows. This avoids
+  version-sensitive Scapy contrib IGMP classes while still preserving and
+  comparing the exact IPv4 protocol 2 bytes.
 
 All examples use documentation IPv4 unicast space and source-backed multicast
 documentation or link-local control groups, including `224.0.0.1`,
@@ -28,34 +25,34 @@ documentation or link-local control groups, including `224.0.0.1`,
 
 | Area | Case ID | Directions | Byte policy | Scapy path |
 | --- | --- | --- | --- | --- |
-| Bootstrap | `igmp-membership-query` | both | strict_bytes | native `IP/IGMP` |
-| V2 | `igmp-v2-membership-query` | both | strict_bytes | native `IP/IGMP` |
-| Bootstrap | `igmp-v1-membership-report` | both | strict_bytes | native `IP/IGMP` |
-| V2 | `igmp-v2-membership-report` | both | strict_bytes | native `IP/IGMP` |
-| V2 | `igmp-v2-leave-group` | both | strict_bytes | native `IP/IGMP` |
-| Override | `igmp-checksum-explicit-invalid` | both | strict_bytes | native `IP/IGMP`, checksum pinned |
+| Bootstrap | `igmp-membership-query` | both | strict_bytes | raw IPv4 protocol 2 bytes |
+| V2 | `igmp-v2-membership-query` | both | strict_bytes | raw IPv4 protocol 2 bytes |
+| Bootstrap | `igmp-v1-membership-report` | both | strict_bytes | raw IPv4 protocol 2 bytes |
+| V2 | `igmp-v2-membership-report` | both | strict_bytes | raw IPv4 protocol 2 bytes |
+| V2 | `igmp-v2-leave-group` | both | strict_bytes | raw IPv4 protocol 2 bytes |
+| Override | `igmp-checksum-explicit-invalid` | both | strict_bytes | raw IPv4 protocol 2 bytes, checksum pinned |
 | Unknown values | `igmp-unknown-type-raw` | both | strict_bytes | raw IPv4 protocol 2 payload |
 | Unknown values | `igmp-unsupported-assigned-type-raw` | both | strict_bytes | raw IPv4 protocol 2 payload |
-| V3 query | `igmp-v3-query-general` | both | strict_bytes | native `IP/IGMPv3/IGMPv3mq` |
-| V3 query | `igmp-v3-query-group-specific` | both | strict_bytes | native `IP/IGMPv3/IGMPv3mq` |
-| V3 query | `igmp-v3-query-group-and-source-specific` | both | strict_bytes | native `IP/IGMPv3/IGMPv3mq` |
-| V3 query override | `igmp-v3-query-source-count-override` | both | strict_bytes | mixed/native header plus raw body |
-| V3 query override | `igmp-v3-query-checksum-explicit-invalid` | both | strict_bytes | native query, checksum pinned |
-| V3 query raw tail | `igmp-v3-query-ignored-extra-octets` | both | strict_bytes | mixed `IP/IGMPv3/IGMPv3mq/Raw` |
-| V3 report | `igmp-v3-report-empty` | both | strict_bytes | native `IP/IGMPv3/IGMPv3mr` |
-| V3 report | `igmp-v3-report-include-record` | both | strict_bytes | native `IP/IGMPv3/IGMPv3mr/IGMPv3gr` |
-| V3 report | `igmp-v3-report-exclude-record` | both | strict_bytes | native `IP/IGMPv3/IGMPv3mr/IGMPv3gr` |
-| V3 report | `igmp-v3-report-source-list-change-records` | both | strict_bytes | native report with ordered group records |
-| V3 report aux | `igmp-v3-report-auxiliary-data-record` | both | strict_bytes | mixed group record plus raw aux bytes |
-| V3 report unknown | `igmp-v3-report-unknown-record-type` | both | strict_bytes | native record container with numeric type |
-| V3 report override | `igmp-v3-report-count-override` | both | strict_bytes | mixed/native header plus raw body |
-| V3 report override | `igmp-v3-report-checksum-explicit-invalid` | both | strict_bytes | native report, checksum pinned |
-| RFC 9279 extension | `igmp-extension-query-noop` | both | strict_bytes | mixed query plus raw TLV |
-| RFC 9279 extension | `igmp-extension-report-noop-zero-length` | both | strict_bytes | mixed report plus raw TLV |
+| V3 query | `igmp-v3-query-general` | both | strict_bytes | raw IPv4 protocol 2 bytes |
+| V3 query | `igmp-v3-query-group-specific` | both | strict_bytes | raw IPv4 protocol 2 bytes |
+| V3 query | `igmp-v3-query-group-and-source-specific` | both | strict_bytes | raw IPv4 protocol 2 bytes |
+| V3 query override | `igmp-v3-query-source-count-override` | both | strict_bytes | raw IPv4 protocol 2 bytes |
+| V3 query override | `igmp-v3-query-checksum-explicit-invalid` | both | strict_bytes | raw IPv4 protocol 2 bytes, checksum pinned |
+| V3 query raw tail | `igmp-v3-query-ignored-extra-octets` | both | strict_bytes | raw IPv4 protocol 2 bytes |
+| V3 report | `igmp-v3-report-empty` | both | strict_bytes | raw IPv4 protocol 2 bytes |
+| V3 report | `igmp-v3-report-include-record` | both | strict_bytes | raw IPv4 protocol 2 bytes |
+| V3 report | `igmp-v3-report-exclude-record` | both | strict_bytes | raw IPv4 protocol 2 bytes |
+| V3 report | `igmp-v3-report-source-list-change-records` | both | strict_bytes | raw IPv4 protocol 2 bytes |
+| V3 report aux | `igmp-v3-report-auxiliary-data-record` | both | strict_bytes | raw IPv4 protocol 2 bytes |
+| V3 report unknown | `igmp-v3-report-unknown-record-type` | both | strict_bytes | raw IPv4 protocol 2 bytes |
+| V3 report override | `igmp-v3-report-count-override` | both | strict_bytes | raw IPv4 protocol 2 bytes |
+| V3 report override | `igmp-v3-report-checksum-explicit-invalid` | both | strict_bytes | raw IPv4 protocol 2 bytes, checksum pinned |
+| RFC 9279 extension | `igmp-extension-query-noop` | both | strict_bytes | raw IPv4 protocol 2 bytes |
+| RFC 9279 extension | `igmp-extension-report-noop-zero-length` | both | strict_bytes | raw IPv4 protocol 2 bytes |
 | RFC 9279 extension | `igmp-extension-unassigned-type` | both | strict_bytes | raw extension TLV bytes |
 | RFC 9279 extension | `igmp-extension-experimental-type` | both | strict_bytes | raw extension TLV bytes |
 | RFC 9279 extension | `igmp-extension-ordered-tlvs` | both | strict_bytes | raw ordered TLV bytes |
-| RFC 9279 extension | `igmp-extension-e-flag-clear-raw-tail` | both | strict_bytes | mixed query plus raw tail |
+| RFC 9279 extension | `igmp-extension-e-flag-clear-raw-tail` | both | strict_bytes | raw IPv4 protocol 2 bytes |
 | MRD | `igmp-mrd-advertisement` | both | strict_bytes | raw IPv4 protocol 2 payload |
 | MRD | `igmp-mrd-solicitation` | both | strict_bytes | raw IPv4 protocol 2 payload |
 | MRD | `igmp-mrd-termination` | both | strict_bytes | raw IPv4 protocol 2 payload |
@@ -95,9 +92,9 @@ after decode rejects the malformed input.
 
 ## Backend Limitations
 
-- Scapy native IGMP support is limited. IGMPv1/v2 fixed-header cases can use
-  the native `IGMP` layer, while IGMPv3 query/report support depends on the
-  `igmpv3` contrib layers available in the backend runtime.
+- Scapy native IGMP support is limited and version-sensitive. The executable
+  backend therefore emits exact `Raw` bytes under IPv4 protocol number 2 for
+  all IGMP cases.
 - RFC 9279 generic extension TLVs have no Scapy high-level typed layer in this
   plan. The backend should materialize the TLV area from explicit raw bytes and
   compare those bytes strictly.
