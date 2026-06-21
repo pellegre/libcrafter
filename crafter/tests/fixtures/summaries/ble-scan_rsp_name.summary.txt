@@ -1,0 +1,1 @@
+BleRadio(ch=39, aa=0x8e89bed6, phy=1M) / BleLlAdv(SCAN_RSP, AdvA=C2:00:5E:00:53:49, len=20)
