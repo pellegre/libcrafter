@@ -147,8 +147,10 @@ impl<C: WhadByteChannel> PacketWriter for WhadWriter<C> {
             let target_details = dry_run_target_details(&plan);
             self.last_dry_run_plan = Some(plan);
 
-            return Ok(WriteReport::new(BackendKind::Whad, raw_pdu.pdu_len, 0, true)
-                .with_target_details(target_details));
+            return Ok(
+                WriteReport::new(BackendKind::Whad, raw_pdu.pdu_len, 0, true)
+                    .with_target_details(target_details),
+            );
         }
 
         self.last_dry_run_plan = None;
