@@ -8,8 +8,9 @@
 //! The implementation is split into a shared [`common`] module (request/plan
 //! contracts, dry-run/live dispatch, response and artifact helpers) and one
 //! module per protocol family: [`icmp`], [`tcp`], [`dns`], [`udp`], [`dhcp`],
-//! [`arp`], [`ndp`] (IPv6 Neighbor Discovery), and [`rip`] (Routing Information
-//! Protocol). The binary is a thin wrapper that calls [`common::run`].
+//! [`arp`], [`ndp`] (IPv6 Neighbor Discovery), [`rip`] (Routing Information
+//! Protocol), and [`igmp`]. The binary is a thin wrapper that calls
+//! [`common::run`].
 
 // The `plan_json` builder serializes the full probe-plan contract through a
 // single `json!` literal; the field count pushes the macro past serde_json's
@@ -21,6 +22,7 @@ pub mod common;
 pub mod dhcp;
 pub mod dns;
 pub mod icmp;
+pub mod igmp;
 pub mod ndp;
 pub mod ospf;
 pub mod rip;
