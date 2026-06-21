@@ -5,8 +5,12 @@
 //! source and writer capabilities explicitly so callers can wire the opened
 //! direction into [`crate::wire::Sniffer`] or [`crate::wire::Transmitter`].
 
+#[cfg(feature = "whad")]
+use std::collections::VecDeque;
 use std::fmt;
 use std::path::{Path, PathBuf};
+#[cfg(feature = "whad")]
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::net::send::validated_interface;
@@ -24,9 +28,12 @@ use super::backend::raw_socket::RawSocketWriter;
 use super::backend::whad::{
     capability::enter_ble,
     discovery::{discover, WhadDevice},
+    messages::{WhadDeviceInfo, WhadDomainCommands, WhadDomains, WhadFirmwareVersion},
+    proto,
     reader::WhadReader,
-    transport::{SerialChannel, WhadLink},
+    transport::{SerialChannel, WhadByteChannel, WhadLink},
     writer::WhadWriter,
+    WHAD_TARGET_PROTOCOL_VERSION,
 };
 use super::source::PacketSource;
 use super::writer::PacketWriter;
@@ -48,6 +55,96 @@ pub type OpenedPacketSource = Box<dyn PacketSource + Send>;
 /// The boxed trait object keeps backend-specific emission state hidden while
 /// preserving the common [`PacketWriter`] contract.
 pub type OpenedPacketWriter = Box<dyn PacketWriter + Send>;
+
+/// In-memory WHAD byte channel for feature-gated integration tests.
+#[cfg(feature = "whad")]
+#[doc(hidden)]
+#[derive(Clone, Default)]
+pub struct WhadMockChannel {
+    state: Arc<Mutex<WhadMockChannelState>>,
+}
+
+#[cfg(feature = "whad")]
+#[derive(Default)]
+struct WhadMockChannelState {
+    inbound: VecDeque<u8>,
+    written: Vec<u8>,
+}
+
+#[cfg(feature = "whad")]
+impl WhadMockChannel {
+    /// Create an empty mock WHAD channel.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Queue one complete framed WHAD message for later reads.
+    pub fn queue_frame(&self, frame: impl AsRef<[u8]>) {
+        self.state
+            .lock()
+            .expect("WHAD mock channel state poisoned")
+            .inbound
+            .extend(frame.as_ref().iter().copied());
+    }
+
+    /// Copy all bytes written by the backend so far.
+    pub fn written_bytes(&self) -> Vec<u8> {
+        self.state
+            .lock()
+            .expect("WHAD mock channel state poisoned")
+            .written
+            .clone()
+    }
+
+    /// Return and clear all bytes written by the backend so far.
+    pub fn take_written_bytes(&self) -> Vec<u8> {
+        std::mem::take(
+            &mut self
+                .state
+                .lock()
+                .expect("WHAD mock channel state poisoned")
+                .written,
+        )
+    }
+}
+
+#[cfg(feature = "whad")]
+impl fmt::Debug for WhadMockChannel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("WhadMockChannel").finish_non_exhaustive()
+    }
+}
+
+#[cfg(feature = "whad")]
+impl PartialEq for WhadMockChannel {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.state, &other.state)
+    }
+}
+
+#[cfg(feature = "whad")]
+impl Eq for WhadMockChannel {}
+
+#[cfg(feature = "whad")]
+impl WhadByteChannel for WhadMockChannel {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+        let mut state = self.state.lock().expect("WHAD mock channel state poisoned");
+        let n = buf.len().min(state.inbound.len());
+        for slot in &mut buf[..n] {
+            *slot = state.inbound.pop_front().expect("mock byte disappeared");
+        }
+        Ok(n)
+    }
+
+    fn write_all(&mut self, data: &[u8]) -> Result<()> {
+        self.state
+            .lock()
+            .expect("WHAD mock channel state poisoned")
+            .written
+            .extend_from_slice(data);
+        Ok(())
+    }
+}
 
 /// One packet-capable backend or interface target.
 ///
@@ -149,6 +246,8 @@ pub struct PacketWireBuilder {
     pcap_immediate: bool,
     pcap_nonblocking: bool,
     whad_channel: u8,
+    #[cfg(feature = "whad")]
+    whad_mock_channel: Option<WhadMockChannel>,
     source: Option<OpenedPacketSource>,
     writer: Option<OpenedPacketWriter>,
 }
@@ -164,6 +263,8 @@ impl PacketWireBuilder {
             pcap_immediate: DEFAULT_INTERFACE_IMMEDIATE,
             pcap_nonblocking: DEFAULT_INTERFACE_NONBLOCKING,
             whad_channel: WHAD_DEFAULT_BLE_CHANNEL,
+            #[cfg(feature = "whad")]
+            whad_mock_channel: None,
             source: None,
             writer: None,
         }
@@ -290,7 +391,19 @@ impl PacketWireBuilder {
                     mode,
                     dry_run,
                 } => {
-                    self.source = open_whad_serial_source(port, *mode, *dry_run)?;
+                    #[cfg(feature = "whad")]
+                    {
+                        self.source = open_whad_serial_source(
+                            port,
+                            *mode,
+                            *dry_run,
+                            self.whad_mock_channel.clone(),
+                        )?;
+                    }
+                    #[cfg(not(feature = "whad"))]
+                    {
+                        self.source = open_whad_serial_source(port, *mode, *dry_run)?;
+                    }
                 }
             }
         }
@@ -320,8 +433,21 @@ impl PacketWireBuilder {
                     mode,
                     dry_run,
                 } => {
-                    self.writer =
-                        open_whad_serial_writer(port, *mode, *dry_run, self.whad_channel)?;
+                    #[cfg(feature = "whad")]
+                    {
+                        self.writer = open_whad_serial_writer(
+                            port,
+                            *mode,
+                            *dry_run,
+                            self.whad_channel,
+                            self.whad_mock_channel.clone(),
+                        )?;
+                    }
+                    #[cfg(not(feature = "whad"))]
+                    {
+                        self.writer =
+                            open_whad_serial_writer(port, *mode, *dry_run, self.whad_channel)?;
+                    }
                 }
             }
         }
@@ -347,6 +473,12 @@ impl PacketWireBuilder {
 
     fn whad_channel(mut self, channel: u8) -> Self {
         self.whad_channel = channel;
+        self
+    }
+
+    #[cfg(feature = "whad")]
+    fn whad_mock_channel(mut self, channel: WhadMockChannel) -> Self {
+        self.whad_mock_channel = Some(channel);
         self
     }
 }
@@ -451,6 +583,8 @@ pub struct WhadWireBuilder {
     mode: WhadBleMode,
     channel: u8,
     live: bool,
+    #[cfg(feature = "whad")]
+    mock_channel: Option<WhadMockChannel>,
 }
 
 impl WhadWireBuilder {
@@ -462,6 +596,8 @@ impl WhadWireBuilder {
             },
             channel: WHAD_DEFAULT_BLE_CHANNEL,
             live: false,
+            #[cfg(feature = "whad")]
+            mock_channel: None,
         }
     }
 
@@ -519,18 +655,35 @@ impl WhadWireBuilder {
         self
     }
 
+    /// Use an in-memory WHAD byte channel instead of opening a serial port.
+    #[cfg(feature = "whad")]
+    #[doc(hidden)]
+    pub fn with_mock_channel(mut self, channel: WhadMockChannel) -> Self {
+        self.mock_channel = Some(channel);
+        self
+    }
+
     /// Open this WHAD serial target as one packet wire.
     pub fn open(self) -> Result<PacketWire> {
         self.into_packet_wire_builder().open()
     }
 
     fn into_packet_wire_builder(self) -> PacketWireBuilder {
-        PacketWireBuilder::new(PacketWireTarget::WhadSerial {
+        let builder = PacketWireBuilder::new(PacketWireTarget::WhadSerial {
             port: self.port,
             mode: self.mode,
             dry_run: !self.live,
         })
-        .whad_channel(self.channel)
+        .whad_channel(self.channel);
+
+        #[cfg(feature = "whad")]
+        {
+            if let Some(channel) = self.mock_channel {
+                return builder.whad_mock_channel(channel);
+            }
+        }
+
+        builder
     }
 
     #[cfg(test)]
@@ -751,6 +904,7 @@ fn open_whad_serial_source(
     port: &str,
     mode: WhadBleMode,
     dry_run: bool,
+    mock_channel: Option<WhadMockChannel>,
 ) -> Result<Option<OpenedPacketSource>> {
     if dry_run {
         return Ok(None);
@@ -758,8 +912,13 @@ fn open_whad_serial_source(
 
     match mode {
         WhadBleMode::SniffAdv { .. } => {
-            let (link, _) = open_whad_serial_link(port, mode)?;
-            Ok(Some(Box::new(WhadReader::new(link))))
+            if let Some(channel) = mock_channel {
+                let (link, _) = open_whad_link_from_channel(channel, mode)?;
+                Ok(Some(Box::new(WhadReader::new(link))))
+            } else {
+                let (link, _) = open_whad_serial_link(port, mode)?;
+                Ok(Some(Box::new(WhadReader::new(link))))
+            }
         }
         WhadBleMode::Inject => Ok(None),
     }
@@ -784,17 +943,32 @@ fn open_whad_serial_writer(
     mode: WhadBleMode,
     dry_run: bool,
     channel: u8,
+    mock_channel: Option<WhadMockChannel>,
 ) -> Result<Option<OpenedPacketWriter>> {
     if dry_run {
+        if let Some(mock_channel) = mock_channel {
+            return Ok(Some(Box::new(WhadWriter::dry_run(
+                WhadLink::new(mock_channel),
+                dry_run_whad_device(),
+                channel,
+            ))));
+        }
         return Ok(None);
     }
 
     match mode {
         WhadBleMode::Inject => {
-            let (link, device) = open_whad_serial_link(port, mode)?;
-            Ok(Some(Box::new(
-                WhadWriter::new(link, device, channel).with_dry_run(dry_run),
-            )))
+            if let Some(mock_channel) = mock_channel {
+                let (link, device) = open_whad_link_from_channel(mock_channel, mode)?;
+                Ok(Some(Box::new(
+                    WhadWriter::new(link, device, channel).with_dry_run(dry_run),
+                )))
+            } else {
+                let (link, device) = open_whad_serial_link(port, mode)?;
+                Ok(Some(Box::new(
+                    WhadWriter::new(link, device, channel).with_dry_run(dry_run),
+                )))
+            }
         }
         WhadBleMode::SniffAdv { .. } => Ok(None),
     }
@@ -820,10 +994,46 @@ fn open_whad_serial_link(
     mode: WhadBleMode,
 ) -> Result<(WhadLink<SerialChannel>, WhadDevice)> {
     let channel = SerialChannel::open(port)?;
+    open_whad_link_from_channel(channel, mode)
+}
+
+#[cfg(feature = "whad")]
+fn open_whad_link_from_channel<C: WhadByteChannel>(
+    channel: C,
+    mode: WhadBleMode,
+) -> Result<(WhadLink<C>, WhadDevice)> {
     let mut link = WhadLink::new(channel);
     let device = discover(&mut link)?;
     enter_ble(&mut link, &device, mode)?;
     Ok((link, device))
+}
+
+#[cfg(feature = "whad")]
+fn dry_run_whad_device() -> WhadDevice {
+    let ble_domain = proto::discovery::Domain::BtLe as u32;
+    WhadDevice {
+        info: WhadDeviceInfo {
+            device_type: proto::discovery::DeviceType::Butterfly as u32,
+            device_id: vec![0x10, 0x20, 0x30, 0x40],
+            protocol_min_version: WHAD_TARGET_PROTOCOL_VERSION,
+            max_speed: 1_000_000,
+            firmware_author: "whad-dry-run".to_string(),
+            firmware_url: "https://example.invalid/whad".to_string(),
+            firmware_version: WhadFirmwareVersion {
+                major: 0,
+                minor: 0,
+                revision: 0,
+            },
+            supported_domains: vec![ble_domain],
+        },
+        domains: WhadDomains {
+            supported_domains: vec![ble_domain],
+            commands: vec![WhadDomainCommands {
+                domain: ble_domain,
+                supported_commands: 0,
+            }],
+        },
+    }
 }
 
 #[cfg(not(feature = "whad"))]
