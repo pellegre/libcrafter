@@ -24,7 +24,7 @@ whad = ["dep:prost", "dep:prost-build", "dep:serialport"]
 [dependencies]
 aes = "0.8"
 aes-gcm = "0.10"
-cbc = "0.1"
+cbc = "0.2"
 ccm = "0.5"
 chacha20poly1305 = "0.10"
 cipher = "0.4"
