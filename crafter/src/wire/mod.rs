@@ -31,6 +31,8 @@ pub mod transmitter;
 pub mod wpa;
 pub mod writer;
 
+#[cfg(feature = "whad")]
+pub use backend::whad::WhadBleMode;
 pub use backend::raw_socket::RawSocketWriter;
 pub use dot11_metadata::Dot11Metadata;
 pub use error::{Result, WireError};
@@ -46,6 +48,8 @@ pub use packet_wire::{
     OpenedPacketSource, OpenedPacketWriter, PacketWire, PacketWireBuilder, PacketWireTarget,
     RawSocketWireBuilder,
 };
+#[cfg(feature = "whad")]
+pub use packet_wire::WhadWireBuilder;
 pub use record::{
     BackendKind, BluetoothMetadata, MediumMetadata, PacketMetadata, PacketOrigin, PacketRecord,
     RadioMetadata, TransformTrace, WifiDecryptState, WifiMetadata, WifiProtectionStatus,
