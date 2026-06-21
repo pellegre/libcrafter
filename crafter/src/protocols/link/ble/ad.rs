@@ -6,7 +6,8 @@ use super::consts::{
     AD_COMPLETE_128_BIT_SERVICE_UUIDS, AD_COMPLETE_16_BIT_SERVICE_UUIDS,
     AD_COMPLETE_32_BIT_SERVICE_UUIDS, AD_COMPLETE_LOCAL_NAME, AD_FLAGS,
     AD_INCOMPLETE_128_BIT_SERVICE_UUIDS, AD_INCOMPLETE_16_BIT_SERVICE_UUIDS,
-    AD_INCOMPLETE_32_BIT_SERVICE_UUIDS, AD_SHORTENED_LOCAL_NAME, AD_TX_POWER_LEVEL,
+    AD_INCOMPLETE_32_BIT_SERVICE_UUIDS, AD_MANUFACTURER_SPECIFIC_DATA, AD_SHORTENED_LOCAL_NAME,
+    AD_TX_POWER_LEVEL,
 };
 
 /// Flags AD structure bit values.
@@ -91,6 +92,13 @@ impl AdStructure {
 
     pub fn tx_power_level(dbm: i8) -> Self {
         Self::new(AD_TX_POWER_LEVEL, [dbm as u8])
+    }
+
+    pub fn manufacturer_data(company_id: u16, data: &[u8]) -> Self {
+        let mut payload = Vec::with_capacity(2 + data.len());
+        payload.extend_from_slice(&company_id.to_le_bytes());
+        payload.extend_from_slice(data);
+        Self::new(AD_MANUFACTURER_SPECIFIC_DATA, payload)
     }
 
     fn from_service_uuids16(ad_type: u8, uuids: &[u16]) -> Self {
@@ -199,6 +207,17 @@ impl AdStructure {
         } else {
             None
         }
+    }
+
+    pub fn manufacturer_data_value(&self) -> Option<(u16, Vec<u8>)> {
+        if self.ad_type != AD_MANUFACTURER_SPECIFIC_DATA || self.data.len() < 2 {
+            return None;
+        }
+
+        Some((
+            u16::from_le_bytes([self.data[0], self.data[1]]),
+            self.data[2..].to_vec(),
+        ))
     }
 
     pub(crate) fn encode(&self, out: &mut Vec<u8>) {
@@ -468,6 +487,32 @@ mod tests {
         );
         assert_eq!(
             AdStructure::raw(AD_TX_POWER_LEVEL, [0xfc, 0x00]).tx_power_level_value(),
+            None
+        );
+    }
+
+    #[test]
+    fn ble_ad_manufacturer_data_encodes_and_reads_company_payload() {
+        let vendor_data = [0xde, 0xad, 0xbe, 0xef, 0xca, 0xfe];
+        let structure = AdStructure::manufacturer_data(0xffff, &vendor_data);
+        let mut encoded = Vec::new();
+
+        structure.encode(&mut encoded);
+
+        assert_eq!(
+            encoded,
+            [0x09, 0xff, 0xff, 0xff, 0xde, 0xad, 0xbe, 0xef, 0xca, 0xfe]
+        );
+        assert_eq!(
+            structure.manufacturer_data_value(),
+            Some((0xffff, vendor_data.to_vec()))
+        );
+        assert_eq!(
+            AdStructure::complete_local_name("x").manufacturer_data_value(),
+            None
+        );
+        assert_eq!(
+            AdStructure::raw(AD_MANUFACTURER_SPECIFIC_DATA, [0xff]).manufacturer_data_value(),
             None
         );
     }
