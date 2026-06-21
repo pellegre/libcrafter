@@ -6,9 +6,9 @@
 </h1>
 
 `libcrafter` is a Rust workspace for packet-level network interaction. Its
-public crate, `crafter` (version 0.3.0), lets agents and Rust tools build
-protocol-correct packets, place them on real networks, decode what comes back,
-and act on what they observe.
+public crate, `crafter`, lets agents and Rust tools build protocol-correct
+packets, place them on real networks, decode what comes back, and act on what
+they observe.
 
 This README is a progressive walkthrough: build your first packet, inspect and
 decode bytes, read and write pcap, plan a send, and reach for disposable
@@ -101,7 +101,7 @@ fn read_pcap(path: &str) -> Result<(), Box<dyn std::error::Error>> {
 Writing pcap is just as direct: compile packets, hand them to a pcap writer
 through `PacketWire`, and replay them later. The packet-wire layer covers
 classic pcap read/write, libpcap BPF filters, offline sniffing, and bounded live
-capture hooks. Full pcapng and a full BPF parser are out of scope for 0.3.0. See
+capture hooks. Full pcapng and a full BPF parser are not currently in scope. See
 [docs/reference/wire.md](docs/reference/wire.md) for sources, writers,
 transmitters, and transform chains.
 
@@ -232,8 +232,8 @@ preserved as `Raw` payloads when the enclosing header is valid.
 
 IP fragmentation and reassembly are explicit `IpFragment` / `IpDefrag` wire
 transforms, not automatic decode-time behavior. TCP stream reassembly, full
-pcapng, full BPF parsing, and a complete TCP/IP stack are not in scope for
-0.3.0.
+pcapng, full BPF parsing, and a complete TCP/IP stack are not currently in
+scope.
 
 ## Examples
 
@@ -279,7 +279,7 @@ The full annotated table, with safety modes and commands, is in
   testing workflows (validation, probes, lab sessions, endpoints).
 - [docs/operations/tools.md](docs/operations/tools.md) — tools overview tying
   the endpoint, lab, oracle, and probe modules together.
-- [CHANGELOG.md](CHANGELOG.md) records the version 0.3.0 scope and boundaries.
+- [CHANGELOG.md](CHANGELOG.md) records release scope and boundaries.
 
 ## Validation
 
