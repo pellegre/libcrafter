@@ -1,5 +1,6 @@
 //! BLE advertising-channel Link Layer PDU scaffolding.
 
+use crate::error::Result;
 use crate::field::Field;
 use crate::mac::MacAddr;
 
@@ -8,8 +9,8 @@ use super::consts::BleAdvPduType;
 /// BLE advertising-channel Link Layer PDU.
 ///
 /// Address fields use `MacAddr` as the crate's existing six-octet address
-/// type. BLE advertising addresses are serialized in little-endian on-air
-/// order by the later encoder/decoder steps.
+/// type. Builder methods accept normal MSB-first display order and store the
+/// bytes in BLE little-endian on-air order for later encoder/decoder steps.
 #[derive(Debug)]
 pub struct BleLlAdv {
     /// Advertising PDU type stored in header bits 0..=3.
@@ -127,14 +128,25 @@ impl BleLlAdv {
 
     /// Set the advertiser address (`AdvA`).
     pub fn adv_a(mut self, adv_a: impl Into<MacAddr>) -> Self {
-        self.adv_a.set_user(adv_a.into());
+        self.adv_a.set_user(display_to_on_air_address(adv_a.into()));
         self
+    }
+
+    /// Set the advertiser address (`AdvA`) from text in MSB-first display order.
+    pub fn adv_a_str(self, adv_a: &str) -> Result<Self> {
+        Ok(self.adv_a(adv_a.parse::<MacAddr>()?))
     }
 
     /// Set the target address (`TargetA`).
     pub fn target_a(mut self, target_a: impl Into<MacAddr>) -> Self {
-        self.target_a.set_user(target_a.into());
+        self.target_a
+            .set_user(display_to_on_air_address(target_a.into()));
         self
+    }
+
+    /// Set the target address (`TargetA`) from text in MSB-first display order.
+    pub fn target_a_str(self, target_a: &str) -> Result<Self> {
+        Ok(self.target_a(target_a.parse::<MacAddr>()?))
     }
 
     /// Set raw trailing payload bytes.
@@ -142,12 +154,38 @@ impl BleLlAdv {
         self.payload = payload.into();
         self
     }
+
+    /// Current advertiser address (`AdvA`) in MSB-first display order.
+    pub fn adv_a_value(&self) -> Option<MacAddr> {
+        self.adv_a.value().copied().map(on_air_to_display_address)
+    }
+
+    /// Current target address (`TargetA`) in MSB-first display order.
+    pub fn target_a_value(&self) -> Option<MacAddr> {
+        self.target_a
+            .value()
+            .copied()
+            .map(on_air_to_display_address)
+    }
 }
 
 impl Default for BleLlAdv {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn display_to_on_air_address(address: MacAddr) -> MacAddr {
+    reverse_address(address)
+}
+
+fn on_air_to_display_address(address: MacAddr) -> MacAddr {
+    reverse_address(address)
+}
+
+fn reverse_address(address: MacAddr) -> MacAddr {
+    let [a, b, c, d, e, f] = address.octets();
+    MacAddr::new([f, e, d, c, b, a])
 }
 
 #[cfg(test)]
@@ -178,5 +216,34 @@ mod tests {
 
         assert_eq!(adv.tx_add.state(), FieldState::Defaulted);
         assert_eq!(adv.tx_add.value(), Some(&true));
+    }
+
+    #[test]
+    fn ble_adv_address_adv_a_str_stores_little_endian_and_gets_display_order() {
+        let adv = BleLlAdv::new().adv_a_str("C0:FF:EE:11:22:33").unwrap();
+
+        assert_eq!(
+            adv.adv_a.value().copied().unwrap().octets(),
+            [0x33, 0x22, 0x11, 0xee, 0xff, 0xc0]
+        );
+        assert_eq!(
+            adv.adv_a_value().unwrap(),
+            MacAddr::new([0xc0, 0xff, 0xee, 0x11, 0x22, 0x33])
+        );
+        assert_eq!(adv.adv_a_value().unwrap().to_string(), "c0:ff:ee:11:22:33");
+    }
+
+    #[test]
+    fn ble_adv_address_target_a_str_stores_little_endian_and_gets_display_order() {
+        let adv = BleLlAdv::new().target_a_str("C0:FF:EE:11:22:33").unwrap();
+
+        assert_eq!(
+            adv.target_a.value().copied().unwrap().octets(),
+            [0x33, 0x22, 0x11, 0xee, 0xff, 0xc0]
+        );
+        assert_eq!(
+            adv.target_a_value().unwrap(),
+            MacAddr::new([0xc0, 0xff, 0xee, 0x11, 0x22, 0x33])
+        );
     }
 }
