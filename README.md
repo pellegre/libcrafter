@@ -36,9 +36,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let compiled = packet.compile()?;
 
-    println!("{}", packet.summary());       // one-line stack summary
-    println!("{}", packet.show());           // full field-by-field view
-    println!("{}", compiled.hexdump());      // the bytes on the wire
+    println!("{}", packet.summary());      // one-line stack summary
+    println!("{}", packet.show());         // full field-by-field view
+    println!("{}", compiled.hexdump());    // the bytes on the wire
     Ok(())
 }
 ```
