@@ -5,8 +5,10 @@ from __future__ import annotations
 import unittest
 
 from tools.probe.engine import cases as probe_cases
+from tools.probe.engine import capabilities
 from tools.probe.engine import cli
 from tools.probe.engine import planning
+from tools.probe.engine.lab import probe_capabilities_from_lab_capabilities
 from tools.probe.engine.model import ProbeRunRequest
 
 
@@ -21,6 +23,31 @@ def _request(**overrides: object) -> ProbeRunRequest:
     }
     base.update(overrides)
     return ProbeRunRequest(**base)  # type: ignore[arg-type]
+
+
+_IGMP_LINK_LAYER_SUBSTRATE = {
+    "provider": "qemu",
+    "ipv4_unicast": True,
+    "controlled_services": True,
+    "link_layer_send": True,
+    "link_layer_capture": True,
+    "broadcast": True,
+    "provider_mac_known": True,
+    "controlled_router": False,
+    "live_packet_exchange": True,
+}
+
+_IGMP_L3_ONLY_SUBSTRATE = {
+    "provider": "hetzner",
+    "ipv4_unicast": True,
+    "controlled_services": True,
+    "link_layer_send": False,
+    "link_layer_capture": False,
+    "broadcast": False,
+    "provider_mac_known": False,
+    "controlled_router": False,
+    "live_packet_exchange": True,
+}
 
 
 class ProbePlanningSelectionTest(unittest.TestCase):
@@ -255,6 +282,99 @@ class ProbePlanningRegistryTest(unittest.TestCase):
             cli._deterministic_documentation_mac,
             planning.deterministic_documentation_mac,
         )
+
+
+class IgmpProbePlanningTest(unittest.TestCase):
+    def _igmp_plan(self, case_name: str, *, sequence: int = 0) -> dict:
+        return planning.probe_plan_for_case(
+            request=_request(profile="igmp", count=len(probe_cases.IGMP_PROFILE_CASE_NAMES)),
+            case=probe_cases.PROBE_CASE_BY_NAME[case_name],
+            sequence=sequence,
+        )
+
+    def test_igmp_membership_query_observation_plan_is_dry_run_only(self) -> None:
+        plan = self._igmp_plan("igmp-membership-query-observation")
+
+        self.assertEqual(plan["protocol"], "igmp")
+        self.assertEqual(plan["ip_protocol"], 2)
+        self.assertEqual(plan["ttl"], 1)
+        self.assertTrue(plan["router_alert_required"])
+        self.assertIs(plan["planned_only"], True)
+        self.assertEqual(plan["destination_ipv4"], "224.0.0.1")
+        self.assertEqual(plan["stimulus_packet_shape"]["igmp"]["igmp_type"], 0x11)
+        self.assertEqual(
+            plan["target_service"]["provision_script"],
+            "tools/probe/target_services/igmp/provision-router.sh",
+        )
+        self.assertIn("igmp and src host", plan["capture_filter"])
+        self.assertNotIn("payload_hex", plan)
+        self.assertNotIn("packet_hex", plan)
+
+    def test_igmp_report_leave_and_v3_source_list_plans(self) -> None:
+        report = self._igmp_plan("igmp-v2-membership-report-emission")
+        leave = self._igmp_plan("igmp-v2-leave-group-emission")
+        v3 = self._igmp_plan("igmp-v3-source-list-report")
+
+        self.assertEqual(report["stimulus_packet_shape"]["igmp"]["igmp_type"], 0x16)
+        self.assertEqual(report["destination_ipv4"], report["group_address"])
+        self.assertEqual(leave["stimulus_packet_shape"]["igmp"]["igmp_type"], 0x17)
+        self.assertEqual(leave["destination_ipv4"], "224.0.0.2")
+        self.assertEqual(v3["stimulus_packet_shape"]["igmp"]["igmp_type"], 0x22)
+        self.assertEqual(v3["destination_ipv4"], "224.0.0.22")
+        self.assertEqual(v3["validation"]["record_type"], "mode_is_include")
+        self.assertEqual(v3["validation"]["record_count"], 1)
+        self.assertEqual(len(v3["validation"]["source_addresses"]), 2)
+        for plan in (report, leave, v3):
+            self.assertEqual(
+                plan["target_service"]["provision_script"],
+                "tools/probe/target_services/igmp/provision-listener.sh",
+            )
+            self.assertTrue(plan["wire_requirements"]["requires_provider_backing"])
+            self.assertTrue(plan["wire_requirements"]["requires_confirm_live_run"])
+            self.assertNotIn("payload_hex", plan)
+            self.assertNotIn("packet_hex", plan)
+
+    def test_igmp_planning_is_deterministic(self) -> None:
+        first = self._igmp_plan("igmp-v3-source-list-report", sequence=3)
+        second = self._igmp_plan("igmp-v3-source-list-report", sequence=3)
+
+        self.assertEqual(first, second)
+        self.assertEqual(first["group_address"].split(".")[:3], ["233", "252", "0"])
+
+    def test_igmp_unsupported_provider_skips_with_stable_reason(self) -> None:
+        case = probe_cases.PROBE_CASE_BY_NAME["igmp-v2-membership-report-emission"]
+        derived = probe_capabilities_from_lab_capabilities(
+            "hetzner",
+            _IGMP_L3_ONLY_SUBSTRATE,
+            dry_run=True,
+        )
+
+        self.assertEqual(capabilities.missing_capabilities(case, derived)[0], "ipv4_multicast")
+        self.assertEqual(
+            capabilities.skip_reason_for_missing_capability(case, "ipv4_multicast"),
+            capabilities.SKIP_REQUIRES_IPV4_MULTICAST,
+        )
+
+    def test_igmp_link_layer_provider_grants_required_capabilities(self) -> None:
+        case = probe_cases.PROBE_CASE_BY_NAME["igmp-v3-source-list-report"]
+        derived = probe_capabilities_from_lab_capabilities(
+            "qemu",
+            _IGMP_LINK_LAYER_SUBSTRATE,
+            dry_run=True,
+        )
+
+        self.assertTrue(derived["ipv4_multicast"])
+        self.assertTrue(derived["igmp_peer"])
+        self.assertEqual(capabilities.missing_capabilities(case, derived), [])
+
+    def test_igmp_failure_reasons_are_reported(self) -> None:
+        reasons = cli._failure_reasons_for_case("igmp-v3-source-list-report")
+
+        self.assertIn("timeout", reasons)
+        self.assertIn("wrong_peer", reasons)
+        self.assertIn("wrong_payload", reasons)
+        self.assertIn("decode_failed", reasons)
+        self.assertIn("target_setup_failed", reasons)
 
 
 if __name__ == "__main__":

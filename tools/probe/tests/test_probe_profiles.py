@@ -128,7 +128,16 @@ class ProbeProfileMembershipTest(unittest.TestCase):
     def test_known_profiles_listed_sorted(self) -> None:
         self.assertEqual(
             cases.known_profiles(),
-            ("behavior", "bgp-smoke", "ipsec", "ospf-smoke", "rip-smoke", "smoke", "tcp-smoke"),
+            (
+                "behavior",
+                "bgp-smoke",
+                "igmp",
+                "ipsec",
+                "ospf-smoke",
+                "rip-smoke",
+                "smoke",
+                "tcp-smoke",
+            ),
         )
 
     def test_ospf_smoke_profile_selects_planned_only_dd_exchange(self) -> None:
