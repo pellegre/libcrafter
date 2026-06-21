@@ -2102,6 +2102,19 @@ def _failure_reasons_for_case(case_name: str) -> list[str]:
             FAILURE_DECODE_FAILED,
             FAILURE_TARGET_SETUP_FAILED,
         ]
+    if case_name in {
+        "igmp-membership-query-observation",
+        "igmp-v2-membership-report-emission",
+        "igmp-v2-leave-group-emission",
+        "igmp-v3-source-list-report",
+    }:
+        return [
+            FAILURE_TIMEOUT,
+            FAILURE_WRONG_PEER,
+            FAILURE_WRONG_PAYLOAD,
+            FAILURE_DECODE_FAILED,
+            FAILURE_TARGET_SETUP_FAILED,
+        ]
     return []
 
 

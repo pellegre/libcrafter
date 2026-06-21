@@ -63,6 +63,8 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
             "provider_mac",
             "repeated_response",
             "bgp_peer",
+            "ipv4_multicast",
+            "igmp_peer",
             "ipsec_esp",
             "ipsec_ah",
             "ikev2",
@@ -90,6 +92,8 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
             "provider_mac",
             "repeated_response",
             "bgp_peer",
+            "ipv4_multicast",
+            "igmp_peer",
             # An IPSec-capable peer rides the controlled-services substrate.
             "ipsec_esp",
             "ipsec_ah",
@@ -135,6 +139,8 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
             "link_layer_arp",
             "provider_mac",
             "broadcast",
+            "ipv4_multicast",
+            "igmp_peer",
         ):
             self.assertIs(derived[denied], False, denied)
 
@@ -430,6 +436,17 @@ class ProbeSkipReasonTest(unittest.TestCase):
         self.assertEqual(
             capabilities.skip_reason_for_missing_capability(ikev2_case, "ikev2"),
             capabilities.SKIP_REQUIRES_IKEV2_RESPONDER,
+        )
+
+    def test_igmp_capabilities_map_to_stable_reasons(self) -> None:
+        case = cases.PROBE_CASE_BY_NAME["igmp-v3-source-list-report"]
+        self.assertEqual(
+            capabilities.skip_reason_for_missing_capability(case, "ipv4_multicast"),
+            capabilities.SKIP_REQUIRES_IPV4_MULTICAST,
+        )
+        self.assertEqual(
+            capabilities.skip_reason_for_missing_capability(case, "igmp_peer"),
+            capabilities.SKIP_REQUIRES_IGMP_PEER,
         )
 
     def test_bgp_peer_maps_to_stable_reason(self) -> None:

@@ -37,6 +37,7 @@ _UDP_OPTIONS_SURPLUS_CAPABILITIES = [
 ]
 _BGP_CAPABILITIES = ["bgp_peer"]
 _RIP_CAPABILITIES = ["rip_peer"]
+_IGMP_CAPABILITIES = ["ipv4_multicast", "igmp_peer"]
 _ARP_CAPABILITIES = [
     "arp_resolution",
     "link_layer_send",
@@ -669,6 +670,84 @@ RIP_SMOKE_CASES: tuple[ProbeCase, ...] = (
 )
 
 
+# IGMP behavior cases. IGMP is IPv4-only and rides link-local IPv4 multicast
+# groups, so every case is kept out of the broad behavior profile and selected
+# through the focused ``igmp`` profile. The cases are planned dry-run first: live
+# execution remains provider-backed and confirmation-gated, with unsupported
+# substrates skipping on the multicast / IGMP-peer capabilities.
+IGMP_PROBE_CASES: tuple[ProbeCase, ...] = (
+    _behavior_case(
+        name="igmp-membership-query-observation",
+        description=(
+            "Observe a controlled peer's IGMP Membership Query on the lab "
+            "multicast segment."
+        ),
+        stimulus="igmp_query_observation",
+        expected_response="igmp_membership_query",
+        required_capabilities=_IGMP_CAPABILITIES,
+        protocol="igmp",
+        metadata={
+            "service": "igmp-router",
+            "layer": "network",
+            "ipv4_only": True,
+            "planned_only": True,
+        },
+    ),
+    _behavior_case(
+        name="igmp-v2-membership-report-emission",
+        description=(
+            "Emit an IGMPv2 Membership Report to a documentation multicast "
+            "group and plan peer observation."
+        ),
+        stimulus="igmp_v2_membership_report",
+        expected_response="igmp_membership_report_observed",
+        required_capabilities=_IGMP_CAPABILITIES,
+        protocol="igmp",
+        metadata={
+            "service": "igmp-listener",
+            "layer": "network",
+            "ipv4_only": True,
+            "planned_only": True,
+        },
+    ),
+    _behavior_case(
+        name="igmp-v2-leave-group-emission",
+        description=(
+            "Emit an IGMPv2 Leave Group message toward the all-routers group and "
+            "plan peer observation."
+        ),
+        stimulus="igmp_v2_leave_group",
+        expected_response="igmp_leave_group_observed",
+        required_capabilities=_IGMP_CAPABILITIES,
+        protocol="igmp",
+        metadata={
+            "service": "igmp-listener",
+            "layer": "network",
+            "ipv4_only": True,
+            "planned_only": True,
+        },
+    ),
+    _behavior_case(
+        name="igmp-v3-source-list-report",
+        description=(
+            "Emit an IGMPv3 Membership Report carrying a deterministic "
+            "MODE_IS_INCLUDE source list."
+        ),
+        stimulus="igmp_v3_source_list_report",
+        expected_response="igmp_v3_report_observed",
+        required_capabilities=_IGMP_CAPABILITIES,
+        protocol="igmp",
+        metadata={
+            "service": "igmp-listener",
+            "layer": "network",
+            "ipv4_only": True,
+            "planned_only": True,
+            "record_type": "mode_is_include",
+        },
+    ),
+)
+
+
 # IPSec behavioral cases (RFC 4303 ESP, RFC 4302 AH, RFC 7296 IKEv2) against a
 # controlled IPSec-capable peer that holds the matching Security Association.
 # Each case is a stateful request/response exchange: libcrafter seals or
@@ -912,6 +991,7 @@ PROBE_CASES: tuple[ProbeCase, ...] = (
     *OSPF_SMOKE_CASES,
     *BGP_SMOKE_CASES,
     *RIP_SMOKE_CASES,
+    *IGMP_PROBE_CASES,
     *BEHAVIOR_IPSEC_CASES,
 )
 
@@ -1004,6 +1084,7 @@ TCP_SMOKE_PROFILE = "tcp-smoke"
 BGP_SESSION_PROFILE = "bgp-smoke"
 RIP_SMOKE_PROFILE = "rip-smoke"
 OSPF_SMOKE_PROFILE = "ospf-smoke"
+IGMP_PROFILE = "igmp"
 IPSEC_PROFILE = "ipsec"
 
 # Legacy default count used by the smoke profile and any profile without an
@@ -1088,6 +1169,10 @@ OSPF_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
     case.name for case in OSPF_SMOKE_CASES
 )
 
+IGMP_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
+    case.name for case in IGMP_PROBE_CASES
+)
+
 
 # Profiles that select an explicit ordered case subset. A profile not listed
 # here selects the full catalog. ``smoke`` is pinned to the legacy case set so
@@ -1099,6 +1184,7 @@ _PROFILE_CASE_NAMES: dict[str, tuple[str, ...]] = {
     BGP_SESSION_PROFILE: BGP_SESSION_PROFILE_CASE_NAMES,
     RIP_SMOKE_PROFILE: RIP_SMOKE_PROFILE_CASE_NAMES,
     OSPF_SMOKE_PROFILE: OSPF_SMOKE_PROFILE_CASE_NAMES,
+    IGMP_PROFILE: IGMP_PROFILE_CASE_NAMES,
     IPSEC_PROFILE: IPSEC_PROFILE_CASE_NAMES,
 }
 
@@ -1110,6 +1196,7 @@ _PROFILE_DEFAULT_COUNTS: dict[str, int] = {
     BGP_SESSION_PROFILE: len(BGP_SESSION_PROFILE_CASE_NAMES),
     RIP_SMOKE_PROFILE: len(RIP_SMOKE_PROFILE_CASE_NAMES),
     OSPF_SMOKE_PROFILE: len(OSPF_SMOKE_PROFILE_CASE_NAMES),
+    IGMP_PROFILE: len(IGMP_PROFILE_CASE_NAMES),
     IPSEC_PROFILE: len(IPSEC_PROFILE_CASE_NAMES),
 }
 
