@@ -521,13 +521,26 @@ impl WhadWireBuilder {
 
     /// Open this WHAD serial target as one packet wire.
     pub fn open(self) -> Result<PacketWire> {
+        self.into_packet_wire_builder().open()
+    }
+
+    fn into_packet_wire_builder(self) -> PacketWireBuilder {
         PacketWireBuilder::new(PacketWireTarget::WhadSerial {
             port: self.port,
             mode: self.mode,
             dry_run: !self.live,
         })
         .whad_channel(self.channel)
-        .open()
+    }
+
+    #[cfg(test)]
+    fn with_source(self, source: impl PacketSource + Send + 'static) -> PacketWireBuilder {
+        self.into_packet_wire_builder().with_source(source)
+    }
+
+    #[cfg(test)]
+    fn with_writer(self, writer: impl PacketWriter + Send + 'static) -> PacketWireBuilder {
+        self.into_packet_wire_builder().with_writer(writer)
     }
 }
 
@@ -998,6 +1011,42 @@ mod tests {
             .ble_inject()
             .channel(38);
         assert_eq!(inject.mode(), WhadBleMode::Inject);
+    }
+
+    #[cfg(all(test, feature = "whad"))]
+    #[test]
+    fn whad_packetwire_sniff_source_returns_injected_source() {
+        let mut source = PacketWire::whad_serial("/dev/ttyACM0")
+            .ble_sniff(37)
+            .with_source(VecPacketSource::from_packets([Raw::from("adv")]))
+            .open()
+            .unwrap()
+            .source()
+            .unwrap();
+
+        let record = source.next_record().unwrap().unwrap();
+        assert_eq!(record.packet().summary(), "Raw(len=3)");
+        assert!(source.next_record().unwrap().is_none());
+    }
+
+    #[cfg(all(test, feature = "whad"))]
+    #[test]
+    fn whad_packetwire_inject_writer_returns_injected_writer() {
+        let mut writer = PacketWire::whad_serial("/dev/ttyACM0")
+            .ble_inject()
+            .with_writer(MemoryPacketWriter::dry_run())
+            .open()
+            .unwrap()
+            .writer()
+            .unwrap();
+
+        let report = writer
+            .write_record(&PacketRecord::new(Raw::from("pdu")))
+            .unwrap();
+
+        assert_eq!(report.backend(), &BackendKind::Memory);
+        assert_eq!(report.bytes_requested(), 3);
+        assert!(report.is_dry_run());
     }
 
     #[test]
