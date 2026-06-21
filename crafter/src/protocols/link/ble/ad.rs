@@ -1,5 +1,7 @@
 //! GAP Advertising Data structures.
 
+use crate::error::{CrafterError, Result};
+
 /// One GAP Advertising Data length/type/value structure.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdStructure {
@@ -59,6 +61,51 @@ impl AdList {
     }
 }
 
+pub(crate) fn decode_ad_list(bytes: &[u8]) -> Result<AdList> {
+    let mut structures = Vec::new();
+    let mut offset = 0usize;
+
+    while offset < bytes.len() {
+        let length = bytes[offset] as usize;
+        offset += 1;
+
+        if length == 0 {
+            break;
+        }
+
+        if offset >= bytes.len() {
+            return Err(CrafterError::buffer_too_short(
+                "ble.ad.structure",
+                1,
+                0,
+            ));
+        }
+
+        let ad_type = bytes[offset];
+        offset += 1;
+
+        let data_len = length - 1;
+        let available = bytes.len() - offset;
+        if available < data_len {
+            return Err(CrafterError::buffer_too_short(
+                "ble.ad.structure",
+                data_len,
+                available,
+            ));
+        }
+
+        let data_end = offset + data_len;
+        structures.push(AdStructure {
+            ad_type,
+            data: bytes[offset..data_end].to_vec(),
+            length_override: None,
+        });
+        offset = data_end;
+    }
+
+    Ok(AdList(structures))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -83,5 +130,38 @@ mod tests {
         structure.encode(&mut encoded);
 
         assert_eq!(encoded, [0x7f, 0x01, 0x06]);
+    }
+
+    #[test]
+    fn ble_ad_decode_preserves_unknown_types() {
+        let ad_list = decode_ad_list(&[0x02, 0x01, 0x06, 0x03, 0xff, 0xaa, 0xbb])
+            .expect("decode AD list");
+
+        assert_eq!(
+            ad_list,
+            AdList(vec![
+                AdStructure::new(0x01, [0x06]),
+                AdStructure::new(0xff, [0xaa, 0xbb]),
+            ])
+        );
+    }
+
+    #[test]
+    fn ble_ad_decode_truncated_structure_is_structured_error() {
+        let err = decode_ad_list(&[0x05, 0x09, 0x41])
+            .expect_err("must reject over-long AD structure");
+
+        assert_eq!(
+            err,
+            CrafterError::buffer_too_short("ble.ad.structure", 4, 1)
+        );
+    }
+
+    #[test]
+    fn ble_ad_decode_zero_terminator_stops_cleanly() {
+        let ad_list = decode_ad_list(&[0x02, 0x01, 0x06, 0x00, 0x03, 0xff, 0xaa, 0xbb])
+            .expect("decode terminated AD list");
+
+        assert_eq!(ad_list, AdList(vec![AdStructure::new(0x01, [0x06])]));
     }
 }
