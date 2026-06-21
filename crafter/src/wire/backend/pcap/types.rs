@@ -172,6 +172,8 @@ pub enum PcapLinkType {
     Ieee80211,
     /// Radiotap metadata followed by IEEE 802.11 MAC frames.
     Ieee80211Radiotap,
+    /// Bluetooth LE Link Layer with pseudo-header.
+    BluetoothLeLl,
     /// Raw IPv4/IPv6 packets without a link-layer header.
     RawIp,
     /// Linux cooked capture v1.
@@ -190,6 +192,7 @@ impl PcapLinkType {
             DLT_RAW | DLT_RAW_BSD | DLT_IPV4 | DLT_IPV6 => Self::RawIp,
             DLT_LINUX_SLL => Self::LinuxSll,
             DLT_IEEE802_11_RADIO => Self::Ieee80211Radiotap,
+            DLT_BLUETOOTH_LE_LL_WITH_PHDR => Self::BluetoothLeLl,
             value => Self::Unknown(value),
         }
     }
@@ -201,6 +204,7 @@ impl PcapLinkType {
             Self::Ethernet => DLT_EN10MB,
             Self::Ieee80211 => DLT_IEEE802_11,
             Self::Ieee80211Radiotap => DLT_IEEE802_11_RADIO,
+            Self::BluetoothLeLl => DLT_BLUETOOTH_LE_LL_WITH_PHDR,
             Self::RawIp => DLT_RAW,
             Self::LinuxSll => DLT_LINUX_SLL,
             Self::Unknown(value) => value,
@@ -215,6 +219,7 @@ impl PcapLinkType {
             Self::Ieee80211 => LinkType::Ieee80211,
             Self::Ieee80211Radiotap => LinkType::Radiotap,
             Self::LinuxSll => LinkType::LinuxSll,
+            Self::BluetoothLeLl => LinkType::Raw,
             Self::RawIp | Self::Unknown(_) => LinkType::Raw,
         }
     }
@@ -236,6 +241,7 @@ impl PcapLinkType {
             | Self::Ethernet
             | Self::Ieee80211
             | Self::Ieee80211Radiotap
+            | Self::BluetoothLeLl
             | Self::LinuxSll => {
                 Packet::decode_from_link_with_registry(registry, self.link_type(), bytes)
             }
@@ -467,5 +473,22 @@ impl PcapPacket {
     /// Consume and return the decoded packet.
     pub fn into_packet(self) -> Packet {
         self.packet
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PcapLinkType, DLT_BLUETOOTH_LE_LL_WITH_PHDR};
+
+    #[test]
+    fn pcap_linktype_ble_datalink() {
+        assert_eq!(
+            PcapLinkType::from_datalink(DLT_BLUETOOTH_LE_LL_WITH_PHDR),
+            PcapLinkType::BluetoothLeLl
+        );
+        assert_eq!(
+            PcapLinkType::BluetoothLeLl.datalink(),
+            DLT_BLUETOOTH_LE_LL_WITH_PHDR
+        );
     }
 }
