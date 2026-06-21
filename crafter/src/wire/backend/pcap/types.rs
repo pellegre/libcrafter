@@ -219,7 +219,7 @@ impl PcapLinkType {
             Self::Ieee80211 => LinkType::Ieee80211,
             Self::Ieee80211Radiotap => LinkType::Radiotap,
             Self::LinuxSll => LinkType::LinuxSll,
-            Self::BluetoothLeLl => LinkType::Raw,
+            Self::BluetoothLeLl => LinkType::BluetoothLeLl,
             Self::RawIp | Self::Unknown(_) => LinkType::Raw,
         }
     }
@@ -258,9 +258,7 @@ impl From<LinkType> for PcapLinkType {
             LinkType::Ethernet => Self::Ethernet,
             LinkType::Ieee80211 => Self::Ieee80211,
             LinkType::Radiotap => Self::Ieee80211Radiotap,
-            LinkType::BluetoothLeLl => {
-                panic!("BluetoothLeLl pcap mapping is not wired yet")
-            }
+            LinkType::BluetoothLeLl => Self::BluetoothLeLl,
             LinkType::LinuxCooked | LinkType::LinuxSll => Self::LinuxSll,
             LinkType::NullLoopback => Self::NullLoopback,
         }
@@ -479,6 +477,7 @@ impl PcapPacket {
 #[cfg(test)]
 mod tests {
     use super::{PcapLinkType, DLT_BLUETOOTH_LE_LL_WITH_PHDR};
+    use crate::LinkType;
 
     #[test]
     fn pcap_linktype_ble_datalink() {
@@ -489,6 +488,18 @@ mod tests {
         assert_eq!(
             PcapLinkType::BluetoothLeLl.datalink(),
             DLT_BLUETOOTH_LE_LL_WITH_PHDR
+        );
+    }
+
+    #[test]
+    fn pcap_linktype_ble_bridge() {
+        assert_eq!(
+            PcapLinkType::BluetoothLeLl.link_type(),
+            LinkType::BluetoothLeLl
+        );
+        assert_eq!(
+            PcapLinkType::from(LinkType::BluetoothLeLl),
+            PcapLinkType::BluetoothLeLl
         );
     }
 }
