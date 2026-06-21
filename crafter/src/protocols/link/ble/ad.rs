@@ -714,4 +714,79 @@ mod tests {
 
         assert_eq!(ad_list, AdList(vec![AdStructure::new(0x01, [0x06])]));
     }
+
+    #[test]
+    fn ble_ad_roundtrip_all_modeled_types_unknown_and_truncation() {
+        let uuid128 = [
+            0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd,
+            0xee, 0xff,
+        ];
+        let service_uuid128 = [
+            0xf0, 0xe1, 0xd2, 0xc3, 0xb4, 0xa5, 0x96, 0x87, 0x78, 0x69, 0x5a, 0x4b, 0x3c, 0x2d,
+            0x1e, 0x0f,
+        ];
+        let list = AdList(vec![
+            AdStructure::flags(BleAdvFlags::GENERAL_DISC),
+            AdStructure::complete_local_name("crafter-ble"),
+            AdStructure::complete_service_uuids16(&[0x180f, 0x180d]),
+            AdStructure::complete_service_uuids32(&[0x0000_1234]),
+            AdStructure::complete_service_uuids128(&[uuid128]),
+            AdStructure::tx_power_level(-8),
+            AdStructure::manufacturer_data(0xffff, &[0x01, 0x02, 0x03]),
+            AdStructure::service_data_uuid16(0xfef3, &[0x04, 0x05]),
+            AdStructure::service_data_uuid32(0x1234_5678, &[0x06, 0x07]),
+            AdStructure::service_data_uuid128(service_uuid128, &[0x08, 0x09]),
+            AdStructure::appearance(0x03c0),
+            AdStructure::raw(0x2a, [0xde, 0xad, 0xbe, 0xef]),
+        ]);
+        let mut encoded = Vec::new();
+
+        list.encode(&mut encoded);
+        let decoded = decode_ad_list(&encoded).expect("decode AD list");
+
+        assert_eq!(decoded.0.len(), 12);
+        assert_eq!(decoded.0[0].ad_type, AD_FLAGS);
+        assert_eq!(
+            decoded.0[0].flags_value(),
+            Some(BleAdvFlags::GENERAL_DISC)
+        );
+        assert_eq!(decoded.0[1].ad_type, AD_COMPLETE_LOCAL_NAME);
+        assert_eq!(decoded.0[1].local_name().as_deref(), Some("crafter-ble"));
+        assert_eq!(decoded.0[2].ad_type, AD_COMPLETE_16_BIT_SERVICE_UUIDS);
+        assert_eq!(decoded.0[2].service_uuids16(), Some(vec![0x180f, 0x180d]));
+        assert_eq!(decoded.0[3].ad_type, AD_COMPLETE_32_BIT_SERVICE_UUIDS);
+        assert_eq!(decoded.0[3].service_uuids32(), Some(vec![0x0000_1234]));
+        assert_eq!(decoded.0[4].ad_type, AD_COMPLETE_128_BIT_SERVICE_UUIDS);
+        assert_eq!(decoded.0[4].service_uuids128(), Some(vec![uuid128]));
+        assert_eq!(decoded.0[5].ad_type, AD_TX_POWER_LEVEL);
+        assert_eq!(decoded.0[5].tx_power_level_value(), Some(-8));
+        assert_eq!(decoded.0[6].ad_type, AD_MANUFACTURER_SPECIFIC_DATA);
+        assert_eq!(
+            decoded.0[6].manufacturer_data_value(),
+            Some((0xffff, vec![0x01, 0x02, 0x03]))
+        );
+        assert_eq!(decoded.0[7].ad_type, AD_SERVICE_DATA_16_BIT_UUID);
+        assert_eq!(
+            decoded.0[7].service_data_uuid16_value(),
+            Some((0xfef3, vec![0x04, 0x05]))
+        );
+        assert_eq!(decoded.0[8].ad_type, AD_SERVICE_DATA_32_BIT_UUID);
+        assert_eq!(
+            decoded.0[8].service_data_uuid32_value(),
+            Some((0x1234_5678, vec![0x06, 0x07]))
+        );
+        assert_eq!(decoded.0[9].ad_type, AD_SERVICE_DATA_128_BIT_UUID);
+        assert_eq!(
+            decoded.0[9].service_data_uuid128_value(),
+            Some((service_uuid128, vec![0x08, 0x09]))
+        );
+        assert_eq!(decoded.0[10].ad_type, AD_APPEARANCE);
+        assert_eq!(decoded.0[10].appearance_value(), Some(0x03c0));
+        assert_eq!(decoded.0[11].ad_type, 0x2a);
+        assert_eq!(decoded.0[11], AdStructure::raw(0x2a, [0xde, 0xad, 0xbe, 0xef]));
+
+        let mut malformed = encoded;
+        malformed.extend_from_slice(&[0x03, AD_COMPLETE_LOCAL_NAME, b'x']);
+        assert!(decode_ad_list(&malformed).is_err());
+    }
 }
