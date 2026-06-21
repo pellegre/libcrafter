@@ -162,16 +162,16 @@ source_refs:
 
 backend_support:
   scapy:
-    status: planned
+    status: supported
     native_layers:
-      - IGMP
+      - Raw
     notes:
-      - Later Scapy backend steps own materialization and normalization for these IGMP cases.
+      - The Scapy backend materializes these IGMP cases as exact IPv4 protocol 2 Raw bytes and normalizes IGMP fields from the IPv4 payload.
       - Structured-error cases are declared coverage only and are excluded from offline strict-byte comparison.
   libcrafter:
-    status: planned
+    status: supported
     native_layers:
       - Igmp
     notes:
-      - The public crate has IGMP packet-layer support; later oracle adapter steps own executable IGMP feature cases.
+      - The public crate adapter materializes executable IGMP header feature cases through the Packet abstraction.
       - IPv4 TTL, destination address, and Router Alert option remain explicit IPv4 composition choices.

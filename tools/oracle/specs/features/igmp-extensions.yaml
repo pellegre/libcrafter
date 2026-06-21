@@ -204,23 +204,19 @@ source_refs:
 
 backend_support:
   scapy:
-    status: planned
+    status: supported
     native_layers:
-      - IGMP
-      - IGMPv3
-      - IGMPv3mq
-      - IGMPv3mr
       - Raw
     notes:
-      - Later Scapy backend steps own materialization and normalization for generic RFC 9279 TLVs.
+      - The Scapy backend materializes RFC 9279 TLV cases as exact IPv4 protocol 2 Raw bytes and normalizes IGMP fields from the IPv4 payload.
       - Structured-error cases are declared coverage only and are excluded from offline strict-byte comparison.
   libcrafter:
-    status: planned
+    status: supported
     native_layers:
       - Igmp
       - IgmpQuery
       - IgmpReport
       - IgmpExtension
     notes:
-      - The public crate preserves generic extension TLVs; later oracle adapter steps own executable extension cases.
+      - The public crate adapter materializes executable generic extension TLV cases through the Packet abstraction.
       - Extension processing is gated to IGMPv3 Query and IGMPv3 Membership Report E-bit cases only.
