@@ -487,6 +487,7 @@ impl ProtocolRegistry {
             LinkType::Ethernet => self.decode_ethernet(bytes),
             LinkType::Ieee80211 => decode_dot11_with_registry(self, bytes),
             LinkType::Radiotap => decode_radiotap_with_registry(self, bytes),
+            LinkType::BluetoothLeLl => Packet::decode_raw(bytes),
             LinkType::LinuxCooked | LinkType::LinuxSll => self.decode_linux_sll(bytes),
             LinkType::NullLoopback => decode_null_loopback_with_registry(self, bytes),
         }
