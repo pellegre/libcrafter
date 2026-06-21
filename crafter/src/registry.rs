@@ -31,8 +31,8 @@ use crate::protocols::ospf::v3::append_ospfv3_packet_with_checksum_validation;
 // callers wiring custom dispatch can decode an OSPF payload without opting into
 // decode-time checksum validation (RFC 2328 §A.3.1).
 use crate::protocols::link::{
-    append_arp_packet, append_vlan_packet_with_registry, decode_dot11_with_registry,
-    decode_ethernet_with_registry, decode_linux_sll_with_registry,
+    append_arp_packet, append_vlan_packet_with_registry, decode_ble_ll_with_registry,
+    decode_dot11_with_registry, decode_ethernet_with_registry, decode_linux_sll_with_registry,
     decode_null_loopback_with_registry, decode_radiotap_with_registry, ETHERTYPE_ARP,
     ETHERTYPE_EAPOL, ETHERTYPE_IPV4, ETHERTYPE_IPV6, ETHERTYPE_VLAN,
 };
@@ -487,7 +487,7 @@ impl ProtocolRegistry {
             LinkType::Ethernet => self.decode_ethernet(bytes),
             LinkType::Ieee80211 => decode_dot11_with_registry(self, bytes),
             LinkType::Radiotap => decode_radiotap_with_registry(self, bytes),
-            LinkType::BluetoothLeLl => Packet::decode_raw(bytes),
+            LinkType::BluetoothLeLl => decode_ble_ll_with_registry(self, bytes),
             LinkType::LinuxCooked | LinkType::LinuxSll => self.decode_linux_sll(bytes),
             LinkType::NullLoopback => decode_null_loopback_with_registry(self, bytes),
         }
@@ -1316,6 +1316,32 @@ mod decode_dispatch {
         assert!(decoded.layer::<Udp>().is_some());
         assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), b"payload");
         assert_eq!(decoded.compile().unwrap().as_bytes(), bytes.as_bytes());
+    }
+
+    #[test]
+    fn registry_ble_decode_from_link_builds_radio_and_advertising_layers() {
+        let frame = [
+            37, 0xc4, 0x00, 0x00, 0xd6, 0xbe, 0x89, 0x8e, 0x13, 0x0c, 0xd6, 0xbe, 0x89, 0x8e,
+            0x40, 0x0f, 0x01, 0x53, 0x00, 0x5e, 0x00, 0x02, 0x02, 0x01, 0x06, 0x05, 0x09,
+            b't', b'e', b's', b't',
+        ];
+
+        let decoded = ProtocolRegistry::new()
+            .decode_from_link(LinkType::BluetoothLeLl, frame)
+            .unwrap();
+
+        assert_eq!(decoded.iter().count(), 2);
+        let radio = decoded.get(0).unwrap();
+        let adv = decoded.get(1).unwrap();
+        assert_eq!(radio.name(), "BleRadio");
+        assert!(radio.summary().contains("ch=37"));
+        assert!(radio.summary().contains("aa=0x8e89bed6"));
+        assert_eq!(adv.name(), "BleLlAdv");
+        assert_eq!(
+            adv.summary(),
+            "BleLlAdv(ADV_IND, AdvA=02:00:5E:00:53:01, len=15)"
+        );
+        assert!(decoded.layer::<Raw>().is_none());
     }
 
     #[test]
