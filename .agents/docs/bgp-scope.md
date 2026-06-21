@@ -13,8 +13,8 @@ and live session establishment. It deliberately excludes the BGP state machine,
 the routing information base, and the decision process: those are agent-built
 tools, not crate surface.
 
-Step numbers reference the files under
-`.internal workflow/plans/implement-bgp-protocol-live-tests/`.
+Step numbers reference the implementation sequence used while building this
+feature.
 
 ## In scope (build + decode + golden + oracle)
 

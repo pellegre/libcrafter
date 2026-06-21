@@ -107,7 +107,7 @@ inspect_package_contents() {
       path = $0
       sub(/^[^/]+\//, "", path)
 
-      if (path ~ /(^|\/)(\.agents|\.internal workflow|\.github|\.githooks|\.libcrafter-live|target)(\/|$)/ ||
+      if (path ~ /(^|\/)(\.agents|\.github|\.githooks|\.libcrafter-live|target)(\/|$)/ ||
           path ~ /(^|\/)(\.codex|\.cursor|\.idea|\.vscode)(\/|$)/ ||
           path ~ /^tools\/(git-hooks|live-lab|policy|reference)(\/|$)/ ||
           path ~ /^tests\/live(\/|$)/ ||

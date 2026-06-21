@@ -12,7 +12,8 @@ and provider-backed live validation. It deliberately excludes the RIP routing
 engine, the route table, distance-vector convergence, and timer state: those are
 agent-built tools, not crate surface.
 
-Step numbers reference the files under `.internal workflow/plans/rip-protocol/`.
+Step numbers reference the implementation sequence used while building this
+feature.
 
 ## In scope (build + decode + golden + oracle)
 
