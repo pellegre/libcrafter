@@ -1,0 +1,179 @@
+// Regenerated WHAD BLE protocol subset for the libcrafter WHAD backend.
+// Pin: whad-team/whad-protocol release/v3
+// Commit: 82dbbefe5c3a1b3bfa89f86829c8872985a7f27e
+
+syntax = "proto3";
+
+package ble;
+
+enum BleCommand {
+  SetBdAddress = 0x00;
+  SniffAdv = 0x01;
+  JamAdv = 0x02;
+  JamAdvOnChannel = 0x03;
+  ReactiveJam = 0x04;
+  SniffConnReq = 0x05;
+  SniffAccessAddress = 0x06;
+  SniffActiveConn = 0x07;
+  JamConn = 0x08;
+  ScanMode = 0x09;
+  AdvMode = 0x0A;
+  SetAdvData = 0x0B;
+  CentralMode = 0x0C;
+  ConnectTo = 0x0D;
+  SendRawPDU = 0x0E;
+  SendPDU = 0x0F;
+  Disconnect = 0x10;
+  PeripheralMode = 0x11;
+  Start = 0x12;
+  Stop = 0x13;
+  SetEncryption = 0x14;
+  HijackMaster = 0x15;
+  HijackSlave = 0x16;
+  HijackBoth = 0x17;
+  PrepareSequence = 0x18;
+  TriggerSequence = 0x19;
+  DeleteSequence = 0x1A;
+  SetPhy = 0x1B;
+  SetSupportedPhys = 0x1C;
+  SetTxPowerLevel = 0x1D;
+  SetExtAdvPdus = 0x1E;
+}
+
+enum BleAdvType {
+  ADV_UNKNOWN = 0;
+  ADV_IND = 1;
+  ADV_DIRECT_IND = 2;
+  ADV_NONCONN_IND = 3;
+  ADV_SCAN_IND = 4;
+  ADV_SCAN_RSP = 5;
+  ADV_EXT_IND = 6;
+  ADV_DECISION_IND = 7;
+}
+
+enum BleDirection {
+  UNKNOWN = 0;
+  MASTER_TO_SLAVE = 1;
+  SLAVE_TO_MASTER = 2;
+  INJECTION_TO_SLAVE = 3;
+  INJECTION_TO_MASTER = 4;
+}
+
+enum BleAddrType {
+  PUBLIC = 0;
+  RANDOM = 1;
+  RPA = 2;
+}
+
+enum BlePhy {
+  UNDEFINED = 0;
+  LE_1M = 1;
+  LE_1M_CODED = 2;
+  LE_2M = 3;
+  LE_2M_2BT = 4;
+}
+
+enum BleCsa {
+  CSA1 = 0;
+  CSA2 = 1;
+  CSA3a = 2;
+  CSA3b = 3;
+  CSA3c = 4;
+}
+
+message SetBdAddressCmd {
+  bytes bd_address = 1;
+  BleAddrType addr_type = 2;
+}
+
+message SniffAdvCmd {
+  bool use_extended_adv = 1;
+  uint32 channel = 2;
+  bytes bd_address = 3;
+}
+
+message ScanModeCmd {
+  bool active_scan = 1;
+}
+
+message AdvModeCmd {
+  bytes scan_data = 1;
+  bytes scanrsp_data = 2;
+}
+
+message SetAdvDataCmd {
+  bytes scan_data = 1;
+  bytes scanrsp_data = 2;
+}
+
+message CentralModeCmd {}
+
+message SendRawPDUCmd {
+  BleDirection direction = 1;
+  uint32 conn_handle = 2;
+  uint32 access_address = 3;
+  bytes pdu = 4;
+  uint32 crc = 5;
+  bool encrypt = 6;
+  optional BlePhy phy = 7;
+}
+
+message SendPDUCmd {
+  BleDirection direction = 1;
+  uint32 conn_handle = 2;
+  bytes pdu = 3;
+  bool encrypt = 4;
+}
+
+message PeripheralModeCmd {
+  bytes scan_data = 1;
+  bytes scanrsp_data = 2;
+}
+
+message StartCmd {}
+
+message StopCmd {}
+
+message AdvPduReceived {
+  BleAdvType adv_type = 1;
+  int32 rssi = 2;
+  bytes bd_address = 3;
+  bytes adv_data = 4;
+  BleAddrType addr_type = 5;
+  uint32 channel = 6;
+  BlePhy phy = 7;
+}
+
+message RawPduReceived {
+  BleDirection direction = 1;
+  uint32 channel = 2;
+  optional int32 rssi = 3;
+  optional uint64 timestamp = 4;
+  optional uint64 relative_timestamp = 5;
+  optional bool crc_validity = 6;
+  uint32 access_address = 7;
+  bytes pdu = 8;
+  uint32 crc = 9;
+  uint32 conn_handle = 10;
+  bool processed = 11;
+  bool decrypted = 12;
+  optional BlePhy phy = 13;
+}
+
+message Message {
+  oneof msg {
+    SetBdAddressCmd set_bd_addr = 1;
+    SniffAdvCmd sniff_adv = 2;
+    ScanModeCmd scan_mode = 9;
+    AdvModeCmd adv_mode = 10;
+    SetAdvDataCmd set_adv_data = 11;
+    CentralModeCmd central_mode = 12;
+    SendRawPDUCmd send_raw_pdu = 14;
+    SendPDUCmd send_pdu = 15;
+    PeripheralModeCmd periph_mode = 17;
+    StartCmd start = 18;
+    StopCmd stop = 19;
+    AdvPduReceived adv_pdu = 24;
+    RawPduReceived raw_pdu = 30;
+  }
+}
