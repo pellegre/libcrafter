@@ -84,6 +84,11 @@ inspect_package_contents() {
   local package_members
   local normalized_members
   local forbidden_members
+  local required_member
+  local required_members=(
+    "tests/fixtures/README.md"
+    "tests/fixtures/bytes/ipv4-icmp-echo-request.bin"
+  )
 
   [[ -f "$crate_file" ]] || die "package archive not found: $crate_file"
 
@@ -125,6 +130,12 @@ inspect_package_contents() {
   if ! grep -Fxq 'src/lib.rs' "$normalized_members"; then
     die "package archive is missing src/lib.rs"
   fi
+
+  for required_member in "${required_members[@]}"; do
+    if ! grep -Fxq "$required_member" "$normalized_members"; then
+      die "package archive is missing $required_member"
+    fi
+  done
 
   rm -rf "$tmp_dir"
 }

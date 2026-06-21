@@ -4,6 +4,7 @@ members = [
     "tools/oracle/adapters",
     "tools/probe/adapters",
 ]
+exclude = ["target/package-self-test"]
 resolver = "2"
 
 [workspace.package]
