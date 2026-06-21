@@ -1,6 +1,6 @@
 //! IGMP membership report model.
 //!
-//! The common IGMP fixed header remains the [`Igmp`](super::Igmp) layer. This
+//! The common IGMP fixed header remains the [`Igmp`] layer. This
 //! layer models the IGMPv3 report-specific body that follows it: Reserved/Flags,
 //! Number of Group Records, and the ordered group-record vector.
 

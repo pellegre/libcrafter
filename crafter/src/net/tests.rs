@@ -172,8 +172,8 @@ mod send_plan {
     };
 
     use crate::net::{
-        reply_filter, send_packet as one_shot_send_packet, send_plan as one_shot_send_plan, NetError,
-        PacketSendExt, SendMode, SendOptions, SendTarget, SocketSender,
+        reply_filter, send_packet as one_shot_send_packet, send_plan as one_shot_send_plan,
+        NetError, PacketSendExt, SendMode, SendOptions, SendTarget, SocketSender,
     };
 
     fn ipv4_packet() -> Packet {

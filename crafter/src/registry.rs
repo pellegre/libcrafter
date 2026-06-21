@@ -1265,8 +1265,12 @@ mod protocol_registry {
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
 
         assert_eq!(decoded.len(), 2);
-        assert!(decoded.get(0).is_some_and(|layer| layer.as_any().is::<Ipv4>()));
-        assert!(decoded.get(1).is_some_and(|layer| layer.as_any().is::<Igmp>()));
+        assert!(decoded
+            .get(0)
+            .is_some_and(|layer| layer.as_any().is::<Ipv4>()));
+        assert!(decoded
+            .get(1)
+            .is_some_and(|layer| layer.as_any().is::<Igmp>()));
         assert!(decoded.layer::<Raw>().is_none());
     }
 
@@ -1281,7 +1285,9 @@ mod protocol_registry {
             .decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes())
             .unwrap();
 
-        let raw = decoded.layer::<Raw>().expect("empty registry raw IGMP payload");
+        let raw = decoded
+            .layer::<Raw>()
+            .expect("empty registry raw IGMP payload");
         assert_eq!(decoded.len(), 2);
         assert!(decoded.layer::<Igmp>().is_none());
         assert_eq!(raw.as_bytes(), &bytes.as_bytes()[20..]);

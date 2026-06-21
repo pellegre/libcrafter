@@ -6,8 +6,8 @@
 
 use std::net::Ipv4Addr;
 
-use crafter::protocols::igmp::IgmpChecksumStatus;
 use crafter::prelude::*;
+use crafter::protocols::igmp::IgmpChecksumStatus;
 
 const DOC_SRC: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 10);
 const DOC_GROUP: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 1);
@@ -98,7 +98,10 @@ fn igmp_router_alert_ipv4_composition_roundtrips() -> crafter::Result<()> {
     assert_eq!(decoded_ipv4.ttl_value(), 1);
     assert_eq!(decoded_ipv4.protocol_value(), IPPROTO_IGMP);
     assert_eq!(decoded_ipv4.checksum_status(), Ipv4ChecksumStatus::Valid);
-    assert_eq!(decoded_ipv4.option_bytes(), &[IPV4_OPTION_ROUTER_ALERT, 4, 0, 0]);
+    assert_eq!(
+        decoded_ipv4.option_bytes(),
+        &[IPV4_OPTION_ROUTER_ALERT, 4, 0, 0]
+    );
 
     let options = decoded_ipv4.parsed_options()?;
     assert_eq!(options, vec![Ipv4Option::router_alert(0)]);

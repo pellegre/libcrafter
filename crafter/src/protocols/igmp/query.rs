@@ -1,6 +1,6 @@
 //! IGMP membership query model.
 //!
-//! The common IGMP fixed header remains the [`Igmp`](super::Igmp) layer. This
+//! The common IGMP fixed header remains the [`Igmp`] layer. This
 //! layer models the IGMPv3 query-specific body that follows it: Flags/S/QRV,
 //! QQIC, Number of Sources, and the source address vector.
 
@@ -989,7 +989,10 @@ mod igmp_v3_query_flags {
         let query = decoded.layer::<IgmpQuery>().expect("IGMPv3 query body");
 
         assert_eq!(query.raw_flags_qrv_value(), 0x75);
-        assert_eq!(query.query_flags_value(), IGMP_V3_QUERY_FLAGS_UNASSIGNED_MASK);
+        assert_eq!(
+            query.query_flags_value(),
+            IGMP_V3_QUERY_FLAGS_UNASSIGNED_MASK
+        );
         assert_eq!(
             query.unassigned_query_flags_value(),
             IGMP_V3_QUERY_FLAGS_UNASSIGNED_MASK
