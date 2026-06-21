@@ -2,14 +2,48 @@
 
 use crate::wire::record::{BackendKind, PacketRecord};
 use crate::wire::writer::{PacketWriter, WriteReport};
-use crate::wire::Result;
+use crate::wire::{Result, WireError};
 use crate::{BleRadio, Packet};
 
 use super::discovery::WhadDevice;
+use super::framing::encode_frame;
 use super::messages::build_send_raw_pdu;
 use super::transport::{WhadByteChannel, WhadLink};
 
+use prost::Message as _;
+
 const BLE_ADVERTISING_ACCESS_ADDRESS: u32 = 0x8E89_BED6;
+
+/// Inspectable WHAD dry-run write plan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct WhadDryRunPlan {
+    channel: u8,
+    access_address: u32,
+    pdu_len: usize,
+    frame: Vec<u8>,
+}
+
+impl WhadDryRunPlan {
+    /// BLE channel carried by the planned `SendRawPdu`.
+    pub(crate) const fn channel(&self) -> u8 {
+        self.channel
+    }
+
+    /// BLE access address carried by the planned `SendRawPdu`.
+    pub(crate) const fn access_address(&self) -> u32 {
+        self.access_address
+    }
+
+    /// Raw BLE PDU length carried by the planned `SendRawPdu`.
+    pub(crate) const fn pdu_len(&self) -> usize {
+        self.pdu_len
+    }
+
+    /// Complete framed WHAD `SendRawPdu` bytes that dry-run skipped sending.
+    pub(crate) fn planned_frame(&self) -> &[u8] {
+        &self.frame
+    }
+}
 
 /// WHAD packet writer translating packet records into BLE `SendRawPdu` messages.
 pub(crate) struct WhadWriter<C: WhadByteChannel> {
@@ -17,6 +51,7 @@ pub(crate) struct WhadWriter<C: WhadByteChannel> {
     device: WhadDevice,
     dry_run: bool,
     channel: u8,
+    last_dry_run_plan: Option<WhadDryRunPlan>,
 }
 
 impl<C: WhadByteChannel> WhadWriter<C> {
@@ -27,6 +62,7 @@ impl<C: WhadByteChannel> WhadWriter<C> {
             device,
             dry_run: false,
             channel,
+            last_dry_run_plan: None,
         }
     }
 
@@ -56,15 +92,17 @@ impl<C: WhadByteChannel> WhadWriter<C> {
         self.dry_run
     }
 
+    /// Last dry-run frame this writer planned instead of transmitting.
+    pub(crate) fn last_dry_run_plan(&self) -> Option<&WhadDryRunPlan> {
+        self.last_dry_run_plan.as_ref()
+    }
+
     /// Consume the writer and return the underlying WHAD link.
     pub(crate) fn into_link(self) -> WhadLink<C> {
         self.link
     }
 
-    fn build_raw_pdu_message(
-        &self,
-        record: &PacketRecord,
-    ) -> Result<(super::proto::Message, usize)> {
+    fn build_raw_pdu_message(&self, record: &PacketRecord) -> Result<WhadRawPduMessage> {
         let packet = record.packet();
         let (channel, access_address, pdu) = if let Some((index, radio)) = ble_radio_layer(packet) {
             let mut pdu = Vec::new();
@@ -82,26 +120,82 @@ impl<C: WhadByteChannel> WhadWriter<C> {
             )
         };
 
-        let requested = pdu.len();
-        Ok((build_send_raw_pdu(channel, access_address, &pdu), requested))
+        Ok(WhadRawPduMessage {
+            message: build_send_raw_pdu(channel, access_address, &pdu),
+            channel,
+            access_address,
+            pdu_len: pdu.len(),
+        })
     }
 }
 
 impl<C: WhadByteChannel> PacketWriter for WhadWriter<C> {
     fn write_record(&mut self, record: &PacketRecord) -> Result<WriteReport> {
-        let (message, requested) = self.build_raw_pdu_message(record)?;
-        if !self.dry_run {
-            self.link.send_message(&message)?;
+        let raw_pdu = self.build_raw_pdu_message(record)?;
+        if self.dry_run {
+            let plan = WhadDryRunPlan {
+                channel: raw_pdu.channel,
+                access_address: raw_pdu.access_address,
+                pdu_len: raw_pdu.pdu_len,
+                frame: encode_planned_frame(&raw_pdu.message)?,
+            };
+            let target_details = dry_run_target_details(&plan);
+            self.last_dry_run_plan = Some(plan);
+
+            return Ok(WriteReport::new(BackendKind::Whad, raw_pdu.pdu_len, 0, true)
+                .with_target_details(target_details));
         }
 
-        let written = if self.dry_run { 0 } else { requested };
+        self.last_dry_run_plan = None;
+        self.link.send_message(&raw_pdu.message)?;
         Ok(WriteReport::new(
             BackendKind::Whad,
-            requested,
-            written,
-            self.dry_run,
+            raw_pdu.pdu_len,
+            raw_pdu.pdu_len,
+            false,
         ))
     }
+}
+
+struct WhadRawPduMessage {
+    message: super::proto::Message,
+    channel: u8,
+    access_address: u32,
+    pdu_len: usize,
+}
+
+fn encode_planned_frame(message: &super::proto::Message) -> Result<Vec<u8>> {
+    let message_bytes = message.encode_to_vec();
+    if message_bytes.len() > u16::MAX as usize {
+        return Err(WireError::backend(
+            "whad writer",
+            "dry-run plan",
+            "encoded SendRawPdu exceeds WHAD frame length",
+        ));
+    }
+
+    Ok(encode_frame(&message_bytes))
+}
+
+fn dry_run_target_details(plan: &WhadDryRunPlan) -> String {
+    format!(
+        "whad SendRawPdu dry-run channel={} access_address=0x{:08x} pdu_len={} frame_len={} frame_hex={}",
+        plan.channel,
+        plan.access_address,
+        plan.pdu_len,
+        plan.frame.len(),
+        hex_bytes(&plan.frame)
+    )
+}
+
+fn hex_bytes(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        output.push(HEX[(byte >> 4) as usize] as char);
+        output.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    output
 }
 
 fn ble_radio_layer(packet: &Packet) -> Option<(usize, &BleRadio)> {
@@ -119,8 +213,9 @@ mod whad_writer {
 
     use prost::Message as _;
 
+    use super::super::framing::encode_message;
     use super::super::messages::{
-        WhadDeviceInfo, WhadDomainCommands, WhadDomains, WhadFirmwareVersion,
+        build_send_raw_pdu, WhadDeviceInfo, WhadDomainCommands, WhadDomains, WhadFirmwareVersion,
     };
     use super::super::proto;
     use super::super::transport::{LoopbackChannel, WhadLink};
@@ -155,12 +250,18 @@ mod whad_writer {
     }
 
     #[test]
-    fn whad_writer_dry_run_emits_nothing_and_reports_dry_run() {
-        let packet = BleRadio::advertising(38)
-            / BleLlAdv::adv_nonconn_ind()
+    fn whad_dry_run_plan_describes_send_raw_pdu_and_writes_no_loopback_bytes() {
+        let packet = BleRadio::advertising(38).access_address(0x1122_3344)
+            / BleLlAdv::adv_ind()
                 .adv_a_str("C0:FF:EE:11:22:33")
-                .unwrap();
+                .unwrap()
+                .payload([0x02, 0x01, 0x06]);
         let record = PacketRecord::new(packet);
+        let expected_pdu = [
+            0x40, 0x09, 0x33, 0x22, 0x11, 0xEE, 0xFF, 0xC0, 0x02, 0x01, 0x06,
+        ];
+        let expected_message = build_send_raw_pdu(38, 0x1122_3344, &expected_pdu);
+        let expected_frame = encode_message(&expected_message);
         let mut writer =
             WhadWriter::dry_run(WhadLink::new(LoopbackChannel::default()), test_device(), 37);
 
@@ -168,7 +269,24 @@ mod whad_writer {
 
         assert_eq!(report.backend(), &BackendKind::Whad);
         assert!(report.is_dry_run());
+        assert_eq!(report.bytes_requested(), expected_pdu.len());
         assert_eq!(report.bytes_written(), 0);
+        let details = report
+            .target_details()
+            .expect("dry-run report should describe planned WHAD frame");
+        assert!(details.contains("SendRawPdu"));
+        assert!(details.contains("channel=38"));
+        assert!(details.contains("access_address=0x11223344"));
+        assert!(details.contains("pdu_len=11"));
+        assert!(details.contains(&format!("frame_hex={}", hex_bytes(&expected_frame))));
+
+        let plan = writer
+            .last_dry_run_plan()
+            .expect("writer should retain the last dry-run plan");
+        assert_eq!(plan.channel(), 38);
+        assert_eq!(plan.access_address(), 0x1122_3344);
+        assert_eq!(plan.pdu_len(), expected_pdu.len());
+        assert_eq!(plan.planned_frame(), expected_frame);
 
         let mut link = writer.into_link();
         assert!(link.recv_message(Duration::from_millis(1)).is_err());
