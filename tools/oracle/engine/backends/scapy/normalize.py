@@ -30,6 +30,9 @@ _IPV6_OPTION_REGION_KEY = "__ipv6_option_region_hex__"
 _LAYER_ALIASES: dict[str, str] = {
     "AH": "ah",
     "ARP": "arp",
+    "BTLE": "ble_radio",
+    "BTLE_ADV": "ble_adv",
+    "BTLE_ADV_IND": "ble_adv",
     "BGPHeader": "bgp",
     "BGPKeepAlive": "bgp",
     "BGPNotification": "bgp",
@@ -227,6 +230,7 @@ _PROTOCOLS: dict[str, int] = {
     "udp": 17,
 }
 _ROOT_ALIASES: dict[str, str] = {
+    "BTLE_PHDR": "link:bluetooth-le-ll-with-phdr",
     "CookedLinux": "link:linux-cooked",
     "Ether": "link:ethernet",
     "Dot11": "link:dot11",
@@ -235,13 +239,56 @@ _ROOT_ALIASES: dict[str, str] = {
     "Loopback": "link:null-loopback",
     "RadioTap": "link:radiotap",
     "Raw": "link:raw",
+    "link:bluetooth_le_ll_with_phdr": "link:bluetooth-le-ll-with-phdr",
     "l2:ipv4": "l3:ipv4",
     "link:ieee80211": "link:dot11",
     "link:linux-sll": "link:linux-cooked",
 }
 
+_BLE_WITH_PHDR_ROOTS = frozenset(
+    {
+        "BTLE_PHDR",
+        "link:bluetooth-le-ll-with-phdr",
+        "link:bluetooth_le_ll_with_phdr",
+    }
+)
 _DOT11_ROOTS = frozenset({"Dot11", "link:dot11", "link:ieee80211"})
 _RADIOTAP_ROOTS = frozenset({"RadioTap", "link:radiotap"})
+_BLE_ADV_PDU_TYPE_NAMES: dict[int, str] = {
+    0: "adv_ind",
+    1: "adv_direct_ind",
+    2: "adv_nonconn_ind",
+    3: "scan_req",
+    4: "scan_rsp",
+    5: "connect_ind",
+    6: "adv_scan_ind",
+    7: "adv_ext_ind",
+}
+_BLE_AD_TYPE_NAMES: dict[int, str] = {
+    0x01: "flags",
+    0x08: "shortened_local_name",
+    0x09: "complete_local_name",
+}
+_BLE_PHDR_FLAG_NAMES: tuple[tuple[int, str], ...] = (
+    (0x0001, "dewhitened"),
+    (0x0002, "signal_power_valid"),
+    (0x0004, "noise_power_valid"),
+    (0x0008, "decrypted"),
+    (0x0010, "reference_access_address_valid"),
+    (0x0020, "access_address_offenses_valid"),
+    (0x0040, "rf_channel_aliased"),
+    (0x0400, "crc_checked"),
+    (0x0800, "crc_valid"),
+    (0x1000, "mic_checked"),
+    (0x2000, "mic_valid"),
+)
+_BLE_ADV_FLAG_NAMES: tuple[tuple[int, str], ...] = (
+    (0x01, "le_limited_discoverable_mode"),
+    (0x02, "le_general_discoverable_mode"),
+    (0x04, "br_edr_not_supported"),
+    (0x08, "simultaneous_le_br_edr_controller"),
+    (0x10, "simultaneous_le_br_edr_host"),
+)
 
 
 def decode_root(
@@ -254,6 +301,14 @@ def decode_root(
 
     _require_decode_capability(capabilities)
     scapy_all = import_scapy()["all"]
+    if root in _BLE_WITH_PHDR_ROOTS:
+        decoder = getattr(scapy_all, "BTLE", None)
+        if decoder is None:
+            raise ValueError("Scapy decoder is unavailable: BTLE")
+        if len(raw) < 10:
+            raise ValueError(f"BLE LL-with-phdr requires 10 pseudo-header bytes, got {len(raw)}")
+        return decoder(raw[10:])
+
     decoders = {
         "CookedLinux": "CookedLinux",
         "Dot11": "Dot11",
@@ -295,6 +350,13 @@ def decode_bytes(
 ) -> DecodedModel:
     """Decode raw bytes and return the normalized Scapy model."""
 
+    if root in _BLE_WITH_PHDR_ROOTS:
+        return _decode_ble_bytes(
+            raw,
+            root=root,
+            source_hex=source_hex or raw.hex(),
+            feature_tags=feature_tags,
+        )
     if root in _DOT11_ROOTS or root in _RADIOTAP_ROOTS:
         return _decode_dot11_bytes(
             raw,
@@ -2155,6 +2217,150 @@ def _payload_fields_from_bytes(body: bytes) -> JSONObject:
         "length": len(body),
         "ascii": body.decode("utf-8", "replace"),
     }
+
+
+def _decode_ble_bytes(
+    raw: bytes,
+    *,
+    root: str,
+    source_hex: str,
+    feature_tags: Sequence[str],
+) -> DecodedModel:
+    canonical_root = _normalize_root_name(root)
+    if canonical_root != "link:bluetooth-le-ll-with-phdr":
+        raise ValueError(f"unsupported BLE byte-normalizer root: {root!r}")
+
+    radio_fields, ll_packet = _parse_ble_pseudoheader(raw)
+    adv_fields = _parse_ble_ll_packet(ll_packet)
+    layers: list[str] = []
+    fields: dict[str, JSONObject] = {}
+    _append_normalized_layer(layers, fields, "ble_radio", radio_fields)
+    _append_normalized_layer(layers, fields, "ble_adv", adv_fields)
+
+    metadata: JSONObject = {
+        "native": {
+            "summary": f"{canonical_root} byte-normalized packet",
+            "layers": [
+                {"name": layer, "fields": fields[_layer_key_at(layers, index)], "summary": layer}
+                for index, layer in enumerate(layers)
+            ],
+        },
+        "normalization": "byte_level_ble",
+        "reencoded_hex": source_hex,
+    }
+
+    return DecodedModel(
+        backend=BACKEND_NAME,
+        layers=layers,
+        fields=fields,
+        root=canonical_root,
+        source_hex=source_hex,
+        feature_tags=list(feature_tags),
+        metadata=metadata,
+    )
+
+
+def _parse_ble_pseudoheader(raw: bytes) -> tuple[JSONObject, bytes]:
+    if len(raw) < 10:
+        raise ValueError(f"BLE LL-with-phdr requires 10 pseudo-header bytes, got {len(raw)}")
+    flags = int.from_bytes(raw[8:10], "little")
+    radio_fields: JSONObject = {
+        "rf_channel": raw[0],
+        "signal_power": int.from_bytes(raw[1:2], "little", signed=True),
+        "noise_power": int.from_bytes(raw[2:3], "little", signed=True),
+        "access_address_offenses": raw[3],
+        "ref_access_address": int.from_bytes(raw[4:8], "little"),
+        "flags": flags,
+        "flag_tokens": _ble_flag_tokens(flags, _BLE_PHDR_FLAG_NAMES),
+        "dewhitened": bool(flags & 0x0001),
+        "signal_power_valid": bool(flags & 0x0002),
+        "noise_power_valid": bool(flags & 0x0004),
+        "reference_access_address_valid": bool(flags & 0x0010),
+        "access_address_offenses_valid": bool(flags & 0x0020),
+        "crc_checked": bool(flags & 0x0400),
+        "crc_valid": bool(flags & 0x0800),
+    }
+    return radio_fields, raw[10:]
+
+
+def _parse_ble_ll_packet(raw: bytes) -> JSONObject:
+    if len(raw) < 9:
+        raise ValueError(f"BLE link-layer packet requires at least 9 bytes, got {len(raw)}")
+    access_address = int.from_bytes(raw[:4], "little")
+    pdu_with_crc = raw[4:]
+    pdu = pdu_with_crc[:-3]
+    crc = pdu_with_crc[-3:]
+    if len(pdu) < 2:
+        raise ValueError(f"BLE PDU requires at least 2 header bytes, got {len(pdu)}")
+    header0 = pdu[0]
+    pdu_type = header0 & 0x0F
+    length = pdu[1]
+    available_payload = pdu[2:]
+    if length > len(available_payload):
+        raise ValueError(
+            f"BLE advertising payload length {length} exceeds available bytes {len(available_payload)}"
+        )
+    payload = available_payload[:length]
+    surplus = available_payload[length:]
+    fields: JSONObject = {
+        "access_address": access_address,
+        "crc": crc.hex(),
+        "pdu_type": _BLE_ADV_PDU_TYPE_NAMES.get(pdu_type, f"unknown:{pdu_type}"),
+        "pdu_type_code": pdu_type,
+        "length": length,
+        "rx_add": "random" if header0 & 0x80 else "public",
+        "tx_add": "random" if header0 & 0x40 else "public",
+        "channel_selection": bool(header0 & 0x20),
+        "rfu": (header0 >> 4) & 0x01,
+    }
+    if pdu_type == 0 and len(payload) >= 6:
+        fields["adv_a"] = _ble_address_text(payload[:6])
+        fields["ad_list"] = _parse_ble_ad_list(payload[6:])
+    elif payload:
+        fields["payload_hex"] = payload.hex()
+    if surplus:
+        fields["surplus_hex"] = surplus.hex()
+    return fields
+
+
+def _parse_ble_ad_list(raw: bytes) -> list[JSONObject]:
+    output: list[JSONObject] = []
+    offset = 0
+    while offset < len(raw):
+        length = raw[offset]
+        offset += 1
+        if length == 0:
+            output.append({"type": "terminator", "type_code": 0, "length": 0, "data_hex": ""})
+            break
+        if offset + length > len(raw):
+            raise ValueError(
+                f"BLE AD structure length {length} exceeds available bytes {len(raw) - offset}"
+            )
+        type_code = raw[offset]
+        data = raw[offset + 1 : offset + length]
+        offset += length
+        entry: JSONObject = {
+            "type": _BLE_AD_TYPE_NAMES.get(type_code, f"unknown:{type_code}"),
+            "type_code": type_code,
+            "length": length,
+            "data_hex": data.hex(),
+        }
+        if type_code == 0x01:
+            value = data[0] if data else 0
+            entry["value"] = value
+            entry["flag_tokens"] = _ble_flag_tokens(value, _BLE_ADV_FLAG_NAMES)
+        elif type_code in {0x08, 0x09}:
+            entry["value"] = data.decode("utf-8", errors="replace")
+        output.append(entry)
+    return output
+
+
+def _ble_flag_tokens(value: int, names: Sequence[tuple[int, str]]) -> list[str]:
+    return [name for bit, name in names if value & bit]
+
+
+def _ble_address_text(wire: bytes) -> str:
+    return ":".join(f"{octet:02x}" for octet in reversed(wire[:6]))
 
 
 def _decode_dot11_bytes(
