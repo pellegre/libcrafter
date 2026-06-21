@@ -74,6 +74,8 @@ Live, provider-backed, and manual testing workflows.
   provider setup, credentials, artifacts, and cleanup for one endpoint.
 - [Dot11 live manual](operations/dot11-live-manual.md) — manual procedure for
   the IEEE 802.11 live testing boundary.
+- [BLE WHAD live manual](operations/ble-whad-live-manual.md) — manual procedure
+  for the feature-gated WHAD dongle live testing boundary.
 
 Agent operating guidance belongs under
 [`.agents/docs/cookbook.md`](../.agents/docs/cookbook.md), not here.
