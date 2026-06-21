@@ -16,6 +16,9 @@ pub(crate) mod framing;
 pub(crate) mod messages;
 
 #[cfg(feature = "whad")]
+pub(crate) mod reader;
+
+#[cfg(feature = "whad")]
 pub(crate) mod transport;
 
 #[cfg(feature = "whad")]

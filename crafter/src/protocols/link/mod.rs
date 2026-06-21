@@ -61,7 +61,8 @@ pub use self::arp::{
     ARP_OP_RARP_REQUEST, ARP_OP_REPLY, ARP_OP_REQUEST, ARP_OP_RESERVED, ARP_OP_RESERVED_MAX,
     ARP_PRO_IPV4,
 };
-use self::ble::{decode_ble_adv, decode_ble_radio};
+pub(crate) use self::ble::decode_ble_adv;
+use self::ble::decode_ble_radio;
 pub use self::ble::{AdList, AdStructure, BleAdvPduType, BleLlAdv, BlePhy, BleRadio};
 pub(crate) use self::dot11::decode_dot11_with_registry;
 pub use self::dot11::*;
