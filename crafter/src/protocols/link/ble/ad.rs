@@ -2,6 +2,19 @@
 
 use crate::error::{CrafterError, Result};
 
+use super::consts::AD_FLAGS;
+
+/// Flags AD structure bit values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BleAdvFlags;
+
+impl BleAdvFlags {
+    pub const LE_LIMITED_DISC: u8 = 0x01;
+    pub const LE_GENERAL_DISC: u8 = 0x02;
+    pub const BR_EDR_NOT_SUPPORTED: u8 = 0x04;
+    pub const GENERAL_DISC: u8 = Self::LE_GENERAL_DISC | Self::BR_EDR_NOT_SUPPORTED;
+}
+
 /// One GAP Advertising Data length/type/value structure.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdStructure {
@@ -21,6 +34,22 @@ impl AdStructure {
 
     pub fn raw(ad_type: u8, data: impl Into<Vec<u8>>) -> Self {
         Self::new(ad_type, data)
+    }
+
+    pub fn flags(value: u8) -> Self {
+        Self::new(AD_FLAGS, [value])
+    }
+
+    pub fn flags_general_disc() -> Self {
+        Self::flags(BleAdvFlags::GENERAL_DISC)
+    }
+
+    pub fn flags_value(&self) -> Option<u8> {
+        if self.ad_type == AD_FLAGS && self.data.len() == 1 {
+            Some(self.data[0])
+        } else {
+            None
+        }
     }
 
     pub(crate) fn encode(&self, out: &mut Vec<u8>) {
@@ -130,6 +159,17 @@ mod tests {
         structure.encode(&mut encoded);
 
         assert_eq!(encoded, [0x7f, 0x01, 0x06]);
+    }
+
+    #[test]
+    fn ble_ad_flags_general_disc_encodes_and_reads_flags() {
+        let structure = AdStructure::flags_general_disc();
+        let mut encoded = Vec::new();
+
+        structure.encode(&mut encoded);
+
+        assert_eq!(encoded, [0x02, 0x01, 0x06]);
+        assert_eq!(structure.flags_value(), Some(0x06));
     }
 
     #[test]
