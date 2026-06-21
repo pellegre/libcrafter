@@ -1,13 +1,14 @@
 //! WHAD-compatible live backend support.
 
 /// WHAD protocol version matched by the regenerated vendored protobuf subset.
+#[cfg(feature = "whad")]
 pub(crate) const WHAD_TARGET_PROTOCOL_VERSION: u32 = 3;
 
-#[cfg(feature = "whad")]
 pub(crate) mod capability;
+pub use capability::WhadBleMode;
 
 #[cfg(feature = "whad")]
-mod discovery;
+pub(crate) mod discovery;
 
 #[cfg(feature = "whad")]
 pub(crate) mod framing;
@@ -24,6 +25,7 @@ pub(crate) mod transport;
 #[cfg(feature = "whad")]
 pub(crate) mod writer;
 
+#[cfg(feature = "whad")]
 pub(crate) mod proto {
     #![allow(dead_code)]
 
