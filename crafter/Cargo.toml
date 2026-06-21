@@ -20,7 +20,7 @@ path = "src/lib.rs"
 # so the default build remains free of those dependencies.
 [features]
 default = []
-whad = []
+whad = ["dep:prost", "dep:prost-build"]
 
 [dependencies]
 aes = "0.8"
@@ -37,9 +37,13 @@ pbkdf2 = "0.12"
 pnet_datalink = "0.35.0"
 pnet_packet = "0.35.0"
 pnet_transport = "0.35.0"
+prost = { version = "0.13", optional = true }
 sha1 = "0.10"
 sha2 = "0.10"
 subtle = "2"
+
+[build-dependencies]
+prost-build = { version = "0.13", optional = true }
 
 [dev-dependencies]
 proptest = "1"
