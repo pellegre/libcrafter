@@ -16,6 +16,12 @@ exclude = ["tests/fixtures/**"]
 [lib]
 path = "src/lib.rs"
 
+# The whad feature gates the optional dongle backend (protobuf + serial)
+# so the default build remains free of those dependencies.
+[features]
+default = []
+whad = []
+
 [dependencies]
 aes = "0.8"
 aes-gcm = "0.10"
