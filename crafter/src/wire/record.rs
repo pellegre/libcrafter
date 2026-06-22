@@ -618,6 +618,8 @@ pub enum MediumMetadata {
     Wifi(WifiMetadata),
     /// Bluetooth or BLE annotations.
     Bluetooth(BluetoothMetadata),
+    /// IEEE 802.15.4 / Zigbee radio annotations.
+    Dot15d4(Dot15d4Metadata),
     /// Generic radio capture annotations.
     Radio(RadioMetadata),
     /// Caller-defined medium annotation.
@@ -970,6 +972,88 @@ impl BluetoothMetadata {
     /// Set protocol label.
     pub fn with_protocol(mut self, protocol: impl Into<String>) -> Self {
         self.protocol = Some(protocol.into());
+        self
+    }
+}
+
+/// Initial IEEE 802.15.4 / Zigbee annotations.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+pub struct Dot15d4Metadata {
+    channel: Option<u8>,
+    signal_dbm: Option<i16>,
+    lqi: Option<u8>,
+    fcs_valid: Option<bool>,
+    protocol: Option<&'static str>,
+}
+
+impl Dot15d4Metadata {
+    /// Create empty 802.15.4 metadata.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create 802.15.4 metadata from scalar WHAD RX descriptor fields.
+    pub fn from_whad_rx_descriptor(channel: u8, rssi: i16, fcs_valid: bool, lqi: u8) -> Self {
+        Self::new()
+            .with_channel(channel)
+            .with_signal_dbm(rssi)
+            .with_fcs_valid(fcs_valid)
+            .with_lqi(lqi)
+            .with_protocol("dot15d4")
+    }
+
+    /// IEEE 802.15.4 channel when known.
+    pub const fn channel(&self) -> Option<u8> {
+        self.channel
+    }
+
+    /// Received signal strength in dBm when known.
+    pub const fn signal_dbm(&self) -> Option<i16> {
+        self.signal_dbm
+    }
+
+    /// Link quality indicator when known.
+    pub const fn lqi(&self) -> Option<u8> {
+        self.lqi
+    }
+
+    /// Frame check sequence validity when known.
+    pub const fn fcs_valid(&self) -> Option<bool> {
+        self.fcs_valid
+    }
+
+    /// Protocol label when known.
+    pub const fn protocol(&self) -> Option<&'static str> {
+        self.protocol
+    }
+
+    /// Set channel.
+    pub const fn with_channel(mut self, channel: u8) -> Self {
+        self.channel = Some(channel);
+        self
+    }
+
+    /// Set received signal strength in dBm.
+    pub const fn with_signal_dbm(mut self, signal_dbm: i16) -> Self {
+        self.signal_dbm = Some(signal_dbm);
+        self
+    }
+
+    /// Set link quality indicator.
+    pub const fn with_lqi(mut self, lqi: u8) -> Self {
+        self.lqi = Some(lqi);
+        self
+    }
+
+    /// Set frame check sequence validity.
+    pub const fn with_fcs_valid(mut self, fcs_valid: bool) -> Self {
+        self.fcs_valid = Some(fcs_valid);
+        self
+    }
+
+    /// Set protocol label.
+    pub const fn with_protocol(mut self, protocol: &'static str) -> Self {
+        self.protocol = Some(protocol);
         self
     }
 }
@@ -1382,6 +1466,28 @@ mod tests {
             metadata.medium(),
             Some(&MediumMetadata::Bluetooth(bluetooth))
         );
+    }
+
+    #[test]
+    fn dot15d4_metadata() {
+        let radio = Dot15d4Metadata::from_whad_rx_descriptor(15, -67, true, 200);
+        let metadata = PacketMetadata::new()
+            .with_backend(BackendKind::Whad)
+            .with_medium(MediumMetadata::Dot15d4(radio.clone()));
+
+        assert_eq!(radio.channel(), Some(15));
+        assert_eq!(radio.signal_dbm(), Some(-67));
+        assert_eq!(radio.fcs_valid(), Some(true));
+        assert_eq!(radio.lqi(), Some(200));
+        assert_eq!(radio.protocol(), Some("dot15d4"));
+        assert_eq!(metadata.medium(), Some(&MediumMetadata::Dot15d4(radio)));
+
+        let empty = Dot15d4Metadata::new();
+        assert_eq!(empty.channel(), None);
+        assert_eq!(empty.signal_dbm(), None);
+        assert_eq!(empty.fcs_valid(), None);
+        assert_eq!(empty.lqi(), None);
+        assert_eq!(empty.protocol(), None);
     }
 
     #[test]

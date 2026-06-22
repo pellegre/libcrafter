@@ -142,8 +142,9 @@ pub use net::{
 };
 pub use wire::Sniffer;
 pub use wire::{
-    derive_pmk, derive_ptk, BackendKind, BluetoothMetadata, Dot11Metadata, DropAllTransform,
-    DuplicateTransform, IpDefrag, IpDefragConfig, IpDefragEvictionReason, IpDefragMetadata,
+    derive_pmk, derive_ptk, BackendKind, BluetoothMetadata, Dot11Metadata, Dot15d4Metadata,
+    DropAllTransform, DuplicateTransform, IpDefrag, IpDefragConfig, IpDefragEvictionReason,
+    IpDefragMetadata,
     IpDefragOverlapPolicy, IpDefragOverlapStatus, IpDefragStats, IpFragment, IpFragmentConfig,
     IpFragmentFamily, IpFragmentMetadata, IpFragmentRange, IpFragmentReason, IpFragmentStats,
     Ipv4DontFragmentPolicy, Ipv4FragmentIdentificationPolicy, Ipv6AtomicFragmentPolicy,
@@ -206,8 +207,8 @@ pub mod prelude {
         WpaHandshakeStatus, WpaKeyKind, WpaMetadata, WpaNetwork, WriteReport,
     };
     pub use crate::{
-        BackendKind, BluetoothMetadata, DropAllTransform, DuplicateTransform, IpDefrag,
-        IpDefragConfig, IpDefragEvictionReason, IpDefragMetadata, IpDefragOverlapPolicy,
+        BackendKind, BluetoothMetadata, Dot15d4Metadata, DropAllTransform, DuplicateTransform,
+        IpDefrag, IpDefragConfig, IpDefragEvictionReason, IpDefragMetadata, IpDefragOverlapPolicy,
         IpDefragOverlapStatus, IpDefragStats, IpFragment, IpFragmentConfig, IpFragmentFamily,
         IpFragmentMetadata, IpFragmentRange, IpFragmentReason, IpFragmentStats,
         Ipv4DontFragmentPolicy, Ipv4FragmentIdentificationPolicy, Ipv6AtomicFragmentPolicy,
