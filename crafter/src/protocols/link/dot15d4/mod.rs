@@ -7,6 +7,8 @@
 
 mod consts;
 mod fcs;
+mod mac;
 mod radio;
 
+pub use mac::Dot15d4;
 pub use radio::Dot15d4Radio;
