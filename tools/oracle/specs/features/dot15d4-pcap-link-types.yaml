@@ -1,0 +1,161 @@
+version: 1
+kind: feature
+name: dot15d4-pcap-link-types
+summary: Classic pcap link-type coverage for IEEE 802.15.4 frames — the bare MAC with-FCS and no-FCS forms and the TAP pseudo-header form.
+
+layers:
+  - dot15d4
+  - dot15d4-radio
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+  - roundtrip
+strict_bytes: true
+malformed: false
+
+link_types:
+  - name: ieee802154-with-fcs
+    pcap_dlt: 195
+    linktype: LINKTYPE_IEEE802_15_4_WITHFCS
+    tcpdump: LINKTYPE_IEEE802_15_4_WITHFCS
+    libcrafter: Ieee802154
+    expected_root: dot15d4
+  - name: ieee802154-no-fcs
+    pcap_dlt: 230
+    linktype: LINKTYPE_IEEE802_15_4_NOFCS
+    tcpdump: LINKTYPE_IEEE802_15_4_NOFCS
+    libcrafter: Ieee802154
+    expected_root: dot15d4
+  - name: ieee802154-tap
+    pcap_dlt: 283
+    linktype: LINKTYPE_IEEE802_15_4_TAP
+    tcpdump: LINKTYPE_IEEE802_15_4_TAP
+    libcrafter: Ieee802154Tap
+    expected_root: dot15d4-radio
+
+behaviors:
+  - name: dlt-195-link-type-mapping
+    link_types:
+      - ieee802154-with-fcs
+    file_formats:
+      - pcap
+    sources:
+      - .agents/docs/dot15d4-manifest.md#Pcap-Link-Types
+    checks:
+      - pcap_dlt_195_maps_to_linktype_ieee802_15_4_withfcs
+      - libcrafter_link_type_is_ieee802154
+      - decoded_model_starts_with_dot15d4
+  - name: dlt-230-link-type-mapping
+    link_types:
+      - ieee802154-no-fcs
+    file_formats:
+      - pcap
+    sources:
+      - .agents/docs/dot15d4-manifest.md#Pcap-Link-Types
+    checks:
+      - pcap_dlt_230_maps_to_linktype_ieee802_15_4_nofcs
+      - libcrafter_link_type_is_ieee802154
+      - decoded_model_starts_with_dot15d4
+  - name: dlt-283-link-type-mapping
+    link_types:
+      - ieee802154-tap
+    file_formats:
+      - pcap
+    sources:
+      - .agents/docs/dot15d4-manifest.md#Pcap-Link-Types
+      - .agents/docs/dot15d4-manifest.md#TAP-Pseudo-Header-DLT-283
+    checks:
+      - pcap_dlt_283_maps_to_linktype_ieee802_15_4_tap
+      - libcrafter_link_type_is_ieee802154_tap
+      - decoded_model_starts_with_dot15d4_radio
+
+coverage_cases:
+  - dot15d4-pcap-dlt-195-link-type
+  - dot15d4-pcap-dlt-230-link-type
+  - dot15d4-pcap-dlt-283-link-type
+
+supported_cases:
+  - name: dot15d4-pcap-dlt-195-link-type
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: strict_bytes
+    file_format: pcap
+    link_types:
+      - ieee802154-with-fcs
+    roots:
+      - "link:ieee802154"
+    contract_only: true
+    expected:
+      pcap_dlt: 195
+      linktype: LINKTYPE_IEEE802_15_4_WITHFCS
+      libcrafter: Ieee802154
+      root: dot15d4
+    required_checks:
+      - link_type
+      - decoded_model
+  - name: dot15d4-pcap-dlt-230-link-type
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: strict_bytes
+    file_format: pcap
+    link_types:
+      - ieee802154-no-fcs
+    roots:
+      - "link:ieee802154"
+    contract_only: true
+    expected:
+      pcap_dlt: 230
+      linktype: LINKTYPE_IEEE802_15_4_NOFCS
+      libcrafter: Ieee802154
+      root: dot15d4
+    required_checks:
+      - link_type
+      - decoded_model
+  - name: dot15d4-pcap-dlt-283-link-type
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: strict_bytes
+    file_format: pcap
+    link_types:
+      - ieee802154-tap
+    roots:
+      - "link:ieee802154-tap"
+    contract_only: true
+    expected:
+      pcap_dlt: 283
+      linktype: LINKTYPE_IEEE802_15_4_TAP
+      libcrafter: Ieee802154Tap
+      root: dot15d4-radio
+    required_checks:
+      - link_type
+      - decoded_model
+
+backend_support:
+  scapy:
+    status: supported
+    pcap_read: true
+    pcap_write: true
+    native_layers:
+      - Dot15d4FCS
+      - PcapReader
+      - PcapWriter
+    notes:
+      - The Scapy backend reads and writes the with-FCS form (DLT 195,
+        Dot15d4FCS) natively; the no-FCS form (DLT 230) carries the bare MAC
+        frame and the TAP form (DLT 283) carries the radio pseudo-header.
+      - Runnable cross-backend pcap fixture execution is deferred until the
+        pcap suite grows dot15d4 case selection.
+  libcrafter:
+    status: partial
+    pcap_read: true
+    pcap_write: true
+    notes:
+      - The crate reads and writes LinkType::Ieee802154 (DLT 195/230) and
+        LinkType::Ieee802154Tap (DLT 283) pcaps; this oracle step records the
+        link-type mapping contract without widening runnable adapters.
