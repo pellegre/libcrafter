@@ -311,6 +311,9 @@ fn locate_by_pcap_link_type(link_type: PcapLinkType, bytes: &[u8]) -> Result<Ipv
         PcapLinkType::Ieee80211
         | PcapLinkType::Ieee80211Radiotap
         | PcapLinkType::BluetoothLeLl
+        | PcapLinkType::Ieee802154WithFcs
+        | PcapLinkType::Ieee802154NoFcs
+        | PcapLinkType::Ieee802154Tap
         | PcapLinkType::Unknown(_) => Ok(Ipv4Location::PassThrough(
             Ipv4FragmentPassThroughReason::UnsupportedWrapper,
         )),

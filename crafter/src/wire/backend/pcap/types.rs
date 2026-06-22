@@ -30,6 +30,21 @@ pub const LINKTYPE_IEEE802_11_RADIOTAP: u32 = DLT_IEEE802_11_RADIO;
 pub const DLT_BLUETOOTH_LE_LL_WITH_PHDR: u32 = 256;
 /// Bluetooth LE Link Layer with pseudo-header pcap link type.
 pub const LINKTYPE_BLUETOOTH_LE_LL_WITH_PHDR: u32 = DLT_BLUETOOTH_LE_LL_WITH_PHDR;
+/// Bare IEEE 802.15.4 MAC frame with the FCS present pcap data-link type
+/// (tcpdump LINKTYPE_IEEE802_15_4_WITHFCS).
+pub const DLT_IEEE802_15_4_WITHFCS: u32 = 195;
+/// Bare IEEE 802.15.4 MAC frame with the FCS present pcap link type.
+pub const LINKTYPE_IEEE802_15_4_WITHFCS: u32 = DLT_IEEE802_15_4_WITHFCS;
+/// Bare IEEE 802.15.4 MAC frame without the FCS pcap data-link type
+/// (tcpdump LINKTYPE_IEEE802_15_4_NOFCS).
+pub const DLT_IEEE802_15_4_NOFCS: u32 = 230;
+/// Bare IEEE 802.15.4 MAC frame without the FCS pcap link type.
+pub const LINKTYPE_IEEE802_15_4_NOFCS: u32 = DLT_IEEE802_15_4_NOFCS;
+/// IEEE 802.15.4 TAP pseudo-header followed by a MAC frame pcap data-link type
+/// (tcpdump LINKTYPE_IEEE802_15_4_TAP).
+pub const DLT_IEEE802_15_4_TAP: u32 = 283;
+/// IEEE 802.15.4 TAP pseudo-header followed by a MAC frame pcap link type.
+pub const LINKTYPE_IEEE802_15_4_TAP: u32 = DLT_IEEE802_15_4_TAP;
 const DLT_RAW_BSD: u32 = 12;
 const DLT_IPV4: u32 = 228;
 const DLT_IPV6: u32 = 229;
@@ -174,6 +189,12 @@ pub enum PcapLinkType {
     Ieee80211Radiotap,
     /// Bluetooth LE Link Layer with pseudo-header.
     BluetoothLeLl,
+    /// Bare IEEE 802.15.4 MAC frames with the FCS present.
+    Ieee802154WithFcs,
+    /// Bare IEEE 802.15.4 MAC frames without the FCS.
+    Ieee802154NoFcs,
+    /// IEEE 802.15.4 TAP pseudo-header followed by a MAC frame.
+    Ieee802154Tap,
     /// Raw IPv4/IPv6 packets without a link-layer header.
     RawIp,
     /// Linux cooked capture v1.
@@ -193,6 +214,9 @@ impl PcapLinkType {
             DLT_LINUX_SLL => Self::LinuxSll,
             DLT_IEEE802_11_RADIO => Self::Ieee80211Radiotap,
             DLT_BLUETOOTH_LE_LL_WITH_PHDR => Self::BluetoothLeLl,
+            DLT_IEEE802_15_4_WITHFCS => Self::Ieee802154WithFcs,
+            DLT_IEEE802_15_4_NOFCS => Self::Ieee802154NoFcs,
+            DLT_IEEE802_15_4_TAP => Self::Ieee802154Tap,
             value => Self::Unknown(value),
         }
     }
@@ -205,6 +229,9 @@ impl PcapLinkType {
             Self::Ieee80211 => DLT_IEEE802_11,
             Self::Ieee80211Radiotap => DLT_IEEE802_11_RADIO,
             Self::BluetoothLeLl => DLT_BLUETOOTH_LE_LL_WITH_PHDR,
+            Self::Ieee802154WithFcs => DLT_IEEE802_15_4_WITHFCS,
+            Self::Ieee802154NoFcs => DLT_IEEE802_15_4_NOFCS,
+            Self::Ieee802154Tap => DLT_IEEE802_15_4_TAP,
             Self::RawIp => DLT_RAW,
             Self::LinuxSll => DLT_LINUX_SLL,
             Self::Unknown(value) => value,
@@ -220,6 +247,10 @@ impl PcapLinkType {
             Self::Ieee80211Radiotap => LinkType::Radiotap,
             Self::LinuxSll => LinkType::LinuxSll,
             Self::BluetoothLeLl => LinkType::BluetoothLeLl,
+            // Temporary arms keeping the match exhaustive; the dedicated
+            // LinkType mappings for the 802.15.4 variants are added in step 29.
+            Self::Ieee802154WithFcs | Self::Ieee802154NoFcs => LinkType::Ieee802154,
+            Self::Ieee802154Tap => LinkType::Ieee802154Tap,
             Self::RawIp | Self::Unknown(_) => LinkType::Raw,
         }
     }
@@ -242,6 +273,11 @@ impl PcapLinkType {
             | Self::Ieee80211
             | Self::Ieee80211Radiotap
             | Self::BluetoothLeLl
+            // Temporary arms keeping the match exhaustive; the dedicated
+            // 802.15.4 decode dispatch is fleshed out in step 29.
+            | Self::Ieee802154WithFcs
+            | Self::Ieee802154NoFcs
+            | Self::Ieee802154Tap
             | Self::LinuxSll => {
                 Packet::decode_from_link_with_registry(registry, self.link_type(), bytes)
             }
@@ -481,7 +517,10 @@ impl PcapPacket {
 
 #[cfg(test)]
 mod tests {
-    use super::{PcapLinkType, PcapRecord, PcapTimestamp, DLT_BLUETOOTH_LE_LL_WITH_PHDR};
+    use super::{
+        PcapLinkType, PcapRecord, PcapTimestamp, DLT_BLUETOOTH_LE_LL_WITH_PHDR,
+        DLT_IEEE802_15_4_NOFCS, DLT_IEEE802_15_4_TAP, DLT_IEEE802_15_4_WITHFCS,
+    };
     use crate::{BleRadio, LinkType};
 
     #[test]
@@ -494,6 +533,18 @@ mod tests {
             PcapLinkType::BluetoothLeLl.datalink(),
             DLT_BLUETOOTH_LE_LL_WITH_PHDR
         );
+    }
+
+    #[test]
+    fn pcap_dot15d4_datalink() {
+        for (dlt, link_type) in [
+            (DLT_IEEE802_15_4_WITHFCS, PcapLinkType::Ieee802154WithFcs),
+            (DLT_IEEE802_15_4_NOFCS, PcapLinkType::Ieee802154NoFcs),
+            (DLT_IEEE802_15_4_TAP, PcapLinkType::Ieee802154Tap),
+        ] {
+            assert_eq!(PcapLinkType::from_datalink(dlt), link_type);
+            assert_eq!(link_type.datalink(), dlt);
+        }
     }
 
     #[test]
