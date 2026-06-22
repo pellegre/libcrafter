@@ -65,6 +65,12 @@ pub use self::arp::{
 pub(crate) use self::ble::decode_ble_adv;
 use self::ble::decode_ble_radio;
 pub use self::ble::{AdList, AdStructure, BleAdvPduType, BleLlAdv, BlePhy, BleRadio};
+pub(crate) use self::dot15d4::{
+    decode_dot15d4, decode_dot15d4_radio, decode_zigbee_aps, decode_zigbee_nwk,
+};
+pub use self::dot15d4::{
+    Dot15d4, Dot15d4AddrMode, Dot15d4FrameType, Dot15d4Radio, ZigbeeAps, ZigbeeNwk,
+};
 pub(crate) use self::dot11::decode_dot11_with_registry;
 pub use self::dot11::*;
 pub(crate) use self::llc::append_llc_snap_packet_with_registry;
@@ -832,6 +838,102 @@ pub(crate) fn decode_ble_ll_with_registry(
     Ok(Packet::new().push(radio).push(adv))
 }
 
+/// IEEE 802.15.4 MAC frame type code point for a Data frame (FCF bits 0..=2).
+///
+/// Only Data MAC frames carry a Zigbee NWK payload; beacons, acknowledgments,
+/// and MAC command frames keep their MAC payload as `Raw`.
+const DOT15D4_MAC_FRAME_TYPE_DATA: u8 = 1;
+/// Zigbee NWK frame type code point for a Data frame (Frame Control bits 0..=1).
+///
+/// Only Data NWK frames carry a Zigbee APS payload; NWK command frames keep
+/// their NWK payload as `Raw`.
+const ZIGBEE_NWK_FRAME_TYPE_DATA: u8 = 0;
+
+/// Decode an IEEE 802.15.4 MAC frame (and any Zigbee NWK/APS layers it carries)
+/// with optional TAP radio-descriptor pseudo-header metadata.
+///
+/// Mirrors [`decode_ble_ll_with_registry`]: it chains the per-layer decoders and
+/// pushes each decoded layer onto a [`Packet`], preserving any unrecognized or
+/// trailing bytes as a `Raw` layer rather than failing.
+///
+/// When `tap` is set, the buffer begins with a `LINKTYPE_IEEE802_15_4_TAP`
+/// (DLT 283) pseudo-header, parsed into a [`Dot15d4Radio`] layer; otherwise the
+/// buffer is a bare MAC frame and no radio descriptor is emitted. The MAC frame
+/// is parsed next. When the MAC frame is a Data frame, its payload is treated as
+/// a candidate Zigbee NWK frame: on a successful NWK decode the [`ZigbeeNwk`]
+/// layer is pushed, and when that NWK frame is itself a Data frame its payload is
+/// treated as a candidate Zigbee APS frame, pushing a [`ZigbeeAps`] layer on a
+/// successful decode. Any remaining undecoded bytes — including the payload of a
+/// non-Data frame or a frame type the crate does not model — become a `Raw`
+/// layer. A failure to recognize Zigbee is never an error.
+///
+/// Truncated, malformed, or otherwise invalid MAC/radio input surfaces as a
+/// structured [`CrafterError`] from the underlying decoders and never panics.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn decode_dot15d4_with_registry(
+    _registry: &ProtocolRegistry,
+    bytes: &[u8],
+    tap: bool,
+) -> Result<Packet> {
+    let mut packet = Packet::new();
+
+    // TAP captures prefix the MAC frame with a radio-descriptor pseudo-header;
+    // bare captures begin directly at the MAC frame.
+    let mac_bytes = if tap {
+        let (radio, rest) = decode_dot15d4_radio(bytes)?;
+        packet = packet.push(radio);
+        rest
+    } else {
+        bytes
+    };
+
+    // The MAC frame is mandatory; truncation surfaces as a structured error.
+    let (mac, mac_payload) = decode_dot15d4(mac_bytes)?;
+    // Only Data MAC frames carry a Zigbee NWK payload (read directly from the
+    // FCF so the dispatch logic stays self-contained in this module).
+    let mac_is_data =
+        mac_bytes.first().is_some_and(|fcf| fcf & 0b111 == DOT15D4_MAC_FRAME_TYPE_DATA);
+    packet = packet.push(mac);
+
+    if mac_payload.is_empty() {
+        return Ok(packet);
+    }
+
+    // Attempt the Zigbee NWK decode on a Data MAC payload; an unrecognized or
+    // failed decode keeps the MAC payload as `Raw` (mirrors BLE's
+    // unknown-preservation), never an error.
+    if mac_is_data {
+        if let Ok((nwk, nwk_payload)) = decode_zigbee_nwk(mac_payload) {
+            // Whether the NWK frame carries a Zigbee APS payload depends on the
+            // NWK frame type (Data), read from the NWK Frame Control field.
+            let nwk_is_data = mac_payload
+                .first()
+                .is_some_and(|fcf| fcf & 0b11 == ZIGBEE_NWK_FRAME_TYPE_DATA);
+            packet = packet.push(nwk);
+
+            if nwk_payload.is_empty() {
+                return Ok(packet);
+            }
+
+            if nwk_is_data {
+                if let Ok((aps, aps_payload)) = decode_zigbee_aps(nwk_payload) {
+                    packet = packet.push(aps);
+                    if !aps_payload.is_empty() {
+                        packet = packet.push_raw(Raw::from_bytes(aps_payload));
+                    }
+                    return Ok(packet);
+                }
+            }
+
+            // NWK present but no (or unrecognized) APS: keep the NWK payload raw.
+            return Ok(packet.push_raw(Raw::from_bytes(nwk_payload)));
+        }
+    }
+
+    // No recognized Zigbee NWK frame: preserve the MAC payload as `Raw`.
+    Ok(packet.push_raw(Raw::from_bytes(mac_payload)))
+}
+
 /// Append a decoded VLAN layer and dispatch its inner Ethernet type.
 pub(crate) fn append_vlan_packet_with_registry(
     registry: &ProtocolRegistry,
@@ -1104,5 +1206,112 @@ mod link_layers {
         let _adv: crate::BleLlAdv = crate::BleLlAdv::new().pdu_type(crate::BleAdvPduType::AdvInd);
         let ad: crate::AdStructure = crate::AdStructure::flags_general_disc();
         let _ads: crate::AdList = crate::AdList(vec![ad]);
+    }
+}
+
+#[cfg(test)]
+mod dot15d4_entry {
+    use super::{
+        decode_dot15d4_with_registry, Dot15d4, Dot15d4Radio, Raw, ZigbeeAps, ZigbeeNwk,
+    };
+    use crate::registry::ProtocolRegistry;
+    use crate::Packet;
+
+    /// A full TAP + MAC + Zigbee NWK + APS stack built with the builder API,
+    /// using lab-safe documentation-style identifiers.
+    fn full_stack_packet() -> Packet {
+        Dot15d4Radio::on_channel(20).rssi(-55)
+            / Dot15d4::data()
+                .seq(9)
+                .dest_short(0x1234, 0x0000)
+                .src_short(0x1234, 0xABCD)
+            / ZigbeeNwk::data().dest(0x0000).src(0xABCD).radius(30).seq(5)
+            / ZigbeeAps::data()
+                .cluster(0x0006)
+                .profile(0x0104)
+                .dest_endpoint(1)
+                .src_endpoint(1)
+                .counter(7)
+                .payload(&[0x01, 0x02])
+    }
+
+    #[test]
+    fn decode_dot15d4_entry_builds_radio_mac_nwk_aps_layers() {
+        // Compile the full TAP + MAC + NWK + APS stack and decode it back through
+        // the entrypoint; all four typed layers must be present.
+        let compiled = full_stack_packet()
+            .compile()
+            .expect("compile TAP + MAC + NWK + APS stack");
+
+        let decoded =
+            decode_dot15d4_with_registry(ProtocolRegistry::builtin(), compiled.as_bytes(), true)
+                .expect("decode TAP 802.15.4 frame through the entrypoint");
+
+        assert!(decoded.layer::<Dot15d4Radio>().is_some(), "Dot15d4Radio layer present");
+        assert!(decoded.layer::<Dot15d4>().is_some(), "Dot15d4 MAC layer present");
+        assert!(decoded.layer::<ZigbeeNwk>().is_some(), "ZigbeeNwk layer present");
+        assert!(decoded.layer::<ZigbeeAps>().is_some(), "ZigbeeAps layer present");
+
+        // The APS application payload is preserved as a trailing `Raw` layer.
+        let raw = decoded.layer::<Raw>().expect("APS payload preserved as Raw");
+        assert_eq!(raw.as_bytes(), &[0x01, 0x02]);
+
+        // Exactly the four typed layers plus the trailing Raw payload.
+        assert_eq!(decoded.iter().count(), 5);
+    }
+
+    #[test]
+    fn decode_dot15d4_entry_bare_mac_skips_radio_descriptor() {
+        // A bare (non-TAP) capture starts at the MAC frame, so no radio
+        // descriptor is emitted, but the MAC + Zigbee layers still decode.
+        let compiled = full_stack_packet()
+            .compile()
+            .expect("compile TAP + MAC + NWK + APS stack");
+
+        // Re-build without the radio descriptor to get the bare MAC frame bytes.
+        let mac_only = (Dot15d4::data()
+            .seq(9)
+            .dest_short(0x1234, 0x0000)
+            .src_short(0x1234, 0xABCD)
+            / ZigbeeNwk::data().dest(0x0000).src(0xABCD).radius(30).seq(5)
+            / ZigbeeAps::data()
+                .cluster(0x0006)
+                .profile(0x0104)
+                .dest_endpoint(1)
+                .src_endpoint(1)
+                .counter(7)
+                .payload(&[0x01, 0x02]))
+        .compile()
+        .expect("compile bare MAC + NWK + APS frame");
+        // Sanity: the TAP capture is exactly the radio pseudo-header followed by
+        // the bare MAC frame.
+        assert!(compiled.as_bytes().ends_with(mac_only.as_bytes()));
+
+        let decoded =
+            decode_dot15d4_with_registry(ProtocolRegistry::builtin(), mac_only.as_bytes(), false)
+                .expect("decode bare 802.15.4 frame through the entrypoint");
+
+        assert!(decoded.layer::<Dot15d4Radio>().is_none(), "no radio descriptor for bare frame");
+        assert!(decoded.layer::<Dot15d4>().is_some(), "Dot15d4 MAC layer present");
+        assert!(decoded.layer::<ZigbeeNwk>().is_some(), "ZigbeeNwk layer present");
+        assert!(decoded.layer::<ZigbeeAps>().is_some(), "ZigbeeAps layer present");
+    }
+
+    #[test]
+    fn decode_dot15d4_entry_non_data_mac_keeps_payload_raw() {
+        // An acknowledgment MAC frame is not a Data frame, so its payload must be
+        // preserved as `Raw` rather than parsed as Zigbee NWK.
+        let compiled = (Dot15d4::ack().seq(3) / Raw::from_bytes([0xAA, 0xBB, 0xCC]))
+            .compile()
+            .expect("compile non-data MAC frame");
+
+        let decoded =
+            decode_dot15d4_with_registry(ProtocolRegistry::builtin(), compiled.as_bytes(), false)
+                .expect("decode non-data 802.15.4 frame through the entrypoint");
+
+        assert!(decoded.layer::<Dot15d4>().is_some(), "Dot15d4 MAC layer present");
+        assert!(decoded.layer::<ZigbeeNwk>().is_none(), "non-data payload is not parsed as NWK");
+        let raw = decoded.layer::<Raw>().expect("non-data MAC payload kept as Raw");
+        assert_eq!(raw.as_bytes(), &[0xAA, 0xBB, 0xCC]);
     }
 }
