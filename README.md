@@ -1,7 +1,7 @@
 <h1 align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/libcrafter-lockup-dark.svg">
-    <img src="docs/assets/libcrafter-lockup.svg" alt="libcrafter" width="560">
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/pellegre/libcrafter/HEAD/docs/assets/libcrafter-lockup-dark.svg">
+    <img src="https://raw.githubusercontent.com/pellegre/libcrafter/HEAD/docs/assets/libcrafter-lockup.svg" alt="libcrafter" width="560">
   </picture>
 </h1>
 
