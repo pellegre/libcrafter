@@ -190,6 +190,171 @@ impl Dot15d4 {
         self.payload = payload.to_vec();
         self
     }
+
+    /// Set a 16-bit (short) destination PAN identifier and address.
+    ///
+    /// Sets `dest_pan`/`dest_addr` and, unless the caller already set
+    /// `dest_addr_mode` explicitly, marks the destination addressing mode as
+    /// [`Dot15d4AddrMode::Short`] (IEEE Std 802.15.4-2020, Clause 7.2.2.8).
+    pub fn dest_short(mut self, pan: u16, addr: u16) -> Self {
+        self.dest_pan.set_user(pan);
+        self.dest_addr.set_user(u64::from(addr));
+        if !self.dest_addr_mode.is_user_set() {
+            self.dest_addr_mode.set_user(Dot15d4AddrMode::Short);
+        }
+        self
+    }
+
+    /// Set a 64-bit (extended) destination PAN identifier and address.
+    ///
+    /// Sets `dest_pan`/`dest_addr` and, unless the caller already set
+    /// `dest_addr_mode` explicitly, marks the destination addressing mode as
+    /// [`Dot15d4AddrMode::Extended`] (IEEE Std 802.15.4-2020, Clause 7.2.2.8).
+    pub fn dest_extended(mut self, pan: u16, addr: u64) -> Self {
+        self.dest_pan.set_user(pan);
+        self.dest_addr.set_user(addr);
+        if !self.dest_addr_mode.is_user_set() {
+            self.dest_addr_mode.set_user(Dot15d4AddrMode::Extended);
+        }
+        self
+    }
+
+    /// Set a 16-bit (short) source PAN identifier and address.
+    ///
+    /// Sets `src_pan`/`src_addr` and, unless the caller already set
+    /// `src_addr_mode` explicitly, marks the source addressing mode as
+    /// [`Dot15d4AddrMode::Short`] (IEEE Std 802.15.4-2020, Clause 7.2.2.10).
+    pub fn src_short(mut self, pan: u16, addr: u16) -> Self {
+        self.src_pan.set_user(pan);
+        self.src_addr.set_user(u64::from(addr));
+        if !self.src_addr_mode.is_user_set() {
+            self.src_addr_mode.set_user(Dot15d4AddrMode::Short);
+        }
+        self
+    }
+
+    /// Set a 64-bit (extended) source PAN identifier and address.
+    ///
+    /// Sets `src_pan`/`src_addr` and, unless the caller already set
+    /// `src_addr_mode` explicitly, marks the source addressing mode as
+    /// [`Dot15d4AddrMode::Extended`] (IEEE Std 802.15.4-2020, Clause 7.2.2.10).
+    pub fn src_extended(mut self, pan: u16, addr: u64) -> Self {
+        self.src_pan.set_user(pan);
+        self.src_addr.set_user(addr);
+        if !self.src_addr_mode.is_user_set() {
+            self.src_addr_mode.set_user(Dot15d4AddrMode::Extended);
+        }
+        self
+    }
+
+    /// Resolve the effective destination addressing mode (FCF bits 10..=11).
+    ///
+    /// Honors a user-set `dest_addr_mode`; otherwise infers it from the
+    /// presence of a destination address: a set address defaults to
+    /// [`Dot15d4AddrMode::Short`] (a fuller short/extended distinction is made
+    /// by the typed `dest_short`/`dest_extended` builders), and an unset
+    /// address resolves to [`Dot15d4AddrMode::None`]
+    /// (IEEE Std 802.15.4-2020, Clause 7.2.2.8).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn effective_dest_addr_mode(&self) -> Dot15d4AddrMode {
+        match self.dest_addr_mode.value() {
+            Some(mode) => *mode,
+            None => {
+                if self.dest_addr.value().is_some() {
+                    Dot15d4AddrMode::Short
+                } else {
+                    Dot15d4AddrMode::None
+                }
+            }
+        }
+    }
+
+    /// Resolve the effective source addressing mode (FCF bits 14..=15).
+    ///
+    /// Honors a user-set `src_addr_mode`; otherwise infers it from the
+    /// presence of a source address, mirroring
+    /// [`Dot15d4::effective_dest_addr_mode`]
+    /// (IEEE Std 802.15.4-2020, Clause 7.2.2.10).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn effective_src_addr_mode(&self) -> Dot15d4AddrMode {
+        match self.src_addr_mode.value() {
+            Some(mode) => *mode,
+            None => {
+                if self.src_addr.value().is_some() {
+                    Dot15d4AddrMode::Short
+                } else {
+                    Dot15d4AddrMode::None
+                }
+            }
+        }
+    }
+
+    /// Resolve the effective addressing mode for the requested direction.
+    ///
+    /// `effective_addr_mode(true)` returns the destination mode and
+    /// `effective_addr_mode(false)` the source mode, sharing the same
+    /// honored-override-then-infer rule used by the per-direction resolvers.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn effective_addr_mode(&self, destination: bool) -> Dot15d4AddrMode {
+        if destination {
+            self.effective_dest_addr_mode()
+        } else {
+            self.effective_src_addr_mode()
+        }
+    }
+
+    /// Resolve the effective PAN-ID-compression bit (FCF bit 6).
+    ///
+    /// Honors a user-set `pan_id_compression`; otherwise applies the standard
+    /// default rule: compression is set when both the destination and source
+    /// addresses are present and share the same PAN identifier, so the source
+    /// PAN ID is omitted on the wire and the single shared PAN ID is serialized
+    /// once (IEEE Std 802.15.4-2020, Clause 7.2.2.6, PAN ID Compression field).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn effective_pan_id_compression(&self) -> bool {
+        if let Some(value) = self.pan_id_compression.value() {
+            return *value;
+        }
+
+        let dest_present = self.effective_dest_addr_mode() != Dot15d4AddrMode::None;
+        let src_present = self.effective_src_addr_mode() != Dot15d4AddrMode::None;
+        if !(dest_present && src_present) {
+            return false;
+        }
+
+        match (self.dest_pan.value(), self.src_pan.value()) {
+            (Some(dest_pan), Some(src_pan)) => dest_pan == src_pan,
+            // With both addresses present and only one PAN ID supplied, treat
+            // the single PAN as shared and compress.
+            (Some(_), None) | (None, Some(_)) => true,
+            (None, None) => false,
+        }
+    }
+
+    /// Resolve whether the destination PAN identifier is present on the wire.
+    ///
+    /// The destination PAN ID is present whenever the destination addressing
+    /// mode is not [`Dot15d4AddrMode::None`]
+    /// (IEEE Std 802.15.4-2020, Clause 7.2.2, Table 7-2).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn effective_dest_pan_present(&self) -> bool {
+        self.effective_dest_addr_mode() != Dot15d4AddrMode::None
+    }
+
+    /// Resolve whether the source PAN identifier is present on the wire.
+    ///
+    /// The source PAN ID is present when the source addressing mode is not
+    /// [`Dot15d4AddrMode::None`] and PAN-ID compression is not in effect; when
+    /// compression is set the source PAN ID is omitted and the destination PAN
+    /// ID serves both addresses
+    /// (IEEE Std 802.15.4-2020, Clause 7.2.2.6 / Table 7-2).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn effective_src_pan_present(&self) -> bool {
+        if self.effective_src_addr_mode() == Dot15d4AddrMode::None {
+            return false;
+        }
+        !self.effective_pan_id_compression()
+    }
 }
 
 impl Default for Dot15d4 {
@@ -260,5 +425,113 @@ mod dot15d4_mac_builder {
         assert!(frame.pan_id_compression.is_unset());
         assert!(frame.frame_version.is_unset());
         assert!(frame.fcs.is_unset());
+    }
+}
+
+#[cfg(test)]
+mod dot15d4_mac_address {
+    use super::{Dot15d4, Dot15d4AddrMode};
+
+    #[test]
+    fn short_dest_and_src_share_pan_under_compression() {
+        let frame = Dot15d4::data()
+            .dest_short(0xABCD, 0x1234)
+            .src_short(0xABCD, 0x5678);
+
+        // Typed builders set the addressing modes to Short.
+        assert_eq!(frame.dest_addr_mode.value(), Some(&Dot15d4AddrMode::Short));
+        assert_eq!(frame.src_addr_mode.value(), Some(&Dot15d4AddrMode::Short));
+        assert_eq!(frame.dest_addr.value(), Some(&0x1234));
+        assert_eq!(frame.src_addr.value(), Some(&0x5678));
+
+        // Resolvers report Short modes.
+        assert_eq!(frame.effective_dest_addr_mode(), Dot15d4AddrMode::Short);
+        assert_eq!(frame.effective_src_addr_mode(), Dot15d4AddrMode::Short);
+        assert_eq!(frame.effective_addr_mode(true), Dot15d4AddrMode::Short);
+        assert_eq!(frame.effective_addr_mode(false), Dot15d4AddrMode::Short);
+
+        // Both addresses present and share a PAN: compression defaults on, so
+        // the source PAN ID is omitted and the single shared PAN is serialized
+        // once via the destination PAN ID.
+        assert!(frame.effective_pan_id_compression());
+        assert!(frame.effective_dest_pan_present());
+        assert!(!frame.effective_src_pan_present());
+    }
+
+    #[test]
+    fn extended_dest_and_src_addresses() {
+        let frame = Dot15d4::data()
+            .dest_extended(0x0001, 0x0011_2233_4455_6677)
+            .src_extended(0x0002, 0x8899_AABB_CCDD_EEFF);
+
+        assert_eq!(
+            frame.dest_addr_mode.value(),
+            Some(&Dot15d4AddrMode::Extended)
+        );
+        assert_eq!(
+            frame.src_addr_mode.value(),
+            Some(&Dot15d4AddrMode::Extended)
+        );
+        assert_eq!(frame.dest_addr.value(), Some(&0x0011_2233_4455_6677));
+        assert_eq!(frame.src_addr.value(), Some(&0x8899_AABB_CCDD_EEFF));
+
+        assert_eq!(frame.effective_dest_addr_mode(), Dot15d4AddrMode::Extended);
+        assert_eq!(frame.effective_src_addr_mode(), Dot15d4AddrMode::Extended);
+
+        // Distinct PAN IDs: compression stays off and both PAN IDs are present.
+        assert!(!frame.effective_pan_id_compression());
+        assert!(frame.effective_dest_pan_present());
+        assert!(frame.effective_src_pan_present());
+    }
+
+    #[test]
+    fn destination_only_frame_has_no_source_addressing() {
+        let frame = Dot15d4::data().dest_short(0xABCD, 0x1234);
+
+        assert_eq!(frame.effective_dest_addr_mode(), Dot15d4AddrMode::Short);
+        assert_eq!(frame.effective_src_addr_mode(), Dot15d4AddrMode::None);
+
+        // With no source address, compression does not apply; the destination
+        // PAN ID is present and there is no source PAN ID.
+        assert!(!frame.effective_pan_id_compression());
+        assert!(frame.effective_dest_pan_present());
+        assert!(!frame.effective_src_pan_present());
+    }
+
+    #[test]
+    fn typed_builder_does_not_override_explicit_addr_mode() {
+        // Caller sets an extended mode but then supplies a short address on
+        // purpose; the explicit mode must survive (malformed-on-purpose).
+        let frame = Dot15d4::data();
+        let mut frame = frame;
+        frame.dest_addr_mode.set_user(Dot15d4AddrMode::Extended);
+        let frame = frame.dest_short(0xABCD, 0x1234);
+
+        assert_eq!(
+            frame.dest_addr_mode.value(),
+            Some(&Dot15d4AddrMode::Extended)
+        );
+        assert_eq!(frame.effective_dest_addr_mode(), Dot15d4AddrMode::Extended);
+    }
+
+    #[test]
+    fn user_set_compression_is_honored() {
+        // Destination-only frame would default compression off, but an explicit
+        // request to compress must be honored.
+        let frame = Dot15d4::data()
+            .dest_short(0xABCD, 0x1234)
+            .pan_id_compression(true);
+
+        assert!(frame.effective_pan_id_compression());
+
+        // And an explicit request to disable compression on a frame that would
+        // otherwise compress must also be honored.
+        let frame = Dot15d4::data()
+            .dest_short(0xABCD, 0x1234)
+            .src_short(0xABCD, 0x5678)
+            .pan_id_compression(false);
+
+        assert!(!frame.effective_pan_id_compression());
+        assert!(frame.effective_src_pan_present());
     }
 }
