@@ -1,0 +1,152 @@
+version: 1
+kind: layer
+name: dot15d4
+summary: IEEE 802.15.4 MAC frame - frame control field, addressing modes (none/short-16/extended-64), PAN-ID compression, sequence number, payload, and trailing CRC-16/CCITT FCS.
+
+roots:
+  - "link:ieee802154"
+parents:
+  - root
+  - dot15d4_radio
+children:
+  - zigbee_nwk
+  - payload
+supported_directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+  - roundtrip
+live_eligibility: false
+live_gate: whad_backend_not_yet_available
+
+fields:
+  - name: frame_type
+    type: enum
+    required: true
+    domains:
+      - data
+      - beacon
+      - ack
+      - command
+  - name: security_enabled
+    type: bool
+    required: false
+    domains:
+      - false
+      - true
+  - name: frame_pending
+    type: bool
+    required: false
+    domains:
+      - false
+      - true
+  - name: ack_request
+    type: bool
+    required: false
+    domains:
+      - false
+      - true
+  - name: pan_id_compression
+    type: bool
+    required: false
+    domains:
+      - false
+      - true
+  - name: frame_version
+    type: uint8
+    required: false
+    domains:
+      - default
+      - explicit
+  - name: dest_addr_mode
+    type: enum
+    required: false
+    domains:
+      - none
+      - short_16
+      - extended_64
+  - name: src_addr_mode
+    type: enum
+    required: false
+    domains:
+      - none
+      - short_16
+      - extended_64
+  - name: seq
+    type: uint8
+    required: false
+    domains:
+      - auto
+      - explicit
+  - name: dest_pan
+    type: uint16
+    required: false
+    domains:
+      - absent
+      - documentation_safe
+      - explicit
+  - name: dest_addr
+    type: uint64
+    required: false
+    domains:
+      - absent
+      - short_address
+      - extended_address
+  - name: src_pan
+    type: uint16
+    required: false
+    domains:
+      - absent
+      - documentation_safe
+      - explicit
+  - name: src_addr
+    type: uint64
+    required: false
+    domains:
+      - absent
+      - short_address
+      - extended_address
+  - name: payload
+    type: bytes
+    required: false
+    domains:
+      - absent
+      - opaque_bytes
+  - name: fcs
+    type: uint16
+    required: false
+    domains:
+      - auto
+      - explicit
+
+coverage_cases:
+  - dot15d4-data-short-pan-compressed
+  - dot15d4-data-extended-pan-compressed
+  - dot15d4-ack-no-addressing
+  - dot15d4-pcap-dlt-195-link-type
+  - dot15d4-pcap-dlt-230-link-type
+  - malformed-dot15d4-truncated-fcf
+  - malformed-dot15d4-truncated-addressing
+  - malformed-dot15d4-reserved-frame-type
+
+backend_support:
+  scapy:
+    status: supported
+    encode: true
+    decode: true
+    native_layers:
+      - Dot15d4
+      - Dot15d4FCS
+      - Dot15d4Data
+    notes:
+      - The Step 36 scapy backend imports scapy.layers.dot15d4 and decodes the
+        with-FCS form (DLT 195, Dot15d4FCS) natively.
+      - Strict-byte dot15d4 MAC cases are contract-only until the runnable
+        libcrafter offline adapter hooks are widened for dot15d4.
+  libcrafter:
+    status: partial
+    encode: true
+    decode: true
+    notes:
+      - The crate exposes Dot15d4 MAC encode/decode behavior with crate tests,
+        hex fixtures, and summary snapshots; runnable dot15d4 offline
+        comparisons remain deferred to adapter normalization work.

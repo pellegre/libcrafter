@@ -5,7 +5,7 @@ summary: Classic pcap link-type coverage for IEEE 802.15.4 frames — the bare M
 
 layers:
   - dot15d4
-  - dot15d4-radio
+  - dot15d4_radio
 directions:
   - reference_to_libcrafter
   - libcrafter_to_reference
@@ -31,7 +31,7 @@ link_types:
     linktype: LINKTYPE_IEEE802_15_4_TAP
     tcpdump: LINKTYPE_IEEE802_15_4_TAP
     libcrafter: Ieee802154Tap
-    expected_root: dot15d4-radio
+    expected_root: dot15d4_radio
 
 behaviors:
   - name: dlt-195-link-type-mapping
@@ -131,7 +131,7 @@ supported_cases:
       pcap_dlt: 283
       linktype: LINKTYPE_IEEE802_15_4_TAP
       libcrafter: Ieee802154Tap
-      root: dot15d4-radio
+      root: dot15d4_radio
     required_checks:
       - link_type
       - decoded_model
