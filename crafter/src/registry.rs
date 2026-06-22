@@ -3,7 +3,7 @@
 use std::sync::OnceLock;
 
 use crate::endian::read_u32_be;
-use crate::error::{CrafterError, Result};
+use crate::error::Result;
 use crate::packet::{LinkType, NetworkLayer, Packet, Raw};
 use crate::protocols::bgp::{decode::append_bgp_packet_with_registry, BGP_PORT};
 use crate::protocols::dhcp::{append_dhcp_packet, is_dhcp_port_pair, looks_like_dhcp_payload};
@@ -32,9 +32,10 @@ use crate::protocols::ospf::v3::append_ospfv3_packet_with_checksum_validation;
 // decode-time checksum validation (RFC 2328 §A.3.1).
 use crate::protocols::link::{
     append_arp_packet, append_vlan_packet_with_registry, decode_ble_ll_with_registry,
-    decode_dot11_with_registry, decode_ethernet_with_registry, decode_linux_sll_with_registry,
-    decode_null_loopback_with_registry, decode_radiotap_with_registry, ETHERTYPE_ARP,
-    ETHERTYPE_EAPOL, ETHERTYPE_IPV4, ETHERTYPE_IPV6, ETHERTYPE_VLAN,
+    decode_dot11_with_registry, decode_dot15d4_with_registry, decode_ethernet_with_registry,
+    decode_linux_sll_with_registry, decode_null_loopback_with_registry,
+    decode_radiotap_with_registry, ETHERTYPE_ARP, ETHERTYPE_EAPOL, ETHERTYPE_IPV4, ETHERTYPE_IPV6,
+    ETHERTYPE_VLAN,
 };
 #[allow(unused_imports)]
 pub(crate) use crate::protocols::ospf::decode::append_ospf_packet;
@@ -488,11 +489,11 @@ impl ProtocolRegistry {
             LinkType::Ieee80211 => decode_dot11_with_registry(self, bytes),
             LinkType::Radiotap => decode_radiotap_with_registry(self, bytes),
             LinkType::BluetoothLeLl => decode_ble_ll_with_registry(self, bytes),
-            // Temporary structured-unsupported arm; the real 802.15.4 decode
-            // dispatch (decode_dot15d4_with_registry) is wired in step 25.
-            LinkType::Ieee802154 | LinkType::Ieee802154Tap => Err(
-                CrafterError::invalid_field_value("registry.link_type", "ieee802154 decode not yet wired"),
-            ),
+            // Bare 802.15.4 captures (DLT 195/230) start at the MAC frame; the
+            // TAP form (DLT 283) prefixes a Dot15d4Radio pseudo-header, selected
+            // by `tap`.
+            LinkType::Ieee802154 => decode_dot15d4_with_registry(self, bytes, false),
+            LinkType::Ieee802154Tap => decode_dot15d4_with_registry(self, bytes, true),
             LinkType::LinuxCooked | LinkType::LinuxSll => self.decode_linux_sll(bytes),
             LinkType::NullLoopback => decode_null_loopback_with_registry(self, bytes),
         }
@@ -1373,6 +1374,100 @@ mod decode_dispatch {
 
         assert_eq!(ipv4.layer::<Raw>().unwrap().as_bytes(), b"v4-private");
         assert_eq!(ipv6.layer::<Raw>().unwrap().as_bytes(), b"v6-private");
+    }
+}
+
+#[cfg(test)]
+mod registry_dot15d4 {
+    use crate::protocols::link::{Dot15d4, Dot15d4Radio, ZigbeeAps, ZigbeeNwk};
+    use crate::{LinkType, Packet, Raw};
+
+    /// A full radio + MAC + Zigbee NWK + APS stack built with the builder API,
+    /// using lab-safe documentation-style identifiers.
+    fn full_stack_packet() -> Packet {
+        Dot15d4Radio::on_channel(20).rssi(-55)
+            / Dot15d4::data()
+                .seq(9)
+                .dest_short(0x1234, 0x0000)
+                .src_short(0x1234, 0xABCD)
+            / ZigbeeNwk::data().dest(0x0000).src(0xABCD).radius(30).seq(5)
+            / ZigbeeAps::data()
+                .cluster(0x0006)
+                .profile(0x0104)
+                .dest_endpoint(1)
+                .src_endpoint(1)
+                .counter(7)
+                .payload(&[0x01, 0x02])
+    }
+
+    #[test]
+    fn decode_from_link_tap_routes_to_dot15d4_entrypoint() {
+        // A TAP capture (DLT 283) prefixes a Dot15d4Radio pseudo-header; the
+        // public decode_from_link path must yield the radio + MAC + Zigbee
+        // layers.
+        let compiled = full_stack_packet()
+            .compile()
+            .expect("compile TAP + MAC + NWK + APS stack");
+
+        let decoded =
+            Packet::decode_from_link(LinkType::Ieee802154Tap, compiled.as_bytes())
+                .expect("decode TAP 802.15.4 frame via decode_from_link");
+
+        assert!(decoded.layer::<Dot15d4Radio>().is_some(), "Dot15d4Radio layer present");
+        assert!(decoded.layer::<Dot15d4>().is_some(), "Dot15d4 MAC layer present");
+        assert!(decoded.layer::<ZigbeeNwk>().is_some(), "ZigbeeNwk layer present");
+        assert!(decoded.layer::<ZigbeeAps>().is_some(), "ZigbeeAps layer present");
+        assert_eq!(
+            decoded.layer::<Raw>().expect("APS payload preserved as Raw").as_bytes(),
+            &[0x01, 0x02]
+        );
+    }
+
+    #[test]
+    fn decode_from_link_bare_mac_skips_radio_descriptor() {
+        // A bare capture (DLT 195/230) starts at the MAC frame, so no radio
+        // descriptor is emitted, but the MAC + Zigbee layers still decode.
+        let mac_only = (Dot15d4::data()
+            .seq(9)
+            .dest_short(0x1234, 0x0000)
+            .src_short(0x1234, 0xABCD)
+            / ZigbeeNwk::data().dest(0x0000).src(0xABCD).radius(30).seq(5)
+            / ZigbeeAps::data()
+                .cluster(0x0006)
+                .profile(0x0104)
+                .dest_endpoint(1)
+                .src_endpoint(1)
+                .counter(7)
+                .payload(&[0x01, 0x02]))
+        .compile()
+        .expect("compile bare MAC + NWK + APS frame");
+
+        let decoded = Packet::decode_from_link(LinkType::Ieee802154, mac_only.as_bytes())
+            .expect("decode bare 802.15.4 frame via decode_from_link");
+
+        assert!(decoded.layer::<Dot15d4Radio>().is_none(), "no radio descriptor for bare frame");
+        assert!(decoded.layer::<Dot15d4>().is_some(), "Dot15d4 MAC layer present");
+        assert!(decoded.layer::<ZigbeeNwk>().is_some(), "ZigbeeNwk layer present");
+        assert!(decoded.layer::<ZigbeeAps>().is_some(), "ZigbeeAps layer present");
+    }
+
+    #[test]
+    fn decode_from_link_truncated_buffer_is_structured_error() {
+        // A buffer too short to hold a MAC frame control field must surface as a
+        // structured decode error, never a panic.
+        let err = Packet::decode_from_link(LinkType::Ieee802154, [0x01u8])
+            .expect_err("truncated 802.15.4 buffer must error");
+        let rendered = err.to_string();
+        assert!(
+            !rendered.is_empty(),
+            "structured error renders a non-empty message: {rendered}"
+        );
+
+        // The TAP form is equally resilient to a truncated radio pseudo-header.
+        assert!(
+            Packet::decode_from_link(LinkType::Ieee802154Tap, [0x00u8, 0x00]).is_err(),
+            "truncated TAP pseudo-header must error",
+        );
     }
 }
 
