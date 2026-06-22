@@ -7,11 +7,13 @@ syntax = "proto3";
 import "device.proto";
 import "generic.proto";
 import "ble.proto";
+import "dot15d4.proto";
 
 message Message {
   oneof msg {
     generic.Message generic = 1;
     discovery.Message discovery = 2;
     ble.Message ble = 3;
+    dot15d4.Message dot15d4 = 4;
   }
 }
