@@ -789,6 +789,58 @@ mod tests {
     }
 
     #[test]
+    fn dot15d4_radio_roundtrip() {
+        // Build a radio descriptor with lab-safe values, compile it as a
+        // lone-layer packet to TAP bytes, then decode those bytes back and
+        // confirm the descriptor fields survive the round-trip.
+        let radio = Dot15d4Radio::on_channel(20)
+            .rssi(-55)
+            .fcs_valid(true)
+            .lqi(200);
+
+        let bytes = Packet::from_layer(radio.clone())
+            .compile()
+            .expect("compile Dot15d4Radio TAP pseudo-header");
+
+        // The compiled bytes are exactly the TAP pseudo-header: the fixed
+        // 4-octet header plus the three padded TLVs.
+        assert_eq!(bytes.len(), radio.encoded_len());
+        assert_eq!(bytes.as_bytes().len(), DOT15D4_TAP_HEADER_LEN + 8 + 8 + 8);
+
+        // The little-endian total-length field in the fixed header equals the
+        // emitted length and is a multiple of the 32-bit TLV alignment.
+        let total_len = u16::from_le_bytes([bytes.as_bytes()[2], bytes.as_bytes()[3]]);
+        assert_eq!(total_len as usize, bytes.as_bytes().len());
+        assert_eq!(total_len % DOT15D4_TAP_TLV_ALIGN as u16, 0);
+
+        let (decoded, tail) =
+            decode_dot15d4_radio(bytes.as_bytes()).expect("decode Dot15d4Radio TAP pseudo-header");
+
+        // No MAC frame follows the lone descriptor, so the decoded tail is empty.
+        assert!(tail.is_empty());
+        assert_eq!(decoded.effective_channel(), 20);
+        assert_eq!(decoded.effective_rssi(), Some(-55));
+        assert!(decoded.effective_fcs_valid());
+        // LQI is receive-side metadata that the TAP pseudo-header encoder does
+        // not serialize, so it is not recoverable on decode and resolves back to
+        // its unset state.
+        assert_eq!(decoded.effective_lqi(), None);
+
+        // A truncated pseudo-header surfaces a structured error rather than
+        // panicking, even after a successful round-trip.
+        let err = decode_dot15d4_radio(&bytes.as_bytes()[..DOT15D4_TAP_HEADER_LEN - 1])
+            .expect_err("a truncated TAP fixed header must be a structured error");
+        assert_eq!(
+            err,
+            CrafterError::buffer_too_short(
+                "dot15d4.tap.header",
+                DOT15D4_TAP_HEADER_LEN,
+                DOT15D4_TAP_HEADER_LEN - 1,
+            )
+        );
+    }
+
+    #[test]
     fn dot15d4_radio_div_builds_two_layer_packet() {
         let packet = Dot15d4Radio::on_channel(15) / Raw::from_bytes([0u8; 4]);
 
