@@ -16,7 +16,7 @@ use std::time::Duration;
 use crate::net::send::validated_interface;
 use crate::net::{SendMode, SendOptions};
 use crate::wire::backend::pcap::PcapLinkType;
-use crate::wire::backend::whad::WhadBleMode;
+use crate::wire::backend::whad::{WhadBleMode, WhadDot15d4Mode};
 
 use super::backend::pcap::{
     filter_trimmed, OfflinePcapSource, PcapFileWriter, PcapInterfaceSource, PcapInterfaceWriter,
@@ -26,7 +26,7 @@ use super::backend::pcap::{
 use super::backend::raw_socket::RawSocketWriter;
 #[cfg(feature = "whad")]
 use super::backend::whad::{
-    capability::enter_ble,
+    capability::{enter_ble, enter_dot15d4},
     discovery::{discover, WhadDevice},
     messages::{WhadDeviceInfo, WhadDomainCommands, WhadDomains, WhadFirmwareVersion},
     proto,
@@ -146,6 +146,20 @@ impl WhadByteChannel for WhadMockChannel {
     }
 }
 
+/// Radio domain and operating mode requested for a WHAD serial target.
+///
+/// A WHAD dongle serves one radio domain at a time. This wraps the BLE and
+/// 802.15.4 operating modes in a single value so a [`PacketWireTarget::WhadSerial`]
+/// target carries exactly one mode while the `path`/`interface`/`pcap_link_type`/
+/// capability matches stay exhaustive across both domains.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WhadMode {
+    /// Bluetooth Low Energy sniff or inject mode.
+    Ble(WhadBleMode),
+    /// IEEE 802.15.4 sniff or send mode.
+    Dot15d4(WhadDot15d4Mode),
+}
+
 /// One packet-capable backend or interface target.
 ///
 /// A target describes exactly one pcap file, pcap recorder, or live interface.
@@ -176,12 +190,12 @@ pub enum PacketWireTarget {
         /// Interface name selected for raw socket send planning and live send.
         interface: String,
     },
-    /// WHAD-compatible serial dongle target for BLE sniffing or injection.
+    /// WHAD-compatible serial dongle target for BLE or 802.15.4 sniff/inject.
     WhadSerial {
         /// Serial port path or name, for example `/dev/ttyACM0` or `COM3`.
         port: String,
-        /// BLE mode to enter after discovery.
-        mode: WhadBleMode,
+        /// Radio domain and mode to enter after discovery.
+        mode: WhadMode,
         /// Whether opening this target must avoid serial I/O and live WHAD control frames.
         dry_run: bool,
     },
@@ -581,6 +595,7 @@ impl RawSocketWireBuilder {
 pub struct WhadWireBuilder {
     port: String,
     mode: WhadBleMode,
+    dot15d4_mode: Option<WhadDot15d4Mode>,
     channel: u8,
     live: bool,
     #[cfg(feature = "whad")]
@@ -594,6 +609,7 @@ impl WhadWireBuilder {
             mode: WhadBleMode::SniffAdv {
                 channel: WHAD_DEFAULT_BLE_CHANNEL,
             },
+            dot15d4_mode: None,
             channel: WHAD_DEFAULT_BLE_CHANNEL,
             live: false,
             #[cfg(feature = "whad")]
@@ -607,8 +623,26 @@ impl WhadWireBuilder {
     }
 
     /// BLE mode this builder will request when opened live.
+    ///
+    /// This reports the BLE mode only. When an 802.15.4 mode has been selected
+    /// with [`Self::dot15d4_sniff`] or [`Self::dot15d4_send`], inspect
+    /// [`Self::dot15d4_mode`] or the opened [`PacketWireTarget::WhadSerial`]
+    /// `mode` instead.
     pub const fn mode(&self) -> WhadBleMode {
         self.mode
+    }
+
+    /// 802.15.4 mode this builder will request when opened live, if any.
+    pub const fn dot15d4_mode(&self) -> Option<WhadDot15d4Mode> {
+        self.dot15d4_mode
+    }
+
+    /// Radio domain and mode this builder will request when opened live.
+    pub const fn whad_mode(&self) -> WhadMode {
+        match self.dot15d4_mode {
+            Some(mode) => WhadMode::Dot15d4(mode),
+            None => WhadMode::Ble(self.mode),
+        }
     }
 
     /// Whether this builder will open the WHAD serial port.
@@ -625,19 +659,45 @@ impl WhadWireBuilder {
     pub const fn ble_sniff(mut self, channel: u8) -> Self {
         self.channel = channel;
         self.mode = WhadBleMode::SniffAdv { channel };
+        self.dot15d4_mode = None;
         self
     }
 
     /// Inject BLE raw PDUs through WHAD's central/raw-PDU path.
     pub const fn ble_inject(mut self) -> Self {
         self.mode = WhadBleMode::Inject;
+        self.dot15d4_mode = None;
         self
     }
 
-    /// Set the BLE channel used by sniff mode and inject fallback writes.
+    /// Capture IEEE 802.15.4 frames on the selected channel.
+    ///
+    /// This is a read-only source mode, mirroring [`Self::ble_sniff`]: the
+    /// opened wire exposes a [`PacketWire::source`] but no writer.
+    pub const fn dot15d4_sniff(mut self, channel: u8) -> Self {
+        self.channel = channel;
+        self.dot15d4_mode = Some(WhadDot15d4Mode::Sniff { channel });
+        self
+    }
+
+    /// Inject IEEE 802.15.4 frames through WHAD's send/raw-send path.
+    ///
+    /// This is a write-only writer mode, mirroring [`Self::ble_inject`]: the
+    /// opened wire exposes a [`PacketWire::writer`] but no source.
+    pub const fn dot15d4_send(mut self) -> Self {
+        self.dot15d4_mode = Some(WhadDot15d4Mode::Send);
+        self
+    }
+
+    /// Set the channel used by sniff mode and inject/send fallback writes.
+    ///
+    /// Updates the selected sniff channel for whichever domain is active: the
+    /// BLE advertising sniff channel, or the 802.15.4 sniff channel.
     pub const fn channel(mut self, channel: u8) -> Self {
         self.channel = channel;
-        if let WhadBleMode::SniffAdv { .. } = self.mode {
+        if let Some(WhadDot15d4Mode::Sniff { .. }) = self.dot15d4_mode {
+            self.dot15d4_mode = Some(WhadDot15d4Mode::Sniff { channel });
+        } else if let WhadBleMode::SniffAdv { .. } = self.mode {
             self.mode = WhadBleMode::SniffAdv { channel };
         }
         self
@@ -669,9 +729,13 @@ impl WhadWireBuilder {
     }
 
     fn into_packet_wire_builder(self) -> PacketWireBuilder {
+        let mode = match self.dot15d4_mode {
+            Some(mode) => WhadMode::Dot15d4(mode),
+            None => WhadMode::Ble(self.mode),
+        };
         let builder = PacketWireBuilder::new(PacketWireTarget::WhadSerial {
             port: self.port,
-            mode: self.mode,
+            mode,
             dry_run: !self.live,
         })
         .whad_channel(self.channel);
@@ -847,14 +911,22 @@ fn unsupported_source_reason(target: &PacketWireTarget) -> &'static str {
             "raw socket interface targets are write-only; use pcap_interface for capture"
         }
         PacketWireTarget::WhadSerial {
-            mode: WhadBleMode::Inject,
+            mode: WhadMode::Ble(WhadBleMode::Inject),
             ..
         } => "WHAD serial inject targets are write-only; use SniffAdv mode for capture",
+        PacketWireTarget::WhadSerial {
+            mode: WhadMode::Dot15d4(WhadDot15d4Mode::Send),
+            ..
+        } => "WHAD serial 802.15.4 send targets are write-only; use Sniff mode for capture",
         PacketWireTarget::PcapFile { .. } | PacketWireTarget::PcapInterface { .. } => {
             "no packet source has been opened for this wire"
         }
         PacketWireTarget::WhadSerial {
-            mode: WhadBleMode::SniffAdv { .. },
+            mode: WhadMode::Ble(WhadBleMode::SniffAdv { .. }),
+            ..
+        } => "no WHAD packet source has been opened for this wire",
+        PacketWireTarget::WhadSerial {
+            mode: WhadMode::Dot15d4(WhadDot15d4Mode::Sniff { .. }),
             ..
         } => "no WHAD packet source has been opened for this wire",
     }
@@ -879,11 +951,19 @@ fn unsupported_writer_reason(target: &PacketWireTarget) -> &'static str {
             "no packet writer has been opened for this wire"
         }
         PacketWireTarget::WhadSerial {
-            mode: WhadBleMode::SniffAdv { .. },
+            mode: WhadMode::Ble(WhadBleMode::SniffAdv { .. }),
             ..
         } => "WHAD serial advertising sniff targets are read-only; use Inject mode for writing",
         PacketWireTarget::WhadSerial {
-            mode: WhadBleMode::Inject,
+            mode: WhadMode::Dot15d4(WhadDot15d4Mode::Sniff { .. }),
+            ..
+        } => "WHAD serial 802.15.4 sniff targets are read-only; use Send mode for writing",
+        PacketWireTarget::WhadSerial {
+            mode: WhadMode::Ble(WhadBleMode::Inject),
+            ..
+        } => "no WHAD packet writer has been opened for this wire",
+        PacketWireTarget::WhadSerial {
+            mode: WhadMode::Dot15d4(WhadDot15d4Mode::Send),
             ..
         } => "no WHAD packet writer has been opened for this wire",
     }
@@ -902,7 +982,7 @@ fn unsupported_split(target: &PacketWireTarget, has_source: bool, has_writer: bo
 #[cfg(feature = "whad")]
 fn open_whad_serial_source(
     port: &str,
-    mode: WhadBleMode,
+    mode: WhadMode,
     dry_run: bool,
     mock_channel: Option<WhadMockChannel>,
 ) -> Result<Option<OpenedPacketSource>> {
@@ -910,24 +990,32 @@ fn open_whad_serial_source(
         return Ok(None);
     }
 
-    match mode {
-        WhadBleMode::SniffAdv { .. } => {
-            if let Some(channel) = mock_channel {
-                let (link, _) = open_whad_link_from_channel(channel, mode)?;
-                Ok(Some(Box::new(WhadReader::new(link))))
-            } else {
-                let (link, _) = open_whad_serial_link(port, mode)?;
-                Ok(Some(Box::new(WhadReader::new(link))))
-            }
-        }
-        WhadBleMode::Inject => Ok(None),
+    // Sniff (BLE advertising or 802.15.4) is the only read-only source mode;
+    // inject/send modes expose a writer, not a source. The WHAD reader is
+    // domain-agnostic (it routes received frames by their notification kind),
+    // so the source open path only needs to enter the right sniff mode.
+    let is_sniff = matches!(
+        mode,
+        WhadMode::Ble(WhadBleMode::SniffAdv { .. })
+            | WhadMode::Dot15d4(WhadDot15d4Mode::Sniff { .. })
+    );
+    if !is_sniff {
+        return Ok(None);
+    }
+
+    if let Some(channel) = mock_channel {
+        let (link, _) = open_whad_link_from_channel(channel, mode)?;
+        Ok(Some(Box::new(WhadReader::new(link))))
+    } else {
+        let (link, _) = open_whad_serial_link(port, mode)?;
+        Ok(Some(Box::new(WhadReader::new(link))))
     }
 }
 
 #[cfg(not(feature = "whad"))]
 fn open_whad_serial_source(
     _port: &str,
-    _mode: WhadBleMode,
+    _mode: WhadMode,
     dry_run: bool,
 ) -> Result<Option<OpenedPacketSource>> {
     if dry_run {
@@ -940,7 +1028,7 @@ fn open_whad_serial_source(
 #[cfg(feature = "whad")]
 fn open_whad_serial_writer(
     port: &str,
-    mode: WhadBleMode,
+    mode: WhadMode,
     dry_run: bool,
     channel: u8,
     mock_channel: Option<WhadMockChannel>,
@@ -956,28 +1044,35 @@ fn open_whad_serial_writer(
         return Ok(None);
     }
 
-    match mode {
-        WhadBleMode::Inject => {
-            if let Some(mock_channel) = mock_channel {
-                let (link, device) = open_whad_link_from_channel(mock_channel, mode)?;
-                Ok(Some(Box::new(
-                    WhadWriter::new(link, device, channel).with_dry_run(dry_run),
-                )))
-            } else {
-                let (link, device) = open_whad_serial_link(port, mode)?;
-                Ok(Some(Box::new(
-                    WhadWriter::new(link, device, channel).with_dry_run(dry_run),
-                )))
-            }
-        }
-        WhadBleMode::SniffAdv { .. } => Ok(None),
+    // Inject (BLE) and send (802.15.4) are the write-only writer modes; sniff
+    // modes expose a source, not a writer. The WHAD writer is domain-agnostic
+    // (it routes records to the BLE or 802.15.4 send path by their layers), so
+    // the writer open path only needs to enter the right inject/send mode.
+    let is_writer = matches!(
+        mode,
+        WhadMode::Ble(WhadBleMode::Inject) | WhadMode::Dot15d4(WhadDot15d4Mode::Send)
+    );
+    if !is_writer {
+        return Ok(None);
+    }
+
+    if let Some(mock_channel) = mock_channel {
+        let (link, device) = open_whad_link_from_channel(mock_channel, mode)?;
+        Ok(Some(Box::new(
+            WhadWriter::new(link, device, channel).with_dry_run(dry_run),
+        )))
+    } else {
+        let (link, device) = open_whad_serial_link(port, mode)?;
+        Ok(Some(Box::new(
+            WhadWriter::new(link, device, channel).with_dry_run(dry_run),
+        )))
     }
 }
 
 #[cfg(not(feature = "whad"))]
 fn open_whad_serial_writer(
     _port: &str,
-    _mode: WhadBleMode,
+    _mode: WhadMode,
     dry_run: bool,
     _channel: u8,
 ) -> Result<Option<OpenedPacketWriter>> {
@@ -991,7 +1086,7 @@ fn open_whad_serial_writer(
 #[cfg(feature = "whad")]
 fn open_whad_serial_link(
     port: &str,
-    mode: WhadBleMode,
+    mode: WhadMode,
 ) -> Result<(WhadLink<SerialChannel>, WhadDevice)> {
     let channel = SerialChannel::open(port)?;
     open_whad_link_from_channel(channel, mode)
@@ -1000,11 +1095,14 @@ fn open_whad_serial_link(
 #[cfg(feature = "whad")]
 fn open_whad_link_from_channel<C: WhadByteChannel>(
     channel: C,
-    mode: WhadBleMode,
+    mode: WhadMode,
 ) -> Result<(WhadLink<C>, WhadDevice)> {
     let mut link = WhadLink::new(channel);
     let device = discover(&mut link)?;
-    enter_ble(&mut link, &device, mode)?;
+    match mode {
+        WhadMode::Ble(mode) => enter_ble(&mut link, &device, mode)?,
+        WhadMode::Dot15d4(mode) => enter_dot15d4(&mut link, &device, mode)?,
+    }
     Ok((link, device))
 }
 
@@ -1137,7 +1235,7 @@ mod tests {
     fn whad_serial_target_reports_port_and_backend_metadata() {
         let target = PacketWireTarget::WhadSerial {
             port: "/dev/ttyACM0".to_string(),
-            mode: WhadBleMode::SniffAdv { channel: 37 },
+            mode: WhadMode::Ble(WhadBleMode::SniffAdv { channel: 37 }),
             dry_run: true,
         };
 
@@ -1153,7 +1251,7 @@ mod tests {
         assert_unsupported(
             PacketWireBuilder::new(PacketWireTarget::WhadSerial {
                 port: "/dev/ttyACM0".to_string(),
-                mode: WhadBleMode::Inject,
+                mode: WhadMode::Ble(WhadBleMode::Inject),
                 dry_run: false,
             })
             .open(),
@@ -1178,7 +1276,7 @@ mod tests {
             wire.target(),
             &PacketWireTarget::WhadSerial {
                 port: "/dev/ttyACM0".to_string(),
-                mode: WhadBleMode::SniffAdv { channel: 37 },
+                mode: WhadMode::Ble(WhadBleMode::SniffAdv { channel: 37 }),
                 dry_run: true,
             }
         );
@@ -1197,7 +1295,7 @@ mod tests {
 
         let target = PacketWireTarget::WhadSerial {
             port: builder.port().to_string(),
-            mode: builder.mode(),
+            mode: builder.whad_mode(),
             dry_run: builder.is_dry_run(),
         };
 
@@ -1205,7 +1303,7 @@ mod tests {
             target,
             PacketWireTarget::WhadSerial {
                 port: "/dev/ttyACM0".to_string(),
-                mode: WhadBleMode::Inject,
+                mode: WhadMode::Ble(WhadBleMode::Inject),
                 dry_run: false,
             }
         );
@@ -1257,6 +1355,163 @@ mod tests {
         assert_eq!(report.backend(), &BackendKind::Memory);
         assert_eq!(report.bytes_requested(), 3);
         assert!(report.is_dry_run());
+    }
+
+    #[cfg(all(test, feature = "whad"))]
+    #[test]
+    fn packetwire_dot15d4_sniff_builder_sets_sniff_target_and_mode() {
+        let builder = PacketWire::whad_serial("/dev/ttyACM0").dot15d4_sniff(15);
+
+        assert_eq!(
+            builder.dot15d4_mode(),
+            Some(WhadDot15d4Mode::Sniff { channel: 15 })
+        );
+        assert_eq!(
+            builder.whad_mode(),
+            WhadMode::Dot15d4(WhadDot15d4Mode::Sniff { channel: 15 })
+        );
+        assert!(builder.is_dry_run());
+
+        let wire = builder.open().unwrap();
+        assert_eq!(
+            wire.target(),
+            &PacketWireTarget::WhadSerial {
+                port: "/dev/ttyACM0".to_string(),
+                mode: WhadMode::Dot15d4(WhadDot15d4Mode::Sniff { channel: 15 }),
+                dry_run: true,
+            }
+        );
+        // Dry-run does not open the serial backend, so no capabilities attach.
+        assert!(!wire.has_source());
+        assert!(!wire.has_writer());
+    }
+
+    #[cfg(all(test, feature = "whad"))]
+    #[test]
+    fn packetwire_dot15d4_send_builder_sets_send_target_and_mode() {
+        let builder = PacketWire::whad_serial("/dev/ttyACM0").dot15d4_send();
+
+        assert_eq!(builder.dot15d4_mode(), Some(WhadDot15d4Mode::Send));
+        assert_eq!(
+            builder.whad_mode(),
+            WhadMode::Dot15d4(WhadDot15d4Mode::Send)
+        );
+
+        let target = PacketWireTarget::WhadSerial {
+            port: builder.port().to_string(),
+            mode: builder.whad_mode(),
+            dry_run: builder.is_dry_run(),
+        };
+        assert_eq!(
+            target,
+            PacketWireTarget::WhadSerial {
+                port: "/dev/ttyACM0".to_string(),
+                mode: WhadMode::Dot15d4(WhadDot15d4Mode::Send),
+                dry_run: true,
+            }
+        );
+    }
+
+    #[cfg(all(test, feature = "whad"))]
+    #[test]
+    fn packetwire_dot15d4_live_flips_dry_run_off() {
+        let builder = PacketWire::whad_serial("/dev/ttyACM0")
+            .dot15d4_sniff(20)
+            .live();
+
+        assert!(builder.is_live());
+        assert!(!builder.is_dry_run());
+        assert_eq!(
+            builder.whad_mode(),
+            WhadMode::Dot15d4(WhadDot15d4Mode::Sniff { channel: 20 })
+        );
+    }
+
+    #[cfg(all(test, feature = "whad"))]
+    #[test]
+    fn packetwire_dot15d4_channel_updates_sniff_and_preserves_send() {
+        let sniff = PacketWire::whad_serial("/dev/ttyACM0")
+            .dot15d4_sniff(11)
+            .channel(26);
+        assert_eq!(
+            sniff.dot15d4_mode(),
+            Some(WhadDot15d4Mode::Sniff { channel: 26 })
+        );
+
+        let send = PacketWire::whad_serial("/dev/ttyACM0")
+            .dot15d4_send()
+            .channel(26);
+        assert_eq!(send.dot15d4_mode(), Some(WhadDot15d4Mode::Send));
+    }
+
+    #[cfg(all(test, feature = "whad"))]
+    #[test]
+    fn packetwire_dot15d4_sniff_source_returns_injected_source() {
+        // Sniff is read-only: the source/writer split exposes a source.
+        let mut source = PacketWire::whad_serial("/dev/ttyACM0")
+            .dot15d4_sniff(15)
+            .with_source(VecPacketSource::from_packets([Raw::from("mac")]))
+            .open()
+            .unwrap()
+            .source()
+            .unwrap();
+
+        let record = source.next_record().unwrap().unwrap();
+        assert_eq!(record.packet().summary(), "Raw(len=3)");
+        assert!(source.next_record().unwrap().is_none());
+    }
+
+    #[cfg(all(test, feature = "whad"))]
+    #[test]
+    fn packetwire_dot15d4_send_writer_returns_injected_writer() {
+        // Send is write-only: the source/writer split exposes a writer.
+        let mut writer = PacketWire::whad_serial("/dev/ttyACM0")
+            .dot15d4_send()
+            .with_writer(MemoryPacketWriter::dry_run())
+            .open()
+            .unwrap()
+            .writer()
+            .unwrap();
+
+        let report = writer
+            .write_record(&PacketRecord::new(Raw::from("pdu")))
+            .unwrap();
+
+        assert_eq!(report.backend(), &BackendKind::Memory);
+        assert_eq!(report.bytes_requested(), 3);
+        assert!(report.is_dry_run());
+    }
+
+    #[cfg(all(test, feature = "whad"))]
+    #[test]
+    fn packetwire_dot15d4_sniff_target_is_read_only_for_writer() {
+        // A sniff target reports a write-only-mismatch reason when a writer is
+        // requested, mirroring the BLE advertising sniff capability error.
+        let target = PacketWireTarget::WhadSerial {
+            port: "/dev/ttyACM0".to_string(),
+            mode: WhadMode::Dot15d4(WhadDot15d4Mode::Sniff { channel: 15 }),
+            dry_run: true,
+        };
+        assert_eq!(
+            unsupported_writer_reason(&target),
+            "WHAD serial 802.15.4 sniff targets are read-only; use Send mode for writing"
+        );
+    }
+
+    #[cfg(all(test, feature = "whad"))]
+    #[test]
+    fn packetwire_dot15d4_send_target_is_write_only_for_source() {
+        // A send target reports a read-only-mismatch reason when a source is
+        // requested, mirroring the BLE inject capability error.
+        let target = PacketWireTarget::WhadSerial {
+            port: "/dev/ttyACM0".to_string(),
+            mode: WhadMode::Dot15d4(WhadDot15d4Mode::Send),
+            dry_run: true,
+        };
+        assert_eq!(
+            unsupported_source_reason(&target),
+            "WHAD serial 802.15.4 send targets are write-only; use Sniff mode for capture"
+        );
     }
 
     #[test]
