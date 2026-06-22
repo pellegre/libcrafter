@@ -1201,4 +1201,122 @@ mod dot15d4_mac_layer {
         assert!(packet.layer::<Dot15d4>().is_some());
         assert!(packet.layer::<Raw>().is_some());
     }
+
+    #[test]
+    fn dot15d4_mac_roundtrip() {
+        // Case 1: short dest + short src addressing.
+        //
+        // Build a Data frame addressed short-to-short on the lab PAN 0xABCD
+        // (documentation-style identifiers), compile it through the packet
+        // stack, and confirm the bytes match the spec-derived reference, then
+        // decode them and confirm every MAC header field round-trips.
+        //
+        // FCF = 0x8841 (Data=001, PAN-ID compression bit 6 set because both
+        // addresses share PAN 0xABCD, dest mode Short = 0b10 in bits 10..=11,
+        // src mode Short = 0b10 in bits 14..=15), little-endian 41 88. The
+        // MHR+payload 41 88 07 CD AB 34 12 78 56 CA FE carries a reflected
+        // CRC-16/CCITT FCS of 0x8B43, serialized little-endian as 43 8B.
+        let frame = Dot15d4::data()
+            .seq(7)
+            .dest_short(0xABCD, 0x1234)
+            .src_short(0xABCD, 0x5678)
+            .payload(&[0xCA, 0xFE]);
+
+        let compiled = Packet::from_layer(frame)
+            .compile()
+            .expect("compile short-addressed Dot15d4 MAC frame");
+        let bytes = compiled.as_bytes();
+
+        // The FCF is the first two octets, little-endian.
+        assert_eq!(&bytes[..2], &[0x41, 0x88]);
+        // The trailing two octets are the auto-filled FCS, little-endian.
+        assert_eq!(&bytes[bytes.len() - 2..], &[0x43, 0x8B]);
+        assert_eq!(
+            bytes,
+            &[
+                0x41, 0x88, // FCF (little-endian)
+                0x07, // sequence number
+                0xCD, 0xAB, // dest PAN 0xABCD (little-endian)
+                0x34, 0x12, // dest short address 0x1234 (little-endian)
+                // source PAN omitted under PAN-ID compression
+                0x78, 0x56, // src short address 0x5678 (little-endian)
+                0xCA, 0xFE, // payload
+                0x43, 0x8B, // FCS 0x8B43 (little-endian)
+            ]
+        );
+
+        let (decoded, tail) = decode_dot15d4(bytes).expect("decode short-addressed MAC frame");
+
+        // The inner MAC payload is returned as the tail for the next layer.
+        assert_eq!(tail, &[0xCA, 0xFE]);
+        // Frame type and sequence number round-trip.
+        assert_eq!(decoded.frame_type.value(), Some(&Dot15d4FrameType::Data));
+        assert_eq!(decoded.seq.value(), Some(&7));
+        // Destination PAN/address pair round-trips.
+        assert_eq!(
+            decoded.dest_addr_mode.value(),
+            Some(&Dot15d4AddrMode::Short)
+        );
+        assert_eq!(decoded.dest_pan.value(), Some(&0xABCD));
+        assert_eq!(decoded.dest_addr.value(), Some(&0x1234));
+        // Source address round-trips; the source PAN is omitted on the wire
+        // under PAN-ID compression but is implied by the shared destination PAN.
+        assert_eq!(decoded.src_addr_mode.value(), Some(&Dot15d4AddrMode::Short));
+        assert_eq!(decoded.pan_id_compression.value(), Some(&true));
+        assert!(decoded.src_pan.is_unset());
+        assert_eq!(decoded.src_addr.value(), Some(&0x5678));
+        // The trailing FCS is stored verbatim (the auto-filled 0x8B43).
+        assert_eq!(decoded.fcs.value(), Some(&0x8B43));
+
+        // Case 2: extended (64-bit) dest + src addressing with PAN-ID
+        // compression. Both addresses share lab PAN 0x1AAA, so compression
+        // defaults on and the source PAN ID is omitted on the wire; the frame
+        // must round-trip back to the same bytes.
+        let ext = Dot15d4::data()
+            .seq(42)
+            .dest_extended(0x1AAA, 0x0011_2233_4455_6677)
+            .src_extended(0x1AAA, 0x8899_AABB_CCDD_EEFF)
+            .payload(&[0xDE, 0xAD, 0xBE, 0xEF]);
+
+        // Compression is on (shared PAN), so the source PAN ID is not serialized.
+        assert!(ext.effective_pan_id_compression());
+        assert!(ext.effective_dest_pan_present());
+        assert!(!ext.effective_src_pan_present());
+
+        let ext_bytes = Packet::from_layer(ext.clone())
+            .compile()
+            .expect("compile extended-addressed Dot15d4 MAC frame");
+        let ext_bytes = ext_bytes.as_bytes();
+
+        let (ext_decoded, ext_tail) =
+            decode_dot15d4(ext_bytes).expect("decode extended-addressed MAC frame");
+
+        assert_eq!(ext_tail, &[0xDE, 0xAD, 0xBE, 0xEF]);
+        assert_eq!(ext_decoded.frame_type.value(), Some(&Dot15d4FrameType::Data));
+        assert_eq!(ext_decoded.seq.value(), Some(&42));
+        assert_eq!(
+            ext_decoded.dest_addr_mode.value(),
+            Some(&Dot15d4AddrMode::Extended)
+        );
+        assert_eq!(
+            ext_decoded.src_addr_mode.value(),
+            Some(&Dot15d4AddrMode::Extended)
+        );
+        assert_eq!(ext_decoded.dest_pan.value(), Some(&0x1AAA));
+        assert_eq!(ext_decoded.dest_addr.value(), Some(&0x0011_2233_4455_6677));
+        // Source PAN omitted under PAN-ID compression; the shared PAN is implied.
+        assert_eq!(ext_decoded.pan_id_compression.value(), Some(&true));
+        assert!(ext_decoded.src_pan.is_unset());
+        assert_eq!(ext_decoded.src_addr.value(), Some(&0x8899_AABB_CCDD_EEFF));
+
+        // Re-attaching the payload reproduces the original extended frame bytes.
+        let reencoded = Packet::from_layer(ext_decoded.payload(&[0xDE, 0xAD, 0xBE, 0xEF]))
+            .compile()
+            .expect("recompile extended-addressed MAC frame");
+        assert_eq!(reencoded.as_bytes(), ext_bytes);
+
+        // A frame truncated mid-FCF returns a structured error, never a panic.
+        let err = decode_dot15d4(&[0x41]).expect_err("must reject a truncated FCF");
+        assert_eq!(err, CrafterError::buffer_too_short("dot15d4.mac.fcf", 2, 1));
+    }
 }
