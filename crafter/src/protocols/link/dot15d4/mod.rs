@@ -7,3 +7,6 @@
 
 mod consts;
 mod fcs;
+mod radio;
+
+pub use radio::Dot15d4Radio;
