@@ -1,0 +1,88 @@
+version: 1
+kind: layer
+name: zigbee_nwk
+summary: Zigbee Network (NWK) sublayer frame header riding on the IEEE 802.15.4 MAC payload - frame control, dest/src 16-bit addresses, radius, and sequence number.
+
+roots: []
+parents:
+  - dot15d4
+children:
+  - zigbee_aps
+  - payload
+supported_directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+  - roundtrip
+live_eligibility: false
+live_gate: whad_backend_not_yet_available
+
+fields:
+  - name: frame_type
+    type: enum
+    required: true
+    domains:
+      - data
+      - command
+  - name: protocol_version
+    type: uint8
+    required: false
+    domains:
+      - default
+      - explicit
+  - name: dest
+    type: uint16
+    required: true
+    domains:
+      - documentation_safe
+      - explicit
+  - name: src
+    type: uint16
+    required: true
+    domains:
+      - documentation_safe
+      - explicit
+  - name: radius
+    type: uint8
+    required: false
+    domains:
+      - default
+      - explicit
+  - name: seq
+    type: uint8
+    required: false
+    domains:
+      - auto
+      - explicit
+  - name: payload
+    type: bytes
+    required: false
+    domains:
+      - absent
+      - opaque_bytes
+
+coverage_cases:
+  - zigbee-nwk-data-frame
+  - zigbee-mac-nwk-aps-data-stack
+  - malformed-zigbee-nwk-truncated-fcf
+  - malformed-zigbee-nwk-truncated-header
+
+backend_support:
+  scapy:
+    status: supported
+    encode: true
+    decode: true
+    native_layers:
+      - ZigbeeNWK
+    notes:
+      - The Step 36 scapy backend imports scapy.layers.zigbee and decodes the
+        Zigbee NWK header (ZigbeeNWK) riding on the 802.15.4 MAC payload.
+      - Strict-byte Zigbee NWK cases are contract-only until the runnable
+        libcrafter offline adapter hooks are widened for dot15d4/zigbee.
+  libcrafter:
+    status: partial
+    encode: true
+    decode: true
+    notes:
+      - The crate exposes ZigbeeNwk encode/decode behavior with crate tests and
+        fixtures; runnable Zigbee offline comparisons remain deferred to adapter
+        normalization work.

@@ -1,0 +1,94 @@
+version: 1
+kind: layer
+name: zigbee_aps
+summary: Zigbee Application Support sublayer (APS) frame header riding on the Zigbee NWK payload - frame control, delivery mode, dest endpoint, cluster id, profile id, src endpoint, and APS counter.
+
+roots: []
+parents:
+  - zigbee_nwk
+children:
+  - payload
+supported_directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+  - roundtrip
+live_eligibility: false
+live_gate: whad_backend_not_yet_available
+
+fields:
+  - name: frame_type
+    type: enum
+    required: true
+    domains:
+      - data
+      - command
+      - ack
+  - name: delivery_mode
+    type: enum
+    required: false
+    domains:
+      - unicast
+      - broadcast
+      - group
+  - name: dest_endpoint
+    type: uint8
+    required: false
+    domains:
+      - absent
+      - explicit
+  - name: cluster
+    type: uint16
+    required: false
+    domains:
+      - absent
+      - explicit
+  - name: profile
+    type: uint16
+    required: false
+    domains:
+      - absent
+      - explicit
+  - name: src_endpoint
+    type: uint8
+    required: false
+    domains:
+      - absent
+      - explicit
+  - name: counter
+    type: uint8
+    required: false
+    domains:
+      - auto
+      - explicit
+  - name: payload
+    type: bytes
+    required: false
+    domains:
+      - absent
+      - opaque_bytes
+
+coverage_cases:
+  - zigbee-mac-nwk-aps-data-stack
+  - malformed-zigbee-aps-truncated-fcf
+  - malformed-zigbee-aps-truncated-header
+
+backend_support:
+  scapy:
+    status: supported
+    encode: true
+    decode: true
+    native_layers:
+      - ZigbeeAppDataPayload
+    notes:
+      - The Step 36 scapy backend imports scapy.layers.zigbee and decodes the
+        Zigbee APS header (ZigbeeAppDataPayload) riding on the NWK payload.
+      - Strict-byte Zigbee APS cases are contract-only until the runnable
+        libcrafter offline adapter hooks are widened for dot15d4/zigbee.
+  libcrafter:
+    status: partial
+    encode: true
+    decode: true
+    notes:
+      - The crate exposes ZigbeeAps encode/decode behavior with crate tests, the
+        committed full-stack fixture, and summary snapshots; runnable Zigbee
+        offline comparisons remain deferred to adapter normalization work.

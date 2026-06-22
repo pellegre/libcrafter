@@ -64,6 +64,27 @@ roots:
     families:
       - link
       - ble
+  # IEEE 802.15.4 bare MAC frame roots: DLT 195 (with-FCS) and DLT 230 (no-FCS)
+  # both decode to a leading Dot15d4 MAC layer. Offline/pcap focused; the
+  # smoke profile does not weight the dot15d4/zigbee families, so these roots
+  # validate but are not sampled by the default offline comparison.
+  - name: "link:ieee802154"
+    layers:
+      - dot15d4
+    families:
+      - link
+      - dot15d4
+      - zigbee
+  # IEEE 802.15.4 TAP pseudo-header root (DLT 283): the Dot15d4Radio descriptor
+  # precedes the MAC frame. libcrafter owns the TAP decode (no native scapy
+  # dissector).
+  - name: "link:ieee802154-tap"
+    layers:
+      - dot15d4_radio
+    families:
+      - link
+      - dot15d4
+      - zigbee
   - name: "l3:ipv4"
     layers:
       - ipv4
@@ -238,6 +259,27 @@ families:
       - ble
       - ble_radio
       - ble_adv
+  # dot15d4: bare IEEE 802.15.4 MAC frames. The default stack is the MAC layer
+  # alone; the offline path (build/decode/pcap/dry-run/oracle) is the committed
+  # default and hardware-free. No profile weights this family, so it validates
+  # without being sampled by the default offline comparison.
+  - name: dot15d4
+    default_stack:
+      - dot15d4
+    feature_tags:
+      - dot15d4
+      - dot15d4_radio
+  # zigbee: Zigbee NWK/APS frames riding on the 802.15.4 MAC payload.
+  - name: zigbee
+    default_stack:
+      - dot15d4
+      - zigbee_nwk
+      - zigbee_aps
+    feature_tags:
+      - zigbee
+      - dot15d4
+      - zigbee_nwk
+      - zigbee_aps
   - name: llc_snap
     default_stack:
       - radiotap
@@ -406,6 +448,53 @@ stacks:
       - ble-adv-unknown-ad-raw
       - malformed-ble-adv-overlong-length
       - malformed-ble-ad-truncated
+  # IEEE 802.15.4 bare MAC frame (DLT 195/230). Strict-byte cases are declared
+  # contract-only until runnable libcrafter offline adapter hooks grow dot15d4
+  # support; offline/pcap link-type and decode-root coverage is recorded here.
+  - name: ieee802154_mac
+    root: "link:ieee802154"
+    layers:
+      - dot15d4
+    coverage_cases:
+      - dot15d4-data-short-pan-compressed
+      - dot15d4-data-extended-pan-compressed
+      - dot15d4-ack-no-addressing
+      - dot15d4-pcap-dlt-195-link-type
+      - dot15d4-pcap-dlt-230-link-type
+      - malformed-dot15d4-truncated-fcf
+      - malformed-dot15d4-truncated-addressing
+      - malformed-dot15d4-reserved-frame-type
+  # IEEE 802.15.4 TAP pseudo-header (DLT 283): the Dot15d4Radio descriptor
+  # before the MAC frame.
+  - name: ieee802154_tap
+    root: "link:ieee802154-tap"
+    layers:
+      - dot15d4_radio
+      - dot15d4
+    coverage_cases:
+      - dot15d4-pcap-dlt-283-link-type
+  # Zigbee NWK/APS riding on the 802.15.4 MAC payload (full data stack). The
+  # strict-byte cases are contract-only until runnable libcrafter offline
+  # adapter hooks grow dot15d4/zigbee support.
+  - name: ieee802154_zigbee_nwk
+    root: "link:ieee802154"
+    layers:
+      - dot15d4
+      - zigbee_nwk
+    coverage_cases:
+      - zigbee-nwk-data-frame
+      - malformed-zigbee-nwk-truncated-fcf
+      - malformed-zigbee-nwk-truncated-header
+  - name: ieee802154_zigbee_nwk_aps
+    root: "link:ieee802154"
+    layers:
+      - dot15d4
+      - zigbee_nwk
+      - zigbee_aps
+    coverage_cases:
+      - zigbee-mac-nwk-aps-data-stack
+      - malformed-zigbee-aps-truncated-fcf
+      - malformed-zigbee-aps-truncated-header
   # ethernet / arp: ARP over Ethernet. ARP is IPv4-era link-layer address
   # resolution (target/arp-rfc/scope.md: RFC 826 over media-generic
   # HRD/PRO/HLN/PLN), so it stays rooted at a link layer and is never eligible
@@ -1209,6 +1298,26 @@ constraints:
     parent: ble_radio
     children:
       - ble_adv
+  # IEEE 802.15.4 TAP pseudo-header carries the bare MAC frame; the MAC payload
+  # carries a Zigbee NWK frame, whose payload carries a Zigbee APS frame.
+  - name: dot15d4_radio_children
+    parent: dot15d4_radio
+    children:
+      - dot15d4
+  - name: dot15d4_children
+    parent: dot15d4
+    children:
+      - zigbee_nwk
+      - payload
+  - name: zigbee_nwk_children
+    parent: zigbee_nwk
+    children:
+      - zigbee_aps
+      - payload
+  - name: zigbee_aps_children
+    parent: zigbee_aps
+    children:
+      - payload
 
 backend_support:
   scapy:

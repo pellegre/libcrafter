@@ -5,7 +5,7 @@ summary: IEEE 802.15.4 MAC frame control, addressing modes (none/short-16/extend
 
 layers:
   - dot15d4
-  - dot15d4-radio
+  - dot15d4_radio
 directions:
   - reference_to_libcrafter
   - libcrafter_to_reference

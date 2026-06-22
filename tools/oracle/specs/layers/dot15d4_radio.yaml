@@ -1,0 +1,75 @@
+version: 1
+kind: layer
+name: dot15d4_radio
+summary: IEEE 802.15.4 TAP (DLT 283) pcap pseudo-header carrying radio metadata (channel, RSSI, LQI, FCS validity) before an 802.15.4 MAC frame.
+
+roots:
+  - "link:ieee802154-tap"
+parents:
+  - root
+children:
+  - dot15d4
+supported_directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+  - roundtrip
+live_eligibility: false
+live_gate: offline_pcap_link_type_only
+
+fields:
+  - name: channel
+    type: uint8
+    required: true
+    domains:
+      - dot15d4_channel_11
+      - dot15d4_channel_20
+      - dot15d4_channel_26
+  - name: rssi
+    type: int16
+    required: false
+    domains:
+      - absent
+      - rssi_metadata
+  - name: lqi
+    type: uint8
+    required: false
+    domains:
+      - absent
+      - lqi_metadata
+  - name: fcs_valid
+    type: bool
+    required: false
+    domains:
+      - false
+      - true
+  - name: fcs_type
+    type: uint8
+    required: false
+    domains:
+      - absent
+      - no_fcs
+      - crc16
+      - crc32
+
+coverage_cases:
+  - dot15d4-pcap-dlt-283-link-type
+
+backend_support:
+  scapy:
+    status: supported
+    encode: true
+    decode: true
+    native_layers:
+      - Raw
+    notes:
+      - IEEE 802.15.4 TAP (DLT 283) has no native scapy dissector; the radio
+        descriptor is materialized and byte-normalized outside scapy's native
+        layer set (Raw passthrough), the same way the BLE LL-with-PHDR
+        pseudo-header is handled. libcrafter's Dot15d4Radio owns the TAP decode.
+  libcrafter:
+    status: partial
+    encode: true
+    decode: true
+    notes:
+      - The crate exposes Dot15d4Radio TAP encode/decode behavior; the offline
+        oracle adapter dot15d4 hooks are outside this spec step.

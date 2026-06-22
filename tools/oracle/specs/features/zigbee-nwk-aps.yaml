@@ -4,8 +4,8 @@ name: zigbee-nwk-aps
 summary: Zigbee Network (NWK) and Application Support sublayer (APS) frame headers riding on the IEEE 802.15.4 MAC payload — NWK frame control/addressing/radius/sequence, APS frame control/endpoints/cluster/profile/counter, full MAC/NWK/APS data stack, and structured malformed-input errors, cross-checked against the scapy ZigbeeNWK/ZigbeeAppDataPayload reference.
 
 layers:
-  - zigbee-nwk
-  - zigbee-aps
+  - zigbee_nwk
+  - zigbee_aps
 directions:
   - reference_to_libcrafter
   - libcrafter_to_reference
@@ -91,7 +91,7 @@ supported_cases:
       - "link:ieee802154-tap"
     contract_only: true
     fields:
-      zigbee-nwk:
+      zigbee_nwk:
         frame_type: data
         protocol_version: 2
         dest: 0x0000
@@ -128,14 +128,14 @@ supported_cases:
         dest_pan: 0x1234
         dest_short: 0x0000
         src_short: 0xabcd
-      zigbee-nwk:
+      zigbee_nwk:
         frame_type: data
         protocol_version: 2
         dest: 0x0000
         src: 0xabcd
         radius: 30
         seq: 0x42
-      zigbee-aps:
+      zigbee_aps:
         frame_type: data
         delivery_mode: unicast
         dest_endpoint: 0x01
