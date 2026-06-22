@@ -457,22 +457,18 @@ impl Dot15d4 {
         len
     }
 
-    /// Serialize the 802.15.4 MAC frame to bytes, auto-filling the FCS.
+    /// Append the MAC header (FCF + sequence + addressing) and this layer's own
+    /// `payload`, without the trailing FCS.
     ///
     /// Emits the Frame Control field (little-endian), the sequence number, the
     /// addressing fields in spec order (destination PAN, destination address,
     /// source PAN — omitted under PAN-ID compression —, source address, each
-    /// little-endian and sized by its addressing mode), the payload, and a
-    /// trailing 2-octet Frame Check Sequence. The FCS is computed over the
-    /// emitted header and payload via [`dot15d4_fcs`] and appended little-endian
-    /// (low byte first), unless the caller set `fcs` explicitly, in which case
-    /// exactly that value is appended little-endian (malformed-on-purpose is
-    /// supported). Every user-set field is honored verbatim; no value is
-    /// clamped or "corrected" (IEEE Std 802.15.4-2020, Clause 7.2; see
-    /// `.agents/docs/dot15d4-manifest.md`).
-    pub(crate) fn encode(&self, out: &mut Vec<u8>) {
-        let start = out.len();
-
+    /// little-endian and sized by its addressing mode), and the MAC payload.
+    /// Every user-set field is honored verbatim; no value is clamped or
+    /// "corrected" (IEEE Std 802.15.4-2020, Clause 7.2; see
+    /// `.agents/docs/dot15d4-manifest.md`). The caller appends the FCS over the
+    /// full MAC frame (this header/payload plus any following layers).
+    fn encode_header_and_payload(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(&self.frame_control().to_le_bytes());
         out.push(self.effective_seq());
 
@@ -490,12 +486,37 @@ impl Dot15d4 {
         Self::encode_addr(out, src_mode, self.src_addr.value().copied().unwrap_or(0));
 
         out.extend_from_slice(&self.payload);
+    }
 
+    /// Append the trailing 2-octet Frame Check Sequence over the MAC frame.
+    ///
+    /// `frame_start` is the offset in `out` where this MAC frame began; the FCS
+    /// is computed over `out[frame_start..]` (the MAC header, this layer's
+    /// payload, and any following layers already appended) via [`dot15d4_fcs`]
+    /// and pushed little-endian (low byte first). A user-set `fcs` is appended
+    /// exactly as supplied (malformed-on-purpose is supported), little-endian,
+    /// without recomputing it.
+    fn append_fcs(&self, frame_start: usize, out: &mut Vec<u8>) {
         let fcs = match self.fcs.value() {
             Some(value) => *value,
-            None => dot15d4_fcs(&out[start..]),
+            None => dot15d4_fcs(&out[frame_start..]),
         };
         out.extend_from_slice(&fcs.to_le_bytes());
+    }
+
+    /// Serialize the standalone 802.15.4 MAC frame to bytes, auto-filling the FCS.
+    ///
+    /// Emits the MAC header and this layer's `payload`, then a trailing 2-octet
+    /// Frame Check Sequence computed over the emitted header and payload via
+    /// [`dot15d4_fcs`] (or the user-set `fcs` verbatim). This is the terminal
+    /// form used when the MAC frame carries no following layers; the layered
+    /// `compile` path instead computes the FCS over the header, payload, and the
+    /// following layers' bytes so the FCS is the last octets of the whole frame
+    /// (IEEE Std 802.15.4-2020, Clause 7.2; see `.agents/docs/dot15d4-manifest.md`).
+    pub(crate) fn encode(&self, out: &mut Vec<u8>) {
+        let start = out.len();
+        self.encode_header_and_payload(out);
+        self.append_fcs(start, out);
     }
 }
 
@@ -595,9 +616,35 @@ impl Layer for Dot15d4 {
         Dot15d4::encoded_len(self)
     }
 
-    fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
-        self.encode(out);
+    fn encoded_len_with_context(&self, ctx: &LayerContext<'_>) -> usize {
+        // The standalone `encoded_len` already counts the MAC header, this
+        // layer's own payload, and the trailing 2-octet FCS. When following
+        // layers ride inside the MAC payload, add their encoded length so the
+        // capacity hint stays accurate (matching the IGMP/ICMP precedent).
+        Dot15d4::encoded_len(self) + ctx.packet().encoded_len_after(ctx.index())
+    }
+
+    fn compile(&self, ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
+        // The FCS is the LAST two octets of the whole MAC frame, computed over
+        // the MAC header, this layer's payload, and every following layer's
+        // bytes (IEEE Std 802.15.4-2020, Clause 7.2). Emit the header+payload,
+        // then the following layers, then append the FCS over all of it. A
+        // user-set `fcs` is honored verbatim (malformed-on-purpose is supported).
+        let start = out.len();
+        self.encode_header_and_payload(out);
+        if let Err(err) = ctx.packet().compile_layers_after_into(ctx.index(), out) {
+            out.truncate(start);
+            return Err(err);
+        }
+        self.append_fcs(start, out);
         Ok(())
+    }
+
+    fn consumes_following(&self) -> bool {
+        // This layer owns the trailing FCS over the following layers and emits
+        // them itself in `compile`, so the packet must not re-emit them after
+        // this layer (mirrors ICMPv4/IGMP checksum-over-following layers).
+        true
     }
 
     fn clone_layer(&self) -> Box<dyn Layer> {
@@ -1318,5 +1365,113 @@ mod dot15d4_mac_layer {
         // A frame truncated mid-FCF returns a structured error, never a panic.
         let err = decode_dot15d4(&[0x41]).expect_err("must reject a truncated FCF");
         assert_eq!(err, CrafterError::buffer_too_short("dot15d4.mac.fcf", 2, 1));
+    }
+}
+
+#[cfg(test)]
+mod dot15d4_stack {
+    use super::super::aps::{decode_zigbee_aps, ZigbeeAps};
+    use super::super::nwk::{decode_zigbee_nwk, ZigbeeNwk};
+    use super::{decode_dot15d4, dot15d4_fcs, Dot15d4, Dot15d4AddrMode, Dot15d4FrameType};
+    use crate::packet::Packet;
+
+    #[test]
+    fn dot15d4_stack_roundtrip() {
+        // A full Dot15d4 / ZigbeeNwk / ZigbeeAps stack composed with `/`, using
+        // lab-safe addresses/PANs (documentation-style identifiers). The MAC FCS
+        // must be the LAST two octets of the whole frame, computed over the MAC
+        // header plus every following layer's bytes (IEEE Std 802.15.4-2020,
+        // Clause 7.2), not over the MAC header alone.
+        let packet = Dot15d4::data()
+            .dest_short(0x1234, 0x0000)
+            .src_short(0x1234, 0xABCD)
+            .seq(9)
+            / ZigbeeNwk::data().dest(0x0000).src(0xABCD).radius(30).seq(5)
+            / ZigbeeAps::data()
+                .cluster(0x0006)
+                .profile(0x0104)
+                .dest_endpoint(1)
+                .src_endpoint(1)
+                .counter(7)
+                .payload(&[0x01, 0x02]);
+
+        let compiled = packet.compile().expect("compile Dot15d4/ZigbeeNwk/ZigbeeAps stack");
+        let bytes = compiled.as_bytes();
+
+        // Reference MAC header (FCF + seq + addressing), NWK header, and APS
+        // header + payload, each derived from the per-layer spec layout.
+        //
+        // MAC FCF = 0x8841 (Data=0b001, PAN-ID compression bit 6 set because
+        // both addresses share PAN 0x1234, dest mode Short = 0b10 in bits
+        // 10..=11, src mode Short = 0b10 in bits 14..=15), little-endian 41 88;
+        // seq 9; dest PAN 0x1234 (34 12); dest short address 0x0000 (00 00);
+        // source PAN omitted under PAN-ID compression; src short address 0xABCD
+        // (CD AB).
+        let mac_header = [0x41u8, 0x88, 0x09, 0x34, 0x12, 0x00, 0x00, 0xCD, 0xAB];
+        // NWK FC = 0x0008 (Data + default protocol version 0x02), little-endian
+        // 08 00; dest 0x0000 (00 00); src 0xABCD (CD AB); radius 30 (1E); seq 5.
+        let nwk_header = [0x08u8, 0x00, 0x00, 0x00, 0xCD, 0xAB, 0x1E, 0x05];
+        // APS FC = 0x00 (Data + unicast delivery); dest endpoint 1; cluster
+        // 0x0006 (06 00); profile 0x0104 (04 01); src endpoint 1; counter 7;
+        // payload 01 02.
+        let aps = [0x00u8, 0x01, 0x06, 0x00, 0x04, 0x01, 0x01, 0x07, 0x01, 0x02];
+
+        let mut frame_no_fcs = Vec::new();
+        frame_no_fcs.extend_from_slice(&mac_header);
+        frame_no_fcs.extend_from_slice(&nwk_header);
+        frame_no_fcs.extend_from_slice(&aps);
+
+        // The compiled frame is exactly the spec-derived MAC+NWK+APS bytes plus
+        // the 2-octet FCS, so the FCS is the LAST two octets, not in the middle.
+        assert_eq!(bytes.len(), frame_no_fcs.len() + 2);
+        assert_eq!(&bytes[..frame_no_fcs.len()], frame_no_fcs.as_slice());
+
+        // The trailing two octets are the FCS computed over ALL preceding octets
+        // (the full MAC header + NWK + APS), serialized little-endian. Computing
+        // the FCS over the MAC header alone would land it in the middle of the
+        // frame; here it is the suffix over everything.
+        let expected_fcs = dot15d4_fcs(&frame_no_fcs);
+        assert_eq!(&bytes[frame_no_fcs.len()..], &expected_fcs.to_le_bytes());
+
+        // Decode the frame back by chaining the per-layer decoders over the
+        // successive tails: MAC payload -> NWK -> APS.
+        let (mac, mac_tail) = decode_dot15d4(bytes).expect("decode MAC frame");
+        // The MAC payload tail is the NWK + APS bytes (the FCS is split off).
+        assert_eq!(mac_tail, frame_no_fcs[mac_header.len()..].to_vec().as_slice());
+        assert_eq!(mac.frame_type.value(), Some(&Dot15d4FrameType::Data));
+        assert_eq!(mac.seq.value(), Some(&9));
+        assert_eq!(mac.dest_addr_mode.value(), Some(&Dot15d4AddrMode::Short));
+        assert_eq!(mac.src_addr_mode.value(), Some(&Dot15d4AddrMode::Short));
+        assert_eq!(mac.dest_pan.value(), Some(&0x1234));
+        assert_eq!(mac.dest_addr.value(), Some(&0x0000));
+        // Source PAN omitted on the wire under PAN-ID compression.
+        assert_eq!(mac.pan_id_compression.value(), Some(&true));
+        assert!(mac.src_pan.is_unset());
+        assert_eq!(mac.src_addr.value(), Some(&0xABCD));
+        // The trailing FCS is stored verbatim (the auto-filled value over the
+        // whole frame).
+        assert_eq!(mac.fcs.value(), Some(&expected_fcs));
+
+        let (nwk, nwk_tail) = decode_zigbee_nwk(mac_tail).expect("decode NWK frame");
+        // The NWK payload tail is the APS bytes.
+        assert_eq!(nwk_tail, aps.as_slice());
+        // The decoded NWK re-encodes to its header + the APS bytes it carries.
+        assert_eq!(nwk.encode(), frame_no_fcs[mac_header.len()..].to_vec());
+
+        let (aps_decoded, aps_tail) = decode_zigbee_aps(nwk_tail).expect("decode APS frame");
+        // The final APS payload is the application bytes.
+        assert_eq!(aps_tail, &[0x01, 0x02]);
+        // The decoded APS re-encodes to its full header + payload verbatim.
+        assert_eq!(aps_decoded.encode(), aps.to_vec());
+
+        // Byte-stable: recompiling the decoded layers reproduces the compiled
+        // frame exactly. The decoded MAC carries an empty payload and the FCS
+        // user-set to the original value; re-attaching the decoded NWK bytes
+        // (which embed the APS bytes as the NWK payload) as the MAC payload and
+        // recompiling reproduces the original frame, FCS included.
+        let recompiled = Packet::from_layer(mac.payload(&nwk.encode()))
+            .compile()
+            .expect("recompile decoded layers");
+        assert_eq!(recompiled.as_bytes(), bytes);
     }
 }
