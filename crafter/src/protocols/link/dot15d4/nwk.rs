@@ -1,6 +1,10 @@
 //! Zigbee Network (NWK) layer scaffolding.
 
+use core::any::Any;
+
+use crate::error::{CrafterError, Result};
 use crate::field::Field;
+use crate::packet::{IntoPacket, Layer, LayerContext, Packet};
 
 /// NWK Frame Control: Frame Type sub-field bit offset (bits 0..=1).
 ///
@@ -72,9 +76,6 @@ const NWK_IEEE_ADDR_LEN: usize = 8;
 /// - The 64-bit destination and source IEEE addresses follow the sequence
 ///   number and are present only when their frame-control flags are set.
 /// - The NWK payload follows the (optional) IEEE addresses.
-///
-/// The `Layer` implementation and decode arrive in step 20; this step defines
-/// the struct, builders, and byte serialization.
 #[derive(Debug)]
 pub struct ZigbeeNwk {
     /// Frame type stored in NWK Frame Control bits 0..=1.
@@ -346,9 +347,260 @@ impl Default for ZigbeeNwk {
     }
 }
 
+/// Human-readable label for a NWK frame type code point.
+///
+/// Known code points (Zigbee Specification R23, Table 3-48) get their spec
+/// names; anything else is rendered as `Type(N)` so an unknown frame type
+/// survives summaries without being misreported.
+fn nwk_frame_type_label(frame_type: u8) -> String {
+    match frame_type & 0b11 {
+        NWK_FRAME_TYPE_DATA => "Data".to_string(),
+        NWK_FRAME_TYPE_COMMAND => "Command".to_string(),
+        other => format!("Type({other})"),
+    }
+}
+
+impl Layer for ZigbeeNwk {
+    fn name(&self) -> &'static str {
+        "ZigbeeNwk"
+    }
+
+    fn summary(&self) -> String {
+        format!(
+            "ZigbeeNwk({}, dst={:#06x}, src={:#06x}, r={})",
+            nwk_frame_type_label(self.effective_frame_type()),
+            self.dest.value().copied().unwrap_or(0),
+            self.src.value().copied().unwrap_or(0),
+            self.radius.value().copied().unwrap_or(NWK_RADIUS_DEFAULT),
+        )
+    }
+
+    fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        let mut fields = vec![
+            (
+                "frame_type",
+                nwk_frame_type_label(self.effective_frame_type()),
+            ),
+            (
+                "protocol_version",
+                self.effective_protocol_version().to_string(),
+            ),
+            (
+                "dest",
+                format!("{:#06x}", self.dest.value().copied().unwrap_or(0)),
+            ),
+            (
+                "src",
+                format!("{:#06x}", self.src.value().copied().unwrap_or(0)),
+            ),
+            (
+                "radius",
+                self.radius.value().copied().unwrap_or(NWK_RADIUS_DEFAULT).to_string(),
+            ),
+            (
+                "seq",
+                self.seq.value().copied().unwrap_or(NWK_SEQ_DEFAULT).to_string(),
+            ),
+        ];
+
+        if self.effective_dest_ieee_flag() {
+            fields.push((
+                "dest_ieee",
+                format!("{:#018x}", self.dest_ieee.value().copied().unwrap_or(0)),
+            ));
+        }
+        if self.effective_src_ieee_flag() {
+            fields.push((
+                "src_ieee",
+                format!("{:#018x}", self.src_ieee.value().copied().unwrap_or(0)),
+            ));
+        }
+
+        fields
+    }
+
+    fn encoded_len(&self) -> usize {
+        ZigbeeNwk::encoded_len(self)
+    }
+
+    fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
+        out.extend_from_slice(&self.encode());
+        Ok(())
+    }
+
+    fn clone_layer(&self) -> Box<dyn Layer> {
+        Box::new(self.clone())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn into_any(self: Box<Self>) -> Box<dyn Any> {
+        self
+    }
+}
+
+impl<R: IntoPacket> core::ops::Div<R> for ZigbeeNwk {
+    type Output = Packet;
+
+    fn div(self, rhs: R) -> Self::Output {
+        Packet::from_layer(self).concat(rhs)
+    }
+}
+
+/// Read a little-endian 64-bit IEEE address from `bytes` at `*offset`.
+///
+/// Advances `*offset` past the eight consumed octets. Truncation surfaces a
+/// structured [`CrafterError`] with the supplied context rather than panicking.
+fn read_nwk_ieee_addr(
+    bytes: &[u8],
+    offset: &mut usize,
+    context: &'static str,
+) -> Result<u64> {
+    let required = *offset + NWK_IEEE_ADDR_LEN;
+    if bytes.len() < required {
+        return Err(CrafterError::buffer_too_short(context, required, bytes.len()));
+    }
+
+    let addr = u64::from_le_bytes([
+        bytes[*offset],
+        bytes[*offset + 1],
+        bytes[*offset + 2],
+        bytes[*offset + 3],
+        bytes[*offset + 4],
+        bytes[*offset + 5],
+        bytes[*offset + 6],
+        bytes[*offset + 7],
+    ]);
+    *offset = required;
+    Ok(addr)
+}
+
+/// Decode a Zigbee Network (NWK) frame header.
+///
+/// Parses the 16-bit Frame Control field, the destination and source 16-bit
+/// network addresses, the radius and sequence-number octets, the optional
+/// 64-bit destination/source IEEE addresses (present only when their
+/// frame-control flags are set), and the optional source-route subframe (relay
+/// count + relay index + relay list, present only when the source-route flag is
+/// set), returning the remaining NWK payload bytes as the tail (Zigbee
+/// Specification R23, Section 3.3.1; see `.agents/docs/zigbee-manifest.md`).
+///
+/// Every parsed field is recorded as [`Field::user`] so a round-trip reproduces
+/// the input verbatim. Truncation mid-frame-control or mid-header surfaces a
+/// structured [`CrafterError`] (`"zigbee.nwk.fcf"` / `"zigbee.nwk.header"`)
+/// rather than panicking; the returned tail is preserved as-is so an APS or
+/// unknown payload can be decoded or kept raw by the caller.
+pub(crate) fn decode_zigbee_nwk(bytes: &[u8]) -> Result<(ZigbeeNwk, &[u8])> {
+    if bytes.len() < NWK_FRAME_CONTROL_LEN {
+        return Err(CrafterError::buffer_too_short(
+            "zigbee.nwk.fcf",
+            NWK_FRAME_CONTROL_LEN,
+            bytes.len(),
+        ));
+    }
+
+    let fcf = u16::from_le_bytes([bytes[0], bytes[1]]);
+    let frame_type = ((fcf >> NWK_FC_FRAME_TYPE_SHIFT) & 0b11) as u8;
+    let protocol_version = ((fcf >> NWK_FC_PROTOCOL_VERSION_SHIFT) & 0b1111) as u8;
+    let discover_route = ((fcf >> NWK_FC_DISCOVER_ROUTE_SHIFT) & 0b11) as u8;
+    let multicast = (fcf >> NWK_FC_MULTICAST_SHIFT) & 0b1 != 0;
+    let security = (fcf >> NWK_FC_SECURITY_SHIFT) & 0b1 != 0;
+    let source_route = (fcf >> NWK_FC_SOURCE_ROUTE_SHIFT) & 0b1 != 0;
+    let dest_ieee_flag = (fcf >> NWK_FC_DEST_IEEE_SHIFT) & 0b1 != 0;
+    let src_ieee_flag = (fcf >> NWK_FC_SRC_IEEE_SHIFT) & 0b1 != 0;
+
+    // Destination + source 16-bit addresses, radius, and sequence number are
+    // always present in that order.
+    let header_end = NWK_FRAME_CONTROL_LEN
+        + NWK_SHORT_ADDR_LEN
+        + NWK_SHORT_ADDR_LEN
+        + NWK_RADIUS_LEN
+        + NWK_SEQ_LEN;
+    if bytes.len() < header_end {
+        return Err(CrafterError::buffer_too_short(
+            "zigbee.nwk.header",
+            header_end,
+            bytes.len(),
+        ));
+    }
+
+    let dest = u16::from_le_bytes([bytes[2], bytes[3]]);
+    let src = u16::from_le_bytes([bytes[4], bytes[5]]);
+    let radius = bytes[6];
+    let seq = bytes[7];
+
+    let mut offset = header_end;
+    let dest_ieee = if dest_ieee_flag {
+        Field::user(read_nwk_ieee_addr(bytes, &mut offset, "zigbee.nwk.header")?)
+    } else {
+        Field::unset()
+    };
+    let src_ieee = if src_ieee_flag {
+        Field::user(read_nwk_ieee_addr(bytes, &mut offset, "zigbee.nwk.header")?)
+    } else {
+        Field::unset()
+    };
+
+    // Optional source-route subframe (Zigbee Specification R23, Section
+    // 3.3.1.8): relay count (1 octet) + relay index (1 octet) + relay list
+    // (relay count * 2 octets). Consumed but not modeled; the bytes are part of
+    // the header, not the payload tail.
+    if source_route {
+        let counts_end = offset + 2;
+        if bytes.len() < counts_end {
+            return Err(CrafterError::buffer_too_short(
+                "zigbee.nwk.header",
+                counts_end,
+                bytes.len(),
+            ));
+        }
+        let relay_count = bytes[offset] as usize;
+        offset = counts_end;
+        let relay_list_end = offset + relay_count * NWK_SHORT_ADDR_LEN;
+        if bytes.len() < relay_list_end {
+            return Err(CrafterError::buffer_too_short(
+                "zigbee.nwk.header",
+                relay_list_end,
+                bytes.len(),
+            ));
+        }
+        offset = relay_list_end;
+    }
+
+    let payload = bytes[offset..].to_vec();
+
+    let nwk = ZigbeeNwk {
+        frame_type: Field::user(frame_type),
+        protocol_version: Field::user(protocol_version),
+        discover_route: Field::user(discover_route),
+        multicast: Field::user(multicast),
+        security: Field::user(security),
+        source_route: Field::user(source_route),
+        dest_ieee_flag: Field::user(dest_ieee_flag),
+        src_ieee_flag: Field::user(src_ieee_flag),
+        dest: Field::user(dest),
+        src: Field::user(src),
+        radius: Field::user(radius),
+        seq: Field::user(seq),
+        dest_ieee,
+        src_ieee,
+        payload,
+    };
+
+    Ok((nwk, &bytes[offset..]))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::ZigbeeNwk;
+    use super::{decode_zigbee_nwk, ZigbeeNwk};
+    use crate::error::CrafterError;
+    use crate::packet::Packet;
 
     #[test]
     fn zigbee_nwk_encode() {
@@ -423,5 +675,50 @@ mod tests {
             &[0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11, 0x00]
         );
         assert_eq!(frame.encoded_len(), bytes.len());
+    }
+
+    #[test]
+    fn zigbee_nwk_layer_compile_equals_encode() {
+        // The `Layer::compile` path must emit exactly the bytes `encode()`
+        // produces, so a packet built from a `ZigbeeNwk` round-trips its
+        // serialized form.
+        let frame = ZigbeeNwk::data()
+            .dest(0x1234)
+            .src(0x5678)
+            .radius(30)
+            .seq(42)
+            .payload(&[0xAA, 0xBB]);
+        let expected = frame.encode();
+
+        let bytes = Packet::from_layer(frame.clone())
+            .compile()
+            .expect("compile ZigbeeNwk layer");
+
+        assert_eq!(bytes.as_bytes(), expected.as_slice());
+
+        // Decoding the compiled bytes reproduces the same header fields. The NWK
+        // payload is returned as the tail for the APS-or-raw layer to consume,
+        // and is also captured on the decoded layer.
+        let (decoded, tail) = decode_zigbee_nwk(bytes.as_bytes()).expect("decode ZigbeeNwk layer");
+        assert_eq!(decoded.dest.value().copied(), Some(0x1234));
+        assert_eq!(decoded.src.value().copied(), Some(0x5678));
+        assert_eq!(decoded.radius.value().copied(), Some(30));
+        assert_eq!(decoded.seq.value().copied(), Some(42));
+        assert_eq!(decoded.payload, vec![0xAA, 0xBB]);
+        assert_eq!(tail, &[0xAA, 0xBB]);
+        assert_eq!(decoded.encode(), expected);
+    }
+
+    #[test]
+    fn zigbee_nwk_layer_decode_truncated_header_is_structured_error() {
+        // A single octet cannot hold the 2-octet Frame Control field.
+        let err = decode_zigbee_nwk(&[0x08]).expect_err("must reject a truncated frame control");
+        assert_eq!(err, CrafterError::buffer_too_short("zigbee.nwk.fcf", 2, 1));
+
+        // A valid frame control but a buffer that stops mid-header (before the
+        // radius and sequence-number octets) surfaces the header context.
+        let err = decode_zigbee_nwk(&[0x08, 0x00, 0x34, 0x12, 0x78, 0x56])
+            .expect_err("must reject a truncated NWK header");
+        assert_eq!(err, CrafterError::buffer_too_short("zigbee.nwk.header", 8, 6));
     }
 }
