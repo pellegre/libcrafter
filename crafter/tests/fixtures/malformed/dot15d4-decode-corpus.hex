@@ -1,0 +1,38 @@
+# name|link-type|expected-kind|expected-context-or-marker|hex
+# link-type selects the decode entrypoint: `mac` -> LinkType::Ieee802154
+# (bare MAC frame, with FCS), `tap` -> LinkType::Ieee802154Tap (TAP
+# radio-descriptor pseudo-header followed by the MAC frame).
+# expected-kind is one of:
+#   buffer-too-short    -> Err(CrafterError::BufferTooShort) with the given context
+#   invalid-field-value -> Err(CrafterError::InvalidFieldValue) with the given field
+#   decodes             -> Ok(Packet); the malformed inner payload is preserved as a
+#                          trailing Raw layer (the given marker names which layer was
+#                          truncated). Truncated Zigbee NWK/APS headers never fail the
+#                          decode_from_link entrypoint: an unrecognized NWK/APS payload
+#                          is kept Raw rather than rejecting the enclosing MAC frame.
+
+# Truncated MAC Frame Control field: a single octet where two are required.
+too-short-mac-fcf|mac|buffer-too-short|dot15d4.mac.fcf|01
+# Data MAC frame declaring a short destination address (FCF 0x0801) but ending
+# right after the sequence number, so the destination PAN/address run past the
+# buffer.
+mac-addressing-runs-past-buffer|mac|buffer-too-short|dot15d4.mac.addressing|010800
+# TAP pseudo-header declaring a 12-octet total length whose single TLV claims an
+# 8-octet value, so the padded TLV record (12 octets) runs past the declared TLV
+# region (8 octets).
+truncated-tap-tlv-header|tap|buffer-too-short|dot15d4.tap.tlv|00000c000000080000000000
+# TAP pseudo-header whose declared total length (28) exceeds the supplied buffer
+# (only the 4-octet fixed header is present).
+tap-declared-length-exceeds-buffer|tap|buffer-too-short|dot15d4.tap.header|00001c00
+# MAC Frame Control field carrying reserved frame type 4 (the crate models only
+# Beacon/Data/Ack/MacCommand).
+reserved-mac-frame-type|mac|invalid-field-value|dot15d4.mac.frame_type|0400
+# Data MAC frame (FCF 0x0001, no addressing) whose one-octet payload is a
+# truncated Zigbee NWK frame control (two octets required); the NWK payload is
+# preserved as Raw rather than rejected. Layout: FCF (01 00) + seq (00) + NWK
+# payload (00) + FCS (00 00).
+truncated-nwk-header|mac|decodes|nwk-raw|010000000000
+# Data MAC frame carrying a full 8-octet Data NWK header followed by a single
+# APS frame-control octet (0x00, unicast Data) whose destination endpoint runs
+# past the buffer; the truncated APS payload is preserved as Raw.
+truncated-aps-header|mac|decodes|aps-raw|0100000000000000000000000000
