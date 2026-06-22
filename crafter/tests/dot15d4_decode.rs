@@ -9,6 +9,8 @@
 #[macro_use]
 mod support;
 
+use std::fs;
+
 use crafter::prelude::*;
 
 #[test]
@@ -101,6 +103,46 @@ fn dot15d4_hex_fixture_decodes_full_zigbee_nwk_aps_stack() {
     assert_eq!(field_value(&aps_fields, "dest_endpoint"), Some("1"));
     assert_eq!(field_value(&aps_fields, "src_endpoint"), Some("1"));
     assert_eq!(field_value(&aps_fields, "counter"), Some("9"));
+}
+
+#[test]
+fn dot15d4_summary_golden_snapshots_match_hex_fixtures() {
+    assert_dot15d4_summary_fixture(
+        "mac-data-short",
+        fixture_str!("dot15d4/mac-data-short.hex"),
+        "summaries/dot15d4-mac-data-short.summary.txt",
+    );
+    assert_dot15d4_summary_fixture(
+        "mac-data-extended",
+        fixture_str!("dot15d4/mac-data-extended.hex"),
+        "summaries/dot15d4-mac-data-extended.summary.txt",
+    );
+    assert_dot15d4_summary_fixture(
+        "zigbee-nwk-aps",
+        fixture_str!("dot15d4/zigbee-nwk-aps.hex"),
+        "summaries/dot15d4-zigbee-nwk-aps.summary.txt",
+    );
+}
+
+/// Decode a bare-MAC hex fixture and assert its rendered `summary()` matches the
+/// committed snapshot, mirroring `assert_ble_summary_fixture` in
+/// `ble_decode.rs`. Guards the layer `summary` implementations against drift.
+fn assert_dot15d4_summary_fixture(label: &str, hex: &str, summary_path: &str) {
+    let frame = decode_hex_fixture(label, hex);
+    let packet = Packet::decode_from_link(LinkType::Ieee802154, &frame)
+        .unwrap_or_else(|err| panic!("{label} fixture should decode: {err}"));
+    let expected = read_summary_fixture(summary_path);
+    assert_eq!(
+        expected.trim_end(),
+        packet.summary().trim_end(),
+        "{label} summary did not match {summary_path}"
+    );
+}
+
+/// Read a committed summary snapshot fixture as a string.
+fn read_summary_fixture(path: &str) -> String {
+    fs::read_to_string(support::fixture_path(path))
+        .unwrap_or_else(|err| panic!("summary fixture {path} should be readable: {err}"))
 }
 
 /// Look up an inspection field's value by name.
