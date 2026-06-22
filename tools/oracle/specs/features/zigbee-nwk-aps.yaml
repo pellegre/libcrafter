@@ -1,0 +1,350 @@
+version: 1
+kind: feature
+name: zigbee-nwk-aps
+summary: Zigbee Network (NWK) and Application Support sublayer (APS) frame headers riding on the IEEE 802.15.4 MAC payload — NWK frame control/addressing/radius/sequence, APS frame control/endpoints/cluster/profile/counter, full MAC/NWK/APS data stack, and structured malformed-input errors, cross-checked against the scapy ZigbeeNWK/ZigbeeAppDataPayload reference.
+
+layers:
+  - zigbee-nwk
+  - zigbee-aps
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+  - roundtrip
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: nwk-frame-control
+    frame_types:
+      - data
+      - command
+    sources:
+      - .agents/docs/zigbee-manifest.md#NWK-Frame-Control-Field-16-bits
+      - .agents/docs/zigbee-manifest.md#NWK-Frame-Types-Discover-Route-and-Protocol-Version-Code-Points
+    checks:
+      - frame_type_bits_0_to_1_preserved
+      - protocol_version_bits_2_to_5_preserved
+      - frame_control_little_endian_on_wire
+      - strict_bytes_preserved
+  - name: nwk-header-fields
+    sources:
+      - .agents/docs/zigbee-manifest.md#NWK-Frame-Format-and-Header-Field-Order
+    checks:
+      - dest_address_is_two_octets_little_endian
+      - src_address_is_two_octets_little_endian
+      - radius_is_one_octet
+      - sequence_number_is_one_octet
+      - strict_bytes_preserved
+  - name: aps-frame-control
+    frame_types:
+      - data
+    sources:
+      - .agents/docs/zigbee-manifest.md#APS-Frame-Control-Field-8-bits
+      - .agents/docs/zigbee-manifest.md#APS-Frame-Type-Delivery-Mode-and-Sub-Field-Code-Points
+    checks:
+      - frame_type_bits_0_to_1_preserved
+      - delivery_mode_bits_2_to_3_preserved
+      - frame_control_is_one_octet
+      - strict_bytes_preserved
+  - name: aps-header-fields
+    sources:
+      - .agents/docs/zigbee-manifest.md#APS-Frame-Format-and-Header-Field-Order
+    checks:
+      - dest_endpoint_present_for_unicast_or_broadcast_delivery
+      - cluster_and_profile_present_for_data_or_ack_frames
+      - cluster_id_is_two_octets_little_endian
+      - profile_id_is_two_octets_little_endian
+      - aps_counter_is_one_octet
+      - strict_bytes_preserved
+  - name: zigbee-on-mac-payload
+    sources:
+      - .agents/docs/zigbee-manifest.md#Recognizing-a-Zigbee-NWK-Frame-Inside-the-802-15-4-MAC-Payload
+    checks:
+      - nwk_frame_rides_on_dot15d4_mac_payload
+      - aps_frame_rides_on_nwk_payload
+      - unknown_payload_kept_as_raw
+  - name: structured-errors
+    checks:
+      - truncated_nwk_frame_control_is_structured_error
+      - truncated_nwk_header_is_structured_error
+      - truncated_aps_frame_control_is_structured_error
+      - truncated_aps_header_is_structured_error
+      - excluded_from_offline_byte_comparison
+
+coverage_cases:
+  - zigbee-nwk-data-frame
+  - zigbee-mac-nwk-aps-data-stack
+  - malformed-zigbee-nwk-truncated-fcf
+  - malformed-zigbee-nwk-truncated-header
+  - malformed-zigbee-aps-truncated-fcf
+  - malformed-zigbee-aps-truncated-header
+
+supported_cases:
+  - name: zigbee-nwk-data-frame
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: strict_bytes
+    roots:
+      - "link:ieee802154"
+      - "link:ieee802154-tap"
+    contract_only: true
+    fields:
+      zigbee-nwk:
+        frame_type: data
+        protocol_version: 2
+        dest: 0x0000
+        src: 0xabcd
+        radius: 30
+        seq: 0x42
+        payload_hex: "deadbeef"
+    expected:
+      nwk_frame_control_hex: "0800"
+      nwk_frame_type_code: 0x00
+      nwk_protocol_version: 2
+      nwk_header_hex: "08000000cdab1e42"
+      nwk_payload_hex: "deadbeef"
+    sources:
+      - .agents/docs/zigbee-manifest.md#NWK-Frame-Format-and-Header-Field-Order
+      - .agents/docs/zigbee-manifest.md#NWK-Frame-Control-Field-16-bits
+      - .agents/docs/zigbee-manifest.md#NWK-Frame-Types-Discover-Route-and-Protocol-Version-Code-Points
+  - name: zigbee-mac-nwk-aps-data-stack
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: strict_bytes
+    roots:
+      - "link:ieee802154"
+      - "link:ieee802154-tap"
+    contract_only: true
+    fixture: crafter/tests/fixtures/dot15d4/zigbee-nwk-aps.hex
+    fields:
+      dot15d4:
+        frame_type: data
+        pan_id_compression: true
+        seq: 0x07
+        dest_pan: 0x1234
+        dest_short: 0x0000
+        src_short: 0xabcd
+      zigbee-nwk:
+        frame_type: data
+        protocol_version: 2
+        dest: 0x0000
+        src: 0xabcd
+        radius: 30
+        seq: 0x42
+      zigbee-aps:
+        frame_type: data
+        delivery_mode: unicast
+        dest_endpoint: 0x01
+        cluster: 0x0006
+        profile: 0x0104
+        src_endpoint: 0x01
+        counter: 0x09
+        payload_hex: "0102"
+    expected:
+      frame_hex: "418807341200 00cdab08000000cdab1e4200010600040101090102 62f5"
+      mac_payload_hex: "08000000cdab1e4200010600040101090102"
+      nwk_header_hex: "08000000cdab1e42"
+      nwk_payload_hex: "00010600040101090102"
+      aps_frame_control_hex: "00"
+      aps_header_hex: "0001060004010109"
+      aps_payload_hex: "0102"
+      fcs_hex: "62f5"
+      nwk_dest: 0x0000
+      nwk_src: 0xabcd
+      nwk_radius: 30
+      aps_cluster: 0x0006
+      aps_profile: 0x0104
+      aps_dest_endpoint: 0x01
+    sources:
+      - .agents/docs/zigbee-manifest.md#NWK-Frame-Format-and-Header-Field-Order
+      - .agents/docs/zigbee-manifest.md#APS-Frame-Format-and-Header-Field-Order
+      - .agents/docs/zigbee-manifest.md#Recognizing-a-Zigbee-NWK-Frame-Inside-the-802-15-4-MAC-Payload
+  - name: malformed-zigbee-nwk-truncated-fcf
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: structured_error
+    offline_byte_comparison: excluded
+    roots:
+      - "link:ieee802154"
+    generator_policy:
+      strict_byte_comparison: excluded
+      reason: structured_error
+    crate_test_coverage:
+      test: crafter/tests/dot15d4_resilience.rs::dot15d4_malformed_corpus_errors_are_structured_and_non_panicking
+      fixture: crafter/tests/fixtures/malformed/dot15d4-decode-corpus.hex
+  - name: malformed-zigbee-nwk-truncated-header
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: structured_error
+    offline_byte_comparison: excluded
+    roots:
+      - "link:ieee802154"
+    generator_policy:
+      strict_byte_comparison: excluded
+      reason: structured_error
+    crate_test_coverage:
+      test: crafter/tests/dot15d4_resilience.rs::dot15d4_malformed_corpus_errors_are_structured_and_non_panicking
+      fixture: crafter/tests/fixtures/malformed/dot15d4-decode-corpus.hex
+  - name: malformed-zigbee-aps-truncated-fcf
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: structured_error
+    offline_byte_comparison: excluded
+    roots:
+      - "link:ieee802154"
+    generator_policy:
+      strict_byte_comparison: excluded
+      reason: structured_error
+    crate_test_coverage:
+      test: crafter/tests/dot15d4_resilience.rs::dot15d4_malformed_corpus_errors_are_structured_and_non_panicking
+      fixture: crafter/tests/fixtures/malformed/dot15d4-decode-corpus.hex
+  - name: malformed-zigbee-aps-truncated-header
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: structured_error
+    offline_byte_comparison: excluded
+    roots:
+      - "link:ieee802154"
+    generator_policy:
+      strict_byte_comparison: excluded
+      reason: structured_error
+    crate_test_coverage:
+      test: crafter/tests/dot15d4_resilience.rs::dot15d4_malformed_corpus_errors_are_structured_and_non_panicking
+      fixture: crafter/tests/fixtures/malformed/dot15d4-decode-corpus.hex
+
+structured_error_cases:
+  - name: truncated-zigbee-nwk-frame-control
+    coverage_case: malformed-zigbee-nwk-truncated-fcf
+    decode_target: zigbee.nwk
+    expected_error:
+      kind: buffer-too-short
+      context: zigbee.nwk.fcf
+      required: 2
+      available: 1
+    crate_test: crafter/tests/dot15d4_resilience.rs::dot15d4_malformed_corpus_errors_are_structured_and_non_panicking
+    fixture: crafter/tests/fixtures/malformed/dot15d4-decode-corpus.hex
+  - name: truncated-zigbee-nwk-header
+    coverage_case: malformed-zigbee-nwk-truncated-header
+    decode_target: zigbee.nwk
+    expected_error:
+      kind: buffer-too-short
+      context: zigbee.nwk.header
+      required: 8
+      available: 6
+    crate_test: crafter/tests/dot15d4_resilience.rs::dot15d4_malformed_corpus_errors_are_structured_and_non_panicking
+    fixture: crafter/tests/fixtures/malformed/dot15d4-decode-corpus.hex
+  - name: truncated-zigbee-aps-frame-control
+    coverage_case: malformed-zigbee-aps-truncated-fcf
+    decode_target: zigbee.aps
+    expected_error:
+      kind: buffer-too-short
+      context: zigbee.aps.fcf
+      required: 1
+      available: 0
+    crate_test: crafter/tests/dot15d4_resilience.rs::dot15d4_malformed_corpus_errors_are_structured_and_non_panicking
+    fixture: crafter/tests/fixtures/malformed/dot15d4-decode-corpus.hex
+  - name: truncated-zigbee-aps-header
+    coverage_case: malformed-zigbee-aps-truncated-header
+    decode_target: zigbee.aps
+    expected_error:
+      kind: buffer-too-short
+      context: zigbee.aps.header
+      required: 7
+      available: 2
+    crate_test: crafter/tests/dot15d4_resilience.rs::dot15d4_malformed_corpus_errors_are_structured_and_non_panicking
+    fixture: crafter/tests/fixtures/malformed/dot15d4-decode-corpus.hex
+
+normalized_model:
+  nwk_header:
+    - frame_type
+    - frame_type_code
+    - protocol_version
+    - discover_route
+    - multicast
+    - security
+    - source_route
+    - dest_ieee_flag
+    - src_ieee_flag
+    - dest
+    - src
+    - radius
+    - seq
+  nwk_optional:
+    shape: ordered_optional_fields
+    presence: determined_by_frame_control_flags
+    fields:
+      - dest_ieee
+      - src_ieee
+      - source_route_subframe
+  aps_header:
+    - frame_type
+    - frame_type_code
+    - delivery_mode
+    - ack_format
+    - security
+    - ack_request
+    - ext_header
+    - counter
+  aps_optional:
+    shape: ordered_optional_fields
+    presence: determined_by_frame_type_and_delivery_mode
+    fields:
+      - dest_endpoint
+      - cluster
+      - profile
+      - src_endpoint
+  payload:
+    shape: opaque_bytes
+    raw_preservation:
+      - unknown_nwk_payload_kept_as_raw
+      - unknown_aps_payload_kept_as_raw
+  malformed:
+    - nwk_frame_control_truncated
+    - nwk_header_runs_past_available_bytes
+    - aps_frame_control_truncated
+    - aps_header_runs_past_available_bytes
+
+live_boundary:
+  provider_backed: false
+  dry_run_profile: smoke
+  smoke_harness: .scratch/dot15d4-whad-smoke
+  notes:
+    - Zigbee NWK/APS framing has no network live provider in the oracle;
+      Hetzner, QEMU, and VirtualBox validate IP/network exchanges, not
+      802.15.4/Zigbee radio traffic.
+    - The offline path (build, decode, pcap, dry-run, oracle) is the default
+      and hardware-free; no packets are sent for these cases.
+    - Real on-air Zigbee behavior is validated through the ignored WHAD dongle
+      smoke harness and is not committed to this repository.
+
+backend_support:
+  scapy:
+    status: supported
+    encode: true
+    decode: true
+    native_layers:
+      - ZigbeeNWK
+      - ZigbeeAppDataPayload
+    notes:
+      - The Step 36 scapy backend imports scapy.layers.zigbee and decodes the
+        Zigbee NWK header (ZigbeeNWK) and APS header (ZigbeeAppDataPayload)
+        riding on the 802.15.4 MAC payload.
+      - Strict-byte Zigbee NWK/APS cases are contract-only until the runnable
+        libcrafter offline adapter hooks are widened for dot15d4/zigbee.
+  libcrafter:
+    status: partial
+    encode: true
+    decode: true
+    notes:
+      - The ZigbeeNwk and ZigbeeAps layers have crate tests, the committed
+        crafter/tests/fixtures/dot15d4/zigbee-nwk-aps.hex full-stack fixture,
+        and summary snapshots; runnable Zigbee offline comparisons remain
+        deferred to adapter normalization work.
