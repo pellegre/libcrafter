@@ -280,7 +280,10 @@ fn assert_sniff_adv(message: &proto::Message, channel: u32) {
             Some(proto::ble::message::Msg::SniffAdv(command)) => {
                 assert!(!command.use_extended_adv);
                 assert_eq!(command.channel, channel);
-                assert!(command.bd_address.is_empty());
+                // Broadcast wildcard FF:FF:FF:FF:FF:FF: report every advertiser.
+                // An empty filter makes the firmware match nothing (the live
+                // sniff fix in enter_ble), so the sniff command carries it.
+                assert_eq!(command.bd_address, vec![0xFF; 6]);
             }
             other => panic!("expected BLE advertising sniff command, got {other:?}"),
         },
