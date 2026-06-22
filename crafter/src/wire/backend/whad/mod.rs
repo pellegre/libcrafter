@@ -5,7 +5,7 @@
 pub(crate) const WHAD_TARGET_PROTOCOL_VERSION: u32 = 3;
 
 pub(crate) mod capability;
-pub use capability::WhadBleMode;
+pub use capability::{WhadBleMode, WhadDot15d4Mode};
 
 #[cfg(feature = "whad")]
 pub(crate) mod discovery;
