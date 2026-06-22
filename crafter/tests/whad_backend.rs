@@ -189,6 +189,141 @@ fn whad_packetwire_open_rejects_device_without_ble_domain() {
     }
 }
 
+// Lab-safe documentation-style 802.15.4 values: a 2.4 GHz channel and a
+// short-addressed data frame between two PAN devices.
+const DOT15D4_CHANNEL: u8 = 15;
+
+#[test]
+fn dot15d4_dry_run_send_plans_without_writing_channel_bytes() {
+    let channel = WhadMockChannel::new();
+    let wire = PacketWire::whad_serial("mock-whad")
+        .dot15d4_send()
+        .channel(DOT15D4_CHANNEL)
+        .with_mock_channel(channel.clone())
+        .open()
+        .expect("dry-run WHAD 802.15.4 PacketWire should open without serial I/O");
+    assert!(wire.has_writer());
+    assert!(!wire.has_source());
+    assert!(channel.written_bytes().is_empty());
+
+    let expected_pdu = sample_dot15d4_mac_pdu();
+    let mut writer = wire
+        .writer()
+        .expect("dry-run 802.15.4 send target should expose a writer");
+    let report = writer
+        .write_record(&PacketRecord::new(sample_dot15d4_frame()))
+        .expect("dry-run write should produce a send plan");
+
+    assert_eq!(report.backend(), &BackendKind::Whad);
+    assert_eq!(report.bytes_requested(), expected_pdu.len());
+    assert_eq!(report.bytes_written(), 0);
+    assert!(report.is_dry_run());
+    let details = report
+        .target_details()
+        .expect("WHAD dry-run report should include an inspectable plan");
+    assert!(details.contains("dot15d4 SendCmd"));
+    assert!(details.contains(&format!("channel={DOT15D4_CHANNEL}")));
+    assert!(details.contains(&format!("pdu_len={}", expected_pdu.len())));
+    // The dry-run write transmitted nothing onto the mock channel.
+    assert!(channel.written_bytes().is_empty());
+}
+
+#[test]
+fn dot15d4_dry_run_live_send_emits_one_send_cmd_after_open() {
+    let channel = WhadMockChannel::new();
+    queue_dot15d4_discovery(
+        &channel,
+        dot15d4_command_mask(&[
+            proto::dot15d4::Dot15d4Command::Send,
+            proto::dot15d4::Dot15d4Command::SendRaw,
+            proto::dot15d4::Dot15d4Command::Start,
+        ]),
+    );
+
+    let wire = PacketWire::whad_serial("mock-whad")
+        .dot15d4_send()
+        .channel(DOT15D4_CHANNEL)
+        .with_mock_channel(channel.clone())
+        .live()
+        .open()
+        .expect("live mock WHAD PacketWire should discover and enter 802.15.4 send mode");
+    assert!(wire.has_writer());
+    assert!(!wire.has_source());
+    let _open_control_frames = channel.take_written_bytes();
+
+    let expected_pdu = sample_dot15d4_mac_pdu();
+    let mut writer = wire
+        .writer()
+        .expect("live send target should expose a writer");
+    let report = writer
+        .write_record(&PacketRecord::new(sample_dot15d4_frame()))
+        .expect("live mock write should frame one WHAD SendCmd");
+
+    assert_eq!(report.backend(), &BackendKind::Whad);
+    assert_eq!(report.bytes_requested(), expected_pdu.len());
+    assert_eq!(report.bytes_written(), expected_pdu.len());
+    assert!(!report.is_dry_run());
+
+    let messages = decode_written_messages(channel.take_written_bytes());
+    assert_eq!(messages.len(), 1);
+    assert_dot15d4_send_cmd(&messages[0], u32::from(DOT15D4_CHANNEL), &expected_pdu);
+}
+
+fn sample_dot15d4_frame() -> Packet {
+    Dot15d4Radio::on_channel(DOT15D4_CHANNEL)
+        / Dot15d4::data()
+            .seq(0x2A)
+            .dest_short(0x1234, 0x0002)
+            .src_short(0x1234, 0x0001)
+            .payload(&[0xDE, 0xAD, 0xBE, 0xEF])
+}
+
+/// The compiled MAC (+FCS) bytes the writer carries as the PDU: the MAC layer
+/// stacked after the `Dot15d4Radio` pseudo-header. The radio descriptor is a
+/// metadata pseudo-header and does not contribute to the over-the-air PDU, so
+/// compiling the MAC layer on its own reproduces the writer's `pdu` exactly.
+fn sample_dot15d4_mac_pdu() -> Vec<u8> {
+    let mac = Dot15d4::data()
+        .seq(0x2A)
+        .dest_short(0x1234, 0x0002)
+        .src_short(0x1234, 0x0001)
+        .payload(&[0xDE, 0xAD, 0xBE, 0xEF]);
+    Packet::from_layer(mac)
+        .compile()
+        .expect("802.15.4 MAC frame should compile")
+        .into_bytes()
+}
+
+fn queue_dot15d4_discovery(channel: &WhadMockChannel, supported_commands: u64) {
+    queue_message(
+        channel,
+        &device_info_response(vec![proto::discovery::Domain::Dot15d4 as u32]),
+    );
+    queue_message(
+        channel,
+        &domain_response(proto::discovery::Domain::Dot15d4 as u32, supported_commands),
+    );
+}
+
+fn dot15d4_command_mask(commands: &[proto::dot15d4::Dot15d4Command]) -> u64 {
+    commands
+        .iter()
+        .fold(0, |mask, command| mask | (1u64 << (*command as u32)))
+}
+
+fn assert_dot15d4_send_cmd(message: &proto::Message, channel: u32, expected_pdu: &[u8]) {
+    match message.msg.as_ref() {
+        Some(proto::message::Msg::Dot15d4(dot15d4)) => match dot15d4.msg.as_ref() {
+            Some(proto::dot15d4::message::Msg::Send(command)) => {
+                assert_eq!(command.channel, channel);
+                assert_eq!(command.pdu, expected_pdu);
+            }
+            other => panic!("expected dot15d4 SendCmd, got {other:?}"),
+        },
+        other => panic!("expected top-level dot15d4 message, got {other:?}"),
+    }
+}
+
 fn sample_advertisement(channel: u8) -> Packet {
     BleRadio::advertising(channel).access_address(BLE_ADVERTISING_ACCESS_ADDRESS)
         / BleLlAdv::adv_ind()
