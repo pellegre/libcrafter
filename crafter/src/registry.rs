@@ -3,7 +3,7 @@
 use std::sync::OnceLock;
 
 use crate::endian::read_u32_be;
-use crate::error::Result;
+use crate::error::{CrafterError, Result};
 use crate::packet::{LinkType, NetworkLayer, Packet, Raw};
 use crate::protocols::bgp::{decode::append_bgp_packet_with_registry, BGP_PORT};
 use crate::protocols::dhcp::{append_dhcp_packet, is_dhcp_port_pair, looks_like_dhcp_payload};
@@ -488,6 +488,11 @@ impl ProtocolRegistry {
             LinkType::Ieee80211 => decode_dot11_with_registry(self, bytes),
             LinkType::Radiotap => decode_radiotap_with_registry(self, bytes),
             LinkType::BluetoothLeLl => decode_ble_ll_with_registry(self, bytes),
+            // Temporary structured-unsupported arm; the real 802.15.4 decode
+            // dispatch (decode_dot15d4_with_registry) is wired in step 25.
+            LinkType::Ieee802154 | LinkType::Ieee802154Tap => Err(
+                CrafterError::invalid_field_value("registry.link_type", "ieee802154 decode not yet wired"),
+            ),
             LinkType::LinuxCooked | LinkType::LinuxSll => self.decode_linux_sll(bytes),
             LinkType::NullLoopback => decode_null_loopback_with_registry(self, bytes),
         }

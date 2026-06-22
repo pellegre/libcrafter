@@ -323,9 +323,13 @@ fn locate_by_link_type(link_type: LinkType, bytes: &[u8]) -> Result<Ipv4Location
         LinkType::Ethernet => locate_ethernet(bytes),
         LinkType::LinuxCooked | LinkType::LinuxSll => locate_linux_sll(bytes),
         LinkType::NullLoopback => locate_null_loopback(bytes),
-        LinkType::Ieee80211 | LinkType::Radiotap | LinkType::BluetoothLeLl => Ok(
-            Ipv4Location::PassThrough(Ipv4FragmentPassThroughReason::UnsupportedWrapper),
-        ),
+        LinkType::Ieee80211
+        | LinkType::Radiotap
+        | LinkType::BluetoothLeLl
+        | LinkType::Ieee802154
+        | LinkType::Ieee802154Tap => Ok(Ipv4Location::PassThrough(
+            Ipv4FragmentPassThroughReason::UnsupportedWrapper,
+        )),
     }
 }
 
