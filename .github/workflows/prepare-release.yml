@@ -36,7 +36,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends curl libpcap-dev pkg-config python3
+          sudo apt-get install -y --no-install-recommends curl libpcap-dev pkg-config protobuf-compiler python3
 
       - name: Install Rust toolchain
         run: |
