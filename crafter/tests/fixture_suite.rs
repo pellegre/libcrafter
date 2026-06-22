@@ -39,11 +39,11 @@ use crafter::wire::backend::pcap::{
     TimestampPrecision,
 };
 use crafter::{
-    AdStructure, BackendKind, BleLlAdv, BleRadio, CrafterError, Dot11Metadata, IpDefrag,
-    IpDefragOverlapStatus, IpFragment, IpFragmentConfig, IpFragmentFamily, IpFragmentRange,
-    IpFragmentReason, PacketOrigin, PacketRecord, PacketWire, Sniffer, WifiDecryptState, WireError,
-    WpaAkm, WpaCipher, WpaCredentialStatus, WpaDecrypt, WpaDecryptReason, WpaHandshakeStatus,
-    WpaKeyKind, IPV4_OPTION_NOP,
+    AdStructure, BackendKind, BleLlAdv, BleRadio, CrafterError, Dot11Metadata, Dot15d4,
+    Dot15d4Radio, IpDefrag, IpDefragOverlapStatus, IpFragment, IpFragmentConfig, IpFragmentFamily,
+    IpFragmentRange, IpFragmentReason, PacketOrigin, PacketRecord, PacketWire, Sniffer,
+    WifiDecryptState, WireError, WpaAkm, WpaCipher, WpaCredentialStatus, WpaDecrypt,
+    WpaDecryptReason, WpaHandshakeStatus, WpaKeyKind, ZigbeeAps, ZigbeeNwk, IPV4_OPTION_NOP,
 };
 use support::fixture_path;
 
@@ -71,6 +71,10 @@ enum ExpectedLayer {
     Radiotap,
     BleRadio,
     BleLlAdv,
+    Dot15d4Radio,
+    Dot15d4,
+    ZigbeeNwk,
+    ZigbeeAps,
     Dot11,
     LlcSnap,
     Eapol,
@@ -173,6 +177,7 @@ enum PcapCoverageFamily {
     Ethernet,
     Ieee80211,
     BluetoothLeLl,
+    Ieee802154,
     RawIpIpv4,
     RawIpIpv6,
     LinuxSll,
@@ -1634,6 +1639,41 @@ const BLE_FIXTURES: &[ValidFixtureCase] = &[
     },
 ];
 
+const DOT15D4_FIXTURES: &[ValidFixtureCase] = &[
+    ValidFixtureCase {
+        name: "dot15d4-mac-data-short",
+        path: "dot15d4/mac-data-short.hex",
+        contents: FixtureContents::Hex(fixture_str!("dot15d4/mac-data-short.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::Link(LinkType::Ieee802154)),
+        expected_layers: &[ExpectedLayer::Dot15d4, ExpectedLayer::Raw],
+        preserve_exact_bytes: false,
+        summary_path: Some("summaries/dot15d4-mac-data-short.summary.txt"),
+    },
+    ValidFixtureCase {
+        name: "dot15d4-mac-data-extended",
+        path: "dot15d4/mac-data-extended.hex",
+        contents: FixtureContents::Hex(fixture_str!("dot15d4/mac-data-extended.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::Link(LinkType::Ieee802154)),
+        expected_layers: &[ExpectedLayer::Dot15d4, ExpectedLayer::Raw],
+        preserve_exact_bytes: false,
+        summary_path: Some("summaries/dot15d4-mac-data-extended.summary.txt"),
+    },
+    ValidFixtureCase {
+        name: "dot15d4-zigbee-nwk-aps",
+        path: "dot15d4/zigbee-nwk-aps.hex",
+        contents: FixtureContents::Hex(fixture_str!("dot15d4/zigbee-nwk-aps.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::Link(LinkType::Ieee802154)),
+        expected_layers: &[
+            ExpectedLayer::Dot15d4,
+            ExpectedLayer::ZigbeeNwk,
+            ExpectedLayer::ZigbeeAps,
+            ExpectedLayer::Raw,
+        ],
+        preserve_exact_bytes: false,
+        summary_path: Some("summaries/dot15d4-zigbee-nwk-aps.summary.txt"),
+    },
+];
+
 const DOT11_TEXT_ARTIFACTS: &[Dot11TextArtifact] = &[
     Dot11TextArtifact {
         path: "docs/guide/dot11.md",
@@ -2063,6 +2103,34 @@ const PCAP_FIXTURES: &[PcapFixtureCase] = &[
             fixture_name: "ble-le-ll-adv-record",
         }],
     },
+    PcapFixtureCase {
+        name: "dot15d4-tap",
+        path: "pcaps/dot15d4-tap.pcap",
+        contents: fixture_bytes!("pcaps/dot15d4-tap.pcap"),
+        pcap_link_type: PcapLinkType::Ieee802154Tap,
+        link_type: LinkType::Ieee802154Tap,
+        timestamp_precision: TimestampPrecision::Microseconds,
+        coverage: PcapCoverageFamily::Ieee802154,
+        records: &[PcapFixtureRecord {
+            seconds: 15,
+            fractional: 4,
+            fixture_name: DOT15D4_TAP_PCAP_RECORD_FIXTURE_NAME,
+        }],
+    },
+    PcapFixtureCase {
+        name: "dot15d4-withfcs",
+        path: "pcaps/dot15d4-withfcs.pcap",
+        contents: fixture_bytes!("pcaps/dot15d4-withfcs.pcap"),
+        pcap_link_type: PcapLinkType::Ieee802154WithFcs,
+        link_type: LinkType::Ieee802154,
+        timestamp_precision: TimestampPrecision::Microseconds,
+        coverage: PcapCoverageFamily::Ieee802154,
+        records: &[PcapFixtureRecord {
+            seconds: 15,
+            fractional: 4,
+            fixture_name: DOT15D4_WITHFCS_PCAP_RECORD_FIXTURE_NAME,
+        }],
+    },
 ];
 
 const REQUIRED_VALID_COVERAGE: &[(CoverageFamily, &str)] = &[
@@ -2219,6 +2287,10 @@ const REQUIRED_PCAP_COVERAGE: &[(PcapCoverageFamily, &str)] = &[
         "Bluetooth LE LL pcap link type",
     ),
     (
+        PcapCoverageFamily::Ieee802154,
+        "IEEE 802.15.4 pcap link types (TAP and with-FCS)",
+    ),
+    (
         PcapCoverageFamily::RawIpIpv4,
         "RawIp pcap with IPv4 payload",
     ),
@@ -2369,6 +2441,7 @@ fn valid_fixture_case_opt(name: &str) -> Option<&'static ValidFixtureCase> {
         .iter()
         .chain(DOT11_FIXTURES.iter())
         .chain(BLE_FIXTURES.iter())
+        .chain(DOT15D4_FIXTURES.iter())
         .find(|case| case.name == name)
 }
 
@@ -2554,6 +2627,18 @@ fn assert_expected_layers(case: &ValidFixtureCase, packet: &Packet) {
             ExpectedLayer::BleLlAdv => {
                 let _ = expect_layer::<BleLlAdv>(case, packet);
             }
+            ExpectedLayer::Dot15d4Radio => {
+                let _ = expect_layer::<Dot15d4Radio>(case, packet);
+            }
+            ExpectedLayer::Dot15d4 => {
+                let _ = expect_layer::<Dot15d4>(case, packet);
+            }
+            ExpectedLayer::ZigbeeNwk => {
+                let _ = expect_layer::<ZigbeeNwk>(case, packet);
+            }
+            ExpectedLayer::ZigbeeAps => {
+                let _ = expect_layer::<ZigbeeAps>(case, packet);
+            }
             ExpectedLayer::Dot11 => {
                 let _ = expect_layer::<Dot11>(case, packet);
             }
@@ -2699,6 +2784,10 @@ fn expected_layer_name(expected: ExpectedLayer) -> &'static str {
         ExpectedLayer::Radiotap => "Radiotap",
         ExpectedLayer::BleRadio => "BleRadio",
         ExpectedLayer::BleLlAdv => "BleLlAdv",
+        ExpectedLayer::Dot15d4Radio => "Dot15d4Radio",
+        ExpectedLayer::Dot15d4 => "Dot15d4",
+        ExpectedLayer::ZigbeeNwk => "ZigbeeNwk",
+        ExpectedLayer::ZigbeeAps => "ZigbeeAps",
         ExpectedLayer::Dot11 => "Dot11",
         ExpectedLayer::LlcSnap => "LlcSnap",
         ExpectedLayer::Eapol => "Eapol",
@@ -3146,6 +3235,54 @@ fn inspection_field_value<'a>(fields: &'a [(&'static str, String)], name: &str) 
         .map(|(_, value)| value.as_str())
 }
 
+fn assert_dot15d4_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
+    let (seq, dest_addr, src_addr): (&str, &str, &str) = match case.name {
+        "dot15d4-mac-data-short" => ("42", "0x0000", "0xABCD"),
+        "dot15d4-mac-data-extended" => ("17", "0x0011223344556677", "0x8899AABBCCDDEEFF"),
+        "dot15d4-zigbee-nwk-aps" => ("7", "0x0000", "0xABCD"),
+        other => panic!("802.15.4 fixture {other} is missing typed field assertions"),
+    };
+
+    let mac = expect_layer::<Dot15d4>(case, packet);
+    let mac_fields = mac.inspection_fields();
+    assert_eq!(
+        inspection_field_value(&mac_fields, "frame_type"),
+        Some("Data")
+    );
+    assert_eq!(inspection_field_value(&mac_fields, "seq"), Some(seq));
+    assert_eq!(
+        inspection_field_value(&mac_fields, "dest_addr"),
+        Some(dest_addr)
+    );
+    assert_eq!(
+        inspection_field_value(&mac_fields, "src_addr"),
+        Some(src_addr)
+    );
+
+    if case.name == "dot15d4-zigbee-nwk-aps" {
+        let nwk = expect_layer::<ZigbeeNwk>(case, packet);
+        let nwk_fields = nwk.inspection_fields();
+        assert_eq!(inspection_field_value(&nwk_fields, "dest"), Some("0x0000"));
+        assert_eq!(inspection_field_value(&nwk_fields, "src"), Some("0xabcd"));
+        assert_eq!(inspection_field_value(&nwk_fields, "radius"), Some("30"));
+
+        let aps = expect_layer::<ZigbeeAps>(case, packet);
+        let aps_fields = aps.inspection_fields();
+        assert_eq!(
+            inspection_field_value(&aps_fields, "cluster"),
+            Some("0x0006")
+        );
+        assert_eq!(
+            inspection_field_value(&aps_fields, "profile"),
+            Some("0x0104")
+        );
+        assert_eq!(
+            inspection_field_value(&aps_fields, "dest_endpoint"),
+            Some("1")
+        );
+    }
+}
+
 fn assert_bgp_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
     assert_exact_layer_stack(case, packet);
 
@@ -3340,6 +3477,7 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
     match case.name {
         name if name.starts_with("ble-") => assert_ble_fixture_fields(case, packet),
         name if name.starts_with("dot11-") => assert_dot11_fixture_fields(case, packet),
+        name if name.starts_with("dot15d4-") => assert_dot15d4_fixture_fields(case, packet),
         name if name.starts_with("ipv4-tcp-bgp-") || name.starts_with("ethernet-ipv4-tcp-bgp-") => {
             assert_bgp_fixture_fields(case, packet)
         }
@@ -6017,6 +6155,7 @@ fn assert_fixture_filename_convention(relative: &Path) {
         "bytes" => strip_allowed_suffix(file_name, &[".bin", ".hex"]),
         "ble" => strip_allowed_suffix(file_name, &[".hex"]),
         "dot11" => strip_allowed_suffix(file_name, &[".hex"]),
+        "dot15d4" => strip_allowed_suffix(file_name, &[".hex"]),
         "malformed" => strip_allowed_suffix(file_name, &[".bin", ".hex"]),
         "pcaps" => strip_allowed_suffix(file_name, &[".pcap", ".pcapng"]),
         "summaries" => strip_allowed_suffix(file_name, &[".summary.txt", ".summary.json"]),
@@ -6875,6 +7014,35 @@ fn fixture_ble_corpus_decodes_layer_stacks() {
 }
 
 #[test]
+fn fixture_dot15d4_corpus_decodes_layer_stacks() {
+    for case in DOT15D4_FIXTURES {
+        ensure_fixture_exists(case.path);
+        let bytes = fixture_bytes_for_case(case);
+        let target = packet_target_for_case(case);
+        let packet = decode_packet(target, &bytes)
+            .unwrap_or_else(|err| panic!("fixture {} should decode: {err}", case.path));
+
+        assert_packet_surface(case, &packet);
+        assert_exact_layer_stack(case, &packet);
+        assert_fixture_fields(case, &packet);
+
+        // The Zigbee NWK/APS layers do not consume following layers on decode:
+        // a decoded `ZigbeeNwk` keeps the APS bytes in its own payload while the
+        // separately decoded `ZigbeeAps` layer re-emits them, so recomposing the
+        // decoded stack with `/` double-counts the trailing bytes (the byte
+        // round-trip for that arrangement is covered in `dot15d4_decode.rs` via
+        // an explicit payload re-encode). Round-trip only the bare-MAC frames,
+        // whose decoded stack recompiles byte-for-byte.
+        let has_zigbee = case.expected_layers.iter().any(|layer| {
+            matches!(layer, ExpectedLayer::ZigbeeNwk | ExpectedLayer::ZigbeeAps)
+        });
+        if !has_zigbee {
+            assert_compile_decode_compile(case, target, &packet, &bytes);
+        }
+    }
+}
+
+#[test]
 fn ipv6_routing_fixtures_decode_compile_and_summarize() {
     for name in [
         "ipv6-routing-generic-unknown-raw",
@@ -7142,20 +7310,120 @@ const BLE_RADIO_PSEUDO_HEADER_LEN: usize = 10;
 const BLE_RADIO_ACCESS_ADDRESS_OFFSET: usize = 4;
 const BLE_LL_ACCESS_ADDRESS_LEN: usize = 4;
 
+// The 802.15.4 pcap records carry payload-free frames whose on-wire bytes are
+// distinct from any committed hex fixture, so they use the same sentinel-record
+// pattern as the BLE pcap fixture rather than a `ValidFixtureCase` file entry.
+const DOT15D4_TAP_PCAP_RECORD_FIXTURE_NAME: &str = "dot15d4-tap-record";
+const DOT15D4_WITHFCS_PCAP_RECORD_FIXTURE_NAME: &str = "dot15d4-withfcs-record";
+
 fn pcap_record_expected_bytes(fixture_name: &str) -> Vec<u8> {
-    if fixture_name == BLE_PCAP_RECORD_FIXTURE_NAME {
-        ble_le_ll_adv_record_bytes()
-    } else {
-        fixture_bytes_for_case(valid_fixture_case(fixture_name))
+    match fixture_name {
+        BLE_PCAP_RECORD_FIXTURE_NAME => ble_le_ll_adv_record_bytes(),
+        DOT15D4_TAP_PCAP_RECORD_FIXTURE_NAME => dot15d4_tap_pcap_record_bytes(),
+        DOT15D4_WITHFCS_PCAP_RECORD_FIXTURE_NAME => dot15d4_withfcs_pcap_record_bytes(),
+        _ => fixture_bytes_for_case(valid_fixture_case(fixture_name)),
     }
 }
 
 fn pcap_record_valid_fixture(fixture_name: &str) -> Option<&'static ValidFixtureCase> {
-    if fixture_name == BLE_PCAP_RECORD_FIXTURE_NAME {
-        None
-    } else {
-        Some(valid_fixture_case(fixture_name))
+    match fixture_name {
+        BLE_PCAP_RECORD_FIXTURE_NAME
+        | DOT15D4_TAP_PCAP_RECORD_FIXTURE_NAME
+        | DOT15D4_WITHFCS_PCAP_RECORD_FIXTURE_NAME => None,
+        _ => Some(valid_fixture_case(fixture_name)),
     }
+}
+
+/// Compiled bytes of the 802.15.4 TAP pcap fixture frame: a `Dot15d4Radio`
+/// pseudo-header over a payload-free MAC data frame on channel 20. Mirrors the
+/// `dot15d4_pcap.rs` fixture generator so the pcap suite re-decodes the same
+/// radio + MAC layer stack.
+fn dot15d4_tap_pcap_decoded_packet() -> Packet {
+    Dot15d4Radio::on_channel(20).rssi(-55).fcs_valid(true)
+        / Dot15d4::data()
+            .seq(9)
+            .dest_short(0x1234, 0x0000)
+            .src_short(0x1234, 0xABCD)
+}
+
+fn dot15d4_tap_pcap_record_bytes() -> Vec<u8> {
+    dot15d4_tap_pcap_decoded_packet()
+        .compile()
+        .expect("802.15.4 TAP pcap fixture packet should compile")
+        .as_bytes()
+        .to_vec()
+}
+
+/// Compiled bytes of the 802.15.4 with-FCS pcap fixture frame: a bare,
+/// payload-free MAC data frame that re-decodes into exactly the MAC layer.
+fn dot15d4_withfcs_pcap_decoded_packet() -> Packet {
+    Packet::new().push(
+        Dot15d4::data()
+            .seq(7)
+            .dest_short(0x1234, 0x0000)
+            .src_short(0x1234, 0xABCD),
+    )
+}
+
+fn dot15d4_withfcs_pcap_record_bytes() -> Vec<u8> {
+    dot15d4_withfcs_pcap_decoded_packet()
+        .compile()
+        .expect("802.15.4 with-FCS pcap fixture packet should compile")
+        .as_bytes()
+        .to_vec()
+}
+
+fn assert_dot15d4_tap_pcap_packet_surface(packet: &Packet) {
+    let layer_names = packet.iter().map(|layer| layer.name()).collect::<Vec<_>>();
+    assert_eq!(layer_names, vec!["Dot15d4Radio", "Dot15d4"]);
+
+    let radio = packet
+        .layer::<Dot15d4Radio>()
+        .expect("decoded 802.15.4 radio layer");
+    assert!(
+        radio.summary().contains("ch=20"),
+        "radio summary: {}",
+        radio.summary()
+    );
+
+    let mac = packet
+        .layer::<Dot15d4>()
+        .expect("decoded 802.15.4 MAC layer");
+    let mac_summary = mac.summary();
+    assert!(mac_summary.contains("Data"), "mac summary: {mac_summary}");
+    assert!(mac_summary.contains("seq=9"), "mac summary: {mac_summary}");
+    assert!(
+        mac_summary.contains("dst=0x0000"),
+        "mac summary: {mac_summary}"
+    );
+    assert!(
+        mac_summary.contains("src=0xABCD"),
+        "mac summary: {mac_summary}"
+    );
+}
+
+fn assert_dot15d4_withfcs_pcap_packet_surface(packet: &Packet) {
+    let layer_names = packet.iter().map(|layer| layer.name()).collect::<Vec<_>>();
+    assert_eq!(layer_names, vec!["Dot15d4"]);
+    assert!(
+        packet.layer::<Dot15d4Radio>().is_none(),
+        "bare MAC pcap decode must not carry a radio pseudo-header"
+    );
+
+    let mac = packet
+        .layer::<Dot15d4>()
+        .expect("decoded 802.15.4 MAC layer");
+    let mac_summary = mac.summary();
+    assert!(mac_summary.contains("Data"), "mac summary: {mac_summary}");
+    assert!(mac_summary.contains("seq=7"), "mac summary: {mac_summary}");
+    assert!(
+        mac_summary.contains("dst=0x0000"),
+        "mac summary: {mac_summary}"
+    );
+    assert!(
+        mac_summary.contains("src=0xABCD"),
+        "mac summary: {mac_summary}"
+    );
 }
 
 fn ble_le_ll_adv_decoded_packet() -> Packet {
@@ -7984,7 +8252,10 @@ fn pcap_fixture_corpus_decodes_supported_link_types() {
             )
         });
         let is_gitkeep = relative.file_name().and_then(|name| name.to_str()) == Some(".gitkeep");
-        if !is_gitkeep {
+        // Only `.pcap` files are catalog entries; provenance docs such as
+        // `pcaps/README.md` live alongside the captures but are not fixtures.
+        let is_pcap = relative.extension().and_then(|ext| ext.to_str()) == Some("pcap");
+        if !is_gitkeep && is_pcap {
             let path = relative
                 .to_str()
                 .unwrap_or_else(|| panic!("fixture path {relative:?} should be UTF-8"));
@@ -8070,11 +8341,22 @@ fn pcap_fixture_corpus_decodes_supported_link_types() {
                     &expected_bytes,
                 );
             } else {
-                assert_ble_pcap_packet_surface(packet.packet());
+                match expected.fixture_name {
+                    BLE_PCAP_RECORD_FIXTURE_NAME => {
+                        assert_ble_pcap_packet_surface(packet.packet())
+                    }
+                    DOT15D4_TAP_PCAP_RECORD_FIXTURE_NAME => {
+                        assert_dot15d4_tap_pcap_packet_surface(packet.packet())
+                    }
+                    DOT15D4_WITHFCS_PCAP_RECORD_FIXTURE_NAME => {
+                        assert_dot15d4_withfcs_pcap_packet_surface(packet.packet())
+                    }
+                    other => panic!("pcap sentinel record {other} has no surface assertion"),
+                }
                 assert_eq!(
                     case.records.len(),
                     1,
-                    "BLE pcap fixture {} should carry one record",
+                    "sentinel-record pcap fixture {} should carry one record",
                     case.path
                 );
                 let mut rewritten = Vec::new();
@@ -8509,6 +8791,7 @@ fn fixture_tree_hygiene_matches_readme_conventions() {
         .iter()
         .chain(DOT11_FIXTURES.iter())
         .chain(BLE_FIXTURES.iter())
+        .chain(DOT15D4_FIXTURES.iter())
         .map(|case| case.path)
         .collect::<HashSet<_>>();
     let mut cataloged_byte_fixture_paths = HashSet::new();
@@ -8528,7 +8811,10 @@ fn fixture_tree_hygiene_matches_readme_conventions() {
             .next()
             .and_then(|component| component.as_os_str().to_str());
         let is_readme = relative.file_name().and_then(|name| name.to_str()) == Some("README.md");
-        if !is_gitkeep && !is_readme && matches!(category, Some("bytes" | "dot11" | "ble")) {
+        if !is_gitkeep
+            && !is_readme
+            && matches!(category, Some("bytes" | "dot11" | "ble" | "dot15d4"))
+        {
             let path = relative
                 .to_str()
                 .unwrap_or_else(|| panic!("fixture path {relative:?} should be UTF-8"));
@@ -8559,6 +8845,15 @@ fn fixture_tree_hygiene_matches_readme_conventions() {
         assert!(
             cataloged_byte_fixture_paths.contains(case.path),
             "catalog entry {} must live under the fixture ble/ directory",
+            case.path
+        );
+    }
+
+    for case in DOT15D4_FIXTURES {
+        ensure_fixture_exists(case.path);
+        assert!(
+            cataloged_byte_fixture_paths.contains(case.path),
+            "catalog entry {} must live under the fixture dot15d4/ directory",
             case.path
         );
     }
