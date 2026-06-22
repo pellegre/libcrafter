@@ -27,6 +27,10 @@ mod framing;
 #[path = "../src/wire/backend/whad/messages.rs"]
 mod messages;
 
+#[allow(dead_code)]
+#[path = "../src/wire/backend/whad/dot15d4.rs"]
+mod dot15d4;
+
 // This integration test imports the production transport module but exercises
 // only the loopback channel; the serial channel remains covered by the library
 // build.
