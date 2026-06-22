@@ -1,6 +1,10 @@
 //! Zigbee Application Support sublayer (APS) layer scaffolding.
 
+use core::any::Any;
+
+use crate::error::{CrafterError, Result};
 use crate::field::Field;
+use crate::packet::{IntoPacket, Layer, LayerContext, Packet};
 
 /// APS Frame Control: Frame Type sub-field bit offset (bits 0..=1).
 ///
@@ -360,9 +364,239 @@ impl Default for ZigbeeAps {
     }
 }
 
+/// Human-readable label for an APS frame type code point.
+///
+/// Known code points (Zigbee Specification R23, Table 2-20) get their spec
+/// names; anything else is rendered as `Type(N)` so an unknown frame type
+/// survives summaries without being misreported.
+fn aps_frame_type_label(frame_type: u8) -> String {
+    match frame_type & 0b11 {
+        APS_FRAME_TYPE_DATA => "Data".to_string(),
+        APS_FRAME_TYPE_COMMAND => "Command".to_string(),
+        APS_FRAME_TYPE_ACK => "Ack".to_string(),
+        other => format!("Type({other})"),
+    }
+}
+
+impl Layer for ZigbeeAps {
+    fn name(&self) -> &'static str {
+        "ZigbeeAps"
+    }
+
+    fn summary(&self) -> String {
+        let mut summary = format!("ZigbeeAps({}", aps_frame_type_label(self.effective_frame_type()));
+        if self.effective_cluster_profile_present() {
+            summary.push_str(&format!(
+                ", cluster={:#06x}, profile={:#06x}",
+                self.cluster.value().copied().unwrap_or(0),
+                self.profile.value().copied().unwrap_or(0),
+            ));
+        }
+        if self.effective_dest_endpoint_present() {
+            summary.push_str(&format!(
+                ", dst_ep={}",
+                self.dest_endpoint.value().copied().unwrap_or(0),
+            ));
+        }
+        summary.push(')');
+        summary
+    }
+
+    fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        let mut fields = vec![
+            (
+                "frame_type",
+                aps_frame_type_label(self.effective_frame_type()),
+            ),
+            (
+                "delivery_mode",
+                self.effective_delivery_mode().to_string(),
+            ),
+        ];
+
+        if self.effective_dest_endpoint_present() {
+            fields.push((
+                "dest_endpoint",
+                self.dest_endpoint.value().copied().unwrap_or(0).to_string(),
+            ));
+        }
+        if self.effective_cluster_profile_present() {
+            fields.push((
+                "cluster",
+                format!("{:#06x}", self.cluster.value().copied().unwrap_or(0)),
+            ));
+            fields.push((
+                "profile",
+                format!("{:#06x}", self.profile.value().copied().unwrap_or(0)),
+            ));
+            fields.push((
+                "src_endpoint",
+                self.src_endpoint.value().copied().unwrap_or(0).to_string(),
+            ));
+        }
+
+        fields.push((
+            "counter",
+            self.counter.value().copied().unwrap_or(APS_COUNTER_DEFAULT).to_string(),
+        ));
+
+        fields
+    }
+
+    fn encoded_len(&self) -> usize {
+        ZigbeeAps::encoded_len(self)
+    }
+
+    fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
+        out.extend_from_slice(&self.encode());
+        Ok(())
+    }
+
+    fn clone_layer(&self) -> Box<dyn Layer> {
+        Box::new(self.clone())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn into_any(self: Box<Self>) -> Box<dyn Any> {
+        self
+    }
+}
+
+impl<R: IntoPacket> core::ops::Div<R> for ZigbeeAps {
+    type Output = Packet;
+
+    fn div(self, rhs: R) -> Self::Output {
+        Packet::from_layer(self).concat(rhs)
+    }
+}
+
+/// Decode a Zigbee Application Support sublayer (APS) frame header.
+///
+/// Parses the 8-bit Frame Control field, then conditionally consumes the
+/// optional destination endpoint (present for unicast/broadcast delivery), the
+/// optional cluster and profile identifiers and source endpoint (present for
+/// data or acknowledgement frames), and the always-present APS Counter octet,
+/// returning the remaining APS payload bytes as the tail (Zigbee Specification
+/// R23, Section 2.2.5.1; see `.agents/docs/zigbee-manifest.md`).
+///
+/// Field presence is derived from the parsed frame control (delivery mode and
+/// frame type) exactly as [`ZigbeeAps::encode`] derives it, so a round-trip
+/// reproduces the input verbatim. Every parsed field is recorded as
+/// [`Field::user`]. Truncation mid-frame-control or mid-header surfaces a
+/// structured [`CrafterError`] (`"zigbee.aps.fcf"` / `"zigbee.aps.header"`)
+/// rather than panicking; the returned tail is preserved as-is so an unknown
+/// payload can be kept raw by the caller.
+pub(crate) fn decode_zigbee_aps(bytes: &[u8]) -> Result<(ZigbeeAps, &[u8])> {
+    if bytes.len() < APS_FRAME_CONTROL_LEN {
+        return Err(CrafterError::buffer_too_short(
+            "zigbee.aps.fcf",
+            APS_FRAME_CONTROL_LEN,
+            bytes.len(),
+        ));
+    }
+
+    let fcf = bytes[0];
+    let frame_type = (fcf >> APS_FC_FRAME_TYPE_SHIFT) & 0b11;
+    let delivery_mode = (fcf >> APS_FC_DELIVERY_MODE_SHIFT) & 0b11;
+    let ack_format = (fcf >> APS_FC_ACK_FORMAT_SHIFT) & 0b1 != 0;
+    let security = (fcf >> APS_FC_SECURITY_SHIFT) & 0b1 != 0;
+    let ack_request = (fcf >> APS_FC_ACK_REQUEST_SHIFT) & 0b1 != 0;
+    let ext_header = (fcf >> APS_FC_EXT_HEADER_SHIFT) & 0b1 != 0;
+
+    // Field presence mirrors the encode-side resolvers: the destination endpoint
+    // is present for unicast/broadcast delivery (group addressing replaces it
+    // with an unmodeled Group Address), and the cluster/profile identifiers and
+    // source endpoint are present for data or acknowledgement frames.
+    let dest_endpoint_present = matches!(
+        delivery_mode,
+        APS_DELIVERY_MODE_UNICAST | APS_DELIVERY_MODE_BROADCAST
+    );
+    let cluster_profile_present =
+        matches!(frame_type, APS_FRAME_TYPE_DATA | APS_FRAME_TYPE_ACK);
+
+    let mut offset = APS_FRAME_CONTROL_LEN;
+
+    let dest_endpoint = if dest_endpoint_present {
+        let required = offset + APS_ENDPOINT_LEN;
+        if bytes.len() < required {
+            return Err(CrafterError::buffer_too_short(
+                "zigbee.aps.header",
+                required,
+                bytes.len(),
+            ));
+        }
+        let endpoint = bytes[offset];
+        offset = required;
+        Field::user(endpoint)
+    } else {
+        Field::unset()
+    };
+
+    let (cluster, profile, src_endpoint) = if cluster_profile_present {
+        let required = offset + APS_CLUSTER_LEN + APS_PROFILE_LEN + APS_ENDPOINT_LEN;
+        if bytes.len() < required {
+            return Err(CrafterError::buffer_too_short(
+                "zigbee.aps.header",
+                required,
+                bytes.len(),
+            ));
+        }
+        let cluster = u16::from_le_bytes([bytes[offset], bytes[offset + 1]]);
+        let profile = u16::from_le_bytes([bytes[offset + 2], bytes[offset + 3]]);
+        let src_endpoint = bytes[offset + 4];
+        offset = required;
+        (
+            Field::user(cluster),
+            Field::user(profile),
+            Field::user(src_endpoint),
+        )
+    } else {
+        (Field::unset(), Field::unset(), Field::unset())
+    };
+
+    let required = offset + APS_COUNTER_LEN;
+    if bytes.len() < required {
+        return Err(CrafterError::buffer_too_short(
+            "zigbee.aps.header",
+            required,
+            bytes.len(),
+        ));
+    }
+    let counter = bytes[offset];
+    offset = required;
+
+    let payload = bytes[offset..].to_vec();
+
+    let aps = ZigbeeAps {
+        frame_type: Field::user(frame_type),
+        delivery_mode: Field::user(delivery_mode),
+        ack_format: Field::user(ack_format),
+        security: Field::user(security),
+        ack_request: Field::user(ack_request),
+        ext_header: Field::user(ext_header),
+        dest_endpoint,
+        cluster,
+        profile,
+        src_endpoint,
+        counter: Field::user(counter),
+        payload,
+    };
+
+    Ok((aps, &bytes[offset..]))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::ZigbeeAps;
+    use super::{decode_zigbee_aps, ZigbeeAps};
+    use crate::error::CrafterError;
+    use crate::packet::Packet;
 
     #[test]
     fn zigbee_aps_encode() {
@@ -469,6 +703,54 @@ mod tests {
             ]
         );
         assert_eq!(frame.encoded_len(), bytes.len());
+    }
+
+    #[test]
+    fn zigbee_aps_layer() {
+        // The `Layer::compile` path must emit exactly the bytes `encode()`
+        // produces, so a packet built from a `ZigbeeAps` round-trips its
+        // serialized form.
+        let frame = ZigbeeAps::data()
+            .dest_endpoint(0x0A)
+            .cluster(0x0006)
+            .profile(0x0104)
+            .src_endpoint(0x01)
+            .counter(0x2A)
+            .payload(&[0xAA, 0xBB]);
+        let expected = frame.encode();
+
+        let bytes = Packet::from_layer(frame.clone())
+            .compile()
+            .expect("compile ZigbeeAps layer");
+
+        assert_eq!(bytes.as_bytes(), expected.as_slice());
+
+        // Decoding the compiled bytes reproduces the same header fields. The APS
+        // payload is returned as the tail for the unknown-or-raw layer to
+        // consume, and is also captured on the decoded layer.
+        let (decoded, tail) = decode_zigbee_aps(bytes.as_bytes()).expect("decode ZigbeeAps layer");
+        assert_eq!(decoded.dest_endpoint.value().copied(), Some(0x0A));
+        assert_eq!(decoded.cluster.value().copied(), Some(0x0006));
+        assert_eq!(decoded.profile.value().copied(), Some(0x0104));
+        assert_eq!(decoded.src_endpoint.value().copied(), Some(0x01));
+        assert_eq!(decoded.counter.value().copied(), Some(0x2A));
+        assert_eq!(decoded.payload, vec![0xAA, 0xBB]);
+        assert_eq!(tail, &[0xAA, 0xBB]);
+        assert_eq!(decoded.encode(), expected);
+
+        // A truncated buffer surfaces a structured decode error rather than
+        // panicking. An empty buffer cannot hold the 1-octet Frame Control.
+        let err = decode_zigbee_aps(&[]).expect_err("must reject a truncated frame control");
+        assert_eq!(err, CrafterError::buffer_too_short("zigbee.aps.fcf", 1, 0));
+
+        // A valid frame control for a data frame, but a buffer that stops
+        // mid-header (before the cluster/profile/source-endpoint block), surfaces
+        // the header context. FC 0x00 = Data + unicast, then only the
+        // destination endpoint octet is present (offset 2); the cluster block
+        // needs 5 more octets (offset 2 + 5 = 7).
+        let err = decode_zigbee_aps(&[0x00, 0x0A])
+            .expect_err("must reject a truncated APS header");
+        assert_eq!(err, CrafterError::buffer_too_short("zigbee.aps.header", 7, 2));
     }
 }
 
