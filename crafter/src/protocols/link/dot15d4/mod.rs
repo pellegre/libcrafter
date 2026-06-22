@@ -8,7 +8,9 @@
 mod consts;
 mod fcs;
 mod mac;
+mod nwk;
 mod radio;
 
 pub use mac::Dot15d4;
+pub use nwk::ZigbeeNwk;
 pub use radio::Dot15d4Radio;
