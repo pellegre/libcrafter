@@ -180,6 +180,10 @@ pub enum LinkType {
     Radiotap,
     /// BLE LE Link Layer with radio pseudo-header; pcap DLT 256.
     BluetoothLeLl,
+    /// Bare IEEE 802.15.4 MAC frame with FCS; pcap DLT 195 (with-FCS) / 230 (no-FCS).
+    Ieee802154,
+    /// IEEE 802.15.4 TAP pseudo-header followed by a MAC frame; pcap DLT 283.
+    Ieee802154Tap,
     /// Linux cooked capture frames.
     LinuxCooked,
     /// Linux cooked capture frames.
