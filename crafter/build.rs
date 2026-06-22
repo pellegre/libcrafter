@@ -14,6 +14,7 @@ fn generate_whad_proto() -> Result<(), Box<dyn std::error::Error>> {
         "src/wire/backend/whad/proto/generic.proto",
         "src/wire/backend/whad/proto/device.proto",
         "src/wire/backend/whad/proto/ble.proto",
+        "src/wire/backend/whad/proto/dot15d4.proto",
         "src/wire/backend/whad/proto/whad.proto",
     ];
     let includes = ["src/wire/backend/whad/proto"];
@@ -21,6 +22,7 @@ fn generate_whad_proto() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-changed=src/wire/backend/whad/proto/generic.proto");
     println!("cargo:rerun-if-changed=src/wire/backend/whad/proto/device.proto");
     println!("cargo:rerun-if-changed=src/wire/backend/whad/proto/ble.proto");
+    println!("cargo:rerun-if-changed=src/wire/backend/whad/proto/dot15d4.proto");
     println!("cargo:rerun-if-changed=src/wire/backend/whad/proto/whad.proto");
 
     let mut config = prost_build::Config::new();
