@@ -9,29 +9,21 @@ from ...model import EncodedVector, JSONObject, PacketPlan
 from ..registry import BackendCapabilities, BackendRegistration, get_backend
 from . import dns_raw
 from .bootstrap import import_scapy
+from .encode_helpers import (
+    _ETHERTYPES,
+    _IP_PROTOCOLS,
+    _bool_int,
+    _ethertype_value,
+    _int,
+    _layer_fields,
+    _optional_field,
+    _required_field,
+    _text,
+)
 
 
 BACKEND_NAME = "scapy"
 
-_ETHERTYPES: dict[str, int] = {
-    "arp": 0x0806,
-    "eapol": 0x888E,
-    "experimental": 0x9000,
-    "ipv4": 0x0800,
-    "ip": 0x0800,
-    "ipv6": 0x86DD,
-    "unknown": 0x9000,
-    "vlan": 0x8100,
-}
-_IP_PROTOCOLS: dict[str, int] = {
-    "ah": 51,
-    "esp": 50,
-    "icmp": 1,
-    "igmp": 2,
-    "tcp": 6,
-    "unknown": 253,
-    "udp": 17,
-}
 _BGP_MESSAGE_TYPES: dict[str, int] = {
     "open": 1,
     "update": 2,
@@ -3569,19 +3561,6 @@ def _plan_root(plan: PacketPlan) -> str:
     return root
 
 
-def _layer_fields(fields: Mapping[str, JSONObject], layer: str) -> JSONObject:
-    value = fields.get(layer)
-    if value is None and layer == "ipv4":
-        value = fields.get("ip")
-    if value is None and layer == "payload":
-        value = fields.get("raw")
-    if value is None:
-        return {}
-    if not isinstance(value, Mapping):
-        raise ValueError(f"{layer} fields must be an object")
-    return dict(value)
-
-
 def _layer_fields_for_stack_index(
     fields: Mapping[str, JSONObject],
     stack: Sequence[str],
@@ -4519,21 +4498,6 @@ def _oui_bytes(value: object) -> bytes:
     return _bytes_exact(value if value is not None else {"hex": "000000"}, 3)
 
 
-def _required_field(fields: Mapping[str, object], layer: str, *names: str) -> object:
-    value = _optional_field(fields, *names)
-    if value is None:
-        joined = "/".join(names)
-        raise ValueError(f"{layer} materialization requires field {joined}")
-    return value
-
-
-def _optional_field(fields: Mapping[str, object], *names: str) -> object | None:
-    for name in names:
-        if name in fields:
-            return fields[name]
-    return None
-
-
 def _ipv4_options(value: object, scapy_all: Any) -> object:
     raw = _option_bytes(value)
     if raw is not None:
@@ -4942,15 +4906,6 @@ def _capability_contract(
     return capabilities
 
 
-def _ethertype_value(value: object) -> int:
-    if isinstance(value, str):
-        lowered = value.lower()
-        if lowered in _ETHERTYPES:
-            return _ETHERTYPES[lowered]
-        return int(lowered, 0)
-    return _int(value, 0x9000)
-
-
 def _hardware_type_value(value: object) -> int:
     if isinstance(value, str):
         lowered = value.lower()
@@ -5270,18 +5225,6 @@ def _dhcp_option_value(value: object) -> object:
     if isinstance(value, (list, tuple)):
         return list(value)
     return value
-
-
-def _bool_int(value: object, default: int) -> int:
-    if isinstance(value, bool):
-        return int(value)
-    if isinstance(value, str):
-        lowered = value.lower().replace("_", "-")
-        if lowered in {"true", "yes", "response"}:
-            return 1
-        if lowered in {"false", "no", "query"}:
-            return 0
-    return _int(value, default)
 
 
 def _dns_opcode(value: object) -> int:
@@ -5912,26 +5855,6 @@ def _scapy_decoder(root: str) -> str:
 
 def _scapy_layer_name(layer: str) -> str:
     return _SCAPY_LAYER_BY_LAYER.get(layer, layer)
-
-
-def _int(value: object, default: int) -> int:
-    if value is None:
-        return default
-    if isinstance(value, bool):
-        return int(value)
-    if isinstance(value, int):
-        return value
-    if isinstance(value, str):
-        return int(value, 0)
-    raise ValueError(f"expected integer-compatible value, got {value!r}")
-
-
-def _text(value: object, default: str) -> str:
-    if value is None:
-        return default
-    if isinstance(value, str):
-        return value
-    return str(value)
 
 
 def _string(value: object, default: str) -> str:
