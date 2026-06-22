@@ -6,3 +6,4 @@
 //! stack on the MAC payload. Mirrors the `ble` module layout.
 
 mod consts;
+mod fcs;
