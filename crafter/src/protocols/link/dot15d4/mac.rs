@@ -1,6 +1,10 @@
 //! IEEE 802.15.4 MAC frame layer scaffolding.
 
+use core::any::Any;
+
+use crate::error::{CrafterError, Result};
 use crate::field::Field;
+use crate::packet::{IntoPacket, Layer, LayerContext, Packet};
 
 use super::consts::{
     DOT15D4_EXTENDED_ADDR_LEN, DOT15D4_FCF_LEN, DOT15D4_FCS_LEN, DOT15D4_PAN_ID_LEN,
@@ -261,7 +265,6 @@ impl Dot15d4 {
     /// by the typed `dest_short`/`dest_extended` builders), and an unset
     /// address resolves to [`Dot15d4AddrMode::None`]
     /// (IEEE Std 802.15.4-2020, Clause 7.2.2.8).
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn effective_dest_addr_mode(&self) -> Dot15d4AddrMode {
         match self.dest_addr_mode.value() {
             Some(mode) => *mode,
@@ -281,7 +284,6 @@ impl Dot15d4 {
     /// presence of a source address, mirroring
     /// [`Dot15d4::effective_dest_addr_mode`]
     /// (IEEE Std 802.15.4-2020, Clause 7.2.2.10).
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn effective_src_addr_mode(&self) -> Dot15d4AddrMode {
         match self.src_addr_mode.value() {
             Some(mode) => *mode,
@@ -316,7 +318,6 @@ impl Dot15d4 {
     /// addresses are present and share the same PAN identifier, so the source
     /// PAN ID is omitted on the wire and the single shared PAN ID is serialized
     /// once (IEEE Std 802.15.4-2020, Clause 7.2.2.6, PAN ID Compression field).
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn effective_pan_id_compression(&self) -> bool {
         if let Some(value) = self.pan_id_compression.value() {
             return *value;
@@ -342,7 +343,6 @@ impl Dot15d4 {
     /// The destination PAN ID is present whenever the destination addressing
     /// mode is not [`Dot15d4AddrMode::None`]
     /// (IEEE Std 802.15.4-2020, Clause 7.2.2, Table 7-2).
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn effective_dest_pan_present(&self) -> bool {
         self.effective_dest_addr_mode() != Dot15d4AddrMode::None
     }
@@ -354,7 +354,6 @@ impl Dot15d4 {
     /// compression is set the source PAN ID is omitted and the destination PAN
     /// ID serves both addresses
     /// (IEEE Std 802.15.4-2020, Clause 7.2.2.6 / Table 7-2).
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn effective_src_pan_present(&self) -> bool {
         if self.effective_src_addr_mode() == Dot15d4AddrMode::None {
             return false;
@@ -440,7 +439,6 @@ impl Dot15d4 {
     /// Mirrors [`Dot15d4::encode`]: FCF + sequence number + the addressing
     /// fields implied by the effective addressing modes and PAN-ID compression
     /// + payload + the 2-octet FCS.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn encoded_len(&self) -> usize {
         let dest_mode = self.effective_dest_addr_mode();
         let src_mode = self.effective_src_addr_mode();
@@ -472,7 +470,6 @@ impl Dot15d4 {
     /// supported). Every user-set field is honored verbatim; no value is
     /// clamped or "corrected" (IEEE Std 802.15.4-2020, Clause 7.2; see
     /// `.agents/docs/dot15d4-manifest.md`).
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn encode(&self, out: &mut Vec<u8>) {
         let start = out.len();
 
@@ -506,6 +503,319 @@ impl Default for Dot15d4 {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Stable label for an 802.15.4 MAC frame type used in summaries.
+fn dot15d4_frame_type_label(frame_type: Dot15d4FrameType) -> &'static str {
+    match frame_type {
+        Dot15d4FrameType::Beacon => "Beacon",
+        Dot15d4FrameType::Data => "Data",
+        Dot15d4FrameType::Ack => "Ack",
+        Dot15d4FrameType::MacCommand => "MacCommand",
+    }
+}
+
+/// Display an address sized by its addressing mode, or `None` when absent.
+///
+/// Short addresses render as four hex digits and extended addresses as sixteen,
+/// each prefixed `0x`, matching the on-wire address width.
+fn dot15d4_addr_label(mode: Dot15d4AddrMode, addr: Option<u64>) -> Option<String> {
+    match (mode, addr) {
+        (Dot15d4AddrMode::Short, Some(addr)) => Some(format!("0x{:04X}", addr as u16)),
+        (Dot15d4AddrMode::Extended, Some(addr)) => Some(format!("0x{addr:016X}")),
+        // `None` mode or a missing address: no address to display.
+        _ => None,
+    }
+}
+
+impl Layer for Dot15d4 {
+    fn name(&self) -> &'static str {
+        "Dot15d4"
+    }
+
+    fn summary(&self) -> String {
+        let mut fields = vec![dot15d4_frame_type_label(self.effective_frame_type()).to_string()];
+
+        fields.push(format!("seq={}", self.effective_seq()));
+
+        if let Some(dst) =
+            dot15d4_addr_label(self.effective_dest_addr_mode(), self.dest_addr.value().copied())
+        {
+            fields.push(format!("dst={dst}"));
+        }
+        if let Some(src) =
+            dot15d4_addr_label(self.effective_src_addr_mode(), self.src_addr.value().copied())
+        {
+            fields.push(format!("src={src}"));
+        }
+
+        format!("Dot15d4({})", fields.join(", "))
+    }
+
+    fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        let mut fields = vec![
+            (
+                "frame_type",
+                dot15d4_frame_type_label(self.effective_frame_type()).to_string(),
+            ),
+            ("seq", self.effective_seq().to_string()),
+            (
+                "security_enabled",
+                self.security_enabled.value().copied().unwrap_or(false).to_string(),
+            ),
+            (
+                "frame_pending",
+                self.frame_pending.value().copied().unwrap_or(false).to_string(),
+            ),
+            (
+                "ack_request",
+                self.ack_request.value().copied().unwrap_or(false).to_string(),
+            ),
+            (
+                "pan_id_compression",
+                self.effective_pan_id_compression().to_string(),
+            ),
+        ];
+
+        if let Some(dst) =
+            dot15d4_addr_label(self.effective_dest_addr_mode(), self.dest_addr.value().copied())
+        {
+            fields.push(("dest_addr", dst));
+        }
+        if let Some(src) =
+            dot15d4_addr_label(self.effective_src_addr_mode(), self.src_addr.value().copied())
+        {
+            fields.push(("src_addr", src));
+        }
+
+        fields
+    }
+
+    fn encoded_len(&self) -> usize {
+        Dot15d4::encoded_len(self)
+    }
+
+    fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
+        self.encode(out);
+        Ok(())
+    }
+
+    fn clone_layer(&self) -> Box<dyn Layer> {
+        Box::new(self.clone())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn into_any(self: Box<Self>) -> Box<dyn Any> {
+        self
+    }
+}
+
+impl<R: IntoPacket> core::ops::Div<R> for Dot15d4 {
+    type Output = Packet;
+
+    fn div(self, rhs: R) -> Self::Output {
+        Packet::from_layer(self).concat(rhs)
+    }
+}
+
+/// Read an address sized by its addressing mode from `bytes` at `*offset`.
+///
+/// Advances `*offset` past the consumed octets and returns the address as a
+/// `u64` (short addresses occupy the low 16 bits). A `None` mode reads nothing.
+/// Truncation surfaces a structured [`CrafterError`] with the supplied context.
+fn read_dot15d4_addr(
+    bytes: &[u8],
+    offset: &mut usize,
+    mode: Dot15d4AddrMode,
+    context: &'static str,
+) -> Result<u64> {
+    let width = Dot15d4::addr_octets(mode);
+    if width == 0 {
+        return Ok(0);
+    }
+
+    let required = *offset + width;
+    if bytes.len() < required {
+        return Err(CrafterError::buffer_too_short(context, required, bytes.len()));
+    }
+
+    let addr = match mode {
+        Dot15d4AddrMode::None => 0,
+        Dot15d4AddrMode::Short => {
+            u64::from(u16::from_le_bytes([bytes[*offset], bytes[*offset + 1]]))
+        }
+        Dot15d4AddrMode::Extended => u64::from_le_bytes([
+            bytes[*offset],
+            bytes[*offset + 1],
+            bytes[*offset + 2],
+            bytes[*offset + 3],
+            bytes[*offset + 4],
+            bytes[*offset + 5],
+            bytes[*offset + 6],
+            bytes[*offset + 7],
+        ]),
+    };
+    *offset = required;
+    Ok(addr)
+}
+
+/// Read a 2-octet little-endian PAN identifier from `bytes` at `*offset`.
+///
+/// Advances `*offset` past the consumed octets. Truncation surfaces a structured
+/// [`CrafterError`] with the supplied context.
+fn read_dot15d4_pan(bytes: &[u8], offset: &mut usize, context: &'static str) -> Result<u16> {
+    let required = *offset + DOT15D4_PAN_ID_LEN;
+    if bytes.len() < required {
+        return Err(CrafterError::buffer_too_short(context, required, bytes.len()));
+    }
+    let pan = u16::from_le_bytes([bytes[*offset], bytes[*offset + 1]]);
+    *offset = required;
+    Ok(pan)
+}
+
+/// Decode an IEEE 802.15.4 MAC frame header, addressing, payload, and FCS.
+///
+/// Parses the 16-bit Frame Control field (little-endian), derives the
+/// addressing-field layout from the FCF (honoring PAN-ID compression), consumes
+/// the destination/source PAN identifiers and addresses, splits the trailing
+/// 2-octet Frame Check Sequence (stored verbatim; an FCS mismatch is **not**
+/// rejected — validity is recorded through the radio descriptor), and returns
+/// the decoded layer plus the inner MAC payload as the tail for the next layer.
+///
+/// Every parsed field is stored as [`Field::user`] so a round-trip through
+/// `encode` reproduces the same bytes. Truncation mid-FCF, mid-address, or
+/// missing-FCS surfaces a structured [`CrafterError`] with stable context
+/// strings (`"dot15d4.mac.fcf"`, `"dot15d4.mac.addressing"`, `"dot15d4.mac.fcs"`)
+/// rather than panicking, and a reserved frame type surfaces as
+/// [`CrafterError::invalid_field_value`] for `"dot15d4.mac.frame_type"`
+/// (IEEE Std 802.15.4-2020, Clause 7.2; see `.agents/docs/dot15d4-manifest.md`).
+pub(crate) fn decode_dot15d4(bytes: &[u8]) -> Result<(Dot15d4, &[u8])> {
+    if bytes.len() < DOT15D4_FCF_LEN {
+        return Err(CrafterError::buffer_too_short(
+            "dot15d4.mac.fcf",
+            DOT15D4_FCF_LEN,
+            bytes.len(),
+        ));
+    }
+
+    let fcf = u16::from_le_bytes([bytes[0], bytes[1]]);
+    let frame_type = Dot15d4FrameType::from_u3((fcf & 0b111) as u8).ok_or_else(|| {
+        CrafterError::invalid_field_value("dot15d4.mac.frame_type", "reserved frame type")
+    })?;
+    let security_enabled = (fcf & (1 << 3)) != 0;
+    let frame_pending = (fcf & (1 << 4)) != 0;
+    let ack_request = (fcf & (1 << 5)) != 0;
+    let pan_id_compression = (fcf & (1 << 6)) != 0;
+    let dest_addr_mode = Dot15d4AddrMode::from_u2(((fcf >> 10) & 0b11) as u8).ok_or_else(|| {
+        CrafterError::invalid_field_value(
+            "dot15d4.mac.addressing",
+            "reserved destination addressing mode",
+        )
+    })?;
+    let frame_version = ((fcf >> 12) & 0b11) as u8;
+    let src_addr_mode = Dot15d4AddrMode::from_u2(((fcf >> 14) & 0b11) as u8).ok_or_else(|| {
+        CrafterError::invalid_field_value(
+            "dot15d4.mac.addressing",
+            "reserved source addressing mode",
+        )
+    })?;
+
+    // The MHR is at least the FCF plus the 1-octet sequence number.
+    let seq_offset = DOT15D4_FCF_LEN;
+    if bytes.len() < seq_offset + DOT15D4_SEQ_LEN {
+        return Err(CrafterError::buffer_too_short(
+            "dot15d4.mac.seq",
+            seq_offset + DOT15D4_SEQ_LEN,
+            bytes.len(),
+        ));
+    }
+    let seq = bytes[seq_offset];
+
+    // Addressing-field presence follows the FCF and the PAN-ID-compression bit
+    // (IEEE Std 802.15.4-2020, Clause 7.2.2, Table 7-2). The destination PAN ID
+    // is present whenever a destination address is present; the source PAN ID is
+    // present when a source address is present and compression is not in effect.
+    let dest_present = dest_addr_mode != Dot15d4AddrMode::None;
+    let src_present = src_addr_mode != Dot15d4AddrMode::None;
+    let dest_pan_present = dest_present;
+    let src_pan_present = src_present && !pan_id_compression;
+
+    let mut offset = seq_offset + DOT15D4_SEQ_LEN;
+
+    let dest_pan = if dest_pan_present {
+        Field::user(read_dot15d4_pan(bytes, &mut offset, "dot15d4.mac.addressing")?)
+    } else {
+        Field::unset()
+    };
+    let dest_addr = if dest_present {
+        Field::user(read_dot15d4_addr(
+            bytes,
+            &mut offset,
+            dest_addr_mode,
+            "dot15d4.mac.addressing",
+        )?)
+    } else {
+        Field::unset()
+    };
+
+    let src_pan = if src_pan_present {
+        Field::user(read_dot15d4_pan(bytes, &mut offset, "dot15d4.mac.addressing")?)
+    } else {
+        Field::unset()
+    };
+    let src_addr = if src_present {
+        Field::user(read_dot15d4_addr(
+            bytes,
+            &mut offset,
+            src_addr_mode,
+            "dot15d4.mac.addressing",
+        )?)
+    } else {
+        Field::unset()
+    };
+
+    // The frame must carry at least the trailing 2-octet FCS after the MHR.
+    if bytes.len() < offset + DOT15D4_FCS_LEN {
+        return Err(CrafterError::buffer_too_short(
+            "dot15d4.mac.fcs",
+            offset + DOT15D4_FCS_LEN,
+            bytes.len(),
+        ));
+    }
+
+    let payload_end = bytes.len() - DOT15D4_FCS_LEN;
+    let payload = &bytes[offset..payload_end];
+    let fcs = u16::from_le_bytes([bytes[payload_end], bytes[payload_end + 1]]);
+
+    let frame = Dot15d4 {
+        frame_type: Field::user(frame_type),
+        security_enabled: Field::user(security_enabled),
+        frame_pending: Field::user(frame_pending),
+        ack_request: Field::user(ack_request),
+        pan_id_compression: Field::user(pan_id_compression),
+        frame_version: Field::user(frame_version),
+        dest_addr_mode: Field::user(dest_addr_mode),
+        src_addr_mode: Field::user(src_addr_mode),
+        seq: Field::user(seq),
+        dest_pan,
+        dest_addr,
+        src_pan,
+        src_addr,
+        // The inner MAC payload is returned as the tail so the next layer
+        // (Zigbee NWK/APS or `Raw`) decodes it; the decoded MAC header carries
+        // no payload of its own.
+        payload: Vec::new(),
+        fcs: Field::user(fcs),
+    };
+
+    Ok((frame, payload))
 }
 
 #[cfg(test)]
@@ -751,5 +1061,144 @@ mod dot15d4_mac_encode {
         // Trailing FCS is the wrong user value, little-endian (AD DE), not the
         // recomputed 0x8B43 (43 8B).
         assert_eq!(&bytes[bytes.len() - 2..], &[0xAD, 0xDE]);
+    }
+}
+
+#[cfg(test)]
+mod dot15d4_mac_layer {
+    use super::{decode_dot15d4, Dot15d4, Dot15d4AddrMode, Dot15d4FrameType};
+    use crate::error::CrafterError;
+    use crate::packet::{Layer, Packet, Raw};
+
+    /// The reference short-dest/short-src data frame from step 16.
+    fn reference_frame() -> Dot15d4 {
+        Dot15d4::data()
+            .seq(7)
+            .dest_short(0xABCD, 0x1234)
+            .src_short(0xABCD, 0x5678)
+            .payload(&[0xCA, 0xFE])
+    }
+
+    #[test]
+    fn layer_compile_equals_encode() {
+        // Compiling the MAC frame through the packet stack must emit exactly the
+        // same bytes the standalone encoder produces.
+        let frame = reference_frame();
+
+        let mut encoded = Vec::new();
+        frame.encode(&mut encoded);
+
+        let compiled = Packet::from_layer(frame.clone())
+            .compile()
+            .expect("compile Dot15d4 MAC frame");
+
+        assert_eq!(compiled.as_bytes(), encoded.as_slice());
+        assert_eq!(compiled.len(), Layer::encoded_len(&frame));
+    }
+
+    #[test]
+    fn layer_name_and_summary() {
+        let frame = reference_frame();
+        assert_eq!(frame.name(), "Dot15d4");
+        assert_eq!(frame.summary(), "Dot15d4(Data, seq=7, dst=0x1234, src=0x5678)");
+
+        // Inspection fields surface the frame type, sequence number, flags, and
+        // addresses.
+        let fields = frame.inspection_fields();
+        assert!(fields.contains(&("frame_type", "Data".to_string())));
+        assert!(fields.contains(&("seq", "7".to_string())));
+        assert!(fields.contains(&("dest_addr", "0x1234".to_string())));
+        assert!(fields.contains(&("src_addr", "0x5678".to_string())));
+    }
+
+    #[test]
+    fn decode_round_trips_reference_frame() {
+        // Encode the reference frame, then decode the bytes and confirm the MAC
+        // header fields round-trip and the inner payload is returned as the tail.
+        let frame = reference_frame();
+        let mut bytes = Vec::new();
+        frame.encode(&mut bytes);
+
+        let (decoded, tail) = decode_dot15d4(&bytes).expect("decode reference MAC frame");
+
+        // The inner MAC payload is returned as the tail for the next layer.
+        assert_eq!(tail, &[0xCA, 0xFE]);
+
+        assert_eq!(decoded.frame_type.value(), Some(&Dot15d4FrameType::Data));
+        assert_eq!(decoded.seq.value(), Some(&7));
+        assert_eq!(
+            decoded.dest_addr_mode.value(),
+            Some(&Dot15d4AddrMode::Short)
+        );
+        assert_eq!(decoded.src_addr_mode.value(), Some(&Dot15d4AddrMode::Short));
+        assert_eq!(decoded.dest_pan.value(), Some(&0xABCD));
+        assert_eq!(decoded.dest_addr.value(), Some(&0x1234));
+        // Source PAN omitted on the wire under PAN-ID compression.
+        assert_eq!(decoded.pan_id_compression.value(), Some(&true));
+        assert!(decoded.src_pan.is_unset());
+        assert_eq!(decoded.src_addr.value(), Some(&0x5678));
+        // The trailing FCS is stored verbatim (the auto-filled 0x8B43).
+        assert_eq!(decoded.fcs.value(), Some(&0x8B43));
+
+        // Re-attaching the payload reproduces the original frame bytes exactly.
+        let mut reencoded = Vec::new();
+        decoded.payload(&[0xCA, 0xFE]).encode(&mut reencoded);
+        assert_eq!(reencoded, bytes);
+    }
+
+    #[test]
+    fn decode_too_short_fcf_is_structured_error() {
+        // A single octet cannot hold the 2-octet FCF.
+        let err = decode_dot15d4(&[0x41]).expect_err("must reject a truncated FCF");
+
+        assert_eq!(
+            err,
+            CrafterError::buffer_too_short("dot15d4.mac.fcf", 2, 1)
+        );
+    }
+
+    #[test]
+    fn decode_addressing_claiming_more_bytes_than_present_is_structured_error() {
+        // FCF 0x8841: Data, PAN-ID compression set, short dest + short src
+        // addressing. Supply the FCF, sequence number, and a full destination
+        // PAN + address but truncate the source address so the declared
+        // addressing claims more bytes than are present.
+        let bytes = [
+            0x41, 0x88, // FCF (little-endian): short dest + short src, compressed
+            0x07, // sequence number
+            0xCD, 0xAB, // dest PAN
+            0x34, 0x12, // dest short address
+            0x78, // only one octet of the 2-octet src short address
+        ];
+
+        let err = decode_dot15d4(&bytes)
+            .expect_err("must reject addressing that claims more bytes than present");
+
+        assert_eq!(
+            err,
+            CrafterError::buffer_too_short("dot15d4.mac.addressing", 9, bytes.len())
+        );
+    }
+
+    #[test]
+    fn decode_reserved_frame_type_is_structured_error() {
+        // FCF low three bits = 0b100 (frame type 4) is reserved and is reported
+        // structurally rather than modeled.
+        let bytes = [0x04, 0x00, 0x00, 0x00, 0x00];
+        let err = decode_dot15d4(&bytes).expect_err("must reject a reserved frame type");
+
+        assert_eq!(
+            err,
+            CrafterError::invalid_field_value("dot15d4.mac.frame_type", "reserved frame type")
+        );
+    }
+
+    #[test]
+    fn div_builds_two_layer_packet() {
+        let packet = Dot15d4::data().seq(1) / Raw::from_bytes([0xAA, 0xBB]);
+
+        assert_eq!(packet.len(), 2);
+        assert!(packet.layer::<Dot15d4>().is_some());
+        assert!(packet.layer::<Raw>().is_some());
     }
 }
