@@ -14,8 +14,10 @@ use crate::registry::ProtocolRegistry;
 use super::append_llc_snap_packet_with_registry;
 
 mod constants;
+mod util;
 
 pub use self::constants::*;
+use self::util::{dot11_hex_bytes, set_flag, set_subfield, value_or_copy};
 
 /// Raw IEEE 802.11 management tagged parameter.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -2709,35 +2711,6 @@ impl From<Dot11QosControl> for u16 {
     fn from(value: Dot11QosControl) -> Self {
         value.bits()
     }
-}
-
-const fn set_subfield(bits: u16, mask: u16, shift: u8, value: u8) -> u16 {
-    (bits & !mask) | (((value as u16) << shift) & mask)
-}
-
-const fn set_flag(bits: u16, flag: u16, enabled: bool) -> u16 {
-    if enabled {
-        bits | flag
-    } else {
-        bits & !flag
-    }
-}
-
-fn value_or_copy<T: Copy>(field: &Field<T>, default: T) -> T {
-    field.value().copied().unwrap_or(default)
-}
-
-fn dot11_hex_bytes(bytes: &[u8]) -> String {
-    let mut output = String::new();
-
-    for (index, byte) in bytes.iter().enumerate() {
-        if index > 0 {
-            output.push(' ');
-        }
-        output.push_str(&format!("{byte:02x}"));
-    }
-
-    output
 }
 
 const fn dot11_required_header_len(frame_control: Dot11FrameControl) -> usize {
