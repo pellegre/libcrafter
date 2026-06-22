@@ -69,6 +69,12 @@ _SCAPY_LAYER_BY_LAYER: dict[str, str] = {
     "dhcp": "DHCP",
     "dns": "DNS",
     "dot11": "Dot11",
+    "dot15d4": "Dot15d4",
+    # Scapy has no native IEEE 802.15.4 TAP (DLT 283) pseudo-header dissector;
+    # libcrafter's Dot15d4Radio carries it, so the radio descriptor is
+    # materialized/normalized outside Scapy's native layer set (Raw passthrough)
+    # the same way the BLE LL-with-PHDR pseudo-header is handled.
+    "dot15d4_radio": "Raw",
     "eapol": "EAPOL",
     "esp": "ESP",
     "ethernet": "Ether",
@@ -104,6 +110,8 @@ _SCAPY_LAYER_BY_LAYER: dict[str, str] = {
     "tcp": "TCP",
     "udp": "UDP",
     "vlan": "Dot1Q",
+    "zigbee_aps": "ZigbeeAppDataPayload",
+    "zigbee_nwk": "ZigbeeNWK",
 }
 _SCAPY_DECODER_BY_ROOT: dict[str, str] = {
     "link:bluetooth-le-ll-with-phdr": "BTLE_PHDR",
@@ -111,6 +119,11 @@ _SCAPY_DECODER_BY_ROOT: dict[str, str] = {
     "link:ethernet": "Ether",
     "link:dot11": "Dot11",
     "link:ieee80211": "Dot11",
+    "link:ieee802154": "Dot15d4FCS",
+    # The TAP pseudo-header has no native Scapy dissector; the link-type bytes
+    # are normalized as raw bytes (libcrafter owns the TAP descriptor decode).
+    "link:ieee802154-tap": "Raw",
+    "link:ieee802154_tap": "Raw",
     "link:linux-cooked": "CookedLinux",
     "link:linux-sll": "CookedLinux",
     "link:null-loopback": "Loopback",
@@ -126,6 +139,9 @@ _ROOT_FIRST_LAYERS: dict[str, set[str]] = {
     "link:dot11": {"dot11"},
     "link:ethernet": {"ethernet"},
     "link:ieee80211": {"dot11"},
+    "link:ieee802154": {"dot15d4"},
+    "link:ieee802154-tap": {"dot15d4_radio"},
+    "link:ieee802154_tap": {"dot15d4_radio"},
     "link:linux-cooked": {"linux_cooked"},
     "link:linux-sll": {"linux_cooked"},
     "link:null-loopback": {"null_loopback"},
@@ -154,6 +170,10 @@ _SUPPORTED_FEATURES = {
     "dot11_basic",
     "dot11_data_llc",
     "dot11_pcap_link_types",
+    "dot15d4-mac",
+    "dot15d4-pcap-link-types",
+    "dot15d4_mac",
+    "dot15d4_pcap_link_types",
     "eapol_basic",
     "esp_aead",
     "esp_cbc",
@@ -181,6 +201,8 @@ _SUPPORTED_FEATURES = {
     "tcp_header",
     "tcp_options",
     "udp_options",
+    "zigbee-nwk-aps",
+    "zigbee_nwk_aps",
 }
 _SUPPORTED_FIELDS_BY_LAYER: dict[str, set[str]] = {
     "arp": {
@@ -314,6 +336,31 @@ _SUPPORTED_FIELDS_BY_LAYER: dict[str, set[str]] = {
         "subtype",
         "tagged_parameters",
         "to_ds",
+    },
+    "dot15d4": {
+        "ack_request",
+        "dest_addr",
+        "dest_addr_mode",
+        "dest_pan",
+        "fcs",
+        "frame_pending",
+        "frame_type",
+        "frame_version",
+        "pan_id_compression",
+        "payload",
+        "security_enabled",
+        "seq",
+        "sequence_number",
+        "src_addr",
+        "src_addr_mode",
+        "src_pan",
+    },
+    "dot15d4_radio": {
+        "channel",
+        "fcs_type",
+        "fcs_valid",
+        "lqi",
+        "rssi",
     },
     "dns": {
         "additional",
@@ -668,6 +715,25 @@ _SUPPORTED_FIELDS_BY_LAYER: dict[str, set[str]] = {
         "type",
         "vlan",
         "vlan_id",
+    },
+    "zigbee_aps": {
+        "cluster",
+        "counter",
+        "delivery_mode",
+        "dest_endpoint",
+        "frame_type",
+        "payload",
+        "profile",
+        "src_endpoint",
+    },
+    "zigbee_nwk": {
+        "dest",
+        "frame_type",
+        "payload",
+        "protocol_version",
+        "radius",
+        "seq",
+        "src",
     },
 }
 
@@ -3118,7 +3184,15 @@ def _canonical_stack(stack: list[str]) -> list[str]:
         "btle-adv": "ble_adv",
         "btle-radio": "ble_radio",
         "dot1q": "vlan",
+        "dot15d4-radio": "dot15d4_radio",
+        "dot15d4-tap": "dot15d4_radio",
+        "ieee802154": "dot15d4",
+        "ieee802154-radio": "dot15d4_radio",
+        "ieee802154-tap": "dot15d4_radio",
         "ether": "ethernet",
+        "zigbee-aps": "zigbee_aps",
+        "zigbee-app-data-payload": "zigbee_aps",
+        "zigbee-nwk": "zigbee_nwk",
         "hop-by-hop": "ipv6_hop_by_hop",
         "hop-by-hop-options": "ipv6_hop_by_hop",
         "hop_by_hop": "ipv6_hop_by_hop",

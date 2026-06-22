@@ -46,6 +46,9 @@ _LAYER_ALIASES: dict[str, str] = {
     "Dot1Q": "vlan",
     "Dot11": "dot11",
     "Dot11EltRSN": "rsn",
+    "Dot15d4": "dot15d4",
+    "Dot15d4Data": "dot15d4",
+    "Dot15d4FCS": "dot15d4",
     "ESP": "esp",
     "Ether": "ethernet",
     "EAPOL": "eapol",
@@ -77,6 +80,8 @@ _LAYER_ALIASES: dict[str, str] = {
     "SNAP": "llc_snap",
     "TCP": "tcp",
     "UDP": "udp",
+    "ZigbeeAppDataPayload": "zigbee_aps",
+    "ZigbeeNWK": "zigbee_nwk",
 }
 _FIELD_ALIASES: dict[str, str] = {
     "chksum": "checksum",
@@ -234,6 +239,8 @@ _ROOT_ALIASES: dict[str, str] = {
     "CookedLinux": "link:linux-cooked",
     "Ether": "link:ethernet",
     "Dot11": "link:dot11",
+    "Dot15d4": "link:ieee802154",
+    "Dot15d4FCS": "link:ieee802154",
     "IP": "l3:ipv4",
     "IPv6": "l3:ipv6",
     "Loopback": "link:null-loopback",
@@ -242,6 +249,7 @@ _ROOT_ALIASES: dict[str, str] = {
     "link:bluetooth_le_ll_with_phdr": "link:bluetooth-le-ll-with-phdr",
     "l2:ipv4": "l3:ipv4",
     "link:ieee80211": "link:dot11",
+    "link:ieee802154_tap": "link:ieee802154-tap",
     "link:linux-sll": "link:linux-cooked",
 }
 
