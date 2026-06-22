@@ -3,11 +3,15 @@
 //! `Dot15d4Radio` is the 802.15.4 analog of the BLE `BleRadio` pseudo-header:
 //! a radio descriptor carrying channel, RSSI, FCS validity, LQI, and FCS-type
 //! metadata. It serializes to the `LINKTYPE_IEEE802_15_4_TAP` (DLT 283) TLV
-//! pseudo-header and bridges to WHAD receive metadata. Encoding, decoding, and
-//! the `Layer` implementation are added in later steps; this module defines the
-//! struct, builders, and resolver helpers only.
+//! pseudo-header and bridges to WHAD receive metadata. This module defines the
+//! struct, builders, resolver helpers, the TAP encode/decode, and the [`Layer`]
+//! implementation.
 
+use core::any::Any;
+
+use crate::error::{CrafterError, Result};
 use crate::field::Field;
+use crate::packet::{IntoPacket, Layer, LayerContext, Packet};
 
 use super::consts::DOT15D4_CHANNEL_MIN;
 
@@ -186,6 +190,25 @@ impl Dot15d4Radio {
         self.fcs_type.value().copied()
     }
 
+    /// Resolved 2.4 GHz PHY channel number for backend translators.
+    ///
+    /// The WHAD 802.15.4 sniff/inject commands carry the channel number; this
+    /// bridge mirrors `BleRadio::effective_channel_for_backend` and resolves the
+    /// channel (defaulting to channel 11 when unset).
+    #[cfg(feature = "whad")]
+    pub(crate) fn effective_channel_for_backend(&self) -> u8 {
+        self.effective_channel()
+    }
+
+    /// Resolved FCS validity for backend translators.
+    ///
+    /// The WHAD 802.15.4 send command can request that the firmware append the
+    /// FCS; this bridge resolves whether the descriptor reports a valid FCS.
+    #[cfg(feature = "whad")]
+    pub(crate) fn effective_fcs_valid_for_backend(&self) -> bool {
+        self.effective_fcs_valid()
+    }
+
     /// Resolved TAP `FCS_TYPE` value emitted in the pseudo-header.
     ///
     /// An explicit FCS-type codepoint is honored verbatim. Otherwise the value
@@ -288,9 +311,199 @@ impl Default for Dot15d4Radio {
     }
 }
 
+/// Decode an IEEE 802.15.4 TAP (`LINKTYPE_IEEE802_15_4_TAP`, DLT 283)
+/// pseudo-header back into a [`Dot15d4Radio`] descriptor.
+///
+/// Parses the fixed 4-octet header (validating the version and the declared
+/// total length), then walks the TLV records, recovering the FCS type, RSS, and
+/// channel-assignment fields. The descriptor plus the remaining bytes following
+/// the pseudo-header (the bare MAC frame) are returned.
+///
+/// Truncation and inconsistent length fields surface as structured
+/// [`CrafterError`]s with stable `context`/`field` strings and never panic.
+/// Unknown TLV types are skipped, and a frame may follow the pseudo-header or
+/// the buffer may end exactly at the header.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn decode_dot15d4_radio(bytes: &[u8]) -> Result<(Dot15d4Radio, &[u8])> {
+    if bytes.len() < DOT15D4_TAP_HEADER_LEN {
+        return Err(CrafterError::buffer_too_short(
+            "dot15d4.tap.header",
+            DOT15D4_TAP_HEADER_LEN,
+            bytes.len(),
+        ));
+    }
+
+    if bytes[0] != DOT15D4_TAP_VERSION {
+        return Err(CrafterError::invalid_field_value(
+            "dot15d4.tap.header",
+            "unsupported TAP version",
+        ));
+    }
+
+    // Total length covers the fixed header plus all TLVs; it must be a multiple
+    // of the 32-bit TLV alignment, at least the fixed header, and within the
+    // available buffer.
+    let total_len = u16::from_le_bytes([bytes[2], bytes[3]]) as usize;
+    if total_len < DOT15D4_TAP_HEADER_LEN || total_len % DOT15D4_TAP_TLV_ALIGN != 0 {
+        return Err(CrafterError::invalid_field_value(
+            "dot15d4.tap.header",
+            "invalid TAP total length",
+        ));
+    }
+    if bytes.len() < total_len {
+        return Err(CrafterError::buffer_too_short(
+            "dot15d4.tap.header",
+            total_len,
+            bytes.len(),
+        ));
+    }
+
+    let mut radio = Dot15d4Radio::new();
+    let mut offset = DOT15D4_TAP_HEADER_LEN;
+    while offset < total_len {
+        // Each TLV needs at least its 4-octet header (type u16, length u16).
+        if total_len - offset < DOT15D4_TAP_TLV_HEADER_LEN {
+            return Err(CrafterError::buffer_too_short(
+                "dot15d4.tap.tlv",
+                DOT15D4_TAP_TLV_HEADER_LEN,
+                total_len - offset,
+            ));
+        }
+
+        let tlv_type = u16::from_le_bytes([bytes[offset], bytes[offset + 1]]);
+        let value_len = u16::from_le_bytes([bytes[offset + 2], bytes[offset + 3]]) as usize;
+        let value_start = offset + DOT15D4_TAP_TLV_HEADER_LEN;
+        // The value is zero-padded up to a 32-bit boundary; the padded record
+        // must stay within the declared total length.
+        let padded_value_len = value_len.next_multiple_of(DOT15D4_TAP_TLV_ALIGN);
+        let record_len = DOT15D4_TAP_TLV_HEADER_LEN + padded_value_len;
+        if total_len - offset < record_len {
+            return Err(CrafterError::buffer_too_short(
+                "dot15d4.tap.tlv",
+                record_len,
+                total_len - offset,
+            ));
+        }
+
+        let value = &bytes[value_start..value_start + value_len];
+        match tlv_type {
+            DOT15D4_TAP_TLV_FCS_TYPE => {
+                if value_len < 1 {
+                    return Err(CrafterError::invalid_field_value(
+                        "dot15d4.tap.tlv",
+                        "FCS_TYPE TLV value too short",
+                    ));
+                }
+                let fcs_type = value[0];
+                radio.fcs_type.set_user(fcs_type);
+                radio
+                    .fcs_valid
+                    .set_user(fcs_type != DOT15D4_TAP_FCS_TYPE_NONE);
+            }
+            DOT15D4_TAP_TLV_RSS => {
+                if value_len < 4 {
+                    return Err(CrafterError::invalid_field_value(
+                        "dot15d4.tap.tlv",
+                        "RSS TLV value too short",
+                    ));
+                }
+                let rss = f32::from_le_bytes([value[0], value[1], value[2], value[3]]);
+                radio.rssi.set_user(rss as i16);
+            }
+            DOT15D4_TAP_TLV_CHANNEL_ASSIGNMENT => {
+                if value_len < 2 {
+                    return Err(CrafterError::invalid_field_value(
+                        "dot15d4.tap.tlv",
+                        "CHANNEL_ASSIGNMENT TLV value too short",
+                    ));
+                }
+                let channel = u16::from_le_bytes([value[0], value[1]]);
+                radio.channel.set_user(channel as u8);
+            }
+            // Unknown TLV types are preserved by skipping rather than failing.
+            _ => {}
+        }
+
+        offset += record_len;
+    }
+
+    Ok((radio, &bytes[total_len..]))
+}
+
+impl Layer for Dot15d4Radio {
+    fn name(&self) -> &'static str {
+        "Dot15d4Radio"
+    }
+
+    fn summary(&self) -> String {
+        let fcs = if self.effective_fcs_valid() {
+            "fcs_ok"
+        } else {
+            "fcs_bad"
+        };
+        match self.effective_rssi() {
+            Some(rssi) => format!(
+                "Dot15d4Radio(ch={}, rssi={}, {})",
+                self.effective_channel(),
+                rssi,
+                fcs
+            ),
+            None => format!("Dot15d4Radio(ch={}, {})", self.effective_channel(), fcs),
+        }
+    }
+
+    fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        let mut fields = vec![("channel", self.effective_channel().to_string())];
+
+        if let Some(rssi) = self.effective_rssi() {
+            fields.push(("rssi", rssi.to_string()));
+        }
+        if let Some(lqi) = self.effective_lqi() {
+            fields.push(("lqi", lqi.to_string()));
+        }
+        fields.push(("fcs_valid", self.effective_fcs_valid().to_string()));
+
+        fields
+    }
+
+    fn encoded_len(&self) -> usize {
+        Dot15d4Radio::encoded_len(self)
+    }
+
+    fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
+        self.encode(out);
+        Ok(())
+    }
+
+    fn clone_layer(&self) -> Box<dyn Layer> {
+        Box::new(self.clone())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+
+    fn into_any(self: Box<Self>) -> Box<dyn Any> {
+        self
+    }
+}
+
+impl<R: IntoPacket> core::ops::Div<R> for Dot15d4Radio {
+    type Output = Packet;
+
+    fn div(self, rhs: R) -> Self::Output {
+        Packet::from_layer(self).concat(rhs)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::field::FieldState;
+    use crate::packet::{Packet, Raw};
 
     use super::*;
 
@@ -424,5 +637,170 @@ mod tests {
         assert_eq!(&out[4..12], &[0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00]);
         // CHANNEL_ASSIGNMENT: channel 200 (0x00C8 LE) emitted without clamping.
         assert_eq!(&out[20..28], &[0x03, 0x00, 0x03, 0x00, 0xC8, 0x00, 0x00, 0x00]);
+    }
+
+    #[test]
+    fn dot15d4_radio_layer_compile_equals_encode() {
+        // Compiling the descriptor through the packet stack must emit exactly the
+        // same TAP bytes the standalone encoder produces.
+        let radio = Dot15d4Radio::new().channel(15).rssi(-60).fcs_valid(true);
+
+        let mut encoded = Vec::new();
+        radio.encode(&mut encoded);
+
+        let compiled = Packet::from_layer(radio.clone())
+            .compile()
+            .expect("compile Dot15d4Radio TAP pseudo-header");
+
+        assert_eq!(compiled.as_bytes(), encoded.as_slice());
+        assert_eq!(compiled.len(), radio.encoded_len());
+    }
+
+    #[test]
+    fn dot15d4_radio_layer_summary_text() {
+        let with_rssi = Dot15d4Radio::new().channel(15).rssi(-60).fcs_valid(true);
+        assert_eq!(with_rssi.summary(), "Dot15d4Radio(ch=15, rssi=-60, fcs_ok)");
+
+        let invalid_fcs = Dot15d4Radio::new().channel(20).fcs_valid(false);
+        assert_eq!(invalid_fcs.summary(), "Dot15d4Radio(ch=20, fcs_bad)");
+
+        // The packet summary surfaces the layer summary fields.
+        let summary = Packet::from_layer(with_rssi).summary();
+        assert!(summary.contains("ch=15"));
+        assert!(summary.contains("rssi=-60"));
+        assert!(summary.contains("fcs_ok"));
+    }
+
+    #[test]
+    fn dot15d4_radio_layer_inspection_fields_list_channel_rssi_lqi_fcs_valid() {
+        let radio = Dot15d4Radio::new()
+            .channel(15)
+            .rssi(-60)
+            .lqi(200)
+            .fcs_valid(true);
+
+        let fields = radio.inspection_fields();
+
+        assert!(fields.contains(&("channel", "15".to_string())));
+        assert!(fields.contains(&("rssi", "-60".to_string())));
+        assert!(fields.contains(&("lqi", "200".to_string())));
+        assert!(fields.contains(&("fcs_valid", "true".to_string())));
+    }
+
+    #[test]
+    fn dot15d4_radio_layer_round_trips_compiled_pseudo_header() {
+        let radio = Dot15d4Radio::new().channel(15).rssi(-60).fcs_valid(true);
+        let mut bytes = Vec::new();
+        radio.encode(&mut bytes);
+        // Append a trailing MAC frame so decode returns the remaining bytes.
+        bytes.extend_from_slice(&[0xAA, 0xBB, 0xCC]);
+
+        let (decoded, tail) =
+            decode_dot15d4_radio(&bytes).expect("decode Dot15d4Radio TAP pseudo-header");
+
+        assert_eq!(tail, &[0xAA, 0xBB, 0xCC]);
+        assert_eq!(decoded.effective_channel(), 15);
+        assert_eq!(decoded.effective_rssi(), Some(-60));
+        assert_eq!(decoded.effective_fcs_type(), Some(DOT15D4_TAP_FCS_TYPE_CRC16));
+        assert!(decoded.effective_fcs_valid());
+    }
+
+    #[test]
+    fn dot15d4_radio_decode_reports_invalid_fcs_when_type_none() {
+        // FCS type none (NOFCS-style capture) must still decode and report the
+        // FCS as invalid through the descriptor rather than rejecting the frame.
+        let radio = Dot15d4Radio::new().channel(11).fcs_valid(false);
+        let mut bytes = Vec::new();
+        radio.encode(&mut bytes);
+
+        let (decoded, tail) =
+            decode_dot15d4_radio(&bytes).expect("decode NOFCS-style TAP pseudo-header");
+
+        assert!(tail.is_empty());
+        assert!(!decoded.effective_fcs_valid());
+        assert_eq!(decoded.effective_fcs_type(), Some(DOT15D4_TAP_FCS_TYPE_NONE));
+    }
+
+    #[test]
+    fn dot15d4_radio_decode_truncated_header_is_structured_error() {
+        let err = decode_dot15d4_radio(&[0x00, 0x00, 0x1C])
+            .expect_err("must reject a truncated TAP fixed header");
+
+        assert_eq!(
+            err,
+            CrafterError::BufferTooShort {
+                context: "dot15d4.tap.header",
+                required: DOT15D4_TAP_HEADER_LEN,
+                available: 3,
+            }
+        );
+    }
+
+    #[test]
+    fn dot15d4_radio_decode_truncated_tlv_body_is_structured_error_not_panic() {
+        // Declares a 28-octet total length but supplies only the fixed header
+        // plus a single full TLV (12 octets), so walking the remaining TLVs
+        // must surface a structured error rather than panicking.
+        let mut bytes = Vec::new();
+        radio_encode_only_header(&mut bytes, 28);
+        // One complete FCS_TYPE TLV (8 octets), leaving the declared length
+        // pointing past the supplied bytes.
+        bytes.extend_from_slice(&[0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00]);
+
+        let err = decode_dot15d4_radio(&bytes)
+            .expect_err("must reject a TAP header whose declared length exceeds the buffer");
+
+        assert_eq!(
+            err,
+            CrafterError::BufferTooShort {
+                context: "dot15d4.tap.header",
+                required: 28,
+                available: bytes.len(),
+            }
+        );
+    }
+
+    #[test]
+    fn dot15d4_radio_decode_rejects_unsupported_version() {
+        let err = decode_dot15d4_radio(&[0x01, 0x00, 0x04, 0x00])
+            .expect_err("must reject an unsupported TAP version");
+
+        assert_eq!(
+            err,
+            CrafterError::invalid_field_value("dot15d4.tap.header", "unsupported TAP version")
+        );
+    }
+
+    #[test]
+    fn dot15d4_radio_decode_skips_unknown_tlv() {
+        // Fixed header (length 12) + one unknown TLV (type 0x00FF, length 4,
+        // 4-octet value): 4 (header) + 4 (TLV header) + 4 (value) = 12.
+        let mut bytes = Vec::new();
+        radio_encode_only_header(&mut bytes, 12);
+        bytes.extend_from_slice(&[0xFF, 0x00, 0x04, 0x00, 0xDE, 0xAD, 0xBE, 0xEF]);
+
+        let (decoded, tail) =
+            decode_dot15d4_radio(&bytes).expect("unknown TLVs must be skipped, not rejected");
+
+        assert!(tail.is_empty());
+        // No channel/RSS/FCS TLV present, so resolvers fall back to defaults.
+        assert_eq!(decoded.effective_channel(), DOT15D4_CHANNEL_MIN);
+        assert_eq!(decoded.effective_rssi(), None);
+    }
+
+    #[test]
+    fn dot15d4_radio_div_builds_two_layer_packet() {
+        let packet = Dot15d4Radio::on_channel(15) / Raw::from_bytes([0u8; 4]);
+
+        assert_eq!(packet.len(), 2);
+        assert!(packet.layer::<Dot15d4Radio>().is_some());
+        assert!(packet.layer::<Raw>().is_some());
+    }
+
+    /// Write only the fixed 4-octet TAP header with a chosen total-length field.
+    fn radio_encode_only_header(out: &mut Vec<u8>, total_len: u16) {
+        out.push(DOT15D4_TAP_VERSION);
+        out.push(0);
+        out.extend_from_slice(&total_len.to_le_bytes());
     }
 }
