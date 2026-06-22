@@ -1,0 +1,317 @@
+version: 1
+kind: feature
+name: dot15d4-mac
+summary: IEEE 802.15.4 MAC frame control, addressing modes (none/short-16/extended-64), PAN-ID compression, sequence number, FCS, and structured malformed-input errors, cross-checked against the scapy Dot15d4 reference.
+
+layers:
+  - dot15d4
+  - dot15d4-radio
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+  - roundtrip
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: mac-frame-control
+    frame_types:
+      - data
+      - beacon
+      - ack
+    sources:
+      - .agents/docs/dot15d4-manifest.md#MAC-Frame-Format
+      - .agents/docs/dot15d4-manifest.md#Frame-Control-Field-FCF
+    checks:
+      - frame_type_bits_0_to_2_preserved
+      - frame_control_little_endian_on_wire
+      - sequence_number_is_one_octet
+      - strict_bytes_preserved
+  - name: addressing-modes
+    addr_modes:
+      - none
+      - short_16
+      - extended_64
+    sources:
+      - .agents/docs/dot15d4-manifest.md#Addressing-Modes
+      - .agents/docs/dot15d4-manifest.md#Frame-Control-Field-FCF
+    checks:
+      - dest_addressing_mode_bits_10_to_11_preserved
+      - src_addressing_mode_bits_14_to_15_preserved
+      - short_address_is_two_octets_little_endian
+      - extended_address_is_eight_octets_little_endian
+      - pan_id_is_two_octets_little_endian
+      - strict_bytes_preserved
+  - name: pan-id-compression
+    sources:
+      - .agents/docs/dot15d4-manifest.md#PAN-ID-Compression
+    checks:
+      - pan_id_compression_bit_6_preserved
+      - source_pan_id_omitted_when_compression_set_and_both_addresses_present
+      - addressing_field_presence_determined_by_modes_and_compression
+      - strict_bytes_preserved
+  - name: frame-check-sequence
+    sources:
+      - .agents/docs/dot15d4-manifest.md#Frame-Check-Sequence-FCS
+    checks:
+      - fcs_is_trailing_two_octets
+      - fcs_is_crc16_ccitt_over_mhr_and_payload
+      - fcs_transmitted_little_endian
+      - strict_bytes_preserved
+  - name: structured-errors
+    checks:
+      - truncated_frame_control_is_structured_error
+      - truncated_addressing_is_structured_error
+      - reserved_frame_type_is_structured_error
+      - excluded_from_offline_byte_comparison
+
+coverage_cases:
+  - dot15d4-data-short-pan-compressed
+  - dot15d4-data-extended-pan-compressed
+  - dot15d4-ack-no-addressing
+  - malformed-dot15d4-truncated-fcf
+  - malformed-dot15d4-truncated-addressing
+  - malformed-dot15d4-reserved-frame-type
+
+supported_cases:
+  - name: dot15d4-data-short-pan-compressed
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: strict_bytes
+    roots:
+      - "link:ieee802154"
+      - "link:ieee802154-tap"
+    contract_only: true
+    fields:
+      dot15d4:
+        frame_type: data
+        pan_id_compression: true
+        seq: 0x2a
+        dest_pan: 0x1234
+        dest_short: 0x0000
+        src_short: 0xabcd
+        payload_hex: "deadbeef"
+    expected:
+      frame_control_hex: "4188"
+      frame_type_code: 0x01
+      dest_addr_mode: short_16
+      src_addr_mode: short_16
+      pan_id_compression: true
+      mhr_payload_hex: "41882a341200 00cdabdeadbeef"
+      fcs_hex: "561b"
+      frame_hex: "41882a341200 00cdabdeadbeef561b"
+    sources:
+      - .agents/docs/dot15d4-manifest.md#MAC-Frame-Format
+      - .agents/docs/dot15d4-manifest.md#Frame-Control-Field-FCF
+      - .agents/docs/dot15d4-manifest.md#Addressing-Modes
+      - .agents/docs/dot15d4-manifest.md#PAN-ID-Compression
+      - .agents/docs/dot15d4-manifest.md#Frame-Check-Sequence-FCS
+  - name: dot15d4-data-extended-pan-compressed
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: strict_bytes
+    roots:
+      - "link:ieee802154"
+      - "link:ieee802154-tap"
+    contract_only: true
+    fields:
+      dot15d4:
+        frame_type: data
+        pan_id_compression: true
+        seq: 0x11
+        dest_pan: 0xabcd
+        dest_extended: 0x0011223344556677
+        src_extended: 0x8899aabbccddeeff
+        payload_hex: "cafe"
+    expected:
+      frame_control_hex: "41cc"
+      frame_type_code: 0x01
+      dest_addr_mode: extended_64
+      src_addr_mode: extended_64
+      pan_id_compression: true
+      mhr_payload_hex: "41cc11cdab77665544332211 00ffeeddccbbaa9988cafe"
+      fcs_hex: "580c"
+      frame_hex: "41cc11cdab77665544332211 00ffeeddccbbaa9988cafe580c"
+    sources:
+      - .agents/docs/dot15d4-manifest.md#MAC-Frame-Format
+      - .agents/docs/dot15d4-manifest.md#Frame-Control-Field-FCF
+      - .agents/docs/dot15d4-manifest.md#Addressing-Modes
+      - .agents/docs/dot15d4-manifest.md#PAN-ID-Compression
+      - .agents/docs/dot15d4-manifest.md#Frame-Check-Sequence-FCS
+  - name: dot15d4-ack-no-addressing
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: strict_bytes
+    roots:
+      - "link:ieee802154"
+      - "link:ieee802154-tap"
+    contract_only: true
+    fields:
+      dot15d4:
+        frame_type: ack
+        seq: 0x2a
+    expected:
+      frame_control_hex: "0200"
+      frame_type_code: 0x02
+      dest_addr_mode: none
+      src_addr_mode: none
+      pan_id_compression: false
+      mhr_payload_hex: "02002a"
+      fcs_hex: "e03b"
+      frame_hex: "02002ae03b"
+    sources:
+      - .agents/docs/dot15d4-manifest.md#MAC-Frame-Format
+      - .agents/docs/dot15d4-manifest.md#Frame-Control-Field-FCF
+      - .agents/docs/dot15d4-manifest.md#Addressing-Modes
+      - .agents/docs/dot15d4-manifest.md#Frame-Check-Sequence-FCS
+  - name: malformed-dot15d4-truncated-fcf
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: structured_error
+    offline_byte_comparison: excluded
+    roots:
+      - "link:ieee802154"
+    generator_policy:
+      strict_byte_comparison: excluded
+      reason: structured_error
+    crate_test_coverage:
+      test: crafter/tests/dot15d4_resilience.rs::dot15d4_malformed_corpus_errors_are_structured_and_non_panicking
+      fixture: crafter/tests/fixtures/malformed/dot15d4-decode-corpus.hex
+  - name: malformed-dot15d4-truncated-addressing
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: structured_error
+    offline_byte_comparison: excluded
+    roots:
+      - "link:ieee802154"
+    generator_policy:
+      strict_byte_comparison: excluded
+      reason: structured_error
+    crate_test_coverage:
+      test: crafter/tests/dot15d4_resilience.rs::dot15d4_malformed_corpus_errors_are_structured_and_non_panicking
+      fixture: crafter/tests/fixtures/malformed/dot15d4-decode-corpus.hex
+  - name: malformed-dot15d4-reserved-frame-type
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: structured_error
+    offline_byte_comparison: excluded
+    roots:
+      - "link:ieee802154"
+    generator_policy:
+      strict_byte_comparison: excluded
+      reason: structured_error
+    crate_test_coverage:
+      test: crafter/tests/dot15d4_resilience.rs::dot15d4_malformed_corpus_errors_are_structured_and_non_panicking
+      fixture: crafter/tests/fixtures/malformed/dot15d4-decode-corpus.hex
+
+structured_error_cases:
+  - name: truncated-dot15d4-frame-control
+    coverage_case: malformed-dot15d4-truncated-fcf
+    decode_target: link:ieee802154
+    expected_error:
+      kind: buffer-too-short
+      context: dot15d4.mac.fcf
+      required: 2
+      available: 1
+    crate_test: crafter/tests/dot15d4_resilience.rs::dot15d4_malformed_corpus_errors_are_structured_and_non_panicking
+    fixture: crafter/tests/fixtures/malformed/dot15d4-decode-corpus.hex
+  - name: truncated-dot15d4-addressing
+    coverage_case: malformed-dot15d4-truncated-addressing
+    decode_target: link:ieee802154
+    expected_error:
+      kind: buffer-too-short
+      context: dot15d4.mac.addressing
+      required: 9
+      available: 3
+    crate_test: crafter/tests/dot15d4_resilience.rs::dot15d4_malformed_corpus_errors_are_structured_and_non_panicking
+    fixture: crafter/tests/fixtures/malformed/dot15d4-decode-corpus.hex
+  - name: reserved-dot15d4-frame-type
+    coverage_case: malformed-dot15d4-reserved-frame-type
+    decode_target: link:ieee802154
+    expected_error:
+      kind: invalid-field-value
+      field: dot15d4.mac.frame_type
+    crate_test: crafter/tests/dot15d4_resilience.rs::dot15d4_malformed_corpus_errors_are_structured_and_non_panicking
+    fixture: crafter/tests/fixtures/malformed/dot15d4-decode-corpus.hex
+
+normalized_model:
+  header:
+    - frame_type
+    - frame_type_code
+    - security_enabled
+    - frame_pending
+    - ack_request
+    - pan_id_compression
+    - dest_addr_mode
+    - src_addr_mode
+    - frame_version
+    - seq
+  addresses:
+    shape: ordered_addressing_fields
+    presence: determined_by_addr_modes_and_pan_id_compression
+    fields:
+      - dest_pan
+      - dest_addr
+      - src_pan
+      - src_addr
+    pan_id_compression:
+      omits: src_pan
+      when: compression_set_and_both_addresses_present
+  footer:
+    - fcs
+  payload:
+    shape: opaque_bytes
+    raw_preservation:
+      - unknown_mac_payload_kept_as_raw
+  malformed:
+    - frame_control_truncated
+    - addressing_runs_past_available_bytes
+    - reserved_frame_type
+
+live_boundary:
+  provider_backed: false
+  dry_run_profile: smoke
+  smoke_harness: .scratch/dot15d4-whad-smoke
+  notes:
+    - IEEE 802.15.4 MAC framing has no network live provider in the oracle;
+      Hetzner, QEMU, and VirtualBox validate IP/network exchanges, not
+      802.15.4 radio traffic.
+    - The offline path (build, decode, pcap, dry-run, oracle) is the default
+      and hardware-free; no packets are sent for these cases.
+    - Real on-air 802.15.4 behavior is validated through the ignored WHAD
+      dongle smoke harness and is not committed to this repository.
+
+backend_support:
+  scapy:
+    status: supported
+    encode: true
+    decode: true
+    native_layers:
+      - Dot15d4
+      - Dot15d4FCS
+      - Dot15d4Data
+    notes:
+      - The Step 36 scapy backend imports scapy.layers.dot15d4 and decodes the
+        with-FCS form (DLT 195, Dot15d4FCS) natively.
+      - The TAP form (DLT 283) has no native scapy dissector; the radio
+        descriptor is carried as raw passthrough until adapter normalization
+        is widened.
+      - Strict-byte dot15d4 MAC cases are contract-only until the runnable
+        libcrafter offline adapter hooks are widened for dot15d4.
+  libcrafter:
+    status: partial
+    encode: true
+    decode: true
+    notes:
+      - The Dot15d4 MAC layer and FCS have crate tests, hex fixtures, and
+        summary snapshots; runnable dot15d4 offline comparisons remain
+        deferred to adapter normalization work.
