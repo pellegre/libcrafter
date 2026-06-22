@@ -49,6 +49,7 @@ use crate::registry::ProtocolRegistry;
 mod arp;
 mod ble;
 mod dot11;
+mod dot15d4;
 mod llc;
 mod radiotap;
 
