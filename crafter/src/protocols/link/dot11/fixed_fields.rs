@@ -2,8 +2,8 @@
 
 use crate::mac::MacAddr;
 
-use super::{read_mac_at, read_u16_le_at};
 use super::*;
+use super::{read_mac_at, read_u16_le_at};
 
 /// Source-backed typed management fixed fields, or the raw fallback bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
