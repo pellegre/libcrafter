@@ -259,6 +259,11 @@ impl From<LinkType> for PcapLinkType {
             LinkType::Ieee80211 => Self::Ieee80211,
             LinkType::Radiotap => Self::Ieee80211Radiotap,
             LinkType::BluetoothLeLl => Self::BluetoothLeLl,
+            // Temporary pass-through to the raw DLT codes (195 with-FCS, 283 TAP)
+            // through Self::Unknown; the dedicated PcapLinkType variants and
+            // mappings are added in step 29.
+            LinkType::Ieee802154 => Self::Unknown(195),
+            LinkType::Ieee802154Tap => Self::Unknown(283),
             LinkType::LinuxCooked | LinkType::LinuxSll => Self::LinuxSll,
             LinkType::NullLoopback => Self::NullLoopback,
         }
