@@ -1,0 +1,1 @@
+Dot15d4(Data, seq=7, dst=0x0000, src=0xABCD) / ZigbeeNwk(Data, dst=0x0000, src=0xabcd, r=30) / ZigbeeAps(Data, cluster=0x0006, profile=0x0104, dst_ep=1) / Raw(len=2)
