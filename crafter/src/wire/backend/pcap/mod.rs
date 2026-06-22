@@ -35,7 +35,9 @@ use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::{BleRadio, Dot11, Ethernet, Ipv4, Ipv6, LinuxSll, NullLoopback, Radiotap};
+use crate::{
+    BleRadio, Dot11, Dot15d4, Dot15d4Radio, Ethernet, Ipv4, Ipv6, LinuxSll, NullLoopback, Radiotap,
+};
 
 use super::super::record::{BackendKind, PacketRecord};
 use super::super::source::PacketSource;
@@ -626,6 +628,13 @@ fn packet_pcap_link_type(record: &PacketRecord) -> Option<PcapLinkType> {
         Some(PcapLinkType::Ieee80211Radiotap)
     } else if first.as_any().is::<BleRadio>() {
         Some(PcapLinkType::BluetoothLeLl)
+    } else if first.as_any().is::<Dot15d4Radio>() {
+        // A leading radio descriptor maps to the TAP form (DLT 283), which
+        // carries the pseudo-header; a bare MAC frame maps to the with-FCS
+        // form (DLT 195).
+        Some(PcapLinkType::Ieee802154Tap)
+    } else if first.as_any().is::<Dot15d4>() {
+        Some(PcapLinkType::Ieee802154WithFcs)
     } else if first.as_any().is::<LinuxSll>() {
         Some(PcapLinkType::LinuxSll)
     } else if first.as_any().is::<NullLoopback>() {
@@ -665,8 +674,9 @@ mod tests {
 
     use super::*;
     use crate::{
-        AdStructure, BleLlAdv, BleRadio, Dot11, Ethernet, Ipv4, LinkType, MacAddr, Packet,
-        PacketOrigin, PacketWire, Radiotap, Raw, Sniffer, Tcp, Transmitter, WireError,
+        AdStructure, BleLlAdv, BleRadio, Dot11, Dot15d4, Dot15d4Radio, Ethernet, Ipv4, LinkType,
+        MacAddr, Packet, PacketOrigin, PacketWire, Radiotap, Raw, Sniffer, Tcp, Transmitter,
+        WireError,
     };
 
     static NEXT_TEMP_PCAP: AtomicUsize = AtomicUsize::new(0);
@@ -1280,6 +1290,36 @@ mod tests {
         assert_eq!(
             reader.header().pcap_link_type().datalink(),
             DLT_BLUETOOTH_LE_LL_WITH_PHDR
+        );
+    }
+
+    #[test]
+    fn pcap_dot15d4_infer() {
+        // A leading `Dot15d4Radio` descriptor infers the TAP form, which carries
+        // the pseudo-header.
+        let tap_packet = Dot15d4Radio::on_channel(20).rssi(-55)
+            / Dot15d4::data()
+                .seq(9)
+                .dest_short(0x1234, 0x0000)
+                .src_short(0x1234, 0xABCD);
+        let tap_record = PacketRecord::new(tap_packet);
+        assert_eq!(
+            packet_pcap_link_type(&tap_record),
+            Some(PcapLinkType::Ieee802154Tap)
+        );
+
+        // A bare `Dot15d4` MAC frame (no radio descriptor) infers the with-FCS
+        // form.
+        let mac_packet = Packet::new().push(
+            Dot15d4::data()
+                .seq(7)
+                .dest_short(0x1234, 0x0000)
+                .src_short(0x1234, 0xABCD),
+        );
+        let mac_record = PacketRecord::new(mac_packet);
+        assert_eq!(
+            packet_pcap_link_type(&mac_record),
+            Some(PcapLinkType::Ieee802154WithFcs)
         );
     }
 
