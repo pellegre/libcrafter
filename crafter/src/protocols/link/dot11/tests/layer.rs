@@ -191,8 +191,8 @@ fn dot11_management_fixed_fields_encode_typed_builders_for_supported_subtypes() 
         association_request.to_bytes()
     );
 
-    let frame = Dot11::association_response()
-        .with_association_response_fixed_fields(association_response);
+    let frame =
+        Dot11::association_response().with_association_response_fixed_fields(association_response);
     assert_eq!(
         frame.association_response_fixed_fields(),
         Some(association_response)
@@ -435,8 +435,8 @@ fn dot11_management_fixed_fields_raw_fallback_preserves_overrides() {
     assert_eq!(malformed.raw_fixed_parameters(), &[0xaa, 0xbb]);
     assert_eq!(dot11_compiled_management_body(malformed), vec![0xaa, 0xbb]);
 
-    let unsupported = Dot11::management(Dot11ManagementSubtype::Unknown(7))
-        .fixed_parameters([0x01, 0x02, 0x03]);
+    let unsupported =
+        Dot11::management(Dot11ManagementSubtype::Unknown(7)).fixed_parameters([0x01, 0x02, 0x03]);
 
     assert_eq!(
         unsupported.management_fixed_fields(),

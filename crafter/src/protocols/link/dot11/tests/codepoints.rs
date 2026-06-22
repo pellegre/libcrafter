@@ -204,19 +204,14 @@ fn dot11_header_length_from_bytes_rejects_truncated_boundaries() {
         CrafterError::buffer_too_short("dot11.frame_control", 2, 1)
     );
 
-    let beacon =
-        dot11_test_frame_control(DOT11_FRAME_TYPE_MANAGEMENT, DOT11_MGMT_SUBTYPE_BEACON);
+    let beacon = dot11_test_frame_control(DOT11_FRAME_TYPE_MANAGEMENT, DOT11_MGMT_SUBTYPE_BEACON);
     let beacon_header_len = DOT11_DATA_HEADER_LEN + DOT11_MGMT_BEACON_FIXED_LEN;
-    let err = Dot11::header_len_from_bytes(dot11_test_bytes(beacon, beacon_header_len - 1))
-        .unwrap_err();
+    let err =
+        Dot11::header_len_from_bytes(dot11_test_bytes(beacon, beacon_header_len - 1)).unwrap_err();
 
     assert_eq!(
         err,
-        CrafterError::buffer_too_short(
-            "dot11.header",
-            beacon_header_len,
-            beacon_header_len - 1
-        )
+        CrafterError::buffer_too_short("dot11.header", beacon_header_len, beacon_header_len - 1)
     );
 
     let qos_four_address =
@@ -224,9 +219,8 @@ fn dot11_header_length_from_bytes_rejects_truncated_boundaries() {
             .with_to_ds(true)
             .with_from_ds(true);
     let qos_header_len = DOT11_DATA_ADDR4_HEADER_LEN + DOT11_QOS_CONTROL_LEN;
-    let err =
-        Dot11::header_len_from_bytes(dot11_test_bytes(qos_four_address, qos_header_len - 1))
-            .unwrap_err();
+    let err = Dot11::header_len_from_bytes(dot11_test_bytes(qos_four_address, qos_header_len - 1))
+        .unwrap_err();
 
     assert_eq!(
         err,

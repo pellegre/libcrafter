@@ -7,8 +7,7 @@ use crate::{Ipv4, LinkType, LlcSnap, Packet, Radiotap, Raw};
 
 #[test]
 fn dot11_decode_basic_three_address_data_preserves_raw_tail() {
-    let frame_control =
-        dot11_test_frame_control(DOT11_FRAME_TYPE_DATA, DOT11_DATA_SUBTYPE_DATA);
+    let frame_control = dot11_test_frame_control(DOT11_FRAME_TYPE_DATA, DOT11_DATA_SUBTYPE_DATA);
     let mut bytes = dot11_decode_test_header(frame_control);
     bytes.extend_from_slice(b"payload");
 
@@ -33,8 +32,7 @@ fn dot11_decode_basic_three_address_data_preserves_raw_tail() {
 
 #[test]
 fn dot11_decode_from_link_ieee80211_uses_typed_dot11_root() {
-    let frame_control =
-        dot11_test_frame_control(DOT11_FRAME_TYPE_DATA, DOT11_DATA_SUBTYPE_DATA);
+    let frame_control = dot11_test_frame_control(DOT11_FRAME_TYPE_DATA, DOT11_DATA_SUBTYPE_DATA);
     let mut bytes = dot11_decode_test_header(frame_control);
     bytes.extend_from_slice(b"link-root-payload");
 
@@ -174,8 +172,7 @@ fn dot11_qos_data_control_fields_encode_decode() {
         qos_control
     );
 
-    let packet =
-        Dot11::qos_data().with_qos_control_fields(qos_control) / Raw::from([0xde, 0xad]);
+    let packet = Dot11::qos_data().with_qos_control_fields(qos_control) / Raw::from([0xde, 0xad]);
     let bytes = packet.compile().unwrap();
 
     assert_eq!(
@@ -268,8 +265,7 @@ fn dot11_qos_data_truncated_before_qos_control_returns_structured_error() {
 
 #[test]
 fn dot11_qos_data_absent_for_plain_data_preserves_tail_as_raw() {
-    let frame_control =
-        dot11_test_frame_control(DOT11_FRAME_TYPE_DATA, DOT11_DATA_SUBTYPE_DATA);
+    let frame_control = dot11_test_frame_control(DOT11_FRAME_TYPE_DATA, DOT11_DATA_SUBTYPE_DATA);
     let mut bytes = dot11_decode_test_header(frame_control);
     bytes.extend_from_slice(&0xabcd_u16.to_le_bytes());
 
@@ -319,8 +315,7 @@ fn dot11_qos_data_explicit_raw_override_preserved_on_non_qos_compile() {
 
 #[test]
 fn dot11_decode_basic_unknown_valid_subtype_stays_typed_with_raw_tail() {
-    let frame_control =
-        dot11_test_frame_control(DOT11_FRAME_TYPE_MANAGEMENT, 7).with_retry(true);
+    let frame_control = dot11_test_frame_control(DOT11_FRAME_TYPE_MANAGEMENT, 7).with_retry(true);
     let mut bytes = dot11_decode_test_header(frame_control);
     bytes.extend_from_slice(b"unknown-management-body");
 
@@ -353,9 +348,8 @@ fn dot11_llc_dispatch_unprotected_data_decodes_snap_ipv4() {
 
 #[test]
 fn dot11_protected_data_raw_body_len_and_no_llc_dispatch() {
-    let frame_control =
-        dot11_test_frame_control(DOT11_FRAME_TYPE_DATA, DOT11_DATA_SUBTYPE_DATA)
-            .with_protected(true);
+    let frame_control = dot11_test_frame_control(DOT11_FRAME_TYPE_DATA, DOT11_DATA_SUBTYPE_DATA)
+        .with_protected(true);
     let encrypted_body = [
         0xaa, 0xaa, 0x03, 0x00, 0x00, 0x00, 0x08, 0x00, 0xde, 0xad, 0xbe, 0xef,
     ];
@@ -430,8 +424,7 @@ fn dot11_llc_dispatch_non_data_frame_keeps_tail_raw() {
 
 #[test]
 fn dot11_llc_dispatch_null_data_subtype_keeps_body_raw() {
-    let frame_control =
-        dot11_test_frame_control(DOT11_FRAME_TYPE_DATA, DOT11_DATA_SUBTYPE_NULL);
+    let frame_control = dot11_test_frame_control(DOT11_FRAME_TYPE_DATA, DOT11_DATA_SUBTYPE_NULL);
     let dot11 = Dot11::data().frame_control(frame_control);
     let packet = dot11.clone() / LlcSnap::new() / Ipv4::new() / Raw::from("null-tail");
     let bytes = packet.compile().unwrap();
