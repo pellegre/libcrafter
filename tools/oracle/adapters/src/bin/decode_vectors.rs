@@ -218,6 +218,11 @@ fn decode_for_root(root: &str, bytes: &[u8]) -> ExampleResult<Packet> {
         "IP" | "l3:ipv4" | "l2:ipv4" => Packet::decode_from_l3(NetworkLayer::Ipv4, bytes),
         "IPv6" | "l3:ipv6" => Packet::decode_from_l3(NetworkLayer::Ipv6, bytes),
         "l3:raw" => Packet::decode_from_l3(NetworkLayer::Raw, bytes),
+        "BTLE" | "link:bluetooth-le-ll-with-phdr" => {
+            Packet::decode_from_link(LinkType::BluetoothLeLl, bytes)
+        }
+        "link:ieee802154" => Packet::decode_from_link(LinkType::Ieee802154, bytes),
+        "link:ieee802154-tap" => Packet::decode_from_link(LinkType::Ieee802154Tap, bytes),
         _ => return Err(format!("unsupported root decoder: {root}").into()),
     };
     Ok(decoded?)
@@ -476,6 +481,10 @@ fn normalized_layer_name(layer: &dyn Layer) -> String {
         "esp"
     } else if layer.as_any().is::<Ah>() {
         "ah"
+    } else if layer.as_any().is::<BleRadio>() {
+        "ble_radio"
+    } else if layer.as_any().is::<BleLlAdv>() {
+        "ble_adv"
     } else if layer.as_any().is::<Raw>() {
         "payload"
     } else {
@@ -608,6 +617,12 @@ fn normalized_layer_fields(
     if let Some(layer) = layer.as_any().downcast_ref::<Ah>() {
         return ah_fields(layer);
     }
+    if let Some(layer) = layer.as_any().downcast_ref::<BleRadio>() {
+        return ble_radio_fields(layer, source_bytes);
+    }
+    if let Some(layer) = layer.as_any().downcast_ref::<BleLlAdv>() {
+        return ble_adv_fields(layer, source_bytes);
+    }
     if let Some(layer) = layer.as_any().downcast_ref::<Raw>() {
         return payload_fields(layer);
     }
@@ -658,6 +673,268 @@ fn ah_fields(layer: &Ah) -> BTreeMap<String, Value> {
     let icv = layer.icv_value().unwrap_or(&[]);
     fields.insert("icv".to_string(), bytes_hex_ascii(icv));
     fields
+}
+
+/// Normalize a decoded BLE LE Link-Layer radio pseudo-header into the
+/// backend-neutral oracle shape.
+///
+/// libcrafter decodes the 10-byte `LINKTYPE_BLUETOOTH_LE_LL_WITH_PHDR`
+/// pseudo-header into a typed `BleRadio` layer, but that decode is lossy: it
+/// keeps only the channel, access address, PHY, whitening, RSSI, and CRC
+/// validity, discarding the offense counter, noise power, and the raw flags
+/// word that the Scapy reference reports verbatim. The Scapy reference
+/// byte-normalizes the pseudo-header (see `normalize._parse_ble_pseudoheader`),
+/// so reconstruct the same model from the source bytes that libcrafter decoded.
+/// The compare is byte-exact, so deriving from `source_bytes` reproduces the
+/// reference fields faithfully without weakening it.
+fn ble_radio_fields(layer: &BleRadio, source_bytes: Option<&[u8]>) -> BTreeMap<String, Value> {
+    let raw = match source_bytes {
+        Some(raw) if raw.len() >= BLE_RADIO_PSEUDO_HEADER_LEN => raw,
+        _ => return inspection_fields(layer),
+    };
+
+    let flags = u16::from_le_bytes([raw[8], raw[9]]);
+    map([
+        ("rf_channel", json!(raw[0])),
+        ("signal_power", json!(i16::from(raw[1] as i8))),
+        ("noise_power", json!(i16::from(raw[2] as i8))),
+        ("access_address_offenses", json!(raw[3])),
+        (
+            "ref_access_address",
+            json!(u32::from_le_bytes([raw[4], raw[5], raw[6], raw[7]])),
+        ),
+        ("flags", json!(flags)),
+        ("flag_tokens", json!(ble_phdr_flag_tokens(flags))),
+        ("dewhitened", json!(flags & 0x0001 != 0)),
+        ("signal_power_valid", json!(flags & 0x0002 != 0)),
+        ("noise_power_valid", json!(flags & 0x0004 != 0)),
+        ("reference_access_address_valid", json!(flags & 0x0010 != 0)),
+        ("access_address_offenses_valid", json!(flags & 0x0020 != 0)),
+        ("crc_checked", json!(flags & 0x0400 != 0)),
+        ("crc_valid", json!(flags & 0x0800 != 0)),
+    ])
+}
+
+/// Bit width of the BLE LE Link-Layer pcap pseudo-header.
+const BLE_RADIO_PSEUDO_HEADER_LEN: usize = 10;
+/// Bit width of the BLE Link-Layer access address that follows the pseudo-header.
+const BLE_LL_ACCESS_ADDRESS_LEN: usize = 4;
+/// Bit width of the BLE Link-Layer CRC that trails an advertising PDU.
+const BLE_LL_CRC_LEN: usize = 3;
+
+/// `LINKTYPE_BLUETOOTH_LE_LL_WITH_PHDR` flag-word token names in wire-bit order.
+///
+/// Mirrors the Scapy reference `_BLE_PHDR_FLAG_NAMES` table so emitted
+/// `flag_tokens` lists match the reference order exactly.
+const BLE_PHDR_FLAG_NAMES: &[(u16, &str)] = &[
+    (0x0001, "dewhitened"),
+    (0x0002, "signal_power_valid"),
+    (0x0004, "noise_power_valid"),
+    (0x0008, "decrypted"),
+    (0x0010, "reference_access_address_valid"),
+    (0x0020, "access_address_offenses_valid"),
+    (0x0040, "rf_channel_aliased"),
+    (0x0400, "crc_checked"),
+    (0x0800, "crc_valid"),
+    (0x1000, "mic_checked"),
+    (0x2000, "mic_valid"),
+];
+
+/// GAP Advertising Data flags-structure token names in wire-bit order.
+///
+/// Mirrors the Scapy reference `_BLE_ADV_FLAG_NAMES` table.
+const BLE_ADV_FLAG_NAMES: &[(u8, &str)] = &[
+    (0x01, "le_limited_discoverable_mode"),
+    (0x02, "le_general_discoverable_mode"),
+    (0x04, "br_edr_not_supported"),
+    (0x08, "simultaneous_le_br_edr_controller"),
+    (0x10, "simultaneous_le_br_edr_host"),
+];
+
+fn ble_phdr_flag_tokens(flags: u16) -> Vec<&'static str> {
+    BLE_PHDR_FLAG_NAMES
+        .iter()
+        .filter(|(bit, _)| flags & bit != 0)
+        .map(|(_, name)| *name)
+        .collect()
+}
+
+fn ble_adv_flag_tokens(value: u8) -> Vec<&'static str> {
+    BLE_ADV_FLAG_NAMES
+        .iter()
+        .filter(|(bit, _)| value & bit != 0)
+        .map(|(_, name)| *name)
+        .collect()
+}
+
+/// Translate a four-bit advertising PDU type into the reference name.
+///
+/// Mirrors the Scapy reference `_BLE_ADV_PDU_TYPE_NAMES` table, including the
+/// `unknown:N` fallback for codepoints the model does not name.
+fn ble_adv_pdu_type_name(code: u8) -> String {
+    match code {
+        0 => "adv_ind".to_string(),
+        1 => "adv_direct_ind".to_string(),
+        2 => "adv_nonconn_ind".to_string(),
+        3 => "scan_req".to_string(),
+        4 => "scan_rsp".to_string(),
+        5 => "connect_ind".to_string(),
+        6 => "adv_scan_ind".to_string(),
+        7 => "adv_ext_ind".to_string(),
+        other => format!("unknown:{other}"),
+    }
+}
+
+/// Translate a GAP Advertising Data type code into the reference name.
+fn ble_ad_type_name(code: u8) -> String {
+    match code {
+        0x01 => "flags".to_string(),
+        0x08 => "shortened_local_name".to_string(),
+        0x09 => "complete_local_name".to_string(),
+        other => format!("unknown:{other}"),
+    }
+}
+
+/// Normalize a decoded BLE advertising-channel Link Layer PDU into the
+/// backend-neutral oracle shape.
+///
+/// libcrafter decodes the advertising PDU into a typed `BleLlAdv` layer, but
+/// that layer does not retain the trailing CRC, the Link-Layer access address,
+/// or the raw header byte (PDU-type code, RX/TX address-type bits, channel
+/// selection, RFU). The Scapy reference reports all of these by byte-normalizing
+/// the link-layer packet (see `normalize._parse_ble_ll_packet`), so reconstruct
+/// the same model from the source bytes libcrafter decoded. The compare is
+/// byte-exact, so this reproduces the reference fields faithfully.
+fn ble_adv_fields(layer: &BleLlAdv, source_bytes: Option<&[u8]>) -> BTreeMap<String, Value> {
+    let ll_start = BLE_RADIO_PSEUDO_HEADER_LEN + BLE_LL_ACCESS_ADDRESS_LEN;
+    let raw = match source_bytes {
+        Some(raw) if raw.len() >= ll_start + 2 => raw,
+        _ => return inspection_fields(layer),
+    };
+
+    let access_address = u32::from_le_bytes([
+        raw[BLE_RADIO_PSEUDO_HEADER_LEN],
+        raw[BLE_RADIO_PSEUDO_HEADER_LEN + 1],
+        raw[BLE_RADIO_PSEUDO_HEADER_LEN + 2],
+        raw[BLE_RADIO_PSEUDO_HEADER_LEN + 3],
+    ]);
+    let pdu_with_crc = &raw[ll_start..];
+    if pdu_with_crc.len() < BLE_LL_CRC_LEN {
+        return inspection_fields(layer);
+    }
+    let (pdu, crc) = pdu_with_crc.split_at(pdu_with_crc.len() - BLE_LL_CRC_LEN);
+    if pdu.len() < 2 {
+        return inspection_fields(layer);
+    }
+    let header0 = pdu[0];
+    let pdu_type_code = header0 & 0x0f;
+    let length = pdu[1] as usize;
+    let available_payload = &pdu[2..];
+    let payload = available_payload.get(..length).unwrap_or(available_payload);
+
+    let mut fields = map([
+        ("access_address", json!(access_address)),
+        ("crc", json!(hex_bytes(crc))),
+        ("pdu_type", json!(ble_adv_pdu_type_name(pdu_type_code))),
+        ("pdu_type_code", json!(pdu_type_code)),
+        ("length", json!(pdu[1])),
+        (
+            "rx_add",
+            json!(if header0 & 0x80 != 0 {
+                "random"
+            } else {
+                "public"
+            }),
+        ),
+        (
+            "tx_add",
+            json!(if header0 & 0x40 != 0 {
+                "random"
+            } else {
+                "public"
+            }),
+        ),
+        ("channel_selection", json!(header0 & 0x20 != 0)),
+        ("rfu", json!((header0 >> 4) & 0x01)),
+    ]);
+
+    if pdu_type_code == 0 && payload.len() >= 6 {
+        // ADV_IND: the advertiser address is reported in MSB-first display
+        // order; libcrafter's typed decode already reverses the on-air bytes,
+        // so prefer the layer accessor and fall back to the source bytes.
+        let adv_a = layer
+            .adv_a_value()
+            .map(|address| address.to_string())
+            .unwrap_or_else(|| ble_address_text(&payload[..6]));
+        fields.insert("adv_a".to_string(), json!(adv_a));
+        fields.insert("ad_list".to_string(), json!(ble_ad_list(&payload[6..])));
+    } else if !payload.is_empty() {
+        fields.insert("payload_hex".to_string(), json!(hex_bytes(payload)));
+    }
+    let surplus = &available_payload[payload.len().min(available_payload.len())..];
+    if !surplus.is_empty() {
+        fields.insert("surplus_hex".to_string(), json!(hex_bytes(surplus)));
+    }
+    fields
+}
+
+/// Parse a GAP Advertising Data list into the reference per-structure model.
+///
+/// Mirrors the Scapy reference `_parse_ble_ad_list`, including the zero-length
+/// terminator entry and the typed `value`/`flag_tokens` enrichment for the
+/// flags and local-name AD types.
+fn ble_ad_list(raw: &[u8]) -> Vec<Value> {
+    let mut output = Vec::new();
+    let mut offset = 0;
+    while offset < raw.len() {
+        let length = raw[offset] as usize;
+        offset += 1;
+        if length == 0 {
+            output.push(json!({
+                "type": "terminator",
+                "type_code": 0,
+                "length": 0,
+                "data_hex": ""
+            }));
+            break;
+        }
+        if offset + length > raw.len() {
+            // Truncated structure: surface the remaining bytes rather than panic.
+            break;
+        }
+        let type_code = raw[offset];
+        let data = &raw[offset + 1..offset + length];
+        offset += length;
+        let mut entry = map([
+            ("type", json!(ble_ad_type_name(type_code))),
+            ("type_code", json!(type_code)),
+            ("length", json!(length)),
+            ("data_hex", json!(hex_bytes(data))),
+        ]);
+        if type_code == 0x01 {
+            let value = data.first().copied().unwrap_or(0);
+            entry.insert("value".to_string(), json!(value));
+            entry.insert("flag_tokens".to_string(), json!(ble_adv_flag_tokens(value)));
+        } else if type_code == 0x08 || type_code == 0x09 {
+            entry.insert(
+                "value".to_string(),
+                json!(String::from_utf8_lossy(data).into_owned()),
+            );
+        }
+        output.push(Value::Object(entry.into_iter().collect()));
+    }
+    output
+}
+
+/// Render a six-octet BLE address in MSB-first display order from on-air bytes.
+fn ble_address_text(on_air: &[u8]) -> String {
+    on_air
+        .iter()
+        .take(6)
+        .rev()
+        .map(|octet| format!("{octet:02x}"))
+        .collect::<Vec<_>>()
+        .join(":")
 }
 
 /// Build the `{hex, ascii}` representation the oracle uses for opaque byte blobs.

@@ -373,6 +373,9 @@ fn link_type_name(link_type: PcapLinkType) -> &'static str {
         PcapLinkType::Ieee80211 => "ieee80211",
         PcapLinkType::Ieee80211Radiotap => "radiotap",
         PcapLinkType::BluetoothLeLl => "bluetooth_le_ll_with_phdr",
+        PcapLinkType::Ieee802154WithFcs => "ieee802154_withfcs",
+        PcapLinkType::Ieee802154NoFcs => "ieee802154_nofcs",
+        PcapLinkType::Ieee802154Tap => "ieee802154_tap",
         PcapLinkType::Unknown(_) => "unknown",
     }
 }
@@ -386,6 +389,8 @@ fn root_for_link_type(link_type: PcapLinkType) -> &'static str {
         PcapLinkType::Ieee80211 => "link:dot11",
         PcapLinkType::Ieee80211Radiotap => "link:radiotap",
         PcapLinkType::BluetoothLeLl => "link:bluetooth-le-ll-with-phdr",
+        PcapLinkType::Ieee802154WithFcs | PcapLinkType::Ieee802154NoFcs => "link:ieee802154",
+        PcapLinkType::Ieee802154Tap => "link:ieee802154-tap",
         PcapLinkType::Unknown(_) => "link:raw",
     }
 }
