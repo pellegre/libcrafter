@@ -1,7 +1,9 @@
-//! WHAD BLE capability assertion and mode selection.
+//! WHAD BLE and 802.15.4 capability assertion and mode selection.
 
 #[cfg(feature = "whad")]
 use super::discovery::WhadDevice;
+#[cfg(feature = "whad")]
+use super::dot15d4::{build_dot15d4_sniff, build_dot15d4_start};
 #[cfg(feature = "whad")]
 use super::messages::{
     build_ble_central_mode, build_ble_domain_query, build_ble_sniff_adv, build_ble_start,
@@ -23,6 +25,18 @@ pub enum WhadBleMode {
     },
     /// Inject BLE raw PDUs through WHAD's central/raw-PDU path.
     Inject,
+}
+
+/// 802.15.4 operating mode requested for a WHAD serial packet wire.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WhadDot15d4Mode {
+    /// Capture 802.15.4 frames on one channel.
+    Sniff {
+        /// 802.15.4 channel, usually 11-26 in the 2.4 GHz band.
+        channel: u8,
+    },
+    /// Inject 802.15.4 frames through WHAD's send/raw-send path.
+    Send,
 }
 
 #[cfg(feature = "whad")]
@@ -98,6 +112,84 @@ fn missing_capability(capability: &'static str) -> WireError {
     WireError::backend(
         "whad",
         "enter BLE",
+        format!("missing required capability: {capability}"),
+    )
+}
+
+#[cfg(feature = "whad")]
+pub(crate) fn enter_dot15d4<C: WhadByteChannel>(
+    link: &mut WhadLink<C>,
+    device: &WhadDevice,
+    mode: WhadDot15d4Mode,
+) -> Result<()> {
+    assert_dot15d4_capability(device, mode)?;
+
+    match mode {
+        WhadDot15d4Mode::Sniff { channel } => {
+            // SniffCmd{channel} is the whole mode-entry: select the channel,
+            // then Start. No wildcard/filter field exists for 802.15.4 sniff,
+            // so there is no empty-vs-broadcast pitfall to fall into here.
+            link.send_message(&build_dot15d4_sniff(u32::from(channel)))?;
+        }
+        WhadDot15d4Mode::Send => {
+            // Transmit mode only needs the device started; each frame is sent
+            // with a per-frame SendCmd/SendRawCmd from the writer (step 48).
+        }
+    }
+    link.send_message(&build_dot15d4_start())
+}
+
+#[cfg(feature = "whad")]
+fn assert_dot15d4_capability(device: &WhadDevice, mode: WhadDot15d4Mode) -> Result<()> {
+    let dot15d4_domain = proto::discovery::Domain::Dot15d4 as u32;
+    if !device.domains.supported_domains.contains(&dot15d4_domain) {
+        return Err(missing_dot15d4_capability("Dot15d4 domain"));
+    }
+
+    let commands = device
+        .domains
+        .commands
+        .iter()
+        .find(|commands| commands.domain == dot15d4_domain)
+        .map(|commands| commands.supported_commands)
+        .ok_or_else(|| missing_dot15d4_capability("Dot15d4 command table"))?;
+
+    match mode {
+        WhadDot15d4Mode::Sniff { .. } => {
+            require_dot15d4_command(commands, proto::dot15d4::Dot15d4Command::Sniff, "Sniff")?;
+            require_dot15d4_command(commands, proto::dot15d4::Dot15d4Command::Stop, "Stop")?;
+        }
+        WhadDot15d4Mode::Send => {
+            require_dot15d4_command(commands, proto::dot15d4::Dot15d4Command::Send, "Send")?;
+            require_dot15d4_command(
+                commands,
+                proto::dot15d4::Dot15d4Command::SendRaw,
+                "SendRaw",
+            )?;
+        }
+    }
+    require_dot15d4_command(commands, proto::dot15d4::Dot15d4Command::Start, "Start")
+}
+
+#[cfg(feature = "whad")]
+fn require_dot15d4_command(
+    commands: u64,
+    command: proto::dot15d4::Dot15d4Command,
+    capability: &'static str,
+) -> Result<()> {
+    let bit = 1u64 << command as u32;
+    if commands & bit == 0 {
+        return Err(missing_dot15d4_capability(capability));
+    }
+
+    Ok(())
+}
+
+#[cfg(feature = "whad")]
+fn missing_dot15d4_capability(capability: &'static str) -> WireError {
+    WireError::backend(
+        "whad",
+        "enter Dot15d4",
         format!("missing required capability: {capability}"),
     )
 }
@@ -191,6 +283,123 @@ mod tests {
         assert_ble_domain_query(recv_control(&mut link));
         assert_central_mode(recv_control(&mut link));
         assert_ble_start(recv_control(&mut link));
+    }
+
+    #[test]
+    fn dot15d4_capability_enter_rejects_non_dot15d4_device() {
+        let mut link = WhadLink::new(LoopbackChannel::default());
+        let err = enter_dot15d4(
+            &mut link,
+            &device_with_domains(vec![proto::discovery::Domain::BtLe as u32], vec![]),
+            WhadDot15d4Mode::Sniff { channel: 15 },
+        )
+        .expect_err("non-dot15d4 device should be rejected");
+
+        match err {
+            WireError::Backend {
+                backend,
+                operation,
+                reason,
+            } => {
+                assert_eq!(backend, "whad");
+                assert_eq!(operation, "enter Dot15d4");
+                assert!(reason.contains("Dot15d4 domain"));
+            }
+            other => panic!("expected WHAD backend error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn dot15d4_capability_enter_rejects_missing_send_command() {
+        let mut link = WhadLink::new(LoopbackChannel::default());
+        let err = enter_dot15d4(
+            &mut link,
+            &dot15d4_device_with_commands(dot15d4_command_mask(&[
+                proto::dot15d4::Dot15d4Command::Send,
+                proto::dot15d4::Dot15d4Command::Start,
+            ])),
+            WhadDot15d4Mode::Send,
+        )
+        .expect_err("dot15d4 device without raw send should be rejected");
+
+        match err {
+            WireError::Backend { reason, .. } => {
+                assert!(reason.contains("SendRaw"));
+            }
+            other => panic!("expected WHAD backend error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn dot15d4_capability_enter_sniff_succeeds_and_emits_control_frames() {
+        let mut link = WhadLink::new(LoopbackChannel::default());
+        let device = dot15d4_device_with_commands(dot15d4_command_mask(&[
+            proto::dot15d4::Dot15d4Command::Sniff,
+            proto::dot15d4::Dot15d4Command::Stop,
+            proto::dot15d4::Dot15d4Command::Start,
+        ]));
+
+        enter_dot15d4(&mut link, &device, WhadDot15d4Mode::Sniff { channel: 26 })
+            .expect("dot15d4 sniff mode should start");
+
+        assert_dot15d4_sniff(recv_control(&mut link), 26);
+        assert_dot15d4_start(recv_control(&mut link));
+    }
+
+    #[test]
+    fn dot15d4_capability_enter_send_succeeds_and_emits_control_frames() {
+        let mut link = WhadLink::new(LoopbackChannel::default());
+        let device = dot15d4_device_with_commands(dot15d4_command_mask(&[
+            proto::dot15d4::Dot15d4Command::Send,
+            proto::dot15d4::Dot15d4Command::SendRaw,
+            proto::dot15d4::Dot15d4Command::Start,
+        ]));
+
+        enter_dot15d4(&mut link, &device, WhadDot15d4Mode::Send)
+            .expect("dot15d4 send mode should start");
+
+        // Send mode only starts the device; per-frame send commands come from
+        // the writer (step 48), so the only control frame is Start.
+        assert_dot15d4_start(recv_control(&mut link));
+    }
+
+    fn dot15d4_device_with_commands(supported_commands: u64) -> WhadDevice {
+        let dot15d4_domain = proto::discovery::Domain::Dot15d4 as u32;
+        device_with_domains(
+            vec![dot15d4_domain],
+            vec![WhadDomainCommands {
+                domain: dot15d4_domain,
+                supported_commands,
+            }],
+        )
+    }
+
+    fn dot15d4_command_mask(commands: &[proto::dot15d4::Dot15d4Command]) -> u64 {
+        commands
+            .iter()
+            .fold(0, |mask, command| mask | (1u64 << (*command as u32)))
+    }
+
+    fn assert_dot15d4_sniff(message: proto::Message, channel: u32) {
+        match message.msg {
+            Some(proto::message::Msg::Dot15d4(dot15d4)) => match dot15d4.msg {
+                Some(proto::dot15d4::message::Msg::Sniff(command)) => {
+                    assert_eq!(command.channel, channel);
+                }
+                other => panic!("expected dot15d4 sniff command, got {other:?}"),
+            },
+            other => panic!("expected dot15d4 message, got {other:?}"),
+        }
+    }
+
+    fn assert_dot15d4_start(message: proto::Message) {
+        match message.msg {
+            Some(proto::message::Msg::Dot15d4(dot15d4)) => match dot15d4.msg {
+                Some(proto::dot15d4::message::Msg::Start(_)) => {}
+                other => panic!("expected dot15d4 start command, got {other:?}"),
+            },
+            other => panic!("expected dot15d4 message, got {other:?}"),
+        }
     }
 
     fn ble_device_with_commands(supported_commands: u64) -> WhadDevice {
