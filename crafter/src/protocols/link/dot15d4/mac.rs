@@ -2,6 +2,12 @@
 
 use crate::field::Field;
 
+use super::consts::{
+    DOT15D4_EXTENDED_ADDR_LEN, DOT15D4_FCF_LEN, DOT15D4_FCS_LEN, DOT15D4_PAN_ID_LEN,
+    DOT15D4_SEQ_LEN, DOT15D4_SHORT_ADDR_LEN,
+};
+use super::fcs::dot15d4_fcs;
+
 pub use super::consts::{Dot15d4AddrMode, Dot15d4FrameType};
 
 /// IEEE 802.15.4 MAC frame.
@@ -355,6 +361,145 @@ impl Dot15d4 {
         }
         !self.effective_pan_id_compression()
     }
+
+    /// Resolve the effective frame type (FCF bits 0..=2).
+    ///
+    /// Honors a user-set `frame_type`; otherwise defaults to
+    /// [`Dot15d4FrameType::Data`] (the type the bare `Dot15d4::new()` frame
+    /// carries on the wire).
+    fn effective_frame_type(&self) -> Dot15d4FrameType {
+        self.frame_type
+            .value()
+            .copied()
+            .unwrap_or(Dot15d4FrameType::Data)
+    }
+
+    /// Resolve the effective sequence number (auto-fill 0 when unset).
+    fn effective_seq(&self) -> u8 {
+        self.seq.value().copied().unwrap_or(0)
+    }
+
+    /// Resolve the effective Frame Version (FCF bits 12..=13, default 0).
+    fn effective_frame_version(&self) -> u8 {
+        self.frame_version.value().copied().unwrap_or(0)
+    }
+
+    /// Assemble the 16-bit Frame Control field from the effective fields.
+    ///
+    /// Packs the frame type (bits 0..=2), the security-enabled (bit 3),
+    /// frame-pending (bit 4), ack-request (bit 5), and PAN-ID-compression
+    /// (bit 6) flags, the destination addressing mode (bits 10..=11), the frame
+    /// version (bits 12..=13), and the source addressing mode (bits 14..=15),
+    /// per IEEE Std 802.15.4-2020, Clause 7.2.2 (see
+    /// `.agents/docs/dot15d4-manifest.md`). User-set flags are honored exactly;
+    /// the FCF is never "corrected" to be consistent with the addresses
+    /// present.
+    fn frame_control(&self) -> u16 {
+        let frame_type = u16::from(self.effective_frame_type().as_u3() & 0b111);
+        let security = u16::from(self.security_enabled.value().copied().unwrap_or(false));
+        let frame_pending = u16::from(self.frame_pending.value().copied().unwrap_or(false));
+        let ack_request = u16::from(self.ack_request.value().copied().unwrap_or(false));
+        let pan_id_compression = u16::from(self.effective_pan_id_compression());
+        let dest_mode = u16::from(self.effective_dest_addr_mode().as_u2() & 0b11);
+        let frame_version = u16::from(self.effective_frame_version() & 0b11);
+        let src_mode = u16::from(self.effective_src_addr_mode().as_u2() & 0b11);
+
+        frame_type
+            | (security << 3)
+            | (frame_pending << 4)
+            | (ack_request << 5)
+            | (pan_id_compression << 6)
+            | (dest_mode << 10)
+            | (frame_version << 12)
+            | (src_mode << 14)
+    }
+
+    /// Number of address octets implied by an addressing mode.
+    ///
+    /// `None` carries no address, `Short` two octets, `Extended` eight, per
+    /// IEEE Std 802.15.4-2020, Clause 7.2.4 through 7.2.8.
+    fn addr_octets(mode: Dot15d4AddrMode) -> usize {
+        match mode {
+            Dot15d4AddrMode::None => 0,
+            Dot15d4AddrMode::Short => DOT15D4_SHORT_ADDR_LEN,
+            Dot15d4AddrMode::Extended => DOT15D4_EXTENDED_ADDR_LEN,
+        }
+    }
+
+    /// Append an address sized by its addressing mode, little-endian.
+    fn encode_addr(out: &mut Vec<u8>, mode: Dot15d4AddrMode, addr: u64) {
+        match mode {
+            Dot15d4AddrMode::None => {}
+            Dot15d4AddrMode::Short => out.extend_from_slice(&(addr as u16).to_le_bytes()),
+            Dot15d4AddrMode::Extended => out.extend_from_slice(&addr.to_le_bytes()),
+        }
+    }
+
+    /// Encoded length, in octets, of the full MAC frame including the FCS.
+    ///
+    /// Mirrors [`Dot15d4::encode`]: FCF + sequence number + the addressing
+    /// fields implied by the effective addressing modes and PAN-ID compression
+    /// + payload + the 2-octet FCS.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn encoded_len(&self) -> usize {
+        let dest_mode = self.effective_dest_addr_mode();
+        let src_mode = self.effective_src_addr_mode();
+
+        let mut len = DOT15D4_FCF_LEN + DOT15D4_SEQ_LEN;
+        if self.effective_dest_pan_present() {
+            len += DOT15D4_PAN_ID_LEN;
+        }
+        len += Self::addr_octets(dest_mode);
+        if self.effective_src_pan_present() {
+            len += DOT15D4_PAN_ID_LEN;
+        }
+        len += Self::addr_octets(src_mode);
+        len += self.payload.len();
+        len += DOT15D4_FCS_LEN;
+        len
+    }
+
+    /// Serialize the 802.15.4 MAC frame to bytes, auto-filling the FCS.
+    ///
+    /// Emits the Frame Control field (little-endian), the sequence number, the
+    /// addressing fields in spec order (destination PAN, destination address,
+    /// source PAN — omitted under PAN-ID compression —, source address, each
+    /// little-endian and sized by its addressing mode), the payload, and a
+    /// trailing 2-octet Frame Check Sequence. The FCS is computed over the
+    /// emitted header and payload via [`dot15d4_fcs`] and appended little-endian
+    /// (low byte first), unless the caller set `fcs` explicitly, in which case
+    /// exactly that value is appended little-endian (malformed-on-purpose is
+    /// supported). Every user-set field is honored verbatim; no value is
+    /// clamped or "corrected" (IEEE Std 802.15.4-2020, Clause 7.2; see
+    /// `.agents/docs/dot15d4-manifest.md`).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn encode(&self, out: &mut Vec<u8>) {
+        let start = out.len();
+
+        out.extend_from_slice(&self.frame_control().to_le_bytes());
+        out.push(self.effective_seq());
+
+        let dest_mode = self.effective_dest_addr_mode();
+        let src_mode = self.effective_src_addr_mode();
+
+        if self.effective_dest_pan_present() {
+            out.extend_from_slice(&self.dest_pan.value().copied().unwrap_or(0).to_le_bytes());
+        }
+        Self::encode_addr(out, dest_mode, self.dest_addr.value().copied().unwrap_or(0));
+
+        if self.effective_src_pan_present() {
+            out.extend_from_slice(&self.src_pan.value().copied().unwrap_or(0).to_le_bytes());
+        }
+        Self::encode_addr(out, src_mode, self.src_addr.value().copied().unwrap_or(0));
+
+        out.extend_from_slice(&self.payload);
+
+        let fcs = match self.fcs.value() {
+            Some(value) => *value,
+            None => dot15d4_fcs(&out[start..]),
+        };
+        out.extend_from_slice(&fcs.to_le_bytes());
+    }
 }
 
 impl Default for Dot15d4 {
@@ -533,5 +678,78 @@ mod dot15d4_mac_address {
 
         assert!(!frame.effective_pan_id_compression());
         assert!(frame.effective_src_pan_present());
+    }
+}
+
+#[cfg(test)]
+mod dot15d4_mac_encode {
+    use super::Dot15d4;
+
+    fn encode(frame: &Dot15d4) -> Vec<u8> {
+        let mut out = Vec::new();
+        frame.encode(&mut out);
+        out
+    }
+
+    #[test]
+    fn short_dest_src_data_frame_matches_reference() {
+        // Data frame, short dest+src sharing PAN 0xABCD (PAN-ID compression
+        // defaults on, so the source PAN ID is omitted), sequence number 7,
+        // payload [0xCA, 0xFE].
+        //
+        // FCF = 0x8841 (Data=001, PAN-ID compression bit 6 set, dest mode Short
+        // = 0b10 in bits 10..=11, src mode Short = 0b10 in bits 14..=15), LE
+        // bytes 41 88. The MHR+payload is 41 88 07 CD AB 34 12 78 56 CA FE; the
+        // reflected CRC-16/CCITT FCS over those octets is 0x8B43, serialized
+        // little-endian as 43 8B. Cross-checked against the `dot15d4_fcs`
+        // reference algorithm (scapy `makeFCS`).
+        let frame = Dot15d4::data()
+            .seq(7)
+            .dest_short(0xABCD, 0x1234)
+            .src_short(0xABCD, 0x5678)
+            .payload(&[0xCA, 0xFE]);
+
+        let bytes = encode(&frame);
+
+        assert_eq!(
+            bytes,
+            vec![
+                0x41, 0x88, // FCF (little-endian)
+                0x07, // sequence number
+                0xCD, 0xAB, // dest PAN 0xABCD (little-endian)
+                0x34, 0x12, // dest short address 0x1234 (little-endian)
+                // source PAN omitted under PAN-ID compression
+                0x78, 0x56, // src short address 0x5678 (little-endian)
+                0xCA, 0xFE, // payload
+                0x43, 0x8B, // FCS 0x8B43 (little-endian)
+            ]
+        );
+
+        // encoded_len() matches the serialized length.
+        assert_eq!(frame.encoded_len(), bytes.len());
+    }
+
+    #[test]
+    fn user_set_wrong_fcs_is_emitted_verbatim() {
+        // The same frame, but the caller forces a deliberately wrong FCS; the
+        // emitted trailing two octets must be exactly that value
+        // (little-endian), not the recomputed correct 0x8B43.
+        let frame = Dot15d4::data()
+            .seq(7)
+            .dest_short(0xABCD, 0x1234)
+            .src_short(0xABCD, 0x5678)
+            .payload(&[0xCA, 0xFE]);
+        let mut frame = frame;
+        frame.fcs.set_user(0xDEAD);
+        let bytes = encode(&frame);
+
+        // Header + payload unchanged from the reference frame.
+        assert_eq!(
+            &bytes[..bytes.len() - 2],
+            &[0x41, 0x88, 0x07, 0xCD, 0xAB, 0x34, 0x12, 0x78, 0x56, 0xCA, 0xFE]
+        );
+        // Trailing FCS is the wrong user value, little-endian (AD DE), not the
+        // recomputed 0x8B43 (43 8B).
+        assert_eq!(&bytes[bytes.len() - 2..], &[0xAD, 0xDE]);
     }
 }
