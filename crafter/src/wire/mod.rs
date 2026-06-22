@@ -33,7 +33,7 @@ pub mod writer;
 
 pub use backend::raw_socket::RawSocketWriter;
 #[cfg(feature = "whad")]
-pub use backend::whad::WhadBleMode;
+pub use backend::whad::{WhadBleMode, WhadDot15d4Mode};
 pub use dot11_metadata::Dot11Metadata;
 pub use error::{Result, WireError};
 pub use ip::{

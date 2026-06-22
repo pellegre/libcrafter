@@ -160,7 +160,7 @@ pub use wire::{
     IP_DEFRAG_DEFAULT_MAX_DATAGRAMS, IP_FRAGMENT_MIN_MTU,
 };
 #[cfg(feature = "whad")]
-pub use wire::{WhadBleMode, WhadWireBuilder};
+pub use wire::{WhadBleMode, WhadDot15d4Mode, WhadWireBuilder};
 
 /// Core packet and protocol APIs.
 pub mod core {
@@ -221,5 +221,5 @@ pub mod prelude {
         IP_DEFRAG_DEFAULT_MAX_DATAGRAMS, IP_FRAGMENT_MIN_MTU,
     };
     #[cfg(feature = "whad")]
-    pub use crate::{WhadBleMode, WhadWireBuilder};
+    pub use crate::{WhadBleMode, WhadDot15d4Mode, WhadWireBuilder};
 }
