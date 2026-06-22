@@ -42,7 +42,9 @@ def import_scapy() -> dict[str, Any]:
         import scapy.all as scapy_all  # type: ignore[import-untyped]
         import scapy.contrib.bgp as scapy_bgp  # type: ignore[import-untyped]
         import scapy.contrib.ospf as scapy_ospf  # type: ignore[import-untyped]
+        import scapy.layers.dot15d4 as scapy_dot15d4  # type: ignore[import-untyped]
         import scapy.layers.rip as scapy_rip  # type: ignore[import-untyped]
+        import scapy.layers.zigbee as scapy_zigbee  # type: ignore[import-untyped]
         from scapy.all import conf  # type: ignore[import-untyped]
         # Load the RIP layer explicitly so RIP/RIPEntry/RIPAuth are available to
         # the materializer regardless of lazy contrib loading.
@@ -51,6 +53,18 @@ def import_scapy() -> dict[str, Any]:
             RIPAuth,
             RIPEntry,
         )
+        # Load the IEEE 802.15.4 / Zigbee layers explicitly so Dot15d4 / Dot15d4FCS
+        # / Dot15d4Data / ZigbeeNWK / ZigbeeAppDataPayload are available to the
+        # materializer and normalizer regardless of lazy layer loading.
+        from scapy.layers.dot15d4 import (  # type: ignore[import-untyped]  # noqa: F401
+            Dot15d4,
+            Dot15d4Data,
+            Dot15d4FCS,
+        )
+        from scapy.layers.zigbee import (  # type: ignore[import-untyped]  # noqa: F401
+            ZigbeeAppDataPayload,
+            ZigbeeNWK,
+        )
     except ModuleNotFoundError as exc:
         if exc.name != "scapy":
             raise
@@ -58,12 +72,19 @@ def import_scapy() -> dict[str, Any]:
         raise ScapyBootstrapError("unreachable after Scapy bootstrap re-exec")
 
     conf.verb = 0
+    # Scapy dissects the 802.15.4 MAC payload by the configured upper protocol;
+    # without this it defaults to SixLoWPAN and never dispatches to ZigbeeNWK.
+    # Pin it to Zigbee so Dot15d4 frames re-parse into the Zigbee NWK/APS layers
+    # the oracle 802.15.4/Zigbee family cross-checks against libcrafter.
+    conf.dot15d4_protocol = "zigbee"
     return {
         "module": scapy,
         "all": scapy_all,
         "bgp": scapy_bgp,
+        "dot15d4": scapy_dot15d4,
         "ospf": scapy_ospf,
         "rip": scapy_rip,
+        "zigbee": scapy_zigbee,
         "version": _scapy_version(scapy),
         "metadata": scapy_report_metadata(scapy),
     }

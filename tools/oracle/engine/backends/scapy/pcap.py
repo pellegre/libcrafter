@@ -27,14 +27,18 @@ _LINK_TYPES: dict[int, str] = {
     108: "null_loopback",
     113: "linux_sll",
     127: "radiotap",
+    195: "ieee802154_withfcs",
     228: "raw",
     229: "raw",
     256: "bluetooth_le_ll_with_phdr",
+    283: "ieee802154_tap",
 }
 _ROOTS_BY_LINK_TYPE: dict[str, str] = {
     "bluetooth_le_ll_with_phdr": "link:bluetooth-le-ll-with-phdr",
     "ethernet": "link:ethernet",
     "ieee80211": "link:dot11",
+    "ieee802154_withfcs": "link:ieee802154",
+    "ieee802154_tap": "link:ieee802154-tap",
     "linux_cooked": "link:linux-cooked",
     "linux_sll": "link:linux-sll",
     "null_loopback": "link:null-loopback",
@@ -45,6 +49,8 @@ _DATALINK_BY_LINK_TYPE: dict[str, int] = {
     "bluetooth_le_ll_with_phdr": 256,
     "ethernet": 1,
     "ieee80211": 105,
+    "ieee802154_withfcs": 195,
+    "ieee802154_tap": 283,
     "linux_cooked": 113,
     "linux_sll": 113,
     "null_loopback": 0,
@@ -252,6 +258,10 @@ def _pcap_link_type_for_vector(vector: EncodedVector, requested: str) -> str:
         return "null_loopback"
     if root in {"Dot11", "link:dot11", "link:ieee80211"}:
         return "ieee80211"
+    if root in {"Dot15d4FCS", "Dot15d4", "link:ieee802154"}:
+        return "ieee802154_withfcs"
+    if root in {"link:ieee802154-tap", "link:ieee802154_tap"}:
+        return "ieee802154_tap"
     if root in {"RadioTap", "link:radiotap"}:
         return "radiotap"
     return _canonical_link_type_name(requested)
@@ -277,6 +287,10 @@ def _decode_packet_for_write(root: str | None, raw: bytes, scapy_all: Any) -> An
         "BTLE_PHDR",
         "link:bluetooth-le-ll-with-phdr",
         "link:bluetooth_le_ll_with_phdr",
+        # The IEEE 802.15.4 TAP (DLT 283) pseudo-header has no native Scapy
+        # dissector, so write its bytes verbatim like the BLE LL-with-PHDR form.
+        "link:ieee802154-tap",
+        "link:ieee802154_tap",
     }:
         return raw
     decoder_name = {
@@ -290,6 +304,9 @@ def _decode_packet_for_write(root: str | None, raw: bytes, scapy_all: Any) -> An
         "Dot11": "Dot11",
         "link:dot11": "Dot11",
         "link:ieee80211": "Dot11",
+        "Dot15d4FCS": "Dot15d4FCS",
+        "Dot15d4": "Dot15d4FCS",
+        "link:ieee802154": "Dot15d4FCS",
         "RadioTap": "RadioTap",
         "link:radiotap": "RadioTap",
         "Raw": "Raw",
@@ -392,6 +409,22 @@ def _canonical_link_type_name(name: str) -> str:
         return "ieee80211"
     if normalized in {"radiotap", "ieee80211_radio", "ieee80211_radiotap"}:
         return "radiotap"
+    if normalized in {
+        "ieee802154_withfcs",
+        "ieee802_15_4_withfcs",
+        "ieee802154",
+        "ieee802_15_4",
+        "dlt_195",
+        "linktype_ieee802_15_4_withfcs",
+    }:
+        return "ieee802154_withfcs"
+    if normalized in {
+        "ieee802154_tap",
+        "ieee802_15_4_tap",
+        "dlt_283",
+        "linktype_ieee802_15_4_tap",
+    }:
+        return "ieee802154_tap"
     return normalized
 
 
