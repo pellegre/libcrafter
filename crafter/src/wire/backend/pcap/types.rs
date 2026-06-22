@@ -247,8 +247,9 @@ impl PcapLinkType {
             Self::Ieee80211Radiotap => LinkType::Radiotap,
             Self::LinuxSll => LinkType::LinuxSll,
             Self::BluetoothLeLl => LinkType::BluetoothLeLl,
-            // Temporary arms keeping the match exhaustive; the dedicated
-            // LinkType mappings for the 802.15.4 variants are added in step 29.
+            // Bare 802.15.4 captures (DLT 195 with-FCS / 230 no-FCS) start at the
+            // MAC frame, so both map to the plain `Ieee802154` entrypoint; the TAP
+            // form (DLT 283) prefixes the `Dot15d4Radio` pseudo-header.
             Self::Ieee802154WithFcs | Self::Ieee802154NoFcs => LinkType::Ieee802154,
             Self::Ieee802154Tap => LinkType::Ieee802154Tap,
             Self::RawIp | Self::Unknown(_) => LinkType::Raw,
@@ -273,8 +274,9 @@ impl PcapLinkType {
             | Self::Ieee80211
             | Self::Ieee80211Radiotap
             | Self::BluetoothLeLl
-            // Temporary arms keeping the match exhaustive; the dedicated
-            // 802.15.4 decode dispatch is fleshed out in step 29.
+            // The bare 802.15.4 variants decode through `LinkType::Ieee802154`
+            // and the TAP variant through `LinkType::Ieee802154Tap` (resolved by
+            // `self.link_type()`), routing into `registry::decode_from_link`.
             | Self::Ieee802154WithFcs
             | Self::Ieee802154NoFcs
             | Self::Ieee802154Tap
@@ -295,11 +297,10 @@ impl From<LinkType> for PcapLinkType {
             LinkType::Ieee80211 => Self::Ieee80211,
             LinkType::Radiotap => Self::Ieee80211Radiotap,
             LinkType::BluetoothLeLl => Self::BluetoothLeLl,
-            // Temporary pass-through to the raw DLT codes (195 with-FCS, 283 TAP)
-            // through Self::Unknown; the dedicated PcapLinkType variants and
-            // mappings are added in step 29.
-            LinkType::Ieee802154 => Self::Unknown(195),
-            LinkType::Ieee802154Tap => Self::Unknown(283),
+            // The bare 802.15.4 entrypoint defaults to the with-FCS DLT (195);
+            // the TAP entrypoint maps to the TAP pseudo-header DLT (283).
+            LinkType::Ieee802154 => Self::Ieee802154WithFcs,
+            LinkType::Ieee802154Tap => Self::Ieee802154Tap,
             LinkType::LinuxCooked | LinkType::LinuxSll => Self::LinuxSll,
             LinkType::NullLoopback => Self::NullLoopback,
         }
@@ -521,7 +522,8 @@ mod tests {
         PcapLinkType, PcapRecord, PcapTimestamp, DLT_BLUETOOTH_LE_LL_WITH_PHDR,
         DLT_IEEE802_15_4_NOFCS, DLT_IEEE802_15_4_TAP, DLT_IEEE802_15_4_WITHFCS,
     };
-    use crate::{BleRadio, LinkType};
+    use crate::packet::Layer;
+    use crate::{BleRadio, Dot15d4, Dot15d4Radio, LinkType, Packet, ProtocolRegistry};
 
     #[test]
     fn pcap_linktype_ble_datalink() {
@@ -579,5 +581,109 @@ mod tests {
 
         assert!(first.as_any().is::<BleRadio>());
         assert_eq!(first.name(), "BleRadio");
+    }
+
+    #[test]
+    fn pcap_dot15d4_bridge() {
+        // The bare 802.15.4 link types resolve to the plain MAC entrypoint and
+        // the TAP link type to the TAP entrypoint.
+        assert_eq!(
+            PcapLinkType::Ieee802154WithFcs.link_type(),
+            LinkType::Ieee802154
+        );
+        assert_eq!(
+            PcapLinkType::Ieee802154NoFcs.link_type(),
+            LinkType::Ieee802154
+        );
+        assert_eq!(
+            PcapLinkType::Ieee802154Tap.link_type(),
+            LinkType::Ieee802154Tap
+        );
+        // The `From<LinkType>` round-trip uses the default with-FCS DLT for the
+        // bare entrypoint and the TAP DLT for the TAP entrypoint.
+        assert_eq!(
+            PcapLinkType::from(LinkType::Ieee802154),
+            PcapLinkType::Ieee802154WithFcs
+        );
+        assert_eq!(
+            PcapLinkType::from(LinkType::Ieee802154Tap),
+            PcapLinkType::Ieee802154Tap
+        );
+    }
+
+    #[test]
+    fn pcap_dot15d4_decode() {
+        let registry = ProtocolRegistry::new();
+
+        // TAP frame: a `Dot15d4Radio` pseudo-header over a MAC data frame. Decode
+        // through `PcapLinkType::Ieee802154Tap` yields both typed layers.
+        let tap_bytes = (Dot15d4Radio::on_channel(20).rssi(-55)
+            / Dot15d4::data()
+                .seq(9)
+                .dest_short(0x1234, 0x0000)
+                .src_short(0x1234, 0xABCD))
+        .compile()
+        .expect("compile TAP + MAC frame")
+        .as_bytes()
+        .to_vec();
+
+        let tap_packet = PcapLinkType::Ieee802154Tap
+            .decode_with_registry(&registry, &tap_bytes)
+            .expect("decode TAP 802.15.4 frame");
+        let tap_radio = tap_packet
+            .layer::<Dot15d4Radio>()
+            .expect("Dot15d4Radio layer present in TAP decode");
+        assert!(
+            tap_radio.summary().contains("ch=20"),
+            "tap radio summary: {}",
+            tap_radio.summary()
+        );
+        let tap_mac = tap_packet
+            .layer::<Dot15d4>()
+            .expect("Dot15d4 MAC layer present in TAP decode");
+        let tap_mac_summary = tap_mac.summary();
+        assert!(
+            tap_mac_summary.contains("seq=9"),
+            "tap mac summary: {tap_mac_summary}"
+        );
+        assert!(
+            tap_mac_summary.contains("src=0xABCD"),
+            "tap mac summary: {tap_mac_summary}"
+        );
+
+        // With-FCS frame: the bare MAC frame (no radio pseudo-header). Decode
+        // through `PcapLinkType::Ieee802154WithFcs` yields the MAC layer and no
+        // radio descriptor.
+        let mac_bytes = Packet::new()
+            .push(
+                Dot15d4::data()
+                    .seq(7)
+                    .dest_short(0x1234, 0x0000)
+                    .src_short(0x1234, 0xABCD),
+            )
+            .compile()
+            .expect("compile bare MAC frame")
+            .as_bytes()
+            .to_vec();
+
+        let mac_packet = PcapLinkType::Ieee802154WithFcs
+            .decode_with_registry(&registry, &mac_bytes)
+            .expect("decode with-FCS 802.15.4 frame");
+        assert!(
+            mac_packet.layer::<Dot15d4Radio>().is_none(),
+            "bare MAC decode must not carry a radio pseudo-header"
+        );
+        let mac_mac = mac_packet
+            .layer::<Dot15d4>()
+            .expect("Dot15d4 MAC layer present in with-FCS decode");
+        let mac_summary = mac_mac.summary();
+        assert!(
+            mac_summary.contains("seq=7"),
+            "with-FCS mac summary: {mac_summary}"
+        );
+        assert!(
+            mac_summary.contains("src=0xABCD"),
+            "with-FCS mac summary: {mac_summary}"
+        );
     }
 }
