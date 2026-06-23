@@ -33,6 +33,10 @@ from .sampling import (
     _is_ipv4_root_dhcp_stack,
     _mac_for_domain,
     _next_layer_after,
+    _payload_hex_from_fields,
+    _udp_option_checksum_intent,
+    _udp_options_field,
+    _udp_options_items,
     bounded_int,
     byte_payload,
     documentation_ipv4,
@@ -319,7 +323,6 @@ _SUPPORTED_FIELDS: dict[str, set[str]] = {
         "urgent_pointer",
         "options",
     },
-    "udp": {"src_port", "dst_port", "checksum", "options"},
 }
 
 
@@ -1825,8 +1828,6 @@ class PacketGenerator:
             _apply_dns_behavior(fields["dns"], case=case, behavior=behavior)
         elif feature == "dhcp_behavior" and "dhcp" in fields:
             _apply_dhcp_behavior(fields["dhcp"], case=case, behavior=behavior)
-        elif feature == "udp_options" and "udp" in fields:
-            _apply_udp_options_behavior(fields, case=case, behavior=behavior)
         elif feature is not None and feature.startswith("igmp_") and "igmp" in stack:
             self._apply_igmp_behavior(fields, feature=feature, case=case, behavior=behavior)
 
@@ -2349,8 +2350,6 @@ class PacketGenerator:
                 field_spec=field_spec,
                 current_fields=current_fields,
             )
-        if layer == "udp":
-            return _sample_udp_field(ctx, field_name, domain)
         if layer == "tcp":
             return _sample_tcp_field(ctx, field_name, domain, field_spec)
         if layer == "bgp":
@@ -2537,46 +2536,6 @@ def _ipv6_extension_options_for_case(layer: str, case: str) -> list[JSONObject]:
         {"kind": "home_address", "address": "2001:db8::42"},
         {"kind": "padn", "total_length": 4},
     ]
-
-
-def _sample_udp_field(ctx: _SamplingContext, field_name: str, domain: object) -> object:
-    if field_name == "src_port":
-        if "dhcp" in ctx.stack:
-            return 68
-        if "dns" in ctx.stack:
-            return ephemeral_port(ctx.rng)
-        # RIP (UDP/520, RFC 1058 §3.4) and RIPng (UDP/521, RFC 2080 §2) are
-        # exchanged from the well-known port, not an ephemeral one.
-        if "rip" in ctx.stack:
-            return 520
-        if "ripng" in ctx.stack:
-            return 521
-        if domain in {"bootpc", "dns_client", "dynamic"}:
-            return _integer_domain_value(ctx, domain, field_name, bits=16)
-        return ctx.src_port
-    if field_name == "dst_port":
-        if "dhcp" in ctx.stack:
-            return 67
-        if "dns" in ctx.stack:
-            return 53
-        if "rip" in ctx.stack:
-            return 520
-        if "ripng" in ctx.stack:
-            return 521
-        if domain in {"bootps", "dns_server"}:
-            return ctx.dst_port
-        if domain == "dynamic":
-            return _integer_domain_value(ctx, domain, field_name, bits=16)
-        return ctx.dst_port
-    if field_name == "checksum" and domain == "zero_ipv4" and "ipv4" in ctx.stack:
-        return 0
-    if field_name == "options":
-        payload_hex = ctx.payload.hex() if "payload" in ctx.stack else None
-        return _udp_options_field(
-            f"{ctx.case} {domain}".replace("_", "-"),
-            payload_hex=payload_hex,
-        ) or _SKIP_FIELD
-    return _SKIP_FIELD
 
 
 def _sample_tcp_field(
@@ -4851,24 +4810,6 @@ def _apply_dhcp_behavior(fields: JSONObject, *, case: str, behavior: str) -> Non
         fields["options"] = ["message-type=lease_query", "end"]
 
 
-def _apply_udp_options_behavior(
-    fields: dict[str, JSONObject],
-    *,
-    case: str,
-    behavior: str,
-) -> None:
-    key = f"{case} {behavior}".replace("_", "-")
-    udp_fields = fields.setdefault("udp", {})
-    if "ipv4-zero-checksum" in key or "ipv6-zero-checksum" in key:
-        udp_fields["checksum"] = 0
-    payload_hex = _payload_hex_from_fields(fields.get("payload", {})) if "payload" in fields else None
-    options = _udp_options_field(key, payload_hex=payload_hex)
-    if options is None:
-        udp_fields.pop("options", None)
-    else:
-        udp_fields["options"] = options
-
-
 def _udp_option_feature_tags(case: str, behavior: str | None) -> list[str]:
     key = f"{case} {behavior or ''}".replace("_", "-")
     tags = ["udp_options"]
@@ -4937,123 +4878,6 @@ def _udp_options_metadata(
             "udp_options": "fields.udp.options",
         },
     }
-
-
-def _payload_hex_from_fields(payload: object) -> str:
-    if not isinstance(payload, Mapping):
-        return ""
-    payload_hex = payload.get("hex", "")
-    return payload_hex if isinstance(payload_hex, str) else ""
-
-
-def _payload_hex_length(payload_hex: str) -> int:
-    try:
-        return len(bytes.fromhex(payload_hex))
-    except ValueError:
-        return 0
-
-
-def _udp_options_field(key: str, *, payload_hex: str | None) -> JSONObject | None:
-    options = _udp_option_intent(key)
-    if not options:
-        return None
-    field: JSONObject = {
-        "format": "udp_surplus_options",
-        "placement": "after_udp_length",
-        "udp_length_scope": "header_and_application_payload",
-        "surplus_excluded_from_udp_checksum": True,
-        "option_checksum": _udp_option_checksum_intent(key, True),
-        "items": options,
-    }
-    if payload_hex is not None:
-        field["application_payload"] = {
-            "layer": "payload",
-            "hex": payload_hex,
-            "length": _payload_hex_length(payload_hex),
-        }
-    return field
-
-
-def _udp_options_items(options_field: JSONObject | None) -> list[JSONObject]:
-    if options_field is None:
-        return []
-    items = options_field.get("items")
-    if not isinstance(items, Sequence) or isinstance(items, (str, bytes)):
-        return []
-    return [dict(item) for item in items if isinstance(item, Mapping)]
-
-
-def _udp_option_checksum_intent(key: str, surplus: bool) -> JSONObject:
-    if not surplus:
-        return {"mode": "absent"}
-    if "ipv4-zero-checksum" in key:
-        return {"mode": "zero_allowed_when_udp_checksum_zero"}
-    return {"mode": "auto_internet_checksum"}
-
-
-def _udp_option_intent(key: str) -> list[JSONObject]:
-    if "ipv4-zero-checksum" in key or "ipv6-zero-checksum" in key:
-        return []
-    if "apc" in key:
-        return [
-            {
-                "kind": 2,
-                "name": "apc",
-                "length": 6,
-                "checksum": "auto_crc32c_application_payload",
-            }
-        ]
-    if "unknown-safe" in key:
-        return [
-            {
-                "kind": 10,
-                "name": "unassigned_safe",
-                "length": 4,
-                "data_hex": "aabb",
-                "safety": "safe",
-                "expected_status": "unknown_safe",
-            }
-        ]
-    if "unknown-unsafe" in key:
-        return [
-            {
-                "kind": 194,
-                "name": "unassigned_unsafe",
-                "length": 4,
-                "data_hex": "dead",
-                "safety": "unsafe",
-                "expected_status": "unknown_unsafe",
-            }
-        ]
-    if "unsupported-frag" in key:
-        return [
-            {
-                "kind": 3,
-                "name": "frag",
-                "length": 10,
-                "data_hex": "00010003aabbccdd",
-                "expected_status": "unsupported_fragmentation",
-            }
-        ]
-    if "surplus-application-boundary" in key:
-        return [
-            {"kind": 1, "name": "nop", "length": 1},
-            {"kind": 0, "name": "eol", "length": 1},
-        ]
-    return [
-        {"kind": 1, "name": "nop", "length": 1},
-        {"kind": 4, "name": "mds", "length": 4, "max_datagram_size": 1440},
-        {
-            "kind": 5,
-            "name": "mrds",
-            "length": 5,
-            "max_reassembled_size": 1500,
-            "segment_count": 2,
-        },
-        {"kind": 6, "name": "req", "length": 6, "token": 16909060},
-        {"kind": 7, "name": "res", "length": 6, "token": 168496141},
-        {"kind": 8, "name": "time", "length": 10, "tsval": 16909060, "tsecr": 168496141},
-    ]
 
 
 def _is_malformed_case_name(case: str) -> bool:
