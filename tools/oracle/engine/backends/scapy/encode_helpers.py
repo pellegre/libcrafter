@@ -33,6 +33,30 @@ _IP_PROTOCOLS: dict[str, int] = {
     "unknown": 253,
     "udp": 17,
 }
+# IPv6 ``next_header`` / extension-header protocol numbers. Shared by the base
+# IPv6 builder (migrated to ``protocols/ipv6.py``), the IPv6 extension-header
+# builders, and the IPv6 raw-bytes path in ``packets``, so it lives here in the
+# stage helper module rather than in ``packets`` to avoid a circular import.
+_IPV6_NEXT_HEADERS: dict[str, int] = {
+    "destination-options": 60,
+    "destination_options": 60,
+    "dstopts": 60,
+    "fragment": 44,
+    "hop-by-hop": 0,
+    "hop-by-hop-options": 0,
+    "hop_by_hop": 0,
+    "hop_by_hop_options": 0,
+    "hopopts": 0,
+    "routing": 43,
+    "icmpv6": 58,
+    "no-next": 59,
+    "no_next": 59,
+    "payload": 253,
+    "raw": 253,
+    "tcp": 6,
+    "unknown": 253,
+    "udp": 17,
+}
 
 
 def _layer_fields(fields: Mapping[str, JSONObject], layer: str) -> JSONObject:

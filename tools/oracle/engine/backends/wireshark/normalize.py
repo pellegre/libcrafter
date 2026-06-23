@@ -336,8 +336,6 @@ def _normalize_protocol_fields(
         return _normalize_eapol(_layer(layers, "eapol"))
     if layer_name == "rsn":
         return _normalize_rsn(_layer_any(layers, "wlan_mgt.rsn", "wlan.rsn"))
-    if layer_name == "ipv6":
-        return _normalize_ipv6(_layer(layers, "ipv6"))
     if layer_name == "ipv6_hop_by_hop":
         return _normalize_ipv6_options_header(
             _layer_any(layers, "ipv6.hopopts", "ipv6_hopopts"),
@@ -628,36 +626,6 @@ def _normalize_rsn(layer: JSONObject) -> JSONObject:
     )
     if akms:
         output["akm_suites"] = akms
-    return output
-
-
-def _normalize_ipv6(layer: JSONObject) -> JSONObject:
-    output = _fields_from_aliases(
-        layer,
-        {
-            "version": ("ipv6.version",),
-            "traffic_class": ("ipv6.tclass",),
-            "flow_label": ("ipv6.flow",),
-            "payload_length": ("ipv6.plen",),
-            "next_header": ("ipv6.nxt",),
-            "hop_limit": ("ipv6.hlim",),
-            "src": ("ipv6.src",),
-            "dst": ("ipv6.dst",),
-        },
-    )
-    _parse_int_fields(
-        output,
-        "version",
-        "traffic_class",
-        "flow_label",
-        "payload_length",
-        "next_header",
-        "hop_limit",
-    )
-    traffic_class = output.get("traffic_class")
-    if isinstance(traffic_class, int):
-        output["dscp"] = traffic_class >> 2
-        output["ecn"] = traffic_class & 0x03
     return output
 
 
