@@ -14,12 +14,20 @@ field layout; new planners may add optional fields only.
 
 from __future__ import annotations
 
-import hashlib
 import ipaddress
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 
 from .cases import PROBE_CASE_BY_NAME, UDP_ECHO_LARGE_PAYLOAD_LENGTH
 from .model import JSONObject, ProbeCase, ProbeRunRequest, json_object
+from .planning_helpers import (
+    PlanBuilder,
+    deterministic_bytes,
+    deterministic_documentation_ipv6,
+    deterministic_documentation_mac,
+    deterministic_ipv4_pair,
+    deterministic_router_ipv4,
+    dns_label,
+)
 from .target_services import (
     BGP_DOCUMENTATION_IPV4_PREFIX,
     BGP_DOCUMENTATION_IPV6_PREFIX,
@@ -41,11 +49,6 @@ from .target_services import (
     RIP_SERVICE_PORTS,
     rip_peer_service_descriptor,
 )
-
-
-# A plan builder takes the deterministic planning inputs (profile, seed,
-# sequence) plus the case name and returns the case's stable plan object.
-PlanBuilder = Callable[..., JSONObject]
 
 
 def planned_cases(
@@ -1710,21 +1713,6 @@ def dns_canonical_name(*, profile: str, seed: int, sequence: int, digest: bytes)
     label = dns_label(profile)
     suffix = digest.hex()[10:20]
     return f"canonical-{seed}-{sequence}-{suffix}.{label}.libcrafter.test."
-
-
-def deterministic_documentation_ipv6(digest: bytes) -> str:
-    """Return a deterministic IPv6 address in the ``2001:db8::/32`` block.
-
-    The four trailing hextets are derived from the case digest so the answer is
-    stable per (case, profile, seed, sequence) while staying inside the RFC 3849
-    documentation prefix.
-    """
-
-    group_e = int.from_bytes(digest[4:6], "big")
-    group_f = int.from_bytes(digest[6:8], "big")
-    group_g = int.from_bytes(digest[8:10], "big")
-    host = 1 + int.from_bytes(digest[10:12], "big") % 0xFFFE
-    return f"2001:db8:{group_e:x}:{group_f:x}:0:{group_g:x}:0:{host:x}"
 
 
 def dns_query_name(*, profile: str, seed: int, sequence: int, digest: bytes) -> str:
@@ -4419,43 +4407,6 @@ def _arp_broadcast_filtered_capture_probe_plan(
         },
         "digest_hex": digest.hex()[:16],
     }
-
-
-def deterministic_documentation_mac(
-    profile: str,
-    seed: int,
-    sequence: int,
-    *,
-    role: str,
-) -> str:
-    digest = deterministic_bytes(f"arp-mac-{role}", profile, seed, sequence)
-    # RFC 7042 reserves 00:00:5e:00:53:00-ff for documentation unicast MACs.
-    return f"00:00:5e:00:53:{digest[0]:02x}"
-
-
-def dns_label(value: str) -> str:
-    label = "".join(char.lower() if char.isalnum() else "-" for char in value)
-    label = "-".join(part for part in label.split("-") if part)
-    return (label or "profile")[:32].strip("-") or "profile"
-
-
-def deterministic_bytes(case: str, profile: str, seed: int, sequence: int) -> bytes:
-    material = f"{case}\0{profile}\0{seed}\0{sequence}".encode("utf-8")
-    return hashlib.sha256(material).digest()
-
-
-def deterministic_ipv4_pair(profile: str, seed: int, sequence: int) -> tuple[str, str]:
-    digest = deterministic_bytes("endpoint-addresses", profile, seed, sequence)
-    second = 64 + digest[0] % 64
-    third = digest[1]
-    return f"10.{second}.{third}.10", f"10.{second}.{third}.20"
-
-
-def deterministic_router_ipv4(profile: str, seed: int, sequence: int) -> str:
-    digest = deterministic_bytes("endpoint-addresses", profile, seed, sequence)
-    second = 64 + digest[0] % 64
-    third = digest[1]
-    return f"10.{second}.{third}.1"
 
 
 def deterministic_arp_alias_ipv4(profile: str, seed: int, sequence: int) -> str:
