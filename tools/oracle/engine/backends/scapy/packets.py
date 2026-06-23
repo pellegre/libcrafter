@@ -20,6 +20,12 @@ from .encode_helpers import (
     _required_field,
     _text,
 )
+# Importing the protocols package runs its ``autodiscover`` so every per-protocol
+# Scapy encoder/decoder module self-registers. ``STACK_ENCODER_REGISTRY`` is
+# consulted before the legacy whole-stack branches and ``SCAPY_REGISTRY`` before the
+# per-layer ``_build_layer`` if/elif. No protocol is migrated yet, so both registries
+# are empty and every stack/layer falls through to the legacy code.
+from .protocols import SCAPY_REGISTRY, STACK_ENCODER_REGISTRY
 
 
 BACKEND_NAME = "scapy"
@@ -751,9 +757,19 @@ def encode_packet_plan(
     root = _plan_root(plan)
     _validate_plan_contract(plan, stack, root)
 
+    # Consult the whole-stack encoder plugins before any legacy special case. The
+    # registry is empty until a raw-bytes family is migrated, so this resolves to
+    # ``None`` and the legacy branches below run unchanged.
+    stack_encoder = next(
+        (encoder for encoder in STACK_ENCODER_REGISTRY if encoder.matches(stack)),
+        None,
+    )
+
     wifi_materialization = _is_dot11_phase15_stack(stack)
     ble_materialization = _is_ble_stack(stack)
-    needs_scapy = not wifi_materialization and not ble_materialization
+    needs_scapy = stack_encoder is not None or (
+        not wifi_materialization and not ble_materialization
+    )
     scapy_all = None
     scapy_version = "not-required"
     raw = None
@@ -765,7 +781,10 @@ def encode_packet_plan(
 
     ipsec_sa_metadata = None
     ble_metadata = None
-    if wifi_materialization:
+    if stack_encoder is not None:
+        raw_bytes = stack_encoder.encode(plan, scapy_all)
+        raw_bytes, udp_options_metadata = _materialize_udp_options(plan, root, raw_bytes)
+    elif wifi_materialization:
         raw_bytes = _dot11_phase15_bytes(plan, stack, scapy_all)
         udp_options_metadata = None
     elif ble_materialization:
@@ -837,6 +856,13 @@ def encode_packet_plans(
 def _build_layer(plan: PacketPlan, stack: list[str], index: int, scapy_all: Any) -> Any:
     layer = stack[index]
     fields = plan.fields
+
+    # Consult the per-layer Scapy encoder plugins before the legacy if/elif. The
+    # registry is empty until a protocol is migrated, so this resolves to ``None``
+    # and the legacy branches below build the layer unchanged.
+    plugin = SCAPY_REGISTRY.get(layer)
+    if plugin is not None:
+        return plugin.build(plan, fields, stack, index, scapy_all)
 
     if layer == "payload" or layer == "raw":
         return scapy_all.Raw(load=_payload_bytes(fields))
