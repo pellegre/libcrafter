@@ -98,7 +98,6 @@ _SCAPY_LAYER_BY_LAYER: dict[str, str] = {
     # parser (wireshark/tshark) backend supplies the cross-validation decode.
     "ripng": "Raw",
     "rsn": "Dot11EltRSN",
-    "tcp": "TCP",
 }
 _SCAPY_DECODER_BY_ROOT: dict[str, str] = {
     "link:bluetooth-le-ll-with-phdr": "BTLE_PHDR",
@@ -623,26 +622,6 @@ _SUPPORTED_FIELDS_BY_LAYER: dict[str, set[str]] = {
         "trailing_bytes",
         "version",
     },
-    "tcp": {
-        "ack",
-        "acknowledgement",
-        "checksum",
-        "chksum",
-        "data_offset",
-        "dataofs",
-        "dport",
-        "dst_port",
-        "flags",
-        "options",
-        "reserved",
-        "seq",
-        "sequence",
-        "sport",
-        "src_port",
-        "urgent_pointer",
-        "urgptr",
-        "window",
-    },
 }
 
 
@@ -793,8 +772,6 @@ def _build_layer(plan: PacketPlan, stack: list[str], index: int, scapy_all: Any)
         return scapy_all.Raw(load=_igmp_report_bytes(fields))
     if layer == "igmp_extension":
         return scapy_all.Raw(load=_igmp_extension_layer_bytes(_layer_fields_for_stack_index(fields, stack, index)))
-    if layer == "tcp":
-        return _tcp(fields, scapy_all)
     if layer == "dns":
         return _dns(fields, scapy_all)
     if layer == "dhcp":
@@ -1932,27 +1909,6 @@ def _igmp_bytes_value(value: object) -> bytes:
     if value is None:
         return b""
     return _bytes_field(value)
-
-
-def _tcp(fields: Mapping[str, JSONObject], scapy_all: Any) -> Any:
-    tcp_fields = _layer_fields(fields, "tcp")
-    kwargs: dict[str, Any] = {
-        "sport": _int(_required_field(tcp_fields, "tcp", "src_port", "sport"), 0),
-        "dport": _int(_required_field(tcp_fields, "tcp", "dst_port", "dport"), 0),
-        "flags": _tcp_flags(_required_field(tcp_fields, "tcp", "flags")),
-        "seq": _int(_required_field(tcp_fields, "tcp", "sequence", "seq"), 0),
-        "ack": _int(_required_field(tcp_fields, "tcp", "acknowledgement", "ack"), 0),
-        "window": _int(_required_field(tcp_fields, "tcp", "window"), 0),
-        "reserved": _int(_required_field(tcp_fields, "tcp", "reserved"), 0),
-        "urgptr": _int(_optional_field(tcp_fields, "urgent_pointer", "urgptr"), 0),
-    }
-    if "checksum" in tcp_fields or "chksum" in tcp_fields:
-        kwargs["chksum"] = _int(_optional_field(tcp_fields, "checksum", "chksum"), 0)
-    if "data_offset" in tcp_fields or "dataofs" in tcp_fields:
-        kwargs["dataofs"] = _int(_optional_field(tcp_fields, "data_offset", "dataofs"), 0)
-    if "options" in tcp_fields:
-        kwargs["options"] = _tcp_options(tcp_fields["options"])
-    return scapy_all.TCP(**kwargs)
 
 
 def _dns(fields: Mapping[str, JSONObject], scapy_all: Any) -> Any:
@@ -3951,56 +3907,6 @@ def _oui_bytes(value: object) -> bytes:
     return _bytes_exact(value if value is not None else {"hex": "000000"}, 3)
 
 
-def _tcp_options(value: object) -> object:
-    raw = _option_bytes(value)
-    if raw is None:
-        return value
-    return _tcp_option_tuples(raw)
-
-
-def _tcp_option_tuples(raw: bytes) -> list[object]:
-    options: list[object] = []
-    index = 0
-    while index < len(raw):
-        kind = raw[index]
-        if kind == 0:
-            options.append(("EOL", None))
-            index += 1
-            continue
-        if kind == 1:
-            options.append(("NOP", None))
-            index += 1
-            continue
-        if index + 1 >= len(raw):
-            options.append((kind, b""))
-            break
-        length = raw[index + 1]
-        if length < 2 or index + length > len(raw):
-            options.append((kind, raw[index + 2 :]))
-            break
-        data = raw[index + 2 : index + length]
-        if kind == 2 and len(data) == 2:
-            options.append(("MSS", int.from_bytes(data, "big")))
-        elif kind == 3 and len(data) == 1:
-            options.append(("WScale", data[0]))
-        elif kind in {4, 5}:
-            options.append((kind, data))
-        elif kind == 8 and len(data) == 8:
-            options.append(
-                (
-                    "Timestamp",
-                    (
-                        int.from_bytes(data[0:4], "big"),
-                        int.from_bytes(data[4:8], "big"),
-                    ),
-                )
-            )
-        else:
-            options.append((kind, data))
-        index += length
-    return options
-
-
 def _materialize_udp_options(
     plan: PacketPlan,
     root: str,
@@ -4425,35 +4331,6 @@ _ICMPV6_CLASS_NAMES: dict[str, str] = {
     # mirroring the ICMPv4 extended-echo path, so it is intentionally absent
     # from this native-class table.
 }
-
-
-def _tcp_flags(value: object) -> object:
-    flag_names = {
-        "fin": "F",
-        "syn": "S",
-        "rst": "R",
-        "psh": "P",
-        "ack": "A",
-        "urg": "U",
-        "ece": "E",
-        "cwr": "C",
-    }
-    if isinstance(value, str):
-        lowered = value.lower()
-        if lowered == "all":
-            return 0x1FF
-        return flag_names.get(lowered, value)
-    if isinstance(value, list):
-        output = ""
-        for item in value:
-            if not isinstance(item, str):
-                return value
-            lowered = item.lower()
-            if lowered == "all":
-                return 0x1FF
-            output += flag_names.get(lowered, item)
-        return output
-    return value
 
 
 def _dhcp_op(value: object) -> int:

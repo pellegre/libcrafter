@@ -161,13 +161,16 @@ def _apply_behavior(
     feature: str,
     case: str,
     behavior: str,
+    grammar: JSONObject | None = None,
 ) -> None:
     """Apply the ``ipv4_options`` feature behavior to the sampled IPv4 fields.
 
     Byte-identical to the legacy ``ipv4_options`` branch of
     ``generator._apply_feature_behavior``: it pins the IPv4 options hex for the
     selected case/behavior and forces non-fragmented IPv4 so the options carry on
-    the first (and only) fragment.
+    the first (and only) fragment. ``grammar`` is part of the uniform
+    ``apply_behavior`` call path (the TCP ``tcp_header`` behavior reads it); IPv4
+    does not consult it.
     """
 
     if "ipv4" in fields:
