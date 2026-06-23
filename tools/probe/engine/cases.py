@@ -35,10 +35,9 @@ from .protocols import (
 # validation wiring lands in the later per-case steps; here the cases route
 # through the planned-only dispatcher fallback.
 UDP_ECHO_LARGE_PAYLOAD_LENGTH = 1200
-# DNS's capability constant and case tuple now live in the DNS plugin module
-# (``protocols/dns.py``); the merged catalog/profile tables below pick the DNS
-# cases up from the registry.
-_DHCP_CAPABILITIES = ["dhcp_service"]
+# DNS's and DHCP's capability constants and case tuples now live in their plugin
+# modules (``protocols/dns.py``, ``protocols/dhcp.py``); the merged catalog/
+# profile tables below pick those cases up from the registry.
 _UDP_CAPABILITIES = ["udp_service"]
 _UDP_LARGE_CAPABILITIES = [*_UDP_CAPABILITIES, "udp_large_payload"]
 _UDP_ZERO_CHECKSUM_IPV4_CAPABILITIES = [
@@ -108,103 +107,6 @@ _IPSEC_CAPABILITIES = [
 # ``LIBCRAFTER_PROBE_LIVE_PROVIDER`` (see ``tools/probe/README.md``); the default
 # CI-safe path is the dry-run plan exercised here.
 _OSPF_CAPABILITIES = ["ospf_neighbor_peer"]
-
-
-# Ten DHCP behavioral cases (DHCP/BOOTP client messages against a controlled
-# DHCP responder on a private L2 segment).
-BEHAVIOR_DHCP_CASES: tuple[ProbeCase, ...] = (
-    _behavior_case(
-        name="dhcp-discover-offer",
-        description="Send a DHCP Discover and validate the Offer.",
-        stimulus="dhcp_discover",
-        expected_response="dhcp_offer",
-        required_capabilities=_DHCP_CAPABILITIES,
-        protocol="dhcp",
-    ),
-    _behavior_case(
-        name="dhcp-request-ack",
-        description="Send a DHCP Request and validate the Ack.",
-        stimulus="dhcp_request",
-        expected_response="dhcp_ack",
-        required_capabilities=_DHCP_CAPABILITIES,
-        protocol="dhcp",
-    ),
-    _behavior_case(
-        name="dhcp-client-identifier",
-        description=(
-            "Send a Discover carrying a client identifier (option 61) and validate "
-            "the matching Offer that records the client identity."
-        ),
-        stimulus="dhcp_discover",
-        expected_response="dhcp_offer",
-        required_capabilities=_DHCP_CAPABILITIES,
-        protocol="dhcp",
-    ),
-    _behavior_case(
-        name="dhcp-hostname",
-        description="Send a Discover with a hostname option and validate the Offer.",
-        stimulus="dhcp_discover",
-        expected_response="dhcp_offer",
-        required_capabilities=_DHCP_CAPABILITIES,
-        protocol="dhcp",
-    ),
-    _behavior_case(
-        name="dhcp-parameter-request-list",
-        description=(
-            "Send a Discover with a parameter request list and validate the "
-            "requested options in the Offer."
-        ),
-        stimulus="dhcp_discover",
-        expected_response="dhcp_offer",
-        required_capabilities=_DHCP_CAPABILITIES,
-        protocol="dhcp",
-    ),
-    _behavior_case(
-        name="dhcp-lease-time",
-        description=(
-            "Send a Discover and validate the lease time (51), renewal T1 (58), "
-            "and rebinding T2 (59) timing options in the Offer."
-        ),
-        stimulus="dhcp_discover",
-        expected_response="dhcp_offer",
-        required_capabilities=_DHCP_CAPABILITIES,
-        protocol="dhcp",
-    ),
-    _behavior_case(
-        name="dhcp-renewal-unicast-ack",
-        description="Send a unicast renewal Request and validate the unicast Ack.",
-        stimulus="dhcp_request",
-        expected_response="dhcp_ack",
-        required_capabilities=_DHCP_CAPABILITIES,
-        protocol="dhcp",
-    ),
-    _behavior_case(
-        name="dhcp-inform-ack",
-        description="Send a DHCP Inform and validate the Ack with config options.",
-        stimulus="dhcp_inform",
-        expected_response="dhcp_ack",
-        required_capabilities=_DHCP_CAPABILITIES,
-        protocol="dhcp",
-    ),
-    _behavior_case(
-        name="dhcp-request-nak",
-        description="Request an invalid address and validate the Nak.",
-        stimulus="dhcp_request",
-        expected_response="dhcp_nak",
-        required_capabilities=_DHCP_CAPABILITIES,
-        protocol="dhcp",
-    ),
-    _behavior_case(
-        name="dhcp-rapid-repeat",
-        description=(
-            "Send repeated Discovers and validate each independently decoded Offer."
-        ),
-        stimulus="dhcp_discover",
-        expected_response="dhcp_offer",
-        required_capabilities=_DHCP_CAPABILITIES,
-        protocol="dhcp",
-    ),
-)
 
 
 # NDP (IPv6 Neighbor Discovery, RFC 4861) behavioral cases. NDP is the IPv6
@@ -740,9 +642,9 @@ _LEGACY_PROBE_CASES: tuple[ProbeCase, ...] = (
     # The inline ``arp-resolution`` smoke case and the ten ARP behavioral cases
     # are contributed by the ARP plugin (``protocols/arp.py``); the inline
     # ``dns-query`` smoke case and the ten DNS behavioral cases are contributed
-    # by the DNS plugin (``protocols/dns.py``). Both are merged in ahead of this
-    # legacy aggregation by ``_merge_probe_cases``.
-    *BEHAVIOR_DHCP_CASES,
+    # by the DNS plugin (``protocols/dns.py``); the ten DHCP behavioral cases are
+    # contributed by the DHCP plugin (``protocols/dhcp.py``). All are merged in
+    # ahead of this legacy aggregation by ``_merge_probe_cases``.
     *BEHAVIOR_NDP_CASES,
     *BEHAVIOR_UDP_CASES,
     *BEHAVIOR_OSPF_CASES,
@@ -893,6 +795,17 @@ _DNS_BEHAVIOR_CASE_NAMES: tuple[str, ...] = tuple(
     if case.metadata.get("protocol") == "dns" and case.name != "dns-query"
 )
 
+# The ten DHCP behavioral case names, in declaration order, sourced from the
+# DHCP plugin's registered cases. DHCP's profile membership stays in these legacy
+# ordered tables (rather than the plugin's ``profile_counts``) so the behavior
+# selection order is byte-identical: the registry-first profile merge would
+# otherwise move DHCP to the front of the behavior profile.
+_DHCP_BEHAVIOR_CASE_NAMES: tuple[str, ...] = tuple(
+    case.name
+    for case in _registry_cases()
+    if case.metadata.get("protocol") == "dhcp"
+)
+
 # The ten ARP behavioral case names, in declaration order, sourced from the ARP
 # plugin's registered cases (the ``arp-resolution`` smoke case is excluded -- it
 # rides the smoke profile, not the behavior profile). ARP's profile membership
@@ -916,7 +829,7 @@ _ARP_BEHAVIOR_CASE_NAMES: tuple[str, ...] = tuple(
 # ``--profile behavior`` plans the complete suite.
 BEHAVIOR_PROFILE_CASE_NAMES: tuple[str, ...] = (
     *_DNS_BEHAVIOR_CASE_NAMES,
-    *(case.name for case in BEHAVIOR_DHCP_CASES),
+    *_DHCP_BEHAVIOR_CASE_NAMES,
     *_ARP_BEHAVIOR_CASE_NAMES,
     *(case.name for case in BEHAVIOR_NDP_CASES),
     *(case.name for case in BEHAVIOR_UDP_CASES),
