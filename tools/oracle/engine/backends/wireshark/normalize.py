@@ -365,8 +365,6 @@ def _normalize_protocol_fields(
         )
     if layer_name == "dhcp":
         return _normalize_dhcp(_dhcp_layer(layers), source_hex=source_hex)
-    if layer_name == "ripng":
-        return _normalize_ripng(_layer(layers, "ripng"))
     if layer_name == "linux_sll":
         return _normalize_linux_sll(_layer(layers, "sll"))
     return {}
@@ -764,52 +762,6 @@ def _dhcp_layer(layers: JSONObject) -> JSONObject:
     if isinstance(layer, dict):
         return layer
     return _layer(layers, "bootp")
-
-
-def _normalize_ripng(layer: JSONObject) -> JSONObject:
-    """Normalize a tshark RIPng layer to the shared oracle field names.
-
-    Scapy has no native RIPng dissector, so the parser (tshark) backend supplies
-    the RIPng cross-validation decode. The normalized names mirror the libcrafter
-    Ripng/RipngRte accessor names (``command``/``version``/``reserved`` plus an
-    ``rtes`` list of ``prefix``/``route_tag``/``prefix_len``/``metric``) so the
-    parser decode aligns with the libcrafter surface. Wireshark's RIPng dissector
-    (``packet-ripng.c``) exposes ``ripng.cmd``/``ripng.version``/``ripng.ip``/
-    ``ripng.route_tag``/``ripng.prefix_length``/``ripng.metric``; the alternate
-    ``ripng.command`` prefix is accepted defensively.
-    """
-
-    output = _fields_from_aliases(
-        layer,
-        {
-            "command": ("ripng.cmd", "ripng.command"),
-            "version": ("ripng.version",),
-            "reserved": ("ripng.reserved", "ripng.null"),
-        },
-    )
-    _parse_int_fields(output, "command", "version", "reserved")
-
-    prefixes = [str(item) for item in _field_list(layer, "ripng.ip", "ripng.prefix")]
-    route_tags = [_parse_int(item) for item in _field_list(layer, "ripng.route_tag", "ripng.tag")]
-    prefix_lens = [
-        _parse_int(item)
-        for item in _field_list(layer, "ripng.prefix_length", "ripng.prefix_len")
-    ]
-    metrics = [_parse_int(item) for item in _field_list(layer, "ripng.metric")]
-
-    rtes: list[JSONObject] = []
-    for index, prefix in enumerate(prefixes):
-        rte: JSONObject = {"prefix": prefix}
-        if index < len(route_tags) and route_tags[index] is not None:
-            rte["route_tag"] = route_tags[index]
-        if index < len(prefix_lens) and prefix_lens[index] is not None:
-            rte["prefix_len"] = prefix_lens[index]
-        if index < len(metrics) and metrics[index] is not None:
-            rte["metric"] = metrics[index]
-        rtes.append(rte)
-    if rtes:
-        output["rtes"] = rtes
-    return output
 
 
 def _normalize_linux_sll(layer: JSONObject) -> JSONObject:

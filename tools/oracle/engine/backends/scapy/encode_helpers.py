@@ -292,3 +292,16 @@ def _ipv4_address_bytes(value: object, default: str = "0.0.0.0") -> bytes:
 
     text = _text(value, default)
     return bytes(int(part) & 0xFF for part in text.split("."))
+
+
+def _ipv6_address_bytes(value: object, default: str) -> bytes:
+    """Pack an IPv6 address string into sixteen network-order bytes.
+
+    Shared by the RIPng RTE builder and the still-resident IPsec inner-IPv6
+    materializer; extracted here so the per-protocol plugins can serialize an
+    IPv6 address without importing the ``packets`` orchestrator.
+    """
+
+    import ipaddress
+
+    return ipaddress.IPv6Address(_text(value, default)).packed
