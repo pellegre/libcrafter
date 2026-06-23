@@ -10,7 +10,6 @@ from ...model import DecodedModel, EncodedVector, JSONObject, JSONValue, PacketP
 from ..registry import BackendCapabilities, BackendRegistration, get_backend
 from .bootstrap import import_scapy
 from .decode_helpers import (
-    _bool_flag,
     _crc32c,
     _field_key,
     _internet_checksum,
@@ -60,7 +59,6 @@ _LAYER_ALIASES: dict[str, str] = {
     "BTLE_ADV_IND": "ble_adv",
     "BOOTP": "dhcp",
     "DHCP": "dhcp",
-    "DNS": "dns",
     "Dot11": "dot11",
     "Dot11EltRSN": "rsn",
     "Dot15d4": "dot15d4",
@@ -118,11 +116,6 @@ _LAYER_FIELD_ALIASES: dict[str, dict[str, str]] = {
         "siaddr": "server_ip",
         "xid": "transaction_id",
         "yiaddr": "your_ip",
-    },
-    "dns": {
-        "id": "transaction_id",
-        "qr": "is_response",
-        "rcode": "response_code",
     },
     "ipv6_destination_options": {
         "len": "header_ext_len",
@@ -603,8 +596,6 @@ def _normalize_fields(layer_name: str, fields: JSONObject) -> JSONObject:
     plugin = SCAPY_REGISTRY.get(layer_name)
     if plugin is not None and plugin.normalize is not None:
         return plugin.normalize(fields)
-    if layer_name == "dns":
-        return _normalize_dns_fields(fields)
     if layer_name == "dhcp":
         return _normalize_dhcp_fields(fields)
 
@@ -895,42 +886,6 @@ def _bgp_offset(raw: bytes) -> int | None:
         tcp_header_len = (raw[tcp_offset_index] >> 4) * 4
         return 40 + tcp_header_len
     return None
-
-
-def _normalize_dns_fields(fields: JSONObject) -> JSONObject:
-    aliases = {
-        "id": "transaction_id",
-        "qr": "is_response",
-        "rcode": "response_code",
-        "aa": "authoritative",
-        "tc": "truncated",
-        "rd": "recursion_desired",
-        "ra": "recursion_available",
-        "ad": "authenticated_data",
-        "cd": "checking_disabled",
-        "qdcount": "question_count",
-        "ancount": "answer_count",
-        "nscount": "authority_count",
-        "arcount": "additional_count",
-    }
-    output: JSONObject = {}
-    for native_name, value in fields.items():
-        if native_name in {"qd", "an", "ns", "ar"}:
-            continue
-        normalized_name = aliases.get(native_name, _normalize_field_name("dns", native_name))
-        if normalized_name in {
-            "authoritative",
-            "truncated",
-            "recursion_desired",
-            "recursion_available",
-            "authenticated_data",
-            "checking_disabled",
-            "is_response",
-        }:
-            output[normalized_name] = _bool_flag(value)
-        else:
-            output[normalized_name] = _normalize_field_value("dns", normalized_name, value)
-    return output
 
 
 # DNS record-type codes used to drive RDATA normalization. These are the wire

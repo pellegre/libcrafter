@@ -16,13 +16,18 @@ unchanged; this module keeps importing :mod:`..dns_raw` for it, exactly as
 :mod:`..packets` so the existing ``test_dns_backend.py`` references
 (``packets._dns`` / ``packets._dns_record_entry``) keep resolving.
 
-DNS decode is the whole-packet ``_normalize_dns_*`` cluster in :mod:`..normalize`;
-this plugin therefore carries no ``normalize`` callback (``normalize=None``) and DNS
-decode continues through the legacy Scapy normalize path until step 31 co-locates it.
+DNS decode has two surfaces. The per-layer field normalizer (the former
+``normalize._normalize_dns_fields`` dispatched from ``_normalize_fields``) moves here
+and is wired up as this plugin's :func:`_normalize` callback, byte-identical to the
+legacy generic path for the ``dns`` layer. The whole-packet ``_normalize_dns_message``
+canonicalize pass (header, the four sections, names, types, RDATA) is a whole-packet
+decode pass — analogous to ``_canonicalize_icmpv4`` / ``_canonicalize_bgp_from_wire`` —
+and stays in :mod:`..normalize` per precedent; the ``test_dns_normalize.py`` and
+``test_dns_backend.py`` suites reference those helpers through the ``normalize`` module.
 
 Shared primitives come from the helper modules so this plugin does not depend on the
-``packets`` orchestrator (which would create a circular import). Relative imports
-only so the package resolves under both the ``engine.*`` (CLI) and
+``packets``/``normalize`` orchestrators (which would create a circular import).
+Relative imports only so the package resolves under both the ``engine.*`` (CLI) and
 ``tools.oracle.engine.*`` (tests) import roots.
 """
 
@@ -31,8 +36,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from ....model import JSONObject
+from ....model import JSONObject, JSONValue
 from .. import dns_raw
+from ..decode_helpers import _bool_flag
 from ..encode_helpers import (
     _bool_int,
     _int,
@@ -745,12 +751,129 @@ def _dns_count(value: object, default: int) -> int:
     return default
 
 
+# ---------------------------------------------------------------------------
+# Decode
+# ---------------------------------------------------------------------------
+
+
+# Decode-side native-name aliases the DNS layer owns. ``_LAYER_ALIASES`` maps the
+# Scapy class name to the oracle layer name (the former ``normalize._LAYER_ALIASES``
+# ``"DNS": "dns"`` entry); ``_FIELD_ALIASES`` records the DNS-specific field renames
+# the layer owns (the former ``normalize._LAYER_FIELD_ALIASES["dns"]`` entry).
+_LAYER_ALIASES = (("DNS", "dns"),)
+_FIELD_ALIASES = (
+    ("id", "transaction_id"),
+    ("qr", "is_response"),
+    ("rcode", "response_code"),
+)
+
+# Global cross-layer field aliases the legacy ``_normalize_field_name`` consulted
+# as a fallback after the layer-specific map (mirrors ``normalize._FIELD_ALIASES``).
+# No DNS native field name collides with any of these, so carrying the full map is
+# harmless and keeps the lookup byte-identical to the legacy generic path.
+_GLOBAL_FIELD_ALIASES: dict[str, str] = {
+    "chksum": "checksum",
+    "dataofs": "data_offset",
+    "dport": "dst_port",
+    "frag": "fragment_offset",
+    "hlim": "hop_limit",
+    "len": "length",
+    "nh": "next_header",
+    "proto": "protocol",
+    "sport": "src_port",
+    "urgptr": "urgent_pointer",
+}
+
+# The richer per-field rename table the former ``_normalize_dns_fields`` checked
+# first (a superset of ``_FIELD_ALIASES``, which only carried id/qr/rcode). Mirrors
+# the local ``aliases`` mapping verbatim.
+_DNS_FIELD_NAME_ALIASES: dict[str, str] = {
+    "id": "transaction_id",
+    "qr": "is_response",
+    "rcode": "response_code",
+    "aa": "authoritative",
+    "tc": "truncated",
+    "rd": "recursion_desired",
+    "ra": "recursion_available",
+    "ad": "authenticated_data",
+    "cd": "checking_disabled",
+    "qdcount": "question_count",
+    "ancount": "answer_count",
+    "nscount": "authority_count",
+    "arcount": "additional_count",
+}
+
+# Effective DNS field-name map: global aliases overlaid by the DNS layer-specific
+# aliases and then the richer local rename table, exactly the precedence the legacy
+# ``aliases.get(native_name, _normalize_field_name("dns", native_name))`` applied.
+_DNS_FIELD_NAME_MAP: dict[str, str] = {
+    **_GLOBAL_FIELD_ALIASES,
+    **dict(_FIELD_ALIASES),
+    **_DNS_FIELD_NAME_ALIASES,
+}
+
+# Normalized field names whose value the former ``_normalize_dns_fields`` reduced to
+# a boolean via ``_bool_flag`` before the generic ``_normalize_field_value`` ran.
+_DNS_BOOL_FIELDS = frozenset(
+    {
+        "authoritative",
+        "truncated",
+        "recursion_desired",
+        "recursion_available",
+        "authenticated_data",
+        "checking_disabled",
+        "is_response",
+    }
+)
+
+# Native DNS section fields the former normalizer skipped (the four record sections
+# are surfaced through the whole-packet ``_normalize_dns_message`` model instead).
+_DNS_SKIP_FIELDS = frozenset({"qd", "an", "ns", "ar"})
+
+
+def _normalize(fields: JSONObject) -> JSONObject:
+    """Normalize a decoded Scapy DNS layer to the comparable oracle shape.
+
+    Byte-identical to the legacy ``_normalize_dns_fields`` path: the four record
+    sections are dropped, each remaining native field name is renamed via the DNS
+    field-name map (the lookup order the legacy code applied), and the boolean flag
+    fields are reduced to bools through ``_bool_flag``. Every other value passes
+    through unchanged (no DNS field reaches a generic ``_normalize_field_value``
+    transform).
+    """
+
+    output: JSONObject = {}
+    for native_name, value in fields.items():
+        if native_name in _DNS_SKIP_FIELDS:
+            continue
+        normalized_name = _DNS_FIELD_NAME_MAP.get(native_name, native_name)
+        if normalized_name in _DNS_BOOL_FIELDS:
+            output[normalized_name] = _bool_flag(value)
+        else:
+            output[normalized_name] = _normalize_field_value(normalized_name, value)
+    return output
+
+
+def _normalize_field_value(field_name: str, value: JSONValue) -> JSONValue:
+    # Mirror the generic ``normalize._normalize_field_value`` for the DNS layer: it
+    # has no ``flags`` field and ``is_response`` is handled by the bool-flag branch
+    # above, so every DNS field falls through to the identity return. The
+    # ``is_response``/``more_fragments`` int-to-bool guards are kept for fidelity.
+    if field_name == "is_response" and isinstance(value, int):
+        return bool(value)
+    if field_name == "more_fragments" and isinstance(value, int):
+        return bool(value)
+    return value
+
+
 register(
     ScapyProtocol(
         layer="dns",
         scapy_class="DNS",
         supported_fields=_SUPPORTED_FIELDS,
         build=_build,
-        normalize=None,
+        normalize=_normalize,
+        layer_aliases=_LAYER_ALIASES,
+        field_aliases=_FIELD_ALIASES,
     )
 )
