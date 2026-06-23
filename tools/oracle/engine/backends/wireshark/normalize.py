@@ -363,8 +363,6 @@ def _normalize_protocol_fields(
         return _normalize_ipv6_routing(
             _layer_any(layers, "ipv6.routing", "ipv6_routing")
         )
-    if layer_name == "udp":
-        return _normalize_udp(_layer(layers, "udp"))
     if layer_name == "dhcp":
         return _normalize_dhcp(_dhcp_layer(layers), source_hex=source_hex)
     if layer_name == "tcp":
@@ -635,20 +633,6 @@ def _normalize_rsn(layer: JSONObject) -> JSONObject:
     )
     if akms:
         output["akm_suites"] = akms
-    return output
-
-
-def _normalize_udp(layer: JSONObject) -> JSONObject:
-    output = _fields_from_aliases(
-        layer,
-        {
-            "src_port": ("udp.srcport",),
-            "dst_port": ("udp.dstport",),
-            "length": ("udp.length",),
-            "checksum": ("udp.checksum",),
-        },
-    )
-    _parse_int_fields(output, "src_port", "dst_port", "length", "checksum")
     return output
 
 
