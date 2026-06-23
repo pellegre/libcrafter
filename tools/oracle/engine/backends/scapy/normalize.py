@@ -329,6 +329,16 @@ def decode_root(
         "link:dot11": "Dot11",
         "link:ethernet": "Ether",
         "link:ieee80211": "Dot11",
+        # IEEE 802.15.4 with-FCS MAC frame (DLT 195): scapy's Dot15d4FCS dissects
+        # the frame-control field, addressing, payload, and trailing FCS, then
+        # dispatches the MAC payload to ZigbeeNWK/ZigbeeAppDataPayload via the
+        # conf.dot15d4_protocol="zigbee" pin set in bootstrap.import_scapy.
+        "link:ieee802154": "Dot15d4FCS",
+        # IEEE 802.15.4 TAP (DLT 283): no native scapy dissector; the radio
+        # pseudo-header is carried as Raw (libcrafter owns the TAP descriptor
+        # decode), mirroring _SCAPY_DECODER_BY_ROOT in packets.py.
+        "link:ieee802154-tap": "Raw",
+        "link:ieee802154_tap": "Raw",
         "link:linux-cooked": "CookedLinux",
         "link:linux-sll": "CookedLinux",
         "link:null-loopback": "Loopback",
@@ -460,6 +470,7 @@ def normalize_packet(
     _canonicalize_igmp(packet, normalized_layers, normalized_fields)
     _canonicalize_rip(packet, normalized_layers, normalized_fields)
     _canonicalize_ripng(packet, normalized_layers, normalized_fields)
+    _canonicalize_dot15d4_zigbee(normalized_layers, normalized_fields)
     if source_hex is not None:
         _canonicalize_bgp_from_wire(source_hex, normalized_fields)
 
@@ -884,6 +895,65 @@ def _canonicalize_ripng(
     layers[payload_index] = "ripng"
     ripng_key = _layer_key_at(layers, payload_index)
     fields[ripng_key] = ripng_fields
+
+
+# Scapy normalized dot15d4/zigbee layer names mapped onto the libcrafter
+# adapter's decoded layer names. Scapy splits the IEEE 802.15.4 MAC header
+# (Dot15d4FCS) and the addressing fields (Dot15d4Data) into two layers that both
+# normalize to ``dot15d4``; libcrafter decodes the MAC frame as a single
+# ``Dot15d4`` layer, so the leading run of ``dot15d4`` entries collapses to one.
+_DOT15D4_ZIGBEE_LIBCRAFTER_NAMES: dict[str, str] = {
+    "dot15d4": "Dot15d4",
+    "dot15d4_radio": "Dot15d4Radio",
+    "zigbee_nwk": "ZigbeeNwk",
+    "zigbee_aps": "ZigbeeAps",
+}
+
+
+def _canonicalize_dot15d4_zigbee(
+    layers: list[str],
+    fields: dict[str, JSONObject],
+) -> None:
+    """Align the IEEE 802.15.4 / Zigbee decode model with the libcrafter adapter.
+
+    Scapy dissects the MAC frame as Dot15d4FCS + Dot15d4Data (two ``dot15d4``
+    entries) and exposes rich per-layer fields; the libcrafter oracle decode
+    adapter reports a single ``Dot15d4`` layer plus ``ZigbeeNwk`` / ``ZigbeeAps``
+    with header-only field models. Collapse the consecutive ``dot15d4`` run into
+    one ``Dot15d4`` layer, rename the Zigbee sublayers to the libcrafter names,
+    and present header-only (empty) comparison fields so the cross-backend
+    decoded model matches without weakening the strict-byte (``source_hex``)
+    comparison. The full scapy field detail stays inspectable on the decoded
+    model metadata (``native``). Mirrors the DNS/RIP normalization precedent that
+    shapes the scapy reference model to the current libcrafter decode model.
+    """
+
+    if not any(layer in _DOT15D4_ZIGBEE_LIBCRAFTER_NAMES for layer in layers):
+        return
+
+    new_layers: list[str] = []
+    new_fields: dict[str, JSONObject] = {}
+    previous_was_dot15d4 = False
+    for index, layer in enumerate(layers):
+        key = _layer_key_at(layers, index)
+        if layer in ("dot15d4", "dot15d4_radio"):
+            # Collapse the Dot15d4FCS + Dot15d4Data run into a single MAC layer.
+            if layer == "dot15d4" and previous_was_dot15d4:
+                continue
+            mapped = _DOT15D4_ZIGBEE_LIBCRAFTER_NAMES[layer]
+            new_layers.append(mapped)
+            new_fields[_layer_key_at(new_layers, len(new_layers) - 1)] = {}
+            previous_was_dot15d4 = layer == "dot15d4"
+            continue
+        previous_was_dot15d4 = False
+        mapped = _DOT15D4_ZIGBEE_LIBCRAFTER_NAMES.get(layer, layer)
+        new_layers.append(mapped)
+        new_key = _layer_key_at(new_layers, len(new_layers) - 1)
+        new_fields[new_key] = {} if mapped in _DOT15D4_ZIGBEE_LIBCRAFTER_NAMES.values() else fields.get(key, {})
+
+    layers[:] = new_layers
+    fields.clear()
+    fields.update(new_fields)
 
 
 def _bgp_offset(raw: bytes) -> int | None:
