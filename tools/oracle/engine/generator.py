@@ -37,6 +37,11 @@ from .sampling import (
     weighted_choice,
 )
 from .spec_loader import load_oracle_specs
+# Importing the protocols package runs its ``autodiscover`` so every per-protocol
+# sampler module self-registers; ``SAMPLER_REGISTRY`` is then consulted before the
+# legacy sampling/feature branches below. No protocol is migrated yet, so the
+# registry is empty and every layer falls through to the legacy code.
+from .protocols import SAMPLER_REGISTRY
 
 
 SUPPORTED_LAYER_BACKEND = "libcrafter"
@@ -1682,6 +1687,17 @@ class PacketGenerator:
                 fields[layer] = sampled
                 ctx.sampled_layers[layer] = sampled
 
+        # Post-sample hook: after every layer is sampled, give each stack layer's
+        # plugin a chance to run an ordered post-sampling step (this will host the
+        # IPsec pinned-crypto injection above once esp/ah/ikev2 migrate, preserving
+        # its "after field sampling" ordering). Iterating in stack order keeps any
+        # cross-layer ordering stable. The registry is empty today, so this is a
+        # no-op and the legacy in-loop IPsec injection above still runs.
+        for layer in stack:
+            plugin = SAMPLER_REGISTRY.get(layer)
+            if plugin is not None and plugin.post_sample is not None:
+                plugin.post_sample(fields, stack=stack, case=case)
+
         return fields
 
     def _feature_behavior(
@@ -1758,6 +1774,30 @@ class PacketGenerator:
         case: str,
         behavior: str,
     ) -> None:
+        # Consult registered plugins first: the owning plugin (if any) handles the
+        # feature exactly once and we return before the legacy branches. A plugin
+        # owns the feature when its handles_feature matches, it carries an
+        # apply_behavior, and its layer is present in the sampled fields or the
+        # stack (igmp gates on the stack). The registry is empty until protocols are
+        # migrated, so this loop is a no-op today and every feature falls through.
+        if feature is not None:
+            for plugin in SAMPLER_REGISTRY.values():
+                if (
+                    plugin.handles_feature is None
+                    or plugin.apply_behavior is None
+                    or not plugin.handles_feature(feature)
+                ):
+                    continue
+                if plugin.layer not in fields and plugin.layer not in stack:
+                    continue
+                plugin.apply_behavior(
+                    fields,
+                    stack=stack,
+                    feature=feature,
+                    case=case,
+                    behavior=behavior,
+                )
+                return
         if feature == "tcp_options" and "tcp" in fields:
             self._apply_tcp_options_behavior(
                 fields,
@@ -2327,6 +2367,15 @@ class PacketGenerator:
 
         if domain is _SKIP_FIELD:
             return _SKIP_FIELD
+        plugin = SAMPLER_REGISTRY.get(layer)
+        if plugin is not None:
+            return plugin.sample(
+                ctx,
+                field_name,
+                domain,
+                field_spec=field_spec,
+                current_fields=current_fields,
+            )
         if layer == "payload":
             payload = _payload_for_context(ctx)
             return payload.hex() if field_name == "hex" else len(payload)
