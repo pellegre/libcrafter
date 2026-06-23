@@ -315,15 +315,31 @@ normalized_model:
 live_boundary:
   provider_backed: false
   dry_run_profile: smoke
-  smoke_harness: .scratch/dot15d4-whad-smoke
+  smoke_harness: .scratch/dot15d4-smoke
+  live_path:
+    backend: whad
+    transport: whad_serial
+    sniff: dot15d4_sniff(channel)
+    send: dot15d4_send()
+    transmit_opt_in: .live()
+  dry_run_by_default: true
+  transmit_requires_opt_in: true
   notes:
     - Zigbee NWK/APS framing has no network live provider in the oracle;
       Hetzner, QEMU, and VirtualBox validate IP/network exchanges, not
       802.15.4/Zigbee radio traffic.
     - The offline path (build, decode, pcap, dry-run, oracle) is the default
       and hardware-free; no packets are sent for these cases.
-    - Real on-air Zigbee behavior is validated through the ignored WHAD dongle
-      smoke harness and is not committed to this repository.
+    - The live path is the feature-gated WHAD dongle backend reached through
+      PacketWire::whad_serial(port).dot15d4_sniff(channel) to capture and
+      .dot15d4_send() to inject Zigbee frames riding on the 802.15.4 MAC; it
+      defaults to a dry-run send plan and transmits nothing until an explicit
+      .live() opt-in is added.
+    - tools/oracle/run live dry-runs this boundary and skips when no dongle is
+      present, so it never requires hardware in CI and never transmits.
+    - Real on-air Zigbee sniff/inject behavior is validated through the
+      ignored WHAD dongle smoke harness and is not committed to this
+      repository.
 
 backend_support:
   scapy:
