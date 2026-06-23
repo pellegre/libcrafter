@@ -389,15 +389,22 @@ def arp_sysctl_descriptor(
 
 
 def _registry_owned_case_names() -> frozenset[str]:
-    """Return the set of case names served by a registered protocol plugin.
+    """Return the case names whose target-service plan a plugin owns.
 
-    Empty until a protocol migrates. The legacy per-protocol construction below
-    skips any plan whose case is in this set so a plugin-served protocol is
-    never built twice.
+    Only plugins that provide a ``target_service`` hook divert their cases to the
+    registry path: a plan is removed from the legacy per-protocol construction
+    (so a plugin-served protocol is never built twice) *only* when its owning
+    plugin actually contributes a target-service fragment. A plugin that has
+    migrated its planning surface but not yet its target-service concern (its
+    ``target_service`` hook is still ``None``) keeps its cases on the legacy path
+    so their target-service plan stays byte-identical until that hook lands.
+    Empty until a protocol migrates its target-service hook.
     """
 
     names: set[str] = set()
     for plugin in registered_plugins():
+        if plugin.target_service is None:
+            continue
         names.update(case.name for case in plugin.cases)
     return frozenset(names)
 
