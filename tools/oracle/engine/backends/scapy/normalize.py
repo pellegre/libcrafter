@@ -38,27 +38,28 @@ from .protocols.ipv6 import (
     _normalize_ipv6_options_header_fields,
     _normalize_ipv6_routing_fields,
 )
+# The ``dhcp`` layer is migrated to ``protocols/dhcp.py`` and registered in
+# ``SCAPY_REGISTRY`` (its ``ScapyProtocol.normalize`` hook owns the per-layer DHCP
+# decode). The synthetic option-region key and the option-region decode helpers are
+# co-located there but, like the IPv6 ext-header option-region helpers, are also
+# consumed by the whole-packet ``_packet_layers`` capture below; they are re-imported
+# here so that capture and the existing ``test_dhcp_oracle.py`` references
+# (``normalize._decode_dhcp_option_tlvs`` / ``normalize._apply_dhcp_option_details``)
+# keep resolving through the ``normalize`` module after the move.
+from .protocols.dhcp import (
+    _DHCP_OPTION_REGION_KEY,
+    _apply_dhcp_option_details,
+    _decode_dhcp_option_tlvs,
+)
 
 
 BACKEND_NAME = "scapy"
-
-# Synthetic field key carrying the raw DHCP option TLV region (hex) captured
-# from the live Scapy DHCP sub-layer. Consumed and removed during DHCP field
-# normalization so it never leaks into the comparable model.
-_DHCP_OPTION_REGION_KEY = "__option_region_hex__"
-
-# DHCP option codes whose payload is a single message-type octet (option 53).
-_DHCP_OPTION_MESSAGE_TYPE = 53
-_DHCP_OPTION_PAD = 0
-_DHCP_OPTION_END = 255
 
 _LAYER_ALIASES: dict[str, str] = {
     "AH": "ah",
     "BTLE": "ble_radio",
     "BTLE_ADV": "ble_adv",
     "BTLE_ADV_IND": "ble_adv",
-    "BOOTP": "dhcp",
-    "DHCP": "dhcp",
     "Dot11": "dot11",
     "Dot11EltRSN": "rsn",
     "Dot15d4": "dot15d4",
@@ -106,16 +107,6 @@ _LAYER_FIELD_ALIASES: dict[str, dict[str, str]] = {
         "id": "message_id",
         "init_cookie": "initiator_spi",
         "resp_cookie": "responder_spi",
-    },
-    "dhcp": {
-        "ciaddr": "client_ip",
-        "chaddr": "client_hardware_address",
-        "giaddr": "relay_ip",
-        "htype": "hardware_type",
-        "hlen": "hardware_length",
-        "siaddr": "server_ip",
-        "xid": "transaction_id",
-        "yiaddr": "your_ip",
     },
     "ipv6_destination_options": {
         "len": "header_ext_len",
@@ -596,8 +587,6 @@ def _normalize_fields(layer_name: str, fields: JSONObject) -> JSONObject:
     plugin = SCAPY_REGISTRY.get(layer_name)
     if plugin is not None and plugin.normalize is not None:
         return plugin.normalize(fields)
-    if layer_name == "dhcp":
-        return _normalize_dhcp_fields(fields)
 
     output: JSONObject = {}
     for native_name, value in fields.items():
@@ -1263,102 +1252,6 @@ def _dns_int(value: Any) -> int:
         return 0
 
 
-def _normalize_dhcp_fields(fields: JSONObject) -> JSONObject:
-    aliases = {
-        "op": "opcode",
-        "htype": "hardware_type",
-        "hlen": "hardware_length",
-        "xid": "transaction_id",
-        "secs": "seconds",
-        "ciaddr": "client_ip",
-        "yiaddr": "your_ip",
-        "siaddr": "server_ip",
-        "giaddr": "relay_ip",
-        "chaddr": "client_hardware_address",
-    }
-    option_region_hex = fields.get(_DHCP_OPTION_REGION_KEY)
-    output: JSONObject = {}
-    for native_name, value in fields.items():
-        if native_name in {"sname", "file", _DHCP_OPTION_REGION_KEY}:
-            continue
-        if native_name == "options" and isinstance(value, list):
-            output["option_count"] = len(value)
-            continue
-        normalized_name = aliases.get(native_name, _normalize_field_name("dhcp", native_name))
-        output[normalized_name] = _normalize_field_value("dhcp", normalized_name, value)
-    if "client_hardware_address" in output:
-        output["client_hardware_address"] = _normalize_dhcp_chaddr(
-            output["client_hardware_address"],
-            output.get("hardware_length"),
-        )
-    options = output.get("options")
-    if isinstance(options, Mapping) and options.get("hex") == "63825363":
-        output["magic_cookie"] = 0x63825363
-        output.pop("options", None)
-    if isinstance(option_region_hex, str):
-        _apply_dhcp_option_details(output, option_region_hex)
-    return output
-
-
-def _apply_dhcp_option_details(output: JSONObject, option_region_hex: str) -> None:
-    """Record backend-neutral DHCP option details from the raw TLV region.
-
-    Each option is normalized to a stable ``{code, payload_hex}`` pair carrying
-    the raw option payload (no typed reinterpretation), which compares cleanly
-    against the libcrafter decoded option view regardless of how either backend
-    types the value. The message type (option 53) is also surfaced as an integer
-    so option coverage records it directly rather than only as a count.
-    """
-
-    options = _decode_dhcp_option_tlvs(option_region_hex)
-    if options is None:
-        return
-    output["options"] = options
-    output["option_count"] = len(options)
-    for option in options:
-        if option["code"] == _DHCP_OPTION_MESSAGE_TYPE:
-            payload = bytes.fromhex(option["payload_hex"])
-            if len(payload) == 1:
-                output["message_type"] = payload[0]
-            break
-
-
-def _decode_dhcp_option_tlvs(option_region_hex: str) -> list[JSONObject] | None:
-    """Parse a DHCP option TLV region into ``{code, payload_hex}`` entries.
-
-    Pad (0) and end (255) are single-octet options with empty payloads. A
-    truncated or malformed region returns ``None`` so the raw typed option list
-    handling is preserved instead of emitting partial option details.
-    """
-
-    try:
-        raw = bytes.fromhex(option_region_hex)
-    except ValueError:
-        return None
-    options: list[JSONObject] = []
-    index = 0
-    length = len(raw)
-    while index < length:
-        code = raw[index]
-        index += 1
-        if code == _DHCP_OPTION_PAD:
-            options.append({"code": code, "payload_hex": ""})
-            continue
-        if code == _DHCP_OPTION_END:
-            options.append({"code": code, "payload_hex": ""})
-            break
-        if index >= length:
-            return None
-        option_length = raw[index]
-        index += 1
-        if index + option_length > length:
-            return None
-        payload = raw[index : index + option_length]
-        index += option_length
-        options.append({"code": code, "payload_hex": payload.hex()})
-    return options
-
-
 def _normalize_field_name(layer_name: str, native_name: str) -> str:
     layer_aliases = _LAYER_FIELD_ALIASES.get(layer_name, {})
     return layer_aliases.get(native_name, _FIELD_ALIASES.get(native_name, native_name))
@@ -1368,32 +1261,12 @@ def _normalize_field_value(layer_name: str, field_name: str, value: JSONValue) -
     if layer_name == "linux_sll" and field_name == "source_address":
         return _normalize_linux_sll_source_address(value)
     if field_name == "flags":
-        if layer_name == "dhcp":
-            return _normalize_dhcp_flags(value)
         return _normalize_flags(value)
     if field_name == "is_response" and isinstance(value, int):
         return bool(value)
     if field_name in {"more_fragments"} and isinstance(value, int):
         return bool(value)
     return value
-
-
-def _normalize_dhcp_flags(value: JSONValue) -> JSONValue:
-    if value == "B":
-        return 0x8000
-    if value in {"", "none", "0"}:
-        return 0
-    return _normalize_flags(value)
-
-
-def _normalize_dhcp_chaddr(value: JSONValue, hardware_length: JSONValue) -> JSONValue:
-    if not isinstance(value, Mapping):
-        return value
-    hex_value = value.get("hex")
-    if not isinstance(hex_value, str):
-        return value
-    length = hardware_length if isinstance(hardware_length, int) else 6
-    return {"hex": hex_value[: length * 2]}
 
 
 # IGMP over IPv4 protocol number 2. Scapy does not expose all IGMP contrib
