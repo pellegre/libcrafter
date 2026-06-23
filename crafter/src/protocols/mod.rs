@@ -9,6 +9,7 @@ pub mod igmp;
 pub mod ip;
 pub mod ipsec;
 pub mod link;
+pub mod mqtt;
 pub mod ospf;
 pub mod rip;
 pub mod rsn;
@@ -35,7 +36,8 @@ pub mod ipv6 {
 /// Curated protocol symbols exported by both `crate::protocols` and the crate root.
 pub mod exports {
     use super::{
-        bgp, dhcp, dns, eapol, icmp, igmp, ip, ipsec, ipv4, ipv6, link, ospf, rip, rsn, transport,
+        bgp, dhcp, dns, eapol, icmp, igmp, ip, ipsec, ipv4, ipv6, link, mqtt, ospf, rip, rsn,
+        transport,
     };
 
     pub use crate::packet::Raw;
@@ -46,6 +48,7 @@ pub mod exports {
     pub use bgp::{
         Bgp, BgpCapability, BgpKeepalive, BgpNotification, BgpOpen, BgpRouteRefresh, BgpUpdate,
     };
+    pub use mqtt::{MQTT_PORT, MQTT_TLS_PORT};
     pub use dhcp::{
         decode_tftp_server_addresses, option_meta, option_name, option_status,
         scan_dhcp_option_segments, typed_option_value, ClientNetworkDeviceInterface,
