@@ -445,7 +445,11 @@ def _igmp_plan(
 class ScapyIgmpMaterializationTest(unittest.TestCase):
     def test_igmp_features_protocol_and_layers_are_supported(self) -> None:
         self.assertEqual(packets._IP_PROTOCOLS["igmp"], 2)
-        self.assertIn("igmp", packets._SCAPY_MATERIALIZED_LAYERS)
+        # The base ``igmp`` layer is now materialized through its registered
+        # ``ScapyProtocol`` rather than the legacy ``_SCAPY_MATERIALIZED_LAYERS``
+        # set, so check the registry-derived predicate. The ``igmp_query`` /
+        # ``igmp_report`` / ``igmp_extension`` sub-layers stay on the legacy set.
+        self.assertTrue(packets._is_materialized_layer("igmp"))
         self.assertIn("igmp_query", packets._SCAPY_MATERIALIZED_LAYERS)
         self.assertIn("igmp_report", packets._SCAPY_MATERIALIZED_LAYERS)
         self.assertIn("igmp_extension", packets._SCAPY_MATERIALIZED_LAYERS)
