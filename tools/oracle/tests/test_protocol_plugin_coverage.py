@@ -49,7 +49,6 @@ KNOWN_UNMIGRATED: frozenset[str] = frozenset(
         "eapol",
         "esp",
         "ikev2",
-        "ospf",
         "radiotap",
         "rip",
         "ripng",

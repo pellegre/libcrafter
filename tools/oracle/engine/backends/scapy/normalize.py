@@ -80,12 +80,6 @@ _LAYER_ALIASES: dict[str, str] = {
     "IPv6ExtHdrHopByHop": "ipv6_hop_by_hop",
     "IPv6ExtHdrRouting": "ipv6_routing",
     "IPv6ExtHdrSegmentRouting": "ipv6_routing",
-    "OSPF_Hdr": "ospf",
-    "OSPF_Hello": "ospf",
-    "OSPF_DBDesc": "ospf",
-    "OSPF_LSReq": "ospf",
-    "OSPF_LSUpd": "ospf",
-    "OSPF_LSAck": "ospf",
     "RadioTap": "radiotap",
 }
 _FIELD_ALIASES: dict[str, str] = {
@@ -141,27 +135,6 @@ _LAYER_FIELD_ALIASES: dict[str, dict[str, str]] = {
         "lladdrtype": "address_type",
         "pkttype": "packet_type",
         "src": "source_address",
-    },
-    "ospf": {
-        # OSPF_Hdr common-header fields mapped to the oracle-neutral names
-        # declared in specs/layers/ospf.yaml.
-        "len": "packet_length",
-        "src": "router_id",
-        "area": "area_id",
-        "chksum": "checksum",
-        "authtype": "autype",
-        "authdata": "authentication",
-        # OSPF_Hello / OSPF_DBDesc body fields.
-        "mask": "network_mask",
-        "hellointerval": "hello_interval",
-        "prio": "router_priority",
-        "deadinterval": "router_dead_interval",
-        "router": "designated_router",
-        "backup": "backup_designated_router",
-        "mtu": "interface_mtu",
-        "dbdescr": "dd_flags",
-        "ddseq": "dd_sequence_number",
-        "lsaheaders": "lsa_headers",
     },
 }
 _ETHERTYPES: dict[str, int] = {
@@ -641,8 +614,6 @@ def _normalize_fields(layer_name: str, fields: JSONObject) -> JSONObject:
         output[normalized_name] = _normalize_field_value(layer_name, normalized_name, value)
     if layer_name in {"ipv6_hop_by_hop", "ipv6_destination_options"}:
         _normalize_ipv6_options_header_fields(output)
-    if layer_name == "ospf":
-        _normalize_ospf_fields(output)
     if layer_name == "ipv6_fragment":
         _normalize_ipv6_fragment_fields(output)
     if layer_name == "ipv6_routing":
@@ -2899,60 +2870,6 @@ def _normalize_linux_sll_source_address(value: JSONValue) -> JSONValue:
         if isinstance(hex_value, str):
             return {"hex": hex_value}
     return value
-
-
-# OSPF_Hdr type codes (RFC 2328) rendered by Scapy's ShortEnumField as
-# descriptive strings; collapse them onto the oracle-neutral packet-type domain
-# names from specs/layers/ospf.yaml so a decoded type compares against the plan.
-_OSPF_TYPE_NAMES: dict[int, str] = {
-    1: "hello",
-    2: "database_description",
-    3: "link_state_request",
-    4: "link_state_update",
-    5: "link_state_ack",
-}
-# OSPF AuType codes mapped to the oracle-neutral autype domain names.
-_OSPF_AUTYPE_NAMES: dict[int, str] = {
-    0: "null",
-    1: "simple",
-    2: "cryptographic",
-}
-
-
-def _normalize_ospf_fields(fields: JSONObject) -> None:
-    """Normalize decoded OSPFv2 fields into the backend-neutral oracle shape.
-
-    The common-header field names are already aliased (len->packet_length,
-    src->router_id, area->area_id, chksum->checksum, authtype->autype,
-    authdata->authentication). This reduces the remaining Scapy-typed values to
-    comparable forms: the packet ``type`` and ``autype`` enum strings collapse to
-    the oracle-neutral domain names, and the 64-bit authentication field is
-    rendered as raw hex bytes so both backends compare byte-for-byte.
-    """
-
-    type_value = fields.get("type")
-    if isinstance(type_value, int) and not isinstance(type_value, bool):
-        fields["type"] = _OSPF_TYPE_NAMES.get(type_value, type_value)
-    elif isinstance(type_value, str):
-        fields["type"] = _ospf_enum_token(type_value)
-
-    autype_value = fields.get("autype")
-    if isinstance(autype_value, int) and not isinstance(autype_value, bool):
-        fields["autype"] = _OSPF_AUTYPE_NAMES.get(autype_value, autype_value)
-    elif isinstance(autype_value, str):
-        fields["autype"] = _ospf_enum_token(autype_value)
-
-    authentication = fields.get("authentication")
-    if isinstance(authentication, int) and not isinstance(authentication, bool):
-        fields["authentication"] = {"hex": authentication.to_bytes(8, "big").hex()}
-
-    lsa_headers = fields.get("lsa_headers")
-    if isinstance(lsa_headers, list):
-        fields["lsa_header_count"] = len(lsa_headers)
-
-
-def _ospf_enum_token(value: str) -> str:
-    return value.strip().lower().replace(" ", "_").replace("-", "_")
 
 
 def _apply_udp_surplus_normalization(
