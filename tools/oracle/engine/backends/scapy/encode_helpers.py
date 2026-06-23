@@ -233,3 +233,33 @@ def _option_bytes(value: object) -> bytes | None:
     if isinstance(value, str):
         return bytes.fromhex(value)
     return None
+
+
+def _internet_checksum(data: bytes) -> int:
+    """Compute the 16-bit one's-complement Internet checksum (RFC 1071).
+
+    Shared by the IPv4/ICMP/IGMP/RIPng raw-header builders; extracted here so the
+    per-protocol plugins can fold their own header checksums without importing the
+    ``packets`` orchestrator.
+    """
+
+    if len(data) % 2:
+        data += b"\x00"
+    total = 0
+    for index in range(0, len(data), 2):
+        total += int.from_bytes(data[index : index + 2], "big")
+    while total >> 16:
+        total = (total & 0xFFFF) + (total >> 16)
+    return (~total) & 0xFFFF
+
+
+def _ipv4_address_bytes(value: object, default: str = "0.0.0.0") -> bytes:
+    """Pack a dotted-quad IPv4 address string into four network-order bytes.
+
+    Shared by the ICMP router/quoted-datagram builders and the IPv4/IGMP raw
+    builders; extracted here so the per-protocol plugins can serialize an IPv4
+    address without importing the ``packets`` orchestrator.
+    """
+
+    text = _text(value, default)
+    return bytes(int(part) & 0xFF for part in text.split("."))
