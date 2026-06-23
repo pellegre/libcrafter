@@ -38,12 +38,7 @@ from tools.oracle.engine.spec_loader import load_oracle_specs
 # registry. Seeded with the full current spec layer set so the forward-looking
 # coverage assertion passes today; each protocol migration step removes its
 # layer(s) here, and step 44 deletes this set and asserts ``missing == set()``.
-KNOWN_UNMIGRATED: frozenset[str] = frozenset(
-    {
-        "ble_adv",
-        "ble_radio",
-    }
-)
+KNOWN_UNMIGRATED: frozenset[str] = frozenset()
 
 
 def _spec_layer_names() -> frozenset[str]:
