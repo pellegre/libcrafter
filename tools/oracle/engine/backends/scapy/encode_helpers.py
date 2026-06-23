@@ -72,6 +72,22 @@ def _layer_fields(fields: Mapping[str, JSONObject], layer: str) -> JSONObject:
     return dict(value)
 
 
+def _layer_fields_for_stack_index(
+    fields: Mapping[str, JSONObject],
+    stack: Sequence[str],
+    index: int,
+) -> JSONObject:
+    layer = stack[index]
+    occurrence = sum(1 for item in stack[: index + 1] if item == layer)
+    if occurrence > 1:
+        value = fields.get(f"{layer}#{occurrence}")
+        if value is not None:
+            if not isinstance(value, Mapping):
+                raise ValueError(f"{layer}#{occurrence} fields must be an object")
+            return dict(value)
+    return _layer_fields(fields, layer)
+
+
 def _required_field(fields: Mapping[str, object], layer: str, *names: str) -> object:
     value = _optional_field(fields, *names)
     if value is None:
