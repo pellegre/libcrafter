@@ -1091,7 +1091,7 @@ mod dot15d4_mac_encode {
         // bytes 41 88. The MHR+payload is 41 88 07 CD AB 34 12 78 56 CA FE; the
         // reflected CRC-16/CCITT FCS over those octets is 0x8B43, serialized
         // little-endian as 43 8B. Cross-checked against the `dot15d4_fcs`
-        // reference algorithm (scapy `makeFCS`).
+        // reference algorithm (the reference backend's `makeFCS`).
         let frame = Dot15d4::data()
             .seq(7)
             .dest_short(0xABCD, 0x1234)

@@ -9,7 +9,7 @@
 //! The 802.15.4 PHY transmits each octet least-significant bit first, so the
 //! CRC is computed in its *reflected* form: the polynomial 0x1021 reflected to
 //! 0x8408, with reflected input and output and an initial value of 0x0000.
-//! This is the CRC-16/CCITT variant that scapy implements as
+//! This is the CRC-16/CCITT variant the reference backend implements as
 //! `Dot15d4FCS`/`makeFCS`; the caller serializes the returned `u16`
 //! little-endian (low byte first) as the on-air FCS.
 
@@ -53,8 +53,8 @@ mod tests {
         // addressing), sequence number 0x53. The MHR+payload bytes are
         // 02 00 53 and the FCS is 0xD5A6 (serialized on air as A6 D5).
         //
-        // Cross-checked against scapy's `Dot15d4FCS`/`makeFCS` algorithm
-        // (scapy/layers/dot15d4.py), which yields 0xD5A6 for these bytes.
+        // Cross-checked against the reference backend's `Dot15d4FCS`/`makeFCS`
+        // algorithm, which yields 0xD5A6 for these bytes.
         let mhr_and_payload = [0x02u8, 0x00, 0x53];
         assert_eq!(dot15d4_fcs(&mhr_and_payload), 0xD5A6);
     }
@@ -64,7 +64,7 @@ mod tests {
         // A data frame header: FCF = 0x8841 (Data frame, PAN ID compression,
         // dest short address present), sequence number 0x01, dest PAN ID
         // 0xFFFF, dest short address 0xFFFF -> bytes 41 88 01 FF FF FF FF.
-        // scapy's makeFCS yields 0x84F4 for these bytes.
+        // The reference `makeFCS` yields 0x84F4 for these bytes.
         let mhr = [0x41u8, 0x88, 0x01, 0xFF, 0xFF, 0xFF, 0xFF];
         assert_eq!(dot15d4_fcs(&mhr), 0x84F4);
     }

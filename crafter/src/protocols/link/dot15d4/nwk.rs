@@ -626,12 +626,12 @@ mod tests {
         // nwkcProtocolVersion = 0x02 (bits 2..=5 -> 0b0010 << 2 = 0x0008), every
         // other sub-field/flag 0, so FC = 0x0008, little-endian bytes 08 00.
         //
-        // This is the layout scapy emits for
+        // This is the layout the reference backend emits for
         //   ZigbeeNWK(frametype=0, proto_version=2, destination=0x1234,
         //             source=0x5678, radius=30, seqnum=42)/Raw(b"\xAA\xBB")
         // whose bytes are 08 00 34 12 78 56 1E 2A AA BB (FC + LE short
         // addresses + radius + seqnum + payload), cross-checked against the
-        // scapy `ZigbeeNWK` field layout.
+        // reference `ZigbeeNWK` field layout.
         let frame = ZigbeeNwk::data()
             .dest(0x1234)
             .src(0x5678)
