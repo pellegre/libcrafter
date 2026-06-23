@@ -220,7 +220,10 @@ impl ZigbeeNwk {
     /// Honors a user-set frame type; otherwise defaults to the data code point
     /// (0b00).
     fn effective_frame_type(&self) -> u8 {
-        self.frame_type.value().copied().unwrap_or(NWK_FRAME_TYPE_DATA)
+        self.frame_type
+            .value()
+            .copied()
+            .unwrap_or(NWK_FRAME_TYPE_DATA)
     }
 
     /// Resolve the effective NWK protocol version (Frame Control bits 2..=5).
@@ -395,11 +398,19 @@ impl Layer for ZigbeeNwk {
             ),
             (
                 "radius",
-                self.radius.value().copied().unwrap_or(NWK_RADIUS_DEFAULT).to_string(),
+                self.radius
+                    .value()
+                    .copied()
+                    .unwrap_or(NWK_RADIUS_DEFAULT)
+                    .to_string(),
             ),
             (
                 "seq",
-                self.seq.value().copied().unwrap_or(NWK_SEQ_DEFAULT).to_string(),
+                self.seq
+                    .value()
+                    .copied()
+                    .unwrap_or(NWK_SEQ_DEFAULT)
+                    .to_string(),
             ),
         ];
 
@@ -457,14 +468,14 @@ impl<R: IntoPacket> core::ops::Div<R> for ZigbeeNwk {
 ///
 /// Advances `*offset` past the eight consumed octets. Truncation surfaces a
 /// structured [`CrafterError`] with the supplied context rather than panicking.
-fn read_nwk_ieee_addr(
-    bytes: &[u8],
-    offset: &mut usize,
-    context: &'static str,
-) -> Result<u64> {
+fn read_nwk_ieee_addr(bytes: &[u8], offset: &mut usize, context: &'static str) -> Result<u64> {
     let required = *offset + NWK_IEEE_ADDR_LEN;
     if bytes.len() < required {
-        return Err(CrafterError::buffer_too_short(context, required, bytes.len()));
+        return Err(CrafterError::buffer_too_short(
+            context,
+            required,
+            bytes.len(),
+        ));
     }
 
     let addr = u64::from_le_bytes([
@@ -719,6 +730,9 @@ mod tests {
         // radius and sequence-number octets) surfaces the header context.
         let err = decode_zigbee_nwk(&[0x08, 0x00, 0x34, 0x12, 0x78, 0x56])
             .expect_err("must reject a truncated NWK header");
-        assert_eq!(err, CrafterError::buffer_too_short("zigbee.nwk.header", 8, 6));
+        assert_eq!(
+            err,
+            CrafterError::buffer_too_short("zigbee.nwk.header", 8, 6)
+        );
     }
 }

@@ -264,7 +264,11 @@ impl Dot15d4Radio {
         out.extend_from_slice(&0u16.to_le_bytes()); // length placeholder
 
         // FCS_TYPE TLV (type 0, length 1): single-octet FCS type, 3 pad octets.
-        push_tap_tlv(out, DOT15D4_TAP_TLV_FCS_TYPE, &[self.effective_tap_fcs_type()]);
+        push_tap_tlv(
+            out,
+            DOT15D4_TAP_TLV_FCS_TYPE,
+            &[self.effective_tap_fcs_type()],
+        );
 
         // RSS TLV (type 1, length 4): RSS in dBm as a 32-bit IEEE-754 float.
         // Unset RSS resolves to 0.0 dBm, matching the absence of a measurement.
@@ -634,9 +638,15 @@ mod tests {
         radio.encode(&mut out);
 
         // FCS_TYPE: invalid FCS resolves to type none (0).
-        assert_eq!(&out[4..12], &[0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00]);
+        assert_eq!(
+            &out[4..12],
+            &[0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00]
+        );
         // CHANNEL_ASSIGNMENT: channel 200 (0x00C8 LE) emitted without clamping.
-        assert_eq!(&out[20..28], &[0x03, 0x00, 0x03, 0x00, 0xC8, 0x00, 0x00, 0x00]);
+        assert_eq!(
+            &out[20..28],
+            &[0x03, 0x00, 0x03, 0x00, 0xC8, 0x00, 0x00, 0x00]
+        );
     }
 
     #[test]
@@ -701,7 +711,10 @@ mod tests {
         assert_eq!(tail, &[0xAA, 0xBB, 0xCC]);
         assert_eq!(decoded.effective_channel(), 15);
         assert_eq!(decoded.effective_rssi(), Some(-60));
-        assert_eq!(decoded.effective_fcs_type(), Some(DOT15D4_TAP_FCS_TYPE_CRC16));
+        assert_eq!(
+            decoded.effective_fcs_type(),
+            Some(DOT15D4_TAP_FCS_TYPE_CRC16)
+        );
         assert!(decoded.effective_fcs_valid());
     }
 
@@ -718,7 +731,10 @@ mod tests {
 
         assert!(tail.is_empty());
         assert!(!decoded.effective_fcs_valid());
-        assert_eq!(decoded.effective_fcs_type(), Some(DOT15D4_TAP_FCS_TYPE_NONE));
+        assert_eq!(
+            decoded.effective_fcs_type(),
+            Some(DOT15D4_TAP_FCS_TYPE_NONE)
+        );
     }
 
     #[test]
