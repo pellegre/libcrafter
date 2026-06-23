@@ -15,9 +15,13 @@ from .sampling import (
     EPHEMERAL_PORT_MAX,
     EPHEMERAL_PORT_MIN,
     T,
+    _ICMP_EXTENSION_BYTES,
+    _ICMP_MPLS_EXTENSION_BYTES,
+    _ICMP_QUOTED_IPV4_DATAGRAM,
     _SKIP_FIELD,
     _SamplingContext,
     _SkipField,
+    _string_or_none,
     _declared_ethertype_for_stack,
     _dot11_is_management,
     _different_ipv4,
@@ -243,27 +247,6 @@ _SUPPORTED_FIELDS: dict[str, set[str]] = {
     "bgp": {"marker", "length", "type"},
     "rip": {"command", "version", "reserved"},
     "ripng": {"command", "version", "reserved"},
-    "icmp": {
-        "type",
-        "code",
-        "checksum",
-        "identifier",
-        "sequence",
-        "rest_of_header",
-        "gateway",
-        "pointer",
-        "next_hop_mtu",
-        "originate_timestamp",
-        "receive_timestamp",
-        "transmit_timestamp",
-        "address_mask",
-        "router_addresses",
-        "router_address_entry_size",
-        "router_lifetime",
-        "extension_bytes",
-        "embedded_header",
-    },
-    "icmpv6": {"type", "code", "identifier", "sequence"},
     "ikev2": {
         "initiator_spi",
         "responder_spi",
@@ -370,25 +353,6 @@ _SUPPORTED_FIELD_DOMAINS: dict[tuple[str, str], set[object]] = {
         "unsupported_frag",
         "surplus_application_boundary",
     },
-}
-# ICMP rest-of-header and type-specific body fields. The base layer sampler
-# leaves these unset (echo query default); the live-matrix sampler fills exactly
-# the fields a given ICMP behavior needs.
-_ICMP_BODY_FIELDS = {
-    "checksum",
-    "rest_of_header",
-    "gateway",
-    "pointer",
-    "next_hop_mtu",
-    "originate_timestamp",
-    "receive_timestamp",
-    "transmit_timestamp",
-    "address_mask",
-    "router_addresses",
-    "router_address_entry_size",
-    "router_lifetime",
-    "extension_bytes",
-    "embedded_header",
 }
 _SCAPY_MATERIALIZED_LAYERS = {
     "arp",
@@ -1795,17 +1759,6 @@ class PacketGenerator:
             _apply_ripng_behavior(fields, stack=stack, case=case, behavior=behavior)
         elif feature is not None and feature.startswith("rip_") and "rip" in fields:
             _apply_rip_behavior(fields, stack=stack, case=case, behavior=behavior)
-        elif feature == "icmpv4_errors" and "icmp" in fields:
-            _apply_icmpv4_error_behavior(
-                fields,
-                grammar=self.grammar,
-                feature=feature,
-                case=case,
-                behavior=behavior,
-            )
-        elif feature == "icmpv6_errors" and "icmpv6" in fields:
-            fields["icmpv6"]["type"] = _icmp_error_type_for_case(case, behavior, ipv6=True)
-            fields["icmpv6"]["code"] = 0
         elif feature == "dns_behavior" and "dns" in fields:
             _apply_dns_behavior(fields["dns"], case=case, behavior=behavior)
         elif feature == "dhcp_behavior" and "dhcp" in fields:
@@ -2172,10 +2125,6 @@ class PacketGenerator:
             return _sample_ripng_field(ctx, field_name, domain)
         if layer == "ospf":
             return _sample_ospf_field(ctx, field_name, domain)
-        if layer == "icmp":
-            return _sample_icmp_field(ctx, field_name, domain)
-        if layer == "icmpv6":
-            return _sample_icmp_field(ctx, field_name, domain)
         if layer == "esp":
             return _sample_esp_field(ctx, field_name, domain, field_spec)
         if layer == "ah":
@@ -2421,22 +2370,6 @@ def _int_or(domain: object, default: int) -> object:
     if isinstance(domain, int):
         return domain
     return default
-
-
-def _sample_icmp_field(ctx: _SamplingContext, field_name: str, domain: object) -> object:
-    if field_name == "type":
-        return str(domain).replace("_", "-") if domain in {"echo_reply", "echo_request"} else domain
-    if field_name == "code":
-        return 0
-    if field_name in {"identifier", "sequence"}:
-        return bounded_int(ctx.rng, 0, 65535)
-    # Rest-of-header, gateway, pointer, MTU, timestamp, address-mask, router
-    # discovery, and extension-byte fields are populated per ICMP behavior by the
-    # live-matrix sampler so the base path stays an echo query. Emitting them
-    # unconditionally here would attach body bytes to plain echo cases.
-    if field_name in _ICMP_BODY_FIELDS:
-        return _SKIP_FIELD
-    raise ValueError(f"spec error: unsupported icmp field sampler: {field_name}")
 
 
 # --------------------------------------------------------------------------
@@ -2731,19 +2664,6 @@ def _dhcp_option_domains(ctx: _SamplingContext, domain: object) -> list[object]:
     return options
 
 
-def _icmp_error_type_for_case(case: str, behavior: str, *, ipv6: bool) -> str:
-    key = f"{case} {behavior}".replace("_", "-")
-    if "packet-too-big" in key:
-        return "packet_too_big" if ipv6 else "destination_unreachable"
-    if "time-exceeded" in key:
-        return "time_exceeded"
-    if "parameter-problem" in key:
-        return "parameter_problem"
-    if "redirect" in key and not ipv6:
-        return "redirect"
-    return "destination_unreachable"
-
-
 def _dns_behavior_emits_raw(case: str, behavior: str) -> bool:
     """Whether applying ``behavior`` to ``case`` emits a Scapy-owned raw spec.
 
@@ -2769,33 +2689,10 @@ _ICMP_DEST_UNREACHABLE_CODES: dict[str, int] = {
 # Raw rest-of-header bytes for legacy/raw-compatible types whose four reserved
 # bytes both backends emit and parse identically. Deterministic and well formed.
 _ICMP_LEGACY_REST_OF_HEADER = "00000000"
-# Deterministic RFC 4884 extension blob (extension header version 2 plus one
-# generic object) shared by the extension-framing live behaviors as
-# raw-compatible bytes.
-_ICMP_EXTENSION_BYTES = "20000000000800010102030405060708"
-# Deterministic RFC 4950 MPLS extension blob (extension header plus one MPLS
-# object carrying a single label stack entry).
-_ICMP_MPLS_EXTENSION_BYTES = "2000000000080100000010ff"
-# Deterministic quoted (embedded) original IPv4 datagram carried inside an
-# ICMPv4 error message per RFC 792: a documentation-address UDP/53 query with a
-# well-formed IPv4 header (correct length and checksum) plus eight bytes of UDP
-# header and a short payload. Both backends emit and decode these bytes
-# identically; the normalized model collapses them into a single trailing
-# payload after the ICMP rest-of-header.
-_ICMP_QUOTED_IPV4_DATAGRAM = (
-    "45000028424200004011b464c000020ac00002149c4000350014000071756f7465642d7175657279"
-)
-
-
-def _icmp_behavior_embeds(spec: JSONObject | None) -> set[str]:
-    """Return the set of layer names a behavior's ``embeds`` declaration lists."""
-
-    if spec is None:
-        return set()
-    embeds = spec.get("embeds")
-    if not isinstance(embeds, Sequence) or isinstance(embeds, (str, bytes)):
-        return set()
-    return {value for value in embeds if isinstance(value, str)}
+# ``_ICMP_EXTENSION_BYTES`` / ``_ICMP_MPLS_EXTENSION_BYTES`` /
+# ``_ICMP_QUOTED_IPV4_DATAGRAM`` live in ``sampling`` so the ICMP error behavior
+# plugin can share them without importing ``generator``; re-imported above for the
+# still-resident ICMP live-matrix body sampler.
 
 
 def _icmp_live_matrix_entry(
@@ -4068,85 +3965,6 @@ def _dns_answers_for_domain(ctx: _SamplingContext, domain: object) -> list[JSONO
     return [{"name": "example.com.", "type": "A", "ttl": 60, "address": ctx.dst_ipv4}]
 
 
-def _icmpv4_error_behavior_spec(
-    grammar: JSONObject, feature: str, behavior: str
-) -> JSONObject | None:
-    features = _object(grammar.get("features"), "features")
-    if feature not in features:
-        raise ValueError(f"unsupported feature: {feature}")
-    feature_spec = _object(features[feature], f"features.{feature}")
-    behaviors = _object_list(
-        feature_spec.get("behaviors", []), f"features.{feature}.behaviors"
-    )
-    for raw_behavior in behaviors:
-        if not isinstance(raw_behavior, Mapping):
-            continue
-        entry = _json_object(raw_behavior)
-        if entry.get("name") == behavior:
-            return entry
-    return None
-
-
-def _apply_icmpv4_error_behavior(
-    fields: dict[str, JSONObject],
-    *,
-    grammar: JSONObject,
-    feature: str,
-    case: str,
-    behavior: str,
-) -> None:
-    """Populate one structured ICMPv4 error behavior.
-
-    Structured error behaviors (destination unreachable, time exceeded,
-    parameter problem, redirect, fragmentation-needed) carry an outer IPv4
-    header, the ICMP error header, and a quoted (embedded) IPv4 datagram
-    prefix with deterministic payload bytes. The quoted datagram is emitted
-    as the ``embedded_header`` field so both backends materialize the same
-    bytes after the ICMP rest-of-header.
-
-    Extension-framing behaviors marked raw-compatible (RFC 4884/4950 MPLS,
-    RFC 5837 interface information) still include the quoted datagram before
-    their deterministic ``extension_bytes`` body. The reference model keeps
-    this as a flat trailing payload for backend-neutral comparison.
-
-    ``grammar`` is threaded in from ``self.grammar`` for the per-behavior
-    feature-spec lookup.
-    """
-
-    icmp = fields["icmp"]
-    spec = _icmpv4_error_behavior_spec(grammar, feature, behavior)
-    icmp_type = _string_or_none(spec.get("icmp_type")) if spec is not None else None
-    if icmp_type is None:
-        icmp_type = _icmp_error_type_for_case(case, behavior, ipv6=False)
-    icmp["type"] = icmp_type
-    icmp["code"] = 0
-
-    embeds = _icmp_behavior_embeds(spec)
-
-    # Extension error behaviors keep backend-neutral flat payload bytes, but
-    # the ICMP error body still starts with a quoted datagram.
-    if "icmp_extension_mpls" in embeds:
-        icmp["embedded_header"] = {"hex": _ICMP_QUOTED_IPV4_DATAGRAM}
-        icmp["extension_bytes"] = {"hex": _ICMP_MPLS_EXTENSION_BYTES}
-        return
-    if embeds.intersection({"icmp_extension_header", "icmp_extension_object"}):
-        icmp["extension_bytes"] = {"hex": _ICMP_EXTENSION_BYTES}
-        if "quoted_ipv4" in embeds or "ipv4" in embeds:
-            icmp["embedded_header"] = {"hex": _ICMP_QUOTED_IPV4_DATAGRAM}
-        return
-
-    # Structured quoted-datagram error behaviors: outer IPv4 header, ICMP
-    # error header, quoted IPv4 prefix, and deterministic quoted payload.
-    if "ipv4" in embeds or "payload_prefix" in embeds:
-        icmp["embedded_header"] = {"hex": _ICMP_QUOTED_IPV4_DATAGRAM}
-        if behavior == "redirect" or icmp_type == "redirect":
-            icmp["gateway"] = "192.0.2.1"
-        elif behavior == "parameter_problem" or icmp_type == "parameter_problem":
-            icmp["pointer"] = 20
-        elif behavior == "frag_needed_next_hop_mtu":
-            icmp["next_hop_mtu"] = 1280
-
-
 def _apply_bgp_behavior(
     fields: dict[str, JSONObject],
     *,
@@ -5307,12 +5125,6 @@ def _string(value: object, name: str) -> str:
     if not isinstance(value, str):
         raise ValueError(f"{name} must be a string")
     return value
-
-
-def _string_or_none(value: object) -> str | None:
-    if value is None or isinstance(value, str):
-        return value
-    raise ValueError(f"expected string or null: {value!r}")
 
 
 def _stack_families(layers: Sequence[str], root_families: Sequence[str]) -> list[str]:

@@ -49,8 +49,6 @@ KNOWN_UNMIGRATED: frozenset[str] = frozenset(
         "dot11",
         "eapol",
         "esp",
-        "icmp",
-        "icmpv6",
         "igmp",
         "ikev2",
         "ospf",
