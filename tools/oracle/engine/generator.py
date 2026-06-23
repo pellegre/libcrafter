@@ -79,6 +79,15 @@ from .protocols.bgp import _apply_bgp_behavior
 # re-import pattern as the BGP body injector above. OSPF has no feature behavior,
 # so only this smoke-path entry point is re-imported.
 from .protocols.ospf import _apply_ospf_behavior
+# ``_apply_rip_behavior`` and ``_rip_command_for_case`` moved to the RIP sampler
+# plugin (``protocols/rip.py``) with the rest of the RIP feature behavior. They are
+# re-imported here because the focused rip-smoke profile path in ``generate_plan``
+# calls ``_apply_rip_behavior`` directly (with ``behavior=""``) outside the registry
+# feature loop, and the still-resident RIPng sampler and RIPng behavior share
+# ``_rip_command_for_case`` (request vs response selection) — the same
+# co-locate-and-re-import pattern as the BGP/OSPF body injectors above. RIPng
+# migrates in its own later step.
+from .protocols.rip import _apply_rip_behavior, _rip_command_for_case
 
 
 SUPPORTED_LAYER_BACKEND = "libcrafter"
@@ -252,7 +261,6 @@ _SUPPORTED_FIELDS: dict[str, set[str]] = {
         "iv",
         "icv",
     },
-    "rip": {"command", "version", "reserved"},
     "ripng": {"command", "version", "reserved"},
     "ikev2": {
         "initiator_spi",
@@ -1686,8 +1694,6 @@ class PacketGenerator:
                 return
         if feature is not None and feature.startswith("ripng_") and "ripng" in fields:
             _apply_ripng_behavior(fields, stack=stack, case=case, behavior=behavior)
-        elif feature is not None and feature.startswith("rip_") and "rip" in fields:
-            _apply_rip_behavior(fields, stack=stack, case=case, behavior=behavior)
         elif feature == "dns_behavior" and "dns" in fields:
             _apply_dns_behavior(fields["dns"], case=case, behavior=behavior)
         elif feature == "dhcp_behavior" and "dhcp" in fields:
@@ -1821,8 +1827,6 @@ class PacketGenerator:
                 field_spec=field_spec,
                 current_fields=current_fields,
             )
-        if layer == "rip":
-            return _sample_rip_field(ctx, field_name, domain)
         if layer == "ripng":
             return _sample_ripng_field(ctx, field_name, domain)
         if layer == "esp":
@@ -1991,19 +1995,6 @@ def _ipv6_extension_options_for_case(layer: str, case: str) -> list[JSONObject]:
         {"kind": "home_address", "address": "2001:db8::42"},
         {"kind": "padn", "total_length": 4},
     ]
-
-
-def _sample_rip_field(ctx: _SamplingContext, field_name: str, domain: object) -> object:
-    # The RIP header scalars (command/version/reserved) seed the layer so it
-    # survives the empty-dict drop in _fields; the per-case entries/auth values
-    # are attached by _apply_rip_behavior, mirroring how BGP body bytes attach.
-    if field_name == "command":
-        return _rip_command_for_case(ctx.case)
-    if field_name == "version":
-        return _rip_version_for_case(ctx.case)
-    if field_name == "reserved":
-        return 0
-    raise ValueError(f"spec error: unsupported rip field sampler: {field_name}")
 
 
 def _sample_ripng_field(ctx: _SamplingContext, field_name: str, domain: object) -> object:
@@ -3616,125 +3607,19 @@ def _is_ospf_smoke_case(case: str) -> bool:
 
 
 # --------------------------------------------------------------------------
-# RIP / RIPng behavior enrichment.
+# RIPng behavior enrichment.
 #
-# Like BGP, the RIP/RIPng header scalars are seeded by the field sampler and the
-# per-case message body (route entries, the AFI 0xFFFF authentication entry, and
-# the RIPng RTEs) is attached here. The libcrafter adapter and the Scapy
-# reference backend read the same plan field names (command/version/reserved,
-# entries[*].{address_family,route_tag,address,subnet_mask,next_hop,metric},
-# auth.{type,simple_password}, rtes[*].{prefix,route_tag,prefix_len,metric,
+# Like BGP, the RIPng header scalars are seeded by the field sampler and the
+# per-case message body (the RIPng RTEs) is attached here. The libcrafter adapter
+# and the Scapy reference backend read the same plan field names
+# (command/version/reserved, rtes[*].{prefix,route_tag,prefix_len,metric,
 # next_hop}), so a single field block materializes byte-identically on both
-# backends. Every address lives in documentation space (RFC 5737 / RFC 3849).
-# The authentication case uses simple-password (RFC 2453 §4.1) because that is
-# the byte-safe form the Scapy RIPAuth reference can reproduce; keyed message
-# digest is covered by the feature-spec / native-fixture path, not the smoke
-# cross-backend run.
-
-
-def _rip_command_for_case(case: str) -> str:
-    """RIP/RIPng command for a coverage case: request vs response (RFC 1058 §4)."""
-
-    if "request" in case.replace("_", "-"):
-        return "request"
-    return "response"
-
-
-def _rip_version_for_case(case: str) -> int:
-    """RIP version for a coverage case: v1 only for the explicit v1 cases."""
-
-    return 1 if "v1" in case.replace("_", "-") else 2
-
-
-def _apply_rip_behavior(
-    fields: dict[str, JSONObject],
-    *,
-    stack: Sequence[str],
-    case: str,
-    behavior: str,
-) -> None:
-    rip = fields["rip"]
-    rip["command"] = _rip_command_for_case(case)
-    rip["version"] = _rip_version_for_case(case)
-    rip.setdefault("reserved", 0)
-    rip.pop("auth", None)
-    rip.pop("entries", None)
-
-    if "udp" in fields:
-        fields["udp"]["src_port"] = 520
-        fields["udp"]["dst_port"] = 520
-    if "payload" in fields:
-        fields["payload"] = {"hex": "", "length": 0}
-
-    normalized = case.replace("_", "-")
-
-    if rip["command"] == "request":
-        # Request-whole-table sentinel (RFC 2453 §3.4.1 / RFC 1058 §3.4.1):
-        # one AFI 0 entry with metric 16 (infinity).
-        rip["entries"] = [
-            {
-                "address_family": 0,
-                "route_tag": 0,
-                "address": "0.0.0.0",
-                "subnet_mask": "0.0.0.0",
-                "next_hop": "0.0.0.0",
-                "metric": 16,
-            }
-        ]
-        return
-
-    if "auth" in normalized:
-        # Simple-password authenticated response (RFC 2453 §4.1): the AFI 0xFFFF
-        # leading entry carries a 16-octet cleartext password, followed by a
-        # single v2 route entry.
-        rip["auth"] = {"type": 2, "simple_password": "oraclesecret"}
-        rip["entries"] = [_rip_v2_entry()]
-        return
-
-    if rip["version"] == 1:
-        # RFC 1058 v1 route entry: AFI IP, address + metric only (route tag,
-        # subnet mask, and next hop are reserved-zero on the wire).
-        rip["entries"] = [
-            {
-                "address_family": 2,
-                "route_tag": 0,
-                "address": "192.0.2.0",
-                "subnet_mask": "0.0.0.0",
-                "next_hop": "0.0.0.0",
-                "metric": 1,
-            }
-        ]
-        return
-
-    # RFC 2453 v2 response: a route entry carrying route tag, subnet mask, and
-    # next hop. The matrix case adds a second entry so a multi-entry message is
-    # exercised by the smoke run.
-    entries = [_rip_v2_entry()]
-    if "matrix" in normalized:
-        entries.append(
-            {
-                "address_family": 2,
-                "route_tag": 64512,
-                "address": "198.51.100.0",
-                "subnet_mask": "255.255.255.0",
-                "next_hop": "192.0.2.1",
-                "metric": 2,
-            }
-        )
-    rip["entries"] = entries
-
-
-def _rip_v2_entry() -> dict[str, object]:
-    """A canonical RFC 2453 v2 route entry in documentation address space."""
-
-    return {
-        "address_family": 2,
-        "route_tag": 0,
-        "address": "192.0.2.0",
-        "subnet_mask": "255.255.255.0",
-        "next_hop": "0.0.0.0",
-        "metric": 1,
-    }
+# backends. Every address lives in documentation space (RFC 3849).
+#
+# The RIP (IPv4) sampler/behavior counterpart moved to ``protocols/rip.py``;
+# ``_rip_command_for_case`` (the shared request/response case selector) is
+# re-imported at the top of this module so the RIPng sampler and behavior below
+# keep using it unchanged. RIPng migrates in its own later step.
 
 
 def _apply_ripng_behavior(
