@@ -12,6 +12,7 @@ from .bootstrap import import_scapy
 from .encode_helpers import (
     _ETHERTYPES,
     _IP_PROTOCOLS,
+    _IPV6_NEXT_HEADERS,
     _bool_int,
     _bytes_field,
     _ethertype_value,
@@ -45,26 +46,6 @@ _BGP_MESSAGE_TYPES: dict[str, int] = {
     "route-refresh": 5,
     "route_refresh": 5,
 }
-_IPV6_NEXT_HEADERS: dict[str, int] = {
-    "destination-options": 60,
-    "destination_options": 60,
-    "dstopts": 60,
-    "fragment": 44,
-    "hop-by-hop": 0,
-    "hop-by-hop-options": 0,
-    "hop_by_hop": 0,
-    "hop_by_hop_options": 0,
-    "hopopts": 0,
-    "routing": 43,
-    "icmpv6": 58,
-    "no-next": 59,
-    "no_next": 59,
-    "payload": 253,
-    "raw": 253,
-    "tcp": 6,
-    "unknown": 253,
-    "udp": 17,
-}
 _SCAPY_LAYER_BY_LAYER: dict[str, str] = {
     "ah": "AH",
     "ble_adv": "BTLE_ADV_IND",
@@ -95,7 +76,6 @@ _SCAPY_LAYER_BY_LAYER: dict[str, str] = {
     "ipv6_fragment": "IPv6ExtHdrFragment",
     "ipv6_hop_by_hop": "IPv6ExtHdrHopByHop",
     "ipv6_routing": "IPv6ExtHdrRouting",
-    "ipv6": "IPv6",
     "ospf": "OSPF_Hdr",
     "radiotap": "RadioTap",
     "raw": "Raw",
@@ -515,18 +495,6 @@ _SUPPORTED_FIELDS_BY_LAYER: dict[str, set[str]] = {
         "report_flags",
         "reserved_flags",
     },
-    "ipv6": {
-        "dst",
-        "fl",
-        "flow_label",
-        "hlim",
-        "hop_limit",
-        "next_header",
-        "nh",
-        "src",
-        "tc",
-        "traffic_class",
-    },
     "ipv6_destination_options": {
         "header_ext_len",
         "len",
@@ -804,8 +772,6 @@ def _build_layer(plan: PacketPlan, stack: list[str], index: int, scapy_all: Any)
         return _bgp(fields, stack, index, scapy_all)
     if layer == "ospf":
         return _ospf(fields, stack, index, scapy_all)
-    if layer == "ipv6":
-        return _ipv6(fields, stack, index, scapy_all)
     if layer == "ipv6_hop_by_hop":
         return _ipv6_hop_by_hop(fields, stack, index, scapy_all)
     if layer == "ipv6_destination_options":
@@ -1275,24 +1241,6 @@ def _ospf_lsa_list(value: object, scapy_ospf: Any) -> list[Any]:
             else:
                 lsas.append(header)
     return lsas
-
-
-def _ipv6(fields: Mapping[str, JSONObject], stack: list[str], index: int, scapy_all: Any) -> Any:
-    ipv6_fields = _layer_fields(fields, "ipv6")
-    kwargs: dict[str, Any] = {
-        "src": _text(_required_field(ipv6_fields, "ipv6", "src"), ""),
-        "dst": _text(_required_field(ipv6_fields, "ipv6", "dst"), ""),
-        "hlim": _int(_required_field(ipv6_fields, "ipv6", "hop_limit", "hlim"), 0),
-        "nh": _protocol_value(
-            _required_field(ipv6_fields, "ipv6", "next_header", "nh"),
-            _IPV6_NEXT_HEADERS,
-        ),
-    }
-    if "traffic_class" in ipv6_fields or "tc" in ipv6_fields:
-        kwargs["tc"] = _int(_optional_field(ipv6_fields, "traffic_class", "tc"), 0)
-    if "flow_label" in ipv6_fields or "fl" in ipv6_fields:
-        kwargs["fl"] = _int(_optional_field(ipv6_fields, "flow_label", "fl"), 0)
-    return scapy_all.IPv6(**kwargs)
 
 
 def _ipv6_hop_by_hop(

@@ -29,6 +29,7 @@ from .sampling import (
     _integer_domain_value,
     _IPV4_DOCUMENTATION_NETWORKS,
     _IPV6_DOCUMENTATION_NETWORK,
+    _ipv6_next_header_for_stack,
     _is_ipv4_root_dhcp_stack,
     _mac_for_domain,
     _next_layer_after,
@@ -265,7 +266,6 @@ _SUPPORTED_FIELDS: dict[str, set[str]] = {
         "message_id",
         "length",
     },
-    "ipv6": {"src", "dst", "traffic_class", "flow_label", "next_header", "hop_limit"},
     # OSPFv2 common-header fields declared in specs/layers/ospf.yaml. The
     # per-type body (Hello/DD/LSR/LSU/LSAck neighbor and LSA lists) is injected
     # by _apply_ospf_behavior AFTER field sampling, mirroring the BGP body path,
@@ -2366,8 +2366,6 @@ class PacketGenerator:
                 field_spec=field_spec,
                 current_fields=current_fields,
             )
-        if layer == "ipv6":
-            return _sample_ipv6_field(ctx, field_name, domain)
         if layer == "udp":
             return _sample_udp_field(ctx, field_name, domain)
         if layer == "tcp":
@@ -2535,22 +2533,6 @@ def _is_boundary_domain(domain: object) -> bool:
         "zero",
         "zero_ipv4",
     }
-
-
-def _sample_ipv6_field(ctx: _SamplingContext, field_name: str, domain: object) -> object:
-    if field_name == "src":
-        return ctx.src_ipv6
-    if field_name == "dst":
-        return ctx.dst_ipv6
-    if field_name == "traffic_class":
-        return _integer_domain_value(ctx, domain, field_name, bits=8)
-    if field_name == "flow_label":
-        return _integer_domain_value(ctx, domain, field_name, bits=20)
-    if field_name == "next_header":
-        return _ipv6_next_header_for_stack(ctx.stack, "ipv6")
-    if field_name == "hop_limit":
-        return _integer_domain_value(ctx, domain, field_name, bits=8)
-    raise ValueError(f"spec error: unsupported ipv6 field sampler: {field_name}")
 
 
 def _ipv6_extension_options_for_case(layer: str, case: str) -> list[JSONObject]:
@@ -5859,21 +5841,6 @@ def _udp_option_cases_for_stack(stack: Sequence[str], cases: Sequence[str]) -> l
             continue
         output.append(case)
     return output
-
-
-def _ipv6_next_header_for_stack(stack: Sequence[str], layer: str) -> str:
-    next_layer = _next_layer_after(stack, layer)
-    if next_layer == "ipv6_destination_options":
-        return "destination-options"
-    if next_layer == "ipv6_fragment":
-        return "fragment"
-    if next_layer == "ipv6_hop_by_hop":
-        return "hop-by-hop"
-    if next_layer == "ipv6_routing":
-        return "routing"
-    if next_layer in {"icmpv6", "tcp", "udp"}:
-        return next_layer
-    return "unknown"
 
 
 if __name__ == "__main__":
