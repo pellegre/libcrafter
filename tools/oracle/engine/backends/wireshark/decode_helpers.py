@@ -123,3 +123,14 @@ def _layer_any(layers: JSONObject, *names: str) -> JSONObject:
 
 def _hex_bytes(value: str) -> str:
     return "".join(char for char in value.lower() if char in "0123456789abcdef")
+
+
+def _truthy_field(layer: JSONObject, name: str) -> bool:
+    value = _field(layer, name)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value != 0
+    if isinstance(value, str):
+        return value not in {"", "0", "0x0", "False", "false"}
+    return False

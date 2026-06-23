@@ -98,3 +98,11 @@ def _text_or_none(value: object) -> str | None:
     if isinstance(value, str):
         return value
     return str(value)
+
+
+def _normalize_flags(value: JSONValue) -> JSONValue:
+    if isinstance(value, str):
+        if not value:
+            return "none"
+        return value.lower().replace("+", "|").replace(" ", "_")
+    return value
