@@ -76,7 +76,6 @@ _SCAPY_LAYER_BY_LAYER: dict[str, str] = {
     "dot15d4_radio": "Raw",
     "eapol": "EAPOL",
     "esp": "ESP",
-    "ethernet": "Ether",
     "icmp": "ICMP",
     # IGMP contrib classes are not exposed through scapy.all consistently
     # across supported Scapy versions. The oracle materializer emits exact
@@ -108,9 +107,6 @@ _SCAPY_LAYER_BY_LAYER: dict[str, str] = {
     "rsn": "Dot11EltRSN",
     "tcp": "TCP",
     "udp": "UDP",
-    "vlan": "Dot1Q",
-    "zigbee_aps": "ZigbeeAppDataPayload",
-    "zigbee_nwk": "ZigbeeNWK",
 }
 _SCAPY_DECODER_BY_ROOT: dict[str, str] = {
     "link:bluetooth-le-ll-with-phdr": "BTLE_PHDR",
@@ -431,7 +427,6 @@ _SUPPORTED_FIELDS_BY_LAYER: dict[str, set[str]] = {
         "responder_spi",
         "version",
     },
-    "ethernet": {"dst", "ethertype", "src", "type"},
     "icmp": {
         "checksum",
         "chksum",
@@ -711,38 +706,6 @@ _SUPPORTED_FIELDS_BY_LAYER: dict[str, set[str]] = {
         "sport",
         "src_port",
     },
-    "vlan": {
-        "dei",
-        "drop_eligible",
-        "ethertype",
-        "id",
-        "prio",
-        "priority",
-        "type",
-        "vlan",
-        "vlan_id",
-    },
-    "zigbee_aps": {
-        "cluster",
-        "counter",
-        "delivery_mode",
-        "dest_endpoint",
-        "frame_type",
-        "payload",
-        "payload_hex",
-        "profile",
-        "src_endpoint",
-    },
-    "zigbee_nwk": {
-        "dest",
-        "frame_type",
-        "payload",
-        "payload_hex",
-        "protocol_version",
-        "radius",
-        "seq",
-        "src",
-    },
 }
 
 
@@ -869,14 +832,10 @@ def _build_layer(plan: PacketPlan, stack: list[str], index: int, scapy_all: Any)
 
     if layer == "payload" or layer == "raw":
         return scapy_all.Raw(load=_payload_bytes(fields))
-    if layer == "ethernet":
-        return _ethernet(plan, scapy_all)
     if layer == "linux_cooked":
         return _linux_cooked(plan.fields, scapy_all)
     if layer == "null_loopback":
         return _null_loopback(plan.fields, scapy_all)
-    if layer == "vlan":
-        return _vlan(plan, scapy_all)
     if layer == "bgp":
         return _bgp(fields, stack, index, scapy_all)
     if layer == "ospf":
@@ -933,27 +892,6 @@ def _build_layer(plan: PacketPlan, stack: list[str], index: int, scapy_all: Any)
         return _zigbee_aps(fields, stack, index, scapy_all)
 
     raise ValueError(f"unsupported Scapy materialization layer: {layer}")
-
-
-def _ethernet(plan: PacketPlan, scapy_all: Any) -> Any:
-    fields = _layer_fields(plan.fields, "ethernet")
-    kwargs: dict[str, Any] = {
-        "src": _text(_required_field(fields, "ethernet", "src"), ""),
-        "dst": _text(_required_field(fields, "ethernet", "dst"), ""),
-        "type": _ethertype_value(_required_field(fields, "ethernet", "ethertype", "type")),
-    }
-    return scapy_all.Ether(**kwargs)
-
-
-def _vlan(plan: PacketPlan, scapy_all: Any) -> Any:
-    fields = _layer_fields(plan.fields, "vlan")
-    kwargs: dict[str, Any] = {
-        "prio": _int(_required_field(fields, "vlan", "priority", "prio"), 0),
-        "vlan": _int(_required_field(fields, "vlan", "vlan_id", "id", "vlan"), 0),
-        "type": _ethertype_value(_required_field(fields, "vlan", "ethertype", "type")),
-        "dei": _int(_optional_field(fields, "drop_eligible", "dei"), 0),
-    }
-    return scapy_all.Dot1Q(**kwargs)
 
 
 def _linux_cooked(fields: Mapping[str, JSONObject], scapy_all: Any) -> Any:
