@@ -114,17 +114,6 @@ def _ipsec_pinned_crypto() -> JSONObject:
         "integrity_key": {"hex": _IPSEC_PINNED_INTEGRITY_KEY},
     }
 _SUPPORTED_FIELDS: dict[str, set[str]] = {
-    "arp": {
-        "hardware_type",
-        "protocol_type",
-        "hardware_length",
-        "protocol_length",
-        "opcode",
-        "sender_hardware_address",
-        "sender_protocol_address",
-        "target_hardware_address",
-        "target_protocol_address",
-    },
     "dhcp": {
         "op",
         "hardware_type",
@@ -344,6 +333,23 @@ _SUPPORTED_FIELDS: dict[str, set[str]] = {
     "udp": {"src_port", "dst_port", "checksum", "options"},
     "vlan": {"priority", "drop_eligible", "vlan_id", "ethertype"},
 }
+
+
+def _supported_fields(layer: str) -> frozenset[str] | set[str]:
+    """Return the fields the generator samples for ``layer``.
+
+    A migrated layer declares its field allowlist on its registered
+    :class:`~.protocols.base.ProtocolSampler`; an unmigrated layer keeps it in the
+    legacy ``_SUPPORTED_FIELDS`` table. Consulting the registry first lets the two
+    coexist during the migration without changing which fields get sampled.
+    """
+
+    plugin = SAMPLER_REGISTRY.get(layer)
+    if plugin is not None:
+        return plugin.supported_fields
+    return _SUPPORTED_FIELDS.get(layer, set())
+
+
 _SUPPORTED_FIELD_DOMAINS: dict[tuple[str, str], set[object]] = {
     ("dns", "answers"): set(),
     ("icmp", "type"): {"echo_reply", "echo_request"},
@@ -2323,7 +2329,7 @@ class PacketGenerator:
         output: JSONObject = {}
         for raw_field in _field_specs(spec, layer):
             field_name = _string(raw_field.get("name"), f"layers.{layer}.fields.name")
-            if field_name not in _SUPPORTED_FIELDS.get(layer, set()):
+            if field_name not in _supported_fields(layer):
                 continue
             sampled = self._sample_field_value(ctx, layer, raw_field, output)
             if sampled is _SKIP_FIELD:
@@ -2341,7 +2347,7 @@ class PacketGenerator:
             _string(field.get("name"), f"layers.{layer}.fields.name")
             for field in _field_specs(spec, layer)
         }
-        supported = _SUPPORTED_FIELDS.get(layer, set())
+        supported = _supported_fields(layer)
         for field_name in sampled:
             if field_name not in declared:
                 raise ValueError(
@@ -2390,8 +2396,6 @@ class PacketGenerator:
             if field_name == "ethertype":
                 return _declared_ethertype_for_stack(ctx.stack, "vlan")
             return _integer_domain_value(ctx, domain, field_name, bits=_field_bits(field_spec))
-        if layer == "arp":
-            return _sample_arp_field(ctx, field_name, domain)
         if layer == "ipv4":
             return _sample_ipv4_field(ctx, field_name, domain, current_fields)
         if layer == "ipv6":
@@ -2611,34 +2615,6 @@ def _ipv4_for_domain(ctx: _SamplingContext, domain: object, default: str, *, dst
 def _declared_ethertype_for_stack(stack: Sequence[str], layer: str) -> str:
     value = _ethertype_for_stack(stack, layer)
     return "experimental" if value == "unknown" else value
-
-
-def _sample_arp_field(ctx: _SamplingContext, field_name: str, domain: object) -> object:
-    if field_name == "hardware_type":
-        return "ethernet"
-    if field_name == "protocol_type":
-        return "ipv4"
-    if field_name == "hardware_length":
-        return _integer_domain_value(ctx, domain, field_name, bits=8)
-    if field_name == "protocol_length":
-        return _integer_domain_value(ctx, domain, field_name, bits=8)
-    if field_name == "opcode":
-        return domain
-    if field_name == "sender_hardware_address":
-        return _mac_for_domain(ctx, domain, ctx.src_mac)
-    if field_name == "target_hardware_address":
-        return _mac_for_domain(ctx, domain, ctx.dst_mac)
-    if field_name == "sender_protocol_address":
-        return _arp_protocol_address_for_domain(ctx, domain, ctx.arp_sender_ip)
-    if field_name == "target_protocol_address":
-        return _arp_protocol_address_for_domain(ctx, domain, ctx.arp_target_ip)
-    raise ValueError(f"spec error: unsupported arp field sampler: {field_name}")
-
-
-def _arp_protocol_address_for_domain(ctx: _SamplingContext, domain: object, default: str) -> str:
-    if domain == "zero":
-        return "0.0.0.0"
-    return default
 
 
 def _sample_ipv4_field(

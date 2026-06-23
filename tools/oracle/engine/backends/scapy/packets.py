@@ -13,7 +13,9 @@ from .encode_helpers import (
     _ETHERTYPES,
     _IP_PROTOCOLS,
     _bool_int,
+    _bytes_field,
     _ethertype_value,
+    _hardware_type_value,
     _int,
     _layer_fields,
     _optional_field,
@@ -60,7 +62,6 @@ _IPV6_NEXT_HEADERS: dict[str, int] = {
 }
 _SCAPY_LAYER_BY_LAYER: dict[str, str] = {
     "ah": "AH",
-    "arp": "ARP",
     "ble_adv": "BTLE_ADV_IND",
     "ble_radio": "BTLE_PHDR",
     "bgp": "BGPHeader",
@@ -150,6 +151,31 @@ _ROOT_FIRST_LAYERS: dict[str, set[str]] = {
     "l3:ipv6": {"ipv6"},
 }
 _SCAPY_MATERIALIZED_LAYERS = frozenset(_SCAPY_LAYER_BY_LAYER)
+
+
+def _is_materialized_layer(layer: str) -> bool:
+    """Report whether ``layer`` can be encoded by the Scapy backend.
+
+    A migrated layer is materialized when it has a registered
+    :class:`~.protocols.base.ScapyProtocol`; an unmigrated layer stays in the
+    legacy ``_SCAPY_MATERIALIZED_LAYERS`` set. Checking the registry first lets the
+    two coexist during the migration.
+    """
+
+    return layer in _SCAPY_MATERIALIZED_LAYERS or SCAPY_REGISTRY.get(layer) is not None
+
+
+def _scapy_supported_fields(layer: str) -> frozenset[str] | set[str] | None:
+    """Return the encode-side field allowlist for ``layer``.
+
+    A migrated layer declares it on its registered ``ScapyProtocol``; an
+    unmigrated layer keeps it in the legacy ``_SUPPORTED_FIELDS_BY_LAYER`` table.
+    """
+
+    plugin = SCAPY_REGISTRY.get(layer)
+    if plugin is not None:
+        return plugin.supported_fields
+    return _SUPPORTED_FIELDS_BY_LAYER.get(layer)
 _SUPPORTED_FEATURES = {
     "ah_integrity",
     "bgp_communities",
@@ -203,29 +229,6 @@ _SUPPORTED_FEATURES = {
     "zigbee_nwk_aps",
 }
 _SUPPORTED_FIELDS_BY_LAYER: dict[str, set[str]] = {
-    "arp": {
-        "hardware_type",
-        "hwtype",
-        "protocol_type",
-        "ptype",
-        "hardware_length",
-        "hwlen",
-        "protocol_length",
-        "plen",
-        "opcode",
-        "op",
-        "operation",
-        "sender_hardware_address",
-        "sender_ip",
-        "sender_protocol_address",
-        "hwsrc",
-        "psrc",
-        "target_hardware_address",
-        "target_ip",
-        "target_protocol_address",
-        "hwdst",
-        "pdst",
-    },
     "bgp": {
         "afi",
         "asn",
@@ -874,8 +877,6 @@ def _build_layer(plan: PacketPlan, stack: list[str], index: int, scapy_all: Any)
         return _null_loopback(plan.fields, scapy_all)
     if layer == "vlan":
         return _vlan(plan, scapy_all)
-    if layer == "arp":
-        return _arp(fields, scapy_all)
     if layer == "bgp":
         return _bgp(fields, stack, index, scapy_all)
     if layer == "ospf":
@@ -987,143 +988,6 @@ def _null_loopback(fields: Mapping[str, JSONObject], scapy_all: Any) -> Any:
         )
     }
     return scapy_all.Loopback(**kwargs)
-
-
-def _arp(fields: Mapping[str, JSONObject], scapy_all: Any) -> Any:
-    arp_fields = _layer_fields(fields, "arp")
-    kwargs: dict[str, Any] = {
-        "op": _arp_op(_required_field(arp_fields, "arp", "opcode", "op", "operation")),
-        "hwsrc": _arp_address(
-            _required_field(arp_fields, "arp", "sender_hardware_address", "hwsrc"),
-            kind="hardware",
-        ),
-        "psrc": _arp_address(
-            _required_field(
-                arp_fields,
-                "arp",
-                "sender_protocol_address",
-                "sender_ip",
-                "psrc",
-            ),
-            kind="protocol",
-        ),
-        "hwdst": _arp_address(
-            _required_field(arp_fields, "arp", "target_hardware_address", "hwdst"),
-            kind="hardware",
-        ),
-        "pdst": _arp_address(
-            _required_field(
-                arp_fields,
-                "arp",
-                "target_protocol_address",
-                "target_ip",
-                "pdst",
-            ),
-            kind="protocol",
-        ),
-        "hwtype": _hardware_type_value(
-            _required_field(arp_fields, "arp", "hardware_type", "hwtype")
-        ),
-        "ptype": _ethertype_value(_required_field(arp_fields, "arp", "protocol_type", "ptype")),
-    }
-    if "hardware_length" in arp_fields or "hwlen" in arp_fields:
-        kwargs["hwlen"] = _int(_optional_field(arp_fields, "hardware_length", "hwlen"), 0)
-    if "protocol_length" in arp_fields or "plen" in arp_fields:
-        kwargs["plen"] = _int(_optional_field(arp_fields, "protocol_length", "plen"), 0)
-    return scapy_all.ARP(**kwargs)
-
-
-# Hardware/protocol address octet counts for the standard Ethernet/IPv4 ARP
-# form. Scapy's ARP layer accepts a colon-MAC or dotted-IPv4 *string* for these
-# standard widths and emits exact wire bytes, so the existing string path is
-# preserved for them (and for the hwsrc/psrc/hwdst/pdst aliases). Any other
-# address form — a raw ``bytes`` value, a ``{"hex": ...}`` object, or a hex
-# string whose decoded width is not the standard one — is materialized as raw
-# octets so variable-length and unknown-family ARP addresses round-trip without
-# Scapy re-interpreting them as a MAC or IP string.
-_ARP_STANDARD_HARDWARE_OCTETS = 6
-_ARP_STANDARD_PROTOCOL_OCTETS = 4
-
-
-def _arp_address(value: object, *, kind: str) -> object:
-    """Coerce one ARP sender/target address into a Scapy-materializable value.
-
-    Standard Ethernet/IPv4 forms (a colon-separated MAC for a hardware address,
-    a dotted-quad IPv4 for a protocol address) pass through unchanged as the
-    string Scapy expects, keeping the golden Ethernet/IPv4 ARP bytes stable.
-    Raw byte forms — ``bytes``, ``{"hex": ...}``, or a non-standard-width hex
-    string — are decoded to raw octets so nonstandard hardware/protocol address
-    lengths and unknown address families materialize byte-for-byte.
-    """
-
-    standard_octets = (
-        _ARP_STANDARD_HARDWARE_OCTETS
-        if kind == "hardware"
-        else _ARP_STANDARD_PROTOCOL_OCTETS
-    )
-
-    if isinstance(value, bytes):
-        return value
-    if isinstance(value, Mapping):
-        return _bytes_field(value)
-    if isinstance(value, str):
-        if kind == "hardware" and _is_standard_mac(value):
-            return value
-        if kind == "protocol" and _is_standard_ipv4(value):
-            return value
-        raw = _arp_address_hex_bytes(value)
-        if raw is None:
-            # Unrecognized string form (e.g. a non-standard IPv4/MAC textual
-            # form). Leave it to Scapy unchanged rather than silently rewriting
-            # the address; an encode failure here surfaces as a backend
-            # limitation in the oracle report.
-            return value
-        if len(raw) == standard_octets:
-            # Standard-width hex with no separators: hand Scapy the native
-            # string form so the standard golden bytes path is unchanged.
-            if kind == "hardware":
-                return ":".join(f"{octet:02x}" for octet in raw)
-            return ".".join(str(octet) for octet in raw)
-        return raw
-    return _text(value, "")
-
-
-def _is_standard_mac(value: str) -> bool:
-    parts = value.split(":")
-    if len(parts) != _ARP_STANDARD_HARDWARE_OCTETS:
-        return False
-    for part in parts:
-        if len(part) != 2:
-            return False
-        try:
-            int(part, 16)
-        except ValueError:
-            return False
-    return True
-
-
-def _is_standard_ipv4(value: str) -> bool:
-    parts = value.split(".")
-    if len(parts) != _ARP_STANDARD_PROTOCOL_OCTETS:
-        return False
-    for part in parts:
-        if not part.isdigit():
-            return False
-        if not 0 <= int(part) <= 255:
-            return False
-    return True
-
-
-def _arp_address_hex_bytes(value: str) -> bytes | None:
-    cleaned = value.replace(":", "").replace("-", "").replace(" ", "")
-    if cleaned == "":
-        return b""
-    if len(cleaned) % 2 != 0:
-        return None
-    try:
-        return bytes.fromhex(cleaned)
-    except ValueError:
-        return None
 
 
 def _bgp(
@@ -3559,7 +3423,7 @@ def _validate_plan_contract(plan: PacketPlan, stack: list[str], root: str) -> No
         )
 
     for index, layer in enumerate(stack):
-        if layer not in _SCAPY_MATERIALIZED_LAYERS:
+        if not _is_materialized_layer(layer):
             raise ValueError(f"unsupported Scapy materialization layer: {layer}")
         fields = _layer_fields_for_stack_index(plan.fields, stack, index)
         _validate_layer_fields(layer, fields)
@@ -3570,7 +3434,7 @@ def _validate_plan_contract(plan: PacketPlan, stack: list[str], root: str) -> No
 
 
 def _validate_layer_fields(layer: str, fields: Mapping[str, object]) -> None:
-    supported = _SUPPORTED_FIELDS_BY_LAYER.get(layer)
+    supported = _scapy_supported_fields(layer)
     if supported is None:
         raise ValueError(f"unsupported Scapy materialization layer: {layer}")
     unknown = sorted(set(fields) - supported)
@@ -4932,15 +4796,6 @@ def _capability_contract(
     return capabilities
 
 
-def _hardware_type_value(value: object) -> int:
-    if isinstance(value, str):
-        lowered = value.lower()
-        if lowered in {"ether", "ethernet"}:
-            return 1
-        return int(lowered, 0)
-    return _int(value, 1)
-
-
 def _linux_sll_packet_type(value: object) -> int:
     if isinstance(value, str):
         lowered = value.lower().replace("-", "_")
@@ -4971,24 +4826,6 @@ def _address_family_value(value: object) -> int:
     return _int(value, 2)
 
 
-def _bytes_field(value: object, *, pad_to: int | None = None) -> bytes:
-    if isinstance(value, bytes):
-        raw = value
-    elif isinstance(value, Mapping):
-        hex_value = value.get("hex")
-        if not isinstance(hex_value, str):
-            raise ValueError(f"bytes field object requires hex, got {value!r}")
-        raw = bytes.fromhex(hex_value)
-    elif isinstance(value, str):
-        cleaned = value.replace(":", "").replace("-", "")
-        raw = bytes.fromhex(cleaned)
-    else:
-        raise ValueError(f"expected bytes-compatible value, got {value!r}")
-    if pad_to is not None and len(raw) < pad_to:
-        raw = raw + (b"\x00" * (pad_to - len(raw)))
-    return raw
-
-
 def _protocol_value(value: object, mapping: Mapping[str, int]) -> int:
     if isinstance(value, str):
         lowered = value.lower()
@@ -4996,19 +4833,6 @@ def _protocol_value(value: object, mapping: Mapping[str, int]) -> int:
             return mapping[lowered]
         return int(lowered, 0)
     return _int(value, 0)
-
-
-def _arp_op(value: object) -> int | str:
-    if value is None:
-        return 1
-    if isinstance(value, str):
-        lowered = value.lower()
-        if lowered in {"who-has", "request"}:
-            return 1
-        if lowered in {"is-at", "reply"}:
-            return 2
-        return lowered
-    return _int(value, 1)
 
 
 def _ipv4_flags(value: object) -> object:
@@ -5880,6 +5704,9 @@ def _scapy_decoder(root: str) -> str:
 
 
 def _scapy_layer_name(layer: str) -> str:
+    plugin = SCAPY_REGISTRY.get(layer)
+    if plugin is not None and plugin.scapy_class is not None:
+        return plugin.scapy_class
     return _SCAPY_LAYER_BY_LAYER.get(layer, layer)
 
 

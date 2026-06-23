@@ -102,3 +102,30 @@ def _text(value: object, default: str) -> str:
     if isinstance(value, str):
         return value
     return str(value)
+
+
+def _hardware_type_value(value: object) -> int:
+    if isinstance(value, str):
+        lowered = value.lower()
+        if lowered in {"ether", "ethernet"}:
+            return 1
+        return int(lowered, 0)
+    return _int(value, 1)
+
+
+def _bytes_field(value: object, *, pad_to: int | None = None) -> bytes:
+    if isinstance(value, bytes):
+        raw = value
+    elif isinstance(value, Mapping):
+        hex_value = value.get("hex")
+        if not isinstance(hex_value, str):
+            raise ValueError(f"bytes field object requires hex, got {value!r}")
+        raw = bytes.fromhex(hex_value)
+    elif isinstance(value, str):
+        cleaned = value.replace(":", "").replace("-", "")
+        raw = bytes.fromhex(cleaned)
+    else:
+        raise ValueError(f"expected bytes-compatible value, got {value!r}")
+    if pad_to is not None and len(raw) < pad_to:
+        raw = raw + (b"\x00" * (pad_to - len(raw)))
+    return raw

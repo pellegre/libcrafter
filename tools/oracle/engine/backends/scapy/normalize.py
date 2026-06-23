@@ -47,7 +47,6 @@ _IPV6_OPTION_REGION_KEY = "__ipv6_option_region_hex__"
 
 _LAYER_ALIASES: dict[str, str] = {
     "AH": "ah",
-    "ARP": "arp",
     "BTLE": "ble_radio",
     "BTLE_ADV": "ble_adv",
     "BTLE_ADV_IND": "ble_adv",
@@ -107,15 +106,9 @@ _FIELD_ALIASES: dict[str, str] = {
     "dport": "dst_port",
     "frag": "fragment_offset",
     "hlim": "hop_limit",
-    "hwsrc": "sender_hardware_address",
-    "hwdst": "target_hardware_address",
     "len": "length",
     "nh": "next_header",
-    "op": "opcode",
-    "pdst": "target_protocol_address",
     "proto": "protocol",
-    "psrc": "sender_protocol_address",
-    "ptype": "protocol_type",
     "sport": "src_port",
     "urgptr": "urgent_pointer",
 }
@@ -124,11 +117,6 @@ _LAYER_FIELD_ALIASES: dict[str, dict[str, str]] = {
         "nh": "next_header",
         "payloadlen": "payload_len",
         "seq": "sequence",
-    },
-    "arp": {
-        "hwlen": "hardware_length",
-        "hwtype": "hardware_type",
-        "plen": "protocol_length",
     },
     "bgp": {
         "bgp_id": "bgp_identifier",
@@ -631,9 +619,28 @@ def _ipv6_option_region_bytes(layer: Any) -> bytes | None:
     return raw[2:total_len]
 
 
+def _registered_layer_aliases() -> dict[str, str]:
+    """Native Scapy class name -> oracle layer name, contributed by plugins.
+
+    Each migrated layer's :class:`~.protocols.base.ScapyProtocol` carries the
+    decode-side ``layer_aliases`` it owns; collecting them lets
+    :func:`_normalize_layer_name` resolve migrated layers from the registry while
+    the legacy ``_LAYER_ALIASES`` table still covers unmigrated ones.
+    """
+
+    aliases: dict[str, str] = {}
+    for plugin in SCAPY_REGISTRY.values():
+        for native_name, layer_name in plugin.layer_aliases:
+            aliases[native_name] = layer_name
+    return aliases
+
+
 def _normalize_layer_name(native_name: str) -> str:
     if native_name.startswith("ICMPv6"):
         return "icmpv6"
+    registered = _registered_layer_aliases()
+    if native_name in registered:
+        return registered[native_name]
     return _LAYER_ALIASES.get(native_name, native_name.lower())
 
 
@@ -694,8 +701,6 @@ def _normalize_fields(layer_name: str, fields: JSONObject) -> JSONObject:
         _normalize_ipv6_fields(output)
     if layer_name in {"ipv6_hop_by_hop", "ipv6_destination_options"}:
         _normalize_ipv6_options_header_fields(output)
-    if layer_name == "arp":
-        _normalize_arp_fields(output)
     if layer_name == "ospf":
         _normalize_ospf_fields(output)
     if layer_name in {"icmp", "icmpv6"}:
@@ -3282,41 +3287,6 @@ def _ipv6_segment_routing_flags(fields: JSONObject) -> int | None:
         | ((_int_or_zero(fields.get("hmac")) & 0x01) << 3)
         | (_int_or_zero(fields.get("unused2")) & 0x07)
     )
-
-
-_ARP_ADDRESS_FIELDS = (
-    "sender_hardware_address",
-    "sender_protocol_address",
-    "target_hardware_address",
-    "target_protocol_address",
-)
-
-
-def _normalize_arp_fields(fields: JSONObject) -> None:
-    """Normalize ARP fields for backend-neutral comparison.
-
-    The fixed-header fields (hardware/protocol type, hardware/protocol length,
-    and opcode) are already aliased and kept numeric so known and unknown
-    codepoints stay raw-preserving and round-trippable. The four variable
-    sender/target address fields are reduced to a stable comparable form:
-    standard Ethernet/IPv4 ARP keeps the colon-formatted MAC and dotted IPv4
-    strings (matching the current fixtures and the libcrafter decoded view),
-    while nonstandard or unknown-family address byte vectors are reduced to a
-    bare ``{"hex": ...}`` value carrying the raw octets without the Scapy
-    ASCII rendering, which is not byte-comparable across backends.
-    """
-
-    for name in _ARP_ADDRESS_FIELDS:
-        if name in fields:
-            fields[name] = _normalize_arp_address(fields[name])
-
-
-def _normalize_arp_address(value: JSONValue) -> JSONValue:
-    if isinstance(value, Mapping):
-        hex_value = value.get("hex")
-        if isinstance(hex_value, str):
-            return {"hex": hex_value}
-    return value
 
 
 def _normalize_linux_sll_source_address(value: JSONValue) -> JSONValue:
