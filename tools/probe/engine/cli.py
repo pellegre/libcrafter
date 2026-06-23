@@ -141,6 +141,7 @@ from .endpoint_addressing import (
 )
 from .protocols import (
     all_stimulus_endpoint_cases as _registry_stimulus_endpoint_cases,
+    registered_plugins as _registered_protocol_plugins,
 )
 
 
@@ -1307,6 +1308,27 @@ def _ndp_plan_with_endpoint_addresses(
     return updated
 
 
+def _registry_rewrite_plugin_for_case(case_name: str) -> object | None:
+    """Return the registered plugin that owns ``case_name`` and rewrites it.
+
+    A plugin owns a stimulus-endpoint case via its ``stimulus_endpoint_cases``;
+    if it also defines a ``rewrite_endpoint_addresses`` hook, that hook replaces
+    the legacy per-protocol branch for the case's live-path address rewrite. No
+    protocol is migrated yet, so this returns ``None`` for every case and the
+    legacy if/elif (including the NDP early-return) runs unchanged. A case is
+    therefore rewritten exactly once: the plugin hook when an owner exists,
+    otherwise the legacy branch.
+    """
+
+    for plugin in _registered_protocol_plugins():
+        if (
+            case_name in plugin.stimulus_endpoint_cases
+            and plugin.rewrite_endpoint_addresses is not None
+        ):
+            return plugin
+    return None
+
+
 def _probe_plan_with_endpoint_addresses(
     plan: JSONObject,
     *,
@@ -1319,6 +1341,22 @@ def _probe_plan_with_endpoint_addresses(
 ) -> JSONObject:
     if plan.get("case") not in _STIMULUS_ENDPOINT_CASES:
         return dict(plan)
+    # Registry-first dispatch: if a migrated plugin owns this case and defines a
+    # rewrite hook, it replaces the legacy per-protocol branch (including the NDP
+    # early-return) and is called with the same rewrite context. With an empty
+    # registry no plugin owns any case, so this is a no-op today and every case
+    # flows through the unchanged legacy branches below.
+    plugin = _registry_rewrite_plugin_for_case(str(plan.get("case", "")))
+    if plugin is not None:
+        return plugin.rewrite_endpoint_addresses(
+            plan,
+            source_ipv4=source_ipv4,
+            target_ipv4=target_ipv4,
+            source_mac=source_mac,
+            target_mac=target_mac,
+            target_interface=target_interface,
+            rewrite_source=rewrite_source,
+        )
     if plan.get("case") in _NDP_REWRITE_CASES:
         # NDP rides ICMPv6 over IPv6 (next header 58) and carries no IPv4
         # transport, so the lab rewrite touches the IPv6/link-local addresses and
