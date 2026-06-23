@@ -79,12 +79,27 @@ from .protocols.dns import (
     dns_responder_descriptor,
     dns_responder_setup_lines,
 )
+
+# DHCP's target-service descriptor, responder case set, plan selector, and the
+# setup-script blocks were migrated into the DHCP plugin
+# (:mod:`tools.probe.engine.protocols.dhcp`). They are re-imported here so
+# ``target_services.dhcp_responder_descriptor`` / ``target_services._DHCP_RESPONDER_CASES``
+# / ``target_services.dhcp_probe_plans`` keep resolving (the behavior/script tests,
+# ``prepare_wire_probe_target``, and ``__all__`` reference them), and so
+# ``target_service_setup_script`` can render the DHCP setup blocks. The DHCP plugin
+# module does not import ``target_services``, so this does not cycle.
+from .protocols.dhcp import (
+    _DHCP_RESPONDER_CASES,
+    dhcp_port_check_lines,
+    dhcp_probe_plans,
+    dhcp_responder_descriptor,
+    dhcp_responder_setup_lines,
+)
 from .target_service_helpers import (
     KernelStateDescriptor,
     TargetServiceDescriptor,
     dedupe_ints,
     plans_by_destination_port,
-    probe_plan_send_count,
     target_service_address_fields,
 )
 from .target_service_helpers import json_mapping as _json_mapping
@@ -137,43 +152,6 @@ RIP_RIB_COMMAND = "vtysh -c 'show ip rip'"
 # :mod:`tools.probe.engine.protocols.dns` and is re-imported above so
 # ``target_services.dns_responder_descriptor`` keeps resolving for the
 # behavior/script tests.
-
-
-def dhcp_responder_descriptor(
-    *,
-    bind_ipv4: str,
-    source_ipv4: str,
-    port: int,
-    artifact_root: str,
-) -> TargetServiceDescriptor:
-    """Describe the controlled DHCP/BOOTP responder on a private L2 segment.
-
-    DHCP requires link-layer broadcast on a private lab network, so the
-    descriptor records the link-layer requirement that gates it.
-    """
-
-    return TargetServiceDescriptor(
-        name="dhcp-responder",
-        protocol="udp",
-        purpose="dhcp",
-        bind_ipv4=bind_ipv4,
-        source_ipv4=source_ipv4,
-        port=port,
-        requires=["python3", SKIP_REQUIRES_LINK_LAYER, SKIP_REQUIRES_CONTROLLED_SERVICE],
-        setup_commands=[
-            f"check udp port {bind_ipv4}:{port} is free",
-            f"start dhcp-responder.py on {bind_ipv4}:{port}",
-        ],
-        cleanup_commands=[
-            f"kill dhcp-responder on {bind_ipv4}:{port}",
-        ],
-        artifacts=[
-            posixpath.join(artifact_root, f"dhcp-responder-{port}.stdout.txt"),
-            posixpath.join(artifact_root, f"dhcp-responder-{port}.stderr.txt"),
-            posixpath.join(artifact_root, f"dhcp-responder-{port}.pid"),
-        ],
-        metadata={"runtime": "python3", "deterministic": True, "layer": "link"},
-    )
 
 
 def udp_responder_descriptor(
@@ -470,8 +448,6 @@ def _legacy_target_service_setup_plan(
     tcp_closed_plans = plans_by_destination_port(
         plan for plan in probe_plans if plan.get("case") == "tcp-syn-closed"
     )
-    dhcp_plans = dhcp_probe_plans(probe_plans)
-    dhcp_plans_by_port = plans_by_destination_port(dhcp_plans)
     udp_plans = udp_probe_plans(probe_plans)
     udp_plans_by_port = plans_by_destination_port(udp_plans)
     closed_udp_plans = closed_udp_probe_plans(probe_plans)
@@ -484,7 +460,6 @@ def _legacy_target_service_setup_plan(
         "starts_services": not dry_run
         and bool(
             tcp_open_plans
-            or dhcp_plans_by_port
             or udp_plans_by_port
             or bgp_plans
         ),
@@ -500,26 +475,6 @@ def _legacy_target_service_setup_plan(
                     **target_service_address_fields(plan),
                 }
                 for port, plan in tcp_open_plans.items()
-            ],
-            *[
-                {
-                    "name": "dhcp-responder",
-                    "protocol": "udp",
-                    "port": port,
-                    "purpose": "dhcp",
-                    "deterministic": True,
-                    "request_count": sum(
-                        probe_plan_send_count(plan)
-                        for plan in dhcp_plans
-                        if int(plan.get("destination_port", 0)) == port
-                    ),
-                    **target_service_address_fields(plan),
-                    "log_paths": [
-                        f"live-artifacts/probe/target-services/dhcp-responder-{port}.stdout.txt",
-                        f"live-artifacts/probe/target-services/dhcp-responder-{port}.stderr.txt",
-                    ],
-                }
-                for port, plan in dhcp_plans_by_port.items()
             ],
             *[
                 {
@@ -649,31 +604,12 @@ def probe_plan_requires_bgp_peer(plan: Mapping[str, JSONValue]) -> bool:
     return isinstance(case_name, str) and case_name.startswith("bgp-")
 
 
-# Probe cases that drive the controlled DHCP/BOOTP responder on a private L2
-# segment. ``dhcp-discover-offer`` is the baseline Discover->Offer case; the
-# later DHCP behavioral cases reuse the same responder descriptor and target
-# setup. Providers without link-layer/broadcast capability skip these cases (the
-# descriptor records the link-layer requirement that gates them).
-_DHCP_RESPONDER_CASES: frozenset[str] = frozenset(
-    {
-        "dhcp-discover-offer",
-        "dhcp-request-ack",
-        "dhcp-client-identifier",
-        "dhcp-hostname",
-        "dhcp-parameter-request-list",
-        "dhcp-lease-time",
-        "dhcp-renewal-unicast-ack",
-        "dhcp-inform-ack",
-        "dhcp-request-nak",
-        "dhcp-rapid-repeat",
-    }
-)
-
-
-def dhcp_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
-    """Return the DHCP probe plans in order."""
-
-    return [plan for plan in probe_plans if plan.get("case") in _DHCP_RESPONDER_CASES]
+# The DHCP responder case set (``_DHCP_RESPONDER_CASES``) and the
+# ``dhcp_probe_plans`` selector now live in
+# :mod:`tools.probe.engine.protocols.dhcp`; they are re-imported above so
+# ``target_services._DHCP_RESPONDER_CASES`` / ``target_services.dhcp_probe_plans``
+# keep resolving for ``prepare_wire_probe_target`` / the tests (the partition
+# reroutes DHCP plans to the plugin's ``target_service`` hook).
 
 
 # Probe cases that drive the controlled UDP echo/transform responder. The empty
@@ -882,12 +818,6 @@ def target_service_setup_script(
     the live run is inspectable.
     """
 
-    dhcp_plan_json = json.dumps(list(dhcp_plans), sort_keys=True)
-    dhcp_ports = dedupe_ints(
-        int(plan["destination_port"])
-        for plan in dhcp_plans
-        if isinstance(plan.get("destination_port"), int)
-    )
     udp_ports = dedupe_ints(
         int(plan["destination_port"])
         for plan in udp_plans
@@ -943,25 +873,10 @@ def target_service_setup_script(
     # ``protocols.dns.dns_port_check_lines``; render it here so the script bytes
     # stay byte-identical to the legacy inline ``for port in dns_ports:`` loop.
     lines.extend(dns_port_check_lines(dns_plans))
-    for port in dhcp_ports:
-        lines.extend(
-            [
-                "python3 - \"$dhcp_bind_ipv4\" \"$1\" <<'PY'".replace("$1", str(port)),
-                "import socket",
-                "import sys",
-                "bind_ip = sys.argv[1]",
-                "port = int(sys.argv[2])",
-                "sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)",
-                "try:",
-                "    sock.bind((bind_ip, port))",
-                "except OSError as exc:",
-                "    print(f'udp port {bind_ip}:{port} is not free: {exc}', file=sys.stderr)",
-                "    sys.exit(1)",
-                "finally:",
-                "    sock.close()",
-                "PY",
-            ]
-        )
+    # The DHCP per-port UDP port-free check moved to
+    # ``protocols.dhcp.dhcp_port_check_lines``; render it here so the script bytes
+    # stay byte-identical to the legacy inline ``for port in dhcp_ports:`` loop.
+    lines.extend(dhcp_port_check_lines(dhcp_plans))
     for port in closed_ports:
         lines.append(f"check_port_free \"$tcp_bind_ipv4\" {port}")
         lines.append(f"echo closed_port_{port}=free")
@@ -1031,213 +946,15 @@ def target_service_setup_script(
             dns_plans=dns_plans,
         )
     )
-    if dhcp_ports:
-        plan_path = posixpath.join(artifact_root, "dhcp-plans.json")
-        service_path = posixpath.join(artifact_root, "dhcp-responder.py")
-        lines.extend(
-            [
-                f"cat > {shlex.quote(plan_path)} <<'JSON'",
-                dhcp_plan_json,
-                "JSON",
-                f"cat > {shlex.quote(service_path)} <<'PY'",
-                "import ipaddress",
-                "import json",
-                "import signal",
-                "import socket",
-                "import struct",
-                "import sys",
-                "import time",
-                "",
-                "stop = False",
-                "",
-                "def handle_stop(_signum, _frame):",
-                "    global stop",
-                "    stop = True",
-                "",
-                "signal.signal(signal.SIGTERM, handle_stop)",
-                "signal.signal(signal.SIGINT, handle_stop)",
-                "",
-                "plan_path, bind_ip, port_text = sys.argv[1:4]",
-                "port = int(port_text)",
-                "plans = json.load(open(plan_path, encoding='utf-8'))",
-                "entries = {}",
-                "entries_by_xid = {}",
-                "",
-                "def mac_normal(value):",
-                "    return str(value or '').lower()",
-                "",
-                "def mac_bytes(value):",
-                "    return bytes(int(part, 16) for part in mac_normal(value).split(':'))",
-                "",
-                "def ip_bytes(value):",
-                "    return ipaddress.IPv4Address(str(value)).packed",
-                "",
-                "def opt_u8(code, value):",
-                "    return bytes([code, 1, int(value) & 0xff])",
-                "",
-                "def opt_u32(code, value):",
-                "    return bytes([code, 4]) + struct.pack('!I', int(value) & 0xffffffff)",
-                "",
-                "def opt_ip(code, value):",
-                "    return bytes([code, 4]) + ip_bytes(value)",
-                "",
-                "def opt_bytes(code, data):",
-                "    return bytes([code, len(data)]) + data",
-                "",
-                "def opt_text(code, value):",
-                "    raw = str(value).encode('utf-8')",
-                "    if len(raw) > 255:",
-                "        raise ValueError(f'dhcp option {code} text is too long')",
-                "    return opt_bytes(code, raw)",
-                "",
-                "def entry_from(raw, parent=None):",
-                "    parent = parent or {}",
-                "    xid = int(raw.get('transaction_id') or parent.get('transaction_id'))",
-                "    client_mac = mac_normal(raw.get('client_mac') or parent.get('client_mac'))",
-                "    message_type = int(",
-                "        raw.get('expected_message_type_value')",
-                "        or parent.get('expected_message_type_value')",
-                "        or (6 if raw.get('expected_message') or raw.get('message') else 2)",
-                "    )",
-                "    yiaddr = '0.0.0.0' if (raw.get('expected_yiaddr_zero') or raw.get('yiaddr_zero')) else str(",
-                "        raw.get('expected_yiaddr') or raw.get('yiaddr') or parent.get('expected_yiaddr') or '0.0.0.0'",
-                "    )",
-                "    return {",
-                "        'transaction_id': xid,",
-                "        'client_mac': client_mac,",
-                "        'message_type': message_type,",
-                "        'yiaddr': yiaddr,",
-                "        'server_identifier': str(",
-                "            raw.get('expected_server_identifier')",
-                "            or raw.get('server_identifier')",
-                "            or parent.get('expected_server_identifier')",
-                "            or bind_ip",
-                "        ),",
-                "        'subnet_mask': raw.get('expected_subnet_mask') or raw.get('subnet_mask') or parent.get('expected_subnet_mask'),",
-                "        'router_ipv4': raw.get('expected_router_ipv4') or raw.get('router_ipv4') or parent.get('expected_router_ipv4'),",
-                "        'dns_ipv4': raw.get('expected_dns_ipv4') or raw.get('dns_ipv4') or parent.get('expected_dns_ipv4'),",
-                "        'lease_time': raw.get('expected_lease_time') or raw.get('lease_time') or parent.get('expected_lease_time'),",
-                "        'renewal_time': raw.get('expected_renewal_time') or raw.get('renewal_time') or parent.get('expected_renewal_time'),",
-                "        'rebinding_time': raw.get('expected_rebinding_time') or raw.get('rebinding_time') or parent.get('expected_rebinding_time'),",
-                "        'no_lease_time': bool(raw.get('expected_no_lease_time') or raw.get('no_lease_time')),",
-                "        'client_identifier_hex': raw.get('expected_client_identifier_hex') or raw.get('client_identifier_hex') or parent.get('expected_client_identifier_hex'),",
-                "        'hostname': raw.get('expected_hostname') or raw.get('hostname') or parent.get('expected_hostname'),",
-                "        'message': raw.get('expected_message') or raw.get('message') or parent.get('expected_message'),",
-                "    }",
-                "",
-                "def register(raw, parent=None):",
-                "    entry = entry_from(raw, parent)",
-                "    key = (entry['transaction_id'], entry['client_mac'])",
-                "    entries[key] = entry",
-                "    entries_by_xid.setdefault(entry['transaction_id'], entry)",
-                "",
-                "for plan in plans:",
-                "    register(plan)",
-                "    sends = plan.get('dhcp_sends')",
-                "    if isinstance(sends, list):",
-                "        for send in sends:",
-                "            register(send, plan)",
-                "",
-                "def response_for(request):",
-                "    if len(request) < 240:",
-                "        raise ValueError('dhcp request shorter than bootp header')",
-                "    xid = struct.unpack('!I', request[4:8])[0]",
-                "    chaddr = request[28:44]",
-                "    client_mac = ':'.join(f'{octet:02x}' for octet in chaddr[:6])",
-                "    entry = entries.get((xid, client_mac)) or entries_by_xid.get(xid)",
-                "    if entry is None:",
-                "        raise ValueError(f'no planned dhcp response for xid {xid} client {client_mac}')",
-                "    server_ip = ip_bytes(entry['server_identifier'])",
-                "    yiaddr = ip_bytes(entry['yiaddr'])",
-                "    ciaddr = request[12:16]",
-                "    header = struct.pack(",
-                "        '!BBBBIHH4s4s4s4s16s64s128s',",
-                "        2,",
-                "        1,",
-                "        6,",
-                "        0,",
-                "        xid,",
-                "        0,",
-                "        0,",
-                "        ciaddr,",
-                "        yiaddr,",
-                "        server_ip,",
-                "        b'\\x00' * 4,",
-                "        chaddr,",
-                "        b'\\x00' * 64,",
-                "        b'\\x00' * 128,",
-                "    )",
-                "    options = bytearray(b'\\x63\\x82\\x53\\x63')",
-                "    options.extend(opt_u8(53, entry['message_type']))",
-                "    options.extend(opt_ip(54, entry['server_identifier']))",
-                "    if entry.get('subnet_mask'):",
-                "        options.extend(opt_ip(1, entry['subnet_mask']))",
-                "    if entry.get('router_ipv4'):",
-                "        options.extend(opt_ip(3, entry['router_ipv4']))",
-                "    if entry.get('dns_ipv4'):",
-                "        options.extend(opt_ip(6, entry['dns_ipv4']))",
-                "    if entry.get('lease_time') is not None and not entry.get('no_lease_time'):",
-                "        options.extend(opt_u32(51, entry['lease_time']))",
-                "    if entry.get('renewal_time') is not None:",
-                "        options.extend(opt_u32(58, entry['renewal_time']))",
-                "    if entry.get('rebinding_time') is not None:",
-                "        options.extend(opt_u32(59, entry['rebinding_time']))",
-                "    if entry.get('client_identifier_hex'):",
-                "        options.extend(opt_bytes(61, bytes.fromhex(str(entry['client_identifier_hex']))))",
-                "    if entry.get('hostname'):",
-                "        options.extend(opt_text(12, entry['hostname']))",
-                "    if entry.get('message'):",
-                "        options.extend(opt_text(56, entry['message']))",
-                "    options.append(255)",
-                "    return header + bytes(options), entry",
-                "",
-                "sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)",
-                "sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)",
-                "sock.bind((bind_ip, port))",
-                "sock.settimeout(1.0)",
-                "print(json.dumps({'event': 'listening', 'bind_ip': bind_ip, 'port': port, 'planned_responses': len(entries)}), flush=True)",
-                "while not stop:",
-                "    try:",
-                "        data, addr = sock.recvfrom(4096)",
-                "    except socket.timeout:",
-                "        continue",
-                "    try:",
-                "        response, entry = response_for(data)",
-                "        sock.sendto(response, (addr[0], 68))",
-                "        print(json.dumps({'event': 'answered', 'client': addr[0], 'client_port': addr[1], 'transaction_id': entry['transaction_id'], 'message_type': entry['message_type']}, sort_keys=True), flush=True)",
-                "    except Exception as exc:",
-                "        print(json.dumps({'event': 'error', 'client': addr[0], 'error': str(exc)}), file=sys.stderr, flush=True)",
-                "sock.close()",
-                "print(json.dumps({'event': 'stopped', 'ts': time.time()}), flush=True)",
-                "PY",
-            ]
+    # The DHCP responder heredoc + launch block moved to
+    # ``protocols.dhcp.dhcp_responder_setup_lines``; render it here so the
+    # script bytes stay byte-identical to the legacy inline blocks.
+    lines.extend(
+        dhcp_responder_setup_lines(
+            artifact_root=artifact_root,
+            dhcp_plans=dhcp_plans,
         )
-    for port in dhcp_ports:
-        stdout_path = posixpath.join(artifact_root, f"dhcp-responder-{port}.stdout.txt")
-        stderr_path = posixpath.join(artifact_root, f"dhcp-responder-{port}.stderr.txt")
-        pid_path = posixpath.join(artifact_root, f"dhcp-responder-{port}.pid")
-        lines.extend(
-            [
-                f"check_udp_port_free \"$dhcp_bind_ipv4\" {port}",
-                (
-                    f"python3 {shlex.quote(posixpath.join(artifact_root, 'dhcp-responder.py'))} "
-                    f"{shlex.quote(posixpath.join(artifact_root, 'dhcp-plans.json'))} "
-                    f"\"$dhcp_bind_ipv4\" {port} "
-                    f">{shlex.quote(stdout_path)} 2>{shlex.quote(stderr_path)} &"
-                ),
-                "pid=$!",
-                f"echo \"$pid\" > {shlex.quote(pid_path)}",
-                "printf '%s\\n' \"kill $pid 2>/dev/null || true\" >> \"$cleanup\"",
-                f"printf '%s\\n' \"rm -f {shlex.quote(pid_path)}\" >> \"$cleanup\"",
-                "sleep 0.5",
-                "if ! kill -0 \"$pid\" 2>/dev/null; then",
-                f"  cat {shlex.quote(stderr_path)} >&2 || true",
-                f"  echo dhcp_responder_{port}=failed >&2",
-                "  exit 73",
-                "fi",
-                f"echo dhcp_responder_{port}=running",
-            ]
-        )
+    )
     if udp_ports:
         service_path = posixpath.join(artifact_root, "udp-responder.py")
         lines.extend(

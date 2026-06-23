@@ -23,8 +23,16 @@ ordered profile name tables in :mod:`tools.probe.engine.cases` keep owning
 DHCP's profile membership to preserve byte-identical selection order.
 
 The DHCP target-service / address-rewrite / failure-reason / lab-capability
-hooks are deferred to the second half of the migration (step 22); they are
-``None`` here.
+hooks complete the migration here (step 22): the ``target_service`` hook
+contributes the ``dhcp-responder`` service entries (and diverts the DHCP cases
+off the legacy target path); the co-located setup-script blocks (the per-port
+UDP free check and the responder heredoc + launch) are called directly by
+``target_services.target_service_setup_script`` because they need the planned
+DHCP plans the ``setup_script`` hook is not handed; the
+``rewrite_endpoint_addresses`` hook reproduces the DHCP live-path rewrite (all
+ten DHCP cases carry a DHCP-specific rewrite, so none falls through); the
+``failure_reasons`` hook reproduces the DHCP failure taxonomy; and the
+``lab_capabilities`` hook contributes the ``dhcp_service`` derived capability.
 
 Imports are relative only so the module loads under both engine import roots
 (``engine.protocols.dhcp`` for the CLI and ``tools.probe.engine.protocols.dhcp``
@@ -33,13 +41,35 @@ for the tests).
 
 from __future__ import annotations
 
+import json
+import posixpath
+import shlex
+from collections.abc import Mapping, Sequence
+
+from ..capability_derivation import capability
 from ..case_helpers import _behavior_case
-from ..model import JSONObject, ProbeCase
+from ..endpoint_addressing import (
+    FAILURE_DECODE_FAILED,
+    FAILURE_TARGET_SETUP_FAILED,
+    FAILURE_TIMEOUT,
+    FAILURE_WRONG_FLAGS,
+    FAILURE_WRONG_PAYLOAD,
+    FAILURE_WRONG_PEER,
+    apply_shared_ipv4_rewrite_tail,
+)
+from ..model import JSONObject, JSONValue, ProbeCase, json_object
 from ..planning_helpers import (
     deterministic_bytes,
     deterministic_ipv4_pair,
     deterministic_router_ipv4,
     dns_label,
+)
+from ..target_service_helpers import (
+    TargetServiceDescriptor,
+    dedupe_ints,
+    plans_by_destination_port,
+    probe_plan_send_count,
+    target_service_address_fields,
 )
 from .base import ProtocolPlugin, register
 
@@ -1591,6 +1621,595 @@ _DHCP_STIMULUS_ENDPOINT_CASES: frozenset[str] = frozenset(
 )
 
 
+# --------------------------------------------------------------------------- #
+# Target-service descriptor and case selector (moved from target_services.py)
+# --------------------------------------------------------------------------- #
+#
+# Probe cases that drive the controlled DHCP/BOOTP responder on a private L2
+# segment. ``dhcp-discover-offer`` is the baseline Discover->Offer case; the
+# later DHCP behavioral cases reuse the same responder descriptor and target
+# setup. Providers without link-layer/broadcast capability skip these cases (the
+# descriptor records the link-layer requirement that gates them).
+_DHCP_RESPONDER_CASES: frozenset[str] = frozenset(
+    {
+        "dhcp-discover-offer",
+        "dhcp-request-ack",
+        "dhcp-client-identifier",
+        "dhcp-hostname",
+        "dhcp-parameter-request-list",
+        "dhcp-lease-time",
+        "dhcp-renewal-unicast-ack",
+        "dhcp-inform-ack",
+        "dhcp-request-nak",
+        "dhcp-rapid-repeat",
+    }
+)
+
+
+def dhcp_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
+    """Return the DHCP probe plans in order."""
+
+    return [plan for plan in probe_plans if plan.get("case") in _DHCP_RESPONDER_CASES]
+
+
+def dhcp_responder_descriptor(
+    *,
+    bind_ipv4: str,
+    source_ipv4: str,
+    port: int,
+    artifact_root: str,
+) -> TargetServiceDescriptor:
+    """Describe the controlled DHCP/BOOTP responder on a private L2 segment.
+
+    DHCP requires link-layer broadcast on a private lab network, so the
+    descriptor records the link-layer requirement that gates it.
+    """
+
+    # Imported lazily so the plugin module loads during ``protocols`` package
+    # auto-discovery without cycling through ``capabilities`` -> ``lab`` ->
+    # ``protocols``. The constants are plain skip-reason strings.
+    from ..capabilities import (
+        SKIP_REQUIRES_CONTROLLED_SERVICE,
+        SKIP_REQUIRES_LINK_LAYER,
+    )
+
+    return TargetServiceDescriptor(
+        name="dhcp-responder",
+        protocol="udp",
+        purpose="dhcp",
+        bind_ipv4=bind_ipv4,
+        source_ipv4=source_ipv4,
+        port=port,
+        requires=["python3", SKIP_REQUIRES_LINK_LAYER, SKIP_REQUIRES_CONTROLLED_SERVICE],
+        setup_commands=[
+            f"check udp port {bind_ipv4}:{port} is free",
+            f"start dhcp-responder.py on {bind_ipv4}:{port}",
+        ],
+        cleanup_commands=[
+            f"kill dhcp-responder on {bind_ipv4}:{port}",
+        ],
+        artifacts=[
+            posixpath.join(artifact_root, f"dhcp-responder-{port}.stdout.txt"),
+            posixpath.join(artifact_root, f"dhcp-responder-{port}.stderr.txt"),
+            posixpath.join(artifact_root, f"dhcp-responder-{port}.pid"),
+        ],
+        metadata={"runtime": "python3", "deterministic": True, "layer": "link"},
+    )
+
+
+def dhcp_target_service_contribution(
+    probe_plans: Sequence[JSONObject],
+    *,
+    dry_run: bool,
+) -> JSONObject:
+    """Return the DHCP plugin's ``target_service_setup_plan`` contribution.
+
+    Moved verbatim from the ``dhcp-responder`` ``services`` entries of the
+    central ``target_service_setup_plan``: one controlled DHCP responder service
+    per distinct destination port, plus the ``starts_services`` flip on a live
+    run that has at least one DHCP responder to stand up. The registry merge
+    appends these services to the central plan's ``services`` list and OR-s
+    ``starts_services``, byte-identical to the legacy per-protocol path (which
+    included ``dhcp_plans_by_port`` in its ``starts_services`` OR).
+    """
+
+    dhcp_plans = dhcp_probe_plans(probe_plans)
+    dhcp_plans_by_port = plans_by_destination_port(dhcp_plans)
+    services = [
+        {
+            "name": "dhcp-responder",
+            "protocol": "udp",
+            "port": port,
+            "purpose": "dhcp",
+            "deterministic": True,
+            "request_count": sum(
+                probe_plan_send_count(plan)
+                for plan in dhcp_plans
+                if int(plan.get("destination_port", 0)) == port
+            ),
+            **target_service_address_fields(plan),
+            "log_paths": [
+                f"live-artifacts/probe/target-services/dhcp-responder-{port}.stdout.txt",
+                f"live-artifacts/probe/target-services/dhcp-responder-{port}.stderr.txt",
+            ],
+        }
+        for port, plan in dhcp_plans_by_port.items()
+    ]
+    return {
+        "services": services,
+        "starts_services": not dry_run and bool(dhcp_plans_by_port),
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Target setup-script blocks (moved from target_services.target_service_setup_script)
+# --------------------------------------------------------------------------- #
+#
+# The DHCP setup-script contribution is split into two blocks that the legacy
+# ``target_service_setup_script`` emitted at two distinct positions: a per-port
+# UDP port-free check (rendered after the DNS port checks, before the
+# closed/open-port handling) and the DHCP responder heredoc + launch block
+# (rendered after the DNS responder block). They are co-located here and called
+# *directly* by ``target_service_setup_script`` (the plugin ``setup_script`` hook
+# receives no plan context), so the rendered bytes stay byte-identical to the
+# legacy inline blocks.
+
+
+def dhcp_port_check_lines(dhcp_plans: Sequence[JSONObject]) -> list[str]:
+    """Render the DHCP per-port UDP port-free check block.
+
+    Moved verbatim from the ``for port in dhcp_ports:`` loop that ran before the
+    closed/open-port handling in ``target_service_setup_script``; binds
+    ``$dhcp_bind_ipv4:port`` to confirm the port is free before the responder
+    starts.
+    """
+
+    dhcp_ports = dedupe_ints(
+        int(plan["destination_port"])
+        for plan in dhcp_plans
+        if isinstance(plan.get("destination_port"), int)
+    )
+    lines: list[str] = []
+    for port in dhcp_ports:
+        lines.extend(
+            [
+                "python3 - \"$dhcp_bind_ipv4\" \"$1\" <<'PY'".replace("$1", str(port)),
+                "import socket",
+                "import sys",
+                "bind_ip = sys.argv[1]",
+                "port = int(sys.argv[2])",
+                "sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)",
+                "try:",
+                "    sock.bind((bind_ip, port))",
+                "except OSError as exc:",
+                "    print(f'udp port {bind_ip}:{port} is not free: {exc}', file=sys.stderr)",
+                "    sys.exit(1)",
+                "finally:",
+                "    sock.close()",
+                "PY",
+            ]
+        )
+    return lines
+
+
+def dhcp_responder_setup_lines(
+    *,
+    artifact_root: str,
+    dhcp_plans: Sequence[JSONObject],
+) -> list[str]:
+    """Render the DHCP responder heredoc + launch block for the setup script.
+
+    Moved verbatim from the ``if dhcp_ports:`` responder heredoc and the
+    subsequent ``for port in dhcp_ports:`` launch loop of
+    ``target_service_setup_script``; the orchestrator calls this with the planned
+    DHCP plans so the rendered script bytes stay byte-identical.
+    """
+
+    dhcp_plan_json = json.dumps(list(dhcp_plans), sort_keys=True)
+    dhcp_ports = dedupe_ints(
+        int(plan["destination_port"])
+        for plan in dhcp_plans
+        if isinstance(plan.get("destination_port"), int)
+    )
+    lines: list[str] = []
+    if dhcp_ports:
+        plan_path = posixpath.join(artifact_root, "dhcp-plans.json")
+        service_path = posixpath.join(artifact_root, "dhcp-responder.py")
+        lines.extend(
+            [
+                f"cat > {shlex.quote(plan_path)} <<'JSON'",
+                dhcp_plan_json,
+                "JSON",
+                f"cat > {shlex.quote(service_path)} <<'PY'",
+                "import ipaddress",
+                "import json",
+                "import signal",
+                "import socket",
+                "import struct",
+                "import sys",
+                "import time",
+                "",
+                "stop = False",
+                "",
+                "def handle_stop(_signum, _frame):",
+                "    global stop",
+                "    stop = True",
+                "",
+                "signal.signal(signal.SIGTERM, handle_stop)",
+                "signal.signal(signal.SIGINT, handle_stop)",
+                "",
+                "plan_path, bind_ip, port_text = sys.argv[1:4]",
+                "port = int(port_text)",
+                "plans = json.load(open(plan_path, encoding='utf-8'))",
+                "entries = {}",
+                "entries_by_xid = {}",
+                "",
+                "def mac_normal(value):",
+                "    return str(value or '').lower()",
+                "",
+                "def mac_bytes(value):",
+                "    return bytes(int(part, 16) for part in mac_normal(value).split(':'))",
+                "",
+                "def ip_bytes(value):",
+                "    return ipaddress.IPv4Address(str(value)).packed",
+                "",
+                "def opt_u8(code, value):",
+                "    return bytes([code, 1, int(value) & 0xff])",
+                "",
+                "def opt_u32(code, value):",
+                "    return bytes([code, 4]) + struct.pack('!I', int(value) & 0xffffffff)",
+                "",
+                "def opt_ip(code, value):",
+                "    return bytes([code, 4]) + ip_bytes(value)",
+                "",
+                "def opt_bytes(code, data):",
+                "    return bytes([code, len(data)]) + data",
+                "",
+                "def opt_text(code, value):",
+                "    raw = str(value).encode('utf-8')",
+                "    if len(raw) > 255:",
+                "        raise ValueError(f'dhcp option {code} text is too long')",
+                "    return opt_bytes(code, raw)",
+                "",
+                "def entry_from(raw, parent=None):",
+                "    parent = parent or {}",
+                "    xid = int(raw.get('transaction_id') or parent.get('transaction_id'))",
+                "    client_mac = mac_normal(raw.get('client_mac') or parent.get('client_mac'))",
+                "    message_type = int(",
+                "        raw.get('expected_message_type_value')",
+                "        or parent.get('expected_message_type_value')",
+                "        or (6 if raw.get('expected_message') or raw.get('message') else 2)",
+                "    )",
+                "    yiaddr = '0.0.0.0' if (raw.get('expected_yiaddr_zero') or raw.get('yiaddr_zero')) else str(",
+                "        raw.get('expected_yiaddr') or raw.get('yiaddr') or parent.get('expected_yiaddr') or '0.0.0.0'",
+                "    )",
+                "    return {",
+                "        'transaction_id': xid,",
+                "        'client_mac': client_mac,",
+                "        'message_type': message_type,",
+                "        'yiaddr': yiaddr,",
+                "        'server_identifier': str(",
+                "            raw.get('expected_server_identifier')",
+                "            or raw.get('server_identifier')",
+                "            or parent.get('expected_server_identifier')",
+                "            or bind_ip",
+                "        ),",
+                "        'subnet_mask': raw.get('expected_subnet_mask') or raw.get('subnet_mask') or parent.get('expected_subnet_mask'),",
+                "        'router_ipv4': raw.get('expected_router_ipv4') or raw.get('router_ipv4') or parent.get('expected_router_ipv4'),",
+                "        'dns_ipv4': raw.get('expected_dns_ipv4') or raw.get('dns_ipv4') or parent.get('expected_dns_ipv4'),",
+                "        'lease_time': raw.get('expected_lease_time') or raw.get('lease_time') or parent.get('expected_lease_time'),",
+                "        'renewal_time': raw.get('expected_renewal_time') or raw.get('renewal_time') or parent.get('expected_renewal_time'),",
+                "        'rebinding_time': raw.get('expected_rebinding_time') or raw.get('rebinding_time') or parent.get('expected_rebinding_time'),",
+                "        'no_lease_time': bool(raw.get('expected_no_lease_time') or raw.get('no_lease_time')),",
+                "        'client_identifier_hex': raw.get('expected_client_identifier_hex') or raw.get('client_identifier_hex') or parent.get('expected_client_identifier_hex'),",
+                "        'hostname': raw.get('expected_hostname') or raw.get('hostname') or parent.get('expected_hostname'),",
+                "        'message': raw.get('expected_message') or raw.get('message') or parent.get('expected_message'),",
+                "    }",
+                "",
+                "def register(raw, parent=None):",
+                "    entry = entry_from(raw, parent)",
+                "    key = (entry['transaction_id'], entry['client_mac'])",
+                "    entries[key] = entry",
+                "    entries_by_xid.setdefault(entry['transaction_id'], entry)",
+                "",
+                "for plan in plans:",
+                "    register(plan)",
+                "    sends = plan.get('dhcp_sends')",
+                "    if isinstance(sends, list):",
+                "        for send in sends:",
+                "            register(send, plan)",
+                "",
+                "def response_for(request):",
+                "    if len(request) < 240:",
+                "        raise ValueError('dhcp request shorter than bootp header')",
+                "    xid = struct.unpack('!I', request[4:8])[0]",
+                "    chaddr = request[28:44]",
+                "    client_mac = ':'.join(f'{octet:02x}' for octet in chaddr[:6])",
+                "    entry = entries.get((xid, client_mac)) or entries_by_xid.get(xid)",
+                "    if entry is None:",
+                "        raise ValueError(f'no planned dhcp response for xid {xid} client {client_mac}')",
+                "    server_ip = ip_bytes(entry['server_identifier'])",
+                "    yiaddr = ip_bytes(entry['yiaddr'])",
+                "    ciaddr = request[12:16]",
+                "    header = struct.pack(",
+                "        '!BBBBIHH4s4s4s4s16s64s128s',",
+                "        2,",
+                "        1,",
+                "        6,",
+                "        0,",
+                "        xid,",
+                "        0,",
+                "        0,",
+                "        ciaddr,",
+                "        yiaddr,",
+                "        server_ip,",
+                "        b'\\x00' * 4,",
+                "        chaddr,",
+                "        b'\\x00' * 64,",
+                "        b'\\x00' * 128,",
+                "    )",
+                "    options = bytearray(b'\\x63\\x82\\x53\\x63')",
+                "    options.extend(opt_u8(53, entry['message_type']))",
+                "    options.extend(opt_ip(54, entry['server_identifier']))",
+                "    if entry.get('subnet_mask'):",
+                "        options.extend(opt_ip(1, entry['subnet_mask']))",
+                "    if entry.get('router_ipv4'):",
+                "        options.extend(opt_ip(3, entry['router_ipv4']))",
+                "    if entry.get('dns_ipv4'):",
+                "        options.extend(opt_ip(6, entry['dns_ipv4']))",
+                "    if entry.get('lease_time') is not None and not entry.get('no_lease_time'):",
+                "        options.extend(opt_u32(51, entry['lease_time']))",
+                "    if entry.get('renewal_time') is not None:",
+                "        options.extend(opt_u32(58, entry['renewal_time']))",
+                "    if entry.get('rebinding_time') is not None:",
+                "        options.extend(opt_u32(59, entry['rebinding_time']))",
+                "    if entry.get('client_identifier_hex'):",
+                "        options.extend(opt_bytes(61, bytes.fromhex(str(entry['client_identifier_hex']))))",
+                "    if entry.get('hostname'):",
+                "        options.extend(opt_text(12, entry['hostname']))",
+                "    if entry.get('message'):",
+                "        options.extend(opt_text(56, entry['message']))",
+                "    options.append(255)",
+                "    return header + bytes(options), entry",
+                "",
+                "sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)",
+                "sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)",
+                "sock.bind((bind_ip, port))",
+                "sock.settimeout(1.0)",
+                "print(json.dumps({'event': 'listening', 'bind_ip': bind_ip, 'port': port, 'planned_responses': len(entries)}), flush=True)",
+                "while not stop:",
+                "    try:",
+                "        data, addr = sock.recvfrom(4096)",
+                "    except socket.timeout:",
+                "        continue",
+                "    try:",
+                "        response, entry = response_for(data)",
+                "        sock.sendto(response, (addr[0], 68))",
+                "        print(json.dumps({'event': 'answered', 'client': addr[0], 'client_port': addr[1], 'transaction_id': entry['transaction_id'], 'message_type': entry['message_type']}, sort_keys=True), flush=True)",
+                "    except Exception as exc:",
+                "        print(json.dumps({'event': 'error', 'client': addr[0], 'error': str(exc)}), file=sys.stderr, flush=True)",
+                "sock.close()",
+                "print(json.dumps({'event': 'stopped', 'ts': time.time()}), flush=True)",
+                "PY",
+            ]
+        )
+    for port in dhcp_ports:
+        stdout_path = posixpath.join(artifact_root, f"dhcp-responder-{port}.stdout.txt")
+        stderr_path = posixpath.join(artifact_root, f"dhcp-responder-{port}.stderr.txt")
+        pid_path = posixpath.join(artifact_root, f"dhcp-responder-{port}.pid")
+        lines.extend(
+            [
+                f"check_udp_port_free \"$dhcp_bind_ipv4\" {port}",
+                (
+                    f"python3 {shlex.quote(posixpath.join(artifact_root, 'dhcp-responder.py'))} "
+                    f"{shlex.quote(posixpath.join(artifact_root, 'dhcp-plans.json'))} "
+                    f"\"$dhcp_bind_ipv4\" {port} "
+                    f">{shlex.quote(stdout_path)} 2>{shlex.quote(stderr_path)} &"
+                ),
+                "pid=$!",
+                f"echo \"$pid\" > {shlex.quote(pid_path)}",
+                "printf '%s\\n' \"kill $pid 2>/dev/null || true\" >> \"$cleanup\"",
+                f"printf '%s\\n' \"rm -f {shlex.quote(pid_path)}\" >> \"$cleanup\"",
+                "sleep 0.5",
+                "if ! kill -0 \"$pid\" 2>/dev/null; then",
+                f"  cat {shlex.quote(stderr_path)} >&2 || true",
+                f"  echo dhcp_responder_{port}=failed >&2",
+                "  exit 73",
+                "fi",
+                f"echo dhcp_responder_{port}=running",
+            ]
+        )
+    return lines
+
+
+# --------------------------------------------------------------------------- #
+# Live-path address rewrite (moved from cli._probe_plan_with_endpoint_addresses)
+# --------------------------------------------------------------------------- #
+#
+# The legacy DHCP rewrite branch matched all ten DHCP cases, so the plugin set
+# below is the full DHCP case set: every DHCP case carries the DHCP-specific
+# rewrite plus the shared transport-IPv4 pre-sets and the shared IPv4-layer tail.
+
+
+def dhcp_rewrite_endpoint_addresses(
+    plan: JSONObject,
+    *,
+    source_ipv4: str,
+    target_ipv4: str,
+    source_mac: str | None = None,
+    target_mac: str | None = None,
+    target_interface: str | None = None,
+    rewrite_source: str = "wire_endpoint_plan",
+) -> JSONObject:
+    """Rewrite a DHCP probe plan onto the live lab-segment addresses.
+
+    Moved verbatim from the DHCP branch of
+    ``cli._probe_plan_with_endpoint_addresses`` (including the shared
+    transport-IPv4 pre-sets that ran before the per-protocol if/elif). DHCP uses
+    fixed privileged ports (client 68 -> server 67). The Offer/Ack flows from the
+    responder (target) back to the client (stimulus); the server identifier names
+    the responder, so it follows the target address onto the lab segment. For a
+    SELECTING-state Request the client also names the chosen server (option 54),
+    so the stimulus server identifier is rewritten to the target as well. A
+    RENEWING-state renewal Request (``dhcp-renewal-unicast-ack``) is unicast
+    directly to the leasing server and carries no server-identifier (54) option,
+    so the rewrite only touches the stimulus server identifier when one is
+    present. The client identifier (option 61), the hostname (option 12), and the
+    already-bound client address (ciaddr) are opaque identities or
+    documentation-space leases that carry no transport IP, so they stay unchanged
+    across the lab-segment rewrite. The branch then falls into the shared
+    IPv4-layer validation/live-rewrite tail, applied here.
+    """
+
+    updated = dict(plan)
+    updated["source_ipv4"] = source_ipv4
+    updated["destination_ipv4"] = target_ipv4
+    updated["expected_reply_source_ipv4"] = target_ipv4
+    updated["expected_reply_destination_ipv4"] = source_ipv4
+    case_name = str(updated.get("case", ""))
+    source_port = int(updated.get("source_port", 68))
+    destination_port = int(updated.get("destination_port", 67))
+    updated["capture_filter"] = (
+        f"udp and src host {target_ipv4} and dst host {source_ipv4} "
+        f"and src port {destination_port} and dst port {source_port}"
+    )
+    updated["expected_server_identifier"] = target_ipv4
+    if "server_identifier" in updated:
+        updated["server_identifier"] = target_ipv4
+    target_service = dict(
+        json_object(updated.get("target_service", {}), "probe_plan.target_service")
+    )
+    target_service.update(
+        {
+            "bind_ipv4": target_ipv4,
+            "port": destination_port,
+            "source_ipv4": source_ipv4,
+            "server_identifier": target_ipv4,
+        }
+    )
+    updated["target_service"] = target_service
+    # dhcp-rapid-repeat carries a per-send array: rewrite each send's transport
+    # addresses, capture filter, server identifier (option 54), and validation
+    # onto the lab segment so every Discover->Offer send is matched against its
+    # own Offer (its own xid/chaddr) and never confused with the sibling send.
+    # Each send keeps its distinct transaction id, client MAC, and offered
+    # address (those are per-send identities, not transport IPs).
+    dhcp_sends = updated.get("dhcp_sends")
+    if isinstance(dhcp_sends, list):
+        rewritten_dhcp_sends: list[JSONObject] = []
+        for raw_send in dhcp_sends:
+            send = dict(json_object(raw_send, "probe_plan.dhcp_send"))
+            send_source_port = int(send.get("source_port", 68))
+            send_destination_port = int(send.get("destination_port", 67))
+            send["source_ipv4"] = source_ipv4
+            send["destination_ipv4"] = target_ipv4
+            send["expected_reply_source_ipv4"] = target_ipv4
+            send["expected_reply_destination_ipv4"] = source_ipv4
+            send["expected_server_identifier"] = target_ipv4
+            send["capture_filter"] = (
+                f"udp and src host {target_ipv4} and dst host {source_ipv4} "
+                f"and src port {send_destination_port} and dst port {send_source_port}"
+            )
+            send_target_service = dict(
+                json_object(
+                    send.get("target_service", {}), "probe_plan.dhcp_send.target_service"
+                )
+            )
+            send_target_service.update(
+                {
+                    "bind_ipv4": target_ipv4,
+                    "port": send_destination_port,
+                    "source_ipv4": source_ipv4,
+                    "server_identifier": target_ipv4,
+                }
+            )
+            send["target_service"] = send_target_service
+            send_validation = dict(
+                json_object(send.get("validation", {}), "probe_plan.dhcp_send.validation")
+            )
+            send_validation["source_ipv4"] = target_ipv4
+            send_validation["destination_ipv4"] = source_ipv4
+            send_validation["server_identifier"] = target_ipv4
+            send["validation"] = send_validation
+            rewritten_dhcp_sends.append(send)
+        updated["dhcp_sends"] = rewritten_dhcp_sends
+    dhcp_validation = dict(
+        json_object(updated.get("validation", {}), "probe_plan.validation")
+    )
+    dhcp_validation["server_identifier"] = target_ipv4
+    updated["validation"] = dhcp_validation
+    return apply_shared_ipv4_rewrite_tail(
+        updated,
+        case_name=case_name,
+        source_ipv4=source_ipv4,
+        target_ipv4=target_ipv4,
+        rewrite_source=rewrite_source,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Failure-reason taxonomy (moved from cli._failure_reasons_for_case)
+# --------------------------------------------------------------------------- #
+
+
+def dhcp_failure_reasons(case_name: str) -> list[str] | None:
+    """Return the ordered DHCP failure-reason taxonomy for ``case_name``.
+
+    Moved verbatim from the DHCP branch of ``cli._failure_reasons_for_case`` (all
+    ten DHCP cases). Returns ``None`` for a non-matching case so the central
+    dispatcher falls through to the next branch.
+    """
+
+    if case_name in _DHCP_RESPONDER_CASES:
+        return [
+            FAILURE_TIMEOUT,
+            FAILURE_WRONG_PEER,
+            FAILURE_WRONG_PAYLOAD,
+            FAILURE_WRONG_FLAGS,
+            FAILURE_DECODE_FAILED,
+            FAILURE_TARGET_SETUP_FAILED,
+        ]
+    return None
+
+
+# --------------------------------------------------------------------------- #
+# Lab-capability derivation (moved from lab.probe_capabilities_from_lab_capabilities)
+# --------------------------------------------------------------------------- #
+
+
+def dhcp_lab_capabilities(substrate: Mapping[str, JSONValue]) -> Mapping[str, object]:
+    """Return the DHCP plugin's derived probe-capability contribution.
+
+    Moved verbatim from the ``dhcp_service`` boolean derivation in
+    ``lab.probe_capabilities_from_lab_capabilities``: the controlled DHCP
+    responder needs an IPv4-unicast substrate that can host a controlled service
+    and a link-layer segment carrying broadcast (DHCP requires link-layer
+    broadcast on a private lab network). The shared ``capability_names`` /
+    ``capability_sources`` tables stay in ``lab``; this hook contributes only the
+    derived ``dhcp_service`` boolean, merged byte-identically over the legacy
+    value.
+    """
+
+    ipv4_unicast = capability(substrate, "ipv4_unicast", "ipv4")
+    controlled_services = capability(
+        substrate,
+        "controlled_services",
+        "controlled_service",
+    )
+    link_layer_send = capability(substrate, "link_layer_send")
+    link_layer_capture = capability(substrate, "link_layer_capture")
+    broadcast = capability(substrate, "broadcast")
+    return {
+        "dhcp_service": (
+            ipv4_unicast
+            and controlled_services
+            and link_layer_send
+            and link_layer_capture
+            and broadcast
+        ),
+    }
+
+
 register(
     ProtocolPlugin(
         name="dhcp",
@@ -1606,13 +2225,19 @@ register(
         profile_counts={},
         stimulus_endpoint_cases=_DHCP_STIMULUS_ENDPOINT_CASES,
         # DHCP target-service / address-rewrite / failure-reason / lab-capability
-        # hooks are deferred to the second half of the migration (step 22); they
-        # are ``None`` here, so DHCP's cases stay on the legacy target/rewrite/
-        # failure/capability paths until that step.
-        target_service=None,
+        # hooks (step 22, completing DHCP). ``target_service`` contributes the
+        # ``dhcp-responder`` services entries (and diverts the DHCP cases off the
+        # legacy target path). ``setup_script`` stays ``None``: DHCP's setup-script
+        # blocks (the per-port UDP free check and the responder heredoc + launch)
+        # need the planned DHCP plans, which the plugin ``setup_script`` hook does
+        # not receive, so ``target_services.target_service_setup_script`` renders
+        # them by calling :func:`dhcp_port_check_lines` /
+        # :func:`dhcp_responder_setup_lines` directly (byte-identically to the
+        # legacy inline blocks).
+        target_service=dhcp_target_service_contribution,
         setup_script=None,
-        rewrite_endpoint_addresses=None,
-        failure_reasons=None,
-        lab_capabilities=None,
+        rewrite_endpoint_addresses=dhcp_rewrite_endpoint_addresses,
+        failure_reasons=dhcp_failure_reasons,
+        lab_capabilities=dhcp_lab_capabilities,
     )
 )
