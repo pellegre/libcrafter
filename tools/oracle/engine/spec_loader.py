@@ -248,7 +248,38 @@ def load_oracle_specs(
 
     stacks_doc = _load_yaml_object(stacks_path)
     profiles_doc = _load_yaml_object(profiles_path)
-    roots, families, stacks, constraints, stack_backend_support = _load_stacks(stacks_doc, stacks_path)
+
+    roots: dict[str, RootSpec] = {}
+    families: dict[str, FamilySpec] = {}
+    stacks: dict[str, StackSpec] = {}
+    constraints: dict[str, StackConstraint] = {}
+    stack_backend_support = _load_stacks(
+        stacks_doc,
+        stacks_path,
+        roots=roots,
+        families=families,
+        stacks=stacks,
+        constraints=constraints,
+        require_collections=True,
+    )
+    stack_fragment_paths = tuple(sorted((root / "stacks.d").glob("*.yaml")))
+    for fragment_path in stack_fragment_paths:
+        # Per-protocol stack-grammar fragments extend the monolithic
+        # stacks.yaml with the same schema (any of roots/families/stacks/
+        # constraints). Entries merge into the same collections, and
+        # _insert_unique rejects any duplicate name across files rather than
+        # silently overriding. A missing stacks.d/ directory yields no
+        # fragments, preserving back-compatibility.
+        _load_stacks(
+            _load_yaml_object(fragment_path),
+            fragment_path,
+            roots=roots,
+            families=families,
+            stacks=stacks,
+            constraints=constraints,
+            require_collections=False,
+        )
+
     profiles, profile_backend_support = _load_profiles(profiles_doc, profiles_path)
 
     layers: dict[str, LayerSpec] = {}
@@ -287,8 +318,14 @@ def load_oracle_specs(
         *(feature.backend_support for feature in features.values()),
     )
     source_paths = tuple(
-        path.relative_to(REPO_ROOT).as_posix()
-        for path in (stacks_path, profiles_path, *layer_paths, *feature_paths)
+        _source_path(path)
+        for path in (
+            stacks_path,
+            *stack_fragment_paths,
+            profiles_path,
+            *layer_paths,
+            *feature_paths,
+        )
     )
     return OracleSpecs(
         roots=roots,
@@ -303,19 +340,43 @@ def load_oracle_specs(
     )
 
 
+def _source_path(path: Path) -> str:
+    """Return a repo-relative spec path, or the absolute path when external.
+
+    Spec roots normally live under ``REPO_ROOT``, but the loader also accepts a
+    caller-supplied spec root (e.g. a temporary directory in tests). Fall back
+    to the absolute path so an external root never raises ``ValueError``.
+    """
+
+    try:
+        return path.relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
 def _load_stacks(
     document: JSONObject,
     path: Path,
-) -> tuple[
-    dict[str, RootSpec],
-    dict[str, FamilySpec],
-    dict[str, StackSpec],
-    dict[str, StackConstraint],
-    dict[str, BackendSupport],
-]:
+    *,
+    roots: dict[str, RootSpec],
+    families: dict[str, FamilySpec],
+    stacks: dict[str, StackSpec],
+    constraints: dict[str, StackConstraint],
+    require_collections: bool,
+) -> dict[str, BackendSupport]:
+    """Parse one stack-grammar document, merging entries into shared maps.
+
+    The monolithic ``stacks.yaml`` (``require_collections=True``) must declare
+    ``roots``/``families``/``stacks``; per-protocol fragments under
+    ``stacks.d/*.yaml`` (``require_collections=False``) may declare any subset.
+    Duplicate root/family/stack/constraint names across files raise via
+    ``_insert_unique`` rather than silently overriding.
+    """
+
     _validate_header(document, path, kind="stack_grammar")
-    roots: dict[str, RootSpec] = {}
-    for index, item in enumerate(_required_list(document, "roots", path)):
+    list_for = _required_list if require_collections else _optional_list
+
+    for index, item in enumerate(list_for(document, "roots", path)):
         item_obj = _object(item, path, f"roots[{index}]")
         root = RootSpec(
             name=_required_name(item_obj, "name", path, f"roots[{index}]", allow_colon=True),
@@ -324,8 +385,7 @@ def _load_stacks(
         )
         _insert_unique(roots, root.name, root, path, "root")
 
-    families: dict[str, FamilySpec] = {}
-    for index, item in enumerate(_required_list(document, "families", path)):
+    for index, item in enumerate(list_for(document, "families", path)):
         item_obj = _object(item, path, f"families[{index}]")
         family = FamilySpec(
             name=_required_name(item_obj, "name", path, f"families[{index}]"),
@@ -344,8 +404,7 @@ def _load_stacks(
         )
         _insert_unique(families, family.name, family, path, "family")
 
-    stacks: dict[str, StackSpec] = {}
-    for index, item in enumerate(_required_list(document, "stacks", path)):
+    for index, item in enumerate(list_for(document, "stacks", path)):
         item_obj = _object(item, path, f"stacks[{index}]")
         stack = StackSpec(
             name=_required_name(item_obj, "name", path, f"stacks[{index}]"),
@@ -360,7 +419,6 @@ def _load_stacks(
         )
         _insert_unique(stacks, stack.name, stack, path, "stack")
 
-    constraints: dict[str, StackConstraint] = {}
     for index, item in enumerate(_optional_list(document, "constraints", path)):
         item_obj = _object(item, path, f"constraints[{index}]")
         constraint = StackConstraint(
@@ -370,7 +428,7 @@ def _load_stacks(
         )
         _insert_unique(constraints, constraint.name, constraint, path, "constraint")
 
-    return roots, families, stacks, constraints, _backend_support(document, path)
+    return _backend_support(document, path)
 
 
 def _load_profiles(
