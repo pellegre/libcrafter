@@ -168,8 +168,9 @@ def probe_capabilities_from_lab_capabilities(
     link_layer_capture = _capability(substrate, "link_layer_capture")
     broadcast = _capability(substrate, "broadcast")
     provider_mac = _capability(substrate, "provider_mac_known", "provider_mac")
-    arp_resolution = link_layer_send and link_layer_capture and broadcast
-    link_layer_arp = arp_resolution and provider_mac
+    # ``arp_resolution`` / ``link_layer_arp`` are derived by the ARP plugin's
+    # ``lab_capabilities`` hook (folded in below), not here. The shared
+    # ``capability_names`` / ``capability_sources`` tables still list them.
     # IPv6 Neighbor Discovery (the IPv6 analog of ARP) addresses solicitations to
     # the solicited-node / all-routers / all-nodes multicast groups rather than
     # the broadcast address, but it rides the same same-segment link-layer
@@ -327,8 +328,8 @@ def probe_capabilities_from_lab_capabilities(
         "broadcast": broadcast,
         "ipv6_multicast": ipv6_multicast,
         "provider_mac": provider_mac,
-        "arp_resolution": arp_resolution,
-        "link_layer_arp": link_layer_arp,
+        # ``arp_resolution`` / ``link_layer_arp`` are contributed by the ARP
+        # plugin's ``lab_capabilities`` hook (folded in below).
         "repeated_response": repeated_response,
         "bgp_peer": bgp_peer,
         "rip_peer": rip_peer,

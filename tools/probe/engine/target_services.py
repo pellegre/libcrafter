@@ -41,12 +41,28 @@ from .model import JSONObject, JSONValue, json_object
 
 # Importing from the ``protocols`` package runs its auto-discovery so every
 # migrated protocol module self-registers into ``PROTOCOL_REGISTRY`` before the
-# target-service setup plan and setup script consult it below. No protocol is
-# migrated yet, so the registry contribution is empty: the plan/script fold is a
-# no-op and both stay byte-identical to the legacy per-protocol path. Imports
-# stay relative; the package autodiscovers ``__name__``-relatively, so this does
-# not cycle back through ``target_services``.
+# target-service setup plan and setup script consult it below. Imports stay
+# relative; the package autodiscovers ``__name__``-relatively, so this does not
+# cycle back through ``target_services``.
 from .protocols import PROTOCOL_REGISTRY, registered_plugins
+
+# ARP's target-service descriptors, kernel case set, plan/script helpers, and the
+# setup-script block were migrated into the ARP plugin
+# (:mod:`tools.probe.engine.protocols.arp`). They are re-imported here so
+# ``target_services.arp_*`` / ``target_services._ARP_KERNEL_CASES`` keep
+# resolving (the behavior/script tests and ``__all__`` reference them), and so
+# ``target_service_setup_script`` can render the ARP setup block. The ARP plugin
+# module does not import ``target_services``, so this does not cycle.
+from .protocols.arp import (
+    _ARP_KERNEL_CASES,
+    arp_alias_descriptor,
+    arp_decoy_events,
+    arp_extra_addresses,
+    arp_kernel_state_plan,
+    arp_probe_plans,
+    arp_sysctl_descriptor,
+    arp_target_setup_lines,
+)
 from .target_service_helpers import (
     KernelStateDescriptor,
     TargetServiceDescriptor,
@@ -316,63 +332,10 @@ def closed_udp_port_descriptor(
     )
 
 
-def arp_alias_descriptor(
-    *,
-    bind_ipv4: str,
-    source_ipv4: str,
-    alias_ipv4: str,
-    interface: str,
-) -> KernelStateDescriptor:
-    """Describe an ARP alias address added to the target interface."""
-
-    quoted_alias = shlex.quote(f"{alias_ipv4}/32")
-    quoted_iface = shlex.quote(interface)
-    return KernelStateDescriptor(
-        name="arp-alias",
-        purpose="arp-alias-address",
-        bind_ipv4=bind_ipv4,
-        source_ipv4=source_ipv4,
-        setup_commands=[
-            f"ip addr add {quoted_alias} dev {quoted_iface}",
-        ],
-        cleanup_commands=[
-            f"ip addr del {quoted_alias} dev {quoted_iface} || true",
-        ],
-        metadata={
-            "alias_ipv4": alias_ipv4,
-            "interface": interface,
-            "layer": "link",
-            "deterministic": True,
-        },
-    )
-
-
-def arp_sysctl_descriptor(
-    *,
-    bind_ipv4: str,
-    source_ipv4: str,
-    interface: str,
-) -> KernelStateDescriptor:
-    """Describe ARP sysctl tuning and neighbor-cache flush for the target."""
-
-    quoted_iface = shlex.quote(interface)
-    arp_ignore = f"net.ipv4.conf.{interface}.arp_ignore"
-    arp_announce = f"net.ipv4.conf.{interface}.arp_announce"
-    return KernelStateDescriptor(
-        name="arp-sysctl",
-        purpose="arp-neighbor-setup",
-        bind_ipv4=bind_ipv4,
-        source_ipv4=source_ipv4,
-        setup_commands=[
-            f"sysctl -w {shlex.quote(arp_ignore + '=0')}",
-            f"sysctl -w {shlex.quote(arp_announce + '=0')}",
-            f"ip neigh flush dev {quoted_iface} || true",
-        ],
-        cleanup_commands=[
-            f"ip neigh flush dev {quoted_iface} || true",
-        ],
-        metadata={"interface": interface, "layer": "link", "deterministic": True},
-    )
+# The ARP target-service descriptors (``arp_alias_descriptor`` /
+# ``arp_sysctl_descriptor``) now live in :mod:`tools.probe.engine.protocols.arp`
+# and are re-imported below so ``target_services.arp_*`` keeps resolving for the
+# behavior/script tests.
 
 
 # --------------------------------------------------------------------------- #
@@ -672,61 +635,10 @@ def bgp_peer_service_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject
     return [service]
 
 
-def arp_kernel_state_plan(
-    *,
-    probe_plans: Sequence[JSONObject],
-    dry_run: bool,
-) -> JSONObject:
-    """Return the inspectable ARP kernel setup contract for planned ARP cases."""
-
-    if not probe_plans:
-        return {
-            "planned": False,
-            "state": "not-required",
-            "cases": [],
-            "alias_addresses": [],
-            "alt_sender_addresses": [],
-            "decoy_events": [],
-        }
-
-    alias_addresses: list[str] = []
-    alt_sender_addresses: list[str] = []
-    decoy_events: list[JSONObject] = []
-    interfaces: list[str] = []
-    for plan in probe_plans:
-        service = _json_mapping(
-            plan.get("target_service", {}),
-            "probe_plan.target_service",
-        )
-        alias_ipv4 = _string_or(service.get("alias_ipv4"), "")
-        if alias_ipv4:
-            alias_addresses.append(alias_ipv4)
-        alt_sender_ipv4 = _string_or(service.get("alt_sender_ipv4"), "")
-        if alt_sender_ipv4:
-            alt_sender_addresses.append(alt_sender_ipv4)
-        decoy = service.get("decoy_arp_event")
-        if isinstance(decoy, Mapping):
-            decoy_events.append(json_object(decoy, "probe_plan.decoy_arp_event"))
-        interface = _string_or(service.get("interface"), "")
-        if not interface:
-            interface = _string_or(service.get("neighbor_flush_interface"), "")
-        if interface:
-            interfaces.append(interface)
-
-    state = "planned" if dry_run else "configured"
-    return {
-        "planned": True,
-        "state": state,
-        "case_count": len(probe_plans),
-        "cases": [str(plan.get("case", "")) for plan in probe_plans],
-        "requires_link_layer": True,
-        "arp_sysctls": True,
-        "neighbor_cache_flush": True,
-        "interfaces": list(dict.fromkeys(interfaces)),
-        "alias_addresses": list(dict.fromkeys(alias_addresses)),
-        "alt_sender_addresses": list(dict.fromkeys(alt_sender_addresses)),
-        "decoy_events": decoy_events,
-    }
+# The ARP kernel-state plan (``arp_kernel_state_plan``) now lives in
+# :mod:`tools.probe.engine.protocols.arp`; the ARP plugin's ``target_service``
+# hook contributes the ``arp_kernel_state`` key to the central setup plan. It is
+# re-imported below so ``target_services.arp_kernel_state_plan`` keeps resolving.
 
 
 # --------------------------------------------------------------------------- #
@@ -857,33 +769,11 @@ def closed_udp_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject
     ]
 
 
-# Probe cases whose target is primarily the kernel answering ARP who-has on a
-# private L2 segment. ``arp-resolution`` is the legacy smoke case;
-# ``arp-basic-who-has`` is the baseline ARP behavioral case. Both rely on the
-# target kernel answering ARP for its own configured address, with ARP sysctl
-# tuning and a neighbor-cache flush as setup (no listening daemon). Providers
-# without link-layer/broadcast capability skip these cases.
-_ARP_KERNEL_CASES: frozenset[str] = frozenset(
-    {
-        "arp-resolution",
-        "arp-basic-who-has",
-        "arp-repeat-two-replies",
-        "arp-source-address-preserved",
-        "arp-alias-address-reply",
-        "arp-unicast-request-reply",
-        "arp-padding-reply",
-        "arp-cache-flush-reply",
-        "arp-mac-validation",
-        "arp-spa-variation",
-        "arp-broadcast-filtered-capture",
-    }
-)
-
-
-def arp_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
-    """Return the ARP probe plans in order."""
-
-    return [plan for plan in probe_plans if plan.get("case") in _ARP_KERNEL_CASES]
+# The ARP kernel case set (``_ARP_KERNEL_CASES``) and the ``arp_probe_plans``
+# selector now live in :mod:`tools.probe.engine.protocols.arp`; they are
+# re-imported below so ``target_services._ARP_KERNEL_CASES`` /
+# ``target_services.arp_probe_plans`` keep resolving for the legacy plan body
+# (which now sees no ARP plans) and the behavior/script tests.
 
 
 # Probe cases whose target is primarily the kernel answering IPv6 Neighbor
@@ -910,35 +800,9 @@ def ndp_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
     return [plan for plan in probe_plans if plan.get("case") in _NDP_KERNEL_CASES]
 
 
-def arp_extra_addresses(probe_plans: Sequence[JSONObject]) -> list[str]:
-    """Return secondary IPv4 addresses that ARP live setup must add."""
-
-    addresses: list[str] = []
-    for plan in probe_plans:
-        service = _json_mapping(
-            plan.get("target_service", {}),
-            "probe_plan.target_service",
-        )
-        for key in ("alias_ipv4", "alt_sender_ipv4"):
-            value = _string_or(service.get(key), "")
-            if value:
-                addresses.append(value)
-    return list(dict.fromkeys(addresses))
-
-
-def arp_decoy_events(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
-    """Return ARP decoy events that live setup should emit during capture."""
-
-    events: list[JSONObject] = []
-    for plan in probe_plans:
-        service = _json_mapping(
-            plan.get("target_service", {}),
-            "probe_plan.target_service",
-        )
-        event = service.get("decoy_arp_event")
-        if isinstance(event, Mapping):
-            events.append(json_object(event, "probe_plan.decoy_arp_event"))
-    return events
+# The ARP live-setup helpers (``arp_extra_addresses`` / ``arp_decoy_events``)
+# now live in :mod:`tools.probe.engine.protocols.arp` and are re-imported below;
+# the ARP setup-script block also moved there (``arp_target_setup_lines``).
 
 
 # --------------------------------------------------------------------------- #
@@ -1072,10 +936,6 @@ def target_service_setup_script(
 
     dns_plan_json = json.dumps(list(dns_plans), sort_keys=True)
     dhcp_plan_json = json.dumps(list(dhcp_plans), sort_keys=True)
-    arp_decoy_events_json = json.dumps(
-        arp_decoy_events(arp_plans),
-        sort_keys=True,
-    )
     dns_ports = dedupe_ints(
         int(plan["destination_port"])
         for plan in dns_plans
@@ -1086,7 +946,6 @@ def target_service_setup_script(
         for plan in dhcp_plans
         if isinstance(plan.get("destination_port"), int)
     )
-    arp_addresses = arp_extra_addresses(arp_plans)
     udp_ports = dedupe_ints(
         int(plan["destination_port"])
         for plan in udp_plans
@@ -1884,134 +1743,15 @@ def target_service_setup_script(
             ]
         )
     if arp_plans:
+        # The ARP kernel-state setup block moved to
+        # ``protocols.arp.arp_target_setup_lines``; render it here so the
+        # script bytes stay byte-identical to the legacy inline block.
         lines.extend(
-            [
-                'if [ -z "$target_interface" ]; then',
-                "  echo arp_target_interface=missing >&2",
-                "  exit 73",
-                "fi",
-                'ip link show dev "$target_interface" >/dev/null',
-                'printf \'%s\\n\' "ip neigh flush dev $target_interface || true" >> "$cleanup"',
-                'for key in arp_ignore arp_announce; do',
-                '  sysctl_name="net.ipv4.conf.${target_interface}.${key}"',
-                '  before_path="$artifact_root/arp-${key}.before"',
-                '  sysctl -n "$sysctl_name" > "$before_path" 2>/dev/null || true',
-                '  before_value=""',
-                '  if [ -s "$before_path" ]; then before_value="$(cat "$before_path")"; fi',
-                '  if [ -n "$before_value" ]; then',
-                '    printf \'%s\\n\' "sysctl -w ${sysctl_name}=${before_value} >/dev/null 2>&1 || true" >> "$cleanup"',
-                "  fi",
-                '  sysctl -w "${sysctl_name}=0"',
-                "done",
-                'ip neigh flush dev "$target_interface" || true',
-                "echo arp_kernel_state=configured",
-            ]
+            arp_target_setup_lines(
+                artifact_root=artifact_root,
+                arp_plans=arp_plans,
+            )
         )
-        for address in arp_addresses:
-            quoted_address = shlex.quote(address)
-            lines.extend(
-                [
-                    (
-                        "if ! ip -4 addr show dev \"$target_interface\" "
-                        f"| grep -Fq {shlex.quote(address + '/32')}; then"
-                    ),
-                    f"  ip addr add {quoted_address}/32 dev \"$target_interface\"",
-                    "fi",
-                    (
-                        f"printf '%s\\n' \"ip addr del {quoted_address}/32 dev "
-                        "$target_interface 2>/dev/null || true\" >> \"$cleanup\""
-                    ),
-                    f"echo arp_extra_address_{address}=configured",
-                ]
-            )
-        if arp_decoy_events_json != "[]":
-            decoy_path = posixpath.join(artifact_root, "arp-decoy-events.json")
-            decoy_script = posixpath.join(artifact_root, "arp-decoy-emitter.py")
-            stdout_path = posixpath.join(artifact_root, "arp-decoy-emitter.stdout.txt")
-            stderr_path = posixpath.join(artifact_root, "arp-decoy-emitter.stderr.txt")
-            pid_path = posixpath.join(artifact_root, "arp-decoy-emitter.pid")
-            lines.extend(
-                [
-                    f"cat > {shlex.quote(decoy_path)} <<'JSON'",
-                    arp_decoy_events_json,
-                    "JSON",
-                    f"cat > {shlex.quote(decoy_script)} <<'PY'",
-                    "import ipaddress",
-                    "import json",
-                    "import signal",
-                    "import socket",
-                    "import struct",
-                    "import sys",
-                    "import time",
-                    "",
-                    "stop = False",
-                    "",
-                    "def handle_stop(_signum, _frame):",
-                    "    global stop",
-                    "    stop = True",
-                    "",
-                    "signal.signal(signal.SIGTERM, handle_stop)",
-                    "signal.signal(signal.SIGINT, handle_stop)",
-                    "",
-                    "events_path, iface = sys.argv[1:3]",
-                    "events = json.load(open(events_path, encoding='utf-8'))",
-                    "",
-                    "def mac_bytes(value):",
-                    "    return bytes(int(part, 16) for part in str(value).split(':'))",
-                    "",
-                    "def ip_bytes(value):",
-                    "    return ipaddress.IPv4Address(str(value)).packed",
-                    "",
-                    "def frame(event):",
-                    "    ethernet_dst = mac_bytes(event['ethernet_destination'])",
-                    "    ethernet_src = mac_bytes(event['ethernet_source'])",
-                    "    sender_hw = mac_bytes(event['sender_hardware_addr'])",
-                    "    target_hw = mac_bytes(event['target_hardware_addr'])",
-                    "    arp = struct.pack(",
-                    "        '!HHBBH6s4s6s4s',",
-                    "        1,",
-                    "        0x0800,",
-                    "        6,",
-                    "        4,",
-                    "        int(event.get('operation', 2)),",
-                    "        sender_hw,",
-                    "        ip_bytes(event['sender_protocol_addr']),",
-                    "        target_hw,",
-                    "        ip_bytes(event['target_protocol_addr']),",
-                    "    )",
-                    "    return ethernet_dst + ethernet_src + struct.pack('!H', 0x0806) + arp",
-                    "",
-                    "frames = [(event, frame(event)) for event in events if event.get('present', True)]",
-                    "sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW)",
-                    "sock.bind((iface, 0))",
-                    "deadline = time.time() + 30.0",
-                    "print(json.dumps({'event': 'listening', 'interface': iface, 'decoy_count': len(frames)}), flush=True)",
-                    "while not stop and time.time() < deadline:",
-                    "    for event, raw in frames:",
-                    "        sock.send(raw)",
-                    "        print(json.dumps({'event': 'sent', 'sender_protocol_addr': event.get('sender_protocol_addr'), 'target_protocol_addr': event.get('target_protocol_addr')}, sort_keys=True), flush=True)",
-                    "    time.sleep(0.25)",
-                    "sock.close()",
-                    "print(json.dumps({'event': 'stopped', 'ts': time.time()}), flush=True)",
-                    "PY",
-                    (
-                        f"python3 {shlex.quote(decoy_script)} {shlex.quote(decoy_path)} "
-                        f"\"$target_interface\" >{shlex.quote(stdout_path)} "
-                        f"2>{shlex.quote(stderr_path)} &"
-                    ),
-                    "pid=$!",
-                    f"echo \"$pid\" > {shlex.quote(pid_path)}",
-                    "printf '%s\\n' \"kill $pid 2>/dev/null || true\" >> \"$cleanup\"",
-                    f"printf '%s\\n' \"rm -f {shlex.quote(pid_path)}\" >> \"$cleanup\"",
-                    "sleep 0.2",
-                    "if ! kill -0 \"$pid\" 2>/dev/null; then",
-                    f"  cat {shlex.quote(stderr_path)} >&2 || true",
-                    "  echo arp_decoy_emitter=failed >&2",
-                    "  exit 73",
-                    "fi",
-                    "echo arp_decoy_emitter=running",
-                ]
-            )
     if ndp_plans:
         wants_router = any(
             str(plan.get("case", "")) in _NDP_ROUTER_CASES for plan in ndp_plans
