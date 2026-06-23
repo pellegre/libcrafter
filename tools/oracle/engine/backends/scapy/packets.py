@@ -19,8 +19,10 @@ from .encode_helpers import (
     _int,
     _layer_fields,
     _optional_field,
+    _payload_bytes,
     _required_field,
     _text,
+    _validate_payload_length,
 )
 # Importing the protocols package runs its ``autodiscover`` so every per-protocol
 # Scapy encoder/decoder module self-registers. ``STACK_ENCODER_REGISTRY`` is
@@ -92,11 +94,7 @@ _SCAPY_LAYER_BY_LAYER: dict[str, str] = {
     "ipv6_routing": "IPv6ExtHdrRouting",
     "ipv4": "IP",
     "ipv6": "IPv6",
-    "linux_cooked": "CookedLinux",
-    "llc_snap": "LLC/SNAP",
-    "null_loopback": "Loopback",
     "ospf": "OSPF_Hdr",
-    "payload": "Raw",
     "radiotap": "RadioTap",
     "raw": "Raw",
     "rip": "RIP",
@@ -576,22 +574,6 @@ _SUPPORTED_FIELDS_BY_LAYER: dict[str, set[str]] = {
         "segleft",
         "type",
     },
-    "linux_cooked": {
-        "address_length",
-        "address_type",
-        "packet_type",
-        "protocol",
-        "source_address",
-    },
-    "llc_snap": {
-        "control",
-        "dsap",
-        "ethertype",
-        "oui",
-        "payload_length",
-        "ssap",
-    },
-    "null_loopback": {"type"},
     "ospf": {
         # Oracle-neutral OSPFv2 common-header fields from specs/layers/ospf.yaml.
         "version",
@@ -627,7 +609,6 @@ _SUPPORTED_FIELDS_BY_LAYER: dict[str, set[str]] = {
         "raw",
         "raw_body",
     },
-    "payload": {"bytes_hex", "hex", "length", "text", "value"},
     "radiotap": {
         "antenna",
         "channel_flags",
@@ -830,12 +811,8 @@ def _build_layer(plan: PacketPlan, stack: list[str], index: int, scapy_all: Any)
     if plugin is not None:
         return plugin.build(plan, fields, stack, index, scapy_all)
 
-    if layer == "payload" or layer == "raw":
+    if layer == "raw":
         return scapy_all.Raw(load=_payload_bytes(fields))
-    if layer == "linux_cooked":
-        return _linux_cooked(plan.fields, scapy_all)
-    if layer == "null_loopback":
-        return _null_loopback(plan.fields, scapy_all)
     if layer == "bgp":
         return _bgp(fields, stack, index, scapy_all)
     if layer == "ospf":
@@ -892,40 +869,6 @@ def _build_layer(plan: PacketPlan, stack: list[str], index: int, scapy_all: Any)
         return _zigbee_aps(fields, stack, index, scapy_all)
 
     raise ValueError(f"unsupported Scapy materialization layer: {layer}")
-
-
-def _linux_cooked(fields: Mapping[str, JSONObject], scapy_all: Any) -> Any:
-    sll_fields = _layer_fields(fields, "linux_cooked")
-    kwargs: dict[str, Any] = {
-        "pkttype": _linux_sll_packet_type(
-            _required_field(sll_fields, "linux_cooked", "packet_type")
-        ),
-        "lladdrtype": _hardware_type_value(
-            _required_field(sll_fields, "linux_cooked", "address_type")
-        ),
-        "lladdrlen": _int(
-            _required_field(sll_fields, "linux_cooked", "address_length"),
-            6,
-        ),
-        "src": _bytes_field(
-            _required_field(sll_fields, "linux_cooked", "source_address"),
-            pad_to=8,
-        ),
-        "proto": _ethertype_value(
-            _required_field(sll_fields, "linux_cooked", "protocol")
-        ),
-    }
-    return scapy_all.CookedLinux(**kwargs)
-
-
-def _null_loopback(fields: Mapping[str, JSONObject], scapy_all: Any) -> Any:
-    null_fields = _layer_fields(fields, "null_loopback")
-    kwargs = {
-        "type": _address_family_value(
-            _required_field(null_fields, "null_loopback", "type")
-        )
-    }
-    return scapy_all.Loopback(**kwargs)
 
 
 def _bgp(
@@ -3405,39 +3348,6 @@ def _layer_fields_for_stack_index(
     return _layer_fields(fields, layer)
 
 
-def _payload_bytes(fields: Mapping[str, JSONObject]) -> bytes:
-    payload = _layer_fields(fields, "payload")
-    if not payload:
-        return b""
-    if "hex" in payload:
-        raw = bytes.fromhex(_text(payload.get("hex"), ""))
-        _validate_payload_length(payload, raw)
-        return raw
-    if "bytes_hex" in payload:
-        raw = bytes.fromhex(_text(payload.get("bytes_hex"), ""))
-        _validate_payload_length(payload, raw)
-        return raw
-    if "text" in payload:
-        raw = _text(payload.get("text"), "").encode("utf-8")
-        _validate_payload_length(payload, raw)
-        return raw
-    if "value" in payload:
-        raw = _text(payload.get("value"), "").encode("utf-8")
-        _validate_payload_length(payload, raw)
-        return raw
-    raise ValueError("payload materialization requires bytes in hex, bytes_hex, text, or value")
-
-
-def _validate_payload_length(payload: Mapping[str, object], raw: bytes) -> None:
-    if "length" not in payload:
-        return
-    length = _int(payload.get("length"), 0)
-    if length != len(raw):
-        raise ValueError(
-            f"payload length mismatch: declared={length} materialized={len(raw)}"
-        )
-
-
 _BLE_LAYERS = frozenset({"ble_radio", "ble_adv"})
 _BLE_ADV_PDU_TYPES: dict[str, int] = {
     "adv_ind": 0,
@@ -4732,36 +4642,6 @@ def _capability_contract(
     if isinstance(capabilities, BackendRegistration):
         return capabilities.capabilities
     return capabilities
-
-
-def _linux_sll_packet_type(value: object) -> int:
-    if isinstance(value, str):
-        lowered = value.lower().replace("-", "_")
-        mapping = {
-            "host": 0,
-            "broadcast": 1,
-            "multicast": 2,
-            "otherhost": 3,
-            "outgoing": 4,
-        }
-        if lowered in mapping:
-            return mapping[lowered]
-        return int(lowered, 0)
-    return _int(value, 0)
-
-
-def _address_family_value(value: object) -> int:
-    if isinstance(value, str):
-        lowered = value.lower().replace("-", "_")
-        mapping = {
-            "ipv4": 2,
-            "ip": 2,
-            "ipv6": 24,
-        }
-        if lowered in mapping:
-            return mapping[lowered]
-        return int(lowered, 0)
-    return _int(value, 2)
 
 
 def _protocol_value(value: object, mapping: Mapping[str, int]) -> int:
