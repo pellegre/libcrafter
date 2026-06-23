@@ -14,7 +14,9 @@ from .encode_helpers import (
     _IP_PROTOCOLS,
     _IPV6_NEXT_HEADERS,
     _bool_int,
+    _bytes_exact,
     _bytes_field,
+    _bytes_optional,
     _ethertype_value,
     _hardware_type_value,
     _int,
@@ -65,19 +67,10 @@ from .protocols.igmp import (
 
 BACKEND_NAME = "scapy"
 
-_BGP_MESSAGE_TYPES: dict[str, int] = {
-    "open": 1,
-    "update": 2,
-    "notification": 3,
-    "keepalive": 4,
-    "route-refresh": 5,
-    "route_refresh": 5,
-}
 _SCAPY_LAYER_BY_LAYER: dict[str, str] = {
     "ah": "AH",
     "ble_adv": "BTLE_ADV_IND",
     "ble_radio": "BTLE_PHDR",
-    "bgp": "BGPHeader",
     "dhcp": "DHCP",
     "dns": "DNS",
     "dot11": "Dot11",
@@ -232,46 +225,6 @@ _SUPPORTED_FEATURES = {
     "zigbee_nwk_aps",
 }
 _SUPPORTED_FIELDS_BY_LAYER: dict[str, set[str]] = {
-    "bgp": {
-        "afi",
-        "asn",
-        "bgp_id",
-        "bgp_identifier",
-        "body",
-        "body_hex",
-        "capabilities",
-        "code",
-        "data",
-        "error_code",
-        "error_subcode",
-        "hold_time",
-        "len",
-        "length",
-        "marker",
-        "message_type",
-        "my_as",
-        "nlri",
-        "nlri_hex",
-        "opt_param_len",
-        "opt_params",
-        "optional_parameters",
-        "optional_parameters_hex",
-        "orf_data",
-        "path_attr",
-        "path_attr_len",
-        "path_attributes",
-        "path_attributes_hex",
-        "raw",
-        "raw_body",
-        "safi",
-        "subcode",
-        "subtype",
-        "type",
-        "version",
-        "withdrawn_routes",
-        "withdrawn_routes_hex",
-        "withdrawn_routes_len",
-    },
     "ble_adv": {
         "ad",
         "ad_list",
@@ -706,8 +659,6 @@ def _build_layer(plan: PacketPlan, stack: list[str], index: int, scapy_all: Any)
 
     if layer == "raw":
         return scapy_all.Raw(load=_payload_bytes(fields))
-    if layer == "bgp":
-        return _bgp(fields, stack, index, scapy_all)
     if layer == "ospf":
         return _ospf(fields, stack, index, scapy_all)
     if layer == "ipv6_hop_by_hop":
@@ -748,193 +699,6 @@ def _build_layer(plan: PacketPlan, stack: list[str], index: int, scapy_all: Any)
         return _zigbee_aps(fields, stack, index, scapy_all)
 
     raise ValueError(f"unsupported Scapy materialization layer: {layer}")
-
-
-def _bgp(
-    fields: Mapping[str, JSONObject],
-    stack: Sequence[str],
-    index: int,
-    scapy_all: Any,
-) -> Any:
-    scapy_bgp = import_scapy()["bgp"]
-    bgp_fields = _layer_fields_for_stack_index(fields, stack, index)
-    message_type = _bgp_message_type(
-        _required_field(bgp_fields, "bgp", "message_type", "type")
-    )
-    header_kwargs = _bgp_header_kwargs(bgp_fields)
-
-    if message_type == 4:
-        return scapy_bgp.BGPKeepAlive(**header_kwargs)
-
-    body = _bgp_raw_body(bgp_fields)
-    if body is not None:
-        return scapy_bgp.BGPHeader(type=message_type, **header_kwargs) / scapy_all.Raw(
-            load=body
-        )
-
-    if message_type == 1:
-        body = _bgp_open_raw_body(bgp_fields)
-        if body is not None:
-            return scapy_bgp.BGPHeader(type=message_type, **header_kwargs) / scapy_all.Raw(
-                load=body
-            )
-        return scapy_bgp.BGPHeader(type=message_type, **header_kwargs) / scapy_bgp.BGPOpen(
-            version=_int(_optional_field(bgp_fields, "version"), 4),
-            my_as=_int(_optional_field(bgp_fields, "my_as", "asn"), 0),
-            hold_time=_int(_optional_field(bgp_fields, "hold_time"), 0),
-            bgp_id=_text(
-                _optional_field(bgp_fields, "bgp_id", "bgp_identifier"),
-                "0.0.0.0",
-            ),
-        )
-
-    if message_type == 2:
-        body = _bgp_update_raw_body(bgp_fields)
-        if body is not None:
-            return scapy_bgp.BGPHeader(type=message_type, **header_kwargs) / scapy_all.Raw(
-                load=body
-            )
-        return scapy_bgp.BGPHeader(type=message_type, **header_kwargs) / scapy_bgp.BGPUpdate()
-
-    if message_type == 3:
-        kwargs: dict[str, Any] = {
-            "error_code": _int(_optional_field(bgp_fields, "error_code", "code"), 0),
-            "error_subcode": _int(
-                _optional_field(bgp_fields, "error_subcode", "subcode"),
-                0,
-            ),
-        }
-        data = _optional_field(bgp_fields, "data")
-        if data is not None:
-            kwargs["data"] = _bytes_field(data)
-        return (
-            scapy_bgp.BGPHeader(type=message_type, **header_kwargs)
-            / scapy_bgp.BGPNotification(**kwargs)
-        )
-
-    if message_type == 5:
-        kwargs = {
-            "afi": _bgp_afi(_optional_field(bgp_fields, "afi")),
-            "subtype": _int(_optional_field(bgp_fields, "subtype"), 0),
-            "safi": _bgp_safi(_optional_field(bgp_fields, "safi")),
-        }
-        orf_data = _optional_field(bgp_fields, "orf_data")
-        if orf_data is not None:
-            kwargs["orf_data"] = _bytes_field(orf_data)
-        return (
-            scapy_bgp.BGPHeader(type=message_type, **header_kwargs)
-            / scapy_bgp.BGPRouteRefresh(**kwargs)
-        )
-
-    return scapy_bgp.BGPHeader(type=message_type, **header_kwargs)
-
-
-def _bgp_header_kwargs(fields: Mapping[str, object]) -> dict[str, Any]:
-    kwargs: dict[str, Any] = {}
-    if "marker" in fields:
-        kwargs["marker"] = _bgp_marker(fields["marker"])
-    if "length" in fields or "len" in fields:
-        kwargs["len"] = _int(_optional_field(fields, "length", "len"), 0)
-    return kwargs
-
-
-def _bgp_message_type(value: object) -> int:
-    if isinstance(value, str):
-        normalized = value.lower().replace("_", "-")
-        if normalized in _BGP_MESSAGE_TYPES:
-            return _BGP_MESSAGE_TYPES[normalized]
-        return int(normalized, 0)
-    return _int(value, 0)
-
-
-def _bgp_marker(value: object) -> int:
-    if isinstance(value, int) and not isinstance(value, bool):
-        return value
-    return int.from_bytes(_bytes_exact(value, 16), "big")
-
-
-def _bgp_raw_body(fields: Mapping[str, object]) -> bytes | None:
-    value = _optional_field(fields, "body", "body_hex", "raw_body", "raw")
-    if value is None:
-        return None
-    return _bytes_field(value)
-
-
-def _bgp_open_raw_body(fields: Mapping[str, object]) -> bytes | None:
-    optional_parameters = _optional_field(
-        fields,
-        "optional_parameters",
-        "optional_parameters_hex",
-        "opt_params",
-        "capabilities",
-    )
-    if optional_parameters is None:
-        return None
-    parameters = _bytes_field(optional_parameters)
-    param_len = _int(_optional_field(fields, "opt_param_len"), len(parameters))
-    return (
-        bytes([_int(_optional_field(fields, "version"), 4) & 0xFF])
-        + _int(_optional_field(fields, "my_as", "asn"), 0).to_bytes(2, "big")
-        + _int(_optional_field(fields, "hold_time"), 0).to_bytes(2, "big")
-        + _ipv4_address_bytes(
-            _optional_field(fields, "bgp_id", "bgp_identifier"),
-            "0.0.0.0",
-        )
-        + bytes([param_len & 0xFF])
-        + parameters
-    )
-
-
-def _bgp_update_raw_body(fields: Mapping[str, object]) -> bytes | None:
-    withdrawn = _optional_field(fields, "withdrawn_routes", "withdrawn_routes_hex")
-    path_attrs = _optional_field(
-        fields,
-        "path_attributes",
-        "path_attributes_hex",
-        "path_attr",
-    )
-    nlri = _optional_field(fields, "nlri", "nlri_hex")
-    if withdrawn is None and path_attrs is None and nlri is None:
-        return None
-    withdrawn_bytes = _bytes_field(withdrawn) if withdrawn is not None else b""
-    path_attr_bytes = _bytes_field(path_attrs) if path_attrs is not None else b""
-    nlri_bytes = _bytes_field(nlri) if nlri is not None else b""
-    withdrawn_len = _int(
-        _optional_field(fields, "withdrawn_routes_len"),
-        len(withdrawn_bytes),
-    )
-    path_attr_len = _int(_optional_field(fields, "path_attr_len"), len(path_attr_bytes))
-    return (
-        withdrawn_len.to_bytes(2, "big")
-        + withdrawn_bytes
-        + path_attr_len.to_bytes(2, "big")
-        + path_attr_bytes
-        + nlri_bytes
-    )
-
-
-def _bgp_afi(value: object) -> int:
-    if isinstance(value, str):
-        normalized = value.lower().replace("_", "-")
-        mapping = {"ipv4": 1, "ip": 1, "ipv6": 2}
-        if normalized in mapping:
-            return mapping[normalized]
-        return int(normalized, 0)
-    return _int(value, 1)
-
-
-def _bgp_safi(value: object) -> int:
-    if isinstance(value, str):
-        normalized = value.lower().replace("_", "-")
-        mapping = {
-            "unicast": 1,
-            "multicast": 2,
-            "nlri-unicast": 1,
-        }
-        if normalized in mapping:
-            return mapping[normalized]
-        return int(normalized, 0)
-    return _int(value, 1)
 
 
 # Oracle-neutral OSPFv2 packet-type domain names (specs/layers/ospf.yaml) mapped
@@ -3123,19 +2887,6 @@ def _rsn_suite_selector(value: object, *, default_type: int) -> bytes:
     else:
         suite_type = default_type
     return b"\x00\x0f\xac" + bytes([suite_type & 0xFF])
-
-
-def _bytes_exact(value: object, length: int) -> bytes:
-    raw = _bytes_optional(value)
-    if len(raw) > length:
-        return raw[:length]
-    return raw.ljust(length, b"\x00")
-
-
-def _bytes_optional(value: object) -> bytes:
-    if value is None:
-        return b""
-    return _bytes_field(value)
 
 
 def _mac_bytes(value: object, default: str) -> bytes:
