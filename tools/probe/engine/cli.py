@@ -1397,102 +1397,6 @@ def _probe_plan_with_endpoint_addresses(
         )
         updated["stimulus_rst_guard"] = rst_guard
     elif case_name in {
-        "dhcp-discover-offer",
-        "dhcp-request-ack",
-        "dhcp-client-identifier",
-        "dhcp-hostname",
-        "dhcp-parameter-request-list",
-        "dhcp-lease-time",
-        "dhcp-renewal-unicast-ack",
-        "dhcp-inform-ack",
-        "dhcp-request-nak",
-        "dhcp-rapid-repeat",
-    }:
-        # DHCP uses fixed privileged ports (client 68 -> server 67). The Offer/Ack
-        # flows from the responder (target) back to the client (stimulus); the
-        # server identifier names the responder, so it follows the target
-        # address onto the lab segment. For a SELECTING-state Request the client
-        # also names the chosen server (option 54), so the stimulus server
-        # identifier is rewritten to the target as well. A RENEWING-state
-        # renewal Request (dhcp-renewal-unicast-ack) is unicast directly to the
-        # leasing server and carries no server-identifier (54) option, so the
-        # rewrite below only touches the stimulus server identifier when one is
-        # present. The client identifier (option 61), the hostname (option 12),
-        # and the already-bound client address (ciaddr) are opaque identities or
-        # documentation-space leases that carry no transport IP, so they stay
-        # unchanged across the lab-segment rewrite.
-        source_port = int(updated.get("source_port", 68))
-        destination_port = int(updated.get("destination_port", 67))
-        updated["capture_filter"] = (
-            f"udp and src host {target_ipv4} and dst host {source_ipv4} "
-            f"and src port {destination_port} and dst port {source_port}"
-        )
-        updated["expected_server_identifier"] = target_ipv4
-        if "server_identifier" in updated:
-            updated["server_identifier"] = target_ipv4
-        target_service = dict(
-            json_object(updated.get("target_service", {}), "probe_plan.target_service")
-        )
-        target_service.update(
-            {
-                "bind_ipv4": target_ipv4,
-                "port": destination_port,
-                "source_ipv4": source_ipv4,
-                "server_identifier": target_ipv4,
-            }
-        )
-        updated["target_service"] = target_service
-        # dhcp-rapid-repeat carries a per-send array: rewrite each send's
-        # transport addresses, capture filter, server identifier (option 54), and
-        # validation onto the lab segment so every Discover->Offer send is matched
-        # against its own Offer (its own xid/chaddr) and never confused with the
-        # sibling send. Each send keeps its distinct transaction id, client MAC,
-        # and offered address (those are per-send identities, not transport IPs).
-        dhcp_sends = updated.get("dhcp_sends")
-        if isinstance(dhcp_sends, list):
-            rewritten_dhcp_sends: list[JSONObject] = []
-            for raw_send in dhcp_sends:
-                send = dict(json_object(raw_send, "probe_plan.dhcp_send"))
-                send_source_port = int(send.get("source_port", 68))
-                send_destination_port = int(send.get("destination_port", 67))
-                send["source_ipv4"] = source_ipv4
-                send["destination_ipv4"] = target_ipv4
-                send["expected_reply_source_ipv4"] = target_ipv4
-                send["expected_reply_destination_ipv4"] = source_ipv4
-                send["expected_server_identifier"] = target_ipv4
-                send["capture_filter"] = (
-                    f"udp and src host {target_ipv4} and dst host {source_ipv4} "
-                    f"and src port {send_destination_port} and dst port {send_source_port}"
-                )
-                send_target_service = dict(
-                    json_object(
-                        send.get("target_service", {}), "probe_plan.dhcp_send.target_service"
-                    )
-                )
-                send_target_service.update(
-                    {
-                        "bind_ipv4": target_ipv4,
-                        "port": send_destination_port,
-                        "source_ipv4": source_ipv4,
-                        "server_identifier": target_ipv4,
-                    }
-                )
-                send["target_service"] = send_target_service
-                send_validation = dict(
-                    json_object(send.get("validation", {}), "probe_plan.dhcp_send.validation")
-                )
-                send_validation["source_ipv4"] = target_ipv4
-                send_validation["destination_ipv4"] = source_ipv4
-                send_validation["server_identifier"] = target_ipv4
-                send["validation"] = send_validation
-                rewritten_dhcp_sends.append(send)
-            updated["dhcp_sends"] = rewritten_dhcp_sends
-        dhcp_validation = dict(
-            json_object(updated.get("validation", {}), "probe_plan.validation")
-        )
-        dhcp_validation["server_identifier"] = target_ipv4
-        updated["validation"] = dhcp_validation
-    elif case_name in {
         "udp-echo-empty",
         "udp-echo-short",
         "udp-echo-binary",
@@ -1690,26 +1594,6 @@ def _failure_reasons_for_case(case_name: str) -> list[str]:
         return [
             FAILURE_TIMEOUT,
             FAILURE_WRONG_PEER,
-            FAILURE_WRONG_FLAGS,
-            FAILURE_DECODE_FAILED,
-            FAILURE_TARGET_SETUP_FAILED,
-        ]
-    if case_name in {
-        "dhcp-discover-offer",
-        "dhcp-request-ack",
-        "dhcp-client-identifier",
-        "dhcp-hostname",
-        "dhcp-parameter-request-list",
-        "dhcp-lease-time",
-        "dhcp-renewal-unicast-ack",
-        "dhcp-inform-ack",
-        "dhcp-request-nak",
-        "dhcp-rapid-repeat",
-    }:
-        return [
-            FAILURE_TIMEOUT,
-            FAILURE_WRONG_PEER,
-            FAILURE_WRONG_PAYLOAD,
             FAILURE_WRONG_FLAGS,
             FAILURE_DECODE_FAILED,
             FAILURE_TARGET_SETUP_FAILED,
