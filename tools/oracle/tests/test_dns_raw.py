@@ -12,7 +12,7 @@ from __future__ import annotations
 import unittest
 
 from tools.oracle.engine.backends.scapy import dns_raw
-from tools.oracle.engine.generator import _dns_compressed_names_raw_spec
+from tools.oracle.engine.protocols.dns import _dns_compressed_names_raw_spec
 
 try:  # pragma: no cover - import guard
     import scapy.all as _scapy_all  # type: ignore[import-untyped]
