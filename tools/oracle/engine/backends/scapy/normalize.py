@@ -58,12 +58,6 @@ _LAYER_ALIASES: dict[str, str] = {
     "BTLE": "ble_radio",
     "BTLE_ADV": "ble_adv",
     "BTLE_ADV_IND": "ble_adv",
-    "BGPHeader": "bgp",
-    "BGPKeepAlive": "bgp",
-    "BGPNotification": "bgp",
-    "BGPOpen": "bgp",
-    "BGPRouteRefresh": "bgp",
-    "BGPUpdate": "bgp",
     "BOOTP": "dhcp",
     "DHCP": "dhcp",
     "DNS": "dns",
@@ -111,13 +105,6 @@ _LAYER_FIELD_ALIASES: dict[str, dict[str, str]] = {
         "nh": "next_header",
         "payloadlen": "payload_len",
         "seq": "sequence",
-    },
-    "bgp": {
-        "bgp_id": "bgp_identifier",
-        "len": "length",
-        "my_as": "asn",
-        "opt_params": "optional_parameters",
-        "path_attr": "path_attributes",
     },
     "esp": {
         "seq": "sequence",
@@ -647,8 +634,6 @@ def _normalize_fields(layer_name: str, fields: JSONObject) -> JSONObject:
         return _normalize_dns_fields(fields)
     if layer_name == "dhcp":
         return _normalize_dhcp_fields(fields)
-    if layer_name == "bgp":
-        return _normalize_bgp_fields(fields)
 
     output: JSONObject = {}
     for native_name, value in fields.items():
@@ -714,6 +699,11 @@ def _normalize_ikev2_flags(value: JSONValue) -> JSONValue:
     return value
 
 
+# BGP message-type code -> name. The per-layer BGP normalizer moved to
+# ``protocols/bgp.py`` (which keeps its own copy), but this table is still consulted
+# by the whole-packet ``_canonicalize_bgp_from_wire`` pass below, which — like the
+# other whole-packet canonicalizers (``_canonicalize_icmpv4``/``_canonicalize_igmp``)
+# — rebuilds BGP from the assembled wire bytes and therefore stays in this module.
 _BGP_MESSAGE_TYPE_NAMES: dict[int, str] = {
     1: "open",
     2: "update",
@@ -721,26 +711,6 @@ _BGP_MESSAGE_TYPE_NAMES: dict[int, str] = {
     4: "keepalive",
     5: "route_refresh",
 }
-
-
-def _normalize_bgp_fields(fields: JSONObject) -> JSONObject:
-    output: JSONObject = {}
-    for native_name, value in fields.items():
-        normalized_name = _normalize_field_name("bgp", native_name)
-        output[normalized_name] = _normalize_field_value("bgp", normalized_name, value)
-
-    marker = output.get("marker")
-    if isinstance(marker, int) and not isinstance(marker, bool):
-        output["marker"] = {"hex": marker.to_bytes(16, "big").hex()}
-
-    message_type = output.get("type")
-    if isinstance(message_type, int) and not isinstance(message_type, bool):
-        output["message_type"] = _BGP_MESSAGE_TYPE_NAMES.get(message_type, message_type)
-
-    for name in ("optional_parameters", "withdrawn_routes", "path_attributes", "nlri"):
-        if output.get(name) == []:
-            output[name] = {"hex": ""}
-    return output
 
 
 _BGP_HEADER_LEN = 19

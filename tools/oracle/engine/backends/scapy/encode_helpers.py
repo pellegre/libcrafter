@@ -171,6 +171,19 @@ def _bytes_field(value: object, *, pad_to: int | None = None) -> bytes:
     return raw
 
 
+def _bytes_optional(value: object) -> bytes:
+    if value is None:
+        return b""
+    return _bytes_field(value)
+
+
+def _bytes_exact(value: object, length: int) -> bytes:
+    raw = _bytes_optional(value)
+    if len(raw) > length:
+        return raw[:length]
+    return raw.ljust(length, b"\x00")
+
+
 def _payload_bytes(fields: Mapping[str, JSONObject]) -> bytes:
     payload = _layer_fields(fields, "payload")
     if not payload:
