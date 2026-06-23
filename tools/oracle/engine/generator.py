@@ -1796,14 +1796,15 @@ class PacketGenerator:
                 )
                 return
         if feature == "tcp_options" and "tcp" in fields:
-            self._apply_tcp_options_behavior(
+            _apply_tcp_options_behavior(
                 fields,
                 case=case,
                 behavior=behavior,
             )
         elif feature == "tcp_header" and "tcp" in fields:
-            self._apply_tcp_header_behavior(
+            _apply_tcp_header_behavior(
                 fields,
+                grammar=self.grammar,
                 feature=feature,
                 case=case,
                 behavior=behavior,
@@ -2053,103 +2054,6 @@ class PacketGenerator:
             "source_addresses": [_IGMP_DOC_SOURCE],
             "auxiliary_data": auxiliary_data,
         }
-
-    def _apply_tcp_header_behavior(
-        self,
-        fields: dict[str, JSONObject],
-        *,
-        feature: str,
-        case: str,
-        behavior: str,
-    ) -> None:
-        """Populate one TCP header behavior for the tcp_header feature.
-
-        The control-bit set comes from the behavior's declared ``flags`` list so
-        SYN, SYN-ACK, RST-ACK, and payload/raw ACK cases set exactly the bits the
-        spec names. Per-case overrides fill the remaining header behaviors: an
-        explicit checksum override that compile() must honor, a deliberately
-        out-of-range data offset that decode preserves rather than rewriting, and
-        a deterministic application payload for the raw-payload-preservation
-        cases. Every value uses documentation-safe, seed-independent bytes so the
-        comparison stays deterministic.
-        """
-
-        tcp = fields["tcp"]
-        flags = self._tcp_header_behavior_flags(feature, behavior)
-        if flags:
-            tcp["flags"] = list(flags)
-
-        key = case.replace("_", "-")
-        if "explicit-checksum" in key:
-            # Honored override: fix the TCP checksum to a constant so both
-            # backends emit it verbatim instead of deriving from the pseudo
-            # header. Exercises the protocol-correct-defaults / honored-override
-            # contract for an intentionally non-derived value.
-            tcp["checksum"] = 0xBEEF
-        if "invalid-data-offset" in key:
-            # Deliberately malformed: a data offset of 15 (60 bytes) with no
-            # option space. compile() preserves the explicit value rather than
-            # rewriting it; compared non-strict (see supported_cases byte_policy).
-            tcp["data_offset"] = 15
-        if "payload-ack" in key or "raw-payload" in key:
-            # Raw payload preservation: a fixed application payload that must
-            # round-trip as a trailing Raw layer after the TCP header.
-            payload_hex = "7261772d7463702d7061796c6f6164"  # b"raw-tcp-payload"
-            fields["payload"] = {
-                "hex": payload_hex,
-                "length": len(payload_hex) // 2,
-            }
-
-    def _tcp_header_behavior_flags(self, feature: str, behavior: str) -> list[str]:
-        feature_spec = self._feature_spec(feature)
-        behaviors = _object_list(
-            feature_spec.get("behaviors", []), f"features.{feature}.behaviors"
-        )
-        for raw_behavior in behaviors:
-            if not isinstance(raw_behavior, Mapping):
-                continue
-            if raw_behavior.get("name") != behavior:
-                continue
-            return _string_list(
-                raw_behavior.get("flags", []),
-                f"features.{feature}.behaviors.{behavior}.flags",
-            )
-        return []
-
-    def _apply_tcp_options_behavior(
-        self,
-        fields: dict[str, JSONObject],
-        *,
-        case: str,
-        behavior: str,
-    ) -> None:
-        """Populate one TCP option behavior for the tcp_options feature.
-
-        Broad option-list cases (tcp-options*, tcp-all-flags-reserved-offset)
-        keep their existing combined option region via ``_tcp_options_hex``. The
-        focused single-option cases (tcp-option-*) materialize exactly one option
-        kind via ``_tcp_option_case_hex``: the comparable kinds (MSS, Window
-        Scale, SACK Permitted, SACK, Timestamp, Fast Open, MPTCP generic, and an
-        unknown valid generic) emit a self-consistent option both backends build
-        byte-identically. The preserved-only kinds (User Timeout, TCP-AO,
-        TCP-ENO, Accurate ECN, experimental ExID) and the malformed-length case
-        carry byte_policy: structured_error and are excluded from offline
-        sampling (see _case_supported_in_direction), so they never reach this
-        materialization in an offline run; the option bytes are still defined
-        here so the spec's declared coverage stays reproducible and so the
-        libcrafter_to_reference and dry-plan paths can render them determinist
-        ically. Every value uses fixed, seed-independent bytes.
-        """
-
-        tcp = fields["tcp"]
-        case_id = _identifier_part(case)
-        if case_id.startswith("tcp-option-"):
-            tcp["options"] = {"hex": _tcp_option_case_hex(behavior)}
-            return
-        tcp["options"] = {"hex": _tcp_options_hex(case, behavior)}
-        if case == "tcp-all-flags-reserved-offset":
-            tcp["flags"] = "all"
-            tcp["reserved"] = 7
 
     def _apply_icmpv4_error_behavior(
         self,
@@ -4337,6 +4241,110 @@ def _dns_answers_for_domain(ctx: _SamplingContext, domain: object) -> list[JSONO
     if domain == "cname":
         return [{"name": "example.org.", "type": "CNAME", "ttl": 60, "target": "alias.example.org."}]
     return [{"name": "example.com.", "type": "A", "ttl": 60, "address": ctx.dst_ipv4}]
+
+
+def _apply_tcp_header_behavior(
+    fields: dict[str, JSONObject],
+    *,
+    grammar: JSONObject,
+    feature: str,
+    case: str,
+    behavior: str,
+) -> None:
+    """Populate one TCP header behavior for the tcp_header feature.
+
+    The control-bit set comes from the behavior's declared ``flags`` list so
+    SYN, SYN-ACK, RST-ACK, and payload/raw ACK cases set exactly the bits the
+    spec names. Per-case overrides fill the remaining header behaviors: an
+    explicit checksum override that compile() must honor, a deliberately
+    out-of-range data offset that decode preserves rather than rewriting, and
+    a deterministic application payload for the raw-payload-preservation
+    cases. Every value uses documentation-safe, seed-independent bytes so the
+    comparison stays deterministic.
+    """
+
+    tcp = fields["tcp"]
+    flags = _tcp_header_behavior_flags(grammar, feature, behavior)
+    if flags:
+        tcp["flags"] = list(flags)
+
+    key = case.replace("_", "-")
+    if "explicit-checksum" in key:
+        # Honored override: fix the TCP checksum to a constant so both
+        # backends emit it verbatim instead of deriving from the pseudo
+        # header. Exercises the protocol-correct-defaults / honored-override
+        # contract for an intentionally non-derived value.
+        tcp["checksum"] = 0xBEEF
+    if "invalid-data-offset" in key:
+        # Deliberately malformed: a data offset of 15 (60 bytes) with no
+        # option space. compile() preserves the explicit value rather than
+        # rewriting it; compared non-strict (see supported_cases byte_policy).
+        tcp["data_offset"] = 15
+    if "payload-ack" in key or "raw-payload" in key:
+        # Raw payload preservation: a fixed application payload that must
+        # round-trip as a trailing Raw layer after the TCP header.
+        payload_hex = "7261772d7463702d7061796c6f6164"  # b"raw-tcp-payload"
+        fields["payload"] = {
+            "hex": payload_hex,
+            "length": len(payload_hex) // 2,
+        }
+
+
+def _tcp_header_behavior_flags(
+    grammar: JSONObject, feature: str, behavior: str
+) -> list[str]:
+    features = _object(grammar.get("features"), "features")
+    if feature not in features:
+        raise ValueError(f"unsupported feature: {feature}")
+    feature_spec = _object(features[feature], f"features.{feature}")
+    behaviors = _object_list(
+        feature_spec.get("behaviors", []), f"features.{feature}.behaviors"
+    )
+    for raw_behavior in behaviors:
+        if not isinstance(raw_behavior, Mapping):
+            continue
+        if raw_behavior.get("name") != behavior:
+            continue
+        return _string_list(
+            raw_behavior.get("flags", []),
+            f"features.{feature}.behaviors.{behavior}.flags",
+        )
+    return []
+
+
+def _apply_tcp_options_behavior(
+    fields: dict[str, JSONObject],
+    *,
+    case: str,
+    behavior: str,
+) -> None:
+    """Populate one TCP option behavior for the tcp_options feature.
+
+    Broad option-list cases (tcp-options*, tcp-all-flags-reserved-offset)
+    keep their existing combined option region via ``_tcp_options_hex``. The
+    focused single-option cases (tcp-option-*) materialize exactly one option
+    kind via ``_tcp_option_case_hex``: the comparable kinds (MSS, Window
+    Scale, SACK Permitted, SACK, Timestamp, Fast Open, MPTCP generic, and an
+    unknown valid generic) emit a self-consistent option both backends build
+    byte-identically. The preserved-only kinds (User Timeout, TCP-AO,
+    TCP-ENO, Accurate ECN, experimental ExID) and the malformed-length case
+    carry byte_policy: structured_error and are excluded from offline
+    sampling (see _case_supported_in_direction), so they never reach this
+    materialization in an offline run; the option bytes are still defined
+    here so the spec's declared coverage stays reproducible and so the
+    libcrafter_to_reference and dry-plan paths can render them determinist
+    ically. Every value uses fixed, seed-independent bytes.
+    """
+
+    tcp = fields["tcp"]
+    case_id = _identifier_part(case)
+    if case_id.startswith("tcp-option-"):
+        tcp["options"] = {"hex": _tcp_option_case_hex(behavior)}
+        return
+    tcp["options"] = {"hex": _tcp_options_hex(case, behavior)}
+    if case == "tcp-all-flags-reserved-offset":
+        tcp["flags"] = "all"
+        tcp["reserved"] = 7
 
 
 def _apply_bgp_behavior(
