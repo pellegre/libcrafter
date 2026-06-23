@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import importlib
 import json
 import os
 import posixpath
@@ -193,74 +194,16 @@ REPORT_SCAN_EXCLUDED_DIRS = {
     "venv",
 }
 
-def _add_common_options(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
-        "--out",
-        default=str(DEFAULT_OUTPUT_ROOT),
-        help="artifact output root (default: %(default)s)",
-    )
-
-
-def _positive_int(value: str) -> int:
-    parsed = int(value)
-    if parsed < 1:
-        raise argparse.ArgumentTypeError("value must be positive")
-    return parsed
-
-
-def _non_negative_int(value: str) -> int:
-    parsed = int(value)
-    if parsed < 0:
-        raise argparse.ArgumentTypeError("value must be non-negative")
-    return parsed
-
-
-def _add_generation_options(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
-        "--backend",
-        choices=registered_backend_names(),
-        default="scapy",
-        help="reference backend to target (default: %(default)s)",
-    )
-    parser.add_argument(
-        "--profile",
-        default="smoke",
-        help="sampling profile from profiles.yaml (default: %(default)s)",
-    )
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=1,
-        help="deterministic generator seed (default: %(default)s)",
-    )
-    parser.add_argument(
-        "--count",
-        type=_positive_int,
-        default=10,
-        help="number of generated packet plans (default: %(default)s)",
-    )
-    parser.add_argument(
-        "--case",
-        dest="case_name",
-        help="case name filter or reproduction coordinate",
-    )
-    parser.add_argument(
-        "--feature",
-        help="feature name filter or reproduction coordinate",
-    )
-    parser.add_argument(
-        "--family",
-        help="protocol family filter from stacks.yaml",
-    )
-    parser.add_argument(
-        "--root",
-        help="root decoder filter from stacks.yaml, such as link:ethernet or l3:ipv4",
-    )
-    parser.add_argument(
-        "--index",
-        type=_non_negative_int,
-        help="generate one packet plan at the selected index",
-    )
+# Shared argparse option helpers live in ``.options`` so the per-command modules
+# under ``.commands`` can import them without pulling in the live-provider
+# machinery. They are re-exported here so historical ``cli.<name>`` lookups (and
+# any code reading them off the ``cli`` namespace) keep resolving as before.
+from .options import (  # noqa: E402
+    _add_common_options,
+    _add_generation_options,
+    _non_negative_int,
+    _positive_int,
+)
 
 
 def _not_implemented(args: argparse.Namespace) -> int:
@@ -8943,272 +8886,15 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
     )
 
-    generate_parser = subparsers.add_parser(
-        "generate",
-        help="generate deterministic packet plans",
-        description="Generate deterministic oracle packet plans.",
-    )
-    _add_common_options(generate_parser)
-    _add_generation_options(generate_parser)
-    generate_parser.add_argument(
-        "--direction",
-        default="reference_to_libcrafter",
-        choices=(
-            "reference_to_libcrafter",
-            "libcrafter_to_reference",
-            "roundtrip",
-            "live",
-            "live_exchange",
-        ),
-        help="plan direction metadata (default: %(default)s)",
-    )
-    generate_parser.set_defaults(func=_generate)
+    # Import the commands package by its canonical name rather than ``from .``.
+    # ``__init__`` aliases this module onto the ``cli`` package and copies its
+    # ``__path__`` onto us, so a plain relative ``from . import commands`` would
+    # root the subpackage under ``...cli.main.commands`` and break the command
+    # modules' relative imports. ``__package__`` resolves to the true ``cli``
+    # package under both the ``engine.*`` and ``tools.oracle.engine.*`` roots.
+    commands = importlib.import_module(f"{__package__}.commands")
 
-    corpus_parser = subparsers.add_parser(
-        "corpus",
-        help="generate a reusable packet corpus",
-        description="Generate a reusable oracle packet corpus artifact.",
-    )
-    corpus_parser.add_argument(
-        "--out",
-        default=str(DEFAULT_OUTPUT_ROOT / "corpus"),
-        help="corpus output root (default: %(default)s)",
-    )
-    _add_generation_options(corpus_parser)
-    corpus_parser.add_argument(
-        "--direction",
-        default="reference_to_libcrafter",
-        choices=(
-            "reference_to_libcrafter",
-            "libcrafter_to_reference",
-            "roundtrip",
-            "live",
-            "live_exchange",
-        ),
-        help="plan direction metadata (default: %(default)s)",
-    )
-    corpus_parser.set_defaults(func=_corpus)
-
-    offline_parser = subparsers.add_parser(
-        "offline",
-        help="run offline validation",
-        description="Run offline oracle validation.",
-    )
-    _add_common_options(offline_parser)
-    _add_generation_options(offline_parser)
-    offline_parser.add_argument(
-        "--direction",
-        choices=("reference_to_libcrafter", "libcrafter_to_reference"),
-        default="reference_to_libcrafter",
-        help="offline validation direction (default: %(default)s)",
-    )
-    offline_parser.add_argument(
-        "--corpus",
-        help="read packet plans from a corpus plans.json artifact",
-    )
-    offline_parser.add_argument(
-        "--keep-artifacts",
-        action="store_true",
-        help="keep intermediate vector and decoded artifacts for successful runs",
-    )
-    offline_parser.add_argument(
-        "--dry-plan",
-        action="store_true",
-        help="print generated packet plans without invoking a backend",
-    )
-    offline_parser.add_argument(
-        "--emit-vectors",
-        action="store_true",
-        help="print Scapy-materialized packet vectors without invoking libcrafter",
-    )
-    offline_parser.add_argument(
-        "--emit-decoded",
-        action="store_true",
-        help="print normalized Scapy-decoded packet models without invoking libcrafter",
-    )
-    offline_parser.set_defaults(func=_offline)
-
-    pcap_parser = subparsers.add_parser(
-        "pcap",
-        help="run pcap validation",
-        description="Run pcap oracle validation.",
-    )
-    _add_common_options(pcap_parser)
-    _add_generation_options(pcap_parser)
-    pcap_parser.add_argument(
-        "--direction",
-        choices=("reference_to_libcrafter", "libcrafter_to_reference", "roundtrip"),
-        default="roundtrip",
-        help="pcap validation direction (default: %(default)s)",
-    )
-    pcap_parser.add_argument(
-        "--corpus",
-        help="read packet plans from a corpus plans.json artifact",
-    )
-    pcap_parser.add_argument(
-        "--keep-artifacts",
-        action="store_true",
-        help="keep intermediate pcap and bridge artifacts for successful runs",
-    )
-    pcap_parser.add_argument(
-        "--dry-plan",
-        "--dry-run",
-        dest="dry_plan",
-        action="store_true",
-        help="print deterministic pcap plans without invoking a backend",
-    )
-    pcap_parser.set_defaults(func=_pcap)
-
-    live_parser = subparsers.add_parser(
-        "live",
-        help="run live validation",
-        description="Run live oracle validation.",
-    )
-    _add_common_options(live_parser)
-    _add_generation_options(live_parser)
-    from ..providers.registry import registered_provider_names
-
-    live_parser.add_argument(
-        "--provider",
-        choices=("local-dry-run", *registered_provider_names()),
-        required=True,
-        help="live provider to use",
-    )
-    live_parser.add_argument(
-        "--direction",
-        choices=("libcrafter_to_reference", "reference_to_libcrafter", "live_exchange"),
-        default="live_exchange",
-        help="live validation direction (default: %(default)s)",
-    )
-    live_parser.add_argument(
-        "--corpus",
-        help="read packet plans from a corpus plans.json artifact",
-    )
-    live_parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="plan provider-backed live validation without creating infrastructure",
-    )
-    live_parser.add_argument(
-        "--confirm-live-run",
-        action="store_true",
-        help="confirm protected non-dry-run provider execution",
-    )
-    live_parser.add_argument(
-        "--keep-wire-endpoints",
-        action="store_true",
-        help="keep provider endpoints after a non-dry-run for debugging",
-    )
-    live_parser.set_defaults(func=_live)
-
-    backend_info_parser = subparsers.add_parser(
-        "backend-info",
-        help="print backend dependency and version metadata",
-        description="Print oracle backend dependency and version metadata.",
-    )
-    backend_info_parser.add_argument(
-        "--backend",
-        choices=registered_backend_names(),
-        default="scapy",
-        help="backend to inspect (default: %(default)s)",
-    )
-    backend_info_parser.set_defaults(func=_backend_info)
-
-    specs_parser = subparsers.add_parser(
-        "specs",
-        help="inspect executable oracle specs",
-        description="Inspect executable oracle specs.",
-    )
-    specs_subparsers = specs_parser.add_subparsers(
-        dest="specs_command",
-        metavar="COMMAND",
-        required=True,
-    )
-    specs_validate_parser = specs_subparsers.add_parser(
-        "validate",
-        help="load and validate all executable oracle specs",
-        description="Load and validate all executable oracle specs.",
-    )
-    specs_validate_parser.add_argument(
-        "--json",
-        action="store_true",
-        help="print the validation summary as JSON",
-    )
-    specs_validate_parser.add_argument(
-        "--strict",
-        action="store_true",
-        help="run strict cross-file spec validation",
-    )
-    specs_validate_parser.set_defaults(func=_specs_validate)
-
-    specs_suite_parser = specs_subparsers.add_parser(
-        "suite",
-        help="emit the reproducible offline case suite for a protocol family",
-        description=(
-            "Emit every offline-eligible supported case for a protocol family in "
-            "each direction it declares, derived from the feature spec's "
-            "supported_cases (directions + byte_policy). structured_error cases are "
-            "excluded because the oracle has no offline malformed pathway. "
-            "contract_only cases are reported in JSON without runnable commands."
-        ),
-    )
-    specs_suite_parser.add_argument(
-        "--family",
-        default="dns",
-        help="protocol family to emit the offline suite for (default: %(default)s)",
-    )
-    specs_suite_parser.add_argument(
-        "--backend",
-        default="scapy",
-        choices=("scapy", "wireshark"),
-        help="reference backend for the emitted commands (default: %(default)s)",
-    )
-    specs_suite_parser.add_argument(
-        "--profile",
-        default="ci",
-        help="sampling profile for the emitted commands (default: %(default)s)",
-    )
-    specs_suite_parser.add_argument(
-        "--seed",
-        type=int,
-        default=2701,
-        help="base seed; per-case seeds derive deterministically (default: %(default)s)",
-    )
-    specs_suite_parser.add_argument(
-        "--out",
-        default=str(DEFAULT_OUTPUT_ROOT),
-        help="artifact output root for the emitted commands (default: %(default)s)",
-    )
-    specs_suite_parser.add_argument(
-        "--json",
-        action="store_true",
-        help="print the suite plan as JSON",
-    )
-    specs_suite_parser.add_argument(
-        "--run",
-        action="store_true",
-        help="execute each emitted offline command and report the aggregate result",
-    )
-    specs_suite_parser.set_defaults(func=_specs_suite)
-
-    report_parser = subparsers.add_parser(
-        "report",
-        help="run final oracle validation and write a summary",
-        description="Run final oracle validation and write a summary.",
-    )
-    report_parser.add_argument(
-        "--out",
-        default=str(DEFAULT_OUTPUT_ROOT / "final"),
-        help="final report output directory (default: %(default)s)",
-    )
-    report_parser.set_defaults(func=_report)
-
-    self_check_parser = subparsers.add_parser(
-        "self-check",
-        help="run oracle engine self checks",
-        description="Run lightweight oracle engine self checks.",
-    )
-    self_check_parser.set_defaults(func=_self_check)
+    commands.register_all(subparsers)
 
     return parser
 
