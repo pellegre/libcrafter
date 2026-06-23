@@ -659,18 +659,10 @@ _LEGACY_STIMULUS_ENDPOINT_CASES = frozenset(
         "tcp-syn-options",
         "ttl-expired",
         # The inline ``dns-query`` smoke case and the ten DNS behavioral cases
-        # are now contributed by the DNS plugin (``protocols/dns.py``) and
-        # unioned into ``_STIMULUS_ENDPOINT_CASES`` below.
-        "dhcp-discover-offer",
-        "dhcp-request-ack",
-        "dhcp-client-identifier",
-        "dhcp-hostname",
-        "dhcp-parameter-request-list",
-        "dhcp-lease-time",
-        "dhcp-renewal-unicast-ack",
-        "dhcp-inform-ack",
-        "dhcp-request-nak",
-        "dhcp-rapid-repeat",
+        # are now contributed by the DNS plugin (``protocols/dns.py``); the ten
+        # DHCP behavioral cases are now contributed by the DHCP plugin
+        # (``protocols/dhcp.py``). Both are unioned into
+        # ``_STIMULUS_ENDPOINT_CASES`` below.
         # The ten ARP stimulus-endpoint cases are now contributed by the ARP
         # plugin (``protocols/arp.py``) and unioned into ``_STIMULUS_ENDPOINT_CASES``
         # below; ``arp-resolution`` was never stimulus-routed.
