@@ -341,6 +341,64 @@ def _field_bits(field_spec: JSONObject) -> int:
     return 16
 
 
+def _json_object(value: object) -> JSONObject:
+    """Coerce a string-keyed mapping into a :data:`JSONObject`.
+
+    Generic JSON-validation primitive shared by the spec/grammar readers; kept
+    here so the per-protocol plugins (e.g. the TCP ``tcp_header`` behavior, which
+    reads the loaded feature grammar) can validate spec fragments without
+    importing ``generator`` (which would create a cycle). Re-imported into
+    ``generator`` to preserve its call sites.
+    """
+
+    if not isinstance(value, Mapping):
+        raise ValueError("expected a JSON object")
+    output: JSONObject = {}
+    for key, item in value.items():
+        if not isinstance(key, str):
+            raise ValueError(f"JSON object key must be a string: {key!r}")
+        output[key] = item  # type: ignore[assignment]
+    return output
+
+
+def _object(value: object, name: str) -> JSONObject:
+    """Validate ``value`` as a JSON object, raising on the named path otherwise.
+
+    Backend-neutral spec helper shared by the per-protocol plugins (re-imported
+    into ``generator`` to preserve its call sites).
+    """
+
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{name} must be an object")
+    return _json_object(value)
+
+
+def _object_list(value: object, name: str) -> list[object]:
+    """Validate ``value`` as a list (not a string/bytes), raising otherwise.
+
+    Backend-neutral spec helper shared by the per-protocol plugins (re-imported
+    into ``generator`` to preserve its call sites).
+    """
+
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        raise ValueError(f"{name} must be a list")
+    return list(value)
+
+
+def _string_list(value: object, name: str) -> list[str]:
+    """Validate ``value`` as a list of strings, raising on the named path otherwise.
+
+    Backend-neutral spec helper shared by the per-protocol plugins (re-imported
+    into ``generator`` to preserve its call sites).
+    """
+
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        raise ValueError(f"{name} must be a list of strings")
+    if not all(isinstance(item, str) for item in value):
+        raise ValueError(f"{name} must be a list of strings")
+    return list(value)
+
+
 def _next_layer_after(stack: Sequence[str], layer: str) -> str | None:
     """Return the next non-payload layer after ``layer`` in ``stack``.
 

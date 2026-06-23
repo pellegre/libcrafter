@@ -126,6 +126,7 @@ def _apply_behavior(
     feature: str,
     case: str,
     behavior: str,
+    grammar: JSONObject | None = None,
 ) -> None:
     """Apply the ``udp_options`` feature behavior to the sampled UDP fields.
 
@@ -133,6 +134,8 @@ def _apply_behavior(
     ``generator._apply_feature_behavior``: it pins the UDP surplus options for the
     selected case/behavior, zeroes the UDP checksum for the IPv4/IPv6 zero-checksum
     cases, and drops the options field when the case carries no surplus area.
+    ``grammar`` is part of the uniform ``apply_behavior`` call path (the TCP
+    ``tcp_header`` behavior reads it); UDP does not consult it.
     """
 
     _apply_udp_options_behavior(fields, case=case, behavior=behavior)

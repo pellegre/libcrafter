@@ -31,9 +31,13 @@ from .sampling import (
     _IPV6_DOCUMENTATION_NETWORK,
     _ipv6_next_header_for_stack,
     _is_ipv4_root_dhcp_stack,
+    _json_object,
     _mac_for_domain,
     _next_layer_after,
+    _object,
+    _object_list,
     _payload_hex_from_fields,
+    _string_list,
     _udp_option_checksum_intent,
     _udp_options_field,
     _udp_options_items,
@@ -311,17 +315,6 @@ _SUPPORTED_FIELDS: dict[str, set[str]] = {
         "pmkid_list",
         "trailing_bytes",
         "version",
-    },
-    "tcp": {
-        "src_port",
-        "dst_port",
-        "sequence",
-        "acknowledgement",
-        "reserved",
-        "flags",
-        "window",
-        "urgent_pointer",
-        "options",
     },
 }
 
@@ -1793,23 +1786,10 @@ class PacketGenerator:
                     feature=feature,
                     case=case,
                     behavior=behavior,
+                    grammar=self.grammar,
                 )
                 return
-        if feature == "tcp_options" and "tcp" in fields:
-            _apply_tcp_options_behavior(
-                fields,
-                case=case,
-                behavior=behavior,
-            )
-        elif feature == "tcp_header" and "tcp" in fields:
-            _apply_tcp_header_behavior(
-                fields,
-                grammar=self.grammar,
-                feature=feature,
-                case=case,
-                behavior=behavior,
-            )
-        elif feature is not None and feature.startswith("bgp_") and "bgp" in fields:
+        if feature is not None and feature.startswith("bgp_") and "bgp" in fields:
             _apply_bgp_behavior(fields, stack=stack, case=case, behavior=behavior)
         elif feature is not None and feature.startswith("ripng_") and "ripng" in fields:
             _apply_ripng_behavior(fields, stack=stack, case=case, behavior=behavior)
@@ -2254,8 +2234,6 @@ class PacketGenerator:
                 field_spec=field_spec,
                 current_fields=current_fields,
             )
-        if layer == "tcp":
-            return _sample_tcp_field(ctx, field_name, domain, field_spec)
         if layer == "bgp":
             return _sample_bgp_field(ctx, field_name, domain)
         if layer == "rip":
@@ -2353,12 +2331,6 @@ def _field_specs(spec: JSONObject, layer: str) -> list[JSONObject]:
     return [_object(field, f"layers.{layer}.fields item") for field in raw_fields]
 
 
-def _object_list(value: object, name: str) -> list[object]:
-    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
-        raise ValueError(f"{name} must be a list")
-    return list(value)
-
-
 def _domain_weight(ctx: _SamplingContext, layer: str, field_name: str, domain: object) -> int:
     if field_name == "options" and layer == "ipv4":
         if ctx.feature == "ipv4_options" or "ipv4-options" in ctx.case:
@@ -2440,29 +2412,6 @@ def _ipv6_extension_options_for_case(layer: str, case: str) -> list[JSONObject]:
         {"kind": "home_address", "address": "2001:db8::42"},
         {"kind": "padn", "total_length": 4},
     ]
-
-
-def _sample_tcp_field(
-    ctx: _SamplingContext,
-    field_name: str,
-    domain: object,
-    field_spec: JSONObject,
-) -> object:
-    if field_name == "src_port":
-        return _integer_domain_value(ctx, domain, field_name, bits=16)
-    if field_name == "dst_port":
-        return _integer_domain_value(ctx, domain, field_name, bits=16)
-    if field_name in {"sequence", "acknowledgement", "urgent_pointer"}:
-        return _integer_domain_value(ctx, domain, field_name, bits=_field_bits(field_spec))
-    if field_name == "reserved":
-        return _integer_domain_value(ctx, domain, field_name, bits=3)
-    if field_name == "flags":
-        return domain
-    if field_name == "window":
-        return _integer_domain_value(ctx, domain, field_name, bits=16)
-    if field_name == "options":
-        return {"hex": _tcp_options_hex(ctx.case, str(domain))}
-    raise ValueError(f"spec error: unsupported tcp field sampler: {field_name}")
 
 
 def _sample_bgp_field(ctx: _SamplingContext, field_name: str, domain: object) -> object:
@@ -2850,60 +2799,6 @@ def _dhcp_option_domains(ctx: _SamplingContext, domain: object) -> list[object]:
         options.append(["param_req_list", [1, 3, 6]])
     options.append("end")
     return options
-
-
-def _tcp_options_hex(case: str, behavior: str) -> str:
-    key = f"{case} {behavior}".replace("_", "-")
-    if "sack" in key:
-        return "0402050a0000000100000002"
-    if any(token in key for token in ("mptcp", "fast-open", "edo", "generic", "advanced")):
-        return "1e04000122040102fd040000fe040102"
-    if "header-boundary" in key or "all-flags" in key:
-        return "01010101"
-    return "020405b4010303070402080a0102030405060708"
-
-
-# Per-behavior option region for the focused single-option tcp_options cases.
-# Each entry carries exactly one TCP option whose declared length byte matches
-# its data so the Scapy reference backend emits it verbatim (comparable cases)
-# or so libcrafter preserves the documented wire form (preserved-only cases).
-# Sources: RFC 9293 (base options/EOL/NOP), RFC 793/879 (MSS kind 2),
-# RFC 7323 (Window Scale kind 3, Timestamps kind 8), RFC 2018 (SACK Permitted
-# kind 4, SACK kind 5), RFC 7413 (Fast Open kind 34), RFC 8684 (MPTCP kind 30),
-# RFC 5482 (User Timeout kind 28), RFC 5925 (TCP-AO kind 29), RFC 8547
-# (TCP-ENO kind 69), RFC 9768 (Accurate ECN kinds 172/174), and RFC 6994
-# (experimental ExID kinds 253/254). See docs/guide/tcp.md.
-_TCP_OPTION_CASE_HEX: dict[str, str] = {
-    # Comparable kinds: Scapy builds these byte-identically to libcrafter.
-    "mss": "020405b4",  # kind 2, len 4: MSS 1460
-    "window-scale": "030307",  # kind 3, len 3: shift 7
-    "sack-permitted": "0402",  # kind 4, len 2
-    "sack": "050a0000000100000002",  # kind 5, len 10: one SACK block
-    "timestamp": "080a0102030405060708",  # kind 8, len 10: TSval/TSecr
-    "fast-open": "2202",  # kind 34, len 2: Fast Open cookie request
-    "mptcp-generic": "1e040001",  # kind 30, len 4: MPTCP generic subtype
-    "unknown-generic": "c804aabb",  # kind 200, len 4: unknown valid generic
-    # Preserved-only kinds: declared coverage, byte_policy structured_error.
-    # Scapy has no faithful native build/compare path; libcrafter preserves
-    # these bytes verbatim (asserted by the crate suites).
-    "user-timeout": "1c0480e8",  # kind 28, len 4: G=1, value 0x00e8 (RFC 5482)
-    "tcp-ao": "1d0c01020304050607080910",  # kind 29, len 12: KeyID/RNext/MAC
-    "tcp-eno": "4504aabb",  # kind 69, len 4: ENO suboptions (RFC 8547)
-    "accurate-ecn": "ac0601020304",  # kind 172, len 6: AccECN order-0 counters
-    "experimental": "fd06f0010203",  # kind 253, len 6: ExID 0xf001 + data
-    # Malformed: a length byte below the two-octet minimum (kind 2, len 1).
-    # No offline malformed comparison pathway; the crate suites assert the error.
-    "malformed-length": "0201",
-}
-
-
-def _tcp_option_case_hex(behavior: str) -> str:
-    """Return the option region hex for one focused tcp_options behavior."""
-
-    key = _identifier_part(behavior)
-    if key not in _TCP_OPTION_CASE_HEX:
-        raise ValueError(f"spec error: no tcp option hex for behavior {behavior!r}")
-    return _TCP_OPTION_CASE_HEX[key]
 
 
 def _icmp_error_type_for_case(case: str, behavior: str, *, ipv6: bool) -> str:
@@ -4243,110 +4138,6 @@ def _dns_answers_for_domain(ctx: _SamplingContext, domain: object) -> list[JSONO
     return [{"name": "example.com.", "type": "A", "ttl": 60, "address": ctx.dst_ipv4}]
 
 
-def _apply_tcp_header_behavior(
-    fields: dict[str, JSONObject],
-    *,
-    grammar: JSONObject,
-    feature: str,
-    case: str,
-    behavior: str,
-) -> None:
-    """Populate one TCP header behavior for the tcp_header feature.
-
-    The control-bit set comes from the behavior's declared ``flags`` list so
-    SYN, SYN-ACK, RST-ACK, and payload/raw ACK cases set exactly the bits the
-    spec names. Per-case overrides fill the remaining header behaviors: an
-    explicit checksum override that compile() must honor, a deliberately
-    out-of-range data offset that decode preserves rather than rewriting, and
-    a deterministic application payload for the raw-payload-preservation
-    cases. Every value uses documentation-safe, seed-independent bytes so the
-    comparison stays deterministic.
-    """
-
-    tcp = fields["tcp"]
-    flags = _tcp_header_behavior_flags(grammar, feature, behavior)
-    if flags:
-        tcp["flags"] = list(flags)
-
-    key = case.replace("_", "-")
-    if "explicit-checksum" in key:
-        # Honored override: fix the TCP checksum to a constant so both
-        # backends emit it verbatim instead of deriving from the pseudo
-        # header. Exercises the protocol-correct-defaults / honored-override
-        # contract for an intentionally non-derived value.
-        tcp["checksum"] = 0xBEEF
-    if "invalid-data-offset" in key:
-        # Deliberately malformed: a data offset of 15 (60 bytes) with no
-        # option space. compile() preserves the explicit value rather than
-        # rewriting it; compared non-strict (see supported_cases byte_policy).
-        tcp["data_offset"] = 15
-    if "payload-ack" in key or "raw-payload" in key:
-        # Raw payload preservation: a fixed application payload that must
-        # round-trip as a trailing Raw layer after the TCP header.
-        payload_hex = "7261772d7463702d7061796c6f6164"  # b"raw-tcp-payload"
-        fields["payload"] = {
-            "hex": payload_hex,
-            "length": len(payload_hex) // 2,
-        }
-
-
-def _tcp_header_behavior_flags(
-    grammar: JSONObject, feature: str, behavior: str
-) -> list[str]:
-    features = _object(grammar.get("features"), "features")
-    if feature not in features:
-        raise ValueError(f"unsupported feature: {feature}")
-    feature_spec = _object(features[feature], f"features.{feature}")
-    behaviors = _object_list(
-        feature_spec.get("behaviors", []), f"features.{feature}.behaviors"
-    )
-    for raw_behavior in behaviors:
-        if not isinstance(raw_behavior, Mapping):
-            continue
-        if raw_behavior.get("name") != behavior:
-            continue
-        return _string_list(
-            raw_behavior.get("flags", []),
-            f"features.{feature}.behaviors.{behavior}.flags",
-        )
-    return []
-
-
-def _apply_tcp_options_behavior(
-    fields: dict[str, JSONObject],
-    *,
-    case: str,
-    behavior: str,
-) -> None:
-    """Populate one TCP option behavior for the tcp_options feature.
-
-    Broad option-list cases (tcp-options*, tcp-all-flags-reserved-offset)
-    keep their existing combined option region via ``_tcp_options_hex``. The
-    focused single-option cases (tcp-option-*) materialize exactly one option
-    kind via ``_tcp_option_case_hex``: the comparable kinds (MSS, Window
-    Scale, SACK Permitted, SACK, Timestamp, Fast Open, MPTCP generic, and an
-    unknown valid generic) emit a self-consistent option both backends build
-    byte-identically. The preserved-only kinds (User Timeout, TCP-AO,
-    TCP-ENO, Accurate ECN, experimental ExID) and the malformed-length case
-    carry byte_policy: structured_error and are excluded from offline
-    sampling (see _case_supported_in_direction), so they never reach this
-    materialization in an offline run; the option bytes are still defined
-    here so the spec's declared coverage stays reproducible and so the
-    libcrafter_to_reference and dry-plan paths can render them determinist
-    ically. Every value uses fixed, seed-independent bytes.
-    """
-
-    tcp = fields["tcp"]
-    case_id = _identifier_part(case)
-    if case_id.startswith("tcp-option-"):
-        tcp["options"] = {"hex": _tcp_option_case_hex(behavior)}
-        return
-    tcp["options"] = {"hex": _tcp_options_hex(case, behavior)}
-    if case == "tcp-all-flags-reserved-offset":
-        tcp["flags"] = "all"
-        tcp["reserved"] = 7
-
-
 def _apply_bgp_behavior(
     fields: dict[str, JSONObject],
     *,
@@ -5503,35 +5294,10 @@ def _derive_deck_seed(seed: int, profile: str, names: Sequence[str]) -> int:
     return int.from_bytes(hashlib.sha256(material).digest()[:16], byteorder="big")
 
 
-def _json_object(value: object) -> JSONObject:
-    if not isinstance(value, Mapping):
-        raise ValueError("expected a JSON object")
-    output: JSONObject = {}
-    for key, item in value.items():
-        if not isinstance(key, str):
-            raise ValueError(f"JSON object key must be a string: {key!r}")
-        output[key] = item  # type: ignore[assignment]
-    return output
-
-
-def _object(value: object, name: str) -> JSONObject:
-    if not isinstance(value, Mapping):
-        raise ValueError(f"{name} must be an object")
-    return _json_object(value)
-
-
 def _string(value: object, name: str) -> str:
     if not isinstance(value, str):
         raise ValueError(f"{name} must be a string")
     return value
-
-
-def _string_list(value: object, name: str) -> list[str]:
-    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
-        raise ValueError(f"{name} must be a list of strings")
-    if not all(isinstance(item, str) for item in value):
-        raise ValueError(f"{name} must be a list of strings")
-    return list(value)
 
 
 def _string_or_none(value: object) -> str | None:
