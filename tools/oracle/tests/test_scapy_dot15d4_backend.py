@@ -77,10 +77,23 @@ class ScapyDot15d4ZigbeeSupportTest(unittest.TestCase):
             parsed, root="link:ieee802154", source_hex=raw.hex()
         )
 
+        # The comparison-visible decoded model is aligned with the libcrafter
+        # oracle decode adapter: the Dot15d4FCS + Dot15d4Data scapy layers
+        # collapse into a single ``Dot15d4`` MAC layer and the Zigbee sublayers
+        # use the libcrafter layer names so the cross-backend offline comparison
+        # matches. The full scapy field detail stays inspectable on the model
+        # metadata (``native``).
         self.assertEqual(model.root, "link:ieee802154")
-        self.assertIn("dot15d4", model.layers)
-        self.assertIn("zigbee_nwk", model.layers)
-        self.assertIn("zigbee_aps", model.layers)
+        self.assertEqual(model.layers, ["Dot15d4", "ZigbeeNwk", "ZigbeeAps"])
+        self.assertEqual(model.fields["Dot15d4"], {})
+        self.assertEqual(model.fields["ZigbeeNwk"], {})
+        self.assertEqual(model.fields["ZigbeeAps"], {})
+        native_layers = [
+            layer["name"] for layer in model.metadata["native"]["layers"]
+        ]
+        self.assertIn("Dot15d4", native_layers)
+        self.assertIn("ZigbeeNWK", native_layers)
+        self.assertIn("ZigbeeAppDataPayload", native_layers)
 
 
 if __name__ == "__main__":
