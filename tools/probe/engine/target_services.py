@@ -28,8 +28,7 @@ from __future__ import annotations
 import json
 import posixpath
 import shlex
-from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 from .capabilities import (
@@ -39,6 +38,16 @@ from .capabilities import (
 )
 from .lab import TARGET_ROLE
 from .model import JSONObject, JSONValue, json_object
+from .target_service_helpers import (
+    KernelStateDescriptor,
+    TargetServiceDescriptor,
+    dedupe_ints,
+    plans_by_destination_port,
+    probe_plan_send_count,
+    target_service_address_fields,
+)
+from .target_service_helpers import json_mapping as _json_mapping
+from .target_service_helpers import string_or as _string_or
 
 
 # A lab-wire helper that resolves an endpoint mapping to its endpoint ID.
@@ -76,50 +85,11 @@ RIP_RIB_COMMAND = "vtysh -c 'show ip rip'"
 # --------------------------------------------------------------------------- #
 #
 # Each descriptor is a deterministic, inspectable plan for one controlled
-# target service or one piece of verified kernel state. They are the typed
-# contract the live setup script renders and the dry-run report advertises.
-
-
-@dataclass(frozen=True, slots=True)
-class TargetServiceDescriptor:
-    """A controlled, disposable service the target endpoint stands up.
-
-    ``setup_commands`` and ``cleanup_commands`` are deterministic shell
-    fragments; ``artifacts`` lists the relative artifact paths the running
-    service produces so the live path can collect inspectable evidence.
-    """
-
-    name: str
-    protocol: str
-    purpose: str
-    bind_ipv4: str
-    source_ipv4: str
-    port: int | None = None
-    requires: list[str] = field(default_factory=list)
-    setup_commands: list[str] = field(default_factory=list)
-    cleanup_commands: list[str] = field(default_factory=list)
-    artifacts: list[str] = field(default_factory=list)
-    metadata: JSONObject = field(default_factory=dict)
-
-
-@dataclass(frozen=True, slots=True)
-class KernelStateDescriptor:
-    """A piece of target kernel state the setup verifies or configures.
-
-    Used for closed UDP/TCP port validation, ARP alias addresses, and ARP
-    sysctl tuning. ``verify_commands`` assert preconditions; ``setup_commands``
-    apply state; ``cleanup_commands`` restore it.
-    """
-
-    name: str
-    purpose: str
-    bind_ipv4: str
-    source_ipv4: str
-    port: int | None = None
-    verify_commands: list[str] = field(default_factory=list)
-    setup_commands: list[str] = field(default_factory=list)
-    cleanup_commands: list[str] = field(default_factory=list)
-    metadata: JSONObject = field(default_factory=dict)
+# target service or one piece of verified kernel state. The descriptor
+# dataclasses (:class:`TargetServiceDescriptor`, :class:`KernelStateDescriptor`)
+# live in :mod:`target_service_helpers`; the per-protocol builders below render
+# the typed contract the live setup script renders and the dry-run report
+# advertises.
 
 
 def dns_responder_descriptor(
@@ -548,39 +518,6 @@ def target_service_setup_plan(
     }
 
 
-def plans_by_destination_port(plans: Iterable[JSONObject]) -> dict[int, JSONObject]:
-    """Map each plan's destination port to the first plan that used it."""
-
-    by_port: dict[int, JSONObject] = {}
-    for plan in plans:
-        port = int(plan["destination_port"])
-        by_port.setdefault(port, plan)
-    return by_port
-
-
-def target_service_address_fields(plan: Mapping[str, JSONValue]) -> JSONObject:
-    """Return the bind/source IPv4 fields for a plan's target service."""
-
-    target_service = _json_mapping(
-        plan.get("target_service", {}),
-        "probe_plan.target_service",
-    )
-    bind_ipv4 = _string_or(
-        target_service.get("bind_ipv4"),
-        _string_or(plan.get("destination_ipv4"), ""),
-    )
-    source_ipv4 = _string_or(
-        target_service.get("source_ipv4"),
-        _string_or(plan.get("source_ipv4"), ""),
-    )
-    fields: JSONObject = {}
-    if bind_ipv4:
-        fields["bind_ipv4"] = bind_ipv4
-    if source_ipv4:
-        fields["source_ipv4"] = source_ipv4
-    return fields
-
-
 def bgp_peer_service_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
     """Return the FRR BGP peer service plan, if any probe plan requests it."""
 
@@ -604,21 +541,6 @@ def bgp_peer_service_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject
         **descriptor.metadata,
     }
     return [service]
-
-
-def probe_plan_send_count(plan: Mapping[str, JSONValue]) -> int:
-    """Return the number of endpoint sends represented by a probe plan."""
-
-    for key in ("sends", "dhcp_sends", "arp_sends", "udp_sends"):
-        value = plan.get(key)
-        if isinstance(value, Sequence) and not isinstance(
-            value, (str, bytes, bytearray)
-        ):
-            return len(value)
-    raw_count = plan.get("send_count")
-    if isinstance(raw_count, int) and raw_count > 0:
-        return raw_count
-    return 1
 
 
 def arp_kernel_state_plan(
@@ -888,22 +810,6 @@ def arp_decoy_events(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
         if isinstance(event, Mapping):
             events.append(json_object(event, "probe_plan.decoy_arp_event"))
     return events
-
-
-def dedupe_ints(values: Iterable[int]) -> list[int]:
-    """Return the integer sequence with duplicates removed, order preserved."""
-
-    return list(dict.fromkeys(values))
-
-
-def _string_or(value: object, default: str) -> str:
-    return value if isinstance(value, str) and value else default
-
-
-def _json_mapping(value: object, name: str) -> JSONObject:
-    if isinstance(value, Mapping):
-        return json_object(value, name)
-    return {}
 
 
 # --------------------------------------------------------------------------- #
