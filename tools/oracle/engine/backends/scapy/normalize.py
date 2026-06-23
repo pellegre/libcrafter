@@ -95,9 +95,6 @@ _LAYER_ALIASES: dict[str, str] = {
     "OSPF_LSAck": "ospf",
     "RadioTap": "radiotap",
     "TCP": "tcp",
-    "UDP": "udp",
-    "ZigbeeAppDataPayload": "zigbee_aps",
-    "ZigbeeNWK": "zigbee_nwk",
 }
 _FIELD_ALIASES: dict[str, str] = {
     "chksum": "checksum",

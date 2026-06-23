@@ -59,7 +59,6 @@ KNOWN_UNMIGRATED: frozenset[str] = frozenset(
         "ripng",
         "rsn",
         "tcp",
-        "udp",
     }
 )
 

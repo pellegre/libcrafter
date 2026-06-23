@@ -99,7 +99,6 @@ _SCAPY_LAYER_BY_LAYER: dict[str, str] = {
     "ripng": "Raw",
     "rsn": "Dot11EltRSN",
     "tcp": "TCP",
-    "udp": "UDP",
 }
 _SCAPY_DECODER_BY_ROOT: dict[str, str] = {
     "link:bluetooth-le-ll-with-phdr": "BTLE_PHDR",
@@ -644,17 +643,6 @@ _SUPPORTED_FIELDS_BY_LAYER: dict[str, set[str]] = {
         "urgptr",
         "window",
     },
-    "udp": {
-        "checksum",
-        "chksum",
-        "dport",
-        "dst_port",
-        "len",
-        "length",
-        "options",
-        "sport",
-        "src_port",
-    },
 }
 
 
@@ -805,8 +793,6 @@ def _build_layer(plan: PacketPlan, stack: list[str], index: int, scapy_all: Any)
         return scapy_all.Raw(load=_igmp_report_bytes(fields))
     if layer == "igmp_extension":
         return scapy_all.Raw(load=_igmp_extension_layer_bytes(_layer_fields_for_stack_index(fields, stack, index)))
-    if layer == "udp":
-        return _udp(fields, stack, scapy_all)
     if layer == "tcp":
         return _tcp(fields, scapy_all)
     if layer == "dns":
@@ -1946,19 +1932,6 @@ def _igmp_bytes_value(value: object) -> bytes:
     if value is None:
         return b""
     return _bytes_field(value)
-
-
-def _udp(fields: Mapping[str, JSONObject], stack: list[str], scapy_all: Any) -> Any:
-    udp_fields = _layer_fields(fields, "udp")
-    kwargs: dict[str, Any] = {
-        "sport": _int(_required_field(udp_fields, "udp", "src_port", "sport"), 0),
-        "dport": _int(_required_field(udp_fields, "udp", "dst_port", "dport"), 0),
-    }
-    if "checksum" in udp_fields or "chksum" in udp_fields:
-        kwargs["chksum"] = _int(_optional_field(udp_fields, "checksum", "chksum"), 0)
-    if "length" in udp_fields or "len" in udp_fields:
-        kwargs["len"] = _int(_optional_field(udp_fields, "length", "len"), 0)
-    return scapy_all.UDP(**kwargs)
 
 
 def _tcp(fields: Mapping[str, JSONObject], scapy_all: Any) -> Any:
