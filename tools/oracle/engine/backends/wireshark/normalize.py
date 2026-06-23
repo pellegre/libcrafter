@@ -24,6 +24,7 @@ from .decode_helpers import (
     _parse_int,
     _parse_int_fields,
     _string_field,
+    _truthy_field,
 )
 # Importing the protocols package runs its ``autodiscover`` so every per-protocol
 # Wireshark decoder module self-registers; ``WIRESHARK_REGISTRY`` is consulted for a
@@ -335,8 +336,6 @@ def _normalize_protocol_fields(
         return _normalize_eapol(_layer(layers, "eapol"))
     if layer_name == "rsn":
         return _normalize_rsn(_layer_any(layers, "wlan_mgt.rsn", "wlan.rsn"))
-    if layer_name == "ipv4":
-        return _normalize_ipv4(_layer(layers, "ip"))
     if layer_name == "ipv6":
         return _normalize_ipv6(_layer(layers, "ipv6"))
     if layer_name == "ipv6_hop_by_hop":
@@ -629,42 +628,6 @@ def _normalize_rsn(layer: JSONObject) -> JSONObject:
     )
     if akms:
         output["akm_suites"] = akms
-    return output
-
-
-def _normalize_ipv4(layer: JSONObject) -> JSONObject:
-    output = _fields_from_aliases(
-        layer,
-        {
-            "version": ("ip.version",),
-            "header_length": ("ip.hdr_len",),
-            "tos": ("ip.dsfield", "ip.tos"),
-            "length": ("ip.len",),
-            "identification": ("ip.id",),
-            "fragment_offset": ("ip.frag_offset",),
-            "ttl": ("ip.ttl",),
-            "protocol": ("ip.proto",),
-            "checksum": ("ip.checksum",),
-            "src": ("ip.src",),
-            "dst": ("ip.dst",),
-        },
-    )
-    _parse_int_fields(
-        output,
-        "version",
-        "header_length",
-        "tos",
-        "length",
-        "identification",
-        "fragment_offset",
-        "ttl",
-        "protocol",
-        "checksum",
-    )
-    header_length = output.get("header_length")
-    if isinstance(header_length, int) and header_length >= 20 and header_length % 4 == 0:
-        output["header_length"] = header_length // 4
-    output["flags"] = _ipv4_flags(layer)
     return output
 
 
@@ -1164,24 +1127,6 @@ def _normalize_linux_sll(layer: JSONObject) -> JSONObject:
     return output
 
 
-def _ipv4_flags(layer: JSONObject) -> str:
-    if _truthy_field(layer, "ip.flags.df"):
-        return "df"
-    if _truthy_field(layer, "ip.flags.mf"):
-        return "mf"
-    value = _parse_int(_field(layer, "ip.flags"))
-    if value == 0:
-        return "none"
-    if value is None:
-        return "none"
-    flags: list[str] = []
-    if value & 0x2:
-        flags.append("df")
-    if value & 0x1:
-        flags.append("mf")
-    return "|".join(flags) if flags else "none"
-
-
 def _tcp_flags(layer: JSONObject) -> str:
     names = [
         ("tcp.flags.fin", "fin"),
@@ -1210,17 +1155,6 @@ def _tcp_flags(layer: JSONObject) -> str:
         (0x80, "cwr"),
     ]
     return "|".join(name for bit, name in raw_names if value & bit) or "none"
-
-
-def _truthy_field(layer: JSONObject, name: str) -> bool:
-    value = _field(layer, name)
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, int):
-        return value != 0
-    if isinstance(value, str):
-        return value not in {"", "0", "0x0", "False", "false"}
-    return False
 
 
 def _truthy_value(value: object) -> bool:

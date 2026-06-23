@@ -17,9 +17,12 @@ from .encode_helpers import (
     _ethertype_value,
     _hardware_type_value,
     _int,
+    _ipv4_flags,
     _layer_fields,
+    _option_bytes,
     _optional_field,
     _payload_bytes,
+    _protocol_value,
     _required_field,
     _text,
     _validate_payload_length,
@@ -92,7 +95,6 @@ _SCAPY_LAYER_BY_LAYER: dict[str, str] = {
     "ipv6_fragment": "IPv6ExtHdrFragment",
     "ipv6_hop_by_hop": "IPv6ExtHdrHopByHop",
     "ipv6_routing": "IPv6ExtHdrRouting",
-    "ipv4": "IP",
     "ipv6": "IPv6",
     "ospf": "OSPF_Hdr",
     "radiotap": "RadioTap",
@@ -513,21 +515,6 @@ _SUPPORTED_FIELDS_BY_LAYER: dict[str, set[str]] = {
         "report_flags",
         "reserved_flags",
     },
-    "ipv4": {
-        "dst",
-        "ds_field",
-        "flags",
-        "frag",
-        "fragment_offset",
-        "id",
-        "identification",
-        "options",
-        "protocol",
-        "proto",
-        "src",
-        "tos",
-        "ttl",
-    },
     "ipv6": {
         "dst",
         "fl",
@@ -817,8 +804,6 @@ def _build_layer(plan: PacketPlan, stack: list[str], index: int, scapy_all: Any)
         return _bgp(fields, stack, index, scapy_all)
     if layer == "ospf":
         return _ospf(fields, stack, index, scapy_all)
-    if layer == "ipv4":
-        return _ipv4(fields, stack, index, scapy_all)
     if layer == "ipv6":
         return _ipv6(fields, stack, index, scapy_all)
     if layer == "ipv6_hop_by_hop":
@@ -1290,27 +1275,6 @@ def _ospf_lsa_list(value: object, scapy_ospf: Any) -> list[Any]:
             else:
                 lsas.append(header)
     return lsas
-
-
-def _ipv4(fields: Mapping[str, JSONObject], stack: list[str], index: int, scapy_all: Any) -> Any:
-    ipv4_fields = _layer_fields(fields, "ipv4")
-    kwargs: dict[str, Any] = {
-        "src": _text(_required_field(ipv4_fields, "ipv4", "src"), ""),
-        "dst": _text(_required_field(ipv4_fields, "ipv4", "dst"), ""),
-        "id": _int(_required_field(ipv4_fields, "ipv4", "identification", "id"), 0),
-        "ttl": _int(_required_field(ipv4_fields, "ipv4", "ttl"), 0),
-        "flags": _ipv4_flags(_required_field(ipv4_fields, "ipv4", "flags")),
-        "proto": _protocol_value(_required_field(ipv4_fields, "ipv4", "protocol", "proto"), _IP_PROTOCOLS),
-    }
-    if "tos" in ipv4_fields:
-        kwargs["tos"] = _int(ipv4_fields.get("tos"), 0)
-    if "ds_field" in ipv4_fields:
-        kwargs["tos"] = _int(ipv4_fields.get("ds_field"), 0)
-    if "fragment_offset" in ipv4_fields or "frag" in ipv4_fields:
-        kwargs["frag"] = _int(_optional_field(ipv4_fields, "fragment_offset", "frag"), 0)
-    if "options" in ipv4_fields:
-        kwargs["options"] = _ipv4_options(ipv4_fields["options"], scapy_all)
-    return scapy_all.IP(**kwargs)
 
 
 def _ipv6(fields: Mapping[str, JSONObject], stack: list[str], index: int, scapy_all: Any) -> Any:
@@ -4236,32 +4200,11 @@ def _oui_bytes(value: object) -> bytes:
     return _bytes_exact(value if value is not None else {"hex": "000000"}, 3)
 
 
-def _ipv4_options(value: object, scapy_all: Any) -> object:
-    raw = _option_bytes(value)
-    if raw is not None:
-        if not raw:
-            return []
-        return [scapy_all.IPOption(raw)]
-    return value
-
-
 def _tcp_options(value: object) -> object:
     raw = _option_bytes(value)
     if raw is None:
         return value
     return _tcp_option_tuples(raw)
-
-
-def _option_bytes(value: object) -> bytes | None:
-    if isinstance(value, bytes):
-        return value
-    if isinstance(value, Mapping):
-        hex_value = value.get("hex")
-        if isinstance(hex_value, str):
-            return bytes.fromhex(hex_value)
-    if isinstance(value, str):
-        return bytes.fromhex(value)
-    return None
 
 
 def _tcp_option_tuples(raw: bytes) -> list[object]:
@@ -4642,41 +4585,6 @@ def _capability_contract(
     if isinstance(capabilities, BackendRegistration):
         return capabilities.capabilities
     return capabilities
-
-
-def _protocol_value(value: object, mapping: Mapping[str, int]) -> int:
-    if isinstance(value, str):
-        lowered = value.lower()
-        if lowered in mapping:
-            return mapping[lowered]
-        return int(lowered, 0)
-    return _int(value, 0)
-
-
-def _ipv4_flags(value: object) -> object:
-    names = {
-        "mf": 0b001,
-        "more-fragments": 0b001,
-        "df": 0b010,
-        "dont-fragment": 0b010,
-        "reserved": 0b100,
-    }
-    if isinstance(value, str):
-        lowered = value.lower().replace("_", "-")
-        if lowered in {"none", "0"}:
-            return 0
-        if lowered == "df-mf":
-            return names["df"] | names["mf"]
-        if lowered == "all":
-            return names["reserved"] | names["df"] | names["mf"]
-        if lowered in names:
-            return names[lowered]
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-        flags = 0
-        for item in value:
-            flags |= _int(_ipv4_flags(item), 0)
-        return flags
-    return value
 
 
 # ICMPv4 type names the generator emits, mapped to the Scapy ICMP type-field

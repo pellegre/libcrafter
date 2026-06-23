@@ -17,6 +17,7 @@ from .decode_helpers import (
     _internet_checksum,
     _json_value,
     _mac_text,
+    _normalize_flags,
     _object,
     _text,
     _text_or_none,
@@ -72,7 +73,6 @@ _LAYER_ALIASES: dict[str, str] = {
     "IGMPv3gr": "igmp_group_record",
     "IGMPv3mq": "igmp_query",
     "IGMPv3mr": "igmp_report",
-    "IP": "ipv4",
     "IPv6": "ipv6",
     "ISAKMP": "ikev2",
     "ISAKMP_v1": "ikev2",
@@ -153,10 +153,6 @@ _LAYER_FIELD_ALIASES: dict[str, dict[str, str]] = {
     },
     "ipv6_destination_options": {
         "len": "header_ext_len",
-    },
-    "ipv4": {
-        "id": "identification",
-        "ihl": "header_length",
     },
     "ipv6": {
         "fl": "flow_label",
@@ -1511,30 +1507,12 @@ def _normalize_field_value(layer_name: str, field_name: str, value: JSONValue) -
             return _normalize_tcp_flags(value)
         if layer_name == "dhcp":
             return _normalize_dhcp_flags(value)
-        if layer_name == "ipv4":
-            return _normalize_ipv4_flags(value)
         return _normalize_flags(value)
     if field_name == "is_response" and isinstance(value, int):
         return bool(value)
     if field_name in {"more_fragments"} and isinstance(value, int):
         return bool(value)
     return value
-
-
-def _normalize_flags(value: JSONValue) -> JSONValue:
-    if isinstance(value, str):
-        if not value:
-            return "none"
-        return value.lower().replace("+", "|").replace(" ", "_")
-    return value
-
-
-def _normalize_ipv4_flags(value: JSONValue) -> JSONValue:
-    normalized = _normalize_flags(value)
-    if isinstance(normalized, str):
-        tokens = ["reserved" if token == "evil" else token for token in normalized.split("|")]
-        return "|".join(tokens)
-    return normalized
 
 
 def _normalize_icmpv6_type(value: str) -> str:

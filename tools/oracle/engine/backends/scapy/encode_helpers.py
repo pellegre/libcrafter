@@ -10,7 +10,7 @@ This module must not import from :mod:`packets`.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 
 from ...model import JSONObject
 
@@ -162,3 +162,50 @@ def _validate_payload_length(payload: Mapping[str, object], raw: bytes) -> None:
         raise ValueError(
             f"payload length mismatch: declared={length} materialized={len(raw)}"
         )
+
+
+def _protocol_value(value: object, mapping: Mapping[str, int]) -> int:
+    if isinstance(value, str):
+        lowered = value.lower()
+        if lowered in mapping:
+            return mapping[lowered]
+        return int(lowered, 0)
+    return _int(value, 0)
+
+
+def _ipv4_flags(value: object) -> object:
+    names = {
+        "mf": 0b001,
+        "more-fragments": 0b001,
+        "df": 0b010,
+        "dont-fragment": 0b010,
+        "reserved": 0b100,
+    }
+    if isinstance(value, str):
+        lowered = value.lower().replace("_", "-")
+        if lowered in {"none", "0"}:
+            return 0
+        if lowered == "df-mf":
+            return names["df"] | names["mf"]
+        if lowered == "all":
+            return names["reserved"] | names["df"] | names["mf"]
+        if lowered in names:
+            return names[lowered]
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        flags = 0
+        for item in value:
+            flags |= _int(_ipv4_flags(item), 0)
+        return flags
+    return value
+
+
+def _option_bytes(value: object) -> bytes | None:
+    if isinstance(value, bytes):
+        return value
+    if isinstance(value, Mapping):
+        hex_value = value.get("hex")
+        if isinstance(hex_value, str):
+            return bytes.fromhex(hex_value)
+    if isinstance(value, str):
+        return bytes.fromhex(value)
+    return None
