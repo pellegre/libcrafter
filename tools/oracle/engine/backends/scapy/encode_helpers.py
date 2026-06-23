@@ -144,6 +144,12 @@ def _text(value: object, default: str) -> str:
     return str(value)
 
 
+def _string(value: object, default: str) -> str:
+    if isinstance(value, str):
+        return value
+    return default
+
+
 def _hardware_type_value(value: object) -> int:
     if isinstance(value, str):
         lowered = value.lower()
