@@ -1,12 +1,12 @@
 """Wireshark-stage decode plugin for the Wi-Fi (802.11) stack.
 
 This module is the home for the 802.11 tshark normalizers (``radiotap``,
-``dot11``, ``eapol``, ``rsn``); this step migrates ``radiotap`` and later steps add
-the rest. It moves the ``_normalize_radiotap`` tshark normalizer and its
-``_parse_radiotap_rate`` / ``_radiotap_fcs_status`` helpers verbatim out of
-:mod:`..normalize` and registers them through the :class:`~.base.WiresharkProtocol`
-contract; only the dispatch moves out of the legacy if/elif. Behavior must stay
-byte-identical.
+``dot11``, ``eapol``, ``rsn``); ``radiotap``, ``eapol``, and ``rsn`` are migrated
+here and ``dot11`` is added next. It moves the ``_normalize_radiotap`` /
+``_normalize_eapol`` / ``_normalize_rsn`` tshark normalizers and their helpers
+verbatim out of :mod:`..normalize` and registers them through the
+:class:`~.base.WiresharkProtocol` contract; only the dispatch moves out of the
+legacy if/elif. Behavior must stay byte-identical.
 
 Shared primitives come from :mod:`..decode_helpers` so this plugin does not depend
 on the ``normalize`` orchestrator (which would create a circular import). Relative
@@ -18,11 +18,15 @@ from __future__ import annotations
 
 from ....model import JSONObject
 from ..decode_helpers import (
+    _field,
     _field_list,
     _fields_from_aliases,
+    _hex_bytes,
     _layer,
+    _layer_any,
     _parse_int,
     _parse_int_fields,
+    _string_field,
     _truthy_field,
 )
 from .base import WiresharkProtocol, register
@@ -131,5 +135,258 @@ register(
         layer="radiotap",
         normalize=_normalize_radiotap,
         tshark_aliases=dict(_RADIOTAP_TSHARK_ALIASES),
+    )
+)
+
+
+# tshark field aliases the eapol layer owns: canonical oracle name -> the native
+# tshark field names that carry it.
+_EAPOL_TSHARK_ALIASES: JSONObject = {
+    "version": ("eapol.version",),
+    "packet_type": ("eapol.type",),
+    "body_length": ("eapol.len", "eapol.length"),
+    "descriptor_type": ("eapol.keydes.type",),
+    "key_information": ("eapol.keydes.key_info",),
+    "key_length": ("eapol.keydes.key_len",),
+    "replay_counter": ("eapol.keydes.replay_counter",),
+    "key_nonce": ("eapol.keydes.nonce",),
+    "key_iv": ("eapol.keydes.key_iv",),
+    "key_rsc": ("eapol.keydes.key_rsc",),
+    "key_id": ("eapol.keydes.key_id",),
+    "key_mic": ("eapol.keydes.key_mic",),
+    "key_data_length": ("eapol.keydes.keydes_data_len",),
+    "key_data": ("eapol.keydes.data",),
+}
+
+# tshark field aliases the rsn layer owns: canonical oracle name -> the native
+# tshark field names that carry it.
+_RSN_TSHARK_ALIASES: JSONObject = {
+    "element_id": ("wlan.rsn.tag", "wlan.rsn.element_id"),
+    "length": ("wlan.rsn.length",),
+    "version": ("wlan.rsn.version",),
+    "capabilities": ("wlan.rsn.capabilities",),
+}
+
+
+def _normalize_eapol_layer(layer: JSONObject) -> JSONObject:
+    output = _fields_from_aliases(layer, dict(_EAPOL_TSHARK_ALIASES))
+    _parse_int_fields(
+        output,
+        "version",
+        "packet_type",
+        "body_length",
+        "descriptor_type",
+        "key_information",
+        "key_length",
+        "replay_counter",
+        "key_data_length",
+    )
+    for name in ("key_nonce", "key_iv", "key_rsc", "key_id", "key_mic", "key_data"):
+        value = output.get(name)
+        if isinstance(value, str):
+            output[name] = {"hex": _hex_bytes(value)}
+    return output
+
+
+def _normalize_rsn_layer(layer: JSONObject) -> JSONObject:
+    output = _fields_from_aliases(layer, dict(_RSN_TSHARK_ALIASES))
+    _parse_int_fields(output, "element_id", "length", "version", "capabilities")
+    group = _rsn_suite_from_layer(
+        layer,
+        kind="cipher",
+        value_names=("wlan.rsn.gcs", "wlan.rsn.group_cipher_suite"),
+        oui_names=("wlan.rsn.gcs.oui",),
+        type_names=("wlan.rsn.gcs.type",),
+    )
+    if group is not None:
+        output["group_cipher_suite"] = group
+    pairwise = _rsn_suite_list_from_layer(
+        layer,
+        kind="cipher",
+        value_names=("wlan.rsn.pcs", "wlan.rsn.pcs.type"),
+        oui_names=("wlan.rsn.pcs.oui",),
+    )
+    if pairwise:
+        output["pairwise_cipher_suites"] = pairwise
+    akms = _rsn_suite_list_from_layer(
+        layer,
+        kind="akm",
+        value_names=("wlan.rsn.akms", "wlan.rsn.akms.type"),
+        oui_names=("wlan.rsn.akms.oui",),
+    )
+    if akms:
+        output["akm_suites"] = akms
+    return output
+
+
+def _rsn_suite_from_layer(
+    layer: JSONObject,
+    *,
+    kind: str,
+    value_names: tuple[str, ...],
+    oui_names: tuple[str, ...],
+    type_names: tuple[str, ...],
+) -> JSONObject | None:
+    value = _field(layer, *value_names)
+    suite = _rsn_suite_from_value(value, kind=kind)
+    if suite is not None:
+        return suite
+    oui = _string_field(layer, *oui_names)
+    suite_type = _parse_int(_field(layer, *type_names))
+    if oui is None or suite_type is None:
+        return None
+    return _rsn_suite_from_oui_type(oui, suite_type, kind=kind)
+
+
+def _rsn_suite_list_from_layer(
+    layer: JSONObject,
+    *,
+    kind: str,
+    value_names: tuple[str, ...],
+    oui_names: tuple[str, ...],
+) -> list[JSONObject]:
+    values = _field_list(layer, *value_names)
+    suites = [
+        suite
+        for suite in (_rsn_suite_from_value(value, kind=kind) for value in values)
+        if suite is not None
+    ]
+    if suites:
+        return suites
+    oui_values = [str(value) for value in _field_list(layer, *oui_names)]
+    if not oui_values:
+        oui_values = ["00:0f:ac"] * len(values)
+    output: list[JSONObject] = []
+    for index, value in enumerate(values):
+        suite_type = _parse_int(value)
+        if suite_type is None:
+            continue
+        oui = oui_values[index] if index < len(oui_values) else oui_values[0]
+        suite = _rsn_suite_from_oui_type(oui, suite_type, kind=kind)
+        if suite is not None:
+            output.append(suite)
+    return output
+
+
+def _rsn_suite_from_oui_type(oui: str, suite_type: int, *, kind: str) -> JSONObject | None:
+    try:
+        oui_bytes = bytes.fromhex(_hex_bytes(oui))
+    except ValueError:
+        return None
+    if len(oui_bytes) < 3:
+        return None
+    return _rsn_suite_selector(oui_bytes[:3] + bytes([suite_type & 0xFF]), kind=kind)
+
+
+def _rsn_suite_from_value(value: object, *, kind: str) -> JSONObject | None:
+    if value is None:
+        return None
+    parsed = _parse_int(value)
+    if parsed is not None:
+        return _rsn_suite_selector(b"\x00\x0f\xac" + bytes([parsed & 0xFF]), kind=kind)
+    if not isinstance(value, str):
+        return None
+    raw_hex = _hex_bytes(value)
+    if len(raw_hex) < 8:
+        return None
+    try:
+        raw = bytes.fromhex(raw_hex[:8])
+    except ValueError:
+        return None
+    return _rsn_suite_selector(raw, kind=kind)
+
+
+def _rsn_suite_selector(raw: bytes, *, kind: str) -> JSONObject:
+    selector = bytes(raw)
+    label = _rsn_cipher_label(selector) if kind == "cipher" else _rsn_akm_label(selector)
+    output: JSONObject = {
+        "selector": selector.hex(),
+        "oui": selector[:3].hex(),
+        "suite_type": selector[3],
+    }
+    if label is not None:
+        output["label"] = label
+    return output
+
+
+def _rsn_cipher_label(selector: bytes) -> str | None:
+    if selector[:3] != b"\x00\x0f\xac":
+        return None
+    return {
+        0: "use-group",
+        2: "tkip",
+        4: "ccmp-128",
+        6: "aes-128-cmac",
+        7: "no-group-addressed",
+        8: "gcmp-128",
+        9: "gcmp-256",
+        10: "ccmp-256",
+        11: "bip-gmac-128",
+        12: "bip-gmac-256",
+        13: "bip-cmac-256",
+        18: "ccm-star",
+    }.get(selector[3])
+
+
+def _rsn_akm_label(selector: bytes) -> str | None:
+    if selector[:3] != b"\x00\x0f\xac":
+        return None
+    return {
+        1: "802.1x",
+        2: "psk",
+        3: "ft-802.1x",
+        4: "ft-psk",
+        5: "802.1x-sha256",
+        6: "psk-sha256",
+        7: "tdls",
+        8: "sae",
+        9: "ft-sae",
+        10: "ap-peer-key",
+        11: "802.1x-suite-b",
+        12: "802.1x-suite-b-192",
+        13: "ft-802.1x-sha384-cmp-256",
+        14: "fils-sha256",
+        15: "fils-sha384",
+        16: "ft-fils-sha256",
+        17: "ft-fils-sha384",
+        18: "owe",
+        19: "ft-psk-sha384",
+        20: "psk-sha384",
+        21: "pasn",
+        22: "ft-802.1x-sha384",
+        23: "802.1x-sha384",
+        24: "sae-pmk384",
+        25: "ft-sae-pmk384",
+        26: "pasn-defined-key-wrap",
+        29: "edpke",
+    }.get(selector[3])
+
+
+def _normalize_eapol(
+    layers: JSONObject, *, source_hex: str | None = None
+) -> JSONObject:
+    return _normalize_eapol_layer(_layer(layers, "eapol"))
+
+
+def _normalize_rsn(
+    layers: JSONObject, *, source_hex: str | None = None
+) -> JSONObject:
+    return _normalize_rsn_layer(_layer_any(layers, "wlan_mgt.rsn", "wlan.rsn"))
+
+
+register(
+    WiresharkProtocol(
+        layer="eapol",
+        normalize=_normalize_eapol,
+        tshark_aliases=dict(_EAPOL_TSHARK_ALIASES),
+    )
+)
+
+
+register(
+    WiresharkProtocol(
+        layer="rsn",
+        normalize=_normalize_rsn,
+        tshark_aliases=dict(_RSN_TSHARK_ALIASES),
     )
 )

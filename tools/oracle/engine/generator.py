@@ -106,6 +106,12 @@ from .protocols.dns import _dns_behavior_emits_raw
 # the cross-backend option matrix — the same co-locate-and-re-import pattern as
 # the DNS ``_dns_behavior_emits_raw`` helper above.
 from .protocols.dhcp import DHCP_OPTION_MATRIX_TOKENS
+# ``_rsn_information_value_hex`` moved to the Wi-Fi sampler plugin
+# (``protocols/wifi.py``) with the ``eapol`` and ``rsn`` samplers. It is
+# re-imported here because the still-resident ``dot11`` management-tag sampler
+# (``_dot11_management_tags``) builds the RSN information element from it; the
+# helper moves out of the generator entirely once ``dot11`` migrates.
+from .protocols.wifi import _rsn_information_value_hex
 
 
 SUPPORTED_LAYER_BACKEND = "libcrafter"
@@ -138,34 +144,9 @@ _SUPPORTED_FIELDS: dict[str, set[str]] = {
         "tagged_parameters",
         "to_ds",
     },
-    "eapol": {
-        "body_length",
-        "descriptor_type",
-        "key_data",
-        "key_data_length",
-        "key_id",
-        "key_information",
-        "key_iv",
-        "key_length",
-        "key_mic",
-        "key_nonce",
-        "key_rsc",
-        "packet_type",
-        "replay_counter",
-        "version",
-    },
-    "rsn": {
-        "akm_suites",
-        "capabilities",
-        "element_id",
-        "group_cipher_suite",
-        "group_management_cipher_suite",
-        "length",
-        "pairwise_cipher_suites",
-        "pmkid_list",
-        "trailing_bytes",
-        "version",
-    },
+    # The ``eapol`` and ``rsn`` field allowlists moved to ``protocols/wifi.py``
+    # (their ``ProtocolSampler.supported_fields``); ``_supported_fields`` resolves
+    # them from the registry. ``dot11`` stays here until it migrates next.
 }
 
 
@@ -1683,10 +1664,6 @@ class PacketGenerator:
             )
         if layer == "dot11":
             return _sample_dot11_field(ctx, field_name, domain, current_fields)
-        if layer == "eapol":
-            return _sample_eapol_field(ctx, field_name, domain)
-        if layer == "rsn":
-            return _sample_rsn_field(ctx, field_name, domain)
 
         raise ValueError(f"spec error: unsupported layer sampler: {layer}")
 
@@ -2418,76 +2395,10 @@ def _dot11_management_subtype_has_tags(subtype: int) -> bool:
     return subtype in {0, 2, 4, 5, 8}
 
 
-def _sample_eapol_field(ctx: _SamplingContext, field_name: str, domain: object) -> object:
-    is_key = "key" in ctx.case.replace("_", "-")
-    if field_name == "version":
-        return 2 if domain in {1, 2, 3, "explicit"} else 2
-    if field_name == "packet_type":
-        case = ctx.case.replace("_", "-")
-        if "logoff" in case:
-            return "logoff"
-        if is_key:
-            return "key"
-        if "eap-packet" in case:
-            return "eap_packet"
-        return "start"
-    if field_name == "body_length":
-        return 0
-    if not is_key:
-        return _SKIP_FIELD
-    if field_name == "descriptor_type":
-        return "rsn_key"
-    if field_name == "key_information":
-        return 0x008A if "key-data" not in ctx.case else 0x010A
-    if field_name == "key_length":
-        return 16
-    if field_name == "replay_counter":
-        return 1
-    if field_name == "key_nonce":
-        return {"hex": "00112233445566778899aabbccddeeff102132435465768798a9bacbdcedfe0f"}
-    if field_name == "key_iv":
-        return {"hex": "00000000000000000000000000000000"}
-    if field_name == "key_rsc":
-        return {"hex": "0000000000000000"}
-    if field_name == "key_id":
-        return {"hex": "0000000000000000"}
-    if field_name == "key_mic":
-        return {"hex": "00000000000000000000000000000000"}
-    if field_name == "key_data_length":
-        return 0
-    if field_name == "key_data":
-        return {"hex": _rsn_information_value_hex()} if "key-data" in ctx.case else _SKIP_FIELD
-    raise ValueError(f"spec error: unsupported eapol field sampler: {field_name}")
-
-
-def _sample_rsn_field(ctx: _SamplingContext, field_name: str, domain: object) -> object:
-    if field_name == "element_id":
-        return 48
-    if field_name == "length":
-        return 0
-    if field_name == "version":
-        return 1
-    if field_name == "group_cipher_suite":
-        return "ccmp_128"
-    if field_name == "pairwise_cipher_suites":
-        return ["ccmp_128"]
-    if field_name == "akm_suites":
-        return ["sae"] if "sae" in ctx.case else ["psk"]
-    if field_name == "capabilities":
-        return 0x00C0 if "management-protection" in ctx.case else 0
-    if field_name == "pmkid_list":
-        return _SKIP_FIELD
-    if field_name == "group_management_cipher_suite":
-        return "bip_cmac_128" if "management-protection" in ctx.case else _SKIP_FIELD
-    if field_name == "trailing_bytes":
-        if domain in {"absent", "empty"} or "unknown-suite-raw" not in ctx.case:
-            return _SKIP_FIELD
-        return {"hex": "aabb"}
-    raise ValueError(f"spec error: unsupported rsn field sampler: {field_name}")
-
-
-def _rsn_information_value_hex() -> str:
-    return "0100000fac040100000fac040100000fac020000"
+# The ``eapol`` and ``rsn`` field samplers and the ``_rsn_information_value_hex``
+# helper moved to ``protocols/wifi.py`` with the registered ``ProtocolSampler``s;
+# ``_rsn_information_value_hex`` is re-imported above for the still-resident
+# ``dot11`` management-tag sampler.
 
 
 def _dot11_frame_control_for_case(case: str, stack: Sequence[str]) -> int:

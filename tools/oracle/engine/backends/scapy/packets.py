@@ -81,15 +81,19 @@ from .protocols.ipsec import (
     _is_ipsec_sa_stack,
     _materialize_ipsec_sa_packet,
 )
-# The ``radiotap`` layer is migrated to ``protocols/wifi.py`` and registered in
-# ``SCAPY_REGISTRY`` (its ``ScapyProtocol`` declares ``scapy_class="RadioTap"`` and
-# the ``RadioTap`` -> ``radiotap`` decode alias). Radiotap is never built through the
-# per-layer ``_build_layer`` dispatch — it is part of the whole-stack Dot11 phase-1.5
-# raw-bytes path, which still lives here (``_dot11_phase15_bytes``) until the
-# ``dot11`` raw-bytes stack encoder migrates. The ``_radiotap_bytes`` serializer is
-# re-imported here so that whole-stack driver keeps emitting the radiotap header
-# unchanged.
-from .protocols.wifi import _radiotap_bytes
+# The ``radiotap`` / ``eapol`` / ``rsn`` layers are migrated to ``protocols/wifi.py``
+# and registered in ``SCAPY_REGISTRY`` (their ``ScapyProtocol``s declare
+# ``scapy_class`` and the native-name decode aliases). None is built through the
+# per-layer ``_build_layer`` dispatch — they are part of the whole-stack Dot11
+# phase-1.5 raw-bytes path, which still lives here (``_dot11_phase15_bytes``) until
+# the ``dot11`` raw-bytes stack encoder migrates. Their byte serializers are
+# re-imported here so that whole-stack driver keeps emitting the radiotap header and
+# the eapol/rsn bodies unchanged.
+from .protocols.wifi import (
+    _eapol_bytes,
+    _radiotap_bytes,
+    _rsn_element_bytes,
+)
 
 
 BACKEND_NAME = "scapy"
@@ -103,13 +107,9 @@ _SCAPY_LAYER_BY_LAYER: dict[str, str] = {
     "ble_adv": "BTLE_ADV_IND",
     "ble_radio": "BTLE_PHDR",
     "dot11": "Dot11",
-    "dot15d4": "Dot15d4",
-    # Scapy has no native IEEE 802.15.4 TAP (DLT 283) pseudo-header dissector;
-    # libcrafter's Dot15d4Radio carries it, so the radio descriptor is
-    # materialized/normalized outside Scapy's native layer set (Raw passthrough)
-    # the same way the BLE LL-with-PHDR pseudo-header is handled.
-    "dot15d4_radio": "Raw",
-    "eapol": "EAPOL",
+    # The ``eapol`` layer is migrated to ``protocols/wifi.py`` (its ``ScapyProtocol``
+    # declares ``scapy_class="EAPOL"`` and the ``EAPOL`` -> ``eapol`` decode alias);
+    # ``_scapy_layer_name`` resolves it from the registry.
     # IGMP contrib classes are not exposed through scapy.all consistently
     # across supported Scapy versions, so the oracle materializer emits exact
     # IGMP bytes through Raw while preserving IPv4 protocol number 2. The base
@@ -130,7 +130,9 @@ _SCAPY_LAYER_BY_LAYER: dict[str, str] = {
     # ``_scapy_layer_name`` and the ``scapy_stack`` metadata); ``_scapy_layer_name``
     # resolves it from the registry.
     "raw": "Raw",
-    "rsn": "Dot11EltRSN",
+    # The ``rsn`` layer is migrated to ``protocols/wifi.py`` (its ``ScapyProtocol``
+    # declares ``scapy_class="Dot11EltRSN"`` and the ``Dot11EltRSN`` -> ``rsn`` decode
+    # alias); ``_scapy_layer_name`` resolves it from the registry.
 }
 _SCAPY_DECODER_BY_ROOT: dict[str, str] = {
     "link:bluetooth-le-ll-with-phdr": "BTLE_PHDR",
@@ -301,22 +303,9 @@ _SUPPORTED_FIELDS_BY_LAYER: dict[str, set[str]] = {
         "tagged_parameters",
         "to_ds",
     },
-    "eapol": {
-        "body_length",
-        "descriptor_type",
-        "key_data",
-        "key_data_length",
-        "key_id",
-        "key_information",
-        "key_iv",
-        "key_length",
-        "key_mic",
-        "key_nonce",
-        "key_rsc",
-        "packet_type",
-        "replay_counter",
-        "version",
-    },
+    # The ``eapol`` field allowlist moved to ``protocols/wifi.py`` (its
+    # ``ScapyProtocol.supported_fields``); ``_scapy_supported_fields`` resolves it
+    # from the registry.
     # The ``esp`` / ``ah`` / ``ikev2`` field allowlists moved to
     # ``protocols/ipsec.py`` (their ``ScapyProtocol.supported_fields``);
     # ``_scapy_supported_fields`` resolves them from the registry.
@@ -384,21 +373,9 @@ _SUPPORTED_FIELDS_BY_LAYER: dict[str, set[str]] = {
         "segleft",
         "type",
     },
-    # The ``radiotap`` field allowlist moved to ``protocols/wifi.py`` (its
-    # ``ScapyProtocol.supported_fields``); ``_scapy_supported_fields`` resolves it
-    # from the registry.
-    "rsn": {
-        "akm_suites",
-        "capabilities",
-        "element_id",
-        "group_cipher_suite",
-        "group_management_cipher_suite",
-        "length",
-        "pairwise_cipher_suites",
-        "pmkid_list",
-        "trailing_bytes",
-        "version",
-    },
+    # The ``radiotap`` and ``rsn`` field allowlists moved to ``protocols/wifi.py``
+    # (their ``ScapyProtocol.supported_fields``); ``_scapy_supported_fields``
+    # resolves them from the registry.
 }
 
 
@@ -1282,146 +1259,11 @@ def _llc_snap_ethertype_for_stack(stack: Sequence[str]) -> str:
     return "eapol" if next_layer == "eapol" else next_layer
 
 
-def _eapol_bytes(fields: Mapping[str, JSONObject], stack: Sequence[str], index: int) -> bytes:
-    eapol = _layer_fields(fields, "eapol")
-    packet_type = _eapol_type(eapol.get("packet_type"))
-    body = _eapol_key_bytes(eapol) if packet_type == 3 or "descriptor_type" in eapol else b""
-    trailing = _payload_bytes(fields) if "payload" in stack[index + 1 :] else b""
-    body_length = len(body) + len(trailing)
-    explicit_length = _int(eapol.get("body_length"), 0)
-    if explicit_length:
-        body_length = explicit_length
-    return bytes(
-        [
-            _int(eapol.get("version"), 2) & 0xFF,
-            packet_type & 0xFF,
-        ]
-    ) + body_length.to_bytes(2, "big") + body
-
-
-def _eapol_type(value: object) -> int:
-    if not isinstance(value, str):
-        return _int(value, 1)
-    mapping = {
-        "eap_packet": 0,
-        "eap-packet": 0,
-        "start": 1,
-        "logoff": 2,
-        "key": 3,
-        "asf_alert": 4,
-        "asf-alert": 4,
-        "unknown": 255,
-    }
-    normalized = value.lower()
-    if normalized in mapping:
-        return mapping[normalized]
-    return _int(value, 1)
-
-
-def _eapol_key_bytes(fields: Mapping[str, object]) -> bytes:
-    key_data = _bytes_optional(fields.get("key_data"))
-    key_data_length = _int(fields.get("key_data_length"), len(key_data))
-    if key_data and key_data_length == 0:
-        key_data_length = len(key_data)
-    return (
-        bytes([_eapol_descriptor_type(fields.get("descriptor_type"))])
-        + _int(fields.get("key_information"), 0).to_bytes(2, "big")
-        + _int(fields.get("key_length"), 0).to_bytes(2, "big")
-        + _int(fields.get("replay_counter"), 0).to_bytes(8, "big")
-        + _bytes_exact(fields.get("key_nonce"), 32)
-        + _bytes_exact(fields.get("key_iv"), 16)
-        + _bytes_exact(fields.get("key_rsc"), 8)
-        + _bytes_exact(fields.get("key_id"), 8)
-        + _bytes_exact(fields.get("key_mic"), 16)
-        + key_data_length.to_bytes(2, "big")
-        + key_data
-    )
-
-
-def _eapol_descriptor_type(value: object) -> int:
-    if not isinstance(value, str):
-        return _int(value, 2)
-    mapping = {"rc4_key": 1, "rc4-key": 1, "rsn_key": 2, "rsn-key": 2, "unknown": 254}
-    normalized = value.lower()
-    if normalized in mapping:
-        return mapping[normalized]
-    return _int(value, 2)
-
-
-def _rsn_element_bytes(fields: Mapping[str, JSONObject]) -> bytes:
-    rsn = _layer_fields(fields, "rsn")
-    value = _rsn_information_value_bytes(rsn)
-    element_id = _int(rsn.get("element_id"), 48) & 0xFF
-    length = _int(rsn.get("length"), len(value))
-    if length == 0:
-        length = len(value)
-    return bytes([element_id, length & 0xFF]) + value
-
-
-def _rsn_information_value_bytes(fields: Mapping[str, object] | None = None) -> bytes:
-    fields = {} if fields is None else fields
-    output = bytearray()
-    output.extend(_int(fields.get("version"), 1).to_bytes(2, "little"))
-    output.extend(_rsn_suite_selector(fields.get("group_cipher_suite"), default_type=4))
-    pairwise = _suite_list(fields.get("pairwise_cipher_suites"), default_type=4)
-    output.extend(len(pairwise).to_bytes(2, "little"))
-    for suite in pairwise:
-        output.extend(suite)
-    akms = _suite_list(fields.get("akm_suites"), default_type=2)
-    output.extend(len(akms).to_bytes(2, "little"))
-    for suite in akms:
-        output.extend(suite)
-    if "capabilities" in fields or "group_management_cipher_suite" in fields:
-        output.extend(_int(fields.get("capabilities"), 0).to_bytes(2, "little"))
-    pmkids = _bytes_optional(fields.get("pmkid_list"))
-    if pmkids:
-        if len(pmkids) % 16 != 0:
-            raise ValueError("rsn pmkid_list length must be a multiple of 16")
-        output.extend((len(pmkids) // 16).to_bytes(2, "little"))
-        output.extend(pmkids)
-    elif "group_management_cipher_suite" in fields:
-        output.extend((0).to_bytes(2, "little"))
-    if "group_management_cipher_suite" in fields:
-        output.extend(_rsn_suite_selector(fields.get("group_management_cipher_suite"), default_type=6))
-    output.extend(_bytes_optional(fields.get("trailing_bytes")))
-    return bytes(output)
-
-
-def _suite_list(value: object, *, default_type: int) -> list[bytes]:
-    if value is None:
-        return [_rsn_suite_selector(None, default_type=default_type)]
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-        return [_rsn_suite_selector(item, default_type=default_type) for item in value]
-    return [_rsn_suite_selector(value, default_type=default_type)]
-
-
-def _rsn_suite_selector(value: object, *, default_type: int) -> bytes:
-    if value is None:
-        suite_type = default_type
-    elif isinstance(value, Mapping) or isinstance(value, bytes):
-        raw = _bytes_optional(value)
-        if len(raw) != 4:
-            raise ValueError("rsn suite selector must be exactly 4 bytes")
-        return raw
-    elif isinstance(value, int):
-        suite_type = value
-    elif isinstance(value, str):
-        normalized = value.lower().replace("-", "_")
-        suite_type = {
-            "use_group": 0,
-            "tkip": 2,
-            "ccmp_128": 4,
-            "aes_128_cmac": 6,
-            "bip_cmac_128": 6,
-            "psk": 2,
-            "ieee8021x": 1,
-            "sae": 8,
-        }.get(normalized)
-        if suite_type is None:
-            return _bytes_optional(value)
-    else:
-        suite_type = default_type
-    return b"\x00\x0f\xac" + bytes([suite_type & 0xFF])
+# The ``eapol`` / ``rsn`` byte serializers (``_eapol_bytes`` / ``_rsn_element_bytes``
+# and their helpers) moved to ``protocols/wifi.py`` with the registered
+# ``ScapyProtocol``s; ``_eapol_bytes`` and ``_rsn_element_bytes`` are re-imported at
+# the top of this module so the whole-stack ``_dot11_phase15_bytes`` driver still
+# emits the eapol/rsn bodies unchanged.
 
 
 def _mac_bytes(value: object, default: str) -> bytes:
