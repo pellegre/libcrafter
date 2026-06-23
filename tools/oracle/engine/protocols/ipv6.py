@@ -6,9 +6,19 @@ moves from the generator's legacy if/elif into this self-contained module, which
 self-registers on import. The sampling logic is moved verbatim (behavior must stay
 byte-identical).
 
-The base IPv6 layer carries no feature behavior — the ``ipv6_fragment_routing``
-feature targets the IPv6 extension headers, which migrate in a later step — so this
-plugin registers ``sample`` only.
+The ``ipv6_fragment_routing`` feature behavior — which rewrites the
+``ipv6_fragment``/``ipv6_routing`` extension-header fields by case keyword — also
+lives here, registered on the base IPv6 plugin via ``apply_behavior`` /
+``handles_feature``. The extension headers always ride on a base ``ipv6`` layer (the
+stacks never carry an extension header without ``ipv6`` first), so the
+generator's registry-first feature loop fires this plugin exactly once whenever the
+feature applies — the same selection the legacy ``feature == "ipv6_fragment_routing"``
+branch performed. The branch body is moved byte-identically. The IPv6
+extension-header *layers* are sub-layers of the ``ipv6`` spec (declared as
+``extension_layers`` inside ``specs/layers/ipv6.yaml``, not as separate top-level
+spec layers), so they have no per-field sampler entry in ``generator._SUPPORTED_FIELDS``
+and no separate registry name of their own; their whole-layer field dicts are still
+assembled inline in ``generator._fields``.
 
 Shared primitives (``_integer_domain_value``, ``_ipv6_next_header_for_stack``) live
 in :mod:`..sampling` because they are cross-layer stack grammar still used by other
@@ -20,8 +30,9 @@ import roots.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 
+from ..model import JSONObject
 from ..sampling import (
     _SamplingContext,
     _integer_domain_value,
@@ -75,10 +86,54 @@ def _sample(
     return _sample_ipv6_field(ctx, field_name, domain)
 
 
+def _handles_feature(feature: str) -> bool:
+    """The base IPv6 plugin owns the ``ipv6_fragment_routing`` feature."""
+
+    return feature == "ipv6_fragment_routing"
+
+
+def _apply_behavior(
+    fields: dict[str, JSONObject],
+    *,
+    stack: Sequence[str],
+    feature: str,
+    case: str,
+    behavior: str,
+) -> None:
+    """Apply ``ipv6_fragment_routing`` behavior into the extension-header fields.
+
+    Moved byte-identically out of the legacy ``generator._apply_feature_behavior``
+    ``elif feature == "ipv6_fragment_routing"`` branch: the fragment header's
+    ``more_fragments``/``fragment_offset`` are reset, and the routing header's
+    ``type``/``segments_left``/``addresses`` are set by case keyword
+    (``"segment"`` -> type 4 segleft 1 addr ``2001:db8:ffff::1``; ``"mobile"`` ->
+    type 2 segleft 1 addr ``2001:db8:ffff::2``; otherwise type 0 segleft 0).
+    """
+
+    if "ipv6_fragment" in fields:
+        fields["ipv6_fragment"]["more_fragments"] = False
+        fields["ipv6_fragment"]["fragment_offset"] = 0
+    if "ipv6_routing" in fields:
+        routing = fields["ipv6_routing"]
+        if "segment" in case:
+            routing["type"] = 4
+            routing["segments_left"] = 1
+            routing["addresses"] = ["2001:db8:ffff::1"]
+        elif "mobile" in case:
+            routing["type"] = 2
+            routing["segments_left"] = 1
+            routing["addresses"] = ["2001:db8:ffff::2"]
+        else:
+            routing["type"] = 0
+            routing["segments_left"] = 0
+
+
 register(
     ProtocolSampler(
         layer="ipv6",
         supported_fields=_SUPPORTED_FIELDS,
         sample=_sample,
+        apply_behavior=_apply_behavior,
+        handles_feature=_handles_feature,
     )
 )

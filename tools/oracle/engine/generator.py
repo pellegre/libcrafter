@@ -1805,23 +1805,6 @@ class PacketGenerator:
                 case=case,
                 behavior=behavior,
             )
-        elif feature == "ipv6_fragment_routing":
-            if "ipv6_fragment" in fields:
-                fields["ipv6_fragment"]["more_fragments"] = False
-                fields["ipv6_fragment"]["fragment_offset"] = 0
-            if "ipv6_routing" in fields:
-                routing = fields["ipv6_routing"]
-                if "segment" in case:
-                    routing["type"] = 4
-                    routing["segments_left"] = 1
-                    routing["addresses"] = ["2001:db8:ffff::1"]
-                elif "mobile" in case:
-                    routing["type"] = 2
-                    routing["segments_left"] = 1
-                    routing["addresses"] = ["2001:db8:ffff::2"]
-                else:
-                    routing["type"] = 0
-                    routing["segments_left"] = 0
         elif feature is not None and feature.startswith("bgp_") and "bgp" in fields:
             _apply_bgp_behavior(fields, stack=stack, case=case, behavior=behavior)
         elif feature is not None and feature.startswith("ripng_") and "ripng" in fields:
