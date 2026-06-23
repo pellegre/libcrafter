@@ -76,7 +76,6 @@ _SCAPY_LAYER_BY_LAYER: dict[str, str] = {
     "ah": "AH",
     "ble_adv": "BTLE_ADV_IND",
     "ble_radio": "BTLE_PHDR",
-    "dhcp": "DHCP",
     "dot11": "Dot11",
     "dot15d4": "Dot15d4",
     # Scapy has no native IEEE 802.15.4 TAP (DLT 283) pseudo-header dissector;
@@ -249,23 +248,6 @@ _SUPPORTED_FIELDS_BY_LAYER: dict[str, set[str]] = {
         "reference_access_address",
         "rf_channel",
         "signal_power",
-    },
-    "dhcp": {
-        "op",
-        "hardware_type",
-        "htype",
-        "hardware_length",
-        "hlen",
-        "transaction_id",
-        "xid",
-        "flags",
-        "client_ip",
-        "ciaddr",
-        "your_ip",
-        "yiaddr",
-        "client_hardware_address",
-        "chaddr",
-        "options",
     },
     "dot11": {
         "addr1",
@@ -571,8 +553,6 @@ def _build_layer(plan: PacketPlan, stack: list[str], index: int, scapy_all: Any)
         return scapy_all.Raw(load=_igmp_report_bytes(fields))
     if layer == "igmp_extension":
         return scapy_all.Raw(load=_igmp_extension_layer_bytes(_layer_fields_for_stack_index(fields, stack, index)))
-    if layer == "dhcp":
-        return _dhcp(fields, scapy_all)
     if layer == "esp":
         return _esp(fields, scapy_all)
     if layer == "ah":
@@ -589,25 +569,6 @@ def _build_layer(plan: PacketPlan, stack: list[str], index: int, scapy_all: Any)
         return _zigbee_aps(fields, stack, index, scapy_all)
 
     raise ValueError(f"unsupported Scapy materialization layer: {layer}")
-
-
-def _dhcp(fields: Mapping[str, JSONObject], scapy_all: Any) -> Any:
-    dhcp_fields = _layer_fields(fields, "dhcp")
-    bootp = scapy_all.BOOTP(
-        op=_dhcp_op(_required_field(dhcp_fields, "dhcp", "op")),
-        htype=_hardware_type_value(_required_field(dhcp_fields, "dhcp", "hardware_type", "htype")),
-        hlen=_int(_required_field(dhcp_fields, "dhcp", "hardware_length", "hlen"), 0),
-        xid=_int(_optional_field(dhcp_fields, "transaction_id", "xid"), 0),
-        flags=_dhcp_flags(_required_field(dhcp_fields, "dhcp", "flags")),
-        ciaddr=_text(_optional_field(dhcp_fields, "client_ip", "ciaddr"), "0.0.0.0"),
-        yiaddr=_text(_optional_field(dhcp_fields, "your_ip", "yiaddr"), "0.0.0.0"),
-        chaddr=_dhcp_chaddr(
-            _optional_field(dhcp_fields, "client_hardware_address", "chaddr")
-        ),
-    )
-    return bootp / scapy_all.DHCP(
-        options=_dhcp_options(_required_field(dhcp_fields, "dhcp", "options"))
-    )
 
 
 # --------------------------------------------------------------------------
@@ -2625,102 +2586,10 @@ def _capability_contract(
     return capabilities
 
 
-def _dhcp_op(value: object) -> int:
-    if isinstance(value, str):
-        lowered = value.lower().replace("_", "-")
-        if lowered in {"bootrequest", "request"}:
-            return 1
-        if lowered in {"bootreply", "reply"}:
-            return 2
-    return _int(value, 1)
-
-
-def _dhcp_flags(value: object) -> int:
-    if isinstance(value, str):
-        lowered = value.lower().replace("_", "-")
-        if lowered in {"broadcast", "b"}:
-            return 0x8000
-        if lowered in {"none", "0"}:
-            return 0
-    return _int(value, 0)
-
-
-def _dhcp_chaddr(value: object) -> bytes:
-    mac = _text(value, "00:00:5e:00:53:01")
-    raw = bytes.fromhex(mac.replace(":", ""))
-    return raw.ljust(16, b"\x00")
-
-
-# Scapy DHCP option names differ from the backend-neutral / libcrafter option
-# names for several byte-identical options. Mapping the neutral name to the
-# Scapy field name lets the same ``name=value`` option string materialize to
-# identical option bytes through both backends; an unmapped name passes through
-# unchanged so Scapy still recognizes its own native option names.
-_DHCP_OPTION_NAME_TO_SCAPY: dict[str, str] = {
-    "message_type": "message-type",
-    "host_name": "hostname",
-    "domain_name": "domain",
-    "requested_ip": "requested_addr",
-    "requested_ip_address": "requested_addr",
-    "server_identifier": "server_id",
-    "dns": "name_server",
-    "domain_name_server": "name_server",
-}
-# Options whose Scapy field is an integer; the generator carries the value as a
-# JSON string, so it must be coerced back to int before Scapy serializes it.
-_DHCP_INTEGER_OPTIONS = frozenset({"lease_time", "renewal_time", "rebinding_time"})
-
-
-def _dhcp_options(value: object) -> list[object]:
-    if not isinstance(value, list):
-        return [("message-type", "discover"), "end"]
-    options: list[object] = []
-    for item in value:
-        if isinstance(item, str):
-            if item in {"end", "pad"}:
-                options.append(item)
-                continue
-            if "=" in item:
-                name, raw_value = item.split("=", 1)
-                options.append(_dhcp_name_value_option(name, raw_value))
-                continue
-        if isinstance(item, (list, tuple)) and len(item) == 2 and isinstance(item[0], str):
-            options.append((item[0], _dhcp_option_value(item[1])))
-            continue
-        options.append(item)
-    if not options or options[-1] != "end":
-        options.append("end")
-    return options
-
-
-def _dhcp_name_value_option(name: str, raw_value: str) -> tuple[str, object]:
-    """Translate a ``name=value`` option string into a Scapy option tuple.
-
-    The option name is normalized to the Scapy field name for the byte-safe
-    option set so the neutral/libcrafter option names round-trip strict-bytes,
-    and integer-valued options are coerced from their JSON string form.
-    """
-
-    scapy_name = _DHCP_OPTION_NAME_TO_SCAPY.get(name, name)
-    if name in _DHCP_INTEGER_OPTIONS:
-        return scapy_name, int(raw_value, 0)
-    return scapy_name, raw_value
-
-
-def _dhcp_option_value(value: object) -> object:
-    """Translate a JSON-safe option value into a Scapy option payload.
-
-    A string value is interpreted as raw option bytes encoded as hex so byte
-    payloads (client identifiers, raw relay-agent option 82, vendor class data)
-    survive JSON transport. List values pass through for Scapy fields that take
-    lists, such as the parameter request list and classless static routes.
-    """
-
-    if isinstance(value, str):
-        return bytes.fromhex(value)
-    if isinstance(value, (list, tuple)):
-        return list(value)
-    return value
+# The DHCP (BOOTP / DHCP) materializer ``_dhcp`` and its ``_dhcp_op`` /
+# ``_dhcp_flags`` / ``_dhcp_chaddr`` / ``_dhcp_options`` option helpers moved to
+# ``protocols/dhcp.py`` and are registered in ``SCAPY_REGISTRY`` (so ``_build_layer``
+# routes ``dhcp`` to the plugin's ``build``).
 
 
 def _scapy_decoder(root: str) -> str:
