@@ -1981,7 +1981,36 @@ def _probe_interface(provider: str, *, dry_run: bool) -> str:
     return "auto"
 
 
+def _registry_failure_reasons_plugin_for_case(case_name: str) -> object | None:
+    """Return the registered plugin owning ``case_name`` with a failure hook.
+
+    A plugin owns a case via its ``cases`` tuple; if it also defines a
+    ``failure_reasons`` hook, that hook replaces the legacy per-protocol branch
+    for the case's failure-reason taxonomy. No protocol is migrated yet, so this
+    returns ``None`` for every case and the legacy if/elif runs unchanged. A
+    case's reasons are therefore derived exactly once: the plugin hook when an
+    owner exists, otherwise the legacy branch.
+    """
+
+    for plugin in _registered_protocol_plugins():
+        if plugin.failure_reasons is None:
+            continue
+        if any(case.name == case_name for case in plugin.cases):
+            return plugin
+    return None
+
+
 def _failure_reasons_for_case(case_name: str) -> list[str]:
+    # Registry-first dispatch: if a migrated plugin owns this case and defines a
+    # failure-reason hook returning a non-None taxonomy, it replaces the legacy
+    # per-protocol branch. With an empty registry no plugin owns any case, so
+    # this is a no-op today and every case flows through the unchanged legacy
+    # branches below.
+    plugin = _registry_failure_reasons_plugin_for_case(case_name)
+    if plugin is not None:
+        reasons = plugin.failure_reasons(case_name)
+        if reasons is not None:
+            return reasons
     if case_name == "icmp-echo":
         return [
             FAILURE_TIMEOUT,
