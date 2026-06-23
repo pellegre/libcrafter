@@ -129,3 +129,36 @@ def _bytes_field(value: object, *, pad_to: int | None = None) -> bytes:
     if pad_to is not None and len(raw) < pad_to:
         raw = raw + (b"\x00" * (pad_to - len(raw)))
     return raw
+
+
+def _payload_bytes(fields: Mapping[str, JSONObject]) -> bytes:
+    payload = _layer_fields(fields, "payload")
+    if not payload:
+        return b""
+    if "hex" in payload:
+        raw = bytes.fromhex(_text(payload.get("hex"), ""))
+        _validate_payload_length(payload, raw)
+        return raw
+    if "bytes_hex" in payload:
+        raw = bytes.fromhex(_text(payload.get("bytes_hex"), ""))
+        _validate_payload_length(payload, raw)
+        return raw
+    if "text" in payload:
+        raw = _text(payload.get("text"), "").encode("utf-8")
+        _validate_payload_length(payload, raw)
+        return raw
+    if "value" in payload:
+        raw = _text(payload.get("value"), "").encode("utf-8")
+        _validate_payload_length(payload, raw)
+        return raw
+    raise ValueError("payload materialization requires bytes in hex, bytes_hex, text, or value")
+
+
+def _validate_payload_length(payload: Mapping[str, object], raw: bytes) -> None:
+    if "length" not in payload:
+        return
+    length = _int(payload.get("length"), 0)
+    if length != len(raw):
+        raise ValueError(
+            f"payload length mismatch: declared={length} materialized={len(raw)}"
+        )

@@ -57,7 +57,6 @@ _LAYER_ALIASES: dict[str, str] = {
     "BGPRouteRefresh": "bgp",
     "BGPUpdate": "bgp",
     "BOOTP": "dhcp",
-    "CookedLinux": "linux_sll",
     "DHCP": "dhcp",
     "DNS": "dns",
     "Dot11": "dot11",
@@ -77,13 +76,11 @@ _LAYER_ALIASES: dict[str, str] = {
     "IPv6": "ipv6",
     "ISAKMP": "ikev2",
     "ISAKMP_v1": "ikev2",
-    "LLC": "llc_snap",
     "IPv6ExtHdrDestOpt": "ipv6_destination_options",
     "IPv6ExtHdrFragment": "ipv6_fragment",
     "IPv6ExtHdrHopByHop": "ipv6_hop_by_hop",
     "IPv6ExtHdrRouting": "ipv6_routing",
     "IPv6ExtHdrSegmentRouting": "ipv6_routing",
-    "Loopback": "null_loopback",
     "OSPF_Hdr": "ospf",
     "OSPF_Hello": "ospf",
     "OSPF_DBDesc": "ospf",
@@ -91,8 +88,6 @@ _LAYER_ALIASES: dict[str, str] = {
     "OSPF_LSUpd": "ospf",
     "OSPF_LSAck": "ospf",
     "RadioTap": "radiotap",
-    "Raw": "payload",
-    "SNAP": "llc_snap",
     "TCP": "tcp",
     "UDP": "udp",
     "ZigbeeAppDataPayload": "zigbee_aps",
@@ -198,9 +193,6 @@ _LAYER_FIELD_ALIASES: dict[str, dict[str, str]] = {
         "dbdescr": "dd_flags",
         "ddseq": "dd_sequence_number",
         "lsaheaders": "lsa_headers",
-    },
-    "payload": {
-        "load": "hex",
     },
     "tcp": {
         "ack": "acknowledgement",
@@ -673,8 +665,6 @@ def _normalize_fields(layer_name: str, fields: JSONObject) -> JSONObject:
     plugin = SCAPY_REGISTRY.get(layer_name)
     if plugin is not None and plugin.normalize is not None:
         return plugin.normalize(fields)
-    if layer_name == "payload":
-        return _normalize_payload_fields(fields)
     if layer_name == "dns":
         return _normalize_dns_fields(fields)
     if layer_name == "dhcp":
@@ -1502,24 +1492,6 @@ def _decode_dhcp_option_tlvs(option_region_hex: str) -> list[JSONObject] | None:
         index += option_length
         options.append({"code": code, "payload_hex": payload.hex()})
     return options
-
-
-def _normalize_payload_fields(fields: JSONObject) -> JSONObject:
-    load = fields.get("load")
-    if isinstance(load, Mapping):
-        hex_value = load.get("hex")
-        ascii_value = load.get("ascii")
-        if isinstance(hex_value, str):
-            output: JSONObject = {
-                "hex": hex_value,
-                "length": len(bytes.fromhex(hex_value)),
-            }
-            if isinstance(ascii_value, str):
-                output["ascii"] = ascii_value
-            return output
-    if isinstance(load, str):
-        return {"hex": load, "length": len(bytes.fromhex(load))}
-    return {}
 
 
 def _normalize_field_name(layer_name: str, native_name: str) -> str:
