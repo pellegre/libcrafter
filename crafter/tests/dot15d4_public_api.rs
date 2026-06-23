@@ -37,7 +37,9 @@ fn prelude_dot15d4_tap_round_trip() {
     let radio_layer = decoded
         .layer::<Dot15d4Radio>()
         .expect("Dot15d4Radio layer present");
-    let mac_layer = decoded.layer::<Dot15d4>().expect("Dot15d4 MAC layer present");
+    let mac_layer = decoded
+        .layer::<Dot15d4>()
+        .expect("Dot15d4 MAC layer present");
 
     // The radio descriptor preserves the channel.
     assert!(

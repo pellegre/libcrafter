@@ -7033,9 +7033,10 @@ fn fixture_dot15d4_corpus_decodes_layer_stacks() {
         // round-trip for that arrangement is covered in `dot15d4_decode.rs` via
         // an explicit payload re-encode). Round-trip only the bare-MAC frames,
         // whose decoded stack recompiles byte-for-byte.
-        let has_zigbee = case.expected_layers.iter().any(|layer| {
-            matches!(layer, ExpectedLayer::ZigbeeNwk | ExpectedLayer::ZigbeeAps)
-        });
+        let has_zigbee = case
+            .expected_layers
+            .iter()
+            .any(|layer| matches!(layer, ExpectedLayer::ZigbeeNwk | ExpectedLayer::ZigbeeAps));
         if !has_zigbee {
             assert_compile_decode_compile(case, target, &packet, &bytes);
         }
@@ -8342,9 +8343,7 @@ fn pcap_fixture_corpus_decodes_supported_link_types() {
                 );
             } else {
                 match expected.fixture_name {
-                    BLE_PCAP_RECORD_FIXTURE_NAME => {
-                        assert_ble_pcap_packet_surface(packet.packet())
-                    }
+                    BLE_PCAP_RECORD_FIXTURE_NAME => assert_ble_pcap_packet_surface(packet.packet()),
                     DOT15D4_TAP_PCAP_RECORD_FIXTURE_NAME => {
                         assert_dot15d4_tap_pcap_packet_surface(packet.packet())
                     }

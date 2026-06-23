@@ -65,14 +65,14 @@ pub use self::arp::{
 pub(crate) use self::ble::decode_ble_adv;
 use self::ble::decode_ble_radio;
 pub use self::ble::{AdList, AdStructure, BleAdvPduType, BleLlAdv, BlePhy, BleRadio};
+pub(crate) use self::dot11::decode_dot11_with_registry;
+pub use self::dot11::*;
 pub(crate) use self::dot15d4::{
     decode_dot15d4, decode_dot15d4_radio, decode_zigbee_aps, decode_zigbee_nwk,
 };
 pub use self::dot15d4::{
     Dot15d4, Dot15d4AddrMode, Dot15d4FrameType, Dot15d4Radio, ZigbeeAps, ZigbeeNwk,
 };
-pub(crate) use self::dot11::decode_dot11_with_registry;
-pub use self::dot11::*;
 pub(crate) use self::llc::append_llc_snap_packet_with_registry;
 pub use self::llc::LlcSnap;
 pub(crate) use self::radiotap::decode_radiotap_with_registry;
@@ -891,8 +891,9 @@ pub(crate) fn decode_dot15d4_with_registry(
     let (mac, mac_payload) = decode_dot15d4(mac_bytes)?;
     // Only Data MAC frames carry a Zigbee NWK payload (read directly from the
     // FCF so the dispatch logic stays self-contained in this module).
-    let mac_is_data =
-        mac_bytes.first().is_some_and(|fcf| fcf & 0b111 == DOT15D4_MAC_FRAME_TYPE_DATA);
+    let mac_is_data = mac_bytes
+        .first()
+        .is_some_and(|fcf| fcf & 0b111 == DOT15D4_MAC_FRAME_TYPE_DATA);
     packet = packet.push(mac);
 
     if mac_payload.is_empty() {
@@ -1211,9 +1212,7 @@ mod link_layers {
 
 #[cfg(test)]
 mod dot15d4_entry {
-    use super::{
-        decode_dot15d4_with_registry, Dot15d4, Dot15d4Radio, Raw, ZigbeeAps, ZigbeeNwk,
-    };
+    use super::{decode_dot15d4_with_registry, Dot15d4, Dot15d4Radio, Raw, ZigbeeAps, ZigbeeNwk};
     use crate::registry::ProtocolRegistry;
     use crate::Packet;
 
@@ -1247,13 +1246,27 @@ mod dot15d4_entry {
             decode_dot15d4_with_registry(ProtocolRegistry::builtin(), compiled.as_bytes(), true)
                 .expect("decode TAP 802.15.4 frame through the entrypoint");
 
-        assert!(decoded.layer::<Dot15d4Radio>().is_some(), "Dot15d4Radio layer present");
-        assert!(decoded.layer::<Dot15d4>().is_some(), "Dot15d4 MAC layer present");
-        assert!(decoded.layer::<ZigbeeNwk>().is_some(), "ZigbeeNwk layer present");
-        assert!(decoded.layer::<ZigbeeAps>().is_some(), "ZigbeeAps layer present");
+        assert!(
+            decoded.layer::<Dot15d4Radio>().is_some(),
+            "Dot15d4Radio layer present"
+        );
+        assert!(
+            decoded.layer::<Dot15d4>().is_some(),
+            "Dot15d4 MAC layer present"
+        );
+        assert!(
+            decoded.layer::<ZigbeeNwk>().is_some(),
+            "ZigbeeNwk layer present"
+        );
+        assert!(
+            decoded.layer::<ZigbeeAps>().is_some(),
+            "ZigbeeAps layer present"
+        );
 
         // The APS application payload is preserved as a trailing `Raw` layer.
-        let raw = decoded.layer::<Raw>().expect("APS payload preserved as Raw");
+        let raw = decoded
+            .layer::<Raw>()
+            .expect("APS payload preserved as Raw");
         assert_eq!(raw.as_bytes(), &[0x01, 0x02]);
 
         // Exactly the four typed layers plus the trailing Raw payload.
@@ -1291,10 +1304,22 @@ mod dot15d4_entry {
             decode_dot15d4_with_registry(ProtocolRegistry::builtin(), mac_only.as_bytes(), false)
                 .expect("decode bare 802.15.4 frame through the entrypoint");
 
-        assert!(decoded.layer::<Dot15d4Radio>().is_none(), "no radio descriptor for bare frame");
-        assert!(decoded.layer::<Dot15d4>().is_some(), "Dot15d4 MAC layer present");
-        assert!(decoded.layer::<ZigbeeNwk>().is_some(), "ZigbeeNwk layer present");
-        assert!(decoded.layer::<ZigbeeAps>().is_some(), "ZigbeeAps layer present");
+        assert!(
+            decoded.layer::<Dot15d4Radio>().is_none(),
+            "no radio descriptor for bare frame"
+        );
+        assert!(
+            decoded.layer::<Dot15d4>().is_some(),
+            "Dot15d4 MAC layer present"
+        );
+        assert!(
+            decoded.layer::<ZigbeeNwk>().is_some(),
+            "ZigbeeNwk layer present"
+        );
+        assert!(
+            decoded.layer::<ZigbeeAps>().is_some(),
+            "ZigbeeAps layer present"
+        );
     }
 
     #[test]
@@ -1309,9 +1334,17 @@ mod dot15d4_entry {
             decode_dot15d4_with_registry(ProtocolRegistry::builtin(), compiled.as_bytes(), false)
                 .expect("decode non-data 802.15.4 frame through the entrypoint");
 
-        assert!(decoded.layer::<Dot15d4>().is_some(), "Dot15d4 MAC layer present");
-        assert!(decoded.layer::<ZigbeeNwk>().is_none(), "non-data payload is not parsed as NWK");
-        let raw = decoded.layer::<Raw>().expect("non-data MAC payload kept as Raw");
+        assert!(
+            decoded.layer::<Dot15d4>().is_some(),
+            "Dot15d4 MAC layer present"
+        );
+        assert!(
+            decoded.layer::<ZigbeeNwk>().is_none(),
+            "non-data payload is not parsed as NWK"
+        );
+        let raw = decoded
+            .layer::<Raw>()
+            .expect("non-data MAC payload kept as Raw");
         assert_eq!(raw.as_bytes(), &[0xAA, 0xBB, 0xCC]);
     }
 }

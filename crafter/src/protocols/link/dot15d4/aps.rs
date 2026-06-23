@@ -243,7 +243,10 @@ impl ZigbeeAps {
     /// Honors a user-set frame type; otherwise defaults to the data code point
     /// (0b00).
     fn effective_frame_type(&self) -> u8 {
-        self.frame_type.value().copied().unwrap_or(APS_FRAME_TYPE_DATA)
+        self.frame_type
+            .value()
+            .copied()
+            .unwrap_or(APS_FRAME_TYPE_DATA)
     }
 
     /// Resolve the effective APS delivery mode (Frame Control bits 2..=3).
@@ -384,7 +387,10 @@ impl Layer for ZigbeeAps {
     }
 
     fn summary(&self) -> String {
-        let mut summary = format!("ZigbeeAps({}", aps_frame_type_label(self.effective_frame_type()));
+        let mut summary = format!(
+            "ZigbeeAps({}",
+            aps_frame_type_label(self.effective_frame_type())
+        );
         if self.effective_cluster_profile_present() {
             summary.push_str(&format!(
                 ", cluster={:#06x}, profile={:#06x}",
@@ -408,10 +414,7 @@ impl Layer for ZigbeeAps {
                 "frame_type",
                 aps_frame_type_label(self.effective_frame_type()),
             ),
-            (
-                "delivery_mode",
-                self.effective_delivery_mode().to_string(),
-            ),
+            ("delivery_mode", self.effective_delivery_mode().to_string()),
         ];
 
         if self.effective_dest_endpoint_present() {
@@ -437,7 +440,11 @@ impl Layer for ZigbeeAps {
 
         fields.push((
             "counter",
-            self.counter.value().copied().unwrap_or(APS_COUNTER_DEFAULT).to_string(),
+            self.counter
+                .value()
+                .copied()
+                .unwrap_or(APS_COUNTER_DEFAULT)
+                .to_string(),
         ));
 
         fields
@@ -518,8 +525,7 @@ pub(crate) fn decode_zigbee_aps(bytes: &[u8]) -> Result<(ZigbeeAps, &[u8])> {
         delivery_mode,
         APS_DELIVERY_MODE_UNICAST | APS_DELIVERY_MODE_BROADCAST
     );
-    let cluster_profile_present =
-        matches!(frame_type, APS_FRAME_TYPE_DATA | APS_FRAME_TYPE_ACK);
+    let cluster_profile_present = matches!(frame_type, APS_FRAME_TYPE_DATA | APS_FRAME_TYPE_ACK);
 
     let mut offset = APS_FRAME_CONTROL_LEN;
 
@@ -748,9 +754,11 @@ mod tests {
         // the header context. FC 0x00 = Data + unicast, then only the
         // destination endpoint octet is present (offset 2); the cluster block
         // needs 5 more octets (offset 2 + 5 = 7).
-        let err = decode_zigbee_aps(&[0x00, 0x0A])
-            .expect_err("must reject a truncated APS header");
-        assert_eq!(err, CrafterError::buffer_too_short("zigbee.aps.header", 7, 2));
+        let err = decode_zigbee_aps(&[0x00, 0x0A]).expect_err("must reject a truncated APS header");
+        assert_eq!(
+            err,
+            CrafterError::buffer_too_short("zigbee.aps.header", 7, 2)
+        );
     }
 }
 

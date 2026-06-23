@@ -309,7 +309,9 @@ fn dot15d4_framing_concatenated_frames_decode_as_two() {
     let mut decoder = FrameDecoder::default();
     decoder.push(&bytes);
 
-    let first_payload = decoder.next().expect("first framed dot15d4 message decodes");
+    let first_payload = decoder
+        .next()
+        .expect("first framed dot15d4 message decodes");
     let second_payload = decoder
         .next()
         .expect("second framed dot15d4 message decodes");
