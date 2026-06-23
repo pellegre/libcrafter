@@ -50,12 +50,10 @@ _UDP_OPTIONS_SURPLUS_CAPABILITIES = [
 _BGP_CAPABILITIES = ["bgp_peer"]
 _RIP_CAPABILITIES = ["rip_peer"]
 _IGMP_CAPABILITIES = ["ipv4_multicast", "igmp_peer"]
-_ARP_CAPABILITIES = [
-    "arp_resolution",
-    "link_layer_send",
-    "link_layer_capture",
-    "broadcast",
-]
+# ARP's capability constants and case tuple now live in the ARP plugin module
+# (``protocols/arp.py``); the merged catalog/profile tables below pick the ARP
+# cases up from the registry. The NDP constant below references ARP only in
+# prose.
 # IPv6 Neighbor Discovery is the IPv6 analog of ARP. Unlike ARP (which rides
 # Ethernet broadcast), NDP rides ICMPv6 over IPv6 and addresses solicitations to
 # the solicited-node multicast group (and router solicitations to the
@@ -70,18 +68,6 @@ _NDP_CAPABILITIES = [
     "link_layer_capture",
     "ipv6_multicast",
 ]
-# Some ARP cases need the *target MAC* (provider metadata): a unicast request is
-# addressed to it rather than the broadcast address, and the MAC-validation case
-# ties the decoded reply to it. Either way the case can only run once the
-# target's MAC is known, so it adds ``provider_mac`` to the base ARP
-# capabilities. A provider that cannot supply target-MAC metadata must skip with
-# the stable ``requires_provider_mac`` reason.
-_ARP_PROVIDER_MAC_CAPABILITIES = [
-    *_ARP_CAPABILITIES,
-    "provider_mac",
-]
-# Backwards-compatible alias: the unicast case introduced this list.
-_ARP_UNICAST_CAPABILITIES = _ARP_PROVIDER_MAC_CAPABILITIES
 
 # IPSec behavioral cases drive a controlled IPSec-capable peer: a libcrafter
 # ESP/AH datagram or IKE_SA_INIT is placed on the wire and the peer's protected
@@ -304,117 +290,6 @@ BEHAVIOR_DHCP_CASES: tuple[ProbeCase, ...] = (
         expected_response="dhcp_offer",
         required_capabilities=_DHCP_CAPABILITIES,
         protocol="dhcp",
-    ),
-)
-
-
-# Ten ARP behavioral cases (Ethernet/ARP who-has and is-at exchanges on a
-# private L2 segment with provider MAC knowledge).
-BEHAVIOR_ARP_CASES: tuple[ProbeCase, ...] = (
-    _behavior_case(
-        name="arp-basic-who-has",
-        description="Broadcast a who-has request and validate the is-at reply.",
-        stimulus="arp_who_has",
-        expected_response="arp_is_at",
-        required_capabilities=_ARP_CAPABILITIES,
-        protocol="arp",
-        metadata={"layer": "link"},
-    ),
-    _behavior_case(
-        name="arp-repeat-two-replies",
-        description="Repeat a who-has request and validate two parseable replies.",
-        stimulus="arp_who_has",
-        expected_response="arp_is_at",
-        required_capabilities=_ARP_CAPABILITIES,
-        protocol="arp",
-        metadata={"layer": "link"},
-    ),
-    _behavior_case(
-        name="arp-source-address-preserved",
-        description=(
-            "Validate that the reply is addressed to the request's sender "
-            "hardware/protocol address."
-        ),
-        stimulus="arp_who_has",
-        expected_response="arp_is_at",
-        required_capabilities=_ARP_CAPABILITIES,
-        protocol="arp",
-        metadata={"layer": "link"},
-    ),
-    _behavior_case(
-        name="arp-alias-address-reply",
-        description="Query a target alias address and validate the reply.",
-        stimulus="arp_who_has",
-        expected_response="arp_is_at",
-        required_capabilities=_ARP_CAPABILITIES,
-        protocol="arp",
-        metadata={"layer": "link"},
-    ),
-    _behavior_case(
-        name="arp-unicast-request-reply",
-        description=(
-            "Send the ARP request to the known target MAC (not broadcast) and "
-            "validate the reply."
-        ),
-        stimulus="arp_who_has",
-        expected_response="arp_is_at",
-        required_capabilities=_ARP_UNICAST_CAPABILITIES,
-        protocol="arp",
-        metadata={"layer": "link"},
-    ),
-    _behavior_case(
-        name="arp-padding-reply",
-        description="Send a request with Ethernet padding and validate the reply.",
-        stimulus="arp_who_has",
-        expected_response="arp_is_at",
-        required_capabilities=_ARP_CAPABILITIES,
-        protocol="arp",
-        metadata={"layer": "link"},
-    ),
-    _behavior_case(
-        name="arp-cache-flush-reply",
-        description="Flush the neighbor cache, then validate a fresh who-has reply.",
-        stimulus="arp_who_has",
-        expected_response="arp_is_at",
-        required_capabilities=_ARP_CAPABILITIES,
-        protocol="arp",
-        metadata={"layer": "link"},
-    ),
-    _behavior_case(
-        name="arp-mac-validation",
-        description=(
-            "Validate that the reply Ethernet source and ARP sender hardware "
-            "address both equal the target endpoint MAC."
-        ),
-        stimulus="arp_who_has",
-        expected_response="arp_is_at",
-        # The reply is validated against the target endpoint's MAC (provider
-        # metadata), so the case requires provider_mac: MAC-less providers skip
-        # with the stable requires_provider_mac reason.
-        required_capabilities=_ARP_PROVIDER_MAC_CAPABILITIES,
-        protocol="arp",
-        metadata={"layer": "link"},
-    ),
-    _behavior_case(
-        name="arp-spa-variation",
-        description="Send a request from an alternate sender protocol address and validate the reply.",
-        stimulus="arp_who_has",
-        expected_response="arp_is_at",
-        required_capabilities=_ARP_CAPABILITIES,
-        protocol="arp",
-        metadata={"layer": "link"},
-    ),
-    _behavior_case(
-        name="arp-broadcast-filtered-capture",
-        description=(
-            "Capture ARP replies on a noisy segment and validate only the "
-            "matching target reply."
-        ),
-        stimulus="arp_who_has",
-        expected_response="arp_is_at",
-        required_capabilities=_ARP_CAPABILITIES,
-        protocol="arp",
-        metadata={"layer": "link"},
     ),
 )
 
@@ -955,26 +830,11 @@ _LEGACY_PROBE_CASES: tuple[ProbeCase, ...] = (
         endpoint_roles=["stimulus", "router"],
         metadata={"protocol": "icmp", "service": "controlled_router"},
     ),
-    ProbeCase(
-        name="arp-resolution",
-        description=(
-            "Broadcast an ARP who-has request on the lab segment and validate the "
-            "target's unicast is-at reply."
-        ),
-        stimulus="arp_who_has",
-        expected_response="arp_is_at",
-        required_capabilities=[
-            "arp_resolution",
-            "link_layer_send",
-            "link_layer_capture",
-            "broadcast",
-        ],
-        endpoint_roles=["stimulus", "target"],
-        metadata={"protocol": "arp", "service": "kernel", "layer": "link"},
-    ),
+    # The inline ``arp-resolution`` smoke case and the ten ARP behavioral cases
+    # are contributed by the ARP plugin (``protocols/arp.py``) and merged in
+    # ahead of this legacy aggregation by ``_merge_probe_cases``.
     *BEHAVIOR_DNS_CASES,
     *BEHAVIOR_DHCP_CASES,
-    *BEHAVIOR_ARP_CASES,
     *BEHAVIOR_NDP_CASES,
     *BEHAVIOR_UDP_CASES,
     *BEHAVIOR_OSPF_CASES,
@@ -1112,6 +972,19 @@ TCP_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = (
     "tcp-syn-closed",
 )
 
+# The ten ARP behavioral case names, in declaration order, sourced from the ARP
+# plugin's registered cases (the ``arp-resolution`` smoke case is excluded -- it
+# rides the smoke profile, not the behavior profile). ARP's profile membership
+# stays in these legacy ordered tables (rather than the plugin's
+# ``profile_counts``) so the behavior/smoke selection order is byte-identical:
+# the registry-first profile merge would otherwise move ARP to the front of
+# those profiles.
+_ARP_BEHAVIOR_CASE_NAMES: tuple[str, ...] = tuple(
+    case.name
+    for case in _registry_cases()
+    if case.metadata.get("protocol") == "arp" and case.name != "arp-resolution"
+)
+
 # The behavior profile selects the full DNS/DHCP/ARP/NDP/UDP behavioral catalog
 # plus the live-capable OSPF case in a stable deterministic order: each protocol
 # group in declaration order, grouped DNS -> DHCP -> ARP -> NDP -> UDP -> OSPF.
@@ -1120,17 +993,13 @@ TCP_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = (
 # sits in the dry-run ``ospf-smoke`` profile so the behavior profile stays fully
 # live-routable. The default count covers every case so a bare
 # ``--profile behavior`` plans the complete suite.
-BEHAVIOR_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
-    case.name
-    for group in (
-        BEHAVIOR_DNS_CASES,
-        BEHAVIOR_DHCP_CASES,
-        BEHAVIOR_ARP_CASES,
-        BEHAVIOR_NDP_CASES,
-        BEHAVIOR_UDP_CASES,
-        BEHAVIOR_OSPF_CASES,
-    )
-    for case in group
+BEHAVIOR_PROFILE_CASE_NAMES: tuple[str, ...] = (
+    *(case.name for case in BEHAVIOR_DNS_CASES),
+    *(case.name for case in BEHAVIOR_DHCP_CASES),
+    *_ARP_BEHAVIOR_CASE_NAMES,
+    *(case.name for case in BEHAVIOR_NDP_CASES),
+    *(case.name for case in BEHAVIOR_UDP_CASES),
+    *(case.name for case in BEHAVIOR_OSPF_CASES),
 )
 
 # The ipsec profile selects the IPSec behavioral catalog (ESP transport/tunnel,
