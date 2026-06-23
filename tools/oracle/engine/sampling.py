@@ -359,6 +359,29 @@ def _next_layer_after(stack: Sequence[str], layer: str) -> str | None:
     return "payload" if "payload" in stack[index + 1 :] else None
 
 
+def _ipv6_next_header_for_stack(stack: Sequence[str], layer: str) -> str:
+    """Resolve the IPv6 ``next_header`` name the layer after ``layer`` implies.
+
+    Cross-layer stack-grammar routing shared by the base IPv6 sampler and the
+    IPv6 extension-header sampling in ``generator``; kept here so the per-protocol
+    plugins can resolve their next-header field without importing ``generator``
+    (which would create a cycle).
+    """
+
+    next_layer = _next_layer_after(stack, layer)
+    if next_layer == "ipv6_destination_options":
+        return "destination-options"
+    if next_layer == "ipv6_fragment":
+        return "fragment"
+    if next_layer == "ipv6_hop_by_hop":
+        return "hop-by-hop"
+    if next_layer == "ipv6_routing":
+        return "routing"
+    if next_layer in {"icmpv6", "tcp", "udp"}:
+        return next_layer
+    return "unknown"
+
+
 def _ethertype_for_stack(stack: Sequence[str], layer: str) -> str:
     """Resolve the EtherType name the layer after ``layer`` implies."""
 

@@ -73,7 +73,6 @@ _LAYER_ALIASES: dict[str, str] = {
     "IGMPv3gr": "igmp_group_record",
     "IGMPv3mq": "igmp_query",
     "IGMPv3mr": "igmp_report",
-    "IPv6": "ipv6",
     "ISAKMP": "ikev2",
     "ISAKMP_v1": "ikev2",
     "IPv6ExtHdrDestOpt": "ipv6_destination_options",
@@ -153,12 +152,6 @@ _LAYER_FIELD_ALIASES: dict[str, dict[str, str]] = {
     },
     "ipv6_destination_options": {
         "len": "header_ext_len",
-    },
-    "ipv6": {
-        "fl": "flow_label",
-        "plen": "payload_length",
-        "tc": "traffic_class",
-        "version": "version",
     },
     "ipv6_hop_by_hop": {
         "len": "header_ext_len",
@@ -672,8 +665,6 @@ def _normalize_fields(layer_name: str, fields: JSONObject) -> JSONObject:
     for native_name, value in fields.items():
         normalized_name = _normalize_field_name(layer_name, native_name)
         output[normalized_name] = _normalize_field_value(layer_name, normalized_name, value)
-    if layer_name == "ipv6":
-        _normalize_ipv6_fields(output)
     if layer_name in {"ipv6_hop_by_hop", "ipv6_destination_options"}:
         _normalize_ipv6_options_header_fields(output)
     if layer_name == "ospf":
@@ -3048,13 +3039,6 @@ def _normalize_icmpv6_rest_of_header(fields: JSONObject) -> None:
         fields.pop("ext", None)
     if fields.get("extpad") == {"hex": "", "ascii": ""}:
         fields.pop("extpad", None)
-
-
-def _normalize_ipv6_fields(fields: JSONObject) -> None:
-    traffic_class = fields.get("traffic_class")
-    if isinstance(traffic_class, int):
-        fields["dscp"] = traffic_class >> 2
-        fields["ecn"] = traffic_class & 0x03
 
 
 def _normalize_ipv6_options_header_fields(fields: JSONObject) -> None:
