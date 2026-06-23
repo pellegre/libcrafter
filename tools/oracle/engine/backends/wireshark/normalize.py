@@ -24,6 +24,12 @@ from .decode_helpers import (
     _parse_int_fields,
     _string_field,
 )
+# Importing the protocols package runs its ``autodiscover`` so every per-protocol
+# Wireshark decoder module self-registers; ``WIRESHARK_REGISTRY`` is consulted for a
+# layer's ``normalize`` hook before the legacy branches below. No protocol is migrated
+# yet, so the registry is empty and every layer falls through to the legacy
+# normalization.
+from .protocols import WIRESHARK_REGISTRY
 
 
 BACKEND_NAME = "wireshark"
@@ -314,6 +320,12 @@ def _protocol_names(layers: JSONObject) -> list[str]:
 def _normalize_protocol_fields(
     layer_name: str, layers: JSONObject, *, source_hex: str | None = None
 ) -> JSONObject:
+    # Consult the per-layer Wireshark decoder plugin before the legacy branches. The
+    # registry is empty until a protocol is migrated, so this resolves to ``None`` and
+    # the legacy code below runs unchanged.
+    plugin = WIRESHARK_REGISTRY.get(layer_name)
+    if plugin is not None:
+        return plugin.normalize(layers, source_hex=source_hex)
     if layer_name == "ethernet":
         return _normalize_ethernet(_layer(layers, "eth"))
     if layer_name == "radiotap":
