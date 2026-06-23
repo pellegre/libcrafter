@@ -44,7 +44,6 @@ KNOWN_UNMIGRATED: frozenset[str] = frozenset(
         "ble_adv",
         "ble_radio",
         "dhcp",
-        "dns",
         "dot11",
         "eapol",
         "esp",
