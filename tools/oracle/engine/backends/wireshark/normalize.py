@@ -13,6 +13,17 @@ from pathlib import Path
 
 from ...model import DecodedModel, EncodedVector, JSONObject
 from ..registry import get_backend
+from .decode_helpers import (
+    _field,
+    _field_list,
+    _fields_from_aliases,
+    _layer,
+    _layer_any,
+    _normalize_root_name,
+    _parse_int,
+    _parse_int_fields,
+    _string_field,
+)
 
 
 BACKEND_NAME = "wireshark"
@@ -35,16 +46,6 @@ _DLT_BY_ROOT: dict[str, int] = {
     "l3:ipv4": 101,
     "l3:ipv6": 101,
     "l3:raw": 101,
-}
-_ROOT_ALIASES: dict[str, str] = {
-    "Dot11": "link:dot11",
-    "Ether": "link:ethernet",
-    "IP": "l3:ipv4",
-    "IPv6": "l3:ipv6",
-    "RadioTap": "link:radiotap",
-    "Raw": "link:raw",
-    "link:ieee80211": "link:dot11",
-    "link:linux-sll": "link:linux-cooked",
 }
 _PROTOCOL_LAYER_ALIASES: dict[str, str | None] = {
     "arp": "arp",
@@ -1328,23 +1329,6 @@ def _normalize_null_loopback(layer: JSONObject) -> JSONObject:
     return output
 
 
-def _fields_from_aliases(layer: JSONObject, aliases: dict[str, tuple[str, ...]]) -> JSONObject:
-    output: JSONObject = {}
-    for target, field_names in aliases.items():
-        value = _field(layer, *field_names)
-        if value is not None:
-            output[target] = value
-    return output
-
-
-def _parse_int_fields(output: JSONObject, *names: str) -> None:
-    for name in names:
-        value = output.get(name)
-        parsed = _parse_int(value)
-        if parsed is not None:
-            output[name] = parsed
-
-
 def _ipv4_flags(layer: JSONObject) -> str:
     if _truthy_field(layer, "ip.flags.df"):
         return "df"
@@ -1402,68 +1386,6 @@ def _truthy_field(layer: JSONObject, name: str) -> bool:
     if isinstance(value, str):
         return value not in {"", "0", "0x0", "False", "false"}
     return False
-
-
-def _field(layer: JSONObject, *names: str) -> object | None:
-    for name in names:
-        value = layer.get(name)
-        if value is None:
-            continue
-        return _scalar_value(value)
-    return None
-
-
-def _field_list(layer: JSONObject, *names: str) -> list[object]:
-    for name in names:
-        value = layer.get(name)
-        if value is None:
-            continue
-        if isinstance(value, list):
-            return [_scalar_value(item) for item in value if _scalar_value(item) is not None]
-        scalar = _scalar_value(value)
-        return [] if scalar is None else [scalar]
-    return []
-
-
-def _string_field(layer: JSONObject, *names: str) -> str | None:
-    value = _field(layer, *names)
-    if value is None:
-        return None
-    return str(value)
-
-
-def _scalar_value(value: object) -> object:
-    if isinstance(value, list):
-        if not value:
-            return None
-        return _scalar_value(value[0])
-    if isinstance(value, dict):
-        show = value.get("show")
-        if show is not None:
-            return _scalar_value(show)
-        value_value = value.get("value")
-        if value_value is not None:
-            return _scalar_value(value_value)
-        return value
-    return value
-
-
-def _parse_int(value: object) -> int | None:
-    if isinstance(value, bool):
-        return int(value)
-    if isinstance(value, int):
-        return value
-    if not isinstance(value, str):
-        return None
-    candidate = value.strip()
-    if not candidate:
-        return None
-    if " " in candidate:
-        candidate = candidate.split(" ", 1)[0]
-    try:
-        return int(candidate, 0)
-    except ValueError:
-        return None
 
 
 def _truthy_value(value: object) -> bool:
@@ -1666,25 +1588,6 @@ def _field_key(fields: dict[str, JSONObject], layer_name: str) -> str:
     while f"{layer_name}#{suffix}" in fields:
         suffix += 1
     return f"{layer_name}#{suffix}"
-
-
-def _normalize_root_name(root: str | None) -> str | None:
-    if root is None:
-        return None
-    return _ROOT_ALIASES.get(root, root)
-
-
-def _layer(layers: JSONObject, name: str) -> JSONObject:
-    value = layers.get(name)
-    return value if isinstance(value, dict) else {}
-
-
-def _layer_any(layers: JSONObject, *names: str) -> JSONObject:
-    for name in names:
-        value = layers.get(name)
-        if isinstance(value, dict):
-            return value
-    return {}
 
 
 def _object(value: object, name: str) -> JSONObject:
