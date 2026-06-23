@@ -12,6 +12,11 @@ from tools.lab.engine.providers import (
     resolve_lab_provider,
 )
 
+from .capability_derivation import (
+    capability as _capability,
+    capability_default_true as _capability_default_true,
+    optional_positive_int as _optional_positive_int,
+)
 from .cases import UDP_ECHO_LARGE_PAYLOAD_LENGTH
 from .model import JSONObject, JSONValue, json_object
 
@@ -476,31 +481,6 @@ def probe_address_context_from_lab_session(
         "endpoint_count": len(endpoints),
         "endpoints": endpoints,
     }
-
-
-def _capability(capabilities: Mapping[str, JSONValue], *names: str) -> bool:
-    return any(capabilities.get(name) is True for name in names)
-
-
-def _optional_positive_int(
-    capabilities: Mapping[str, JSONValue],
-    *names: str,
-) -> int | None:
-    for name in names:
-        value = capabilities.get(name)
-        if isinstance(value, int) and not isinstance(value, bool) and value > 0:
-            return value
-    return None
-
-
-def _capability_default_true(
-    capabilities: Mapping[str, JSONValue],
-    *names: str,
-) -> bool:
-    for name in names:
-        if name in capabilities:
-            return capabilities.get(name) is True
-    return True
 
 
 def _endpoints_by_role(session: LabSession) -> dict[str, LabEndpoint]:
