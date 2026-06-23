@@ -4,5 +4,7 @@
 //! the source of truth derived from `.agents/docs/mqtt-manifest.md`.
 
 pub mod constants;
+pub mod header;
 
 pub use constants::*;
+pub use header::MqttControlPacketType;
