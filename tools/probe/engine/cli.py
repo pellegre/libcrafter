@@ -1405,62 +1405,6 @@ def _probe_plan_with_endpoint_addresses(
         )
         updated["stimulus_rst_guard"] = rst_guard
     elif case_name in {
-        "dns-query",
-        "dns-aaaa-success",
-        "dns-cname-chain",
-        "dns-nxdomain",
-        "dns-nodata",
-        "dns-txt-answer",
-        "dns-mx-answer",
-        "dns-srv-answer",
-        "dns-edns-opt",
-        "dns-repeat-transaction",
-    }:
-        source_port = int(updated.get("source_port", 0))
-        destination_port = int(updated.get("destination_port", 53))
-        updated["capture_filter"] = (
-            f"udp and src host {target_ipv4} and dst host {source_ipv4} "
-            f"and src port {destination_port} and dst port {source_port}"
-        )
-        target_service = dict(
-            json_object(updated.get("target_service", {}), "probe_plan.target_service")
-        )
-        target_service.update(
-            {
-                "bind_ipv4": target_ipv4,
-                "port": destination_port,
-                "source_ipv4": source_ipv4,
-            }
-        )
-        updated["target_service"] = target_service
-        # dns-repeat-transaction carries a per-send array; rewrite each send's
-        # addresses, capture filter, and validation for the lab segment so every
-        # send is matched against its own response (its own source port) and not
-        # confused with the sibling send.
-        sends = updated.get("sends")
-        if isinstance(sends, list):
-            rewritten_sends: list[JSONObject] = []
-            for raw_send in sends:
-                send = dict(json_object(raw_send, "probe_plan.send"))
-                send_source_port = int(send.get("source_port", 0))
-                send_destination_port = int(send.get("destination_port", 53))
-                send["source_ipv4"] = source_ipv4
-                send["destination_ipv4"] = target_ipv4
-                send["expected_reply_source_ipv4"] = target_ipv4
-                send["expected_reply_destination_ipv4"] = source_ipv4
-                send["capture_filter"] = (
-                    f"udp and src host {target_ipv4} and dst host {source_ipv4} "
-                    f"and src port {send_destination_port} and dst port {send_source_port}"
-                )
-                send_validation = dict(
-                    json_object(send.get("validation", {}), "probe_plan.send.validation")
-                )
-                send_validation["source_ipv4"] = target_ipv4
-                send_validation["destination_ipv4"] = source_ipv4
-                send["validation"] = send_validation
-                rewritten_sends.append(send)
-            updated["sends"] = rewritten_sends
-    elif case_name in {
         "dhcp-discover-offer",
         "dhcp-request-ack",
         "dhcp-client-identifier",
@@ -1754,26 +1698,6 @@ def _failure_reasons_for_case(case_name: str) -> list[str]:
         return [
             FAILURE_TIMEOUT,
             FAILURE_WRONG_PEER,
-            FAILURE_WRONG_FLAGS,
-            FAILURE_DECODE_FAILED,
-            FAILURE_TARGET_SETUP_FAILED,
-        ]
-    if case_name in {
-        "dns-query",
-        "dns-aaaa-success",
-        "dns-cname-chain",
-        "dns-nxdomain",
-        "dns-nodata",
-        "dns-txt-answer",
-        "dns-mx-answer",
-        "dns-srv-answer",
-        "dns-edns-opt",
-        "dns-repeat-transaction",
-    }:
-        return [
-            FAILURE_TIMEOUT,
-            FAILURE_WRONG_PEER,
-            FAILURE_WRONG_PAYLOAD,
             FAILURE_WRONG_FLAGS,
             FAILURE_DECODE_FAILED,
             FAILURE_TARGET_SETUP_FAILED,
