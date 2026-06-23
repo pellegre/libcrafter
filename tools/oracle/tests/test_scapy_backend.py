@@ -7,6 +7,8 @@ import unittest
 from pathlib import Path
 
 from tools.oracle.engine.backends.scapy import normalize, packets, pcap
+from tools.oracle.engine.backends.scapy.protocols import rip as rip_scapy
+from tools.oracle.engine.backends.scapy.protocols import ripng as ripng_scapy
 from tools.oracle.engine.generator import generate_plans
 from tools.oracle.engine.model import PacketPlan
 
@@ -1194,10 +1196,13 @@ class ScapyRipLayerMappingTest(unittest.TestCase):
         self.assertIn("auth", supported)
 
     def test_rip_command_resolves_named_and_numeric_commands(self) -> None:
-        self.assertEqual(packets._rip_command("request"), 1)
-        self.assertEqual(packets._rip_command("response"), 2)
-        self.assertEqual(packets._rip_command(2), 2)
-        self.assertEqual(packets._rip_command("0x02"), 2)
+        # ``_rip_command`` migrated with the rip layer to ``protocols/rip.py``
+        # (it was re-imported into ``packets`` only while RIPng still depended on
+        # it; RIPng now imports it from the co-located rip plugin directly).
+        self.assertEqual(rip_scapy._rip_command("request"), 1)
+        self.assertEqual(rip_scapy._rip_command("response"), 2)
+        self.assertEqual(rip_scapy._rip_command(2), 2)
+        self.assertEqual(rip_scapy._rip_command("0x02"), 2)
 
 
 def _rip_plan(*, command: object, version: int, entries: list, auth=None) -> PacketPlan:
@@ -1451,17 +1456,26 @@ class RipngRteByteEncodingTest(unittest.TestCase):
     """
 
     def test_ripng_layer_maps_to_raw(self) -> None:
-        self.assertEqual(packets._SCAPY_LAYER_BY_LAYER["ripng"], "Raw")
+        # ``ripng`` migrated to ``protocols/ripng.py``: its Scapy-class metadata now
+        # comes from the registered ``ScapyProtocol`` via ``_scapy_layer_name``
+        # (registry-derived), the same value the legacy ``_SCAPY_LAYER_BY_LAYER``
+        # table carried before the move.
         self.assertEqual(packets._scapy_layer_name("ripng"), "Raw")
 
     def test_ripng_supported_fields_cover_header_and_rtes(self) -> None:
-        supported = packets._SUPPORTED_FIELDS_BY_LAYER["ripng"]
+        # Registry-derived after migration: ``_scapy_supported_fields`` returns the
+        # migrated plugin's ``supported_fields`` (formerly
+        # ``_SUPPORTED_FIELDS_BY_LAYER["ripng"]``).
+        supported = packets._scapy_supported_fields("ripng")
+        self.assertIsNotNone(supported)
         self.assertIn("command", supported)
         self.assertIn("version", supported)
         self.assertIn("rtes", supported)
 
     def test_route_rte_encodes_prefix_tag_prefix_len_and_metric(self) -> None:
-        raw = packets._ripng_rte_bytes(
+        # ``_ripng_rte_bytes`` migrated with the ripng layer to
+        # ``protocols/ripng.py``; the raw-octet layout is unchanged.
+        raw = ripng_scapy._ripng_rte_bytes(
             {
                 "prefix": "2001:db8::",
                 "route_tag": 7,
@@ -1478,7 +1492,7 @@ class RipngRteByteEncodingTest(unittest.TestCase):
         self.assertEqual(raw[19], 1)
 
     def test_next_hop_rte_defaults_metric_to_0xff(self) -> None:
-        raw = packets._ripng_rte_bytes({"prefix": "2001:db8::99", "next_hop": True})
+        raw = ripng_scapy._ripng_rte_bytes({"prefix": "2001:db8::99", "next_hop": True})
         self.assertEqual(len(raw), 20)
         # A next-hop RTE carries metric 0xFF with route tag and prefix length 0.
         self.assertEqual(raw[16:18], b"\x00\x00")

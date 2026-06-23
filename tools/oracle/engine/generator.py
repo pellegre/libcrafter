@@ -83,11 +83,15 @@ from .protocols.ospf import _apply_ospf_behavior
 # plugin (``protocols/rip.py``) with the rest of the RIP feature behavior. They are
 # re-imported here because the focused rip-smoke profile path in ``generate_plan``
 # calls ``_apply_rip_behavior`` directly (with ``behavior=""``) outside the registry
-# feature loop, and the still-resident RIPng sampler and RIPng behavior share
-# ``_rip_command_for_case`` (request vs response selection) — the same
-# co-locate-and-re-import pattern as the BGP/OSPF body injectors above. RIPng
-# migrates in its own later step.
+# feature loop — the same co-locate-and-re-import pattern as the BGP/OSPF body
+# injectors above.
 from .protocols.rip import _apply_rip_behavior, _rip_command_for_case
+# ``_apply_ripng_behavior`` moved to the RIPng sampler plugin
+# (``protocols/ripng.py``) with the rest of the RIPng feature behavior. It is
+# re-imported here because the focused rip-smoke profile path in ``generate_plan``
+# calls it directly (with ``behavior=""``) outside the registry feature loop, the
+# same co-locate-and-re-import pattern as ``_apply_rip_behavior`` above.
+from .protocols.ripng import _apply_ripng_behavior
 
 
 SUPPORTED_LAYER_BACKEND = "libcrafter"
@@ -261,7 +265,6 @@ _SUPPORTED_FIELDS: dict[str, set[str]] = {
         "iv",
         "icv",
     },
-    "ripng": {"command", "version", "reserved"},
     "ikev2": {
         "initiator_spi",
         "responder_spi",
@@ -1692,9 +1695,7 @@ class PacketGenerator:
                     grammar=self.grammar,
                 )
                 return
-        if feature is not None and feature.startswith("ripng_") and "ripng" in fields:
-            _apply_ripng_behavior(fields, stack=stack, case=case, behavior=behavior)
-        elif feature == "dns_behavior" and "dns" in fields:
+        if feature == "dns_behavior" and "dns" in fields:
             _apply_dns_behavior(fields["dns"], case=case, behavior=behavior)
         elif feature == "dhcp_behavior" and "dhcp" in fields:
             _apply_dhcp_behavior(fields["dhcp"], case=case, behavior=behavior)
@@ -1827,8 +1828,6 @@ class PacketGenerator:
                 field_spec=field_spec,
                 current_fields=current_fields,
             )
-        if layer == "ripng":
-            return _sample_ripng_field(ctx, field_name, domain)
         if layer == "esp":
             return _sample_esp_field(ctx, field_name, domain, field_spec)
         if layer == "ah":
@@ -1995,16 +1994,6 @@ def _ipv6_extension_options_for_case(layer: str, case: str) -> list[JSONObject]:
         {"kind": "home_address", "address": "2001:db8::42"},
         {"kind": "padn", "total_length": 4},
     ]
-
-
-def _sample_ripng_field(ctx: _SamplingContext, field_name: str, domain: object) -> object:
-    if field_name == "command":
-        return _rip_command_for_case(ctx.case)
-    if field_name == "version":
-        return 1
-    if field_name == "reserved":
-        return 0
-    raise ValueError(f"spec error: unsupported ripng field sampler: {field_name}")
 
 
 # --------------------------------------------------------------------------
@@ -3607,89 +3596,12 @@ def _is_ospf_smoke_case(case: str) -> bool:
 
 
 # --------------------------------------------------------------------------
-# RIPng behavior enrichment.
-#
-# Like BGP, the RIPng header scalars are seeded by the field sampler and the
-# per-case message body (the RIPng RTEs) is attached here. The libcrafter adapter
-# and the Scapy reference backend read the same plan field names
-# (command/version/reserved, rtes[*].{prefix,route_tag,prefix_len,metric,
-# next_hop}), so a single field block materializes byte-identically on both
-# backends. Every address lives in documentation space (RFC 3849).
-#
-# The RIP (IPv4) sampler/behavior counterpart moved to ``protocols/rip.py``;
-# ``_rip_command_for_case`` (the shared request/response case selector) is
-# re-imported at the top of this module so the RIPng sampler and behavior below
-# keep using it unchanged. RIPng migrates in its own later step.
-
-
-def _apply_ripng_behavior(
-    fields: dict[str, JSONObject],
-    *,
-    stack: Sequence[str],
-    case: str,
-    behavior: str,
-) -> None:
-    ripng = fields["ripng"]
-    ripng["command"] = _rip_command_for_case(case)
-    ripng["version"] = 1
-    ripng.setdefault("reserved", 0)
-    ripng.pop("rtes", None)
-    ripng.pop("entries", None)
-
-    if "udp" in fields:
-        fields["udp"]["src_port"] = 521
-        fields["udp"]["dst_port"] = 521
-    if "payload" in fields:
-        fields["payload"] = {"hex": "", "length": 0}
-
-    normalized = case.replace("_", "-")
-
-    if ripng["command"] == "request":
-        # Request-whole-table sentinel (RFC 2080 §2.4.1): one RTE with prefix ::,
-        # prefix length 0, metric 16 (infinity).
-        ripng["rtes"] = [
-            {
-                "prefix": "::",
-                "route_tag": 0,
-                "prefix_len": 0,
-                "metric": 16,
-            }
-        ]
-        return
-
-    route_rte = {
-        "prefix": "2001:db8::",
-        "route_tag": 0,
-        "prefix_len": 64,
-        "metric": 1,
-    }
-
-    if "next-hop" in normalized:
-        # Next-hop RTE (RFC 2080 §2.1.1): metric 0xFF, route tag and prefix
-        # length zero, immediately followed by the route RTEs it applies to.
-        ripng["rtes"] = [
-            {
-                "prefix": "fe80::1",
-                "route_tag": 0,
-                "prefix_len": 0,
-                "metric": 255,
-                "next_hop": True,
-            },
-            route_rte,
-        ]
-        return
-
-    rtes = [route_rte]
-    if "matrix" in normalized:
-        rtes.append(
-            {
-                "prefix": "2001:db8:1::",
-                "route_tag": 64512,
-                "prefix_len": 48,
-                "metric": 2,
-            }
-        )
-    ripng["rtes"] = rtes
+# RIPng sampler/behavior moved to ``protocols/ripng.py`` and is registered in
+# ``SAMPLER_REGISTRY`` (so ``_sample_field_value`` routes ``ripng`` to its sampler
+# and ``_apply_feature_behavior`` routes ``ripng_`` features to it). Its
+# ``_apply_ripng_behavior`` body injector is re-imported at the top of this module
+# because the focused rip-smoke profile path calls it directly with ``behavior=""``
+# outside the registry feature loop.
 
 
 # Backend-neutral DHCP option kinds that materialize byte-for-byte through both
