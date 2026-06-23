@@ -20,6 +20,12 @@ workspace, released as one public crate: `crafter`.
   advertising PDUs, GAP Advertising Data structures, `LinkType::BluetoothLeLl`
   and pcap DLT 256 read/write support, plus a feature-gated `whad` dongle
   backend for dry-run-default inject and sniff workflows.
+- IEEE 802.15.4 and Zigbee coverage with `Dot15d4Radio` radio descriptors,
+  `Dot15d4` MAC frames (frame control, addressing modes, PAN-ID compression,
+  and auto-filled CRC-16 FCS), and Zigbee `ZigbeeNwk` and `ZigbeeAps` layers,
+  `LinkType::Ieee802154` and `LinkType::Ieee802154Tap` with pcap DLT 195/230/283
+  read/write support, plus the feature-gated `whad` dongle backend extended with
+  dry-run-default 802.15.4 `dot15d4` sniff and inject workflows.
 - Network and control coverage for ARP, IPv4 (DSCP/ECN, typed options,
   checksum status, and fragment fields), IPv6 with hop-by-hop, destination,
   fragment, routing, mobile-routing, and segment-routing extension headers,

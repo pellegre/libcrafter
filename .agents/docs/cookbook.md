@@ -653,6 +653,125 @@ Only call `.live()` in an authorized RF environment with bounded sniff counts
 or timeouts. Live WHAD paths are for manual or operator-gated runs, not default
 generated-tool behavior.
 
+## Build 802.15.4 and Zigbee
+
+Generated 802.15.4/Zigbee tools should use the public `crafter` facade:
+`crafter::prelude::*`, `Dot15d4Radio / Dot15d4 / ZigbeeNwk / ZigbeeAps`,
+`PacketWire`, `Sniffer`, and `Transmitter`. Keep examples synthetic with
+lab-safe 2.4 GHz channels (11 through 26) and documentation PAN ids and short
+addresses, and do not commit real captures, device addresses, dongle
+identifiers, or RF observations.
+
+```rust
+use crafter::prelude::*;
+
+fn main() -> crafter::Result<()> {
+    let packet = Dot15d4Radio::on_channel(20)
+        / Dot15d4::data()
+            .seq(7)
+            .dest_short(0x1234, 0x0002)
+            .src_short(0x1234, 0x0001)
+        / ZigbeeNwk::data()
+            .dest(0x0000)
+            .src(0x1234)
+            .radius(30)
+            .seq(42)
+        / ZigbeeAps::data()
+            .dest_endpoint(1)
+            .cluster(0x0006)
+            .profile(0x0104)
+            .src_endpoint(1)
+            .counter(0xaa)
+            .payload(&[0x01, 0x02]);
+
+    let bytes = packet.compile()?;
+    println!("{}", packet.summary());
+    println!("{}", bytes.hexdump());
+
+    let writer = PacketWire::pcap_recorder("target/dot15d4-agent.pcap", LinkType::Ieee802154Tap)
+        .open()?
+        .writer()?;
+    let mut tx = Transmitter::new(writer);
+    tx.send(packet.clone())?;
+
+    let source = PacketWire::pcap_file("target/dot15d4-agent.pcap")
+        .open()?
+        .source()?;
+    for record in Sniffer::new(source).collect_records()? {
+        println!("{}", record.packet().summary());
+    }
+
+    Ok(())
+}
+
+fn decode_sniffed_dot15d4_record(sniffed_record: &[u8]) -> crafter::Result<()> {
+    let decoded = Packet::decode_from_link(LinkType::Ieee802154Tap, sniffed_record)?;
+    println!("{}", decoded.show());
+    Ok(())
+}
+```
+
+`Dot15d4::data()` selects the Data frame type; `dest_short` / `src_short` set
+the addressing mode, PAN id, and 16-bit address together (use `dest_extended` /
+`src_extended` for 64-bit addresses). `compile()` fills the FCF addressing-mode
+bits, the PAN-ID-compression bit, and the CRC-16 FCS, while leaving any field
+the tool set explicitly untouched, including values that are wrong on purpose.
+`ZigbeeNwk` and `ZigbeeAps` stack on the MAC payload through the same `/`
+composition; only header framing plus basic cluster/profile/endpoint fields are
+modeled.
+
+802.15.4 pcap uses `LinkType::Ieee802154Tap` (DLT 283, the TAP radio
+pseudo-header carried by `Dot15d4Radio`) and `LinkType::Ieee802154` for a bare
+MAC frame (DLT 195 with FCS, DLT 230 without). Treat pcap input and output as
+the default path for generated tools and tests; keep fixtures deterministic and
+sanitized.
+
+The WHAD serial backend is feature-gated and offline by default. A generated
+tool that offers live 802.15.4 injection or sniffing should compile `crafter`
+with the `whad` feature, expose a local `--live` opt-in, and otherwise stop
+after packet construction, decode, pcap work, or a dry-run WHAD target open.
+
+```rust
+use crafter::prelude::*;
+
+fn whad_dot15d4_paths(packet: Packet, live: bool) -> crafter::Result<()> {
+    let port = "/dev/ttyACM0";
+    let channel = 15;
+
+    let dry_run = PacketWire::whad_serial(port)
+        .dot15d4_send()
+        .channel(channel);
+    assert!(dry_run.is_dry_run());
+    let dry_wire = dry_run.open()?;
+    assert!(!dry_wire.has_writer());
+
+    if live {
+        let inject = PacketWire::whad_serial(port)
+            .dot15d4_send()
+            .channel(channel)
+            .live()
+            .open()?;
+        let mut writer = inject.writer()?;
+        writer.write_record(&PacketRecord::new(packet))?;
+
+        let sniff = PacketWire::whad_serial(port)
+            .dot15d4_sniff(channel)
+            .live()
+            .open()?;
+        for record in Sniffer::new(sniff.source()?).count(10).collect_records()? {
+            println!("{}", record.packet().summary());
+        }
+    }
+
+    Ok(())
+}
+```
+
+Only call `.live()` in an authorized RF environment with bounded sniff counts
+or timeouts and lab-safe channel and PAN/address values. Live WHAD 802.15.4
+paths are for manual or operator-gated runs, not default generated-tool
+behavior.
+
 ## Build UDP Options
 
 Generated tools should build UDP options as a separate `UdpOptions` layer after
