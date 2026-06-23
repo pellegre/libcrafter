@@ -281,6 +281,19 @@ def load_oracle_specs(
         )
 
     profiles, profile_backend_support = _load_profiles(profiles_doc, profiles_path)
+    profile_fragment_paths = tuple(sorted((root / "profiles.d").glob("*.yaml")))
+    for fragment_path in profile_fragment_paths:
+        # Per-protocol sampling-profile fragments extend the monolithic
+        # profiles.yaml with the same schema. Entries merge into the same
+        # profiles map, and _insert_unique rejects any duplicate profile name
+        # across files rather than silently overriding. A missing profiles.d/
+        # directory yields no fragments, preserving back-compatibility.
+        _load_profiles(
+            _load_yaml_object(fragment_path),
+            fragment_path,
+            profiles=profiles,
+            require_profiles=False,
+        )
 
     layers: dict[str, LayerSpec] = {}
     for path in layer_paths:
@@ -323,6 +336,7 @@ def load_oracle_specs(
             stacks_path,
             *stack_fragment_paths,
             profiles_path,
+            *profile_fragment_paths,
             *layer_paths,
             *feature_paths,
         )
@@ -434,10 +448,24 @@ def _load_stacks(
 def _load_profiles(
     document: JSONObject,
     path: Path,
+    *,
+    profiles: dict[str, ProfileSpec] | None = None,
+    require_profiles: bool = True,
 ) -> tuple[dict[str, ProfileSpec], dict[str, BackendSupport]]:
+    """Parse one profiles document, merging entries into a shared map.
+
+    The monolithic ``profiles.yaml`` (``require_profiles=True``) must declare a
+    non-empty ``profiles`` list; per-protocol fragments under
+    ``profiles.d/*.yaml`` (``require_profiles=False``) may declare any subset.
+    Duplicate profile names across files raise via ``_insert_unique`` rather
+    than silently overriding.
+    """
+
     _validate_header(document, path, kind="profiles")
-    profiles: dict[str, ProfileSpec] = {}
-    for index, item in enumerate(_required_list(document, "profiles", path)):
+    if profiles is None:
+        profiles = {}
+    list_for = _required_list if require_profiles else _optional_list
+    for index, item in enumerate(list_for(document, "profiles", path)):
         item_obj = _object(item, path, f"profiles[{index}]")
         profile_name = _required_name(item_obj, "name", path, f"profiles[{index}]")
         weights = tuple(
