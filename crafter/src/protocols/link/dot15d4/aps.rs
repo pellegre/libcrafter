@@ -618,13 +618,13 @@ mod tests {
         // Frame Control: frame type Data = 0b00 (bits 0..=1), delivery mode
         // unicast = 0b00 (bits 2..=3), every other flag 0, so FC = 0x00.
         //
-        // This is the layout scapy emits for
+        // This is the layout the reference backend emits for
         //   ZigbeeAppDataPayload(frame_control=0, aps_frametype=0,
         //       delivery_mode=0, dst_endpoint=0x0A, cluster=0x0006,
         //       profile=0x0104, src_endpoint=0x01, counter=0x2A)/Raw(b"\xAA\xBB")
         // whose bytes are 00 0A 06 00 04 01 01 2A AA BB (FC + dst endpoint +
         // LE cluster + LE profile + src endpoint + counter + payload),
-        // cross-checked against the scapy `ZigbeeAppDataPayload` field layout.
+        // cross-checked against the reference `ZigbeeAppDataPayload` field layout.
         let frame = ZigbeeAps::data()
             .dest_endpoint(0x0A)
             .cluster(0x0006)
