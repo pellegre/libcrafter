@@ -17,6 +17,7 @@ from .decode_helpers import (
     _field,
     _field_list,
     _fields_from_aliases,
+    _hex_bytes,
     _layer,
     _layer_any,
     _normalize_root_name,
@@ -338,8 +339,6 @@ def _normalize_protocol_fields(
         return _normalize_eapol(_layer(layers, "eapol"))
     if layer_name == "rsn":
         return _normalize_rsn(_layer_any(layers, "wlan_mgt.rsn", "wlan.rsn"))
-    if layer_name == "arp":
-        return _normalize_arp(_layer(layers, "arp"))
     if layer_name == "ipv4":
         return _normalize_ipv4(_layer(layers, "ip"))
     if layer_name == "ipv6":
@@ -672,110 +671,6 @@ def _normalize_rsn(layer: JSONObject) -> JSONObject:
     if akms:
         output["akm_suites"] = akms
     return output
-
-
-_ARP_HARDWARE_ADDRESS_FIELDS = (
-    "sender_hardware_address",
-    "target_hardware_address",
-)
-_ARP_PROTOCOL_ADDRESS_FIELDS = (
-    "sender_protocol_address",
-    "target_protocol_address",
-)
-
-
-def _normalize_arp(layer: JSONObject) -> JSONObject:
-    """Normalize a tshark ARP layer to the shared canonical field names.
-
-    The normalized names and comparable forms match the Scapy reference backend
-    (``tools/oracle/engine/backends/scapy/normalize.py``) and the libcrafter
-    decoder (``tools/oracle/adapters/src/bin/decode_vectors.rs``). The fixed
-    header (``hardware_type``, ``protocol_type``, ``hardware_length``,
-    ``protocol_length``, ``opcode``) is kept numeric so known and unknown
-    codepoints stay raw-preserving. The four variable sender/target address
-    fields keep their colon-formatted MAC / dotted IPv4 string form for standard
-    Ethernet/IPv4 ARP, and reduce to a bare ``{"hex": ...}`` value carrying the
-    raw octets for nonstandard hardware/protocol lengths or unknown address
-    families. tshark exposes typed ``*.hw_mac`` / ``*.proto_ipv4`` fields for the
-    standard forms and the generic ``*.hw`` / ``*.proto`` fields otherwise.
-    """
-
-    output = _fields_from_aliases(
-        layer,
-        {
-            "hardware_type": ("arp.hw.type", "arp.hardware.type"),
-            "protocol_type": ("arp.proto.type",),
-            "hardware_length": ("arp.hw.size", "arp.hardware.size"),
-            "protocol_length": ("arp.proto.size",),
-            "opcode": ("arp.opcode",),
-            "sender_hardware_address": ("arp.src.hw_mac", "arp.src.hw"),
-            "sender_protocol_address": ("arp.src.proto_ipv4", "arp.src.proto"),
-            "target_hardware_address": ("arp.dst.hw_mac", "arp.dst.hw"),
-            "target_protocol_address": ("arp.dst.proto_ipv4", "arp.dst.proto"),
-        },
-    )
-    _parse_int_fields(
-        output,
-        "hardware_type",
-        "protocol_type",
-        "hardware_length",
-        "protocol_length",
-        "opcode",
-    )
-    for name in _ARP_HARDWARE_ADDRESS_FIELDS:
-        if name in output:
-            output[name] = _normalize_arp_address(output[name], kind="hardware")
-    for name in _ARP_PROTOCOL_ADDRESS_FIELDS:
-        if name in output:
-            output[name] = _normalize_arp_address(output[name], kind="protocol")
-    return output
-
-
-def _normalize_arp_address(value: object, *, kind: str) -> object:
-    """Reduce one tshark ARP address to the shared comparable form.
-
-    Standard Ethernet hardware addresses (a colon-separated MAC) and standard
-    IPv4 protocol addresses (a dotted quad) keep their string form, matching the
-    Scapy reference backend and libcrafter's decoded view. Any other form — a
-    nonstandard-width hardware/protocol address or an unknown address family,
-    which tshark renders as a colon-separated hex string — is reduced to a bare
-    ``{"hex": ...}`` value carrying the raw octets, so the comparison stays
-    byte-identical across backends regardless of tshark's textual rendering.
-    """
-
-    if not isinstance(value, str):
-        return value
-    if kind == "hardware" and _is_standard_mac(value):
-        return value
-    if kind == "protocol" and _is_standard_ipv4(value):
-        return value
-    return {"hex": _hex_bytes(value)}
-
-
-def _is_standard_mac(value: str) -> bool:
-    parts = value.split(":")
-    if len(parts) != 6:
-        return False
-    for part in parts:
-        if len(part) != 2:
-            return False
-        try:
-            int(part, 16)
-        except ValueError:
-            return False
-    return True
-
-
-def _is_standard_ipv4(value: str) -> bool:
-    parts = value.split(".")
-    if len(parts) != 4:
-        return False
-    for part in parts:
-        if not part.isdigit():
-            return False
-        if not 0 <= int(part) <= 255:
-            return False
-    return True
 
 
 def _normalize_ipv4(layer: JSONObject) -> JSONObject:
@@ -1587,10 +1482,6 @@ def _rsn_akm_label(selector: bytes) -> str | None:
         26: "pasn-defined-key-wrap",
         29: "edpke",
     }.get(selector[3])
-
-
-def _hex_bytes(value: str) -> str:
-    return "".join(char for char in value.lower() if char in "0123456789abcdef")
 
 
 def _field_key(fields: dict[str, JSONObject], layer_name: str) -> str:

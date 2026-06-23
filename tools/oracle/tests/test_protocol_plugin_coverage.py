@@ -41,7 +41,6 @@ from tools.oracle.engine.spec_loader import load_oracle_specs
 KNOWN_UNMIGRATED: frozenset[str] = frozenset(
     {
         "ah",
-        "arp",
         "bgp",
         "ble_adv",
         "ble_radio",
