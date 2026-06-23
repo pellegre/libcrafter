@@ -21,6 +21,12 @@ from .decode_helpers import (
     _text,
     _text_or_none,
 )
+# Importing the protocols package runs its ``autodiscover`` so every per-protocol
+# Scapy encoder/decoder module self-registers; ``SCAPY_REGISTRY`` is consulted for a
+# layer's ``normalize`` hook before the legacy branches below. No protocol is
+# migrated yet, so the registry is empty and every layer falls through to the legacy
+# normalization.
+from .protocols import SCAPY_REGISTRY
 
 
 BACKEND_NAME = "scapy"
@@ -664,6 +670,13 @@ def _normalize_root_name(root: str | None) -> str | None:
 
 
 def _normalize_fields(layer_name: str, fields: JSONObject) -> JSONObject:
+    # Consult the per-layer Scapy decoder plugin before the legacy branches. The
+    # registry is empty until a protocol is migrated, so this resolves to ``None``
+    # (or a plugin without a ``normalize`` hook) and the legacy code below runs
+    # unchanged.
+    plugin = SCAPY_REGISTRY.get(layer_name)
+    if plugin is not None and plugin.normalize is not None:
+        return plugin.normalize(fields)
     if layer_name == "payload":
         return _normalize_payload_fields(fields)
     if layer_name == "dns":
