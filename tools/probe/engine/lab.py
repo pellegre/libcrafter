@@ -180,13 +180,9 @@ def probe_capabilities_from_lab_capabilities(
     # traffic (QEMU, VirtualBox) and skip cleanly on providers without an L2
     # segment (Hetzner) with the stable link-layer reason.
     ipv6_multicast = link_layer_send and link_layer_capture and broadcast
-    dhcp_service = (
-        ipv4_unicast
-        and controlled_services
-        and link_layer_send
-        and link_layer_capture
-        and broadcast
-    )
+    # ``dhcp_service`` is derived by the DHCP plugin's ``lab_capabilities`` hook
+    # (folded in below), not here. The shared ``capability_names`` /
+    # ``capability_sources`` tables still list it.
     udp_service = ipv4_unicast and controlled_services
     advertised_udp_safe_payload = _optional_positive_int(
         substrate,
@@ -315,10 +311,10 @@ def probe_capabilities_from_lab_capabilities(
         "icmp_echo": ipv4_unicast,
         "tcp_open_port": ipv4_unicast and controlled_services,
         "tcp_closed_port": ipv4_unicast,
-        # ``dns_service`` is contributed by the DNS plugin's ``lab_capabilities``
-        # hook (folded in below), not here. The shared ``capability_names`` /
-        # ``capability_sources`` tables still list it.
-        "dhcp_service": dhcp_service,
+        # ``dns_service`` / ``dhcp_service`` are contributed by the DNS and DHCP
+        # plugins' ``lab_capabilities`` hooks (folded in below), not here. The
+        # shared ``capability_names`` / ``capability_sources`` tables still list
+        # them.
         "udp_service": udp_service,
         "udp_large_payload": udp_large_payload,
         "udp_ipv4_zero_checksum": udp_ipv4_zero_checksum,
