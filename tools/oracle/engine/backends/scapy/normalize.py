@@ -62,10 +62,10 @@ _LAYER_ALIASES: dict[str, str] = {
     "BTLE": "ble_radio",
     "BTLE_ADV": "ble_adv",
     "BTLE_ADV_IND": "ble_adv",
-    "Dot11": "dot11",
-    # The ``Dot11EltRSN`` -> ``rsn`` and ``EAPOL`` -> ``eapol`` decode aliases moved
-    # to the migrated ``protocols/wifi.py`` plugin (their ``ScapyProtocol.layer_aliases``);
-    # ``_normalize_layer_name`` resolves them from ``_registered_layer_aliases``.
+    # The ``Dot11`` -> ``dot11``, ``Dot11EltRSN`` -> ``rsn`` and ``EAPOL`` ->
+    # ``eapol`` decode aliases moved to the migrated ``protocols/wifi.py`` plugin
+    # (their ``ScapyProtocol.layer_aliases``); ``_normalize_layer_name`` resolves
+    # them from ``_registered_layer_aliases``.
     "IGMP": "igmp",
     "IGMPv3": "igmp",
     "IGMPv3gr": "igmp_group_record",
