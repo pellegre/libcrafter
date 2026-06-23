@@ -44,7 +44,6 @@ KNOWN_UNMIGRATED: frozenset[str] = frozenset(
         "ble_radio",
         "dot11",
         "eapol",
-        "radiotap",
         "rsn",
     }
 )

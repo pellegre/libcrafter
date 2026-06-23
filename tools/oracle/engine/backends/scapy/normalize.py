@@ -75,7 +75,9 @@ _LAYER_ALIASES: dict[str, str] = {
     "IPv6ExtHdrHopByHop": "ipv6_hop_by_hop",
     "IPv6ExtHdrRouting": "ipv6_routing",
     "IPv6ExtHdrSegmentRouting": "ipv6_routing",
-    "RadioTap": "radiotap",
+    # The ``RadioTap`` -> ``radiotap`` decode alias moved to the migrated
+    # ``protocols/wifi.py`` plugin (its ``ScapyProtocol.layer_aliases``);
+    # ``_normalize_layer_name`` resolves it from ``_registered_layer_aliases``.
 }
 _FIELD_ALIASES: dict[str, str] = {
     "chksum": "checksum",

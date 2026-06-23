@@ -329,8 +329,6 @@ def _normalize_protocol_fields(
     plugin = WIRESHARK_REGISTRY.get(layer_name)
     if plugin is not None:
         return plugin.normalize(layers, source_hex=source_hex)
-    if layer_name == "radiotap":
-        return _normalize_radiotap(_layer(layers, "radiotap"))
     if layer_name == "dot11":
         return _normalize_dot11(_layer(layers, "wlan"))
     if layer_name == "eapol":
@@ -405,71 +403,6 @@ def _dot11_source_model(
         feature_tags=list(model.feature_tags),
         metadata=metadata,
     )
-
-
-def _normalize_radiotap(layer: JSONObject) -> JSONObject:
-    output = _fields_from_aliases(
-        layer,
-        {
-            "version": ("radiotap.version",),
-            "pad": ("radiotap.pad",),
-            "length": ("radiotap.length",),
-            "flags": ("radiotap.flags",),
-            "rate": ("radiotap.datarate", "radiotap.rate"),
-            "channel_frequency": ("radiotap.channel.freq", "radiotap.channel.frequency"),
-            "channel_flags": ("radiotap.channel.flags",),
-            "dbm_antenna_signal": ("radiotap.dbm_antsignal", "radiotap.dbm_antenna_signal"),
-            "antenna": ("radiotap.antenna",),
-            "rx_flags": ("radiotap.rxflags", "radiotap.rx_flags"),
-            "tx_flags": ("radiotap.txflags", "radiotap.tx_flags"),
-        },
-    )
-    _parse_int_fields(
-        output,
-        "version",
-        "pad",
-        "length",
-        "flags",
-        "channel_frequency",
-        "channel_flags",
-        "dbm_antenna_signal",
-        "antenna",
-        "rx_flags",
-        "tx_flags",
-    )
-    rate = _parse_radiotap_rate(output.get("rate"))
-    if rate is not None:
-        output["rate"] = rate
-    else:
-        output.pop("rate", None)
-
-    present_words = [
-        parsed
-        for parsed in (
-            _parse_int(item)
-            for item in _field_list(
-                layer,
-                "radiotap.present.word",
-                "radiotap.present",
-            )
-        )
-        if parsed is not None
-    ]
-    if present_words:
-        output["present_words"] = present_words
-
-    flags = output.get("flags")
-    if isinstance(flags, int):
-        output["fcs_status"] = _radiotap_fcs_status(flags)
-    elif _truthy_field(layer, "radiotap.flags.fcs"):
-        output["fcs_status"] = (
-            "present_failed"
-            if _truthy_field(layer, "radiotap.flags.badfcs")
-            else "present"
-        )
-    elif _truthy_field(layer, "radiotap.flags.badfcs"):
-        output["fcs_status"] = "failed"
-    return output
 
 
 def _normalize_dot11(layer: JSONObject) -> JSONObject:
@@ -659,31 +592,6 @@ def _copy_string_field(
     value = _string_field(layer, *names)
     if value is not None:
         output[target] = value
-
-
-def _parse_radiotap_rate(value: object) -> int | None:
-    parsed = _parse_int(value)
-    if parsed is not None:
-        return parsed
-    if not isinstance(value, str):
-        return None
-    candidate = value.strip().split(" ", 1)[0]
-    try:
-        return int(round(float(candidate) * 2))
-    except ValueError:
-        return None
-
-
-def _radiotap_fcs_status(flags: int) -> str:
-    present = bool(flags & 0x10)
-    failed = bool(flags & 0x40)
-    if present and failed:
-        return "present_failed"
-    if present:
-        return "present"
-    if failed:
-        return "failed"
-    return "absent"
 
 
 def _rsn_suite_from_layer(
