@@ -327,8 +327,6 @@ def _normalize_protocol_fields(
     plugin = WIRESHARK_REGISTRY.get(layer_name)
     if plugin is not None:
         return plugin.normalize(layers, source_hex=source_hex)
-    if layer_name == "ethernet":
-        return _normalize_ethernet(_layer(layers, "eth"))
     if layer_name == "radiotap":
         return _normalize_radiotap(_layer(layers, "radiotap"))
     if layer_name == "dot11":
@@ -375,26 +373,11 @@ def _normalize_protocol_fields(
         return _normalize_ripng(_layer(layers, "ripng"))
     if layer_name == "payload":
         return _normalize_payload(_layer(layers, "data"))
-    if layer_name == "vlan":
-        return _normalize_vlan(_layer(layers, "vlan"))
     if layer_name == "linux_sll":
         return _normalize_linux_sll(_layer(layers, "sll"))
     if layer_name == "null_loopback":
         return _normalize_null_loopback(_layer(layers, "null"))
     return {}
-
-
-def _normalize_ethernet(layer: JSONObject) -> JSONObject:
-    output = _fields_from_aliases(
-        layer,
-        {
-            "dst": ("eth.dst",),
-            "src": ("eth.src",),
-            "ethertype": ("eth.type",),
-        },
-    )
-    _parse_int_fields(output, "ethertype")
-    return output
 
 
 def _dot11_source_model(
@@ -1199,20 +1182,6 @@ def _normalize_payload(layer: JSONObject) -> JSONObject:
         "hex": hex_value,
         "length": len(bytes.fromhex(hex_value)),
     }
-
-
-def _normalize_vlan(layer: JSONObject) -> JSONObject:
-    output = _fields_from_aliases(
-        layer,
-        {
-            "priority": ("vlan.priority",),
-            "drop_eligible": ("vlan.dei",),
-            "vlan_id": ("vlan.id",),
-            "ethertype": ("vlan.etype", "vlan.type"),
-        },
-    )
-    _parse_int_fields(output, "priority", "drop_eligible", "vlan_id", "ethertype")
-    return output
 
 
 def _normalize_linux_sll(layer: JSONObject) -> JSONObject:

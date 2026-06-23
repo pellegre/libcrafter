@@ -323,3 +323,61 @@ def _different_ipv6(rng: random.Random, first: str) -> str:
     if next_host >= _IPV6_DOCUMENTATION_NETWORK.num_addresses - 1:
         next_host = 1
     return str(ipaddress.IPv6Address(int(_IPV6_DOCUMENTATION_NETWORK.network_address) + next_host))
+
+
+def _field_bits(field_spec: JSONObject) -> int:
+    """Return the integer width declared by a field spec's ``type``.
+
+    A ``uintN`` type yields ``N`` bits; anything else defaults to 16. This is a
+    backend-neutral spec helper shared by the per-protocol sampler plugins (and
+    re-imported into ``generator`` to preserve its call sites).
+    """
+
+    field_type = field_spec.get("type")
+    if not isinstance(field_type, str):
+        raise ValueError("field.type must be a string")
+    if field_type.startswith("uint"):
+        return int(field_type.removeprefix("uint"))
+    return 16
+
+
+def _next_layer_after(stack: Sequence[str], layer: str) -> str | None:
+    """Return the next non-payload layer after ``layer`` in ``stack``.
+
+    Cross-layer stack-grammar routing shared by the framing/IP samplers; kept
+    here so the per-protocol plugins can resolve their next-protocol fields
+    without importing ``generator`` (which would create a cycle).
+    """
+
+    try:
+        index = list(stack).index(layer)
+    except ValueError:
+        return None
+    for next_layer in stack[index + 1 :]:
+        if next_layer != "payload":
+            return next_layer
+    return "payload" if "payload" in stack[index + 1 :] else None
+
+
+def _ethertype_for_stack(stack: Sequence[str], layer: str) -> str:
+    """Resolve the EtherType name the layer after ``layer`` implies."""
+
+    next_layer = _next_layer_after(stack, layer)
+    if next_layer == "vlan":
+        return "vlan"
+    if next_layer == "arp":
+        return "arp"
+    if next_layer == "ipv4":
+        return "ipv4"
+    if next_layer == "ipv6":
+        return "ipv6"
+    if next_layer == "eapol":
+        return "eapol"
+    return "unknown"
+
+
+def _declared_ethertype_for_stack(stack: Sequence[str], layer: str) -> str:
+    """EtherType name for ``layer``, mapping the unknown case to experimental."""
+
+    value = _ethertype_for_stack(stack, layer)
+    return "experimental" if value == "unknown" else value

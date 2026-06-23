@@ -49,7 +49,6 @@ KNOWN_UNMIGRATED: frozenset[str] = frozenset(
         "dot11",
         "eapol",
         "esp",
-        "ethernet",
         "icmp",
         "icmpv6",
         "igmp",
@@ -67,7 +66,6 @@ KNOWN_UNMIGRATED: frozenset[str] = frozenset(
         "rsn",
         "tcp",
         "udp",
-        "vlan",
     }
 )
 
