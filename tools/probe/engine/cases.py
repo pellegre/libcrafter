@@ -10,7 +10,8 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from .model import EndpointRole, JSONObject, ProbeCase
+from .case_helpers import _behavior_case, case_name_filters
+from .model import EndpointRole, ProbeCase
 
 
 # Capabilities required by each behavioral protocol group. DNS and UDP need only
@@ -108,33 +109,6 @@ _IPSEC_CAPABILITIES = [
 # ``LIBCRAFTER_PROBE_LIVE_PROVIDER`` (see ``tools/probe/README.md``); the default
 # CI-safe path is the dry-run plan exercised here.
 _OSPF_CAPABILITIES = ["ospf_neighbor_peer"]
-
-
-def _behavior_case(
-    *,
-    name: str,
-    description: str,
-    stimulus: str,
-    expected_response: str,
-    required_capabilities: list[str],
-    protocol: str,
-    metadata: JSONObject | None = None,
-) -> ProbeCase:
-    case_metadata: JSONObject = {
-        "protocol": protocol,
-        "suite": "behavior",
-    }
-    if metadata:
-        case_metadata.update(metadata)
-    return ProbeCase(
-        name=name,
-        description=description,
-        stimulus=stimulus,
-        expected_response=expected_response,
-        required_capabilities=list(required_capabilities),
-        endpoint_roles=["stimulus", "target"],
-        metadata=case_metadata,
-    )
 
 
 # Ten DNS behavioral cases (RFC-correct query/response shapes against a
@@ -1036,25 +1010,6 @@ def case_by_name(name: str) -> ProbeCase:
         raise ValueError(
             f"unknown probe case {name!r}; available cases: {available}"
         ) from None
-
-
-def case_name_filters(values: Sequence[str] | None) -> list[str]:
-    """Normalize raw ``--case`` values into a de-duplicated, ordered list.
-
-    Each value may be comma-separated; surrounding whitespace is stripped and
-    empty fragments are dropped. Insertion order is preserved while removing
-    duplicates so the resulting selection is deterministic.
-    """
-
-    if not values:
-        return []
-    names: list[str] = []
-    for value in values:
-        for raw_name in value.split(","):
-            name = raw_name.strip()
-            if name:
-                names.append(name)
-    return list(dict.fromkeys(names))
 
 
 def selected_cases(case_names: Sequence[str]) -> list[ProbeCase]:
