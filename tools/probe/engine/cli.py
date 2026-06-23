@@ -680,16 +680,9 @@ _LEGACY_STIMULUS_ENDPOINT_CASES = frozenset(
         "dhcp-inform-ack",
         "dhcp-request-nak",
         "dhcp-rapid-repeat",
-        "arp-basic-who-has",
-        "arp-repeat-two-replies",
-        "arp-source-address-preserved",
-        "arp-alias-address-reply",
-        "arp-unicast-request-reply",
-        "arp-padding-reply",
-        "arp-cache-flush-reply",
-        "arp-mac-validation",
-        "arp-spa-variation",
-        "arp-broadcast-filtered-capture",
+        # The ten ARP stimulus-endpoint cases are now contributed by the ARP
+        # plugin (``protocols/arp.py``) and unioned into ``_STIMULUS_ENDPOINT_CASES``
+        # below; ``arp-resolution`` was never stimulus-routed.
         "ndp-neighbor-solicitation",
         "ndp-router-solicitation",
         "ndp-duplicate-address-detection",
