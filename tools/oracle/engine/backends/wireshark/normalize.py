@@ -328,8 +328,6 @@ def _normalize_protocol_fields(
     plugin = WIRESHARK_REGISTRY.get(layer_name)
     if plugin is not None:
         return plugin.normalize(layers, source_hex=source_hex)
-    if layer_name == "dot11":
-        return _normalize_dot11(_layer(layers, "wlan"))
     if layer_name == "ipv6_hop_by_hop":
         return _normalize_ipv6_options_header(
             _layer_any(layers, "ipv6.hopopts", "ipv6_hopopts"),
@@ -400,73 +398,12 @@ def _dot11_source_model(
     )
 
 
-def _normalize_dot11(layer: JSONObject) -> JSONObject:
-    output = _fields_from_aliases(
-        layer,
-        {
-            "frame_control": ("wlan.fc", "wlan.fc.raw"),
-            "protocol_version": ("wlan.fc.version",),
-            "frame_type": ("wlan.fc.type",),
-            "subtype": ("wlan.fc.subtype",),
-            "duration_id": ("wlan.duration", "wlan.duration_id"),
-            "sequence_control": ("wlan.seq_control", "wlan.seqctl"),
-            "sequence_number": ("wlan.seq", "wlan.seq.seq"),
-            "fragment_number": ("wlan.frag", "wlan.seq.frag"),
-            "qos_control": ("wlan.qos", "wlan.qos.control"),
-            "ht_control": ("wlan.ht.control", "wlan.ht_control"),
-        },
-    )
-    _parse_int_fields(
-        output,
-        "frame_control",
-        "protocol_version",
-        "frame_type",
-        "subtype",
-        "duration_id",
-        "sequence_control",
-        "sequence_number",
-        "fragment_number",
-        "qos_control",
-        "ht_control",
-    )
-
-    bool_fields = {
-        "to_ds": ("wlan.fc.tods",),
-        "from_ds": ("wlan.fc.fromds",),
-        "more_fragments": ("wlan.fc.frag",),
-        "retry": ("wlan.fc.retry",),
-        "power_management": ("wlan.fc.pwrmgt",),
-        "more_data": ("wlan.fc.moredata",),
-        "protected": ("wlan.fc.protected", "wlan.fc.wep"),
-        "order": ("wlan.fc.order",),
-    }
-    for target, aliases in bool_fields.items():
-        value = _field(layer, *aliases)
-        if value is not None:
-            output[target] = _truthy_value(value)
-    ds = _parse_int(_field(layer, "wlan.fc.ds"))
-    if ds is not None:
-        output.setdefault("to_ds", bool(ds & 0x01))
-        output.setdefault("from_ds", bool(ds & 0x02))
-
-    addresses = [str(item) for item in _field_list(layer, "wlan.addr")]
-    for index, address in enumerate(addresses[:4], start=1):
-        output.setdefault(f"addr{index}", address)
-    _copy_string_field(output, "addr1", layer, "wlan.addr1", "wlan.ra", "wlan.da")
-    _copy_string_field(output, "addr2", layer, "wlan.addr2", "wlan.ta", "wlan.sa")
-    _copy_string_field(output, "addr3", layer, "wlan.addr3", "wlan.bssid")
-    _copy_string_field(output, "addr4", layer, "wlan.addr4")
-
-    sequence_number = output.get("sequence_number")
-    fragment_number = output.get("fragment_number")
-    if "sequence_control" not in output and isinstance(sequence_number, int):
-        fragment = fragment_number if isinstance(fragment_number, int) else 0
-        output["sequence_control"] = (sequence_number << 4) | (fragment & 0x0F)
-    if "sequence_number" not in output and isinstance(output.get("sequence_control"), int):
-        output["sequence_number"] = output["sequence_control"] >> 4
-    if "fragment_number" not in output and isinstance(output.get("sequence_control"), int):
-        output["fragment_number"] = output["sequence_control"] & 0x0F
-    return output
+# The ``dot11`` tshark normalizer (``_normalize_dot11`` and its ``_truthy_value`` /
+# ``_copy_string_field`` helpers) moved to ``protocols/wifi.py`` and is registered
+# in ``WIRESHARK_REGISTRY`` (so ``_normalize_protocol_fields`` routes the ``dot11``
+# layer to the plugin's ``normalize``). The whole-packet byte-level Dot11 path
+# (``_dot11_source_model`` above, which calls the scapy ``_decode_dot11_bytes``
+# cluster) stays here per the whole-packet decode precedent.
 
 
 # The ``eapol`` and ``rsn`` tshark normalizers (``_normalize_eapol`` /
@@ -496,27 +433,6 @@ def _normalize_linux_sll(layer: JSONObject) -> JSONObject:
     )
     _parse_int_fields(output, "packet_type", "address_type", "address_length", "protocol")
     return output
-
-
-def _truthy_value(value: object) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, int):
-        return value != 0
-    if isinstance(value, str):
-        return value not in {"", "0", "0x0", "False", "false"}
-    return bool(value)
-
-
-def _copy_string_field(
-    output: JSONObject,
-    target: str,
-    layer: JSONObject,
-    *names: str,
-) -> None:
-    value = _string_field(layer, *names)
-    if value is not None:
-        output[target] = value
 
 
 # The RSN suite-selector helper cluster (``_rsn_suite_from_layer`` /

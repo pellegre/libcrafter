@@ -9,26 +9,19 @@ from ...model import EncodedVector, JSONObject, PacketPlan
 from ..registry import BackendCapabilities, BackendRegistration, get_backend
 from .bootstrap import import_scapy
 from .encode_helpers import (
-    _ETHERTYPES,
     _IP_PROTOCOLS,
-    _IPV6_NEXT_HEADERS,
     _bytes_exact,
     _bytes_optional,
-    _ethertype_value,
-    _hardware_type_value,
+    _canonical_stack,
     _int,
     _internet_checksum,
-    _ipv4_address_bytes,
     _ipv4_flags,
-    _ipv6_address_bytes,
     _layer_fields,
     _layer_fields_for_stack_index,
     _optional_field,
     _payload_bytes,
-    _protocol_value,
     _required_field,
     _text,
-    _validate_payload_length,
 )
 # Importing the protocols package runs its ``autodiscover`` so every per-protocol
 # Scapy encoder/decoder module self-registers. ``STACK_ENCODER_REGISTRY`` is
@@ -81,19 +74,15 @@ from .protocols.ipsec import (
     _is_ipsec_sa_stack,
     _materialize_ipsec_sa_packet,
 )
-# The ``radiotap`` / ``eapol`` / ``rsn`` layers are migrated to ``protocols/wifi.py``
-# and registered in ``SCAPY_REGISTRY`` (their ``ScapyProtocol``s declare
-# ``scapy_class`` and the native-name decode aliases). None is built through the
-# per-layer ``_build_layer`` dispatch — they are part of the whole-stack Dot11
-# phase-1.5 raw-bytes path, which still lives here (``_dot11_phase15_bytes``) until
-# the ``dot11`` raw-bytes stack encoder migrates. Their byte serializers are
-# re-imported here so that whole-stack driver keeps emitting the radiotap header and
-# the eapol/rsn bodies unchanged.
-from .protocols.wifi import (
-    _eapol_bytes,
-    _radiotap_bytes,
-    _rsn_element_bytes,
-)
+# The ``radiotap`` / ``dot11`` / ``eapol`` / ``rsn`` layers are migrated to
+# ``protocols/wifi.py`` and registered in ``SCAPY_REGISTRY`` (their
+# ``ScapyProtocol``s declare ``scapy_class`` and the native-name decode aliases).
+# None is built through the per-layer ``_build_layer`` dispatch — they are part of
+# the whole-stack Dot11 phase-1.5 raw-bytes path, which is now registered as a
+# :class:`~.protocols.base.StackEncoder` in that module (``_dot11_phase15_bytes`` /
+# ``_is_dot11_phase15_stack``). ``encode_packet_plan`` reaches it through
+# ``STACK_ENCODER_REGISTRY`` (consulted above), so no Wi-Fi byte serializer is
+# re-imported here anymore.
 
 
 BACKEND_NAME = "scapy"
@@ -106,7 +95,9 @@ _SCAPY_LAYER_BY_LAYER: dict[str, str] = {
     # registry, so they no longer carry literal entries here.
     "ble_adv": "BTLE_ADV_IND",
     "ble_radio": "BTLE_PHDR",
-    "dot11": "Dot11",
+    # The ``dot11`` layer is migrated to ``protocols/wifi.py`` (its ``ScapyProtocol``
+    # declares ``scapy_class="Dot11"`` and the ``Dot11`` -> ``dot11`` decode alias);
+    # ``_scapy_layer_name`` resolves it from the registry.
     # The ``eapol`` layer is migrated to ``protocols/wifi.py`` (its ``ScapyProtocol``
     # declares ``scapy_class="EAPOL"`` and the ``EAPOL`` -> ``eapol`` decode alias);
     # ``_scapy_layer_name`` resolves it from the registry.
@@ -278,31 +269,9 @@ _SUPPORTED_FIELDS_BY_LAYER: dict[str, set[str]] = {
         "rf_channel",
         "signal_power",
     },
-    "dot11": {
-        "addr1",
-        "addr2",
-        "addr3",
-        "addr4",
-        "duration_id",
-        "frame_control",
-        "frame_type",
-        "from_ds",
-        "ht_control",
-        "management_fixed_fields",
-        "more_data",
-        "more_fragments",
-        "order",
-        "payload",
-        "power_management",
-        "protected",
-        "protocol_version",
-        "qos_control",
-        "retry",
-        "sequence_control",
-        "subtype",
-        "tagged_parameters",
-        "to_ds",
-    },
+    # The ``dot11`` field allowlist moved to ``protocols/wifi.py`` (its
+    # ``ScapyProtocol.supported_fields``); ``_scapy_supported_fields`` resolves it
+    # from the registry.
     # The ``eapol`` field allowlist moved to ``protocols/wifi.py`` (its
     # ``ScapyProtocol.supported_fields``); ``_scapy_supported_fields`` resolves it
     # from the registry.
@@ -401,10 +370,16 @@ def encode_packet_plan(
         None,
     )
 
-    wifi_materialization = _is_dot11_phase15_stack(stack)
+    # The Dot11 phase-1.5 stack encoder emits deterministic wire bytes without
+    # touching Scapy, exactly as the former in-line ``_dot11_phase15_bytes`` branch
+    # did; it must keep ``scapy_version`` at ``"not-required"`` and skip the Scapy
+    # import. Other (future) stack encoders may require Scapy, so they fall through
+    # to the import like the legacy per-layer path.
+    wifi_materialization = stack_encoder is not None and stack_encoder.name == "dot11_phase15"
     ble_materialization = _is_ble_stack(stack)
-    needs_scapy = stack_encoder is not None or (
-        not wifi_materialization and not ble_materialization
+    needs_scapy = (
+        (stack_encoder is not None and not wifi_materialization)
+        or (stack_encoder is None and not ble_materialization)
     )
     scapy_all = None
     scapy_version = "not-required"
@@ -420,9 +395,6 @@ def encode_packet_plan(
     if stack_encoder is not None:
         raw_bytes = stack_encoder.encode(plan, scapy_all)
         raw_bytes, udp_options_metadata = _materialize_udp_options(plan, root, raw_bytes)
-    elif wifi_materialization:
-        raw_bytes = _dot11_phase15_bytes(plan, stack, scapy_all)
-        udp_options_metadata = None
     elif ble_materialization:
         raw_bytes, ble_metadata = _ble_bytes(plan, stack)
         udp_options_metadata = None
@@ -540,41 +512,6 @@ def _build_layer(plan: PacketPlan, stack: list[str], index: int, scapy_all: Any)
 # the materializer can build inner Scapy layers without importing this module.
 
 
-def _canonical_stack(stack: list[str]) -> list[str]:
-    aliases = {
-        "ble": "ble_adv",
-        "ble-adv": "ble_adv",
-        "ble-advertising": "ble_adv",
-        "ble-radio": "ble_radio",
-        "bluetooth-le-adv": "ble_adv",
-        "bluetooth-le-radio": "ble_radio",
-        "btle-adv": "ble_adv",
-        "btle-radio": "ble_radio",
-        "dot1q": "vlan",
-        "dot15d4-radio": "dot15d4_radio",
-        "dot15d4-tap": "dot15d4_radio",
-        "ieee802154": "dot15d4",
-        "ieee802154-radio": "dot15d4_radio",
-        "ieee802154-tap": "dot15d4_radio",
-        "ether": "ethernet",
-        "zigbee-aps": "zigbee_aps",
-        "zigbee-app-data-payload": "zigbee_aps",
-        "zigbee-nwk": "zigbee_nwk",
-        "hop-by-hop": "ipv6_hop_by_hop",
-        "hop-by-hop-options": "ipv6_hop_by_hop",
-        "hop_by_hop": "ipv6_hop_by_hop",
-        "hop_by_hop_options": "ipv6_hop_by_hop",
-        "ip": "ipv4",
-        "ipv6-destination-options": "ipv6_destination_options",
-        "ipv6-hop-by-hop": "ipv6_hop_by_hop",
-        "ipv6-hop-by-hop-options": "ipv6_hop_by_hop",
-        "destination-options": "ipv6_destination_options",
-        "destination_options": "ipv6_destination_options",
-        "raw": "payload",
-    }
-    return [aliases.get(layer.lower(), layer.lower()) for layer in stack]
-
-
 def _validate_plan_contract(plan: PacketPlan, stack: list[str], root: str) -> None:
     supported_roots = _ROOT_FIRST_LAYERS.get(root)
     if supported_roots is None:
@@ -674,10 +611,6 @@ _BLE_ADV_FLAG_BITS: dict[str, int] = {
     "simultaneous_le_br_edr_controller": 0x08,
     "simultaneous_le_br_edr_host": 0x10,
 }
-
-_DOT11_PHASE15_LAYERS = frozenset({"radiotap", "dot11", "llc_snap", "eapol", "rsn"})
-_DOT11_CONVENTIONAL_CHILDREN = frozenset({"arp", "ipv4", "ipv6"})
-
 
 def _is_ble_stack(stack: Sequence[str]) -> bool:
     return any(layer in _BLE_LAYERS for layer in stack)
@@ -1000,278 +933,6 @@ def _ble_swap_bits(value: int) -> int:
         if value & (1 << bit):
             output |= 1 << (7 - bit)
     return output
-
-
-def _is_dot11_phase15_stack(stack: Sequence[str]) -> bool:
-    return any(layer in _DOT11_PHASE15_LAYERS for layer in stack)
-
-
-def _dot11_phase15_bytes(plan: PacketPlan, stack: list[str], scapy_all: Any) -> bytes:
-    output = bytearray()
-    index = 0
-    while index < len(stack):
-        layer = stack[index]
-        if layer == "radiotap":
-            output.extend(_radiotap_bytes(plan.fields))
-        elif layer == "dot11":
-            output.extend(_dot11_bytes(plan.fields))
-        elif layer == "llc_snap":
-            output.extend(_llc_snap_bytes(plan.fields, stack))
-        elif layer == "eapol":
-            output.extend(_eapol_bytes(plan.fields, stack, index))
-        elif layer == "rsn":
-            output.extend(_rsn_element_bytes(plan.fields))
-        elif layer in {"payload", "raw"}:
-            output.extend(_payload_bytes(plan.fields))
-        elif layer in _DOT11_CONVENTIONAL_CHILDREN:
-            output.extend(_dot11_conventional_child_bytes(plan.fields, layer))
-        else:
-            raise ValueError(f"unsupported Dot11 phase 1.5 materialization layer: {layer}")
-        index += 1
-    return bytes(output)
-
-
-def _dot11_bytes(fields: Mapping[str, JSONObject]) -> bytes:
-    dot11 = _layer_fields(fields, "dot11")
-    frame_control = _dot11_frame_control(dot11)
-    frame_type = (frame_control >> 2) & 0x3
-    subtype = (frame_control >> 4) & 0xF
-    output = bytearray()
-    output.extend(frame_control.to_bytes(2, "little"))
-    output.extend(_int(dot11.get("duration_id"), 0).to_bytes(2, "little"))
-    output.extend(_mac_bytes(dot11.get("addr1"), "00:00:5e:00:53:01"))
-
-    if frame_type == 1:
-        if subtype not in {12, 13}:
-            output.extend(_mac_bytes(dot11.get("addr2"), "00:00:5e:00:53:02"))
-        return bytes(output)
-
-    output.extend(_mac_bytes(dot11.get("addr2"), "00:00:5e:00:53:02"))
-    output.extend(_mac_bytes(dot11.get("addr3"), "00:00:5e:00:53:03"))
-    output.extend(_int(dot11.get("sequence_control"), 0).to_bytes(2, "little"))
-    if frame_type == 2 and (frame_control & 0x0300) == 0x0300:
-        output.extend(_mac_bytes(dot11.get("addr4"), "00:00:5e:00:53:04"))
-    if frame_type == 2 and (subtype & 0x8):
-        output.extend(_int(dot11.get("qos_control"), 0).to_bytes(2, "little"))
-    if frame_control & 0x8000 and "ht_control" in dot11:
-        output.extend(_int(dot11.get("ht_control"), 0).to_bytes(4, "little"))
-    if frame_type == 0:
-        output.extend(_bytes_optional(dot11.get("management_fixed_fields")))
-        output.extend(_tagged_parameters_bytes(dot11.get("tagged_parameters")))
-    return bytes(output)
-
-
-def _dot11_frame_control(fields: Mapping[str, object]) -> int:
-    if "frame_control" in fields:
-        return _int(fields.get("frame_control"), 0)
-    value = (_int(fields.get("protocol_version"), 0) & 0x3)
-    value |= (_dot11_frame_type_value(fields.get("frame_type")) & 0x3) << 2
-    value |= (_dot11_subtype_value(fields.get("subtype")) & 0xF) << 4
-    for name, mask in (
-        ("to_ds", 0x0100),
-        ("from_ds", 0x0200),
-        ("more_fragments", 0x0400),
-        ("retry", 0x0800),
-        ("power_management", 0x1000),
-        ("more_data", 0x2000),
-        ("protected", 0x4000),
-        ("order", 0x8000),
-    ):
-        if bool(fields.get(name)):
-            value |= mask
-    return value
-
-
-def _dot11_frame_type_value(value: object) -> int:
-    if not isinstance(value, str):
-        return _int(value, 2)
-    mapping = {"management": 0, "control": 1, "data": 2, "extension": 3}
-    normalized = value.lower().replace("-", "_")
-    if normalized in mapping:
-        return mapping[normalized]
-    return _int(value, 2)
-
-
-def _dot11_subtype_value(value: object) -> int:
-    if not isinstance(value, str):
-        return _int(value, 0)
-    mapping = {
-        "association_request": 0,
-        "probe_request": 4,
-        "beacon": 8,
-        "authentication": 11,
-        "deauthentication": 12,
-        "rts": 11,
-        "cts": 12,
-        "ack": 13,
-        "data": 0,
-        "qos_data": 8,
-        "unknown": 15,
-    }
-    normalized = value.lower().replace("-", "_")
-    if normalized in mapping:
-        return mapping[normalized]
-    return _int(value, 0)
-
-
-def _tagged_parameters_bytes(value: object) -> bytes:
-    if value is None:
-        return b""
-    if isinstance(value, Mapping):
-        value = [value]
-    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
-        return _bytes_optional(value)
-    output = bytearray()
-    for item in value:
-        if not isinstance(item, Mapping):
-            continue
-        tag = _int(item.get("id", item.get("tag", item.get("element_id"))), 0)
-        data = _bytes_optional(item.get("value", item.get("data", item.get("bytes"))))
-        output.extend(bytes([tag & 0xFF, len(data) & 0xFF]))
-        output.extend(data)
-    return bytes(output)
-
-
-def _llc_snap_bytes(fields: Mapping[str, JSONObject], stack: Sequence[str]) -> bytes:
-    llc = _layer_fields(fields, "llc_snap")
-    return bytes(
-        [
-            _int(llc.get("dsap"), 0xAA) & 0xFF,
-            _int(llc.get("ssap"), 0xAA) & 0xFF,
-            _int(llc.get("control"), 0x03) & 0xFF,
-        ]
-    ) + _oui_bytes(llc.get("oui")) + _ethertype_value(
-        llc.get("ethertype", _llc_snap_ethertype_for_stack(stack))
-    ).to_bytes(2, "big")
-
-
-def _dot11_conventional_child_bytes(fields: Mapping[str, JSONObject], layer: str) -> bytes:
-    if layer == "arp":
-        return _arp_bytes(fields)
-    if layer == "ipv4":
-        return _ipv4_bytes(fields)
-    if layer == "ipv6":
-        return _ipv6_bytes(fields)
-    raise ValueError(f"unsupported Dot11 child protocol: {layer}")
-
-
-def _arp_bytes(fields: Mapping[str, JSONObject]) -> bytes:
-    arp = _layer_fields(fields, "arp")
-    hwlen = _int(arp.get("hardware_length"), 6)
-    plen = _int(arp.get("protocol_length"), 4)
-    return (
-        _hardware_type_value(arp.get("hardware_type", "ethernet")).to_bytes(2, "big")
-        + _ethertype_value(arp.get("protocol_type", "ipv4")).to_bytes(2, "big")
-        + bytes([hwlen & 0xFF, plen & 0xFF])
-        + _arp_opcode_value(arp.get("opcode", arp.get("op", "request"))).to_bytes(2, "big")
-        + _bytes_exact(_arp_address_bytes(arp.get("sender_hardware_address", arp.get("hwsrc")), "hardware"), hwlen)
-        + _bytes_exact(_arp_address_bytes(arp.get("sender_protocol_address", arp.get("sender_ip", arp.get("psrc"))), "protocol"), plen)
-        + _bytes_exact(_arp_address_bytes(arp.get("target_hardware_address", arp.get("hwdst")), "hardware"), hwlen)
-        + _bytes_exact(_arp_address_bytes(arp.get("target_protocol_address", arp.get("target_ip", arp.get("pdst"))), "protocol"), plen)
-    )
-
-
-def _arp_opcode_value(value: object) -> int:
-    if not isinstance(value, str):
-        return _int(value, 1)
-    mapping = {"request": 1, "who-has": 1, "reply": 2, "is-at": 2}
-    normalized = value.lower().replace("_", "-")
-    if normalized in mapping:
-        return mapping[normalized]
-    return _int(value, 1)
-
-
-def _arp_address_bytes(value: object, kind: str) -> bytes:
-    if kind == "protocol" and isinstance(value, str) and "." in value:
-        return bytes(int(part) & 0xFF for part in value.split("."))
-    default = "00:00:5e:00:53:01" if kind == "hardware" else {"hex": "00000000"}
-    return _bytes_optional(value if value is not None else default)
-
-
-def _ipv4_bytes(fields: Mapping[str, JSONObject]) -> bytes:
-    ipv4 = _layer_fields(fields, "ipv4")
-    payload = b""
-    ihl = 5
-    version_ihl = (4 << 4) | ihl
-    flags_fragment = _ipv4_flags_fragment(ipv4)
-    total_length = 20 + len(payload)
-    protocol = _protocol_value(ipv4.get("protocol", ipv4.get("proto", "unknown")), _IP_PROTOCOLS)
-    header = bytearray(
-        [
-            version_ihl,
-            _int(ipv4.get("ds_field", ipv4.get("tos")), 0) & 0xFF,
-        ]
-    )
-    header.extend(total_length.to_bytes(2, "big"))
-    header.extend(_int(ipv4.get("identification", ipv4.get("id")), 0).to_bytes(2, "big"))
-    header.extend(flags_fragment.to_bytes(2, "big"))
-    header.extend(bytes([_int(ipv4.get("ttl"), 64) & 0xFF, protocol & 0xFF]))
-    header.extend(b"\x00\x00")
-    header.extend(_ipv4_address_bytes(ipv4.get("src"), "192.0.2.1"))
-    header.extend(_ipv4_address_bytes(ipv4.get("dst"), "198.51.100.1"))
-    checksum = _internet_checksum(bytes(header))
-    header[10:12] = checksum.to_bytes(2, "big")
-    return bytes(header) + payload
-
-
-def _ipv4_flags_fragment(fields: Mapping[str, object]) -> int:
-    flags = fields.get("flags", "none")
-    flag_bits = 0
-    if isinstance(flags, str):
-        normalized = flags.lower().replace("_", "-")
-        if "df" in normalized:
-            flag_bits |= 0x4000
-        if "mf" in normalized:
-            flag_bits |= 0x2000
-    else:
-        flag_bits = (_int(flags, 0) & 0x7) << 13
-    return flag_bits | (_int(fields.get("fragment_offset", fields.get("frag")), 0) & 0x1FFF)
-
-
-def _ipv6_bytes(fields: Mapping[str, JSONObject]) -> bytes:
-    ipv6 = _layer_fields(fields, "ipv6")
-    traffic_class = _int(ipv6.get("traffic_class", ipv6.get("tc")), 0) & 0xFF
-    flow_label = _int(ipv6.get("flow_label", ipv6.get("fl")), 0) & 0xFFFFF
-    first_word = (6 << 28) | (traffic_class << 20) | flow_label
-    payload = b""
-    next_header = _protocol_value(
-        ipv6.get("next_header", ipv6.get("nh", "unknown")),
-        _IPV6_NEXT_HEADERS,
-    )
-    return (
-        first_word.to_bytes(4, "big")
-        + len(payload).to_bytes(2, "big")
-        + bytes([next_header & 0xFF, _int(ipv6.get("hop_limit", ipv6.get("hlim")), 64) & 0xFF])
-        + _ipv6_address_bytes(ipv6.get("src"), "2001:db8::1")
-        + _ipv6_address_bytes(ipv6.get("dst"), "2001:db8::2")
-        + payload
-    )
-
-
-def _llc_snap_ethertype_for_stack(stack: Sequence[str]) -> str:
-    try:
-        index = list(stack).index("llc_snap")
-    except ValueError:
-        return "unknown"
-    if index + 1 >= len(stack):
-        return "unknown"
-    next_layer = stack[index + 1]
-    return "eapol" if next_layer == "eapol" else next_layer
-
-
-# The ``eapol`` / ``rsn`` byte serializers (``_eapol_bytes`` / ``_rsn_element_bytes``
-# and their helpers) moved to ``protocols/wifi.py`` with the registered
-# ``ScapyProtocol``s; ``_eapol_bytes`` and ``_rsn_element_bytes`` are re-imported at
-# the top of this module so the whole-stack ``_dot11_phase15_bytes`` driver still
-# emits the eapol/rsn bodies unchanged.
-
-
-def _mac_bytes(value: object, default: str) -> bytes:
-    return _bytes_exact(value if value is not None else default, 6)
-
-
-def _oui_bytes(value: object) -> bytes:
-    return _bytes_exact(value if value is not None else {"hex": "000000"}, 3)
 
 
 def _materialize_udp_options(

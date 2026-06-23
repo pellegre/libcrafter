@@ -305,3 +305,42 @@ def _ipv6_address_bytes(value: object, default: str) -> bytes:
     import ipaddress
 
     return ipaddress.IPv6Address(_text(value, default)).packed
+
+
+def _canonical_stack(stack: list[str]) -> list[str]:
+    """Normalize a plan's layer names to the canonical Scapy encoder names.
+
+    Lowercases each layer and maps the accepted spelling aliases (``ble`` ->
+    ``ble_adv``, ``ether`` -> ``ethernet``, ``ip`` -> ``ipv4``, ``raw`` ->
+    ``payload``, the IPv6 ext-header spellings, ...) onto the canonical names the
+    encoder builds against. Extracted here from :mod:`packets` so the whole-stack
+    ``StackEncoder`` plugins (which only receive the plan, not the already-canonical
+    stack) can recover the same canonical layer list without importing the
+    ``packets`` orchestrator; ``packets`` re-imports it to keep ``encode_packet_plan``
+    and the ``packets._canonical_stack`` test references resolving unchanged.
+    """
+
+    aliases = {
+        "ble": "ble_adv",
+        "ble-adv": "ble_adv",
+        "ble-advertising": "ble_adv",
+        "ble-radio": "ble_radio",
+        "bluetooth-le-adv": "ble_adv",
+        "bluetooth-le-radio": "ble_radio",
+        "btle-adv": "ble_adv",
+        "btle-radio": "ble_radio",
+        "dot1q": "vlan",
+        "ether": "ethernet",
+        "hop-by-hop": "ipv6_hop_by_hop",
+        "hop-by-hop-options": "ipv6_hop_by_hop",
+        "hop_by_hop": "ipv6_hop_by_hop",
+        "hop_by_hop_options": "ipv6_hop_by_hop",
+        "ip": "ipv4",
+        "ipv6-destination-options": "ipv6_destination_options",
+        "ipv6-hop-by-hop": "ipv6_hop_by_hop",
+        "ipv6-hop-by-hop-options": "ipv6_hop_by_hop",
+        "destination-options": "ipv6_destination_options",
+        "destination_options": "ipv6_destination_options",
+        "raw": "payload",
+    }
+    return [aliases.get(layer.lower(), layer.lower()) for layer in stack]
