@@ -1,10 +1,10 @@
 """Wireshark-stage decode plugin for the Wi-Fi (802.11) stack.
 
 This module is the home for the 802.11 tshark normalizers (``radiotap``,
-``dot11``, ``eapol``, ``rsn``); ``radiotap``, ``eapol``, and ``rsn`` are migrated
-here and ``dot11`` is added next. It moves the ``_normalize_radiotap`` /
-``_normalize_eapol`` / ``_normalize_rsn`` tshark normalizers and their helpers
-verbatim out of :mod:`..normalize` and registers them through the
+``dot11``, ``eapol``, ``rsn``); all four are migrated here. It moves the
+``_normalize_radiotap`` / ``_normalize_dot11`` / ``_normalize_eapol`` /
+``_normalize_rsn`` tshark normalizers and their helpers verbatim out of
+:mod:`..normalize` and registers them through the
 :class:`~.base.WiresharkProtocol` contract; only the dispatch moves out of the
 legacy if/elif. Behavior must stay byte-identical.
 
@@ -135,6 +135,113 @@ register(
         layer="radiotap",
         normalize=_normalize_radiotap,
         tshark_aliases=dict(_RADIOTAP_TSHARK_ALIASES),
+    )
+)
+
+
+# tshark field aliases the dot11 layer owns: canonical oracle name -> the native
+# tshark field names that carry it.
+_DOT11_TSHARK_ALIASES: JSONObject = {
+    "frame_control": ("wlan.fc", "wlan.fc.raw"),
+    "protocol_version": ("wlan.fc.version",),
+    "frame_type": ("wlan.fc.type",),
+    "subtype": ("wlan.fc.subtype",),
+    "duration_id": ("wlan.duration", "wlan.duration_id"),
+    "sequence_control": ("wlan.seq_control", "wlan.seqctl"),
+    "sequence_number": ("wlan.seq", "wlan.seq.seq"),
+    "fragment_number": ("wlan.frag", "wlan.seq.frag"),
+    "qos_control": ("wlan.qos", "wlan.qos.control"),
+    "ht_control": ("wlan.ht.control", "wlan.ht_control"),
+}
+
+
+def _normalize_dot11_layer(layer: JSONObject) -> JSONObject:
+    output = _fields_from_aliases(layer, dict(_DOT11_TSHARK_ALIASES))
+    _parse_int_fields(
+        output,
+        "frame_control",
+        "protocol_version",
+        "frame_type",
+        "subtype",
+        "duration_id",
+        "sequence_control",
+        "sequence_number",
+        "fragment_number",
+        "qos_control",
+        "ht_control",
+    )
+
+    bool_fields = {
+        "to_ds": ("wlan.fc.tods",),
+        "from_ds": ("wlan.fc.fromds",),
+        "more_fragments": ("wlan.fc.frag",),
+        "retry": ("wlan.fc.retry",),
+        "power_management": ("wlan.fc.pwrmgt",),
+        "more_data": ("wlan.fc.moredata",),
+        "protected": ("wlan.fc.protected", "wlan.fc.wep"),
+        "order": ("wlan.fc.order",),
+    }
+    for target, aliases in bool_fields.items():
+        value = _field(layer, *aliases)
+        if value is not None:
+            output[target] = _truthy_value(value)
+    ds = _parse_int(_field(layer, "wlan.fc.ds"))
+    if ds is not None:
+        output.setdefault("to_ds", bool(ds & 0x01))
+        output.setdefault("from_ds", bool(ds & 0x02))
+
+    addresses = [str(item) for item in _field_list(layer, "wlan.addr")]
+    for index, address in enumerate(addresses[:4], start=1):
+        output.setdefault(f"addr{index}", address)
+    _copy_string_field(output, "addr1", layer, "wlan.addr1", "wlan.ra", "wlan.da")
+    _copy_string_field(output, "addr2", layer, "wlan.addr2", "wlan.ta", "wlan.sa")
+    _copy_string_field(output, "addr3", layer, "wlan.addr3", "wlan.bssid")
+    _copy_string_field(output, "addr4", layer, "wlan.addr4")
+
+    sequence_number = output.get("sequence_number")
+    fragment_number = output.get("fragment_number")
+    if "sequence_control" not in output and isinstance(sequence_number, int):
+        fragment = fragment_number if isinstance(fragment_number, int) else 0
+        output["sequence_control"] = (sequence_number << 4) | (fragment & 0x0F)
+    if "sequence_number" not in output and isinstance(output.get("sequence_control"), int):
+        output["sequence_number"] = output["sequence_control"] >> 4
+    if "fragment_number" not in output and isinstance(output.get("sequence_control"), int):
+        output["fragment_number"] = output["sequence_control"] & 0x0F
+    return output
+
+
+def _truthy_value(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value != 0
+    if isinstance(value, str):
+        return value not in {"", "0", "0x0", "False", "false"}
+    return bool(value)
+
+
+def _copy_string_field(
+    output: JSONObject,
+    target: str,
+    layer: JSONObject,
+    *names: str,
+) -> None:
+    value = _string_field(layer, *names)
+    if value is not None:
+        output[target] = value
+
+
+def _normalize_dot11(
+    layers: JSONObject, *, source_hex: str | None = None
+) -> JSONObject:
+    return _normalize_dot11_layer(_layer(layers, "wlan"))
+
+
+register(
+    WiresharkProtocol(
+        layer="dot11",
+        normalize=_normalize_dot11,
+        tshark_aliases=dict(_DOT11_TSHARK_ALIASES),
     )
 )
 
