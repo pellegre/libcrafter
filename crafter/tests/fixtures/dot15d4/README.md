@@ -16,8 +16,8 @@ values; none are captured from a real network.
 
 ## Derivation / provenance
 
-scapy is not importable in this environment, so each frame's bytes are
-hand-built by composing the crate's own builders (`Dot15d4` / `ZigbeeNwk` /
+The reference backend is not importable in this environment, so each frame's
+bytes are hand-built by composing the crate's own builders (`Dot15d4` / `ZigbeeNwk` /
 `ZigbeeAps` from `crafter::prelude::*`), compiling the packet, and recording the
 compiled bytes. The field layout and the auto-filled CRC-16/CCITT Frame Check
 Sequence are grounded in `.agents/docs/dot15d4-manifest.md`,
