@@ -151,6 +151,42 @@ _SUPPORTED_FIELDS: dict[str, set[str]] = {
         "response_code",
         "questions",
     },
+    # IEEE 802.15.4 MAC frame fields the scapy Dot15d4FCS/Dot15d4Data
+    # materializer and the libcrafter Dot15d4 decoder both round-trip. The MAC
+    # carries an addressed data frame so scapy dispatches the payload into the
+    # Zigbee NWK/APS sublayers (conf.dot15d4_protocol="zigbee"), matching the
+    # libcrafter decode layer structure.
+    "dot15d4": {
+        "frame_type",
+        "pan_id_compression",
+        "dest_addr_mode",
+        "src_addr_mode",
+        "seq",
+        "dest_pan",
+        "dest_addr",
+        "src_addr",
+    },
+    # The IEEE 802.15.4 TAP (DLT 283) pseudo-header carries no strict-byte
+    # descriptor fields through the scapy reference path; libcrafter owns the
+    # TAP decode, so no fields are sampled.
+    "dot15d4_radio": set(),
+    "zigbee_nwk": {
+        "frame_type",
+        "protocol_version",
+        "dest",
+        "src",
+        "radius",
+        "seq",
+    },
+    "zigbee_aps": {
+        "frame_type",
+        "delivery_mode",
+        "dest_endpoint",
+        "cluster",
+        "profile",
+        "src_endpoint",
+        "counter",
+    },
     "eapol": {
         "body_length",
         "descriptor_type",
@@ -350,6 +386,8 @@ _SCAPY_MATERIALIZED_LAYERS = {
     "arp",
     "dhcp",
     "dot11",
+    "dot15d4",
+    "dot15d4_radio",
     "eapol",
     "dns",
     "ethernet",
@@ -366,6 +404,8 @@ _SCAPY_MATERIALIZED_LAYERS = {
     "udp",
     "vlan",
     "bgp",
+    "zigbee_aps",
+    "zigbee_nwk",
 }
 
 
@@ -2440,6 +2480,12 @@ class PacketGenerator:
             return _sample_linux_cooked_field(ctx, field_name, domain)
         if layer == "null_loopback":
             return _sample_null_loopback_field(ctx, field_name)
+        if layer == "dot15d4":
+            return _sample_dot15d4_field(ctx, field_name, domain)
+        if layer == "zigbee_nwk":
+            return _sample_zigbee_nwk_field(ctx, field_name, domain)
+        if layer == "zigbee_aps":
+            return _sample_zigbee_aps_field(ctx, field_name, domain)
 
         raise ValueError(f"spec error: unsupported layer sampler: {layer}")
 
@@ -5955,6 +6001,74 @@ def _sample_null_loopback_field(ctx: _SamplingContext, field_name: str) -> objec
     if field_name == "type":
         return "ipv4" if "ipv4" in ctx.stack else "ipv6"
     raise ValueError(f"spec error: unsupported null_loopback field sampler: {field_name}")
+
+
+# IEEE 802.15.4 / Zigbee deterministic field samplers.
+#
+# The MAC is sampled as an addressed (short-16, PAN-ID compressed) data frame so
+# scapy's Dot15d4FCS dissector dispatches the MAC payload into ZigbeeNWK ->
+# ZigbeeAppDataPayload (conf.dot15d4_protocol="zigbee"), producing the same
+# layer structure libcrafter decodes. The values mirror the
+# zigbee-mac-nwk-aps-data-stack spec case so the materialized frame is a real,
+# decodable Zigbee data stack rather than a degenerate default frame.
+def _sample_dot15d4_field(
+    ctx: _SamplingContext, field_name: str, domain: object
+) -> object:
+    if field_name == "frame_type":
+        return "data"
+    if field_name == "pan_id_compression":
+        return True
+    if field_name == "dest_addr_mode":
+        return "short_16"
+    if field_name == "src_addr_mode":
+        return "short_16"
+    if field_name == "seq":
+        return 0x07
+    if field_name == "dest_pan":
+        return 0x1234
+    if field_name == "dest_addr":
+        return 0x0000
+    if field_name == "src_addr":
+        return 0xABCD
+    raise ValueError(f"spec error: unsupported dot15d4 field sampler: {field_name}")
+
+
+def _sample_zigbee_nwk_field(
+    ctx: _SamplingContext, field_name: str, domain: object
+) -> object:
+    if field_name == "frame_type":
+        return "data"
+    if field_name == "protocol_version":
+        return 2
+    if field_name == "dest":
+        return 0x0000
+    if field_name == "src":
+        return 0xABCD
+    if field_name == "radius":
+        return 30
+    if field_name == "seq":
+        return 0x42
+    raise ValueError(f"spec error: unsupported zigbee_nwk field sampler: {field_name}")
+
+
+def _sample_zigbee_aps_field(
+    ctx: _SamplingContext, field_name: str, domain: object
+) -> object:
+    if field_name == "frame_type":
+        return "data"
+    if field_name == "delivery_mode":
+        return "unicast"
+    if field_name == "dest_endpoint":
+        return 0x01
+    if field_name == "cluster":
+        return 0x0006
+    if field_name == "profile":
+        return 0x0104
+    if field_name == "src_endpoint":
+        return 0x01
+    if field_name == "counter":
+        return 0x09
+    raise ValueError(f"spec error: unsupported zigbee_aps field sampler: {field_name}")
 
 
 def generate_plans(
