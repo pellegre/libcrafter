@@ -1637,6 +1637,13 @@ the validation system. Backend-specific names and implementation details belong
 inside `tools/oracle/`; agents should not add ad hoc reference-backend imports
 to tests or scripts when an oracle mode covers the same behavior.
 
+Adding an oracle protocol is plug-and-play: drop in per-stage plugin modules
+(`engine/protocols/<name>.py`, `engine/backends/scapy/protocols/<name>.py`,
+`engine/backends/wireshark/protocols/<name>.py`) plus spec files, with no central
+dispatcher edits. See `tools/oracle/docs/adding-a-protocol.md` for the full
+recipe (ARP worked example, plugin callback signatures, the `StackEncoder`
+raw-bytes option, spec files, and the test gate).
+
 Offline validation compares generated raw packet vectors and normalized decode
 models without root privileges:
 
