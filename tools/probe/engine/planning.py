@@ -28,6 +28,16 @@ from .planning_helpers import (
     deterministic_router_ipv4,
     dns_label,
 )
+# Importing from the ``protocols`` package runs its auto-discovery so every
+# migrated protocol module self-registers into ``PROTOCOL_REGISTRY`` before
+# ``PLAN_BUILDERS`` is assembled below. No protocol is migrated yet, so the
+# registry contribution is empty and ``PLAN_BUILDERS`` is byte-identical to the
+# legacy dict. Imports stay relative; the package autodiscovers
+# ``__name__``-relatively, so this does not cycle back through ``planning``.
+from .protocols import (
+    all_plan_builders as _registry_plan_builders,
+    all_planned_only_cases as _registry_planned_only_cases,
+)
 from .target_services import (
     BGP_DOCUMENTATION_IPV4_PREFIX,
     BGP_DOCUMENTATION_IPV6_PREFIX,
@@ -6304,13 +6314,13 @@ def _ipsec_probe_plan(
     return plan
 
 
-# Registry of per-case plan builders. The dispatcher in
-# :func:`probe_plan_for_case` looks up a builder by case name; cases without an
-# entry fall back to a minimal planned-only plan. DNS, DHCP, ARP, and UDP case
-# groups extend the behavior suite by registering builders here. The IPSec
-# cases register a planned-only builder that records the exchange shape (see
-# :func:`_ipsec_probe_plan`).
-PLAN_BUILDERS: dict[str, PlanBuilder] = {
+# Legacy per-case plan builders defined in this module. Every protocol still
+# lives here until its plugin migration; the assembly below merges the protocol
+# registry's contribution (empty until a protocol migrates) ahead of these so a
+# migrated builder takes precedence while unmigrated cases keep their legacy
+# builder. The IPSec cases register a planned-only builder that records the
+# exchange shape (see :func:`_ipsec_probe_plan`).
+_LEGACY_PLAN_BUILDERS: dict[str, PlanBuilder] = {
     "icmp-echo": _icmp_echo_probe_plan,
     "tcp-syn-open": _tcp_syn_probe_plan,
     "tcp-syn-closed": _tcp_syn_probe_plan,
@@ -6375,12 +6385,22 @@ PLAN_BUILDERS: dict[str, PlanBuilder] = {
 }
 
 
-# Registered cases whose builder intentionally emits a ``planned_only`` plan
-# (the exchange shape is recorded, but no packet bytes are built). The IPSec
-# cases land here when the current step intentionally records an exchange shape
-# without asking the endpoint runner to materialize or send packet bytes. Every
-# other registered builder produces a fully materialized plan.
-PLANNED_ONLY_REGISTERED_CASES: frozenset[str] = frozenset(
+# Per-case plan-builder dispatch table consulted by :func:`probe_plan_for_case`.
+# It is assembled registry-first: the protocol registry's contributed builders
+# (empty until a protocol migrates) take precedence, then the legacy module
+# builders fill in every case no plugin owns yet. The exact function objects are
+# kept (no wrappers) so ``planning._<builder>`` and ``PLAN_BUILDERS[name] is
+# _<builder>`` identity stays intact for the pinning tests.
+PLAN_BUILDERS: dict[str, PlanBuilder] = {
+    **_LEGACY_PLAN_BUILDERS,
+    **_registry_plan_builders(),
+}
+
+
+# Legacy planned-only registered cases declared in this module. A planned-only
+# builder records the exchange shape (the IPSec/BGP/RIP/IGMP cases) without
+# building packet bytes; every other builder produces a fully materialized plan.
+_LEGACY_PLANNED_ONLY_REGISTERED_CASES: frozenset[str] = frozenset(
     {
         "esp-transport-echo",
         "esp-tunnel-echo",
@@ -6394,6 +6414,13 @@ PLANNED_ONLY_REGISTERED_CASES: frozenset[str] = frozenset(
         "igmp-v2-leave-group-emission",
         "igmp-v3-source-list-report",
     }
+)
+
+
+# The planned-only set is the union of the registry's contribution (empty until
+# a protocol migrates) and the legacy frozenset above.
+PLANNED_ONLY_REGISTERED_CASES: frozenset[str] = (
+    _registry_planned_only_cases() | _LEGACY_PLANNED_ONLY_REGISTERED_CASES
 )
 
 
