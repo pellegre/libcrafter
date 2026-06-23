@@ -9,6 +9,18 @@ from typing import Any
 from ...model import DecodedModel, EncodedVector, JSONObject, JSONValue, PacketPlan
 from ..registry import BackendCapabilities, BackendRegistration, get_backend
 from .bootstrap import import_scapy
+from .decode_helpers import (
+    _bool_flag,
+    _crc32c,
+    _field_key,
+    _int_or_zero,
+    _internet_checksum,
+    _json_value,
+    _mac_text,
+    _object,
+    _text,
+    _text_or_none,
+)
 
 
 BACKEND_NAME = "scapy"
@@ -1634,16 +1646,6 @@ def _normalize_dhcp_chaddr(value: JSONValue, hardware_length: JSONValue) -> JSON
     return {"hex": hex_value[: length * 2]}
 
 
-def _bool_flag(value: JSONValue) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, int):
-        return value != 0
-    if isinstance(value, str):
-        return value not in {"", "0", "false", "False"}
-    return bool(value)
-
-
 # IGMP over IPv4 protocol number 2. Scapy does not expose all IGMP contrib
 # classes through scapy.all consistently, so normalize the IPv4 payload bytes
 # directly into the same backend-neutral layer names that libcrafter reports.
@@ -3044,10 +3046,6 @@ def _is_truncated_snap_prefix(raw: bytes) -> bool:
     return b"\xaa\xaa\x03".startswith(raw) and bool(raw)
 
 
-def _mac_text(raw: bytes) -> str:
-    return ":".join(f"{byte:02x}" for byte in raw)
-
-
 def _radiotap_fcs_status(flags: int) -> str:
     present = bool(flags & 0x10)
     failed = bool(flags & 0x40)
@@ -3271,10 +3269,6 @@ def _ipv6_segment_routing_flags(fields: JSONObject) -> int | None:
         | ((_int_or_zero(fields.get("hmac")) & 0x01) << 3)
         | (_int_or_zero(fields.get("unused2")) & 0x07)
     )
-
-
-def _int_or_zero(value: object) -> int:
-    return value if isinstance(value, int) else 0
 
 
 _ARP_ADDRESS_FIELDS = (
@@ -3764,38 +3758,6 @@ def _ipv6_udp_start(raw: bytes, l3_start: int) -> int:
     return cursor
 
 
-def _internet_checksum(data: bytes) -> int:
-    if len(data) % 2:
-        data += b"\x00"
-    total = 0
-    for index in range(0, len(data), 2):
-        total += int.from_bytes(data[index : index + 2], "big")
-    while total >> 16:
-        total = (total & 0xFFFF) + (total >> 16)
-    return (~total) & 0xFFFF
-
-
-def _crc32c(data: bytes) -> int:
-    crc = 0xFFFF_FFFF
-    for byte in data:
-        crc ^= byte
-        for _ in range(8):
-            if crc & 1:
-                crc = (crc >> 1) ^ 0x82F6_3B78
-            else:
-                crc >>= 1
-    return (~crc) & 0xFFFF_FFFF
-
-
-def _field_key(existing: Mapping[str, JSONObject], layer_name: str) -> str:
-    if layer_name not in existing:
-        return layer_name
-    index = 2
-    while f"{layer_name}#{index}" in existing:
-        index += 1
-    return f"{layer_name}#{index}"
-
-
 def _require_decode_capability(
     capabilities: BackendCapabilities | BackendRegistration | None,
 ) -> None:
@@ -3944,37 +3906,3 @@ def _protocol_value(value: object) -> int:
     if isinstance(value, int):
         return value
     raise ValueError(f"expected protocol-compatible value: {value!r}")
-
-
-def _json_value(value: Any) -> JSONValue:
-    if isinstance(value, bytes):
-        return {"hex": value.hex(), "ascii": value.decode("utf-8", "replace")}
-    if isinstance(value, (str, int, float, bool)) or value is None:
-        return value
-    if isinstance(value, tuple):
-        return [_json_value(item) for item in value]
-    if isinstance(value, list):
-        return [_json_value(item) for item in value]
-    if isinstance(value, Mapping):
-        return {str(key): _json_value(item) for key, item in value.items()}
-    return str(value)
-
-
-def _object(value: JSONValue, name: str) -> JSONObject:
-    if not isinstance(value, Mapping):
-        raise ValueError(f"{name} must be an object")
-    return dict(value)
-
-
-def _text(value: object) -> str:
-    if isinstance(value, str):
-        return value
-    return str(value)
-
-
-def _text_or_none(value: object) -> str | None:
-    if value is None:
-        return None
-    if isinstance(value, str):
-        return value
-    return str(value)
