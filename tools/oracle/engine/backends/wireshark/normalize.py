@@ -13,16 +13,12 @@ from pathlib import Path
 from ...model import DecodedModel, EncodedVector, JSONObject
 from ..registry import get_backend
 from .decode_helpers import (
-    _field,
-    _field_list,
     _fields_from_aliases,
     _layer,
     _layer_any,
     _normalize_root_name,
-    _parse_int,
     _parse_int_fields,
     _string_field,
-    _truthy_field,
 )
 # Importing the protocols package runs its ``autodiscover`` so every per-protocol
 # Wireshark decoder module self-registers; ``WIRESHARK_REGISTRY`` is consulted for a
