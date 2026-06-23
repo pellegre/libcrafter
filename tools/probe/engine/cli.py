@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import ipaddress
 import os
 import posixpath
 import shlex
@@ -128,6 +127,18 @@ from .report import DEFAULT_OUTPUT_ROOT, REPO_ROOT
 from .target_services import (
     target_service_setup_plan as _target_service_setup_plan,
 )
+from .endpoint_addressing import (
+    FAILURE_DECODE_FAILED,
+    FAILURE_TARGET_SETUP_FAILED,
+    FAILURE_TIMEOUT,
+    FAILURE_WRONG_FLAGS,
+    FAILURE_WRONG_PAYLOAD,
+    FAILURE_WRONG_PEER,
+    apply_shared_ipv4_rewrite_tail as _apply_shared_ipv4_rewrite_tail,
+    default_failure_reasons as _default_failure_reasons,
+    _eui64_link_local_ipv6,
+    _lab_arp_alias_ipv4,
+)
 
 
 PROBE_SELECTED_SPECS = ("probe-contracts",)
@@ -135,12 +146,6 @@ STATUS_DRY_RUN = "dry-run"
 STATUS_FAILED = "failed"
 STATUS_PASSED = "passed"
 STATUS_UNSUPPORTED = "unsupported"
-FAILURE_TIMEOUT = "timeout"
-FAILURE_WRONG_PEER = "wrong_peer"
-FAILURE_WRONG_PAYLOAD = "wrong_payload"
-FAILURE_WRONG_FLAGS = "wrong_flags"
-FAILURE_DECODE_FAILED = "decode_failed"
-FAILURE_TARGET_SETUP_FAILED = "target_setup_failed"
 
 
 def _positive_int(value: str) -> int:
@@ -1104,59 +1109,6 @@ def _stimulus_endpoint_request_metadata(
     return output
 
 
-def _lab_arp_alias_ipv4(target_ipv4: str, source_ipv4: str) -> str:
-    """Derive a deterministic secondary IPv4 alias host on the lab segment.
-
-    ``arp-alias-address-reply`` configures the target kernel to answer ARP for a
-    *secondary* address added to the private interface, distinct from both the
-    target endpoint's primary IPv4 (``target_ipv4``) and the stimulus endpoint
-    (``source_ipv4``). The alias must therefore be a different host in the same
-    /24 lab subnet as the target. The host octet is derived deterministically
-    from the target's last octet and kept clear of the source/target hosts, the
-    network (0), broadcast (255), and the conventional router (1).
-    """
-
-    octets = target_ipv4.split(".")
-    if len(octets) != 4:
-        raise ValueError(f"unexpected lab target IPv4 {target_ipv4!r}")
-    prefix = ".".join(octets[:3])
-    target_host = int(octets[3])
-    source_host = int(source_ipv4.split(".")[3]) if source_ipv4.count(".") == 3 else -1
-    reserved = {0, 1, 255, target_host, source_host}
-    host = (target_host + 7) % 256
-    while host in reserved:
-        host = (host + 1) % 256
-    return f"{prefix}.{host}"
-
-
-def _eui64_link_local_ipv6(mac: str) -> str:
-    """Return the modified-EUI-64 link-local address (``fe80::/64``) for a MAC.
-
-    RFC 4291 Appendix A: an interface forms its link-local address by inserting
-    ``ff:fe`` between the third and fourth octets of its 48-bit MAC and flipping
-    the Universal/Local bit (bit 0x02 of the first octet) to produce a 64-bit
-    interface identifier, prefixed with ``fe80::/64``. A Linux kernel always owns
-    this address on every IPv6-enabled interface and auto-answers a Neighbor
-    Solicitation for it (and defends it on Duplicate Address Detection), so it is
-    the most robust live NDP target address — no separate address needs to be
-    configured. The MAC is the real lab endpoint MAC threaded in from the
-    provider manifest at live time.
-    """
-
-    octets = [int(part, 16) for part in mac.split(":")]
-    if len(octets) != 6:
-        raise ValueError(f"unexpected lab endpoint MAC {mac!r}")
-    # Flip the Universal/Local bit of the first octet, then insert ff:fe.
-    interface_id = bytes(
-        [octets[0] ^ 0x02, octets[1], octets[2], 0xFF, 0xFE, octets[3], octets[4], octets[5]]
-    )
-    address = bytes(8) + interface_id
-    link_local = bytearray(address)
-    link_local[0] = 0xFE
-    link_local[1] = 0x80
-    return str(ipaddress.IPv6Address(bytes(link_local)))
-
-
 # NDP behavioral cases handled by the IPv6/link-local address-rewrite branch. The
 # Neighbor Solicitation and Duplicate Address Detection cases resolve a kernel-
 # owned link-local address (the IPv6 analog of ARP who-has/is-at); the Router
@@ -1887,20 +1839,13 @@ def _probe_plan_with_endpoint_addresses(
                 )
         updated["live_address_rewrite"] = live_rewrite
         return updated
-    validation = dict(json_object(updated.get("validation", {}), "probe_plan.validation"))
-    validation["source_ipv4"] = (
-        str(updated.get("controlled_router_ipv4"))
-        if case_name == "ttl-expired" and updated.get("controlled_router_ipv4")
-        else target_ipv4
+    return _apply_shared_ipv4_rewrite_tail(
+        updated,
+        case_name=case_name,
+        source_ipv4=source_ipv4,
+        target_ipv4=target_ipv4,
+        rewrite_source=rewrite_source,
     )
-    validation["destination_ipv4"] = source_ipv4
-    updated["validation"] = validation
-    updated["live_address_rewrite"] = {
-        "source": rewrite_source,
-        "stimulus_ipv4": source_ipv4,
-        "target_ipv4": target_ipv4,
-    }
-    return updated
 
 
 def _run_command(
@@ -2115,7 +2060,7 @@ def _failure_reasons_for_case(case_name: str) -> list[str]:
             FAILURE_DECODE_FAILED,
             FAILURE_TARGET_SETUP_FAILED,
         ]
-    return []
+    return _default_failure_reasons()
 
 
 def _live_status(request: ProbeRunRequest) -> str:
