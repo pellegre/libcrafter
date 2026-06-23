@@ -18,15 +18,18 @@ from .sampling import (
     _SKIP_FIELD,
     _SamplingContext,
     _SkipField,
+    _declared_ethertype_for_stack,
     _different_ipv4,
     _different_ipv6,
     _different_mac,
     _different_port,
+    _field_bits,
     _identifier_part,
     _integer_domain_value,
     _IPV4_DOCUMENTATION_NETWORKS,
     _IPV6_DOCUMENTATION_NETWORK,
     _mac_for_domain,
+    _next_layer_after,
     bounded_int,
     byte_payload,
     documentation_ipv4,
@@ -229,7 +232,6 @@ _SUPPORTED_FIELDS: dict[str, set[str]] = {
     "bgp": {"marker", "length", "type"},
     "rip": {"command", "version", "reserved"},
     "ripng": {"command", "version", "reserved"},
-    "ethernet": {"dst", "src", "ethertype"},
     "icmp": {
         "type",
         "code",
@@ -331,7 +333,6 @@ _SUPPORTED_FIELDS: dict[str, set[str]] = {
         "options",
     },
     "udp": {"src_port", "dst_port", "checksum", "options"},
-    "vlan": {"priority", "drop_eligible", "vlan_id", "ethertype"},
 }
 
 
@@ -2385,17 +2386,6 @@ class PacketGenerator:
         if layer == "payload":
             payload = _payload_for_context(ctx)
             return payload.hex() if field_name == "hex" else len(payload)
-        if layer == "ethernet":
-            if field_name == "src":
-                return _mac_for_domain(ctx, domain, ctx.src_mac)
-            if field_name == "dst":
-                return _mac_for_domain(ctx, domain, ctx.dst_mac)
-            if field_name == "ethertype":
-                return _declared_ethertype_for_stack(ctx.stack, "ethernet")
-        if layer == "vlan":
-            if field_name == "ethertype":
-                return _declared_ethertype_for_stack(ctx.stack, "vlan")
-            return _integer_domain_value(ctx, domain, field_name, bits=_field_bits(field_spec))
         if layer == "ipv4":
             return _sample_ipv4_field(ctx, field_name, domain, current_fields)
         if layer == "ipv6":
@@ -2581,13 +2571,6 @@ def _is_boundary_domain(domain: object) -> bool:
     }
 
 
-def _field_bits(field_spec: JSONObject) -> int:
-    field_type = _string(field_spec.get("type"), "field.type")
-    if field_type.startswith("uint"):
-        return int(field_type.removeprefix("uint"))
-    return 16
-
-
 def _is_ipv4_root_dhcp_stack(stack: Sequence[str]) -> bool:
     """Return True for the IPv4-root, unicast live DHCP stack.
 
@@ -2610,11 +2593,6 @@ def _ipv4_for_domain(ctx: _SamplingContext, domain: object, default: str, *, dst
             return default
         return "255.255.255.255"
     return default
-
-
-def _declared_ethertype_for_stack(stack: Sequence[str], layer: str) -> str:
-    value = _ethertype_for_stack(stack, layer)
-    return "experimental" if value == "unknown" else value
 
 
 def _sample_ipv4_field(
@@ -6130,21 +6108,6 @@ def _udp_option_cases_for_stack(stack: Sequence[str], cases: Sequence[str]) -> l
     return output
 
 
-def _ethertype_for_stack(stack: Sequence[str], layer: str) -> str:
-    next_layer = _next_layer_after(stack, layer)
-    if next_layer == "vlan":
-        return "vlan"
-    if next_layer == "arp":
-        return "arp"
-    if next_layer == "ipv4":
-        return "ipv4"
-    if next_layer == "ipv6":
-        return "ipv6"
-    if next_layer == "eapol":
-        return "eapol"
-    return "unknown"
-
-
 def _ipv4_protocol_for_stack(stack: Sequence[str]) -> str:
     next_layer = _next_layer_after(stack, "ipv4")
     if next_layer in {"icmp", "tcp", "udp"}:
@@ -6165,17 +6128,6 @@ def _ipv6_next_header_for_stack(stack: Sequence[str], layer: str) -> str:
     if next_layer in {"icmpv6", "tcp", "udp"}:
         return next_layer
     return "unknown"
-
-
-def _next_layer_after(stack: Sequence[str], layer: str) -> str | None:
-    try:
-        index = list(stack).index(layer)
-    except ValueError:
-        return None
-    for next_layer in stack[index + 1 :]:
-        if next_layer != "payload":
-            return next_layer
-    return "payload" if "payload" in stack[index + 1 :] else None
 
 
 if __name__ == "__main__":

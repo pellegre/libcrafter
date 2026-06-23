@@ -60,14 +60,12 @@ _LAYER_ALIASES: dict[str, str] = {
     "CookedLinux": "linux_sll",
     "DHCP": "dhcp",
     "DNS": "dns",
-    "Dot1Q": "vlan",
     "Dot11": "dot11",
     "Dot11EltRSN": "rsn",
     "Dot15d4": "dot15d4",
     "Dot15d4Data": "dot15d4",
     "Dot15d4FCS": "dot15d4",
     "ESP": "esp",
-    "Ether": "ethernet",
     "EAPOL": "eapol",
     "ICMP": "icmp",
     "IGMP": "igmp",
@@ -149,9 +147,6 @@ _LAYER_FIELD_ALIASES: dict[str, dict[str, str]] = {
         "qr": "is_response",
         "rcode": "response_code",
     },
-    "ethernet": {
-        "type": "ethertype",
-    },
     "icmp": {
         "id": "identifier",
         "seq": "sequence",
@@ -210,12 +205,6 @@ _LAYER_FIELD_ALIASES: dict[str, dict[str, str]] = {
     "tcp": {
         "ack": "acknowledgement",
         "seq": "sequence",
-    },
-    "vlan": {
-        "dei": "drop_eligible",
-        "prio": "priority",
-        "type": "ethertype",
-        "vlan": "vlan_id",
     },
 }
 _ETHERTYPES: dict[str, int] = {
