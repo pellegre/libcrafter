@@ -34,13 +34,33 @@ for the tests).
 
 from __future__ import annotations
 
+import json
+import posixpath
+import shlex
+from collections.abc import Mapping, Sequence
+
+from ..capability_derivation import capability
 from ..case_helpers import _behavior_case
-from ..model import JSONObject, ProbeCase
+from ..endpoint_addressing import (
+    FAILURE_DECODE_FAILED,
+    FAILURE_TARGET_SETUP_FAILED,
+    FAILURE_TIMEOUT,
+    FAILURE_WRONG_PAYLOAD,
+    FAILURE_WRONG_PEER,
+    _lab_arp_alias_ipv4,
+)
+from ..model import JSONObject, JSONValue, ProbeCase, json_object
 from ..planning_helpers import (
     deterministic_bytes,
     deterministic_documentation_mac,
     deterministic_ipv4_pair,
 )
+from ..target_service_helpers import (
+    KernelStateDescriptor,
+    dedupe_ints,
+)
+from ..target_service_helpers import json_mapping as _json_mapping
+from ..target_service_helpers import string_or as _string_or
 from .base import ProtocolPlugin, register
 
 
@@ -1506,6 +1526,714 @@ _ARP_STIMULUS_ENDPOINT_CASES: frozenset[str] = frozenset(
 )
 
 
+# --------------------------------------------------------------------------- #
+# Target-service descriptors and case selector (moved from target_services.py)
+# --------------------------------------------------------------------------- #
+#
+# Probe cases whose target is primarily the kernel answering ARP who-has on a
+# private L2 segment. ``arp-resolution`` is the legacy smoke case;
+# ``arp-basic-who-has`` is the baseline ARP behavioral case. Both rely on the
+# target kernel answering ARP for its own configured address, with ARP sysctl
+# tuning and a neighbor-cache flush as setup (no listening daemon). Providers
+# without link-layer/broadcast capability skip these cases.
+_ARP_KERNEL_CASES: frozenset[str] = frozenset(
+    {
+        "arp-resolution",
+        "arp-basic-who-has",
+        "arp-repeat-two-replies",
+        "arp-source-address-preserved",
+        "arp-alias-address-reply",
+        "arp-unicast-request-reply",
+        "arp-padding-reply",
+        "arp-cache-flush-reply",
+        "arp-mac-validation",
+        "arp-spa-variation",
+        "arp-broadcast-filtered-capture",
+    }
+)
+
+
+def arp_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
+    """Return the ARP probe plans in order."""
+
+    return [plan for plan in probe_plans if plan.get("case") in _ARP_KERNEL_CASES]
+
+
+def arp_alias_descriptor(
+    *,
+    bind_ipv4: str,
+    source_ipv4: str,
+    alias_ipv4: str,
+    interface: str,
+) -> KernelStateDescriptor:
+    """Describe an ARP alias address added to the target interface."""
+
+    quoted_alias = shlex.quote(f"{alias_ipv4}/32")
+    quoted_iface = shlex.quote(interface)
+    return KernelStateDescriptor(
+        name="arp-alias",
+        purpose="arp-alias-address",
+        bind_ipv4=bind_ipv4,
+        source_ipv4=source_ipv4,
+        setup_commands=[
+            f"ip addr add {quoted_alias} dev {quoted_iface}",
+        ],
+        cleanup_commands=[
+            f"ip addr del {quoted_alias} dev {quoted_iface} || true",
+        ],
+        metadata={
+            "alias_ipv4": alias_ipv4,
+            "interface": interface,
+            "layer": "link",
+            "deterministic": True,
+        },
+    )
+
+
+def arp_sysctl_descriptor(
+    *,
+    bind_ipv4: str,
+    source_ipv4: str,
+    interface: str,
+) -> KernelStateDescriptor:
+    """Describe ARP sysctl tuning and neighbor-cache flush for the target."""
+
+    quoted_iface = shlex.quote(interface)
+    arp_ignore = f"net.ipv4.conf.{interface}.arp_ignore"
+    arp_announce = f"net.ipv4.conf.{interface}.arp_announce"
+    return KernelStateDescriptor(
+        name="arp-sysctl",
+        purpose="arp-neighbor-setup",
+        bind_ipv4=bind_ipv4,
+        source_ipv4=source_ipv4,
+        setup_commands=[
+            f"sysctl -w {shlex.quote(arp_ignore + '=0')}",
+            f"sysctl -w {shlex.quote(arp_announce + '=0')}",
+            f"ip neigh flush dev {quoted_iface} || true",
+        ],
+        cleanup_commands=[
+            f"ip neigh flush dev {quoted_iface} || true",
+        ],
+        metadata={"interface": interface, "layer": "link", "deterministic": True},
+    )
+
+
+def arp_extra_addresses(probe_plans: Sequence[JSONObject]) -> list[str]:
+    """Return secondary IPv4 addresses that ARP live setup must add."""
+
+    addresses: list[str] = []
+    for plan in probe_plans:
+        service = _json_mapping(
+            plan.get("target_service", {}),
+            "probe_plan.target_service",
+        )
+        for key in ("alias_ipv4", "alt_sender_ipv4"):
+            value = _string_or(service.get(key), "")
+            if value:
+                addresses.append(value)
+    return list(dict.fromkeys(addresses))
+
+
+def arp_decoy_events(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
+    """Return ARP decoy events that live setup should emit during capture."""
+
+    events: list[JSONObject] = []
+    for plan in probe_plans:
+        service = _json_mapping(
+            plan.get("target_service", {}),
+            "probe_plan.target_service",
+        )
+        event = service.get("decoy_arp_event")
+        if isinstance(event, Mapping):
+            events.append(json_object(event, "probe_plan.decoy_arp_event"))
+    return events
+
+
+def arp_kernel_state_plan(
+    *,
+    probe_plans: Sequence[JSONObject],
+    dry_run: bool,
+) -> JSONObject:
+    """Return the inspectable ARP kernel setup contract for planned ARP cases."""
+
+    if not probe_plans:
+        return {
+            "planned": False,
+            "state": "not-required",
+            "cases": [],
+            "alias_addresses": [],
+            "alt_sender_addresses": [],
+            "decoy_events": [],
+        }
+
+    alias_addresses: list[str] = []
+    alt_sender_addresses: list[str] = []
+    decoy_events: list[JSONObject] = []
+    interfaces: list[str] = []
+    for plan in probe_plans:
+        service = _json_mapping(
+            plan.get("target_service", {}),
+            "probe_plan.target_service",
+        )
+        alias_ipv4 = _string_or(service.get("alias_ipv4"), "")
+        if alias_ipv4:
+            alias_addresses.append(alias_ipv4)
+        alt_sender_ipv4 = _string_or(service.get("alt_sender_ipv4"), "")
+        if alt_sender_ipv4:
+            alt_sender_addresses.append(alt_sender_ipv4)
+        decoy = service.get("decoy_arp_event")
+        if isinstance(decoy, Mapping):
+            decoy_events.append(json_object(decoy, "probe_plan.decoy_arp_event"))
+        interface = _string_or(service.get("interface"), "")
+        if not interface:
+            interface = _string_or(service.get("neighbor_flush_interface"), "")
+        if interface:
+            interfaces.append(interface)
+
+    state = "planned" if dry_run else "configured"
+    return {
+        "planned": True,
+        "state": state,
+        "case_count": len(probe_plans),
+        "cases": [str(plan.get("case", "")) for plan in probe_plans],
+        "requires_link_layer": True,
+        "arp_sysctls": True,
+        "neighbor_cache_flush": True,
+        "interfaces": list(dict.fromkeys(interfaces)),
+        "alias_addresses": list(dict.fromkeys(alias_addresses)),
+        "alt_sender_addresses": list(dict.fromkeys(alt_sender_addresses)),
+        "decoy_events": decoy_events,
+    }
+
+
+def arp_target_service_contribution(
+    probe_plans: Sequence[JSONObject],
+    *,
+    dry_run: bool,
+) -> JSONObject:
+    """Return the ARP plugin's ``target_service_setup_plan`` contribution.
+
+    ARP stands up no listening daemon; its only target-service contribution is
+    the inspectable ``arp_kernel_state`` contract (the central plan's
+    ``arp_kernel_state`` key). The registry merge overwrites the central plan's
+    default (``not-required``) key with this contract, byte-identical to the
+    legacy per-protocol path that built it inline.
+    """
+
+    return {
+        "arp_kernel_state": arp_kernel_state_plan(
+            probe_plans=arp_probe_plans(probe_plans),
+            dry_run=dry_run,
+        ),
+    }
+
+
+def arp_target_setup_lines(
+    *,
+    artifact_root: str,
+    arp_plans: Sequence[JSONObject],
+) -> list[str]:
+    """Render the ARP kernel-state setup block for the target setup script.
+
+    Moved verbatim from the inline ``if arp_plans:`` block of
+    ``target_services.target_service_setup_script``; the orchestrator calls this
+    with the planned ARP plans so the rendered script bytes stay byte-identical.
+    """
+
+    arp_decoy_events_json = json.dumps(
+        arp_decoy_events(arp_plans),
+        sort_keys=True,
+    )
+    arp_addresses = arp_extra_addresses(arp_plans)
+    lines: list[str] = [
+        'if [ -z "$target_interface" ]; then',
+        "  echo arp_target_interface=missing >&2",
+        "  exit 73",
+        "fi",
+        'ip link show dev "$target_interface" >/dev/null',
+        'printf \'%s\\n\' "ip neigh flush dev $target_interface || true" >> "$cleanup"',
+        'for key in arp_ignore arp_announce; do',
+        '  sysctl_name="net.ipv4.conf.${target_interface}.${key}"',
+        '  before_path="$artifact_root/arp-${key}.before"',
+        '  sysctl -n "$sysctl_name" > "$before_path" 2>/dev/null || true',
+        '  before_value=""',
+        '  if [ -s "$before_path" ]; then before_value="$(cat "$before_path")"; fi',
+        '  if [ -n "$before_value" ]; then',
+        '    printf \'%s\\n\' "sysctl -w ${sysctl_name}=${before_value} >/dev/null 2>&1 || true" >> "$cleanup"',
+        "  fi",
+        '  sysctl -w "${sysctl_name}=0"',
+        "done",
+        'ip neigh flush dev "$target_interface" || true',
+        "echo arp_kernel_state=configured",
+    ]
+    for address in arp_addresses:
+        quoted_address = shlex.quote(address)
+        lines.extend(
+            [
+                (
+                    "if ! ip -4 addr show dev \"$target_interface\" "
+                    f"| grep -Fq {shlex.quote(address + '/32')}; then"
+                ),
+                f"  ip addr add {quoted_address}/32 dev \"$target_interface\"",
+                "fi",
+                (
+                    f"printf '%s\\n' \"ip addr del {quoted_address}/32 dev "
+                    "$target_interface 2>/dev/null || true\" >> \"$cleanup\""
+                ),
+                f"echo arp_extra_address_{address}=configured",
+            ]
+        )
+    if arp_decoy_events_json != "[]":
+        decoy_path = posixpath.join(artifact_root, "arp-decoy-events.json")
+        decoy_script = posixpath.join(artifact_root, "arp-decoy-emitter.py")
+        stdout_path = posixpath.join(artifact_root, "arp-decoy-emitter.stdout.txt")
+        stderr_path = posixpath.join(artifact_root, "arp-decoy-emitter.stderr.txt")
+        pid_path = posixpath.join(artifact_root, "arp-decoy-emitter.pid")
+        lines.extend(
+            [
+                f"cat > {shlex.quote(decoy_path)} <<'JSON'",
+                arp_decoy_events_json,
+                "JSON",
+                f"cat > {shlex.quote(decoy_script)} <<'PY'",
+                "import ipaddress",
+                "import json",
+                "import signal",
+                "import socket",
+                "import struct",
+                "import sys",
+                "import time",
+                "",
+                "stop = False",
+                "",
+                "def handle_stop(_signum, _frame):",
+                "    global stop",
+                "    stop = True",
+                "",
+                "signal.signal(signal.SIGTERM, handle_stop)",
+                "signal.signal(signal.SIGINT, handle_stop)",
+                "",
+                "events_path, iface = sys.argv[1:3]",
+                "events = json.load(open(events_path, encoding='utf-8'))",
+                "",
+                "def mac_bytes(value):",
+                "    return bytes(int(part, 16) for part in str(value).split(':'))",
+                "",
+                "def ip_bytes(value):",
+                "    return ipaddress.IPv4Address(str(value)).packed",
+                "",
+                "def frame(event):",
+                "    ethernet_dst = mac_bytes(event['ethernet_destination'])",
+                "    ethernet_src = mac_bytes(event['ethernet_source'])",
+                "    sender_hw = mac_bytes(event['sender_hardware_addr'])",
+                "    target_hw = mac_bytes(event['target_hardware_addr'])",
+                "    arp = struct.pack(",
+                "        '!HHBBH6s4s6s4s',",
+                "        1,",
+                "        0x0800,",
+                "        6,",
+                "        4,",
+                "        int(event.get('operation', 2)),",
+                "        sender_hw,",
+                "        ip_bytes(event['sender_protocol_addr']),",
+                "        target_hw,",
+                "        ip_bytes(event['target_protocol_addr']),",
+                "    )",
+                "    return ethernet_dst + ethernet_src + struct.pack('!H', 0x0806) + arp",
+                "",
+                "frames = [(event, frame(event)) for event in events if event.get('present', True)]",
+                "sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW)",
+                "sock.bind((iface, 0))",
+                "deadline = time.time() + 30.0",
+                "print(json.dumps({'event': 'listening', 'interface': iface, 'decoy_count': len(frames)}), flush=True)",
+                "while not stop and time.time() < deadline:",
+                "    for event, raw in frames:",
+                "        sock.send(raw)",
+                "        print(json.dumps({'event': 'sent', 'sender_protocol_addr': event.get('sender_protocol_addr'), 'target_protocol_addr': event.get('target_protocol_addr')}, sort_keys=True), flush=True)",
+                "    time.sleep(0.25)",
+                "sock.close()",
+                "print(json.dumps({'event': 'stopped', 'ts': time.time()}), flush=True)",
+                "PY",
+                (
+                    f"python3 {shlex.quote(decoy_script)} {shlex.quote(decoy_path)} "
+                    f"\"$target_interface\" >{shlex.quote(stdout_path)} "
+                    f"2>{shlex.quote(stderr_path)} &"
+                ),
+                "pid=$!",
+                f"echo \"$pid\" > {shlex.quote(pid_path)}",
+                "printf '%s\\n' \"kill $pid 2>/dev/null || true\" >> \"$cleanup\"",
+                f"printf '%s\\n' \"rm -f {shlex.quote(pid_path)}\" >> \"$cleanup\"",
+                "sleep 0.2",
+                "if ! kill -0 \"$pid\" 2>/dev/null; then",
+                f"  cat {shlex.quote(stderr_path)} >&2 || true",
+                "  echo arp_decoy_emitter=failed >&2",
+                "  exit 73",
+                "fi",
+                "echo arp_decoy_emitter=running",
+            ]
+        )
+    return lines
+
+
+# --------------------------------------------------------------------------- #
+# Live-path address rewrite (moved from cli._probe_plan_with_endpoint_addresses)
+# --------------------------------------------------------------------------- #
+
+
+def arp_rewrite_endpoint_addresses(
+    plan: JSONObject,
+    *,
+    source_ipv4: str,
+    target_ipv4: str,
+    source_mac: str | None = None,
+    target_mac: str | None = None,
+    target_interface: str | None = None,
+    rewrite_source: str = "wire_endpoint_plan",
+) -> JSONObject:
+    """Rewrite an ARP probe plan onto the live lab-segment addresses.
+
+    Moved verbatim from the ARP branch of
+    ``cli._probe_plan_with_endpoint_addresses`` (including the shared
+    transport-IPv4 pre-sets that ran before the per-protocol if/elif). ARP rides
+    Ethernet directly, so this returns the rewritten plan rather than falling
+    into the shared IPv4-layer tail.
+    """
+
+    updated = dict(plan)
+    updated["source_ipv4"] = source_ipv4
+    updated["destination_ipv4"] = target_ipv4
+    updated["expected_reply_source_ipv4"] = target_ipv4
+    updated["expected_reply_destination_ipv4"] = source_ipv4
+    case_name = str(updated.get("case", ""))
+    # ARP rides Ethernet directly (no IP/UDP), so the lab rewrite touches the
+    # ARP protocol addresses rather than transport IPs: the stimulus resolves
+    # the target endpoint's IPv4 (target protocol address) from its own IPv4
+    # (sender protocol address). The Ethernet source stays the stimulus MAC
+    # and the request is broadcast; the target hardware/protocol addresses the
+    # reply resolves are the target endpoint's on-segment MAC/IPv4. The
+    # capture filter is link-layer (ARP plus the reply opcode), so it carries
+    # no host/IP terms to rewrite. ARP carries no transport source/destination
+    # IPv4 to overwrite, so this branch returns directly rather than falling
+    # into the shared IP-layer validation tail.
+    #
+    # arp-alias-address-reply is the exception: the kernel answers for a
+    # *configured secondary* IPv4 alias, not its primary on-segment address.
+    # The resolved target protocol address (and the expected reply sender
+    # protocol address) is therefore a distinct alias host in the lab subnet,
+    # derived deterministically from the target endpoint's IPv4 and threaded
+    # into the target_service setup/cleanup (alias add/del) and the expected
+    # reply sender-proto.
+    is_alias_case = case_name == "arp-alias-address-reply"
+    is_spa_case = case_name == "arp-spa-variation"
+    is_filtered_capture_case = case_name == "arp-broadcast-filtered-capture"
+    resolved_source_mac = _string_or(source_mac, "")
+    resolved_target_mac = _string_or(target_mac, "")
+    resolved_target_interface = _string_or(target_interface, "")
+    resolved_ipv4 = (
+        _lab_arp_alias_ipv4(target_ipv4, source_ipv4)
+        if is_alias_case
+        else target_ipv4
+    )
+    # arp-spa-variation is the sender-side exception: the who-has carries an
+    # ALTERNATE sender protocol address (SPA), distinct from the stimulus
+    # endpoint's primary on-segment IPv4 (``source_ipv4``). The SPA is a single
+    # source of truth: the request's sender_protocol_addr and the expected
+    # reply target_protocol_addr are both the alternate SPA. Derive it as a
+    # distinct host on the lab segment (reuse the alias-style host derivation,
+    # which already avoids the source/target/router/broadcast hosts).
+    sender_proto = (
+        _lab_arp_alias_ipv4(source_ipv4, target_ipv4)
+        if is_spa_case
+        else source_ipv4
+    )
+    updated["source_ipv4"] = source_ipv4
+    updated["destination_ipv4"] = resolved_ipv4
+    updated["expected_reply_source_ipv4"] = resolved_ipv4
+    updated["expected_reply_destination_ipv4"] = sender_proto
+    updated["sender_protocol_addr"] = sender_proto
+    updated["target_protocol_addr"] = resolved_ipv4
+    if resolved_source_mac:
+        updated["sender_hardware_addr"] = resolved_source_mac
+        updated["ethernet_source"] = resolved_source_mac
+    if resolved_target_mac and case_name == "arp-unicast-request-reply":
+        updated["ethernet_destination"] = resolved_target_mac
+    if is_alias_case:
+        updated["alias_ipv4"] = resolved_ipv4
+    if is_spa_case:
+        updated["alt_sender_ipv4"] = sender_proto
+    target_service = dict(
+        json_object(updated.get("target_service", {}), "probe_plan.target_service")
+    )
+    target_service.update(
+        {
+            # The kernel's primary on-segment address is the endpoint IPv4; the
+            # alias is added on top of it, so the interface still binds the
+            # endpoint address.
+            "bind_ipv4": target_ipv4,
+            "source_ipv4": source_ipv4,
+            "target_protocol_addr": resolved_ipv4,
+        }
+    )
+    if resolved_target_mac:
+        target_service["target_hardware_addr"] = resolved_target_mac
+        repeat = target_service.get("repeat")
+        if isinstance(repeat, dict) and isinstance(repeat.get("sends"), list):
+            repeat["sends"] = [
+                {
+                    **json_object(send, "probe_plan.target_service.repeat.send"),
+                    "sender_hardware_addr": resolved_target_mac,
+                }
+                for send in repeat["sends"]
+                if isinstance(send, Mapping)
+            ]
+            target_service["repeat"] = repeat
+    if resolved_target_interface:
+        target_service["interface"] = resolved_target_interface
+    if is_alias_case:
+        # Target setup adds the secondary alias to the private interface (and
+        # removes it during cleanup); rewrite the alias onto the lab segment so
+        # the live setup configures the on-segment alias the who-has resolves.
+        target_service["alias_ipv4"] = resolved_ipv4
+        target_service["alias_address"] = True
+    if is_spa_case:
+        # For live execution the target kernel may need the alternate SPA
+        # configured as a secondary sender address so it accepts/answers the
+        # who-has; thread the on-segment SPA into the target service so setup
+        # adds (and cleanup removes) the secondary sender address.
+        target_service["alt_sender_ipv4"] = sender_proto
+        target_service["alt_sender_address"] = True
+    if is_filtered_capture_case:
+        decoy_sender_ipv4 = _lab_arp_alias_ipv4(target_ipv4, source_ipv4)
+        decoy_target_ipv4 = _lab_arp_alias_ipv4(source_ipv4, target_ipv4)
+
+        def _rewrite_decoy_arp_event(raw_event: object) -> JSONObject:
+            event = dict(json_object(raw_event, "probe_plan.decoy_arp_event"))
+            event["sender_protocol_addr"] = decoy_sender_ipv4
+            event["target_protocol_addr"] = decoy_target_ipv4
+            if resolved_target_mac:
+                event["ethernet_source"] = resolved_target_mac
+                event["sender_hardware_addr"] = resolved_target_mac
+            if resolved_source_mac:
+                event["ethernet_destination"] = resolved_source_mac
+                event["target_hardware_addr"] = resolved_source_mac
+            return event
+
+        if isinstance(updated.get("decoy_arp_event"), dict):
+            updated["decoy_arp_event"] = _rewrite_decoy_arp_event(
+                updated["decoy_arp_event"]
+            )
+        target_service["decoy_arp_event"] = updated.get("decoy_arp_event")
+    updated["target_service"] = target_service
+    arp_validation = dict(
+        json_object(updated.get("validation", {}), "probe_plan.validation")
+    )
+    arp_validation["sender_protocol_addr"] = resolved_ipv4
+    # The reply is addressed back to the request's sender protocol address: the
+    # alternate SPA for arp-spa-variation, the stimulus IPv4 otherwise.
+    arp_validation["target_protocol_addr"] = sender_proto
+    if resolved_target_mac:
+        arp_validation["sender_hardware_addr"] = resolved_target_mac
+        arp_validation["ethernet_source"] = resolved_target_mac
+        if "provider_mac" in arp_validation:
+            arp_validation["provider_mac"] = resolved_target_mac
+    if resolved_source_mac:
+        arp_validation["target_hardware_addr"] = resolved_source_mac
+        arp_validation["ethernet_destination"] = resolved_source_mac
+    updated["validation"] = arp_validation
+    if case_name == "arp-unicast-request-reply":
+        # The unicast case sends the request directly to the known target MAC
+        # rather than the broadcast address. Pin the request's Ethernet
+        # destination to the target endpoint's hardware address (the resolved
+        # target MAC the reply also carries) so the request stays unicast and
+        # the target MAC remains a single source of truth across the request
+        # frame, the target service, and the is-at validation contract.
+        target_mac_value = target_service.get("target_hardware_addr")
+        if isinstance(target_mac_value, str) and target_mac_value:
+            updated["ethernet_destination"] = target_mac_value
+    if case_name == "arp-cache-flush-reply":
+        # The cache-flush case carries an explicit pre-stimulus neighbor flush
+        # (a `flush_neighbor` marker plus the setup/cleanup `ip neigh` commands)
+        # both at the top level (read by the endpoint via the flattened plan)
+        # and mirrored into the target service. The documentation-space commands
+        # name the stimulus IPv4; rewrite that onto the lab segment so the live
+        # setup flushes the querier the on-segment who-has actually resolves.
+        doc_stimulus_ipv4 = str(plan.get("source_ipv4", ""))
+
+        def _rewrite_flush(commands: object) -> object:
+            if not isinstance(commands, list):
+                return commands
+            rewritten = [
+                command.replace(doc_stimulus_ipv4, source_ipv4)
+                if isinstance(command, str) and doc_stimulus_ipv4
+                else command
+                for command in commands
+            ]
+            if resolved_target_interface:
+                old_interface = _string_or(
+                    updated.get("neighbor_flush_interface"),
+                    _string_or(target_service.get("neighbor_flush_interface"), "eth0"),
+                )
+                rewritten = [
+                    command.replace(
+                        f" dev {old_interface}",
+                        f" dev {resolved_target_interface}",
+                    )
+                    if isinstance(command, str)
+                    else command
+                    for command in rewritten
+                ]
+            return rewritten
+
+        for key in ("neighbor_flush_commands", "neighbor_flush_cleanup_commands"):
+            if key in updated:
+                updated[key] = _rewrite_flush(updated[key])
+            if key in target_service:
+                target_service[key] = _rewrite_flush(target_service[key])
+        if resolved_target_interface:
+            updated["neighbor_flush_interface"] = resolved_target_interface
+            target_service["neighbor_flush_interface"] = resolved_target_interface
+        updated["target_service"] = target_service
+    # arp-repeat-two-replies carries a per-send array: rewrite each who-has
+    # send's ARP protocol addresses and is-at validation contract onto the lab
+    # segment so every send resolves the same target and each decoded is-at
+    # reply is validated against its own send. The two sends share the target
+    # (the case point is a repeated who-has for one target), so they all
+    # resolve the same on-segment protocol addresses.
+    arp_sends = updated.get("arp_sends")
+    if isinstance(arp_sends, list):
+        rewritten_arp_sends: list[JSONObject] = []
+        for raw_send in arp_sends:
+            send = dict(json_object(raw_send, "probe_plan.arp_send"))
+            send["source_ipv4"] = source_ipv4
+            send["destination_ipv4"] = target_ipv4
+            send["expected_reply_source_ipv4"] = target_ipv4
+            send["expected_reply_destination_ipv4"] = source_ipv4
+            send["sender_protocol_addr"] = source_ipv4
+            send["target_protocol_addr"] = target_ipv4
+            if resolved_source_mac:
+                send["sender_hardware_addr"] = resolved_source_mac
+                send["ethernet_source"] = resolved_source_mac
+            send_validation = dict(
+                json_object(send.get("validation", {}), "probe_plan.arp_send.validation")
+            )
+            send_validation["sender_protocol_addr"] = target_ipv4
+            send_validation["target_protocol_addr"] = source_ipv4
+            if resolved_target_mac:
+                send_validation["sender_hardware_addr"] = resolved_target_mac
+                send_validation["ethernet_source"] = resolved_target_mac
+            if resolved_source_mac:
+                send_validation["target_hardware_addr"] = resolved_source_mac
+                send_validation["ethernet_destination"] = resolved_source_mac
+            send["validation"] = send_validation
+            rewritten_arp_sends.append(send)
+        updated["arp_sends"] = rewritten_arp_sends
+    live_rewrite: JSONObject = {
+        "source": rewrite_source,
+        "stimulus_ipv4": source_ipv4,
+        "target_ipv4": target_ipv4,
+    }
+    if is_alias_case:
+        live_rewrite["alias_ipv4"] = resolved_ipv4
+    if is_filtered_capture_case:
+        decoy_arp_event = updated.get("decoy_arp_event")
+        if isinstance(decoy_arp_event, dict):
+            live_rewrite["decoy_sender_ipv4"] = decoy_arp_event.get(
+                "sender_protocol_addr"
+            )
+            live_rewrite["decoy_target_ipv4"] = decoy_arp_event.get(
+                "target_protocol_addr"
+            )
+    updated["live_address_rewrite"] = live_rewrite
+    return updated
+
+
+# --------------------------------------------------------------------------- #
+# Failure-reason taxonomy (moved from cli._failure_reasons_for_case)
+# --------------------------------------------------------------------------- #
+
+
+_ARP_SETUP_SENSITIVE_CASES: frozenset[str] = frozenset(
+    {
+        "arp-alias-address-reply",
+        "arp-cache-flush-reply",
+        "arp-spa-variation",
+        "arp-broadcast-filtered-capture",
+    }
+)
+_ARP_PLAIN_CASES: frozenset[str] = frozenset(
+    {
+        "arp-resolution",
+        "arp-basic-who-has",
+        "arp-repeat-two-replies",
+        "arp-source-address-preserved",
+        "arp-unicast-request-reply",
+        "arp-padding-reply",
+        "arp-mac-validation",
+    }
+)
+
+
+def arp_failure_reasons(case_name: str) -> list[str] | None:
+    """Return the ordered ARP failure-reason taxonomy for ``case_name``.
+
+    Moved verbatim from the two ARP branches of
+    ``cli._failure_reasons_for_case``. Returns ``None`` for a non-ARP case so
+    the central dispatcher falls through to the next branch.
+    """
+
+    if case_name in _ARP_SETUP_SENSITIVE_CASES:
+        # The alias case adds (and removes) a secondary IPv4 on the target
+        # interface as part of target setup; the cache-flush case flushes the
+        # neighbor cache before the stimulus as part of target setup; the
+        # spa-variation case may configure a secondary *sender* IPv4 so the kernel
+        # accepts the reply addressed to the alternate SPA; the filtered-capture
+        # case may emit a decoy ARP setup event. Any setup step failing is a
+        # distinct failure mode on top of the shared ARP reasons.
+        return [
+            FAILURE_TIMEOUT,
+            FAILURE_WRONG_PEER,
+            FAILURE_WRONG_PAYLOAD,
+            FAILURE_DECODE_FAILED,
+            FAILURE_TARGET_SETUP_FAILED,
+        ]
+    if case_name in _ARP_PLAIN_CASES:
+        return [
+            FAILURE_TIMEOUT,
+            FAILURE_WRONG_PEER,
+            FAILURE_WRONG_PAYLOAD,
+            FAILURE_DECODE_FAILED,
+        ]
+    return None
+
+
+# --------------------------------------------------------------------------- #
+# Lab-capability derivation (moved from lab.probe_capabilities_from_lab_capabilities)
+# --------------------------------------------------------------------------- #
+
+
+def arp_lab_capabilities(substrate: Mapping[str, JSONValue]) -> Mapping[str, object]:
+    """Return the ARP plugin's derived probe-capability contribution.
+
+    Moved verbatim from the ARP boolean derivation in
+    ``lab.probe_capabilities_from_lab_capabilities``: ``arp_resolution`` needs a
+    same-segment link-layer substrate (send/capture + broadcast), and
+    ``link_layer_arp`` additionally needs the provider's target MAC. The
+    ``capability_names``/``capability_sources`` tables stay in ``lab`` (they are
+    the shared cross-protocol structure); this hook contributes only the two
+    derived booleans, merged byte-identically over the legacy values.
+    """
+
+    link_layer_send = capability(substrate, "link_layer_send")
+    link_layer_capture = capability(substrate, "link_layer_capture")
+    broadcast = capability(substrate, "broadcast")
+    provider_mac = capability(substrate, "provider_mac_known", "provider_mac")
+    arp_resolution = link_layer_send and link_layer_capture and broadcast
+    link_layer_arp = arp_resolution and provider_mac
+    return {
+        "arp_resolution": arp_resolution,
+        "link_layer_arp": link_layer_arp,
+    }
+
+
 register(
     ProtocolPlugin(
         name="arp",
@@ -1522,12 +2250,18 @@ register(
         # and behavior profiles). Contribute nothing here.
         profile_counts={},
         stimulus_endpoint_cases=_ARP_STIMULUS_ENDPOINT_CASES,
-        # The target-service / address-rewrite / failure-reason / lab-capability
-        # hooks are added in the second half of the ARP slice (step 18).
-        target_service=None,
+        # ARP target-service / address-rewrite / failure-reason / lab-capability
+        # hooks (step 18). ``target_service`` contributes the ``arp_kernel_state``
+        # plan key (and diverts the ARP cases off the legacy target path).
+        # ``setup_script`` stays ``None``: ARP's setup-script block needs the
+        # planned ARP plans, which the plugin ``setup_script`` hook does not
+        # receive, so ``target_services.target_service_setup_script`` renders the
+        # block by calling :func:`arp_target_setup_lines` directly (the same way
+        # the legacy code rendered it, byte-identically).
+        target_service=arp_target_service_contribution,
         setup_script=None,
-        rewrite_endpoint_addresses=None,
-        failure_reasons=None,
-        lab_capabilities=None,
+        rewrite_endpoint_addresses=arp_rewrite_endpoint_addresses,
+        failure_reasons=arp_failure_reasons,
+        lab_capabilities=arp_lab_capabilities,
     )
 )
