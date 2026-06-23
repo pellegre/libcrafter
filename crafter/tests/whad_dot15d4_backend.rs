@@ -82,10 +82,7 @@ fn dot15d4_packetwire_sniff_decodes_received_raw_pdu() {
 
     assert_eq!(record.metadata().origin(), PacketOrigin::Captured);
     assert_eq!(record.metadata().backend(), &BackendKind::Whad);
-    assert_eq!(
-        record.metadata().link_type(),
-        Some(LinkType::Ieee802154Tap)
-    );
+    assert_eq!(record.metadata().link_type(), Some(LinkType::Ieee802154Tap));
     match record.metadata().medium() {
         Some(MediumMetadata::Dot15d4(dot15d4)) => {
             assert_eq!(dot15d4.channel(), Some(DOT15D4_CHANNEL));
@@ -111,7 +108,10 @@ fn dot15d4_packetwire_sniff_decodes_received_raw_pdu() {
             .find(|(key, _)| *key == name)
             .map(|(_, value)| value.as_str())
     };
-    assert_eq!(radio_field("channel"), Some(DOT15D4_CHANNEL.to_string().as_str()));
+    assert_eq!(
+        radio_field("channel"),
+        Some(DOT15D4_CHANNEL.to_string().as_str())
+    );
     assert_eq!(radio_field("fcs_valid"), Some("true"));
     let mac = packet
         .layer::<Dot15d4>()

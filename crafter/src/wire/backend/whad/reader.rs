@@ -144,12 +144,8 @@ fn record_from_dot15d4_rx(rx: WhadDot15d4Rx) -> Result<PacketRecord> {
     let decoded = decode_dot15d4_with_registry(ProtocolRegistry::builtin(), &rx.pdu, false)?;
     let packet = Packet::from_layer(radio).concat(decoded);
 
-    let dot15d4 = Dot15d4Metadata::from_whad_rx_descriptor(
-        rx.channel,
-        rx.rssi,
-        rx.fcs_valid,
-        rx.lqi,
-    );
+    let dot15d4 =
+        Dot15d4Metadata::from_whad_rx_descriptor(rx.channel, rx.rssi, rx.fcs_valid, rx.lqi);
     Ok(PacketRecord::new(packet)
         .with_origin(PacketOrigin::Captured)
         .with_backend(BackendKind::Whad)
@@ -330,10 +326,7 @@ mod dot15d4_reader {
         let radio = packet.layer::<Dot15d4Radio>().expect("Dot15d4Radio layer");
         assert_eq!(radio.effective_channel_for_backend(), DOT15D4_SNIFF_CHANNEL);
 
-        assert_eq!(
-            record.metadata().link_type(),
-            Some(LinkType::Ieee802154Tap)
-        );
+        assert_eq!(record.metadata().link_type(), Some(LinkType::Ieee802154Tap));
     }
 
     fn raw_pdu_received() -> proto::Message {

@@ -59,10 +59,7 @@ fn dot15d4_hex_fixture_decodes_extended_data_frame() {
         field_value(&fields, "dest_addr"),
         Some("0x0011223344556677")
     );
-    assert_eq!(
-        field_value(&fields, "src_addr"),
-        Some("0x8899AABBCCDDEEFF")
-    );
+    assert_eq!(field_value(&fields, "src_addr"), Some("0x8899AABBCCDDEEFF"));
     assert_eq!(field_value(&fields, "pan_id_compression"), Some("true"));
 }
 

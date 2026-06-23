@@ -559,14 +559,16 @@ impl Layer for Dot15d4 {
 
         fields.push(format!("seq={}", self.effective_seq()));
 
-        if let Some(dst) =
-            dot15d4_addr_label(self.effective_dest_addr_mode(), self.dest_addr.value().copied())
-        {
+        if let Some(dst) = dot15d4_addr_label(
+            self.effective_dest_addr_mode(),
+            self.dest_addr.value().copied(),
+        ) {
             fields.push(format!("dst={dst}"));
         }
-        if let Some(src) =
-            dot15d4_addr_label(self.effective_src_addr_mode(), self.src_addr.value().copied())
-        {
+        if let Some(src) = dot15d4_addr_label(
+            self.effective_src_addr_mode(),
+            self.src_addr.value().copied(),
+        ) {
             fields.push(format!("src={src}"));
         }
 
@@ -582,15 +584,27 @@ impl Layer for Dot15d4 {
             ("seq", self.effective_seq().to_string()),
             (
                 "security_enabled",
-                self.security_enabled.value().copied().unwrap_or(false).to_string(),
+                self.security_enabled
+                    .value()
+                    .copied()
+                    .unwrap_or(false)
+                    .to_string(),
             ),
             (
                 "frame_pending",
-                self.frame_pending.value().copied().unwrap_or(false).to_string(),
+                self.frame_pending
+                    .value()
+                    .copied()
+                    .unwrap_or(false)
+                    .to_string(),
             ),
             (
                 "ack_request",
-                self.ack_request.value().copied().unwrap_or(false).to_string(),
+                self.ack_request
+                    .value()
+                    .copied()
+                    .unwrap_or(false)
+                    .to_string(),
             ),
             (
                 "pan_id_compression",
@@ -598,14 +612,16 @@ impl Layer for Dot15d4 {
             ),
         ];
 
-        if let Some(dst) =
-            dot15d4_addr_label(self.effective_dest_addr_mode(), self.dest_addr.value().copied())
-        {
+        if let Some(dst) = dot15d4_addr_label(
+            self.effective_dest_addr_mode(),
+            self.dest_addr.value().copied(),
+        ) {
             fields.push(("dest_addr", dst));
         }
-        if let Some(src) =
-            dot15d4_addr_label(self.effective_src_addr_mode(), self.src_addr.value().copied())
-        {
+        if let Some(src) = dot15d4_addr_label(
+            self.effective_src_addr_mode(),
+            self.src_addr.value().copied(),
+        ) {
             fields.push(("src_addr", src));
         }
 
@@ -690,7 +706,11 @@ fn read_dot15d4_addr(
 
     let required = *offset + width;
     if bytes.len() < required {
-        return Err(CrafterError::buffer_too_short(context, required, bytes.len()));
+        return Err(CrafterError::buffer_too_short(
+            context,
+            required,
+            bytes.len(),
+        ));
     }
 
     let addr = match mode {
@@ -720,7 +740,11 @@ fn read_dot15d4_addr(
 fn read_dot15d4_pan(bytes: &[u8], offset: &mut usize, context: &'static str) -> Result<u16> {
     let required = *offset + DOT15D4_PAN_ID_LEN;
     if bytes.len() < required {
-        return Err(CrafterError::buffer_too_short(context, required, bytes.len()));
+        return Err(CrafterError::buffer_too_short(
+            context,
+            required,
+            bytes.len(),
+        ));
     }
     let pan = u16::from_le_bytes([bytes[*offset], bytes[*offset + 1]]);
     *offset = required;
@@ -797,7 +821,11 @@ pub(crate) fn decode_dot15d4(bytes: &[u8]) -> Result<(Dot15d4, &[u8])> {
     let mut offset = seq_offset + DOT15D4_SEQ_LEN;
 
     let dest_pan = if dest_pan_present {
-        Field::user(read_dot15d4_pan(bytes, &mut offset, "dot15d4.mac.addressing")?)
+        Field::user(read_dot15d4_pan(
+            bytes,
+            &mut offset,
+            "dot15d4.mac.addressing",
+        )?)
     } else {
         Field::unset()
     };
@@ -813,7 +841,11 @@ pub(crate) fn decode_dot15d4(bytes: &[u8]) -> Result<(Dot15d4, &[u8])> {
     };
 
     let src_pan = if src_pan_present {
-        Field::user(read_dot15d4_pan(bytes, &mut offset, "dot15d4.mac.addressing")?)
+        Field::user(read_dot15d4_pan(
+            bytes,
+            &mut offset,
+            "dot15d4.mac.addressing",
+        )?)
     } else {
         Field::unset()
     };
@@ -1147,7 +1179,10 @@ mod dot15d4_mac_layer {
     fn layer_name_and_summary() {
         let frame = reference_frame();
         assert_eq!(frame.name(), "Dot15d4");
-        assert_eq!(frame.summary(), "Dot15d4(Data, seq=7, dst=0x1234, src=0x5678)");
+        assert_eq!(
+            frame.summary(),
+            "Dot15d4(Data, seq=7, dst=0x1234, src=0x5678)"
+        );
 
         // Inspection fields surface the frame type, sequence number, flags, and
         // addresses.
@@ -1198,10 +1233,7 @@ mod dot15d4_mac_layer {
         // A single octet cannot hold the 2-octet FCF.
         let err = decode_dot15d4(&[0x41]).expect_err("must reject a truncated FCF");
 
-        assert_eq!(
-            err,
-            CrafterError::buffer_too_short("dot15d4.mac.fcf", 2, 1)
-        );
+        assert_eq!(err, CrafterError::buffer_too_short("dot15d4.mac.fcf", 2, 1));
     }
 
     #[test]
@@ -1339,7 +1371,10 @@ mod dot15d4_mac_layer {
             decode_dot15d4(ext_bytes).expect("decode extended-addressed MAC frame");
 
         assert_eq!(ext_tail, &[0xDE, 0xAD, 0xBE, 0xEF]);
-        assert_eq!(ext_decoded.frame_type.value(), Some(&Dot15d4FrameType::Data));
+        assert_eq!(
+            ext_decoded.frame_type.value(),
+            Some(&Dot15d4FrameType::Data)
+        );
         assert_eq!(ext_decoded.seq.value(), Some(&42));
         assert_eq!(
             ext_decoded.dest_addr_mode.value(),
@@ -1395,7 +1430,9 @@ mod dot15d4_stack {
                 .counter(7)
                 .payload(&[0x01, 0x02]);
 
-        let compiled = packet.compile().expect("compile Dot15d4/ZigbeeNwk/ZigbeeAps stack");
+        let compiled = packet
+            .compile()
+            .expect("compile Dot15d4/ZigbeeNwk/ZigbeeAps stack");
         let bytes = compiled.as_bytes();
 
         // Reference MAC header (FCF + seq + addressing), NWK header, and APS
@@ -1437,7 +1474,10 @@ mod dot15d4_stack {
         // successive tails: MAC payload -> NWK -> APS.
         let (mac, mac_tail) = decode_dot15d4(bytes).expect("decode MAC frame");
         // The MAC payload tail is the NWK + APS bytes (the FCS is split off).
-        assert_eq!(mac_tail, frame_no_fcs[mac_header.len()..].to_vec().as_slice());
+        assert_eq!(
+            mac_tail,
+            frame_no_fcs[mac_header.len()..].to_vec().as_slice()
+        );
         assert_eq!(mac.frame_type.value(), Some(&Dot15d4FrameType::Data));
         assert_eq!(mac.seq.value(), Some(&9));
         assert_eq!(mac.dest_addr_mode.value(), Some(&Dot15d4AddrMode::Short));

@@ -1409,16 +1409,30 @@ mod registry_dot15d4 {
             .compile()
             .expect("compile TAP + MAC + NWK + APS stack");
 
-        let decoded =
-            Packet::decode_from_link(LinkType::Ieee802154Tap, compiled.as_bytes())
-                .expect("decode TAP 802.15.4 frame via decode_from_link");
+        let decoded = Packet::decode_from_link(LinkType::Ieee802154Tap, compiled.as_bytes())
+            .expect("decode TAP 802.15.4 frame via decode_from_link");
 
-        assert!(decoded.layer::<Dot15d4Radio>().is_some(), "Dot15d4Radio layer present");
-        assert!(decoded.layer::<Dot15d4>().is_some(), "Dot15d4 MAC layer present");
-        assert!(decoded.layer::<ZigbeeNwk>().is_some(), "ZigbeeNwk layer present");
-        assert!(decoded.layer::<ZigbeeAps>().is_some(), "ZigbeeAps layer present");
+        assert!(
+            decoded.layer::<Dot15d4Radio>().is_some(),
+            "Dot15d4Radio layer present"
+        );
+        assert!(
+            decoded.layer::<Dot15d4>().is_some(),
+            "Dot15d4 MAC layer present"
+        );
+        assert!(
+            decoded.layer::<ZigbeeNwk>().is_some(),
+            "ZigbeeNwk layer present"
+        );
+        assert!(
+            decoded.layer::<ZigbeeAps>().is_some(),
+            "ZigbeeAps layer present"
+        );
         assert_eq!(
-            decoded.layer::<Raw>().expect("APS payload preserved as Raw").as_bytes(),
+            decoded
+                .layer::<Raw>()
+                .expect("APS payload preserved as Raw")
+                .as_bytes(),
             &[0x01, 0x02]
         );
     }
@@ -1445,10 +1459,22 @@ mod registry_dot15d4 {
         let decoded = Packet::decode_from_link(LinkType::Ieee802154, mac_only.as_bytes())
             .expect("decode bare 802.15.4 frame via decode_from_link");
 
-        assert!(decoded.layer::<Dot15d4Radio>().is_none(), "no radio descriptor for bare frame");
-        assert!(decoded.layer::<Dot15d4>().is_some(), "Dot15d4 MAC layer present");
-        assert!(decoded.layer::<ZigbeeNwk>().is_some(), "ZigbeeNwk layer present");
-        assert!(decoded.layer::<ZigbeeAps>().is_some(), "ZigbeeAps layer present");
+        assert!(
+            decoded.layer::<Dot15d4Radio>().is_none(),
+            "no radio descriptor for bare frame"
+        );
+        assert!(
+            decoded.layer::<Dot15d4>().is_some(),
+            "Dot15d4 MAC layer present"
+        );
+        assert!(
+            decoded.layer::<ZigbeeNwk>().is_some(),
+            "ZigbeeNwk layer present"
+        );
+        assert!(
+            decoded.layer::<ZigbeeAps>().is_some(),
+            "ZigbeeAps layer present"
+        );
     }
 
     #[test]

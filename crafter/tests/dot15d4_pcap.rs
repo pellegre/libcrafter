@@ -155,7 +155,9 @@ fn dot15d4_tap_pcap_roundtrip_fixture_decodes_and_rewrites() {
         radio.summary()
     );
 
-    let mac = packet.layer::<Dot15d4>().expect("decoded 802.15.4 MAC layer");
+    let mac = packet
+        .layer::<Dot15d4>()
+        .expect("decoded 802.15.4 MAC layer");
     let mac_summary = mac.summary();
     assert!(mac_summary.contains("Data"), "mac summary: {mac_summary}");
     assert!(mac_summary.contains("seq=9"), "mac summary: {mac_summary}");
@@ -177,7 +179,9 @@ fn dot15d4_tap_pcap_roundtrip_fixture_decodes_and_rewrites() {
         writer
             .write_record(record)
             .expect("802.15.4 TAP pcap record should rewrite");
-        writer.flush().expect("802.15.4 TAP pcap writer should flush");
+        writer
+            .flush()
+            .expect("802.15.4 TAP pcap writer should flush");
     }
     assert_eq!(rewritten, fixture);
 }
@@ -231,7 +235,9 @@ fn dot15d4_withfcs_pcap_roundtrip_fixture_decodes_and_rewrites() {
         "bare MAC decode must not carry a radio pseudo-header"
     );
 
-    let mac = packet.layer::<Dot15d4>().expect("decoded 802.15.4 MAC layer");
+    let mac = packet
+        .layer::<Dot15d4>()
+        .expect("decoded 802.15.4 MAC layer");
     let mac_summary = mac.summary();
     assert!(mac_summary.contains("Data"), "mac summary: {mac_summary}");
     assert!(mac_summary.contains("seq=7"), "mac summary: {mac_summary}");

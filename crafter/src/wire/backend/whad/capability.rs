@@ -161,11 +161,7 @@ fn assert_dot15d4_capability(device: &WhadDevice, mode: WhadDot15d4Mode) -> Resu
         }
         WhadDot15d4Mode::Send => {
             require_dot15d4_command(commands, proto::dot15d4::Dot15d4Command::Send, "Send")?;
-            require_dot15d4_command(
-                commands,
-                proto::dot15d4::Dot15d4Command::SendRaw,
-                "SendRaw",
-            )?;
+            require_dot15d4_command(commands, proto::dot15d4::Dot15d4Command::SendRaw, "SendRaw")?;
         }
     }
     require_dot15d4_command(commands, proto::dot15d4::Dot15d4Command::Start, "Start")
