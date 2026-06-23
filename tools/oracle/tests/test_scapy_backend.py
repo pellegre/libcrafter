@@ -920,9 +920,12 @@ class ScapyIpsecMaterializationTest(unittest.TestCase):
     """ESP/AH/IKEv2 plans materialize through Scapy and decode to the model."""
 
     def test_layer_and_protocol_maps_register_ipsec(self) -> None:
-        self.assertEqual(packets._SCAPY_LAYER_BY_LAYER["esp"], "ESP")
-        self.assertEqual(packets._SCAPY_LAYER_BY_LAYER["ah"], "AH")
-        self.assertEqual(packets._SCAPY_LAYER_BY_LAYER["ikev2"], "ISAKMP")
+        # esp/ah/ikev2 are migrated to ``protocols/ipsec.py``; their Scapy class
+        # names resolve from the registry via ``_scapy_layer_name`` rather than the
+        # legacy ``_SCAPY_LAYER_BY_LAYER`` table.
+        self.assertEqual(packets._scapy_layer_name("esp"), "ESP")
+        self.assertEqual(packets._scapy_layer_name("ah"), "AH")
+        self.assertEqual(packets._scapy_layer_name("ikev2"), "ISAKMP")
         self.assertEqual(packets._IP_PROTOCOLS["esp"], 50)
         self.assertEqual(packets._IP_PROTOCOLS["ah"], 51)
 

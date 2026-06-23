@@ -13,7 +13,6 @@ from .encode_helpers import (
     _IP_PROTOCOLS,
     _IPV6_NEXT_HEADERS,
     _bytes_exact,
-    _bytes_field,
     _bytes_optional,
     _ethertype_value,
     _hardware_type_value,
@@ -68,12 +67,30 @@ from .protocols.igmp import (
 # re-imported here so the existing ``test_dns_backend.py`` references
 # (``packets._dns`` / ``packets._dns_record_entry``) keep resolving after the move.
 from .protocols.dns import _dns, _dns_record_entry
+# The ``esp`` / ``ah`` / ``ikev2`` layers are migrated to ``protocols/ipsec.py`` and
+# registered in ``SCAPY_REGISTRY`` (their per-layer raw builders are reached through
+# the ``_build_layer`` registry consult). The ESP/AH SecurityAssociation path is a
+# PLAN-DEPENDENT whole-stack decision (the null/opaque case is excluded by plan
+# metadata, which the stack-only ``StackEncoder.matches`` contract cannot see), so
+# its selection stays in ``encode_packet_plan`` below; the materializer and its
+# crypto maps / predicate are re-imported from the plugin (``_materialize_ipsec_sa_packet``
+# takes a ``build_layer`` callback to avoid a circular import). ``_is_ipsec_sa_stack``
+# / ``_canonical_stack`` keep resolving through ``packets`` for the existing
+# ``test_scapy_backend.py`` references.
+from .protocols.ipsec import (
+    _is_ipsec_sa_stack,
+    _materialize_ipsec_sa_packet,
+)
 
 
 BACKEND_NAME = "scapy"
 
 _SCAPY_LAYER_BY_LAYER: dict[str, str] = {
-    "ah": "AH",
+    # The base ``esp`` / ``ah`` / ``ikev2`` layers are migrated to
+    # ``protocols/ipsec.py`` (their ``ScapyProtocol`` declares ``scapy_class``
+    # ``ESP`` / ``AH`` / ``ISAKMP``, which drives ``_scapy_layer_name`` and the
+    # ``scapy_stack`` metadata); ``_scapy_layer_name`` resolves them from the
+    # registry, so they no longer carry literal entries here.
     "ble_adv": "BTLE_ADV_IND",
     "ble_radio": "BTLE_PHDR",
     "dot11": "Dot11",
@@ -84,7 +101,6 @@ _SCAPY_LAYER_BY_LAYER: dict[str, str] = {
     # the same way the BLE LL-with-PHDR pseudo-header is handled.
     "dot15d4_radio": "Raw",
     "eapol": "EAPOL",
-    "esp": "ESP",
     # IGMP contrib classes are not exposed through scapy.all consistently
     # across supported Scapy versions, so the oracle materializer emits exact
     # IGMP bytes through Raw while preserving IPv4 protocol number 2. The base
@@ -96,7 +112,6 @@ _SCAPY_LAYER_BY_LAYER: dict[str, str] = {
     "igmp_extension": "Raw",
     "igmp_query": "Raw",
     "igmp_report": "Raw",
-    "ikev2": "ISAKMP",
     "ipv6_destination_options": "IPv6ExtHdrDestOpt",
     "ipv6_fragment": "IPv6ExtHdrFragment",
     "ipv6_hop_by_hop": "IPv6ExtHdrHopByHop",
@@ -290,37 +305,9 @@ _SUPPORTED_FIELDS_BY_LAYER: dict[str, set[str]] = {
         "replay_counter",
         "version",
     },
-    "esp": {
-        # The pinned key/salt/IV crypto context (see the generator determinism
-        # seam) is consumed by the SecurityAssociation materializer.
-        "crypto",
-        "icv",
-        "iv",
-        "next_header",
-        "pad_length",
-        "sequence",
-        "spi",
-    },
-    "ah": {
-        "crypto",
-        "icv",
-        "next_header",
-        "payload_len",
-        "reserved",
-        "sequence",
-        "spi",
-    },
-    "ikev2": {
-        "crypto",
-        "exchange_type",
-        "flags",
-        "initiator_spi",
-        "length",
-        "message_id",
-        "next_payload",
-        "responder_spi",
-        "version",
-    },
+    # The ``esp`` / ``ah`` / ``ikev2`` field allowlists moved to
+    # ``protocols/ipsec.py`` (their ``ScapyProtocol.supported_fields``);
+    # ``_scapy_supported_fields`` resolves them from the registry.
     # The base ``igmp`` field allowlist moved to ``protocols/igmp.py`` (its
     # ``ScapyProtocol.supported_fields``); ``_scapy_supported_fields`` resolves it
     # from the registry. The ``igmp_query`` / ``igmp_report`` / ``igmp_extension``
@@ -468,7 +455,7 @@ def encode_packet_plan(
         if raw is None:
             raise ValueError("Scapy raw materializer was not initialized")
         raw_bytes, ipsec_sa_metadata = _materialize_ipsec_sa_packet(
-            plan, stack, scapy_all
+            plan, stack, scapy_all, _build_layer
         )
         raw_bytes, udp_options_metadata = _materialize_udp_options(plan, root, raw_bytes)
     else:
@@ -553,20 +540,6 @@ def _build_layer(plan: PacketPlan, stack: list[str], index: int, scapy_all: Any)
         return scapy_all.Raw(load=_igmp_report_bytes(fields))
     if layer == "igmp_extension":
         return scapy_all.Raw(load=_igmp_extension_layer_bytes(_layer_fields_for_stack_index(fields, stack, index)))
-    if layer == "esp":
-        return _esp(fields, scapy_all)
-    if layer == "ah":
-        return _ah(fields, scapy_all)
-    if layer == "ikev2":
-        return _ikev2(fields, scapy_all)
-    if layer == "dot15d4_radio":
-        return _dot15d4_radio(fields, scapy_all)
-    if layer == "dot15d4":
-        return _dot15d4(fields, stack, index, scapy_all)
-    if layer == "zigbee_nwk":
-        return _zigbee_nwk(fields, stack, index, scapy_all)
-    if layer == "zigbee_aps":
-        return _zigbee_aps(fields, stack, index, scapy_all)
 
     raise ValueError(f"unsupported Scapy materialization layer: {layer}")
 
@@ -579,730 +552,16 @@ def _build_layer(plan: PacketPlan, stack: list[str], index: int, scapy_all: Any)
 # resolver, which the ripng plugin imports from the co-located ``rip`` plugin.
 
 # --------------------------------------------------------------------------
-# IPSec (ESP / AH / IKEv2) materialization.
-#
-# ESP and AH byte-parity is driven by scapy.layers.ipsec.SecurityAssociation:
-# the SA seals the cleartext IP packet (transport: the upper-layer data;
-# tunnel: the inner IP datagram) with the algorithm, key, salt, and explicit IV
-# pinned by the generator's determinism seam, so the emitted
-# SPI || Seq || IV || ciphertext || ICV (ESP) or AH header + ICV (AH) matches
-# libcrafter octet-for-octet. The ESP-null/opaque case and IKEv2 (ISAKMP) do not
-# need an SA and are built as raw layers in the normal chain.
-#
-# The crypto suite is keyed off the plan's feature/feature_behavior metadata
-# (esp_aead -> AES-GCM-16; esp_cbc cbc-hmac -> AES-CBC + HMAC-SHA2-256-128;
-# esp_cbc null-opaque -> ENCR_NULL opaque; ah_integrity -> HMAC-SHA2-256-128),
-# matching the feature specs and RFC 4106 / RFC 3602 / RFC 4302 placement.
-
-# libcrafter EncryptionAlgorithm / IntegrityAlgorithm names mapped to scapy's
-# SecurityAssociation crypt_algo / auth_algo identifiers.
-_IPSEC_CRYPT_ALGO_BY_NAME: dict[str, str] = {
-    "aes-gcm-16": "AES-GCM",
-    "encr_aes_gcm_16": "AES-GCM",
-    "aes-cbc": "AES-CBC",
-    "encr_aes_cbc": "AES-CBC",
-    "aes-ctr": "AES-CTR",
-    "encr_aes_ctr": "AES-CTR",
-    "null": "NULL",
-    "encr_null": "NULL",
-}
-_IPSEC_AUTH_ALGO_BY_NAME: dict[str, str] = {
-    "hmac-sha2-256-128": "SHA2-256-128",
-    "auth_hmac_sha2_256_128": "SHA2-256-128",
-    "hmac-sha2-384-192": "SHA2-384-192",
-    "auth_hmac_sha2_384_192": "SHA2-384-192",
-    "hmac-sha2-512-256": "SHA2-512-256",
-    "auth_hmac_sha2_512_256": "SHA2-512-256",
-    "hmac-sha1-96": "HMAC-SHA1-96",
-    "auth_hmac_sha1_96": "HMAC-SHA1-96",
-    "aes-xcbc-96": "AES-CMAC-96",
-    "auth_aes_xcbc_96": "AES-CMAC-96",
-}
-# AEAD ICV (tag) length in octets, by suite. AES-GCM-16 is the MUST suite.
-_IPSEC_AEAD_ICV_LEN: dict[str, int] = {
-    "AES-GCM": 16,
-    "AES-CCM": 8,
-    "CHACHA20-POLY1305": 16,
-}
-# IP next-header derived from the plan ESP/AH next_header value for transport
-# mode (tunnel mode dispatches an inner IP layer instead).
-_IPSEC_TRANSPORT_PROTO: dict[str, int] = {
-    "tcp": 6,
-    "udp": 17,
-    "icmp": 1,
-    "payload": 253,
-    "raw": 253,
-}
-
-
-def _is_ipsec_sa_stack(plan: PacketPlan, stack: Sequence[str]) -> bool:
-    """True when an ESP/AH stack must be sealed with a SecurityAssociation.
-
-    The ESP null/opaque case carries no SA (the body is preserved verbatim) and
-    is materialized through the normal chain as a raw ESP layer; every other
-    ESP/AH stack is sealed/signed by ``SecurityAssociation`` so the ciphertext
-    and ICV are byte-reproducible.
-    """
-
-    if "esp" not in stack and "ah" not in stack:
-        return False
-    if _ipsec_feature_behavior(plan) == "null-opaque":
-        return False
-    return True
-
-
-def _ipsec_feature(plan: PacketPlan) -> str:
-    feature = plan.metadata.get("feature")
-    return feature if isinstance(feature, str) else ""
-
-
-def _ipsec_feature_behavior(plan: PacketPlan) -> str:
-    behavior = plan.metadata.get("feature_behavior")
-    return behavior if isinstance(behavior, str) else ""
-
-
-def _ipsec_crypto_block(layer_fields: Mapping[str, object]) -> Mapping[str, object]:
-    crypto = layer_fields.get("crypto")
-    if not isinstance(crypto, Mapping):
-        raise ValueError("IPSec ESP/AH materialization requires a pinned crypto block")
-    return crypto
-
-
-def _ipsec_crypto_bytes(crypto: Mapping[str, object], *names: str) -> bytes:
-    for name in names:
-        value = crypto.get(name)
-        if value is not None:
-            return _bytes_field(value)
-    joined = "/".join(names)
-    raise ValueError(f"IPSec crypto block requires field {joined}")
-
-
-def _esp_suite(plan: PacketPlan) -> tuple[str, str | None]:
-    """Resolve the (crypt_algo, auth_algo) scapy names for an ESP plan."""
-
-    feature = _ipsec_feature(plan)
-    if feature == "esp_aead":
-        return "AES-GCM", None
-    if feature == "esp_cbc":
-        return "AES-CBC", "SHA2-256-128"
-    # Default to the MUST AEAD suite so an unkeyed feature still seals.
-    return "AES-GCM", None
-
-
-def _materialize_ipsec_sa_packet(
-    plan: PacketPlan,
-    stack: Sequence[str],
-    scapy_all: Any,
-) -> tuple[bytes, JSONObject]:
-    if "esp" in stack:
-        return _materialize_esp_sa_packet(plan, stack, scapy_all)
-    return _materialize_ah_sa_packet(plan, stack, scapy_all)
-
-
-def _materialize_esp_sa_packet(
-    plan: PacketPlan,
-    stack: Sequence[str],
-    scapy_all: Any,
-) -> tuple[bytes, JSONObject]:
-    esp_index = stack.index("esp")
-    esp_fields = _layer_fields(plan.fields, "esp")
-    crypto = _ipsec_crypto_block(esp_fields)
-    crypt_algo, auth_algo = _esp_suite(plan)
-
-    if crypt_algo == "AES-GCM":
-        crypt_key = _ipsec_crypto_bytes(crypto, "encryption_key") + _ipsec_crypto_bytes(
-            crypto, "salt"
-        )
-        explicit_iv = _ipsec_explicit_iv(esp_fields, crypto, aead=True)
-    else:
-        crypt_key = _ipsec_crypto_bytes(crypto, "encryption_key")
-        explicit_iv = _ipsec_explicit_iv(esp_fields, crypto, aead=False)
-
-    sa_kwargs: dict[str, Any] = {
-        "spi": _int(_optional_field(esp_fields, "spi"), 0),
-        "crypt_algo": crypt_algo,
-        "crypt_key": crypt_key,
-    }
-    if crypt_algo in _IPSEC_AEAD_ICV_LEN:
-        sa_kwargs["crypt_icv_size"] = _IPSEC_AEAD_ICV_LEN[crypt_algo]
-    if auth_algo is not None:
-        sa_kwargs["auth_algo"] = auth_algo
-        sa_kwargs["auth_key"] = _ipsec_crypto_bytes(crypto, "integrity_key")
-
-    tunnel, nat_t, outer, inner = _ipsec_inner_packet(plan, stack, esp_index, scapy_all)
-    if tunnel is not None:
-        sa_kwargs["tunnel_header"] = tunnel
-    if nat_t is not None:
-        sa_kwargs["nat_t_header"] = nat_t
-
-    sa = scapy_all.SecurityAssociation(scapy_all.ESP, **sa_kwargs)
-    seq = _int(_optional_field(esp_fields, "sequence"), 1)
-    sealed = sa.encrypt(inner, seq_num=seq, iv=explicit_iv)
-    raw_bytes = bytes(scapy_all.raw(sealed))
-    return raw_bytes, {
-        "layer": "esp",
-        "crypt_algo": crypt_algo,
-        "auth_algo": auth_algo,
-        "mode": "tunnel" if tunnel is not None else "transport",
-        "nat_traversal": nat_t is not None,
-        "spi": sa_kwargs["spi"],
-        "sequence": seq,
-        "explicit_iv_hex": explicit_iv.hex(),
-        "native_scapy_support": True,
-    }
-
-
-def _materialize_ah_sa_packet(
-    plan: PacketPlan,
-    stack: Sequence[str],
-    scapy_all: Any,
-) -> tuple[bytes, JSONObject]:
-    ah_index = stack.index("ah")
-    ah_fields = _layer_fields(plan.fields, "ah")
-    crypto = _ipsec_crypto_block(ah_fields)
-    auth_algo = "SHA2-256-128"
-
-    sa_kwargs: dict[str, Any] = {
-        "spi": _int(_optional_field(ah_fields, "spi"), 0),
-        "auth_algo": auth_algo,
-        "auth_key": _ipsec_crypto_bytes(crypto, "integrity_key"),
-    }
-    tunnel, nat_t, outer, inner = _ipsec_inner_packet(plan, stack, ah_index, scapy_all)
-    if tunnel is not None:
-        sa_kwargs["tunnel_header"] = tunnel
-    if nat_t is not None:
-        sa_kwargs["nat_t_header"] = nat_t
-
-    sa = scapy_all.SecurityAssociation(scapy_all.AH, **sa_kwargs)
-    seq = _int(_optional_field(ah_fields, "sequence"), 1)
-    signed = sa.encrypt(inner, seq_num=seq)
-    raw_bytes = bytes(scapy_all.raw(signed))
-    return raw_bytes, {
-        "layer": "ah",
-        "auth_algo": auth_algo,
-        "mode": "tunnel" if tunnel is not None else "transport",
-        "nat_traversal": nat_t is not None,
-        "spi": sa_kwargs["spi"],
-        "sequence": seq,
-        "native_scapy_support": True,
-    }
-
-
-def _ipsec_explicit_iv(
-    layer_fields: Mapping[str, object],
-    crypto: Mapping[str, object],
-    *,
-    aead: bool,
-) -> bytes:
-    """Resolve the pinned explicit IV for an ESP datagram.
-
-    AEAD (RFC 4106): the 8-octet explicit IV. A per-layer ``iv`` override wins
-    (the generator pins it, including the all-zero ``zero`` domain) so the
-    explicit IV || ciphertext is reproducible. CBC (RFC 3602) uses the 16-octet
-    ``cbc_iv`` from the pinned crypto block; the ESP ``iv`` field carries only
-    the 8-octet AEAD IV, so it is not used for the CBC IV.
-    """
-
-    if aead:
-        override = layer_fields.get("iv")
-        if override is not None:
-            return _bytes_field(override)
-        return _ipsec_crypto_bytes(crypto, "iv", "aead_iv")
-    return _ipsec_crypto_bytes(crypto, "cbc_iv")
-
-
-def _ipsec_inner_packet(
-    plan: PacketPlan,
-    stack: Sequence[str],
-    sec_index: int,
-    scapy_all: Any,
-) -> tuple[Any | None, Any | None, Any, Any]:
-    """Build (tunnel_header, nat_t_header, outer_ip, cleartext_inner).
-
-    Transport mode: the outer IP carries the upper-layer data directly, so the
-    inner packet is ``outer_ip / upper_layers`` and there is no tunnel header.
-    Tunnel mode: the ESP/AH next-header is an inner IP datagram, so the outer IP
-    becomes the tunnel header and the inner packet is the inner IP datagram and
-    everything after it. NAT-T (RFC 3948): when a UDP layer sits between the IP
-    header and ESP, the UDP layer becomes the SecurityAssociation NAT-T header so
-    scapy emits IP / UDP / ESP.
-    """
-
-    nat_t_index = sec_index - 1
-    if nat_t_index >= 0 and stack[nat_t_index] == "udp":
-        nat_t = _build_layer(plan, list(stack), nat_t_index, scapy_all)
-        outer_index = nat_t_index - 1
-    else:
-        nat_t = None
-        outer_index = sec_index - 1
-
-    if outer_index < 0 or stack[outer_index] not in {"ipv4", "ipv6"}:
-        raise ValueError("ESP/AH materialization requires a preceding IP layer")
-    outer_ip = _build_layer(plan, list(stack), outer_index, scapy_all)
-
-    inner_layers = stack[sec_index + 1 :]
-    if inner_layers and inner_layers[0] in {"ipv4", "ipv6"}:
-        # Tunnel mode: outer IP is the tunnel header; the inner IP datagram (and
-        # any following upper layers) is the cleartext that gets sealed.
-        inner = _chain_layers(plan, stack, sec_index + 1, len(stack), scapy_all)
-        return outer_ip, nat_t, outer_ip, inner
-
-    # Transport mode: the upper-layer data is carried directly under the outer IP.
-    inner = outer_ip
-    for index in range(sec_index + 1, len(stack)):
-        inner = inner / _build_layer(plan, list(stack), index, scapy_all)
-    return None, nat_t, outer_ip, inner
-
-
-def _chain_layers(
-    plan: PacketPlan,
-    stack: Sequence[str],
-    start: int,
-    end: int,
-    scapy_all: Any,
-) -> Any:
-    packet = None
-    for index in range(start, end):
-        piece = _build_layer(plan, list(stack), index, scapy_all)
-        packet = piece if packet is None else packet / piece
-    if packet is None:
-        raise ValueError("IPSec inner packet did not produce any layers")
-    return packet
-
-
-def _esp(fields: Mapping[str, JSONObject], scapy_all: Any) -> Any:
-    """Build a raw ESP layer for the opaque (no-SA) case.
-
-    The null/opaque case preserves the ESP body verbatim, so the layer carries
-    SPI || Seq and the following layer's bytes become the opaque ``data``.
-    """
-
-    esp_fields = _layer_fields(fields, "esp")
-    kwargs: dict[str, Any] = {
-        "spi": _int(_optional_field(esp_fields, "spi"), 0),
-        "seq": _int(_optional_field(esp_fields, "sequence"), 1),
-    }
-    return scapy_all.ESP(**kwargs)
-
-
-def _ah(fields: Mapping[str, JSONObject], scapy_all: Any) -> Any:
-    """Build a raw AH header (used when no SA seals the stack)."""
-
-    ah_fields = _layer_fields(fields, "ah")
-    kwargs: dict[str, Any] = {
-        "spi": _int(_optional_field(ah_fields, "spi"), 0),
-        "seq": _int(_optional_field(ah_fields, "sequence"), 1),
-    }
-    if "reserved" in ah_fields:
-        kwargs["reserved"] = _int(ah_fields.get("reserved"), 0)
-    if "payload_len" in ah_fields:
-        kwargs["payloadlen"] = _int(ah_fields.get("payload_len"), 0)
-    if "icv" in ah_fields:
-        kwargs["icv"] = _bytes_field(ah_fields["icv"])
-    return scapy_all.AH(**kwargs)
-
-
-# --------------------------------------------------------------------------
-# IEEE 802.15.4 / Zigbee materialization.
-#
-# Scapy 2.7 ships native Dot15d4 / Dot15d4FCS / Dot15d4Data MAC layers and
-# native ZigbeeNWK / ZigbeeAppDataPayload layers (scapy.layers.dot15d4 /
-# scapy.layers.zigbee, imported by bootstrap.import_scapy). The materializer
-# maps the libcrafter-neutral plan fields onto the scapy constructors so the
-# emitted bytes match libcrafter's wire encoding (the spec ``expected`` bytes
-# were derived from the crate). The trailing CRC-16/CCITT FCS is produced by
-# scapy's Dot15d4FCS makeFCS, which matches libcrafter's reflected FCS.
-#
-# The IEEE 802.15.4 TAP (DLT 283) pseudo-header has no native scapy dissector;
-# the radio descriptor is materialized as a Raw passthrough (the same precedent
-# as the BLE LL-with-PHDR pseudo-header). libcrafter's Dot15d4Radio owns the TAP
-# decode, so when a dot15d4_radio layer carries no strict-byte descriptor fields
-# the materializer emits no bytes and lets the following MAC frame stand alone.
-
-# spec frame_type -> scapy fcf_frametype codepoint.
-_DOT15D4_FRAME_TYPES: dict[str, int] = {
-    "beacon": 0,
-    "data": 1,
-    "ack": 2,
-    "acknowledgement": 2,
-    "command": 3,
-    "mac_command": 3,
-}
-# spec addressing mode -> scapy fcf_*addrmode codepoint.
-_DOT15D4_ADDR_MODES: dict[str, int] = {
-    "none": 0,
-    "absent": 0,
-    "short_16": 2,
-    "short": 2,
-    "extended_64": 3,
-    "extended": 3,
-    "long": 3,
-}
-# spec zigbee NWK frame_type -> scapy frametype codepoint.
-_ZIGBEE_NWK_FRAME_TYPES: dict[str, int] = {
-    "data": 0,
-    "command": 1,
-    "inter_pan": 3,
-    "inter-pan": 3,
-}
-# spec zigbee APS frame_type -> scapy aps_frametype codepoint.
-_ZIGBEE_APS_FRAME_TYPES: dict[str, int] = {
-    "data": 0,
-    "command": 1,
-    "ack": 2,
-    "acknowledgement": 2,
-}
-# spec zigbee APS delivery_mode -> scapy delivery_mode codepoint.
-_ZIGBEE_APS_DELIVERY_MODES: dict[str, int] = {
-    "unicast": 0,
-    "indirect": 1,
-    "broadcast": 2,
-    "group": 3,
-    "group_addressing": 3,
-}
-
-
-def _dot15d4_enum(value: object, table: Mapping[str, int], default: int) -> int:
-    if value is None:
-        return default
-    if isinstance(value, bool):
-        return int(value)
-    if isinstance(value, int):
-        return value
-    if isinstance(value, str):
-        key = value.lower().replace("-", "_")
-        if key in table:
-            return table[key]
-        return int(value, 0)
-    raise ValueError(f"unsupported IEEE 802.15.4/Zigbee enum value: {value!r}")
-
-
-def _has_child_layer(stack: Sequence[str], index: int) -> bool:
-    """Return True when a non-payload protocol layer follows ``index``.
-
-    dot15d4/zigbee plans carry the upper protocol as a stacked layer (zigbee_nwk
-    inside dot15d4, zigbee_aps inside zigbee_nwk). When such a child exists the
-    builder must not append its own ``payload`` field, because the composed
-    child layer is the real payload; only the terminal layer materializes its
-    declared opaque payload bytes.
-    """
-
-    return any(layer != "payload" and layer != "raw" for layer in stack[index + 1 :])
-
-
-def _layer_opaque_payload(
-    fields: Mapping[str, JSONObject],
-    stack: Sequence[str],
-    index: int,
-    layer_fields: Mapping[str, object],
-) -> bytes:
-    """Resolve the trailing opaque payload bytes for a dot15d4/zigbee layer.
-
-    The bytes come from the layer's own ``payload``/``payload_hex`` field, or
-    from a following ``payload`` stack entry, and are only emitted when no
-    protocol child layer follows this one in the stack.
-    """
-
-    if _has_child_layer(stack, index):
-        return b""
-    payload_field = _optional_field(layer_fields, "payload", "payload_hex")
-    if payload_field is not None:
-        return _opaque_bytes(payload_field)
-    # Fall back to a following payload/raw stack entry, if present.
-    for following in stack[index + 1 :]:
-        if following in ("payload", "raw"):
-            return _payload_bytes(fields)
-    return b""
-
-
-def _opaque_bytes(value: object) -> bytes:
-    if value is None:
-        return b""
-    if isinstance(value, (bytes, bytearray)):
-        return bytes(value)
-    if isinstance(value, str):
-        return bytes.fromhex(value)
-    if isinstance(value, Mapping):
-        return _bytes_field(value)
-    raise ValueError(f"unsupported IEEE 802.15.4/Zigbee payload value: {value!r}")
-
-
-def _dot15d4_radio(fields: Mapping[str, JSONObject], scapy_all: Any) -> Any:
-    """Materialize the IEEE 802.15.4 TAP (DLT 283) pseudo-header.
-
-    Scapy 2.7 has no native Dot15d4 TAP dissector. libcrafter's Dot15d4Radio
-    owns the TAP descriptor decode, so the radio layer carries no strict-byte
-    descriptor fields here and is emitted as an empty Raw passthrough (the BLE
-    LL-with-PHDR precedent); the following MAC frame provides the wire bytes.
-    """
-
-    _ = _layer_fields(fields, "dot15d4_radio")
-    return scapy_all.Raw(load=b"")
-
-
-def _dot15d4(
-    fields: Mapping[str, JSONObject],
-    stack: list[str],
-    index: int,
-    scapy_all: Any,
-) -> Any:
-    """Build an IEEE 802.15.4 MAC frame via scapy Dot15d4FCS / Dot15d4Data.
-
-    The Dot15d4FCS header carries the frame-control field, sequence number, and
-    the trailing CRC-16/CCITT FCS; Dot15d4Data carries the addressing fields
-    when a destination or source addressing mode is present. PAN-ID compression,
-    the addressing modes, and the address widths are all encoded by scapy from
-    the frame-control codepoints, matching libcrafter's wire layout.
-    """
-
-    mac = _layer_fields(fields, "dot15d4")
-    frame_type = _dot15d4_enum(
-        _optional_field(mac, "frame_type"), _DOT15D4_FRAME_TYPES, 1
-    )
-    dest_mode = _dot15d4_enum(
-        _optional_field(mac, "dest_addr_mode"), _DOT15D4_ADDR_MODES, 0
-    )
-    src_mode = _dot15d4_enum(
-        _optional_field(mac, "src_addr_mode"), _DOT15D4_ADDR_MODES, 0
-    )
-    # When the plan omits explicit addressing modes but supplies addresses,
-    # infer the mode from the address presence so the frame is self-consistent.
-    if _optional_field(mac, "dest_addr_mode") is None:
-        if _optional_field(mac, "dest_extended") is not None:
-            dest_mode = 3
-        elif _optional_field(mac, "dest_short", "dest_addr") is not None:
-            dest_mode = 2
-    if _optional_field(mac, "src_addr_mode") is None:
-        if _optional_field(mac, "src_extended") is not None:
-            src_mode = 3
-        elif _optional_field(mac, "src_short", "src_addr") is not None:
-            src_mode = 2
-
-    fcf_kwargs: dict[str, Any] = {
-        "fcf_frametype": frame_type,
-        "fcf_destaddrmode": dest_mode,
-        "fcf_srcaddrmode": src_mode,
-        "fcf_panidcompress": _bool_int(_optional_field(mac, "pan_id_compression"), 0),
-        "seqnum": _int(_optional_field(mac, "seq", "sequence_number"), 0),
-    }
-    if _optional_field(mac, "security_enabled") is not None:
-        fcf_kwargs["fcf_security"] = _bool_int(mac.get("security_enabled"), 0)
-    if _optional_field(mac, "frame_pending") is not None:
-        fcf_kwargs["fcf_pending"] = _bool_int(mac.get("frame_pending"), 0)
-    if _optional_field(mac, "ack_request") is not None:
-        fcf_kwargs["fcf_ackreq"] = _bool_int(mac.get("ack_request"), 0)
-    if _optional_field(mac, "frame_version") is not None:
-        fcf_kwargs["fcf_framever"] = _int(mac.get("frame_version"), 0)
-    if _optional_field(mac, "fcs") is not None:
-        fcf_kwargs["fcs"] = _int(mac.get("fcs"), 0)
-
-    packet = scapy_all.Dot15d4FCS(**fcf_kwargs)
-
-    if dest_mode != 0 or src_mode != 0:
-        data_kwargs: dict[str, Any] = {}
-        if dest_mode != 0:
-            data_kwargs["dest_panid"] = _int(_optional_field(mac, "dest_pan"), 0xFFFF)
-            data_kwargs["dest_addr"] = _int(
-                _optional_field(mac, "dest_extended", "dest_short", "dest_addr"), 0
-            )
-        if src_mode != 0:
-            if _optional_field(mac, "src_pan") is not None:
-                data_kwargs["src_panid"] = _int(mac.get("src_pan"), 0xFFFF)
-            data_kwargs["src_addr"] = _int(
-                _optional_field(mac, "src_extended", "src_short", "src_addr"), 0
-            )
-        packet = packet / scapy_all.Dot15d4Data(**data_kwargs)
-
-    trailer = _layer_opaque_payload(fields, stack, index, mac)
-    if trailer:
-        packet = packet / scapy_all.Raw(load=trailer)
-    return packet
-
-
-def _zigbee_nwk(
-    fields: Mapping[str, JSONObject],
-    stack: list[str],
-    index: int,
-    scapy_all: Any,
-) -> Any:
-    """Build a Zigbee NWK header via scapy ZigbeeNWK.
-
-    Maps the libcrafter-neutral frame type, protocol version, 16-bit dest/src
-    addresses, radius, and sequence number onto the scapy constructor.
-    """
-
-    nwk = _layer_fields(fields, "zigbee_nwk")
-    kwargs: dict[str, Any] = {
-        "frametype": _dot15d4_enum(
-            _optional_field(nwk, "frame_type"), _ZIGBEE_NWK_FRAME_TYPES, 0
-        ),
-        "proto_version": _int(_optional_field(nwk, "protocol_version"), 2),
-        "flags": 0,
-        "discover_route": 0,
-        "destination": _int(_optional_field(nwk, "dest"), 0),
-        "source": _int(_optional_field(nwk, "src"), 0),
-        "radius": _int(_optional_field(nwk, "radius"), 0),
-        "seqnum": _int(_optional_field(nwk, "seq"), 0),
-    }
-    packet = scapy_all.ZigbeeNWK(**kwargs)
-    trailer = _layer_opaque_payload(fields, stack, index, nwk)
-    if trailer:
-        packet = packet / scapy_all.Raw(load=trailer)
-    return packet
-
-
-def _zigbee_aps(
-    fields: Mapping[str, JSONObject],
-    stack: list[str],
-    index: int,
-    scapy_all: Any,
-) -> Any:
-    """Build a Zigbee APS header via scapy ZigbeeAppDataPayload.
-
-    Maps the libcrafter-neutral frame type, delivery mode, destination/source
-    endpoints, cluster id, profile id, and APS counter onto the scapy
-    constructor. dst_endpoint / cluster / profile / src_endpoint are conditional
-    scapy fields driven by the frame type and delivery mode; the data frame /
-    unicast delivery used by the spec stack carries all four.
-    """
-
-    aps = _layer_fields(fields, "zigbee_aps")
-    kwargs: dict[str, Any] = {
-        "aps_frametype": _dot15d4_enum(
-            _optional_field(aps, "frame_type"), _ZIGBEE_APS_FRAME_TYPES, 0
-        ),
-        "delivery_mode": _dot15d4_enum(
-            _optional_field(aps, "delivery_mode"), _ZIGBEE_APS_DELIVERY_MODES, 0
-        ),
-        "frame_control": 0,
-        "counter": _int(_optional_field(aps, "counter"), 0),
-    }
-    if _optional_field(aps, "dest_endpoint") is not None:
-        kwargs["dst_endpoint"] = _int(aps.get("dest_endpoint"), 0)
-    if _optional_field(aps, "cluster") is not None:
-        kwargs["cluster"] = _int(aps.get("cluster"), 0)
-    if _optional_field(aps, "profile") is not None:
-        kwargs["profile"] = _int(aps.get("profile"), 0)
-    if _optional_field(aps, "src_endpoint") is not None:
-        kwargs["src_endpoint"] = _int(aps.get("src_endpoint"), 0)
-    packet = scapy_all.ZigbeeAppDataPayload(**kwargs)
-    trailer = _layer_opaque_payload(fields, stack, index, aps)
-    if trailer:
-        packet = packet / scapy_all.Raw(load=trailer)
-    return packet
-
-
-def _ikev2(fields: Mapping[str, JSONObject], scapy_all: Any) -> Any:
-    """Build an IKEv2 (ISAKMP) message header via scapy.layers.isakmp.
-
-    The initiator/responder SPIs map to the ISAKMP init/resp cookies, and the
-    next-payload, version, exchange type, flags, and message id round-trip. The
-    payload chain itself is carried as the following Raw layer in the stack, so
-    this builder materializes the 28-byte header only; compile() / the generic
-    payload chain belongs to the libcrafter side and later parity steps.
-    """
-
-    ike_fields = _layer_fields(fields, "ikev2")
-    kwargs: dict[str, Any] = {
-        "next_payload": _ikev2_next_payload(_optional_field(ike_fields, "next_payload")),
-        "exch_type": _ikev2_exchange_type(_optional_field(ike_fields, "exchange_type")),
-        "id": _int(_optional_field(ike_fields, "message_id"), 0),
-        "flags": _ikev2_flags(_optional_field(ike_fields, "flags")),
-    }
-    if "initiator_spi" in ike_fields:
-        kwargs["init_cookie"] = _bytes_field(ike_fields["initiator_spi"])
-    if "responder_spi" in ike_fields:
-        kwargs["resp_cookie"] = _bytes_field(ike_fields["responder_spi"])
-    if "version" in ike_fields:
-        kwargs["version"] = _int(ike_fields.get("version"), 0x20)
-    if "length" in ike_fields:
-        kwargs["length"] = _int(ike_fields.get("length"), 0)
-    return scapy_all.ISAKMP(**kwargs)
-
-
-# IKEv2 next-payload codepoints (RFC 7296 §3.2). The plan carries libcrafter
-# payload-type layer names; map them to the wire codepoint scapy stores.
-_IKEV2_NEXT_PAYLOAD_CODE: dict[str, int] = {
-    "none": 0,
-    "ikesapayload": 33,
-    "sa": 33,
-    "ikekepayload": 34,
-    "ke": 34,
-    "ikeidipayload": 35,
-    "ikeidrpayload": 36,
-    "ikecertpayload": 37,
-    "ikecertreqpayload": 38,
-    "ikeauthpayload": 39,
-    "auth": 39,
-    "ikenoncepayload": 40,
-    "nonce": 40,
-    "ikenotifypayload": 41,
-    "notify": 41,
-    "ikedeletepayload": 42,
-    "delete": 42,
-    "ikevendorpayload": 43,
-    "iketsipayload": 44,
-    "iketsrpayload": 45,
-    "ikeencryptedpayload": 46,
-    "encrypted": 46,
-    "ikeconfigpayload": 47,
-    "ikeeappayload": 48,
-}
-_IKEV2_EXCHANGE_TYPE_CODE: dict[str, int] = {
-    "ike_sa_init": 34,
-    "ike_auth": 35,
-    "create_child_sa": 36,
-    "informational": 37,
-}
-_IKEV2_FLAG_BIT: dict[str, int] = {
-    "initiator": 0x08,
-    "version": 0x10,
-    "response": 0x20,
-}
-
-
-def _ikev2_next_payload(value: object) -> int:
-    if value is None:
-        return 0
-    if isinstance(value, int) and not isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        lowered = value.lower().replace("-", "_")
-        if lowered in _IKEV2_NEXT_PAYLOAD_CODE:
-            return _IKEV2_NEXT_PAYLOAD_CODE[lowered]
-        return int(lowered, 0)
-    return _int(value, 0)
-
-
-def _ikev2_exchange_type(value: object) -> int:
-    if value is None:
-        return 34
-    if isinstance(value, int) and not isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        lowered = value.lower().replace("-", "_")
-        if lowered in _IKEV2_EXCHANGE_TYPE_CODE:
-            return _IKEV2_EXCHANGE_TYPE_CODE[lowered]
-        return int(lowered, 0)
-    return _int(value, 34)
-
-
-def _ikev2_flags(value: object) -> int:
-    if value is None:
-        return 0
-    if isinstance(value, int) and not isinstance(value, bool):
-        return value
-    items = value if isinstance(value, (list, tuple)) else [value]
-    flags = 0
-    for item in items:
-        if isinstance(item, int) and not isinstance(item, bool):
-            flags |= item
-            continue
-        if isinstance(item, str):
-            lowered = item.lower().replace("-", "_")
-            if lowered in _IKEV2_FLAG_BIT:
-                flags |= _IKEV2_FLAG_BIT[lowered]
-    return flags
+# IPSec (ESP / AH / IKEv2) materialization moved to ``protocols/ipsec.py``. The
+# ``esp`` / ``ah`` / ``ikev2`` per-layer raw builders are registered in
+# ``SCAPY_REGISTRY`` (so ``_build_layer`` routes them to their ``build``), and the
+# crypto/auth/AEAD/transport maps, the ESP/AH SecurityAssociation materializer, and
+# the ``_is_ipsec_sa_stack`` predicate live there too. The SA path is a
+# plan-dependent whole-stack decision (the null/opaque case is excluded by plan
+# metadata, which the stack-only ``StackEncoder.matches`` contract cannot see), so
+# ``encode_packet_plan`` keeps the selection branch and calls the moved
+# ``_materialize_ipsec_sa_packet`` (re-imported above), passing ``_build_layer`` so
+# the materializer can build inner Scapy layers without importing this module.
 
 
 def _canonical_stack(stack: list[str]) -> list[str]:
