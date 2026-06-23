@@ -1176,11 +1176,18 @@ class ScapyRipLayerMappingTest(unittest.TestCase):
     """
 
     def test_rip_layer_maps_to_native_rip(self) -> None:
-        self.assertEqual(packets._SCAPY_LAYER_BY_LAYER["rip"], "RIP")
+        # ``rip`` migrated to ``protocols/rip.py``: its Scapy-class metadata now
+        # comes from the registered ``ScapyProtocol`` via ``_scapy_layer_name``
+        # (registry-derived), the same value the legacy ``_SCAPY_LAYER_BY_LAYER``
+        # table carried before the move.
         self.assertEqual(packets._scapy_layer_name("rip"), "RIP")
 
     def test_rip_supported_fields_cover_header_and_entries(self) -> None:
-        supported = packets._SUPPORTED_FIELDS_BY_LAYER["rip"]
+        # Registry-derived after migration: ``_scapy_supported_fields`` returns the
+        # migrated plugin's ``supported_fields`` (formerly
+        # ``_SUPPORTED_FIELDS_BY_LAYER["rip"]``).
+        supported = packets._scapy_supported_fields("rip")
+        self.assertIsNotNone(supported)
         self.assertIn("command", supported)
         self.assertIn("version", supported)
         self.assertIn("entries", supported)
