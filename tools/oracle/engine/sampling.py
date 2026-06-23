@@ -399,6 +399,43 @@ def _string_list(value: object, name: str) -> list[str]:
     return list(value)
 
 
+def _string_or_none(value: object) -> str | None:
+    """Validate ``value`` as a string or ``None``, raising otherwise.
+
+    Backend-neutral spec helper shared by the per-protocol plugins (e.g. the ICMP
+    error behavior reads spec-declared ``icmp_type`` strings) and re-imported into
+    ``generator`` to preserve its call sites.
+    """
+
+    if value is None or isinstance(value, str):
+        return value
+    raise ValueError(f"expected string or null: {value!r}")
+
+
+# Deterministic ICMP error-message body blobs shared by the ICMPv4 error behavior
+# plugin (``protocols/icmp.py``) and the generator's still-resident ICMP
+# live-matrix body sampler. Kept here so the per-protocol plugin can reference
+# them without importing ``generator`` (which would create a cycle); re-imported
+# into ``generator`` to preserve the live-matrix call sites.
+#
+# Deterministic RFC 4884 extension blob (extension header version 2 plus one
+# generic object) shared by the extension-framing live behaviors as
+# raw-compatible bytes.
+_ICMP_EXTENSION_BYTES = "20000000000800010102030405060708"
+# Deterministic RFC 4950 MPLS extension blob (extension header plus one MPLS
+# object carrying a single label stack entry).
+_ICMP_MPLS_EXTENSION_BYTES = "2000000000080100000010ff"
+# Deterministic quoted (embedded) original IPv4 datagram carried inside an
+# ICMPv4 error message per RFC 792: a documentation-address UDP/53 query with a
+# well-formed IPv4 header (correct length and checksum) plus eight bytes of UDP
+# header and a short payload. Both backends emit and decode these bytes
+# identically; the normalized model collapses them into a single trailing
+# payload after the ICMP rest-of-header.
+_ICMP_QUOTED_IPV4_DATAGRAM = (
+    "45000028424200004011b464c000020ac00002149c4000350014000071756f7465642d7175657279"
+)
+
+
 def _next_layer_after(stack: Sequence[str], layer: str) -> str | None:
     """Return the next non-payload layer after ``layer`` in ``stack``.
 

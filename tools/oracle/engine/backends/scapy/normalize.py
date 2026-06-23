@@ -74,7 +74,6 @@ _LAYER_ALIASES: dict[str, str] = {
     "Dot15d4FCS": "dot15d4",
     "ESP": "esp",
     "EAPOL": "eapol",
-    "ICMP": "icmp",
     "IGMP": "igmp",
     "IGMPv3": "igmp",
     "IGMPv3gr": "igmp_group_record",
@@ -143,15 +142,6 @@ _LAYER_FIELD_ALIASES: dict[str, dict[str, str]] = {
         "id": "transaction_id",
         "qr": "is_response",
         "rcode": "response_code",
-    },
-    "icmp": {
-        "id": "identifier",
-        "seq": "sequence",
-    },
-    "icmpv6": {
-        "cksum": "checksum",
-        "id": "identifier",
-        "seq": "sequence",
     },
     "ipv6_destination_options": {
         "len": "header_ext_len",
@@ -668,13 +658,6 @@ def _normalize_fields(layer_name: str, fields: JSONObject) -> JSONObject:
         _normalize_ipv6_options_header_fields(output)
     if layer_name == "ospf":
         _normalize_ospf_fields(output)
-    if layer_name in {"icmp", "icmpv6"}:
-        output.pop("unused", None)
-        if output.get("data") == {"hex": "", "ascii": ""}:
-            output.pop("data", None)
-        _fill_icmp_rest_of_header(output)
-        if layer_name == "icmpv6":
-            _normalize_icmpv6_rest_of_header(output)
     if layer_name == "ipv6_fragment":
         _normalize_ipv6_fragment_fields(output)
     if layer_name == "ipv6_routing":
@@ -1486,10 +1469,6 @@ def _normalize_field_name(layer_name: str, native_name: str) -> str:
 
 
 def _normalize_field_value(layer_name: str, field_name: str, value: JSONValue) -> JSONValue:
-    if layer_name == "icmpv6" and field_name == "type" and isinstance(value, str):
-        return _normalize_icmpv6_type(value)
-    if layer_name == "icmp" and field_name == "type" and isinstance(value, str):
-        return _normalize_icmpv4_type(value)
     if layer_name == "linux_sll" and field_name == "source_address":
         return _normalize_linux_sll_source_address(value)
     if field_name == "flags":
@@ -1501,55 +1480,6 @@ def _normalize_field_value(layer_name: str, field_name: str, value: JSONValue) -
     if field_name in {"more_fragments"} and isinstance(value, int):
         return bool(value)
     return value
-
-
-def _normalize_icmpv6_type(value: str) -> str:
-    lowered = value.lower().replace(" ", "_").replace("-", "_")
-    aliases = {
-        "echo_reply": "echo_reply",
-        "echo_request": "echo_request",
-        "destination_unreachable": "destination_unreachable",
-        "packet_too_big": "packet_too_big",
-        "parameter_problem": "parameter_problem",
-        "time_exceeded": "time_exceeded",
-        # NDP (RFC 4861). Scapy's ND classes report descriptive type strings
-        # (e.g. "Neighbor Solicitation"); collapse them onto the spec domain
-        # names so decoded NDP/MLD/extended-echo kinds compare cleanly once the
-        # per-message coverage cases land. Scaffolding for later steps.
-        "router_solicitation": "router_solicitation",
-        "router_advertisement": "router_advertisement",
-        "neighbor_solicitation": "neighbor_solicitation",
-        "neighbor_advertisement": "neighbor_advertisement",
-        "redirect": "redirect",
-        "redirect_message": "redirect",
-        # MLD (RFC 2710 / RFC 3810 / RFC 9777).
-        "mld_query": "mld_query",
-        "multicast_listener_query": "mld_query",
-        "mld_report": "mld_report",
-        "multicast_listener_report": "mld_report",
-        "mld_done": "mld_done",
-        "multicast_listener_done": "mld_done",
-        "mldv2_report": "mldv2_report",
-        "version_2_multicast_listener_report": "mldv2_report",
-        # Extended echo (RFC 8335, types 160/161).
-        "extended_echo_request": "extended_echo_request",
-        "extended_echo_reply": "extended_echo_reply",
-    }
-    return aliases.get(lowered, lowered)
-
-
-def _normalize_icmpv4_type(value: str) -> str:
-    lowered = value.lower().replace(" ", "_").replace("-", "_")
-    aliases = {
-        "dest_unreach": "destination_unreachable",
-        "destination_unreachable": "destination_unreachable",
-        "echo_reply": "echo_reply",
-        "echo_request": "echo_request",
-        "parameter_problem": "parameter_problem",
-        "redirect": "redirect",
-        "time_exceeded": "time_exceeded",
-    }
-    return aliases.get(lowered, lowered)
 
 
 def _normalize_dhcp_flags(value: JSONValue) -> JSONValue:
@@ -2991,30 +2921,6 @@ def _ipv4_flags(flags: int) -> str:
     if flags & 0x04:
         names.append("reserved")
     return "|".join(names) if names else "none"
-
-
-def _fill_icmp_rest_of_header(fields: JSONObject) -> None:
-    if "rest_of_header" in fields:
-        return
-    identifier = fields.get("identifier")
-    sequence = fields.get("sequence")
-    if isinstance(identifier, int) and isinstance(sequence, int):
-        fields["rest_of_header"] = f"{identifier:04x}{sequence:04x}"
-
-
-def _normalize_icmpv6_rest_of_header(fields: JSONObject) -> None:
-    icmp_type = fields.get("type")
-    if icmp_type in {2, "packet_too_big"} and isinstance(fields.get("mtu"), int):
-        fields["rest_of_header"] = f"{fields.pop('mtu'):08x}"
-    elif icmp_type in {4, "parameter_problem"} and isinstance(fields.get("ptr"), int):
-        fields["rest_of_header"] = f"{fields.pop('ptr'):08x}"
-    elif icmp_type in {1, 3, "destination_unreachable", "time_exceeded"}:
-        fields.setdefault("rest_of_header", "00000000")
-
-    if fields.get("ext") is None:
-        fields.pop("ext", None)
-    if fields.get("extpad") == {"hex": "", "ascii": ""}:
-        fields.pop("extpad", None)
 
 
 def _normalize_linux_sll_source_address(value: JSONValue) -> JSONValue:

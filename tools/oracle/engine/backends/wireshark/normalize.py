@@ -365,10 +365,6 @@ def _normalize_protocol_fields(
         )
     if layer_name == "dhcp":
         return _normalize_dhcp(_dhcp_layer(layers), source_hex=source_hex)
-    if layer_name == "icmp":
-        return _normalize_icmp(_layer(layers, "icmp"))
-    if layer_name == "icmpv6":
-        return _normalize_icmp(_layer(layers, "icmpv6"))
     if layer_name == "ripng":
         return _normalize_ripng(_layer(layers, "ripng"))
     if layer_name == "linux_sll":
@@ -768,25 +764,6 @@ def _dhcp_layer(layers: JSONObject) -> JSONObject:
     if isinstance(layer, dict):
         return layer
     return _layer(layers, "bootp")
-
-
-def _normalize_icmp(layer: JSONObject) -> JSONObject:
-    output = _fields_from_aliases(
-        layer,
-        {
-            "type": ("icmp.type", "icmpv6.type"),
-            "code": ("icmp.code", "icmpv6.code"),
-            "checksum": ("icmp.checksum", "icmpv6.checksum"),
-            "identifier": ("icmp.ident", "icmpv6.echo.identifier"),
-            "sequence": ("icmp.seq", "icmpv6.echo.sequence_number"),
-        },
-    )
-    _parse_int_fields(output, "type", "code", "checksum", "identifier", "sequence")
-    identifier = output.get("identifier")
-    sequence = output.get("sequence")
-    if isinstance(identifier, int) and isinstance(sequence, int):
-        output["rest_of_header"] = f"{identifier:04x}{sequence:04x}"
-    return output
 
 
 def _normalize_ripng(layer: JSONObject) -> JSONObject:
