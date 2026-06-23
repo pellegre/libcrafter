@@ -315,7 +315,9 @@ def probe_capabilities_from_lab_capabilities(
         "icmp_echo": ipv4_unicast,
         "tcp_open_port": ipv4_unicast and controlled_services,
         "tcp_closed_port": ipv4_unicast,
-        "dns_service": ipv4_unicast and controlled_services,
+        # ``dns_service`` is contributed by the DNS plugin's ``lab_capabilities``
+        # hook (folded in below), not here. The shared ``capability_names`` /
+        # ``capability_sources`` tables still list it.
         "dhcp_service": dhcp_service,
         "udp_service": udp_service,
         "udp_large_payload": udp_large_payload,
