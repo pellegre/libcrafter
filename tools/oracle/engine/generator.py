@@ -114,27 +114,16 @@ SUPPORTED_LAYER_BACKEND = "libcrafter"
 
 _DERIVED_DOMAINS = {"derived"}
 
-_SUPPORTED_FIELDS: dict[str, set[str]] = {
-    # The ``dot11`` / ``eapol`` / ``radiotap`` / ``rsn`` field allowlists moved to
-    # ``protocols/wifi.py`` (their ``ProtocolSampler.supported_fields``);
-    # ``_supported_fields`` resolves them from the registry. Every Wi-Fi layer is
-    # now registered, so this table no longer carries any 802.11 entry.
-}
-
-
-def _supported_fields(layer: str) -> frozenset[str] | set[str]:
+def _supported_fields(layer: str) -> frozenset[str]:
     """Return the fields the generator samples for ``layer``.
 
-    A migrated layer declares its field allowlist on its registered
-    :class:`~.protocols.base.ProtocolSampler`; an unmigrated layer keeps it in the
-    legacy ``_SUPPORTED_FIELDS`` table. Consulting the registry first lets the two
-    coexist during the migration without changing which fields get sampled.
+    Every layer declares its field allowlist on its registered
+    :class:`~.protocols.base.ProtocolSampler` (``supported_fields``); the registry
+    is the sole source. An unregistered layer is a spec error and
+    :meth:`~.plugin_registry.PluginRegistry.require` raises.
     """
 
-    plugin = SAMPLER_REGISTRY.get(layer)
-    if plugin is not None:
-        return plugin.supported_fields
-    return _SUPPORTED_FIELDS.get(layer, set())
+    return SAMPLER_REGISTRY.require(layer).supported_fields
 
 
 _SUPPORTED_FIELD_DOMAINS: dict[tuple[str, str], set[object]] = {
@@ -1480,12 +1469,11 @@ class PacketGenerator:
         case: str,
         behavior: str,
     ) -> None:
-        # Consult registered plugins first: the owning plugin (if any) handles the
-        # feature exactly once and we return before the legacy branches. A plugin
-        # owns the feature when its handles_feature matches, it carries an
-        # apply_behavior, and its layer is present in the sampled fields or the
-        # stack (igmp gates on the stack). The registry is empty until protocols are
-        # migrated, so this loop is a no-op today and every feature falls through.
+        # The owning plugin (if any) handles the feature exactly once. A plugin owns
+        # the feature when its handles_feature matches, it carries an apply_behavior,
+        # and its layer is present in the sampled fields or the stack (igmp gates on
+        # the stack). Every feature is owned by a registered plugin; a feature with
+        # no owner is simply a no-op here.
         if feature is not None:
             for plugin in SAMPLER_REGISTRY.values():
                 if (
@@ -1599,7 +1587,7 @@ class PacketGenerator:
             _string(field.get("name"), f"layers.{layer}.fields.name")
             for field in _field_specs(spec, layer)
         }
-        supported = _supported_fields(layer)
+        supported = SAMPLER_REGISTRY.require(layer).supported_fields
         for field_name in sampled:
             if field_name not in declared:
                 raise ValueError(
@@ -1635,7 +1623,7 @@ class PacketGenerator:
                 current_fields=current_fields,
             )
 
-        raise ValueError(f"spec error: unsupported layer sampler: {layer}")
+        raise ValueError(f"spec error: no sampler registered for layer: {layer}")
 
     def _field_domains(
         self,
