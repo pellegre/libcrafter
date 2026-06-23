@@ -657,18 +657,10 @@ _LEGACY_STIMULUS_ENDPOINT_CASES = frozenset(
         "tcp-syn-open",
         "tcp-syn-closed",
         "tcp-syn-options",
-        "dns-query",
         "ttl-expired",
-        "dns-a-success",
-        "dns-aaaa-success",
-        "dns-cname-chain",
-        "dns-nxdomain",
-        "dns-nodata",
-        "dns-txt-answer",
-        "dns-mx-answer",
-        "dns-srv-answer",
-        "dns-edns-opt",
-        "dns-repeat-transaction",
+        # The inline ``dns-query`` smoke case and the ten DNS behavioral cases
+        # are now contributed by the DNS plugin (``protocols/dns.py``) and
+        # unioned into ``_STIMULUS_ENDPOINT_CASES`` below.
         "dhcp-discover-offer",
         "dhcp-request-ack",
         "dhcp-client-identifier",

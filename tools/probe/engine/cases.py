@@ -35,7 +35,9 @@ from .protocols import (
 # validation wiring lands in the later per-case steps; here the cases route
 # through the planned-only dispatcher fallback.
 UDP_ECHO_LARGE_PAYLOAD_LENGTH = 1200
-_DNS_CAPABILITIES = ["dns_service"]
+# DNS's capability constant and case tuple now live in the DNS plugin module
+# (``protocols/dns.py``); the merged catalog/profile tables below pick the DNS
+# cases up from the registry.
 _DHCP_CAPABILITIES = ["dhcp_service"]
 _UDP_CAPABILITIES = ["udp_service"]
 _UDP_LARGE_CAPABILITIES = [*_UDP_CAPABILITIES, "udp_large_payload"]
@@ -106,95 +108,6 @@ _IPSEC_CAPABILITIES = [
 # ``LIBCRAFTER_PROBE_LIVE_PROVIDER`` (see ``tools/probe/README.md``); the default
 # CI-safe path is the dry-run plan exercised here.
 _OSPF_CAPABILITIES = ["ospf_neighbor_peer"]
-
-
-# Ten DNS behavioral cases (RFC-correct query/response shapes against a
-# controlled DNS responder bound to the target address).
-BEHAVIOR_DNS_CASES: tuple[ProbeCase, ...] = (
-    _behavior_case(
-        name="dns-a-success",
-        description="Send an A query and validate a matching A answer.",
-        stimulus="dns_query",
-        expected_response="dns_response",
-        required_capabilities=_DNS_CAPABILITIES,
-        protocol="dns",
-    ),
-    _behavior_case(
-        name="dns-aaaa-success",
-        description="Send an AAAA query and validate a matching AAAA answer.",
-        stimulus="dns_query",
-        expected_response="dns_response",
-        required_capabilities=_DNS_CAPABILITIES,
-        protocol="dns",
-    ),
-    _behavior_case(
-        name="dns-cname-chain",
-        description="Query a CNAME that chains to an A record and validate the chain.",
-        stimulus="dns_query",
-        expected_response="dns_response",
-        required_capabilities=_DNS_CAPABILITIES,
-        protocol="dns",
-    ),
-    _behavior_case(
-        name="dns-nxdomain",
-        description="Query an absent name and validate an NXDOMAIN response.",
-        stimulus="dns_query",
-        expected_response="dns_response",
-        required_capabilities=_DNS_CAPABILITIES,
-        protocol="dns",
-    ),
-    _behavior_case(
-        name="dns-nodata",
-        description="Query an existing name for an absent type and validate NOERROR/NODATA.",
-        stimulus="dns_query",
-        expected_response="dns_response",
-        required_capabilities=_DNS_CAPABILITIES,
-        protocol="dns",
-    ),
-    _behavior_case(
-        name="dns-txt-answer",
-        description="Send a TXT query and validate the TXT answer.",
-        stimulus="dns_query",
-        expected_response="dns_response",
-        required_capabilities=_DNS_CAPABILITIES,
-        protocol="dns",
-    ),
-    _behavior_case(
-        name="dns-mx-answer",
-        description="Send an MX query and validate the MX answer.",
-        stimulus="dns_query",
-        expected_response="dns_response",
-        required_capabilities=_DNS_CAPABILITIES,
-        protocol="dns",
-    ),
-    _behavior_case(
-        name="dns-srv-answer",
-        description="Send an SRV query and validate the SRV answer.",
-        stimulus="dns_query",
-        expected_response="dns_response",
-        required_capabilities=_DNS_CAPABILITIES,
-        protocol="dns",
-    ),
-    _behavior_case(
-        name="dns-edns-opt",
-        description="Send an EDNS query with an OPT record and validate the OPT metadata.",
-        stimulus="dns_query",
-        expected_response="dns_response",
-        required_capabilities=_DNS_CAPABILITIES,
-        protocol="dns",
-    ),
-    _behavior_case(
-        name="dns-repeat-transaction",
-        description=(
-            "Reuse a transaction id over separate source ports and validate each "
-            "independently decoded response."
-        ),
-        stimulus="dns_query",
-        expected_response="dns_response",
-        required_capabilities=_DNS_CAPABILITIES,
-        protocol="dns",
-    ),
-)
 
 
 # Ten DHCP behavioral cases (DHCP/BOOTP client messages against a controlled
@@ -812,15 +725,9 @@ _LEGACY_PROBE_CASES: tuple[ProbeCase, ...] = (
         endpoint_roles=["stimulus", "target"],
         metadata={"protocol": "tcp", "service": "controlled_listener"},
     ),
-    ProbeCase(
-        name="dns-query",
-        description="Send DNS query to controlled DNS service and validate matching reply.",
-        stimulus="dns_query",
-        expected_response="dns_response",
-        required_capabilities=["dns_service"],
-        endpoint_roles=["stimulus", "target"],
-        metadata={"protocol": "dns", "service": "controlled_dns"},
-    ),
+    # The inline ``dns-query`` smoke case is contributed by the DNS plugin
+    # (``protocols/dns.py``) and merged in ahead of this legacy aggregation by
+    # ``_merge_probe_cases``.
     ProbeCase(
         name="ttl-expired",
         description="Send low-TTL packet and validate ICMP TTL-expired from controlled hop.",
@@ -831,9 +738,10 @@ _LEGACY_PROBE_CASES: tuple[ProbeCase, ...] = (
         metadata={"protocol": "icmp", "service": "controlled_router"},
     ),
     # The inline ``arp-resolution`` smoke case and the ten ARP behavioral cases
-    # are contributed by the ARP plugin (``protocols/arp.py``) and merged in
-    # ahead of this legacy aggregation by ``_merge_probe_cases``.
-    *BEHAVIOR_DNS_CASES,
+    # are contributed by the ARP plugin (``protocols/arp.py``); the inline
+    # ``dns-query`` smoke case and the ten DNS behavioral cases are contributed
+    # by the DNS plugin (``protocols/dns.py``). Both are merged in ahead of this
+    # legacy aggregation by ``_merge_probe_cases``.
     *BEHAVIOR_DHCP_CASES,
     *BEHAVIOR_NDP_CASES,
     *BEHAVIOR_UDP_CASES,
@@ -972,6 +880,19 @@ TCP_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = (
     "tcp-syn-closed",
 )
 
+# The ten DNS behavioral case names, in declaration order, sourced from the DNS
+# plugin's registered cases (the ``dns-query`` smoke case is excluded -- it
+# rides the smoke profile, not the behavior profile). DNS's profile membership
+# stays in these legacy ordered tables (rather than the plugin's
+# ``profile_counts``) so the behavior/smoke selection order is byte-identical:
+# the registry-first profile merge would otherwise move DNS to the front of
+# those profiles.
+_DNS_BEHAVIOR_CASE_NAMES: tuple[str, ...] = tuple(
+    case.name
+    for case in _registry_cases()
+    if case.metadata.get("protocol") == "dns" and case.name != "dns-query"
+)
+
 # The ten ARP behavioral case names, in declaration order, sourced from the ARP
 # plugin's registered cases (the ``arp-resolution`` smoke case is excluded -- it
 # rides the smoke profile, not the behavior profile). ARP's profile membership
@@ -994,7 +915,7 @@ _ARP_BEHAVIOR_CASE_NAMES: tuple[str, ...] = tuple(
 # live-routable. The default count covers every case so a bare
 # ``--profile behavior`` plans the complete suite.
 BEHAVIOR_PROFILE_CASE_NAMES: tuple[str, ...] = (
-    *(case.name for case in BEHAVIOR_DNS_CASES),
+    *_DNS_BEHAVIOR_CASE_NAMES,
     *(case.name for case in BEHAVIOR_DHCP_CASES),
     *_ARP_BEHAVIOR_CASE_NAMES,
     *(case.name for case in BEHAVIOR_NDP_CASES),
