@@ -38,6 +38,15 @@ from .capabilities import (
 )
 from .lab import TARGET_ROLE
 from .model import JSONObject, JSONValue, json_object
+
+# Importing from the ``protocols`` package runs its auto-discovery so every
+# migrated protocol module self-registers into ``PROTOCOL_REGISTRY`` before the
+# target-service setup plan and setup script consult it below. No protocol is
+# migrated yet, so the registry contribution is empty: the plan/script fold is a
+# no-op and both stay byte-identical to the legacy per-protocol path. Imports
+# stay relative; the package autodiscovers ``__name__``-relatively, so this does
+# not cycle back through ``target_services``.
+from .protocols import PROTOCOL_REGISTRY, registered_plugins
 from .target_service_helpers import (
     KernelStateDescriptor,
     TargetServiceDescriptor,
@@ -367,6 +376,82 @@ def arp_sysctl_descriptor(
 
 
 # --------------------------------------------------------------------------- #
+# Registry-first folding helpers
+# --------------------------------------------------------------------------- #
+#
+# The target-service setup plan and setup script are assembled registry-first:
+# every registered protocol plugin contributes its own target-service plan
+# fragment and setup-script block, and only the cases no plugin owns flow
+# through the legacy per-protocol construction below. With an empty registry
+# (no protocol migrated yet) the owned-case set is empty, so the legacy path
+# sees every plan and the emitted bytes are byte-identical to the pre-registry
+# behavior. A protocol served by a plugin is therefore never double-built.
+
+
+def _registry_owned_case_names() -> frozenset[str]:
+    """Return the set of case names served by a registered protocol plugin.
+
+    Empty until a protocol migrates. The legacy per-protocol construction below
+    skips any plan whose case is in this set so a plugin-served protocol is
+    never built twice.
+    """
+
+    names: set[str] = set()
+    for plugin in registered_plugins():
+        names.update(case.name for case in plugin.cases)
+    return frozenset(names)
+
+
+def _split_registry_plans(
+    probe_plans: Sequence[JSONObject],
+) -> tuple[list[JSONObject], list[JSONObject]]:
+    """Partition probe plans into registry-owned and legacy-owned lists.
+
+    The first list holds plans whose case is served by a registered plugin (to
+    be built from the plugin's ``target_service`` contribution); the second
+    holds the plans the legacy per-protocol code still owns. With an empty
+    registry the first list is empty and the second is the full input, in order.
+    """
+
+    owned = _registry_owned_case_names()
+    if not owned:
+        return [], list(probe_plans)
+    registry_plans = [plan for plan in probe_plans if plan.get("case") in owned]
+    legacy_plans = [plan for plan in probe_plans if plan.get("case") not in owned]
+    return registry_plans, legacy_plans
+
+
+def _merge_target_service_contribution(
+    plan: JSONObject,
+    contribution: Mapping[str, JSONValue],
+) -> None:
+    """Fold one plugin's target-service contribution into the central plan.
+
+    Plugin-contributed ``services``/``closed_tcp_ports``/``closed_udp_ports``
+    entries are appended to the central lists, and ``starts_services`` is OR-ed
+    so a live run that any plugin needs to stand up a service still flips the
+    flag. Other contributed keys overwrite the central value (the legacy path
+    leaves them at their defaults for plugin-owned protocols). With an empty
+    registry this helper is never called.
+    """
+
+    for key in ("services", "closed_tcp_ports", "closed_udp_ports"):
+        extra = contribution.get(key)
+        if isinstance(extra, Sequence) and not isinstance(extra, (str, bytes)):
+            existing = plan.get(key)
+            if isinstance(existing, list):
+                existing.extend(extra)
+            else:
+                plan[key] = list(extra)
+    if contribution.get("starts_services"):
+        plan["starts_services"] = bool(plan.get("starts_services")) or True
+    for key, value in contribution.items():
+        if key in ("services", "closed_tcp_ports", "closed_udp_ports", "starts_services"):
+            continue
+        plan[key] = value
+
+
+# --------------------------------------------------------------------------- #
 # Target service setup plan (dry-run + live shape)
 # --------------------------------------------------------------------------- #
 
@@ -381,6 +466,43 @@ def target_service_setup_plan(
     The shape is the stable contract consumed by the dry-run report and the
     live target setup. ``starts_services`` is only true on a live run that has
     at least one service to stand up; dry-run never starts services.
+
+    The plan is assembled registry-first: every registered protocol plugin
+    contributes its own ``target_service(probe_plans)`` fragment, and only the
+    plans no plugin owns flow through the legacy per-protocol construction below
+    (so a plugin-served protocol is never double-built). With an empty registry
+    the legacy path sees every plan and the result is byte-identical.
+    """
+
+    registry_plans, legacy_plans = _split_registry_plans(probe_plans)
+    plan = _legacy_target_service_setup_plan(
+        probe_plans=legacy_plans,
+        dry_run=dry_run,
+    )
+    if registry_plans:
+        for plugin in registered_plugins():
+            if plugin.target_service is None:
+                continue
+            owned = frozenset(case.name for case in plugin.cases)
+            plugin_plans = [p for p in registry_plans if p.get("case") in owned]
+            if not plugin_plans:
+                continue
+            contribution = plugin.target_service(plugin_plans, dry_run=dry_run)
+            if isinstance(contribution, Mapping):
+                _merge_target_service_contribution(plan, contribution)
+    return plan
+
+
+def _legacy_target_service_setup_plan(
+    *,
+    probe_plans: Sequence[JSONObject],
+    dry_run: bool,
+) -> JSONObject:
+    """Build the per-protocol target-service plan for legacy-owned cases.
+
+    This is the historical ``target_service_setup_plan`` body, unchanged; the
+    registry-first wrapper above feeds it only the plans no plugin owns. With an
+    empty registry that is every plan, so the output is byte-identical.
     """
 
     tcp_open_plans = plans_by_destination_port(
@@ -1888,8 +2010,48 @@ def target_service_setup_script(
             str(plan.get("case", "")) in _NDP_ROUTER_CASES for plan in ndp_plans
         )
         lines.extend(_ndp_target_setup_lines(wants_router=wants_router))
+    # Fold in each registered plugin's setup-script block after the legacy
+    # per-protocol blocks, preserving block ordering. Migrated protocols emit
+    # their own responder heredocs here; with an empty registry no plugin
+    # contributes, so the script bytes are byte-identical to the legacy output.
+    lines.extend(
+        _registry_setup_script_lines(
+            artifact_root=artifact_root,
+            bind_ipv4=bind_ipv4,
+            target_interface=target_interface,
+        )
+    )
     lines.append("echo target_service_setup=ok")
     return "\n".join(lines)
+
+
+def _registry_setup_script_lines(
+    *,
+    artifact_root: str,
+    bind_ipv4: str,
+    target_interface: str,
+) -> list[str]:
+    """Return the setup-script lines contributed by registered plugins.
+
+    Each registered plugin's optional ``setup_script(ctx)`` hook returns the
+    block of script lines for that protocol's responder/provisioning. The blocks
+    are concatenated in sorted-plugin order. Empty until a protocol migrates, so
+    this returns ``[]`` and the assembled script is byte-identical to the legacy
+    output.
+    """
+
+    lines: list[str] = []
+    for plugin in registered_plugins():
+        if plugin.setup_script is None:
+            continue
+        block = plugin.setup_script(
+            artifact_root=artifact_root,
+            bind_ipv4=bind_ipv4,
+            target_interface=target_interface,
+        )
+        if isinstance(block, Sequence) and not isinstance(block, (str, bytes)):
+            lines.extend(str(line) for line in block)
+    return lines
 
 
 def _ndp_target_setup_lines(*, wants_router: bool) -> list[str]:
