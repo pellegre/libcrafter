@@ -40,13 +40,10 @@ from tools.oracle.engine.spec_loader import load_oracle_specs
 # layer(s) here, and step 44 deletes this set and asserts ``missing == set()``.
 KNOWN_UNMIGRATED: frozenset[str] = frozenset(
     {
-        "ah",
         "ble_adv",
         "ble_radio",
         "dot11",
         "eapol",
-        "esp",
-        "ikev2",
         "radiotap",
         "rsn",
     }

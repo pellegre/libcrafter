@@ -56,24 +56,20 @@ from .protocols.dhcp import (
 BACKEND_NAME = "scapy"
 
 _LAYER_ALIASES: dict[str, str] = {
-    "AH": "ah",
+    # ``AH`` / ``ESP`` / ``ISAKMP`` / ``ISAKMP_v1`` moved to the migrated
+    # ``protocols/ipsec.py`` plugin (its ``ScapyProtocol.layer_aliases``);
+    # ``_normalize_layer_name`` resolves them from ``_registered_layer_aliases``.
     "BTLE": "ble_radio",
     "BTLE_ADV": "ble_adv",
     "BTLE_ADV_IND": "ble_adv",
     "Dot11": "dot11",
     "Dot11EltRSN": "rsn",
-    "Dot15d4": "dot15d4",
-    "Dot15d4Data": "dot15d4",
-    "Dot15d4FCS": "dot15d4",
-    "ESP": "esp",
     "EAPOL": "eapol",
     "IGMP": "igmp",
     "IGMPv3": "igmp",
     "IGMPv3gr": "igmp_group_record",
     "IGMPv3mq": "igmp_query",
     "IGMPv3mr": "igmp_report",
-    "ISAKMP": "ikev2",
-    "ISAKMP_v1": "ikev2",
     "IPv6ExtHdrDestOpt": "ipv6_destination_options",
     "IPv6ExtHdrFragment": "ipv6_fragment",
     "IPv6ExtHdrHopByHop": "ipv6_hop_by_hop",
@@ -94,20 +90,10 @@ _FIELD_ALIASES: dict[str, str] = {
     "urgptr": "urgent_pointer",
 }
 _LAYER_FIELD_ALIASES: dict[str, dict[str, str]] = {
-    "ah": {
-        "nh": "next_header",
-        "payloadlen": "payload_len",
-        "seq": "sequence",
-    },
-    "esp": {
-        "seq": "sequence",
-    },
-    "ikev2": {
-        "exch_type": "exchange_type",
-        "id": "message_id",
-        "init_cookie": "initiator_spi",
-        "resp_cookie": "responder_spi",
-    },
+    # The ``ah`` / ``esp`` / ``ikev2`` per-layer field renames moved to the
+    # migrated ``protocols/ipsec.py`` plugin (its ``ScapyProtocol.field_aliases``,
+    # applied by the registered ``normalize`` hook); esp/ah/ikev2 no longer reach
+    # the generic ``_normalize_field_name`` path here.
     "ipv6_destination_options": {
         "len": "header_ext_len",
     },
@@ -598,56 +584,14 @@ def _normalize_fields(layer_name: str, fields: JSONObject) -> JSONObject:
         _normalize_ipv6_fragment_fields(output)
     if layer_name == "ipv6_routing":
         _normalize_ipv6_routing_fields(output)
-    if layer_name in {"esp", "ah", "ikev2"}:
-        _normalize_ipsec_fields(layer_name, output)
     return output
 
 
-def _normalize_ipsec_fields(layer_name: str, output: JSONObject) -> None:
-    """Tidy decoded ESP/AH/IKEv2 fields into the comparable oracle shape.
-
-    ESP carries the SPI, sequence, and the opaque encrypted body (``data``); AH
-    carries the header fields plus the ICV, with the empty trailing ``padding``
-    artifact dropped; IKEv2 (ISAKMP) carries the SPIs, next-payload, version,
-    exchange type, flags, message id, and length. The ESP/AH SPI is reported as
-    an unsigned integer to match the libcrafter decode model.
-    """
-
-    if layer_name == "ah":
-        # Scapy appends an empty ``padding`` field on the AH header; it carries
-        # no wire bytes (the ICV padding is folded into ``icv``), so drop it.
-        padding = output.get("padding")
-        if padding in (None, {"hex": "", "ascii": ""}, ""):
-            output.pop("padding", None)
-    if layer_name == "ikev2":
-        flags = output.get("flags")
-        if flags is not None:
-            output["flags"] = _normalize_ikev2_flags(flags)
-
-
-# IKEv2 (ISAKMP) flag bits (RFC 7296 §3.1) mapped to the stable domain names the
-# generator emits, so a decoded flag set compares against the planned domain.
-_IKEV2_FLAG_NAMES: dict[int, str] = {
-    0x08: "initiator",
-    0x10: "version",
-    0x20: "response",
-}
-
-
-def _normalize_ikev2_flags(value: JSONValue) -> JSONValue:
-    if isinstance(value, str):
-        # Scapy renders the FlagsField as a textual token (e.g. "initiator").
-        cleaned = value.strip()
-        if not cleaned:
-            return []
-        tokens = [
-            token.lower().replace("-", "_").replace("+", "_")
-            for token in cleaned.replace("+", " ").split()
-        ]
-        return tokens
-    if isinstance(value, int) and not isinstance(value, bool):
-        return [name for bit, name in sorted(_IKEV2_FLAG_NAMES.items()) if value & bit]
-    return value
+# The esp/ah/ikev2 per-layer decode tweaks (the former ``_normalize_ipsec_fields``
+# and ``_normalize_ikev2_flags`` / ``_IKEV2_FLAG_NAMES``) moved to
+# ``protocols/ipsec.py``; the registered ``ScapyProtocol.normalize`` hooks own them
+# now, so ``_normalize_fields`` resolves esp/ah/ikev2 from the registry before the
+# generic path above ever runs.
 
 
 # BGP message-type code -> name. The per-layer BGP normalizer moved to
