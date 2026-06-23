@@ -20,8 +20,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 
-from . import bootstrap as oracle_bootstrap
-from .backends import (
+from .. import bootstrap as oracle_bootstrap
+from ..backends import (
     BackendCapabilityName,
     BackendRegistration,
     UnknownBackendError,
@@ -30,8 +30,8 @@ from .backends import (
     get_backend_capability_registration,
     registered_backend_names,
 )
-from .compare import compare_decoded_models, failure_indexes
-from .model import (
+from ..compare import compare_decoded_models, failure_indexes
+from ..model import (
     ComparisonResult,
     DecodedModel,
     EncodedVector,
@@ -43,7 +43,7 @@ from .model import (
     read_json,
     write_json,
 )
-from .report import DEFAULT_OUTPUT_ROOT, REPO_ROOT
+from ..report import DEFAULT_OUTPUT_ROOT, REPO_ROOT
 
 
 PCAP_CONTRACT_SPEC = "features/pcap.yaml"
@@ -272,7 +272,7 @@ def _not_implemented(args: argparse.Namespace) -> int:
 
 
 def _generate(args: argparse.Namespace) -> int:
-    from .generator import generate_plans
+    from ..generator import generate_plans
 
     try:
         plans = generate_plans(
@@ -324,7 +324,7 @@ def _generate(args: argparse.Namespace) -> int:
 
 
 def _corpus(args: argparse.Namespace) -> int:
-    from .corpus import write_corpus_report
+    from ..corpus import write_corpus_report
 
     direction = getattr(args, "direction", "reference_to_libcrafter")
     try:
@@ -348,8 +348,8 @@ def _build_corpus_report_from_generation(
     *,
     direction: str = "reference_to_libcrafter",
 ):
-    from .corpus import build_corpus_report
-    from .generator import generate_plans
+    from ..corpus import build_corpus_report
+    from ..generator import generate_plans
 
     plans = generate_plans(
         seed=args.seed,
@@ -415,8 +415,8 @@ def _build_udp_live_case_corpus_report(
     *,
     direction: str,
 ):
-    from .corpus import build_corpus_report
-    from .generator import generate_plans
+    from ..corpus import build_corpus_report
+    from ..generator import generate_plans
 
     live_cases = _udp_options_live_case_specs()
     plans: list[PacketPlan] = []
@@ -495,7 +495,7 @@ def _build_udp_live_case_corpus_report(
 
 
 def _udp_options_live_case_specs() -> list[JSONObject]:
-    from .spec_loader import load_oracle_specs
+    from ..spec_loader import load_oracle_specs
 
     specs = load_oracle_specs()
     feature = specs.features.get("udp_options")
@@ -554,7 +554,7 @@ def _offline_required_capabilities(
 def _offline_corpus_plans(
     args: argparse.Namespace,
 ) -> tuple[list[PacketPlan], list[str], JSONObject]:
-    from .corpus import CorpusFormatError, load_corpus_report
+    from ..corpus import CorpusFormatError, load_corpus_report
 
     corpus_path: Path | None = None
     corpus_source = "generated"
@@ -630,7 +630,7 @@ def _live_case_byte_policies() -> dict[str, str]:
     """
 
     try:
-        from .generator import case_byte_policy_index
+        from ..generator import case_byte_policy_index
 
         return case_byte_policy_index()
     except Exception:
@@ -644,7 +644,7 @@ def _live_corpus_plans(
     direction: str,
     provider_capabilities: Mapping[str, object] | None = None,
 ) -> tuple[list[PacketPlan], list[str], JSONObject]:
-    from .corpus import (
+    from ..corpus import (
         CorpusFormatError,
         SKIP_PROVIDER_CAPABILITY_UNAVAILABLE,
         corpus_eligibility_summary,
@@ -858,7 +858,7 @@ def _live_endpoint_pair_validation(
     sender_request,
     receiver_request,
 ):
-    from .live import LiveValidationCheck
+    from ..live import LiveValidationCheck
 
     errors: list[str] = []
     sender_corpus = sender_request.metadata.get("corpus_id")
@@ -983,7 +983,7 @@ def _live_corpus_accounting_validation(
     *,
     provider: str,
 ):
-    from .live import LiveValidationCheck
+    from ..live import LiveValidationCheck
 
     generated_count = int(metadata.get("generated_count", 0))
     eligible_count = int(metadata.get("wire_eligible_count", 0))
@@ -1623,7 +1623,7 @@ def _live(args: argparse.Namespace) -> int:
     if args.provider == "local-dry-run":
         return _live_local_dry_run(args)
 
-    from .providers.registry import resolve_live_provider
+    from ..providers.registry import resolve_live_provider
 
     try:
         provider_adapter = resolve_live_provider(args.provider)
@@ -1640,13 +1640,13 @@ def _live_provider(args: argparse.Namespace, provider_adapter) -> int:
     # get isolated provider networks and IP allocations.
     _seed_live_private_group()
 
-    from .backends.scapy.live import (
+    from ..backends.scapy.live import (
         backend_bootstrap_command_plan,
         dry_run_command_plan as scapy_dry_run_command_plan,
         validate_backend_bootstrap_command,
         validate_dry_run_command_plan as validate_scapy_dry_run_command_plan,
     )
-    from .live import (
+    from ..live import (
         LIVE_SELECTED_SPECS,
         LiveExchangePlan,
         LiveValidationCheck,
@@ -2964,12 +2964,12 @@ def _live_provider_execute(
     selected_specs: list[str],
     corpus_metadata: JSONObject,
 ) -> int:
-    from .backends.scapy.normalize import decode_vectors
-    from .backends.scapy.packets import encode_packet_plans
+    from ..backends.scapy.normalize import decode_vectors
+    from ..backends.scapy.packets import encode_packet_plans
     from tools.lab.engine import repo as lab_repo
     from tools.lab.engine import session as lab_session_state
     from tools.lab.engine import endpoint_client as lab_endpoint_client
-    from .live import (
+    from ..live import (
         LiveCommandPlan,
         LiveExchangePlan,
         build_live_endpoint_batch_request,
@@ -4060,7 +4060,7 @@ def _live_wire_policy(
     else:
         if provider_name is None:
             raise RuntimeError("live wire policy requires a provider adapter or name")
-        from .corpus import wire_comparison_policy
+        from ..corpus import wire_comparison_policy
 
         policy = wire_comparison_policy(plan, provider=provider_name)
 
@@ -4326,7 +4326,7 @@ def _parse_endpoint_stdout(stdout: str, label: str) -> tuple[JSONObject | None, 
 
 
 def _endpoint_response_from_execution(execution: JSONObject):
-    from .live import (
+    from ..live import (
         LiveCaptureArtifact,
         LiveEndpointBatchResponse,
         LiveEndpointIndexStatus,
@@ -4406,7 +4406,7 @@ def _decoded_model_from_object(value: object, name: str) -> DecodedModel:
 
 
 def _live_capture_from_object(value: object, name: str):
-    from .live import LiveCaptureArtifact
+    from ..live import LiveCaptureArtifact
 
     capture = _json_object(value, name)
     return LiveCaptureArtifact(
@@ -4419,7 +4419,7 @@ def _live_capture_from_object(value: object, name: str):
 
 
 def _live_status_from_object(value: object, name: str):
-    from .live import LiveEndpointIndexStatus
+    from ..live import LiveEndpointIndexStatus
 
     status = _json_object(value, name)
     return LiveEndpointIndexStatus(
@@ -4750,7 +4750,7 @@ def _live_sender_decoded_models_by_index(
     *,
     provider_adapter,
 ) -> dict[int, JSONObject]:
-    from .backends.scapy.normalize import decode_vectors
+    from ..backends.scapy.normalize import decode_vectors
 
     sender_statuses = {
         status.index: status for status in sender_response.per_index_status
@@ -5205,13 +5205,13 @@ def _live_endpoint_response_artifact_paths(response) -> list[str]:
 
 
 def _live_local_dry_run(args: argparse.Namespace) -> int:
-    from .backends.scapy.live import (
+    from ..backends.scapy.live import (
         backend_bootstrap_command_plan,
         dry_run_command_plan as scapy_dry_run_command_plan,
         validate_backend_bootstrap_command,
         validate_dry_run_command_plan as validate_scapy_dry_run_command_plan,
     )
-    from .live import (
+    from ..live import (
         LIVE_SELECTED_SPECS,
         LiveExchangePlan,
         build_live_endpoint_batch_request,
@@ -5739,7 +5739,7 @@ def _offline(args: argparse.Namespace) -> int:
         return 2
     if args.emit_vectors or args.emit_decoded:
         if args.backend == "scapy":
-            from .backends.scapy.packets import encode_packet_plans
+            from ..backends.scapy.packets import encode_packet_plans
 
             vectors = encode_packet_plans(plans)
         else:
@@ -5747,7 +5747,7 @@ def _offline(args: argparse.Namespace) -> int:
             return 2
 
         if args.emit_decoded:
-            from .backends.scapy.normalize import decode_vectors, validate_smoke_decodes
+            from ..backends.scapy.normalize import decode_vectors, validate_smoke_decodes
 
             decoded = decode_vectors(vectors)
             if args.profile == "smoke":
@@ -5821,12 +5821,12 @@ def _offline_reference_to_libcrafter(args: argparse.Namespace) -> int:
         print(f"unsupported offline direction: {args.direction}", file=sys.stderr)
         return 2
 
-    from .backends.scapy.packets import encode_packet_plans
+    from ..backends.scapy.packets import encode_packet_plans
 
     if args.backend == "scapy":
-        from .backends.scapy.normalize import decode_vectors
+        from ..backends.scapy.normalize import decode_vectors
     elif args.backend == "wireshark":
-        from .backends.wireshark.normalize import decode_vectors
+        from ..backends.wireshark.normalize import decode_vectors
     else:
         print(f"unsupported backend: {args.backend}", file=sys.stderr)
         return 2
@@ -5993,9 +5993,9 @@ def _offline_libcrafter_to_reference(args: argparse.Namespace) -> int:
         return 2
 
     if args.backend == "scapy":
-        from .backends.scapy.normalize import decode_vectors
+        from ..backends.scapy.normalize import decode_vectors
     else:
-        from .backends.wireshark.normalize import decode_vectors
+        from ..backends.wireshark.normalize import decode_vectors
 
     output_dir = _offline_report_output_dir(args)
     artifacts_root = output_dir / "artifacts"
@@ -6199,7 +6199,7 @@ def _pcap_reference_to_libcrafter(
     plans: list[PacketPlan],
     label: str,
 ) -> JSONObject:
-    from .backends.scapy.pcap import read_pcap, write_pcap
+    from ..backends.scapy.pcap import read_pcap, write_pcap
 
     pcap_path = run_dir / f"{label}.scapy-reference.pcap"
     artifacts: list[str] = [str(vector_path)]
@@ -6274,7 +6274,7 @@ def _pcap_libcrafter_to_reference(
     plans: list[PacketPlan],
     label: str,
 ) -> JSONObject:
-    from .backends.scapy.pcap import pcap_link_type_for_vectors
+    from ..backends.scapy.pcap import pcap_link_type_for_vectors
 
     pcap_path = run_dir / f"{label}.libcrafter-reference.pcap"
     artifacts: list[str] = [str(vector_path)]
@@ -6420,7 +6420,7 @@ def _dedupe_existing_paths(paths: Sequence[str]) -> list[str]:
 
 def _pcap_read_reference_records(backend: str, pcap_path: Path) -> list[JSONObject]:
     if backend == "scapy":
-        from .backends.scapy.pcap import read_pcap
+        from ..backends.scapy.pcap import read_pcap
 
         records = read_pcap(pcap_path)
         return [
@@ -6428,7 +6428,7 @@ def _pcap_read_reference_records(backend: str, pcap_path: Path) -> list[JSONObje
             for index, record in enumerate(records)
         ]
     if backend == "wireshark":
-        from .backends.wireshark.pcap import read_pcap
+        from ..backends.wireshark.pcap import read_pcap
 
         records = read_pcap(pcap_path)
         return [
@@ -7763,7 +7763,7 @@ def _pcap_case_name_is_contract(case_name: str | None) -> bool:
 
 
 def _pcap_spec_cases() -> list[JSONObject]:
-    from .spec_loader import load_oracle_specs
+    from ..spec_loader import load_oracle_specs
 
     specs = load_oracle_specs()
     cases: list[JSONObject] = []
@@ -7794,7 +7794,7 @@ def _pcap_corpus_plan_groups(
     *,
     materialize: bool,
 ) -> tuple[dict[str, list[JSONObject]], list[str], JSONObject]:
-    from .corpus import CorpusFormatError, load_corpus_report
+    from ..corpus import CorpusFormatError, load_corpus_report
 
     corpus_path: Path | None = None
     corpus_source = "generated"
@@ -7842,8 +7842,8 @@ def _pcap_corpus_plan_groups(
     encode_packet_plan = None
     with_pcap_metadata = None
     if materialize:
-        from .backends.scapy.packets import encode_packet_plan as scapy_encode_packet_plan
-        from .backends.scapy.pcap import with_pcap_metadata as scapy_with_pcap_metadata
+        from ..backends.scapy.packets import encode_packet_plan as scapy_encode_packet_plan
+        from ..backends.scapy.pcap import with_pcap_metadata as scapy_with_pcap_metadata
 
         encode_packet_plan = scapy_encode_packet_plan
         with_pcap_metadata = scapy_with_pcap_metadata
@@ -8140,9 +8140,9 @@ def _pcap_group_summaries(groups_by_direction: Mapping[str, list[JSONObject]]) -
 
 
 def _pcap_vector_groups(args: argparse.Namespace, direction: str) -> list[JSONObject]:
-    from .backends.scapy.packets import encode_packet_plan
-    from .backends.scapy.pcap import with_pcap_metadata
-    from .generator import PacketGenerator
+    from ..backends.scapy.packets import encode_packet_plan
+    from ..backends.scapy.pcap import with_pcap_metadata
+    from ..generator import PacketGenerator
 
     cases = _pcap_cases_for_direction(args=args, direction=direction, dry_plan=False)
     generator = PacketGenerator(seed=args.seed, profile=args.profile, backend=args.backend)
@@ -8469,8 +8469,8 @@ def _backend_info(args: argparse.Namespace) -> int:
 
 
 def _self_check(args: argparse.Namespace) -> int:
-    from .generator import run_self_checks
-    from .spec_loader import run_self_checks as run_spec_self_checks
+    from ..generator import run_self_checks
+    from ..spec_loader import run_self_checks as run_spec_self_checks
 
     spec_checks = run_spec_self_checks()
     run_self_checks()
@@ -8526,7 +8526,7 @@ def _suite_offline_cases(feature_name: str) -> list[JSONObject]:
     sorted for reproducibility.
     """
 
-    from .generator import load_stack_grammar
+    from ..generator import load_stack_grammar
 
     grammar = load_stack_grammar()
     features = grammar.get("features", {})
@@ -8572,7 +8572,7 @@ def _suite_offline_cases(feature_name: str) -> list[JSONObject]:
 
 
 def _suite_layer_exists(layer: str) -> bool:
-    from .generator import load_stack_grammar
+    from ..generator import load_stack_grammar
 
     grammar = load_stack_grammar()
     layers = grammar.get("layers", {})
@@ -8729,7 +8729,7 @@ def _run_specs_suite(summary: JSONObject, commands: Sequence[JSONObject]) -> int
 
 
 def _specs_validate(args: argparse.Namespace) -> int:
-    from .spec_loader import SpecValidationError, load_oracle_specs
+    from ..spec_loader import SpecValidationError, load_oracle_specs
 
     try:
         specs = load_oracle_specs(strict=args.strict)
@@ -9066,7 +9066,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_common_options(live_parser)
     _add_generation_options(live_parser)
-    from .providers.registry import registered_provider_names
+    from ..providers.registry import registered_provider_names
 
     live_parser.add_argument(
         "--provider",
