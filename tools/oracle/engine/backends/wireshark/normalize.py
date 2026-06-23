@@ -331,8 +331,6 @@ def _normalize_protocol_fields(
         return _normalize_radiotap(_layer(layers, "radiotap"))
     if layer_name == "dot11":
         return _normalize_dot11(_layer(layers, "wlan"))
-    if layer_name == "llc_snap":
-        return _normalize_llc_snap(_layer(layers, "llc"))
     if layer_name == "eapol":
         return _normalize_eapol(_layer(layers, "eapol"))
     if layer_name == "rsn":
@@ -371,12 +369,8 @@ def _normalize_protocol_fields(
         return _normalize_icmp(_layer(layers, "icmpv6"))
     if layer_name == "ripng":
         return _normalize_ripng(_layer(layers, "ripng"))
-    if layer_name == "payload":
-        return _normalize_payload(_layer(layers, "data"))
     if layer_name == "linux_sll":
         return _normalize_linux_sll(_layer(layers, "sll"))
-    if layer_name == "null_loopback":
-        return _normalize_null_loopback(_layer(layers, "null"))
     return {}
 
 
@@ -558,24 +552,6 @@ def _normalize_dot11(layer: JSONObject) -> JSONObject:
         output["sequence_number"] = output["sequence_control"] >> 4
     if "fragment_number" not in output and isinstance(output.get("sequence_control"), int):
         output["fragment_number"] = output["sequence_control"] & 0x0F
-    return output
-
-
-def _normalize_llc_snap(layer: JSONObject) -> JSONObject:
-    output = _fields_from_aliases(
-        layer,
-        {
-            "dsap": ("llc.dsap",),
-            "ssap": ("llc.ssap",),
-            "control": ("llc.control",),
-            "oui": ("llc.oui", "llc.snap.oui"),
-            "ethertype": ("llc.type", "llc.etype", "llc.pid"),
-        },
-    )
-    _parse_int_fields(output, "dsap", "ssap", "control", "ethertype")
-    oui = output.get("oui")
-    if isinstance(oui, str):
-        output["oui"] = {"hex": _hex_bytes(oui)}
     return output
 
 
@@ -1173,17 +1149,6 @@ def _normalize_ripng(layer: JSONObject) -> JSONObject:
     return output
 
 
-def _normalize_payload(layer: JSONObject) -> JSONObject:
-    data = _string_field(layer, "data.data", "data.text")
-    if data is None:
-        return {}
-    hex_value = _hex_bytes(data)
-    return {
-        "hex": hex_value,
-        "length": len(bytes.fromhex(hex_value)),
-    }
-
-
 def _normalize_linux_sll(layer: JSONObject) -> JSONObject:
     output = _fields_from_aliases(
         layer,
@@ -1196,12 +1161,6 @@ def _normalize_linux_sll(layer: JSONObject) -> JSONObject:
         },
     )
     _parse_int_fields(output, "packet_type", "address_type", "address_length", "protocol")
-    return output
-
-
-def _normalize_null_loopback(layer: JSONObject) -> JSONObject:
-    output = _fields_from_aliases(layer, {"type": ("null.type",)})
-    _parse_int_fields(output, "type")
     return output
 
 

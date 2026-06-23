@@ -381,3 +381,15 @@ def _declared_ethertype_for_stack(stack: Sequence[str], layer: str) -> str:
 
     value = _ethertype_for_stack(stack, layer)
     return "experimental" if value == "unknown" else value
+
+
+def _dot11_is_management(frame_control: int) -> bool:
+    """Report whether an 802.11 frame-control word denotes a management frame.
+
+    Shared sampling primitive: the framing-layer ``payload`` sampler uses it to
+    suppress the payload of a Dot11 management frame, and the (still legacy) dot11
+    sampler uses it for its management-frame branches. Kept here so the migrated
+    framing plugin can import it without depending on ``generator``.
+    """
+
+    return ((frame_control >> 2) & 0x3) == 0

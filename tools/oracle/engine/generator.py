@@ -19,6 +19,7 @@ from .sampling import (
     _SamplingContext,
     _SkipField,
     _declared_ethertype_for_stack,
+    _dot11_is_management,
     _different_ipv4,
     _different_ipv6,
     _different_mac,
@@ -275,9 +276,6 @@ _SUPPORTED_FIELDS: dict[str, set[str]] = {
         "options",
     },
     "ipv6": {"src", "dst", "traffic_class", "flow_label", "next_header", "hop_limit"},
-    "linux_cooked": {"packet_type", "address_type", "address_length", "source_address", "protocol"},
-    "llc_snap": {"control", "dsap", "ethertype", "oui", "payload_length", "ssap"},
-    "null_loopback": {"type"},
     # OSPFv2 common-header fields declared in specs/layers/ospf.yaml. The
     # per-type body (Hello/DD/LSR/LSU/LSAck neighbor and LSA lists) is injected
     # by _apply_ospf_behavior AFTER field sampling, mirroring the BGP body path,
@@ -292,7 +290,6 @@ _SUPPORTED_FIELDS: dict[str, set[str]] = {
         "autype",
         "authentication",
     },
-    "payload": {"hex", "length"},
     "radiotap": {
         "antenna",
         "channel_flags",
@@ -2383,9 +2380,6 @@ class PacketGenerator:
                 field_spec=field_spec,
                 current_fields=current_fields,
             )
-        if layer == "payload":
-            payload = _payload_for_context(ctx)
-            return payload.hex() if field_name == "hex" else len(payload)
         if layer == "ipv4":
             return _sample_ipv4_field(ctx, field_name, domain, current_fields)
         if layer == "ipv6":
@@ -2420,22 +2414,10 @@ class PacketGenerator:
             return _sample_radiotap_field(ctx, field_name, domain)
         if layer == "dot11":
             return _sample_dot11_field(ctx, field_name, domain, current_fields)
-        if layer == "llc_snap":
-            return _sample_llc_snap_field(ctx, field_name)
         if layer == "eapol":
             return _sample_eapol_field(ctx, field_name, domain)
         if layer == "rsn":
             return _sample_rsn_field(ctx, field_name, domain)
-        if layer == "linux_cooked":
-            return _sample_linux_cooked_field(ctx, field_name, domain)
-        if layer == "null_loopback":
-            return _sample_null_loopback_field(ctx, field_name)
-        if layer == "dot15d4":
-            return _sample_dot15d4_field(ctx, field_name, domain)
-        if layer == "zigbee_nwk":
-            return _sample_zigbee_nwk_field(ctx, field_name, domain)
-        if layer == "zigbee_aps":
-            return _sample_zigbee_aps_field(ctx, field_name, domain)
 
         raise ValueError(f"spec error: unsupported layer sampler: {layer}")
 
@@ -5584,15 +5566,6 @@ def _dot11_management_fixed_hex(frame_control: int, domain: str) -> str:
     return ""
 
 
-def _payload_for_context(ctx: _SamplingContext) -> bytes:
-    dot11 = ctx.sampled_layers.get("dot11")
-    if isinstance(dot11, Mapping):
-        frame_control = dot11.get("frame_control")
-        if isinstance(frame_control, int) and _dot11_is_management(frame_control):
-            return b""
-    return ctx.payload
-
-
 def _dot11_management_tags(case: str, domain: str) -> list[JSONObject]:
     if domain == "absent":
         return []
@@ -5611,22 +5584,6 @@ def _dot11_management_tags(case: str, domain: str) -> list[JSONObject]:
 
 def _dot11_management_subtype_has_tags(subtype: int) -> bool:
     return subtype in {0, 2, 4, 5, 8}
-
-
-def _sample_llc_snap_field(ctx: _SamplingContext, field_name: str) -> object:
-    if field_name == "dsap":
-        return 0xAA
-    if field_name == "ssap":
-        return 0xAA
-    if field_name == "control":
-        return 0x03
-    if field_name == "oui":
-        return {"hex": "000000"}
-    if field_name == "ethertype":
-        return _declared_ethertype_for_stack(ctx.stack, "llc_snap")
-    if field_name == "payload_length":
-        return 0
-    raise ValueError(f"spec error: unsupported llc_snap field sampler: {field_name}")
 
 
 def _sample_eapol_field(ctx: _SamplingContext, field_name: str, domain: object) -> object:
@@ -5716,10 +5673,6 @@ def _dot11_frame_control_for_case(case: str, stack: Sequence[str]) -> int:
     return (2 << 2) | (subtype << 4) | flags
 
 
-def _dot11_is_management(frame_control: int) -> bool:
-    return ((frame_control >> 2) & 0x3) == 0
-
-
 def _dot11_is_control(frame_control: int) -> bool:
     return ((frame_control >> 2) & 0x3) == 1
 
@@ -5749,94 +5702,6 @@ def _dot11_control_address_count(frame_control: int) -> int:
         return 3
     subtype = (frame_control >> 4) & 0xF
     return 1 if subtype in {12, 13} else 2
-
-
-def _sample_linux_cooked_field(ctx: _SamplingContext, field_name: str, domain: object) -> object:
-    if field_name == "packet_type":
-        return domain
-    if field_name == "address_type":
-        return "ethernet"
-    if field_name == "address_length":
-        return 6
-    if field_name == "source_address":
-        return {"hex": f"{ctx.src_mac.replace(':', '')}0000"}
-    if field_name == "protocol":
-        return _declared_ethertype_for_stack(ctx.stack, "linux_cooked")
-    raise ValueError(f"spec error: unsupported linux_cooked field sampler: {field_name}")
-
-
-def _sample_null_loopback_field(ctx: _SamplingContext, field_name: str) -> object:
-    if field_name == "type":
-        return "ipv4" if "ipv4" in ctx.stack else "ipv6"
-    raise ValueError(f"spec error: unsupported null_loopback field sampler: {field_name}")
-
-
-# IEEE 802.15.4 / Zigbee deterministic field samplers.
-#
-# The MAC is sampled as an addressed (short-16, PAN-ID compressed) data frame so
-# scapy's Dot15d4FCS dissector dispatches the MAC payload into ZigbeeNWK ->
-# ZigbeeAppDataPayload (conf.dot15d4_protocol="zigbee"), producing the same
-# layer structure libcrafter decodes. The values mirror the
-# zigbee-mac-nwk-aps-data-stack spec case so the materialized frame is a real,
-# decodable Zigbee data stack rather than a degenerate default frame.
-def _sample_dot15d4_field(
-    ctx: _SamplingContext, field_name: str, domain: object
-) -> object:
-    if field_name == "frame_type":
-        return "data"
-    if field_name == "pan_id_compression":
-        return True
-    if field_name == "dest_addr_mode":
-        return "short_16"
-    if field_name == "src_addr_mode":
-        return "short_16"
-    if field_name == "seq":
-        return 0x07
-    if field_name == "dest_pan":
-        return 0x1234
-    if field_name == "dest_addr":
-        return 0x0000
-    if field_name == "src_addr":
-        return 0xABCD
-    raise ValueError(f"spec error: unsupported dot15d4 field sampler: {field_name}")
-
-
-def _sample_zigbee_nwk_field(
-    ctx: _SamplingContext, field_name: str, domain: object
-) -> object:
-    if field_name == "frame_type":
-        return "data"
-    if field_name == "protocol_version":
-        return 2
-    if field_name == "dest":
-        return 0x0000
-    if field_name == "src":
-        return 0xABCD
-    if field_name == "radius":
-        return 30
-    if field_name == "seq":
-        return 0x42
-    raise ValueError(f"spec error: unsupported zigbee_nwk field sampler: {field_name}")
-
-
-def _sample_zigbee_aps_field(
-    ctx: _SamplingContext, field_name: str, domain: object
-) -> object:
-    if field_name == "frame_type":
-        return "data"
-    if field_name == "delivery_mode":
-        return "unicast"
-    if field_name == "dest_endpoint":
-        return 0x01
-    if field_name == "cluster":
-        return 0x0006
-    if field_name == "profile":
-        return 0x0104
-    if field_name == "src_endpoint":
-        return 0x01
-    if field_name == "counter":
-        return 0x09
-    raise ValueError(f"spec error: unsupported zigbee_aps field sampler: {field_name}")
 
 
 def generate_plans(
