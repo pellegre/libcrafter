@@ -63,6 +63,22 @@ from .protocols.arp import (
     arp_sysctl_descriptor,
     arp_target_setup_lines,
 )
+
+# DNS's target-service descriptor, responder case set, plan selector, and the
+# setup-script blocks were migrated into the DNS plugin
+# (:mod:`tools.probe.engine.protocols.dns`). They are re-imported here so
+# ``target_services.dns_responder_descriptor`` / ``target_services._DNS_RESPONDER_CASES``
+# / ``target_services.dns_probe_plans`` keep resolving (the behavior/script tests,
+# ``prepare_wire_probe_target``, and ``__all__`` reference them), and so
+# ``target_service_setup_script`` can render the DNS setup blocks. The DNS plugin
+# module does not import ``target_services``, so this does not cycle.
+from .protocols.dns import (
+    _DNS_RESPONDER_CASES,
+    dns_port_check_lines,
+    dns_probe_plans,
+    dns_responder_descriptor,
+    dns_responder_setup_lines,
+)
 from .target_service_helpers import (
     KernelStateDescriptor,
     TargetServiceDescriptor,
@@ -117,37 +133,10 @@ RIP_RIB_COMMAND = "vtysh -c 'show ip rip'"
 # advertises.
 
 
-def dns_responder_descriptor(
-    *,
-    bind_ipv4: str,
-    source_ipv4: str,
-    port: int,
-    artifact_root: str,
-) -> TargetServiceDescriptor:
-    """Describe the controlled UDP DNS responder bound to the target address."""
-
-    return TargetServiceDescriptor(
-        name="dns-responder",
-        protocol="udp",
-        purpose="dns-query",
-        bind_ipv4=bind_ipv4,
-        source_ipv4=source_ipv4,
-        port=port,
-        requires=["python3", SKIP_REQUIRES_CONTROLLED_SERVICE],
-        setup_commands=[
-            f"check udp port {bind_ipv4}:{port} is free",
-            f"start dns-responder.py on {bind_ipv4}:{port}",
-        ],
-        cleanup_commands=[
-            f"kill dns-responder on {bind_ipv4}:{port}",
-        ],
-        artifacts=[
-            posixpath.join(artifact_root, f"dns-responder-{port}.stdout.txt"),
-            posixpath.join(artifact_root, f"dns-responder-{port}.stderr.txt"),
-            posixpath.join(artifact_root, f"dns-responder-{port}.pid"),
-        ],
-        metadata={"runtime": "python3", "deterministic": True},
-    )
+# The DNS target-service descriptor (``dns_responder_descriptor``) now lives in
+# :mod:`tools.probe.engine.protocols.dns` and is re-imported above so
+# ``target_services.dns_responder_descriptor`` keeps resolving for the
+# behavior/script tests.
 
 
 def dhcp_responder_descriptor(
@@ -481,8 +470,6 @@ def _legacy_target_service_setup_plan(
     tcp_closed_plans = plans_by_destination_port(
         plan for plan in probe_plans if plan.get("case") == "tcp-syn-closed"
     )
-    dns_plans = dns_probe_plans(probe_plans)
-    dns_plans_by_port = plans_by_destination_port(dns_plans)
     dhcp_plans = dhcp_probe_plans(probe_plans)
     dhcp_plans_by_port = plans_by_destination_port(dhcp_plans)
     udp_plans = udp_probe_plans(probe_plans)
@@ -497,7 +484,6 @@ def _legacy_target_service_setup_plan(
         "starts_services": not dry_run
         and bool(
             tcp_open_plans
-            or dns_plans_by_port
             or dhcp_plans_by_port
             or udp_plans_by_port
             or bgp_plans
@@ -514,26 +500,6 @@ def _legacy_target_service_setup_plan(
                     **target_service_address_fields(plan),
                 }
                 for port, plan in tcp_open_plans.items()
-            ],
-            *[
-                {
-                    "name": "dns-responder",
-                    "protocol": "udp",
-                    "port": port,
-                    "purpose": "dns-query",
-                    "deterministic": True,
-                    "query_count": sum(
-                        1
-                        for plan in dns_plans
-                        if int(plan.get("destination_port", 0)) == port
-                    ),
-                    **target_service_address_fields(plan),
-                    "log_paths": [
-                        f"live-artifacts/probe/target-services/dns-responder-{port}.stdout.txt",
-                        f"live-artifacts/probe/target-services/dns-responder-{port}.stderr.txt",
-                    ],
-                }
-                for port, plan in dns_plans_by_port.items()
             ],
             *[
                 {
@@ -656,30 +622,12 @@ def tcp_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
     ]
 
 
-# Probe cases that drive the controlled UDP DNS responder. ``dns-query`` is the
-# legacy smoke case; ``dns-a-success``, ``dns-aaaa-success``, and the later DNS
-# behavioral cases reuse the same responder descriptor and target setup.
-_DNS_RESPONDER_CASES: frozenset[str] = frozenset(
-    {
-        "dns-query",
-        "dns-a-success",
-        "dns-aaaa-success",
-        "dns-cname-chain",
-        "dns-nxdomain",
-        "dns-nodata",
-        "dns-txt-answer",
-        "dns-mx-answer",
-        "dns-srv-answer",
-        "dns-edns-opt",
-        "dns-repeat-transaction",
-    }
-)
-
-
-def dns_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
-    """Return the DNS-query probe plans in order."""
-
-    return [plan for plan in probe_plans if plan.get("case") in _DNS_RESPONDER_CASES]
+# The DNS responder case set (``_DNS_RESPONDER_CASES``) and the ``dns_probe_plans``
+# selector now live in :mod:`tools.probe.engine.protocols.dns`; they are
+# re-imported above so ``target_services._DNS_RESPONDER_CASES`` /
+# ``target_services.dns_probe_plans`` keep resolving for the legacy plan body
+# (the partition reroutes DNS plans to the plugin's ``target_service`` hook) and
+# for ``prepare_wire_probe_target`` / the tests.
 
 
 def bgp_peer_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
@@ -934,13 +882,7 @@ def target_service_setup_script(
     the live run is inspectable.
     """
 
-    dns_plan_json = json.dumps(list(dns_plans), sort_keys=True)
     dhcp_plan_json = json.dumps(list(dhcp_plans), sort_keys=True)
-    dns_ports = dedupe_ints(
-        int(plan["destination_port"])
-        for plan in dns_plans
-        if isinstance(plan.get("destination_port"), int)
-    )
     dhcp_ports = dedupe_ints(
         int(plan["destination_port"])
         for plan in dhcp_plans
@@ -997,25 +939,10 @@ def target_service_setup_script(
         "PY",
         "}",
     ]
-    for port in dns_ports:
-        lines.extend(
-            [
-                "python3 - \"$dns_bind_ipv4\" \"$1\" <<'PY'".replace("$1", str(port)),
-                "import socket",
-                "import sys",
-                "bind_ip = sys.argv[1]",
-                "port = int(sys.argv[2])",
-                "sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)",
-                "try:",
-                "    sock.bind((bind_ip, port))",
-                "except OSError as exc:",
-                "    print(f'udp port {bind_ip}:{port} is not free: {exc}', file=sys.stderr)",
-                "    sys.exit(1)",
-                "finally:",
-                "    sock.close()",
-                "PY",
-            ]
-        )
+    # The DNS per-port UDP port-free check moved to
+    # ``protocols.dns.dns_port_check_lines``; render it here so the script bytes
+    # stay byte-identical to the legacy inline ``for port in dns_ports:`` loop.
+    lines.extend(dns_port_check_lines(dns_plans))
     for port in dhcp_ports:
         lines.extend(
             [
@@ -1095,383 +1022,15 @@ def target_service_setup_script(
                 f"echo listener_{port}=running",
             ]
         )
-    if dns_ports:
-        zone_path = posixpath.join(artifact_root, "dns-zone.json")
-        service_path = posixpath.join(artifact_root, "dns-responder.py")
-        lines.extend(
-            [
-                f"cat > {shlex.quote(zone_path)} <<'JSON'",
-                dns_plan_json,
-                "JSON",
-                f"cat > {shlex.quote(service_path)} <<'PY'",
-                "import ipaddress",
-                "import json",
-                "import signal",
-                "import socket",
-                "import struct",
-                "import sys",
-                "import time",
-                "",
-                "stop = False",
-                "",
-                "def handle_stop(_signum, _frame):",
-                "    global stop",
-                "    stop = True",
-                "",
-                "signal.signal(signal.SIGTERM, handle_stop)",
-                "signal.signal(signal.SIGINT, handle_stop)",
-                "",
-                "zone_path, bind_ip, port_text = sys.argv[1:4]",
-                "port = int(port_text)",
-                "plans = json.load(open(zone_path, encoding='utf-8'))",
-                "records = {}",
-                "present_names = set()",
-                "# repeat_overrides maps a client source port to the A answer that",
-                "# port's send expects. The dns-repeat-transaction case reuses one",
-                "# transaction id and query name across two sends distinguished only",
-                "# by source port, so the responder serves each send its own planned",
-                "# answer keyed by the client source port — that is what lets the",
-                "# stimulus match each response back to its send without confusing",
-                "# the two same-name responses.",
-                "repeat_overrides = {}",
-                "for plan in plans:",
-                "    name = str(plan['query_name']).lower().rstrip('.') + '.'",
-                "    qtype = int(plan['query_type_value'])",
-                "    service = plan.get('target_service') or {}",
-                "    # NXDOMAIN cases register no record: the name is deliberately",
-                "    # absent so the responder returns rcode 3 with an empty answer",
-                "    # section and the original question echoed.",
-                "    if isinstance(service, dict) and service.get('absent'):",
-                "        records.pop((name, qtype), None)",
-                "        continue",
-                "    # NODATA cases: the name EXISTS in the zone, but only under a",
-                "    # different type (present_type), so the queried type has no",
-                "    # record. Mark the name present (so the responder returns",
-                "    # rcode 0 NODATA, not rcode 3 NXDOMAIN) without registering an",
-                "    # answer record for the queried type.",
-                "    if isinstance(service, dict) and service.get('nodata'):",
-                "        present_names.add(name)",
-                "        records.pop((name, qtype), None)",
-                "        continue",
-                "    present_names.add(name)",
-                "    # TXT answers carry a list of character-strings instead of a",
-                "    # single address/name answer_data. Each string is encoded on",
-                "    # the wire as one length-prefixed DNS character-string.",
-                "    if qtype == 16:",
-                "        strings = service.get('txt_strings') if isinstance(service, dict) else None",
-                "        if not strings:",
-                "            strings = plan.get('expected_txt_strings') or []",
-                "        records[(name, qtype)] = {",
-                "            'txt_strings': [str(value) for value in strings],",
-                "            'ttl': int(plan.get('answer_ttl', 60)),",
-                "        }",
-                "        continue",
-                "    # MX answers carry structured RDATA: a 16-bit preference",
-                "    # followed by the exchange <domain-name>, encoded uncompressed",
-                "    # so the wire rdlength is 2 + encoded-name length.",
-                "    if qtype == 15:",
-                "        preference = service.get('mx_preference') if isinstance(service, dict) else None",
-                "        exchange = service.get('mx_exchange') if isinstance(service, dict) else None",
-                "        if preference is None:",
-                "            preference = plan.get('expected_mx_preference')",
-                "        if exchange is None:",
-                "            exchange = plan.get('expected_mx_exchange')",
-                "        records[(name, qtype)] = {",
-                "            'mx_preference': int(preference),",
-                "            'mx_exchange': str(exchange).lower().rstrip('.') + '.',",
-                "            'ttl': int(plan.get('answer_ttl', 60)),",
-                "        }",
-                "        continue",
-                "    # SRV answers carry structured RDATA: three 16-bit fields",
-                "    # (priority, weight, port) followed by the target",
-                "    # <domain-name>, encoded uncompressed so the wire rdlength is",
-                "    # 6 + encoded-name length.",
-                "    if qtype == 33:",
-                "        priority = service.get('srv_priority') if isinstance(service, dict) else None",
-                "        weight = service.get('srv_weight') if isinstance(service, dict) else None",
-                "        srv_port = service.get('srv_port') if isinstance(service, dict) else None",
-                "        target = service.get('srv_target') if isinstance(service, dict) else None",
-                "        if priority is None:",
-                "            priority = plan.get('expected_srv_priority')",
-                "        if weight is None:",
-                "            weight = plan.get('expected_srv_weight')",
-                "        if srv_port is None:",
-                "            srv_port = plan.get('expected_srv_port')",
-                "        if target is None:",
-                "            target = plan.get('expected_srv_target')",
-                "        records[(name, qtype)] = {",
-                "            'srv_priority': int(priority),",
-                "            'srv_weight': int(weight),",
-                "            'srv_port': int(srv_port),",
-                "            'srv_target': str(target).lower().rstrip('.') + '.',",
-                "            'ttl': int(plan.get('answer_ttl', 60)),",
-                "        }",
-                "        continue",
-                "    record = {",
-                "        'answer_data': str(plan['expected_answer_data']),",
-                "        'ttl': int(plan.get('answer_ttl', 60)),",
-                "    }",
-                "    # EDNS(0) cases attach an OPT pseudo-record (RFC 6891) to the",
-                "    # response's additional section. The responder echoes a planned",
-                "    # OPT: UDP payload size in CLASS, extended rcode/version/DO flag",
-                "    # packed into TTL, and an ordered {code,length,data} option list",
-                "    # in the RDATA.",
-                "    edns = service.get('edns') if isinstance(service, dict) else None",
-                "    if isinstance(edns, dict):",
-                "        record['edns'] = {",
-                "            'udp_payload_size': int(edns.get('udp_payload_size', 4096)),",
-                "            'version': int(edns.get('version', 0)),",
-                "            'extended_rcode': int(edns.get('extended_rcode', 0)),",
-                "            'do': bool(edns.get('do', False)),",
-                "            'options': [",
-                "                {",
-                "                    'code': int(option['code']),",
-                "                    'data': bytes.fromhex(str(option.get('data_hex', ''))),",
-                "                }",
-                "                for option in edns.get('options', [])",
-                "            ],",
-                "        }",
-                "    # dns-repeat-transaction: register the per-source-port answer",
-                "    # overrides so each send (same name/id, distinct source port)",
-                "    # gets its own A answer.",
-                "    repeat = service.get('repeat_transaction') if isinstance(service, dict) else None",
-                "    if isinstance(repeat, dict):",
-                "        for send in repeat.get('sends', []):",
-                "            repeat_overrides[(name, qtype, int(send['source_port']))] = {",
-                "                'answer_data': str(send['answer_data']),",
-                "                'ttl': int(send.get('answer_ttl', record['ttl'])),",
-                "            }",
-                "    chain = service.get('cname_chain') if isinstance(service, dict) else None",
-                "    if isinstance(chain, dict):",
-                "        canonical = str(chain['canonical_name']).lower().rstrip('.') + '.'",
-                "        record['cname'] = {",
-                "            'canonical_name': canonical,",
-                "            'cname_ttl': int(chain.get('cname_ttl', record['ttl'])),",
-                "            'address_ttl': int(chain.get('address_ttl', record['ttl'])),",
-                "        }",
-                "    records[(name, qtype)] = record",
-                "",
-                "def read_name(message, offset):",
-                "    labels = []",
-                "    jumped = False",
-                "    consumed = 0",
-                "    seen = set()",
-                "    while True:",
-                "        if offset >= len(message):",
-                "            raise ValueError('name offset out of range')",
-                "        length = message[offset]",
-                "        if length & 0xc0 == 0xc0:",
-                "            if offset + 1 >= len(message):",
-                "                raise ValueError('truncated compression pointer')",
-                "            pointer = ((length & 0x3f) << 8) | message[offset + 1]",
-                "            if pointer in seen:",
-                "                raise ValueError('compression pointer loop')",
-                "            seen.add(pointer)",
-                "            if not jumped:",
-                "                consumed += 2",
-                "            offset = pointer",
-                "            jumped = True",
-                "            continue",
-                "        offset += 1",
-                "        if not jumped:",
-                "            consumed += 1",
-                "        if length == 0:",
-                "            return '.'.join(labels).lower() + '.', consumed",
-                "        if length & 0xc0:",
-                "            raise ValueError('unsupported dns label kind')",
-                "        label = message[offset:offset + length]",
-                "        if len(label) != length:",
-                "            raise ValueError('truncated dns label')",
-                "        labels.append(label.decode('ascii'))",
-                "        offset += length",
-                "        if not jumped:",
-                "            consumed += length",
-                "",
-                "def encode_name(name):",
-                "    out = bytearray()",
-                "    for label in name.rstrip('.').split('.'):",
-                "        raw = label.encode('ascii')",
-                "        out.append(len(raw))",
-                "        out.extend(raw)",
-                "    out.append(0)",
-                "    return bytes(out)",
-                "",
-                "def encode_opt(edns):",
-                "    # EDNS(0) OPT pseudo-record (RFC 6891 Section 6.1): root owner",
-                "    # name, TYPE 41, CLASS = requestor UDP payload size, TTL packs",
-                "    # extended-rcode(8) | version(8) | DO flag (bit 0 of the low 16),",
-                "    # and RDATA is the ordered {code(u16), length(u16), data} options.",
-                "    do_flag = 0x8000 if edns['do'] else 0",
-                "    ttl = (",
-                "        ((edns['extended_rcode'] & 0xff) << 24)",
-                "        | ((edns['version'] & 0xff) << 16)",
-                "        | do_flag",
-                "    )",
-                "    rdata = b''",
-                "    for option in edns['options']:",
-                "        data = option['data']",
-                "        rdata += struct.pack('!HH', option['code'] & 0xffff, len(data)) + data",
-                "    return (",
-                "        b'\\x00'",
-                "        + struct.pack('!HHIH', 41, edns['udp_payload_size'] & 0xffff, ttl, len(rdata))",
-                "        + rdata",
-                "    )",
-                "",
-                "def response_for(query, client_port=None):",
-                "    if len(query) < 12:",
-                "        raise ValueError('query shorter than dns header')",
-                "    txid, flags, qdcount, _ancount, _nscount, _arcount = struct.unpack('!HHHHHH', query[:12])",
-                "    if qdcount < 1:",
-                "        raise ValueError('query has no question')",
-                "    name, consumed = read_name(query, 12)",
-                "    question_end = 12 + consumed + 4",
-                "    if question_end > len(query):",
-                "        raise ValueError('truncated dns question')",
-                "    qtype, qclass = struct.unpack('!HH', query[12 + consumed:question_end])",
-                "    question = query[12:question_end]",
-                "    record = records.get((name, qtype))",
-                "    rd = flags & 0x0100",
-                "    if record is None or qclass != 1:",
-                "        # NODATA: the name exists (under a different type), so the",
-                "        # response is NOERROR (rcode 0) with the question echoed and",
-                "        # an empty answer section. NXDOMAIN (rcode 3) is reserved for",
-                "        # names absent from the zone.",
-                "        if qclass == 1 and name in present_names:",
-                "            header = struct.pack('!HHHHHH', txid, 0x8000 | rd | 0x0080, 1, 0, 0, 0)",
-                "            return header + question, {'name': name, 'qtype': qtype, 'rcode': 0}",
-                "        header = struct.pack('!HHHHHH', txid, 0x8000 | rd | 3, 1, 0, 0, 0)",
-                "        return header + question, {'name': name, 'qtype': qtype, 'rcode': 3}",
-                "    chain = record.get('cname')",
-                "    if chain is not None:",
-                "        if qtype != 1:",
-                "            raise ValueError(f'cname chain only supports qtype 1, got {qtype}')",
-                "        canonical = chain['canonical_name']",
-                "        canonical_wire = encode_name(canonical)",
-                "        cname_answer = (",
-                "            b'\\xc0\\x0c'",
-                "            + struct.pack('!HHIH', 5, 1, chain['cname_ttl'], len(canonical_wire))",
-                "            + canonical_wire",
-                "        )",
-                "        address = ipaddress.IPv4Address(record['answer_data']).packed",
-                "        a_answer = (",
-                "            canonical_wire",
-                "            + struct.pack('!HHIH', 1, 1, chain['address_ttl'], len(address))",
-                "            + address",
-                "        )",
-                "        header = struct.pack('!HHHHHH', txid, 0x8000 | rd | 0x0400 | 0x0080, 1, 2, 0, 0)",
-                "        meta = {",
-                "            'name': name,",
-                "            'qtype': qtype,",
-                "            'rcode': 0,",
-                "            'answer_count': 2,",
-                "            'canonical_name': canonical,",
-                "        }",
-                "        return header + question + cname_answer + a_answer, meta",
-                "    answer_data = record.get('answer_data')",
-                "    answer_ttl = record['ttl']",
-                "    # Per-source-port answer override (dns-repeat-transaction): pick",
-                "    # the A answer planned for this client source port so each send's",
-                "    # response carries its own answer.",
-                "    override = repeat_overrides.get((name, qtype, client_port))",
-                "    if override is not None:",
-                "        answer_data = override['answer_data']",
-                "        answer_ttl = override['ttl']",
-                "    if qtype == 1:",
-                "        if answer_data is None:",
-                "            raise ValueError('A answer missing answer_data')",
-                "        rdata = ipaddress.IPv4Address(answer_data).packed",
-                "    elif qtype == 28:",
-                "        if answer_data is None:",
-                "            raise ValueError('AAAA answer missing answer_data')",
-                "        rdata = ipaddress.IPv6Address(answer_data).packed",
-                "    elif qtype == 16:",
-                "        # TXT RDATA: one or more DNS character-strings, each a",
-                "        # single length octet followed by up to 255 content bytes.",
-                "        rdata = b''",
-                "        for value in record['txt_strings']:",
-                "            raw = value.encode('utf-8')",
-                "            if len(raw) > 255:",
-                "                raise ValueError('txt character-string exceeds 255 bytes')",
-                "            rdata += bytes([len(raw)]) + raw",
-                "    elif qtype == 15:",
-                "        # MX RDATA: 16-bit preference + exchange <domain-name>,",
-                "        # encoded uncompressed so rdlength == 2 + name length.",
-                "        rdata = struct.pack('!H', record['mx_preference'] & 0xffff)",
-                "        rdata += encode_name(record['mx_exchange'])",
-                "    elif qtype == 33:",
-                "        # SRV RDATA: 16-bit priority + weight + port, then the",
-                "        # target <domain-name>, encoded uncompressed so rdlength",
-                "        # == 6 + name length.",
-                "        rdata = struct.pack(",
-                "            '!HHH',",
-                "            record['srv_priority'] & 0xffff,",
-                "            record['srv_weight'] & 0xffff,",
-                "            record['srv_port'] & 0xffff,",
-                "        )",
-                "        rdata += encode_name(record['srv_target'])",
-                "    else:",
-                "        raise ValueError(f'unsupported qtype {qtype}')",
-                "    answer = b'\\xc0\\x0c' + struct.pack('!HHIH', qtype, 1, answer_ttl, len(rdata)) + rdata",
-                "    # EDNS(0) cases append an OPT pseudo-record to the additional",
-                "    # section; arcount reflects it so the OPT decodes as an",
-                "    # additional record rather than trailing bytes.",
-                "    edns = record.get('edns')",
-                "    additional = encode_opt(edns) if edns else b''",
-                "    arcount = 1 if edns else 0",
-                "    header = struct.pack(",
-                "        '!HHHHHH', txid, 0x8000 | rd | 0x0400 | 0x0080, 1, 1, 0, arcount",
-                "    )",
-                "    meta = {'name': name, 'qtype': qtype, 'rcode': 0}",
-                "    if edns:",
-                "        meta['edns'] = True",
-                "    return header + question + answer + additional, meta",
-                "",
-                "sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)",
-                "sock.bind((bind_ip, port))",
-                "sock.settimeout(1.0)",
-                "print(json.dumps({'event': 'listening', 'bind_ip': bind_ip, 'port': port}), flush=True)",
-                "while not stop:",
-                "    try:",
-                "        data, addr = sock.recvfrom(4096)",
-                "    except socket.timeout:",
-                "        continue",
-                "    try:",
-                "        response, meta = response_for(data, addr[1])",
-                "        sock.sendto(response, addr)",
-                "        meta.update({'event': 'answered', 'client': addr[0], 'client_port': addr[1]})",
-                "        print(json.dumps(meta, sort_keys=True), flush=True)",
-                "    except Exception as exc:",
-                "        print(json.dumps({'event': 'error', 'error': str(exc)}), file=sys.stderr, flush=True)",
-                "sock.close()",
-                "print(json.dumps({'event': 'stopped', 'ts': time.time()}), flush=True)",
-                "PY",
-            ]
+    # The DNS responder heredoc + launch block moved to
+    # ``protocols.dns.dns_responder_setup_lines``; render it here so the
+    # script bytes stay byte-identical to the legacy inline blocks.
+    lines.extend(
+        dns_responder_setup_lines(
+            artifact_root=artifact_root,
+            dns_plans=dns_plans,
         )
-    for port in dns_ports:
-        stdout_path = posixpath.join(artifact_root, f"dns-responder-{port}.stdout.txt")
-        stderr_path = posixpath.join(artifact_root, f"dns-responder-{port}.stderr.txt")
-        pid_path = posixpath.join(artifact_root, f"dns-responder-{port}.pid")
-        lines.extend(
-            [
-                (
-                    f"python3 {shlex.quote(posixpath.join(artifact_root, 'dns-responder.py'))} "
-                    f"{shlex.quote(posixpath.join(artifact_root, 'dns-zone.json'))} "
-                    f"\"$dns_bind_ipv4\" {port} "
-                    f">{shlex.quote(stdout_path)} 2>{shlex.quote(stderr_path)} &"
-                ),
-                "pid=$!",
-                f"echo \"$pid\" > {shlex.quote(pid_path)}",
-                "printf '%s\\n' \"kill $pid 2>/dev/null || true\" >> \"$cleanup\"",
-                f"printf '%s\\n' \"rm -f {shlex.quote(pid_path)}\" >> \"$cleanup\"",
-                "sleep 0.5",
-                "if ! kill -0 \"$pid\" 2>/dev/null; then",
-                f"  cat {shlex.quote(stderr_path)} >&2 || true",
-                f"  echo dns_responder_{port}=failed >&2",
-                "  exit 73",
-                "fi",
-                f"echo dns_responder_{port}=running",
-            ]
-        )
+    )
     if dhcp_ports:
         plan_path = posixpath.join(artifact_root, "dhcp-plans.json")
         service_path = posixpath.join(artifact_root, "dhcp-responder.py")
