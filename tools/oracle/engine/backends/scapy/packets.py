@@ -10,8 +10,6 @@ from ..registry import BackendCapabilities, BackendRegistration, get_backend
 from .bootstrap import import_scapy
 from .encode_helpers import (
     _IP_PROTOCOLS,
-    _bytes_exact,
-    _bytes_optional,
     _canonical_stack,
     _int,
     _internet_checksum,
