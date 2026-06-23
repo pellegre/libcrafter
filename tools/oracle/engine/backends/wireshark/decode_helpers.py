@@ -119,3 +119,7 @@ def _layer_any(layers: JSONObject, *names: str) -> JSONObject:
         if isinstance(value, dict):
             return value
     return {}
+
+
+def _hex_bytes(value: str) -> str:
+    return "".join(char for char in value.lower() if char in "0123456789abcdef")
