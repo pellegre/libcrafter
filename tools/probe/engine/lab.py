@@ -19,6 +19,7 @@ from .capability_derivation import (
 )
 from .cases import UDP_ECHO_LARGE_PAYLOAD_LENGTH
 from .model import JSONObject, JSONValue, json_object
+from .protocols import registered_plugins as _registered_protocol_plugins
 
 
 LOCAL_DRY_RUN_PROVIDER = "local-dry-run"
@@ -434,6 +435,18 @@ def probe_capabilities_from_lab_capabilities(
     artifact = substrate.get("capability_report_artifact")
     if isinstance(artifact, str) and artifact:
         capabilities["capability_report_artifact"] = artifact
+    # Registry-first fold: each migrated plugin contributes its protocol's
+    # derived capability bits via ``lab_capabilities(substrate)`` instead of the
+    # legacy per-protocol booleans above; a protocol served by a plugin is
+    # derived exactly once (its legacy branch moves into the plugin in that
+    # protocol's migration step). With an empty registry no plugin contributes,
+    # so this is a no-op today and the legacy derivation is byte-identical.
+    for plugin in _registered_protocol_plugins():
+        if plugin.lab_capabilities is None:
+            continue
+        contribution = plugin.lab_capabilities(substrate)
+        for key, value in contribution.items():
+            capabilities[key] = value
     return capabilities
 
 
