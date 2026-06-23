@@ -154,22 +154,6 @@ _SUPPORTED_FIELDS: dict[str, set[str]] = {
         "replay_counter",
         "version",
     },
-    "radiotap": {
-        "antenna",
-        "channel_flags",
-        "channel_frequency",
-        "dbm_antenna_signal",
-        "fcs_status",
-        "flags",
-        "length",
-        "pad",
-        "present_words",
-        "rate",
-        "rx_flags",
-        "tx_flags",
-        "unknown_fields",
-        "version",
-    },
     "rsn": {
         "akm_suites",
         "capabilities",
@@ -1697,8 +1681,6 @@ class PacketGenerator:
                 field_spec=field_spec,
                 current_fields=current_fields,
             )
-        if layer == "radiotap":
-            return _sample_radiotap_field(ctx, field_name, domain)
         if layer == "dot11":
             return _sample_dot11_field(ctx, field_name, domain, current_fields)
         if layer == "eapol":
@@ -2294,54 +2276,6 @@ def _is_focused_tcp_option_behavior(name: str) -> bool:
 
 def _auto_sample_feature(feature: str) -> bool:
     return feature != "icmpv4_errors"
-
-
-def _sample_radiotap_field(ctx: _SamplingContext, field_name: str, domain: object) -> object:
-    if field_name == "version":
-        return 0 if domain != "explicit_nonzero" else 1
-    if field_name == "pad":
-        return 0
-    if field_name == "length":
-        return 0
-    if field_name == "present_words":
-        return [0]
-    if field_name == "flags":
-        if domain == "absent":
-            return _SKIP_FIELD
-        if domain in {"fcs_present", "fcs_present_failed"}:
-            return "fcs_present"
-        if domain == "failed_fcs":
-            return "failed_fcs"
-        return "none"
-    if field_name == "rate":
-        return _SKIP_FIELD if domain == "absent" else (2 if domain == "2" else _integer_domain_value(ctx, domain, field_name, bits=8))
-    if field_name == "channel_frequency":
-        return _SKIP_FIELD if domain == "absent" else _integer_domain_value(ctx, domain, field_name, bits=16)
-    if field_name == "channel_flags":
-        if domain == "absent":
-            return _SKIP_FIELD
-        return domain
-    if field_name == "dbm_antenna_signal":
-        if domain == "absent":
-            return _SKIP_FIELD
-        if domain == "boundary":
-            return -128
-        return -42 if domain == "synthetic_signal" else _integer_domain_value(ctx, domain, field_name, bits=8)
-    if field_name == "antenna":
-        return _SKIP_FIELD if domain == "absent" else _integer_domain_value(ctx, domain, field_name, bits=8)
-    if field_name == "rx_flags":
-        if domain == "absent":
-            return _SKIP_FIELD
-        return 0x0001 if domain == "failed_fcs" else 0
-    if field_name == "tx_flags":
-        if domain == "absent":
-            return _SKIP_FIELD
-        return 0x0008 if domain == "no_ack" else 0
-    if field_name == "unknown_fields":
-        return _SKIP_FIELD if domain == "absent" else {"hex": "aabbccdd"}
-    if field_name == "fcs_status":
-        return _SKIP_FIELD if domain == "absent" else domain
-    raise ValueError(f"spec error: unsupported radiotap field sampler: {field_name}")
 
 
 def _sample_dot11_field(

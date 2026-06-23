@@ -81,6 +81,15 @@ from .protocols.ipsec import (
     _is_ipsec_sa_stack,
     _materialize_ipsec_sa_packet,
 )
+# The ``radiotap`` layer is migrated to ``protocols/wifi.py`` and registered in
+# ``SCAPY_REGISTRY`` (its ``ScapyProtocol`` declares ``scapy_class="RadioTap"`` and
+# the ``RadioTap`` -> ``radiotap`` decode alias). Radiotap is never built through the
+# per-layer ``_build_layer`` dispatch — it is part of the whole-stack Dot11 phase-1.5
+# raw-bytes path, which still lives here (``_dot11_phase15_bytes``) until the
+# ``dot11`` raw-bytes stack encoder migrates. The ``_radiotap_bytes`` serializer is
+# re-imported here so that whole-stack driver keeps emitting the radiotap header
+# unchanged.
+from .protocols.wifi import _radiotap_bytes
 
 
 BACKEND_NAME = "scapy"
@@ -116,7 +125,10 @@ _SCAPY_LAYER_BY_LAYER: dict[str, str] = {
     "ipv6_fragment": "IPv6ExtHdrFragment",
     "ipv6_hop_by_hop": "IPv6ExtHdrHopByHop",
     "ipv6_routing": "IPv6ExtHdrRouting",
-    "radiotap": "RadioTap",
+    # The ``radiotap`` layer is migrated to ``protocols/wifi.py`` (its
+    # ``ScapyProtocol`` declares ``scapy_class="RadioTap"``, which drives
+    # ``_scapy_layer_name`` and the ``scapy_stack`` metadata); ``_scapy_layer_name``
+    # resolves it from the registry.
     "raw": "Raw",
     "rsn": "Dot11EltRSN",
 }
@@ -372,22 +384,9 @@ _SUPPORTED_FIELDS_BY_LAYER: dict[str, set[str]] = {
         "segleft",
         "type",
     },
-    "radiotap": {
-        "antenna",
-        "channel_flags",
-        "channel_frequency",
-        "dbm_antenna_signal",
-        "fcs_status",
-        "flags",
-        "length",
-        "pad",
-        "present_words",
-        "rate",
-        "rx_flags",
-        "tx_flags",
-        "unknown_fields",
-        "version",
-    },
+    # The ``radiotap`` field allowlist moved to ``protocols/wifi.py`` (its
+    # ``ScapyProtocol.supported_fields``); ``_scapy_supported_fields`` resolves it
+    # from the registry.
     "rsn": {
         "akm_suites",
         "capabilities",
@@ -1053,92 +1052,6 @@ def _dot11_phase15_bytes(plan: PacketPlan, stack: list[str], scapy_all: Any) -> 
             raise ValueError(f"unsupported Dot11 phase 1.5 materialization layer: {layer}")
         index += 1
     return bytes(output)
-
-
-def _radiotap_bytes(fields: Mapping[str, JSONObject]) -> bytes:
-    radiotap = _layer_fields(fields, "radiotap")
-    field_entries: list[tuple[int, int, bytes]] = []
-    if "flags" in radiotap or "fcs_status" in radiotap:
-        field_entries.append((1, 1, bytes([_radiotap_flags(radiotap)])))
-    if "rate" in radiotap:
-        field_entries.append((2, 1, bytes([_int(radiotap.get("rate"), 2) & 0xFF])))
-    if "channel_frequency" in radiotap or "channel_flags" in radiotap:
-        field_entries.append(
-            (
-                3,
-                2,
-                _int(radiotap.get("channel_frequency"), 2412).to_bytes(2, "little")
-                + _radiotap_channel_flags(radiotap.get("channel_flags")).to_bytes(2, "little"),
-            )
-        )
-    if "dbm_antenna_signal" in radiotap:
-        signal = _int(radiotap.get("dbm_antenna_signal"), -42)
-        field_entries.append((5, 1, int(signal).to_bytes(1, "little", signed=True)))
-    if "antenna" in radiotap:
-        field_entries.append((11, 1, bytes([_int(radiotap.get("antenna"), 0) & 0xFF])))
-    if "rx_flags" in radiotap:
-        field_entries.append((14, 2, _int(radiotap.get("rx_flags"), 0).to_bytes(2, "little")))
-    if "tx_flags" in radiotap:
-        field_entries.append((15, 2, _int(radiotap.get("tx_flags"), 0).to_bytes(2, "little")))
-
-    present = 0
-    for bit, _, _ in field_entries:
-        present |= 1 << bit
-    body = bytearray()
-    offset = 8
-    for _, alignment, value in sorted(field_entries, key=lambda item: item[0]):
-        pad = _radiotap_padding(offset, alignment)
-        body.extend(b"\x00" * pad)
-        offset += pad
-        body.extend(value)
-        offset += len(value)
-
-    version = _int(radiotap.get("version"), 0) & 0xFF
-    pad_byte = _int(radiotap.get("pad"), 0) & 0xFF
-    length = 8 + len(body)
-    return (
-        bytes([version, pad_byte])
-        + length.to_bytes(2, "little")
-        + present.to_bytes(4, "little")
-        + bytes(body)
-    )
-
-
-def _radiotap_padding(offset: int, alignment: int) -> int:
-    if alignment <= 1:
-        return 0
-    remainder = offset % alignment
-    return 0 if remainder == 0 else alignment - remainder
-
-
-def _radiotap_flags(fields: Mapping[str, object]) -> int:
-    value = 0
-    raw_flags = fields.get("flags")
-    raw_status = fields.get("fcs_status")
-    tokens = {str(item).lower().replace("-", "_") for item in (raw_flags, raw_status) if item is not None}
-    if raw_flags is not None and not isinstance(raw_flags, str):
-        value |= _int(raw_flags, 0)
-    if "fcs_present" in tokens or "present" in tokens or "present_failed" in tokens:
-        value |= 0x10
-    if "failed_fcs" in tokens or "failed" in tokens or "present_failed" in tokens:
-        value |= 0x40
-    return value
-
-
-def _radiotap_channel_flags(value: object) -> int:
-    if value is None:
-        return 0x00A0
-    if not isinstance(value, str):
-        return _int(value, 0)
-    normalized = value.lower().replace("-", "_")
-    mapping = {
-        "two_ghz_cck": 0x00A0,
-        "two_ghz_ofdm": 0x00C0,
-        "five_ghz_ofdm": 0x0140,
-    }
-    if normalized in mapping:
-        return mapping[normalized]
-    return _int(value, 0)
 
 
 def _dot11_bytes(fields: Mapping[str, JSONObject]) -> bytes:
