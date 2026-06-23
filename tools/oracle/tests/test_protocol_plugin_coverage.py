@@ -53,7 +53,6 @@ KNOWN_UNMIGRATED: frozenset[str] = frozenset(
         "icmpv6",
         "igmp",
         "ikev2",
-        "ipv4",
         "ipv6",
         "ospf",
         "radiotap",

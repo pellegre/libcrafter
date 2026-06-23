@@ -25,6 +25,7 @@ import unittest
 
 from tools.oracle.engine.backends.scapy import normalize
 from tools.oracle.engine.backends.scapy.bootstrap import import_scapy
+from tools.oracle.engine.backends.scapy.protocols import ipv4 as ipv4_scapy
 
 
 def _scapy():
@@ -52,13 +53,13 @@ def _normalize(packet):
 class ScapyIpv4FlagNormalizeTest(unittest.TestCase):
     def test_ipv4_reserved_flag_uses_libcrafter_name(self) -> None:
         self.assertEqual(
-            normalize._normalize_field_value("ipv4", "flags", "evil"),
+            ipv4_scapy._normalize_ipv4_flags("evil"),
             "reserved",
         )
 
     def test_ipv4_reserved_flag_uses_libcrafter_name_inside_combinations(self) -> None:
         self.assertEqual(
-            normalize._normalize_field_value("ipv4", "flags", "MF+DF+evil"),
+            ipv4_scapy._normalize_ipv4_flags("MF+DF+evil"),
             "mf|df|reserved",
         )
 
