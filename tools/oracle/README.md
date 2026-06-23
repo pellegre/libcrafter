@@ -15,6 +15,25 @@ Wireshark/tshark is registered as a parser-only backend. It can decode packets
 and read pcaps for comparison paths, but it does not encode packet bytes, write
 pcaps, or act as a live endpoint.
 
+## Protocol plugins
+
+Protocol logic lives in small per-protocol plugin modules, one per processing
+stage, each auto-discovered through its stage registry — there is no central
+dispatcher or shared lookup table to edit:
+
+- `tools/oracle/engine/protocols/<name>.py` — generator-stage sampling and
+  feature behavior (`ProtocolSampler`).
+- `tools/oracle/engine/backends/scapy/protocols/<name>.py` — Scapy encode and
+  decode (`ScapyProtocol`, and `StackEncoder` for raw-bytes families).
+- `tools/oracle/engine/backends/wireshark/protocols/<name>.py` — Wireshark/tshark
+  decode (`WiresharkProtocol`), only for layers that declare `wireshark` support.
+
+This keeps the backend-directory rule above intact: Scapy code stays under
+`tools/oracle/engine/backends/scapy/` and Wireshark code under
+`tools/oracle/engine/backends/wireshark/`. Adding a protocol means dropping in
+these files plus its spec files, not growing a shared dispatcher. See
+[`docs/adding-a-protocol.md`](docs/adding-a-protocol.md) for the full recipe.
+
 ## Common Commands
 
 Generate a reusable packet corpus before running a validation mode:
