@@ -1796,8 +1796,9 @@ class PacketGenerator:
         elif feature is not None and feature.startswith("rip_") and "rip" in fields:
             _apply_rip_behavior(fields, stack=stack, case=case, behavior=behavior)
         elif feature == "icmpv4_errors" and "icmp" in fields:
-            self._apply_icmpv4_error_behavior(
+            _apply_icmpv4_error_behavior(
                 fields,
+                grammar=self.grammar,
                 feature=feature,
                 case=case,
                 behavior=behavior,
@@ -2034,77 +2035,6 @@ class PacketGenerator:
             "source_addresses": [_IGMP_DOC_SOURCE],
             "auxiliary_data": auxiliary_data,
         }
-
-    def _apply_icmpv4_error_behavior(
-        self,
-        fields: dict[str, JSONObject],
-        *,
-        feature: str,
-        case: str,
-        behavior: str,
-    ) -> None:
-        """Populate one structured ICMPv4 error behavior.
-
-        Structured error behaviors (destination unreachable, time exceeded,
-        parameter problem, redirect, fragmentation-needed) carry an outer IPv4
-        header, the ICMP error header, and a quoted (embedded) IPv4 datagram
-        prefix with deterministic payload bytes. The quoted datagram is emitted
-        as the ``embedded_header`` field so both backends materialize the same
-        bytes after the ICMP rest-of-header.
-
-        Extension-framing behaviors marked raw-compatible (RFC 4884/4950 MPLS,
-        RFC 5837 interface information) still include the quoted datagram before
-        their deterministic ``extension_bytes`` body. The reference model keeps
-        this as a flat trailing payload for backend-neutral comparison.
-        """
-
-        icmp = fields["icmp"]
-        spec = self._icmpv4_error_behavior_spec(feature, behavior)
-        icmp_type = _string_or_none(spec.get("icmp_type")) if spec is not None else None
-        if icmp_type is None:
-            icmp_type = _icmp_error_type_for_case(case, behavior, ipv6=False)
-        icmp["type"] = icmp_type
-        icmp["code"] = 0
-
-        embeds = _icmp_behavior_embeds(spec)
-
-        # Extension error behaviors keep backend-neutral flat payload bytes, but
-        # the ICMP error body still starts with a quoted datagram.
-        if "icmp_extension_mpls" in embeds:
-            icmp["embedded_header"] = {"hex": _ICMP_QUOTED_IPV4_DATAGRAM}
-            icmp["extension_bytes"] = {"hex": _ICMP_MPLS_EXTENSION_BYTES}
-            return
-        if embeds.intersection({"icmp_extension_header", "icmp_extension_object"}):
-            icmp["extension_bytes"] = {"hex": _ICMP_EXTENSION_BYTES}
-            if "quoted_ipv4" in embeds or "ipv4" in embeds:
-                icmp["embedded_header"] = {"hex": _ICMP_QUOTED_IPV4_DATAGRAM}
-            return
-
-        # Structured quoted-datagram error behaviors: outer IPv4 header, ICMP
-        # error header, quoted IPv4 prefix, and deterministic quoted payload.
-        if "ipv4" in embeds or "payload_prefix" in embeds:
-            icmp["embedded_header"] = {"hex": _ICMP_QUOTED_IPV4_DATAGRAM}
-            if behavior == "redirect" or icmp_type == "redirect":
-                icmp["gateway"] = "192.0.2.1"
-            elif behavior == "parameter_problem" or icmp_type == "parameter_problem":
-                icmp["pointer"] = 20
-            elif behavior == "frag_needed_next_hop_mtu":
-                icmp["next_hop_mtu"] = 1280
-
-    def _icmpv4_error_behavior_spec(
-        self, feature: str, behavior: str
-    ) -> JSONObject | None:
-        feature_spec = self._feature_spec(feature)
-        behaviors = _object_list(
-            feature_spec.get("behaviors", []), f"features.{feature}.behaviors"
-        )
-        for raw_behavior in behaviors:
-            if not isinstance(raw_behavior, Mapping):
-                continue
-            entry = _json_object(raw_behavior)
-            if entry.get("name") == behavior:
-                return entry
-        return None
 
     def _apply_icmp_live_fields(
         self,
@@ -4136,6 +4066,85 @@ def _dns_answers_for_domain(ctx: _SamplingContext, domain: object) -> list[JSONO
     if domain == "cname":
         return [{"name": "example.org.", "type": "CNAME", "ttl": 60, "target": "alias.example.org."}]
     return [{"name": "example.com.", "type": "A", "ttl": 60, "address": ctx.dst_ipv4}]
+
+
+def _icmpv4_error_behavior_spec(
+    grammar: JSONObject, feature: str, behavior: str
+) -> JSONObject | None:
+    features = _object(grammar.get("features"), "features")
+    if feature not in features:
+        raise ValueError(f"unsupported feature: {feature}")
+    feature_spec = _object(features[feature], f"features.{feature}")
+    behaviors = _object_list(
+        feature_spec.get("behaviors", []), f"features.{feature}.behaviors"
+    )
+    for raw_behavior in behaviors:
+        if not isinstance(raw_behavior, Mapping):
+            continue
+        entry = _json_object(raw_behavior)
+        if entry.get("name") == behavior:
+            return entry
+    return None
+
+
+def _apply_icmpv4_error_behavior(
+    fields: dict[str, JSONObject],
+    *,
+    grammar: JSONObject,
+    feature: str,
+    case: str,
+    behavior: str,
+) -> None:
+    """Populate one structured ICMPv4 error behavior.
+
+    Structured error behaviors (destination unreachable, time exceeded,
+    parameter problem, redirect, fragmentation-needed) carry an outer IPv4
+    header, the ICMP error header, and a quoted (embedded) IPv4 datagram
+    prefix with deterministic payload bytes. The quoted datagram is emitted
+    as the ``embedded_header`` field so both backends materialize the same
+    bytes after the ICMP rest-of-header.
+
+    Extension-framing behaviors marked raw-compatible (RFC 4884/4950 MPLS,
+    RFC 5837 interface information) still include the quoted datagram before
+    their deterministic ``extension_bytes`` body. The reference model keeps
+    this as a flat trailing payload for backend-neutral comparison.
+
+    ``grammar`` is threaded in from ``self.grammar`` for the per-behavior
+    feature-spec lookup.
+    """
+
+    icmp = fields["icmp"]
+    spec = _icmpv4_error_behavior_spec(grammar, feature, behavior)
+    icmp_type = _string_or_none(spec.get("icmp_type")) if spec is not None else None
+    if icmp_type is None:
+        icmp_type = _icmp_error_type_for_case(case, behavior, ipv6=False)
+    icmp["type"] = icmp_type
+    icmp["code"] = 0
+
+    embeds = _icmp_behavior_embeds(spec)
+
+    # Extension error behaviors keep backend-neutral flat payload bytes, but
+    # the ICMP error body still starts with a quoted datagram.
+    if "icmp_extension_mpls" in embeds:
+        icmp["embedded_header"] = {"hex": _ICMP_QUOTED_IPV4_DATAGRAM}
+        icmp["extension_bytes"] = {"hex": _ICMP_MPLS_EXTENSION_BYTES}
+        return
+    if embeds.intersection({"icmp_extension_header", "icmp_extension_object"}):
+        icmp["extension_bytes"] = {"hex": _ICMP_EXTENSION_BYTES}
+        if "quoted_ipv4" in embeds or "ipv4" in embeds:
+            icmp["embedded_header"] = {"hex": _ICMP_QUOTED_IPV4_DATAGRAM}
+        return
+
+    # Structured quoted-datagram error behaviors: outer IPv4 header, ICMP
+    # error header, quoted IPv4 prefix, and deterministic quoted payload.
+    if "ipv4" in embeds or "payload_prefix" in embeds:
+        icmp["embedded_header"] = {"hex": _ICMP_QUOTED_IPV4_DATAGRAM}
+        if behavior == "redirect" or icmp_type == "redirect":
+            icmp["gateway"] = "192.0.2.1"
+        elif behavior == "parameter_problem" or icmp_type == "parameter_problem":
+            icmp["pointer"] = 20
+        elif behavior == "frag_needed_next_hop_mtu":
+            icmp["next_hop_mtu"] = 1280
 
 
 def _apply_bgp_behavior(
