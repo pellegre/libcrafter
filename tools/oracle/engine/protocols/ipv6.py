@@ -99,6 +99,7 @@ def _apply_behavior(
     feature: str,
     case: str,
     behavior: str,
+    grammar: JSONObject | None = None,
 ) -> None:
     """Apply ``ipv6_fragment_routing`` behavior into the extension-header fields.
 
@@ -108,6 +109,8 @@ def _apply_behavior(
     ``type``/``segments_left``/``addresses`` are set by case keyword
     (``"segment"`` -> type 4 segleft 1 addr ``2001:db8:ffff::1``; ``"mobile"`` ->
     type 2 segleft 1 addr ``2001:db8:ffff::2``; otherwise type 0 segleft 0).
+    ``grammar`` is part of the uniform ``apply_behavior`` call path (the TCP
+    ``tcp_header`` behavior reads it); IPv6 does not consult it.
     """
 
     if "ipv6_fragment" in fields:

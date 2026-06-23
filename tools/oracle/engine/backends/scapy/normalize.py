@@ -94,7 +94,6 @@ _LAYER_ALIASES: dict[str, str] = {
     "OSPF_LSUpd": "ospf",
     "OSPF_LSAck": "ospf",
     "RadioTap": "radiotap",
-    "TCP": "tcp",
 }
 _FIELD_ALIASES: dict[str, str] = {
     "chksum": "checksum",
@@ -186,10 +185,6 @@ _LAYER_FIELD_ALIASES: dict[str, dict[str, str]] = {
         "dbdescr": "dd_flags",
         "ddseq": "dd_sequence_number",
         "lsaheaders": "lsa_headers",
-    },
-    "tcp": {
-        "ack": "acknowledgement",
-        "seq": "sequence",
     },
 }
 _ETHERTYPES: dict[str, int] = {
@@ -1498,8 +1493,6 @@ def _normalize_field_value(layer_name: str, field_name: str, value: JSONValue) -
     if layer_name == "linux_sll" and field_name == "source_address":
         return _normalize_linux_sll_source_address(value)
     if field_name == "flags":
-        if layer_name == "tcp":
-            return _normalize_tcp_flags(value)
         if layer_name == "dhcp":
             return _normalize_dhcp_flags(value)
         return _normalize_flags(value)
@@ -1557,27 +1550,6 @@ def _normalize_icmpv4_type(value: str) -> str:
         "time_exceeded": "time_exceeded",
     }
     return aliases.get(lowered, lowered)
-
-
-def _normalize_tcp_flags(value: JSONValue) -> JSONValue:
-    if not isinstance(value, str):
-        return value
-    if not value:
-        return "none"
-    names = {
-        "F": "fin",
-        "S": "syn",
-        "R": "rst",
-        "P": "psh",
-        "A": "ack",
-        "U": "urg",
-        "E": "ece",
-        "C": "cwr",
-        "N": "ns",
-    }
-    if all(char in names for char in value):
-        return "|".join(names[char] for char in value)
-    return value.lower().replace("+", "|").replace(" ", "_")
 
 
 def _normalize_dhcp_flags(value: JSONValue) -> JSONValue:

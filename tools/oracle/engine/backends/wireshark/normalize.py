@@ -365,8 +365,6 @@ def _normalize_protocol_fields(
         )
     if layer_name == "dhcp":
         return _normalize_dhcp(_dhcp_layer(layers), source_hex=source_hex)
-    if layer_name == "tcp":
-        return _normalize_tcp(_layer(layers, "tcp"))
     if layer_name == "icmp":
         return _normalize_icmp(_layer(layers, "icmp"))
     if layer_name == "icmpv6":
@@ -772,38 +770,6 @@ def _dhcp_layer(layers: JSONObject) -> JSONObject:
     return _layer(layers, "bootp")
 
 
-def _normalize_tcp(layer: JSONObject) -> JSONObject:
-    output = _fields_from_aliases(
-        layer,
-        {
-            "src_port": ("tcp.srcport",),
-            "dst_port": ("tcp.dstport",),
-            "sequence": ("tcp.seq_raw", "tcp.seq"),
-            "acknowledgement": ("tcp.ack_raw", "tcp.ack"),
-            "data_offset": ("tcp.hdr_len",),
-            "window": ("tcp.window_size_value", "tcp.window_size"),
-            "checksum": ("tcp.checksum",),
-            "urgent_pointer": ("tcp.urgent_pointer",),
-        },
-    )
-    _parse_int_fields(
-        output,
-        "src_port",
-        "dst_port",
-        "sequence",
-        "acknowledgement",
-        "data_offset",
-        "window",
-        "checksum",
-        "urgent_pointer",
-    )
-    data_offset = output.get("data_offset")
-    if isinstance(data_offset, int) and data_offset >= 20 and data_offset % 4 == 0:
-        output["data_offset"] = data_offset // 4
-    output["flags"] = _tcp_flags(layer)
-    return output
-
-
 def _normalize_icmp(layer: JSONObject) -> JSONObject:
     output = _fields_from_aliases(
         layer,
@@ -882,36 +848,6 @@ def _normalize_linux_sll(layer: JSONObject) -> JSONObject:
     )
     _parse_int_fields(output, "packet_type", "address_type", "address_length", "protocol")
     return output
-
-
-def _tcp_flags(layer: JSONObject) -> str:
-    names = [
-        ("tcp.flags.fin", "fin"),
-        ("tcp.flags.syn", "syn"),
-        ("tcp.flags.reset", "rst"),
-        ("tcp.flags.push", "psh"),
-        ("tcp.flags.ack", "ack"),
-        ("tcp.flags.urg", "urg"),
-        ("tcp.flags.ece", "ece"),
-        ("tcp.flags.cwr", "cwr"),
-    ]
-    enabled = [name for field, name in names if _truthy_field(layer, field)]
-    if enabled:
-        return "|".join(enabled)
-    value = _parse_int(_field(layer, "tcp.flags"))
-    if value is None or value == 0:
-        return "none"
-    raw_names = [
-        (0x01, "fin"),
-        (0x02, "syn"),
-        (0x04, "rst"),
-        (0x08, "psh"),
-        (0x10, "ack"),
-        (0x20, "urg"),
-        (0x40, "ece"),
-        (0x80, "cwr"),
-    ]
-    return "|".join(name for bit, name in raw_names if value & bit) or "none"
 
 
 def _truthy_value(value: object) -> bool:
