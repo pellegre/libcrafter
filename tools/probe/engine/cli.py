@@ -139,6 +139,9 @@ from .endpoint_addressing import (
     _eui64_link_local_ipv6,
     _lab_arp_alias_ipv4,
 )
+from .protocols import (
+    all_stimulus_endpoint_cases as _registry_stimulus_endpoint_cases,
+)
 
 
 PROBE_SELECTED_SPECS = ("probe-contracts",)
@@ -648,7 +651,7 @@ def _write_stimulus_endpoint_request_artifact(
     return request_path
 
 
-_STIMULUS_ENDPOINT_CASES = frozenset(
+_LEGACY_STIMULUS_ENDPOINT_CASES = frozenset(
     {
         "icmp-echo",
         "tcp-syn-open",
@@ -705,6 +708,16 @@ _STIMULUS_ENDPOINT_CASES = frozenset(
         # ospf-smoke profile).
         "ospf-hello-exchange",
     }
+)
+
+
+# The effective routing set is the union of each registered plugin's
+# stimulus-endpoint cases and the legacy frozenset above. No protocol is
+# migrated yet, so the registry contribution is empty and this stays
+# byte-identical to the legacy set; a migrated protocol's cases will come from
+# its plugin without editing this module.
+_STIMULUS_ENDPOINT_CASES = frozenset(
+    _registry_stimulus_endpoint_cases() | _LEGACY_STIMULUS_ENDPOINT_CASES
 )
 
 
