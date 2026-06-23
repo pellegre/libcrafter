@@ -1764,230 +1764,7 @@ class PacketGenerator:
         elif feature == "dhcp_behavior" and "dhcp" in fields:
             _apply_dhcp_behavior(fields["dhcp"], case=case, behavior=behavior)
         elif feature is not None and feature.startswith("igmp_") and "igmp" in stack:
-            self._apply_igmp_behavior(fields, feature=feature, case=case, behavior=behavior)
-
-    def _apply_igmp_behavior(
-        self,
-        fields: dict[str, JSONObject],
-        *,
-        feature: str,
-        case: str,
-        behavior: str,
-    ) -> None:
-        ipv4 = fields.setdefault("ipv4", {})
-        ipv4["protocol"] = "igmp"
-        ipv4["flags"] = "none"
-        ipv4["fragment_offset"] = 0
-
-        igmp = fields.setdefault("igmp", {})
-        if feature == "igmp_header":
-            self._apply_igmp_header_behavior(igmp, behavior=behavior)
-        elif feature == "igmp_v3_query":
-            self._apply_igmp_v3_query_behavior(igmp, behavior=behavior)
-        elif feature == "igmp_v3_report":
-            self._apply_igmp_v3_report_behavior(igmp, behavior=behavior)
-        elif feature == "igmp_extensions":
-            self._apply_igmp_extension_behavior(igmp, behavior=behavior)
-        elif feature == "igmp_mrd":
-            self._apply_igmp_mrd_behavior(ipv4, igmp, behavior=behavior)
-
-    def _apply_igmp_header_behavior(self, igmp: JSONObject, *, behavior: str) -> None:
-        igmp.update({"type": "membership_query", "code": 0, "group_address": "0.0.0.0"})
-        if behavior == "v2-query":
-            igmp.update({"code": 100, "group_address": _IGMP_DOC_GROUP})
-        elif behavior == "v1-membership-report":
-            igmp.update({"type": "v1_membership_report", "group_address": _IGMP_DOC_GROUP})
-        elif behavior == "v2-membership-report":
-            igmp.update({"type": "v2_membership_report", "group_address": _IGMP_DOC_GROUP})
-        elif behavior == "v2-leave-group":
-            igmp.update({"type": "v2_leave_group", "group_address": _IGMP_DOC_GROUP})
-        elif behavior == "checksum-explicit":
-            igmp["checksum"] = "explicit_invalid"
-        elif behavior == "unknown-type-raw":
-            igmp.update({"type": "unassigned", "raw_tail": _IGMP_BYTES_UNKNOWN_TYPE})
-        elif behavior == "unsupported-assigned-type-raw":
-            igmp.update(
-                {
-                    "type": "dvmrp_unsupported_assigned",
-                    "raw_tail": _IGMP_BYTES_UNSUPPORTED_ASSIGNED_TYPE,
-                }
-            )
-
-    def _apply_igmp_v3_query_behavior(self, igmp: JSONObject, *, behavior: str) -> None:
-        igmp.update(
-            {
-                "type": "membership_query",
-                "code": 100,
-                "group_address": "0.0.0.0",
-                "query_flags": 0,
-                "qqic": 10,
-                "source_addresses": [],
-            }
-        )
-        if behavior == "group-specific-query":
-            igmp.update({"group_address": _IGMP_DOC_GROUP_ALT, "query_flags": 0x08, "qqic": 0x81})
-        elif behavior == "group-and-source-specific-query":
-            igmp.update(
-                {
-                    "group_address": _IGMP_SSM_DOC_GROUP,
-                    "query_flags": 0x02,
-                    "source_addresses": [_IGMP_DOC_SOURCE],
-                }
-            )
-        elif behavior == "query-source-count-override":
-            igmp.update(
-                {
-                    "group_address": _IGMP_SSM_DOC_GROUP,
-                    "number_of_sources": 0,
-                    "source_addresses": [_IGMP_DOC_SOURCE],
-                }
-            )
-        elif behavior == "checksum-explicit":
-            igmp["checksum"] = "explicit_invalid"
-        elif behavior == "ignored-extra-query-octets":
-            igmp["raw_tail"] = _IGMP_BYTES_IGNORED_EXTRA
-
-    def _apply_igmp_v3_report_behavior(self, igmp: JSONObject, *, behavior: str) -> None:
-        igmp.update({"type": "v3_membership_report", "report_flags": 0, "group_records": []})
-        if behavior == "include-record":
-            igmp["group_records"] = [self._igmp_group_record("mode_is_include")]
-        elif behavior == "exclude-record":
-            igmp["group_records"] = [self._igmp_group_record("mode_is_exclude")]
-        elif behavior == "source-list-change-records":
-            igmp["group_records"] = [
-                self._igmp_group_record("allow_new_sources", group=_IGMP_SSM_DOC_GROUP),
-                self._igmp_group_record("block_old_sources", group=_IGMP_DOC_GROUP_ALT),
-            ]
-        elif behavior == "auxiliary-data-record":
-            igmp["group_records"] = [
-                self._igmp_group_record(
-                    "change_to_exclude_mode", auxiliary_data=_IGMP_BYTES_PADDED_WORD
-                )
-            ]
-        elif behavior == "unknown-record-type":
-            igmp["group_records"] = [self._igmp_group_record("unknown", auxiliary_data=_IGMP_BYTES_RAW)]
-        elif behavior == "report-count-override":
-            igmp.update(
-                {
-                    "number_of_group_records": 0,
-                    "group_records": [self._igmp_group_record("mode_is_include")],
-                }
-            )
-        elif behavior == "checksum-explicit":
-            igmp["checksum"] = "explicit_invalid"
-
-    def _apply_igmp_extension_behavior(self, igmp: JSONObject, *, behavior: str) -> None:
-        if behavior in {
-            "query-noop-extension",
-            "unassigned-extension-type",
-            "ordered-extension-tlvs",
-            "e-flag-clear-extension-looking-bytes",
-        }:
-            self._apply_igmp_v3_query_behavior(igmp, behavior="general-query")
-        else:
-            self._apply_igmp_v3_report_behavior(igmp, behavior="empty-report")
-
-        if behavior == "query-noop-extension":
-            igmp.update(
-                {
-                    "query_flags": 0x10,
-                    "extension_tlvs": [
-                        {"extension_type": "noop", "extension_value": _IGMP_BYTES_RAW}
-                    ],
-                }
-            )
-        elif behavior == "report-noop-extension":
-            igmp.update(
-                {
-                    "report_flags": 0x8000,
-                    "extension_tlvs": [
-                        {
-                            "extension_type": "noop",
-                            "extension_length": 0,
-                            "extension_value": _IGMP_BYTES_EMPTY,
-                        }
-                    ],
-                }
-            )
-        elif behavior == "unassigned-extension-type":
-            igmp.update(
-                {
-                    "query_flags": 0x10,
-                    "extension_tlvs": [
-                        {"extension_type": "unassigned", "extension_value": _IGMP_BYTES_RAW}
-                    ],
-                }
-            )
-        elif behavior == "experimental-extension-type":
-            igmp.update(
-                {
-                    "report_flags": 0x8000,
-                    "extension_tlvs": [
-                        {"extension_type": "experimental", "extension_value": _IGMP_BYTES_RAW}
-                    ],
-                }
-            )
-        elif behavior == "ordered-extension-tlvs":
-            igmp.update(
-                {
-                    "query_flags": 0x10,
-                    "extension_tlvs": [
-                        {
-                            "extension_type": "noop",
-                            "extension_length": 0,
-                            "extension_value": _IGMP_BYTES_EMPTY,
-                        },
-                        {"extension_type": "unassigned", "extension_value": _IGMP_BYTES_RAW},
-                        {"extension_type": "experimental", "extension_value": _IGMP_BYTES_RAW},
-                    ],
-                }
-            )
-        elif behavior == "e-flag-clear-extension-looking-bytes":
-            igmp.update({"query_flags": 0, "raw_tail": _IGMP_BYTES_E_FLAG_CLEAR_EXTENSION})
-
-    def _apply_igmp_mrd_behavior(
-        self, ipv4: JSONObject, igmp: JSONObject, *, behavior: str
-    ) -> None:
-        ipv4["ttl"] = 1
-        ipv4["dst"] = "224.0.0.106"
-        igmp.update({"type": "multicast_router_solicitation", "code": 0})
-        if behavior == "multicast-router-advertisement":
-            igmp.update(
-                {
-                    "type": "multicast_router_advertisement",
-                    "code": 20,
-                    "mrd_query_interval": 125,
-                    "mrd_robustness_variable": 2,
-                }
-            )
-        elif behavior == "multicast-router-termination":
-            igmp["type"] = "multicast_router_termination"
-        elif behavior == "mrd-explicit-checksum":
-            igmp.update(
-                {
-                    "type": "multicast_router_advertisement",
-                    "code": 20,
-                    "mrd_query_interval": 125,
-                    "mrd_robustness_variable": 2,
-                    "checksum": "explicit_invalid",
-                }
-            )
-        elif behavior == "mrd-reserved-override":
-            igmp["code"] = 7
-
-    def _igmp_group_record(
-        self,
-        record_type: str,
-        *,
-        group: str = _IGMP_DOC_GROUP,
-        auxiliary_data: object = _IGMP_BYTES_EMPTY,
-    ) -> JSONObject:
-        return {
-            "record_type": record_type,
-            "multicast_address": group,
-            "source_addresses": [_IGMP_DOC_SOURCE],
-            "auxiliary_data": auxiliary_data,
-        }
+            _apply_igmp_behavior(fields, feature=feature, case=case, behavior=behavior)
 
     def _apply_icmp_live_fields(
         self,
@@ -4000,6 +3777,234 @@ def _apply_bgp_behavior(
 
     if bgp["type"] == "update":
         bgp["body"] = {"hex": _bgp_update_body_hex(stack=stack, case=case, behavior=behavior)}
+
+
+def _apply_igmp_behavior(
+    fields: dict[str, JSONObject],
+    *,
+    feature: str,
+    case: str,
+    behavior: str,
+) -> None:
+    ipv4 = fields.setdefault("ipv4", {})
+    ipv4["protocol"] = "igmp"
+    ipv4["flags"] = "none"
+    ipv4["fragment_offset"] = 0
+
+    igmp = fields.setdefault("igmp", {})
+    if feature == "igmp_header":
+        _apply_igmp_header_behavior(igmp, behavior=behavior)
+    elif feature == "igmp_v3_query":
+        _apply_igmp_v3_query_behavior(igmp, behavior=behavior)
+    elif feature == "igmp_v3_report":
+        _apply_igmp_v3_report_behavior(igmp, behavior=behavior)
+    elif feature == "igmp_extensions":
+        _apply_igmp_extension_behavior(igmp, behavior=behavior)
+    elif feature == "igmp_mrd":
+        _apply_igmp_mrd_behavior(ipv4, igmp, behavior=behavior)
+
+
+def _apply_igmp_header_behavior(igmp: JSONObject, *, behavior: str) -> None:
+    igmp.update({"type": "membership_query", "code": 0, "group_address": "0.0.0.0"})
+    if behavior == "v2-query":
+        igmp.update({"code": 100, "group_address": _IGMP_DOC_GROUP})
+    elif behavior == "v1-membership-report":
+        igmp.update({"type": "v1_membership_report", "group_address": _IGMP_DOC_GROUP})
+    elif behavior == "v2-membership-report":
+        igmp.update({"type": "v2_membership_report", "group_address": _IGMP_DOC_GROUP})
+    elif behavior == "v2-leave-group":
+        igmp.update({"type": "v2_leave_group", "group_address": _IGMP_DOC_GROUP})
+    elif behavior == "checksum-explicit":
+        igmp["checksum"] = "explicit_invalid"
+    elif behavior == "unknown-type-raw":
+        igmp.update({"type": "unassigned", "raw_tail": _IGMP_BYTES_UNKNOWN_TYPE})
+    elif behavior == "unsupported-assigned-type-raw":
+        igmp.update(
+            {
+                "type": "dvmrp_unsupported_assigned",
+                "raw_tail": _IGMP_BYTES_UNSUPPORTED_ASSIGNED_TYPE,
+            }
+        )
+
+
+def _apply_igmp_v3_query_behavior(igmp: JSONObject, *, behavior: str) -> None:
+    igmp.update(
+        {
+            "type": "membership_query",
+            "code": 100,
+            "group_address": "0.0.0.0",
+            "query_flags": 0,
+            "qqic": 10,
+            "source_addresses": [],
+        }
+    )
+    if behavior == "group-specific-query":
+        igmp.update({"group_address": _IGMP_DOC_GROUP_ALT, "query_flags": 0x08, "qqic": 0x81})
+    elif behavior == "group-and-source-specific-query":
+        igmp.update(
+            {
+                "group_address": _IGMP_SSM_DOC_GROUP,
+                "query_flags": 0x02,
+                "source_addresses": [_IGMP_DOC_SOURCE],
+            }
+        )
+    elif behavior == "query-source-count-override":
+        igmp.update(
+            {
+                "group_address": _IGMP_SSM_DOC_GROUP,
+                "number_of_sources": 0,
+                "source_addresses": [_IGMP_DOC_SOURCE],
+            }
+        )
+    elif behavior == "checksum-explicit":
+        igmp["checksum"] = "explicit_invalid"
+    elif behavior == "ignored-extra-query-octets":
+        igmp["raw_tail"] = _IGMP_BYTES_IGNORED_EXTRA
+
+
+def _apply_igmp_v3_report_behavior(igmp: JSONObject, *, behavior: str) -> None:
+    igmp.update({"type": "v3_membership_report", "report_flags": 0, "group_records": []})
+    if behavior == "include-record":
+        igmp["group_records"] = [_igmp_group_record("mode_is_include")]
+    elif behavior == "exclude-record":
+        igmp["group_records"] = [_igmp_group_record("mode_is_exclude")]
+    elif behavior == "source-list-change-records":
+        igmp["group_records"] = [
+            _igmp_group_record("allow_new_sources", group=_IGMP_SSM_DOC_GROUP),
+            _igmp_group_record("block_old_sources", group=_IGMP_DOC_GROUP_ALT),
+        ]
+    elif behavior == "auxiliary-data-record":
+        igmp["group_records"] = [
+            _igmp_group_record(
+                "change_to_exclude_mode", auxiliary_data=_IGMP_BYTES_PADDED_WORD
+            )
+        ]
+    elif behavior == "unknown-record-type":
+        igmp["group_records"] = [_igmp_group_record("unknown", auxiliary_data=_IGMP_BYTES_RAW)]
+    elif behavior == "report-count-override":
+        igmp.update(
+            {
+                "number_of_group_records": 0,
+                "group_records": [_igmp_group_record("mode_is_include")],
+            }
+        )
+    elif behavior == "checksum-explicit":
+        igmp["checksum"] = "explicit_invalid"
+
+
+def _apply_igmp_extension_behavior(igmp: JSONObject, *, behavior: str) -> None:
+    if behavior in {
+        "query-noop-extension",
+        "unassigned-extension-type",
+        "ordered-extension-tlvs",
+        "e-flag-clear-extension-looking-bytes",
+    }:
+        _apply_igmp_v3_query_behavior(igmp, behavior="general-query")
+    else:
+        _apply_igmp_v3_report_behavior(igmp, behavior="empty-report")
+
+    if behavior == "query-noop-extension":
+        igmp.update(
+            {
+                "query_flags": 0x10,
+                "extension_tlvs": [
+                    {"extension_type": "noop", "extension_value": _IGMP_BYTES_RAW}
+                ],
+            }
+        )
+    elif behavior == "report-noop-extension":
+        igmp.update(
+            {
+                "report_flags": 0x8000,
+                "extension_tlvs": [
+                    {
+                        "extension_type": "noop",
+                        "extension_length": 0,
+                        "extension_value": _IGMP_BYTES_EMPTY,
+                    }
+                ],
+            }
+        )
+    elif behavior == "unassigned-extension-type":
+        igmp.update(
+            {
+                "query_flags": 0x10,
+                "extension_tlvs": [
+                    {"extension_type": "unassigned", "extension_value": _IGMP_BYTES_RAW}
+                ],
+            }
+        )
+    elif behavior == "experimental-extension-type":
+        igmp.update(
+            {
+                "report_flags": 0x8000,
+                "extension_tlvs": [
+                    {"extension_type": "experimental", "extension_value": _IGMP_BYTES_RAW}
+                ],
+            }
+        )
+    elif behavior == "ordered-extension-tlvs":
+        igmp.update(
+            {
+                "query_flags": 0x10,
+                "extension_tlvs": [
+                    {
+                        "extension_type": "noop",
+                        "extension_length": 0,
+                        "extension_value": _IGMP_BYTES_EMPTY,
+                    },
+                    {"extension_type": "unassigned", "extension_value": _IGMP_BYTES_RAW},
+                    {"extension_type": "experimental", "extension_value": _IGMP_BYTES_RAW},
+                ],
+            }
+        )
+    elif behavior == "e-flag-clear-extension-looking-bytes":
+        igmp.update({"query_flags": 0, "raw_tail": _IGMP_BYTES_E_FLAG_CLEAR_EXTENSION})
+
+
+def _apply_igmp_mrd_behavior(
+    ipv4: JSONObject, igmp: JSONObject, *, behavior: str
+) -> None:
+    ipv4["ttl"] = 1
+    ipv4["dst"] = "224.0.0.106"
+    igmp.update({"type": "multicast_router_solicitation", "code": 0})
+    if behavior == "multicast-router-advertisement":
+        igmp.update(
+            {
+                "type": "multicast_router_advertisement",
+                "code": 20,
+                "mrd_query_interval": 125,
+                "mrd_robustness_variable": 2,
+            }
+        )
+    elif behavior == "multicast-router-termination":
+        igmp["type"] = "multicast_router_termination"
+    elif behavior == "mrd-explicit-checksum":
+        igmp.update(
+            {
+                "type": "multicast_router_advertisement",
+                "code": 20,
+                "mrd_query_interval": 125,
+                "mrd_robustness_variable": 2,
+                "checksum": "explicit_invalid",
+            }
+        )
+    elif behavior == "mrd-reserved-override":
+        igmp["code"] = 7
+
+
+def _igmp_group_record(
+    record_type: str,
+    *,
+    group: str = _IGMP_DOC_GROUP,
+    auxiliary_data: object = _IGMP_BYTES_EMPTY,
+) -> JSONObject:
+    return {
+        "record_type": record_type,
+        "multicast_address": group,
+        "source_addresses": [_IGMP_DOC_SOURCE],
+        "auxiliary_data": auxiliary_data,
+    }
 
 
 def _apply_ospf_behavior(
