@@ -17,8 +17,8 @@ use crafter::protocols::bgp::{
 use crafter::protocols::igmp::IgmpExtension;
 use crafter::protocols::link::RadiotapFcsStatus;
 use crafter::protocols::mqtt::{
-    Mqtt, MqttControlPacketType, MQTT_CONNECT_FLAG_CLEAN_SESSION, MQTT_PUBLISH_FLAG_DUP,
-    MQTT_PUBLISH_FLAG_QOS_MASK, MQTT_PUBLISH_FLAG_RETAIN,
+    Mqtt, MqttControlPacketType, MqttProperties, MqttProperty, MQTT_CONNECT_FLAG_CLEAN_SESSION,
+    MQTT_PUBLISH_FLAG_DUP, MQTT_PUBLISH_FLAG_QOS_MASK, MQTT_PUBLISH_FLAG_RETAIN,
 };
 use crafter::protocols::rip::ripng::{Ripng, RipngRte};
 use crafter::protocols::rip::{Rip, RipAuth, RipAuthPayload, RipEntry, RIP_AFI_AUTH};
@@ -1777,6 +1777,7 @@ fn mqtt_fields(layer: &Mqtt) -> BTreeMap<String, Value> {
 
     match packet_type {
         MqttControlPacketType::Connect => {
+            fields.insert("version".to_string(), json!(layer.version_value()));
             if let Some(value) = layer.protocol_name_value() {
                 fields.insert("protocol_name".to_string(), json!(value));
             }
@@ -1793,8 +1794,17 @@ fn mqtt_fields(layer: &Mqtt) -> BTreeMap<String, Value> {
             if let Some(value) = layer.keep_alive_value() {
                 fields.insert("keep_alive".to_string(), json!(value));
             }
+            if let Some(value) = layer.connect_properties_value() {
+                fields.insert(
+                    "connect_properties".to_string(),
+                    mqtt_properties_fields(value),
+                );
+            }
             if let Some(value) = layer.client_id_value() {
                 fields.insert("client_id".to_string(), json!(value));
+            }
+            if let Some(value) = layer.will_properties_value() {
+                fields.insert("will_properties".to_string(), mqtt_properties_fields(value));
             }
             if let Some(value) = layer.will_topic_value() {
                 fields.insert("will_topic".to_string(), json!(value));
@@ -1813,7 +1823,15 @@ fn mqtt_fields(layer: &Mqtt) -> BTreeMap<String, Value> {
             let session_present = layer.session_present_value().unwrap_or(false);
             fields.insert("ack_flags".to_string(), json!(u8::from(session_present)));
             fields.insert("session_present".to_string(), json!(session_present));
-            if let Some(value) = layer.return_code_value() {
+            if layer.version_value() == 5 {
+                fields.insert("version".to_string(), json!(5));
+                if let Some(value) = layer.reason_code_value() {
+                    fields.insert("reason_code".to_string(), json!(value));
+                }
+                if let Some(value) = layer.connack_properties_value() {
+                    fields.insert("properties".to_string(), mqtt_properties_fields(value));
+                }
+            } else if let Some(value) = layer.return_code_value() {
                 fields.insert("return_code".to_string(), json!(value));
             }
         }
@@ -1836,19 +1854,35 @@ fn mqtt_fields(layer: &Mqtt) -> BTreeMap<String, Value> {
             if let Some(value) = layer.payload_value() {
                 fields.insert("payload".to_string(), mqtt_bytes_fields(value));
             }
+            if let Some(value) = layer.publish_properties_value() {
+                fields.insert("version".to_string(), json!(5));
+                fields.insert("properties".to_string(), mqtt_properties_fields(value));
+            }
         }
         MqttControlPacketType::Puback
         | MqttControlPacketType::Pubrec
         | MqttControlPacketType::Pubrel
-        | MqttControlPacketType::Pubcomp
-        | MqttControlPacketType::Unsuback => {
+        | MqttControlPacketType::Pubcomp => {
             if let Some(value) = layer.packet_id_value() {
                 fields.insert("packet_id".to_string(), json!(value));
+            }
+            if layer.version_value() == 5 {
+                fields.insert("version".to_string(), json!(5));
+                if let Some(value) = layer.reason_code_value() {
+                    fields.insert("reason_code".to_string(), json!(value));
+                }
+                if let Some(value) = layer.ack_properties_value() {
+                    fields.insert("properties".to_string(), mqtt_properties_fields(value));
+                }
             }
         }
         MqttControlPacketType::Subscribe => {
             if let Some(value) = layer.packet_id_value() {
                 fields.insert("packet_id".to_string(), json!(value));
+            }
+            if let Some(value) = layer.subscribe_properties_value() {
+                fields.insert("version".to_string(), json!(5));
+                fields.insert("properties".to_string(), mqtt_properties_fields(value));
             }
             if let Some(topics) = layer.subscribe_topics_value() {
                 fields.insert(
@@ -1866,7 +1900,13 @@ fn mqtt_fields(layer: &Mqtt) -> BTreeMap<String, Value> {
             if let Some(value) = layer.packet_id_value() {
                 fields.insert("packet_id".to_string(), json!(value));
             }
-            if let Some(value) = layer.suback_return_codes_value() {
+            if let Some(value) = layer.suback_properties_value() {
+                fields.insert("version".to_string(), json!(5));
+                fields.insert("properties".to_string(), mqtt_properties_fields(value));
+                if let Some(value) = layer.suback_return_codes_value() {
+                    fields.insert("reason_codes".to_string(), json!(value));
+                }
+            } else if let Some(value) = layer.suback_return_codes_value() {
                 fields.insert("return_codes".to_string(), json!(value));
             }
         }
@@ -1874,13 +1914,47 @@ fn mqtt_fields(layer: &Mqtt) -> BTreeMap<String, Value> {
             if let Some(value) = layer.packet_id_value() {
                 fields.insert("packet_id".to_string(), json!(value));
             }
+            if let Some(value) = layer.unsubscribe_properties_value() {
+                fields.insert("version".to_string(), json!(5));
+                fields.insert("properties".to_string(), mqtt_properties_fields(value));
+            }
             if let Some(topics) = layer.unsubscribe_topics_value() {
                 fields.insert("topic_filters".to_string(), json!(topics));
             }
         }
-        MqttControlPacketType::Pingreq
-        | MqttControlPacketType::Pingresp
-        | MqttControlPacketType::Disconnect => {}
+        MqttControlPacketType::Unsuback => {
+            if let Some(value) = layer.packet_id_value() {
+                fields.insert("packet_id".to_string(), json!(value));
+            }
+            if let Some(value) = layer.unsuback_properties_value() {
+                fields.insert("version".to_string(), json!(5));
+                fields.insert("properties".to_string(), mqtt_properties_fields(value));
+                if let Some(value) = layer.unsuback_reason_codes_value() {
+                    fields.insert("reason_codes".to_string(), json!(value));
+                }
+            }
+        }
+        MqttControlPacketType::Pingreq | MqttControlPacketType::Pingresp => {}
+        MqttControlPacketType::Disconnect => {
+            if layer.version_value() == 5 {
+                fields.insert("version".to_string(), json!(5));
+                if let Some(value) = layer.reason_code_value() {
+                    fields.insert("reason_code".to_string(), json!(value));
+                }
+                if let Some(value) = layer.disconnect_properties_value() {
+                    fields.insert("properties".to_string(), mqtt_properties_fields(value));
+                }
+            }
+        }
+        MqttControlPacketType::Auth => {
+            fields.insert("version".to_string(), json!(5));
+            if let Some(value) = layer.reason_code_value() {
+                fields.insert("reason_code".to_string(), json!(value));
+            }
+            if let Some(value) = layer.auth_properties_value() {
+                fields.insert("properties".to_string(), mqtt_properties_fields(value));
+            }
+        }
     }
 
     if !layer.body().is_empty() {
@@ -1906,6 +1980,93 @@ fn mqtt_packet_type_name(packet_type: MqttControlPacketType) -> &'static str {
         MqttControlPacketType::Pingreq => "pingreq",
         MqttControlPacketType::Pingresp => "pingresp",
         MqttControlPacketType::Disconnect => "disconnect",
+        MqttControlPacketType::Auth => "auth",
+    }
+}
+
+fn mqtt_properties_fields(properties: &MqttProperties) -> Value {
+    Value::Array(
+        properties
+            .property_values()
+            .iter()
+            .map(mqtt_property_fields)
+            .collect(),
+    )
+}
+
+fn mqtt_property_fields(property: &MqttProperty) -> Value {
+    match property {
+        MqttProperty::PayloadFormatIndicator(value) => {
+            json!({"name": "payload_format_indicator", "value": value})
+        }
+        MqttProperty::MessageExpiryInterval(value) => {
+            json!({"name": "message_expiry_interval", "value": value})
+        }
+        MqttProperty::ContentType(value) => json!({"name": "content_type", "value": value}),
+        MqttProperty::ResponseTopic(value) => json!({"name": "response_topic", "value": value}),
+        MqttProperty::CorrelationData(value) => {
+            json!({"name": "correlation_data", "value": mqtt_bytes_fields(value)})
+        }
+        MqttProperty::SubscriptionIdentifier(value) => {
+            json!({"name": "subscription_identifier", "value": value})
+        }
+        MqttProperty::SessionExpiryInterval(value) => {
+            json!({"name": "session_expiry_interval", "value": value})
+        }
+        MqttProperty::AssignedClientIdentifier(value) => {
+            json!({"name": "assigned_client_identifier", "value": value})
+        }
+        MqttProperty::ServerKeepAlive(value) => {
+            json!({"name": "server_keep_alive", "value": value})
+        }
+        MqttProperty::AuthenticationMethod(value) => {
+            json!({"name": "authentication_method", "value": value})
+        }
+        MqttProperty::AuthenticationData(value) => {
+            json!({"name": "authentication_data", "value": mqtt_bytes_fields(value)})
+        }
+        MqttProperty::RequestProblemInformation(value) => {
+            json!({"name": "request_problem_information", "value": value})
+        }
+        MqttProperty::WillDelayInterval(value) => {
+            json!({"name": "will_delay_interval", "value": value})
+        }
+        MqttProperty::RequestResponseInformation(value) => {
+            json!({"name": "request_response_information", "value": value})
+        }
+        MqttProperty::ResponseInformation(value) => {
+            json!({"name": "response_information", "value": value})
+        }
+        MqttProperty::ServerReference(value) => {
+            json!({"name": "server_reference", "value": value})
+        }
+        MqttProperty::ReasonString(value) => json!({"name": "reason_string", "value": value}),
+        MqttProperty::ReceiveMaximum(value) => {
+            json!({"name": "receive_maximum", "value": value})
+        }
+        MqttProperty::TopicAliasMaximum(value) => {
+            json!({"name": "topic_alias_maximum", "value": value})
+        }
+        MqttProperty::TopicAlias(value) => json!({"name": "topic_alias", "value": value}),
+        MqttProperty::MaximumQos(value) => json!({"name": "maximum_qos", "value": value}),
+        MqttProperty::RetainAvailable(value) => {
+            json!({"name": "retain_available", "value": value})
+        }
+        MqttProperty::UserProperty { name, value } => {
+            json!({"name": "user_property", "key": name, "value": value})
+        }
+        MqttProperty::MaximumPacketSize(value) => {
+            json!({"name": "maximum_packet_size", "value": value})
+        }
+        MqttProperty::WildcardSubscriptionAvailable(value) => {
+            json!({"name": "wildcard_subscription_available", "value": value})
+        }
+        MqttProperty::SubscriptionIdentifierAvailable(value) => {
+            json!({"name": "subscription_identifier_available", "value": value})
+        }
+        MqttProperty::SharedSubscriptionAvailable(value) => {
+            json!({"name": "shared_subscription_available", "value": value})
+        }
     }
 }
 
