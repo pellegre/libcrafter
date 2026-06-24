@@ -3,7 +3,8 @@ use std::net::Ipv4Addr;
 use crafter::prelude::*;
 use crafter::protocols::mqtt::{
     MQTT_CONNACK_ACCEPTED, MQTT_CONNACK_IDENTIFIER_REJECTED, MQTT_CONNACK_SERVER_UNAVAILABLE,
-    MQTT_PUBLISH_QOS_0, MQTT_PUBLISH_QOS_1,
+    MQTT_PUBLISH_QOS_0, MQTT_PUBLISH_QOS_1, MQTT_SUBACK_FAILURE, MQTT_SUBACK_MAX_QOS_0,
+    MQTT_SUBACK_MAX_QOS_1,
 };
 
 const CONNECT_CLIENT_ONLY: &[u8] = &[
@@ -108,6 +109,20 @@ const SUBSCRIBE_TWO_FILTERS: &[u8] = &[
     b'/',
     b'd',
     MQTT_PUBLISH_QOS_1,
+];
+
+const SUBACK_QOS_AND_FAILURE: &[u8] = &[
+    // `.agents/docs/mqtt-manifest.md`: SUBACK fixed-header type 9 uses flags
+    // 0x0 and Remaining Length covers packet id plus one return code per
+    // requested subscription.
+    0x90,
+    0x04,
+    // Manifest SUBACK variable header: one two-byte Packet Identifier.
+    0x12,
+    0x34,
+    // Manifest SUBACK payload: each byte is a granted maximum QoS or failure.
+    MQTT_SUBACK_MAX_QOS_1,
+    MQTT_SUBACK_FAILURE,
 ];
 
 fn mqtt_over_ipv4_tcp(payload: &[u8]) -> crafter::Result<Vec<u8>> {
@@ -587,5 +602,53 @@ fn subscribe_decode_errors_cover_filter_overrun_and_missing_qos() -> crafter::Re
         other => panic!("expected subscribe requested-qos error, got {other:?}"),
     }
 
+    Ok(())
+}
+
+#[test]
+fn suback_golden_decodes_return_codes_and_recompiles() -> crafter::Result<()> {
+    let (bytes, decoded) = decode_ipv4_tcp_mqtt(SUBACK_QOS_AND_FAILURE)?;
+    let mqtt = decoded.layer::<Mqtt>().expect("decoded MQTT SUBACK layer");
+
+    assert_eq!(mqtt.packet_type(), MqttControlPacketType::Suback);
+    assert_eq!(mqtt.flags_value(), 0x0);
+    assert_eq!(mqtt.remaining_length_value(), 4);
+    assert_eq!(mqtt.packet_id_value(), Some(0x1234));
+    assert_eq!(
+        mqtt.suback_return_codes_value(),
+        Some(&[MQTT_SUBACK_MAX_QOS_1, MQTT_SUBACK_FAILURE][..])
+    );
+    assert_eq!(decoded.compile()?.as_bytes(), bytes.as_slice());
+    Ok(())
+}
+
+#[test]
+fn suback_build_decode_round_trip() -> crafter::Result<()> {
+    let packet = Ipv4::new()
+        .src(Ipv4Addr::new(198, 51, 100, 74))
+        .dst(Ipv4Addr::new(192, 0, 2, 64))
+        / Tcp::new()
+            .sport(MQTT_PORT)
+            .dport(49_158)
+            .seq(0x1112_1314)
+            .ack(0x2122_2324)
+            .ack_segment()
+        / Mqtt::suback()
+            .packet_id(9)
+            .return_code(MQTT_SUBACK_MAX_QOS_0)
+            .return_code(MQTT_SUBACK_FAILURE);
+
+    let compiled = packet.compile()?;
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes())?;
+    let mqtt = decoded.layer::<Mqtt>().expect("decoded MQTT SUBACK layer");
+
+    assert_eq!(mqtt.packet_type(), MqttControlPacketType::Suback);
+    assert_eq!(mqtt.flags_value(), 0x0);
+    assert_eq!(mqtt.packet_id_value(), Some(9));
+    assert_eq!(
+        mqtt.suback_return_codes_value(),
+        Some(&[MQTT_SUBACK_MAX_QOS_0, MQTT_SUBACK_FAILURE][..])
+    );
+    assert_eq!(decoded.compile()?.as_bytes(), compiled.as_bytes());
     Ok(())
 }
