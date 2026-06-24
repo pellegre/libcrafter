@@ -10,6 +10,7 @@ use super::constants::{
     MQTT_CONNECT_FLAG_CLEAN_SESSION, MQTT_CONNECT_FLAG_PASSWORD, MQTT_CONNECT_FLAG_USER_NAME,
     MQTT_CONNECT_FLAG_WILL, MQTT_CONNECT_FLAG_WILL_QOS_MASK, MQTT_CONNECT_FLAG_WILL_RETAIN,
     MQTT_PUBLISH_FLAG_DUP, MQTT_PUBLISH_FLAG_QOS_MASK, MQTT_PUBLISH_FLAG_RETAIN,
+    MQTT_REASON_SUCCESS,
 };
 use super::header::MqttControlPacketType;
 use super::property::{MqttProperties, MqttProperty};
@@ -408,18 +409,28 @@ impl MqttPublish {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct MqttPacketIdentifier {
     packet_id: Field<u16>,
+    reason_code: Field<u8>,
+    properties: MqttProperties,
 }
 
 impl MqttPacketIdentifier {
     fn new() -> Self {
         Self {
             packet_id: Field::defaulted(0),
+            reason_code: Field::unset(),
+            properties: MqttProperties::new(),
         }
     }
 
-    fn from_decoded_parts(packet_id: u16) -> Self {
+    fn from_decoded_parts(
+        packet_id: u16,
+        reason_code: Option<u8>,
+        properties: MqttProperties,
+    ) -> Self {
         Self {
             packet_id: Field::user(packet_id),
+            reason_code: reason_code.map_or_else(Field::unset, Field::user),
+            properties,
         }
     }
 
@@ -427,12 +438,46 @@ impl MqttPacketIdentifier {
         self.packet_id.value().copied().unwrap_or(0)
     }
 
-    fn encoded_len(&self) -> usize {
-        2
+    fn reason_code(&self) -> u8 {
+        self.reason_code
+            .value()
+            .copied()
+            .unwrap_or(MQTT_REASON_SUCCESS)
     }
 
-    fn write_body(&self, out: &mut Vec<u8>) {
+    fn reason_code_value(&self, version: u8) -> Option<u8> {
+        if version == MQTT_5_PROTOCOL_LEVEL {
+            Some(self.reason_code())
+        } else {
+            self.reason_code.value().copied()
+        }
+    }
+
+    fn properties(&self) -> &MqttProperties {
+        &self.properties
+    }
+
+    fn has_v5_details(&self) -> bool {
+        self.reason_code.value().is_some()
+            || !self.properties.property_values().is_empty()
+            || self.properties.property_length_override().is_some()
+    }
+
+    fn encoded_len(&self, version: u8) -> usize {
+        let mut len = 2;
+        if version == MQTT_5_PROTOCOL_LEVEL && self.has_v5_details() {
+            len += 1 + encoded_properties_len(self.properties());
+        }
+        len
+    }
+
+    fn write_body(&self, out: &mut Vec<u8>, version: u8) -> Result<()> {
         encode_u16(self.packet_id(), out);
+        if version == MQTT_5_PROTOCOL_LEVEL && self.has_v5_details() {
+            out.push(self.reason_code());
+            self.properties.write(out)?;
+        }
+        Ok(())
     }
 }
 
@@ -605,7 +650,7 @@ impl MqttBody {
             Self::Connect(connect) => connect.encoded_len(),
             Self::Connack(connack) => connack.encoded_len(version),
             Self::Publish(publish) => publish.encoded_len(flags, version),
-            Self::PacketIdentifier(packet_identifier) => packet_identifier.encoded_len(),
+            Self::PacketIdentifier(packet_identifier) => packet_identifier.encoded_len(version),
             Self::Subscribe(subscribe) => subscribe.encoded_len(),
             Self::Suback(suback) => suback.encoded_len(),
             Self::Unsubscribe(unsubscribe) => unsubscribe.encoded_len(),
@@ -619,7 +664,9 @@ impl MqttBody {
             Self::Connect(connect) => connect.write_body(out)?,
             Self::Connack(connack) => connack.write_body(out, version)?,
             Self::Publish(publish) => publish.write_body(out, flags, version)?,
-            Self::PacketIdentifier(packet_identifier) => packet_identifier.write_body(out),
+            Self::PacketIdentifier(packet_identifier) => {
+                packet_identifier.write_body(out, version)?
+            }
             Self::Subscribe(subscribe) => subscribe.write_body(out)?,
             Self::Suback(suback) => suback.write_body(out),
             Self::Unsubscribe(unsubscribe) => unsubscribe.write_body(out)?,
@@ -912,14 +959,21 @@ impl Mqtt {
         packet_type: MqttControlPacketType,
         fixed_header_flags: u8,
         remaining_length: u32,
+        version: u8,
         packet_id: u16,
+        reason_code: Option<u8>,
+        properties: MqttProperties,
     ) -> Self {
         Self {
             packet_type,
-            version: Field::defaulted(MQTT_311_PROTOCOL_LEVEL),
+            version: Field::user(version),
             flags: Field::user(fixed_header_flags),
             remaining_length: Field::user(remaining_length),
-            body: MqttBody::PacketIdentifier(MqttPacketIdentifier::from_decoded_parts(packet_id)),
+            body: MqttBody::PacketIdentifier(MqttPacketIdentifier::from_decoded_parts(
+                packet_id,
+                reason_code,
+                properties,
+            )),
         }
     }
 
@@ -1263,10 +1317,14 @@ impl Mqtt {
         self
     }
 
-    /// Set the MQTT 5.0 CONNACK reason code.
+    /// Set the MQTT 5.0 reason code for packets that carry one.
     pub fn reason_code(mut self, reason_code: u8) -> Self {
-        if let MqttBody::Connack(connack) = &mut self.body {
-            connack.return_code.set_user(reason_code);
+        match &mut self.body {
+            MqttBody::Connack(connack) => connack.return_code.set_user(reason_code),
+            MqttBody::PacketIdentifier(packet_identifier) => {
+                packet_identifier.reason_code.set_user(reason_code);
+            }
+            _ => {}
         }
         self
     }
@@ -1283,6 +1341,22 @@ impl Mqtt {
     pub fn connack_property(mut self, property: MqttProperty) -> Self {
         if let MqttBody::Connack(connack) = &mut self.body {
             connack.properties.push(property);
+        }
+        self
+    }
+
+    /// Replace the MQTT 5.0 PUBACK/PUBREC/PUBREL/PUBCOMP properties block.
+    pub fn ack_properties(mut self, properties: MqttProperties) -> Self {
+        if let MqttBody::PacketIdentifier(packet_identifier) = &mut self.body {
+            packet_identifier.properties = properties;
+        }
+        self
+    }
+
+    /// Add one MQTT 5.0 PUBACK/PUBREC/PUBREL/PUBCOMP property.
+    pub fn ack_property(mut self, property: MqttProperty) -> Self {
+        if let MqttBody::PacketIdentifier(packet_identifier) = &mut self.body {
+            packet_identifier.properties.push(property);
         }
         self
     }
@@ -1427,15 +1501,30 @@ impl Mqtt {
         self.connack_body().map(MqttConnack::return_code)
     }
 
-    /// MQTT 5.0 CONNACK reason code, when this is a typed CONNACK packet.
+    /// MQTT 5.0 reason code, when this typed packet carries one.
     pub fn reason_code_value(&self) -> Option<u8> {
-        self.connack_body().map(MqttConnack::return_code)
+        if let Some(connack) = self.connack_body() {
+            Some(connack.return_code())
+        } else {
+            self.packet_identifier_body()
+                .and_then(|body| body.reason_code_value(self.version_value()))
+        }
     }
 
     /// MQTT 5.0 CONNACK properties, when this is a version-5 CONNACK packet.
     pub fn connack_properties_value(&self) -> Option<&MqttProperties> {
         (self.version_value() == MQTT_5_PROTOCOL_LEVEL)
             .then(|| self.connack_body().map(MqttConnack::properties))
+            .flatten()
+    }
+
+    /// MQTT 5.0 PUBACK/PUBREC/PUBREL/PUBCOMP properties, when this is a version-5 packet.
+    pub fn ack_properties_value(&self) -> Option<&MqttProperties> {
+        (self.version_value() == MQTT_5_PROTOCOL_LEVEL)
+            .then(|| {
+                self.packet_identifier_body()
+                    .map(MqttPacketIdentifier::properties)
+            })
             .flatten()
     }
 

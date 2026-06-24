@@ -250,22 +250,62 @@ fn decode_packet_identifier(
     body: &[u8],
     context: &'static str,
 ) -> Result<Mqtt> {
+    decode_packet_identifier_with_version(
+        packet_type,
+        fixed_header_flags,
+        remaining_length,
+        MQTT_311_PROTOCOL_LEVEL,
+        body,
+        context,
+    )
+}
+
+fn decode_packet_identifier_with_version(
+    packet_type: MqttControlPacketType,
+    fixed_header_flags: u8,
+    remaining_length: u32,
+    version: u8,
+    body: &[u8],
+    context: &'static str,
+) -> Result<Mqtt> {
     if body.len() < 2 {
         return Err(CrafterError::buffer_too_short(context, 2, body.len()));
     }
-    if body.len() != 2 {
+    if version != MQTT_5_PROTOCOL_LEVEL && body.len() != 2 {
         return Err(CrafterError::invalid_field_value(
             "mqtt.packet_identifier.remaining_length",
             "packet identifier control packet Remaining Length must be 2",
         ));
     }
 
-    let (packet_id, _consumed) = decode_u16(body)?;
+    let mut cursor = 0;
+    let packet_id = take_u16(body, &mut cursor)?;
+    let (reason_code, properties) = if version == MQTT_5_PROTOCOL_LEVEL {
+        if cursor == body.len() {
+            (None, MqttProperties::new())
+        } else {
+            let reason_code = take_u8(body, &mut cursor, "mqtt.packet_identifier.reason_code")?;
+            let properties = take_properties(body, &mut cursor)?;
+            if cursor != body.len() {
+                return Err(CrafterError::invalid_field_value(
+                    "mqtt.packet_identifier.remaining_length",
+                    "Remaining Length includes bytes outside the property block",
+                ));
+            }
+            (Some(reason_code), properties)
+        }
+    } else {
+        (None, MqttProperties::new())
+    };
+
     Ok(Mqtt::packet_identifier_from_decoded_parts(
         packet_type,
         fixed_header_flags,
         remaining_length,
+        version,
         packet_id,
+        reason_code,
+        properties,
     ))
 }
 
@@ -656,6 +696,78 @@ mod tests {
                 b'l', b'a', b'i', b'n', 0x26, 0x00, 0x04, b's', b'i', b't', b'e', 0x00, 0x03, b'l',
                 b'a', b'b', b'4', b'2',
             ]
+        );
+    }
+
+    #[test]
+    fn decodes_v5_puback_family_short_and_full_forms_when_version_is_supplied() {
+        let full_body = [
+            0x12, 0x34, 0x10, 0x09, 0x1f, 0x00, 0x06, b'q', b'u', b'e', b'u', b'e', b'd',
+        ];
+        let full = decode_packet_identifier_with_version(
+            MqttControlPacketType::Puback,
+            0x00,
+            full_body.len() as u32,
+            MQTT_5_PROTOCOL_LEVEL,
+            &full_body,
+            "mqtt.puback",
+        )
+        .unwrap();
+
+        assert_eq!(full.version_value(), MQTT_5_PROTOCOL_LEVEL);
+        assert_eq!(full.packet_id_value(), Some(0x1234));
+        assert_eq!(full.reason_code_value(), Some(0x10));
+        assert_eq!(
+            full.ack_properties_value()
+                .expect("ack properties")
+                .property_values(),
+            &[MqttProperty::ReasonString("queued".to_string())]
+        );
+        assert_eq!(
+            Packet::from_layer(full).compile().unwrap().as_bytes(),
+            &[
+                0x40, 0x0d, 0x12, 0x34, 0x10, 0x09, 0x1f, 0x00, 0x06, b'q', b'u', b'e', b'u', b'e',
+                b'd'
+            ]
+        );
+
+        let short_body = [0x12, 0x34];
+        let short = decode_packet_identifier_with_version(
+            MqttControlPacketType::Puback,
+            0x00,
+            short_body.len() as u32,
+            MQTT_5_PROTOCOL_LEVEL,
+            &short_body,
+            "mqtt.puback",
+        )
+        .unwrap();
+
+        assert_eq!(short.reason_code_value(), Some(0x00));
+        assert!(short
+            .ack_properties_value()
+            .expect("short-form ack properties")
+            .property_values()
+            .is_empty());
+        assert_eq!(
+            Packet::from_layer(short).compile().unwrap().as_bytes(),
+            &[0x40, 0x02, 0x12, 0x34]
+        );
+
+        let pubrel_body = [0x22, 0x22, 0x92, 0x00];
+        let pubrel = decode_packet_identifier_with_version(
+            MqttControlPacketType::Pubrel,
+            0x02,
+            pubrel_body.len() as u32,
+            MQTT_5_PROTOCOL_LEVEL,
+            &pubrel_body,
+            "mqtt.pubrel",
+        )
+        .unwrap();
+
+        assert_eq!(pubrel.flags_value(), 0x02);
+        assert_eq!(
+            Packet::from_layer(pubrel).compile().unwrap().as_bytes(),
+            &[0x62, 0x04, 0x22, 0x22, 0x92, 0x00]
         );
     }
 
