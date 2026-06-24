@@ -15,6 +15,7 @@ from tools.probe.engine import target_services as ts
 
 
 PROBE_BGP_PATH = "tools/probe/target_services/bgp"
+PROBE_MQTT_PATH = "tools/probe/target_services/mqtt"
 
 
 def _dns_plan(*, port: int = 53, sequence: int = 0) -> dict[str, object]:
@@ -264,6 +265,23 @@ class TargetServiceDescriptorTest(unittest.TestCase):
         )
         self.assertTrue(Path(descriptor.metadata["frr_template"]).is_file())
         self.assertIn(PROBE_BGP_PATH, json.dumps(descriptor.metadata))
+
+    def test_mqtt_broker_assets_are_probe_owned(self) -> None:
+        provision_script = Path(PROBE_MQTT_PATH) / "provision-broker.sh"
+        config_template = Path(PROBE_MQTT_PATH) / "mosquitto.conf.template"
+        readme = Path(PROBE_MQTT_PATH) / "README.md"
+
+        self.assertTrue(provision_script.is_file())
+        self.assertTrue(config_template.is_file())
+        self.assertTrue(readme.is_file())
+        self.assertEqual(
+            provision_script.read_text().splitlines()[0],
+            "#!/usr/bin/env bash",
+        )
+        template = config_template.read_text()
+        self.assertIn("listener {{MQTT_PORT}} {{MQTT_BIND_IPV4}}", template)
+        self.assertIn("allow_anonymous true", template)
+        self.assertIn("persistence false", template)
 
     def test_closed_udp_port_descriptor_verifies_free(self) -> None:
         descriptor = ts.closed_udp_port_descriptor(
