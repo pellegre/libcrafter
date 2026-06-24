@@ -44,9 +44,11 @@ pub mod constants;
 pub(crate) mod decode;
 pub mod header;
 pub mod message;
+pub mod property;
 pub mod varint;
 pub mod wire;
 
 pub use constants::*;
 pub use header::MqttControlPacketType;
 pub use message::Mqtt;
+pub use property::{MqttProperties, MqttProperty};
