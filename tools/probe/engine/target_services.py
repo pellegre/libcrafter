@@ -118,6 +118,18 @@ from .protocols.udp import (
     udp_responder_descriptor,
     udp_responder_setup_lines,
 )
+
+# NDP's kernel case set, plan selector, and the IPv6/kernel setup-script block
+# were migrated into the NDP plugin (:mod:`tools.probe.engine.protocols.ndp`).
+# They are re-imported here so ``target_services.ndp_probe_plans`` keeps
+# resolving (``prepare_wire_probe_target`` uses it, the partition reroutes NDP
+# cases to the plugin's ``target_service`` hook), and so
+# ``target_service_setup_script`` can render the NDP setup block. The NDP plugin
+# module does not import ``target_services``, so this does not cycle.
+from .protocols.ndp import (
+    ndp_probe_plans,
+    ndp_target_setup_lines,
+)
 from .target_service_helpers import (
     KernelStateDescriptor,
     TargetServiceDescriptor,
@@ -579,28 +591,15 @@ def probe_plan_requires_bgp_peer(plan: Mapping[str, JSONValue]) -> bool:
 # (which now sees no ARP plans) and the behavior/script tests.
 
 
-# Probe cases whose target is primarily the kernel answering IPv6 Neighbor
-# Discovery on a private L2 segment. ``ndp-neighbor-solicitation`` and
-# ``ndp-duplicate-address-detection`` rely on a bare kernel auto-answering /
-# defending a Neighbor Solicitation for an address it owns; the setup only needs
-# to make sure IPv6 is enabled on the private interface and the neighbor cache is
-# clean (no listening daemon). ``ndp-router-solicitation`` additionally needs the
-# target to act as an RA-emitting router (kernel RA via forwarding + accept_ra),
-# which the setup enables best-effort.
-_NDP_KERNEL_CASES: frozenset[str] = frozenset(
-    {
-        "ndp-neighbor-solicitation",
-        "ndp-router-solicitation",
-        "ndp-duplicate-address-detection",
-    }
-)
-_NDP_ROUTER_CASES: frozenset[str] = frozenset({"ndp-router-solicitation"})
-
-
-def ndp_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
-    """Return the NDP probe plans in order."""
-
-    return [plan for plan in probe_plans if plan.get("case") in _NDP_KERNEL_CASES]
+# The NDP kernel case set (``_NDP_KERNEL_CASES`` / ``_NDP_ROUTER_CASES``), the
+# ``ndp_probe_plans`` selector, and the IPv6/kernel setup-script block
+# (``ndp_target_setup_lines``) now live in
+# :mod:`tools.probe.engine.protocols.ndp`; ``ndp_probe_plans`` /
+# ``ndp_target_setup_lines`` are re-imported above so
+# ``target_services.ndp_probe_plans`` keeps resolving for
+# ``prepare_wire_probe_target`` (the partition reroutes NDP cases to the plugin's
+# ``target_service`` hook) and ``target_service_setup_script`` can render the NDP
+# setup block.
 
 
 # The ARP live-setup helpers (``arp_extra_addresses`` / ``arp_decoy_events``)
@@ -891,10 +890,10 @@ def target_service_setup_script(
             )
         )
     if ndp_plans:
-        wants_router = any(
-            str(plan.get("case", "")) in _NDP_ROUTER_CASES for plan in ndp_plans
-        )
-        lines.extend(_ndp_target_setup_lines(wants_router=wants_router))
+        # The NDP/IPv6 kernel-state setup block moved to
+        # ``protocols.ndp.ndp_target_setup_lines``; render it here so the script
+        # bytes stay byte-identical to the legacy inline block.
+        lines.extend(ndp_target_setup_lines(ndp_plans=ndp_plans))
     # Fold in each registered plugin's setup-script block after the legacy
     # per-protocol blocks, preserving block ordering. Migrated protocols emit
     # their own responder heredocs here; with an empty registry no plugin
@@ -936,81 +935,6 @@ def _registry_setup_script_lines(
         )
         if isinstance(block, Sequence) and not isinstance(block, (str, bytes)):
             lines.extend(str(line) for line in block)
-    return lines
-
-
-def _ndp_target_setup_lines(*, wants_router: bool) -> list[str]:
-    """Render the NDP/IPv6 kernel setup block for the target setup script.
-
-    A bare Linux kernel already owns a modified-EUI-64 link-local address on
-    every IPv6-enabled interface and auto-answers a Neighbor Solicitation for it
-    (and defends it on Duplicate Address Detection), so the Neighbor Solicitation
-    and DAD cases need only that IPv6 is enabled on the private interface, that
-    the link-local has finished Duplicate Address Detection, and that the IPv6
-    neighbor cache is clean so the kernel re-answers. The Router Solicitation
-    case additionally needs the target to act as an RA-emitting router; the block
-    enables IPv6 forwarding and per-interface RA emission best-effort (a bare
-    kernel without forwarding does not answer a Router Solicitation). Every
-    sysctl change records its restore command into the cleanup script so the
-    disposable endpoint is returned to its prior state on teardown.
-    """
-
-    lines = [
-        'if [ -z "$target_interface" ]; then',
-        "  echo ndp_target_interface=missing >&2",
-        "  exit 73",
-        "fi",
-        'ip link show dev "$target_interface" >/dev/null',
-        # Enable IPv6 on the private interface and accept the kernel's link-local.
-        'for key in disable_ipv6 accept_dad; do',
-        '  sysctl_name="net.ipv6.conf.${target_interface}.${key}"',
-        '  before_path="$artifact_root/ndp-${key}.before"',
-        '  sysctl -n "$sysctl_name" > "$before_path" 2>/dev/null || true',
-        '  before_value=""',
-        '  if [ -s "$before_path" ]; then before_value="$(cat "$before_path")"; fi',
-        '  if [ -n "$before_value" ]; then',
-        '    printf \'%s\\n\' "sysctl -w ${sysctl_name}=${before_value} >/dev/null 2>&1 || true" >> "$cleanup"',
-        "  fi",
-        "done",
-        # disable_ipv6=0 keeps IPv6 on; accept_dad=1 lets the link-local finish DAD.
-        'sysctl -w "net.ipv6.conf.${target_interface}.disable_ipv6=0" >/dev/null 2>&1 || true',
-        'sysctl -w "net.ipv6.conf.${target_interface}.accept_dad=1" >/dev/null 2>&1 || true',
-        'ip link set dev "$target_interface" up || true',
-        # Give the kernel a moment to assign the link-local and finish DAD so it
-        # answers a solicitation for the address it owns.
-        'for _ in 1 2 3 4 5 6 7 8 9 10; do',
-        '  if ip -6 addr show dev "$target_interface" scope link | grep -q "inet6 fe80:"; then break; fi',
-        "  sleep 1",
-        "done",
-        'link_local="$(ip -6 addr show dev "$target_interface" scope link 2>/dev/null '
-        "| awk '/inet6 fe80:/ {print $2}' | head -1)\"",
-        'printf \'%s\\n\' "ip -6 neigh flush dev $target_interface || true" >> "$cleanup"',
-        'ip -6 neigh flush dev "$target_interface" 2>/dev/null || true',
-        'echo "ndp_link_local=${link_local:-none}"',
-        "echo ndp_kernel_state=configured",
-    ]
-    if wants_router:
-        lines.extend(
-            [
-                # Router Solicitation needs the target to emit Router
-                # Advertisements. Enable IPv6 forwarding so the kernel acts as a
-                # router; per-interface RA emission still depends on the kernel
-                # build, so this is best-effort and the case skips cleanly if no
-                # RA arrives.
-                'for key in forwarding; do',
-                '  sysctl_name="net.ipv6.conf.${target_interface}.${key}"',
-                '  before_path="$artifact_root/ndp-router-${key}.before"',
-                '  sysctl -n "$sysctl_name" > "$before_path" 2>/dev/null || true',
-                '  before_value=""',
-                '  if [ -s "$before_path" ]; then before_value="$(cat "$before_path")"; fi',
-                '  if [ -n "$before_value" ]; then',
-                '    printf \'%s\\n\' "sysctl -w ${sysctl_name}=${before_value} >/dev/null 2>&1 || true" >> "$cleanup"',
-                "  fi",
-                "done",
-                'sysctl -w "net.ipv6.conf.${target_interface}.forwarding=1" >/dev/null 2>&1 || true',
-                "echo ndp_router_state=configured",
-            ]
-        )
     return lines
 
 
