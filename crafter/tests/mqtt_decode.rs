@@ -1,7 +1,6 @@
 use std::net::Ipv4Addr;
 
 use crafter::prelude::*;
-use crafter::protocols::mqtt::{Mqtt, MqttControlPacketType, MQTT_PORT};
 
 fn mqtt_tcp_packet(source_port: u16, destination_port: u16) -> Packet {
     Ipv4::new()
@@ -50,4 +49,20 @@ fn default_registry_decodes_mqtt_destination_port_1883() -> crafter::Result<()> 
 #[test]
 fn default_registry_decodes_mqtt_source_port_1883() -> crafter::Result<()> {
     assert_default_registry_decodes_mqtt(MQTT_PORT, 49_152)
+}
+
+#[test]
+fn prelude_exports_mqtt_packet_builder_surface() -> crafter::Result<()> {
+    let packet = Ipv4::new()
+        .src(Ipv4Addr::new(192, 0, 2, 30))
+        .dst(Ipv4Addr::new(198, 51, 100, 40))
+        / Tcp::new().sport(49_152).dport(MQTT_PORT)
+        / Mqtt::raw(MqttControlPacketType::Pingreq, []);
+
+    let compiled = packet.compile()?;
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes())?;
+
+    let mqtt = decoded.layer::<Mqtt>().expect("decoded mqtt layer");
+    assert_eq!(mqtt.packet_type(), MqttControlPacketType::Pingreq);
+    Ok(())
 }
