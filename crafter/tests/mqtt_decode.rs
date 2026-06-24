@@ -2,7 +2,7 @@ use std::net::Ipv4Addr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crafter::prelude::*;
-use crafter::protocols::mqtt::MQTT_PUBLISH_QOS_1;
+use crafter::protocols::mqtt::{MQTT_PUBLISH_QOS_1, MQTT_TLS_PORT};
 use crafter::wire::backend::pcap::{PcapLinkType, PcapReader, PcapWriter};
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
@@ -57,6 +57,68 @@ fn default_registry_decodes_mqtt_destination_port_1883() -> crafter::Result<()> 
 #[test]
 fn default_registry_decodes_mqtt_source_port_1883() -> crafter::Result<()> {
     assert_default_registry_decodes_mqtt(MQTT_PORT, 49_152)
+}
+
+#[test]
+fn ethernet_ipv4_tcp_publish_decodes_from_link_to_mqtt() -> crafter::Result<()> {
+    let packet = Ethernet::new()
+        / Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 92))
+            .dst(Ipv4Addr::new(198, 51, 100, 92))
+        / Tcp::new()
+            .sport(49_192)
+            .dport(MQTT_PORT)
+            .seq(0x7172_7374)
+            .ack(0x8182_8384)
+            .ack_segment()
+        / Mqtt::publish()
+            .topic("telemetry")
+            .payload(b"online".to_vec());
+
+    let compiled = packet.compile()?;
+    let decoded = Packet::decode_from_link(LinkType::Ethernet, compiled.as_bytes())?;
+
+    let layer_names = decoded.iter().map(|layer| layer.name()).collect::<Vec<_>>();
+    assert_eq!(layer_names, ["Ethernet", "Ipv4", "Tcp", "MQTT"]);
+
+    let mqtt = decoded.layer::<Mqtt>().expect("decoded MQTT PUBLISH layer");
+    assert_eq!(mqtt.packet_type(), MqttControlPacketType::Publish);
+    assert_eq!(mqtt.topic_value(), Some("telemetry"));
+    assert_eq!(mqtt.payload_value(), Some(&b"online"[..]));
+    assert_eq!(decoded.compile()?.as_bytes(), compiled.as_bytes());
+    Ok(())
+}
+
+#[test]
+fn ethernet_ipv4_tcp_secure_mqtt_port_remains_raw_payload() -> crafter::Result<()> {
+    let mqtt = Mqtt::publish()
+        .topic("telemetry")
+        .payload(b"online".to_vec());
+    let mqtt_bytes = Packet::from_layer(mqtt.clone()).compile()?;
+    let packet = Ethernet::new()
+        / Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 93))
+            .dst(Ipv4Addr::new(198, 51, 100, 93))
+        / Tcp::new()
+            .sport(49_193)
+            .dport(MQTT_TLS_PORT)
+            .seq(0x9192_9394)
+            .ack(0xa1a2_a3a4)
+            .ack_segment()
+        // Port 8883 is registered for TLS-wrapped secure-mqtt, not cleartext MQTT.
+        / mqtt;
+
+    let compiled = packet.compile()?;
+    let decoded = Packet::decode_from_link(LinkType::Ethernet, compiled.as_bytes())?;
+
+    let layer_names = decoded.iter().map(|layer| layer.name()).collect::<Vec<_>>();
+    assert_eq!(layer_names, ["Ethernet", "Ipv4", "Tcp", "Raw"]);
+    assert!(decoded.layer::<Mqtt>().is_none());
+
+    let raw = decoded.layer::<Raw>().expect("secure-mqtt opaque payload");
+    assert_eq!(raw.as_bytes(), mqtt_bytes.as_bytes());
+    assert_eq!(decoded.compile()?.as_bytes(), compiled.as_bytes());
+    Ok(())
 }
 
 #[test]
