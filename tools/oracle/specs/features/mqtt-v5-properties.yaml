@@ -1,0 +1,235 @@
+version: 1
+kind: feature
+name: mqtt_v5_properties
+summary: >-
+  MQTT 5.0 CONNECT, CONNACK, and PUBLISH property blocks over cleartext TCP/1883,
+  including property-length prefixes, representative scalar/string/user
+  properties, and byte-exact libcrafter golden output.
+
+layers:
+  - mqtt
+  - tcp
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: connect_properties
+    sources:
+      - .agents/docs/mqtt-manifest.md#MQTT-5.0-Properties
+      - .agents/docs/mqtt-codepoints.md#MQTT-5.0-Property-Identifiers
+    message_type: connect
+    checks:
+      - protocol_level_is_5
+      - connect_properties_length_prefix_preserved
+      - will_properties_length_prefix_preserved
+      - properties_decode_to_typed_values
+  - name: connack_properties
+    sources:
+      - .agents/docs/mqtt-manifest.md#MQTT-5.0-Properties
+      - .agents/docs/mqtt-codepoints.md#MQTT-5.0-Property-Identifiers
+    message_type: connack
+    checks:
+      - reason_code_preserved
+      - property_block_preserved
+      - assigned_client_identifier_preserved
+      - reason_string_preserved
+  - name: publish_properties
+    sources:
+      - .agents/docs/mqtt-manifest.md#MQTT-5.0-Properties
+      - .agents/docs/mqtt-codepoints.md#MQTT-5.0-Property-Identifiers
+    message_type: publish
+    checks:
+      - topic_alias_preserved
+      - content_type_preserved
+      - user_property_preserved
+      - payload_bytes_preserved
+
+coverage_cases:
+  - mqtt-v5-connect-properties
+  - mqtt-v5-connack-properties
+  - mqtt-v5-publish-properties
+
+supported_cases:
+  - name: mqtt-v5-connect-properties
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+    roots:
+      - "l3:ipv4"
+      - "l3:ipv6"
+    contract_only: true
+    contract_reason: scapy.contrib.mqtt backend support for MQTT 5 property materialization is added in the follow-up backend step.
+    fields:
+      mqtt:
+        packet_type: connect
+        version: 5
+        flags: default
+        protocol_name: MQTT
+        protocol_level: 5
+        connect_flags:
+          - clean_session
+          - will
+        keep_alive: 30
+        connect_properties:
+          - name: session_expiry_interval
+            value: 60
+          - name: receive_maximum
+            value: 10
+        client_id: cid
+        will_properties:
+          - name: payload_format_indicator
+            value: 1
+          - name: message_expiry_interval
+            value: 5
+        will_topic: status
+        will_message:
+          hex: "6f6e6c696e65"
+    expected:
+      mqtt_hex: "103000044d5154540506001e08110000003c21000a00036369640701010200000005000673746174757300066f6e6c696e65"
+      fixed_header_hex: "1030"
+      remaining_length: 48
+      normalized_fields:
+        packet_type: connect
+        version: 5
+        flags: 0
+        remaining_length: 48
+        protocol_name: MQTT
+        protocol_level: 5
+        connect_flags: 6
+        clean_session: true
+        keep_alive: 30
+        connect_properties:
+          - name: session_expiry_interval
+            value: 60
+          - name: receive_maximum
+            value: 10
+        client_id: cid
+        will_topic: status
+        will_message:
+          hex: "6f6e6c696e65"
+          length: 6
+        will_properties:
+          - name: payload_format_indicator
+            value: 1
+          - name: message_expiry_interval
+            value: 5
+  - name: mqtt-v5-connack-properties
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+    roots:
+      - "l3:ipv4"
+      - "l3:ipv6"
+    contract_only: true
+    contract_reason: scapy.contrib.mqtt backend support for MQTT 5 property materialization is added in the follow-up backend step.
+    fields:
+      mqtt:
+        packet_type: connack
+        version: 5
+        flags: default
+        session_present: true
+        reason_code: 140
+        properties:
+          - name: assigned_client_identifier
+            value: srv
+          - name: receive_maximum
+            value: 20
+          - name: reason_string
+            value: "no"
+    expected:
+      mqtt_hex: "2011018c0e1200037372762100141f00026e6f"
+      fixed_header_hex: "2011"
+      remaining_length: 17
+      normalized_fields:
+        packet_type: connack
+        version: 5
+        flags: 0
+        remaining_length: 17
+        ack_flags: 1
+        session_present: true
+        reason_code: 140
+        properties:
+          - name: assigned_client_identifier
+            value: srv
+          - name: receive_maximum
+            value: 20
+          - name: reason_string
+            value: "no"
+  - name: mqtt-v5-publish-properties
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+    roots:
+      - "l3:ipv4"
+      - "l3:ipv6"
+    contract_only: true
+    contract_reason: scapy.contrib.mqtt backend support for MQTT 5 property materialization is added in the follow-up backend step.
+    fields:
+      mqtt:
+        packet_type: publish
+        version: 5
+        flags: publish_qos1
+        qos: 1
+        topic: sensors/t
+        packet_id: 4660
+        properties:
+          - name: topic_alias
+            value: 7
+          - name: content_type
+            value: text/plain
+          - name: user_property
+            key: site
+            value: lab
+        payload:
+          hex: "3432"
+    expected:
+      mqtt_hex: "322c000973656e736f72732f7412341c23000703000a746578742f706c61696e2600047369746500036c61623432"
+      fixed_header_hex: "322c"
+      remaining_length: 44
+      normalized_fields:
+        packet_type: publish
+        version: 5
+        flags: 2
+        remaining_length: 44
+        topic: sensors/t
+        qos: 1
+        dup: false
+        retain: false
+        packet_id: 4660
+        properties:
+          - name: topic_alias
+            value: 7
+          - name: content_type
+            value: text/plain
+          - name: user_property
+            key: site
+            value: lab
+        payload:
+          hex: "3432"
+          length: 2
+
+backend_support:
+  scapy:
+    status: partial
+    native_layers:
+      - MQTT
+      - MQTTConnect
+      - MQTTConnack
+      - MQTTPublish
+    notes:
+      - Baseline Scapy MQTT layers are available, but MQTT 5 property
+        materialization and normalization are not enabled until the backend gap
+        step, so these cases are contract-only here.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    notes:
+      - The public crafter MQTT layer builds, decodes, and recompiles MQTT 5
+        CONNECT, CONNACK, and PUBLISH property blocks byte-for-byte.
