@@ -28,6 +28,9 @@ from .protocols import (
 from .protocols.igmp import (  # noqa: F401  (re-exported for back-compat)
     IGMP_PROBE_CASES,
 )
+from .protocols.mqtt import (  # noqa: F401  (re-exported for back-compat)
+    MQTT_SMOKE_CASES,
+)
 
 
 # Capabilities required by each behavioral protocol group. DNS and UDP need only
@@ -51,6 +54,11 @@ UDP_ECHO_LARGE_PAYLOAD_LENGTH = 1200
 # RIP's capability constant (``_RIP_CAPABILITIES``) and case tuple now live in
 # the RIP plugin module (``protocols/rip.py``); the merged catalog/profile tables
 # below pick the RIP/RIPng cases up from the registry.
+# MQTT's capability constant (``_MQTT_CAPABILITIES``) and case tuple now live in
+# the MQTT plugin module (``protocols/mqtt.py``); the merged catalog/profile
+# tables below pick the MQTT cases up from the registry. ``MQTT_SMOKE_CASES`` is
+# re-imported above so ``cases.MQTT_SMOKE_CASES`` stays resolvable for the catalog
+# tests.
 # IGMP's capability constant (``_IGMP_CAPABILITIES``) and case tuple now live in
 # the IGMP plugin module (``protocols/igmp.py``); the merged catalog/profile
 # tables below pick the IGMP cases up from the registry. ``IGMP_PROBE_CASES`` is
@@ -181,6 +189,7 @@ BEHAVIOR_PROFILE = "behavior"
 TCP_SMOKE_PROFILE = "tcp-smoke"
 BGP_SESSION_PROFILE = "bgp-smoke"
 RIP_SMOKE_PROFILE = "rip-smoke"
+MQTT_SMOKE_PROFILE = "mqtt-smoke"
 OSPF_SMOKE_PROFILE = "ospf-smoke"
 IGMP_PROFILE = "igmp"
 IPSEC_PROFILE = "ipsec"
@@ -357,6 +366,16 @@ RIP_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
     if case.metadata.get("protocol") in ("rip", "ripng")
 )
 
+# The MQTT smoke profile plans the probe-owned Mosquitto broker target service
+# and MQTT session stimulus intent without adding planned-only stateful cases to
+# the default smoke profile. The case names are sourced from the MQTT plugin's
+# registered cases in declaration order.
+MQTT_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
+    case.name
+    for case in _registry_cases()
+    if case.metadata.get("protocol") == "mqtt"
+)
+
 # The OSPF smoke profile carries the planned-only OSPF cases (currently the
 # Database Description exchange). They plan in dry-run but have no live adapter
 # arm yet, so they are kept out of the live ``behavior`` profile -- the way
@@ -395,6 +414,7 @@ _PROFILE_CASE_NAMES: dict[str, tuple[str, ...]] = {
     TCP_SMOKE_PROFILE: TCP_SMOKE_PROFILE_CASE_NAMES,
     BGP_SESSION_PROFILE: BGP_SESSION_PROFILE_CASE_NAMES,
     RIP_SMOKE_PROFILE: RIP_SMOKE_PROFILE_CASE_NAMES,
+    MQTT_SMOKE_PROFILE: MQTT_SMOKE_PROFILE_CASE_NAMES,
     OSPF_SMOKE_PROFILE: OSPF_SMOKE_PROFILE_CASE_NAMES,
     IGMP_PROFILE: IGMP_PROFILE_CASE_NAMES,
     IPSEC_PROFILE: IPSEC_PROFILE_CASE_NAMES,
@@ -407,6 +427,7 @@ _PROFILE_DEFAULT_COUNTS: dict[str, int] = {
     BEHAVIOR_PROFILE: len(BEHAVIOR_PROFILE_CASE_NAMES),
     BGP_SESSION_PROFILE: len(BGP_SESSION_PROFILE_CASE_NAMES),
     RIP_SMOKE_PROFILE: len(RIP_SMOKE_PROFILE_CASE_NAMES),
+    MQTT_SMOKE_PROFILE: len(MQTT_SMOKE_PROFILE_CASE_NAMES),
     OSPF_SMOKE_PROFILE: len(OSPF_SMOKE_PROFILE_CASE_NAMES),
     IGMP_PROFILE: len(IGMP_PROFILE_CASE_NAMES),
     IPSEC_PROFILE: len(IPSEC_PROFILE_CASE_NAMES),
