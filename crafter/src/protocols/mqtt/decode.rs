@@ -62,9 +62,7 @@ pub(crate) fn decode_mqtt(bytes: &[u8]) -> Result<(Mqtt, usize)> {
         MqttControlPacketType::Pubcomp => {
             decode_packet_identifier(packet_type, flags, remaining_length, body, "mqtt.pubcomp")?
         }
-        MqttControlPacketType::Unsuback => {
-            decode_packet_identifier(packet_type, flags, remaining_length, body, "mqtt.unsuback")?
-        }
+        MqttControlPacketType::Unsuback => decode_unsuback(flags, remaining_length, body)?,
         MqttControlPacketType::Pingreq => {
             decode_empty_packet(packet_type, flags, remaining_length, body, "mqtt.pingreq")?
         }
@@ -379,6 +377,20 @@ fn decode_suback_with_version(
 }
 
 fn decode_unsubscribe(fixed_header_flags: u8, remaining_length: u32, body: &[u8]) -> Result<Mqtt> {
+    decode_unsubscribe_with_version(
+        fixed_header_flags,
+        remaining_length,
+        MQTT_311_PROTOCOL_LEVEL,
+        body,
+    )
+}
+
+fn decode_unsubscribe_with_version(
+    fixed_header_flags: u8,
+    remaining_length: u32,
+    version: u8,
+    body: &[u8],
+) -> Result<Mqtt> {
     let mut cursor = 0;
 
     if body.len() < 2 {
@@ -389,6 +401,11 @@ fn decode_unsubscribe(fixed_header_flags: u8, remaining_length: u32, body: &[u8]
         ));
     }
     let packet_id = take_u16(body, &mut cursor)?;
+    let properties = if version == MQTT_5_PROTOCOL_LEVEL {
+        take_properties(body, &mut cursor)?
+    } else {
+        MqttProperties::new()
+    };
     let mut topics = Vec::new();
 
     while cursor < body.len() {
@@ -404,8 +421,59 @@ fn decode_unsubscribe(fixed_header_flags: u8, remaining_length: u32, body: &[u8]
     Ok(Mqtt::unsubscribe_from_decoded_parts(
         fixed_header_flags,
         remaining_length,
+        version,
         packet_id,
+        properties,
         topics,
+    ))
+}
+
+fn decode_unsuback(fixed_header_flags: u8, remaining_length: u32, body: &[u8]) -> Result<Mqtt> {
+    decode_unsuback_with_version(
+        fixed_header_flags,
+        remaining_length,
+        MQTT_311_PROTOCOL_LEVEL,
+        body,
+    )
+}
+
+fn decode_unsuback_with_version(
+    fixed_header_flags: u8,
+    remaining_length: u32,
+    version: u8,
+    body: &[u8],
+) -> Result<Mqtt> {
+    let mut cursor = 0;
+
+    if body.len() < 2 {
+        return Err(CrafterError::buffer_too_short(
+            "mqtt.unsuback.packet_identifier",
+            2,
+            body.len(),
+        ));
+    }
+    if version != MQTT_5_PROTOCOL_LEVEL && body.len() != 2 {
+        return Err(CrafterError::invalid_field_value(
+            "mqtt.unsuback.remaining_length",
+            "UNSUBACK Remaining Length must be 2",
+        ));
+    }
+
+    let packet_id = take_u16(body, &mut cursor)?;
+    let properties = if version == MQTT_5_PROTOCOL_LEVEL {
+        take_properties(body, &mut cursor)?
+    } else {
+        MqttProperties::new()
+    };
+    let reason_codes = body[cursor..].to_vec();
+
+    Ok(Mqtt::unsuback_from_decoded_parts(
+        fixed_header_flags,
+        remaining_length,
+        version,
+        packet_id,
+        properties,
+        reason_codes,
     ))
 }
 
@@ -882,6 +950,69 @@ mod tests {
             &[
                 0x90, 0x10, 0x43, 0x21, 0x0a, 0x1f, 0x00, 0x07, b'p', b'a', b'r', b't', b'i', b'a',
                 b'l', 0x00, 0x01, 0x83,
+            ]
+        );
+    }
+
+    #[test]
+    fn decodes_v5_unsubscribe_properties_when_version_is_supplied() {
+        let body = [
+            0x12, 0x34, 0x0c, 0x26, 0x00, 0x06, b'c', b'l', b'i', b'e', b'n', b't', 0x00, 0x01,
+            b'a', 0x00, 0x09, b's', b'e', b'n', b's', b'o', b'r', b's', b'/', b'+',
+        ];
+        let mqtt =
+            decode_unsubscribe_with_version(0x02, body.len() as u32, MQTT_5_PROTOCOL_LEVEL, &body)
+                .unwrap();
+
+        assert_eq!(mqtt.packet_type(), MqttControlPacketType::Unsubscribe);
+        assert_eq!(mqtt.version_value(), MQTT_5_PROTOCOL_LEVEL);
+        assert_eq!(mqtt.packet_id_value(), Some(0x1234));
+        assert_eq!(
+            mqtt.unsubscribe_properties_value()
+                .expect("unsubscribe properties")
+                .property_values(),
+            &[MqttProperty::user_property("client", "a")]
+        );
+        assert_eq!(
+            mqtt.unsubscribe_topics_value(),
+            Some(&["sensors/+".to_string()][..])
+        );
+        assert_eq!(
+            Packet::from_layer(mqtt).compile().unwrap().as_bytes(),
+            &[
+                0xa2, 0x1a, 0x12, 0x34, 0x0c, 0x26, 0x00, 0x06, b'c', b'l', b'i', b'e', b'n', b't',
+                0x00, 0x01, b'a', 0x00, 0x09, b's', b'e', b'n', b's', b'o', b'r', b's', b'/', b'+',
+            ]
+        );
+    }
+
+    #[test]
+    fn decodes_v5_unsuback_properties_and_reason_codes_when_version_is_supplied() {
+        let body = [
+            0x43, 0x21, 0x07, 0x1f, 0x00, 0x04, b'g', b'o', b'n', b'e', 0x00, 0x11, 0x8f,
+        ];
+        let mqtt =
+            decode_unsuback_with_version(0x00, body.len() as u32, MQTT_5_PROTOCOL_LEVEL, &body)
+                .unwrap();
+
+        assert_eq!(mqtt.packet_type(), MqttControlPacketType::Unsuback);
+        assert_eq!(mqtt.version_value(), MQTT_5_PROTOCOL_LEVEL);
+        assert_eq!(mqtt.packet_id_value(), Some(0x4321));
+        assert_eq!(
+            mqtt.unsuback_properties_value()
+                .expect("unsuback properties")
+                .property_values(),
+            &[MqttProperty::ReasonString("gone".to_string())]
+        );
+        assert_eq!(
+            mqtt.unsuback_reason_codes_value(),
+            Some(&[0x00, 0x11, 0x8f][..])
+        );
+        assert_eq!(
+            Packet::from_layer(mqtt).compile().unwrap().as_bytes(),
+            &[
+                0xb0, 0x0d, 0x43, 0x21, 0x07, 0x1f, 0x00, 0x04, b'g', b'o', b'n', b'e', 0x00, 0x11,
+                0x8f,
             ]
         );
     }

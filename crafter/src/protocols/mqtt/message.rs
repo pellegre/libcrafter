@@ -550,6 +550,7 @@ impl MqttSuback {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct MqttUnsubscribe {
     packet_id: Field<u16>,
+    properties: MqttProperties,
     topics: Vec<String>,
 }
 
@@ -557,13 +558,15 @@ impl MqttUnsubscribe {
     fn new() -> Self {
         Self {
             packet_id: Field::defaulted(0),
+            properties: MqttProperties::new(),
             topics: Vec::new(),
         }
     }
 
-    fn from_decoded_parts(packet_id: u16, topics: Vec<String>) -> Self {
+    fn from_decoded_parts(packet_id: u16, properties: MqttProperties, topics: Vec<String>) -> Self {
         Self {
             packet_id: Field::user(packet_id),
+            properties,
             topics,
         }
     }
@@ -576,22 +579,96 @@ impl MqttUnsubscribe {
         &self.topics
     }
 
+    fn properties(&self) -> &MqttProperties {
+        &self.properties
+    }
+
     fn push_topic(&mut self, filter: impl Into<String>) {
         self.topics.push(filter.into());
     }
 
-    fn encoded_len(&self) -> usize {
-        2 + self
+    fn encoded_len(&self, version: u8) -> usize {
+        let mut len = 2;
+        if version == MQTT_5_PROTOCOL_LEVEL {
+            len += encoded_properties_len(self.properties());
+        }
+        len + self
             .topics
             .iter()
             .map(|filter| 2 + filter.len())
             .sum::<usize>()
     }
 
-    fn write_body(&self, out: &mut Vec<u8>) -> Result<()> {
+    fn write_body(&self, out: &mut Vec<u8>, version: u8) -> Result<()> {
         encode_u16(self.packet_id(), out);
+        if version == MQTT_5_PROTOCOL_LEVEL {
+            self.properties.write(out)?;
+        }
         for filter in &self.topics {
             encode_string(filter, out)?;
+        }
+        Ok(())
+    }
+}
+
+/// MQTT UNSUBACK variable header and payload fields.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MqttUnsuback {
+    packet_id: Field<u16>,
+    properties: MqttProperties,
+    reason_codes: Vec<u8>,
+}
+
+impl MqttUnsuback {
+    fn new() -> Self {
+        Self {
+            packet_id: Field::defaulted(0),
+            properties: MqttProperties::new(),
+            reason_codes: Vec::new(),
+        }
+    }
+
+    fn from_decoded_parts(
+        packet_id: u16,
+        properties: MqttProperties,
+        reason_codes: Vec<u8>,
+    ) -> Self {
+        Self {
+            packet_id: Field::user(packet_id),
+            properties,
+            reason_codes,
+        }
+    }
+
+    fn packet_id(&self) -> u16 {
+        self.packet_id.value().copied().unwrap_or(0)
+    }
+
+    fn properties(&self) -> &MqttProperties {
+        &self.properties
+    }
+
+    fn reason_codes(&self) -> &[u8] {
+        &self.reason_codes
+    }
+
+    fn push_reason_code(&mut self, reason_code: u8) {
+        self.reason_codes.push(reason_code);
+    }
+
+    fn encoded_len(&self, version: u8) -> usize {
+        let mut len = 2;
+        if version == MQTT_5_PROTOCOL_LEVEL {
+            len += encoded_properties_len(self.properties()) + self.reason_codes.len();
+        }
+        len
+    }
+
+    fn write_body(&self, out: &mut Vec<u8>, version: u8) -> Result<()> {
+        encode_u16(self.packet_id(), out);
+        if version == MQTT_5_PROTOCOL_LEVEL {
+            self.properties.write(out)?;
+            out.extend_from_slice(&self.reason_codes);
         }
         Ok(())
     }
@@ -756,6 +833,7 @@ enum MqttBody {
     Subscribe(MqttSubscribe),
     Suback(MqttSuback),
     Unsubscribe(MqttUnsubscribe),
+    Unsuback(MqttUnsuback),
 }
 
 impl MqttBody {
@@ -769,7 +847,8 @@ impl MqttBody {
             Self::PacketIdentifier(packet_identifier) => packet_identifier.encoded_len(version),
             Self::Subscribe(subscribe) => subscribe.encoded_len(version),
             Self::Suback(suback) => suback.encoded_len(version),
-            Self::Unsubscribe(unsubscribe) => unsubscribe.encoded_len(),
+            Self::Unsubscribe(unsubscribe) => unsubscribe.encoded_len(version),
+            Self::Unsuback(unsuback) => unsuback.encoded_len(version),
         }
     }
 
@@ -785,7 +864,8 @@ impl MqttBody {
             }
             Self::Subscribe(subscribe) => subscribe.write_body(out, version)?,
             Self::Suback(suback) => suback.write_body(out, version)?,
-            Self::Unsubscribe(unsubscribe) => unsubscribe.write_body(out)?,
+            Self::Unsubscribe(unsubscribe) => unsubscribe.write_body(out, version)?,
+            Self::Unsuback(unsuback) => unsuback.write_body(out, version)?,
         }
         Ok(())
     }
@@ -800,7 +880,8 @@ impl MqttBody {
             | Self::PacketIdentifier(_)
             | Self::Subscribe(_)
             | Self::Suback(_)
-            | Self::Unsubscribe(_) => &[],
+            | Self::Unsubscribe(_)
+            | Self::Unsuback(_) => &[],
         }
     }
 }
@@ -923,7 +1004,7 @@ impl Mqtt {
             version: Field::defaulted(MQTT_311_PROTOCOL_LEVEL),
             flags: Field::defaulted(MqttControlPacketType::Unsuback.default_flags()),
             remaining_length: Field::unset(),
-            body: MqttBody::PacketIdentifier(MqttPacketIdentifier::new()),
+            body: MqttBody::Unsuback(MqttUnsuback::new()),
         }
     }
 
@@ -1136,15 +1217,40 @@ impl Mqtt {
     pub(crate) fn unsubscribe_from_decoded_parts(
         fixed_header_flags: u8,
         remaining_length: u32,
+        version: u8,
         packet_id: u16,
+        properties: MqttProperties,
         topics: Vec<String>,
     ) -> Self {
         Self {
             packet_type: MqttControlPacketType::Unsubscribe,
-            version: Field::defaulted(MQTT_311_PROTOCOL_LEVEL),
+            version: Field::user(version),
             flags: Field::user(fixed_header_flags),
             remaining_length: Field::user(remaining_length),
-            body: MqttBody::Unsubscribe(MqttUnsubscribe::from_decoded_parts(packet_id, topics)),
+            body: MqttBody::Unsubscribe(MqttUnsubscribe::from_decoded_parts(
+                packet_id, properties, topics,
+            )),
+        }
+    }
+
+    pub(crate) fn unsuback_from_decoded_parts(
+        fixed_header_flags: u8,
+        remaining_length: u32,
+        version: u8,
+        packet_id: u16,
+        properties: MqttProperties,
+        reason_codes: Vec<u8>,
+    ) -> Self {
+        Self {
+            packet_type: MqttControlPacketType::Unsuback,
+            version: Field::user(version),
+            flags: Field::user(fixed_header_flags),
+            remaining_length: Field::user(remaining_length),
+            body: MqttBody::Unsuback(MqttUnsuback::from_decoded_parts(
+                packet_id,
+                properties,
+                reason_codes,
+            )),
         }
     }
 
@@ -1396,6 +1502,15 @@ impl Mqtt {
             MqttBody::Subscribe(subscribe) => {
                 subscribe.properties.push(property);
             }
+            MqttBody::Suback(suback) => {
+                suback.properties.push(property);
+            }
+            MqttBody::Unsubscribe(unsubscribe) => {
+                unsubscribe.properties.push(property);
+            }
+            MqttBody::Unsuback(unsuback) => {
+                unsuback.properties.push(property);
+            }
             _ => {}
         }
         self
@@ -1411,6 +1526,7 @@ impl Mqtt {
             MqttBody::Subscribe(subscribe) => subscribe.packet_id.set_user(packet_id),
             MqttBody::Suback(suback) => suback.packet_id.set_user(packet_id),
             MqttBody::Unsubscribe(unsubscribe) => unsubscribe.packet_id.set_user(packet_id),
+            MqttBody::Unsuback(unsuback) => unsuback.packet_id.set_user(packet_id),
             _ => {}
         }
         self
@@ -1540,6 +1656,38 @@ impl Mqtt {
         self
     }
 
+    /// Replace the MQTT 5.0 UNSUBSCRIBE properties block.
+    pub fn unsubscribe_properties(mut self, properties: MqttProperties) -> Self {
+        if let MqttBody::Unsubscribe(unsubscribe) = &mut self.body {
+            unsubscribe.properties = properties;
+        }
+        self
+    }
+
+    /// Add one MQTT 5.0 UNSUBSCRIBE property.
+    pub fn unsubscribe_property(mut self, property: MqttProperty) -> Self {
+        if let MqttBody::Unsubscribe(unsubscribe) = &mut self.body {
+            unsubscribe.properties.push(property);
+        }
+        self
+    }
+
+    /// Replace the MQTT 5.0 UNSUBACK properties block.
+    pub fn unsuback_properties(mut self, properties: MqttProperties) -> Self {
+        if let MqttBody::Unsuback(unsuback) = &mut self.body {
+            unsuback.properties = properties;
+        }
+        self
+    }
+
+    /// Add one MQTT 5.0 UNSUBACK property.
+    pub fn unsuback_property(mut self, property: MqttProperty) -> Self {
+        if let MqttBody::Unsuback(unsuback) = &mut self.body {
+            unsuback.properties.push(property);
+        }
+        self
+    }
+
     /// Replace the MQTT 5.0 PUBACK/PUBREC/PUBREL/PUBCOMP properties block.
     pub fn ack_properties(mut self, properties: MqttProperties) -> Self {
         if let MqttBody::PacketIdentifier(packet_identifier) = &mut self.body {
@@ -1564,6 +1712,27 @@ impl Mqtt {
         if let MqttBody::Suback(suback) = &mut self.body {
             for return_code in return_codes {
                 suback.push_return_code(return_code);
+            }
+        }
+        self
+    }
+
+    /// Add one MQTT 5.0 UNSUBACK reason code.
+    pub fn unsuback_reason_code(mut self, reason_code: u8) -> Self {
+        if let MqttBody::Unsuback(unsuback) = &mut self.body {
+            unsuback.push_reason_code(reason_code);
+        }
+        self
+    }
+
+    /// Add MQTT 5.0 UNSUBACK reason codes.
+    pub fn unsuback_reason_codes<I>(mut self, reason_codes: I) -> Self
+    where
+        I: IntoIterator<Item = u8>,
+    {
+        if let MqttBody::Unsuback(unsuback) = &mut self.body {
+            for reason_code in reason_codes {
+                unsuback.push_reason_code(reason_code);
             }
         }
         self
@@ -1763,6 +1932,7 @@ impl Mqtt {
             .or_else(|| self.subscribe_body().map(MqttSubscribe::packet_id))
             .or_else(|| self.suback_body().map(MqttSuback::packet_id))
             .or_else(|| self.unsubscribe_body().map(MqttUnsubscribe::packet_id))
+            .or_else(|| self.unsuback_body().map(MqttUnsuback::packet_id))
     }
 
     /// SUBSCRIBE topic filter and raw options byte pairs, when this is a typed SUBSCRIBE packet.
@@ -1807,6 +1977,25 @@ impl Mqtt {
         self.unsubscribe_body().map(MqttUnsubscribe::topics)
     }
 
+    /// MQTT 5.0 UNSUBSCRIBE properties, when this is a version-5 UNSUBSCRIBE packet.
+    pub fn unsubscribe_properties_value(&self) -> Option<&MqttProperties> {
+        (self.version_value() == MQTT_5_PROTOCOL_LEVEL)
+            .then(|| self.unsubscribe_body().map(MqttUnsubscribe::properties))
+            .flatten()
+    }
+
+    /// MQTT 5.0 UNSUBACK properties, when this is a version-5 UNSUBACK packet.
+    pub fn unsuback_properties_value(&self) -> Option<&MqttProperties> {
+        (self.version_value() == MQTT_5_PROTOCOL_LEVEL)
+            .then(|| self.unsuback_body().map(MqttUnsuback::properties))
+            .flatten()
+    }
+
+    /// MQTT 5.0 UNSUBACK reason codes, when this is a typed UNSUBACK packet.
+    pub fn unsuback_reason_codes_value(&self) -> Option<&[u8]> {
+        self.unsuback_body().map(MqttUnsuback::reason_codes)
+    }
+
     /// PUBLISH application payload bytes, when this is a typed PUBLISH packet.
     pub fn payload_value(&self) -> Option<&[u8]> {
         self.publish_body().map(MqttPublish::payload)
@@ -1822,7 +2011,8 @@ impl Mqtt {
             | MqttBody::PacketIdentifier(_)
             | MqttBody::Subscribe(_)
             | MqttBody::Suback(_)
-            | MqttBody::Unsubscribe(_) => None,
+            | MqttBody::Unsubscribe(_)
+            | MqttBody::Unsuback(_) => None,
         }
     }
 
@@ -1836,7 +2026,8 @@ impl Mqtt {
             | MqttBody::PacketIdentifier(_)
             | MqttBody::Subscribe(_)
             | MqttBody::Suback(_)
-            | MqttBody::Unsubscribe(_) => None,
+            | MqttBody::Unsubscribe(_)
+            | MqttBody::Unsuback(_) => None,
         }
     }
 
@@ -1850,7 +2041,8 @@ impl Mqtt {
             | MqttBody::PacketIdentifier(_)
             | MqttBody::Subscribe(_)
             | MqttBody::Suback(_)
-            | MqttBody::Unsubscribe(_) => None,
+            | MqttBody::Unsubscribe(_)
+            | MqttBody::Unsuback(_) => None,
         }
     }
 
@@ -1864,7 +2056,8 @@ impl Mqtt {
             | MqttBody::Publish(_)
             | MqttBody::Subscribe(_)
             | MqttBody::Suback(_)
-            | MqttBody::Unsubscribe(_) => None,
+            | MqttBody::Unsubscribe(_)
+            | MqttBody::Unsuback(_) => None,
         }
     }
 
@@ -1878,7 +2071,8 @@ impl Mqtt {
             | MqttBody::Publish(_)
             | MqttBody::PacketIdentifier(_)
             | MqttBody::Suback(_)
-            | MqttBody::Unsubscribe(_) => None,
+            | MqttBody::Unsubscribe(_)
+            | MqttBody::Unsuback(_) => None,
         }
     }
 
@@ -1892,7 +2086,8 @@ impl Mqtt {
             | MqttBody::Publish(_)
             | MqttBody::PacketIdentifier(_)
             | MqttBody::Subscribe(_)
-            | MqttBody::Unsubscribe(_) => None,
+            | MqttBody::Unsubscribe(_)
+            | MqttBody::Unsuback(_) => None,
         }
     }
 
@@ -1906,7 +2101,23 @@ impl Mqtt {
             | MqttBody::Publish(_)
             | MqttBody::PacketIdentifier(_)
             | MqttBody::Subscribe(_)
-            | MqttBody::Suback(_) => None,
+            | MqttBody::Suback(_)
+            | MqttBody::Unsuback(_) => None,
+        }
+    }
+
+    fn unsuback_body(&self) -> Option<&MqttUnsuback> {
+        match &self.body {
+            MqttBody::Unsuback(unsuback) => Some(unsuback),
+            MqttBody::Raw(_)
+            | MqttBody::Empty
+            | MqttBody::Connect(_)
+            | MqttBody::Connack(_)
+            | MqttBody::Publish(_)
+            | MqttBody::PacketIdentifier(_)
+            | MqttBody::Subscribe(_)
+            | MqttBody::Suback(_)
+            | MqttBody::Unsubscribe(_) => None,
         }
     }
 
@@ -1995,6 +2206,11 @@ impl Layer for Mqtt {
                 "MQTT UNSUBSCRIBE packet_id={} topics={}",
                 unsubscribe.packet_id(),
                 topic_list_summary(unsubscribe.topics())
+            ),
+            MqttBody::Unsuback(unsuback) => format!(
+                "MQTT UNSUBACK packet_id={} reason_codes={}",
+                unsuback.packet_id(),
+                byte_list_summary(unsuback.reason_codes())
             ),
         }
     }
@@ -2088,6 +2304,10 @@ impl Layer for Mqtt {
                 for topic in unsubscribe.topics() {
                     fields.push(("topic_filter", topic.clone()));
                 }
+            }
+            MqttBody::Unsuback(unsuback) => {
+                fields.push(("packet_id", unsuback.packet_id().to_string()));
+                fields.push(("reason_codes", byte_list_summary(unsuback.reason_codes())));
             }
         }
 
