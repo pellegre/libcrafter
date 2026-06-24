@@ -41,6 +41,7 @@ SKIP_REQUIRES_PRIVILEGED_PORT = "requires_privileged_port"
 SKIP_REQUIRES_CONTROLLED_SERVICE = "requires_controlled_service"
 SKIP_REQUIRES_BGP_PEER = "requires_bgp_peer"
 SKIP_REQUIRES_RIP_PEER = "requires_rip_peer"
+SKIP_REQUIRES_MQTT_BROKER = "requires_mqtt_broker"
 SKIP_REQUIRES_IPV4_MULTICAST = "requires_ipv4_multicast"
 SKIP_REQUIRES_IGMP_PEER = "requires_igmp_peer"
 # IPSec ESP/AH cases need a peer that holds the matching Security Association
@@ -82,6 +83,7 @@ _CAPABILITY_SKIP_REASONS = {
     "controlled_services": SKIP_REQUIRES_CONTROLLED_SERVICE,
     "bgp_peer": SKIP_REQUIRES_BGP_PEER,
     "rip_peer": SKIP_REQUIRES_RIP_PEER,
+    "mqtt_broker": SKIP_REQUIRES_MQTT_BROKER,
     "ipv4_multicast": SKIP_REQUIRES_IPV4_MULTICAST,
     "igmp_peer": SKIP_REQUIRES_IGMP_PEER,
     # An IPSec-capable peer is missing: ESP/AH need the matching SA, IKEv2 needs
@@ -260,6 +262,7 @@ __all__ = [
     "SKIP_REQUIRES_IPSEC_PEER",
     "SKIP_REQUIRES_IPV4_MULTICAST",
     "SKIP_REQUIRES_LINK_LAYER",
+    "SKIP_REQUIRES_MQTT_BROKER",
     "SKIP_REQUIRES_PRIVILEGED_PORT",
     "SKIP_REQUIRES_PROVIDER_MAC",
     "SKIP_REQUIRES_RIP_PEER",

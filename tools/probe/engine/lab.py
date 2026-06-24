@@ -65,6 +65,7 @@ PROBE_CAPABILITY_NAMES = (
     "repeated_response",
     "bgp_peer",
     "rip_peer",
+    "mqtt_broker",
     "ipv4_multicast",
     "igmp_peer",
     # IPSec behavioral capabilities. An IPSec-capable peer holds the matching
@@ -257,8 +258,10 @@ def probe_capabilities_from_lab_capabilities(
         "repeated_response": repeated_response,
         # ``bgp_peer`` is contributed by the BGP plugin's ``lab_capabilities``
         # hook (folded in below). ``rip_peer`` is contributed by the RIP plugin's
-        # ``lab_capabilities`` hook (folded in below). The shared
-        # ``capability_names`` / ``capability_sources`` tables still list both.
+        # ``lab_capabilities`` hook (folded in below). ``mqtt_broker`` is
+        # contributed by the MQTT plugin's ``lab_capabilities`` hook (folded in
+        # below). The shared ``capability_names`` / ``capability_sources`` tables
+        # still list all three.
         # ``ipv4_multicast`` / ``igmp_peer`` are contributed by the IGMP plugin's
         # ``lab_capabilities`` hook (folded in below). The shared
         # ``capability_names`` / ``capability_sources`` tables still list both.
@@ -323,6 +326,11 @@ def probe_capabilities_from_lab_capabilities(
             "repeated_response": ["ipv4_unicast", "controlled_services"],
             "bgp_peer": ["ipv4_unicast", "controlled_services", "bgp_peer"],
             "rip_peer": ["ipv4_unicast", "controlled_services", "rip_peer"],
+            "mqtt_broker": [
+                "ipv4_unicast",
+                "controlled_services",
+                "mqtt_broker",
+            ],
             "ipv4_multicast": [
                 "ipv4_unicast",
                 "link_layer_send",

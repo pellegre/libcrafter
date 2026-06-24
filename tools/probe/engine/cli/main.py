@@ -28,6 +28,7 @@ from ..capabilities import (
     SKIP_REQUIRES_CONTROLLED_ROUTER,
     SKIP_REQUIRES_CONTROLLED_SERVICE,
     SKIP_REQUIRES_LINK_LAYER,
+    SKIP_REQUIRES_MQTT_BROKER,
     SKIP_REQUIRES_PRIVILEGED_PORT,
     SKIP_REQUIRES_PROVIDER_MAC,
     capability_skip_result as _capability_skip_result,
