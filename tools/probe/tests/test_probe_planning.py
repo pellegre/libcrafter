@@ -204,6 +204,113 @@ class ProbePlanningDispatchTest(unittest.TestCase):
         self.assertTrue(plan["wire_requirements"]["requires_link_layer_send"])
         self.assertTrue(plan["wire_requirements"]["requires_broadcast"])
 
+    def test_mqtt_plans_describe_broker_exchange_and_service(self) -> None:
+        request = _request(profile="mqtt-smoke", seed=1, count=3)
+
+        plans = [
+            planning.probe_plan_for_case(
+                request=request,
+                case=probe_cases.PROBE_CASE_BY_NAME[name],
+                sequence=sequence,
+            )
+            for sequence, name in enumerate(probe_cases.MQTT_SMOKE_PROFILE_CASE_NAMES)
+        ]
+
+        self.assertEqual(
+            [plan["case"] for plan in plans],
+            [
+                "mqtt-connect-connack",
+                "mqtt-subscribe-suback",
+                "mqtt-publish-puback",
+            ],
+        )
+        for plan in plans:
+            with self.subTest(case=plan["case"]):
+                self.assertIs(plan["planned_only"], True)
+                self.assertEqual(plan["protocol"], "mqtt")
+                self.assertTrue(plan["source_ipv4"])
+                self.assertTrue(plan["destination_ipv4"])
+                self.assertEqual(plan["destination_port"], 1883)
+                self.assertIn("tcp and src host", plan["capture_filter"])
+
+                service = plan["target_service"]
+                self.assertTrue(service["required"])
+                self.assertEqual(service["kind"], "mosquitto-mqtt-broker")
+                self.assertEqual(service["protocol"], "tcp")
+                self.assertEqual(service["port"], 1883)
+                self.assertEqual(service["bind_ipv4"], plan["destination_ipv4"])
+                self.assertEqual(service["source_ipv4"], plan["source_ipv4"])
+                self.assertEqual(service["runtime"], "mosquitto")
+                self.assertEqual(
+                    service["provision_script"],
+                    "tools/probe/target_services/mqtt/provision-broker.sh",
+                )
+                self.assertEqual(
+                    service["config_template"],
+                    "tools/probe/target_services/mqtt/mosquitto.conf.template",
+                )
+                self.assertTrue(service["anonymous_access"])
+                self.assertFalse(service["persistence"])
+
+                exchange = plan["broker_exchange"]
+                self.assertEqual(exchange["broker_ipv4"], plan["destination_ipv4"])
+                self.assertEqual(exchange["client_ipv4"], plan["source_ipv4"])
+                self.assertEqual(exchange["broker_port"], 1883)
+                self.assertGreaterEqual(len(exchange["steps"]), 1)
+                self.assertEqual(
+                    plan["validation"]["source_ipv4"],
+                    plan["destination_ipv4"],
+                )
+                self.assertEqual(
+                    plan["validation"]["destination_ipv4"],
+                    plan["source_ipv4"],
+                )
+
+        self.assertEqual(
+            plans[0]["stimulus_packet_shape"]["mqtt"]["packet_type"],
+            "CONNECT",
+        )
+        self.assertEqual(
+            plans[1]["stimulus_packet_shape"]["mqtt"]["packet_id"],
+            1,
+        )
+        self.assertEqual(
+            plans[2]["stimulus_packet_shape"]["mqtt"]["payload_hex"],
+            b"hello from crafter probe".hex(),
+        )
+
+    def test_mqtt_lab_address_rewrite_updates_broker_metadata(self) -> None:
+        plan = planning.probe_plan_for_case(
+            request=_request(profile="mqtt-smoke", seed=1, count=3),
+            case=probe_cases.PROBE_CASE_BY_NAME["mqtt-connect-connack"],
+            sequence=0,
+        )
+
+        rewritten = cli._probe_plans_with_lab_endpoint_addresses(
+            [plan],
+            address_context={
+                "stimulus_ipv4": "10.77.0.10",
+                "target_ipv4": "10.77.0.20",
+            },
+        )[0]
+
+        self.assertEqual(rewritten["source_ipv4"], "10.77.0.10")
+        self.assertEqual(rewritten["destination_ipv4"], "10.77.0.20")
+        self.assertEqual(rewritten["expected_reply_source_ipv4"], "10.77.0.20")
+        self.assertEqual(rewritten["expected_reply_destination_ipv4"], "10.77.0.10")
+        self.assertEqual(rewritten["target_service"]["bind_ipv4"], "10.77.0.20")
+        self.assertEqual(rewritten["target_service"]["source_ipv4"], "10.77.0.10")
+        self.assertEqual(rewritten["broker_exchange"]["broker_ipv4"], "10.77.0.20")
+        self.assertEqual(rewritten["broker_exchange"]["client_ipv4"], "10.77.0.10")
+        self.assertEqual(
+            rewritten["stimulus_packet_shape"]["ipv4"]["source"],
+            "10.77.0.10",
+        )
+        self.assertEqual(
+            rewritten["expected_response_packet_shape"]["ipv4"]["source"],
+            "10.77.0.20",
+        )
+
 
 class ProbePlanningRegistryTest(unittest.TestCase):
     def test_register_plan_builder_rejects_unknown_case(self) -> None:
@@ -271,6 +378,19 @@ class ProbePlanningRegistryTest(unittest.TestCase):
                 elif case.metadata.get("protocol") == "ipsec":
                     self.assertIn("ipsec_protocol", plan, name)
                     self.assertIn("stimulus_packet_shape", plan, name)
+                elif case.metadata.get("protocol") == "mqtt":
+                    self.assertEqual(plan["protocol"], "mqtt", name)
+                    self.assertEqual(
+                        plan["target_service"]["kind"],
+                        "mosquitto-mqtt-broker",
+                        name,
+                    )
+                    self.assertEqual(
+                        plan["target_service"]["provision_script"],
+                        "tools/probe/target_services/mqtt/provision-broker.sh",
+                        name,
+                    )
+                    self.assertIn("broker_exchange", plan, name)
                 else:
                     self.fail(f"unhandled planned-only registered case {name}")
             else:
