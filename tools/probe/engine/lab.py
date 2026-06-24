@@ -12,10 +12,14 @@ from tools.lab.engine.providers import (
     resolve_lab_provider,
 )
 
-from .capability_derivation import (
-    capability as _capability,
-    capability_default_true as _capability_default_true,
-)
+# Only the protocol-agnostic ``capability`` reader is still consumed here: it
+# derives the shared substrate bits (``ipv4_unicast``, ``controlled_services``,
+# ``controlled_router``, the link-layer flags, ``provider_mac``,
+# ``live_packet_exchange``) that every plugin's ``lab_capabilities`` hook reads as
+# input. The ``capability_default_true`` / ``optional_positive_int`` readers that
+# backed the per-protocol derivations moved into the owning plugins, so they are
+# no longer imported here.
+from .capability_derivation import capability as _capability
 # ``UDP_ECHO_LARGE_PAYLOAD_LENGTH`` is re-exported through this module's
 # ``__all__`` (the public lab surface); the ``udp_large_payload`` derivation that
 # read it moved into the UDP plugin's ``lab_capabilities`` hook, so the import now
@@ -29,6 +33,16 @@ LOCAL_DRY_RUN_PROVIDER = "local-dry-run"
 STIMULUS_ROLE = "stimulus"
 TARGET_ROLE = "target"
 PROBE_LAB_ROLES = (STIMULUS_ROLE, TARGET_ROLE)
+# ``PROBE_CAPABILITY_NAMES`` stays here as cross-protocol metadata rather than
+# being derived from the registered plugins. It is the canonical *ordered*
+# capability-name list (its order/content is observable byte-for-byte through the
+# emitted ``capability_names`` field, pinned by ``test_probe_capabilities`` and the
+# plan snapshot). Deriving it from the registry is not order-and-content identical:
+# it interleaves per-protocol bits (contributed by plugins) with shared substrate
+# bits (``controlled_router``, ``link_layer_send`` / ``link_layer_capture`` /
+# ``broadcast``, ``provider_mac``, ``repeated_response``) that no plugin emits, in a
+# hand-curated order that does not match plugin registration order. Byte-identity
+# wins, so the list is kept as shared metadata alongside ``capability_sources``.
 PROBE_CAPABILITY_NAMES = (
     "icmp_echo",
     "tcp_open_port",
