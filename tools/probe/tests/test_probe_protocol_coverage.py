@@ -27,7 +27,7 @@ Three guarantees are asserted:
   re-exported descriptor names, the registry-union ``_STIMULUS_ENDPOINT_CASES``)
   is *not* asserted gone.
 
-The test is offline: pure registry/case/source introspection, no Scapy, uv,
+The test is offline: pure registry/case/source introspection, no uv,
 cargo, or network.
 """
 

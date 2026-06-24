@@ -15,7 +15,7 @@ changed no observable behavior. A guard test asserts that the set of cases and
 profiles still exactly matches the pinned digest keys, so adding or removing a
 case (or profile) fails loudly here rather than silently going undigested.
 
-The suite is offline and deterministic: pure Python planning, no Scapy, uv,
+The suite is offline and deterministic: pure Python planning, no uv,
 cargo, or network. The expected digests were computed once from the current
 engine and hardcoded below; there is intentionally no print or self-updating
 logic.
