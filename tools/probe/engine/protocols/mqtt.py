@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
+from ..capability_derivation import capability, capability_default_true
 from ..model import JSONObject, JSONValue
 from ..target_service_helpers import (
     TargetServiceDescriptor,
@@ -117,10 +118,29 @@ def mqtt_target_service_contribution(
     }
 
 
+def mqtt_lab_capabilities(substrate: Mapping[str, JSONValue]) -> Mapping[str, object]:
+    """Return the MQTT plugin's derived broker capability contribution."""
+
+    ipv4_unicast = capability(substrate, "ipv4_unicast", "ipv4")
+    controlled_services = capability(
+        substrate,
+        "controlled_services",
+        "controlled_service",
+    )
+    return {
+        "mqtt_broker": (
+            ipv4_unicast
+            and controlled_services
+            and capability_default_true(substrate, "mqtt_broker")
+        ),
+    }
+
+
 register(
     ProtocolPlugin(
         name="mqtt",
         cases=(),
         target_service=mqtt_target_service_contribution,
+        lab_capabilities=mqtt_lab_capabilities,
     )
 )

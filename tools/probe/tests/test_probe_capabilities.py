@@ -63,6 +63,7 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
             "provider_mac",
             "repeated_response",
             "bgp_peer",
+            "mqtt_broker",
             "ipv4_multicast",
             "igmp_peer",
             "ipsec_esp",
@@ -92,6 +93,7 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
             "provider_mac",
             "repeated_response",
             "bgp_peer",
+            "mqtt_broker",
             "ipv4_multicast",
             "igmp_peer",
             # An IPSec-capable peer rides the controlled-services substrate.
@@ -121,6 +123,7 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
             "privileged_udp_port",
             "repeated_response",
             "bgp_peer",
+            "mqtt_broker",
             # IPSec rides IPv4 unicast + a controlled peer, not the link layer,
             # so an L3-only-but-controlled substrate still grants it.
             "ipsec_esp",
@@ -211,6 +214,7 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
 
         for denied in (
             "bgp_peer",
+            "mqtt_broker",
             "ipsec_esp",
             "ipsec_ah",
             "ikev2",
@@ -230,6 +234,20 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
 
         self.assertIs(derived["bgp_peer"], False)
         self.assertIs(derived["dns_service"], True)
+
+    def test_explicit_mqtt_broker_denial_disables_mqtt_only(self) -> None:
+        substrate = dict(_LINK_LAYER_SUBSTRATE)
+        substrate["mqtt_broker"] = False
+
+        derived = probe_capabilities_from_lab_capabilities(
+            "qemu",
+            substrate,
+            dry_run=True,
+        )
+
+        self.assertIs(derived["mqtt_broker"], False)
+        self.assertIs(derived["dns_service"], True)
+        self.assertIs(derived["bgp_peer"], True)
 
     def test_explicit_ospf_peer_denial_disables_ospf_only(self) -> None:
         # A controlled substrate that cannot stand up an OSPFv2 speaker in the
@@ -456,6 +474,13 @@ class ProbeSkipReasonTest(unittest.TestCase):
             capabilities.SKIP_REQUIRES_BGP_PEER,
         )
 
+    def test_mqtt_broker_maps_to_stable_reason(self) -> None:
+        case = cases.PROBE_CASE_BY_NAME["bgp-session-smoke"]
+        self.assertEqual(
+            capabilities.skip_reason_for_missing_capability(case, "mqtt_broker"),
+            capabilities.SKIP_REQUIRES_MQTT_BROKER,
+        )
+
     def test_ospf_neighbor_peer_maps_to_capability_unavailable(self) -> None:
         # OSPF has no dedicated stable skip reason: a provider without an
         # OSPF-capable neighbor skips the cases with the shared
@@ -598,6 +623,10 @@ class ProbeCapabilityBackwardCompatTest(unittest.TestCase):
         self.assertEqual(
             cli.SKIP_REQUIRES_BGP_PEER,
             capabilities.SKIP_REQUIRES_BGP_PEER,
+        )
+        self.assertEqual(
+            cli.SKIP_REQUIRES_MQTT_BROKER,
+            capabilities.SKIP_REQUIRES_MQTT_BROKER,
         )
 
 
