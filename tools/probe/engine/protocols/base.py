@@ -50,12 +50,19 @@ from ..plugin_registry import PluginRegistry
 #   ordered failure-reason taxonomy, or ``None`` to fall through.
 # ``lab_capabilities``: given the substrate capability mapping, return this
 #   protocol's contribution to the derived probe capability mapping.
+# ``live_plan_candidates``: given the full batched live probe-plan sequence,
+#   return a transformed plan sequence (e.g. ARP's batched sender-protocol
+#   candidate annotation). The hook receives every plan so it can read cross-plan
+#   context (sibling target-service addresses) and must return the full sequence;
+#   ``live.plans_with_live_plan_candidates`` folds each plugin's transform in
+#   registry order so the live path stays protocol-agnostic.
 # ``ipsec_interop``: the IPSec-only cross-crypto interop dry-run hook.
 TargetServiceHook = Callable[..., object]
 SetupScriptHook = Callable[..., object]
 RewriteEndpointAddressesHook = Callable[..., JSONObject]
 FailureReasonsHook = Callable[[str], "list[str] | None"]
 LabCapabilitiesHook = Callable[..., Mapping[str, object]]
+LivePlanCandidatesHook = Callable[..., "list[JSONObject]"]
 IpsecInteropHook = Callable[..., object]
 
 
@@ -80,6 +87,7 @@ class ProtocolPlugin:
     rewrite_endpoint_addresses: RewriteEndpointAddressesHook | None = None
     failure_reasons: FailureReasonsHook | None = None
     lab_capabilities: LabCapabilitiesHook | None = None
+    live_plan_candidates: LivePlanCandidatesHook | None = None
     ipsec_interop: IpsecInteropHook | None = None
 
 
