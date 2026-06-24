@@ -95,6 +95,36 @@ const AUTH_V5_WITH_PROPERTIES: &[u8] = &[
 
 const AUTH_SHORT: &[u8] = &[0xf0, 0x00];
 
+const COMMITTED_DOCS_CONNECT_V5_FRAME: &[u8] = &[
+    // IPv4/TCP envelope from the documented `mqtt_session -- --v5` dry-run.
+    // MQTT begins at offset 40: CONNECT fixed header 0x10, Remaining Length
+    // 0x23, protocol level 5, Clean Start, keep-alive 30, Session Expiry 60,
+    // Receive Maximum 10, and client id "crafter-client".
+    0x45, 0x00, 0x00, 0x4d, 0x00, 0x01, 0x00, 0x00, 0x40, 0x06, 0x8e, 0x58, 0xc0, 0x00, 0x02, 0x0a,
+    0xc6, 0x33, 0x64, 0x14, 0xc0, 0x2a, 0x07, 0x5b, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+    0x50, 0x10, 0x20, 0x00, 0x21, 0xa3, 0x00, 0x00, 0x10, 0x23, 0x00, 0x04, b'M', b'Q', b'T', b'T',
+    0x05, 0x02, 0x00, 0x1e, 0x08, 0x11, 0x00, 0x00, 0x00, 0x3c, 0x21, 0x00, 0x0a, 0x00, 0x0e, b'c',
+    b'r', b'a', b'f', b't', b'e', b'r', b'-', b'c', b'l', b'i', b'e', b'n', b't',
+];
+
+const COMMITTED_DOCS_PUBLISH_V5_FRAME: &[u8] = &[
+    // Same documentation envelope. MQTT begins at offset 40: PUBLISH fixed
+    // header 0x32 (QoS 1), Remaining Length 0x44, topic
+    // "crafter/demo/outbound", packet id 2, a User Property
+    // "example"="mqtt_session", and payload "hello from crafter".
+    0x45, 0x00, 0x00, 0x6e, 0x00, 0x01, 0x00, 0x00, 0x40, 0x06, 0x8e, 0x37, 0xc0, 0x00, 0x02, 0x0a,
+    0xc6, 0x33, 0x64, 0x14, 0xc0, 0x2a, 0x07, 0x5b, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+    0x50, 0x10, 0x20, 0x00, 0xb7, 0x62, 0x00, 0x00, 0x32, 0x44, 0x00, 0x15, b'c', b'r', b'a', b'f',
+    b't', b'e', b'r', b'/', b'd', b'e', b'm', b'o', b'/', b'o', b'u', b't', b'b', b'o', b'u', b'n',
+    b'd', 0x00, 0x02, 0x18, 0x26, 0x00, 0x07, b'e', b'x', b'a', b'm', b'p', b'l', b'e', 0x00, 0x0c,
+    b'm', b'q', b't', b't', b'_', b's', b'e', b's', b's', b'i', b'o', b'n', b'h', b'e', b'l', b'l',
+    b'o', b' ', b'f', b'r', b'o', b'm', b' ', b'c', b'r', b'a', b'f', b't', b'e', b'r',
+];
+
+const COMMITTED_DOCS_CONNECT_V5_SUMMARY: &str = "Ipv4(src=192.0.2.10, dst=198.51.100.20, proto=tcp(6)) / Tcp(sport=49194, dport=1883, flags=ACK) / MQTT CONNECT client_id=crafter-client keep_alive=30 clean_session=true will=false username=false password=false";
+
+const COMMITTED_DOCS_PUBLISH_V5_SUMMARY: &str = "Ipv4(src=192.0.2.10, dst=198.51.100.20, proto=tcp(6)) / Tcp(sport=49194, dport=1883, flags=ACK) / MQTT PUBLISH topic=crafter/demo/outbound qos=1 dup=false retain=false payload=18 bytes";
+
 fn mqtt_bytes(message: Mqtt) -> crafter::Result<Vec<u8>> {
     Ok(Packet::from_layer(message).compile()?.into_bytes())
 }
@@ -223,6 +253,62 @@ fn auth_v5_message() -> Mqtt {
         .reason_code(MQTT_REASON_CONTINUE_AUTHENTICATION)
         .authentication_method("scram")
         .authentication_data(vec![1, 2, 3])
+}
+
+fn documented_mqtt_v5_packet(message: Mqtt) -> Packet {
+    Ipv4::new()
+        .src(Ipv4Addr::new(192, 0, 2, 10))
+        .dst(Ipv4Addr::new(198, 51, 100, 20))
+        .protocol(IPPROTO_TCP)
+        / Tcp::new()
+            .sport(49_194)
+            .dport(MQTT_PORT)
+            .seq(0x0102_0304)
+            .ack(0x0506_0708)
+            .ack_segment()
+        / message
+}
+
+#[test]
+fn committed_docs_v5_connect_and_publish_frames_match_expected_bytes() -> crafter::Result<()> {
+    let connect = documented_mqtt_v5_packet(
+        Mqtt::connect()
+            .version(MQTT_5_PROTOCOL_LEVEL)
+            .client_id("crafter-client")
+            .keep_alive(30)
+            .clean_session(true)
+            .connect_property(MqttProperty::SessionExpiryInterval(60))
+            .connect_property(MqttProperty::ReceiveMaximum(10)),
+    );
+    let connect_bytes = connect.compile()?;
+    let connect_decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, connect_bytes.as_bytes())?;
+
+    assert_eq!(connect.summary(), COMMITTED_DOCS_CONNECT_V5_SUMMARY);
+    assert_eq!(connect_decoded.summary(), COMMITTED_DOCS_CONNECT_V5_SUMMARY);
+    assert_eq!(connect_bytes.as_bytes(), COMMITTED_DOCS_CONNECT_V5_FRAME);
+
+    let publish = documented_mqtt_v5_packet(
+        Mqtt::publish()
+            .version(MQTT_5_PROTOCOL_LEVEL)
+            .topic("crafter/demo/outbound")
+            .qos(1)
+            .packet_id(2)
+            .user_property("example", "mqtt_session")
+            .payload(b"hello from crafter".to_vec()),
+    );
+    let publish_bytes = publish.compile()?;
+    let publish_payload_decoded = Mqtt::decode_payload_with_default_version(
+        &publish_bytes.as_bytes()[40..],
+        MQTT_5_PROTOCOL_LEVEL,
+    )?;
+
+    assert_eq!(publish.summary(), COMMITTED_DOCS_PUBLISH_V5_SUMMARY);
+    assert_eq!(
+        publish_payload_decoded.summary(),
+        "MQTT PUBLISH topic=crafter/demo/outbound qos=1 dup=false retain=false payload=18 bytes"
+    );
+    assert_eq!(publish_bytes.as_bytes(), COMMITTED_DOCS_PUBLISH_V5_FRAME);
+    Ok(())
 }
 
 #[test]

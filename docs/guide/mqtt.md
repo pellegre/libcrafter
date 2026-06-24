@@ -40,6 +40,7 @@ use std::net::Ipv4Addr;
 let packet = Ipv4::new()
     .src(Ipv4Addr::new(192, 0, 2, 10))
     .dst(Ipv4Addr::new(198, 51, 100, 20))
+    .protocol(IPPROTO_TCP)
     / Tcp::new()
         .sport(49_194)
         .dport(MQTT_PORT)
@@ -139,6 +140,7 @@ use crafter::prelude::*;
 # let packet = Ipv4::new()
 #     .src("192.0.2.10".parse().unwrap())
 #     .dst("198.51.100.20".parse().unwrap())
+#     .protocol(IPPROTO_TCP)
 #     / Tcp::new().sport(49_194).dport(MQTT_PORT)
 #     / Mqtt::publish().topic("crafter/demo").payload(b"hi".to_vec());
 # let bytes = packet.compile()?;
