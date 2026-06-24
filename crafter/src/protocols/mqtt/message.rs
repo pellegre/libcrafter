@@ -257,6 +257,7 @@ impl MqttConnect {
 struct MqttConnack {
     ack_flags: Field<u8>,
     return_code: Field<u8>,
+    properties: MqttProperties,
 }
 
 impl MqttConnack {
@@ -264,13 +265,15 @@ impl MqttConnack {
         Self {
             ack_flags: Field::defaulted(0),
             return_code: Field::defaulted(MQTT_CONNACK_ACCEPTED),
+            properties: MqttProperties::new(),
         }
     }
 
-    fn from_decoded_parts(ack_flags: u8, return_code: u8) -> Self {
+    fn from_decoded_parts(ack_flags: u8, return_code: u8, properties: MqttProperties) -> Self {
         Self {
             ack_flags: Field::user(ack_flags),
             return_code: Field::user(return_code),
+            properties,
         }
     }
 
@@ -289,6 +292,10 @@ impl MqttConnack {
             .unwrap_or(MQTT_CONNACK_ACCEPTED)
     }
 
+    fn properties(&self) -> &MqttProperties {
+        &self.properties
+    }
+
     fn set_session_present(&mut self, session_present: bool) {
         let mut flags = self.ack_flags();
         if session_present {
@@ -299,13 +306,21 @@ impl MqttConnack {
         self.ack_flags.set_user(flags);
     }
 
-    fn encoded_len(&self) -> usize {
-        2
+    fn encoded_len(&self, version: u8) -> usize {
+        let mut len = 2;
+        if version == MQTT_5_PROTOCOL_LEVEL {
+            len += encoded_properties_len(self.properties());
+        }
+        len
     }
 
-    fn write_body(&self, out: &mut Vec<u8>) {
+    fn write_body(&self, out: &mut Vec<u8>, version: u8) -> Result<()> {
         out.push(self.ack_flags());
         out.push(self.return_code());
+        if version == MQTT_5_PROTOCOL_LEVEL {
+            self.properties.write(out)?;
+        }
+        Ok(())
     }
 }
 
@@ -565,12 +580,12 @@ enum MqttBody {
 }
 
 impl MqttBody {
-    fn encoded_len(&self, flags: u8) -> usize {
+    fn encoded_len(&self, flags: u8, version: u8) -> usize {
         match self {
             Self::Raw(body) => body.len(),
             Self::Empty => 0,
             Self::Connect(connect) => connect.encoded_len(),
-            Self::Connack(connack) => connack.encoded_len(),
+            Self::Connack(connack) => connack.encoded_len(version),
             Self::Publish(publish) => publish.encoded_len(flags),
             Self::PacketIdentifier(packet_identifier) => packet_identifier.encoded_len(),
             Self::Subscribe(subscribe) => subscribe.encoded_len(),
@@ -579,12 +594,12 @@ impl MqttBody {
         }
     }
 
-    fn write_body(&self, out: &mut Vec<u8>, flags: u8) -> Result<()> {
+    fn write_body(&self, out: &mut Vec<u8>, flags: u8, version: u8) -> Result<()> {
         match self {
             Self::Raw(body) => out.extend_from_slice(body),
             Self::Empty => {}
             Self::Connect(connect) => connect.write_body(out)?,
-            Self::Connack(connack) => connack.write_body(out),
+            Self::Connack(connack) => connack.write_body(out, version)?,
             Self::Publish(publish) => publish.write_body(out, flags)?,
             Self::PacketIdentifier(packet_identifier) => packet_identifier.write_body(out),
             Self::Subscribe(subscribe) => subscribe.write_body(out)?,
@@ -837,15 +852,21 @@ impl Mqtt {
     pub(crate) fn connack_from_decoded_parts(
         fixed_header_flags: u8,
         remaining_length: u32,
+        version: u8,
         ack_flags: u8,
-        return_code: u8,
+        reason_code: u8,
+        properties: MqttProperties,
     ) -> Self {
         Self {
             packet_type: MqttControlPacketType::Connack,
-            version: Field::defaulted(MQTT_311_PROTOCOL_LEVEL),
+            version: Field::user(version),
             flags: Field::user(fixed_header_flags),
             remaining_length: Field::user(remaining_length),
-            body: MqttBody::Connack(MqttConnack::from_decoded_parts(ack_flags, return_code)),
+            body: MqttBody::Connack(MqttConnack::from_decoded_parts(
+                ack_flags,
+                reason_code,
+                properties,
+            )),
         }
     }
 
@@ -1174,6 +1195,30 @@ impl Mqtt {
         self
     }
 
+    /// Set the MQTT 5.0 CONNACK reason code.
+    pub fn reason_code(mut self, reason_code: u8) -> Self {
+        if let MqttBody::Connack(connack) = &mut self.body {
+            connack.return_code.set_user(reason_code);
+        }
+        self
+    }
+
+    /// Replace the MQTT 5.0 CONNACK properties block.
+    pub fn connack_properties(mut self, properties: MqttProperties) -> Self {
+        if let MqttBody::Connack(connack) = &mut self.body {
+            connack.properties = properties;
+        }
+        self
+    }
+
+    /// Add one MQTT 5.0 CONNACK property.
+    pub fn connack_property(mut self, property: MqttProperty) -> Self {
+        if let MqttBody::Connack(connack) = &mut self.body {
+            connack.properties.push(property);
+        }
+        self
+    }
+
     /// Add SUBACK return codes.
     pub fn return_codes<I>(mut self, return_codes: I) -> Self
     where
@@ -1228,7 +1273,11 @@ impl Mqtt {
     /// Effective Remaining Length value.
     pub fn remaining_length_value(&self) -> u32 {
         self.remaining_length.value().copied().unwrap_or_else(|| {
-            u32::try_from(self.body.encoded_len(self.flags_value())).unwrap_or(u32::MAX)
+            u32::try_from(
+                self.body
+                    .encoded_len(self.flags_value(), self.version_value()),
+            )
+            .unwrap_or(u32::MAX)
         })
     }
 
@@ -1308,6 +1357,18 @@ impl Mqtt {
     /// CONNACK return code, when this is a typed CONNACK packet.
     pub fn return_code_value(&self) -> Option<u8> {
         self.connack_body().map(MqttConnack::return_code)
+    }
+
+    /// MQTT 5.0 CONNACK reason code, when this is a typed CONNACK packet.
+    pub fn reason_code_value(&self) -> Option<u8> {
+        self.connack_body().map(MqttConnack::return_code)
+    }
+
+    /// MQTT 5.0 CONNACK properties, when this is a version-5 CONNACK packet.
+    pub fn connack_properties_value(&self) -> Option<&MqttProperties> {
+        (self.version_value() == MQTT_5_PROTOCOL_LEVEL)
+            .then(|| self.connack_body().map(MqttConnack::properties))
+            .flatten()
     }
 
     /// PUBLISH topic name, when this is a typed PUBLISH packet.
@@ -1479,8 +1540,9 @@ impl Mqtt {
 
     fn encoded_body(&self) -> Result<Vec<u8>> {
         let flags = self.flags_value();
-        let mut body = Vec::with_capacity(self.body.encoded_len(flags));
-        self.body.write_body(&mut body, flags)?;
+        let version = self.version_value();
+        let mut body = Vec::with_capacity(self.body.encoded_len(flags, version));
+        self.body.write_body(&mut body, flags, version)?;
         Ok(body)
     }
 }
@@ -1561,7 +1623,9 @@ impl Layer for Mqtt {
             ),
             (
                 "body_length",
-                self.body.encoded_len(self.flags_value()).to_string(),
+                self.body
+                    .encoded_len(self.flags_value(), self.version_value())
+                    .to_string(),
             ),
         ];
 
@@ -1646,7 +1710,9 @@ impl Layer for Mqtt {
 
     fn encoded_len(&self) -> usize {
         1 + remaining_length_encoded_len(self.remaining_length_value())
-            + self.body.encoded_len(self.flags_value())
+            + self
+                .body
+                .encoded_len(self.flags_value(), self.version_value())
     }
 
     fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {

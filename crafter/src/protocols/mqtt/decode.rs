@@ -7,8 +7,8 @@ use crate::packet::{Packet, Raw};
 use crate::registry::ProtocolRegistry;
 
 use super::constants::{
-    MQTT_5_PROTOCOL_LEVEL, MQTT_CONNECT_FLAG_PASSWORD, MQTT_CONNECT_FLAG_USER_NAME,
-    MQTT_CONNECT_FLAG_WILL, MQTT_PUBLISH_FLAG_QOS_MASK,
+    MQTT_311_PROTOCOL_LEVEL, MQTT_5_PROTOCOL_LEVEL, MQTT_CONNECT_FLAG_PASSWORD,
+    MQTT_CONNECT_FLAG_USER_NAME, MQTT_CONNECT_FLAG_WILL, MQTT_PUBLISH_FLAG_QOS_MASK,
 };
 use super::header::MqttControlPacketType;
 use super::property::MqttProperties;
@@ -156,23 +156,49 @@ fn decode_connect(fixed_header_flags: u8, remaining_length: u32, body: &[u8]) ->
 }
 
 fn decode_connack(fixed_header_flags: u8, remaining_length: u32, body: &[u8]) -> Result<Mqtt> {
+    decode_connack_with_version(
+        fixed_header_flags,
+        remaining_length,
+        MQTT_311_PROTOCOL_LEVEL,
+        body,
+    )
+}
+
+fn decode_connack_with_version(
+    fixed_header_flags: u8,
+    remaining_length: u32,
+    version: u8,
+    body: &[u8],
+) -> Result<Mqtt> {
     let mut cursor = 0;
 
     let ack_flags = take_u8(body, &mut cursor, "mqtt.connack.ack_flags")?;
-    let return_code = take_u8(body, &mut cursor, "mqtt.connack.return_code")?;
+    let reason_code = take_u8(body, &mut cursor, "mqtt.connack.return_code")?;
+    let properties = if version == MQTT_5_PROTOCOL_LEVEL {
+        take_properties(body, &mut cursor)?
+    } else {
+        MqttProperties::new()
+    };
 
     if cursor != body.len() {
+        let reason = if version == MQTT_5_PROTOCOL_LEVEL {
+            "CONNACK Remaining Length includes bytes outside the property block"
+        } else {
+            "CONNACK Remaining Length must be 2"
+        };
         return Err(CrafterError::invalid_field_value(
             "mqtt.connack.remaining_length",
-            "CONNACK Remaining Length must be 2",
+            reason,
         ));
     }
 
     Ok(Mqtt::connack_from_decoded_parts(
         fixed_header_flags,
         remaining_length,
+        version,
         ack_flags,
-        return_code,
+        reason_code,
+        properties,
     ))
 }
 
@@ -465,6 +491,7 @@ pub(crate) fn append_mqtt_packet_with_registry(
 mod tests {
     use super::*;
     use crate::packet::Layer;
+    use crate::protocols::mqtt::MqttProperty;
 
     #[test]
     fn decodes_typed_disconnect_and_rejects_declared_body() {
@@ -534,6 +561,40 @@ mod tests {
             }
             other => panic!("expected connack length error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn decodes_v5_connack_with_reason_code_and_properties_when_version_is_supplied() {
+        let body = [
+            0x01, 0x8c, 0x0e, 0x12, 0x00, 0x03, b's', b'r', b'v', 0x21, 0x00, 0x14, 0x1f, 0x00,
+            0x02, b'n', b'o',
+        ];
+        let mqtt = decode_connack_with_version(0, body.len() as u32, MQTT_5_PROTOCOL_LEVEL, &body)
+            .unwrap();
+
+        assert_eq!(mqtt.packet_type(), MqttControlPacketType::Connack);
+        assert_eq!(mqtt.version_value(), MQTT_5_PROTOCOL_LEVEL);
+        assert_eq!(mqtt.session_present_value(), Some(true));
+        assert_eq!(mqtt.reason_code_value(), Some(0x8c));
+        assert_eq!(
+            mqtt.connack_properties_value()
+                .expect("connack properties")
+                .property_values(),
+            &[
+                MqttProperty::AssignedClientIdentifier("srv".to_string()),
+                MqttProperty::ReceiveMaximum(20),
+                MqttProperty::ReasonString("no".to_string()),
+            ]
+        );
+
+        let compiled = Packet::from_layer(mqtt).compile().unwrap();
+        assert_eq!(
+            compiled.as_bytes(),
+            &[
+                0x20, 0x11, 0x01, 0x8c, 0x0e, 0x12, 0x00, 0x03, b's', b'r', b'v', 0x21, 0x00, 0x14,
+                0x1f, 0x00, 0x02, b'n', b'o',
+            ]
+        );
     }
 
     #[test]

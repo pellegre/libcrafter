@@ -1,7 +1,9 @@
 use std::net::Ipv4Addr;
 
 use crafter::prelude::*;
-use crafter::protocols::mqtt::{MqttProperties, MqttProperty, MQTT_5_PROTOCOL_LEVEL};
+use crafter::protocols::mqtt::{
+    MqttProperties, MqttProperty, MQTT_5_PROTOCOL_LEVEL, MQTT_REASON_BAD_AUTHENTICATION_METHOD,
+};
 
 const CONNECT_V5_WITH_PROPERTIES: &[u8] = &[
     0x10, 0x30, 0x00, 0x04, b'M', b'Q', b'T', b'T', 0x05, 0x06, 0x00, 0x1e, 0x08, 0x11, 0x00, 0x00,
@@ -14,6 +16,13 @@ const CONNECT_311_BASELINE: &[u8] = &[
     0x10, 0x0f, 0x00, 0x04, b'M', b'Q', b'T', b'T', 0x04, 0x02, 0x00, 0x1e, 0x00, 0x03, b'c', b'i',
     b'd',
 ];
+
+const CONNACK_V5_WITH_PROPERTIES: &[u8] = &[
+    0x20, 0x11, 0x01, 0x8c, 0x0e, 0x12, 0x00, 0x03, b's', b'r', b'v', 0x21, 0x00, 0x14, 0x1f, 0x00,
+    0x02, b'n', b'o',
+];
+
+const CONNACK_311_BASELINE: &[u8] = &[0x20, 0x02, 0x01, 0x03];
 
 fn mqtt_bytes(message: Mqtt) -> crafter::Result<Vec<u8>> {
     Ok(Packet::from_layer(message).compile()?.into_bytes())
@@ -51,6 +60,19 @@ fn connect_v5_message() -> Mqtt {
             MqttProperties::new()
                 .property(MqttProperty::PayloadFormatIndicator(1))
                 .property(MqttProperty::MessageExpiryInterval(5)),
+        )
+}
+
+fn connack_v5_message() -> Mqtt {
+    Mqtt::connack()
+        .version(MQTT_5_PROTOCOL_LEVEL)
+        .session_present(true)
+        .reason_code(MQTT_REASON_BAD_AUTHENTICATION_METHOD)
+        .connack_properties(
+            MqttProperties::new()
+                .property(MqttProperty::AssignedClientIdentifier("srv".to_string()))
+                .property(MqttProperty::ReceiveMaximum(20))
+                .property(MqttProperty::ReasonString("no".to_string())),
         )
 }
 
@@ -103,5 +125,21 @@ fn connect_311_baseline_stays_unchanged() -> crafter::Result<()> {
     )?;
 
     assert_eq!(bytes, CONNECT_311_BASELINE);
+    Ok(())
+}
+
+#[test]
+fn connack_v5_reason_code_and_properties_compile_byte_exact() -> crafter::Result<()> {
+    let bytes = mqtt_bytes(connack_v5_message())?;
+
+    assert_eq!(bytes, CONNACK_V5_WITH_PROPERTIES);
+    Ok(())
+}
+
+#[test]
+fn connack_311_baseline_stays_unchanged() -> crafter::Result<()> {
+    let bytes = mqtt_bytes(Mqtt::connack().session_present(true).return_code(0x03))?;
+
+    assert_eq!(bytes, CONNACK_311_BASELINE);
     Ok(())
 }
