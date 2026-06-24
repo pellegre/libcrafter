@@ -1,14 +1,12 @@
-# MQTT 3.1.1 Source Manifest
+# MQTT Source Manifest
 
 Source-backed evidence record for the initial `crafter` MQTT layer. Later
 constants, builders, decoders, oracle specs, fixtures, and tests must cite this
 manifest or the compact authority table in
 [`mqtt-codepoints.md`](mqtt-codepoints.md), not model memory.
 
-This baseline covers MQTT Version 3.1.1. MQTT Version 5.0 properties, reason
-codes, four-byte integer fields, enhanced authentication, and version-specific
-framing extensions are intentionally deferred to the MQTT 5.0 manifest extension
-step.
+The baseline sections cover MQTT Version 3.1.1. The MQTT 5.0 extension sections
+record the advanced-version facts needed before any MQTT 5.0 implementation.
 
 ## Provenance
 
@@ -21,6 +19,8 @@ OASIS Standard:
 
 - OASIS, "MQTT Version 3.1.1", 29 October 2014, OASIS Standard:
   <https://docs.oasis-open.org/mqtt/mqtt/v3.1.1/os/mqtt-v3.1.1-os.html>
+- OASIS, "MQTT Version 5.0", 7 March 2019, OASIS Standard:
+  <https://docs.oasis-open.org/mqtt/mqtt/v5.0/os/mqtt-v5.0-os.html>
 - IANA, "Service Name and Transport Protocol Port Number Registry", queried for
   MQTT service names on 2026-06-23:
   <https://www.iana.org/assignments/service-names-port-numbers/service-names-port-numbers.xhtml?search=mqtt>
@@ -235,15 +235,115 @@ The `crafter` cleartext MQTT decode binding is for `mqtt` over TCP port 1883.
 The `secure-mqtt` TCP port 8883 is reserved for secure MQTT traffic and is not a
 cleartext MQTT decode binding in this baseline.
 
-## Deferred and Out of Scope for Baseline
+## MQTT 5.0 Protocol Version
 
-- MQTT Version 5.0 packet fields and framing differences.
-- MQTT Version 5.0 property system, property identifiers, property length
-  encoding, duplicate-property rules, and packet-specific property placement.
-- MQTT Version 5.0 reason codes for CONNACK, QoS acknowledgements, SUBACK,
-  UNSUBACK, DISCONNECT, and AUTH.
-- MQTT Version 5.0 AUTH packet and enhanced authentication.
-- MQTT Version 5.0 four-byte integer fields and any property-specific integer
-  representation not present in MQTT 3.1.1.
+OASIS MQTT 5.0 sec. 3.1.2.2 defines the CONNECT Protocol Version byte as a
+one-byte unsigned value. MQTT 5.0 uses protocol level `5` (`0x05`).
+
+## MQTT 5.0 Properties
+
+OASIS MQTT 5.0 sec. 2.2.2 defines Properties as a Property Length encoded as a
+Variable Byte Integer followed by zero or more property entries. A property entry
+is a Variable Byte Integer Property Identifier followed by a value of the
+specified type. OASIS sec. 2.2.2.2 states that an identifier not valid for the
+packet type, or a value not of the specified data type, is a Malformed Packet;
+the receiver uses CONNACK or DISCONNECT with reason code `0x81`.
+
+Property identifiers from OASIS MQTT 5.0 sec. 2.2.2.2 Table 2-4:
+
+| Id | Name | Wire type | Allowed packets / Will Properties |
+| --- | --- | --- | --- |
+| `0x01` | Payload Format Indicator | Byte | PUBLISH, Will Properties |
+| `0x02` | Message Expiry Interval | Four Byte Integer | PUBLISH, Will Properties |
+| `0x03` | Content Type | UTF-8 Encoded String | PUBLISH, Will Properties |
+| `0x08` | Response Topic | UTF-8 Encoded String | PUBLISH, Will Properties |
+| `0x09` | Correlation Data | Binary Data | PUBLISH, Will Properties |
+| `0x0B` | Subscription Identifier | Variable Byte Integer | PUBLISH, SUBSCRIBE |
+| `0x11` | Session Expiry Interval | Four Byte Integer | CONNECT, CONNACK, DISCONNECT |
+| `0x12` | Assigned Client Identifier | UTF-8 Encoded String | CONNACK |
+| `0x13` | Server Keep Alive | Two Byte Integer | CONNACK |
+| `0x15` | Authentication Method | UTF-8 Encoded String | CONNECT, CONNACK, AUTH |
+| `0x16` | Authentication Data | Binary Data | CONNECT, CONNACK, AUTH |
+| `0x17` | Request Problem Information | Byte | CONNECT |
+| `0x18` | Will Delay Interval | Four Byte Integer | Will Properties |
+| `0x19` | Request Response Information | Byte | CONNECT |
+| `0x1A` | Response Information | UTF-8 Encoded String | CONNACK |
+| `0x1C` | Server Reference | UTF-8 Encoded String | CONNACK, DISCONNECT |
+| `0x1F` | Reason String | UTF-8 Encoded String | CONNACK, PUBACK, PUBREC, PUBREL, PUBCOMP, SUBACK, UNSUBACK, DISCONNECT, AUTH |
+| `0x21` | Receive Maximum | Two Byte Integer | CONNECT, CONNACK |
+| `0x22` | Topic Alias Maximum | Two Byte Integer | CONNECT, CONNACK |
+| `0x23` | Topic Alias | Two Byte Integer | PUBLISH |
+| `0x24` | Maximum QoS | Byte | CONNACK |
+| `0x25` | Retain Available | Byte | CONNACK |
+| `0x26` | User Property | UTF-8 String Pair | CONNECT, CONNACK, PUBLISH, Will Properties, PUBACK, PUBREC, PUBREL, PUBCOMP, SUBSCRIBE, SUBACK, UNSUBSCRIBE, UNSUBACK, DISCONNECT, AUTH |
+| `0x27` | Maximum Packet Size | Four Byte Integer | CONNECT, CONNACK |
+| `0x28` | Wildcard Subscription Available | Byte | CONNACK |
+| `0x29` | Subscription Identifier Available | Byte | CONNACK |
+| `0x2A` | Shared Subscription Available | Byte | CONNACK |
+
+OASIS sec. 2.2.2.2 notes that although Property Identifier is encoded as a
+Variable Byte Integer, every MQTT 5.0 property identifier in Table 2-4 is one
+byte long.
+
+## MQTT 5.0 Reason Codes
+
+OASIS MQTT 5.0 sec. 2.4 defines a Reason Code as a one-byte unsigned value.
+Values below `0x80` indicate successful completion; values `0x80` and above
+indicate failure. CONNACK, PUBACK, PUBREC, PUBREL, PUBCOMP, DISCONNECT, and AUTH
+carry a single Reason Code in the variable header. SUBACK and UNSUBACK carry a
+list of one or more Reason Codes in the payload. OASIS sec. 2.4 Table 2-6 is the
+common reason-code table; the packet sections below provide packet-specific
+allowed sets.
+
+| Packet | Allowed reason codes | Source |
+| --- | --- | --- |
+| CONNACK | `0x00` Success; `0x80` Unspecified error; `0x81` Malformed Packet; `0x82` Protocol Error; `0x83` Implementation specific error; `0x84` Unsupported Protocol Version; `0x85` Client Identifier not valid; `0x86` Bad User Name or Password; `0x87` Not authorized; `0x88` Server unavailable; `0x89` Server busy; `0x8A` Banned; `0x8C` Bad authentication method; `0x90` Topic Name invalid; `0x95` Packet too large; `0x97` Quota exceeded; `0x99` Payload format invalid; `0x9A` Retain not supported; `0x9B` QoS not supported; `0x9C` Use another server; `0x9D` Server moved; `0x9F` Connection rate exceeded. | OASIS MQTT 5.0 sec. 3.2.2.2 Table 3-1 |
+| PUBACK | `0x00` Success; `0x10` No matching subscribers; `0x80` Unspecified error; `0x83` Implementation specific error; `0x87` Not authorized; `0x90` Topic Name invalid; `0x91` Packet Identifier in use; `0x97` Quota exceeded; `0x99` Payload format invalid. | OASIS MQTT 5.0 sec. 3.4.2.1 Table 3-4 |
+| PUBREC | `0x00` Success; `0x10` No matching subscribers; `0x80` Unspecified error; `0x83` Implementation specific error; `0x87` Not authorized; `0x90` Topic Name invalid; `0x91` Packet Identifier in use; `0x97` Quota exceeded; `0x99` Payload format invalid. | OASIS MQTT 5.0 sec. 3.5.2.1 Table 3-5 |
+| PUBREL | `0x00` Success; `0x92` Packet Identifier not found. | OASIS MQTT 5.0 sec. 3.6.2.1 Table 3-6 |
+| PUBCOMP | `0x00` Success; `0x92` Packet Identifier not found. | OASIS MQTT 5.0 sec. 3.7.2.1 Table 3-7 |
+| SUBACK | `0x00` Granted QoS 0; `0x01` Granted QoS 1; `0x02` Granted QoS 2; `0x80` Unspecified error; `0x83` Implementation specific error; `0x87` Not authorized; `0x8F` Topic Filter invalid; `0x91` Packet Identifier in use; `0x97` Quota exceeded; `0x9E` Shared Subscriptions not supported; `0xA1` Subscription Identifiers not supported; `0xA2` Wildcard Subscriptions not supported. | OASIS MQTT 5.0 sec. 3.9.3 Table 3-9 |
+| UNSUBACK | `0x00` Success; `0x11` No subscription existed; `0x80` Unspecified error; `0x83` Implementation specific error; `0x87` Not authorized; `0x8F` Topic Filter invalid; `0x91` Packet Identifier in use. | OASIS MQTT 5.0 sec. 3.11.3 Table 3-10 |
+| DISCONNECT | `0x00` Normal disconnection; `0x04` Disconnect with Will Message; `0x80` Unspecified error; `0x81` Malformed Packet; `0x82` Protocol Error; `0x83` Implementation specific error; `0x87` Not authorized; `0x89` Server busy; `0x8B` Server shutting down; `0x8D` Keep Alive timeout; `0x8E` Session taken over; `0x8F` Topic Filter invalid; `0x90` Topic Name invalid; `0x93` Receive Maximum exceeded; `0x94` Topic Alias invalid; `0x95` Packet too large; `0x96` Message rate too high; `0x97` Quota exceeded; `0x98` Administrative action; `0x99` Payload format invalid; `0x9A` Retain not supported; `0x9B` QoS not supported; `0x9C` Use another server; `0x9D` Server moved; `0x9E` Shared Subscriptions not supported; `0x9F` Connection rate exceeded; `0xA0` Maximum connect time; `0xA1` Subscription Identifiers not supported; `0xA2` Wildcard Subscriptions not supported. | OASIS MQTT 5.0 sec. 3.14.2.1 Table 3-12 |
+| AUTH | `0x00` Success; `0x18` Continue authentication; `0x19` Re-authenticate. | OASIS MQTT 5.0 sec. 3.15.2.1 Table 3-11 |
+
+## MQTT 5.0 Subscription Options
+
+OASIS MQTT 5.0 sec. 3.8.3.1 defines one Subscription Options byte after each
+Topic Filter in a SUBSCRIBE payload:
+
+| Bits | Name | Values |
+| --- | --- | --- |
+| 0-1 | Maximum QoS | `0`, `1`, or `2`; value `3` is a Protocol Error. |
+| 2 | No Local | `1` prevents forwarding messages to a connection with the same ClientID as the publishing connection; setting No Local to `1` on a Shared Subscription is a Protocol Error. |
+| 3 | Retain As Published | `1` preserves the PUBLISH RETAIN flag on forwarded Application Messages; `0` clears it on forwarded Application Messages. |
+| 4-5 | Retain Handling | `0` send retained messages at subscribe time; `1` send retained messages only if the subscription does not currently exist; `2` do not send retained messages at subscribe time; value `3` is a Protocol Error. |
+| 6-7 | Reserved | Must be zero; non-zero reserved bits make the SUBSCRIBE packet malformed. |
+
+## MQTT 5.0 AUTH Packet
+
+OASIS MQTT 5.0 sec. 2.2.1 Table 2-1 and sec. 3.15 define AUTH as control packet
+type `15`. OASIS sec. 3.15.1 defines the fixed header first byte as type 15 with
+reserved flags `0x0` (`0xF0`); any non-zero flags are malformed.
+
+OASIS sec. 3.15.2 defines the AUTH variable header fields in order:
+Authenticate Reason Code, then Properties. OASIS sec. 3.15.2.1 defines the
+Authenticate Reason Code as byte 0 of the variable header, with the allowed
+values listed in the reason-code table above. The Reason Code and Property
+Length may be omitted when the reason code is `0x00` Success and there are no
+Properties, yielding Remaining Length 0. OASIS sec. 3.15.2.2 allows AUTH
+properties Authentication Method (`0x15`), Authentication Data (`0x16`), Reason
+String (`0x1F`), and User Property (`0x26`). OASIS sec. 3.15.3 states that AUTH
+has no payload.
+
+## MQTT 5.0 Reference-Backend Notes
+
+Step 77 must confirm reference-backend support for MQTT 5.0 properties, reason
+codes, subscription options, and AUTH in `scapy.contrib.mqtt`. Support is
+uncertain until checked against the installed Scapy version; unsupported 5.0
+features must be recorded as explicit oracle gaps rather than silently skipped.
+
+## Still Deferred and Out of Scope
+
 - TLS or cleartext decoding on `secure-mqtt` port 8883.
 - MQTT over WebSocket IANA identifier and transport binding.
