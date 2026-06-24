@@ -290,8 +290,10 @@ def probe_capabilities_from_lab_capabilities(
         # hook (folded in below), not here. The shared ``capability_names`` /
         # ``capability_sources`` tables still list it. (``ttl-expired``'s
         # ``controlled_router`` capability is a distinct bit derived above.)
-        "tcp_open_port": ipv4_unicast and controlled_services,
-        "tcp_closed_port": ipv4_unicast,
+        # ``tcp_open_port`` / ``tcp_closed_port`` are contributed by the TCP
+        # plugin's ``lab_capabilities`` hook (folded in below), not here. The
+        # shared ``capability_names`` / ``capability_sources`` tables still list
+        # them.
         # ``dns_service`` / ``dhcp_service`` and the ``udp_*`` capabilities
         # (``udp_service`` / ``udp_large_payload`` / ``udp_ipv4_zero_checksum`` /
         # ``udp_options_surplus`` / ``privileged_udp_port``, plus the advertised
