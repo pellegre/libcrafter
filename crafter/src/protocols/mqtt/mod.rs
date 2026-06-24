@@ -6,6 +6,7 @@
 pub mod constants;
 pub mod header;
 pub mod varint;
+pub mod wire;
 
 pub use constants::*;
 pub use header::MqttControlPacketType;
