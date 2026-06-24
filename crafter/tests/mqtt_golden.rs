@@ -3,8 +3,8 @@ use std::net::Ipv4Addr;
 use crafter::prelude::*;
 use crafter::protocols::mqtt::{
     MQTT_CONNACK_ACCEPTED, MQTT_CONNACK_IDENTIFIER_REJECTED, MQTT_CONNACK_SERVER_UNAVAILABLE,
-    MQTT_PUBLISH_QOS_0, MQTT_PUBLISH_QOS_1, MQTT_SUBACK_FAILURE, MQTT_SUBACK_MAX_QOS_0,
-    MQTT_SUBACK_MAX_QOS_1,
+    MQTT_PUBLISH_QOS_0, MQTT_PUBLISH_QOS_1, MQTT_PUBLISH_QOS_2, MQTT_SUBACK_FAILURE,
+    MQTT_SUBACK_MAX_QOS_0, MQTT_SUBACK_MAX_QOS_1,
 };
 
 const CONNECT_CLIENT_ONLY: &[u8] = &[
@@ -181,6 +181,11 @@ fn decode_ipv4_tcp_mqtt(payload: &[u8]) -> crafter::Result<(Vec<u8>, Packet)> {
     let bytes = mqtt_over_ipv4_tcp(payload)?;
     let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, &bytes)?;
     Ok((bytes, decoded))
+}
+
+fn decode_built_mqtt(message: Mqtt) -> crafter::Result<(Vec<u8>, Packet)> {
+    let payload = Packet::from_layer(message).compile()?.into_bytes();
+    decode_ipv4_tcp_mqtt(&payload)
 }
 
 #[test]
@@ -544,6 +549,60 @@ fn pubcomp_build_decode_round_trip() -> crafter::Result<()> {
     assert_eq!(mqtt.packet_type(), MqttControlPacketType::Pubcomp);
     assert_eq!(mqtt.packet_id_value(), Some(9));
     assert_eq!(decoded.compile()?.as_bytes(), compiled.as_bytes());
+    Ok(())
+}
+
+#[test]
+fn qos2_flow_decodes_ordered_packet_exchange() -> crafter::Result<()> {
+    let packet_id = 0x4567;
+    let flow = [
+        (
+            Mqtt::publish()
+                .topic("qos/two")
+                .qos(MQTT_PUBLISH_QOS_2)
+                .packet_id(packet_id)
+                .payload(b"exactly".to_vec()),
+            MqttControlPacketType::Publish,
+        ),
+        (
+            Mqtt::pubrec().packet_id(packet_id),
+            MqttControlPacketType::Pubrec,
+        ),
+        (
+            Mqtt::pubrel().packet_id(packet_id),
+            MqttControlPacketType::Pubrel,
+        ),
+        (
+            Mqtt::pubcomp().packet_id(packet_id),
+            MqttControlPacketType::Pubcomp,
+        ),
+    ];
+
+    let mut decoded_types = Vec::new();
+    let mut decoded_packet_ids = Vec::new();
+
+    for (message, expected_type) in flow {
+        let (bytes, decoded) = decode_built_mqtt(message)?;
+        let mqtt = decoded.layer::<Mqtt>().expect("decoded MQTT QoS2 layer");
+
+        decoded_types.push(mqtt.packet_type());
+        decoded_packet_ids.push(mqtt.packet_id_value());
+
+        assert_eq!(mqtt.packet_type(), expected_type);
+        assert_eq!(mqtt.packet_id_value(), Some(packet_id));
+        assert_eq!(decoded.compile()?.as_bytes(), bytes.as_slice());
+    }
+
+    assert_eq!(
+        decoded_types,
+        [
+            MqttControlPacketType::Publish,
+            MqttControlPacketType::Pubrec,
+            MqttControlPacketType::Pubrel,
+            MqttControlPacketType::Pubcomp,
+        ]
+    );
+    assert_eq!(decoded_packet_ids.as_slice(), &[Some(packet_id); 4]);
     Ok(())
 }
 
