@@ -5,7 +5,8 @@ use crafter::protocols::mqtt::{
     MqttProperties, MqttProperty, MQTT_5_PROTOCOL_LEVEL, MQTT_REASON_BAD_AUTHENTICATION_METHOD,
     MQTT_REASON_GRANTED_QOS_0, MQTT_REASON_GRANTED_QOS_1,
     MQTT_REASON_IMPLEMENTATION_SPECIFIC_ERROR, MQTT_REASON_NO_MATCHING_SUBSCRIBERS,
-    MQTT_REASON_PACKET_IDENTIFIER_NOT_FOUND, MQTT_SUBOPT_RETAIN_SEND_IF_NEW,
+    MQTT_REASON_NO_SUBSCRIPTION_EXISTED, MQTT_REASON_PACKET_IDENTIFIER_NOT_FOUND,
+    MQTT_REASON_SUCCESS, MQTT_REASON_TOPIC_FILTER_INVALID, MQTT_SUBOPT_RETAIN_SEND_IF_NEW,
 };
 
 const CONNECT_V5_WITH_PROPERTIES: &[u8] = &[
@@ -61,6 +62,21 @@ const SUBACK_V5_WITH_PROPERTIES: &[u8] = &[
 ];
 
 const SUBACK_311_BASELINE: &[u8] = &[0x90, 0x04, 0x12, 0x34, 0x01, 0x80];
+
+const UNSUBSCRIBE_V5_WITH_PROPERTIES: &[u8] = &[
+    0xa2, 0x1a, 0x12, 0x34, 0x0c, 0x26, 0x00, 0x06, b'c', b'l', b'i', b'e', b'n', b't', 0x00, 0x01,
+    b'a', 0x00, 0x09, b's', b'e', b'n', b's', b'o', b'r', b's', b'/', b'+',
+];
+
+const UNSUBSCRIBE_311_BASELINE: &[u8] = &[
+    0xa2, 0x0d, 0x12, 0x34, 0x00, 0x09, b's', b'e', b'n', b's', b'o', b'r', b's', b'/', b'+',
+];
+
+const UNSUBACK_V5_WITH_PROPERTIES: &[u8] = &[
+    0xb0, 0x0d, 0x43, 0x21, 0x07, 0x1f, 0x00, 0x04, b'g', b'o', b'n', b'e', 0x00, 0x11, 0x8f,
+];
+
+const UNSUBACK_311_BASELINE: &[u8] = &[0xb0, 0x02, 0x12, 0x34];
 
 fn mqtt_bytes(message: Mqtt) -> crafter::Result<Vec<u8>> {
     Ok(Packet::from_layer(message).compile()?.into_bytes())
@@ -151,6 +167,26 @@ fn suback_v5_message() -> Mqtt {
             MQTT_REASON_GRANTED_QOS_0,
             MQTT_REASON_GRANTED_QOS_1,
             MQTT_REASON_IMPLEMENTATION_SPECIFIC_ERROR,
+        ])
+}
+
+fn unsubscribe_v5_message() -> Mqtt {
+    Mqtt::unsubscribe()
+        .version(MQTT_5_PROTOCOL_LEVEL)
+        .packet_id(0x1234)
+        .unsubscribe_property(MqttProperty::user_property("client", "a"))
+        .topic("sensors/+")
+}
+
+fn unsuback_v5_message() -> Mqtt {
+    Mqtt::unsuback()
+        .version(MQTT_5_PROTOCOL_LEVEL)
+        .packet_id(0x4321)
+        .unsuback_property(MqttProperty::ReasonString("gone".to_string()))
+        .unsuback_reason_codes([
+            MQTT_REASON_SUCCESS,
+            MQTT_REASON_NO_SUBSCRIPTION_EXISTED,
+            MQTT_REASON_TOPIC_FILTER_INVALID,
         ])
 }
 
@@ -310,5 +346,37 @@ fn suback_311_baseline_stays_unchanged() -> crafter::Result<()> {
     let bytes = mqtt_bytes(Mqtt::suback().packet_id(0x1234).return_codes([0x01, 0x80]))?;
 
     assert_eq!(bytes, SUBACK_311_BASELINE);
+    Ok(())
+}
+
+#[test]
+fn unsubscribe_v5_properties_compile_byte_exact() -> crafter::Result<()> {
+    let bytes = mqtt_bytes(unsubscribe_v5_message())?;
+
+    assert_eq!(bytes, UNSUBSCRIBE_V5_WITH_PROPERTIES);
+    Ok(())
+}
+
+#[test]
+fn unsubscribe_311_baseline_stays_unchanged() -> crafter::Result<()> {
+    let bytes = mqtt_bytes(Mqtt::unsubscribe().packet_id(0x1234).topic("sensors/+"))?;
+
+    assert_eq!(bytes, UNSUBSCRIBE_311_BASELINE);
+    Ok(())
+}
+
+#[test]
+fn unsuback_v5_properties_and_reason_codes_compile_byte_exact() -> crafter::Result<()> {
+    let bytes = mqtt_bytes(unsuback_v5_message())?;
+
+    assert_eq!(bytes, UNSUBACK_V5_WITH_PROPERTIES);
+    Ok(())
+}
+
+#[test]
+fn unsuback_311_baseline_stays_unchanged() -> crafter::Result<()> {
+    let bytes = mqtt_bytes(Mqtt::unsuback().packet_id(0x1234))?;
+
+    assert_eq!(bytes, UNSUBACK_311_BASELINE);
     Ok(())
 }
