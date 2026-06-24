@@ -2234,6 +2234,68 @@ def arp_lab_capabilities(substrate: Mapping[str, JSONValue]) -> Mapping[str, obj
     }
 
 
+# --------------------------------------------------------------------------- #
+# Live-plan candidate annotation (moved from
+# live.plans_with_arp_sender_protocol_candidates)
+# --------------------------------------------------------------------------- #
+
+
+def _dedupe_strings(values: Sequence[str]) -> list[str]:
+    return list(dict.fromkeys(value for value in values if value))
+
+
+def arp_live_plan_candidates(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
+    """Make batched live ARP validation explicit about local sender IP choices.
+
+    Full-suite target setup batches every ARP case onto one VM. Some cases add
+    secondary IPv4 addresses to the target interface; Linux may use any matching
+    local address as the ARP reply sender protocol while still replying to the
+    planned querier SPA. The SPA-variation assertion is about the reply target
+    protocol, so keep the possible sender protocol values explicit in its plan.
+
+    Moved verbatim from ``live.plans_with_arp_sender_protocol_candidates`` so the
+    live path stays protocol-agnostic and consults this ARP plugin contribution
+    through the generic ``live_plan_candidates`` hook.
+    """
+
+    target_sender_protocols: list[str] = []
+    for plan in probe_plans:
+        service = _json_mapping(
+            plan.get("target_service", {}),
+            "probe_plan.target_service",
+        )
+        for key in (
+            "bind_ipv4",
+            "target_protocol_addr",
+            "alias_ipv4",
+            "alt_sender_ipv4",
+        ):
+            value = _string_or(service.get(key), "")
+            if value:
+                target_sender_protocols.append(value)
+        destination = _string_or(plan.get("destination_ipv4"), "")
+        if destination:
+            target_sender_protocols.append(destination)
+    target_sender_protocols = _dedupe_strings(target_sender_protocols)
+
+    rewritten: list[JSONObject] = []
+    for plan in probe_plans:
+        if plan.get("case") != "arp-spa-variation":
+            rewritten.append(dict(plan))
+            continue
+        updated = dict(plan)
+        validation = dict(
+            _json_mapping(updated.get("validation", {}), "probe_plan.validation")
+        )
+        canonical = _string_or(validation.get("sender_protocol_addr"), "")
+        candidates = _dedupe_strings([canonical, *target_sender_protocols])
+        if candidates:
+            validation["sender_protocol_addrs"] = candidates
+            updated["validation"] = validation
+        rewritten.append(updated)
+    return rewritten
+
+
 register(
     ProtocolPlugin(
         name="arp",
@@ -2263,5 +2325,10 @@ register(
         rewrite_endpoint_addresses=arp_rewrite_endpoint_addresses,
         failure_reasons=arp_failure_reasons,
         lab_capabilities=arp_lab_capabilities,
+        # ARP is the only protocol that annotates batched live plans with
+        # alternate sender-protocol candidates; the live path folds this through
+        # the generic ``live_plan_candidates`` hook instead of an ARP-specific
+        # branch in ``live.py``.
+        live_plan_candidates=arp_live_plan_candidates,
     )
 )
