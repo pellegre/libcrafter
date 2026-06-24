@@ -286,7 +286,10 @@ def probe_capabilities_from_lab_capabilities(
         "live_packet_exchange": _capability(substrate, "live_packet_exchange"),
         "ipv4_unicast": ipv4_unicast,
         "controlled_services": controlled_services,
-        "icmp_echo": ipv4_unicast,
+        # ``icmp_echo`` is contributed by the ICMP plugin's ``lab_capabilities``
+        # hook (folded in below), not here. The shared ``capability_names`` /
+        # ``capability_sources`` tables still list it. (``ttl-expired``'s
+        # ``controlled_router`` capability is a distinct bit derived above.)
         "tcp_open_port": ipv4_unicast and controlled_services,
         "tcp_closed_port": ipv4_unicast,
         # ``dns_service`` / ``dhcp_service`` and the ``udp_*`` capabilities

@@ -160,6 +160,15 @@ from .protocols.ndp import (  # noqa: F401  (re-exported for identity/back-compa
     _ndp_router_solicitation_probe_plan,
     solicited_node_multicast,
 )
+# The ICMP planning surface (the two inline cases and their builders) lives in the
+# ICMP plugin module. Re-import each moved builder so ``planning._<builder>``
+# resolves to the *same* function object the plugin registered and the merged
+# ``PLAN_BUILDERS`` exposes -- any pin on ``planning.PLAN_BUILDERS[name] is
+# planning._<builder>`` keeps identical object identity.
+from .protocols.icmp import (  # noqa: F401  (re-exported for identity/back-compat)
+    _icmp_echo_probe_plan,
+    _ttl_expired_probe_plan,
+)
 from .target_services import (
     BGP_DOCUMENTATION_IPV4_PREFIX,
     BGP_DOCUMENTATION_IPV6_PREFIX,
@@ -260,53 +269,6 @@ def _planned_only_probe_plan(
         "stimulus": case.stimulus,
         "expected_response": case.expected_response,
         "planned_only": True,
-    }
-
-
-def _icmp_echo_probe_plan(
-    *,
-    case_name: str = "icmp-echo",
-    profile: str,
-    seed: int,
-    sequence: int,
-) -> JSONObject:
-    digest = deterministic_bytes("icmp-echo", profile, seed, sequence)
-    identifier = int.from_bytes(digest[0:2], "big") or 1
-    sequence_number = int.from_bytes(digest[2:4], "big")
-    stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
-    payload = (
-        f"libcrafter-probe:icmp-echo:{profile}:{seed}:{sequence}:"
-        f"{digest.hex()[:16]}"
-    ).encode("ascii")
-    return {
-        "schema_version": 1,
-        "case": "icmp-echo",
-        "sequence": sequence,
-        "index": sequence,
-        "profile": profile,
-        "seed": seed,
-        "stimulus": "icmp_echo_request",
-        "expected_response": "icmp_echo_reply",
-        "identifier": identifier,
-        "sequence_number": sequence_number,
-        "payload_hex": payload.hex(),
-        "payload_length": len(payload),
-        "source_ipv4": stimulus_ipv4,
-        "destination_ipv4": target_ipv4,
-        "expected_reply_source_ipv4": target_ipv4,
-        "expected_reply_destination_ipv4": stimulus_ipv4,
-        "capture_filter": (
-            f"icmp and src host {target_ipv4} and dst host {stimulus_ipv4}"
-        ),
-        "validation": {
-            "source_ipv4": target_ipv4,
-            "destination_ipv4": stimulus_ipv4,
-            "icmp_type": 0,
-            "icmp_code": 0,
-            "identifier": identifier,
-            "sequence_number": sequence_number,
-            "payload_hex": payload.hex(),
-        },
     }
 
 
@@ -479,66 +441,6 @@ def _tcp_syn_options_probe_plan(
             "flags": ["syn", "ack"],
             "acknowledgment_number": expected_ack,
             "allow_rst_ack": False,
-        },
-    }
-
-
-def _ttl_expired_probe_plan(
-    *,
-    case_name: str = "ttl-expired",
-    profile: str,
-    seed: int,
-    sequence: int,
-) -> JSONObject:
-    digest = deterministic_bytes("ttl-expired", profile, seed, sequence)
-    stimulus_ipv4, destination_ipv4 = deterministic_ipv4_pair(
-        profile,
-        seed,
-        sequence,
-    )
-    router_ipv4 = deterministic_router_ipv4(profile, seed, sequence)
-    identifier = int.from_bytes(digest[0:2], "big") or 1
-    sequence_number = int.from_bytes(digest[2:4], "big")
-    payload = (
-        f"libcrafter-probe:ttl-expired:{profile}:{seed}:{sequence}:"
-        f"{digest.hex()[:16]}"
-    ).encode("ascii")
-    embedded_prefix_length = 28
-    return {
-        "schema_version": 1,
-        "case": "ttl-expired",
-        "sequence": sequence,
-        "index": sequence,
-        "profile": profile,
-        "seed": seed,
-        "stimulus": "low_ttl_probe",
-        "expected_response": "icmp_ttl_expired",
-        "ttl": 1,
-        "identifier": identifier,
-        "sequence_number": sequence_number,
-        "payload_hex": payload.hex(),
-        "payload_length": len(payload),
-        "source_ipv4": stimulus_ipv4,
-        "destination_ipv4": destination_ipv4,
-        "controlled_router_ipv4": router_ipv4,
-        "expected_reply_source_ipv4": router_ipv4,
-        "expected_reply_destination_ipv4": stimulus_ipv4,
-        "expected_icmp_type": 11,
-        "expected_icmp_code": 0,
-        "expected_embedded_prefix_length": embedded_prefix_length,
-        "capture_filter": (
-            f"icmp and src host {router_ipv4} and dst host {stimulus_ipv4}"
-        ),
-        "validation": {
-            "source_ipv4": router_ipv4,
-            "destination_ipv4": stimulus_ipv4,
-            "icmp_type": 11,
-            "icmp_code": 0,
-            "embedded_prefix": {
-                "source": "stimulus_sent_bytes",
-                "length": embedded_prefix_length,
-                "meaning": "original IPv4 header plus first eight bytes of payload",
-            },
         },
     }
 
@@ -1307,7 +1209,9 @@ def _ipsec_probe_plan(
 # builder. The IPSec cases register a planned-only builder that records the
 # exchange shape (see :func:`_ipsec_probe_plan`).
 _LEGACY_PLAN_BUILDERS: dict[str, PlanBuilder] = {
-    "icmp-echo": _icmp_echo_probe_plan,
+    # ICMP plan builders (``icmp-echo`` / ``ttl-expired``) now live in
+    # ``protocols/icmp.py`` and reach ``PLAN_BUILDERS`` through the registry merge
+    # below (re-imported into this module above for identity/back-compat).
     "tcp-syn-open": _tcp_syn_probe_plan,
     "tcp-syn-closed": _tcp_syn_probe_plan,
     "tcp-syn-options": _tcp_syn_options_probe_plan,
@@ -1317,7 +1221,6 @@ _LEGACY_PLAN_BUILDERS: dict[str, PlanBuilder] = {
     # DHCP plan builders now live in ``protocols/dhcp.py`` and reach
     # ``PLAN_BUILDERS`` through the registry merge below (re-imported into this
     # module above for identity/back-compat).
-    "ttl-expired": _ttl_expired_probe_plan,
     # ARP plan builders now live in ``protocols/arp.py`` and reach
     # ``PLAN_BUILDERS`` through the registry merge below (re-imported into this
     # module above for identity/back-compat).

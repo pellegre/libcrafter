@@ -653,11 +653,12 @@ def _write_stimulus_endpoint_request_artifact(
 
 _LEGACY_STIMULUS_ENDPOINT_CASES = frozenset(
     {
-        "icmp-echo",
         "tcp-syn-open",
         "tcp-syn-closed",
         "tcp-syn-options",
-        "ttl-expired",
+        # The ``icmp-echo`` and ``ttl-expired`` stimulus-endpoint cases are now
+        # contributed by the ICMP plugin (``protocols/icmp.py``) and unioned into
+        # ``_STIMULUS_ENDPOINT_CASES`` below.
         # The inline ``dns-query`` smoke case and the ten DNS behavioral cases
         # are now contributed by the DNS plugin (``protocols/dns.py``); the ten
         # DHCP behavioral cases are now contributed by the DHCP plugin
@@ -1162,23 +1163,13 @@ def _probe_plan_with_endpoint_addresses(
     updated["expected_reply_source_ipv4"] = target_ipv4
     updated["expected_reply_destination_ipv4"] = source_ipv4
     case_name = str(updated.get("case", ""))
-    if case_name == "icmp-echo":
-        updated["capture_filter"] = (
-            f"icmp and src host {target_ipv4} and dst host {source_ipv4}"
-        )
-    elif case_name == "ttl-expired":
-        router_ipv4 = str(
-            updated.get("controlled_router_ipv4") or target_ipv4
-        )
-        updated["source_ipv4"] = source_ipv4
-        updated["destination_ipv4"] = target_ipv4
-        updated["controlled_router_ipv4"] = router_ipv4
-        updated["expected_reply_source_ipv4"] = router_ipv4
-        updated["expected_reply_destination_ipv4"] = source_ipv4
-        updated["capture_filter"] = (
-            f"icmp and src host {router_ipv4} and dst host {source_ipv4}"
-        )
-    elif case_name.startswith("tcp-syn-"):
+    # The ICMP live-path rewrite branches (``icmp-echo`` / ``ttl-expired``) moved
+    # to the ICMP plugin's ``rewrite_endpoint_addresses`` hook
+    # (:func:`tools.probe.engine.protocols.icmp.icmp_rewrite_endpoint_addresses`),
+    # dispatched registry-first above before the per-protocol if/elif here (the
+    # hook reproduces the same shared transport-IPv4 pre-sets and shared tail), so
+    # they no longer appear in this legacy chain.
+    if case_name.startswith("tcp-syn-"):
         source_port = int(updated.get("source_port", 0))
         destination_port = int(updated.get("destination_port", 0))
         updated["capture_filter"] = (
@@ -1333,13 +1324,10 @@ def _failure_reasons_for_case(case_name: str) -> list[str]:
         reasons = plugin.failure_reasons(case_name)
         if reasons is not None:
             return reasons
-    if case_name == "icmp-echo":
-        return [
-            FAILURE_TIMEOUT,
-            FAILURE_WRONG_PEER,
-            FAILURE_WRONG_PAYLOAD,
-            FAILURE_DECODE_FAILED,
-        ]
+    # The ICMP failure-reason taxonomy (``icmp-echo`` / ``ttl-expired``) moved to
+    # the ICMP plugin's ``failure_reasons`` hook
+    # (:func:`tools.probe.engine.protocols.icmp.icmp_failure_reasons`), dispatched
+    # registry-first above, so it no longer appears in this legacy chain.
     if case_name in {"tcp-syn-open", "tcp-syn-closed"}:
         return [
             FAILURE_TIMEOUT,
@@ -1347,13 +1335,6 @@ def _failure_reasons_for_case(case_name: str) -> list[str]:
             FAILURE_WRONG_FLAGS,
             FAILURE_DECODE_FAILED,
             FAILURE_TARGET_SETUP_FAILED,
-        ]
-    if case_name == "ttl-expired":
-        return [
-            FAILURE_TIMEOUT,
-            FAILURE_WRONG_PEER,
-            FAILURE_WRONG_PAYLOAD,
-            FAILURE_DECODE_FAILED,
         ]
     # The UDP failure-reason taxonomy (all ten UDP cases) moved to the UDP
     # plugin's ``failure_reasons`` hook
