@@ -75,20 +75,9 @@ _IPSEC_CAPABILITIES = [
     *_IKEV2_CAPABILITIES,
 ]
 
-# OSPF behavioral cases (RFC 2328) drive a controlled OSPFv2 neighbor: libcrafter
-# places an OSPF Hello (or Database Description) directly over IPv4 (protocol 89,
-# no ports) and the peer's Hello / Database Description reply is captured and
-# validated. OSPF needs a peer that runs an OSPFv2 speaker on the same area and
-# segment (FRR/Quagga ospfd or the oracle reference peer), so the cases carry
-# ``ospf_neighbor_peer`` beyond the unicast IPv4 substrate. The capability name
-# matches the probe capability derivation in :mod:`tools.probe.engine.lab`, so a
-# provider without an OSPF-capable neighbor skips the cases with the stable
-# capability-unavailable reason rather than failing; the offline dry-run path
-# plans the exchange regardless. The gated live exchange runs only when a human
-# passes ``--confirm-live-run`` and selects a real provider via
-# ``LIBCRAFTER_PROBE_LIVE_PROVIDER`` (see ``tools/probe/README.md``); the default
-# CI-safe path is the dry-run plan exercised here.
-_OSPF_CAPABILITIES = ["ospf_neighbor_peer"]
+# OSPF's capability constant (``_OSPF_CAPABILITIES``) and the two OSPF behavioral
+# cases now live in the OSPF plugin module (``protocols/ospf.py``); the merged
+# catalog/profile tables source the OSPF cases from the registry.
 
 
 # NDP's capability constant and the three NDP behavioral cases now live in the
@@ -262,84 +251,10 @@ BEHAVIOR_IPSEC_CASES: tuple[ProbeCase, ...] = (
 )
 
 
-# OSPFv2 behavioral cases (RFC 2328) against a controlled OSPF neighbor peer.
-# OSPF runs directly over IPv4 (protocol 89) and has no ports: the Hello exchange
-# is the adjacency-forming primitive, and the Database Description exchange is the
-# first database-synchronization step. Each case is a stateful exchange whose
-# response depends on the peer's adjacency state, so it carries the ``stateful``
-# metadata flag the way the IPSec/BGP cases do.
-#
-# ``ospf-hello-exchange`` is wired end-to-end through the probe adapter
-# (``tools/probe/adapters/src/ospf.rs``), so it both plans in dry-run and runs as
-# a gated live exchange; it is the only OSPF case in the live ``behavior``
-# profile. ``ospf-dd-exchange`` plans in dry-run today and is marked
-# ``planned_only`` (mirroring ``bgp-session-smoke``) until its adapter dispatch
-# arm lands. Because a ``planned_only`` case cannot route a live run, the DD
-# exchange is kept OUT of the ``behavior`` profile (which must stay fully
-# live-routable) and lives in the dedicated dry-run ``ospf-smoke`` profile
-# instead, exactly the way ``bgp-session-smoke`` sits in ``bgp-smoke`` rather
-# than ``behavior``. It stays registered in ``PROBE_CASES`` so it remains
-# name-selectable for a dry-run plan; the dry-run plan never sends packets
-# regardless.
-#
-# Gated live invocation (NOT exercised by CI/default): a human selects a real
-# provider with ``LIBCRAFTER_PROBE_LIVE_PROVIDER`` and confirms the run with
-# ``--confirm-live-run``, e.g.::
-#
-#     LIBCRAFTER_PROBE_LIVE_PROVIDER=qemu \
-#       tools/probe/run --provider qemu --confirm-live-run \
-#         --profile behavior --case ospf-hello-exchange --out target/probe/ospf-live
-#
-# Without ``--confirm-live-run`` the run stays a dry-run plan over documentation
-# address space; the CI-safe default is the ``--dry-run`` plan.
-BEHAVIOR_OSPF_CASES: tuple[ProbeCase, ...] = (
-    _behavior_case(
-        name="ospf-hello-exchange",
-        description=(
-            "Send an OSPFv2 Hello (RFC 2328 §A.3.2) to the controlled neighbor "
-            "and validate the peer's Hello or Database Description reply that "
-            "forms the adjacency."
-        ),
-        stimulus="ospf_hello",
-        expected_response="ospf_hello_or_database_description",
-        required_capabilities=_OSPF_CAPABILITIES,
-        protocol="ospf",
-        metadata={"layer": "network", "stateful": True},
-    ),
-)
-
-# Planned-only OSPF cases. These plan in dry-run but have no live adapter arm
-# yet, so -- like ``bgp-session-smoke`` -- they are registered in ``PROBE_CASES``
-# and selected only by the dedicated dry-run ``ospf-smoke`` profile, never by the
-# live ``behavior`` profile.
-OSPF_SMOKE_CASES: tuple[ProbeCase, ...] = (
-    _behavior_case(
-        name="ospf-dd-exchange",
-        description=(
-            "Send an OSPFv2 Database Description packet (RFC 2328 §A.3.3) to the "
-            "controlled neighbor and validate the peer's Database Description "
-            "reply that advances database synchronization."
-        ),
-        stimulus="ospf_database_description",
-        expected_response="ospf_database_description",
-        required_capabilities=_OSPF_CAPABILITIES,
-        protocol="ospf",
-        metadata={
-            "layer": "network",
-            "stateful": True,
-            # The adapter dispatch (tools/probe/adapters/src/common.rs) wires the
-            # ospf-hello-exchange case today; the DD exchange plans in dry-run and
-            # gains its live adapter arm in a later step, mirroring the
-            # bgp-session-smoke planned-only precedent.
-            "planned_only": True,
-            "notes": (
-                "Needs the peer to advance to the Database Description exchange "
-                "state; the dry-run plans the exchange and the live adapter arm "
-                "lands in a follow-on step."
-            ),
-        },
-    ),
-)
+# OSPFv2's behavioral cases (RFC 2328) -- the live-capable ``ospf-hello-exchange``
+# and the planned-only ``ospf-dd-exchange`` -- and their ``_OSPF_CAPABILITIES``
+# constant now live in the OSPF plugin module (``protocols/ospf.py``); the merged
+# catalog below contributes them through the registry.
 
 
 # The legacy per-protocol case aggregation: the seven inline ICMP/TCP/DNS/TTL/ARP
@@ -370,8 +285,9 @@ _LEGACY_PROBE_CASES: tuple[ProbeCase, ...] = (
     # the ten UDP behavioral cases are contributed by the UDP plugin
     # (``protocols/udp.py``). All are merged in ahead of this legacy aggregation
     # by ``_merge_probe_cases``.
-    *BEHAVIOR_OSPF_CASES,
-    *OSPF_SMOKE_CASES,
+    # The ``ospf-hello-exchange`` / ``ospf-dd-exchange`` cases are contributed by
+    # the OSPF plugin (``protocols/ospf.py``) and merged in ahead of this legacy
+    # aggregation by ``_merge_probe_cases``.
     # The ``bgp-session-smoke`` case is contributed by the BGP plugin
     # (``protocols/bgp.py``); the ``rip-update-v2`` / ``ripng-update`` cases are
     # contributed by the RIP plugin (``protocols/rip.py``). Both are merged in
@@ -566,11 +482,36 @@ _UDP_BEHAVIOR_CASE_NAMES: tuple[str, ...] = tuple(
     if case.metadata.get("protocol") == "udp"
 )
 
+# The single live-capable OSPF case name (``ospf-hello-exchange``), sourced from
+# the OSPF plugin's registered cases. Only the OSPF case that is *not*
+# ``planned_only`` rides the live ``behavior`` profile; the planned-only
+# ``ospf-dd-exchange`` is excluded here (it lives in the dry-run ``ospf-smoke``
+# profile below). OSPF's profile membership stays in these legacy ordered tables
+# (rather than the plugin's ``profile_counts``) so the behavior selection order
+# is byte-identical: the registry-first profile merge would otherwise move OSPF
+# to the front of the behavior profile.
+_OSPF_BEHAVIOR_CASE_NAMES: tuple[str, ...] = tuple(
+    case.name
+    for case in _registry_cases()
+    if case.metadata.get("protocol") == "ospf"
+    and not case.metadata.get("planned_only")
+)
+
+# The planned-only OSPF case names (currently ``ospf-dd-exchange``), sourced from
+# the OSPF plugin's registered cases. These ride the dry-run ``ospf-smoke``
+# profile, never the live ``behavior`` profile.
+_OSPF_SMOKE_CASE_NAMES: tuple[str, ...] = tuple(
+    case.name
+    for case in _registry_cases()
+    if case.metadata.get("protocol") == "ospf"
+    and case.metadata.get("planned_only")
+)
+
 # The behavior profile selects the full DNS/DHCP/ARP/NDP/UDP behavioral catalog
 # plus the live-capable OSPF case in a stable deterministic order: each protocol
 # group in declaration order, grouped DNS -> DHCP -> ARP -> NDP -> UDP -> OSPF.
-# Only the live-routable OSPF case (``ospf-hello-exchange`` in
-# ``BEHAVIOR_OSPF_CASES``) is included; the planned-only ``ospf-dd-exchange``
+# Only the live-routable OSPF case (``ospf-hello-exchange``, sourced into
+# ``_OSPF_BEHAVIOR_CASE_NAMES``) is included; the planned-only ``ospf-dd-exchange``
 # sits in the dry-run ``ospf-smoke`` profile so the behavior profile stays fully
 # live-routable. The default count covers every case so a bare
 # ``--profile behavior`` plans the complete suite.
@@ -580,7 +521,7 @@ BEHAVIOR_PROFILE_CASE_NAMES: tuple[str, ...] = (
     *_ARP_BEHAVIOR_CASE_NAMES,
     *_NDP_BEHAVIOR_CASE_NAMES,
     *_UDP_BEHAVIOR_CASE_NAMES,
-    *(case.name for case in BEHAVIOR_OSPF_CASES),
+    *_OSPF_BEHAVIOR_CASE_NAMES,
 )
 
 # The ipsec profile selects the IPSec behavioral catalog (ESP transport/tunnel,
@@ -625,10 +566,11 @@ RIP_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
 # Database Description exchange). They plan in dry-run but have no live adapter
 # arm yet, so they are kept out of the live ``behavior`` profile -- the way
 # ``bgp-session-smoke`` lives in ``bgp-smoke`` -- and selected here for an
-# isolated dry-run plan until their adapter dispatch arm lands.
-OSPF_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
-    case.name for case in OSPF_SMOKE_CASES
-)
+# isolated dry-run plan until their adapter dispatch arm lands. The case names
+# are sourced from the OSPF plugin's registered planned-only cases; OSPF's
+# profile membership stays in this legacy ordered table (rather than the plugin's
+# ``profile_counts``) so the selection order is byte-identical.
+OSPF_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = _OSPF_SMOKE_CASE_NAMES
 
 IGMP_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
     case.name for case in IGMP_PROBE_CASES
