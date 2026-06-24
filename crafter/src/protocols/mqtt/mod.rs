@@ -50,5 +50,5 @@ pub mod wire;
 
 pub use constants::*;
 pub use header::MqttControlPacketType;
-pub use message::Mqtt;
+pub use message::{Mqtt, MqttSubscriptionOptions};
 pub use property::{MqttProperties, MqttProperty};

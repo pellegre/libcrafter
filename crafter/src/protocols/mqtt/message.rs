@@ -10,7 +10,9 @@ use super::constants::{
     MQTT_CONNECT_FLAG_CLEAN_SESSION, MQTT_CONNECT_FLAG_PASSWORD, MQTT_CONNECT_FLAG_USER_NAME,
     MQTT_CONNECT_FLAG_WILL, MQTT_CONNECT_FLAG_WILL_QOS_MASK, MQTT_CONNECT_FLAG_WILL_RETAIN,
     MQTT_PUBLISH_FLAG_DUP, MQTT_PUBLISH_FLAG_QOS_MASK, MQTT_PUBLISH_FLAG_RETAIN,
-    MQTT_REASON_SUCCESS,
+    MQTT_REASON_SUCCESS, MQTT_SUBOPT_NO_LOCAL, MQTT_SUBOPT_QOS_MASK,
+    MQTT_SUBOPT_RETAIN_AS_PUBLISHED, MQTT_SUBOPT_RETAIN_HANDLING_MASK,
+    MQTT_SUBOPT_RETAIN_HANDLING_SHIFT,
 };
 use super::header::MqttControlPacketType;
 use super::property::{MqttProperties, MqttProperty};
@@ -576,10 +578,88 @@ impl MqttUnsubscribe {
     }
 }
 
+/// MQTT SUBSCRIBE topic-filter options byte.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct MqttSubscriptionOptions {
+    bits: u8,
+}
+
+impl MqttSubscriptionOptions {
+    /// Create empty subscription options.
+    pub const fn new() -> Self {
+        Self { bits: 0 }
+    }
+
+    /// Create subscription options from the raw options byte.
+    pub const fn from_bits(bits: u8) -> Self {
+        Self { bits }
+    }
+
+    /// Return the raw subscription options byte.
+    pub const fn bits(self) -> u8 {
+        self.bits
+    }
+
+    /// Return the requested QoS subfield.
+    pub const fn qos(self) -> u8 {
+        self.bits & MQTT_SUBOPT_QOS_MASK
+    }
+
+    /// Return the No Local flag.
+    pub const fn no_local(self) -> bool {
+        self.bits & MQTT_SUBOPT_NO_LOCAL != 0
+    }
+
+    /// Return the Retain As Published flag.
+    pub const fn retain_as_published(self) -> bool {
+        self.bits & MQTT_SUBOPT_RETAIN_AS_PUBLISHED != 0
+    }
+
+    /// Return the Retain Handling subfield.
+    pub const fn retain_handling(self) -> u8 {
+        (self.bits & MQTT_SUBOPT_RETAIN_HANDLING_MASK) >> MQTT_SUBOPT_RETAIN_HANDLING_SHIFT
+    }
+
+    /// Set the requested QoS subfield.
+    pub const fn with_qos(mut self, qos: u8) -> Self {
+        self.bits = (self.bits & !MQTT_SUBOPT_QOS_MASK) | (qos & MQTT_SUBOPT_QOS_MASK);
+        self
+    }
+
+    /// Set or clear the No Local flag.
+    pub const fn with_no_local(mut self, no_local: bool) -> Self {
+        if no_local {
+            self.bits |= MQTT_SUBOPT_NO_LOCAL;
+        } else {
+            self.bits &= !MQTT_SUBOPT_NO_LOCAL;
+        }
+        self
+    }
+
+    /// Set or clear the Retain As Published flag.
+    pub const fn with_retain_as_published(mut self, retain_as_published: bool) -> Self {
+        if retain_as_published {
+            self.bits |= MQTT_SUBOPT_RETAIN_AS_PUBLISHED;
+        } else {
+            self.bits &= !MQTT_SUBOPT_RETAIN_AS_PUBLISHED;
+        }
+        self
+    }
+
+    /// Set the Retain Handling subfield.
+    pub const fn with_retain_handling(mut self, retain_handling: u8) -> Self {
+        self.bits = (self.bits & !MQTT_SUBOPT_RETAIN_HANDLING_MASK)
+            | ((retain_handling << MQTT_SUBOPT_RETAIN_HANDLING_SHIFT)
+                & MQTT_SUBOPT_RETAIN_HANDLING_MASK);
+        self
+    }
+}
+
 /// MQTT SUBSCRIBE variable header and payload fields.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct MqttSubscribe {
     packet_id: Field<u16>,
+    properties: MqttProperties,
     topics: Vec<(String, u8)>,
 }
 
@@ -587,13 +667,19 @@ impl MqttSubscribe {
     fn new() -> Self {
         Self {
             packet_id: Field::defaulted(0),
+            properties: MqttProperties::new(),
             topics: Vec::new(),
         }
     }
 
-    fn from_decoded_parts(packet_id: u16, topics: Vec<(String, u8)>) -> Self {
+    fn from_decoded_parts(
+        packet_id: u16,
+        properties: MqttProperties,
+        topics: Vec<(String, u8)>,
+    ) -> Self {
         Self {
             packet_id: Field::user(packet_id),
+            properties,
             topics,
         }
     }
@@ -606,20 +692,31 @@ impl MqttSubscribe {
         &self.topics
     }
 
+    fn properties(&self) -> &MqttProperties {
+        &self.properties
+    }
+
     fn push_topic(&mut self, filter: impl Into<String>, qos: u8) {
         self.topics.push((filter.into(), qos));
     }
 
-    fn encoded_len(&self) -> usize {
-        2 + self
+    fn encoded_len(&self, version: u8) -> usize {
+        let mut len = 2;
+        if version == MQTT_5_PROTOCOL_LEVEL {
+            len += encoded_properties_len(self.properties());
+        }
+        len + self
             .topics
             .iter()
             .map(|(filter, _qos)| 2 + filter.len() + 1)
             .sum::<usize>()
     }
 
-    fn write_body(&self, out: &mut Vec<u8>) -> Result<()> {
+    fn write_body(&self, out: &mut Vec<u8>, version: u8) -> Result<()> {
         encode_u16(self.packet_id(), out);
+        if version == MQTT_5_PROTOCOL_LEVEL {
+            self.properties.write(out)?;
+        }
         for (filter, qos) in &self.topics {
             encode_string(filter, out)?;
             out.push(*qos);
@@ -651,7 +748,7 @@ impl MqttBody {
             Self::Connack(connack) => connack.encoded_len(version),
             Self::Publish(publish) => publish.encoded_len(flags, version),
             Self::PacketIdentifier(packet_identifier) => packet_identifier.encoded_len(version),
-            Self::Subscribe(subscribe) => subscribe.encoded_len(),
+            Self::Subscribe(subscribe) => subscribe.encoded_len(version),
             Self::Suback(suback) => suback.encoded_len(),
             Self::Unsubscribe(unsubscribe) => unsubscribe.encoded_len(),
         }
@@ -667,7 +764,7 @@ impl MqttBody {
             Self::PacketIdentifier(packet_identifier) => {
                 packet_identifier.write_body(out, version)?
             }
-            Self::Subscribe(subscribe) => subscribe.write_body(out)?,
+            Self::Subscribe(subscribe) => subscribe.write_body(out, version)?,
             Self::Suback(suback) => suback.write_body(out),
             Self::Unsubscribe(unsubscribe) => unsubscribe.write_body(out)?,
         }
@@ -980,15 +1077,19 @@ impl Mqtt {
     pub(crate) fn subscribe_from_decoded_parts(
         fixed_header_flags: u8,
         remaining_length: u32,
+        version: u8,
         packet_id: u16,
+        properties: MqttProperties,
         topics: Vec<(String, u8)>,
     ) -> Self {
         Self {
             packet_type: MqttControlPacketType::Subscribe,
-            version: Field::defaulted(MQTT_311_PROTOCOL_LEVEL),
+            version: Field::user(version),
             flags: Field::user(fixed_header_flags),
             remaining_length: Field::user(remaining_length),
-            body: MqttBody::Subscribe(MqttSubscribe::from_decoded_parts(packet_id, topics)),
+            body: MqttBody::Subscribe(MqttSubscribe::from_decoded_parts(
+                packet_id, properties, topics,
+            )),
         }
     }
 
@@ -1260,12 +1361,17 @@ impl Mqtt {
         self
     }
 
-    /// Add one MQTT 5.0 PUBLISH User Property.
+    /// Add one MQTT 5.0 User Property for packets that support one.
     pub fn user_property(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
-        if let MqttBody::Publish(publish) = &mut self.body {
-            publish
-                .properties
-                .push(MqttProperty::user_property(name, value));
+        let property = MqttProperty::user_property(name, value);
+        match &mut self.body {
+            MqttBody::Publish(publish) => {
+                publish.properties.push(property);
+            }
+            MqttBody::Subscribe(subscribe) => {
+                subscribe.properties.push(property);
+            }
+            _ => {}
         }
         self
     }
@@ -1289,6 +1395,54 @@ impl Mqtt {
     pub fn subscribe_topic(mut self, filter: impl Into<String>, qos: u8) -> Self {
         if let MqttBody::Subscribe(subscribe) = &mut self.body {
             subscribe.push_topic(filter, qos);
+        }
+        self
+    }
+
+    /// Add one MQTT 5.0 SUBSCRIBE topic filter with the full options byte.
+    pub fn subscribe_topic_options(
+        mut self,
+        filter: impl Into<String>,
+        qos: u8,
+        no_local: bool,
+        retain_as_published: bool,
+        retain_handling: u8,
+    ) -> Self {
+        if let MqttBody::Subscribe(subscribe) = &mut self.body {
+            let options = MqttSubscriptionOptions::new()
+                .with_qos(qos)
+                .with_no_local(no_local)
+                .with_retain_as_published(retain_as_published)
+                .with_retain_handling(retain_handling);
+            subscribe.push_topic(filter, options.bits());
+        }
+        self
+    }
+
+    /// Replace the MQTT 5.0 SUBSCRIBE properties block.
+    pub fn subscribe_properties(mut self, properties: MqttProperties) -> Self {
+        if let MqttBody::Subscribe(subscribe) = &mut self.body {
+            subscribe.properties = properties;
+        }
+        self
+    }
+
+    /// Add one MQTT 5.0 SUBSCRIBE property.
+    pub fn subscribe_property(mut self, property: MqttProperty) -> Self {
+        if let MqttBody::Subscribe(subscribe) = &mut self.body {
+            subscribe.properties.push(property);
+        }
+        self
+    }
+
+    /// Add the MQTT 5.0 SUBSCRIBE Subscription Identifier property.
+    pub fn subscription_identifier(mut self, subscription_identifier: u32) -> Self {
+        if let MqttBody::Subscribe(subscribe) = &mut self.body {
+            subscribe
+                .properties
+                .push(MqttProperty::SubscriptionIdentifier(
+                    subscription_identifier,
+                ));
         }
         self
     }
@@ -1570,9 +1724,29 @@ impl Mqtt {
             .or_else(|| self.unsubscribe_body().map(MqttUnsubscribe::packet_id))
     }
 
-    /// SUBSCRIBE topic filter and requested QoS pairs, when this is a typed SUBSCRIBE packet.
+    /// SUBSCRIBE topic filter and raw options byte pairs, when this is a typed SUBSCRIBE packet.
     pub fn subscribe_topics_value(&self) -> Option<&[(String, u8)]> {
         self.subscribe_body().map(MqttSubscribe::topics)
+    }
+
+    /// MQTT 5.0 SUBSCRIBE properties, when this is a version-5 SUBSCRIBE packet.
+    pub fn subscribe_properties_value(&self) -> Option<&MqttProperties> {
+        (self.version_value() == MQTT_5_PROTOCOL_LEVEL)
+            .then(|| self.subscribe_body().map(MqttSubscribe::properties))
+            .flatten()
+    }
+
+    /// SUBSCRIBE topic filters with typed option subfields.
+    pub fn subscribe_topic_options_value(&self) -> Option<Vec<(String, MqttSubscriptionOptions)>> {
+        self.subscribe_body().map(|subscribe| {
+            subscribe
+                .topics()
+                .iter()
+                .map(|(filter, options)| {
+                    (filter.clone(), MqttSubscriptionOptions::from_bits(*options))
+                })
+                .collect()
+        })
     }
 
     /// SUBACK return codes, when this is a typed SUBACK packet.
