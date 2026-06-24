@@ -1,0 +1,135 @@
+version: 1
+kind: feature
+name: mqtt_ping_disconnect
+summary: >-
+  MQTT 3.1.1 header-only PINGREQ, PINGRESP, and baseline DISCONNECT control
+  packets over cleartext TCP/1883, including fixed header type/flags and zero
+  Remaining Length byte-for-byte.
+
+layers:
+  - mqtt
+  - tcp
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: pingreq
+    sources:
+      - .agents/docs/mqtt-manifest.md#Baseline-Control-Packet-Types-and-Fixed-Header-Flags
+      - .agents/docs/mqtt-codepoints.md#Fixed-Header-First-Bytes-for-Default-Encodings
+    message_type: pingreq
+    checks:
+      - fixed_header_type_is_pingreq
+      - flags_are_zero
+      - remaining_length_is_zero
+      - no_variable_header_or_payload
+  - name: pingresp
+    sources:
+      - .agents/docs/mqtt-manifest.md#Baseline-Control-Packet-Types-and-Fixed-Header-Flags
+      - .agents/docs/mqtt-codepoints.md#Fixed-Header-First-Bytes-for-Default-Encodings
+    message_type: pingresp
+    checks:
+      - fixed_header_type_is_pingresp
+      - flags_are_zero
+      - remaining_length_is_zero
+      - no_variable_header_or_payload
+  - name: disconnect
+    sources:
+      - .agents/docs/mqtt-manifest.md#Baseline-Control-Packet-Types-and-Fixed-Header-Flags
+      - .agents/docs/mqtt-codepoints.md#Fixed-Header-First-Bytes-for-Default-Encodings
+    message_type: disconnect
+    checks:
+      - fixed_header_type_is_disconnect
+      - flags_are_zero
+      - remaining_length_is_zero
+      - no_variable_header_or_payload
+
+coverage_cases:
+  - mqtt-pingreq
+  - mqtt-pingresp
+  - mqtt-disconnect
+
+supported_cases:
+  - name: mqtt-pingreq
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+    roots:
+      - "l3:ipv4"
+      - "l3:ipv6"
+    fields:
+      mqtt:
+        packet_type: pingreq
+        flags: default
+    expected:
+      mqtt_hex: "c000"
+      fixed_header_hex: "c000"
+      remaining_length: 0
+      normalized_fields:
+        packet_type: pingreq
+        flags: 0
+        remaining_length: 0
+  - name: mqtt-pingresp
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+    roots:
+      - "l3:ipv4"
+      - "l3:ipv6"
+    fields:
+      mqtt:
+        packet_type: pingresp
+        flags: default
+    expected:
+      mqtt_hex: "d000"
+      fixed_header_hex: "d000"
+      remaining_length: 0
+      normalized_fields:
+        packet_type: pingresp
+        flags: 0
+        remaining_length: 0
+  - name: mqtt-disconnect
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+    roots:
+      - "l3:ipv4"
+      - "l3:ipv6"
+    fields:
+      mqtt:
+        packet_type: disconnect
+        flags: default
+    expected:
+      mqtt_hex: "e000"
+      fixed_header_hex: "e000"
+      remaining_length: 0
+      normalized_fields:
+        packet_type: disconnect
+        flags: 0
+        remaining_length: 0
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - MQTT
+      - MQTTDisconnect
+    encode: true
+    decode: true
+    notes:
+      - Scapy contrib MQTT materialization and TCP/1883 payload normalization
+        support PINGREQ, PINGRESP, and baseline DISCONNECT header-only packets
+        for the declared fields.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    notes:
+      - The public crafter MQTT layer builds, decodes, and recompiles PINGREQ,
+        PINGRESP, and baseline DISCONNECT while deriving zero Remaining Length.
