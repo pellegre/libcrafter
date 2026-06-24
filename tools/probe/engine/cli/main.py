@@ -153,6 +153,27 @@ from ..protocols.ipsec import (
     _IPSEC_PROBE_CASES,
     _ipsec_interop_dry_run_metadata,
 )
+# The argparse parser construction lives in ``cli.parser`` (an
+# orchestration-only concern with no patch/identity coupling). ``_build_parser``
+# is re-imported here so ``cli._build_parser`` stays resolvable (the profile
+# suite reads it as a ``cli`` attribute) and ``main()`` keeps building the
+# byte-identical parser. ``_positive_int`` is re-imported for parity so the
+# argument ``type`` callable stays addressable as a ``cli`` attribute.
+from .parser import (
+    _build_parser,
+    _positive_int,
+)
+# Output, report-path, and command-IO helpers live in ``cli.report_io`` (pure,
+# patch-independent concerns). They are re-imported here so the body's call
+# sites (``_run`` resolves ``_report_path``) and any ``cli.`` attribute lookups
+# stay identical to the former single-module CLI.
+from .report_io import (
+    _redacted_argv,
+    _report_path,
+    _run_command,
+    _run_name,
+    _slug,
+)
 
 
 PROBE_SELECTED_SPECS = ("probe-contracts",)
@@ -160,70 +181,6 @@ STATUS_DRY_RUN = "dry-run"
 STATUS_FAILED = "failed"
 STATUS_PASSED = "passed"
 STATUS_UNSUPPORTED = "unsupported"
-
-
-def _positive_int(value: str) -> int:
-    parsed = int(value)
-    if parsed < 1:
-        raise argparse.ArgumentTypeError("value must be positive")
-    return parsed
-
-
-def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        prog="tools/probe/run",
-        description="Run libcrafter probe validation.",
-    )
-    parser.add_argument(
-        "--provider",
-        choices=probe_provider_names(),
-        required=True,
-        help="probe provider to use",
-    )
-    parser.add_argument(
-        "--profile",
-        default=DEFAULT_PROFILE,
-        help=(
-            "probe sampling profile (default: %(default)s); "
-            "'behavior' selects the full DNS/DHCP/ARP/UDP suite"
-        ),
-    )
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=1,
-        help="deterministic probe selection seed (default: %(default)s)",
-    )
-    parser.add_argument(
-        "--count",
-        type=_positive_int,
-        default=None,
-        help=(
-            "number of probe cases to plan "
-            "(default: profile default, smoke=5, behavior=40)"
-        ),
-    )
-    parser.add_argument(
-        "--case",
-        dest="case_names",
-        action="append",
-        help="probe case name to include; may be repeated or comma-separated",
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="write a deterministic non-mutating probe plan and report",
-    )
-    parser.add_argument(
-        "--confirm-live-run",
-        action="store_true",
-        help="confirm protected non-dry-run provider execution",
-    )
-    parser.add_argument(
-        "--out",
-        help="probe report output directory or report.json path",
-    )
-    return parser
 
 
 def _run(args: argparse.Namespace) -> int:
@@ -1113,77 +1070,6 @@ def _probe_plan_with_endpoint_addresses(
     )
 
 
-def _run_command(
-    argv: Sequence[str],
-    *,
-    output_dir: Path,
-    label: str,
-    input_text: str | None = None,
-    timeout_seconds: int | None = None,
-    parse_json: bool = False,
-) -> JSONObject:
-    stdout_path = output_dir / f"{label}.stdout.txt"
-    stderr_path = output_dir / f"{label}.stderr.txt"
-    try:
-        process = subprocess.run(
-            list(argv),
-            cwd=REPO_ROOT,
-            input=input_text,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=timeout_seconds,
-            check=False,
-        )
-        stdout = process.stdout
-        stderr = process.stderr
-        exit_code = process.returncode
-        errors: list[str] = []
-    except subprocess.TimeoutExpired as exc:
-        stdout = exc.stdout if isinstance(exc.stdout, str) else ""
-        stderr = exc.stderr if isinstance(exc.stderr, str) else ""
-        exit_code = 124
-        errors = [f"{label}: command timed out after {timeout_seconds}s"]
-    stdout_path.write_text(stdout, encoding="utf-8")
-    stderr_path.write_text(stderr, encoding="utf-8")
-    response: JSONObject | None = None
-    if parse_json:
-        response, parse_errors = _parse_json_stdout(stdout, label)
-        errors.extend(parse_errors)
-    return {
-        "argv": _redacted_argv(argv),
-        "exit_code": exit_code,
-        "label": label,
-        "stdout_path": str(stdout_path),
-        "stderr_path": str(stderr_path),
-        "response": response,
-        "errors": errors,
-    }
-
-
-def _redacted_argv(argv: Sequence[str]) -> list[str]:
-    redacted: list[str] = []
-    redact_next = False
-    for arg in argv:
-        if redact_next:
-            redacted.append("<redacted>")
-            redact_next = False
-            continue
-        if arg == "-i":
-            redacted.append(arg)
-            redact_next = True
-            continue
-        if arg.startswith("UserKnownHostsFile="):
-            redacted.append("UserKnownHostsFile=<redacted>")
-            continue
-        if "@" in arg and not arg.startswith("-"):
-            user, _, _host = arg.partition("@")
-            redacted.append(f"{user}@<redacted>")
-            continue
-        redacted.append(arg)
-    return redacted
-
-
 def _probe_interface(provider: str, *, dry_run: bool) -> str:
     if provider == LOCAL_DRY_RUN_PROVIDER:
         return "dry-run0"
@@ -1230,44 +1116,6 @@ def _live_status(request: ProbeRunRequest) -> str:
     if not request.confirm_live_run:
         return "requires-confirmation"
     return STATUS_UNSUPPORTED
-
-
-def _report_path(
-    out: str | None,
-    *,
-    request: ProbeRunRequest,
-    status: str,
-) -> Path:
-    if out:
-        output = Path(out)
-    else:
-        output = DEFAULT_OUTPUT_ROOT / _run_name(request=request, status=status)
-    if not output.is_absolute():
-        output = REPO_ROOT / output
-    if output.suffix == ".json":
-        return output
-    return output / "report.json"
-
-
-def _run_name(*, request: ProbeRunRequest, status: str) -> str:
-    return "-".join(
-        _slug(part)
-        for part in (
-            status,
-            request.provider,
-            request.profile,
-            f"seed-{request.seed}",
-            f"count-{request.count}",
-        )
-        if part
-    )
-
-
-def _slug(value: object) -> str:
-    raw = str(value).strip().lower()
-    chars = [char if char.isalnum() else "-" for char in raw]
-    slug = "-".join(part for part in "".join(chars).split("-") if part)
-    return slug or "run"
 
 
 def _requested_command() -> str:
