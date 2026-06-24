@@ -174,6 +174,17 @@ from .protocols.bgp import (  # noqa: F401  (re-exported for resolvability)
     frr_bgp_peer_descriptor,
     probe_plan_requires_bgp_peer,
 )
+from .protocols.mqtt import (  # noqa: F401  (re-exported for resolvability)
+    MQTT_CONFIG_TEMPLATE,
+    MQTT_PROVISION_SCRIPT,
+    MQTT_RUNTIME,
+    MQTT_SERVICE_KIND,
+    MQTT_SERVICE_PORT,
+    mqtt_broker_descriptor,
+    mqtt_broker_probe_plans,
+    mqtt_broker_service_plans,
+    probe_plan_requires_mqtt_broker,
+)
 from .target_service_helpers import (
     KernelStateDescriptor,
     TargetServiceDescriptor,
@@ -197,6 +208,10 @@ WireCommandRunner = Callable[..., JSONObject]
 # prefixes / ``BGP_PROVISION_SCRIPT`` / ``BGP_FRR_TEMPLATE`` / ``BGP_RIB_COMMAND``)
 # now live in the BGP plugin module (``protocols/bgp.py``) and are re-imported
 # above so ``target_services.BGP_*`` keeps resolving.
+
+# The MQTT target-service constants, descriptor, and broker service-plan selectors
+# now live in the MQTT plugin module (``protocols/mqtt.py``) and are re-imported
+# above so ``target_services.MQTT_*`` and ``target_services.mqtt_*`` keep resolving.
 
 # The RIP target-service constants (``RIP_SERVICE_KIND`` / ``RIP_SERVICE_PORTS`` /
 # ``RIP_RUNTIME`` / ``RIP_MULTICAST_GROUP`` / ``RIP_DOCUMENTATION_IPV4_PREFIX`` /
@@ -394,6 +409,7 @@ def _legacy_target_service_setup_plan(
     """
 
     bgp_plans = bgp_peer_probe_plans(probe_plans)
+    mqtt_plans = mqtt_broker_probe_plans(probe_plans)
     arp_plans = arp_probe_plans(probe_plans)
     return {
         "role": "target",
@@ -416,10 +432,11 @@ def _legacy_target_service_setup_plan(
         # ``bgp-session-smoke``, served by the plugin -- so this legacy build is
         # exercised only by the kind/prefix coverage tests and stays byte-identical
         # to the pre-migration behavior for them.
-        "starts_services": not dry_run and bool(bgp_plans),
+        "starts_services": not dry_run and bool(bgp_plans or mqtt_plans),
         "dry_run_starts_services": False,
         "services": [
             *bgp_peer_service_plans(bgp_plans),
+            *mqtt_broker_service_plans(mqtt_plans),
         ],
         "closed_tcp_ports": [],
         "closed_udp_ports": [],
@@ -473,6 +490,13 @@ def _legacy_target_service_setup_plan(
 # ``target_services.bgp_peer_probe_plans`` / ``target_services.probe_plan_requires_bgp_peer``
 # keep resolving; the BGP plugin's ``target_service`` hook uses them to gate the
 # FRR BGP peer service entry.
+
+
+# The ``mqtt_broker_probe_plans`` selector and the ``mqtt-`` name-prefix dispatch
+# (``probe_plan_requires_mqtt_broker``) now live in the MQTT plugin module
+# (``protocols/mqtt.py``) and are re-imported above so
+# ``target_services.mqtt_broker_probe_plans`` /
+# ``target_services.probe_plan_requires_mqtt_broker`` keep resolving.
 
 
 # The DHCP responder case set (``_DHCP_RESPONDER_CASES``) and the
@@ -825,8 +849,17 @@ __all__ = [
     "dhcp_responder_descriptor",
     "dns_probe_plans",
     "dns_responder_descriptor",
+    "mqtt_broker_descriptor",
+    "mqtt_broker_probe_plans",
+    "mqtt_broker_service_plans",
+    "MQTT_CONFIG_TEMPLATE",
+    "MQTT_PROVISION_SCRIPT",
+    "MQTT_RUNTIME",
+    "MQTT_SERVICE_KIND",
+    "MQTT_SERVICE_PORT",
     "plans_by_destination_port",
     "prepare_wire_probe_target",
+    "probe_plan_requires_mqtt_broker",
     "target_service_address_fields",
     "target_service_setup_plan",
     "target_service_setup_script",
