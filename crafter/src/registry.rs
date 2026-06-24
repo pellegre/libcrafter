@@ -25,6 +25,7 @@ use crate::protocols::ipv4::{
     IPPROTO_OSPF, IPPROTO_TCP, IPPROTO_UDP,
 };
 use crate::protocols::ipv6::{append_ipv6_packet_with_registry, IPPROTO_IPV6_AH, IPPROTO_IPV6_ESP};
+use crate::protocols::mqtt::{decode::append_mqtt_packet_with_registry, MQTT_PORT};
 use crate::protocols::ospf::decode::append_ospf_packet_with_checksum_validation;
 use crate::protocols::ospf::v3::append_ospfv3_packet_with_checksum_validation;
 // Re-export the checksum-agnostic OSPF entrypoint alongside the registry so
@@ -398,6 +399,9 @@ impl ProtocolRegistry {
 
         registry.bind_tcp_port_with_registry(BGP_PORT, |registry, packet, payload| {
             append_bgp_packet_with_registry(registry, packet, payload)
+        });
+        registry.bind_tcp_port_with_registry(MQTT_PORT, |registry, packet, payload| {
+            append_mqtt_packet_with_registry(registry, packet, payload)
         });
 
         registry.builtin_ipv4_protocol_dispatch = true;
