@@ -219,7 +219,7 @@ from .protocols.igmp import (  # noqa: F401  (re-exported for identity/back-comp
 from .protocols.ipsec import (  # noqa: F401  (re-exported for identity/back-compat)
     _ipsec_probe_plan,
 )
-# The MQTT planning surface (the three planned-only broker-exchange smoke cases'
+# The MQTT planning surface (the planned-only broker-exchange smoke cases'
 # shared ``_mqtt_probe_plan`` builder) lives in the MQTT plugin module. Re-import
 # the moved builder so ``planning._mqtt_probe_plan`` resolves to the *same*
 # function object the plugin registered and the merged ``PLAN_BUILDERS`` exposes

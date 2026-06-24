@@ -34,6 +34,11 @@ _MQTT_SUBSCRIBE_PACKET_ID = 1
 _MQTT_PUBLISH_PACKET_ID = 2
 _MQTT_QOS_1 = 1
 _MQTT_CONNACK_ACCEPTED = 0
+_MQTT_V5_PROTOCOL_LEVEL = 5
+_MQTT_V5_CONNECT_PROPERTIES: tuple[JSONObject, ...] = (
+    {"name": "session_expiry_interval", "value": 60},
+    {"name": "receive_maximum", "value": 10},
+)
 
 
 MQTT_SMOKE_CASES: tuple[ProbeCase, ...] = (
@@ -45,6 +50,22 @@ MQTT_SMOKE_CASES: tuple[ProbeCase, ...] = (
         ),
         stimulus="mqtt_connect",
         expected_response="mqtt_connack",
+        required_capabilities=_MQTT_CAPABILITIES,
+        protocol="mqtt",
+        metadata={
+            "service": "mosquitto",
+            "stateful": True,
+            "planned_only": True,
+        },
+    ),
+    _behavior_case(
+        name="mqtt-v5-connect-connack",
+        description=(
+            "Plan an MQTT 5.0 CONNECT exchange with properties against a "
+            "probe-owned Mosquitto broker and expect a reason-code CONNACK."
+        ),
+        stimulus="mqtt_v5_connect",
+        expected_response="mqtt_v5_connack",
         required_capabilities=_MQTT_CAPABILITIES,
         protocol="mqtt",
         metadata={
@@ -148,6 +169,29 @@ def _mqtt_probe_plan(
             "return_code": _MQTT_CONNACK_ACCEPTED,
         }
         steps = [connect_step]
+    elif case_name == "mqtt-v5-connect-connack":
+        v5_connect_step: JSONObject = {
+            **connect_step,
+            "label": "CONNECT v5",
+            "stimulus": "mqtt_v5_connect",
+            "expected_response": "mqtt_v5_connack",
+            "version": _MQTT_V5_PROTOCOL_LEVEL,
+            "connect_properties": list(_MQTT_V5_CONNECT_PROPERTIES),
+        }
+        stimulus_shape = {
+            "packet_type": "CONNECT",
+            "version": _MQTT_V5_PROTOCOL_LEVEL,
+            "client_id": client_id,
+            "keep_alive_seconds": _MQTT_KEEP_ALIVE_SECONDS,
+            "clean_session": True,
+            "connect_properties": list(_MQTT_V5_CONNECT_PROPERTIES),
+        }
+        expected_shape = {
+            "packet_type": "CONNACK",
+            "version": _MQTT_V5_PROTOCOL_LEVEL,
+            "reason_code": _MQTT_CONNACK_ACCEPTED,
+        }
+        steps = [v5_connect_step]
     elif case_name == "mqtt-subscribe-suback":
         stimulus_shape = {
             "packet_type": "SUBSCRIBE",
@@ -161,7 +205,7 @@ def _mqtt_probe_plan(
             "suback_return_codes": "no_failure",
         }
         steps = [connect_step, subscribe_step]
-    else:
+    elif case_name == "mqtt-publish-puback":
         stimulus_shape = {
             "packet_type": "PUBLISH",
             "packet_id": _MQTT_PUBLISH_PACKET_ID,
@@ -175,6 +219,8 @@ def _mqtt_probe_plan(
             "packet_id": _MQTT_PUBLISH_PACKET_ID,
         }
         steps = [connect_step, publish_step]
+    else:
+        raise ValueError(f"unsupported MQTT probe case {case_name!r}")
 
     return {
         "schema_version": 1,

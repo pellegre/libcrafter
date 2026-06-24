@@ -173,6 +173,7 @@ class ProbeProfileMembershipTest(unittest.TestCase):
             names,
             (
                 "mqtt-connect-connack",
+                "mqtt-v5-connect-connack",
                 "mqtt-subscribe-suback",
                 "mqtt-publish-puback",
             ),

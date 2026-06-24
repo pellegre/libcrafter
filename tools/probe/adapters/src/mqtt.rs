@@ -7,7 +7,10 @@
 //! MQTT packet and validates the broker reply.
 
 use crafter::prelude::*;
-use crafter::protocols::mqtt::{MQTT_CONNACK_ACCEPTED, MQTT_PUBLISH_QOS_1, MQTT_SUBACK_FAILURE};
+use crafter::protocols::mqtt::{
+    MqttProperty, MQTT_5_PROTOCOL_LEVEL, MQTT_CONNACK_ACCEPTED, MQTT_PUBLISH_QOS_1,
+    MQTT_REASON_SUCCESS, MQTT_SUBACK_FAILURE,
+};
 use serde_json::{json, Value};
 use std::io::{ErrorKind, Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpStream};
@@ -30,6 +33,7 @@ const DEFAULT_SOURCE_PORT_BASE: u16 = 49_194;
 #[derive(Debug, Clone, Copy)]
 enum ExpectedMqttReply {
     ConnackAccepted,
+    ConnackV5Success,
     Suback { packet_id: u16 },
     Puback { packet_id: u16 },
 }
@@ -37,7 +41,7 @@ enum ExpectedMqttReply {
 impl ExpectedMqttReply {
     fn label(self) -> &'static str {
         match self {
-            Self::ConnackAccepted => "CONNACK",
+            Self::ConnackAccepted | Self::ConnackV5Success => "CONNACK",
             Self::Suback { .. } => "SUBACK",
             Self::Puback { .. } => "PUBACK",
         }
@@ -46,6 +50,7 @@ impl ExpectedMqttReply {
     fn response_type(self) -> &'static str {
         match self {
             Self::ConnackAccepted => "mqtt_connack",
+            Self::ConnackV5Success => "mqtt_v5_connack",
             Self::Suback { .. } => "mqtt_suback",
             Self::Puback { .. } => "mqtt_puback",
         }
@@ -285,6 +290,7 @@ pub fn run_mqtt_live(
 fn case_message(plan: &ProbePlan) -> ExampleResult<PlannedMqttMessage> {
     Ok(match plan.case.as_str() {
         "mqtt-connect-connack" => connect_message(plan),
+        "mqtt-v5-connect-connack" => connect_v5_message(plan),
         "mqtt-subscribe-suback" => subscribe_message(),
         "mqtt-publish-puback" => publish_message(),
         _ => return Err(format!("unsupported MQTT probe case: {}", plan.case).into()),
@@ -295,6 +301,7 @@ fn live_scenario(plan: &ProbePlan) -> ExampleResult<Vec<PlannedMqttMessage>> {
     let connect = connect_message(plan);
     Ok(match plan.case.as_str() {
         "mqtt-connect-connack" => vec![connect],
+        "mqtt-v5-connect-connack" => vec![connect_v5_message(plan)],
         "mqtt-subscribe-suback" => vec![connect, subscribe_message()],
         "mqtt-publish-puback" => vec![connect, publish_message()],
         _ => return Err(format!("unsupported MQTT probe case: {}", plan.case).into()),
@@ -309,6 +316,20 @@ fn connect_message(plan: &ProbePlan) -> PlannedMqttMessage {
             .keep_alive(30)
             .clean_session(true),
         expected_reply: ExpectedMqttReply::ConnackAccepted,
+    }
+}
+
+fn connect_v5_message(plan: &ProbePlan) -> PlannedMqttMessage {
+    PlannedMqttMessage {
+        label: "CONNECT v5",
+        mqtt: Mqtt::connect()
+            .version(MQTT_5_PROTOCOL_LEVEL)
+            .client_id(format!("{DEFAULT_CLIENT_ID_PREFIX}-{}", plan.sequence))
+            .keep_alive(30)
+            .clean_session(true)
+            .connect_property(MqttProperty::SessionExpiryInterval(60))
+            .connect_property(MqttProperty::ReceiveMaximum(10)),
+        expected_reply: ExpectedMqttReply::ConnackV5Success,
     }
 }
 
@@ -443,6 +464,13 @@ fn decode_mqtt_payload(
     plan: &ProbePlan,
     bytes: &[u8],
 ) -> ExampleResult<Packet> {
+    if plan.case == "mqtt-v5-connect-connack" {
+        return Ok(Mqtt::decode_payload_with_default_version(
+            bytes,
+            MQTT_5_PROTOCOL_LEVEL,
+        )?);
+    }
+
     let source: Ipv4Addr = plan
         .destination_ipv4
         .as_deref()
@@ -491,6 +519,25 @@ fn validate_expected_reply(
                     "field": "mqtt.return_code",
                     "expected": MQTT_CONNACK_ACCEPTED,
                     "actual": mqtt.return_code_value(),
+                }));
+            }
+        }
+        ExpectedMqttReply::ConnackV5Success => {
+            if mqtt.packet_type() != MqttControlPacketType::Connack {
+                mismatches.push(packet_type_mismatch(mqtt, "CONNACK"));
+            }
+            if mqtt.version_value() != MQTT_5_PROTOCOL_LEVEL {
+                mismatches.push(json!({
+                    "field": "mqtt.version",
+                    "expected": MQTT_5_PROTOCOL_LEVEL,
+                    "actual": mqtt.version_value(),
+                }));
+            }
+            if mqtt.reason_code_value() != Some(MQTT_REASON_SUCCESS) {
+                mismatches.push(json!({
+                    "field": "mqtt.reason_code",
+                    "expected": MQTT_REASON_SUCCESS,
+                    "actual": mqtt.reason_code_value(),
                 }));
             }
         }
@@ -551,8 +598,16 @@ pub fn mqtt_json(mqtt: &Mqtt) -> Value {
         "packet_type": format!("{:?}", mqtt.packet_type()),
         "flags": mqtt.flags_value(),
         "remaining_length": mqtt.remaining_length_value(),
+        "version": mqtt.version_value(),
         "client_id": mqtt.client_id_value(),
         "return_code": mqtt.return_code_value(),
+        "reason_code": mqtt.reason_code_value(),
+        "connect_property_count": mqtt
+            .connect_properties_value()
+            .map(|properties| properties.property_values().len()),
+        "connack_property_count": mqtt
+            .connack_properties_value()
+            .map(|properties| properties.property_values().len()),
         "topic": mqtt.topic_value(),
         "qos": mqtt.qos_value(),
         "packet_id": mqtt.packet_id_value(),
@@ -591,10 +646,16 @@ mod tests {
     #[test]
     fn case_messages_select_expected_packet_types() {
         let connect = case_message(&base_plan("mqtt-connect-connack")).unwrap();
+        let connect_v5 = case_message(&base_plan("mqtt-v5-connect-connack")).unwrap();
         let subscribe = case_message(&base_plan("mqtt-subscribe-suback")).unwrap();
         let publish = case_message(&base_plan("mqtt-publish-puback")).unwrap();
 
         assert_eq!(connect.mqtt.packet_type(), MqttControlPacketType::Connect);
+        assert_eq!(
+            connect_v5.mqtt.packet_type(),
+            MqttControlPacketType::Connect
+        );
+        assert_eq!(connect_v5.mqtt.version_value(), MQTT_5_PROTOCOL_LEVEL);
         assert_eq!(
             subscribe.mqtt.packet_type(),
             MqttControlPacketType::Subscribe
