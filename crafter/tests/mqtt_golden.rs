@@ -3,6 +3,7 @@ use std::net::Ipv4Addr;
 use crafter::prelude::*;
 use crafter::protocols::mqtt::{
     MQTT_CONNACK_ACCEPTED, MQTT_CONNACK_IDENTIFIER_REJECTED, MQTT_CONNACK_SERVER_UNAVAILABLE,
+    MQTT_PUBLISH_QOS_0, MQTT_PUBLISH_QOS_1,
 };
 
 const CONNECT_CLIENT_ONLY: &[u8] = &[
@@ -41,6 +42,22 @@ const CONNACK_SERVER_UNAVAILABLE: &[u8] = &[
     0x02,
     0x00,
     MQTT_CONNACK_SERVER_UNAVAILABLE,
+];
+
+const PUBLISH_QOS0: &[u8] = &[
+    // `.agents/docs/mqtt-manifest.md`: PUBLISH fixed-header type 3 carries
+    // DUP/QoS/RETAIN in the low nibble. QoS 0 has flags 0x0 and therefore no
+    // packet identifier. Remaining Length covers topic plus payload.
+    0x30, 0x07, // Manifest PUBLISH variable header: Topic Name is an MQTT UTF-8 string.
+    0x00, 0x03, b'a', b'/', b'b',
+    // The rest of the Remaining Length is application payload.
+    b'h', b'i',
+];
+
+const PUBLISH_QOS1: &[u8] = &[
+    // PUBLISH QoS 1 sets fixed-header QoS bits to 0b01, making the first byte
+    // 0x32 and requiring a two-byte Packet Identifier after the topic.
+    0x32, 0x0b, 0x00, 0x05, b't', b'o', b'p', b'i', b'c', 0x12, 0x34, 0xde, 0xad,
 ];
 
 fn mqtt_over_ipv4_tcp(payload: &[u8]) -> crafter::Result<Vec<u8>> {
@@ -195,6 +212,75 @@ fn connack_build_decode_round_trip_with_session_present() -> crafter::Result<()>
         mqtt.return_code_value(),
         Some(MQTT_CONNACK_IDENTIFIER_REJECTED)
     );
+    assert_eq!(decoded.compile()?.as_bytes(), compiled.as_bytes());
+    Ok(())
+}
+
+#[test]
+fn publish_qos0_golden_decodes_payload_without_packet_id() -> crafter::Result<()> {
+    let (bytes, decoded) = decode_ipv4_tcp_mqtt(PUBLISH_QOS0)?;
+    let mqtt = decoded.layer::<Mqtt>().expect("decoded MQTT PUBLISH layer");
+
+    assert_eq!(mqtt.packet_type(), MqttControlPacketType::Publish);
+    assert_eq!(mqtt.flags_value(), 0x0);
+    assert_eq!(mqtt.remaining_length_value(), 7);
+    assert_eq!(mqtt.topic_value(), Some("a/b"));
+    assert_eq!(mqtt.qos_value(), Some(MQTT_PUBLISH_QOS_0));
+    assert_eq!(mqtt.dup_value(), Some(false));
+    assert_eq!(mqtt.retain_value(), Some(false));
+    assert_eq!(mqtt.packet_id_value(), None);
+    assert_eq!(mqtt.payload_value(), Some(&b"hi"[..]));
+    assert_eq!(decoded.compile()?.as_bytes(), bytes.as_slice());
+    Ok(())
+}
+
+#[test]
+fn publish_qos1_golden_decodes_packet_id_and_payload() -> crafter::Result<()> {
+    let (bytes, decoded) = decode_ipv4_tcp_mqtt(PUBLISH_QOS1)?;
+    let mqtt = decoded.layer::<Mqtt>().expect("decoded MQTT PUBLISH layer");
+
+    assert_eq!(mqtt.packet_type(), MqttControlPacketType::Publish);
+    assert_eq!(mqtt.flags_value(), 0x2);
+    assert_eq!(mqtt.remaining_length_value(), 11);
+    assert_eq!(mqtt.topic_value(), Some("topic"));
+    assert_eq!(mqtt.qos_value(), Some(MQTT_PUBLISH_QOS_1));
+    assert_eq!(mqtt.dup_value(), Some(false));
+    assert_eq!(mqtt.retain_value(), Some(false));
+    assert_eq!(mqtt.packet_id_value(), Some(0x1234));
+    assert_eq!(mqtt.payload_value(), Some(&[0xde, 0xad][..]));
+    assert_eq!(decoded.compile()?.as_bytes(), bytes.as_slice());
+    Ok(())
+}
+
+#[test]
+fn publish_build_decode_round_trip_with_retain_qos1() -> crafter::Result<()> {
+    let packet = Ipv4::new()
+        .src(Ipv4Addr::new(192, 0, 2, 50))
+        .dst(Ipv4Addr::new(198, 51, 100, 60))
+        / Tcp::new()
+            .sport(49_154)
+            .dport(MQTT_PORT)
+            .seq(0x5152_5354)
+            .ack(0x6162_6364)
+            .ack_segment()
+        / Mqtt::publish()
+            .topic("alerts")
+            .qos(1)
+            .retain(true)
+            .packet_id(9)
+            .payload(vec![0xca, 0xfe]);
+
+    let compiled = packet.compile()?;
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes())?;
+    let mqtt = decoded.layer::<Mqtt>().expect("decoded MQTT PUBLISH layer");
+
+    assert_eq!(mqtt.packet_type(), MqttControlPacketType::Publish);
+    assert_eq!(mqtt.qos_value(), Some(MQTT_PUBLISH_QOS_1));
+    assert_eq!(mqtt.dup_value(), Some(false));
+    assert_eq!(mqtt.retain_value(), Some(true));
+    assert_eq!(mqtt.topic_value(), Some("alerts"));
+    assert_eq!(mqtt.packet_id_value(), Some(9));
+    assert_eq!(mqtt.payload_value(), Some(&[0xca, 0xfe][..]));
     assert_eq!(decoded.compile()?.as_bytes(), compiled.as_bytes());
     Ok(())
 }

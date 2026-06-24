@@ -283,8 +283,20 @@ impl MqttPublish {
         }
     }
 
+    fn from_decoded_parts(topic: String, packet_id: Option<u16>, payload: Vec<u8>) -> Self {
+        Self {
+            topic: Field::user(topic),
+            packet_id: packet_id.map_or_else(Field::unset, Field::user),
+            payload: Field::user(payload),
+        }
+    }
+
     fn topic(&self) -> &str {
         self.topic.value().map(String::as_str).unwrap_or("")
+    }
+
+    fn packet_id_value(&self) -> Option<u16> {
+        self.packet_id.value().copied()
     }
 
     fn packet_id(&self) -> u16 {
@@ -446,6 +458,21 @@ impl Mqtt {
             flags: Field::user(fixed_header_flags),
             remaining_length: Field::user(remaining_length),
             body: MqttBody::Connack(MqttConnack::from_decoded_parts(ack_flags, return_code)),
+        }
+    }
+
+    pub(crate) fn publish_from_decoded_parts(
+        fixed_header_flags: u8,
+        remaining_length: u32,
+        topic: String,
+        packet_id: Option<u16>,
+        payload: Vec<u8>,
+    ) -> Self {
+        Self {
+            packet_type: MqttControlPacketType::Publish,
+            flags: Field::user(fixed_header_flags),
+            remaining_length: Field::user(remaining_length),
+            body: MqttBody::Publish(MqttPublish::from_decoded_parts(topic, packet_id, payload)),
         }
     }
 
@@ -712,6 +739,38 @@ impl Mqtt {
         self.connack_body().map(MqttConnack::return_code)
     }
 
+    /// PUBLISH topic name, when this is a typed PUBLISH packet.
+    pub fn topic_value(&self) -> Option<&str> {
+        self.publish_body().map(MqttPublish::topic)
+    }
+
+    /// PUBLISH QoS value from the fixed-header flags, when this is a typed PUBLISH packet.
+    pub fn qos_value(&self) -> Option<u8> {
+        self.publish_body().map(|_| publish_qos(self.flags_value()))
+    }
+
+    /// PUBLISH DUP flag, when this is a typed PUBLISH packet.
+    pub fn dup_value(&self) -> Option<bool> {
+        self.publish_body()
+            .map(|_| self.flags_value() & MQTT_PUBLISH_FLAG_DUP != 0)
+    }
+
+    /// PUBLISH RETAIN flag, when this is a typed PUBLISH packet.
+    pub fn retain_value(&self) -> Option<bool> {
+        self.publish_body()
+            .map(|_| self.flags_value() & MQTT_PUBLISH_FLAG_RETAIN != 0)
+    }
+
+    /// PUBLISH Packet Identifier, when present on a typed PUBLISH packet.
+    pub fn packet_id_value(&self) -> Option<u16> {
+        self.publish_body().and_then(MqttPublish::packet_id_value)
+    }
+
+    /// PUBLISH application payload bytes, when this is a typed PUBLISH packet.
+    pub fn payload_value(&self) -> Option<&[u8]> {
+        self.publish_body().map(MqttPublish::payload)
+    }
+
     fn connect_body(&self) -> Option<&MqttConnect> {
         match &self.body {
             MqttBody::Connect(connect) => Some(connect),
@@ -723,6 +782,13 @@ impl Mqtt {
         match &self.body {
             MqttBody::Connack(connack) => Some(connack),
             MqttBody::Raw(_) | MqttBody::Connect(_) | MqttBody::Publish(_) => None,
+        }
+    }
+
+    fn publish_body(&self) -> Option<&MqttPublish> {
+        match &self.body {
+            MqttBody::Publish(publish) => Some(publish),
+            MqttBody::Raw(_) | MqttBody::Connect(_) | MqttBody::Connack(_) => None,
         }
     }
 

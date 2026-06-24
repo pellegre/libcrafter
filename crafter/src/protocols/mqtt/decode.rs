@@ -6,11 +6,14 @@ use crate::registry::ProtocolRegistry;
 
 use super::constants::{
     MQTT_CONNECT_FLAG_PASSWORD, MQTT_CONNECT_FLAG_USER_NAME, MQTT_CONNECT_FLAG_WILL,
+    MQTT_PUBLISH_FLAG_QOS_MASK,
 };
 use super::header::MqttControlPacketType;
 use super::varint::decode_remaining_length;
 use super::wire::{decode_binary, decode_string, decode_u16};
 use super::Mqtt;
+
+const PUBLISH_QOS_SHIFT: u8 = 1;
 
 /// Decode a single MQTT control packet from the front of `bytes`.
 pub(crate) fn decode_mqtt(bytes: &[u8]) -> Result<(Mqtt, usize)> {
@@ -41,6 +44,7 @@ pub(crate) fn decode_mqtt(bytes: &[u8]) -> Result<(Mqtt, usize)> {
     let mqtt = match packet_type {
         MqttControlPacketType::Connect => decode_connect(flags, remaining_length, body)?,
         MqttControlPacketType::Connack => decode_connack(flags, remaining_length, body)?,
+        MqttControlPacketType::Publish => decode_publish(flags, remaining_length, body)?,
         _ => Mqtt::raw(packet_type, body.to_vec())
             .flags(flags)
             .remaining_length(remaining_length),
@@ -122,6 +126,26 @@ fn decode_connack(fixed_header_flags: u8, remaining_length: u32, body: &[u8]) ->
     ))
 }
 
+fn decode_publish(fixed_header_flags: u8, remaining_length: u32, body: &[u8]) -> Result<Mqtt> {
+    let mut cursor = 0;
+
+    let topic = take_string(body, &mut cursor)?;
+    let packet_id = if publish_qos(fixed_header_flags) != 0 {
+        Some(take_u16(body, &mut cursor)?)
+    } else {
+        None
+    };
+    let payload = body[cursor..].to_vec();
+
+    Ok(Mqtt::publish_from_decoded_parts(
+        fixed_header_flags,
+        remaining_length,
+        topic,
+        packet_id,
+        payload,
+    ))
+}
+
 fn take_u8(bytes: &[u8], cursor: &mut usize, context: &'static str) -> Result<u8> {
     let Some(&value) = bytes.get(*cursor) else {
         return Err(CrafterError::buffer_too_short(
@@ -151,6 +175,10 @@ fn take_binary(bytes: &[u8], cursor: &mut usize) -> Result<Vec<u8>> {
     let (value, consumed) = decode_binary(&bytes[*cursor..])?;
     *cursor += consumed;
     Ok(value)
+}
+
+fn publish_qos(flags: u8) -> u8 {
+    (flags & MQTT_PUBLISH_FLAG_QOS_MASK) >> PUBLISH_QOS_SHIFT
 }
 
 fn is_incomplete_mqtt_frame(context: &'static str) -> bool {
@@ -205,13 +233,13 @@ mod tests {
 
     #[test]
     fn decodes_single_raw_packet() {
-        let bytes = [0x30, 0x03, b'a', b'b', b'c'];
+        let bytes = [0x40, 0x03, b'a', b'b', b'c'];
 
         let (mqtt, consumed) = decode_mqtt(&bytes).unwrap();
 
         assert_eq!(consumed, bytes.len());
         assert_eq!(mqtt.name(), "MQTT");
-        assert_eq!(mqtt.packet_type(), MqttControlPacketType::Publish);
+        assert_eq!(mqtt.packet_type(), MqttControlPacketType::Puback);
         assert_eq!(mqtt.flags_value(), 0x0);
         assert_eq!(mqtt.remaining_length_value(), 3);
         assert_eq!(mqtt.body(), b"abc");
