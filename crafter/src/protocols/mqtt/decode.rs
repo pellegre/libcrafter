@@ -389,6 +389,20 @@ fn decode_unsubscribe(fixed_header_flags: u8, remaining_length: u32, body: &[u8]
 }
 
 fn decode_subscribe(fixed_header_flags: u8, remaining_length: u32, body: &[u8]) -> Result<Mqtt> {
+    decode_subscribe_with_version(
+        fixed_header_flags,
+        remaining_length,
+        MQTT_311_PROTOCOL_LEVEL,
+        body,
+    )
+}
+
+fn decode_subscribe_with_version(
+    fixed_header_flags: u8,
+    remaining_length: u32,
+    version: u8,
+    body: &[u8],
+) -> Result<Mqtt> {
     let mut cursor = 0;
 
     if body.len() < 2 {
@@ -399,6 +413,11 @@ fn decode_subscribe(fixed_header_flags: u8, remaining_length: u32, body: &[u8]) 
         ));
     }
     let packet_id = take_u16(body, &mut cursor)?;
+    let properties = if version == MQTT_5_PROTOCOL_LEVEL {
+        take_properties(body, &mut cursor)?
+    } else {
+        MqttProperties::new()
+    };
     let mut topics = Vec::new();
 
     while cursor < body.len() {
@@ -415,7 +434,9 @@ fn decode_subscribe(fixed_header_flags: u8, remaining_length: u32, body: &[u8]) 
     Ok(Mqtt::subscribe_from_decoded_parts(
         fixed_header_flags,
         remaining_length,
+        version,
         packet_id,
+        properties,
         topics,
     ))
 }
@@ -552,7 +573,7 @@ pub(crate) fn append_mqtt_packet_with_registry(
 mod tests {
     use super::*;
     use crate::packet::Layer;
-    use crate::protocols::mqtt::MqttProperty;
+    use crate::protocols::mqtt::{MqttProperty, MqttSubscriptionOptions};
 
     #[test]
     fn decodes_typed_disconnect_and_rejects_declared_body() {
@@ -768,6 +789,47 @@ mod tests {
         assert_eq!(
             Packet::from_layer(pubrel).compile().unwrap().as_bytes(),
             &[0x62, 0x04, 0x22, 0x22, 0x92, 0x00]
+        );
+    }
+
+    #[test]
+    fn decodes_v5_subscribe_properties_and_subscription_options_when_version_is_supplied() {
+        let body = [
+            0x12, 0x34, 0x03, 0x0b, 0xc1, 0x02, 0x00, 0x09, b's', b'e', b'n', b's', b'o', b'r',
+            b's', b'/', b'+', 0x15,
+        ];
+        let mqtt =
+            decode_subscribe_with_version(0x02, body.len() as u32, MQTT_5_PROTOCOL_LEVEL, &body)
+                .unwrap();
+
+        assert_eq!(mqtt.packet_type(), MqttControlPacketType::Subscribe);
+        assert_eq!(mqtt.version_value(), MQTT_5_PROTOCOL_LEVEL);
+        assert_eq!(mqtt.packet_id_value(), Some(0x1234));
+        assert_eq!(
+            mqtt.subscribe_properties_value()
+                .expect("subscribe properties")
+                .property_values(),
+            &[MqttProperty::SubscriptionIdentifier(321)]
+        );
+
+        let topics = mqtt
+            .subscribe_topic_options_value()
+            .expect("subscribe topic options");
+        assert_eq!(topics.len(), 1);
+        assert_eq!(topics[0].0, "sensors/+");
+        let options = topics[0].1;
+        assert_eq!(options, MqttSubscriptionOptions::from_bits(0x15));
+        assert_eq!(options.qos(), 1);
+        assert!(options.no_local());
+        assert!(!options.retain_as_published());
+        assert_eq!(options.retain_handling(), 1);
+
+        assert_eq!(
+            Packet::from_layer(mqtt).compile().unwrap().as_bytes(),
+            &[
+                0x82, 0x12, 0x12, 0x34, 0x03, 0x0b, 0xc1, 0x02, 0x00, 0x09, b's', b'e', b'n', b's',
+                b'o', b'r', b's', b'/', b'+', 0x15,
+            ]
         );
     }
 

@@ -4,6 +4,7 @@ use crafter::prelude::*;
 use crafter::protocols::mqtt::{
     MqttProperties, MqttProperty, MQTT_5_PROTOCOL_LEVEL, MQTT_REASON_BAD_AUTHENTICATION_METHOD,
     MQTT_REASON_NO_MATCHING_SUBSCRIBERS, MQTT_REASON_PACKET_IDENTIFIER_NOT_FOUND,
+    MQTT_SUBOPT_RETAIN_SEND_IF_NEW,
 };
 
 const CONNECT_V5_WITH_PROPERTIES: &[u8] = &[
@@ -43,6 +44,15 @@ const PUBACK_V5_FULL: &[u8] = &[
 const PUBACK_V5_SHORT: &[u8] = &[0x40, 0x02, 0x12, 0x34];
 
 const PUBREL_V5_FULL: &[u8] = &[0x62, 0x04, 0x22, 0x22, 0x92, 0x00];
+
+const SUBSCRIBE_V5_WITH_PROPERTIES: &[u8] = &[
+    0x82, 0x12, 0x12, 0x34, 0x03, 0x0b, 0xc1, 0x02, 0x00, 0x09, b's', b'e', b'n', b's', b'o', b'r',
+    b's', b'/', b'+', 0x15,
+];
+
+const SUBSCRIBE_311_BASELINE: &[u8] = &[
+    0x82, 0x0e, 0x12, 0x34, 0x00, 0x09, b's', b'e', b'n', b's', b'o', b'r', b's', b'/', b'+', 0x01,
+];
 
 fn mqtt_bytes(message: Mqtt) -> crafter::Result<Vec<u8>> {
     Ok(Packet::from_layer(message).compile()?.into_bytes())
@@ -114,6 +124,14 @@ fn puback_v5_full_message() -> Mqtt {
         .packet_id(0x1234)
         .reason_code(MQTT_REASON_NO_MATCHING_SUBSCRIBERS)
         .ack_property(MqttProperty::ReasonString("queued".to_string()))
+}
+
+fn subscribe_v5_message() -> Mqtt {
+    Mqtt::subscribe()
+        .version(MQTT_5_PROTOCOL_LEVEL)
+        .packet_id(0x1234)
+        .subscription_identifier(321)
+        .subscribe_topic_options("sensors/+", 1, true, false, MQTT_SUBOPT_RETAIN_SEND_IF_NEW)
 }
 
 #[test]
@@ -236,5 +254,25 @@ fn pubacks_v5_pubrel_preserves_required_flag_nibble() -> crafter::Result<()> {
     )?;
 
     assert_eq!(bytes, PUBREL_V5_FULL);
+    Ok(())
+}
+
+#[test]
+fn subscribe_v5_properties_and_options_compile_byte_exact() -> crafter::Result<()> {
+    let bytes = mqtt_bytes(subscribe_v5_message())?;
+
+    assert_eq!(bytes, SUBSCRIBE_V5_WITH_PROPERTIES);
+    Ok(())
+}
+
+#[test]
+fn subscribe_311_baseline_stays_unchanged() -> crafter::Result<()> {
+    let bytes = mqtt_bytes(
+        Mqtt::subscribe()
+            .packet_id(0x1234)
+            .subscribe_topic("sensors/+", 1),
+    )?;
+
+    assert_eq!(bytes, SUBSCRIBE_311_BASELINE);
     Ok(())
 }
