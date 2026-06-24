@@ -43,7 +43,9 @@ UDP_ECHO_LARGE_PAYLOAD_LENGTH = 1200
 # BGP's capability constant (``_BGP_CAPABILITIES``) and case tuple now live in
 # the BGP plugin module (``protocols/bgp.py``); the merged catalog/profile tables
 # below pick the BGP case up from the registry.
-_RIP_CAPABILITIES = ["rip_peer"]
+# RIP's capability constant (``_RIP_CAPABILITIES``) and case tuple now live in
+# the RIP plugin module (``protocols/rip.py``); the merged catalog/profile tables
+# below pick the RIP/RIPng cases up from the registry.
 _IGMP_CAPABILITIES = ["ipv4_multicast", "igmp_peer"]
 # ARP's capability constants and case tuple now live in the ARP plugin module
 # (``protocols/arp.py``); NDP's capability constant and case tuple now live in
@@ -99,44 +101,9 @@ _OSPF_CAPABILITIES = ["ospf_neighbor_peer"]
 # the registry.
 
 
-# RIP smoke cases. Probe owns controlled target-service setup for the FRR ripd
-# daemon; the current stimulus is planned-only until the endpoint driver
-# executes the RIP stimulus example. The RIPng variant rides UDP/521 to the
-# IPv6 all-RIPng-routers multicast group (ff02::9) and reuses the same FRR
-# runtime (the ``ripngd`` daemon) so the live path covers IPv6 too.
-RIP_SMOKE_CASES: tuple[ProbeCase, ...] = (
-    _behavior_case(
-        name="rip-update-v2",
-        description=(
-            "Plan a RIPv2 update exchange against a probe-owned RIP daemon."
-        ),
-        stimulus="rip_request",
-        expected_response="rip_peer_update",
-        required_capabilities=_RIP_CAPABILITIES,
-        protocol="rip",
-        metadata={
-            "service": "frr-ripd",
-            "stateful": True,
-            "planned_only": True,
-        },
-    ),
-    _behavior_case(
-        name="ripng-update",
-        description=(
-            "Plan a RIPng update exchange against a probe-owned RIPng daemon "
-            "over UDP/521 to the ff02::9 multicast group."
-        ),
-        stimulus="ripng_request",
-        expected_response="ripng_peer_update",
-        required_capabilities=_RIP_CAPABILITIES,
-        protocol="ripng",
-        metadata={
-            "service": "frr-ripngd",
-            "stateful": True,
-            "planned_only": True,
-        },
-    ),
-)
+# The RIP smoke cases (``rip-update-v2`` / ``ripng-update``) now live in the RIP
+# plugin module (``protocols/rip.py``); the merged catalog/profile tables below
+# pick them up from the registry.
 
 
 # IGMP behavior cases. IGMP is IPv4-only and rides link-local IPv4 multicast
@@ -406,9 +373,9 @@ _LEGACY_PROBE_CASES: tuple[ProbeCase, ...] = (
     *BEHAVIOR_OSPF_CASES,
     *OSPF_SMOKE_CASES,
     # The ``bgp-session-smoke`` case is contributed by the BGP plugin
-    # (``protocols/bgp.py``) and merged in ahead of this legacy aggregation by
-    # ``_merge_probe_cases``.
-    *RIP_SMOKE_CASES,
+    # (``protocols/bgp.py``); the ``rip-update-v2`` / ``ripng-update`` cases are
+    # contributed by the RIP plugin (``protocols/rip.py``). Both are merged in
+    # ahead of this legacy aggregation by ``_merge_probe_cases``.
     *IGMP_PROBE_CASES,
     *BEHAVIOR_IPSEC_CASES,
 )
@@ -642,9 +609,16 @@ BGP_SESSION_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
 
 # The RIP smoke profile plans the probe-owned FRR ripd target service and the
 # RIP stimulus driver intent without asking lab to infer workload metadata from
-# the profile label.
+# the profile label. The RIP/RIPng case names are sourced from the RIP plugin's
+# registered cases in declaration order (``rip-update-v2`` then ``ripng-update``);
+# RIP's profile membership stays in this legacy ordered table (rather than the
+# plugin's ``profile_counts``) so the selection order is byte-identical -- the
+# registry-first profile merge would otherwise move RIP to the front of the
+# profile.
 RIP_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
-    case.name for case in RIP_SMOKE_CASES
+    case.name
+    for case in _registry_cases()
+    if case.metadata.get("protocol") in ("rip", "ripng")
 )
 
 # The OSPF smoke profile carries the planned-only OSPF cases (currently the
