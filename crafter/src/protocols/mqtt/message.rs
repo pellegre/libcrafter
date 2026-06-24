@@ -329,6 +329,7 @@ impl MqttConnack {
 struct MqttPublish {
     topic: Field<String>,
     packet_id: Field<u16>,
+    properties: MqttProperties,
     payload: Field<Vec<u8>>,
 }
 
@@ -337,14 +338,21 @@ impl MqttPublish {
         Self {
             topic: Field::defaulted(String::new()),
             packet_id: Field::unset(),
+            properties: MqttProperties::new(),
             payload: Field::defaulted(Vec::new()),
         }
     }
 
-    fn from_decoded_parts(topic: String, packet_id: Option<u16>, payload: Vec<u8>) -> Self {
+    fn from_decoded_parts(
+        topic: String,
+        packet_id: Option<u16>,
+        properties: MqttProperties,
+        payload: Vec<u8>,
+    ) -> Self {
         Self {
             topic: Field::user(topic),
             packet_id: packet_id.map_or_else(Field::unset, Field::user),
+            properties,
             payload: Field::user(payload),
         }
     }
@@ -365,21 +373,31 @@ impl MqttPublish {
         self.payload.value().map(Vec::as_slice).unwrap_or(&[])
     }
 
-    fn encoded_len(&self, flags: u8) -> usize {
+    fn properties(&self) -> &MqttProperties {
+        &self.properties
+    }
+
+    fn encoded_len(&self, flags: u8, version: u8) -> usize {
         let mut len = 2 + self.topic().len() + self.payload().len();
         if publish_qos(flags) != 0 {
             len += 2;
         }
+        if version == MQTT_5_PROTOCOL_LEVEL {
+            len += encoded_properties_len(self.properties());
+        }
         len
     }
 
-    fn write_body(&self, out: &mut Vec<u8>, flags: u8) -> Result<()> {
+    fn write_body(&self, out: &mut Vec<u8>, flags: u8, version: u8) -> Result<()> {
         encode_string(self.topic(), out)?;
         // Packet Identifier presence follows the effective QoS bits. Values
         // such as 0 are still emitted when set or defaulted for malformed
         // packet construction; validation belongs above the packet primitive.
         if publish_qos(flags) != 0 {
             encode_u16(self.packet_id(), out);
+        }
+        if version == MQTT_5_PROTOCOL_LEVEL {
+            self.properties.write(out)?;
         }
         out.extend_from_slice(self.payload());
         Ok(())
@@ -586,7 +604,7 @@ impl MqttBody {
             Self::Empty => 0,
             Self::Connect(connect) => connect.encoded_len(),
             Self::Connack(connack) => connack.encoded_len(version),
-            Self::Publish(publish) => publish.encoded_len(flags),
+            Self::Publish(publish) => publish.encoded_len(flags, version),
             Self::PacketIdentifier(packet_identifier) => packet_identifier.encoded_len(),
             Self::Subscribe(subscribe) => subscribe.encoded_len(),
             Self::Suback(suback) => suback.encoded_len(),
@@ -600,7 +618,7 @@ impl MqttBody {
             Self::Empty => {}
             Self::Connect(connect) => connect.write_body(out)?,
             Self::Connack(connack) => connack.write_body(out, version)?,
-            Self::Publish(publish) => publish.write_body(out, flags)?,
+            Self::Publish(publish) => publish.write_body(out, flags, version)?,
             Self::PacketIdentifier(packet_identifier) => packet_identifier.write_body(out),
             Self::Subscribe(subscribe) => subscribe.write_body(out)?,
             Self::Suback(suback) => suback.write_body(out),
@@ -873,16 +891,20 @@ impl Mqtt {
     pub(crate) fn publish_from_decoded_parts(
         fixed_header_flags: u8,
         remaining_length: u32,
+        version: u8,
         topic: String,
         packet_id: Option<u16>,
+        properties: MqttProperties,
         payload: Vec<u8>,
     ) -> Self {
         Self {
             packet_type: MqttControlPacketType::Publish,
-            version: Field::defaulted(MQTT_311_PROTOCOL_LEVEL),
+            version: Field::user(version),
             flags: Field::user(fixed_header_flags),
             remaining_length: Field::user(remaining_length),
-            body: MqttBody::Publish(MqttPublish::from_decoded_parts(topic, packet_id, payload)),
+            body: MqttBody::Publish(MqttPublish::from_decoded_parts(
+                topic, packet_id, properties, payload,
+            )),
         }
     }
 
@@ -1148,6 +1170,52 @@ impl Mqtt {
         self
     }
 
+    /// Replace the MQTT 5.0 PUBLISH properties block.
+    pub fn publish_properties(mut self, properties: MqttProperties) -> Self {
+        if let MqttBody::Publish(publish) = &mut self.body {
+            publish.properties = properties;
+        }
+        self
+    }
+
+    /// Add one MQTT 5.0 PUBLISH property.
+    pub fn publish_property(mut self, property: MqttProperty) -> Self {
+        if let MqttBody::Publish(publish) = &mut self.body {
+            publish.properties.push(property);
+        }
+        self
+    }
+
+    /// Add the MQTT 5.0 PUBLISH Content Type property.
+    pub fn content_type(mut self, content_type: impl Into<String>) -> Self {
+        if let MqttBody::Publish(publish) = &mut self.body {
+            publish
+                .properties
+                .push(MqttProperty::ContentType(content_type.into()));
+        }
+        self
+    }
+
+    /// Add the MQTT 5.0 PUBLISH Topic Alias property.
+    pub fn topic_alias(mut self, topic_alias: u16) -> Self {
+        if let MqttBody::Publish(publish) = &mut self.body {
+            publish
+                .properties
+                .push(MqttProperty::TopicAlias(topic_alias));
+        }
+        self
+    }
+
+    /// Add one MQTT 5.0 PUBLISH User Property.
+    pub fn user_property(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        if let MqttBody::Publish(publish) = &mut self.body {
+            publish
+                .properties
+                .push(MqttProperty::user_property(name, value));
+        }
+        self
+    }
+
     /// Set the Packet Identifier for packet types that carry one.
     pub fn packet_id(mut self, packet_id: u16) -> Self {
         match &mut self.body {
@@ -1391,6 +1459,13 @@ impl Mqtt {
     pub fn retain_value(&self) -> Option<bool> {
         self.publish_body()
             .map(|_| self.flags_value() & MQTT_PUBLISH_FLAG_RETAIN != 0)
+    }
+
+    /// MQTT 5.0 PUBLISH properties, when this is a version-5 PUBLISH packet.
+    pub fn publish_properties_value(&self) -> Option<&MqttProperties> {
+        (self.version_value() == MQTT_5_PROTOCOL_LEVEL)
+            .then(|| self.publish_body().map(MqttPublish::properties))
+            .flatten()
     }
 
     /// Packet Identifier, when present on a typed packet.

@@ -203,6 +203,20 @@ fn decode_connack_with_version(
 }
 
 fn decode_publish(fixed_header_flags: u8, remaining_length: u32, body: &[u8]) -> Result<Mqtt> {
+    decode_publish_with_version(
+        fixed_header_flags,
+        remaining_length,
+        MQTT_311_PROTOCOL_LEVEL,
+        body,
+    )
+}
+
+fn decode_publish_with_version(
+    fixed_header_flags: u8,
+    remaining_length: u32,
+    version: u8,
+    body: &[u8],
+) -> Result<Mqtt> {
     let mut cursor = 0;
 
     let topic = take_string(body, &mut cursor)?;
@@ -211,13 +225,20 @@ fn decode_publish(fixed_header_flags: u8, remaining_length: u32, body: &[u8]) ->
     } else {
         None
     };
+    let properties = if version == MQTT_5_PROTOCOL_LEVEL {
+        take_properties(body, &mut cursor)?
+    } else {
+        MqttProperties::new()
+    };
     let payload = body[cursor..].to_vec();
 
     Ok(Mqtt::publish_from_decoded_parts(
         fixed_header_flags,
         remaining_length,
+        version,
         topic,
         packet_id,
+        properties,
         payload,
     ))
 }
@@ -593,6 +614,47 @@ mod tests {
             &[
                 0x20, 0x11, 0x01, 0x8c, 0x0e, 0x12, 0x00, 0x03, b's', b'r', b'v', 0x21, 0x00, 0x14,
                 0x1f, 0x00, 0x02, b'n', b'o',
+            ]
+        );
+    }
+
+    #[test]
+    fn decodes_v5_publish_properties_before_payload_when_version_is_supplied() {
+        let body = [
+            0x00, 0x09, b's', b'e', b'n', b's', b'o', b'r', b's', b'/', b't', 0x12, 0x34, 0x1c,
+            0x23, 0x00, 0x07, 0x03, 0x00, 0x0a, b't', b'e', b'x', b't', b'/', b'p', b'l', b'a',
+            b'i', b'n', 0x26, 0x00, 0x04, b's', b'i', b't', b'e', 0x00, 0x03, b'l', b'a', b'b',
+            b'4', b'2',
+        ];
+        let mqtt =
+            decode_publish_with_version(0x02, body.len() as u32, MQTT_5_PROTOCOL_LEVEL, &body)
+                .unwrap();
+
+        assert_eq!(mqtt.packet_type(), MqttControlPacketType::Publish);
+        assert_eq!(mqtt.version_value(), MQTT_5_PROTOCOL_LEVEL);
+        assert_eq!(mqtt.topic_value(), Some("sensors/t"));
+        assert_eq!(mqtt.qos_value(), Some(1));
+        assert_eq!(mqtt.packet_id_value(), Some(0x1234));
+        assert_eq!(mqtt.payload_value(), Some(&b"42"[..]));
+        assert_eq!(
+            mqtt.publish_properties_value()
+                .expect("publish properties")
+                .property_values(),
+            &[
+                MqttProperty::TopicAlias(7),
+                MqttProperty::ContentType("text/plain".to_string()),
+                MqttProperty::user_property("site", "lab"),
+            ]
+        );
+
+        let compiled = Packet::from_layer(mqtt).compile().unwrap();
+        assert_eq!(
+            compiled.as_bytes(),
+            &[
+                0x32, 0x2c, 0x00, 0x09, b's', b'e', b'n', b's', b'o', b'r', b's', b'/', b't', 0x12,
+                0x34, 0x1c, 0x23, 0x00, 0x07, 0x03, 0x00, 0x0a, b't', b'e', b'x', b't', b'/', b'p',
+                b'l', b'a', b'i', b'n', 0x26, 0x00, 0x04, b's', b'i', b't', b'e', 0x00, 0x03, b'l',
+                b'a', b'b', b'4', b'2',
             ]
         );
     }
