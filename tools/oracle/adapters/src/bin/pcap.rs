@@ -5,6 +5,7 @@ use crafter::core::{
 };
 use crafter::prelude::*;
 use crafter::protocols::igmp::IgmpExtension;
+use crafter::protocols::mqtt::Mqtt;
 use crafter::wire::backend::pcap::{
     PcapLinkType, PcapReader, PcapRecord, PcapTimestamp, PcapWriter, TimestampPrecision,
 };
@@ -440,6 +441,8 @@ fn normalized_layer_name(layer: &dyn Layer) -> String {
         "tcp"
     } else if layer.as_any().is::<Bgp>() {
         "bgp"
+    } else if layer.as_any().is::<Mqtt>() {
+        "mqtt"
     } else if layer.as_any().is::<Rip>() {
         // The Scapy reference and the decode adapter normalize RIP/RIPng to the
         // lowercase oracle layer names; mirror them so the pcap-roundtrip decoded
