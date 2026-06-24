@@ -487,6 +487,7 @@ impl MqttPacketIdentifier {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct MqttSuback {
     packet_id: Field<u16>,
+    properties: MqttProperties,
     return_codes: Vec<u8>,
 }
 
@@ -494,13 +495,19 @@ impl MqttSuback {
     fn new() -> Self {
         Self {
             packet_id: Field::defaulted(0),
+            properties: MqttProperties::new(),
             return_codes: Vec::new(),
         }
     }
 
-    fn from_decoded_parts(packet_id: u16, return_codes: Vec<u8>) -> Self {
+    fn from_decoded_parts(
+        packet_id: u16,
+        properties: MqttProperties,
+        return_codes: Vec<u8>,
+    ) -> Self {
         Self {
             packet_id: Field::user(packet_id),
+            properties,
             return_codes,
         }
     }
@@ -513,17 +520,29 @@ impl MqttSuback {
         &self.return_codes
     }
 
+    fn properties(&self) -> &MqttProperties {
+        &self.properties
+    }
+
     fn push_return_code(&mut self, return_code: u8) {
         self.return_codes.push(return_code);
     }
 
-    fn encoded_len(&self) -> usize {
-        2 + self.return_codes.len()
+    fn encoded_len(&self, version: u8) -> usize {
+        let mut len = 2;
+        if version == MQTT_5_PROTOCOL_LEVEL {
+            len += encoded_properties_len(self.properties());
+        }
+        len + self.return_codes.len()
     }
 
-    fn write_body(&self, out: &mut Vec<u8>) {
+    fn write_body(&self, out: &mut Vec<u8>, version: u8) -> Result<()> {
         encode_u16(self.packet_id(), out);
+        if version == MQTT_5_PROTOCOL_LEVEL {
+            self.properties.write(out)?;
+        }
         out.extend_from_slice(&self.return_codes);
+        Ok(())
     }
 }
 
@@ -749,7 +768,7 @@ impl MqttBody {
             Self::Publish(publish) => publish.encoded_len(flags, version),
             Self::PacketIdentifier(packet_identifier) => packet_identifier.encoded_len(version),
             Self::Subscribe(subscribe) => subscribe.encoded_len(version),
-            Self::Suback(suback) => suback.encoded_len(),
+            Self::Suback(suback) => suback.encoded_len(version),
             Self::Unsubscribe(unsubscribe) => unsubscribe.encoded_len(),
         }
     }
@@ -765,7 +784,7 @@ impl MqttBody {
                 packet_identifier.write_body(out, version)?
             }
             Self::Subscribe(subscribe) => subscribe.write_body(out, version)?,
-            Self::Suback(suback) => suback.write_body(out),
+            Self::Suback(suback) => suback.write_body(out, version)?,
             Self::Unsubscribe(unsubscribe) => unsubscribe.write_body(out)?,
         }
         Ok(())
@@ -1096,15 +1115,21 @@ impl Mqtt {
     pub(crate) fn suback_from_decoded_parts(
         fixed_header_flags: u8,
         remaining_length: u32,
+        version: u8,
         packet_id: u16,
+        properties: MqttProperties,
         return_codes: Vec<u8>,
     ) -> Self {
         Self {
             packet_type: MqttControlPacketType::Suback,
-            version: Field::defaulted(MQTT_311_PROTOCOL_LEVEL),
+            version: Field::user(version),
             flags: Field::user(fixed_header_flags),
             remaining_length: Field::user(remaining_length),
-            body: MqttBody::Suback(MqttSuback::from_decoded_parts(packet_id, return_codes)),
+            body: MqttBody::Suback(MqttSuback::from_decoded_parts(
+                packet_id,
+                properties,
+                return_codes,
+            )),
         }
     }
 
@@ -1499,6 +1524,22 @@ impl Mqtt {
         self
     }
 
+    /// Replace the MQTT 5.0 SUBACK properties block.
+    pub fn suback_properties(mut self, properties: MqttProperties) -> Self {
+        if let MqttBody::Suback(suback) = &mut self.body {
+            suback.properties = properties;
+        }
+        self
+    }
+
+    /// Add one MQTT 5.0 SUBACK property.
+    pub fn suback_property(mut self, property: MqttProperty) -> Self {
+        if let MqttBody::Suback(suback) = &mut self.body {
+            suback.properties.push(property);
+        }
+        self
+    }
+
     /// Replace the MQTT 5.0 PUBACK/PUBREC/PUBREL/PUBCOMP properties block.
     pub fn ack_properties(mut self, properties: MqttProperties) -> Self {
         if let MqttBody::PacketIdentifier(packet_identifier) = &mut self.body {
@@ -1752,6 +1793,13 @@ impl Mqtt {
     /// SUBACK return codes, when this is a typed SUBACK packet.
     pub fn suback_return_codes_value(&self) -> Option<&[u8]> {
         self.suback_body().map(MqttSuback::return_codes)
+    }
+
+    /// MQTT 5.0 SUBACK properties, when this is a version-5 SUBACK packet.
+    pub fn suback_properties_value(&self) -> Option<&MqttProperties> {
+        (self.version_value() == MQTT_5_PROTOCOL_LEVEL)
+            .then(|| self.suback_body().map(MqttSuback::properties))
+            .flatten()
     }
 
     /// UNSUBSCRIBE topic filters, when this is a typed UNSUBSCRIBE packet.
