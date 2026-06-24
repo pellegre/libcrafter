@@ -1,0 +1,209 @@
+version: 1
+kind: feature
+name: mqtt_connect
+summary: >-
+  MQTT 3.1.1 CONNECT and CONNACK control-packet framing over cleartext
+  TCP/1883, including derived Remaining Length values, CONNECT variable-header
+  and payload ordering, and CONNACK acknowledge flags plus return code.
+
+layers:
+  - mqtt
+  - tcp
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: connect_minimal
+    sources:
+      - .agents/docs/mqtt-manifest.md#CONNECT
+      - .agents/docs/mqtt-codepoints.md#CONNECT-Variable-Header-and-Flags
+    message_type: connect
+    checks:
+      - fixed_header_type_is_connect
+      - flags_are_zero
+      - remaining_length_covers_variable_header_and_payload
+      - protocol_name_is_mqtt
+      - protocol_level_is_4
+      - clean_session_flag_preserved
+      - client_id_length_prefix_preserved
+  - name: connect_will_username_password
+    sources:
+      - .agents/docs/mqtt-manifest.md#CONNECT
+      - .agents/docs/mqtt-codepoints.md#CONNECT-Variable-Header-and-Flags
+    message_type: connect
+    checks:
+      - will_flag_requires_will_topic_and_message
+      - username_flag_requires_username_field
+      - password_flag_requires_password_field
+      - payload_order_is_client_id_will_topic_will_message_username_password
+      - strict_bytes_preserved
+  - name: connack
+    sources:
+      - .agents/docs/mqtt-manifest.md#CONNACK
+      - .agents/docs/mqtt-codepoints.md#CONNACK-Return-Codes
+    message_type: connack
+    checks:
+      - fixed_header_type_is_connack
+      - flags_are_zero
+      - remaining_length_is_two
+      - session_present_bit_preserved
+      - return_code_preserved
+
+coverage_cases:
+  - mqtt-connect
+  - mqtt-connect-will-auth
+  - mqtt-connack-accepted
+  - mqtt-connack-server-unavailable
+
+supported_cases:
+  - name: mqtt-connect
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+    roots:
+      - "l3:ipv4"
+      - "l3:ipv6"
+    fields:
+      mqtt:
+        packet_type: connect
+        flags: default
+        protocol_name: MQTT
+        protocol_level: 4
+        connect_flags: clean_session
+        keep_alive: 60
+        client_id: client
+    expected:
+      mqtt_hex: "101200044d5154540402003c0006636c69656e74"
+      fixed_header_hex: "1012"
+      remaining_length: 18
+      normalized_fields:
+        packet_type: connect
+        flags: 0
+        remaining_length: 18
+        protocol_name: MQTT
+        protocol_level: 4
+        connect_flags: 2
+        clean_session: true
+        keep_alive: 60
+        client_id: client
+  - name: mqtt-connect-will-auth
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+    roots:
+      - "l3:ipv4"
+      - "l3:ipv6"
+    fields:
+      mqtt:
+        packet_type: connect
+        flags: default
+        protocol_name: MQTT
+        protocol_level: 4
+        connect_flags:
+          - clean_session
+          - will
+          - username
+          - password
+        keep_alive: 30
+        client_id: cid
+        will_topic: status
+        will_message:
+          hex: "dead"
+        username: user
+        password:
+          hex: "beef"
+    expected:
+      mqtt_hex: "102500044d51545404c6001e000363696400067374617475730002dead0004757365720002beef"
+      fixed_header_hex: "1025"
+      remaining_length: 37
+      normalized_fields:
+        packet_type: connect
+        flags: 0
+        remaining_length: 37
+        protocol_name: MQTT
+        protocol_level: 4
+        connect_flags: 198
+        clean_session: true
+        keep_alive: 30
+        client_id: cid
+        will_topic: status
+        will_message:
+          hex: "dead"
+          length: 2
+        username: user
+        password:
+          hex: "beef"
+          length: 2
+  - name: mqtt-connack-accepted
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+    roots:
+      - "l3:ipv4"
+      - "l3:ipv6"
+    fields:
+      mqtt:
+        packet_type: connack
+        flags: default
+        return_code: connack_accepted
+    expected:
+      mqtt_hex: "20020000"
+      fixed_header_hex: "2002"
+      remaining_length: 2
+      normalized_fields:
+        packet_type: connack
+        flags: 0
+        remaining_length: 2
+        ack_flags: 0
+        session_present: false
+        return_code: 0
+  - name: mqtt-connack-server-unavailable
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+    roots:
+      - "l3:ipv4"
+      - "l3:ipv6"
+    fields:
+      mqtt:
+        packet_type: connack
+        flags: default
+        return_code: 3
+    expected:
+      mqtt_hex: "20020003"
+      fixed_header_hex: "2002"
+      remaining_length: 2
+      normalized_fields:
+        packet_type: connack
+        flags: 0
+        remaining_length: 2
+        ack_flags: 0
+        session_present: false
+        return_code: 3
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - MQTT
+      - MQTTConnect
+      - MQTTConnack
+    encode: true
+    decode: true
+    notes:
+      - Scapy contrib MQTT materialization and TCP/1883 payload normalization
+        support CONNECT and CONNACK byte-for-byte for the declared fields.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    notes:
+      - The public crafter MQTT layer builds, decodes, and recompiles CONNECT
+        and CONNACK while deriving Remaining Length unless explicitly set.
