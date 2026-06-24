@@ -187,16 +187,14 @@ from .protocols.tcp import (  # noqa: F401  (re-exported for identity/back-compa
 from .protocols.bgp import (  # noqa: F401  (re-exported for identity/back-compat)
     _bgp_session_smoke_probe_plan,
 )
-from .target_services import (
-    RIP_CONFIG_TEMPLATE,
-    RIP_DOCUMENTATION_IPV4_PREFIX,
-    RIP_MULTICAST_GROUP,
-    RIP_PROVISION_SCRIPT,
-    RIP_RIB_COMMAND,
-    RIP_RUNTIME,
-    RIP_SERVICE_KIND,
-    RIP_SERVICE_PORTS,
-    rip_peer_service_descriptor,
+# The RIP/RIPng planning surface (the ``rip-update-v2`` / ``ripng-update`` cases
+# and their builders) lives in the RIP plugin module. Re-import each moved
+# builder so ``planning._rip_update_probe_plan`` / ``planning._ripng_update_probe_plan``
+# resolve to the *same* function objects the plugin registered and the merged
+# ``PLAN_BUILDERS`` exposes -- any pin on object identity keeps holding.
+from .protocols.rip import (  # noqa: F401  (re-exported for identity/back-compat)
+    _rip_update_probe_plan,
+    _ripng_update_probe_plan,
 )
 
 
@@ -288,37 +286,11 @@ _IPSEC_AH_PROTOCOL = 51
 _IKEV2_UDP_PORT = 500
 
 
-# RIPv2 rides UDP/520 (RFC 2453 sec. 3.9.1) and advertises to the all-RIP-routers
-# multicast group 224.0.0.9 (RFC 2453 sec. 3.5). The unicast target stays in
-# documentation address space; the probe-owned RIP daemon is FRR ``ripd`` (the
-# same FRR/vtysh runtime as the BGP target service), inspected with
-# ``show ip rip``. These are recorded in the dry-run plan so an inspecting agent
-# sees the wire port, multicast group, and RIB command without consulting the
-# crate. No packets are sent: the plan is planned-only.
-# RIP target-service constants are owned by :mod:`target_services` (the same
-# module that owns the BGP service constants the BGP plan references); the plan
-# pulls them in so the wire port, multicast group, runtime, provision assets,
-# and RIB command match the ``rip_peer_service_descriptor`` the live target
-# setup renders.
-_RIP_UDP_PORT = RIP_SERVICE_PORTS[0]
-_RIP_MULTICAST_GROUP = RIP_MULTICAST_GROUP
-_RIP_SERVICE_KIND = RIP_SERVICE_KIND
-_RIP_RUNTIME = RIP_RUNTIME
-_RIP_RIB_COMMAND = RIP_RIB_COMMAND
-
-
-# RIPng (RFC 2080) rides UDP/521 and advertises to the all-RIPng-routers IPv6
-# multicast group ff02::9 (RFC 2080 sec. 2.1). It reuses the same FRR runtime as
-# the IPv4 RIP target service (FRR's ``ripngd`` daemon), inspected with
-# ``show ipv6 ripng``. The documentation prefix stays in the RFC 3849 block
-# (2001:db8::/32). These mirror the IPv4 RIP plan constants for the IPv6 path so
-# an inspecting agent sees the wire port, multicast group, and RIB command
-# without consulting the crate; the plan is planned-only and sends no packets.
-_RIPNG_UDP_PORT = 521
-_RIPNG_MULTICAST_GROUP = "ff02::9"
-_RIPNG_SERVICE_KIND = "frr-ripngd"
-_RIPNG_RIB_COMMAND = "vtysh -c 'show ipv6 ripng'"
-_RIPNG_DOCUMENTATION_IPV6_PREFIX = "2001:db8::/32"
+# The RIP/RIPng plan constants (UDP ports, multicast groups, service kinds, RIB
+# commands, documentation prefixes) and the ``rip_peer_service_descriptor`` the
+# IPv4 plan references now live in the RIP plugin module (``protocols/rip.py``);
+# the moved builders reach ``PLAN_BUILDERS`` through the registry merge below and
+# are re-imported into this module above for identity/back-compat.
 
 
 # IGMP (IPv4 protocol number 2) rides link-local IPv4 multicast with TTL 1 and
@@ -342,208 +314,6 @@ _IGMP_CLEANUP_SCRIPT = f"{_IGMP_TARGET_SERVICE_DIR}/cleanup.sh"
 # plugin module (``protocols/bgp.py``) and reaches ``PLAN_BUILDERS`` through the
 # registry merge below; it is re-imported into this module above for
 # identity/back-compat.
-
-
-def _rip_update_probe_plan(
-    *,
-    case_name: str = "rip-update-v2",
-    profile: str,
-    seed: int,
-    sequence: int,
-) -> JSONObject:
-    """Plan a probe-owned RIPv2 update exchange against an FRR ``ripd`` service.
-
-    The probe sends a RIPv2 request on UDP/520 to the documentation-range
-    unicast target running the RIP daemon and expects the daemon's RIPv2
-    response (advertised to the all-RIP-routers multicast group 224.0.0.9 per
-    RFC 2453). The crate-side ``rip_request`` stimulus driver lands with the
-    endpoint runner; until then the dry-run plan is ``planned_only`` -- it
-    records the stimulus driver intent, the FRR ``ripd`` target-service setup,
-    the UDP port, multicast group, and the ``show ip rip`` RIB command, but
-    builds no packet bytes and sends nothing.
-    """
-
-    digest = deterministic_bytes(case_name, profile, seed, sequence)
-    stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
-    source_port = 42000 + int.from_bytes(digest[0:2], "big") % 10000
-    documentation_prefixes = [
-        RIP_DOCUMENTATION_IPV4_PREFIX,
-    ]
-    # The plan references the same probe-owned FRR ``ripd`` descriptor the live
-    # target setup renders (mirroring how the BGP plan references its peer
-    # descriptor), so the provision script and config template stay in sync.
-    rip_service = rip_peer_service_descriptor(
-        bind_ipv4=target_ipv4,
-        source_ipv4=stimulus_ipv4,
-    )
-    return {
-        "schema_version": 1,
-        "case": case_name,
-        "sequence": sequence,
-        "index": sequence,
-        "profile": profile,
-        "seed": seed,
-        "stimulus": "rip_request",
-        "expected_response": "rip_peer_update",
-        "planned_only": True,
-        "protocol": "rip",
-        "source_ipv4": stimulus_ipv4,
-        "destination_ipv4": target_ipv4,
-        "multicast_group": _RIP_MULTICAST_GROUP,
-        "expected_reply_source_ipv4": target_ipv4,
-        "expected_reply_destination_ipv4": stimulus_ipv4,
-        "source_port": source_port,
-        "destination_port": _RIP_UDP_PORT,
-        "documentation_prefixes": documentation_prefixes,
-        "stimulus_driver": {
-            "name": "rip_request",
-            "cargo_example": "rip_request",
-            "driver_source": "crafter/examples/rip_request.rs",
-            "state": "planned-only",
-            "planned_only": True,
-        },
-        "target_service": {
-            "required": True,
-            "kind": _RIP_SERVICE_KIND,
-            "protocol": "udp",
-            "port": _RIP_UDP_PORT,
-            "multicast_group": _RIP_MULTICAST_GROUP,
-            "bind_ipv4": target_ipv4,
-            "source_ipv4": stimulus_ipv4,
-            "runtime": _RIP_RUNTIME,
-            "documentation_prefixes": documentation_prefixes,
-            "provision_script": rip_service.metadata["provision_script"],
-            "config_template": rip_service.metadata["config_template"],
-            "rib_command": _RIP_RIB_COMMAND,
-            "deterministic": True,
-        },
-        "capture_filter": (
-            f"udp and src host {target_ipv4} "
-            f"and src port {_RIP_UDP_PORT} and dst port {_RIP_UDP_PORT}"
-        ),
-        "validation": {
-            "planned_only": True,
-            "driver": "rip_request",
-            "source_ipv4": target_ipv4,
-            "destination_ipv4": stimulus_ipv4,
-            "source_port": _RIP_UDP_PORT,
-            "destination_port": _RIP_UDP_PORT,
-            "multicast_group": _RIP_MULTICAST_GROUP,
-            "rib_command": _RIP_RIB_COMMAND,
-        },
-        "wire_requirements": {
-            "requires_ipv4_unicast": True,
-            "requires_controlled_service": True,
-            "requires_rip_peer": True,
-            "note": (
-                "RIP smoke dry-run exposes the rip_request stimulus intent and "
-                "probe-owned FRR ripd target-service setup without sending "
-                "UDP/520 datagrams or installing FRR."
-            ),
-        },
-        "digest_hex": digest.hex()[:16],
-    }
-
-
-def _ripng_update_probe_plan(
-    *,
-    case_name: str = "ripng-update",
-    profile: str,
-    seed: int,
-    sequence: int,
-) -> JSONObject:
-    """Plan a probe-owned RIPng update exchange against an FRR ``ripngd`` service.
-
-    The IPv6 analog of :func:`_rip_update_probe_plan`: the probe sends a RIPng
-    request on UDP/521 to the documentation-range unicast target running the
-    RIPng daemon and expects the daemon's RIPng response (advertised to the
-    all-RIPng-routers multicast group ``ff02::9`` per RFC 2080). The crate-side
-    ``ripng_request`` stimulus driver lands with the endpoint runner; until then
-    the dry-run plan is ``planned_only`` -- it records the stimulus driver
-    intent, the FRR ``ripngd`` target-service setup, the UDP port, multicast
-    group, and the ``show ipv6 ripng`` RIB command, but builds no packet bytes
-    and sends nothing.
-    """
-
-    digest = deterministic_bytes(case_name, profile, seed, sequence)
-    stimulus_ipv6 = deterministic_documentation_ipv6(digest)
-    target_ipv6 = deterministic_documentation_ipv6(digest[::-1])
-    source_port = 42000 + int.from_bytes(digest[0:2], "big") % 10000
-    documentation_prefixes = [
-        _RIPNG_DOCUMENTATION_IPV6_PREFIX,
-    ]
-    # The RIPng path reuses the same probe-owned FRR runtime assets as the IPv4
-    # RIP target service (FRR's ``ripngd`` daemon shares the ``ripd.conf``
-    # runtime), so the provision script and config template stay in sync with
-    # the IPv4 plan while the wire details (port, multicast group, RIB command)
-    # are IPv6-specific.
-    return {
-        "schema_version": 1,
-        "case": case_name,
-        "sequence": sequence,
-        "index": sequence,
-        "profile": profile,
-        "seed": seed,
-        "stimulus": "ripng_request",
-        "expected_response": "ripng_peer_update",
-        "planned_only": True,
-        "protocol": "ripng",
-        "source_ipv6": stimulus_ipv6,
-        "destination_ipv6": target_ipv6,
-        "multicast_group": _RIPNG_MULTICAST_GROUP,
-        "expected_reply_source_ipv6": target_ipv6,
-        "expected_reply_destination_ipv6": stimulus_ipv6,
-        "source_port": source_port,
-        "destination_port": _RIPNG_UDP_PORT,
-        "documentation_prefixes": documentation_prefixes,
-        "stimulus_driver": {
-            "name": "ripng_request",
-            "cargo_example": "ripng_request",
-            "driver_source": "crafter/examples/ripng_request.rs",
-            "state": "planned-only",
-            "planned_only": True,
-        },
-        "target_service": {
-            "required": True,
-            "kind": _RIPNG_SERVICE_KIND,
-            "protocol": "udp",
-            "port": _RIPNG_UDP_PORT,
-            "multicast_group": _RIPNG_MULTICAST_GROUP,
-            "bind_ipv6": target_ipv6,
-            "source_ipv6": stimulus_ipv6,
-            "runtime": _RIP_RUNTIME,
-            "documentation_prefixes": documentation_prefixes,
-            "provision_script": RIP_PROVISION_SCRIPT,
-            "config_template": RIP_CONFIG_TEMPLATE,
-            "rib_command": _RIPNG_RIB_COMMAND,
-            "deterministic": True,
-        },
-        "capture_filter": (
-            f"udp and src host {target_ipv6} "
-            f"and src port {_RIPNG_UDP_PORT} and dst port {_RIPNG_UDP_PORT}"
-        ),
-        "validation": {
-            "planned_only": True,
-            "driver": "ripng_request",
-            "source_ipv6": target_ipv6,
-            "destination_ipv6": stimulus_ipv6,
-            "source_port": _RIPNG_UDP_PORT,
-            "destination_port": _RIPNG_UDP_PORT,
-            "multicast_group": _RIPNG_MULTICAST_GROUP,
-            "rib_command": _RIPNG_RIB_COMMAND,
-        },
-        "wire_requirements": {
-            "requires_ipv6_unicast": True,
-            "requires_controlled_service": True,
-            "requires_rip_peer": True,
-            "note": (
-                "RIPng smoke dry-run exposes the ripng_request stimulus intent "
-                "and probe-owned FRR ripngd target-service setup without sending "
-                "UDP/521 datagrams or installing FRR."
-            ),
-        },
-        "digest_hex": digest.hex()[:16],
-    }
 
 
 def _igmp_probe_plan(
@@ -988,8 +758,9 @@ _LEGACY_PLAN_BUILDERS: dict[str, PlanBuilder] = {
     # The BGP plan builder now lives in ``protocols/bgp.py`` and reaches
     # ``PLAN_BUILDERS`` through the registry merge below (re-imported into this
     # module above for identity/back-compat).
-    "rip-update-v2": _rip_update_probe_plan,
-    "ripng-update": _ripng_update_probe_plan,
+    # The RIP/RIPng plan builders now live in ``protocols/rip.py`` and reach
+    # ``PLAN_BUILDERS`` through the registry merge below (re-imported into this
+    # module above for identity/back-compat).
     "igmp-membership-query-observation": _igmp_probe_plan,
     "igmp-v2-membership-report-emission": _igmp_probe_plan,
     "igmp-v2-leave-group-emission": _igmp_probe_plan,
@@ -1024,9 +795,9 @@ _LEGACY_PLANNED_ONLY_REGISTERED_CASES: frozenset[str] = frozenset(
         "ikev2-sa-init",
         # ``bgp-session-smoke`` is contributed by the BGP plugin
         # (``protocols/bgp.py``) and unioned into ``PLANNED_ONLY_REGISTERED_CASES``
-        # below.
-        "rip-update-v2",
-        "ripng-update",
+        # below; the ``rip-update-v2`` / ``ripng-update`` planned-only cases are
+        # contributed by the RIP plugin (``protocols/rip.py``) and unioned in the
+        # same way.
         "igmp-membership-query-observation",
         "igmp-v2-membership-report-emission",
         "igmp-v2-leave-group-emission",

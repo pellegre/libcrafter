@@ -188,14 +188,9 @@ def probe_capabilities_from_lab_capabilities(
     # ``bgp_peer`` is derived by the BGP plugin's ``lab_capabilities`` hook
     # (folded in below), not here. The shared ``capability_names`` /
     # ``capability_sources`` tables still list it.
-    # RIP smoke drives a controlled FRR ripd peer on the target endpoint. Like
-    # BGP, it needs the IPv4-unicast + controlled-service substrate, with an
-    # optional provider flag to deny RIP peer provisioning.
-    rip_peer = (
-        ipv4_unicast
-        and controlled_services
-        and _capability_default_true(substrate, "rip_peer")
-    )
+    # ``rip_peer`` is derived by the RIP plugin's ``lab_capabilities`` hook
+    # (folded in below). The shared ``capability_names`` / ``capability_sources``
+    # tables still list it.
     # IGMP peer behavior needs a same-segment IPv4 multicast substrate plus a
     # controlled peer/listener/router service on the target endpoint. Providers
     # may explicitly deny either multicast delivery or the controlled IGMP peer;
@@ -307,9 +302,9 @@ def probe_capabilities_from_lab_capabilities(
         # plugin's ``lab_capabilities`` hook (folded in below).
         "repeated_response": repeated_response,
         # ``bgp_peer`` is contributed by the BGP plugin's ``lab_capabilities``
-        # hook (folded in below). The shared ``capability_names`` /
-        # ``capability_sources`` tables still list it.
-        "rip_peer": rip_peer,
+        # hook (folded in below). ``rip_peer`` is contributed by the RIP plugin's
+        # ``lab_capabilities`` hook (folded in below). The shared
+        # ``capability_names`` / ``capability_sources`` tables still list both.
         "ipv4_multicast": ipv4_multicast,
         "igmp_peer": igmp_peer,
         "ipsec_esp": ipsec_esp,
