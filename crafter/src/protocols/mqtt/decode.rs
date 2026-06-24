@@ -70,12 +70,16 @@ pub(crate) fn decode_mqtt(bytes: &[u8]) -> Result<(Mqtt, usize)> {
         MqttControlPacketType::Pingresp => {
             decode_empty_packet(packet_type, flags, remaining_length, body, "mqtt.pingresp")?
         }
+        MqttControlPacketType::Disconnect => decode_empty_packet(
+            packet_type,
+            flags,
+            remaining_length,
+            body,
+            "mqtt.disconnect",
+        )?,
         MqttControlPacketType::Subscribe => decode_subscribe(flags, remaining_length, body)?,
         MqttControlPacketType::Suback => decode_suback(flags, remaining_length, body)?,
         MqttControlPacketType::Unsubscribe => decode_unsubscribe(flags, remaining_length, body)?,
-        _ => Mqtt::raw(packet_type, body.to_vec())
-            .flags(flags)
-            .remaining_length(remaining_length),
     };
 
     Ok((mqtt, total_len))
@@ -211,6 +215,7 @@ fn decode_empty_packet(
         let field = match context {
             "mqtt.pingreq" => "mqtt.pingreq.remaining_length",
             "mqtt.pingresp" => "mqtt.pingresp.remaining_length",
+            "mqtt.disconnect" => "mqtt.disconnect.remaining_length",
             _ => "mqtt.empty.remaining_length",
         };
         return Err(CrafterError::invalid_field_value(
@@ -438,8 +443,8 @@ mod tests {
     use crate::packet::Layer;
 
     #[test]
-    fn decodes_single_raw_packet() {
-        let bytes = [0xe0, 0x03, b'a', b'b', b'c'];
+    fn decodes_typed_disconnect_and_rejects_declared_body() {
+        let bytes = [0xe0, 0x00];
 
         let (mqtt, consumed) = decode_mqtt(&bytes).unwrap();
 
@@ -447,8 +452,16 @@ mod tests {
         assert_eq!(mqtt.name(), "MQTT");
         assert_eq!(mqtt.packet_type(), MqttControlPacketType::Disconnect);
         assert_eq!(mqtt.flags_value(), 0x0);
-        assert_eq!(mqtt.remaining_length_value(), 3);
-        assert_eq!(mqtt.body(), b"abc");
+        assert_eq!(mqtt.remaining_length_value(), 0);
+        assert!(mqtt.body().is_empty());
+
+        match decode_mqtt(&[0xe0, 0x01, 0x00]) {
+            Err(CrafterError::InvalidFieldValue { field, reason }) => {
+                assert_eq!(field, "mqtt.disconnect.remaining_length");
+                assert!(reason.contains("must be 0"));
+            }
+            other => panic!("expected disconnect remaining-length error, got {other:?}"),
+        }
     }
 
     #[test]
