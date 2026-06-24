@@ -99,6 +99,7 @@ roots:
       - ah
       - ikev2
       - bgp
+      - mqtt
       - ospf
   - name: "l2:ipv4"
     layers:
@@ -120,6 +121,7 @@ roots:
       - ah
       - ikev2
       - bgp
+      - mqtt
       - ospf
 
 families:
@@ -173,6 +175,18 @@ families:
       - ipv6
       - tcp
       - bgp
+      - payload
+  - name: mqtt
+    default_stack:
+      - ipv4
+      - tcp
+      - mqtt
+      - payload
+    feature_tags:
+      - ipv4
+      - ipv6
+      - tcp
+      - mqtt
       - payload
   # ospf: OSPFv2 (RFC 2328) rides directly over IPv4 (IP protocol 89). The
   # ipv6 feature tag reserves next-header 89 for the OSPFv3 base layer. OSPF
@@ -655,6 +669,18 @@ stacks:
       - bgp-standard-communities
       - bgp-extended-communities
       - bgp-large-communities
+  - name: ipv4_tcp_mqtt_payload
+    root: "l3:ipv4"
+    layers:
+      - ipv4
+      - tcp
+      - mqtt
+      - payload
+    coverage_cases:
+      - mqtt-connect
+      - mqtt-publish
+      - mqtt-subscribe
+      - mqtt-ping-disconnect
   # OSPFv2 (RFC 2328) rides directly over IPv4 (IP protocol 89). The five
   # OSPFv2 packet types are sampled by the focused ospf-smoke profile; the
   # generator narrows case selection to these ospf-* cases when that profile is
@@ -719,6 +745,18 @@ stacks:
       - bgp-standard-communities
       - bgp-extended-communities
       - bgp-large-communities
+  - name: ipv6_tcp_mqtt_payload
+    root: "l3:ipv6"
+    layers:
+      - ipv6
+      - tcp
+      - mqtt
+      - payload
+    coverage_cases:
+      - mqtt-connect
+      - mqtt-publish
+      - mqtt-subscribe
+      - mqtt-ping-disconnect
   - name: ipv4_icmp_payload
     root: "l3:ipv4"
     layers:
@@ -1250,11 +1288,17 @@ constraints:
     parent: tcp
     children:
       - bgp
+      - mqtt
       - payload
   - name: bgp_children
     parent: bgp
     children:
       - bgp
+      - payload
+  - name: mqtt_children
+    parent: mqtt
+    children:
+      - mqtt
       - payload
   # ESP and AH (IP protocol 50 / 51) carry an inner upper-layer protocol in
   # transport mode (tcp / udp / icmp / payload) or an inner IP datagram in

@@ -1,0 +1,180 @@
+version: 1
+kind: layer
+name: mqtt
+summary: >-
+  MQTT 3.1.1 control packet framing over cleartext TCP port 1883, covering the
+  fixed-header control packet type and flags, Remaining Length
+  variable-byte-integer, and common CONNECT, PUBLISH, QoS acknowledgement,
+  SUBSCRIBE, SUBACK, UNSUBSCRIBE, UNSUBACK, PING, and DISCONNECT fields. MQTT
+  codepoints are sourced from .agents/docs/mqtt-codepoints.md; TLS-wrapped
+  secure-mqtt on TCP port 8883 remains opaque payload.
+
+roots: []
+parents:
+  - tcp
+children:
+  - payload
+  - mqtt
+
+fields:
+  - name: packet_type
+    type: enum
+    required: true
+    domains:
+      - connect
+      - connack
+      - publish
+      - puback
+      - pubrec
+      - pubrel
+      - pubcomp
+      - subscribe
+      - suback
+      - unsubscribe
+      - unsuback
+      - pingreq
+      - pingresp
+      - disconnect
+  - name: flags
+    type: uint4
+    required: true
+    domains:
+      - default
+      - publish_qos0
+      - publish_qos1
+      - publish_qos2
+      - publish_dup
+      - publish_retain
+      - pubrel_required
+      - subscribe_required
+      - unsubscribe_required
+      - malformed_override
+  - name: remaining_length
+    type: varint
+    required: true
+    domains:
+      - derived
+      - boundary
+      - malformed_override
+  - name: protocol_name
+    type: string
+    required: false
+    domains:
+      - mqtt311
+      - malformed_override
+  - name: protocol_level
+    type: uint8
+    required: false
+    domains:
+      - mqtt311
+      - malformed_override
+  - name: connect_flags
+    type: flags
+    required: false
+    domains:
+      - clean_session
+      - will
+      - username
+      - password
+      - malformed_override
+  - name: keep_alive
+    type: uint16
+    required: false
+    domains:
+      - default
+      - zero
+      - boundary
+  - name: client_id
+    type: string
+    required: false
+    domains:
+      - empty
+      - deterministic
+      - boundary
+  - name: packet_id
+    type: uint16
+    required: false
+    domains:
+      - absent
+      - deterministic
+      - boundary
+  - name: topic
+    type: string
+    required: false
+    domains:
+      - telemetry_topic
+      - wildcard_filter
+      - boundary
+  - name: topic_filters
+    type: string_list
+    required: false
+    domains:
+      - single
+      - multiple
+      - wildcard
+  - name: payload
+    type: bytes
+    required: false
+    domains:
+      - empty
+      - ascii
+      - binary
+      - boundary
+  - name: return_code
+    type: uint8
+    required: false
+    domains:
+      - connack_accepted
+      - connack_refused
+      - suback_qos0
+      - suback_qos1
+      - suback_qos2
+      - suback_failure
+  - name: username
+    type: string
+    required: false
+    domains:
+      - absent
+      - deterministic
+  - name: password
+    type: bytes
+    required: false
+    domains:
+      - absent
+      - deterministic
+
+coverage_cases:
+  - mqtt-connect
+  - mqtt-publish
+  - mqtt-subscribe
+  - mqtt-ping-disconnect
+
+backend_support:
+  scapy:
+    status: planned
+    native_layers:
+      - MQTT
+      - MQTTConnect
+      - MQTTConnack
+      - MQTTPublish
+      - MQTTPuback
+      - MQTTPubrec
+      - MQTTPubrel
+      - MQTTPubcomp
+      - MQTTSubscribe
+      - MQTTSuback
+      - MQTTUnsubscribe
+      - MQTTUnsuback
+      - MQTTPingreq
+      - MQTTPingresp
+      - MQTTDisconnect
+    encode: false
+    decode: false
+    notes:
+      - Scapy contrib import, materialization, and normalization are added by later MQTT oracle steps.
+  libcrafter:
+    status: planned
+    encode: false
+    decode: false
+    notes:
+      - The public crafter MQTT layer exists; oracle adapter materialization and decode support are added by a later step.
