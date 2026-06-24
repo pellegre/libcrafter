@@ -161,3 +161,19 @@ def all_stimulus_endpoint_cases() -> frozenset[str]:
     for plugin in registered_plugins():
         names.update(plugin.stimulus_endpoint_cases)
     return frozenset(names)
+
+
+def ipsec_interop_plugin() -> ProtocolPlugin | None:
+    """Return the registered plugin that owns the ``ipsec_interop`` hook.
+
+    The cross-crypto IPSec interop dry-run check is a single-protocol concern
+    (only the IPSec plugin sets ``ipsec_interop``), so this returns the first
+    registered plugin whose ``ipsec_interop`` hook is non-``None``, or ``None``
+    when no plugin participates. ``cli._dry_run_report`` routes the IPSec dry-run
+    interop metadata through this accessor instead of an inline branch.
+    """
+
+    for plugin in registered_plugins():
+        if plugin.ipsec_interop is not None:
+            return plugin
+    return None
