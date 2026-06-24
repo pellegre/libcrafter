@@ -77,6 +77,9 @@ pub(crate) fn decode_mqtt(bytes: &[u8]) -> Result<(Mqtt, usize)> {
             body,
             "mqtt.disconnect",
         )?,
+        MqttControlPacketType::Auth => Mqtt::raw(packet_type, body.to_vec())
+            .flags(flags)
+            .remaining_length(remaining_length),
         MqttControlPacketType::Subscribe => decode_subscribe(flags, remaining_length, body)?,
         MqttControlPacketType::Suback => decode_suback(flags, remaining_length, body)?,
         MqttControlPacketType::Unsubscribe => decode_unsubscribe(flags, remaining_length, body)?,
