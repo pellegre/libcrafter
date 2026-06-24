@@ -131,7 +131,6 @@ from .endpoint_addressing import (
     FAILURE_DECODE_FAILED,
     FAILURE_TARGET_SETUP_FAILED,
     FAILURE_TIMEOUT,
-    FAILURE_WRONG_FLAGS,
     FAILURE_WRONG_PAYLOAD,
     FAILURE_WRONG_PEER,
     apply_shared_ipv4_rewrite_tail as _apply_shared_ipv4_rewrite_tail,
@@ -653,9 +652,10 @@ def _write_stimulus_endpoint_request_artifact(
 
 _LEGACY_STIMULUS_ENDPOINT_CASES = frozenset(
     {
-        "tcp-syn-open",
-        "tcp-syn-closed",
-        "tcp-syn-options",
+        # The three TCP stimulus-endpoint cases (``tcp-syn-open`` /
+        # ``tcp-syn-closed`` / ``tcp-syn-options``) are now contributed by the TCP
+        # plugin (``protocols/tcp.py``) and unioned into
+        # ``_STIMULUS_ENDPOINT_CASES`` below.
         # The ``icmp-echo`` and ``ttl-expired`` stimulus-endpoint cases are now
         # contributed by the ICMP plugin (``protocols/icmp.py``) and unioned into
         # ``_STIMULUS_ENDPOINT_CASES`` below.
@@ -1169,35 +1169,14 @@ def _probe_plan_with_endpoint_addresses(
     # dispatched registry-first above before the per-protocol if/elif here (the
     # hook reproduces the same shared transport-IPv4 pre-sets and shared tail), so
     # they no longer appear in this legacy chain.
-    if case_name.startswith("tcp-syn-"):
-        source_port = int(updated.get("source_port", 0))
-        destination_port = int(updated.get("destination_port", 0))
-        updated["capture_filter"] = (
-            f"tcp and src host {target_ipv4} and dst host {source_ipv4} "
-            f"and src port {destination_port} and dst port {source_port}"
-        )
-        target_service = dict(
-            json_object(updated.get("target_service", {}), "probe_plan.target_service")
-        )
-        target_service.update(
-            {
-                "bind_ipv4": target_ipv4,
-                "source_ipv4": source_ipv4,
-            }
-        )
-        updated["target_service"] = target_service
-        rst_guard = dict(
-            json_object(updated.get("stimulus_rst_guard", {}), "probe_plan.rst_guard")
-        )
-        rst_guard.update(
-            {
-                "source_ipv4": source_ipv4,
-                "destination_ipv4": target_ipv4,
-                "source_port": source_port,
-                "destination_port": destination_port,
-            }
-        )
-        updated["stimulus_rst_guard"] = rst_guard
+    # The TCP live-path rewrite branch (``case_name.startswith("tcp-syn-")``,
+    # covering all three TCP cases) moved to the TCP plugin's
+    # ``rewrite_endpoint_addresses`` hook
+    # (:func:`tools.probe.engine.protocols.tcp.tcp_rewrite_endpoint_addresses`),
+    # dispatched registry-first above before the per-protocol if/elif here (the
+    # hook reproduces the same ``tcp-syn-`` name-prefix dispatch, the shared
+    # transport-IPv4 pre-sets, and the shared tail), so it no longer appears in
+    # this legacy chain.
     # The UDP live-path rewrite branch (all ten UDP cases) moved to the UDP
     # plugin's ``rewrite_endpoint_addresses`` hook
     # (:func:`tools.probe.engine.protocols.udp.udp_rewrite_endpoint_addresses`),
@@ -1328,14 +1307,12 @@ def _failure_reasons_for_case(case_name: str) -> list[str]:
     # the ICMP plugin's ``failure_reasons`` hook
     # (:func:`tools.probe.engine.protocols.icmp.icmp_failure_reasons`), dispatched
     # registry-first above, so it no longer appears in this legacy chain.
-    if case_name in {"tcp-syn-open", "tcp-syn-closed"}:
-        return [
-            FAILURE_TIMEOUT,
-            FAILURE_WRONG_PEER,
-            FAILURE_WRONG_FLAGS,
-            FAILURE_DECODE_FAILED,
-            FAILURE_TARGET_SETUP_FAILED,
-        ]
+    # The TCP failure-reason taxonomy (``tcp-syn-open`` / ``tcp-syn-closed``)
+    # moved to the TCP plugin's ``failure_reasons`` hook
+    # (:func:`tools.probe.engine.protocols.tcp.tcp_failure_reasons`), dispatched
+    # registry-first above, so it no longer appears in this legacy chain.
+    # (``tcp-syn-options`` was never covered by the TCP branch; it falls through
+    # to the shared default taxonomy below, unchanged.)
     # The UDP failure-reason taxonomy (all ten UDP cases) moved to the UDP
     # plugin's ``failure_reasons`` hook
     # (:func:`tools.probe.engine.protocols.udp.udp_failure_reasons`), dispatched

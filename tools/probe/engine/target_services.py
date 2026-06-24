@@ -119,6 +119,20 @@ from .protocols.udp import (
     udp_responder_setup_lines,
 )
 
+# TCP's plan selector (``tcp_probe_plans``) and the setup-script blocks (the
+# closed-TCP-port free check and the open-listener heredoc + launch) were
+# migrated into the TCP plugin (:mod:`tools.probe.engine.protocols.tcp`). They are
+# re-imported here so ``target_services.tcp_probe_plans`` keeps resolving (``live.py``
+# / ``prepare_wire_probe_target`` use it, and the partition reroutes the TCP cases
+# to the plugin's ``target_service`` hook), and so ``target_service_setup_script``
+# can render the TCP setup blocks. The TCP plugin module does not import
+# ``target_services``, so this does not cycle.
+from .protocols.tcp import (
+    tcp_closed_port_check_lines,
+    tcp_open_listener_setup_lines,
+    tcp_probe_plans,
+)
+
 # NDP's kernel case set, plan selector, and the IPv6/kernel setup-script block
 # were migrated into the NDP plugin (:mod:`tools.probe.engine.protocols.ndp`).
 # They are re-imported here so ``target_services.ndp_probe_plans`` keeps
@@ -435,51 +449,24 @@ def _legacy_target_service_setup_plan(
     empty registry that is every plan, so the output is byte-identical.
     """
 
-    tcp_open_plans = plans_by_destination_port(
-        plan for plan in probe_plans if plan.get("case") == "tcp-syn-open"
-    )
-    tcp_closed_plans = plans_by_destination_port(
-        plan for plan in probe_plans if plan.get("case") == "tcp-syn-closed"
-    )
     bgp_plans = bgp_peer_probe_plans(probe_plans)
     arp_plans = arp_probe_plans(probe_plans)
     return {
         "role": "target",
         "planned": True,
-        # The ``udp-responder`` services and ``closed_udp_ports`` entries (and
-        # their ``starts_services`` contribution) moved to the UDP plugin's
-        # ``target_service`` hook; the registry partition diverts the UDP cases off
-        # this legacy path, so this body sees no UDP plans.
-        "starts_services": not dry_run
-        and bool(
-            tcp_open_plans
-            or bgp_plans
-        ),
+        # The ``tcp-open-listener`` services and ``closed_tcp_ports`` entries (and
+        # their ``starts_services`` contribution) moved to the TCP plugin's
+        # ``target_service`` hook; the ``udp-responder`` services and
+        # ``closed_udp_ports`` entries (and their ``starts_services`` contribution)
+        # moved to the UDP plugin's ``target_service`` hook. The registry partition
+        # diverts the TCP and UDP cases off this legacy path, so this body sees no
+        # TCP or UDP plans.
+        "starts_services": not dry_run and bool(bgp_plans),
         "dry_run_starts_services": False,
         "services": [
-            *[
-                {
-                    "name": "tcp-open-listener",
-                    "protocol": "tcp",
-                    "port": port,
-                    "purpose": "tcp-syn-open",
-                    "deterministic": True,
-                    **target_service_address_fields(plan),
-                }
-                for port, plan in tcp_open_plans.items()
-            ],
             *bgp_peer_service_plans(bgp_plans),
         ],
-        "closed_tcp_ports": [
-            {
-                "port": port,
-                "state": "verified-unbound" if not dry_run else "planned-unbound",
-                "purpose": "tcp-syn-closed",
-                "deterministic": True,
-                **target_service_address_fields(plan),
-            }
-            for port, plan in tcp_closed_plans.items()
-        ],
+        "closed_tcp_ports": [],
         "closed_udp_ports": [],
         "controlled_router": {
             "available": False,
@@ -528,14 +515,11 @@ def bgp_peer_service_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject
 # --------------------------------------------------------------------------- #
 
 
-def tcp_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
-    """Return the TCP-SYN probe plans (open and closed) in order."""
-
-    return [
-        plan
-        for plan in probe_plans
-        if str(plan.get("case", "")).startswith("tcp-syn-")
-    ]
+# The TCP plan selector (``tcp_probe_plans``) now lives in
+# :mod:`tools.probe.engine.protocols.tcp` and is re-imported above so
+# ``target_services.tcp_probe_plans`` keeps resolving (``live.py`` /
+# ``prepare_wire_probe_target`` use it; the partition reroutes the TCP plans to
+# the plugin's ``target_service`` hook).
 
 
 # The DNS responder case set (``_DNS_RESPONDER_CASES``) and the ``dns_probe_plans``
@@ -790,68 +774,26 @@ def target_service_setup_script(
     # ``protocols.dhcp.dhcp_port_check_lines``; render it here so the script bytes
     # stay byte-identical to the legacy inline ``for port in dhcp_ports:`` loop.
     lines.extend(dhcp_port_check_lines(dhcp_plans))
-    for port in closed_ports:
-        lines.append(f"check_port_free \"$tcp_bind_ipv4\" {port}")
-        lines.append(f"echo closed_port_{port}=free")
+    # The closed-TCP-port free-check moved to
+    # ``protocols.tcp.tcp_closed_port_check_lines``; render it here so the script
+    # bytes stay byte-identical to the legacy inline ``for port in closed_ports:``
+    # loop.
+    lines.extend(tcp_closed_port_check_lines(closed_ports))
     # The closed-UDP-port free-check moved to
     # ``protocols.udp.udp_closed_port_check_lines``; render it here so the script
     # bytes stay byte-identical to the legacy inline ``for port in closed_udp_ports:``
     # loop.
     lines.extend(udp_closed_port_check_lines(closed_udp_ports))
-    for port in open_ports:
-        listener_path = posixpath.join(artifact_root, f"tcp-listener-{port}.py")
-        stdout_path = posixpath.join(artifact_root, f"tcp-listener-{port}.stdout.txt")
-        stderr_path = posixpath.join(artifact_root, f"tcp-listener-{port}.stderr.txt")
-        pid_path = posixpath.join(artifact_root, f"tcp-listener-{port}.pid")
-        lines.extend(
-            [
-                f"check_port_free \"$tcp_bind_ipv4\" {port}",
-                f"cat > {shlex.quote(listener_path)} <<'PY'",
-                "import signal",
-                "import socket",
-                "import sys",
-                "",
-                "stop = False",
-                "",
-                "def handle_stop(_signum, _frame):",
-                "    global stop",
-                "    stop = True",
-                "",
-                "signal.signal(signal.SIGTERM, handle_stop)",
-                "signal.signal(signal.SIGINT, handle_stop)",
-                "bind_ip = sys.argv[1]",
-                "port = int(sys.argv[2])",
-                "sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)",
-                "sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)",
-                "sock.bind((bind_ip, port))",
-                "sock.listen(128)",
-                "sock.settimeout(1.0)",
-                "print(f'listening on {bind_ip}:{port}', flush=True)",
-                "while not stop:",
-                "    try:",
-                "        conn, _addr = sock.accept()",
-                "    except socket.timeout:",
-                "        continue",
-                "    conn.close()",
-                "sock.close()",
-                "PY",
-                (
-                    f"python3 {shlex.quote(listener_path)} \"$tcp_bind_ipv4\" {port} "
-                    f">{shlex.quote(stdout_path)} 2>{shlex.quote(stderr_path)} &"
-                ),
-                "pid=$!",
-                f"echo \"$pid\" > {shlex.quote(pid_path)}",
-                "printf '%s\\n' \"kill $pid 2>/dev/null || true\" >> \"$cleanup\"",
-                f"printf '%s\\n' \"rm -f {shlex.quote(pid_path)}\" >> \"$cleanup\"",
-                "sleep 0.5",
-                "if ! kill -0 \"$pid\" 2>/dev/null; then",
-                f"  cat {shlex.quote(stderr_path)} >&2 || true",
-                f"  echo listener_{port}=failed >&2",
-                "  exit 73",
-                "fi",
-                f"echo listener_{port}=running",
-            ]
+    # The TCP open-listener heredoc + launch block moved to
+    # ``protocols.tcp.tcp_open_listener_setup_lines``; render it here so the script
+    # bytes stay byte-identical to the legacy inline ``for port in open_ports:``
+    # loop.
+    lines.extend(
+        tcp_open_listener_setup_lines(
+            artifact_root=artifact_root,
+            open_ports=open_ports,
         )
+    )
     # The DNS responder heredoc + launch block moved to
     # ``protocols.dns.dns_responder_setup_lines``; render it here so the
     # script bytes stay byte-identical to the legacy inline blocks.
@@ -960,6 +902,8 @@ __all__ = [
     "target_service_address_fields",
     "target_service_setup_plan",
     "target_service_setup_script",
+    "tcp_closed_port_check_lines",
+    "tcp_open_listener_setup_lines",
     "tcp_probe_plans",
     "udp_probe_plans",
     "udp_responder_descriptor",
