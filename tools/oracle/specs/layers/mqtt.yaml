@@ -165,9 +165,9 @@ backend_support:
       - MQTTSuback
       - MQTTUnsubscribe
       - MQTTUnsuback
-      - MQTTPingreq
-      - MQTTPingresp
       - MQTTDisconnect
+      - MQTTTopic
+      - MQTTTopicQOS
     encode: false
     decode: false
     notes:
