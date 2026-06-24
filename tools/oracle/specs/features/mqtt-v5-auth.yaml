@@ -1,0 +1,120 @@
+version: 1
+kind: feature
+name: mqtt_v5_auth
+summary: >-
+  MQTT 5.0 AUTH control-packet framing for enhanced authentication, including
+  the empty short form and the full reason-code plus authentication properties
+  form.
+
+layers:
+  - mqtt
+  - tcp
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: auth_short
+    sources:
+      - .agents/docs/mqtt-manifest.md#MQTT-5.0-AUTH-Packet
+      - .agents/docs/mqtt-codepoints.md#Control-Packet-Types
+    message_type: auth
+    checks:
+      - fixed_header_type_is_auth
+      - flags_are_zero
+      - short_form_remaining_length_is_zero
+  - name: auth_reason_and_properties
+    sources:
+      - .agents/docs/mqtt-manifest.md#MQTT-5.0-AUTH-Packet
+      - .agents/docs/mqtt-codepoints.md#MQTT-5.0-Property-Identifiers
+    message_type: auth
+    checks:
+      - reason_code_preserved
+      - authentication_method_preserved
+      - authentication_data_preserved
+
+coverage_cases:
+  - mqtt-v5-auth-short
+  - mqtt-v5-auth-properties
+
+supported_cases:
+  - name: mqtt-v5-auth-short
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+    roots:
+      - "l3:ipv4"
+      - "l3:ipv6"
+    contract_only: true
+    contract_reason: scapy.contrib.mqtt has no typed AUTH materializer in this plan step.
+    fields:
+      mqtt:
+        packet_type: auth
+        version: 5
+        flags: default
+    expected:
+      mqtt_hex: "f000"
+      fixed_header_hex: "f000"
+      remaining_length: 0
+      normalized_fields:
+        packet_type: auth
+        version: 5
+        flags: 0
+        remaining_length: 0
+        reason_code: 0
+  - name: mqtt-v5-auth-properties
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+    roots:
+      - "l3:ipv4"
+      - "l3:ipv6"
+    contract_only: true
+    contract_reason: scapy.contrib.mqtt has no typed AUTH materializer in this plan step.
+    fields:
+      mqtt:
+        packet_type: auth
+        version: 5
+        reason_code: 24
+        properties:
+          - name: authentication_method
+            value: scram
+          - name: authentication_data
+            value:
+              hex: "010203"
+    expected:
+      mqtt_hex: "f010180e150005736372616d160003010203"
+      fixed_header_hex: "f010"
+      remaining_length: 16
+      normalized_fields:
+        packet_type: auth
+        version: 5
+        flags: 0
+        remaining_length: 16
+        reason_code: 24
+        properties:
+          - name: authentication_method
+            value: scram
+          - name: authentication_data
+            value:
+              hex: "010203"
+              length: 3
+
+backend_support:
+  scapy:
+    status: planned
+    notes:
+      - Scapy contrib MQTT does not expose a typed MQTT 5 AUTH packet in the
+        current backend wiring, so AUTH cases are contract-only until backend
+        support is added or the gap is recorded as intentional.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    notes:
+      - The public crafter MQTT layer builds, decodes, and recompiles MQTT 5
+        AUTH short and property-bearing forms byte-for-byte.

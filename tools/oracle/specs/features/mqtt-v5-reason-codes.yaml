@@ -1,0 +1,326 @@
+version: 1
+kind: feature
+name: mqtt_v5_reason_codes
+summary: >-
+  MQTT 5.0 reason-code forms for CONNACK, QoS acknowledgements, SUBACK,
+  UNSUBACK, and DISCONNECT, including short/full acknowledgement framing and
+  byte-exact libcrafter golden output.
+
+layers:
+  - mqtt
+  - tcp
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: connack_reason_code
+    sources:
+      - .agents/docs/mqtt-manifest.md#MQTT-5.0-Reason-Codes
+      - .agents/docs/mqtt-codepoints.md#MQTT-5.0-Reason-Codes
+    message_type: connack
+    checks:
+      - reason_code_preserved
+      - property_block_preserved
+  - name: qos_ack_reason_codes
+    sources:
+      - .agents/docs/mqtt-manifest.md#MQTT-5.0-Reason-Codes
+      - .agents/docs/mqtt-codepoints.md#MQTT-5.0-Reason-Codes
+    message_type: puback_family
+    checks:
+      - packet_identifier_preserved
+      - reason_code_preserved
+      - property_length_preserved
+  - name: suback_reason_codes
+    sources:
+      - .agents/docs/mqtt-manifest.md#MQTT-5.0-Reason-Codes
+      - .agents/docs/mqtt-codepoints.md#MQTT-5.0-Reason-Codes
+    message_type: suback
+    checks:
+      - reason_code_list_preserved
+      - property_block_preserved
+  - name: unsuback_reason_codes
+    sources:
+      - .agents/docs/mqtt-manifest.md#MQTT-5.0-Reason-Codes
+      - .agents/docs/mqtt-codepoints.md#MQTT-5.0-Reason-Codes
+    message_type: unsuback
+    checks:
+      - reason_code_list_preserved
+      - property_block_preserved
+  - name: disconnect_reason_code
+    sources:
+      - .agents/docs/mqtt-manifest.md#MQTT-5.0-Reason-Codes
+      - .agents/docs/mqtt-codepoints.md#MQTT-5.0-Reason-Codes
+    message_type: disconnect
+    checks:
+      - reason_code_preserved
+      - property_block_preserved
+
+coverage_cases:
+  - mqtt-v5-connack-reason-code
+  - mqtt-v5-puback-reason-code
+  - mqtt-v5-pubrec-reason-code
+  - mqtt-v5-pubrel-reason-code
+  - mqtt-v5-pubcomp-reason-code
+  - mqtt-v5-suback-reason-codes
+  - mqtt-v5-unsuback-reason-codes
+  - mqtt-v5-disconnect-reason-code
+
+supported_cases:
+  - name: mqtt-v5-connack-reason-code
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+    roots:
+      - "l3:ipv4"
+      - "l3:ipv6"
+    contract_only: true
+    contract_reason: scapy.contrib.mqtt backend support for MQTT 5 reason-code framing is added in the follow-up backend step.
+    fields:
+      mqtt:
+        packet_type: connack
+        version: 5
+        session_present: true
+        reason_code: 140
+        properties:
+          - name: reason_string
+            value: "no"
+    expected:
+      mqtt_hex: "2011018c0e1200037372762100141f00026e6f"
+      fixed_header_hex: "2011"
+      remaining_length: 17
+      normalized_fields:
+        packet_type: connack
+        version: 5
+        reason_code: 140
+        session_present: true
+  - name: mqtt-v5-puback-reason-code
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+    roots:
+      - "l3:ipv4"
+      - "l3:ipv6"
+    contract_only: true
+    contract_reason: scapy.contrib.mqtt backend support for MQTT 5 reason-code framing is added in the follow-up backend step.
+    fields:
+      mqtt:
+        packet_type: puback
+        version: 5
+        packet_id: 4660
+        reason_code: 16
+        properties:
+          - name: reason_string
+            value: queued
+    expected:
+      mqtt_hex: "400d123410091f0006717565756564"
+      fixed_header_hex: "400d"
+      remaining_length: 13
+      normalized_fields:
+        packet_type: puback
+        version: 5
+        packet_id: 4660
+        reason_code: 16
+  - name: mqtt-v5-pubrec-reason-code
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+    roots:
+      - "l3:ipv4"
+      - "l3:ipv6"
+    contract_only: true
+    contract_reason: scapy.contrib.mqtt backend support for MQTT 5 reason-code framing is added in the follow-up backend step.
+    fields:
+      mqtt:
+        packet_type: pubrec
+        version: 5
+        packet_id: 4660
+        reason_code: 16
+    expected:
+      mqtt_hex: "500412341000"
+      fixed_header_hex: "5004"
+      remaining_length: 4
+      normalized_fields:
+        packet_type: pubrec
+        version: 5
+        packet_id: 4660
+        reason_code: 16
+  - name: mqtt-v5-pubrel-reason-code
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+    roots:
+      - "l3:ipv4"
+      - "l3:ipv6"
+    contract_only: true
+    contract_reason: scapy.contrib.mqtt backend support for MQTT 5 reason-code framing is added in the follow-up backend step.
+    fields:
+      mqtt:
+        packet_type: pubrel
+        version: 5
+        flags: pubrel_required
+        packet_id: 8738
+        reason_code: 146
+    expected:
+      mqtt_hex: "620422229200"
+      fixed_header_hex: "6204"
+      remaining_length: 4
+      normalized_fields:
+        packet_type: pubrel
+        version: 5
+        flags: 2
+        packet_id: 8738
+        reason_code: 146
+  - name: mqtt-v5-pubcomp-reason-code
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+    roots:
+      - "l3:ipv4"
+      - "l3:ipv6"
+    contract_only: true
+    contract_reason: scapy.contrib.mqtt backend support for MQTT 5 reason-code framing is added in the follow-up backend step.
+    fields:
+      mqtt:
+        packet_type: pubcomp
+        version: 5
+        packet_id: 4660
+        reason_code: 0
+    expected:
+      mqtt_hex: "700412340000"
+      fixed_header_hex: "7004"
+      remaining_length: 4
+      normalized_fields:
+        packet_type: pubcomp
+        version: 5
+        packet_id: 4660
+        reason_code: 0
+  - name: mqtt-v5-suback-reason-codes
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+    roots:
+      - "l3:ipv4"
+      - "l3:ipv6"
+    contract_only: true
+    contract_reason: scapy.contrib.mqtt backend support for MQTT 5 reason-code framing is added in the follow-up backend step.
+    fields:
+      mqtt:
+        packet_type: suback
+        version: 5
+        packet_id: 17185
+        properties:
+          - name: reason_string
+            value: partial
+        reason_codes:
+          - 0
+          - 1
+          - 131
+    expected:
+      mqtt_hex: "901043210a1f00077061727469616c000183"
+      fixed_header_hex: "9010"
+      remaining_length: 16
+      normalized_fields:
+        packet_type: suback
+        version: 5
+        packet_id: 17185
+        reason_codes:
+          - 0
+          - 1
+          - 131
+  - name: mqtt-v5-unsuback-reason-codes
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+    roots:
+      - "l3:ipv4"
+      - "l3:ipv6"
+    contract_only: true
+    contract_reason: scapy.contrib.mqtt backend support for MQTT 5 reason-code framing is added in the follow-up backend step.
+    fields:
+      mqtt:
+        packet_type: unsuback
+        version: 5
+        packet_id: 17185
+        properties:
+          - name: reason_string
+            value: gone
+        reason_codes:
+          - 0
+          - 17
+          - 143
+    expected:
+      mqtt_hex: "b00d4321071f0004676f6e6500118f"
+      fixed_header_hex: "b00d"
+      remaining_length: 13
+      normalized_fields:
+        packet_type: unsuback
+        version: 5
+        packet_id: 17185
+        reason_codes:
+          - 0
+          - 17
+          - 143
+  - name: mqtt-v5-disconnect-reason-code
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+    roots:
+      - "l3:ipv4"
+      - "l3:ipv6"
+    contract_only: true
+    contract_reason: scapy.contrib.mqtt backend support for MQTT 5 reason-code framing is added in the follow-up backend step.
+    fields:
+      mqtt:
+        packet_type: disconnect
+        version: 5
+        reason_code: 142
+        properties:
+          - name: session_expiry_interval
+            value: 60
+    expected:
+      mqtt_hex: "e0078e05110000003c"
+      fixed_header_hex: "e007"
+      remaining_length: 7
+      normalized_fields:
+        packet_type: disconnect
+        version: 5
+        reason_code: 142
+        properties:
+          - name: session_expiry_interval
+            value: 60
+
+backend_support:
+  scapy:
+    status: partial
+    native_layers:
+      - MQTT
+      - MQTTConnack
+      - MQTTPuback
+      - MQTTPubrec
+      - MQTTPubrel
+      - MQTTPubcomp
+      - MQTTSuback
+      - MQTTUnsuback
+      - MQTTDisconnect
+    notes:
+      - Baseline Scapy MQTT acknowledgement layers are available, but MQTT 5
+        reason-code/property framing is not enabled until the backend gap step,
+        so these cases are contract-only here.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    notes:
+      - The public crafter MQTT layer builds, decodes, and recompiles MQTT 5
+        reason-code acknowledgement and DISCONNECT forms byte-for-byte.
