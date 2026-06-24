@@ -41,6 +41,9 @@ const PUBLISH_311_BASELINE: &[u8] = &[
     b'2',
 ];
 
+const PUBLISH_V5_TOPIC_ALIAS_ONLY: &[u8] =
+    &[0x30, 0x08, 0x00, 0x00, 0x03, 0x23, 0x00, 0x09, b'4', b'2'];
+
 const PUBACK_V5_FULL: &[u8] = &[
     0x40, 0x0d, 0x12, 0x34, 0x10, 0x09, 0x1f, 0x00, 0x06, b'q', b'u', b'e', b'u', b'e', b'd',
 ];
@@ -346,6 +349,62 @@ fn publish_v5_properties_compile_byte_exact() -> crafter::Result<()> {
     let bytes = mqtt_bytes(publish_v5_message())?;
 
     assert_eq!(bytes, PUBLISH_V5_WITH_PROPERTIES);
+    Ok(())
+}
+
+#[test]
+fn topic_alias_v5_publish_with_topic_round_trips() -> crafter::Result<()> {
+    let bytes = mqtt_bytes(publish_v5_message())?;
+    assert_eq!(bytes, PUBLISH_V5_WITH_PROPERTIES);
+
+    let decoded = Mqtt::decode_payload_with_default_version(
+        PUBLISH_V5_WITH_PROPERTIES,
+        MQTT_5_PROTOCOL_LEVEL,
+    )?;
+    let mqtt = decoded.layer::<Mqtt>().expect("decoded MQTT PUBLISH layer");
+
+    assert_eq!(mqtt.packet_type(), MqttControlPacketType::Publish);
+    assert_eq!(mqtt.version_value(), MQTT_5_PROTOCOL_LEVEL);
+    assert_eq!(mqtt.topic_value(), Some("sensors/t"));
+    assert_eq!(
+        mqtt.publish_properties_value()
+            .expect("publish properties")
+            .property_values(),
+        &[
+            MqttProperty::TopicAlias(7),
+            MqttProperty::ContentType("text/plain".to_string()),
+            MqttProperty::user_property("site", "lab"),
+        ]
+    );
+    assert_eq!(decoded.compile()?.as_bytes(), PUBLISH_V5_WITH_PROPERTIES);
+    Ok(())
+}
+
+#[test]
+fn topic_alias_v5_publish_allows_empty_topic_alias_only() -> crafter::Result<()> {
+    let bytes = mqtt_bytes(
+        Mqtt::publish()
+            .version(MQTT_5_PROTOCOL_LEVEL)
+            .topic("")
+            .topic_alias(9)
+            .payload(b"42".to_vec()),
+    )?;
+    assert_eq!(bytes, PUBLISH_V5_TOPIC_ALIAS_ONLY);
+
+    let decoded = Mqtt::decode_payload_with_default_version(&bytes, MQTT_5_PROTOCOL_LEVEL)?;
+    let mqtt = decoded.layer::<Mqtt>().expect("decoded MQTT PUBLISH layer");
+
+    assert_eq!(mqtt.packet_type(), MqttControlPacketType::Publish);
+    assert_eq!(mqtt.version_value(), MQTT_5_PROTOCOL_LEVEL);
+    assert_eq!(mqtt.topic_value(), Some(""));
+    assert_eq!(mqtt.payload_value(), Some(&b"42"[..]));
+    assert_eq!(
+        mqtt.publish_properties_value()
+            .expect("publish properties")
+            .property_values(),
+        &[MqttProperty::TopicAlias(9)]
+    );
+    assert_eq!(decoded.compile()?.as_bytes(), PUBLISH_V5_TOPIC_ALIAS_ONLY);
     Ok(())
 }
 
