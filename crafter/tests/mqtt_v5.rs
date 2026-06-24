@@ -139,7 +139,7 @@ fn mqtt_over_ipv4_tcp(payload: &[u8]) -> crafter::Result<Vec<u8>> {
             .seq(0x0102_0304)
             .ack(0x0506_0708)
             .ack_segment()
-        / Raw::from_bytes(payload.to_vec());
+        / Raw::from_bytes(payload);
     Ok(packet.compile()?.into_bytes())
 }
 
