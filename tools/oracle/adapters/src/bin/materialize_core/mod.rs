@@ -18,6 +18,15 @@ use crafter::protocols::bgp::{
 };
 use crafter::protocols::igmp::{IgmpExtension, IGMP_ALL_ROUTERS_GROUP, IGMP_ALL_SYSTEMS_GROUP};
 use crafter::protocols::link::{RadiotapChannel, RadiotapFlags, RadiotapRxFlags, RadiotapTxFlags};
+use crafter::protocols::mqtt::{
+    Mqtt, MqttControlPacketType, MQTT_CONNACK_ACCEPTED, MQTT_CONNACK_BAD_USERNAME_OR_PASSWORD,
+    MQTT_CONNACK_IDENTIFIER_REJECTED, MQTT_CONNACK_NOT_AUTHORIZED, MQTT_CONNACK_SERVER_UNAVAILABLE,
+    MQTT_CONNACK_UNACCEPTABLE_PROTOCOL_VERSION, MQTT_CONNECT_FLAG_CLEAN_SESSION,
+    MQTT_CONNECT_FLAG_PASSWORD, MQTT_CONNECT_FLAG_USER_NAME, MQTT_CONNECT_FLAG_WILL,
+    MQTT_CONNECT_FLAG_WILL_RETAIN, MQTT_PORT, MQTT_PUBLISH_FLAG_DUP, MQTT_PUBLISH_FLAG_RETAIN,
+    MQTT_PUBLISH_QOS_0, MQTT_PUBLISH_QOS_1, MQTT_PUBLISH_QOS_2, MQTT_SUBACK_FAILURE,
+    MQTT_SUBACK_MAX_QOS_0, MQTT_SUBACK_MAX_QOS_1, MQTT_SUBACK_MAX_QOS_2,
+};
 use crafter::protocols::rip::ripng::{Ripng, RipngRte};
 use crafter::protocols::rip::{RipAuth, RipDigestAlgorithm};
 use serde_json::{json, Map, Value};
@@ -257,6 +266,7 @@ fn build_layer(plan: &Value, layer: &str) -> ExampleResult<Box<dyn Layer>> {
         "rip" => Ok(Box::new(rip_layer(plan)?)),
         "ripng" => Ok(Box::new(ripng_layer(plan)?)),
         "bgp" => Ok(Box::new(bgp_layer(plan)?)),
+        "mqtt" => Ok(Box::new(mqtt_layer(plan)?)),
         "radiotap" => Ok(Box::new(radiotap_layer(plan)?)),
         "dot11" => Ok(Box::new(dot11_layer(plan)?)),
         "llc_snap" => Ok(Box::new(llc_snap_layer(plan)?)),
@@ -1578,6 +1588,9 @@ fn tcp_layer(plan: &Value, next_layer: Option<&str>) -> ExampleResult<Tcp> {
     if next_layer == Some("bgp") && source_port != BGP_PORT && destination_port != BGP_PORT {
         destination_port = BGP_PORT;
     }
+    if next_layer == Some("mqtt") && source_port != MQTT_PORT && destination_port != MQTT_PORT {
+        destination_port = MQTT_PORT;
+    }
     let mut layer = Tcp::new()
         .sport(source_port)
         .dport(destination_port)
@@ -1840,6 +1853,383 @@ fn bgp_message_type(value: &Value) -> ExampleResult<u8> {
         };
     }
     u8_value(value)
+}
+
+fn mqtt_layer(plan: &Value) -> ExampleResult<Mqtt> {
+    let fields = layer_fields(plan, "mqtt")?;
+    let packet_type = mqtt_packet_type(required(
+        fields,
+        &["packet_type", "type", "control_packet_type"],
+    )?)?;
+    let mut layer = match packet_type {
+        MqttControlPacketType::Connect => mqtt_connect_layer(fields)?,
+        MqttControlPacketType::Connack => mqtt_connack_layer(fields)?,
+        MqttControlPacketType::Publish => mqtt_publish_layer(fields)?,
+        MqttControlPacketType::Puback => mqtt_packet_identifier_layer(Mqtt::puback(), fields)?,
+        MqttControlPacketType::Pubrec => mqtt_packet_identifier_layer(Mqtt::pubrec(), fields)?,
+        MqttControlPacketType::Pubrel => mqtt_packet_identifier_layer(Mqtt::pubrel(), fields)?,
+        MqttControlPacketType::Pubcomp => mqtt_packet_identifier_layer(Mqtt::pubcomp(), fields)?,
+        MqttControlPacketType::Subscribe => mqtt_subscribe_layer(fields)?,
+        MqttControlPacketType::Suback => mqtt_suback_layer(fields)?,
+        MqttControlPacketType::Unsubscribe => mqtt_unsubscribe_layer(fields)?,
+        MqttControlPacketType::Unsuback => mqtt_packet_identifier_layer(Mqtt::unsuback(), fields)?,
+        MqttControlPacketType::Pingreq => Mqtt::pingreq(),
+        MqttControlPacketType::Pingresp => Mqtt::pingresp(),
+        MqttControlPacketType::Disconnect => Mqtt::disconnect(),
+    };
+
+    if let Some(value) = optional(fields, &["flags"]) {
+        layer = layer.flags(mqtt_flags(value, packet_type)?);
+    }
+    if let Some(value) = optional(fields, &["remaining_length", "len"]) {
+        if let Some(remaining_length) = mqtt_remaining_length(value)? {
+            layer = layer.remaining_length(remaining_length);
+        }
+    }
+    Ok(layer)
+}
+
+fn mqtt_connect_layer(fields: &Map<String, Value>) -> ExampleResult<Mqtt> {
+    let mut layer = Mqtt::connect();
+    if let Some(value) = optional(fields, &["protocol_name", "protoname"]) {
+        layer = layer.protocol_name(text_value(value)?.to_string());
+    }
+    if let Some(value) = optional(fields, &["protocol_level", "protolevel"]) {
+        layer = layer.protocol_level(u8_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["clean_session", "cleansess"]) {
+        layer = layer.clean_session(bool_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["keep_alive", "klive"]) {
+        layer = layer.keep_alive(u16_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["client_id", "clientId"]) {
+        layer = layer.client_id(text_value(value)?.to_string());
+    }
+    let will_topic = optional(fields, &["will_topic"]);
+    let will_message = optional(fields, &["will_message"]);
+    if will_topic.is_some() || will_message.is_some() {
+        let topic = will_topic.map(text_value).transpose()?.unwrap_or("");
+        let message = will_message
+            .map(mqtt_bytes)
+            .transpose()?
+            .unwrap_or_default();
+        layer = layer.will(topic.to_string(), message);
+    }
+    if let Some(value) = optional(fields, &["will_qos"]) {
+        layer = layer.will_qos(mqtt_qos(value)?);
+    }
+    if let Some(value) = optional(fields, &["will_retain"]) {
+        layer = layer.will_retain(bool_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["username"]) {
+        layer = layer.username(text_value(value)?.to_string());
+    }
+    if let Some(value) = optional(fields, &["password"]) {
+        layer = layer.password(mqtt_bytes(value)?);
+    }
+    if let Some(value) = optional(fields, &["connect_flags"]) {
+        layer = layer.connect_flags(mqtt_connect_flags(value)?);
+    }
+    Ok(layer)
+}
+
+fn mqtt_connack_layer(fields: &Map<String, Value>) -> ExampleResult<Mqtt> {
+    let mut layer = Mqtt::connack();
+    if let Some(value) = optional(fields, &["session_present"]) {
+        layer = layer.session_present(bool_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["ack_flags"]) {
+        let ack_flags = u8_value(value)?;
+        if ack_flags & !0x01 != 0 {
+            return Err(format!(
+                "MQTT CONNACK ack_flags reserved bits are not constructible through the public Mqtt layer: {ack_flags:#04x}"
+            )
+            .into());
+        }
+        layer = layer.session_present(ack_flags & 0x01 != 0);
+    }
+    if let Some(value) = optional(fields, &["return_code"]) {
+        layer = layer.return_code(mqtt_return_code(value)?);
+    }
+    Ok(layer)
+}
+
+fn mqtt_publish_layer(fields: &Map<String, Value>) -> ExampleResult<Mqtt> {
+    let mut layer = Mqtt::publish();
+    let topic = optional(fields, &["topic"])
+        .map(text_value)
+        .transpose()?
+        .unwrap_or("crafter/demo");
+    layer = layer.topic(topic.to_string());
+    if let Some(value) = optional(fields, &["qos"]) {
+        layer = layer.qos(mqtt_qos(value)?);
+    }
+    if let Some(value) = optional(fields, &["dup"]) {
+        layer = layer.dup(bool_value(value)?);
+    }
+    if let Some(value) = optional(fields, &["retain"]) {
+        layer = layer.retain(bool_value(value)?);
+    }
+    if let Some(value) = mqtt_packet_id_value(fields)? {
+        layer = layer.packet_id(value);
+    }
+    if let Some(value) = optional(fields, &["payload_hex"]) {
+        layer = layer.payload(option_bytes(value)?);
+    } else if let Some(value) = optional(fields, &["payload", "value"]) {
+        layer = layer.payload(mqtt_bytes(value)?);
+    }
+    Ok(layer)
+}
+
+fn mqtt_packet_identifier_layer(
+    mut layer: Mqtt,
+    fields: &Map<String, Value>,
+) -> ExampleResult<Mqtt> {
+    let packet_id = mqtt_packet_id_value(fields)?.unwrap_or(1);
+    layer = layer.packet_id(packet_id);
+    Ok(layer)
+}
+
+fn mqtt_subscribe_layer(fields: &Map<String, Value>) -> ExampleResult<Mqtt> {
+    let mut layer = Mqtt::subscribe().packet_id(mqtt_packet_id_value(fields)?.unwrap_or(1));
+    for (topic, qos) in mqtt_topic_qos_pairs(fields)? {
+        layer = layer.subscribe_topic(topic, qos);
+    }
+    Ok(layer)
+}
+
+fn mqtt_suback_layer(fields: &Map<String, Value>) -> ExampleResult<Mqtt> {
+    let mut layer = Mqtt::suback().packet_id(mqtt_packet_id_value(fields)?.unwrap_or(1));
+    if let Some(value) = optional(fields, &["return_codes", "return_code"]) {
+        layer = layer.return_codes(mqtt_return_codes(value)?);
+    }
+    Ok(layer)
+}
+
+fn mqtt_unsubscribe_layer(fields: &Map<String, Value>) -> ExampleResult<Mqtt> {
+    let mut layer = Mqtt::unsubscribe().packet_id(mqtt_packet_id_value(fields)?.unwrap_or(1));
+    for topic in mqtt_topic_values(fields)? {
+        layer = layer.topic(topic);
+    }
+    Ok(layer)
+}
+
+fn mqtt_packet_type(value: &Value) -> ExampleResult<MqttControlPacketType> {
+    if let Some(text) = value.as_str() {
+        let normalized = text.to_ascii_lowercase().replace('_', "-");
+        return match normalized.as_str() {
+            "connect" => Ok(MqttControlPacketType::Connect),
+            "connack" => Ok(MqttControlPacketType::Connack),
+            "publish" => Ok(MqttControlPacketType::Publish),
+            "puback" => Ok(MqttControlPacketType::Puback),
+            "pubrec" => Ok(MqttControlPacketType::Pubrec),
+            "pubrel" => Ok(MqttControlPacketType::Pubrel),
+            "pubcomp" => Ok(MqttControlPacketType::Pubcomp),
+            "subscribe" => Ok(MqttControlPacketType::Subscribe),
+            "suback" => Ok(MqttControlPacketType::Suback),
+            "unsubscribe" => Ok(MqttControlPacketType::Unsubscribe),
+            "unsuback" => Ok(MqttControlPacketType::Unsuback),
+            "pingreq" | "ping-request" => Ok(MqttControlPacketType::Pingreq),
+            "pingresp" | "ping-response" => Ok(MqttControlPacketType::Pingresp),
+            "disconnect" => Ok(MqttControlPacketType::Disconnect),
+            _ => MqttControlPacketType::from_type_value(u8_text(text)?).map_err(Into::into),
+        };
+    }
+    MqttControlPacketType::from_type_value(u8_value(value)?).map_err(Into::into)
+}
+
+fn mqtt_remaining_length(value: &Value) -> ExampleResult<Option<u32>> {
+    if let Some(text) = value.as_str() {
+        if matches!(
+            text.to_ascii_lowercase().replace('-', "_").as_str(),
+            "auto" | "default" | "derived"
+        ) {
+            return Ok(None);
+        }
+    }
+    Ok(Some(u32_value(value)?))
+}
+
+fn mqtt_flags(value: &Value, packet_type: MqttControlPacketType) -> ExampleResult<u8> {
+    if let Some(items) = value.as_array() {
+        let mut flags = 0;
+        for item in items {
+            flags |= mqtt_flags(item, packet_type)?;
+        }
+        return Ok(flags);
+    }
+    if let Some(text) = value.as_str() {
+        let normalized = text.to_ascii_lowercase().replace([' ', '-'], "_");
+        return match normalized.as_str() {
+            "default" => Ok(packet_type.default_flags()),
+            "publish_qos0" => Ok(MQTT_PUBLISH_QOS_0 << 1),
+            "publish_qos1" => Ok(MQTT_PUBLISH_QOS_1 << 1),
+            "publish_qos2" => Ok(MQTT_PUBLISH_QOS_2 << 1),
+            "publish_dup" => Ok(MQTT_PUBLISH_FLAG_DUP),
+            "publish_retain" => Ok(MQTT_PUBLISH_FLAG_RETAIN),
+            "pubrel_required" | "subscribe_required" | "unsubscribe_required" => Ok(0x02),
+            "malformed_override" => Ok(0x0f),
+            _ => u8_text(text),
+        };
+    }
+    u8_value(value)
+}
+
+fn mqtt_connect_flags(value: &Value) -> ExampleResult<u8> {
+    if let Some(items) = value.as_array() {
+        let mut flags = 0;
+        for item in items {
+            flags |= mqtt_connect_flags(item)?;
+        }
+        return Ok(flags);
+    }
+    if let Some(text) = value.as_str() {
+        let normalized = text.to_ascii_lowercase().replace([' ', '-'], "_");
+        return match normalized.as_str() {
+            "clean_session" => Ok(MQTT_CONNECT_FLAG_CLEAN_SESSION),
+            "will" => Ok(MQTT_CONNECT_FLAG_WILL),
+            "will_retain" => Ok(MQTT_CONNECT_FLAG_WILL_RETAIN),
+            "username" | "user_name" => Ok(MQTT_CONNECT_FLAG_USER_NAME),
+            "password" => Ok(MQTT_CONNECT_FLAG_PASSWORD),
+            "will_qos1" => Ok(MQTT_CONNECT_FLAG_WILL | (1 << 3)),
+            "will_qos2" => Ok(MQTT_CONNECT_FLAG_WILL | (2 << 3)),
+            "malformed_override" => Ok(0xff),
+            _ => u8_text(text),
+        };
+    }
+    u8_value(value)
+}
+
+fn mqtt_qos(value: &Value) -> ExampleResult<u8> {
+    if let Some(text) = value.as_str() {
+        let normalized = text.to_ascii_lowercase().replace('-', "_");
+        return match normalized.as_str() {
+            "qos0" | "qos_0" | "at_most_once" => Ok(MQTT_PUBLISH_QOS_0),
+            "qos1" | "qos_1" | "at_least_once" => Ok(MQTT_PUBLISH_QOS_1),
+            "qos2" | "qos_2" | "exactly_once" => Ok(MQTT_PUBLISH_QOS_2),
+            _ => u8_text(text),
+        };
+    }
+    u8_value(value)
+}
+
+fn mqtt_packet_id_value(fields: &Map<String, Value>) -> ExampleResult<Option<u16>> {
+    optional(fields, &["packet_id", "message_id", "msgid"])
+        .map(u16_value)
+        .transpose()
+}
+
+fn mqtt_return_code(value: &Value) -> ExampleResult<u8> {
+    if let Some(text) = value.as_str() {
+        let normalized = text.to_ascii_lowercase().replace('-', "_");
+        return match normalized.as_str() {
+            "accepted" | "connack_accepted" => Ok(MQTT_CONNACK_ACCEPTED),
+            "unacceptable_protocol_version" => Ok(MQTT_CONNACK_UNACCEPTABLE_PROTOCOL_VERSION),
+            "identifier_rejected" => Ok(MQTT_CONNACK_IDENTIFIER_REJECTED),
+            "server_unavailable" => Ok(MQTT_CONNACK_SERVER_UNAVAILABLE),
+            "bad_username_or_password" => Ok(MQTT_CONNACK_BAD_USERNAME_OR_PASSWORD),
+            "not_authorized" => Ok(MQTT_CONNACK_NOT_AUTHORIZED),
+            "suback_qos0" => Ok(MQTT_SUBACK_MAX_QOS_0),
+            "suback_qos1" => Ok(MQTT_SUBACK_MAX_QOS_1),
+            "suback_qos2" => Ok(MQTT_SUBACK_MAX_QOS_2),
+            "suback_failure" | "failure" => Ok(MQTT_SUBACK_FAILURE),
+            _ => u8_text(text),
+        };
+    }
+    u8_value(value)
+}
+
+fn mqtt_return_codes(value: &Value) -> ExampleResult<Vec<u8>> {
+    if let Some(items) = value.as_array() {
+        return items.iter().map(mqtt_return_code).collect();
+    }
+    Ok(vec![mqtt_return_code(value)?])
+}
+
+fn mqtt_topic_qos_pairs(fields: &Map<String, Value>) -> ExampleResult<Vec<(String, u8)>> {
+    let default_qos = optional(fields, &["qos"])
+        .map(mqtt_qos)
+        .transpose()?
+        .unwrap_or(0);
+    let Some(value) = optional(fields, &["topic_filters", "topics"]) else {
+        let topic = optional(fields, &["topic"])
+            .map(text_value)
+            .transpose()?
+            .unwrap_or("crafter/demo");
+        return Ok(vec![(topic.to_string(), default_qos)]);
+    };
+
+    if let Some(items) = value.as_array() {
+        let mut pairs = Vec::with_capacity(items.len());
+        for item in items {
+            if let Some(fields) = item.as_object() {
+                let topic = optional(fields, &["topic", "filter", "name"])
+                    .map(text_value)
+                    .transpose()?
+                    .unwrap_or("crafter/demo");
+                let qos = optional(fields, &["qos", "requested_qos"])
+                    .map(mqtt_qos)
+                    .transpose()?
+                    .unwrap_or(default_qos);
+                pairs.push((topic.to_string(), qos));
+            } else {
+                pairs.push((text_value(item)?.to_string(), default_qos));
+            }
+        }
+        return Ok(pairs);
+    }
+
+    Ok(vec![(text_value(value)?.to_string(), default_qos)])
+}
+
+fn mqtt_topic_values(fields: &Map<String, Value>) -> ExampleResult<Vec<String>> {
+    let Some(value) = optional(fields, &["topic_filters", "topics"]) else {
+        let topic = optional(fields, &["topic"])
+            .map(text_value)
+            .transpose()?
+            .unwrap_or("crafter/demo");
+        return Ok(vec![topic.to_string()]);
+    };
+
+    if let Some(items) = value.as_array() {
+        let mut topics = Vec::with_capacity(items.len());
+        for item in items {
+            if let Some(fields) = item.as_object() {
+                let topic = optional(fields, &["topic", "filter", "name"])
+                    .map(text_value)
+                    .transpose()?
+                    .unwrap_or("crafter/demo");
+                topics.push(topic.to_string());
+            } else {
+                topics.push(text_value(item)?.to_string());
+            }
+        }
+        return Ok(topics);
+    }
+
+    Ok(vec![text_value(value)?.to_string()])
+}
+
+fn mqtt_bytes(value: &Value) -> ExampleResult<Vec<u8>> {
+    if let Some(text) = value.as_str() {
+        if text.len() % 2 == 0 && text.as_bytes().iter().all(u8::is_ascii_hexdigit) {
+            return decode_hex(text);
+        }
+        return Ok(text.as_bytes().to_vec());
+    }
+    if let Some(object) = value.as_object() {
+        if let Some(hex) = object.get("hex").and_then(Value::as_str) {
+            return decode_hex(hex);
+        }
+        if let Some(text) = object.get("text").and_then(Value::as_str) {
+            return Ok(text.as_bytes().to_vec());
+        }
+        if let Some(text) = object.get("value").and_then(Value::as_str) {
+            return Ok(text.as_bytes().to_vec());
+        }
+    }
+    option_bytes(value)
 }
 
 fn bgp_marker(value: &Value) -> ExampleResult<[u8; BGP_MARKER_LEN]> {
