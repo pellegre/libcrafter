@@ -652,6 +652,16 @@ impl Mqtt {
         }
     }
 
+    /// Build an MQTT UNSUBACK packet.
+    pub fn unsuback() -> Self {
+        Self {
+            packet_type: MqttControlPacketType::Unsuback,
+            flags: Field::defaulted(MqttControlPacketType::Unsuback.default_flags()),
+            remaining_length: Field::unset(),
+            body: MqttBody::PacketIdentifier(MqttPacketIdentifier::new()),
+        }
+    }
+
     /// Build an MQTT SUBSCRIBE packet.
     pub fn subscribe() -> Self {
         Self {
@@ -1545,6 +1555,13 @@ mod tests {
         let bytes = mqtt_bytes(Mqtt::pubcomp().packet_id(0x1234));
 
         assert_eq!(bytes, [0x70, 0x02, 0x12, 0x34]);
+    }
+
+    #[test]
+    fn unsuback_compiles_packet_identifier() {
+        let bytes = mqtt_bytes(Mqtt::unsuback().packet_id(0x1234));
+
+        assert_eq!(bytes, [0xb0, 0x02, 0x12, 0x34]);
     }
 
     #[test]
