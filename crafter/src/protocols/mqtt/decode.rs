@@ -4,8 +4,12 @@ use crate::error::{CrafterError, Result};
 use crate::packet::{Packet, Raw};
 use crate::registry::ProtocolRegistry;
 
+use super::constants::{
+    MQTT_CONNECT_FLAG_PASSWORD, MQTT_CONNECT_FLAG_USER_NAME, MQTT_CONNECT_FLAG_WILL,
+};
 use super::header::MqttControlPacketType;
 use super::varint::decode_remaining_length;
+use super::wire::{decode_binary, decode_string, decode_u16};
 use super::Mqtt;
 
 /// Decode a single MQTT control packet from the front of `bytes`.
@@ -33,12 +37,105 @@ pub(crate) fn decode_mqtt(bytes: &[u8]) -> Result<(Mqtt, usize)> {
         ));
     }
 
-    let body = bytes[header_len..total_len].to_vec();
-    let mqtt = Mqtt::raw(packet_type, body)
-        .flags(flags)
-        .remaining_length(remaining_length);
+    let body = &bytes[header_len..total_len];
+    let mqtt = match packet_type {
+        MqttControlPacketType::Connect => decode_connect(flags, remaining_length, body)?,
+        _ => Mqtt::raw(packet_type, body.to_vec())
+            .flags(flags)
+            .remaining_length(remaining_length),
+    };
 
     Ok((mqtt, total_len))
+}
+
+fn decode_connect(fixed_header_flags: u8, remaining_length: u32, body: &[u8]) -> Result<Mqtt> {
+    let mut cursor = 0;
+
+    let protocol_name = take_string(body, &mut cursor)?;
+    let protocol_level = take_u8(body, &mut cursor, "mqtt.connect.protocol_level")?;
+    let connect_flags = take_u8(body, &mut cursor, "mqtt.connect.flags")?;
+    let keep_alive = take_u16(body, &mut cursor)?;
+    let client_id = take_string(body, &mut cursor)?;
+
+    let (will_topic, will_message) = if connect_flags & MQTT_CONNECT_FLAG_WILL != 0 {
+        (
+            Some(take_string(body, &mut cursor)?),
+            Some(take_binary(body, &mut cursor)?),
+        )
+    } else {
+        (None, None)
+    };
+
+    let username = if connect_flags & MQTT_CONNECT_FLAG_USER_NAME != 0 {
+        Some(take_string(body, &mut cursor)?)
+    } else {
+        None
+    };
+
+    let password = if connect_flags & MQTT_CONNECT_FLAG_PASSWORD != 0 {
+        Some(take_binary(body, &mut cursor)?)
+    } else {
+        None
+    };
+
+    if cursor != body.len() {
+        return Err(CrafterError::invalid_field_value(
+            "mqtt.connect.remaining_length",
+            "CONNECT Remaining Length includes bytes not described by CONNECT flags",
+        ));
+    }
+
+    Ok(Mqtt::connect_from_decoded_parts(
+        fixed_header_flags,
+        remaining_length,
+        protocol_name,
+        protocol_level,
+        connect_flags,
+        keep_alive,
+        client_id,
+        will_topic,
+        will_message,
+        username,
+        password,
+    ))
+}
+
+fn take_u8(bytes: &[u8], cursor: &mut usize, context: &'static str) -> Result<u8> {
+    let Some(&value) = bytes.get(*cursor) else {
+        return Err(CrafterError::buffer_too_short(
+            context,
+            cursor.saturating_add(1),
+            bytes.len(),
+        ));
+    };
+
+    *cursor += 1;
+    Ok(value)
+}
+
+fn take_u16(bytes: &[u8], cursor: &mut usize) -> Result<u16> {
+    let (value, consumed) = decode_u16(&bytes[*cursor..])?;
+    *cursor += consumed;
+    Ok(value)
+}
+
+fn take_string(bytes: &[u8], cursor: &mut usize) -> Result<String> {
+    let (value, consumed) = decode_string(&bytes[*cursor..])?;
+    *cursor += consumed;
+    Ok(value)
+}
+
+fn take_binary(bytes: &[u8], cursor: &mut usize) -> Result<Vec<u8>> {
+    let (value, consumed) = decode_binary(&bytes[*cursor..])?;
+    *cursor += consumed;
+    Ok(value)
+}
+
+fn is_incomplete_mqtt_frame(context: &'static str) -> bool {
+    matches!(
+        context,
+        "mqtt.fixed_header" | "mqtt.remaining_length" | "mqtt.control_packet"
+    )
 }
 
 /// Decode one or more MQTT control packets from a TCP payload.
@@ -59,7 +156,9 @@ pub(crate) fn append_mqtt_packet_with_registry(
                 packet = packet.push(Raw::from_bytes(remaining));
                 break;
             }
-            Err(CrafterError::BufferTooShort { .. }) => {
+            Err(CrafterError::BufferTooShort { context, .. })
+                if is_incomplete_mqtt_frame(context) =>
+            {
                 packet = packet.push(Raw::from_bytes(remaining));
                 break;
             }

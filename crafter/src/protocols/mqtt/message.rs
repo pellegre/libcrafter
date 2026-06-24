@@ -46,6 +46,30 @@ impl MqttConnect {
         }
     }
 
+    fn from_decoded_parts(
+        protocol_name: String,
+        protocol_level: u8,
+        connect_flags: u8,
+        keep_alive: u16,
+        client_id: String,
+        will_topic: Option<String>,
+        will_message: Option<Vec<u8>>,
+        username: Option<String>,
+        password: Option<Vec<u8>>,
+    ) -> Self {
+        Self {
+            protocol_name: Field::user(protocol_name),
+            protocol_level: Field::user(protocol_level),
+            connect_flags: Field::user(connect_flags),
+            keep_alive: Field::user(keep_alive),
+            client_id: Field::user(client_id),
+            will_topic: will_topic.map_or_else(Field::unset, Field::user),
+            will_message: will_message.map_or_else(Field::unset, Field::user),
+            username: username.map_or_else(Field::unset, Field::user),
+            password: password.map_or_else(Field::unset, Field::user),
+        }
+    }
+
     fn protocol_name(&self) -> &str {
         self.protocol_name
             .value()
@@ -92,6 +116,22 @@ impl MqttConnect {
 
     fn password(&self) -> &[u8] {
         self.password.value().map(Vec::as_slice).unwrap_or(&[])
+    }
+
+    fn will_topic_value(&self) -> Option<&str> {
+        self.will_topic.value().map(String::as_str)
+    }
+
+    fn will_message_value(&self) -> Option<&[u8]> {
+        self.will_message.value().map(Vec::as_slice)
+    }
+
+    fn username_value(&self) -> Option<&str> {
+        self.username.value().map(String::as_str)
+    }
+
+    fn password_value(&self) -> Option<&[u8]> {
+        self.password.value().map(Vec::as_slice)
     }
 
     fn set_connect_flag_default(&mut self, mask: u8, enabled: bool) {
@@ -224,6 +264,38 @@ impl Mqtt {
             flags: Field::defaulted(MqttControlPacketType::Connect.default_flags()),
             remaining_length: Field::unset(),
             body: MqttBody::Connect(MqttConnect::new()),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn connect_from_decoded_parts(
+        fixed_header_flags: u8,
+        remaining_length: u32,
+        protocol_name: String,
+        protocol_level: u8,
+        connect_flags: u8,
+        keep_alive: u16,
+        client_id: String,
+        will_topic: Option<String>,
+        will_message: Option<Vec<u8>>,
+        username: Option<String>,
+        password: Option<Vec<u8>>,
+    ) -> Self {
+        Self {
+            packet_type: MqttControlPacketType::Connect,
+            flags: Field::user(fixed_header_flags),
+            remaining_length: Field::user(remaining_length),
+            body: MqttBody::Connect(MqttConnect::from_decoded_parts(
+                protocol_name,
+                protocol_level,
+                connect_flags,
+                keep_alive,
+                client_id,
+                will_topic,
+                will_message,
+                username,
+                password,
+            )),
         }
     }
 
@@ -367,6 +439,59 @@ impl Mqtt {
     /// Opaque bytes after the fixed header.
     pub fn body(&self) -> &[u8] {
         self.body.raw_bytes()
+    }
+
+    /// CONNECT protocol name, when this is a typed CONNECT packet.
+    pub fn protocol_name_value(&self) -> Option<&str> {
+        self.connect_body().map(MqttConnect::protocol_name)
+    }
+
+    /// CONNECT protocol level, when this is a typed CONNECT packet.
+    pub fn protocol_level_value(&self) -> Option<u8> {
+        self.connect_body().map(MqttConnect::protocol_level)
+    }
+
+    /// CONNECT flags byte, when this is a typed CONNECT packet.
+    pub fn connect_flags_value(&self) -> Option<u8> {
+        self.connect_body().map(MqttConnect::connect_flags)
+    }
+
+    /// CONNECT keep-alive interval in seconds, when this is a typed CONNECT packet.
+    pub fn keep_alive_value(&self) -> Option<u16> {
+        self.connect_body().map(MqttConnect::keep_alive)
+    }
+
+    /// CONNECT client identifier, when this is a typed CONNECT packet.
+    pub fn client_id_value(&self) -> Option<&str> {
+        self.connect_body().map(MqttConnect::client_id)
+    }
+
+    /// CONNECT Will Topic, when present on a typed CONNECT packet.
+    pub fn will_topic_value(&self) -> Option<&str> {
+        self.connect_body().and_then(MqttConnect::will_topic_value)
+    }
+
+    /// CONNECT Will Message bytes, when present on a typed CONNECT packet.
+    pub fn will_message_value(&self) -> Option<&[u8]> {
+        self.connect_body()
+            .and_then(MqttConnect::will_message_value)
+    }
+
+    /// CONNECT User Name, when present on a typed CONNECT packet.
+    pub fn username_value(&self) -> Option<&str> {
+        self.connect_body().and_then(MqttConnect::username_value)
+    }
+
+    /// CONNECT Password bytes, when present on a typed CONNECT packet.
+    pub fn password_value(&self) -> Option<&[u8]> {
+        self.connect_body().and_then(MqttConnect::password_value)
+    }
+
+    fn connect_body(&self) -> Option<&MqttConnect> {
+        match &self.body {
+            MqttBody::Connect(connect) => Some(connect),
+            MqttBody::Raw(_) => None,
+        }
     }
 
     fn first_byte(&self) -> u8 {
@@ -575,10 +700,9 @@ mod tests {
         );
 
         let expected = vec![
-            0x10, 0x25, 0x00, 0x04, b'M', b'Q', b'T', b'T', 0x04, 0xee, 0x00, 0x1e, 0x00,
-            0x03, b'c', b'i', b'd', 0x00, 0x06, b's', b't', b'a', b't', b'u', b's',
-            0x00, 0x02, 0xde, 0xad, 0x00, 0x04, b'u', b's', b'e', b'r', 0x00, 0x02,
-            0xbe, 0xef,
+            0x10, 0x25, 0x00, 0x04, b'M', b'Q', b'T', b'T', 0x04, 0xee, 0x00, 0x1e, 0x00, 0x03,
+            b'c', b'i', b'd', 0x00, 0x06, b's', b't', b'a', b't', b'u', b's', 0x00, 0x02, 0xde,
+            0xad, 0x00, 0x04, b'u', b's', b'e', b'r', 0x00, 0x02, 0xbe, 0xef,
         ];
 
         assert_eq!(bytes, expected);
@@ -589,8 +713,8 @@ mod tests {
         let bytes = mqtt_bytes(Mqtt::connect().client_id("cid").username("user"));
 
         let expected = vec![
-            0x10, 0x15, 0x00, 0x04, b'M', b'Q', b'T', b'T', 0x04, 0x82, 0x00, 0x3c, 0x00,
-            0x03, b'c', b'i', b'd', 0x00, 0x04, b'u', b's', b'e', b'r',
+            0x10, 0x15, 0x00, 0x04, b'M', b'Q', b'T', b'T', 0x04, 0x82, 0x00, 0x3c, 0x00, 0x03,
+            b'c', b'i', b'd', 0x00, 0x04, b'u', b's', b'e', b'r',
         ];
 
         assert_eq!(bytes, expected);
@@ -608,8 +732,23 @@ mod tests {
         );
 
         let expected = vec![
-            0x10, 0x0f, 0x00, 0x04, b'M', b'Q', b'T', b'T', 0x04,
-            MQTT_CONNECT_FLAG_CLEAN_SESSION, 0x00, 0x3c, 0x00, 0x03, b'c', b'i', b'd',
+            0x10,
+            0x0f,
+            0x00,
+            0x04,
+            b'M',
+            b'Q',
+            b'T',
+            b'T',
+            0x04,
+            MQTT_CONNECT_FLAG_CLEAN_SESSION,
+            0x00,
+            0x3c,
+            0x00,
+            0x03,
+            b'c',
+            b'i',
+            b'd',
         ];
 
         assert_eq!(bytes, expected);
