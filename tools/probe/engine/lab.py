@@ -15,8 +15,11 @@ from tools.lab.engine.providers import (
 from .capability_derivation import (
     capability as _capability,
     capability_default_true as _capability_default_true,
-    optional_positive_int as _optional_positive_int,
 )
+# ``UDP_ECHO_LARGE_PAYLOAD_LENGTH`` is re-exported through this module's
+# ``__all__`` (the public lab surface); the ``udp_large_payload`` derivation that
+# read it moved into the UDP plugin's ``lab_capabilities`` hook, so the import now
+# only backs that re-export.
 from .cases import UDP_ECHO_LARGE_PAYLOAD_LENGTH
 from .model import JSONObject, JSONValue, json_object
 from .protocols import registered_plugins as _registered_protocol_plugins
@@ -182,30 +185,11 @@ def probe_capabilities_from_lab_capabilities(
     ipv6_multicast = link_layer_send and link_layer_capture and broadcast
     # ``dhcp_service`` is derived by the DHCP plugin's ``lab_capabilities`` hook
     # (folded in below), not here. The shared ``capability_names`` /
-    # ``capability_sources`` tables still list it.
-    udp_service = ipv4_unicast and controlled_services
-    advertised_udp_safe_payload = _optional_positive_int(
-        substrate,
-        "udp_safe_payload_size",
-        "safe_udp_payload_size",
-        "max_udp_payload_size",
-        "private_network_safe_udp_payload_size",
-    )
-    udp_large_payload = udp_service and (
-        advertised_udp_safe_payload is None
-        or advertised_udp_safe_payload >= UDP_ECHO_LARGE_PAYLOAD_LENGTH
-    )
-    udp_ipv4_zero_checksum = udp_service and _capability_default_true(
-        substrate,
-        "udp_ipv4_zero_checksum",
-        "ipv4_udp_zero_checksum",
-    )
-    udp_options_surplus = udp_service and _capability_default_true(
-        substrate,
-        "udp_options_surplus",
-        "udp_surplus_options",
-    )
-    privileged_udp_port = ipv4_unicast and controlled_services
+    # ``capability_sources`` tables still list it. The ``udp_*`` derived
+    # capabilities (``udp_service`` / ``udp_large_payload`` /
+    # ``udp_ipv4_zero_checksum`` / ``udp_options_surplus`` / ``privileged_udp_port``,
+    # plus the advertised ``udp_safe_payload_size`` echo) are likewise contributed
+    # by the UDP plugin's ``lab_capabilities`` hook (folded in below), not here.
     repeated_response = ipv4_unicast and controlled_services
     # BGP smoke drives a controlled FRR peer on the target endpoint. It needs the
     # same IPv4-unicast + controlled-service substrate as DNS/UDP target
@@ -311,15 +295,13 @@ def probe_capabilities_from_lab_capabilities(
         "icmp_echo": ipv4_unicast,
         "tcp_open_port": ipv4_unicast and controlled_services,
         "tcp_closed_port": ipv4_unicast,
-        # ``dns_service`` / ``dhcp_service`` are contributed by the DNS and DHCP
+        # ``dns_service`` / ``dhcp_service`` and the ``udp_*`` capabilities
+        # (``udp_service`` / ``udp_large_payload`` / ``udp_ipv4_zero_checksum`` /
+        # ``udp_options_surplus`` / ``privileged_udp_port``, plus the advertised
+        # ``udp_safe_payload_size`` echo) are contributed by the DNS / DHCP / UDP
         # plugins' ``lab_capabilities`` hooks (folded in below), not here. The
         # shared ``capability_names`` / ``capability_sources`` tables still list
         # them.
-        "udp_service": udp_service,
-        "udp_large_payload": udp_large_payload,
-        "udp_ipv4_zero_checksum": udp_ipv4_zero_checksum,
-        "udp_options_surplus": udp_options_surplus,
-        "privileged_udp_port": privileged_udp_port,
         "controlled_router": controlled_router,
         "link_layer_send": link_layer_send,
         "link_layer_capture": link_layer_capture,
@@ -429,8 +411,9 @@ def probe_capabilities_from_lab_capabilities(
         )
     if derived_dry_run is not None:
         capabilities["dry_run"] = derived_dry_run
-    if advertised_udp_safe_payload is not None:
-        capabilities["udp_safe_payload_size"] = advertised_udp_safe_payload
+    # The advertised ``udp_safe_payload_size`` echo moved to the UDP plugin's
+    # ``lab_capabilities`` hook (folded in below), so it is no longer injected
+    # here.
     artifact = substrate.get("capability_report_artifact")
     if isinstance(artifact, str) and artifact:
         capabilities["capability_report_artifact"] = artifact

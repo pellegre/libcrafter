@@ -26,10 +26,20 @@ tables in :mod:`tools.probe.engine.cases` keep owning UDP's profile membership t
 preserve byte-identical selection order.
 
 The UDP target-service / address-rewrite / failure-reason / lab-capability hooks
-complete the migration in the next step (step 24, the services/cli half),
-including the closed-port case's controlled-service handling
-(``closed_udp_port_descriptor`` / ``_UDP_CLOSED_PORT_CASES``); this module leaves
-those hooks ``None``.
+complete the migration here (step 24): the ``target_service`` hook contributes
+the ``udp-responder`` service entries *and* the ``closed_udp_ports`` entries for
+the closed-port case (and diverts all ten UDP cases off the legacy target path);
+the co-located setup-script blocks (the closed-UDP-port free check and the UDP
+responder heredoc + launch) are called directly by
+``target_services.target_service_setup_script`` because they need the planned
+UDP plans the ``setup_script`` hook is not handed; the
+``rewrite_endpoint_addresses`` hook reproduces the UDP live-path rewrite (all
+ten UDP cases carry a UDP-specific rewrite, so none falls through); the
+``failure_reasons`` hook reproduces the UDP failure taxonomy; and the
+``lab_capabilities`` hook contributes the ``udp_*`` derived capabilities
+(``udp_service`` / ``udp_large_payload`` / ``udp_ipv4_zero_checksum`` /
+``udp_options_surplus`` / ``privileged_udp_port``, plus the advertised
+``udp_safe_payload_size`` echo when present).
 
 Imports are relative only so the module loads under both engine import roots
 (``engine.protocols.udp`` for the CLI and ``tools.probe.engine.protocols.udp``
@@ -38,11 +48,36 @@ for the tests).
 
 from __future__ import annotations
 
+import json
+import posixpath
+import shlex
+from collections.abc import Mapping, Sequence
+
+from ..capability_derivation import (
+    capability,
+    capability_default_true,
+    optional_positive_int,
+)
 from ..case_helpers import _behavior_case
-from ..model import JSONObject, ProbeCase, json_object
+from ..endpoint_addressing import (
+    FAILURE_DECODE_FAILED,
+    FAILURE_TARGET_SETUP_FAILED,
+    FAILURE_TIMEOUT,
+    FAILURE_WRONG_PAYLOAD,
+    FAILURE_WRONG_PEER,
+    apply_shared_ipv4_rewrite_tail,
+)
+from ..model import JSONObject, JSONValue, ProbeCase, json_object
 from ..planning_helpers import (
     deterministic_bytes,
     deterministic_ipv4_pair,
+)
+from ..target_service_helpers import (
+    KernelStateDescriptor,
+    TargetServiceDescriptor,
+    dedupe_ints,
+    plans_by_destination_port,
+    target_service_address_fields,
 )
 from .base import ProtocolPlugin, register
 
@@ -931,6 +966,485 @@ _UDP_STIMULUS_ENDPOINT_CASES: frozenset[str] = frozenset(
 )
 
 
+# --------------------------------------------------------------------------- #
+# Target-service descriptors and case selectors (moved from target_services.py)
+# --------------------------------------------------------------------------- #
+#
+# Probe cases that drive the controlled UDP echo/transform responder. The empty
+# echo case is the zero-payload baseline; the short and binary echo cases cover
+# application bytes over the same service-response path. Source-port reflection
+# reuses the same echo responder and tightens the stimulus-side port contract.
+# Multi-shot order drives the same responder with an ordered per-send payload
+# sequence. The IPv4 zero-checksum case uses the same responder, while the
+# provider/kernel acceptance is surfaced through a case capability. The options
+# surplus case also reuses the responder; only the stimulus datagram carries the
+# surplus area, while the service echoes the conventional application payload.
+_UDP_RESPONDER_CASES: frozenset[str] = frozenset(
+    {
+        "udp-echo-empty",
+        "udp-echo-short",
+        "udp-echo-binary",
+        "udp-echo-large",
+        "udp-length-boundary-echo",
+        "udp-source-port-reflection",
+        "udp-multi-shot-order",
+        "udp-zero-checksum-ipv4",
+        "udp-options-surplus-echo",
+    }
+)
+
+
+_UDP_CLOSED_PORT_CASES: frozenset[str] = frozenset({"udp-closed-port-icmp"})
+
+
+def udp_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
+    """Return the UDP responder probe plans in order."""
+
+    return [plan for plan in probe_plans if plan.get("case") in _UDP_RESPONDER_CASES]
+
+
+def closed_udp_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
+    """Return UDP plans that require the target kernel's closed-port behavior."""
+
+    return [
+        plan for plan in probe_plans if plan.get("case") in _UDP_CLOSED_PORT_CASES
+    ]
+
+
+def udp_responder_descriptor(
+    *,
+    bind_ipv4: str,
+    source_ipv4: str,
+    port: int,
+    artifact_root: str,
+) -> TargetServiceDescriptor:
+    """Describe the controlled UDP echo/transform responder."""
+
+    # Imported lazily so the plugin module loads during ``protocols`` package
+    # auto-discovery without cycling through ``capabilities`` -> ``lab`` ->
+    # ``protocols``. The constant is a plain skip-reason string.
+    from ..capabilities import SKIP_REQUIRES_CONTROLLED_SERVICE
+
+    return TargetServiceDescriptor(
+        name="udp-responder",
+        protocol="udp",
+        purpose="udp-echo",
+        bind_ipv4=bind_ipv4,
+        source_ipv4=source_ipv4,
+        port=port,
+        requires=["python3", SKIP_REQUIRES_CONTROLLED_SERVICE],
+        setup_commands=[
+            f"check udp port {bind_ipv4}:{port} is free",
+            f"start udp-responder.py on {bind_ipv4}:{port}",
+        ],
+        cleanup_commands=[
+            f"kill udp-responder on {bind_ipv4}:{port}",
+        ],
+        artifacts=[
+            posixpath.join(artifact_root, f"udp-responder-{port}.stdout.txt"),
+            posixpath.join(artifact_root, f"udp-responder-{port}.stderr.txt"),
+            posixpath.join(artifact_root, f"udp-responder-{port}.pid"),
+        ],
+        metadata={"runtime": "python3", "deterministic": True},
+    )
+
+
+def closed_udp_port_descriptor(
+    *,
+    bind_ipv4: str,
+    source_ipv4: str,
+    port: int,
+) -> KernelStateDescriptor:
+    """Describe a closed UDP port whose kernel emits ICMP port-unreachable."""
+
+    return KernelStateDescriptor(
+        name="closed-udp-port",
+        purpose="udp-port-unreachable",
+        bind_ipv4=bind_ipv4,
+        source_ipv4=source_ipv4,
+        port=port,
+        verify_commands=[
+            f"check udp port {bind_ipv4}:{port} is free",
+        ],
+        metadata={"expects": "icmp_port_unreachable", "deterministic": True},
+    )
+
+
+def udp_target_service_contribution(
+    probe_plans: Sequence[JSONObject],
+    *,
+    dry_run: bool,
+) -> JSONObject:
+    """Return the UDP plugin's ``target_service_setup_plan`` contribution.
+
+    Moved verbatim from the ``udp-responder`` ``services`` entries and the
+    ``closed_udp_ports`` entries of the central ``target_service_setup_plan``:
+    one controlled UDP responder service per distinct responder destination port,
+    one closed-UDP-port verification entry per distinct closed-port destination,
+    plus the ``starts_services`` flip on a live run that has at least one UDP
+    responder to stand up. The registry merge appends these ``services`` /
+    ``closed_udp_ports`` to the central lists and OR-s ``starts_services``,
+    byte-identical to the legacy per-protocol path (which included
+    ``udp_plans_by_port`` -- but not the closed-port plans -- in its
+    ``starts_services`` OR).
+    """
+
+    udp_plans = udp_probe_plans(probe_plans)
+    udp_plans_by_port = plans_by_destination_port(udp_plans)
+    closed_udp_plans = closed_udp_probe_plans(probe_plans)
+    closed_udp_plans_by_port = plans_by_destination_port(closed_udp_plans)
+    services = [
+        {
+            "name": "udp-responder",
+            "protocol": "udp",
+            "port": port,
+            "purpose": "udp-echo",
+            "deterministic": True,
+            "echo": True,
+            "payload_count": sum(
+                int(plan.get("send_count") or 1)
+                for plan in udp_plans
+                if int(plan.get("destination_port", 0)) == port
+            ),
+            **target_service_address_fields(plan),
+            "log_paths": [
+                f"live-artifacts/probe/target-services/udp-responder-{port}.stdout.txt",
+                f"live-artifacts/probe/target-services/udp-responder-{port}.stderr.txt",
+            ],
+        }
+        for port, plan in udp_plans_by_port.items()
+    ]
+    closed_udp_ports = [
+        {
+            "port": port,
+            "state": "verified-unbound" if not dry_run else "planned-unbound",
+            "purpose": "udp-closed-port-icmp",
+            "expects": "icmp_port_unreachable",
+            "deterministic": True,
+            **target_service_address_fields(plan),
+        }
+        for port, plan in closed_udp_plans_by_port.items()
+    ]
+    return {
+        "services": services,
+        "closed_udp_ports": closed_udp_ports,
+        "starts_services": not dry_run and bool(udp_plans_by_port),
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Target setup-script blocks (moved from target_services.target_service_setup_script)
+# --------------------------------------------------------------------------- #
+#
+# The UDP setup-script contribution is split into two blocks that the legacy
+# ``target_service_setup_script`` emitted at two distinct positions: a per-port
+# closed-UDP-port free check (rendered after the closed TCP-port checks, before
+# the open-port listeners) and the UDP responder heredoc + per-port launch loop
+# (rendered after the DHCP responder block, before the ARP block). They are
+# co-located here and called *directly* by ``target_service_setup_script`` (the
+# plugin ``setup_script`` hook receives no plan context), so the rendered bytes
+# stay byte-identical to the legacy inline blocks.
+
+
+def udp_closed_port_check_lines(closed_udp_ports: Sequence[int]) -> list[str]:
+    """Render the closed-UDP-port free-check block for the setup script.
+
+    Moved verbatim from the ``for port in closed_udp_ports:`` loop that ran after
+    the closed TCP-port checks in ``target_service_setup_script``; binds
+    ``$udp_bind_ipv4:port`` to confirm the port stays free so the target kernel
+    emits ICMP port-unreachable.
+    """
+
+    lines: list[str] = []
+    for port in closed_udp_ports:
+        lines.append(f"check_udp_port_free \"$udp_bind_ipv4\" {port}")
+        lines.append(f"echo closed_udp_port_{port}=free")
+    return lines
+
+
+def udp_responder_setup_lines(
+    *,
+    artifact_root: str,
+    udp_plans: Sequence[JSONObject],
+) -> list[str]:
+    """Render the UDP responder heredoc + launch block for the setup script.
+
+    Moved verbatim from the ``if udp_ports:`` responder heredoc and the
+    subsequent ``for port in udp_ports:`` launch loop of
+    ``target_service_setup_script``; the orchestrator calls this with the planned
+    UDP plans so the rendered script bytes stay byte-identical.
+    """
+
+    udp_ports = dedupe_ints(
+        int(plan["destination_port"])
+        for plan in udp_plans
+        if isinstance(plan.get("destination_port"), int)
+    )
+    lines: list[str] = []
+    if udp_ports:
+        service_path = posixpath.join(artifact_root, "udp-responder.py")
+        lines.extend(
+            [
+                f"cat > {shlex.quote(service_path)} <<'PY'",
+                "import json",
+                "import signal",
+                "import socket",
+                "import sys",
+                "import time",
+                "",
+                "stop = False",
+                "",
+                "def handle_stop(_signum, _frame):",
+                "    global stop",
+                "    stop = True",
+                "",
+                "signal.signal(signal.SIGTERM, handle_stop)",
+                "signal.signal(signal.SIGINT, handle_stop)",
+                "",
+                "bind_ip, port_text = sys.argv[1:3]",
+                "port = int(port_text)",
+                "sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)",
+                "sock.bind((bind_ip, port))",
+                "sock.settimeout(1.0)",
+                "print(json.dumps({'event': 'listening', 'bind_ip': bind_ip, 'port': port}), flush=True)",
+                "while not stop:",
+                "    try:",
+                "        data, addr = sock.recvfrom(65535)",
+                "    except socket.timeout:",
+                "        continue",
+                "    sock.sendto(data, addr)",
+                "    print(json.dumps({'event': 'echoed', 'client': addr[0], 'client_port': addr[1], 'bytes': len(data)}, sort_keys=True), flush=True)",
+                "sock.close()",
+                "print(json.dumps({'event': 'stopped', 'ts': time.time()}), flush=True)",
+                "PY",
+            ]
+        )
+    for port in udp_ports:
+        stdout_path = posixpath.join(artifact_root, f"udp-responder-{port}.stdout.txt")
+        stderr_path = posixpath.join(artifact_root, f"udp-responder-{port}.stderr.txt")
+        pid_path = posixpath.join(artifact_root, f"udp-responder-{port}.pid")
+        lines.extend(
+            [
+                f"check_udp_port_free \"$udp_bind_ipv4\" {port}",
+                (
+                    f"python3 {shlex.quote(posixpath.join(artifact_root, 'udp-responder.py'))} "
+                    f"\"$udp_bind_ipv4\" {port} "
+                    f">{shlex.quote(stdout_path)} 2>{shlex.quote(stderr_path)} &"
+                ),
+                "pid=$!",
+                f"echo \"$pid\" > {shlex.quote(pid_path)}",
+                "printf '%s\\n' \"kill $pid 2>/dev/null || true\" >> \"$cleanup\"",
+                f"printf '%s\\n' \"rm -f {shlex.quote(pid_path)}\" >> \"$cleanup\"",
+                "sleep 0.5",
+                "if ! kill -0 \"$pid\" 2>/dev/null; then",
+                f"  cat {shlex.quote(stderr_path)} >&2 || true",
+                f"  echo udp_responder_{port}=failed >&2",
+                "  exit 73",
+                "fi",
+                f"echo udp_responder_{port}=running",
+            ]
+        )
+    return lines
+
+
+# --------------------------------------------------------------------------- #
+# Live-path address rewrite (moved from cli._probe_plan_with_endpoint_addresses)
+# --------------------------------------------------------------------------- #
+#
+# The legacy UDP rewrite branch matched all ten UDP cases, so the plugin set is
+# the full UDP stimulus-endpoint case set: every UDP case carries the
+# UDP-specific rewrite plus the shared transport-IPv4 pre-sets and the shared
+# IPv4-layer tail.
+
+
+def udp_rewrite_endpoint_addresses(
+    plan: JSONObject,
+    *,
+    source_ipv4: str,
+    target_ipv4: str,
+    source_mac: str | None = None,
+    target_mac: str | None = None,
+    target_interface: str | None = None,
+    rewrite_source: str = "wire_endpoint_plan",
+) -> JSONObject:
+    """Rewrite a UDP probe plan onto the live lab-segment addresses.
+
+    Moved verbatim from the UDP branch of
+    ``cli._probe_plan_with_endpoint_addresses`` (including the shared
+    transport-IPv4 pre-sets that ran before the per-protocol if/elif). The
+    closed-port case validates the target kernel's ICMP port-unreachable, so its
+    capture filter watches ICMP from the target; every other UDP case watches the
+    echoed datagram from the responder. The multi-shot case carries a per-send
+    ``udp_sends`` array whose transport addresses, capture filters, and
+    validation contracts are rewritten onto the lab segment while the ordered
+    payload markers stay intact. The branch then falls into the shared
+    IPv4-layer validation/live-rewrite tail, applied here.
+    """
+
+    updated = dict(plan)
+    updated["source_ipv4"] = source_ipv4
+    updated["destination_ipv4"] = target_ipv4
+    updated["expected_reply_source_ipv4"] = target_ipv4
+    updated["expected_reply_destination_ipv4"] = source_ipv4
+    case_name = str(updated.get("case", ""))
+    source_port = int(updated.get("source_port", 0))
+    destination_port = int(updated.get("destination_port", 0))
+    if case_name == "udp-closed-port-icmp":
+        updated["capture_filter"] = (
+            f"icmp and src host {target_ipv4} and dst host {source_ipv4}"
+        )
+    else:
+        updated["capture_filter"] = (
+            f"udp and src host {target_ipv4} and dst host {source_ipv4} "
+            f"and src port {destination_port} and dst port {source_port}"
+        )
+    target_service = dict(
+        json_object(updated.get("target_service", {}), "probe_plan.target_service")
+    )
+    target_service.update(
+        {
+            "bind_ipv4": target_ipv4,
+            "port": destination_port,
+            "source_ipv4": source_ipv4,
+        }
+    )
+    updated["target_service"] = target_service
+    udp_validation = dict(
+        json_object(updated.get("validation", {}), "probe_plan.validation")
+    )
+    udp_validation["source_ipv4"] = target_ipv4
+    udp_validation["destination_ipv4"] = source_ipv4
+    updated["validation"] = udp_validation
+    # udp-multi-shot-order carries a per-send array: rewrite each datagram's
+    # transport addresses, capture filter, and validation contract onto the
+    # lab segment while preserving the ordered payload markers.
+    udp_sends = updated.get("udp_sends")
+    if isinstance(udp_sends, list):
+        rewritten_udp_sends: list[JSONObject] = []
+        for raw_send in udp_sends:
+            send = dict(json_object(raw_send, "probe_plan.udp_send"))
+            send_source_port = int(send.get("source_port", source_port))
+            send_destination_port = int(send.get("destination_port", destination_port))
+            send["source_ipv4"] = source_ipv4
+            send["destination_ipv4"] = target_ipv4
+            send["expected_reply_source_ipv4"] = target_ipv4
+            send["expected_reply_destination_ipv4"] = source_ipv4
+            send["capture_filter"] = (
+                f"udp and src host {target_ipv4} and dst host {source_ipv4} "
+                f"and src port {send_destination_port} and dst port {send_source_port}"
+            )
+            send_validation = dict(
+                json_object(send.get("validation", {}), "probe_plan.udp_send.validation")
+            )
+            send_validation["source_ipv4"] = target_ipv4
+            send_validation["destination_ipv4"] = source_ipv4
+            send["validation"] = send_validation
+            rewritten_udp_sends.append(send)
+        updated["udp_sends"] = rewritten_udp_sends
+    return apply_shared_ipv4_rewrite_tail(
+        updated,
+        case_name=case_name,
+        source_ipv4=source_ipv4,
+        target_ipv4=target_ipv4,
+        rewrite_source=rewrite_source,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Failure-reason taxonomy (moved from cli._failure_reasons_for_case)
+# --------------------------------------------------------------------------- #
+
+
+def udp_failure_reasons(case_name: str) -> list[str] | None:
+    """Return the ordered UDP failure-reason taxonomy for ``case_name``.
+
+    Moved verbatim from the UDP branch of ``cli._failure_reasons_for_case`` (all
+    ten UDP cases). Returns ``None`` for a non-matching case so the central
+    dispatcher falls through to the next branch.
+    """
+
+    if case_name in _UDP_STIMULUS_ENDPOINT_CASES:
+        return [
+            FAILURE_TIMEOUT,
+            FAILURE_WRONG_PEER,
+            FAILURE_WRONG_PAYLOAD,
+            FAILURE_DECODE_FAILED,
+            FAILURE_TARGET_SETUP_FAILED,
+        ]
+    return None
+
+
+# --------------------------------------------------------------------------- #
+# Lab-capability derivation (moved from lab.probe_capabilities_from_lab_capabilities)
+# --------------------------------------------------------------------------- #
+
+
+def udp_lab_capabilities(substrate: Mapping[str, JSONValue]) -> Mapping[str, object]:
+    """Return the UDP plugin's derived probe-capability contribution.
+
+    Moved verbatim from the ``udp_*`` boolean derivations in
+    ``lab.probe_capabilities_from_lab_capabilities``: the controlled UDP
+    responder needs an IPv4-unicast substrate that can host a controlled service
+    (``udp_service``); the large/length-boundary echo additionally needs the
+    advertised safe payload size to clear the large-echo length
+    (``udp_large_payload``); the zero-checksum and options-surplus echoes can be
+    explicitly denied per provider (``udp_ipv4_zero_checksum`` /
+    ``udp_options_surplus``); and a privileged UDP port rides the same
+    IPv4-unicast + controlled-service substrate (``privileged_udp_port``). When
+    the substrate advertises a safe UDP payload size, the derived capabilities
+    echo it back as ``udp_safe_payload_size`` (the legacy body added the same
+    key). The shared ``capability_names`` / ``capability_sources`` tables stay in
+    ``lab``; this hook contributes only the derived ``udp_*`` values, merged
+    byte-identically over the legacy values.
+    """
+
+    # ``UDP_ECHO_LARGE_PAYLOAD_LENGTH`` lives in :mod:`tools.probe.engine.cases`.
+    # Import it lazily to avoid a module-init cycle: ``cases`` triggers
+    # ``protocols`` auto-discovery (which imports this module) before its own
+    # module body finishes binding the constant.
+    from ..cases import UDP_ECHO_LARGE_PAYLOAD_LENGTH
+
+    ipv4_unicast = capability(substrate, "ipv4_unicast", "ipv4")
+    controlled_services = capability(
+        substrate,
+        "controlled_services",
+        "controlled_service",
+    )
+    udp_service = ipv4_unicast and controlled_services
+    advertised_udp_safe_payload = optional_positive_int(
+        substrate,
+        "udp_safe_payload_size",
+        "safe_udp_payload_size",
+        "max_udp_payload_size",
+        "private_network_safe_udp_payload_size",
+    )
+    udp_large_payload = udp_service and (
+        advertised_udp_safe_payload is None
+        or advertised_udp_safe_payload >= UDP_ECHO_LARGE_PAYLOAD_LENGTH
+    )
+    udp_ipv4_zero_checksum = udp_service and capability_default_true(
+        substrate,
+        "udp_ipv4_zero_checksum",
+        "ipv4_udp_zero_checksum",
+    )
+    udp_options_surplus = udp_service and capability_default_true(
+        substrate,
+        "udp_options_surplus",
+        "udp_surplus_options",
+    )
+    privileged_udp_port = ipv4_unicast and controlled_services
+    contribution: dict[str, object] = {
+        "udp_service": udp_service,
+        "udp_large_payload": udp_large_payload,
+        "udp_ipv4_zero_checksum": udp_ipv4_zero_checksum,
+        "udp_options_surplus": udp_options_surplus,
+        "privileged_udp_port": privileged_udp_port,
+    }
+    if advertised_udp_safe_payload is not None:
+        contribution["udp_safe_payload_size"] = advertised_udp_safe_payload
+    return contribution
+
+
 register(
     ProtocolPlugin(
         name="udp",
@@ -946,12 +1460,20 @@ register(
         profile_counts={},
         stimulus_endpoint_cases=_UDP_STIMULUS_ENDPOINT_CASES,
         # UDP target-service / address-rewrite / failure-reason / lab-capability
-        # hooks land in the next step (step 24, the services/cli half, including
-        # the closed-port controlled-service handling). They stay ``None`` here.
-        target_service=None,
+        # hooks (step 24, completing UDP). ``target_service`` contributes the
+        # ``udp-responder`` services entries and the ``closed_udp_ports`` entries
+        # (and diverts all ten UDP cases off the legacy target path).
+        # ``setup_script`` stays ``None``: UDP's setup-script blocks (the
+        # closed-UDP-port free check and the responder heredoc + launch) need the
+        # planned UDP plans, which the plugin ``setup_script`` hook does not
+        # receive, so ``target_services.target_service_setup_script`` renders them
+        # by calling :func:`udp_closed_port_check_lines` /
+        # :func:`udp_responder_setup_lines` directly (byte-identically to the
+        # legacy inline blocks).
+        target_service=udp_target_service_contribution,
         setup_script=None,
-        rewrite_endpoint_addresses=None,
-        failure_reasons=None,
-        lab_capabilities=None,
+        rewrite_endpoint_addresses=udp_rewrite_endpoint_addresses,
+        failure_reasons=udp_failure_reasons,
+        lab_capabilities=udp_lab_capabilities,
     )
 )
