@@ -135,6 +135,26 @@ class ProbeCatalogTest(unittest.TestCase):
                     ["ipv4_multicast", "igmp_peer"],
                 )
 
+    def test_mqtt_smoke_cases_are_planned_only_and_gated(self) -> None:
+        self.assertEqual(
+            cases.MQTT_SMOKE_PROFILE_CASE_NAMES,
+            (
+                "mqtt-connect-connack",
+                "mqtt-subscribe-suback",
+                "mqtt-publish-puback",
+            ),
+        )
+
+        for case in cases.MQTT_SMOKE_CASES:
+            with self.subTest(case=case.name):
+                self.assertIn(case.name, cases.PROBE_CASE_BY_NAME)
+                self.assertEqual(case.metadata["protocol"], "mqtt")
+                self.assertEqual(case.metadata["suite"], "behavior")
+                self.assertEqual(case.metadata["service"], "mosquitto")
+                self.assertIs(case.metadata["stateful"], True)
+                self.assertIs(case.metadata["planned_only"], True)
+                self.assertEqual(case.required_capabilities, ["mqtt_broker"])
+
 
 if __name__ == "__main__":
     unittest.main()
