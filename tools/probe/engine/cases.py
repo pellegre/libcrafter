@@ -23,6 +23,12 @@ from .protocols import (
     all_cases as _registry_cases,
     all_profile_counts as _registry_profile_counts,
 )
+# Re-import the IGMP case tuple from the IGMP plugin so ``cases.IGMP_PROBE_CASES``
+# stays resolvable for the catalog tests (the cases themselves reach the merged
+# catalog through the registry; this is a back-compat re-export only).
+from .protocols.igmp import (  # noqa: F401  (re-exported for back-compat)
+    IGMP_PROBE_CASES,
+)
 
 
 # Capabilities required by each behavioral protocol group. DNS and UDP need only
@@ -46,7 +52,11 @@ UDP_ECHO_LARGE_PAYLOAD_LENGTH = 1200
 # RIP's capability constant (``_RIP_CAPABILITIES``) and case tuple now live in
 # the RIP plugin module (``protocols/rip.py``); the merged catalog/profile tables
 # below pick the RIP/RIPng cases up from the registry.
-_IGMP_CAPABILITIES = ["ipv4_multicast", "igmp_peer"]
+# IGMP's capability constant (``_IGMP_CAPABILITIES``) and case tuple now live in
+# the IGMP plugin module (``protocols/igmp.py``); the merged catalog/profile
+# tables below pick the IGMP cases up from the registry. ``IGMP_PROBE_CASES`` is
+# re-imported below so ``cases.IGMP_PROBE_CASES`` stays resolvable for the catalog
+# tests.
 # ARP's capability constants and case tuple now live in the ARP plugin module
 # (``protocols/arp.py``); NDP's capability constant and case tuple now live in
 # the NDP plugin module (``protocols/ndp.py``); the merged catalog/profile tables
@@ -95,82 +105,11 @@ _IPSEC_CAPABILITIES = [
 # pick them up from the registry.
 
 
-# IGMP behavior cases. IGMP is IPv4-only and rides link-local IPv4 multicast
-# groups, so every case is kept out of the broad behavior profile and selected
-# through the focused ``igmp`` profile. The cases are planned dry-run first: live
-# execution remains provider-backed and confirmation-gated, with unsupported
-# substrates skipping on the multicast / IGMP-peer capabilities.
-IGMP_PROBE_CASES: tuple[ProbeCase, ...] = (
-    _behavior_case(
-        name="igmp-membership-query-observation",
-        description=(
-            "Observe a controlled peer's IGMP Membership Query on the lab "
-            "multicast segment."
-        ),
-        stimulus="igmp_query_observation",
-        expected_response="igmp_membership_query",
-        required_capabilities=_IGMP_CAPABILITIES,
-        protocol="igmp",
-        metadata={
-            "service": "igmp-router",
-            "layer": "network",
-            "ipv4_only": True,
-            "planned_only": True,
-        },
-    ),
-    _behavior_case(
-        name="igmp-v2-membership-report-emission",
-        description=(
-            "Emit an IGMPv2 Membership Report to a documentation multicast "
-            "group and plan peer observation."
-        ),
-        stimulus="igmp_v2_membership_report",
-        expected_response="igmp_membership_report_observed",
-        required_capabilities=_IGMP_CAPABILITIES,
-        protocol="igmp",
-        metadata={
-            "service": "igmp-listener",
-            "layer": "network",
-            "ipv4_only": True,
-            "planned_only": True,
-        },
-    ),
-    _behavior_case(
-        name="igmp-v2-leave-group-emission",
-        description=(
-            "Emit an IGMPv2 Leave Group message toward the all-routers group and "
-            "plan peer observation."
-        ),
-        stimulus="igmp_v2_leave_group",
-        expected_response="igmp_leave_group_observed",
-        required_capabilities=_IGMP_CAPABILITIES,
-        protocol="igmp",
-        metadata={
-            "service": "igmp-listener",
-            "layer": "network",
-            "ipv4_only": True,
-            "planned_only": True,
-        },
-    ),
-    _behavior_case(
-        name="igmp-v3-source-list-report",
-        description=(
-            "Emit an IGMPv3 Membership Report carrying a deterministic "
-            "MODE_IS_INCLUDE source list."
-        ),
-        stimulus="igmp_v3_source_list_report",
-        expected_response="igmp_v3_report_observed",
-        required_capabilities=_IGMP_CAPABILITIES,
-        protocol="igmp",
-        metadata={
-            "service": "igmp-listener",
-            "layer": "network",
-            "ipv4_only": True,
-            "planned_only": True,
-            "record_type": "mode_is_include",
-        },
-    ),
-)
+# The IGMP behavior cases (``igmp-membership-query-observation`` /
+# ``igmp-v2-membership-report-emission`` / ``igmp-v2-leave-group-emission`` /
+# ``igmp-v3-source-list-report``) now live in the IGMP plugin module
+# (``protocols/igmp.py``); the merged catalog/profile tables below pick them up
+# from the registry, and ``IGMP_PROBE_CASES`` is re-imported above for back-compat.
 
 
 # IPSec behavioral cases (RFC 4303 ESP, RFC 4302 AH, RFC 7296 IKEv2) against a
@@ -292,7 +231,9 @@ _LEGACY_PROBE_CASES: tuple[ProbeCase, ...] = (
     # (``protocols/bgp.py``); the ``rip-update-v2`` / ``ripng-update`` cases are
     # contributed by the RIP plugin (``protocols/rip.py``). Both are merged in
     # ahead of this legacy aggregation by ``_merge_probe_cases``.
-    *IGMP_PROBE_CASES,
+    # The four IGMP cases are contributed by the IGMP plugin
+    # (``protocols/igmp.py``) and merged in ahead of this legacy aggregation by
+    # ``_merge_probe_cases``.
     *BEHAVIOR_IPSEC_CASES,
 )
 
@@ -572,8 +513,16 @@ RIP_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
 # ``profile_counts``) so the selection order is byte-identical.
 OSPF_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = _OSPF_SMOKE_CASE_NAMES
 
+# The focused ``igmp`` profile selects the four IGMP cases in declaration order.
+# The case names are sourced from the IGMP plugin's registered cases; IGMP's
+# profile membership stays in this legacy ordered table (rather than the plugin's
+# ``profile_counts``) so the selection order is byte-identical -- the
+# registry-first profile merge would otherwise move IGMP to the front of the
+# profile.
 IGMP_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
-    case.name for case in IGMP_PROBE_CASES
+    case.name
+    for case in _registry_cases()
+    if case.metadata.get("protocol") == "igmp"
 )
 
 
