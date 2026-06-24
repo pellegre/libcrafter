@@ -40,6 +40,7 @@ pub(crate) fn decode_mqtt(bytes: &[u8]) -> Result<(Mqtt, usize)> {
     let body = &bytes[header_len..total_len];
     let mqtt = match packet_type {
         MqttControlPacketType::Connect => decode_connect(flags, remaining_length, body)?,
+        MqttControlPacketType::Connack => decode_connack(flags, remaining_length, body)?,
         _ => Mqtt::raw(packet_type, body.to_vec())
             .flags(flags)
             .remaining_length(remaining_length),
@@ -97,6 +98,27 @@ fn decode_connect(fixed_header_flags: u8, remaining_length: u32, body: &[u8]) ->
         will_message,
         username,
         password,
+    ))
+}
+
+fn decode_connack(fixed_header_flags: u8, remaining_length: u32, body: &[u8]) -> Result<Mqtt> {
+    let mut cursor = 0;
+
+    let ack_flags = take_u8(body, &mut cursor, "mqtt.connack.ack_flags")?;
+    let return_code = take_u8(body, &mut cursor, "mqtt.connack.return_code")?;
+
+    if cursor != body.len() {
+        return Err(CrafterError::invalid_field_value(
+            "mqtt.connack.remaining_length",
+            "CONNACK Remaining Length must be 2",
+        ));
+    }
+
+    Ok(Mqtt::connack_from_decoded_parts(
+        fixed_header_flags,
+        remaining_length,
+        ack_flags,
+        return_code,
     ))
 }
 
@@ -210,5 +232,36 @@ mod tests {
         assert_eq!(mqtt_layers.len(), 1);
         assert_eq!(mqtt_layers[0].packet_type(), MqttControlPacketType::Pingreq);
         assert_eq!(raw.as_bytes(), &[0xd0, 0x02, 0xaa]);
+    }
+
+    #[test]
+    fn decodes_typed_connack_and_rejects_inconsistent_lengths() {
+        let (mqtt, consumed) = decode_mqtt(&[0x20, 0x02, 0x01, 0x03]).unwrap();
+
+        assert_eq!(consumed, 4);
+        assert_eq!(mqtt.packet_type(), MqttControlPacketType::Connack);
+        assert_eq!(mqtt.session_present_value(), Some(true));
+        assert_eq!(mqtt.return_code_value(), Some(0x03));
+
+        match decode_mqtt(&[0x20, 0x01, 0x00]) {
+            Err(CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            }) => {
+                assert_eq!(context, "mqtt.connack.return_code");
+                assert_eq!(required, 2);
+                assert_eq!(available, 1);
+            }
+            other => panic!("expected connack truncation error, got {other:?}"),
+        }
+
+        match decode_mqtt(&[0x20, 0x03, 0x00, 0x00, 0x00]) {
+            Err(CrafterError::InvalidFieldValue { field, reason }) => {
+                assert_eq!(field, "mqtt.connack.remaining_length");
+                assert!(reason.contains("must be 2"));
+            }
+            other => panic!("expected connack length error, got {other:?}"),
+        }
     }
 }
