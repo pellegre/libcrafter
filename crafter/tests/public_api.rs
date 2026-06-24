@@ -51,6 +51,22 @@ fn ble_root_reexports_compile() {
     ));
 }
 
+#[test]
+fn mqtt_public_api_surface_resolves() {
+    let _: Mqtt = Mqtt::connect().client_id("client");
+    let _: Mqtt = Mqtt::publish().topic("topic").payload(b"data".to_vec());
+    let _: Mqtt = Mqtt::subscribe().packet_id(7).subscribe_topic("topic", 1);
+    let _: MqttControlPacketType = MqttControlPacketType::Publish;
+    assert_eq!(MQTT_PORT, 1883);
+    assert_eq!(MQTT_TLS_PORT, 8883);
+
+    let _: crafter::protocols::mqtt::Mqtt = crafter::protocols::mqtt::Mqtt::connect();
+    let _: crafter::protocols::mqtt::MqttControlPacketType =
+        crafter::protocols::mqtt::MqttControlPacketType::Connect;
+    assert_eq!(crafter::protocols::mqtt::MQTT_PORT, MQTT_PORT);
+    assert_eq!(crafter::protocols::mqtt::MQTT_TLS_PORT, MQTT_TLS_PORT);
+}
+
 #[cfg(feature = "whad")]
 #[test]
 fn whad_reexport_public_api_compile() {
