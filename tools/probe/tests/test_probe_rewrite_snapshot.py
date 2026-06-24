@@ -19,7 +19,7 @@ computed once from the current engine and hardcoded below; there is
 intentionally no print or self-updating logic.
 
 The suite is offline and deterministic: pure Python planning + rewrite, no
-Scapy, uv, cargo, or network.
+uv, cargo, or network.
 """
 
 from __future__ import annotations
