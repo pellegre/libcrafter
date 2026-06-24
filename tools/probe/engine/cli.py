@@ -118,10 +118,10 @@ from .planning import (
     planned_cases as _planned_cases,
     probe_plan_for_case as _probe_plan_for_case,
     probe_plans_for_cases as _probe_plans_for_cases,
+    # ``solicited_node_multicast`` is re-exported so the live-behavior suite can
+    # reference ``cli._solicited_node_multicast``; the NDP rewrite that used it
+    # moved to the NDP plugin (``protocols/ndp.py``) in step 26.
     solicited_node_multicast as _solicited_node_multicast,
-    IPV6_ALL_NODES_MULTICAST as _IPV6_ALL_NODES_MULTICAST,
-    IPV6_ALL_ROUTERS_MULTICAST as _IPV6_ALL_ROUTERS_MULTICAST,
-    IPV6_UNSPECIFIED as _IPV6_UNSPECIFIED,
 )
 from .report import DEFAULT_OUTPUT_ROOT, REPO_ROOT
 from .target_services import (
@@ -1092,189 +1092,17 @@ def _stimulus_endpoint_request_metadata(
     return output
 
 
-# NDP behavioral cases handled by the IPv6/link-local address-rewrite branch. The
-# Neighbor Solicitation and Duplicate Address Detection cases resolve a kernel-
-# owned link-local address (the IPv6 analog of ARP who-has/is-at); the Router
-# Solicitation case targets the all-routers group and validates a Router
-# Advertisement from an RA-emitting router target.
-_NDP_REWRITE_CASES: frozenset[str] = frozenset(
-    {
-        "ndp-neighbor-solicitation",
-        "ndp-router-solicitation",
-        "ndp-duplicate-address-detection",
-    }
-)
-
-
-def _ndp_plan_with_endpoint_addresses(
-    plan: JSONObject,
-    *,
-    source_mac: str | None = None,
-    target_mac: str | None = None,
-    target_interface: str | None = None,
-    rewrite_source: str = "wire_endpoint_plan",
-) -> JSONObject:
-    """Rewrite an NDP probe plan onto the live lab-segment IPv6 addresses.
-
-    NDP is the IPv6 analog of ARP: the stimulus resolves a kernel-owned
-    link-local address the way an ARP who-has resolves an IPv4 address. The
-    dry-run plan carries deterministic documentation link-local addresses and
-    documentation MACs; at live time the real lab endpoint MACs are threaded in,
-    so the rewrite derives every address from the real MACs:
-
-    * The target address the Neighbor Solicitation resolves is the *target
-      kernel's own* modified-EUI-64 link-local address (RFC 4291 Appendix A),
-      which a bare Linux kernel always owns and auto-answers a Neighbor
-      Solicitation for (and defends on Duplicate Address Detection). No separate
-      address needs to be configured.
-    * The Neighbor Solicitation destination is the target's solicited-node
-      multicast group ``ff02::1:ffXX:XXXX`` (RFC 4291 section 2.7.1) derived from
-      that link-local address; the Rust adapter maps it to the ``33:33`` Ethernet
-      multicast destination (RFC 2464).
-    * The stimulus IPv6 source is the *stimulus* kernel's own EUI-64 link-local
-      address, except the Duplicate Address Detection case, whose source is the
-      unspecified address ``::`` with no Source Link-Layer Address option
-      (RFC 4861 section 4.3).
-    * The Router Solicitation case keeps the all-routers multicast destination
-      (``ff02::2``); a Router Advertisement only arrives from an RA-emitting
-      router target.
-
-    The Neighbor Advertisement validation contract is rewritten so it checks the
-    decoded reply against the real target's resolved link-local address and the
-    real target MAC (the Target Link-Layer Address option). ``source_mac`` /
-    ``target_mac`` are the real lab endpoint MACs; when a MAC is absent (dry-run
-    parity) the plan's existing documentation address survives untouched.
-    """
-
-    updated = dict(plan)
-    case_name = str(updated.get("case", ""))
-    is_dad = case_name == "ndp-duplicate-address-detection"
-    is_router = case_name == "ndp-router-solicitation"
-    resolved_source_mac = _string_or(source_mac, "")
-    resolved_target_mac = _string_or(target_mac, "")
-    resolved_target_interface = _string_or(target_interface, "")
-
-    # Without the real lab MACs (e.g. an early dry-run parity call) the plan keeps
-    # its deterministic documentation link-local addresses; nothing to rewrite.
-    if not resolved_source_mac and not resolved_target_mac:
-        return updated
-
-    # Resolve the kernel-owned link-local addresses from the real MACs. The target
-    # link-local is the address the solicitation resolves and the advertisement
-    # validates; the stimulus link-local is the solicitation source (unless DAD).
-    target_ipv6 = (
-        _eui64_link_local_ipv6(resolved_target_mac)
-        if resolved_target_mac
-        else _string_or(plan.get("target_ipv6"), "")
-    )
-    source_ipv6 = (
-        _eui64_link_local_ipv6(resolved_source_mac)
-        if resolved_source_mac
-        else _string_or(plan.get("source_ipv6"), "")
-    )
-    solicited_node = (
-        _solicited_node_multicast(target_ipv6)
-        if target_ipv6
-        else _string_or(plan.get("solicited_node_multicast"), "")
-    )
-
-    if is_router:
-        # Router Solicitation: source is the stimulus link-local, destination stays
-        # the all-routers multicast group. The reply (an RA) is validated against
-        # the router target's link-local address and MAC.
-        if source_ipv6:
-            updated["source_ipv6"] = source_ipv6
-        updated["destination_ipv6"] = _IPV6_ALL_ROUTERS_MULTICAST
-        updated["all_routers_multicast"] = _IPV6_ALL_ROUTERS_MULTICAST
-        if resolved_source_mac:
-            updated["source_link_layer_addr"] = resolved_source_mac
-            updated["ethernet_source"] = resolved_source_mac
-        if target_ipv6:
-            updated["expected_reply_source_ipv6"] = target_ipv6
-        if source_ipv6:
-            updated["expected_reply_destination_ipv6"] = source_ipv6
-    else:
-        # Neighbor Solicitation / DAD: resolve the target link-local through its
-        # solicited-node multicast group. DAD sources from the unspecified address
-        # (::) and carries no Source Link-Layer Address option.
-        if is_dad:
-            updated["source_ipv6"] = _IPV6_UNSPECIFIED
-        elif source_ipv6:
-            updated["source_ipv6"] = source_ipv6
-            updated["source_link_layer_addr"] = resolved_source_mac
-        if solicited_node:
-            updated["destination_ipv6"] = solicited_node
-            updated["solicited_node_multicast"] = solicited_node
-        if target_ipv6:
-            updated["target_ipv6"] = target_ipv6
-            updated["expected_reply_source_ipv6"] = target_ipv6
-        if is_dad:
-            updated["expected_reply_destination_ipv6"] = _IPV6_ALL_NODES_MULTICAST
-        elif source_ipv6:
-            updated["expected_reply_destination_ipv6"] = source_ipv6
-        if resolved_source_mac:
-            # The stimulus Ethernet source is the sender's MAC even on DAD (where
-            # the IPv6 source is unspecified and no SLLA option is present).
-            updated["ethernet_source"] = resolved_source_mac
-
-    # The target service configures the kernel to answer/defend the resolved
-    # address. The kernel's EUI-64 link-local is owned automatically, but thread
-    # the resolved address, MAC, and interface through so setup can enable IPv6 /
-    # flush the neighbor cache on the real interface.
-    target_service = dict(
-        json_object(updated.get("target_service", {}), "probe_plan.target_service")
-    )
-    if target_ipv6 and not is_router:
-        target_service["target_ipv6"] = target_ipv6
-    if is_router and target_ipv6:
-        target_service["router_ipv6"] = target_ipv6
-    if resolved_target_mac:
-        if is_router:
-            target_service["router_hardware_addr"] = resolved_target_mac
-        else:
-            target_service["target_hardware_addr"] = resolved_target_mac
-    if resolved_target_interface:
-        target_service["interface"] = resolved_target_interface
-    updated["target_service"] = target_service
-
-    # Rewrite both validation contracts (the ARP-parity ``validation`` and the
-    # typed ``ndp_validation`` the Rust adapter reads) so the decoded reply is
-    # checked against the real resolved target address and MAC.
-    for key in ("validation", "ndp_validation"):
-        contract = dict(json_object(updated.get(key, {}), f"probe_plan.{key}"))
-        if not contract:
-            continue
-        if is_router:
-            if target_ipv6:
-                contract["source_ipv6"] = target_ipv6
-            if source_ipv6:
-                contract["destination_ipv6"] = source_ipv6
-            if resolved_target_mac:
-                contract["router_link_layer_addr"] = resolved_target_mac
-        else:
-            if target_ipv6:
-                contract["target_ipv6"] = target_ipv6
-                contract["source_ipv6"] = target_ipv6
-            if resolved_target_mac:
-                contract["target_link_layer_addr"] = resolved_target_mac
-            if is_dad:
-                contract["destination_ipv6"] = _IPV6_ALL_NODES_MULTICAST
-            elif source_ipv6:
-                contract["destination_ipv6"] = source_ipv6
-        updated[key] = contract
-
-    live_rewrite: JSONObject = {
-        "source": rewrite_source,
-        "stimulus_ipv6": _IPV6_UNSPECIFIED if is_dad else source_ipv6,
-        "target_ipv6": target_ipv6,
-        "solicited_node_multicast": solicited_node,
-    }
-    if resolved_source_mac:
-        live_rewrite["stimulus_mac"] = resolved_source_mac
-    if resolved_target_mac:
-        live_rewrite["target_mac"] = resolved_target_mac
-    updated["live_address_rewrite"] = live_rewrite
-    return updated
+# The NDP live-path address rewrite (``_ndp_plan_with_endpoint_addresses``), its
+# dedicated case set (``_NDP_REWRITE_CASES``), and the hard early-return that
+# bypassed the shared IPv4 tail moved to the NDP plugin's
+# ``rewrite_endpoint_addresses`` hook
+# (:func:`tools.probe.engine.protocols.ndp.ndp_rewrite_endpoint_addresses`) in
+# step 26. The registry-first dispatch in
+# :func:`_probe_plan_with_endpoint_addresses` now routes the three NDP cases to
+# that hook, which reproduces the early-return by returning the fully-rewritten
+# plan without the shared IPv4 tail. ``cli._solicited_node_multicast`` /
+# ``cli._eui64_link_local_ipv6`` stay re-imported above for the live-behavior
+# suite's direct ``cli.`` references.
 
 
 def _registry_rewrite_plugin_for_case(case_name: str) -> object | None:
@@ -1311,28 +1139,18 @@ def _probe_plan_with_endpoint_addresses(
     if plan.get("case") not in _STIMULUS_ENDPOINT_CASES:
         return dict(plan)
     # Registry-first dispatch: if a migrated plugin owns this case and defines a
-    # rewrite hook, it replaces the legacy per-protocol branch (including the NDP
-    # early-return) and is called with the same rewrite context. With an empty
-    # registry no plugin owns any case, so this is a no-op today and every case
-    # flows through the unchanged legacy branches below.
+    # rewrite hook, it replaces the legacy per-protocol branch and is called with
+    # the same rewrite context. The NDP plugin's hook
+    # (``ndp_rewrite_endpoint_addresses``) reproduces NDP's dedicated IPv6 rewrite
+    # *and its hard early-return*: it returns the fully-rewritten plan directly,
+    # so NDP never falls into the shared IPv4-layer tail below (NDP rides ICMPv6
+    # over IPv6 with no IPv4 transport).
     plugin = _registry_rewrite_plugin_for_case(str(plan.get("case", "")))
     if plugin is not None:
         return plugin.rewrite_endpoint_addresses(
             plan,
             source_ipv4=source_ipv4,
             target_ipv4=target_ipv4,
-            source_mac=source_mac,
-            target_mac=target_mac,
-            target_interface=target_interface,
-            rewrite_source=rewrite_source,
-        )
-    if plan.get("case") in _NDP_REWRITE_CASES:
-        # NDP rides ICMPv6 over IPv6 (next header 58) and carries no IPv4
-        # transport, so the lab rewrite touches the IPv6/link-local addresses and
-        # the IPv6-multicast groups rather than transport IPv4. This branch
-        # returns directly rather than falling into the shared IPv4-layer tail.
-        return _ndp_plan_with_endpoint_addresses(
-            plan,
             source_mac=source_mac,
             target_mac=target_mac,
             target_interface=target_interface,

@@ -174,15 +174,9 @@ def probe_capabilities_from_lab_capabilities(
     # ``arp_resolution`` / ``link_layer_arp`` are derived by the ARP plugin's
     # ``lab_capabilities`` hook (folded in below), not here. The shared
     # ``capability_names`` / ``capability_sources`` tables still list them.
-    # IPv6 Neighbor Discovery (the IPv6 analog of ARP) addresses solicitations to
-    # the solicited-node / all-routers / all-nodes multicast groups rather than
-    # the broadcast address, but it rides the same same-segment link-layer
-    # substrate ARP uses: a segment that carries broadcast frames carries IPv6
-    # multicast frames too. Derive ``ipv6_multicast`` from link-layer send/capture
-    # plus broadcast so NDP cases plan on providers that carry same-segment L2
-    # traffic (QEMU, VirtualBox) and skip cleanly on providers without an L2
-    # segment (Hetzner) with the stable link-layer reason.
-    ipv6_multicast = link_layer_send and link_layer_capture and broadcast
+    # ``ipv6_multicast`` (the NDP IPv6-multicast substrate gate) is likewise
+    # derived by the NDP plugin's ``lab_capabilities`` hook (folded in below); the
+    # shared ``capability_sources`` table still lists it.
     # ``dhcp_service`` is derived by the DHCP plugin's ``lab_capabilities`` hook
     # (folded in below), not here. The shared ``capability_names`` /
     # ``capability_sources`` tables still list it. The ``udp_*`` derived
@@ -306,7 +300,8 @@ def probe_capabilities_from_lab_capabilities(
         "link_layer_send": link_layer_send,
         "link_layer_capture": link_layer_capture,
         "broadcast": broadcast,
-        "ipv6_multicast": ipv6_multicast,
+        # ``ipv6_multicast`` is contributed by the NDP plugin's
+        # ``lab_capabilities`` hook (folded in below).
         "provider_mac": provider_mac,
         # ``arp_resolution`` / ``link_layer_arp`` are contributed by the ARP
         # plugin's ``lab_capabilities`` hook (folded in below).
