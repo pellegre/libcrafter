@@ -45,6 +45,22 @@ IGMP_STRUCTURED_ERROR_CASES = {
     "malformed-igmp-mrd-truncated-solicitation",
     "malformed-igmp-mrd-truncated-termination",
 }
+BLE_CONTRACT_ONLY_CASES = {
+    "ble-radio-default-advertising-phdr",
+    "ble-radio-explicit-aa-channel",
+    "ble-adv-ind-flags-name",
+    "ble-adv-nonconn-uuid16",
+    "ble-adv-nonconn-uuid128",
+    "ble-scan-rsp-manufacturer-data",
+    "ble-scan-rsp-service-data",
+    "ble-adv-unknown-ad-raw",
+}
+IP_FRAGMENT_PACKET_CASES = {
+    "ipv4-fragment-mf-offset",
+    "crafter-ipv4-fragment-mf-offset",
+    "ipv6-fragment-udp",
+    "crafter-ipv6-fragment-udp",
+}
 
 
 def _icmp_for_case(case: str) -> dict[str, object]:
@@ -443,6 +459,42 @@ class MqttGeneratorTest(unittest.TestCase):
                 else:
                     self.assertIn(packet_type, {"pingreq", "pingresp", "disconnect"})
                     self.assertEqual(mqtt.get("flags"), "default")
+
+
+class ContractOnlyGeneratorTest(unittest.TestCase):
+    def test_ci_profile_does_not_emit_contract_only_ble_cases(self) -> None:
+        plans = generate_plans(
+            seed=12345,
+            profile="ci",
+            count=100,
+            backend=_BACKEND,
+        )
+
+        generated_cases = {plan.case for plan in plans}
+        self.assertFalse(generated_cases & BLE_CONTRACT_ONLY_CASES)
+        self.assertNotIn(
+            "ble_radio_phdr",
+            {plan.metadata.get("stack_name") for plan in plans},
+        )
+
+        grammar = load_stack_grammar()
+        stacks = grammar["stacks"]
+        for plan in plans:
+            if plan.case not in IP_FRAGMENT_PACKET_CASES:
+                continue
+            stack_name = str(plan.metadata.get("stack_name"))
+            stack_cases = set(stacks[stack_name].get("coverage_cases", []))
+            self.assertIn(plan.case, stack_cases)
+
+    def test_explicit_contract_only_case_is_not_runnable_corpus_input(self) -> None:
+        with self.assertRaisesRegex(ValueError, "no stack specs match"):
+            generate_plans(
+                seed=1,
+                profile="ci",
+                count=1,
+                backend=_BACKEND,
+                case="ble-radio-explicit-aa-channel",
+            )
 
 
 if __name__ == "__main__":
