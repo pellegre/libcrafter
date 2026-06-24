@@ -44,23 +44,9 @@ _BGP_CAPABILITIES = ["bgp_peer"]
 _RIP_CAPABILITIES = ["rip_peer"]
 _IGMP_CAPABILITIES = ["ipv4_multicast", "igmp_peer"]
 # ARP's capability constants and case tuple now live in the ARP plugin module
-# (``protocols/arp.py``); the merged catalog/profile tables below pick the ARP
-# cases up from the registry. The NDP constant below references ARP only in
-# prose.
-# IPv6 Neighbor Discovery is the IPv6 analog of ARP. Unlike ARP (which rides
-# Ethernet broadcast), NDP rides ICMPv6 over IPv6 and addresses solicitations to
-# the solicited-node multicast group (and router solicitations to the
-# all-routers multicast group), so it needs an IPv6 link-layer multicast
-# substrate rather than broadcast. ``ipv6_multicast`` is derived in
-# :mod:`tools.probe.engine.lab` from the same link-layer send/capture substrate
-# ARP uses, so providers that carry same-segment multicast (QEMU, VirtualBox)
-# plan the cases while providers without an L2 segment (Hetzner) skip cleanly
-# with the stable ``requires_link_layer`` reason.
-_NDP_CAPABILITIES = [
-    "link_layer_send",
-    "link_layer_capture",
-    "ipv6_multicast",
-]
+# (``protocols/arp.py``); NDP's capability constant and case tuple now live in
+# the NDP plugin module (``protocols/ndp.py``); the merged catalog/profile tables
+# below pick those cases up from the registry.
 
 # IPSec behavioral cases drive a controlled IPSec-capable peer: a libcrafter
 # ESP/AH datagram or IKE_SA_INIT is placed on the wire and the peer's protected
@@ -101,86 +87,9 @@ _IPSEC_CAPABILITIES = [
 _OSPF_CAPABILITIES = ["ospf_neighbor_peer"]
 
 
-# NDP (IPv6 Neighbor Discovery, RFC 4861) behavioral cases. NDP is the IPv6
-# analog of ARP: a Neighbor Solicitation resolves an IPv6 address the way an ARP
-# who-has resolves an IPv4 address, and the target kernel answers a solicited
-# Neighbor Advertisement the way it answers an ARP is-at. The cases mirror the
-# ARP set's stimulus/expected_response/required_capabilities shape; the
-# ``layer`` metadata is ``network`` because NDP rides ICMPv6 over IPv6 (rather
-# than directly over Ethernet like ARP). Providers that lack an IPv6 multicast
-# link-layer substrate skip cleanly on ``_NDP_CAPABILITIES``.
-BEHAVIOR_NDP_CASES: tuple[ProbeCase, ...] = (
-    _behavior_case(
-        name="ndp-neighbor-solicitation",
-        description=(
-            "Send a Neighbor Solicitation (ICMPv6 type 135) to the target's "
-            "solicited-node multicast group and validate the kernel's solicited "
-            "Neighbor Advertisement (type 136)."
-        ),
-        # The kernel NA-for-NS exchange is the direct analog of ARP who-has/is-at
-        # and the single most reliable NDP behavior on a bare kernel: the target
-        # kernel auto-answers a solicitation for an address it owns. This is the
-        # PRIMARY reliable NDP case.
-        stimulus="ndp_neighbor_solicitation",
-        expected_response="ndp_neighbor_advertisement",
-        required_capabilities=_NDP_CAPABILITIES,
-        protocol="ndp",
-        metadata={"layer": "network"},
-    ),
-    _behavior_case(
-        name="ndp-router-solicitation",
-        description=(
-            "Send a Router Solicitation (ICMPv6 type 133) to the all-routers "
-            "multicast group and validate a Router Advertisement (type 134)."
-        ),
-        # A Router Advertisement only arrives when the target acts as a router and
-        # sends RAs (e.g. radvd / net.ipv6.conf.*.forwarding with RA emission). A
-        # bare kernel that is not configured as a router does not answer a Router
-        # Solicitation, so the live runners must configure the target as an
-        # RA-emitting router for this case or skip it; the plan/notes record that
-        # requirement. The dry-run plan is well-formed regardless.
-        stimulus="ndp_router_solicitation",
-        expected_response="ndp_router_advertisement",
-        required_capabilities=_NDP_CAPABILITIES,
-        protocol="ndp",
-        metadata={
-            "layer": "network",
-            "requires_router_target": True,
-            "notes": (
-                "Needs the target to act as a router and emit Router "
-                "Advertisements; a bare kernel does not answer a Router "
-                "Solicitation. Live runners configure an RA-emitting router or "
-                "skip this case."
-            ),
-        },
-    ),
-    _behavior_case(
-        name="ndp-duplicate-address-detection",
-        description=(
-            "Send a Duplicate Address Detection Neighbor Solicitation from the "
-            "unspecified source (::) for an address the target owns and validate "
-            "the target's defending Neighbor Advertisement."
-        ),
-        # DAD probe: RFC 4861 section 4.3 / RFC 4862 — the solicitation source is
-        # the unspecified address (::) and carries no Source Link-Layer Address
-        # option; the target, which owns the tentative address, defends it with a
-        # Neighbor Advertisement to the all-nodes multicast group.
-        stimulus="ndp_duplicate_address_detection",
-        expected_response="ndp_neighbor_advertisement",
-        required_capabilities=_NDP_CAPABILITIES,
-        protocol="ndp",
-        metadata={
-            "layer": "network",
-            "dad": True,
-            "notes": (
-                "Unspecified-source (::) DAD solicitation with no SLLA option; "
-                "the target defends an owned address with a Neighbor "
-                "Advertisement (RFC 4861 section 4.3 / RFC 4862)."
-            ),
-        },
-    ),
-)
-
+# NDP's capability constant and the three NDP behavioral cases now live in the
+# NDP plugin module (``protocols/ndp.py``); the merged catalog/profile tables
+# below pick the NDP cases up from the registry.
 
 
 # BGP smoke cases. Probe owns controlled target-service setup for the FRR peer;
@@ -544,10 +453,11 @@ _LEGACY_PROBE_CASES: tuple[ProbeCase, ...] = (
     # are contributed by the ARP plugin (``protocols/arp.py``); the inline
     # ``dns-query`` smoke case and the ten DNS behavioral cases are contributed
     # by the DNS plugin (``protocols/dns.py``); the ten DHCP behavioral cases are
-    # contributed by the DHCP plugin (``protocols/dhcp.py``); the ten UDP
-    # behavioral cases are contributed by the UDP plugin (``protocols/udp.py``).
-    # All are merged in ahead of this legacy aggregation by ``_merge_probe_cases``.
-    *BEHAVIOR_NDP_CASES,
+    # contributed by the DHCP plugin (``protocols/dhcp.py``); the three NDP
+    # behavioral cases are contributed by the NDP plugin (``protocols/ndp.py``);
+    # the ten UDP behavioral cases are contributed by the UDP plugin
+    # (``protocols/udp.py``). All are merged in ahead of this legacy aggregation
+    # by ``_merge_probe_cases``.
     *BEHAVIOR_OSPF_CASES,
     *OSPF_SMOKE_CASES,
     *BGP_SMOKE_CASES,
@@ -720,6 +630,17 @@ _ARP_BEHAVIOR_CASE_NAMES: tuple[str, ...] = tuple(
     if case.metadata.get("protocol") == "arp" and case.name != "arp-resolution"
 )
 
+# The three NDP behavioral case names, in declaration order, sourced from the NDP
+# plugin's registered cases. NDP's profile membership stays in these legacy
+# ordered tables (rather than the plugin's ``profile_counts``) so the behavior
+# selection order is byte-identical: the registry-first profile merge would
+# otherwise move NDP to the front of the behavior profile.
+_NDP_BEHAVIOR_CASE_NAMES: tuple[str, ...] = tuple(
+    case.name
+    for case in _registry_cases()
+    if case.metadata.get("protocol") == "ndp"
+)
+
 # The ten UDP behavioral case names, in declaration order, sourced from the UDP
 # plugin's registered cases. UDP's profile membership stays in these legacy
 # ordered tables (rather than the plugin's ``profile_counts``) so the behavior
@@ -743,7 +664,7 @@ BEHAVIOR_PROFILE_CASE_NAMES: tuple[str, ...] = (
     *_DNS_BEHAVIOR_CASE_NAMES,
     *_DHCP_BEHAVIOR_CASE_NAMES,
     *_ARP_BEHAVIOR_CASE_NAMES,
-    *(case.name for case in BEHAVIOR_NDP_CASES),
+    *_NDP_BEHAVIOR_CASE_NAMES,
     *_UDP_BEHAVIOR_CASE_NAMES,
     *(case.name for case in BEHAVIOR_OSPF_CASES),
 )
