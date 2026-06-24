@@ -38,7 +38,6 @@ from tools.probe.engine.protocols import PROTOCOL_REGISTRY, registered_plugins
 # seed and asserts full coverage directly.
 KNOWN_UNMIGRATED: frozenset[str] = frozenset(
     {
-        "ospf",
         "igmp",
         "ipsec",
     }

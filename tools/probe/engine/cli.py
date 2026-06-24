@@ -673,11 +673,11 @@ _LEGACY_STIMULUS_ENDPOINT_CASES = frozenset(
         # The ten UDP behavioral stimulus-endpoint cases are now contributed by
         # the UDP plugin (``protocols/udp.py``) and unioned into
         # ``_STIMULUS_ENDPOINT_CASES`` below.
-        # Only the live-capable OSPF Hello exchange is wired through the stimulus
-        # endpoint adapter; the planned-only ospf-dd-exchange has no adapter arm
-        # yet and is intentionally absent (it stays a dry-run plan via the
-        # ospf-smoke profile).
-        "ospf-hello-exchange",
+        # The live-capable OSPF Hello exchange (``ospf-hello-exchange``) is now
+        # contributed by the OSPF plugin (``protocols/ospf.py``) and unioned into
+        # ``_STIMULUS_ENDPOINT_CASES`` below; the planned-only ``ospf-dd-exchange``
+        # has no adapter arm yet and is intentionally absent (it stays a dry-run
+        # plan via the ospf-smoke profile).
     }
 )
 
