@@ -1,0 +1,13 @@
+# One malformed MQTT TCP payload per line. The hex bytes precede an inline
+# metadata comment: name|expected-kind|expected-context-or-marker.
+# expected-kind is one of:
+#   buffer-too-short    -> Err(CrafterError::BufferTooShort) with context
+#   invalid-field-value -> Err(CrafterError::InvalidFieldValue) with field
+#   decodes             -> Ok(Packet), preserving the malformed MQTT tail as Raw
+
+10 80 80 80 80 00 # overlong-remaining-length|invalid-field-value|mqtt.remaining_length
+30 05 00 01 61 # remaining-length-overruns-buffer|decodes|raw-tail
+10 0e 00 04 4d 51 54 54 04 02 00 3c 00 06 61 62 # connect-truncated-client-id|buffer-too-short|mqtt.string
+30 04 00 05 61 62 # publish-topic-overruns-buffer|buffer-too-short|mqtt.string
+82 07 12 34 00 03 61 2f 62 # subscribe-dangling-qos|buffer-too-short|mqtt.subscribe.requested_qos
+f0 00 # out-of-range-control-packet-type|decodes|raw-tail
