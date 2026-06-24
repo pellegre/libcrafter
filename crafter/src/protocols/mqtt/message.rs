@@ -404,6 +404,57 @@ impl MqttSuback {
     }
 }
 
+/// MQTT UNSUBSCRIBE variable header and payload fields.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MqttUnsubscribe {
+    packet_id: Field<u16>,
+    topics: Vec<String>,
+}
+
+impl MqttUnsubscribe {
+    fn new() -> Self {
+        Self {
+            packet_id: Field::defaulted(0),
+            topics: Vec::new(),
+        }
+    }
+
+    fn from_decoded_parts(packet_id: u16, topics: Vec<String>) -> Self {
+        Self {
+            packet_id: Field::user(packet_id),
+            topics,
+        }
+    }
+
+    fn packet_id(&self) -> u16 {
+        self.packet_id.value().copied().unwrap_or(0)
+    }
+
+    fn topics(&self) -> &[String] {
+        &self.topics
+    }
+
+    fn push_topic(&mut self, filter: impl Into<String>) {
+        self.topics.push(filter.into());
+    }
+
+    fn encoded_len(&self) -> usize {
+        2 + self
+            .topics
+            .iter()
+            .map(|filter| 2 + filter.len())
+            .sum::<usize>()
+    }
+
+    fn write_body(&self, out: &mut Vec<u8>) -> Result<()> {
+        encode_u16(self.packet_id(), out);
+        for filter in &self.topics {
+            encode_string(filter, out)?;
+        }
+        Ok(())
+    }
+}
+
 /// MQTT SUBSCRIBE variable header and payload fields.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct MqttSubscribe {
@@ -466,6 +517,7 @@ enum MqttBody {
     PacketIdentifier(MqttPacketIdentifier),
     Subscribe(MqttSubscribe),
     Suback(MqttSuback),
+    Unsubscribe(MqttUnsubscribe),
 }
 
 impl MqttBody {
@@ -478,6 +530,7 @@ impl MqttBody {
             Self::PacketIdentifier(packet_identifier) => packet_identifier.encoded_len(),
             Self::Subscribe(subscribe) => subscribe.encoded_len(),
             Self::Suback(suback) => suback.encoded_len(),
+            Self::Unsubscribe(unsubscribe) => unsubscribe.encoded_len(),
         }
     }
 
@@ -490,6 +543,7 @@ impl MqttBody {
             Self::PacketIdentifier(packet_identifier) => packet_identifier.write_body(out),
             Self::Subscribe(subscribe) => subscribe.write_body(out)?,
             Self::Suback(suback) => suback.write_body(out),
+            Self::Unsubscribe(unsubscribe) => unsubscribe.write_body(out)?,
         }
         Ok(())
     }
@@ -502,7 +556,8 @@ impl MqttBody {
             | Self::Publish(_)
             | Self::PacketIdentifier(_)
             | Self::Subscribe(_)
-            | Self::Suback(_) => &[],
+            | Self::Suback(_)
+            | Self::Unsubscribe(_) => &[],
         }
     }
 }
@@ -617,6 +672,16 @@ impl Mqtt {
         }
     }
 
+    /// Build an MQTT UNSUBSCRIBE packet.
+    pub fn unsubscribe() -> Self {
+        Self {
+            packet_type: MqttControlPacketType::Unsubscribe,
+            flags: Field::defaulted(MqttControlPacketType::Unsubscribe.default_flags()),
+            remaining_length: Field::unset(),
+            body: MqttBody::Unsubscribe(MqttUnsubscribe::new()),
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn connect_from_decoded_parts(
         fixed_header_flags: u8,
@@ -717,6 +782,20 @@ impl Mqtt {
             flags: Field::user(fixed_header_flags),
             remaining_length: Field::user(remaining_length),
             body: MqttBody::Suback(MqttSuback::from_decoded_parts(packet_id, return_codes)),
+        }
+    }
+
+    pub(crate) fn unsubscribe_from_decoded_parts(
+        fixed_header_flags: u8,
+        remaining_length: u32,
+        packet_id: u16,
+        topics: Vec<String>,
+    ) -> Self {
+        Self {
+            packet_type: MqttControlPacketType::Unsubscribe,
+            flags: Field::user(fixed_header_flags),
+            remaining_length: Field::user(remaining_length),
+            body: MqttBody::Unsubscribe(MqttUnsubscribe::from_decoded_parts(packet_id, topics)),
         }
     }
 
@@ -830,10 +909,12 @@ impl Mqtt {
         self
     }
 
-    /// Set the PUBLISH topic name.
+    /// Set the PUBLISH topic name or add one UNSUBSCRIBE topic filter.
     pub fn topic(mut self, topic: impl Into<String>) -> Self {
-        if let MqttBody::Publish(publish) = &mut self.body {
-            publish.topic.set_user(topic.into());
+        match &mut self.body {
+            MqttBody::Publish(publish) => publish.topic.set_user(topic.into()),
+            MqttBody::Unsubscribe(unsubscribe) => unsubscribe.push_topic(topic),
+            _ => {}
         }
         self
     }
@@ -873,6 +954,7 @@ impl Mqtt {
             }
             MqttBody::Subscribe(subscribe) => subscribe.packet_id.set_user(packet_id),
             MqttBody::Suback(suback) => suback.packet_id.set_user(packet_id),
+            MqttBody::Unsubscribe(unsubscribe) => unsubscribe.packet_id.set_user(packet_id),
             _ => {}
         }
         self
@@ -1058,6 +1140,7 @@ impl Mqtt {
             })
             .or_else(|| self.subscribe_body().map(MqttSubscribe::packet_id))
             .or_else(|| self.suback_body().map(MqttSuback::packet_id))
+            .or_else(|| self.unsubscribe_body().map(MqttUnsubscribe::packet_id))
     }
 
     /// SUBSCRIBE topic filter and requested QoS pairs, when this is a typed SUBSCRIBE packet.
@@ -1068,6 +1151,11 @@ impl Mqtt {
     /// SUBACK return codes, when this is a typed SUBACK packet.
     pub fn suback_return_codes_value(&self) -> Option<&[u8]> {
         self.suback_body().map(MqttSuback::return_codes)
+    }
+
+    /// UNSUBSCRIBE topic filters, when this is a typed UNSUBSCRIBE packet.
+    pub fn unsubscribe_topics_value(&self) -> Option<&[String]> {
+        self.unsubscribe_body().map(MqttUnsubscribe::topics)
     }
 
     /// PUBLISH application payload bytes, when this is a typed PUBLISH packet.
@@ -1083,7 +1171,8 @@ impl Mqtt {
             | MqttBody::Publish(_)
             | MqttBody::PacketIdentifier(_)
             | MqttBody::Subscribe(_)
-            | MqttBody::Suback(_) => None,
+            | MqttBody::Suback(_)
+            | MqttBody::Unsubscribe(_) => None,
         }
     }
 
@@ -1095,7 +1184,8 @@ impl Mqtt {
             | MqttBody::Publish(_)
             | MqttBody::PacketIdentifier(_)
             | MqttBody::Subscribe(_)
-            | MqttBody::Suback(_) => None,
+            | MqttBody::Suback(_)
+            | MqttBody::Unsubscribe(_) => None,
         }
     }
 
@@ -1107,7 +1197,8 @@ impl Mqtt {
             | MqttBody::Connack(_)
             | MqttBody::PacketIdentifier(_)
             | MqttBody::Subscribe(_)
-            | MqttBody::Suback(_) => None,
+            | MqttBody::Suback(_)
+            | MqttBody::Unsubscribe(_) => None,
         }
     }
 
@@ -1119,7 +1210,8 @@ impl Mqtt {
             | MqttBody::Connack(_)
             | MqttBody::Publish(_)
             | MqttBody::Subscribe(_)
-            | MqttBody::Suback(_) => None,
+            | MqttBody::Suback(_)
+            | MqttBody::Unsubscribe(_) => None,
         }
     }
 
@@ -1131,7 +1223,8 @@ impl Mqtt {
             | MqttBody::Connack(_)
             | MqttBody::Publish(_)
             | MqttBody::PacketIdentifier(_)
-            | MqttBody::Suback(_) => None,
+            | MqttBody::Suback(_)
+            | MqttBody::Unsubscribe(_) => None,
         }
     }
 
@@ -1143,7 +1236,21 @@ impl Mqtt {
             | MqttBody::Connack(_)
             | MqttBody::Publish(_)
             | MqttBody::PacketIdentifier(_)
-            | MqttBody::Subscribe(_) => None,
+            | MqttBody::Subscribe(_)
+            | MqttBody::Unsubscribe(_) => None,
+        }
+    }
+
+    fn unsubscribe_body(&self) -> Option<&MqttUnsubscribe> {
+        match &self.body {
+            MqttBody::Unsubscribe(unsubscribe) => Some(unsubscribe),
+            MqttBody::Raw(_)
+            | MqttBody::Connect(_)
+            | MqttBody::Connack(_)
+            | MqttBody::Publish(_)
+            | MqttBody::PacketIdentifier(_)
+            | MqttBody::Subscribe(_)
+            | MqttBody::Suback(_) => None,
         }
     }
 
@@ -1361,6 +1468,21 @@ mod tests {
         let bytes = mqtt_bytes(Mqtt::suback().packet_id(0x1234).return_codes([0x01, 0x80]));
 
         assert_eq!(bytes, [0x90, 0x04, 0x12, 0x34, 0x01, 0x80]);
+    }
+
+    #[test]
+    fn unsubscribe_compiles_packet_identifier_and_topic_filters() {
+        let bytes = mqtt_bytes(
+            Mqtt::unsubscribe()
+                .packet_id(0x1234)
+                .topic("a/b")
+                .topic("c/d"),
+        );
+
+        let expected = vec![
+            0xa2, 0x0c, 0x12, 0x34, 0x00, 0x03, b'a', b'/', b'b', 0x00, 0x03, b'c', b'/', b'd',
+        ];
+        assert_eq!(bytes, expected);
     }
 
     #[test]
