@@ -72,6 +72,13 @@ const PUBREC_PACKET_ID: &[u8] = &[
     0x50, 0x02, 0x12, 0x34,
 ];
 
+const PUBREL_PACKET_ID: &[u8] = &[
+    // `.agents/docs/mqtt-manifest.md`: PUBREL fixed-header type 6 uses the
+    // specification-fixed low-nibble flags value 0b0010, so the first byte is
+    // 0x62. Remaining Length is 2 for the Packet Identifier.
+    0x62, 0x02, 0x12, 0x34,
+];
+
 fn mqtt_over_ipv4_tcp(payload: &[u8]) -> crafter::Result<Vec<u8>> {
     let packet = Ipv4::new()
         .src(Ipv4Addr::new(192, 0, 2, 10))
@@ -366,5 +373,57 @@ fn pubrec_build_decode_round_trip() -> crafter::Result<()> {
     assert_eq!(mqtt.packet_type(), MqttControlPacketType::Pubrec);
     assert_eq!(mqtt.packet_id_value(), Some(9));
     assert_eq!(decoded.compile()?.as_bytes(), compiled.as_bytes());
+    Ok(())
+}
+
+#[test]
+fn pubrel_golden_decodes_packet_id_and_fixed_flags() -> crafter::Result<()> {
+    let (bytes, decoded) = decode_ipv4_tcp_mqtt(PUBREL_PACKET_ID)?;
+    let mqtt = decoded.layer::<Mqtt>().expect("decoded MQTT PUBREL layer");
+
+    assert_eq!(mqtt.packet_type(), MqttControlPacketType::Pubrel);
+    assert_eq!(mqtt.flags_value(), 0x2);
+    assert_eq!(mqtt.remaining_length_value(), 2);
+    assert_eq!(mqtt.packet_id_value(), Some(0x1234));
+    assert_eq!(decoded.compile()?.as_bytes(), bytes.as_slice());
+    Ok(())
+}
+
+#[test]
+fn pubrel_build_decode_round_trip() -> crafter::Result<()> {
+    let packet = Ipv4::new()
+        .src(Ipv4Addr::new(198, 51, 100, 62))
+        .dst(Ipv4Addr::new(192, 0, 2, 52))
+        / Tcp::new()
+            .sport(MQTT_PORT)
+            .dport(49_156)
+            .seq(0xb1b2_b3b4)
+            .ack(0xc1c2_c3c4)
+            .ack_segment()
+        / Mqtt::pubrel().packet_id(9);
+
+    let compiled = packet.compile()?;
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes())?;
+    let mqtt = decoded.layer::<Mqtt>().expect("decoded MQTT PUBREL layer");
+
+    assert_eq!(mqtt.packet_type(), MqttControlPacketType::Pubrel);
+    assert_eq!(mqtt.flags_value(), 0x2);
+    assert_eq!(mqtt.packet_id_value(), Some(9));
+    assert_eq!(decoded.compile()?.as_bytes(), compiled.as_bytes());
+    Ok(())
+}
+
+#[test]
+fn pubrel_decode_preserves_nonstandard_flags() -> crafter::Result<()> {
+    let mut payload = PUBREL_PACKET_ID.to_vec();
+    payload[0] = 0x60;
+
+    let (bytes, decoded) = decode_ipv4_tcp_mqtt(&payload)?;
+    let mqtt = decoded.layer::<Mqtt>().expect("decoded MQTT PUBREL layer");
+
+    assert_eq!(mqtt.packet_type(), MqttControlPacketType::Pubrel);
+    assert_eq!(mqtt.flags_value(), 0x0);
+    assert_eq!(mqtt.packet_id_value(), Some(0x1234));
+    assert_eq!(decoded.compile()?.as_bytes(), bytes.as_slice());
     Ok(())
 }
