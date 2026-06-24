@@ -36,6 +36,9 @@ Per-protocol wire coverage for building and decoding packets.
   planned typed records, and known deferrals.
 - [BGP wire coverage](guide/bgp.md) — BGP message construction, UPDATE path
   attributes, MP-BGP, TCP/179 decode dispatch, and the offline/live surfaces.
+- [MQTT wire coverage](guide/mqtt.md) — MQTT 3.1.1 and 5.0 control packet
+  construction, properties, TCP/1883 decode dispatch, stacked payload decode,
+  inspection, and the offline/live surfaces.
 - [RIP wire coverage](rip.md) — RIPv1/RIPv2 and RIPng message construction,
   route entries, authentication, UDP/520 and UDP/521 decode dispatch, and the
   offline/live surfaces. Source mapping:
