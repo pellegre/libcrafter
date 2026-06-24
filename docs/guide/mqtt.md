@@ -218,6 +218,14 @@ tools/oracle/run specs validate
 tools/probe/run --provider local-dry-run --dry-run --profile mqtt-smoke --seed 1
 ```
 
+The MQTT 5.0 oracle cases for properties, reason codes, and AUTH are runnable
+strict-byte cases today; no MQTT 5.0 oracle case is left as `contract_only`.
+The Scapy reference backend contributes the IP/TCP/MQTT fixed-header framing and
+the oracle materializes exact MQTT 5.0 bodies as bytes before normalizing them
+from the TCP payload. Live broker exchange remains a dry-run-default probe or
+example workflow: real traffic requires an explicit `--peer` or provider-backed
+run with live confirmation and authorized endpoints.
+
 ## Explicit exclusions
 
 `crafter` does not implement broker state, client reconnect/session semantics,
