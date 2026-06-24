@@ -64,32 +64,36 @@ from .protocols.arp import (
     arp_target_setup_lines,
 )
 
-# DNS's target-service descriptor, responder case set, plan selector, and the
-# setup-script blocks were migrated into the DNS plugin
-# (:mod:`tools.probe.engine.protocols.dns`). They are re-imported here so
-# ``target_services.dns_responder_descriptor`` / ``target_services._DNS_RESPONDER_CASES``
-# / ``target_services.dns_probe_plans`` keep resolving (the behavior/script tests,
+# DNS's target-service descriptor, plan selector, and the setup-script blocks
+# were migrated into the DNS plugin (:mod:`tools.probe.engine.protocols.dns`).
+# They are re-imported here so ``target_services.dns_responder_descriptor`` /
+# ``target_services.dns_probe_plans`` keep resolving (the behavior/script tests,
 # ``prepare_wire_probe_target``, and ``__all__`` reference them), and so
-# ``target_service_setup_script`` can render the DNS setup blocks. The DNS plugin
-# module does not import ``target_services``, so this does not cycle.
+# ``target_service_setup_script`` can render the DNS setup blocks. The DNS
+# responder case set (``_DNS_RESPONDER_CASES``) is no longer re-imported: the
+# registry partition diverts the DNS cases to the plugin's ``target_service``
+# hook, so the legacy plan body no longer selects them and no caller references
+# ``target_services._DNS_RESPONDER_CASES``. The DNS plugin module does not import
+# ``target_services``, so this does not cycle.
 from .protocols.dns import (
-    _DNS_RESPONDER_CASES,
     dns_port_check_lines,
     dns_probe_plans,
     dns_responder_descriptor,
     dns_responder_setup_lines,
 )
 
-# DHCP's target-service descriptor, responder case set, plan selector, and the
-# setup-script blocks were migrated into the DHCP plugin
-# (:mod:`tools.probe.engine.protocols.dhcp`). They are re-imported here so
-# ``target_services.dhcp_responder_descriptor`` / ``target_services._DHCP_RESPONDER_CASES``
-# / ``target_services.dhcp_probe_plans`` keep resolving (the behavior/script tests,
+# DHCP's target-service descriptor, plan selector, and the setup-script blocks
+# were migrated into the DHCP plugin (:mod:`tools.probe.engine.protocols.dhcp`).
+# They are re-imported here so ``target_services.dhcp_responder_descriptor`` /
+# ``target_services.dhcp_probe_plans`` keep resolving (the behavior/script tests,
 # ``prepare_wire_probe_target``, and ``__all__`` reference them), and so
-# ``target_service_setup_script`` can render the DHCP setup blocks. The DHCP plugin
-# module does not import ``target_services``, so this does not cycle.
+# ``target_service_setup_script`` can render the DHCP setup blocks. The DHCP
+# responder case set (``_DHCP_RESPONDER_CASES``) is no longer re-imported: the
+# registry partition diverts the DHCP cases to the plugin's ``target_service``
+# hook, so the legacy plan body no longer selects them and no caller references
+# ``target_services._DHCP_RESPONDER_CASES``. The DHCP plugin module does not
+# import ``target_services``, so this does not cycle.
 from .protocols.dhcp import (
-    _DHCP_RESPONDER_CASES,
     dhcp_port_check_lines,
     dhcp_probe_plans,
     dhcp_responder_descriptor,
@@ -459,11 +463,12 @@ def _legacy_target_service_setup_plan(
 
 
 # The DNS responder case set (``_DNS_RESPONDER_CASES``) and the ``dns_probe_plans``
-# selector now live in :mod:`tools.probe.engine.protocols.dns`; they are
-# re-imported above so ``target_services._DNS_RESPONDER_CASES`` /
-# ``target_services.dns_probe_plans`` keep resolving for the legacy plan body
-# (the partition reroutes DNS plans to the plugin's ``target_service`` hook) and
-# for ``prepare_wire_probe_target`` / the tests.
+# selector now live in :mod:`tools.probe.engine.protocols.dns`. ``dns_probe_plans``
+# is re-imported above so ``target_services.dns_probe_plans`` keeps resolving for
+# ``prepare_wire_probe_target`` / the tests (the partition reroutes DNS plans to
+# the plugin's ``target_service`` hook). ``_DNS_RESPONDER_CASES`` is no longer
+# re-imported: the legacy plan body no longer selects DNS cases and no caller
+# references it.
 
 
 # The ``bgp_peer_probe_plans`` selector and the ``bgp-`` name-prefix dispatch
@@ -476,10 +481,12 @@ def _legacy_target_service_setup_plan(
 
 # The DHCP responder case set (``_DHCP_RESPONDER_CASES``) and the
 # ``dhcp_probe_plans`` selector now live in
-# :mod:`tools.probe.engine.protocols.dhcp`; they are re-imported above so
-# ``target_services._DHCP_RESPONDER_CASES`` / ``target_services.dhcp_probe_plans``
-# keep resolving for ``prepare_wire_probe_target`` / the tests (the partition
-# reroutes DHCP plans to the plugin's ``target_service`` hook).
+# :mod:`tools.probe.engine.protocols.dhcp`. ``dhcp_probe_plans`` is re-imported
+# above so ``target_services.dhcp_probe_plans`` keeps resolving for
+# ``prepare_wire_probe_target`` / the tests (the partition reroutes DHCP plans to
+# the plugin's ``target_service`` hook). ``_DHCP_RESPONDER_CASES`` is no longer
+# re-imported: the legacy plan body no longer selects DHCP cases and no caller
+# references it.
 
 
 # The UDP responder / closed-port case sets (``_UDP_RESPONDER_CASES`` /
