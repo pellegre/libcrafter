@@ -676,6 +676,16 @@ impl Mqtt {
         }
     }
 
+    /// Build an MQTT PINGRESP packet.
+    pub fn pingresp() -> Self {
+        Self {
+            packet_type: MqttControlPacketType::Pingresp,
+            flags: Field::defaulted(MqttControlPacketType::Pingresp.default_flags()),
+            remaining_length: Field::unset(),
+            body: MqttBody::Empty,
+        }
+    }
+
     /// Build an MQTT SUBSCRIBE packet.
     pub fn subscribe() -> Self {
         Self {
@@ -1603,6 +1613,13 @@ mod tests {
         let bytes = mqtt_bytes(Mqtt::pingreq());
 
         assert_eq!(bytes, [0xc0, 0x00]);
+    }
+
+    #[test]
+    fn pingresp_compiles_empty_body() {
+        let bytes = mqtt_bytes(Mqtt::pingresp());
+
+        assert_eq!(bytes, [0xd0, 0x00]);
     }
 
     #[test]
