@@ -3,7 +3,7 @@ use std::net::Ipv4Addr;
 use crafter::prelude::*;
 use crafter::protocols::mqtt::{
     MqttProperties, MqttProperty, MQTT_311_PROTOCOL_LEVEL, MQTT_5_PROTOCOL_LEVEL,
-    MQTT_REASON_BAD_AUTHENTICATION_METHOD, MQTT_REASON_CONTINUE_AUTHENTICATION,
+    MQTT_PUBLISH_QOS_2, MQTT_REASON_BAD_AUTHENTICATION_METHOD, MQTT_REASON_CONTINUE_AUTHENTICATION,
     MQTT_REASON_GRANTED_QOS_0, MQTT_REASON_GRANTED_QOS_1,
     MQTT_REASON_IMPLEMENTATION_SPECIFIC_ERROR, MQTT_REASON_NO_MATCHING_SUBSCRIBERS,
     MQTT_REASON_NO_SUBSCRIPTION_EXISTED, MQTT_REASON_PACKET_IDENTIFIER_NOT_FOUND,
@@ -96,7 +96,7 @@ fn mqtt_bytes(message: Mqtt) -> crafter::Result<Vec<u8>> {
     Ok(Packet::from_layer(message).compile()?.into_bytes())
 }
 
-fn decode_mqtt_payload(payload: &[u8]) -> crafter::Result<(Vec<u8>, Packet)> {
+fn mqtt_over_ipv4_tcp(payload: &[u8]) -> crafter::Result<Vec<u8>> {
     let packet = Ipv4::new()
         .src(Ipv4Addr::new(192, 0, 2, 10))
         .dst(Ipv4Addr::new(198, 51, 100, 20))
@@ -107,7 +107,11 @@ fn decode_mqtt_payload(payload: &[u8]) -> crafter::Result<(Vec<u8>, Packet)> {
             .ack(0x0506_0708)
             .ack_segment()
         / Raw::from_bytes(payload.to_vec());
-    let bytes = packet.compile()?.into_bytes();
+    Ok(packet.compile()?.into_bytes())
+}
+
+fn decode_mqtt_payload(payload: &[u8]) -> crafter::Result<(Vec<u8>, Packet)> {
+    let bytes = mqtt_over_ipv4_tcp(payload)?;
     let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, &bytes)?;
 
     Ok((bytes, decoded))
@@ -389,6 +393,79 @@ fn pubacks_v5_pubrel_preserves_required_flag_nibble() -> crafter::Result<()> {
     )?;
 
     assert_eq!(bytes, PUBREL_V5_FULL);
+    Ok(())
+}
+
+#[test]
+fn qos2_v5_flow_decodes_packet_ids_and_reason_codes() -> crafter::Result<()> {
+    let packet_id = 0x4567;
+    let flow = [
+        (
+            Mqtt::publish()
+                .version(MQTT_5_PROTOCOL_LEVEL)
+                .topic("qos/two")
+                .qos(MQTT_PUBLISH_QOS_2)
+                .packet_id(packet_id)
+                .payload(b"exactly".to_vec()),
+            MqttControlPacketType::Publish,
+            None,
+        ),
+        (
+            Mqtt::pubrec()
+                .version(MQTT_5_PROTOCOL_LEVEL)
+                .packet_id(packet_id)
+                .reason_code(MQTT_REASON_NO_MATCHING_SUBSCRIBERS),
+            MqttControlPacketType::Pubrec,
+            Some(MQTT_REASON_NO_MATCHING_SUBSCRIBERS),
+        ),
+        (
+            Mqtt::pubrel()
+                .version(MQTT_5_PROTOCOL_LEVEL)
+                .packet_id(packet_id)
+                .reason_code(MQTT_REASON_PACKET_IDENTIFIER_NOT_FOUND),
+            MqttControlPacketType::Pubrel,
+            Some(MQTT_REASON_PACKET_IDENTIFIER_NOT_FOUND),
+        ),
+        (
+            Mqtt::pubcomp()
+                .version(MQTT_5_PROTOCOL_LEVEL)
+                .packet_id(packet_id)
+                .reason_code(MQTT_REASON_SUCCESS),
+            MqttControlPacketType::Pubcomp,
+            Some(MQTT_REASON_SUCCESS),
+        ),
+    ];
+
+    let mut decoded_types = Vec::new();
+    let mut decoded_packet_ids = Vec::new();
+
+    for (message, expected_type, expected_reason_code) in flow {
+        let payload = mqtt_bytes(message)?;
+        let packet_bytes = mqtt_over_ipv4_tcp(&payload)?;
+        let decoded = Mqtt::decode_payload_with_default_version(&payload, MQTT_5_PROTOCOL_LEVEL)?;
+        let mqtt = decoded.layer::<Mqtt>().expect("decoded MQTT QoS2 layer");
+
+        decoded_types.push(mqtt.packet_type());
+        decoded_packet_ids.push(mqtt.packet_id_value());
+
+        assert_eq!(mqtt.version_value(), MQTT_5_PROTOCOL_LEVEL);
+        assert_eq!(mqtt.packet_type(), expected_type);
+        assert_eq!(mqtt.packet_id_value(), Some(packet_id));
+        assert_eq!(mqtt.reason_code_value(), expected_reason_code);
+        assert!(!packet_bytes.is_empty());
+        assert_eq!(decoded.compile()?.as_bytes(), payload.as_slice());
+    }
+
+    assert_eq!(
+        decoded_types,
+        [
+            MqttControlPacketType::Publish,
+            MqttControlPacketType::Pubrec,
+            MqttControlPacketType::Pubrel,
+            MqttControlPacketType::Pubcomp,
+        ]
+    );
+    assert_eq!(decoded_packet_ids.as_slice(), &[Some(packet_id); 4]);
     Ok(())
 }
 
