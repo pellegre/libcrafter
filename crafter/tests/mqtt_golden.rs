@@ -85,6 +85,31 @@ const PUBCOMP_PACKET_ID: &[u8] = &[
     0x70, 0x02, 0x12, 0x34,
 ];
 
+const SUBSCRIBE_TWO_FILTERS: &[u8] = &[
+    // `.agents/docs/mqtt-manifest.md`: SUBSCRIBE fixed-header type 8 uses the
+    // specification-fixed low-nibble flags value 0b0010, so the first byte is
+    // 0x82. Remaining Length covers packet id plus all topic-filter entries.
+    0x82,
+    0x0e,
+    // Manifest SUBSCRIBE variable header: one two-byte Packet Identifier.
+    0x12,
+    0x34,
+    // Manifest SUBSCRIBE payload: each entry is an MQTT UTF-8 topic filter
+    // followed by one requested-QoS byte.
+    0x00,
+    0x03,
+    b'a',
+    b'/',
+    b'b',
+    MQTT_PUBLISH_QOS_0,
+    0x00,
+    0x03,
+    b'c',
+    b'/',
+    b'd',
+    MQTT_PUBLISH_QOS_1,
+];
+
 fn mqtt_over_ipv4_tcp(payload: &[u8]) -> crafter::Result<Vec<u8>> {
     let packet = Ipv4::new()
         .src(Ipv4Addr::new(192, 0, 2, 10))
@@ -467,5 +492,100 @@ fn pubcomp_build_decode_round_trip() -> crafter::Result<()> {
     assert_eq!(mqtt.packet_type(), MqttControlPacketType::Pubcomp);
     assert_eq!(mqtt.packet_id_value(), Some(9));
     assert_eq!(decoded.compile()?.as_bytes(), compiled.as_bytes());
+    Ok(())
+}
+
+#[test]
+fn subscribe_golden_decodes_filters_and_recompiles() -> crafter::Result<()> {
+    let (bytes, decoded) = decode_ipv4_tcp_mqtt(SUBSCRIBE_TWO_FILTERS)?;
+    let mqtt = decoded
+        .layer::<Mqtt>()
+        .expect("decoded MQTT SUBSCRIBE layer");
+
+    assert_eq!(mqtt.packet_type(), MqttControlPacketType::Subscribe);
+    assert_eq!(mqtt.flags_value(), 0x2);
+    assert_eq!(mqtt.remaining_length_value(), 14);
+    assert_eq!(mqtt.packet_id_value(), Some(0x1234));
+    assert_eq!(
+        mqtt.subscribe_topics_value(),
+        Some(
+            &[
+                ("a/b".to_string(), MQTT_PUBLISH_QOS_0),
+                ("c/d".to_string(), MQTT_PUBLISH_QOS_1),
+            ][..]
+        )
+    );
+    assert_eq!(decoded.compile()?.as_bytes(), bytes.as_slice());
+    Ok(())
+}
+
+#[test]
+fn subscribe_build_decode_round_trip() -> crafter::Result<()> {
+    let packet = Ipv4::new()
+        .src(Ipv4Addr::new(192, 0, 2, 64))
+        .dst(Ipv4Addr::new(198, 51, 100, 74))
+        / Tcp::new()
+            .sport(49_158)
+            .dport(MQTT_PORT)
+            .seq(0xf1f2_f3f4)
+            .ack(0x0102_0304)
+            .ack_segment()
+        / Mqtt::subscribe()
+            .packet_id(9)
+            .subscribe_topic("alerts/critical", MQTT_PUBLISH_QOS_1)
+            .subscribe_topic("status/+", MQTT_PUBLISH_QOS_0);
+
+    let compiled = packet.compile()?;
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes())?;
+    let mqtt = decoded
+        .layer::<Mqtt>()
+        .expect("decoded MQTT SUBSCRIBE layer");
+
+    assert_eq!(mqtt.packet_type(), MqttControlPacketType::Subscribe);
+    assert_eq!(mqtt.flags_value(), 0x2);
+    assert_eq!(mqtt.packet_id_value(), Some(9));
+    assert_eq!(
+        mqtt.subscribe_topics_value(),
+        Some(
+            &[
+                ("alerts/critical".to_string(), MQTT_PUBLISH_QOS_1),
+                ("status/+".to_string(), MQTT_PUBLISH_QOS_0),
+            ][..]
+        )
+    );
+    assert_eq!(decoded.compile()?.as_bytes(), compiled.as_bytes());
+    Ok(())
+}
+
+#[test]
+fn subscribe_decode_errors_cover_filter_overrun_and_missing_qos() -> crafter::Result<()> {
+    let overrun = mqtt_over_ipv4_tcp(&[0x82, 0x07, 0x12, 0x34, 0x00, 0x05, b'a', b'/', b'b'])?;
+    match Packet::decode_from_l3(NetworkLayer::Ipv4, &overrun) {
+        Err(crafter::CrafterError::BufferTooShort {
+            context,
+            required,
+            available,
+        }) => {
+            assert_eq!(context, "mqtt.subscribe.topic_filter");
+            assert_eq!(required, 9);
+            assert_eq!(available, 7);
+        }
+        other => panic!("expected subscribe filter overrun error, got {other:?}"),
+    }
+
+    let missing_qos = mqtt_over_ipv4_tcp(&[0x82, 0x07, 0x12, 0x34, 0x00, 0x03, b'a', b'/', b'b'])?;
+    match Packet::decode_from_l3(NetworkLayer::Ipv4, &missing_qos) {
+        Err(crafter::CrafterError::BufferTooShort {
+            context,
+            required,
+            available,
+        }) => {
+            assert_eq!(context, "mqtt.subscribe.requested_qos");
+            assert_eq!(required, 8);
+            assert_eq!(available, 7);
+        }
+        other => panic!("expected subscribe requested-qos error, got {other:?}"),
+    }
+
     Ok(())
 }
