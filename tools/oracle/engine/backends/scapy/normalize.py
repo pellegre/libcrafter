@@ -211,6 +211,7 @@ _MQTT_PACKET_TYPE_NAMES: dict[int, str] = {
     12: "pingreq",
     13: "pingresp",
     14: "disconnect",
+    15: "auth",
 }
 _MQTT_CONNECT_FLAG_PASSWORD = 0x40
 _MQTT_CONNECT_FLAG_USERNAME = 0x80
@@ -931,33 +932,102 @@ def _mqtt_body_fields(packet_type: int, flags: int, body: bytes) -> JSONObject |
     if packet_type == 1:
         return _mqtt_connect_fields(body)
     if packet_type == 2:
-        if len(body) != 2:
+        if len(body) == 2:
+            ack_flags = body[0]
+            return {
+                "ack_flags": ack_flags,
+                "session_present": bool(ack_flags & 0x01),
+                "return_code": body[1],
+            }
+        if len(body) < 3:
             return None
         ack_flags = body[0]
+        properties, cursor = _mqtt_read_properties(body, 2)
+        if properties is None or cursor != len(body):
+            return None
         return {
+            "version": 5,
             "ack_flags": ack_flags,
             "session_present": bool(ack_flags & 0x01),
-            "return_code": body[1],
+            "reason_code": body[1],
+            "properties": properties,
         }
     if packet_type == 3:
         return _mqtt_publish_fields(flags, body)
-    if packet_type in {4, 5, 6, 7, 11}:
-        if len(body) != 2:
+    if packet_type in {4, 5, 6, 7}:
+        if len(body) == 2:
+            return {"packet_id": int.from_bytes(body, "big")}
+        if len(body) < 4:
             return None
-        return {"packet_id": int.from_bytes(body, "big")}
+        properties, cursor = _mqtt_read_properties(body, 3)
+        if properties is None:
+            return None
+        fields = {
+            "version": 5,
+            "packet_id": int.from_bytes(body[:2], "big"),
+            "reason_code": body[2],
+            "properties": properties,
+        }
+        if cursor != len(body):
+            return None
+        return fields
     if packet_type == 8:
         return _mqtt_subscribe_fields(body)
     if packet_type == 9:
         if len(body) < 2:
             return None
+        properties, cursor = _mqtt_read_properties(body, 2)
+        if properties is not None and cursor <= len(body):
+            return {
+                "version": 5,
+                "packet_id": int.from_bytes(body[:2], "big"),
+                "properties": properties,
+                "reason_codes": list(body[cursor:]),
+            }
         return {
             "packet_id": int.from_bytes(body[:2], "big"),
             "return_codes": list(body[2:]),
         }
     if packet_type == 10:
         return _mqtt_unsubscribe_fields(body)
-    if packet_type in {12, 13, 14}:
+    if packet_type == 11:
+        if len(body) == 2:
+            return {"packet_id": int.from_bytes(body, "big")}
+        if len(body) < 3:
+            return None
+        properties, cursor = _mqtt_read_properties(body, 2)
+        if properties is None or cursor > len(body):
+            return None
+        return {
+            "version": 5,
+            "packet_id": int.from_bytes(body[:2], "big"),
+            "properties": properties,
+            "reason_codes": list(body[cursor:]),
+        }
+    if packet_type in {12, 13}:
         return {} if not body else None
+    if packet_type == 14:
+        if not body:
+            return {}
+        properties, cursor = _mqtt_read_properties(body, 1)
+        if properties is None or cursor != len(body):
+            return None
+        return {
+            "version": 5,
+            "reason_code": body[0],
+            "properties": properties,
+        }
+    if packet_type == 15:
+        if not body:
+            return {"version": 5, "reason_code": 0}
+        properties, cursor = _mqtt_read_properties(body, 1)
+        if properties is None or cursor != len(body):
+            return None
+        return {
+            "version": 5,
+            "reason_code": body[0],
+            "properties": properties,
+        }
     return {}
 
 
@@ -970,11 +1040,17 @@ def _mqtt_connect_fields(body: bytes) -> JSONObject | None:
     connect_flags = body[cursor + 1]
     keep_alive = int.from_bytes(body[cursor + 2 : cursor + 4], "big")
     cursor += 4
+    connect_properties: list[JSONObject] | None = None
+    if protocol_level == 5:
+        connect_properties, cursor = _mqtt_read_properties(body, cursor)
+        if connect_properties is None:
+            return None
     client_id, cursor = _mqtt_read_string(body, cursor)
     if client_id is None:
         return None
 
     fields: JSONObject = {
+        "version": protocol_level,
         "protocol_name": protocol_name,
         "protocol_level": protocol_level,
         "connect_flags": connect_flags,
@@ -982,7 +1058,14 @@ def _mqtt_connect_fields(body: bytes) -> JSONObject | None:
         "keep_alive": keep_alive,
         "client_id": client_id,
     }
+    if connect_properties is not None:
+        fields["connect_properties"] = connect_properties
     if connect_flags & _MQTT_CONNECT_FLAG_WILL:
+        if protocol_level == 5:
+            will_properties, cursor = _mqtt_read_properties(body, cursor)
+            if will_properties is None:
+                return None
+            fields["will_properties"] = will_properties
         will_topic, cursor = _mqtt_read_string(body, cursor)
         if will_topic is None:
             return None
@@ -1022,6 +1105,11 @@ def _mqtt_publish_fields(flags: int, body: bytes) -> JSONObject | None:
             return None
         fields["packet_id"] = int.from_bytes(body[cursor : cursor + 2], "big")
         cursor += 2
+    properties, property_cursor = _mqtt_read_properties(body, cursor)
+    if properties:
+        fields["version"] = 5
+        fields["properties"] = properties
+        cursor = property_cursor
     fields["payload"] = _mqtt_bytes_fields(body[cursor:])
     return fields
 
@@ -1057,6 +1145,105 @@ def _mqtt_unsubscribe_fields(body: bytes) -> JSONObject | None:
         "packet_id": int.from_bytes(body[:2], "big"),
         "topic_filters": topic_filters,
     }
+
+
+def _mqtt_read_properties(raw: bytes, cursor: int) -> tuple[list[JSONObject] | None, int]:
+    decoded = _mqtt_decode_remaining_length(raw[cursor:])
+    if decoded is None:
+        return None, cursor
+    length, length_len = decoded
+    cursor += length_len
+    end = cursor + length
+    if end > len(raw):
+        return None, cursor
+
+    properties: list[JSONObject] = []
+    while cursor < end:
+        property_id = raw[cursor]
+        cursor += 1
+        parsed, cursor = _mqtt_read_property(property_id, raw, cursor, end)
+        if parsed is None:
+            return None, cursor
+        properties.append(parsed)
+    return properties, cursor
+
+
+def _mqtt_read_property(
+    property_id: int,
+    raw: bytes,
+    cursor: int,
+    end: int,
+) -> tuple[JSONObject | None, int]:
+    if property_id == 0x01:
+        if cursor >= end:
+            return None, cursor
+        return {"name": "payload_format_indicator", "value": raw[cursor]}, cursor + 1
+    if property_id == 0x02:
+        if cursor + 4 > end:
+            return None, cursor
+        return {
+            "name": "message_expiry_interval",
+            "value": int.from_bytes(raw[cursor : cursor + 4], "big"),
+        }, cursor + 4
+    if property_id == 0x03:
+        value, cursor = _mqtt_read_string(raw, cursor)
+        if value is None or cursor > end:
+            return None, cursor
+        return {"name": "content_type", "value": value}, cursor
+    if property_id == 0x0B:
+        decoded = _mqtt_decode_remaining_length(raw[cursor:end])
+        if decoded is None:
+            return None, cursor
+        value, length_len = decoded
+        return {"name": "subscription_identifier", "value": value}, cursor + length_len
+    if property_id == 0x11:
+        if cursor + 4 > end:
+            return None, cursor
+        return {
+            "name": "session_expiry_interval",
+            "value": int.from_bytes(raw[cursor : cursor + 4], "big"),
+        }, cursor + 4
+    if property_id == 0x12:
+        value, cursor = _mqtt_read_string(raw, cursor)
+        if value is None or cursor > end:
+            return None, cursor
+        return {"name": "assigned_client_identifier", "value": value}, cursor
+    if property_id == 0x15:
+        value, cursor = _mqtt_read_string(raw, cursor)
+        if value is None or cursor > end:
+            return None, cursor
+        return {"name": "authentication_method", "value": value}, cursor
+    if property_id == 0x16:
+        value, cursor = _mqtt_read_binary(raw, cursor)
+        if value is None or cursor > end:
+            return None, cursor
+        return {"name": "authentication_data", "value": _mqtt_bytes_fields(value)}, cursor
+    if property_id == 0x1F:
+        value, cursor = _mqtt_read_string(raw, cursor)
+        if value is None or cursor > end:
+            return None, cursor
+        return {"name": "reason_string", "value": value}, cursor
+    if property_id == 0x21:
+        if cursor + 2 > end:
+            return None, cursor
+        return {
+            "name": "receive_maximum",
+            "value": int.from_bytes(raw[cursor : cursor + 2], "big"),
+        }, cursor + 2
+    if property_id == 0x23:
+        if cursor + 2 > end:
+            return None, cursor
+        return {
+            "name": "topic_alias",
+            "value": int.from_bytes(raw[cursor : cursor + 2], "big"),
+        }, cursor + 2
+    if property_id == 0x26:
+        key, cursor = _mqtt_read_string(raw, cursor)
+        value, cursor = _mqtt_read_string(raw, cursor)
+        if key is None or value is None or cursor > end:
+            return None, cursor
+        return {"name": "user_property", "key": key, "value": value}, cursor
+    return None, cursor
 
 
 def _mqtt_read_string(raw: bytes, cursor: int) -> tuple[str | None, int]:

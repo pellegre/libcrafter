@@ -148,6 +148,133 @@ class ScapyMqttSupportTest(unittest.TestCase):
         self.assertEqual(mqtt["packet_id"], 2)
         self.assertEqual(mqtt["payload"], {"hex": "68656c6c6f", "length": 5})
 
+    def test_v5_connect_properties_materialize_and_normalize(self) -> None:
+        from tools.oracle.engine.backends.scapy import normalize, packets
+
+        vector = packets.encode_packet_plan(
+            _mqtt_plan(
+                {
+                    "packet_type": "connect",
+                    "version": 5,
+                    "protocol_level": 5,
+                    "connect_flags": ["clean_session", "will"],
+                    "keep_alive": 30,
+                    "connect_properties": [
+                        {"name": "session_expiry_interval", "value": 60},
+                        {"name": "receive_maximum", "value": 10},
+                    ],
+                    "client_id": "cid",
+                    "will_properties": [
+                        {"name": "payload_format_indicator", "value": 1},
+                        {"name": "message_expiry_interval", "value": 5},
+                    ],
+                    "will_topic": "status",
+                    "will_message": {"hex": "6f6e6c696e65"},
+                }
+            )
+        )
+        raw = vector.to_bytes()
+
+        self.assertEqual(
+            raw[40:].hex(),
+            "103000044d5154540506001e08110000003c21000a00036369640701010200000005000673746174757300066f6e6c696e65",
+        )
+        decoded = normalize.decode_vector(vector)
+        mqtt = decoded.fields["mqtt"]
+        self.assertEqual(mqtt["packet_type"], "connect")
+        self.assertEqual(mqtt["version"], 5)
+        self.assertEqual(mqtt["protocol_level"], 5)
+        self.assertEqual(
+            mqtt["connect_properties"],
+            [
+                {"name": "session_expiry_interval", "value": 60},
+                {"name": "receive_maximum", "value": 10},
+            ],
+        )
+        self.assertEqual(
+            mqtt["will_properties"],
+            [
+                {"name": "payload_format_indicator", "value": 1},
+                {"name": "message_expiry_interval", "value": 5},
+            ],
+        )
+
+    def test_v5_publish_properties_materialize_and_normalize(self) -> None:
+        from tools.oracle.engine.backends.scapy import normalize, packets
+
+        vector = packets.encode_packet_plan(
+            _mqtt_plan(
+                {
+                    "packet_type": "publish",
+                    "version": 5,
+                    "qos": 1,
+                    "topic": "sensors/t",
+                    "packet_id": 0x1234,
+                    "properties": [
+                        {"name": "topic_alias", "value": 7},
+                        {"name": "content_type", "value": "text/plain"},
+                        {"name": "user_property", "key": "site", "value": "lab"},
+                    ],
+                    "payload": {"hex": "3432"},
+                }
+            )
+        )
+        raw = vector.to_bytes()
+
+        self.assertEqual(
+            raw[40:].hex(),
+            "322c000973656e736f72732f7412341c23000703000a746578742f706c61696e2600047369746500036c61623432",
+        )
+        decoded = normalize.decode_vector(vector)
+        mqtt = decoded.fields["mqtt"]
+        self.assertEqual(mqtt["packet_type"], "publish")
+        self.assertEqual(mqtt["version"], 5)
+        self.assertEqual(mqtt["topic"], "sensors/t")
+        self.assertEqual(
+            mqtt["properties"],
+            [
+                {"name": "topic_alias", "value": 7},
+                {"name": "content_type", "value": "text/plain"},
+                {"name": "user_property", "key": "site", "value": "lab"},
+            ],
+        )
+        self.assertEqual(mqtt["payload"], {"hex": "3432", "length": 2})
+
+    def test_v5_auth_materializes_and_normalizes(self) -> None:
+        from tools.oracle.engine.backends.scapy import normalize, packets
+
+        vector = packets.encode_packet_plan(
+            _mqtt_plan(
+                {
+                    "packet_type": "auth",
+                    "version": 5,
+                    "reason_code": 24,
+                    "properties": [
+                        {"name": "authentication_method", "value": "scram"},
+                        {"name": "authentication_data", "value": {"hex": "010203"}},
+                    ],
+                }
+            )
+        )
+        raw = vector.to_bytes()
+
+        self.assertEqual(raw[40:].hex(), "f010180e150005736372616d160003010203")
+        decoded = normalize.decode_vector(vector)
+        mqtt = decoded.fields["mqtt"]
+        self.assertEqual(mqtt["packet_type"], "auth")
+        self.assertEqual(mqtt["version"], 5)
+        self.assertEqual(mqtt["reason_code"], 24)
+        self.assertEqual(
+            mqtt["properties"],
+            [
+                {"name": "authentication_method", "value": "scram"},
+                {
+                    "name": "authentication_data",
+                    "value": {"hex": "010203", "length": 3},
+                },
+            ],
+        )
+
     def test_stacked_mqtt_payload_decodes_to_multiple_mqtt_layers(self) -> None:
         from tools.oracle.engine.backends.scapy import normalize
         from tools.oracle.engine.backends.scapy.bootstrap import import_scapy
