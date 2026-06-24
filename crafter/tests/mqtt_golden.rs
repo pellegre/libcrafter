@@ -79,6 +79,12 @@ const PUBREL_PACKET_ID: &[u8] = &[
     0x62, 0x02, 0x12, 0x34,
 ];
 
+const PUBCOMP_PACKET_ID: &[u8] = &[
+    // `.agents/docs/mqtt-manifest.md`: PUBCOMP fixed-header type 7 uses flags
+    // 0x0 and Remaining Length 2. Its variable header is one Packet Identifier.
+    0x70, 0x02, 0x12, 0x34,
+];
+
 fn mqtt_over_ipv4_tcp(payload: &[u8]) -> crafter::Result<Vec<u8>> {
     let packet = Ipv4::new()
         .src(Ipv4Addr::new(192, 0, 2, 10))
@@ -425,5 +431,41 @@ fn pubrel_decode_preserves_nonstandard_flags() -> crafter::Result<()> {
     assert_eq!(mqtt.flags_value(), 0x0);
     assert_eq!(mqtt.packet_id_value(), Some(0x1234));
     assert_eq!(decoded.compile()?.as_bytes(), bytes.as_slice());
+    Ok(())
+}
+
+#[test]
+fn pubcomp_golden_decodes_packet_id_and_recompiles() -> crafter::Result<()> {
+    let (bytes, decoded) = decode_ipv4_tcp_mqtt(PUBCOMP_PACKET_ID)?;
+    let mqtt = decoded.layer::<Mqtt>().expect("decoded MQTT PUBCOMP layer");
+
+    assert_eq!(mqtt.packet_type(), MqttControlPacketType::Pubcomp);
+    assert_eq!(mqtt.flags_value(), 0x0);
+    assert_eq!(mqtt.remaining_length_value(), 2);
+    assert_eq!(mqtt.packet_id_value(), Some(0x1234));
+    assert_eq!(decoded.compile()?.as_bytes(), bytes.as_slice());
+    Ok(())
+}
+
+#[test]
+fn pubcomp_build_decode_round_trip() -> crafter::Result<()> {
+    let packet = Ipv4::new()
+        .src(Ipv4Addr::new(198, 51, 100, 63))
+        .dst(Ipv4Addr::new(192, 0, 2, 53))
+        / Tcp::new()
+            .sport(MQTT_PORT)
+            .dport(49_157)
+            .seq(0xd1d2_d3d4)
+            .ack(0xe1e2_e3e4)
+            .ack_segment()
+        / Mqtt::pubcomp().packet_id(9);
+
+    let compiled = packet.compile()?;
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes())?;
+    let mqtt = decoded.layer::<Mqtt>().expect("decoded MQTT PUBCOMP layer");
+
+    assert_eq!(mqtt.packet_type(), MqttControlPacketType::Pubcomp);
+    assert_eq!(mqtt.packet_id_value(), Some(9));
+    assert_eq!(decoded.compile()?.as_bytes(), compiled.as_bytes());
     Ok(())
 }
