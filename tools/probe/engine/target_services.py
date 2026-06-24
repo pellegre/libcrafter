@@ -25,7 +25,6 @@ running anything.
 
 from __future__ import annotations
 
-import json
 import posixpath
 import shlex
 from collections.abc import Callable, Mapping, Sequence
@@ -33,11 +32,10 @@ from pathlib import Path
 
 from .capabilities import (
     SKIP_REQUIRES_CONTROLLED_ROUTER,
-    SKIP_REQUIRES_CONTROLLED_SERVICE,
     SKIP_REQUIRES_LINK_LAYER,
 )
 from .lab import TARGET_ROLE
-from .model import JSONObject, JSONValue, json_object
+from .model import JSONObject, JSONValue
 
 # Importing from the ``protocols`` package runs its auto-discovery so every
 # migrated protocol module self-registers into ``PROTOCOL_REGISTRY`` before the
@@ -183,8 +181,6 @@ from .target_service_helpers import (
     plans_by_destination_port,
     target_service_address_fields,
 )
-from .target_service_helpers import json_mapping as _json_mapping
-from .target_service_helpers import string_or as _string_or
 
 
 # A lab-wire helper that resolves an endpoint mapping to its endpoint ID.
