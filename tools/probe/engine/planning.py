@@ -332,87 +332,23 @@ def _planned_only_probe_plan(
 # identity/back-compat.
 
 
-# Legacy per-case plan builders defined in this module. Every protocol still
-# lives here until its plugin migration; the assembly below merges the protocol
-# registry's contribution (empty until a protocol migrates) ahead of these so a
-# migrated builder takes precedence while unmigrated cases keep their legacy
-# builder. Every protocol's builders have now migrated to their plugin modules,
-# so this legacy table is empty and ``PLAN_BUILDERS`` is sourced entirely from
-# the registry below.
-_LEGACY_PLAN_BUILDERS: dict[str, PlanBuilder] = {
-    # ICMP plan builders (``icmp-echo`` / ``ttl-expired``) now live in
-    # ``protocols/icmp.py`` and reach ``PLAN_BUILDERS`` through the registry merge
-    # below (re-imported into this module above for identity/back-compat).
-    # TCP plan builders (``tcp-syn-open`` / ``tcp-syn-closed`` /
-    # ``tcp-syn-options``) now live in ``protocols/tcp.py`` and reach
-    # ``PLAN_BUILDERS`` through the registry merge below (re-imported into this
-    # module above for identity/back-compat).
-    # DNS plan builders now live in ``protocols/dns.py`` and reach
-    # ``PLAN_BUILDERS`` through the registry merge below (re-imported into this
-    # module above for identity/back-compat).
-    # DHCP plan builders now live in ``protocols/dhcp.py`` and reach
-    # ``PLAN_BUILDERS`` through the registry merge below (re-imported into this
-    # module above for identity/back-compat).
-    # ARP plan builders now live in ``protocols/arp.py`` and reach
-    # ``PLAN_BUILDERS`` through the registry merge below (re-imported into this
-    # module above for identity/back-compat).
-    # NDP plan builders now live in ``protocols/ndp.py`` and reach
-    # ``PLAN_BUILDERS`` through the registry merge below (re-imported into this
-    # module above for identity/back-compat).
-    # UDP plan builders now live in ``protocols/udp.py`` and reach
-    # ``PLAN_BUILDERS`` through the registry merge below (re-imported into this
-    # module above for identity/back-compat).
-    # The BGP plan builder now lives in ``protocols/bgp.py`` and reaches
-    # ``PLAN_BUILDERS`` through the registry merge below (re-imported into this
-    # module above for identity/back-compat).
-    # The RIP/RIPng plan builders now live in ``protocols/rip.py`` and reach
-    # ``PLAN_BUILDERS`` through the registry merge below (re-imported into this
-    # module above for identity/back-compat).
-    # The IGMP plan builder (``_igmp_probe_plan``, serving all four IGMP cases)
-    # now lives in ``protocols/igmp.py`` and reaches ``PLAN_BUILDERS`` through the
-    # registry merge below (re-imported into this module above for
-    # identity/back-compat).
-    # The IPSec plan builder (``_ipsec_probe_plan``, serving all four IPSec cases)
-    # now lives in ``protocols/ipsec.py`` and reaches ``PLAN_BUILDERS`` through the
-    # registry merge below (re-imported into this module above for
-    # identity/back-compat).
-}
-
-
 # Per-case plan-builder dispatch table consulted by :func:`probe_plan_for_case`.
-# It is assembled registry-first: the protocol registry's contributed builders
-# (empty until a protocol migrates) take precedence, then the legacy module
-# builders fill in every case no plugin owns yet. The exact function objects are
+# Every protocol's builders have migrated to their plugin modules, so this table
+# is sourced entirely from the protocol registry. The exact function objects are
 # kept (no wrappers) so ``planning._<builder>`` and ``PLAN_BUILDERS[name] is
-# _<builder>`` identity stays intact for the pinning tests.
-PLAN_BUILDERS: dict[str, PlanBuilder] = {
-    **_LEGACY_PLAN_BUILDERS,
-    **_registry_plan_builders(),
-}
+# _<builder>`` identity stays intact for the pinning tests; each builder is
+# re-imported into this module above to preserve ``planning._<builder>`` access.
+PLAN_BUILDERS: dict[str, PlanBuilder] = dict(_registry_plan_builders())
 
 
-# Legacy planned-only registered cases declared in this module. A planned-only
-# builder records the exchange shape without building packet bytes; every other
-# builder produces a fully materialized plan. Every planned-only protocol has now
-# migrated to its plugin module, so this legacy set is empty and
-# ``PLANNED_ONLY_REGISTERED_CASES`` is sourced entirely from the registry below.
-_LEGACY_PLANNED_ONLY_REGISTERED_CASES: frozenset[str] = frozenset(
-    {
-        # ``bgp-session-smoke`` is contributed by the BGP plugin
-        # (``protocols/bgp.py``) and unioned into ``PLANNED_ONLY_REGISTERED_CASES``
-        # below; the ``rip-update-v2`` / ``ripng-update`` planned-only cases are
-        # contributed by the RIP plugin (``protocols/rip.py``) and unioned in the
-        # same way. The four IGMP planned-only cases are contributed by the IGMP
-        # plugin (``protocols/igmp.py``) and the four IPSec planned-only cases by
-        # the IPSec plugin (``protocols/ipsec.py``), unioned in the same way.
-    }
-)
-
-
-# The planned-only set is the union of the registry's contribution (empty until
-# a protocol migrates) and the legacy frozenset above.
-PLANNED_ONLY_REGISTERED_CASES: frozenset[str] = (
-    _registry_planned_only_cases() | _LEGACY_PLANNED_ONLY_REGISTERED_CASES
+# Planned-only registered cases. A planned-only builder records the exchange
+# shape without building packet bytes; every other builder produces a fully
+# materialized plan. Every planned-only protocol has migrated to its plugin
+# module, so this set is sourced entirely from the protocol registry (the BGP,
+# RIP/RIPng, IGMP, and IPSec planned-only cases are each contributed by their
+# plugin module).
+PLANNED_ONLY_REGISTERED_CASES: frozenset[str] = frozenset(
+    _registry_planned_only_cases()
 )
 
 
