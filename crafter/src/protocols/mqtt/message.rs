@@ -328,6 +328,38 @@ impl MqttPublish {
     }
 }
 
+/// MQTT variable header containing only a Packet Identifier.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MqttPacketIdentifier {
+    packet_id: Field<u16>,
+}
+
+impl MqttPacketIdentifier {
+    fn new() -> Self {
+        Self {
+            packet_id: Field::defaulted(0),
+        }
+    }
+
+    fn from_decoded_parts(packet_id: u16) -> Self {
+        Self {
+            packet_id: Field::user(packet_id),
+        }
+    }
+
+    fn packet_id(&self) -> u16 {
+        self.packet_id.value().copied().unwrap_or(0)
+    }
+
+    fn encoded_len(&self) -> usize {
+        2
+    }
+
+    fn write_body(&self, out: &mut Vec<u8>) {
+        encode_u16(self.packet_id(), out);
+    }
+}
+
 /// MQTT control packet body bytes after the fixed header.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum MqttBody {
@@ -335,6 +367,7 @@ enum MqttBody {
     Connect(MqttConnect),
     Connack(MqttConnack),
     Publish(MqttPublish),
+    PacketIdentifier(MqttPacketIdentifier),
 }
 
 impl MqttBody {
@@ -344,6 +377,7 @@ impl MqttBody {
             Self::Connect(connect) => connect.encoded_len(),
             Self::Connack(connack) => connack.encoded_len(),
             Self::Publish(publish) => publish.encoded_len(flags),
+            Self::PacketIdentifier(packet_identifier) => packet_identifier.encoded_len(),
         }
     }
 
@@ -353,6 +387,7 @@ impl MqttBody {
             Self::Connect(connect) => connect.write_body(out)?,
             Self::Connack(connack) => connack.write_body(out),
             Self::Publish(publish) => publish.write_body(out, flags)?,
+            Self::PacketIdentifier(packet_identifier) => packet_identifier.write_body(out),
         }
         Ok(())
     }
@@ -360,7 +395,9 @@ impl MqttBody {
     fn raw_bytes(&self) -> &[u8] {
         match self {
             Self::Raw(body) => body,
-            Self::Connect(_) | Self::Connack(_) | Self::Publish(_) => &[],
+            Self::Connect(_) | Self::Connack(_) | Self::Publish(_) | Self::PacketIdentifier(_) => {
+                &[]
+            }
         }
     }
 }
@@ -412,6 +449,16 @@ impl Mqtt {
             flags: Field::defaulted(MqttControlPacketType::Publish.default_flags()),
             remaining_length: Field::unset(),
             body: MqttBody::Publish(MqttPublish::new()),
+        }
+    }
+
+    /// Build an MQTT PUBACK packet.
+    pub fn puback() -> Self {
+        Self {
+            packet_type: MqttControlPacketType::Puback,
+            flags: Field::defaulted(MqttControlPacketType::Puback.default_flags()),
+            remaining_length: Field::unset(),
+            body: MqttBody::PacketIdentifier(MqttPacketIdentifier::new()),
         }
     }
 
@@ -473,6 +520,20 @@ impl Mqtt {
             flags: Field::user(fixed_header_flags),
             remaining_length: Field::user(remaining_length),
             body: MqttBody::Publish(MqttPublish::from_decoded_parts(topic, packet_id, payload)),
+        }
+    }
+
+    pub(crate) fn packet_identifier_from_decoded_parts(
+        packet_type: MqttControlPacketType,
+        fixed_header_flags: u8,
+        remaining_length: u32,
+        packet_id: u16,
+    ) -> Self {
+        Self {
+            packet_type,
+            flags: Field::user(fixed_header_flags),
+            remaining_length: Field::user(remaining_length),
+            body: MqttBody::PacketIdentifier(MqttPacketIdentifier::from_decoded_parts(packet_id)),
         }
     }
 
@@ -620,10 +681,14 @@ impl Mqtt {
         self
     }
 
-    /// Set the PUBLISH Packet Identifier.
+    /// Set the Packet Identifier for packet types that carry one.
     pub fn packet_id(mut self, packet_id: u16) -> Self {
-        if let MqttBody::Publish(publish) = &mut self.body {
-            publish.packet_id.set_user(packet_id);
+        match &mut self.body {
+            MqttBody::Publish(publish) => publish.packet_id.set_user(packet_id),
+            MqttBody::PacketIdentifier(packet_identifier) => {
+                packet_identifier.packet_id.set_user(packet_id);
+            }
+            _ => {}
         }
         self
     }
@@ -761,9 +826,14 @@ impl Mqtt {
             .map(|_| self.flags_value() & MQTT_PUBLISH_FLAG_RETAIN != 0)
     }
 
-    /// PUBLISH Packet Identifier, when present on a typed PUBLISH packet.
+    /// Packet Identifier, when present on a typed packet.
     pub fn packet_id_value(&self) -> Option<u16> {
-        self.publish_body().and_then(MqttPublish::packet_id_value)
+        self.publish_body()
+            .and_then(MqttPublish::packet_id_value)
+            .or_else(|| {
+                self.packet_identifier_body()
+                    .map(MqttPacketIdentifier::packet_id)
+            })
     }
 
     /// PUBLISH application payload bytes, when this is a typed PUBLISH packet.
@@ -774,21 +844,40 @@ impl Mqtt {
     fn connect_body(&self) -> Option<&MqttConnect> {
         match &self.body {
             MqttBody::Connect(connect) => Some(connect),
-            MqttBody::Raw(_) | MqttBody::Connack(_) | MqttBody::Publish(_) => None,
+            MqttBody::Raw(_)
+            | MqttBody::Connack(_)
+            | MqttBody::Publish(_)
+            | MqttBody::PacketIdentifier(_) => None,
         }
     }
 
     fn connack_body(&self) -> Option<&MqttConnack> {
         match &self.body {
             MqttBody::Connack(connack) => Some(connack),
-            MqttBody::Raw(_) | MqttBody::Connect(_) | MqttBody::Publish(_) => None,
+            MqttBody::Raw(_)
+            | MqttBody::Connect(_)
+            | MqttBody::Publish(_)
+            | MqttBody::PacketIdentifier(_) => None,
         }
     }
 
     fn publish_body(&self) -> Option<&MqttPublish> {
         match &self.body {
             MqttBody::Publish(publish) => Some(publish),
-            MqttBody::Raw(_) | MqttBody::Connect(_) | MqttBody::Connack(_) => None,
+            MqttBody::Raw(_)
+            | MqttBody::Connect(_)
+            | MqttBody::Connack(_)
+            | MqttBody::PacketIdentifier(_) => None,
+        }
+    }
+
+    fn packet_identifier_body(&self) -> Option<&MqttPacketIdentifier> {
+        match &self.body {
+            MqttBody::PacketIdentifier(packet_identifier) => Some(packet_identifier),
+            MqttBody::Raw(_)
+            | MqttBody::Connect(_)
+            | MqttBody::Connack(_)
+            | MqttBody::Publish(_) => None,
         }
     }
 
@@ -1011,6 +1100,13 @@ mod tests {
         );
 
         assert_eq!(bytes, [0x20, 0x00, 0x01, 0x03]);
+    }
+
+    #[test]
+    fn puback_compiles_packet_identifier() {
+        let bytes = mqtt_bytes(Mqtt::puback().packet_id(0x1234));
+
+        assert_eq!(bytes, [0x40, 0x02, 0x12, 0x34]);
     }
 
     #[test]
