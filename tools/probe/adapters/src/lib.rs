@@ -9,7 +9,7 @@
 //! contracts, dry-run/live dispatch, response and artifact helpers) and one
 //! module per protocol family: [`icmp`], [`tcp`], [`dns`], [`udp`], [`dhcp`],
 //! [`arp`], [`ndp`] (IPv6 Neighbor Discovery), [`rip`] (Routing Information
-//! Protocol), and [`igmp`]. The binary is a thin wrapper that calls
+//! Protocol), [`igmp`], and [`mqtt`]. The binary is a thin wrapper that calls
 //! [`common::run`].
 
 // The `plan_json` builder serializes the full probe-plan contract through a
@@ -23,6 +23,7 @@ pub mod dhcp;
 pub mod dns;
 pub mod icmp;
 pub mod igmp;
+pub mod mqtt;
 pub mod ndp;
 pub mod ospf;
 pub mod rip;
