@@ -6,12 +6,13 @@ use crate::protocols::transport::common::{hex_bytes, impl_layer_div, impl_layer_
 use crate::Result;
 
 use super::constants::{
-    MQTT_311_PROTOCOL_LEVEL, MQTT_311_PROTOCOL_NAME, MQTT_CONNACK_ACCEPTED,
+    MQTT_311_PROTOCOL_LEVEL, MQTT_311_PROTOCOL_NAME, MQTT_5_PROTOCOL_LEVEL, MQTT_CONNACK_ACCEPTED,
     MQTT_CONNECT_FLAG_CLEAN_SESSION, MQTT_CONNECT_FLAG_PASSWORD, MQTT_CONNECT_FLAG_USER_NAME,
     MQTT_CONNECT_FLAG_WILL, MQTT_CONNECT_FLAG_WILL_QOS_MASK, MQTT_CONNECT_FLAG_WILL_RETAIN,
     MQTT_PUBLISH_FLAG_DUP, MQTT_PUBLISH_FLAG_QOS_MASK, MQTT_PUBLISH_FLAG_RETAIN,
 };
 use super::header::MqttControlPacketType;
+use super::property::{MqttProperties, MqttProperty};
 use super::varint::encode_remaining_length;
 use super::wire::{encode_binary, encode_string, encode_u16};
 
@@ -27,7 +28,9 @@ struct MqttConnect {
     protocol_level: Field<u8>,
     connect_flags: Field<u8>,
     keep_alive: Field<u16>,
+    connect_properties: MqttProperties,
     client_id: Field<String>,
+    will_properties: MqttProperties,
     will_topic: Field<String>,
     will_message: Field<Vec<u8>>,
     username: Field<String>,
@@ -41,7 +44,9 @@ impl MqttConnect {
             protocol_level: Field::defaulted(MQTT_311_PROTOCOL_LEVEL),
             connect_flags: Field::defaulted(MQTT_CONNECT_FLAG_CLEAN_SESSION),
             keep_alive: Field::defaulted(DEFAULT_CONNECT_KEEP_ALIVE),
+            connect_properties: MqttProperties::new(),
             client_id: Field::defaulted(String::new()),
+            will_properties: MqttProperties::new(),
             will_topic: Field::unset(),
             will_message: Field::unset(),
             username: Field::unset(),
@@ -55,7 +60,9 @@ impl MqttConnect {
         protocol_level: u8,
         connect_flags: u8,
         keep_alive: u16,
+        connect_properties: MqttProperties,
         client_id: String,
+        will_properties: MqttProperties,
         will_topic: Option<String>,
         will_message: Option<Vec<u8>>,
         username: Option<String>,
@@ -66,7 +73,9 @@ impl MqttConnect {
             protocol_level: Field::user(protocol_level),
             connect_flags: Field::user(connect_flags),
             keep_alive: Field::user(keep_alive),
+            connect_properties,
             client_id: Field::user(client_id),
+            will_properties,
             will_topic: will_topic.map_or_else(Field::unset, Field::user),
             will_message: will_message.map_or_else(Field::unset, Field::user),
             username: username.map_or_else(Field::unset, Field::user),
@@ -88,6 +97,10 @@ impl MqttConnect {
             .unwrap_or(MQTT_311_PROTOCOL_LEVEL)
     }
 
+    fn is_v5(&self) -> bool {
+        self.protocol_level() == MQTT_5_PROTOCOL_LEVEL
+    }
+
     fn connect_flags(&self) -> u8 {
         self.connect_flags
             .value()
@@ -102,6 +115,10 @@ impl MqttConnect {
             .unwrap_or(DEFAULT_CONNECT_KEEP_ALIVE)
     }
 
+    fn connect_properties(&self) -> &MqttProperties {
+        &self.connect_properties
+    }
+
     fn client_id(&self) -> &str {
         self.client_id.value().map(String::as_str).unwrap_or("")
     }
@@ -112,6 +129,10 @@ impl MqttConnect {
 
     fn will_message(&self) -> &[u8] {
         self.will_message.value().map(Vec::as_slice).unwrap_or(&[])
+    }
+
+    fn will_properties(&self) -> &MqttProperties {
+        &self.will_properties
     }
 
     fn username(&self) -> &str {
@@ -136,6 +157,15 @@ impl MqttConnect {
 
     fn password_value(&self) -> Option<&[u8]> {
         self.password.value().map(Vec::as_slice)
+    }
+
+    fn connect_properties_value(&self) -> Option<&MqttProperties> {
+        self.is_v5().then_some(&self.connect_properties)
+    }
+
+    fn will_properties_value(&self) -> Option<&MqttProperties> {
+        (self.is_v5() && self.connect_flags() & MQTT_CONNECT_FLAG_WILL != 0)
+            .then_some(&self.will_properties)
     }
 
     fn set_connect_flag_default(&mut self, mask: u8, enabled: bool) {
@@ -169,7 +199,13 @@ impl MqttConnect {
         let flags = self.connect_flags();
         let mut len = 2 + self.protocol_name().len() + 1 + 1 + 2 + 2 + self.client_id().len();
 
+        if self.is_v5() {
+            len += encoded_properties_len(self.connect_properties());
+        }
         if flags & MQTT_CONNECT_FLAG_WILL != 0 {
+            if self.is_v5() {
+                len += encoded_properties_len(self.will_properties());
+            }
             len += 2 + self.will_topic().len();
             len += 2 + self.will_message().len();
         }
@@ -190,12 +226,18 @@ impl MqttConnect {
         out.push(self.protocol_level());
         out.push(flags);
         encode_u16(self.keep_alive(), out);
+        if self.is_v5() {
+            self.connect_properties.write(out)?;
+        }
         encode_string(self.client_id(), out)?;
 
         // Optional payload emission follows the effective flags byte. A direct
         // connect_flags() override is not reconciled with populated fields so
         // malformed CONNECT packets can be constructed intentionally.
         if flags & MQTT_CONNECT_FLAG_WILL != 0 {
+            if self.is_v5() {
+                self.will_properties.write(out)?;
+            }
             encode_string(self.will_topic(), out)?;
             encode_binary(self.will_message(), out)?;
         }
@@ -583,6 +625,7 @@ impl MqttBody {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Mqtt {
     packet_type: MqttControlPacketType,
+    version: Field<u8>,
     flags: Field<u8>,
     remaining_length: Field<u32>,
     body: MqttBody,
@@ -593,6 +636,7 @@ impl Mqtt {
     pub fn raw(packet_type: MqttControlPacketType, body: impl Into<Vec<u8>>) -> Self {
         Self {
             packet_type,
+            version: Field::defaulted(MQTT_311_PROTOCOL_LEVEL),
             flags: Field::defaulted(packet_type.default_flags()),
             remaining_length: Field::unset(),
             body: MqttBody::Raw(body.into()),
@@ -603,6 +647,7 @@ impl Mqtt {
     pub fn connect() -> Self {
         Self {
             packet_type: MqttControlPacketType::Connect,
+            version: Field::defaulted(MQTT_311_PROTOCOL_LEVEL),
             flags: Field::defaulted(MqttControlPacketType::Connect.default_flags()),
             remaining_length: Field::unset(),
             body: MqttBody::Connect(MqttConnect::new()),
@@ -613,6 +658,7 @@ impl Mqtt {
     pub fn connack() -> Self {
         Self {
             packet_type: MqttControlPacketType::Connack,
+            version: Field::defaulted(MQTT_311_PROTOCOL_LEVEL),
             flags: Field::defaulted(MqttControlPacketType::Connack.default_flags()),
             remaining_length: Field::unset(),
             body: MqttBody::Connack(MqttConnack::new()),
@@ -623,6 +669,7 @@ impl Mqtt {
     pub fn publish() -> Self {
         Self {
             packet_type: MqttControlPacketType::Publish,
+            version: Field::defaulted(MQTT_311_PROTOCOL_LEVEL),
             flags: Field::defaulted(MqttControlPacketType::Publish.default_flags()),
             remaining_length: Field::unset(),
             body: MqttBody::Publish(MqttPublish::new()),
@@ -633,6 +680,7 @@ impl Mqtt {
     pub fn puback() -> Self {
         Self {
             packet_type: MqttControlPacketType::Puback,
+            version: Field::defaulted(MQTT_311_PROTOCOL_LEVEL),
             flags: Field::defaulted(MqttControlPacketType::Puback.default_flags()),
             remaining_length: Field::unset(),
             body: MqttBody::PacketIdentifier(MqttPacketIdentifier::new()),
@@ -643,6 +691,7 @@ impl Mqtt {
     pub fn pubrec() -> Self {
         Self {
             packet_type: MqttControlPacketType::Pubrec,
+            version: Field::defaulted(MQTT_311_PROTOCOL_LEVEL),
             flags: Field::defaulted(MqttControlPacketType::Pubrec.default_flags()),
             remaining_length: Field::unset(),
             body: MqttBody::PacketIdentifier(MqttPacketIdentifier::new()),
@@ -653,6 +702,7 @@ impl Mqtt {
     pub fn pubrel() -> Self {
         Self {
             packet_type: MqttControlPacketType::Pubrel,
+            version: Field::defaulted(MQTT_311_PROTOCOL_LEVEL),
             flags: Field::defaulted(MqttControlPacketType::Pubrel.default_flags()),
             remaining_length: Field::unset(),
             body: MqttBody::PacketIdentifier(MqttPacketIdentifier::new()),
@@ -663,6 +713,7 @@ impl Mqtt {
     pub fn pubcomp() -> Self {
         Self {
             packet_type: MqttControlPacketType::Pubcomp,
+            version: Field::defaulted(MQTT_311_PROTOCOL_LEVEL),
             flags: Field::defaulted(MqttControlPacketType::Pubcomp.default_flags()),
             remaining_length: Field::unset(),
             body: MqttBody::PacketIdentifier(MqttPacketIdentifier::new()),
@@ -673,6 +724,7 @@ impl Mqtt {
     pub fn unsuback() -> Self {
         Self {
             packet_type: MqttControlPacketType::Unsuback,
+            version: Field::defaulted(MQTT_311_PROTOCOL_LEVEL),
             flags: Field::defaulted(MqttControlPacketType::Unsuback.default_flags()),
             remaining_length: Field::unset(),
             body: MqttBody::PacketIdentifier(MqttPacketIdentifier::new()),
@@ -683,6 +735,7 @@ impl Mqtt {
     pub fn pingreq() -> Self {
         Self {
             packet_type: MqttControlPacketType::Pingreq,
+            version: Field::defaulted(MQTT_311_PROTOCOL_LEVEL),
             flags: Field::defaulted(MqttControlPacketType::Pingreq.default_flags()),
             remaining_length: Field::unset(),
             body: MqttBody::Empty,
@@ -693,6 +746,7 @@ impl Mqtt {
     pub fn pingresp() -> Self {
         Self {
             packet_type: MqttControlPacketType::Pingresp,
+            version: Field::defaulted(MQTT_311_PROTOCOL_LEVEL),
             flags: Field::defaulted(MqttControlPacketType::Pingresp.default_flags()),
             remaining_length: Field::unset(),
             body: MqttBody::Empty,
@@ -703,6 +757,7 @@ impl Mqtt {
     pub fn disconnect() -> Self {
         Self {
             packet_type: MqttControlPacketType::Disconnect,
+            version: Field::defaulted(MQTT_311_PROTOCOL_LEVEL),
             flags: Field::defaulted(MqttControlPacketType::Disconnect.default_flags()),
             remaining_length: Field::unset(),
             body: MqttBody::Empty,
@@ -713,6 +768,7 @@ impl Mqtt {
     pub fn subscribe() -> Self {
         Self {
             packet_type: MqttControlPacketType::Subscribe,
+            version: Field::defaulted(MQTT_311_PROTOCOL_LEVEL),
             flags: Field::defaulted(MqttControlPacketType::Subscribe.default_flags()),
             remaining_length: Field::unset(),
             body: MqttBody::Subscribe(MqttSubscribe::new()),
@@ -723,6 +779,7 @@ impl Mqtt {
     pub fn suback() -> Self {
         Self {
             packet_type: MqttControlPacketType::Suback,
+            version: Field::defaulted(MQTT_311_PROTOCOL_LEVEL),
             flags: Field::defaulted(MqttControlPacketType::Suback.default_flags()),
             remaining_length: Field::unset(),
             body: MqttBody::Suback(MqttSuback::new()),
@@ -733,6 +790,7 @@ impl Mqtt {
     pub fn unsubscribe() -> Self {
         Self {
             packet_type: MqttControlPacketType::Unsubscribe,
+            version: Field::defaulted(MQTT_311_PROTOCOL_LEVEL),
             flags: Field::defaulted(MqttControlPacketType::Unsubscribe.default_flags()),
             remaining_length: Field::unset(),
             body: MqttBody::Unsubscribe(MqttUnsubscribe::new()),
@@ -747,7 +805,9 @@ impl Mqtt {
         protocol_level: u8,
         connect_flags: u8,
         keep_alive: u16,
+        connect_properties: MqttProperties,
         client_id: String,
+        will_properties: MqttProperties,
         will_topic: Option<String>,
         will_message: Option<Vec<u8>>,
         username: Option<String>,
@@ -755,6 +815,7 @@ impl Mqtt {
     ) -> Self {
         Self {
             packet_type: MqttControlPacketType::Connect,
+            version: Field::user(protocol_level),
             flags: Field::user(fixed_header_flags),
             remaining_length: Field::user(remaining_length),
             body: MqttBody::Connect(MqttConnect::from_decoded_parts(
@@ -762,7 +823,9 @@ impl Mqtt {
                 protocol_level,
                 connect_flags,
                 keep_alive,
+                connect_properties,
                 client_id,
+                will_properties,
                 will_topic,
                 will_message,
                 username,
@@ -779,6 +842,7 @@ impl Mqtt {
     ) -> Self {
         Self {
             packet_type: MqttControlPacketType::Connack,
+            version: Field::defaulted(MQTT_311_PROTOCOL_LEVEL),
             flags: Field::user(fixed_header_flags),
             remaining_length: Field::user(remaining_length),
             body: MqttBody::Connack(MqttConnack::from_decoded_parts(ack_flags, return_code)),
@@ -794,6 +858,7 @@ impl Mqtt {
     ) -> Self {
         Self {
             packet_type: MqttControlPacketType::Publish,
+            version: Field::defaulted(MQTT_311_PROTOCOL_LEVEL),
             flags: Field::user(fixed_header_flags),
             remaining_length: Field::user(remaining_length),
             body: MqttBody::Publish(MqttPublish::from_decoded_parts(topic, packet_id, payload)),
@@ -808,6 +873,7 @@ impl Mqtt {
     ) -> Self {
         Self {
             packet_type,
+            version: Field::defaulted(MQTT_311_PROTOCOL_LEVEL),
             flags: Field::user(fixed_header_flags),
             remaining_length: Field::user(remaining_length),
             body: MqttBody::PacketIdentifier(MqttPacketIdentifier::from_decoded_parts(packet_id)),
@@ -822,6 +888,7 @@ impl Mqtt {
     ) -> Self {
         Self {
             packet_type: MqttControlPacketType::Subscribe,
+            version: Field::defaulted(MQTT_311_PROTOCOL_LEVEL),
             flags: Field::user(fixed_header_flags),
             remaining_length: Field::user(remaining_length),
             body: MqttBody::Subscribe(MqttSubscribe::from_decoded_parts(packet_id, topics)),
@@ -836,6 +903,7 @@ impl Mqtt {
     ) -> Self {
         Self {
             packet_type: MqttControlPacketType::Suback,
+            version: Field::defaulted(MQTT_311_PROTOCOL_LEVEL),
             flags: Field::user(fixed_header_flags),
             remaining_length: Field::user(remaining_length),
             body: MqttBody::Suback(MqttSuback::from_decoded_parts(packet_id, return_codes)),
@@ -850,6 +918,7 @@ impl Mqtt {
     ) -> Self {
         Self {
             packet_type: MqttControlPacketType::Unsubscribe,
+            version: Field::defaulted(MQTT_311_PROTOCOL_LEVEL),
             flags: Field::user(fixed_header_flags),
             remaining_length: Field::user(remaining_length),
             body: MqttBody::Unsubscribe(MqttUnsubscribe::from_decoded_parts(packet_id, topics)),
@@ -863,6 +932,7 @@ impl Mqtt {
     ) -> Self {
         Self {
             packet_type,
+            version: Field::defaulted(MQTT_311_PROTOCOL_LEVEL),
             flags: Field::user(fixed_header_flags),
             remaining_length: Field::user(remaining_length),
             body: MqttBody::Empty,
@@ -881,6 +951,15 @@ impl Mqtt {
         self
     }
 
+    /// Set the MQTT protocol version selector for this layer.
+    pub fn version(mut self, version: u8) -> Self {
+        self.version.set_user(version);
+        if let MqttBody::Connect(connect) = &mut self.body {
+            connect.protocol_level.set_user(version);
+        }
+        self
+    }
+
     /// Set the CONNECT protocol name.
     pub fn protocol_name(mut self, protocol_name: impl Into<String>) -> Self {
         if let MqttBody::Connect(connect) = &mut self.body {
@@ -893,6 +972,7 @@ impl Mqtt {
     pub fn protocol_level(mut self, protocol_level: u8) -> Self {
         if let MqttBody::Connect(connect) = &mut self.body {
             connect.protocol_level.set_user(protocol_level);
+            self.version.set_user(protocol_level);
         }
         self
     }
@@ -921,12 +1001,44 @@ impl Mqtt {
         self
     }
 
+    /// Replace the MQTT 5.0 CONNECT properties block.
+    pub fn connect_properties(mut self, properties: MqttProperties) -> Self {
+        if let MqttBody::Connect(connect) = &mut self.body {
+            connect.connect_properties = properties;
+        }
+        self
+    }
+
+    /// Add one MQTT 5.0 CONNECT property.
+    pub fn connect_property(mut self, property: MqttProperty) -> Self {
+        if let MqttBody::Connect(connect) = &mut self.body {
+            connect.connect_properties.push(property);
+        }
+        self
+    }
+
     /// Set the CONNECT Will Topic and Will Message fields.
     pub fn will(mut self, topic: impl Into<String>, message: impl Into<Vec<u8>>) -> Self {
         if let MqttBody::Connect(connect) = &mut self.body {
             connect.will_topic.set_user(topic.into());
             connect.will_message.set_user(message.into());
             connect.set_connect_flag_default(MQTT_CONNECT_FLAG_WILL, true);
+        }
+        self
+    }
+
+    /// Replace the MQTT 5.0 Will Properties block.
+    pub fn will_properties(mut self, properties: MqttProperties) -> Self {
+        if let MqttBody::Connect(connect) = &mut self.body {
+            connect.will_properties = properties;
+        }
+        self
+    }
+
+    /// Add one MQTT 5.0 Will Property.
+    pub fn will_property(mut self, property: MqttProperty) -> Self {
+        if let MqttBody::Connect(connect) = &mut self.body {
+            connect.will_properties.push(property);
         }
         self
     }
@@ -1096,6 +1208,14 @@ impl Mqtt {
         self.packet_type
     }
 
+    /// MQTT protocol version selected for this layer.
+    pub fn version_value(&self) -> u8 {
+        self.version
+            .value()
+            .copied()
+            .unwrap_or(MQTT_311_PROTOCOL_LEVEL)
+    }
+
     /// Fixed-header flags nibble value.
     pub fn flags_value(&self) -> u8 {
         self.flags
@@ -1166,6 +1286,18 @@ impl Mqtt {
     /// CONNECT Password bytes, when present on a typed CONNECT packet.
     pub fn password_value(&self) -> Option<&[u8]> {
         self.connect_body().and_then(MqttConnect::password_value)
+    }
+
+    /// MQTT 5.0 CONNECT properties, when this is a version-5 CONNECT packet.
+    pub fn connect_properties_value(&self) -> Option<&MqttProperties> {
+        self.connect_body()
+            .and_then(MqttConnect::connect_properties_value)
+    }
+
+    /// MQTT 5.0 Will Properties, when present on a version-5 CONNECT packet.
+    pub fn will_properties_value(&self) -> Option<&MqttProperties> {
+        self.connect_body()
+            .and_then(MqttConnect::will_properties_value)
     }
 
     /// CONNACK Session Present flag, when this is a typed CONNACK packet.
@@ -1547,6 +1679,13 @@ fn remaining_length_encoded_len(value: u32) -> usize {
         16_384..=2_097_151 => 3,
         _ => 4,
     }
+}
+
+fn encoded_properties_len(properties: &MqttProperties) -> usize {
+    properties
+        .to_vec()
+        .map(|bytes| bytes.len())
+        .unwrap_or(usize::MAX)
 }
 
 fn packet_type_name(packet_type: MqttControlPacketType) -> &'static str {

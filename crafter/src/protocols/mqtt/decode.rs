@@ -7,10 +7,11 @@ use crate::packet::{Packet, Raw};
 use crate::registry::ProtocolRegistry;
 
 use super::constants::{
-    MQTT_CONNECT_FLAG_PASSWORD, MQTT_CONNECT_FLAG_USER_NAME, MQTT_CONNECT_FLAG_WILL,
-    MQTT_PUBLISH_FLAG_QOS_MASK,
+    MQTT_5_PROTOCOL_LEVEL, MQTT_CONNECT_FLAG_PASSWORD, MQTT_CONNECT_FLAG_USER_NAME,
+    MQTT_CONNECT_FLAG_WILL, MQTT_PUBLISH_FLAG_QOS_MASK,
 };
 use super::header::MqttControlPacketType;
+use super::property::MqttProperties;
 use super::varint::decode_remaining_length;
 use super::wire::{decode_binary, decode_string, decode_u16};
 use super::Mqtt;
@@ -95,15 +96,27 @@ fn decode_connect(fixed_header_flags: u8, remaining_length: u32, body: &[u8]) ->
     let protocol_level = take_u8(body, &mut cursor, "mqtt.connect.protocol_level")?;
     let connect_flags = take_u8(body, &mut cursor, "mqtt.connect.flags")?;
     let keep_alive = take_u16(body, &mut cursor)?;
+    let connect_properties = if protocol_level == MQTT_5_PROTOCOL_LEVEL {
+        take_properties(body, &mut cursor)?
+    } else {
+        MqttProperties::new()
+    };
     let client_id = take_string(body, &mut cursor)?;
 
-    let (will_topic, will_message) = if connect_flags & MQTT_CONNECT_FLAG_WILL != 0 {
+    let (will_properties, will_topic, will_message) = if connect_flags & MQTT_CONNECT_FLAG_WILL != 0
+    {
+        let will_properties = if protocol_level == MQTT_5_PROTOCOL_LEVEL {
+            take_properties(body, &mut cursor)?
+        } else {
+            MqttProperties::new()
+        };
         (
+            will_properties,
             Some(take_string(body, &mut cursor)?),
             Some(take_binary(body, &mut cursor)?),
         )
     } else {
-        (None, None)
+        (MqttProperties::new(), None, None)
     };
 
     let username = if connect_flags & MQTT_CONNECT_FLAG_USER_NAME != 0 {
@@ -132,7 +145,9 @@ fn decode_connect(fixed_header_flags: u8, remaining_length: u32, body: &[u8]) ->
         protocol_level,
         connect_flags,
         keep_alive,
+        connect_properties,
         client_id,
+        will_properties,
         will_topic,
         will_message,
         username,
@@ -389,6 +404,12 @@ fn take_binary(bytes: &[u8], cursor: &mut usize) -> Result<Vec<u8>> {
     let (value, consumed) = decode_binary(&bytes[*cursor..])?;
     *cursor += consumed;
     Ok(value)
+}
+
+fn take_properties(bytes: &[u8], cursor: &mut usize) -> Result<MqttProperties> {
+    let (properties, consumed) = MqttProperties::decode(&bytes[*cursor..])?;
+    *cursor += consumed;
+    Ok(properties)
 }
 
 fn publish_qos(flags: u8) -> u8 {
