@@ -195,6 +195,30 @@ _BLE_ADV_FLAG_NAMES: tuple[tuple[int, str], ...] = (
     (0x08, "simultaneous_le_br_edr_controller"),
     (0x10, "simultaneous_le_br_edr_host"),
 )
+_MQTT_TCP_PORT = 1883
+_MQTT_PACKET_TYPE_NAMES: dict[int, str] = {
+    1: "connect",
+    2: "connack",
+    3: "publish",
+    4: "puback",
+    5: "pubrec",
+    6: "pubrel",
+    7: "pubcomp",
+    8: "subscribe",
+    9: "suback",
+    10: "unsubscribe",
+    11: "unsuback",
+    12: "pingreq",
+    13: "pingresp",
+    14: "disconnect",
+}
+_MQTT_CONNECT_FLAG_PASSWORD = 0x40
+_MQTT_CONNECT_FLAG_USERNAME = 0x80
+_MQTT_CONNECT_FLAG_WILL = 0x04
+_MQTT_CONNECT_FLAG_CLEAN_SESSION = 0x02
+_MQTT_PUBLISH_FLAG_DUP = 0x08
+_MQTT_PUBLISH_FLAG_QOS_MASK = 0x06
+_MQTT_PUBLISH_FLAG_RETAIN = 0x01
 
 
 def decode_root(
@@ -369,6 +393,7 @@ def normalize_packet(
     _canonicalize_rip(packet, normalized_layers, normalized_fields)
     _canonicalize_ripng(packet, normalized_layers, normalized_fields)
     _canonicalize_dot15d4_zigbee(normalized_layers, normalized_fields)
+    _canonicalize_mqtt(packet, normalized_layers, normalized_fields)
     if source_hex is not None:
         _canonicalize_bgp_from_wire(source_hex, normalized_fields)
 
@@ -800,6 +825,282 @@ def _canonicalize_dot15d4_zigbee(
     layers[:] = new_layers
     fields.clear()
     fields.update(new_fields)
+
+
+def _canonicalize_mqtt(
+    packet: Any,
+    layers: list[str],
+    fields: dict[str, JSONObject],
+) -> None:
+    """Normalize MQTT from raw TCP payload bytes.
+
+    Scapy's MQTT contrib dissector exposes the first fixed header plus a
+    per-message body layer, but it leaves additional MQTT control packets in one
+    Raw tail. libcrafter decodes the TCP payload as a sequence of MQTT control
+    packets, preserving an incomplete final frame as Raw. Rebuilding from the
+    TCP payload gives both backends the same layer sequence.
+    """
+
+    payload = _mqtt_payload_from_tcp(packet)
+    if not payload or "tcp" not in layers:
+        return
+
+    tcp_index = layers.index("tcp")
+    for offset in range(tcp_index + 1, len(layers)):
+        fields.pop(_layer_key_at(layers, offset), None)
+    del layers[tcp_index + 1 :]
+
+    cursor = 0
+    while cursor < len(payload):
+        parsed = _parse_mqtt_frame(payload[cursor:])
+        if parsed is None:
+            _append_normalized_layer(
+                layers,
+                fields,
+                "payload",
+                _payload_fields_from_bytes(payload[cursor:]),
+            )
+            return
+        mqtt_fields, consumed = parsed
+        _append_normalized_layer(layers, fields, "mqtt", mqtt_fields)
+        cursor += consumed
+
+
+def _mqtt_payload_from_tcp(packet: Any) -> bytes | None:
+    tcp = _scapy_layer(packet, "TCP")
+    if tcp is None:
+        return None
+    sport = _mqtt_int(getattr(tcp, "sport", 0))
+    dport = _mqtt_int(getattr(tcp, "dport", 0))
+    if sport != _MQTT_TCP_PORT and dport != _MQTT_TCP_PORT:
+        return None
+    payload = getattr(tcp, "payload", None)
+    if payload is None or payload.__class__.__name__ == "NoPayload":
+        return b""
+    try:
+        return bytes(import_scapy()["all"].raw(payload))
+    except Exception:  # pragma: no cover - Scapy exception types vary.
+        return None
+
+
+def _parse_mqtt_frame(raw: bytes) -> tuple[JSONObject, int] | None:
+    if len(raw) < 2:
+        return None
+
+    first = raw[0]
+    packet_type = first >> 4
+    packet_type_name = _MQTT_PACKET_TYPE_NAMES.get(packet_type)
+    if packet_type_name is None:
+        return None
+    remaining = _mqtt_decode_remaining_length(raw[1:])
+    if remaining is None:
+        return None
+    remaining_length, remaining_length_len = remaining
+    header_len = 1 + remaining_length_len
+    total_len = header_len + remaining_length
+    if len(raw) < total_len:
+        return None
+
+    body = raw[header_len:total_len]
+    flags = first & 0x0F
+    fields: JSONObject = {
+        "packet_type": packet_type_name,
+        "flags": flags,
+        "remaining_length": remaining_length,
+    }
+    parsed = _mqtt_body_fields(packet_type, flags, body)
+    if parsed is None:
+        fields["payload"] = _mqtt_bytes_fields(body)
+    else:
+        fields.update(parsed)
+    return fields, total_len
+
+
+def _mqtt_decode_remaining_length(raw: bytes) -> tuple[int, int] | None:
+    multiplier = 1
+    value = 0
+    for index, byte in enumerate(raw[:4]):
+        value += (byte & 0x7F) * multiplier
+        if byte & 0x80 == 0:
+            return value, index + 1
+        multiplier *= 128
+    return None
+
+
+def _mqtt_body_fields(packet_type: int, flags: int, body: bytes) -> JSONObject | None:
+    if packet_type == 1:
+        return _mqtt_connect_fields(body)
+    if packet_type == 2:
+        if len(body) != 2:
+            return None
+        ack_flags = body[0]
+        return {
+            "ack_flags": ack_flags,
+            "session_present": bool(ack_flags & 0x01),
+            "return_code": body[1],
+        }
+    if packet_type == 3:
+        return _mqtt_publish_fields(flags, body)
+    if packet_type in {4, 5, 6, 7, 11}:
+        if len(body) != 2:
+            return None
+        return {"packet_id": int.from_bytes(body, "big")}
+    if packet_type == 8:
+        return _mqtt_subscribe_fields(body)
+    if packet_type == 9:
+        if len(body) < 2:
+            return None
+        return {
+            "packet_id": int.from_bytes(body[:2], "big"),
+            "return_codes": list(body[2:]),
+        }
+    if packet_type == 10:
+        return _mqtt_unsubscribe_fields(body)
+    if packet_type in {12, 13, 14}:
+        return {} if not body else None
+    return {}
+
+
+def _mqtt_connect_fields(body: bytes) -> JSONObject | None:
+    cursor = 0
+    protocol_name, cursor = _mqtt_read_string(body, cursor)
+    if protocol_name is None or len(body) < cursor + 4:
+        return None
+    protocol_level = body[cursor]
+    connect_flags = body[cursor + 1]
+    keep_alive = int.from_bytes(body[cursor + 2 : cursor + 4], "big")
+    cursor += 4
+    client_id, cursor = _mqtt_read_string(body, cursor)
+    if client_id is None:
+        return None
+
+    fields: JSONObject = {
+        "protocol_name": protocol_name,
+        "protocol_level": protocol_level,
+        "connect_flags": connect_flags,
+        "clean_session": bool(connect_flags & _MQTT_CONNECT_FLAG_CLEAN_SESSION),
+        "keep_alive": keep_alive,
+        "client_id": client_id,
+    }
+    if connect_flags & _MQTT_CONNECT_FLAG_WILL:
+        will_topic, cursor = _mqtt_read_string(body, cursor)
+        if will_topic is None:
+            return None
+        will_message, cursor = _mqtt_read_binary(body, cursor)
+        if will_message is None:
+            return None
+        fields["will_topic"] = will_topic
+        fields["will_message"] = _mqtt_bytes_fields(will_message)
+    if connect_flags & _MQTT_CONNECT_FLAG_USERNAME:
+        username, cursor = _mqtt_read_string(body, cursor)
+        if username is None:
+            return None
+        fields["username"] = username
+    if connect_flags & _MQTT_CONNECT_FLAG_PASSWORD:
+        password, cursor = _mqtt_read_binary(body, cursor)
+        if password is None:
+            return None
+        fields["password"] = _mqtt_bytes_fields(password)
+    if cursor != len(body):
+        return None
+    return fields
+
+
+def _mqtt_publish_fields(flags: int, body: bytes) -> JSONObject | None:
+    topic, cursor = _mqtt_read_string(body, 0)
+    if topic is None:
+        return None
+    qos = (flags & _MQTT_PUBLISH_FLAG_QOS_MASK) >> 1
+    fields: JSONObject = {
+        "topic": topic,
+        "qos": qos,
+        "dup": bool(flags & _MQTT_PUBLISH_FLAG_DUP),
+        "retain": bool(flags & _MQTT_PUBLISH_FLAG_RETAIN),
+    }
+    if qos != 0:
+        if len(body) < cursor + 2:
+            return None
+        fields["packet_id"] = int.from_bytes(body[cursor : cursor + 2], "big")
+        cursor += 2
+    fields["payload"] = _mqtt_bytes_fields(body[cursor:])
+    return fields
+
+
+def _mqtt_subscribe_fields(body: bytes) -> JSONObject | None:
+    if len(body) < 2:
+        return None
+    cursor = 2
+    topic_filters: list[JSONObject] = []
+    while cursor < len(body):
+        topic, cursor = _mqtt_read_string(body, cursor)
+        if topic is None or cursor >= len(body):
+            return None
+        topic_filters.append({"topic": topic, "qos": body[cursor]})
+        cursor += 1
+    return {
+        "packet_id": int.from_bytes(body[:2], "big"),
+        "topic_filters": topic_filters,
+    }
+
+
+def _mqtt_unsubscribe_fields(body: bytes) -> JSONObject | None:
+    if len(body) < 2:
+        return None
+    cursor = 2
+    topic_filters: list[str] = []
+    while cursor < len(body):
+        topic, cursor = _mqtt_read_string(body, cursor)
+        if topic is None:
+            return None
+        topic_filters.append(topic)
+    return {
+        "packet_id": int.from_bytes(body[:2], "big"),
+        "topic_filters": topic_filters,
+    }
+
+
+def _mqtt_read_string(raw: bytes, cursor: int) -> tuple[str | None, int]:
+    value, cursor = _mqtt_read_binary(raw, cursor)
+    if value is None:
+        return None, cursor
+    try:
+        text = value.decode("utf-8")
+    except UnicodeDecodeError:
+        return None, cursor
+    if "\x00" in text:
+        return None, cursor
+    return text, cursor
+
+
+def _mqtt_read_binary(raw: bytes, cursor: int) -> tuple[bytes | None, int]:
+    if len(raw) < cursor + 2:
+        return None, cursor
+    length = int.from_bytes(raw[cursor : cursor + 2], "big")
+    start = cursor + 2
+    end = start + length
+    if len(raw) < end:
+        return None, cursor
+    return raw[start:end], end
+
+
+def _mqtt_bytes_fields(value: bytes) -> JSONObject:
+    return {
+        "hex": value.hex(),
+        "length": len(value),
+    }
+
+
+def _mqtt_int(value: Any) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if value is None:
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _bgp_offset(raw: bytes) -> int | None:
