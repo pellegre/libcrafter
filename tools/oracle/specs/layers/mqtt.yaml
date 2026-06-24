@@ -151,7 +151,7 @@ coverage_cases:
 
 backend_support:
   scapy:
-    status: planned
+    status: supported
     native_layers:
       - MQTT
       - MQTTConnect
@@ -168,13 +168,13 @@ backend_support:
       - MQTTDisconnect
       - MQTTTopic
       - MQTTTopicQOS
-    encode: false
-    decode: false
+    encode: true
+    decode: true
     notes:
-      - Scapy contrib import, materialization, and normalization are added by later MQTT oracle steps.
+      - Scapy contrib import, materialization, and TCP-payload normalization support MQTT 3.1.1 control packets.
   libcrafter:
-    status: planned
-    encode: false
-    decode: false
+    status: supported
+    encode: true
+    decode: true
     notes:
-      - The public crafter MQTT layer exists; oracle adapter materialization and decode support are added by a later step.
+      - The public crafter MQTT layer builds, decodes, and stacks cleartext MQTT 3.1.1 control packets.
