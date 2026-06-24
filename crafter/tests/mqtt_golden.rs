@@ -1,6 +1,9 @@
 use std::net::Ipv4Addr;
 
 use crafter::prelude::*;
+use crafter::protocols::mqtt::{
+    MQTT_CONNACK_ACCEPTED, MQTT_CONNACK_IDENTIFIER_REJECTED, MQTT_CONNACK_SERVER_UNAVAILABLE,
+};
 
 const CONNECT_CLIENT_ONLY: &[u8] = &[
     // `.agents/docs/mqtt-manifest.md`: MQTT fixed header byte 1 is control
@@ -17,6 +20,27 @@ const CONNECT_CLIENT_ONLY: &[u8] = &[
     // Manifest CONNECT payload: Client Identifier is required first and is an
     // MQTT UTF-8 string.
     0x00, 0x06, b'c', b'l', b'i', b'e', b'n', b't',
+];
+
+const CONNACK_ACCEPTED: &[u8] = &[
+    // `.agents/docs/mqtt-manifest.md`: CONNACK is fixed-header type 2 with
+    // flags 0x0 and Remaining Length 2. The two-byte variable header is
+    // acknowledge flags followed by the return code.
+    0x20,
+    0x02,
+    // Manifest CONNACK acknowledge flags: bit 0 is Session Present, all other
+    // bits reserved. Return code 0x00 is Connection Accepted.
+    0x00,
+    MQTT_CONNACK_ACCEPTED,
+];
+
+const CONNACK_SERVER_UNAVAILABLE: &[u8] = &[
+    // Same CONNACK fixed header and acknowledge-flags shape; return code 0x03
+    // is Server unavailable in OASIS MQTT 3.1.1 sec. 3.2.2.3 Table 3.1.
+    0x20,
+    0x02,
+    0x00,
+    MQTT_CONNACK_SERVER_UNAVAILABLE,
 ];
 
 fn mqtt_over_ipv4_tcp(payload: &[u8]) -> crafter::Result<Vec<u8>> {
@@ -118,6 +142,59 @@ fn connect_build_decode_round_trip_with_will_username_and_password() -> crafter:
     assert_eq!(mqtt.username_value(), Some("user"));
     assert_eq!(mqtt.password_value(), Some(&[0xbe, 0xef][..]));
 
+    assert_eq!(decoded.compile()?.as_bytes(), compiled.as_bytes());
+    Ok(())
+}
+
+fn assert_connack_golden(payload: &[u8], expected_return_code: u8) -> crafter::Result<()> {
+    let (bytes, decoded) = decode_ipv4_tcp_mqtt(payload)?;
+    let layer_names = decoded.iter().map(|layer| layer.name()).collect::<Vec<_>>();
+    assert_eq!(layer_names, ["Ipv4", "Tcp", "MQTT"]);
+
+    let mqtt = decoded.layer::<Mqtt>().expect("decoded MQTT CONNACK layer");
+    assert_eq!(mqtt.packet_type(), MqttControlPacketType::Connack);
+    assert_eq!(mqtt.flags_value(), 0x0);
+    assert_eq!(mqtt.remaining_length_value(), 2);
+    assert_eq!(mqtt.session_present_value(), Some(false));
+    assert_eq!(mqtt.return_code_value(), Some(expected_return_code));
+    assert_eq!(decoded.compile()?.as_bytes(), bytes.as_slice());
+    Ok(())
+}
+
+#[test]
+fn connack_golden_decodes_accepted_and_nonzero_return_codes() -> crafter::Result<()> {
+    assert_connack_golden(CONNACK_ACCEPTED, MQTT_CONNACK_ACCEPTED)?;
+    assert_connack_golden(CONNACK_SERVER_UNAVAILABLE, MQTT_CONNACK_SERVER_UNAVAILABLE)?;
+    Ok(())
+}
+
+#[test]
+fn connack_build_decode_round_trip_with_session_present() -> crafter::Result<()> {
+    let packet = Ipv4::new()
+        .src(Ipv4Addr::new(198, 51, 100, 40))
+        .dst(Ipv4Addr::new(192, 0, 2, 30))
+        / Tcp::new()
+            .sport(MQTT_PORT)
+            .dport(49_153)
+            .seq(0x3132_3334)
+            .ack(0x4142_4344)
+            .ack_segment()
+        / Mqtt::connack()
+            .session_present(true)
+            .return_code(MQTT_CONNACK_IDENTIFIER_REJECTED);
+
+    let compiled = packet.compile()?;
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes())?;
+    let mqtt = decoded.layer::<Mqtt>().expect("decoded MQTT CONNACK layer");
+
+    assert_eq!(mqtt.packet_type(), MqttControlPacketType::Connack);
+    assert_eq!(mqtt.flags_value(), 0x0);
+    assert_eq!(mqtt.remaining_length_value(), 2);
+    assert_eq!(mqtt.session_present_value(), Some(true));
+    assert_eq!(
+        mqtt.return_code_value(),
+        Some(MQTT_CONNACK_IDENTIFIER_REJECTED)
+    );
     assert_eq!(decoded.compile()?.as_bytes(), compiled.as_bytes());
     Ok(())
 }

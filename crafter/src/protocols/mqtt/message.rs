@@ -6,9 +6,9 @@ use crate::protocols::transport::common::{impl_layer_div, impl_layer_object};
 use crate::Result;
 
 use super::constants::{
-    MQTT_311_PROTOCOL_LEVEL, MQTT_311_PROTOCOL_NAME, MQTT_CONNECT_FLAG_CLEAN_SESSION,
-    MQTT_CONNECT_FLAG_PASSWORD, MQTT_CONNECT_FLAG_USER_NAME, MQTT_CONNECT_FLAG_WILL,
-    MQTT_CONNECT_FLAG_WILL_QOS_MASK, MQTT_CONNECT_FLAG_WILL_RETAIN,
+    MQTT_311_PROTOCOL_LEVEL, MQTT_311_PROTOCOL_NAME, MQTT_CONNACK_ACCEPTED,
+    MQTT_CONNECT_FLAG_CLEAN_SESSION, MQTT_CONNECT_FLAG_PASSWORD, MQTT_CONNECT_FLAG_USER_NAME,
+    MQTT_CONNECT_FLAG_WILL, MQTT_CONNECT_FLAG_WILL_QOS_MASK, MQTT_CONNECT_FLAG_WILL_RETAIN,
 };
 use super::header::MqttControlPacketType;
 use super::varint::encode_remaining_length;
@@ -16,6 +16,7 @@ use super::wire::{encode_binary, encode_string, encode_u16};
 
 const DEFAULT_CONNECT_KEEP_ALIVE: u16 = 60;
 const CONNECT_WILL_QOS_SHIFT: u8 = 3;
+const CONNACK_FLAG_SESSION_PRESENT: u8 = 0x01;
 
 /// MQTT CONNECT variable header and mandatory payload fields.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -206,11 +207,69 @@ impl MqttConnect {
     }
 }
 
+/// MQTT CONNACK variable header fields.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MqttConnack {
+    ack_flags: Field<u8>,
+    return_code: Field<u8>,
+}
+
+impl MqttConnack {
+    fn new() -> Self {
+        Self {
+            ack_flags: Field::defaulted(0),
+            return_code: Field::defaulted(MQTT_CONNACK_ACCEPTED),
+        }
+    }
+
+    fn from_decoded_parts(ack_flags: u8, return_code: u8) -> Self {
+        Self {
+            ack_flags: Field::user(ack_flags),
+            return_code: Field::user(return_code),
+        }
+    }
+
+    fn ack_flags(&self) -> u8 {
+        self.ack_flags.value().copied().unwrap_or(0)
+    }
+
+    fn session_present(&self) -> bool {
+        self.ack_flags() & CONNACK_FLAG_SESSION_PRESENT != 0
+    }
+
+    fn return_code(&self) -> u8 {
+        self.return_code
+            .value()
+            .copied()
+            .unwrap_or(MQTT_CONNACK_ACCEPTED)
+    }
+
+    fn set_session_present(&mut self, session_present: bool) {
+        let mut flags = self.ack_flags();
+        if session_present {
+            flags |= CONNACK_FLAG_SESSION_PRESENT;
+        } else {
+            flags &= !CONNACK_FLAG_SESSION_PRESENT;
+        }
+        self.ack_flags.set_user(flags);
+    }
+
+    fn encoded_len(&self) -> usize {
+        2
+    }
+
+    fn write_body(&self, out: &mut Vec<u8>) {
+        out.push(self.ack_flags());
+        out.push(self.return_code());
+    }
+}
+
 /// MQTT control packet body bytes after the fixed header.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum MqttBody {
     Raw(Vec<u8>),
     Connect(MqttConnect),
+    Connack(MqttConnack),
 }
 
 impl MqttBody {
@@ -218,6 +277,7 @@ impl MqttBody {
         match self {
             Self::Raw(body) => body.len(),
             Self::Connect(connect) => connect.encoded_len(),
+            Self::Connack(connack) => connack.encoded_len(),
         }
     }
 
@@ -225,6 +285,7 @@ impl MqttBody {
         match self {
             Self::Raw(body) => out.extend_from_slice(body),
             Self::Connect(connect) => connect.write_body(out)?,
+            Self::Connack(connack) => connack.write_body(out),
         }
         Ok(())
     }
@@ -232,7 +293,7 @@ impl MqttBody {
     fn raw_bytes(&self) -> &[u8] {
         match self {
             Self::Raw(body) => body,
-            Self::Connect(_) => &[],
+            Self::Connect(_) | Self::Connack(_) => &[],
         }
     }
 }
@@ -267,6 +328,16 @@ impl Mqtt {
         }
     }
 
+    /// Build an MQTT CONNACK packet with MQTT 3.1.1 defaults.
+    pub fn connack() -> Self {
+        Self {
+            packet_type: MqttControlPacketType::Connack,
+            flags: Field::defaulted(MqttControlPacketType::Connack.default_flags()),
+            remaining_length: Field::unset(),
+            body: MqttBody::Connack(MqttConnack::new()),
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn connect_from_decoded_parts(
         fixed_header_flags: u8,
@@ -296,6 +367,20 @@ impl Mqtt {
                 username,
                 password,
             )),
+        }
+    }
+
+    pub(crate) fn connack_from_decoded_parts(
+        fixed_header_flags: u8,
+        remaining_length: u32,
+        ack_flags: u8,
+        return_code: u8,
+    ) -> Self {
+        Self {
+            packet_type: MqttControlPacketType::Connack,
+            flags: Field::user(fixed_header_flags),
+            remaining_length: Field::user(remaining_length),
+            body: MqttBody::Connack(MqttConnack::from_decoded_parts(ack_flags, return_code)),
         }
     }
 
@@ -409,6 +494,22 @@ impl Mqtt {
         self
     }
 
+    /// Set or clear the CONNACK Session Present flag.
+    pub fn session_present(mut self, session_present: bool) -> Self {
+        if let MqttBody::Connack(connack) = &mut self.body {
+            connack.set_session_present(session_present);
+        }
+        self
+    }
+
+    /// Set the CONNACK return code byte.
+    pub fn return_code(mut self, return_code: u8) -> Self {
+        if let MqttBody::Connack(connack) = &mut self.body {
+            connack.return_code.set_user(return_code);
+        }
+        self
+    }
+
     /// MQTT control packet type.
     pub fn packet_type(&self) -> MqttControlPacketType {
         self.packet_type
@@ -487,10 +588,27 @@ impl Mqtt {
         self.connect_body().and_then(MqttConnect::password_value)
     }
 
+    /// CONNACK Session Present flag, when this is a typed CONNACK packet.
+    pub fn session_present_value(&self) -> Option<bool> {
+        self.connack_body().map(MqttConnack::session_present)
+    }
+
+    /// CONNACK return code, when this is a typed CONNACK packet.
+    pub fn return_code_value(&self) -> Option<u8> {
+        self.connack_body().map(MqttConnack::return_code)
+    }
+
     fn connect_body(&self) -> Option<&MqttConnect> {
         match &self.body {
             MqttBody::Connect(connect) => Some(connect),
-            MqttBody::Raw(_) => None,
+            MqttBody::Raw(_) | MqttBody::Connack(_) => None,
+        }
+    }
+
+    fn connack_body(&self) -> Option<&MqttConnack> {
+        match &self.body {
+            MqttBody::Connack(connack) => Some(connack),
+            MqttBody::Raw(_) | MqttBody::Connect(_) => None,
         }
     }
 
@@ -628,6 +746,25 @@ mod tests {
         assert_eq!(bytes[mqtt_offset], 0x3d);
         assert_eq!(bytes[mqtt_offset + 1], 0x00);
         assert_eq!(&bytes[mqtt_offset + 2..mqtt_offset + 5], b"abc");
+    }
+
+    #[test]
+    fn connack_defaults_to_accepted_without_session_present() {
+        let bytes = mqtt_bytes(Mqtt::connack());
+
+        assert_eq!(bytes, [0x20, 0x02, 0x00, MQTT_CONNACK_ACCEPTED]);
+    }
+
+    #[test]
+    fn connack_session_present_return_code_and_remaining_length_override_are_honored() {
+        let bytes = mqtt_bytes(
+            Mqtt::connack()
+                .session_present(true)
+                .return_code(0x03)
+                .remaining_length(0),
+        );
+
+        assert_eq!(bytes, [0x20, 0x00, 0x01, 0x03]);
     }
 
     #[test]
