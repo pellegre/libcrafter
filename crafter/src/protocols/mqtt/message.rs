@@ -462,6 +462,16 @@ impl Mqtt {
         }
     }
 
+    /// Build an MQTT PUBREC packet.
+    pub fn pubrec() -> Self {
+        Self {
+            packet_type: MqttControlPacketType::Pubrec,
+            flags: Field::defaulted(MqttControlPacketType::Pubrec.default_flags()),
+            remaining_length: Field::unset(),
+            body: MqttBody::PacketIdentifier(MqttPacketIdentifier::new()),
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn connect_from_decoded_parts(
         fixed_header_flags: u8,
@@ -1107,6 +1117,13 @@ mod tests {
         let bytes = mqtt_bytes(Mqtt::puback().packet_id(0x1234));
 
         assert_eq!(bytes, [0x40, 0x02, 0x12, 0x34]);
+    }
+
+    #[test]
+    fn pubrec_compiles_packet_identifier() {
+        let bytes = mqtt_bytes(Mqtt::pubrec().packet_id(0x1234));
+
+        assert_eq!(bytes, [0x50, 0x02, 0x12, 0x34]);
     }
 
     #[test]
