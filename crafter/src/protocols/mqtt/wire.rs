@@ -21,9 +21,8 @@ fn encode_length_prefixed(
     out: &mut Vec<u8>,
     field: &'static str,
 ) -> crate::Result<()> {
-    let length = u16::try_from(value.len()).map_err(|_| {
-        CrafterError::invalid_field_value(field, "length must fit in two bytes")
-    })?;
+    let length = u16::try_from(value.len())
+        .map_err(|_| CrafterError::invalid_field_value(field, "length must fit in two bytes"))?;
 
     encode_u16(length, out);
     out.extend_from_slice(value);

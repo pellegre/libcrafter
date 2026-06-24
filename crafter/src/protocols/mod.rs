@@ -48,7 +48,6 @@ pub mod exports {
     pub use bgp::{
         Bgp, BgpCapability, BgpKeepalive, BgpNotification, BgpOpen, BgpRouteRefresh, BgpUpdate,
     };
-    pub use mqtt::{Mqtt, MqttControlPacketType, MQTT_PORT, MQTT_TLS_PORT};
     pub use dhcp::{
         decode_tftp_server_addresses, option_meta, option_name, option_status,
         scan_dhcp_option_segments, typed_option_value, ClientNetworkDeviceInterface,
@@ -123,6 +122,7 @@ pub mod exports {
         EAPOL_TYPE_ASF_ALERT, EAPOL_TYPE_EAP_PACKET, EAPOL_TYPE_KEY, EAPOL_TYPE_LOGOFF,
         EAPOL_TYPE_START, EAPOL_VERSION_1, EAPOL_VERSION_2, EAPOL_VERSION_3,
     };
+    pub use mqtt::{Mqtt, MqttControlPacketType, MQTT_PORT, MQTT_TLS_PORT};
     // Re-export the deprecated `Icmp*` aliases separately so the
     // `#[allow(deprecated)]` scope stays narrow: only these aliases are exempt from
     // the deprecation warning, while the rest of the icmp surface keeps full lint
