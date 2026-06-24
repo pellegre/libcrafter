@@ -1109,11 +1109,17 @@ fn dispatch_case(
         (RunMode::Live, "ospf-hello-exchange") => ospf::run_ospf_live(request, plan),
         (
             RunMode::DryRun,
-            "mqtt-connect-connack" | "mqtt-subscribe-suback" | "mqtt-publish-puback",
+            "mqtt-connect-connack"
+            | "mqtt-v5-connect-connack"
+            | "mqtt-subscribe-suback"
+            | "mqtt-publish-puback",
         ) => mqtt::run_mqtt_dry_run(request, plan),
         (
             RunMode::Live,
-            "mqtt-connect-connack" | "mqtt-subscribe-suback" | "mqtt-publish-puback",
+            "mqtt-connect-connack"
+            | "mqtt-v5-connect-connack"
+            | "mqtt-subscribe-suback"
+            | "mqtt-publish-puback",
         ) => mqtt::run_mqtt_live(request, plan),
         (
             RunMode::DryRun,
@@ -1493,22 +1499,23 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
             plan.destination_port.unwrap_or(0),
             plan.source_port.unwrap_or(0),
         ),
-        "mqtt-connect-connack" | "mqtt-subscribe-suback" | "mqtt-publish-puback" => {
-            format!(
-                "tcp and src host {} and dst host {} and src port {} and dst port {}",
-                plan.expected_reply_source_ipv4
-                    .as_deref()
-                    .or(plan.destination_ipv4.as_deref())
-                    .unwrap_or(""),
-                plan.expected_reply_destination_ipv4
-                    .as_deref()
-                    .or(plan.source_ipv4.as_deref())
-                    .unwrap_or(""),
-                plan.destination_port.unwrap_or(MQTT_PORT),
-                plan.source_port
-                    .unwrap_or_else(|| 49_194u16.saturating_add((plan.sequence % 1000) as u16)),
-            )
-        }
+        "mqtt-connect-connack"
+        | "mqtt-v5-connect-connack"
+        | "mqtt-subscribe-suback"
+        | "mqtt-publish-puback" => format!(
+            "tcp and src host {} and dst host {} and src port {} and dst port {}",
+            plan.expected_reply_source_ipv4
+                .as_deref()
+                .or(plan.destination_ipv4.as_deref())
+                .unwrap_or(""),
+            plan.expected_reply_destination_ipv4
+                .as_deref()
+                .or(plan.source_ipv4.as_deref())
+                .unwrap_or(""),
+            plan.destination_port.unwrap_or(MQTT_PORT),
+            plan.source_port
+                .unwrap_or_else(|| 49_194u16.saturating_add((plan.sequence % 1000) as u16)),
+        ),
         "dns-query"
         | "dns-a-success"
         | "dns-aaaa-success"
@@ -1670,6 +1677,7 @@ pub fn expected_response(plan: &ProbePlan) -> &str {
             "ndp-router-solicitation" => "ndp_router_advertisement",
             "ospf-hello-exchange" => "ospf_hello",
             "mqtt-connect-connack" => "mqtt_connack",
+            "mqtt-v5-connect-connack" => "mqtt_v5_connack",
             "mqtt-subscribe-suback" => "mqtt_suback",
             "mqtt-publish-puback" => "mqtt_puback",
             _ => "unknown",
@@ -1688,7 +1696,10 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
             "kind": "closed-port",
             "port": plan.destination_port,
         }),
-        "mqtt-connect-connack" | "mqtt-subscribe-suback" | "mqtt-publish-puback" => json!({
+        "mqtt-connect-connack"
+        | "mqtt-v5-connect-connack"
+        | "mqtt-subscribe-suback"
+        | "mqtt-publish-puback" => json!({
             "required": true,
             "kind": "mosquitto-mqtt-broker",
             "protocol": "tcp",

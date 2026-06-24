@@ -140,6 +140,7 @@ class ProbeCatalogTest(unittest.TestCase):
             cases.MQTT_SMOKE_PROFILE_CASE_NAMES,
             (
                 "mqtt-connect-connack",
+                "mqtt-v5-connect-connack",
                 "mqtt-subscribe-suback",
                 "mqtt-publish-puback",
             ),
