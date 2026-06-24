@@ -19,7 +19,6 @@ from tools.lab.engine.model import LabRequest, LabRole, LabSession
 from tools.lab.engine import repo as lab_repo
 from tools.lab.engine import session as lab_session_state
 from tools.lab.engine import endpoint_client as lab_endpoint_client
-from tools.oracle.engine import ipsec_interop as _ipsec_interop
 
 from .capabilities import (
     SKIP_CAPABILITY_UNAVAILABLE,
@@ -139,7 +138,20 @@ from .endpoint_addressing import (
 )
 from .protocols import (
     all_stimulus_endpoint_cases as _registry_stimulus_endpoint_cases,
+    ipsec_interop_plugin as _ipsec_interop_plugin,
     registered_plugins as _registered_protocol_plugins,
+)
+# The IPSec cross-crypto interop dry-run hook moved into the IPSec plugin
+# (``protocols/ipsec.py``), which now owns the only ``tools.oracle`` import in the
+# probe engine. ``cli._dry_run_report`` routes the interop metadata through the
+# registry's ``ipsec_interop`` accessor (``_ipsec_interop_plugin``); the moved
+# ``_IPSEC_PROBE_CASES`` / ``_ipsec_interop_dry_run_metadata`` are re-imported
+# here (object identity preserved) so ``cli._IPSEC_PROBE_CASES`` /
+# ``cli._ipsec_interop_dry_run_metadata`` stay resolvable for the interop wiring
+# test (``test_ipsec_interop.py``).
+from .protocols.ipsec import (
+    _IPSEC_PROBE_CASES,
+    _ipsec_interop_dry_run_metadata,
 )
 
 
@@ -335,10 +347,16 @@ def _dry_run_report(
     # AH / IKEv2-SK packet is opened by the reference crypto and vice versa, both
     # directions plus tamper detection, over documentation addresses and pinned
     # keys. The result is recorded in the report so the offline dry-run path
-    # carries the behavioral-parity evidence without any live traffic.
-    interop = _ipsec_interop_dry_run_metadata(selected_cases)
-    if interop is not None:
-        provider_context = {**provider_context, "ipsec_interop": interop}
+    # carries the behavioral-parity evidence without any live traffic. The check
+    # (the only ``tools.oracle`` dependency in the probe engine) moved into the
+    # IPSec plugin; ``_ipsec_interop_plugin`` resolves the registered plugin that
+    # owns the ``ipsec_interop`` hook so the IPSec profile's metadata is derived
+    # registry-first with no inline IPSec branch here.
+    interop_plugin = _ipsec_interop_plugin()
+    if interop_plugin is not None:
+        interop = interop_plugin.ipsec_interop(selected_cases)
+        if interop is not None:
+            provider_context = {**provider_context, "ipsec_interop": interop}
 
     return _build_report(
         request=request,
@@ -352,47 +370,6 @@ def _dry_run_report(
         provider_capabilities=provider_capabilities,
         stimulus_endpoint=stimulus_endpoint,
     )
-
-
-# Probe case names whose dry-run plan is an ESP / AH / IKEv2 IPSec exchange. When
-# the profile selects any of these, the dry-run runs the oracle-owned
-# cross-crypto interop check.
-_IPSEC_PROBE_CASES: frozenset[str] = frozenset(
-    {
-        "esp-transport-echo",
-        "esp-tunnel-echo",
-        "ah-transport-verify",
-        "ikev2-sa-init",
-    }
-)
-
-
-def _ipsec_interop_dry_run_metadata(
-    selected_cases: Sequence[ProbeCase],
-) -> JSONObject | None:
-    """Run the cross-crypto IPSec interop check for an IPSec dry-run.
-
-    Returns the structured interop report when the selected cases include an
-    IPSec exchange, otherwise ``None`` (non-IPSec profiles skip the check). A
-    failed assertion is reported as ``passed: False`` in the returned object so
-    the report carries it; the CLI surfaces that as a non-zero exit. A missing
-    build/crypto tool is recorded as ``available: False`` rather than crashing
-    the dry-run, since the offline plan itself is still valid.
-    """
-
-    if not any(case.name in _IPSEC_PROBE_CASES for case in selected_cases):
-        return None
-    try:
-        report = _ipsec_interop.run_interop()
-    except _ipsec_interop.IpsecInteropError as exc:
-        return {
-            "check": "ipsec-cross-crypto-interop",
-            "available": False,
-            "passed": None,
-            "reason": str(exc),
-        }
-    report["available"] = True
-    return report
 
 
 def _guarded_live_report(
