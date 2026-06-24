@@ -511,6 +511,7 @@ impl MqttSubscribe {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum MqttBody {
     Raw(Vec<u8>),
+    Empty,
     Connect(MqttConnect),
     Connack(MqttConnack),
     Publish(MqttPublish),
@@ -524,6 +525,7 @@ impl MqttBody {
     fn encoded_len(&self, flags: u8) -> usize {
         match self {
             Self::Raw(body) => body.len(),
+            Self::Empty => 0,
             Self::Connect(connect) => connect.encoded_len(),
             Self::Connack(connack) => connack.encoded_len(),
             Self::Publish(publish) => publish.encoded_len(flags),
@@ -537,6 +539,7 @@ impl MqttBody {
     fn write_body(&self, out: &mut Vec<u8>, flags: u8) -> Result<()> {
         match self {
             Self::Raw(body) => out.extend_from_slice(body),
+            Self::Empty => {}
             Self::Connect(connect) => connect.write_body(out)?,
             Self::Connack(connack) => connack.write_body(out),
             Self::Publish(publish) => publish.write_body(out, flags)?,
@@ -551,7 +554,8 @@ impl MqttBody {
     fn raw_bytes(&self) -> &[u8] {
         match self {
             Self::Raw(body) => body,
-            Self::Connect(_)
+            Self::Empty
+            | Self::Connect(_)
             | Self::Connack(_)
             | Self::Publish(_)
             | Self::PacketIdentifier(_)
@@ -659,6 +663,16 @@ impl Mqtt {
             flags: Field::defaulted(MqttControlPacketType::Unsuback.default_flags()),
             remaining_length: Field::unset(),
             body: MqttBody::PacketIdentifier(MqttPacketIdentifier::new()),
+        }
+    }
+
+    /// Build an MQTT PINGREQ packet.
+    pub fn pingreq() -> Self {
+        Self {
+            packet_type: MqttControlPacketType::Pingreq,
+            flags: Field::defaulted(MqttControlPacketType::Pingreq.default_flags()),
+            remaining_length: Field::unset(),
+            body: MqttBody::Empty,
         }
     }
 
@@ -806,6 +820,19 @@ impl Mqtt {
             flags: Field::user(fixed_header_flags),
             remaining_length: Field::user(remaining_length),
             body: MqttBody::Unsubscribe(MqttUnsubscribe::from_decoded_parts(packet_id, topics)),
+        }
+    }
+
+    pub(crate) fn empty_from_decoded_parts(
+        packet_type: MqttControlPacketType,
+        fixed_header_flags: u8,
+        remaining_length: u32,
+    ) -> Self {
+        Self {
+            packet_type,
+            flags: Field::user(fixed_header_flags),
+            remaining_length: Field::user(remaining_length),
+            body: MqttBody::Empty,
         }
     }
 
@@ -1177,6 +1204,7 @@ impl Mqtt {
         match &self.body {
             MqttBody::Connect(connect) => Some(connect),
             MqttBody::Raw(_)
+            | MqttBody::Empty
             | MqttBody::Connack(_)
             | MqttBody::Publish(_)
             | MqttBody::PacketIdentifier(_)
@@ -1190,6 +1218,7 @@ impl Mqtt {
         match &self.body {
             MqttBody::Connack(connack) => Some(connack),
             MqttBody::Raw(_)
+            | MqttBody::Empty
             | MqttBody::Connect(_)
             | MqttBody::Publish(_)
             | MqttBody::PacketIdentifier(_)
@@ -1203,6 +1232,7 @@ impl Mqtt {
         match &self.body {
             MqttBody::Publish(publish) => Some(publish),
             MqttBody::Raw(_)
+            | MqttBody::Empty
             | MqttBody::Connect(_)
             | MqttBody::Connack(_)
             | MqttBody::PacketIdentifier(_)
@@ -1216,6 +1246,7 @@ impl Mqtt {
         match &self.body {
             MqttBody::PacketIdentifier(packet_identifier) => Some(packet_identifier),
             MqttBody::Raw(_)
+            | MqttBody::Empty
             | MqttBody::Connect(_)
             | MqttBody::Connack(_)
             | MqttBody::Publish(_)
@@ -1229,6 +1260,7 @@ impl Mqtt {
         match &self.body {
             MqttBody::Subscribe(subscribe) => Some(subscribe),
             MqttBody::Raw(_)
+            | MqttBody::Empty
             | MqttBody::Connect(_)
             | MqttBody::Connack(_)
             | MqttBody::Publish(_)
@@ -1242,6 +1274,7 @@ impl Mqtt {
         match &self.body {
             MqttBody::Suback(suback) => Some(suback),
             MqttBody::Raw(_)
+            | MqttBody::Empty
             | MqttBody::Connect(_)
             | MqttBody::Connack(_)
             | MqttBody::Publish(_)
@@ -1255,6 +1288,7 @@ impl Mqtt {
         match &self.body {
             MqttBody::Unsubscribe(unsubscribe) => Some(unsubscribe),
             MqttBody::Raw(_)
+            | MqttBody::Empty
             | MqttBody::Connect(_)
             | MqttBody::Connack(_)
             | MqttBody::Publish(_)
@@ -1562,6 +1596,13 @@ mod tests {
         let bytes = mqtt_bytes(Mqtt::unsuback().packet_id(0x1234));
 
         assert_eq!(bytes, [0xb0, 0x02, 0x12, 0x34]);
+    }
+
+    #[test]
+    fn pingreq_compiles_empty_body() {
+        let bytes = mqtt_bytes(Mqtt::pingreq());
+
+        assert_eq!(bytes, [0xc0, 0x00]);
     }
 
     #[test]

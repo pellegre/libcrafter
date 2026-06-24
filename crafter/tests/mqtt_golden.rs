@@ -143,6 +143,12 @@ const UNSUBACK_PACKET_ID: &[u8] = &[
     0xb0, 0x02, 0x12, 0x34,
 ];
 
+const PINGREQ_EMPTY: &[u8] = &[
+    // `.agents/docs/mqtt-manifest.md`: PINGREQ fixed-header type 12 uses flags
+    // 0x0 and has no variable header or payload, so Remaining Length is 0.
+    0xc0, 0x00,
+];
+
 fn mqtt_over_ipv4_tcp(payload: &[u8]) -> crafter::Result<Vec<u8>> {
     let packet = Ipv4::new()
         .src(Ipv4Addr::new(192, 0, 2, 10))
@@ -780,5 +786,56 @@ fn unsuback_build_decode_round_trip() -> crafter::Result<()> {
     assert_eq!(mqtt.flags_value(), 0x0);
     assert_eq!(mqtt.packet_id_value(), Some(10));
     assert_eq!(decoded.compile()?.as_bytes(), compiled.as_bytes());
+    Ok(())
+}
+
+#[test]
+fn pingreq_golden_decodes_empty_body_and_recompiles() -> crafter::Result<()> {
+    let (bytes, decoded) = decode_ipv4_tcp_mqtt(PINGREQ_EMPTY)?;
+    let mqtt = decoded.layer::<Mqtt>().expect("decoded MQTT PINGREQ layer");
+
+    assert_eq!(mqtt.packet_type(), MqttControlPacketType::Pingreq);
+    assert_eq!(mqtt.flags_value(), 0x0);
+    assert_eq!(mqtt.remaining_length_value(), 0);
+    assert!(mqtt.body().is_empty());
+    assert_eq!(decoded.compile()?.as_bytes(), bytes.as_slice());
+    Ok(())
+}
+
+#[test]
+fn pingreq_build_decode_round_trip() -> crafter::Result<()> {
+    let packet = Ipv4::new()
+        .src(Ipv4Addr::new(192, 0, 2, 66))
+        .dst(Ipv4Addr::new(198, 51, 100, 76))
+        / Tcp::new()
+            .sport(49_160)
+            .dport(MQTT_PORT)
+            .seq(0x7172_7374)
+            .ack(0x8182_8384)
+            .ack_segment()
+        / Mqtt::pingreq();
+
+    let compiled = packet.compile()?;
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes())?;
+    let mqtt = decoded.layer::<Mqtt>().expect("decoded MQTT PINGREQ layer");
+
+    assert_eq!(mqtt.packet_type(), MqttControlPacketType::Pingreq);
+    assert_eq!(mqtt.remaining_length_value(), 0);
+    assert!(mqtt.body().is_empty());
+    assert_eq!(decoded.compile()?.as_bytes(), compiled.as_bytes());
+    Ok(())
+}
+
+#[test]
+fn pingreq_decode_rejects_declared_body_bytes() -> crafter::Result<()> {
+    let bytes = mqtt_over_ipv4_tcp(&[0xc0, 0x01, 0x00])?;
+    match Packet::decode_from_l3(NetworkLayer::Ipv4, &bytes) {
+        Err(crafter::CrafterError::InvalidFieldValue { field, reason }) => {
+            assert_eq!(field, "mqtt.pingreq.remaining_length");
+            assert!(reason.contains("must be 0"));
+        }
+        other => panic!("expected pingreq remaining-length error, got {other:?}"),
+    }
+
     Ok(())
 }
