@@ -56,6 +56,9 @@ pub(crate) fn decode_mqtt(bytes: &[u8]) -> Result<(Mqtt, usize)> {
             // decide whether to enforce MQTT 3.1.1's reserved PUBREL value.
             decode_packet_identifier(packet_type, flags, remaining_length, body, "mqtt.pubrel")?
         }
+        MqttControlPacketType::Pubcomp => {
+            decode_packet_identifier(packet_type, flags, remaining_length, body, "mqtt.pubcomp")?
+        }
         _ => Mqtt::raw(packet_type, body.to_vec())
             .flags(flags)
             .remaining_length(remaining_length),
