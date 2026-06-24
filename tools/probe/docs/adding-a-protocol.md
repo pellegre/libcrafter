@@ -209,7 +209,7 @@ python3 -m unittest discover -s tools/probe/tests -p 'test_*.py'
 ```
 
 This is what CI runs (`.github/workflows/local-static.yml`). It is fully offline
-and deterministic — no Scapy, `uv`, `cargo`, or network; live/end-to-end arms
+and deterministic — no reference backend, `uv`, `cargo`, or network; live/end-to-end arms
 self-skip when `uv`/`cargo` are absent. (The repo-wide release gate
 `.agents/scripts/check-crafter-release --static` runs the crate's static checks;
 the probe test gate above is the relevant one for a probe-only change.)

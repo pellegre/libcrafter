@@ -2,7 +2,7 @@
 
 This guard pins the plug-and-play outcome of the probe refactor against silent
 regression. It is pure ``pathlib`` line counting with no engine imports so it
-runs fully offline (no Scapy/uv/cargo, no heavy deps). It asserts that:
+runs fully offline (no uv/cargo, no heavy deps). It asserts that:
 
 * the per-protocol plugin directory is populated (one module per protocol);
 * each previously monolithic engine file stays under a regrowth bound locked at

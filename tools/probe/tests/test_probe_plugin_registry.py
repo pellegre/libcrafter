@@ -5,7 +5,7 @@ These tests guard :mod:`tools.probe.engine.plugin_registry` -- the name-keyed
 ``ProtocolPlugin`` machinery on. They register/look up plain values, exercise the
 duplicate and unknown-name error paths, and prove that ``autodiscover`` imports a
 throwaway package's submodules (so each protocol module can self-register at
-import). Everything is offline: no Scapy, no uv, no network, no real protocol
+import). Everything is offline: no uv, no network, no real protocol
 plugins.
 """
 
