@@ -394,5 +394,56 @@ class BgpSmokeProfileTest(unittest.TestCase):
                     self.assertIn("body", bgp)
 
 
+class MqttGeneratorTest(unittest.TestCase):
+    def test_mqtt_family_cases_generate_materializable_plans(self) -> None:
+        for case in (
+            "mqtt-connect",
+            "mqtt-publish",
+            "mqtt-subscribe",
+            "mqtt-ping-disconnect",
+        ):
+            with self.subTest(case=case):
+                plans = generate_plans(
+                    seed=7,
+                    profile="ci",
+                    count=1,
+                    backend=_BACKEND,
+                    family="mqtt",
+                    case=case,
+                )
+
+                self.assertEqual(len(plans), 1)
+                plan = plans[0]
+                self.assertEqual(plan.family, "mqtt")
+                self.assertIn("mqtt", plan.stack)
+                self.assertEqual(plan.fields.get("tcp", {}).get("dst_port"), 1883)
+                self.assertEqual(plan.fields.get("payload"), {"hex": "", "length": 0})
+                mqtt = plan.fields.get("mqtt")
+                self.assertIsInstance(mqtt, dict)
+                self.assertNotIn("remaining_length", mqtt)
+
+                packet_type = mqtt.get("packet_type")
+                if case == "mqtt-connect":
+                    self.assertEqual(packet_type, "connect")
+                    self.assertEqual(mqtt.get("protocol_name"), "MQTT")
+                    self.assertEqual(mqtt.get("protocol_level"), 4)
+                    self.assertEqual(mqtt.get("connect_flags"), "clean_session")
+                    self.assertEqual(mqtt.get("client_id"), "crafter-client")
+                elif case == "mqtt-publish":
+                    self.assertEqual(packet_type, "publish")
+                    self.assertEqual(mqtt.get("flags"), "publish_qos1")
+                    self.assertEqual(mqtt.get("packet_id"), 1)
+                    self.assertEqual(mqtt.get("topic"), "crafter/demo")
+                    self.assertEqual(mqtt.get("payload"), {"hex": "68656c6c6f"})
+                elif case == "mqtt-subscribe":
+                    self.assertEqual(packet_type, "subscribe")
+                    self.assertEqual(mqtt.get("flags"), "subscribe_required")
+                    self.assertEqual(mqtt.get("packet_id"), 1)
+                    self.assertEqual(mqtt.get("topic_filters"), ["crafter/demo"])
+                else:
+                    self.assertIn(packet_type, {"pingreq", "pingresp", "disconnect"})
+                    self.assertEqual(mqtt.get("flags"), "default")
+
+
 if __name__ == "__main__":
     unittest.main()

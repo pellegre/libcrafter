@@ -120,8 +120,12 @@ def _sample_tcp_field(
     field_spec: JSONObject,
 ) -> object:
     if field_name == "src_port":
+        if "mqtt" in ctx.stack:
+            return _integer_domain_value(ctx, "dynamic", field_name, bits=16)
         return _integer_domain_value(ctx, domain, field_name, bits=16)
     if field_name == "dst_port":
+        if "mqtt" in ctx.stack:
+            return 1883
         return _integer_domain_value(ctx, domain, field_name, bits=16)
     if field_name in {"sequence", "acknowledgement", "urgent_pointer"}:
         return _integer_domain_value(ctx, domain, field_name, bits=_field_bits(field_spec))

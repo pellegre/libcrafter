@@ -130,6 +130,30 @@ _SUPPORTED_FIELD_DOMAINS: dict[tuple[str, str], set[object]] = {
     ("dns", "answers"): set(),
     ("icmp", "type"): {"echo_reply", "echo_request"},
     ("icmpv6", "type"): {"echo_reply", "echo_request"},
+    ("mqtt", "connect_flags"): {"clean_session"},
+    ("mqtt", "client_id"): {"deterministic"},
+    ("mqtt", "flags"): {
+        "default",
+        "publish_qos0",
+        "publish_qos1",
+        "publish_qos2",
+        "publish_dup",
+        "publish_retain",
+        "pubrel_required",
+        "subscribe_required",
+        "unsubscribe_required",
+    },
+    ("mqtt", "keep_alive"): {"default"},
+    ("mqtt", "packet_id"): {"deterministic"},
+    ("mqtt", "payload"): {"ascii"},
+    ("mqtt", "protocol_level"): {"mqtt311"},
+    ("mqtt", "protocol_name"): {"mqtt311"},
+    ("mqtt", "remaining_length"): {"derived"},
+    ("mqtt", "return_code"): {"connack_accepted", "suback_qos0"},
+    ("mqtt", "topic"): {"telemetry_topic"},
+    ("mqtt", "topic_filters"): {"single"},
+    ("mqtt", "username"): {"absent"},
+    ("mqtt", "password"): {"absent"},
     ("ipv4", "options"): {
         "eol",
         "nop",
@@ -177,6 +201,7 @@ _SCAPY_MATERIALIZED_LAYERS = {
     "ipv4",
     "ipv6",
     "llc_snap",
+    "mqtt",
     "ospf",
     "payload",
     "radiotap",
@@ -1367,7 +1392,9 @@ class PacketGenerator:
                     "type": 0,
                     "segments_left": 0,
                 }
-            elif layer == "payload" and ("bgp" in stack or "ospf" in stack):
+            elif layer == "payload" and (
+                "bgp" in stack or "ospf" in stack or "mqtt" in stack
+            ):
                 sampled = {"hex": "", "length": 0}
             else:
                 spec = self._layer_spec(layer)
