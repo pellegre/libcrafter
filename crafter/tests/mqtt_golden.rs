@@ -962,3 +962,46 @@ fn disconnect_decode_rejects_declared_body_bytes() -> crafter::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn summary_show_and_hexdump_are_informative_for_representative_packets() -> crafter::Result<()> {
+    let (_, connect) = decode_ipv4_tcp_mqtt(CONNECT_CLIENT_ONLY)?;
+    let connect_mqtt = connect.layer::<Mqtt>().expect("decoded MQTT CONNECT layer");
+    assert_eq!(
+        connect_mqtt.summary(),
+        "MQTT CONNECT client_id=client keep_alive=60 clean_session=true will=false username=false password=false"
+    );
+
+    let (_, publish) = decode_ipv4_tcp_mqtt(PUBLISH_QOS0)?;
+    let publish_mqtt = publish.layer::<Mqtt>().expect("decoded MQTT PUBLISH layer");
+    assert_eq!(
+        publish_mqtt.summary(),
+        "MQTT PUBLISH topic=a/b qos=0 dup=false retain=false payload=2 bytes"
+    );
+
+    let (_, subscribe) = decode_ipv4_tcp_mqtt(SUBSCRIBE_TWO_FILTERS)?;
+    let subscribe_mqtt = subscribe
+        .layer::<Mqtt>()
+        .expect("decoded MQTT SUBSCRIBE layer");
+    assert_eq!(
+        subscribe_mqtt.summary(),
+        "MQTT SUBSCRIBE packet_id=4660 topics=[a/b:qos0,c/d:qos1]"
+    );
+
+    let (_, suback) = decode_ipv4_tcp_mqtt(SUBACK_QOS_AND_FAILURE)?;
+    let suback_mqtt = suback.layer::<Mqtt>().expect("decoded MQTT SUBACK layer");
+    assert_eq!(
+        suback_mqtt.summary(),
+        "MQTT SUBACK packet_id=4660 return_codes=[1,128]"
+    );
+
+    let show = connect.show();
+    assert!(show.contains("[2] MQTT"), "show output was:\n{show}");
+    assert!(
+        show.contains("client_id: client"),
+        "show output was:\n{show}"
+    );
+    assert!(!connect.hexdump()?.is_empty());
+
+    Ok(())
+}
