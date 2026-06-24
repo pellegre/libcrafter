@@ -9,10 +9,12 @@ from pathlib import Path
 from tools.lab.engine.model import LabEndpoint, LabRole, LabSession
 from tools.probe.engine import cases as probe_cases
 from tools.probe.engine import cli
+from tools.probe.engine import target_services as ts
 from tools.probe.engine.lab import probe_address_context_from_lab_session
 from tools.probe.engine.model import ProbeRunRequest
 
 IGMP_TARGET_SERVICE_DIR = Path("tools/probe/target_services/igmp")
+MQTT_TARGET_SERVICE_DIR = Path("tools/probe/target_services/mqtt")
 
 
 class ProbeTargetServicesTest(unittest.TestCase):
@@ -134,6 +136,74 @@ class IgmpProbeTargetServiceTest(unittest.TestCase):
         self.assertIn("233.252.0.42", combined)
 
 
+class MqttProbeTargetServiceTest(unittest.TestCase):
+    def test_mqtt_broker_descriptor_uses_probe_owned_assets(self) -> None:
+        descriptor = ts.mqtt_broker_descriptor(
+            bind_ipv4="10.77.0.20",
+            source_ipv4="10.77.0.10",
+        )
+
+        self.assertEqual(descriptor.name, ts.MQTT_SERVICE_KIND)
+        self.assertEqual(descriptor.protocol, "tcp")
+        self.assertEqual(descriptor.port, 1883)
+        self.assertEqual(descriptor.purpose, "mqtt-broker")
+        self.assertIn("mosquitto", descriptor.requires)
+        self.assertIn("requires_controlled_service", descriptor.requires)
+        self.assertEqual(descriptor.metadata["runtime"], "mosquitto")
+        self.assertTrue(descriptor.metadata["anonymous_access"])
+        self.assertFalse(descriptor.metadata["persistence"])
+        self.assertEqual(
+            descriptor.metadata["provision_script"],
+            str(MQTT_TARGET_SERVICE_DIR / "provision-broker.sh"),
+        )
+        self.assertTrue(Path(descriptor.metadata["provision_script"]).is_file())
+        self.assertEqual(
+            descriptor.metadata["config_template"],
+            str(MQTT_TARGET_SERVICE_DIR / "mosquitto.conf.template"),
+        )
+        self.assertTrue(Path(descriptor.metadata["config_template"]).is_file())
+
+    def test_dry_run_plan_includes_mqtt_broker_service_from_kind(self) -> None:
+        setup = ts.target_service_setup_plan(
+            probe_plans=[_mqtt_plan(case="custom-mqtt-case")],
+            dry_run=True,
+        )
+
+        self.assertFalse(setup["starts_services"])
+        self.assertFalse(setup["dry_run_starts_services"])
+        self.assertEqual(len(setup["services"]), 1)
+        service = setup["services"][0]
+        self.assertEqual(service["kind"], ts.MQTT_SERVICE_KIND)
+        self.assertEqual(service["protocol"], "tcp")
+        self.assertEqual(service["port"], 1883)
+        self.assertEqual(service["runtime"], "mosquitto")
+        self.assertEqual(service["bind_ipv4"], "10.77.0.20")
+        self.assertEqual(service["source_ipv4"], "10.77.0.10")
+        self.assertIn("mosquitto", service["requires"])
+        self.assertIn("requires_controlled_service", service["requires"])
+        self.assertEqual(
+            service["provision_script"],
+            str(MQTT_TARGET_SERVICE_DIR / "provision-broker.sh"),
+        )
+        self.assertEqual(
+            service["config_template"],
+            str(MQTT_TARGET_SERVICE_DIR / "mosquitto.conf.template"),
+        )
+
+    def test_dry_run_plan_includes_mqtt_broker_service_from_case_name(self) -> None:
+        plan = _mqtt_plan(case="mqtt-connect-connack")
+        plan["target_service"] = {
+            "bind_ipv4": "10.77.0.20",
+            "source_ipv4": "10.77.0.10",
+        }
+
+        setup = ts.target_service_setup_plan(probe_plans=[plan], dry_run=True)
+
+        self.assertFalse(setup["starts_services"])
+        self.assertEqual(len(setup["services"]), 1)
+        self.assertEqual(setup["services"][0]["kind"], ts.MQTT_SERVICE_KIND)
+
+
 class _FakeProcessResult:
     stdout = ""
     stderr = ""
@@ -205,6 +275,23 @@ def _rewritten_service_plans() -> tuple[
         address_context=context,
     )
     return context, original_plans, rewritten_plans
+
+
+def _mqtt_plan(*, case: str) -> dict[str, object]:
+    return {
+        "case": case,
+        "sequence": 0,
+        "destination_port": ts.MQTT_SERVICE_PORT,
+        "source_port": 52000,
+        "destination_ipv4": "10.77.0.20",
+        "source_ipv4": "10.77.0.10",
+        "target_service": {
+            "required": True,
+            "kind": ts.MQTT_SERVICE_KIND,
+            "bind_ipv4": "10.77.0.20",
+            "source_ipv4": "10.77.0.10",
+        },
+    }
 
 
 def _fake_session() -> LabSession:
