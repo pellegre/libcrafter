@@ -191,27 +191,9 @@ def probe_capabilities_from_lab_capabilities(
     # ``rip_peer`` is derived by the RIP plugin's ``lab_capabilities`` hook
     # (folded in below). The shared ``capability_names`` / ``capability_sources``
     # tables still list it.
-    # IGMP peer behavior needs a same-segment IPv4 multicast substrate plus a
-    # controlled peer/listener/router service on the target endpoint. Providers
-    # may explicitly deny either multicast delivery or the controlled IGMP peer;
-    # unsupported substrates then skip with stable IGMP-specific reasons.
-    ipv4_multicast = (
-        ipv4_unicast
-        and link_layer_send
-        and link_layer_capture
-        and broadcast
-        and _capability_default_true(substrate, "ipv4_multicast", "multicast")
-    )
-    igmp_peer = (
-        ipv4_multicast
-        and controlled_services
-        and _capability_default_true(
-            substrate,
-            "igmp_peer",
-            "igmp_listener",
-            "igmp_router",
-        )
-    )
+    # ``ipv4_multicast`` / ``igmp_peer`` are derived by the IGMP plugin's
+    # ``lab_capabilities`` hook (folded in below), not here. The shared
+    # ``capability_names`` / ``capability_sources`` tables still list them.
     # IPSec behavioral capabilities. The ESP/AH cases need a peer on the
     # controlled target endpoint that holds the matching Security Association
     # (the same SPI, mode, algorithms, and keys libcrafter seals/verifies with);
@@ -293,8 +275,9 @@ def probe_capabilities_from_lab_capabilities(
         # hook (folded in below). ``rip_peer`` is contributed by the RIP plugin's
         # ``lab_capabilities`` hook (folded in below). The shared
         # ``capability_names`` / ``capability_sources`` tables still list both.
-        "ipv4_multicast": ipv4_multicast,
-        "igmp_peer": igmp_peer,
+        # ``ipv4_multicast`` / ``igmp_peer`` are contributed by the IGMP plugin's
+        # ``lab_capabilities`` hook (folded in below). The shared
+        # ``capability_names`` / ``capability_sources`` tables still list both.
         "ipsec_esp": ipsec_esp,
         "ipsec_ah": ipsec_ah,
         "ikev2": ikev2,
