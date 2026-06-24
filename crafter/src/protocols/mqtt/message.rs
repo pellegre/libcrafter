@@ -549,6 +549,72 @@ impl MqttDisconnect {
     }
 }
 
+/// MQTT AUTH variable header fields.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MqttAuth {
+    reason_code: Field<u8>,
+    properties: MqttProperties,
+}
+
+impl MqttAuth {
+    fn new() -> Self {
+        Self {
+            reason_code: Field::defaulted(MQTT_REASON_SUCCESS),
+            properties: MqttProperties::new(),
+        }
+    }
+
+    fn from_decoded_parts(reason_code: Option<u8>, properties: MqttProperties) -> Self {
+        Self {
+            reason_code: reason_code
+                .map(Field::user)
+                .unwrap_or_else(|| Field::defaulted(MQTT_REASON_SUCCESS)),
+            properties,
+        }
+    }
+
+    fn reason_code(&self) -> u8 {
+        self.reason_code
+            .value()
+            .copied()
+            .unwrap_or(MQTT_REASON_SUCCESS)
+    }
+
+    fn reason_code_value(&self, version: u8) -> Option<u8> {
+        if version == MQTT_5_PROTOCOL_LEVEL {
+            Some(self.reason_code())
+        } else {
+            self.reason_code.value().copied()
+        }
+    }
+
+    fn properties(&self) -> &MqttProperties {
+        &self.properties
+    }
+
+    fn has_v5_details(&self) -> bool {
+        self.reason_code.is_user_set()
+            || !self.properties.property_values().is_empty()
+            || self.properties.property_length_override().is_some()
+    }
+
+    fn encoded_len(&self, version: u8) -> usize {
+        if version == MQTT_5_PROTOCOL_LEVEL && self.has_v5_details() {
+            1 + encoded_properties_len(self.properties())
+        } else {
+            0
+        }
+    }
+
+    fn write_body(&self, out: &mut Vec<u8>, version: u8) -> Result<()> {
+        if version == MQTT_5_PROTOCOL_LEVEL && self.has_v5_details() {
+            out.push(self.reason_code());
+            self.properties.write(out)?;
+        }
+        Ok(())
+    }
+}
+
 /// MQTT SUBACK variable header and payload fields.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct MqttSuback {
@@ -897,6 +963,7 @@ enum MqttBody {
     Publish(MqttPublish),
     PacketIdentifier(MqttPacketIdentifier),
     Disconnect(MqttDisconnect),
+    Auth(MqttAuth),
     Subscribe(MqttSubscribe),
     Suback(MqttSuback),
     Unsubscribe(MqttUnsubscribe),
@@ -913,6 +980,7 @@ impl MqttBody {
             Self::Publish(publish) => publish.encoded_len(flags, version),
             Self::PacketIdentifier(packet_identifier) => packet_identifier.encoded_len(version),
             Self::Disconnect(disconnect) => disconnect.encoded_len(version),
+            Self::Auth(auth) => auth.encoded_len(version),
             Self::Subscribe(subscribe) => subscribe.encoded_len(version),
             Self::Suback(suback) => suback.encoded_len(version),
             Self::Unsubscribe(unsubscribe) => unsubscribe.encoded_len(version),
@@ -931,6 +999,7 @@ impl MqttBody {
                 packet_identifier.write_body(out, version)?
             }
             Self::Disconnect(disconnect) => disconnect.write_body(out, version)?,
+            Self::Auth(auth) => auth.write_body(out, version)?,
             Self::Subscribe(subscribe) => subscribe.write_body(out, version)?,
             Self::Suback(suback) => suback.write_body(out, version)?,
             Self::Unsubscribe(unsubscribe) => unsubscribe.write_body(out, version)?,
@@ -948,6 +1017,7 @@ impl MqttBody {
             | Self::Publish(_)
             | Self::PacketIdentifier(_)
             | Self::Disconnect(_)
+            | Self::Auth(_)
             | Self::Subscribe(_)
             | Self::Suback(_)
             | Self::Unsubscribe(_)
@@ -1108,6 +1178,17 @@ impl Mqtt {
             flags: Field::defaulted(MqttControlPacketType::Disconnect.default_flags()),
             remaining_length: Field::unset(),
             body: MqttBody::Disconnect(MqttDisconnect::new()),
+        }
+    }
+
+    /// Build an MQTT 5.0 AUTH packet.
+    pub fn auth() -> Self {
+        Self {
+            packet_type: MqttControlPacketType::Auth,
+            version: Field::defaulted(MQTT_5_PROTOCOL_LEVEL),
+            flags: Field::defaulted(MqttControlPacketType::Auth.default_flags()),
+            remaining_length: Field::unset(),
+            body: MqttBody::Auth(MqttAuth::new()),
         }
     }
 
@@ -1337,6 +1418,22 @@ impl Mqtt {
             flags: Field::user(fixed_header_flags),
             remaining_length: Field::user(remaining_length),
             body: MqttBody::Disconnect(MqttDisconnect::from_decoded_parts(reason_code, properties)),
+        }
+    }
+
+    pub(crate) fn auth_from_decoded_parts(
+        fixed_header_flags: u8,
+        remaining_length: u32,
+        version: u8,
+        reason_code: Option<u8>,
+        properties: MqttProperties,
+    ) -> Self {
+        Self {
+            packet_type: MqttControlPacketType::Auth,
+            version: Field::user(version),
+            flags: Field::user(fixed_header_flags),
+            remaining_length: Field::user(remaining_length),
+            body: MqttBody::Auth(MqttAuth::from_decoded_parts(reason_code, properties)),
         }
     }
 
@@ -1594,6 +1691,9 @@ impl Mqtt {
             MqttBody::Disconnect(disconnect) => {
                 disconnect.properties.push(property);
             }
+            MqttBody::Auth(auth) => {
+                auth.properties.push(property);
+            }
             MqttBody::Unsubscribe(unsubscribe) => {
                 unsubscribe.properties.push(property);
             }
@@ -1711,6 +1811,9 @@ impl Mqtt {
             MqttBody::Disconnect(disconnect) => {
                 disconnect.reason_code.set_user(reason_code);
             }
+            MqttBody::Auth(auth) => {
+                auth.reason_code.set_user(reason_code);
+            }
             _ => {}
         }
         self
@@ -1744,6 +1847,40 @@ impl Mqtt {
     pub fn disconnect_property(mut self, property: MqttProperty) -> Self {
         if let MqttBody::Disconnect(disconnect) = &mut self.body {
             disconnect.properties.push(property);
+        }
+        self
+    }
+
+    /// Replace the MQTT 5.0 AUTH properties block.
+    pub fn auth_properties(mut self, properties: MqttProperties) -> Self {
+        if let MqttBody::Auth(auth) = &mut self.body {
+            auth.properties = properties;
+        }
+        self
+    }
+
+    /// Add one MQTT 5.0 AUTH property.
+    pub fn auth_property(mut self, property: MqttProperty) -> Self {
+        if let MqttBody::Auth(auth) = &mut self.body {
+            auth.properties.push(property);
+        }
+        self
+    }
+
+    /// Add the MQTT 5.0 AUTH Authentication Method property.
+    pub fn authentication_method(mut self, method: impl Into<String>) -> Self {
+        if let MqttBody::Auth(auth) = &mut self.body {
+            auth.properties
+                .push(MqttProperty::AuthenticationMethod(method.into()));
+        }
+        self
+    }
+
+    /// Add the MQTT 5.0 AUTH Authentication Data property.
+    pub fn authentication_data(mut self, data: impl Into<Vec<u8>>) -> Self {
+        if let MqttBody::Auth(auth) = &mut self.body {
+            auth.properties
+                .push(MqttProperty::AuthenticationData(data.into()));
         }
         self
     }
@@ -1984,6 +2121,10 @@ impl Mqtt {
                     self.disconnect_body()
                         .and_then(|body| body.reason_code_value(self.version_value()))
                 })
+                .or_else(|| {
+                    self.auth_body()
+                        .and_then(|body| body.reason_code_value(self.version_value()))
+                })
         }
     }
 
@@ -1998,6 +2139,13 @@ impl Mqtt {
     pub fn disconnect_properties_value(&self) -> Option<&MqttProperties> {
         (self.version_value() == MQTT_5_PROTOCOL_LEVEL)
             .then(|| self.disconnect_body().map(MqttDisconnect::properties))
+            .flatten()
+    }
+
+    /// MQTT 5.0 AUTH properties, when this is an AUTH packet.
+    pub fn auth_properties_value(&self) -> Option<&MqttProperties> {
+        (self.version_value() == MQTT_5_PROTOCOL_LEVEL)
+            .then(|| self.auth_body().map(MqttAuth::properties))
             .flatten()
     }
 
@@ -2129,6 +2277,7 @@ impl Mqtt {
             | MqttBody::Publish(_)
             | MqttBody::PacketIdentifier(_)
             | MqttBody::Disconnect(_)
+            | MqttBody::Auth(_)
             | MqttBody::Subscribe(_)
             | MqttBody::Suback(_)
             | MqttBody::Unsubscribe(_)
@@ -2145,6 +2294,7 @@ impl Mqtt {
             | MqttBody::Publish(_)
             | MqttBody::PacketIdentifier(_)
             | MqttBody::Disconnect(_)
+            | MqttBody::Auth(_)
             | MqttBody::Subscribe(_)
             | MqttBody::Suback(_)
             | MqttBody::Unsubscribe(_)
@@ -2161,6 +2311,7 @@ impl Mqtt {
             | MqttBody::Connack(_)
             | MqttBody::PacketIdentifier(_)
             | MqttBody::Disconnect(_)
+            | MqttBody::Auth(_)
             | MqttBody::Subscribe(_)
             | MqttBody::Suback(_)
             | MqttBody::Unsubscribe(_)
@@ -2177,6 +2328,7 @@ impl Mqtt {
             | MqttBody::Connack(_)
             | MqttBody::Publish(_)
             | MqttBody::Disconnect(_)
+            | MqttBody::Auth(_)
             | MqttBody::Subscribe(_)
             | MqttBody::Suback(_)
             | MqttBody::Unsubscribe(_)
@@ -2194,6 +2346,7 @@ impl Mqtt {
             | MqttBody::Publish(_)
             | MqttBody::PacketIdentifier(_)
             | MqttBody::Disconnect(_)
+            | MqttBody::Auth(_)
             | MqttBody::Suback(_)
             | MqttBody::Unsubscribe(_)
             | MqttBody::Unsuback(_) => None,
@@ -2210,6 +2363,7 @@ impl Mqtt {
             | MqttBody::Publish(_)
             | MqttBody::PacketIdentifier(_)
             | MqttBody::Disconnect(_)
+            | MqttBody::Auth(_)
             | MqttBody::Subscribe(_)
             | MqttBody::Unsubscribe(_)
             | MqttBody::Unsuback(_) => None,
@@ -2226,6 +2380,7 @@ impl Mqtt {
             | MqttBody::Publish(_)
             | MqttBody::PacketIdentifier(_)
             | MqttBody::Disconnect(_)
+            | MqttBody::Auth(_)
             | MqttBody::Subscribe(_)
             | MqttBody::Suback(_)
             | MqttBody::Unsuback(_) => None,
@@ -2242,6 +2397,7 @@ impl Mqtt {
             | MqttBody::Publish(_)
             | MqttBody::PacketIdentifier(_)
             | MqttBody::Disconnect(_)
+            | MqttBody::Auth(_)
             | MqttBody::Subscribe(_)
             | MqttBody::Suback(_)
             | MqttBody::Unsubscribe(_) => None,
@@ -2257,6 +2413,24 @@ impl Mqtt {
             | MqttBody::Connack(_)
             | MqttBody::Publish(_)
             | MqttBody::PacketIdentifier(_)
+            | MqttBody::Auth(_)
+            | MqttBody::Subscribe(_)
+            | MqttBody::Suback(_)
+            | MqttBody::Unsubscribe(_)
+            | MqttBody::Unsuback(_) => None,
+        }
+    }
+
+    fn auth_body(&self) -> Option<&MqttAuth> {
+        match &self.body {
+            MqttBody::Auth(auth) => Some(auth),
+            MqttBody::Raw(_)
+            | MqttBody::Empty
+            | MqttBody::Connect(_)
+            | MqttBody::Connack(_)
+            | MqttBody::Publish(_)
+            | MqttBody::PacketIdentifier(_)
+            | MqttBody::Disconnect(_)
             | MqttBody::Subscribe(_)
             | MqttBody::Suback(_)
             | MqttBody::Unsubscribe(_)
@@ -2337,6 +2511,9 @@ impl Layer for Mqtt {
             ),
             MqttBody::Disconnect(disconnect) => {
                 format!("MQTT DISCONNECT reason_code={}", disconnect.reason_code())
+            }
+            MqttBody::Auth(auth) => {
+                format!("MQTT AUTH reason_code={}", auth.reason_code())
             }
             MqttBody::Subscribe(subscribe) => format!(
                 "MQTT SUBSCRIBE packet_id={} topics={}",
@@ -2435,6 +2612,9 @@ impl Layer for Mqtt {
             }
             MqttBody::Disconnect(disconnect) => {
                 fields.push(("reason_code", disconnect.reason_code().to_string()));
+            }
+            MqttBody::Auth(auth) => {
+                fields.push(("reason_code", auth.reason_code().to_string()));
             }
             MqttBody::Subscribe(subscribe) => {
                 fields.push(("packet_id", subscribe.packet_id().to_string()));

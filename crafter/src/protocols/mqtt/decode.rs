@@ -70,9 +70,7 @@ pub(crate) fn decode_mqtt(bytes: &[u8]) -> Result<(Mqtt, usize)> {
             decode_empty_packet(packet_type, flags, remaining_length, body, "mqtt.pingresp")?
         }
         MqttControlPacketType::Disconnect => decode_disconnect(flags, remaining_length, body)?,
-        MqttControlPacketType::Auth => Mqtt::raw(packet_type, body.to_vec())
-            .flags(flags)
-            .remaining_length(remaining_length),
+        MqttControlPacketType::Auth => decode_auth(flags, remaining_length, body)?,
         MqttControlPacketType::Subscribe => decode_subscribe(flags, remaining_length, body)?,
         MqttControlPacketType::Suback => decode_suback(flags, remaining_length, body)?,
         MqttControlPacketType::Unsubscribe => decode_unsubscribe(flags, remaining_length, body)?,
@@ -374,6 +372,53 @@ fn decode_disconnect_with_version(
     };
 
     Ok(Mqtt::disconnect_from_decoded_parts(
+        fixed_header_flags,
+        remaining_length,
+        version,
+        reason_code,
+        properties,
+    ))
+}
+
+fn decode_auth(fixed_header_flags: u8, remaining_length: u32, body: &[u8]) -> Result<Mqtt> {
+    decode_auth_with_version(
+        fixed_header_flags,
+        remaining_length,
+        MQTT_5_PROTOCOL_LEVEL,
+        body,
+    )
+}
+
+fn decode_auth_with_version(
+    fixed_header_flags: u8,
+    remaining_length: u32,
+    version: u8,
+    body: &[u8],
+) -> Result<Mqtt> {
+    let mut cursor = 0;
+    let (reason_code, properties) = if version == MQTT_5_PROTOCOL_LEVEL {
+        if body.is_empty() {
+            (None, MqttProperties::new())
+        } else {
+            let reason_code = take_u8(body, &mut cursor, "mqtt.auth.reason_code")?;
+            let properties = if cursor < body.len() {
+                take_properties(body, &mut cursor)?
+            } else {
+                MqttProperties::new()
+            };
+            if cursor != body.len() {
+                return Err(CrafterError::invalid_field_value(
+                    "mqtt.auth.remaining_length",
+                    "Remaining Length includes bytes outside the property block",
+                ));
+            }
+            (Some(reason_code), properties)
+        }
+    } else {
+        (None, MqttProperties::new())
+    };
+
+    Ok(Mqtt::auth_from_decoded_parts(
         fixed_header_flags,
         remaining_length,
         version,
@@ -765,6 +810,47 @@ mod tests {
         assert_eq!(
             Packet::from_layer(short).compile().unwrap().as_bytes(),
             &[0xe0, 0x00]
+        );
+    }
+
+    #[test]
+    fn decodes_v5_auth_reason_code_and_properties() {
+        let body = [
+            0x18, 0x0e, 0x15, 0x00, 0x05, b's', b'c', b'r', b'a', b'm', 0x16, 0x00, 0x03, 0x01,
+            0x02, 0x03,
+        ];
+        let mqtt = decode_auth(0x00, body.len() as u32, &body).unwrap();
+
+        assert_eq!(mqtt.packet_type(), MqttControlPacketType::Auth);
+        assert_eq!(mqtt.version_value(), MQTT_5_PROTOCOL_LEVEL);
+        assert_eq!(mqtt.reason_code_value(), Some(0x18));
+        assert_eq!(
+            mqtt.auth_properties_value()
+                .expect("auth properties")
+                .property_values(),
+            &[
+                MqttProperty::AuthenticationMethod("scram".to_string()),
+                MqttProperty::AuthenticationData(vec![1, 2, 3]),
+            ]
+        );
+        assert_eq!(
+            Packet::from_layer(mqtt).compile().unwrap().as_bytes(),
+            &[
+                0xf0, 0x10, 0x18, 0x0e, 0x15, 0x00, 0x05, b's', b'c', b'r', b'a', b'm', 0x16, 0x00,
+                0x03, 0x01, 0x02, 0x03,
+            ]
+        );
+
+        let short = decode_auth(0x00, 0, &[]).unwrap();
+        assert_eq!(short.reason_code_value(), Some(0x00));
+        assert!(short
+            .auth_properties_value()
+            .expect("short-form auth properties")
+            .property_values()
+            .is_empty());
+        assert_eq!(
+            Packet::from_layer(short).compile().unwrap().as_bytes(),
+            &[0xf0, 0x00]
         );
     }
 
