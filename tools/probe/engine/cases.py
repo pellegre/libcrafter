@@ -40,7 +40,9 @@ UDP_ECHO_LARGE_PAYLOAD_LENGTH = 1200
 # ``protocols/udp.py``); the merged catalog/profile tables below pick those cases
 # up from the registry. ``UDP_ECHO_LARGE_PAYLOAD_LENGTH`` stays here because
 # :mod:`tools.probe.engine.lab` also reads it; the UDP plugin imports it lazily.
-_BGP_CAPABILITIES = ["bgp_peer"]
+# BGP's capability constant (``_BGP_CAPABILITIES``) and case tuple now live in
+# the BGP plugin module (``protocols/bgp.py``); the merged catalog/profile tables
+# below pick the BGP case up from the registry.
 _RIP_CAPABILITIES = ["rip_peer"]
 _IGMP_CAPABILITIES = ["ipv4_multicast", "igmp_peer"]
 # ARP's capability constants and case tuple now live in the ARP plugin module
@@ -92,27 +94,9 @@ _OSPF_CAPABILITIES = ["ospf_neighbor_peer"]
 # below pick the NDP cases up from the registry.
 
 
-# BGP smoke cases. Probe owns controlled target-service setup for the FRR peer;
-# the current stimulus is planned-only until the endpoint driver executes the
-# bgp_session example.
-BGP_SMOKE_CASES: tuple[ProbeCase, ...] = (
-    _behavior_case(
-        name="bgp-session-smoke",
-        description=(
-            "Plan a BGP session exchange against a probe-owned FRR peer target "
-            "service."
-        ),
-        stimulus="bgp_session",
-        expected_response="bgp_peer_session",
-        required_capabilities=_BGP_CAPABILITIES,
-        protocol="bgp",
-        metadata={
-            "service": "frr-bgp-peer",
-            "stateful": True,
-            "planned_only": True,
-        },
-    ),
-)
+# The BGP smoke case (``bgp-session-smoke``) now lives in the BGP plugin module
+# (``protocols/bgp.py``); the merged catalog/profile tables below pick it up from
+# the registry.
 
 
 # RIP smoke cases. Probe owns controlled target-service setup for the FRR ripd
@@ -421,7 +405,9 @@ _LEGACY_PROBE_CASES: tuple[ProbeCase, ...] = (
     # by ``_merge_probe_cases``.
     *BEHAVIOR_OSPF_CASES,
     *OSPF_SMOKE_CASES,
-    *BGP_SMOKE_CASES,
+    # The ``bgp-session-smoke`` case is contributed by the BGP plugin
+    # (``protocols/bgp.py``) and merged in ahead of this legacy aggregation by
+    # ``_merge_probe_cases``.
     *RIP_SMOKE_CASES,
     *IGMP_PROBE_CASES,
     *BEHAVIOR_IPSEC_CASES,
@@ -643,9 +629,15 @@ IPSEC_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
 
 # The BGP smoke profile plans the probe-owned FRR peer target service and the
 # bgp_session stimulus driver intent without asking lab to infer workload
-# metadata from the profile label.
+# metadata from the profile label. The BGP case name is sourced from the BGP
+# plugin's registered case; BGP's profile membership stays in this legacy ordered
+# table (rather than the plugin's ``profile_counts``) so the selection order is
+# byte-identical -- the registry-first profile merge would otherwise move BGP to
+# the front of the profile.
 BGP_SESSION_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
-    case.name for case in BGP_SMOKE_CASES
+    case.name
+    for case in _registry_cases()
+    if case.metadata.get("protocol") == "bgp"
 )
 
 # The RIP smoke profile plans the probe-owned FRR ripd target service and the

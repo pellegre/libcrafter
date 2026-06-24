@@ -185,14 +185,9 @@ def probe_capabilities_from_lab_capabilities(
     # plus the advertised ``udp_safe_payload_size`` echo) are likewise contributed
     # by the UDP plugin's ``lab_capabilities`` hook (folded in below), not here.
     repeated_response = ipv4_unicast and controlled_services
-    # BGP smoke drives a controlled FRR peer on the target endpoint. It needs the
-    # same IPv4-unicast + controlled-service substrate as DNS/UDP target
-    # services, with an optional provider flag to deny BGP peer provisioning.
-    bgp_peer = (
-        ipv4_unicast
-        and controlled_services
-        and _capability_default_true(substrate, "bgp_peer")
-    )
+    # ``bgp_peer`` is derived by the BGP plugin's ``lab_capabilities`` hook
+    # (folded in below), not here. The shared ``capability_names`` /
+    # ``capability_sources`` tables still list it.
     # RIP smoke drives a controlled FRR ripd peer on the target endpoint. Like
     # BGP, it needs the IPv4-unicast + controlled-service substrate, with an
     # optional provider flag to deny RIP peer provisioning.
@@ -311,7 +306,9 @@ def probe_capabilities_from_lab_capabilities(
         # ``arp_resolution`` / ``link_layer_arp`` are contributed by the ARP
         # plugin's ``lab_capabilities`` hook (folded in below).
         "repeated_response": repeated_response,
-        "bgp_peer": bgp_peer,
+        # ``bgp_peer`` is contributed by the BGP plugin's ``lab_capabilities``
+        # hook (folded in below). The shared ``capability_names`` /
+        # ``capability_sources`` tables still list it.
         "rip_peer": rip_peer,
         "ipv4_multicast": ipv4_multicast,
         "igmp_peer": igmp_peer,
