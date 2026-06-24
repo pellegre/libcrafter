@@ -3,6 +3,7 @@ use std::net::Ipv4Addr;
 use crafter::prelude::*;
 use crafter::protocols::mqtt::{
     MqttProperties, MqttProperty, MQTT_5_PROTOCOL_LEVEL, MQTT_REASON_BAD_AUTHENTICATION_METHOD,
+    MQTT_REASON_NO_MATCHING_SUBSCRIBERS, MQTT_REASON_PACKET_IDENTIFIER_NOT_FOUND,
 };
 
 const CONNECT_V5_WITH_PROPERTIES: &[u8] = &[
@@ -34,6 +35,14 @@ const PUBLISH_311_BASELINE: &[u8] = &[
     0x32, 0x0f, 0x00, 0x09, b's', b'e', b'n', b's', b'o', b'r', b's', b'/', b't', 0x12, 0x34, b'4',
     b'2',
 ];
+
+const PUBACK_V5_FULL: &[u8] = &[
+    0x40, 0x0d, 0x12, 0x34, 0x10, 0x09, 0x1f, 0x00, 0x06, b'q', b'u', b'e', b'u', b'e', b'd',
+];
+
+const PUBACK_V5_SHORT: &[u8] = &[0x40, 0x02, 0x12, 0x34];
+
+const PUBREL_V5_FULL: &[u8] = &[0x62, 0x04, 0x22, 0x22, 0x92, 0x00];
 
 fn mqtt_bytes(message: Mqtt) -> crafter::Result<Vec<u8>> {
     Ok(Packet::from_layer(message).compile()?.into_bytes())
@@ -97,6 +106,14 @@ fn publish_v5_message() -> Mqtt {
         .content_type("text/plain")
         .user_property("site", "lab")
         .payload(b"42".to_vec())
+}
+
+fn puback_v5_full_message() -> Mqtt {
+    Mqtt::puback()
+        .version(MQTT_5_PROTOCOL_LEVEL)
+        .packet_id(0x1234)
+        .reason_code(MQTT_REASON_NO_MATCHING_SUBSCRIBERS)
+        .ack_property(MqttProperty::ReasonString("queued".to_string()))
 }
 
 #[test]
@@ -186,5 +203,38 @@ fn publish_311_baseline_stays_unchanged() -> crafter::Result<()> {
     )?;
 
     assert_eq!(bytes, PUBLISH_311_BASELINE);
+    Ok(())
+}
+
+#[test]
+fn pubacks_v5_puback_full_form_compiles_byte_exact() -> crafter::Result<()> {
+    let bytes = mqtt_bytes(puback_v5_full_message())?;
+
+    assert_eq!(bytes, PUBACK_V5_FULL);
+    Ok(())
+}
+
+#[test]
+fn pubacks_v5_puback_short_form_compiles_byte_exact() -> crafter::Result<()> {
+    let bytes = mqtt_bytes(
+        Mqtt::puback()
+            .version(MQTT_5_PROTOCOL_LEVEL)
+            .packet_id(0x1234),
+    )?;
+
+    assert_eq!(bytes, PUBACK_V5_SHORT);
+    Ok(())
+}
+
+#[test]
+fn pubacks_v5_pubrel_preserves_required_flag_nibble() -> crafter::Result<()> {
+    let bytes = mqtt_bytes(
+        Mqtt::pubrel()
+            .version(MQTT_5_PROTOCOL_LEVEL)
+            .packet_id(0x2222)
+            .reason_code(MQTT_REASON_PACKET_IDENTIFIER_NOT_FOUND),
+    )?;
+
+    assert_eq!(bytes, PUBREL_V5_FULL);
     Ok(())
 }
