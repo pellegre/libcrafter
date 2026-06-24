@@ -220,6 +220,7 @@ class ProbePlanningDispatchTest(unittest.TestCase):
             [plan["case"] for plan in plans],
             [
                 "mqtt-connect-connack",
+                "mqtt-v5-connect-connack",
                 "mqtt-subscribe-suback",
                 "mqtt-publish-puback",
             ],
@@ -271,11 +272,19 @@ class ProbePlanningDispatchTest(unittest.TestCase):
             "CONNECT",
         )
         self.assertEqual(
-            plans[1]["stimulus_packet_shape"]["mqtt"]["packet_id"],
+            plans[1]["stimulus_packet_shape"]["mqtt"]["version"],
+            5,
+        )
+        self.assertEqual(
+            plans[1]["expected_response_packet_shape"]["mqtt"]["reason_code"],
+            0,
+        )
+        self.assertEqual(
+            plans[2]["stimulus_packet_shape"]["mqtt"]["packet_id"],
             1,
         )
         self.assertEqual(
-            plans[2]["stimulus_packet_shape"]["mqtt"]["payload_hex"],
+            plans[3]["stimulus_packet_shape"]["mqtt"]["payload_hex"],
             b"hello from crafter probe".hex(),
         )
 
