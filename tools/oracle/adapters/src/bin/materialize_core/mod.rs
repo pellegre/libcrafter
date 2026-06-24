@@ -1876,6 +1876,7 @@ fn mqtt_layer(plan: &Value) -> ExampleResult<Mqtt> {
         MqttControlPacketType::Pingreq => Mqtt::pingreq(),
         MqttControlPacketType::Pingresp => Mqtt::pingresp(),
         MqttControlPacketType::Disconnect => Mqtt::disconnect(),
+        MqttControlPacketType::Auth => Mqtt::auth(),
     };
 
     if let Some(value) = optional(fields, &["flags"]) {
@@ -2033,6 +2034,7 @@ fn mqtt_packet_type(value: &Value) -> ExampleResult<MqttControlPacketType> {
             "pingreq" | "ping-request" => Ok(MqttControlPacketType::Pingreq),
             "pingresp" | "ping-response" => Ok(MqttControlPacketType::Pingresp),
             "disconnect" => Ok(MqttControlPacketType::Disconnect),
+            "auth" => Ok(MqttControlPacketType::Auth),
             _ => MqttControlPacketType::from_type_value(u8_text(text)?).map_err(Into::into),
         };
     }
