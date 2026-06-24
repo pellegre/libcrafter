@@ -666,9 +666,9 @@ _LEGACY_STIMULUS_ENDPOINT_CASES = frozenset(
         # The ten ARP stimulus-endpoint cases are now contributed by the ARP
         # plugin (``protocols/arp.py``) and unioned into ``_STIMULUS_ENDPOINT_CASES``
         # below; ``arp-resolution`` was never stimulus-routed.
-        "ndp-neighbor-solicitation",
-        "ndp-router-solicitation",
-        "ndp-duplicate-address-detection",
+        # The three NDP behavioral stimulus-endpoint cases are now contributed by
+        # the NDP plugin (``protocols/ndp.py``) and unioned into
+        # ``_STIMULUS_ENDPOINT_CASES`` below.
         # The ten UDP behavioral stimulus-endpoint cases are now contributed by
         # the UDP plugin (``protocols/udp.py``) and unioned into
         # ``_STIMULUS_ENDPOINT_CASES`` below.
