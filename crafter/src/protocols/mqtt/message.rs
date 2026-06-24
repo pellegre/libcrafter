@@ -360,6 +360,57 @@ impl MqttPacketIdentifier {
     }
 }
 
+/// MQTT SUBSCRIBE topic filter and requested QoS pair.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MqttSubscription {
+    filter: String,
+    qos: u8,
+}
+
+/// MQTT SUBSCRIBE variable header and payload fields.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MqttSubscribe {
+    packet_id: Field<u16>,
+    topics: Vec<MqttSubscription>,
+}
+
+impl MqttSubscribe {
+    fn new() -> Self {
+        Self {
+            packet_id: Field::defaulted(0),
+            topics: Vec::new(),
+        }
+    }
+
+    fn packet_id(&self) -> u16 {
+        self.packet_id.value().copied().unwrap_or(0)
+    }
+
+    fn push_topic(&mut self, filter: impl Into<String>, qos: u8) {
+        self.topics.push(MqttSubscription {
+            filter: filter.into(),
+            qos,
+        });
+    }
+
+    fn encoded_len(&self) -> usize {
+        2 + self
+            .topics
+            .iter()
+            .map(|topic| 2 + topic.filter.len() + 1)
+            .sum::<usize>()
+    }
+
+    fn write_body(&self, out: &mut Vec<u8>) -> Result<()> {
+        encode_u16(self.packet_id(), out);
+        for topic in &self.topics {
+            encode_string(&topic.filter, out)?;
+            out.push(topic.qos);
+        }
+        Ok(())
+    }
+}
+
 /// MQTT control packet body bytes after the fixed header.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum MqttBody {
@@ -368,6 +419,7 @@ enum MqttBody {
     Connack(MqttConnack),
     Publish(MqttPublish),
     PacketIdentifier(MqttPacketIdentifier),
+    Subscribe(MqttSubscribe),
 }
 
 impl MqttBody {
@@ -378,6 +430,7 @@ impl MqttBody {
             Self::Connack(connack) => connack.encoded_len(),
             Self::Publish(publish) => publish.encoded_len(flags),
             Self::PacketIdentifier(packet_identifier) => packet_identifier.encoded_len(),
+            Self::Subscribe(subscribe) => subscribe.encoded_len(),
         }
     }
 
@@ -388,6 +441,7 @@ impl MqttBody {
             Self::Connack(connack) => connack.write_body(out),
             Self::Publish(publish) => publish.write_body(out, flags)?,
             Self::PacketIdentifier(packet_identifier) => packet_identifier.write_body(out),
+            Self::Subscribe(subscribe) => subscribe.write_body(out)?,
         }
         Ok(())
     }
@@ -398,6 +452,7 @@ impl MqttBody {
             Self::Connect(_) | Self::Connack(_) | Self::Publish(_) | Self::PacketIdentifier(_) => {
                 &[]
             }
+            Self::Subscribe(_) => &[],
         }
     }
 }
@@ -489,6 +544,16 @@ impl Mqtt {
             flags: Field::defaulted(MqttControlPacketType::Pubcomp.default_flags()),
             remaining_length: Field::unset(),
             body: MqttBody::PacketIdentifier(MqttPacketIdentifier::new()),
+        }
+    }
+
+    /// Build an MQTT SUBSCRIBE packet.
+    pub fn subscribe() -> Self {
+        Self {
+            packet_type: MqttControlPacketType::Subscribe,
+            flags: Field::defaulted(MqttControlPacketType::Subscribe.default_flags()),
+            remaining_length: Field::unset(),
+            body: MqttBody::Subscribe(MqttSubscribe::new()),
         }
     }
 
@@ -718,7 +783,30 @@ impl Mqtt {
             MqttBody::PacketIdentifier(packet_identifier) => {
                 packet_identifier.packet_id.set_user(packet_id);
             }
+            MqttBody::Subscribe(subscribe) => subscribe.packet_id.set_user(packet_id),
             _ => {}
+        }
+        self
+    }
+
+    /// Add one SUBSCRIBE topic filter and requested QoS pair.
+    pub fn subscribe_topic(mut self, filter: impl Into<String>, qos: u8) -> Self {
+        if let MqttBody::Subscribe(subscribe) = &mut self.body {
+            subscribe.push_topic(filter, qos);
+        }
+        self
+    }
+
+    /// Add SUBSCRIBE topic filter and requested QoS pairs.
+    pub fn topics<I, S>(mut self, topics: I) -> Self
+    where
+        I: IntoIterator<Item = (S, u8)>,
+        S: Into<String>,
+    {
+        if let MqttBody::Subscribe(subscribe) = &mut self.body {
+            for (filter, qos) in topics {
+                subscribe.push_topic(filter, qos);
+            }
         }
         self
     }
@@ -864,6 +952,7 @@ impl Mqtt {
                 self.packet_identifier_body()
                     .map(MqttPacketIdentifier::packet_id)
             })
+            .or_else(|| self.subscribe_body().map(MqttSubscribe::packet_id))
     }
 
     /// PUBLISH application payload bytes, when this is a typed PUBLISH packet.
@@ -877,7 +966,8 @@ impl Mqtt {
             MqttBody::Raw(_)
             | MqttBody::Connack(_)
             | MqttBody::Publish(_)
-            | MqttBody::PacketIdentifier(_) => None,
+            | MqttBody::PacketIdentifier(_)
+            | MqttBody::Subscribe(_) => None,
         }
     }
 
@@ -887,7 +977,8 @@ impl Mqtt {
             MqttBody::Raw(_)
             | MqttBody::Connect(_)
             | MqttBody::Publish(_)
-            | MqttBody::PacketIdentifier(_) => None,
+            | MqttBody::PacketIdentifier(_)
+            | MqttBody::Subscribe(_) => None,
         }
     }
 
@@ -897,7 +988,8 @@ impl Mqtt {
             MqttBody::Raw(_)
             | MqttBody::Connect(_)
             | MqttBody::Connack(_)
-            | MqttBody::PacketIdentifier(_) => None,
+            | MqttBody::PacketIdentifier(_)
+            | MqttBody::Subscribe(_) => None,
         }
     }
 
@@ -907,7 +999,19 @@ impl Mqtt {
             MqttBody::Raw(_)
             | MqttBody::Connect(_)
             | MqttBody::Connack(_)
-            | MqttBody::Publish(_) => None,
+            | MqttBody::Publish(_)
+            | MqttBody::Subscribe(_) => None,
+        }
+    }
+
+    fn subscribe_body(&self) -> Option<&MqttSubscribe> {
+        match &self.body {
+            MqttBody::Subscribe(subscribe) => Some(subscribe),
+            MqttBody::Raw(_)
+            | MqttBody::Connect(_)
+            | MqttBody::Connack(_)
+            | MqttBody::Publish(_)
+            | MqttBody::PacketIdentifier(_) => None,
         }
     }
 
@@ -1096,6 +1200,28 @@ mod tests {
 
         assert_eq!(bytes[mqtt_offset], 0x82);
         assert_eq!(&bytes[mqtt_offset + 1..mqtt_offset + 3], &[0x80, 0x01]);
+    }
+
+    #[test]
+    fn subscribe_compiles_packet_identifier_and_topic_filters() {
+        let bytes = mqtt_bytes(
+            Mqtt::subscribe()
+                .packet_id(0x1234)
+                .topics([("a/b", 0), ("c/d", 1)]),
+        );
+
+        let expected = vec![
+            0x82, 0x0e, 0x12, 0x34, 0x00, 0x03, b'a', b'/', b'b', 0x00, 0x00, 0x03, b'c', b'/',
+            b'd', 0x01,
+        ];
+        assert_eq!(bytes, expected);
+    }
+
+    #[test]
+    fn subscribe_empty_topic_list_is_not_filled_implicitly() {
+        let bytes = mqtt_bytes(Mqtt::subscribe().packet_id(0x1234));
+
+        assert_eq!(bytes, [0x82, 0x02, 0x12, 0x34]);
     }
 
     #[test]
