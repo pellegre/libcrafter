@@ -16,6 +16,10 @@ use crafter::protocols::bgp::{
 };
 use crafter::protocols::igmp::IgmpExtension;
 use crafter::protocols::link::RadiotapFcsStatus;
+use crafter::protocols::mqtt::{
+    Mqtt, MqttControlPacketType, MQTT_CONNECT_FLAG_CLEAN_SESSION, MQTT_PUBLISH_FLAG_DUP,
+    MQTT_PUBLISH_FLAG_QOS_MASK, MQTT_PUBLISH_FLAG_RETAIN,
+};
 use crafter::protocols::rip::ripng::{Ripng, RipngRte};
 use crafter::protocols::rip::{Rip, RipAuth, RipAuthPayload, RipEntry, RIP_AFI_AUTH};
 use serde::{Deserialize, Serialize};
@@ -450,6 +454,8 @@ fn normalized_layer_name(layer: &dyn Layer) -> String {
         "tcp"
     } else if layer.as_any().is::<Bgp>() {
         "bgp"
+    } else if layer.as_any().is::<Mqtt>() {
+        "mqtt"
     } else if layer.as_any().is::<Rip>() {
         "rip"
     } else if layer.as_any().is::<Ripng>() {
@@ -574,6 +580,9 @@ fn normalized_layer_fields(
     }
     if let Some(layer) = layer.as_any().downcast_ref::<Bgp>() {
         return bgp_fields(layer);
+    }
+    if let Some(layer) = layer.as_any().downcast_ref::<Mqtt>() {
+        return mqtt_fields(layer);
     }
     if let Some(layer) = layer.as_any().downcast_ref::<Rip>() {
         return rip_fields(layer);
@@ -1755,6 +1764,156 @@ fn bgp_message_type_name(message_type: u8) -> Value {
         BGP_TYPE_ROUTE_REFRESH => json!("route_refresh"),
         other => json!(other),
     }
+}
+
+fn mqtt_fields(layer: &Mqtt) -> BTreeMap<String, Value> {
+    let packet_type = layer.packet_type();
+    let flags = layer.flags_value();
+    let mut fields = map([
+        ("packet_type", json!(mqtt_packet_type_name(packet_type))),
+        ("flags", json!(flags)),
+        ("remaining_length", json!(layer.remaining_length_value())),
+    ]);
+
+    match packet_type {
+        MqttControlPacketType::Connect => {
+            if let Some(value) = layer.protocol_name_value() {
+                fields.insert("protocol_name".to_string(), json!(value));
+            }
+            if let Some(value) = layer.protocol_level_value() {
+                fields.insert("protocol_level".to_string(), json!(value));
+            }
+            if let Some(value) = layer.connect_flags_value() {
+                fields.insert("connect_flags".to_string(), json!(value));
+                fields.insert(
+                    "clean_session".to_string(),
+                    json!(value & MQTT_CONNECT_FLAG_CLEAN_SESSION != 0),
+                );
+            }
+            if let Some(value) = layer.keep_alive_value() {
+                fields.insert("keep_alive".to_string(), json!(value));
+            }
+            if let Some(value) = layer.client_id_value() {
+                fields.insert("client_id".to_string(), json!(value));
+            }
+            if let Some(value) = layer.will_topic_value() {
+                fields.insert("will_topic".to_string(), json!(value));
+            }
+            if let Some(value) = layer.will_message_value() {
+                fields.insert("will_message".to_string(), mqtt_bytes_fields(value));
+            }
+            if let Some(value) = layer.username_value() {
+                fields.insert("username".to_string(), json!(value));
+            }
+            if let Some(value) = layer.password_value() {
+                fields.insert("password".to_string(), mqtt_bytes_fields(value));
+            }
+        }
+        MqttControlPacketType::Connack => {
+            let session_present = layer.session_present_value().unwrap_or(false);
+            fields.insert("ack_flags".to_string(), json!(u8::from(session_present)));
+            fields.insert("session_present".to_string(), json!(session_present));
+            if let Some(value) = layer.return_code_value() {
+                fields.insert("return_code".to_string(), json!(value));
+            }
+        }
+        MqttControlPacketType::Publish => {
+            if let Some(value) = layer.topic_value() {
+                fields.insert("topic".to_string(), json!(value));
+            }
+            fields.insert(
+                "qos".to_string(),
+                json!((flags & MQTT_PUBLISH_FLAG_QOS_MASK) >> 1),
+            );
+            fields.insert("dup".to_string(), json!(flags & MQTT_PUBLISH_FLAG_DUP != 0));
+            fields.insert(
+                "retain".to_string(),
+                json!(flags & MQTT_PUBLISH_FLAG_RETAIN != 0),
+            );
+            if let Some(value) = layer.packet_id_value() {
+                fields.insert("packet_id".to_string(), json!(value));
+            }
+            if let Some(value) = layer.payload_value() {
+                fields.insert("payload".to_string(), mqtt_bytes_fields(value));
+            }
+        }
+        MqttControlPacketType::Puback
+        | MqttControlPacketType::Pubrec
+        | MqttControlPacketType::Pubrel
+        | MqttControlPacketType::Pubcomp
+        | MqttControlPacketType::Unsuback => {
+            if let Some(value) = layer.packet_id_value() {
+                fields.insert("packet_id".to_string(), json!(value));
+            }
+        }
+        MqttControlPacketType::Subscribe => {
+            if let Some(value) = layer.packet_id_value() {
+                fields.insert("packet_id".to_string(), json!(value));
+            }
+            if let Some(topics) = layer.subscribe_topics_value() {
+                fields.insert(
+                    "topic_filters".to_string(),
+                    Value::Array(
+                        topics
+                            .iter()
+                            .map(|(topic, qos)| json!({"topic": topic, "qos": qos}))
+                            .collect(),
+                    ),
+                );
+            }
+        }
+        MqttControlPacketType::Suback => {
+            if let Some(value) = layer.packet_id_value() {
+                fields.insert("packet_id".to_string(), json!(value));
+            }
+            if let Some(value) = layer.suback_return_codes_value() {
+                fields.insert("return_codes".to_string(), json!(value));
+            }
+        }
+        MqttControlPacketType::Unsubscribe => {
+            if let Some(value) = layer.packet_id_value() {
+                fields.insert("packet_id".to_string(), json!(value));
+            }
+            if let Some(topics) = layer.unsubscribe_topics_value() {
+                fields.insert("topic_filters".to_string(), json!(topics));
+            }
+        }
+        MqttControlPacketType::Pingreq
+        | MqttControlPacketType::Pingresp
+        | MqttControlPacketType::Disconnect => {}
+    }
+
+    if !layer.body().is_empty() {
+        fields.insert("payload".to_string(), mqtt_bytes_fields(layer.body()));
+    }
+
+    fields
+}
+
+fn mqtt_packet_type_name(packet_type: MqttControlPacketType) -> &'static str {
+    match packet_type {
+        MqttControlPacketType::Connect => "connect",
+        MqttControlPacketType::Connack => "connack",
+        MqttControlPacketType::Publish => "publish",
+        MqttControlPacketType::Puback => "puback",
+        MqttControlPacketType::Pubrec => "pubrec",
+        MqttControlPacketType::Pubrel => "pubrel",
+        MqttControlPacketType::Pubcomp => "pubcomp",
+        MqttControlPacketType::Subscribe => "subscribe",
+        MqttControlPacketType::Suback => "suback",
+        MqttControlPacketType::Unsubscribe => "unsubscribe",
+        MqttControlPacketType::Unsuback => "unsuback",
+        MqttControlPacketType::Pingreq => "pingreq",
+        MqttControlPacketType::Pingresp => "pingresp",
+        MqttControlPacketType::Disconnect => "disconnect",
+    }
+}
+
+fn mqtt_bytes_fields(bytes: &[u8]) -> Value {
+    json!({
+        "hex": hex_bytes(bytes),
+        "length": bytes.len(),
+    })
 }
 
 /// Normalize a decoded RIP layer into the backend-neutral oracle model.
