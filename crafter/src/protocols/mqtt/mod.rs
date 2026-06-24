@@ -4,6 +4,7 @@
 //! the source of truth derived from `.agents/docs/mqtt-manifest.md`.
 
 pub mod constants;
+pub(crate) mod decode;
 pub mod header;
 pub mod message;
 pub mod varint;
