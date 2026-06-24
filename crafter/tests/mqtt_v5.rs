@@ -3,7 +3,7 @@ use std::net::Ipv4Addr;
 use crafter::prelude::*;
 use crafter::protocols::mqtt::{
     MqttProperties, MqttProperty, MQTT_5_PROTOCOL_LEVEL, MQTT_REASON_BAD_AUTHENTICATION_METHOD,
-    MQTT_REASON_GRANTED_QOS_0, MQTT_REASON_GRANTED_QOS_1,
+    MQTT_REASON_CONTINUE_AUTHENTICATION, MQTT_REASON_GRANTED_QOS_0, MQTT_REASON_GRANTED_QOS_1,
     MQTT_REASON_IMPLEMENTATION_SPECIFIC_ERROR, MQTT_REASON_NO_MATCHING_SUBSCRIBERS,
     MQTT_REASON_NO_SUBSCRIPTION_EXISTED, MQTT_REASON_PACKET_IDENTIFIER_NOT_FOUND,
     MQTT_REASON_SESSION_TAKEN_OVER, MQTT_REASON_SUCCESS, MQTT_REASON_TOPIC_FILTER_INVALID,
@@ -83,6 +83,13 @@ const DISCONNECT_V5_WITH_PROPERTIES: &[u8] =
     &[0xe0, 0x07, 0x8e, 0x05, 0x11, 0x00, 0x00, 0x00, 0x3c];
 
 const DISCONNECT_SHORT: &[u8] = &[0xe0, 0x00];
+
+const AUTH_V5_WITH_PROPERTIES: &[u8] = &[
+    0xf0, 0x10, 0x18, 0x0e, 0x15, 0x00, 0x05, b's', b'c', b'r', b'a', b'm', 0x16, 0x00, 0x03, 0x01,
+    0x02, 0x03,
+];
+
+const AUTH_SHORT: &[u8] = &[0xf0, 0x00];
 
 fn mqtt_bytes(message: Mqtt) -> crafter::Result<Vec<u8>> {
     Ok(Packet::from_layer(message).compile()?.into_bytes())
@@ -201,6 +208,13 @@ fn disconnect_v5_message() -> Mqtt {
         .version(MQTT_5_PROTOCOL_LEVEL)
         .reason_code(MQTT_REASON_SESSION_TAKEN_OVER)
         .disconnect_property(MqttProperty::SessionExpiryInterval(60))
+}
+
+fn auth_v5_message() -> Mqtt {
+    Mqtt::auth()
+        .reason_code(MQTT_REASON_CONTINUE_AUTHENTICATION)
+        .authentication_method("scram")
+        .authentication_data(vec![1, 2, 3])
 }
 
 #[test]
@@ -415,5 +429,21 @@ fn disconnect_311_baseline_stays_unchanged() -> crafter::Result<()> {
     let bytes = mqtt_bytes(Mqtt::disconnect())?;
 
     assert_eq!(bytes, DISCONNECT_SHORT);
+    Ok(())
+}
+
+#[test]
+fn auth_v5_reason_code_and_properties_compile_byte_exact() -> crafter::Result<()> {
+    let bytes = mqtt_bytes(auth_v5_message())?;
+
+    assert_eq!(bytes, AUTH_V5_WITH_PROPERTIES);
+    Ok(())
+}
+
+#[test]
+fn auth_v5_short_form_compiles_byte_exact() -> crafter::Result<()> {
+    let bytes = mqtt_bytes(Mqtt::auth())?;
+
+    assert_eq!(bytes, AUTH_SHORT);
     Ok(())
 }
