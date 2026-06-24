@@ -5,6 +5,7 @@ use std::collections::HashSet;
 use std::net::Ipv4Addr;
 
 use crafter::prelude::*;
+use crafter::protocols::mqtt::{MQTT_311_PROTOCOL_LEVEL, MQTT_5_PROTOCOL_LEVEL};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ExpectedOutcome {
@@ -17,6 +18,7 @@ enum ExpectedOutcome {
 struct MqttMalformedCase {
     name: &'static str,
     expected: ExpectedOutcome,
+    default_version: u8,
     bytes: Vec<u8>,
 }
 
@@ -26,10 +28,8 @@ fn mqtt_resilience_malformed_decode_corpus_reports_structured_outcomes() -> craf
     assert_required_mqtt_resilience_cases(&cases);
 
     for case in cases {
-        let frame = mqtt_over_ipv4_tcp(&case.bytes)?;
-        let decoded =
-            std::panic::catch_unwind(|| Packet::decode_from_l3(NetworkLayer::Ipv4, &frame))
-                .unwrap_or_else(|_| panic!("MQTT malformed corpus case {} panicked", case.name));
+        let decoded = std::panic::catch_unwind(|| decode_malformed_case(&case))
+            .unwrap_or_else(|_| panic!("MQTT malformed corpus case {} panicked", case.name));
 
         match case.expected {
             ExpectedOutcome::BufferTooShort(expected_context) => {
@@ -45,6 +45,15 @@ fn mqtt_resilience_malformed_decode_corpus_reports_structured_outcomes() -> craf
     }
 
     Ok(())
+}
+
+fn decode_malformed_case(case: &MqttMalformedCase) -> crafter::Result<Packet> {
+    if case.default_version == MQTT_5_PROTOCOL_LEVEL {
+        Mqtt::decode_payload_with_default_version(&case.bytes, MQTT_5_PROTOCOL_LEVEL)
+    } else {
+        let frame = mqtt_over_ipv4_tcp(&case.bytes)?;
+        Packet::decode_from_l3(NetworkLayer::Ipv4, &frame)
+    }
 }
 
 fn mqtt_over_ipv4_tcp(payload: &[u8]) -> crafter::Result<Vec<u8>> {
@@ -86,6 +95,13 @@ fn mqtt_malformed_cases() -> Vec<MqttMalformedCase> {
             let expected_context_or_marker = parts.next().unwrap_or_else(|| {
                 panic!("MQTT malformed corpus case {name} is missing an expected context")
             });
+            let default_version = match parts.next() {
+                Some("v5") => MQTT_5_PROTOCOL_LEVEL,
+                Some("v311") | None => MQTT_311_PROTOCOL_LEVEL,
+                Some(version) => {
+                    panic!("MQTT malformed corpus case {name} has unknown version {version}")
+                }
+            };
             assert!(
                 parts.next().is_none(),
                 "MQTT malformed corpus case {name} has too many metadata fields"
@@ -94,6 +110,7 @@ fn mqtt_malformed_cases() -> Vec<MqttMalformedCase> {
             Some(MqttMalformedCase {
                 name,
                 expected: parse_expected_outcome(name, expected_kind, expected_context_or_marker),
+                default_version,
                 bytes: parse_hex(name, hex),
             })
         })
@@ -145,6 +162,10 @@ fn assert_required_mqtt_resilience_cases(cases: &[MqttMalformedCase]) {
         "publish-topic-overruns-buffer",
         "subscribe-dangling-qos",
         "out-of-range-control-packet-type",
+        "v5-connack-property-length-overruns",
+        "v5-connack-truncated-property-value",
+        "v5-connack-truncated-property-string",
+        "v5-publish-property-length-overruns",
     ] {
         assert!(
             names.contains(required),
