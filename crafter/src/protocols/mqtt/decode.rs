@@ -48,6 +48,9 @@ pub(crate) fn decode_mqtt(bytes: &[u8]) -> Result<(Mqtt, usize)> {
         MqttControlPacketType::Puback => {
             decode_packet_identifier(packet_type, flags, remaining_length, body, "mqtt.puback")?
         }
+        MqttControlPacketType::Pubrec => {
+            decode_packet_identifier(packet_type, flags, remaining_length, body, "mqtt.pubrec")?
+        }
         _ => Mqtt::raw(packet_type, body.to_vec())
             .flags(flags)
             .remaining_length(remaining_length),
