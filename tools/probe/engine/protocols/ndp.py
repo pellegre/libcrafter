@@ -40,9 +40,20 @@ tables in :mod:`tools.probe.engine.cases` keep owning NDP's profile membership t
 preserve byte-identical selection order.
 
 The NDP target-service / address-rewrite / failure-reason / lab-capability hooks
-land in step 26 (the special NDP early-return rewrite); they stay ``None`` here,
-so NDP cases keep flowing through the legacy target / rewrite / failure /
-capability paths until that step.
+complete the migration here (step 26). NDP stands up no listening daemon: its
+``target_service`` hook contributes nothing to the central setup plan (NDP never
+had a setup-plan key), and the co-located IPv6/kernel setup-script block
+(:func:`ndp_target_setup_lines`) is called *directly* by
+``target_services.target_service_setup_script`` (the ``setup_script`` hook
+receives no plan context). The ``rewrite_endpoint_addresses`` hook reproduces
+NDP's dedicated IPv6/link-local rewrite *and its hard early-return*: NDP rides
+ICMPv6 over IPv6 (next header 58) with no IPv4 transport, so the hook rewrites
+the link-local addresses and multicast groups and returns the fully-rewritten
+plan without ever touching the shared transport-IPv4 tail. The
+``failure_reasons`` hook returns ``None`` for every NDP case (NDP never had a
+dedicated failure branch; it fell through to the shared default of no reasons),
+and the ``lab_capabilities`` hook contributes the ``ipv6_multicast`` derived
+capability.
 
 Imports are relative only so the module loads under both engine import roots
 (``engine.protocols.ndp`` for the CLI and ``tools.probe.engine.protocols.ndp``
@@ -52,13 +63,17 @@ for the tests).
 from __future__ import annotations
 
 import ipaddress
+from collections.abc import Mapping, Sequence
 
+from ..capability_derivation import capability
 from ..case_helpers import _behavior_case
-from ..model import JSONObject, ProbeCase
+from ..endpoint_addressing import _eui64_link_local_ipv6
+from ..model import JSONObject, JSONValue, ProbeCase, json_object
 from ..planning_helpers import (
     deterministic_bytes,
     deterministic_documentation_mac,
 )
+from ..target_service_helpers import string_or as _string_or
 from .base import ProtocolPlugin, register
 
 
@@ -540,6 +555,379 @@ _NDP_STIMULUS_ENDPOINT_CASES: frozenset[str] = frozenset(
 )
 
 
+# --------------------------------------------------------------------------- #
+# Target-service kernel setup (moved from target_services.py)
+# --------------------------------------------------------------------------- #
+#
+# NDP's target is primarily the kernel answering IPv6 Neighbor Discovery on a
+# private L2 segment. ``ndp-neighbor-solicitation`` and
+# ``ndp-duplicate-address-detection`` rely on a bare kernel auto-answering /
+# defending a Neighbor Solicitation for an address it owns; the setup only needs
+# to make sure IPv6 is enabled on the private interface and the neighbor cache is
+# clean (no listening daemon). ``ndp-router-solicitation`` additionally needs the
+# target to act as an RA-emitting router (kernel RA via forwarding + accept_ra),
+# which the setup enables best-effort.
+_NDP_KERNEL_CASES: frozenset[str] = frozenset(
+    {
+        "ndp-neighbor-solicitation",
+        "ndp-router-solicitation",
+        "ndp-duplicate-address-detection",
+    }
+)
+_NDP_ROUTER_CASES: frozenset[str] = frozenset({"ndp-router-solicitation"})
+
+
+def ndp_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
+    """Return the NDP probe plans in order."""
+
+    return [plan for plan in probe_plans if plan.get("case") in _NDP_KERNEL_CASES]
+
+
+def ndp_target_service_contribution(
+    probe_plans: Sequence[JSONObject],
+    *,
+    dry_run: bool,
+) -> JSONObject:
+    """Return the NDP plugin's ``target_service_setup_plan`` contribution.
+
+    NDP stands up no listening daemon and never carried a setup-plan key (the
+    legacy central ``target_service_setup_plan`` body had no NDP branch), so this
+    hook contributes nothing to the central plan. It exists only so the registry
+    partition diverts the NDP cases off the legacy target path (the legacy body
+    ignored them anyway), keeping the emitted setup plan byte-identical. NDP's
+    actual kernel setup is rendered into the live setup *script* by
+    :func:`ndp_target_setup_lines`, which ``target_service_setup_script`` calls
+    directly with the planned NDP plans.
+    """
+
+    return {}
+
+
+def ndp_target_setup_lines(
+    *,
+    ndp_plans: Sequence[JSONObject],
+) -> list[str]:
+    """Render the NDP/IPv6 kernel setup block for the target setup script.
+
+    Moved verbatim from the inline ``if ndp_plans:`` block and the
+    ``_ndp_target_setup_lines`` helper of
+    ``target_services.target_service_setup_script``; the orchestrator calls this
+    with the planned NDP plans so the rendered script bytes stay byte-identical.
+
+    A bare Linux kernel already owns a modified-EUI-64 link-local address on
+    every IPv6-enabled interface and auto-answers a Neighbor Solicitation for it
+    (and defends it on Duplicate Address Detection), so the Neighbor Solicitation
+    and DAD cases need only that IPv6 is enabled on the private interface, that
+    the link-local has finished Duplicate Address Detection, and that the IPv6
+    neighbor cache is clean so the kernel re-answers. The Router Solicitation
+    case additionally needs the target to act as an RA-emitting router; the block
+    enables IPv6 forwarding and per-interface RA emission best-effort (a bare
+    kernel without forwarding does not answer a Router Solicitation). Every
+    sysctl change records its restore command into the cleanup script so the
+    disposable endpoint is returned to its prior state on teardown.
+    """
+
+    wants_router = any(
+        str(plan.get("case", "")) in _NDP_ROUTER_CASES for plan in ndp_plans
+    )
+    lines = [
+        'if [ -z "$target_interface" ]; then',
+        "  echo ndp_target_interface=missing >&2",
+        "  exit 73",
+        "fi",
+        'ip link show dev "$target_interface" >/dev/null',
+        # Enable IPv6 on the private interface and accept the kernel's link-local.
+        'for key in disable_ipv6 accept_dad; do',
+        '  sysctl_name="net.ipv6.conf.${target_interface}.${key}"',
+        '  before_path="$artifact_root/ndp-${key}.before"',
+        '  sysctl -n "$sysctl_name" > "$before_path" 2>/dev/null || true',
+        '  before_value=""',
+        '  if [ -s "$before_path" ]; then before_value="$(cat "$before_path")"; fi',
+        '  if [ -n "$before_value" ]; then',
+        '    printf \'%s\\n\' "sysctl -w ${sysctl_name}=${before_value} >/dev/null 2>&1 || true" >> "$cleanup"',
+        "  fi",
+        "done",
+        # disable_ipv6=0 keeps IPv6 on; accept_dad=1 lets the link-local finish DAD.
+        'sysctl -w "net.ipv6.conf.${target_interface}.disable_ipv6=0" >/dev/null 2>&1 || true',
+        'sysctl -w "net.ipv6.conf.${target_interface}.accept_dad=1" >/dev/null 2>&1 || true',
+        'ip link set dev "$target_interface" up || true',
+        # Give the kernel a moment to assign the link-local and finish DAD so it
+        # answers a solicitation for the address it owns.
+        'for _ in 1 2 3 4 5 6 7 8 9 10; do',
+        '  if ip -6 addr show dev "$target_interface" scope link | grep -q "inet6 fe80:"; then break; fi',
+        "  sleep 1",
+        "done",
+        'link_local="$(ip -6 addr show dev "$target_interface" scope link 2>/dev/null '
+        "| awk '/inet6 fe80:/ {print $2}' | head -1)\"",
+        'printf \'%s\\n\' "ip -6 neigh flush dev $target_interface || true" >> "$cleanup"',
+        'ip -6 neigh flush dev "$target_interface" 2>/dev/null || true',
+        'echo "ndp_link_local=${link_local:-none}"',
+        "echo ndp_kernel_state=configured",
+    ]
+    if wants_router:
+        lines.extend(
+            [
+                # Router Solicitation needs the target to emit Router
+                # Advertisements. Enable IPv6 forwarding so the kernel acts as a
+                # router; per-interface RA emission still depends on the kernel
+                # build, so this is best-effort and the case skips cleanly if no
+                # RA arrives.
+                'for key in forwarding; do',
+                '  sysctl_name="net.ipv6.conf.${target_interface}.${key}"',
+                '  before_path="$artifact_root/ndp-router-${key}.before"',
+                '  sysctl -n "$sysctl_name" > "$before_path" 2>/dev/null || true',
+                '  before_value=""',
+                '  if [ -s "$before_path" ]; then before_value="$(cat "$before_path")"; fi',
+                '  if [ -n "$before_value" ]; then',
+                '    printf \'%s\\n\' "sysctl -w ${sysctl_name}=${before_value} >/dev/null 2>&1 || true" >> "$cleanup"',
+                "  fi",
+                "done",
+                'sysctl -w "net.ipv6.conf.${target_interface}.forwarding=1" >/dev/null 2>&1 || true',
+                "echo ndp_router_state=configured",
+            ]
+        )
+    return lines
+
+
+# --------------------------------------------------------------------------- #
+# Live-path address rewrite (moved from cli._probe_plan_with_endpoint_addresses)
+# --------------------------------------------------------------------------- #
+#
+# NDP's rewrite is its own dedicated IPv6/link-local rewrite with a HARD
+# early-return: the legacy dispatcher matched the three NDP cases *before* the
+# shared transport-IPv4 overwrite and returned the fully-rewritten plan directly
+# (NDP rides ICMPv6 over IPv6, next header 58, with no IPv4 transport). The hook
+# reproduces that exactly -- it returns the rewritten plan and never falls into
+# the shared IPv4-layer tail. The dispatch passes ``source_ipv4`` / ``target_ipv4``
+# (it cannot know NDP ignores them); the hook accepts and discards them.
+
+
+def ndp_rewrite_endpoint_addresses(
+    plan: JSONObject,
+    *,
+    source_ipv4: str,
+    target_ipv4: str,
+    source_mac: str | None = None,
+    target_mac: str | None = None,
+    target_interface: str | None = None,
+    rewrite_source: str = "wire_endpoint_plan",
+) -> JSONObject:
+    """Rewrite an NDP probe plan onto the live lab-segment IPv6 addresses.
+
+    Moved verbatim from ``cli._ndp_plan_with_endpoint_addresses`` (and the NDP
+    early-return of ``cli._probe_plan_with_endpoint_addresses``). NDP is the IPv6
+    analog of ARP: the stimulus resolves a kernel-owned link-local address the way
+    an ARP who-has resolves an IPv4 address. The dry-run plan carries
+    deterministic documentation link-local addresses and documentation MACs; at
+    live time the real lab endpoint MACs are threaded in, so the rewrite derives
+    every address from the real MACs:
+
+    * The target address the Neighbor Solicitation resolves is the *target
+      kernel's own* modified-EUI-64 link-local address (RFC 4291 Appendix A),
+      which a bare Linux kernel always owns and auto-answers a Neighbor
+      Solicitation for (and defends on Duplicate Address Detection). No separate
+      address needs to be configured.
+    * The Neighbor Solicitation destination is the target's solicited-node
+      multicast group ``ff02::1:ffXX:XXXX`` (RFC 4291 section 2.7.1) derived from
+      that link-local address; the Rust adapter maps it to the ``33:33`` Ethernet
+      multicast destination (RFC 2464).
+    * The stimulus IPv6 source is the *stimulus* kernel's own EUI-64 link-local
+      address, except the Duplicate Address Detection case, whose source is the
+      unspecified address ``::`` with no Source Link-Layer Address option
+      (RFC 4861 section 4.3).
+    * The Router Solicitation case keeps the all-routers multicast destination
+      (``ff02::2``); a Router Advertisement only arrives from an RA-emitting
+      router target.
+
+    The Neighbor Advertisement validation contract is rewritten so it checks the
+    decoded reply against the real target's resolved link-local address and the
+    real target MAC (the Target Link-Layer Address option). ``source_mac`` /
+    ``target_mac`` are the real lab endpoint MACs; when a MAC is absent (dry-run
+    parity) the plan's existing documentation address survives untouched. NDP
+    rides ICMPv6 over IPv6 with no IPv4 transport, so ``source_ipv4`` /
+    ``target_ipv4`` (passed by the central dispatcher, which cannot know NDP
+    ignores them) are accepted and discarded, and this hook returns the
+    fully-rewritten plan *without* the shared IPv4-layer tail -- exactly the
+    legacy NDP early-return.
+    """
+
+    updated = dict(plan)
+    case_name = str(updated.get("case", ""))
+    is_dad = case_name == "ndp-duplicate-address-detection"
+    is_router = case_name == "ndp-router-solicitation"
+    resolved_source_mac = _string_or(source_mac, "")
+    resolved_target_mac = _string_or(target_mac, "")
+    resolved_target_interface = _string_or(target_interface, "")
+
+    # Without the real lab MACs (e.g. an early dry-run parity call) the plan keeps
+    # its deterministic documentation link-local addresses; nothing to rewrite.
+    if not resolved_source_mac and not resolved_target_mac:
+        return updated
+
+    # Resolve the kernel-owned link-local addresses from the real MACs. The target
+    # link-local is the address the solicitation resolves and the advertisement
+    # validates; the stimulus link-local is the solicitation source (unless DAD).
+    target_ipv6 = (
+        _eui64_link_local_ipv6(resolved_target_mac)
+        if resolved_target_mac
+        else _string_or(plan.get("target_ipv6"), "")
+    )
+    source_ipv6 = (
+        _eui64_link_local_ipv6(resolved_source_mac)
+        if resolved_source_mac
+        else _string_or(plan.get("source_ipv6"), "")
+    )
+    solicited_node = (
+        solicited_node_multicast(target_ipv6)
+        if target_ipv6
+        else _string_or(plan.get("solicited_node_multicast"), "")
+    )
+
+    if is_router:
+        # Router Solicitation: source is the stimulus link-local, destination stays
+        # the all-routers multicast group. The reply (an RA) is validated against
+        # the router target's link-local address and MAC.
+        if source_ipv6:
+            updated["source_ipv6"] = source_ipv6
+        updated["destination_ipv6"] = IPV6_ALL_ROUTERS_MULTICAST
+        updated["all_routers_multicast"] = IPV6_ALL_ROUTERS_MULTICAST
+        if resolved_source_mac:
+            updated["source_link_layer_addr"] = resolved_source_mac
+            updated["ethernet_source"] = resolved_source_mac
+        if target_ipv6:
+            updated["expected_reply_source_ipv6"] = target_ipv6
+        if source_ipv6:
+            updated["expected_reply_destination_ipv6"] = source_ipv6
+    else:
+        # Neighbor Solicitation / DAD: resolve the target link-local through its
+        # solicited-node multicast group. DAD sources from the unspecified address
+        # (::) and carries no Source Link-Layer Address option.
+        if is_dad:
+            updated["source_ipv6"] = IPV6_UNSPECIFIED
+        elif source_ipv6:
+            updated["source_ipv6"] = source_ipv6
+            updated["source_link_layer_addr"] = resolved_source_mac
+        if solicited_node:
+            updated["destination_ipv6"] = solicited_node
+            updated["solicited_node_multicast"] = solicited_node
+        if target_ipv6:
+            updated["target_ipv6"] = target_ipv6
+            updated["expected_reply_source_ipv6"] = target_ipv6
+        if is_dad:
+            updated["expected_reply_destination_ipv6"] = IPV6_ALL_NODES_MULTICAST
+        elif source_ipv6:
+            updated["expected_reply_destination_ipv6"] = source_ipv6
+        if resolved_source_mac:
+            # The stimulus Ethernet source is the sender's MAC even on DAD (where
+            # the IPv6 source is unspecified and no SLLA option is present).
+            updated["ethernet_source"] = resolved_source_mac
+
+    # The target service configures the kernel to answer/defend the resolved
+    # address. The kernel's EUI-64 link-local is owned automatically, but thread
+    # the resolved address, MAC, and interface through so setup can enable IPv6 /
+    # flush the neighbor cache on the real interface.
+    target_service = dict(
+        json_object(updated.get("target_service", {}), "probe_plan.target_service")
+    )
+    if target_ipv6 and not is_router:
+        target_service["target_ipv6"] = target_ipv6
+    if is_router and target_ipv6:
+        target_service["router_ipv6"] = target_ipv6
+    if resolved_target_mac:
+        if is_router:
+            target_service["router_hardware_addr"] = resolved_target_mac
+        else:
+            target_service["target_hardware_addr"] = resolved_target_mac
+    if resolved_target_interface:
+        target_service["interface"] = resolved_target_interface
+    updated["target_service"] = target_service
+
+    # Rewrite both validation contracts (the ARP-parity ``validation`` and the
+    # typed ``ndp_validation`` the Rust adapter reads) so the decoded reply is
+    # checked against the real resolved target address and MAC.
+    for key in ("validation", "ndp_validation"):
+        contract = dict(json_object(updated.get(key, {}), f"probe_plan.{key}"))
+        if not contract:
+            continue
+        if is_router:
+            if target_ipv6:
+                contract["source_ipv6"] = target_ipv6
+            if source_ipv6:
+                contract["destination_ipv6"] = source_ipv6
+            if resolved_target_mac:
+                contract["router_link_layer_addr"] = resolved_target_mac
+        else:
+            if target_ipv6:
+                contract["target_ipv6"] = target_ipv6
+                contract["source_ipv6"] = target_ipv6
+            if resolved_target_mac:
+                contract["target_link_layer_addr"] = resolved_target_mac
+            if is_dad:
+                contract["destination_ipv6"] = IPV6_ALL_NODES_MULTICAST
+            elif source_ipv6:
+                contract["destination_ipv6"] = source_ipv6
+        updated[key] = contract
+
+    live_rewrite: JSONObject = {
+        "source": rewrite_source,
+        "stimulus_ipv6": IPV6_UNSPECIFIED if is_dad else source_ipv6,
+        "target_ipv6": target_ipv6,
+        "solicited_node_multicast": solicited_node,
+    }
+    if resolved_source_mac:
+        live_rewrite["stimulus_mac"] = resolved_source_mac
+    if resolved_target_mac:
+        live_rewrite["target_mac"] = resolved_target_mac
+    updated["live_address_rewrite"] = live_rewrite
+    return updated
+
+
+# --------------------------------------------------------------------------- #
+# Failure-reason taxonomy (moved from cli._failure_reasons_for_case)
+# --------------------------------------------------------------------------- #
+
+
+def ndp_failure_reasons(case_name: str) -> list[str] | None:
+    """Return the ordered NDP failure-reason taxonomy for ``case_name``.
+
+    NDP never had a dedicated branch in ``cli._failure_reasons_for_case``: its
+    cases fell through to the shared default (no reasons). This hook preserves
+    that exactly by returning ``None`` for every case, so the central dispatcher
+    keeps falling through to ``default_failure_reasons()`` (the empty list).
+    """
+
+    return None
+
+
+# --------------------------------------------------------------------------- #
+# Lab-capability derivation (moved from lab.probe_capabilities_from_lab_capabilities)
+# --------------------------------------------------------------------------- #
+
+
+def ndp_lab_capabilities(substrate: Mapping[str, JSONValue]) -> Mapping[str, object]:
+    """Return the NDP plugin's derived probe-capability contribution.
+
+    Moved verbatim from the ``ipv6_multicast`` derivation in
+    ``lab.probe_capabilities_from_lab_capabilities``: IPv6 Neighbor Discovery
+    (the IPv6 analog of ARP) addresses solicitations to the solicited-node /
+    all-routers / all-nodes multicast groups rather than the broadcast address,
+    but it rides the same same-segment link-layer substrate ARP uses (a segment
+    that carries broadcast frames carries IPv6 multicast frames too). So
+    ``ipv6_multicast`` derives from link-layer send/capture plus broadcast and
+    NDP cases plan on providers that carry same-segment L2 traffic (QEMU,
+    VirtualBox) and skip cleanly on providers without an L2 segment (Hetzner).
+    The shared ``capability_names`` / ``capability_sources`` tables stay in
+    ``lab``; this hook contributes only the derived ``ipv6_multicast`` value,
+    merged byte-identically over the legacy value.
+    """
+
+    link_layer_send = capability(substrate, "link_layer_send")
+    link_layer_capture = capability(substrate, "link_layer_capture")
+    broadcast = capability(substrate, "broadcast")
+    ipv6_multicast = link_layer_send and link_layer_capture and broadcast
+    return {"ipv6_multicast": ipv6_multicast}
+
+
 register(
     ProtocolPlugin(
         name="ndp",
@@ -554,14 +942,23 @@ register(
         # behavior profile). Contribute nothing here.
         profile_counts={},
         stimulus_endpoint_cases=_NDP_STIMULUS_ENDPOINT_CASES,
-        # NDP's target-service / address-rewrite / failure-reason / lab-capability
-        # hooks land in step 26 (the special NDP early-return rewrite). They stay
-        # ``None`` here, so NDP cases keep flowing through the legacy target /
-        # rewrite / failure / capability paths until then.
-        target_service=None,
+        # NDP target-service / address-rewrite / failure-reason / lab-capability
+        # hooks (step 26, completing NDP). ``target_service`` contributes nothing
+        # to the central plan (NDP never had a setup-plan key) but, being
+        # non-``None``, diverts the NDP cases off the legacy target path (which
+        # ignored them anyway), keeping the emitted plan byte-identical.
+        # ``setup_script`` stays ``None``: NDP's kernel setup block needs the
+        # planned NDP plans, which the plugin ``setup_script`` hook does not
+        # receive, so ``target_services.target_service_setup_script`` renders the
+        # block by calling :func:`ndp_target_setup_lines` directly (the same way
+        # the legacy code rendered it, byte-identically). ``rewrite_endpoint_addresses``
+        # reproduces the dedicated NDP IPv6/link-local rewrite and its hard
+        # early-return; ``failure_reasons`` returns ``None`` (NDP fell through to
+        # the shared default); ``lab_capabilities`` contributes ``ipv6_multicast``.
+        target_service=ndp_target_service_contribution,
         setup_script=None,
-        rewrite_endpoint_addresses=None,
-        failure_reasons=None,
-        lab_capabilities=None,
+        rewrite_endpoint_addresses=ndp_rewrite_endpoint_addresses,
+        failure_reasons=ndp_failure_reasons,
+        lab_capabilities=ndp_lab_capabilities,
     )
 )
