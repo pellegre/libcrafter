@@ -1,6 +1,7 @@
 use std::net::Ipv4Addr;
 
 use crafter::prelude::*;
+use crafter::protocols::mqtt::MQTT_PUBLISH_QOS_1;
 
 fn mqtt_tcp_packet(source_port: u16, destination_port: u16) -> Packet {
     Ipv4::new()
@@ -67,5 +68,86 @@ fn prelude_exports_mqtt_packet_builder_surface() -> crafter::Result<()> {
 
     let mqtt = decoded.layer::<Mqtt>().expect("decoded mqtt layer");
     assert_eq!(mqtt.packet_type(), MqttControlPacketType::Pingreq);
+    Ok(())
+}
+
+#[test]
+fn stacked_mqtt_packets_decode_to_ordered_typed_layers() -> crafter::Result<()> {
+    let packet = Ipv4::new()
+        .src(Ipv4Addr::new(192, 0, 2, 50))
+        .dst(Ipv4Addr::new(198, 51, 100, 60))
+        / Tcp::new()
+            .sport(49_153)
+            .dport(MQTT_PORT)
+            .seq(0x1112_1314)
+            .ack(0x2122_2324)
+            .ack_segment()
+        / Mqtt::connect().client_id("cid").keep_alive(30)
+        / Mqtt::publish().topic("topic").payload(b"hello".to_vec())
+        / Mqtt::subscribe()
+            .packet_id(0x1234)
+            .subscribe_topic("topic", MQTT_PUBLISH_QOS_1);
+
+    let compiled = packet.compile()?;
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes())?;
+
+    let layer_names = decoded.iter().map(|layer| layer.name()).collect::<Vec<_>>();
+    assert_eq!(layer_names, ["Ipv4", "Tcp", "MQTT", "MQTT", "MQTT"]);
+
+    let mqtt_layers = decoded.layers::<Mqtt>().collect::<Vec<_>>();
+    assert_eq!(mqtt_layers.len(), 3);
+
+    assert_eq!(mqtt_layers[0].packet_type(), MqttControlPacketType::Connect);
+    assert_eq!(mqtt_layers[0].client_id_value(), Some("cid"));
+    assert_eq!(mqtt_layers[0].keep_alive_value(), Some(30));
+
+    assert_eq!(mqtt_layers[1].packet_type(), MqttControlPacketType::Publish);
+    assert_eq!(mqtt_layers[1].topic_value(), Some("topic"));
+    assert_eq!(mqtt_layers[1].payload_value(), Some(&b"hello"[..]));
+
+    assert_eq!(
+        mqtt_layers[2].packet_type(),
+        MqttControlPacketType::Subscribe
+    );
+    assert_eq!(mqtt_layers[2].packet_id_value(), Some(0x1234));
+    assert_eq!(
+        mqtt_layers[2].subscribe_topics_value(),
+        Some(&[("topic".to_string(), MQTT_PUBLISH_QOS_1)][..])
+    );
+
+    assert_eq!(decoded.compile()?.as_bytes(), compiled.as_bytes());
+    Ok(())
+}
+
+#[test]
+fn stacked_mqtt_decode_preserves_partial_tail_as_raw() -> crafter::Result<()> {
+    let mqtt_payload = [0xc0, 0x00, 0xd0, 0x00, 0xe0];
+    let packet = Ipv4::new()
+        .src(Ipv4Addr::new(192, 0, 2, 70))
+        .dst(Ipv4Addr::new(198, 51, 100, 80))
+        / Tcp::new()
+            .sport(49_154)
+            .dport(MQTT_PORT)
+            .seq(0x3132_3334)
+            .ack(0x4142_4344)
+            .ack_segment()
+        / Raw::from_bytes(mqtt_payload);
+
+    let compiled = packet.compile()?;
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes())?;
+
+    let layer_names = decoded.iter().map(|layer| layer.name()).collect::<Vec<_>>();
+    assert_eq!(layer_names, ["Ipv4", "Tcp", "MQTT", "MQTT", "Raw"]);
+
+    let mqtt_layers = decoded.layers::<Mqtt>().collect::<Vec<_>>();
+    assert_eq!(mqtt_layers.len(), 2);
+    assert_eq!(mqtt_layers[0].packet_type(), MqttControlPacketType::Pingreq);
+    assert_eq!(
+        mqtt_layers[1].packet_type(),
+        MqttControlPacketType::Pingresp
+    );
+
+    let raw = decoded.layer::<Raw>().expect("partial mqtt tail");
+    assert_eq!(raw.as_bytes(), &[0xe0]);
     Ok(())
 }
