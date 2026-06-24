@@ -60,6 +60,12 @@ const PUBLISH_QOS1: &[u8] = &[
     0x32, 0x0b, 0x00, 0x05, b't', b'o', b'p', b'i', b'c', 0x12, 0x34, 0xde, 0xad,
 ];
 
+const PUBACK_PACKET_ID: &[u8] = &[
+    // `.agents/docs/mqtt-manifest.md`: PUBACK fixed-header type 4 uses flags
+    // 0x0 and Remaining Length 2. Its variable header is one Packet Identifier.
+    0x40, 0x02, 0x12, 0x34,
+];
+
 fn mqtt_over_ipv4_tcp(payload: &[u8]) -> crafter::Result<Vec<u8>> {
     let packet = Ipv4::new()
         .src(Ipv4Addr::new(192, 0, 2, 10))
@@ -281,6 +287,42 @@ fn publish_build_decode_round_trip_with_retain_qos1() -> crafter::Result<()> {
     assert_eq!(mqtt.topic_value(), Some("alerts"));
     assert_eq!(mqtt.packet_id_value(), Some(9));
     assert_eq!(mqtt.payload_value(), Some(&[0xca, 0xfe][..]));
+    assert_eq!(decoded.compile()?.as_bytes(), compiled.as_bytes());
+    Ok(())
+}
+
+#[test]
+fn puback_golden_decodes_packet_id_and_recompiles() -> crafter::Result<()> {
+    let (bytes, decoded) = decode_ipv4_tcp_mqtt(PUBACK_PACKET_ID)?;
+    let mqtt = decoded.layer::<Mqtt>().expect("decoded MQTT PUBACK layer");
+
+    assert_eq!(mqtt.packet_type(), MqttControlPacketType::Puback);
+    assert_eq!(mqtt.flags_value(), 0x0);
+    assert_eq!(mqtt.remaining_length_value(), 2);
+    assert_eq!(mqtt.packet_id_value(), Some(0x1234));
+    assert_eq!(decoded.compile()?.as_bytes(), bytes.as_slice());
+    Ok(())
+}
+
+#[test]
+fn puback_build_decode_round_trip() -> crafter::Result<()> {
+    let packet = Ipv4::new()
+        .src(Ipv4Addr::new(198, 51, 100, 60))
+        .dst(Ipv4Addr::new(192, 0, 2, 50))
+        / Tcp::new()
+            .sport(MQTT_PORT)
+            .dport(49_154)
+            .seq(0x7172_7374)
+            .ack(0x8182_8384)
+            .ack_segment()
+        / Mqtt::puback().packet_id(9);
+
+    let compiled = packet.compile()?;
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes())?;
+    let mqtt = decoded.layer::<Mqtt>().expect("decoded MQTT PUBACK layer");
+
+    assert_eq!(mqtt.packet_type(), MqttControlPacketType::Puback);
+    assert_eq!(mqtt.packet_id_value(), Some(9));
     assert_eq!(decoded.compile()?.as_bytes(), compiled.as_bytes());
     Ok(())
 }

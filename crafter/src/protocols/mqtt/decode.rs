@@ -45,6 +45,9 @@ pub(crate) fn decode_mqtt(bytes: &[u8]) -> Result<(Mqtt, usize)> {
         MqttControlPacketType::Connect => decode_connect(flags, remaining_length, body)?,
         MqttControlPacketType::Connack => decode_connack(flags, remaining_length, body)?,
         MqttControlPacketType::Publish => decode_publish(flags, remaining_length, body)?,
+        MqttControlPacketType::Puback => {
+            decode_packet_identifier(packet_type, flags, remaining_length, body, "mqtt.puback")?
+        }
         _ => Mqtt::raw(packet_type, body.to_vec())
             .flags(flags)
             .remaining_length(remaining_length),
@@ -146,6 +149,32 @@ fn decode_publish(fixed_header_flags: u8, remaining_length: u32, body: &[u8]) ->
     ))
 }
 
+fn decode_packet_identifier(
+    packet_type: MqttControlPacketType,
+    fixed_header_flags: u8,
+    remaining_length: u32,
+    body: &[u8],
+    context: &'static str,
+) -> Result<Mqtt> {
+    if body.len() < 2 {
+        return Err(CrafterError::buffer_too_short(context, 2, body.len()));
+    }
+    if body.len() != 2 {
+        return Err(CrafterError::invalid_field_value(
+            "mqtt.packet_identifier.remaining_length",
+            "packet identifier control packet Remaining Length must be 2",
+        ));
+    }
+
+    let (packet_id, _consumed) = decode_u16(body)?;
+    Ok(Mqtt::packet_identifier_from_decoded_parts(
+        packet_type,
+        fixed_header_flags,
+        remaining_length,
+        packet_id,
+    ))
+}
+
 fn take_u8(bytes: &[u8], cursor: &mut usize, context: &'static str) -> Result<u8> {
     let Some(&value) = bytes.get(*cursor) else {
         return Err(CrafterError::buffer_too_short(
@@ -233,13 +262,13 @@ mod tests {
 
     #[test]
     fn decodes_single_raw_packet() {
-        let bytes = [0x40, 0x03, b'a', b'b', b'c'];
+        let bytes = [0xb0, 0x03, b'a', b'b', b'c'];
 
         let (mqtt, consumed) = decode_mqtt(&bytes).unwrap();
 
         assert_eq!(consumed, bytes.len());
         assert_eq!(mqtt.name(), "MQTT");
-        assert_eq!(mqtt.packet_type(), MqttControlPacketType::Puback);
+        assert_eq!(mqtt.packet_type(), MqttControlPacketType::Unsuback);
         assert_eq!(mqtt.flags_value(), 0x0);
         assert_eq!(mqtt.remaining_length_value(), 3);
         assert_eq!(mqtt.body(), b"abc");
@@ -290,6 +319,28 @@ mod tests {
                 assert!(reason.contains("must be 2"));
             }
             other => panic!("expected connack length error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn decodes_typed_puback_and_rejects_truncated_packet_identifier() {
+        let (mqtt, consumed) = decode_mqtt(&[0x40, 0x02, 0x12, 0x34]).unwrap();
+
+        assert_eq!(consumed, 4);
+        assert_eq!(mqtt.packet_type(), MqttControlPacketType::Puback);
+        assert_eq!(mqtt.packet_id_value(), Some(0x1234));
+
+        match decode_mqtt(&[0x40, 0x01, 0x12]) {
+            Err(CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            }) => {
+                assert_eq!(context, "mqtt.puback");
+                assert_eq!(required, 2);
+                assert_eq!(available, 1);
+            }
+            other => panic!("expected puback truncation error, got {other:?}"),
         }
     }
 }
