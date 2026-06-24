@@ -87,7 +87,10 @@ for index, line in enumerate(lines):
         continue
 
     if in_workspace_package and re.match(r"^\s*version\s*=", line):
-        match = re.match(r'^(\s*version\s*=\s*)"[^"]*"(.*)$', line)
+        # re.DOTALL keeps the trailing newline inside group(2); without it the
+        # `$` anchor stops before the line ending and the rewrite would fuse this
+        # line into the next one (version = "x"edition = "2021").
+        match = re.match(r'^(\s*version\s*=\s*)"[^"]*"(.*)$', line, re.DOTALL)
         if not match:
             raise SystemExit("workspace package version is not a quoted string")
         lines[index] = f'{match.group(1)}"{version}"{match.group(2)}'
@@ -122,7 +125,10 @@ pattern = rf"^##\s+{re.escape(version)}(?:\s|$|-)"
 if re.search(pattern, text, re.MULTILINE):
     raise SystemExit(f"CHANGELOG.md already contains version {version}")
 
-header = re.match(r"(?s)^(# .*\n\n)", text)
+# Match only the top-level title line plus its blank line. A DOTALL `.*` here is
+# greedy and backtracks to the LAST blank line in the file, which would splice
+# the new section into the previous release instead of above it.
+header = re.match(r"^(# [^\n]*\n\n)", text)
 if not header:
     raise SystemExit("CHANGELOG.md must start with a level-1 heading followed by a blank line")
 
