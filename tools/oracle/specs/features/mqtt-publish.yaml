@@ -1,0 +1,351 @@
+version: 1
+kind: feature
+name: mqtt_publish
+summary: >-
+  MQTT 3.1.1 PUBLISH control packets across QoS levels and retained delivery,
+  plus the PUBACK, PUBREC, PUBREL, and PUBCOMP QoS acknowledgement packet family
+  over cleartext TCP/1883.
+
+layers:
+  - mqtt
+  - tcp
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: publish_qos0
+    sources:
+      - .agents/docs/mqtt-manifest.md#PUBLISH-Flags-and-Packet-Identifier
+      - .agents/docs/mqtt-codepoints.md#Fixed-Header-Flag-Nibbles
+    message_type: publish
+    checks:
+      - fixed_header_type_is_publish
+      - qos_bits_are_zero
+      - packet_identifier_absent
+      - topic_length_prefix_preserved
+      - payload_bytes_preserved
+  - name: publish_qos1
+    sources:
+      - .agents/docs/mqtt-manifest.md#PUBLISH-Flags-and-Packet-Identifier
+      - .agents/docs/mqtt-codepoints.md#Fixed-Header-Flag-Nibbles
+    message_type: publish
+    checks:
+      - fixed_header_qos_bits_are_one
+      - packet_identifier_present
+      - payload_bytes_preserved
+  - name: publish_qos2
+    sources:
+      - .agents/docs/mqtt-manifest.md#PUBLISH-Flags-and-Packet-Identifier
+      - .agents/docs/mqtt-codepoints.md#Fixed-Header-Flag-Nibbles
+    message_type: publish
+    checks:
+      - fixed_header_qos_bits_are_two
+      - packet_identifier_present
+      - payload_bytes_preserved
+  - name: publish_retain
+    sources:
+      - .agents/docs/mqtt-manifest.md#PUBLISH-Flags-and-Packet-Identifier
+      - .agents/docs/mqtt-codepoints.md#Fixed-Header-Flag-Nibbles
+    message_type: publish
+    checks:
+      - retain_flag_set
+      - topic_length_prefix_preserved
+      - payload_bytes_preserved
+  - name: puback
+    sources:
+      - .agents/docs/mqtt-manifest.md#Control-Packet-Types-and-Flags
+      - .agents/docs/mqtt-codepoints.md#Fixed-Header-Flag-Nibbles
+    message_type: puback
+    checks:
+      - fixed_header_type_is_puback
+      - flags_are_zero
+      - remaining_length_is_two
+      - packet_identifier_present
+  - name: pubrec
+    sources:
+      - .agents/docs/mqtt-manifest.md#Control-Packet-Types-and-Flags
+      - .agents/docs/mqtt-codepoints.md#Fixed-Header-Flag-Nibbles
+    message_type: pubrec
+    checks:
+      - fixed_header_type_is_pubrec
+      - flags_are_zero
+      - remaining_length_is_two
+      - packet_identifier_present
+  - name: pubrel
+    sources:
+      - .agents/docs/mqtt-manifest.md#Control-Packet-Types-and-Flags
+      - .agents/docs/mqtt-codepoints.md#Fixed-Header-Flag-Nibbles
+    message_type: pubrel
+    checks:
+      - fixed_header_type_is_pubrel
+      - flags_are_0b0010
+      - remaining_length_is_two
+      - packet_identifier_present
+  - name: pubcomp
+    sources:
+      - .agents/docs/mqtt-manifest.md#Control-Packet-Types-and-Flags
+      - .agents/docs/mqtt-codepoints.md#Fixed-Header-Flag-Nibbles
+    message_type: pubcomp
+    checks:
+      - fixed_header_type_is_pubcomp
+      - flags_are_zero
+      - remaining_length_is_two
+      - packet_identifier_present
+
+coverage_cases:
+  - mqtt-publish-qos0
+  - mqtt-publish-qos1
+  - mqtt-publish-qos2
+  - mqtt-publish-retain
+  - mqtt-puback
+  - mqtt-pubrec
+  - mqtt-pubrel
+  - mqtt-pubcomp
+
+supported_cases:
+  - name: mqtt-publish-qos0
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+    roots:
+      - "l3:ipv4"
+      - "l3:ipv6"
+    fields:
+      mqtt:
+        packet_type: publish
+        flags: publish_qos0
+        qos: 0
+        topic: a/b
+        payload:
+          hex: "6869"
+    expected:
+      mqtt_hex: "30070003612f626869"
+      fixed_header_hex: "3007"
+      remaining_length: 7
+      normalized_fields:
+        packet_type: publish
+        flags: 0
+        remaining_length: 7
+        topic: a/b
+        qos: 0
+        dup: false
+        retain: false
+        payload:
+          hex: "6869"
+          length: 2
+  - name: mqtt-publish-qos1
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+    roots:
+      - "l3:ipv4"
+      - "l3:ipv6"
+    fields:
+      mqtt:
+        packet_type: publish
+        flags: publish_qos1
+        qos: 1
+        topic: topic
+        packet_id: 4660
+        payload:
+          hex: "dead"
+    expected:
+      mqtt_hex: "320b0005746f7069631234dead"
+      fixed_header_hex: "320b"
+      remaining_length: 11
+      normalized_fields:
+        packet_type: publish
+        flags: 2
+        remaining_length: 11
+        topic: topic
+        qos: 1
+        dup: false
+        retain: false
+        packet_id: 4660
+        payload:
+          hex: "dead"
+          length: 2
+  - name: mqtt-publish-qos2
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+    roots:
+      - "l3:ipv4"
+      - "l3:ipv6"
+    fields:
+      mqtt:
+        packet_type: publish
+        flags: publish_qos2
+        qos: 2
+        topic: qos/two
+        packet_id: 514
+        payload:
+          hex: "6f6b"
+    expected:
+      mqtt_hex: "340d0007716f732f74776f02026f6b"
+      fixed_header_hex: "340d"
+      remaining_length: 13
+      normalized_fields:
+        packet_type: publish
+        flags: 4
+        remaining_length: 13
+        topic: qos/two
+        qos: 2
+        dup: false
+        retain: false
+        packet_id: 514
+        payload:
+          hex: "6f6b"
+          length: 2
+  - name: mqtt-publish-retain
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+    roots:
+      - "l3:ipv4"
+      - "l3:ipv6"
+    fields:
+      mqtt:
+        packet_type: publish
+        flags:
+          - publish_retain
+        qos: 0
+        retain: true
+        topic: retained
+        payload:
+          hex: "6f6e"
+    expected:
+      mqtt_hex: "310c000872657461696e65646f6e"
+      fixed_header_hex: "310c"
+      remaining_length: 12
+      normalized_fields:
+        packet_type: publish
+        flags: 1
+        remaining_length: 12
+        topic: retained
+        qos: 0
+        dup: false
+        retain: true
+        payload:
+          hex: "6f6e"
+          length: 2
+  - name: mqtt-puback
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+    roots:
+      - "l3:ipv4"
+      - "l3:ipv6"
+    fields:
+      mqtt:
+        packet_type: puback
+        flags: default
+        packet_id: 4660
+    expected:
+      mqtt_hex: "40021234"
+      fixed_header_hex: "4002"
+      remaining_length: 2
+      normalized_fields:
+        packet_type: puback
+        flags: 0
+        remaining_length: 2
+        packet_id: 4660
+  - name: mqtt-pubrec
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+    roots:
+      - "l3:ipv4"
+      - "l3:ipv6"
+    fields:
+      mqtt:
+        packet_type: pubrec
+        flags: default
+        packet_id: 4660
+    expected:
+      mqtt_hex: "50021234"
+      fixed_header_hex: "5002"
+      remaining_length: 2
+      normalized_fields:
+        packet_type: pubrec
+        flags: 0
+        remaining_length: 2
+        packet_id: 4660
+  - name: mqtt-pubrel
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+    roots:
+      - "l3:ipv4"
+      - "l3:ipv6"
+    fields:
+      mqtt:
+        packet_type: pubrel
+        flags: pubrel_required
+        packet_id: 4660
+    expected:
+      mqtt_hex: "62021234"
+      fixed_header_hex: "6202"
+      remaining_length: 2
+      normalized_fields:
+        packet_type: pubrel
+        flags: 2
+        remaining_length: 2
+        packet_id: 4660
+  - name: mqtt-pubcomp
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+    roots:
+      - "l3:ipv4"
+      - "l3:ipv6"
+    fields:
+      mqtt:
+        packet_type: pubcomp
+        flags: default
+        packet_id: 4660
+    expected:
+      mqtt_hex: "70021234"
+      fixed_header_hex: "7002"
+      remaining_length: 2
+      normalized_fields:
+        packet_type: pubcomp
+        flags: 0
+        remaining_length: 2
+        packet_id: 4660
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - MQTT
+      - MQTTPublish
+      - MQTTPuback
+      - MQTTPubrec
+      - MQTTPubrel
+      - MQTTPubcomp
+    encode: true
+    decode: true
+    notes:
+      - Scapy contrib MQTT materialization and TCP/1883 payload normalization
+        support PUBLISH, PUBACK, PUBREC, PUBREL, and PUBCOMP byte-for-byte for
+        the declared fields.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    notes:
+      - The public crafter MQTT layer builds, decodes, and recompiles PUBLISH
+        and QoS acknowledgement packets while deriving Remaining Length unless
+        explicitly set.
