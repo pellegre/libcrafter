@@ -35,6 +35,7 @@ from .capabilities import (
     probe_capabilities_for_request,
     skip_class_counts,
 )
+from .protocols import registered_plugins as _registered_protocol_plugins
 from .lab import (
     STIMULUS_ROLE,
     TARGET_ROLE,
@@ -113,51 +114,23 @@ def wire_command_failed(command: Mapping[str, JSONValue]) -> bool:
 def plans_with_arp_sender_protocol_candidates(
     probe_plans: Sequence[JSONObject],
 ) -> list[JSONObject]:
-    """Make batched live ARP validation explicit about local sender IP choices.
+    """Fold each protocol plugin's live-plan candidate annotation over the plans.
 
-    Full-suite target setup batches every ARP case onto one VM. Some cases add
-    secondary IPv4 addresses to the target interface; Linux may use any matching
-    local address as the ARP reply sender protocol while still replying to the
-    planned querier SPA. The SPA-variation assertion is about the reply target
-    protocol, so keep the possible sender protocol values explicit in its plan.
+    The live path stays protocol-agnostic: every plugin that declares a
+    ``live_plan_candidates`` hook gets to transform the batched live probe-plan
+    sequence in registry order, each consuming the previous plugin's output. The
+    only protocol that participates today is ARP, whose hook
+    (``protocols.arp.arp_live_plan_candidates``) annotates the ``arp-spa-variation``
+    plan with the alternate sender-protocol addresses a batched target VM may use.
+    The public name is retained as the generic entrypoint for back-compatibility.
     """
 
-    target_sender_protocols: list[str] = []
-    for plan in probe_plans:
-        service = json_mapping(
-            plan.get("target_service", {}),
-            "probe_plan.target_service",
-        )
-        for key in (
-            "bind_ipv4",
-            "target_protocol_addr",
-            "alias_ipv4",
-            "alt_sender_ipv4",
-        ):
-            value = string_or(service.get(key), "")
-            if value:
-                target_sender_protocols.append(value)
-        destination = string_or(plan.get("destination_ipv4"), "")
-        if destination:
-            target_sender_protocols.append(destination)
-    target_sender_protocols = dedupe_strings(target_sender_protocols)
-
-    rewritten: list[JSONObject] = []
-    for plan in probe_plans:
-        if plan.get("case") != "arp-spa-variation":
-            rewritten.append(dict(plan))
+    plans = list(probe_plans)
+    for plugin in _registered_protocol_plugins():
+        if plugin.live_plan_candidates is None:
             continue
-        updated = dict(plan)
-        validation = dict(
-            json_mapping(updated.get("validation", {}), "probe_plan.validation")
-        )
-        canonical = string_or(validation.get("sender_protocol_addr"), "")
-        candidates = dedupe_strings([canonical, *target_sender_protocols])
-        if candidates:
-            validation["sender_protocol_addrs"] = candidates
-            updated["validation"] = validation
-        rewritten.append(updated)
-    return rewritten
+        plans = list(plugin.live_plan_candidates(plans))
+    return plans
 
 
 # --------------------------------------------------------------------------- #
