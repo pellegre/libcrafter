@@ -339,9 +339,9 @@ has no payload.
 ## MQTT 5.0 Reference-Backend Notes
 
 Step 77 must confirm reference-backend support for MQTT 5.0 properties, reason
-codes, subscription options, and AUTH in `scapy.contrib.mqtt`. Support is
-uncertain until checked against the installed Scapy version; unsupported 5.0
-features must be recorded as explicit oracle gaps rather than silently skipped.
+codes, subscription options, and AUTH. Support is uncertain until checked
+against the installed backend version; unsupported 5.0 features must be recorded
+as explicit oracle gaps rather than silently skipped.
 
 ## Still Deferred and Out of Scope
 

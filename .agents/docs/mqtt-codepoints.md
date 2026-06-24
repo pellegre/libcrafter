@@ -279,6 +279,6 @@ payload.
 
 ## MQTT 5.0 Reference-Backend Gap To Verify
 
-Step 77 must confirm whether the installed `scapy.contrib.mqtt` supports MQTT
-5.0 properties, reason codes, subscription options, and AUTH. Until then,
+Step 77 must confirm whether the installed reference backend supports MQTT 5.0
+properties, reason codes, subscription options, and AUTH. Until then,
 reference-backend support is uncertain and gaps must be recorded explicitly.
