@@ -1085,6 +1085,10 @@ session, including on failure.
 
 For user-facing BGP coverage, see [`docs/guide/bgp.md`](../../docs/guide/bgp.md).
 
+To add a new probe protocol (one auto-discovered plugin file plus its Rust
+adapter, with no central dispatcher edits), see
+[`tools/probe/docs/adding-a-protocol.md`](../../tools/probe/docs/adding-a-protocol.md).
+
 ## Build RIP / RIPng Messages
 
 RIP is a UDP application payload: RIPv1/RIPv2 ride over UDP/520
