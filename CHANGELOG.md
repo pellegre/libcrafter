@@ -39,6 +39,12 @@ workspace, released as one public crate: `crafter`.
   option 82, client identifiers, authentication, and leasequery fields), BGP
   (OPEN, UPDATE, KEEPALIVE, NOTIFICATION, ROUTE-REFRESH, path attributes, and
   capabilities), and raw payloads.
+- MQTT coverage for cleartext MQTT 3.1.1 and 5.0 over TCP/1883, including
+  typed builders and decode for baseline control packets, MQTT 5.0 properties
+  and reason codes, QoS flows, topic aliases, retained PUBLISH and last-will
+  helpers, stacked TCP-payload decode, the `mqtt_session` dry-run example, Scapy
+  oracle cross-validation, CI corpus/pcap parity, and a dry-run-default
+  `mqtt-smoke` probe/lab path.
 - IPsec coverage for ESP, AH, and IKEv2 (IKE header and payload set) with
   security-association and transform primitives.
 - Routing coverage for OSPFv2 (IP protocol 89) as a wire-level primitive: the
