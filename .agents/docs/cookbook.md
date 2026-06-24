@@ -63,6 +63,87 @@ and read identification, reserved/DF/MF flags, `fragment_offset`, and
 transforms when a tool needs fragmentation or reassembly; they keep bounded
 state, metadata, overlap policy, and timers out of the layer builder.
 
+## Build MQTT Sessions
+
+MQTT is an application layer over cleartext TCP/1883. Generated tools should
+build it as `Ipv4 / Tcp / Mqtt` or `Ipv6 / Tcp / Mqtt`, keep the default path
+offline, and reserve live broker sessions for an explicit `--peer` or probe/lab
+run. Use documentation IP addresses in examples and fixtures.
+
+```rust
+use crafter::prelude::*;
+use crafter::protocols::mqtt::{MqttProperty, MQTT_5_PROTOCOL_LEVEL, MQTT_PUBLISH_QOS_1};
+use std::net::Ipv4Addr;
+
+fn main() -> crafter::Result<()> {
+    let connect = Ipv4::new()
+        .src(Ipv4Addr::new(192, 0, 2, 10))
+        .dst(Ipv4Addr::new(198, 51, 100, 20))
+        .protocol(IPPROTO_TCP)
+        / Tcp::new().sport(49_194).dport(MQTT_PORT).ack_segment()
+        / Mqtt::connect()
+            .client_id("crafter-agent")
+            .keep_alive(30)
+            .clean_session(true);
+
+    let publish = Ipv4::new()
+        .src(Ipv4Addr::new(192, 0, 2, 10))
+        .dst(Ipv4Addr::new(198, 51, 100, 20))
+        .protocol(IPPROTO_TCP)
+        / Tcp::new().sport(49_194).dport(MQTT_PORT).ack_segment()
+        / Mqtt::publish()
+            .topic("crafter/demo/outbound")
+            .qos(MQTT_PUBLISH_QOS_1)
+            .packet_id(2)
+            .payload(b"hello from crafter".to_vec());
+
+    for packet in [connect, publish] {
+        let bytes = packet.compile()?;
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes())?;
+        println!("{}", decoded.summary());
+        println!("{}", decoded.show());
+    }
+
+    let mqtt5_connect = Mqtt::connect()
+        .version(MQTT_5_PROTOCOL_LEVEL)
+        .client_id("crafter-agent-v5")
+        .connect_property(MqttProperty::SessionExpiryInterval(60))
+        .connect_property(MqttProperty::ReceiveMaximum(10));
+    println!("{}", mqtt5_connect.summary());
+
+    Ok(())
+}
+```
+
+For standalone MQTT payloads that do not carry a version marker, choose the
+default version explicitly. MQTT 3.1.1 uses protocol level 4; MQTT 5.0 uses
+protocol level 5:
+
+```rust
+use crafter::prelude::*;
+
+let reply = [0x20, 0x03, 0x00, 0x00, 0x00]; // MQTT 5 CONNACK success + empty props
+let decoded = Mqtt::decode_payload_with_default_version(&reply, MQTT_5_PROTOCOL_LEVEL)?;
+let mqtt = decoded.layer::<Mqtt>().expect("MQTT layer");
+assert_eq!(mqtt.reason_code_value(), Some(0));
+```
+
+Keep the first validation pass offline. The example prints packet plans without
+opening a socket unless `--peer` is supplied, the oracle compares generated MQTT
+corpora against the reference backend, and the probe profile plans a controlled
+Mosquitto exchange without starting a broker in local dry-run mode:
+
+```sh
+cargo run -p crafter --example mqtt_session
+cargo run -p crafter --example mqtt_session -- --v5
+tools/oracle/run offline --backend scapy --family mqtt --profile ci --seed 5 --count 30 --out target/oracle/mqtt-agent-offline
+tools/probe/run --provider local-dry-run --dry-run --profile mqtt-smoke --seed 1
+```
+
+Live MQTT runs must stay opt-in: use `mqtt_session --peer IP:PORT` only against
+an authorized broker, or use a provider-backed probe/lab session that provisions
+the broker, collects artifacts under `target/`, and tears the endpoint down.
+
 ## Build IGMP
 
 IGMP is an IPv4 packet layer. Generated tools should build it as `Ipv4 / Igmp`
