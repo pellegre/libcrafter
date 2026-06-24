@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.1 - 2026-06-24
+
+### Changed
+
+- Add cleartext MQTT 3.1.1 and 5.0 coverage over TCP/1883: typed builders and decode for the baseline control packets, MQTT 5.0 properties and reason codes, QoS flows, topic aliases, retained PUBLISH and last-will helpers, stacked TCP-payload decode, the dry-run-default mqtt_session example, oracle cross-validation, CI corpus/pcap parity, and a dry-run-default mqtt-smoke probe path.
+- Extend the feature-gated whad dongle backend with dry-run-default IEEE 802.15.4 dot15d4 sniff and inject workflows.
+
 ## 0.3.0 - Packet-Level Network Interaction
 
 This is the first public release of the Rust packet-level network interaction
