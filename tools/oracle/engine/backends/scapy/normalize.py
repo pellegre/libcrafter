@@ -977,7 +977,7 @@ def _mqtt_body_fields(packet_type: int, flags: int, body: bytes) -> JSONObject |
         if len(body) < 2:
             return None
         properties, cursor = _mqtt_read_properties(body, 2)
-        if properties is not None and cursor <= len(body):
+        if properties and cursor <= len(body):
             return {
                 "version": 5,
                 "packet_id": int.from_bytes(body[:2], "big"),
