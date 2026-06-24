@@ -85,6 +85,25 @@ pub const MQTT_FLAGS_PINGRESP: u8 = 0x0;
 pub const MQTT_FLAGS_DISCONNECT: u8 = 0x0;
 
 // ---------------------------------------------------------------------------
+// PUBLISH fixed-header flags (OASIS MQTT 3.1.1 sec. 3.3.1)
+// ---------------------------------------------------------------------------
+
+/// PUBLISH RETAIN flag bit. OASIS MQTT 3.1.1 sec. 3.3.1.3.
+pub const MQTT_PUBLISH_FLAG_RETAIN: u8 = 0x01;
+/// PUBLISH QoS two-bit field mask. OASIS MQTT 3.1.1 sec. 3.3.1.2.
+pub const MQTT_PUBLISH_FLAG_QOS_MASK: u8 = 0x06;
+/// PUBLISH DUP flag bit. OASIS MQTT 3.1.1 sec. 3.3.1.1.
+pub const MQTT_PUBLISH_FLAG_DUP: u8 = 0x08;
+/// PUBLISH QoS 0, at most once. OASIS MQTT 3.1.1 sec. 3.3.1.2 Table 3.2.
+pub const MQTT_PUBLISH_QOS_0: u8 = 0;
+/// PUBLISH QoS 1, at least once. OASIS MQTT 3.1.1 sec. 3.3.1.2 Table 3.2.
+pub const MQTT_PUBLISH_QOS_1: u8 = 1;
+/// PUBLISH QoS 2, exactly once. OASIS MQTT 3.1.1 sec. 3.3.1.2 Table 3.2.
+pub const MQTT_PUBLISH_QOS_2: u8 = 2;
+/// Reserved PUBLISH QoS value. OASIS MQTT 3.1.1 sec. 3.3.1.2 Table 3.2.
+pub const MQTT_PUBLISH_QOS_RESERVED: u8 = 3;
+
+// ---------------------------------------------------------------------------
 // CONNECT variable-header flags (OASIS MQTT 3.1.1 sec. 3.1.2.3)
 // ---------------------------------------------------------------------------
 

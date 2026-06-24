@@ -9,6 +9,7 @@ use super::constants::{
     MQTT_311_PROTOCOL_LEVEL, MQTT_311_PROTOCOL_NAME, MQTT_CONNACK_ACCEPTED,
     MQTT_CONNECT_FLAG_CLEAN_SESSION, MQTT_CONNECT_FLAG_PASSWORD, MQTT_CONNECT_FLAG_USER_NAME,
     MQTT_CONNECT_FLAG_WILL, MQTT_CONNECT_FLAG_WILL_QOS_MASK, MQTT_CONNECT_FLAG_WILL_RETAIN,
+    MQTT_PUBLISH_FLAG_DUP, MQTT_PUBLISH_FLAG_QOS_MASK, MQTT_PUBLISH_FLAG_RETAIN,
 };
 use super::header::MqttControlPacketType;
 use super::varint::encode_remaining_length;
@@ -17,6 +18,7 @@ use super::wire::{encode_binary, encode_string, encode_u16};
 const DEFAULT_CONNECT_KEEP_ALIVE: u16 = 60;
 const CONNECT_WILL_QOS_SHIFT: u8 = 3;
 const CONNACK_FLAG_SESSION_PRESENT: u8 = 0x01;
+const PUBLISH_QOS_SHIFT: u8 = 1;
 
 /// MQTT CONNECT variable header and mandatory payload fields.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -264,28 +266,81 @@ impl MqttConnack {
     }
 }
 
+/// MQTT PUBLISH variable header and payload fields.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MqttPublish {
+    topic: Field<String>,
+    packet_id: Field<u16>,
+    payload: Field<Vec<u8>>,
+}
+
+impl MqttPublish {
+    fn new() -> Self {
+        Self {
+            topic: Field::defaulted(String::new()),
+            packet_id: Field::unset(),
+            payload: Field::defaulted(Vec::new()),
+        }
+    }
+
+    fn topic(&self) -> &str {
+        self.topic.value().map(String::as_str).unwrap_or("")
+    }
+
+    fn packet_id(&self) -> u16 {
+        self.packet_id.value().copied().unwrap_or(0)
+    }
+
+    fn payload(&self) -> &[u8] {
+        self.payload.value().map(Vec::as_slice).unwrap_or(&[])
+    }
+
+    fn encoded_len(&self, flags: u8) -> usize {
+        let mut len = 2 + self.topic().len() + self.payload().len();
+        if publish_qos(flags) != 0 {
+            len += 2;
+        }
+        len
+    }
+
+    fn write_body(&self, out: &mut Vec<u8>, flags: u8) -> Result<()> {
+        encode_string(self.topic(), out)?;
+        // Packet Identifier presence follows the effective QoS bits. Values
+        // such as 0 are still emitted when set or defaulted for malformed
+        // packet construction; validation belongs above the packet primitive.
+        if publish_qos(flags) != 0 {
+            encode_u16(self.packet_id(), out);
+        }
+        out.extend_from_slice(self.payload());
+        Ok(())
+    }
+}
+
 /// MQTT control packet body bytes after the fixed header.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum MqttBody {
     Raw(Vec<u8>),
     Connect(MqttConnect),
     Connack(MqttConnack),
+    Publish(MqttPublish),
 }
 
 impl MqttBody {
-    fn encoded_len(&self) -> usize {
+    fn encoded_len(&self, flags: u8) -> usize {
         match self {
             Self::Raw(body) => body.len(),
             Self::Connect(connect) => connect.encoded_len(),
             Self::Connack(connack) => connack.encoded_len(),
+            Self::Publish(publish) => publish.encoded_len(flags),
         }
     }
 
-    fn write_body(&self, out: &mut Vec<u8>) -> Result<()> {
+    fn write_body(&self, out: &mut Vec<u8>, flags: u8) -> Result<()> {
         match self {
             Self::Raw(body) => out.extend_from_slice(body),
             Self::Connect(connect) => connect.write_body(out)?,
             Self::Connack(connack) => connack.write_body(out),
+            Self::Publish(publish) => publish.write_body(out, flags)?,
         }
         Ok(())
     }
@@ -293,7 +348,7 @@ impl MqttBody {
     fn raw_bytes(&self) -> &[u8] {
         match self {
             Self::Raw(body) => body,
-            Self::Connect(_) | Self::Connack(_) => &[],
+            Self::Connect(_) | Self::Connack(_) | Self::Publish(_) => &[],
         }
     }
 }
@@ -335,6 +390,16 @@ impl Mqtt {
             flags: Field::defaulted(MqttControlPacketType::Connack.default_flags()),
             remaining_length: Field::unset(),
             body: MqttBody::Connack(MqttConnack::new()),
+        }
+    }
+
+    /// Build an MQTT PUBLISH packet with QoS 0 defaults.
+    pub fn publish() -> Self {
+        Self {
+            packet_type: MqttControlPacketType::Publish,
+            flags: Field::defaulted(MqttControlPacketType::Publish.default_flags()),
+            remaining_length: Field::unset(),
+            body: MqttBody::Publish(MqttPublish::new()),
         }
     }
 
@@ -494,6 +559,56 @@ impl Mqtt {
         self
     }
 
+    /// Set the PUBLISH topic name.
+    pub fn topic(mut self, topic: impl Into<String>) -> Self {
+        if let MqttBody::Publish(publish) = &mut self.body {
+            publish.topic.set_user(topic.into());
+        }
+        self
+    }
+
+    /// Set the PUBLISH QoS bits.
+    pub fn qos(mut self, qos: u8) -> Self {
+        if matches!(&self.body, MqttBody::Publish(_)) {
+            let mut flags = self.flags_value() & !MQTT_PUBLISH_FLAG_QOS_MASK;
+            flags |= (qos << PUBLISH_QOS_SHIFT) & MQTT_PUBLISH_FLAG_QOS_MASK;
+            self.flags.set_user(flags);
+        }
+        self
+    }
+
+    /// Set or clear the PUBLISH DUP bit.
+    pub fn dup(mut self, dup: bool) -> Self {
+        if matches!(&self.body, MqttBody::Publish(_)) {
+            self.set_publish_flag(MQTT_PUBLISH_FLAG_DUP, dup);
+        }
+        self
+    }
+
+    /// Set or clear the PUBLISH RETAIN bit.
+    pub fn retain(mut self, retain: bool) -> Self {
+        if matches!(&self.body, MqttBody::Publish(_)) {
+            self.set_publish_flag(MQTT_PUBLISH_FLAG_RETAIN, retain);
+        }
+        self
+    }
+
+    /// Set the PUBLISH Packet Identifier.
+    pub fn packet_id(mut self, packet_id: u16) -> Self {
+        if let MqttBody::Publish(publish) = &mut self.body {
+            publish.packet_id.set_user(packet_id);
+        }
+        self
+    }
+
+    /// Set the PUBLISH application payload.
+    pub fn payload(mut self, payload: impl Into<Vec<u8>>) -> Self {
+        if let MqttBody::Publish(publish) = &mut self.body {
+            publish.payload.set_user(payload.into());
+        }
+        self
+    }
+
     /// Set or clear the CONNACK Session Present flag.
     pub fn session_present(mut self, session_present: bool) -> Self {
         if let MqttBody::Connack(connack) = &mut self.body {
@@ -526,10 +641,9 @@ impl Mqtt {
 
     /// Effective Remaining Length value.
     pub fn remaining_length_value(&self) -> u32 {
-        self.remaining_length
-            .value()
-            .copied()
-            .unwrap_or_else(|| u32::try_from(self.body.encoded_len()).unwrap_or(u32::MAX))
+        self.remaining_length.value().copied().unwrap_or_else(|| {
+            u32::try_from(self.body.encoded_len(self.flags_value())).unwrap_or(u32::MAX)
+        })
     }
 
     /// Explicit Remaining Length value, if one was set.
@@ -601,15 +715,25 @@ impl Mqtt {
     fn connect_body(&self) -> Option<&MqttConnect> {
         match &self.body {
             MqttBody::Connect(connect) => Some(connect),
-            MqttBody::Raw(_) | MqttBody::Connack(_) => None,
+            MqttBody::Raw(_) | MqttBody::Connack(_) | MqttBody::Publish(_) => None,
         }
     }
 
     fn connack_body(&self) -> Option<&MqttConnack> {
         match &self.body {
             MqttBody::Connack(connack) => Some(connack),
-            MqttBody::Raw(_) | MqttBody::Connect(_) => None,
+            MqttBody::Raw(_) | MqttBody::Connect(_) | MqttBody::Publish(_) => None,
         }
+    }
+
+    fn set_publish_flag(&mut self, mask: u8, enabled: bool) {
+        let mut flags = self.flags_value();
+        if enabled {
+            flags |= mask;
+        } else {
+            flags &= !mask;
+        }
+        self.flags.set_user(flags);
     }
 
     fn first_byte(&self) -> u8 {
@@ -617,8 +741,9 @@ impl Mqtt {
     }
 
     fn encoded_body(&self) -> Result<Vec<u8>> {
-        let mut body = Vec::with_capacity(self.body.encoded_len());
-        self.body.write_body(&mut body)?;
+        let flags = self.flags_value();
+        let mut body = Vec::with_capacity(self.body.encoded_len(flags));
+        self.body.write_body(&mut body, flags)?;
         Ok(body)
     }
 }
@@ -633,7 +758,7 @@ impl Layer for Mqtt {
             "MQTT {} len={} body={} bytes",
             packet_type_name(self.packet_type),
             self.remaining_length_value(),
-            self.body.encoded_len()
+            self.body.encoded_len(self.flags_value())
         )
     }
 
@@ -645,12 +770,16 @@ impl Layer for Mqtt {
                 "remaining_length",
                 self.remaining_length_value().to_string(),
             ),
-            ("body_length", self.body.encoded_len().to_string()),
+            (
+                "body_length",
+                self.body.encoded_len(self.flags_value()).to_string(),
+            ),
         ]
     }
 
     fn encoded_len(&self) -> usize {
-        1 + remaining_length_encoded_len(self.remaining_length_value()) + self.body.encoded_len()
+        1 + remaining_length_encoded_len(self.remaining_length_value())
+            + self.body.encoded_len(self.flags_value())
     }
 
     fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
@@ -671,6 +800,10 @@ impl Layer for Mqtt {
 }
 
 impl_layer_div!(Mqtt);
+
+fn publish_qos(flags: u8) -> u8 {
+    (flags & MQTT_PUBLISH_FLAG_QOS_MASK) >> PUBLISH_QOS_SHIFT
+}
 
 fn remaining_length_encoded_len(value: u32) -> usize {
     match value {
@@ -720,6 +853,53 @@ mod tests {
         assert_eq!(bytes[mqtt_offset], 0x30);
         assert_eq!(bytes[mqtt_offset + 1], 0x03);
         assert_eq!(&bytes[mqtt_offset + 2..mqtt_offset + 5], b"abc");
+    }
+
+    #[test]
+    fn publish_qos0_omits_packet_identifier() {
+        let bytes = mqtt_bytes(Mqtt::publish().topic("a/b").payload(b"hi".to_vec()));
+
+        let expected = vec![0x30, 0x07, 0x00, 0x03, b'a', b'/', b'b', b'h', b'i'];
+        assert_eq!(bytes, expected);
+    }
+
+    #[test]
+    fn publish_qos1_includes_packet_identifier() {
+        let bytes = mqtt_bytes(
+            Mqtt::publish()
+                .topic("topic")
+                .qos(1)
+                .packet_id(0x1234)
+                .payload(vec![0xde, 0xad]),
+        );
+
+        let expected = vec![
+            0x32, 0x0b, 0x00, 0x05, b't', b'o', b'p', b'i', b'c', 0x12, 0x34, 0xde, 0xad,
+        ];
+        assert_eq!(bytes, expected);
+    }
+
+    #[test]
+    fn publish_dup_qos2_and_retain_bits_land_in_fixed_header() {
+        let bytes = mqtt_bytes(
+            Mqtt::publish()
+                .topic("x")
+                .qos(2)
+                .dup(true)
+                .retain(true)
+                .packet_id(7),
+        );
+
+        let expected = vec![0x3d, 0x05, 0x00, 0x01, b'x', 0x00, 0x07];
+        assert_eq!(bytes, expected);
+    }
+
+    #[test]
+    fn publish_explicit_packet_identifier_value_is_preserved() {
+        let bytes = mqtt_bytes(Mqtt::publish().topic("x").qos(1).packet_id(0));
+
+        let expected = vec![0x32, 0x05, 0x00, 0x01, b'x', 0x00, 0x00];
+        assert_eq!(bytes, expected);
     }
 
     #[test]
