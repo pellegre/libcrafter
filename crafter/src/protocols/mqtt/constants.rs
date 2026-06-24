@@ -90,6 +90,16 @@ pub const MQTT_FLAGS_DISCONNECT: u8 = 0x0;
 
 /// CONNECT Clean Session flag bit. OASIS MQTT 3.1.1 sec. 3.1.2.4.
 pub const MQTT_CONNECT_FLAG_CLEAN_SESSION: u8 = 0x02;
+/// CONNECT Will Flag bit. OASIS MQTT 3.1.1 sec. 3.1.2.5.
+pub const MQTT_CONNECT_FLAG_WILL: u8 = 0x04;
+/// CONNECT Will QoS two-bit field mask. OASIS MQTT 3.1.1 sec. 3.1.2.6.
+pub const MQTT_CONNECT_FLAG_WILL_QOS_MASK: u8 = 0x18;
+/// CONNECT Will Retain flag bit. OASIS MQTT 3.1.1 sec. 3.1.2.7.
+pub const MQTT_CONNECT_FLAG_WILL_RETAIN: u8 = 0x20;
+/// CONNECT Password flag bit. OASIS MQTT 3.1.1 sec. 3.1.2.9.
+pub const MQTT_CONNECT_FLAG_PASSWORD: u8 = 0x40;
+/// CONNECT User Name flag bit. OASIS MQTT 3.1.1 sec. 3.1.2.8.
+pub const MQTT_CONNECT_FLAG_USER_NAME: u8 = 0x80;
 
 // ---------------------------------------------------------------------------
 // CONNACK return codes (OASIS MQTT 3.1.1 sec. 3.2.2.3 Table 3.1)
