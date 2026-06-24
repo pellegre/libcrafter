@@ -63,6 +63,7 @@ pub(crate) fn decode_mqtt(bytes: &[u8]) -> Result<(Mqtt, usize)> {
         }
         MqttControlPacketType::Subscribe => decode_subscribe(flags, remaining_length, body)?,
         MqttControlPacketType::Suback => decode_suback(flags, remaining_length, body)?,
+        MqttControlPacketType::Unsubscribe => decode_unsubscribe(flags, remaining_length, body)?,
         _ => Mqtt::raw(packet_type, body.to_vec())
             .flags(flags)
             .remaining_length(remaining_length),
@@ -208,6 +209,37 @@ fn decode_suback(fixed_header_flags: u8, remaining_length: u32, body: &[u8]) -> 
         remaining_length,
         packet_id,
         return_codes,
+    ))
+}
+
+fn decode_unsubscribe(fixed_header_flags: u8, remaining_length: u32, body: &[u8]) -> Result<Mqtt> {
+    let mut cursor = 0;
+
+    if body.len() < 2 {
+        return Err(CrafterError::buffer_too_short(
+            "mqtt.unsubscribe.packet_identifier",
+            2,
+            body.len(),
+        ));
+    }
+    let packet_id = take_u16(body, &mut cursor)?;
+    let mut topics = Vec::new();
+
+    while cursor < body.len() {
+        let filter = take_string_with_context(
+            body,
+            &mut cursor,
+            "mqtt.unsubscribe.topic_filter.length",
+            "mqtt.unsubscribe.topic_filter",
+        )?;
+        topics.push(filter);
+    }
+
+    Ok(Mqtt::unsubscribe_from_decoded_parts(
+        fixed_header_flags,
+        remaining_length,
+        packet_id,
+        topics,
     ))
 }
 

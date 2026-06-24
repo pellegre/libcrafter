@@ -125,6 +125,17 @@ const SUBACK_QOS_AND_FAILURE: &[u8] = &[
     MQTT_SUBACK_FAILURE,
 ];
 
+const UNSUBSCRIBE_TWO_FILTERS: &[u8] = &[
+    // `.agents/docs/mqtt-manifest.md`: UNSUBSCRIBE fixed-header type 10 uses
+    // the specification-fixed low-nibble flags value 0b0010, so the first byte
+    // is 0xa2. Remaining Length covers packet id plus topic filters.
+    0xa2, 0x0c, // Manifest UNSUBSCRIBE variable header: one two-byte Packet Identifier.
+    0x12, 0x34,
+    // Manifest UNSUBSCRIBE payload: one or more MQTT UTF-8 topic filters, with
+    // no requested-QoS byte.
+    0x00, 0x03, b'a', b'/', b'b', 0x00, 0x03, b'c', b'/', b'd',
+];
+
 fn mqtt_over_ipv4_tcp(payload: &[u8]) -> crafter::Result<Vec<u8>> {
     let packet = Ipv4::new()
         .src(Ipv4Addr::new(192, 0, 2, 10))
@@ -650,5 +661,76 @@ fn suback_build_decode_round_trip() -> crafter::Result<()> {
         Some(&[MQTT_SUBACK_MAX_QOS_0, MQTT_SUBACK_FAILURE][..])
     );
     assert_eq!(decoded.compile()?.as_bytes(), compiled.as_bytes());
+    Ok(())
+}
+
+#[test]
+fn unsubscribe_golden_decodes_filters_and_recompiles() -> crafter::Result<()> {
+    let (bytes, decoded) = decode_ipv4_tcp_mqtt(UNSUBSCRIBE_TWO_FILTERS)?;
+    let mqtt = decoded
+        .layer::<Mqtt>()
+        .expect("decoded MQTT UNSUBSCRIBE layer");
+
+    assert_eq!(mqtt.packet_type(), MqttControlPacketType::Unsubscribe);
+    assert_eq!(mqtt.flags_value(), 0x2);
+    assert_eq!(mqtt.remaining_length_value(), 12);
+    assert_eq!(mqtt.packet_id_value(), Some(0x1234));
+    assert_eq!(
+        mqtt.unsubscribe_topics_value(),
+        Some(&["a/b".to_string(), "c/d".to_string()][..])
+    );
+    assert_eq!(decoded.compile()?.as_bytes(), bytes.as_slice());
+    Ok(())
+}
+
+#[test]
+fn unsubscribe_build_decode_round_trip() -> crafter::Result<()> {
+    let packet = Ipv4::new()
+        .src(Ipv4Addr::new(192, 0, 2, 65))
+        .dst(Ipv4Addr::new(198, 51, 100, 75))
+        / Tcp::new()
+            .sport(49_159)
+            .dport(MQTT_PORT)
+            .seq(0x3132_3334)
+            .ack(0x4142_4344)
+            .ack_segment()
+        / Mqtt::unsubscribe()
+            .packet_id(10)
+            .topic("alerts/critical")
+            .topic("status/+");
+
+    let compiled = packet.compile()?;
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes())?;
+    let mqtt = decoded
+        .layer::<Mqtt>()
+        .expect("decoded MQTT UNSUBSCRIBE layer");
+
+    assert_eq!(mqtt.packet_type(), MqttControlPacketType::Unsubscribe);
+    assert_eq!(mqtt.flags_value(), 0x2);
+    assert_eq!(mqtt.packet_id_value(), Some(10));
+    assert_eq!(
+        mqtt.unsubscribe_topics_value(),
+        Some(&["alerts/critical".to_string(), "status/+".to_string()][..])
+    );
+    assert_eq!(decoded.compile()?.as_bytes(), compiled.as_bytes());
+    Ok(())
+}
+
+#[test]
+fn unsubscribe_decode_error_covers_filter_overrun() -> crafter::Result<()> {
+    let overrun = mqtt_over_ipv4_tcp(&[0xa2, 0x07, 0x12, 0x34, 0x00, 0x05, b'a', b'/', b'b'])?;
+    match Packet::decode_from_l3(NetworkLayer::Ipv4, &overrun) {
+        Err(crafter::CrafterError::BufferTooShort {
+            context,
+            required,
+            available,
+        }) => {
+            assert_eq!(context, "mqtt.unsubscribe.topic_filter");
+            assert_eq!(required, 9);
+            assert_eq!(available, 7);
+        }
+        other => panic!("expected unsubscribe filter overrun error, got {other:?}"),
+    }
+
     Ok(())
 }
