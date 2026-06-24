@@ -3,16 +3,16 @@
 use crate::error::{CrafterError, Result};
 
 use super::constants::{
-    MQTT_FLAGS_CONNACK, MQTT_FLAGS_CONNECT, MQTT_FLAGS_DISCONNECT, MQTT_FLAGS_PINGREQ,
-    MQTT_FLAGS_PINGRESP, MQTT_FLAGS_PUBACK, MQTT_FLAGS_PUBCOMP, MQTT_FLAGS_PUBREC,
-    MQTT_FLAGS_PUBREL, MQTT_FLAGS_SUBACK, MQTT_FLAGS_SUBSCRIBE, MQTT_FLAGS_UNSUBACK,
-    MQTT_FLAGS_UNSUBSCRIBE, MQTT_TYPE_CONNACK, MQTT_TYPE_CONNECT, MQTT_TYPE_DISCONNECT,
-    MQTT_TYPE_PINGREQ, MQTT_TYPE_PINGRESP, MQTT_TYPE_PUBACK, MQTT_TYPE_PUBCOMP, MQTT_TYPE_PUBLISH,
-    MQTT_TYPE_PUBREC, MQTT_TYPE_PUBREL, MQTT_TYPE_SUBACK, MQTT_TYPE_SUBSCRIBE, MQTT_TYPE_UNSUBACK,
-    MQTT_TYPE_UNSUBSCRIBE,
+    MQTT_FLAGS_AUTH, MQTT_FLAGS_CONNACK, MQTT_FLAGS_CONNECT, MQTT_FLAGS_DISCONNECT,
+    MQTT_FLAGS_PINGREQ, MQTT_FLAGS_PINGRESP, MQTT_FLAGS_PUBACK, MQTT_FLAGS_PUBCOMP,
+    MQTT_FLAGS_PUBREC, MQTT_FLAGS_PUBREL, MQTT_FLAGS_SUBACK, MQTT_FLAGS_SUBSCRIBE,
+    MQTT_FLAGS_UNSUBACK, MQTT_FLAGS_UNSUBSCRIBE, MQTT_TYPE_AUTH, MQTT_TYPE_CONNACK,
+    MQTT_TYPE_CONNECT, MQTT_TYPE_DISCONNECT, MQTT_TYPE_PINGREQ, MQTT_TYPE_PINGRESP,
+    MQTT_TYPE_PUBACK, MQTT_TYPE_PUBCOMP, MQTT_TYPE_PUBLISH, MQTT_TYPE_PUBREC, MQTT_TYPE_PUBREL,
+    MQTT_TYPE_SUBACK, MQTT_TYPE_SUBSCRIBE, MQTT_TYPE_UNSUBACK, MQTT_TYPE_UNSUBSCRIBE,
 };
 
-/// MQTT 3.1.1 fixed-header control packet type.
+/// MQTT fixed-header control packet type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MqttControlPacketType {
     /// Client request to connect to a server.
@@ -43,6 +43,8 @@ pub enum MqttControlPacketType {
     Pingresp,
     /// Client disconnect notification.
     Disconnect,
+    /// Enhanced authentication exchange packet from MQTT 5.0.
+    Auth,
 }
 
 impl MqttControlPacketType {
@@ -64,6 +66,7 @@ impl MqttControlPacketType {
             Self::Pingreq => MQTT_TYPE_PINGREQ,
             Self::Pingresp => MQTT_TYPE_PINGRESP,
             Self::Disconnect => MQTT_TYPE_DISCONNECT,
+            Self::Auth => MQTT_TYPE_AUTH,
         }
     }
 
@@ -91,9 +94,10 @@ impl MqttControlPacketType {
             MQTT_TYPE_PINGREQ => Ok(Self::Pingreq),
             MQTT_TYPE_PINGRESP => Ok(Self::Pingresp),
             MQTT_TYPE_DISCONNECT => Ok(Self::Disconnect),
+            MQTT_TYPE_AUTH => Ok(Self::Auth),
             _ => Err(CrafterError::invalid_field_value(
                 "mqtt.fixed_header.control_packet_type",
-                "control packet type must be 1..=14",
+                "control packet type must be 1..=15",
             )),
         }
     }
@@ -120,6 +124,7 @@ impl MqttControlPacketType {
             Self::Pingreq => MQTT_FLAGS_PINGREQ,
             Self::Pingresp => MQTT_FLAGS_PINGRESP,
             Self::Disconnect => MQTT_FLAGS_DISCONNECT,
+            Self::Auth => MQTT_FLAGS_AUTH,
         }
     }
 }
@@ -195,6 +200,7 @@ mod tests {
             MQTT_TYPE_DISCONNECT,
             MQTT_FLAGS_DISCONNECT,
         ),
+        (MqttControlPacketType::Auth, MQTT_TYPE_AUTH, MQTT_FLAGS_AUTH),
     ];
 
     #[test]
@@ -222,8 +228,30 @@ mod tests {
 
     #[test]
     fn out_of_range_type_values_error() {
-        for value in [0, 15, 16, u8::MAX] {
+        for value in [0, 16, u8::MAX] {
             assert!(MqttControlPacketType::from_type_value(value).is_err());
         }
+    }
+
+    #[test]
+    fn mqtt5_authority_constants_match_representative_values() {
+        use super::super::constants::*;
+
+        assert_eq!(MQTT_5_PROTOCOL_LEVEL, 5);
+        assert_eq!(MQTT_TYPE_AUTH, 15);
+        assert_eq!(MQTT_PROP_AUTHENTICATION_METHOD, 0x15);
+        assert_eq!(MQTT_PROP_USER_PROPERTY, 0x26);
+        assert_eq!(MQTT_REASON_RE_AUTHENTICATE, 0x19);
+        assert_eq!(MQTT_REASON_WILDCARD_SUBSCRIPTIONS_NOT_SUPPORTED, 0xa2);
+        assert_eq!(MQTT_SUBOPT_RETAIN_HANDLING_MASK, 0x30);
+        assert_eq!(MQTT_SUBOPT_RESERVED_MASK, 0xc0);
+        assert_eq!(
+            MQTT_AUTH_REASON_CODES,
+            [
+                MQTT_REASON_SUCCESS,
+                MQTT_REASON_CONTINUE_AUTHENTICATION,
+                MQTT_REASON_RE_AUTHENTICATE,
+            ]
+        );
     }
 }

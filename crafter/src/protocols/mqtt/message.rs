@@ -1565,6 +1565,7 @@ fn packet_type_name(packet_type: MqttControlPacketType) -> &'static str {
         MqttControlPacketType::Pingreq => "PINGREQ",
         MqttControlPacketType::Pingresp => "PINGRESP",
         MqttControlPacketType::Disconnect => "DISCONNECT",
+        MqttControlPacketType::Auth => "AUTH",
     }
 }
 
