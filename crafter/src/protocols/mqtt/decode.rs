@@ -61,6 +61,9 @@ pub(crate) fn decode_mqtt(bytes: &[u8]) -> Result<(Mqtt, usize)> {
         MqttControlPacketType::Pubcomp => {
             decode_packet_identifier(packet_type, flags, remaining_length, body, "mqtt.pubcomp")?
         }
+        MqttControlPacketType::Unsuback => {
+            decode_packet_identifier(packet_type, flags, remaining_length, body, "mqtt.unsuback")?
+        }
         MqttControlPacketType::Subscribe => decode_subscribe(flags, remaining_length, body)?,
         MqttControlPacketType::Suback => decode_suback(flags, remaining_length, body)?,
         MqttControlPacketType::Unsubscribe => decode_unsubscribe(flags, remaining_length, body)?,
@@ -404,13 +407,13 @@ mod tests {
 
     #[test]
     fn decodes_single_raw_packet() {
-        let bytes = [0xb0, 0x03, b'a', b'b', b'c'];
+        let bytes = [0xd0, 0x03, b'a', b'b', b'c'];
 
         let (mqtt, consumed) = decode_mqtt(&bytes).unwrap();
 
         assert_eq!(consumed, bytes.len());
         assert_eq!(mqtt.name(), "MQTT");
-        assert_eq!(mqtt.packet_type(), MqttControlPacketType::Unsuback);
+        assert_eq!(mqtt.packet_type(), MqttControlPacketType::Pingresp);
         assert_eq!(mqtt.flags_value(), 0x0);
         assert_eq!(mqtt.remaining_length_value(), 3);
         assert_eq!(mqtt.body(), b"abc");
