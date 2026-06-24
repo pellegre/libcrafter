@@ -35,7 +35,10 @@ fn assert_default_registry_decodes_mqtt(
     let mqtt_layers = decoded.layers::<Mqtt>().collect::<Vec<_>>();
     assert_eq!(mqtt_layers.len(), 1);
     assert_eq!(mqtt_layers[0].packet_type(), MqttControlPacketType::Publish);
-    assert_eq!(mqtt_layers[0].body(), b"\0\x05topichello");
+    assert_eq!(mqtt_layers[0].topic_value(), Some("topic"));
+    assert_eq!(mqtt_layers[0].qos_value(), Some(0));
+    assert_eq!(mqtt_layers[0].packet_id_value(), None);
+    assert_eq!(mqtt_layers[0].payload_value(), Some(&b"hello"[..]));
 
     assert_eq!(decoded.compile()?.as_bytes(), compiled.as_bytes());
     Ok(())
