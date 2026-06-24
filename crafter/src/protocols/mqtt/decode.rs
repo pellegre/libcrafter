@@ -337,6 +337,20 @@ fn decode_empty_packet(
 }
 
 fn decode_suback(fixed_header_flags: u8, remaining_length: u32, body: &[u8]) -> Result<Mqtt> {
+    decode_suback_with_version(
+        fixed_header_flags,
+        remaining_length,
+        MQTT_311_PROTOCOL_LEVEL,
+        body,
+    )
+}
+
+fn decode_suback_with_version(
+    fixed_header_flags: u8,
+    remaining_length: u32,
+    version: u8,
+    body: &[u8],
+) -> Result<Mqtt> {
     let mut cursor = 0;
 
     if body.len() < 2 {
@@ -347,12 +361,19 @@ fn decode_suback(fixed_header_flags: u8, remaining_length: u32, body: &[u8]) -> 
         ));
     }
     let packet_id = take_u16(body, &mut cursor)?;
+    let properties = if version == MQTT_5_PROTOCOL_LEVEL {
+        take_properties(body, &mut cursor)?
+    } else {
+        MqttProperties::new()
+    };
     let return_codes = body[cursor..].to_vec();
 
     Ok(Mqtt::suback_from_decoded_parts(
         fixed_header_flags,
         remaining_length,
+        version,
         packet_id,
+        properties,
         return_codes,
     ))
 }
@@ -829,6 +850,38 @@ mod tests {
             &[
                 0x82, 0x12, 0x12, 0x34, 0x03, 0x0b, 0xc1, 0x02, 0x00, 0x09, b's', b'e', b'n', b's',
                 b'o', b'r', b's', b'/', b'+', 0x15,
+            ]
+        );
+    }
+
+    #[test]
+    fn decodes_v5_suback_properties_and_reason_codes_when_version_is_supplied() {
+        let body = [
+            0x43, 0x21, 0x0a, 0x1f, 0x00, 0x07, b'p', b'a', b'r', b't', b'i', b'a', b'l', 0x00,
+            0x01, 0x83,
+        ];
+        let mqtt =
+            decode_suback_with_version(0x00, body.len() as u32, MQTT_5_PROTOCOL_LEVEL, &body)
+                .unwrap();
+
+        assert_eq!(mqtt.packet_type(), MqttControlPacketType::Suback);
+        assert_eq!(mqtt.version_value(), MQTT_5_PROTOCOL_LEVEL);
+        assert_eq!(mqtt.packet_id_value(), Some(0x4321));
+        assert_eq!(
+            mqtt.suback_properties_value()
+                .expect("suback properties")
+                .property_values(),
+            &[MqttProperty::ReasonString("partial".to_string())]
+        );
+        assert_eq!(
+            mqtt.suback_return_codes_value(),
+            Some(&[0x00, 0x01, 0x83][..])
+        );
+        assert_eq!(
+            Packet::from_layer(mqtt).compile().unwrap().as_bytes(),
+            &[
+                0x90, 0x10, 0x43, 0x21, 0x0a, 0x1f, 0x00, 0x07, b'p', b'a', b'r', b't', b'i', b'a',
+                b'l', 0x00, 0x01, 0x83,
             ]
         );
     }
