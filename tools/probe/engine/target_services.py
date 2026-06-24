@@ -198,14 +198,15 @@ WireCommandRunner = Callable[..., JSONObject]
 # now live in the BGP plugin module (``protocols/bgp.py``) and are re-imported
 # above so ``target_services.BGP_*`` keeps resolving.
 
-RIP_SERVICE_KIND = "frr-ripd"
-RIP_SERVICE_PORTS = [520]
-RIP_RUNTIME = "frr"
-RIP_MULTICAST_GROUP = "224.0.0.9"
-RIP_DOCUMENTATION_IPV4_PREFIX = "198.51.100.0/24"
-RIP_PROVISION_SCRIPT = "tools/probe/target_services/rip/provision-daemon.sh"
-RIP_CONFIG_TEMPLATE = "tools/probe/target_services/rip/ripd.conf.template"
-RIP_RIB_COMMAND = "vtysh -c 'show ip rip'"
+# The RIP target-service constants (``RIP_SERVICE_KIND`` / ``RIP_SERVICE_PORTS`` /
+# ``RIP_RUNTIME`` / ``RIP_MULTICAST_GROUP`` / ``RIP_DOCUMENTATION_IPV4_PREFIX`` /
+# ``RIP_PROVISION_SCRIPT`` / ``RIP_CONFIG_TEMPLATE`` / ``RIP_RIB_COMMAND``) and the
+# ``rip_peer_service_descriptor`` now live in the RIP plugin module
+# (``protocols/rip.py``). RIP/RIPng never produced a ``target_service_setup_plan``
+# service entry (the legacy setup plan only builds the BGP peer via the
+# ``bgp-`` / ``frr-bgp-peer`` selector), so nothing in this module references
+# them: the descriptor is a plan-building input the RIP plan builder calls
+# directly.
 
 
 # --------------------------------------------------------------------------- #
@@ -237,52 +238,10 @@ RIP_RIB_COMMAND = "vtysh -c 'show ip rip'"
 # ``target_services.frr_bgp_peer_descriptor`` keeps resolving for the script test.
 
 
-def rip_peer_service_descriptor(
-    *,
-    bind_ipv4: str,
-    source_ipv4: str,
-) -> TargetServiceDescriptor:
-    """Describe the probe-owned FRR ``ripd`` target service.
-
-    Mirrors :func:`frr_bgp_peer_descriptor` for the RIP smoke profile: an FRR
-    runtime serving RIPv2 on UDP/520, advertising documentation-range prefixes
-    to the all-RIP-routers multicast group, provisioned from probe-owned assets
-    and inspected through ``vtysh``.
-    """
-
-    return TargetServiceDescriptor(
-        name=RIP_SERVICE_KIND,
-        protocol="udp",
-        purpose="rip-peer",
-        bind_ipv4=bind_ipv4,
-        source_ipv4=source_ipv4,
-        port=RIP_SERVICE_PORTS[0],
-        requires=[RIP_RUNTIME, SKIP_REQUIRES_CONTROLLED_SERVICE],
-        setup_commands=[
-            f"run {RIP_PROVISION_SCRIPT} with DRIVER_IP={source_ipv4}",
-            f"inspect RIB with {RIP_RIB_COMMAND}",
-        ],
-        cleanup_commands=[
-            "stop FRR ripd peer service through provider cleanup",
-        ],
-        artifacts=[
-            "live-artifacts/probe/target-services/rip-provision.stdout.txt",
-            "live-artifacts/probe/target-services/rip-provision.stderr.txt",
-        ],
-        metadata={
-            "kind": RIP_SERVICE_KIND,
-            "runtime": RIP_RUNTIME,
-            "deterministic": True,
-            "ports": list(RIP_SERVICE_PORTS),
-            "multicast_group": RIP_MULTICAST_GROUP,
-            "documentation_prefixes": [
-                RIP_DOCUMENTATION_IPV4_PREFIX,
-            ],
-            "provision_script": RIP_PROVISION_SCRIPT,
-            "config_template": RIP_CONFIG_TEMPLATE,
-            "rib_command": RIP_RIB_COMMAND,
-        },
-    )
+# The FRR ``ripd`` peer descriptor (``rip_peer_service_descriptor``) now lives in
+# the RIP plugin module (``protocols/rip.py``); the RIP plan builder calls it to
+# render the IPv4 RIP plan's target-service block. Nothing in this module
+# references it.
 
 
 # The closed-UDP-port descriptor (``closed_udp_port_descriptor``) now lives in
