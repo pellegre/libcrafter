@@ -64,6 +64,9 @@ pub(crate) fn decode_mqtt(bytes: &[u8]) -> Result<(Mqtt, usize)> {
         MqttControlPacketType::Unsuback => {
             decode_packet_identifier(packet_type, flags, remaining_length, body, "mqtt.unsuback")?
         }
+        MqttControlPacketType::Pingreq => {
+            decode_empty_packet(packet_type, flags, remaining_length, body, "mqtt.pingreq")?
+        }
         MqttControlPacketType::Subscribe => decode_subscribe(flags, remaining_length, body)?,
         MqttControlPacketType::Suback => decode_suback(flags, remaining_length, body)?,
         MqttControlPacketType::Unsubscribe => decode_unsubscribe(flags, remaining_length, body)?,
@@ -191,6 +194,31 @@ fn decode_packet_identifier(
         fixed_header_flags,
         remaining_length,
         packet_id,
+    ))
+}
+
+fn decode_empty_packet(
+    packet_type: MqttControlPacketType,
+    fixed_header_flags: u8,
+    remaining_length: u32,
+    body: &[u8],
+    context: &'static str,
+) -> Result<Mqtt> {
+    if !body.is_empty() {
+        let field = match context {
+            "mqtt.pingreq" => "mqtt.pingreq.remaining_length",
+            _ => "mqtt.empty.remaining_length",
+        };
+        return Err(CrafterError::invalid_field_value(
+            field,
+            "empty MQTT control packet Remaining Length must be 0",
+        ));
+    }
+
+    Ok(Mqtt::empty_from_decoded_parts(
+        packet_type,
+        fixed_header_flags,
+        remaining_length,
     ))
 }
 
