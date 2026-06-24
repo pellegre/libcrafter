@@ -85,6 +85,13 @@ pub const MQTT_FLAGS_PINGRESP: u8 = 0x0;
 pub const MQTT_FLAGS_DISCONNECT: u8 = 0x0;
 
 // ---------------------------------------------------------------------------
+// CONNECT variable-header flags (OASIS MQTT 3.1.1 sec. 3.1.2.3)
+// ---------------------------------------------------------------------------
+
+/// CONNECT Clean Session flag bit. OASIS MQTT 3.1.1 sec. 3.1.2.4.
+pub const MQTT_CONNECT_FLAG_CLEAN_SESSION: u8 = 0x02;
+
+// ---------------------------------------------------------------------------
 // CONNACK return codes (OASIS MQTT 3.1.1 sec. 3.2.2.3 Table 3.1)
 // ---------------------------------------------------------------------------
 
