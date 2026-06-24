@@ -1389,72 +1389,11 @@ def _probe_plan_with_endpoint_addresses(
             }
         )
         updated["stimulus_rst_guard"] = rst_guard
-    elif case_name in {
-        "udp-echo-empty",
-        "udp-echo-short",
-        "udp-echo-binary",
-        "udp-echo-large",
-        "udp-length-boundary-echo",
-        "udp-source-port-reflection",
-        "udp-multi-shot-order",
-        "udp-closed-port-icmp",
-        "udp-zero-checksum-ipv4",
-        "udp-options-surplus-echo",
-    }:
-        source_port = int(updated.get("source_port", 0))
-        destination_port = int(updated.get("destination_port", 0))
-        if case_name == "udp-closed-port-icmp":
-            updated["capture_filter"] = (
-                f"icmp and src host {target_ipv4} and dst host {source_ipv4}"
-            )
-        else:
-            updated["capture_filter"] = (
-                f"udp and src host {target_ipv4} and dst host {source_ipv4} "
-                f"and src port {destination_port} and dst port {source_port}"
-            )
-        target_service = dict(
-            json_object(updated.get("target_service", {}), "probe_plan.target_service")
-        )
-        target_service.update(
-            {
-                "bind_ipv4": target_ipv4,
-                "port": destination_port,
-                "source_ipv4": source_ipv4,
-            }
-        )
-        updated["target_service"] = target_service
-        udp_validation = dict(
-            json_object(updated.get("validation", {}), "probe_plan.validation")
-        )
-        udp_validation["source_ipv4"] = target_ipv4
-        udp_validation["destination_ipv4"] = source_ipv4
-        updated["validation"] = udp_validation
-        # udp-multi-shot-order carries a per-send array: rewrite each datagram's
-        # transport addresses, capture filter, and validation contract onto the
-        # lab segment while preserving the ordered payload markers.
-        udp_sends = updated.get("udp_sends")
-        if isinstance(udp_sends, list):
-            rewritten_udp_sends: list[JSONObject] = []
-            for raw_send in udp_sends:
-                send = dict(json_object(raw_send, "probe_plan.udp_send"))
-                send_source_port = int(send.get("source_port", source_port))
-                send_destination_port = int(send.get("destination_port", destination_port))
-                send["source_ipv4"] = source_ipv4
-                send["destination_ipv4"] = target_ipv4
-                send["expected_reply_source_ipv4"] = target_ipv4
-                send["expected_reply_destination_ipv4"] = source_ipv4
-                send["capture_filter"] = (
-                    f"udp and src host {target_ipv4} and dst host {source_ipv4} "
-                    f"and src port {send_destination_port} and dst port {send_source_port}"
-                )
-                send_validation = dict(
-                    json_object(send.get("validation", {}), "probe_plan.udp_send.validation")
-                )
-                send_validation["source_ipv4"] = target_ipv4
-                send_validation["destination_ipv4"] = source_ipv4
-                send["validation"] = send_validation
-                rewritten_udp_sends.append(send)
-            updated["udp_sends"] = rewritten_udp_sends
+    # The UDP live-path rewrite branch (all ten UDP cases) moved to the UDP
+    # plugin's ``rewrite_endpoint_addresses`` hook
+    # (:func:`tools.probe.engine.protocols.udp.udp_rewrite_endpoint_addresses`),
+    # dispatched registry-first above before the per-protocol if/elif here, so it
+    # no longer appears in this legacy chain.
     return _apply_shared_ipv4_rewrite_tail(
         updated,
         case_name=case_name,
@@ -1598,25 +1537,10 @@ def _failure_reasons_for_case(case_name: str) -> list[str]:
             FAILURE_WRONG_PAYLOAD,
             FAILURE_DECODE_FAILED,
         ]
-    if case_name in {
-        "udp-echo-empty",
-        "udp-echo-short",
-        "udp-echo-binary",
-        "udp-echo-large",
-        "udp-length-boundary-echo",
-        "udp-source-port-reflection",
-        "udp-multi-shot-order",
-        "udp-closed-port-icmp",
-        "udp-zero-checksum-ipv4",
-        "udp-options-surplus-echo",
-    }:
-        return [
-            FAILURE_TIMEOUT,
-            FAILURE_WRONG_PEER,
-            FAILURE_WRONG_PAYLOAD,
-            FAILURE_DECODE_FAILED,
-            FAILURE_TARGET_SETUP_FAILED,
-        ]
+    # The UDP failure-reason taxonomy (all ten UDP cases) moved to the UDP
+    # plugin's ``failure_reasons`` hook
+    # (:func:`tools.probe.engine.protocols.udp.udp_failure_reasons`), dispatched
+    # registry-first above, so it no longer appears in this legacy chain.
     if case_name in {
         "igmp-membership-query-observation",
         "igmp-v2-membership-report-emission",
