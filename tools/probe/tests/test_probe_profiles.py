@@ -33,6 +33,7 @@ _LEGACY_CASE_NAMES = (
 # catalog so the suite can grow without re-pinning a literal here.
 _BEHAVIOR_CASE_COUNT = len(cases.BEHAVIOR_PROFILE_CASE_NAMES)
 _BGP_CASE_COUNT = len(cases.BGP_SESSION_PROFILE_CASE_NAMES)
+_MQTT_SMOKE_CASE_COUNT = len(cases.MQTT_SMOKE_PROFILE_CASE_NAMES)
 _OSPF_SMOKE_CASE_COUNT = len(cases.OSPF_SMOKE_PROFILE_CASE_NAMES)
 _BEHAVIOR_PROTOCOL_COMPOSITION = {
     "dns": 10,
@@ -133,6 +134,7 @@ class ProbeProfileMembershipTest(unittest.TestCase):
                 "bgp-smoke",
                 "igmp",
                 "ipsec",
+                "mqtt-smoke",
                 "ospf-smoke",
                 "rip-smoke",
                 "smoke",
@@ -163,6 +165,28 @@ class ProbeProfileMembershipTest(unittest.TestCase):
         self.assertEqual(selected[0].metadata["protocol"], "bgp")
         self.assertEqual(selected[0].metadata["service"], "frr-bgp-peer")
         self.assertIs(selected[0].metadata["stateful"], True)
+
+    def test_mqtt_smoke_profile_selects_planned_only_mqtt_cases(self) -> None:
+        names = cases.profile_case_names("mqtt-smoke")
+
+        self.assertEqual(
+            names,
+            (
+                "mqtt-connect-connack",
+                "mqtt-subscribe-suback",
+                "mqtt-publish-puback",
+            ),
+        )
+        selected = cases.profile_selected_cases("mqtt-smoke", [])
+        self.assertEqual([case.name for case in selected], list(names))
+        for case in selected:
+            with self.subTest(case=case.name):
+                self.assertEqual(case.metadata["protocol"], "mqtt")
+                self.assertEqual(case.metadata["service"], "mosquitto")
+                self.assertEqual(case.required_capabilities, ["mqtt_broker"])
+                self.assertIs(case.metadata["stateful"], True)
+                self.assertIs(case.metadata["planned_only"], True)
+        self.assertNotIn("mqtt-connect-connack", cases.SMOKE_PROFILE_CASE_NAMES)
 
     def test_tcp_smoke_profile_selects_tcp_cases_with_options(self) -> None:
         names = cases.profile_case_names("tcp-smoke")
@@ -246,6 +270,16 @@ class ProbeProfileDefaultCountTest(unittest.TestCase):
         self.assertEqual(
             cases.profile_default_count("bgp-smoke"),
             len(cases.BGP_SESSION_PROFILE_CASE_NAMES),
+        )
+
+    def test_mqtt_smoke_profile_default_count_is_full_suite(self) -> None:
+        self.assertEqual(
+            cases.profile_default_count("mqtt-smoke"),
+            _MQTT_SMOKE_CASE_COUNT,
+        )
+        self.assertEqual(
+            cases.profile_default_count("mqtt-smoke"),
+            len(cases.MQTT_SMOKE_PROFILE_CASE_NAMES),
         )
 
     def test_ospf_smoke_profile_default_count_is_full_suite(self) -> None:

@@ -5,7 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 
 from ..capability_derivation import capability, capability_default_true
-from ..model import JSONObject, JSONValue
+from ..case_helpers import _behavior_case
+from ..model import JSONObject, JSONValue, ProbeCase
 from ..target_service_helpers import (
     TargetServiceDescriptor,
     json_mapping,
@@ -20,6 +21,59 @@ MQTT_SERVICE_PORT = 1883
 MQTT_RUNTIME = "mosquitto"
 MQTT_PROVISION_SCRIPT = "tools/probe/target_services/mqtt/provision-broker.sh"
 MQTT_CONFIG_TEMPLATE = "tools/probe/target_services/mqtt/mosquitto.conf.template"
+_MQTT_CAPABILITIES = ["mqtt_broker"]
+
+
+MQTT_SMOKE_CASES: tuple[ProbeCase, ...] = (
+    _behavior_case(
+        name="mqtt-connect-connack",
+        description=(
+            "Plan an MQTT CONNECT exchange against a probe-owned Mosquitto "
+            "broker and expect CONNACK."
+        ),
+        stimulus="mqtt_connect",
+        expected_response="mqtt_connack",
+        required_capabilities=_MQTT_CAPABILITIES,
+        protocol="mqtt",
+        metadata={
+            "service": "mosquitto",
+            "stateful": True,
+            "planned_only": True,
+        },
+    ),
+    _behavior_case(
+        name="mqtt-subscribe-suback",
+        description=(
+            "Plan an MQTT SUBSCRIBE exchange against a probe-owned Mosquitto "
+            "broker and expect SUBACK."
+        ),
+        stimulus="mqtt_subscribe",
+        expected_response="mqtt_suback",
+        required_capabilities=_MQTT_CAPABILITIES,
+        protocol="mqtt",
+        metadata={
+            "service": "mosquitto",
+            "stateful": True,
+            "planned_only": True,
+        },
+    ),
+    _behavior_case(
+        name="mqtt-publish-puback",
+        description=(
+            "Plan an MQTT QoS 1 PUBLISH exchange against a probe-owned "
+            "Mosquitto broker and expect PUBACK."
+        ),
+        stimulus="mqtt_publish",
+        expected_response="mqtt_puback",
+        required_capabilities=_MQTT_CAPABILITIES,
+        protocol="mqtt",
+        metadata={
+            "service": "mosquitto",
+            "stateful": True,
+            "planned_only": True,
+        },
+    ),
+)
 
 
 def mqtt_broker_descriptor(
@@ -139,7 +193,7 @@ def mqtt_lab_capabilities(substrate: Mapping[str, JSONValue]) -> Mapping[str, ob
 register(
     ProtocolPlugin(
         name="mqtt",
-        cases=(),
+        cases=MQTT_SMOKE_CASES,
         target_service=mqtt_target_service_contribution,
         lab_capabilities=mqtt_lab_capabilities,
     )
