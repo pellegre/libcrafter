@@ -1,0 +1,207 @@
+version: 1
+kind: feature
+name: mqtt_subscribe
+summary: >-
+  MQTT 3.1.1 SUBSCRIBE/SUBACK and UNSUBSCRIBE/UNSUBACK control-packet
+  framing over cleartext TCP/1883, including multi-entry topic-filter payloads,
+  required fixed-header flag nibbles, and SUBACK success plus failure return
+  codes.
+
+layers:
+  - mqtt
+  - tcp
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: subscribe
+    sources:
+      - .agents/docs/mqtt-manifest.md#SUBSCRIBE-and-SUBACK
+      - .agents/docs/mqtt-codepoints.md#Fixed-Header-Flag-Nibbles
+    message_type: subscribe
+    checks:
+      - fixed_header_type_is_subscribe
+      - flags_are_0b0010
+      - remaining_length_covers_packet_identifier_and_topic_filters
+      - packet_identifier_present
+      - topic_filter_length_prefixes_preserved
+      - requested_qos_bytes_preserved
+  - name: suback
+    sources:
+      - .agents/docs/mqtt-manifest.md#SUBSCRIBE-and-SUBACK
+      - .agents/docs/mqtt-codepoints.md#SUBACK-Return-Codes
+    message_type: suback
+    checks:
+      - fixed_header_type_is_suback
+      - flags_are_zero
+      - remaining_length_covers_packet_identifier_and_return_codes
+      - granted_qos_return_code_preserved
+      - failure_return_code_preserved
+  - name: unsubscribe
+    sources:
+      - .agents/docs/mqtt-manifest.md#Control-Packet-Types-and-Flags
+      - .agents/docs/mqtt-codepoints.md#Fixed-Header-Flag-Nibbles
+    message_type: unsubscribe
+    checks:
+      - fixed_header_type_is_unsubscribe
+      - flags_are_0b0010
+      - remaining_length_covers_packet_identifier_and_topic_filters
+      - packet_identifier_present
+      - topic_filter_length_prefixes_preserved
+  - name: unsuback
+    sources:
+      - .agents/docs/mqtt-manifest.md#Control-Packet-Types-and-Flags
+      - .agents/docs/mqtt-codepoints.md#Fixed-Header-Flag-Nibbles
+    message_type: unsuback
+    checks:
+      - fixed_header_type_is_unsuback
+      - flags_are_zero
+      - remaining_length_is_two
+      - packet_identifier_present
+
+coverage_cases:
+  - mqtt-subscribe
+  - mqtt-suback
+  - mqtt-unsubscribe
+  - mqtt-unsuback
+
+supported_cases:
+  - name: mqtt-subscribe
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+    roots:
+      - "l3:ipv4"
+      - "l3:ipv6"
+    fields:
+      mqtt:
+        packet_type: subscribe
+        flags: subscribe_required
+        packet_id: 4660
+        topic_filters:
+          - topic: a/b
+            qos: 0
+          - topic: c/d
+            qos: 1
+    expected:
+      mqtt_hex: "820e12340003612f62000003632f6401"
+      fixed_header_hex: "820e"
+      remaining_length: 14
+      normalized_fields:
+        packet_type: subscribe
+        flags: 2
+        remaining_length: 14
+        packet_id: 4660
+        topic_filters:
+          - topic: a/b
+            qos: 0
+          - topic: c/d
+            qos: 1
+  - name: mqtt-suback
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+    roots:
+      - "l3:ipv4"
+      - "l3:ipv6"
+    fields:
+      mqtt:
+        packet_type: suback
+        flags: default
+        packet_id: 4660
+        return_codes:
+          - suback_qos1
+          - suback_failure
+    expected:
+      mqtt_hex: "900412340180"
+      fixed_header_hex: "9004"
+      remaining_length: 4
+      normalized_fields:
+        packet_type: suback
+        flags: 0
+        remaining_length: 4
+        packet_id: 4660
+        return_codes:
+          - 1
+          - 128
+  - name: mqtt-unsubscribe
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+    roots:
+      - "l3:ipv4"
+      - "l3:ipv6"
+    fields:
+      mqtt:
+        packet_type: unsubscribe
+        flags: unsubscribe_required
+        packet_id: 4660
+        topic_filters:
+          - a/b
+          - c/d
+    expected:
+      mqtt_hex: "a20c12340003612f620003632f64"
+      fixed_header_hex: "a20c"
+      remaining_length: 12
+      normalized_fields:
+        packet_type: unsubscribe
+        flags: 2
+        remaining_length: 12
+        packet_id: 4660
+        topic_filters:
+          - a/b
+          - c/d
+  - name: mqtt-unsuback
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+    roots:
+      - "l3:ipv4"
+      - "l3:ipv6"
+    fields:
+      mqtt:
+        packet_type: unsuback
+        flags: default
+        packet_id: 4660
+    expected:
+      mqtt_hex: "b0021234"
+      fixed_header_hex: "b002"
+      remaining_length: 2
+      normalized_fields:
+        packet_type: unsuback
+        flags: 0
+        remaining_length: 2
+        packet_id: 4660
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - MQTT
+      - MQTTSubscribe
+      - MQTTSuback
+      - MQTTUnsubscribe
+      - MQTTUnsuback
+      - MQTTTopic
+      - MQTTTopicQOS
+    encode: true
+    decode: true
+    notes:
+      - Scapy contrib MQTT materialization and TCP/1883 payload normalization
+        support SUBSCRIBE, SUBACK, UNSUBSCRIBE, and UNSUBACK for the declared
+        baseline fields.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    notes:
+      - The public crafter MQTT layer builds, decodes, and recompiles
+        SUBSCRIBE/SUBACK and UNSUBSCRIBE/UNSUBACK packets while deriving
+        Remaining Length unless explicitly set.
