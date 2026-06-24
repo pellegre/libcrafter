@@ -67,6 +67,9 @@ pub(crate) fn decode_mqtt(bytes: &[u8]) -> Result<(Mqtt, usize)> {
         MqttControlPacketType::Pingreq => {
             decode_empty_packet(packet_type, flags, remaining_length, body, "mqtt.pingreq")?
         }
+        MqttControlPacketType::Pingresp => {
+            decode_empty_packet(packet_type, flags, remaining_length, body, "mqtt.pingresp")?
+        }
         MqttControlPacketType::Subscribe => decode_subscribe(flags, remaining_length, body)?,
         MqttControlPacketType::Suback => decode_suback(flags, remaining_length, body)?,
         MqttControlPacketType::Unsubscribe => decode_unsubscribe(flags, remaining_length, body)?,
@@ -207,6 +210,7 @@ fn decode_empty_packet(
     if !body.is_empty() {
         let field = match context {
             "mqtt.pingreq" => "mqtt.pingreq.remaining_length",
+            "mqtt.pingresp" => "mqtt.pingresp.remaining_length",
             _ => "mqtt.empty.remaining_length",
         };
         return Err(CrafterError::invalid_field_value(
@@ -435,13 +439,13 @@ mod tests {
 
     #[test]
     fn decodes_single_raw_packet() {
-        let bytes = [0xd0, 0x03, b'a', b'b', b'c'];
+        let bytes = [0xe0, 0x03, b'a', b'b', b'c'];
 
         let (mqtt, consumed) = decode_mqtt(&bytes).unwrap();
 
         assert_eq!(consumed, bytes.len());
         assert_eq!(mqtt.name(), "MQTT");
-        assert_eq!(mqtt.packet_type(), MqttControlPacketType::Pingresp);
+        assert_eq!(mqtt.packet_type(), MqttControlPacketType::Disconnect);
         assert_eq!(mqtt.flags_value(), 0x0);
         assert_eq!(mqtt.remaining_length_value(), 3);
         assert_eq!(mqtt.body(), b"abc");
