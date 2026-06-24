@@ -2,8 +2,9 @@ use std::net::Ipv4Addr;
 
 use crafter::prelude::*;
 use crafter::protocols::mqtt::{
-    MqttProperties, MqttProperty, MQTT_5_PROTOCOL_LEVEL, MQTT_REASON_BAD_AUTHENTICATION_METHOD,
-    MQTT_REASON_CONTINUE_AUTHENTICATION, MQTT_REASON_GRANTED_QOS_0, MQTT_REASON_GRANTED_QOS_1,
+    MqttProperties, MqttProperty, MQTT_311_PROTOCOL_LEVEL, MQTT_5_PROTOCOL_LEVEL,
+    MQTT_REASON_BAD_AUTHENTICATION_METHOD, MQTT_REASON_CONTINUE_AUTHENTICATION,
+    MQTT_REASON_GRANTED_QOS_0, MQTT_REASON_GRANTED_QOS_1,
     MQTT_REASON_IMPLEMENTATION_SPECIFIC_ERROR, MQTT_REASON_NO_MATCHING_SUBSCRIBERS,
     MQTT_REASON_NO_SUBSCRIPTION_EXISTED, MQTT_REASON_PACKET_IDENTIFIER_NOT_FOUND,
     MQTT_REASON_SESSION_TAKEN_OVER, MQTT_REASON_SUCCESS, MQTT_REASON_TOPIC_FILTER_INVALID,
@@ -266,6 +267,57 @@ fn connect_311_baseline_stays_unchanged() -> crafter::Result<()> {
     )?;
 
     assert_eq!(bytes, CONNECT_311_BASELINE);
+    Ok(())
+}
+
+#[test]
+fn version_connect_v5_decodes_from_protocol_level() -> crafter::Result<()> {
+    let (_packet_bytes, decoded) = decode_mqtt_payload(CONNECT_V5_WITH_PROPERTIES)?;
+    let mqtt = decoded.layer::<Mqtt>().expect("decoded MQTT CONNECT layer");
+
+    assert_eq!(mqtt.packet_type(), MqttControlPacketType::Connect);
+    assert_eq!(mqtt.version_value(), MQTT_5_PROTOCOL_LEVEL);
+    assert_eq!(mqtt.protocol_level_value(), Some(MQTT_5_PROTOCOL_LEVEL));
+    Ok(())
+}
+
+#[test]
+fn version_connack_v5_decodes_with_explicit_default() -> crafter::Result<()> {
+    let decoded = Mqtt::decode_payload_with_default_version(
+        CONNACK_V5_WITH_PROPERTIES,
+        MQTT_5_PROTOCOL_LEVEL,
+    )?;
+    let mqtt = decoded.layer::<Mqtt>().expect("decoded MQTT CONNACK layer");
+
+    assert_eq!(mqtt.packet_type(), MqttControlPacketType::Connack);
+    assert_eq!(mqtt.version_value(), MQTT_5_PROTOCOL_LEVEL);
+    assert_eq!(
+        mqtt.reason_code_value(),
+        Some(MQTT_REASON_BAD_AUTHENTICATION_METHOD)
+    );
+    assert_eq!(
+        mqtt.connack_properties_value()
+            .expect("connack properties")
+            .property_values(),
+        &[
+            MqttProperty::AssignedClientIdentifier("srv".to_string()),
+            MqttProperty::ReceiveMaximum(20),
+            MqttProperty::ReasonString("no".to_string()),
+        ]
+    );
+    assert_eq!(decoded.compile()?.as_bytes(), CONNACK_V5_WITH_PROPERTIES);
+    Ok(())
+}
+
+#[test]
+fn version_default_registry_path_decodes_baseline_connack() -> crafter::Result<()> {
+    let (packet_bytes, decoded) = decode_mqtt_payload(CONNACK_311_BASELINE)?;
+    let mqtt = decoded.layer::<Mqtt>().expect("decoded MQTT CONNACK layer");
+
+    assert_eq!(mqtt.packet_type(), MqttControlPacketType::Connack);
+    assert_eq!(mqtt.version_value(), MQTT_311_PROTOCOL_LEVEL);
+    assert_eq!(mqtt.return_code_value(), Some(0x03));
+    assert_eq!(decoded.compile()?.as_bytes(), packet_bytes.as_slice());
     Ok(())
 }
 

@@ -1,10 +1,17 @@
-//! MQTT 3.1.1 control packet support.
+//! MQTT control packet support.
 //!
 //! This module provides packet-layer construction and decoding for cleartext
-//! MQTT 3.1.1 control packets on TCP port [`MQTT_PORT`]. The [`Mqtt`] layer
-//! follows the same builder and decode model as the rest of `crafter`: fields
-//! left unset are filled during `compile()`, while fields set explicitly are
-//! preserved so malformed packets can still be built intentionally.
+//! MQTT 3.1.1 and 5.0 control packets on TCP port [`MQTT_PORT`]. The [`Mqtt`]
+//! layer follows the same builder and decode model as the rest of `crafter`:
+//! fields left unset are filled during `compile()`, while fields set explicitly
+//! are preserved so malformed packets can still be built intentionally.
+//!
+//! Decode determines a CONNECT packet's version from its protocol level. Other
+//! MQTT control packets do not carry a version marker, so the registry path uses
+//! MQTT 3.1.1 as the default for non-CONNECT packets. Use
+//! [`Mqtt::decode_payload_with_default_version`] to decode standalone payloads
+//! with a different default, for example MQTT 5.0 property-bearing CONNACK or
+//! SUBACK packets.
 //!
 //! MQTT-over-TLS on [`MQTT_TLS_PORT`] is treated as TLS-wrapped traffic rather
 //! than cleartext MQTT, so TCP payloads on that port are preserved as raw bytes.
