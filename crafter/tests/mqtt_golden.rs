@@ -155,6 +155,13 @@ const PINGRESP_EMPTY: &[u8] = &[
     0xd0, 0x00,
 ];
 
+const DISCONNECT_EMPTY: &[u8] = &[
+    // `.agents/docs/mqtt-manifest.md`: MQTT 3.1.1 DISCONNECT fixed-header
+    // type 14 uses flags 0x0 and has no variable header or payload, so
+    // Remaining Length is 0.
+    0xe0, 0x00,
+];
+
 fn mqtt_over_ipv4_tcp(payload: &[u8]) -> crafter::Result<Vec<u8>> {
     let packet = Ipv4::new()
         .src(Ipv4Addr::new(192, 0, 2, 10))
@@ -896,6 +903,61 @@ fn pingresp_decode_rejects_declared_body_bytes() -> crafter::Result<()> {
             assert!(reason.contains("must be 0"));
         }
         other => panic!("expected pingresp remaining-length error, got {other:?}"),
+    }
+
+    Ok(())
+}
+
+#[test]
+fn disconnect_golden_decodes_empty_body_and_recompiles() -> crafter::Result<()> {
+    let (bytes, decoded) = decode_ipv4_tcp_mqtt(DISCONNECT_EMPTY)?;
+    let mqtt = decoded
+        .layer::<Mqtt>()
+        .expect("decoded MQTT DISCONNECT layer");
+
+    assert_eq!(mqtt.packet_type(), MqttControlPacketType::Disconnect);
+    assert_eq!(mqtt.flags_value(), 0x0);
+    assert_eq!(mqtt.remaining_length_value(), 0);
+    assert!(mqtt.body().is_empty());
+    assert_eq!(decoded.compile()?.as_bytes(), bytes.as_slice());
+    Ok(())
+}
+
+#[test]
+fn disconnect_build_decode_round_trip() -> crafter::Result<()> {
+    let packet = Ipv4::new()
+        .src(Ipv4Addr::new(192, 0, 2, 67))
+        .dst(Ipv4Addr::new(198, 51, 100, 77))
+        / Tcp::new()
+            .sport(49_161)
+            .dport(MQTT_PORT)
+            .seq(0xb1b2_b3b4)
+            .ack(0xc1c2_c3c4)
+            .ack_segment()
+        / Mqtt::disconnect();
+
+    let compiled = packet.compile()?;
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes())?;
+    let mqtt = decoded
+        .layer::<Mqtt>()
+        .expect("decoded MQTT DISCONNECT layer");
+
+    assert_eq!(mqtt.packet_type(), MqttControlPacketType::Disconnect);
+    assert_eq!(mqtt.remaining_length_value(), 0);
+    assert!(mqtt.body().is_empty());
+    assert_eq!(decoded.compile()?.as_bytes(), compiled.as_bytes());
+    Ok(())
+}
+
+#[test]
+fn disconnect_decode_rejects_declared_body_bytes() -> crafter::Result<()> {
+    let bytes = mqtt_over_ipv4_tcp(&[0xe0, 0x01, 0x00])?;
+    match Packet::decode_from_l3(NetworkLayer::Ipv4, &bytes) {
+        Err(crafter::CrafterError::InvalidFieldValue { field, reason }) => {
+            assert_eq!(field, "mqtt.disconnect.remaining_length");
+            assert!(reason.contains("must be 0"));
+        }
+        other => panic!("expected disconnect remaining-length error, got {other:?}"),
     }
 
     Ok(())
