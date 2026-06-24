@@ -62,6 +62,7 @@ pub(crate) fn decode_mqtt(bytes: &[u8]) -> Result<(Mqtt, usize)> {
             decode_packet_identifier(packet_type, flags, remaining_length, body, "mqtt.pubcomp")?
         }
         MqttControlPacketType::Subscribe => decode_subscribe(flags, remaining_length, body)?,
+        MqttControlPacketType::Suback => decode_suback(flags, remaining_length, body)?,
         _ => Mqtt::raw(packet_type, body.to_vec())
             .flags(flags)
             .remaining_length(remaining_length),
@@ -186,6 +187,27 @@ fn decode_packet_identifier(
         fixed_header_flags,
         remaining_length,
         packet_id,
+    ))
+}
+
+fn decode_suback(fixed_header_flags: u8, remaining_length: u32, body: &[u8]) -> Result<Mqtt> {
+    let mut cursor = 0;
+
+    if body.len() < 2 {
+        return Err(CrafterError::buffer_too_short(
+            "mqtt.suback.packet_identifier",
+            2,
+            body.len(),
+        ));
+    }
+    let packet_id = take_u16(body, &mut cursor)?;
+    let return_codes = body[cursor..].to_vec();
+
+    Ok(Mqtt::suback_from_decoded_parts(
+        fixed_header_flags,
+        remaining_length,
+        packet_id,
+        return_codes,
     ))
 }
 

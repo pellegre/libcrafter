@@ -360,6 +360,50 @@ impl MqttPacketIdentifier {
     }
 }
 
+/// MQTT SUBACK variable header and payload fields.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MqttSuback {
+    packet_id: Field<u16>,
+    return_codes: Vec<u8>,
+}
+
+impl MqttSuback {
+    fn new() -> Self {
+        Self {
+            packet_id: Field::defaulted(0),
+            return_codes: Vec::new(),
+        }
+    }
+
+    fn from_decoded_parts(packet_id: u16, return_codes: Vec<u8>) -> Self {
+        Self {
+            packet_id: Field::user(packet_id),
+            return_codes,
+        }
+    }
+
+    fn packet_id(&self) -> u16 {
+        self.packet_id.value().copied().unwrap_or(0)
+    }
+
+    fn return_codes(&self) -> &[u8] {
+        &self.return_codes
+    }
+
+    fn push_return_code(&mut self, return_code: u8) {
+        self.return_codes.push(return_code);
+    }
+
+    fn encoded_len(&self) -> usize {
+        2 + self.return_codes.len()
+    }
+
+    fn write_body(&self, out: &mut Vec<u8>) {
+        encode_u16(self.packet_id(), out);
+        out.extend_from_slice(&self.return_codes);
+    }
+}
+
 /// MQTT SUBSCRIBE variable header and payload fields.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct MqttSubscribe {
@@ -421,6 +465,7 @@ enum MqttBody {
     Publish(MqttPublish),
     PacketIdentifier(MqttPacketIdentifier),
     Subscribe(MqttSubscribe),
+    Suback(MqttSuback),
 }
 
 impl MqttBody {
@@ -432,6 +477,7 @@ impl MqttBody {
             Self::Publish(publish) => publish.encoded_len(flags),
             Self::PacketIdentifier(packet_identifier) => packet_identifier.encoded_len(),
             Self::Subscribe(subscribe) => subscribe.encoded_len(),
+            Self::Suback(suback) => suback.encoded_len(),
         }
     }
 
@@ -443,6 +489,7 @@ impl MqttBody {
             Self::Publish(publish) => publish.write_body(out, flags)?,
             Self::PacketIdentifier(packet_identifier) => packet_identifier.write_body(out),
             Self::Subscribe(subscribe) => subscribe.write_body(out)?,
+            Self::Suback(suback) => suback.write_body(out),
         }
         Ok(())
     }
@@ -450,10 +497,12 @@ impl MqttBody {
     fn raw_bytes(&self) -> &[u8] {
         match self {
             Self::Raw(body) => body,
-            Self::Connect(_) | Self::Connack(_) | Self::Publish(_) | Self::PacketIdentifier(_) => {
-                &[]
-            }
-            Self::Subscribe(_) => &[],
+            Self::Connect(_)
+            | Self::Connack(_)
+            | Self::Publish(_)
+            | Self::PacketIdentifier(_)
+            | Self::Subscribe(_)
+            | Self::Suback(_) => &[],
         }
     }
 }
@@ -558,6 +607,16 @@ impl Mqtt {
         }
     }
 
+    /// Build an MQTT SUBACK packet.
+    pub fn suback() -> Self {
+        Self {
+            packet_type: MqttControlPacketType::Suback,
+            flags: Field::defaulted(MqttControlPacketType::Suback.default_flags()),
+            remaining_length: Field::unset(),
+            body: MqttBody::Suback(MqttSuback::new()),
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn connect_from_decoded_parts(
         fixed_header_flags: u8,
@@ -644,6 +703,20 @@ impl Mqtt {
             flags: Field::user(fixed_header_flags),
             remaining_length: Field::user(remaining_length),
             body: MqttBody::Subscribe(MqttSubscribe::from_decoded_parts(packet_id, topics)),
+        }
+    }
+
+    pub(crate) fn suback_from_decoded_parts(
+        fixed_header_flags: u8,
+        remaining_length: u32,
+        packet_id: u16,
+        return_codes: Vec<u8>,
+    ) -> Self {
+        Self {
+            packet_type: MqttControlPacketType::Suback,
+            flags: Field::user(fixed_header_flags),
+            remaining_length: Field::user(remaining_length),
+            body: MqttBody::Suback(MqttSuback::from_decoded_parts(packet_id, return_codes)),
         }
     }
 
@@ -799,6 +872,7 @@ impl Mqtt {
                 packet_identifier.packet_id.set_user(packet_id);
             }
             MqttBody::Subscribe(subscribe) => subscribe.packet_id.set_user(packet_id),
+            MqttBody::Suback(suback) => suback.packet_id.set_user(packet_id),
             _ => {}
         }
         self
@@ -826,6 +900,29 @@ impl Mqtt {
         self
     }
 
+    /// Add one SUBACK return code.
+    pub fn return_code(mut self, return_code: u8) -> Self {
+        match &mut self.body {
+            MqttBody::Connack(connack) => connack.return_code.set_user(return_code),
+            MqttBody::Suback(suback) => suback.push_return_code(return_code),
+            _ => {}
+        }
+        self
+    }
+
+    /// Add SUBACK return codes.
+    pub fn return_codes<I>(mut self, return_codes: I) -> Self
+    where
+        I: IntoIterator<Item = u8>,
+    {
+        if let MqttBody::Suback(suback) = &mut self.body {
+            for return_code in return_codes {
+                suback.push_return_code(return_code);
+            }
+        }
+        self
+    }
+
     /// Set the PUBLISH application payload.
     pub fn payload(mut self, payload: impl Into<Vec<u8>>) -> Self {
         if let MqttBody::Publish(publish) = &mut self.body {
@@ -838,14 +935,6 @@ impl Mqtt {
     pub fn session_present(mut self, session_present: bool) -> Self {
         if let MqttBody::Connack(connack) = &mut self.body {
             connack.set_session_present(session_present);
-        }
-        self
-    }
-
-    /// Set the CONNACK return code byte.
-    pub fn return_code(mut self, return_code: u8) -> Self {
-        if let MqttBody::Connack(connack) = &mut self.body {
-            connack.return_code.set_user(return_code);
         }
         self
     }
@@ -968,11 +1057,17 @@ impl Mqtt {
                     .map(MqttPacketIdentifier::packet_id)
             })
             .or_else(|| self.subscribe_body().map(MqttSubscribe::packet_id))
+            .or_else(|| self.suback_body().map(MqttSuback::packet_id))
     }
 
     /// SUBSCRIBE topic filter and requested QoS pairs, when this is a typed SUBSCRIBE packet.
     pub fn subscribe_topics_value(&self) -> Option<&[(String, u8)]> {
         self.subscribe_body().map(MqttSubscribe::topics)
+    }
+
+    /// SUBACK return codes, when this is a typed SUBACK packet.
+    pub fn suback_return_codes_value(&self) -> Option<&[u8]> {
+        self.suback_body().map(MqttSuback::return_codes)
     }
 
     /// PUBLISH application payload bytes, when this is a typed PUBLISH packet.
@@ -987,7 +1082,8 @@ impl Mqtt {
             | MqttBody::Connack(_)
             | MqttBody::Publish(_)
             | MqttBody::PacketIdentifier(_)
-            | MqttBody::Subscribe(_) => None,
+            | MqttBody::Subscribe(_)
+            | MqttBody::Suback(_) => None,
         }
     }
 
@@ -998,7 +1094,8 @@ impl Mqtt {
             | MqttBody::Connect(_)
             | MqttBody::Publish(_)
             | MqttBody::PacketIdentifier(_)
-            | MqttBody::Subscribe(_) => None,
+            | MqttBody::Subscribe(_)
+            | MqttBody::Suback(_) => None,
         }
     }
 
@@ -1009,7 +1106,8 @@ impl Mqtt {
             | MqttBody::Connect(_)
             | MqttBody::Connack(_)
             | MqttBody::PacketIdentifier(_)
-            | MqttBody::Subscribe(_) => None,
+            | MqttBody::Subscribe(_)
+            | MqttBody::Suback(_) => None,
         }
     }
 
@@ -1020,7 +1118,8 @@ impl Mqtt {
             | MqttBody::Connect(_)
             | MqttBody::Connack(_)
             | MqttBody::Publish(_)
-            | MqttBody::Subscribe(_) => None,
+            | MqttBody::Subscribe(_)
+            | MqttBody::Suback(_) => None,
         }
     }
 
@@ -1031,7 +1130,20 @@ impl Mqtt {
             | MqttBody::Connect(_)
             | MqttBody::Connack(_)
             | MqttBody::Publish(_)
-            | MqttBody::PacketIdentifier(_) => None,
+            | MqttBody::PacketIdentifier(_)
+            | MqttBody::Suback(_) => None,
+        }
+    }
+
+    fn suback_body(&self) -> Option<&MqttSuback> {
+        match &self.body {
+            MqttBody::Suback(suback) => Some(suback),
+            MqttBody::Raw(_)
+            | MqttBody::Connect(_)
+            | MqttBody::Connack(_)
+            | MqttBody::Publish(_)
+            | MqttBody::PacketIdentifier(_)
+            | MqttBody::Subscribe(_) => None,
         }
     }
 
@@ -1242,6 +1354,13 @@ mod tests {
         let bytes = mqtt_bytes(Mqtt::subscribe().packet_id(0x1234));
 
         assert_eq!(bytes, [0x82, 0x02, 0x12, 0x34]);
+    }
+
+    #[test]
+    fn suback_compiles_packet_identifier_and_return_codes() {
+        let bytes = mqtt_bytes(Mqtt::suback().packet_id(0x1234).return_codes([0x01, 0x80]));
+
+        assert_eq!(bytes, [0x90, 0x04, 0x12, 0x34, 0x01, 0x80]);
     }
 
     #[test]
