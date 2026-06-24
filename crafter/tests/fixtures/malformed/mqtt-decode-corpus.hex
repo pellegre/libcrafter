@@ -10,4 +10,8 @@
 10 0e 00 04 4d 51 54 54 04 02 00 3c 00 06 61 62 # connect-truncated-client-id|buffer-too-short|mqtt.string
 30 04 00 05 61 62 # publish-topic-overruns-buffer|buffer-too-short|mqtt.string
 82 07 12 34 00 03 61 2f 62 # subscribe-dangling-qos|buffer-too-short|mqtt.subscribe.requested_qos
-f0 00 # out-of-range-control-packet-type|decodes|raw-tail
+00 00 # out-of-range-control-packet-type|decodes|raw-tail
+20 04 00 00 05 11 # v5-connack-property-length-overruns|buffer-too-short|mqtt.properties|v5
+20 05 00 00 02 21 00 # v5-connack-truncated-property-value|buffer-too-short|mqtt.u16|v5
+20 06 00 00 03 1f 00 02 # v5-connack-truncated-property-string|buffer-too-short|mqtt.string|v5
+30 05 00 01 61 05 01 # v5-publish-property-length-overruns|buffer-too-short|mqtt.properties|v5
