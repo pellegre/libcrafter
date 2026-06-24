@@ -400,37 +400,10 @@ _LEGACY_PROBE_CASES: tuple[ProbeCase, ...] = (
     # The inline ``icmp-echo`` smoke case (and the ``ttl-expired`` case) are now
     # contributed by the ICMP plugin (``protocols/icmp.py``) and merged in ahead
     # of this legacy aggregation by ``_merge_probe_cases``.
-    ProbeCase(
-        name="tcp-syn-open",
-        description="Send TCP SYN to controlled listener and validate SYN/ACK.",
-        stimulus="tcp_syn",
-        expected_response="tcp_syn_ack",
-        required_capabilities=["tcp_open_port"],
-        endpoint_roles=["stimulus", "target"],
-        metadata={"protocol": "tcp", "service": "controlled_listener"},
-    ),
-    ProbeCase(
-        name="tcp-syn-closed",
-        description="Send TCP SYN to closed port and validate RST response.",
-        stimulus="tcp_syn",
-        expected_response="tcp_rst",
-        required_capabilities=["tcp_closed_port"],
-        endpoint_roles=["stimulus", "target"],
-        metadata={"protocol": "tcp", "service": "kernel"},
-    ),
-    ProbeCase(
-        name="tcp-syn-options",
-        description=(
-            "Send a TCP SYN carrying a representative option set (MSS, Window "
-            "Scale, SACK-Permitted, Timestamp, User Timeout) to a controlled "
-            "listener and validate the SYN/ACK."
-        ),
-        stimulus="tcp_syn",
-        expected_response="tcp_syn_ack",
-        required_capabilities=["tcp_open_port"],
-        endpoint_roles=["stimulus", "target"],
-        metadata={"protocol": "tcp", "service": "controlled_listener"},
-    ),
+    # The inline ``tcp-syn-open`` / ``tcp-syn-closed`` smoke cases and the
+    # ``tcp-syn-options`` case are now contributed by the TCP plugin
+    # (``protocols/tcp.py``) and merged in ahead of this legacy aggregation by
+    # ``_merge_probe_cases``.
     # The inline ``dns-query`` smoke case is contributed by the DNS plugin
     # (``protocols/dns.py``) and merged in ahead of this legacy aggregation by
     # ``_merge_probe_cases``.
