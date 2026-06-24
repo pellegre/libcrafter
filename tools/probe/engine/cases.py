@@ -13,15 +13,14 @@ from collections.abc import Sequence
 from .case_helpers import _behavior_case, case_name_filters
 from .model import EndpointRole, ProbeCase
 # Importing from the ``protocols`` package runs its auto-discovery so every
-# migrated protocol module self-registers into ``PROTOCOL_REGISTRY`` before the
-# case catalog and profile tables are assembled below. No protocol is migrated
-# yet, so the registry contribution is empty and the merged catalog/profiles are
-# byte-identical to the legacy aggregation. Imports stay relative; the package
-# autodiscovers ``__name__``-relatively, so this does not cycle back through
-# ``cases``.
+# per-protocol module self-registers into ``PROTOCOL_REGISTRY`` before the case
+# catalog and profile tables are assembled below. Every probe case is now
+# contributed by a plugin, so ``all_cases`` is the sole source of the catalog and
+# of the registry-sourced ordered profile-membership tables. Imports stay
+# relative; the package autodiscovers ``__name__``-relatively, so this does not
+# cycle back through ``cases``.
 from .protocols import (
     all_cases as _registry_cases,
-    all_profile_counts as _registry_profile_counts,
 )
 # Re-import the IGMP case tuple from the IGMP plugin so ``cases.IGMP_PROBE_CASES``
 # stays resolvable for the catalog tests (the cases themselves reach the merged
@@ -107,76 +106,11 @@ UDP_ECHO_LARGE_PAYLOAD_LENGTH = 1200
 # catalog below contributes them through the registry.
 
 
-# The legacy per-protocol case aggregation: the seven inline ICMP/TCP/DNS/TTL/ARP
-# cases followed by the behavioral ``BEHAVIOR_*``/smoke case tuples in declaration
-# order. The registry-aware ``PROBE_CASES`` below merges this with the registry's
-# contributed cases; until a protocol migrates the registry is empty and the
-# merged catalog is byte-identical to this tuple.
-_LEGACY_PROBE_CASES: tuple[ProbeCase, ...] = (
-    # The inline ``icmp-echo`` smoke case (and the ``ttl-expired`` case) are now
-    # contributed by the ICMP plugin (``protocols/icmp.py``) and merged in ahead
-    # of this legacy aggregation by ``_merge_probe_cases``.
-    # The inline ``tcp-syn-open`` / ``tcp-syn-closed`` smoke cases and the
-    # ``tcp-syn-options`` case are now contributed by the TCP plugin
-    # (``protocols/tcp.py``) and merged in ahead of this legacy aggregation by
-    # ``_merge_probe_cases``.
-    # The inline ``dns-query`` smoke case is contributed by the DNS plugin
-    # (``protocols/dns.py``) and merged in ahead of this legacy aggregation by
-    # ``_merge_probe_cases``.
-    # The inline ``icmp-echo`` and ``ttl-expired`` cases are contributed by the
-    # ICMP plugin (``protocols/icmp.py``) and merged in ahead of this legacy
-    # aggregation by ``_merge_probe_cases``.
-    # The inline ``arp-resolution`` smoke case and the ten ARP behavioral cases
-    # are contributed by the ARP plugin (``protocols/arp.py``); the inline
-    # ``dns-query`` smoke case and the ten DNS behavioral cases are contributed
-    # by the DNS plugin (``protocols/dns.py``); the ten DHCP behavioral cases are
-    # contributed by the DHCP plugin (``protocols/dhcp.py``); the three NDP
-    # behavioral cases are contributed by the NDP plugin (``protocols/ndp.py``);
-    # the ten UDP behavioral cases are contributed by the UDP plugin
-    # (``protocols/udp.py``). All are merged in ahead of this legacy aggregation
-    # by ``_merge_probe_cases``.
-    # The ``ospf-hello-exchange`` / ``ospf-dd-exchange`` cases are contributed by
-    # the OSPF plugin (``protocols/ospf.py``) and merged in ahead of this legacy
-    # aggregation by ``_merge_probe_cases``.
-    # The ``bgp-session-smoke`` case is contributed by the BGP plugin
-    # (``protocols/bgp.py``); the ``rip-update-v2`` / ``ripng-update`` cases are
-    # contributed by the RIP plugin (``protocols/rip.py``). Both are merged in
-    # ahead of this legacy aggregation by ``_merge_probe_cases``.
-    # The four IGMP cases are contributed by the IGMP plugin
-    # (``protocols/igmp.py``) and merged in ahead of this legacy aggregation by
-    # ``_merge_probe_cases``.
-    # The four IPSec cases are contributed by the IPSec plugin
-    # (``protocols/ipsec.py``) and merged in ahead of this legacy aggregation by
-    # ``_merge_probe_cases``. Every protocol's cases now come from the registry,
-    # so this legacy aggregation is empty.
-)
-
-
-def _merge_probe_cases() -> tuple[ProbeCase, ...]:
-    """Merge the registry's contributed cases ahead of the legacy aggregation.
-
-    Registry-contributed cases come first (in sorted-plugin / declaration
-    order), then the legacy per-protocol and inline cases, deduped by case name
-    with the registry taking precedence. Until a protocol migrates the registry
-    is empty, so the merge yields ``_LEGACY_PROBE_CASES`` byte-identically and
-    the snapshot-pinned generated plans (and profile selection order) are
-    unchanged.
-    """
-
-    merged: list[ProbeCase] = []
-    seen: set[str] = set()
-    for case in (*_registry_cases(), *_LEGACY_PROBE_CASES):
-        if case.name in seen:
-            continue
-        seen.add(case.name)
-        merged.append(case)
-    return tuple(merged)
-
-
-# Registry-first case catalog. The registry contribution (empty until a protocol
-# migrates) takes precedence; the legacy aggregation fills every case no plugin
-# owns yet, preserving declaration order where ordering is observable.
-PROBE_CASES: tuple[ProbeCase, ...] = _merge_probe_cases()
+# Every probe case is contributed by a per-protocol ``ProtocolPlugin``; the
+# registry is the sole source of the catalog. The case order is the registry's
+# (sorted-plugin / per-plugin declaration) order, which the plan-JSON snapshot
+# pins; there is no legacy per-protocol/inline aggregation left to merge.
+PROBE_CASES: tuple[ProbeCase, ...] = tuple(_registry_cases())
 
 PROBE_CASE_BY_NAME: dict[str, ProbeCase] = {case.name: case for case in PROBE_CASES}
 
@@ -446,13 +380,16 @@ IGMP_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
 )
 
 
-# Legacy profiles that select an explicit ordered case subset. A profile not
-# listed here selects the full catalog. ``smoke`` is pinned to the legacy case
-# set so adding the behavioral catalog does not change what smoke samples. The
-# registry-aware tables below merge this with each plugin's ``profile_counts``
-# contribution; until a protocol migrates the registry is empty and the merged
-# tables are byte-identical to these.
-_LEGACY_PROFILE_CASE_NAMES: dict[str, tuple[str, ...]] = {
+# Profiles that select an explicit ordered case subset. A profile not listed
+# here selects the full catalog. ``smoke`` is pinned to the historical
+# ICMP/TCP/DNS/TTL/ARP set so adding the behavioral catalog does not change what
+# smoke samples. Every entry's ordered case names come from the registry-sourced
+# ``*_PROFILE_CASE_NAMES`` tables above (which filter ``_registry_cases()`` while
+# fixing the observable selection order the plan-JSON snapshot pins); the
+# registry's ``profile_counts`` contribution stays empty by design, so profile
+# membership ordering lives here and these tables are the registry-built profile
+# assembly.
+_PROFILE_CASE_NAMES: dict[str, tuple[str, ...]] = {
     SMOKE_PROFILE: SMOKE_PROFILE_CASE_NAMES,
     BEHAVIOR_PROFILE: BEHAVIOR_PROFILE_CASE_NAMES,
     TCP_SMOKE_PROFILE: TCP_SMOKE_PROFILE_CASE_NAMES,
@@ -465,8 +402,8 @@ _LEGACY_PROFILE_CASE_NAMES: dict[str, tuple[str, ...]] = {
 
 # Per-profile default counts used when no explicit ``--count`` is supplied. The
 # behavior and ipsec profiles default to their full case suites; every other
-# profile keeps the legacy default.
-_LEGACY_PROFILE_DEFAULT_COUNTS: dict[str, int] = {
+# profile keeps the legacy default count.
+_PROFILE_DEFAULT_COUNTS: dict[str, int] = {
     BEHAVIOR_PROFILE: len(BEHAVIOR_PROFILE_CASE_NAMES),
     BGP_SESSION_PROFILE: len(BGP_SESSION_PROFILE_CASE_NAMES),
     RIP_SMOKE_PROFILE: len(RIP_SMOKE_PROFILE_CASE_NAMES),
@@ -474,63 +411,6 @@ _LEGACY_PROFILE_DEFAULT_COUNTS: dict[str, int] = {
     IGMP_PROFILE: len(IGMP_PROFILE_CASE_NAMES),
     IPSEC_PROFILE: len(IPSEC_PROFILE_CASE_NAMES),
 }
-
-
-def _merge_profile_case_names() -> dict[str, tuple[str, ...]]:
-    """Union the registry's profile membership with the legacy profile tables.
-
-    Each plugin contributes ``profile_counts`` as ``{profile: {case_name:
-    count}}``; the registry's case names for a profile come first (registry
-    precedence), then the legacy ordered case names, deduped. Until a protocol
-    migrates the registry is empty, so the merge reproduces
-    ``_LEGACY_PROFILE_CASE_NAMES`` byte-identically and the profile selection
-    order is unchanged.
-    """
-
-    registry_counts = _registry_profile_counts()
-    profiles = [*_LEGACY_PROFILE_CASE_NAMES]
-    for profile in registry_counts:
-        if profile not in _LEGACY_PROFILE_CASE_NAMES:
-            profiles.append(profile)
-
-    merged: dict[str, tuple[str, ...]] = {}
-    for profile in profiles:
-        ordered: list[str] = []
-        seen: set[str] = set()
-        for case_name in (
-            *registry_counts.get(profile, {}),
-            *_LEGACY_PROFILE_CASE_NAMES.get(profile, ()),
-        ):
-            if case_name in seen:
-                continue
-            seen.add(case_name)
-            ordered.append(case_name)
-        merged[profile] = tuple(ordered)
-    return merged
-
-
-def _merge_profile_default_counts() -> dict[str, int]:
-    """Union the registry's default counts with the legacy default counts.
-
-    A plugin's ``profile_counts`` per-case entries sum into the profile's
-    registry-contributed default; that sum is added to the legacy default count
-    so several protocols can grow one profile's default. Until a protocol
-    migrates the registry is empty and this reproduces
-    ``_LEGACY_PROFILE_DEFAULT_COUNTS`` byte-identically.
-    """
-
-    registry_counts = _registry_profile_counts()
-    merged: dict[str, int] = dict(_LEGACY_PROFILE_DEFAULT_COUNTS)
-    for profile, contribution in registry_counts.items():
-        merged[profile] = merged.get(profile, 0) + sum(contribution.values())
-    return merged
-
-
-# Registry-first profile tables. The registry contribution (empty until a
-# protocol migrates) is unioned with the legacy profile membership and default
-# counts, preserving selection order and counts where they are observable.
-_PROFILE_CASE_NAMES: dict[str, tuple[str, ...]] = _merge_profile_case_names()
-_PROFILE_DEFAULT_COUNTS: dict[str, int] = _merge_profile_default_counts()
 
 
 def known_profiles() -> tuple[str, ...]:
