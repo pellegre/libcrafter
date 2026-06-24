@@ -1538,6 +1538,21 @@ impl Mqtt {
     }
 
     /// Set the CONNECT Will Topic and Will Message fields.
+    ///
+    /// For the common last-will-and-testament shape with QoS and retain in one
+    /// call, use [`Mqtt::last_will`].
+    ///
+    /// ```
+    /// use crafter::prelude::*;
+    ///
+    /// let connect = Mqtt::connect()
+    ///     .will("status/client", b"offline".to_vec())
+    ///     .will_qos(1)
+    ///     .will_retain(true);
+    ///
+    /// assert_eq!(connect.will_topic_value(), Some("status/client"));
+    /// assert_eq!(connect.will_message_value(), Some(&b"offline"[..]));
+    /// ```
     pub fn will(mut self, topic: impl Into<String>, message: impl Into<Vec<u8>>) -> Self {
         if let MqttBody::Connect(connect) = &mut self.body {
             connect.will_topic.set_user(topic.into());
@@ -1545,6 +1560,17 @@ impl Mqtt {
             connect.set_connect_flag_default(MQTT_CONNECT_FLAG_WILL, true);
         }
         self
+    }
+
+    /// Set CONNECT Will Topic, Will Message, Will QoS, and Will Retain together.
+    pub fn last_will(
+        self,
+        topic: impl Into<String>,
+        message: impl Into<Vec<u8>>,
+        qos: u8,
+        retain: bool,
+    ) -> Self {
+        self.will(topic, message).will_qos(qos).will_retain(retain)
     }
 
     /// Replace the MQTT 5.0 Will Properties block.
@@ -1640,11 +1666,27 @@ impl Mqtt {
     }
 
     /// Set or clear the PUBLISH RETAIN bit.
+    ///
+    /// ```
+    /// use crafter::prelude::*;
+    ///
+    /// let publish = Mqtt::publish()
+    ///     .topic("status/client")
+    ///     .retain(true)
+    ///     .payload(b"online".to_vec());
+    ///
+    /// assert_eq!(publish.retain_value(), Some(true));
+    /// ```
     pub fn retain(mut self, retain: bool) -> Self {
         if matches!(&self.body, MqttBody::Publish(_)) {
             self.set_publish_flag(MQTT_PUBLISH_FLAG_RETAIN, retain);
         }
         self
+    }
+
+    /// Mark a PUBLISH packet as retained.
+    pub fn retained(self) -> Self {
+        self.retain(true)
     }
 
     /// Replace the MQTT 5.0 PUBLISH properties block.
@@ -2841,6 +2883,33 @@ mod tests {
     }
 
     #[test]
+    fn retained_publish_helpers_set_retain_bit_for_311_and_v5() {
+        let retained = Mqtt::publish()
+            .topic("status")
+            .retained()
+            .payload(b"online".to_vec());
+        assert_eq!(retained.retain_value(), Some(true));
+        let retained_bytes = mqtt_bytes(retained);
+        assert_eq!(
+            retained_bytes[0] & MQTT_PUBLISH_FLAG_RETAIN,
+            MQTT_PUBLISH_FLAG_RETAIN
+        );
+
+        let v5_retained = Mqtt::publish()
+            .version(MQTT_5_PROTOCOL_LEVEL)
+            .topic("status")
+            .retain(true)
+            .payload(b"online".to_vec());
+        assert_eq!(v5_retained.version_value(), MQTT_5_PROTOCOL_LEVEL);
+        assert_eq!(v5_retained.retain_value(), Some(true));
+        let v5_retained_bytes = mqtt_bytes(v5_retained);
+        assert_eq!(
+            v5_retained_bytes[0] & MQTT_PUBLISH_FLAG_RETAIN,
+            MQTT_PUBLISH_FLAG_RETAIN
+        );
+    }
+
+    #[test]
     fn publish_explicit_packet_identifier_value_is_preserved() {
         let bytes = mqtt_bytes(Mqtt::publish().topic("x").qos(1).packet_id(0));
 
@@ -3102,6 +3171,53 @@ mod tests {
         ];
 
         assert_eq!(bytes, expected);
+    }
+
+    #[test]
+    fn last_will_helpers_set_flags_and_fields_for_311_and_v5() {
+        let baseline =
+            Mqtt::connect()
+                .client_id("cid")
+                .last_will("status", b"offline".to_vec(), 2, true);
+        let baseline_flags = baseline.connect_flags_value().expect("connect flags");
+
+        assert!(connect_will_flag(baseline_flags));
+        assert_eq!(connect_will_qos(baseline_flags), 2);
+        assert!(connect_will_retain_flag(baseline_flags));
+        assert_eq!(baseline.will_topic_value(), Some("status"));
+        assert_eq!(baseline.will_message_value(), Some(&b"offline"[..]));
+        assert_eq!(
+            mqtt_bytes(baseline)[9],
+            MQTT_CONNECT_FLAG_CLEAN_SESSION
+                | MQTT_CONNECT_FLAG_WILL
+                | (2 << CONNECT_WILL_QOS_SHIFT)
+                | MQTT_CONNECT_FLAG_WILL_RETAIN
+        );
+
+        let v5 = Mqtt::connect()
+            .version(MQTT_5_PROTOCOL_LEVEL)
+            .client_id("cid")
+            .last_will("status", b"offline".to_vec(), 1, true)
+            .will_property(MqttProperty::PayloadFormatIndicator(1));
+        let v5_flags = v5.connect_flags_value().expect("connect flags");
+
+        assert_eq!(v5.version_value(), MQTT_5_PROTOCOL_LEVEL);
+        assert!(connect_will_flag(v5_flags));
+        assert_eq!(connect_will_qos(v5_flags), 1);
+        assert!(connect_will_retain_flag(v5_flags));
+        assert_eq!(
+            v5.will_properties_value()
+                .expect("will properties")
+                .property_values(),
+            &[MqttProperty::PayloadFormatIndicator(1)]
+        );
+        assert_eq!(
+            mqtt_bytes(v5)[9],
+            MQTT_CONNECT_FLAG_CLEAN_SESSION
+                | MQTT_CONNECT_FLAG_WILL
+                | (1 << CONNECT_WILL_QOS_SHIFT)
+                | MQTT_CONNECT_FLAG_WILL_RETAIN
+        );
     }
 
     #[test]
