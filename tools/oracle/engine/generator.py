@@ -584,7 +584,7 @@ class PacketGenerator:
             joined = " ".join(detail) or "current filters"
             raise ValueError(f"no stack specs match {joined}")
 
-        deck = self._stack_deck(candidates)
+        deck = self._stack_deck(candidates, direction=direction)
         if not deck:
             raise ValueError("no stack specs have positive sampling weight")
         return deck[index % len(deck)]
@@ -634,6 +634,17 @@ class PacketGenerator:
             if family is not None and family not in stack_families:
                 continue
             if case is not None and case not in coverage_cases:
+                continue
+            if case is not None and not self._case_supported_in_direction(case, direction):
+                continue
+            if (
+                case is None
+                and coverage_cases
+                and not any(
+                    self._case_supported_in_direction(stack_case, direction)
+                    for stack_case in coverage_cases
+                )
+            ):
                 continue
             if feature_spec is not None:
                 feature_layers = _string_list(feature_spec.get("layers"), "feature.layers")
@@ -745,7 +756,7 @@ class PacketGenerator:
             candidates.append(stack)
         return candidates
 
-    def _stack_deck(self, stacks: Sequence[JSONObject]) -> list[JSONObject]:
+    def _stack_deck(self, stacks: Sequence[JSONObject], *, direction: str) -> list[JSONObject]:
         if self.profile == "ipv6-enrichment":
             deck: list[JSONObject] = []
             for stack in stacks:
@@ -755,6 +766,8 @@ class PacketGenerator:
                 )
                 for case in coverage_cases:
                     if not _is_ipv6_enrichment_case(case):
+                        continue
+                    if not self._case_supported_in_direction(case, direction):
                         continue
                     deck.append({**stack, "coverage_cases": [case]})
             if deck:
@@ -768,6 +781,8 @@ class PacketGenerator:
                 )
                 for case in coverage_cases:
                     if not _is_ip_fragment_smoke_case(case):
+                        continue
+                    if not self._case_supported_in_direction(case, direction):
                         continue
                     deck.append({**stack, "coverage_cases": [case]})
             if deck:
@@ -1081,6 +1096,8 @@ class PacketGenerator:
             ):
                 if feature_case in coverage_cases:
                     continue
+                if feature_name == "ip_fragment_transforms":
+                    continue
                 if not self._case_supported_in_direction(feature_case, direction):
                     continue
                 weight = self._case_weight(
@@ -1231,10 +1248,22 @@ class PacketGenerator:
             return []
         cases = _string_list(feature_spec.get("coverage_cases", []), "feature.coverage_cases")
         if feature == "ipv6_fragment_routing":
-            return _ipv6_extension_cases_for_stack(stack, cases)
+            return [
+                case
+                for case in _ipv6_extension_cases_for_stack(stack, cases)
+                if self._case_supported_in_direction(case, direction)
+            ]
         if feature == "udp_options":
-            return _udp_option_cases_for_stack(stack, cases)
-        return cases
+            return [
+                case
+                for case in _udp_option_cases_for_stack(stack, cases)
+                if self._case_supported_in_direction(case, direction)
+            ]
+        return [
+            case
+            for case in cases
+            if self._case_supported_in_direction(case, direction)
+        ]
 
     def _case_weight(self, case: str, *, categories: Sequence[str]) -> int:
         weights = self._profile_feature_weights()
@@ -1268,9 +1297,10 @@ class PacketGenerator:
         """Map each declared supported case to its directions and byte policy.
 
         Built from every feature's ``supported_cases`` block so case selection
-        can honor the per-case ``directions`` and ``byte_policy`` contract that
-        the feature specs declare. Cases without a ``supported_cases`` entry are
-        absent from the map and keep the historical sampling behavior.
+        can honor the per-case ``directions``, ``byte_policy``, and
+        ``contract_only`` contract that the feature specs declare. Cases without
+        a ``supported_cases`` entry are absent from the map and keep the
+        historical sampling behavior.
         """
 
         cached = getattr(self, "_supported_case_index_cache", None)
@@ -1298,6 +1328,7 @@ class PacketGenerator:
                 index[name] = {
                     "directions": list(directions),
                     "byte_policy": byte_policy if isinstance(byte_policy, str) else None,
+                    "contract_only": raw_case.get("contract_only") is True,
                 }
         self._supported_case_index_cache = index  # type: ignore[attr-defined]
         return index
@@ -1306,14 +1337,18 @@ class PacketGenerator:
         """Return whether ``case`` may be generated for ``direction``.
 
         A case that declares ``supported_cases`` directions is excluded from a
-        direction it does not list, and any ``structured_error`` case is excluded
-        from offline encode/decode sampling entirely (the oracle has no offline
-        malformed comparison pathway). Undeclared cases keep the prior behavior.
+        direction it does not list. ``structured_error`` and ``contract_only``
+        cases are excluded from offline encode/decode sampling entirely (the
+        oracle has no runnable malformed comparison pathway, and contract-only
+        cases are reported by the specs suite instead). Undeclared cases keep
+        the prior behavior.
         """
 
         entry = self._supported_case_index().get(case)
         if entry is None:
             return True
+        if entry.get("contract_only") is True:
+            return False
         if entry.get("byte_policy") == "structured_error":
             return False
         directions = entry.get("directions") or []
