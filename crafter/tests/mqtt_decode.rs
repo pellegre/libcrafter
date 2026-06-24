@@ -1,7 +1,11 @@
 use std::net::Ipv4Addr;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crafter::prelude::*;
 use crafter::protocols::mqtt::MQTT_PUBLISH_QOS_1;
+use crafter::wire::backend::pcap::{PcapLinkType, PcapReader, PcapWriter};
+
+type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
 fn mqtt_tcp_packet(source_port: u16, destination_port: u16) -> Packet {
     Ipv4::new()
@@ -149,5 +153,61 @@ fn stacked_mqtt_decode_preserves_partial_tail_as_raw() -> crafter::Result<()> {
 
     let raw = decoded.layer::<Raw>().expect("partial mqtt tail");
     assert_eq!(raw.as_bytes(), &[0xe0]);
+    Ok(())
+}
+
+#[test]
+fn pcap_roundtrip_preserves_mqtt_publish_packet() -> TestResult {
+    let path = std::env::temp_dir().join(format!(
+        "crafter-mqtt-pcap-{}-{}.pcap",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time should be after unix epoch")
+            .as_nanos()
+    ));
+    let packet = Ethernet::with_addresses(
+        MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0x01]),
+        MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0x02]),
+    ) / Ipv4::new()
+        .src(Ipv4Addr::new(192, 0, 2, 91))
+        .dst(Ipv4Addr::new(198, 51, 100, 91))
+        / Tcp::new()
+            .sport(49_191)
+            .dport(MQTT_PORT)
+            .seq(0x5152_5354)
+            .ack(0x6162_6364)
+            .ack_segment()
+        / Mqtt::publish()
+            .topic("telemetry")
+            .qos(MQTT_PUBLISH_QOS_1)
+            .packet_id(0x1234)
+            .payload(b"online".to_vec());
+    let written_bytes = packet.compile()?;
+
+    {
+        let mut writer = PcapWriter::create(&path, PcapLinkType::Ethernet)?;
+        writer.write_packet(&packet)?;
+        writer.flush()?;
+    }
+
+    let records = PcapReader::open(&path)?.collect_records()?;
+    let packets = PcapReader::open(&path)?.collect_packets()?;
+    std::fs::remove_file(&path)?;
+
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].pcap_link_type(), PcapLinkType::Ethernet);
+    assert_eq!(records[0].data(), written_bytes.as_bytes());
+
+    assert_eq!(packets.len(), 1);
+    let decoded = packets[0].packet();
+    assert_eq!(decoded.compile()?.as_bytes(), written_bytes.as_bytes());
+
+    let mqtt = decoded.layer::<Mqtt>().expect("decoded MQTT PUBLISH layer");
+    assert_eq!(mqtt.packet_type(), MqttControlPacketType::Publish);
+    assert_eq!(mqtt.topic_value(), Some("telemetry"));
+    assert_eq!(mqtt.qos_value(), Some(MQTT_PUBLISH_QOS_1));
+    assert_eq!(mqtt.packet_id_value(), Some(0x1234));
+    assert_eq!(mqtt.payload_value(), Some(&b"online"[..]));
     Ok(())
 }
