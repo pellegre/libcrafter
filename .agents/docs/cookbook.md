@@ -136,7 +136,7 @@ Mosquitto exchange without starting a broker in local dry-run mode:
 ```sh
 cargo run -p crafter --example mqtt_session
 cargo run -p crafter --example mqtt_session -- --v5
-tools/oracle/run offline --backend scapy --family mqtt --profile ci --seed 5 --count 30 --out target/oracle/mqtt-agent-offline
+tools/oracle/run offline --backend <reference-backend> --family mqtt --profile ci --seed 5 --count 30 --out target/oracle/mqtt-agent-offline
 tools/probe/run --provider local-dry-run --dry-run --profile mqtt-smoke --seed 1
 ```
 
