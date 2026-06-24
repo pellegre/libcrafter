@@ -22,11 +22,15 @@ from .base import ScapyProtocol, register
 _SUPPORTED_FIELDS = frozenset(
     {
         "ack_flags",
+        "ack_properties",
+        "auth_properties",
         "clean_session",
         "cleansess",
         "clientId",
         "client_id",
+        "connack_properties",
         "connect_flags",
+        "connect_properties",
         "control_packet_type",
         "dup",
         "flags",
@@ -40,23 +44,32 @@ _SUPPORTED_FIELDS = frozenset(
         "password",
         "payload",
         "payload_hex",
+        "properties",
         "protocol_level",
         "protocol_name",
         "protolevel",
         "protoname",
         "qos",
+        "reason_code",
+        "reason_codes",
         "remaining_length",
         "retain",
         "return_code",
         "return_codes",
         "session_present",
+        "suback_properties",
+        "subscribe_properties",
         "topic",
         "topic_filters",
         "topics",
         "type",
+        "unsuback_properties",
+        "unsubscribe_properties",
         "username",
         "value",
+        "version",
         "will_message",
+        "will_properties",
         "will_qos",
         "will_retain",
         "will_topic",
@@ -78,6 +91,7 @@ _MQTT_PACKET_TYPES: dict[str, int] = {
     "pingreq": 12,
     "pingresp": 13,
     "disconnect": 14,
+    "auth": 15,
 }
 _MQTT_FLAG_DOMAINS: dict[str, int] = {
     "default": 0,
@@ -213,6 +227,11 @@ def _mqtt_qos(value: object) -> int:
 
 
 def _mqtt_body(packet_type: int, fields: Mapping[str, object], scapy_mqtt: Any) -> Any | None:
+    if _mqtt_version(fields) == 5:
+        body = _mqtt_v5_body(packet_type, fields)
+        if body is not None:
+            return import_scapy()["all"].Raw(load=body)
+
     if packet_type == 1:
         return _mqtt_connect_body(fields, scapy_mqtt)
     if packet_type == 2:
@@ -269,6 +288,159 @@ def _mqtt_body(packet_type: int, fields: Mapping[str, object], scapy_mqtt: Any) 
     if packet_type in {12, 13}:
         return None
     return None
+
+
+def _mqtt_version(fields: Mapping[str, object]) -> int:
+    value = _optional_field(fields, "version", "protocol_level", "protolevel")
+    if value is None:
+        return 4
+    return _int(value, 4)
+
+
+def _mqtt_v5_body(packet_type: int, fields: Mapping[str, object]) -> bytes | None:
+    if packet_type == 1:
+        return _mqtt_v5_connect_body(fields)
+    if packet_type == 2:
+        ack_flags = _bool_int(_optional_field(fields, "session_present", "ack_flags"), 0)
+        reason_code = _mqtt_return_code(
+            _optional_field(fields, "reason_code", "return_code")
+        )
+        return bytes([ack_flags, reason_code]) + _mqtt_properties_block(
+            _optional_field(fields, "properties", "connack_properties")
+        )
+    if packet_type == 3:
+        payload_hex = _optional_field(fields, "payload_hex")
+        payload = (
+            _bytes_field(payload_hex)
+            if payload_hex is not None
+            else _mqtt_payload_bytes(_optional_field(fields, "payload", "value"))
+        )
+        body = bytearray()
+        body.extend(
+            _mqtt_encode_string(_optional_field(fields, "topic"), "crafter/demo")
+        )
+        if _mqtt_qos(_optional_field(fields, "qos")) != 0:
+            body.extend((_mqtt_packet_id(fields) or 1).to_bytes(2, "big"))
+        body.extend(_mqtt_properties_block(_optional_field(fields, "properties")))
+        body.extend(payload)
+        return bytes(body)
+    if packet_type in {4, 5, 6, 7}:
+        body = bytearray((_mqtt_packet_id(fields) or 1).to_bytes(2, "big"))
+        reason_code_value = _optional_field(fields, "reason_code")
+        properties = _optional_field(fields, "properties", "ack_properties")
+        if reason_code_value is not None or properties is not None:
+            body.append(_mqtt_return_code(reason_code_value))
+            body.extend(_mqtt_properties_block(properties))
+        return bytes(body)
+    if packet_type == 8:
+        body = bytearray((_mqtt_packet_id(fields) or 1).to_bytes(2, "big"))
+        body.extend(
+            _mqtt_properties_block(
+                _optional_field(fields, "properties", "subscribe_properties")
+            )
+        )
+        for topic, qos in _mqtt_topic_qos_pairs(fields):
+            body.extend(_mqtt_encode_string(topic, ""))
+            body.append(_mqtt_qos(qos))
+        return bytes(body)
+    if packet_type == 9:
+        body = bytearray((_mqtt_packet_id(fields) or 1).to_bytes(2, "big"))
+        body.extend(
+            _mqtt_properties_block(
+                _optional_field(fields, "properties", "suback_properties")
+            )
+        )
+        body.extend(
+            _mqtt_return_codes(
+                _optional_field(fields, "reason_codes", "return_codes", "return_code")
+            )
+        )
+        return bytes(body)
+    if packet_type == 10:
+        body = bytearray((_mqtt_packet_id(fields) or 1).to_bytes(2, "big"))
+        body.extend(
+            _mqtt_properties_block(
+                _optional_field(fields, "properties", "unsubscribe_properties")
+            )
+        )
+        for topic in _mqtt_topic_values(fields):
+            body.extend(_mqtt_encode_string(topic, ""))
+        return bytes(body)
+    if packet_type == 11:
+        body = bytearray((_mqtt_packet_id(fields) or 1).to_bytes(2, "big"))
+        properties = _optional_field(fields, "properties", "unsuback_properties")
+        reason_codes = _mqtt_return_codes(
+            _optional_field(fields, "reason_codes", "return_codes", "return_code")
+        )
+        if properties is not None or reason_codes:
+            body.extend(_mqtt_properties_block(properties))
+            body.extend(reason_codes)
+        return bytes(body)
+    if packet_type in {14, 15}:
+        reason_code_value = _optional_field(fields, "reason_code")
+        properties = _optional_field(
+            fields,
+            "properties",
+            "disconnect_properties" if packet_type == 14 else "auth_properties",
+        )
+        if reason_code_value is None and properties is None:
+            return b""
+        return bytes([_mqtt_return_code(reason_code_value)]) + _mqtt_properties_block(
+            properties
+        )
+    if packet_type in {12, 13}:
+        return b""
+    return None
+
+
+def _mqtt_v5_connect_body(fields: Mapping[str, object]) -> bytes:
+    connect_flags_value = _optional_field(fields, "connect_flags")
+    connect_flags = _mqtt_connect_flags(connect_flags_value)
+    if connect_flags_value is None:
+        if _bool_int(_optional_field(fields, "clean_session", "cleansess"), 1):
+            connect_flags |= 0x02
+        if (
+            _optional_field(fields, "will_topic") is not None
+            or _optional_field(fields, "will_message") is not None
+        ):
+            connect_flags |= 0x04
+        if _optional_field(fields, "will_retain") is not None and _bool_int(
+            _optional_field(fields, "will_retain"),
+            0,
+        ):
+            connect_flags |= 0x20
+        connect_flags |= (_mqtt_will_qos(fields, connect_flags) << 3) & 0x18
+        if _optional_field(fields, "username") is not None:
+            connect_flags |= 0x80
+        if _optional_field(fields, "password") is not None:
+            connect_flags |= 0x40
+
+    body = bytearray()
+    body.extend(
+        _mqtt_encode_string(
+            _optional_field(fields, "protocol_name", "protoname"),
+            "MQTT",
+        )
+    )
+    body.append(_int(_optional_field(fields, "protocol_level", "protolevel", "version"), 5))
+    body.append(connect_flags)
+    body.extend(_int(_optional_field(fields, "keep_alive", "klive"), 60).to_bytes(2, "big"))
+    body.extend(
+        _mqtt_properties_block(
+            _optional_field(fields, "connect_properties", "properties")
+        )
+    )
+    body.extend(_mqtt_encode_string(_optional_field(fields, "client_id", "clientId"), ""))
+
+    if connect_flags & 0x04:
+        body.extend(_mqtt_properties_block(_optional_field(fields, "will_properties")))
+        body.extend(_mqtt_encode_string(_optional_field(fields, "will_topic"), ""))
+        body.extend(_mqtt_encode_binary(_optional_field(fields, "will_message")))
+    if connect_flags & 0x80:
+        body.extend(_mqtt_encode_string(_optional_field(fields, "username"), ""))
+    if connect_flags & 0x40:
+        body.extend(_mqtt_encode_binary(_optional_field(fields, "password")))
+    return bytes(body)
 
 
 def _mqtt_connect_body(fields: Mapping[str, object], scapy_mqtt: Any) -> Any:
@@ -454,6 +626,164 @@ def _mqtt_topic_values(fields: Mapping[str, object]) -> list[object]:
         else:
             values.append(item)
     return values
+
+
+def _mqtt_properties_block(value: object) -> bytes:
+    properties = _mqtt_properties_bytes(value)
+    return _mqtt_encode_vbi(len(properties)) + properties
+
+
+def _mqtt_properties_bytes(value: object) -> bytes:
+    if value is None:
+        return b""
+    if isinstance(value, Mapping):
+        value = [value]
+    if not isinstance(value, Sequence) or isinstance(value, (bytes, bytearray, str)):
+        raise ValueError(f"expected MQTT property list, got {value!r}")
+
+    out = bytearray()
+    for item in value:
+        if not isinstance(item, Mapping):
+            raise ValueError(f"expected MQTT property mapping, got {item!r}")
+        name = _mqtt_property_name(
+            _required_field(
+                item,
+                "mqtt_property",
+                "name",
+                "id",
+                "identifier",
+                "property",
+            )
+        )
+        if name == "payload_format_indicator":
+            out.extend(
+                [0x01, _int(_required_field(item, "mqtt_property.value", "value"), 0)]
+            )
+        elif name == "message_expiry_interval":
+            out.append(0x02)
+            out.extend(
+                _int(
+                    _required_field(item, "mqtt_property.value", "value"),
+                    0,
+                ).to_bytes(4, "big")
+            )
+        elif name == "content_type":
+            out.append(0x03)
+            out.extend(
+                _mqtt_encode_string(
+                    _required_field(item, "mqtt_property.value", "value"),
+                    "",
+                )
+            )
+        elif name == "subscription_identifier":
+            out.append(0x0B)
+            out.extend(
+                _mqtt_encode_vbi(
+                    _int(_required_field(item, "mqtt_property.value", "value"), 0)
+                )
+            )
+        elif name == "session_expiry_interval":
+            out.append(0x11)
+            out.extend(
+                _int(
+                    _required_field(item, "mqtt_property.value", "value"),
+                    0,
+                ).to_bytes(4, "big")
+            )
+        elif name == "assigned_client_identifier":
+            out.append(0x12)
+            out.extend(
+                _mqtt_encode_string(
+                    _required_field(item, "mqtt_property.value", "value"),
+                    "",
+                )
+            )
+        elif name == "authentication_method":
+            out.append(0x15)
+            out.extend(
+                _mqtt_encode_string(
+                    _required_field(item, "mqtt_property.value", "value"),
+                    "",
+                )
+            )
+        elif name == "authentication_data":
+            out.append(0x16)
+            out.extend(
+                _mqtt_encode_binary(
+                    _required_field(item, "mqtt_property.value", "value")
+                )
+            )
+        elif name == "reason_string":
+            out.append(0x1F)
+            out.extend(
+                _mqtt_encode_string(
+                    _required_field(item, "mqtt_property.value", "value"),
+                    "",
+                )
+            )
+        elif name == "receive_maximum":
+            out.append(0x21)
+            out.extend(
+                _int(
+                    _required_field(item, "mqtt_property.value", "value"),
+                    0,
+                ).to_bytes(2, "big")
+            )
+        elif name == "topic_alias":
+            out.append(0x23)
+            out.extend(
+                _int(
+                    _required_field(item, "mqtt_property.value", "value"),
+                    0,
+                ).to_bytes(2, "big")
+            )
+        elif name == "user_property":
+            out.append(0x26)
+            out.extend(
+                _mqtt_encode_string(
+                    _required_field(item, "mqtt_property.key", "key", "name"),
+                    "",
+                )
+            )
+            out.extend(
+                _mqtt_encode_string(
+                    _required_field(item, "mqtt_property.value", "value"),
+                    "",
+                )
+            )
+        else:
+            raise ValueError(f"unsupported MQTT 5 property: {name}")
+    return bytes(out)
+
+
+def _mqtt_property_name(value: object) -> str:
+    if isinstance(value, str):
+        return value.lower().replace("-", "_").replace(" ", "_")
+    return str(_int(value, 0))
+
+
+def _mqtt_encode_string(value: object, default: str) -> bytes:
+    encoded = _mqtt_text_bytes(value, default)
+    return len(encoded).to_bytes(2, "big") + encoded
+
+
+def _mqtt_encode_binary(value: object) -> bytes:
+    encoded = _mqtt_payload_bytes(value)
+    return len(encoded).to_bytes(2, "big") + encoded
+
+
+def _mqtt_encode_vbi(value: int) -> bytes:
+    if value < 0 or value > 268_435_455:
+        raise ValueError(f"MQTT variable byte integer out of range: {value}")
+    out = bytearray()
+    while True:
+        encoded = value % 128
+        value //= 128
+        if value > 0:
+            encoded |= 0x80
+        out.append(encoded)
+        if value == 0:
+            return bytes(out)
 
 
 def _mqtt_text_bytes(value: object, default: str) -> bytes:

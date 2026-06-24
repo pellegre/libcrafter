@@ -77,8 +77,6 @@ supported_cases:
     roots:
       - "l3:ipv4"
       - "l3:ipv6"
-    contract_only: true
-    contract_reason: scapy.contrib.mqtt backend support for MQTT 5 reason-code framing is added in the follow-up backend step.
     fields:
       mqtt:
         packet_type: connack
@@ -105,8 +103,6 @@ supported_cases:
     roots:
       - "l3:ipv4"
       - "l3:ipv6"
-    contract_only: true
-    contract_reason: scapy.contrib.mqtt backend support for MQTT 5 reason-code framing is added in the follow-up backend step.
     fields:
       mqtt:
         packet_type: puback
@@ -133,8 +129,6 @@ supported_cases:
     roots:
       - "l3:ipv4"
       - "l3:ipv6"
-    contract_only: true
-    contract_reason: scapy.contrib.mqtt backend support for MQTT 5 reason-code framing is added in the follow-up backend step.
     fields:
       mqtt:
         packet_type: pubrec
@@ -158,8 +152,6 @@ supported_cases:
     roots:
       - "l3:ipv4"
       - "l3:ipv6"
-    contract_only: true
-    contract_reason: scapy.contrib.mqtt backend support for MQTT 5 reason-code framing is added in the follow-up backend step.
     fields:
       mqtt:
         packet_type: pubrel
@@ -185,8 +177,6 @@ supported_cases:
     roots:
       - "l3:ipv4"
       - "l3:ipv6"
-    contract_only: true
-    contract_reason: scapy.contrib.mqtt backend support for MQTT 5 reason-code framing is added in the follow-up backend step.
     fields:
       mqtt:
         packet_type: pubcomp
@@ -210,8 +200,6 @@ supported_cases:
     roots:
       - "l3:ipv4"
       - "l3:ipv6"
-    contract_only: true
-    contract_reason: scapy.contrib.mqtt backend support for MQTT 5 reason-code framing is added in the follow-up backend step.
     fields:
       mqtt:
         packet_type: suback
@@ -244,8 +232,6 @@ supported_cases:
     roots:
       - "l3:ipv4"
       - "l3:ipv6"
-    contract_only: true
-    contract_reason: scapy.contrib.mqtt backend support for MQTT 5 reason-code framing is added in the follow-up backend step.
     fields:
       mqtt:
         packet_type: unsuback
@@ -278,8 +264,6 @@ supported_cases:
     roots:
       - "l3:ipv4"
       - "l3:ipv6"
-    contract_only: true
-    contract_reason: scapy.contrib.mqtt backend support for MQTT 5 reason-code framing is added in the follow-up backend step.
     fields:
       mqtt:
         packet_type: disconnect
@@ -303,6 +287,8 @@ supported_cases:
 backend_support:
   scapy:
     status: partial
+    encode: true
+    decode: true
     native_layers:
       - MQTT
       - MQTTConnack
@@ -314,9 +300,10 @@ backend_support:
       - MQTTUnsuback
       - MQTTDisconnect
     notes:
-      - Baseline Scapy MQTT acknowledgement layers are available, but MQTT 5
-        reason-code/property framing is not enabled until the backend gap step,
-        so these cases are contract-only here.
+      - Scapy contributes the MQTT fixed header and IP/TCP stack; the backend
+        materializes MQTT 5 reason-code/property bodies as exact raw MQTT bytes
+        and normalizes them from the TCP payload because Scapy's contrib MQTT
+        model does not expose all MQTT 5 acknowledgement fields natively.
   libcrafter:
     status: supported
     encode: true

@@ -172,6 +172,7 @@ backend_support:
     decode: true
     notes:
       - Scapy contrib import, materialization, and TCP-payload normalization support MQTT 3.1.1 control packets.
+      - MQTT 5.0 properties, reason-code forms, and AUTH are bridged by the backend as Scapy MQTT fixed headers plus exact raw MQTT body bytes because Scapy's contrib model does not expose all MQTT 5 fields natively.
   libcrafter:
     status: supported
     encode: true
