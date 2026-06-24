@@ -17,11 +17,10 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from .cases import PROBE_CASE_BY_NAME
-from .model import JSONObject, ProbeCase, ProbeRunRequest, json_object
+from .model import JSONObject, ProbeCase, ProbeRunRequest
 from .planning_helpers import (
     PlanBuilder,
     deterministic_bytes,
-    deterministic_documentation_ipv6,
     deterministic_documentation_mac,
     deterministic_ipv4_pair,
     deterministic_router_ipv4,
