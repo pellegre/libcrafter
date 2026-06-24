@@ -95,6 +95,29 @@ from .protocols.dhcp import (
     dhcp_responder_descriptor,
     dhcp_responder_setup_lines,
 )
+
+# UDP's target-service descriptors (responder + closed-port), responder /
+# closed-port case sets, plan selectors, and the setup-script blocks (the
+# closed-UDP-port free check and the responder heredoc + launch) were migrated
+# into the UDP plugin (:mod:`tools.probe.engine.protocols.udp`). They are
+# re-imported here so ``target_services.udp_responder_descriptor`` /
+# ``target_services.closed_udp_port_descriptor`` /
+# ``target_services._UDP_RESPONDER_CASES`` / ``target_services._UDP_CLOSED_PORT_CASES``
+# / ``target_services.udp_probe_plans`` / ``target_services.closed_udp_probe_plans``
+# keep resolving (the behavior/script tests, ``prepare_wire_probe_target``, and
+# ``__all__`` reference them), and so ``target_service_setup_script`` can render
+# the UDP setup blocks. The UDP plugin module does not import ``target_services``,
+# so this does not cycle.
+from .protocols.udp import (
+    _UDP_CLOSED_PORT_CASES,
+    _UDP_RESPONDER_CASES,
+    closed_udp_port_descriptor,
+    closed_udp_probe_plans,
+    udp_closed_port_check_lines,
+    udp_probe_plans,
+    udp_responder_descriptor,
+    udp_responder_setup_lines,
+)
 from .target_service_helpers import (
     KernelStateDescriptor,
     TargetServiceDescriptor,
@@ -154,37 +177,10 @@ RIP_RIB_COMMAND = "vtysh -c 'show ip rip'"
 # behavior/script tests.
 
 
-def udp_responder_descriptor(
-    *,
-    bind_ipv4: str,
-    source_ipv4: str,
-    port: int,
-    artifact_root: str,
-) -> TargetServiceDescriptor:
-    """Describe the controlled UDP echo/transform responder."""
-
-    return TargetServiceDescriptor(
-        name="udp-responder",
-        protocol="udp",
-        purpose="udp-echo",
-        bind_ipv4=bind_ipv4,
-        source_ipv4=source_ipv4,
-        port=port,
-        requires=["python3", SKIP_REQUIRES_CONTROLLED_SERVICE],
-        setup_commands=[
-            f"check udp port {bind_ipv4}:{port} is free",
-            f"start udp-responder.py on {bind_ipv4}:{port}",
-        ],
-        cleanup_commands=[
-            f"kill udp-responder on {bind_ipv4}:{port}",
-        ],
-        artifacts=[
-            posixpath.join(artifact_root, f"udp-responder-{port}.stdout.txt"),
-            posixpath.join(artifact_root, f"udp-responder-{port}.stderr.txt"),
-            posixpath.join(artifact_root, f"udp-responder-{port}.pid"),
-        ],
-        metadata={"runtime": "python3", "deterministic": True},
-    )
+# The UDP target-service descriptor (``udp_responder_descriptor``) now lives in
+# :mod:`tools.probe.engine.protocols.udp` and is re-imported above so
+# ``target_services.udp_responder_descriptor`` keeps resolving for the
+# behavior/script tests.
 
 
 def frr_bgp_peer_descriptor(
@@ -278,25 +274,10 @@ def rip_peer_service_descriptor(
     )
 
 
-def closed_udp_port_descriptor(
-    *,
-    bind_ipv4: str,
-    source_ipv4: str,
-    port: int,
-) -> KernelStateDescriptor:
-    """Describe a closed UDP port whose kernel emits ICMP port-unreachable."""
-
-    return KernelStateDescriptor(
-        name="closed-udp-port",
-        purpose="udp-port-unreachable",
-        bind_ipv4=bind_ipv4,
-        source_ipv4=source_ipv4,
-        port=port,
-        verify_commands=[
-            f"check udp port {bind_ipv4}:{port} is free",
-        ],
-        metadata={"expects": "icmp_port_unreachable", "deterministic": True},
-    )
+# The closed-UDP-port descriptor (``closed_udp_port_descriptor``) now lives in
+# :mod:`tools.probe.engine.protocols.udp` and is re-imported above so
+# ``target_services.closed_udp_port_descriptor`` keeps resolving for the
+# behavior/script tests.
 
 
 # The ARP target-service descriptors (``arp_alias_descriptor`` /
@@ -448,19 +429,18 @@ def _legacy_target_service_setup_plan(
     tcp_closed_plans = plans_by_destination_port(
         plan for plan in probe_plans if plan.get("case") == "tcp-syn-closed"
     )
-    udp_plans = udp_probe_plans(probe_plans)
-    udp_plans_by_port = plans_by_destination_port(udp_plans)
-    closed_udp_plans = closed_udp_probe_plans(probe_plans)
-    closed_udp_plans_by_port = plans_by_destination_port(closed_udp_plans)
     bgp_plans = bgp_peer_probe_plans(probe_plans)
     arp_plans = arp_probe_plans(probe_plans)
     return {
         "role": "target",
         "planned": True,
+        # The ``udp-responder`` services and ``closed_udp_ports`` entries (and
+        # their ``starts_services`` contribution) moved to the UDP plugin's
+        # ``target_service`` hook; the registry partition diverts the UDP cases off
+        # this legacy path, so this body sees no UDP plans.
         "starts_services": not dry_run
         and bool(
             tcp_open_plans
-            or udp_plans_by_port
             or bgp_plans
         ),
         "dry_run_starts_services": False,
@@ -476,27 +456,6 @@ def _legacy_target_service_setup_plan(
                 }
                 for port, plan in tcp_open_plans.items()
             ],
-            *[
-                {
-                    "name": "udp-responder",
-                    "protocol": "udp",
-                    "port": port,
-                    "purpose": "udp-echo",
-                    "deterministic": True,
-                    "echo": True,
-                    "payload_count": sum(
-                        int(plan.get("send_count") or 1)
-                        for plan in udp_plans
-                        if int(plan.get("destination_port", 0)) == port
-                    ),
-                    **target_service_address_fields(plan),
-                    "log_paths": [
-                        f"live-artifacts/probe/target-services/udp-responder-{port}.stdout.txt",
-                        f"live-artifacts/probe/target-services/udp-responder-{port}.stderr.txt",
-                    ],
-                }
-                for port, plan in udp_plans_by_port.items()
-            ],
             *bgp_peer_service_plans(bgp_plans),
         ],
         "closed_tcp_ports": [
@@ -509,17 +468,7 @@ def _legacy_target_service_setup_plan(
             }
             for port, plan in tcp_closed_plans.items()
         ],
-        "closed_udp_ports": [
-            {
-                "port": port,
-                "state": "verified-unbound" if not dry_run else "planned-unbound",
-                "purpose": "udp-closed-port-icmp",
-                "expects": "icmp_port_unreachable",
-                "deterministic": True,
-                **target_service_address_fields(plan),
-            }
-            for port, plan in closed_udp_plans_by_port.items()
-        ],
+        "closed_udp_ports": [],
         "controlled_router": {
             "available": False,
             "skip_reason": SKIP_REQUIRES_CONTROLLED_ROUTER,
@@ -612,45 +561,15 @@ def probe_plan_requires_bgp_peer(plan: Mapping[str, JSONValue]) -> bool:
 # reroutes DHCP plans to the plugin's ``target_service`` hook).
 
 
-# Probe cases that drive the controlled UDP echo/transform responder. The empty
-# echo case is the zero-payload baseline; the short and binary echo cases cover
-# application bytes over the same service-response path. Source-port reflection
-# reuses the same echo responder and tightens the stimulus-side port contract.
-# Multi-shot order drives the same responder with an ordered per-send payload
-# sequence. The IPv4 zero-checksum case uses the same responder, while the
-# provider/kernel acceptance is surfaced through a case capability. The options
-# surplus case also reuses the responder; only the stimulus datagram carries the
-# surplus area, while the service echoes the conventional application payload.
-_UDP_RESPONDER_CASES: frozenset[str] = frozenset(
-    {
-        "udp-echo-empty",
-        "udp-echo-short",
-        "udp-echo-binary",
-        "udp-echo-large",
-        "udp-length-boundary-echo",
-        "udp-source-port-reflection",
-        "udp-multi-shot-order",
-        "udp-zero-checksum-ipv4",
-        "udp-options-surplus-echo",
-    }
-)
-
-
-_UDP_CLOSED_PORT_CASES: frozenset[str] = frozenset({"udp-closed-port-icmp"})
-
-
-def udp_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
-    """Return the UDP responder probe plans in order."""
-
-    return [plan for plan in probe_plans if plan.get("case") in _UDP_RESPONDER_CASES]
-
-
-def closed_udp_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
-    """Return UDP plans that require the target kernel's closed-port behavior."""
-
-    return [
-        plan for plan in probe_plans if plan.get("case") in _UDP_CLOSED_PORT_CASES
-    ]
+# The UDP responder / closed-port case sets (``_UDP_RESPONDER_CASES`` /
+# ``_UDP_CLOSED_PORT_CASES``) and the ``udp_probe_plans`` / ``closed_udp_probe_plans``
+# selectors now live in :mod:`tools.probe.engine.protocols.udp`; they are
+# re-imported above so ``target_services._UDP_RESPONDER_CASES`` /
+# ``target_services._UDP_CLOSED_PORT_CASES`` / ``target_services.udp_probe_plans``
+# / ``target_services.closed_udp_probe_plans`` keep resolving for the legacy plan
+# body (the partition reroutes UDP plans to the plugin's ``target_service`` hook),
+# for ``prepare_wire_probe_target`` / ``target_service_setup_script``, and for the
+# behavior/script tests.
 
 
 # The ARP kernel case set (``_ARP_KERNEL_CASES``) and the ``arp_probe_plans``
@@ -818,11 +737,6 @@ def target_service_setup_script(
     the live run is inspectable.
     """
 
-    udp_ports = dedupe_ints(
-        int(plan["destination_port"])
-        for plan in udp_plans
-        if isinstance(plan.get("destination_port"), int)
-    )
     lines = [
         "set -euo pipefail",
         f"artifact_root={shlex.quote(artifact_root)}",
@@ -880,9 +794,11 @@ def target_service_setup_script(
     for port in closed_ports:
         lines.append(f"check_port_free \"$tcp_bind_ipv4\" {port}")
         lines.append(f"echo closed_port_{port}=free")
-    for port in closed_udp_ports:
-        lines.append(f"check_udp_port_free \"$udp_bind_ipv4\" {port}")
-        lines.append(f"echo closed_udp_port_{port}=free")
+    # The closed-UDP-port free-check moved to
+    # ``protocols.udp.udp_closed_port_check_lines``; render it here so the script
+    # bytes stay byte-identical to the legacy inline ``for port in closed_udp_ports:``
+    # loop.
+    lines.extend(udp_closed_port_check_lines(closed_udp_ports))
     for port in open_ports:
         listener_path = posixpath.join(artifact_root, f"tcp-listener-{port}.py")
         stdout_path = posixpath.join(artifact_root, f"tcp-listener-{port}.stdout.txt")
@@ -955,69 +871,15 @@ def target_service_setup_script(
             dhcp_plans=dhcp_plans,
         )
     )
-    if udp_ports:
-        service_path = posixpath.join(artifact_root, "udp-responder.py")
-        lines.extend(
-            [
-                f"cat > {shlex.quote(service_path)} <<'PY'",
-                "import json",
-                "import signal",
-                "import socket",
-                "import sys",
-                "import time",
-                "",
-                "stop = False",
-                "",
-                "def handle_stop(_signum, _frame):",
-                "    global stop",
-                "    stop = True",
-                "",
-                "signal.signal(signal.SIGTERM, handle_stop)",
-                "signal.signal(signal.SIGINT, handle_stop)",
-                "",
-                "bind_ip, port_text = sys.argv[1:3]",
-                "port = int(port_text)",
-                "sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)",
-                "sock.bind((bind_ip, port))",
-                "sock.settimeout(1.0)",
-                "print(json.dumps({'event': 'listening', 'bind_ip': bind_ip, 'port': port}), flush=True)",
-                "while not stop:",
-                "    try:",
-                "        data, addr = sock.recvfrom(65535)",
-                "    except socket.timeout:",
-                "        continue",
-                "    sock.sendto(data, addr)",
-                "    print(json.dumps({'event': 'echoed', 'client': addr[0], 'client_port': addr[1], 'bytes': len(data)}, sort_keys=True), flush=True)",
-                "sock.close()",
-                "print(json.dumps({'event': 'stopped', 'ts': time.time()}), flush=True)",
-                "PY",
-            ]
+    # The UDP responder heredoc + launch block moved to
+    # ``protocols.udp.udp_responder_setup_lines``; render it here so the script
+    # bytes stay byte-identical to the legacy inline blocks.
+    lines.extend(
+        udp_responder_setup_lines(
+            artifact_root=artifact_root,
+            udp_plans=udp_plans,
         )
-    for port in udp_ports:
-        stdout_path = posixpath.join(artifact_root, f"udp-responder-{port}.stdout.txt")
-        stderr_path = posixpath.join(artifact_root, f"udp-responder-{port}.stderr.txt")
-        pid_path = posixpath.join(artifact_root, f"udp-responder-{port}.pid")
-        lines.extend(
-            [
-                f"check_udp_port_free \"$udp_bind_ipv4\" {port}",
-                (
-                    f"python3 {shlex.quote(posixpath.join(artifact_root, 'udp-responder.py'))} "
-                    f"\"$udp_bind_ipv4\" {port} "
-                    f">{shlex.quote(stdout_path)} 2>{shlex.quote(stderr_path)} &"
-                ),
-                "pid=$!",
-                f"echo \"$pid\" > {shlex.quote(pid_path)}",
-                "printf '%s\\n' \"kill $pid 2>/dev/null || true\" >> \"$cleanup\"",
-                f"printf '%s\\n' \"rm -f {shlex.quote(pid_path)}\" >> \"$cleanup\"",
-                "sleep 0.5",
-                "if ! kill -0 \"$pid\" 2>/dev/null; then",
-                f"  cat {shlex.quote(stderr_path)} >&2 || true",
-                f"  echo udp_responder_{port}=failed >&2",
-                "  exit 73",
-                "fi",
-                f"echo udp_responder_{port}=running",
-            ]
-        )
+    )
     if arp_plans:
         # The ARP kernel-state setup block moved to
         # ``protocols.arp.arp_target_setup_lines``; render it here so the
