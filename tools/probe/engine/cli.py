@@ -627,46 +627,12 @@ def _write_stimulus_endpoint_request_artifact(
     return request_path
 
 
-_LEGACY_STIMULUS_ENDPOINT_CASES = frozenset(
-    {
-        # The three TCP stimulus-endpoint cases (``tcp-syn-open`` /
-        # ``tcp-syn-closed`` / ``tcp-syn-options``) are now contributed by the TCP
-        # plugin (``protocols/tcp.py``) and unioned into
-        # ``_STIMULUS_ENDPOINT_CASES`` below.
-        # The ``icmp-echo`` and ``ttl-expired`` stimulus-endpoint cases are now
-        # contributed by the ICMP plugin (``protocols/icmp.py``) and unioned into
-        # ``_STIMULUS_ENDPOINT_CASES`` below.
-        # The inline ``dns-query`` smoke case and the ten DNS behavioral cases
-        # are now contributed by the DNS plugin (``protocols/dns.py``); the ten
-        # DHCP behavioral cases are now contributed by the DHCP plugin
-        # (``protocols/dhcp.py``). Both are unioned into
-        # ``_STIMULUS_ENDPOINT_CASES`` below.
-        # The ten ARP stimulus-endpoint cases are now contributed by the ARP
-        # plugin (``protocols/arp.py``) and unioned into ``_STIMULUS_ENDPOINT_CASES``
-        # below; ``arp-resolution`` was never stimulus-routed.
-        # The three NDP behavioral stimulus-endpoint cases are now contributed by
-        # the NDP plugin (``protocols/ndp.py``) and unioned into
-        # ``_STIMULUS_ENDPOINT_CASES`` below.
-        # The ten UDP behavioral stimulus-endpoint cases are now contributed by
-        # the UDP plugin (``protocols/udp.py``) and unioned into
-        # ``_STIMULUS_ENDPOINT_CASES`` below.
-        # The live-capable OSPF Hello exchange (``ospf-hello-exchange``) is now
-        # contributed by the OSPF plugin (``protocols/ospf.py``) and unioned into
-        # ``_STIMULUS_ENDPOINT_CASES`` below; the planned-only ``ospf-dd-exchange``
-        # has no adapter arm yet and is intentionally absent (it stays a dry-run
-        # plan via the ospf-smoke profile).
-    }
-)
-
-
-# The effective routing set is the union of each registered plugin's
-# stimulus-endpoint cases and the legacy frozenset above. No protocol is
-# migrated yet, so the registry contribution is empty and this stays
-# byte-identical to the legacy set; a migrated protocol's cases will come from
-# its plugin without editing this module.
-_STIMULUS_ENDPOINT_CASES = frozenset(
-    _registry_stimulus_endpoint_cases() | _LEGACY_STIMULUS_ENDPOINT_CASES
-)
+# Every probe protocol is migrated, so the effective stimulus-endpoint routing
+# set is exactly the union of each registered plugin's
+# ``stimulus_endpoint_cases``; the legacy frozenset that this union used to fall
+# back on is gone. ``cli._STIMULUS_ENDPOINT_CASES`` stays a module-level name
+# because the rewrite snapshot and coverage guards pin it as a ``cli.`` attribute.
+_STIMULUS_ENDPOINT_CASES = frozenset(_registry_stimulus_endpoint_cases())
 
 
 def _stimulus_endpoint_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
@@ -1070,29 +1036,25 @@ def _stimulus_endpoint_request_metadata(
     return output
 
 
-# The NDP live-path address rewrite (``_ndp_plan_with_endpoint_addresses``), its
-# dedicated case set (``_NDP_REWRITE_CASES``), and the hard early-return that
-# bypassed the shared IPv4 tail moved to the NDP plugin's
-# ``rewrite_endpoint_addresses`` hook
-# (:func:`tools.probe.engine.protocols.ndp.ndp_rewrite_endpoint_addresses`) in
-# step 26. The registry-first dispatch in
-# :func:`_probe_plan_with_endpoint_addresses` now routes the three NDP cases to
-# that hook, which reproduces the early-return by returning the fully-rewritten
-# plan without the shared IPv4 tail. ``cli._solicited_node_multicast`` /
-# ``cli._eui64_link_local_ipv6`` stay re-imported above for the live-behavior
-# suite's direct ``cli.`` references.
+# Every protocol's live-path address rewrite is now a plugin
+# ``rewrite_endpoint_addresses`` hook; no per-protocol branch remains in this
+# module. The NDP early-return that used to bypass the shared IPv4 tail lives in
+# the NDP plugin's hook
+# (:func:`tools.probe.engine.protocols.ndp.ndp_rewrite_endpoint_addresses`),
+# which returns the fully-rewritten IPv6/link-local plan directly.
+# ``cli._solicited_node_multicast`` / ``cli._eui64_link_local_ipv6`` stay
+# re-imported above for the live-behavior suite's direct ``cli.`` references.
 
 
 def _registry_rewrite_plugin_for_case(case_name: str) -> object | None:
     """Return the registered plugin that owns ``case_name`` and rewrites it.
 
     A plugin owns a stimulus-endpoint case via its ``stimulus_endpoint_cases``;
-    if it also defines a ``rewrite_endpoint_addresses`` hook, that hook replaces
-    the legacy per-protocol branch for the case's live-path address rewrite. No
-    protocol is migrated yet, so this returns ``None`` for every case and the
-    legacy if/elif (including the NDP early-return) runs unchanged. A case is
-    therefore rewritten exactly once: the plugin hook when an owner exists,
-    otherwise the legacy branch.
+    if it also defines a ``rewrite_endpoint_addresses`` hook, that hook owns the
+    case's live-path address rewrite. Every probe case is now plugin-owned, so a
+    case in :data:`_STIMULUS_ENDPOINT_CASES` always resolves to exactly one
+    plugin; the only ``None`` returns are for cases without a rewrite hook (those
+    fall to the shared IPv4/IPv6 tail).
     """
 
     for plugin in _registered_protocol_plugins():
@@ -1116,10 +1078,9 @@ def _probe_plan_with_endpoint_addresses(
 ) -> JSONObject:
     if plan.get("case") not in _STIMULUS_ENDPOINT_CASES:
         return dict(plan)
-    # Registry-first dispatch: if a migrated plugin owns this case and defines a
-    # rewrite hook, it replaces the legacy per-protocol branch and is called with
-    # the same rewrite context. The NDP plugin's hook
-    # (``ndp_rewrite_endpoint_addresses``) reproduces NDP's dedicated IPv6 rewrite
+    # Registry dispatch: the migrated plugin that owns this case rewrites it with
+    # the shared rewrite context. The NDP plugin's hook
+    # (``ndp_rewrite_endpoint_addresses``) carries NDP's dedicated IPv6 rewrite
     # *and its hard early-return*: it returns the fully-rewritten plan directly,
     # so NDP never falls into the shared IPv4-layer tail below (NDP rides ICMPv6
     # over IPv6 with no IPv4 transport).
@@ -1134,31 +1095,15 @@ def _probe_plan_with_endpoint_addresses(
             target_interface=target_interface,
             rewrite_source=rewrite_source,
         )
+    # No owning plugin defines a rewrite hook for this case: apply the shared
+    # IPv4 pre-sets and the shared tail (used by the stimulus-endpoint cases
+    # whose plugin leaves ``rewrite_endpoint_addresses`` unset).
     updated = dict(plan)
     updated["source_ipv4"] = source_ipv4
     updated["destination_ipv4"] = target_ipv4
     updated["expected_reply_source_ipv4"] = target_ipv4
     updated["expected_reply_destination_ipv4"] = source_ipv4
     case_name = str(updated.get("case", ""))
-    # The ICMP live-path rewrite branches (``icmp-echo`` / ``ttl-expired``) moved
-    # to the ICMP plugin's ``rewrite_endpoint_addresses`` hook
-    # (:func:`tools.probe.engine.protocols.icmp.icmp_rewrite_endpoint_addresses`),
-    # dispatched registry-first above before the per-protocol if/elif here (the
-    # hook reproduces the same shared transport-IPv4 pre-sets and shared tail), so
-    # they no longer appear in this legacy chain.
-    # The TCP live-path rewrite branch (``case_name.startswith("tcp-syn-")``,
-    # covering all three TCP cases) moved to the TCP plugin's
-    # ``rewrite_endpoint_addresses`` hook
-    # (:func:`tools.probe.engine.protocols.tcp.tcp_rewrite_endpoint_addresses`),
-    # dispatched registry-first above before the per-protocol if/elif here (the
-    # hook reproduces the same ``tcp-syn-`` name-prefix dispatch, the shared
-    # transport-IPv4 pre-sets, and the shared tail), so it no longer appears in
-    # this legacy chain.
-    # The UDP live-path rewrite branch (all ten UDP cases) moved to the UDP
-    # plugin's ``rewrite_endpoint_addresses`` hook
-    # (:func:`tools.probe.engine.protocols.udp.udp_rewrite_endpoint_addresses`),
-    # dispatched registry-first above before the per-protocol if/elif here, so it
-    # no longer appears in this legacy chain.
     return _apply_shared_ipv4_rewrite_tail(
         updated,
         case_name=case_name,
@@ -1254,11 +1199,10 @@ def _registry_failure_reasons_plugin_for_case(case_name: str) -> object | None:
     """Return the registered plugin owning ``case_name`` with a failure hook.
 
     A plugin owns a case via its ``cases`` tuple; if it also defines a
-    ``failure_reasons`` hook, that hook replaces the legacy per-protocol branch
-    for the case's failure-reason taxonomy. No protocol is migrated yet, so this
-    returns ``None`` for every case and the legacy if/elif runs unchanged. A
-    case's reasons are therefore derived exactly once: the plugin hook when an
-    owner exists, otherwise the legacy branch.
+    ``failure_reasons`` hook, that hook owns the case's failure-reason taxonomy.
+    Every probe case is plugin-owned, so the only ``None`` returns are for cases
+    whose owning plugin defines no ``failure_reasons`` hook; those fall to the
+    shared default taxonomy.
     """
 
     for plugin in _registered_protocol_plugins():
@@ -1270,34 +1214,15 @@ def _registry_failure_reasons_plugin_for_case(case_name: str) -> object | None:
 
 
 def _failure_reasons_for_case(case_name: str) -> list[str]:
-    # Registry-first dispatch: if a migrated plugin owns this case and defines a
-    # failure-reason hook returning a non-None taxonomy, it replaces the legacy
-    # per-protocol branch. With an empty registry no plugin owns any case, so
-    # this is a no-op today and every case flows through the unchanged legacy
-    # branches below.
+    # Registry dispatch: the migrated plugin that owns this case supplies its
+    # failure-reason taxonomy. A plugin may return ``None`` for a case it owns but
+    # does not give a dedicated taxonomy (the legacy branch likewise let those
+    # cases fall through); such cases use the shared default scaffolding below.
     plugin = _registry_failure_reasons_plugin_for_case(case_name)
     if plugin is not None:
         reasons = plugin.failure_reasons(case_name)
         if reasons is not None:
             return reasons
-    # The ICMP failure-reason taxonomy (``icmp-echo`` / ``ttl-expired``) moved to
-    # the ICMP plugin's ``failure_reasons`` hook
-    # (:func:`tools.probe.engine.protocols.icmp.icmp_failure_reasons`), dispatched
-    # registry-first above, so it no longer appears in this legacy chain.
-    # The TCP failure-reason taxonomy (``tcp-syn-open`` / ``tcp-syn-closed``)
-    # moved to the TCP plugin's ``failure_reasons`` hook
-    # (:func:`tools.probe.engine.protocols.tcp.tcp_failure_reasons`), dispatched
-    # registry-first above, so it no longer appears in this legacy chain.
-    # (``tcp-syn-options`` was never covered by the TCP branch; it falls through
-    # to the shared default taxonomy below, unchanged.)
-    # The UDP failure-reason taxonomy (all ten UDP cases) moved to the UDP
-    # plugin's ``failure_reasons`` hook
-    # (:func:`tools.probe.engine.protocols.udp.udp_failure_reasons`), dispatched
-    # registry-first above, so it no longer appears in this legacy chain.
-    # The IGMP failure-reason taxonomy (the four IGMP cases) moved to the IGMP
-    # plugin's ``failure_reasons`` hook
-    # (:func:`tools.probe.engine.protocols.igmp.igmp_failure_reasons`), dispatched
-    # registry-first above, so it no longer appears in this legacy chain.
     return _default_failure_reasons()
 
 
