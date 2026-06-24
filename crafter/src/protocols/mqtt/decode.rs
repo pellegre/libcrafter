@@ -69,13 +69,7 @@ pub(crate) fn decode_mqtt(bytes: &[u8]) -> Result<(Mqtt, usize)> {
         MqttControlPacketType::Pingresp => {
             decode_empty_packet(packet_type, flags, remaining_length, body, "mqtt.pingresp")?
         }
-        MqttControlPacketType::Disconnect => decode_empty_packet(
-            packet_type,
-            flags,
-            remaining_length,
-            body,
-            "mqtt.disconnect",
-        )?,
+        MqttControlPacketType::Disconnect => decode_disconnect(flags, remaining_length, body)?,
         MqttControlPacketType::Auth => Mqtt::raw(packet_type, body.to_vec())
             .flags(flags)
             .remaining_length(remaining_length),
@@ -331,6 +325,60 @@ fn decode_empty_packet(
         packet_type,
         fixed_header_flags,
         remaining_length,
+    ))
+}
+
+fn decode_disconnect(fixed_header_flags: u8, remaining_length: u32, body: &[u8]) -> Result<Mqtt> {
+    decode_disconnect_with_version(
+        fixed_header_flags,
+        remaining_length,
+        MQTT_311_PROTOCOL_LEVEL,
+        body,
+    )
+}
+
+fn decode_disconnect_with_version(
+    fixed_header_flags: u8,
+    remaining_length: u32,
+    version: u8,
+    body: &[u8],
+) -> Result<Mqtt> {
+    if version != MQTT_5_PROTOCOL_LEVEL && !body.is_empty() {
+        return Err(CrafterError::invalid_field_value(
+            "mqtt.disconnect.remaining_length",
+            "DISCONNECT Remaining Length must be 0",
+        ));
+    }
+
+    let mut cursor = 0;
+    let (reason_code, properties) = if version == MQTT_5_PROTOCOL_LEVEL {
+        if body.is_empty() {
+            (None, MqttProperties::new())
+        } else {
+            let reason_code = take_u8(body, &mut cursor, "mqtt.disconnect.reason_code")?;
+            let properties = if cursor < body.len() {
+                take_properties(body, &mut cursor)?
+            } else {
+                MqttProperties::new()
+            };
+            if cursor != body.len() {
+                return Err(CrafterError::invalid_field_value(
+                    "mqtt.disconnect.remaining_length",
+                    "Remaining Length includes bytes outside the property block",
+                ));
+            }
+            (Some(reason_code), properties)
+        }
+    } else {
+        (None, MqttProperties::new())
+    };
+
+    Ok(Mqtt::disconnect_from_decoded_parts(
+        fixed_header_flags,
+        remaining_length,
+        version,
+        reason_code,
+        properties,
     ))
 }
 
@@ -684,6 +732,40 @@ mod tests {
             }
             other => panic!("expected disconnect remaining-length error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn decodes_v5_disconnect_reason_code_and_properties_when_version_is_supplied() {
+        let body = [0x8e, 0x05, 0x11, 0x00, 0x00, 0x00, 0x3c];
+        let mqtt =
+            decode_disconnect_with_version(0x00, body.len() as u32, MQTT_5_PROTOCOL_LEVEL, &body)
+                .unwrap();
+
+        assert_eq!(mqtt.packet_type(), MqttControlPacketType::Disconnect);
+        assert_eq!(mqtt.version_value(), MQTT_5_PROTOCOL_LEVEL);
+        assert_eq!(mqtt.reason_code_value(), Some(0x8e));
+        assert_eq!(
+            mqtt.disconnect_properties_value()
+                .expect("disconnect properties")
+                .property_values(),
+            &[MqttProperty::SessionExpiryInterval(60)]
+        );
+        assert_eq!(
+            Packet::from_layer(mqtt).compile().unwrap().as_bytes(),
+            &[0xe0, 0x07, 0x8e, 0x05, 0x11, 0x00, 0x00, 0x00, 0x3c]
+        );
+
+        let short = decode_disconnect_with_version(0x00, 0, MQTT_5_PROTOCOL_LEVEL, &[]).unwrap();
+        assert_eq!(short.reason_code_value(), Some(0x00));
+        assert!(short
+            .disconnect_properties_value()
+            .expect("short-form disconnect properties")
+            .property_values()
+            .is_empty());
+        assert_eq!(
+            Packet::from_layer(short).compile().unwrap().as_bytes(),
+            &[0xe0, 0x00]
+        );
     }
 
     #[test]

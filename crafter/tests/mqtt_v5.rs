@@ -6,7 +6,8 @@ use crafter::protocols::mqtt::{
     MQTT_REASON_GRANTED_QOS_0, MQTT_REASON_GRANTED_QOS_1,
     MQTT_REASON_IMPLEMENTATION_SPECIFIC_ERROR, MQTT_REASON_NO_MATCHING_SUBSCRIBERS,
     MQTT_REASON_NO_SUBSCRIPTION_EXISTED, MQTT_REASON_PACKET_IDENTIFIER_NOT_FOUND,
-    MQTT_REASON_SUCCESS, MQTT_REASON_TOPIC_FILTER_INVALID, MQTT_SUBOPT_RETAIN_SEND_IF_NEW,
+    MQTT_REASON_SESSION_TAKEN_OVER, MQTT_REASON_SUCCESS, MQTT_REASON_TOPIC_FILTER_INVALID,
+    MQTT_SUBOPT_RETAIN_SEND_IF_NEW,
 };
 
 const CONNECT_V5_WITH_PROPERTIES: &[u8] = &[
@@ -77,6 +78,11 @@ const UNSUBACK_V5_WITH_PROPERTIES: &[u8] = &[
 ];
 
 const UNSUBACK_311_BASELINE: &[u8] = &[0xb0, 0x02, 0x12, 0x34];
+
+const DISCONNECT_V5_WITH_PROPERTIES: &[u8] =
+    &[0xe0, 0x07, 0x8e, 0x05, 0x11, 0x00, 0x00, 0x00, 0x3c];
+
+const DISCONNECT_SHORT: &[u8] = &[0xe0, 0x00];
 
 fn mqtt_bytes(message: Mqtt) -> crafter::Result<Vec<u8>> {
     Ok(Packet::from_layer(message).compile()?.into_bytes())
@@ -188,6 +194,13 @@ fn unsuback_v5_message() -> Mqtt {
             MQTT_REASON_NO_SUBSCRIPTION_EXISTED,
             MQTT_REASON_TOPIC_FILTER_INVALID,
         ])
+}
+
+fn disconnect_v5_message() -> Mqtt {
+    Mqtt::disconnect()
+        .version(MQTT_5_PROTOCOL_LEVEL)
+        .reason_code(MQTT_REASON_SESSION_TAKEN_OVER)
+        .disconnect_property(MqttProperty::SessionExpiryInterval(60))
 }
 
 #[test]
@@ -378,5 +391,29 @@ fn unsuback_311_baseline_stays_unchanged() -> crafter::Result<()> {
     let bytes = mqtt_bytes(Mqtt::unsuback().packet_id(0x1234))?;
 
     assert_eq!(bytes, UNSUBACK_311_BASELINE);
+    Ok(())
+}
+
+#[test]
+fn disconnect_v5_reason_code_and_properties_compile_byte_exact() -> crafter::Result<()> {
+    let bytes = mqtt_bytes(disconnect_v5_message())?;
+
+    assert_eq!(bytes, DISCONNECT_V5_WITH_PROPERTIES);
+    Ok(())
+}
+
+#[test]
+fn disconnect_v5_short_form_compiles_byte_exact() -> crafter::Result<()> {
+    let bytes = mqtt_bytes(Mqtt::disconnect().version(MQTT_5_PROTOCOL_LEVEL))?;
+
+    assert_eq!(bytes, DISCONNECT_SHORT);
+    Ok(())
+}
+
+#[test]
+fn disconnect_311_baseline_stays_unchanged() -> crafter::Result<()> {
+    let bytes = mqtt_bytes(Mqtt::disconnect())?;
+
+    assert_eq!(bytes, DISCONNECT_SHORT);
     Ok(())
 }
