@@ -17,7 +17,7 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::{arp, dhcp, dns, icmp, ndp, ospf, rip, tcp, udp};
+use crate::{arp, dhcp, dns, icmp, mqtt, ndp, ospf, rip, tcp, udp};
 
 pub type ExampleResult<T> = std::result::Result<T, Box<dyn Error>>;
 
@@ -1109,6 +1109,14 @@ fn dispatch_case(
         (RunMode::Live, "ospf-hello-exchange") => ospf::run_ospf_live(request, plan),
         (
             RunMode::DryRun,
+            "mqtt-connect-connack" | "mqtt-subscribe-suback" | "mqtt-publish-puback",
+        ) => mqtt::run_mqtt_dry_run(request, plan),
+        (
+            RunMode::Live,
+            "mqtt-connect-connack" | "mqtt-subscribe-suback" | "mqtt-publish-puback",
+        ) => mqtt::run_mqtt_live(request, plan),
+        (
+            RunMode::DryRun,
             "udp-echo-empty"
             | "udp-echo-short"
             | "udp-echo-binary"
@@ -1410,6 +1418,7 @@ pub fn decoded_packet_json(packet: &Packet, raw: &[u8]) -> Value {
     let ipv4 = packet.layer::<Ipv4>();
     let icmp = packet.layer::<Icmpv4>();
     let tcp = packet.layer::<Tcp>();
+    let mqtt_layer = packet.layer::<Mqtt>();
     let udp = packet.layer::<Udp>();
     let dns = packet.layer::<Dns>();
     let dhcp = packet.layer::<Dhcp>();
@@ -1447,6 +1456,7 @@ pub fn decoded_packet_json(packet: &Packet, raw: &[u8]) -> Value {
             "flags_value": layer.flags_value(),
             "window": layer.window_value(),
         })),
+        "mqtt": mqtt_layer.map(mqtt::mqtt_json),
         "udp": udp.map(|layer| json!({
             "sport": layer.source_port_value(),
             "dport": layer.destination_port_value(),
@@ -1483,6 +1493,22 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
             plan.destination_port.unwrap_or(0),
             plan.source_port.unwrap_or(0),
         ),
+        "mqtt-connect-connack" | "mqtt-subscribe-suback" | "mqtt-publish-puback" => {
+            format!(
+                "tcp and src host {} and dst host {} and src port {} and dst port {}",
+                plan.expected_reply_source_ipv4
+                    .as_deref()
+                    .or(plan.destination_ipv4.as_deref())
+                    .unwrap_or(""),
+                plan.expected_reply_destination_ipv4
+                    .as_deref()
+                    .or(plan.source_ipv4.as_deref())
+                    .unwrap_or(""),
+                plan.destination_port.unwrap_or(MQTT_PORT),
+                plan.source_port
+                    .unwrap_or_else(|| 49_194u16.saturating_add((plan.sequence % 1000) as u16)),
+            )
+        }
         "dns-query"
         | "dns-a-success"
         | "dns-aaaa-success"
@@ -1643,6 +1669,9 @@ pub fn expected_response(plan: &ProbePlan) -> &str {
             }
             "ndp-router-solicitation" => "ndp_router_advertisement",
             "ospf-hello-exchange" => "ospf_hello",
+            "mqtt-connect-connack" => "mqtt_connack",
+            "mqtt-subscribe-suback" => "mqtt_suback",
+            "mqtt-publish-puback" => "mqtt_puback",
             _ => "unknown",
         })
 }
@@ -1658,6 +1687,13 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
             "required": false,
             "kind": "closed-port",
             "port": plan.destination_port,
+        }),
+        "mqtt-connect-connack" | "mqtt-subscribe-suback" | "mqtt-publish-puback" => json!({
+            "required": true,
+            "kind": "mosquitto-mqtt-broker",
+            "protocol": "tcp",
+            "port": plan.destination_port.unwrap_or(MQTT_PORT),
+            "runtime": "mosquitto",
         }),
         "dns-query" | "dns-a-success" | "dns-aaaa-success" => json!({
             "required": true,
