@@ -591,6 +591,15 @@ def _write_stimulus_endpoint_request_artifact(
 # back on is gone. ``cli._STIMULUS_ENDPOINT_CASES`` stays a module-level name
 # because the rewrite snapshot and coverage guards pin it as a ``cli.`` attribute.
 _STIMULUS_ENDPOINT_CASES = frozenset(_registry_stimulus_endpoint_cases())
+_DRY_RUN_ENDPOINT_REWRITE_CASES = frozenset(
+    case.name
+    for plugin in _registered_protocol_plugins()
+    if plugin.rewrite_endpoint_addresses is not None
+    for case in plugin.cases
+    if case.name not in plugin.stimulus_endpoint_cases
+    and case.metadata.get("planned_only") is True
+)
+_LAB_ADDRESS_REWRITE_CASES = _STIMULUS_ENDPOINT_CASES | _DRY_RUN_ENDPOINT_REWRITE_CASES
 
 
 def _stimulus_endpoint_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
@@ -1007,17 +1016,21 @@ def _stimulus_endpoint_request_metadata(
 def _registry_rewrite_plugin_for_case(case_name: str) -> object | None:
     """Return the registered plugin that owns ``case_name`` and rewrites it.
 
-    A plugin owns a stimulus-endpoint case via its ``stimulus_endpoint_cases``;
-    if it also defines a ``rewrite_endpoint_addresses`` hook, that hook owns the
-    case's live-path address rewrite. Every probe case is now plugin-owned, so a
-    case in :data:`_STIMULUS_ENDPOINT_CASES` always resolves to exactly one
-    plugin; the only ``None`` returns are for cases without a rewrite hook (those
-    fall to the shared IPv4/IPv6 tail).
+    A plugin owns a live stimulus-endpoint case via its
+    ``stimulus_endpoint_cases``. Planned-only protocol cases may also ask for a
+    dry-run lab address rewrite by declaring a ``rewrite_endpoint_addresses``
+    hook and case metadata with ``planned_only`` set. The only ``None`` returns
+    are for cases without a rewrite hook (those fall to the shared IPv4/IPv6
+    tail).
     """
 
     for plugin in _registered_protocol_plugins():
+        owns_planned_only_rewrite = (
+            case_name in _DRY_RUN_ENDPOINT_REWRITE_CASES
+            and any(case.name == case_name for case in plugin.cases)
+        )
         if (
-            case_name in plugin.stimulus_endpoint_cases
+            (case_name in plugin.stimulus_endpoint_cases or owns_planned_only_rewrite)
             and plugin.rewrite_endpoint_addresses is not None
         ):
             return plugin
@@ -1034,7 +1047,10 @@ def _probe_plan_with_endpoint_addresses(
     target_interface: str | None = None,
     rewrite_source: str = "wire_endpoint_plan",
 ) -> JSONObject:
-    if plan.get("case") not in _STIMULUS_ENDPOINT_CASES:
+    case_name = str(plan.get("case", ""))
+    if case_name not in _STIMULUS_ENDPOINT_CASES and (
+        rewrite_source != "lab_session" or case_name not in _LAB_ADDRESS_REWRITE_CASES
+    ):
         return dict(plan)
     # Registry dispatch: the migrated plugin that owns this case rewrites it with
     # the shared rewrite context. The NDP plugin's hook
@@ -1042,7 +1058,7 @@ def _probe_plan_with_endpoint_addresses(
     # *and its hard early-return*: it returns the fully-rewritten plan directly,
     # so NDP never falls into the shared IPv4-layer tail below (NDP rides ICMPv6
     # over IPv6 with no IPv4 transport).
-    plugin = _registry_rewrite_plugin_for_case(str(plan.get("case", "")))
+    plugin = _registry_rewrite_plugin_for_case(case_name)
     if plugin is not None:
         return plugin.rewrite_endpoint_addresses(
             plan,
@@ -1061,7 +1077,6 @@ def _probe_plan_with_endpoint_addresses(
     updated["destination_ipv4"] = target_ipv4
     updated["expected_reply_source_ipv4"] = target_ipv4
     updated["expected_reply_destination_ipv4"] = source_ipv4
-    case_name = str(updated.get("case", ""))
     return _apply_shared_ipv4_rewrite_tail(
         updated,
         case_name=case_name,

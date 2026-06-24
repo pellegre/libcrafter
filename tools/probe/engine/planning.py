@@ -219,6 +219,14 @@ from .protocols.igmp import (  # noqa: F401  (re-exported for identity/back-comp
 from .protocols.ipsec import (  # noqa: F401  (re-exported for identity/back-compat)
     _ipsec_probe_plan,
 )
+# The MQTT planning surface (the three planned-only broker-exchange smoke cases'
+# shared ``_mqtt_probe_plan`` builder) lives in the MQTT plugin module. Re-import
+# the moved builder so ``planning._mqtt_probe_plan`` resolves to the *same*
+# function object the plugin registered and the merged ``PLAN_BUILDERS`` exposes
+# -- any pin on object identity keeps holding.
+from .protocols.mqtt import (  # noqa: F401  (re-exported for identity/back-compat)
+    _mqtt_probe_plan,
+)
 
 
 def planned_cases(
@@ -344,8 +352,8 @@ PLAN_BUILDERS: dict[str, PlanBuilder] = dict(_registry_plan_builders())
 # shape without building packet bytes; every other builder produces a fully
 # materialized plan. Every planned-only protocol has migrated to its plugin
 # module, so this set is sourced entirely from the protocol registry (the BGP,
-# RIP/RIPng, IGMP, and IPSec planned-only cases are each contributed by their
-# plugin module).
+# RIP/RIPng, IGMP, IPSec, and MQTT planned-only cases are each contributed by
+# their plugin module).
 PLANNED_ONLY_REGISTERED_CASES: frozenset[str] = frozenset(
     _registry_planned_only_cases()
 )
