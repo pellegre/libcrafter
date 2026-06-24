@@ -144,6 +144,34 @@ from .protocols.ndp import (
     ndp_probe_plans,
     ndp_target_setup_lines,
 )
+
+# BGP's target-service constants, the ``frr_bgp_peer_descriptor``, the FRR BGP
+# peer service-plan builder, the ``bgp-`` name-prefix plan selector
+# (``probe_plan_requires_bgp_peer``), and the ``bgp_peer_probe_plans`` selector
+# were migrated into the BGP plugin
+# (:mod:`tools.probe.engine.protocols.bgp`). They are re-imported here so
+# ``target_services.frr_bgp_peer_descriptor`` (and the ``BGP_*`` constants) keep
+# resolving (the script test and any caller reference them). The BGP plugin's
+# ``target_service`` hook now contributes the FRR BGP peer service entry, so the
+# partition reroutes the BGP case to the plugin and the legacy setup-plan body no
+# longer builds it. The BGP plugin module does not import ``target_services``, so
+# this does not cycle.
+from .protocols.bgp import (  # noqa: F401  (re-exported for resolvability)
+    BGP_DOCUMENTATION_IPV4_PREFIX,
+    BGP_DOCUMENTATION_IPV6_PREFIX,
+    BGP_DRIVER_AS,
+    BGP_FRR_TEMPLATE,
+    BGP_PEER_AS,
+    BGP_PROVISION_SCRIPT,
+    BGP_RIB_COMMAND,
+    BGP_RUNTIME,
+    BGP_SERVICE_KIND,
+    BGP_SERVICE_PORT,
+    bgp_peer_probe_plans,
+    bgp_peer_service_plans,
+    frr_bgp_peer_descriptor,
+    probe_plan_requires_bgp_peer,
+)
 from .target_service_helpers import (
     KernelStateDescriptor,
     TargetServiceDescriptor,
@@ -164,16 +192,11 @@ EndpointInterfaceResolver = Callable[..., str]
 # A lab-wire helper that runs a wire command response and records its artifacts.
 WireCommandRunner = Callable[..., JSONObject]
 
-BGP_SERVICE_KIND = "frr-bgp-peer"
-BGP_SERVICE_PORT = 179
-BGP_RUNTIME = "frr"
-BGP_DRIVER_AS = 65000
-BGP_PEER_AS = 65001
-BGP_DOCUMENTATION_IPV4_PREFIX = "198.51.100.0/24"
-BGP_DOCUMENTATION_IPV6_PREFIX = "2001:db8::/32"
-BGP_PROVISION_SCRIPT = "tools/probe/target_services/bgp/provision-peer.sh"
-BGP_FRR_TEMPLATE = "tools/probe/target_services/bgp/frr.conf.template"
-BGP_RIB_COMMAND = "vtysh -c 'show bgp ipv4 unicast'"
+# The BGP target-service constants (``BGP_SERVICE_KIND`` / ``BGP_SERVICE_PORT`` /
+# ``BGP_RUNTIME`` / ``BGP_DRIVER_AS`` / ``BGP_PEER_AS`` / the documentation
+# prefixes / ``BGP_PROVISION_SCRIPT`` / ``BGP_FRR_TEMPLATE`` / ``BGP_RIB_COMMAND``)
+# now live in the BGP plugin module (``protocols/bgp.py``) and are re-imported
+# above so ``target_services.BGP_*`` keeps resolving.
 
 RIP_SERVICE_KIND = "frr-ripd"
 RIP_SERVICE_PORTS = [520]
@@ -209,47 +232,9 @@ RIP_RIB_COMMAND = "vtysh -c 'show ip rip'"
 # behavior/script tests.
 
 
-def frr_bgp_peer_descriptor(
-    *,
-    bind_ipv4: str,
-    source_ipv4: str,
-) -> TargetServiceDescriptor:
-    """Describe the probe-owned FRR BGP peer target service."""
-
-    return TargetServiceDescriptor(
-        name=BGP_SERVICE_KIND,
-        protocol="tcp",
-        purpose="bgp-peer",
-        bind_ipv4=bind_ipv4,
-        source_ipv4=source_ipv4,
-        port=BGP_SERVICE_PORT,
-        requires=[BGP_RUNTIME, SKIP_REQUIRES_CONTROLLED_SERVICE],
-        setup_commands=[
-            f"run {BGP_PROVISION_SCRIPT} with DRIVER_IP={source_ipv4}",
-            f"inspect RIB with {BGP_RIB_COMMAND}",
-        ],
-        cleanup_commands=[
-            "stop FRR BGP peer service through provider cleanup",
-        ],
-        artifacts=[
-            "live-artifacts/probe/target-services/bgp-provision.stdout.txt",
-            "live-artifacts/probe/target-services/bgp-provision.stderr.txt",
-        ],
-        metadata={
-            "kind": BGP_SERVICE_KIND,
-            "runtime": BGP_RUNTIME,
-            "deterministic": True,
-            "driver_as": BGP_DRIVER_AS,
-            "peer_as": BGP_PEER_AS,
-            "documentation_prefixes": [
-                BGP_DOCUMENTATION_IPV4_PREFIX,
-                BGP_DOCUMENTATION_IPV6_PREFIX,
-            ],
-            "provision_script": BGP_PROVISION_SCRIPT,
-            "frr_template": BGP_FRR_TEMPLATE,
-            "rib_command": BGP_RIB_COMMAND,
-        },
-    )
+# The FRR BGP peer descriptor (``frr_bgp_peer_descriptor``) now lives in the BGP
+# plugin module (``protocols/bgp.py``) and is re-imported above so
+# ``target_services.frr_bgp_peer_descriptor`` keeps resolving for the script test.
 
 
 def rip_peer_service_descriptor(
@@ -461,6 +446,17 @@ def _legacy_target_service_setup_plan(
         # moved to the UDP plugin's ``target_service`` hook. The registry partition
         # diverts the TCP and UDP cases off this legacy path, so this body sees no
         # TCP or UDP plans.
+        #
+        # The BGP plugin's ``target_service`` hook owns the FRR BGP peer service
+        # entry for the ``bgp-session-smoke`` case (the only real BGP case); the
+        # partition diverts that case to the plugin. This legacy body keeps the BGP
+        # build for any *other* plan that requests the peer through the ``bgp-``
+        # name-prefix or the ``frr-bgp-peer`` ``target_service.kind`` (which the
+        # partition does not divert because such a plan's case is not in the plugin's
+        # case set). In a real run those plans never occur -- the only BGP case is
+        # ``bgp-session-smoke``, served by the plugin -- so this legacy build is
+        # exercised only by the kind/prefix coverage tests and stays byte-identical
+        # to the pre-migration behavior for them.
         "starts_services": not dry_run and bool(bgp_plans),
         "dry_run_starts_services": False,
         "services": [
@@ -479,29 +475,10 @@ def _legacy_target_service_setup_plan(
     }
 
 
-def bgp_peer_service_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
-    """Return the FRR BGP peer service plan, if any probe plan requests it."""
-
-    if not probe_plans:
-        return []
-    plan = probe_plans[0]
-    addresses = target_service_address_fields(plan)
-    descriptor = frr_bgp_peer_descriptor(
-        bind_ipv4=_string_or(addresses.get("bind_ipv4"), ""),
-        source_ipv4=_string_or(addresses.get("source_ipv4"), ""),
-    )
-    service: JSONObject = {
-        "name": descriptor.name,
-        "kind": descriptor.name,
-        "protocol": descriptor.protocol,
-        "port": descriptor.port,
-        "purpose": descriptor.purpose,
-        "deterministic": True,
-        "requires": list(descriptor.requires),
-        **addresses,
-        **descriptor.metadata,
-    }
-    return [service]
+# The FRR BGP peer service-plan builder (``bgp_peer_service_plans``) now lives in
+# the BGP plugin module (``protocols/bgp.py``) and is re-imported above so
+# ``target_services.bgp_peer_service_plans`` keeps resolving; the BGP plugin's
+# ``target_service`` hook calls it to contribute the FRR BGP peer service entry.
 
 
 # The ARP kernel-state plan (``arp_kernel_state_plan``) now lives in
@@ -530,23 +507,12 @@ def bgp_peer_service_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject
 # for ``prepare_wire_probe_target`` / the tests.
 
 
-def bgp_peer_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
-    """Return probe plans that require the probe-owned FRR BGP peer."""
-
-    return [plan for plan in probe_plans if probe_plan_requires_bgp_peer(plan)]
-
-
-def probe_plan_requires_bgp_peer(plan: Mapping[str, JSONValue]) -> bool:
-    """Return whether a probe plan requests FRR BGP peer target setup."""
-
-    target_service = _json_mapping(
-        plan.get("target_service", {}),
-        "probe_plan.target_service",
-    )
-    if target_service.get("kind") == BGP_SERVICE_KIND:
-        return True
-    case_name = plan.get("case")
-    return isinstance(case_name, str) and case_name.startswith("bgp-")
+# The ``bgp_peer_probe_plans`` selector and the ``bgp-`` name-prefix dispatch
+# (``probe_plan_requires_bgp_peer``) now live in the BGP plugin module
+# (``protocols/bgp.py``) and are re-imported above so
+# ``target_services.bgp_peer_probe_plans`` / ``target_services.probe_plan_requires_bgp_peer``
+# keep resolving; the BGP plugin's ``target_service`` hook uses them to gate the
+# FRR BGP peer service entry.
 
 
 # The DHCP responder case set (``_DHCP_RESPONDER_CASES``) and the

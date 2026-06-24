@@ -178,17 +178,16 @@ from .protocols.tcp import (  # noqa: F401  (re-exported for identity/back-compa
     _tcp_syn_options_probe_plan,
     _tcp_syn_probe_plan,
 )
+# The BGP planning surface (the ``bgp-session-smoke`` case and its builder) lives
+# in the BGP plugin module. Re-import the moved builder so
+# ``planning._bgp_session_smoke_probe_plan`` resolves to the *same* function
+# object the plugin registered and the merged ``PLAN_BUILDERS`` exposes -- any
+# pin on ``planning.PLAN_BUILDERS[name] is planning._bgp_session_smoke_probe_plan``
+# keeps identical object identity.
+from .protocols.bgp import (  # noqa: F401  (re-exported for identity/back-compat)
+    _bgp_session_smoke_probe_plan,
+)
 from .target_services import (
-    BGP_DOCUMENTATION_IPV4_PREFIX,
-    BGP_DOCUMENTATION_IPV6_PREFIX,
-    BGP_DRIVER_AS,
-    BGP_FRR_TEMPLATE,
-    BGP_PEER_AS,
-    BGP_PROVISION_SCRIPT,
-    BGP_RIB_COMMAND,
-    BGP_RUNTIME,
-    BGP_SERVICE_KIND,
-    BGP_SERVICE_PORT,
     RIP_CONFIG_TEMPLATE,
     RIP_DOCUMENTATION_IPV4_PREFIX,
     RIP_MULTICAST_GROUP,
@@ -339,91 +338,10 @@ _IGMP_ROUTER_SCRIPT = f"{_IGMP_TARGET_SERVICE_DIR}/provision-router.sh"
 _IGMP_CLEANUP_SCRIPT = f"{_IGMP_TARGET_SERVICE_DIR}/cleanup.sh"
 
 
-def _bgp_session_smoke_probe_plan(
-    *,
-    case_name: str = "bgp-session-smoke",
-    profile: str,
-    seed: int,
-    sequence: int,
-) -> JSONObject:
-    """Plan a probe-owned BGP smoke exchange against an FRR peer service."""
-
-    digest = deterministic_bytes(case_name, profile, seed, sequence)
-    stimulus_ipv4, target_ipv4 = deterministic_ipv4_pair(profile, seed, sequence)
-    source_port = 42000 + int.from_bytes(digest[0:2], "big") % 10000
-    documentation_prefixes = [
-        BGP_DOCUMENTATION_IPV4_PREFIX,
-        BGP_DOCUMENTATION_IPV6_PREFIX,
-    ]
-    return {
-        "schema_version": 1,
-        "case": case_name,
-        "sequence": sequence,
-        "index": sequence,
-        "profile": profile,
-        "seed": seed,
-        "stimulus": "bgp_session",
-        "expected_response": "bgp_peer_session",
-        "planned_only": True,
-        "source_ipv4": stimulus_ipv4,
-        "destination_ipv4": target_ipv4,
-        "expected_reply_source_ipv4": target_ipv4,
-        "expected_reply_destination_ipv4": stimulus_ipv4,
-        "source_port": source_port,
-        "destination_port": BGP_SERVICE_PORT,
-        "driver_as": BGP_DRIVER_AS,
-        "peer_as": BGP_PEER_AS,
-        "documentation_prefixes": documentation_prefixes,
-        "stimulus_driver": {
-            "name": "bgp_session",
-            "cargo_example": "bgp_session",
-            "driver_source": "crafter/examples/bgp_session.rs",
-            "state": "planned-only",
-            "planned_only": True,
-        },
-        "target_service": {
-            "required": True,
-            "kind": BGP_SERVICE_KIND,
-            "protocol": "tcp",
-            "port": BGP_SERVICE_PORT,
-            "bind_ipv4": target_ipv4,
-            "source_ipv4": stimulus_ipv4,
-            "runtime": BGP_RUNTIME,
-            "driver_as": BGP_DRIVER_AS,
-            "peer_as": BGP_PEER_AS,
-            "documentation_prefixes": documentation_prefixes,
-            "provision_script": BGP_PROVISION_SCRIPT,
-            "frr_template": BGP_FRR_TEMPLATE,
-            "rib_command": BGP_RIB_COMMAND,
-            "deterministic": True,
-        },
-        "capture_filter": (
-            f"tcp and src host {target_ipv4} and dst host {stimulus_ipv4} "
-            f"and src port {BGP_SERVICE_PORT} and dst port {source_port}"
-        ),
-        "validation": {
-            "planned_only": True,
-            "driver": "bgp_session",
-            "source_ipv4": target_ipv4,
-            "destination_ipv4": stimulus_ipv4,
-            "source_port": BGP_SERVICE_PORT,
-            "destination_port": source_port,
-            "driver_as": BGP_DRIVER_AS,
-            "peer_as": BGP_PEER_AS,
-            "rib_command": BGP_RIB_COMMAND,
-        },
-        "wire_requirements": {
-            "requires_ipv4_unicast": True,
-            "requires_controlled_service": True,
-            "requires_bgp_peer": True,
-            "note": (
-                "BGP smoke dry-run exposes the bgp_session stimulus intent and "
-                "probe-owned FRR target-service setup without opening TCP "
-                "sessions or installing FRR."
-            ),
-        },
-        "digest_hex": digest.hex()[:16],
-    }
+# The BGP plan builder (``_bgp_session_smoke_probe_plan``) now lives in the BGP
+# plugin module (``protocols/bgp.py``) and reaches ``PLAN_BUILDERS`` through the
+# registry merge below; it is re-imported into this module above for
+# identity/back-compat.
 
 
 def _rip_update_probe_plan(
@@ -1067,7 +985,9 @@ _LEGACY_PLAN_BUILDERS: dict[str, PlanBuilder] = {
     # UDP plan builders now live in ``protocols/udp.py`` and reach
     # ``PLAN_BUILDERS`` through the registry merge below (re-imported into this
     # module above for identity/back-compat).
-    "bgp-session-smoke": _bgp_session_smoke_probe_plan,
+    # The BGP plan builder now lives in ``protocols/bgp.py`` and reaches
+    # ``PLAN_BUILDERS`` through the registry merge below (re-imported into this
+    # module above for identity/back-compat).
     "rip-update-v2": _rip_update_probe_plan,
     "ripng-update": _ripng_update_probe_plan,
     "igmp-membership-query-observation": _igmp_probe_plan,
@@ -1102,7 +1022,9 @@ _LEGACY_PLANNED_ONLY_REGISTERED_CASES: frozenset[str] = frozenset(
         "esp-tunnel-echo",
         "ah-transport-verify",
         "ikev2-sa-init",
-        "bgp-session-smoke",
+        # ``bgp-session-smoke`` is contributed by the BGP plugin
+        # (``protocols/bgp.py``) and unioned into ``PLANNED_ONLY_REGISTERED_CASES``
+        # below.
         "rip-update-v2",
         "ripng-update",
         "igmp-membership-query-observation",
