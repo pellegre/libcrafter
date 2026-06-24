@@ -19,7 +19,16 @@ use super::Mqtt;
 const PUBLISH_QOS_SHIFT: u8 = 1;
 
 /// Decode a single MQTT control packet from the front of `bytes`.
+#[cfg(test)]
 pub(crate) fn decode_mqtt(bytes: &[u8]) -> Result<(Mqtt, usize)> {
+    decode_mqtt_with_default_version(bytes, MQTT_311_PROTOCOL_LEVEL)
+}
+
+/// Decode a single MQTT control packet using `default_version` for non-CONNECT packets.
+pub(crate) fn decode_mqtt_with_default_version(
+    bytes: &[u8],
+    default_version: u8,
+) -> Result<(Mqtt, usize)> {
     let first_byte = *bytes
         .first()
         .ok_or_else(|| CrafterError::buffer_too_short("mqtt.fixed_header", 1, bytes.len()))?;
@@ -46,34 +55,70 @@ pub(crate) fn decode_mqtt(bytes: &[u8]) -> Result<(Mqtt, usize)> {
     let body = &bytes[header_len..total_len];
     let mqtt = match packet_type {
         MqttControlPacketType::Connect => decode_connect(flags, remaining_length, body)?,
-        MqttControlPacketType::Connack => decode_connack(flags, remaining_length, body)?,
-        MqttControlPacketType::Publish => decode_publish(flags, remaining_length, body)?,
-        MqttControlPacketType::Puback => {
-            decode_packet_identifier(packet_type, flags, remaining_length, body, "mqtt.puback")?
+        MqttControlPacketType::Connack => {
+            decode_connack_with_version(flags, remaining_length, default_version, body)?
         }
-        MqttControlPacketType::Pubrec => {
-            decode_packet_identifier(packet_type, flags, remaining_length, body, "mqtt.pubrec")?
+        MqttControlPacketType::Publish => {
+            decode_publish_with_version(flags, remaining_length, default_version, body)?
         }
+        MqttControlPacketType::Puback => decode_packet_identifier_with_version(
+            packet_type,
+            flags,
+            remaining_length,
+            default_version,
+            body,
+            "mqtt.puback",
+        )?,
+        MqttControlPacketType::Pubrec => decode_packet_identifier_with_version(
+            packet_type,
+            flags,
+            remaining_length,
+            default_version,
+            body,
+            "mqtt.pubrec",
+        )?,
         MqttControlPacketType::Pubrel => {
             // The decoded fixed-header flags are preserved exactly; callers can
             // decide whether to enforce MQTT 3.1.1's reserved PUBREL value.
-            decode_packet_identifier(packet_type, flags, remaining_length, body, "mqtt.pubrel")?
+            decode_packet_identifier_with_version(
+                packet_type,
+                flags,
+                remaining_length,
+                default_version,
+                body,
+                "mqtt.pubrel",
+            )?
         }
-        MqttControlPacketType::Pubcomp => {
-            decode_packet_identifier(packet_type, flags, remaining_length, body, "mqtt.pubcomp")?
+        MqttControlPacketType::Pubcomp => decode_packet_identifier_with_version(
+            packet_type,
+            flags,
+            remaining_length,
+            default_version,
+            body,
+            "mqtt.pubcomp",
+        )?,
+        MqttControlPacketType::Unsuback => {
+            decode_unsuback_with_version(flags, remaining_length, default_version, body)?
         }
-        MqttControlPacketType::Unsuback => decode_unsuback(flags, remaining_length, body)?,
         MqttControlPacketType::Pingreq => {
             decode_empty_packet(packet_type, flags, remaining_length, body, "mqtt.pingreq")?
         }
         MqttControlPacketType::Pingresp => {
             decode_empty_packet(packet_type, flags, remaining_length, body, "mqtt.pingresp")?
         }
-        MqttControlPacketType::Disconnect => decode_disconnect(flags, remaining_length, body)?,
+        MqttControlPacketType::Disconnect => {
+            decode_disconnect_with_version(flags, remaining_length, default_version, body)?
+        }
         MqttControlPacketType::Auth => decode_auth(flags, remaining_length, body)?,
-        MqttControlPacketType::Subscribe => decode_subscribe(flags, remaining_length, body)?,
-        MqttControlPacketType::Suback => decode_suback(flags, remaining_length, body)?,
-        MqttControlPacketType::Unsubscribe => decode_unsubscribe(flags, remaining_length, body)?,
+        MqttControlPacketType::Subscribe => {
+            decode_subscribe_with_version(flags, remaining_length, default_version, body)?
+        }
+        MqttControlPacketType::Suback => {
+            decode_suback_with_version(flags, remaining_length, default_version, body)?
+        }
+        MqttControlPacketType::Unsubscribe => {
+            decode_unsubscribe_with_version(flags, remaining_length, default_version, body)?
+        }
     };
 
     Ok((mqtt, total_len))
@@ -145,15 +190,6 @@ fn decode_connect(fixed_header_flags: u8, remaining_length: u32, body: &[u8]) ->
     ))
 }
 
-fn decode_connack(fixed_header_flags: u8, remaining_length: u32, body: &[u8]) -> Result<Mqtt> {
-    decode_connack_with_version(
-        fixed_header_flags,
-        remaining_length,
-        MQTT_311_PROTOCOL_LEVEL,
-        body,
-    )
-}
-
 fn decode_connack_with_version(
     fixed_header_flags: u8,
     remaining_length: u32,
@@ -192,15 +228,6 @@ fn decode_connack_with_version(
     ))
 }
 
-fn decode_publish(fixed_header_flags: u8, remaining_length: u32, body: &[u8]) -> Result<Mqtt> {
-    decode_publish_with_version(
-        fixed_header_flags,
-        remaining_length,
-        MQTT_311_PROTOCOL_LEVEL,
-        body,
-    )
-}
-
 fn decode_publish_with_version(
     fixed_header_flags: u8,
     remaining_length: u32,
@@ -231,23 +258,6 @@ fn decode_publish_with_version(
         properties,
         payload,
     ))
-}
-
-fn decode_packet_identifier(
-    packet_type: MqttControlPacketType,
-    fixed_header_flags: u8,
-    remaining_length: u32,
-    body: &[u8],
-    context: &'static str,
-) -> Result<Mqtt> {
-    decode_packet_identifier_with_version(
-        packet_type,
-        fixed_header_flags,
-        remaining_length,
-        MQTT_311_PROTOCOL_LEVEL,
-        body,
-        context,
-    )
 }
 
 fn decode_packet_identifier_with_version(
@@ -324,15 +334,6 @@ fn decode_empty_packet(
         fixed_header_flags,
         remaining_length,
     ))
-}
-
-fn decode_disconnect(fixed_header_flags: u8, remaining_length: u32, body: &[u8]) -> Result<Mqtt> {
-    decode_disconnect_with_version(
-        fixed_header_flags,
-        remaining_length,
-        MQTT_311_PROTOCOL_LEVEL,
-        body,
-    )
 }
 
 fn decode_disconnect_with_version(
@@ -427,15 +428,6 @@ fn decode_auth_with_version(
     ))
 }
 
-fn decode_suback(fixed_header_flags: u8, remaining_length: u32, body: &[u8]) -> Result<Mqtt> {
-    decode_suback_with_version(
-        fixed_header_flags,
-        remaining_length,
-        MQTT_311_PROTOCOL_LEVEL,
-        body,
-    )
-}
-
 fn decode_suback_with_version(
     fixed_header_flags: u8,
     remaining_length: u32,
@@ -467,15 +459,6 @@ fn decode_suback_with_version(
         properties,
         return_codes,
     ))
-}
-
-fn decode_unsubscribe(fixed_header_flags: u8, remaining_length: u32, body: &[u8]) -> Result<Mqtt> {
-    decode_unsubscribe_with_version(
-        fixed_header_flags,
-        remaining_length,
-        MQTT_311_PROTOCOL_LEVEL,
-        body,
-    )
 }
 
 fn decode_unsubscribe_with_version(
@@ -521,15 +504,6 @@ fn decode_unsubscribe_with_version(
     ))
 }
 
-fn decode_unsuback(fixed_header_flags: u8, remaining_length: u32, body: &[u8]) -> Result<Mqtt> {
-    decode_unsuback_with_version(
-        fixed_header_flags,
-        remaining_length,
-        MQTT_311_PROTOCOL_LEVEL,
-        body,
-    )
-}
-
 fn decode_unsuback_with_version(
     fixed_header_flags: u8,
     remaining_length: u32,
@@ -568,15 +542,6 @@ fn decode_unsuback_with_version(
         properties,
         reason_codes,
     ))
-}
-
-fn decode_subscribe(fixed_header_flags: u8, remaining_length: u32, body: &[u8]) -> Result<Mqtt> {
-    decode_subscribe_with_version(
-        fixed_header_flags,
-        remaining_length,
-        MQTT_311_PROTOCOL_LEVEL,
-        body,
-    )
 }
 
 fn decode_subscribe_with_version(
@@ -715,14 +680,29 @@ fn is_incomplete_mqtt_frame(context: &'static str) -> bool {
 
 /// Decode one or more MQTT control packets from a TCP payload.
 pub(crate) fn append_mqtt_packet_with_registry(
-    _registry: &ProtocolRegistry,
+    registry: &ProtocolRegistry,
+    packet: Packet,
+    bytes: &[u8],
+) -> Result<Packet> {
+    append_mqtt_packet_with_default_version(registry, packet, bytes, MQTT_311_PROTOCOL_LEVEL)
+}
+
+pub(crate) fn decode_mqtt_payload_with_default_version(
+    bytes: &[u8],
+    default_version: u8,
+) -> Result<Packet> {
+    decode_mqtt_payload_with_default_version_from(Packet::new(), bytes, default_version)
+}
+
+fn decode_mqtt_payload_with_default_version_from(
     mut packet: Packet,
     bytes: &[u8],
+    default_version: u8,
 ) -> Result<Packet> {
     let mut remaining = bytes;
 
     while !remaining.is_empty() {
-        match decode_mqtt(remaining) {
+        match decode_mqtt_with_default_version(remaining, default_version) {
             Ok((mqtt, consumed)) if consumed > 0 => {
                 packet = packet.push(mqtt);
                 remaining = &remaining[consumed..];
@@ -749,6 +729,15 @@ pub(crate) fn append_mqtt_packet_with_registry(
     }
 
     Ok(packet)
+}
+
+fn append_mqtt_packet_with_default_version(
+    _registry: &ProtocolRegistry,
+    packet: Packet,
+    bytes: &[u8],
+    default_version: u8,
+) -> Result<Packet> {
+    decode_mqtt_payload_with_default_version_from(packet, bytes, default_version)
 }
 
 #[cfg(test)]

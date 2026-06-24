@@ -1,7 +1,7 @@
 //! MQTT control packet layer.
 
 use crate::field::Field;
-use crate::packet::{Layer, LayerContext};
+use crate::packet::{Layer, LayerContext, Packet};
 use crate::protocols::transport::common::{hex_bytes, impl_layer_div, impl_layer_object};
 use crate::Result;
 
@@ -1058,6 +1058,14 @@ impl Mqtt {
             remaining_length: Field::unset(),
             body: MqttBody::Raw(body.into()),
         }
+    }
+
+    /// Decode one or more MQTT control packets using `default_version` for non-CONNECT packets.
+    pub fn decode_payload_with_default_version(
+        bytes: &[u8],
+        default_version: u8,
+    ) -> Result<Packet> {
+        super::decode::decode_mqtt_payload_with_default_version(bytes, default_version)
     }
 
     /// Build an MQTT CONNECT packet with MQTT 3.1.1 defaults.
