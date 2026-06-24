@@ -162,6 +162,34 @@ const DISCONNECT_EMPTY: &[u8] = &[
     0xe0, 0x00,
 ];
 
+const COMMITTED_DOCS_CONNECT_FRAME: &[u8] = &[
+    // IPv4/TCP envelope from docs/guide/mqtt.md. The MQTT bytes begin at
+    // offset 40: CONNECT fixed header 0x10, Remaining Length 0x1a, protocol
+    // name "MQTT", protocol level 4, Clean Session, keep-alive 30, and the
+    // "crafter-client" client identifier per `.agents/docs/mqtt-manifest.md`.
+    0x45, 0x00, 0x00, 0x44, 0x00, 0x01, 0x00, 0x00, 0x40, 0x06, 0x8e, 0x61, 0xc0, 0x00, 0x02, 0x0a,
+    0xc6, 0x33, 0x64, 0x14, 0xc0, 0x2a, 0x07, 0x5b, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+    0x50, 0x10, 0x20, 0x00, 0x2f, 0x29, 0x00, 0x00, 0x10, 0x1a, 0x00, 0x04, b'M', b'Q', b'T', b'T',
+    0x04, 0x02, 0x00, 0x1e, 0x00, 0x0e, b'c', b'r', b'a', b'f', b't', b'e', b'r', b'-', b'c', b'l',
+    b'i', b'e', b'n', b't',
+];
+
+const COMMITTED_DOCS_PUBLISH_FRAME: &[u8] = &[
+    // Same documentation envelope. The MQTT bytes begin at offset 40: PUBLISH
+    // fixed header 0x32 (QoS 1), Remaining Length 0x2b, topic
+    // "crafter/demo/outbound", packet id 2, and payload "hello from crafter".
+    0x45, 0x00, 0x00, 0x55, 0x00, 0x01, 0x00, 0x00, 0x40, 0x06, 0x8e, 0x50, 0xc0, 0x00, 0x02, 0x0a,
+    0xc6, 0x33, 0x64, 0x14, 0xc0, 0x2a, 0x07, 0x5b, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+    0x50, 0x10, 0x20, 0x00, 0xbb, 0xfe, 0x00, 0x00, 0x32, 0x2b, 0x00, 0x15, b'c', b'r', b'a', b'f',
+    b't', b'e', b'r', b'/', b'd', b'e', b'm', b'o', b'/', b'o', b'u', b't', b'b', b'o', b'u', b'n',
+    b'd', 0x00, 0x02, b'h', b'e', b'l', b'l', b'o', b' ', b'f', b'r', b'o', b'm', b' ', b'c', b'r',
+    b'a', b'f', b't', b'e', b'r',
+];
+
+const COMMITTED_DOCS_CONNECT_SUMMARY: &str = "Ipv4(src=192.0.2.10, dst=198.51.100.20, proto=tcp(6)) / Tcp(sport=49194, dport=1883, flags=ACK) / MQTT CONNECT client_id=crafter-client keep_alive=30 clean_session=true will=false username=false password=false";
+
+const COMMITTED_DOCS_PUBLISH_SUMMARY: &str = "Ipv4(src=192.0.2.10, dst=198.51.100.20, proto=tcp(6)) / Tcp(sport=49194, dport=1883, flags=ACK) / MQTT PUBLISH topic=crafter/demo/outbound qos=1 dup=false retain=false payload=18 bytes";
+
 fn mqtt_over_ipv4_tcp(payload: &[u8]) -> crafter::Result<Vec<u8>> {
     let packet = Ipv4::new()
         .src(Ipv4Addr::new(192, 0, 2, 10))
@@ -186,6 +214,51 @@ fn decode_ipv4_tcp_mqtt(payload: &[u8]) -> crafter::Result<(Vec<u8>, Packet)> {
 fn decode_built_mqtt(message: Mqtt) -> crafter::Result<(Vec<u8>, Packet)> {
     let payload = Packet::from_layer(message).compile()?.into_bytes();
     decode_ipv4_tcp_mqtt(&payload)
+}
+
+fn documented_mqtt_packet(message: Mqtt) -> Packet {
+    Ipv4::new()
+        .src(Ipv4Addr::new(192, 0, 2, 10))
+        .dst(Ipv4Addr::new(198, 51, 100, 20))
+        .protocol(IPPROTO_TCP)
+        / Tcp::new()
+            .sport(49_194)
+            .dport(MQTT_PORT)
+            .seq(0x0102_0304)
+            .ack(0x0506_0708)
+            .ack_segment()
+        / message
+}
+
+#[test]
+fn committed_docs_connect_and_publish_frames_match_expected_bytes() -> crafter::Result<()> {
+    let connect = documented_mqtt_packet(
+        Mqtt::connect()
+            .client_id("crafter-client")
+            .keep_alive(30)
+            .clean_session(true),
+    );
+    let connect_bytes = connect.compile()?;
+    let connect_decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, connect_bytes.as_bytes())?;
+
+    assert_eq!(connect.summary(), COMMITTED_DOCS_CONNECT_SUMMARY);
+    assert_eq!(connect_decoded.summary(), COMMITTED_DOCS_CONNECT_SUMMARY);
+    assert_eq!(connect_bytes.as_bytes(), COMMITTED_DOCS_CONNECT_FRAME);
+
+    let publish = documented_mqtt_packet(
+        Mqtt::publish()
+            .topic("crafter/demo/outbound")
+            .qos(MQTT_PUBLISH_QOS_1)
+            .packet_id(2)
+            .payload(b"hello from crafter".to_vec()),
+    );
+    let publish_bytes = publish.compile()?;
+    let publish_decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, publish_bytes.as_bytes())?;
+
+    assert_eq!(publish.summary(), COMMITTED_DOCS_PUBLISH_SUMMARY);
+    assert_eq!(publish_decoded.summary(), COMMITTED_DOCS_PUBLISH_SUMMARY);
+    assert_eq!(publish_bytes.as_bytes(), COMMITTED_DOCS_PUBLISH_FRAME);
+    Ok(())
 }
 
 #[test]
