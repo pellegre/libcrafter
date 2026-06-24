@@ -3,8 +3,9 @@ use std::net::Ipv4Addr;
 use crafter::prelude::*;
 use crafter::protocols::mqtt::{
     MqttProperties, MqttProperty, MQTT_5_PROTOCOL_LEVEL, MQTT_REASON_BAD_AUTHENTICATION_METHOD,
-    MQTT_REASON_NO_MATCHING_SUBSCRIBERS, MQTT_REASON_PACKET_IDENTIFIER_NOT_FOUND,
-    MQTT_SUBOPT_RETAIN_SEND_IF_NEW,
+    MQTT_REASON_GRANTED_QOS_0, MQTT_REASON_GRANTED_QOS_1,
+    MQTT_REASON_IMPLEMENTATION_SPECIFIC_ERROR, MQTT_REASON_NO_MATCHING_SUBSCRIBERS,
+    MQTT_REASON_PACKET_IDENTIFIER_NOT_FOUND, MQTT_SUBOPT_RETAIN_SEND_IF_NEW,
 };
 
 const CONNECT_V5_WITH_PROPERTIES: &[u8] = &[
@@ -53,6 +54,13 @@ const SUBSCRIBE_V5_WITH_PROPERTIES: &[u8] = &[
 const SUBSCRIBE_311_BASELINE: &[u8] = &[
     0x82, 0x0e, 0x12, 0x34, 0x00, 0x09, b's', b'e', b'n', b's', b'o', b'r', b's', b'/', b'+', 0x01,
 ];
+
+const SUBACK_V5_WITH_PROPERTIES: &[u8] = &[
+    0x90, 0x10, 0x43, 0x21, 0x0a, 0x1f, 0x00, 0x07, b'p', b'a', b'r', b't', b'i', b'a', b'l', 0x00,
+    0x01, 0x83,
+];
+
+const SUBACK_311_BASELINE: &[u8] = &[0x90, 0x04, 0x12, 0x34, 0x01, 0x80];
 
 fn mqtt_bytes(message: Mqtt) -> crafter::Result<Vec<u8>> {
     Ok(Packet::from_layer(message).compile()?.into_bytes())
@@ -132,6 +140,18 @@ fn subscribe_v5_message() -> Mqtt {
         .packet_id(0x1234)
         .subscription_identifier(321)
         .subscribe_topic_options("sensors/+", 1, true, false, MQTT_SUBOPT_RETAIN_SEND_IF_NEW)
+}
+
+fn suback_v5_message() -> Mqtt {
+    Mqtt::suback()
+        .version(MQTT_5_PROTOCOL_LEVEL)
+        .packet_id(0x4321)
+        .suback_property(MqttProperty::ReasonString("partial".to_string()))
+        .return_codes([
+            MQTT_REASON_GRANTED_QOS_0,
+            MQTT_REASON_GRANTED_QOS_1,
+            MQTT_REASON_IMPLEMENTATION_SPECIFIC_ERROR,
+        ])
 }
 
 #[test]
@@ -274,5 +294,21 @@ fn subscribe_311_baseline_stays_unchanged() -> crafter::Result<()> {
     )?;
 
     assert_eq!(bytes, SUBSCRIBE_311_BASELINE);
+    Ok(())
+}
+
+#[test]
+fn suback_v5_properties_and_reason_codes_compile_byte_exact() -> crafter::Result<()> {
+    let bytes = mqtt_bytes(suback_v5_message())?;
+
+    assert_eq!(bytes, SUBACK_V5_WITH_PROPERTIES);
+    Ok(())
+}
+
+#[test]
+fn suback_311_baseline_stays_unchanged() -> crafter::Result<()> {
+    let bytes = mqtt_bytes(Mqtt::suback().packet_id(0x1234).return_codes([0x01, 0x80]))?;
+
+    assert_eq!(bytes, SUBACK_311_BASELINE);
     Ok(())
 }
