@@ -686,6 +686,16 @@ impl Mqtt {
         }
     }
 
+    /// Build an MQTT 3.1.1 DISCONNECT packet.
+    pub fn disconnect() -> Self {
+        Self {
+            packet_type: MqttControlPacketType::Disconnect,
+            flags: Field::defaulted(MqttControlPacketType::Disconnect.default_flags()),
+            remaining_length: Field::unset(),
+            body: MqttBody::Empty,
+        }
+    }
+
     /// Build an MQTT SUBSCRIBE packet.
     pub fn subscribe() -> Self {
         Self {
@@ -1620,6 +1630,13 @@ mod tests {
         let bytes = mqtt_bytes(Mqtt::pingresp());
 
         assert_eq!(bytes, [0xd0, 0x00]);
+    }
+
+    #[test]
+    fn disconnect_compiles_empty_body() {
+        let bytes = mqtt_bytes(Mqtt::disconnect());
+
+        assert_eq!(bytes, [0xe0, 0x00]);
     }
 
     #[test]
