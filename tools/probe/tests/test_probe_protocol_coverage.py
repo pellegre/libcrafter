@@ -36,11 +36,7 @@ from tools.probe.engine.protocols import PROTOCOL_REGISTRY, registered_plugins
 # each migration step lands its plugin, that protocol is removed from this
 # frozenset; once every protocol is served, the strict step (43) deletes this
 # seed and asserts full coverage directly.
-KNOWN_UNMIGRATED: frozenset[str] = frozenset(
-    {
-        "ipsec",
-    }
-)
+KNOWN_UNMIGRATED: frozenset[str] = frozenset()
 
 # The canonical, complete list of probe protocols. ``KNOWN_UNMIGRATED`` may only
 # ever name protocols from this list; protocols served by a plugin are computed

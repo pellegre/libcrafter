@@ -35,15 +35,19 @@ leaves the IPSec cases on the legacy path, which never built an IPSec service
 either.
 
 IPSec is the only protocol with a ``tools.oracle.engine.ipsec_interop``
-cross-crypto dry-run hook (``cli._IPSEC_PROBE_CASES`` /
-``_ipsec_interop_dry_run_metadata``). That interop hook -- and the IPSec
-address-rewrite / failure-reason / lab-capability contributions -- are
-deliberately *not* part of this step: there is no IPSec live-path rewrite branch
-(the four cases are planned-only and never stimulus-routed), and no IPSec
+cross-crypto dry-run hook, so the IPSec plugin is the only place the probe engine
+imports from ``tools.oracle``. That interop hook (``_IPSEC_PROBE_CASES`` /
+``_ipsec_interop_dry_run_metadata``, moved verbatim from ``cli``) and the IPSec
+lab-capability derivation (``ipsec_esp`` / ``ipsec_ah`` / ``ikev2``, moved
+verbatim from ``lab``) now live here; ``cli`` re-imports ``_IPSEC_PROBE_CASES``
+and ``_ipsec_interop_dry_run_metadata`` (object-identity preserved for the
+interop wiring test) and routes the IPSec dry-run interop metadata through the
+registry's ``ipsec_interop`` accessor. The IPSec ``rewrite_endpoint_addresses``
+and ``failure_reasons`` hooks stay ``None``: there is no IPSec live-path rewrite
+branch (the four cases are planned-only and never stimulus-routed) and no IPSec
 ``_failure_reasons_for_case`` branch (the cases fall through to the shared
-default taxonomy). The IPSec lab-capability derivation (``ipsec_esp`` /
-``ipsec_ah`` / ``ikev2``) and the interop hook land in step 35, so every
-remaining optional hook -- including ``ipsec_interop`` -- stays ``None`` here.
+default taxonomy), verified against the actual code. This completes IPSec, the
+last probe protocol to migrate.
 
 IPSec's ``profile_counts`` is intentionally empty: the focused ``ipsec`` profile
 rides the four cases in a fixed declaration order, and the registry-first profile
@@ -59,8 +63,18 @@ for the tests).
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
+
+# IPSec is the only probe protocol with a cross-crypto interop dry-run hook, so
+# it is the only place probe imports from ``tools.oracle``. The import is kept
+# local to this plugin (mirroring ``cli.py``'s former module-top import) so the
+# only ``tools.oracle`` dependency in the probe engine lives with the IPSec
+# protocol it belongs to.
+from tools.oracle.engine import ipsec_interop as _ipsec_interop
+
+from ..capability_derivation import capability, capability_default_true
 from ..case_helpers import _behavior_case
-from ..model import JSONObject, ProbeCase
+from ..model import JSONObject, JSONValue, ProbeCase
 from ..planning_helpers import deterministic_bytes, deterministic_ipv4_pair
 from .base import ProtocolPlugin, register
 
@@ -333,6 +347,123 @@ _IPSEC_PLANNED_ONLY_CASES: frozenset[str] = frozenset(
 )
 
 
+# --------------------------------------------------------------------------- #
+# Cross-crypto interop dry-run hook (moved verbatim from
+# ``cli._IPSEC_PROBE_CASES`` / ``cli._ipsec_interop_dry_run_metadata``)
+# --------------------------------------------------------------------------- #
+
+
+# Probe case names whose dry-run plan is an ESP / AH / IKEv2 IPSec exchange. When
+# the profile selects any of these, the dry-run runs the oracle-owned
+# cross-crypto interop check. Moved verbatim from ``cli._IPSEC_PROBE_CASES``;
+# ``cli`` re-imports it so ``cli._IPSEC_PROBE_CASES`` keeps identical object
+# identity for the interop wiring test.
+_IPSEC_PROBE_CASES: frozenset[str] = frozenset(
+    {
+        "esp-transport-echo",
+        "esp-tunnel-echo",
+        "ah-transport-verify",
+        "ikev2-sa-init",
+    }
+)
+
+
+def _ipsec_interop_dry_run_metadata(
+    selected_cases: Sequence[ProbeCase],
+) -> JSONObject | None:
+    """Run the cross-crypto IPSec interop check for an IPSec dry-run.
+
+    Returns the structured interop report when the selected cases include an
+    IPSec exchange, otherwise ``None`` (non-IPSec profiles skip the check). A
+    failed assertion is reported as ``passed: False`` in the returned object so
+    the report carries it; the CLI surfaces that as a non-zero exit. A missing
+    build/crypto tool is recorded as ``available: False`` rather than crashing
+    the dry-run, since the offline plan itself is still valid.
+
+    Moved verbatim from ``cli._ipsec_interop_dry_run_metadata`` and registered
+    as the IPSec plugin's ``ipsec_interop`` hook. ``cli`` re-imports it so
+    ``cli._ipsec_interop_dry_run_metadata`` keeps identical object identity for
+    the interop wiring test, and ``cli._dry_run_report`` invokes it through the
+    registry's ``ipsec_interop`` accessor.
+    """
+
+    if not any(case.name in _IPSEC_PROBE_CASES for case in selected_cases):
+        return None
+    try:
+        report = _ipsec_interop.run_interop()
+    except _ipsec_interop.IpsecInteropError as exc:
+        return {
+            "check": "ipsec-cross-crypto-interop",
+            "available": False,
+            "passed": None,
+            "reason": str(exc),
+        }
+    report["available"] = True
+    return report
+
+
+# --------------------------------------------------------------------------- #
+# Lab-capability derivation (moved from
+# ``lab.probe_capabilities_from_lab_capabilities``)
+# --------------------------------------------------------------------------- #
+
+
+def ipsec_lab_capabilities(
+    substrate: Mapping[str, JSONValue],
+) -> Mapping[str, object]:
+    """Return the IPSec plugin's derived probe-capability contribution.
+
+    Moved verbatim from the ``ipsec_esp`` / ``ipsec_ah`` / ``ikev2`` derivation
+    in ``lab.probe_capabilities_from_lab_capabilities``. The ESP/AH cases need a
+    peer on the controlled target endpoint that holds the matching Security
+    Association (the same SPI, mode, algorithms, and keys libcrafter
+    seals/verifies with); the IKEv2 case needs that peer to run an IKE responder
+    on UDP/500. The peer is realized as the Linux kernel xfrm / strongSwan stack
+    or an oracle reference peer configured on the target VM, so the capabilities
+    derive from the same IPv4-unicast + controlled-services substrate the
+    DNS/UDP services use: a substrate that can carry IPv4 unicast and host a
+    controlled service can host the IPSec peer too. Providers without a
+    controlled service (a bare L3 transit with no configurable peer) skip the
+    IPSec cases cleanly with the stable requires-IPSec-peer /
+    requires-IKEv2-responder reasons. An explicit ``ipsec_peer`` substrate flag,
+    when present, can deny the peer even where controlled services exist (e.g. a
+    peer the lab cannot configure with an xfrm/strongSwan SA). Tunnel-mode ESP
+    additionally needs a tunnel-mode SA on the peer; the ``requires_tunnel`` case
+    metadata records that so a transport-only peer skips the tunnel case while
+    transport cases still plan -- the capability itself is shared (``ipsec_esp``).
+
+    The shared ``capability_names`` / ``capability_sources`` tables stay in
+    ``lab``; this hook contributes only the derived ``ipsec_esp`` / ``ipsec_ah``
+    / ``ikev2`` values, merged byte-identically over the legacy values.
+    """
+
+    ipv4_unicast = capability(substrate, "ipv4_unicast", "ipv4")
+    controlled_services = capability(
+        substrate,
+        "controlled_services",
+        "controlled_service",
+    )
+    ipsec_peer = (
+        ipv4_unicast
+        and controlled_services
+        and capability_default_true(substrate, "ipsec_peer")
+    )
+    ikev2_responder = (
+        ipv4_unicast
+        and controlled_services
+        and capability_default_true(
+            substrate,
+            "ikev2_responder",
+            "ike_responder",
+        )
+    )
+    return {
+        "ipsec_esp": ipsec_peer,
+        "ipsec_ah": ipsec_peer,
+        "ikev2": ikev2_responder,
+    }
+
+
 register(
     ProtocolPlugin(
         name="ipsec",
@@ -346,22 +477,28 @@ register(
         # All four IPSec cases are planned-only and were never stimulus-routed.
         stimulus_endpoint_cases=frozenset(),
         # IPSec produced no ``target_service_setup_plan`` service entry and no
-        # inline setup-script block (verified in this target-service step against
-        # the actual code), so ``target_service`` / ``setup_script`` stay ``None``
-        # and nothing moved out of ``target_services.py``. The remaining hooks are
-        # step 35: the four planned-only cases were never stimulus-routed, so there
-        # is no live-path rewrite branch to reproduce
-        # (``rewrite_endpoint_addresses``); the cases fall through to the shared
-        # default failure taxonomy, so there is no IPSec
-        # ``_failure_reasons_for_case`` branch (``failure_reasons``). The IPSec
-        # lab-capability derivation (``ipsec_esp`` / ``ipsec_ah`` / ``ikev2``) and
-        # the cross-crypto ``ipsec_interop`` hook (the only ``tools.oracle``
-        # dependency) land in step 35.
+        # inline setup-script block (verified against the actual code), so
+        # ``target_service`` / ``setup_script`` stay ``None`` and nothing moved out
+        # of ``target_services.py``. ``rewrite_endpoint_addresses`` stays ``None``:
+        # the four planned-only cases were never stimulus-routed, so there was no
+        # IPSec live-path rewrite branch in
+        # ``cli._probe_plan_with_endpoint_addresses`` to reproduce (verified
+        # against the actual code -- IPSec cases are not in
+        # ``cli._STIMULUS_ENDPOINT_CASES`` and have no rewrite branch).
+        # ``failure_reasons`` stays ``None``: the IPSec cases had no
+        # ``cli._failure_reasons_for_case`` branch and fall through to the shared
+        # default taxonomy (verified against the actual code), so leaving the hook
+        # ``None`` keeps them on that shared default byte-for-byte.
+        # ``lab_capabilities`` contributes the IPSec ``ipsec_esp`` / ``ipsec_ah`` /
+        # ``ikev2`` derived capabilities. ``ipsec_interop`` is the IPSec-only
+        # cross-crypto dry-run hook (the only ``tools.oracle`` dependency in the
+        # probe engine), routed by ``cli._dry_run_report`` through the registry's
+        # ``ipsec_interop`` accessor.
         target_service=None,
         setup_script=None,
         rewrite_endpoint_addresses=None,
         failure_reasons=None,
-        lab_capabilities=None,
-        ipsec_interop=None,
+        lab_capabilities=ipsec_lab_capabilities,
+        ipsec_interop=_ipsec_interop_dry_run_metadata,
     )
 )

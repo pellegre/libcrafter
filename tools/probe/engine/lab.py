@@ -194,40 +194,10 @@ def probe_capabilities_from_lab_capabilities(
     # ``ipv4_multicast`` / ``igmp_peer`` are derived by the IGMP plugin's
     # ``lab_capabilities`` hook (folded in below), not here. The shared
     # ``capability_names`` / ``capability_sources`` tables still list them.
-    # IPSec behavioral capabilities. The ESP/AH cases need a peer on the
-    # controlled target endpoint that holds the matching Security Association
-    # (the same SPI, mode, algorithms, and keys libcrafter seals/verifies with);
-    # the IKEv2 case needs that peer to run an IKE responder on UDP/500. The peer
-    # is realized as the Linux kernel xfrm / strongSwan stack or an oracle
-    # reference peer configured on the target VM, so the capabilities derive from
-    # the same IPv4-unicast + controlled-services substrate the DNS/UDP services
-    # use: a substrate that can carry IPv4 unicast and host a controlled service
-    # can host the IPSec peer too. Providers without a controlled service (a
-    # bare L3 transit with no configurable peer) skip the IPSec cases cleanly
-    # with the stable requires-IPSec-peer / requires-IKEv2-responder reasons.
-    # An explicit ``ipsec_peer`` substrate flag, when present, can deny the peer
-    # even where controlled services exist (e.g. a peer the lab cannot configure
-    # with an xfrm/strongSwan SA). Tunnel-mode ESP additionally needs a
-    # tunnel-mode SA on the peer; the ``requires_tunnel`` case metadata records
-    # that so a transport-only peer skips the tunnel case while transport cases
-    # still plan -- the capability itself is shared (``ipsec_esp``).
-    ipsec_peer = (
-        ipv4_unicast
-        and controlled_services
-        and _capability_default_true(substrate, "ipsec_peer")
-    )
-    ikev2_responder = (
-        ipv4_unicast
-        and controlled_services
-        and _capability_default_true(
-            substrate,
-            "ikev2_responder",
-            "ike_responder",
-        )
-    )
-    ipsec_esp = ipsec_peer
-    ipsec_ah = ipsec_peer
-    ikev2 = ikev2_responder
+    # The IPSec behavioral capabilities (``ipsec_esp`` / ``ipsec_ah`` / ``ikev2``)
+    # are derived by the IPSec plugin's ``lab_capabilities`` hook (folded in
+    # below), not here. The shared ``capability_names`` / ``capability_sources``
+    # tables still list them.
     # ``ospf_neighbor_peer`` is derived by the OSPF plugin's ``lab_capabilities``
     # hook (folded in below), not here. The shared ``capability_names`` /
     # ``capability_sources`` tables still list it.
@@ -278,9 +248,10 @@ def probe_capabilities_from_lab_capabilities(
         # ``ipv4_multicast`` / ``igmp_peer`` are contributed by the IGMP plugin's
         # ``lab_capabilities`` hook (folded in below). The shared
         # ``capability_names`` / ``capability_sources`` tables still list both.
-        "ipsec_esp": ipsec_esp,
-        "ipsec_ah": ipsec_ah,
-        "ikev2": ikev2,
+        # ``ipsec_esp`` / ``ipsec_ah`` / ``ikev2`` are contributed by the IPSec
+        # plugin's ``lab_capabilities`` hook (folded in below), not here. The
+        # shared ``capability_names`` / ``capability_sources`` tables still list
+        # them.
         # ``ospf_neighbor_peer`` is contributed by the OSPF plugin's
         # ``lab_capabilities`` hook (folded in below), not here. The shared
         # ``capability_names`` / ``capability_sources`` tables still list it.
