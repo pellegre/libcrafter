@@ -360,18 +360,11 @@ impl MqttPacketIdentifier {
     }
 }
 
-/// MQTT SUBSCRIBE topic filter and requested QoS pair.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct MqttSubscription {
-    filter: String,
-    qos: u8,
-}
-
 /// MQTT SUBSCRIBE variable header and payload fields.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct MqttSubscribe {
     packet_id: Field<u16>,
-    topics: Vec<MqttSubscription>,
+    topics: Vec<(String, u8)>,
 }
 
 impl MqttSubscribe {
@@ -382,30 +375,38 @@ impl MqttSubscribe {
         }
     }
 
+    fn from_decoded_parts(packet_id: u16, topics: Vec<(String, u8)>) -> Self {
+        Self {
+            packet_id: Field::user(packet_id),
+            topics,
+        }
+    }
+
     fn packet_id(&self) -> u16 {
         self.packet_id.value().copied().unwrap_or(0)
     }
 
+    fn topics(&self) -> &[(String, u8)] {
+        &self.topics
+    }
+
     fn push_topic(&mut self, filter: impl Into<String>, qos: u8) {
-        self.topics.push(MqttSubscription {
-            filter: filter.into(),
-            qos,
-        });
+        self.topics.push((filter.into(), qos));
     }
 
     fn encoded_len(&self) -> usize {
         2 + self
             .topics
             .iter()
-            .map(|topic| 2 + topic.filter.len() + 1)
+            .map(|(filter, _qos)| 2 + filter.len() + 1)
             .sum::<usize>()
     }
 
     fn write_body(&self, out: &mut Vec<u8>) -> Result<()> {
         encode_u16(self.packet_id(), out);
-        for topic in &self.topics {
-            encode_string(&topic.filter, out)?;
-            out.push(topic.qos);
+        for (filter, qos) in &self.topics {
+            encode_string(filter, out)?;
+            out.push(*qos);
         }
         Ok(())
     }
@@ -629,6 +630,20 @@ impl Mqtt {
             flags: Field::user(fixed_header_flags),
             remaining_length: Field::user(remaining_length),
             body: MqttBody::PacketIdentifier(MqttPacketIdentifier::from_decoded_parts(packet_id)),
+        }
+    }
+
+    pub(crate) fn subscribe_from_decoded_parts(
+        fixed_header_flags: u8,
+        remaining_length: u32,
+        packet_id: u16,
+        topics: Vec<(String, u8)>,
+    ) -> Self {
+        Self {
+            packet_type: MqttControlPacketType::Subscribe,
+            flags: Field::user(fixed_header_flags),
+            remaining_length: Field::user(remaining_length),
+            body: MqttBody::Subscribe(MqttSubscribe::from_decoded_parts(packet_id, topics)),
         }
     }
 
@@ -953,6 +968,11 @@ impl Mqtt {
                     .map(MqttPacketIdentifier::packet_id)
             })
             .or_else(|| self.subscribe_body().map(MqttSubscribe::packet_id))
+    }
+
+    /// SUBSCRIBE topic filter and requested QoS pairs, when this is a typed SUBSCRIBE packet.
+    pub fn subscribe_topics_value(&self) -> Option<&[(String, u8)]> {
+        self.subscribe_body().map(MqttSubscribe::topics)
     }
 
     /// PUBLISH application payload bytes, when this is a typed PUBLISH packet.

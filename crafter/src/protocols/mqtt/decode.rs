@@ -1,5 +1,7 @@
 //! MQTT decode entrypoints.
 
+use core::str;
+
 use crate::error::{CrafterError, Result};
 use crate::packet::{Packet, Raw};
 use crate::registry::ProtocolRegistry;
@@ -59,6 +61,7 @@ pub(crate) fn decode_mqtt(bytes: &[u8]) -> Result<(Mqtt, usize)> {
         MqttControlPacketType::Pubcomp => {
             decode_packet_identifier(packet_type, flags, remaining_length, body, "mqtt.pubcomp")?
         }
+        MqttControlPacketType::Subscribe => decode_subscribe(flags, remaining_length, body)?,
         _ => Mqtt::raw(packet_type, body.to_vec())
             .flags(flags)
             .remaining_length(remaining_length),
@@ -186,6 +189,38 @@ fn decode_packet_identifier(
     ))
 }
 
+fn decode_subscribe(fixed_header_flags: u8, remaining_length: u32, body: &[u8]) -> Result<Mqtt> {
+    let mut cursor = 0;
+
+    if body.len() < 2 {
+        return Err(CrafterError::buffer_too_short(
+            "mqtt.subscribe.packet_identifier",
+            2,
+            body.len(),
+        ));
+    }
+    let packet_id = take_u16(body, &mut cursor)?;
+    let mut topics = Vec::new();
+
+    while cursor < body.len() {
+        let filter = take_string_with_context(
+            body,
+            &mut cursor,
+            "mqtt.subscribe.topic_filter.length",
+            "mqtt.subscribe.topic_filter",
+        )?;
+        let qos = take_u8(body, &mut cursor, "mqtt.subscribe.requested_qos")?;
+        topics.push((filter, qos));
+    }
+
+    Ok(Mqtt::subscribe_from_decoded_parts(
+        fixed_header_flags,
+        remaining_length,
+        packet_id,
+        topics,
+    ))
+}
+
 fn take_u8(bytes: &[u8], cursor: &mut usize, context: &'static str) -> Result<u8> {
     let Some(&value) = bytes.get(*cursor) else {
         return Err(CrafterError::buffer_too_short(
@@ -197,6 +232,48 @@ fn take_u8(bytes: &[u8], cursor: &mut usize, context: &'static str) -> Result<u8
 
     *cursor += 1;
     Ok(value)
+}
+
+fn take_string_with_context(
+    bytes: &[u8],
+    cursor: &mut usize,
+    length_context: &'static str,
+    value_context: &'static str,
+) -> Result<String> {
+    let prefix_end = (*cursor).saturating_add(2);
+    if bytes.len() < prefix_end {
+        return Err(CrafterError::buffer_too_short(
+            length_context,
+            prefix_end,
+            bytes.len(),
+        ));
+    }
+
+    let length = u16::from_be_bytes([bytes[*cursor], bytes[*cursor + 1]]) as usize;
+    let value_end = prefix_end
+        .checked_add(length)
+        .ok_or_else(|| CrafterError::invalid_field_value(value_context, "length is too large"))?;
+    if bytes.len() < value_end {
+        return Err(CrafterError::buffer_too_short(
+            value_context,
+            value_end,
+            bytes.len(),
+        ));
+    }
+
+    let raw = &bytes[prefix_end..value_end];
+    let value = str::from_utf8(raw).map_err(|_| {
+        CrafterError::invalid_field_value(value_context, "string bytes must be valid UTF-8")
+    })?;
+    if value.as_bytes().contains(&0) {
+        return Err(CrafterError::invalid_field_value(
+            value_context,
+            "string must not contain U+0000",
+        ));
+    }
+
+    *cursor = value_end;
+    Ok(value.to_owned())
 }
 
 fn take_u16(bytes: &[u8], cursor: &mut usize) -> Result<u16> {
