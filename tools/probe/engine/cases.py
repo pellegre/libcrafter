@@ -62,28 +62,11 @@ UDP_ECHO_LARGE_PAYLOAD_LENGTH = 1200
 # the NDP plugin module (``protocols/ndp.py``); the merged catalog/profile tables
 # below pick those cases up from the registry.
 
-# IPSec behavioral cases drive a controlled IPSec-capable peer: a libcrafter
-# ESP/AH datagram or IKE_SA_INIT is placed on the wire and the peer's protected
-# reply, ICV-accepting response, or IKE_SA_INIT answer is decoded and validated.
-# ESP and AH need a peer that holds the matching Security Association (the same
-# SPI, mode, algorithms, and keys libcrafter seals/verifies with), so they carry
-# ``ipsec_esp`` / ``ipsec_ah`` beyond the unicast IPv4 substrate; IKEv2 only
-# needs the peer to run an IKE responder on UDP/500, so it carries ``ikev2``.
-# These capability names match the probe capability derivation in
-# :mod:`tools.probe.engine.lab`, so providers without an IPSec-capable peer skip
-# the cases with stable reasons rather than failing. The tunnel-mode ESP case
-# additionally needs a peer configured for tunnel-mode SAs (inner IP), recorded
-# with the ``requires_tunnel`` metadata flag the way NDP records
-# ``requires_router_target``.
-_IPSEC_ESP_CAPABILITIES = ["ipsec_esp"]
-_IPSEC_AH_CAPABILITIES = ["ipsec_ah"]
-_IKEV2_CAPABILITIES = ["ikev2"]
-# Aggregate alias for callers that want the full IPSec capability surface.
-_IPSEC_CAPABILITIES = [
-    *_IPSEC_ESP_CAPABILITIES,
-    *_IPSEC_AH_CAPABILITIES,
-    *_IKEV2_CAPABILITIES,
-]
+# IPSec's capability constants (``_IPSEC_ESP_CAPABILITIES`` /
+# ``_IPSEC_AH_CAPABILITIES`` / ``_IKEV2_CAPABILITIES`` and the aggregate
+# ``_IPSEC_CAPABILITIES`` alias) and the four IPSec behavioral cases now live in
+# the IPSec plugin module (``protocols/ipsec.py``); the merged catalog/profile
+# tables below pick those cases up from the registry.
 
 # OSPF's capability constant (``_OSPF_CAPABILITIES``) and the two OSPF behavioral
 # cases now live in the OSPF plugin module (``protocols/ospf.py``); the merged
@@ -112,82 +95,10 @@ _IPSEC_CAPABILITIES = [
 # from the registry, and ``IGMP_PROBE_CASES`` is re-imported above for back-compat.
 
 
-# IPSec behavioral cases (RFC 4303 ESP, RFC 4302 AH, RFC 7296 IKEv2) against a
-# controlled IPSec-capable peer that holds the matching Security Association.
-# Each case is a stateful request/response exchange: libcrafter seals or
-# authenticates a datagram (or builds an IKE_SA_INIT), the peer accepts it
-# (decrypts/verifies the ICV, or parses the IKE header), and its protected reply
-# or IKE_SA_INIT response is captured and decoded. The ``stateful`` metadata
-# flag mirrors the DHCP precedent (an exchange whose response depends on shared
-# per-exchange state -- here the SA / IKE SPI pair -- rather than a stateless
-# echo); ``requires_tunnel`` marks the tunnel-mode ESP case the way NDP marks
-# ``requires_router_target``, so a peer without tunnel-mode SAs can skip it
-# cleanly while transport-mode cases still plan.
-BEHAVIOR_IPSEC_CASES: tuple[ProbeCase, ...] = (
-    _behavior_case(
-        name="esp-transport-echo",
-        description=(
-            "Send an ESP-protected (transport-mode) ICMP echo request to the "
-            "peer and validate the peer's ESP-protected echo reply."
-        ),
-        stimulus="esp_transport_echo_request",
-        expected_response="esp_transport_echo_reply",
-        required_capabilities=_IPSEC_ESP_CAPABILITIES,
-        protocol="ipsec",
-        metadata={"ipsec_protocol": "esp", "mode": "transport", "stateful": True},
-    ),
-    _behavior_case(
-        name="esp-tunnel-echo",
-        description=(
-            "Send a tunnel-mode ESP-encapsulated ICMP echo request (inner IP "
-            "inside ESP) to the peer and validate the tunnel-mode ESP echo "
-            "reply."
-        ),
-        # Tunnel mode needs the peer to hold a tunnel-mode SA (inner IP), which
-        # not every IPSec-capable peer exposes; ``requires_tunnel`` lets such a
-        # peer skip this case while the transport-mode ESP case still runs.
-        stimulus="esp_tunnel_echo_request",
-        expected_response="esp_tunnel_echo_reply",
-        required_capabilities=_IPSEC_ESP_CAPABILITIES,
-        protocol="ipsec",
-        metadata={
-            "ipsec_protocol": "esp",
-            "mode": "tunnel",
-            "stateful": True,
-            "requires_tunnel": True,
-            "notes": (
-                "Needs the peer to hold a tunnel-mode ESP SA (inner IP); a "
-                "transport-only peer skips this case. Live runners configure a "
-                "tunnel-mode SA or skip."
-            ),
-        },
-    ),
-    _behavior_case(
-        name="ah-transport-verify",
-        description=(
-            "Send an AH-protected (transport-mode) datagram to the peer and "
-            "validate that the peer accepts it (the ICV verifies) and responds."
-        ),
-        stimulus="ah_transport_request",
-        expected_response="ah_transport_response",
-        required_capabilities=_IPSEC_AH_CAPABILITIES,
-        protocol="ipsec",
-        metadata={"ipsec_protocol": "ah", "mode": "transport", "stateful": True},
-    ),
-    _behavior_case(
-        name="ikev2-sa-init",
-        description=(
-            "Send an IKE_SA_INIT request (header + SA + KE + Ni) over UDP/500 "
-            "and validate a well-formed IKE_SA_INIT response from the peer's "
-            "IKE responder."
-        ),
-        stimulus="ikev2_sa_init_request",
-        expected_response="ikev2_sa_init_response",
-        required_capabilities=_IKEV2_CAPABILITIES,
-        protocol="ipsec",
-        metadata={"ipsec_protocol": "ikev2", "exchange": "IKE_SA_INIT", "stateful": True},
-    ),
-)
+# The four IPSec behavioral cases (``esp-transport-echo`` / ``esp-tunnel-echo`` /
+# ``ah-transport-verify`` / ``ikev2-sa-init``) now live in the IPSec plugin module
+# (``protocols/ipsec.py``); the merged catalog/profile tables below pick them up
+# from the registry.
 
 
 # OSPFv2's behavioral cases (RFC 2328) -- the live-capable ``ospf-hello-exchange``
@@ -234,7 +145,10 @@ _LEGACY_PROBE_CASES: tuple[ProbeCase, ...] = (
     # The four IGMP cases are contributed by the IGMP plugin
     # (``protocols/igmp.py``) and merged in ahead of this legacy aggregation by
     # ``_merge_probe_cases``.
-    *BEHAVIOR_IPSEC_CASES,
+    # The four IPSec cases are contributed by the IPSec plugin
+    # (``protocols/ipsec.py``) and merged in ahead of this legacy aggregation by
+    # ``_merge_probe_cases``. Every protocol's cases now come from the registry,
+    # so this legacy aggregation is empty.
 )
 
 
@@ -471,9 +385,15 @@ BEHAVIOR_PROFILE_CASE_NAMES: tuple[str, ...] = (
 # the matching Security Association (or an IKE responder), so an agent inspects
 # the planned IPSec exchange in isolation before any provider-backed run. The
 # default count covers every case so a bare ``--profile ipsec`` plans the whole
-# IPSec suite.
+# IPSec suite. The case names are sourced from the IPSec plugin's registered
+# cases; IPSec's profile membership stays in this legacy ordered table (rather
+# than the plugin's ``profile_counts``) so the selection order is byte-identical
+# -- the registry-first profile merge would otherwise move IPSec to the front of
+# the profile.
 IPSEC_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
-    case.name for case in BEHAVIOR_IPSEC_CASES
+    case.name
+    for case in _registry_cases()
+    if case.metadata.get("protocol") == "ipsec"
 )
 
 # The BGP smoke profile plans the probe-owned FRR peer target service and the
