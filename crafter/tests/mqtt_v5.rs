@@ -24,6 +24,17 @@ const CONNACK_V5_WITH_PROPERTIES: &[u8] = &[
 
 const CONNACK_311_BASELINE: &[u8] = &[0x20, 0x02, 0x01, 0x03];
 
+const PUBLISH_V5_WITH_PROPERTIES: &[u8] = &[
+    0x32, 0x2c, 0x00, 0x09, b's', b'e', b'n', b's', b'o', b'r', b's', b'/', b't', 0x12, 0x34, 0x1c,
+    0x23, 0x00, 0x07, 0x03, 0x00, 0x0a, b't', b'e', b'x', b't', b'/', b'p', b'l', b'a', b'i', b'n',
+    0x26, 0x00, 0x04, b's', b'i', b't', b'e', 0x00, 0x03, b'l', b'a', b'b', b'4', b'2',
+];
+
+const PUBLISH_311_BASELINE: &[u8] = &[
+    0x32, 0x0f, 0x00, 0x09, b's', b'e', b'n', b's', b'o', b'r', b's', b'/', b't', 0x12, 0x34, b'4',
+    b'2',
+];
+
 fn mqtt_bytes(message: Mqtt) -> crafter::Result<Vec<u8>> {
     Ok(Packet::from_layer(message).compile()?.into_bytes())
 }
@@ -74,6 +85,18 @@ fn connack_v5_message() -> Mqtt {
                 .property(MqttProperty::ReceiveMaximum(20))
                 .property(MqttProperty::ReasonString("no".to_string())),
         )
+}
+
+fn publish_v5_message() -> Mqtt {
+    Mqtt::publish()
+        .version(MQTT_5_PROTOCOL_LEVEL)
+        .topic("sensors/t")
+        .qos(1)
+        .packet_id(0x1234)
+        .topic_alias(7)
+        .content_type("text/plain")
+        .user_property("site", "lab")
+        .payload(b"42".to_vec())
 }
 
 #[test]
@@ -141,5 +164,27 @@ fn connack_311_baseline_stays_unchanged() -> crafter::Result<()> {
     let bytes = mqtt_bytes(Mqtt::connack().session_present(true).return_code(0x03))?;
 
     assert_eq!(bytes, CONNACK_311_BASELINE);
+    Ok(())
+}
+
+#[test]
+fn publish_v5_properties_compile_byte_exact() -> crafter::Result<()> {
+    let bytes = mqtt_bytes(publish_v5_message())?;
+
+    assert_eq!(bytes, PUBLISH_V5_WITH_PROPERTIES);
+    Ok(())
+}
+
+#[test]
+fn publish_311_baseline_stays_unchanged() -> crafter::Result<()> {
+    let bytes = mqtt_bytes(
+        Mqtt::publish()
+            .topic("sensors/t")
+            .qos(1)
+            .packet_id(0x1234)
+            .payload(b"42".to_vec()),
+    )?;
+
+    assert_eq!(bytes, PUBLISH_311_BASELINE);
     Ok(())
 }
