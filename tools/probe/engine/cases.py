@@ -35,19 +35,11 @@ from .protocols import (
 # validation wiring lands in the later per-case steps; here the cases route
 # through the planned-only dispatcher fallback.
 UDP_ECHO_LARGE_PAYLOAD_LENGTH = 1200
-# DNS's and DHCP's capability constants and case tuples now live in their plugin
-# modules (``protocols/dns.py``, ``protocols/dhcp.py``); the merged catalog/
-# profile tables below pick those cases up from the registry.
-_UDP_CAPABILITIES = ["udp_service"]
-_UDP_LARGE_CAPABILITIES = [*_UDP_CAPABILITIES, "udp_large_payload"]
-_UDP_ZERO_CHECKSUM_IPV4_CAPABILITIES = [
-    *_UDP_CAPABILITIES,
-    "udp_ipv4_zero_checksum",
-]
-_UDP_OPTIONS_SURPLUS_CAPABILITIES = [
-    *_UDP_CAPABILITIES,
-    "udp_options_surplus",
-]
+# DNS's, DHCP's, and UDP's capability constants and case tuples now live in their
+# plugin modules (``protocols/dns.py``, ``protocols/dhcp.py``,
+# ``protocols/udp.py``); the merged catalog/profile tables below pick those cases
+# up from the registry. ``UDP_ECHO_LARGE_PAYLOAD_LENGTH`` stays here because
+# :mod:`tools.probe.engine.lab` also reads it; the UDP plugin imports it lazily.
 _BGP_CAPABILITIES = ["bgp_peer"]
 _RIP_CAPABILITIES = ["rip_peer"]
 _IGMP_CAPABILITIES = ["ipv4_multicast", "igmp_peer"]
@@ -189,97 +181,6 @@ BEHAVIOR_NDP_CASES: tuple[ProbeCase, ...] = (
     ),
 )
 
-
-# Ten UDP behavioral cases (datagram echo/transform and kernel ICMP behavior
-# against controlled UDP services bound to the target address).
-BEHAVIOR_UDP_CASES: tuple[ProbeCase, ...] = (
-    _behavior_case(
-        name="udp-echo-empty",
-        description="Echo an empty payload and validate the echoed response.",
-        stimulus="udp_datagram",
-        expected_response="udp_response",
-        required_capabilities=_UDP_CAPABILITIES,
-        protocol="udp",
-    ),
-    _behavior_case(
-        name="udp-echo-short",
-        description="Echo a short ASCII payload and validate the echoed response.",
-        stimulus="udp_datagram",
-        expected_response="udp_response",
-        required_capabilities=_UDP_CAPABILITIES,
-        protocol="udp",
-    ),
-    _behavior_case(
-        name="udp-echo-binary",
-        description="Echo a binary payload and validate the echoed response.",
-        stimulus="udp_datagram",
-        expected_response="udp_response",
-        required_capabilities=_UDP_CAPABILITIES,
-        protocol="udp",
-    ),
-    _behavior_case(
-        name="udp-echo-large",
-        description="Echo a large non-fragmenting payload and validate the response.",
-        stimulus="udp_datagram",
-        expected_response="udp_response",
-        required_capabilities=_UDP_LARGE_CAPABILITIES,
-        protocol="udp",
-    ),
-    _behavior_case(
-        name="udp-source-port-reflection",
-        description="Validate that the response reflects the source port.",
-        stimulus="udp_datagram",
-        expected_response="udp_response",
-        required_capabilities=_UDP_CAPABILITIES,
-        protocol="udp",
-    ),
-    _behavior_case(
-        name="udp-multi-shot-order",
-        description="Send multiple datagrams and validate ordered echoed responses.",
-        stimulus="udp_datagram",
-        expected_response="udp_response",
-        required_capabilities=_UDP_CAPABILITIES,
-        protocol="udp",
-    ),
-    _behavior_case(
-        name="udp-closed-port-icmp",
-        description="Send to a closed port and validate an ICMP port unreachable.",
-        stimulus="udp_datagram",
-        expected_response="icmp_port_unreachable",
-        required_capabilities=_UDP_CAPABILITIES,
-        protocol="udp",
-    ),
-    _behavior_case(
-        name="udp-zero-checksum-ipv4",
-        description=(
-            "Send an IPv4 zero-checksum datagram and validate the response where the "
-            "kernel accepts it."
-        ),
-        stimulus="udp_datagram",
-        expected_response="udp_response",
-        required_capabilities=_UDP_ZERO_CHECKSUM_IPV4_CAPABILITIES,
-        protocol="udp",
-    ),
-    _behavior_case(
-        name="udp-options-surplus-echo",
-        description=(
-            "Send a UDP options surplus datagram and validate the response where the "
-            "kernel accepts it."
-        ),
-        stimulus="udp_datagram",
-        expected_response="udp_response",
-        required_capabilities=_UDP_OPTIONS_SURPLUS_CAPABILITIES,
-        protocol="udp",
-    ),
-    _behavior_case(
-        name="udp-length-boundary-echo",
-        description="Echo a near-length-boundary payload and validate the response.",
-        stimulus="udp_datagram",
-        expected_response="udp_response",
-        required_capabilities=_UDP_LARGE_CAPABILITIES,
-        protocol="udp",
-    ),
-)
 
 
 # BGP smoke cases. Probe owns controlled target-service setup for the FRR peer;
@@ -643,10 +544,10 @@ _LEGACY_PROBE_CASES: tuple[ProbeCase, ...] = (
     # are contributed by the ARP plugin (``protocols/arp.py``); the inline
     # ``dns-query`` smoke case and the ten DNS behavioral cases are contributed
     # by the DNS plugin (``protocols/dns.py``); the ten DHCP behavioral cases are
-    # contributed by the DHCP plugin (``protocols/dhcp.py``). All are merged in
-    # ahead of this legacy aggregation by ``_merge_probe_cases``.
+    # contributed by the DHCP plugin (``protocols/dhcp.py``); the ten UDP
+    # behavioral cases are contributed by the UDP plugin (``protocols/udp.py``).
+    # All are merged in ahead of this legacy aggregation by ``_merge_probe_cases``.
     *BEHAVIOR_NDP_CASES,
-    *BEHAVIOR_UDP_CASES,
     *BEHAVIOR_OSPF_CASES,
     *OSPF_SMOKE_CASES,
     *BGP_SMOKE_CASES,
@@ -819,6 +720,17 @@ _ARP_BEHAVIOR_CASE_NAMES: tuple[str, ...] = tuple(
     if case.metadata.get("protocol") == "arp" and case.name != "arp-resolution"
 )
 
+# The ten UDP behavioral case names, in declaration order, sourced from the UDP
+# plugin's registered cases. UDP's profile membership stays in these legacy
+# ordered tables (rather than the plugin's ``profile_counts``) so the behavior
+# selection order is byte-identical: the registry-first profile merge would
+# otherwise move UDP to the front of the behavior profile.
+_UDP_BEHAVIOR_CASE_NAMES: tuple[str, ...] = tuple(
+    case.name
+    for case in _registry_cases()
+    if case.metadata.get("protocol") == "udp"
+)
+
 # The behavior profile selects the full DNS/DHCP/ARP/NDP/UDP behavioral catalog
 # plus the live-capable OSPF case in a stable deterministic order: each protocol
 # group in declaration order, grouped DNS -> DHCP -> ARP -> NDP -> UDP -> OSPF.
@@ -832,7 +744,7 @@ BEHAVIOR_PROFILE_CASE_NAMES: tuple[str, ...] = (
     *_DHCP_BEHAVIOR_CASE_NAMES,
     *_ARP_BEHAVIOR_CASE_NAMES,
     *(case.name for case in BEHAVIOR_NDP_CASES),
-    *(case.name for case in BEHAVIOR_UDP_CASES),
+    *_UDP_BEHAVIOR_CASE_NAMES,
     *(case.name for case in BEHAVIOR_OSPF_CASES),
 )
 
