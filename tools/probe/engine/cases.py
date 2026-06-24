@@ -397,15 +397,9 @@ OSPF_SMOKE_CASES: tuple[ProbeCase, ...] = (
 # contributed cases; until a protocol migrates the registry is empty and the
 # merged catalog is byte-identical to this tuple.
 _LEGACY_PROBE_CASES: tuple[ProbeCase, ...] = (
-    ProbeCase(
-        name="icmp-echo",
-        description="Send ICMP echo request and validate echo reply from peer kernel.",
-        stimulus="icmp_echo_request",
-        expected_response="icmp_echo_reply",
-        required_capabilities=["icmp_echo"],
-        endpoint_roles=["stimulus", "target"],
-        metadata={"protocol": "icmp", "service": "kernel"},
-    ),
+    # The inline ``icmp-echo`` smoke case (and the ``ttl-expired`` case) are now
+    # contributed by the ICMP plugin (``protocols/icmp.py``) and merged in ahead
+    # of this legacy aggregation by ``_merge_probe_cases``.
     ProbeCase(
         name="tcp-syn-open",
         description="Send TCP SYN to controlled listener and validate SYN/ACK.",
@@ -440,15 +434,9 @@ _LEGACY_PROBE_CASES: tuple[ProbeCase, ...] = (
     # The inline ``dns-query`` smoke case is contributed by the DNS plugin
     # (``protocols/dns.py``) and merged in ahead of this legacy aggregation by
     # ``_merge_probe_cases``.
-    ProbeCase(
-        name="ttl-expired",
-        description="Send low-TTL packet and validate ICMP TTL-expired from controlled hop.",
-        stimulus="low_ttl_probe",
-        expected_response="icmp_ttl_expired",
-        required_capabilities=["controlled_router"],
-        endpoint_roles=["stimulus", "router"],
-        metadata={"protocol": "icmp", "service": "controlled_router"},
-    ),
+    # The inline ``icmp-echo`` and ``ttl-expired`` cases are contributed by the
+    # ICMP plugin (``protocols/icmp.py``) and merged in ahead of this legacy
+    # aggregation by ``_merge_probe_cases``.
     # The inline ``arp-resolution`` smoke case and the ten ARP behavioral cases
     # are contributed by the ARP plugin (``protocols/arp.py``); the inline
     # ``dns-query`` smoke case and the ten DNS behavioral cases are contributed
