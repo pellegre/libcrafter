@@ -49,6 +49,7 @@ impl MqttConnect {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn from_decoded_parts(
         protocol_name: String,
         protocol_level: u8,
@@ -566,7 +567,19 @@ impl MqttBody {
     }
 }
 
-/// MQTT control packet layer.
+/// MQTT 3.1.1 control packet layer.
+///
+/// `Mqtt` represents one MQTT control packet, starting at the fixed header. It
+/// can be used as a standalone application-layer packet with
+/// `Packet::from_layer(Mqtt::...)` or stacked under TCP in a larger
+/// [`crate::Packet`].
+/// Constructors build typed MQTT 3.1.1 messages for the baseline cleartext
+/// control packets, while [`Mqtt::raw`] preserves an opaque body for control
+/// packet types whose body should not be interpreted.
+///
+/// `compile()` emits the fixed header, auto-fills Remaining Length from the
+/// encoded body unless [`Mqtt::remaining_length`] was used, and preserves any
+/// caller-supplied flag nibble from [`Mqtt::flags`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Mqtt {
     packet_type: MqttControlPacketType,
