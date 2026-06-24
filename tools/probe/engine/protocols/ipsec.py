@@ -20,17 +20,30 @@ The plan builder is moved verbatim from :mod:`tools.probe.engine.planning`;
 ``PLAN_BUILDERS[name] is _ipsec_probe_plan`` keep identical object identity for
 the pinning tests.
 
+The IPSec target-service half (this step) verified, against the actual code,
+that IPSec contributes *no* target-service surface: there is no IPSec
+``target_service_setup_plan`` service entry, no IPSec descriptor / case
+frozenset / plan selector in :mod:`tools.probe.engine.target_services`, and no
+inline IPSec setup-script block in ``target_service_setup_script`` (nor any
+per-service shell assets under ``tools/probe/target_services/``). The four IPSec
+cases are all planned-only and never reach the target-service path, so the
+``target_service`` and ``setup_script`` hooks stay ``None`` and there is nothing
+to move out of ``target_services.py``. This mirrors the ICMP / OSPF / IGMP
+precedent (a protocol whose service concern simply does not exist), and keeping
+both hooks ``None`` is byte-identical: the registry target-service partition
+leaves the IPSec cases on the legacy path, which never built an IPSec service
+either.
+
 IPSec is the only protocol with a ``tools.oracle.engine.ipsec_interop``
 cross-crypto dry-run hook (``cli._IPSEC_PROBE_CASES`` /
 ``_ipsec_interop_dry_run_metadata``). That interop hook -- and the IPSec
-target-service / address-rewrite / failure-reason / lab-capability contributions
--- are deliberately *not* part of this step: there is no IPSec
-``target_service_setup_plan`` entry, no inline setup-script block, no IPSec
-live-path rewrite branch (the four cases are planned-only and never
-stimulus-routed), and no IPSec ``_failure_reasons_for_case`` branch (the cases
-fall through to the shared default taxonomy). The IPSec lab-capability derivation
-(``ipsec_esp`` / ``ipsec_ah`` / ``ikev2``) and the interop hook land in step 35,
-so every optional hook -- including ``ipsec_interop`` -- stays ``None`` here.
+address-rewrite / failure-reason / lab-capability contributions -- are
+deliberately *not* part of this step: there is no IPSec live-path rewrite branch
+(the four cases are planned-only and never stimulus-routed), and no IPSec
+``_failure_reasons_for_case`` branch (the cases fall through to the shared
+default taxonomy). The IPSec lab-capability derivation (``ipsec_esp`` /
+``ipsec_ah`` / ``ikev2``) and the interop hook land in step 35, so every
+remaining optional hook -- including ``ipsec_interop`` -- stays ``None`` here.
 
 IPSec's ``profile_counts`` is intentionally empty: the focused ``ipsec`` profile
 rides the four cases in a fixed declaration order, and the registry-first profile
@@ -332,16 +345,18 @@ register(
         profile_counts={},
         # All four IPSec cases are planned-only and were never stimulus-routed.
         stimulus_endpoint_cases=frozenset(),
-        # Every optional hook stays ``None`` in this planning-half step. IPSec
-        # produced no ``target_service_setup_plan`` service entry and no inline
-        # setup-script block (``target_service`` / ``setup_script``); the four
-        # planned-only cases were never stimulus-routed, so there is no live-path
-        # rewrite branch to reproduce (``rewrite_endpoint_addresses``); the cases
-        # fall through to the shared default failure taxonomy, so there is no
-        # IPSec ``_failure_reasons_for_case`` branch (``failure_reasons``). The
-        # IPSec lab-capability derivation (``ipsec_esp`` / ``ipsec_ah`` /
-        # ``ikev2``) and the cross-crypto ``ipsec_interop`` hook (the only
-        # ``tools.oracle`` dependency) land in step 35.
+        # IPSec produced no ``target_service_setup_plan`` service entry and no
+        # inline setup-script block (verified in this target-service step against
+        # the actual code), so ``target_service`` / ``setup_script`` stay ``None``
+        # and nothing moved out of ``target_services.py``. The remaining hooks are
+        # step 35: the four planned-only cases were never stimulus-routed, so there
+        # is no live-path rewrite branch to reproduce
+        # (``rewrite_endpoint_addresses``); the cases fall through to the shared
+        # default failure taxonomy, so there is no IPSec
+        # ``_failure_reasons_for_case`` branch (``failure_reasons``). The IPSec
+        # lab-capability derivation (``ipsec_esp`` / ``ipsec_ah`` / ``ikev2``) and
+        # the cross-crypto ``ipsec_interop`` hook (the only ``tools.oracle``
+        # dependency) land in step 35.
         target_service=None,
         setup_script=None,
         rewrite_endpoint_addresses=None,
