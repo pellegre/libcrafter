@@ -28,8 +28,13 @@ from __future__ import annotations
 
 import unittest
 
+from tools.probe.engine import cli
 from tools.probe.engine.cases import PROBE_CASE_BY_NAME
-from tools.probe.engine.protocols import PROTOCOL_REGISTRY, registered_plugins
+from tools.probe.engine.protocols import (
+    PROTOCOL_REGISTRY,
+    all_stimulus_endpoint_cases,
+    registered_plugins,
+)
 
 
 # The full set of probe protocols this refactor migrates, one plugin each. As
@@ -117,6 +122,98 @@ class ProbeProtocolMigrationCoverageTest(unittest.TestCase):
             stray,
             frozenset(),
             f"KNOWN_UNMIGRATED names non-protocol(s) {sorted(stray)!r}",
+        )
+
+
+class ProbeMigrationParityCheckpointTest(unittest.TestCase):
+    """Pin that the registry fully covers every protocol/case/route.
+
+    This is the parity checkpoint taken once every protocol is migrated (steps
+    17-36) but *before* the now-dead legacy fallback branches are stripped from
+    the six central dispatchers (steps 38-42). It locks that the registry alone
+    accounts for every known protocol, every case, and every stimulus-endpoint
+    route, so that legacy removal cannot silently drop coverage.
+
+    The checks are offline: pure registry/case introspection plus the module
+    constant ``cli._STIMULUS_ENDPOINT_CASES``; no Scapy, uv, cargo, or network.
+    """
+
+    def test_every_known_protocol_is_registered(self) -> None:
+        """(a) Each of the 12 known protocols has a registered plugin."""
+
+        registered = set(PROTOCOL_REGISTRY.names())
+        missing = ALL_PROTOCOLS - registered
+        self.assertEqual(
+            missing,
+            set(),
+            f"known protocol(s) {sorted(missing)!r} are not registered in "
+            "PROTOCOL_REGISTRY; the migration is incomplete.",
+        )
+
+    def test_every_case_is_owned_by_exactly_one_plugin(self) -> None:
+        """(b) Every ``PROBE_CASE_BY_NAME`` case is owned by exactly one plugin.
+
+        Ownership is by case *name* via ``plugin.cases`` -- this is unambiguous
+        regardless of a case's protocol-metadata field, so the single ``rip``
+        plugin owning both ``rip`` and ``ripng`` protocol-metadata cases still
+        reads as exactly one owner per case name.
+        """
+
+        owners: dict[str, list[str]] = {}
+        for plugin in registered_plugins():
+            for case in plugin.cases:
+                owners.setdefault(case.name, []).append(plugin.name)
+
+        for case_name in PROBE_CASE_BY_NAME:
+            with self.subTest(case=case_name):
+                plugin_names = owners.get(case_name, [])
+                self.assertEqual(
+                    len(plugin_names),
+                    1,
+                    f"case {case_name!r} is owned by {sorted(plugin_names)!r}; "
+                    "expected exactly one registered plugin to own it.",
+                )
+
+    def test_no_plugin_owns_a_phantom_case(self) -> None:
+        """(b, inverse) No plugin owns a case absent from ``PROBE_CASE_BY_NAME``."""
+
+        real_case_names = set(PROBE_CASE_BY_NAME)
+        owned: set[str] = set()
+        for plugin in registered_plugins():
+            owned.update(case.name for case in plugin.cases)
+        phantom = owned - real_case_names
+        self.assertEqual(
+            phantom,
+            set(),
+            f"plugin(s) own case(s) {sorted(phantom)!r} absent from "
+            "PROBE_CASE_BY_NAME.",
+        )
+
+    def test_every_stimulus_endpoint_case_is_contributed_by_a_plugin(self) -> None:
+        """(c) Every ``cli._STIMULUS_ENDPOINT_CASES`` name is plugin-contributed."""
+
+        contributed = set(all_stimulus_endpoint_cases())
+        uncontributed = set(cli._STIMULUS_ENDPOINT_CASES) - contributed
+        self.assertEqual(
+            uncontributed,
+            set(),
+            f"stimulus-endpoint case(s) {sorted(uncontributed)!r} are routed by "
+            "cli._STIMULUS_ENDPOINT_CASES but contributed by no plugin's "
+            "stimulus_endpoint_cases; the legacy union still carries them.",
+        )
+
+    def test_known_unmigrated_is_empty(self) -> None:
+        """(d) ``KNOWN_UNMIGRATED`` is empty -- every protocol is now served.
+
+        The seed itself is not deleted here (the strict step 43 removes the
+        mechanism); this only asserts it has been drained to empty.
+        """
+
+        self.assertEqual(
+            KNOWN_UNMIGRATED,
+            frozenset(),
+            f"KNOWN_UNMIGRATED still names {sorted(KNOWN_UNMIGRATED)!r}; the "
+            "migration parity checkpoint requires every protocol be served.",
         )
 
 
