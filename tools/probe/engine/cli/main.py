@@ -11,7 +11,7 @@ import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
-_REPO_ROOT_FOR_IMPORTS = Path(__file__).resolve().parents[3]
+_REPO_ROOT_FOR_IMPORTS = Path(__file__).resolve().parents[4]
 if str(_REPO_ROOT_FOR_IMPORTS) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT_FOR_IMPORTS))
 
@@ -20,7 +20,7 @@ from tools.lab.engine import repo as lab_repo
 from tools.lab.engine import session as lab_session_state
 from tools.lab.engine import endpoint_client as lab_endpoint_client
 
-from .capabilities import (
+from ..capabilities import (
     SKIP_CAPABILITY_UNAVAILABLE,
     SKIP_CONFIRMATION_REQUIRED,
     SKIP_REQUIRES_BGP_PEER,
@@ -38,7 +38,7 @@ from .capabilities import (
     skip_class_counts as _skip_class_counts,
     skip_reason_for_missing_capability as _skip_reason_for_missing_capability,
 )
-from .cases import (
+from ..cases import (
     DEFAULT_PROFILE,
     ENDPOINT_ROLES as _ENDPOINT_ROLES,
     PROBE_CASES as _PROBE_CASES,
@@ -48,7 +48,7 @@ from .cases import (
     profile_selected_cases as _profile_selected_cases,
     selected_cases as _selected_cases,
 )
-from .lab import (
+from ..lab import (
     LOCAL_DRY_RUN_PROVIDER,
     PROBE_LAB_ROLES,
     STIMULUS_ROLE,
@@ -59,8 +59,8 @@ from .lab import (
     probe_provider_names,
     resolve_probe_lab_provider,
 )
-from . import live as probe_live
-from .live import (
+from .. import live as probe_live
+from ..live import (
     cleanup_wire_probe_target as _cleanup_wire_probe_target,
     cleanup_wire_stimulus_rst_guards as _cleanup_wire_stimulus_rst_guards,
     command_artifact_paths as _command_artifact_paths,
@@ -89,13 +89,13 @@ from .live import (
     upload_wire_probe_request as _upload_wire_probe_request,
     wire_command_failed as _wire_command_failed,
 )
-from . import results as probe_results
-from .results import (
+from .. import results as probe_results
+from ..results import (
     failed_counts_by_reason as _failed_counts_by_reason,
     failed_live_probe_results as _failed_live_probe_results,
     probe_results_from_endpoint_response as _probe_results_from_endpoint_response,
 )
-from .model import (
+from ..model import (
     JSONObject,
     JSONValue,
     ObservedResponse,
@@ -107,7 +107,7 @@ from .model import (
     json_object,
     write_json,
 )
-from .planning import (
+from ..planning import (
     deterministic_bytes as _deterministic_bytes,
     deterministic_documentation_mac as _deterministic_documentation_mac,
     deterministic_ipv4_pair as _deterministic_ipv4_pair,
@@ -122,11 +122,11 @@ from .planning import (
     # moved to the NDP plugin (``protocols/ndp.py``) in step 26.
     solicited_node_multicast as _solicited_node_multicast,
 )
-from .report import DEFAULT_OUTPUT_ROOT, REPO_ROOT
-from .target_services import (
+from ..report import DEFAULT_OUTPUT_ROOT, REPO_ROOT
+from ..target_services import (
     target_service_setup_plan as _target_service_setup_plan,
 )
-from .endpoint_addressing import (
+from ..endpoint_addressing import (
     FAILURE_DECODE_FAILED,
     FAILURE_TARGET_SETUP_FAILED,
     FAILURE_TIMEOUT,
@@ -136,7 +136,7 @@ from .endpoint_addressing import (
     default_failure_reasons as _default_failure_reasons,
     _eui64_link_local_ipv6,
 )
-from .protocols import (
+from ..protocols import (
     all_stimulus_endpoint_cases as _registry_stimulus_endpoint_cases,
     ipsec_interop_plugin as _ipsec_interop_plugin,
     registered_plugins as _registered_protocol_plugins,
@@ -149,7 +149,7 @@ from .protocols import (
 # here (object identity preserved) so ``cli._IPSEC_PROBE_CASES`` /
 # ``cli._ipsec_interop_dry_run_metadata`` stay resolvable for the interop wiring
 # test (``test_ipsec_interop.py``).
-from .protocols.ipsec import (
+from ..protocols.ipsec import (
     _IPSEC_PROBE_CASES,
     _ipsec_interop_dry_run_metadata,
 )
