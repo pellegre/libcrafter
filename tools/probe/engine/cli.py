@@ -669,16 +669,9 @@ _LEGACY_STIMULUS_ENDPOINT_CASES = frozenset(
         "ndp-neighbor-solicitation",
         "ndp-router-solicitation",
         "ndp-duplicate-address-detection",
-        "udp-echo-empty",
-        "udp-echo-short",
-        "udp-echo-binary",
-        "udp-echo-large",
-        "udp-length-boundary-echo",
-        "udp-source-port-reflection",
-        "udp-multi-shot-order",
-        "udp-closed-port-icmp",
-        "udp-zero-checksum-ipv4",
-        "udp-options-surplus-echo",
+        # The ten UDP behavioral stimulus-endpoint cases are now contributed by
+        # the UDP plugin (``protocols/udp.py``) and unioned into
+        # ``_STIMULUS_ENDPOINT_CASES`` below.
         # Only the live-capable OSPF Hello exchange is wired through the stimulus
         # endpoint adapter; the planned-only ospf-dd-exchange has no adapter arm
         # yet and is intentionally absent (it stays a dry-run plan via the
