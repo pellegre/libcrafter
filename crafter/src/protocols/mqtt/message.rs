@@ -2,7 +2,7 @@
 
 use crate::field::Field;
 use crate::packet::{Layer, LayerContext};
-use crate::protocols::transport::common::{impl_layer_div, impl_layer_object};
+use crate::protocols::transport::common::{hex_bytes, impl_layer_div, impl_layer_object};
 use crate::Result;
 
 use super::constants::{
@@ -1346,16 +1346,68 @@ impl Layer for Mqtt {
     }
 
     fn summary(&self) -> String {
-        format!(
-            "MQTT {} len={} body={} bytes",
-            packet_type_name(self.packet_type),
-            self.remaining_length_value(),
-            self.body.encoded_len(self.flags_value())
-        )
+        match &self.body {
+            MqttBody::Raw(body) => format!(
+                "MQTT {} raw len={} body={} bytes",
+                packet_type_name(self.packet_type),
+                self.remaining_length_value(),
+                body.len()
+            ),
+            MqttBody::Empty => format!(
+                "MQTT {} len={}",
+                packet_type_name(self.packet_type),
+                self.remaining_length_value()
+            ),
+            MqttBody::Connect(connect) => {
+                let flags = connect.connect_flags();
+                format!(
+                    "MQTT CONNECT client_id={} keep_alive={} clean_session={} will={} username={} password={}",
+                    connect.client_id(),
+                    connect.keep_alive(),
+                    connect_clean_session(flags),
+                    connect_will_flag(flags),
+                    connect_username_flag(flags),
+                    connect_password_flag(flags)
+                )
+            }
+            MqttBody::Connack(connack) => format!(
+                "MQTT CONNACK session_present={} return_code={}",
+                connack.session_present(),
+                connack.return_code()
+            ),
+            MqttBody::Publish(publish) => format!(
+                "MQTT PUBLISH topic={} qos={} dup={} retain={} payload={} bytes",
+                publish.topic(),
+                publish_qos(self.flags_value()),
+                self.flags_value() & MQTT_PUBLISH_FLAG_DUP != 0,
+                self.flags_value() & MQTT_PUBLISH_FLAG_RETAIN != 0,
+                publish.payload().len()
+            ),
+            MqttBody::PacketIdentifier(packet_identifier) => format!(
+                "MQTT {} packet_id={}",
+                packet_type_name(self.packet_type),
+                packet_identifier.packet_id()
+            ),
+            MqttBody::Subscribe(subscribe) => format!(
+                "MQTT SUBSCRIBE packet_id={} topics={}",
+                subscribe.packet_id(),
+                subscribe_topic_summary(subscribe.topics())
+            ),
+            MqttBody::Suback(suback) => format!(
+                "MQTT SUBACK packet_id={} return_codes={}",
+                suback.packet_id(),
+                byte_list_summary(suback.return_codes())
+            ),
+            MqttBody::Unsubscribe(unsubscribe) => format!(
+                "MQTT UNSUBSCRIBE packet_id={} topics={}",
+                unsubscribe.packet_id(),
+                topic_list_summary(unsubscribe.topics())
+            ),
+        }
     }
 
     fn inspection_fields(&self) -> Vec<(&'static str, String)> {
-        vec![
+        let mut fields = vec![
             ("type", packet_type_name(self.packet_type).to_string()),
             ("flags", format!("0x{:x}", self.flags_value())),
             (
@@ -1366,7 +1418,85 @@ impl Layer for Mqtt {
                 "body_length",
                 self.body.encoded_len(self.flags_value()).to_string(),
             ),
-        ]
+        ];
+
+        match &self.body {
+            MqttBody::Raw(body) => {
+                fields.push(("raw_body_length", body.len().to_string()));
+                fields.push(("raw_body", hex_bytes(body)));
+            }
+            MqttBody::Empty => {}
+            MqttBody::Connect(connect) => {
+                let flags = connect.connect_flags();
+                fields.push(("protocol_name", connect.protocol_name().to_string()));
+                fields.push(("protocol_level", connect.protocol_level().to_string()));
+                fields.push(("connect_flags", format!("0x{:x}", flags)));
+                fields.push(("clean_session", connect_clean_session(flags).to_string()));
+                fields.push(("keep_alive", connect.keep_alive().to_string()));
+                fields.push(("client_id", connect.client_id().to_string()));
+                fields.push(("will", connect_will_flag(flags).to_string()));
+                fields.push(("will_qos", connect_will_qos(flags).to_string()));
+                fields.push(("will_retain", connect_will_retain_flag(flags).to_string()));
+                if let Some(will_topic) = connect.will_topic_value() {
+                    fields.push(("will_topic", will_topic.to_string()));
+                }
+                if let Some(will_message) = connect.will_message_value() {
+                    fields.push(("will_message_length", will_message.len().to_string()));
+                    fields.push(("will_message", hex_bytes(will_message)));
+                }
+                if let Some(username) = connect.username_value() {
+                    fields.push(("username", username.to_string()));
+                }
+                if let Some(password) = connect.password_value() {
+                    fields.push(("password_length", password.len().to_string()));
+                }
+            }
+            MqttBody::Connack(connack) => {
+                fields.push(("ack_flags", format!("0x{:x}", connack.ack_flags())));
+                fields.push(("session_present", connack.session_present().to_string()));
+                fields.push(("return_code", connack.return_code().to_string()));
+            }
+            MqttBody::Publish(publish) => {
+                fields.push(("topic", publish.topic().to_string()));
+                fields.push(("qos", publish_qos(self.flags_value()).to_string()));
+                fields.push((
+                    "dup",
+                    (self.flags_value() & MQTT_PUBLISH_FLAG_DUP != 0).to_string(),
+                ));
+                fields.push((
+                    "retain",
+                    (self.flags_value() & MQTT_PUBLISH_FLAG_RETAIN != 0).to_string(),
+                ));
+                if let Some(packet_id) = publish.packet_id_value() {
+                    fields.push(("packet_id", packet_id.to_string()));
+                }
+                fields.push(("payload_length", publish.payload().len().to_string()));
+                fields.push(("payload", hex_bytes(publish.payload())));
+            }
+            MqttBody::PacketIdentifier(packet_identifier) => {
+                fields.push(("packet_id", packet_identifier.packet_id().to_string()));
+            }
+            MqttBody::Subscribe(subscribe) => {
+                fields.push(("packet_id", subscribe.packet_id().to_string()));
+                fields.push(("topics", subscribe_topic_summary(subscribe.topics())));
+                for (filter, qos) in subscribe.topics() {
+                    fields.push(("topic_filter", format!("{filter}:qos{qos}")));
+                }
+            }
+            MqttBody::Suback(suback) => {
+                fields.push(("packet_id", suback.packet_id().to_string()));
+                fields.push(("return_codes", byte_list_summary(suback.return_codes())));
+            }
+            MqttBody::Unsubscribe(unsubscribe) => {
+                fields.push(("packet_id", unsubscribe.packet_id().to_string()));
+                fields.push(("topics", topic_list_summary(unsubscribe.topics())));
+                for topic in unsubscribe.topics() {
+                    fields.push(("topic_filter", topic.clone()));
+                }
+            }
+        }
+
+        fields
     }
 
     fn encoded_len(&self) -> usize {
@@ -1423,6 +1553,68 @@ fn packet_type_name(packet_type: MqttControlPacketType) -> &'static str {
         MqttControlPacketType::Pingresp => "PINGRESP",
         MqttControlPacketType::Disconnect => "DISCONNECT",
     }
+}
+
+fn connect_clean_session(flags: u8) -> bool {
+    flags & MQTT_CONNECT_FLAG_CLEAN_SESSION != 0
+}
+
+fn connect_will_flag(flags: u8) -> bool {
+    flags & MQTT_CONNECT_FLAG_WILL != 0
+}
+
+fn connect_will_qos(flags: u8) -> u8 {
+    (flags & MQTT_CONNECT_FLAG_WILL_QOS_MASK) >> CONNECT_WILL_QOS_SHIFT
+}
+
+fn connect_will_retain_flag(flags: u8) -> bool {
+    flags & MQTT_CONNECT_FLAG_WILL_RETAIN != 0
+}
+
+fn connect_username_flag(flags: u8) -> bool {
+    flags & MQTT_CONNECT_FLAG_USER_NAME != 0
+}
+
+fn connect_password_flag(flags: u8) -> bool {
+    flags & MQTT_CONNECT_FLAG_PASSWORD != 0
+}
+
+fn subscribe_topic_summary(topics: &[(String, u8)]) -> String {
+    if topics.is_empty() {
+        return "[]".to_string();
+    }
+
+    format!(
+        "[{}]",
+        topics
+            .iter()
+            .map(|(filter, qos)| format!("{filter}:qos{qos}"))
+            .collect::<Vec<_>>()
+            .join(",")
+    )
+}
+
+fn topic_list_summary(topics: &[String]) -> String {
+    if topics.is_empty() {
+        return "[]".to_string();
+    }
+
+    format!("[{}]", topics.join(","))
+}
+
+fn byte_list_summary(bytes: &[u8]) -> String {
+    if bytes.is_empty() {
+        return "[]".to_string();
+    }
+
+    format!(
+        "[{}]",
+        bytes
+            .iter()
+            .map(u8::to_string)
+            .collect::<Vec<_>>()
+            .join(",")
+    )
 }
 
 #[cfg(test)]
@@ -1637,6 +1829,39 @@ mod tests {
         let bytes = mqtt_bytes(Mqtt::disconnect());
 
         assert_eq!(bytes, [0xe0, 0x00]);
+    }
+
+    #[test]
+    fn summary_show_and_hexdump_cover_baseline_packets() {
+        let messages = vec![
+            Mqtt::connect().client_id("cid"),
+            Mqtt::connack(),
+            Mqtt::publish().topic("topic").payload(b"hello".to_vec()),
+            Mqtt::puback().packet_id(1),
+            Mqtt::pubrec().packet_id(2),
+            Mqtt::pubrel().packet_id(3),
+            Mqtt::pubcomp().packet_id(4),
+            Mqtt::subscribe().packet_id(5).subscribe_topic("topic", 1),
+            Mqtt::suback().packet_id(5).return_code(1),
+            Mqtt::unsubscribe().packet_id(6).topic("topic"),
+            Mqtt::unsuback().packet_id(6),
+            Mqtt::pingreq(),
+            Mqtt::pingresp(),
+            Mqtt::disconnect(),
+        ];
+
+        for message in messages {
+            let packet = Ipv4::new() / Tcp::new() / message;
+            let summary = packet.summary();
+            assert!(summary.contains("MQTT"), "summary was: {summary}");
+
+            let show = packet.show();
+            assert!(show.contains("[2] MQTT"), "show was:\n{show}");
+            assert!(show.contains("type:"), "show was:\n{show}");
+
+            let hexdump = packet.hexdump().expect("hexdump");
+            assert!(!hexdump.is_empty());
+        }
     }
 
     #[test]
