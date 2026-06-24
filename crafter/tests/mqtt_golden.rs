@@ -3,8 +3,16 @@ use std::net::Ipv4Addr;
 use crafter::prelude::*;
 use crafter::protocols::mqtt::{
     MQTT_CONNACK_ACCEPTED, MQTT_CONNACK_IDENTIFIER_REJECTED, MQTT_CONNACK_SERVER_UNAVAILABLE,
-    MQTT_PUBLISH_QOS_0, MQTT_PUBLISH_QOS_1, MQTT_PUBLISH_QOS_2, MQTT_SUBACK_FAILURE,
-    MQTT_SUBACK_MAX_QOS_0, MQTT_SUBACK_MAX_QOS_1,
+    MQTT_FLAGS_PUBREL, MQTT_FLAGS_SUBSCRIBE, MQTT_FLAGS_UNSUBSCRIBE, MQTT_PUBLISH_QOS_0,
+    MQTT_PUBLISH_QOS_1, MQTT_PUBLISH_QOS_2, MQTT_REASON_BAD_AUTHENTICATION_METHOD,
+    MQTT_REASON_CONTINUE_AUTHENTICATION, MQTT_REASON_MALFORMED_PACKET,
+    MQTT_REASON_NO_MATCHING_SUBSCRIBERS, MQTT_REASON_PACKET_IDENTIFIER_NOT_FOUND,
+    MQTT_REASON_PROTOCOL_ERROR, MQTT_REASON_SESSION_TAKEN_OVER, MQTT_REASON_SUCCESS,
+    MQTT_REASON_TOPIC_FILTER_INVALID, MQTT_SUBACK_FAILURE, MQTT_SUBACK_MAX_QOS_0,
+    MQTT_SUBACK_MAX_QOS_1, MQTT_TLS_PORT, MQTT_TYPE_AUTH, MQTT_TYPE_CONNACK, MQTT_TYPE_CONNECT,
+    MQTT_TYPE_DISCONNECT, MQTT_TYPE_PINGREQ, MQTT_TYPE_PINGRESP, MQTT_TYPE_PUBACK,
+    MQTT_TYPE_PUBCOMP, MQTT_TYPE_PUBLISH, MQTT_TYPE_PUBREC, MQTT_TYPE_PUBREL, MQTT_TYPE_SUBACK,
+    MQTT_TYPE_SUBSCRIBE, MQTT_TYPE_UNSUBACK, MQTT_TYPE_UNSUBSCRIBE,
 };
 
 const CONNECT_CLIENT_ONLY: &[u8] = &[
@@ -228,6 +236,45 @@ fn documented_mqtt_packet(message: Mqtt) -> Packet {
             .ack(0x0506_0708)
             .ack_segment()
         / message
+}
+
+#[test]
+fn constants_match_mqtt_codepoint_authority() {
+    // Authority: `.agents/docs/mqtt-codepoints.md`, derived from
+    // `.agents/docs/mqtt-manifest.md`. Update the authority document first when
+    // changing any of these wire values.
+    assert_eq!(MQTT_PORT, 1883);
+    assert_eq!(MQTT_TLS_PORT, 8883);
+
+    assert_eq!(MQTT_TYPE_CONNECT, 1);
+    assert_eq!(MQTT_TYPE_CONNACK, 2);
+    assert_eq!(MQTT_TYPE_PUBLISH, 3);
+    assert_eq!(MQTT_TYPE_PUBACK, 4);
+    assert_eq!(MQTT_TYPE_PUBREC, 5);
+    assert_eq!(MQTT_TYPE_PUBREL, 6);
+    assert_eq!(MQTT_TYPE_PUBCOMP, 7);
+    assert_eq!(MQTT_TYPE_SUBSCRIBE, 8);
+    assert_eq!(MQTT_TYPE_SUBACK, 9);
+    assert_eq!(MQTT_TYPE_UNSUBSCRIBE, 10);
+    assert_eq!(MQTT_TYPE_UNSUBACK, 11);
+    assert_eq!(MQTT_TYPE_PINGREQ, 12);
+    assert_eq!(MQTT_TYPE_PINGRESP, 13);
+    assert_eq!(MQTT_TYPE_DISCONNECT, 14);
+    assert_eq!(MQTT_TYPE_AUTH, 15);
+
+    assert_eq!(MQTT_FLAGS_PUBREL, 0x02);
+    assert_eq!(MQTT_FLAGS_SUBSCRIBE, 0x02);
+    assert_eq!(MQTT_FLAGS_UNSUBSCRIBE, 0x02);
+
+    assert_eq!(MQTT_REASON_SUCCESS, 0x00);
+    assert_eq!(MQTT_REASON_NO_MATCHING_SUBSCRIBERS, 0x10);
+    assert_eq!(MQTT_REASON_CONTINUE_AUTHENTICATION, 0x18);
+    assert_eq!(MQTT_REASON_MALFORMED_PACKET, 0x81);
+    assert_eq!(MQTT_REASON_PROTOCOL_ERROR, 0x82);
+    assert_eq!(MQTT_REASON_BAD_AUTHENTICATION_METHOD, 0x8c);
+    assert_eq!(MQTT_REASON_SESSION_TAKEN_OVER, 0x8e);
+    assert_eq!(MQTT_REASON_TOPIC_FILTER_INVALID, 0x8f);
+    assert_eq!(MQTT_REASON_PACKET_IDENTIFIER_NOT_FOUND, 0x92);
 }
 
 #[test]
