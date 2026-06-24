@@ -15,6 +15,23 @@ plans, writes request artifacts, orchestrates provider execution, and builds
 reports. The Rust endpoint binary lives in `tools/probe/adapters/`; it is tool
 infrastructure, not a public `crafter` example.
 
+## Protocol plugins
+
+Each protocol's full surface lives in one auto-discovered plugin module,
+`tools/probe/engine/protocols/<name>.py` (e.g. `arp.py`, `dns.py`, `tcp.py`).
+A single `ProtocolPlugin` per module bundles that protocol's cases, plan
+builders, target-service setup, stimulus routing, live-path address rewrite,
+failure reasons, and lab-capability derivation, and registers itself at import
+through `PROTOCOL_REGISTRY` in `tools/probe/engine/protocols/base.py`. The
+engine's central dispatchers fold over the registry rather than carrying
+per-protocol branches, so adding a protocol means writing that one file — no
+central dispatcher or shared lookup table to edit.
+
+The emitted plan JSON each builder produces is the stable cross-language wire
+contract consumed by the Rust adapter under `tools/probe/adapters/`; its field
+names and shapes must stay byte-identical or the Rust decode breaks. See
+[`docs/adding-a-protocol.md`](docs/adding-a-protocol.md) for the full recipe.
+
 Common dry-run commands:
 
 ```sh
