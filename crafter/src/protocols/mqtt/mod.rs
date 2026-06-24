@@ -5,8 +5,10 @@
 
 pub mod constants;
 pub mod header;
+pub mod message;
 pub mod varint;
 pub mod wire;
 
 pub use constants::*;
 pub use header::MqttControlPacketType;
+pub use message::Mqtt;
