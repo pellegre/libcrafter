@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import ipaddress
+import tempfile
 import unittest
+from pathlib import Path
 
+from tools.probe.engine import capabilities
 from tools.probe.engine import cases as probe_cases
+from tools.probe.engine import lab as probe_lab
 from tools.probe.engine import planning
 from tools.probe.engine.model import ProbeRunRequest
+from tools.probe.testing import probe_acceptance
 
 
 SNMP_SMOKE_PROFILE = "snmp-smoke"
@@ -50,6 +55,27 @@ class SnmpProbeProfileTest(unittest.TestCase):
                 self.assertEqual(case.metadata["protocol"], "snmp")
                 self.assertIn("snmp_peer", case.required_capabilities)
 
+    def test_provider_without_snmp_peer_skips_with_stable_reason(self) -> None:
+        case = probe_cases.PROBE_CASE_BY_NAME[SNMP_GET_CASE]
+        provider_capabilities = probe_lab.probe_capabilities_from_lab_capabilities(
+            "snmp-less-lab",
+            {
+                "provider": "snmp-less-lab",
+                "ipv4_unicast": True,
+                "controlled_services": True,
+                "snmp_peer": False,
+            },
+            dry_run=False,
+        )
+
+        missing = capabilities.missing_capabilities(case, provider_capabilities)
+
+        self.assertEqual(missing, ["snmp_peer"])
+        self.assertEqual(
+            capabilities.skip_reason_for_missing_capability(case, missing[0]),
+            capabilities.SKIP_REQUIRES_SNMP_PEER,
+        )
+
 
 class SnmpProbePlanTest(unittest.TestCase):
     def test_get_plan_carries_agent_service_and_wire_shape(self) -> None:
@@ -90,6 +116,74 @@ class SnmpProbePlanTest(unittest.TestCase):
         self.assertEqual(plan["documentation_prefixes"], ["198.51.100.0/24"])
         for key in ("source_ipv4", "destination_ipv4"):
             self.assertIn(ipaddress.ip_address(plan[key]), documentation)
+
+
+class SnmpProbeAcceptanceTest(unittest.TestCase):
+    def test_get_case_drives_planner_and_stimulus_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            outcome = probe_acceptance.assert_focused_case(
+                self,
+                SNMP_GET_CASE,
+                out_dir=Path(temp_dir) / "harness",
+                provider="local-dry-run",
+                profile=SNMP_SMOKE_PROFILE,
+                seed=2020,
+            )
+
+            self.assertEqual(outcome.report.get("status"), "dry-run")
+            self.assertEqual(outcome.report.get("provider"), "local-dry-run")
+            self.assertFalse(outcome.report.get("metadata", {}).get("mutates_lab"))
+            self.assertFalse(
+                outcome.report.get("metadata", {}).get("creates_infrastructure")
+            )
+            planned = outcome.report.get("metadata", {}).get("planned_case_names", [])
+            self.assertIn(SNMP_GET_CASE, planned)
+
+            request_plans = [
+                plan
+                for plan in outcome.request.get("probe_plans", [])
+                if plan.get("case") == SNMP_GET_CASE
+            ]
+            self.assertTrue(request_plans, "request emitted no SNMP Get plan")
+            request_plan = request_plans[0]
+            self.assertTrue(request_plan["planned_only"])
+            self.assertEqual(request_plan["snmp_request"]["pdu"], "get_request")
+            self.assertEqual(request_plan["expected_snmp_response"]["pdu"], "response")
+            self.assertEqual(
+                request_plan["target_service"]["kind"], "snmp-controlled-peer"
+            )
+            self.assertEqual(request_plan["target_service"]["service_mode"], "agent")
+            self.assertNotIn("payload_hex", request_plan)
+            self.assertNotIn("packet_hex", request_plan)
+
+            self.assertEqual(outcome.response.get("mode"), "dry-run")
+            self.assertEqual(outcome.response.get("sent_count"), 0)
+            self.assertEqual(outcome.response.get("received_count"), 0)
+            self.assertEqual(outcome.response.get("errors"), [])
+
+            results = [
+                result
+                for result in outcome.response.get("results", [])
+                if result.get("case") == SNMP_GET_CASE
+            ]
+            self.assertTrue(results, "endpoint emitted no SNMP Get result")
+            for result in results:
+                metadata = result.get("metadata", {})
+                self.assertEqual(result.get("status"), "planned")
+                self.assertTrue(metadata.get("dry_run"))
+                self.assertTrue(metadata.get("planned_only"))
+                self.assertTrue(metadata.get("sent_raw_hex"))
+                decoded_snmp = metadata.get("sent_decoded", {}).get("snmp", {})
+                self.assertEqual(decoded_snmp.get("version"), "v2c")
+                self.assertEqual(decoded_snmp.get("pdu", {}).get("type"), "get-request")
+                self.assertEqual(
+                    metadata.get("target_service", {}).get("kind"),
+                    "snmp-controlled-peer",
+                )
+                self.assertEqual(
+                    metadata.get("expected_snmp_response", {}).get("pdu"),
+                    "response",
+                )
 
 
 if __name__ == "__main__":
