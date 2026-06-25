@@ -453,7 +453,7 @@ pub mod exports {
         snmp_security_model_name, snmp_security_model_status, snmp_security_model_summary,
         snmp_v3_flags_label, Snmp, SnmpErrorStatus, SnmpErrorStatusAssignment, SnmpErrorStatusMeta,
         SnmpGetBulkPdu, SnmpOid, SnmpPdu, SnmpPduTagMeta, SnmpPduTagStatus, SnmpRawPdu,
-        SnmpRawPduBody, SnmpRequestPdu, SnmpSecurityModel, SnmpSecurityModelMeta,
+        SnmpRawPduBody, SnmpRequestPdu, SnmpScopedPdu, SnmpSecurityModel, SnmpSecurityModelMeta,
         SnmpSecurityModelStatus, SnmpV1TrapPdu, SnmpV3Flags, SnmpV3GlobalData, SnmpV3Message,
         SnmpVarBind, SnmpVarBindList, SnmpVersion, SNMP_ERROR_STATUS_AUTHORIZATION_ERROR,
         SNMP_ERROR_STATUS_BAD_VALUE, SNMP_ERROR_STATUS_COMMIT_FAILED, SNMP_ERROR_STATUS_GEN_ERR,
