@@ -397,6 +397,46 @@ impl SnmpValue {
         }
     }
 
+    pub(super) fn unknown_value_class(&self) -> Option<&'static str> {
+        match self {
+            Self::RawApplication(_) => Some(ber::BerClass::Application.label()),
+            Self::RawTlv(raw) => raw.class_label(),
+            _ => None,
+        }
+    }
+
+    pub(super) fn unknown_value_is_constructed(&self) -> Option<bool> {
+        match self {
+            Self::RawApplication(raw) => Some(raw.is_constructed()),
+            Self::RawTlv(raw) => raw.is_constructed(),
+            _ => None,
+        }
+    }
+
+    pub(super) fn unknown_value_tag_number(&self) -> Option<u8> {
+        match self {
+            Self::RawApplication(raw) => Some(raw.tag_number()),
+            Self::RawTlv(raw) => raw.tag_number(),
+            _ => None,
+        }
+    }
+
+    pub(super) fn unknown_value_content(&self) -> Option<&[u8]> {
+        match self {
+            Self::RawApplication(raw) => Some(raw.content()),
+            Self::RawTlv(raw) => raw.content(),
+            _ => None,
+        }
+    }
+
+    pub(super) fn unknown_value_tlv_bytes(&self) -> Option<&[u8]> {
+        match self {
+            Self::RawApplication(raw) => raw.tlv_bytes(),
+            Self::RawTlv(raw) => Some(raw.as_bytes()),
+            _ => None,
+        }
+    }
+
     pub(super) fn summary_label(&self) -> String {
         match self {
             Self::Integer(_) => "integer".to_string(),
@@ -589,6 +629,18 @@ impl RawTlv {
 
     pub(super) fn tag(&self) -> Option<ber::BerTag> {
         ber::decode_identifier(&self.bytes).ok().map(|(tag, _)| tag)
+    }
+
+    pub(super) fn class_label(&self) -> Option<&'static str> {
+        self.tag().map(|tag| tag.class().label())
+    }
+
+    pub(super) fn is_constructed(&self) -> Option<bool> {
+        self.tag().map(|tag| tag.is_constructed())
+    }
+
+    pub(super) fn tag_number(&self) -> Option<u8> {
+        self.tag().map(|tag| tag.number())
     }
 
     pub(super) fn content(&self) -> Option<&[u8]> {
@@ -1047,6 +1099,49 @@ mod tests {
         assert_eq!(raw.tlv_bytes(), Some(&raw_application[..5]));
         assert_eq!(decoded.compile()?, raw_application[..5]);
         assert_eq!(rest, &[0xbb]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_unknown_value_metadata_and_compile_are_preserved_for_all_classes() -> Result<()> {
+        let cases: &[(&[u8], &str, bool, u8, &[u8])] = &[
+            (&[0x01, 0x01, 0xff, 0xaa], "universal", false, 1, &[0xff]),
+            (
+                &[0x45, 0x81, 0x02, 0xde, 0xad, 0xbb],
+                "application",
+                false,
+                5,
+                &[0xde, 0xad],
+            ),
+            (
+                &[0xb4, 0x02, 0x05, 0x00, 0xcc],
+                "context-specific",
+                true,
+                20,
+                &[0x05, 0x00],
+            ),
+            (
+                &[0xe3, 0x02, 0x04, 0x00, 0xdd],
+                "private",
+                true,
+                3,
+                &[0x04, 0x00],
+            ),
+        ];
+
+        for (bytes, class, constructed, tag_number, content) in cases {
+            let (decoded, rest) = SnmpValue::decode(bytes)?;
+            let tlv_len = bytes.len() - rest.len();
+
+            assert_eq!(decoded.unknown_value_class(), Some(*class));
+            assert_eq!(decoded.unknown_value_is_constructed(), Some(*constructed));
+            assert_eq!(decoded.unknown_value_tag_number(), Some(*tag_number));
+            assert_eq!(decoded.unknown_value_content(), Some(*content));
+            assert_eq!(decoded.unknown_value_tlv_bytes(), Some(&bytes[..tlv_len]));
+            assert_eq!(decoded.compile()?, bytes[..tlv_len]);
+            assert_eq!(rest, &bytes[tlv_len..]);
+        }
 
         Ok(())
     }
