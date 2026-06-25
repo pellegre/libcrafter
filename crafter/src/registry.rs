@@ -42,6 +42,10 @@ use crate::protocols::link::{
 pub(crate) use crate::protocols::ospf::decode::append_ospf_packet;
 use crate::protocols::rip::ripng::{append_ripng_packet, looks_like_ripng_payload, RIPNG_UDP_PORT};
 use crate::protocols::rip::{append_rip_packet, looks_like_rip_payload, RIP_UDP_PORT};
+use crate::protocols::snmp::{
+    decode::{append_snmp_packet, looks_like_snmp_payload},
+    SNMP_PORT, SNMP_TRAP_PORT,
+};
 use crate::protocols::transport::{
     append_tcp_packet_with_registry, append_udp_packet_with_registry,
 };
@@ -55,6 +59,10 @@ const IKEV2_UDP_PORT: u16 = 500;
 /// port carries both UDP-encapsulated ESP and IKE; the registry disambiguates
 /// them by the RFC 3948 non-ESP marker (the leading four octets).
 const NATT_UDP_PORT: u16 = 4500;
+
+const fn is_snmp_udp_port(port: u16) -> bool {
+    matches!(port, SNMP_PORT | SNMP_TRAP_PORT)
+}
 
 type ProtocolDecoder = dyn for<'a> Fn(&'a ProtocolRegistry, Packet, &'a [u8]) -> Result<Packet>
     + Send
@@ -395,6 +403,18 @@ impl ProtocolRegistry {
                     && looks_like_ripng_payload(ctx.payload)
             },
             |_registry, packet, payload| append_ripng_packet(packet, payload),
+        );
+
+        // SNMP message and notification decode binds on the source-backed
+        // UDP/161 and UDP/162 ports. Port use alone is not sufficient: the BER
+        // payload must pass the conservative SNMP wrapper shape check so
+        // unrelated traffic on these well-known ports remains `Raw`.
+        registry.bind_udp_with_registry(
+            |ctx| {
+                (is_snmp_udp_port(ctx.source_port) || is_snmp_udp_port(ctx.destination_port))
+                    && looks_like_snmp_payload(ctx.payload)
+            },
+            |_registry, packet, payload| append_snmp_packet(packet, payload),
         );
 
         registry.bind_tcp_port_with_registry(BGP_PORT, |registry, packet, payload| {
@@ -822,6 +842,12 @@ impl ProtocolRegistry {
                 && looks_like_ripng_payload(payload)
             {
                 return append_ripng_packet(packet, payload);
+            }
+
+            if (is_snmp_udp_port(source_port) || is_snmp_udp_port(destination_port))
+                && looks_like_snmp_payload(payload)
+            {
+                return append_snmp_packet(packet, payload);
             }
 
             if (source_port == NATT_UDP_PORT || destination_port == NATT_UDP_PORT)
@@ -1776,6 +1802,87 @@ mod dns_udp_binding {
         assert_eq!(
             decoded.layer::<Raw>().unwrap().as_bytes(),
             b"custom-dns-like"
+        );
+    }
+}
+
+#[cfg(test)]
+mod snmp_udp_decode {
+    use std::net::{Ipv4Addr, Ipv6Addr};
+
+    use crate::{
+        Ipv4, Ipv6, NetworkLayer, Packet, Raw, Snmp, SnmpPdu, SnmpVarBindList, SnmpVersion, Udp,
+        SNMP_PORT, SNMP_TRAP_PORT,
+    };
+
+    #[test]
+    fn snmp_udp_decode_decodes_ipv4_and_ipv6_stacks() {
+        let ipv4_snmp = Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 66))
+            .dst(Ipv4Addr::new(198, 51, 100, 66))
+            / Udp::new().sport(49_152).dport(SNMP_PORT)
+            / Snmp::v1_get_request(b"public".to_vec(), 1, SnmpVarBindList::empty()).unwrap();
+        let ipv4_decoded =
+            Packet::decode_from_l3(NetworkLayer::Ipv4, ipv4_snmp.compile().unwrap().as_bytes())
+                .unwrap();
+
+        let snmp = ipv4_decoded.layer::<Snmp>().expect("IPv4 SNMP layer");
+        assert_eq!(snmp.version(), SnmpVersion::V1);
+        assert!(ipv4_decoded.layer::<Raw>().is_none());
+
+        let ipv6_snmp = Ipv6::new()
+            .src("2001:db8::66".parse::<Ipv6Addr>().unwrap())
+            .dst("2001:db8::67".parse::<Ipv6Addr>().unwrap())
+            / Udp::new().sport(SNMP_TRAP_PORT).dport(49_153)
+            / Snmp::v2c_snmpv2_trap(b"public".to_vec(), 2, SnmpVarBindList::empty()).unwrap();
+        let ipv6_decoded =
+            Packet::decode_from_l3(NetworkLayer::Ipv6, ipv6_snmp.compile().unwrap().as_bytes())
+                .unwrap();
+
+        let snmp = ipv6_decoded.layer::<Snmp>().expect("IPv6 SNMP layer");
+        assert_eq!(snmp.version(), SnmpVersion::V2c);
+        assert_eq!(snmp.pdu().tag_number(), SnmpPdu::TAG_TRAP_V2);
+        assert!(ipv6_decoded.layer::<Raw>().is_none());
+    }
+
+    #[test]
+    fn snmp_udp_decode_preserves_non_snmp_bytes_on_snmp_ports_as_raw() {
+        let raw_payload = b"not-snmp".to_vec();
+        let ipv4_raw = Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 66))
+            .dst(Ipv4Addr::new(198, 51, 100, 66))
+            / Udp::new().sport(49_152).dport(SNMP_PORT)
+            / Raw::from_bytes(raw_payload.clone());
+        let ipv4_decoded =
+            Packet::decode_from_l3(NetworkLayer::Ipv4, ipv4_raw.compile().unwrap().as_bytes())
+                .unwrap();
+
+        assert!(ipv4_decoded.layer::<Snmp>().is_none());
+        assert_eq!(
+            ipv4_decoded
+                .layer::<Raw>()
+                .expect("raw IPv4 payload")
+                .as_bytes(),
+            raw_payload
+        );
+
+        let invalid_sequence = [0x30, 0x03, 0x02, 0x01, 0x00];
+        let ipv6_raw = Ipv6::new()
+            .src("2001:db8::66".parse::<Ipv6Addr>().unwrap())
+            .dst("2001:db8::67".parse::<Ipv6Addr>().unwrap())
+            / Udp::new().sport(SNMP_TRAP_PORT).dport(49_153)
+            / Raw::from_bytes(invalid_sequence);
+        let ipv6_decoded =
+            Packet::decode_from_l3(NetworkLayer::Ipv6, ipv6_raw.compile().unwrap().as_bytes())
+                .unwrap();
+
+        assert!(ipv6_decoded.layer::<Snmp>().is_none());
+        assert_eq!(
+            ipv6_decoded
+                .layer::<Raw>()
+                .expect("raw IPv6 payload")
+                .as_bytes(),
+            invalid_sequence
         );
     }
 }

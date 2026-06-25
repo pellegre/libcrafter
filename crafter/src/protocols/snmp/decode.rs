@@ -3,7 +3,14 @@
 //! Source-gated by `docs/snmp-rfc-manifest.md`; UDP dispatch binding is added
 //! in a later step.
 
-use super::{ber, SnmpVersion};
+use super::{ber, Snmp, SnmpVersion};
+use crate::error::Result;
+use crate::packet::Packet;
+
+/// Append a decoded SNMP message to an existing packet stack.
+pub(crate) fn append_snmp_packet(packet: Packet, bytes: &[u8]) -> Result<Packet> {
+    Ok(packet.push(Snmp::decode(bytes)?))
+}
 
 /// Return true when bytes have enough SNMP wrapper structure for UDP dispatch.
 ///
