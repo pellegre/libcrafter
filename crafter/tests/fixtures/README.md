@@ -103,6 +103,10 @@ Valid byte fixtures cover:
   `ipv4-udp-dns-response-example-com.hex`
 - IPv4 UDP DHCP message and DHCP option corpus:
   `ipv4-udp-dhcp-discover.hex`, `dhcp-offer-options.hex`
+- IPv4 UDP SNMP message fixtures:
+  `ethernet-ipv4-udp-snmp-get-request.hex` and
+  `ipv4-udp-snmp-response.hex` cover v2c GetRequest / Response payloads over
+  UDP/161 using documentation address space and redacted summary output.
 - IPv4 UDP options surplus decode:
   `ipv4-udp-options-known.hex`,
   `ipv4-udp-options-unknown-safe.hex`
@@ -141,7 +145,9 @@ Pcap fixtures cover:
 
 - Ethernet link type with ARP request and reply records, plus a single-record
   nonstandard ARP frame (`ethernet-arp-nonstandard.pcap`) exercising variable
-  address lengths and unknown codepoints.
+  address lengths and unknown codepoints. `ethernet-ipv4-udp-snmp-get-request.pcap`
+  adds a synthetic Ethernet/IPv4/UDP/SNMPv2c GetRequest record generated from
+  the SNMP byte fixture.
 - RawIp link type with IPv4 and IPv6 packets, including
   `raw-ipv4-igmp-bootstrap.pcap`: timestamped IGMP v1 query/report and
   IGMPv2 query/report/leave records using RFC 5737 source addresses, RFC 5771
@@ -156,6 +162,8 @@ Pcap fixtures cover:
   `ipv6-base-traffic-flow-udp-raw.hex`, decoded as IPv6/UDP/Raw with Traffic
   Class `0xbb` (DSCP 46, ECN 3), Flow Label `0xabcde`, Hop Limit 37, UDP
   ports `54049 -> 1049`, a valid UDP checksum, and raw payload `base-v6!`.
+  `raw-ipv4-udp-snmp-response.pcap` carries a synthetic RawIp SNMPv2c Response
+  over UDP/161 with a valid checksum and no live capture data.
   The RawIp pcap corpus also includes deterministic IP fragment transform
   fixtures: `raw-ipv4-ipfragment-generated.pcap` is byte-for-byte regenerated
   from `IpFragment`, and `raw-ipv6-fragment-oracle-reference.pcap` carries an

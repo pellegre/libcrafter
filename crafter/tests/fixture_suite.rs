@@ -16,7 +16,7 @@ use crafter::core::{
     Ipv6HopByHopOptionsHeader, Ipv6MobileRoutingHeader, Ipv6MobileRoutingHeaderStatus, Ipv6Option,
     Ipv6RoutingHeader, Ipv6RoutingTypeStatus, Ipv6SegmentRoutingHeader, Layer, LinkType, LinuxSll,
     LlcSnap, MacAddr, NetworkLayer, NullByteOrder, NullLoopback, OptionOverload,
-    OspfChecksumStatus, Ospfv2, Ospfv3, Packet, Radiotap, Raw, Rip, Ripng, Tcp, TcpOption,
+    OspfChecksumStatus, Ospfv2, Ospfv3, Packet, Radiotap, Raw, Rip, Ripng, Snmp, Tcp, TcpOption,
     TcpSackBlock, Udp, UdpChecksumStatus, UdpOption, UdpOptionStatus, UdpOptions, Vlan,
     ARP_HRD_INFINIBAND, BOOTP_REQUEST, DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_CLASS_IN,
     DNS_EDNS_DEFAULT_UDP_PAYLOAD_SIZE, DNS_EDNS_OPTION_COOKIE, DNS_EDNS_OPTION_NSID,
@@ -30,7 +30,7 @@ use crafter::core::{
     IPPROTO_IPV6_DSTOPTS, IPPROTO_IPV6_EXPERIMENTAL_1, IPPROTO_IPV6_FRAGMENT, IPPROTO_IPV6_HOPOPTS,
     IPPROTO_IPV6_ROUTE, IPPROTO_TCP, IPPROTO_UDP, IPV4_FLAG_DONT_FRAGMENT,
     IPV4_FLAG_MORE_FRAGMENTS, IPV4_FLAG_RESERVED, IPV6_ROUTING_TYPE_MOBILE,
-    IPV6_ROUTING_TYPE_SEGMENT, TCP_FLAG_ACK, TCP_FLAG_PSH, TCP_FLAG_SYN, UDP_HEADER_LEN,
+    IPV6_ROUTING_TYPE_SEGMENT, SNMP_PORT, TCP_FLAG_ACK, TCP_FLAG_PSH, TCP_FLAG_SYN, UDP_HEADER_LEN,
     UDP_OPTION_EOL, UDP_OPTION_NOP,
 };
 use crafter::protocols::igmp::IgmpExtension;
@@ -101,6 +101,7 @@ enum ExpectedLayer {
     Tcp,
     Udp,
     UdpOptions,
+    Snmp,
     Bgp,
     Rip,
     Ripng,
@@ -146,6 +147,7 @@ enum CoverageFamily {
     Ipv4UdpDnsRawUnknown,
     Ipv4UdpDnsSectionPlacement,
     Ipv4UdpDhcp,
+    Ipv4UdpSnmp,
     Ipv4Ospf,
     Ipv6Ospfv3,
     Ipv4UdpOptions,
@@ -1068,6 +1070,31 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         summary_path: None,
     },
     ValidFixtureCase {
+        name: "ethernet-ipv4-udp-snmp-get-request",
+        path: "bytes/ethernet-ipv4-udp-snmp-get-request.hex",
+        contents: FixtureContents::Hex(fixture_str!(
+            "bytes/ethernet-ipv4-udp-snmp-get-request.hex"
+        )),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::Link(LinkType::Ethernet)),
+        expected_layers: &[
+            ExpectedLayer::Ethernet,
+            ExpectedLayer::Ipv4,
+            ExpectedLayer::Udp,
+            ExpectedLayer::Snmp,
+        ],
+        preserve_exact_bytes: true,
+        summary_path: Some("summaries/ethernet-ipv4-udp-snmp-get-request.summary.txt"),
+    },
+    ValidFixtureCase {
+        name: "ipv4-udp-snmp-response",
+        path: "bytes/ipv4-udp-snmp-response.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-udp-snmp-response.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Udp, ExpectedLayer::Snmp],
+        preserve_exact_bytes: true,
+        summary_path: Some("summaries/ipv4-udp-snmp-response.summary.txt"),
+    },
+    ValidFixtureCase {
         name: "ipv4-udp-dns-query-example-com",
         path: "bytes/ipv4-udp-dns-query-example-com.bin",
         contents: FixtureContents::Bytes(fixture_bytes!(
@@ -1788,6 +1815,34 @@ const PCAP_FIXTURES: &[PcapFixtureCase] = &[
             },
         ],
     },
+    PcapFixtureCase {
+        name: "ethernet-ipv4-udp-snmp-get-request",
+        path: "pcaps/ethernet-ipv4-udp-snmp-get-request.pcap",
+        contents: fixture_bytes!("pcaps/ethernet-ipv4-udp-snmp-get-request.pcap"),
+        pcap_link_type: PcapLinkType::Ethernet,
+        link_type: LinkType::Ethernet,
+        timestamp_precision: TimestampPrecision::Microseconds,
+        coverage: PcapCoverageFamily::Ethernet,
+        records: &[PcapFixtureRecord {
+            seconds: 62,
+            fractional: 161,
+            fixture_name: "ethernet-ipv4-udp-snmp-get-request",
+        }],
+    },
+    PcapFixtureCase {
+        name: "raw-ipv4-udp-snmp-response",
+        path: "pcaps/raw-ipv4-udp-snmp-response.pcap",
+        contents: fixture_bytes!("pcaps/raw-ipv4-udp-snmp-response.pcap"),
+        pcap_link_type: PcapLinkType::RawIp,
+        link_type: LinkType::Raw,
+        timestamp_precision: TimestampPrecision::Microseconds,
+        coverage: PcapCoverageFamily::RawIpIpv4,
+        records: &[PcapFixtureRecord {
+            seconds: 62,
+            fractional: 162,
+            fixture_name: "ipv4-udp-snmp-response",
+        }],
+    },
     // RawIp pcap fixtures carrying the RIP / RIPng UDP fixtures so the full
     // read -> decode -> summary path is exercised: a RIPv1 whole-table request
     // (Ipv4/Udp 520), a RIPv2 simple-password authenticated response
@@ -2209,6 +2264,7 @@ const REQUIRED_VALID_COVERAGE: &[(CoverageFamily, &str)] = &[
         "IPv4 UDP DNS four-section placement",
     ),
     (CoverageFamily::Ipv4UdpDhcp, "IPv4 UDP DHCP message"),
+    (CoverageFamily::Ipv4UdpSnmp, "IPv4 UDP SNMP message"),
     (
         CoverageFamily::Ipv4UdpOptions,
         "IPv4 UDP options surplus decode",
@@ -2383,6 +2439,9 @@ fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
         "ipv4-udp-dns-raw-unknown-records-response" => &[CoverageFamily::Ipv4UdpDnsRawUnknown],
         "ipv4-udp-dns-section-placement-response" => &[CoverageFamily::Ipv4UdpDnsSectionPlacement],
         "ipv4-udp-dhcp-discover" => &[CoverageFamily::Ipv4UdpDhcp],
+        "ethernet-ipv4-udp-snmp-get-request" | "ipv4-udp-snmp-response" => {
+            &[CoverageFamily::Ipv4UdpSnmp]
+        }
         "ospf-hello-single-neighbor"
         | "ospf-database-description"
         | "ospf-link-state-request"
@@ -2717,6 +2776,9 @@ fn assert_expected_layers(case: &ValidFixtureCase, packet: &Packet) {
             ExpectedLayer::UdpOptions => {
                 let _ = expect_layer::<UdpOptions>(case, packet);
             }
+            ExpectedLayer::Snmp => {
+                let _ = expect_layer::<Snmp>(case, packet);
+            }
             ExpectedLayer::Bgp => {
                 let _ = expect_layer::<Bgp>(case, packet);
             }
@@ -2814,6 +2876,7 @@ fn expected_layer_name(expected: ExpectedLayer) -> &'static str {
         ExpectedLayer::Tcp => "Tcp",
         ExpectedLayer::Udp => "Udp",
         ExpectedLayer::UdpOptions => "UdpOptions",
+        ExpectedLayer::Snmp => "Snmp",
         ExpectedLayer::Bgp => "BGP",
         ExpectedLayer::Rip => "Rip",
         ExpectedLayer::Ripng => "Ripng",
@@ -3348,6 +3411,75 @@ fn assert_bgp_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
     }
 }
 
+fn assert_snmp_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
+    assert_exact_layer_stack(case, packet);
+
+    let ipv4 = expect_layer::<Ipv4>(case, packet);
+    assert!(is_documentation_ip(IpAddr::V4(ipv4.source())));
+    assert!(is_documentation_ip(IpAddr::V4(ipv4.destination())));
+    assert_eq!(ipv4.protocol_value(), IPPROTO_UDP);
+
+    let udp = expect_layer::<Udp>(case, packet);
+    assert_eq!(udp.checksum_status(), UdpChecksumStatus::Valid);
+    assert_ne!(udp.checksum_value(), Some(0));
+    assert!(
+        udp.source_port_value() == SNMP_PORT || udp.destination_port_value() == SNMP_PORT,
+        "fixture {} should use UDP/161 for SNMP, got sport={} dport={}",
+        case.path,
+        udp.source_port_value(),
+        udp.destination_port_value()
+    );
+
+    let snmp = expect_layer::<Snmp>(case, packet);
+    assert_eq!(snmp.version_label(), "v2c");
+    assert!(!packet.summary().contains("public"));
+    assert!(!packet.show().contains("public"));
+
+    match case.name {
+        "ethernet-ipv4-udp-snmp-get-request" => {
+            let ethernet = expect_layer::<Ethernet>(case, packet);
+            assert_eq!(
+                ethernet.source(),
+                Some(MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0xa1]))
+            );
+            assert_eq!(
+                ethernet.destination(),
+                Some(MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0xa2]))
+            );
+            assert_eq!(ethernet.ethertype_value(), Some(ETHERTYPE_IPV4));
+            assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 161));
+            assert_eq!(ipv4.destination(), Ipv4Addr::new(198, 51, 100, 161));
+            assert_eq!(udp.destination_port_value(), SNMP_PORT);
+
+            let request = snmp
+                .pdu()
+                .as_get_request()
+                .expect("SNMP GetRequest PDU should parse")
+                .expect("SNMP fixture should carry GetRequest fields");
+            assert_eq!(request.request_id(), 0x7061);
+            assert_eq!(request.error_status(), 0);
+            assert_eq!(request.error_index(), 0);
+            assert_eq!(request.varbinds().len(), 1);
+        }
+        "ipv4-udp-snmp-response" => {
+            assert_eq!(ipv4.source(), Ipv4Addr::new(198, 51, 100, 161));
+            assert_eq!(ipv4.destination(), Ipv4Addr::new(192, 0, 2, 161));
+            assert_eq!(udp.source_port_value(), SNMP_PORT);
+
+            let response = snmp
+                .pdu()
+                .as_response()
+                .expect("SNMP Response PDU should parse")
+                .expect("SNMP fixture should carry Response fields");
+            assert_eq!(response.request_id(), 0x7061);
+            assert_eq!(response.error_status(), 0);
+            assert_eq!(response.error_index(), 0);
+            assert_eq!(response.varbinds().len(), 1);
+        }
+        _ => unreachable!("SNMP fixture names are matched before dispatch"),
+    }
+}
+
 fn assert_igmp_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
     assert_exact_layer_stack(case, packet);
 
@@ -3480,6 +3612,9 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
         name if name.starts_with("dot15d4-") => assert_dot15d4_fixture_fields(case, packet),
         name if name.starts_with("ipv4-tcp-bgp-") || name.starts_with("ethernet-ipv4-tcp-bgp-") => {
             assert_bgp_fixture_fields(case, packet)
+        }
+        "ethernet-ipv4-udp-snmp-get-request" | "ipv4-udp-snmp-response" => {
+            assert_snmp_fixture_fields(case, packet)
         }
         name if name.starts_with("ipv4-fragment-defrag-") => {
             assert_ipv4_fragment_defrag_fixture_fields(case, packet)
@@ -7304,6 +7439,81 @@ fn pcap_fixture_case(name: &str) -> &'static PcapFixtureCase {
         .iter()
         .find(|case| case.name == name)
         .unwrap_or_else(|| panic!("pcap fixture {name} should be cataloged"))
+}
+
+#[test]
+fn snmp_fixture_suite_pcap_decodes_records() {
+    for name in [
+        "ethernet-ipv4-udp-snmp-get-request",
+        "ipv4-udp-snmp-response",
+    ] {
+        let case = valid_fixture_case(name);
+        ensure_fixture_exists(case.path);
+        let bytes = fixture_bytes_for_case(case);
+        let target = packet_target_for_case(case);
+        let packet = decode_packet(target, &bytes)
+            .unwrap_or_else(|err| panic!("fixture {} should decode: {err}", case.path));
+
+        assert_packet_surface(case, &packet);
+        assert_exact_layer_stack(case, &packet);
+        assert_fixture_fields(case, &packet);
+        assert_compile_decode_compile(case, target, &packet, &bytes);
+    }
+
+    for name in [
+        "ethernet-ipv4-udp-snmp-get-request",
+        "raw-ipv4-udp-snmp-response",
+    ] {
+        let case = pcap_fixture_case(name);
+        let records = PcapReader::from_reader(case.contents)
+            .unwrap_or_else(|err| panic!("pcap fixture {} should parse header: {err}", case.path))
+            .collect_records()
+            .unwrap_or_else(|err| panic!("pcap fixture {} should read records: {err}", case.path));
+        let packets = PcapReader::from_reader(case.contents)
+            .unwrap_or_else(|err| {
+                panic!(
+                    "pcap fixture {} should parse header for packets: {err}",
+                    case.path
+                )
+            })
+            .collect_packets()
+            .unwrap_or_else(|err| {
+                panic!("pcap fixture {} should decode packets: {err}", case.path)
+            });
+        assert_eq!(records.len(), case.records.len());
+        assert_eq!(packets.len(), case.records.len());
+
+        for ((record, packet), expected) in records.iter().zip(packets.iter()).zip(case.records) {
+            let expected_fixture = valid_fixture_case(expected.fixture_name);
+            let expected_bytes = fixture_bytes_for_case(expected_fixture);
+            let expected_timestamp = PcapTimestamp::new(
+                expected.seconds,
+                expected.fractional,
+                case.timestamp_precision,
+            )
+            .unwrap_or_else(|err| {
+                panic!(
+                    "pcap fixture {} timestamp should be valid: {err}",
+                    case.path
+                )
+            });
+
+            assert_eq!(record.timestamp(), expected_timestamp);
+            assert_eq!(record.pcap_link_type(), case.pcap_link_type);
+            assert_eq!(record.link_type(), case.link_type);
+            assert_eq!(record.data(), expected_bytes.as_slice());
+            assert_eq!(packet.timestamp(), expected_timestamp);
+            assert_eq!(packet.data(), expected_bytes.as_slice());
+            assert_packet_surface(expected_fixture, packet.packet());
+            assert_fixture_fields(expected_fixture, packet.packet());
+            assert_compile_decode_compile(
+                expected_fixture,
+                packet_target_for_case(expected_fixture),
+                packet.packet(),
+                &expected_bytes,
+            );
+        }
+    }
 }
 
 const BLE_PCAP_RECORD_FIXTURE_NAME: &str = "ble-le-ll-adv-record";
