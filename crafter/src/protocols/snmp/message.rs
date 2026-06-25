@@ -1,9 +1,9 @@
 //! SNMP message layer.
 //!
 //! Source-gated by `docs/snmp-rfc-manifest.md`; this module models
-//! community-based SNMPv1/SNMPv2c packet bytes only. Manager sessions,
-//! credentials, retries, walks, and SNMPv3 security behavior belong outside
-//! this packet primitive until the corresponding source-backed slices land.
+//! community-based SNMPv1/SNMPv2c packet bytes and the SNMPv3 top-level
+//! message wrapper. Manager sessions, credentials, retries, walks, and SNMPv3
+//! security behavior belong outside this packet primitive.
 
 #![cfg_attr(not(test), allow(dead_code))]
 
@@ -17,8 +17,13 @@ use crate::packet::{IntoPacket, Layer, LayerContext, Packet};
 
 pub(super) const SNMP_VERSION_VALUE_V1: i64 = 0;
 pub(super) const SNMP_VERSION_VALUE_V2C: i64 = 1;
+pub(super) const SNMP_VERSION_VALUE_V3: i64 = 3;
 
 const SNMP_MESSAGE_COMMUNITY_CONTEXT: &str = "snmp.message.community";
+const SNMP_V3_HEADER_DATA_CONTEXT: &str = "snmp.v3.header_data";
+const SNMP_V3_FLAGS_CONTEXT: &str = "snmp.v3.flags";
+const SNMP_V3_SECURITY_PARAMETERS_CONTEXT: &str = "snmp.v3.security_parameters";
+const SNMP_V3_SCOPED_DATA_CONTEXT: &str = "snmp.v3.scoped_data";
 
 /// Source-backed SNMP message version value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,6 +32,8 @@ pub enum SnmpVersion {
     V1,
     /// Community-based SNMPv2 message wrapper version value 1.
     V2c,
+    /// SNMPv3 message wrapper version value 3.
+    V3,
     /// Well-formed but unsupported or unassigned version value.
     Unknown(i64),
 }
@@ -36,6 +43,7 @@ impl SnmpVersion {
         match value {
             SNMP_VERSION_VALUE_V1 => Self::V1,
             SNMP_VERSION_VALUE_V2C => Self::V2c,
+            SNMP_VERSION_VALUE_V3 => Self::V3,
             value => Self::Unknown(value),
         }
     }
@@ -45,6 +53,7 @@ impl SnmpVersion {
         match self {
             Self::V1 => SNMP_VERSION_VALUE_V1,
             Self::V2c => SNMP_VERSION_VALUE_V2C,
+            Self::V3 => SNMP_VERSION_VALUE_V3,
             Self::Unknown(value) => value,
         }
     }
@@ -54,6 +63,7 @@ impl SnmpVersion {
         match self {
             Self::V1 => "v1",
             Self::V2c => "v2c",
+            Self::V3 => "v3",
             Self::Unknown(_) => "unknown",
         }
     }
@@ -144,16 +154,200 @@ impl SnmpMessageHeader {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SnmpMessageData {
+    Community {
+        header: SnmpMessageHeader,
+        pdu: SnmpPdu,
+    },
+    V3(SnmpV3Message),
+}
+
+/// SNMPv3 top-level message wrapper fields.
+///
+/// This models the RFC 3412 message framing only. Security-model processing,
+/// USM credentials, encryption, authentication, timeliness, and scoped-PDU
+/// interpretation belong to later packet slices or generated tools.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SnmpV3Message {
+    version: SnmpVersion,
+    msg_id: i64,
+    max_size: i64,
+    flags: Vec<u8>,
+    security_model: i64,
+    security_parameters: Vec<u8>,
+    scoped_data: Vec<u8>,
+}
+
+impl SnmpV3Message {
+    /// Build an SNMPv3 message wrapper with raw security/scoped-data bytes.
+    pub fn new(
+        msg_id: i64,
+        max_size: i64,
+        flags: impl Into<Vec<u8>>,
+        security_model: i64,
+        security_parameters: impl Into<Vec<u8>>,
+        scoped_data: impl Into<Vec<u8>>,
+    ) -> Self {
+        Self {
+            version: SnmpVersion::V3,
+            msg_id,
+            max_size,
+            flags: flags.into(),
+            security_model,
+            security_parameters: security_parameters.into(),
+            scoped_data: scoped_data.into(),
+        }
+    }
+
+    const fn with_version(mut self, version: SnmpVersion) -> Self {
+        self.version = version;
+        self
+    }
+
+    /// Message wrapper version.
+    pub const fn version(&self) -> SnmpVersion {
+        self.version
+    }
+
+    /// Raw message wrapper version INTEGER.
+    pub const fn version_value(&self) -> i64 {
+        self.version.as_integer()
+    }
+
+    /// RFC 3412 `msgID` INTEGER value.
+    pub const fn msg_id(&self) -> i64 {
+        self.msg_id
+    }
+
+    /// RFC 3412 `msgMaxSize` INTEGER value.
+    pub const fn max_size(&self) -> i64 {
+        self.max_size
+    }
+
+    /// Raw RFC 3412 `msgFlags` OCTET STRING bytes.
+    pub fn flags(&self) -> &[u8] {
+        &self.flags
+    }
+
+    /// RFC 3412 `msgSecurityModel` INTEGER value.
+    pub const fn security_model(&self) -> i64 {
+        self.security_model
+    }
+
+    /// Raw RFC 3412 `msgSecurityParameters` OCTET STRING bytes.
+    pub fn security_parameters(&self) -> &[u8] {
+        &self.security_parameters
+    }
+
+    /// Raw RFC 3412 `ScopedPduData` TLV bytes.
+    pub fn scoped_data(&self) -> &[u8] {
+        &self.scoped_data
+    }
+
+    fn decode_after_version(version: SnmpVersion, bytes: &[u8]) -> Result<(Self, &[u8])> {
+        let (header_content, rest) = ber::decode_sequence(bytes)?;
+        let (msg_id, header_rest) = ber::decode_integer(header_content)?;
+        let (max_size, header_rest) = ber::decode_integer(header_rest)?;
+        let (flags, header_rest) = decode_octet_string_tlv(
+            header_rest,
+            SNMP_V3_FLAGS_CONTEXT,
+            "expected universal primitive OCTET STRING for msgFlags",
+            "msgFlags length exceeds supported size",
+        )?;
+        let (security_model, header_rest) = ber::decode_integer(header_rest)?;
+        if !header_rest.is_empty() {
+            return Err(ber::invalid_ber_field(
+                SNMP_V3_HEADER_DATA_CONTEXT,
+                "trailing bytes after HeaderData fields",
+            ));
+        }
+
+        let (security_parameters, rest) = decode_octet_string_tlv(
+            rest,
+            SNMP_V3_SECURITY_PARAMETERS_CONTEXT,
+            "expected universal primitive OCTET STRING for msgSecurityParameters",
+            "msgSecurityParameters length exceeds supported size",
+        )?;
+        let (scoped_data, rest) = decode_scoped_data_tlv(rest)?;
+
+        Ok((
+            Self {
+                version,
+                msg_id,
+                max_size,
+                flags: flags.to_vec(),
+                security_model,
+                security_parameters: security_parameters.to_vec(),
+                scoped_data: scoped_data.to_vec(),
+            },
+            rest,
+        ))
+    }
+
+    fn encode_content_after_version(&self, out: &mut Vec<u8>) -> Result<()> {
+        let mut header = Vec::with_capacity(self.header_data_content_len());
+        ber::encode_integer(self.msg_id, &mut header)?;
+        ber::encode_integer(self.max_size, &mut header)?;
+        encode_octet_string_tlv(&self.flags, &mut header)?;
+        ber::encode_integer(self.security_model, &mut header)?;
+
+        ber::encode_sequence(&header, out)?;
+        encode_octet_string_tlv(&self.security_parameters, out)?;
+        out.extend_from_slice(&self.scoped_data);
+        Ok(())
+    }
+
+    fn encoded_content_after_version_len(&self) -> usize {
+        encoded_tlv_len(self.header_data_content_len())
+            + encoded_tlv_len(self.security_parameters.len())
+            + self.scoped_data.len()
+    }
+
+    fn header_data_content_len(&self) -> usize {
+        encoded_integer_tlv_len(self.msg_id)
+            + encoded_integer_tlv_len(self.max_size)
+            + encoded_tlv_len(self.flags.len())
+            + encoded_integer_tlv_len(self.security_model)
+    }
+
+    fn summary_fields(&self) -> String {
+        format!(
+            "msg_id={} msg_max_size={} msg_flags_len={} msg_security_model={} msg_security_parameters_len={} scoped_data_len={}",
+            self.msg_id,
+            self.max_size,
+            self.flags.len(),
+            self.security_model,
+            self.security_parameters.len(),
+            self.scoped_data.len()
+        )
+    }
+
+    fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("msg_id", self.msg_id.to_string()),
+            ("msg_max_size", self.max_size.to_string()),
+            ("msg_flags_len", self.flags.len().to_string()),
+            ("msg_flags", ber::hex_bytes(&self.flags)),
+            ("msg_security_model", self.security_model.to_string()),
+            (
+                "msg_security_parameters_len",
+                self.security_parameters.len().to_string(),
+            ),
+            ("scoped_data_len", self.scoped_data.len().to_string()),
+        ]
+    }
+}
+
 /// Top-level SNMP packet layer.
 ///
-/// The initial public constructors are limited to source-backed SNMPv1 and
-/// community-based SNMPv2 wrappers. The layer composes with [`Packet`] and `/`
+/// Public constructors cover source-backed SNMPv1, community-based SNMPv2c,
+/// and the SNMPv3 message wrapper. The layer composes with [`Packet`] and `/`
 /// like every other packet layer and leaves application workflows to generated
 /// tools.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Snmp {
-    header: SnmpMessageHeader,
-    pdu: SnmpPdu,
+    data: SnmpMessageData,
     length: Option<usize>,
 }
 
@@ -405,21 +599,57 @@ impl Snmp {
         Ok(Self::v2c(community, SnmpPdu::report(request_id, varbinds)?))
     }
 
+    /// Build an SNMPv3 top-level message wrapper.
+    ///
+    /// This preserves raw `msgFlags`, `msgSecurityParameters`, and
+    /// `ScopedPduData` bytes. It does not perform security-model processing or
+    /// parse the scoped PDU payload.
+    pub fn v3(
+        msg_id: i64,
+        max_size: i64,
+        flags: impl Into<Vec<u8>>,
+        security_model: i64,
+        security_parameters: impl Into<Vec<u8>>,
+        scoped_data: impl Into<Vec<u8>>,
+    ) -> Self {
+        Self::from_v3_message(SnmpV3Message::new(
+            msg_id,
+            max_size,
+            flags,
+            security_model,
+            security_parameters,
+            scoped_data,
+        ))
+    }
+
+    /// Build a top-level SNMP layer from explicit SNMPv3 wrapper fields.
+    pub fn from_v3_message(message: SnmpV3Message) -> Self {
+        Self {
+            data: SnmpMessageData::V3(message),
+            length: None,
+        }
+    }
+
     fn community_message(
         version: SnmpVersion,
         community: impl Into<Vec<u8>>,
         pdu: SnmpPdu,
     ) -> Self {
         Self {
-            header: SnmpMessageHeader::new(version, community),
-            pdu,
+            data: SnmpMessageData::Community {
+                header: SnmpMessageHeader::new(version, community),
+                pdu,
+            },
             length: None,
         }
     }
 
     /// Message wrapper version.
     pub const fn version(&self) -> SnmpVersion {
-        self.header.version()
+        match &self.data {
+            SnmpMessageData::Community { header, .. } => header.version(),
+            SnmpMessageData::V3(message) => message.version(),
+        }
     }
 
     /// Raw message wrapper version INTEGER.
@@ -437,29 +667,66 @@ impl Snmp {
     /// Summaries and inspection output report only the byte length; callers can
     /// opt in to inspecting the bytes through this accessor.
     pub fn community(&self) -> &[u8] {
-        self.header.community()
+        match &self.data {
+            SnmpMessageData::Community { header, .. } => header.community(),
+            SnmpMessageData::V3(_) => &[],
+        }
     }
 
-    /// PDU body carried by this message.
+    /// PDU body carried by a community-based message.
+    ///
+    /// SNMPv3 scoped-PDU parsing is added by a later packet slice; use
+    /// [`Snmp::as_v3`] to inspect raw v3 wrapper fields.
     pub const fn pdu(&self) -> &SnmpPdu {
-        &self.pdu
+        match &self.data {
+            SnmpMessageData::Community { pdu, .. } => pdu,
+            SnmpMessageData::V3(_) => panic!("SNMPv3 scoped PDU parsing is not available"),
+        }
+    }
+
+    /// PDU body carried by a community-based message, if present.
+    pub const fn pdu_opt(&self) -> Option<&SnmpPdu> {
+        match &self.data {
+            SnmpMessageData::Community { pdu, .. } => Some(pdu),
+            SnmpMessageData::V3(_) => None,
+        }
+    }
+
+    /// SNMPv3 wrapper fields, if this message uses v3 framing.
+    pub const fn as_v3(&self) -> Option<&SnmpV3Message> {
+        match &self.data {
+            SnmpMessageData::Community { .. } => None,
+            SnmpMessageData::V3(message) => Some(message),
+        }
     }
 
     /// Return a copy of this message with an explicit version INTEGER value.
     pub fn with_version(mut self, version: SnmpVersion) -> Self {
-        self.header.version = version;
+        match &mut self.data {
+            SnmpMessageData::Community { header, .. } => header.version = version,
+            SnmpMessageData::V3(message) => {
+                *message = message.clone().with_version(version);
+            }
+        }
         self
     }
 
     /// Return a copy of this message with explicit community OCTET STRING bytes.
     pub fn with_community(mut self, community: impl Into<Vec<u8>>) -> Self {
-        self.header.community = SnmpCommunity::new(community);
+        if let SnmpMessageData::Community { header, .. } = &mut self.data {
+            header.community = SnmpCommunity::new(community);
+        }
         self
     }
 
     /// Return a copy of this message carrying an explicit PDU.
     pub fn with_pdu(mut self, pdu: SnmpPdu) -> Self {
-        self.pdu = pdu;
+        if let SnmpMessageData::Community {
+            pdu: current_pdu, ..
+        } = &mut self.data
+        {
+            *current_pdu = pdu;
+        }
         self
     }
 
@@ -493,12 +760,18 @@ impl Snmp {
 
     /// Mutable PDU body carried by this message.
     pub fn pdu_mut(&mut self) -> &mut SnmpPdu {
-        &mut self.pdu
+        match &mut self.data {
+            SnmpMessageData::Community { pdu, .. } => pdu,
+            SnmpMessageData::V3(_) => panic!("SNMPv3 scoped PDU parsing is not available"),
+        }
     }
 
     /// Consume the message and return its PDU body.
     pub fn into_pdu(self) -> SnmpPdu {
-        self.pdu
+        match self.data {
+            SnmpMessageData::Community { pdu, .. } => pdu,
+            SnmpMessageData::V3(_) => panic!("SNMPv3 scoped PDU parsing is not available"),
+        }
     }
 
     /// Encoded SNMP message length in octets.
@@ -511,23 +784,38 @@ impl Snmp {
     /// Encode this SNMP message into BER bytes.
     pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
         let mut content = Vec::with_capacity(self.encoded_content_len());
-        self.header.encode(&mut content)?;
-        self.pdu.encode(&mut content)?;
+        match &self.data {
+            SnmpMessageData::Community { header, pdu } => {
+                header.encode(&mut content)?;
+                pdu.encode(&mut content)?;
+            }
+            SnmpMessageData::V3(message) => {
+                message.version().encode(&mut content)?;
+                message.encode_content_after_version(&mut content)?;
+            }
+        }
         encode_message_sequence(&content, self.explicit_length(), out)
     }
 
     /// Decode one complete SNMP message from BER bytes.
     pub fn decode(bytes: &[u8]) -> Result<Self> {
         let content = ber::decode_sequence_exact(bytes)?;
-        let (header, rest) = SnmpMessageHeader::decode(content)?;
-        let (pdu, rest) = SnmpPdu::decode(rest)?;
-        ber::require_sequence_exact(rest)?;
+        let (version, rest) = SnmpVersion::decode(content)?;
+        let data = if version == SnmpVersion::V3 {
+            let (message, rest) = SnmpV3Message::decode_after_version(version, rest)?;
+            ber::require_sequence_exact(rest)?;
+            SnmpMessageData::V3(message)
+        } else {
+            let (community, rest) = SnmpCommunity::decode(rest)?;
+            let (pdu, rest) = SnmpPdu::decode(rest)?;
+            ber::require_sequence_exact(rest)?;
+            SnmpMessageData::Community {
+                header: SnmpMessageHeader { version, community },
+                pdu,
+            }
+        };
 
-        Ok(Self {
-            header,
-            pdu,
-            length: None,
-        })
+        Ok(Self { data, length: None })
     }
 
     /// Return this SNMP message encoded as BER bytes.
@@ -544,12 +832,21 @@ impl Snmp {
 
     /// A compact SNMP message summary that avoids printing community bytes.
     pub fn summary(&self) -> String {
-        format!(
-            "Snmp(version={}, community_len={}, pdu={})",
-            self.version(),
-            self.community().len(),
-            self.pdu.summary()
-        )
+        match &self.data {
+            SnmpMessageData::Community { pdu, .. } => format!(
+                "Snmp(version={}, community_len={}, pdu={})",
+                self.version(),
+                self.community().len(),
+                pdu.summary()
+            ),
+            SnmpMessageData::V3(message) => {
+                format!(
+                    "Snmp(version={}, {})",
+                    self.version(),
+                    message.summary_fields()
+                )
+            }
+        }
     }
 
     /// Stable inspection fields for generated tools.
@@ -557,10 +854,15 @@ impl Snmp {
         let mut fields = vec![
             ("version", self.version().to_string()),
             ("version_value", self.version_value().to_string()),
-            ("community_len", self.community().len().to_string()),
             ("message_len", self.encoded_len().to_string()),
         ];
-        fields.extend(self.pdu.inspection_fields());
+        match &self.data {
+            SnmpMessageData::Community { pdu, .. } => {
+                fields.push(("community_len", self.community().len().to_string()));
+                fields.extend(pdu.inspection_fields());
+            }
+            SnmpMessageData::V3(message) => fields.extend(message.inspection_fields()),
+        }
         fields
     }
 
@@ -575,8 +877,12 @@ impl Snmp {
 
     fn encoded_content_len(&self) -> usize {
         encoded_integer_tlv_len(self.version_value())
-            + encoded_tlv_len(self.community().len())
-            + encoded_pdu_len(&self.pdu)
+            + match &self.data {
+                SnmpMessageData::Community { pdu, .. } => {
+                    encoded_tlv_len(self.community().len()) + encoded_pdu_len(pdu)
+                }
+                SnmpMessageData::V3(message) => message.encoded_content_after_version_len(),
+            }
     }
 }
 
@@ -630,11 +936,61 @@ where
 }
 
 fn decode_community_octet_string(bytes: &[u8]) -> Result<(&[u8], &[u8])> {
+    decode_octet_string_tlv(
+        bytes,
+        SNMP_MESSAGE_COMMUNITY_CONTEXT,
+        "expected universal primitive OCTET STRING",
+        "community length exceeds supported size",
+    )
+}
+
+fn encode_community_octet_string(bytes: &[u8], out: &mut Vec<u8>) -> Result<()> {
+    encode_octet_string_tlv(bytes, out)
+}
+
+fn decode_octet_string_tlv<'a>(
+    bytes: &'a [u8],
+    context: &'static str,
+    tag_reason: &'static str,
+    overflow_reason: &'static str,
+) -> Result<(&'a [u8], &'a [u8])> {
     let (tag, rest) = ber::decode_identifier(bytes)?;
     if tag != ber::BerTag::new(ber::BerClass::Universal, false, ber::BER_TAG_OCTET_STRING) {
+        return Err(ber::invalid_ber_field(context, tag_reason));
+    }
+
+    let (length, rest) = ber::decode_length(rest)?;
+    if rest.len() < length {
+        let prefix_len = bytes.len() - rest.len();
+        let required = prefix_len
+            .checked_add(length)
+            .ok_or_else(|| ber::invalid_ber_field(context, overflow_reason))?;
+        return Err(ber::truncated_ber(context, required, bytes.len()));
+    }
+
+    Ok(rest.split_at(length))
+}
+
+fn encode_octet_string_tlv(bytes: &[u8], out: &mut Vec<u8>) -> Result<()> {
+    ber::encode_identifier(
+        ber::BerTag::new(ber::BerClass::Universal, false, ber::BER_TAG_OCTET_STRING),
+        out,
+    )?;
+    ber::encode_length(bytes.len(), out)?;
+    out.extend_from_slice(bytes);
+    Ok(())
+}
+
+fn decode_scoped_data_tlv(bytes: &[u8]) -> Result<(&[u8], &[u8])> {
+    let (tag, rest) = ber::decode_identifier(bytes)?;
+    let is_plaintext =
+        tag == ber::BerTag::new(ber::BerClass::Universal, true, ber::BER_TAG_SEQUENCE);
+    let is_encrypted =
+        tag == ber::BerTag::new(ber::BerClass::Universal, false, ber::BER_TAG_OCTET_STRING);
+    if !is_plaintext && !is_encrypted {
         return Err(ber::invalid_ber_field(
-            SNMP_MESSAGE_COMMUNITY_CONTEXT,
-            "expected universal primitive OCTET STRING",
+            SNMP_V3_SCOPED_DATA_CONTEXT,
+            "expected plaintext ScopedPDU SEQUENCE or encrypted OCTET STRING",
         ));
     }
 
@@ -643,28 +999,19 @@ fn decode_community_octet_string(bytes: &[u8]) -> Result<(&[u8], &[u8])> {
         let prefix_len = bytes.len() - rest.len();
         let required = prefix_len.checked_add(length).ok_or_else(|| {
             ber::invalid_ber_field(
-                SNMP_MESSAGE_COMMUNITY_CONTEXT,
-                "community length exceeds supported size",
+                SNMP_V3_SCOPED_DATA_CONTEXT,
+                "ScopedPduData length exceeds supported size",
             )
         })?;
         return Err(ber::truncated_ber(
-            SNMP_MESSAGE_COMMUNITY_CONTEXT,
+            SNMP_V3_SCOPED_DATA_CONTEXT,
             required,
             bytes.len(),
         ));
     }
 
-    Ok(rest.split_at(length))
-}
-
-fn encode_community_octet_string(bytes: &[u8], out: &mut Vec<u8>) -> Result<()> {
-    ber::encode_identifier(
-        ber::BerTag::new(ber::BerClass::Universal, false, ber::BER_TAG_OCTET_STRING),
-        out,
-    )?;
-    ber::encode_length(bytes.len(), out)?;
-    out.extend_from_slice(bytes);
-    Ok(())
+    let tlv_len = bytes.len() - rest.len() + length;
+    Ok(bytes.split_at(tlv_len))
 }
 
 fn encode_message_sequence(
@@ -737,10 +1084,12 @@ mod tests {
     #[test]
     fn snmp_version_labels_source_backed_values() {
         // Source-backed: docs/snmp-rfc-manifest.md records RFC 1157 Section
-        // 4.1.2 for SNMPv1 value 0 and RFC 1901 Section 3 for SNMPv2c value 1.
+        // 4.1.2 for SNMPv1 value 0, RFC 1901 Section 3 for SNMPv2c value 1,
+        // and RFC 3412 Section 6.1 for SNMPv3 value 3.
         let cases = [
             (SNMP_VERSION_VALUE_V1, SnmpVersion::V1, "v1"),
             (SNMP_VERSION_VALUE_V2C, SnmpVersion::V2c, "v2c"),
+            (SNMP_VERSION_VALUE_V3, SnmpVersion::V3, "v3"),
         ];
 
         for (integer, version, label) in cases {
@@ -750,20 +1099,20 @@ mod tests {
             assert_eq!(version.to_string(), label);
         }
 
-        let unknown = SnmpVersion::from_integer(3);
+        let unknown = SnmpVersion::from_integer(4);
         assert_eq!(unknown.label(), "unknown");
-        assert_eq!(unknown.to_string(), "unknown(3)");
+        assert_eq!(unknown.to_string(), "unknown(4)");
     }
 
     #[test]
     fn snmp_version_unknown_version_preservation() -> Result<()> {
         let mut bytes =
-            SnmpMessageHeader::new(SnmpVersion::from_integer(3), b"example".to_vec()).to_bytes()?;
+            SnmpMessageHeader::new(SnmpVersion::from_integer(4), b"example".to_vec()).to_bytes()?;
         bytes.extend_from_slice(&[0xa0, 0x00]);
 
         let (decoded, rest) = SnmpMessageHeader::decode(&bytes)?;
-        assert_eq!(decoded.version(), SnmpVersion::Unknown(3));
-        assert_eq!(decoded.version().as_integer(), 3);
+        assert_eq!(decoded.version(), SnmpVersion::Unknown(4));
+        assert_eq!(decoded.version().as_integer(), 4);
         assert_eq!(decoded.version().label(), "unknown");
         assert_eq!(decoded.community(), b"example");
         assert_eq!(rest, &[0xa0, 0x00]);
@@ -995,17 +1344,111 @@ mod tests {
         Ok(())
     }
 
+    fn minimal_plaintext_v3_scoped_data() -> Vec<u8> {
+        vec![
+            0x30, 0x11, 0x04, 0x00, 0x04, 0x00, 0xa0, 0x0b, 0x02, 0x01, 0x01, 0x02, 0x01, 0x00,
+            0x02, 0x01, 0x00, 0x30, 0x00,
+        ]
+    }
+
+    #[test]
+    fn snmp_v3_message_minimal_plaintext_compile_decode_roundtrips() -> Result<()> {
+        let scoped_data = minimal_plaintext_v3_scoped_data();
+        let snmp = Snmp::v3(1, 1500, [0x00], 3, Vec::<u8>::new(), scoped_data.clone());
+
+        // Source-backed: docs/snmp-rfc-manifest.md records RFC 3412 Sections
+        // 6.1 through 6.8 for the v3 message wrapper fields and plaintext
+        // ScopedPduData CHOICE.
+        let expected = [
+            0x30, 0x27, 0x02, 0x01, 0x03, 0x30, 0x0d, 0x02, 0x01, 0x01, 0x02, 0x02, 0x05, 0xdc,
+            0x04, 0x01, 0x00, 0x02, 0x01, 0x03, 0x04, 0x00, 0x30, 0x11, 0x04, 0x00, 0x04, 0x00,
+            0xa0, 0x0b, 0x02, 0x01, 0x01, 0x02, 0x01, 0x00, 0x02, 0x01, 0x00, 0x30, 0x00,
+        ];
+
+        assert_eq!(snmp.version(), SnmpVersion::V3);
+        assert_eq!(snmp.version_value(), 3);
+        assert_eq!(snmp.community(), b"");
+        assert!(snmp.pdu_opt().is_none());
+        let v3 = snmp.as_v3().expect("v3 wrapper");
+        assert_eq!(v3.msg_id(), 1);
+        assert_eq!(v3.max_size(), 1500);
+        assert_eq!(v3.flags(), &[0x00]);
+        assert_eq!(v3.security_model(), 3);
+        assert_eq!(v3.security_parameters(), b"");
+        assert_eq!(v3.scoped_data(), scoped_data);
+        assert_eq!(snmp.encoded_len(), expected.len());
+        assert_eq!(snmp.compile()?, expected);
+
+        let decoded = Snmp::decode(&expected)?;
+        let decoded_v3 = decoded.as_v3().expect("decoded v3 wrapper");
+        assert_eq!(decoded.version(), SnmpVersion::V3);
+        assert_eq!(decoded_v3.msg_id(), 1);
+        assert_eq!(decoded_v3.max_size(), 1500);
+        assert_eq!(decoded_v3.flags(), &[0x00]);
+        assert_eq!(decoded_v3.security_model(), 3);
+        assert_eq!(decoded_v3.security_parameters(), b"");
+        assert_eq!(decoded_v3.scoped_data(), scoped_data);
+        assert_eq!(decoded.compile()?, expected);
+
+        let summary = decoded.summary();
+        assert!(summary.contains("version=v3"));
+        assert!(summary.contains("msg_id=1"));
+        assert!(summary.contains("msg_max_size=1500"));
+        assert!(summary.contains("msg_security_model=3"));
+        assert!(summary.contains("msg_security_parameters_len=0"));
+        assert!(summary.contains("scoped_data_len=19"));
+
+        let fields = decoded.inspection_fields();
+        assert_eq!(inspection_value(&fields, "version"), Some("v3"));
+        assert_eq!(inspection_value(&fields, "version_value"), Some("3"));
+        assert_eq!(inspection_value(&fields, "msg_id"), Some("1"));
+        assert_eq!(inspection_value(&fields, "msg_max_size"), Some("1500"));
+        assert_eq!(inspection_value(&fields, "msg_flags"), Some("00"));
+        assert_eq!(inspection_value(&fields, "msg_security_model"), Some("3"));
+        assert_eq!(
+            inspection_value(&fields, "msg_security_parameters_len"),
+            Some("0")
+        );
+        assert_eq!(inspection_value(&fields, "scoped_data_len"), Some("19"));
+        assert!(decoded.show().contains("  msg_id: 1"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_v3_message_preserves_unknown_security_model_and_security_bytes() -> Result<()> {
+        let scoped_data = minimal_plaintext_v3_scoped_data();
+        let snmp = Snmp::v3(7, 65_535, [0x01], 999, [0xaa, 0xbb], scoped_data.clone());
+
+        let bytes = snmp.compile()?;
+        let decoded = Snmp::decode(&bytes)?;
+        let v3 = decoded.as_v3().expect("decoded v3 wrapper");
+
+        assert_eq!(v3.msg_id(), 7);
+        assert_eq!(v3.max_size(), 65_535);
+        assert_eq!(v3.flags(), &[0x01]);
+        assert_eq!(v3.security_model(), 999);
+        assert_eq!(v3.security_parameters(), &[0xaa, 0xbb]);
+        assert_eq!(v3.scoped_data(), scoped_data);
+        assert_eq!(decoded.compile()?, bytes);
+        assert!(decoded.summary().contains("msg_security_parameters_len=2"));
+        assert!(!decoded.summary().contains("aa bb"));
+        assert!(!decoded.show().contains("aa bb"));
+
+        Ok(())
+    }
+
     #[test]
     fn snmp_message_decode_preserves_unknown_version_and_unknown_pdu() -> Result<()> {
         let bytes = [
-            0x30, 0x0b, 0x02, 0x01, 0x03, 0x04, 0x01, b'x', 0xa9, 0x03, 0x02, 0x01, 0x05,
+            0x30, 0x0b, 0x02, 0x01, 0x04, 0x04, 0x01, b'x', 0xa9, 0x03, 0x02, 0x01, 0x05,
         ];
 
         let decoded = Snmp::decode(&bytes)?;
         let unknown = decoded.pdu().as_unknown().expect("unknown PDU");
 
-        assert_eq!(decoded.version(), SnmpVersion::Unknown(3));
-        assert_eq!(decoded.version_value(), 3);
+        assert_eq!(decoded.version(), SnmpVersion::Unknown(4));
+        assert_eq!(decoded.version_value(), 4);
         assert_eq!(decoded.community(), b"x");
         assert_eq!(unknown.tag_number(), 9);
         assert!(unknown.is_constructed());
@@ -1034,17 +1477,17 @@ mod tests {
     fn snmp_v1_message_override_setters_preserve_explicit_wire_choices() -> Result<()> {
         let malformed_pdu = SnmpPdu::get_request(1, SnmpVarBindList::empty())?.length(0);
         let snmp = Snmp::v1_get_request(b"public".to_vec(), 99, SnmpVarBindList::empty())?
-            .with_version(SnmpVersion::Unknown(3))
+            .with_version(SnmpVersion::Unknown(4))
             .with_community([0xff])
             .with_pdu(malformed_pdu);
 
-        assert_eq!(snmp.version(), SnmpVersion::Unknown(3));
+        assert_eq!(snmp.version(), SnmpVersion::Unknown(4));
         assert_eq!(snmp.community(), &[0xff]);
         assert_eq!(snmp.pdu().explicit_length(), Some(0));
         assert_eq!(
             snmp.compile()?,
             [
-                0x30, 0x13, 0x02, 0x01, 0x03, 0x04, 0x01, 0xff, 0xa0, 0x00, 0x02, 0x01, 0x01, 0x02,
+                0x30, 0x13, 0x02, 0x01, 0x04, 0x04, 0x01, 0xff, 0xa0, 0x00, 0x02, 0x01, 0x01, 0x02,
                 0x01, 0x00, 0x02, 0x01, 0x00, 0x30, 0x00,
             ]
         );
@@ -1139,14 +1582,14 @@ mod tests {
     fn snmp_v2c_message_preserves_raw_community_bytes_and_unknown_version_override() -> Result<()> {
         let community = [0x00, 0xff, 0x80, b'a'];
         let snmp = Snmp::v2c_get_bulk_request(community, 7, 1, 10, SnmpVarBindList::empty())?
-            .with_version(SnmpVersion::Unknown(3));
+            .with_version(SnmpVersion::Unknown(4));
 
-        assert_eq!(snmp.version(), SnmpVersion::Unknown(3));
+        assert_eq!(snmp.version(), SnmpVersion::Unknown(4));
         assert_eq!(snmp.community(), &community);
         assert_eq!(
             snmp.compile()?,
             [
-                0x30, 0x16, 0x02, 0x01, 0x03, 0x04, 0x04, 0x00, 0xff, 0x80, b'a', 0xa5, 0x0b, 0x02,
+                0x30, 0x16, 0x02, 0x01, 0x04, 0x04, 0x04, 0x00, 0xff, 0x80, b'a', 0xa5, 0x0b, 0x02,
                 0x01, 0x07, 0x02, 0x01, 0x01, 0x02, 0x01, 0x0a, 0x30, 0x00,
             ]
         );
@@ -1157,7 +1600,7 @@ mod tests {
         let (pdu, rest) = SnmpPdu::decode(rest)?;
         ber::require_sequence_exact(rest)?;
 
-        assert_eq!(header.version(), SnmpVersion::Unknown(3));
+        assert_eq!(header.version(), SnmpVersion::Unknown(4));
         assert_eq!(header.community(), &community);
         assert_eq!(pdu.tag_number(), SnmpPdu::TAG_GET_BULK_REQUEST);
 
@@ -1375,7 +1818,7 @@ mod tests {
         let varbinds = SnmpVarBindList::new(vec![raw_varbind]).length(0);
         let pdu = SnmpPdu::get_request_with_fields(127, 99, 300, varbinds)?.length(0);
         let snmp = Snmp::v2c_get_request(b"public".to_vec(), 1, SnmpVarBindList::empty())?
-            .with_version(SnmpVersion::Unknown(3))
+            .with_version(SnmpVersion::Unknown(4))
             .with_community([0x00, 0xff])
             .with_pdu(pdu)
             .length(3);
@@ -1385,7 +1828,7 @@ mod tests {
         assert_eq!(snmp.effective_length(), 3);
         assert_eq!(snmp.encoded_len(), bytes.len());
         assert_eq!(&bytes[..2], &[0x30, 0x03]);
-        assert_eq!(&bytes[2..9], &[0x02, 0x01, 0x03, 0x04, 0x02, 0x00, 0xff]);
+        assert_eq!(&bytes[2..9], &[0x02, 0x01, 0x04, 0x04, 0x02, 0x00, 0xff]);
         assert_eq!(&bytes[9..11], &[0xa0, 0x00]);
         assert_eq!(
             &bytes[11..],
@@ -1403,10 +1846,10 @@ mod tests {
         assert_eq!(&auto_bytes[2..], &bytes[2..]);
 
         let raw_pdu_message = [
-            0x30, 0x0c, 0x02, 0x01, 0x03, 0x04, 0x01, b'x', 0xa9, 0x81, 0x03, 0x02, 0x01, 0x05,
+            0x30, 0x0c, 0x02, 0x01, 0x04, 0x04, 0x01, b'x', 0xa9, 0x81, 0x03, 0x02, 0x01, 0x05,
         ];
         let decoded = Snmp::decode(&raw_pdu_message)?;
-        assert_eq!(decoded.version(), SnmpVersion::Unknown(3));
+        assert_eq!(decoded.version(), SnmpVersion::Unknown(4));
         assert_eq!(decoded.community(), b"x");
         assert_eq!(decoded.pdu().raw_tlv_bytes(), Some(&raw_pdu_message[8..]));
         assert_eq!(decoded.compile()?, raw_pdu_message);
