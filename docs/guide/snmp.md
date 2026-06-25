@@ -199,11 +199,11 @@ command takes the dry-run branch unless `LIBCRAFTER_RUN_SNMP_LIVE=1` is set; a
 real run still requires `--confirm-live-run` and a registered lab provider.
 
 ```sh
-tools/oracle/run live --backend scapy --provider local-dry-run --family snmp --profile snmp-live-dry-run --seed 4205 --count 10 --out target/oracle/snmp-live-local-dry-run
+tools/oracle/run live --backend <reference-backend> --provider local-dry-run --family snmp --profile snmp-live-dry-run --seed 4205 --count 10 --out target/oracle/snmp-live-local-dry-run
 
 if [ "${LIBCRAFTER_RUN_SNMP_LIVE:-0}" = "1" ]; then
   tools/oracle/run live \
-    --backend scapy \
+    --backend <reference-backend> \
     --provider "${LIBCRAFTER_SNMP_LIVE_PROVIDER:-qemu}" \
     --family snmp \
     --profile snmp-live-dry-run \
@@ -214,7 +214,7 @@ if [ "${LIBCRAFTER_RUN_SNMP_LIVE:-0}" = "1" ]; then
     --out target/oracle/snmp-live-confirmed
 else
   tools/oracle/run live \
-    --backend scapy \
+    --backend <reference-backend> \
     --provider qemu \
     --dry-run \
     --family snmp \
