@@ -17,6 +17,9 @@ pub(super) enum SnmpValue {
     Integer(i64),
     OctetString(SnmpOctetString),
     Null,
+    NoSuchObject,
+    NoSuchInstance,
+    EndOfMibView,
     ObjectIdentifier(SnmpOid),
     IpAddress([u8; SNMP_IP_ADDRESS_LEN]),
     Counter32(u32),
@@ -39,6 +42,18 @@ impl SnmpValue {
 
     pub(super) const fn null() -> Self {
         Self::Null
+    }
+
+    pub(super) const fn no_such_object() -> Self {
+        Self::NoSuchObject
+    }
+
+    pub(super) const fn no_such_instance() -> Self {
+        Self::NoSuchInstance
+    }
+
+    pub(super) const fn end_of_mib_view() -> Self {
+        Self::EndOfMibView
     }
 
     pub(super) fn object_identifier(oid: SnmpOid) -> Self {
@@ -108,6 +123,36 @@ impl SnmpValue {
                     ));
                 }
                 Self::Null
+            }
+            tag if tag
+                == ber::BerTag::new(
+                    ber::BerClass::ContextSpecific,
+                    false,
+                    ber::SNMP_CONTEXT_TAG_NO_SUCH_OBJECT,
+                ) =>
+            {
+                decode_exception_content(content)?;
+                Self::NoSuchObject
+            }
+            tag if tag
+                == ber::BerTag::new(
+                    ber::BerClass::ContextSpecific,
+                    false,
+                    ber::SNMP_CONTEXT_TAG_NO_SUCH_INSTANCE,
+                ) =>
+            {
+                decode_exception_content(content)?;
+                Self::NoSuchInstance
+            }
+            tag if tag
+                == ber::BerTag::new(
+                    ber::BerClass::ContextSpecific,
+                    false,
+                    ber::SNMP_CONTEXT_TAG_END_OF_MIB_VIEW,
+                ) =>
+            {
+                decode_exception_content(content)?;
+                Self::EndOfMibView
             }
             tag if tag
                 == ber::BerTag::new(
@@ -277,6 +322,18 @@ impl SnmpValue {
         matches!(self, Self::Null)
     }
 
+    pub(super) fn is_no_such_object(&self) -> bool {
+        matches!(self, Self::NoSuchObject)
+    }
+
+    pub(super) fn is_no_such_instance(&self) -> bool {
+        matches!(self, Self::NoSuchInstance)
+    }
+
+    pub(super) fn is_end_of_mib_view(&self) -> bool {
+        matches!(self, Self::EndOfMibView)
+    }
+
     pub(super) fn as_object_identifier(&self) -> Option<&SnmpOid> {
         match self {
             Self::ObjectIdentifier(value) => Some(value),
@@ -345,6 +402,9 @@ impl SnmpValue {
             Self::Integer(_) => "integer".to_string(),
             Self::OctetString(_) => "octet-string".to_string(),
             Self::Null => "null".to_string(),
+            Self::NoSuchObject => "no-such-object".to_string(),
+            Self::NoSuchInstance => "no-such-instance".to_string(),
+            Self::EndOfMibView => "end-of-mib-view".to_string(),
             Self::ObjectIdentifier(_) => "object-identifier".to_string(),
             Self::IpAddress(_) => "ip-address".to_string(),
             Self::Counter32(_) => "counter32".to_string(),
@@ -372,6 +432,11 @@ impl SnmpValue {
                 )?;
                 ber::encode_length(0, out)
             }
+            Self::NoSuchObject => encode_exception_tlv(ber::SNMP_CONTEXT_TAG_NO_SUCH_OBJECT, out),
+            Self::NoSuchInstance => {
+                encode_exception_tlv(ber::SNMP_CONTEXT_TAG_NO_SUCH_INSTANCE, out)
+            }
+            Self::EndOfMibView => encode_exception_tlv(ber::SNMP_CONTEXT_TAG_END_OF_MIB_VIEW, out),
             Self::ObjectIdentifier(value) => value.encode(out),
             Self::IpAddress(octets) => {
                 encode_application_tlv(ber::SNMP_APPLICATION_TAG_IP_ADDRESS, false, octets, out)
@@ -607,6 +672,25 @@ fn encode_application_tlv(
         content,
         out,
     )
+}
+
+fn encode_exception_tlv(tag_number: u8, out: &mut Vec<u8>) -> Result<()> {
+    encode_tlv(
+        ber::BerTag::new(ber::BerClass::ContextSpecific, false, tag_number),
+        &[],
+        out,
+    )
+}
+
+fn decode_exception_content(content: &[u8]) -> Result<()> {
+    if !content.is_empty() {
+        return Err(ber::invalid_ber_field(
+            "snmp.ber.exception",
+            "exception value must have zero content length",
+        ));
+    }
+
+    Ok(())
 }
 
 fn encode_unsigned_application_tlv(tag_number: u8, value: u32, out: &mut Vec<u8>) -> Result<()> {
@@ -870,6 +954,9 @@ mod tests {
             (SnmpValue::integer(1), "integer"),
             (SnmpValue::octet_string([0xaa]), "octet-string"),
             (SnmpValue::null(), "null"),
+            (SnmpValue::no_such_object(), "no-such-object"),
+            (SnmpValue::no_such_instance(), "no-such-instance"),
+            (SnmpValue::end_of_mib_view(), "end-of-mib-view"),
             (SnmpValue::object_identifier(oid), "object-identifier"),
             (SnmpValue::ip_address([192, 0, 2, 1]), "ip-address"),
             (SnmpValue::counter32(1), "counter32"),
@@ -901,6 +988,9 @@ mod tests {
             Some(&[0xde, 0xad][..])
         );
         assert!(SnmpValue::null().is_null());
+        assert!(SnmpValue::no_such_object().is_no_such_object());
+        assert!(SnmpValue::no_such_instance().is_no_such_instance());
+        assert!(SnmpValue::end_of_mib_view().is_end_of_mib_view());
         assert_eq!(
             SnmpValue::object_identifier(oid.clone())
                 .as_object_identifier()
