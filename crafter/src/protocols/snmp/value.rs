@@ -487,8 +487,11 @@ impl SnmpValue {
                         raw.is_constructed(),
                         raw.tag_number(),
                     ),
+                    Some(raw.declared_length()),
                     Some(raw.content().len()),
                     Some(raw.tlv_len()),
+                    raw.tlv_bytes(),
+                    Some(raw.content()),
                 );
             }
             Self::RawTlv(raw) => {
@@ -496,11 +499,15 @@ impl SnmpValue {
                     push_unknown_inspection_fields(
                         &mut fields,
                         tag,
+                        raw.declared_length(),
                         raw.content().map(<[u8]>::len),
                         Some(raw.as_bytes().len()),
+                        Some(raw.as_bytes()),
+                        raw.content(),
                     );
                 } else {
                     fields.push(("value_tlv_len", raw.as_bytes().len().to_string()));
+                    fields.push(("value_tlv_bytes", ber::hex_bytes(raw.as_bytes())));
                 }
             }
         }
@@ -637,6 +644,13 @@ impl RawApplicationValue {
             .unwrap_or_else(|| encoded_tlv_len(self.content.len()))
     }
 
+    fn declared_length(&self) -> usize {
+        self.raw_tlv
+            .as_ref()
+            .and_then(RawTlv::declared_length)
+            .unwrap_or(self.content.len())
+    }
+
     pub(super) fn label(&self) -> String {
         registry::application_tag_label(self.tag_number, self.constructed)
     }
@@ -686,6 +700,12 @@ impl RawTlv {
 
     pub(super) fn tag(&self) -> Option<ber::BerTag> {
         ber::decode_identifier(&self.bytes).ok().map(|(tag, _)| tag)
+    }
+
+    pub(super) fn declared_length(&self) -> Option<usize> {
+        let (_, rest) = ber::decode_identifier(&self.bytes).ok()?;
+        let (length, _) = ber::decode_length(rest).ok()?;
+        Some(length)
     }
 
     pub(super) fn class_label(&self) -> Option<&'static str> {
@@ -785,8 +805,11 @@ fn encoded_length_len(length: usize) -> usize {
 fn push_unknown_inspection_fields(
     fields: &mut Vec<(&'static str, String)>,
     tag: ber::BerTag,
+    declared_length: Option<usize>,
     content_len: Option<usize>,
     tlv_len: Option<usize>,
+    tlv_bytes: Option<&[u8]>,
+    content_bytes: Option<&[u8]>,
 ) {
     fields.push(("value_ber_class", tag.class().label().to_string()));
     fields.push((
@@ -799,11 +822,20 @@ fn push_unknown_inspection_fields(
         "value_ber_identifier",
         format!("0x{:02x}", tag.identifier_octet()),
     ));
+    if let Some(declared_length) = declared_length {
+        fields.push(("value_ber_length", declared_length.to_string()));
+    }
     if let Some(content_len) = content_len {
         fields.push(("value_content_len", content_len.to_string()));
     }
     if let Some(tlv_len) = tlv_len {
         fields.push(("value_tlv_len", tlv_len.to_string()));
+    }
+    if let Some(content_bytes) = content_bytes {
+        fields.push(("value_content_bytes", ber::hex_bytes(content_bytes)));
+    }
+    if let Some(tlv_bytes) = tlv_bytes {
+        fields.push(("value_tlv_bytes", ber::hex_bytes(tlv_bytes)));
     }
 }
 
@@ -1167,8 +1199,11 @@ mod tests {
                 ("value_ber_constructed", "false".to_string()),
                 ("value_ber_tag_number", "5".to_string()),
                 ("value_ber_identifier", "0x45".to_string()),
+                ("value_ber_length", "2".to_string()),
                 ("value_content_len", "2".to_string()),
                 ("value_tlv_len", "5".to_string()),
+                ("value_content_bytes", "de ad".to_string()),
+                ("value_tlv_bytes", "45 81 02 de ad".to_string()),
             ]
         );
 

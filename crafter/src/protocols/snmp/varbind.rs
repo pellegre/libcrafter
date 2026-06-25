@@ -570,6 +570,51 @@ mod tests {
     }
 
     #[test]
+    fn snmp_raw_tlv_varbind_compile_decode_recompile_and_inspection() -> Result<()> {
+        let name = SnmpOid::from_dotted("1.3.6.1.2.1.1.5.0")?;
+        let raw_tlv = [0xc3, 0x81, 0x02, 0xde, 0xad];
+        let varbind = SnmpVarBind::raw_value_tlv(name, raw_tlv);
+        let expected = [
+            0x30, 0x0f, 0x06, 0x08, 0x2b, 0x06, 0x01, 0x02, 0x01, 0x01, 0x05, 0x00, 0xc3, 0x81,
+            0x02, 0xde, 0xad,
+        ];
+
+        assert_eq!(varbind.compile()?, expected);
+        let (decoded, rest) = SnmpVarBind::decode(&expected)?;
+
+        assert!(rest.is_empty());
+        assert_eq!(decoded.compile()?, expected);
+        assert_eq!(decoded.value_summary(), "private-3");
+        assert_eq!(decoded.raw_value_tlv_bytes(), Some(&raw_tlv[..]));
+        assert_eq!(decoded.unknown_value_class(), Some("private"));
+        assert_eq!(decoded.unknown_value_is_constructed(), Some(false));
+        assert_eq!(decoded.unknown_value_tag_number(), Some(3));
+        assert_eq!(decoded.unknown_value_content(), Some(&[0xde, 0xad][..]));
+        assert_eq!(decoded.unknown_value_tlv_bytes(), Some(&raw_tlv[..]));
+        assert_eq!(
+            decoded.inspection_fields(),
+            [
+                ("name", "1.3.6.1.2.1.1.5.0".to_string()),
+                ("name_type", "object-identifier".to_string()),
+                ("name_arc_count", "9".to_string()),
+                ("value_type", "private-3".to_string()),
+                ("value_ber_class", "private".to_string()),
+                ("value_ber_class_bits", "0xc0".to_string()),
+                ("value_ber_constructed", "false".to_string()),
+                ("value_ber_tag_number", "3".to_string()),
+                ("value_ber_identifier", "0xc3".to_string()),
+                ("value_ber_length", "2".to_string()),
+                ("value_content_len", "2".to_string()),
+                ("value_tlv_len", "5".to_string()),
+                ("value_content_bytes", "de ad".to_string()),
+                ("value_tlv_bytes", "c3 81 02 de ad".to_string()),
+            ]
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn snmp_varbind_list_empty_compiles_and_decodes() -> Result<()> {
         let list = SnmpVarBindList::empty();
 

@@ -422,6 +422,19 @@ pub(super) fn encode_sequence(content: &[u8], out: &mut Vec<u8>) -> Result<()> {
     Ok(())
 }
 
+pub(super) fn hex_bytes(bytes: &[u8]) -> String {
+    let mut output = String::new();
+
+    for (index, byte) in bytes.iter().enumerate() {
+        if index > 0 {
+            output.push(' ');
+        }
+        output.push_str(&format!("{byte:02x}"));
+    }
+
+    output
+}
+
 pub(super) fn truncated_identifier(available: usize) -> CrafterError {
     CrafterError::buffer_too_short("snmp.ber.identifier", BER_IDENTIFIER_LEN, available)
 }
