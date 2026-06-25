@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shutil
 import unittest
+from importlib import import_module
 
 from tools.oracle.engine.backends.scapy import normalize as scapy_normalize
 from tools.oracle.engine.backends.scapy import packets as scapy_packets
@@ -14,6 +15,8 @@ from tools.oracle.engine.backends.wireshark.protocols import WIRESHARK_REGISTRY
 from tools.oracle.engine.generator import generate_plans
 from tools.oracle.engine.protocols import SAMPLER_REGISTRY
 from tools.oracle.engine.spec_loader import load_oracle_specs
+
+oracle_cli = import_module("tools.oracle.engine.cli.main")
 
 
 def _scapy_available() -> bool:
@@ -87,6 +90,9 @@ class SnmpOracleBackendTest(unittest.TestCase):
         self.assertIn(b"doc-community", payload)
         self.assertTrue(payload.endswith(bytes.fromhex("06082b060102010101000500")))
 
+    def test_pcap_layer_canonicalization_normalizes_snmp(self) -> None:
+        self.assertEqual(oracle_cli._canonical_pcap_layers(["Snmp"]), ["snmp"])
+
     @unittest.skipUnless(_scapy_available(), "scapy not importable")
     def test_scapy_encode_decode_surfaces_snmp_layer(self) -> None:
         plan = _plan("snmp-basic-v2c-get-request", "snmp_basic")
@@ -102,6 +108,19 @@ class SnmpOracleBackendTest(unittest.TestCase):
         plan = _plan("snmp-v3-encrypted-scoped-data", "snmp_v3")
         vector = scapy_packets.encode_packet_plan(plan)
         decoded = scapy_normalize.decode_vector(vector)
+        self.assertIn("snmp", decoded.layers)
+        self.assertEqual(decoded.fields["snmp"]["version"], "v3")
+        self.assertNotIn("payload", decoded.fields)
+
+    @unittest.skipUnless(_scapy_available(), "scapy not importable")
+    def test_scapy_decode_canonicalizes_snmp_v3_raw_payload_without_feature_tags(self) -> None:
+        plan = _plan("snmp-v3-encrypted-scoped-data", "snmp_v3")
+        vector = scapy_packets.encode_packet_plan(plan)
+        decoded = scapy_normalize.decode_bytes(
+            vector.to_bytes(),
+            root=vector.root or "l3:ipv4",
+            source_hex=vector.raw_hex,
+        )
         self.assertIn("snmp", decoded.layers)
         self.assertEqual(decoded.fields["snmp"]["version"], "v3")
         self.assertNotIn("payload", decoded.fields)
