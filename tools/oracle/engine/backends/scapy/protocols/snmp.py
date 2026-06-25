@@ -424,23 +424,61 @@ def _bytes_value(value: object, default: bytes) -> bytes:
 
 def _normalize(fields: JSONObject) -> JSONObject:
     output: JSONObject = {}
-    version = fields.get("version")
+    version = _native_version(fields.get("version"))
     if version is not None:
-        output["version"] = _json_scalar(version)
-    community = fields.get("community")
+        output["version"] = _VERSION_LABELS_FOR_CODE.get(version, version)
+    community = _native_octets(fields.get("community"))
     if community is not None:
-        output["community"] = _json_scalar(community)
+        output["community"] = community.decode("utf-8", "replace")
     pdu = fields.get("PDU")
     if isinstance(pdu, Mapping):
         output["pdu"] = dict(pdu)  # type: ignore[arg-type]
     return output
 
 
-def _json_scalar(value: JSONValue) -> JSONValue:
-    if isinstance(value, (str, int, float, bool)) or value is None:
-        return value
-    return value
+_VERSION_LABELS_FOR_CODE = {0: "v1", 1: "v2c", 3: "v3"}
 
+
+def _native_version(value: JSONValue) -> int | None:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    content = _native_ber_content(value, 0x02)
+    if content is None:
+        return None
+    return int.from_bytes(content, "big")
+
+
+def _native_octets(value: JSONValue) -> bytes | None:
+    if isinstance(value, str):
+        content = _native_ber_content(value, 0x04)
+        if content is not None:
+            return content
+        return value.encode("utf-8")
+    if isinstance(value, Mapping) and isinstance(value.get("hex"), str):
+        return bytes.fromhex(str(value["hex"]))
+    return None
+
+
+def _native_ber_content(value: JSONValue, tag: int) -> bytes | None:
+    if not isinstance(value, str):
+        return None
+    raw = value.encode("latin1", "ignore")
+    if len(raw) < 2 or raw[0] != tag:
+        return None
+    length_octet = raw[1]
+    if length_octet & 0x80:
+        width = length_octet & 0x7F
+        if len(raw) < 2 + width:
+            return None
+        length = int.from_bytes(raw[2 : 2 + width], "big")
+        start = 2 + width
+    else:
+        length = length_octet
+        start = 2
+    end = start + length
+    if len(raw) < end:
+        return None
+    return raw[start:end]
 
 register(
     ScapyProtocol(
