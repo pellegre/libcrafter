@@ -85,6 +85,14 @@ impl QuicPacketNumber {
         }
         decode(bytes, bytes.len())
     }
+
+    /// Stable summary for packet inspection.
+    pub fn summary(self) -> String {
+        match self.effective_encoded_len() {
+            Ok(len) => format!("value={} encoded_len={len}", self.value),
+            Err(err) => format!("value={} encoded_len=invalid ({err})", self.value),
+        }
+    }
 }
 
 /// Shortest valid packet-number encoded length for a value.
@@ -289,5 +297,17 @@ mod tests {
                 "QUIC packet number exceeds 32 encoded bits"
             )
         );
+    }
+
+    #[test]
+    fn quic_summary_inspection_packet_number_summary_is_stable() {
+        assert_eq!(
+            QuicPacketNumber::new(0x12).with_encoded_len(2).summary(),
+            "value=18 encoded_len=2"
+        );
+        assert!(QuicPacketNumber::new(0x0100)
+            .with_encoded_len(1)
+            .summary()
+            .starts_with("value=256 encoded_len=invalid"));
     }
 }
