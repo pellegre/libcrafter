@@ -17,7 +17,7 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::{arp, dhcp, dns, icmp, mqtt, ndp, ospf, rip, tcp, udp};
+use crate::{arp, dhcp, dns, icmp, mqtt, ndp, ospf, rip, snmp, tcp, udp};
 
 pub type ExampleResult<T> = std::result::Result<T, Box<dyn Error>>;
 
@@ -149,6 +149,14 @@ pub struct ProbePlan {
     pub source_port: Option<u16>,
     #[serde(default)]
     pub destination_port: Option<u16>,
+    // SNMP behavioral case fields. The planner carries the source-backed SNMP
+    // message intent in nested JSON so the Rust endpoint can materialize the
+    // packet with libcrafter's typed SNMP layer while keeping community/user
+    // bytes out of summaries unless explicitly requested by the plan.
+    #[serde(default)]
+    pub snmp_request: Option<Value>,
+    #[serde(default)]
+    pub expected_snmp_response: Option<Value>,
     #[serde(default)]
     pub tcp_sequence_number: Option<u32>,
     #[serde(default)]
@@ -1123,6 +1131,20 @@ fn dispatch_case(
         ) => mqtt::run_mqtt_live(request, plan),
         (
             RunMode::DryRun,
+            "snmp-get-response"
+            | "snmp-getbulk-response"
+            | "snmp-notification-trap"
+            | "snmpv3-engine-discovery-report",
+        ) => snmp::run_snmp_dry_run(request, plan),
+        (
+            RunMode::Live,
+            "snmp-get-response"
+            | "snmp-getbulk-response"
+            | "snmp-notification-trap"
+            | "snmpv3-engine-discovery-report",
+        ) => snmp::run_snmp_live(request, plan),
+        (
+            RunMode::DryRun,
             "udp-echo-empty"
             | "udp-echo-short"
             | "udp-echo-binary"
@@ -1416,6 +1438,11 @@ pub fn plan_json(plan: &ProbePlan) -> Value {
             "expected_ospf_area_id".into(),
             json!(plan.expected_ospf_area_id),
         );
+        map.insert("snmp_request".into(), json!(plan.snmp_request));
+        map.insert(
+            "expected_snmp_response".into(),
+            json!(plan.expected_snmp_response),
+        );
     }
     value
 }
@@ -1428,6 +1455,7 @@ pub fn decoded_packet_json(packet: &Packet, raw: &[u8]) -> Value {
     let udp = packet.layer::<Udp>();
     let dns = packet.layer::<Dns>();
     let dhcp = packet.layer::<Dhcp>();
+    let snmp_layer = packet.layer::<Snmp>();
     let udp_options = packet.layer::<UdpOptions>();
     let ethernet = packet.layer::<Ethernet>();
     let arp_layer = packet.layer::<Arp>();
@@ -1473,6 +1501,7 @@ pub fn decoded_packet_json(packet: &Packet, raw: &[u8]) -> Value {
         "udp_options": udp::udp_options_json(udp_options),
         "dns": dns.map(dns::dns_json),
         "dhcp": dhcp.map(dhcp::dhcp_json),
+        "snmp": snmp_layer.map(snmp::snmp_json),
         "payload_hex": hex_bytes(raw_payload(packet)),
     })
 }
@@ -1534,6 +1563,20 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
                     .as_deref()
                     .unwrap_or(""),
                 plan.destination_port.unwrap_or(0),
+                plan.source_port.unwrap_or(0),
+            )
+        }
+        "snmp-get-response"
+        | "snmp-getbulk-response"
+        | "snmp-notification-trap"
+        | "snmpv3-engine-discovery-report" => {
+            format!(
+                "udp and src host {} and dst host {} and src port {} and dst port {}",
+                plan.expected_reply_source_ipv4.as_deref().unwrap_or(""),
+                plan.expected_reply_destination_ipv4
+                    .as_deref()
+                    .unwrap_or(""),
+                plan.destination_port.unwrap_or(SNMP_PORT),
                 plan.source_port.unwrap_or(0),
             )
         }
@@ -1680,6 +1723,9 @@ pub fn expected_response(plan: &ProbePlan) -> &str {
             "mqtt-v5-connect-connack" => "mqtt_v5_connack",
             "mqtt-subscribe-suback" => "mqtt_suback",
             "mqtt-publish-puback" => "mqtt_puback",
+            "snmp-get-response" | "snmp-getbulk-response" => "snmp_response",
+            "snmp-notification-trap" => "snmp_notification_observed",
+            "snmpv3-engine-discovery-report" => "snmpv3_report",
             _ => "unknown",
         })
 }
@@ -1807,6 +1853,23 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
                 "query_name": plan.query_name,
                 "sends": dns::repeat_sends_json(plan.sends.as_deref()),
             },
+        }),
+        "snmp-get-response"
+        | "snmp-getbulk-response"
+        | "snmp-notification-trap"
+        | "snmpv3-engine-discovery-report" => json!({
+            "required": true,
+            "kind": "snmp-controlled-peer",
+            "protocol": "udp",
+            "port": plan.destination_port,
+            "source_ipv4": plan.source_ipv4,
+            "bind_ipv4": plan.destination_ipv4,
+            "service_mode": match plan.case.as_str() {
+                "snmp-notification-trap" => "notification_sink",
+                _ => "agent",
+            },
+            "snmp_request": plan.snmp_request,
+            "expected_snmp_response": plan.expected_snmp_response,
         }),
         "dhcp-discover-offer" => json!({
             "required": true,
@@ -2264,6 +2327,18 @@ pub fn validation_json(plan: &ProbePlan) -> Value {
                 "destination_port": plan.destination_port,
                 "udp_length": plan.expected_udp_length,
             },
+        }),
+        "snmp-get-response"
+        | "snmp-getbulk-response"
+        | "snmp-notification-trap"
+        | "snmpv3-engine-discovery-report" => json!({
+            "planned_only": true,
+            "driver": "snmp_probe",
+            "source_ipv4": plan.expected_reply_source_ipv4,
+            "destination_ipv4": plan.expected_reply_destination_ipv4,
+            "source_port": plan.destination_port,
+            "destination_port": plan.source_port,
+            "expected_snmp_response": plan.expected_snmp_response,
         }),
         "ndp-neighbor-solicitation"
         | "ndp-router-solicitation"

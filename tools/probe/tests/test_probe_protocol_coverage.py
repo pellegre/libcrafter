@@ -11,10 +11,10 @@ with the full case set in :data:`tools.probe.engine.cases.PROBE_CASE_BY_NAME`.
 
 Three guarantees are asserted:
 
-* Full registry coverage -- every one of the 13 known probe protocols
+* Full registry coverage -- every one of the 14 known probe protocols
   (``arp``, ``dns``, ``dhcp``, ``udp``, ``ndp``, ``icmp``, ``tcp``, ``bgp``,
-  ``rip``, ``ospf``, ``igmp``, ``ipsec``, ``mqtt``) has a registered plugin,
-  and no registered plugin names a non-protocol.
+  ``rip``, ``ospf``, ``igmp``, ``ipsec``, ``mqtt``, ``snmp``) has a registered
+  plugin, and no registered plugin names a non-protocol.
 * Exactly-one ownership -- every case in ``PROBE_CASE_BY_NAME`` is owned by
   exactly one plugin (by case *name* via ``plugin.cases``), and no plugin owns a
   phantom case absent from ``PROBE_CASE_BY_NAME``.
@@ -63,6 +63,7 @@ ALL_PROTOCOLS: frozenset[str] = frozenset(
         "igmp",
         "ipsec",
         "mqtt",
+        "snmp",
     }
 )
 
