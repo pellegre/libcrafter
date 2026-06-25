@@ -49,6 +49,8 @@ values use `Ipv4Protocol`.
 | `dhcp_leasequery` | Protocols | Offline | DHCP leasequery, typed client identifier, authentication, and status/state packet-field construction and offline decode. | `cargo run -p crafter --example dhcp_leasequery` |
 | `icmpv4_error` | Protocols | Offline | ICMPv4 time-exceeded error with a quoted datagram and an RFC 4884/4950 MPLS extension object, compiled and decoded offline. | `cargo run -p crafter --example icmpv4_error` |
 | `icmpv6_echo` | Protocols | Offline by default; dry-run with `--send-recv` | IPv6 ICMPv6 echo construction and optional dry-run send/receive reporting. | `cargo run -p crafter --example icmpv6_echo` |
+| `snmp_get` | Protocols | Offline | SNMPv1 and SNMPv2c GetRequest packet construction, decode, show, and hexdump output. | `cargo run -p crafter --example snmp_get` |
+| `snmp_trap` | Protocols | Offline | SNMPv1 Trap and SNMPv2c SNMPv2-Trap packet construction, decode, show, and hexdump output. | `cargo run -p crafter --example snmp_trap` |
 | `vlan` | Protocols | Offline | 802.1Q VLAN frame construction, compile, and decode. | `cargo run -p crafter --example vlan` |
 | `linux_sll` | Protocols | Offline | Linux cooked capture packet construction, compile, and decode. | `cargo run -p crafter --example linux_sll` |
 | `null_loopback` | Protocols | Offline | BSD null/loopback link-layer packet construction, compile, and decode. | `cargo run -p crafter --example null_loopback` |
