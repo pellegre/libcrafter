@@ -163,56 +163,51 @@ enum SnmpMessageData {
     V3(SnmpV3Message),
 }
 
-/// SNMPv3 top-level message wrapper fields.
+/// RFC 3412 SNMPv3 `HeaderData` global message fields.
 ///
-/// This models the RFC 3412 message framing only. Security-model processing,
-/// USM credentials, encryption, authentication, timeliness, and scoped-PDU
-/// interpretation belong to later packet slices or generated tools.
+/// These are wire fields only. The packet layer preserves caller-supplied
+/// values and unknown security-model numbers without applying session policy.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SnmpV3Message {
-    version: SnmpVersion,
+pub struct SnmpV3GlobalData {
     msg_id: i64,
     max_size: i64,
     flags: Vec<u8>,
     security_model: i64,
-    security_parameters: Vec<u8>,
-    scoped_data: Vec<u8>,
 }
 
-impl SnmpV3Message {
-    /// Build an SNMPv3 message wrapper with raw security/scoped-data bytes.
-    pub fn new(
-        msg_id: i64,
-        max_size: i64,
-        flags: impl Into<Vec<u8>>,
-        security_model: i64,
-        security_parameters: impl Into<Vec<u8>>,
-        scoped_data: impl Into<Vec<u8>>,
-    ) -> Self {
+impl SnmpV3GlobalData {
+    /// Build SNMPv3 global data from explicit wire values.
+    pub fn new(msg_id: i64, max_size: i64, flags: impl Into<Vec<u8>>, security_model: i64) -> Self {
         Self {
-            version: SnmpVersion::V3,
             msg_id,
             max_size,
             flags: flags.into(),
             security_model,
-            security_parameters: security_parameters.into(),
-            scoped_data: scoped_data.into(),
         }
     }
 
-    const fn with_version(mut self, version: SnmpVersion) -> Self {
-        self.version = version;
+    /// Return a copy with an explicit `msgID` INTEGER.
+    pub fn with_msg_id(mut self, msg_id: i64) -> Self {
+        self.msg_id = msg_id;
         self
     }
 
-    /// Message wrapper version.
-    pub const fn version(&self) -> SnmpVersion {
-        self.version
+    /// Return a copy with an explicit `msgMaxSize` INTEGER.
+    pub fn with_max_size(mut self, max_size: i64) -> Self {
+        self.max_size = max_size;
+        self
     }
 
-    /// Raw message wrapper version INTEGER.
-    pub const fn version_value(&self) -> i64 {
-        self.version.as_integer()
+    /// Return a copy with explicit raw `msgFlags` OCTET STRING bytes.
+    pub fn with_flags(mut self, flags: impl Into<Vec<u8>>) -> Self {
+        self.flags = flags.into();
+        self
+    }
+
+    /// Return a copy with an explicit `msgSecurityModel` INTEGER.
+    pub fn with_security_model(mut self, security_model: i64) -> Self {
+        self.security_model = security_model;
+        self
     }
 
     /// RFC 3412 `msgID` INTEGER value.
@@ -235,17 +230,8 @@ impl SnmpV3Message {
         self.security_model
     }
 
-    /// Raw RFC 3412 `msgSecurityParameters` OCTET STRING bytes.
-    pub fn security_parameters(&self) -> &[u8] {
-        &self.security_parameters
-    }
-
-    /// Raw RFC 3412 `ScopedPduData` TLV bytes.
-    pub fn scoped_data(&self) -> &[u8] {
-        &self.scoped_data
-    }
-
-    fn decode_after_version(version: SnmpVersion, bytes: &[u8]) -> Result<(Self, &[u8])> {
+    /// Decode one SNMPv3 `HeaderData` SEQUENCE.
+    pub fn decode(bytes: &[u8]) -> Result<(Self, &[u8])> {
         let (header_content, rest) = ber::decode_sequence(bytes)?;
         let (msg_id, header_rest) = ber::decode_integer(header_content)?;
         let (max_size, header_rest) = ber::decode_integer(header_rest)?;
@@ -263,6 +249,156 @@ impl SnmpV3Message {
             ));
         }
 
+        Ok((
+            Self::new(msg_id, max_size, flags.to_vec(), security_model),
+            rest,
+        ))
+    }
+
+    /// Encode this SNMPv3 `HeaderData` SEQUENCE.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        let mut content = Vec::with_capacity(self.encoded_content_len());
+        ber::encode_integer(self.msg_id, &mut content)?;
+        ber::encode_integer(self.max_size, &mut content)?;
+        encode_octet_string_tlv(&self.flags, &mut content)?;
+        ber::encode_integer(self.security_model, &mut content)?;
+        ber::encode_sequence(&content, out)
+    }
+
+    /// Return this global data encoded as BER bytes.
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.encoded_len());
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Compile this global data into BER bytes.
+    pub fn compile(&self) -> Result<Vec<u8>> {
+        self.to_bytes()
+    }
+
+    /// Encoded SNMPv3 `HeaderData` length in octets.
+    pub fn encoded_len(&self) -> usize {
+        encoded_tlv_len(self.encoded_content_len())
+    }
+
+    fn encoded_content_len(&self) -> usize {
+        encoded_integer_tlv_len(self.msg_id)
+            + encoded_integer_tlv_len(self.max_size)
+            + encoded_tlv_len(self.flags.len())
+            + encoded_integer_tlv_len(self.security_model)
+    }
+
+    /// A compact summary of the SNMPv3 global message fields.
+    pub fn summary(&self) -> String {
+        format!("SnmpV3GlobalData({})", self.summary_fields())
+    }
+
+    fn summary_fields(&self) -> String {
+        format!(
+            "msg_id={} msg_max_size={} msg_flags_len={} msg_security_model={}",
+            self.msg_id,
+            self.max_size,
+            self.flags.len(),
+            self.security_model
+        )
+    }
+
+    /// Stable inspection fields for generated tools.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("msg_id", self.msg_id.to_string()),
+            ("msg_max_size", self.max_size.to_string()),
+            ("msg_flags_len", self.flags.len().to_string()),
+            ("msg_flags", ber::hex_bytes(&self.flags)),
+            ("msg_security_model", self.security_model.to_string()),
+        ]
+    }
+}
+
+/// SNMPv3 top-level message wrapper fields.
+///
+/// This models the RFC 3412 message framing only. Security-model processing,
+/// USM credentials, encryption, authentication, timeliness, and scoped-PDU
+/// interpretation belong to later packet slices or generated tools.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SnmpV3Message {
+    version: SnmpVersion,
+    global_data: SnmpV3GlobalData,
+    security_parameters: Vec<u8>,
+    scoped_data: Vec<u8>,
+}
+
+impl SnmpV3Message {
+    /// Build an SNMPv3 message wrapper with raw security/scoped-data bytes.
+    pub fn new(
+        msg_id: i64,
+        max_size: i64,
+        flags: impl Into<Vec<u8>>,
+        security_model: i64,
+        security_parameters: impl Into<Vec<u8>>,
+        scoped_data: impl Into<Vec<u8>>,
+    ) -> Self {
+        Self {
+            version: SnmpVersion::V3,
+            global_data: SnmpV3GlobalData::new(msg_id, max_size, flags, security_model),
+            security_parameters: security_parameters.into(),
+            scoped_data: scoped_data.into(),
+        }
+    }
+
+    const fn with_version(mut self, version: SnmpVersion) -> Self {
+        self.version = version;
+        self
+    }
+
+    /// Message wrapper version.
+    pub const fn version(&self) -> SnmpVersion {
+        self.version
+    }
+
+    /// Raw message wrapper version INTEGER.
+    pub const fn version_value(&self) -> i64 {
+        self.version.as_integer()
+    }
+
+    /// RFC 3412 `HeaderData` global message fields.
+    pub const fn global_data(&self) -> &SnmpV3GlobalData {
+        &self.global_data
+    }
+
+    /// RFC 3412 `msgID` INTEGER value.
+    pub const fn msg_id(&self) -> i64 {
+        self.global_data.msg_id()
+    }
+
+    /// RFC 3412 `msgMaxSize` INTEGER value.
+    pub const fn max_size(&self) -> i64 {
+        self.global_data.max_size()
+    }
+
+    /// Raw RFC 3412 `msgFlags` OCTET STRING bytes.
+    pub fn flags(&self) -> &[u8] {
+        self.global_data.flags()
+    }
+
+    /// RFC 3412 `msgSecurityModel` INTEGER value.
+    pub const fn security_model(&self) -> i64 {
+        self.global_data.security_model()
+    }
+
+    /// Raw RFC 3412 `msgSecurityParameters` OCTET STRING bytes.
+    pub fn security_parameters(&self) -> &[u8] {
+        &self.security_parameters
+    }
+
+    /// Raw RFC 3412 `ScopedPduData` TLV bytes.
+    pub fn scoped_data(&self) -> &[u8] {
+        &self.scoped_data
+    }
+
+    fn decode_after_version(version: SnmpVersion, bytes: &[u8]) -> Result<(Self, &[u8])> {
+        let (global_data, rest) = SnmpV3GlobalData::decode(bytes)?;
         let (security_parameters, rest) = decode_octet_string_tlv(
             rest,
             SNMP_V3_SECURITY_PARAMETERS_CONTEXT,
@@ -274,10 +410,7 @@ impl SnmpV3Message {
         Ok((
             Self {
                 version,
-                msg_id,
-                max_size,
-                flags: flags.to_vec(),
-                security_model,
+                global_data,
                 security_parameters: security_parameters.to_vec(),
                 scoped_data: scoped_data.to_vec(),
             },
@@ -286,56 +419,35 @@ impl SnmpV3Message {
     }
 
     fn encode_content_after_version(&self, out: &mut Vec<u8>) -> Result<()> {
-        let mut header = Vec::with_capacity(self.header_data_content_len());
-        ber::encode_integer(self.msg_id, &mut header)?;
-        ber::encode_integer(self.max_size, &mut header)?;
-        encode_octet_string_tlv(&self.flags, &mut header)?;
-        ber::encode_integer(self.security_model, &mut header)?;
-
-        ber::encode_sequence(&header, out)?;
+        self.global_data.encode(out)?;
         encode_octet_string_tlv(&self.security_parameters, out)?;
         out.extend_from_slice(&self.scoped_data);
         Ok(())
     }
 
     fn encoded_content_after_version_len(&self) -> usize {
-        encoded_tlv_len(self.header_data_content_len())
+        self.global_data.encoded_len()
             + encoded_tlv_len(self.security_parameters.len())
             + self.scoped_data.len()
     }
 
-    fn header_data_content_len(&self) -> usize {
-        encoded_integer_tlv_len(self.msg_id)
-            + encoded_integer_tlv_len(self.max_size)
-            + encoded_tlv_len(self.flags.len())
-            + encoded_integer_tlv_len(self.security_model)
-    }
-
     fn summary_fields(&self) -> String {
         format!(
-            "msg_id={} msg_max_size={} msg_flags_len={} msg_security_model={} msg_security_parameters_len={} scoped_data_len={}",
-            self.msg_id,
-            self.max_size,
-            self.flags.len(),
-            self.security_model,
+            "{} msg_security_parameters_len={} scoped_data_len={}",
+            self.global_data.summary_fields(),
             self.security_parameters.len(),
             self.scoped_data.len()
         )
     }
 
     fn inspection_fields(&self) -> Vec<(&'static str, String)> {
-        vec![
-            ("msg_id", self.msg_id.to_string()),
-            ("msg_max_size", self.max_size.to_string()),
-            ("msg_flags_len", self.flags.len().to_string()),
-            ("msg_flags", ber::hex_bytes(&self.flags)),
-            ("msg_security_model", self.security_model.to_string()),
-            (
-                "msg_security_parameters_len",
-                self.security_parameters.len().to_string(),
-            ),
-            ("scoped_data_len", self.scoped_data.len().to_string()),
-        ]
+        let mut fields = self.global_data.inspection_fields();
+        fields.push((
+            "msg_security_parameters_len",
+            self.security_parameters.len().to_string(),
+        ));
+        fields.push(("scoped_data_len", self.scoped_data.len().to_string()));
+        fields
     }
 }
 
@@ -1349,6 +1461,77 @@ mod tests {
             0x30, 0x11, 0x04, 0x00, 0x04, 0x00, 0xa0, 0x0b, 0x02, 0x01, 0x01, 0x02, 0x01, 0x00,
             0x02, 0x01, 0x00, 0x30, 0x00,
         ]
+    }
+
+    #[test]
+    fn snmp_v3_global_data_boundary_values_compile_decode_and_summarize() -> Result<()> {
+        let global = SnmpV3GlobalData::new(2_147_483_647, 0, [0x07], 999);
+        let expected = [
+            0x30, 0x10, 0x02, 0x04, 0x7f, 0xff, 0xff, 0xff, 0x02, 0x01, 0x00, 0x04, 0x01, 0x07,
+            0x02, 0x02, 0x03, 0xe7,
+        ];
+
+        // Source-backed: docs/snmp-rfc-manifest.md records RFC 3412 Sections
+        // 6.2 through 6.5 for HeaderData msgID, msgMaxSize, msgFlags, and
+        // msgSecurityModel wire fields.
+        assert_eq!(global.encoded_len(), expected.len());
+        assert_eq!(global.compile()?, expected);
+
+        let mut with_rest = expected.to_vec();
+        with_rest.push(0xaa);
+        let (decoded, rest) = SnmpV3GlobalData::decode(&with_rest)?;
+        assert_eq!(rest, &[0xaa]);
+        assert_eq!(decoded.msg_id(), 2_147_483_647);
+        assert_eq!(decoded.max_size(), 0);
+        assert_eq!(decoded.flags(), &[0x07]);
+        assert_eq!(decoded.security_model(), 999);
+        assert_eq!(decoded.compile()?, expected);
+
+        assert_eq!(
+            decoded.summary(),
+            "SnmpV3GlobalData(msg_id=2147483647 msg_max_size=0 msg_flags_len=1 msg_security_model=999)"
+        );
+        let fields = decoded.inspection_fields();
+        assert_eq!(inspection_value(&fields, "msg_id"), Some("2147483647"));
+        assert_eq!(inspection_value(&fields, "msg_max_size"), Some("0"));
+        assert_eq!(inspection_value(&fields, "msg_flags"), Some("07"));
+        assert_eq!(inspection_value(&fields, "msg_security_model"), Some("999"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_v3_global_data_builders_preserve_explicit_wire_values() -> Result<()> {
+        let global = SnmpV3GlobalData::new(0, 484, Vec::<u8>::new(), 3)
+            .with_msg_id(-1)
+            .with_max_size(65_535)
+            .with_flags([0xaa, 0xbb])
+            .with_security_model(65_535);
+
+        let bytes = global.compile()?;
+        let (decoded, rest) = SnmpV3GlobalData::decode(&bytes)?;
+
+        assert!(rest.is_empty());
+        assert_eq!(decoded.msg_id(), -1);
+        assert_eq!(decoded.max_size(), 65_535);
+        assert_eq!(decoded.flags(), &[0xaa, 0xbb]);
+        assert_eq!(decoded.security_model(), 65_535);
+        assert_eq!(decoded.compile()?, bytes);
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_v3_global_data_malformed_sequence_length_is_structured_error() {
+        let bytes = [
+            0x30, 0x0e, 0x02, 0x01, 0x01, 0x02, 0x01, 0x00, 0x04, 0x01, 0x00, 0x02, 0x01, 0x03,
+        ];
+        let error = SnmpV3GlobalData::decode(&bytes).expect_err("overreported HeaderData length");
+
+        assert_eq!(
+            error,
+            crate::error::CrafterError::buffer_too_short("snmp.ber.sequence", 16, bytes.len())
+        );
     }
 
     #[test]
