@@ -1,8 +1,10 @@
 //! SNMP PDU tag metadata, request fields, and raw-body preservation.
 //!
 //! Source-gated by `docs/snmp-rfc-manifest.md`; only GetRequest-style common
-//! request fields are modeled here. Other PDU bodies remain raw until their
-//! implementation slices land.
+//! request fields are modeled here for GetRequest, GetNextRequest, and
+//! SetRequest. Other PDU bodies remain raw until their implementation slices
+//! land. Walk, polling, authorization, and set workflows belong in generated
+//! tools, not in this packet primitive.
 
 use super::{ber, constants, registry, varbind::SnmpVarBindList};
 use crate::error::Result;
@@ -212,8 +214,8 @@ impl SnmpRequestPdu {
 /// Source-backed SNMP PDU tag variants with raw body preservation.
 ///
 /// This enum preserves operation tag bytes. GetRequest-style common fields can
-/// be decoded through [`SnmpPdu::as_get_request`]; other PDU body fields are
-/// parsed by later implementation slices.
+/// be decoded through the tag-specific request accessors; other PDU body
+/// fields are parsed by later implementation slices.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SnmpPdu {
     /// GetRequest-PDU.
@@ -282,15 +284,43 @@ impl SnmpPdu {
         error_index: i64,
         varbinds: SnmpVarBindList,
     ) -> Result<Self> {
-        let request = SnmpRequestPdu::with_fields(request_id, error_status, error_index, varbinds);
-        Ok(Self::GetRequest(SnmpRawPduBody::new(
-            request.to_body_bytes()?,
-        )))
+        Ok(Self::GetRequest(Self::request_body_with_fields(
+            request_id,
+            error_status,
+            error_index,
+            varbinds,
+        )?))
     }
 
     /// Build a raw GetNextRequest-PDU body.
     pub fn raw_get_next_request(body: impl Into<Vec<u8>>) -> Self {
         Self::GetNextRequest(SnmpRawPduBody::new(body))
+    }
+
+    /// Build a GetNextRequest-PDU with noError/noErrorIndex convention fields.
+    ///
+    /// This only builds the wire PDU. Walk and retry behavior belongs in
+    /// generated tools outside the crate.
+    pub fn get_next_request(request_id: i64, varbinds: SnmpVarBindList) -> Result<Self> {
+        Self::get_next_request_with_fields(request_id, 0, 0, varbinds)
+    }
+
+    /// Build a GetNextRequest-PDU preserving caller-supplied integer fields.
+    ///
+    /// This only builds the wire PDU. Walk and retry behavior belongs in
+    /// generated tools outside the crate.
+    pub fn get_next_request_with_fields(
+        request_id: i64,
+        error_status: i64,
+        error_index: i64,
+        varbinds: SnmpVarBindList,
+    ) -> Result<Self> {
+        Ok(Self::GetNextRequest(Self::request_body_with_fields(
+            request_id,
+            error_status,
+            error_index,
+            varbinds,
+        )?))
     }
 
     /// Build a raw Response/GetResponse PDU body.
@@ -301,6 +331,32 @@ impl SnmpPdu {
     /// Build a raw SetRequest-PDU body.
     pub fn raw_set_request(body: impl Into<Vec<u8>>) -> Self {
         Self::SetRequest(SnmpRawPduBody::new(body))
+    }
+
+    /// Build a SetRequest-PDU with noError/noErrorIndex convention fields.
+    ///
+    /// This only builds the wire PDU. Authorization and mutation workflows
+    /// belong in generated tools outside the crate.
+    pub fn set_request(request_id: i64, varbinds: SnmpVarBindList) -> Result<Self> {
+        Self::set_request_with_fields(request_id, 0, 0, varbinds)
+    }
+
+    /// Build a SetRequest-PDU preserving caller-supplied integer fields.
+    ///
+    /// This only builds the wire PDU. Authorization and mutation workflows
+    /// belong in generated tools outside the crate.
+    pub fn set_request_with_fields(
+        request_id: i64,
+        error_status: i64,
+        error_index: i64,
+        varbinds: SnmpVarBindList,
+    ) -> Result<Self> {
+        Ok(Self::SetRequest(Self::request_body_with_fields(
+            request_id,
+            error_status,
+            error_index,
+            varbinds,
+        )?))
     }
 
     /// Build a raw SNMPv1 Trap-PDU body.
@@ -331,6 +387,16 @@ impl SnmpPdu {
     /// Build an unknown context-specific PDU body.
     pub fn unknown(tag_number: u8, constructed: bool, body: impl Into<Vec<u8>>) -> Self {
         Self::Unknown(SnmpRawPdu::new(tag_number, constructed, body))
+    }
+
+    fn request_body_with_fields(
+        request_id: i64,
+        error_status: i64,
+        error_index: i64,
+        varbinds: SnmpVarBindList,
+    ) -> Result<SnmpRawPduBody> {
+        let request = SnmpRequestPdu::with_fields(request_id, error_status, error_index, varbinds);
+        Ok(SnmpRawPduBody::new(request.to_body_bytes()?))
     }
 
     fn from_body(tag_number: u8, constructed: bool, body: SnmpRawPduBody) -> Self {
@@ -466,6 +532,22 @@ impl SnmpPdu {
     pub fn as_get_request(&self) -> Result<Option<SnmpRequestPdu>> {
         match self {
             Self::GetRequest(body) => Ok(Some(SnmpRequestPdu::decode_body(body.as_bytes())?)),
+            _ => Ok(None),
+        }
+    }
+
+    /// Decode typed GetRequest-style fields when this PDU has the GetNextRequest tag.
+    pub fn as_get_next_request(&self) -> Result<Option<SnmpRequestPdu>> {
+        match self {
+            Self::GetNextRequest(body) => Ok(Some(SnmpRequestPdu::decode_body(body.as_bytes())?)),
+            _ => Ok(None),
+        }
+    }
+
+    /// Decode typed GetRequest-style fields when this PDU has the SetRequest tag.
+    pub fn as_set_request(&self) -> Result<Option<SnmpRequestPdu>> {
+        match self {
+            Self::SetRequest(body) => Ok(Some(SnmpRequestPdu::decode_body(body.as_bytes())?)),
             _ => Ok(None),
         }
     }
@@ -778,6 +860,111 @@ mod tests {
         assert_eq!(request.request_id(), 0);
         assert!(request.varbinds().is_empty());
         assert_eq!(decoded.compile()?, bytes);
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_getnext_set_pdu_builders_select_tags_and_summary_labels() -> Result<()> {
+        let get_next = SnmpPdu::get_next_request(1, SnmpVarBindList::empty())?;
+        let set = SnmpPdu::set_request(1, SnmpVarBindList::empty())?;
+        let expected_get_next = [
+            0xa1, 0x0b, 0x02, 0x01, 0x01, 0x02, 0x01, 0x00, 0x02, 0x01, 0x00, 0x30, 0x00,
+        ];
+        let expected_set = [
+            0xa3, 0x0b, 0x02, 0x01, 0x01, 0x02, 0x01, 0x00, 0x02, 0x01, 0x00, 0x30, 0x00,
+        ];
+
+        // Source-backed: docs/snmp-rfc-manifest.md records RFC 1157 Sections
+        // 4.1.3 and 4.1.5 plus RFC 3416 Sections 3, 4.2.2, and 4.2.5 for
+        // GetNextRequest and SetRequest tags using the common request PDU
+        // fields. Walk and set workflows are explicitly outside the crate.
+        assert_eq!(
+            get_next.tag_number(),
+            constants::SNMP_PDU_TAG_GET_NEXT_REQUEST
+        );
+        assert_eq!(get_next.tag_name(), Some("get-next-request"));
+        assert_eq!(get_next.tag_label(), "get-next-request");
+        assert_eq!(get_next.compile()?, expected_get_next);
+        assert!(get_next.as_get_request()?.is_none());
+        assert!(get_next.as_set_request()?.is_none());
+        let get_next_request = get_next
+            .as_get_next_request()?
+            .expect("GetNextRequest fields");
+        assert_eq!(get_next_request.request_id(), 1);
+        assert_eq!(get_next_request.error_status(), 0);
+        assert_eq!(get_next_request.error_index(), 0);
+        assert!(get_next_request.varbinds().is_empty());
+
+        assert_eq!(set.tag_number(), constants::SNMP_PDU_TAG_SET_REQUEST);
+        assert_eq!(set.tag_name(), Some("set-request"));
+        assert_eq!(set.tag_label(), "set-request");
+        assert_eq!(set.compile()?, expected_set);
+        assert!(set.as_get_request()?.is_none());
+        assert!(set.as_get_next_request()?.is_none());
+        let set_request = set.as_set_request()?.expect("SetRequest fields");
+        assert_eq!(set_request.request_id(), 1);
+        assert_eq!(set_request.error_status(), 0);
+        assert_eq!(set_request.error_index(), 0);
+        assert!(set_request.varbinds().is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_getnext_set_pdu_roundtrip_bytes_preserve_explicit_fields() -> Result<()> {
+        let cases = [
+            (
+                SnmpPdu::get_next_request_with_fields(128, 7, 2, SnmpVarBindList::empty())?,
+                constants::SNMP_PDU_TAG_GET_NEXT_REQUEST,
+                [
+                    0xa1, 0x0c, 0x02, 0x02, 0x00, 0x80, 0x02, 0x01, 0x07, 0x02, 0x01, 0x02, 0x30,
+                    0x00,
+                ],
+            ),
+            (
+                SnmpPdu::set_request_with_fields(128, 7, 2, SnmpVarBindList::empty())?,
+                constants::SNMP_PDU_TAG_SET_REQUEST,
+                [
+                    0xa3, 0x0c, 0x02, 0x02, 0x00, 0x80, 0x02, 0x01, 0x07, 0x02, 0x01, 0x02, 0x30,
+                    0x00,
+                ],
+            ),
+        ];
+
+        for (pdu, tag, expected) in cases {
+            assert_eq!(pdu.tag_number(), tag);
+            assert_eq!(pdu.compile()?, expected);
+
+            let request = match tag {
+                constants::SNMP_PDU_TAG_GET_NEXT_REQUEST => {
+                    pdu.as_get_next_request()?.expect("GetNextRequest fields")
+                }
+                constants::SNMP_PDU_TAG_SET_REQUEST => {
+                    pdu.as_set_request()?.expect("SetRequest fields")
+                }
+                _ => unreachable!("test only covers GetNextRequest and SetRequest"),
+            };
+            assert_eq!(request.request_id(), 128);
+            assert_eq!(request.error_status(), 7);
+            assert_eq!(request.error_index(), 2);
+            assert!(request.varbinds().is_empty());
+
+            let (decoded, rest) = SnmpPdu::decode(&expected)?;
+            assert!(rest.is_empty());
+            assert_eq!(decoded.tag_number(), tag);
+            assert_eq!(decoded.compile()?, expected);
+            let decoded_request = match tag {
+                constants::SNMP_PDU_TAG_GET_NEXT_REQUEST => decoded
+                    .as_get_next_request()?
+                    .expect("decoded GetNextRequest fields"),
+                constants::SNMP_PDU_TAG_SET_REQUEST => decoded
+                    .as_set_request()?
+                    .expect("decoded SetRequest fields"),
+                _ => unreachable!("test only covers GetNextRequest and SetRequest"),
+            };
+            assert_eq!(decoded_request, request);
+        }
 
         Ok(())
     }
