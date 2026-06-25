@@ -11,7 +11,7 @@ use crafter::prelude::*;
 const DOC_SRC: Ipv4Addr = Ipv4Addr::new(192, 0, 2, 61);
 const DOC_DST: Ipv4Addr = Ipv4Addr::new(198, 51, 100, 61);
 const DOC_CLIENT_PORT: u16 = 49_152;
-const SNMP_AGENT_PORT: u16 = 161;
+const SNMP_AGENT_PORT: u16 = SNMP_PORT;
 
 fn oid(dotted: &str) -> crafter::Result<SnmpOid> {
     SnmpOid::from_dotted(dotted)
@@ -104,6 +104,52 @@ fn snmp_public_api_raw_decode_preserves_unknown_pdu() -> crafter::Result<()> {
         "Snmp(version=v2c, community_len=1, pdu=SnmpPdu(pdu_type=pdu-9 pdu_tag=9 constructed=true body_length=3))"
     );
     assert!(decoded.show().contains("pdu_tlv_bytes: a9 03 02 01 05"));
+
+    Ok(())
+}
+
+#[test]
+fn snmp_public_api_registry_controls_decode_behavior() -> crafter::Result<()> {
+    let snmp = Snmp::v2c_get_request(b"public".to_vec(), 99, SnmpVarBindList::empty())?;
+    let snmp_payload = snmp.compile()?;
+    let packet = Ipv4::new().src(DOC_SRC).dst(DOC_DST)
+        / Udp::new().sport(DOC_CLIENT_PORT).dport(SNMP_PORT)
+        / snmp;
+    let bytes = packet.compile()?;
+
+    let builtin = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes())?;
+    assert!(builtin.layer::<Snmp>().is_some());
+    assert!(builtin.layer::<Raw>().is_none());
+
+    let empty = ProtocolRegistry::empty().decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes())?;
+    assert!(empty.layer::<Snmp>().is_none());
+    assert!(empty.layer::<Raw>().is_some());
+
+    let mut custom = ProtocolRegistry::new();
+    custom.bind_udp_port(SNMP_PORT, |packet, payload| {
+        Ok(packet.push(Raw::from_bytes(payload)))
+    });
+    let custom_decoded = custom.decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes())?;
+    assert!(custom_decoded.layer::<Snmp>().is_none());
+    assert_eq!(
+        custom_decoded
+            .layer::<Raw>()
+            .expect("custom raw SNMP payload")
+            .as_bytes(),
+        snmp_payload
+    );
+
+    let disabled = ProtocolRegistry::new().application_decoding(false);
+    let disabled_decoded = disabled.decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes())?;
+    assert!(disabled_decoded.layer::<Udp>().is_some());
+    assert!(disabled_decoded.layer::<Snmp>().is_none());
+    assert_eq!(
+        disabled_decoded
+            .layer::<Raw>()
+            .expect("application payload preserved as Raw")
+            .as_bytes(),
+        snmp_payload
+    );
 
     Ok(())
 }
