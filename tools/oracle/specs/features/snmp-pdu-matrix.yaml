@@ -290,17 +290,19 @@ notes:
 
 backend_support:
   scapy:
-    status: planned
+    status: partial
     native_layers:
+      - Raw
       - SNMP
     notes:
-      - Later Scapy backend work must prove byte-exact support for each PDU tag
-        and record gaps for any PDU shape Scapy cannot materialize exactly.
+      - The Scapy backend emits deterministic BER bytes for source-backed PDU
+        tags and raw-preserve unknown PDU cases; malformed PDU cases stay out of
+        strict-byte materialization.
   libcrafter:
-    status: planned
+    status: partial
     native_layers:
       - SnmpPdu
       - Snmp
     notes:
-      - The crate supports the PDU matrix; later oracle adapter steps expose
-        those constructors and decoders through data-driven cases.
+      - The crate supports the PDU matrix; later oracle execution steps compare
+        backend mismatches case by case.
