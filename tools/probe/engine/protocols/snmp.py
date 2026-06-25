@@ -335,7 +335,7 @@ register(
         plan_builders=_SNMP_PLAN_BUILDERS,
         planned_only_cases=_SNMP_PLANNED_ONLY_CASES,
         profile_counts={},
-        stimulus_endpoint_cases=frozenset(),
+        stimulus_endpoint_cases=_SNMP_PLANNED_ONLY_CASES,
         target_service=snmp_target_service_contribution,
         setup_script=None,
         rewrite_endpoint_addresses=None,
