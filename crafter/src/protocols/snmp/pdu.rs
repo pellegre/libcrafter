@@ -1,9 +1,10 @@
-//! SNMP PDU tag metadata and raw-body preservation.
+//! SNMP PDU tag metadata, request fields, and raw-body preservation.
 //!
-//! Source-gated by `docs/snmp-rfc-manifest.md`; full PDU field builders and
-//! decoders are intentionally deferred to later implementation slices.
+//! Source-gated by `docs/snmp-rfc-manifest.md`; only GetRequest-style common
+//! request fields are modeled here. Other PDU bodies remain raw until their
+//! implementation slices land.
 
-use super::{ber, constants, registry};
+use super::{ber, constants, registry, varbind::SnmpVarBindList};
 use crate::error::Result;
 
 /// Raw BER content bytes for one SNMP PDU body.
@@ -112,11 +113,107 @@ impl SnmpRawPdu {
     }
 }
 
+/// Common GetRequest-style PDU fields.
+///
+/// RFC-backed request PDUs carry request-id, error-status, error-index, and
+/// a VarBindList as the PDU body content. This type models those fields as
+/// packet bytes only; it does not add manager/session behavior.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SnmpRequestPdu {
+    request_id: i64,
+    error_status: i64,
+    error_index: i64,
+    varbinds: SnmpVarBindList,
+}
+
+impl SnmpRequestPdu {
+    /// Build request fields with noError/noErrorIndex convention values.
+    pub fn new(request_id: i64, varbinds: SnmpVarBindList) -> Self {
+        Self::with_fields(request_id, 0, 0, varbinds)
+    }
+
+    /// Build request fields with caller-supplied integer values.
+    pub fn with_fields(
+        request_id: i64,
+        error_status: i64,
+        error_index: i64,
+        varbinds: SnmpVarBindList,
+    ) -> Self {
+        Self {
+            request_id,
+            error_status,
+            error_index,
+            varbinds,
+        }
+    }
+
+    /// Decode the body content of one GetRequest-style PDU.
+    pub fn decode_body(bytes: &[u8]) -> Result<Self> {
+        let (request_id, rest) = ber::decode_integer(bytes)?;
+        let (error_status, rest) = ber::decode_integer(rest)?;
+        let (error_index, rest) = ber::decode_integer(rest)?;
+        let (varbinds, rest) = SnmpVarBindList::decode(rest)?;
+        if !rest.is_empty() {
+            return Err(ber::invalid_ber_field(
+                "snmp.pdu.request",
+                "trailing bytes after request PDU fields",
+            ));
+        }
+
+        Ok(Self::with_fields(
+            request_id,
+            error_status,
+            error_index,
+            varbinds,
+        ))
+    }
+
+    /// Encode the body content of this GetRequest-style PDU.
+    pub fn encode_body(&self, out: &mut Vec<u8>) -> Result<()> {
+        ber::encode_integer(self.request_id, out)?;
+        ber::encode_integer(self.error_status, out)?;
+        ber::encode_integer(self.error_index, out)?;
+        self.varbinds.encode(out)
+    }
+
+    /// Return this request PDU body encoded as BER content bytes.
+    pub fn to_body_bytes(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        self.encode_body(&mut out)?;
+        Ok(out)
+    }
+
+    /// Request-id INTEGER value.
+    pub const fn request_id(&self) -> i64 {
+        self.request_id
+    }
+
+    /// Error-status INTEGER value.
+    pub const fn error_status(&self) -> i64 {
+        self.error_status
+    }
+
+    /// Error-index INTEGER value.
+    pub const fn error_index(&self) -> i64 {
+        self.error_index
+    }
+
+    /// Ordered VarBindList carried by this request PDU.
+    pub const fn varbinds(&self) -> &SnmpVarBindList {
+        &self.varbinds
+    }
+
+    /// Consume this request PDU and return the ordered VarBindList.
+    pub fn into_varbinds(self) -> SnmpVarBindList {
+        self.varbinds
+    }
+}
+
 /// Source-backed SNMP PDU tag variants with raw body preservation.
 ///
-/// This enum models only the operation tag choice. The request-id,
-/// error-status, error-index, VarBindList, trap, bulk, and report body fields
-/// are parsed by later implementation slices.
+/// This enum preserves operation tag bytes. GetRequest-style common fields can
+/// be decoded through [`SnmpPdu::as_get_request`]; other PDU body fields are
+/// parsed by later implementation slices.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SnmpPdu {
     /// GetRequest-PDU.
@@ -171,6 +268,24 @@ impl SnmpPdu {
     /// Build a raw GetRequest-PDU body.
     pub fn raw_get_request(body: impl Into<Vec<u8>>) -> Self {
         Self::GetRequest(SnmpRawPduBody::new(body))
+    }
+
+    /// Build a GetRequest-PDU with noError/noErrorIndex convention fields.
+    pub fn get_request(request_id: i64, varbinds: SnmpVarBindList) -> Result<Self> {
+        Self::get_request_with_fields(request_id, 0, 0, varbinds)
+    }
+
+    /// Build a GetRequest-PDU preserving caller-supplied integer fields.
+    pub fn get_request_with_fields(
+        request_id: i64,
+        error_status: i64,
+        error_index: i64,
+        varbinds: SnmpVarBindList,
+    ) -> Result<Self> {
+        let request = SnmpRequestPdu::with_fields(request_id, error_status, error_index, varbinds);
+        Ok(Self::GetRequest(SnmpRawPduBody::new(
+            request.to_body_bytes()?,
+        )))
     }
 
     /// Build a raw GetNextRequest-PDU body.
@@ -346,6 +461,14 @@ impl SnmpPdu {
             _ => None,
         }
     }
+
+    /// Decode typed GetRequest-style fields when this PDU has the GetRequest tag.
+    pub fn as_get_request(&self) -> Result<Option<SnmpRequestPdu>> {
+        match self {
+            Self::GetRequest(body) => Ok(Some(SnmpRequestPdu::decode_body(body.as_bytes())?)),
+            _ => Ok(None),
+        }
+    }
 }
 
 fn decode_pdu_tlv(bytes: &[u8]) -> Result<(ber::BerTag, &[u8], &[u8], &[u8])> {
@@ -433,7 +556,9 @@ mod tests {
 
     #[test]
     fn snmp_pdu_tags_decode_known_raw_body_and_reencode_tlv() -> Result<()> {
-        let bytes = [0xa0, 0x02, 0x05, 0x00, 0xbb];
+        let bytes = [
+            0xa0, 0x0b, 0x02, 0x01, 0x01, 0x02, 0x01, 0x00, 0x02, 0x01, 0x00, 0x30, 0x00, 0xbb,
+        ];
         let (decoded, rest) = SnmpPdu::decode(&bytes)?;
 
         assert!(matches!(decoded, SnmpPdu::GetRequest(_)));
@@ -441,9 +566,12 @@ mod tests {
         assert_eq!(decoded.tag_name(), Some("get-request"));
         assert_eq!(decoded.tag_status(), registry::SnmpPduTagStatus::Assigned);
         assert!(decoded.is_constructed());
-        assert_eq!(decoded.body(), &[0x05, 0x00]);
-        assert_eq!(decoded.raw_tlv_bytes(), Some(&bytes[..4]));
-        assert_eq!(decoded.compile()?, bytes[..4]);
+        assert_eq!(
+            decoded.body(),
+            &[0x02, 0x01, 0x01, 0x02, 0x01, 0x00, 0x02, 0x01, 0x00, 0x30, 0x00]
+        );
+        assert_eq!(decoded.raw_tlv_bytes(), Some(&bytes[..13]));
+        assert_eq!(decoded.compile()?, bytes[..13]);
         assert_eq!(rest, &[0xbb]);
 
         Ok(())
@@ -553,5 +681,104 @@ mod tests {
             error,
             CrafterError::invalid_field_value("snmp.pdu", "expected context-specific PDU tag")
         );
+    }
+
+    #[test]
+    fn snmp_request_pdu_empty_varbinds_compile_and_decode() -> Result<()> {
+        let pdu = SnmpPdu::get_request(1, SnmpVarBindList::empty())?;
+
+        // Source-backed: docs/snmp-rfc-manifest.md records RFC 1157 Section
+        // 4.1.1 and RFC 3416 Section 3 for request-id, error-status,
+        // error-index, and VarBindList as the common request PDU fields.
+        let expected = [
+            0xa0, 0x0b, 0x02, 0x01, 0x01, 0x02, 0x01, 0x00, 0x02, 0x01, 0x00, 0x30, 0x00,
+        ];
+        assert_eq!(pdu.compile()?, expected);
+        assert_eq!(pdu.body(), &expected[2..]);
+
+        let request = pdu.as_get_request()?.expect("GetRequest fields");
+        assert_eq!(request.request_id(), 1);
+        assert_eq!(request.error_status(), 0);
+        assert_eq!(request.error_index(), 0);
+        assert!(request.varbinds().is_empty());
+
+        let (decoded, rest) = SnmpPdu::decode(&expected)?;
+        assert!(rest.is_empty());
+        let decoded_request = decoded
+            .as_get_request()?
+            .expect("decoded GetRequest fields");
+        assert_eq!(decoded_request, request);
+        assert_eq!(decoded.compile()?, expected);
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_request_pdu_multi_varbind_preserves_order_and_fields() -> Result<()> {
+        let first = crate::protocols::snmp::SnmpVarBind::null(
+            crate::protocols::snmp::SnmpOid::from_dotted("1.3.6.1.2.1.1.3.0")?,
+        );
+        let second = crate::protocols::snmp::SnmpVarBind::null(
+            crate::protocols::snmp::SnmpOid::from_dotted("1.3.6.1.2.1.1.5.0")?,
+        );
+        let varbinds = SnmpVarBindList::new(vec![first.clone(), second.clone()]);
+        let pdu = SnmpPdu::get_request_with_fields(12_345, 7, 2, varbinds)?;
+
+        let expected = [
+            0xa0, 0x28, 0x02, 0x02, 0x30, 0x39, 0x02, 0x01, 0x07, 0x02, 0x01, 0x02, 0x30, 0x1c,
+            0x30, 0x0c, 0x06, 0x08, 0x2b, 0x06, 0x01, 0x02, 0x01, 0x01, 0x03, 0x00, 0x05, 0x00,
+            0x30, 0x0c, 0x06, 0x08, 0x2b, 0x06, 0x01, 0x02, 0x01, 0x01, 0x05, 0x00, 0x05, 0x00,
+        ];
+        assert_eq!(pdu.compile()?, expected);
+
+        let request = pdu.as_get_request()?.expect("GetRequest fields");
+        assert_eq!(request.request_id(), 12_345);
+        assert_eq!(request.error_status(), 7);
+        assert_eq!(request.error_index(), 2);
+        assert_eq!(request.varbinds().as_slice(), &[first, second]);
+
+        let (decoded, rest) = SnmpPdu::decode(&expected)?;
+        assert!(rest.is_empty());
+        assert_eq!(decoded.as_get_request()?.expect("decoded fields"), request);
+        assert_eq!(decoded.compile()?, expected);
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_request_pdu_unknown_request_id_value_is_not_special_cased() -> Result<()> {
+        let pdu = SnmpPdu::get_request(2_147_483_647, SnmpVarBindList::empty())?;
+
+        let expected = [
+            0xa0, 0x0e, 0x02, 0x04, 0x7f, 0xff, 0xff, 0xff, 0x02, 0x01, 0x00, 0x02, 0x01, 0x00,
+            0x30, 0x00,
+        ];
+        assert_eq!(pdu.compile()?, expected);
+
+        let (decoded, rest) = SnmpPdu::decode(&expected)?;
+        assert!(rest.is_empty());
+        let request = decoded.as_get_request()?.expect("GetRequest fields");
+        assert_eq!(request.request_id(), 2_147_483_647);
+        assert_eq!(request.error_status(), 0);
+        assert_eq!(request.error_index(), 0);
+        assert!(request.varbinds().is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_request_pdu_decoded_bytes_round_trip_without_normalizing_lengths() -> Result<()> {
+        let bytes = [
+            0xa0, 0x0c, 0x02, 0x02, 0x00, 0x00, 0x02, 0x01, 0x00, 0x02, 0x01, 0x00, 0x30, 0x00,
+        ];
+        let (decoded, rest) = SnmpPdu::decode(&bytes)?;
+
+        assert!(rest.is_empty());
+        let request = decoded.as_get_request()?.expect("GetRequest fields");
+        assert_eq!(request.request_id(), 0);
+        assert!(request.varbinds().is_empty());
+        assert_eq!(decoded.compile()?, bytes);
+
+        Ok(())
     }
 }
