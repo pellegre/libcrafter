@@ -1,0 +1,299 @@
+version: 1
+kind: layer
+name: snmp
+summary: >-
+  Simple Network Management Protocol messages over UDP, covering BER message
+  framing, SNMPv1 and community-based SNMPv2c wrappers, source-backed PDU tags,
+  VarBind lists, SNMP application values, SNMPv3 message framing, raw and USM
+  security parameters, plaintext ScopedPDU data, and opaque encrypted scoped
+  data. This layer spec is packet-level only; manager sessions, agent state,
+  MIB name resolution, credential storage, VACM decisions, authentication,
+  privacy decryption, retries, walks, trap receiver workflows, and live target
+  selection are out of scope.
+
+roots: []
+parents:
+  - udp
+children: []
+
+supported_parents:
+  - layer: udp
+    destination_port: 161
+    service: snmp
+  - layer: udp
+    source_port: 161
+    service: snmp
+  - layer: udp
+    destination_port: 162
+    service: snmptrap
+  - layer: udp
+    source_port: 162
+    service: snmptrap
+unsupported_parents:
+  - tcp
+  - ssh
+  - tls
+  - dtls
+  - ipx
+  - ieee802
+  - syslog
+live_eligibility: provider_gated
+live_gate: confirm_live_run_provider_lab_only
+live_defaults:
+  default_mode: dry_run
+  allowed_without_confirmation: false
+  developer_host_raw_send: false
+  provider_required: true
+
+fields:
+  - name: version
+    type: int
+    required: true
+    domains:
+      - v1
+      - v2c
+      - v3
+      - unknown_preserved
+  - name: message_length
+    type: ber_length
+    required: true
+    domains:
+      - derived
+      - boundary
+      - malformed_override
+  - name: community
+    type: bytes
+    required: false
+    domains:
+      - synthetic
+      - empty
+      - non_utf8
+  - name: pdu_tag
+    type: uint8
+    required: false
+    domains:
+      - get_request
+      - get_next_request
+      - response
+      - set_request
+      - trap_v1
+      - get_bulk_request
+      - inform_request
+      - snmpv2_trap
+      - report
+      - unknown_preserved
+  - name: request_id
+    type: int
+    required: false
+    domains:
+      - deterministic
+      - boundary
+  - name: error_status
+    type: int
+    required: false
+    domains:
+      - no_error
+      - v1_assigned
+      - v2_assigned
+      - unassigned_preserved
+  - name: error_index
+    type: int
+    required: false
+    domains:
+      - zero
+      - deterministic
+  - name: non_repeaters
+    type: int
+    required: false
+    domains:
+      - zero
+      - deterministic
+      - boundary
+  - name: max_repetitions
+    type: int
+    required: false
+    domains:
+      - zero
+      - deterministic
+      - boundary
+  - name: enterprise_oid
+    type: oid
+    required: false
+    domains:
+      - source_backed
+      - unknown_preserved
+  - name: agent_address
+    type: ipv4
+    required: false
+    domains:
+      - documentation_ipv4
+  - name: generic_trap
+    type: int
+    required: false
+    domains:
+      - cold_start
+      - warm_start
+      - link_down
+      - link_up
+      - authentication_failure
+      - egp_neighbor_loss
+      - enterprise_specific
+      - unknown_preserved
+  - name: specific_trap
+    type: int
+    required: false
+    domains:
+      - zero
+      - deterministic
+  - name: timestamp
+    type: time_ticks
+    required: false
+    domains:
+      - zero
+      - deterministic
+      - boundary
+  - name: varbinds
+    type: snmp_varbind_list
+    required: false
+    domains:
+      - empty
+      - null_request
+      - integer
+      - octet_string
+      - object_identifier
+      - ip_address
+      - counter32
+      - gauge32
+      - time_ticks
+      - opaque
+      - counter64
+      - exception
+      - raw_value_preserved
+  - name: msg_id
+    type: int
+    required: false
+    domains:
+      - deterministic
+      - boundary
+  - name: msg_max_size
+    type: int
+    required: false
+    domains:
+      - default
+      - boundary
+  - name: msg_flags
+    type: flags
+    required: false
+    domains:
+      - none
+      - auth
+      - privacy
+      - reportable
+      - reserved_bits_preserved
+      - reserved_privacy_without_auth
+  - name: msg_security_model
+    type: int
+    required: false
+    domains:
+      - any
+      - snmpv1
+      - snmpv2c
+      - usm
+      - tsm
+      - unassigned_preserved
+      - unknown_preserved
+  - name: msg_security_parameters
+    type: bytes
+    required: false
+    domains:
+      - empty
+      - raw_preserved
+      - usm
+      - malformed_usm_accessor_error
+  - name: scoped_data_kind
+    type: enum
+    required: false
+    domains:
+      - plaintext
+      - encrypted_opaque
+  - name: context_engine_id
+    type: bytes
+    required: false
+    domains:
+      - empty
+      - synthetic
+      - non_utf8
+  - name: context_name
+    type: bytes
+    required: false
+    domains:
+      - empty
+      - synthetic
+      - non_utf8
+  - name: encrypted_scoped_pdu
+    type: bytes
+    required: false
+    domains:
+      - opaque_preserved
+      - empty
+
+coverage_cases:
+  - snmp-v1-get-request
+  - snmp-v1-trap
+  - snmp-v2c-response
+  - snmp-v2c-get-bulk
+  - snmp-v2c-inform-trap-report
+  - snmp-v3-plaintext-report
+  - snmp-v3-usm
+  - snmp-v3-encrypted-opaque
+  - snmp-unknown-preservation
+  - snmp-malformed-ber
+  - crafter-snmp-pcap-fixtures
+
+notes:
+  - >-
+    Source authority lives in docs/snmp-rfc-manifest.md. The layer model is
+    limited to RFC 1157 SNMPv1 message and Trap-PDU bytes, RFC 1901 community
+    wrappers, RFC 3412 SNMPv3 message framing, RFC 3414 USM security-parameter
+    wire fields, RFC 3416 protocol operation PDUs, RFC 3418 SNMPv2-MIB
+    notification OIDs, and IANA SNMP port/security-model registries recorded by
+    that manifest.
+  - >-
+    UDP dispatch is conservative: UDP/161 and UDP/162 payloads decode as SNMP
+    only when the payload is one complete BER message wrapper. Non-SNMP bytes on
+    those ports remain payload/raw data.
+  - >-
+    Security material is byte-level only. Oracle cases must use synthetic
+    communities, users, engine IDs, authentication parameters, privacy
+    parameters, and encrypted scoped data; no real credentials or live captures
+    belong in tracked fixtures.
+  - >-
+    SNMP over SSH, TLS, DTLS, TCP, IPX, IEEE 802, SYSLOG notification mappings,
+    MIB resolution, VACM, authentication verification, privacy decryption,
+    manager workflows, agent daemon behavior, and trap receiver services are
+    unsupported by this packet layer and must be represented as gaps rather than
+    implicit fields.
+
+backend_support:
+  scapy:
+    status: planned
+    native_layers:
+      - SNMP
+    encode: false
+    decode: false
+    notes:
+      - Later SNMP backend work must record which v1/v2c/v3 wire cases Scapy can
+        encode and decode byte-for-byte and which cases require backend gaps.
+  wireshark:
+    status: planned
+    decode: false
+    notes:
+      - Later SNMP Wireshark work must normalize decoded field names to this
+        layer spec and keep credential-like bytes redacted or length-only.
+  libcrafter:
+    status: planned
+    encode: false
+    decode: false
+    notes:
+      - The Rust crate supports the packet layer, but the oracle materializer
+        and decode adapter are added by later SNMP oracle steps.
