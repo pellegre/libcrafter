@@ -484,6 +484,16 @@ impl Snmp {
         ber::encode_sequence(&content, out)
     }
 
+    /// Decode one complete SNMP message from BER bytes.
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        let content = ber::decode_sequence_exact(bytes)?;
+        let (header, rest) = SnmpMessageHeader::decode(content)?;
+        let (pdu, rest) = SnmpPdu::decode(rest)?;
+        ber::require_sequence_exact(rest)?;
+
+        Ok(Self { header, pdu })
+    }
+
     /// Return this SNMP message encoded as BER bytes.
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
         let mut out = Vec::with_capacity(self.encoded_len());
@@ -867,6 +877,88 @@ mod tests {
         assert_eq!(pdu.compile()?, snmp.pdu().compile()?);
 
         Ok(())
+    }
+
+    #[test]
+    fn snmp_message_decode_v1_raw_bytes_to_typed_layer() -> Result<()> {
+        let bytes = [
+            0x30, 0x18, 0x02, 0x01, 0x00, 0x04, 0x06, b'p', b'u', b'b', b'l', b'i', b'c', 0xa0,
+            0x0b, 0x02, 0x01, 0x07, 0x02, 0x01, 0x00, 0x02, 0x01, 0x00, 0x30, 0x00,
+        ];
+
+        let decoded = Snmp::decode(&bytes)?;
+        let request = decoded.pdu().as_get_request()?.expect("GetRequest fields");
+
+        assert_eq!(decoded.version(), SnmpVersion::V1);
+        assert_eq!(decoded.community(), b"public");
+        assert_eq!(decoded.pdu().tag_number(), SnmpPdu::TAG_GET_REQUEST);
+        assert_eq!(request.request_id(), 7);
+        assert_eq!(request.error_status(), 0);
+        assert_eq!(request.error_index(), 0);
+        assert!(request.varbinds().is_empty());
+        assert_eq!(decoded.compile()?, bytes);
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_message_decode_v2c_raw_bytes_to_typed_layer() -> Result<()> {
+        let bytes = [
+            0x30, 0x18, 0x02, 0x01, 0x01, 0x04, 0x06, b'p', b'u', b'b', b'l', b'i', b'c', 0xa5,
+            0x0b, 0x02, 0x01, 0x04, 0x02, 0x01, 0x01, 0x02, 0x01, 0x0a, 0x30, 0x00,
+        ];
+
+        let decoded = Snmp::decode(&bytes)?;
+        let bulk = decoded
+            .pdu()
+            .as_get_bulk_request()?
+            .expect("GetBulk fields");
+
+        assert_eq!(decoded.version(), SnmpVersion::V2c);
+        assert_eq!(decoded.community(), b"public");
+        assert_eq!(decoded.pdu().tag_number(), SnmpPdu::TAG_GET_BULK_REQUEST);
+        assert_eq!(bulk.request_id(), 4);
+        assert_eq!(bulk.non_repeaters(), 1);
+        assert_eq!(bulk.max_repetitions(), 10);
+        assert!(bulk.varbinds().is_empty());
+        assert_eq!(decoded.compile()?, bytes);
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_message_decode_preserves_unknown_version_and_unknown_pdu() -> Result<()> {
+        let bytes = [
+            0x30, 0x0b, 0x02, 0x01, 0x03, 0x04, 0x01, b'x', 0xa9, 0x03, 0x02, 0x01, 0x05,
+        ];
+
+        let decoded = Snmp::decode(&bytes)?;
+        let unknown = decoded.pdu().as_unknown().expect("unknown PDU");
+
+        assert_eq!(decoded.version(), SnmpVersion::Unknown(3));
+        assert_eq!(decoded.version_value(), 3);
+        assert_eq!(decoded.community(), b"x");
+        assert_eq!(unknown.tag_number(), 9);
+        assert!(unknown.is_constructed());
+        assert_eq!(unknown.body(), &[0x02, 0x01, 0x05]);
+        assert_eq!(unknown.raw_tlv_bytes(), Some(&bytes[8..]));
+        assert_eq!(decoded.compile()?, bytes);
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_message_decode_rejects_non_pdu_tlv() {
+        let bytes = [0x30, 0x07, 0x02, 0x01, 0x01, 0x04, 0x00, 0x30, 0x00];
+        let error = Snmp::decode(&bytes).expect_err("non-PDU TLV");
+
+        assert_eq!(
+            error,
+            crate::error::CrafterError::invalid_field_value(
+                "snmp.pdu",
+                "expected context-specific PDU tag"
+            )
+        );
     }
 
     #[test]
