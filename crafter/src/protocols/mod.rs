@@ -449,9 +449,12 @@ pub mod exports {
     pub use snmp::{
         snmp_error_status_label, snmp_error_status_meta, snmp_error_status_name,
         snmp_error_status_status, snmp_error_status_summary, snmp_pdu_tag_meta, snmp_pdu_tag_name,
-        snmp_pdu_tag_status, Snmp, SnmpErrorStatus, SnmpErrorStatusAssignment, SnmpErrorStatusMeta,
+        snmp_pdu_tag_status, snmp_security_model_label, snmp_security_model_meta,
+        snmp_security_model_name, snmp_security_model_status, snmp_security_model_summary,
+        snmp_v3_flags_label, Snmp, SnmpErrorStatus, SnmpErrorStatusAssignment, SnmpErrorStatusMeta,
         SnmpGetBulkPdu, SnmpOid, SnmpPdu, SnmpPduTagMeta, SnmpPduTagStatus, SnmpRawPdu,
-        SnmpRawPduBody, SnmpRequestPdu, SnmpV1TrapPdu, SnmpV3GlobalData, SnmpV3Message,
+        SnmpRawPduBody, SnmpRequestPdu, SnmpSecurityModel, SnmpSecurityModelMeta,
+        SnmpSecurityModelStatus, SnmpV1TrapPdu, SnmpV3Flags, SnmpV3GlobalData, SnmpV3Message,
         SnmpVarBind, SnmpVarBindList, SnmpVersion, SNMP_ERROR_STATUS_AUTHORIZATION_ERROR,
         SNMP_ERROR_STATUS_BAD_VALUE, SNMP_ERROR_STATUS_COMMIT_FAILED, SNMP_ERROR_STATUS_GEN_ERR,
         SNMP_ERROR_STATUS_INCONSISTENT_NAME, SNMP_ERROR_STATUS_INCONSISTENT_VALUE,
@@ -463,7 +466,10 @@ pub mod exports {
         SNMP_ERROR_STATUS_WRONG_VALUE, SNMP_PDU_TAG_GET_BULK_REQUEST,
         SNMP_PDU_TAG_GET_NEXT_REQUEST, SNMP_PDU_TAG_GET_REQUEST, SNMP_PDU_TAG_INFORM_REQUEST,
         SNMP_PDU_TAG_REPORT, SNMP_PDU_TAG_RESPONSE, SNMP_PDU_TAG_SET_REQUEST, SNMP_PDU_TAG_TRAP,
-        SNMP_PDU_TAG_TRAP_V2,
+        SNMP_PDU_TAG_TRAP_V2, SNMP_SECURITY_MODEL_ANY, SNMP_SECURITY_MODEL_SNMPV1,
+        SNMP_SECURITY_MODEL_SNMPV2C, SNMP_SECURITY_MODEL_TSM, SNMP_SECURITY_MODEL_USM,
+        SNMP_V3_FLAG_AUTH, SNMP_V3_FLAG_KNOWN_MASK, SNMP_V3_FLAG_PRIVACY, SNMP_V3_FLAG_REPORTABLE,
+        SNMP_V3_FLAG_RESERVED_MASK,
     };
     pub use transport::{
         tcp_option_kind_class, tcp_option_kind_is_assigned, tcp_option_kind_is_experimental,

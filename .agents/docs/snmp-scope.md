@@ -25,6 +25,20 @@ store, access-control engine, or monitoring product.
   defaults, but caller-set overrides must survive, including deliberately
   malformed values.
 
+## SNMPv3 Policy Boundary
+
+- SNMPv3 helpers may name msgFlags bits, reserved bit combinations, security
+  model values, raw security parameters, scoped-PDU bytes, and USM wire fields
+  when the manifest backs the packet format.
+- SNMPv3 helpers must not enforce VACM, access-control decisions, timeliness
+  policy, user/key lookup, authentication success, privacy decryption,
+  authorization, or engine-state transitions. Generated tools may report those
+  wire fields, but policy decisions stay outside `crafter`.
+- Reserved msgFlags bits, the reserved privacy-without-authentication
+  combination, unassigned security models, and unknown security models must
+  remain inspectable packet bytes unless a later source-backed slice explicitly
+  adds a narrower validation primitive.
+
 ## Tool Defaults
 
 - Default generated examples, fixtures, oracle cases, probe plans, and send
