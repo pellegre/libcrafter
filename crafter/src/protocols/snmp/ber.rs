@@ -384,7 +384,10 @@ pub(super) fn decode_sequence(bytes: &[u8]) -> Result<(&[u8], &[u8])> {
     if rest.len() < length {
         let prefix_len = bytes.len() - rest.len();
         let required = prefix_len.checked_add(length).ok_or_else(|| {
-            invalid_ber_field("snmp.ber.sequence", "sequence length exceeds supported size")
+            invalid_ber_field(
+                "snmp.ber.sequence",
+                "sequence length exceeds supported size",
+            )
         })?;
         return Err(truncated_ber("snmp.ber.sequence", required, bytes.len()));
     }
@@ -928,8 +931,7 @@ mod tests {
         assert_eq!(&encoded[3..], &content);
 
         encoded.push(0xaa);
-        let (decoded_content, rest) =
-            decode_sequence(&encoded).expect("decode long-form SEQUENCE");
+        let (decoded_content, rest) = decode_sequence(&encoded).expect("decode long-form SEQUENCE");
 
         assert_eq!(decoded_content, content);
         assert_eq!(rest, &[0xaa]);
