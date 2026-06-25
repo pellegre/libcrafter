@@ -1,0 +1,1 @@
+Ethernet(src=02:00:5e:00:53:a1, dst=02:00:5e:00:53:a2, type=0x0800) / Ipv4(src=192.0.2.161, dst=198.51.100.161, proto=udp(17)) / Udp(sport=49152, dport=161, len=49, checksum_status=Valid) / Snmp(version=v2c, community_len=6, pdu=SnmpPdu(pdu_type=get-request request_id=28769 error_status=no-error(0) error_index=0 varbind_count=1))
