@@ -725,6 +725,12 @@ class PacketGenerator:
                 and not _has_rip_smoke_case(coverage_cases)
             ):
                 continue
+            if feature is None and case is None and root is None and family is None:
+                if self.profile.startswith("snmp-"):
+                    if "snmp" not in stack_layers:
+                        continue
+                elif "snmp" in stack_layers:
+                    continue
             if (
                 feature is None
                 and case is None

@@ -250,24 +250,27 @@ notes:
 
 backend_support:
   scapy:
-    status: planned
+    status: partial
     native_layers:
+      - Raw
       - SNMP
     notes:
-      - Later Scapy backend work must record exact v3 support and mark crypto,
-        VACM, timeliness, and policy behavior unsupported.
+      - The Scapy backend emits deterministic BER bytes for v3 message framing,
+        USM parameter bytes, plaintext scoped PDUs, encrypted opaque scoped data,
+        and Report PDUs. Cryptographic verification, privacy decryption, VACM,
+        timeliness, and policy behavior remain unsupported.
   wireshark:
-    status: planned
-    decode: false
+    status: partial
+    decode: true
     notes:
-      - Later Wireshark decode normalization must keep credential-like bytes
-        length-only or synthetic and compare encrypted scoped data as opaque.
+      - Wireshark parser-only normalization records stable top-level v3 fields
+        where tshark exposes them and leaves encrypted scoped data opaque.
   libcrafter:
-    status: planned
+    status: partial
     native_layers:
       - SnmpV3Message
       - SnmpUsmSecurityParameters
       - SnmpScopedPdu
     notes:
       - The crate supports v3 wire framing and preservation; later oracle
-        adapter steps expose that behavior through executable plans.
+        execution steps compare backend mismatches case by case.

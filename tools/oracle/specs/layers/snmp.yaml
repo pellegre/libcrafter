@@ -276,24 +276,29 @@ notes:
 
 backend_support:
   scapy:
-    status: planned
+    status: partial
     native_layers:
+      - Raw
       - SNMP
-    encode: false
-    decode: false
+    encode: true
+    decode: true
     notes:
-      - Later SNMP backend work must record which v1/v2c/v3 wire cases Scapy can
-        encode and decode byte-for-byte and which cases require backend gaps.
+      - The Scapy backend materializes generated SNMP messages as deterministic
+        BER bytes in a Raw UDP payload so v3 and unknown-preservation cases do
+        not depend on native Scapy ASN.1 feature coverage. Native SNMP decode is
+        normalized when Scapy exposes it; unsupported malformed cases remain
+        structured-error inputs outside strict-byte materialization.
   wireshark:
-    status: planned
-    decode: false
+    status: partial
+    decode: true
     notes:
-      - Later SNMP Wireshark work must normalize decoded field names to this
-        layer spec and keep credential-like bytes redacted or length-only.
+      - The parser-only Wireshark backend normalizes stable top-level tshark
+        SNMP fields and VarBind OIDs when tshark is available. Backend-specific
+        nested details remain inspectable in native metadata.
   libcrafter:
-    status: planned
-    encode: false
-    decode: false
+    status: partial
+    encode: true
+    decode: true
     notes:
-      - The Rust crate supports the packet layer, but the oracle materializer
-        and decode adapter are added by later SNMP oracle steps.
+      - The Rust crate supports SNMP packet builders and decoders. Later oracle
+        execution steps widen adapter coverage and compare backend mismatches.
