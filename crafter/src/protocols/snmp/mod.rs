@@ -16,6 +16,8 @@ mod pdu;
 mod registry;
 mod value;
 
+pub use oid::SnmpOid;
+
 #[cfg(test)]
 mod tests {
     use super::{ber, oid::SnmpOid, value::SnmpValue};

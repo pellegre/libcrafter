@@ -21,23 +21,42 @@ const MIN_OID_ARCS: usize = 2;
 const MAX_ARC: u64 = u32::MAX as u64;
 const MAX_FIRST_SUBIDENTIFIER: u64 = MAX_ARC + 80;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct SnmpOid {
+/// SNMP OBJECT IDENTIFIER value as ordered numeric arcs.
+///
+/// `SnmpOid` is a packet-level object identifier. It does not resolve MIB
+/// names and it does not imply that the crate implements the referenced MIB
+/// object.
+///
+/// ```rust
+/// use crafter::protocols::snmp::SnmpOid;
+///
+/// # fn main() -> crafter::Result<()> {
+/// let oid = SnmpOid::from_arcs([1, 3, 6, 1, 2, 1, 1, 3, 0])?;
+/// assert_eq!(oid.to_string(), "1.3.6.1.2.1.1.3.0");
+/// assert_eq!(oid.arcs(), &[1, 3, 6, 1, 2, 1, 1, 3, 0]);
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SnmpOid {
     arcs: Vec<u32>,
 }
 
 impl SnmpOid {
-    pub(super) fn from_arcs(arcs: impl Into<Vec<u32>>) -> Result<Self> {
+    /// Build an object identifier from ordered numeric arcs.
+    pub fn from_arcs(arcs: impl Into<Vec<u32>>) -> Result<Self> {
         let arcs = arcs.into();
         validate_arcs(&arcs)?;
         Ok(Self { arcs })
     }
 
-    pub(super) fn from_slice(arcs: &[u32]) -> Result<Self> {
+    /// Build an object identifier from a borrowed arc slice.
+    pub fn from_slice(arcs: &[u32]) -> Result<Self> {
         Self::from_arcs(arcs.to_vec())
     }
 
-    pub(super) fn from_dotted(input: &str) -> Result<Self> {
+    /// Parse a dotted-decimal object identifier such as `1.3.6.1.2.1.1.3.0`.
+    pub fn from_dotted(input: &str) -> Result<Self> {
         if input.is_empty() {
             return Err(invalid_dotted("dotted object identifier is empty"));
         }
@@ -62,7 +81,8 @@ impl SnmpOid {
         Self::from_arcs(arcs)
     }
 
-    pub(super) fn decode(bytes: &[u8]) -> Result<(Self, &[u8])> {
+    /// Decode one BER OBJECT IDENTIFIER TLV and return the remaining bytes.
+    pub fn decode(bytes: &[u8]) -> Result<(Self, &[u8])> {
         let (tag, rest) = ber::decode_identifier(bytes)?;
         if tag
             != ber::BerTag::new(
@@ -130,7 +150,8 @@ impl SnmpOid {
         Self::from_arcs(arcs)
     }
 
-    pub(super) fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+    /// Encode this object identifier as a BER OBJECT IDENTIFIER TLV.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
         let mut content = Vec::new();
         self.encode_content(&mut content)?;
 
@@ -158,25 +179,35 @@ impl SnmpOid {
         Ok(())
     }
 
-    pub(super) fn to_bytes(&self) -> Result<Vec<u8>> {
+    /// Return this object identifier encoded as a BER OBJECT IDENTIFIER TLV.
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
         let mut out = Vec::new();
         self.encode(&mut out)?;
         Ok(out)
     }
 
-    pub(super) fn as_slice(&self) -> &[u32] {
+    /// Ordered numeric arcs.
+    pub fn arcs(&self) -> &[u32] {
         &self.arcs
     }
 
-    pub(super) fn as_arcs(&self) -> &[u32] {
-        self.as_slice()
+    /// Compatibility alias for [`SnmpOid::arcs`].
+    pub fn as_slice(&self) -> &[u32] {
+        self.arcs()
     }
 
-    pub(super) fn to_vec(&self) -> Vec<u32> {
+    /// Compatibility alias for [`SnmpOid::arcs`].
+    pub fn as_arcs(&self) -> &[u32] {
+        self.arcs()
+    }
+
+    /// Copy the ordered numeric arcs into a vector.
+    pub fn to_vec(&self) -> Vec<u32> {
         self.arcs.clone()
     }
 
-    pub(super) fn into_vec(self) -> Vec<u32> {
+    /// Consume the object identifier and return its arc vector.
+    pub fn into_vec(self) -> Vec<u32> {
         self.arcs
     }
 }
@@ -281,6 +312,7 @@ mod tests {
     fn snmp_oid_common_shape_parses_encodes_and_decodes() {
         let oid = SnmpOid::from_dotted("1.3.6.1.2.1.1.1.0").expect("parse OID");
 
+        assert_eq!(oid.arcs(), &[1, 3, 6, 1, 2, 1, 1, 1, 0]);
         assert_eq!(oid.as_slice(), &[1, 3, 6, 1, 2, 1, 1, 1, 0]);
         assert_eq!(oid.as_arcs(), &[1, 3, 6, 1, 2, 1, 1, 1, 0]);
         assert_eq!(oid.to_vec(), vec![1, 3, 6, 1, 2, 1, 1, 1, 0]);
@@ -429,13 +461,13 @@ mod tests {
     }
 
     #[test]
-    fn snmp_oid_byte_preserving_decode_encode_keeps_arc_vector() {
+    fn snmp_oid_standard_notification_oid_decode_encode_keeps_arc_vector() {
         let bytes = [
-            0x06, 0x0a, 0x2b, 0x06, 0x01, 0x04, 0x01, 0xbf, 0x08, 0x03, 0x02, 0x0a,
+            0x06, 0x0a, 0x2b, 0x06, 0x01, 0x06, 0x03, 0x01, 0x01, 0x04, 0x01, 0x00,
         ];
-        let arcs = [1, 3, 6, 1, 4, 1, 8072, 3, 2, 10];
+        let arcs = [1, 3, 6, 1, 6, 3, 1, 1, 4, 1, 0];
 
-        let (decoded, rest) = SnmpOid::decode(&bytes).expect("decode enterprise OID");
+        let (decoded, rest) = SnmpOid::decode(&bytes).expect("decode snmpTrapOID.0");
 
         assert_eq!(decoded.as_slice(), &arcs);
         assert!(rest.is_empty());
