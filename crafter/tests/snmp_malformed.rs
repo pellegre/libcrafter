@@ -1,9 +1,18 @@
-use crafter::protocols::snmp::{Snmp, SnmpOid, SnmpPdu, SnmpVarBind, SnmpVarBindList};
+use crafter::protocols::snmp::{
+    Snmp, SnmpOid, SnmpPdu, SnmpVarBind, SnmpVarBindList, SNMP_SECURITY_MODEL_USM,
+};
 use crafter::CrafterError;
 use std::fmt::Debug;
 use std::panic::{self, UnwindSafe};
 
 const NAME_TLV: &[u8] = &[0x06, 0x08, 0x2b, 0x06, 0x01, 0x02, 0x01, 0x01, 0x05, 0x00];
+
+fn minimal_plaintext_scoped_data() -> Vec<u8> {
+    vec![
+        0x30, 0x11, 0x04, 0x00, 0x04, 0x00, 0xa0, 0x0b, 0x02, 0x01, 0x01, 0x02, 0x01, 0x00, 0x02,
+        0x01, 0x00, 0x30, 0x00,
+    ]
+}
 
 fn decode_pdu_without_panic<'a>(
     name: &'static str,
@@ -17,6 +26,24 @@ fn assert_snmp_decode_error(name: &'static str, bytes: &[u8], expected: CrafterE
     let result = panic::catch_unwind(|| Snmp::decode(bytes))
         .unwrap_or_else(|_| panic!("{name} panicked during SNMP message decode"));
     assert_eq!(result, Err(expected), "{name}");
+}
+
+fn assert_snmp_decode_error_context(
+    name: &'static str,
+    bytes: &[u8],
+    expected_context: &'static str,
+) {
+    let result = panic::catch_unwind(|| Snmp::decode(bytes))
+        .unwrap_or_else(|_| panic!("{name} panicked during SNMP message decode"));
+    match result {
+        Err(CrafterError::BufferTooShort { context, .. }) => {
+            assert_eq!(context, expected_context, "{name}");
+        }
+        Err(CrafterError::InvalidFieldValue { field, .. }) => {
+            assert_eq!(field, expected_context, "{name}");
+        }
+        other => panic!("{name} returned unexpected result {other:?}"),
+    }
 }
 
 fn assert_accessor_error<T, F>(name: &'static str, accessor: F, expected: CrafterError)
@@ -153,6 +180,109 @@ fn snmp_malformed_v3_raw_security_parameters_length_is_structured_error() {
         &bytes,
         CrafterError::buffer_too_short("snmp.v3.security_parameters", 5, 3),
     );
+}
+
+#[test]
+fn snmp_malformed_v3_short_global_data_is_structured_error() {
+    let bytes = [0x30, 0x07, 0x02, 0x01, 0x03, 0x30, 0x02, 0x02, 0x01];
+
+    assert_snmp_decode_error_context("short v3 global data", &bytes, "snmp.ber.integer");
+}
+
+#[test]
+fn snmp_malformed_v3_flags_length_is_structured_error() {
+    let bytes = [
+        0x30, 0x0f, 0x02, 0x01, 0x03, 0x30, 0x0a, 0x02, 0x01, 0x01, 0x02, 0x02, 0x05, 0xdc, 0x04,
+        0x02, 0x00,
+    ];
+
+    assert_snmp_decode_error_context("truncated v3 flags field", &bytes, "snmp.v3.flags");
+}
+
+#[test]
+fn snmp_malformed_v3_usm_sequence_accessor_is_structured_error() -> crafter::Result<()> {
+    let malformed_usm = vec![0x30, 0x03, 0x04, 0x01, 0xaa];
+    let message = Snmp::v3(
+        21,
+        1500,
+        [0x00],
+        SNMP_SECURITY_MODEL_USM,
+        malformed_usm.clone(),
+        minimal_plaintext_scoped_data(),
+    );
+    let decoded = Snmp::decode(&message.compile()?)?;
+    let v3 = decoded.as_v3().expect("v3 wrapper");
+
+    assert_eq!(v3.security_parameters(), malformed_usm);
+    assert_eq!(
+        v3.usm_security_parameters().expect_err("malformed USM"),
+        CrafterError::buffer_too_short("snmp.ber.identifier", 1, 0)
+    );
+    assert_eq!(decoded.compile()?, message.compile()?);
+
+    Ok(())
+}
+
+#[test]
+fn snmp_malformed_v3_truncated_scoped_pdu_is_structured_error() -> crafter::Result<()> {
+    let message = Snmp::v3(
+        22,
+        1500,
+        [0x00],
+        SNMP_SECURITY_MODEL_USM,
+        Vec::<u8>::new(),
+        [0x30, 0x02, 0x04],
+    );
+
+    assert_snmp_decode_error_context(
+        "truncated plaintext ScopedPDU",
+        &message.compile()?,
+        "snmp.v3.scoped_data",
+    );
+
+    Ok(())
+}
+
+#[test]
+fn snmp_malformed_v3_encrypted_payload_missing_bytes_is_structured_error() -> crafter::Result<()> {
+    let message = Snmp::v3(
+        23,
+        1500,
+        [0x02],
+        SNMP_SECURITY_MODEL_USM,
+        Vec::<u8>::new(),
+        [0x04, 0x04, 0xde, 0xad],
+    );
+
+    assert_snmp_decode_error_context(
+        "truncated encryptedPDU",
+        &message.compile()?,
+        "snmp.v3.scoped_data",
+    );
+
+    Ok(())
+}
+
+#[test]
+fn snmp_malformed_v3_unknown_security_model_preserves_raw_bytes() -> crafter::Result<()> {
+    let message = Snmp::v3(
+        24,
+        1500,
+        [0x00],
+        777,
+        [0xaa, 0xbb, 0xcc],
+        minimal_plaintext_scoped_data(),
+    );
+    let bytes = message.compile()?;
+    let decoded = Snmp::decode(&bytes)?;
+    let v3 = decoded.as_v3().expect("v3 wrapper");
+
+    assert_eq!(v3.security_model(), 777);
+    assert_eq!(v3.security_parameters(), &[0xaa, 0xbb, 0xcc]);
+    assert_eq!(v3.usm_security_parameters()?, None);
+    assert_eq!(decoded.compile()?, bytes);
+
+    Ok(())
 }
 
 #[test]
