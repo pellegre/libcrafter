@@ -38,8 +38,8 @@ pub mod ipv6 {
 /// Curated protocol symbols exported by both `crate::protocols` and the crate root.
 pub mod exports {
     use super::{
-        bgp, dhcp, dns, eapol, icmp, igmp, ip, ipsec, ipv4, ipv6, link, mqtt, ospf, rip, rsn, snmp,
-        transport,
+        bgp, dhcp, dns, eapol, icmp, igmp, ip, ipsec, ipv4, ipv6, link, mqtt, ospf, quic, rip, rsn,
+        snmp, transport,
     };
 
     pub use crate::packet::Raw;
@@ -419,6 +419,11 @@ pub mod exports {
     // coverage (mirroring the deprecated `Icmp` alias re-export above).
     #[allow(deprecated)]
     pub use ospf::Ospf;
+    pub use quic::constants::{QUIC_VERSION_1, QUIC_VERSION_2, QUIC_VERSION_NEGOTIATION};
+    pub use quic::{
+        Quic, QuicConnectionId, QuicFrame, QuicPacket, QuicPacketNumber, QuicTransportParameter,
+        QuicVarInt,
+    };
     pub use rip::ripng::{
         Ripng, RipngRte, RIPNG_COMMAND_REQUEST, RIPNG_COMMAND_RESPONSE, RIPNG_METRIC_INFINITY,
         RIPNG_MULTICAST, RIPNG_NEXT_HOP_METRIC, RIPNG_UDP_PORT, RIPNG_VERSION_1,
