@@ -661,6 +661,12 @@ impl SnmpUsmSecurityParameters {
         self
     }
 
+    /// Return a copy with explicit msgPrivacyParameters bytes.
+    pub fn with_privacy_parameters(mut self, privacy_parameters: impl Into<Vec<u8>>) -> Self {
+        self.privacy_parameters = privacy_parameters.into();
+        self
+    }
+
     /// msgAuthoritativeEngineID OCTET STRING bytes.
     pub fn engine_id(&self) -> &[u8] {
         &self.engine_id
@@ -699,6 +705,11 @@ impl SnmpUsmSecurityParameters {
     /// msgPrivacyParameters OCTET STRING bytes.
     pub fn privacy_parameters(&self) -> &[u8] {
         &self.privacy_parameters
+    }
+
+    /// msgPrivacyParameters OCTET STRING content length.
+    pub fn privacy_parameters_len(&self) -> usize {
+        self.privacy_parameters.len()
     }
 
     /// Decode one USM security-parameters SEQUENCE.
@@ -960,6 +971,101 @@ impl SnmpRawSecurityParameters {
     }
 }
 
+/// Opaque encrypted SNMPv3 scoped data and associated privacy bytes.
+///
+/// This stores encrypted PDU bytes exactly as packet content and pairs them
+/// with the USM privacy-parameter bytes when those are available. It never
+/// decrypts, derives keys, or validates privacy algorithms.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SnmpEncryptedScopedData {
+    privacy_parameters: Vec<u8>,
+    encrypted_pdu: Vec<u8>,
+}
+
+impl SnmpEncryptedScopedData {
+    /// Build encrypted scoped data from explicit packet bytes.
+    pub fn new(privacy_parameters: impl Into<Vec<u8>>, encrypted_pdu: impl Into<Vec<u8>>) -> Self {
+        Self {
+            privacy_parameters: privacy_parameters.into(),
+            encrypted_pdu: encrypted_pdu.into(),
+        }
+    }
+
+    /// Raw msgPrivacyParameters OCTET STRING content bytes, when available.
+    pub fn privacy_parameters(&self) -> &[u8] {
+        &self.privacy_parameters
+    }
+
+    /// Raw msgPrivacyParameters content length.
+    pub fn privacy_parameters_len(&self) -> usize {
+        self.privacy_parameters.len()
+    }
+
+    /// Raw encryptedPDU OCTET STRING content bytes.
+    pub fn encrypted_pdu(&self) -> &[u8] {
+        &self.encrypted_pdu
+    }
+
+    /// Raw encryptedPDU content length.
+    pub fn encrypted_pdu_len(&self) -> usize {
+        self.encrypted_pdu.len()
+    }
+
+    /// Encode this encrypted scoped data as the RFC 3412 encryptedPDU OCTET STRING.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        encode_octet_string_tlv(&self.encrypted_pdu, out)
+    }
+
+    /// Return the encoded encryptedPDU OCTET STRING.
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.encoded_len());
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Compile this encrypted scoped data into BER bytes.
+    pub fn compile(&self) -> Result<Vec<u8>> {
+        self.to_bytes()
+    }
+
+    /// Encoded encryptedPDU OCTET STRING length in octets.
+    pub fn encoded_len(&self) -> usize {
+        encoded_tlv_len(self.encrypted_pdu.len())
+    }
+
+    /// A compact summary that avoids printing privacy or encrypted payload bytes.
+    pub fn summary(&self) -> String {
+        format!(
+            "SnmpEncryptedScopedData(encrypted_pdu_len={} privacy_parameters_len={})",
+            self.encrypted_pdu.len(),
+            self.privacy_parameters.len()
+        )
+    }
+
+    /// Stable inspection fields for generated tools.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            (
+                "encrypted_scoped_pdu_len",
+                self.encrypted_pdu.len().to_string(),
+            ),
+            (
+                "usm_privacy_parameters_len",
+                self.privacy_parameters.len().to_string(),
+            ),
+        ]
+    }
+
+    /// Multi-line encrypted scoped-data inspection output.
+    pub fn show(&self) -> String {
+        let mut output = "SnmpEncryptedScopedData".to_string();
+        for (name, value) in self.inspection_fields() {
+            output.push_str(&format!("\n  {name}: {value}"));
+        }
+        output
+    }
+}
+
 /// SNMPv3 top-level message wrapper fields.
 ///
 /// This models the RFC 3412 message framing only. Security-model processing,
@@ -1031,6 +1137,25 @@ impl SnmpV3Message {
         ))
     }
 
+    /// Build an SNMPv3 USM message carrying opaque encrypted scoped data.
+    pub fn new_encrypted_usm(
+        msg_id: i64,
+        max_size: i64,
+        flags: impl Into<Vec<u8>>,
+        usm: SnmpUsmSecurityParameters,
+        encrypted_pdu: impl Into<Vec<u8>>,
+    ) -> Result<Self> {
+        let encrypted_scoped_data =
+            SnmpEncryptedScopedData::new(usm.privacy_parameters().to_vec(), encrypted_pdu);
+        Self::new_usm(
+            msg_id,
+            max_size,
+            flags,
+            usm,
+            encrypted_scoped_data.compile()?,
+        )
+    }
+
     const fn with_version(mut self, version: SnmpVersion) -> Self {
         self.version = version;
         self
@@ -1064,6 +1189,11 @@ impl SnmpV3Message {
     /// Raw RFC 3412 `msgFlags` OCTET STRING bytes.
     pub fn flags(&self) -> &[u8] {
         self.global_data.flags()
+    }
+
+    /// Typed view of the first `msgFlags` octet.
+    pub fn flags_value(&self) -> registry::SnmpV3Flags {
+        self.global_data.flags_value()
     }
 
     /// RFC 3412 `msgSecurityModel` INTEGER value.
@@ -1103,6 +1233,32 @@ impl SnmpV3Message {
         Ok(Some(scoped_pdu))
     }
 
+    /// Decode encrypted scoped data as opaque bytes, if this message carries it.
+    pub fn encrypted_scoped_data(&self) -> Result<Option<SnmpEncryptedScopedData>> {
+        let Some(encrypted_pdu) = decode_encrypted_scoped_pdu_content(&self.scoped_data)? else {
+            return Ok(None);
+        };
+        let privacy_parameters = self
+            .usm_security_parameters()?
+            .map(|usm| usm.privacy_parameters().to_vec())
+            .unwrap_or_default();
+
+        Ok(Some(SnmpEncryptedScopedData::new(
+            privacy_parameters,
+            encrypted_pdu.to_vec(),
+        )))
+    }
+
+    /// Source-backed scoped-data CHOICE label.
+    pub fn scoped_data_kind(&self) -> &'static str {
+        scoped_data_kind_label(&self.scoped_data)
+    }
+
+    /// Raw encryptedPDU content length, if scoped data is encrypted.
+    pub fn encrypted_scoped_pdu_len(&self) -> Result<Option<usize>> {
+        Ok(decode_encrypted_scoped_pdu_content(&self.scoped_data)?.map(<[u8]>::len))
+    }
+
     fn decode_after_version(version: SnmpVersion, bytes: &[u8]) -> Result<(Self, &[u8])> {
         let (global_data, rest) = SnmpV3GlobalData::decode(bytes)?;
         let (security_parameters, rest) =
@@ -1134,18 +1290,25 @@ impl SnmpV3Message {
     }
 
     fn summary_fields(&self) -> String {
+        let encrypted_len = self.encrypted_scoped_pdu_len().ok().flatten().unwrap_or(0);
         format!(
-            "{} msg_security_parameters_len={} scoped_data_len={}",
+            "{} msg_security_parameters_len={} scoped_data_kind={} scoped_data_len={} encrypted_scoped_pdu_len={}",
             self.global_data.summary_fields(),
             self.security_parameters.len(),
-            self.scoped_data.len()
+            self.scoped_data_kind(),
+            self.scoped_data.len(),
+            encrypted_len
         )
     }
 
     fn inspection_fields(&self) -> Vec<(&'static str, String)> {
         let mut fields = self.global_data.inspection_fields();
         fields.extend(self.security_parameters.inspection_fields());
+        fields.push(("scoped_data_kind", self.scoped_data_kind().to_string()));
         fields.push(("scoped_data_len", self.scoped_data.len().to_string()));
+        if let Ok(Some(encrypted_len)) = self.encrypted_scoped_pdu_len() {
+            fields.push(("encrypted_scoped_pdu_len", encrypted_len.to_string()));
+        }
         fields
     }
 }
@@ -1449,6 +1612,23 @@ impl Snmp {
             security_model,
             security_parameters,
             scoped_pdu,
+        )?))
+    }
+
+    /// Build an SNMPv3 USM message with encrypted scoped-PDU bytes.
+    pub fn v3_encrypted_usm(
+        msg_id: i64,
+        max_size: i64,
+        flags: impl Into<Vec<u8>>,
+        usm: SnmpUsmSecurityParameters,
+        encrypted_pdu: impl Into<Vec<u8>>,
+    ) -> Result<Self> {
+        Ok(Self::from_v3_message(SnmpV3Message::new_encrypted_usm(
+            msg_id,
+            max_size,
+            flags,
+            usm,
+            encrypted_pdu,
         )?))
     }
 
@@ -1842,6 +2022,45 @@ fn decode_scoped_data_tlv(bytes: &[u8]) -> Result<(&[u8], &[u8])> {
 
     let tlv_len = bytes.len() - rest.len() + length;
     Ok(bytes.split_at(tlv_len))
+}
+
+fn scoped_data_kind_label(bytes: &[u8]) -> &'static str {
+    match ber::decode_identifier(bytes) {
+        Ok((tag, _))
+            if tag == ber::BerTag::new(ber::BerClass::Universal, true, ber::BER_TAG_SEQUENCE) =>
+        {
+            "plaintext"
+        }
+        Ok((tag, _))
+            if tag
+                == ber::BerTag::new(ber::BerClass::Universal, false, ber::BER_TAG_OCTET_STRING) =>
+        {
+            "encrypted"
+        }
+        _ => "unknown",
+    }
+}
+
+fn decode_encrypted_scoped_pdu_content(bytes: &[u8]) -> Result<Option<&[u8]>> {
+    let (tag, _) = ber::decode_identifier(bytes)?;
+    if tag != ber::BerTag::new(ber::BerClass::Universal, false, ber::BER_TAG_OCTET_STRING) {
+        return Ok(None);
+    }
+
+    let (encrypted_pdu, rest) = decode_octet_string_tlv(
+        bytes,
+        SNMP_V3_SCOPED_DATA_CONTEXT,
+        "expected universal primitive OCTET STRING for encryptedPDU",
+        "encryptedPDU length exceeds supported size",
+    )?;
+    if !rest.is_empty() {
+        return Err(ber::invalid_ber_field(
+            SNMP_V3_SCOPED_DATA_CONTEXT,
+            "trailing bytes after encryptedPDU",
+        ));
+    }
+
+    Ok(Some(encrypted_pdu))
 }
 
 fn encode_message_sequence(
@@ -2784,6 +3003,94 @@ mod tests {
         assert!(!decoded_usm.summary().contains("a0 a1"));
         assert!(!decoded_usm.show().contains("a0 a1"));
         assert!(!decoded.summary().contains("a0 a1"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_v3_encrypted_pdu_builder_preserves_payload_and_privacy_params() -> Result<()> {
+        let privacy_parameters = [0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17];
+        let encrypted_pdu = [0xde, 0xad, 0xbe, 0xef, 0x00, 0xff];
+        let usm = sample_usm_parameters().with_privacy_parameters(privacy_parameters);
+        let flags = [registry::SNMP_V3_FLAG_AUTH | registry::SNMP_V3_FLAG_PRIVACY];
+        let snmp = Snmp::v3_encrypted_usm(15, 1500, flags, usm.clone(), encrypted_pdu)?;
+        let decoded = Snmp::decode(&snmp.compile()?)?;
+        let v3 = decoded.as_v3().expect("v3 wrapper");
+        let encrypted = v3.encrypted_scoped_data()?.expect("encrypted scoped data");
+
+        // Source-backed: docs/snmp-rfc-manifest.md records RFC 3412 Section 6
+        // for encryptedPDU as OCTET STRING and RFC 3414 Section 8 for privacy
+        // parameter bytes. The packet primitive preserves both without keys.
+        assert_eq!(v3.flags_value().privacy(), true);
+        assert_eq!(v3.scoped_data_kind(), "encrypted");
+        assert_eq!(v3.encrypted_scoped_pdu_len()?, Some(encrypted_pdu.len()));
+        assert!(v3.scoped_pdu()?.is_none());
+        assert_eq!(encrypted.encrypted_pdu(), encrypted_pdu);
+        assert_eq!(encrypted.encrypted_pdu_len(), encrypted_pdu.len());
+        assert_eq!(encrypted.privacy_parameters(), privacy_parameters);
+        assert_eq!(encrypted.privacy_parameters_len(), privacy_parameters.len());
+        assert_eq!(encrypted.compile()?, v3.scoped_data());
+        assert_eq!(v3.raw_security_parameters().bytes(), usm.compile()?);
+        assert_eq!(decoded.compile()?, snmp.compile()?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_v3_encrypted_pdu_decode_opaque_variant_from_raw_wrapper() -> Result<()> {
+        let privacy_parameters = [0x21, 0x22, 0x23, 0x24];
+        let encrypted_pdu = [0x8a, 0x8b, 0x8c, 0x8d, 0x8e];
+        let usm = sample_usm_parameters().with_privacy_parameters(privacy_parameters);
+        let encrypted = SnmpEncryptedScopedData::new(privacy_parameters, encrypted_pdu);
+        let snmp = Snmp::v3(
+            16,
+            1500,
+            [registry::SNMP_V3_FLAG_PRIVACY],
+            registry::SNMP_SECURITY_MODEL_USM,
+            usm.compile()?,
+            encrypted.compile()?,
+        );
+        let decoded = Snmp::decode(&snmp.compile()?)?;
+        let v3 = decoded.as_v3().expect("v3 wrapper");
+        let decoded_encrypted = v3.encrypted_scoped_data()?.expect("encrypted scoped data");
+
+        assert_eq!(v3.scoped_data_kind(), "encrypted");
+        assert_eq!(v3.scoped_data(), encrypted.compile()?);
+        assert_eq!(decoded_encrypted.encrypted_pdu(), encrypted_pdu);
+        assert_eq!(decoded_encrypted.privacy_parameters(), privacy_parameters);
+        assert_eq!(decoded.compile()?, snmp.compile()?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_v3_encrypted_pdu_safe_summaries_hide_secret_bytes() -> Result<()> {
+        let privacy_parameters = [0x30, 0x31, 0x32, 0x33];
+        let encrypted_pdu = [0xfa, 0xfb, 0xfc, 0xfd, 0xfe];
+        let usm = sample_usm_parameters().with_privacy_parameters(privacy_parameters);
+        let snmp = Snmp::v3_encrypted_usm(
+            17,
+            1500,
+            [registry::SNMP_V3_FLAG_PRIVACY],
+            usm,
+            encrypted_pdu,
+        )?;
+        let decoded = Snmp::decode(&snmp.compile()?)?;
+        let encrypted = decoded
+            .as_v3()
+            .expect("v3 wrapper")
+            .encrypted_scoped_data()?
+            .expect("encrypted scoped data");
+
+        assert!(encrypted.summary().contains("encrypted_pdu_len=5"));
+        assert!(encrypted.summary().contains("privacy_parameters_len=4"));
+        assert!(!encrypted.summary().contains("fa fb"));
+        assert!(!encrypted.show().contains("fa fb"));
+        assert!(!encrypted.show().contains("30 31"));
+        assert!(decoded.summary().contains("scoped_data_kind=encrypted"));
+        assert!(decoded.summary().contains("encrypted_scoped_pdu_len=5"));
+        assert!(!decoded.summary().contains("fa fb"));
+        assert!(!decoded.show().contains("fa fb"));
 
         Ok(())
     }
