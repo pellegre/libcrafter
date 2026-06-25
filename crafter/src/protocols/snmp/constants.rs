@@ -2,6 +2,18 @@
 //!
 //! Source-gated by `docs/snmp-rfc-manifest.md`.
 
+/// SNMP message UDP port.
+///
+/// Source: IANA Service Name and Transport Protocol Port Number Registry row
+/// `snmp`/UDP, and RFC 3417 Section 3 for the preferred UDP/IPv4 mapping.
+pub const SNMP_PORT: u16 = 161;
+
+/// SNMP notification/trap UDP port.
+///
+/// Source: IANA Service Name and Transport Protocol Port Number Registry row
+/// `snmptrap`/UDP.
+pub const SNMP_TRAP_PORT: u16 = 162;
+
 /// GetRequest-PDU context-specific tag number.
 ///
 /// Source: RFC 1157 Section 4.1.2 and RFC 3416 Section 3.
