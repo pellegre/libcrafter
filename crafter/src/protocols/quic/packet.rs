@@ -9,9 +9,11 @@
 use crate::field::{Field, FieldState};
 use crate::packet::{Layer, LayerContext};
 use crate::protocols::transport::common::{hex_bytes, impl_layer_div, impl_layer_object};
-use crate::Result;
+use crate::{CrafterError, Result};
 
-use super::header::{classify_quic_header, QuicHeaderClassification};
+use super::constants::{quic_version_label, quic_version_status};
+use super::header::{classify_quic_header, QuicHeaderClassification, QuicLongPacketKind};
+use super::QuicConnectionId;
 
 /// Raw-preserving QUIC UDP payload layer.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -205,6 +207,7 @@ impl_layer_div!(Quic);
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct QuicPacket {
     bytes: Vec<u8>,
+    version_negotiation: Option<QuicVersionNegotiationPacket>,
 }
 
 impl QuicPacket {
@@ -212,7 +215,36 @@ impl QuicPacket {
     pub fn from_bytes(bytes: impl AsRef<[u8]>) -> Self {
         Self {
             bytes: bytes.as_ref().to_vec(),
+            version_negotiation: None,
         }
+    }
+
+    /// Decode a QUIC packet entry where source-backed typed parsing exists.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let bytes = bytes.as_ref();
+        match classify_quic_header(bytes)? {
+            QuicHeaderClassification::LongHeader {
+                packet_kind: QuicLongPacketKind::VersionNegotiation,
+                ..
+            } => {
+                let version_negotiation = QuicVersionNegotiationPacket::decode(bytes)?;
+                Ok(Self {
+                    bytes: bytes.to_vec(),
+                    version_negotiation: Some(version_negotiation),
+                })
+            }
+            _ => Ok(Self::from_bytes(bytes)),
+        }
+    }
+
+    /// Return the decoded Version Negotiation packet, when this packet is one.
+    pub fn version_negotiation(&self) -> Option<&QuicVersionNegotiationPacket> {
+        self.version_negotiation.as_ref()
+    }
+
+    /// Return true when this packet is a decoded Version Negotiation packet.
+    pub fn is_version_negotiation(&self) -> bool {
+        self.version_negotiation.is_some()
     }
 
     /// Borrow the preserved packet bytes.
@@ -232,6 +264,9 @@ impl QuicPacket {
 
     /// One-line packet summary for datagram inspection.
     pub fn summary(&self) -> String {
+        if let Some(version_negotiation) = &self.version_negotiation {
+            return version_negotiation.summary();
+        }
         match classify_quic_header(&self.bytes) {
             Ok(classification) => {
                 format!("raw_len={} {}", self.bytes.len(), classification.summary())
@@ -242,6 +277,9 @@ impl QuicPacket {
 
     /// Stable field/value pairs for packet inspection.
     pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        if let Some(version_negotiation) = &self.version_negotiation {
+            return version_negotiation.inspection_fields();
+        }
         let mut fields = vec![
             ("raw_len", self.bytes.len().to_string()),
             ("raw_bytes", hex_bytes(&self.bytes)),
@@ -255,6 +293,161 @@ impl QuicPacket {
         }
         fields
     }
+}
+
+/// Decoded QUIC Version Negotiation packet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuicVersionNegotiationPacket {
+    first_byte: u8,
+    destination_connection_id: QuicConnectionId,
+    source_connection_id: QuicConnectionId,
+    supported_versions: Vec<u32>,
+    raw: Vec<u8>,
+}
+
+impl QuicVersionNegotiationPacket {
+    /// Decode a byte-complete Version Negotiation packet.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let bytes = bytes.as_ref();
+        let classification = classify_quic_header(bytes)?;
+        let QuicHeaderClassification::LongHeader {
+            first_byte,
+            destination_connection_id,
+            source_connection_id,
+            invariant_len,
+            packet_kind: QuicLongPacketKind::VersionNegotiation,
+            ..
+        } = classification
+        else {
+            return Err(CrafterError::invalid_field_value(
+                "quic.version_negotiation",
+                "packet is not a Version Negotiation packet",
+            ));
+        };
+
+        let version_bytes = &bytes[invariant_len..];
+        if version_bytes.is_empty() || version_bytes.len() % 4 != 0 {
+            let missing = if version_bytes.is_empty() {
+                4
+            } else {
+                4 - (version_bytes.len() % 4)
+            };
+            return Err(CrafterError::buffer_too_short(
+                "quic.version_negotiation.supported_versions",
+                bytes.len() + missing,
+                bytes.len(),
+            ));
+        }
+
+        let supported_versions = version_bytes
+            .chunks_exact(4)
+            .map(|chunk| u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+            .collect();
+
+        Ok(Self {
+            first_byte,
+            destination_connection_id,
+            source_connection_id,
+            supported_versions,
+            raw: bytes.to_vec(),
+        })
+    }
+
+    /// Raw first byte, including the unused low seven bits.
+    pub const fn first_byte(&self) -> u8 {
+        self.first_byte
+    }
+
+    /// Borrow the Destination Connection ID.
+    pub fn destination_connection_id(&self) -> &QuicConnectionId {
+        &self.destination_connection_id
+    }
+
+    /// Borrow the Source Connection ID.
+    pub fn source_connection_id(&self) -> &QuicConnectionId {
+        &self.source_connection_id
+    }
+
+    /// Borrow the offered supported-version list.
+    pub fn supported_versions(&self) -> &[u32] {
+        &self.supported_versions
+    }
+
+    /// Borrow the preserved packet bytes.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.raw
+    }
+
+    /// Packet length in bytes.
+    pub fn len(&self) -> usize {
+        self.raw.len()
+    }
+
+    /// Return true when the packet has no bytes.
+    pub fn is_empty(&self) -> bool {
+        self.raw.is_empty()
+    }
+
+    /// One-line Version Negotiation summary.
+    pub fn summary(&self) -> String {
+        format!(
+            "VersionNegotiation(raw_len={}, dcid={}, scid={}, supported_versions={})",
+            self.raw.len(),
+            self.destination_connection_id.summary(),
+            self.source_connection_id.summary(),
+            version_list_summary(&self.supported_versions)
+        )
+    }
+
+    /// Stable field/value pairs for packet inspection.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("classification", "version_negotiation".to_string()),
+            ("first_byte", format!("0x{:02x}", self.first_byte)),
+            (
+                "destination_connection_id_len",
+                self.destination_connection_id.len().to_string(),
+            ),
+            (
+                "destination_connection_id",
+                self.destination_connection_id.to_spaced_hex(),
+            ),
+            (
+                "source_connection_id_len",
+                self.source_connection_id.len().to_string(),
+            ),
+            (
+                "source_connection_id",
+                self.source_connection_id.to_spaced_hex(),
+            ),
+            (
+                "supported_version_count",
+                self.supported_versions.len().to_string(),
+            ),
+            (
+                "supported_versions",
+                version_list_summary(&self.supported_versions),
+            ),
+            (
+                "supported_version_statuses",
+                self.supported_versions
+                    .iter()
+                    .map(|version| format!("0x{version:08x}:{:?}", quic_version_status(*version)))
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ),
+            ("raw_len", self.raw.len().to_string()),
+            ("raw_bytes", hex_bytes(&self.raw)),
+        ]
+    }
+}
+
+fn version_list_summary(versions: &[u32]) -> String {
+    versions
+        .iter()
+        .map(|version| format!("0x{version:08x}({})", quic_version_label(*version)))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 #[cfg(test)]
@@ -346,5 +539,81 @@ mod tests {
         let fields = quic_packet.inspection_fields();
         assert!(fields.contains(&("classification", "short_header_ambiguous".to_string())));
         assert!(fields.contains(&("raw_len", "7".to_string())));
+    }
+
+    #[test]
+    fn quic_version_negotiation_decode_preserves_versions_and_bytes() {
+        let bytes = [
+            0xc0, 0x00, 0x00, 0x00, 0x00, 0x04, 0x83, 0x94, 0xc8, 0xf0, 0x01, 0xaa, 0x00, 0x00,
+            0x00, 0x01, 0x6b, 0x33, 0x43, 0xcf, 0xfa, 0xce, 0xfe, 0xed,
+        ];
+
+        let vn = QuicVersionNegotiationPacket::decode(bytes).unwrap();
+
+        assert_eq!(vn.first_byte(), 0xc0);
+        assert_eq!(
+            vn.destination_connection_id().as_bytes(),
+            [0x83, 0x94, 0xc8, 0xf0]
+        );
+        assert_eq!(vn.source_connection_id().as_bytes(), [0xaa]);
+        assert_eq!(
+            vn.supported_versions(),
+            [0x0000_0001, 0x6b33_43cf, 0xface_feed]
+        );
+        assert_eq!(vn.as_bytes(), bytes);
+        assert_eq!(
+            vn.summary(),
+            "VersionNegotiation(raw_len=24, dcid=len=4 value=8394c8f0, scid=len=1 value=aa, supported_versions=0x00000001(QUIC v1),0x6b3343cf(QUIC v2),0xfacefeed(unknown version 0xfacefeed))"
+        );
+
+        let packet = QuicPacket::decode(bytes).unwrap();
+        assert!(packet.is_version_negotiation());
+        assert_eq!(packet.as_bytes(), bytes);
+        assert_eq!(
+            packet.version_negotiation().unwrap().supported_versions(),
+            vn.supported_versions()
+        );
+    }
+
+    #[test]
+    fn quic_version_negotiation_decode_inspection_fields_are_stable() {
+        let packet = QuicPacket::decode([
+            0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x6b, 0x33, 0x43, 0xcf,
+        ])
+        .unwrap();
+        let fields = packet.inspection_fields();
+
+        assert!(fields.contains(&("classification", "version_negotiation".to_string())));
+        assert!(fields.contains(&("first_byte", "0x80".to_string())));
+        assert!(fields.contains(&("destination_connection_id_len", "0".to_string())));
+        assert!(fields.contains(&("source_connection_id_len", "0".to_string())));
+        assert!(fields.contains(&("supported_version_count", "1".to_string())));
+        assert!(fields.contains(&("supported_versions", "0x6b3343cf(QUIC v2)".to_string(),)));
+    }
+
+    #[test]
+    fn quic_version_negotiation_decode_reports_missing_or_truncated_versions() {
+        assert_eq!(
+            QuicVersionNegotiationPacket::decode([0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,])
+                .unwrap_err(),
+            CrafterError::buffer_too_short("quic.version_negotiation.supported_versions", 11, 7,)
+        );
+        assert_eq!(
+            QuicVersionNegotiationPacket::decode([0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,])
+                .unwrap_err(),
+            CrafterError::buffer_too_short("quic.version_negotiation.supported_versions", 11, 8,)
+        );
+    }
+
+    #[test]
+    fn quic_version_negotiation_decode_rejects_non_vn_packets() {
+        assert_eq!(
+            QuicVersionNegotiationPacket::decode([0xc0, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,])
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "quic.version_negotiation",
+                "packet is not a Version Negotiation packet",
+            )
+        );
     }
 }

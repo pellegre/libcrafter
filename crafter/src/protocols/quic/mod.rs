@@ -27,7 +27,7 @@ pub use connection_id::QuicConnectionId;
 pub use crypto::QuicCryptoContext;
 pub use frame::QuicFrame;
 pub use header::QuicHeader;
-pub use packet::{Quic, QuicPacket};
+pub use packet::{Quic, QuicPacket, QuicVersionNegotiationPacket};
 pub use packet_number::QuicPacketNumber;
 pub use transport_parameter::QuicTransportParameter;
 pub use varint::QuicVarInt;

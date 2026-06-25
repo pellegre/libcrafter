@@ -8,7 +8,7 @@ use crate::error::{CrafterError, Result};
 use crate::packet::Packet;
 
 use super::header::{classify_quic_header, QuicHeaderClassification, QuicLongPacketKind};
-use super::Quic;
+use super::{Quic, QuicPacket};
 
 /// Explicitly append a raw-preserving QUIC placeholder layer.
 pub(crate) fn append_quic_packet(packet: Packet, payload: &[u8]) -> Result<Packet> {
@@ -45,5 +45,32 @@ pub(crate) fn decode_quic_datagram(payload: &[u8]) -> Result<Quic> {
         ));
     }
 
+    let packet = QuicPacket::decode(payload)?;
+    if packet.is_version_negotiation() {
+        return Ok(Quic::new().packet(packet));
+    }
+
     Ok(Quic::from_decoded_payload(payload))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::packet::Packet;
+
+    use super::*;
+
+    #[test]
+    fn quic_version_negotiation_decode_enters_typed_packet_layer() -> crate::Result<()> {
+        let payload = [
+            0xc0, 0x00, 0x00, 0x00, 0x00, 0x04, 0x83, 0x94, 0xc8, 0xf0, 0x01, 0xaa, 0x00, 0x00,
+            0x00, 0x01,
+        ];
+        let quic = decode_quic_datagram(&payload)?;
+
+        assert_eq!(quic.packets().len(), 1);
+        assert!(quic.packets()[0].is_version_negotiation());
+        let compiled = Packet::from_layer(quic).compile()?;
+        assert_eq!(compiled.as_bytes(), payload);
+        Ok(())
+    }
 }
