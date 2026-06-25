@@ -29,8 +29,11 @@ pub use pdu::{SnmpGetBulkPdu, SnmpPdu, SnmpRawPdu, SnmpRawPduBody, SnmpRequestPd
 pub use registry::{
     snmp_error_status_label, snmp_error_status_meta, snmp_error_status_name,
     snmp_error_status_status, snmp_error_status_summary, snmp_pdu_tag_meta, snmp_pdu_tag_name,
-    snmp_pdu_tag_status, SnmpErrorStatus, SnmpErrorStatusAssignment, SnmpErrorStatusMeta,
-    SnmpPduTagMeta, SnmpPduTagStatus, SNMP_ERROR_STATUS_AUTHORIZATION_ERROR,
+    snmp_pdu_tag_status, snmp_security_model_label, snmp_security_model_meta,
+    snmp_security_model_name, snmp_security_model_status, snmp_security_model_summary,
+    snmp_v3_flags_label, SnmpErrorStatus, SnmpErrorStatusAssignment, SnmpErrorStatusMeta,
+    SnmpPduTagMeta, SnmpPduTagStatus, SnmpSecurityModel, SnmpSecurityModelMeta,
+    SnmpSecurityModelStatus, SnmpV3Flags, SNMP_ERROR_STATUS_AUTHORIZATION_ERROR,
     SNMP_ERROR_STATUS_BAD_VALUE, SNMP_ERROR_STATUS_COMMIT_FAILED, SNMP_ERROR_STATUS_GEN_ERR,
     SNMP_ERROR_STATUS_INCONSISTENT_NAME, SNMP_ERROR_STATUS_INCONSISTENT_VALUE,
     SNMP_ERROR_STATUS_NOT_WRITABLE, SNMP_ERROR_STATUS_NO_ACCESS, SNMP_ERROR_STATUS_NO_CREATION,
@@ -38,6 +41,9 @@ pub use registry::{
     SNMP_ERROR_STATUS_RESOURCE_UNAVAILABLE, SNMP_ERROR_STATUS_TOO_BIG,
     SNMP_ERROR_STATUS_UNDO_FAILED, SNMP_ERROR_STATUS_WRONG_ENCODING,
     SNMP_ERROR_STATUS_WRONG_LENGTH, SNMP_ERROR_STATUS_WRONG_TYPE, SNMP_ERROR_STATUS_WRONG_VALUE,
+    SNMP_SECURITY_MODEL_ANY, SNMP_SECURITY_MODEL_SNMPV1, SNMP_SECURITY_MODEL_SNMPV2C,
+    SNMP_SECURITY_MODEL_TSM, SNMP_SECURITY_MODEL_USM, SNMP_V3_FLAG_AUTH, SNMP_V3_FLAG_KNOWN_MASK,
+    SNMP_V3_FLAG_PRIVACY, SNMP_V3_FLAG_REPORTABLE, SNMP_V3_FLAG_RESERVED_MASK,
 };
 pub use varbind::{SnmpVarBind, SnmpVarBindList};
 

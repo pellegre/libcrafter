@@ -11,7 +11,7 @@ use core::any::Any;
 use core::fmt;
 use core::ops::Div;
 
-use super::{ber, pdu::SnmpPdu};
+use super::{ber, pdu::SnmpPdu, registry};
 use crate::error::Result;
 use crate::packet::{IntoPacket, Layer, LayerContext, Packet};
 
@@ -225,9 +225,34 @@ impl SnmpV3GlobalData {
         &self.flags
     }
 
+    /// Typed view of the first `msgFlags` octet.
+    pub fn flags_value(&self) -> registry::SnmpV3Flags {
+        registry::SnmpV3Flags::from_octets(&self.flags)
+    }
+
     /// RFC 3412 `msgSecurityModel` INTEGER value.
     pub const fn security_model(&self) -> i64 {
         self.security_model
+    }
+
+    /// Typed security-model wrapper for the INTEGER value.
+    pub const fn security_model_value(&self) -> registry::SnmpSecurityModel {
+        registry::SnmpSecurityModel::new(self.security_model)
+    }
+
+    /// Source-backed security-model name, when assigned or reserved.
+    pub const fn security_model_name(&self) -> Option<&'static str> {
+        registry::snmp_security_model_name(self.security_model)
+    }
+
+    /// Source-backed assignment status for the security-model value.
+    pub const fn security_model_status(&self) -> registry::SnmpSecurityModelStatus {
+        registry::snmp_security_model_status(self.security_model)
+    }
+
+    /// Stable security-model label that preserves unassigned values.
+    pub fn security_model_label(&self) -> String {
+        registry::snmp_security_model_label(self.security_model)
     }
 
     /// Decode one SNMPv3 `HeaderData` SEQUENCE.
@@ -295,23 +320,44 @@ impl SnmpV3GlobalData {
     }
 
     fn summary_fields(&self) -> String {
+        let flags = self.flags_value();
         format!(
-            "msg_id={} msg_max_size={} msg_flags_len={} msg_security_model={}",
+            "msg_id={} msg_max_size={} msg_flags={} msg_flags_len={} msg_security_model={} msg_security_model_label={}",
             self.msg_id,
             self.max_size,
+            flags,
             self.flags.len(),
-            self.security_model
+            self.security_model,
+            self.security_model_label()
         )
     }
 
     /// Stable inspection fields for generated tools.
     pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        let flags = self.flags_value();
         vec![
             ("msg_id", self.msg_id.to_string()),
             ("msg_max_size", self.max_size.to_string()),
             ("msg_flags_len", self.flags.len().to_string()),
             ("msg_flags", ber::hex_bytes(&self.flags)),
+            ("msg_flags_label", flags.label()),
+            ("msg_flags_auth", flags.auth().to_string()),
+            ("msg_flags_privacy", flags.privacy().to_string()),
+            ("msg_flags_reportable", flags.reportable().to_string()),
+            (
+                "msg_flags_reserved_bits",
+                format!("0x{:02x}", flags.reserved_bits()),
+            ),
+            (
+                "msg_flags_reserved_auth_priv",
+                flags.has_reserved_auth_priv_combination().to_string(),
+            ),
             ("msg_security_model", self.security_model.to_string()),
+            ("msg_security_model_label", self.security_model_label()),
+            (
+                "msg_security_model_status",
+                self.security_model_status().to_string(),
+            ),
         ]
     }
 }
@@ -1489,13 +1535,21 @@ mod tests {
 
         assert_eq!(
             decoded.summary(),
-            "SnmpV3GlobalData(msg_id=2147483647 msg_max_size=0 msg_flags_len=1 msg_security_model=999)"
+            "SnmpV3GlobalData(msg_id=2147483647 msg_max_size=0 msg_flags=auth|privacy|reportable msg_flags_len=1 msg_security_model=999 msg_security_model_label=security-model-999)"
         );
         let fields = decoded.inspection_fields();
         assert_eq!(inspection_value(&fields, "msg_id"), Some("2147483647"));
         assert_eq!(inspection_value(&fields, "msg_max_size"), Some("0"));
         assert_eq!(inspection_value(&fields, "msg_flags"), Some("07"));
+        assert_eq!(
+            inspection_value(&fields, "msg_flags_label"),
+            Some("auth|privacy|reportable")
+        );
         assert_eq!(inspection_value(&fields, "msg_security_model"), Some("999"));
+        assert_eq!(
+            inspection_value(&fields, "msg_security_model_status"),
+            Some("unknown")
+        );
 
         Ok(())
     }
@@ -1515,6 +1569,8 @@ mod tests {
         assert_eq!(decoded.msg_id(), -1);
         assert_eq!(decoded.max_size(), 65_535);
         assert_eq!(decoded.flags(), &[0xaa, 0xbb]);
+        assert_eq!(decoded.flags_value().reserved_bits(), 0xa8);
+        assert_eq!(decoded.flags_value().label(), "privacy|reserved-0xa8");
         assert_eq!(decoded.security_model(), 65_535);
         assert_eq!(decoded.compile()?, bytes);
 
@@ -1532,6 +1588,56 @@ mod tests {
             error,
             crate::error::CrafterError::buffer_too_short("snmp.ber.sequence", 16, bytes.len())
         );
+    }
+
+    #[test]
+    fn snmp_v3_flags_message_decode_inspects_raw_flags_and_unknown_security_model() -> Result<()> {
+        let scoped_data = minimal_plaintext_v3_scoped_data();
+        let snmp = Snmp::v3(9, 1500, [0xff, 0x55], 99, [0xaa], scoped_data);
+        let decoded = Snmp::decode(&snmp.compile()?)?;
+        let global = decoded.as_v3().expect("v3 wrapper").global_data();
+        let flags = global.flags_value();
+
+        assert_eq!(global.flags(), &[0xff, 0x55]);
+        assert_eq!(flags.bits(), 0xff);
+        assert!(flags.auth());
+        assert!(flags.privacy());
+        assert!(flags.reportable());
+        assert_eq!(flags.reserved_bits(), 0xf8);
+        assert_eq!(flags.label(), "auth|privacy|reportable|reserved-0xf8");
+        assert_eq!(global.security_model(), 99);
+        assert_eq!(global.security_model_label(), "security-model-99");
+        assert_eq!(
+            global.security_model_status(),
+            registry::SnmpSecurityModelStatus::Unassigned
+        );
+
+        let fields = decoded.inspection_fields();
+        assert_eq!(inspection_value(&fields, "msg_flags"), Some("ff 55"));
+        assert_eq!(
+            inspection_value(&fields, "msg_flags_label"),
+            Some("auth|privacy|reportable|reserved-0xf8")
+        );
+        assert_eq!(inspection_value(&fields, "msg_flags_auth"), Some("true"));
+        assert_eq!(inspection_value(&fields, "msg_flags_privacy"), Some("true"));
+        assert_eq!(
+            inspection_value(&fields, "msg_flags_reportable"),
+            Some("true")
+        );
+        assert_eq!(
+            inspection_value(&fields, "msg_flags_reserved_bits"),
+            Some("0xf8")
+        );
+        assert_eq!(
+            inspection_value(&fields, "msg_security_model_label"),
+            Some("security-model-99")
+        );
+        assert_eq!(
+            inspection_value(&fields, "msg_security_model_status"),
+            Some("unassigned")
+        );
+
+        Ok(())
     }
 
     #[test]
