@@ -1,0 +1,273 @@
+version: 1
+kind: feature
+name: snmp_v3
+summary: SNMPv3 message framing, flags, security-model metadata, USM wire fields, scoped PDUs, encrypted opaque data, and Report PDUs.
+
+layers:
+  - udp
+  - snmp
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: global-data
+    rfc:
+      - RFC 3412 Section 6
+    fields:
+      - msg_id
+      - msg_max_size
+      - msg_flags
+      - msg_security_model
+    checks:
+      - header_data_sequence_preserved
+      - msg_id_preserved
+      - msg_max_size_preserved
+      - security_model_label_stable
+  - name: flags-and-security-models
+    rfc:
+      - RFC 3412 Section 6.4
+      - IANA SNMP Number Spaces
+    fields:
+      - msg_flags
+      - msg_security_model
+    checks:
+      - auth_flag_named
+      - privacy_flag_named
+      - reportable_flag_named
+      - reserved_bits_preserved
+      - reserved_priv_without_auth_reported
+      - assigned_and_unassigned_security_models_preserved
+  - name: raw-security-parameters
+    rfc:
+      - RFC 3412 Section 6
+    fields:
+      - msg_security_parameters
+    checks:
+      - raw_security_bytes_preserved
+      - summary_hides_security_bytes
+  - name: usm-security-parameters
+    rfc:
+      - RFC 3414 Section 2.4
+    fields:
+      - usm_engine_id
+      - usm_engine_boots
+      - usm_engine_time
+      - usm_user_name
+      - usm_authentication_parameters
+      - usm_privacy_parameters
+    checks:
+      - usm_sequence_preserved
+      - engine_time_fields_preserved
+      - credential_like_bytes_length_only_in_summary
+  - name: plaintext-scoped-pdu
+    rfc:
+      - RFC 3412 Section 6
+    fields:
+      - context_engine_id
+      - context_name
+      - pdu
+    checks:
+      - scoped_pdu_sequence_preserved
+      - context_bytes_preserved
+      - nested_pdu_decodes
+  - name: encrypted-scoped-data
+    rfc:
+      - RFC 3412 Section 6
+      - RFC 3414 Section 8
+    fields:
+      - encrypted_scoped_pdu
+      - usm_privacy_parameters
+    checks:
+      - encrypted_pdu_octet_string_preserved
+      - privacy_parameters_preserved_as_wire_bytes
+      - no_decryption_attempted
+      - summary_reports_lengths_only
+  - name: report-pdu
+    rfc:
+      - RFC 3416 Section 3
+      - RFC 3412 Section 6
+    fields:
+      - pdu_tag
+      - request_id
+      - varbinds
+    checks:
+      - report_tag_preserved
+      - report_varbinds_preserved
+      - plaintext_scoped_report_decodes
+  - name: malformed-v3-header
+    malformed: true
+    fields:
+      - header_data
+    expected_error:
+      context: snmp.v3.header_data
+      required: complete_header_data
+      available: fewer_than_required
+  - name: malformed-usm-parameters
+    malformed: true
+    fields:
+      - msg_security_parameters
+    expected_error:
+      context: snmp.usm.security_parameters
+      required: complete_usm_sequence
+      available: fewer_than_required
+  - name: malformed-scoped-data
+    malformed: true
+    fields:
+      - scoped_data
+    expected_error:
+      context: snmp.v3.scoped_data
+      required: plaintext_or_encrypted_scoped_data
+      available: malformed_tlv
+
+coverage_cases:
+  - snmp-v3-global-data
+  - snmp-v3-flags-security-models
+  - snmp-v3-raw-security-parameters
+  - snmp-v3-usm-security-parameters
+  - snmp-v3-plaintext-scoped-pdu
+  - snmp-v3-encrypted-scoped-data
+  - snmp-v3-report-pdu
+  - malformed-snmp-v3-header
+  - malformed-snmp-v3-usm-parameters
+  - malformed-snmp-v3-scoped-data
+
+supported_cases:
+  - name: snmp-v3-global-data
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: snmp-v3-flags-security-models
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: snmp-v3-raw-security-parameters
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: raw_preserve
+  - name: snmp-v3-usm-security-parameters
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: snmp-v3-plaintext-scoped-pdu
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: snmp-v3-encrypted-scoped-data
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: raw_preserve
+  - name: snmp-v3-report-pdu
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: malformed-snmp-v3-header
+    directions:
+      - reference_to_libcrafter
+    byte_policy: structured_error
+  - name: malformed-snmp-v3-usm-parameters
+    directions:
+      - reference_to_libcrafter
+    byte_policy: structured_error
+  - name: malformed-snmp-v3-scoped-data
+    directions:
+      - reference_to_libcrafter
+    byte_policy: structured_error
+
+case_groups:
+  - name: snmp-v3-wrapper
+    summary: SNMPv3 HeaderData, msgFlags, security model values, and raw security parameters.
+    byte_policy: strict_bytes
+    cases:
+      - snmp-v3-global-data
+      - snmp-v3-flags-security-models
+  - name: snmp-v3-security
+    summary: Raw security parameters and USM parameter wire fields with credential-like bytes compared as packet bytes but summarized by length.
+    byte_policy: raw_preserve
+    cases:
+      - snmp-v3-raw-security-parameters
+      - snmp-v3-usm-security-parameters
+  - name: snmp-v3-scoped-data
+    summary: Plaintext ScopedPDU and opaque encrypted scoped-data preservation.
+    byte_policy: raw_preserve
+    cases:
+      - snmp-v3-plaintext-scoped-pdu
+      - snmp-v3-encrypted-scoped-data
+  - name: snmp-v3-report
+    summary: Report-PDU carried by plaintext scoped data.
+    byte_policy: strict_bytes
+    cases:
+      - snmp-v3-report-pdu
+  - name: snmp-v3-malformed
+    summary: Malformed HeaderData, USM parameters, and scoped-data inputs surface structured errors.
+    byte_policy: structured_error
+    cases:
+      - malformed-snmp-v3-header
+      - malformed-snmp-v3-usm-parameters
+      - malformed-snmp-v3-scoped-data
+
+unsupported_cases:
+  - name: snmp-v3-authentication-verification
+    reason: >-
+      Auth digest generation and verification require security policy, keys, and
+      algorithms outside the packet primitive.
+  - name: snmp-v3-privacy-decryption
+    reason: >-
+      Privacy decryption, key localization, salt/IV generation, replay windows,
+      and plaintext recovery are not implemented by the packet layer.
+  - name: snmp-v3-vacm-or-timeliness-policy
+    reason: >-
+      VACM, timeliness validation, engine discovery, and access-control
+      decisions are management-policy behavior, not packet encoding behavior.
+
+source_refs:
+  - RFC 3411
+  - RFC 3412
+  - RFC 3414
+  - RFC 3416
+  - IANA SNMP Number Spaces
+  - docs/snmp-rfc-manifest.md
+
+notes:
+  - >-
+    Authentication and privacy bytes are packet bytes only. Oracle materializers
+    must use synthetic placeholder values and must not store real users, keys,
+    engine IDs from live systems, authentication parameters, privacy parameters,
+    encrypted scoped data, or sensitive captures.
+  - >-
+    Encrypted scoped data is raw-preserve behavior. The oracle compares the
+    encryptedPDU OCTET STRING and privacy parameter bytes without trying to
+    decrypt or validate cryptographic transforms.
+
+backend_support:
+  scapy:
+    status: planned
+    native_layers:
+      - SNMP
+    notes:
+      - Later Scapy backend work must record exact v3 support and mark crypto,
+        VACM, timeliness, and policy behavior unsupported.
+  wireshark:
+    status: planned
+    decode: false
+    notes:
+      - Later Wireshark decode normalization must keep credential-like bytes
+        length-only or synthetic and compare encrypted scoped data as opaque.
+  libcrafter:
+    status: planned
+    native_layers:
+      - SnmpV3Message
+      - SnmpUsmSecurityParameters
+      - SnmpScopedPdu
+    notes:
+      - The crate supports v3 wire framing and preservation; later oracle
+        adapter steps expose that behavior through executable plans.
