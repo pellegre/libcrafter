@@ -20,6 +20,7 @@ roots:
       - udp
       - dns
       - dhcp
+      - snmp
   - name: "link:linux-cooked"
     layers:
       - linux_cooked
@@ -101,6 +102,7 @@ roots:
       - bgp
       - mqtt
       - ospf
+      - snmp
   - name: "l2:ipv4"
     layers:
       - ipv4
