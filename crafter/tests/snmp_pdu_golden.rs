@@ -399,7 +399,11 @@ fn snmp_unknown_pdu_golden_roundtrips() -> crafter::Result<()> {
             "  pdu_tag: 9\n",
             "  pdu_tag_status: unknown\n",
             "  constructed: true\n",
-            "  body_length: 3",
+            "  body_length: 3\n",
+            "  pdu_ber_length: 3\n",
+            "  body_bytes: 02 01 05\n",
+            "  pdu_tlv_len: 5\n",
+            "  pdu_tlv_bytes: a9 03 02 01 05",
         )
     );
 
