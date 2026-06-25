@@ -133,6 +133,15 @@ fn snmp_malformed_message_overreported_length_is_structured_error() -> crafter::
 }
 
 #[test]
+fn snmp_malformed_message_long_form_overreported_length_is_structured_error() {
+    assert_snmp_decode_error(
+        "long-form overreported outer message length",
+        &[0x30, 0x82, 0x01, 0x00, 0x02, 0x01, 0x01],
+        CrafterError::buffer_too_short("snmp.ber.sequence", 260, 7),
+    );
+}
+
+#[test]
 fn snmp_malformed_varbind_list_underreported_length_preserves_member_bytes() -> crafter::Result<()>
 {
     let name = SnmpOid::from_dotted("1.3.6.1.2.1.1.3.0")?;
@@ -144,6 +153,27 @@ fn snmp_malformed_varbind_list_underreported_length_preserves_member_bytes() -> 
     assert!(decoded.is_empty());
     assert_eq!(rest, &bytes[2..]);
     assert_eq!(&list.clear_length().compile()?[..2], &[0x30, 0x0e]);
+
+    Ok(())
+}
+
+#[test]
+fn snmp_malformed_request_varbind_invalid_oid_is_structured_error() -> crafter::Result<()> {
+    let bytes = [
+        0x30, 0x1e, 0x02, 0x01, 0x01, 0x04, 0x06, b'p', b'u', b'b', b'l', b'i', b'c', 0xa0, 0x11,
+        0x02, 0x01, 0x01, 0x02, 0x01, 0x00, 0x02, 0x01, 0x00, 0x30, 0x06, 0x30, 0x04, 0x06, 0x00,
+        0x05, 0x00,
+    ];
+    let decoded = Snmp::decode(&bytes)?;
+
+    assert_accessor_error(
+        "request varbind invalid OID",
+        || decoded.pdu().as_get_request(),
+        CrafterError::invalid_field_value(
+            "snmp.ber.object_identifier",
+            "object identifier requires at least one content octet",
+        ),
+    );
 
     Ok(())
 }
