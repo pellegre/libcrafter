@@ -12,6 +12,18 @@ guessed from uncited SNMP knowledge.
 
 Date checked: 2026-06-24, against `docs/snmp-rfc-manifest.md`.
 
+## Module and Export Status
+
+`crafter/src/protocols/mod.rs` now exposes the SNMP namespace with
+`pub mod snmp;` so later source-backed slices have the stable module home
+`crafter::protocols::snmp`.
+
+No SNMP symbols are re-exported through `crafter::protocols::exports`, the crate
+root, or `crafter::prelude::*` in this step. The existing files under
+`crafter/src/protocols/snmp/` remain private scaffolding with no packet layer,
+builders, decode entrypoint, UDP dispatch, constants, or placeholder public
+types.
+
 ## Status Labels
 
 | Status | Meaning |
@@ -196,6 +208,8 @@ Date checked: 2026-06-24, against `docs/snmp-rfc-manifest.md`.
 
 As of this inventory, SNMP remains planned. The manifest and this inventory
 authorize later implementation slices to add source-backed packet primitives
-under `crafter/src/protocols/snmp`, but no SNMP public API, decode dispatch,
-tests, oracle specs, probe cases, or live artifacts should be treated as
-supported until the corresponding implementation and validation rows land.
+under `crafter/src/protocols/snmp`. The only public SNMP surface currently
+landed is the empty `crafter::protocols::snmp` module namespace; no SNMP packet
+API, decode dispatch, tests, oracle specs, probe cases, or live artifacts should
+be treated as supported until the corresponding implementation and validation
+rows land.
