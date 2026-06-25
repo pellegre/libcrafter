@@ -176,7 +176,7 @@ fn main() -> crafter::Result<()> {
             SnmpVarBindList::empty(),
         )?;
 
-    let plan = packet.send_dry_run(SendOptions::new().iface("snmp-dry-run0").network_layer())?;
+    let plan = packet.send_dry_run(SendOptions::new().iface("dry-run0").network_layer())?;
     println!("mode: dry-run");
     println!("target: {:?}", plan.target());
     println!("compiled bytes: {}", plan.len());

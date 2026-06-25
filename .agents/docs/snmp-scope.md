@@ -51,6 +51,25 @@ store, access-control engine, or monitoring product.
 - Store live-run artifacts only under ignored paths such as `target/`, and keep
   committed fixtures deterministic and non-sensitive.
 
+Generated SNMP send paths start as inspectable plans. Use a documentation
+interface such as `dry-run0`, documentation addresses, and `SendOptions`
+without calling `.live()`:
+
+```rust
+use crafter::prelude::*;
+
+let packet = Ipv4::new()
+    .src_str("192.0.2.30")?
+    .dst_str("198.51.100.30")?
+    / Udp::new().sport(49152).dport(SNMP_PORT)
+    / Snmp::v2c_get_request(b"doc-community".to_vec(), 100, SnmpVarBindList::empty())?;
+
+let plan = packet.send_dry_run(SendOptions::new().iface("dry-run0").network_layer())?;
+println!("target={:?}", plan.target());
+println!("{}", plan.compiled_packet().hexdump());
+# Ok::<(), crafter::CrafterError>(())
+```
+
 ## Live Work
 
 Live SNMP traffic is lab-only. Plan with dry-run oracle, probe, endpoint, or lab
