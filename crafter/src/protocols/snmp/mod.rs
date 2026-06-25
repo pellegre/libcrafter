@@ -18,7 +18,7 @@ mod value;
 mod varbind;
 
 pub use oid::SnmpOid;
-pub use varbind::SnmpVarBind;
+pub use varbind::{SnmpVarBind, SnmpVarBindList};
 
 #[cfg(test)]
 mod tests {
