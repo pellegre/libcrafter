@@ -11,6 +11,8 @@ use crate::error::{CrafterError, Result};
 pub(super) const BER_CLASS_MASK: u8 = 0xc0;
 pub(super) const BER_CONSTRUCTED_MASK: u8 = 0x20;
 pub(super) const BER_TAG_NUMBER_MASK: u8 = 0x1f;
+pub(super) const BER_IDENTIFIER_LEN: usize = 1;
+pub(super) const BER_LOW_TAG_NUMBER_MAX: u8 = BER_TAG_NUMBER_MASK - 1;
 
 pub(super) const BER_TAG_INTEGER: u8 = 2;
 pub(super) const BER_TAG_OCTET_STRING: u8 = 4;
@@ -200,16 +202,44 @@ impl fmt::Display for BerTag {
     }
 }
 
-pub(super) fn parse_identifier_octet(bytes: &[u8]) -> Result<(BerTag, &[u8])> {
+pub(super) fn decode_identifier(bytes: &[u8]) -> Result<(BerTag, &[u8])> {
     let Some((&octet, rest)) = bytes.split_first() else {
         return Err(truncated_identifier(bytes.len()));
     };
 
-    Ok((BerTag::from_identifier_octet(octet), rest))
+    let tag = BerTag::from_identifier_octet(octet);
+    if tag.number() > BER_LOW_TAG_NUMBER_MAX {
+        return Err(invalid_ber_field(
+            "snmp.ber.identifier",
+            "high-tag-number form is not supported for SNMP",
+        ));
+    }
+
+    Ok((tag, rest))
+}
+
+pub(super) fn encode_identifier(tag: BerTag, out: &mut Vec<u8>) -> Result<()> {
+    out.push(encode_identifier_octet(tag)?);
+    Ok(())
+}
+
+pub(super) fn encode_identifier_octet(tag: BerTag) -> Result<u8> {
+    if tag.number() > BER_LOW_TAG_NUMBER_MAX {
+        return Err(invalid_ber_field(
+            "snmp.ber.identifier",
+            "high-tag-number form is not supported for SNMP",
+        ));
+    }
+
+    Ok(tag.identifier_octet())
+}
+
+pub(super) fn parse_identifier_octet(bytes: &[u8]) -> Result<(BerTag, &[u8])> {
+    decode_identifier(bytes)
 }
 
 pub(super) fn truncated_identifier(available: usize) -> CrafterError {
-    CrafterError::buffer_too_short("snmp.ber.identifier", 1, available)
+    CrafterError::buffer_too_short("snmp.ber.identifier", BER_IDENTIFIER_LEN, available)
 }
 
 pub(super) fn truncated_ber(
@@ -311,6 +341,141 @@ mod tests {
                 "snmp.ber.length",
                 "indefinite length is not valid for SNMP"
             )
+        );
+    }
+
+    #[test]
+    fn snmp_ber_identifier_decodes_universal_application_and_context_specific_tags() {
+        let cases = [
+            (
+                0x02,
+                BerTag::new(BerClass::Universal, false, BER_TAG_INTEGER),
+                "integer",
+            ),
+            (
+                0x30,
+                BerTag::new(BerClass::Universal, true, BER_TAG_SEQUENCE),
+                "sequence",
+            ),
+            (
+                0x40,
+                BerTag::new(
+                    BerClass::Application,
+                    false,
+                    SNMP_APPLICATION_TAG_IP_ADDRESS,
+                ),
+                "ip-address",
+            ),
+            (
+                0x82,
+                BerTag::new(
+                    BerClass::ContextSpecific,
+                    false,
+                    SNMP_CONTEXT_TAG_END_OF_MIB_VIEW,
+                ),
+                "end-of-mib-view",
+            ),
+            (
+                0xa5,
+                BerTag::new(
+                    BerClass::ContextSpecific,
+                    true,
+                    SNMP_PDU_TAG_GET_BULK_REQUEST,
+                ),
+                "get-bulk-request",
+            ),
+        ];
+
+        for (octet, expected, label) in cases {
+            let bytes = [octet, 0xaa];
+            let (tag, rest) = decode_identifier(&bytes).expect("identifier");
+
+            assert_eq!(tag, expected, "0x{octet:02x}");
+            assert_eq!(tag.label(), label, "0x{octet:02x}");
+            assert_eq!(rest, &[0xaa], "0x{octet:02x}");
+        }
+    }
+
+    #[test]
+    fn snmp_ber_identifier_encodes_single_octet_tags() {
+        let cases = [
+            (BerTag::new(BerClass::Universal, false, BER_TAG_NULL), 0x05),
+            (
+                BerTag::new(BerClass::Universal, true, BER_TAG_SEQUENCE),
+                0x30,
+            ),
+            (
+                BerTag::new(BerClass::Application, false, SNMP_APPLICATION_TAG_COUNTER64),
+                0x46,
+            ),
+            (
+                BerTag::new(BerClass::ContextSpecific, true, SNMP_PDU_TAG_REPORT),
+                0xa8,
+            ),
+        ];
+
+        let mut encoded = Vec::new();
+        for (tag, octet) in cases {
+            assert_eq!(
+                encode_identifier_octet(tag).expect("identifier octet"),
+                octet
+            );
+            encode_identifier(tag, &mut encoded).expect("identifier");
+        }
+
+        assert_eq!(encoded, [0x05, 0x30, 0x46, 0xa8]);
+    }
+
+    #[test]
+    fn snmp_ber_identifier_preserves_unknown_low_tag_numbers_and_private_class() {
+        let unknown_application = decode_identifier(&[0x5e]).expect("application tag").0;
+        assert_eq!(unknown_application.class(), BerClass::Application);
+        assert!(!unknown_application.is_constructed());
+        assert_eq!(unknown_application.number(), 30);
+        assert_eq!(unknown_application.to_string(), "application-30");
+        assert_eq!(
+            encode_identifier_octet(unknown_application).expect("application tag"),
+            0x5e
+        );
+
+        let unknown_private = decode_identifier(&[0xea]).expect("private tag").0;
+        assert_eq!(unknown_private.class(), BerClass::Private);
+        assert!(unknown_private.is_constructed());
+        assert_eq!(unknown_private.number(), 10);
+        assert_eq!(unknown_private.to_string(), "constructed-private-10");
+        assert_eq!(
+            encode_identifier_octet(unknown_private).expect("private tag"),
+            0xea
+        );
+    }
+
+    #[test]
+    fn snmp_ber_identifier_errors_on_missing_bytes() {
+        assert_eq!(
+            decode_identifier(&[]),
+            Err(CrafterError::buffer_too_short(
+                "snmp.ber.identifier",
+                BER_IDENTIFIER_LEN,
+                0
+            ))
+        );
+    }
+
+    #[test]
+    fn snmp_ber_identifier_keeps_high_tag_number_form_out_of_scope() {
+        assert_eq!(
+            decode_identifier(&[0x1f]),
+            Err(CrafterError::invalid_field_value(
+                "snmp.ber.identifier",
+                "high-tag-number form is not supported for SNMP"
+            ))
+        );
+        assert_eq!(
+            encode_identifier_octet(BerTag::new(BerClass::Private, false, BER_TAG_NUMBER_MASK)),
+            Err(CrafterError::invalid_field_value(
+                "snmp.ber.identifier",
+                "high-tag-number form is not supported for SNMP"
+            ))
         );
     }
 }
