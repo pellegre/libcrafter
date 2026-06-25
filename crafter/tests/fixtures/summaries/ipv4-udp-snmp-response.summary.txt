@@ -1,0 +1,1 @@
+Ipv4(src=198.51.100.161, dst=192.0.2.161, proto=udp(17)) / Udp(sport=161, dport=49152, len=51, checksum_status=Valid) / Snmp(version=v2c, community_len=6, pdu=SnmpPdu(pdu_type=response request_id=28769 error_status=no-error(0) error_index=0 varbind_count=1))
