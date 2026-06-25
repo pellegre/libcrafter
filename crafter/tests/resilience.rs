@@ -21,6 +21,7 @@ use crafter::protocols::dhcp::{
     DHCP_FIXED_HEADER_LEN, DHCP_MAGIC_COOKIE, DHCP_MIN_LEN, DHCP_OPTION_END,
     DHCP_OPTION_MESSAGE_TYPE,
 };
+use crafter::protocols::snmp::Snmp;
 use crafter::wire::backend::pcap::PcapLinkType;
 use crafter::wire::{IpDefrag, IpFragment, PacketRecord, WireError};
 use proptest::prelude::*;
@@ -406,6 +407,94 @@ fn assert_udp_option_status_matches(case: &MalformedCase, packet: Packet) {
 
 fn expects_decoded_udp_option_status(case: &MalformedCase) -> bool {
     matches!(case.expected_outcome, ExpectedOutcome::UdpOptionStatus(_))
+}
+
+#[test]
+fn snmp_malformed_message_decode_corpus_never_panics() {
+    struct SnmpCase {
+        name: &'static str,
+        bytes: &'static [u8],
+        expected: ExpectedError,
+    }
+
+    let cases = [
+        SnmpCase {
+            name: "short outer sequence",
+            bytes: &[0x30, 0x05, 0x02, 0x01, 0x00],
+            expected: ExpectedError {
+                kind: ExpectedErrorKind::BufferTooShort,
+                context_or_field: "snmp.ber.sequence",
+            },
+        },
+        SnmpCase {
+            name: "long-form overreported outer sequence",
+            bytes: &[0x30, 0x82, 0x01, 0x00, 0x02, 0x01, 0x01],
+            expected: ExpectedError {
+                kind: ExpectedErrorKind::BufferTooShort,
+                context_or_field: "snmp.ber.sequence",
+            },
+        },
+        SnmpCase {
+            name: "truncated community",
+            bytes: &[0x30, 0x06, 0x02, 0x01, 0x00, 0x04, 0x02, 0xaa],
+            expected: ExpectedError {
+                kind: ExpectedErrorKind::BufferTooShort,
+                context_or_field: "snmp.message.community",
+            },
+        },
+        SnmpCase {
+            name: "truncated pdu",
+            bytes: &[0x30, 0x08, 0x02, 0x01, 0x00, 0x04, 0x00, 0xa0, 0x02, 0x02],
+            expected: ExpectedError {
+                kind: ExpectedErrorKind::BufferTooShort,
+                context_or_field: "snmp.pdu",
+            },
+        },
+        SnmpCase {
+            name: "non-sequence message",
+            bytes: &[0x02, 0x01, 0x00],
+            expected: ExpectedError {
+                kind: ExpectedErrorKind::InvalidFieldValue,
+                context_or_field: "snmp.ber.sequence",
+            },
+        },
+    ];
+
+    for case in cases {
+        let result = std::panic::catch_unwind(|| Snmp::decode(case.bytes))
+            .unwrap_or_else(|_| panic!("SNMP malformed case {} panicked", case.name));
+        let error = result.unwrap_err();
+        match (case.expected.kind, error) {
+            (ExpectedErrorKind::BufferTooShort, CrafterError::BufferTooShort { context, .. }) => {
+                assert_eq!(context, case.expected.context_or_field, "{}", case.name);
+            }
+            (
+                ExpectedErrorKind::InvalidFieldValue,
+                CrafterError::InvalidFieldValue { field, .. },
+            ) => {
+                assert_eq!(field, case.expected.context_or_field, "{}", case.name);
+            }
+            (expected, actual) => panic!(
+                "SNMP malformed case {} expected {expected:?}, got {actual:?}",
+                case.name
+            ),
+        }
+    }
+}
+
+#[test]
+fn snmp_unknown_raw_message_decode_is_panic_safe_and_inspectable() -> crafter::core::Result<()> {
+    let bytes = [
+        0x30, 0x0b, 0x02, 0x01, 0x01, 0x04, 0x01, b'x', 0xa9, 0x03, 0x02, 0x01, 0x05,
+    ];
+    let decoded = std::panic::catch_unwind(|| Snmp::decode(&bytes))
+        .unwrap_or_else(|_| panic!("SNMP unknown raw message panicked"))?;
+
+    assert_eq!(decoded.compile()?, bytes);
+    assert!(decoded.summary().contains("pdu_type=pdu-9"));
+    assert!(decoded.show().contains("pdu_tlv_bytes: a9 03 02 01 05"));
+
+    Ok(())
 }
 
 fn required_malformed_families() -> &'static [&'static str] {
