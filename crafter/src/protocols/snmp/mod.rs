@@ -21,7 +21,7 @@ mod varbind;
 pub use constants::{
     SNMP_PDU_TAG_GET_BULK_REQUEST, SNMP_PDU_TAG_GET_NEXT_REQUEST, SNMP_PDU_TAG_GET_REQUEST,
     SNMP_PDU_TAG_INFORM_REQUEST, SNMP_PDU_TAG_REPORT, SNMP_PDU_TAG_RESPONSE,
-    SNMP_PDU_TAG_SET_REQUEST, SNMP_PDU_TAG_TRAP, SNMP_PDU_TAG_TRAP_V2,
+    SNMP_PDU_TAG_SET_REQUEST, SNMP_PDU_TAG_TRAP, SNMP_PDU_TAG_TRAP_V2, SNMP_PORT, SNMP_TRAP_PORT,
 };
 pub use message::{
     Snmp, SnmpEncryptedScopedData, SnmpRawSecurityParameters, SnmpScopedPdu, SnmpUsmEngineTime,
@@ -34,9 +34,10 @@ pub use registry::{
     snmp_error_status_status, snmp_error_status_summary, snmp_pdu_tag_meta, snmp_pdu_tag_name,
     snmp_pdu_tag_status, snmp_security_model_label, snmp_security_model_meta,
     snmp_security_model_name, snmp_security_model_status, snmp_security_model_summary,
+    snmp_udp_port_label, snmp_udp_port_meta, snmp_udp_port_name, snmp_udp_port_summary,
     snmp_v3_flags_label, SnmpErrorStatus, SnmpErrorStatusAssignment, SnmpErrorStatusMeta,
     SnmpPduTagMeta, SnmpPduTagStatus, SnmpSecurityModel, SnmpSecurityModelMeta,
-    SnmpSecurityModelStatus, SnmpV3Flags, SNMP_ERROR_STATUS_AUTHORIZATION_ERROR,
+    SnmpSecurityModelStatus, SnmpUdpPortMeta, SnmpV3Flags, SNMP_ERROR_STATUS_AUTHORIZATION_ERROR,
     SNMP_ERROR_STATUS_BAD_VALUE, SNMP_ERROR_STATUS_COMMIT_FAILED, SNMP_ERROR_STATUS_GEN_ERR,
     SNMP_ERROR_STATUS_INCONSISTENT_NAME, SNMP_ERROR_STATUS_INCONSISTENT_VALUE,
     SNMP_ERROR_STATUS_NOT_WRITABLE, SNMP_ERROR_STATUS_NO_ACCESS, SNMP_ERROR_STATUS_NO_CREATION,

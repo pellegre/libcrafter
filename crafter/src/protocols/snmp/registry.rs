@@ -34,6 +34,58 @@ impl fmt::Display for SnmpPduTagStatus {
     }
 }
 
+/// Source-backed SNMP UDP service metadata.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SnmpUdpPortMeta {
+    /// UDP port number.
+    pub port: u16,
+    /// IANA service name.
+    pub name: &'static str,
+    /// Packet-layer role of the port for SNMP traffic.
+    pub role: &'static str,
+}
+
+/// Return source-backed metadata for SNMP UDP ports.
+///
+/// Source: `docs/snmp-rfc-manifest.md` records the IANA Service Name and
+/// Transport Protocol Port Number Registry rows for `snmp`/UDP and
+/// `snmptrap`/UDP, plus RFC 3417 Section 3 for UDP/IPv4 SNMP messages.
+pub const fn snmp_udp_port_meta(port: u16) -> Option<SnmpUdpPortMeta> {
+    match port {
+        constants::SNMP_PORT => Some(SnmpUdpPortMeta {
+            port,
+            name: "snmp",
+            role: "message",
+        }),
+        constants::SNMP_TRAP_PORT => Some(SnmpUdpPortMeta {
+            port,
+            name: "snmptrap",
+            role: "notification",
+        }),
+        _ => None,
+    }
+}
+
+/// Return the IANA service name for a source-backed SNMP UDP port.
+pub const fn snmp_udp_port_name(port: u16) -> Option<&'static str> {
+    match snmp_udp_port_meta(port) {
+        Some(meta) => Some(meta.name),
+        None => None,
+    }
+}
+
+/// Return a stable SNMP UDP port label while preserving unknown values.
+pub fn snmp_udp_port_label(port: u16) -> String {
+    snmp_udp_port_name(port)
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("udp-port-{port}"))
+}
+
+/// Return a compact summary label for an SNMP UDP port.
+pub fn snmp_udp_port_summary(port: u16) -> String {
+    format!("{}({port})", snmp_udp_port_label(port))
+}
+
 /// SNMPv3 msgFlags authFlag bit.
 ///
 /// Source: `docs/snmp-rfc-manifest.md` records RFC 3412 Section 6.4.
@@ -663,6 +715,35 @@ pub(super) fn application_tag_label(tag_number: u8, constructed: bool) -> String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn snmp_udp_ports_constants_and_labels_source_backed() {
+        let cases = [
+            (constants::SNMP_PORT, "snmp", "message"),
+            (constants::SNMP_TRAP_PORT, "snmptrap", "notification"),
+        ];
+
+        // Source-backed: docs/snmp-rfc-manifest.md records the IANA service
+        // name registry rows for UDP/161 `snmp` and UDP/162 `snmptrap`; RFC
+        // 3417 Section 3 records the preferred UDP/IPv4 mapping for messages.
+        assert_eq!(constants::SNMP_PORT, 161);
+        assert_eq!(constants::SNMP_TRAP_PORT, 162);
+        for (port, name, role) in cases {
+            let meta = snmp_udp_port_meta(port).expect("SNMP UDP port");
+
+            assert_eq!(meta.port, port);
+            assert_eq!(meta.name, name);
+            assert_eq!(meta.role, role);
+            assert_eq!(snmp_udp_port_name(port), Some(name));
+            assert_eq!(snmp_udp_port_label(port), name);
+            assert_eq!(snmp_udp_port_summary(port), format!("{name}({port})"));
+        }
+
+        assert_eq!(snmp_udp_port_meta(5161), None);
+        assert_eq!(snmp_udp_port_name(5161), None);
+        assert_eq!(snmp_udp_port_label(5161), "udp-port-5161");
+        assert_eq!(snmp_udp_port_summary(5161), "udp-port-5161(5161)");
+    }
 
     #[test]
     fn snmp_v3_flags_helpers_name_bits_and_preserve_reserved_bits() {
