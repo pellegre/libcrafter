@@ -39,6 +39,11 @@ Per-protocol wire coverage for building and decoding packets.
 - [MQTT wire coverage](guide/mqtt.md) — MQTT 3.1.1 and 5.0 control packet
   construction, properties, TCP/1883 decode dispatch, stacked payload decode,
   inspection, and the offline/live surfaces.
+- [SNMP wire coverage](guide/snmp.md) — SNMP BER values, VarBinds, v1/v2c
+  PDUs, v3 wire framing, UDP/161 and UDP/162 decode dispatch, unknown
+  preservation, pcap fixtures, and the dry-run/live-lab boundary. SNMP support
+  is not a scanner, manager, agent daemon, MIB engine, credential store, or
+  VACM evaluator.
 - [RIP wire coverage](rip.md) — RIPv1/RIPv2 and RIPng message construction,
   route entries, authentication, UDP/520 and UDP/521 decode dispatch, and the
   offline/live surfaces. Source mapping:
