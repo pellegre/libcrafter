@@ -11,6 +11,7 @@ pub mod ipsec;
 pub mod link;
 pub mod mqtt;
 pub mod ospf;
+pub mod quic;
 pub mod rip;
 pub mod rsn;
 pub mod snmp;
