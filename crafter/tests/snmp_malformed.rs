@@ -142,6 +142,20 @@ fn snmp_malformed_message_long_form_overreported_length_is_structured_error() {
 }
 
 #[test]
+fn snmp_malformed_v3_raw_security_parameters_length_is_structured_error() {
+    let bytes = [
+        0x30, 0x16, 0x02, 0x01, 0x03, 0x30, 0x0e, 0x02, 0x01, 0x01, 0x02, 0x02, 0x05, 0xdc, 0x04,
+        0x01, 0x00, 0x02, 0x02, 0x03, 0xe7, 0x04, 0x03, 0xaa,
+    ];
+
+    assert_snmp_decode_error(
+        "overreported v3 raw security parameters",
+        &bytes,
+        CrafterError::buffer_too_short("snmp.v3.security_parameters", 5, 3),
+    );
+}
+
+#[test]
 fn snmp_malformed_varbind_list_underreported_length_preserves_member_bytes() -> crafter::Result<()>
 {
     let name = SnmpOid::from_dotted("1.3.6.1.2.1.1.3.0")?;
