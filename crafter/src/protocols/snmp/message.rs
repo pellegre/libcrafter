@@ -24,6 +24,9 @@ const SNMP_V3_HEADER_DATA_CONTEXT: &str = "snmp.v3.header_data";
 const SNMP_V3_FLAGS_CONTEXT: &str = "snmp.v3.flags";
 const SNMP_V3_SECURITY_PARAMETERS_CONTEXT: &str = "snmp.v3.security_parameters";
 const SNMP_V3_SCOPED_DATA_CONTEXT: &str = "snmp.v3.scoped_data";
+const SNMP_V3_SCOPED_PDU_CONTEXT: &str = "snmp.v3.scoped_pdu";
+const SNMP_V3_CONTEXT_ENGINE_ID_CONTEXT: &str = "snmp.v3.context_engine_id";
+const SNMP_V3_CONTEXT_NAME_CONTEXT: &str = "snmp.v3.context_name";
 
 /// Source-backed SNMP message version value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -362,6 +365,156 @@ impl SnmpV3GlobalData {
     }
 }
 
+/// RFC 3412 plaintext SNMPv3 `ScopedPDU`.
+///
+/// This is a wire container for context engine ID bytes, context name bytes,
+/// and an ordinary SNMP PDU. It does not add session state, VACM policy, or
+/// manager behavior.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SnmpScopedPdu {
+    context_engine_id: Vec<u8>,
+    context_name: Vec<u8>,
+    pdu: SnmpPdu,
+}
+
+impl SnmpScopedPdu {
+    /// Build a plaintext scoped PDU from byte-oriented context fields.
+    pub fn new(
+        context_engine_id: impl Into<Vec<u8>>,
+        context_name: impl Into<Vec<u8>>,
+        pdu: SnmpPdu,
+    ) -> Self {
+        Self {
+            context_engine_id: context_engine_id.into(),
+            context_name: context_name.into(),
+            pdu,
+        }
+    }
+
+    /// Raw contextEngineID OCTET STRING bytes.
+    pub fn context_engine_id(&self) -> &[u8] {
+        &self.context_engine_id
+    }
+
+    /// Raw contextName OCTET STRING bytes.
+    pub fn context_name(&self) -> &[u8] {
+        &self.context_name
+    }
+
+    /// PDU carried by this plaintext scoped PDU.
+    pub const fn pdu(&self) -> &SnmpPdu {
+        &self.pdu
+    }
+
+    /// Mutable PDU carried by this plaintext scoped PDU.
+    pub fn pdu_mut(&mut self) -> &mut SnmpPdu {
+        &mut self.pdu
+    }
+
+    /// Consume this scoped PDU and return its PDU body.
+    pub fn into_pdu(self) -> SnmpPdu {
+        self.pdu
+    }
+
+    /// Decode one plaintext `ScopedPDU` SEQUENCE.
+    pub fn decode(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        let (content, rest) = ber::decode_sequence(bytes)?;
+        let (context_engine_id, content_rest) = decode_octet_string_tlv(
+            content,
+            SNMP_V3_CONTEXT_ENGINE_ID_CONTEXT,
+            "expected universal primitive OCTET STRING for contextEngineID",
+            "contextEngineID length exceeds supported size",
+        )?;
+        let (context_name, content_rest) = decode_octet_string_tlv(
+            content_rest,
+            SNMP_V3_CONTEXT_NAME_CONTEXT,
+            "expected universal primitive OCTET STRING for contextName",
+            "contextName length exceeds supported size",
+        )?;
+        let (pdu, content_rest) = SnmpPdu::decode(content_rest)?;
+        if !content_rest.is_empty() {
+            return Err(ber::invalid_ber_field(
+                SNMP_V3_SCOPED_PDU_CONTEXT,
+                "trailing bytes after ScopedPDU fields",
+            ));
+        }
+
+        Ok((
+            Self::new(context_engine_id.to_vec(), context_name.to_vec(), pdu),
+            rest,
+        ))
+    }
+
+    /// Encode this plaintext `ScopedPDU` SEQUENCE.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        let mut content = Vec::with_capacity(self.encoded_content_len());
+        encode_octet_string_tlv(&self.context_engine_id, &mut content)?;
+        encode_octet_string_tlv(&self.context_name, &mut content)?;
+        self.pdu.encode(&mut content)?;
+        ber::encode_sequence(&content, out)
+    }
+
+    /// Return this scoped PDU encoded as BER bytes.
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.encoded_len());
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Compile this scoped PDU into BER bytes.
+    pub fn compile(&self) -> Result<Vec<u8>> {
+        self.to_bytes()
+    }
+
+    /// Encoded plaintext `ScopedPDU` length in octets.
+    pub fn encoded_len(&self) -> usize {
+        encoded_tlv_len(self.encoded_content_len())
+    }
+
+    fn encoded_content_len(&self) -> usize {
+        encoded_tlv_len(self.context_engine_id.len())
+            + encoded_tlv_len(self.context_name.len())
+            + encoded_pdu_len(&self.pdu)
+    }
+
+    /// A compact scoped-PDU summary that reports context byte lengths.
+    pub fn summary(&self) -> String {
+        format!(
+            "SnmpScopedPdu(context_engine_id_len={} context_name_len={} pdu={})",
+            self.context_engine_id.len(),
+            self.context_name.len(),
+            self.pdu.summary()
+        )
+    }
+
+    /// Stable inspection fields for generated tools.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        let mut fields = vec![
+            (
+                "context_engine_id_len",
+                self.context_engine_id.len().to_string(),
+            ),
+            (
+                "context_engine_id_bytes",
+                ber::hex_bytes(&self.context_engine_id),
+            ),
+            ("context_name_len", self.context_name.len().to_string()),
+            ("context_name_bytes", ber::hex_bytes(&self.context_name)),
+        ];
+        fields.extend(self.pdu.inspection_fields());
+        fields
+    }
+
+    /// Multi-line scoped-PDU inspection output.
+    pub fn show(&self) -> String {
+        let mut output = "SnmpScopedPdu".to_string();
+        for (name, value) in self.inspection_fields() {
+            output.push_str(&format!("\n  {name}: {value}"));
+        }
+        output
+    }
+}
+
 /// SNMPv3 top-level message wrapper fields.
 ///
 /// This models the RFC 3412 message framing only. Security-model processing,
@@ -391,6 +544,25 @@ impl SnmpV3Message {
             security_parameters: security_parameters.into(),
             scoped_data: scoped_data.into(),
         }
+    }
+
+    /// Build an SNMPv3 message wrapper carrying plaintext scoped-PDU data.
+    pub fn new_plaintext(
+        msg_id: i64,
+        max_size: i64,
+        flags: impl Into<Vec<u8>>,
+        security_model: i64,
+        security_parameters: impl Into<Vec<u8>>,
+        scoped_pdu: SnmpScopedPdu,
+    ) -> Result<Self> {
+        Ok(Self::new(
+            msg_id,
+            max_size,
+            flags,
+            security_model,
+            security_parameters,
+            scoped_pdu.compile()?,
+        ))
     }
 
     const fn with_version(mut self, version: SnmpVersion) -> Self {
@@ -441,6 +613,18 @@ impl SnmpV3Message {
     /// Raw RFC 3412 `ScopedPduData` TLV bytes.
     pub fn scoped_data(&self) -> &[u8] {
         &self.scoped_data
+    }
+
+    /// Decode plaintext scoped-PDU data, if this message carries plaintext.
+    pub fn scoped_pdu(&self) -> Result<Option<SnmpScopedPdu>> {
+        let (tag, _) = ber::decode_identifier(&self.scoped_data)?;
+        if tag != ber::BerTag::new(ber::BerClass::Universal, true, ber::BER_TAG_SEQUENCE) {
+            return Ok(None);
+        }
+
+        let (scoped_pdu, rest) = SnmpScopedPdu::decode(&self.scoped_data)?;
+        ber::require_sequence_exact(rest)?;
+        Ok(Some(scoped_pdu))
     }
 
     fn decode_after_version(version: SnmpVersion, bytes: &[u8]) -> Result<(Self, &[u8])> {
@@ -778,6 +962,25 @@ impl Snmp {
             security_parameters,
             scoped_data,
         ))
+    }
+
+    /// Build an SNMPv3 top-level message with plaintext scoped-PDU data.
+    pub fn v3_plaintext(
+        msg_id: i64,
+        max_size: i64,
+        flags: impl Into<Vec<u8>>,
+        security_model: i64,
+        security_parameters: impl Into<Vec<u8>>,
+        scoped_pdu: SnmpScopedPdu,
+    ) -> Result<Self> {
+        Ok(Self::from_v3_message(SnmpV3Message::new_plaintext(
+            msg_id,
+            max_size,
+            flags,
+            security_model,
+            security_parameters,
+            scoped_pdu,
+        )?))
     }
 
     /// Build a top-level SNMP layer from explicit SNMPv3 wrapper fields.
@@ -1636,6 +1839,138 @@ mod tests {
             inspection_value(&fields, "msg_security_model_status"),
             Some("unassigned")
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_v3_scoped_pdu_wraps_request_pdu_and_v3_message() -> Result<()> {
+        let scoped = SnmpScopedPdu::new(
+            Vec::<u8>::new(),
+            Vec::<u8>::new(),
+            SnmpPdu::get_request(1, SnmpVarBindList::empty())?,
+        );
+        let expected = minimal_plaintext_v3_scoped_data();
+
+        // Source-backed: docs/snmp-rfc-manifest.md records RFC 3412 Sections
+        // 6.7 and 6.8 for plaintext ScopedPDU contextEngineID, contextName,
+        // and PDU payload fields.
+        assert_eq!(scoped.encoded_len(), expected.len());
+        assert_eq!(scoped.compile()?, expected);
+        assert_eq!(scoped.context_engine_id(), b"");
+        assert_eq!(scoped.context_name(), b"");
+        assert_eq!(scoped.pdu().tag_number(), SnmpPdu::TAG_GET_REQUEST);
+
+        let (decoded, rest) = SnmpScopedPdu::decode(&expected)?;
+        assert!(rest.is_empty());
+        assert_eq!(decoded.context_engine_id(), b"");
+        assert_eq!(decoded.context_name(), b"");
+        assert_eq!(decoded.pdu().tag_number(), SnmpPdu::TAG_GET_REQUEST);
+        assert_eq!(
+            decoded
+                .pdu()
+                .as_get_request()?
+                .expect("get request fields")
+                .request_id(),
+            1
+        );
+        assert_eq!(decoded.compile()?, expected);
+        assert!(decoded.summary().contains("context_engine_id_len=0"));
+        assert!(decoded.summary().contains("pdu_type=get-request"));
+
+        let snmp = Snmp::v3_plaintext(
+            1,
+            1500,
+            [0x00],
+            registry::SNMP_SECURITY_MODEL_USM,
+            Vec::<u8>::new(),
+            scoped,
+        )?;
+        let decoded_snmp = Snmp::decode(&snmp.compile()?)?;
+        let decoded_scoped = decoded_snmp
+            .as_v3()
+            .expect("v3 wrapper")
+            .scoped_pdu()?
+            .expect("plaintext scoped PDU");
+        assert_eq!(decoded_scoped.compile()?, expected);
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_v3_scoped_pdu_preserves_non_utf8_context_name_and_response_pdu() -> Result<()> {
+        let scoped = SnmpScopedPdu::new(
+            [0x80, 0x00, 0x1f],
+            [0xff, 0x00, b'a'],
+            SnmpPdu::response_error(128, 2, 3, SnmpVarBindList::empty())?,
+        );
+        let bytes = scoped.compile()?;
+        let (decoded, rest) = SnmpScopedPdu::decode(&bytes)?;
+
+        assert!(rest.is_empty());
+        assert_eq!(decoded.context_engine_id(), &[0x80, 0x00, 0x1f]);
+        assert_eq!(decoded.context_name(), &[0xff, 0x00, b'a']);
+        assert_eq!(decoded.pdu().tag_number(), SnmpPdu::TAG_RESPONSE);
+        let response = decoded.pdu().as_response()?.expect("response fields");
+        assert_eq!(response.request_id(), 128);
+        assert_eq!(response.error_status(), 2);
+        assert_eq!(response.error_index(), 3);
+        assert_eq!(decoded.compile()?, bytes);
+
+        let fields = decoded.inspection_fields();
+        assert_eq!(
+            inspection_value(&fields, "context_engine_id_len"),
+            Some("3")
+        );
+        assert_eq!(
+            inspection_value(&fields, "context_engine_id_bytes"),
+            Some("80 00 1f")
+        );
+        assert_eq!(inspection_value(&fields, "context_name_len"), Some("3"));
+        assert_eq!(
+            inspection_value(&fields, "context_name_bytes"),
+            Some("ff 00 61")
+        );
+        assert_eq!(inspection_value(&fields, "pdu_type"), Some("response"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_v3_scoped_pdu_wraps_report_pdu() -> Result<()> {
+        let scoped = SnmpScopedPdu::new(
+            b"engine".to_vec(),
+            b"context".to_vec(),
+            SnmpPdu::report(7, SnmpVarBindList::empty())?,
+        );
+        let snmp = Snmp::v3_plaintext(
+            44,
+            1500,
+            [registry::SNMP_V3_FLAG_REPORTABLE],
+            registry::SNMP_SECURITY_MODEL_USM,
+            Vec::<u8>::new(),
+            scoped.clone(),
+        )?;
+        let decoded = Snmp::decode(&snmp.compile()?)?;
+        let decoded_scoped = decoded
+            .as_v3()
+            .expect("v3 wrapper")
+            .scoped_pdu()?
+            .expect("plaintext scoped PDU");
+
+        assert_eq!(decoded_scoped.context_engine_id(), b"engine");
+        assert_eq!(decoded_scoped.context_name(), b"context");
+        assert_eq!(decoded_scoped.pdu().tag_number(), SnmpPdu::TAG_REPORT);
+        assert_eq!(
+            decoded_scoped
+                .pdu()
+                .as_report()?
+                .expect("report fields")
+                .request_id(),
+            7
+        );
+        assert_eq!(decoded_scoped.compile()?, scoped.compile()?);
+        assert!(decoded_scoped.summary().contains("pdu_type=report"));
 
         Ok(())
     }
