@@ -193,6 +193,7 @@ MQTT_SMOKE_PROFILE = "mqtt-smoke"
 OSPF_SMOKE_PROFILE = "ospf-smoke"
 IGMP_PROFILE = "igmp"
 IPSEC_PROFILE = "ipsec"
+SNMP_SMOKE_PROFILE = "snmp-smoke"
 
 # Legacy default count used by the smoke profile and any profile without an
 # explicit default; preserves the pre-behavior-suite CLI behavior.
@@ -398,6 +399,16 @@ IGMP_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
     if case.metadata.get("protocol") == "igmp"
 )
 
+# The SNMP smoke profile carries planned-only controlled peer exchanges for
+# Get/Response, GetBulk/Response, notification delivery, and SNMPv3
+# engine-discovery Report shapes. It is isolated from the live behavior profile
+# until the Rust stimulus endpoint adapter lands.
+SNMP_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
+    case.name
+    for case in _registry_cases()
+    if case.metadata.get("protocol") == "snmp"
+)
+
 
 # Profiles that select an explicit ordered case subset. A profile not listed
 # here selects the full catalog. ``smoke`` is pinned to the historical
@@ -418,6 +429,7 @@ _PROFILE_CASE_NAMES: dict[str, tuple[str, ...]] = {
     OSPF_SMOKE_PROFILE: OSPF_SMOKE_PROFILE_CASE_NAMES,
     IGMP_PROFILE: IGMP_PROFILE_CASE_NAMES,
     IPSEC_PROFILE: IPSEC_PROFILE_CASE_NAMES,
+    SNMP_SMOKE_PROFILE: SNMP_SMOKE_PROFILE_CASE_NAMES,
 }
 
 # Per-profile default counts used when no explicit ``--count`` is supplied. The
@@ -431,6 +443,7 @@ _PROFILE_DEFAULT_COUNTS: dict[str, int] = {
     OSPF_SMOKE_PROFILE: len(OSPF_SMOKE_PROFILE_CASE_NAMES),
     IGMP_PROFILE: len(IGMP_PROFILE_CASE_NAMES),
     IPSEC_PROFILE: len(IPSEC_PROFILE_CASE_NAMES),
+    SNMP_SMOKE_PROFILE: len(SNMP_SMOKE_PROFILE_CASE_NAMES),
 }
 
 

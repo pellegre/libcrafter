@@ -82,6 +82,10 @@ PROBE_CAPABILITY_NAMES = (
     # rides the IPv4-unicast + controlled-services substrate and is not required
     # for a dry-run, which plans the OSPF exchange without provisioning the peer.
     "ospf_neighbor_peer",
+    # SNMP peer behavior is a controlled UDP/161 or UDP/162 service on the target
+    # endpoint. Dry-runs render the exchange and target-service setup without
+    # sending traffic; live runs require provider-backed controlled services.
+    "snmp_peer",
 )
 
 
@@ -358,6 +362,7 @@ def probe_capabilities_from_lab_capabilities(
                 "controlled_services",
                 "ospf_peer",
             ],
+            "snmp_peer": ["ipv4_unicast", "controlled_services", "snmp_peer"],
         },
         "lab_capabilities": substrate,
     }
