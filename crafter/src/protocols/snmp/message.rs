@@ -154,6 +154,7 @@ impl SnmpMessageHeader {
 pub struct Snmp {
     header: SnmpMessageHeader,
     pdu: SnmpPdu,
+    length: Option<usize>,
 }
 
 impl Snmp {
@@ -412,6 +413,7 @@ impl Snmp {
         Self {
             header: SnmpMessageHeader::new(version, community),
             pdu,
+            length: None,
         }
     }
 
@@ -461,6 +463,34 @@ impl Snmp {
         self
     }
 
+    /// Pin the outer SNMP Message SEQUENCE length field to an explicit value.
+    ///
+    /// The normal builder path auto-fills this length from the encoded header
+    /// and PDU bytes. This override is for deliberately malformed packets: the
+    /// length field is emitted as supplied while the content bytes remain
+    /// unchanged.
+    pub fn length(mut self, length: usize) -> Self {
+        self.length = Some(length);
+        self
+    }
+
+    /// Drop any explicit outer message length override so encode auto-fills it.
+    pub fn clear_length(mut self) -> Self {
+        self.length = None;
+        self
+    }
+
+    /// Explicit outer message BER length override, if one is pinned.
+    pub const fn explicit_length(&self) -> Option<usize> {
+        self.length
+    }
+
+    /// Effective outer message BER length: caller override when set, else
+    /// encoded content length.
+    pub fn effective_length(&self) -> usize {
+        self.length.unwrap_or_else(|| self.encoded_content_len())
+    }
+
     /// Mutable PDU body carried by this message.
     pub fn pdu_mut(&mut self) -> &mut SnmpPdu {
         &mut self.pdu
@@ -473,7 +503,9 @@ impl Snmp {
 
     /// Encoded SNMP message length in octets.
     pub fn encoded_len(&self) -> usize {
-        encoded_tlv_len(self.encoded_content_len())
+        ber::BER_IDENTIFIER_LEN
+            + encoded_length_len(self.effective_length())
+            + self.encoded_content_len()
     }
 
     /// Encode this SNMP message into BER bytes.
@@ -481,7 +513,7 @@ impl Snmp {
         let mut content = Vec::with_capacity(self.encoded_content_len());
         self.header.encode(&mut content)?;
         self.pdu.encode(&mut content)?;
-        ber::encode_sequence(&content, out)
+        encode_message_sequence(&content, self.explicit_length(), out)
     }
 
     /// Decode one complete SNMP message from BER bytes.
@@ -491,7 +523,11 @@ impl Snmp {
         let (pdu, rest) = SnmpPdu::decode(rest)?;
         ber::require_sequence_exact(rest)?;
 
-        Ok(Self { header, pdu })
+        Ok(Self {
+            header,
+            pdu,
+            length: None,
+        })
     }
 
     /// Return this SNMP message encoded as BER bytes.
@@ -609,6 +645,20 @@ fn encode_community_octet_string(bytes: &[u8], out: &mut Vec<u8>) -> Result<()> 
     )?;
     ber::encode_length(bytes.len(), out)?;
     out.extend_from_slice(bytes);
+    Ok(())
+}
+
+fn encode_message_sequence(
+    content: &[u8],
+    explicit_length: Option<usize>,
+    out: &mut Vec<u8>,
+) -> Result<()> {
+    ber::encode_identifier(
+        ber::BerTag::new(ber::BerClass::Universal, true, ber::BER_TAG_SEQUENCE),
+        out,
+    )?;
+    ber::encode_length(explicit_length.unwrap_or(content.len()), out)?;
+    out.extend_from_slice(content);
     Ok(())
 }
 
@@ -1156,6 +1206,52 @@ mod tests {
 
         assert!(packet.layer::<Snmp>().is_some());
         assert!(packet.summary().contains("Snmp(version=v2c"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_defaults_overrides_auto_fill_and_preserve_malformed_message_fields() -> Result<()> {
+        let name = SnmpOid::from_dotted("1.3.6.1.2.1.1.5.0")?;
+        let raw_varbind = SnmpVarBind::raw_value_tlv_with_length(name, 0x04, 5, [0xaa])?;
+        let varbinds = SnmpVarBindList::new(vec![raw_varbind]).length(0);
+        let pdu = SnmpPdu::get_request_with_fields(127, 99, 300, varbinds)?.length(0);
+        let snmp = Snmp::v2c_get_request(b"public".to_vec(), 1, SnmpVarBindList::empty())?
+            .with_version(SnmpVersion::Unknown(3))
+            .with_community([0x00, 0xff])
+            .with_pdu(pdu)
+            .length(3);
+
+        let bytes = snmp.compile()?;
+        assert_eq!(snmp.explicit_length(), Some(3));
+        assert_eq!(snmp.effective_length(), 3);
+        assert_eq!(snmp.encoded_len(), bytes.len());
+        assert_eq!(&bytes[..2], &[0x30, 0x03]);
+        assert_eq!(&bytes[2..9], &[0x02, 0x01, 0x03, 0x04, 0x02, 0x00, 0xff]);
+        assert_eq!(&bytes[9..11], &[0xa0, 0x00]);
+        assert_eq!(
+            &bytes[11..],
+            &[
+                0x02, 0x01, 0x7f, 0x02, 0x01, 0x63, 0x02, 0x02, 0x01, 0x2c, 0x30, 0x00, 0x30, 0x0d,
+                0x06, 0x08, 0x2b, 0x06, 0x01, 0x02, 0x01, 0x01, 0x05, 0x00, 0x04, 0x05, 0xaa,
+            ]
+        );
+
+        let auto = snmp.clone().clear_length();
+        let auto_bytes = auto.compile()?;
+        assert_eq!(auto.explicit_length(), None);
+        assert_eq!(auto.effective_length(), auto_bytes.len() - 2);
+        assert_eq!(&auto_bytes[..2], &[0x30, 0x24]);
+        assert_eq!(&auto_bytes[2..], &bytes[2..]);
+
+        let raw_pdu_message = [
+            0x30, 0x0c, 0x02, 0x01, 0x03, 0x04, 0x01, b'x', 0xa9, 0x81, 0x03, 0x02, 0x01, 0x05,
+        ];
+        let decoded = Snmp::decode(&raw_pdu_message)?;
+        assert_eq!(decoded.version(), SnmpVersion::Unknown(3));
+        assert_eq!(decoded.community(), b"x");
+        assert_eq!(decoded.pdu().raw_tlv_bytes(), Some(&raw_pdu_message[8..]));
+        assert_eq!(decoded.compile()?, raw_pdu_message);
 
         Ok(())
     }

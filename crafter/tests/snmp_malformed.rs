@@ -100,6 +100,55 @@ fn snmp_malformed_unset_pdu_and_value_lengths_auto_fill() -> crafter::Result<()>
 }
 
 #[test]
+fn snmp_malformed_message_underreported_length_preserves_content_bytes() -> crafter::Result<()> {
+    let auto = Snmp::v2c_get_request(b"public".to_vec(), 1, SnmpVarBindList::empty())?;
+    let bytes = auto.clone().length(0).compile()?;
+    let auto_bytes = auto.compile()?;
+
+    assert_eq!(&bytes[..2], &[0x30, 0x00]);
+    assert_eq!(&bytes[2..], &auto_bytes[2..]);
+    assert_snmp_decode_error(
+        "underreported outer message length",
+        &bytes,
+        CrafterError::invalid_field_value("snmp.ber.sequence", "trailing bytes after SEQUENCE TLV"),
+    );
+
+    Ok(())
+}
+
+#[test]
+fn snmp_malformed_message_overreported_length_is_structured_error() -> crafter::Result<()> {
+    let bytes = Snmp::v2c_get_request(b"public".to_vec(), 1, SnmpVarBindList::empty())?
+        .length(25)
+        .compile()?;
+
+    assert_eq!(&bytes[..2], &[0x30, 0x19]);
+    assert_snmp_decode_error(
+        "overreported outer message length",
+        &bytes,
+        CrafterError::buffer_too_short("snmp.ber.sequence", 27, 26),
+    );
+
+    Ok(())
+}
+
+#[test]
+fn snmp_malformed_varbind_list_underreported_length_preserves_member_bytes() -> crafter::Result<()>
+{
+    let name = SnmpOid::from_dotted("1.3.6.1.2.1.1.3.0")?;
+    let list = SnmpVarBindList::new(vec![SnmpVarBind::null(name)]).length(0);
+    let bytes = list.compile()?;
+
+    assert_eq!(&bytes[..2], &[0x30, 0x00]);
+    let (decoded, rest) = SnmpVarBindList::decode(&bytes)?;
+    assert!(decoded.is_empty());
+    assert_eq!(rest, &bytes[2..]);
+    assert_eq!(&list.clear_length().compile()?[..2], &[0x30, 0x0e]);
+
+    Ok(())
+}
+
+#[test]
 fn snmp_malformed_message_short_outer_sequence_is_structured_error() {
     assert_snmp_decode_error(
         "short outer message sequence",
