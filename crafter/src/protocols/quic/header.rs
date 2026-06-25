@@ -8,7 +8,25 @@ use crate::error::{CrafterError, Result};
 use crate::field::{Field, FieldState};
 
 use super::constants::{QUIC_VERSION_1, QUIC_VERSION_2, QUIC_VERSION_NEGOTIATION};
+use super::packet_number::{header_bits_for_len, len_from_header_bits};
 use super::QuicConnectionId;
+
+/// Header Form bit mask in byte 0.
+pub const QUIC_HEADER_FORM_MASK: u8 = 0x80;
+/// QUIC fixed-bit mask in byte 0.
+pub const QUIC_FIXED_BIT_MASK: u8 = 0x40;
+/// QUIC v1/v2 long-header packet-type mask in byte 0.
+pub const QUIC_LONG_PACKET_TYPE_MASK: u8 = 0x30;
+/// QUIC v1/v2 long-header reserved-bits mask in byte 0.
+pub const QUIC_LONG_RESERVED_BITS_MASK: u8 = 0x0c;
+/// QUIC v1/v2 short-header spin-bit mask in byte 0.
+pub const QUIC_SHORT_SPIN_BIT_MASK: u8 = 0x20;
+/// QUIC v1/v2 short-header reserved-bits mask in byte 0.
+pub const QUIC_SHORT_RESERVED_BITS_MASK: u8 = 0x18;
+/// QUIC v1/v2 short-header key-phase mask in byte 0.
+pub const QUIC_SHORT_KEY_PHASE_MASK: u8 = 0x04;
+/// QUIC packet-number length mask in byte 0.
+pub const QUIC_PACKET_NUMBER_LEN_MASK: u8 = 0x03;
 
 /// QUIC invariant header form.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,6 +122,68 @@ impl QuicHeader {
         self
     }
 
+    /// Set the invariant header form bit while preserving every other bit.
+    pub fn header_form(mut self, form: QuicHeaderForm) -> Self {
+        self.update_first_byte_mask(QUIC_HEADER_FORM_MASK, form.first_byte_bits());
+        self
+    }
+
+    /// Set the QUIC fixed bit while preserving every other bit.
+    pub fn fixed_bit(mut self, fixed: bool) -> Self {
+        let value = if fixed { QUIC_FIXED_BIT_MASK } else { 0 };
+        self.update_first_byte_mask(QUIC_FIXED_BIT_MASK, value);
+        self
+    }
+
+    /// Set the v1/v2 long-header packet type bits while preserving other bits.
+    pub fn long_packet_type_bits(mut self, bits: u8) -> Self {
+        self.update_first_byte_mask(QUIC_LONG_PACKET_TYPE_MASK, (bits & 0x03) << 4);
+        self
+    }
+
+    /// Set the v1/v2 long-header reserved bits while preserving other bits.
+    pub fn long_reserved_bits(mut self, bits: u8) -> Self {
+        self.update_first_byte_mask(QUIC_LONG_RESERVED_BITS_MASK, (bits & 0x03) << 2);
+        self
+    }
+
+    /// Set the short-header spin bit while preserving every other bit.
+    pub fn short_spin_bit(mut self, spin: bool) -> Self {
+        let value = if spin { QUIC_SHORT_SPIN_BIT_MASK } else { 0 };
+        self.update_first_byte_mask(QUIC_SHORT_SPIN_BIT_MASK, value);
+        self
+    }
+
+    /// Set the v1/v2 short-header reserved bits while preserving other bits.
+    pub fn short_reserved_bits(mut self, bits: u8) -> Self {
+        self.update_first_byte_mask(QUIC_SHORT_RESERVED_BITS_MASK, (bits & 0x03) << 3);
+        self
+    }
+
+    /// Set the short-header key-phase bit while preserving every other bit.
+    pub fn short_key_phase(mut self, key_phase: bool) -> Self {
+        let value = if key_phase {
+            QUIC_SHORT_KEY_PHASE_MASK
+        } else {
+            0
+        };
+        self.update_first_byte_mask(QUIC_SHORT_KEY_PHASE_MASK, value);
+        self
+    }
+
+    /// Set raw packet-number length bits while preserving every other bit.
+    pub fn packet_number_len_bits(mut self, bits: u8) -> Self {
+        self.update_first_byte_mask(QUIC_PACKET_NUMBER_LEN_MASK, bits & 0x03);
+        self
+    }
+
+    /// Set packet-number length bits from a 1, 2, 3, or 4-byte length.
+    pub fn packet_number_len(mut self, encoded_len: usize) -> Result<Self> {
+        let bits = header_bits_for_len(encoded_len)?;
+        self.update_first_byte_mask(QUIC_PACKET_NUMBER_LEN_MASK, bits);
+        Ok(self)
+    }
+
     /// Stored first-byte value, if one has been supplied or decoded.
     pub fn first_byte_value(&self) -> Option<u8> {
         self.first_byte.value().copied()
@@ -114,9 +194,105 @@ impl QuicHeader {
         self.first_byte.state()
     }
 
+    /// Invariant header form, if byte 0 is present.
+    pub fn header_form_value(&self) -> Option<QuicHeaderForm> {
+        self.first_byte_value().map(QuicHeaderForm::from_first_byte)
+    }
+
+    /// Return true when byte 0 identifies a long header.
+    pub fn is_long_header(&self) -> Option<bool> {
+        self.header_form_value()
+            .map(|form| form == QuicHeaderForm::Long)
+    }
+
+    /// Return true when byte 0 identifies a short header.
+    pub fn is_short_header(&self) -> Option<bool> {
+        self.header_form_value()
+            .map(|form| form == QuicHeaderForm::Short)
+    }
+
+    /// QUIC/fixed bit value, if byte 0 is present.
+    pub fn fixed_bit_value(&self) -> Option<bool> {
+        self.first_byte_value()
+            .map(|first| first & QUIC_FIXED_BIT_MASK != 0)
+    }
+
+    /// Raw v1/v2 long-header packet type bits, if byte 0 is present.
+    pub fn long_packet_type_bits_value(&self) -> Option<u8> {
+        self.first_byte_value()
+            .map(|first| (first & QUIC_LONG_PACKET_TYPE_MASK) >> 4)
+    }
+
+    /// Raw v1/v2 long-header reserved bits, if byte 0 is present.
+    pub fn long_reserved_bits_value(&self) -> Option<u8> {
+        self.first_byte_value()
+            .map(|first| (first & QUIC_LONG_RESERVED_BITS_MASK) >> 2)
+    }
+
+    /// Short-header spin bit value, if byte 0 is present.
+    pub fn short_spin_bit_value(&self) -> Option<bool> {
+        self.first_byte_value()
+            .map(|first| first & QUIC_SHORT_SPIN_BIT_MASK != 0)
+    }
+
+    /// Raw v1/v2 short-header reserved bits, if byte 0 is present.
+    pub fn short_reserved_bits_value(&self) -> Option<u8> {
+        self.first_byte_value()
+            .map(|first| (first & QUIC_SHORT_RESERVED_BITS_MASK) >> 3)
+    }
+
+    /// Short-header key-phase bit value, if byte 0 is present.
+    pub fn short_key_phase_value(&self) -> Option<bool> {
+        self.first_byte_value()
+            .map(|first| first & QUIC_SHORT_KEY_PHASE_MASK != 0)
+    }
+
+    /// Raw packet-number length bits, if byte 0 is present.
+    pub fn packet_number_len_bits_value(&self) -> Option<u8> {
+        self.first_byte_value()
+            .map(|first| first & QUIC_PACKET_NUMBER_LEN_MASK)
+    }
+
+    /// Decoded packet-number length in bytes, if byte 0 is present.
+    pub fn packet_number_len_value(&self) -> Option<usize> {
+        self.packet_number_len_bits_value()
+            .map(len_from_header_bits)
+    }
+
+    /// Return whether this header form carries a Destination Connection ID field.
+    ///
+    /// Long headers encode the field length after the version. Short headers
+    /// carry the field immediately after byte 0, but the length is contextual.
+    pub fn destination_connection_id_field_present(&self) -> Option<bool> {
+        self.header_form_value().map(|_| true)
+    }
+
     /// Borrow the preserved raw header bytes.
     pub fn raw_bytes(&self) -> &[u8] {
         &self.raw
+    }
+
+    fn update_first_byte_mask(&mut self, mask: u8, value: u8) {
+        let current = self.first_byte_value().unwrap_or(0);
+        self.first_byte.set_user((current & !mask) | (value & mask));
+    }
+}
+
+impl QuicHeaderForm {
+    /// Interpret the invariant header form bit from byte 0.
+    pub const fn from_first_byte(first_byte: u8) -> Self {
+        if first_byte & QUIC_HEADER_FORM_MASK != 0 {
+            Self::Long
+        } else {
+            Self::Short
+        }
+    }
+
+    const fn first_byte_bits(self) -> u8 {
+        match self {
+            Self::Long => QUIC_HEADER_FORM_MASK,
+            Self::Short => 0,
+        }
     }
 }
 
@@ -125,8 +301,8 @@ pub fn classify_quic_header(bytes: &[u8]) -> Result<QuicHeaderClassification> {
     let Some(first_byte) = bytes.first().copied() else {
         return Ok(QuicHeaderClassification::NonQuic);
     };
-    let fixed_bit = first_byte & 0x40 != 0;
-    if first_byte & 0x80 == 0 {
+    let fixed_bit = first_byte & QUIC_FIXED_BIT_MASK != 0;
+    if first_byte & QUIC_HEADER_FORM_MASK == 0 {
         return if fixed_bit {
             Ok(QuicHeaderClassification::ShortHeaderAmbiguous {
                 first_byte,
@@ -212,7 +388,7 @@ const fn classify_long_packet_kind(version: u32, first_byte: u8) -> QuicLongPack
     if version == QUIC_VERSION_NEGOTIATION {
         return QuicLongPacketKind::VersionNegotiation;
     }
-    let bits = (first_byte & 0x30) >> 4;
+    let bits = (first_byte & QUIC_LONG_PACKET_TYPE_MASK) >> 4;
     match version {
         QUIC_VERSION_1 => match bits {
             0 => QuicLongPacketKind::Initial,
@@ -233,6 +409,80 @@ const fn classify_long_packet_kind(version: u32, first_byte: u8) -> QuicLongPack
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quic_header_bits_access_decoded_first_byte() {
+        let header = QuicHeader::from_decoded_bytes([0x5d, 0xaa, 0xbb]).unwrap();
+
+        assert_eq!(header.first_byte_value(), Some(0x5d));
+        assert_eq!(header.first_byte_state(), FieldState::User);
+        assert_eq!(header.header_form_value(), Some(QuicHeaderForm::Short));
+        assert_eq!(header.is_short_header(), Some(true));
+        assert_eq!(header.fixed_bit_value(), Some(true));
+        assert_eq!(header.short_spin_bit_value(), Some(false));
+        assert_eq!(header.short_reserved_bits_value(), Some(0x03));
+        assert_eq!(header.short_key_phase_value(), Some(true));
+        assert_eq!(header.packet_number_len_bits_value(), Some(0x01));
+        assert_eq!(header.packet_number_len_value(), Some(2));
+        assert_eq!(header.destination_connection_id_field_present(), Some(true));
+        assert_eq!(header.raw_bytes(), &[0x5d, 0xaa, 0xbb]);
+    }
+
+    #[test]
+    fn quic_header_bits_build_long_header_first_byte_without_normalizing_reserved_bits() {
+        let header = QuicHeader::new()
+            .header_form(QuicHeaderForm::Long)
+            .fixed_bit(true)
+            .long_packet_type_bits(2)
+            .long_reserved_bits(3)
+            .packet_number_len(4)
+            .unwrap();
+
+        assert_eq!(header.first_byte_value(), Some(0xef));
+        assert_eq!(header.header_form_value(), Some(QuicHeaderForm::Long));
+        assert_eq!(header.is_long_header(), Some(true));
+        assert_eq!(header.fixed_bit_value(), Some(true));
+        assert_eq!(header.long_packet_type_bits_value(), Some(2));
+        assert_eq!(header.long_reserved_bits_value(), Some(3));
+        assert_eq!(header.packet_number_len_bits_value(), Some(3));
+        assert_eq!(header.packet_number_len_value(), Some(4));
+    }
+
+    #[test]
+    fn quic_header_bits_build_short_header_preserving_other_raw_bits() {
+        let header = QuicHeader::new()
+            .first_byte(0xff)
+            .header_form(QuicHeaderForm::Short)
+            .fixed_bit(false)
+            .short_spin_bit(false)
+            .short_reserved_bits(1)
+            .short_key_phase(false)
+            .packet_number_len_bits(2);
+
+        assert_eq!(header.first_byte_value(), Some(0x0a));
+        assert_eq!(header.header_form_value(), Some(QuicHeaderForm::Short));
+        assert_eq!(header.fixed_bit_value(), Some(false));
+        assert_eq!(header.short_spin_bit_value(), Some(false));
+        assert_eq!(header.short_reserved_bits_value(), Some(1));
+        assert_eq!(header.short_key_phase_value(), Some(false));
+        assert_eq!(header.packet_number_len_value(), Some(3));
+    }
+
+    #[test]
+    fn quic_header_bits_reject_invalid_packet_number_length_builder() {
+        assert_eq!(
+            QuicHeader::new().packet_number_len(0).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "quic.packet_number.length",
+                "QUIC packet-number length must be 1, 2, 3, or 4 bytes",
+            )
+        );
+        assert_eq!(
+            QuicHeader::new().first_byte_value(),
+            None,
+            "failed builder should not synthesize a byte"
+        );
+    }
 
     #[test]
     fn quic_header_classifier_returns_non_match_for_ordinary_udp_payloads() {
