@@ -21,6 +21,7 @@ pub struct SnmpVarBind {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SnmpVarBindList {
     varbinds: Vec<SnmpVarBind>,
+    length: Option<usize>,
 }
 
 impl SnmpVarBind {
@@ -313,6 +314,7 @@ impl SnmpVarBindList {
     pub fn new(varbinds: impl Into<Vec<SnmpVarBind>>) -> Self {
         Self {
             varbinds: varbinds.into(),
+            length: None,
         }
     }
 
@@ -342,7 +344,7 @@ impl SnmpVarBindList {
             varbind.encode(&mut content)?;
         }
 
-        ber::encode_sequence(&content, out)
+        encode_varbind_list_sequence(&content, self.length, out)
     }
 
     /// Return this variable binding list encoded as BER bytes.
@@ -355,6 +357,27 @@ impl SnmpVarBindList {
     /// Compile this variable binding list into BER bytes.
     pub fn compile(&self) -> Result<Vec<u8>> {
         self.to_bytes()
+    }
+
+    /// Pin the VarBindList SEQUENCE length field to an explicit value.
+    ///
+    /// Unset list lengths are auto-filled from the encoded VarBind bytes. A
+    /// pinned value is emitted verbatim, even when it deliberately disagrees
+    /// with the VarBind bytes; the VarBind bytes are still emitted unchanged.
+    pub fn length(mut self, length: usize) -> Self {
+        self.length = Some(length);
+        self
+    }
+
+    /// Drop any explicit VarBindList length override so encode auto-fills it.
+    pub fn clear_length(mut self) -> Self {
+        self.length = None;
+        self
+    }
+
+    /// Explicit VarBindList BER length override, if one is pinned.
+    pub const fn explicit_length(&self) -> Option<usize> {
+        self.length
     }
 
     /// Append one variable binding.
@@ -419,6 +442,20 @@ fn varbind_field_name(index: usize) -> &'static str {
         "varbind[7]",
     ];
     NAMES.get(index).copied().unwrap_or("varbind[*]")
+}
+
+fn encode_varbind_list_sequence(
+    content: &[u8],
+    explicit_length: Option<usize>,
+    out: &mut Vec<u8>,
+) -> Result<()> {
+    ber::encode_identifier(
+        ber::BerTag::new(ber::BerClass::Universal, true, ber::BER_TAG_SEQUENCE),
+        out,
+    )?;
+    ber::encode_length(explicit_length.unwrap_or(content.len()), out)?;
+    out.extend_from_slice(content);
+    Ok(())
 }
 
 #[cfg(test)]
