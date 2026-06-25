@@ -1,0 +1,75 @@
+version: 1
+kind: profiles
+name: snmp_profiles
+
+profiles:
+  - name: snmp-smoke
+    purpose: focused offline SNMP message smoke coverage over IPv4 UDP
+    default_count: 10
+    family_weights:
+      - name: snmp
+        weight: 1
+    payload_length:
+      min: 0
+      max: 0
+    feature_weights:
+      baseline: 10
+      boundary: 3
+      malformed: 0
+      pcap: 0
+      live: 0
+  - name: snmp-ci
+    purpose: deterministic SNMP pull request coverage over IPv4 UDP
+    default_count: 200
+    family_weights:
+      - name: snmp
+        weight: 1
+    payload_length:
+      min: 0
+      max: 0
+    feature_weights:
+      baseline: 10
+      boundary: 5
+      malformed: 1
+      pcap: 1
+      live: 0
+  - name: snmp-boundary
+    purpose: focused SNMP BER, PDU, unknown-preservation, and structured-error coverage
+    default_count: 100
+    family_weights:
+      - name: snmp
+        weight: 1
+    payload_length:
+      min: 0
+      max: 0
+    feature_weights:
+      baseline: 3
+      boundary: 10
+      malformed: 4
+      pcap: 1
+      live: 0
+  - name: snmp-live-dry-run
+    purpose: provider-neutral SNMP live validation dry-run planning
+    default_count: 10
+    family_weights:
+      - name: snmp
+        weight: 1
+    payload_length:
+      min: 0
+      max: 0
+    feature_weights:
+      baseline: 2
+      boundary: 4
+      malformed: 0
+      pcap: 0
+      live: 0
+
+backend_support:
+  scapy:
+    status: planned
+    notes:
+      - Profiles affect SNMP generator sampling only after backend adapters land.
+  libcrafter:
+    status: planned
+    notes:
+      - Profiles remain dry-run/offline until executable SNMP oracle adapters are present.
