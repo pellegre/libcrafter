@@ -1394,6 +1394,158 @@ mod tests {
         );
     }
 
+    fn decoded_common_fields(pdu: &SnmpPdu) -> Result<Option<SnmpRequestPdu>> {
+        match pdu.tag_number() {
+            constants::SNMP_PDU_TAG_GET_REQUEST => pdu.as_get_request(),
+            constants::SNMP_PDU_TAG_GET_NEXT_REQUEST => pdu.as_get_next_request(),
+            constants::SNMP_PDU_TAG_RESPONSE => pdu.as_response(),
+            constants::SNMP_PDU_TAG_SET_REQUEST => pdu.as_set_request(),
+            constants::SNMP_PDU_TAG_INFORM_REQUEST => pdu.as_inform_request(),
+            constants::SNMP_PDU_TAG_TRAP_V2 => pdu.as_snmpv2_trap(),
+            constants::SNMP_PDU_TAG_REPORT => pdu.as_report(),
+            _ => Ok(None),
+        }
+    }
+
+    #[test]
+    fn snmp_pdu_decode_common_request_variants_parse_fields_and_varbinds() -> Result<()> {
+        let varbind = crate::protocols::snmp::SnmpVarBind::integer(
+            SnmpOid::from_dotted("1.3.6.1.2.1.1.5.0")?,
+            7,
+        );
+        let varbinds = SnmpVarBindList::new(vec![varbind.clone()]);
+        let cases = vec![
+            (
+                SnmpPdu::get_request_with_fields(101, 5, 2, varbinds.clone())?,
+                constants::SNMP_PDU_TAG_GET_REQUEST,
+                "get-request",
+            ),
+            (
+                SnmpPdu::get_next_request_with_fields(101, 5, 2, varbinds.clone())?,
+                constants::SNMP_PDU_TAG_GET_NEXT_REQUEST,
+                "get-next-request",
+            ),
+            (
+                SnmpPdu::response_with_fields(101, 5, 2, varbinds.clone())?,
+                constants::SNMP_PDU_TAG_RESPONSE,
+                "response",
+            ),
+            (
+                SnmpPdu::set_request_with_fields(101, 5, 2, varbinds.clone())?,
+                constants::SNMP_PDU_TAG_SET_REQUEST,
+                "set-request",
+            ),
+            (
+                SnmpPdu::inform_request_with_fields(101, 5, 2, varbinds.clone())?,
+                constants::SNMP_PDU_TAG_INFORM_REQUEST,
+                "inform-request",
+            ),
+            (
+                SnmpPdu::snmpv2_trap_with_fields(101, 5, 2, varbinds.clone())?,
+                constants::SNMP_PDU_TAG_TRAP_V2,
+                "snmpv2-trap",
+            ),
+            (
+                SnmpPdu::report_with_fields(101, 5, 2, varbinds)?,
+                constants::SNMP_PDU_TAG_REPORT,
+                "report",
+            ),
+        ];
+
+        for (pdu, tag, label) in cases {
+            let bytes = pdu.compile()?;
+            let (decoded, rest) = SnmpPdu::decode(&bytes)?;
+            let fields = decoded_common_fields(&decoded)?.expect("common PDU fields");
+
+            assert!(rest.is_empty());
+            assert_eq!(decoded.tag_number(), tag);
+            assert_eq!(decoded.tag_label(), label);
+            assert_eq!(fields.request_id(), 101);
+            assert_eq!(fields.error_status(), 5);
+            assert_eq!(fields.error_index(), 2);
+            assert_eq!(fields.varbinds().as_slice(), std::slice::from_ref(&varbind));
+            assert_eq!(decoded.compile()?, bytes);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_pdu_decode_bulk_and_v1_trap_parse_source_backed_fields() -> Result<()> {
+        let varbind =
+            crate::protocols::snmp::SnmpVarBind::null(SnmpOid::from_dotted("1.3.6.1.2.1.1.3.0")?);
+        let bulk =
+            SnmpPdu::get_bulk_request(77, 2, 10, SnmpVarBindList::new(vec![varbind.clone()]))?;
+        let bulk_bytes = bulk.compile()?;
+        let (decoded_bulk, bulk_rest) = SnmpPdu::decode(&bulk_bytes)?;
+        let bulk_fields = decoded_bulk
+            .as_get_bulk_request()?
+            .expect("GetBulkRequest fields");
+
+        assert!(bulk_rest.is_empty());
+        assert_eq!(
+            decoded_bulk.tag_number(),
+            constants::SNMP_PDU_TAG_GET_BULK_REQUEST
+        );
+        assert_eq!(bulk_fields.request_id(), 77);
+        assert_eq!(bulk_fields.non_repeaters(), 2);
+        assert_eq!(bulk_fields.max_repetitions(), 10);
+        assert_eq!(
+            bulk_fields.varbinds().as_slice(),
+            std::slice::from_ref(&varbind)
+        );
+        assert_eq!(decoded_bulk.compile()?, bulk_bytes);
+
+        let enterprise = SnmpOid::from_dotted("1.3.6.1.4.1")?;
+        let trap = SnmpPdu::v1_trap(
+            enterprise.clone(),
+            [192, 0, 2, 55],
+            6,
+            44,
+            12_345,
+            SnmpVarBindList::new(vec![varbind.clone()]),
+        )?;
+        let trap_bytes = trap.compile()?;
+        let (decoded_trap, trap_rest) = SnmpPdu::decode(&trap_bytes)?;
+        let trap_fields = decoded_trap.as_v1_trap()?.expect("Trap fields");
+
+        assert!(trap_rest.is_empty());
+        assert_eq!(decoded_trap.tag_number(), constants::SNMP_PDU_TAG_TRAP);
+        assert_eq!(trap_fields.enterprise(), &enterprise);
+        assert_eq!(trap_fields.agent_address(), [192, 0, 2, 55]);
+        assert_eq!(trap_fields.generic_trap(), 6);
+        assert_eq!(trap_fields.specific_trap(), 44);
+        assert_eq!(trap_fields.timestamp(), 12_345);
+        assert_eq!(
+            trap_fields.varbinds().as_slice(),
+            std::slice::from_ref(&varbind)
+        );
+        assert_eq!(decoded_trap.compile()?, trap_bytes);
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_pdu_decode_unknown_context_specific_tag_preserves_raw_body() -> Result<()> {
+        let bytes = [0xa9, 0x03, 0x02, 0x01, 0x05, 0xee];
+        let (decoded, rest) = SnmpPdu::decode(&bytes)?;
+        let unknown = decoded.as_unknown().expect("unknown PDU");
+
+        assert_eq!(unknown.tag_number(), 9);
+        assert!(unknown.is_constructed());
+        assert_eq!(unknown.body(), &[0x02, 0x01, 0x05]);
+        assert_eq!(unknown.raw_tlv_bytes(), Some(&bytes[..5]));
+        assert_eq!(decoded.tag_name(), None);
+        assert_eq!(decoded.tag_status(), registry::SnmpPduTagStatus::Unknown);
+        assert_eq!(decoded.as_get_request()?, None);
+        assert_eq!(decoded.as_get_bulk_request()?, None);
+        assert_eq!(decoded.as_v1_trap()?, None);
+        assert_eq!(decoded.compile()?, bytes[..5]);
+        assert_eq!(rest, &[0xee]);
+
+        Ok(())
+    }
+
     #[test]
     fn snmp_request_pdu_empty_varbinds_compile_and_decode() -> Result<()> {
         let pdu = SnmpPdu::get_request(1, SnmpVarBindList::empty())?;
