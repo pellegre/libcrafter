@@ -5,7 +5,7 @@
 
 #![cfg_attr(not(test), allow(dead_code))]
 
-use super::{ber, registry};
+use super::{ber, oid::SnmpOid, registry};
 use crate::error::Result;
 
 const SNMP_IP_ADDRESS_LEN: usize = 4;
@@ -17,6 +17,7 @@ pub(super) enum SnmpValue {
     Integer(i64),
     OctetString(SnmpOctetString),
     Null,
+    ObjectIdentifier(SnmpOid),
     IpAddress([u8; SNMP_IP_ADDRESS_LEN]),
     Counter32(u32),
     Gauge32OrUnsigned32(u32),
@@ -38,6 +39,10 @@ impl SnmpValue {
 
     pub(super) const fn null() -> Self {
         Self::Null
+    }
+
+    pub(super) fn object_identifier(oid: SnmpOid) -> Self {
+        Self::ObjectIdentifier(oid)
     }
 
     pub(super) const fn ip_address(octets: [u8; SNMP_IP_ADDRESS_LEN]) -> Self {
@@ -80,6 +85,48 @@ impl SnmpValue {
         Self::RawTlv(RawTlv::new(bytes))
     }
 
+    pub(super) fn decode(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        let (tag, content, tlv, rest) =
+            decode_tlv(bytes, "snmp.value", "value length exceeds supported size")?;
+
+        let value = match tag {
+            tag if tag
+                == ber::BerTag::new(ber::BerClass::Universal, false, ber::BER_TAG_INTEGER) =>
+            {
+                Self::Integer(ber::decode_integer_content(content)?)
+            }
+            tag if tag
+                == ber::BerTag::new(ber::BerClass::Universal, false, ber::BER_TAG_OCTET_STRING) =>
+            {
+                Self::octet_string(content.to_vec())
+            }
+            tag if tag == ber::BerTag::new(ber::BerClass::Universal, false, ber::BER_TAG_NULL) => {
+                if !content.is_empty() {
+                    return Err(ber::invalid_ber_field(
+                        "snmp.ber.null",
+                        "NULL must have zero content length",
+                    ));
+                }
+                Self::Null
+            }
+            tag if tag
+                == ber::BerTag::new(
+                    ber::BerClass::Universal,
+                    false,
+                    ber::BER_TAG_OBJECT_IDENTIFIER,
+                ) =>
+            {
+                Self::ObjectIdentifier(SnmpOid::decode_content(content)?)
+            }
+            tag if tag.class() == ber::BerClass::Application => {
+                decode_application_value(tag, content, Some(tlv))?
+            }
+            _ => Self::raw_tlv(tlv.to_vec()),
+        };
+
+        Ok((value, rest))
+    }
+
     pub(super) fn decode_octet_string(bytes: &[u8]) -> Result<(Self, &[u8])> {
         let (content, rest) = decode_primitive_content(
             bytes,
@@ -110,30 +157,14 @@ impl SnmpValue {
         Ok((Self::Null, rest))
     }
 
-    pub(super) fn decode_application(bytes: &[u8]) -> Result<(Self, &[u8])> {
-        let (tag, content, rest) = decode_application_content(bytes, "snmp.ber.application")?;
+    pub(super) fn decode_object_identifier(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        let (oid, rest) = SnmpOid::decode(bytes)?;
+        Ok((Self::ObjectIdentifier(oid), rest))
+    }
 
-        let value = match (tag.is_constructed(), tag.number()) {
-            (false, ber::SNMP_APPLICATION_TAG_IP_ADDRESS) => {
-                Self::IpAddress(decode_ip_address_content(content)?)
-            }
-            (false, ber::SNMP_APPLICATION_TAG_COUNTER32) => Self::Counter32(
-                decode_unsigned_u32_content(content, "snmp.ber.application.counter32")?,
-            ),
-            (false, ber::SNMP_APPLICATION_TAG_GAUGE32_OR_UNSIGNED32) => Self::Gauge32OrUnsigned32(
-                decode_unsigned_u32_content(content, "snmp.ber.application.gauge32_or_unsigned32")?,
-            ),
-            (false, ber::SNMP_APPLICATION_TAG_TIME_TICKS) => Self::TimeTicks(
-                decode_unsigned_u32_content(content, "snmp.ber.application.time_ticks")?,
-            ),
-            (false, ber::SNMP_APPLICATION_TAG_OPAQUE) => {
-                Self::Opaque(SnmpOctetString::new(content.to_vec()))
-            }
-            (false, ber::SNMP_APPLICATION_TAG_COUNTER64) => Self::Counter64(
-                decode_unsigned_u64_content(content, "snmp.ber.application.counter64")?,
-            ),
-            _ => Self::raw_application(tag.number(), tag.is_constructed(), content.to_vec()),
-        };
+    pub(super) fn decode_application(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        let (tag, content, tlv, rest) = decode_application_tlv(bytes, "snmp.ber.application")?;
+        let value = decode_application_value(tag, content, Some(tlv))?;
 
         Ok((value, rest))
     }
@@ -228,9 +259,27 @@ impl SnmpValue {
         ))
     }
 
+    pub(super) fn as_integer(&self) -> Option<i64> {
+        match self {
+            Self::Integer(value) => Some(*value),
+            _ => None,
+        }
+    }
+
     pub(super) fn as_octets(&self) -> Option<&[u8]> {
         match self {
             Self::OctetString(value) => Some(value.as_bytes()),
+            _ => None,
+        }
+    }
+
+    pub(super) fn is_null(&self) -> bool {
+        matches!(self, Self::Null)
+    }
+
+    pub(super) fn as_object_identifier(&self) -> Option<&SnmpOid> {
+        match self {
+            Self::ObjectIdentifier(value) => Some(value),
             _ => None,
         }
     }
@@ -284,6 +333,30 @@ impl SnmpValue {
         }
     }
 
+    pub(super) fn as_raw_tlv(&self) -> Option<&RawTlv> {
+        match self {
+            Self::RawTlv(value) => Some(value),
+            _ => None,
+        }
+    }
+
+    pub(super) fn summary_label(&self) -> String {
+        match self {
+            Self::Integer(_) => "integer".to_string(),
+            Self::OctetString(_) => "octet-string".to_string(),
+            Self::Null => "null".to_string(),
+            Self::ObjectIdentifier(_) => "object-identifier".to_string(),
+            Self::IpAddress(_) => "ip-address".to_string(),
+            Self::Counter32(_) => "counter32".to_string(),
+            Self::Gauge32OrUnsigned32(_) => "gauge32-or-unsigned32".to_string(),
+            Self::TimeTicks(_) => "time-ticks".to_string(),
+            Self::Opaque(_) => "opaque".to_string(),
+            Self::Counter64(_) => "counter64".to_string(),
+            Self::RawApplication(raw) => raw.label(),
+            Self::RawTlv(raw) => raw.label(),
+        }
+    }
+
     pub(super) fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
         match self {
             Self::Integer(value) => ber::encode_integer(*value, out),
@@ -299,6 +372,7 @@ impl SnmpValue {
                 )?;
                 ber::encode_length(0, out)
             }
+            Self::ObjectIdentifier(value) => value.encode(out),
             Self::IpAddress(octets) => {
                 encode_application_tlv(ber::SNMP_APPLICATION_TAG_IP_ADDRESS, false, octets, out)
             }
@@ -337,14 +411,29 @@ impl SnmpValue {
         self.encode(&mut out)?;
         Ok(out)
     }
+
+    pub(super) fn compile(&self) -> Result<Vec<u8>> {
+        self.to_bytes()
+    }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub(super) struct RawApplicationValue {
     tag_number: u8,
     constructed: bool,
     content: Vec<u8>,
+    raw_tlv: Option<RawTlv>,
 }
+
+impl PartialEq for RawApplicationValue {
+    fn eq(&self, other: &Self) -> bool {
+        self.tag_number == other.tag_number
+            && self.constructed == other.constructed
+            && self.content == other.content
+    }
+}
+
+impl Eq for RawApplicationValue {}
 
 impl RawApplicationValue {
     pub(super) fn new(tag_number: u8, constructed: bool, content: impl Into<Vec<u8>>) -> Self {
@@ -352,6 +441,21 @@ impl RawApplicationValue {
             tag_number,
             constructed,
             content: content.into(),
+            raw_tlv: None,
+        }
+    }
+
+    fn from_tlv(
+        tag_number: u8,
+        constructed: bool,
+        content: impl Into<Vec<u8>>,
+        tlv: impl Into<Vec<u8>>,
+    ) -> Self {
+        Self {
+            tag_number,
+            constructed,
+            content: content.into(),
+            raw_tlv: Some(RawTlv::new(tlv)),
         }
     }
 
@@ -367,11 +471,20 @@ impl RawApplicationValue {
         &self.content
     }
 
+    pub(super) fn tlv_bytes(&self) -> Option<&[u8]> {
+        self.raw_tlv.as_ref().map(RawTlv::as_bytes)
+    }
+
     pub(super) fn label(&self) -> String {
         registry::application_tag_label(self.tag_number, self.constructed)
     }
 
     fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        if let Some(raw_tlv) = &self.raw_tlv {
+            out.extend_from_slice(raw_tlv.as_bytes());
+            return Ok(());
+        }
+
         encode_application_tlv(self.tag_number, self.constructed, &self.content, out)
     }
 }
@@ -408,6 +521,65 @@ impl RawTlv {
     pub(super) fn as_bytes(&self) -> &[u8] {
         &self.bytes
     }
+
+    pub(super) fn tag(&self) -> Option<ber::BerTag> {
+        ber::decode_identifier(&self.bytes).ok().map(|(tag, _)| tag)
+    }
+
+    pub(super) fn content(&self) -> Option<&[u8]> {
+        let (_, rest) = ber::decode_identifier(&self.bytes).ok()?;
+        let (length, rest) = ber::decode_length(rest).ok()?;
+        if rest.len() < length {
+            return None;
+        }
+
+        Some(&rest[..length])
+    }
+
+    pub(super) fn label(&self) -> String {
+        self.tag()
+            .map(ber::BerTag::label)
+            .unwrap_or_else(|| "raw-tlv".to_string())
+    }
+}
+
+fn decode_application_value(
+    tag: ber::BerTag,
+    content: &[u8],
+    raw_tlv: Option<&[u8]>,
+) -> Result<SnmpValue> {
+    Ok(match (tag.is_constructed(), tag.number()) {
+        (false, ber::SNMP_APPLICATION_TAG_IP_ADDRESS) => {
+            SnmpValue::IpAddress(decode_ip_address_content(content)?)
+        }
+        (false, ber::SNMP_APPLICATION_TAG_COUNTER32) => SnmpValue::Counter32(
+            decode_unsigned_u32_content(content, "snmp.ber.application.counter32")?,
+        ),
+        (false, ber::SNMP_APPLICATION_TAG_GAUGE32_OR_UNSIGNED32) => SnmpValue::Gauge32OrUnsigned32(
+            decode_unsigned_u32_content(content, "snmp.ber.application.gauge32_or_unsigned32")?,
+        ),
+        (false, ber::SNMP_APPLICATION_TAG_TIME_TICKS) => SnmpValue::TimeTicks(
+            decode_unsigned_u32_content(content, "snmp.ber.application.time_ticks")?,
+        ),
+        (false, ber::SNMP_APPLICATION_TAG_OPAQUE) => {
+            SnmpValue::Opaque(SnmpOctetString::new(content.to_vec()))
+        }
+        (false, ber::SNMP_APPLICATION_TAG_COUNTER64) => SnmpValue::Counter64(
+            decode_unsigned_u64_content(content, "snmp.ber.application.counter64")?,
+        ),
+        _ => {
+            if let Some(raw_tlv) = raw_tlv {
+                SnmpValue::RawApplication(RawApplicationValue::from_tlv(
+                    tag.number(),
+                    tag.is_constructed(),
+                    content.to_vec(),
+                    raw_tlv.to_vec(),
+                ))
+            } else {
+                SnmpValue::raw_application(tag.number(), tag.is_constructed(), content.to_vec())
+            }
+        }
+    })
 }
 
 fn encode_tlv(tag: ber::BerTag, content: &[u8], out: &mut Vec<u8>) -> Result<()> {
@@ -465,6 +637,29 @@ fn encode_unsigned_integer_content(value: u64, out: &mut Vec<u8>) {
     out.extend_from_slice(content);
 }
 
+fn decode_tlv<'a>(
+    bytes: &'a [u8],
+    context: &'static str,
+    overflow_reason: &'static str,
+) -> Result<(ber::BerTag, &'a [u8], &'a [u8], &'a [u8])> {
+    let (tag, rest) = ber::decode_identifier(bytes)?;
+    let (length, rest) = ber::decode_length(rest)?;
+    if rest.len() < length {
+        let prefix_len = bytes.len() - rest.len();
+        let required = prefix_len
+            .checked_add(length)
+            .ok_or_else(|| ber::invalid_ber_field(context, overflow_reason))?;
+        return Err(ber::truncated_ber(context, required, bytes.len()));
+    }
+
+    let content_offset = bytes.len() - rest.len();
+    let value_end = content_offset + length;
+    let content = &bytes[content_offset..value_end];
+    let tlv = &bytes[..value_end];
+    let rest = &bytes[value_end..];
+    Ok((tag, content, tlv, rest))
+}
+
 fn decode_primitive_content<'a>(
     bytes: &'a [u8],
     expected_tag: ber::BerTag,
@@ -494,7 +689,16 @@ fn decode_application_content<'a>(
     bytes: &'a [u8],
     context: &'static str,
 ) -> Result<(ber::BerTag, &'a [u8], &'a [u8])> {
-    let (tag, rest) = ber::decode_identifier(bytes)?;
+    let (tag, content, _, rest) = decode_application_tlv(bytes, context)?;
+    Ok((tag, content, rest))
+}
+
+fn decode_application_tlv<'a>(
+    bytes: &'a [u8],
+    context: &'static str,
+) -> Result<(ber::BerTag, &'a [u8], &'a [u8], &'a [u8])> {
+    let (tag, content, tlv, rest) =
+        decode_tlv(bytes, context, "application length exceeds supported size")?;
     if tag.class() != ber::BerClass::Application {
         return Err(ber::invalid_ber_field(
             context,
@@ -502,17 +706,7 @@ fn decode_application_content<'a>(
         ));
     }
 
-    let (length, rest) = ber::decode_length(rest)?;
-    if rest.len() < length {
-        let prefix_len = bytes.len() - rest.len();
-        let required = prefix_len.checked_add(length).ok_or_else(|| {
-            ber::invalid_ber_field(context, "application length exceeds supported size")
-        })?;
-        return Err(ber::truncated_ber(context, required, bytes.len()));
-    }
-
-    let (content, rest) = rest.split_at(length);
-    Ok((tag, content, rest))
+    Ok((tag, content, tlv, rest))
 }
 
 fn decode_known_application_content<'a>(
@@ -608,6 +802,164 @@ fn decode_unsigned_integer_content(
 mod tests {
     use super::*;
     use crate::CrafterError;
+
+    #[test]
+    fn snmp_value_compile_decode_universal_and_application_values() -> Result<()> {
+        let oid = SnmpOid::from_slice(&[1, 3, 6, 1, 2, 1, 1, 3, 0])?;
+        let cases = vec![
+            (SnmpValue::integer(128), vec![0x02, 0x02, 0x00, 0x80]),
+            (
+                SnmpValue::octet_string([0x00, 0xff, b'a']),
+                vec![0x04, 0x03, 0x00, 0xff, b'a'],
+            ),
+            (SnmpValue::null(), vec![0x05, 0x00]),
+            (
+                SnmpValue::object_identifier(oid.clone()),
+                vec![0x06, 0x08, 0x2b, 0x06, 0x01, 0x02, 0x01, 0x01, 0x03, 0x00],
+            ),
+            (
+                SnmpValue::ip_address([192, 0, 2, 1]),
+                vec![0x40, 0x04, 192, 0, 2, 1],
+            ),
+            (
+                SnmpValue::counter32(u32::MAX),
+                vec![0x41, 0x05, 0x00, 0xff, 0xff, 0xff, 0xff],
+            ),
+            (SnmpValue::gauge32(128), vec![0x42, 0x02, 0x00, 0x80]),
+            (SnmpValue::time_ticks(12_345), vec![0x43, 0x02, 0x30, 0x39]),
+            (
+                SnmpValue::opaque([0x30, 0x03, 0x02, 0x01, 0x05]),
+                vec![0x44, 0x05, 0x30, 0x03, 0x02, 0x01, 0x05],
+            ),
+            (
+                SnmpValue::counter64(u64::MAX),
+                vec![
+                    0x46, 0x09, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+                ],
+            ),
+        ];
+
+        // Source-backed: docs/snmp-rfc-manifest.md, RFC 2578 Sections 7.1.1
+        // through 7.1.11 and RFC 3416 Section 3 record these value choices.
+        for (value, expected) in cases {
+            assert_eq!(value.compile()?, expected);
+
+            let mut with_rest = expected.clone();
+            with_rest.push(0xaa);
+            let (decoded, rest) = SnmpValue::decode(&with_rest)?;
+            assert_eq!(decoded.compile()?, expected);
+            assert_eq!(rest, &[0xaa]);
+        }
+
+        let mut oid_bytes = vec![0x06, 0x08, 0x2b, 0x06, 0x01, 0x02, 0x01, 0x01, 0x03, 0x00];
+        oid_bytes.push(0xbb);
+        let (decoded, rest) = SnmpValue::decode_object_identifier(&oid_bytes)?;
+        assert_eq!(
+            decoded.as_object_identifier().map(SnmpOid::as_slice),
+            Some(oid.as_slice())
+        );
+        assert_eq!(rest, &[0xbb]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_value_summary_labels_cover_all_variants() -> Result<()> {
+        let oid = SnmpOid::from_slice(&[1, 3, 6, 1])?;
+        let cases = vec![
+            (SnmpValue::integer(1), "integer"),
+            (SnmpValue::octet_string([0xaa]), "octet-string"),
+            (SnmpValue::null(), "null"),
+            (SnmpValue::object_identifier(oid), "object-identifier"),
+            (SnmpValue::ip_address([192, 0, 2, 1]), "ip-address"),
+            (SnmpValue::counter32(1), "counter32"),
+            (SnmpValue::gauge32(1), "gauge32-or-unsigned32"),
+            (SnmpValue::time_ticks(1), "time-ticks"),
+            (SnmpValue::opaque([0xaa]), "opaque"),
+            (SnmpValue::counter64(1), "counter64"),
+            (
+                SnmpValue::raw_application(5, true, [0x05, 0x00]),
+                "constructed-application-5",
+            ),
+            (SnmpValue::raw_tlv([0xc3, 0x01, 0xaa]), "private-3"),
+        ];
+
+        for (value, label) in cases {
+            assert_eq!(value.summary_label(), label);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_value_typed_inspection_helpers_cover_all_variants() -> Result<()> {
+        let oid = SnmpOid::from_slice(&[1, 3, 6, 1])?;
+
+        assert_eq!(SnmpValue::integer(-1).as_integer(), Some(-1));
+        assert_eq!(
+            SnmpValue::octet_string([0xde, 0xad]).as_octets(),
+            Some(&[0xde, 0xad][..])
+        );
+        assert!(SnmpValue::null().is_null());
+        assert_eq!(
+            SnmpValue::object_identifier(oid.clone())
+                .as_object_identifier()
+                .map(SnmpOid::as_slice),
+            Some(oid.as_slice())
+        );
+        assert_eq!(
+            SnmpValue::ip_address([192, 0, 2, 1]).as_ip_address(),
+            Some([192, 0, 2, 1])
+        );
+        assert_eq!(SnmpValue::counter32(7).as_counter32(), Some(7));
+        assert_eq!(SnmpValue::unsigned32(8).as_gauge32_or_unsigned32(), Some(8));
+        assert_eq!(SnmpValue::time_ticks(9).as_time_ticks(), Some(9));
+        assert_eq!(SnmpValue::opaque([0xaa]).as_opaque(), Some(&[0xaa][..]));
+        assert_eq!(SnmpValue::counter64(10).as_counter64(), Some(10));
+
+        let raw_application = SnmpValue::raw_application(5, false, [0xde, 0xad]);
+        let raw_application = raw_application
+            .as_raw_application()
+            .expect("raw application value");
+        assert_eq!(raw_application.tag_number(), 5);
+        assert!(!raw_application.is_constructed());
+        assert_eq!(raw_application.content(), &[0xde, 0xad]);
+
+        let raw_tlv = SnmpValue::raw_tlv([0xc3, 0x01, 0xaa]);
+        let raw_tlv = raw_tlv.as_raw_tlv().expect("raw TLV value");
+        assert_eq!(
+            raw_tlv.tag(),
+            Some(ber::BerTag::new(ber::BerClass::Private, false, 3))
+        );
+        assert_eq!(raw_tlv.content(), Some(&[0xaa][..]));
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_value_raw_unknown_tlv_preservation_is_byte_exact() -> Result<()> {
+        let raw_private = [0xc3, 0x81, 0x02, 0xde, 0xad, 0xaa];
+        let (decoded, rest) = SnmpValue::decode(&raw_private)?;
+        let raw = decoded.as_raw_tlv().expect("raw private value");
+
+        assert_eq!(raw.as_bytes(), &raw_private[..5]);
+        assert_eq!(raw.content(), Some(&[0xde, 0xad][..]));
+        assert_eq!(raw.label(), "private-3");
+        assert_eq!(decoded.compile()?, raw_private[..5]);
+        assert_eq!(rest, &[0xaa]);
+
+        let raw_application = [0x45, 0x81, 0x02, 0xde, 0xad, 0xbb];
+        let (decoded, rest) = SnmpValue::decode(&raw_application)?;
+        let raw = decoded.as_raw_application().expect("raw application value");
+
+        assert_eq!(raw.tag_number(), 5);
+        assert_eq!(raw.content(), &[0xde, 0xad]);
+        assert_eq!(raw.tlv_bytes(), Some(&raw_application[..5]));
+        assert_eq!(decoded.compile()?, raw_application[..5]);
+        assert_eq!(rest, &[0xbb]);
+
+        Ok(())
+    }
 
     #[test]
     fn snmp_ber_integer_value_constructor_emits_minimal_integer_tlv() {
