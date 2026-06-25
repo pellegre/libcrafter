@@ -23,7 +23,7 @@ pub use constants::{
     SNMP_PDU_TAG_INFORM_REQUEST, SNMP_PDU_TAG_REPORT, SNMP_PDU_TAG_RESPONSE,
     SNMP_PDU_TAG_SET_REQUEST, SNMP_PDU_TAG_TRAP, SNMP_PDU_TAG_TRAP_V2,
 };
-pub use message::{Snmp, SnmpV3Message, SnmpVersion};
+pub use message::{Snmp, SnmpV3GlobalData, SnmpV3Message, SnmpVersion};
 pub use oid::SnmpOid;
 pub use pdu::{SnmpGetBulkPdu, SnmpPdu, SnmpRawPdu, SnmpRawPduBody, SnmpRequestPdu, SnmpV1TrapPdu};
 pub use registry::{
