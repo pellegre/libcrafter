@@ -1,0 +1,306 @@
+version: 1
+kind: feature
+name: snmp_pdu_matrix
+summary: Full source-backed SNMP PDU matrix, unknown PDU preservation, and malformed PDU structured-error cases.
+
+layers:
+  - udp
+  - snmp
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: get-request
+    rfc:
+      - RFC 1157 Section 4.1
+      - RFC 3416 Section 3
+    pdu_tag: 0
+    fields:
+      - request_id
+      - error_status
+      - error_index
+      - varbinds
+    checks:
+      - request_id_preserved
+      - no_error_fields_preserved
+      - request_null_varbinds_preserved
+  - name: get-next-request
+    rfc:
+      - RFC 1157 Section 4.1
+      - RFC 3416 Section 3
+    pdu_tag: 1
+    fields:
+      - request_id
+      - error_status
+      - error_index
+      - varbinds
+    checks:
+      - request_id_preserved
+      - get_next_tag_preserved
+  - name: response
+    rfc:
+      - RFC 1157 Section 4.1
+      - RFC 3416 Section 3
+    pdu_tag: 2
+    fields:
+      - request_id
+      - error_status
+      - error_index
+      - varbinds
+    checks:
+      - response_tag_preserved
+      - assigned_error_status_labels
+      - unassigned_error_status_preserved
+  - name: set-request
+    rfc:
+      - RFC 1157 Section 4.1
+      - RFC 3416 Section 3
+    pdu_tag: 3
+    fields:
+      - request_id
+      - error_status
+      - error_index
+      - varbinds
+    checks:
+      - set_tag_preserved
+      - caller_supplied_varbind_values_preserved
+  - name: v1-trap
+    rfc:
+      - RFC 1157 Section 4.1.6
+      - RFC 1215
+    pdu_tag: 4
+    fields:
+      - enterprise_oid
+      - agent_address
+      - generic_trap
+      - specific_trap
+      - timestamp
+      - varbinds
+    checks:
+      - enterprise_oid_preserved
+      - agent_address_preserved
+      - generic_and_specific_trap_preserved
+      - timestamp_time_ticks_preserved
+  - name: get-bulk-request
+    rfc:
+      - RFC 3416 Section 4.2.3
+    pdu_tag: 5
+    fields:
+      - request_id
+      - non_repeaters
+      - max_repetitions
+      - varbinds
+    checks:
+      - bulk_fields_preserved
+      - request_null_varbinds_preserved
+  - name: inform-request
+    rfc:
+      - RFC 3416 Section 4.2.7
+    pdu_tag: 6
+    fields:
+      - request_id
+      - error_status
+      - error_index
+      - varbinds
+    checks:
+      - inform_tag_preserved
+      - notification_varbinds_preserved
+  - name: snmpv2-trap
+    rfc:
+      - RFC 3416 Section 4.2.6
+      - RFC 3418 Section 7.1
+    pdu_tag: 7
+    fields:
+      - request_id
+      - error_status
+      - error_index
+      - varbinds
+    checks:
+      - trap_v2_tag_preserved
+      - sys_uptime_varbind_preserved
+      - snmp_trap_oid_varbind_preserved
+  - name: report
+    rfc:
+      - RFC 3416 Section 3
+      - RFC 3412 Section 6
+    pdu_tag: 8
+    fields:
+      - request_id
+      - error_status
+      - error_index
+      - varbinds
+    checks:
+      - report_tag_preserved
+      - report_varbinds_preserved
+  - name: unknown-pdu
+    pdu_tag: unassigned
+    fields:
+      - raw_pdu_tlv
+    checks:
+      - raw_pdu_tlv_preserved
+      - unknown_pdu_label_stable
+      - recompile_matches_input
+  - name: malformed-pdu-length
+    malformed: true
+    fields:
+      - pdu_length
+    expected_error:
+      context: snmp.pdu
+      required: declared_length
+      available: fewer_than_required
+  - name: malformed-v1-trap-body
+    malformed: true
+    fields:
+      - v1_trap_timestamp
+      - v1_trap_varbinds
+    expected_error:
+      context: snmp.pdu.trap
+      required: complete_trap_fields
+      available: fewer_than_required
+
+coverage_cases:
+  - snmp-pdu-get-request
+  - snmp-pdu-get-next-request
+  - snmp-pdu-response
+  - snmp-pdu-set-request
+  - snmp-pdu-v1-trap
+  - snmp-pdu-get-bulk-request
+  - snmp-pdu-inform-request
+  - snmp-pdu-v2-trap
+  - snmp-pdu-report
+  - snmp-pdu-unknown-preserve
+  - malformed-snmp-pdu-length
+  - malformed-snmp-v1-trap-body
+
+supported_cases:
+  - name: snmp-pdu-get-request
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: snmp-pdu-get-next-request
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: snmp-pdu-response
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: snmp-pdu-set-request
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: snmp-pdu-v1-trap
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: snmp-pdu-get-bulk-request
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: snmp-pdu-inform-request
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: snmp-pdu-v2-trap
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: snmp-pdu-report
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: snmp-pdu-unknown-preserve
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: raw_preserve
+  - name: malformed-snmp-pdu-length
+    directions:
+      - reference_to_libcrafter
+    byte_policy: structured_error
+  - name: malformed-snmp-v1-trap-body
+    directions:
+      - reference_to_libcrafter
+    byte_policy: structured_error
+
+case_groups:
+  - name: request-response-pdus
+    summary: GetRequest, GetNextRequest, Response, and SetRequest common request PDU fields.
+    byte_policy: strict_bytes
+    cases:
+      - snmp-pdu-get-request
+      - snmp-pdu-get-next-request
+      - snmp-pdu-response
+      - snmp-pdu-set-request
+  - name: notification-pdus
+    summary: SNMPv1 Trap, InformRequest, SNMPv2-Trap, and Report notification/report shapes.
+    byte_policy: strict_bytes
+    cases:
+      - snmp-pdu-v1-trap
+      - snmp-pdu-inform-request
+      - snmp-pdu-v2-trap
+      - snmp-pdu-report
+  - name: bulk-pdu
+    summary: GetBulk non-repeaters and max-repetitions request fields.
+    byte_policy: strict_bytes
+    cases:
+      - snmp-pdu-get-bulk-request
+  - name: raw-preserve-pdus
+    summary: Unknown context-specific PDU tags remain byte-exact raw TLVs.
+    byte_policy: raw_preserve
+    cases:
+      - snmp-pdu-unknown-preserve
+  - name: malformed-pdus
+    summary: PDU length and v1 Trap body truncation produce structured errors, not panics.
+    byte_policy: structured_error
+    cases:
+      - malformed-snmp-pdu-length
+      - malformed-snmp-v1-trap-body
+
+source_refs:
+  - RFC 1157
+  - RFC 1215
+  - RFC 1901
+  - RFC 3412
+  - RFC 3416
+  - RFC 3418
+  - docs/snmp-rfc-manifest.md
+
+notes:
+  - >-
+    This feature spec covers only source-backed PDU tags 0 through 8 and
+    unknown-tag preservation. Unsupported transports, manager workflow behavior,
+    MIB lookup, VACM, auth/privacy verification, and trap receiver behavior
+    remain outside executable oracle cases.
+  - >-
+    Malformed cases are declared coverage for structured errors and must not be
+    sampled as ordinary strict-byte offline packets.
+
+backend_support:
+  scapy:
+    status: planned
+    native_layers:
+      - SNMP
+    notes:
+      - Later Scapy backend work must prove byte-exact support for each PDU tag
+        and record gaps for any PDU shape Scapy cannot materialize exactly.
+  libcrafter:
+    status: planned
+    native_layers:
+      - SnmpPdu
+      - Snmp
+    notes:
+      - The crate supports the PDU matrix; later oracle adapter steps expose
+        those constructors and decoders through data-driven cases.
