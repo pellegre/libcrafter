@@ -1,9 +1,9 @@
 //! SNMP PDU tag metadata, request/trap fields, and raw-body preservation.
 //!
-//! Source-gated by `docs/snmp-rfc-manifest.md`; only GetRequest-style common
+//! Source-gated by `docs/snmp-rfc-manifest.md`; GetRequest-style common
 //! request fields are modeled here for GetRequest, GetNextRequest, Response,
-//! and SetRequest, plus source-backed GetBulkRequest and SNMPv1 Trap-PDU wire
-//! fields. Other PDU bodies remain raw until their implementation slices land.
+//! SetRequest, InformRequest, SNMPv2-Trap, and Report, plus source-backed
+//! GetBulkRequest and SNMPv1 Trap-PDU wire fields.
 //! Walk, polling, trap listener, authorization, and set workflows belong in
 //! generated tools, not in this packet primitive.
 
@@ -118,10 +118,12 @@ impl SnmpRawPdu {
 
 /// Common GetRequest-style request/response PDU fields.
 ///
-/// RFC-backed GetRequest, GetNextRequest, Response, and SetRequest PDUs carry
-/// request-id, error-status, error-index, and a VarBindList as the PDU body
-/// content. This type models those fields as packet bytes only; it does not
-/// add manager/session behavior or validate application success semantics.
+/// RFC-backed GetRequest, GetNextRequest, Response, SetRequest, InformRequest,
+/// SNMPv2-Trap, and Report PDUs carry request-id, error-status, error-index,
+/// and a VarBindList as the PDU body content. This type models those fields as
+/// packet bytes only; it does not add manager/session behavior, notification
+/// delivery, security-engine behavior, or validate application success
+/// semantics.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SnmpRequestPdu {
     request_id: i64,
@@ -210,6 +212,33 @@ impl SnmpRequestPdu {
     /// Consume this request PDU and return the ordered VarBindList.
     pub fn into_varbinds(self) -> SnmpVarBindList {
         self.varbinds
+    }
+
+    /// A compact summary of the common PDU fields.
+    pub fn summary(&self) -> String {
+        self.summary_with_label("request")
+    }
+
+    /// A compact summary of the common PDU fields with a tag-specific label.
+    pub fn summary_with_label(&self, label: &str) -> String {
+        format!(
+            "{label} request_id={} error_status={} error_index={} varbinds={}",
+            self.request_id,
+            self.error_status,
+            self.error_index,
+            self.varbinds.len()
+        )
+    }
+
+    /// Stable inspection fields for generated tools.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        let mut fields = vec![
+            ("request_id", self.request_id.to_string()),
+            ("error_status", self.error_status.to_string()),
+            ("error_index", self.error_index.to_string()),
+        ];
+        fields.extend(self.varbinds.inspection_fields());
+        fields
     }
 }
 
@@ -716,14 +745,96 @@ impl SnmpPdu {
         Self::InformRequest(SnmpRawPduBody::new(body))
     }
 
+    /// Build an InformRequest-PDU with noError/noErrorIndex convention fields.
+    ///
+    /// This only builds packet bytes. Delivery confirmation, retransmission,
+    /// and notification workflow behavior belong in generated tools outside
+    /// the crate.
+    pub fn inform_request(request_id: i64, varbinds: SnmpVarBindList) -> Result<Self> {
+        Self::inform_request_with_fields(request_id, 0, 0, varbinds)
+    }
+
+    /// Build an InformRequest-PDU preserving caller-supplied integer fields.
+    ///
+    /// This only builds packet bytes. Delivery confirmation, retransmission,
+    /// and notification workflow behavior belong in generated tools outside
+    /// the crate.
+    pub fn inform_request_with_fields(
+        request_id: i64,
+        error_status: i64,
+        error_index: i64,
+        varbinds: SnmpVarBindList,
+    ) -> Result<Self> {
+        Ok(Self::InformRequest(Self::request_body_with_fields(
+            request_id,
+            error_status,
+            error_index,
+            varbinds,
+        )?))
+    }
+
     /// Build a raw SNMPv2-Trap-PDU body.
     pub fn raw_snmpv2_trap(body: impl Into<Vec<u8>>) -> Self {
         Self::SnmpV2Trap(SnmpRawPduBody::new(body))
     }
 
+    /// Build an SNMPv2-Trap-PDU with noError/noErrorIndex convention fields.
+    ///
+    /// This only builds packet bytes. Trap listener and notification-service
+    /// behavior belongs in generated tools outside the crate.
+    pub fn snmpv2_trap(request_id: i64, varbinds: SnmpVarBindList) -> Result<Self> {
+        Self::snmpv2_trap_with_fields(request_id, 0, 0, varbinds)
+    }
+
+    /// Build an SNMPv2-Trap-PDU preserving caller-supplied integer fields.
+    ///
+    /// This only builds packet bytes. Trap listener and notification-service
+    /// behavior belongs in generated tools outside the crate.
+    pub fn snmpv2_trap_with_fields(
+        request_id: i64,
+        error_status: i64,
+        error_index: i64,
+        varbinds: SnmpVarBindList,
+    ) -> Result<Self> {
+        Ok(Self::SnmpV2Trap(Self::request_body_with_fields(
+            request_id,
+            error_status,
+            error_index,
+            varbinds,
+        )?))
+    }
+
     /// Build a raw Report-PDU body.
     pub fn raw_report(body: impl Into<Vec<u8>>) -> Self {
         Self::Report(SnmpRawPduBody::new(body))
+    }
+
+    /// Build a Report-PDU with noError/noErrorIndex convention fields.
+    ///
+    /// This only builds packet bytes. SNMPv3 security validation and engine
+    /// behavior belong in later packet validation or generated tools, not in
+    /// this PDU helper.
+    pub fn report(request_id: i64, varbinds: SnmpVarBindList) -> Result<Self> {
+        Self::report_with_fields(request_id, 0, 0, varbinds)
+    }
+
+    /// Build a Report-PDU preserving caller-supplied integer fields.
+    ///
+    /// This only builds packet bytes. SNMPv3 security validation and engine
+    /// behavior belong in later packet validation or generated tools, not in
+    /// this PDU helper.
+    pub fn report_with_fields(
+        request_id: i64,
+        error_status: i64,
+        error_index: i64,
+        varbinds: SnmpVarBindList,
+    ) -> Result<Self> {
+        Ok(Self::Report(Self::request_body_with_fields(
+            request_id,
+            error_status,
+            error_index,
+            varbinds,
+        )?))
     }
 
     /// Build an unknown context-specific PDU body.
@@ -914,6 +1025,30 @@ impl SnmpPdu {
     pub fn as_get_bulk_request(&self) -> Result<Option<SnmpGetBulkPdu>> {
         match self {
             Self::GetBulkRequest(body) => Ok(Some(SnmpGetBulkPdu::decode_body(body.as_bytes())?)),
+            _ => Ok(None),
+        }
+    }
+
+    /// Decode typed common fields when this PDU has the InformRequest tag.
+    pub fn as_inform_request(&self) -> Result<Option<SnmpRequestPdu>> {
+        match self {
+            Self::InformRequest(body) => Ok(Some(SnmpRequestPdu::decode_body(body.as_bytes())?)),
+            _ => Ok(None),
+        }
+    }
+
+    /// Decode typed common fields when this PDU has the SNMPv2-Trap tag.
+    pub fn as_snmpv2_trap(&self) -> Result<Option<SnmpRequestPdu>> {
+        match self {
+            Self::SnmpV2Trap(body) => Ok(Some(SnmpRequestPdu::decode_body(body.as_bytes())?)),
+            _ => Ok(None),
+        }
+    }
+
+    /// Decode typed common fields when this PDU has the Report tag.
+    pub fn as_report(&self) -> Result<Option<SnmpRequestPdu>> {
+        match self {
+            Self::Report(body) => Ok(Some(SnmpRequestPdu::decode_body(body.as_bytes())?)),
             _ => Ok(None),
         }
     }
@@ -1525,6 +1660,163 @@ mod tests {
         assert_eq!(bulk.max_repetitions(), 1);
         assert!(bulk.varbinds().is_empty());
         assert_eq!(decoded.compile()?, bytes);
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_advanced_pdus_inform_request_compiles_decodes_and_summarizes() -> Result<()> {
+        let varbind =
+            crate::protocols::snmp::SnmpVarBind::null(SnmpOid::from_dotted("1.3.6.1.2.1.1.3.0")?);
+        let pdu = SnmpPdu::inform_request(7, SnmpVarBindList::new(vec![varbind.clone()]))?;
+
+        // Source-backed: docs/snmp-rfc-manifest.md records RFC 3416 Sections
+        // 3 and 4.2.7 for InformRequest-PDU tag 6 using the common PDU
+        // fields. This builds only packet bytes, not delivery confirmation.
+        let expected = [
+            0xa6, 0x19, 0x02, 0x01, 0x07, 0x02, 0x01, 0x00, 0x02, 0x01, 0x00, 0x30, 0x0e, 0x30,
+            0x0c, 0x06, 0x08, 0x2b, 0x06, 0x01, 0x02, 0x01, 0x01, 0x03, 0x00, 0x05, 0x00,
+        ];
+        assert_eq!(pdu.tag_number(), constants::SNMP_PDU_TAG_INFORM_REQUEST);
+        assert_eq!(pdu.tag_name(), Some("inform-request"));
+        assert_eq!(pdu.tag_label(), "inform-request");
+        assert_eq!(pdu.compile()?, expected);
+        assert!(pdu.as_get_request()?.is_none());
+        assert!(pdu.as_get_bulk_request()?.is_none());
+        assert!(pdu.as_snmpv2_trap()?.is_none());
+        assert!(pdu.as_report()?.is_none());
+
+        let inform = pdu.as_inform_request()?.expect("InformRequest fields");
+        assert_eq!(inform.request_id(), 7);
+        assert_eq!(inform.error_status(), 0);
+        assert_eq!(inform.error_index(), 0);
+        assert_eq!(inform.varbinds().as_slice(), &[varbind]);
+        assert_eq!(
+            inform.summary_with_label("inform-request"),
+            "inform-request request_id=7 error_status=0 error_index=0 varbinds=1"
+        );
+        assert_eq!(
+            inform.inspection_fields(),
+            [
+                ("request_id", "7".to_string()),
+                ("error_status", "0".to_string()),
+                ("error_index", "0".to_string()),
+                ("varbind_count", "1".to_string()),
+                ("varbind[0]", "1.3.6.1.2.1.1.3.0=null".to_string()),
+            ]
+        );
+
+        let (decoded, rest) = SnmpPdu::decode(&expected)?;
+        assert!(rest.is_empty());
+        assert_eq!(
+            decoded
+                .as_inform_request()?
+                .expect("decoded InformRequest fields"),
+            inform
+        );
+        assert_eq!(decoded.compile()?, expected);
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_advanced_pdus_snmpv2_trap_keeps_notification_varbinds_as_fields() -> Result<()> {
+        let uptime = crate::protocols::snmp::SnmpVarBind::time_ticks(
+            SnmpOid::from_dotted("1.3.6.1.2.1.1.3.0")?,
+            12_345,
+        );
+        let trap_oid = crate::protocols::snmp::SnmpVarBind::object_identifier(
+            SnmpOid::from_dotted("1.3.6.1.6.3.1.1.4.1.0")?,
+            SnmpOid::from_dotted("1.3.6.1.6.3.1.1.5.1")?,
+        );
+        let pdu = SnmpPdu::snmpv2_trap(
+            42,
+            SnmpVarBindList::new(vec![uptime.clone(), trap_oid.clone()]),
+        )?;
+
+        // Source-backed: docs/snmp-rfc-manifest.md records RFC 3416 Sections
+        // 3 and 4.2.6 for SNMPv2-Trap-PDU tag 7 using the common PDU fields.
+        // The notification object ordering remains a VarBindList byte shape;
+        // listener or delivery semantics stay outside this packet primitive.
+        let expected = [
+            0xa7, 0x34, 0x02, 0x01, 0x2a, 0x02, 0x01, 0x00, 0x02, 0x01, 0x00, 0x30, 0x29, 0x30,
+            0x0e, 0x06, 0x08, 0x2b, 0x06, 0x01, 0x02, 0x01, 0x01, 0x03, 0x00, 0x43, 0x02, 0x30,
+            0x39, 0x30, 0x17, 0x06, 0x0a, 0x2b, 0x06, 0x01, 0x06, 0x03, 0x01, 0x01, 0x04, 0x01,
+            0x00, 0x06, 0x09, 0x2b, 0x06, 0x01, 0x06, 0x03, 0x01, 0x01, 0x05, 0x01,
+        ];
+        assert_eq!(pdu.tag_number(), constants::SNMP_PDU_TAG_TRAP_V2);
+        assert_eq!(pdu.tag_name(), Some("snmpv2-trap"));
+        assert_eq!(pdu.tag_label(), "snmpv2-trap");
+        assert_eq!(pdu.compile()?, expected);
+        assert!(pdu.as_v1_trap()?.is_none());
+        assert!(pdu.as_inform_request()?.is_none());
+        assert!(pdu.as_report()?.is_none());
+
+        let trap = pdu.as_snmpv2_trap()?.expect("SNMPv2-Trap fields");
+        assert_eq!(trap.request_id(), 42);
+        assert_eq!(trap.error_status(), 0);
+        assert_eq!(trap.error_index(), 0);
+        assert_eq!(trap.varbinds().as_slice(), &[uptime, trap_oid]);
+        assert_eq!(
+            trap.summary_with_label("snmpv2-trap"),
+            "snmpv2-trap request_id=42 error_status=0 error_index=0 varbinds=2"
+        );
+
+        let (decoded, rest) = SnmpPdu::decode(&expected)?;
+        assert!(rest.is_empty());
+        assert_eq!(
+            decoded
+                .as_snmpv2_trap()?
+                .expect("decoded SNMPv2-Trap fields"),
+            trap
+        );
+        assert_eq!(decoded.compile()?, expected);
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_advanced_pdus_report_preserves_fields_without_security_engine() -> Result<()> {
+        let pdu = SnmpPdu::report_with_fields(128, 2, 3, SnmpVarBindList::empty())?;
+
+        // Source-backed: docs/snmp-rfc-manifest.md records RFC 3416 Sections
+        // 3 and 4.2 notes for Report-PDU tag 8 using the common PDU byte
+        // shape, with administrative-framework behavior left outside this
+        // helper.
+        let expected = [
+            0xa8, 0x0c, 0x02, 0x02, 0x00, 0x80, 0x02, 0x01, 0x02, 0x02, 0x01, 0x03, 0x30, 0x00,
+        ];
+        assert_eq!(pdu.tag_number(), constants::SNMP_PDU_TAG_REPORT);
+        assert_eq!(pdu.tag_name(), Some("report"));
+        assert_eq!(pdu.tag_label(), "report");
+        assert_eq!(pdu.compile()?, expected);
+        assert!(pdu.as_response()?.is_none());
+        assert!(pdu.as_inform_request()?.is_none());
+        assert!(pdu.as_snmpv2_trap()?.is_none());
+
+        let report = pdu.as_report()?.expect("Report fields");
+        assert_eq!(report.request_id(), 128);
+        assert_eq!(report.error_status(), 2);
+        assert_eq!(report.error_index(), 3);
+        assert!(report.varbinds().is_empty());
+        assert_eq!(
+            report.summary_with_label("report"),
+            "report request_id=128 error_status=2 error_index=3 varbinds=0"
+        );
+
+        let default_report = SnmpPdu::report(9, SnmpVarBindList::empty())?;
+        assert_eq!(
+            default_report
+                .as_report()?
+                .expect("default Report fields")
+                .summary_with_label("report"),
+            "report request_id=9 error_status=0 error_index=0 varbinds=0"
+        );
+
+        let (decoded, rest) = SnmpPdu::decode(&expected)?;
+        assert!(rest.is_empty());
+        assert_eq!(decoded.as_report()?.expect("decoded Report fields"), report);
+        assert_eq!(decoded.compile()?, expected);
 
         Ok(())
     }
