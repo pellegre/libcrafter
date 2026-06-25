@@ -1369,7 +1369,10 @@ impl SnmpV3Message {
 
     fn inspection_fields(&self) -> Vec<(&'static str, String)> {
         let mut fields = self.global_data.inspection_fields();
-        fields.extend(self.security_parameters.inspection_fields());
+        fields.push((
+            "msg_security_parameters_len",
+            self.security_parameters.len().to_string(),
+        ));
         if let Ok(Some(usm)) = self.usm_security_parameters() {
             fields.extend(usm.inspection_fields());
         }
@@ -3264,6 +3267,27 @@ mod tests {
         assert_eq!(
             inspection_value(&fields, "msg_security_model_label"),
             Some("usm")
+        );
+        assert_eq!(
+            fields
+                .iter()
+                .filter(|(name, _)| *name == "msg_security_model")
+                .count(),
+            1
+        );
+        assert_eq!(
+            fields
+                .iter()
+                .filter(|(name, _)| *name == "msg_security_model_label")
+                .count(),
+            1
+        );
+        assert_eq!(
+            fields
+                .iter()
+                .filter(|(name, _)| *name == "msg_security_model_status")
+                .count(),
+            1
         );
         assert_eq!(
             inspection_value(&fields, "usm_authentication_parameters_len"),
