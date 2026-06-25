@@ -371,6 +371,54 @@ pub(super) fn encode_integer_content(value: i64, out: &mut Vec<u8>) {
     out.extend_from_slice(&bytes[start..]);
 }
 
+pub(super) fn decode_sequence(bytes: &[u8]) -> Result<(&[u8], &[u8])> {
+    let (tag, rest) = decode_identifier(bytes)?;
+    if tag != BerTag::new(BerClass::Universal, true, BER_TAG_SEQUENCE) {
+        return Err(invalid_ber_field(
+            "snmp.ber.sequence",
+            "expected universal constructed SEQUENCE",
+        ));
+    }
+
+    let (length, rest) = decode_length(rest)?;
+    if rest.len() < length {
+        let prefix_len = bytes.len() - rest.len();
+        let required = prefix_len.checked_add(length).ok_or_else(|| {
+            invalid_ber_field("snmp.ber.sequence", "sequence length exceeds supported size")
+        })?;
+        return Err(truncated_ber("snmp.ber.sequence", required, bytes.len()));
+    }
+
+    Ok(rest.split_at(length))
+}
+
+pub(super) fn decode_sequence_exact(bytes: &[u8]) -> Result<&[u8]> {
+    let (content, rest) = decode_sequence(bytes)?;
+    require_sequence_exact(rest)?;
+    Ok(content)
+}
+
+pub(super) fn require_sequence_exact(rest: &[u8]) -> Result<()> {
+    if !rest.is_empty() {
+        return Err(invalid_ber_field(
+            "snmp.ber.sequence",
+            "trailing bytes after SEQUENCE TLV",
+        ));
+    }
+
+    Ok(())
+}
+
+pub(super) fn encode_sequence(content: &[u8], out: &mut Vec<u8>) -> Result<()> {
+    encode_identifier(
+        BerTag::new(BerClass::Universal, true, BER_TAG_SEQUENCE),
+        out,
+    )?;
+    encode_length(content.len(), out)?;
+    out.extend_from_slice(content);
+    Ok(())
+}
+
 pub(super) fn truncated_identifier(available: usize) -> CrafterError {
     CrafterError::buffer_too_short("snmp.ber.identifier", BER_IDENTIFIER_LEN, available)
 }
@@ -846,5 +894,106 @@ mod tests {
                 "integer exceeds supported i64 width"
             ))
         );
+    }
+
+    #[test]
+    fn snmp_ber_sequence_nested_sequences_decode_and_encode() {
+        let mut integer = Vec::new();
+        encode_integer(5, &mut integer).expect("encode inner INTEGER");
+
+        let mut inner = Vec::new();
+        encode_sequence(&integer, &mut inner).expect("encode inner SEQUENCE");
+
+        let mut outer = Vec::new();
+        encode_sequence(&inner, &mut outer).expect("encode outer SEQUENCE");
+
+        assert_eq!(outer, [0x30, 0x05, 0x30, 0x03, 0x02, 0x01, 0x05]);
+
+        let outer_content = decode_sequence_exact(&outer).expect("decode outer SEQUENCE");
+        let inner_content = decode_sequence_exact(outer_content).expect("decode inner SEQUENCE");
+        let (value, rest) = decode_integer(inner_content).expect("decode inner INTEGER");
+
+        assert_eq!(value, 5);
+        assert!(rest.is_empty());
+        require_sequence_exact(rest).expect("inner content fully consumed");
+    }
+
+    #[test]
+    fn snmp_ber_sequence_long_form_lengths_roundtrip() {
+        let content = (0..128).map(|value| value as u8).collect::<Vec<_>>();
+        let mut encoded = Vec::new();
+        encode_sequence(&content, &mut encoded).expect("encode long-form SEQUENCE");
+
+        assert_eq!(&encoded[..3], &[0x30, 0x81, 0x80]);
+        assert_eq!(&encoded[3..], &content);
+
+        encoded.push(0xaa);
+        let (decoded_content, rest) =
+            decode_sequence(&encoded).expect("decode long-form SEQUENCE");
+
+        assert_eq!(decoded_content, content);
+        assert_eq!(rest, &[0xaa]);
+    }
+
+    #[test]
+    fn snmp_ber_sequence_short_headers_content_and_wrong_tags_are_structured_errors() {
+        assert_eq!(
+            decode_sequence(&[]),
+            Err(CrafterError::buffer_too_short(
+                "snmp.ber.identifier",
+                BER_IDENTIFIER_LEN,
+                0
+            ))
+        );
+        assert_eq!(
+            decode_sequence(&[0x30]),
+            Err(CrafterError::buffer_too_short(
+                "snmp.ber.length",
+                BER_LENGTH_FIELD_MIN_LEN,
+                0
+            ))
+        );
+        assert_eq!(
+            decode_sequence(&[0x30, 0x82, 0x01]),
+            Err(CrafterError::buffer_too_short("snmp.ber.length", 3, 2))
+        );
+        assert_eq!(
+            decode_sequence(&[0x30, 0x02, 0x02]),
+            Err(CrafterError::buffer_too_short("snmp.ber.sequence", 4, 3))
+        );
+        assert_eq!(
+            decode_sequence(&[0x02, 0x01, 0x00]),
+            Err(CrafterError::invalid_field_value(
+                "snmp.ber.sequence",
+                "expected universal constructed SEQUENCE"
+            ))
+        );
+    }
+
+    #[test]
+    fn snmp_ber_sequence_trailing_raw_preservation_and_exact_consumption_decisions() {
+        let bytes = [0x30, 0x00, 0x04, 0x01, 0xaa];
+
+        let (content, rest) = decode_sequence(&bytes).expect("decode SEQUENCE with trailing TLV");
+        assert!(content.is_empty());
+        assert_eq!(rest, &[0x04, 0x01, 0xaa]);
+
+        assert_eq!(
+            decode_sequence_exact(&bytes),
+            Err(CrafterError::invalid_field_value(
+                "snmp.ber.sequence",
+                "trailing bytes after SEQUENCE TLV"
+            ))
+        );
+        assert_eq!(
+            require_sequence_exact(rest),
+            Err(CrafterError::invalid_field_value(
+                "snmp.ber.sequence",
+                "trailing bytes after SEQUENCE TLV"
+            ))
+        );
+
+        let content = decode_sequence_exact(&[0x30, 0x00]).expect("exact empty SEQUENCE");
+        assert!(content.is_empty());
     }
 }
