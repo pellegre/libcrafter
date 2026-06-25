@@ -40,6 +40,7 @@ use crate::protocols::link::{
 };
 #[allow(unused_imports)]
 pub(crate) use crate::protocols::ospf::decode::append_ospf_packet;
+use crate::protocols::quic::decode::{append_quic_packet, looks_like_quic_udp_payload};
 use crate::protocols::rip::ripng::{append_ripng_packet, looks_like_ripng_payload, RIPNG_UDP_PORT};
 use crate::protocols::rip::{append_rip_packet, looks_like_rip_payload, RIP_UDP_PORT};
 use crate::protocols::snmp::{
@@ -63,6 +64,12 @@ const NATT_UDP_PORT: u16 = 4500;
 const fn is_snmp_udp_port(port: u16) -> bool {
     matches!(port, SNMP_PORT | SNMP_TRAP_PORT)
 }
+
+/// Common QUIC-over-UDP HTTPS port used by default registry recognition.
+const QUIC_HTTPS_UDP_PORT: u16 = 443;
+
+/// Documentation/example QUIC UDP port used by RFC-backed local fixtures.
+const QUIC_EXAMPLE_UDP_PORT: u16 = 4433;
 
 type ProtocolDecoder = dyn for<'a> Fn(&'a ProtocolRegistry, Packet, &'a [u8]) -> Result<Packet>
     + Send
@@ -874,6 +881,12 @@ impl ProtocolRegistry {
                 return append_dns_packet(packet, payload);
             }
 
+            if is_quic_default_port_pair(source_port, destination_port)
+                && looks_like_quic_udp_payload(payload)
+            {
+                return append_quic_packet(packet, payload);
+            }
+
             return append_raw_if_needed(packet, payload);
         }
 
@@ -1081,6 +1094,14 @@ impl ProtocolRegistry {
         });
         self
     }
+}
+
+fn is_quic_default_port_pair(source_port: u16, destination_port: u16) -> bool {
+    matches!(source_port, QUIC_HTTPS_UDP_PORT | QUIC_EXAMPLE_UDP_PORT)
+        || matches!(
+            destination_port,
+            QUIC_HTTPS_UDP_PORT | QUIC_EXAMPLE_UDP_PORT
+        )
 }
 
 impl Default for ProtocolRegistry {
@@ -1951,6 +1972,129 @@ mod snmp_udp_decode {
         assert!(decoded.layer::<Raw>().is_none());
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod quic_udp_dispatch {
+    use super::ProtocolRegistry;
+    use crate::{
+        Ipv4, NetworkLayer, Packet, Quic, Raw, Udp, QUIC_VERSION_1, QUIC_VERSION_NEGOTIATION,
+    };
+
+    const QUIC_PAYLOAD: [u8; 12] = [
+        0xc3, 0x00, 0x00, 0x00, 0x01, 0x04, 0x83, 0x94, 0xc8, 0xf0, 0x00, 0x00,
+    ];
+
+    fn udp_ipv4_packet(source_port: u16, destination_port: u16, payload: impl Into<Raw>) -> Packet {
+        Ipv4::new() / Udp::new().sport(source_port).dport(destination_port) / payload.into()
+    }
+
+    fn udp_length(bytes: &[u8]) -> u16 {
+        u16::from_be_bytes([bytes[24], bytes[25]])
+    }
+
+    #[test]
+    fn quic_udp_dispatch_decodes_long_header_on_example_port() {
+        let bytes = udp_ipv4_packet(49_152, 4433, Raw::from_bytes(QUIC_PAYLOAD))
+            .compile()
+            .unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+        let quic = decoded.layer::<Quic>().expect("QUIC layer");
+
+        assert_eq!(quic.payload_bytes(), QUIC_PAYLOAD);
+        assert!(decoded.layer::<Raw>().is_none());
+        assert_eq!(QUIC_VERSION_1, 0x0000_0001);
+    }
+
+    #[test]
+    fn quic_udp_dispatch_decodes_version_negotiation_on_https_port() {
+        let payload = [
+            0x80, 0x00, 0x00, 0x00, 0x00, 0x04, 0x83, 0x94, 0xc8, 0xf0, 0x00, 0x00, 0x00, 0x00,
+            0x01,
+        ];
+        let bytes = udp_ipv4_packet(443, 49_152, Raw::from_bytes(payload))
+            .compile()
+            .unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+
+        assert!(decoded.layer::<Quic>().is_some());
+        assert_eq!(QUIC_VERSION_NEGOTIATION, 0x0000_0000);
+    }
+
+    #[test]
+    fn quic_udp_dispatch_preserves_non_quic_payloads_as_raw() {
+        let payload = [0x16, 0xfe, 0xfd, 0x00, 0x00, 0xde, 0xad];
+        let bytes = udp_ipv4_packet(49_152, 443, Raw::from_bytes(payload))
+            .compile()
+            .unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+
+        assert!(decoded.layer::<Quic>().is_none());
+        assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), payload);
+    }
+
+    #[test]
+    fn quic_udp_dispatch_preserves_ambiguous_short_header_as_raw() {
+        let payload = [0x43, 0x83, 0x94, 0xc8, 0xf0, 0x01, 0x02];
+        let bytes = udp_ipv4_packet(49_152, 4433, Raw::from_bytes(payload))
+            .compile()
+            .unwrap();
+
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
+
+        assert!(decoded.layer::<Quic>().is_none());
+        assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), payload);
+    }
+
+    #[test]
+    fn quic_udp_dispatch_custom_binding_overrides_builtin() {
+        let mut registry = ProtocolRegistry::new();
+        registry.bind_udp_port(4433, |packet, payload| {
+            Ok(packet.push(Raw::from_bytes(payload)))
+        });
+        let bytes = udp_ipv4_packet(49_152, 4433, Raw::from_bytes(QUIC_PAYLOAD))
+            .compile()
+            .unwrap();
+
+        let decoded =
+            Packet::decode_from_l3_with_registry(&registry, NetworkLayer::Ipv4, bytes.as_bytes())
+                .unwrap();
+
+        assert!(decoded.layer::<Quic>().is_none());
+        assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), QUIC_PAYLOAD);
+    }
+
+    #[test]
+    fn quic_udp_dispatch_disabled_application_decoding_preserves_raw() {
+        let registry = ProtocolRegistry::new().application_decoding(false);
+        let bytes = udp_ipv4_packet(49_152, 4433, Raw::from_bytes(QUIC_PAYLOAD))
+            .compile()
+            .unwrap();
+
+        let decoded =
+            Packet::decode_from_l3_with_registry(&registry, NetworkLayer::Ipv4, bytes.as_bytes())
+                .unwrap();
+
+        assert!(decoded.layer::<Quic>().is_none());
+        assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), QUIC_PAYLOAD);
+    }
+
+    #[test]
+    fn quic_udp_dispatch_layer_length_excludes_udp_surplus_raw() {
+        let packet = Ipv4::new()
+            / Udp::new().sport(49_152).dport(4433)
+            / Quic::from_bytes(QUIC_PAYLOAD)
+            / Raw::from_bytes([0xde, 0xad, 0xbe, 0xef]);
+        let compiled = packet.compile().unwrap();
+
+        assert_eq!(
+            udp_length(compiled.as_bytes()),
+            (8 + QUIC_PAYLOAD.len()) as u16
+        );
     }
 }
 
