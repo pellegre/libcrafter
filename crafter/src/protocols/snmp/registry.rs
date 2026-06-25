@@ -34,6 +34,264 @@ impl fmt::Display for SnmpPduTagStatus {
     }
 }
 
+/// noError(0) error-status value.
+///
+/// Source: `docs/snmp-rfc-manifest.md` records RFC 1157 Section 4.1.1 and
+/// RFC 3416 Section 3 as error-status authority.
+pub const SNMP_ERROR_STATUS_NO_ERROR: i64 = 0;
+/// tooBig(1) error-status value.
+///
+/// Source: `docs/snmp-rfc-manifest.md` records RFC 1157 Section 4.1.1 and
+/// RFC 3416 Section 3 as error-status authority.
+pub const SNMP_ERROR_STATUS_TOO_BIG: i64 = 1;
+/// noSuchName(2) error-status value.
+///
+/// Source: `docs/snmp-rfc-manifest.md` records RFC 1157 Section 4.1.1 and
+/// RFC 3416 Section 3 as error-status authority.
+pub const SNMP_ERROR_STATUS_NO_SUCH_NAME: i64 = 2;
+/// badValue(3) error-status value.
+///
+/// Source: `docs/snmp-rfc-manifest.md` records RFC 1157 Section 4.1.1 and
+/// RFC 3416 Section 3 as error-status authority.
+pub const SNMP_ERROR_STATUS_BAD_VALUE: i64 = 3;
+/// readOnly(4) error-status value.
+///
+/// Source: `docs/snmp-rfc-manifest.md` records RFC 1157 Section 4.1.1 and
+/// RFC 3416 Section 3 as error-status authority.
+pub const SNMP_ERROR_STATUS_READ_ONLY: i64 = 4;
+/// genErr(5) error-status value.
+///
+/// Source: `docs/snmp-rfc-manifest.md` records RFC 1157 Section 4.1.1 and
+/// RFC 3416 Section 3 as error-status authority.
+pub const SNMP_ERROR_STATUS_GEN_ERR: i64 = 5;
+/// noAccess(6) error-status value.
+///
+/// Source: `docs/snmp-rfc-manifest.md` records RFC 3416 Section 3 as
+/// error-status authority.
+pub const SNMP_ERROR_STATUS_NO_ACCESS: i64 = 6;
+/// wrongType(7) error-status value.
+///
+/// Source: `docs/snmp-rfc-manifest.md` records RFC 3416 Section 3 as
+/// error-status authority.
+pub const SNMP_ERROR_STATUS_WRONG_TYPE: i64 = 7;
+/// wrongLength(8) error-status value.
+///
+/// Source: `docs/snmp-rfc-manifest.md` records RFC 3416 Section 3 as
+/// error-status authority.
+pub const SNMP_ERROR_STATUS_WRONG_LENGTH: i64 = 8;
+/// wrongEncoding(9) error-status value.
+///
+/// Source: `docs/snmp-rfc-manifest.md` records RFC 3416 Section 3 as
+/// error-status authority.
+pub const SNMP_ERROR_STATUS_WRONG_ENCODING: i64 = 9;
+/// wrongValue(10) error-status value.
+///
+/// Source: `docs/snmp-rfc-manifest.md` records RFC 3416 Section 3 as
+/// error-status authority.
+pub const SNMP_ERROR_STATUS_WRONG_VALUE: i64 = 10;
+/// noCreation(11) error-status value.
+///
+/// Source: `docs/snmp-rfc-manifest.md` records RFC 3416 Section 3 as
+/// error-status authority.
+pub const SNMP_ERROR_STATUS_NO_CREATION: i64 = 11;
+/// inconsistentValue(12) error-status value.
+///
+/// Source: `docs/snmp-rfc-manifest.md` records RFC 3416 Section 3 as
+/// error-status authority.
+pub const SNMP_ERROR_STATUS_INCONSISTENT_VALUE: i64 = 12;
+/// resourceUnavailable(13) error-status value.
+///
+/// Source: `docs/snmp-rfc-manifest.md` records RFC 3416 Section 3 as
+/// error-status authority.
+pub const SNMP_ERROR_STATUS_RESOURCE_UNAVAILABLE: i64 = 13;
+/// commitFailed(14) error-status value.
+///
+/// Source: `docs/snmp-rfc-manifest.md` records RFC 3416 Section 3 as
+/// error-status authority.
+pub const SNMP_ERROR_STATUS_COMMIT_FAILED: i64 = 14;
+/// undoFailed(15) error-status value.
+///
+/// Source: `docs/snmp-rfc-manifest.md` records RFC 3416 Section 3 as
+/// error-status authority.
+pub const SNMP_ERROR_STATUS_UNDO_FAILED: i64 = 15;
+/// authorizationError(16) error-status value.
+///
+/// Source: `docs/snmp-rfc-manifest.md` records RFC 3416 Section 3 as
+/// error-status authority.
+pub const SNMP_ERROR_STATUS_AUTHORIZATION_ERROR: i64 = 16;
+/// notWritable(17) error-status value.
+///
+/// Source: `docs/snmp-rfc-manifest.md` records RFC 3416 Section 3 as
+/// error-status authority.
+pub const SNMP_ERROR_STATUS_NOT_WRITABLE: i64 = 17;
+/// inconsistentName(18) error-status value.
+///
+/// Source: `docs/snmp-rfc-manifest.md` records RFC 3416 Section 3 as
+/// error-status authority.
+pub const SNMP_ERROR_STATUS_INCONSISTENT_NAME: i64 = 18;
+
+/// Source-backed assignment status for an SNMP PDU error-status value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SnmpErrorStatusAssignment {
+    /// Assigned by the manifest-backed SNMP error-status sources.
+    Assigned,
+    /// Not assigned by the manifest-backed SNMP error-status sources.
+    Unknown,
+}
+
+impl SnmpErrorStatusAssignment {
+    /// Stable lowercase status label.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Assigned => "assigned",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+impl fmt::Display for SnmpErrorStatusAssignment {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.label())
+    }
+}
+
+/// One source-backed SNMP error-status metadata entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SnmpErrorStatusMeta {
+    /// INTEGER value carried by the PDU error-status field.
+    pub code: i64,
+    /// Stable short name, or `"unknown-error-status"` for unassigned values.
+    pub name: &'static str,
+    /// Assignment status from the manifest-backed error-status registry.
+    pub status: SnmpErrorStatusAssignment,
+}
+
+/// A typed SNMP PDU error-status value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SnmpErrorStatus {
+    code: i64,
+}
+
+impl SnmpErrorStatus {
+    /// Wrap a raw PDU error-status INTEGER value without validation.
+    pub const fn new(code: i64) -> Self {
+        Self { code }
+    }
+
+    /// Raw INTEGER value carried by the PDU error-status field.
+    pub const fn code(self) -> i64 {
+        self.code
+    }
+
+    /// Source-backed metadata for this error-status value.
+    pub const fn meta(self) -> SnmpErrorStatusMeta {
+        snmp_error_status_meta(self.code)
+    }
+
+    /// Source-backed name for assigned values.
+    pub const fn name(self) -> Option<&'static str> {
+        snmp_error_status_name(self.code)
+    }
+
+    /// Source-backed assignment status for this value.
+    pub const fn status(self) -> SnmpErrorStatusAssignment {
+        snmp_error_status_status(self.code)
+    }
+
+    /// Stable label that preserves unknown values.
+    pub fn label(self) -> String {
+        snmp_error_status_label(self.code)
+    }
+
+    /// Compact summary label with the numeric code.
+    pub fn summary(self) -> String {
+        snmp_error_status_summary(self.code)
+    }
+}
+
+impl From<i64> for SnmpErrorStatus {
+    fn from(code: i64) -> Self {
+        Self::new(code)
+    }
+}
+
+impl From<SnmpErrorStatus> for i64 {
+    fn from(status: SnmpErrorStatus) -> Self {
+        status.code()
+    }
+}
+
+impl fmt::Display for SnmpErrorStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.label())
+    }
+}
+
+/// Return source-backed metadata for an SNMP PDU error-status value.
+///
+/// Source: RFC 1157 Section 4.1.1 and RFC 3416 Section 3, both recorded in
+/// `docs/snmp-rfc-manifest.md`.
+pub const fn snmp_error_status_meta(code: i64) -> SnmpErrorStatusMeta {
+    let (name, status) = match code {
+        SNMP_ERROR_STATUS_NO_ERROR => ("no-error", SnmpErrorStatusAssignment::Assigned),
+        SNMP_ERROR_STATUS_TOO_BIG => ("too-big", SnmpErrorStatusAssignment::Assigned),
+        SNMP_ERROR_STATUS_NO_SUCH_NAME => ("no-such-name", SnmpErrorStatusAssignment::Assigned),
+        SNMP_ERROR_STATUS_BAD_VALUE => ("bad-value", SnmpErrorStatusAssignment::Assigned),
+        SNMP_ERROR_STATUS_READ_ONLY => ("read-only", SnmpErrorStatusAssignment::Assigned),
+        SNMP_ERROR_STATUS_GEN_ERR => ("gen-err", SnmpErrorStatusAssignment::Assigned),
+        SNMP_ERROR_STATUS_NO_ACCESS => ("no-access", SnmpErrorStatusAssignment::Assigned),
+        SNMP_ERROR_STATUS_WRONG_TYPE => ("wrong-type", SnmpErrorStatusAssignment::Assigned),
+        SNMP_ERROR_STATUS_WRONG_LENGTH => ("wrong-length", SnmpErrorStatusAssignment::Assigned),
+        SNMP_ERROR_STATUS_WRONG_ENCODING => ("wrong-encoding", SnmpErrorStatusAssignment::Assigned),
+        SNMP_ERROR_STATUS_WRONG_VALUE => ("wrong-value", SnmpErrorStatusAssignment::Assigned),
+        SNMP_ERROR_STATUS_NO_CREATION => ("no-creation", SnmpErrorStatusAssignment::Assigned),
+        SNMP_ERROR_STATUS_INCONSISTENT_VALUE => {
+            ("inconsistent-value", SnmpErrorStatusAssignment::Assigned)
+        }
+        SNMP_ERROR_STATUS_RESOURCE_UNAVAILABLE => {
+            ("resource-unavailable", SnmpErrorStatusAssignment::Assigned)
+        }
+        SNMP_ERROR_STATUS_COMMIT_FAILED => ("commit-failed", SnmpErrorStatusAssignment::Assigned),
+        SNMP_ERROR_STATUS_UNDO_FAILED => ("undo-failed", SnmpErrorStatusAssignment::Assigned),
+        SNMP_ERROR_STATUS_AUTHORIZATION_ERROR => {
+            ("authorization-error", SnmpErrorStatusAssignment::Assigned)
+        }
+        SNMP_ERROR_STATUS_NOT_WRITABLE => ("not-writable", SnmpErrorStatusAssignment::Assigned),
+        SNMP_ERROR_STATUS_INCONSISTENT_NAME => {
+            ("inconsistent-name", SnmpErrorStatusAssignment::Assigned)
+        }
+        _ => ("unknown-error-status", SnmpErrorStatusAssignment::Unknown),
+    };
+
+    SnmpErrorStatusMeta { code, name, status }
+}
+
+/// Return the source-backed error-status name for an assigned value.
+pub const fn snmp_error_status_name(code: i64) -> Option<&'static str> {
+    let meta = snmp_error_status_meta(code);
+    match meta.status {
+        SnmpErrorStatusAssignment::Assigned => Some(meta.name),
+        SnmpErrorStatusAssignment::Unknown => None,
+    }
+}
+
+/// Return the source-backed assignment status for an error-status value.
+pub const fn snmp_error_status_status(code: i64) -> SnmpErrorStatusAssignment {
+    snmp_error_status_meta(code).status
+}
+
+/// Return a stable error-status label while preserving unknown values.
+pub fn snmp_error_status_label(code: i64) -> String {
+    snmp_error_status_name(code)
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("error-status-{code}"))
+}
+
+/// Return a compact summary label with the numeric error-status code.
+pub fn snmp_error_status_summary(code: i64) -> String {
+    format!("{}({code})", snmp_error_status_label(code))
+}
+
 /// One source-backed SNMP PDU tag metadata entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SnmpPduTagMeta {
@@ -155,6 +413,84 @@ mod tests {
         assert_eq!(pdu_tag_label(9), "pdu-9");
         assert_eq!(SnmpPduTagStatus::Assigned.label(), "assigned");
         assert_eq!(SnmpPduTagStatus::Unknown.to_string(), "unknown");
+    }
+
+    #[test]
+    fn snmp_error_status_registry_names_source_backed_values() {
+        let cases = [
+            (SNMP_ERROR_STATUS_NO_ERROR, "no-error"),
+            (SNMP_ERROR_STATUS_TOO_BIG, "too-big"),
+            (SNMP_ERROR_STATUS_NO_SUCH_NAME, "no-such-name"),
+            (SNMP_ERROR_STATUS_BAD_VALUE, "bad-value"),
+            (SNMP_ERROR_STATUS_READ_ONLY, "read-only"),
+            (SNMP_ERROR_STATUS_GEN_ERR, "gen-err"),
+            (SNMP_ERROR_STATUS_NO_ACCESS, "no-access"),
+            (SNMP_ERROR_STATUS_WRONG_TYPE, "wrong-type"),
+            (SNMP_ERROR_STATUS_WRONG_LENGTH, "wrong-length"),
+            (SNMP_ERROR_STATUS_WRONG_ENCODING, "wrong-encoding"),
+            (SNMP_ERROR_STATUS_WRONG_VALUE, "wrong-value"),
+            (SNMP_ERROR_STATUS_NO_CREATION, "no-creation"),
+            (SNMP_ERROR_STATUS_INCONSISTENT_VALUE, "inconsistent-value"),
+            (
+                SNMP_ERROR_STATUS_RESOURCE_UNAVAILABLE,
+                "resource-unavailable",
+            ),
+            (SNMP_ERROR_STATUS_COMMIT_FAILED, "commit-failed"),
+            (SNMP_ERROR_STATUS_UNDO_FAILED, "undo-failed"),
+            (SNMP_ERROR_STATUS_AUTHORIZATION_ERROR, "authorization-error"),
+            (SNMP_ERROR_STATUS_NOT_WRITABLE, "not-writable"),
+            (SNMP_ERROR_STATUS_INCONSISTENT_NAME, "inconsistent-name"),
+        ];
+
+        // Source-backed: docs/snmp-rfc-manifest.md records RFC 1157 Section
+        // 4.1.1 for values 0 through 5 and RFC 3416 Section 3 for values
+        // 0 through 18.
+        for (code, name) in cases {
+            let meta = snmp_error_status_meta(code);
+            assert_eq!(meta.code, code);
+            assert_eq!(meta.name, name);
+            assert_eq!(meta.status, SnmpErrorStatusAssignment::Assigned);
+            assert_eq!(snmp_error_status_name(code), Some(name));
+            assert_eq!(
+                snmp_error_status_status(code),
+                SnmpErrorStatusAssignment::Assigned
+            );
+            assert_eq!(snmp_error_status_label(code), name);
+            assert_eq!(SnmpErrorStatus::new(code).name(), Some(name));
+            assert_eq!(SnmpErrorStatus::new(code).code(), code);
+            assert_eq!(SnmpErrorStatus::new(code).to_string(), name);
+        }
+
+        assert_eq!(SnmpErrorStatusAssignment::Assigned.label(), "assigned");
+        assert_eq!(SnmpErrorStatusAssignment::Unknown.to_string(), "unknown");
+    }
+
+    #[test]
+    fn snmp_error_status_registry_unknown_values_are_preserved() {
+        for code in [-1, 19, 99] {
+            let meta = snmp_error_status_meta(code);
+            let status = SnmpErrorStatus::new(code);
+
+            assert_eq!(meta.code, code);
+            assert_eq!(meta.name, "unknown-error-status");
+            assert_eq!(meta.status, SnmpErrorStatusAssignment::Unknown);
+            assert_eq!(snmp_error_status_name(code), None);
+            assert_eq!(
+                snmp_error_status_status(code),
+                SnmpErrorStatusAssignment::Unknown
+            );
+            assert_eq!(
+                snmp_error_status_label(code),
+                format!("error-status-{code}")
+            );
+            assert_eq!(
+                snmp_error_status_summary(code),
+                format!("error-status-{code}({code})")
+            );
+            assert_eq!(status.meta(), meta);
+            assert_eq!(status.status(), SnmpErrorStatusAssignment::Unknown);
+            assert_eq!(i64::from(status), code);
+        }
     }
 
     #[test]
