@@ -162,8 +162,8 @@ types.
 
 | Item | Source | Planned path | Status | Notes |
 | --- | --- | --- | --- | --- |
-| SNMP message UDP port 161 constant and label | IANA Service Name and Transport Protocol Port Number Registry; RFC 3417 Section 3 | `crafter/src/protocols/snmp/constants.rs`; `crafter/src/protocols/snmp/registry.rs` | source-backed planned | Use for conservative UDP payload detection and examples. |
-| SNMP notification UDP port 162 constant and label | IANA Service Name and Transport Protocol Port Number Registry | `crafter/src/protocols/snmp/constants.rs`; `crafter/src/protocols/snmp/registry.rs` | source-backed planned | Dispatch only packet decode, not a trap receiver service. |
+| SNMP message UDP port 161 constant and label | IANA Service Name and Transport Protocol Port Number Registry; RFC 3417 Section 3 | `crafter/src/protocols/snmp/constants.rs`; `crafter/src/protocols/snmp/registry.rs` | source-backed implemented | `SNMP_PORT`, `snmp_udp_port_*` metadata, and the `snmp` label are available for conservative UDP payload detection and examples. |
+| SNMP notification UDP port 162 constant and label | IANA Service Name and Transport Protocol Port Number Registry | `crafter/src/protocols/snmp/constants.rs`; `crafter/src/protocols/snmp/registry.rs` | source-backed implemented | `SNMP_TRAP_PORT`, `snmp_udp_port_*` metadata, and the `snmptrap` label are packet decode hints only, not a trap receiver service. |
 | Built-in UDP/161 and UDP/162 decode binding | RFC 3417 Section 3; IANA port registry | `crafter/src/registry.rs`; `crafter/src/protocols/snmp/registry.rs` | source-backed planned | Conservative detection should fall back to `Raw` for unsupported payloads. |
 | SNMP over IPv6-specific transport mapping | Manifest unresolved questions | none | source-gap out of scope | Add source evidence before implementation. |
 | SNMP over TCP, SSH, TLS, DTLS, IPX, IEEE 802, or SYSLOG mappings | Manifest unsupported by default | none | out of scope | Dedicated mapping slices and tests are required before any support claim. |

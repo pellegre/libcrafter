@@ -276,9 +276,10 @@ Rows relevant to SNMP packet composition and conservative UDP dispatch:
 | snmptls-trap | 10162 | tcp | SNMP-Trap-TLS | RFC 6353 |
 | snmpdtls-trap | 10162 | udp | SNMP-Trap-DTLS | RFC 6353 |
 
-Downstream use: the initial built-in registry may dispatch only conservative
-UDP/161 and UDP/162 SNMP payloads unless a later mapping slice cites and tests
-additional transports.
+Downstream use: UDP port constants and labels cite the `snmp`/UDP and
+`snmptrap`/UDP rows. The initial built-in registry may dispatch only
+conservative UDP/161 and UDP/162 SNMP payloads unless a later mapping slice
+cites and tests additional transports.
 
 ### IANA Structure of Management Information (SMI) Numbers
 
