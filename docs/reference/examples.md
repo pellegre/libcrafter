@@ -36,6 +36,7 @@ cargo run -p crafter --example batch_send_recv
 cargo run -p crafter --example dns_query -- --name example.com
 cargo run -p crafter --example snmp_get
 cargo run -p crafter --example snmp_trap
+cargo run -p crafter --example snmpv3_message
 cargo run -p crafter --example ipv4_enrichment
 cargo run -p crafter --example tcp_options
 ```

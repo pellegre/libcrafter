@@ -262,8 +262,9 @@ By category:
   `wire_transform_chain`, `ip_defrag_offline`, `ip_fragment_offline`,
   `wpa_decrypt_offline`.
 - Protocols — `arp_who_has`, `dns_query`, `dhcp_discover`, `icmpv4_error`,
-  `icmpv6_echo`, `snmp_get`, `snmp_trap`, `vlan`, `dot11_beacon_rsn`,
-  `ipsec_esp`, `bgp_session`, `mqtt_session`. SNMP wire guidance also lives in
+  `icmpv6_echo`, `snmp_get`, `snmp_trap`, `snmpv3_message`, `vlan`,
+  `dot11_beacon_rsn`, `ipsec_esp`, `bgp_session`, `mqtt_session`. SNMP wire
+  guidance also lives in
   [docs/guide/snmp.md](docs/guide/snmp.md), and examples stay offline or
   dry-run by default.
 
