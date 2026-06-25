@@ -13,6 +13,10 @@ pub(super) const BER_CONSTRUCTED_MASK: u8 = 0x20;
 pub(super) const BER_TAG_NUMBER_MASK: u8 = 0x1f;
 pub(super) const BER_IDENTIFIER_LEN: usize = 1;
 pub(super) const BER_LOW_TAG_NUMBER_MAX: u8 = BER_TAG_NUMBER_MASK - 1;
+pub(super) const BER_LENGTH_SHORT_FORM_MAX: usize = 0x7f;
+pub(super) const BER_LENGTH_LONG_FORM_FLAG: u8 = 0x80;
+pub(super) const BER_LENGTH_LONG_FORM_OCTETS_MASK: u8 = 0x7f;
+pub(super) const BER_LENGTH_FIELD_MIN_LEN: usize = 1;
 
 pub(super) const BER_TAG_INTEGER: u8 = 2;
 pub(super) const BER_TAG_OCTET_STRING: u8 = 4;
@@ -238,8 +242,65 @@ pub(super) fn parse_identifier_octet(bytes: &[u8]) -> Result<(BerTag, &[u8])> {
     decode_identifier(bytes)
 }
 
+pub(super) fn decode_length(bytes: &[u8]) -> Result<(usize, &[u8])> {
+    let Some((&first, rest)) = bytes.split_first() else {
+        return Err(truncated_length(bytes.len()));
+    };
+
+    if first & BER_LENGTH_LONG_FORM_FLAG == 0 {
+        return Ok((usize::from(first), rest));
+    }
+
+    let length_octets = usize::from(first & BER_LENGTH_LONG_FORM_OCTETS_MASK);
+    if length_octets == 0 {
+        return Err(invalid_ber_field(
+            "snmp.ber.length",
+            "indefinite length is not valid for SNMP",
+        ));
+    }
+
+    let required = BER_LENGTH_FIELD_MIN_LEN + length_octets;
+    if bytes.len() < required {
+        return Err(truncated_ber("snmp.ber.length", required, bytes.len()));
+    }
+
+    let mut length = 0usize;
+    for octet in &rest[..length_octets] {
+        length = length
+            .checked_mul(256)
+            .and_then(|value| value.checked_add(usize::from(*octet)))
+            .ok_or_else(|| {
+                invalid_ber_field("snmp.ber.length", "length exceeds supported size")
+            })?;
+    }
+
+    Ok((length, &rest[length_octets..]))
+}
+
+pub(super) fn encode_length(length: usize, out: &mut Vec<u8>) -> Result<()> {
+    if length <= BER_LENGTH_SHORT_FORM_MAX {
+        out.push(length as u8);
+        return Ok(());
+    }
+
+    let octets = length.to_be_bytes();
+    let first_non_zero = octets
+        .iter()
+        .position(|octet| *octet != 0)
+        .unwrap_or(octets.len() - 1);
+    let encoded = &octets[first_non_zero..];
+
+    out.push(BER_LENGTH_LONG_FORM_FLAG | encoded.len() as u8);
+    out.extend_from_slice(encoded);
+    Ok(())
+}
+
 pub(super) fn truncated_identifier(available: usize) -> CrafterError {
     CrafterError::buffer_too_short("snmp.ber.identifier", BER_IDENTIFIER_LEN, available)
+}
+
+pub(super) fn truncated_length(available: usize) -> CrafterError {
+    CrafterError::buffer_too_short("snmp.ber.length", BER_LENGTH_FIELD_MIN_LEN, available)
 }
 
 pub(super) fn truncated_ber(
@@ -342,6 +403,123 @@ mod tests {
                 "indefinite length is not valid for SNMP"
             )
         );
+    }
+
+    #[test]
+    fn snmp_ber_length_boundary_lengths_decode_and_encode() {
+        let cases: &[(usize, &[u8])] = &[
+            (0, &[0x00]),
+            (1, &[0x01]),
+            (127, &[0x7f]),
+            (128, &[0x81, 0x80]),
+            (255, &[0x81, 0xff]),
+            (256, &[0x82, 0x01, 0x00]),
+            (65_535, &[0x82, 0xff, 0xff]),
+        ];
+
+        for (length, encoded) in cases {
+            let mut bytes = encoded.to_vec();
+            bytes.push(0xaa);
+
+            let (decoded, rest) = decode_length(&bytes).expect("BER length");
+            assert_eq!(decoded, *length, "decode {encoded:02x?}");
+            assert_eq!(rest, &[0xaa], "decode rest {encoded:02x?}");
+
+            let mut out = Vec::new();
+            encode_length(*length, &mut out).expect("encode BER length");
+            assert_eq!(&out, encoded, "encode {length}");
+        }
+    }
+
+    #[test]
+    fn snmp_ber_length_long_form_decodes_and_encodes_multi_octet_lengths() {
+        let bytes = [0x83, 0x01, 0x00, 0x00, 0xbb];
+        let (length, rest) = decode_length(&bytes).expect("long-form length");
+
+        assert_eq!(length, 65_536);
+        assert_eq!(rest, &[0xbb]);
+
+        let mut out = Vec::new();
+        encode_length(length, &mut out).expect("encode long-form length");
+        assert_eq!(out, [0x83, 0x01, 0x00, 0x00]);
+    }
+
+    #[test]
+    fn snmp_ber_length_non_minimal_long_form_decode_is_accepted() {
+        let cases: &[(usize, &[u8], &[u8])] = &[
+            (0, &[0x81, 0x00, 0xcc], &[0xcc]),
+            (127, &[0x81, 0x7f, 0xcc], &[0xcc]),
+            (128, &[0x82, 0x00, 0x80, 0xcc], &[0xcc]),
+            (256, &[0x84, 0x00, 0x00, 0x01, 0x00, 0xcc], &[0xcc]),
+        ];
+
+        for (expected, bytes, expected_rest) in cases {
+            let (length, rest) = decode_length(bytes).expect("non-minimal BER length");
+            assert_eq!(length, *expected, "decode {bytes:02x?}");
+            assert_eq!(rest, *expected_rest, "decode rest {bytes:02x?}");
+        }
+
+        let mut minimal = Vec::new();
+        encode_length(127, &mut minimal).expect("minimal encoding");
+        assert_eq!(minimal, [0x7f]);
+    }
+
+    #[test]
+    fn snmp_ber_length_indefinite_form_is_rejected_for_snmp() {
+        assert_eq!(
+            decode_length(&[0x80, 0x00, 0x00]),
+            Err(CrafterError::invalid_field_value(
+                "snmp.ber.length",
+                "indefinite length is not valid for SNMP"
+            ))
+        );
+    }
+
+    #[test]
+    fn snmp_ber_length_truncation_reports_required_and_available() {
+        assert_eq!(
+            decode_length(&[]),
+            Err(CrafterError::buffer_too_short("snmp.ber.length", 1, 0))
+        );
+        assert_eq!(
+            decode_length(&[0x82, 0x01]),
+            Err(CrafterError::buffer_too_short("snmp.ber.length", 3, 2))
+        );
+    }
+
+    #[test]
+    fn snmp_ber_length_overflow_returns_invalid_field() {
+        let length_octets = core::mem::size_of::<usize>() + 1;
+        assert!(length_octets <= usize::from(BER_LENGTH_LONG_FORM_OCTETS_MASK));
+
+        let mut bytes = Vec::with_capacity(BER_LENGTH_FIELD_MIN_LEN + length_octets);
+        bytes.push(BER_LENGTH_LONG_FORM_FLAG | length_octets as u8);
+        bytes.push(0x01);
+        bytes.extend(core::iter::repeat(0).take(length_octets - 1));
+
+        assert_eq!(
+            decode_length(&bytes),
+            Err(CrafterError::invalid_field_value(
+                "snmp.ber.length",
+                "length exceeds supported size"
+            ))
+        );
+    }
+
+    #[test]
+    fn snmp_ber_length_emission_is_bounded_to_native_usize_width() {
+        let mut encoded = Vec::new();
+        encode_length(usize::MAX, &mut encoded).expect("encode usize max");
+
+        assert_eq!(
+            usize::from(encoded[0] & BER_LENGTH_LONG_FORM_OCTETS_MASK),
+            core::mem::size_of::<usize>()
+        );
+        assert_eq!(&encoded[1..], &usize::MAX.to_be_bytes());
+
+        let (decoded, rest) = decode_length(&encoded).expect("decode usize max");
+        assert_eq!(decoded, usize::MAX);
+        assert!(rest.is_empty());
     }
 
     #[test]
