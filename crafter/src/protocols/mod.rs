@@ -13,6 +13,7 @@ pub mod mqtt;
 pub mod ospf;
 pub mod rip;
 pub mod rsn;
+pub mod snmp;
 pub mod transport;
 
 /// Compatibility re-exports for the IPv4 protocol implementation.
