@@ -476,6 +476,8 @@ fn normalized_layer_name(layer: &dyn Layer) -> String {
         "dns"
     } else if layer.as_any().is::<Dhcp>() {
         "dhcp"
+    } else if layer.as_any().is::<Snmp>() {
+        "snmp"
     } else if layer.as_any().is::<Eapol>() {
         "eapol"
     } else if layer.as_any().is::<EapolKey>() {
@@ -614,6 +616,9 @@ fn normalized_layer_fields(
     if let Some(layer) = layer.as_any().downcast_ref::<Dhcp>() {
         return dhcp_fields(layer);
     }
+    if let Some(layer) = layer.as_any().downcast_ref::<Snmp>() {
+        return snmp_fields(layer);
+    }
     if let Some(layer) = layer.as_any().downcast_ref::<Eapol>() {
         return eapol_fields(layer);
     }
@@ -681,6 +686,22 @@ fn ah_fields(layer: &Ah) -> BTreeMap<String, Value> {
     }
     let icv = layer.icv_value().unwrap_or(&[]);
     fields.insert("icv".to_string(), bytes_hex_ascii(icv));
+    fields
+}
+
+/// Normalize a decoded SNMP message into the stable oracle comparison shape.
+///
+/// libcrafter keeps rich SNMP PDU and SNMPv3 inspection fields in the native
+/// metadata. The Scapy reference exposes only the backend-stable wrapper fields
+/// for strict byte runs, so the comparable model stays intentionally compact.
+fn snmp_fields(layer: &Snmp) -> BTreeMap<String, Value> {
+    let mut fields = map([("version", json!(layer.version_label()))]);
+    if !layer.community().is_empty() {
+        fields.insert(
+            "community".to_string(),
+            json!(String::from_utf8_lossy(layer.community()).into_owned()),
+        );
+    }
     fields
 }
 

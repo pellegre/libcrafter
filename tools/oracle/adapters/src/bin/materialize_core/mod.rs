@@ -263,6 +263,7 @@ fn build_layer(plan: &Value, layer: &str) -> ExampleResult<Box<dyn Layer>> {
         "igmp_extension" => Ok(Box::new(igmp_extension_layer(plan)?)),
         "dns" => Ok(Box::new(dns_layer(plan)?)),
         "dhcp" => Ok(Box::new(dhcp_layer(plan)?)),
+        "snmp" => Ok(Box::new(snmp_layer(plan)?)),
         "rip" => Ok(Box::new(rip_layer(plan)?)),
         "ripng" => Ok(Box::new(ripng_layer(plan)?)),
         "bgp" => Ok(Box::new(bgp_layer(plan)?)),
@@ -3458,6 +3459,550 @@ fn dhcp_layer(plan: &Value) -> ExampleResult<Dhcp> {
         layer = layer.options(dhcp_options(options)?);
     }
     Ok(layer)
+}
+
+fn snmp_layer(plan: &Value) -> ExampleResult<Snmp> {
+    let fields = layer_fields(plan, "snmp")?;
+    let message = snmp_message_bytes(fields)?;
+    Ok(Snmp::decode(&message)?)
+}
+
+fn snmp_message_bytes(fields: &Map<String, Value>) -> ExampleResult<Vec<u8>> {
+    if snmp_is_structured_error(fields) {
+        return Err("SNMP structured-error cases are not libcrafter materialized".into());
+    }
+    let version = snmp_version_code(optional(fields, &["version"]))?;
+    let mut body = Vec::new();
+    body.extend_from_slice(&snmp_ber_integer(version)?);
+    if version == 3 {
+        body.extend_from_slice(&snmp_v3_header_data(fields)?);
+        body.extend_from_slice(&snmp_ber_octet_string(snmp_security_parameters_bytes(
+            fields,
+        )?)?);
+        body.extend_from_slice(&snmp_v3_scoped_data(fields)?);
+    } else {
+        body.extend_from_slice(&snmp_ber_octet_string(snmp_bytes_value(
+            optional(fields, &["community"]),
+            b"doc-community",
+        )?)?);
+        body.extend_from_slice(&snmp_pdu_bytes(fields)?);
+    }
+    snmp_ber_sequence(body)
+}
+
+fn snmp_is_structured_error(fields: &Map<String, Value>) -> bool {
+    for name in ["message_length", "pdu_length", "msg_id", "scoped_data_kind"] {
+        if optional(fields, &[name])
+            .and_then(Value::as_object)
+            .is_some_and(|value| value.contains_key("malformed"))
+        {
+            return true;
+        }
+    }
+    if optional(fields, &["varbinds"])
+        .and_then(Value::as_array)
+        .is_some_and(|items| {
+            items.iter().any(|item| {
+                item.as_object()
+                    .is_some_and(|value| value.contains_key("malformed"))
+            })
+        })
+    {
+        return true;
+    }
+    optional(fields, &["msg_security_parameters"])
+        .and_then(Value::as_object)
+        .and_then(|value| value.get("kind"))
+        .and_then(Value::as_str)
+        == Some("malformed_usm")
+}
+
+fn snmp_pdu_bytes(fields: &Map<String, Value>) -> ExampleResult<Vec<u8>> {
+    if let Some(raw_pdu) = optional(fields, &["raw_pdu"]) {
+        if let Some(hex) = raw_pdu
+            .as_object()
+            .and_then(|object| object.get("hex"))
+            .and_then(Value::as_str)
+        {
+            return decode_hex(hex);
+        }
+    }
+
+    let tag = snmp_pdu_tag_value(optional(fields, &["pdu_tag"]))?;
+    if tag == 0xa4 {
+        return snmp_v1_trap_pdu(fields, tag);
+    }
+
+    let varbinds = snmp_varbind_list_bytes(optional(fields, &["varbinds"]))?;
+    let mut content = Vec::new();
+    content.extend_from_slice(&snmp_ber_integer(snmp_int_value(
+        optional(fields, &["request_id"]),
+        0,
+    )?)?);
+    if tag == 0xa5 {
+        content.extend_from_slice(&snmp_ber_integer(snmp_int_value(
+            optional(fields, &["non_repeaters"]),
+            0,
+        )?)?);
+        content.extend_from_slice(&snmp_ber_integer(snmp_int_value(
+            optional(fields, &["max_repetitions"]),
+            0,
+        )?)?);
+    } else {
+        content.extend_from_slice(&snmp_ber_integer(snmp_error_status(optional(
+            fields,
+            &["error_status"],
+        ))?)?);
+        content.extend_from_slice(&snmp_ber_integer(snmp_int_value(
+            optional(fields, &["error_index"]),
+            0,
+        )?)?);
+    }
+    content.extend_from_slice(&varbinds);
+    snmp_ber_tlv(tag, content)
+}
+
+fn snmp_v1_trap_pdu(fields: &Map<String, Value>, tag: u8) -> ExampleResult<Vec<u8>> {
+    let mut content = Vec::new();
+    content.extend_from_slice(&snmp_ber_oid(
+        text_optional(fields, &["enterprise_oid"]).unwrap_or("1.3.6.1.2.1.1.2.0"),
+    )?);
+    let agent =
+        Ipv4Addr::from_str(text_optional(fields, &["agent_address"]).unwrap_or("192.0.2.10"))?;
+    content.extend_from_slice(&snmp_ber_tlv(0x40, agent.octets().to_vec())?);
+    content.extend_from_slice(&snmp_ber_integer(snmp_generic_trap(optional(
+        fields,
+        &["generic_trap"],
+    ))?)?);
+    content.extend_from_slice(&snmp_ber_integer(snmp_int_value(
+        optional(fields, &["specific_trap"]),
+        0,
+    )?)?);
+    content.extend_from_slice(&snmp_ber_tlv(
+        0x43,
+        snmp_unsigned_integer_content(snmp_int_value(optional(fields, &["timestamp"]), 0)?)?,
+    )?);
+    content.extend_from_slice(&snmp_varbind_list_bytes(optional(fields, &["varbinds"]))?);
+    snmp_ber_tlv(tag, content)
+}
+
+fn snmp_varbind_list_bytes(value: Option<&Value>) -> ExampleResult<Vec<u8>> {
+    let Some(value) = value else {
+        return snmp_ber_sequence(Vec::new());
+    };
+    let Some(items) = value.as_array() else {
+        return snmp_ber_sequence(Vec::new());
+    };
+    let mut content = Vec::new();
+    for item in items {
+        content.extend_from_slice(&snmp_varbind_bytes(item)?);
+    }
+    snmp_ber_sequence(content)
+}
+
+fn snmp_varbind_bytes(value: &Value) -> ExampleResult<Vec<u8>> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| format!("SNMP varbind must be an object, got {value:?}"))?;
+    let name = text_optional(object, &["name"]).unwrap_or("1.3.6.1.2.1.1.1.0");
+    let value_bytes = match optional(object, &["value"]) {
+        Some(value) => snmp_varbind_value_bytes(value)?,
+        None => snmp_ber_tlv(0x05, Vec::new())?,
+    };
+    let mut content = snmp_ber_oid(name)?;
+    content.extend_from_slice(&value_bytes);
+    snmp_ber_sequence(content)
+}
+
+fn snmp_varbind_value_bytes(value: &Value) -> ExampleResult<Vec<u8>> {
+    let Some(object) = value.as_object() else {
+        return snmp_ber_tlv(0x05, Vec::new());
+    };
+    let kind = text_optional(object, &["type"]).unwrap_or("null");
+    match kind {
+        "raw" => decode_hex(text_required(object, &["tlv_hex"])?),
+        "null" => snmp_ber_tlv(0x05, Vec::new()),
+        "integer" => snmp_ber_integer(snmp_int_value(optional(object, &["value"]), 0)?),
+        "octet_string" => snmp_ber_octet_string(snmp_bytes_value(Some(value), b"")?),
+        "object_identifier" => {
+            snmp_ber_oid(text_optional(object, &["value"]).unwrap_or("1.3.6.1.2.1.1.2.0"))
+        }
+        "ip_address" => {
+            let address =
+                Ipv4Addr::from_str(text_optional(object, &["value"]).unwrap_or("192.0.2.10"))?;
+            snmp_ber_tlv(0x40, address.octets().to_vec())
+        }
+        "counter32" => snmp_ber_tlv(
+            0x41,
+            snmp_unsigned_integer_content(snmp_int_value(optional(object, &["value"]), 0)?)?,
+        ),
+        "gauge32" | "unsigned32" => snmp_ber_tlv(
+            0x42,
+            snmp_unsigned_integer_content(snmp_int_value(optional(object, &["value"]), 0)?)?,
+        ),
+        "time_ticks" => snmp_ber_tlv(
+            0x43,
+            snmp_unsigned_integer_content(snmp_int_value(optional(object, &["value"]), 0)?)?,
+        ),
+        "opaque" => snmp_ber_tlv(0x44, snmp_bytes_value(Some(value), b"")?),
+        "counter64" => snmp_ber_tlv(
+            0x46,
+            snmp_unsigned_integer_content(snmp_int_value(optional(object, &["value"]), 0)?)?,
+        ),
+        "no_such_object" => snmp_ber_tlv(0x80, Vec::new()),
+        "no_such_instance" => snmp_ber_tlv(0x81, Vec::new()),
+        "end_of_mib_view" => snmp_ber_tlv(0x82, Vec::new()),
+        _ => Err(format!("unsupported SNMP varbind value type: {kind}").into()),
+    }
+}
+
+fn snmp_v3_header_data(fields: &Map<String, Value>) -> ExampleResult<Vec<u8>> {
+    let mut content = Vec::new();
+    content.extend_from_slice(&snmp_ber_integer(snmp_int_value(
+        optional(fields, &["msg_id"]),
+        1000,
+    )?)?);
+    content.extend_from_slice(&snmp_ber_integer(snmp_int_value(
+        optional(fields, &["msg_max_size"]),
+        65507,
+    )?)?);
+    content.extend_from_slice(&snmp_ber_octet_string(vec![snmp_msg_flags(optional(
+        fields,
+        &["msg_flags"],
+    ))?])?);
+    content.extend_from_slice(&snmp_ber_integer(snmp_security_model(optional(
+        fields,
+        &["msg_security_model"],
+    ))?)?);
+    snmp_ber_sequence(content)
+}
+
+fn snmp_security_parameters_bytes(fields: &Map<String, Value>) -> ExampleResult<Vec<u8>> {
+    let value = optional(fields, &["msg_security_parameters"]);
+    if let Some(object) = value.and_then(Value::as_object) {
+        if text_optional(object, &["kind"]) == Some("usm") {
+            return snmp_usm_parameters_bytes(object);
+        }
+    }
+    snmp_bytes_value(value, b"")
+}
+
+fn snmp_usm_parameters_bytes(value: &Map<String, Value>) -> ExampleResult<Vec<u8>> {
+    let mut content = Vec::new();
+    content.extend_from_slice(&snmp_ber_octet_string(snmp_bytes_value(
+        optional(value, &["engine_id"]),
+        b"doc-engine",
+    )?)?);
+    content.extend_from_slice(&snmp_ber_integer(snmp_int_value(
+        optional(value, &["engine_boots"]),
+        0,
+    )?)?);
+    content.extend_from_slice(&snmp_ber_integer(snmp_int_value(
+        optional(value, &["engine_time"]),
+        0,
+    )?)?);
+    content.extend_from_slice(&snmp_ber_octet_string(snmp_bytes_value(
+        optional(value, &["user_name"]),
+        b"doc-user",
+    )?)?);
+    content.extend_from_slice(&snmp_ber_octet_string(snmp_bytes_value(
+        optional(value, &["authentication_parameters"]),
+        b"",
+    )?)?);
+    content.extend_from_slice(&snmp_ber_octet_string(snmp_bytes_value(
+        optional(value, &["privacy_parameters"]),
+        b"",
+    )?)?);
+    snmp_ber_sequence(content)
+}
+
+fn snmp_v3_scoped_data(fields: &Map<String, Value>) -> ExampleResult<Vec<u8>> {
+    if optional(fields, &["scoped_data_kind"]).and_then(Value::as_str) == Some("encrypted_opaque") {
+        return snmp_ber_octet_string(snmp_bytes_value(
+            optional(fields, &["encrypted_scoped_pdu"]),
+            b"",
+        )?);
+    }
+
+    let mut content = Vec::new();
+    content.extend_from_slice(&snmp_ber_octet_string(snmp_bytes_value(
+        optional(fields, &["context_engine_id"]),
+        b"",
+    )?)?);
+    content.extend_from_slice(&snmp_ber_octet_string(snmp_bytes_value(
+        optional(fields, &["context_name"]),
+        b"",
+    )?)?);
+    content.extend_from_slice(&snmp_pdu_bytes(fields)?);
+    snmp_ber_sequence(content)
+}
+
+fn snmp_version_code(value: Option<&Value>) -> ExampleResult<i64> {
+    if let Some(value) = value {
+        if let Some(object) = value.as_object() {
+            return snmp_int_value(object.get("raw"), 1);
+        }
+        if let Some(text) = value.as_str() {
+            return match text {
+                "v1" => Ok(0),
+                "v2c" => Ok(1),
+                "v3" => Ok(3),
+                _ => snmp_i64_text(text),
+            };
+        }
+        return snmp_int_value(Some(value), 1);
+    }
+    Ok(1)
+}
+
+fn snmp_pdu_tag_value(value: Option<&Value>) -> ExampleResult<u8> {
+    if let Some(value) = value {
+        if let Some(object) = value.as_object() {
+            return Ok(u8::try_from(snmp_int_value(object.get("raw"), 0xa0)?)?);
+        }
+        if let Some(text) = value.as_str() {
+            return match text {
+                "get_request" => Ok(0xa0),
+                "get_next_request" => Ok(0xa1),
+                "response" => Ok(0xa2),
+                "set_request" => Ok(0xa3),
+                "trap_v1" => Ok(0xa4),
+                "get_bulk_request" => Ok(0xa5),
+                "inform_request" => Ok(0xa6),
+                "snmpv2_trap" => Ok(0xa7),
+                "report" => Ok(0xa8),
+                _ => Ok(u8::try_from(snmp_i64_text(text)?)?),
+            };
+        }
+        return Ok(u8::try_from(snmp_int_value(Some(value), 0xa0)?)?);
+    }
+    Ok(0xa0)
+}
+
+fn snmp_error_status(value: Option<&Value>) -> ExampleResult<i64> {
+    if let Some(value) = value {
+        if let Some(object) = value.as_object() {
+            return snmp_int_value(object.get("raw"), 0);
+        }
+        if let Some(text) = value.as_str() {
+            return match text {
+                "no_error" => Ok(0),
+                "too_big" => Ok(1),
+                "no_such_name" => Ok(2),
+                "bad_value" => Ok(3),
+                "read_only" => Ok(4),
+                "gen_err" => Ok(5),
+                _ => snmp_i64_text(text),
+            };
+        }
+        return snmp_int_value(Some(value), 0);
+    }
+    Ok(0)
+}
+
+fn snmp_generic_trap(value: Option<&Value>) -> ExampleResult<i64> {
+    if let Some(value) = value {
+        if let Some(object) = value.as_object() {
+            return snmp_int_value(object.get("raw"), 0);
+        }
+        if let Some(text) = value.as_str() {
+            return match text {
+                "cold_start" => Ok(0),
+                "warm_start" => Ok(1),
+                "link_down" => Ok(2),
+                "link_up" => Ok(3),
+                "authentication_failure" => Ok(4),
+                "egp_neighbor_loss" => Ok(5),
+                "enterprise_specific" => Ok(6),
+                _ => snmp_i64_text(text),
+            };
+        }
+        return snmp_int_value(Some(value), 0);
+    }
+    Ok(0)
+}
+
+fn snmp_msg_flags(value: Option<&Value>) -> ExampleResult<u8> {
+    if let Some(object) = value.and_then(Value::as_object) {
+        return Ok(u8::try_from(snmp_int_value(object.get("raw"), 0)?)?);
+    }
+    let mut flags = 0u8;
+    if let Some(items) = value.and_then(Value::as_array) {
+        for item in items {
+            flags |= snmp_msg_flag(item)?;
+        }
+        return Ok(flags);
+    }
+    if let Some(value) = value {
+        return snmp_msg_flag(value);
+    }
+    Ok(0)
+}
+
+fn snmp_msg_flag(value: &Value) -> ExampleResult<u8> {
+    if let Some(text) = value.as_str() {
+        return match text {
+            "auth" => Ok(0x01),
+            "privacy" => Ok(0x02),
+            "reportable" => Ok(0x04),
+            _ => Ok(u8::try_from(snmp_i64_text(text)?)?),
+        };
+    }
+    Ok(u8::try_from(snmp_int_value(Some(value), 0)?)?)
+}
+
+fn snmp_security_model(value: Option<&Value>) -> ExampleResult<i64> {
+    if let Some(value) = value {
+        if let Some(object) = value.as_object() {
+            return snmp_int_value(object.get("raw"), 3);
+        }
+        if let Some(text) = value.as_str() {
+            return match text {
+                "snmpv1" => Ok(1),
+                "snmpv2c" => Ok(2),
+                "usm" => Ok(3),
+                "tsm" => Ok(4),
+                _ => snmp_i64_text(text),
+            };
+        }
+        return snmp_int_value(Some(value), 3);
+    }
+    Ok(3)
+}
+
+fn snmp_int_value(value: Option<&Value>, default: i64) -> ExampleResult<i64> {
+    let Some(value) = value else {
+        return Ok(default);
+    };
+    if let Some(object) = value.as_object() {
+        if let Some(raw) = object.get("raw").or_else(|| object.get("value")) {
+            return snmp_int_value(Some(raw), default);
+        }
+        return Ok(default);
+    }
+    if let Some(value) = value.as_i64() {
+        return Ok(value);
+    }
+    if let Some(value) = value.as_u64() {
+        return Ok(i64::try_from(value)?);
+    }
+    if let Some(text) = value.as_str() {
+        return snmp_i64_text(text);
+    }
+    Err(format!("expected SNMP integer-compatible value, got {value:?}").into())
+}
+
+fn snmp_i64_text(value: &str) -> ExampleResult<i64> {
+    let text = value.trim();
+    if let Some(hex) = text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
+        return Ok(i64::from_str_radix(hex, 16)?);
+    }
+    Ok(text.parse::<i64>()?)
+}
+
+fn snmp_bytes_value(value: Option<&Value>, default: &[u8]) -> ExampleResult<Vec<u8>> {
+    let Some(value) = value else {
+        return Ok(default.to_vec());
+    };
+    if let Some(text) = value.as_str() {
+        return Ok(text.as_bytes().to_vec());
+    }
+    if let Some(object) = value.as_object() {
+        if let Some(hex) = object.get("hex").and_then(Value::as_str) {
+            return decode_hex(hex);
+        }
+        if let Some(value) = object.get("value") {
+            return snmp_bytes_value(Some(value), default);
+        }
+    }
+    Err(format!("expected SNMP bytes-compatible value, got {value:?}").into())
+}
+
+fn snmp_ber_sequence(content: Vec<u8>) -> ExampleResult<Vec<u8>> {
+    snmp_ber_tlv(0x30, content)
+}
+
+fn snmp_ber_integer(value: i64) -> ExampleResult<Vec<u8>> {
+    snmp_ber_tlv(0x02, snmp_unsigned_integer_content(value)?)
+}
+
+fn snmp_ber_octet_string(value: Vec<u8>) -> ExampleResult<Vec<u8>> {
+    snmp_ber_tlv(0x04, value)
+}
+
+fn snmp_ber_oid(value: &str) -> ExampleResult<Vec<u8>> {
+    let arcs = value
+        .trim_matches('.')
+        .split('.')
+        .filter(|part| !part.is_empty())
+        .map(str::parse::<u64>)
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    if arcs.len() < 2 {
+        return Err(format!("SNMP OID requires at least two arcs: {value:?}").into());
+    }
+    let first = 40u64
+        .checked_mul(arcs[0])
+        .and_then(|value| value.checked_add(arcs[1]))
+        .ok_or("SNMP OID first two arcs overflow")?;
+    let mut content = vec![u8::try_from(first)?];
+    for arc in arcs.iter().skip(2) {
+        content.extend_from_slice(&snmp_base128_arc(*arc));
+    }
+    snmp_ber_tlv(0x06, content)
+}
+
+fn snmp_base128_arc(mut value: u64) -> Vec<u8> {
+    let mut chunks = vec![(value & 0x7f) as u8];
+    value >>= 7;
+    while value != 0 {
+        chunks.push(0x80 | ((value & 0x7f) as u8));
+        value >>= 7;
+    }
+    chunks.reverse();
+    chunks
+}
+
+fn snmp_ber_tlv(tag: u8, content: Vec<u8>) -> ExampleResult<Vec<u8>> {
+    let mut output = Vec::with_capacity(1 + 5 + content.len());
+    output.push(tag);
+    output.extend_from_slice(&snmp_ber_length(content.len())?);
+    output.extend_from_slice(&content);
+    Ok(output)
+}
+
+fn snmp_ber_length(length: usize) -> ExampleResult<Vec<u8>> {
+    if length < 0x80 {
+        return Ok(vec![u8::try_from(length)?]);
+    }
+    let width = ((usize::BITS - length.leading_zeros() + 7) / 8) as usize;
+    let bytes = length.to_be_bytes();
+    let start = bytes.len() - width;
+    let mut output = vec![0x80 | u8::try_from(width)?];
+    output.extend_from_slice(&bytes[start..]);
+    Ok(output)
+}
+
+fn snmp_unsigned_integer_content(value: i64) -> ExampleResult<Vec<u8>> {
+    if value < 0 {
+        return Err(format!(
+            "SNMP integer materializer only supports non-negative values: {value}"
+        )
+        .into());
+    }
+    let value = value as u64;
+    if value == 0 {
+        return Ok(vec![0]);
+    }
+    let bytes = value.to_be_bytes();
+    let start = bytes
+        .iter()
+        .position(|byte| *byte != 0)
+        .unwrap_or(bytes.len() - 1);
+    let mut content = bytes[start..].to_vec();
+    if content.first().is_some_and(|byte| byte & 0x80 != 0) {
+        content.insert(0, 0);
+    }
+    Ok(content)
 }
 
 /// Materialize a RIP message (RFC 1058 / RFC 2453, IPv4 UDP port 520) from a
