@@ -1,0 +1,75 @@
+version: 1
+kind: stack_grammar
+name: snmp_stacks
+
+families:
+  - name: snmp
+    default_stack:
+      - ipv4
+      - udp
+      - snmp
+    feature_tags:
+      - ipv4
+      - udp
+      - snmp
+
+stacks:
+  - name: ipv4_udp_snmp
+    root: "l3:ipv4"
+    layers:
+      - ipv4
+      - udp
+      - snmp
+    coverage_cases:
+      - snmp-basic-v1-get-request
+      - snmp-basic-v2c-get-request
+      - snmp-basic-v2c-response
+      - snmp-basic-ber-values
+      - snmp-basic-unknown-value-preservation
+      - snmp-pdu-get-request
+      - snmp-pdu-get-next-request
+      - snmp-pdu-response
+      - snmp-pdu-set-request
+      - snmp-pdu-v1-trap
+      - snmp-pdu-get-bulk-request
+      - snmp-pdu-inform-request
+      - snmp-pdu-v2-trap
+      - snmp-pdu-report
+      - snmp-pdu-unknown-preserve
+      - snmp-v3-global-data
+      - snmp-v3-flags-security-models
+      - snmp-v3-raw-security-parameters
+      - snmp-v3-usm-security-parameters
+      - snmp-v3-plaintext-scoped-pdu
+      - snmp-v3-encrypted-scoped-data
+      - snmp-v3-report-pdu
+  - name: ethernet_ipv4_udp_snmp
+    root: "link:ethernet"
+    layers:
+      - ethernet
+      - ipv4
+      - udp
+      - snmp
+    coverage_cases:
+      - crafter-snmp-pcap-fixtures
+      - snmp-basic-v2c-get-request
+      - snmp-pdu-v2-trap
+      - snmp-v3-report-pdu
+
+constraints:
+  - name: snmp_udp_children
+    parent: udp
+    children:
+      - snmp
+
+backend_support:
+  scapy:
+    status: planned
+    notes:
+      - SNMP stacks are eligible for deterministic planning before the Scapy
+        SNMP backend adapter is implemented.
+  libcrafter:
+    status: planned
+    notes:
+      - SNMP stacks become executable after the oracle generator and libcrafter
+        adapter learn to materialize the SNMP feature cases.
