@@ -13,6 +13,16 @@ pub struct SnmpVarBind {
     value: SnmpValue,
 }
 
+/// Ordered SNMP variable binding list.
+///
+/// A VarBindList is encoded as one BER SEQUENCE containing zero or more
+/// VarBind SEQUENCE values. Order and duplicate names are preserved because
+/// this type models packet bytes, not MIB semantics.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SnmpVarBindList {
+    varbinds: Vec<SnmpVarBind>,
+}
+
 impl SnmpVarBind {
     pub(super) fn new(name: SnmpOid, value: SnmpValue) -> Self {
         Self { name, value }
@@ -241,9 +251,95 @@ impl SnmpVarBind {
     }
 }
 
+impl SnmpVarBindList {
+    /// Build a variable binding list from ordered variable bindings.
+    pub fn new(varbinds: impl Into<Vec<SnmpVarBind>>) -> Self {
+        Self {
+            varbinds: varbinds.into(),
+        }
+    }
+
+    /// Build an empty variable binding list.
+    pub fn empty() -> Self {
+        Self::new(Vec::new())
+    }
+
+    /// Decode one VarBindList SEQUENCE and return the remaining bytes.
+    pub fn decode(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        let (mut content, rest) = ber::decode_sequence(bytes)?;
+        let mut varbinds = Vec::new();
+
+        while !content.is_empty() {
+            let (varbind, remaining) = SnmpVarBind::decode(content)?;
+            varbinds.push(varbind);
+            content = remaining;
+        }
+
+        Ok((Self::new(varbinds), rest))
+    }
+
+    /// Encode this variable binding list into BER bytes.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        let mut content = Vec::new();
+        for varbind in &self.varbinds {
+            varbind.encode(&mut content)?;
+        }
+
+        ber::encode_sequence(&content, out)
+    }
+
+    /// Return this variable binding list encoded as BER bytes.
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Compile this variable binding list into BER bytes.
+    pub fn compile(&self) -> Result<Vec<u8>> {
+        self.to_bytes()
+    }
+
+    /// Append one variable binding.
+    pub fn push(&mut self, varbind: SnmpVarBind) {
+        self.varbinds.push(varbind);
+    }
+
+    /// Ordered variable bindings.
+    pub fn varbinds(&self) -> &[SnmpVarBind] {
+        &self.varbinds
+    }
+
+    /// Compatibility alias for [`SnmpVarBindList::varbinds`].
+    pub fn as_slice(&self) -> &[SnmpVarBind] {
+        self.varbinds()
+    }
+
+    /// Consume the list and return the ordered variable bindings.
+    pub fn into_vec(self) -> Vec<SnmpVarBind> {
+        self.varbinds
+    }
+
+    /// Iterate over ordered variable bindings.
+    pub fn iter(&self) -> core::slice::Iter<'_, SnmpVarBind> {
+        self.varbinds.iter()
+    }
+
+    /// Number of variable bindings.
+    pub fn len(&self) -> usize {
+        self.varbinds.len()
+    }
+
+    /// Whether the list contains no variable bindings.
+    pub fn is_empty(&self) -> bool {
+        self.varbinds.is_empty()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::CrafterError;
 
     #[test]
     fn snmp_varbind_request_null_compiles_decodes_and_inspects() -> Result<()> {
@@ -325,5 +421,118 @@ mod tests {
         assert_eq!(raw.raw_value_tlv_bytes(), Some(&[0xc3, 0x01, 0xaa][..]));
 
         Ok(())
+    }
+
+    #[test]
+    fn snmp_varbind_list_empty_compiles_and_decodes() -> Result<()> {
+        let list = SnmpVarBindList::empty();
+
+        // Source-backed: docs/snmp-rfc-manifest.md records RFC 1157 Section
+        // 4.1.1 and RFC 3416 Section 3 for VarBindList as an ordered
+        // SEQUENCE OF VarBind, which may be empty at the BER layer.
+        assert_eq!(list.compile()?, [0x30, 0x00]);
+        assert!(list.is_empty());
+        assert_eq!(list.len(), 0);
+        assert_eq!(list.as_slice(), &[]);
+
+        let mut with_rest = list.compile()?;
+        with_rest.push(0xaa);
+        let (decoded, rest) = SnmpVarBindList::decode(&with_rest)?;
+
+        assert_eq!(decoded, list);
+        assert_eq!(rest, &[0xaa]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_varbind_list_single_compiles_and_decodes() -> Result<()> {
+        let name = SnmpOid::from_dotted("1.3.6.1.2.1.1.3.0")?;
+        let varbind = SnmpVarBind::null(name);
+        let list = SnmpVarBindList::new(vec![varbind.clone()]);
+
+        let expected = [
+            0x30, 0x0e, 0x30, 0x0c, 0x06, 0x08, 0x2b, 0x06, 0x01, 0x02, 0x01, 0x01, 0x03, 0x00,
+            0x05, 0x00,
+        ];
+        assert_eq!(list.compile()?, expected);
+        assert_eq!(list.len(), 1);
+        assert_eq!(list.as_slice(), &[varbind]);
+
+        let (decoded, rest) = SnmpVarBindList::decode(&expected)?;
+        assert_eq!(decoded, list);
+        assert!(rest.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_varbind_list_multiple_preserves_order_and_unknown_values() -> Result<()> {
+        let uptime = SnmpVarBind::time_ticks(SnmpOid::from_dotted("1.3.6.1.2.1.1.3.0")?, 12_345);
+        let raw = SnmpVarBind::raw_value_tlv(
+            SnmpOid::from_dotted("1.3.6.1.2.1.1.5.0")?,
+            [0xc3, 0x01, 0xaa],
+        );
+        let list = SnmpVarBindList::new(vec![uptime.clone(), raw.clone()]);
+
+        let expected = [
+            0x30, 0x1f, 0x30, 0x0e, 0x06, 0x08, 0x2b, 0x06, 0x01, 0x02, 0x01, 0x01, 0x03, 0x00,
+            0x43, 0x02, 0x30, 0x39, 0x30, 0x0d, 0x06, 0x08, 0x2b, 0x06, 0x01, 0x02, 0x01, 0x01,
+            0x05, 0x00, 0xc3, 0x01, 0xaa,
+        ];
+        assert_eq!(list.compile()?, expected);
+
+        let (decoded, rest) = SnmpVarBindList::decode(&expected)?;
+        assert!(rest.is_empty());
+        assert_eq!(decoded.as_slice(), &[uptime, raw.clone()]);
+        assert_eq!(
+            decoded.as_slice()[1].raw_value_tlv_bytes(),
+            raw.raw_value_tlv_bytes()
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_varbind_list_duplicate_names_are_preserved() -> Result<()> {
+        let name = SnmpOid::from_dotted("1.3.6.1.2.1.1.5.0")?;
+        let first = SnmpVarBind::octet_string(name.clone(), b"alpha".to_vec());
+        let second = SnmpVarBind::octet_string(name, b"beta".to_vec());
+        let list = SnmpVarBindList::new(vec![first.clone(), second.clone()]);
+
+        let decoded = SnmpVarBindList::decode(&list.compile()?)?.0;
+
+        assert_eq!(decoded.as_slice(), &[first, second]);
+        assert_eq!(decoded.as_slice()[0].name(), decoded.as_slice()[1].name());
+        assert_eq!(decoded.as_slice()[0].as_octets(), Some(&b"alpha"[..]));
+        assert_eq!(decoded.as_slice()[1].as_octets(), Some(&b"beta"[..]));
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_varbind_list_truncated_member_returns_structured_error() {
+        let bytes = [
+            0x30, 0x0d, 0x30, 0x0c, 0x06, 0x08, 0x2b, 0x06, 0x01, 0x02, 0x01, 0x01, 0x03, 0x00,
+            0x05,
+        ];
+
+        assert_eq!(
+            SnmpVarBindList::decode(&bytes),
+            Err(CrafterError::buffer_too_short("snmp.ber.sequence", 14, 13))
+        );
+    }
+
+    #[test]
+    fn snmp_varbind_list_invalid_nested_sequence_returns_structured_error() {
+        let bytes = [0x30, 0x03, 0x02, 0x01, 0x00];
+
+        assert_eq!(
+            SnmpVarBindList::decode(&bytes),
+            Err(CrafterError::invalid_field_value(
+                "snmp.ber.sequence",
+                "expected universal constructed SEQUENCE"
+            ))
+        );
     }
 }
