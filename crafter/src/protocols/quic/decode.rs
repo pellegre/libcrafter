@@ -46,7 +46,7 @@ pub(crate) fn decode_quic_datagram(payload: &[u8]) -> Result<Quic> {
     }
 
     let packet = QuicPacket::decode(payload)?;
-    if packet.is_version_negotiation() || packet.is_retry() {
+    if packet.is_version_negotiation() || packet.is_retry() || packet.is_long_header() {
         return Ok(Quic::new().packet(packet));
     }
 
