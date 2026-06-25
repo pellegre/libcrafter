@@ -1,8 +1,9 @@
 //! Simple Network Management Protocol (SNMP) module scaffold.
 //!
-//! SNMP support is being added in source-backed slices. This module is only
-//! the Rust home for those later slices; it does not expose a packet layer,
-//! builders, decode entrypoint, or UDP registry dispatch yet.
+//! SNMP support is being added in source-backed slices. This module exposes
+//! the community-based packet layer and source-backed BER/PDU primitives; it
+//! does not expose a manager workflow, SNMPv3 security behavior, or UDP
+//! registry dispatch yet.
 //!
 //! Source gate: any SNMP wire behavior added here must first be authorized by
 //! `docs/snmp-rfc-manifest.md`.
@@ -22,6 +23,7 @@ pub use constants::{
     SNMP_PDU_TAG_INFORM_REQUEST, SNMP_PDU_TAG_REPORT, SNMP_PDU_TAG_RESPONSE,
     SNMP_PDU_TAG_SET_REQUEST, SNMP_PDU_TAG_TRAP, SNMP_PDU_TAG_TRAP_V2,
 };
+pub use message::{Snmp, SnmpVersion};
 pub use oid::SnmpOid;
 pub use pdu::{SnmpGetBulkPdu, SnmpPdu, SnmpRawPdu, SnmpRawPduBody, SnmpRequestPdu, SnmpV1TrapPdu};
 pub use registry::{
