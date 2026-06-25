@@ -1156,6 +1156,51 @@ impl SnmpV3Message {
         )
     }
 
+    /// Build an SNMPv3 message with a plaintext Report-PDU.
+    pub fn new_plaintext_report(
+        msg_id: i64,
+        max_size: i64,
+        flags: impl Into<Vec<u8>>,
+        security_model: i64,
+        security_parameters: impl Into<Vec<u8>>,
+        context_engine_id: impl Into<Vec<u8>>,
+        context_name: impl Into<Vec<u8>>,
+        request_id: i64,
+        varbinds: super::SnmpVarBindList,
+    ) -> Result<Self> {
+        Self::new_plaintext(
+            msg_id,
+            max_size,
+            flags,
+            security_model,
+            security_parameters,
+            SnmpScopedPdu::new(
+                context_engine_id,
+                context_name,
+                SnmpPdu::report(request_id, varbinds)?,
+            ),
+        )
+    }
+
+    /// Build an SNMPv3 USM message with a plaintext Report-PDU.
+    pub fn new_usm_report(
+        msg_id: i64,
+        max_size: i64,
+        flags: impl Into<Vec<u8>>,
+        usm: SnmpUsmSecurityParameters,
+        context_engine_id: impl Into<Vec<u8>>,
+        context_name: impl Into<Vec<u8>>,
+        request_id: i64,
+        varbinds: super::SnmpVarBindList,
+    ) -> Result<Self> {
+        let scoped_pdu = SnmpScopedPdu::new(
+            context_engine_id,
+            context_name,
+            SnmpPdu::report(request_id, varbinds)?,
+        );
+        Self::new_usm(msg_id, max_size, flags, usm, scoped_pdu.compile()?)
+    }
+
     const fn with_version(mut self, version: SnmpVersion) -> Self {
         self.version = version;
         self
@@ -1291,13 +1336,20 @@ impl SnmpV3Message {
 
     fn summary_fields(&self) -> String {
         let encrypted_len = self.encrypted_scoped_pdu_len().ok().flatten().unwrap_or(0);
+        let scoped_summary = self
+            .scoped_pdu()
+            .ok()
+            .flatten()
+            .map(|scoped_pdu| format!(" scoped_pdu={}", scoped_pdu.summary()))
+            .unwrap_or_default();
         format!(
-            "{} msg_security_parameters_len={} scoped_data_kind={} scoped_data_len={} encrypted_scoped_pdu_len={}",
+            "{} msg_security_parameters_len={} scoped_data_kind={} scoped_data_len={} encrypted_scoped_pdu_len={}{}",
             self.global_data.summary_fields(),
             self.security_parameters.len(),
             self.scoped_data_kind(),
             self.scoped_data.len(),
-            encrypted_len
+            encrypted_len,
+            scoped_summary
         )
     }
 
@@ -1629,6 +1681,54 @@ impl Snmp {
             flags,
             usm,
             encrypted_pdu,
+        )?))
+    }
+
+    /// Build an SNMPv3 top-level message with a plaintext Report-PDU.
+    pub fn v3_report(
+        msg_id: i64,
+        max_size: i64,
+        flags: impl Into<Vec<u8>>,
+        security_model: i64,
+        security_parameters: impl Into<Vec<u8>>,
+        context_engine_id: impl Into<Vec<u8>>,
+        context_name: impl Into<Vec<u8>>,
+        request_id: i64,
+        varbinds: super::SnmpVarBindList,
+    ) -> Result<Self> {
+        Ok(Self::from_v3_message(SnmpV3Message::new_plaintext_report(
+            msg_id,
+            max_size,
+            flags,
+            security_model,
+            security_parameters,
+            context_engine_id,
+            context_name,
+            request_id,
+            varbinds,
+        )?))
+    }
+
+    /// Build an SNMPv3 USM top-level message with a plaintext Report-PDU.
+    pub fn v3_usm_report(
+        msg_id: i64,
+        max_size: i64,
+        flags: impl Into<Vec<u8>>,
+        usm: SnmpUsmSecurityParameters,
+        context_engine_id: impl Into<Vec<u8>>,
+        context_name: impl Into<Vec<u8>>,
+        request_id: i64,
+        varbinds: super::SnmpVarBindList,
+    ) -> Result<Self> {
+        Ok(Self::from_v3_message(SnmpV3Message::new_usm_report(
+            msg_id,
+            max_size,
+            flags,
+            usm,
+            context_engine_id,
+            context_name,
+            request_id,
+            varbinds,
         )?))
     }
 
@@ -3091,6 +3191,113 @@ mod tests {
         assert!(decoded.summary().contains("encrypted_scoped_pdu_len=5"));
         assert!(!decoded.summary().contains("fa fb"));
         assert!(!decoded.show().contains("fa fb"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_v3_report_plaintext_builder_compiles_decodes_and_summarizes() -> Result<()> {
+        let oid = SnmpOid::from_dotted("1.3.6.1.2.1.1.3.0")?;
+        let varbinds = SnmpVarBindList::new(vec![SnmpVarBind::time_ticks(oid, 42)]);
+        let snmp = Snmp::v3_report(
+            18,
+            1500,
+            [registry::SNMP_V3_FLAG_REPORTABLE],
+            registry::SNMP_SECURITY_MODEL_USM,
+            Vec::<u8>::new(),
+            b"engine".to_vec(),
+            b"context".to_vec(),
+            99,
+            varbinds,
+        )?;
+        let bytes = snmp.compile()?;
+        let decoded = Snmp::decode(&bytes)?;
+        let v3 = decoded.as_v3().expect("v3 wrapper");
+        let scoped = v3.scoped_pdu()?.expect("plaintext scoped PDU");
+        let report = scoped.pdu().as_report()?.expect("Report fields");
+
+        // Source-backed: docs/snmp-rfc-manifest.md records RFC 3412 Section 6
+        // for plaintext ScopedPDU and RFC 3416 Section 3 for Report-PDU tag 8.
+        // The helper accepts caller-supplied report varbinds rather than
+        // inventing source-unsupported named report shortcuts.
+        assert_eq!(v3.scoped_data_kind(), "plaintext");
+        assert_eq!(scoped.context_engine_id(), b"engine");
+        assert_eq!(scoped.context_name(), b"context");
+        assert_eq!(scoped.pdu().tag_number(), SnmpPdu::TAG_REPORT);
+        assert_eq!(report.request_id(), 99);
+        assert_eq!(report.error_status(), 0);
+        assert_eq!(report.error_index(), 0);
+        assert_eq!(report.varbinds().len(), 1);
+        assert_eq!(decoded.compile()?, bytes);
+        assert!(decoded.summary().contains("scoped_data_kind=plaintext"));
+        assert!(scoped.summary().contains("pdu_type=report"));
+        assert!(decoded.show().contains("msg_flags_reportable: true"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_v3_report_usm_builder_preserves_security_and_context() -> Result<()> {
+        let usm = sample_usm_parameters();
+        let message = SnmpV3Message::new_usm_report(
+            19,
+            1500,
+            [registry::SNMP_V3_FLAG_REPORTABLE],
+            usm.clone(),
+            [0x80, 0x00, 0x1f],
+            Vec::<u8>::new(),
+            100,
+            SnmpVarBindList::empty(),
+        )?;
+        let snmp = Snmp::from_v3_message(message);
+        let decoded = Snmp::decode(&snmp.compile()?)?;
+        let v3 = decoded.as_v3().expect("v3 wrapper");
+        let decoded_usm = v3
+            .usm_security_parameters()?
+            .expect("USM security parameters");
+        let scoped = v3.scoped_pdu()?.expect("plaintext scoped PDU");
+        let report = scoped.pdu().as_report()?.expect("Report fields");
+
+        assert_eq!(decoded_usm, usm);
+        assert_eq!(v3.raw_security_parameters().bytes(), usm.compile()?);
+        assert_eq!(scoped.context_engine_id(), &[0x80, 0x00, 0x1f]);
+        assert_eq!(scoped.context_name(), b"");
+        assert_eq!(report.request_id(), 100);
+        assert!(report.varbinds().is_empty());
+        assert!(decoded.summary().contains("pdu_type=report"));
+        assert_eq!(decoded.compile()?, snmp.compile()?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_v3_report_layer_usm_builder_returns_packet_surface() -> Result<()> {
+        let usm = sample_usm_parameters();
+        let snmp = Snmp::v3_usm_report(
+            20,
+            1500,
+            [registry::SNMP_V3_FLAG_REPORTABLE],
+            usm,
+            b"engine".to_vec(),
+            Vec::<u8>::new(),
+            101,
+            SnmpVarBindList::empty(),
+        )?;
+        let packet = Packet::from_layer(snmp.clone());
+        let decoded = Snmp::decode(&packet.compile()?)?;
+        let report = decoded
+            .as_v3()
+            .expect("v3 wrapper")
+            .scoped_pdu()?
+            .expect("plaintext scoped PDU")
+            .pdu()
+            .as_report()?
+            .expect("Report fields");
+
+        assert_eq!(snmp.as_v3().expect("v3 wrapper").version(), SnmpVersion::V3);
+        assert_eq!(report.request_id(), 101);
+        assert!(packet.summary().contains("Snmp(version=v3"));
+        assert!(packet.summary().contains("pdu_type=report"));
 
         Ok(())
     }
