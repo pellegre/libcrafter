@@ -269,10 +269,13 @@ impl SnmpVarBind {
 
     /// Stable inspection fields for generated tools.
     pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
-        vec![
+        let mut fields = vec![
             ("name", self.name.to_string()),
-            ("value_type", self.value.summary_label()),
-        ]
+            ("name_type", self.name.summary_label().to_string()),
+            ("name_arc_count", self.name.arcs().len().to_string()),
+        ];
+        fields.extend(self.value.inspection_fields());
+        fields
     }
 }
 
@@ -359,6 +362,34 @@ impl SnmpVarBindList {
     pub fn is_empty(&self) -> bool {
         self.varbinds.is_empty()
     }
+
+    /// A compact summary of this variable binding list.
+    pub fn summary(&self) -> String {
+        format!("varbinds={}", self.varbinds.len())
+    }
+
+    /// Stable inspection fields for generated tools.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        let mut fields = vec![("varbind_count", self.varbinds.len().to_string())];
+        for (index, varbind) in self.varbinds.iter().enumerate() {
+            fields.push((varbind_field_name(index), varbind.summary()));
+        }
+        fields
+    }
+}
+
+fn varbind_field_name(index: usize) -> &'static str {
+    const NAMES: [&str; 8] = [
+        "varbind[0]",
+        "varbind[1]",
+        "varbind[2]",
+        "varbind[3]",
+        "varbind[4]",
+        "varbind[5]",
+        "varbind[6]",
+        "varbind[7]",
+    ];
+    NAMES.get(index).copied().unwrap_or("varbind[*]")
 }
 
 #[cfg(test)]
@@ -386,6 +417,8 @@ mod tests {
             varbind.inspection_fields(),
             [
                 ("name", "1.3.6.1.2.1.1.3.0".to_string()),
+                ("name_type", "object-identifier".to_string()),
+                ("name_arc_count", "9".to_string()),
                 ("value_type", "null".to_string()),
             ]
         );
@@ -481,6 +514,11 @@ mod tests {
         assert!(list.is_empty());
         assert_eq!(list.len(), 0);
         assert_eq!(list.as_slice(), &[]);
+        assert_eq!(list.summary(), "varbinds=0");
+        assert_eq!(
+            list.inspection_fields(),
+            [("varbind_count", "0".to_string())]
+        );
 
         let mut with_rest = list.compile()?;
         with_rest.push(0xaa);
@@ -505,6 +543,14 @@ mod tests {
         assert_eq!(list.compile()?, expected);
         assert_eq!(list.len(), 1);
         assert_eq!(list.as_slice(), &[varbind]);
+        assert_eq!(list.summary(), "varbinds=1");
+        assert_eq!(
+            list.inspection_fields(),
+            [
+                ("varbind_count", "1".to_string()),
+                ("varbind[0]", "1.3.6.1.2.1.1.3.0=null".to_string()),
+            ]
+        );
 
         let (decoded, rest) = SnmpVarBindList::decode(&expected)?;
         assert_eq!(decoded, list);

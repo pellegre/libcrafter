@@ -457,6 +457,57 @@ impl SnmpValue {
         }
     }
 
+    pub(super) fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        let mut fields = vec![("value_type", self.summary_label())];
+
+        match self {
+            Self::Integer(value) => fields.push(("value", value.to_string())),
+            Self::OctetString(value) => {
+                fields.push(("value_len", value.as_bytes().len().to_string()))
+            }
+            Self::Null | Self::NoSuchObject | Self::NoSuchInstance | Self::EndOfMibView => {}
+            Self::ObjectIdentifier(value) => {
+                fields.push(("value", value.to_string()));
+                fields.push(("value_arc_count", value.arcs().len().to_string()));
+            }
+            Self::IpAddress(octets) => fields.push((
+                "value",
+                format!("{}.{}.{}.{}", octets[0], octets[1], octets[2], octets[3]),
+            )),
+            Self::Counter32(value) | Self::Gauge32OrUnsigned32(value) | Self::TimeTicks(value) => {
+                fields.push(("value", value.to_string()))
+            }
+            Self::Opaque(value) => fields.push(("value_len", value.as_bytes().len().to_string())),
+            Self::Counter64(value) => fields.push(("value", value.to_string())),
+            Self::RawApplication(raw) => {
+                push_unknown_inspection_fields(
+                    &mut fields,
+                    ber::BerTag::new(
+                        ber::BerClass::Application,
+                        raw.is_constructed(),
+                        raw.tag_number(),
+                    ),
+                    Some(raw.content().len()),
+                    Some(raw.tlv_len()),
+                );
+            }
+            Self::RawTlv(raw) => {
+                if let Some(tag) = raw.tag() {
+                    push_unknown_inspection_fields(
+                        &mut fields,
+                        tag,
+                        raw.content().map(<[u8]>::len),
+                        Some(raw.as_bytes().len()),
+                    );
+                } else {
+                    fields.push(("value_tlv_len", raw.as_bytes().len().to_string()));
+                }
+            }
+        }
+
+        fields
+    }
+
     pub(super) fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
         match self {
             Self::Integer(value) => ber::encode_integer(*value, out),
@@ -578,6 +629,12 @@ impl RawApplicationValue {
 
     pub(super) fn tlv_bytes(&self) -> Option<&[u8]> {
         self.raw_tlv.as_ref().map(RawTlv::as_bytes)
+    }
+
+    fn tlv_len(&self) -> usize {
+        self.tlv_bytes()
+            .map(<[u8]>::len)
+            .unwrap_or_else(|| encoded_tlv_len(self.content.len()))
     }
 
     pub(super) fn label(&self) -> String {
@@ -704,6 +761,50 @@ fn encode_tlv(tag: ber::BerTag, content: &[u8], out: &mut Vec<u8>) -> Result<()>
     ber::encode_length(content.len(), out)?;
     out.extend_from_slice(content);
     Ok(())
+}
+
+fn encoded_tlv_len(content_len: usize) -> usize {
+    ber::BER_IDENTIFIER_LEN + encoded_length_len(content_len) + content_len
+}
+
+fn encoded_length_len(length: usize) -> usize {
+    if length <= ber::BER_LENGTH_SHORT_FORM_MAX {
+        return ber::BER_LENGTH_FIELD_MIN_LEN;
+    }
+
+    let mut value = length;
+    let mut octets = 0usize;
+    while value != 0 {
+        octets += 1;
+        value >>= 8;
+    }
+
+    ber::BER_LENGTH_FIELD_MIN_LEN + octets
+}
+
+fn push_unknown_inspection_fields(
+    fields: &mut Vec<(&'static str, String)>,
+    tag: ber::BerTag,
+    content_len: Option<usize>,
+    tlv_len: Option<usize>,
+) {
+    fields.push(("value_ber_class", tag.class().label().to_string()));
+    fields.push((
+        "value_ber_class_bits",
+        format!("0x{:02x}", tag.class().bits()),
+    ));
+    fields.push(("value_ber_constructed", tag.is_constructed().to_string()));
+    fields.push(("value_ber_tag_number", tag.number().to_string()));
+    fields.push((
+        "value_ber_identifier",
+        format!("0x{:02x}", tag.identifier_octet()),
+    ));
+    if let Some(content_len) = content_len {
+        fields.push(("value_content_len", content_len.to_string()));
+    }
+    if let Some(tlv_len) = tlv_len {
+        fields.push(("value_tlv_len", tlv_len.to_string()));
+    }
 }
 
 fn encode_application_tlv(
@@ -1026,6 +1127,50 @@ mod tests {
         for (value, label) in cases {
             assert_eq!(value.summary_label(), label);
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_value_summary_show_fields_expose_supported_and_unknown_metadata() -> Result<()> {
+        let time_ticks = SnmpValue::time_ticks(12_345);
+        assert_eq!(time_ticks.summary_label(), "time-ticks");
+        assert_eq!(
+            time_ticks.inspection_fields(),
+            [
+                ("value_type", "time-ticks".to_string()),
+                ("value", "12345".to_string()),
+            ]
+        );
+
+        let oid = SnmpOid::from_dotted("1.3.6.1.2.1.1.3.0")?;
+        let oid_value = SnmpValue::object_identifier(oid);
+        assert_eq!(oid_value.summary_label(), "object-identifier");
+        assert_eq!(
+            oid_value.inspection_fields(),
+            [
+                ("value_type", "object-identifier".to_string()),
+                ("value", "1.3.6.1.2.1.1.3.0".to_string()),
+                ("value_arc_count", "9".to_string()),
+            ]
+        );
+
+        let (unknown, rest) = SnmpValue::decode(&[0x45, 0x81, 0x02, 0xde, 0xad, 0xbb])?;
+        assert_eq!(rest, &[0xbb]);
+        assert_eq!(unknown.summary_label(), "application-5");
+        assert_eq!(
+            unknown.inspection_fields(),
+            [
+                ("value_type", "application-5".to_string()),
+                ("value_ber_class", "application".to_string()),
+                ("value_ber_class_bits", "0x40".to_string()),
+                ("value_ber_constructed", "false".to_string()),
+                ("value_ber_tag_number", "5".to_string()),
+                ("value_ber_identifier", "0x45".to_string()),
+                ("value_content_len", "2".to_string()),
+                ("value_tlv_len", "5".to_string()),
+            ]
+        );
 
         Ok(())
     }
