@@ -10,7 +10,7 @@
 
 mod ber;
 mod constants;
-mod decode;
+pub(crate) mod decode;
 mod message;
 mod oid;
 mod pdu;
