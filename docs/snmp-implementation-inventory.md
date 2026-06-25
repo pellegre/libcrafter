@@ -143,6 +143,7 @@ types.
 | msgFlags bits and reserved auth/priv combination label | RFC 3412 Sections 6.4 and 6.5 | `crafter/src/protocols/snmp/v3.rs`; `crafter/src/protocols/snmp/constants.rs` | source-backed planned | Preserve caller-set flags, including deliberately bad combinations. |
 | Message processing model and security model labels | RFC 3411 Sections 5 and 6; IANA SNMP Number Spaces | `crafter/src/protocols/snmp/registry.rs`; `crafter/src/protocols/snmp/constants.rs` | source-backed preserve planned | Unknown and enterprise values are labels/preserved bytes, not policy. |
 | Plaintext `ScopedPDU` | RFC 3412 Section 6 | `crafter/src/protocols/snmp/v3.rs` | source-backed planned | Contains contextEngineID, contextName, and a PDU. |
+| Plaintext SNMPv3 Report wrapper helpers | RFC 3412 Section 6; RFC 3414 Section 4; RFC 3416 Section 3 | `crafter/src/protocols/snmp/message.rs` | source-backed implemented | Wrap caller-supplied Report-PDU varbinds in plaintext ScopedPDU messages for packet construction/decode only; no named discovery/statistics shortcuts are added without explicit source coverage. |
 | Encrypted scoped data as opaque bytes | RFC 3412 Sections 6.6 through 6.8 | `crafter/src/protocols/snmp/v3.rs` | source-backed preserve planned | No decryption or credential storage in `crafter`. |
 
 ## Security Parameters
