@@ -1187,6 +1187,11 @@ class PacketGenerator:
             # pcap/IPsec/fragment features off the BGP TCP stacks.
             if self.profile == "bgp-smoke" and not name.startswith("bgp_"):
                 continue
+            # SNMP focused profiles auto-sample only SNMP feature specs. Without
+            # this guard the generic stack-covering feature pass can draw UDP/IP
+            # feature cases onto the IPv4/UDP/SNMP stack.
+            if self.profile.startswith("snmp-") and not name.startswith("snmp_"):
+                continue
             # The RIP smoke profile auto-samples only RIP/RIPng feature specs
             # (rip_header, rip_entries, rip_auth, ripng_header, ripng_rtes),
             # keeping pcap/IPsec/fragment features off the RIP/RIPng UDP stacks.
