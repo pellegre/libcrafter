@@ -170,13 +170,27 @@ impl SnmpRawPdu {
 
     /// Stable inspection fields for generated tools.
     pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
-        vec![
+        let mut fields = vec![
             ("pdu_type", registry::pdu_tag_label(self.tag_number)),
             ("pdu_tag", self.tag_number.to_string()),
             ("pdu_tag_status", self.tag_status().to_string()),
             ("constructed", self.constructed.to_string()),
             ("body_length", self.body.len().to_string()),
-        ]
+        ];
+        fields.extend(self.raw_inspection_fields());
+        fields
+    }
+
+    fn raw_inspection_fields(&self) -> Vec<(&'static str, String)> {
+        let mut fields = vec![
+            ("pdu_ber_length", self.body.effective_length().to_string()),
+            ("body_bytes", ber::hex_bytes(self.body.as_bytes())),
+        ];
+        if let Some(raw_tlv) = self.raw_tlv_bytes() {
+            fields.push(("pdu_tlv_len", raw_tlv.len().to_string()));
+            fields.push(("pdu_tlv_bytes", ber::hex_bytes(raw_tlv)));
+        }
+        fields
     }
 
     fn tag_status(&self) -> registry::SnmpPduTagStatus {
@@ -1328,7 +1342,7 @@ impl SnmpPdu {
                 .as_report()?
                 .expect("Report variant must decode as Report")
                 .inspection_fields()),
-            Self::Unknown(_) => Ok(Vec::new()),
+            Self::Unknown(raw) => Ok(raw.raw_inspection_fields()),
         }
     }
 }
@@ -1445,6 +1459,47 @@ mod tests {
         assert_eq!(decoded.raw_tlv_bytes(), Some(&bytes[..13]));
         assert_eq!(decoded.compile()?, bytes[..13]);
         assert_eq!(rest, &[0xbb]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_raw_tlv_unknown_pdu_decode_recompile_and_inspection() -> Result<()> {
+        let bytes = [0xa9, 0x03, 0x02, 0x01, 0x05, 0xbb];
+        let (decoded, rest) = SnmpPdu::decode(&bytes)?;
+        let raw = decoded.as_unknown().expect("unknown PDU");
+
+        assert_eq!(rest, &[0xbb]);
+        assert_eq!(decoded.compile()?, bytes[..5]);
+        assert_eq!(raw.raw_tlv_bytes(), Some(&bytes[..5]));
+        assert_eq!(
+            decoded.inspection_fields(),
+            [
+                ("pdu_type", "pdu-9".to_string()),
+                ("pdu_tag", "9".to_string()),
+                ("pdu_tag_status", "unknown".to_string()),
+                ("constructed", "true".to_string()),
+                ("body_length", "3".to_string()),
+                ("pdu_ber_length", "3".to_string()),
+                ("body_bytes", "02 01 05".to_string()),
+                ("pdu_tlv_len", "5".to_string()),
+                ("pdu_tlv_bytes", "a9 03 02 01 05".to_string()),
+            ]
+        );
+        assert_eq!(
+            raw.inspection_fields(),
+            [
+                ("pdu_type", "pdu-9".to_string()),
+                ("pdu_tag", "9".to_string()),
+                ("pdu_tag_status", "unknown".to_string()),
+                ("constructed", "true".to_string()),
+                ("body_length", "3".to_string()),
+                ("pdu_ber_length", "3".to_string()),
+                ("body_bytes", "02 01 05".to_string()),
+                ("pdu_tlv_len", "5".to_string()),
+                ("pdu_tlv_bytes", "a9 03 02 01 05".to_string()),
+            ]
+        );
 
         Ok(())
     }
@@ -2062,7 +2117,9 @@ mod tests {
                 "  pdu_tag: 9\n",
                 "  pdu_tag_status: unknown\n",
                 "  constructed: true\n",
-                "  body_length: 3",
+                "  body_length: 3\n",
+                "  pdu_ber_length: 3\n",
+                "  body_bytes: 02 01 05",
             )
         );
 
