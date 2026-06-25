@@ -334,6 +334,12 @@ def _apply_behavior(
         fields["payload"] = {"hex": "", "length": 0}
 
 
+def _post_sample(fields: dict[str, JSONObject], *, stack: Sequence[str], case: str) -> None:
+    if "snmp" not in fields:
+        return
+    _pin_udp_ports(fields, fields["snmp"])
+
+
 def _apply_basic_behavior(snmp: JSONObject, *, case: str, behavior: str) -> None:
     if "truncated-message" in case:
         snmp.update({"version": "v2c", "message_length": {"malformed": "truncated"}})
@@ -509,5 +515,6 @@ register(
         sample=_sample,
         apply_behavior=_apply_behavior,
         handles_feature=_handles_feature,
+        post_sample=_post_sample,
     )
 )
