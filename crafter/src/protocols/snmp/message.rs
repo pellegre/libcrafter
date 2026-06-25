@@ -27,6 +27,11 @@ const SNMP_V3_SCOPED_DATA_CONTEXT: &str = "snmp.v3.scoped_data";
 const SNMP_V3_SCOPED_PDU_CONTEXT: &str = "snmp.v3.scoped_pdu";
 const SNMP_V3_CONTEXT_ENGINE_ID_CONTEXT: &str = "snmp.v3.context_engine_id";
 const SNMP_V3_CONTEXT_NAME_CONTEXT: &str = "snmp.v3.context_name";
+const SNMP_USM_SECURITY_PARAMETERS_CONTEXT: &str = "snmp.usm.security_parameters";
+const SNMP_USM_ENGINE_ID_CONTEXT: &str = "snmp.usm.engine_id";
+const SNMP_USM_USER_NAME_CONTEXT: &str = "snmp.usm.user_name";
+const SNMP_USM_AUTHENTICATION_PARAMETERS_CONTEXT: &str = "snmp.usm.authentication_parameters";
+const SNMP_USM_PRIVACY_PARAMETERS_CONTEXT: &str = "snmp.usm.privacy_parameters";
 
 /// Source-backed SNMP message version value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -515,6 +520,199 @@ impl SnmpScopedPdu {
     }
 }
 
+/// RFC 3414 USM security-parameters wire structure.
+///
+/// This models the BER bytes carried inside SNMPv3 `msgSecurityParameters`.
+/// It does not store keys, derive localized keys, authenticate, decrypt, or
+/// enforce timeliness policy.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SnmpUsmSecurityParameters {
+    engine_id: Vec<u8>,
+    engine_boots: i64,
+    engine_time: i64,
+    user_name: Vec<u8>,
+    authentication_parameters: Vec<u8>,
+    privacy_parameters: Vec<u8>,
+}
+
+impl SnmpUsmSecurityParameters {
+    /// Build USM security parameters from explicit wire fields.
+    pub fn new(
+        engine_id: impl Into<Vec<u8>>,
+        engine_boots: i64,
+        engine_time: i64,
+        user_name: impl Into<Vec<u8>>,
+        authentication_parameters: impl Into<Vec<u8>>,
+        privacy_parameters: impl Into<Vec<u8>>,
+    ) -> Self {
+        Self {
+            engine_id: engine_id.into(),
+            engine_boots,
+            engine_time,
+            user_name: user_name.into(),
+            authentication_parameters: authentication_parameters.into(),
+            privacy_parameters: privacy_parameters.into(),
+        }
+    }
+
+    /// msgAuthoritativeEngineID OCTET STRING bytes.
+    pub fn engine_id(&self) -> &[u8] {
+        &self.engine_id
+    }
+
+    /// msgAuthoritativeEngineBoots INTEGER value.
+    pub const fn engine_boots(&self) -> i64 {
+        self.engine_boots
+    }
+
+    /// msgAuthoritativeEngineTime INTEGER value.
+    pub const fn engine_time(&self) -> i64 {
+        self.engine_time
+    }
+
+    /// msgUserName OCTET STRING bytes.
+    pub fn user_name(&self) -> &[u8] {
+        &self.user_name
+    }
+
+    /// msgAuthenticationParameters OCTET STRING bytes.
+    pub fn authentication_parameters(&self) -> &[u8] {
+        &self.authentication_parameters
+    }
+
+    /// msgPrivacyParameters OCTET STRING bytes.
+    pub fn privacy_parameters(&self) -> &[u8] {
+        &self.privacy_parameters
+    }
+
+    /// Decode one USM security-parameters SEQUENCE.
+    pub fn decode(bytes: &[u8]) -> Result<(Self, &[u8])> {
+        let (content, rest) = ber::decode_sequence(bytes)?;
+        let (engine_id, content_rest) = decode_octet_string_tlv(
+            content,
+            SNMP_USM_ENGINE_ID_CONTEXT,
+            "expected universal primitive OCTET STRING for msgAuthoritativeEngineID",
+            "msgAuthoritativeEngineID length exceeds supported size",
+        )?;
+        let (engine_boots, content_rest) = ber::decode_integer(content_rest)?;
+        let (engine_time, content_rest) = ber::decode_integer(content_rest)?;
+        let (user_name, content_rest) = decode_octet_string_tlv(
+            content_rest,
+            SNMP_USM_USER_NAME_CONTEXT,
+            "expected universal primitive OCTET STRING for msgUserName",
+            "msgUserName length exceeds supported size",
+        )?;
+        let (authentication_parameters, content_rest) = decode_octet_string_tlv(
+            content_rest,
+            SNMP_USM_AUTHENTICATION_PARAMETERS_CONTEXT,
+            "expected universal primitive OCTET STRING for msgAuthenticationParameters",
+            "msgAuthenticationParameters length exceeds supported size",
+        )?;
+        let (privacy_parameters, content_rest) = decode_octet_string_tlv(
+            content_rest,
+            SNMP_USM_PRIVACY_PARAMETERS_CONTEXT,
+            "expected universal primitive OCTET STRING for msgPrivacyParameters",
+            "msgPrivacyParameters length exceeds supported size",
+        )?;
+        if !content_rest.is_empty() {
+            return Err(ber::invalid_ber_field(
+                SNMP_USM_SECURITY_PARAMETERS_CONTEXT,
+                "trailing bytes after USM security parameter fields",
+            ));
+        }
+
+        Ok((
+            Self::new(
+                engine_id.to_vec(),
+                engine_boots,
+                engine_time,
+                user_name.to_vec(),
+                authentication_parameters.to_vec(),
+                privacy_parameters.to_vec(),
+            ),
+            rest,
+        ))
+    }
+
+    /// Encode this USM security-parameters SEQUENCE.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        let mut content = Vec::with_capacity(self.encoded_content_len());
+        encode_octet_string_tlv(&self.engine_id, &mut content)?;
+        ber::encode_integer(self.engine_boots, &mut content)?;
+        ber::encode_integer(self.engine_time, &mut content)?;
+        encode_octet_string_tlv(&self.user_name, &mut content)?;
+        encode_octet_string_tlv(&self.authentication_parameters, &mut content)?;
+        encode_octet_string_tlv(&self.privacy_parameters, &mut content)?;
+        ber::encode_sequence(&content, out)
+    }
+
+    /// Return this USM structure encoded as BER bytes.
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.encoded_len());
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Compile this USM structure into BER bytes.
+    pub fn compile(&self) -> Result<Vec<u8>> {
+        self.to_bytes()
+    }
+
+    /// Encoded USM security-parameters length in octets.
+    pub fn encoded_len(&self) -> usize {
+        encoded_tlv_len(self.encoded_content_len())
+    }
+
+    fn encoded_content_len(&self) -> usize {
+        encoded_tlv_len(self.engine_id.len())
+            + encoded_integer_tlv_len(self.engine_boots)
+            + encoded_integer_tlv_len(self.engine_time)
+            + encoded_tlv_len(self.user_name.len())
+            + encoded_tlv_len(self.authentication_parameters.len())
+            + encoded_tlv_len(self.privacy_parameters.len())
+    }
+
+    /// A compact summary that avoids printing credential-like bytes.
+    pub fn summary(&self) -> String {
+        format!(
+            "SnmpUsmSecurityParameters(engine_id_len={} engine_boots={} engine_time={} user_name_len={} authentication_parameters_len={} privacy_parameters_len={})",
+            self.engine_id.len(),
+            self.engine_boots,
+            self.engine_time,
+            self.user_name.len(),
+            self.authentication_parameters.len(),
+            self.privacy_parameters.len()
+        )
+    }
+
+    /// Stable inspection fields that avoid printing credential-like bytes.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("usm_engine_id_len", self.engine_id.len().to_string()),
+            ("usm_engine_boots", self.engine_boots.to_string()),
+            ("usm_engine_time", self.engine_time.to_string()),
+            ("usm_user_name_len", self.user_name.len().to_string()),
+            (
+                "usm_authentication_parameters_len",
+                self.authentication_parameters.len().to_string(),
+            ),
+            (
+                "usm_privacy_parameters_len",
+                self.privacy_parameters.len().to_string(),
+            ),
+        ]
+    }
+
+    /// Multi-line USM inspection output.
+    pub fn show(&self) -> String {
+        let mut output = "SnmpUsmSecurityParameters".to_string();
+        for (name, value) in self.inspection_fields() {
+            output.push_str(&format!("\n  {name}: {value}"));
+        }
+        output
+    }
+}
+
 /// Raw SNMPv3 security-parameters bytes for model-specific payloads.
 ///
 /// This records the security model that selected the payload syntax and keeps
@@ -533,6 +731,11 @@ impl SnmpRawSecurityParameters {
             security_model,
             bytes: bytes.into(),
         }
+    }
+
+    /// Build raw security parameters from a USM structure.
+    pub fn from_usm(usm: &SnmpUsmSecurityParameters) -> Result<Self> {
+        Ok(Self::new(registry::SNMP_SECURITY_MODEL_USM, usm.compile()?))
     }
 
     /// RFC 3412 `msgSecurityModel` value associated with these bytes.
@@ -579,6 +782,20 @@ impl SnmpRawSecurityParameters {
             "msgSecurityParameters length exceeds supported size",
         )?;
         Ok((Self::new(security_model, parameters.to_vec()), rest))
+    }
+
+    /// Decode these bytes as USM security parameters when the model is USM.
+    ///
+    /// Malformed USM bytes return a structured error while the original raw
+    /// bytes remain available through [`SnmpRawSecurityParameters::bytes`].
+    pub fn as_usm(&self) -> Result<Option<SnmpUsmSecurityParameters>> {
+        if self.security_model != registry::SNMP_SECURITY_MODEL_USM {
+            return Ok(None);
+        }
+
+        let (usm, rest) = SnmpUsmSecurityParameters::decode(&self.bytes)?;
+        ber::require_sequence_exact(rest)?;
+        Ok(Some(usm))
     }
 
     /// Encode these raw security parameters as msgSecurityParameters.
@@ -680,6 +897,24 @@ impl SnmpV3Message {
         ))
     }
 
+    /// Build an SNMPv3 message wrapper carrying USM security parameters.
+    pub fn new_usm(
+        msg_id: i64,
+        max_size: i64,
+        flags: impl Into<Vec<u8>>,
+        usm: SnmpUsmSecurityParameters,
+        scoped_data: impl Into<Vec<u8>>,
+    ) -> Result<Self> {
+        Ok(Self::new(
+            msg_id,
+            max_size,
+            flags,
+            registry::SNMP_SECURITY_MODEL_USM,
+            usm.compile()?,
+            scoped_data,
+        ))
+    }
+
     const fn with_version(mut self, version: SnmpVersion) -> Self {
         self.version = version;
         self
@@ -728,6 +963,11 @@ impl SnmpV3Message {
     /// Raw security-parameters representation with security-model metadata.
     pub const fn raw_security_parameters(&self) -> &SnmpRawSecurityParameters {
         &self.security_parameters
+    }
+
+    /// Decode USM security parameters when this message uses the USM model.
+    pub fn usm_security_parameters(&self) -> Result<Option<SnmpUsmSecurityParameters>> {
+        self.security_parameters.as_usm()
     }
 
     /// Raw RFC 3412 `ScopedPduData` TLV bytes.
@@ -2142,6 +2382,107 @@ mod tests {
         assert!(decoded.summary().contains("msg_security_parameters_len=2"));
         assert!(!decoded.summary().contains("aa bb"));
         assert!(!decoded.show().contains("aa bb"));
+
+        Ok(())
+    }
+
+    fn sample_usm_parameters() -> SnmpUsmSecurityParameters {
+        SnmpUsmSecurityParameters::new(
+            [0x80, 0x00, 0x1f],
+            7,
+            9,
+            [0xff, 0x00, b'u'],
+            [0xaa, 0xbb, 0xcc],
+            [0xde, 0xad],
+        )
+    }
+
+    #[test]
+    fn snmp_usm_parameters_compile_decode_and_hide_sensitive_bytes() -> Result<()> {
+        let usm = sample_usm_parameters();
+        let expected = [
+            0x30, 0x19, 0x04, 0x03, 0x80, 0x00, 0x1f, 0x02, 0x01, 0x07, 0x02, 0x01, 0x09, 0x04,
+            0x03, 0xff, 0x00, b'u', 0x04, 0x03, 0xaa, 0xbb, 0xcc, 0x04, 0x02, 0xde, 0xad,
+        ];
+
+        // Source-backed: docs/snmp-rfc-manifest.md records RFC 3414 Section
+        // 2.4 for the UsmSecurityParameters SEQUENCE and its six fields.
+        assert_eq!(usm.encoded_len(), expected.len());
+        assert_eq!(usm.compile()?, expected);
+
+        let (decoded, rest) = SnmpUsmSecurityParameters::decode(&expected)?;
+        assert!(rest.is_empty());
+        assert_eq!(decoded.engine_id(), &[0x80, 0x00, 0x1f]);
+        assert_eq!(decoded.engine_boots(), 7);
+        assert_eq!(decoded.engine_time(), 9);
+        assert_eq!(decoded.user_name(), &[0xff, 0x00, b'u']);
+        assert_eq!(decoded.authentication_parameters(), &[0xaa, 0xbb, 0xcc]);
+        assert_eq!(decoded.privacy_parameters(), &[0xde, 0xad]);
+        assert_eq!(decoded.compile()?, expected);
+
+        let summary = decoded.summary();
+        assert!(summary.contains("engine_id_len=3"));
+        assert!(summary.contains("user_name_len=3"));
+        assert!(summary.contains("authentication_parameters_len=3"));
+        assert!(!summary.contains("aa bb"));
+        assert!(!decoded.show().contains("aa bb"));
+        assert!(!decoded.show().contains("ff 00 75"));
+
+        let raw = SnmpRawSecurityParameters::from_usm(&decoded)?;
+        assert_eq!(raw.security_model(), registry::SNMP_SECURITY_MODEL_USM);
+        assert_eq!(raw.bytes(), expected);
+        assert_eq!(raw.as_usm()?.expect("USM parameters"), decoded);
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_usm_parameters_v3_message_decode_preserves_raw_and_typed_forms() -> Result<()> {
+        let usm = sample_usm_parameters();
+        let message = SnmpV3Message::new_usm(
+            11,
+            1500,
+            [0x00],
+            usm.clone(),
+            minimal_plaintext_v3_scoped_data(),
+        )?;
+        let snmp = Snmp::from_v3_message(message);
+        let decoded = Snmp::decode(&snmp.compile()?)?;
+        let v3 = decoded.as_v3().expect("v3 wrapper");
+        let decoded_usm = v3
+            .usm_security_parameters()?
+            .expect("USM security parameters");
+
+        assert_eq!(v3.security_model(), registry::SNMP_SECURITY_MODEL_USM);
+        assert_eq!(v3.raw_security_parameters().bytes(), usm.compile()?);
+        assert_eq!(decoded_usm, usm);
+        assert_eq!(decoded.compile()?, snmp.compile()?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_usm_parameters_malformed_uses_raw_fallback() -> Result<()> {
+        let malformed = vec![0x30, 0x03, 0x04, 0x01, 0xaa];
+        let snmp = Snmp::v3(
+            12,
+            1500,
+            [0x00],
+            registry::SNMP_SECURITY_MODEL_USM,
+            malformed.clone(),
+            minimal_plaintext_v3_scoped_data(),
+        );
+        let decoded = Snmp::decode(&snmp.compile()?)?;
+        let v3 = decoded.as_v3().expect("v3 wrapper");
+        let raw = v3.raw_security_parameters();
+
+        assert_eq!(raw.security_model(), registry::SNMP_SECURITY_MODEL_USM);
+        assert_eq!(raw.bytes(), malformed);
+        assert_eq!(
+            v3.usm_security_parameters().expect_err("malformed USM"),
+            crate::error::CrafterError::buffer_too_short("snmp.ber.identifier", 1, 0)
+        );
+        assert_eq!(decoded.compile()?, snmp.compile()?);
 
         Ok(())
     }
