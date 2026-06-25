@@ -520,6 +520,66 @@ impl SnmpScopedPdu {
     }
 }
 
+/// RFC 3414 USM authoritative engine boots/time wire fields.
+///
+/// This is an inspectable pair of INTEGER values. It does not imply local
+/// engine state, replay windows, authoritative-engine discovery, or timeliness
+/// validation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SnmpUsmEngineTime {
+    engine_boots: i64,
+    engine_time: i64,
+}
+
+impl SnmpUsmEngineTime {
+    /// Build a wire-level USM authoritative engine boots/time pair.
+    ///
+    /// RFC 3414 timeliness windows and authoritative-engine discovery are
+    /// operational behavior for generated tools or probe cases, not crate
+    /// validation policy.
+    pub const fn new(engine_boots: i64, engine_time: i64) -> Self {
+        Self {
+            engine_boots,
+            engine_time,
+        }
+    }
+
+    /// msgAuthoritativeEngineBoots INTEGER value.
+    pub const fn engine_boots(self) -> i64 {
+        self.engine_boots
+    }
+
+    /// msgAuthoritativeEngineTime INTEGER value.
+    pub const fn engine_time(self) -> i64 {
+        self.engine_time
+    }
+
+    /// A compact summary of the USM authoritative engine counters.
+    pub fn summary(self) -> String {
+        format!(
+            "SnmpUsmEngineTime(engine_boots={} engine_time={})",
+            self.engine_boots, self.engine_time
+        )
+    }
+
+    /// Stable inspection fields for generated tools.
+    pub fn inspection_fields(self) -> Vec<(&'static str, String)> {
+        vec![
+            ("usm_engine_boots", self.engine_boots.to_string()),
+            ("usm_engine_time", self.engine_time.to_string()),
+        ]
+    }
+
+    /// Multi-line USM engine-time inspection output.
+    pub fn show(self) -> String {
+        let mut output = "SnmpUsmEngineTime".to_string();
+        for (name, value) in self.inspection_fields() {
+            output.push_str(&format!("\n  {name}: {value}"));
+        }
+        output
+    }
+}
+
 /// RFC 3414 USM security-parameters wire structure.
 ///
 /// This models the BER bytes carried inside SNMPv3 `msgSecurityParameters`.
@@ -555,6 +615,43 @@ impl SnmpUsmSecurityParameters {
         }
     }
 
+    /// Build USM security parameters from an authoritative engine boots/time pair.
+    pub fn from_engine_time(
+        engine_id: impl Into<Vec<u8>>,
+        engine_time: SnmpUsmEngineTime,
+        user_name: impl Into<Vec<u8>>,
+        authentication_parameters: impl Into<Vec<u8>>,
+        privacy_parameters: impl Into<Vec<u8>>,
+    ) -> Self {
+        Self::new(
+            engine_id,
+            engine_time.engine_boots(),
+            engine_time.engine_time(),
+            user_name,
+            authentication_parameters,
+            privacy_parameters,
+        )
+    }
+
+    /// Return a copy with an explicit msgAuthoritativeEngineBoots value.
+    pub fn with_engine_boots(mut self, engine_boots: i64) -> Self {
+        self.engine_boots = engine_boots;
+        self
+    }
+
+    /// Return a copy with an explicit msgAuthoritativeEngineTime value.
+    pub fn with_engine_time(mut self, engine_time: i64) -> Self {
+        self.engine_time = engine_time;
+        self
+    }
+
+    /// Return a copy with an explicit authoritative engine boots/time pair.
+    pub fn with_engine_time_fields(mut self, engine_time: SnmpUsmEngineTime) -> Self {
+        self.engine_boots = engine_time.engine_boots();
+        self.engine_time = engine_time.engine_time();
+        self
+    }
+
     /// msgAuthoritativeEngineID OCTET STRING bytes.
     pub fn engine_id(&self) -> &[u8] {
         &self.engine_id
@@ -568,6 +665,11 @@ impl SnmpUsmSecurityParameters {
     /// msgAuthoritativeEngineTime INTEGER value.
     pub const fn engine_time(&self) -> i64 {
         self.engine_time
+    }
+
+    /// Authoritative engine boots/time pair as packet-level wire fields.
+    pub const fn engine_time_fields(&self) -> SnmpUsmEngineTime {
+        SnmpUsmEngineTime::new(self.engine_boots, self.engine_time)
     }
 
     /// msgUserName OCTET STRING bytes.
@@ -2482,6 +2584,109 @@ mod tests {
             v3.usm_security_parameters().expect_err("malformed USM"),
             crate::error::CrafterError::buffer_too_short("snmp.ber.identifier", 1, 0)
         );
+        assert_eq!(decoded.compile()?, snmp.compile()?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_usm_engine_time_helpers_preserve_boundary_values() -> Result<()> {
+        let engine_time = SnmpUsmEngineTime::new(0, i64::from(i32::MAX));
+        assert_eq!(engine_time.engine_boots(), 0);
+        assert_eq!(engine_time.engine_time(), i64::from(i32::MAX));
+        assert!(engine_time.summary().contains("engine_boots=0"));
+        assert!(engine_time.summary().contains("engine_time=2147483647"));
+
+        let usm = SnmpUsmSecurityParameters::from_engine_time(
+            [0x80, 0x00, 0x1f],
+            engine_time,
+            [b'u'],
+            Vec::<u8>::new(),
+            Vec::<u8>::new(),
+        )
+        .with_engine_boots(i64::from(i32::MAX))
+        .with_engine_time(0);
+
+        // Source-backed: docs/snmp-rfc-manifest.md records RFC 3414 Section
+        // 2.4 for msgAuthoritativeEngineBoots and msgAuthoritativeEngineTime.
+        // The packet primitive preserves the caller's INTEGER values instead
+        // of enforcing RFC 3414 timeliness windows.
+        assert_eq!(
+            usm.engine_time_fields(),
+            SnmpUsmEngineTime::new(i64::from(i32::MAX), 0)
+        );
+
+        let encoded = usm.compile()?;
+        assert!(encoded
+            .windows(6)
+            .any(|window| window == [0x02, 0x04, 0x7f, 0xff, 0xff, 0xff]));
+        assert!(encoded
+            .windows(3)
+            .any(|window| window == [0x02, 0x01, 0x00]));
+
+        let (decoded, rest) = SnmpUsmSecurityParameters::decode(&encoded)?;
+        assert!(rest.is_empty());
+        assert_eq!(
+            decoded.engine_time_fields(),
+            SnmpUsmEngineTime::new(i64::from(i32::MAX), 0)
+        );
+        assert_eq!(decoded.compile()?, encoded);
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_usm_engine_time_decode_summary_and_inspection() -> Result<()> {
+        let engine_time = SnmpUsmEngineTime::new(123, 456);
+        let usm = sample_usm_parameters().with_engine_time_fields(engine_time);
+        let encoded = usm.compile()?;
+        let (decoded, rest) = SnmpUsmSecurityParameters::decode(&encoded)?;
+
+        assert!(rest.is_empty());
+        assert_eq!(decoded.engine_boots(), 123);
+        assert_eq!(decoded.engine_time(), 456);
+        assert_eq!(decoded.engine_time_fields(), engine_time);
+
+        let summary = decoded.summary();
+        assert!(summary.contains("engine_boots=123"));
+        assert!(summary.contains("engine_time=456"));
+        assert!(!summary.contains("aa bb"));
+        assert!(engine_time.show().contains("usm_engine_boots: 123"));
+
+        let fields = decoded.inspection_fields();
+        assert!(fields
+            .iter()
+            .any(|(name, value)| *name == "usm_engine_boots" && value == "123"));
+        assert!(fields
+            .iter()
+            .any(|(name, value)| *name == "usm_engine_time" && value == "456"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_usm_engine_time_unknown_model_preserves_raw_bytes() -> Result<()> {
+        let usm = sample_usm_parameters().with_engine_time_fields(SnmpUsmEngineTime::new(1, 2));
+        let raw_bytes = usm.compile()?;
+        let raw = SnmpRawSecurityParameters::new(999, raw_bytes.clone());
+
+        assert_eq!(raw.as_usm()?, None);
+        assert_eq!(raw.bytes(), raw_bytes);
+
+        let snmp = Snmp::v3(
+            13,
+            1500,
+            [0x00],
+            raw.security_model(),
+            raw.bytes().to_vec(),
+            minimal_plaintext_v3_scoped_data(),
+        );
+        let decoded = Snmp::decode(&snmp.compile()?)?;
+        let v3 = decoded.as_v3().expect("v3 wrapper");
+
+        assert_eq!(v3.security_model(), 999);
+        assert_eq!(v3.usm_security_parameters()?, None);
+        assert_eq!(v3.raw_security_parameters().bytes(), raw_bytes);
         assert_eq!(decoded.compile()?, snmp.compile()?);
 
         Ok(())

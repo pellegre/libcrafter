@@ -24,8 +24,8 @@ pub use constants::{
     SNMP_PDU_TAG_SET_REQUEST, SNMP_PDU_TAG_TRAP, SNMP_PDU_TAG_TRAP_V2,
 };
 pub use message::{
-    Snmp, SnmpRawSecurityParameters, SnmpScopedPdu, SnmpUsmSecurityParameters, SnmpV3GlobalData,
-    SnmpV3Message, SnmpVersion,
+    Snmp, SnmpRawSecurityParameters, SnmpScopedPdu, SnmpUsmEngineTime, SnmpUsmSecurityParameters,
+    SnmpV3GlobalData, SnmpV3Message, SnmpVersion,
 };
 pub use oid::SnmpOid;
 pub use pdu::{SnmpGetBulkPdu, SnmpPdu, SnmpRawPdu, SnmpRawPduBody, SnmpRequestPdu, SnmpV1TrapPdu};
