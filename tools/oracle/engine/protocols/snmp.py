@@ -356,7 +356,7 @@ def _apply_basic_behavior(snmp: JSONObject, *, case: str, behavior: str) -> None
     if behavior == "unknown-value-preservation" or "unknown-value-preservation" in case:
         snmp.update(_community_pdu("v2c", {"raw": 0xA9}, request_id=103))
         snmp["error_status"] = {"raw": 18}
-        snmp["raw_pdu"] = {"hex": "a9070201670201120201003000"}
+        snmp["raw_pdu"] = {"hex": "a90b0201670201120201003000"}
         return
     snmp.update(_community_pdu("v2c", "get_request", request_id=100))
 
@@ -372,7 +372,7 @@ def _apply_pdu_matrix_behavior(snmp: JSONObject, *, case: str, behavior: str) ->
         return
     if "unknown" in case or behavior == "unknown-pdu":
         snmp.update(_community_pdu("v2c", {"raw": 0xA9}, request_id=111))
-        snmp["raw_pdu"] = {"hex": "a90702016f0201000201003000"}
+        snmp["raw_pdu"] = {"hex": "a90b02016f0201000201003000"}
         return
     if "v1-trap" in case or behavior == "v1-trap":
         _apply_v1_trap(snmp)

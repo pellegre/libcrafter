@@ -393,6 +393,7 @@ def normalize_packet(
     _canonicalize_igmp(packet, normalized_layers, normalized_fields)
     _canonicalize_rip(packet, normalized_layers, normalized_fields)
     _canonicalize_ripng(packet, normalized_layers, normalized_fields)
+    _canonicalize_snmp_raw(normalized_layers, normalized_fields, feature_tags)
     _canonicalize_dot15d4_zigbee(normalized_layers, normalized_fields)
     _canonicalize_mqtt(packet, normalized_layers, normalized_fields)
     if source_hex is not None:
@@ -767,6 +768,96 @@ def _canonicalize_ripng(
     layers[payload_index] = "ripng"
     ripng_key = _layer_key_at(layers, payload_index)
     fields[ripng_key] = ripng_fields
+
+
+_SNMP_VERSION_LABELS: dict[int, str] = {0: "v1", 1: "v2c", 3: "v3"}
+
+
+def _canonicalize_snmp_raw(
+    layers: list[str],
+    fields: dict[str, JSONObject],
+    feature_tags: Sequence[str],
+) -> None:
+    """Promote Scapy Raw BER payloads for SNMP specs to a neutral SNMP layer."""
+
+    if "snmp" not in feature_tags and not any(tag.startswith("snmp_") for tag in feature_tags):
+        return
+    if "snmp" in layers or not layers or layers[-1] != "payload":
+        return
+
+    payload_index = len(layers) - 1
+    payload_key = _layer_key_at(layers, payload_index)
+    payload = fields.get(payload_key)
+    if not isinstance(payload, Mapping):
+        return
+    raw_hex = payload.get("hex")
+    if not isinstance(raw_hex, str):
+        return
+    try:
+        raw = bytes.fromhex(raw_hex)
+    except ValueError:
+        return
+
+    snmp_fields = _snmp_ber_message_fields(raw)
+    if snmp_fields is None:
+        return
+
+    fields.pop(payload_key, None)
+    layers[payload_index] = "snmp"
+    snmp_key = _layer_key_at(layers, payload_index)
+    fields[snmp_key] = snmp_fields
+
+
+def _snmp_ber_message_fields(raw: bytes) -> JSONObject | None:
+    if not raw or raw[0] != 0x30:
+        return None
+    message = _ber_definite_content(raw, 0)
+    if message is None or message[1] != len(raw):
+        return None
+    content, _end = message
+    version = _ber_definite_content(content, 0)
+    if version is None:
+        return None
+    version_content, version_end = version
+    if version_end > len(content) or content[0] != 0x02 or not version_content:
+        return None
+    version_value = int.from_bytes(version_content, "big", signed=False)
+    fields: JSONObject = {
+        "version": _SNMP_VERSION_LABELS.get(version_value, version_value),
+    }
+
+    community = _ber_definite_content(content, version_end)
+    if (
+        version_value in {0, 1}
+        and community is not None
+        and version_end < len(content)
+        and content[version_end] == 0x04
+    ):
+        community_content, _community_end = community
+        fields["community"] = community_content.decode("utf-8", "replace")
+
+    return fields
+
+
+def _ber_definite_content(raw: bytes, offset: int) -> tuple[bytes, int] | None:
+    if offset + 2 > len(raw):
+        return None
+    length_octet = raw[offset + 1]
+    if length_octet == 0x80:
+        return None
+    if length_octet & 0x80:
+        width = length_octet & 0x7F
+        if width == 0 or offset + 2 + width > len(raw):
+            return None
+        length = int.from_bytes(raw[offset + 2 : offset + 2 + width], "big")
+        start = offset + 2 + width
+    else:
+        length = length_octet
+        start = offset + 2
+    end = start + length
+    if end > len(raw):
+        return None
+    return raw[start:end], end
 
 
 # Scapy normalized dot15d4/zigbee layer names mapped onto the libcrafter

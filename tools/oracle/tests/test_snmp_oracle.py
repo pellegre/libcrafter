@@ -97,6 +97,25 @@ class SnmpOracleBackendTest(unittest.TestCase):
         self.assertEqual(decoded.fields["snmp"]["version"], "v2c")
         self.assertEqual(decoded.fields["snmp"]["community"], "doc-community")
 
+    @unittest.skipUnless(_scapy_available(), "scapy not importable")
+    def test_scapy_decode_canonicalizes_snmp_v3_raw_payload(self) -> None:
+        plan = _plan("snmp-v3-encrypted-scoped-data", "snmp_v3")
+        vector = scapy_packets.encode_packet_plan(plan)
+        decoded = scapy_normalize.decode_vector(vector)
+        self.assertIn("snmp", decoded.layers)
+        self.assertEqual(decoded.fields["snmp"]["version"], "v3")
+        self.assertNotIn("payload", decoded.fields)
+
+    @unittest.skipUnless(_scapy_available(), "scapy not importable")
+    def test_scapy_decode_canonicalizes_unknown_pdu_raw_payload(self) -> None:
+        plan = _plan("snmp-pdu-unknown-preserve", "snmp_pdu_matrix")
+        vector = scapy_packets.encode_packet_plan(plan)
+        decoded = scapy_normalize.decode_vector(vector)
+        self.assertIn("snmp", decoded.layers)
+        self.assertEqual(decoded.fields["snmp"]["version"], "v2c")
+        self.assertEqual(decoded.fields["snmp"]["community"], "doc-community")
+        self.assertNotIn("payload", decoded.fields)
+
     @unittest.skipUnless(
         _scapy_available() and shutil.which("tshark") is not None,
         "scapy or tshark not available",

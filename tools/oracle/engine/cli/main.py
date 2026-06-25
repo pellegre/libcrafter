@@ -8274,6 +8274,7 @@ _SUITE_FEATURE_BY_FAMILY = {
     "igmp": "igmp_header",
     "ip": "ip_fragment_transforms",
     "ipv6": "ipv6_fragment_routing",
+    "snmp": ("snmp_basic", "snmp_pdu_matrix", "snmp_v3"),
 }
 _LAYER_ONLY_SUITE_FAMILIES = frozenset({"igmp"})
 _SUITE_OFFLINE_DIRECTIONS = (
@@ -8282,7 +8283,20 @@ _SUITE_OFFLINE_DIRECTIONS = (
 )
 
 
-def _suite_offline_cases(feature_name: str) -> list[JSONObject]:
+def _suite_feature_names(feature_entry: str | Sequence[str]) -> tuple[str, ...]:
+    if isinstance(feature_entry, str):
+        return (feature_entry,)
+    names: list[str] = []
+    for name in feature_entry:
+        if not isinstance(name, str):
+            raise ValueError(f"invalid suite feature entry: {feature_entry!r}")
+        names.append(name)
+    if not names:
+        raise ValueError("suite feature entry must not be empty")
+    return tuple(names)
+
+
+def _suite_offline_cases(feature_name: str, *, include_feature: bool = False) -> list[JSONObject]:
     """Derive the offline suite case matrix from a feature's supported_cases.
 
     Each entry pairs a declared case with one supported offline direction and
@@ -8328,6 +8342,8 @@ def _suite_offline_cases(feature_name: str) -> list[JSONObject]:
                 "direction": direction,
                 "byte_policy": byte_policy if isinstance(byte_policy, str) else None,
             }
+            if include_feature:
+                entry["feature"] = feature_name
             if contract_only:
                 entry["contract_only"] = True
             if profile_names:
@@ -8347,8 +8363,8 @@ def _suite_layer_exists(layer: str) -> bool:
 
 def _specs_suite(args: argparse.Namespace) -> int:
     family = args.family
-    feature_name = _SUITE_FEATURE_BY_FAMILY.get(family)
-    if feature_name is None:
+    feature_entry = _SUITE_FEATURE_BY_FAMILY.get(family)
+    if feature_entry is None:
         print(
             f"no offline suite is defined for family {family!r}; "
             f"known families: {', '.join(sorted(_SUITE_FEATURE_BY_FAMILY))}",
@@ -8357,11 +8373,19 @@ def _specs_suite(args: argparse.Namespace) -> int:
         return 2
 
     try:
-        cases = _suite_offline_cases(feature_name)
+        feature_names = _suite_feature_names(feature_entry)
+        include_feature = len(feature_names) > 1
+        cases = [
+            entry
+            for feature_name in feature_names
+            for entry in _suite_offline_cases(feature_name, include_feature=include_feature)
+        ]
     except ValueError as exc:
         if family not in _LAYER_ONLY_SUITE_FAMILIES or not _suite_layer_exists(family):
             print(str(exc), file=sys.stderr)
             return 2
+        feature_names = _suite_feature_names(feature_entry)
+        include_feature = len(feature_names) > 1
         cases = []
 
     out_root = posixpath.join(args.out, f"{family}-offline-suite")
@@ -8373,6 +8397,7 @@ def _specs_suite(args: argparse.Namespace) -> int:
             continue
         case = entry["case"]
         direction = entry["direction"]
+        feature = entry.get("feature") if include_feature else None
         seed = _derive_suite_seed(args.seed, family, case, direction)
         artifact = posixpath.join(out_root, direction, case)
         argv = [
@@ -8384,32 +8409,41 @@ def _specs_suite(args: argparse.Namespace) -> int:
             args.profile,
             "--family",
             family,
-            "--case",
-            case,
-            "--direction",
-            direction,
-            "--seed",
-            str(seed),
-            "--count",
-            "1",
-            "--out",
-            artifact,
         ]
-        commands.append(
-            {
-                "case": case,
-                "direction": direction,
-                "byte_policy": entry["byte_policy"],
-                "seed": seed,
-                "artifact": artifact,
-                "command": argv,
-            }
+        if isinstance(feature, str):
+            argv.extend(["--feature", feature])
+            artifact = posixpath.join(out_root, direction, feature, case)
+        argv.extend(
+            [
+                "--case",
+                case,
+                "--direction",
+                direction,
+                "--seed",
+                str(seed),
+                "--count",
+                "1",
+                "--out",
+                artifact,
+            ]
         )
+        command: JSONObject = {
+            "case": case,
+            "direction": direction,
+            "byte_policy": entry["byte_policy"],
+            "seed": seed,
+            "artifact": artifact,
+            "command": argv,
+        }
+        if isinstance(feature, str):
+            command["feature"] = feature
+        commands.append(command)
 
+    feature_label = feature_names[0] if len(feature_names) == 1 else ",".join(feature_names)
     summary: JSONObject = {
         "mode": "specs.suite",
         "family": family,
-        "feature": feature_name,
+        "feature": feature_label,
         "backend": args.backend,
         "profile": args.profile,
         "base_seed": args.seed,
@@ -8418,12 +8452,14 @@ def _specs_suite(args: argparse.Namespace) -> int:
         "directions": list(_SUITE_OFFLINE_DIRECTIONS),
         "commands": commands,
     }
+    if len(feature_names) > 1:
+        summary["features"] = list(feature_names)
     if contract_cases:
         summary["contract_count"] = len(contract_cases)
         summary["contract_cases"] = contract_cases
     if not commands and not contract_cases and family in _LAYER_ONLY_SUITE_FAMILIES:
         summary["layer_only"] = True
-        summary["pending_feature"] = feature_name
+        summary["pending_feature"] = feature_label
 
     if args.run:
         return _run_specs_suite(summary, commands)
@@ -8432,11 +8468,11 @@ def _specs_suite(args: argparse.Namespace) -> int:
         sys.stdout.write(dumps_json(summary))
     else:
         print(
-            f"offline suite: family={family} feature={feature_name} "
+            f"offline suite: family={family} feature={feature_label} "
             f"backend={args.backend} profile={args.profile} cases={len(commands)}"
         )
         if summary.get("layer_only") is True:
-            print(f"  layer-only suite; pending feature={feature_name}")
+            print(f"  layer-only suite; pending feature={feature_label}")
         for command in commands:
             print(
                 f"  {command['direction']:<26} {command['case']:<34} "
