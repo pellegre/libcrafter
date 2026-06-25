@@ -19,7 +19,7 @@ fn quic_module_skeleton_layer_compiles_raw_payload() -> crate::Result<()> {
     assert_eq!(compiled.as_bytes(), payload);
     assert_eq!(quic.payload_state(), FieldState::User);
     assert_eq!(quic.payload_bytes(), payload);
-    assert_eq!(quic.summary(), "Quic(raw_len=5, status=skeleton)");
+    assert_eq!(quic.summary(), "Quic(raw_len=5, packets=0, status=raw)");
     Ok(())
 }
 
