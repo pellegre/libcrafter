@@ -268,8 +268,7 @@ mod tests {
 
     #[test]
     fn snmp_ber_malformed_indefinite_length_is_rejected_by_manifest_scope() {
-        let error =
-            ber::decode_sequence(&[0x30, 0x80, 0x00, 0x00]).expect_err("indefinite length");
+        let error = ber::decode_sequence(&[0x30, 0x80, 0x00, 0x00]).expect_err("indefinite length");
 
         assert_invalid_field(
             error,
@@ -288,8 +287,7 @@ mod tests {
 
     #[test]
     fn snmp_ber_malformed_invalid_oid_continuation_reports_structured_error() {
-        let error =
-            SnmpOid::decode(&[0x06, 0x02, 0x2b, 0x80]).expect_err("unterminated OID arc");
+        let error = SnmpOid::decode(&[0x06, 0x02, 0x2b, 0x80]).expect_err("unterminated OID arc");
 
         assert_buffer_too_short(error, "snmp.ber.object_identifier.base128", 3, 2);
     }
