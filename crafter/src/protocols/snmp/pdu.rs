@@ -15,6 +15,7 @@ use crate::error::Result;
 pub struct SnmpRawPduBody {
     bytes: Vec<u8>,
     raw_tlv: Option<Vec<u8>>,
+    length: Option<usize>,
 }
 
 impl PartialEq for SnmpRawPduBody {
@@ -31,6 +32,7 @@ impl SnmpRawPduBody {
         Self {
             bytes: bytes.into(),
             raw_tlv: None,
+            length: None,
         }
     }
 
@@ -38,7 +40,44 @@ impl SnmpRawPduBody {
         Self {
             bytes: bytes.into(),
             raw_tlv: Some(raw_tlv.into()),
+            length: None,
         }
+    }
+
+    /// Pin the enclosing PDU BER length field to an explicit value.
+    ///
+    /// Unset PDU lengths are auto-filled from the body length. A pinned value
+    /// is emitted verbatim, even when it deliberately disagrees with the body
+    /// bytes; the body bytes are still emitted unchanged.
+    pub fn length(mut self, length: usize) -> Self {
+        self.set_length(length);
+        self
+    }
+
+    /// Drop any explicit PDU BER length override so encode auto-fills it.
+    pub fn clear_length(mut self) -> Self {
+        self.clear_length_override();
+        self
+    }
+
+    fn set_length(&mut self, length: usize) {
+        self.length = Some(length);
+        self.raw_tlv = None;
+    }
+
+    fn clear_length_override(&mut self) {
+        self.length = None;
+        self.raw_tlv = None;
+    }
+
+    /// Explicit PDU BER length override, if one is pinned.
+    pub const fn explicit_length(&self) -> Option<usize> {
+        self.length
+    }
+
+    /// Effective PDU BER length: caller override when set, else body length.
+    pub fn effective_length(&self) -> usize {
+        self.length.unwrap_or(self.bytes.len())
     }
 
     /// Raw BER content bytes inside the PDU TLV.
@@ -48,6 +87,9 @@ impl SnmpRawPduBody {
 
     /// Byte-exact PDU TLV bytes, when this body came from decode.
     pub fn raw_tlv_bytes(&self) -> Option<&[u8]> {
+        if self.length.is_some() {
+            return None;
+        }
         self.raw_tlv.as_deref()
     }
 
@@ -867,6 +909,32 @@ impl SnmpPdu {
         Self::Unknown(SnmpRawPdu::new(tag_number, constructed, body))
     }
 
+    /// Pin the enclosing PDU BER length field to an explicit value.
+    ///
+    /// The normal builder path auto-fills the PDU length from the body. This
+    /// override is for deliberately malformed packets: the length field is
+    /// emitted as supplied while the body bytes remain unchanged.
+    pub fn length(mut self, length: usize) -> Self {
+        self.raw_body_mut().set_length(length);
+        self
+    }
+
+    /// Drop any explicit PDU BER length override so encode auto-fills it.
+    pub fn clear_length(mut self) -> Self {
+        self.raw_body_mut().clear_length_override();
+        self
+    }
+
+    /// Explicit PDU BER length override, if one is pinned.
+    pub fn explicit_length(&self) -> Option<usize> {
+        self.raw_body().explicit_length()
+    }
+
+    /// Effective PDU BER length: caller override when set, else body length.
+    pub fn effective_length(&self) -> usize {
+        self.raw_body().effective_length()
+    }
+
     fn request_body_with_fields(
         request_id: i64,
         error_status: i64,
@@ -912,7 +980,13 @@ impl SnmpPdu {
             return Ok(());
         }
 
-        encode_pdu_tlv(self.tag_number(), self.is_constructed(), self.body(), out)
+        encode_pdu_tlv(
+            self.tag_number(),
+            self.is_constructed(),
+            self.body(),
+            self.explicit_length(),
+            out,
+        )
     }
 
     /// Return this PDU encoded as BER bytes.
@@ -968,6 +1042,10 @@ impl SnmpPdu {
 
     /// Raw BER content bytes inside the PDU TLV.
     pub fn body(&self) -> &[u8] {
+        self.raw_body().as_bytes()
+    }
+
+    fn raw_body(&self) -> &SnmpRawPduBody {
         match self {
             Self::GetRequest(body)
             | Self::GetNextRequest(body)
@@ -977,8 +1055,23 @@ impl SnmpPdu {
             | Self::GetBulkRequest(body)
             | Self::InformRequest(body)
             | Self::SnmpV2Trap(body)
-            | Self::Report(body) => body.as_bytes(),
-            Self::Unknown(raw) => raw.body(),
+            | Self::Report(body) => body,
+            Self::Unknown(raw) => &raw.body,
+        }
+    }
+
+    fn raw_body_mut(&mut self) -> &mut SnmpRawPduBody {
+        match self {
+            Self::GetRequest(body)
+            | Self::GetNextRequest(body)
+            | Self::Response(body)
+            | Self::SetRequest(body)
+            | Self::Trap(body)
+            | Self::GetBulkRequest(body)
+            | Self::InformRequest(body)
+            | Self::SnmpV2Trap(body)
+            | Self::Report(body) => body,
+            Self::Unknown(raw) => &mut raw.body,
         }
     }
 
@@ -1110,7 +1203,13 @@ fn decode_pdu_tlv(bytes: &[u8]) -> Result<(ber::BerTag, &[u8], &[u8], &[u8])> {
     Ok((tag, body, tlv, rest))
 }
 
-fn encode_pdu_tlv(tag_number: u8, constructed: bool, body: &[u8], out: &mut Vec<u8>) -> Result<()> {
+fn encode_pdu_tlv(
+    tag_number: u8,
+    constructed: bool,
+    body: &[u8],
+    explicit_length: Option<usize>,
+    out: &mut Vec<u8>,
+) -> Result<()> {
     if tag_number > ber::BER_LOW_TAG_NUMBER_MAX {
         return Err(ber::invalid_ber_field(
             "snmp.pdu.tag",
@@ -1122,7 +1221,7 @@ fn encode_pdu_tlv(tag_number: u8, constructed: bool, body: &[u8], out: &mut Vec<
         ber::BerTag::new(ber::BerClass::ContextSpecific, constructed, tag_number),
         out,
     )?;
-    ber::encode_length(body.len(), out)?;
+    ber::encode_length(explicit_length.unwrap_or(body.len()), out)?;
     out.extend_from_slice(body);
     Ok(())
 }
@@ -1390,6 +1489,44 @@ mod tests {
         assert_eq!(request.request_id(), 0);
         assert!(request.varbinds().is_empty());
         assert_eq!(decoded.compile()?, bytes);
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_length_overrides_auto_fill_unset_pdu_length() -> Result<()> {
+        let pdu = SnmpPdu::get_request(1, SnmpVarBindList::empty())?;
+
+        let expected = [
+            0xa0, 0x0b, 0x02, 0x01, 0x01, 0x02, 0x01, 0x00, 0x02, 0x01, 0x00, 0x30, 0x00,
+        ];
+        assert_eq!(pdu.explicit_length(), None);
+        assert_eq!(pdu.effective_length(), pdu.body().len());
+        assert_eq!(pdu.compile()?, expected);
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_length_overrides_preserve_wrong_pdu_and_nested_value_lengths() -> Result<()> {
+        let name = SnmpOid::from_dotted("1.3.6.1.2.1.1.5.0")?;
+        let malformed_value =
+            crate::protocols::snmp::SnmpVarBind::raw_value_tlv_with_length(name, 0x04, 5, [0xaa])?;
+        let pdu = SnmpPdu::get_request(1, SnmpVarBindList::new(vec![malformed_value]))?.length(0);
+
+        let expected_body = [
+            0x02, 0x01, 0x01, 0x02, 0x01, 0x00, 0x02, 0x01, 0x00, 0x30, 0x0f, 0x30, 0x0d, 0x06,
+            0x08, 0x2b, 0x06, 0x01, 0x02, 0x01, 0x01, 0x05, 0x00, 0x04, 0x05, 0xaa,
+        ];
+        let mut expected = vec![0xa0, 0x00];
+        expected.extend_from_slice(&expected_body);
+        assert_eq!(pdu.explicit_length(), Some(0));
+        assert_eq!(pdu.effective_length(), 0);
+        assert_eq!(pdu.compile()?, expected);
+
+        let mut auto_filled = vec![0xa0, expected_body.len() as u8];
+        auto_filled.extend_from_slice(&expected_body);
+        assert_eq!(pdu.clear_length().compile()?, auto_filled);
 
         Ok(())
     }
