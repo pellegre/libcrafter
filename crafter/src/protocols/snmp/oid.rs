@@ -210,6 +210,25 @@ impl SnmpOid {
     pub fn into_vec(self) -> Vec<u32> {
         self.arcs
     }
+
+    /// Stable packet-value label for summaries and inspection output.
+    pub const fn summary_label(&self) -> &'static str {
+        "object-identifier"
+    }
+
+    /// A compact object identifier summary without MIB name resolution.
+    pub fn summary(&self) -> String {
+        format!("oid={self}")
+    }
+
+    /// Stable inspection fields for generated tools.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("type", self.summary_label().to_string()),
+            ("oid", self.to_string()),
+            ("arc_count", self.arcs.len().to_string()),
+        ]
+    }
 }
 
 impl FromStr for SnmpOid {
@@ -317,6 +336,16 @@ mod tests {
         assert_eq!(oid.as_arcs(), &[1, 3, 6, 1, 2, 1, 1, 1, 0]);
         assert_eq!(oid.to_vec(), vec![1, 3, 6, 1, 2, 1, 1, 1, 0]);
         assert_eq!(oid.to_string(), "1.3.6.1.2.1.1.1.0");
+        assert_eq!(oid.summary_label(), "object-identifier");
+        assert_eq!(oid.summary(), "oid=1.3.6.1.2.1.1.1.0");
+        assert_eq!(
+            oid.inspection_fields(),
+            [
+                ("type", "object-identifier".to_string()),
+                ("oid", "1.3.6.1.2.1.1.1.0".to_string()),
+                ("arc_count", "9".to_string()),
+            ]
+        );
 
         let encoded = oid.to_bytes().expect("encode OID");
         assert_eq!(
