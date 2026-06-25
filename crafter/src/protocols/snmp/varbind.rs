@@ -121,6 +121,35 @@ impl SnmpVarBind {
         Self::new(name, SnmpValue::raw_tlv(bytes))
     }
 
+    /// Build a variable binding with a raw value TLV and explicit BER length.
+    ///
+    /// The identifier octet and content bytes are emitted as supplied. The BER
+    /// length field is encoded from `length`, even when it deliberately
+    /// disagrees with the content bytes.
+    pub fn raw_value_tlv_with_length(
+        name: SnmpOid,
+        identifier_octet: u8,
+        length: usize,
+        content: impl Into<Vec<u8>>,
+    ) -> Result<Self> {
+        let content = content.into();
+        let mut bytes = Vec::with_capacity(2 + content.len());
+        bytes.push(identifier_octet);
+        ber::encode_length(length, &mut bytes)?;
+        bytes.extend_from_slice(&content);
+        Ok(Self::raw_value_tlv(name, bytes))
+    }
+
+    /// Compatibility alias for [`SnmpVarBind::raw_value_tlv_with_length`].
+    pub fn raw_value_with_length(
+        name: SnmpOid,
+        identifier_octet: u8,
+        length: usize,
+        content: impl Into<Vec<u8>>,
+    ) -> Result<Self> {
+        Self::raw_value_tlv_with_length(name, identifier_octet, length, content)
+    }
+
     /// Compatibility alias for [`SnmpVarBind::raw_value_tlv`].
     pub fn raw_value(name: SnmpOid, bytes: impl Into<Vec<u8>>) -> Self {
         Self::raw_value_tlv(name, bytes)
