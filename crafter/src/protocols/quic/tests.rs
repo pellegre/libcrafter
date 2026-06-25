@@ -11,7 +11,7 @@ use super::Quic;
 
 #[test]
 fn quic_module_skeleton_layer_compiles_raw_payload() -> crate::Result<()> {
-    let payload = [0xc3, 0x00, 0x00, 0x00, 0x01];
+    let payload = [0xc3, 0xfa, 0xce, 0xfe, 0xed, 0x00, 0x00, 0xaa, 0xbb];
     let quic = Quic::from_bytes(payload);
     let packet = Packet::from_layer(quic.clone());
     let compiled = packet.compile()?;
@@ -19,13 +19,16 @@ fn quic_module_skeleton_layer_compiles_raw_payload() -> crate::Result<()> {
     assert_eq!(compiled.as_bytes(), payload);
     assert_eq!(quic.payload_state(), FieldState::User);
     assert_eq!(quic.payload_bytes(), payload);
-    assert_eq!(quic.summary(), "Quic(raw_len=5, packets=0, status=raw)");
+    assert_eq!(
+        quic.summary(),
+        "Quic(raw_len=9, packets=0, header=long kind=UnknownVersion version=0xfacefeed(unknown version 0xfacefeed) dcid=len=0 value=<empty> scid=len=0 value=<empty> protected_or_raw_len=2, frames=0, transport_parameters=0)"
+    );
     Ok(())
 }
 
 #[test]
 fn quic_module_skeleton_explicit_decode_stub_preserves_payload() -> crate::Result<()> {
-    let payload = [0xc3, 0x00, 0x00, 0x00, 0x01, 0xaa, 0xbb];
+    let payload = [0xc3, 0xfa, 0xce, 0xfe, 0xed, 0x00, 0x00, 0xaa, 0xbb];
     let packet = append_quic_packet(Packet::new(), &payload)?;
     let quic = packet.layer::<Quic>().expect("QUIC placeholder layer");
 

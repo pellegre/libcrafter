@@ -13,6 +13,8 @@ use crate::{CrafterError, Result};
 
 use super::constants::{quic_version_label, quic_version_status, QUIC_VERSION_1, QUIC_VERSION_2};
 use super::header::{classify_quic_header, QuicHeaderClassification, QuicLongPacketKind};
+use super::packet_number::{len_from_header_bits, QuicPacketNumber};
+use super::varint::{encoded_len_from_prefix, QuicVarInt};
 use super::QuicConnectionId;
 
 /// Raw-preserving QUIC UDP payload layer.
@@ -209,6 +211,7 @@ pub struct QuicPacket {
     bytes: Vec<u8>,
     version_negotiation: Option<QuicVersionNegotiationPacket>,
     retry: Option<QuicRetryPacket>,
+    long_header: Option<QuicLongHeaderPacket>,
 }
 
 impl QuicPacket {
@@ -218,6 +221,7 @@ impl QuicPacket {
             bytes: bytes.as_ref().to_vec(),
             version_negotiation: None,
             retry: None,
+            long_header: None,
         }
     }
 
@@ -227,6 +231,7 @@ impl QuicPacket {
             bytes: packet.as_bytes().to_vec(),
             version_negotiation: Some(packet),
             retry: None,
+            long_header: None,
         }
     }
 
@@ -236,6 +241,17 @@ impl QuicPacket {
             bytes: packet.as_bytes().to_vec(),
             version_negotiation: None,
             retry: Some(packet),
+            long_header: None,
+        }
+    }
+
+    /// Preserve a decoded long-header packet that carries a Length field.
+    pub fn from_long_header(packet: QuicLongHeaderPacket) -> Self {
+        Self {
+            bytes: packet.as_bytes().to_vec(),
+            version_negotiation: None,
+            retry: None,
+            long_header: Some(packet),
         }
     }
 
@@ -252,6 +268,7 @@ impl QuicPacket {
                     bytes: bytes.to_vec(),
                     version_negotiation: Some(version_negotiation),
                     retry: None,
+                    long_header: None,
                 })
             }
             QuicHeaderClassification::LongHeader {
@@ -263,7 +280,22 @@ impl QuicPacket {
                     bytes: bytes.to_vec(),
                     version_negotiation: None,
                     retry: Some(retry),
+                    long_header: None,
                 })
+            }
+            QuicHeaderClassification::LongHeader {
+                packet_kind:
+                    QuicLongPacketKind::Initial
+                    | QuicLongPacketKind::ZeroRtt
+                    | QuicLongPacketKind::Handshake,
+                ..
+            } => {
+                let long_header = QuicLongHeaderPacket::decode(bytes)?;
+                if long_header.len() == bytes.len() {
+                    Ok(Self::from_long_header(long_header))
+                } else {
+                    Ok(Self::from_bytes(bytes))
+                }
             }
             _ => Ok(Self::from_bytes(bytes)),
         }
@@ -289,6 +321,16 @@ impl QuicPacket {
         self.retry.is_some()
     }
 
+    /// Return the decoded Initial, 0-RTT, or Handshake long-header packet.
+    pub fn long_header(&self) -> Option<&QuicLongHeaderPacket> {
+        self.long_header.as_ref()
+    }
+
+    /// Return true when this packet is a decoded long-header packet with a Length field.
+    pub fn is_long_header(&self) -> bool {
+        self.long_header.is_some()
+    }
+
     /// Borrow the preserved packet bytes.
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes
@@ -312,6 +354,9 @@ impl QuicPacket {
         if let Some(retry) = &self.retry {
             return retry.summary();
         }
+        if let Some(long_header) = &self.long_header {
+            return long_header.summary();
+        }
         match classify_quic_header(&self.bytes) {
             Ok(classification) => {
                 format!("raw_len={} {}", self.bytes.len(), classification.summary())
@@ -328,6 +373,9 @@ impl QuicPacket {
         if let Some(retry) = &self.retry {
             return retry.inspection_fields();
         }
+        if let Some(long_header) = &self.long_header {
+            return long_header.inspection_fields();
+        }
         let mut fields = vec![
             ("raw_len", self.bytes.len().to_string()),
             ("raw_bytes", hex_bytes(&self.bytes)),
@@ -341,6 +389,266 @@ impl QuicPacket {
         }
         fields
     }
+}
+
+/// Decoded QUIC Initial, 0-RTT, or Handshake long-header packet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuicLongHeaderPacket {
+    first_byte: u8,
+    version: u32,
+    packet_kind: QuicLongPacketKind,
+    destination_connection_id: QuicConnectionId,
+    source_connection_id: QuicConnectionId,
+    length: QuicVarInt,
+    length_encoded_len: usize,
+    packet_number: QuicPacketNumber,
+    packet_number_bytes: Vec<u8>,
+    protected_payload: Vec<u8>,
+    raw: Vec<u8>,
+}
+
+impl QuicLongHeaderPacket {
+    /// Decode a byte-complete Initial, 0-RTT, or Handshake long-header packet.
+    ///
+    /// The QUIC Length field covers the packet-number bytes plus the protected
+    /// payload. Bytes after that span belong to later coalesced packets and are
+    /// not included in this packet's preserved raw bytes.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let bytes = bytes.as_ref();
+        let classification = classify_quic_header(bytes)?;
+        let QuicHeaderClassification::LongHeader {
+            first_byte,
+            version,
+            destination_connection_id,
+            source_connection_id,
+            invariant_len,
+            packet_kind:
+                packet_kind @ (QuicLongPacketKind::Initial
+                | QuicLongPacketKind::ZeroRtt
+                | QuicLongPacketKind::Handshake),
+            ..
+        } = classification
+        else {
+            return Err(CrafterError::invalid_field_value(
+                "quic.long_header",
+                "packet is not an Initial, 0-RTT, or Handshake packet",
+            ));
+        };
+
+        let length_start = invariant_len;
+        let first_length_byte = bytes.get(length_start).copied().ok_or_else(|| {
+            CrafterError::buffer_too_short("quic.long_header.length", length_start + 1, bytes.len())
+        })?;
+        let length_encoded_len = encoded_len_from_prefix(first_length_byte);
+        let length_end = length_start
+            .checked_add(length_encoded_len)
+            .ok_or_else(|| length_overflow_error())?;
+        if bytes.len() < length_end {
+            return Err(CrafterError::buffer_too_short(
+                "quic.long_header.length",
+                length_end,
+                bytes.len(),
+            ));
+        }
+        let (length, consumed) = QuicVarInt::decode(&bytes[length_start..length_end])?;
+        debug_assert_eq!(consumed, length_encoded_len);
+
+        let packet_number_len = len_from_header_bits(first_byte);
+        let length_value = usize::try_from(length.value()).map_err(|_| length_overflow_error())?;
+        if length_value < packet_number_len {
+            return Err(CrafterError::invalid_field_value(
+                "quic.long_header.length",
+                "QUIC long-header length must cover the packet number",
+            ));
+        }
+
+        let packet_number_start = length_end;
+        let protected_payload_start = packet_number_start
+            .checked_add(packet_number_len)
+            .ok_or_else(|| length_overflow_error())?;
+        if bytes.len() < protected_payload_start {
+            return Err(CrafterError::buffer_too_short(
+                "quic.long_header.packet_number",
+                protected_payload_start,
+                bytes.len(),
+            ));
+        }
+
+        let packet_end = length_end
+            .checked_add(length_value)
+            .ok_or_else(|| length_overflow_error())?;
+        if bytes.len() < packet_end {
+            return Err(CrafterError::buffer_too_short(
+                "quic.long_header.protected_payload",
+                packet_end,
+                bytes.len(),
+            ));
+        }
+
+        let (packet_number, consumed) = QuicPacketNumber::decode(
+            &bytes[packet_number_start..protected_payload_start],
+            packet_number_len,
+        )?;
+        debug_assert_eq!(consumed, packet_number_len);
+
+        Ok(Self {
+            first_byte,
+            version,
+            packet_kind,
+            destination_connection_id,
+            source_connection_id,
+            length,
+            length_encoded_len,
+            packet_number,
+            packet_number_bytes: bytes[packet_number_start..protected_payload_start].to_vec(),
+            protected_payload: bytes[protected_payload_start..packet_end].to_vec(),
+            raw: bytes[..packet_end].to_vec(),
+        })
+    }
+
+    /// Raw first byte, including protected packet-type-specific bits.
+    pub const fn first_byte(&self) -> u8 {
+        self.first_byte
+    }
+
+    /// QUIC version field.
+    pub const fn version(&self) -> u32 {
+        self.version
+    }
+
+    /// Version-specific long-header packet kind.
+    pub const fn packet_kind(&self) -> QuicLongPacketKind {
+        self.packet_kind
+    }
+
+    /// Borrow the Destination Connection ID.
+    pub fn destination_connection_id(&self) -> &QuicConnectionId {
+        &self.destination_connection_id
+    }
+
+    /// Borrow the Source Connection ID.
+    pub fn source_connection_id(&self) -> &QuicConnectionId {
+        &self.source_connection_id
+    }
+
+    /// Decoded QUIC Length field value.
+    pub const fn length(&self) -> QuicVarInt {
+        self.length
+    }
+
+    /// Encoded width of the QUIC Length field.
+    pub const fn length_encoded_len(&self) -> usize {
+        self.length_encoded_len
+    }
+
+    /// Decoded truncated packet-number value.
+    pub const fn packet_number(&self) -> QuicPacketNumber {
+        self.packet_number
+    }
+
+    /// Borrow the raw packet-number bytes.
+    pub fn packet_number_bytes(&self) -> &[u8] {
+        &self.packet_number_bytes
+    }
+
+    /// Borrow the protected payload bytes after the packet number.
+    pub fn protected_payload(&self) -> &[u8] {
+        &self.protected_payload
+    }
+
+    /// Borrow the preserved packet bytes.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.raw
+    }
+
+    /// Packet length in bytes.
+    pub fn len(&self) -> usize {
+        self.raw.len()
+    }
+
+    /// Return true when no packet bytes are present.
+    pub fn is_empty(&self) -> bool {
+        self.raw.is_empty()
+    }
+
+    /// One-line long-header summary.
+    pub fn summary(&self) -> String {
+        format!(
+            "{}(raw_len={}, version=0x{:08x}({}), dcid={}, scid={}, length={} length_encoded_len={}, packet_number={}, protected_payload_len={})",
+            self.packet_kind.label(),
+            self.raw.len(),
+            self.version,
+            quic_version_label(self.version),
+            self.destination_connection_id.summary(),
+            self.source_connection_id.summary(),
+            self.length.value(),
+            self.length_encoded_len,
+            self.packet_number.summary(),
+            self.protected_payload.len(),
+        )
+    }
+
+    /// Stable field/value pairs for packet inspection.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("classification", "long_header_packet".to_string()),
+            ("packet_kind", self.packet_kind.label().to_string()),
+            ("first_byte", format!("0x{:02x}", self.first_byte)),
+            (
+                "version",
+                format!(
+                    "0x{:08x} ({})",
+                    self.version,
+                    quic_version_label(self.version)
+                ),
+            ),
+            (
+                "version_status",
+                format!("{:?}", quic_version_status(self.version)),
+            ),
+            (
+                "destination_connection_id_len",
+                self.destination_connection_id.len().to_string(),
+            ),
+            (
+                "destination_connection_id",
+                self.destination_connection_id.to_spaced_hex(),
+            ),
+            (
+                "source_connection_id_len",
+                self.source_connection_id.len().to_string(),
+            ),
+            (
+                "source_connection_id",
+                self.source_connection_id.to_spaced_hex(),
+            ),
+            ("length", self.length.value().to_string()),
+            ("length_encoded_len", self.length_encoded_len.to_string()),
+            ("packet_number", self.packet_number.value().to_string()),
+            (
+                "packet_number_encoded_len",
+                self.packet_number
+                    .encoded_len_value()
+                    .unwrap_or_default()
+                    .to_string(),
+            ),
+            ("packet_number_bytes", hex_bytes(&self.packet_number_bytes)),
+            (
+                "protected_payload_len",
+                self.protected_payload.len().to_string(),
+            ),
+            ("protected_payload", hex_bytes(&self.protected_payload)),
+            ("raw_len", self.raw.len().to_string()),
+            ("raw_bytes", hex_bytes(&self.raw)),
+        ]
+    }
+}
+
+fn length_overflow_error() -> CrafterError {
+    CrafterError::invalid_field_value(
+        "quic.long_header.length",
+        "QUIC long-header length exceeds addressable packet bytes",
+    )
 }
 
 /// Decoded QUIC Retry packet.
@@ -1064,6 +1372,110 @@ mod tests {
         let fields = quic_packet.inspection_fields();
         assert!(fields.contains(&("classification", "short_header_ambiguous".to_string())));
         assert!(fields.contains(&("raw_len", "7".to_string())));
+    }
+
+    #[test]
+    fn quic_long_header_common_decode_parses_v1_initial_fields() {
+        let bytes = [
+            0xc2, 0x00, 0x00, 0x00, 0x01, 0x04, 0x83, 0x94, 0xc8, 0xf0, 0x01, 0xaa, 0x05, 0x01,
+            0x02, 0x03, 0xde, 0xad,
+        ];
+
+        let packet = QuicLongHeaderPacket::decode(bytes).unwrap();
+
+        assert_eq!(packet.first_byte(), 0xc2);
+        assert_eq!(packet.version(), QUIC_VERSION_1);
+        assert_eq!(packet.packet_kind(), QuicLongPacketKind::Initial);
+        assert_eq!(
+            packet.destination_connection_id().as_bytes(),
+            [0x83, 0x94, 0xc8, 0xf0]
+        );
+        assert_eq!(packet.source_connection_id().as_bytes(), [0xaa]);
+        assert_eq!(packet.length().value(), 5);
+        assert_eq!(packet.length_encoded_len(), 1);
+        assert_eq!(packet.packet_number().value(), 0x01_02_03);
+        assert_eq!(packet.packet_number_bytes(), [0x01, 0x02, 0x03]);
+        assert_eq!(packet.protected_payload(), [0xde, 0xad]);
+        assert_eq!(packet.as_bytes(), bytes);
+
+        let quic_packet = QuicPacket::decode(bytes).unwrap();
+        assert!(quic_packet.is_long_header());
+        assert_eq!(
+            quic_packet.long_header().unwrap().protected_payload(),
+            [0xde, 0xad]
+        );
+    }
+
+    #[test]
+    fn quic_long_header_common_decode_maps_v2_zero_rtt_fields() {
+        let bytes = [0xe0, 0x6b, 0x33, 0x43, 0xcf, 0x00, 0x00, 0x02, 0x7f, 0xca];
+
+        let packet = QuicLongHeaderPacket::decode(bytes).unwrap();
+
+        assert_eq!(packet.version(), QUIC_VERSION_2);
+        assert_eq!(packet.packet_kind(), QuicLongPacketKind::ZeroRtt);
+        assert_eq!(packet.destination_connection_id().as_bytes(), []);
+        assert_eq!(packet.source_connection_id().as_bytes(), []);
+        assert_eq!(packet.length().value(), 2);
+        assert_eq!(packet.packet_number().value(), 0x7f);
+        assert_eq!(packet.protected_payload(), [0xca]);
+    }
+
+    #[test]
+    fn quic_long_header_common_decode_preserves_coalesced_remainder_as_raw_packet() {
+        let bytes = [
+            0xc0, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x02, 0x01, 0xaa, 0xbb, 0xcc,
+        ];
+
+        let packet = QuicLongHeaderPacket::decode(bytes).unwrap();
+        assert_eq!(packet.as_bytes(), &bytes[..10]);
+
+        let quic_packet = QuicPacket::decode(bytes).unwrap();
+        assert!(!quic_packet.is_long_header());
+        assert_eq!(quic_packet.as_bytes(), bytes);
+    }
+
+    #[test]
+    fn quic_long_header_common_decode_reports_structured_length_and_packet_number_errors() {
+        assert_eq!(
+            QuicLongHeaderPacket::decode([0xc0, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00]).unwrap_err(),
+            CrafterError::buffer_too_short("quic.long_header.length", 8, 7)
+        );
+        assert_eq!(
+            QuicLongHeaderPacket::decode([0xc3, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x03])
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "quic.long_header.length",
+                "QUIC long-header length must cover the packet number",
+            )
+        );
+        assert_eq!(
+            QuicLongHeaderPacket::decode([0xc1, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x04, 0xaa,])
+                .unwrap_err(),
+            CrafterError::buffer_too_short("quic.long_header.packet_number", 10, 9)
+        );
+        assert_eq!(
+            QuicLongHeaderPacket::decode([
+                0xc0, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x04, 0xaa, 0xbb,
+            ])
+            .unwrap_err(),
+            CrafterError::buffer_too_short("quic.long_header.protected_payload", 12, 10)
+        );
+    }
+
+    #[test]
+    fn quic_long_header_common_decode_rejects_packets_without_common_length_fields() {
+        assert_eq!(
+            QuicLongHeaderPacket::decode([
+                0xf0, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0xde, 0xad, 0xbe, 0x00, 0x01, 0x02, 0x03,
+                0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
+            ])
+            .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "quic.long_header",
+                "packet is not an Initial, 0-RTT, or Handshake packet",
+            )
+        );
     }
 
     #[test]
