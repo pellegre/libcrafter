@@ -191,7 +191,7 @@ types.
 | PDU matrix features | `tools/oracle/specs/features/snmp-pdus.yaml` | source-backed validation planned | Covers Get, GetNext, Set, Response, Trap, GetBulk, Inform, Trapv2, and Report once implemented. |
 | SNMPv3 features | `tools/oracle/specs/features/snmp-v3.yaml` | source-backed validation planned | Covers global data, scoped PDU, raw/USM security parameters, and encrypted opaque data. |
 | Stack and profile fragments | `tools/oracle/specs/stacks.d/snmp.yaml`; `tools/oracle/specs/profiles.d/snmp-smoke.yaml` | source-backed validation planned | Offline and pcap profiles before any provider-backed run. |
-| Oracle generator and backend plugins | `tools/oracle/engine/protocols/snmp.py`; `tools/oracle/engine/backends/scapy/protocols/snmp.py`; `tools/oracle/engine/backends/wireshark/protocols/snmp.py` | source-backed validation planned | Backend gaps must be recorded, not papered over. |
+| Oracle generator and backend plugins | `tools/oracle/engine/protocols/snmp.py`; `tools/oracle/engine/backends/<reference-backend>/protocols/snmp.py`; `tools/oracle/engine/backends/wireshark/protocols/snmp.py` | source-backed validation planned | Backend gaps must be recorded, not papered over. |
 | Oracle tests | `tools/oracle/tests/test_snmp_oracle.py` | source-backed validation planned | Should validate specs, offline bytes, and pcap behavior without live traffic. |
 
 ## Probe Cases
