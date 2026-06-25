@@ -156,6 +156,32 @@ impl SnmpRawPdu {
     pub fn raw_tlv_bytes(&self) -> Option<&[u8]> {
         self.body.raw_tlv_bytes()
     }
+
+    /// A compact summary of this raw context-specific PDU.
+    pub fn summary(&self) -> String {
+        format!(
+            "pdu_type={} pdu_tag={} constructed={} body_length={}",
+            registry::pdu_tag_label(self.tag_number),
+            self.tag_number,
+            self.constructed,
+            self.body.len()
+        )
+    }
+
+    /// Stable inspection fields for generated tools.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("pdu_type", registry::pdu_tag_label(self.tag_number)),
+            ("pdu_tag", self.tag_number.to_string()),
+            ("pdu_tag_status", self.tag_status().to_string()),
+            ("constructed", self.constructed.to_string()),
+            ("body_length", self.body.len().to_string()),
+        ]
+    }
+
+    fn tag_status(&self) -> registry::SnmpPduTagStatus {
+        registry::snmp_pdu_tag_status(self.tag_number)
+    }
 }
 
 /// Common GetRequest-style request/response PDU fields.
@@ -284,7 +310,7 @@ impl SnmpRequestPdu {
     /// A compact summary of the common PDU fields with a tag-specific label.
     pub fn summary_with_label(&self, label: &str) -> String {
         format!(
-            "{label} request_id={} error_status={} error_index={} varbinds={}",
+            "pdu_type={label} request_id={} error_status={} error_index={} varbind_count={}",
             self.request_id,
             registry::snmp_error_status_summary(self.error_status),
             self.error_index,
@@ -403,7 +429,7 @@ impl SnmpGetBulkPdu {
     /// A compact summary of the GetBulkRequest-PDU fields.
     pub fn summary(&self) -> String {
         format!(
-            "get-bulk request_id={} non_repeaters={} max_repetitions={} varbinds={}",
+            "pdu_type=get-bulk-request request_id={} non_repeaters={} max_repetitions={} varbind_count={}",
             self.request_id,
             self.non_repeaters,
             self.max_repetitions,
@@ -552,7 +578,7 @@ impl SnmpV1TrapPdu {
     /// A compact summary of the SNMPv1 Trap-PDU fields.
     pub fn summary(&self) -> String {
         format!(
-            "trap enterprise={} agent={} generic={} specific={} timestamp={} varbinds={}",
+            "pdu_type=trap enterprise={} agent_address={} generic_trap={} specific_trap={} timestamp={} varbind_count={}",
             self.enterprise,
             format_agent_address(self.agent_address),
             self.generic_trap,
@@ -1168,6 +1194,141 @@ impl SnmpPdu {
         match self {
             Self::Report(body) => Ok(Some(SnmpRequestPdu::decode_body(body.as_bytes())?)),
             _ => Ok(None),
+        }
+    }
+
+    /// A compact summary of this PDU and its decoded source-backed fields.
+    ///
+    /// Malformed bodies stay inspectable: summary output falls back to raw PDU
+    /// metadata and `show()` includes the decode error instead of panicking.
+    pub fn summary(&self) -> String {
+        match self.summary_fields() {
+            Ok(fields) => format!("SnmpPdu({fields})"),
+            Err(error) => format!("SnmpPdu({} decode_error={error})", self.raw_summary()),
+        }
+    }
+
+    /// Stable inspection fields for generated tools.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        let mut fields = self.base_inspection_fields();
+        match self.decoded_inspection_fields() {
+            Ok(decoded_fields) => fields.extend(decoded_fields),
+            Err(error) => fields.push(("decode_error", error.to_string())),
+        }
+        fields
+    }
+
+    /// Multi-line PDU inspection output.
+    pub fn show(&self) -> String {
+        let mut output = "SnmpPdu".to_string();
+        for (name, value) in self.inspection_fields() {
+            output.push_str(&format!("\n  {name}: {value}"));
+        }
+        output
+    }
+
+    fn summary_fields(&self) -> Result<String> {
+        let label = self.tag_label();
+        match self {
+            Self::GetRequest(_) => Ok(self
+                .as_get_request()?
+                .expect("GetRequest variant must decode as GetRequest")
+                .summary_with_label(&label)),
+            Self::GetNextRequest(_) => Ok(self
+                .as_get_next_request()?
+                .expect("GetNextRequest variant must decode as GetNextRequest")
+                .summary_with_label(&label)),
+            Self::Response(_) => Ok(self
+                .as_response()?
+                .expect("Response variant must decode as Response")
+                .summary_with_label(&label)),
+            Self::SetRequest(_) => Ok(self
+                .as_set_request()?
+                .expect("SetRequest variant must decode as SetRequest")
+                .summary_with_label(&label)),
+            Self::Trap(_) => Ok(self
+                .as_v1_trap()?
+                .expect("Trap variant must decode as Trap")
+                .summary()),
+            Self::GetBulkRequest(_) => Ok(self
+                .as_get_bulk_request()?
+                .expect("GetBulkRequest variant must decode as GetBulkRequest")
+                .summary()),
+            Self::InformRequest(_) => Ok(self
+                .as_inform_request()?
+                .expect("InformRequest variant must decode as InformRequest")
+                .summary_with_label(&label)),
+            Self::SnmpV2Trap(_) => Ok(self
+                .as_snmpv2_trap()?
+                .expect("SNMPv2-Trap variant must decode as SNMPv2-Trap")
+                .summary_with_label(&label)),
+            Self::Report(_) => Ok(self
+                .as_report()?
+                .expect("Report variant must decode as Report")
+                .summary_with_label(&label)),
+            Self::Unknown(raw) => Ok(raw.summary()),
+        }
+    }
+
+    fn raw_summary(&self) -> String {
+        format!(
+            "pdu_type={} pdu_tag={} constructed={} body_length={}",
+            self.tag_label(),
+            self.tag_number(),
+            self.is_constructed(),
+            self.body().len()
+        )
+    }
+
+    fn base_inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("pdu_type", self.tag_label()),
+            ("pdu_tag", self.tag_number().to_string()),
+            ("pdu_tag_status", self.tag_status().to_string()),
+            ("constructed", self.is_constructed().to_string()),
+            ("body_length", self.body().len().to_string()),
+        ]
+    }
+
+    fn decoded_inspection_fields(&self) -> Result<Vec<(&'static str, String)>> {
+        match self {
+            Self::GetRequest(_) => Ok(self
+                .as_get_request()?
+                .expect("GetRequest variant must decode as GetRequest")
+                .inspection_fields()),
+            Self::GetNextRequest(_) => Ok(self
+                .as_get_next_request()?
+                .expect("GetNextRequest variant must decode as GetNextRequest")
+                .inspection_fields()),
+            Self::Response(_) => Ok(self
+                .as_response()?
+                .expect("Response variant must decode as Response")
+                .inspection_fields()),
+            Self::SetRequest(_) => Ok(self
+                .as_set_request()?
+                .expect("SetRequest variant must decode as SetRequest")
+                .inspection_fields()),
+            Self::Trap(_) => Ok(self
+                .as_v1_trap()?
+                .expect("Trap variant must decode as Trap")
+                .inspection_fields()),
+            Self::GetBulkRequest(_) => Ok(self
+                .as_get_bulk_request()?
+                .expect("GetBulkRequest variant must decode as GetBulkRequest")
+                .inspection_fields()),
+            Self::InformRequest(_) => Ok(self
+                .as_inform_request()?
+                .expect("InformRequest variant must decode as InformRequest")
+                .inspection_fields()),
+            Self::SnmpV2Trap(_) => Ok(self
+                .as_snmpv2_trap()?
+                .expect("SNMPv2-Trap variant must decode as SNMPv2-Trap")
+                .inspection_fields()),
+            Self::Report(_) => Ok(self
+                .as_report()?
+                .expect("Report variant must decode as Report")
+                .inspection_fields()),
+            Self::Unknown(_) => Ok(Vec::new()),
         }
     }
 }
@@ -1793,7 +1954,7 @@ mod tests {
         assert_eq!(known.error_status_label(), "too-big");
         assert_eq!(
             known.summary_with_label("response"),
-            "response request_id=7 error_status=too-big(1) error_index=0 varbinds=0"
+            "pdu_type=response request_id=7 error_status=too-big(1) error_index=0 varbind_count=0"
         );
 
         let unknown = SnmpRequestPdu::with_fields(7, 99, 3, SnmpVarBindList::empty());
@@ -1806,7 +1967,7 @@ mod tests {
         assert_eq!(unknown.error_status_label(), "error-status-99");
         assert_eq!(
             unknown.summary_with_label("response"),
-            "response request_id=7 error_status=error-status-99(99) error_index=3 varbinds=0"
+            "pdu_type=response request_id=7 error_status=error-status-99(99) error_index=3 varbind_count=0"
         );
         assert_eq!(
             unknown.inspection_fields(),
@@ -1819,6 +1980,93 @@ mod tests {
                 ("varbind_count", "0".to_string()),
             ]
         );
+    }
+
+    #[test]
+    fn snmp_pdu_summary_show_fields_are_stable_for_tools() -> Result<()> {
+        let request = SnmpPdu::get_request(1, SnmpVarBindList::empty())?;
+        assert_eq!(
+            request.summary(),
+            "SnmpPdu(pdu_type=get-request request_id=1 error_status=no-error(0) error_index=0 varbind_count=0)"
+        );
+        assert_eq!(
+            request.show(),
+            concat!(
+                "SnmpPdu\n",
+                "  pdu_type: get-request\n",
+                "  pdu_tag: 0\n",
+                "  pdu_tag_status: assigned\n",
+                "  constructed: true\n",
+                "  body_length: 11\n",
+                "  request_id: 1\n",
+                "  error_status: 0\n",
+                "  error_status_label: no-error\n",
+                "  error_status_assignment: assigned\n",
+                "  error_index: 0\n",
+                "  varbind_count: 0",
+            )
+        );
+
+        let response = SnmpPdu::response_error(128, 2, 3, SnmpVarBindList::empty())?;
+        assert_eq!(
+            response.summary(),
+            "SnmpPdu(pdu_type=response request_id=128 error_status=no-such-name(2) error_index=3 varbind_count=0)"
+        );
+        let response_show = response.show();
+        assert!(response_show.contains("  pdu_type: response"));
+        assert!(response_show.contains("  error_status_label: no-such-name"));
+        assert!(response_show.contains("  error_index: 3"));
+
+        let varbind =
+            crate::protocols::snmp::SnmpVarBind::null(SnmpOid::from_dotted("1.3.6.1.2.1.1.3.0")?);
+        let bulk =
+            SnmpPdu::get_bulk_request(7, 1, 10, SnmpVarBindList::new(vec![varbind.clone()]))?;
+        assert_eq!(
+            bulk.summary(),
+            "SnmpPdu(pdu_type=get-bulk-request request_id=7 non_repeaters=1 max_repetitions=10 varbind_count=1)"
+        );
+        let bulk_show = bulk.show();
+        assert!(bulk_show.contains("  pdu_type: get-bulk-request"));
+        assert!(bulk_show.contains("  non_repeaters: 1"));
+        assert!(bulk_show.contains("  max_repetitions: 10"));
+        assert!(bulk_show.contains("  varbind_count: 1"));
+
+        let trap = SnmpPdu::v1_trap(
+            SnmpOid::from_dotted("1.3.6.1.4.1")?,
+            [192, 0, 2, 44],
+            6,
+            4_321,
+            12_345,
+            SnmpVarBindList::new(vec![varbind]),
+        )?;
+        assert_eq!(
+            trap.summary(),
+            "SnmpPdu(pdu_type=trap enterprise=1.3.6.1.4.1 agent_address=192.0.2.44 generic_trap=6 specific_trap=4321 timestamp=12345 varbind_count=1)"
+        );
+        let trap_show = trap.show();
+        assert!(trap_show.contains("  pdu_type: trap"));
+        assert!(trap_show.contains("  agent_address: 192.0.2.44"));
+        assert!(trap_show.contains("  generic_trap: 6"));
+        assert!(trap_show.contains("  specific_trap: 4321"));
+
+        let unknown = SnmpPdu::unknown(9, true, [0x02, 0x01, 0x05]);
+        assert_eq!(
+            unknown.summary(),
+            "SnmpPdu(pdu_type=pdu-9 pdu_tag=9 constructed=true body_length=3)"
+        );
+        assert_eq!(
+            unknown.show(),
+            concat!(
+                "SnmpPdu\n",
+                "  pdu_type: pdu-9\n",
+                "  pdu_tag: 9\n",
+                "  pdu_tag_status: unknown\n",
+                "  constructed: true\n",
+                "  body_length: 3",
+            )
+        );
+
+        Ok(())
     }
 
     #[test]
@@ -1956,7 +2204,7 @@ mod tests {
         assert_eq!(bulk.varbinds().as_slice(), &[varbind]);
         assert_eq!(
             bulk.summary(),
-            "get-bulk request_id=7 non_repeaters=1 max_repetitions=10 varbinds=1"
+            "pdu_type=get-bulk-request request_id=7 non_repeaters=1 max_repetitions=10 varbind_count=1"
         );
         assert_eq!(
             bulk.inspection_fields(),
@@ -2061,7 +2309,7 @@ mod tests {
         assert_eq!(inform.varbinds().as_slice(), &[varbind]);
         assert_eq!(
             inform.summary_with_label("inform-request"),
-            "inform-request request_id=7 error_status=no-error(0) error_index=0 varbinds=1"
+            "pdu_type=inform-request request_id=7 error_status=no-error(0) error_index=0 varbind_count=1"
         );
         assert_eq!(
             inform.inspection_fields(),
@@ -2129,7 +2377,7 @@ mod tests {
         assert_eq!(trap.varbinds().as_slice(), &[uptime, trap_oid]);
         assert_eq!(
             trap.summary_with_label("snmpv2-trap"),
-            "snmpv2-trap request_id=42 error_status=no-error(0) error_index=0 varbinds=2"
+            "pdu_type=snmpv2-trap request_id=42 error_status=no-error(0) error_index=0 varbind_count=2"
         );
 
         let (decoded, rest) = SnmpPdu::decode(&expected)?;
@@ -2171,7 +2419,7 @@ mod tests {
         assert!(report.varbinds().is_empty());
         assert_eq!(
             report.summary_with_label("report"),
-            "report request_id=128 error_status=no-such-name(2) error_index=3 varbinds=0"
+            "pdu_type=report request_id=128 error_status=no-such-name(2) error_index=3 varbind_count=0"
         );
 
         let default_report = SnmpPdu::report(9, SnmpVarBindList::empty())?;
@@ -2180,7 +2428,7 @@ mod tests {
                 .as_report()?
                 .expect("default Report fields")
                 .summary_with_label("report"),
-            "report request_id=9 error_status=no-error(0) error_index=0 varbinds=0"
+            "pdu_type=report request_id=9 error_status=no-error(0) error_index=0 varbind_count=0"
         );
 
         let (decoded, rest) = SnmpPdu::decode(&expected)?;
@@ -2229,7 +2477,7 @@ mod tests {
         assert_eq!(trap.varbinds().as_slice(), &[varbind]);
         assert_eq!(
             trap.summary(),
-            "trap enterprise=1.3.6.1.4.1 agent=192.0.2.44 generic=6 specific=4321 timestamp=12345 varbinds=1"
+            "pdu_type=trap enterprise=1.3.6.1.4.1 agent_address=192.0.2.44 generic_trap=6 specific_trap=4321 timestamp=12345 varbind_count=1"
         );
         assert_eq!(
             trap.inspection_fields(),
