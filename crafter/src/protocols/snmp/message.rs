@@ -542,6 +542,37 @@ impl Snmp {
         self.to_bytes()
     }
 
+    /// A compact SNMP message summary that avoids printing community bytes.
+    pub fn summary(&self) -> String {
+        format!(
+            "Snmp(version={}, community_len={}, pdu={})",
+            self.version(),
+            self.community().len(),
+            self.pdu.summary()
+        )
+    }
+
+    /// Stable inspection fields for generated tools.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        let mut fields = vec![
+            ("version", self.version().to_string()),
+            ("version_value", self.version_value().to_string()),
+            ("community_len", self.community().len().to_string()),
+            ("message_len", self.encoded_len().to_string()),
+        ];
+        fields.extend(self.pdu.inspection_fields());
+        fields
+    }
+
+    /// Multi-line SNMP message inspection output.
+    pub fn show(&self) -> String {
+        let mut output = "Snmp".to_string();
+        for (name, value) in self.inspection_fields() {
+            output.push_str(&format!("\n  {name}: {value}"));
+        }
+        output
+    }
+
     fn encoded_content_len(&self) -> usize {
         encoded_integer_tlv_len(self.version_value())
             + encoded_tlv_len(self.community().len())
@@ -555,23 +586,11 @@ impl Layer for Snmp {
     }
 
     fn summary(&self) -> String {
-        format!(
-            "Snmp(version={}, community_len={}, pdu={})",
-            self.version(),
-            self.community().len(),
-            self.pdu.summary()
-        )
+        Snmp::summary(self)
     }
 
     fn inspection_fields(&self) -> Vec<(&'static str, String)> {
-        let mut fields = vec![
-            ("version", self.version().to_string()),
-            ("version_value", self.version_value().to_string()),
-            ("community_len", self.community().len().to_string()),
-            ("message_len", self.encoded_len().to_string()),
-        ];
-        fields.extend(self.pdu.inspection_fields());
-        fields
+        Snmp::inspection_fields(self)
     }
 
     fn encoded_len(&self) -> usize {
@@ -1165,6 +1184,145 @@ mod tests {
         assert!(fields.contains(&("pdu_type", "response".to_string())));
         assert!(fields.contains(&("request_id", "128".to_string())));
         assert!(!fields.iter().any(|(_, value)| value == "private"));
+
+        Ok(())
+    }
+
+    fn inspection_value<'a>(
+        fields: &'a [(&'static str, String)],
+        name: &'static str,
+    ) -> Option<&'a str> {
+        fields
+            .iter()
+            .find_map(|(field, value)| (*field == name).then_some(value.as_str()))
+    }
+
+    fn assert_message_hides_community(snmp: &Snmp, community: &[u8]) {
+        let secret = String::from_utf8_lossy(community);
+        assert!(!snmp.summary().contains(secret.as_ref()));
+        assert!(!snmp.show().contains(secret.as_ref()));
+        assert!(!snmp
+            .inspection_fields()
+            .iter()
+            .any(|(_, value)| value == secret.as_ref()));
+    }
+
+    #[test]
+    fn snmp_message_summary_v1_request_exposes_safe_fields() -> Result<()> {
+        let community = b"public";
+        let varbind =
+            crate::protocols::snmp::SnmpVarBind::null(SnmpOid::from_dotted("1.3.6.1.2.1.1.3.0")?);
+        let snmp = Snmp::v1_get_request(
+            community.to_vec(),
+            7,
+            crate::protocols::snmp::SnmpVarBindList::new(vec![varbind]),
+        )?;
+
+        let summary = snmp.summary();
+        assert!(summary.contains("version=v1"));
+        assert!(summary.contains("community_len=6"));
+        assert!(summary.contains("pdu_type=get-request"));
+        assert!(summary.contains("request_id=7"));
+        assert!(summary.contains("varbind_count=1"));
+
+        let fields = snmp.inspection_fields();
+        assert_eq!(inspection_value(&fields, "version"), Some("v1"));
+        assert_eq!(inspection_value(&fields, "version_value"), Some("0"));
+        assert_eq!(inspection_value(&fields, "community_len"), Some("6"));
+        assert_eq!(inspection_value(&fields, "pdu_type"), Some("get-request"));
+        assert_eq!(inspection_value(&fields, "request_id"), Some("7"));
+        assert_eq!(inspection_value(&fields, "varbind_count"), Some("1"));
+        assert_message_hides_community(&snmp, community);
+
+        let show = snmp.show();
+        assert!(show.starts_with("Snmp\n"));
+        assert!(show.contains("  version: v1"));
+        assert!(show.contains("  community_len: 6"));
+        assert!(show.contains("  pdu_type: get-request"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_message_summary_v2c_response_exposes_request_and_error_fields() -> Result<()> {
+        let community = b"private";
+        let snmp = Snmp::v2c_response_error(
+            community.to_vec(),
+            128,
+            2,
+            3,
+            crate::protocols::snmp::SnmpVarBindList::empty(),
+        )?;
+
+        let summary = snmp.summary();
+        assert!(summary.contains("version=v2c"));
+        assert!(summary.contains("community_len=7"));
+        assert!(summary.contains("pdu_type=response"));
+        assert!(summary.contains("request_id=128"));
+        assert!(summary.contains("error_status=no-such-name(2)"));
+        assert!(summary.contains("varbind_count=0"));
+
+        let fields = snmp.inspection_fields();
+        assert_eq!(inspection_value(&fields, "version"), Some("v2c"));
+        assert_eq!(inspection_value(&fields, "version_value"), Some("1"));
+        assert_eq!(inspection_value(&fields, "pdu_type"), Some("response"));
+        assert_eq!(inspection_value(&fields, "request_id"), Some("128"));
+        assert_eq!(inspection_value(&fields, "error_status"), Some("2"));
+        assert_eq!(
+            inspection_value(&fields, "error_status_label"),
+            Some("no-such-name")
+        );
+        assert_message_hides_community(&snmp, community);
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_message_summary_unknown_pdu_keeps_raw_metadata_visible() {
+        let community = b"public";
+        let snmp = Snmp::v2c(
+            community.to_vec(),
+            SnmpPdu::unknown(9, true, [0x02, 0x01, 0x05]),
+        );
+
+        assert_eq!(
+            snmp.summary(),
+            "Snmp(version=v2c, community_len=6, pdu=SnmpPdu(pdu_type=pdu-9 pdu_tag=9 constructed=true body_length=3))"
+        );
+        let fields = snmp.inspection_fields();
+        assert_eq!(inspection_value(&fields, "pdu_type"), Some("pdu-9"));
+        assert_eq!(inspection_value(&fields, "pdu_tag"), Some("9"));
+        assert_eq!(inspection_value(&fields, "pdu_tag_status"), Some("unknown"));
+        assert_eq!(inspection_value(&fields, "pdu_ber_length"), Some("3"));
+        assert_eq!(inspection_value(&fields, "body_bytes"), Some("02 01 05"));
+        assert_message_hides_community(&snmp, community);
+    }
+
+    #[test]
+    fn snmp_message_summary_raw_tlv_varbind_keeps_value_metadata_visible() -> Result<()> {
+        let community = b"agent-secret";
+        let raw = crate::protocols::snmp::SnmpVarBind::raw_value_tlv(
+            SnmpOid::from_dotted("1.3.6.1.2.1.1.5.0")?,
+            [0xc3, 0x81, 0x02, 0xde, 0xad],
+        );
+        let snmp = Snmp::v2c_response(
+            community.to_vec(),
+            9,
+            crate::protocols::snmp::SnmpVarBindList::new(vec![raw]),
+        )?;
+
+        let summary = snmp.summary();
+        assert!(summary.contains("pdu_type=response"));
+        assert!(summary.contains("request_id=9"));
+        assert!(summary.contains("varbind_count=1"));
+
+        let fields = snmp.inspection_fields();
+        assert_eq!(
+            inspection_value(&fields, "varbind[0]"),
+            Some("1.3.6.1.2.1.1.5.0=private-3")
+        );
+        assert!(snmp.show().contains("private-3"));
+        assert_message_hides_community(&snmp, community);
 
         Ok(())
     }
