@@ -219,6 +219,14 @@ impl QuicPacket {
         }
     }
 
+    /// Preserve a decoded or built Version Negotiation packet entry.
+    pub fn from_version_negotiation(packet: QuicVersionNegotiationPacket) -> Self {
+        Self {
+            bytes: packet.as_bytes().to_vec(),
+            version_negotiation: Some(packet),
+        }
+    }
+
     /// Decode a QUIC packet entry where source-backed typed parsing exists.
     pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
         let bytes = bytes.as_ref();
@@ -306,6 +314,27 @@ pub struct QuicVersionNegotiationPacket {
 }
 
 impl QuicVersionNegotiationPacket {
+    /// Start building a Version Negotiation packet.
+    ///
+    /// This only emits packet bytes. Endpoint version selection, downgrade
+    /// handling, and echo-policy decisions are intentionally out of scope.
+    pub fn builder() -> QuicVersionNegotiationBuilder {
+        QuicVersionNegotiationBuilder::new()
+    }
+
+    /// Build a Version Negotiation packet from connection IDs and versions.
+    pub fn new(
+        destination_connection_id: QuicConnectionId,
+        source_connection_id: QuicConnectionId,
+        supported_versions: impl IntoIterator<Item = u32>,
+    ) -> Result<Self> {
+        Self::builder()
+            .destination_connection_id(destination_connection_id)
+            .source_connection_id(source_connection_id)
+            .supported_versions(supported_versions)
+            .build()
+    }
+
     /// Decode a byte-complete Version Negotiation packet.
     pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
         let bytes = bytes.as_ref();
@@ -350,6 +379,48 @@ impl QuicVersionNegotiationPacket {
             source_connection_id,
             supported_versions,
             raw: bytes.to_vec(),
+        })
+    }
+
+    fn from_parts(
+        first_byte: u8,
+        destination_connection_id: QuicConnectionId,
+        source_connection_id: QuicConnectionId,
+        supported_versions: Vec<u32>,
+    ) -> Result<Self> {
+        if supported_versions.is_empty() {
+            return Err(CrafterError::invalid_field_value(
+                "quic.version_negotiation.supported_versions",
+                "Version Negotiation packets require at least one supported version",
+            ));
+        }
+        validate_version_negotiation_cid_len(destination_connection_id.len())?;
+        validate_version_negotiation_cid_len(source_connection_id.len())?;
+
+        let mut raw = Vec::with_capacity(
+            1 + 4
+                + 1
+                + destination_connection_id.len()
+                + 1
+                + source_connection_id.len()
+                + supported_versions.len() * 4,
+        );
+        raw.push(first_byte);
+        raw.extend_from_slice(&0u32.to_be_bytes());
+        raw.push(destination_connection_id.len() as u8);
+        raw.extend_from_slice(destination_connection_id.as_bytes());
+        raw.push(source_connection_id.len() as u8);
+        raw.extend_from_slice(source_connection_id.as_bytes());
+        for version in &supported_versions {
+            raw.extend_from_slice(&version.to_be_bytes());
+        }
+
+        Ok(Self {
+            first_byte,
+            destination_connection_id,
+            source_connection_id,
+            supported_versions,
+            raw,
         })
     }
 
@@ -439,6 +510,84 @@ impl QuicVersionNegotiationPacket {
             ("raw_len", self.raw.len().to_string()),
             ("raw_bytes", hex_bytes(&self.raw)),
         ]
+    }
+}
+
+/// Builder for QUIC Version Negotiation packet emission.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct QuicVersionNegotiationBuilder {
+    first_byte: Field<u8>,
+    destination_connection_id: Field<QuicConnectionId>,
+    source_connection_id: Field<QuicConnectionId>,
+    supported_versions: Vec<u32>,
+}
+
+impl QuicVersionNegotiationBuilder {
+    /// Create an empty Version Negotiation builder.
+    pub fn new() -> Self {
+        Self {
+            first_byte: Field::unset(),
+            destination_connection_id: Field::unset(),
+            source_connection_id: Field::unset(),
+            supported_versions: Vec::new(),
+        }
+    }
+
+    /// Pin byte 0 explicitly, including intentionally malformed values.
+    pub fn first_byte(mut self, first_byte: u8) -> Self {
+        self.first_byte.set_user(first_byte);
+        self
+    }
+
+    /// Set the Destination Connection ID bytes.
+    pub fn destination_connection_id(mut self, connection_id: QuicConnectionId) -> Self {
+        self.destination_connection_id.set_user(connection_id);
+        self
+    }
+
+    /// Set the Source Connection ID bytes.
+    pub fn source_connection_id(mut self, connection_id: QuicConnectionId) -> Self {
+        self.source_connection_id.set_user(connection_id);
+        self
+    }
+
+    /// Append one supported-version value.
+    pub fn supported_version(mut self, version: u32) -> Self {
+        self.supported_versions.push(version);
+        self
+    }
+
+    /// Replace supported-version values with the supplied list.
+    pub fn supported_versions(mut self, versions: impl IntoIterator<Item = u32>) -> Self {
+        self.supported_versions = versions.into_iter().collect();
+        self
+    }
+
+    /// Build the packet bytes.
+    pub fn build(self) -> Result<QuicVersionNegotiationPacket> {
+        let first_byte = self.first_byte.into_value().unwrap_or(0xc0);
+        let destination_connection_id = self
+            .destination_connection_id
+            .into_value()
+            .unwrap_or_default();
+        let source_connection_id = self.source_connection_id.into_value().unwrap_or_default();
+        QuicVersionNegotiationPacket::from_parts(
+            first_byte,
+            destination_connection_id,
+            source_connection_id,
+            self.supported_versions,
+        )
+    }
+}
+
+fn validate_version_negotiation_cid_len(len: usize) -> Result<()> {
+    if len <= u8::MAX as usize {
+        Ok(())
+    } else {
+        Err(CrafterError::invalid_field_value(
+            "quic.version_negotiation.connection_id.length",
+            "Version Negotiation connection ID length must fit in one byte",
+        ))
     }
 }
 
@@ -613,6 +762,84 @@ mod tests {
             CrafterError::invalid_field_value(
                 "quic.version_negotiation",
                 "packet is not a Version Negotiation packet",
+            )
+        );
+    }
+
+    #[test]
+    fn quic_version_negotiation_build_emits_default_header_and_roundtrips() {
+        let vn = QuicVersionNegotiationPacket::builder()
+            .destination_connection_id(QuicConnectionId::from_bytes([0x83, 0x94, 0xc8, 0xf0]))
+            .source_connection_id(QuicConnectionId::from_bytes([0xaa]))
+            .supported_version(0x0000_0001)
+            .supported_version(0x6b33_43cf)
+            .build()
+            .unwrap();
+
+        assert_eq!(
+            vn.as_bytes(),
+            [
+                0xc0, 0x00, 0x00, 0x00, 0x00, 0x04, 0x83, 0x94, 0xc8, 0xf0, 0x01, 0xaa, 0x00, 0x00,
+                0x00, 0x01, 0x6b, 0x33, 0x43, 0xcf,
+            ]
+        );
+
+        let decoded = QuicVersionNegotiationPacket::decode(vn.as_bytes()).unwrap();
+        assert_eq!(decoded, vn);
+
+        let compiled =
+            Packet::from_layer(Quic::new().packet(QuicPacket::from_version_negotiation(vn)))
+                .compile()
+                .unwrap();
+        assert_eq!(
+            compiled.as_bytes(),
+            [
+                0xc0, 0x00, 0x00, 0x00, 0x00, 0x04, 0x83, 0x94, 0xc8, 0xf0, 0x01, 0xaa, 0x00, 0x00,
+                0x00, 0x01, 0x6b, 0x33, 0x43, 0xcf,
+            ]
+        );
+    }
+
+    #[test]
+    fn quic_version_negotiation_build_preserves_user_overrides() {
+        let vn = QuicVersionNegotiationPacket::builder()
+            .first_byte(0x81)
+            .destination_connection_id(QuicConnectionId::from_bytes([0xde, 0xad]))
+            .source_connection_id(QuicConnectionId::from_bytes([0xbe, 0xef]))
+            .supported_versions([0xface_feed, 0x0a0a_0a0a])
+            .build()
+            .unwrap();
+
+        assert_eq!(
+            vn.as_bytes(),
+            [
+                0x81, 0x00, 0x00, 0x00, 0x00, 0x02, 0xde, 0xad, 0x02, 0xbe, 0xef, 0xfa, 0xce, 0xfe,
+                0xed, 0x0a, 0x0a, 0x0a, 0x0a,
+            ]
+        );
+        assert_eq!(vn.first_byte(), 0x81);
+        assert_eq!(vn.supported_versions(), [0xface_feed, 0x0a0a_0a0a]);
+    }
+
+    #[test]
+    fn quic_version_negotiation_build_rejects_missing_versions_and_oversized_cids() {
+        assert_eq!(
+            QuicVersionNegotiationPacket::builder().build().unwrap_err(),
+            CrafterError::invalid_field_value(
+                "quic.version_negotiation.supported_versions",
+                "Version Negotiation packets require at least one supported version",
+            )
+        );
+
+        assert_eq!(
+            QuicVersionNegotiationPacket::builder()
+                .destination_connection_id(QuicConnectionId::from_bytes([0xaa; 256]))
+                .supported_version(0x0000_0001)
+                .build()
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "quic.version_negotiation.connection_id.length",
+                "Version Negotiation connection ID length must fit in one byte",
             )
         );
     }

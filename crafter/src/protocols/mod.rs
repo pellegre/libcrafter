@@ -422,7 +422,7 @@ pub mod exports {
     pub use quic::constants::{QUIC_VERSION_1, QUIC_VERSION_2, QUIC_VERSION_NEGOTIATION};
     pub use quic::{
         Quic, QuicConnectionId, QuicFrame, QuicPacket, QuicPacketNumber, QuicTransportParameter,
-        QuicVarInt,
+        QuicVarInt, QuicVersionNegotiationBuilder, QuicVersionNegotiationPacket,
     };
     pub use rip::ripng::{
         Ripng, RipngRte, RIPNG_COMMAND_REQUEST, RIPNG_COMMAND_RESPONSE, RIPNG_METRIC_INFINITY,

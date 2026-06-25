@@ -49,3 +49,27 @@ fn exports_quic_symbols() -> crafter::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn quic_version_negotiation_build_public_api() -> crafter::Result<()> {
+    let vn = QuicVersionNegotiationPacket::new(
+        QuicConnectionId::from_bytes([0x83, 0x94, 0xc8, 0xf0]),
+        QuicConnectionId::from_bytes([0xaa]),
+        [QUIC_VERSION_1, QUIC_VERSION_2],
+    )?;
+    let packet = Ipv4::new()
+        .src(Ipv4Addr::new(192, 0, 2, 10))
+        .dst(Ipv4Addr::new(198, 51, 100, 20))
+        / Udp::new().sport(443).dport(443)
+        / Quic::new().packet(QuicPacket::from_version_negotiation(vn.clone()));
+
+    let compiled = packet.compile()?;
+    assert!(compiled.as_bytes().ends_with(vn.as_bytes()));
+    assert_eq!(
+        QuicVersionNegotiationPacket::decode(vn.as_bytes())?.supported_versions(),
+        &[QUIC_VERSION_1, QUIC_VERSION_2],
+    );
+    assert!(packet.summary().contains("VersionNegotiation"));
+
+    Ok(())
+}
