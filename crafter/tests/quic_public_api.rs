@@ -1,0 +1,51 @@
+//! Public QUIC API smoke tests.
+//!
+//! These tests use only offline construction with documentation address space
+//! and import QUIC symbols through `crafter::prelude::*`.
+
+use crafter::prelude::*;
+use std::net::Ipv4Addr;
+
+#[test]
+fn exports_quic_symbols() -> crafter::Result<()> {
+    assert_eq!(QUIC_VERSION_NEGOTIATION, 0x0000_0000);
+    assert_eq!(QUIC_VERSION_1, 0x0000_0001);
+    assert_eq!(QUIC_VERSION_2, 0x6b33_43cf);
+    assert_eq!(crafter::QUIC_VERSION_1, QUIC_VERSION_1);
+
+    let cid = QuicConnectionId::from_bytes([0x83, 0x94, 0xc8, 0xf0]);
+    assert_eq!(cid.as_bytes(), &[0x83, 0x94, 0xc8, 0xf0]);
+
+    let varint = QuicVarInt::from_u64_unchecked(QUIC_VERSION_1 as u64);
+    assert_eq!(varint.value(), QUIC_VERSION_1 as u64);
+
+    let packet_number = QuicPacketNumber::new(0x1234).with_encoded_len(2);
+    assert_eq!(packet_number.value(), 0x1234);
+    assert_eq!(packet_number.encoded_len_value(), Some(2));
+
+    let frame = QuicFrame::from_bytes([0x01]);
+    assert_eq!(frame.as_bytes(), &[0x01]);
+
+    let parameter = QuicTransportParameter::raw(varint, [0xde, 0xad]);
+    assert_eq!(parameter.identifier(), Some(varint));
+    assert_eq!(parameter.value(), &[0xde, 0xad]);
+
+    let quic_payload = [0xc3, 0x00, 0x00, 0x00, 0x01, 0x08, 0x00];
+    let quic = Quic::from_bytes(quic_payload);
+    let quic_packet = QuicPacket::from_bytes(quic_payload);
+    assert_eq!(quic_packet.as_bytes(), quic_payload);
+
+    let packet = Ipv4::new()
+        .src(Ipv4Addr::new(192, 0, 2, 10))
+        .dst(Ipv4Addr::new(198, 51, 100, 20))
+        / Udp::new().sport(443).dport(443)
+        / quic;
+    let compiled = packet.compile()?;
+    assert!(compiled.as_bytes().ends_with(&quic_payload));
+    assert!(packet.summary().contains("Quic"));
+
+    let root_quic: crafter::Quic = Quic::raw([]);
+    assert!(root_quic.is_empty());
+
+    Ok(())
+}
