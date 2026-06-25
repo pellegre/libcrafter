@@ -29,6 +29,7 @@ types.
 | Status | Meaning |
 | --- | --- |
 | source-backed planned | The manifest cites source authority for this wire fact, but the code and tests have not landed. |
+| source-backed implemented | The source-backed code path and focused tests have landed for this wire fact. |
 | source-backed preserve planned | The manifest requires unknown or caller-supplied bytes to stay inspectable and byte-preserving; the preservation code and tests have not landed. |
 | source-backed validation planned | The validation case is planned and must cite the manifest before it becomes executable evidence. |
 | source-gap out of scope | The current manifest does not authorize implementation; update the manifest first or keep it unsupported. |
@@ -72,7 +73,7 @@ types.
 | INTEGER / Integer32 encoding for versions, request IDs, status values, counters, and v3 global data | RFC 1157 Section 4.1.1; RFC 2578 Section 7.1.1; RFC 3416 Section 3 | `crafter/src/protocols/snmp/ber.rs`; `crafter/src/protocols/snmp/value.rs` | source-backed planned | Preserve caller-set byte widths when explicit malformed output is requested. |
 | OCTET STRING encoding for communities, opaque bytes, engine IDs, names, and security parameters | RFC 1157 Section 4.1.1; RFC 2578 Section 7.1.2; RFC 3412 Section 6; RFC 3414 Section 2.4 | `crafter/src/protocols/snmp/ber.rs`; `crafter/src/protocols/snmp/value.rs` | source-backed planned | No credential or secret handling beyond packet bytes. |
 | NULL encoding for request varbind placeholders and exception values | RFC 1157 Section 4.1.1; RFC 3416 Section 3 | `crafter/src/protocols/snmp/ber.rs`; `crafter/src/protocols/snmp/value.rs` | source-backed planned | Request helpers may default values to NULL where source-backed. |
-| OBJECT IDENTIFIER encoding | RFC 2578 Sections 3.5 and 7.1.3 | `crafter/src/protocols/snmp/oid.rs` | source-backed planned | Enforce only source-backed wire constraints; malformed OIDs return structured errors. |
+| OBJECT IDENTIFIER encoding | RFC 2578 Sections 3.5 and 7.1.3 | `crafter/src/protocols/snmp/oid.rs` | source-backed implemented | `SnmpOid` validates root arcs, maximum arc width, and the 128-arc limit; BER TLV decode/encode returns structured malformed-input errors. |
 | Constructed SEQUENCE helpers for messages, varbind lists, scoped PDUs, and security parameters | RFC 1157 Section 4; RFC 3412 Section 6; RFC 3417 Section 8 | `crafter/src/protocols/snmp/ber.rs` | source-backed planned | Auto-fill unset lengths while preserving explicit overrides. |
 | Raw TLV escape hatch for unsupported but well-formed values | Manifest unresolved questions | `crafter/src/protocols/snmp/ber.rs`; `crafter/src/protocols/snmp/value.rs` | source-backed preserve planned | Unknown TLVs must remain inspectable instead of being dropped. |
 | Structured BER truncation and malformed errors | Manifest edge cases | `crafter/src/protocols/snmp/error.rs`; `crafter/src/protocols/snmp/ber.rs` | source-backed planned | Errors must include context, required bytes, and available bytes. |
@@ -110,10 +111,17 @@ types.
 
 | Item | Source | Planned path | Status | Notes |
 | --- | --- | --- | --- | --- |
-| `SnmpOid` public type | RFC 2578 Section 3.5 | `crafter/src/protocols/snmp/oid.rs` | source-backed planned | Object identifiers are packet content, not MIB database lookups. |
+| `SnmpOid` public type | RFC 2578 Section 3.5 | `crafter/src/protocols/snmp/oid.rs`; `crafter::protocols::snmp::SnmpOid` | source-backed implemented | Object identifiers are packet content, not MIB database lookups. The type exposes `from_arcs`, dotted parsing, `Display`, arc accessors, BER TLV decode/encode, and invalid-input errors. |
 | `SnmpVarBind` as name plus value | RFC 1157 Section 4.1.1; RFC 3416 Section 3 | `crafter/src/protocols/snmp/varbind.rs` | source-backed planned | The value may be NULL, an SMI value, an exception, or unknown raw TLV. |
 | Ordered `SnmpVarBindList` | RFC 1157 Section 4.1.1; RFC 3416 Section 3 | `crafter/src/protocols/snmp/varbind.rs` | source-backed planned | Auto-fill list SEQUENCE lengths while preserving explicit overrides. |
 | Notification and report object IDs used as packet content | RFC 3418 Section 5 | `crafter/src/protocols/snmp/constants.rs`; `crafter/src/protocols/snmp/varbind.rs` | source-backed planned | Only required packet OIDs, not MIB instrumentation. |
+
+## OID Field Mapping
+
+| Field | Source | Rust surface | BER owner | Status | Notes |
+| --- | --- | --- | --- | --- | --- |
+| VarBind `name` / ObjectName | RFC 1157 Section 4.1.1; RFC 3416 Section 3; RFC 2578 Section 3.5 | `SnmpOid` | `crafter/src/protocols/snmp/oid.rs` | source-backed implemented | This field is an ordered OBJECT IDENTIFIER. Name resolution, MIB lookup, table semantics, and enterprise instrumentation remain out of scope. |
+| OBJECT IDENTIFIER value choice | RFC 2578 Sections 3.5 and 7.1.3 | `SnmpOid` through internal `SnmpValue::ObjectIdentifier` until the value surface is public | `crafter/src/protocols/snmp/oid.rs`; `crafter/src/protocols/snmp/value.rs` | source-backed planned | The OID codec has landed; public value/varbind integration lands in later slices. |
 
 ## PDUs
 
@@ -206,10 +214,11 @@ types.
 
 ## Current Support Statement
 
-As of this inventory, SNMP remains planned. The manifest and this inventory
-authorize later implementation slices to add source-backed packet primitives
-under `crafter/src/protocols/snmp`. The only public SNMP surface currently
-landed is the empty `crafter::protocols::snmp` module namespace; no SNMP packet
-API, decode dispatch, tests, oracle specs, probe cases, or live artifacts should
-be treated as supported until the corresponding implementation and validation
-rows land.
+As of this inventory, SNMP remains planned except for the standalone
+`crafter::protocols::snmp::SnmpOid` object identifier type and its BER
+OBJECT IDENTIFIER codec. The manifest and this inventory authorize later
+implementation slices to add the remaining source-backed packet primitives
+under `crafter/src/protocols/snmp`. No SNMP packet layer, message builders,
+UDP decode dispatch, oracle specs, probe cases, or live artifacts should be
+treated as supported until the corresponding implementation and validation rows
+land.
