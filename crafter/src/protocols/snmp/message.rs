@@ -162,6 +162,107 @@ impl Snmp {
         Self::community_message(SnmpVersion::V1, community, pdu)
     }
 
+    /// Build an SNMPv1 GetRequest message with noError/noErrorIndex fields.
+    ///
+    /// This only builds packet bytes. Polling, retries, and response matching
+    /// belong in generated tools outside the crate.
+    pub fn v1_get_request(
+        community: impl Into<Vec<u8>>,
+        request_id: i64,
+        varbinds: super::SnmpVarBindList,
+    ) -> Result<Self> {
+        Ok(Self::v1(
+            community,
+            SnmpPdu::get_request(request_id, varbinds)?,
+        ))
+    }
+
+    /// Build an SNMPv1 GetNextRequest message with noError/noErrorIndex fields.
+    ///
+    /// This only builds packet bytes. Walk behavior belongs in generated tools
+    /// outside the crate.
+    pub fn v1_get_next_request(
+        community: impl Into<Vec<u8>>,
+        request_id: i64,
+        varbinds: super::SnmpVarBindList,
+    ) -> Result<Self> {
+        Ok(Self::v1(
+            community,
+            SnmpPdu::get_next_request(request_id, varbinds)?,
+        ))
+    }
+
+    /// Build an SNMPv1 SetRequest message with noError/noErrorIndex fields.
+    ///
+    /// This only builds packet bytes. Authorization and mutation workflows
+    /// belong in generated tools outside the crate.
+    pub fn v1_set_request(
+        community: impl Into<Vec<u8>>,
+        request_id: i64,
+        varbinds: super::SnmpVarBindList,
+    ) -> Result<Self> {
+        Ok(Self::v1(
+            community,
+            SnmpPdu::set_request(request_id, varbinds)?,
+        ))
+    }
+
+    /// Build an SNMPv1 GetResponse message with noError/noErrorIndex fields.
+    pub fn v1_response(
+        community: impl Into<Vec<u8>>,
+        request_id: i64,
+        varbinds: super::SnmpVarBindList,
+    ) -> Result<Self> {
+        Ok(Self::v1(
+            community,
+            SnmpPdu::response(request_id, varbinds)?,
+        ))
+    }
+
+    /// Build an SNMPv1 GetResponse message carrying explicit error fields.
+    ///
+    /// This helper preserves supplied integer values; it does not validate
+    /// whether an error status is assigned or whether the index matches an
+    /// application-level variable binding.
+    pub fn v1_response_error(
+        community: impl Into<Vec<u8>>,
+        request_id: i64,
+        error_status: i64,
+        error_index: i64,
+        varbinds: super::SnmpVarBindList,
+    ) -> Result<Self> {
+        Ok(Self::v1(
+            community,
+            SnmpPdu::response_error(request_id, error_status, error_index, varbinds)?,
+        ))
+    }
+
+    /// Build an SNMPv1 Trap message from source-backed wire fields.
+    ///
+    /// This only builds packet bytes. Trap listener and notification-service
+    /// behavior belongs in generated tools outside the crate.
+    pub fn v1_trap(
+        community: impl Into<Vec<u8>>,
+        enterprise: super::SnmpOid,
+        agent_address: [u8; 4],
+        generic_trap: i64,
+        specific_trap: i64,
+        timestamp: u32,
+        varbinds: super::SnmpVarBindList,
+    ) -> Result<Self> {
+        Ok(Self::v1(
+            community,
+            SnmpPdu::v1_trap(
+                enterprise,
+                agent_address,
+                generic_trap,
+                specific_trap,
+                timestamp,
+                varbinds,
+            )?,
+        ))
+    }
+
     /// Build an SNMPv2c community message carrying one PDU.
     pub fn v2c(community: impl Into<Vec<u8>>, pdu: SnmpPdu) -> Self {
         Self::community_message(SnmpVersion::V2c, community, pdu)
@@ -204,6 +305,24 @@ impl Snmp {
     /// PDU body carried by this message.
     pub const fn pdu(&self) -> &SnmpPdu {
         &self.pdu
+    }
+
+    /// Return a copy of this message with an explicit version INTEGER value.
+    pub fn with_version(mut self, version: SnmpVersion) -> Self {
+        self.header.version = version;
+        self
+    }
+
+    /// Return a copy of this message with explicit community OCTET STRING bytes.
+    pub fn with_community(mut self, community: impl Into<Vec<u8>>) -> Self {
+        self.header.community = SnmpCommunity::new(community);
+        self
+    }
+
+    /// Return a copy of this message carrying an explicit PDU.
+    pub fn with_pdu(mut self, pdu: SnmpPdu) -> Self {
+        self.pdu = pdu;
+        self
     }
 
     /// Mutable PDU body carried by this message.
@@ -396,6 +515,7 @@ fn encoded_length_len(length: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocols::snmp::{SnmpOid, SnmpVarBind, SnmpVarBindList};
     use crate::protocols::transport::Udp;
     use crate::Layer;
 
@@ -505,6 +625,132 @@ mod tests {
         assert_eq!(packet.encoded_len(), 8 + v2c.encoded_len());
         assert!(packet.layer::<Snmp>().is_some());
         assert!(packet.compile()?.as_bytes().ends_with(&expected));
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_v1_message_builders_emit_source_backed_request_response_and_trap_bytes() -> Result<()> {
+        let request = Snmp::v1_get_request(b"public".to_vec(), 1, SnmpVarBindList::empty())?;
+
+        // Source-backed: docs/snmp-rfc-manifest.md records RFC 1157 Sections
+        // 4.1.2 and 4.1.3 for the SNMPv1 Message wrapper and GetRequest-PDU.
+        assert_eq!(
+            request.compile()?,
+            [
+                0x30, 0x18, 0x02, 0x01, 0x00, 0x04, 0x06, b'p', b'u', b'b', b'l', b'i', b'c', 0xa0,
+                0x0b, 0x02, 0x01, 0x01, 0x02, 0x01, 0x00, 0x02, 0x01, 0x00, 0x30, 0x00,
+            ]
+        );
+
+        let response = Snmp::v1_response([0x00, 0xff], 128, SnmpVarBindList::empty())?;
+
+        // Source-backed: docs/snmp-rfc-manifest.md records RFC 1157 Sections
+        // 4.1.2 and 4.1.4 for the SNMPv1 Message wrapper and GetResponse-PDU.
+        assert_eq!(
+            response.compile()?,
+            [
+                0x30, 0x15, 0x02, 0x01, 0x00, 0x04, 0x02, 0x00, 0xff, 0xa2, 0x0c, 0x02, 0x02, 0x00,
+                0x80, 0x02, 0x01, 0x00, 0x02, 0x01, 0x00, 0x30, 0x00,
+            ]
+        );
+
+        let trap_varbind = SnmpVarBind::null(SnmpOid::from_dotted("1.3.6.1.2.1.1.3.0")?);
+        let trap = Snmp::v1_trap(
+            b"public".to_vec(),
+            SnmpOid::from_dotted("1.3.6.1.4.1")?,
+            [192, 0, 2, 44],
+            6,
+            4_321,
+            12_345,
+            SnmpVarBindList::new(vec![trap_varbind]),
+        )?;
+
+        // Source-backed: docs/snmp-rfc-manifest.md records RFC 1157 Sections
+        // 4.1.2, 4.1.6, and 5 for the SNMPv1 Message wrapper and Trap-PDU.
+        assert_eq!(
+            trap.compile()?,
+            [
+                0x30, 0x35, 0x02, 0x01, 0x00, 0x04, 0x06, b'p', b'u', b'b', b'l', b'i', b'c', 0xa4,
+                0x28, 0x06, 0x05, 0x2b, 0x06, 0x01, 0x04, 0x01, 0x40, 0x04, 192, 0, 2, 44, 0x02,
+                0x01, 0x06, 0x02, 0x02, 0x10, 0xe1, 0x43, 0x02, 0x30, 0x39, 0x30, 0x0e, 0x30, 0x0c,
+                0x06, 0x08, 0x2b, 0x06, 0x01, 0x02, 0x01, 0x01, 0x03, 0x00, 0x05, 0x00,
+            ]
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_v1_message_get_next_set_and_error_response_builders_select_v1_pdu_tags() -> Result<()> {
+        let get_next = Snmp::v1_get_next_request(b"public".to_vec(), 2, SnmpVarBindList::empty())?;
+        let set = Snmp::v1_set_request(b"public".to_vec(), 3, SnmpVarBindList::empty())?;
+        let error_response = Snmp::v1_response_error(
+            b"public".to_vec(),
+            4,
+            super::super::registry::SNMP_ERROR_STATUS_NO_SUCH_NAME,
+            1,
+            SnmpVarBindList::empty(),
+        )?;
+
+        assert_eq!(get_next.version(), SnmpVersion::V1);
+        assert_eq!(get_next.pdu().tag_number(), SnmpPdu::TAG_GET_NEXT_REQUEST);
+        assert_eq!(set.pdu().tag_number(), SnmpPdu::TAG_SET_REQUEST);
+        assert_eq!(error_response.pdu().tag_number(), SnmpPdu::TAG_RESPONSE);
+        assert_eq!(
+            error_response
+                .pdu()
+                .as_response()?
+                .expect("response fields")
+                .error_status(),
+            super::super::registry::SNMP_ERROR_STATUS_NO_SUCH_NAME,
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_v1_message_decode_round_trips_header_and_pdu_without_public_decode() -> Result<()> {
+        let snmp = Snmp::v1_get_request([0x00, 0xff, b'a'], 7, SnmpVarBindList::empty())?;
+        let bytes = snmp.compile()?;
+
+        let content = ber::decode_sequence_exact(&bytes)?;
+        let (header, rest) = SnmpMessageHeader::decode(content)?;
+        let (pdu, rest) = SnmpPdu::decode(rest)?;
+        ber::require_sequence_exact(rest)?;
+
+        assert_eq!(header.version(), SnmpVersion::V1);
+        assert_eq!(header.community(), &[0x00, 0xff, b'a']);
+        assert_eq!(pdu.tag_number(), SnmpPdu::TAG_GET_REQUEST);
+        assert_eq!(
+            pdu.as_get_request()?
+                .expect("GetRequest fields")
+                .request_id(),
+            7
+        );
+        assert_eq!(pdu.compile()?, snmp.pdu().compile()?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_v1_message_override_setters_preserve_explicit_wire_choices() -> Result<()> {
+        let malformed_pdu = SnmpPdu::get_request(1, SnmpVarBindList::empty())?.length(0);
+        let snmp = Snmp::v1_get_request(b"public".to_vec(), 99, SnmpVarBindList::empty())?
+            .with_version(SnmpVersion::Unknown(3))
+            .with_community([0xff])
+            .with_pdu(malformed_pdu);
+
+        assert_eq!(snmp.version(), SnmpVersion::Unknown(3));
+        assert_eq!(snmp.community(), &[0xff]);
+        assert_eq!(snmp.pdu().explicit_length(), Some(0));
+        assert_eq!(
+            snmp.compile()?,
+            [
+                0x30, 0x13, 0x02, 0x01, 0x03, 0x04, 0x01, 0xff, 0xa0, 0x00, 0x02, 0x01, 0x01, 0x02,
+                0x01, 0x00, 0x02, 0x01, 0x00, 0x30, 0x00,
+            ]
+        );
 
         Ok(())
     }
