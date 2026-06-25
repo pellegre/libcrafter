@@ -770,6 +770,7 @@ def _canonicalize_ripng(
     fields[ripng_key] = ripng_fields
 
 
+_SNMP_UDP_PORTS = {161, 162}
 _SNMP_VERSION_LABELS: dict[int, str] = {0: "v1", 1: "v2c", 3: "v3"}
 
 
@@ -780,7 +781,8 @@ def _canonicalize_snmp_raw(
 ) -> None:
     """Promote Scapy Raw BER payloads for SNMP specs to a neutral SNMP layer."""
 
-    if "snmp" not in feature_tags and not any(tag.startswith("snmp_") for tag in feature_tags):
+    tagged = "snmp" in feature_tags or any(tag.startswith("snmp_") for tag in feature_tags)
+    if not tagged and not _snmp_udp_port_matches(layers, fields):
         return
     if "snmp" in layers or not layers or layers[-1] != "payload":
         return
@@ -806,6 +808,37 @@ def _canonicalize_snmp_raw(
     layers[payload_index] = "snmp"
     snmp_key = _layer_key_at(layers, payload_index)
     fields[snmp_key] = snmp_fields
+
+
+def _snmp_udp_port_matches(layers: Sequence[str], fields: Mapping[str, JSONObject]) -> bool:
+    if not layers or layers[-1] != "payload":
+        return False
+    try:
+        payload_index = len(layers) - 1
+        udp_index = max(
+            index
+            for index, layer in enumerate(layers[:payload_index])
+            if layer == "udp"
+        )
+    except ValueError:
+        return False
+    udp = fields.get(_layer_key_at(layers, udp_index))
+    if not isinstance(udp, Mapping):
+        return False
+    return any(_snmp_port_value(udp.get(name)) for name in ("src_port", "dst_port"))
+
+
+def _snmp_port_value(value: object) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return value in _SNMP_UDP_PORTS
+    if isinstance(value, str):
+        try:
+            return int(value, 0) in _SNMP_UDP_PORTS
+        except ValueError:
+            return False
+    return False
 
 
 def _snmp_ber_message_fields(raw: bytes) -> JSONObject | None:

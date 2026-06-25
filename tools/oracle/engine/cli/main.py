@@ -6964,6 +6964,7 @@ def _canonical_pcap_layers(value: object) -> list[str]:
     aliases = {
         "Ipv6DestinationOptionsHeader": "ipv6_destination_options",
         "Ipv6HopByHopOptionsHeader": "ipv6_hop_by_hop",
+        "Snmp": "snmp",
     }
     layers = [aliases.get(layer, layer) for layer in _string_values(value)]
     canonical: list[str] = []
