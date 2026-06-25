@@ -1,10 +1,10 @@
 //! SNMP PDU tag metadata, request fields, and raw-body preservation.
 //!
 //! Source-gated by `docs/snmp-rfc-manifest.md`; only GetRequest-style common
-//! request fields are modeled here for GetRequest, GetNextRequest, and
-//! SetRequest. Other PDU bodies remain raw until their implementation slices
-//! land. Walk, polling, authorization, and set workflows belong in generated
-//! tools, not in this packet primitive.
+//! request fields are modeled here for GetRequest, GetNextRequest, Response,
+//! and SetRequest. Other PDU bodies remain raw until their implementation
+//! slices land. Walk, polling, authorization, and set workflows belong in
+//! generated tools, not in this packet primitive.
 
 use super::{ber, constants, registry, varbind::SnmpVarBindList};
 use crate::error::Result;
@@ -115,11 +115,12 @@ impl SnmpRawPdu {
     }
 }
 
-/// Common GetRequest-style PDU fields.
+/// Common GetRequest-style request/response PDU fields.
 ///
-/// RFC-backed request PDUs carry request-id, error-status, error-index, and
-/// a VarBindList as the PDU body content. This type models those fields as
-/// packet bytes only; it does not add manager/session behavior.
+/// RFC-backed GetRequest, GetNextRequest, Response, and SetRequest PDUs carry
+/// request-id, error-status, error-index, and a VarBindList as the PDU body
+/// content. This type models those fields as packet bytes only; it does not
+/// add manager/session behavior or validate application success semantics.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SnmpRequestPdu {
     request_id: i64,
@@ -326,6 +327,40 @@ impl SnmpPdu {
     /// Build a raw Response/GetResponse PDU body.
     pub fn raw_response(body: impl Into<Vec<u8>>) -> Self {
         Self::Response(SnmpRawPduBody::new(body))
+    }
+
+    /// Build a Response/GetResponse PDU with noError/noErrorIndex convention fields.
+    pub fn response(request_id: i64, varbinds: SnmpVarBindList) -> Result<Self> {
+        Self::response_with_fields(request_id, 0, 0, varbinds)
+    }
+
+    /// Build a Response/GetResponse PDU carrying an error status and index.
+    ///
+    /// This helper preserves the supplied integer values. It does not validate
+    /// whether the error status is source-assigned or whether the index matches
+    /// an application-level variable binding.
+    pub fn response_error(
+        request_id: i64,
+        error_status: i64,
+        error_index: i64,
+        varbinds: SnmpVarBindList,
+    ) -> Result<Self> {
+        Self::response_with_fields(request_id, error_status, error_index, varbinds)
+    }
+
+    /// Build a Response/GetResponse PDU preserving caller-supplied integer fields.
+    pub fn response_with_fields(
+        request_id: i64,
+        error_status: i64,
+        error_index: i64,
+        varbinds: SnmpVarBindList,
+    ) -> Result<Self> {
+        Ok(Self::Response(Self::request_body_with_fields(
+            request_id,
+            error_status,
+            error_index,
+            varbinds,
+        )?))
     }
 
     /// Build a raw SetRequest-PDU body.
@@ -540,6 +575,14 @@ impl SnmpPdu {
     pub fn as_get_next_request(&self) -> Result<Option<SnmpRequestPdu>> {
         match self {
             Self::GetNextRequest(body) => Ok(Some(SnmpRequestPdu::decode_body(body.as_bytes())?)),
+            _ => Ok(None),
+        }
+    }
+
+    /// Decode typed request-id/error fields when this PDU has the Response tag.
+    pub fn as_response(&self) -> Result<Option<SnmpRequestPdu>> {
+        match self {
+            Self::Response(body) => Ok(Some(SnmpRequestPdu::decode_body(body.as_bytes())?)),
             _ => Ok(None),
         }
     }
@@ -860,6 +903,90 @@ mod tests {
         assert_eq!(request.request_id(), 0);
         assert!(request.varbinds().is_empty());
         assert_eq!(decoded.compile()?, bytes);
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_response_pdu_success_builder_compiles_decodes_and_preserves_varbinds() -> Result<()> {
+        let varbind = crate::protocols::snmp::SnmpVarBind::time_ticks(
+            crate::protocols::snmp::SnmpOid::from_dotted("1.3.6.1.2.1.1.3.0")?,
+            12_345,
+        );
+        let pdu = SnmpPdu::response(42, SnmpVarBindList::new(vec![varbind.clone()]))?;
+
+        // Source-backed: docs/snmp-rfc-manifest.md records RFC 1157 Section
+        // 4.1.4 and RFC 3416 Sections 3 and 4.2.4 for Response/GetResponse
+        // using request-id, error-status, error-index, and VarBindList fields.
+        let expected = [
+            0xa2, 0x1b, 0x02, 0x01, 0x2a, 0x02, 0x01, 0x00, 0x02, 0x01, 0x00, 0x30, 0x10, 0x30,
+            0x0e, 0x06, 0x08, 0x2b, 0x06, 0x01, 0x02, 0x01, 0x01, 0x03, 0x00, 0x43, 0x02, 0x30,
+            0x39,
+        ];
+        assert_eq!(pdu.tag_number(), constants::SNMP_PDU_TAG_RESPONSE);
+        assert_eq!(pdu.tag_name(), Some("response"));
+        assert_eq!(pdu.tag_label(), "response");
+        assert_eq!(pdu.compile()?, expected);
+        assert!(pdu.as_get_request()?.is_none());
+        assert!(pdu.as_get_next_request()?.is_none());
+        assert!(pdu.as_set_request()?.is_none());
+
+        let response = pdu.as_response()?.expect("Response fields");
+        assert_eq!(response.request_id(), 42);
+        assert_eq!(response.error_status(), 0);
+        assert_eq!(response.error_index(), 0);
+        assert_eq!(response.varbinds().as_slice(), &[varbind]);
+
+        let (decoded, rest) = SnmpPdu::decode(&expected)?;
+        assert!(rest.is_empty());
+        assert_eq!(decoded.as_response()?.expect("decoded fields"), response);
+        assert_eq!(decoded.compile()?, expected);
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_response_pdu_error_helper_preserves_status_and_index() -> Result<()> {
+        let pdu = SnmpPdu::response_error(128, 2, 3, SnmpVarBindList::empty())?;
+
+        let expected = [
+            0xa2, 0x0c, 0x02, 0x02, 0x00, 0x80, 0x02, 0x01, 0x02, 0x02, 0x01, 0x03, 0x30, 0x00,
+        ];
+        assert_eq!(pdu.compile()?, expected);
+
+        let response = pdu.as_response()?.expect("Response fields");
+        assert_eq!(response.request_id(), 128);
+        assert_eq!(response.error_status(), 2);
+        assert_eq!(response.error_index(), 3);
+        assert!(response.varbinds().is_empty());
+
+        let (decoded, rest) = SnmpPdu::decode(&expected)?;
+        assert!(rest.is_empty());
+        assert_eq!(decoded.tag_number(), constants::SNMP_PDU_TAG_RESPONSE);
+        assert_eq!(decoded.as_response()?.expect("decoded fields"), response);
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_response_pdu_unknown_error_status_value_is_preserved() -> Result<()> {
+        let pdu = SnmpPdu::response_with_fields(5, 99, 300, SnmpVarBindList::empty())?;
+
+        let expected = [
+            0xa2, 0x0c, 0x02, 0x01, 0x05, 0x02, 0x01, 0x63, 0x02, 0x02, 0x01, 0x2c, 0x30, 0x00,
+        ];
+        assert_eq!(pdu.compile()?, expected);
+
+        let response = pdu.as_response()?.expect("Response fields");
+        assert_eq!(response.request_id(), 5);
+        assert_eq!(response.error_status(), 99);
+        assert_eq!(response.error_index(), 300);
+        assert!(response.varbinds().is_empty());
+
+        let (decoded, rest) = SnmpPdu::decode(&expected)?;
+        assert!(rest.is_empty());
+        assert_eq!(decoded.as_response()?.expect("decoded fields"), response);
+        assert_eq!(decoded.compile()?, expected);
 
         Ok(())
     }
