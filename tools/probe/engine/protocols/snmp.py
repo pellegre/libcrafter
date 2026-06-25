@@ -6,6 +6,7 @@ from collections.abc import Mapping, Sequence
 
 from ..capability_derivation import capability, capability_default_true
 from ..case_helpers import _behavior_case
+from ..endpoint_addressing import apply_shared_ipv4_rewrite_tail
 from ..model import JSONObject, JSONValue, ProbeCase
 from ..planning_helpers import deterministic_bytes
 from ..target_service_helpers import (
@@ -328,6 +329,48 @@ def snmp_lab_capabilities(substrate: Mapping[str, JSONValue]) -> Mapping[str, ob
     }
 
 
+def snmp_rewrite_endpoint_addresses(
+    plan: JSONObject,
+    *,
+    source_ipv4: str,
+    target_ipv4: str,
+    source_mac: str | None = None,
+    target_mac: str | None = None,
+    target_interface: str | None = None,
+    rewrite_source: str = "wire_endpoint_plan",
+) -> JSONObject:
+    """Rewrite a SNMP dry-run plan onto the live stimulus/target IPv4 pair."""
+
+    del source_mac, target_mac, target_interface
+
+    updated = dict(plan)
+    updated["source_ipv4"] = source_ipv4
+    updated["destination_ipv4"] = target_ipv4
+    updated["expected_reply_source_ipv4"] = target_ipv4
+    updated["expected_reply_destination_ipv4"] = source_ipv4
+
+    destination_port = int(updated.get("destination_port", SNMP_AGENT_PORT))
+    updated["capture_filter"] = f"udp and host {target_ipv4} and port {destination_port}"
+
+    target_service = dict(
+        updated.get("target_service", {})
+        if isinstance(updated.get("target_service"), Mapping)
+        else {}
+    )
+    if target_service:
+        target_service["bind_ipv4"] = target_ipv4
+        target_service["source_ipv4"] = source_ipv4
+        updated["target_service"] = target_service
+
+    return apply_shared_ipv4_rewrite_tail(
+        updated,
+        case_name=str(updated.get("case", "")),
+        source_ipv4=source_ipv4,
+        target_ipv4=target_ipv4,
+        rewrite_source=rewrite_source,
+    )
+
+
 register(
     ProtocolPlugin(
         name="snmp",
@@ -338,7 +381,7 @@ register(
         stimulus_endpoint_cases=_SNMP_PLANNED_ONLY_CASES,
         target_service=snmp_target_service_contribution,
         setup_script=None,
-        rewrite_endpoint_addresses=None,
+        rewrite_endpoint_addresses=snmp_rewrite_endpoint_addresses,
         failure_reasons=None,
         lab_capabilities=snmp_lab_capabilities,
     )

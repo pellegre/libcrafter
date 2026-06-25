@@ -400,6 +400,16 @@ class ProbePlanningRegistryTest(unittest.TestCase):
                         name,
                     )
                     self.assertIn("broker_exchange", plan, name)
+                elif case.metadata.get("protocol") == "snmp":
+                    self.assertEqual(plan["protocol"], "snmp", name)
+                    self.assertIn("snmp_request", plan, name)
+                    self.assertIn("expected_snmp_response", plan, name)
+                    self.assertEqual(
+                        plan["target_service"]["kind"],
+                        "snmp-controlled-peer",
+                        name,
+                    )
+                    self.assertEqual(plan["validation"]["driver"], "snmp_probe", name)
                 else:
                     self.fail(f"unhandled planned-only registered case {name}")
             else:
