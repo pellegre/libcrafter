@@ -1,4 +1,4 @@
-use crafter::protocols::snmp::{SnmpOid, SnmpPdu, SnmpVarBind, SnmpVarBindList};
+use crafter::protocols::snmp::{Snmp, SnmpOid, SnmpPdu, SnmpVarBind, SnmpVarBindList};
 use crafter::CrafterError;
 use std::fmt::Debug;
 use std::panic::{self, UnwindSafe};
@@ -11,6 +11,12 @@ fn decode_pdu_without_panic<'a>(
 ) -> crafter::Result<(SnmpPdu, &'a [u8])> {
     panic::catch_unwind(|| SnmpPdu::decode(bytes))
         .unwrap_or_else(|_| panic!("{name} panicked during PDU decode"))
+}
+
+fn assert_snmp_decode_error(name: &'static str, bytes: &[u8], expected: CrafterError) {
+    let result = panic::catch_unwind(|| Snmp::decode(bytes))
+        .unwrap_or_else(|_| panic!("{name} panicked during SNMP message decode"));
+    assert_eq!(result, Err(expected), "{name}");
 }
 
 fn assert_accessor_error<T, F>(name: &'static str, accessor: F, expected: CrafterError)
@@ -91,6 +97,42 @@ fn snmp_malformed_unset_pdu_and_value_lengths_auto_fill() -> crafter::Result<()>
     assert_eq!(decoded.compile()?, bytes);
 
     Ok(())
+}
+
+#[test]
+fn snmp_malformed_message_short_outer_sequence_is_structured_error() {
+    assert_snmp_decode_error(
+        "short outer message sequence",
+        &[0x30, 0x05, 0x02, 0x01, 0x00],
+        CrafterError::buffer_too_short("snmp.ber.sequence", 7, 5),
+    );
+}
+
+#[test]
+fn snmp_malformed_message_short_version_is_structured_error() {
+    assert_snmp_decode_error(
+        "short version integer",
+        &[0x30, 0x02, 0x02, 0x01],
+        CrafterError::buffer_too_short("snmp.ber.integer", 3, 2),
+    );
+}
+
+#[test]
+fn snmp_malformed_message_short_community_is_structured_error() {
+    assert_snmp_decode_error(
+        "short community octet string",
+        &[0x30, 0x06, 0x02, 0x01, 0x00, 0x04, 0x02, 0xaa],
+        CrafterError::buffer_too_short("snmp.message.community", 4, 3),
+    );
+}
+
+#[test]
+fn snmp_malformed_message_short_pdu_is_structured_error() {
+    assert_snmp_decode_error(
+        "short PDU TLV",
+        &[0x30, 0x08, 0x02, 0x01, 0x00, 0x04, 0x00, 0xa0, 0x02, 0x02],
+        CrafterError::buffer_too_short("snmp.pdu", 4, 3),
+    );
 }
 
 #[test]
