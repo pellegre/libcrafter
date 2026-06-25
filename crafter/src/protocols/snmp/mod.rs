@@ -17,7 +17,16 @@ mod registry;
 mod value;
 mod varbind;
 
+pub use constants::{
+    SNMP_PDU_TAG_GET_BULK_REQUEST, SNMP_PDU_TAG_GET_NEXT_REQUEST, SNMP_PDU_TAG_GET_REQUEST,
+    SNMP_PDU_TAG_INFORM_REQUEST, SNMP_PDU_TAG_REPORT, SNMP_PDU_TAG_RESPONSE,
+    SNMP_PDU_TAG_SET_REQUEST, SNMP_PDU_TAG_TRAP, SNMP_PDU_TAG_TRAP_V2,
+};
 pub use oid::SnmpOid;
+pub use pdu::{SnmpPdu, SnmpRawPdu, SnmpRawPduBody};
+pub use registry::{
+    snmp_pdu_tag_meta, snmp_pdu_tag_name, snmp_pdu_tag_status, SnmpPduTagMeta, SnmpPduTagStatus,
+};
 pub use varbind::{SnmpVarBind, SnmpVarBindList};
 
 #[cfg(test)]
