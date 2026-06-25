@@ -51,6 +51,7 @@ values use `Ipv4Protocol`.
 | `icmpv6_echo` | Protocols | Offline by default; dry-run with `--send-recv` | IPv6 ICMPv6 echo construction and optional dry-run send/receive reporting. | `cargo run -p crafter --example icmpv6_echo` |
 | `snmp_get` | Protocols | Offline | SNMPv1 and SNMPv2c GetRequest packet construction, decode, show, and hexdump output. | `cargo run -p crafter --example snmp_get` |
 | `snmp_trap` | Protocols | Offline | SNMPv1 Trap and SNMPv2c SNMPv2-Trap packet construction, decode, show, and hexdump output. | `cargo run -p crafter --example snmp_trap` |
+| `snmpv3_message` | Protocols | Offline | Synthetic SNMPv3 USM Report packet construction, decode, show, and hexdump output without credential storage. | `cargo run -p crafter --example snmpv3_message` |
 | `vlan` | Protocols | Offline | 802.1Q VLAN frame construction, compile, and decode. | `cargo run -p crafter --example vlan` |
 | `linux_sll` | Protocols | Offline | Linux cooked capture packet construction, compile, and decode. | `cargo run -p crafter --example linux_sll` |
 | `null_loopback` | Protocols | Offline | BSD null/loopback link-layer packet construction, compile, and decode. | `cargo run -p crafter --example null_loopback` |
