@@ -268,6 +268,142 @@ impl Snmp {
         Self::community_message(SnmpVersion::V2c, community, pdu)
     }
 
+    /// Build an SNMPv2c GetRequest message with noError/noErrorIndex fields.
+    ///
+    /// This only builds packet bytes. Polling, retries, and response matching
+    /// belong in generated tools outside the crate.
+    pub fn v2c_get_request(
+        community: impl Into<Vec<u8>>,
+        request_id: i64,
+        varbinds: super::SnmpVarBindList,
+    ) -> Result<Self> {
+        Ok(Self::v2c(
+            community,
+            SnmpPdu::get_request(request_id, varbinds)?,
+        ))
+    }
+
+    /// Build an SNMPv2c GetNextRequest message with noError/noErrorIndex fields.
+    ///
+    /// This only builds packet bytes. Walk behavior belongs in generated tools
+    /// outside the crate.
+    pub fn v2c_get_next_request(
+        community: impl Into<Vec<u8>>,
+        request_id: i64,
+        varbinds: super::SnmpVarBindList,
+    ) -> Result<Self> {
+        Ok(Self::v2c(
+            community,
+            SnmpPdu::get_next_request(request_id, varbinds)?,
+        ))
+    }
+
+    /// Build an SNMPv2c SetRequest message with noError/noErrorIndex fields.
+    ///
+    /// This only builds packet bytes. Authorization and mutation workflows
+    /// belong in generated tools outside the crate.
+    pub fn v2c_set_request(
+        community: impl Into<Vec<u8>>,
+        request_id: i64,
+        varbinds: super::SnmpVarBindList,
+    ) -> Result<Self> {
+        Ok(Self::v2c(
+            community,
+            SnmpPdu::set_request(request_id, varbinds)?,
+        ))
+    }
+
+    /// Build an SNMPv2c Response message with noError/noErrorIndex fields.
+    pub fn v2c_response(
+        community: impl Into<Vec<u8>>,
+        request_id: i64,
+        varbinds: super::SnmpVarBindList,
+    ) -> Result<Self> {
+        Ok(Self::v2c(
+            community,
+            SnmpPdu::response(request_id, varbinds)?,
+        ))
+    }
+
+    /// Build an SNMPv2c Response message carrying explicit error fields.
+    ///
+    /// This helper preserves supplied integer values; it does not validate
+    /// whether an error status is assigned or whether the index matches an
+    /// application-level variable binding.
+    pub fn v2c_response_error(
+        community: impl Into<Vec<u8>>,
+        request_id: i64,
+        error_status: i64,
+        error_index: i64,
+        varbinds: super::SnmpVarBindList,
+    ) -> Result<Self> {
+        Ok(Self::v2c(
+            community,
+            SnmpPdu::response_error(request_id, error_status, error_index, varbinds)?,
+        ))
+    }
+
+    /// Build an SNMPv2c GetBulkRequest message from source-backed wire fields.
+    ///
+    /// This only builds packet bytes. Table walking, retry behavior, and
+    /// response interpretation belong in generated tools outside the crate.
+    pub fn v2c_get_bulk_request(
+        community: impl Into<Vec<u8>>,
+        request_id: i64,
+        non_repeaters: i64,
+        max_repetitions: i64,
+        varbinds: super::SnmpVarBindList,
+    ) -> Result<Self> {
+        Ok(Self::v2c(
+            community,
+            SnmpPdu::get_bulk_request(request_id, non_repeaters, max_repetitions, varbinds)?,
+        ))
+    }
+
+    /// Build an SNMPv2c InformRequest message with noError/noErrorIndex fields.
+    ///
+    /// This only builds packet bytes. Delivery confirmation, retransmission,
+    /// and notification workflow behavior belong in generated tools outside
+    /// the crate.
+    pub fn v2c_inform_request(
+        community: impl Into<Vec<u8>>,
+        request_id: i64,
+        varbinds: super::SnmpVarBindList,
+    ) -> Result<Self> {
+        Ok(Self::v2c(
+            community,
+            SnmpPdu::inform_request(request_id, varbinds)?,
+        ))
+    }
+
+    /// Build an SNMPv2c Trap message with noError/noErrorIndex fields.
+    ///
+    /// This only builds packet bytes. Trap listener and notification-service
+    /// behavior belongs in generated tools outside the crate.
+    pub fn v2c_snmpv2_trap(
+        community: impl Into<Vec<u8>>,
+        request_id: i64,
+        varbinds: super::SnmpVarBindList,
+    ) -> Result<Self> {
+        Ok(Self::v2c(
+            community,
+            SnmpPdu::snmpv2_trap(request_id, varbinds)?,
+        ))
+    }
+
+    /// Build an SNMPv2c Report message with noError/noErrorIndex fields.
+    ///
+    /// This only builds packet bytes. SNMPv3 security validation and engine
+    /// behavior belong in later packet validation or generated tools, not in
+    /// this message helper.
+    pub fn v2c_report(
+        community: impl Into<Vec<u8>>,
+        request_id: i64,
+        varbinds: super::SnmpVarBindList,
+    ) -> Result<Self> {
+        Ok(Self::v2c(community, SnmpPdu::report(request_id, varbinds)?))
+    }
+
     fn community_message(
         version: SnmpVersion,
         community: impl Into<Vec<u8>>,
@@ -751,6 +887,118 @@ mod tests {
                 0x01, 0x00, 0x02, 0x01, 0x00, 0x30, 0x00,
             ]
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_v2c_message_request_response_builders_emit_source_backed_wrappers() -> Result<()> {
+        let request = Snmp::v2c_get_request(b"public".to_vec(), 1, SnmpVarBindList::empty())?;
+
+        // Source-backed: docs/snmp-rfc-manifest.md records RFC 1901 Section
+        // 3 for the SNMPv2c Message wrapper and RFC 3416 Sections 3 and 4.2.1
+        // for the GetRequest-PDU.
+        assert_eq!(
+            request.compile()?,
+            [
+                0x30, 0x18, 0x02, 0x01, 0x01, 0x04, 0x06, b'p', b'u', b'b', b'l', b'i', b'c', 0xa0,
+                0x0b, 0x02, 0x01, 0x01, 0x02, 0x01, 0x00, 0x02, 0x01, 0x00, 0x30, 0x00,
+            ]
+        );
+
+        let response = Snmp::v2c_response(b"public".to_vec(), 128, SnmpVarBindList::empty())?;
+
+        // Source-backed: docs/snmp-rfc-manifest.md records RFC 1901 Section
+        // 3 for the SNMPv2c Message wrapper and RFC 3416 Sections 3 and 4.2.2
+        // for the Response-PDU.
+        assert_eq!(
+            response.compile()?,
+            [
+                0x30, 0x19, 0x02, 0x01, 0x01, 0x04, 0x06, b'p', b'u', b'b', b'l', b'i', b'c', 0xa2,
+                0x0c, 0x02, 0x02, 0x00, 0x80, 0x02, 0x01, 0x00, 0x02, 0x01, 0x00, 0x30, 0x00,
+            ]
+        );
+
+        let error_response = Snmp::v2c_response_error(
+            b"public".to_vec(),
+            129,
+            super::super::registry::SNMP_ERROR_STATUS_GEN_ERR,
+            2,
+            SnmpVarBindList::empty(),
+        )?;
+
+        assert_eq!(request.version(), SnmpVersion::V2c);
+        assert_eq!(request.pdu().tag_number(), SnmpPdu::TAG_GET_REQUEST);
+        assert_eq!(response.pdu().tag_number(), SnmpPdu::TAG_RESPONSE);
+        assert_eq!(
+            error_response
+                .pdu()
+                .as_response()?
+                .expect("response fields")
+                .error_status(),
+            super::super::registry::SNMP_ERROR_STATUS_GEN_ERR,
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_v2c_message_request_set_bulk_inform_trap_report_builders_select_tags() -> Result<()> {
+        let get_next = Snmp::v2c_get_next_request(b"public".to_vec(), 2, SnmpVarBindList::empty())?;
+        let set = Snmp::v2c_set_request(b"public".to_vec(), 3, SnmpVarBindList::empty())?;
+        let bulk =
+            Snmp::v2c_get_bulk_request(b"public".to_vec(), 4, 1, 10, SnmpVarBindList::empty())?;
+        let inform = Snmp::v2c_inform_request(b"public".to_vec(), 5, SnmpVarBindList::empty())?;
+        let trap = Snmp::v2c_snmpv2_trap(b"public".to_vec(), 6, SnmpVarBindList::empty())?;
+        let report = Snmp::v2c_report(b"public".to_vec(), 7, SnmpVarBindList::empty())?;
+
+        assert_eq!(get_next.version(), SnmpVersion::V2c);
+        assert_eq!(get_next.pdu().tag_number(), SnmpPdu::TAG_GET_NEXT_REQUEST);
+        assert_eq!(set.pdu().tag_number(), SnmpPdu::TAG_SET_REQUEST);
+        assert_eq!(bulk.pdu().tag_number(), SnmpPdu::TAG_GET_BULK_REQUEST);
+        assert_eq!(inform.pdu().tag_number(), SnmpPdu::TAG_INFORM_REQUEST);
+        assert_eq!(trap.pdu().tag_number(), SnmpPdu::TAG_TRAP_V2);
+        assert_eq!(report.pdu().tag_number(), SnmpPdu::TAG_REPORT);
+
+        assert_eq!(
+            bulk.compile()?,
+            [
+                0x30, 0x18, 0x02, 0x01, 0x01, 0x04, 0x06, b'p', b'u', b'b', b'l', b'i', b'c', 0xa5,
+                0x0b, 0x02, 0x01, 0x04, 0x02, 0x01, 0x01, 0x02, 0x01, 0x0a, 0x30, 0x00,
+            ]
+        );
+        assert!(inform.summary().contains("pdu_type=inform-request"));
+        assert!(trap.summary().contains("pdu_type=snmpv2-trap"));
+        assert!(report.summary().contains("pdu_type=report"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_v2c_message_preserves_raw_community_bytes_and_unknown_version_override() -> Result<()> {
+        let community = [0x00, 0xff, 0x80, b'a'];
+        let snmp = Snmp::v2c_get_bulk_request(community, 7, 1, 10, SnmpVarBindList::empty())?
+            .with_version(SnmpVersion::Unknown(3));
+
+        assert_eq!(snmp.version(), SnmpVersion::Unknown(3));
+        assert_eq!(snmp.community(), &community);
+        assert_eq!(
+            snmp.compile()?,
+            [
+                0x30, 0x16, 0x02, 0x01, 0x03, 0x04, 0x04, 0x00, 0xff, 0x80, b'a', 0xa5, 0x0b, 0x02,
+                0x01, 0x07, 0x02, 0x01, 0x01, 0x02, 0x01, 0x0a, 0x30, 0x00,
+            ]
+        );
+
+        let bytes = snmp.compile()?;
+        let content = ber::decode_sequence_exact(&bytes)?;
+        let (header, rest) = SnmpMessageHeader::decode(content)?;
+        let (pdu, rest) = SnmpPdu::decode(rest)?;
+        ber::require_sequence_exact(rest)?;
+
+        assert_eq!(header.version(), SnmpVersion::Unknown(3));
+        assert_eq!(header.community(), &community);
+        assert_eq!(pdu.tag_number(), SnmpPdu::TAG_GET_BULK_REQUEST);
 
         Ok(())
     }
