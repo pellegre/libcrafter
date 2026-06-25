@@ -1,12 +1,13 @@
-//! SNMP PDU tag metadata, request fields, and raw-body preservation.
+//! SNMP PDU tag metadata, request/trap fields, and raw-body preservation.
 //!
 //! Source-gated by `docs/snmp-rfc-manifest.md`; only GetRequest-style common
 //! request fields are modeled here for GetRequest, GetNextRequest, Response,
-//! and SetRequest. Other PDU bodies remain raw until their implementation
-//! slices land. Walk, polling, authorization, and set workflows belong in
-//! generated tools, not in this packet primitive.
+//! and SetRequest, plus source-backed SNMPv1 Trap-PDU wire fields. Other PDU
+//! bodies remain raw until their implementation slices land. Walk, polling,
+//! trap listener, authorization, and set workflows belong in generated tools,
+//! not in this packet primitive.
 
-use super::{ber, constants, registry, varbind::SnmpVarBindList};
+use super::{ber, constants, oid::SnmpOid, registry, value::SnmpValue, varbind::SnmpVarBindList};
 use crate::error::Result;
 
 /// Raw BER content bytes for one SNMP PDU body.
@@ -212,6 +213,159 @@ impl SnmpRequestPdu {
     }
 }
 
+/// SNMPv1 Trap-PDU wire fields.
+///
+/// RFC-backed SNMPv1 Trap-PDUs carry enterprise OBJECT IDENTIFIER, agent
+/// address, generic trap, specific trap, timestamp, and VarBindList fields.
+/// This type preserves generic and specific trap INTEGER values as supplied; it
+/// does not validate assigned generic-trap names or implement listener/service
+/// behavior.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SnmpV1TrapPdu {
+    enterprise: SnmpOid,
+    agent_address: [u8; 4],
+    generic_trap: i64,
+    specific_trap: i64,
+    timestamp: u32,
+    varbinds: SnmpVarBindList,
+}
+
+impl SnmpV1TrapPdu {
+    /// Build SNMPv1 Trap-PDU fields.
+    pub fn new(
+        enterprise: SnmpOid,
+        agent_address: [u8; 4],
+        generic_trap: i64,
+        specific_trap: i64,
+        timestamp: u32,
+        varbinds: SnmpVarBindList,
+    ) -> Self {
+        Self {
+            enterprise,
+            agent_address,
+            generic_trap,
+            specific_trap,
+            timestamp,
+            varbinds,
+        }
+    }
+
+    /// Decode the body content of one SNMPv1 Trap-PDU.
+    pub fn decode_body(bytes: &[u8]) -> Result<Self> {
+        let (enterprise, rest) = SnmpOid::decode(bytes)?;
+        let (agent_address, rest) = SnmpValue::decode_ip_address(rest)?;
+        let Some(agent_address) = agent_address.as_ip_address() else {
+            return Err(ber::invalid_ber_field(
+                "snmp.pdu.trap.agent_address",
+                "expected IpAddress value",
+            ));
+        };
+        let (generic_trap, rest) = ber::decode_integer(rest)?;
+        let (specific_trap, rest) = ber::decode_integer(rest)?;
+        let (timestamp, rest) = SnmpValue::decode_time_ticks(rest)?;
+        let Some(timestamp) = timestamp.as_time_ticks() else {
+            return Err(ber::invalid_ber_field(
+                "snmp.pdu.trap.timestamp",
+                "expected TimeTicks value",
+            ));
+        };
+        let (varbinds, rest) = SnmpVarBindList::decode(rest)?;
+        if !rest.is_empty() {
+            return Err(ber::invalid_ber_field(
+                "snmp.pdu.trap",
+                "trailing bytes after trap PDU fields",
+            ));
+        }
+
+        Ok(Self::new(
+            enterprise,
+            agent_address,
+            generic_trap,
+            specific_trap,
+            timestamp,
+            varbinds,
+        ))
+    }
+
+    /// Encode the body content of this SNMPv1 Trap-PDU.
+    pub fn encode_body(&self, out: &mut Vec<u8>) -> Result<()> {
+        self.enterprise.encode(out)?;
+        SnmpValue::ip_address(self.agent_address).encode(out)?;
+        ber::encode_integer(self.generic_trap, out)?;
+        ber::encode_integer(self.specific_trap, out)?;
+        SnmpValue::time_ticks(self.timestamp).encode(out)?;
+        self.varbinds.encode(out)
+    }
+
+    /// Return this Trap-PDU body encoded as BER content bytes.
+    pub fn to_body_bytes(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        self.encode_body(&mut out)?;
+        Ok(out)
+    }
+
+    /// Enterprise OBJECT IDENTIFIER.
+    pub fn enterprise(&self) -> &SnmpOid {
+        &self.enterprise
+    }
+
+    /// Agent IPv4 address octets from the SNMPv1 NetworkAddress choice.
+    pub const fn agent_address(&self) -> [u8; 4] {
+        self.agent_address
+    }
+
+    /// Generic trap INTEGER value.
+    pub const fn generic_trap(&self) -> i64 {
+        self.generic_trap
+    }
+
+    /// Specific trap INTEGER value.
+    pub const fn specific_trap(&self) -> i64 {
+        self.specific_trap
+    }
+
+    /// Timestamp TimeTicks value.
+    pub const fn timestamp(&self) -> u32 {
+        self.timestamp
+    }
+
+    /// Ordered VarBindList carried by this trap PDU.
+    pub const fn varbinds(&self) -> &SnmpVarBindList {
+        &self.varbinds
+    }
+
+    /// Consume this trap PDU and return the ordered VarBindList.
+    pub fn into_varbinds(self) -> SnmpVarBindList {
+        self.varbinds
+    }
+
+    /// A compact summary of the SNMPv1 Trap-PDU fields.
+    pub fn summary(&self) -> String {
+        format!(
+            "trap enterprise={} agent={} generic={} specific={} timestamp={} varbinds={}",
+            self.enterprise,
+            format_agent_address(self.agent_address),
+            self.generic_trap,
+            self.specific_trap,
+            self.timestamp,
+            self.varbinds.len()
+        )
+    }
+
+    /// Stable inspection fields for generated tools.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        let mut fields = vec![
+            ("enterprise", self.enterprise.to_string()),
+            ("agent_address", format_agent_address(self.agent_address)),
+            ("generic_trap", self.generic_trap.to_string()),
+            ("specific_trap", self.specific_trap.to_string()),
+            ("timestamp", self.timestamp.to_string()),
+        ];
+        fields.extend(self.varbinds.inspection_fields());
+        fields
+    }
+}
+
 /// Source-backed SNMP PDU tag variants with raw body preservation.
 ///
 /// This enum preserves operation tag bytes. GetRequest-style common fields can
@@ -397,6 +551,29 @@ impl SnmpPdu {
     /// Build a raw SNMPv1 Trap-PDU body.
     pub fn raw_trap(body: impl Into<Vec<u8>>) -> Self {
         Self::Trap(SnmpRawPduBody::new(body))
+    }
+
+    /// Build an SNMPv1 Trap-PDU from source-backed wire fields.
+    ///
+    /// This only builds packet bytes. Trap listener and notification-service
+    /// behavior belongs in generated tools outside the crate.
+    pub fn v1_trap(
+        enterprise: SnmpOid,
+        agent_address: [u8; 4],
+        generic_trap: i64,
+        specific_trap: i64,
+        timestamp: u32,
+        varbinds: SnmpVarBindList,
+    ) -> Result<Self> {
+        let trap = SnmpV1TrapPdu::new(
+            enterprise,
+            agent_address,
+            generic_trap,
+            specific_trap,
+            timestamp,
+            varbinds,
+        );
+        Ok(Self::Trap(SnmpRawPduBody::new(trap.to_body_bytes()?)))
     }
 
     /// Build a raw GetBulkRequest-PDU body.
@@ -594,6 +771,18 @@ impl SnmpPdu {
             _ => Ok(None),
         }
     }
+
+    /// Decode typed SNMPv1 Trap-PDU fields when this PDU has the Trap tag.
+    pub fn as_v1_trap(&self) -> Result<Option<SnmpV1TrapPdu>> {
+        match self {
+            Self::Trap(body) => Ok(Some(SnmpV1TrapPdu::decode_body(body.as_bytes())?)),
+            _ => Ok(None),
+        }
+    }
+}
+
+fn format_agent_address(octets: [u8; 4]) -> String {
+    format!("{}.{}.{}.{}", octets[0], octets[1], octets[2], octets[3])
 }
 
 fn decode_pdu_tlv(bytes: &[u8]) -> Result<(ber::BerTag, &[u8], &[u8], &[u8])> {
@@ -1092,6 +1281,120 @@ mod tests {
             };
             assert_eq!(decoded_request, request);
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_v1_trap_pdu_builder_compiles_decodes_and_summarizes() -> Result<()> {
+        let enterprise = SnmpOid::from_dotted("1.3.6.1.4.1")?;
+        let varbind =
+            crate::protocols::snmp::SnmpVarBind::null(SnmpOid::from_dotted("1.3.6.1.2.1.1.3.0")?);
+        let pdu = SnmpPdu::v1_trap(
+            enterprise.clone(),
+            [192, 0, 2, 44],
+            6,
+            4_321,
+            12_345,
+            SnmpVarBindList::new(vec![varbind.clone()]),
+        )?;
+
+        // Source-backed: docs/snmp-rfc-manifest.md records RFC 1157 Sections
+        // 4.1.6 and 5 for SNMPv1 Trap-PDU fields: enterprise, agent address,
+        // generic trap, specific trap, timestamp, and VarBindList.
+        let expected = [
+            0xa4, 0x28, 0x06, 0x05, 0x2b, 0x06, 0x01, 0x04, 0x01, 0x40, 0x04, 192, 0, 2, 44, 0x02,
+            0x01, 0x06, 0x02, 0x02, 0x10, 0xe1, 0x43, 0x02, 0x30, 0x39, 0x30, 0x0e, 0x30, 0x0c,
+            0x06, 0x08, 0x2b, 0x06, 0x01, 0x02, 0x01, 0x01, 0x03, 0x00, 0x05, 0x00,
+        ];
+        assert_eq!(pdu.tag_number(), constants::SNMP_PDU_TAG_TRAP);
+        assert_eq!(pdu.tag_name(), Some("trap"));
+        assert_eq!(pdu.tag_label(), "trap");
+        assert_eq!(pdu.compile()?, expected);
+        assert!(pdu.as_get_request()?.is_none());
+        assert!(pdu.as_response()?.is_none());
+
+        let trap = pdu.as_v1_trap()?.expect("Trap fields");
+        assert_eq!(trap.enterprise(), &enterprise);
+        assert_eq!(trap.agent_address(), [192, 0, 2, 44]);
+        assert_eq!(trap.generic_trap(), 6);
+        assert_eq!(trap.specific_trap(), 4_321);
+        assert_eq!(trap.timestamp(), 12_345);
+        assert_eq!(trap.varbinds().as_slice(), &[varbind]);
+        assert_eq!(
+            trap.summary(),
+            "trap enterprise=1.3.6.1.4.1 agent=192.0.2.44 generic=6 specific=4321 timestamp=12345 varbinds=1"
+        );
+        assert_eq!(
+            trap.inspection_fields(),
+            [
+                ("enterprise", "1.3.6.1.4.1".to_string()),
+                ("agent_address", "192.0.2.44".to_string()),
+                ("generic_trap", "6".to_string()),
+                ("specific_trap", "4321".to_string()),
+                ("timestamp", "12345".to_string()),
+                ("varbind_count", "1".to_string()),
+                ("varbind[0]", "1.3.6.1.2.1.1.3.0=null".to_string()),
+            ]
+        );
+
+        let (decoded, rest) = SnmpPdu::decode(&expected)?;
+        assert!(rest.is_empty());
+        assert_eq!(decoded.as_v1_trap()?.expect("decoded fields"), trap);
+        assert_eq!(decoded.compile()?, expected);
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_v1_trap_pdu_unknown_trap_codes_are_preserved_as_integers() -> Result<()> {
+        let pdu = SnmpPdu::v1_trap(
+            SnmpOid::from_dotted("1.3.6.1.4.1")?,
+            [198, 51, 100, 10],
+            -1,
+            300,
+            0,
+            SnmpVarBindList::empty(),
+        )?;
+
+        let expected = [
+            0xa4, 0x19, 0x06, 0x05, 0x2b, 0x06, 0x01, 0x04, 0x01, 0x40, 0x04, 198, 51, 100, 10,
+            0x02, 0x01, 0xff, 0x02, 0x02, 0x01, 0x2c, 0x43, 0x01, 0x00, 0x30, 0x00,
+        ];
+        assert_eq!(pdu.compile()?, expected);
+
+        let trap = pdu.as_v1_trap()?.expect("Trap fields");
+        assert_eq!(trap.agent_address(), [198, 51, 100, 10]);
+        assert_eq!(trap.generic_trap(), -1);
+        assert_eq!(trap.specific_trap(), 300);
+        assert_eq!(trap.timestamp(), 0);
+        assert!(trap.varbinds().is_empty());
+
+        let (decoded, rest) = SnmpPdu::decode(&expected)?;
+        assert!(rest.is_empty());
+        let decoded_trap = decoded.as_v1_trap()?.expect("decoded Trap fields");
+        assert_eq!(decoded_trap.generic_trap(), -1);
+        assert_eq!(decoded_trap.specific_trap(), 300);
+        assert_eq!(decoded.compile()?, expected);
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_v1_trap_pdu_truncated_field_returns_structured_error() -> Result<()> {
+        let bytes = [
+            0xa4, 0x16, 0x06, 0x05, 0x2b, 0x06, 0x01, 0x04, 0x01, 0x40, 0x04, 192, 0, 2, 44, 0x02,
+            0x01, 0x06, 0x02, 0x01, 0x2a, 0x43, 0x02, 0x30,
+        ];
+        let (decoded, rest) = SnmpPdu::decode(&bytes)?;
+
+        assert!(rest.is_empty());
+        assert_eq!(
+            decoded
+                .as_v1_trap()
+                .expect_err("truncated TimeTicks must error"),
+            CrafterError::buffer_too_short("snmp.ber.application.time_ticks", 4, 3)
+        );
 
         Ok(())
     }
