@@ -34,6 +34,289 @@ impl fmt::Display for SnmpPduTagStatus {
     }
 }
 
+/// SNMPv3 msgFlags authFlag bit.
+///
+/// Source: `docs/snmp-rfc-manifest.md` records RFC 3412 Section 6.4.
+pub const SNMP_V3_FLAG_AUTH: u8 = 0x01;
+/// SNMPv3 msgFlags privFlag bit.
+///
+/// Source: `docs/snmp-rfc-manifest.md` records RFC 3412 Section 6.4.
+pub const SNMP_V3_FLAG_PRIVACY: u8 = 0x02;
+/// SNMPv3 msgFlags reportableFlag bit.
+///
+/// Source: `docs/snmp-rfc-manifest.md` records RFC 3412 Section 6.4.
+pub const SNMP_V3_FLAG_REPORTABLE: u8 = 0x04;
+/// Source-backed SNMPv3 msgFlags bits currently named by RFC 3412.
+pub const SNMP_V3_FLAG_KNOWN_MASK: u8 =
+    SNMP_V3_FLAG_AUTH | SNMP_V3_FLAG_PRIVACY | SNMP_V3_FLAG_REPORTABLE;
+/// SNMPv3 msgFlags bits reserved by RFC 3412 Section 6.4.
+pub const SNMP_V3_FLAG_RESERVED_MASK: u8 = !SNMP_V3_FLAG_KNOWN_MASK;
+
+/// Typed view of one SNMPv3 msgFlags octet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SnmpV3Flags {
+    bits: u8,
+}
+
+impl SnmpV3Flags {
+    /// Wrap one raw msgFlags octet without validation.
+    pub const fn new(bits: u8) -> Self {
+        Self { bits }
+    }
+
+    /// Build from raw OCTET STRING bytes, using the first octet when present.
+    pub fn from_octets(octets: &[u8]) -> Self {
+        Self::new(octets.first().copied().unwrap_or(0))
+    }
+
+    /// Raw msgFlags bits.
+    pub const fn bits(self) -> u8 {
+        self.bits
+    }
+
+    /// Whether authFlag is set.
+    pub const fn auth(self) -> bool {
+        self.bits & SNMP_V3_FLAG_AUTH != 0
+    }
+
+    /// Whether privFlag is set.
+    pub const fn privacy(self) -> bool {
+        self.bits & SNMP_V3_FLAG_PRIVACY != 0
+    }
+
+    /// Whether reportableFlag is set.
+    pub const fn reportable(self) -> bool {
+        self.bits & SNMP_V3_FLAG_REPORTABLE != 0
+    }
+
+    /// Reserved msgFlags bits preserved from the raw octet.
+    pub const fn reserved_bits(self) -> u8 {
+        self.bits & SNMP_V3_FLAG_RESERVED_MASK
+    }
+
+    /// Whether any reserved msgFlags bit is set.
+    pub const fn has_reserved_bits(self) -> bool {
+        self.reserved_bits() != 0
+    }
+
+    /// Whether privFlag is set without authFlag.
+    ///
+    /// RFC 3412 names this bit combination as reserved. The packet layer only
+    /// reports it; it does not reject or enforce security policy.
+    pub const fn has_reserved_auth_priv_combination(self) -> bool {
+        self.privacy() && !self.auth()
+    }
+
+    /// Stable label preserving named and reserved bits.
+    pub fn label(self) -> String {
+        snmp_v3_flags_label(self.bits)
+    }
+}
+
+impl From<u8> for SnmpV3Flags {
+    fn from(bits: u8) -> Self {
+        Self::new(bits)
+    }
+}
+
+impl From<SnmpV3Flags> for u8 {
+    fn from(flags: SnmpV3Flags) -> Self {
+        flags.bits()
+    }
+}
+
+impl fmt::Display for SnmpV3Flags {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.label())
+    }
+}
+
+/// Return a stable label for one SNMPv3 msgFlags octet.
+pub fn snmp_v3_flags_label(bits: u8) -> String {
+    let flags = SnmpV3Flags::new(bits);
+    let mut labels = Vec::new();
+    if flags.auth() {
+        labels.push("auth".to_string());
+    }
+    if flags.privacy() {
+        labels.push("privacy".to_string());
+    }
+    if flags.reportable() {
+        labels.push("reportable".to_string());
+    }
+    if flags.has_reserved_bits() {
+        labels.push(format!("reserved-0x{:02x}", flags.reserved_bits()));
+    }
+
+    if labels.is_empty() {
+        "none".to_string()
+    } else {
+        labels.join("|")
+    }
+}
+
+/// Source-backed assignment status for an SNMPv3 security model value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SnmpSecurityModelStatus {
+    /// Reserved by the IANA SNMP number-space registry.
+    Reserved,
+    /// Assigned by the IANA SNMP number-space registry.
+    Assigned,
+    /// In-range but unassigned by the IANA SNMP number-space registry.
+    Unassigned,
+    /// Outside the manifest-backed registry range.
+    Unknown,
+}
+
+impl SnmpSecurityModelStatus {
+    /// Stable lowercase status label.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Reserved => "reserved",
+            Self::Assigned => "assigned",
+            Self::Unassigned => "unassigned",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+impl fmt::Display for SnmpSecurityModelStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.label())
+    }
+}
+
+/// any(0) security model value, reserved by IANA.
+pub const SNMP_SECURITY_MODEL_ANY: i64 = 0;
+/// SNMPv1 security model value.
+pub const SNMP_SECURITY_MODEL_SNMPV1: i64 = 1;
+/// SNMPv2c security model value.
+pub const SNMP_SECURITY_MODEL_SNMPV2C: i64 = 2;
+/// User-based Security Model value.
+pub const SNMP_SECURITY_MODEL_USM: i64 = 3;
+/// Transport Security Model value.
+pub const SNMP_SECURITY_MODEL_TSM: i64 = 4;
+
+/// One source-backed SNMPv3 security model metadata entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SnmpSecurityModelMeta {
+    /// INTEGER value carried by msgSecurityModel.
+    pub code: i64,
+    /// Stable short name, or a preservation label for unassigned/unknown.
+    pub name: &'static str,
+    /// Assignment status from the manifest-backed IANA registry.
+    pub status: SnmpSecurityModelStatus,
+}
+
+/// A typed SNMPv3 security model value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SnmpSecurityModel {
+    code: i64,
+}
+
+impl SnmpSecurityModel {
+    /// Wrap a raw msgSecurityModel INTEGER value without validation.
+    pub const fn new(code: i64) -> Self {
+        Self { code }
+    }
+
+    /// Raw INTEGER value carried by msgSecurityModel.
+    pub const fn code(self) -> i64 {
+        self.code
+    }
+
+    /// Source-backed metadata for this security model value.
+    pub const fn meta(self) -> SnmpSecurityModelMeta {
+        snmp_security_model_meta(self.code)
+    }
+
+    /// Source-backed name for assigned or reserved values.
+    pub const fn name(self) -> Option<&'static str> {
+        snmp_security_model_name(self.code)
+    }
+
+    /// Source-backed assignment status for this value.
+    pub const fn status(self) -> SnmpSecurityModelStatus {
+        snmp_security_model_status(self.code)
+    }
+
+    /// Stable label that preserves unassigned and unknown values.
+    pub fn label(self) -> String {
+        snmp_security_model_label(self.code)
+    }
+
+    /// Compact summary label with the numeric code.
+    pub fn summary(self) -> String {
+        snmp_security_model_summary(self.code)
+    }
+}
+
+impl From<i64> for SnmpSecurityModel {
+    fn from(code: i64) -> Self {
+        Self::new(code)
+    }
+}
+
+impl From<SnmpSecurityModel> for i64 {
+    fn from(model: SnmpSecurityModel) -> Self {
+        model.code()
+    }
+}
+
+impl fmt::Display for SnmpSecurityModel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.label())
+    }
+}
+
+/// Return source-backed metadata for an SNMPv3 security model value.
+///
+/// Source: `docs/snmp-rfc-manifest.md` records the IANA SNMP Number Spaces
+/// Security Models rows: 0 reserved for any, 1 SNMPv1, 2 SNMPv2c, 3 USM,
+/// 4 TSM, and 5-255 unassigned.
+pub const fn snmp_security_model_meta(code: i64) -> SnmpSecurityModelMeta {
+    let (name, status) = match code {
+        SNMP_SECURITY_MODEL_ANY => ("any", SnmpSecurityModelStatus::Reserved),
+        SNMP_SECURITY_MODEL_SNMPV1 => ("snmpv1", SnmpSecurityModelStatus::Assigned),
+        SNMP_SECURITY_MODEL_SNMPV2C => ("snmpv2c", SnmpSecurityModelStatus::Assigned),
+        SNMP_SECURITY_MODEL_USM => ("usm", SnmpSecurityModelStatus::Assigned),
+        SNMP_SECURITY_MODEL_TSM => ("tsm", SnmpSecurityModelStatus::Assigned),
+        5..=255 => (
+            "unassigned-security-model",
+            SnmpSecurityModelStatus::Unassigned,
+        ),
+        _ => ("unknown-security-model", SnmpSecurityModelStatus::Unknown),
+    };
+
+    SnmpSecurityModelMeta { code, name, status }
+}
+
+/// Return the source-backed security model name for assigned or reserved values.
+pub const fn snmp_security_model_name(code: i64) -> Option<&'static str> {
+    let meta = snmp_security_model_meta(code);
+    match meta.status {
+        SnmpSecurityModelStatus::Reserved | SnmpSecurityModelStatus::Assigned => Some(meta.name),
+        SnmpSecurityModelStatus::Unassigned | SnmpSecurityModelStatus::Unknown => None,
+    }
+}
+
+/// Return the source-backed assignment status for a security model value.
+pub const fn snmp_security_model_status(code: i64) -> SnmpSecurityModelStatus {
+    snmp_security_model_meta(code).status
+}
+
+/// Return a stable security-model label while preserving unknown values.
+pub fn snmp_security_model_label(code: i64) -> String {
+    snmp_security_model_name(code)
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("security-model-{code}"))
+}
+
+/// Return a compact summary label with the numeric security-model code.
+pub fn snmp_security_model_summary(code: i64) -> String {
+    format!("{}({code})", snmp_security_model_label(code))
+}
+
 /// noError(0) error-status value.
 ///
 /// Source: `docs/snmp-rfc-manifest.md` records RFC 1157 Section 4.1.1 and
@@ -380,6 +663,121 @@ pub(super) fn application_tag_label(tag_number: u8, constructed: bool) -> String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn snmp_v3_flags_helpers_name_bits_and_preserve_reserved_bits() {
+        let flags = SnmpV3Flags::new(
+            SNMP_V3_FLAG_AUTH | SNMP_V3_FLAG_PRIVACY | SNMP_V3_FLAG_REPORTABLE | 0x80,
+        );
+
+        // Source-backed: docs/snmp-rfc-manifest.md records RFC 3412 Section
+        // 6.4 for authFlag, privFlag, reportableFlag, reserved msgFlags bits,
+        // and the reserved privFlag-without-authFlag combination.
+        assert_eq!(flags.bits(), 0x87);
+        assert!(flags.auth());
+        assert!(flags.privacy());
+        assert!(flags.reportable());
+        assert_eq!(flags.reserved_bits(), 0x80);
+        assert!(flags.has_reserved_bits());
+        assert!(!flags.has_reserved_auth_priv_combination());
+        assert_eq!(flags.label(), "auth|privacy|reportable|reserved-0x80");
+        assert_eq!(flags.to_string(), flags.label());
+        assert_eq!(u8::from(flags), 0x87);
+        assert_eq!(
+            SnmpV3Flags::from_octets(&[0xff, 0x00]),
+            SnmpV3Flags::new(0xff)
+        );
+        assert_eq!(SnmpV3Flags::from_octets(&[]).label(), "none");
+
+        let privacy_without_auth = SnmpV3Flags::new(SNMP_V3_FLAG_PRIVACY);
+        assert!(privacy_without_auth.privacy());
+        assert!(!privacy_without_auth.auth());
+        assert!(privacy_without_auth.has_reserved_auth_priv_combination());
+        assert_eq!(snmp_v3_flags_label(0), "none");
+    }
+
+    #[test]
+    fn snmp_v3_flags_security_model_registry_names_source_backed_values() {
+        let cases = [
+            (
+                SNMP_SECURITY_MODEL_ANY,
+                "any",
+                SnmpSecurityModelStatus::Reserved,
+            ),
+            (
+                SNMP_SECURITY_MODEL_SNMPV1,
+                "snmpv1",
+                SnmpSecurityModelStatus::Assigned,
+            ),
+            (
+                SNMP_SECURITY_MODEL_SNMPV2C,
+                "snmpv2c",
+                SnmpSecurityModelStatus::Assigned,
+            ),
+            (
+                SNMP_SECURITY_MODEL_USM,
+                "usm",
+                SnmpSecurityModelStatus::Assigned,
+            ),
+            (
+                SNMP_SECURITY_MODEL_TSM,
+                "tsm",
+                SnmpSecurityModelStatus::Assigned,
+            ),
+        ];
+
+        // Source-backed: docs/snmp-rfc-manifest.md records the IANA SNMP
+        // Number Spaces Security Models rows.
+        for (code, name, status) in cases {
+            let meta = snmp_security_model_meta(code);
+            let model = SnmpSecurityModel::new(code);
+
+            assert_eq!(meta.code, code);
+            assert_eq!(meta.name, name);
+            assert_eq!(meta.status, status);
+            assert_eq!(snmp_security_model_name(code), Some(name));
+            assert_eq!(snmp_security_model_status(code), status);
+            assert_eq!(snmp_security_model_label(code), name);
+            assert_eq!(snmp_security_model_summary(code), format!("{name}({code})"));
+            assert_eq!(model.meta(), meta);
+            assert_eq!(model.name(), Some(name));
+            assert_eq!(model.status(), status);
+            assert_eq!(model.to_string(), name);
+            assert_eq!(i64::from(model), code);
+        }
+
+        assert_eq!(SnmpSecurityModelStatus::Assigned.label(), "assigned");
+        assert_eq!(SnmpSecurityModelStatus::Reserved.to_string(), "reserved");
+    }
+
+    #[test]
+    fn snmp_v3_flags_security_model_registry_preserves_unassigned_and_unknowns() {
+        let unassigned = snmp_security_model_meta(99);
+        assert_eq!(unassigned.name, "unassigned-security-model");
+        assert_eq!(unassigned.status, SnmpSecurityModelStatus::Unassigned);
+        assert_eq!(snmp_security_model_name(99), None);
+        assert_eq!(snmp_security_model_label(99), "security-model-99");
+        assert_eq!(snmp_security_model_summary(99), "security-model-99(99)");
+
+        for code in [-1, 256, 999] {
+            let meta = snmp_security_model_meta(code);
+            let model = SnmpSecurityModel::new(code);
+
+            assert_eq!(meta.code, code);
+            assert_eq!(meta.name, "unknown-security-model");
+            assert_eq!(meta.status, SnmpSecurityModelStatus::Unknown);
+            assert_eq!(snmp_security_model_name(code), None);
+            assert_eq!(
+                snmp_security_model_status(code),
+                SnmpSecurityModelStatus::Unknown
+            );
+            assert_eq!(
+                snmp_security_model_label(code),
+                format!("security-model-{code}")
+            );
+            assert_eq!(model.summary(), format!("security-model-{code}({code})"));
+        }
+    }
 
     #[test]
     fn snmp_pdu_tags_registry_names_source_backed_tags_and_unknowns() {
