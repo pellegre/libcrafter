@@ -190,3 +190,42 @@ targets through provider-backed endpoint, oracle, probe, or lab workflows with
 explicit confirmation and teardown. Do not store real communities, USM keys,
 provider identifiers, public IPs, live hostnames, or sensitive packet captures
 in tracked files.
+
+## Guarded Live Validation
+
+The SNMP oracle live workflow is dry-run by default. The first command uses the
+local dry-run provider and never creates infrastructure. The guarded provider
+command takes the dry-run branch unless `LIBCRAFTER_RUN_SNMP_LIVE=1` is set; a
+real run still requires `--confirm-live-run` and a registered lab provider.
+
+```sh
+tools/oracle/run live --backend scapy --provider local-dry-run --family snmp --profile snmp-live-dry-run --seed 4205 --count 10 --out target/oracle/snmp-live-local-dry-run
+
+if [ "${LIBCRAFTER_RUN_SNMP_LIVE:-0}" = "1" ]; then
+  tools/oracle/run live \
+    --backend scapy \
+    --provider "${LIBCRAFTER_SNMP_LIVE_PROVIDER:-qemu}" \
+    --family snmp \
+    --profile snmp-live-dry-run \
+    --seed 4206 \
+    --count 10 \
+    --direction live_exchange \
+    --confirm-live-run \
+    --out target/oracle/snmp-live-confirmed
+else
+  tools/oracle/run live \
+    --backend scapy \
+    --provider qemu \
+    --dry-run \
+    --family snmp \
+    --profile snmp-live-dry-run \
+    --seed 4206 \
+    --count 10 \
+    --direction live_exchange \
+    --out target/oracle/snmp-live-guarded-dry-run
+fi
+```
+
+Keep live artifacts under ignored `target/` paths. A confirmed run must collect
+the oracle report, endpoint artifacts, and teardown records before the lab
+session is considered complete.
