@@ -11,6 +11,8 @@ use crate::packet::{Layer, LayerContext};
 use crate::protocols::transport::common::{hex_bytes, impl_layer_div, impl_layer_object};
 use crate::Result;
 
+use super::header::{classify_quic_header, QuicHeaderClassification};
+
 /// Raw-preserving QUIC UDP payload layer.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Quic {
@@ -97,6 +99,41 @@ impl Quic {
     pub fn payload_state(&self) -> FieldState {
         self.payload.state()
     }
+
+    /// Number of decoded frame entries currently available.
+    pub fn frame_count(&self) -> usize {
+        0
+    }
+
+    /// Number of decoded transport parameter entries currently available.
+    pub fn transport_parameter_count(&self) -> usize {
+        0
+    }
+
+    fn first_packet_bytes_for_inspection(&self) -> &[u8] {
+        if let Some(packet) = self.packets.first() {
+            packet.as_bytes()
+        } else {
+            self.payload_bytes()
+        }
+    }
+
+    fn header_classification_for_inspection(&self) -> Option<Result<QuicHeaderClassification>> {
+        let bytes = self.first_packet_bytes_for_inspection();
+        if bytes.is_empty() {
+            None
+        } else {
+            Some(classify_quic_header(bytes))
+        }
+    }
+
+    fn header_summary_for_inspection(&self) -> String {
+        match self.header_classification_for_inspection() {
+            Some(Ok(classification)) => classification.summary(),
+            Some(Err(err)) => format!("header=malformed error={err}"),
+            None => "header=empty".to_string(),
+        }
+    }
 }
 
 impl Layer for Quic {
@@ -106,19 +143,42 @@ impl Layer for Quic {
 
     fn summary(&self) -> String {
         format!(
-            "Quic(raw_len={}, packets={}, status=raw)",
+            "Quic(raw_len={}, packets={}, {}, frames={}, transport_parameters={})",
             self.len(),
-            self.packets.len()
+            self.packets.len(),
+            self.header_summary_for_inspection(),
+            self.frame_count(),
+            self.transport_parameter_count()
         )
     }
 
     fn inspection_fields(&self) -> Vec<(&'static str, String)> {
-        vec![
+        let mut fields = vec![
             ("raw_len", self.len().to_string()),
             ("packet_count", self.packets.len().to_string()),
             ("payload_state", format!("{:?}", self.payload_state())),
             ("raw_bytes", hex_bytes(self.payload_bytes())),
-        ]
+            ("frame_count", self.frame_count().to_string()),
+            (
+                "transport_parameter_count",
+                self.transport_parameter_count().to_string(),
+            ),
+        ];
+
+        match self.header_classification_for_inspection() {
+            Some(Ok(classification)) => fields.extend(classification.inspection_fields()),
+            Some(Err(err)) => {
+                fields.push(("classification", "malformed".to_string()));
+                fields.push(("classification_error", err.to_string()));
+            }
+            None => fields.push(("classification", "empty".to_string())),
+        }
+
+        for (index, packet) in self.packets.iter().enumerate() {
+            fields.push(("packet", format!("#{index} {}", packet.summary())));
+        }
+
+        fields
     }
 
     fn encoded_len(&self) -> usize {
@@ -169,6 +229,32 @@ impl QuicPacket {
     pub fn is_empty(&self) -> bool {
         self.bytes.is_empty()
     }
+
+    /// One-line packet summary for datagram inspection.
+    pub fn summary(&self) -> String {
+        match classify_quic_header(&self.bytes) {
+            Ok(classification) => {
+                format!("raw_len={} {}", self.bytes.len(), classification.summary())
+            }
+            Err(err) => format!("raw_len={} header=malformed error={err}", self.bytes.len()),
+        }
+    }
+
+    /// Stable field/value pairs for packet inspection.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        let mut fields = vec![
+            ("raw_len", self.bytes.len().to_string()),
+            ("raw_bytes", hex_bytes(&self.bytes)),
+        ];
+        match classify_quic_header(&self.bytes) {
+            Ok(classification) => fields.extend(classification.inspection_fields()),
+            Err(err) => {
+                fields.push(("classification", "malformed".to_string()));
+                fields.push(("classification_error", err.to_string()));
+            }
+        }
+        fields
+    }
 }
 
 #[cfg(test)]
@@ -186,7 +272,10 @@ mod tests {
         assert_eq!(quic.encoded_len(), payload.len());
         assert_eq!(quic.len(), payload.len());
         assert!(quic.packets().is_empty());
-        assert_eq!(quic.summary(), "Quic(raw_len=7, packets=0, status=raw)");
+        assert_eq!(
+            quic.summary(),
+            "Quic(raw_len=7, packets=0, header=malformed error=quic.header.long.dcid requires 176 bytes, but only 7 bytes are available, frames=0, transport_parameters=0)"
+        );
     }
 
     #[test]
@@ -222,5 +311,40 @@ mod tests {
         assert_eq!(datagram.payload_bytes(), [0xaa, 0xbb]);
         assert_eq!(compiled.as_bytes(), [0xaa, 0xbb]);
         Ok(())
+    }
+
+    #[test]
+    fn quic_summary_inspection_datagram_exposes_header_and_counts() {
+        let payload = [
+            0xc3, 0x00, 0x00, 0x00, 0x01, 0x04, 0x83, 0x94, 0xc8, 0xf0, 0x01, 0xaa, 0x00,
+        ];
+        let packet = Packet::from_layer(Quic::from_bytes(payload));
+
+        assert_eq!(
+            packet.summary(),
+            "Quic(raw_len=13, packets=0, header=long kind=Initial version=0x00000001(QUIC v1) dcid=len=4 value=8394c8f0 scid=len=1 value=aa protected_or_raw_len=1, frames=0, transport_parameters=0)"
+        );
+        let show = packet.show();
+        assert!(show.contains("classification: long_header"), "{show}");
+        assert!(show.contains("version: 0x00000001 (QUIC v1)"), "{show}");
+        assert!(
+            show.contains("destination_connection_id: 83 94 c8 f0"),
+            "{show}"
+        );
+        assert!(show.contains("frame_count: 0"), "{show}");
+        assert!(show.contains("transport_parameter_count: 0"), "{show}");
+    }
+
+    #[test]
+    fn quic_summary_inspection_packet_entry_summary_is_stable() {
+        let quic_packet = QuicPacket::from_bytes([0x40, 0x83, 0x94, 0xc8, 0xf0, 0x12, 0x34]);
+
+        assert_eq!(
+            quic_packet.summary(),
+            "raw_len=7 header=short-ambiguous first_byte=0x40 fixed_bit=true"
+        );
+        let fields = quic_packet.inspection_fields();
+        assert!(fields.contains(&("classification", "short_header_ambiguous".to_string())));
+        assert!(fields.contains(&("raw_len", "7".to_string())));
     }
 }

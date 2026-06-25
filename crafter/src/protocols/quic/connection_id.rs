@@ -90,6 +90,15 @@ impl QuicConnectionId {
         }
         output
     }
+
+    /// Stable summary for packet inspection.
+    pub fn summary(&self) -> String {
+        if self.is_empty() {
+            "len=0 value=<empty>".to_string()
+        } else {
+            format!("len={} value={}", self.len(), self.to_hex())
+        }
+    }
 }
 
 impl AsRef<[u8]> for QuicConnectionId {
@@ -166,5 +175,14 @@ mod tests {
                 "QUIC v1/v2 connection IDs must be at most 20 bytes"
             )
         );
+    }
+
+    #[test]
+    fn quic_summary_inspection_connection_id_summary_is_stable() {
+        assert_eq!(
+            QuicConnectionId::from_bytes([0x83, 0x94, 0xc8, 0xf0]).summary(),
+            "len=4 value=8394c8f0"
+        );
+        assert_eq!(QuicConnectionId::new().summary(), "len=0 value=<empty>");
     }
 }

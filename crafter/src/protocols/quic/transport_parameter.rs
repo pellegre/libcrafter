@@ -5,6 +5,7 @@
 //! explicit identifier boundary.
 
 use super::QuicVarInt;
+use crate::protocols::transport::common::hex_bytes;
 
 /// Raw-preserving transport parameter placeholder.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -30,5 +31,58 @@ impl QuicTransportParameter {
     /// Borrow the preserved value bytes.
     pub fn value(&self) -> &[u8] {
         &self.value
+    }
+
+    /// Length of the preserved value bytes.
+    pub fn len(&self) -> usize {
+        self.value.len()
+    }
+
+    /// Return true when the preserved value is empty.
+    pub fn is_empty(&self) -> bool {
+        self.value.is_empty()
+    }
+
+    /// Stable summary for packet inspection.
+    pub fn summary(&self) -> String {
+        match self.identifier {
+            Some(identifier) => {
+                format!(
+                    "id=0x{:x} value_len={}",
+                    identifier.value(),
+                    self.value.len()
+                )
+            }
+            None => format!("id=<unset> value_len={}", self.value.len()),
+        }
+    }
+
+    /// Stable field/value pairs for packet inspection.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            (
+                "identifier",
+                self.identifier
+                    .map(|identifier| format!("0x{:x}", identifier.value()))
+                    .unwrap_or_else(|| "<unset>".to_string()),
+            ),
+            ("value_len", self.value.len().to_string()),
+            ("value", hex_bytes(&self.value)),
+        ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quic_summary_inspection_transport_parameter_summary_preserves_unknown_codepoint() {
+        let parameter = QuicTransportParameter::raw(QuicVarInt::new(0xdead).unwrap(), [0xaa, 0xbb]);
+
+        assert_eq!(parameter.summary(), "id=0xdead value_len=2");
+        let fields = parameter.inspection_fields();
+        assert!(fields.contains(&("identifier", "0xdead".to_string())));
+        assert!(fields.contains(&("value", "aa bb".to_string())));
     }
 }

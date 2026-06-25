@@ -7,7 +7,10 @@
 use crate::error::{CrafterError, Result};
 use crate::field::{Field, FieldState};
 
-use super::constants::{QUIC_VERSION_1, QUIC_VERSION_2, QUIC_VERSION_NEGOTIATION};
+use super::constants::{
+    quic_version_label, quic_version_status, QUIC_VERSION_1, QUIC_VERSION_2,
+    QUIC_VERSION_NEGOTIATION,
+};
 use super::packet_number::{header_bits_for_len, len_from_header_bits};
 use super::QuicConnectionId;
 
@@ -296,6 +299,105 @@ impl QuicHeaderForm {
     }
 }
 
+impl QuicLongPacketKind {
+    /// Stable packet-kind label for summaries and inspection fields.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::VersionNegotiation => "VersionNegotiation",
+            Self::Initial => "Initial",
+            Self::ZeroRtt => "0-RTT",
+            Self::Handshake => "Handshake",
+            Self::Retry => "Retry",
+            Self::UnknownVersion => "UnknownVersion",
+        }
+    }
+}
+
+impl QuicHeaderClassification {
+    /// One-line header classification suitable for packet summaries.
+    pub fn summary(&self) -> String {
+        match self {
+            Self::NonQuic => "header=non-quic".to_string(),
+            Self::ShortHeaderAmbiguous {
+                first_byte,
+                fixed_bit,
+            } => format!(
+                "header=short-ambiguous first_byte=0x{first_byte:02x} fixed_bit={fixed_bit}"
+            ),
+            Self::LongHeader {
+                version,
+                destination_connection_id,
+                source_connection_id,
+                remaining_len,
+                packet_kind,
+                ..
+            } => format!(
+                "header=long kind={} version=0x{version:08x}({}) dcid={} scid={} protected_or_raw_len={remaining_len}",
+                packet_kind.label(),
+                quic_version_label(*version),
+                destination_connection_id.summary(),
+                source_connection_id.summary(),
+            ),
+        }
+    }
+
+    /// Stable field/value pairs for packet inspection output.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        match self {
+            Self::NonQuic => vec![("classification", "non_quic".to_string())],
+            Self::ShortHeaderAmbiguous {
+                first_byte,
+                fixed_bit,
+            } => vec![
+                ("classification", "short_header_ambiguous".to_string()),
+                ("header_form", "short".to_string()),
+                ("first_byte", format!("0x{first_byte:02x}")),
+                ("fixed_bit", fixed_bit.to_string()),
+                ("destination_connection_id", "contextual".to_string()),
+            ],
+            Self::LongHeader {
+                first_byte,
+                fixed_bit,
+                version,
+                destination_connection_id,
+                source_connection_id,
+                invariant_len,
+                remaining_len,
+                packet_kind,
+            } => vec![
+                ("classification", "long_header".to_string()),
+                ("header_form", "long".to_string()),
+                ("first_byte", format!("0x{first_byte:02x}")),
+                ("fixed_bit", fixed_bit.to_string()),
+                ("packet_kind", packet_kind.label().to_string()),
+                (
+                    "version",
+                    format!("0x{version:08x} ({})", quic_version_label(*version)),
+                ),
+                (
+                    "version_status",
+                    format!("{:?}", quic_version_status(*version)),
+                ),
+                (
+                    "destination_connection_id_len",
+                    destination_connection_id.len().to_string(),
+                ),
+                (
+                    "destination_connection_id",
+                    destination_connection_id.to_spaced_hex(),
+                ),
+                (
+                    "source_connection_id_len",
+                    source_connection_id.len().to_string(),
+                ),
+                ("source_connection_id", source_connection_id.to_spaced_hex()),
+                ("invariant_header_len", invariant_len.to_string()),
+                ("protected_or_raw_remainder_len", remaining_len.to_string()),
+            ],
+        }
+    }
+}
+
 /// Classify enough QUIC header structure for conservative UDP dispatch.
 pub fn classify_quic_header(bytes: &[u8]) -> Result<QuicHeaderClassification> {
     let Some(first_byte) = bytes.first().copied() else {
@@ -539,6 +641,24 @@ mod tests {
             }
             other => panic!("unexpected classification: {other:?}"),
         }
+    }
+
+    #[test]
+    fn quic_summary_inspection_header_classification_is_stable() {
+        let classified = classify_quic_header(&[
+            0xc3, 0x00, 0x00, 0x00, 0x01, 0x04, 0x83, 0x94, 0xc8, 0xf0, 0x01, 0xaa, 0x00,
+        ])
+        .unwrap();
+
+        assert_eq!(
+            classified.summary(),
+            "header=long kind=Initial version=0x00000001(QUIC v1) dcid=len=4 value=8394c8f0 scid=len=1 value=aa protected_or_raw_len=1"
+        );
+        let fields = classified.inspection_fields();
+        assert!(fields.contains(&("classification", "long_header".to_string())));
+        assert!(fields.contains(&("version", "0x00000001 (QUIC v1)".to_string())));
+        assert!(fields.contains(&("destination_connection_id", "83 94 c8 f0".to_string())));
+        assert!(fields.contains(&("protected_or_raw_remainder_len", "1".to_string())));
     }
 
     #[test]
