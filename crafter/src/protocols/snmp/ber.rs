@@ -17,6 +17,8 @@ pub(super) const BER_LENGTH_SHORT_FORM_MAX: usize = 0x7f;
 pub(super) const BER_LENGTH_LONG_FORM_FLAG: u8 = 0x80;
 pub(super) const BER_LENGTH_LONG_FORM_OCTETS_MASK: u8 = 0x7f;
 pub(super) const BER_LENGTH_FIELD_MIN_LEN: usize = 1;
+pub(super) const BER_INTEGER_MIN_CONTENT_LEN: usize = 1;
+pub(super) const BER_INTEGER_MAX_I64_CONTENT_LEN: usize = core::mem::size_of::<i64>();
 
 pub(super) const BER_TAG_INTEGER: u8 = 2;
 pub(super) const BER_TAG_OCTET_STRING: u8 = 4;
@@ -269,9 +271,7 @@ pub(super) fn decode_length(bytes: &[u8]) -> Result<(usize, &[u8])> {
         length = length
             .checked_mul(256)
             .and_then(|value| value.checked_add(usize::from(*octet)))
-            .ok_or_else(|| {
-                invalid_ber_field("snmp.ber.length", "length exceeds supported size")
-            })?;
+            .ok_or_else(|| invalid_ber_field("snmp.ber.length", "length exceeds supported size"))?;
     }
 
     Ok((length, &rest[length_octets..]))
@@ -293,6 +293,82 @@ pub(super) fn encode_length(length: usize, out: &mut Vec<u8>) -> Result<()> {
     out.push(BER_LENGTH_LONG_FORM_FLAG | encoded.len() as u8);
     out.extend_from_slice(encoded);
     Ok(())
+}
+
+pub(super) fn decode_integer(bytes: &[u8]) -> Result<(i64, &[u8])> {
+    let (tag, rest) = decode_identifier(bytes)?;
+    if tag != BerTag::new(BerClass::Universal, false, BER_TAG_INTEGER) {
+        return Err(invalid_ber_field(
+            "snmp.ber.integer",
+            "expected universal primitive INTEGER",
+        ));
+    }
+
+    let (length, rest) = decode_length(rest)?;
+    if rest.len() < length {
+        let prefix_len = bytes.len() - rest.len();
+        let required = prefix_len.checked_add(length).ok_or_else(|| {
+            invalid_ber_field("snmp.ber.integer", "integer length exceeds supported size")
+        })?;
+        return Err(truncated_ber("snmp.ber.integer", required, bytes.len()));
+    }
+
+    let (content, rest) = rest.split_at(length);
+    Ok((decode_integer_content(content)?, rest))
+}
+
+pub(super) fn encode_integer(value: i64, out: &mut Vec<u8>) -> Result<()> {
+    let mut content = Vec::with_capacity(BER_INTEGER_MAX_I64_CONTENT_LEN);
+    encode_integer_content(value, &mut content);
+
+    encode_identifier(
+        BerTag::new(BerClass::Universal, false, BER_TAG_INTEGER),
+        out,
+    )?;
+    encode_length(content.len(), out)?;
+    out.extend_from_slice(&content);
+    Ok(())
+}
+
+pub(super) fn decode_integer_content(content: &[u8]) -> Result<i64> {
+    if content.len() < BER_INTEGER_MIN_CONTENT_LEN {
+        return Err(invalid_ber_field(
+            "snmp.ber.integer",
+            "integer requires at least one content octet",
+        ));
+    }
+
+    if content.len() > BER_INTEGER_MAX_I64_CONTENT_LEN {
+        return Err(invalid_ber_field(
+            "snmp.ber.integer",
+            "integer exceeds supported i64 width",
+        ));
+    }
+
+    let mut value = 0u64;
+    for octet in content {
+        value = (value << 8) | u64::from(*octet);
+    }
+
+    let shift = (BER_INTEGER_MAX_I64_CONTENT_LEN - content.len()) * 8;
+    Ok(((value << shift) as i64) >> shift)
+}
+
+pub(super) fn encode_integer_content(value: i64, out: &mut Vec<u8>) {
+    let bytes = value.to_be_bytes();
+    let mut start = 0;
+
+    if value >= 0 {
+        while start < bytes.len() - 1 && bytes[start] == 0x00 && bytes[start + 1] & 0x80 == 0 {
+            start += 1;
+        }
+    } else {
+        while start < bytes.len() - 1 && bytes[start] == 0xff && bytes[start + 1] & 0x80 != 0 {
+            start += 1;
+        }
+    }
+
+    out.extend_from_slice(&bytes[start..]);
 }
 
 pub(super) fn truncated_identifier(available: usize) -> CrafterError {
@@ -653,6 +729,121 @@ mod tests {
             Err(CrafterError::invalid_field_value(
                 "snmp.ber.identifier",
                 "high-tag-number form is not supported for SNMP"
+            ))
+        );
+    }
+
+    #[test]
+    fn snmp_ber_integer_decodes_positive_negative_and_zero_content() {
+        let cases: &[(i64, &[u8])] = &[
+            (0, &[0x00]),
+            (1, &[0x01]),
+            (127, &[0x7f]),
+            (128, &[0x00, 0x80]),
+            (255, &[0x00, 0xff]),
+            (256, &[0x01, 0x00]),
+            (-1, &[0xff]),
+            (-128, &[0x80]),
+            (-129, &[0xff, 0x7f]),
+            (i64::MAX, &[0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]),
+            (i64::MIN, &[0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
+        ];
+
+        for (expected, content) in cases {
+            assert_eq!(
+                decode_integer_content(content).expect("BER INTEGER content"),
+                *expected,
+                "{content:02x?}"
+            );
+        }
+    }
+
+    #[test]
+    fn snmp_ber_integer_encodes_minimal_two_complement_content() {
+        let cases: &[(i64, &[u8])] = &[
+            (0, &[0x00]),
+            (1, &[0x01]),
+            (127, &[0x7f]),
+            (128, &[0x00, 0x80]),
+            (255, &[0x00, 0xff]),
+            (256, &[0x01, 0x00]),
+            (-1, &[0xff]),
+            (-128, &[0x80]),
+            (-129, &[0xff, 0x7f]),
+            (i64::MAX, &[0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]),
+            (i64::MIN, &[0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
+        ];
+
+        for (value, expected) in cases {
+            let mut encoded = Vec::new();
+            encode_integer_content(*value, &mut encoded);
+            assert_eq!(&encoded, expected, "{value}");
+        }
+    }
+
+    #[test]
+    fn snmp_ber_integer_tlv_encodes_minimal_lengths_and_decodes_rest() {
+        let cases: &[(i64, &[u8])] = &[
+            (0, &[0x02, 0x01, 0x00]),
+            (127, &[0x02, 0x01, 0x7f]),
+            (128, &[0x02, 0x02, 0x00, 0x80]),
+            (-128, &[0x02, 0x01, 0x80]),
+            (-129, &[0x02, 0x02, 0xff, 0x7f]),
+        ];
+
+        for (value, expected) in cases {
+            let mut encoded = Vec::new();
+            encode_integer(*value, &mut encoded).expect("encode BER INTEGER");
+            assert_eq!(&encoded, expected, "{value}");
+
+            encoded.push(0xaa);
+            let (decoded, rest) = decode_integer(&encoded).expect("decode BER INTEGER");
+            assert_eq!(decoded, *value, "{value}");
+            assert_eq!(rest, &[0xaa], "{value}");
+        }
+    }
+
+    #[test]
+    fn snmp_ber_integer_decodes_non_minimal_content_without_rewriting_it() {
+        assert_eq!(
+            decode_integer_content(&[0x00, 0x7f]).expect("non-minimal positive"),
+            127
+        );
+        assert_eq!(
+            decode_integer_content(&[0xff, 0x80]).expect("non-minimal negative"),
+            -128
+        );
+    }
+
+    #[test]
+    fn snmp_ber_integer_truncated_integer_buffers_report_required_and_available() {
+        assert_eq!(
+            decode_integer(&[0x02, 0x02, 0x01]),
+            Err(CrafterError::buffer_too_short("snmp.ber.integer", 4, 3))
+        );
+        assert_eq!(
+            decode_integer_content(&[]),
+            Err(CrafterError::invalid_field_value(
+                "snmp.ber.integer",
+                "integer requires at least one content octet"
+            ))
+        );
+    }
+
+    #[test]
+    fn snmp_ber_integer_rejects_wrong_tag_and_unsupported_width() {
+        assert_eq!(
+            decode_integer(&[0x04, 0x01, 0x00]),
+            Err(CrafterError::invalid_field_value(
+                "snmp.ber.integer",
+                "expected universal primitive INTEGER"
+            ))
+        );
+        assert_eq!(
+            decode_integer_content(&[0x00; BER_INTEGER_MAX_I64_CONTENT_LEN + 1]),
+            Err(CrafterError::invalid_field_value(
+                "snmp.ber.integer",
+                "integer exceeds supported i64 width"
             ))
         );
     }
