@@ -3,7 +3,9 @@
 //! RFC 9000 Section 16 defines a 62-bit integer space where the two high bits
 //! of the first byte encode the total width: 1, 2, 4, or 8 bytes. Encoders here
 //! emit the shortest valid representation by default and return structured
-//! errors for values outside the 62-bit wire space.
+//! errors for values outside the 62-bit wire space. Decoders accept byte-complete
+//! non-shortest encodings and return the consumed width so callers can decide
+//! whether that matters for their protocol field.
 
 use crate::error::{CrafterError, Result};
 
@@ -83,20 +85,14 @@ impl QuicVarInt {
         self.encode(out).map(|_| ())
     }
 
-    /// Placeholder decoder that reports truncation before unsupported parsing.
-    pub fn decode_placeholder(bytes: &[u8]) -> Result<(Self, usize)> {
-        if bytes.is_empty() {
-            return Err(CrafterError::buffer_too_short(
-                "quic.varint.prefix",
-                1,
-                bytes.len(),
-            ));
-        }
+    /// Decode one QUIC varint and return the value plus consumed byte length.
+    pub fn decode(bytes: &[u8]) -> Result<(Self, usize)> {
+        decode(bytes)
+    }
 
-        Err(CrafterError::invalid_field_value(
-            "quic.varint",
-            "QUIC varint decoding is not implemented in the module skeleton",
-        ))
+    /// Compatibility alias for older skeleton callers.
+    pub fn decode_placeholder(bytes: &[u8]) -> Result<(Self, usize)> {
+        Self::decode(bytes)
     }
 }
 
@@ -155,6 +151,61 @@ pub fn encode_value_with_len(value: u64, len: usize, out: &mut Vec<u8>) -> Resul
         }
     }
     Ok(())
+}
+
+/// Decode one QUIC varint from the front of a byte slice.
+pub fn decode(bytes: &[u8]) -> Result<(QuicVarInt, usize)> {
+    let Some(first) = bytes.first().copied() else {
+        return Err(CrafterError::buffer_too_short("quic.varint", 1, 0));
+    };
+    let len = encoded_len_from_prefix(first);
+    if bytes.len() < len {
+        return Err(CrafterError::buffer_too_short(
+            "quic.varint",
+            len,
+            bytes.len(),
+        ));
+    }
+
+    let value = match len {
+        1 => (first & 0x3f) as u64,
+        2 => (u16::from_be_bytes([bytes[0], bytes[1]]) & 0x3fff) as u64,
+        4 => (u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) & 0x3fff_ffff) as u64,
+        8 => {
+            u64::from_be_bytes([
+                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+            ]) & 0x3fff_ffff_ffff_ffff
+        }
+        _ => unreachable!("QUIC varint prefix maps only to 1, 2, 4, or 8 bytes"),
+    };
+
+    Ok((QuicVarInt::from_u64_unchecked(value), len))
+}
+
+/// Encoded length indicated by a QUIC varint prefix byte.
+pub const fn encoded_len_from_prefix(first: u8) -> usize {
+    match first >> 6 {
+        0 => 1,
+        1 => 2,
+        2 => 4,
+        _ => 8,
+    }
+}
+
+/// Return true when a decoded value used its shortest possible QUIC varint
+/// encoding.
+pub const fn is_shortest_encoding(value: u64, encoded_len: usize) -> bool {
+    if value <= QUIC_VARINT_ONE_BYTE_MAX {
+        encoded_len == 1
+    } else if value <= QUIC_VARINT_TWO_BYTE_MAX {
+        encoded_len == 2
+    } else if value <= QUIC_VARINT_FOUR_BYTE_MAX {
+        encoded_len == 4
+    } else if value <= QUIC_VARINT_MAX {
+        encoded_len == 8
+    } else {
+        false
+    }
 }
 
 #[cfg(test)]
@@ -235,5 +286,62 @@ mod tests {
             )
         );
         assert!(out.is_empty());
+    }
+
+    #[test]
+    fn quic_varint_decode_errors_report_empty_and_truncated_inputs() {
+        assert_eq!(
+            decode(&[]).unwrap_err(),
+            CrafterError::buffer_too_short("quic.varint", 1, 0)
+        );
+        assert_eq!(
+            decode(&[0x40]).unwrap_err(),
+            CrafterError::buffer_too_short("quic.varint", 2, 1)
+        );
+        assert_eq!(
+            decode(&[0x80, 0x00, 0x00]).unwrap_err(),
+            CrafterError::buffer_too_short("quic.varint", 4, 3)
+        );
+        assert_eq!(
+            decode(&[0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]).unwrap_err(),
+            CrafterError::buffer_too_short("quic.varint", 8, 7)
+        );
+    }
+
+    #[test]
+    fn quic_varint_decode_errors_consume_one_complete_value() {
+        let cases: &[(&[u8], u64, usize)] = &[
+            (&[0x25, 0xaa], 0x25, 1),
+            (&[0x40, 0x25, 0xaa], 0x25, 2),
+            (&[0x80, 0x00, 0x00, 0x25, 0xaa], 0x25, 4),
+            (
+                &[0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x25, 0xaa],
+                0x25,
+                8,
+            ),
+        ];
+
+        for (bytes, expected, consumed) in cases {
+            let (decoded, actual_consumed) = decode(bytes).unwrap();
+
+            assert_eq!(decoded.value(), *expected);
+            assert_eq!(actual_consumed, *consumed);
+            assert_eq!(bytes[actual_consumed], 0xaa);
+        }
+    }
+
+    #[test]
+    fn quic_varint_decode_errors_cover_overlong_and_maximum_values() {
+        let (overlong, consumed) = decode(&[0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x25])
+            .expect("complete overlong value decodes");
+        assert_eq!(overlong.value(), 0x25);
+        assert_eq!(consumed, 8);
+        assert!(!is_shortest_encoding(overlong.value(), consumed));
+
+        let (max, consumed) = decode(&[0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff])
+            .expect("maximum value decodes");
+        assert_eq!(max.value(), QUIC_VARINT_MAX);
+        assert_eq!(consumed, 8);
+        assert!(is_shortest_encoding(max.value(), consumed));
     }
 }
