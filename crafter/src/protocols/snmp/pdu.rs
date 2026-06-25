@@ -199,6 +199,26 @@ impl SnmpRequestPdu {
         self.error_status
     }
 
+    /// Typed error-status wrapper for the INTEGER value.
+    pub const fn error_status_value(&self) -> registry::SnmpErrorStatus {
+        registry::SnmpErrorStatus::new(self.error_status)
+    }
+
+    /// Source-backed error-status name, when assigned.
+    pub const fn error_status_name(&self) -> Option<&'static str> {
+        registry::snmp_error_status_name(self.error_status)
+    }
+
+    /// Source-backed error-status assignment status.
+    pub const fn error_status_assignment(&self) -> registry::SnmpErrorStatusAssignment {
+        registry::snmp_error_status_status(self.error_status)
+    }
+
+    /// Stable error-status label that preserves unknown values.
+    pub fn error_status_label(&self) -> String {
+        registry::snmp_error_status_label(self.error_status)
+    }
+
     /// Error-index INTEGER value.
     pub const fn error_index(&self) -> i64 {
         self.error_index
@@ -224,7 +244,7 @@ impl SnmpRequestPdu {
         format!(
             "{label} request_id={} error_status={} error_index={} varbinds={}",
             self.request_id,
-            self.error_status,
+            registry::snmp_error_status_summary(self.error_status),
             self.error_index,
             self.varbinds.len()
         )
@@ -235,6 +255,11 @@ impl SnmpRequestPdu {
         let mut fields = vec![
             ("request_id", self.request_id.to_string()),
             ("error_status", self.error_status.to_string()),
+            ("error_status_label", self.error_status_label()),
+            (
+                "error_status_assignment",
+                self.error_status_assignment().to_string(),
+            ),
             ("error_index", self.error_index.to_string()),
         ];
         fields.extend(self.varbinds.inspection_fields());
@@ -1443,6 +1468,12 @@ mod tests {
         assert_eq!(response.request_id(), 5);
         assert_eq!(response.error_status(), 99);
         assert_eq!(response.error_index(), 300);
+        assert_eq!(response.error_status_name(), None);
+        assert_eq!(
+            response.error_status_assignment(),
+            registry::SnmpErrorStatusAssignment::Unknown
+        );
+        assert_eq!(response.error_status_label(), "error-status-99");
         assert!(response.varbinds().is_empty());
 
         let (decoded, rest) = SnmpPdu::decode(&expected)?;
@@ -1451,6 +1482,54 @@ mod tests {
         assert_eq!(decoded.compile()?, expected);
 
         Ok(())
+    }
+
+    #[test]
+    fn snmp_error_status_summary_formatting_preserves_known_and_unknown_codes() {
+        let known = SnmpRequestPdu::with_fields(
+            7,
+            registry::SNMP_ERROR_STATUS_TOO_BIG,
+            0,
+            SnmpVarBindList::empty(),
+        );
+        assert_eq!(
+            known.error_status_value(),
+            registry::SnmpErrorStatus::new(registry::SNMP_ERROR_STATUS_TOO_BIG)
+        );
+        assert_eq!(known.error_status_name(), Some("too-big"));
+        assert_eq!(
+            known.error_status_assignment(),
+            registry::SnmpErrorStatusAssignment::Assigned
+        );
+        assert_eq!(known.error_status_label(), "too-big");
+        assert_eq!(
+            known.summary_with_label("response"),
+            "response request_id=7 error_status=too-big(1) error_index=0 varbinds=0"
+        );
+
+        let unknown = SnmpRequestPdu::with_fields(7, 99, 3, SnmpVarBindList::empty());
+        assert_eq!(unknown.error_status(), 99);
+        assert_eq!(unknown.error_status_name(), None);
+        assert_eq!(
+            unknown.error_status_assignment(),
+            registry::SnmpErrorStatusAssignment::Unknown
+        );
+        assert_eq!(unknown.error_status_label(), "error-status-99");
+        assert_eq!(
+            unknown.summary_with_label("response"),
+            "response request_id=7 error_status=error-status-99(99) error_index=3 varbinds=0"
+        );
+        assert_eq!(
+            unknown.inspection_fields(),
+            [
+                ("request_id", "7".to_string()),
+                ("error_status", "99".to_string()),
+                ("error_status_label", "error-status-99".to_string()),
+                ("error_status_assignment", "unknown".to_string()),
+                ("error_index", "3".to_string()),
+                ("varbind_count", "0".to_string()),
+            ]
+        );
     }
 
     #[test]
@@ -1693,13 +1772,15 @@ mod tests {
         assert_eq!(inform.varbinds().as_slice(), &[varbind]);
         assert_eq!(
             inform.summary_with_label("inform-request"),
-            "inform-request request_id=7 error_status=0 error_index=0 varbinds=1"
+            "inform-request request_id=7 error_status=no-error(0) error_index=0 varbinds=1"
         );
         assert_eq!(
             inform.inspection_fields(),
             [
                 ("request_id", "7".to_string()),
                 ("error_status", "0".to_string()),
+                ("error_status_label", "no-error".to_string()),
+                ("error_status_assignment", "assigned".to_string()),
                 ("error_index", "0".to_string()),
                 ("varbind_count", "1".to_string()),
                 ("varbind[0]", "1.3.6.1.2.1.1.3.0=null".to_string()),
@@ -1759,7 +1840,7 @@ mod tests {
         assert_eq!(trap.varbinds().as_slice(), &[uptime, trap_oid]);
         assert_eq!(
             trap.summary_with_label("snmpv2-trap"),
-            "snmpv2-trap request_id=42 error_status=0 error_index=0 varbinds=2"
+            "snmpv2-trap request_id=42 error_status=no-error(0) error_index=0 varbinds=2"
         );
 
         let (decoded, rest) = SnmpPdu::decode(&expected)?;
@@ -1801,7 +1882,7 @@ mod tests {
         assert!(report.varbinds().is_empty());
         assert_eq!(
             report.summary_with_label("report"),
-            "report request_id=128 error_status=2 error_index=3 varbinds=0"
+            "report request_id=128 error_status=no-such-name(2) error_index=3 varbinds=0"
         );
 
         let default_report = SnmpPdu::report(9, SnmpVarBindList::empty())?;
@@ -1810,7 +1891,7 @@ mod tests {
                 .as_report()?
                 .expect("default Report fields")
                 .summary_with_label("report"),
-            "report request_id=9 error_status=0 error_index=0 varbinds=0"
+            "report request_id=9 error_status=no-error(0) error_index=0 varbinds=0"
         );
 
         let (decoded, rest) = SnmpPdu::decode(&expected)?;
