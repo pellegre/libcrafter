@@ -1336,30 +1336,55 @@ impl SnmpV3Message {
 
     fn summary_fields(&self) -> String {
         let encrypted_len = self.encrypted_scoped_pdu_len().ok().flatten().unwrap_or(0);
+        let usm_summary = self
+            .usm_security_parameters()
+            .ok()
+            .flatten()
+            .map(|usm| format!(" usm={}", usm.summary()))
+            .unwrap_or_default();
         let scoped_summary = self
             .scoped_pdu()
             .ok()
             .flatten()
             .map(|scoped_pdu| format!(" scoped_pdu={}", scoped_pdu.summary()))
             .unwrap_or_default();
+        let encrypted_summary = self
+            .encrypted_scoped_data()
+            .ok()
+            .flatten()
+            .map(|encrypted| format!(" encrypted_scoped_data={}", encrypted.summary()))
+            .unwrap_or_default();
         format!(
-            "{} msg_security_parameters_len={} scoped_data_kind={} scoped_data_len={} encrypted_scoped_pdu_len={}{}",
+            "{} msg_security_parameters_len={} scoped_data_kind={} scoped_data_len={} encrypted_scoped_pdu_len={}{}{}{}",
             self.global_data.summary_fields(),
             self.security_parameters.len(),
             self.scoped_data_kind(),
             self.scoped_data.len(),
             encrypted_len,
-            scoped_summary
+            usm_summary,
+            scoped_summary,
+            encrypted_summary
         )
     }
 
     fn inspection_fields(&self) -> Vec<(&'static str, String)> {
         let mut fields = self.global_data.inspection_fields();
         fields.extend(self.security_parameters.inspection_fields());
+        if let Ok(Some(usm)) = self.usm_security_parameters() {
+            fields.extend(usm.inspection_fields());
+        }
         fields.push(("scoped_data_kind", self.scoped_data_kind().to_string()));
         fields.push(("scoped_data_len", self.scoped_data.len().to_string()));
-        if let Ok(Some(encrypted_len)) = self.encrypted_scoped_pdu_len() {
-            fields.push(("encrypted_scoped_pdu_len", encrypted_len.to_string()));
+        if let Ok(Some(scoped_pdu)) = self.scoped_pdu() {
+            fields.extend(scoped_pdu.inspection_fields());
+        }
+        match self.encrypted_scoped_data() {
+            Ok(Some(encrypted)) => fields.extend(encrypted.inspection_fields()),
+            _ => {
+                if let Ok(Some(encrypted_len)) = self.encrypted_scoped_pdu_len() {
+                    fields.push(("encrypted_scoped_pdu_len", encrypted_len.to_string()));
+                }
+            }
         }
         fields
     }
@@ -3191,6 +3216,164 @@ mod tests {
         assert!(decoded.summary().contains("encrypted_scoped_pdu_len=5"));
         assert!(!decoded.summary().contains("fa fb"));
         assert!(!decoded.show().contains("fa fb"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_v3_summary_plaintext_report_exposes_safe_nested_fields() -> Result<()> {
+        let usm = sample_usm_parameters();
+        let snmp = Snmp::v3_usm_report(
+            63,
+            4096,
+            [registry::SNMP_V3_FLAG_REPORTABLE],
+            usm,
+            b"ctx-engine".to_vec(),
+            b"ctx-name".to_vec(),
+            6300,
+            SnmpVarBindList::empty(),
+        )?;
+        let decoded = Snmp::decode(&snmp.compile()?)?;
+
+        let summary = decoded.summary();
+        assert!(summary.contains("version=v3"));
+        assert!(summary.contains("msg_id=63"));
+        assert!(summary.contains("msg_flags=reportable"));
+        assert!(summary.contains("msg_security_model_label=usm"));
+        assert!(summary.contains("msg_security_parameters_len=27"));
+        assert!(summary.contains("scoped_data_kind=plaintext"));
+        assert!(summary.contains("usm=SnmpUsmSecurityParameters("));
+        assert!(summary.contains("authentication_parameters_len=3"));
+        assert!(summary.contains("privacy_parameters_len=2"));
+        assert!(summary.contains("scoped_pdu=SnmpScopedPdu("));
+        assert!(summary.contains("context_engine_id_len=10"));
+        assert!(summary.contains("context_name_len=8"));
+        assert!(summary.contains("pdu_type=report"));
+        assert!(!summary.contains("80 00 1f"));
+        assert!(!summary.contains("ff 00 75"));
+        assert!(!summary.contains("aa bb"));
+        assert!(!summary.contains("de ad"));
+
+        let fields = decoded.inspection_fields();
+        assert_eq!(inspection_value(&fields, "version"), Some("v3"));
+        assert_eq!(inspection_value(&fields, "msg_id"), Some("63"));
+        assert_eq!(
+            inspection_value(&fields, "msg_flags_label"),
+            Some("reportable")
+        );
+        assert_eq!(
+            inspection_value(&fields, "msg_security_model_label"),
+            Some("usm")
+        );
+        assert_eq!(
+            inspection_value(&fields, "usm_authentication_parameters_len"),
+            Some("3")
+        );
+        assert_eq!(
+            inspection_value(&fields, "usm_privacy_parameters_len"),
+            Some("2")
+        );
+        assert_eq!(
+            inspection_value(&fields, "context_engine_id_len"),
+            Some("10")
+        );
+        assert_eq!(inspection_value(&fields, "context_name_len"), Some("8"));
+        assert_eq!(inspection_value(&fields, "pdu_type"), Some("report"));
+        assert!(!fields.iter().any(|(_, value)| value == "80 00 1f"));
+        assert!(!fields.iter().any(|(_, value)| value == "ff 00 75"));
+        assert!(!fields.iter().any(|(_, value)| value == "aa bb cc"));
+        assert!(!fields.iter().any(|(_, value)| value == "de ad"));
+
+        let show = decoded.show();
+        assert!(show.contains("  msg_id: 63"));
+        assert!(show.contains("  msg_flags_reportable: true"));
+        assert!(show.contains("  usm_authentication_parameters_len: 3"));
+        assert!(show.contains("  usm_privacy_parameters_len: 2"));
+        assert!(show.contains("  context_engine_id_len: 10"));
+        assert!(show.contains("  context_name_len: 8"));
+        assert!(show.contains("  pdu_type: report"));
+        assert!(!show.contains("80 00 1f"));
+        assert!(!show.contains("ff 00 75"));
+        assert!(!show.contains("aa bb"));
+        assert!(!show.contains("de ad"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_v3_summary_encrypted_reports_lengths_without_payload_bytes() -> Result<()> {
+        let auth_parameters = [0xa0, 0xa1, 0xa2, 0xa3];
+        let privacy_parameters = [0x01, 0x02, 0x03, 0x04];
+        let encrypted_pdu = [0xde, 0xad, 0xbe, 0xef, 0xfa, 0xfb];
+        let usm = sample_usm_parameters()
+            .with_authentication_parameters(auth_parameters)
+            .with_privacy_parameters(privacy_parameters);
+        let snmp = Snmp::v3_encrypted_usm(
+            64,
+            4096,
+            [registry::SNMP_V3_FLAG_AUTH | registry::SNMP_V3_FLAG_PRIVACY],
+            usm,
+            encrypted_pdu,
+        )?;
+        let decoded = Snmp::decode(&snmp.compile()?)?;
+
+        let summary = decoded.summary();
+        assert!(summary.contains("version=v3"));
+        assert!(summary.contains("msg_id=64"));
+        assert!(summary.contains("msg_flags=auth|privacy"));
+        assert!(summary.contains("scoped_data_kind=encrypted"));
+        assert!(summary.contains("encrypted_scoped_pdu_len=6"));
+        assert!(summary.contains("encrypted_scoped_data=SnmpEncryptedScopedData("));
+        assert!(summary.contains("encrypted_pdu_len=6"));
+        assert!(summary.contains("authentication_parameters_len=4"));
+        assert!(summary.contains("privacy_parameters_len=4"));
+        assert!(!summary.contains("a0 a1"));
+        assert!(!summary.contains("01 02"));
+        assert!(!summary.contains("de ad"));
+        assert!(!summary.contains("fa fb"));
+
+        let fields = decoded.inspection_fields();
+        assert_eq!(inspection_value(&fields, "msg_id"), Some("64"));
+        assert_eq!(inspection_value(&fields, "msg_flags_auth"), Some("true"));
+        assert_eq!(inspection_value(&fields, "msg_flags_privacy"), Some("true"));
+        assert_eq!(
+            inspection_value(&fields, "scoped_data_kind"),
+            Some("encrypted")
+        );
+        assert_eq!(
+            inspection_value(&fields, "encrypted_scoped_pdu_len"),
+            Some("6")
+        );
+        assert_eq!(
+            fields
+                .iter()
+                .filter(|(name, _)| *name == "encrypted_scoped_pdu_len")
+                .count(),
+            1
+        );
+        assert_eq!(
+            inspection_value(&fields, "usm_authentication_parameters_len"),
+            Some("4")
+        );
+        assert_eq!(
+            inspection_value(&fields, "usm_privacy_parameters_len"),
+            Some("4")
+        );
+        assert!(!fields.iter().any(|(_, value)| value == "a0 a1 a2 a3"));
+        assert!(!fields.iter().any(|(_, value)| value == "01 02 03 04"));
+        assert!(!fields.iter().any(|(_, value)| value == "de ad be ef fa fb"));
+
+        let show = decoded.show();
+        assert!(show.contains("  msg_flags_auth: true"));
+        assert!(show.contains("  msg_flags_privacy: true"));
+        assert!(show.contains("  encrypted_scoped_pdu_len: 6"));
+        assert!(show.contains("  usm_authentication_parameters_len: 4"));
+        assert!(show.contains("  usm_privacy_parameters_len: 4"));
+        assert_eq!(show.matches("encrypted_scoped_pdu_len").count(), 1);
+        assert!(!show.contains("a0 a1"));
+        assert!(!show.contains("01 02"));
+        assert!(!show.contains("de ad"));
+        assert!(!show.contains("fa fb"));
 
         Ok(())
     }
