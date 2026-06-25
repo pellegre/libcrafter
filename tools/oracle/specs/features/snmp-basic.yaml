@@ -1,0 +1,209 @@
+version: 1
+kind: feature
+name: snmp_basic
+summary: SNMP BER values, v1/v2c community messages, unknown preservation, and structured-error exclusions.
+
+# Basic SNMP oracle coverage rides over IPv4/UDP with SNMP as the application
+# payload. Comparable cases are strict-byte contracts for later Scapy and
+# libcrafter oracle adapters. Malformed BER inputs are declared coverage with
+# byte_policy: structured_error so they are excluded from normal offline
+# strict-byte sampling until the malformed oracle path owns them.
+
+layers:
+  - udp
+  - snmp
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+strict_bytes: true
+malformed: false
+
+behaviors:
+  - name: v1-get-request
+    version: v1
+    pdu: get_request
+    varbinds:
+      - request_null
+    checks:
+      - community_length_redacted_in_summary
+      - pdu_tag_get_request
+      - request_fields_no_error
+  - name: v2c-get-request
+    version: v2c
+    pdu: get_request
+    varbinds:
+      - request_null
+    checks:
+      - community_length_redacted_in_summary
+      - pdu_tag_get_request
+      - request_fields_no_error
+  - name: v2c-response
+    version: v2c
+    pdu: response
+    varbinds:
+      - time_ticks
+    checks:
+      - pdu_tag_response
+      - error_status_label_no_error
+      - response_varbind_values_preserved
+  - name: ber-values
+    values:
+      - integer
+      - octet_string
+      - "null"
+      - object_identifier
+      - ip_address
+      - counter32
+      - gauge32
+      - time_ticks
+      - opaque
+      - counter64
+      - unsigned32
+      - no_such_object
+      - no_such_instance
+      - end_of_mib_view
+    checks:
+      - application_tags_preserved
+      - oid_arcs_preserved
+      - non_text_octets_preserved
+  - name: unknown-value-preservation
+    values:
+      - raw_application_value
+      - raw_universal_value
+      - unknown_pdu_tag
+      - unassigned_error_status
+    checks:
+      - raw_tlv_bytes_preserved
+      - unknown_labels_stable
+      - recompile_matches_input
+  - name: truncated-message
+    malformed: true
+    fields:
+      - message_length
+    expected_error:
+      context: snmp.message
+      required: declared_length
+      available: fewer_than_required
+  - name: malformed-ber-length
+    malformed: true
+    fields:
+      - varbind_value_length
+    expected_error:
+      context: snmp.ber
+      required: declared_length
+      available: fewer_than_required
+
+coverage_cases:
+  - snmp-basic-v1-get-request
+  - snmp-basic-v2c-get-request
+  - snmp-basic-v2c-response
+  - snmp-basic-ber-values
+  - snmp-basic-unknown-value-preservation
+  - malformed-snmp-truncated-message
+  - malformed-snmp-ber-length
+
+supported_cases:
+  - name: snmp-basic-v1-get-request
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: snmp-basic-v2c-get-request
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: snmp-basic-v2c-response
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: snmp-basic-ber-values
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: snmp-basic-unknown-value-preservation
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: strict_bytes
+  - name: malformed-snmp-truncated-message
+    directions:
+      - reference_to_libcrafter
+    byte_policy: structured_error
+  - name: malformed-snmp-ber-length
+    directions:
+      - reference_to_libcrafter
+    byte_policy: structured_error
+
+case_groups:
+  - name: snmp-basic-community
+    summary: SNMPv1/v2c GetRequest and Response messages with synthetic community bytes.
+    byte_policy: strict_bytes
+    cases:
+      - snmp-basic-v1-get-request
+      - snmp-basic-v2c-get-request
+      - snmp-basic-v2c-response
+  - name: snmp-basic-values
+    summary: BER scalar values, SNMP application values, exception values, and object identifiers.
+    byte_policy: strict_bytes
+    cases:
+      - snmp-basic-ber-values
+      - snmp-basic-unknown-value-preservation
+  - name: snmp-basic-malformed
+    summary: Truncated message and malformed BER length cases that must produce structured errors.
+    byte_policy: structured_error
+    cases:
+      - malformed-snmp-truncated-message
+      - malformed-snmp-ber-length
+
+normalized_model:
+  message:
+    - version
+    - community_len
+    - pdu_type
+    - pdu_tag
+    - request_id
+    - error_status
+    - error_index
+    - varbind_count
+  varbind:
+    - name
+    - value_kind
+    - value
+    - raw_tlv
+
+source_refs:
+  - RFC 1157
+  - RFC 1901
+  - RFC 2578
+  - RFC 3416
+  - RFC 3418
+  - docs/snmp-rfc-manifest.md
+
+notes:
+  - >-
+    Community and credential-like bytes must be synthetic in all oracle cases.
+    Summaries and show output compare lengths or stable labels, not real
+    credential strings.
+  - >-
+    Unknown but well-formed values and PDU tags are strict-byte preservation
+    cases. Truncated or internally inconsistent BER length cases are structured
+    decode errors and do not enter ordinary offline encode/decode sampling.
+
+backend_support:
+  scapy:
+    status: planned
+    native_layers:
+      - SNMP
+    notes:
+      - Later Scapy support must prove which v1/v2c BER and unknown-preservation
+        cases are byte-exact and mark unsupported value shapes as backend gaps.
+  libcrafter:
+    status: planned
+    native_layers:
+      - Snmp
+    notes:
+      - The crate already has public SNMP builders and decoders; later oracle
+        adapter steps will expose them through executable packet plans.
