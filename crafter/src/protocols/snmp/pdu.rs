@@ -2,10 +2,10 @@
 //!
 //! Source-gated by `docs/snmp-rfc-manifest.md`; only GetRequest-style common
 //! request fields are modeled here for GetRequest, GetNextRequest, Response,
-//! and SetRequest, plus source-backed SNMPv1 Trap-PDU wire fields. Other PDU
-//! bodies remain raw until their implementation slices land. Walk, polling,
-//! trap listener, authorization, and set workflows belong in generated tools,
-//! not in this packet primitive.
+//! and SetRequest, plus source-backed GetBulkRequest and SNMPv1 Trap-PDU wire
+//! fields. Other PDU bodies remain raw until their implementation slices land.
+//! Walk, polling, trap listener, authorization, and set workflows belong in
+//! generated tools, not in this packet primitive.
 
 use super::{ber, constants, oid::SnmpOid, registry, value::SnmpValue, varbind::SnmpVarBindList};
 use crate::error::Result;
@@ -210,6 +210,120 @@ impl SnmpRequestPdu {
     /// Consume this request PDU and return the ordered VarBindList.
     pub fn into_varbinds(self) -> SnmpVarBindList {
         self.varbinds
+    }
+}
+
+/// SNMP GetBulkRequest-PDU wire fields.
+///
+/// RFC-backed GetBulkRequest PDUs carry request-id, non-repeaters,
+/// max-repetitions, and a VarBindList as the PDU body content. This type
+/// preserves the integer fields exactly as supplied or decoded; it does not
+/// perform table walks or enforce application-level repetition limits.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SnmpGetBulkPdu {
+    request_id: i64,
+    non_repeaters: i64,
+    max_repetitions: i64,
+    varbinds: SnmpVarBindList,
+}
+
+impl SnmpGetBulkPdu {
+    /// Build GetBulkRequest fields with caller-supplied integer values.
+    pub fn new(
+        request_id: i64,
+        non_repeaters: i64,
+        max_repetitions: i64,
+        varbinds: SnmpVarBindList,
+    ) -> Self {
+        Self {
+            request_id,
+            non_repeaters,
+            max_repetitions,
+            varbinds,
+        }
+    }
+
+    /// Decode the body content of one GetBulkRequest-PDU.
+    pub fn decode_body(bytes: &[u8]) -> Result<Self> {
+        let (request_id, rest) = ber::decode_integer(bytes)?;
+        let (non_repeaters, rest) = ber::decode_integer(rest)?;
+        let (max_repetitions, rest) = ber::decode_integer(rest)?;
+        let (varbinds, rest) = SnmpVarBindList::decode(rest)?;
+        if !rest.is_empty() {
+            return Err(ber::invalid_ber_field(
+                "snmp.pdu.get_bulk",
+                "trailing bytes after GetBulk PDU fields",
+            ));
+        }
+
+        Ok(Self::new(
+            request_id,
+            non_repeaters,
+            max_repetitions,
+            varbinds,
+        ))
+    }
+
+    /// Encode the body content of this GetBulkRequest-PDU.
+    pub fn encode_body(&self, out: &mut Vec<u8>) -> Result<()> {
+        ber::encode_integer(self.request_id, out)?;
+        ber::encode_integer(self.non_repeaters, out)?;
+        ber::encode_integer(self.max_repetitions, out)?;
+        self.varbinds.encode(out)
+    }
+
+    /// Return this GetBulkRequest-PDU body encoded as BER content bytes.
+    pub fn to_body_bytes(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        self.encode_body(&mut out)?;
+        Ok(out)
+    }
+
+    /// Request-id INTEGER value.
+    pub const fn request_id(&self) -> i64 {
+        self.request_id
+    }
+
+    /// Non-repeaters INTEGER value.
+    pub const fn non_repeaters(&self) -> i64 {
+        self.non_repeaters
+    }
+
+    /// Max-repetitions INTEGER value.
+    pub const fn max_repetitions(&self) -> i64 {
+        self.max_repetitions
+    }
+
+    /// Ordered VarBindList carried by this GetBulkRequest-PDU.
+    pub const fn varbinds(&self) -> &SnmpVarBindList {
+        &self.varbinds
+    }
+
+    /// Consume this GetBulkRequest-PDU and return the ordered VarBindList.
+    pub fn into_varbinds(self) -> SnmpVarBindList {
+        self.varbinds
+    }
+
+    /// A compact summary of the GetBulkRequest-PDU fields.
+    pub fn summary(&self) -> String {
+        format!(
+            "get-bulk request_id={} non_repeaters={} max_repetitions={} varbinds={}",
+            self.request_id,
+            self.non_repeaters,
+            self.max_repetitions,
+            self.varbinds.len()
+        )
+    }
+
+    /// Stable inspection fields for generated tools.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        let mut fields = vec![
+            ("request_id", self.request_id.to_string()),
+            ("non_repeaters", self.non_repeaters.to_string()),
+            ("max_repetitions", self.max_repetitions.to_string()),
+        ];
+        fields.extend(self.varbinds.inspection_fields());
+        fields
     }
 }
 
@@ -581,6 +695,22 @@ impl SnmpPdu {
         Self::GetBulkRequest(SnmpRawPduBody::new(body))
     }
 
+    /// Build a GetBulkRequest-PDU from source-backed wire fields.
+    ///
+    /// This only builds packet bytes. Table walking, retry behavior, and
+    /// response interpretation belong in generated tools outside the crate.
+    pub fn get_bulk_request(
+        request_id: i64,
+        non_repeaters: i64,
+        max_repetitions: i64,
+        varbinds: SnmpVarBindList,
+    ) -> Result<Self> {
+        let bulk = SnmpGetBulkPdu::new(request_id, non_repeaters, max_repetitions, varbinds);
+        Ok(Self::GetBulkRequest(SnmpRawPduBody::new(
+            bulk.to_body_bytes()?,
+        )))
+    }
+
     /// Build a raw InformRequest-PDU body.
     pub fn raw_inform_request(body: impl Into<Vec<u8>>) -> Self {
         Self::InformRequest(SnmpRawPduBody::new(body))
@@ -776,6 +906,14 @@ impl SnmpPdu {
     pub fn as_v1_trap(&self) -> Result<Option<SnmpV1TrapPdu>> {
         match self {
             Self::Trap(body) => Ok(Some(SnmpV1TrapPdu::decode_body(body.as_bytes())?)),
+            _ => Ok(None),
+        }
+    }
+
+    /// Decode typed GetBulkRequest-PDU fields when this PDU has the GetBulkRequest tag.
+    pub fn as_get_bulk_request(&self) -> Result<Option<SnmpGetBulkPdu>> {
+        match self {
+            Self::GetBulkRequest(body) => Ok(Some(SnmpGetBulkPdu::decode_body(body.as_bytes())?)),
             _ => Ok(None),
         }
     }
@@ -1281,6 +1419,112 @@ mod tests {
             };
             assert_eq!(decoded_request, request);
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_getbulk_pdu_builder_compiles_decodes_and_summarizes() -> Result<()> {
+        let varbind =
+            crate::protocols::snmp::SnmpVarBind::null(SnmpOid::from_dotted("1.3.6.1.2.1.1.3.0")?);
+        let pdu = SnmpPdu::get_bulk_request(7, 1, 10, SnmpVarBindList::new(vec![varbind.clone()]))?;
+
+        // Source-backed: docs/snmp-rfc-manifest.md records RFC 3416 Sections
+        // 3 and 4.2.3 for GetBulkRequest-PDU fields: request-id,
+        // non-repeaters, max-repetitions, and VarBindList. This builds only
+        // the wire PDU, not a table walk.
+        let expected = [
+            0xa5, 0x19, 0x02, 0x01, 0x07, 0x02, 0x01, 0x01, 0x02, 0x01, 0x0a, 0x30, 0x0e, 0x30,
+            0x0c, 0x06, 0x08, 0x2b, 0x06, 0x01, 0x02, 0x01, 0x01, 0x03, 0x00, 0x05, 0x00,
+        ];
+        assert_eq!(pdu.tag_number(), constants::SNMP_PDU_TAG_GET_BULK_REQUEST);
+        assert_eq!(pdu.tag_name(), Some("get-bulk-request"));
+        assert_eq!(pdu.tag_label(), "get-bulk-request");
+        assert_eq!(pdu.compile()?, expected);
+        assert!(pdu.as_get_request()?.is_none());
+        assert!(pdu.as_get_next_request()?.is_none());
+        assert!(pdu.as_response()?.is_none());
+        assert!(pdu.as_set_request()?.is_none());
+
+        let bulk = pdu.as_get_bulk_request()?.expect("GetBulkRequest fields");
+        assert_eq!(bulk.request_id(), 7);
+        assert_eq!(bulk.non_repeaters(), 1);
+        assert_eq!(bulk.max_repetitions(), 10);
+        assert_eq!(bulk.varbinds().as_slice(), &[varbind]);
+        assert_eq!(
+            bulk.summary(),
+            "get-bulk request_id=7 non_repeaters=1 max_repetitions=10 varbinds=1"
+        );
+        assert_eq!(
+            bulk.inspection_fields(),
+            [
+                ("request_id", "7".to_string()),
+                ("non_repeaters", "1".to_string()),
+                ("max_repetitions", "10".to_string()),
+                ("varbind_count", "1".to_string()),
+                ("varbind[0]", "1.3.6.1.2.1.1.3.0=null".to_string()),
+            ]
+        );
+
+        let (decoded, rest) = SnmpPdu::decode(&expected)?;
+        assert!(rest.is_empty());
+        assert_eq!(
+            decoded
+                .as_get_bulk_request()?
+                .expect("decoded GetBulkRequest fields"),
+            bulk
+        );
+        assert_eq!(decoded.compile()?, expected);
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_getbulk_pdu_boundary_values_are_preserved() -> Result<()> {
+        let pdu = SnmpPdu::get_bulk_request(128, -1, 2_147_483_647, SnmpVarBindList::empty())?;
+
+        let expected = [
+            0xa5, 0x0f, 0x02, 0x02, 0x00, 0x80, 0x02, 0x01, 0xff, 0x02, 0x04, 0x7f, 0xff, 0xff,
+            0xff, 0x30, 0x00,
+        ];
+        assert_eq!(pdu.compile()?, expected);
+
+        let bulk = pdu.as_get_bulk_request()?.expect("GetBulkRequest fields");
+        assert_eq!(bulk.request_id(), 128);
+        assert_eq!(bulk.non_repeaters(), -1);
+        assert_eq!(bulk.max_repetitions(), 2_147_483_647);
+        assert!(bulk.varbinds().is_empty());
+
+        let (decoded, rest) = SnmpPdu::decode(&expected)?;
+        assert!(rest.is_empty());
+        assert_eq!(
+            decoded
+                .as_get_bulk_request()?
+                .expect("decoded GetBulkRequest fields"),
+            bulk
+        );
+        assert_eq!(decoded.compile()?, expected);
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_getbulk_pdu_decoded_bytes_round_trip_without_normalizing_integers() -> Result<()> {
+        let bytes = [
+            0xa5, 0x0d, 0x02, 0x02, 0x00, 0x00, 0x02, 0x01, 0x00, 0x02, 0x02, 0x00, 0x01, 0x30,
+            0x00,
+        ];
+        let (decoded, rest) = SnmpPdu::decode(&bytes)?;
+
+        assert!(rest.is_empty());
+        let bulk = decoded
+            .as_get_bulk_request()?
+            .expect("decoded GetBulkRequest fields");
+        assert_eq!(bulk.request_id(), 0);
+        assert_eq!(bulk.non_repeaters(), 0);
+        assert_eq!(bulk.max_repetitions(), 1);
+        assert!(bulk.varbinds().is_empty());
+        assert_eq!(decoded.compile()?, bytes);
 
         Ok(())
     }
