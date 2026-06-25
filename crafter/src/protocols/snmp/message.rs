@@ -515,6 +515,118 @@ impl SnmpScopedPdu {
     }
 }
 
+/// Raw SNMPv3 security-parameters bytes for model-specific payloads.
+///
+/// This records the security model that selected the payload syntax and keeps
+/// the security parameter bytes opaque. USM or other model-specific decoding
+/// belongs in dedicated source-backed slices.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SnmpRawSecurityParameters {
+    security_model: i64,
+    bytes: Vec<u8>,
+}
+
+impl SnmpRawSecurityParameters {
+    /// Build raw security parameters for one msgSecurityModel value.
+    pub fn new(security_model: i64, bytes: impl Into<Vec<u8>>) -> Self {
+        Self {
+            security_model,
+            bytes: bytes.into(),
+        }
+    }
+
+    /// RFC 3412 `msgSecurityModel` value associated with these bytes.
+    pub const fn security_model(&self) -> i64 {
+        self.security_model
+    }
+
+    /// Typed security-model wrapper for the INTEGER value.
+    pub const fn security_model_value(&self) -> registry::SnmpSecurityModel {
+        registry::SnmpSecurityModel::new(self.security_model)
+    }
+
+    /// Stable security-model label that preserves unassigned values.
+    pub fn security_model_label(&self) -> String {
+        registry::snmp_security_model_label(self.security_model)
+    }
+
+    /// Source-backed assignment status for the security-model value.
+    pub const fn security_model_status(&self) -> registry::SnmpSecurityModelStatus {
+        registry::snmp_security_model_status(self.security_model)
+    }
+
+    /// Raw msgSecurityParameters OCTET STRING content bytes.
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Raw msgSecurityParameters byte length.
+    pub fn len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    /// Whether the raw msgSecurityParameters byte string is empty.
+    pub fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+
+    /// Decode raw msgSecurityParameters for one security model.
+    pub fn decode(security_model: i64, bytes: &[u8]) -> Result<(Self, &[u8])> {
+        let (parameters, rest) = decode_octet_string_tlv(
+            bytes,
+            SNMP_V3_SECURITY_PARAMETERS_CONTEXT,
+            "expected universal primitive OCTET STRING for msgSecurityParameters",
+            "msgSecurityParameters length exceeds supported size",
+        )?;
+        Ok((Self::new(security_model, parameters.to_vec()), rest))
+    }
+
+    /// Encode these raw security parameters as msgSecurityParameters.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        encode_octet_string_tlv(&self.bytes, out)
+    }
+
+    /// Return these raw security parameters encoded as BER bytes.
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(self.encoded_len());
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Compile these raw security parameters into BER bytes.
+    pub fn compile(&self) -> Result<Vec<u8>> {
+        self.to_bytes()
+    }
+
+    /// Encoded msgSecurityParameters length in octets.
+    pub fn encoded_len(&self) -> usize {
+        encoded_tlv_len(self.bytes.len())
+    }
+
+    /// A compact summary that avoids printing security parameter bytes.
+    pub fn summary(&self) -> String {
+        format!(
+            "SnmpRawSecurityParameters(security_model={} security_model_label={} len={})",
+            self.security_model,
+            self.security_model_label(),
+            self.bytes.len()
+        )
+    }
+
+    /// Stable inspection fields that avoid printing security parameter bytes.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("msg_security_model", self.security_model.to_string()),
+            ("msg_security_model_label", self.security_model_label()),
+            (
+                "msg_security_model_status",
+                self.security_model_status().to_string(),
+            ),
+            ("msg_security_parameters_len", self.bytes.len().to_string()),
+        ]
+    }
+}
+
 /// SNMPv3 top-level message wrapper fields.
 ///
 /// This models the RFC 3412 message framing only. Security-model processing,
@@ -524,7 +636,7 @@ impl SnmpScopedPdu {
 pub struct SnmpV3Message {
     version: SnmpVersion,
     global_data: SnmpV3GlobalData,
-    security_parameters: Vec<u8>,
+    security_parameters: SnmpRawSecurityParameters,
     scoped_data: Vec<u8>,
 }
 
@@ -541,7 +653,10 @@ impl SnmpV3Message {
         Self {
             version: SnmpVersion::V3,
             global_data: SnmpV3GlobalData::new(msg_id, max_size, flags, security_model),
-            security_parameters: security_parameters.into(),
+            security_parameters: SnmpRawSecurityParameters::new(
+                security_model,
+                security_parameters,
+            ),
             scoped_data: scoped_data.into(),
         }
     }
@@ -607,6 +722,11 @@ impl SnmpV3Message {
 
     /// Raw RFC 3412 `msgSecurityParameters` OCTET STRING bytes.
     pub fn security_parameters(&self) -> &[u8] {
+        self.security_parameters.bytes()
+    }
+
+    /// Raw security-parameters representation with security-model metadata.
+    pub const fn raw_security_parameters(&self) -> &SnmpRawSecurityParameters {
         &self.security_parameters
     }
 
@@ -629,19 +749,15 @@ impl SnmpV3Message {
 
     fn decode_after_version(version: SnmpVersion, bytes: &[u8]) -> Result<(Self, &[u8])> {
         let (global_data, rest) = SnmpV3GlobalData::decode(bytes)?;
-        let (security_parameters, rest) = decode_octet_string_tlv(
-            rest,
-            SNMP_V3_SECURITY_PARAMETERS_CONTEXT,
-            "expected universal primitive OCTET STRING for msgSecurityParameters",
-            "msgSecurityParameters length exceeds supported size",
-        )?;
+        let (security_parameters, rest) =
+            SnmpRawSecurityParameters::decode(global_data.security_model(), rest)?;
         let (scoped_data, rest) = decode_scoped_data_tlv(rest)?;
 
         Ok((
             Self {
                 version,
                 global_data,
-                security_parameters: security_parameters.to_vec(),
+                security_parameters,
                 scoped_data: scoped_data.to_vec(),
             },
             rest,
@@ -650,14 +766,14 @@ impl SnmpV3Message {
 
     fn encode_content_after_version(&self, out: &mut Vec<u8>) -> Result<()> {
         self.global_data.encode(out)?;
-        encode_octet_string_tlv(&self.security_parameters, out)?;
+        self.security_parameters.encode(out)?;
         out.extend_from_slice(&self.scoped_data);
         Ok(())
     }
 
     fn encoded_content_after_version_len(&self) -> usize {
         self.global_data.encoded_len()
-            + encoded_tlv_len(self.security_parameters.len())
+            + self.security_parameters.encoded_len()
             + self.scoped_data.len()
     }
 
@@ -672,10 +788,7 @@ impl SnmpV3Message {
 
     fn inspection_fields(&self) -> Vec<(&'static str, String)> {
         let mut fields = self.global_data.inspection_fields();
-        fields.push((
-            "msg_security_parameters_len",
-            self.security_parameters.len().to_string(),
-        ));
+        fields.extend(self.security_parameters.inspection_fields());
         fields.push(("scoped_data_len", self.scoped_data.len().to_string()));
         fields
     }
@@ -1971,6 +2084,64 @@ mod tests {
         );
         assert_eq!(decoded_scoped.compile()?, scoped.compile()?);
         assert!(decoded_scoped.summary().contains("pdu_type=report"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_v3_raw_security_parameters_compile_decode_and_hide_bytes() -> Result<()> {
+        let raw = SnmpRawSecurityParameters::new(999, [0xde, 0xad, 0xbe, 0xef]);
+        let expected = [0x04, 0x04, 0xde, 0xad, 0xbe, 0xef];
+
+        assert_eq!(raw.security_model(), 999);
+        assert_eq!(
+            raw.security_model_status(),
+            registry::SnmpSecurityModelStatus::Unknown
+        );
+        assert_eq!(raw.security_model_label(), "security-model-999");
+        assert_eq!(raw.bytes(), &[0xde, 0xad, 0xbe, 0xef]);
+        assert_eq!(raw.len(), 4);
+        assert!(!raw.is_empty());
+        assert_eq!(raw.compile()?, expected);
+
+        let mut with_rest = expected.to_vec();
+        with_rest.push(0xaa);
+        let (decoded, rest) = SnmpRawSecurityParameters::decode(999, &with_rest)?;
+        assert_eq!(rest, &[0xaa]);
+        assert_eq!(decoded.bytes(), raw.bytes());
+        assert_eq!(decoded.compile()?, expected);
+        assert!(decoded.summary().contains("len=4"));
+        assert!(!decoded.summary().contains("de ad"));
+        assert!(!decoded
+            .inspection_fields()
+            .iter()
+            .any(|(_, value)| value == "de ad be ef"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_v3_raw_security_parameters_unknown_model_message_roundtrips() -> Result<()> {
+        let scoped_data = minimal_plaintext_v3_scoped_data();
+        let snmp = Snmp::v3(7, 1500, [0x00], 999, [0xaa, 0xbb], scoped_data);
+        let bytes = snmp.compile()?;
+        let decoded = Snmp::decode(&bytes)?;
+        let v3 = decoded.as_v3().expect("v3 wrapper");
+        let raw = v3.raw_security_parameters();
+
+        assert_eq!(raw.security_model(), 999);
+        assert_eq!(
+            raw.security_model_status(),
+            registry::SnmpSecurityModelStatus::Unknown
+        );
+        assert_eq!(raw.security_model_label(), "security-model-999");
+        assert_eq!(raw.bytes(), &[0xaa, 0xbb]);
+        assert_eq!(v3.security_parameters(), &[0xaa, 0xbb]);
+        assert_eq!(raw.compile()?, [0x04, 0x02, 0xaa, 0xbb]);
+        assert_eq!(decoded.compile()?, bytes);
+        assert!(decoded.summary().contains("msg_security_parameters_len=2"));
+        assert!(!decoded.summary().contains("aa bb"));
+        assert!(!decoded.show().contains("aa bb"));
 
         Ok(())
     }
