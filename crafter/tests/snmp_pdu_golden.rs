@@ -82,9 +82,9 @@ fn snmp_request_style_pdu_golden_matrix_roundtrips() -> crafter::Result<()> {
             error_index: 0,
             varbind_count: 0,
             summary_snippets: &[
-                "get-request request_id=1",
+                "pdu_type=get-request request_id=1",
                 "error_status=no-error(0)",
-                "varbinds=0",
+                "varbind_count=0",
             ],
         },
         CommonPduCase {
@@ -103,9 +103,9 @@ fn snmp_request_style_pdu_golden_matrix_roundtrips() -> crafter::Result<()> {
             error_index: 0,
             varbind_count: 0,
             summary_snippets: &[
-                "get-next-request request_id=1",
+                "pdu_type=get-next-request request_id=1",
                 "error_status=no-error(0)",
-                "varbinds=0",
+                "varbind_count=0",
             ],
         },
         CommonPduCase {
@@ -124,9 +124,9 @@ fn snmp_request_style_pdu_golden_matrix_roundtrips() -> crafter::Result<()> {
             error_index: 0,
             varbind_count: 0,
             summary_snippets: &[
-                "set-request request_id=1",
+                "pdu_type=set-request request_id=1",
                 "error_status=no-error(0)",
-                "varbinds=0",
+                "varbind_count=0",
             ],
         },
         CommonPduCase {
@@ -147,9 +147,9 @@ fn snmp_request_style_pdu_golden_matrix_roundtrips() -> crafter::Result<()> {
             error_index: 0,
             varbind_count: 1,
             summary_snippets: &[
-                "response request_id=42",
+                "pdu_type=response request_id=42",
                 "error_status=no-error(0)",
-                "varbinds=1",
+                "varbind_count=1",
             ],
         },
         CommonPduCase {
@@ -169,9 +169,9 @@ fn snmp_request_style_pdu_golden_matrix_roundtrips() -> crafter::Result<()> {
             error_index: 0,
             varbind_count: 1,
             summary_snippets: &[
-                "inform-request request_id=7",
+                "pdu_type=inform-request request_id=7",
                 "error_status=no-error(0)",
-                "varbinds=1",
+                "varbind_count=1",
             ],
         },
         CommonPduCase {
@@ -197,9 +197,9 @@ fn snmp_request_style_pdu_golden_matrix_roundtrips() -> crafter::Result<()> {
             error_index: 0,
             varbind_count: 2,
             summary_snippets: &[
-                "snmpv2-trap request_id=42",
+                "pdu_type=snmpv2-trap request_id=42",
                 "error_status=no-error(0)",
-                "varbinds=2",
+                "varbind_count=2",
             ],
         },
         CommonPduCase {
@@ -219,9 +219,9 @@ fn snmp_request_style_pdu_golden_matrix_roundtrips() -> crafter::Result<()> {
             error_index: 3,
             varbind_count: 0,
             summary_snippets: &[
-                "report request_id=128",
+                "pdu_type=report request_id=128",
                 "error_status=no-such-name(2)",
-                "varbinds=0",
+                "varbind_count=0",
             ],
         },
     ];
@@ -240,6 +240,13 @@ fn snmp_request_style_pdu_golden_matrix_roundtrips() -> crafter::Result<()> {
             &fields.summary_with_label(case.label),
             case.summary_snippets,
         );
+        assert_summary_contains(&decoded.summary(), case.summary_snippets);
+        let show = decoded.show();
+        assert!(show.contains(&format!("  pdu_type: {}", case.label)));
+        assert!(show.contains(&format!("  request_id: {}", case.request_id)));
+        assert!(show.contains(&format!("  error_status: {}", case.error_status)));
+        assert!(show.contains(&format!("  error_index: {}", case.error_index)));
+        assert!(show.contains(&format!("  varbind_count: {}", case.varbind_count)));
     }
 
     Ok(())
@@ -271,12 +278,27 @@ fn snmp_get_bulk_pdu_golden_roundtrips() -> crafter::Result<()> {
     assert_summary_contains(
         &fields.summary(),
         &[
-            "get-bulk request_id=7",
+            "pdu_type=get-bulk-request request_id=7",
             "non_repeaters=1",
             "max_repetitions=10",
-            "varbinds=1",
+            "varbind_count=1",
         ],
     );
+    assert_summary_contains(
+        &decoded.summary(),
+        &[
+            "pdu_type=get-bulk-request request_id=7",
+            "non_repeaters=1",
+            "max_repetitions=10",
+            "varbind_count=1",
+        ],
+    );
+    let show = decoded.show();
+    assert!(show.contains("  pdu_type: get-bulk-request"));
+    assert!(show.contains("  request_id: 7"));
+    assert!(show.contains("  non_repeaters: 1"));
+    assert!(show.contains("  max_repetitions: 10"));
+    assert!(show.contains("  varbind_count: 1"));
 
     Ok(())
 }
@@ -316,14 +338,33 @@ fn snmp_v1_trap_pdu_golden_roundtrips() -> crafter::Result<()> {
     assert_summary_contains(
         &fields.summary(),
         &[
-            "trap enterprise=1.3.6.1.4.1",
-            "agent=192.0.2.44",
-            "generic=6",
-            "specific=4321",
+            "pdu_type=trap enterprise=1.3.6.1.4.1",
+            "agent_address=192.0.2.44",
+            "generic_trap=6",
+            "specific_trap=4321",
             "timestamp=12345",
-            "varbinds=1",
+            "varbind_count=1",
         ],
     );
+    assert_summary_contains(
+        &decoded.summary(),
+        &[
+            "pdu_type=trap enterprise=1.3.6.1.4.1",
+            "agent_address=192.0.2.44",
+            "generic_trap=6",
+            "specific_trap=4321",
+            "timestamp=12345",
+            "varbind_count=1",
+        ],
+    );
+    let show = decoded.show();
+    assert!(show.contains("  pdu_type: trap"));
+    assert!(show.contains("  enterprise: 1.3.6.1.4.1"));
+    assert!(show.contains("  agent_address: 192.0.2.44"));
+    assert!(show.contains("  generic_trap: 6"));
+    assert!(show.contains("  specific_trap: 4321"));
+    assert!(show.contains("  timestamp: 12345"));
+    assert!(show.contains("  varbind_count: 1"));
 
     Ok(())
 }
@@ -346,6 +387,21 @@ fn snmp_unknown_pdu_golden_roundtrips() -> crafter::Result<()> {
     assert!(unknown.is_constructed());
     assert_eq!(unknown.body(), &[0x02, 0x01, 0x05]);
     assert_eq!(unknown.raw_tlv_bytes(), Some(&expected[..]));
+    assert_eq!(
+        decoded.summary(),
+        "SnmpPdu(pdu_type=pdu-9 pdu_tag=9 constructed=true body_length=3)"
+    );
+    assert_eq!(
+        decoded.show(),
+        concat!(
+            "SnmpPdu\n",
+            "  pdu_type: pdu-9\n",
+            "  pdu_tag: 9\n",
+            "  pdu_tag_status: unknown\n",
+            "  constructed: true\n",
+            "  body_length: 3",
+        )
+    );
 
     let primitive_known_tag = SnmpPdu::unknown(SnmpPdu::TAG_GET_REQUEST, false, [0xaa]);
     let primitive_expected = [0x80, 0x01, 0xaa];
