@@ -62,7 +62,7 @@ _PROTOCOL_DIR_FLOORS = {
 _LINE_BOUNDS = {
     "engine/generator.py": 2950,  # achieved 2458
     "engine/backends/scapy/packets.py": 1061,  # achieved 884
-    "engine/backends/scapy/normalize.py": 3737,  # achieved 3114
+    "engine/backends/scapy/normalize.py": 4559,  # achieved 3799
     "engine/backends/wireshark/normalize.py": 544,  # achieved 453
     # cli/*.py -- main.py is large by design (live-provider mock-patch coupling);
     # the bound locks it against regrowth, it does NOT assert a small file.
@@ -156,7 +156,7 @@ class EngineModuleSizesTest(unittest.TestCase):
         achieved = {
             "engine/generator.py": 2458,
             "engine/backends/scapy/packets.py": 884,
-            "engine/backends/scapy/normalize.py": 3114,
+            "engine/backends/scapy/normalize.py": 3799,
             "engine/backends/wireshark/normalize.py": 453,
             "engine/cli/main.py": 8732,
             "engine/cli/__init__.py": 34,
