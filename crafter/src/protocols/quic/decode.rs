@@ -46,7 +46,7 @@ pub(crate) fn decode_quic_datagram(payload: &[u8]) -> Result<Quic> {
     }
 
     let packet = QuicPacket::decode(payload)?;
-    if packet.is_version_negotiation() {
+    if packet.is_version_negotiation() || packet.is_retry() {
         return Ok(Quic::new().packet(packet));
     }
 
@@ -69,6 +69,22 @@ mod tests {
 
         assert_eq!(quic.packets().len(), 1);
         assert!(quic.packets()[0].is_version_negotiation());
+        let compiled = Packet::from_layer(quic).compile()?;
+        assert_eq!(compiled.as_bytes(), payload);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_retry_decode_enters_typed_packet_layer() -> crate::Result<()> {
+        let payload = [
+            0xf0, 0x00, 0x00, 0x00, 0x01, 0x04, 0x83, 0x94, 0xc8, 0xf0, 0x01, 0xaa, 0xde, 0xad,
+            0xbe, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c,
+            0x0d, 0x0e, 0x0f,
+        ];
+        let quic = decode_quic_datagram(&payload)?;
+
+        assert_eq!(quic.packets().len(), 1);
+        assert!(quic.packets()[0].is_retry());
         let compiled = Packet::from_layer(quic).compile()?;
         assert_eq!(compiled.as_bytes(), payload);
         Ok(())

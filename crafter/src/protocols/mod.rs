@@ -421,8 +421,9 @@ pub mod exports {
     pub use ospf::Ospf;
     pub use quic::constants::{QUIC_VERSION_1, QUIC_VERSION_2, QUIC_VERSION_NEGOTIATION};
     pub use quic::{
-        Quic, QuicConnectionId, QuicFrame, QuicPacket, QuicPacketNumber, QuicTransportParameter,
-        QuicVarInt, QuicVersionNegotiationBuilder, QuicVersionNegotiationPacket,
+        Quic, QuicConnectionId, QuicFrame, QuicPacket, QuicPacketNumber, QuicRetryPacket,
+        QuicTransportParameter, QuicVarInt, QuicVersionNegotiationBuilder,
+        QuicVersionNegotiationPacket, QUIC_RETRY_INTEGRITY_TAG_LEN,
     };
     pub use rip::ripng::{
         Ripng, RipngRte, RIPNG_COMMAND_REQUEST, RIPNG_COMMAND_RESPONSE, RIPNG_METRIC_INFINITY,
