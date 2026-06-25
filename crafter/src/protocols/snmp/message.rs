@@ -652,6 +652,15 @@ impl SnmpUsmSecurityParameters {
         self
     }
 
+    /// Return a copy with explicit msgAuthenticationParameters bytes.
+    pub fn with_authentication_parameters(
+        mut self,
+        authentication_parameters: impl Into<Vec<u8>>,
+    ) -> Self {
+        self.authentication_parameters = authentication_parameters.into();
+        self
+    }
+
     /// msgAuthoritativeEngineID OCTET STRING bytes.
     pub fn engine_id(&self) -> &[u8] {
         &self.engine_id
@@ -680,6 +689,11 @@ impl SnmpUsmSecurityParameters {
     /// msgAuthenticationParameters OCTET STRING bytes.
     pub fn authentication_parameters(&self) -> &[u8] {
         &self.authentication_parameters
+    }
+
+    /// msgAuthenticationParameters OCTET STRING content length.
+    pub fn authentication_parameters_len(&self) -> usize {
+        self.authentication_parameters.len()
     }
 
     /// msgPrivacyParameters OCTET STRING bytes.
@@ -2688,6 +2702,88 @@ mod tests {
         assert_eq!(v3.usm_security_parameters()?, None);
         assert_eq!(v3.raw_security_parameters().bytes(), raw_bytes);
         assert_eq!(decoded.compile()?, snmp.compile()?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_usm_auth_params_setter_preserves_exact_bytes_and_lengths() -> Result<()> {
+        let auth_parameters = [
+            0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc,
+        ];
+        let usm = sample_usm_parameters().with_authentication_parameters(auth_parameters);
+
+        assert_eq!(usm.authentication_parameters(), auth_parameters);
+        assert_eq!(usm.authentication_parameters_len(), auth_parameters.len());
+
+        let encoded = usm.compile()?;
+        let mut auth_tlv = vec![0x04, auth_parameters.len() as u8];
+        auth_tlv.extend_from_slice(&auth_parameters);
+        assert!(encoded
+            .windows(auth_tlv.len())
+            .any(|window| window == auth_tlv.as_slice()));
+
+        let (decoded, rest) = SnmpUsmSecurityParameters::decode(&encoded)?;
+        assert!(rest.is_empty());
+        assert_eq!(decoded.authentication_parameters(), auth_parameters);
+        assert_eq!(
+            decoded.authentication_parameters_len(),
+            auth_parameters.len()
+        );
+        assert_eq!(decoded.compile()?, encoded);
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_usm_auth_params_arbitrary_lengths_remain_packet_bytes() -> Result<()> {
+        let cases = [Vec::<u8>::new(), vec![0xaa], vec![0xbb; 12], vec![0xcc; 13]];
+
+        // Source-backed: docs/snmp-rfc-manifest.md records RFC 3414 Sections
+        // 2.4, 6, and 7 for authentication-parameter bytes. `crafter`
+        // preserves caller-provided bytes and lengths without requiring keys.
+        for auth_parameters in cases {
+            let usm =
+                sample_usm_parameters().with_authentication_parameters(auth_parameters.clone());
+            let decoded = SnmpUsmSecurityParameters::decode(&usm.compile()?)?.0;
+
+            assert_eq!(decoded.authentication_parameters(), auth_parameters);
+            assert_eq!(
+                decoded.authentication_parameters_len(),
+                auth_parameters.len()
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_usm_auth_params_v3_message_roundtrips_without_secrets() -> Result<()> {
+        let auth_parameters = [
+            0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7, 0xa8, 0xa9, 0xaa, 0xab,
+        ];
+        let usm = sample_usm_parameters().with_authentication_parameters(auth_parameters);
+        let message = SnmpV3Message::new_usm(
+            14,
+            1500,
+            [registry::SNMP_V3_FLAG_AUTH],
+            usm.clone(),
+            minimal_plaintext_v3_scoped_data(),
+        )?;
+        let snmp = Snmp::from_v3_message(message);
+        let bytes = snmp.compile()?;
+        let decoded = Snmp::decode(&bytes)?;
+        let v3 = decoded.as_v3().expect("v3 wrapper");
+        let decoded_usm = v3
+            .usm_security_parameters()?
+            .expect("USM security parameters");
+
+        assert_eq!(decoded_usm.authentication_parameters(), auth_parameters);
+        assert_eq!(v3.raw_security_parameters().bytes(), usm.compile()?);
+        assert_eq!(decoded.compile()?, bytes);
+        assert!(!decoded_usm.summary().contains("a0 a1"));
+        assert!(!decoded_usm.show().contains("a0 a1"));
+        assert!(!decoded.summary().contains("a0 a1"));
 
         Ok(())
     }
