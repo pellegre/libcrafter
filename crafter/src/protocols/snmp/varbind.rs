@@ -237,6 +237,31 @@ impl SnmpVarBind {
         self.value.as_raw_tlv().map(|raw| raw.as_bytes())
     }
 
+    /// BER class label for an unsupported value TLV, if present.
+    pub fn unknown_value_class(&self) -> Option<&'static str> {
+        self.value.unknown_value_class()
+    }
+
+    /// Whether an unsupported value TLV used the BER constructed bit.
+    pub fn unknown_value_is_constructed(&self) -> Option<bool> {
+        self.value.unknown_value_is_constructed()
+    }
+
+    /// Low-tag-number value for an unsupported value TLV.
+    pub fn unknown_value_tag_number(&self) -> Option<u8> {
+        self.value.unknown_value_tag_number()
+    }
+
+    /// Raw content octets for an unsupported value TLV.
+    pub fn unknown_value_content(&self) -> Option<&[u8]> {
+        self.value.unknown_value_content()
+    }
+
+    /// Byte-exact unsupported value TLV bytes, if they came from decode.
+    pub fn unknown_value_tlv_bytes(&self) -> Option<&[u8]> {
+        self.value.unknown_value_tlv_bytes()
+    }
+
     /// A compact summary of this variable binding.
     pub fn summary(&self) -> String {
         format!("{}={}", self.name, self.value.summary_label())
@@ -419,6 +444,28 @@ mod tests {
             ]
         );
         assert_eq!(raw.raw_value_tlv_bytes(), Some(&[0xc3, 0x01, 0xaa][..]));
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_unknown_value_metadata_is_exposed_from_varbind_decode() -> Result<()> {
+        let bytes = [
+            0x30, 0x0f, 0x06, 0x08, 0x2b, 0x06, 0x01, 0x02, 0x01, 0x01, 0x05, 0x00, 0x45, 0x81,
+            0x02, 0xde, 0xad,
+        ];
+        let (decoded, rest) = SnmpVarBind::decode(&bytes)?;
+
+        assert!(rest.is_empty());
+        assert_eq!(decoded.unknown_value_class(), Some("application"));
+        assert_eq!(decoded.unknown_value_is_constructed(), Some(false));
+        assert_eq!(decoded.unknown_value_tag_number(), Some(5));
+        assert_eq!(decoded.unknown_value_content(), Some(&[0xde, 0xad][..]));
+        assert_eq!(
+            decoded.unknown_value_tlv_bytes(),
+            Some(&[0x45, 0x81, 0x02, 0xde, 0xad][..])
+        );
+        assert_eq!(decoded.compile()?, bytes);
 
         Ok(())
     }
