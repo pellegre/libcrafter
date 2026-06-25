@@ -11,6 +11,7 @@ mod ber;
 mod constants;
 mod decode;
 mod message;
+mod oid;
 mod pdu;
 mod registry;
 mod value;
