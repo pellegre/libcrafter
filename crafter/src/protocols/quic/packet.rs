@@ -11,7 +11,7 @@ use crate::packet::{Layer, LayerContext};
 use crate::protocols::transport::common::{hex_bytes, impl_layer_div, impl_layer_object};
 use crate::{CrafterError, Result};
 
-use super::constants::{quic_version_label, quic_version_status};
+use super::constants::{quic_version_label, quic_version_status, QUIC_VERSION_1, QUIC_VERSION_2};
 use super::header::{classify_quic_header, QuicHeaderClassification, QuicLongPacketKind};
 use super::QuicConnectionId;
 
@@ -230,6 +230,15 @@ impl QuicPacket {
         }
     }
 
+    /// Preserve a decoded or built Retry packet entry.
+    pub fn from_retry(packet: QuicRetryPacket) -> Self {
+        Self {
+            bytes: packet.as_bytes().to_vec(),
+            version_negotiation: None,
+            retry: Some(packet),
+        }
+    }
+
     /// Decode a QUIC packet entry where source-backed typed parsing exists.
     pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
         let bytes = bytes.as_ref();
@@ -350,6 +359,28 @@ pub struct QuicRetryPacket {
 pub const QUIC_RETRY_INTEGRITY_TAG_LEN: usize = 16;
 
 impl QuicRetryPacket {
+    /// Start building a Retry packet with explicit token and tag bytes.
+    pub fn builder() -> QuicRetryBuilder {
+        QuicRetryBuilder::new()
+    }
+
+    /// Build a Retry packet from the required fields.
+    pub fn new(
+        version: u32,
+        destination_connection_id: QuicConnectionId,
+        source_connection_id: QuicConnectionId,
+        token: impl AsRef<[u8]>,
+        integrity_tag: [u8; QUIC_RETRY_INTEGRITY_TAG_LEN],
+    ) -> Result<Self> {
+        Self::builder()
+            .version(version)
+            .destination_connection_id(destination_connection_id)
+            .source_connection_id(source_connection_id)
+            .token(token)
+            .integrity_tag(integrity_tag)
+            .build()
+    }
+
     /// Decode a byte-complete Retry packet without verifying the integrity tag.
     pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
         let bytes = bytes.as_ref();
@@ -391,6 +422,46 @@ impl QuicRetryPacket {
             token: bytes[invariant_len..tag_start].to_vec(),
             integrity_tag,
             raw: bytes.to_vec(),
+        })
+    }
+
+    fn from_parts(
+        first_byte: u8,
+        version: u32,
+        destination_connection_id: QuicConnectionId,
+        source_connection_id: QuicConnectionId,
+        token: Vec<u8>,
+        integrity_tag: [u8; QUIC_RETRY_INTEGRITY_TAG_LEN],
+    ) -> Result<Self> {
+        validate_one_byte_connection_id_len(destination_connection_id.len())?;
+        validate_one_byte_connection_id_len(source_connection_id.len())?;
+
+        let mut raw = Vec::with_capacity(
+            1 + 4
+                + 1
+                + destination_connection_id.len()
+                + 1
+                + source_connection_id.len()
+                + token.len()
+                + QUIC_RETRY_INTEGRITY_TAG_LEN,
+        );
+        raw.push(first_byte);
+        raw.extend_from_slice(&version.to_be_bytes());
+        raw.push(destination_connection_id.len() as u8);
+        raw.extend_from_slice(destination_connection_id.as_bytes());
+        raw.push(source_connection_id.len() as u8);
+        raw.extend_from_slice(source_connection_id.as_bytes());
+        raw.extend_from_slice(&token);
+        raw.extend_from_slice(&integrity_tag);
+
+        Ok(Self {
+            first_byte,
+            version,
+            destination_connection_id,
+            source_connection_id,
+            token,
+            integrity_tag,
+            raw,
         })
     }
 
@@ -499,6 +570,115 @@ impl QuicRetryPacket {
     }
 }
 
+/// Builder for QUIC Retry packet emission.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct QuicRetryBuilder {
+    first_byte: Field<u8>,
+    version: Field<u32>,
+    destination_connection_id: Field<QuicConnectionId>,
+    source_connection_id: Field<QuicConnectionId>,
+    token: Field<Vec<u8>>,
+    integrity_tag: Field<[u8; QUIC_RETRY_INTEGRITY_TAG_LEN]>,
+}
+
+impl QuicRetryBuilder {
+    /// Create an empty Retry builder.
+    pub fn new() -> Self {
+        Self {
+            first_byte: Field::unset(),
+            version: Field::unset(),
+            destination_connection_id: Field::unset(),
+            source_connection_id: Field::unset(),
+            token: Field::unset(),
+            integrity_tag: Field::unset(),
+        }
+    }
+
+    /// Pin byte 0 explicitly, including intentionally malformed values.
+    pub fn first_byte(mut self, first_byte: u8) -> Self {
+        self.first_byte.set_user(first_byte);
+        self
+    }
+
+    /// Set the QUIC version field.
+    pub fn version(mut self, version: u32) -> Self {
+        self.version.set_user(version);
+        self
+    }
+
+    /// Set the Destination Connection ID bytes.
+    pub fn destination_connection_id(mut self, connection_id: QuicConnectionId) -> Self {
+        self.destination_connection_id.set_user(connection_id);
+        self
+    }
+
+    /// Set the Source Connection ID bytes.
+    pub fn source_connection_id(mut self, connection_id: QuicConnectionId) -> Self {
+        self.source_connection_id.set_user(connection_id);
+        self
+    }
+
+    /// Set the retry token bytes, including an explicitly empty token.
+    pub fn token(mut self, token: impl AsRef<[u8]>) -> Self {
+        self.token.set_user(token.as_ref().to_vec());
+        self
+    }
+
+    /// Set the Retry Integrity Tag bytes.
+    pub fn integrity_tag(mut self, integrity_tag: [u8; QUIC_RETRY_INTEGRITY_TAG_LEN]) -> Self {
+        self.integrity_tag.set_user(integrity_tag);
+        self
+    }
+
+    /// Build the packet bytes.
+    pub fn build(self) -> Result<QuicRetryPacket> {
+        let version = self.version.into_value().ok_or_else(|| {
+            CrafterError::invalid_field_value(
+                "quic.retry.version",
+                "Retry packet version must be set",
+            )
+        })?;
+        let first_byte = match self.first_byte.into_value() {
+            Some(first_byte) => first_byte,
+            None => default_retry_first_byte(version)?,
+        };
+        let destination_connection_id = self
+            .destination_connection_id
+            .into_value()
+            .unwrap_or_default();
+        let source_connection_id = self.source_connection_id.into_value().unwrap_or_default();
+        let token = self.token.into_value().ok_or_else(|| {
+            CrafterError::invalid_field_value("quic.retry.token", "Retry token must be set")
+        })?;
+        let integrity_tag = self.integrity_tag.into_value().ok_or_else(|| {
+            CrafterError::invalid_field_value(
+                "quic.retry.integrity_tag",
+                "Retry Integrity Tag must be set",
+            )
+        })?;
+
+        QuicRetryPacket::from_parts(
+            first_byte,
+            version,
+            destination_connection_id,
+            source_connection_id,
+            token,
+            integrity_tag,
+        )
+    }
+}
+
+fn default_retry_first_byte(version: u32) -> Result<u8> {
+    match version {
+        QUIC_VERSION_1 => Ok(0xf0),
+        QUIC_VERSION_2 => Ok(0xc0),
+        _ => Err(CrafterError::invalid_field_value(
+            "quic.retry.version",
+            "cannot infer Retry packet type bits for unsupported QUIC version",
+        )),
+    }
+}
+
 /// Decoded QUIC Version Negotiation packet.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QuicVersionNegotiationPacket {
@@ -590,8 +770,8 @@ impl QuicVersionNegotiationPacket {
                 "Version Negotiation packets require at least one supported version",
             ));
         }
-        validate_version_negotiation_cid_len(destination_connection_id.len())?;
-        validate_version_negotiation_cid_len(source_connection_id.len())?;
+        validate_one_byte_connection_id_len(destination_connection_id.len())?;
+        validate_one_byte_connection_id_len(source_connection_id.len())?;
 
         let mut raw = Vec::with_capacity(
             1 + 4
@@ -776,13 +956,13 @@ impl QuicVersionNegotiationBuilder {
     }
 }
 
-fn validate_version_negotiation_cid_len(len: usize) -> Result<()> {
+fn validate_one_byte_connection_id_len(len: usize) -> Result<()> {
     if len <= u8::MAX as usize {
         Ok(())
     } else {
         Err(CrafterError::invalid_field_value(
-            "quic.version_negotiation.connection_id.length",
-            "Version Negotiation connection ID length must fit in one byte",
+            "quic.connection_id.length",
+            "QUIC connection ID length field must fit in one byte",
         ))
     }
 }
@@ -1034,8 +1214,8 @@ mod tests {
                 .build()
                 .unwrap_err(),
             CrafterError::invalid_field_value(
-                "quic.version_negotiation.connection_id.length",
-                "Version Negotiation connection ID length must fit in one byte",
+                "quic.connection_id.length",
+                "QUIC connection ID length field must fit in one byte",
             )
         );
     }
@@ -1121,6 +1301,128 @@ mod tests {
         assert_eq!(
             QuicRetryPacket::decode([0xc0, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,]).unwrap_err(),
             CrafterError::invalid_field_value("quic.retry", "packet is not a Retry packet")
+        );
+    }
+
+    #[test]
+    fn quic_retry_build_emits_v1_retry_and_roundtrips() {
+        let retry = QuicRetryPacket::builder()
+            .version(QUIC_VERSION_1)
+            .destination_connection_id(QuicConnectionId::from_bytes([0x83, 0x94, 0xc8, 0xf0]))
+            .source_connection_id(QuicConnectionId::from_bytes([0xaa]))
+            .token([0xde, 0xad, 0xbe])
+            .integrity_tag([
+                0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d,
+                0x0e, 0x0f,
+            ])
+            .build()
+            .unwrap();
+
+        assert_eq!(
+            retry.as_bytes(),
+            [
+                0xf0, 0x00, 0x00, 0x00, 0x01, 0x04, 0x83, 0x94, 0xc8, 0xf0, 0x01, 0xaa, 0xde, 0xad,
+                0xbe, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c,
+                0x0d, 0x0e, 0x0f,
+            ]
+        );
+        assert_eq!(QuicRetryPacket::decode(retry.as_bytes()).unwrap(), retry);
+
+        let compiled = Packet::from_layer(Quic::new().packet(QuicPacket::from_retry(retry)))
+            .compile()
+            .unwrap();
+        assert_eq!(
+            compiled.as_bytes(),
+            [
+                0xf0, 0x00, 0x00, 0x00, 0x01, 0x04, 0x83, 0x94, 0xc8, 0xf0, 0x01, 0xaa, 0xde, 0xad,
+                0xbe, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c,
+                0x0d, 0x0e, 0x0f,
+            ]
+        );
+    }
+
+    #[test]
+    fn quic_retry_build_uses_v2_retry_type_bits() {
+        let retry = QuicRetryPacket::new(
+            QUIC_VERSION_2,
+            QuicConnectionId::new(),
+            QuicConnectionId::new(),
+            [0x42],
+            [0x55; QUIC_RETRY_INTEGRITY_TAG_LEN],
+        )
+        .unwrap();
+
+        assert_eq!(retry.first_byte(), 0xc0);
+        assert_eq!(
+            retry.as_bytes(),
+            [
+                0xc0, 0x6b, 0x33, 0x43, 0xcf, 0x00, 0x00, 0x42, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55,
+                0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55, 0x55,
+            ]
+        );
+    }
+
+    #[test]
+    fn quic_retry_build_preserves_user_first_byte_and_empty_token() {
+        let retry = QuicRetryPacket::builder()
+            .version(0xface_feed)
+            .first_byte(0xff)
+            .token([])
+            .integrity_tag([0xaa; QUIC_RETRY_INTEGRITY_TAG_LEN])
+            .build()
+            .unwrap();
+
+        assert_eq!(retry.first_byte(), 0xff);
+        assert_eq!(retry.version(), 0xface_feed);
+        assert_eq!(retry.token(), []);
+        assert_eq!(
+            retry.as_bytes(),
+            [
+                0xff, 0xfa, 0xce, 0xfe, 0xed, 0x00, 0x00, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
+                0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
+            ]
+        );
+    }
+
+    #[test]
+    fn quic_retry_build_requires_explicit_non_default_fields() {
+        assert_eq!(
+            QuicRetryPacket::builder().build().unwrap_err(),
+            CrafterError::invalid_field_value(
+                "quic.retry.version",
+                "Retry packet version must be set",
+            )
+        );
+        assert_eq!(
+            QuicRetryPacket::builder()
+                .version(0xface_feed)
+                .token([])
+                .integrity_tag([0xaa; QUIC_RETRY_INTEGRITY_TAG_LEN])
+                .build()
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "quic.retry.version",
+                "cannot infer Retry packet type bits for unsupported QUIC version",
+            )
+        );
+        assert_eq!(
+            QuicRetryPacket::builder()
+                .version(QUIC_VERSION_1)
+                .integrity_tag([0xaa; QUIC_RETRY_INTEGRITY_TAG_LEN])
+                .build()
+                .unwrap_err(),
+            CrafterError::invalid_field_value("quic.retry.token", "Retry token must be set")
+        );
+        assert_eq!(
+            QuicRetryPacket::builder()
+                .version(QUIC_VERSION_1)
+                .token([0x42])
+                .build()
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "quic.retry.integrity_tag",
+                "Retry Integrity Tag must be set",
+            )
         );
     }
 }
