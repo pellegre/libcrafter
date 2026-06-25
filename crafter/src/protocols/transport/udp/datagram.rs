@@ -4,6 +4,7 @@ use crate::packet::{Layer, LayerContext, Packet, Raw, TransportChecksumContext};
 use crate::protocols::dhcp::{Dhcp, DHCP_CLIENT_PORT, DHCP_SERVER_PORT};
 use crate::protocols::dns::Dns;
 use crate::protocols::ipv4::IPPROTO_UDP;
+use crate::protocols::quic::Quic;
 use crate::registry::ProtocolRegistry;
 
 use super::super::common::{
@@ -499,7 +500,7 @@ fn compile_udp_following_after(ctx: LayerContext<'_>, out: &mut Vec<u8>) -> Resu
 }
 
 pub(super) fn is_udp_application_layer(layer: &dyn Layer) -> bool {
-    layer.as_any().is::<Dns>() || layer.as_any().is::<Dhcp>()
+    layer.as_any().is::<Dns>() || layer.as_any().is::<Dhcp>() || layer.as_any().is::<Quic>()
 }
 
 pub(super) fn is_current_udp_surplus_layer(
