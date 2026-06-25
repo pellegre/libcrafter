@@ -35,6 +35,7 @@ _BEHAVIOR_CASE_COUNT = len(cases.BEHAVIOR_PROFILE_CASE_NAMES)
 _BGP_CASE_COUNT = len(cases.BGP_SESSION_PROFILE_CASE_NAMES)
 _MQTT_SMOKE_CASE_COUNT = len(cases.MQTT_SMOKE_PROFILE_CASE_NAMES)
 _OSPF_SMOKE_CASE_COUNT = len(cases.OSPF_SMOKE_PROFILE_CASE_NAMES)
+_SNMP_CASE_COUNT = len(cases.SNMP_SMOKE_PROFILE_CASE_NAMES)
 _BEHAVIOR_PROTOCOL_COMPOSITION = {
     "dns": 10,
     "dhcp": 10,
@@ -138,6 +139,7 @@ class ProbeProfileMembershipTest(unittest.TestCase):
                 "ospf-smoke",
                 "rip-smoke",
                 "smoke",
+                "snmp-smoke",
                 "tcp-smoke",
             ),
         )
@@ -252,6 +254,24 @@ class ProbeProfileMembershipTest(unittest.TestCase):
         )
         self.assertIn("198.51.100.0/24", service["documentation_prefixes"])
 
+    def test_snmp_smoke_profile_selects_snmp_cases(self) -> None:
+        names = cases.profile_case_names("snmp-smoke")
+
+        self.assertEqual(
+            names,
+            (
+                "snmp-get-response",
+                "snmp-getbulk-response",
+                "snmp-notification-trap",
+                "snmpv3-engine-discovery-report",
+            ),
+        )
+        selected = cases.profile_selected_cases("snmp-smoke", [])
+        self.assertEqual([case.name for case in selected], list(names))
+        for case in selected:
+            self.assertEqual(case.metadata.get("protocol"), "snmp")
+            self.assertIs(case.metadata.get("planned_only"), True)
+
 
 class ProbeProfileDefaultCountTest(unittest.TestCase):
     def test_behavior_profile_default_count_is_full_suite(self) -> None:
@@ -290,6 +310,13 @@ class ProbeProfileDefaultCountTest(unittest.TestCase):
         self.assertEqual(
             cases.profile_default_count("ospf-smoke"),
             len(cases.OSPF_SMOKE_PROFILE_CASE_NAMES),
+        )
+
+    def test_snmp_smoke_profile_default_count_is_full_suite(self) -> None:
+        self.assertEqual(cases.profile_default_count("snmp-smoke"), _SNMP_CASE_COUNT)
+        self.assertEqual(
+            cases.profile_default_count("snmp-smoke"),
+            len(cases.SNMP_SMOKE_PROFILE_CASE_NAMES),
         )
 
     def test_unknown_profile_default_count_is_legacy_five(self) -> None:

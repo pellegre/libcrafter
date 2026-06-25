@@ -70,6 +70,7 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
             "ipsec_ah",
             "ikev2",
             "ospf_neighbor_peer",
+            "snmp_peer",
         ):
             self.assertIn(name, PROBE_CAPABILITY_NAMES)
 
@@ -102,6 +103,8 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
             "ikev2",
             # An OSPF-capable neighbor rides the controlled-services substrate.
             "ospf_neighbor_peer",
+            # An SNMP peer rides the same controlled IPv4 service substrate.
+            "snmp_peer",
         ):
             self.assertIs(derived[name], True, name)
 
@@ -132,6 +135,8 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
             # OSPF rides IPv4 unicast + a controlled OSPF neighbor, not the link
             # layer, so an L3-only-but-controlled substrate still grants it.
             "ospf_neighbor_peer",
+            # SNMP also rides IPv4 unicast + a controlled service, not L2.
+            "snmp_peer",
         ):
             self.assertIs(derived[granted], True, granted)
 
@@ -219,6 +224,7 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
             "ipsec_ah",
             "ikev2",
             "ospf_neighbor_peer",
+            "snmp_peer",
         ):
             self.assertIs(derived[denied], False, denied)
 
@@ -263,6 +269,20 @@ class ProbeCapabilityDerivationTest(unittest.TestCase):
         )
 
         self.assertIs(derived["ospf_neighbor_peer"], False)
+        self.assertIs(derived["dns_service"], True)
+        self.assertIs(derived["bgp_peer"], True)
+
+    def test_explicit_snmp_peer_denial_disables_snmp_only(self) -> None:
+        substrate = dict(_LINK_LAYER_SUBSTRATE)
+        substrate["snmp_peer"] = False
+
+        derived = probe_capabilities_from_lab_capabilities(
+            "qemu",
+            substrate,
+            dry_run=True,
+        )
+
+        self.assertIs(derived["snmp_peer"], False)
         self.assertIs(derived["dns_service"], True)
         self.assertIs(derived["bgp_peer"], True)
 
@@ -491,6 +511,13 @@ class ProbeSkipReasonTest(unittest.TestCase):
                 case, "ospf_neighbor_peer"
             ),
             capabilities.SKIP_CAPABILITY_UNAVAILABLE,
+        )
+
+    def test_snmp_peer_maps_to_stable_reason(self) -> None:
+        case = cases.PROBE_CASE_BY_NAME["snmp-get-response"]
+        self.assertEqual(
+            capabilities.skip_reason_for_missing_capability(case, "snmp_peer"),
+            capabilities.SKIP_REQUIRES_SNMP_PEER,
         )
 
     def test_unknown_capability_falls_back_to_unavailable(self) -> None:

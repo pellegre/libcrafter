@@ -50,6 +50,7 @@ SKIP_REQUIRES_IGMP_PEER = "requires_igmp_peer"
 # these stable reasons rather than the generic capability-unavailable catch-all.
 SKIP_REQUIRES_IPSEC_PEER = "requires_ipsec_peer"
 SKIP_REQUIRES_IKEV2_RESPONDER = "requires_ikev2_responder"
+SKIP_REQUIRES_SNMP_PEER = "requires_snmp_peer"
 
 
 # Capabilities that imply a link-layer (Ethernet/ARP/broadcast) substrate. A
@@ -91,6 +92,7 @@ _CAPABILITY_SKIP_REASONS = {
     "ipsec_esp": SKIP_REQUIRES_IPSEC_PEER,
     "ipsec_ah": SKIP_REQUIRES_IPSEC_PEER,
     "ikev2": SKIP_REQUIRES_IKEV2_RESPONDER,
+    "snmp_peer": SKIP_REQUIRES_SNMP_PEER,
 }
 
 
@@ -266,6 +268,7 @@ __all__ = [
     "SKIP_REQUIRES_PRIVILEGED_PORT",
     "SKIP_REQUIRES_PROVIDER_MAC",
     "SKIP_REQUIRES_RIP_PEER",
+    "SKIP_REQUIRES_SNMP_PEER",
     "capability_skip_result",
     "capability_skip_state",
     "missing_capabilities",
