@@ -104,8 +104,9 @@ without a later gap review.
 - Report-PDU convenience builders, engine discovery examples, and notification
   helpers must stay wire-shaped; discovery state machines and retry policy are
   generated-tool behavior.
-- Scapy, Wireshark, or other oracle expectations must be backed by executable
-  specs and recorded source authority before they become acceptance evidence.
+- Reference-backend, Wireshark, or other oracle expectations must be backed by
+  executable specs and recorded source authority before they become acceptance
+  evidence.
 - Any live probe behavior must have a dry-run plan, provider capability
   evidence, explicit live confirmation, artifact collection under ignored
   paths, and teardown evidence before it can validate real traffic.
