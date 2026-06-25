@@ -1,7 +1,30 @@
 use crafter::protocols::snmp::{SnmpOid, SnmpPdu, SnmpVarBind, SnmpVarBindList};
 use crafter::CrafterError;
+use std::fmt::Debug;
+use std::panic::{self, UnwindSafe};
 
 const NAME_TLV: &[u8] = &[0x06, 0x08, 0x2b, 0x06, 0x01, 0x02, 0x01, 0x01, 0x05, 0x00];
+
+fn decode_pdu_without_panic<'a>(
+    name: &'static str,
+    bytes: &'a [u8],
+) -> crafter::Result<(SnmpPdu, &'a [u8])> {
+    panic::catch_unwind(|| SnmpPdu::decode(bytes))
+        .unwrap_or_else(|_| panic!("{name} panicked during PDU decode"))
+}
+
+fn assert_accessor_error<T, F>(name: &'static str, accessor: F, expected: CrafterError)
+where
+    T: Debug,
+    F: FnOnce() -> crafter::Result<Option<T>> + UnwindSafe,
+{
+    let result = panic::catch_unwind(accessor)
+        .unwrap_or_else(|_| panic!("{name} panicked during PDU body decode"));
+    match result {
+        Err(error) => assert_eq!(error, expected, "{name}"),
+        Ok(value) => panic!("{name} decoded unexpectedly as {value:?}"),
+    }
+}
 
 #[test]
 fn snmp_malformed_nested_value_length_override_is_emitted() -> crafter::Result<()> {
@@ -66,6 +89,129 @@ fn snmp_malformed_unset_pdu_and_value_lengths_auto_fill() -> crafter::Result<()>
     let (decoded, rest) = SnmpPdu::decode(&bytes)?;
     assert!(rest.is_empty());
     assert_eq!(decoded.compile()?, bytes);
+
+    Ok(())
+}
+
+#[test]
+fn snmp_malformed_request_pdu_truncated_fields_return_structured_errors() -> crafter::Result<()> {
+    let bytes = [0xa0, 0x03, 0x02, 0x01, 0x01];
+    let (decoded, rest) = decode_pdu_without_panic("truncated request fields", &bytes)?;
+
+    assert!(rest.is_empty());
+    assert_accessor_error(
+        "truncated request fields",
+        || decoded.as_get_request(),
+        CrafterError::buffer_too_short("snmp.ber.identifier", 1, 0),
+    );
+
+    Ok(())
+}
+
+#[test]
+fn snmp_malformed_bad_varbind_list_sequence_is_structured_error() -> crafter::Result<()> {
+    let bytes = [
+        0xa0, 0x0b, 0x02, 0x01, 0x01, 0x02, 0x01, 0x00, 0x02, 0x01, 0x00, 0x02, 0x00,
+    ];
+    let (decoded, rest) = decode_pdu_without_panic("bad varbind list sequence", &bytes)?;
+
+    assert!(rest.is_empty());
+    assert_accessor_error(
+        "bad varbind list sequence",
+        || decoded.as_get_request(),
+        CrafterError::invalid_field_value(
+            "snmp.ber.sequence",
+            "expected universal constructed SEQUENCE",
+        ),
+    );
+
+    Ok(())
+}
+
+#[test]
+fn snmp_malformed_v1_trap_short_body_returns_structured_error() -> crafter::Result<()> {
+    let bytes = [0xa4, 0x04, 0x06, 0x02, 0x2b, 0x06];
+    let (decoded, rest) = decode_pdu_without_panic("short v1 trap body", &bytes)?;
+
+    assert!(rest.is_empty());
+    assert_accessor_error(
+        "short v1 trap body",
+        || decoded.as_v1_trap(),
+        CrafterError::buffer_too_short("snmp.ber.identifier", 1, 0),
+    );
+
+    Ok(())
+}
+
+#[test]
+fn snmp_malformed_get_bulk_fields_return_structured_error() -> crafter::Result<()> {
+    let bytes = [0xa5, 0x06, 0x02, 0x01, 0x07, 0x02, 0x02, 0x00];
+    let (decoded, rest) = decode_pdu_without_panic("malformed bulk fields", &bytes)?;
+
+    assert!(rest.is_empty());
+    assert_accessor_error(
+        "malformed bulk fields",
+        || decoded.as_get_bulk_request(),
+        CrafterError::buffer_too_short("snmp.ber.integer", 4, 3),
+    );
+
+    Ok(())
+}
+
+#[test]
+fn snmp_malformed_constructed_request_integer_is_structured_error() -> crafter::Result<()> {
+    let bytes = [
+        0xa0, 0x0b, 0x22, 0x01, 0x01, 0x02, 0x01, 0x00, 0x02, 0x01, 0x00, 0x30, 0x00,
+    ];
+    let (decoded, rest) = decode_pdu_without_panic("constructed request integer", &bytes)?;
+
+    assert!(rest.is_empty());
+    assert_accessor_error(
+        "constructed request integer",
+        || decoded.as_get_request(),
+        CrafterError::invalid_field_value(
+            "snmp.ber.integer",
+            "expected universal primitive INTEGER",
+        ),
+    );
+
+    Ok(())
+}
+
+#[test]
+fn snmp_malformed_primitive_known_pdu_tag_is_preserved_as_unknown() -> crafter::Result<()> {
+    let bytes = [0x80, 0x01, 0xaa, 0xcc];
+    let (decoded, rest) = decode_pdu_without_panic("primitive known PDU tag", &bytes)?;
+    let unknown = decoded.as_unknown().expect("primitive PDU is raw");
+
+    assert_eq!(unknown.tag_number(), SnmpPdu::TAG_GET_REQUEST);
+    assert!(!unknown.is_constructed());
+    assert_eq!(unknown.body(), &[0xaa]);
+    assert_eq!(unknown.raw_tlv_bytes(), Some(&bytes[..3]));
+    assert_eq!(decoded.raw_tlv_bytes(), Some(&bytes[..3]));
+    assert_eq!(decoded.as_get_request()?, None);
+    assert_eq!(decoded.compile()?, bytes[..3]);
+    assert_eq!(rest, &[0xcc]);
+
+    Ok(())
+}
+
+#[test]
+fn snmp_malformed_unknown_pdu_preserves_raw_tlv() -> crafter::Result<()> {
+    let bytes = [0xa9, 0x03, 0x02, 0x01, 0x05, 0xee];
+    let (decoded, rest) = decode_pdu_without_panic("unknown PDU", &bytes)?;
+    let unknown = decoded.as_unknown().expect("unknown PDU is raw");
+
+    assert_eq!(unknown.tag_number(), 9);
+    assert!(unknown.is_constructed());
+    assert_eq!(unknown.body(), &[0x02, 0x01, 0x05]);
+    assert_eq!(unknown.raw_tlv_bytes(), Some(&bytes[..5]));
+    assert_eq!(decoded.raw_tlv_bytes(), Some(&bytes[..5]));
+    assert_eq!(decoded.as_get_request()?, None);
+    assert_eq!(decoded.as_get_bulk_request()?, None);
+    assert_eq!(decoded.as_v1_trap()?, None);
+    assert_eq!(decoded.compile()?, bytes[..5]);
+    assert_eq!(rest, &[0xee]);
 
     Ok(())
 }
