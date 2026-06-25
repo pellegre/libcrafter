@@ -1,12 +1,67 @@
-//! Simple Network Management Protocol (SNMP) module scaffold.
+//! Simple Network Management Protocol (SNMP) packet primitives.
 //!
-//! SNMP support is being added in source-backed slices. This module exposes
-//! the community-based packet layer and source-backed BER/PDU primitives; it
-//! does not expose a manager workflow, SNMPv3 security behavior, or UDP
-//! registry dispatch yet.
+//! SNMP is modeled as packet bytes that compose with the normal `Packet`
+//! abstraction. The module exposes community-based SNMPv1/SNMPv2c builders,
+//! SNMPv3 wire framing helpers, BER values, PDU helpers, UDP/161 and UDP/162
+//! constants, and source-backed registry labels. It does not implement a
+//! manager, agent daemon, trap receiver, MIB resolver, credential store, VACM
+//! evaluator, or live workflow.
 //!
 //! Source gate: any SNMP wire behavior added here must first be authorized by
 //! `docs/snmp-rfc-manifest.md`.
+//!
+//! Build an SNMP message as one layer in an IPv4/UDP packet, compile it, print
+//! packet inspection text, and decode the bytes back through the L3 entrypoint:
+//!
+//! ```rust
+//! use crafter::prelude::*;
+//!
+//! # fn main() -> crafter::Result<()> {
+//! let request = Snmp::v2c_get_request(
+//!     b"doc-community".to_vec(),
+//!     42,
+//!     SnmpVarBindList::new(vec![SnmpVarBind::null(SnmpOid::from_dotted(
+//!         "1.3.6.1.2.1.1.1.0",
+//!     )?)]),
+//! )?;
+//! let packet = Ipv4::new()
+//!     .src_str("192.0.2.30")?
+//!     .dst_str("198.51.100.30")?
+//!     / Udp::new().sport(49152).dport(SNMP_PORT)
+//!     / request;
+//!
+//! let compiled = packet.compile()?;
+//! assert!(packet.summary().contains("Snmp(version=v2c"));
+//! let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes())?;
+//! assert!(decoded.layer::<Snmp>().is_some());
+//! let _show = decoded.show();
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! Decode a standalone UDP payload as an SNMP message when a tool has already
+//! isolated the application bytes:
+//!
+//! ```rust
+//! use crafter::prelude::*;
+//!
+//! # fn main() -> crafter::Result<()> {
+//! let message = Snmp::v1_get_request(
+//!     b"doc-community".to_vec(),
+//!     7,
+//!     SnmpVarBindList::new(vec![SnmpVarBind::null(SnmpOid::from_dotted(
+//!         "1.3.6.1.2.1.1.3.0",
+//!     )?)]),
+//! )?;
+//! let payload = message.compile()?;
+//! let decoded = Snmp::decode(&payload)?;
+//!
+//! assert_eq!(decoded.version(), SnmpVersion::V1);
+//! assert!(decoded.summary().contains("pdu_type=get-request"));
+//! assert!(!decoded.summary().contains("doc-community"));
+//! # Ok(())
+//! # }
+//! ```
 
 mod ber;
 mod constants;
