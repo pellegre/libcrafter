@@ -194,16 +194,18 @@ notes:
 
 backend_support:
   scapy:
-    status: planned
+    status: partial
     native_layers:
+      - Raw
       - SNMP
     notes:
-      - Later Scapy support must prove which v1/v2c BER and unknown-preservation
-        cases are byte-exact and mark unsupported value shapes as backend gaps.
+      - The Scapy backend emits deterministic BER bytes under UDP Raw for
+        v1/v2c and unknown-preservation cases; structured-error malformed
+        inputs remain excluded from strict-byte materialization.
   libcrafter:
-    status: planned
+    status: partial
     native_layers:
       - Snmp
     notes:
-      - The crate already has public SNMP builders and decoders; later oracle
-        adapter steps will expose them through executable packet plans.
+      - The crate has public SNMP builders and decoders for these packet shapes;
+        later oracle execution steps compare backend mismatches case by case.
