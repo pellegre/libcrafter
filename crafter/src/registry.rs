@@ -1811,8 +1811,8 @@ mod snmp_udp_decode {
     use std::net::{Ipv4Addr, Ipv6Addr};
 
     use crate::{
-        Ipv4, Ipv6, NetworkLayer, Packet, Raw, Snmp, SnmpPdu, SnmpVarBindList, SnmpVersion, Udp,
-        SNMP_PORT, SNMP_TRAP_PORT,
+        Ipv4, Ipv6, NetworkLayer, Packet, Raw, Snmp, SnmpOid, SnmpPdu, SnmpVarBindList,
+        SnmpVersion, Udp, SNMP_PORT, SNMP_TRAP_PORT,
     };
 
     #[test]
@@ -1884,6 +1884,73 @@ mod snmp_udp_decode {
                 .as_bytes(),
             invalid_sequence
         );
+    }
+
+    #[test]
+    fn snmp_trap_port_decode_decodes_v1_v2_trap_and_inform_pdus() -> crate::Result<()> {
+        let enterprise = SnmpOid::from_dotted("1.3.6.1.4.1")?;
+        let cases = [
+            (
+                Snmp::v1_trap(
+                    b"public".to_vec(),
+                    enterprise,
+                    [192, 0, 2, 1],
+                    6,
+                    42,
+                    1234,
+                    SnmpVarBindList::empty(),
+                )?,
+                SnmpVersion::V1,
+                SnmpPdu::TAG_TRAP,
+            ),
+            (
+                Snmp::v2c_snmpv2_trap(b"public".to_vec(), 2, SnmpVarBindList::empty())?,
+                SnmpVersion::V2c,
+                SnmpPdu::TAG_TRAP_V2,
+            ),
+            (
+                Snmp::v2c_inform_request(b"public".to_vec(), 3, SnmpVarBindList::empty())?,
+                SnmpVersion::V2c,
+                SnmpPdu::TAG_INFORM_REQUEST,
+            ),
+        ];
+
+        for (snmp, expected_version, expected_tag) in cases {
+            let packet = Ipv4::new()
+                .src(Ipv4Addr::new(192, 0, 2, 67))
+                .dst(Ipv4Addr::new(198, 51, 100, 67))
+                / Udp::new().sport(SNMP_TRAP_PORT).dport(49_154)
+                / snmp;
+            let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, packet.compile()?.as_bytes())?;
+            let decoded_snmp = decoded.layer::<Snmp>().expect("trap-port SNMP");
+
+            assert_eq!(decoded_snmp.version(), expected_version);
+            assert_eq!(decoded_snmp.pdu().tag_number(), expected_tag);
+            assert!(decoded.layer::<Raw>().is_none());
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn snmp_trap_port_decode_decodes_unknown_valid_pdu_payload() -> crate::Result<()> {
+        let unknown_payload = [
+            0x30, 0x0b, 0x02, 0x01, 0x01, 0x04, 0x01, b'x', 0xa9, 0x03, 0x02, 0x01, 0x05,
+        ];
+        let packet = Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 67))
+            .dst(Ipv4Addr::new(198, 51, 100, 67))
+            / Udp::new().sport(49_154).dport(SNMP_TRAP_PORT)
+            / Raw::from_bytes(unknown_payload);
+        let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, packet.compile()?.as_bytes())?;
+        let snmp = decoded.layer::<Snmp>().expect("unknown PDU SNMP");
+
+        assert_eq!(snmp.version(), SnmpVersion::V2c);
+        assert_eq!(snmp.pdu().tag_number(), 9);
+        assert!(snmp.pdu().as_unknown().is_some());
+        assert!(decoded.layer::<Raw>().is_none());
+
+        Ok(())
     }
 }
 
