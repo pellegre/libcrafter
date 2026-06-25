@@ -19,7 +19,41 @@ mod value;
 #[cfg(test)]
 mod tests {
     use super::{ber, oid::SnmpOid, value::SnmpValue};
-    use crate::error::Result;
+    use crate::error::{CrafterError, Result};
+
+    fn assert_buffer_too_short(
+        error: CrafterError,
+        expected_context: &'static str,
+        expected_required: usize,
+        expected_available: usize,
+    ) {
+        match error {
+            CrafterError::BufferTooShort {
+                context,
+                required,
+                available,
+            } => {
+                assert_eq!(context, expected_context);
+                assert_eq!(required, expected_required);
+                assert_eq!(available, expected_available);
+            }
+            other => panic!("expected BufferTooShort, got {other:?}"),
+        }
+    }
+
+    fn assert_invalid_field(
+        error: CrafterError,
+        expected_field: &'static str,
+        expected_reason: &'static str,
+    ) {
+        match error {
+            CrafterError::InvalidFieldValue { field, reason } => {
+                assert_eq!(field, expected_field);
+                assert_eq!(reason, expected_reason);
+            }
+            other => panic!("expected InvalidFieldValue, got {other:?}"),
+        }
+    }
 
     #[test]
     fn snmp_ber_roundtrip_identifier_and_length_forms() -> Result<()> {
@@ -191,5 +225,76 @@ mod tests {
         }
 
         Ok(())
+    }
+
+    #[test]
+    fn snmp_ber_malformed_short_identifier_reports_structured_error() {
+        let error = ber::decode_identifier(&[]).expect_err("missing identifier must error");
+
+        assert_buffer_too_short(error, "snmp.ber.identifier", 1, 0);
+    }
+
+    #[test]
+    fn snmp_ber_malformed_short_length_reports_structured_error() {
+        let error = ber::decode_sequence(&[0x30]).expect_err("missing length must error");
+
+        assert_buffer_too_short(error, "snmp.ber.length", 1, 0);
+    }
+
+    #[test]
+    fn snmp_ber_malformed_indefinite_length_is_rejected_by_manifest_scope() {
+        let error =
+            ber::decode_sequence(&[0x30, 0x80, 0x00, 0x00]).expect_err("indefinite length");
+
+        assert_invalid_field(
+            error,
+            "snmp.ber.length",
+            "indefinite length is not valid for SNMP",
+        );
+    }
+
+    #[test]
+    fn snmp_ber_malformed_truncated_content_reports_required_and_available() {
+        let error = SnmpValue::decode_octet_string(&[0x04, 0x02, 0xaa])
+            .expect_err("truncated OCTET STRING content must error");
+
+        assert_buffer_too_short(error, "snmp.ber.octet_string", 4, 3);
+    }
+
+    #[test]
+    fn snmp_ber_malformed_invalid_oid_continuation_reports_structured_error() {
+        let error =
+            SnmpOid::decode(&[0x06, 0x02, 0x2b, 0x80]).expect_err("unterminated OID arc");
+
+        assert_buffer_too_short(error, "snmp.ber.object_identifier.base128", 3, 2);
+    }
+
+    #[test]
+    fn snmp_ber_malformed_application_values_report_structured_errors() {
+        let error = SnmpValue::decode_ip_address(&[0x40, 0x03, 192, 0, 2])
+            .expect_err("short IpAddress content must error");
+        assert_invalid_field(
+            error,
+            "snmp.ber.application.ip_address",
+            "IpAddress content must be exactly 4 octets",
+        );
+
+        let error = SnmpValue::decode_counter32(&[0x41, 0x00])
+            .expect_err("empty Counter32 content must error");
+        assert_invalid_field(
+            error,
+            "snmp.ber.application.counter32",
+            "application integer requires at least one content octet",
+        );
+
+        let error = SnmpValue::decode_counter64(&[
+            0x46, 0x0a, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00,
+        ])
+        .expect_err("wide Counter64 content must error");
+        assert_invalid_field(
+            error,
+            "snmp.ber.application.counter64",
+            "application integer exceeds source-backed wire width",
+        );
     }
 }
