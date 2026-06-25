@@ -37,7 +37,7 @@ pub mod ipv6 {
 /// Curated protocol symbols exported by both `crate::protocols` and the crate root.
 pub mod exports {
     use super::{
-        bgp, dhcp, dns, eapol, icmp, igmp, ip, ipsec, ipv4, ipv6, link, mqtt, ospf, rip, rsn,
+        bgp, dhcp, dns, eapol, icmp, igmp, ip, ipsec, ipv4, ipv6, link, mqtt, ospf, rip, rsn, snmp,
         transport,
     };
 
@@ -445,6 +445,25 @@ pub mod exports {
         RSN_CIPHER_SUITE_CCMP_256, RSN_CIPHER_SUITE_CCM_STAR, RSN_CIPHER_SUITE_GCMP_128,
         RSN_CIPHER_SUITE_GCMP_256, RSN_CIPHER_SUITE_NO_GROUP_ADDRESSED, RSN_CIPHER_SUITE_TKIP,
         RSN_CIPHER_SUITE_USE_GROUP, RSN_SUITE_SELECTOR_LEN, RSN_SUITE_SELECTOR_OUI, RSN_VERSION_1,
+    };
+    pub use snmp::{
+        snmp_error_status_label, snmp_error_status_meta, snmp_error_status_name,
+        snmp_error_status_status, snmp_error_status_summary, snmp_pdu_tag_meta, snmp_pdu_tag_name,
+        snmp_pdu_tag_status, Snmp, SnmpErrorStatus, SnmpErrorStatusAssignment, SnmpErrorStatusMeta,
+        SnmpGetBulkPdu, SnmpOid, SnmpPdu, SnmpPduTagMeta, SnmpPduTagStatus, SnmpRawPdu,
+        SnmpRawPduBody, SnmpRequestPdu, SnmpV1TrapPdu, SnmpVarBind, SnmpVarBindList, SnmpVersion,
+        SNMP_ERROR_STATUS_AUTHORIZATION_ERROR, SNMP_ERROR_STATUS_BAD_VALUE,
+        SNMP_ERROR_STATUS_COMMIT_FAILED, SNMP_ERROR_STATUS_GEN_ERR,
+        SNMP_ERROR_STATUS_INCONSISTENT_NAME, SNMP_ERROR_STATUS_INCONSISTENT_VALUE,
+        SNMP_ERROR_STATUS_NOT_WRITABLE, SNMP_ERROR_STATUS_NO_ACCESS, SNMP_ERROR_STATUS_NO_CREATION,
+        SNMP_ERROR_STATUS_NO_ERROR, SNMP_ERROR_STATUS_NO_SUCH_NAME, SNMP_ERROR_STATUS_READ_ONLY,
+        SNMP_ERROR_STATUS_RESOURCE_UNAVAILABLE, SNMP_ERROR_STATUS_TOO_BIG,
+        SNMP_ERROR_STATUS_UNDO_FAILED, SNMP_ERROR_STATUS_WRONG_ENCODING,
+        SNMP_ERROR_STATUS_WRONG_LENGTH, SNMP_ERROR_STATUS_WRONG_TYPE,
+        SNMP_ERROR_STATUS_WRONG_VALUE, SNMP_PDU_TAG_GET_BULK_REQUEST,
+        SNMP_PDU_TAG_GET_NEXT_REQUEST, SNMP_PDU_TAG_GET_REQUEST, SNMP_PDU_TAG_INFORM_REQUEST,
+        SNMP_PDU_TAG_REPORT, SNMP_PDU_TAG_RESPONSE, SNMP_PDU_TAG_SET_REQUEST, SNMP_PDU_TAG_TRAP,
+        SNMP_PDU_TAG_TRAP_V2,
     };
     pub use transport::{
         tcp_option_kind_class, tcp_option_kind_is_assigned, tcp_option_kind_is_experimental,
