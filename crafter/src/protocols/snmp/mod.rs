@@ -15,8 +15,10 @@ mod oid;
 mod pdu;
 mod registry;
 mod value;
+mod varbind;
 
 pub use oid::SnmpOid;
+pub use varbind::SnmpVarBind;
 
 #[cfg(test)]
 mod tests {
