@@ -1037,6 +1037,92 @@ impl QuicMaxDataFrame {
     }
 }
 
+/// Parsed MAX_STREAM_DATA frame fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QuicMaxStreamDataFrame {
+    stream_id: QuicVarInt,
+    maximum_stream_data: QuicVarInt,
+}
+
+impl QuicMaxStreamDataFrame {
+    /// Construct a MAX_STREAM_DATA frame from caller-supplied varints.
+    pub const fn new(stream_id: QuicVarInt, maximum_stream_data: QuicVarInt) -> Self {
+        Self {
+            stream_id,
+            maximum_stream_data,
+        }
+    }
+
+    /// Construct a MAX_STREAM_DATA frame from validated integer values.
+    pub fn from_values(stream_id: u64, maximum_stream_data: u64) -> Result<Self> {
+        Ok(Self::new(
+            QuicVarInt::new(stream_id)?,
+            QuicVarInt::new(maximum_stream_data)?,
+        ))
+    }
+
+    /// Return the Stream ID field.
+    pub const fn stream_id(self) -> QuicVarInt {
+        self.stream_id
+    }
+
+    /// Return the Maximum Stream Data field.
+    pub const fn maximum_stream_data(self) -> QuicVarInt {
+        self.maximum_stream_data
+    }
+
+    /// Decode one MAX_STREAM_DATA frame from bytes that include the Frame Type.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let bytes = bytes.as_ref();
+        let (frame, consumed) = decode_max_stream_data_frame(bytes)?;
+        if consumed != bytes.len() {
+            return Err(CrafterError::invalid_field_value(
+                "quic.frame.max_stream_data",
+                "MAX_STREAM_DATA frame has trailing bytes",
+            ));
+        }
+        Ok(frame)
+    }
+
+    /// Append the canonical MAX_STREAM_DATA frame encoding.
+    pub fn encode(self, out: &mut Vec<u8>) -> Result<()> {
+        QuicVarInt::from_u64_unchecked(0x11).encode(out)?;
+        self.stream_id.encode(out)?;
+        self.maximum_stream_data.encode(out)?;
+        Ok(())
+    }
+
+    /// Return the canonical MAX_STREAM_DATA frame encoding.
+    pub fn encode_to_vec(self) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Stable MAX_STREAM_DATA summary for packet inspection.
+    pub fn summary(self) -> String {
+        format!(
+            "kind=MAX_STREAM_DATA stream_id={} maximum_stream_data={}",
+            self.stream_id.value(),
+            self.maximum_stream_data.value()
+        )
+    }
+
+    /// Stable field/value pairs for MAX_STREAM_DATA inspection.
+    pub fn inspection_fields(self) -> Vec<(&'static str, String)> {
+        vec![
+            (
+                "max_stream_data_stream_id",
+                self.stream_id.value().to_string(),
+            ),
+            (
+                "max_stream_data",
+                self.maximum_stream_data.value().to_string(),
+            ),
+        ]
+    }
+}
+
 /// Raw-preserving QUIC frame.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct QuicFrame {
@@ -1173,6 +1259,19 @@ impl QuicFrame {
         Self::from_max_data_frame(QuicMaxDataFrame::new(maximum_data))
     }
 
+    /// Construct a MAX_STREAM_DATA frame from typed fields.
+    pub fn from_max_stream_data_frame(max_stream_data: QuicMaxStreamDataFrame) -> Result<Self> {
+        Ok(Self::from_bytes(max_stream_data.encode_to_vec()?))
+    }
+
+    /// Construct a MAX_STREAM_DATA frame from caller-supplied varints.
+    pub fn max_stream_data(stream_id: QuicVarInt, maximum_stream_data: QuicVarInt) -> Result<Self> {
+        Self::from_max_stream_data_frame(QuicMaxStreamDataFrame::new(
+            stream_id,
+            maximum_stream_data,
+        ))
+    }
+
     /// Decode a frame sequence within the caller-provided packet boundary.
     ///
     /// Supported fixed-boundary frames are split out first. The remaining
@@ -1238,6 +1337,12 @@ impl QuicFrame {
                 0x10 => {
                     let (_, max_data_len) = decode_max_data_frame(&bytes[offset..])?;
                     let end = offset + max_data_len;
+                    frames.push(Self::from_bytes(&bytes[offset..end]));
+                    offset = end;
+                }
+                0x11 => {
+                    let (_, max_stream_data_len) = decode_max_stream_data_frame(&bytes[offset..])?;
+                    let end = offset + max_stream_data_len;
                     frames.push(Self::from_bytes(&bytes[offset..end]));
                     offset = end;
                 }
@@ -1339,6 +1444,14 @@ impl QuicFrame {
         }
     }
 
+    /// Decode this frame as MAX_STREAM_DATA when applicable.
+    pub fn max_stream_data_frame(&self) -> Result<Option<QuicMaxStreamDataFrame>> {
+        match self.frame_type_value() {
+            Some(0x11) => Ok(Some(QuicMaxStreamDataFrame::decode(&self.bytes)?)),
+            _ => Ok(None),
+        }
+    }
+
     /// Borrow the preserved frame bytes.
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes
@@ -1414,6 +1527,9 @@ impl QuicFrame {
         if let Ok(Some(max_data)) = self.max_data_frame() {
             return max_data.summary();
         }
+        if let Ok(Some(max_stream_data)) = self.max_stream_data_frame() {
+            return max_stream_data.summary();
+        }
         match self.frame_type() {
             Some(frame_type) => format!(
                 "kind={} type=0x{:x} raw_len={}",
@@ -1471,6 +1587,9 @@ impl QuicFrame {
         }
         if let Ok(Some(max_data)) = self.max_data_frame() {
             fields.extend(max_data.inspection_fields());
+        }
+        if let Ok(Some(max_stream_data)) = self.max_stream_data_frame() {
+            fields.extend(max_stream_data.inspection_fields());
         }
         fields
     }
@@ -1724,6 +1843,30 @@ fn decode_max_data_frame(bytes: &[u8]) -> Result<(QuicMaxDataFrame, usize)> {
     offset = next;
 
     Ok((QuicMaxDataFrame::new(maximum_data), offset))
+}
+
+fn decode_max_stream_data_frame(bytes: &[u8]) -> Result<(QuicMaxStreamDataFrame, usize)> {
+    let (frame_type, mut offset) = decode_frame_varint(bytes, 0, "quic.frame.type")?;
+    if frame_type.value() != 0x11 {
+        return Err(CrafterError::invalid_field_value(
+            "quic.frame.max_stream_data.type",
+            "MAX_STREAM_DATA frame type must be 0x11",
+        ));
+    }
+    let (stream_id, next) =
+        decode_frame_varint(bytes, offset, "quic.frame.max_stream_data.stream_id")?;
+    offset = next;
+    let (maximum_stream_data, next) = decode_frame_varint(
+        bytes,
+        offset,
+        "quic.frame.max_stream_data.maximum_stream_data",
+    )?;
+    offset = next;
+
+    Ok((
+        QuicMaxStreamDataFrame::new(stream_id, maximum_stream_data),
+        offset,
+    ))
 }
 
 fn decode_frame_varint(
@@ -2258,6 +2401,48 @@ mod tests {
         assert_eq!(
             QuicFrame::decode_sequence([0x10, 0x40]).unwrap_err(),
             CrafterError::buffer_too_short("quic.frame.max_data.maximum_data", 2, 1)
+        );
+    }
+
+    #[test]
+    fn quic_frame_max_stream_data_decodes_and_continues_sequence() -> crate::Result<()> {
+        let bytes = [0x11, 0x04, 0x44, 0x00, 0x01];
+
+        let frames = QuicFrame::decode_sequence(bytes)?;
+
+        assert_eq!(frames.len(), 2);
+        assert_eq!(
+            frames[0].kind(),
+            QuicFrameKind::Known(QuicKnownFrameType::MaxStreamData)
+        );
+        let max_stream_data = frames[0].max_stream_data_frame()?.unwrap();
+        assert_eq!(max_stream_data.stream_id().value(), 4);
+        assert_eq!(max_stream_data.maximum_stream_data().value(), 1024);
+        assert!(frames[1].is_ping());
+        assert_eq!(QuicFrame::encode_sequence(frames), bytes);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_max_stream_data_serializes_and_summarizes() -> crate::Result<()> {
+        let frame = QuicFrame::max_stream_data(v(1), v(63))?;
+
+        assert_eq!(frame.as_bytes(), &[0x11, 0x01, 0x3f]);
+        assert_eq!(
+            frame.summary(),
+            "kind=MAX_STREAM_DATA stream_id=1 maximum_stream_data=63"
+        );
+        assert!(frame
+            .inspection_fields()
+            .contains(&("max_stream_data", "63".to_string())));
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_max_stream_data_malformed_varint_reports_structured_error() {
+        assert_eq!(
+            QuicFrame::decode_sequence([0x11, 1, 0x40]).unwrap_err(),
+            CrafterError::buffer_too_short("quic.frame.max_stream_data.maximum_stream_data", 2, 1)
         );
     }
 }
