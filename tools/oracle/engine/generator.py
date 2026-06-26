@@ -97,13 +97,13 @@ from .protocols.ripng import _apply_ripng_behavior
 # backend can encode — the same co-locate-and-re-import pattern as the
 # BGP/OSPF/RIP body injectors above.
 from .protocols.dns import _dns_behavior_emits_raw
-# ``DHCP_OPTION_MATRIX_TOKENS`` moved to the DHCP sampler plugin
+# ``DHCPV4_OPTION_MATRIX_TOKENS`` moved to the DHCP sampler plugin
 # (``protocols/dhcp.py``) with the rest of the DHCP sampler and ``dhcp_behavior``
 # feature behavior. It is re-imported here because
 # ``tools/oracle/tests/test_dhcp_oracle.py`` imports it from ``generator`` to pin
 # the cross-backend option matrix — the same co-locate-and-re-import pattern as
 # the DNS ``_dns_behavior_emits_raw`` helper above.
-from .protocols.dhcp import DHCP_OPTION_MATRIX_TOKENS
+from .protocols.dhcp import DHCPV4_OPTION_MATRIX_TOKENS
 # The ``radiotap`` / ``dot11`` / ``eapol`` / ``rsn`` samplers and the
 # ``_rsn_information_value_hex`` helper all live in the Wi-Fi sampler plugin
 # (``protocols/wifi.py``); the generator reaches them through ``SAMPLER_REGISTRY``

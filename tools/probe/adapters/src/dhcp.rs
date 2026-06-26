@@ -495,7 +495,7 @@ fn dhcp_expected_response_json(send_plan: &ProbePlan) -> Value {
         "source_port": send_plan.destination_port,
         "destination_port": send_plan.source_port,
         "op_value": 2,
-        "message_type_value": send_plan.expected_message_type_value.unwrap_or(DHCP_OFFER),
+        "message_type_value": send_plan.expected_message_type_value.unwrap_or(DHCPV4_OFFER),
         "transaction_id": send_plan.transaction_id,
         "client_hardware_address": send_plan.client_mac,
         "yiaddr": send_plan.expected_yiaddr,
@@ -579,8 +579,8 @@ pub fn dhcp_packet(plan: &ProbePlan) -> ExampleResult<Packet> {
     let source: Ipv4Addr = required_str(plan.source_ipv4.as_deref(), "source_ipv4")?.parse()?;
     let destination: Ipv4Addr =
         required_str(plan.destination_ipv4.as_deref(), "destination_ipv4")?.parse()?;
-    let source_port = plan.source_port.unwrap_or(DHCP_CLIENT_PORT);
-    let destination_port = plan.destination_port.unwrap_or(DHCP_SERVER_PORT);
+    let source_port = plan.source_port.unwrap_or(DHCPV4_CLIENT_PORT);
+    let destination_port = plan.destination_port.unwrap_or(DHCPV4_SERVER_PORT);
     let client_mac: MacAddr = required_str(plan.client_mac.as_deref(), "client_mac")?.parse()?;
     let transaction_id = required_u32(plan.transaction_id, "transaction_id")?;
 
@@ -725,8 +725,8 @@ pub fn validate_dhcp_candidate(
         "expected_reply_destination_ipv4",
     )?
     .parse()?;
-    let expected_source_port = plan.destination_port.unwrap_or(DHCP_SERVER_PORT);
-    let expected_destination_port = plan.source_port.unwrap_or(DHCP_CLIENT_PORT);
+    let expected_source_port = plan.destination_port.unwrap_or(DHCPV4_SERVER_PORT);
+    let expected_destination_port = plan.source_port.unwrap_or(DHCPV4_CLIENT_PORT);
     let mut peer_mismatches = Vec::new();
 
     match packet.layer::<Ipv4>() {
@@ -801,7 +801,7 @@ pub fn validate_dhcp_candidate(
     }
 
     // Message type (option 53): Offer.
-    let expected_message_type = plan.expected_message_type_value.unwrap_or(DHCP_OFFER);
+    let expected_message_type = plan.expected_message_type_value.unwrap_or(DHCPV4_OFFER);
     let actual_message_type = dhcp.message_type_value().map(Dhcpv4MessageType::code);
     if actual_message_type != Some(expected_message_type) {
         mismatches.push(json!({
@@ -1107,11 +1107,11 @@ mod tests {
         plan.destination_ipv4 = Some("10.64.0.20".to_string());
         plan.expected_reply_source_ipv4 = Some("10.64.0.20".to_string());
         plan.expected_reply_destination_ipv4 = Some("10.64.0.10".to_string());
-        plan.source_port = Some(DHCP_CLIENT_PORT);
-        plan.destination_port = Some(DHCP_SERVER_PORT);
+        plan.source_port = Some(DHCPV4_CLIENT_PORT);
+        plan.destination_port = Some(DHCPV4_SERVER_PORT);
         plan.client_mac = Some("00:00:5e:00:53:2a".to_string());
         plan.transaction_id = Some(0x3903_f326);
-        plan.expected_message_type_value = Some(DHCP_OFFER);
+        plan.expected_message_type_value = Some(DHCPV4_OFFER);
         plan.expected_yiaddr = Some("198.51.100.42".to_string());
         plan.expected_server_identifier = Some("10.64.0.20".to_string());
         plan.expected_lease_time = Some(3600);
@@ -1152,7 +1152,9 @@ mod tests {
                     .parse::<Ipv4Addr>()
                     .unwrap(),
             )
-            / Udp::new().sport(DHCP_SERVER_PORT).dport(DHCP_CLIENT_PORT)
+            / Udp::new()
+                .sport(DHCPV4_SERVER_PORT)
+                .dport(DHCPV4_CLIENT_PORT)
             / dhcp
     }
 
@@ -1162,13 +1164,13 @@ mod tests {
         plan.destination_ipv4 = Some("10.64.0.20".to_string());
         plan.expected_reply_source_ipv4 = Some("10.64.0.20".to_string());
         plan.expected_reply_destination_ipv4 = Some("10.64.0.10".to_string());
-        plan.source_port = Some(DHCP_CLIENT_PORT);
-        plan.destination_port = Some(DHCP_SERVER_PORT);
+        plan.source_port = Some(DHCPV4_CLIENT_PORT);
+        plan.destination_port = Some(DHCPV4_SERVER_PORT);
         plan.client_mac = Some("00:00:5e:00:53:2a".to_string());
         plan.transaction_id = Some(0x3903_f326);
         plan.requested_ipv4 = Some("198.51.100.42".to_string());
         plan.server_identifier = Some("10.64.0.20".to_string());
-        plan.expected_message_type_value = Some(DHCP_ACK);
+        plan.expected_message_type_value = Some(DHCPV4_ACK);
         plan.expected_yiaddr = Some("198.51.100.42".to_string());
         plan.expected_server_identifier = Some("10.64.0.20".to_string());
         plan.expected_subnet_mask = Some("255.255.255.0".to_string());
@@ -1227,7 +1229,9 @@ mod tests {
                     .parse::<Ipv4Addr>()
                     .unwrap(),
             )
-            / Udp::new().sport(DHCP_SERVER_PORT).dport(DHCP_CLIENT_PORT)
+            / Udp::new()
+                .sport(DHCPV4_SERVER_PORT)
+                .dport(DHCPV4_CLIENT_PORT)
             / dhcp
     }
 
@@ -1242,8 +1246,8 @@ mod tests {
         let dhcp = decoded.layer::<Dhcpv4>().unwrap();
 
         // Client 68 -> server 67.
-        assert_eq!(udp.source_port_value(), DHCP_CLIENT_PORT);
-        assert_eq!(udp.destination_port_value(), DHCP_SERVER_PORT);
+        assert_eq!(udp.source_port_value(), DHCPV4_CLIENT_PORT);
+        assert_eq!(udp.destination_port_value(), DHCPV4_SERVER_PORT);
         // BOOTP request carrying a Request with the caller's xid, requested IP
         // (option 50), and server identifier (option 54).
         assert_eq!(dhcp.op_value(), BOOTP_REQUEST);
@@ -1257,7 +1261,7 @@ mod tests {
             dhcp.server_identifier_value(),
             Some("10.64.0.20".parse().unwrap())
         );
-        assert_eq!(dhcp.magic_cookie_value(), DHCP_MAGIC_COOKIE);
+        assert_eq!(dhcp.magic_cookie_value(), DHCPV4_MAGIC_COOKIE);
     }
 
     #[test]
@@ -1302,7 +1306,9 @@ mod tests {
         let packet = Ipv4::new()
             .src("10.64.0.20".parse::<Ipv4Addr>().unwrap())
             .dst("10.64.0.10".parse::<Ipv4Addr>().unwrap())
-            / Udp::new().sport(DHCP_SERVER_PORT).dport(DHCP_CLIENT_PORT)
+            / Udp::new()
+                .sport(DHCPV4_SERVER_PORT)
+                .dport(DHCPV4_CLIENT_PORT)
             / dhcp;
         let bytes = packet.compile().unwrap().as_bytes().to_vec();
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
@@ -1343,7 +1349,9 @@ mod tests {
         let packet = Ipv4::new()
             .src("10.64.0.20".parse::<Ipv4Addr>().unwrap())
             .dst("10.64.0.10".parse::<Ipv4Addr>().unwrap())
-            / Udp::new().sport(DHCP_SERVER_PORT).dport(DHCP_CLIENT_PORT)
+            / Udp::new()
+                .sport(DHCPV4_SERVER_PORT)
+                .dport(DHCPV4_CLIENT_PORT)
             / dhcp;
         let bytes = packet.compile().unwrap().as_bytes().to_vec();
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
@@ -1377,8 +1385,8 @@ mod tests {
         let dhcp = decoded.layer::<Dhcpv4>().unwrap();
 
         // Client 68 -> server 67.
-        assert_eq!(udp.source_port_value(), DHCP_CLIENT_PORT);
-        assert_eq!(udp.destination_port_value(), DHCP_SERVER_PORT);
+        assert_eq!(udp.source_port_value(), DHCPV4_CLIENT_PORT);
+        assert_eq!(udp.destination_port_value(), DHCPV4_SERVER_PORT);
         // BOOTP request carrying a Discover with the caller's xid and chaddr.
         assert_eq!(dhcp.op_value(), BOOTP_REQUEST);
         assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Discover));
@@ -1388,7 +1396,7 @@ mod tests {
             Some("00:00:5e:00:53:2a".parse().unwrap())
         );
         // compile() filled the magic cookie.
-        assert_eq!(dhcp.magic_cookie_value(), DHCP_MAGIC_COOKIE);
+        assert_eq!(dhcp.magic_cookie_value(), DHCPV4_MAGIC_COOKIE);
     }
 
     #[test]
@@ -1432,12 +1440,12 @@ mod tests {
         plan.destination_ipv4 = Some("10.64.0.20".to_string());
         plan.expected_reply_source_ipv4 = Some("10.64.0.20".to_string());
         plan.expected_reply_destination_ipv4 = Some("10.64.0.10".to_string());
-        plan.source_port = Some(DHCP_CLIENT_PORT);
-        plan.destination_port = Some(DHCP_SERVER_PORT);
+        plan.source_port = Some(DHCPV4_CLIENT_PORT);
+        plan.destination_port = Some(DHCPV4_SERVER_PORT);
         plan.client_mac = Some("00:00:5e:00:53:2a".to_string());
         plan.client_identifier_hex = Some(client_identifier_hex.clone());
         plan.transaction_id = Some(0x3903_f326);
-        plan.expected_message_type_value = Some(DHCP_OFFER);
+        plan.expected_message_type_value = Some(DHCPV4_OFFER);
         plan.expected_yiaddr = Some("198.51.100.42".to_string());
         plan.expected_server_identifier = Some("10.64.0.20".to_string());
         plan.expected_client_identifier_hex = Some(client_identifier_hex);
@@ -1482,7 +1490,9 @@ mod tests {
                     .parse::<Ipv4Addr>()
                     .unwrap(),
             )
-            / Udp::new().sport(DHCP_SERVER_PORT).dport(DHCP_CLIENT_PORT)
+            / Udp::new()
+                .sport(DHCPV4_SERVER_PORT)
+                .dport(DHCPV4_CLIENT_PORT)
             / dhcp
     }
 
@@ -1497,8 +1507,8 @@ mod tests {
         let dhcp = decoded.layer::<Dhcpv4>().unwrap();
 
         // Client 68 -> server 67; a Discover carrying chaddr plus option 61.
-        assert_eq!(udp.source_port_value(), DHCP_CLIENT_PORT);
-        assert_eq!(udp.destination_port_value(), DHCP_SERVER_PORT);
+        assert_eq!(udp.source_port_value(), DHCPV4_CLIENT_PORT);
+        assert_eq!(udp.destination_port_value(), DHCPV4_SERVER_PORT);
         assert_eq!(dhcp.op_value(), BOOTP_REQUEST);
         assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Discover));
         assert_eq!(dhcp.transaction_id_value(), 0x3903_f326);
@@ -1507,7 +1517,7 @@ mod tests {
         let expected = decode_hex(plan.expected_client_identifier_hex.as_deref().unwrap()).unwrap();
         let actual = dhcp.client_identifier_value().unwrap().unwrap().encode();
         assert_eq!(actual, expected);
-        assert_eq!(dhcp.magic_cookie_value(), DHCP_MAGIC_COOKIE);
+        assert_eq!(dhcp.magic_cookie_value(), DHCPV4_MAGIC_COOKIE);
     }
 
     #[test]
@@ -1555,7 +1565,9 @@ mod tests {
         let packet = Ipv4::new()
             .src("10.64.0.20".parse::<Ipv4Addr>().unwrap())
             .dst("10.64.0.10".parse::<Ipv4Addr>().unwrap())
-            / Udp::new().sport(DHCP_SERVER_PORT).dport(DHCP_CLIENT_PORT)
+            / Udp::new()
+                .sport(DHCPV4_SERVER_PORT)
+                .dport(DHCPV4_CLIENT_PORT)
             / dhcp;
         let bytes = packet.compile().unwrap().as_bytes().to_vec();
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
@@ -1586,12 +1598,12 @@ mod tests {
         plan.destination_ipv4 = Some("10.64.0.20".to_string());
         plan.expected_reply_source_ipv4 = Some("10.64.0.20".to_string());
         plan.expected_reply_destination_ipv4 = Some("10.64.0.10".to_string());
-        plan.source_port = Some(DHCP_CLIENT_PORT);
-        plan.destination_port = Some(DHCP_SERVER_PORT);
+        plan.source_port = Some(DHCPV4_CLIENT_PORT);
+        plan.destination_port = Some(DHCPV4_SERVER_PORT);
         plan.client_mac = Some("00:00:5e:00:53:2a".to_string());
         plan.hostname = Some(hostname.clone());
         plan.transaction_id = Some(0x3903_f326);
-        plan.expected_message_type_value = Some(DHCP_OFFER);
+        plan.expected_message_type_value = Some(DHCPV4_OFFER);
         plan.expected_yiaddr = Some("198.51.100.42".to_string());
         plan.expected_server_identifier = Some("10.64.0.20".to_string());
         plan.expected_hostname = Some(hostname);
@@ -1635,7 +1647,9 @@ mod tests {
                     .parse::<Ipv4Addr>()
                     .unwrap(),
             )
-            / Udp::new().sport(DHCP_SERVER_PORT).dport(DHCP_CLIENT_PORT)
+            / Udp::new()
+                .sport(DHCPV4_SERVER_PORT)
+                .dport(DHCPV4_CLIENT_PORT)
             / dhcp
     }
 
@@ -1650,14 +1664,14 @@ mod tests {
         let dhcp = decoded.layer::<Dhcpv4>().unwrap();
 
         // Client 68 -> server 67; a Discover carrying chaddr plus option 12.
-        assert_eq!(udp.source_port_value(), DHCP_CLIENT_PORT);
-        assert_eq!(udp.destination_port_value(), DHCP_SERVER_PORT);
+        assert_eq!(udp.source_port_value(), DHCPV4_CLIENT_PORT);
+        assert_eq!(udp.destination_port_value(), DHCPV4_SERVER_PORT);
         assert_eq!(dhcp.op_value(), BOOTP_REQUEST);
         assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Discover));
         assert_eq!(dhcp.transaction_id_value(), 0x3903_f326);
         // The decoded hostname (option 12) round-trips to the planned string.
         assert_eq!(dhcp.host_name_value(), plan.hostname.as_deref());
-        assert_eq!(dhcp.magic_cookie_value(), DHCP_MAGIC_COOKIE);
+        assert_eq!(dhcp.magic_cookie_value(), DHCPV4_MAGIC_COOKIE);
     }
 
     #[test]
@@ -1705,7 +1719,9 @@ mod tests {
         let packet = Ipv4::new()
             .src("10.64.0.20".parse::<Ipv4Addr>().unwrap())
             .dst("10.64.0.10".parse::<Ipv4Addr>().unwrap())
-            / Udp::new().sport(DHCP_SERVER_PORT).dport(DHCP_CLIENT_PORT)
+            / Udp::new()
+                .sport(DHCPV4_SERVER_PORT)
+                .dport(DHCPV4_CLIENT_PORT)
             / dhcp;
         let bytes = packet.compile().unwrap().as_bytes().to_vec();
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
@@ -1738,11 +1754,11 @@ mod tests {
         plan.destination_ipv4 = Some("10.64.0.20".to_string());
         plan.expected_reply_source_ipv4 = Some("10.64.0.20".to_string());
         plan.expected_reply_destination_ipv4 = Some("10.64.0.10".to_string());
-        plan.source_port = Some(DHCP_CLIENT_PORT);
-        plan.destination_port = Some(DHCP_SERVER_PORT);
+        plan.source_port = Some(DHCPV4_CLIENT_PORT);
+        plan.destination_port = Some(DHCPV4_SERVER_PORT);
         plan.client_mac = Some("00:00:5e:00:53:2a".to_string());
         plan.transaction_id = Some(0x3903_f326);
-        plan.expected_message_type_value = Some(DHCP_OFFER);
+        plan.expected_message_type_value = Some(DHCPV4_OFFER);
         plan.expected_yiaddr = Some("198.51.100.42".to_string());
         plan.expected_server_identifier = Some("10.64.0.20".to_string());
         plan.expected_lease_time = Some(3600);
@@ -1783,7 +1799,9 @@ mod tests {
                     .parse::<Ipv4Addr>()
                     .unwrap(),
             )
-            / Udp::new().sport(DHCP_SERVER_PORT).dport(DHCP_CLIENT_PORT)
+            / Udp::new()
+                .sport(DHCPV4_SERVER_PORT)
+                .dport(DHCPV4_CLIENT_PORT)
             / dhcp
     }
 
@@ -1856,7 +1874,9 @@ mod tests {
         let packet = Ipv4::new()
             .src("10.64.0.20".parse::<Ipv4Addr>().unwrap())
             .dst("10.64.0.10".parse::<Ipv4Addr>().unwrap())
-            / Udp::new().sport(DHCP_SERVER_PORT).dport(DHCP_CLIENT_PORT)
+            / Udp::new()
+                .sport(DHCPV4_SERVER_PORT)
+                .dport(DHCPV4_CLIENT_PORT)
             / dhcp;
         let bytes = packet.compile().unwrap().as_bytes().to_vec();
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
@@ -1874,12 +1894,12 @@ mod tests {
         plan.destination_ipv4 = Some("10.64.0.20".to_string());
         plan.expected_reply_source_ipv4 = Some("10.64.0.20".to_string());
         plan.expected_reply_destination_ipv4 = Some("10.64.0.10".to_string());
-        plan.source_port = Some(DHCP_CLIENT_PORT);
-        plan.destination_port = Some(DHCP_SERVER_PORT);
+        plan.source_port = Some(DHCPV4_CLIENT_PORT);
+        plan.destination_port = Some(DHCPV4_SERVER_PORT);
         plan.client_mac = Some("00:00:5e:00:53:2a".to_string());
         plan.parameter_request_list = Some(vec![1, 3, 6, 51, 58, 59]);
         plan.transaction_id = Some(0x3903_f326);
-        plan.expected_message_type_value = Some(DHCP_OFFER);
+        plan.expected_message_type_value = Some(DHCPV4_OFFER);
         plan.expected_yiaddr = Some("198.51.100.42".to_string());
         plan.expected_server_identifier = Some("10.64.0.20".to_string());
         plan.expected_subnet_mask = Some("255.255.255.0".to_string());
@@ -1938,7 +1958,9 @@ mod tests {
                     .parse::<Ipv4Addr>()
                     .unwrap(),
             )
-            / Udp::new().sport(DHCP_SERVER_PORT).dport(DHCP_CLIENT_PORT)
+            / Udp::new()
+                .sport(DHCPV4_SERVER_PORT)
+                .dport(DHCPV4_CLIENT_PORT)
             / dhcp
     }
 
@@ -1953,8 +1975,8 @@ mod tests {
         let dhcp = decoded.layer::<Dhcpv4>().unwrap();
 
         // Client 68 -> server 67; a Discover carrying chaddr plus option 55.
-        assert_eq!(udp.source_port_value(), DHCP_CLIENT_PORT);
-        assert_eq!(udp.destination_port_value(), DHCP_SERVER_PORT);
+        assert_eq!(udp.source_port_value(), DHCPV4_CLIENT_PORT);
+        assert_eq!(udp.destination_port_value(), DHCPV4_SERVER_PORT);
         assert_eq!(dhcp.op_value(), BOOTP_REQUEST);
         assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Discover));
         assert_eq!(dhcp.transaction_id_value(), 0x3903_f326);
@@ -1964,7 +1986,7 @@ mod tests {
             dhcp.parameter_request_list_value(),
             Some([1u8, 3, 6, 51, 58, 59].as_slice())
         );
-        assert_eq!(dhcp.magic_cookie_value(), DHCP_MAGIC_COOKIE);
+        assert_eq!(dhcp.magic_cookie_value(), DHCPV4_MAGIC_COOKIE);
     }
 
     #[test]
@@ -2024,7 +2046,9 @@ mod tests {
         let packet = Ipv4::new()
             .src("10.64.0.20".parse::<Ipv4Addr>().unwrap())
             .dst("10.64.0.10".parse::<Ipv4Addr>().unwrap())
-            / Udp::new().sport(DHCP_SERVER_PORT).dport(DHCP_CLIENT_PORT)
+            / Udp::new()
+                .sport(DHCPV4_SERVER_PORT)
+                .dport(DHCPV4_CLIENT_PORT)
             / dhcp;
         let bytes = packet.compile().unwrap().as_bytes().to_vec();
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
@@ -2042,13 +2066,13 @@ mod tests {
         plan.destination_ipv4 = Some("10.64.0.20".to_string());
         plan.expected_reply_source_ipv4 = Some("10.64.0.20".to_string());
         plan.expected_reply_destination_ipv4 = Some("10.64.0.10".to_string());
-        plan.source_port = Some(DHCP_CLIENT_PORT);
-        plan.destination_port = Some(DHCP_SERVER_PORT);
+        plan.source_port = Some(DHCPV4_CLIENT_PORT);
+        plan.destination_port = Some(DHCPV4_SERVER_PORT);
         plan.client_mac = Some("00:00:5e:00:53:2a".to_string());
         plan.transaction_id = Some(0x3903_f326);
         plan.client_ciaddr = Some("198.51.100.42".to_string());
         plan.parameter_request_list = Some(vec![1, 3, 6, 51, 58, 59]);
-        plan.expected_message_type_value = Some(DHCP_ACK);
+        plan.expected_message_type_value = Some(DHCPV4_ACK);
         plan.expected_yiaddr = Some("198.51.100.42".to_string());
         plan.expected_server_identifier = Some("10.64.0.20".to_string());
         plan.expected_subnet_mask = Some("255.255.255.0".to_string());
@@ -2071,8 +2095,8 @@ mod tests {
         let dhcp = decoded.layer::<Dhcpv4>().unwrap();
 
         // Client 68 -> server 67; a RENEWING-state Request.
-        assert_eq!(udp.source_port_value(), DHCP_CLIENT_PORT);
-        assert_eq!(udp.destination_port_value(), DHCP_SERVER_PORT);
+        assert_eq!(udp.source_port_value(), DHCPV4_CLIENT_PORT);
+        assert_eq!(udp.destination_port_value(), DHCPV4_SERVER_PORT);
         assert_eq!(dhcp.op_value(), BOOTP_REQUEST);
         assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Request));
         assert_eq!(dhcp.transaction_id_value(), 0x3903_f326);
@@ -2093,7 +2117,7 @@ mod tests {
             dhcp.parameter_request_list_value(),
             Some([1u8, 3, 6, 51, 58, 59].as_slice())
         );
-        assert_eq!(dhcp.magic_cookie_value(), DHCP_MAGIC_COOKIE);
+        assert_eq!(dhcp.magic_cookie_value(), DHCPV4_MAGIC_COOKIE);
     }
 
     #[test]
@@ -2141,13 +2165,13 @@ mod tests {
         plan.destination_ipv4 = Some("10.64.0.20".to_string());
         plan.expected_reply_source_ipv4 = Some("10.64.0.20".to_string());
         plan.expected_reply_destination_ipv4 = Some("10.64.0.10".to_string());
-        plan.source_port = Some(DHCP_CLIENT_PORT);
-        plan.destination_port = Some(DHCP_SERVER_PORT);
+        plan.source_port = Some(DHCPV4_CLIENT_PORT);
+        plan.destination_port = Some(DHCPV4_SERVER_PORT);
         plan.client_mac = Some("00:00:5e:00:53:2a".to_string());
         plan.transaction_id = Some(0x3903_f326);
         plan.client_ciaddr = Some("198.51.100.42".to_string());
         plan.parameter_request_list = Some(vec![1, 3, 6]);
-        plan.expected_message_type_value = Some(DHCP_ACK);
+        plan.expected_message_type_value = Some(DHCPV4_ACK);
         plan.expected_yiaddr_zero = Some(true);
         plan.expected_no_lease_time = Some(true);
         plan.expected_server_identifier = Some("10.64.0.20".to_string());
@@ -2205,7 +2229,9 @@ mod tests {
                     .parse::<Ipv4Addr>()
                     .unwrap(),
             )
-            / Udp::new().sport(DHCP_SERVER_PORT).dport(DHCP_CLIENT_PORT)
+            / Udp::new()
+                .sport(DHCPV4_SERVER_PORT)
+                .dport(DHCPV4_CLIENT_PORT)
             / dhcp
     }
 
@@ -2220,8 +2246,8 @@ mod tests {
         let dhcp = decoded.layer::<Dhcpv4>().unwrap();
 
         // Client 68 -> server 67; a BOOTP request carrying an Inform (type 8).
-        assert_eq!(udp.source_port_value(), DHCP_CLIENT_PORT);
-        assert_eq!(udp.destination_port_value(), DHCP_SERVER_PORT);
+        assert_eq!(udp.source_port_value(), DHCPV4_CLIENT_PORT);
+        assert_eq!(udp.destination_port_value(), DHCPV4_SERVER_PORT);
         assert_eq!(dhcp.op_value(), BOOTP_REQUEST);
         assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Inform));
         assert_eq!(dhcp.transaction_id_value(), 0x3903_f326);
@@ -2238,7 +2264,7 @@ mod tests {
             dhcp.parameter_request_list_value(),
             Some([1u8, 3, 6].as_slice())
         );
-        assert_eq!(dhcp.magic_cookie_value(), DHCP_MAGIC_COOKIE);
+        assert_eq!(dhcp.magic_cookie_value(), DHCPV4_MAGIC_COOKIE);
     }
 
     #[test]
@@ -2299,7 +2325,9 @@ mod tests {
         let packet = Ipv4::new()
             .src("10.64.0.20".parse::<Ipv4Addr>().unwrap())
             .dst("10.64.0.10".parse::<Ipv4Addr>().unwrap())
-            / Udp::new().sport(DHCP_SERVER_PORT).dport(DHCP_CLIENT_PORT)
+            / Udp::new()
+                .sport(DHCPV4_SERVER_PORT)
+                .dport(DHCPV4_CLIENT_PORT)
             / dhcp;
         let bytes = packet.compile().unwrap().as_bytes().to_vec();
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
@@ -2328,7 +2356,9 @@ mod tests {
         let packet = Ipv4::new()
             .src("10.64.0.20".parse::<Ipv4Addr>().unwrap())
             .dst("10.64.0.10".parse::<Ipv4Addr>().unwrap())
-            / Udp::new().sport(DHCP_SERVER_PORT).dport(DHCP_CLIENT_PORT)
+            / Udp::new()
+                .sport(DHCPV4_SERVER_PORT)
+                .dport(DHCPV4_CLIENT_PORT)
             / dhcp;
         let bytes = packet.compile().unwrap().as_bytes().to_vec();
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
@@ -2355,7 +2385,9 @@ mod tests {
         let packet = Ipv4::new()
             .src("10.64.0.20".parse::<Ipv4Addr>().unwrap())
             .dst("10.64.0.10".parse::<Ipv4Addr>().unwrap())
-            / Udp::new().sport(DHCP_SERVER_PORT).dport(DHCP_CLIENT_PORT)
+            / Udp::new()
+                .sport(DHCPV4_SERVER_PORT)
+                .dport(DHCPV4_CLIENT_PORT)
             / dhcp;
         let bytes = packet.compile().unwrap().as_bytes().to_vec();
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
@@ -2375,13 +2407,13 @@ mod tests {
         plan.destination_ipv4 = Some("10.64.0.20".to_string());
         plan.expected_reply_source_ipv4 = Some("10.64.0.20".to_string());
         plan.expected_reply_destination_ipv4 = Some("10.64.0.10".to_string());
-        plan.source_port = Some(DHCP_CLIENT_PORT);
-        plan.destination_port = Some(DHCP_SERVER_PORT);
+        plan.source_port = Some(DHCPV4_CLIENT_PORT);
+        plan.destination_port = Some(DHCPV4_SERVER_PORT);
         plan.client_mac = Some("00:00:5e:00:53:2a".to_string());
         plan.transaction_id = Some(0x3903_f326);
         plan.requested_ipv4 = Some("192.0.2.42".to_string());
         plan.server_identifier = Some("10.64.0.20".to_string());
-        plan.expected_message_type_value = Some(DHCP_NAK);
+        plan.expected_message_type_value = Some(DHCPV4_NAK);
         plan.expected_yiaddr_zero = Some(true);
         plan.expected_no_lease_time = Some(true);
         plan.expected_server_identifier = Some("10.64.0.20".to_string());
@@ -2419,7 +2451,9 @@ mod tests {
                     .parse::<Ipv4Addr>()
                     .unwrap(),
             )
-            / Udp::new().sport(DHCP_SERVER_PORT).dport(DHCP_CLIENT_PORT)
+            / Udp::new()
+                .sport(DHCPV4_SERVER_PORT)
+                .dport(DHCPV4_CLIENT_PORT)
             / dhcp
     }
 
@@ -2435,8 +2469,8 @@ mod tests {
 
         // Client 68 -> server 67; a SELECTING-style Request carrying the invalid
         // requested IP (option 50) and the chosen server (option 54).
-        assert_eq!(udp.source_port_value(), DHCP_CLIENT_PORT);
-        assert_eq!(udp.destination_port_value(), DHCP_SERVER_PORT);
+        assert_eq!(udp.source_port_value(), DHCPV4_CLIENT_PORT);
+        assert_eq!(udp.destination_port_value(), DHCPV4_SERVER_PORT);
         assert_eq!(dhcp.op_value(), BOOTP_REQUEST);
         assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Request));
         assert_eq!(dhcp.transaction_id_value(), 0x3903_f326);
@@ -2448,7 +2482,7 @@ mod tests {
             dhcp.server_identifier_value(),
             Some("10.64.0.20".parse().unwrap())
         );
-        assert_eq!(dhcp.magic_cookie_value(), DHCP_MAGIC_COOKIE);
+        assert_eq!(dhcp.magic_cookie_value(), DHCPV4_MAGIC_COOKIE);
     }
 
     #[test]
@@ -2492,7 +2526,9 @@ mod tests {
         let packet = Ipv4::new()
             .src("10.64.0.20".parse::<Ipv4Addr>().unwrap())
             .dst("10.64.0.10".parse::<Ipv4Addr>().unwrap())
-            / Udp::new().sport(DHCP_SERVER_PORT).dport(DHCP_CLIENT_PORT)
+            / Udp::new()
+                .sport(DHCPV4_SERVER_PORT)
+                .dport(DHCPV4_CLIENT_PORT)
             / dhcp;
         let bytes = packet.compile().unwrap().as_bytes().to_vec();
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
@@ -2517,7 +2553,9 @@ mod tests {
         let packet = Ipv4::new()
             .src("10.64.0.20".parse::<Ipv4Addr>().unwrap())
             .dst("10.64.0.10".parse::<Ipv4Addr>().unwrap())
-            / Udp::new().sport(DHCP_SERVER_PORT).dport(DHCP_CLIENT_PORT)
+            / Udp::new()
+                .sport(DHCPV4_SERVER_PORT)
+                .dport(DHCPV4_CLIENT_PORT)
             / dhcp;
         let bytes = packet.compile().unwrap().as_bytes().to_vec();
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
@@ -2556,7 +2594,9 @@ mod tests {
         let packet = Ipv4::new()
             .src("10.64.0.20".parse::<Ipv4Addr>().unwrap())
             .dst("10.64.0.10".parse::<Ipv4Addr>().unwrap())
-            / Udp::new().sport(DHCP_SERVER_PORT).dport(DHCP_CLIENT_PORT)
+            / Udp::new()
+                .sport(DHCPV4_SERVER_PORT)
+                .dport(DHCPV4_CLIENT_PORT)
             / dhcp;
         let bytes = packet.compile().unwrap().as_bytes().to_vec();
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
@@ -2582,7 +2622,9 @@ mod tests {
         let packet = Ipv4::new()
             .src("10.64.0.20".parse::<Ipv4Addr>().unwrap())
             .dst("10.64.0.10".parse::<Ipv4Addr>().unwrap())
-            / Udp::new().sport(DHCP_SERVER_PORT).dport(DHCP_SERVER_PORT)
+            / Udp::new()
+                .sport(DHCPV4_SERVER_PORT)
+                .dport(DHCPV4_SERVER_PORT)
             / dhcp;
         let bytes = packet.compile().unwrap().as_bytes().to_vec();
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
@@ -2604,11 +2646,11 @@ mod tests {
             destination_ipv4: Some("10.64.0.20".to_string()),
             expected_reply_source_ipv4: Some("10.64.0.20".to_string()),
             expected_reply_destination_ipv4: Some("10.64.0.10".to_string()),
-            source_port: Some(DHCP_CLIENT_PORT),
-            destination_port: Some(DHCP_SERVER_PORT),
+            source_port: Some(DHCPV4_CLIENT_PORT),
+            destination_port: Some(DHCPV4_SERVER_PORT),
             client_mac: Some(client_mac.to_string()),
             transaction_id: Some(transaction_id),
-            expected_message_type_value: Some(DHCP_OFFER),
+            expected_message_type_value: Some(DHCPV4_OFFER),
             expected_yiaddr: Some(offered.to_string()),
             expected_server_identifier: Some("10.64.0.20".to_string()),
             expected_subnet_mask: Some("255.255.255.0".to_string()),
@@ -2638,11 +2680,11 @@ mod tests {
         plan.destination_ipv4 = Some("10.64.0.20".to_string());
         plan.expected_reply_source_ipv4 = Some("10.64.0.20".to_string());
         plan.expected_reply_destination_ipv4 = Some("10.64.0.10".to_string());
-        plan.source_port = Some(DHCP_CLIENT_PORT);
-        plan.destination_port = Some(DHCP_SERVER_PORT);
+        plan.source_port = Some(DHCPV4_CLIENT_PORT);
+        plan.destination_port = Some(DHCPV4_SERVER_PORT);
         plan.client_mac = sends[0].client_mac.clone();
         plan.transaction_id = sends[0].transaction_id;
-        plan.expected_message_type_value = Some(DHCP_OFFER);
+        plan.expected_message_type_value = Some(DHCPV4_OFFER);
         plan.expected_yiaddr = sends[0].expected_yiaddr.clone();
         plan.expected_server_identifier = Some("10.64.0.20".to_string());
         plan.expected_subnet_mask = Some("255.255.255.0".to_string());
@@ -2679,7 +2721,9 @@ mod tests {
             Some(1)
         );
         assert_eq!(
-            second_dhcp.message_type_value().map(Dhcpv4MessageType::code),
+            second_dhcp
+                .message_type_value()
+                .map(Dhcpv4MessageType::code),
             Some(1)
         );
     }

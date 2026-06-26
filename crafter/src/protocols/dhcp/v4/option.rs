@@ -7,59 +7,62 @@ use crate::endian::{read_u16_be, read_u32_be};
 use crate::error::{CrafterError, Result};
 
 use super::constants::{
-    DHCP_AUTH_ALGORITHM_HMAC_MD5, DHCP_AUTH_HEADER_LEN, DHCP_AUTH_PROTOCOL_CONFIGURATION_TOKEN,
-    DHCP_AUTH_PROTOCOL_DELAYED, DHCP_AUTH_PROTOCOL_RECONFIGURE_KEY,
-    DHCP_AUTH_RDM_MONOTONIC_COUNTER, DHCP_AUTH_REPLAY_DETECTION_LEN, DHCP_CLIENT_ID_TYPE_NONE,
-    DHCP_CLIENT_ID_TYPE_RFC4361, DHCP_CLIENT_MACHINE_UUID_TYPE, DHCP_CLIENT_NDI_TYPE_UNDI,
-    DHCP_DATA_SOURCE_FLAG_REMOTE, DHCP_HTYPE_ETHERNET, DHCP_IAID_LEN,
-    DHCP_OPTION_ALL_SUBNETS_LOCAL, DHCP_OPTION_ARP_CACHE_TIMEOUT, DHCP_OPTION_ASSOCIATED_IP,
-    DHCP_OPTION_AUTHENTICATION, DHCP_OPTION_BASE_TIME, DHCP_OPTION_BOOTFILE_NAME,
-    DHCP_OPTION_BOOT_FILE_SIZE, DHCP_OPTION_BROADCAST_ADDRESS, DHCP_OPTION_CAPTIVE_PORTAL,
-    DHCP_OPTION_CLASSLESS_STATIC_ROUTE, DHCP_OPTION_CLIENT_IDENTIFIER,
-    DHCP_OPTION_CLIENT_LAST_TRANSACTION_TIME, DHCP_OPTION_CLIENT_MACHINE_IDENTIFIER,
-    DHCP_OPTION_CLIENT_NDI, DHCP_OPTION_CLIENT_SYSTEM_ARCHITECTURE, DHCP_OPTION_COOKIE_SERVER,
-    DHCP_OPTION_DATA_SOURCE, DHCP_OPTION_DEFAULT_IP_TTL, DHCP_OPTION_DHCP_STATE,
-    DHCP_OPTION_DOMAIN_NAME, DHCP_OPTION_DOMAIN_NAME_SERVER, DHCP_OPTION_DOMAIN_SEARCH,
-    DHCP_OPTION_END, DHCP_OPTION_ETHERNET_ENCAPSULATION, DHCP_OPTION_EXTENSIONS_PATH,
-    DHCP_OPTION_FORCERENEW_NONCE_CAPABLE, DHCP_OPTION_HOST_NAME, DHCP_OPTION_IMPRESS_SERVER,
-    DHCP_OPTION_INTERFACE_MTU, DHCP_OPTION_IPV6_ONLY_PREFERRED, DHCP_OPTION_IP_ADDRESS_LEASE_TIME,
-    DHCP_OPTION_IP_FORWARDING, DHCP_OPTION_LOG_SERVER, DHCP_OPTION_LPR_SERVER,
-    DHCP_OPTION_MASK_SUPPLIER, DHCP_OPTION_MAX_DATAGRAM_REASSEMBLY, DHCP_OPTION_MAX_MESSAGE_SIZE,
-    DHCP_OPTION_MERIT_DUMP_FILE, DHCP_OPTION_MESSAGE, DHCP_OPTION_MESSAGE_TYPE,
-    DHCP_OPTION_MUD_URL_V4, DHCP_OPTION_NAME_SERVER, DHCP_OPTION_NETBIOS_DATAGRAM_SERVER,
-    DHCP_OPTION_NETBIOS_NAME_SERVER, DHCP_OPTION_NETBIOS_NODE_TYPE, DHCP_OPTION_NETBIOS_SCOPE,
-    DHCP_OPTION_NIS_DOMAIN, DHCP_OPTION_NIS_SERVERS, DHCP_OPTION_NON_LOCAL_SOURCE_ROUTING,
-    DHCP_OPTION_NTP_SERVERS, DHCP_OPTION_OVERLOAD, DHCP_OPTION_PAD,
-    DHCP_OPTION_PARAMETER_REQUEST_LIST, DHCP_OPTION_PATH_MTU_AGING_TIMEOUT,
-    DHCP_OPTION_PATH_MTU_PLATEAU_TABLE, DHCP_OPTION_PERFORM_MASK_DISCOVERY,
-    DHCP_OPTION_PERFORM_ROUTER_DISCOVERY, DHCP_OPTION_POLICY_FILTER,
-    DHCP_OPTION_PXELINUX_CONFIGFILE, DHCP_OPTION_PXELINUX_MAGIC, DHCP_OPTION_PXELINUX_PATHPREFIX,
-    DHCP_OPTION_PXELINUX_REBOOTTIME, DHCP_OPTION_QUERY_END_TIME, DHCP_OPTION_QUERY_START_TIME,
-    DHCP_OPTION_REBINDING_TIME, DHCP_OPTION_RELAY_AGENT_INFORMATION, DHCP_OPTION_RENEWAL_TIME,
-    DHCP_OPTION_REQUESTED_IP_ADDRESS, DHCP_OPTION_RESOURCE_LOCATION_SERVER, DHCP_OPTION_ROOT_PATH,
-    DHCP_OPTION_ROUTER, DHCP_OPTION_ROUTER_SOLICITATION_ADDRESS, DHCP_OPTION_SERVER_IDENTIFIER,
-    DHCP_OPTION_SIP_SERVERS, DHCP_OPTION_START_TIME_OF_STATE, DHCP_OPTION_STATIC_ROUTE,
-    DHCP_OPTION_STATUS_CODE, DHCP_OPTION_SUBNET_MASK, DHCP_OPTION_SWAP_SERVER,
-    DHCP_OPTION_TCP_DEFAULT_TTL, DHCP_OPTION_TCP_KEEPALIVE_GARBAGE,
-    DHCP_OPTION_TCP_KEEPALIVE_INTERVAL, DHCP_OPTION_TFTP_SERVER_ADDRESS,
-    DHCP_OPTION_TFTP_SERVER_NAME, DHCP_OPTION_TIME_OFFSET, DHCP_OPTION_TIME_SERVER,
-    DHCP_OPTION_TRAILER_ENCAPSULATION, DHCP_OPTION_USER_CLASS, DHCP_OPTION_VENDOR_CLASS_IDENTIFIER,
-    DHCP_OPTION_VENDOR_SPECIFIC, DHCP_OPTION_VI_VENDOR_CLASS, DHCP_OPTION_VI_VENDOR_SPECIFIC,
-    DHCP_OPTION_X_WINDOW_DISPLAY_MANAGER, DHCP_OPTION_X_WINDOW_FONT_SERVER, DHCP_OVERLOAD_BOTH,
-    DHCP_OVERLOAD_FILE, DHCP_OVERLOAD_SNAME, DHCP_PXELINUX_MAGIC_VALUE,
-    DHCP_RELAY_SUBOPTION_AUTHENTICATION, DHCP_RELAY_SUBOPTION_CIRCUIT_ID,
-    DHCP_RELAY_SUBOPTION_DOCSIS_DEVICE_CLASS, DHCP_RELAY_SUBOPTION_LINK_SELECTION,
-    DHCP_RELAY_SUBOPTION_RADIUS_ATTRIBUTES, DHCP_RELAY_SUBOPTION_RELAY_AGENT_ID,
-    DHCP_RELAY_SUBOPTION_RELAY_FLAGS, DHCP_RELAY_SUBOPTION_RELAY_SOURCE_PORT,
-    DHCP_RELAY_SUBOPTION_REMOTE_ID, DHCP_RELAY_SUBOPTION_SERVER_ID_OVERRIDE,
-    DHCP_RELAY_SUBOPTION_SUBSCRIBER_ID, DHCP_RELAY_SUBOPTION_VENDOR_SPECIFIC,
-    DHCP_RELAY_SUBOPTION_VSS, DHCP_RELAY_SUBOPTION_VSS_CONTROL, DHCP_STATE_ABANDONED,
-    DHCP_STATE_ACTIVE, DHCP_STATE_AVAILABLE, DHCP_STATE_EXPIRED, DHCP_STATE_RELEASED,
-    DHCP_STATE_REMOTE, DHCP_STATE_RESERVED, DHCP_STATE_RESET, DHCP_STATE_TRANSITIONING,
-    DHCP_STATUS_CATCH_UP_COMPLETE, DHCP_STATUS_CONNECTION_ACTIVE, DHCP_STATUS_DATA_MISSING,
-    DHCP_STATUS_MALFORMED_QUERY, DHCP_STATUS_NOT_ALLOWED, DHCP_STATUS_QUERY_TERMINATED,
-    DHCP_STATUS_SUCCESS, DHCP_STATUS_TLS_CONNECTION_REFUSED, DHCP_STATUS_UNSPEC_FAIL,
-    DHCP_VSS_TYPE_GLOBAL_DEFAULT, DHCP_VSS_TYPE_NVT_ASCII, DHCP_VSS_TYPE_VPN_ID,
+    DHCPV4_AUTH_ALGORITHM_HMAC_MD5, DHCPV4_AUTH_HEADER_LEN,
+    DHCPV4_AUTH_PROTOCOL_CONFIGURATION_TOKEN, DHCPV4_AUTH_PROTOCOL_DELAYED,
+    DHCPV4_AUTH_PROTOCOL_RECONFIGURE_KEY, DHCPV4_AUTH_RDM_MONOTONIC_COUNTER,
+    DHCPV4_AUTH_REPLAY_DETECTION_LEN, DHCPV4_CLIENT_ID_TYPE_NONE, DHCPV4_CLIENT_ID_TYPE_RFC4361,
+    DHCPV4_CLIENT_MACHINE_UUID_TYPE, DHCPV4_CLIENT_NDI_TYPE_UNDI, DHCPV4_DATA_SOURCE_FLAG_REMOTE,
+    DHCPV4_HTYPE_ETHERNET, DHCPV4_IAID_LEN, DHCPV4_OPTION_ALL_SUBNETS_LOCAL,
+    DHCPV4_OPTION_ARP_CACHE_TIMEOUT, DHCPV4_OPTION_ASSOCIATED_IP, DHCPV4_OPTION_AUTHENTICATION,
+    DHCPV4_OPTION_BASE_TIME, DHCPV4_OPTION_BOOTFILE_NAME, DHCPV4_OPTION_BOOT_FILE_SIZE,
+    DHCPV4_OPTION_BROADCAST_ADDRESS, DHCPV4_OPTION_CAPTIVE_PORTAL,
+    DHCPV4_OPTION_CLASSLESS_STATIC_ROUTE, DHCPV4_OPTION_CLIENT_IDENTIFIER,
+    DHCPV4_OPTION_CLIENT_LAST_TRANSACTION_TIME, DHCPV4_OPTION_CLIENT_MACHINE_IDENTIFIER,
+    DHCPV4_OPTION_CLIENT_NDI, DHCPV4_OPTION_CLIENT_SYSTEM_ARCHITECTURE,
+    DHCPV4_OPTION_COOKIE_SERVER, DHCPV4_OPTION_DATA_SOURCE, DHCPV4_OPTION_DEFAULT_IP_TTL,
+    DHCPV4_OPTION_DHCP_STATE, DHCPV4_OPTION_DOMAIN_NAME, DHCPV4_OPTION_DOMAIN_NAME_SERVER,
+    DHCPV4_OPTION_DOMAIN_SEARCH, DHCPV4_OPTION_END, DHCPV4_OPTION_ETHERNET_ENCAPSULATION,
+    DHCPV4_OPTION_EXTENSIONS_PATH, DHCPV4_OPTION_FORCERENEW_NONCE_CAPABLE, DHCPV4_OPTION_HOST_NAME,
+    DHCPV4_OPTION_IMPRESS_SERVER, DHCPV4_OPTION_INTERFACE_MTU, DHCPV4_OPTION_IPV6_ONLY_PREFERRED,
+    DHCPV4_OPTION_IP_ADDRESS_LEASE_TIME, DHCPV4_OPTION_IP_FORWARDING, DHCPV4_OPTION_LOG_SERVER,
+    DHCPV4_OPTION_LPR_SERVER, DHCPV4_OPTION_MASK_SUPPLIER, DHCPV4_OPTION_MAX_DATAGRAM_REASSEMBLY,
+    DHCPV4_OPTION_MAX_MESSAGE_SIZE, DHCPV4_OPTION_MERIT_DUMP_FILE, DHCPV4_OPTION_MESSAGE,
+    DHCPV4_OPTION_MESSAGE_TYPE, DHCPV4_OPTION_MUD_URL_V4, DHCPV4_OPTION_NAME_SERVER,
+    DHCPV4_OPTION_NETBIOS_DATAGRAM_SERVER, DHCPV4_OPTION_NETBIOS_NAME_SERVER,
+    DHCPV4_OPTION_NETBIOS_NODE_TYPE, DHCPV4_OPTION_NETBIOS_SCOPE, DHCPV4_OPTION_NIS_DOMAIN,
+    DHCPV4_OPTION_NIS_SERVERS, DHCPV4_OPTION_NON_LOCAL_SOURCE_ROUTING, DHCPV4_OPTION_NTP_SERVERS,
+    DHCPV4_OPTION_OVERLOAD, DHCPV4_OPTION_PAD, DHCPV4_OPTION_PARAMETER_REQUEST_LIST,
+    DHCPV4_OPTION_PATH_MTU_AGING_TIMEOUT, DHCPV4_OPTION_PATH_MTU_PLATEAU_TABLE,
+    DHCPV4_OPTION_PERFORM_MASK_DISCOVERY, DHCPV4_OPTION_PERFORM_ROUTER_DISCOVERY,
+    DHCPV4_OPTION_POLICY_FILTER, DHCPV4_OPTION_PXELINUX_CONFIGFILE, DHCPV4_OPTION_PXELINUX_MAGIC,
+    DHCPV4_OPTION_PXELINUX_PATHPREFIX, DHCPV4_OPTION_PXELINUX_REBOOTTIME,
+    DHCPV4_OPTION_QUERY_END_TIME, DHCPV4_OPTION_QUERY_START_TIME, DHCPV4_OPTION_REBINDING_TIME,
+    DHCPV4_OPTION_RELAY_AGENT_INFORMATION, DHCPV4_OPTION_RENEWAL_TIME,
+    DHCPV4_OPTION_REQUESTED_IP_ADDRESS, DHCPV4_OPTION_RESOURCE_LOCATION_SERVER,
+    DHCPV4_OPTION_ROOT_PATH, DHCPV4_OPTION_ROUTER, DHCPV4_OPTION_ROUTER_SOLICITATION_ADDRESS,
+    DHCPV4_OPTION_SERVER_IDENTIFIER, DHCPV4_OPTION_SIP_SERVERS, DHCPV4_OPTION_START_TIME_OF_STATE,
+    DHCPV4_OPTION_STATIC_ROUTE, DHCPV4_OPTION_STATUS_CODE, DHCPV4_OPTION_SUBNET_MASK,
+    DHCPV4_OPTION_SWAP_SERVER, DHCPV4_OPTION_TCP_DEFAULT_TTL, DHCPV4_OPTION_TCP_KEEPALIVE_GARBAGE,
+    DHCPV4_OPTION_TCP_KEEPALIVE_INTERVAL, DHCPV4_OPTION_TFTP_SERVER_ADDRESS,
+    DHCPV4_OPTION_TFTP_SERVER_NAME, DHCPV4_OPTION_TIME_OFFSET, DHCPV4_OPTION_TIME_SERVER,
+    DHCPV4_OPTION_TRAILER_ENCAPSULATION, DHCPV4_OPTION_USER_CLASS,
+    DHCPV4_OPTION_VENDOR_CLASS_IDENTIFIER, DHCPV4_OPTION_VENDOR_SPECIFIC,
+    DHCPV4_OPTION_VI_VENDOR_CLASS, DHCPV4_OPTION_VI_VENDOR_SPECIFIC,
+    DHCPV4_OPTION_X_WINDOW_DISPLAY_MANAGER, DHCPV4_OPTION_X_WINDOW_FONT_SERVER,
+    DHCPV4_OVERLOAD_BOTH, DHCPV4_OVERLOAD_FILE, DHCPV4_OVERLOAD_SNAME, DHCPV4_PXELINUX_MAGIC_VALUE,
+    DHCPV4_RELAY_SUBOPTION_AUTHENTICATION, DHCPV4_RELAY_SUBOPTION_CIRCUIT_ID,
+    DHCPV4_RELAY_SUBOPTION_DOCSIS_DEVICE_CLASS, DHCPV4_RELAY_SUBOPTION_LINK_SELECTION,
+    DHCPV4_RELAY_SUBOPTION_RADIUS_ATTRIBUTES, DHCPV4_RELAY_SUBOPTION_RELAY_AGENT_ID,
+    DHCPV4_RELAY_SUBOPTION_RELAY_FLAGS, DHCPV4_RELAY_SUBOPTION_RELAY_SOURCE_PORT,
+    DHCPV4_RELAY_SUBOPTION_REMOTE_ID, DHCPV4_RELAY_SUBOPTION_SERVER_ID_OVERRIDE,
+    DHCPV4_RELAY_SUBOPTION_SUBSCRIBER_ID, DHCPV4_RELAY_SUBOPTION_VENDOR_SPECIFIC,
+    DHCPV4_RELAY_SUBOPTION_VSS, DHCPV4_RELAY_SUBOPTION_VSS_CONTROL, DHCPV4_STATE_ABANDONED,
+    DHCPV4_STATE_ACTIVE, DHCPV4_STATE_AVAILABLE, DHCPV4_STATE_EXPIRED, DHCPV4_STATE_RELEASED,
+    DHCPV4_STATE_REMOTE, DHCPV4_STATE_RESERVED, DHCPV4_STATE_RESET, DHCPV4_STATE_TRANSITIONING,
+    DHCPV4_STATUS_CATCH_UP_COMPLETE, DHCPV4_STATUS_CONNECTION_ACTIVE, DHCPV4_STATUS_DATA_MISSING,
+    DHCPV4_STATUS_MALFORMED_QUERY, DHCPV4_STATUS_NOT_ALLOWED, DHCPV4_STATUS_QUERY_TERMINATED,
+    DHCPV4_STATUS_SUCCESS, DHCPV4_STATUS_TLS_CONNECTION_REFUSED, DHCPV4_STATUS_UNSPEC_FAIL,
+    DHCPV4_VSS_TYPE_GLOBAL_DEFAULT, DHCPV4_VSS_TYPE_NVT_ASCII, DHCPV4_VSS_TYPE_VPN_ID,
 };
 use super::message::Dhcpv4MessageType;
 use super::registry::{option_name, option_status, Dhcpv4OptionStatus};
@@ -115,9 +118,9 @@ impl OptionOverload {
     /// Classify a raw overload octet (RFC 2132 section 9.3).
     pub const fn from_code(code: u8) -> Self {
         match code {
-            DHCP_OVERLOAD_FILE => Self::File,
-            DHCP_OVERLOAD_SNAME => Self::Sname,
-            DHCP_OVERLOAD_BOTH => Self::Both,
+            DHCPV4_OVERLOAD_FILE => Self::File,
+            DHCPV4_OVERLOAD_SNAME => Self::Sname,
+            DHCPV4_OVERLOAD_BOTH => Self::Both,
             other => Self::Unknown(other),
         }
     }
@@ -125,9 +128,9 @@ impl OptionOverload {
     /// Wire octet value for this overload.
     pub const fn code(self) -> u8 {
         match self {
-            Self::File => DHCP_OVERLOAD_FILE,
-            Self::Sname => DHCP_OVERLOAD_SNAME,
-            Self::Both => DHCP_OVERLOAD_BOTH,
+            Self::File => DHCPV4_OVERLOAD_FILE,
+            Self::Sname => DHCPV4_OVERLOAD_SNAME,
+            Self::Both => DHCPV4_OVERLOAD_BOTH,
             Self::Unknown(code) => code,
         }
     }
@@ -314,7 +317,7 @@ impl ClientNetworkDeviceInterface {
     /// Create a UNDI (type `1`) interface value from major/minor revisions
     /// (RFC 4578 section 2.2).
     pub const fn undi(major: u8, minor: u8) -> Self {
-        Self::new(DHCP_CLIENT_NDI_TYPE_UNDI, major, minor)
+        Self::new(DHCPV4_CLIENT_NDI_TYPE_UNDI, major, minor)
     }
 }
 
@@ -375,7 +378,7 @@ impl Dhcpv4ClientIdentifier {
     /// address octets (RFC 2132 section 9.14).
     pub fn ethernet_mac(mac: [u8; 6]) -> Self {
         Self::LegacyHardware {
-            hardware_type: DHCP_HTYPE_ETHERNET,
+            hardware_type: DHCPV4_HTYPE_ETHERNET,
             address: mac.to_vec(),
         }
     }
@@ -402,7 +405,7 @@ impl Dhcpv4ClientIdentifier {
     pub fn type_octet(&self) -> Option<u8> {
         match self {
             Self::LegacyHardware { hardware_type, .. } => Some(*hardware_type),
-            Self::NodeSpecific { .. } => Some(DHCP_CLIENT_ID_TYPE_RFC4361),
+            Self::NodeSpecific { .. } => Some(DHCPV4_CLIENT_ID_TYPE_RFC4361),
             Self::Raw(bytes) => bytes.first().copied(),
         }
     }
@@ -421,8 +424,8 @@ impl Dhcpv4ClientIdentifier {
                 bytes
             }
             Self::NodeSpecific { iaid, duid } => {
-                let mut bytes = Vec::with_capacity(1 + DHCP_IAID_LEN + duid.len());
-                bytes.push(DHCP_CLIENT_ID_TYPE_RFC4361);
+                let mut bytes = Vec::with_capacity(1 + DHCPV4_IAID_LEN + duid.len());
+                bytes.push(DHCPV4_CLIENT_ID_TYPE_RFC4361);
                 bytes.extend_from_slice(&iaid.to_be_bytes());
                 bytes.extend_from_slice(duid);
                 bytes
@@ -459,9 +462,9 @@ impl Dhcpv4AuthProtocol {
     /// Classify a raw Protocol octet (RFC 3118 section 2).
     pub const fn from_code(code: u8) -> Self {
         match code {
-            DHCP_AUTH_PROTOCOL_CONFIGURATION_TOKEN => Self::ConfigurationToken,
-            DHCP_AUTH_PROTOCOL_DELAYED => Self::Delayed,
-            DHCP_AUTH_PROTOCOL_RECONFIGURE_KEY => Self::ReconfigureKey,
+            DHCPV4_AUTH_PROTOCOL_CONFIGURATION_TOKEN => Self::ConfigurationToken,
+            DHCPV4_AUTH_PROTOCOL_DELAYED => Self::Delayed,
+            DHCPV4_AUTH_PROTOCOL_RECONFIGURE_KEY => Self::ReconfigureKey,
             other => Self::Unknown(other),
         }
     }
@@ -469,9 +472,9 @@ impl Dhcpv4AuthProtocol {
     /// Wire octet value for this Protocol.
     pub const fn code(self) -> u8 {
         match self {
-            Self::ConfigurationToken => DHCP_AUTH_PROTOCOL_CONFIGURATION_TOKEN,
-            Self::Delayed => DHCP_AUTH_PROTOCOL_DELAYED,
-            Self::ReconfigureKey => DHCP_AUTH_PROTOCOL_RECONFIGURE_KEY,
+            Self::ConfigurationToken => DHCPV4_AUTH_PROTOCOL_CONFIGURATION_TOKEN,
+            Self::Delayed => DHCPV4_AUTH_PROTOCOL_DELAYED,
+            Self::ReconfigureKey => DHCPV4_AUTH_PROTOCOL_RECONFIGURE_KEY,
             Self::Unknown(code) => code,
         }
     }
@@ -497,7 +500,7 @@ impl Dhcpv4AuthAlgorithm {
     /// Classify a raw Algorithm octet (RFC 3118 section 5.1).
     pub const fn from_code(code: u8) -> Self {
         match code {
-            DHCP_AUTH_ALGORITHM_HMAC_MD5 => Self::HmacMd5,
+            DHCPV4_AUTH_ALGORITHM_HMAC_MD5 => Self::HmacMd5,
             other => Self::Unknown(other),
         }
     }
@@ -505,7 +508,7 @@ impl Dhcpv4AuthAlgorithm {
     /// Wire octet value for this Algorithm.
     pub const fn code(self) -> u8 {
         match self {
-            Self::HmacMd5 => DHCP_AUTH_ALGORITHM_HMAC_MD5,
+            Self::HmacMd5 => DHCPV4_AUTH_ALGORITHM_HMAC_MD5,
             Self::Unknown(code) => code,
         }
     }
@@ -530,7 +533,7 @@ impl Dhcpv4ReplayDetectionMethod {
     /// Classify a raw RDM octet (RFC 3118 section 2).
     pub const fn from_code(code: u8) -> Self {
         match code {
-            DHCP_AUTH_RDM_MONOTONIC_COUNTER => Self::MonotonicCounter,
+            DHCPV4_AUTH_RDM_MONOTONIC_COUNTER => Self::MonotonicCounter,
             other => Self::Unknown(other),
         }
     }
@@ -538,7 +541,7 @@ impl Dhcpv4ReplayDetectionMethod {
     /// Wire octet value for this RDM.
     pub const fn code(self) -> u8 {
         match self {
-            Self::MonotonicCounter => DHCP_AUTH_RDM_MONOTONIC_COUNTER,
+            Self::MonotonicCounter => DHCPV4_AUTH_RDM_MONOTONIC_COUNTER,
             Self::Unknown(code) => code,
         }
     }
@@ -599,7 +602,7 @@ impl Dhcpv4Authentication {
     /// option code or length byte).
     pub fn encode(&self) -> Vec<u8> {
         let mut bytes =
-            Vec::with_capacity(DHCP_AUTH_HEADER_LEN + self.authentication_information.len());
+            Vec::with_capacity(DHCPV4_AUTH_HEADER_LEN + self.authentication_information.len());
         bytes.push(self.protocol.code());
         bytes.push(self.algorithm.code());
         bytes.push(self.rdm.code());
@@ -641,7 +644,7 @@ impl Dhcpv4ForcerenewNonceCapable {
     /// `1`, RFC 6704 section 4).
     pub fn hmac_md5() -> Self {
         Self {
-            algorithms: vec![DHCP_AUTH_ALGORITHM_HMAC_MD5],
+            algorithms: vec![DHCPV4_AUTH_ALGORITHM_HMAC_MD5],
         }
     }
 
@@ -687,15 +690,15 @@ impl Dhcpv4StatusCode {
     /// Classify a raw status octet (RFC 6926 section 6.2.2).
     pub const fn from_code(code: u8) -> Self {
         match code {
-            DHCP_STATUS_SUCCESS => Self::Success,
-            DHCP_STATUS_UNSPEC_FAIL => Self::UnspecFail,
-            DHCP_STATUS_QUERY_TERMINATED => Self::QueryTerminated,
-            DHCP_STATUS_MALFORMED_QUERY => Self::MalformedQuery,
-            DHCP_STATUS_NOT_ALLOWED => Self::NotAllowed,
-            DHCP_STATUS_DATA_MISSING => Self::DataMissing,
-            DHCP_STATUS_CONNECTION_ACTIVE => Self::ConnectionActive,
-            DHCP_STATUS_CATCH_UP_COMPLETE => Self::CatchUpComplete,
-            DHCP_STATUS_TLS_CONNECTION_REFUSED => Self::TlsConnectionRefused,
+            DHCPV4_STATUS_SUCCESS => Self::Success,
+            DHCPV4_STATUS_UNSPEC_FAIL => Self::UnspecFail,
+            DHCPV4_STATUS_QUERY_TERMINATED => Self::QueryTerminated,
+            DHCPV4_STATUS_MALFORMED_QUERY => Self::MalformedQuery,
+            DHCPV4_STATUS_NOT_ALLOWED => Self::NotAllowed,
+            DHCPV4_STATUS_DATA_MISSING => Self::DataMissing,
+            DHCPV4_STATUS_CONNECTION_ACTIVE => Self::ConnectionActive,
+            DHCPV4_STATUS_CATCH_UP_COMPLETE => Self::CatchUpComplete,
+            DHCPV4_STATUS_TLS_CONNECTION_REFUSED => Self::TlsConnectionRefused,
             other => Self::Unknown(other),
         }
     }
@@ -703,15 +706,15 @@ impl Dhcpv4StatusCode {
     /// Wire octet value for this status code.
     pub const fn code(self) -> u8 {
         match self {
-            Self::Success => DHCP_STATUS_SUCCESS,
-            Self::UnspecFail => DHCP_STATUS_UNSPEC_FAIL,
-            Self::QueryTerminated => DHCP_STATUS_QUERY_TERMINATED,
-            Self::MalformedQuery => DHCP_STATUS_MALFORMED_QUERY,
-            Self::NotAllowed => DHCP_STATUS_NOT_ALLOWED,
-            Self::DataMissing => DHCP_STATUS_DATA_MISSING,
-            Self::ConnectionActive => DHCP_STATUS_CONNECTION_ACTIVE,
-            Self::CatchUpComplete => DHCP_STATUS_CATCH_UP_COMPLETE,
-            Self::TlsConnectionRefused => DHCP_STATUS_TLS_CONNECTION_REFUSED,
+            Self::Success => DHCPV4_STATUS_SUCCESS,
+            Self::UnspecFail => DHCPV4_STATUS_UNSPEC_FAIL,
+            Self::QueryTerminated => DHCPV4_STATUS_QUERY_TERMINATED,
+            Self::MalformedQuery => DHCPV4_STATUS_MALFORMED_QUERY,
+            Self::NotAllowed => DHCPV4_STATUS_NOT_ALLOWED,
+            Self::DataMissing => DHCPV4_STATUS_DATA_MISSING,
+            Self::ConnectionActive => DHCPV4_STATUS_CONNECTION_ACTIVE,
+            Self::CatchUpComplete => DHCPV4_STATUS_CATCH_UP_COMPLETE,
+            Self::TlsConnectionRefused => DHCPV4_STATUS_TLS_CONNECTION_REFUSED,
             Self::Unknown(code) => code,
         }
     }
@@ -799,15 +802,15 @@ impl Dhcpv4State {
     /// Classify a raw State octet (RFC 6926 section 6.2.7).
     pub const fn from_code(code: u8) -> Self {
         match code {
-            DHCP_STATE_RESERVED => Self::Reserved,
-            DHCP_STATE_AVAILABLE => Self::Available,
-            DHCP_STATE_ACTIVE => Self::Active,
-            DHCP_STATE_EXPIRED => Self::Expired,
-            DHCP_STATE_RELEASED => Self::Released,
-            DHCP_STATE_ABANDONED => Self::Abandoned,
-            DHCP_STATE_RESET => Self::Reset,
-            DHCP_STATE_REMOTE => Self::Remote,
-            DHCP_STATE_TRANSITIONING => Self::Transitioning,
+            DHCPV4_STATE_RESERVED => Self::Reserved,
+            DHCPV4_STATE_AVAILABLE => Self::Available,
+            DHCPV4_STATE_ACTIVE => Self::Active,
+            DHCPV4_STATE_EXPIRED => Self::Expired,
+            DHCPV4_STATE_RELEASED => Self::Released,
+            DHCPV4_STATE_ABANDONED => Self::Abandoned,
+            DHCPV4_STATE_RESET => Self::Reset,
+            DHCPV4_STATE_REMOTE => Self::Remote,
+            DHCPV4_STATE_TRANSITIONING => Self::Transitioning,
             other => Self::Unknown(other),
         }
     }
@@ -815,15 +818,15 @@ impl Dhcpv4State {
     /// Wire octet value for this state.
     pub const fn code(self) -> u8 {
         match self {
-            Self::Reserved => DHCP_STATE_RESERVED,
-            Self::Available => DHCP_STATE_AVAILABLE,
-            Self::Active => DHCP_STATE_ACTIVE,
-            Self::Expired => DHCP_STATE_EXPIRED,
-            Self::Released => DHCP_STATE_RELEASED,
-            Self::Abandoned => DHCP_STATE_ABANDONED,
-            Self::Reset => DHCP_STATE_RESET,
-            Self::Remote => DHCP_STATE_REMOTE,
-            Self::Transitioning => DHCP_STATE_TRANSITIONING,
+            Self::Reserved => DHCPV4_STATE_RESERVED,
+            Self::Available => DHCPV4_STATE_AVAILABLE,
+            Self::Active => DHCPV4_STATE_ACTIVE,
+            Self::Expired => DHCPV4_STATE_EXPIRED,
+            Self::Released => DHCPV4_STATE_RELEASED,
+            Self::Abandoned => DHCPV4_STATE_ABANDONED,
+            Self::Reset => DHCPV4_STATE_RESET,
+            Self::Remote => DHCPV4_STATE_REMOTE,
+            Self::Transitioning => DHCPV4_STATE_TRANSITIONING,
             Self::Unknown(code) => code,
         }
     }
@@ -852,7 +855,7 @@ impl Dhcpv4DataSource {
     pub const fn from_remote(remote: bool) -> Self {
         Self {
             flags: if remote {
-                DHCP_DATA_SOURCE_FLAG_REMOTE
+                DHCPV4_DATA_SOURCE_FLAG_REMOTE
             } else {
                 0
             },
@@ -862,7 +865,7 @@ impl Dhcpv4DataSource {
     /// Whether the REMOTE (`R`) flag is set: the data came from a remote server
     /// (RFC 6926 section 6.2.8). A clear flag means the local server.
     pub const fn is_remote(self) -> bool {
-        self.flags & DHCP_DATA_SOURCE_FLAG_REMOTE != 0
+        self.flags & DHCPV4_DATA_SOURCE_FLAG_REMOTE != 0
     }
 
     /// Encode this value to its option 157 payload byte (the Flags octet,
@@ -898,7 +901,7 @@ impl Dhcpv4ClientUuid {
 
     /// Create a type-`0` GUID client identifier from a 16-octet GUID.
     pub fn guid(guid: impl Into<Vec<u8>>) -> Self {
-        Self::new(DHCP_CLIENT_MACHINE_UUID_TYPE, guid)
+        Self::new(DHCPV4_CLIENT_MACHINE_UUID_TYPE, guid)
     }
 }
 
@@ -1030,17 +1033,17 @@ impl Dhcpv4VssInfo {
 
     /// Create a type-`0` NVT ASCII VPN identifier VSS value.
     pub fn nvt_ascii(identifier: impl Into<Vec<u8>>) -> Self {
-        Self::new(DHCP_VSS_TYPE_NVT_ASCII, identifier)
+        Self::new(DHCPV4_VSS_TYPE_NVT_ASCII, identifier)
     }
 
     /// Create a type-`1` RFC 2685 VPN-ID VSS value (7 octets).
     pub fn vpn_id(vpn_id: impl Into<Vec<u8>>) -> Self {
-        Self::new(DHCP_VSS_TYPE_VPN_ID, vpn_id)
+        Self::new(DHCPV4_VSS_TYPE_VPN_ID, vpn_id)
     }
 
     /// Create a type-`255` global default VSS value with no information.
     pub fn global_default() -> Self {
-        Self::new(DHCP_VSS_TYPE_GLOBAL_DEFAULT, Vec::new())
+        Self::new(DHCPV4_VSS_TYPE_GLOBAL_DEFAULT, Vec::new())
     }
 }
 
@@ -1135,20 +1138,20 @@ impl Dhcpv4RelaySuboption {
     /// Wire codepoint of this sub-option.
     pub const fn code(&self) -> u8 {
         match self {
-            Self::CircuitId(_) => DHCP_RELAY_SUBOPTION_CIRCUIT_ID,
-            Self::RemoteId(_) => DHCP_RELAY_SUBOPTION_REMOTE_ID,
-            Self::DocsisDeviceClass(_) => DHCP_RELAY_SUBOPTION_DOCSIS_DEVICE_CLASS,
-            Self::LinkSelection(_) => DHCP_RELAY_SUBOPTION_LINK_SELECTION,
-            Self::SubscriberId(_) => DHCP_RELAY_SUBOPTION_SUBSCRIBER_ID,
-            Self::RadiusAttributes(_) => DHCP_RELAY_SUBOPTION_RADIUS_ATTRIBUTES,
-            Self::Authentication(_) => DHCP_RELAY_SUBOPTION_AUTHENTICATION,
-            Self::VendorSpecific(_) => DHCP_RELAY_SUBOPTION_VENDOR_SPECIFIC,
-            Self::RelayFlags(_) => DHCP_RELAY_SUBOPTION_RELAY_FLAGS,
-            Self::ServerIdOverride(_) => DHCP_RELAY_SUBOPTION_SERVER_ID_OVERRIDE,
-            Self::RelayAgentId(_) => DHCP_RELAY_SUBOPTION_RELAY_AGENT_ID,
-            Self::RelaySourcePort => DHCP_RELAY_SUBOPTION_RELAY_SOURCE_PORT,
-            Self::Vss(_) => DHCP_RELAY_SUBOPTION_VSS,
-            Self::VssControl => DHCP_RELAY_SUBOPTION_VSS_CONTROL,
+            Self::CircuitId(_) => DHCPV4_RELAY_SUBOPTION_CIRCUIT_ID,
+            Self::RemoteId(_) => DHCPV4_RELAY_SUBOPTION_REMOTE_ID,
+            Self::DocsisDeviceClass(_) => DHCPV4_RELAY_SUBOPTION_DOCSIS_DEVICE_CLASS,
+            Self::LinkSelection(_) => DHCPV4_RELAY_SUBOPTION_LINK_SELECTION,
+            Self::SubscriberId(_) => DHCPV4_RELAY_SUBOPTION_SUBSCRIBER_ID,
+            Self::RadiusAttributes(_) => DHCPV4_RELAY_SUBOPTION_RADIUS_ATTRIBUTES,
+            Self::Authentication(_) => DHCPV4_RELAY_SUBOPTION_AUTHENTICATION,
+            Self::VendorSpecific(_) => DHCPV4_RELAY_SUBOPTION_VENDOR_SPECIFIC,
+            Self::RelayFlags(_) => DHCPV4_RELAY_SUBOPTION_RELAY_FLAGS,
+            Self::ServerIdOverride(_) => DHCPV4_RELAY_SUBOPTION_SERVER_ID_OVERRIDE,
+            Self::RelayAgentId(_) => DHCPV4_RELAY_SUBOPTION_RELAY_AGENT_ID,
+            Self::RelaySourcePort => DHCPV4_RELAY_SUBOPTION_RELAY_SOURCE_PORT,
+            Self::Vss(_) => DHCPV4_RELAY_SUBOPTION_VSS,
+            Self::VssControl => DHCPV4_RELAY_SUBOPTION_VSS_CONTROL,
             Self::Other { code, .. } => *code,
         }
     }
@@ -1237,8 +1240,8 @@ impl Dhcpv4OptionCode {
     /// Classify a wire codepoint using the source-backed registry.
     pub const fn from_code(code: u8) -> Self {
         match code {
-            DHCP_OPTION_PAD => Self::Pad,
-            DHCP_OPTION_END => Self::End,
+            DHCPV4_OPTION_PAD => Self::Pad,
+            DHCPV4_OPTION_END => Self::End,
             _ => match option_status(code) {
                 Dhcpv4OptionStatus::Assigned => Self::Assigned(code),
                 Dhcpv4OptionStatus::Ambiguous => Self::Ambiguous(code),
@@ -1253,8 +1256,8 @@ impl Dhcpv4OptionCode {
     /// Wire codepoint value.
     pub const fn code(self) -> u8 {
         match self {
-            Self::Pad => DHCP_OPTION_PAD,
-            Self::End => DHCP_OPTION_END,
+            Self::Pad => DHCPV4_OPTION_PAD,
+            Self::End => DHCPV4_OPTION_END,
             Self::Assigned(code)
             | Self::Ambiguous(code)
             | Self::PrivateUse(code)
@@ -1645,97 +1648,97 @@ impl Dhcpv4OptionKind {
     /// Registered option kind for a wire codepoint, when one has a typed format.
     pub const fn from_code(code: u8) -> Option<Self> {
         let kind = match code {
-            DHCP_OPTION_SUBNET_MASK => Self::SubnetMask,
-            DHCP_OPTION_TIME_OFFSET => Self::TimeOffset,
-            DHCP_OPTION_ROUTER => Self::Router,
-            DHCP_OPTION_TIME_SERVER => Self::TimeServer,
-            DHCP_OPTION_NAME_SERVER => Self::NameServer,
-            DHCP_OPTION_DOMAIN_NAME_SERVER => Self::DomainNameServer,
-            DHCP_OPTION_LOG_SERVER => Self::LogServer,
-            DHCP_OPTION_COOKIE_SERVER => Self::CookieServer,
-            DHCP_OPTION_LPR_SERVER => Self::LprServer,
-            DHCP_OPTION_IMPRESS_SERVER => Self::ImpressServer,
-            DHCP_OPTION_RESOURCE_LOCATION_SERVER => Self::ResourceLocationServer,
-            DHCP_OPTION_HOST_NAME => Self::HostName,
-            DHCP_OPTION_BOOT_FILE_SIZE => Self::BootFileSize,
-            DHCP_OPTION_MERIT_DUMP_FILE => Self::MeritDumpFile,
-            DHCP_OPTION_DOMAIN_NAME => Self::DomainName,
-            DHCP_OPTION_SWAP_SERVER => Self::SwapServer,
-            DHCP_OPTION_ROOT_PATH => Self::RootPath,
-            DHCP_OPTION_EXTENSIONS_PATH => Self::ExtensionsPath,
-            DHCP_OPTION_IP_FORWARDING => Self::IpForwarding,
-            DHCP_OPTION_NON_LOCAL_SOURCE_ROUTING => Self::NonLocalSourceRouting,
-            DHCP_OPTION_POLICY_FILTER => Self::PolicyFilter,
-            DHCP_OPTION_MAX_DATAGRAM_REASSEMBLY => Self::MaxDatagramReassembly,
-            DHCP_OPTION_DEFAULT_IP_TTL => Self::DefaultIpTtl,
-            DHCP_OPTION_PATH_MTU_AGING_TIMEOUT => Self::PathMtuAgingTimeout,
-            DHCP_OPTION_PATH_MTU_PLATEAU_TABLE => Self::PathMtuPlateauTable,
-            DHCP_OPTION_INTERFACE_MTU => Self::InterfaceMtu,
-            DHCP_OPTION_ALL_SUBNETS_LOCAL => Self::AllSubnetsLocal,
-            DHCP_OPTION_BROADCAST_ADDRESS => Self::BroadcastAddress,
-            DHCP_OPTION_PERFORM_MASK_DISCOVERY => Self::PerformMaskDiscovery,
-            DHCP_OPTION_MASK_SUPPLIER => Self::MaskSupplier,
-            DHCP_OPTION_PERFORM_ROUTER_DISCOVERY => Self::PerformRouterDiscovery,
-            DHCP_OPTION_ROUTER_SOLICITATION_ADDRESS => Self::RouterSolicitationAddress,
-            DHCP_OPTION_STATIC_ROUTE => Self::StaticRoute,
-            DHCP_OPTION_TRAILER_ENCAPSULATION => Self::TrailerEncapsulation,
-            DHCP_OPTION_ARP_CACHE_TIMEOUT => Self::ArpCacheTimeout,
-            DHCP_OPTION_ETHERNET_ENCAPSULATION => Self::EthernetEncapsulation,
-            DHCP_OPTION_TCP_DEFAULT_TTL => Self::TcpDefaultTtl,
-            DHCP_OPTION_TCP_KEEPALIVE_INTERVAL => Self::TcpKeepaliveInterval,
-            DHCP_OPTION_TCP_KEEPALIVE_GARBAGE => Self::TcpKeepaliveGarbage,
-            DHCP_OPTION_NIS_DOMAIN => Self::NisDomain,
-            DHCP_OPTION_NIS_SERVERS => Self::NisServers,
-            DHCP_OPTION_NTP_SERVERS => Self::NtpServers,
-            DHCP_OPTION_VENDOR_SPECIFIC => Self::VendorSpecificInformation,
-            DHCP_OPTION_NETBIOS_NAME_SERVER => Self::NetbiosNameServer,
-            DHCP_OPTION_NETBIOS_DATAGRAM_SERVER => Self::NetbiosDatagramServer,
-            DHCP_OPTION_NETBIOS_NODE_TYPE => Self::NetbiosNodeType,
-            DHCP_OPTION_NETBIOS_SCOPE => Self::NetbiosScope,
-            DHCP_OPTION_X_WINDOW_FONT_SERVER => Self::XWindowFontServer,
-            DHCP_OPTION_X_WINDOW_DISPLAY_MANAGER => Self::XWindowDisplayManager,
-            DHCP_OPTION_REQUESTED_IP_ADDRESS => Self::RequestedIpAddress,
-            DHCP_OPTION_IP_ADDRESS_LEASE_TIME => Self::IpAddressLeaseTime,
-            DHCP_OPTION_OVERLOAD => Self::OptionOverload,
-            DHCP_OPTION_MESSAGE_TYPE => Self::Dhcpv4MessageType,
-            DHCP_OPTION_SERVER_IDENTIFIER => Self::ServerIdentifier,
-            DHCP_OPTION_PARAMETER_REQUEST_LIST => Self::ParameterRequestList,
-            DHCP_OPTION_MESSAGE => Self::Dhcpv4Message,
-            DHCP_OPTION_MAX_MESSAGE_SIZE => Self::MaximumDhcpMessageSize,
-            DHCP_OPTION_RENEWAL_TIME => Self::RenewalTime,
-            DHCP_OPTION_REBINDING_TIME => Self::RebindingTime,
-            DHCP_OPTION_VENDOR_CLASS_IDENTIFIER => Self::VendorClassIdentifier,
-            DHCP_OPTION_CLIENT_IDENTIFIER => Self::ClientIdentifier,
-            DHCP_OPTION_DOMAIN_SEARCH => Self::DomainSearch,
-            DHCP_OPTION_SIP_SERVERS => Self::SipServers,
-            DHCP_OPTION_CLASSLESS_STATIC_ROUTE => Self::ClasslessStaticRoute,
-            DHCP_OPTION_TFTP_SERVER_NAME => Self::TftpServerName,
-            DHCP_OPTION_BOOTFILE_NAME => Self::BootfileName,
-            DHCP_OPTION_USER_CLASS => Self::UserClass,
-            DHCP_OPTION_CLIENT_SYSTEM_ARCHITECTURE => Self::ClientSystemArchitecture,
-            DHCP_OPTION_CLIENT_NDI => Self::ClientNetworkDeviceInterface,
-            DHCP_OPTION_CLIENT_MACHINE_IDENTIFIER => Self::ClientMachineIdentifier,
-            DHCP_OPTION_VI_VENDOR_CLASS => Self::ViVendorClass,
-            DHCP_OPTION_VI_VENDOR_SPECIFIC => Self::ViVendorSpecificInformation,
-            DHCP_OPTION_RELAY_AGENT_INFORMATION => Self::RelayAgentInformation,
-            DHCP_OPTION_AUTHENTICATION => Self::Authentication,
-            DHCP_OPTION_FORCERENEW_NONCE_CAPABLE => Self::ForcerenewNonceCapable,
-            DHCP_OPTION_CLIENT_LAST_TRANSACTION_TIME => Self::ClientLastTransactionTime,
-            DHCP_OPTION_ASSOCIATED_IP => Self::AssociatedIp,
-            DHCP_OPTION_STATUS_CODE => Self::StatusCode,
-            DHCP_OPTION_BASE_TIME => Self::BaseTime,
-            DHCP_OPTION_START_TIME_OF_STATE => Self::StartTimeOfState,
-            DHCP_OPTION_QUERY_START_TIME => Self::QueryStartTime,
-            DHCP_OPTION_QUERY_END_TIME => Self::QueryEndTime,
-            DHCP_OPTION_DHCP_STATE => Self::Dhcpv4State,
-            DHCP_OPTION_DATA_SOURCE => Self::DataSource,
-            DHCP_OPTION_PXELINUX_MAGIC => Self::PxelinuxMagic,
-            DHCP_OPTION_PXELINUX_CONFIGFILE => Self::PxelinuxConfigFile,
-            DHCP_OPTION_PXELINUX_PATHPREFIX => Self::PxelinuxPathPrefix,
-            DHCP_OPTION_PXELINUX_REBOOTTIME => Self::PxelinuxRebootTime,
-            DHCP_OPTION_IPV6_ONLY_PREFERRED => Self::Ipv6OnlyPreferred,
-            DHCP_OPTION_CAPTIVE_PORTAL => Self::CaptivePortal,
-            DHCP_OPTION_MUD_URL_V4 => Self::MudUrl,
+            DHCPV4_OPTION_SUBNET_MASK => Self::SubnetMask,
+            DHCPV4_OPTION_TIME_OFFSET => Self::TimeOffset,
+            DHCPV4_OPTION_ROUTER => Self::Router,
+            DHCPV4_OPTION_TIME_SERVER => Self::TimeServer,
+            DHCPV4_OPTION_NAME_SERVER => Self::NameServer,
+            DHCPV4_OPTION_DOMAIN_NAME_SERVER => Self::DomainNameServer,
+            DHCPV4_OPTION_LOG_SERVER => Self::LogServer,
+            DHCPV4_OPTION_COOKIE_SERVER => Self::CookieServer,
+            DHCPV4_OPTION_LPR_SERVER => Self::LprServer,
+            DHCPV4_OPTION_IMPRESS_SERVER => Self::ImpressServer,
+            DHCPV4_OPTION_RESOURCE_LOCATION_SERVER => Self::ResourceLocationServer,
+            DHCPV4_OPTION_HOST_NAME => Self::HostName,
+            DHCPV4_OPTION_BOOT_FILE_SIZE => Self::BootFileSize,
+            DHCPV4_OPTION_MERIT_DUMP_FILE => Self::MeritDumpFile,
+            DHCPV4_OPTION_DOMAIN_NAME => Self::DomainName,
+            DHCPV4_OPTION_SWAP_SERVER => Self::SwapServer,
+            DHCPV4_OPTION_ROOT_PATH => Self::RootPath,
+            DHCPV4_OPTION_EXTENSIONS_PATH => Self::ExtensionsPath,
+            DHCPV4_OPTION_IP_FORWARDING => Self::IpForwarding,
+            DHCPV4_OPTION_NON_LOCAL_SOURCE_ROUTING => Self::NonLocalSourceRouting,
+            DHCPV4_OPTION_POLICY_FILTER => Self::PolicyFilter,
+            DHCPV4_OPTION_MAX_DATAGRAM_REASSEMBLY => Self::MaxDatagramReassembly,
+            DHCPV4_OPTION_DEFAULT_IP_TTL => Self::DefaultIpTtl,
+            DHCPV4_OPTION_PATH_MTU_AGING_TIMEOUT => Self::PathMtuAgingTimeout,
+            DHCPV4_OPTION_PATH_MTU_PLATEAU_TABLE => Self::PathMtuPlateauTable,
+            DHCPV4_OPTION_INTERFACE_MTU => Self::InterfaceMtu,
+            DHCPV4_OPTION_ALL_SUBNETS_LOCAL => Self::AllSubnetsLocal,
+            DHCPV4_OPTION_BROADCAST_ADDRESS => Self::BroadcastAddress,
+            DHCPV4_OPTION_PERFORM_MASK_DISCOVERY => Self::PerformMaskDiscovery,
+            DHCPV4_OPTION_MASK_SUPPLIER => Self::MaskSupplier,
+            DHCPV4_OPTION_PERFORM_ROUTER_DISCOVERY => Self::PerformRouterDiscovery,
+            DHCPV4_OPTION_ROUTER_SOLICITATION_ADDRESS => Self::RouterSolicitationAddress,
+            DHCPV4_OPTION_STATIC_ROUTE => Self::StaticRoute,
+            DHCPV4_OPTION_TRAILER_ENCAPSULATION => Self::TrailerEncapsulation,
+            DHCPV4_OPTION_ARP_CACHE_TIMEOUT => Self::ArpCacheTimeout,
+            DHCPV4_OPTION_ETHERNET_ENCAPSULATION => Self::EthernetEncapsulation,
+            DHCPV4_OPTION_TCP_DEFAULT_TTL => Self::TcpDefaultTtl,
+            DHCPV4_OPTION_TCP_KEEPALIVE_INTERVAL => Self::TcpKeepaliveInterval,
+            DHCPV4_OPTION_TCP_KEEPALIVE_GARBAGE => Self::TcpKeepaliveGarbage,
+            DHCPV4_OPTION_NIS_DOMAIN => Self::NisDomain,
+            DHCPV4_OPTION_NIS_SERVERS => Self::NisServers,
+            DHCPV4_OPTION_NTP_SERVERS => Self::NtpServers,
+            DHCPV4_OPTION_VENDOR_SPECIFIC => Self::VendorSpecificInformation,
+            DHCPV4_OPTION_NETBIOS_NAME_SERVER => Self::NetbiosNameServer,
+            DHCPV4_OPTION_NETBIOS_DATAGRAM_SERVER => Self::NetbiosDatagramServer,
+            DHCPV4_OPTION_NETBIOS_NODE_TYPE => Self::NetbiosNodeType,
+            DHCPV4_OPTION_NETBIOS_SCOPE => Self::NetbiosScope,
+            DHCPV4_OPTION_X_WINDOW_FONT_SERVER => Self::XWindowFontServer,
+            DHCPV4_OPTION_X_WINDOW_DISPLAY_MANAGER => Self::XWindowDisplayManager,
+            DHCPV4_OPTION_REQUESTED_IP_ADDRESS => Self::RequestedIpAddress,
+            DHCPV4_OPTION_IP_ADDRESS_LEASE_TIME => Self::IpAddressLeaseTime,
+            DHCPV4_OPTION_OVERLOAD => Self::OptionOverload,
+            DHCPV4_OPTION_MESSAGE_TYPE => Self::Dhcpv4MessageType,
+            DHCPV4_OPTION_SERVER_IDENTIFIER => Self::ServerIdentifier,
+            DHCPV4_OPTION_PARAMETER_REQUEST_LIST => Self::ParameterRequestList,
+            DHCPV4_OPTION_MESSAGE => Self::Dhcpv4Message,
+            DHCPV4_OPTION_MAX_MESSAGE_SIZE => Self::MaximumDhcpMessageSize,
+            DHCPV4_OPTION_RENEWAL_TIME => Self::RenewalTime,
+            DHCPV4_OPTION_REBINDING_TIME => Self::RebindingTime,
+            DHCPV4_OPTION_VENDOR_CLASS_IDENTIFIER => Self::VendorClassIdentifier,
+            DHCPV4_OPTION_CLIENT_IDENTIFIER => Self::ClientIdentifier,
+            DHCPV4_OPTION_DOMAIN_SEARCH => Self::DomainSearch,
+            DHCPV4_OPTION_SIP_SERVERS => Self::SipServers,
+            DHCPV4_OPTION_CLASSLESS_STATIC_ROUTE => Self::ClasslessStaticRoute,
+            DHCPV4_OPTION_TFTP_SERVER_NAME => Self::TftpServerName,
+            DHCPV4_OPTION_BOOTFILE_NAME => Self::BootfileName,
+            DHCPV4_OPTION_USER_CLASS => Self::UserClass,
+            DHCPV4_OPTION_CLIENT_SYSTEM_ARCHITECTURE => Self::ClientSystemArchitecture,
+            DHCPV4_OPTION_CLIENT_NDI => Self::ClientNetworkDeviceInterface,
+            DHCPV4_OPTION_CLIENT_MACHINE_IDENTIFIER => Self::ClientMachineIdentifier,
+            DHCPV4_OPTION_VI_VENDOR_CLASS => Self::ViVendorClass,
+            DHCPV4_OPTION_VI_VENDOR_SPECIFIC => Self::ViVendorSpecificInformation,
+            DHCPV4_OPTION_RELAY_AGENT_INFORMATION => Self::RelayAgentInformation,
+            DHCPV4_OPTION_AUTHENTICATION => Self::Authentication,
+            DHCPV4_OPTION_FORCERENEW_NONCE_CAPABLE => Self::ForcerenewNonceCapable,
+            DHCPV4_OPTION_CLIENT_LAST_TRANSACTION_TIME => Self::ClientLastTransactionTime,
+            DHCPV4_OPTION_ASSOCIATED_IP => Self::AssociatedIp,
+            DHCPV4_OPTION_STATUS_CODE => Self::StatusCode,
+            DHCPV4_OPTION_BASE_TIME => Self::BaseTime,
+            DHCPV4_OPTION_START_TIME_OF_STATE => Self::StartTimeOfState,
+            DHCPV4_OPTION_QUERY_START_TIME => Self::QueryStartTime,
+            DHCPV4_OPTION_QUERY_END_TIME => Self::QueryEndTime,
+            DHCPV4_OPTION_DHCP_STATE => Self::Dhcpv4State,
+            DHCPV4_OPTION_DATA_SOURCE => Self::DataSource,
+            DHCPV4_OPTION_PXELINUX_MAGIC => Self::PxelinuxMagic,
+            DHCPV4_OPTION_PXELINUX_CONFIGFILE => Self::PxelinuxConfigFile,
+            DHCPV4_OPTION_PXELINUX_PATHPREFIX => Self::PxelinuxPathPrefix,
+            DHCPV4_OPTION_PXELINUX_REBOOTTIME => Self::PxelinuxRebootTime,
+            DHCPV4_OPTION_IPV6_ONLY_PREFERRED => Self::Ipv6OnlyPreferred,
+            DHCPV4_OPTION_CAPTIVE_PORTAL => Self::CaptivePortal,
+            DHCPV4_OPTION_MUD_URL_V4 => Self::MudUrl,
             _ => return None,
         };
         Some(kind)
@@ -1744,97 +1747,97 @@ impl Dhcpv4OptionKind {
     /// Wire codepoint for this option.
     pub const fn code(self) -> u8 {
         match self {
-            Self::SubnetMask => DHCP_OPTION_SUBNET_MASK,
-            Self::TimeOffset => DHCP_OPTION_TIME_OFFSET,
-            Self::Router => DHCP_OPTION_ROUTER,
-            Self::TimeServer => DHCP_OPTION_TIME_SERVER,
-            Self::NameServer => DHCP_OPTION_NAME_SERVER,
-            Self::DomainNameServer => DHCP_OPTION_DOMAIN_NAME_SERVER,
-            Self::LogServer => DHCP_OPTION_LOG_SERVER,
-            Self::CookieServer => DHCP_OPTION_COOKIE_SERVER,
-            Self::LprServer => DHCP_OPTION_LPR_SERVER,
-            Self::ImpressServer => DHCP_OPTION_IMPRESS_SERVER,
-            Self::ResourceLocationServer => DHCP_OPTION_RESOURCE_LOCATION_SERVER,
-            Self::HostName => DHCP_OPTION_HOST_NAME,
-            Self::BootFileSize => DHCP_OPTION_BOOT_FILE_SIZE,
-            Self::MeritDumpFile => DHCP_OPTION_MERIT_DUMP_FILE,
-            Self::DomainName => DHCP_OPTION_DOMAIN_NAME,
-            Self::SwapServer => DHCP_OPTION_SWAP_SERVER,
-            Self::RootPath => DHCP_OPTION_ROOT_PATH,
-            Self::ExtensionsPath => DHCP_OPTION_EXTENSIONS_PATH,
-            Self::IpForwarding => DHCP_OPTION_IP_FORWARDING,
-            Self::NonLocalSourceRouting => DHCP_OPTION_NON_LOCAL_SOURCE_ROUTING,
-            Self::PolicyFilter => DHCP_OPTION_POLICY_FILTER,
-            Self::MaxDatagramReassembly => DHCP_OPTION_MAX_DATAGRAM_REASSEMBLY,
-            Self::DefaultIpTtl => DHCP_OPTION_DEFAULT_IP_TTL,
-            Self::PathMtuAgingTimeout => DHCP_OPTION_PATH_MTU_AGING_TIMEOUT,
-            Self::PathMtuPlateauTable => DHCP_OPTION_PATH_MTU_PLATEAU_TABLE,
-            Self::InterfaceMtu => DHCP_OPTION_INTERFACE_MTU,
-            Self::AllSubnetsLocal => DHCP_OPTION_ALL_SUBNETS_LOCAL,
-            Self::BroadcastAddress => DHCP_OPTION_BROADCAST_ADDRESS,
-            Self::PerformMaskDiscovery => DHCP_OPTION_PERFORM_MASK_DISCOVERY,
-            Self::MaskSupplier => DHCP_OPTION_MASK_SUPPLIER,
-            Self::PerformRouterDiscovery => DHCP_OPTION_PERFORM_ROUTER_DISCOVERY,
-            Self::RouterSolicitationAddress => DHCP_OPTION_ROUTER_SOLICITATION_ADDRESS,
-            Self::StaticRoute => DHCP_OPTION_STATIC_ROUTE,
-            Self::TrailerEncapsulation => DHCP_OPTION_TRAILER_ENCAPSULATION,
-            Self::ArpCacheTimeout => DHCP_OPTION_ARP_CACHE_TIMEOUT,
-            Self::EthernetEncapsulation => DHCP_OPTION_ETHERNET_ENCAPSULATION,
-            Self::TcpDefaultTtl => DHCP_OPTION_TCP_DEFAULT_TTL,
-            Self::TcpKeepaliveInterval => DHCP_OPTION_TCP_KEEPALIVE_INTERVAL,
-            Self::TcpKeepaliveGarbage => DHCP_OPTION_TCP_KEEPALIVE_GARBAGE,
-            Self::NisDomain => DHCP_OPTION_NIS_DOMAIN,
-            Self::NisServers => DHCP_OPTION_NIS_SERVERS,
-            Self::NtpServers => DHCP_OPTION_NTP_SERVERS,
-            Self::VendorSpecificInformation => DHCP_OPTION_VENDOR_SPECIFIC,
-            Self::NetbiosNameServer => DHCP_OPTION_NETBIOS_NAME_SERVER,
-            Self::NetbiosDatagramServer => DHCP_OPTION_NETBIOS_DATAGRAM_SERVER,
-            Self::NetbiosNodeType => DHCP_OPTION_NETBIOS_NODE_TYPE,
-            Self::NetbiosScope => DHCP_OPTION_NETBIOS_SCOPE,
-            Self::XWindowFontServer => DHCP_OPTION_X_WINDOW_FONT_SERVER,
-            Self::XWindowDisplayManager => DHCP_OPTION_X_WINDOW_DISPLAY_MANAGER,
-            Self::RequestedIpAddress => DHCP_OPTION_REQUESTED_IP_ADDRESS,
-            Self::IpAddressLeaseTime => DHCP_OPTION_IP_ADDRESS_LEASE_TIME,
-            Self::OptionOverload => DHCP_OPTION_OVERLOAD,
-            Self::Dhcpv4MessageType => DHCP_OPTION_MESSAGE_TYPE,
-            Self::ServerIdentifier => DHCP_OPTION_SERVER_IDENTIFIER,
-            Self::ParameterRequestList => DHCP_OPTION_PARAMETER_REQUEST_LIST,
-            Self::Dhcpv4Message => DHCP_OPTION_MESSAGE,
-            Self::MaximumDhcpMessageSize => DHCP_OPTION_MAX_MESSAGE_SIZE,
-            Self::RenewalTime => DHCP_OPTION_RENEWAL_TIME,
-            Self::RebindingTime => DHCP_OPTION_REBINDING_TIME,
-            Self::VendorClassIdentifier => DHCP_OPTION_VENDOR_CLASS_IDENTIFIER,
-            Self::ClientIdentifier => DHCP_OPTION_CLIENT_IDENTIFIER,
-            Self::DomainSearch => DHCP_OPTION_DOMAIN_SEARCH,
-            Self::SipServers => DHCP_OPTION_SIP_SERVERS,
-            Self::ClasslessStaticRoute => DHCP_OPTION_CLASSLESS_STATIC_ROUTE,
-            Self::TftpServerName => DHCP_OPTION_TFTP_SERVER_NAME,
-            Self::BootfileName => DHCP_OPTION_BOOTFILE_NAME,
-            Self::UserClass => DHCP_OPTION_USER_CLASS,
-            Self::ClientSystemArchitecture => DHCP_OPTION_CLIENT_SYSTEM_ARCHITECTURE,
-            Self::ClientNetworkDeviceInterface => DHCP_OPTION_CLIENT_NDI,
-            Self::ClientMachineIdentifier => DHCP_OPTION_CLIENT_MACHINE_IDENTIFIER,
-            Self::ViVendorClass => DHCP_OPTION_VI_VENDOR_CLASS,
-            Self::ViVendorSpecificInformation => DHCP_OPTION_VI_VENDOR_SPECIFIC,
-            Self::RelayAgentInformation => DHCP_OPTION_RELAY_AGENT_INFORMATION,
-            Self::Authentication => DHCP_OPTION_AUTHENTICATION,
-            Self::ForcerenewNonceCapable => DHCP_OPTION_FORCERENEW_NONCE_CAPABLE,
-            Self::ClientLastTransactionTime => DHCP_OPTION_CLIENT_LAST_TRANSACTION_TIME,
-            Self::AssociatedIp => DHCP_OPTION_ASSOCIATED_IP,
-            Self::StatusCode => DHCP_OPTION_STATUS_CODE,
-            Self::BaseTime => DHCP_OPTION_BASE_TIME,
-            Self::StartTimeOfState => DHCP_OPTION_START_TIME_OF_STATE,
-            Self::QueryStartTime => DHCP_OPTION_QUERY_START_TIME,
-            Self::QueryEndTime => DHCP_OPTION_QUERY_END_TIME,
-            Self::Dhcpv4State => DHCP_OPTION_DHCP_STATE,
-            Self::DataSource => DHCP_OPTION_DATA_SOURCE,
-            Self::PxelinuxMagic => DHCP_OPTION_PXELINUX_MAGIC,
-            Self::PxelinuxConfigFile => DHCP_OPTION_PXELINUX_CONFIGFILE,
-            Self::PxelinuxPathPrefix => DHCP_OPTION_PXELINUX_PATHPREFIX,
-            Self::PxelinuxRebootTime => DHCP_OPTION_PXELINUX_REBOOTTIME,
-            Self::Ipv6OnlyPreferred => DHCP_OPTION_IPV6_ONLY_PREFERRED,
-            Self::CaptivePortal => DHCP_OPTION_CAPTIVE_PORTAL,
-            Self::MudUrl => DHCP_OPTION_MUD_URL_V4,
+            Self::SubnetMask => DHCPV4_OPTION_SUBNET_MASK,
+            Self::TimeOffset => DHCPV4_OPTION_TIME_OFFSET,
+            Self::Router => DHCPV4_OPTION_ROUTER,
+            Self::TimeServer => DHCPV4_OPTION_TIME_SERVER,
+            Self::NameServer => DHCPV4_OPTION_NAME_SERVER,
+            Self::DomainNameServer => DHCPV4_OPTION_DOMAIN_NAME_SERVER,
+            Self::LogServer => DHCPV4_OPTION_LOG_SERVER,
+            Self::CookieServer => DHCPV4_OPTION_COOKIE_SERVER,
+            Self::LprServer => DHCPV4_OPTION_LPR_SERVER,
+            Self::ImpressServer => DHCPV4_OPTION_IMPRESS_SERVER,
+            Self::ResourceLocationServer => DHCPV4_OPTION_RESOURCE_LOCATION_SERVER,
+            Self::HostName => DHCPV4_OPTION_HOST_NAME,
+            Self::BootFileSize => DHCPV4_OPTION_BOOT_FILE_SIZE,
+            Self::MeritDumpFile => DHCPV4_OPTION_MERIT_DUMP_FILE,
+            Self::DomainName => DHCPV4_OPTION_DOMAIN_NAME,
+            Self::SwapServer => DHCPV4_OPTION_SWAP_SERVER,
+            Self::RootPath => DHCPV4_OPTION_ROOT_PATH,
+            Self::ExtensionsPath => DHCPV4_OPTION_EXTENSIONS_PATH,
+            Self::IpForwarding => DHCPV4_OPTION_IP_FORWARDING,
+            Self::NonLocalSourceRouting => DHCPV4_OPTION_NON_LOCAL_SOURCE_ROUTING,
+            Self::PolicyFilter => DHCPV4_OPTION_POLICY_FILTER,
+            Self::MaxDatagramReassembly => DHCPV4_OPTION_MAX_DATAGRAM_REASSEMBLY,
+            Self::DefaultIpTtl => DHCPV4_OPTION_DEFAULT_IP_TTL,
+            Self::PathMtuAgingTimeout => DHCPV4_OPTION_PATH_MTU_AGING_TIMEOUT,
+            Self::PathMtuPlateauTable => DHCPV4_OPTION_PATH_MTU_PLATEAU_TABLE,
+            Self::InterfaceMtu => DHCPV4_OPTION_INTERFACE_MTU,
+            Self::AllSubnetsLocal => DHCPV4_OPTION_ALL_SUBNETS_LOCAL,
+            Self::BroadcastAddress => DHCPV4_OPTION_BROADCAST_ADDRESS,
+            Self::PerformMaskDiscovery => DHCPV4_OPTION_PERFORM_MASK_DISCOVERY,
+            Self::MaskSupplier => DHCPV4_OPTION_MASK_SUPPLIER,
+            Self::PerformRouterDiscovery => DHCPV4_OPTION_PERFORM_ROUTER_DISCOVERY,
+            Self::RouterSolicitationAddress => DHCPV4_OPTION_ROUTER_SOLICITATION_ADDRESS,
+            Self::StaticRoute => DHCPV4_OPTION_STATIC_ROUTE,
+            Self::TrailerEncapsulation => DHCPV4_OPTION_TRAILER_ENCAPSULATION,
+            Self::ArpCacheTimeout => DHCPV4_OPTION_ARP_CACHE_TIMEOUT,
+            Self::EthernetEncapsulation => DHCPV4_OPTION_ETHERNET_ENCAPSULATION,
+            Self::TcpDefaultTtl => DHCPV4_OPTION_TCP_DEFAULT_TTL,
+            Self::TcpKeepaliveInterval => DHCPV4_OPTION_TCP_KEEPALIVE_INTERVAL,
+            Self::TcpKeepaliveGarbage => DHCPV4_OPTION_TCP_KEEPALIVE_GARBAGE,
+            Self::NisDomain => DHCPV4_OPTION_NIS_DOMAIN,
+            Self::NisServers => DHCPV4_OPTION_NIS_SERVERS,
+            Self::NtpServers => DHCPV4_OPTION_NTP_SERVERS,
+            Self::VendorSpecificInformation => DHCPV4_OPTION_VENDOR_SPECIFIC,
+            Self::NetbiosNameServer => DHCPV4_OPTION_NETBIOS_NAME_SERVER,
+            Self::NetbiosDatagramServer => DHCPV4_OPTION_NETBIOS_DATAGRAM_SERVER,
+            Self::NetbiosNodeType => DHCPV4_OPTION_NETBIOS_NODE_TYPE,
+            Self::NetbiosScope => DHCPV4_OPTION_NETBIOS_SCOPE,
+            Self::XWindowFontServer => DHCPV4_OPTION_X_WINDOW_FONT_SERVER,
+            Self::XWindowDisplayManager => DHCPV4_OPTION_X_WINDOW_DISPLAY_MANAGER,
+            Self::RequestedIpAddress => DHCPV4_OPTION_REQUESTED_IP_ADDRESS,
+            Self::IpAddressLeaseTime => DHCPV4_OPTION_IP_ADDRESS_LEASE_TIME,
+            Self::OptionOverload => DHCPV4_OPTION_OVERLOAD,
+            Self::Dhcpv4MessageType => DHCPV4_OPTION_MESSAGE_TYPE,
+            Self::ServerIdentifier => DHCPV4_OPTION_SERVER_IDENTIFIER,
+            Self::ParameterRequestList => DHCPV4_OPTION_PARAMETER_REQUEST_LIST,
+            Self::Dhcpv4Message => DHCPV4_OPTION_MESSAGE,
+            Self::MaximumDhcpMessageSize => DHCPV4_OPTION_MAX_MESSAGE_SIZE,
+            Self::RenewalTime => DHCPV4_OPTION_RENEWAL_TIME,
+            Self::RebindingTime => DHCPV4_OPTION_REBINDING_TIME,
+            Self::VendorClassIdentifier => DHCPV4_OPTION_VENDOR_CLASS_IDENTIFIER,
+            Self::ClientIdentifier => DHCPV4_OPTION_CLIENT_IDENTIFIER,
+            Self::DomainSearch => DHCPV4_OPTION_DOMAIN_SEARCH,
+            Self::SipServers => DHCPV4_OPTION_SIP_SERVERS,
+            Self::ClasslessStaticRoute => DHCPV4_OPTION_CLASSLESS_STATIC_ROUTE,
+            Self::TftpServerName => DHCPV4_OPTION_TFTP_SERVER_NAME,
+            Self::BootfileName => DHCPV4_OPTION_BOOTFILE_NAME,
+            Self::UserClass => DHCPV4_OPTION_USER_CLASS,
+            Self::ClientSystemArchitecture => DHCPV4_OPTION_CLIENT_SYSTEM_ARCHITECTURE,
+            Self::ClientNetworkDeviceInterface => DHCPV4_OPTION_CLIENT_NDI,
+            Self::ClientMachineIdentifier => DHCPV4_OPTION_CLIENT_MACHINE_IDENTIFIER,
+            Self::ViVendorClass => DHCPV4_OPTION_VI_VENDOR_CLASS,
+            Self::ViVendorSpecificInformation => DHCPV4_OPTION_VI_VENDOR_SPECIFIC,
+            Self::RelayAgentInformation => DHCPV4_OPTION_RELAY_AGENT_INFORMATION,
+            Self::Authentication => DHCPV4_OPTION_AUTHENTICATION,
+            Self::ForcerenewNonceCapable => DHCPV4_OPTION_FORCERENEW_NONCE_CAPABLE,
+            Self::ClientLastTransactionTime => DHCPV4_OPTION_CLIENT_LAST_TRANSACTION_TIME,
+            Self::AssociatedIp => DHCPV4_OPTION_ASSOCIATED_IP,
+            Self::StatusCode => DHCPV4_OPTION_STATUS_CODE,
+            Self::BaseTime => DHCPV4_OPTION_BASE_TIME,
+            Self::StartTimeOfState => DHCPV4_OPTION_START_TIME_OF_STATE,
+            Self::QueryStartTime => DHCPV4_OPTION_QUERY_START_TIME,
+            Self::QueryEndTime => DHCPV4_OPTION_QUERY_END_TIME,
+            Self::Dhcpv4State => DHCPV4_OPTION_DHCP_STATE,
+            Self::DataSource => DHCPV4_OPTION_DATA_SOURCE,
+            Self::PxelinuxMagic => DHCPV4_OPTION_PXELINUX_MAGIC,
+            Self::PxelinuxConfigFile => DHCPV4_OPTION_PXELINUX_CONFIGFILE,
+            Self::PxelinuxPathPrefix => DHCPV4_OPTION_PXELINUX_PATHPREFIX,
+            Self::PxelinuxRebootTime => DHCPV4_OPTION_PXELINUX_REBOOTTIME,
+            Self::Ipv6OnlyPreferred => DHCPV4_OPTION_IPV6_ONLY_PREFERRED,
+            Self::CaptivePortal => DHCPV4_OPTION_CAPTIVE_PORTAL,
+            Self::MudUrl => DHCPV4_OPTION_MUD_URL_V4,
         }
     }
 
@@ -1988,7 +1991,9 @@ pub fn dhcpv4_typed_option_value(code: u8, data: &[u8]) -> Result<Option<Dhcpv4O
     let value = match kind.format() {
         Dhcpv4OptionFormat::Ipv4 => Dhcpv4OptionValue::Ipv4(decode_ipv4_option(field, data)?),
         Dhcpv4OptionFormat::Ipv4List => Dhcpv4OptionValue::Ipv4List(decode_ipv4_list(field, data)?),
-        Dhcpv4OptionFormat::Ipv4Pairs => Dhcpv4OptionValue::Ipv4Pairs(decode_ipv4_pairs(field, data)?),
+        Dhcpv4OptionFormat::Ipv4Pairs => {
+            Dhcpv4OptionValue::Ipv4Pairs(decode_ipv4_pairs(field, data)?)
+        }
         Dhcpv4OptionFormat::Bool => Dhcpv4OptionValue::Bool(decode_bool_option(field, data)?),
         Dhcpv4OptionFormat::U8 => {
             validate_fixed_len(field, data.len(), 1)?;
@@ -2019,10 +2024,9 @@ pub fn dhcpv4_typed_option_value(code: u8, data: &[u8]) -> Result<Option<Dhcpv4O
         Dhcpv4OptionFormat::ClasslessRoutes => {
             Dhcpv4OptionValue::ClasslessRoutes(decode_classless_routes(data)?)
         }
-        Dhcpv4OptionFormat::DomainSearch => Dhcpv4OptionValue::DomainSearch(decode_domain_name_list(
-            "dhcp.option.domain_search",
-            data,
-        )?),
+        Dhcpv4OptionFormat::DomainSearch => Dhcpv4OptionValue::DomainSearch(
+            decode_domain_name_list("dhcp.option.domain_search", data)?,
+        ),
         Dhcpv4OptionFormat::SipServers => Dhcpv4OptionValue::SipServers(decode_sip_servers(data)?),
         Dhcpv4OptionFormat::UserClass => Dhcpv4OptionValue::UserClass(decode_user_class(data)?),
         Dhcpv4OptionFormat::ClientSystemArchitecture => {
@@ -2047,9 +2051,9 @@ pub fn dhcpv4_typed_option_value(code: u8, data: &[u8]) -> Result<Option<Dhcpv4O
         Dhcpv4OptionFormat::Authentication => {
             Dhcpv4OptionValue::Authentication(decode_authentication(data)?)
         }
-        Dhcpv4OptionFormat::ForcerenewNonceCapable => {
-            Dhcpv4OptionValue::ForcerenewNonceCapable(Dhcpv4ForcerenewNonceCapable::new(data.to_vec()))
-        }
+        Dhcpv4OptionFormat::ForcerenewNonceCapable => Dhcpv4OptionValue::ForcerenewNonceCapable(
+            Dhcpv4ForcerenewNonceCapable::new(data.to_vec()),
+        ),
         Dhcpv4OptionFormat::StatusCode => {
             Dhcpv4OptionValue::StatusCode(decode_status_code(field, data)?)
         }
@@ -2149,14 +2153,14 @@ pub fn scan_dhcpv4_option_segments(
         offset += 1;
 
         match code {
-            DHCP_OPTION_PAD => segments.push(Dhcpv4OptionSegment {
+            DHCPV4_OPTION_PAD => segments.push(Dhcpv4OptionSegment {
                 area,
                 code: Dhcpv4OptionCode::Pad,
                 declared_len: None,
                 offset: code_offset,
                 data: Vec::new(),
             }),
-            DHCP_OPTION_END => segments.push(Dhcpv4OptionSegment {
+            DHCPV4_OPTION_END => segments.push(Dhcpv4OptionSegment {
                 area,
                 code: Dhcpv4OptionCode::End,
                 declared_len: None,
@@ -2367,22 +2371,22 @@ impl Dhcpv4Option {
     /// The payload is opaque vendor data whose internal format is defined by the
     /// vendor (option 60); it is carried verbatim.
     pub fn vendor_specific(data: impl Into<Vec<u8>>) -> Self {
-        Self::generic(DHCP_OPTION_VENDOR_SPECIFIC, data)
+        Self::generic(DHCPV4_OPTION_VENDOR_SPECIFIC, data)
     }
 
     /// Create a vendor class identifier option (option 60, RFC 2132).
     pub fn vendor_class_identifier(data: impl Into<Vec<u8>>) -> Self {
-        Self::generic(DHCP_OPTION_VENDOR_CLASS_IDENTIFIER, data)
+        Self::generic(DHCPV4_OPTION_VENDOR_CLASS_IDENTIFIER, data)
     }
 
     /// Create a TFTP server name option (option 66, RFC 2132 section 9.4).
     pub fn tftp_server_name(name: impl Into<Vec<u8>>) -> Self {
-        Self::generic(DHCP_OPTION_TFTP_SERVER_NAME, name)
+        Self::generic(DHCPV4_OPTION_TFTP_SERVER_NAME, name)
     }
 
     /// Create a bootfile name option (option 67, RFC 2132 section 9.5).
     pub fn bootfile_name(name: impl Into<Vec<u8>>) -> Self {
-        Self::generic(DHCP_OPTION_BOOTFILE_NAME, name)
+        Self::generic(DHCPV4_OPTION_BOOTFILE_NAME, name)
     }
 
     /// Create an RFC 3004 user-class option (option 77).
@@ -2541,7 +2545,10 @@ impl Dhcpv4Option {
     /// The value is the absolute end time (seconds since Jan 1, 1970) of the
     /// query (RFC 6926 section 6.2.6).
     pub fn query_end_time(seconds: u32) -> Self {
-        Self::typed(Dhcpv4OptionKind::QueryEndTime, Dhcpv4OptionValue::U32(seconds))
+        Self::typed(
+            Dhcpv4OptionKind::QueryEndTime,
+            Dhcpv4OptionValue::U32(seconds),
+        )
     }
 
     /// Create an RFC 6926 dhcp-state option (option 156).
@@ -2549,7 +2556,10 @@ impl Dhcpv4Option {
     /// The state octet re-decodes through [`Dhcpv4Option::typed_value`] into a
     /// [`Dhcpv4OptionValue::Dhcpv4State`] (RFC 6926 section 6.2.7).
     pub fn dhcp_state(state: Dhcpv4State) -> Self {
-        Self::typed(Dhcpv4OptionKind::Dhcpv4State, Dhcpv4OptionValue::Dhcpv4State(state))
+        Self::typed(
+            Dhcpv4OptionKind::Dhcpv4State,
+            Dhcpv4OptionValue::Dhcpv4State(state),
+        )
     }
 
     /// Create an RFC 6926 data-source option (option 157).
@@ -2573,7 +2583,7 @@ impl Dhcpv4Option {
     /// [`super::Dhcpv4::tftp_server_addresses`] to apply the RFC 5859 decode.
     pub fn tftp_server_addresses(addresses: impl Into<Vec<Ipv4Addr>>) -> Self {
         Self::generic(
-            DHCP_OPTION_TFTP_SERVER_ADDRESS,
+            DHCPV4_OPTION_TFTP_SERVER_ADDRESS,
             encode_ipv4_list(&addresses.into()),
         )
     }
@@ -2583,19 +2593,19 @@ impl Dhcpv4Option {
     /// The payload is the fixed magic value `F1:00:74:7E`.
     pub fn pxelinux_magic() -> Self {
         Self::generic(
-            DHCP_OPTION_PXELINUX_MAGIC,
-            DHCP_PXELINUX_MAGIC_VALUE.to_vec(),
+            DHCPV4_OPTION_PXELINUX_MAGIC,
+            DHCPV4_PXELINUX_MAGIC_VALUE.to_vec(),
         )
     }
 
     /// Create an RFC 5071 PXELINUX configuration file option (option 209).
     pub fn pxelinux_config_file(path: impl Into<Vec<u8>>) -> Self {
-        Self::generic(DHCP_OPTION_PXELINUX_CONFIGFILE, path)
+        Self::generic(DHCPV4_OPTION_PXELINUX_CONFIGFILE, path)
     }
 
     /// Create an RFC 5071 PXELINUX path prefix option (option 210).
     pub fn pxelinux_path_prefix(path: impl Into<Vec<u8>>) -> Self {
-        Self::generic(DHCP_OPTION_PXELINUX_PATHPREFIX, path)
+        Self::generic(DHCPV4_OPTION_PXELINUX_PATHPREFIX, path)
     }
 
     /// Create an RFC 5071 PXELINUX reboot time option (option 211), in seconds.
@@ -2609,24 +2619,24 @@ impl Dhcpv4Option {
     /// Raw DHCP option code.
     pub const fn code(&self) -> u8 {
         match self {
-            Self::Pad => DHCP_OPTION_PAD,
-            Self::End => DHCP_OPTION_END,
-            Self::MessageType(_) => DHCP_OPTION_MESSAGE_TYPE,
-            Self::OptionOverload(_) => DHCP_OPTION_OVERLOAD,
-            Self::SubnetMask(_) => DHCP_OPTION_SUBNET_MASK,
-            Self::Router(_) => DHCP_OPTION_ROUTER,
-            Self::DomainNameServer(_) => DHCP_OPTION_DOMAIN_NAME_SERVER,
-            Self::HostName(_) => DHCP_OPTION_HOST_NAME,
-            Self::DomainName(_) => DHCP_OPTION_DOMAIN_NAME,
-            Self::Dhcpv4Message(_) => DHCP_OPTION_MESSAGE,
-            Self::BroadcastAddress(_) => DHCP_OPTION_BROADCAST_ADDRESS,
-            Self::RequestedIpAddress(_) => DHCP_OPTION_REQUESTED_IP_ADDRESS,
-            Self::IpAddressLeaseTime(_) => DHCP_OPTION_IP_ADDRESS_LEASE_TIME,
-            Self::ServerIdentifier(_) => DHCP_OPTION_SERVER_IDENTIFIER,
-            Self::ParameterRequestList(_) => DHCP_OPTION_PARAMETER_REQUEST_LIST,
-            Self::RenewalTime(_) => DHCP_OPTION_RENEWAL_TIME,
-            Self::RebindingTime(_) => DHCP_OPTION_REBINDING_TIME,
-            Self::ClientIdentifier(_) => DHCP_OPTION_CLIENT_IDENTIFIER,
+            Self::Pad => DHCPV4_OPTION_PAD,
+            Self::End => DHCPV4_OPTION_END,
+            Self::MessageType(_) => DHCPV4_OPTION_MESSAGE_TYPE,
+            Self::OptionOverload(_) => DHCPV4_OPTION_OVERLOAD,
+            Self::SubnetMask(_) => DHCPV4_OPTION_SUBNET_MASK,
+            Self::Router(_) => DHCPV4_OPTION_ROUTER,
+            Self::DomainNameServer(_) => DHCPV4_OPTION_DOMAIN_NAME_SERVER,
+            Self::HostName(_) => DHCPV4_OPTION_HOST_NAME,
+            Self::DomainName(_) => DHCPV4_OPTION_DOMAIN_NAME,
+            Self::Dhcpv4Message(_) => DHCPV4_OPTION_MESSAGE,
+            Self::BroadcastAddress(_) => DHCPV4_OPTION_BROADCAST_ADDRESS,
+            Self::RequestedIpAddress(_) => DHCPV4_OPTION_REQUESTED_IP_ADDRESS,
+            Self::IpAddressLeaseTime(_) => DHCPV4_OPTION_IP_ADDRESS_LEASE_TIME,
+            Self::ServerIdentifier(_) => DHCPV4_OPTION_SERVER_IDENTIFIER,
+            Self::ParameterRequestList(_) => DHCPV4_OPTION_PARAMETER_REQUEST_LIST,
+            Self::RenewalTime(_) => DHCPV4_OPTION_RENEWAL_TIME,
+            Self::RebindingTime(_) => DHCPV4_OPTION_REBINDING_TIME,
+            Self::ClientIdentifier(_) => DHCPV4_OPTION_CLIENT_IDENTIFIER,
             Self::Generic { code, .. } => *code,
         }
     }
@@ -2752,71 +2762,71 @@ impl Dhcpv4Option {
     pub(super) fn encode_into(&self, out: &mut Vec<u8>) -> Result<()> {
         match self {
             Self::Pad => {
-                out.push(DHCP_OPTION_PAD);
+                out.push(DHCPV4_OPTION_PAD);
                 Ok(())
             }
             Self::End => {
-                out.push(DHCP_OPTION_END);
+                out.push(DHCPV4_OPTION_END);
                 Ok(())
             }
             Self::MessageType(message_type) => {
-                encode_split_option(DHCP_OPTION_MESSAGE_TYPE, &[message_type.code()], out);
+                encode_split_option(DHCPV4_OPTION_MESSAGE_TYPE, &[message_type.code()], out);
                 Ok(())
             }
             Self::OptionOverload(overload) => {
-                encode_split_option(DHCP_OPTION_OVERLOAD, &[overload.code()], out);
+                encode_split_option(DHCPV4_OPTION_OVERLOAD, &[overload.code()], out);
                 Ok(())
             }
             Self::SubnetMask(address) => {
-                encode_split_option(DHCP_OPTION_SUBNET_MASK, &address.octets(), out);
+                encode_split_option(DHCPV4_OPTION_SUBNET_MASK, &address.octets(), out);
                 Ok(())
             }
             Self::BroadcastAddress(address) => {
-                encode_split_option(DHCP_OPTION_BROADCAST_ADDRESS, &address.octets(), out);
+                encode_split_option(DHCPV4_OPTION_BROADCAST_ADDRESS, &address.octets(), out);
                 Ok(())
             }
             Self::RequestedIpAddress(address) => {
-                encode_split_option(DHCP_OPTION_REQUESTED_IP_ADDRESS, &address.octets(), out);
+                encode_split_option(DHCPV4_OPTION_REQUESTED_IP_ADDRESS, &address.octets(), out);
                 Ok(())
             }
             Self::ServerIdentifier(address) => {
-                encode_split_option(DHCP_OPTION_SERVER_IDENTIFIER, &address.octets(), out);
+                encode_split_option(DHCPV4_OPTION_SERVER_IDENTIFIER, &address.octets(), out);
                 Ok(())
             }
             Self::HostName(host_name) => {
-                encode_split_option(DHCP_OPTION_HOST_NAME, host_name.as_bytes(), out);
+                encode_split_option(DHCPV4_OPTION_HOST_NAME, host_name.as_bytes(), out);
                 Ok(())
             }
             Self::DomainName(domain_name) => {
-                encode_split_option(DHCP_OPTION_DOMAIN_NAME, domain_name.as_bytes(), out);
+                encode_split_option(DHCPV4_OPTION_DOMAIN_NAME, domain_name.as_bytes(), out);
                 Ok(())
             }
             Self::Dhcpv4Message(message) => {
-                encode_split_option(DHCP_OPTION_MESSAGE, message.as_bytes(), out);
+                encode_split_option(DHCPV4_OPTION_MESSAGE, message.as_bytes(), out);
                 Ok(())
             }
             Self::IpAddressLeaseTime(seconds) => {
                 encode_split_option(
-                    DHCP_OPTION_IP_ADDRESS_LEASE_TIME,
+                    DHCPV4_OPTION_IP_ADDRESS_LEASE_TIME,
                     &seconds.to_be_bytes(),
                     out,
                 );
                 Ok(())
             }
             Self::RenewalTime(seconds) => {
-                encode_split_option(DHCP_OPTION_RENEWAL_TIME, &seconds.to_be_bytes(), out);
+                encode_split_option(DHCPV4_OPTION_RENEWAL_TIME, &seconds.to_be_bytes(), out);
                 Ok(())
             }
             Self::RebindingTime(seconds) => {
-                encode_split_option(DHCP_OPTION_REBINDING_TIME, &seconds.to_be_bytes(), out);
+                encode_split_option(DHCPV4_OPTION_REBINDING_TIME, &seconds.to_be_bytes(), out);
                 Ok(())
             }
             Self::ParameterRequestList(requests) => {
-                encode_split_option(DHCP_OPTION_PARAMETER_REQUEST_LIST, requests, out);
+                encode_split_option(DHCPV4_OPTION_PARAMETER_REQUEST_LIST, requests, out);
                 Ok(())
             }
             Self::ClientIdentifier(identifier) => {
-                encode_split_option(DHCP_OPTION_CLIENT_IDENTIFIER, identifier, out);
+                encode_split_option(DHCPV4_OPTION_CLIENT_IDENTIFIER, identifier, out);
                 Ok(())
             }
             Self::Generic { code, data } => {
@@ -2854,7 +2864,7 @@ impl Dhcpv4Option {
                 requests.clone()
             }
             Self::Generic { code, data } => {
-                if matches!(*code, DHCP_OPTION_PAD | DHCP_OPTION_END) {
+                if matches!(*code, DHCPV4_OPTION_PAD | DHCPV4_OPTION_END) {
                     return Err(CrafterError::invalid_field_value(
                         "dhcp.option.code",
                         "generic option code cannot be pad or end",
@@ -2868,7 +2878,7 @@ impl Dhcpv4Option {
 }
 
 fn validate_data_option_code(code: u8) -> Result<()> {
-    if matches!(code, DHCP_OPTION_PAD | DHCP_OPTION_END) {
+    if matches!(code, DHCPV4_OPTION_PAD | DHCPV4_OPTION_END) {
         return Err(CrafterError::invalid_field_value(
             "dhcp.option.code",
             "pad and end options do not carry a length byte",
@@ -2888,12 +2898,12 @@ pub(super) fn decode_dhcp_options(bytes: &[u8]) -> Result<Vec<Dhcpv4Option>> {
         offset += 1;
 
         match code {
-            DHCP_OPTION_PAD => options.push(Dhcpv4Option::Pad),
-            DHCP_OPTION_END if !saw_end => {
+            DHCPV4_OPTION_PAD => options.push(Dhcpv4Option::Pad),
+            DHCPV4_OPTION_END if !saw_end => {
                 options.push(Dhcpv4Option::End);
                 saw_end = true;
             }
-            DHCP_OPTION_END => {
+            DHCPV4_OPTION_END => {
                 return Err(CrafterError::invalid_field_value(
                     "dhcp.option.end",
                     "non-padding data follows DHCP end option",
@@ -3163,24 +3173,26 @@ impl SegmentOrder {
 
 pub(super) fn decode_dhcp_option(code: u8, data: &[u8]) -> Result<Dhcpv4Option> {
     match code {
-        DHCP_OPTION_MESSAGE_TYPE => {
+        DHCPV4_OPTION_MESSAGE_TYPE => {
             validate_fixed_len("dhcp.option.message_type", data.len(), 1)?;
-            Ok(Dhcpv4Option::MessageType(Dhcpv4MessageType::from_code(data[0])))
+            Ok(Dhcpv4Option::MessageType(Dhcpv4MessageType::from_code(
+                data[0],
+            )))
         }
-        DHCP_OPTION_OVERLOAD => {
+        DHCPV4_OPTION_OVERLOAD => {
             validate_fixed_len("dhcp.option.overload", data.len(), 1)?;
             let overload = OptionOverload::from_code(data[0]);
             Ok(Dhcpv4Option::OptionOverload(overload))
         }
-        DHCP_OPTION_SUBNET_MASK => Ok(Dhcpv4Option::SubnetMask(decode_ipv4_option(
+        DHCPV4_OPTION_SUBNET_MASK => Ok(Dhcpv4Option::SubnetMask(decode_ipv4_option(
             "dhcp.option.subnet_mask",
             data,
         )?)),
-        DHCP_OPTION_ROUTER => Ok(Dhcpv4Option::Router(decode_ipv4_list(
+        DHCPV4_OPTION_ROUTER => Ok(Dhcpv4Option::Router(decode_ipv4_list(
             "dhcp.option.router",
             data,
         )?)),
-        DHCP_OPTION_DOMAIN_NAME_SERVER => Ok(Dhcpv4Option::DomainNameServer(decode_ipv4_list(
+        DHCPV4_OPTION_DOMAIN_NAME_SERVER => Ok(Dhcpv4Option::DomainNameServer(decode_ipv4_list(
             "dhcp.option.domain_name_server",
             data,
         )?)),
@@ -3189,14 +3201,14 @@ pub(super) fn decode_dhcp_option(code: u8, data: &[u8]) -> Result<Dhcpv4Option> 
         // otherwise the raw bytes are preserved verbatim through the generic
         // variant so no data is lost. The format-aware `typed_value()` view
         // still surfaces these as `Dhcpv4OptionValue::Text` in both cases.
-        DHCP_OPTION_HOST_NAME => Ok(match decode_optional_text(data) {
+        DHCPV4_OPTION_HOST_NAME => Ok(match decode_optional_text(data) {
             Some(text) => Dhcpv4Option::HostName(text),
             None => Dhcpv4Option::Generic {
                 code,
                 data: data.to_vec(),
             },
         }),
-        DHCP_OPTION_DOMAIN_NAME => Ok(match decode_optional_text(data) {
+        DHCPV4_OPTION_DOMAIN_NAME => Ok(match decode_optional_text(data) {
             Some(text) => Dhcpv4Option::DomainName(text),
             None => Dhcpv4Option::Generic {
                 code,
@@ -3207,39 +3219,39 @@ pub(super) fn decode_dhcp_option(code: u8, data: &[u8]) -> Result<Dhcpv4Option> 
         // text. When the bytes decode as UTF-8 the convenience String variant is
         // used; otherwise the raw bytes are preserved verbatim through the generic
         // variant so no data is lost.
-        DHCP_OPTION_MESSAGE => Ok(match decode_optional_text(data) {
+        DHCPV4_OPTION_MESSAGE => Ok(match decode_optional_text(data) {
             Some(text) => Dhcpv4Option::Dhcpv4Message(text),
             None => Dhcpv4Option::Generic {
                 code,
                 data: data.to_vec(),
             },
         }),
-        DHCP_OPTION_BROADCAST_ADDRESS => Ok(Dhcpv4Option::BroadcastAddress(decode_ipv4_option(
+        DHCPV4_OPTION_BROADCAST_ADDRESS => Ok(Dhcpv4Option::BroadcastAddress(decode_ipv4_option(
             "dhcp.option.broadcast_address",
             data,
         )?)),
-        DHCP_OPTION_REQUESTED_IP_ADDRESS => Ok(Dhcpv4Option::RequestedIpAddress(decode_ipv4_option(
-            "dhcp.option.requested_ip_address",
-            data,
-        )?)),
-        DHCP_OPTION_IP_ADDRESS_LEASE_TIME => Ok(Dhcpv4Option::IpAddressLeaseTime(decode_u32_option(
-            "dhcp.option.lease_time",
-            data,
-        )?)),
-        DHCP_OPTION_SERVER_IDENTIFIER => Ok(Dhcpv4Option::ServerIdentifier(decode_ipv4_option(
+        DHCPV4_OPTION_REQUESTED_IP_ADDRESS => Ok(Dhcpv4Option::RequestedIpAddress(
+            decode_ipv4_option("dhcp.option.requested_ip_address", data)?,
+        )),
+        DHCPV4_OPTION_IP_ADDRESS_LEASE_TIME => Ok(Dhcpv4Option::IpAddressLeaseTime(
+            decode_u32_option("dhcp.option.lease_time", data)?,
+        )),
+        DHCPV4_OPTION_SERVER_IDENTIFIER => Ok(Dhcpv4Option::ServerIdentifier(decode_ipv4_option(
             "dhcp.option.server_identifier",
             data,
         )?)),
-        DHCP_OPTION_PARAMETER_REQUEST_LIST => Ok(Dhcpv4Option::ParameterRequestList(data.to_vec())),
-        DHCP_OPTION_RENEWAL_TIME => Ok(Dhcpv4Option::RenewalTime(decode_u32_option(
+        DHCPV4_OPTION_PARAMETER_REQUEST_LIST => {
+            Ok(Dhcpv4Option::ParameterRequestList(data.to_vec()))
+        }
+        DHCPV4_OPTION_RENEWAL_TIME => Ok(Dhcpv4Option::RenewalTime(decode_u32_option(
             "dhcp.option.renewal_time",
             data,
         )?)),
-        DHCP_OPTION_REBINDING_TIME => Ok(Dhcpv4Option::RebindingTime(decode_u32_option(
+        DHCPV4_OPTION_REBINDING_TIME => Ok(Dhcpv4Option::RebindingTime(decode_u32_option(
             "dhcp.option.rebinding_time",
             data,
         )?)),
-        DHCP_OPTION_CLIENT_IDENTIFIER => Ok(Dhcpv4Option::ClientIdentifier(data.to_vec())),
+        DHCPV4_OPTION_CLIENT_IDENTIFIER => Ok(Dhcpv4Option::ClientIdentifier(data.to_vec())),
         _ => Ok(Dhcpv4Option::Generic {
             code,
             data: data.to_vec(),
@@ -3265,7 +3277,7 @@ pub(super) fn encode_dhcp_options(options: &[Dhcpv4Option]) -> Result<Vec<u8>> {
     }
 
     if !saw_end {
-        out.push(DHCP_OPTION_END);
+        out.push(DHCPV4_OPTION_END);
     }
     Ok(out)
 }
@@ -3380,19 +3392,19 @@ fn encode_ipv4_list(addresses: &[Ipv4Addr]) -> Vec<u8> {
 }
 
 /// Octet length of one RFC 2132 static route entry on the wire (option 33).
-const DHCP_STATIC_ROUTE_ENTRY_LEN: usize = 8;
+const DHCPV4_STATIC_ROUTE_ENTRY_LEN: usize = 8;
 /// Octet length of the router address in an RFC 3442 classless route.
-const DHCP_CLASSLESS_ROUTER_LEN: usize = 4;
+const DHCPV4_CLASSLESS_ROUTER_LEN: usize = 4;
 /// Maximum subnet-mask width for an RFC 3442 classless route prefix.
-const DHCP_CLASSLESS_MAX_PREFIX: u8 = 32;
+const DHCPV4_CLASSLESS_MAX_PREFIX: u8 = 32;
 /// Maximum length of a single RFC 1035 label (six-bit length field).
-const DHCP_DNS_LABEL_MAX_LEN: usize = 63;
+const DHCPV4_DNS_LABEL_MAX_LEN: usize = 63;
 /// Two high bits set on a length octet mark an RFC 1035 compression pointer.
-const DHCP_DNS_POINTER_MASK: u8 = 0xC0;
+const DHCPV4_DNS_POINTER_MASK: u8 = 0xC0;
 /// RFC 3361 SIP servers encoding: RFC 1035 domain-name list.
-const DHCP_SIP_ENC_DOMAIN: u8 = 0;
+const DHCPV4_SIP_ENC_DOMAIN: u8 = 0;
 /// RFC 3361 SIP servers encoding: IPv4 address list.
-const DHCP_SIP_ENC_ADDRESS: u8 = 1;
+const DHCPV4_SIP_ENC_ADDRESS: u8 = 1;
 
 /// Decode an RFC 2132 static route list (option 33).
 ///
@@ -3402,14 +3414,14 @@ const DHCP_SIP_ENC_ADDRESS: u8 = 1;
 /// error rather than a panic.
 fn decode_static_routes(data: &[u8]) -> Result<Vec<Dhcpv4StaticRoute>> {
     let field = "dhcp.option.static_route";
-    if data.is_empty() || data.len() % DHCP_STATIC_ROUTE_ENTRY_LEN != 0 {
+    if data.is_empty() || data.len() % DHCPV4_STATIC_ROUTE_ENTRY_LEN != 0 {
         return Err(CrafterError::invalid_field_value(
             field,
             "static route option length must be a non-zero multiple of eight",
         ));
     }
     Ok(data
-        .chunks_exact(DHCP_STATIC_ROUTE_ENTRY_LEN)
+        .chunks_exact(DHCPV4_STATIC_ROUTE_ENTRY_LEN)
         .map(|chunk| {
             Dhcpv4StaticRoute::new(
                 Ipv4Addr::new(chunk[0], chunk[1], chunk[2], chunk[3]),
@@ -3421,7 +3433,7 @@ fn decode_static_routes(data: &[u8]) -> Result<Vec<Dhcpv4StaticRoute>> {
 
 /// Encode an RFC 2132 static route list (option 33).
 fn encode_static_routes(routes: &[Dhcpv4StaticRoute]) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(routes.len() * DHCP_STATIC_ROUTE_ENTRY_LEN);
+    let mut bytes = Vec::with_capacity(routes.len() * DHCPV4_STATIC_ROUTE_ENTRY_LEN);
     for route in routes {
         bytes.extend_from_slice(&route.destination.octets());
         bytes.extend_from_slice(&route.router.octets());
@@ -3444,17 +3456,17 @@ fn decode_classless_routes(data: &[u8]) -> Result<Vec<Dhcpv4ClasslessRoute>> {
     while offset < data.len() {
         let prefix_length = data[offset];
         offset += 1;
-        if prefix_length > DHCP_CLASSLESS_MAX_PREFIX {
+        if prefix_length > DHCPV4_CLASSLESS_MAX_PREFIX {
             return Err(CrafterError::invalid_field_value(
                 field,
                 "classless route prefix length exceeds 32 bits",
             ));
         }
         let significant = Dhcpv4ClasslessRoute::significant_octets(prefix_length);
-        if offset + significant + DHCP_CLASSLESS_ROUTER_LEN > data.len() {
+        if offset + significant + DHCPV4_CLASSLESS_ROUTER_LEN > data.len() {
             return Err(CrafterError::buffer_too_short(
                 field,
-                offset + significant + DHCP_CLASSLESS_ROUTER_LEN,
+                offset + significant + DHCPV4_CLASSLESS_ROUTER_LEN,
                 data.len(),
             ));
         }
@@ -3467,7 +3479,7 @@ fn decode_classless_routes(data: &[u8]) -> Result<Vec<Dhcpv4ClasslessRoute>> {
             data[offset + 2],
             data[offset + 3],
         );
-        offset += DHCP_CLASSLESS_ROUTER_LEN;
+        offset += DHCPV4_CLASSLESS_ROUTER_LEN;
         routes.push(Dhcpv4ClasslessRoute::new(
             prefix_length,
             Ipv4Addr::from(subnet),
@@ -3543,7 +3555,7 @@ fn decode_domain_name(field: &'static str, data: &[u8], start: usize) -> Result<
             return Ok((labels.join("."), end));
         }
 
-        if length & DHCP_DNS_POINTER_MASK == DHCP_DNS_POINTER_MASK {
+        if length & DHCPV4_DNS_POINTER_MASK == DHCPV4_DNS_POINTER_MASK {
             if cursor + 2 > data.len() {
                 return Err(CrafterError::buffer_too_short(
                     field,
@@ -3551,8 +3563,8 @@ fn decode_domain_name(field: &'static str, data: &[u8], start: usize) -> Result<
                     data.len(),
                 ));
             }
-            let pointer =
-                (usize::from(length & !DHCP_DNS_POINTER_MASK) << 8) | usize::from(data[cursor + 1]);
+            let pointer = (usize::from(length & !DHCPV4_DNS_POINTER_MASK) << 8)
+                | usize::from(data[cursor + 1]);
             if linear_end.is_none() {
                 linear_end = Some(cursor + 2);
             }
@@ -3573,7 +3585,7 @@ fn decode_domain_name(field: &'static str, data: &[u8], start: usize) -> Result<
             continue;
         }
 
-        if length & DHCP_DNS_POINTER_MASK != 0 {
+        if length & DHCPV4_DNS_POINTER_MASK != 0 {
             return Err(CrafterError::invalid_field_value(
                 field,
                 "domain-name label length has reserved high bits set",
@@ -3581,7 +3593,7 @@ fn decode_domain_name(field: &'static str, data: &[u8], start: usize) -> Result<
         }
 
         let label_len = usize::from(length);
-        if label_len > DHCP_DNS_LABEL_MAX_LEN {
+        if label_len > DHCPV4_DNS_LABEL_MAX_LEN {
             return Err(CrafterError::invalid_field_value(
                 field,
                 "domain-name label exceeds 63 octets",
@@ -3613,7 +3625,7 @@ fn encode_domain_name_list(names: &[String]) -> Vec<u8> {
     for name in names {
         for label in name.split('.').filter(|label| !label.is_empty()) {
             let label_bytes = label.as_bytes();
-            let len = label_bytes.len().min(DHCP_DNS_LABEL_MAX_LEN);
+            let len = label_bytes.len().min(DHCPV4_DNS_LABEL_MAX_LEN);
             bytes.push(len as u8);
             bytes.extend_from_slice(&label_bytes[..len]);
         }
@@ -3635,10 +3647,10 @@ fn decode_sip_servers(data: &[u8]) -> Result<SipServers> {
         return Err(CrafterError::buffer_too_short(field, 1, 0));
     };
     match encoding {
-        DHCP_SIP_ENC_DOMAIN => Ok(SipServers::DomainNames(decode_domain_name_list(
+        DHCPV4_SIP_ENC_DOMAIN => Ok(SipServers::DomainNames(decode_domain_name_list(
             field, rest,
         )?)),
-        DHCP_SIP_ENC_ADDRESS => {
+        DHCPV4_SIP_ENC_ADDRESS => {
             if rest.is_empty() || rest.len() % 4 != 0 {
                 return Err(CrafterError::invalid_field_value(
                     field,
@@ -3658,12 +3670,12 @@ fn decode_sip_servers(data: &[u8]) -> Result<SipServers> {
 fn encode_sip_servers(servers: &SipServers) -> Vec<u8> {
     match servers {
         SipServers::DomainNames(names) => {
-            let mut bytes = vec![DHCP_SIP_ENC_DOMAIN];
+            let mut bytes = vec![DHCPV4_SIP_ENC_DOMAIN];
             bytes.extend(encode_domain_name_list(names));
             bytes
         }
         SipServers::Addresses(addresses) => {
-            let mut bytes = vec![DHCP_SIP_ENC_ADDRESS];
+            let mut bytes = vec![DHCPV4_SIP_ENC_ADDRESS];
             bytes.extend(encode_ipv4_list(addresses));
             bytes
         }
@@ -3677,7 +3689,7 @@ fn encode_sip_servers(servers: &SipServers) -> Vec<u8> {
 }
 
 /// Octet length of an RFC 3925 IANA Enterprise Number (options 124 and 125).
-const DHCP_ENTERPRISE_NUMBER_LEN: usize = 4;
+const DHCPV4_ENTERPRISE_NUMBER_LEN: usize = 4;
 
 /// Decode an RFC 3004 user-class option (option 77).
 ///
@@ -3718,7 +3730,7 @@ fn decode_user_class(data: &[u8]) -> Result<Dhcpv4UserClass> {
 fn encode_user_class(user_class: &Dhcpv4UserClass) -> Vec<u8> {
     let mut bytes = Vec::new();
     for class in &user_class.classes {
-        let len = class.len().min(DHCP_MAX_OPTION_DATA_LEN);
+        let len = class.len().min(DHCPV4_MAX_OPTION_DATA_LEN);
         bytes.push(len as u8);
         bytes.extend_from_slice(&class[..len]);
     }
@@ -3784,19 +3796,19 @@ fn decode_client_identifier(data: &[u8]) -> Result<Dhcpv4ClientIdentifier> {
         // No type octet present: preserve the empty payload verbatim.
         return Ok(Dhcpv4ClientIdentifier::Raw(Vec::new()));
     };
-    if type_octet == DHCP_CLIENT_ID_TYPE_RFC4361 {
-        if rest.len() < DHCP_IAID_LEN {
+    if type_octet == DHCPV4_CLIENT_ID_TYPE_RFC4361 {
+        if rest.len() < DHCPV4_IAID_LEN {
             return Err(CrafterError::buffer_too_short(
                 field,
-                1 + DHCP_IAID_LEN,
+                1 + DHCPV4_IAID_LEN,
                 data.len(),
             ));
         }
-        let iaid = read_u32_be(&rest[..DHCP_IAID_LEN])?;
-        let duid = rest[DHCP_IAID_LEN..].to_vec();
+        let iaid = read_u32_be(&rest[..DHCPV4_IAID_LEN])?;
+        let duid = rest[DHCPV4_IAID_LEN..].to_vec();
         return Ok(Dhcpv4ClientIdentifier::NodeSpecific { iaid, duid });
     }
-    if type_octet == DHCP_CLIENT_ID_TYPE_NONE {
+    if type_octet == DHCPV4_CLIENT_ID_TYPE_NONE {
         // RFC 2132: a type of 0 is a non-hardware identifier (for example a
         // fully-qualified domain name). The structure beyond the type octet is
         // not specified, so the whole payload is preserved verbatim.
@@ -3819,20 +3831,20 @@ fn decode_client_identifier(data: &[u8]) -> Result<Dhcpv4ClientIdentifier> {
 /// never interprets, signs, or verifies it.
 fn decode_authentication(data: &[u8]) -> Result<Dhcpv4Authentication> {
     let field = "dhcp.option.authentication";
-    if data.len() < DHCP_AUTH_HEADER_LEN {
+    if data.len() < DHCPV4_AUTH_HEADER_LEN {
         return Err(CrafterError::buffer_too_short(
             field,
-            DHCP_AUTH_HEADER_LEN,
+            DHCPV4_AUTH_HEADER_LEN,
             data.len(),
         ));
     }
     let protocol = Dhcpv4AuthProtocol::from_code(data[0]);
     let algorithm = Dhcpv4AuthAlgorithm::from_code(data[1]);
     let rdm = Dhcpv4ReplayDetectionMethod::from_code(data[2]);
-    let replay_end = 3 + DHCP_AUTH_REPLAY_DETECTION_LEN;
-    // The length check above guarantees at least DHCP_AUTH_HEADER_LEN (11)
+    let replay_end = 3 + DHCPV4_AUTH_REPLAY_DETECTION_LEN;
+    // The length check above guarantees at least DHCPV4_AUTH_HEADER_LEN (11)
     // octets, so this 8-octet slice is always present.
-    let mut replay_bytes = [0u8; DHCP_AUTH_REPLAY_DETECTION_LEN];
+    let mut replay_bytes = [0u8; DHCPV4_AUTH_REPLAY_DETECTION_LEN];
     replay_bytes.copy_from_slice(&data[3..replay_end]);
     let replay_detection = u64::from_be_bytes(replay_bytes);
     Ok(Dhcpv4Authentication {
@@ -3884,7 +3896,7 @@ fn decode_vi_vendor_class(data: &[u8]) -> Result<Vec<Dhcpv4VendorClassData>> {
 
     while offset < data.len() {
         let enterprise_number = read_enterprise_number(field, data, offset)?;
-        offset += DHCP_ENTERPRISE_NUMBER_LEN;
+        offset += DHCPV4_ENTERPRISE_NUMBER_LEN;
         if offset >= data.len() {
             return Err(CrafterError::buffer_too_short(
                 field,
@@ -3913,7 +3925,7 @@ fn encode_vi_vendor_class(instances: &[Dhcpv4VendorClassData]) -> Vec<u8> {
     let mut bytes = Vec::new();
     for instance in instances {
         bytes.extend_from_slice(&instance.enterprise_number.to_be_bytes());
-        let len = instance.data.len().min(DHCP_MAX_OPTION_DATA_LEN);
+        let len = instance.data.len().min(DHCPV4_MAX_OPTION_DATA_LEN);
         bytes.push(len as u8);
         bytes.extend_from_slice(&instance.data[..len]);
     }
@@ -3936,7 +3948,7 @@ fn decode_vi_vendor_specific(data: &[u8]) -> Result<Vec<Dhcpv4VendorIdentifyingO
 
     while offset < data.len() {
         let enterprise_number = read_enterprise_number(field, data, offset)?;
-        offset += DHCP_ENTERPRISE_NUMBER_LEN;
+        offset += DHCPV4_ENTERPRISE_NUMBER_LEN;
         if offset >= data.len() {
             return Err(CrafterError::buffer_too_short(
                 field,
@@ -3962,7 +3974,10 @@ fn decode_vi_vendor_specific(data: &[u8]) -> Result<Vec<Dhcpv4VendorIdentifyingO
 }
 
 /// Decode the nested RFC 3925 suboptions inside one option-125 instance.
-fn decode_vendor_suboptions(field: &'static str, data: &[u8]) -> Result<Vec<Dhcpv4VendorSuboption>> {
+fn decode_vendor_suboptions(
+    field: &'static str,
+    data: &[u8],
+) -> Result<Vec<Dhcpv4VendorSuboption>> {
     let mut suboptions = Vec::new();
     let mut offset = 0usize;
 
@@ -3995,7 +4010,7 @@ fn encode_vi_vendor_specific(instances: &[Dhcpv4VendorIdentifyingOption]) -> Vec
     for instance in instances {
         bytes.extend_from_slice(&instance.enterprise_number.to_be_bytes());
         let option_data = encode_vendor_suboptions(&instance.suboptions);
-        let len = option_data.len().min(DHCP_MAX_OPTION_DATA_LEN);
+        let len = option_data.len().min(DHCPV4_MAX_OPTION_DATA_LEN);
         bytes.push(len as u8);
         bytes.extend_from_slice(&option_data[..len]);
     }
@@ -4007,7 +4022,7 @@ fn encode_vendor_suboptions(suboptions: &[Dhcpv4VendorSuboption]) -> Vec<u8> {
     let mut bytes = Vec::new();
     for suboption in suboptions {
         bytes.push(suboption.code);
-        let len = suboption.data.len().min(DHCP_MAX_OPTION_DATA_LEN);
+        let len = suboption.data.len().min(DHCPV4_MAX_OPTION_DATA_LEN);
         bytes.push(len as u8);
         bytes.extend_from_slice(&suboption.data[..len]);
     }
@@ -4016,7 +4031,7 @@ fn encode_vendor_suboptions(suboptions: &[Dhcpv4VendorSuboption]) -> Vec<u8> {
 
 /// Read a 4-octet big-endian IANA Enterprise Number at `offset` (RFC 3925).
 fn read_enterprise_number(field: &'static str, data: &[u8], offset: usize) -> Result<u32> {
-    let end = offset + DHCP_ENTERPRISE_NUMBER_LEN;
+    let end = offset + DHCPV4_ENTERPRISE_NUMBER_LEN;
     if end > data.len() {
         return Err(CrafterError::buffer_too_short(field, end, data.len()));
     }
@@ -4068,46 +4083,48 @@ fn decode_relay_suboption(
     value: &[u8],
 ) -> Result<Dhcpv4RelaySuboption> {
     let suboption = match code {
-        DHCP_RELAY_SUBOPTION_CIRCUIT_ID => Dhcpv4RelaySuboption::CircuitId(value.to_vec()),
-        DHCP_RELAY_SUBOPTION_REMOTE_ID => Dhcpv4RelaySuboption::RemoteId(value.to_vec()),
-        DHCP_RELAY_SUBOPTION_DOCSIS_DEVICE_CLASS => {
+        DHCPV4_RELAY_SUBOPTION_CIRCUIT_ID => Dhcpv4RelaySuboption::CircuitId(value.to_vec()),
+        DHCPV4_RELAY_SUBOPTION_REMOTE_ID => Dhcpv4RelaySuboption::RemoteId(value.to_vec()),
+        DHCPV4_RELAY_SUBOPTION_DOCSIS_DEVICE_CLASS => {
             validate_fixed_len(field, value.len(), 4)?;
             Dhcpv4RelaySuboption::DocsisDeviceClass(read_u32_be(value)?)
         }
-        DHCP_RELAY_SUBOPTION_LINK_SELECTION => {
+        DHCPV4_RELAY_SUBOPTION_LINK_SELECTION => {
             Dhcpv4RelaySuboption::LinkSelection(decode_ipv4_option(field, value)?)
         }
-        DHCP_RELAY_SUBOPTION_SUBSCRIBER_ID => Dhcpv4RelaySuboption::SubscriberId(value.to_vec()),
-        DHCP_RELAY_SUBOPTION_RADIUS_ATTRIBUTES => {
+        DHCPV4_RELAY_SUBOPTION_SUBSCRIBER_ID => Dhcpv4RelaySuboption::SubscriberId(value.to_vec()),
+        DHCPV4_RELAY_SUBOPTION_RADIUS_ATTRIBUTES => {
             Dhcpv4RelaySuboption::RadiusAttributes(value.to_vec())
         }
-        DHCP_RELAY_SUBOPTION_AUTHENTICATION => Dhcpv4RelaySuboption::Authentication(value.to_vec()),
-        DHCP_RELAY_SUBOPTION_VENDOR_SPECIFIC => {
+        DHCPV4_RELAY_SUBOPTION_AUTHENTICATION => {
+            Dhcpv4RelaySuboption::Authentication(value.to_vec())
+        }
+        DHCPV4_RELAY_SUBOPTION_VENDOR_SPECIFIC => {
             Dhcpv4RelaySuboption::VendorSpecific(decode_relay_vendor_specific(field, value)?)
         }
-        DHCP_RELAY_SUBOPTION_RELAY_FLAGS => {
+        DHCPV4_RELAY_SUBOPTION_RELAY_FLAGS => {
             validate_fixed_len(field, value.len(), 1)?;
             Dhcpv4RelaySuboption::RelayFlags(value[0])
         }
-        DHCP_RELAY_SUBOPTION_SERVER_ID_OVERRIDE => {
+        DHCPV4_RELAY_SUBOPTION_SERVER_ID_OVERRIDE => {
             Dhcpv4RelaySuboption::ServerIdOverride(decode_ipv4_option(field, value)?)
         }
-        DHCP_RELAY_SUBOPTION_RELAY_AGENT_ID => Dhcpv4RelaySuboption::RelayAgentId(value.to_vec()),
-        DHCP_RELAY_SUBOPTION_RELAY_SOURCE_PORT => {
+        DHCPV4_RELAY_SUBOPTION_RELAY_AGENT_ID => Dhcpv4RelaySuboption::RelayAgentId(value.to_vec()),
+        DHCPV4_RELAY_SUBOPTION_RELAY_SOURCE_PORT => {
             // RFC 8357: the relay source port sub-option carries no value; the
             // length must be zero and the actual port is learned from the UDP
             // header. A non-zero length is malformed for the typed view.
             validate_fixed_len(field, value.len(), 0)?;
             Dhcpv4RelaySuboption::RelaySourcePort
         }
-        DHCP_RELAY_SUBOPTION_VSS => {
+        DHCPV4_RELAY_SUBOPTION_VSS => {
             // RFC 6607: a one-octet Type followed by type-specific VSS Info.
             if value.is_empty() {
                 return Err(CrafterError::buffer_too_short(field, 1, value.len()));
             }
             Dhcpv4RelaySuboption::Vss(Dhcpv4VssInfo::new(value[0], value[1..].to_vec()))
         }
-        DHCP_RELAY_SUBOPTION_VSS_CONTROL => {
+        DHCPV4_RELAY_SUBOPTION_VSS_CONTROL => {
             validate_fixed_len(field, value.len(), 0)?;
             Dhcpv4RelaySuboption::VssControl
         }
@@ -4135,7 +4152,7 @@ fn decode_relay_vendor_specific(
 
     while offset < data.len() {
         let enterprise_number = read_enterprise_number(field, data, offset)?;
-        offset += DHCP_ENTERPRISE_NUMBER_LEN;
+        offset += DHCPV4_ENTERPRISE_NUMBER_LEN;
         if offset >= data.len() {
             return Err(CrafterError::buffer_too_short(
                 field,
@@ -4165,7 +4182,7 @@ fn encode_relay_agent_information(info: &Dhcpv4RelayAgentInfo) -> Vec<u8> {
     let mut bytes = Vec::new();
     for suboption in &info.suboptions {
         let value = suboption.encode_value();
-        let len = value.len().min(DHCP_MAX_OPTION_DATA_LEN);
+        let len = value.len().min(DHCPV4_MAX_OPTION_DATA_LEN);
         bytes.push(suboption.code());
         bytes.push(len as u8);
         bytes.extend_from_slice(&value[..len]);
@@ -4179,7 +4196,7 @@ fn encode_relay_vendor_specific(tuples: &[Dhcpv4RelayVendorSpecific]) -> Vec<u8>
     let mut bytes = Vec::new();
     for tuple in tuples {
         bytes.extend_from_slice(&tuple.enterprise_number.to_be_bytes());
-        let len = tuple.data.len().min(DHCP_MAX_OPTION_DATA_LEN);
+        let len = tuple.data.len().min(DHCPV4_MAX_OPTION_DATA_LEN);
         bytes.push(len as u8);
         bytes.extend_from_slice(&tuple.data[..len]);
     }
@@ -4187,7 +4204,7 @@ fn encode_relay_vendor_specific(tuples: &[Dhcpv4RelayVendorSpecific]) -> Vec<u8>
 }
 
 /// Maximum payload an option length byte can describe (RFC 2132 section 2).
-pub(super) const DHCP_MAX_OPTION_DATA_LEN: usize = u8::MAX as usize;
+pub(super) const DHCPV4_MAX_OPTION_DATA_LEN: usize = u8::MAX as usize;
 
 /// Encode a logical option payload as one or more on-the-wire segments.
 ///
@@ -4202,7 +4219,7 @@ pub(super) fn encode_split_option(code: u8, data: &[u8], out: &mut Vec<u8>) {
         out.push(0);
         return;
     }
-    for chunk in data.chunks(DHCP_MAX_OPTION_DATA_LEN) {
+    for chunk in data.chunks(DHCPV4_MAX_OPTION_DATA_LEN) {
         out.push(code);
         out.push(chunk.len() as u8);
         out.extend_from_slice(chunk);
@@ -4215,7 +4232,7 @@ pub(super) fn split_option_encoded_len(data_len: usize) -> usize {
     if data_len == 0 {
         return 2;
     }
-    let segments = data_len.div_ceil(DHCP_MAX_OPTION_DATA_LEN);
+    let segments = data_len.div_ceil(DHCPV4_MAX_OPTION_DATA_LEN);
     segments * 2 + data_len
 }
 
@@ -4282,7 +4299,7 @@ mod dhcp_options {
             .encoded_options()
             .unwrap();
 
-        assert_eq!(encoded.last(), Some(&super::DHCP_OPTION_END));
+        assert_eq!(encoded.last(), Some(&super::DHCPV4_OPTION_END));
     }
 
     #[test]
@@ -4442,7 +4459,10 @@ mod dhcp_options {
         // Raw scanner records every on-the-wire instance in order, including
         // the leading and trailing pad and the end marker.
         let segments = scan_dhcpv4_option_segments(Dhcpv4OptionArea::Options, &encoded).unwrap();
-        let codes: Vec<u8> = segments.iter().map(Dhcpv4OptionSegment::code_value).collect();
+        let codes: Vec<u8> = segments
+            .iter()
+            .map(Dhcpv4OptionSegment::code_value)
+            .collect();
         assert_eq!(codes, vec![0, 53, 1, 224, 255, 0]);
         assert!(segments.iter().all(|s| s.area == Dhcpv4OptionArea::Options));
 
@@ -4473,8 +4493,8 @@ mod dhcp_options {
         // An end marker immediately followed by non-padding data is a structured
         // decode error, not a panic or a silently truncated decode.
         let bytes = [
-            super::DHCP_OPTION_END,
-            super::DHCP_OPTION_MESSAGE_TYPE,
+            super::DHCPV4_OPTION_END,
+            super::DHCPV4_OPTION_MESSAGE_TYPE,
             1,
             1,
         ];
@@ -4488,7 +4508,10 @@ mod dhcp_options {
         // The raw scanner itself stays permissive and records the trailing
         // option as a segment so callers can still inspect the malformed bytes.
         let segments = scan_dhcpv4_option_segments(Dhcpv4OptionArea::Options, &bytes).unwrap();
-        let codes: Vec<u8> = segments.iter().map(Dhcpv4OptionSegment::code_value).collect();
+        let codes: Vec<u8> = segments
+            .iter()
+            .map(Dhcpv4OptionSegment::code_value)
+            .collect();
         assert_eq!(codes, vec![255, 53]);
     }
 
@@ -4496,7 +4519,7 @@ mod dhcp_options {
     fn dhcp_option_codec_rejects_missing_end_marker() {
         // A well-formed option with no terminating end marker is rejected by the
         // logical decoder with a stable field name.
-        let bytes = [super::DHCP_OPTION_MESSAGE_TYPE, 1, 1];
+        let bytes = [super::DHCPV4_OPTION_MESSAGE_TYPE, 1, 1];
 
         let error = Dhcpv4Option::decode_all(&bytes).unwrap_err();
         assert!(matches!(
@@ -4509,8 +4532,8 @@ mod dhcp_options {
     fn dhcp_option_codec_reports_truncated_segments() {
         // Truncated length and truncated data surface as buffer-too-short
         // errors from the raw scanner rather than panicking.
-        let truncated_length = [super::DHCP_OPTION_MESSAGE_TYPE];
-        let truncated_data = [super::DHCP_OPTION_MESSAGE_TYPE, 4, 0x01];
+        let truncated_length = [super::DHCPV4_OPTION_MESSAGE_TYPE];
+        let truncated_data = [super::DHCPV4_OPTION_MESSAGE_TYPE, 4, 0x01];
 
         for bytes in [truncated_length.as_slice(), truncated_data.as_slice()] {
             let error = scan_dhcpv4_option_segments(Dhcpv4OptionArea::Options, bytes).unwrap_err();
@@ -4565,11 +4588,11 @@ mod dhcp_rfc3396 {
     use super::super::{
         scan_dhcpv4_option_segments, Dhcpv4, Dhcpv4MessageType, Dhcpv4Option, Dhcpv4OptionArea,
     };
-    use super::{encode_split_option, split_option_encoded_len, DHCP_MAX_OPTION_DATA_LEN};
+    use super::{encode_split_option, split_option_encoded_len, DHCPV4_MAX_OPTION_DATA_LEN};
     use core::net::Ipv4Addr;
 
     // Codes used by the long-payload style options exercised below.
-    const HOST_NAME: u8 = super::super::DHCP_OPTION_HOST_NAME;
+    const HOST_NAME: u8 = super::super::DHCPV4_OPTION_HOST_NAME;
     const DOMAIN_SEARCH: u8 = 119; // RFC 3397, decoded as opaque/generic here.
     const VENDOR_CLASS: u8 = 60; // Vendor class identifier, generic opaque.
 
@@ -4587,7 +4610,7 @@ mod dhcp_rfc3396 {
         // logical decoder must reassemble them into one option whose value is the
         // concatenation, while the raw segment scanner still exposes both
         // on-the-wire portions for inspection.
-        let part_one = vec![b'a'; DHCP_MAX_OPTION_DATA_LEN]; // 255 bytes
+        let part_one = vec![b'a'; DHCPV4_MAX_OPTION_DATA_LEN]; // 255 bytes
         let part_two = vec![b'b'; 40];
         let mut full = part_one.clone();
         full.extend_from_slice(&part_two);
@@ -4599,7 +4622,7 @@ mod dhcp_rfc3396 {
         wire.push(HOST_NAME);
         wire.push(part_two.len() as u8);
         wire.extend_from_slice(&part_two);
-        wire.push(super::super::DHCP_OPTION_END);
+        wire.push(super::super::DHCPV4_OPTION_END);
 
         // Raw segments: two separate host-name instances remain inspectable.
         let segments = scan_dhcpv4_option_segments(Dhcpv4OptionArea::Options, &wire).unwrap();
@@ -4619,7 +4642,7 @@ mod dhcp_rfc3396 {
         match host_options[0] {
             Dhcpv4Option::HostName(name) => {
                 assert_eq!(name.as_bytes(), full.as_slice());
-                assert_eq!(name.len(), DHCP_MAX_OPTION_DATA_LEN + 40);
+                assert_eq!(name.len(), DHCPV4_MAX_OPTION_DATA_LEN + 40);
             }
             other => panic!("expected concatenated host name, got {other:?}"),
         }
@@ -4642,13 +4665,13 @@ mod dhcp_rfc3396 {
             .collect();
         // 600 bytes -> 255 + 255 + 90 -> three segments.
         assert_eq!(host_segments.len(), 3);
-        assert_eq!(host_segments[0].data.len(), DHCP_MAX_OPTION_DATA_LEN);
-        assert_eq!(host_segments[1].data.len(), DHCP_MAX_OPTION_DATA_LEN);
+        assert_eq!(host_segments[0].data.len(), DHCPV4_MAX_OPTION_DATA_LEN);
+        assert_eq!(host_segments[1].data.len(), DHCPV4_MAX_OPTION_DATA_LEN);
         assert_eq!(host_segments[2].data.len(), 90);
         // Every emitted segment respects the one-byte length limit.
         assert!(host_segments
             .iter()
-            .all(|s| s.declared_len.unwrap() as usize <= DHCP_MAX_OPTION_DATA_LEN));
+            .all(|s| s.declared_len.unwrap() as usize <= DHCPV4_MAX_OPTION_DATA_LEN));
 
         // Decoding the split bytes reassembles the original logical value, and a
         // re-encode reproduces the same wire bytes (the splits are canonical).
@@ -4665,31 +4688,31 @@ mod dhcp_rfc3396 {
     #[test]
     fn dhcp_rfc3396_exact_255_boundary_is_a_single_segment() {
         // A payload of exactly 255 bytes fits one segment; 256 needs two.
-        let exactly_255 = vec![0xABu8; DHCP_MAX_OPTION_DATA_LEN];
+        let exactly_255 = vec![0xABu8; DHCPV4_MAX_OPTION_DATA_LEN];
         let mut out = Vec::new();
         encode_split_option(VENDOR_CLASS, &exactly_255, &mut out);
         // One segment: code + len(255) + 255 data bytes.
-        assert_eq!(out.len(), 2 + DHCP_MAX_OPTION_DATA_LEN);
+        assert_eq!(out.len(), 2 + DHCPV4_MAX_OPTION_DATA_LEN);
         assert_eq!(out[0], VENDOR_CLASS);
         assert_eq!(out[1], 255);
 
-        let just_over = vec![0xCDu8; DHCP_MAX_OPTION_DATA_LEN + 1];
+        let just_over = vec![0xCDu8; DHCPV4_MAX_OPTION_DATA_LEN + 1];
         let mut out = Vec::new();
         encode_split_option(VENDOR_CLASS, &just_over, &mut out);
         // Two segments: 255 + 1.
         let segments = scan_dhcpv4_option_segments(Dhcpv4OptionArea::Options, &out).unwrap();
         assert_eq!(segments.len(), 2);
-        assert_eq!(segments[0].data.len(), DHCP_MAX_OPTION_DATA_LEN);
+        assert_eq!(segments[0].data.len(), DHCPV4_MAX_OPTION_DATA_LEN);
         assert_eq!(segments[1].data.len(), 1);
 
         // Reported encoded length matches the encoder for both boundaries.
         assert_eq!(
-            split_option_encoded_len(DHCP_MAX_OPTION_DATA_LEN),
-            2 + DHCP_MAX_OPTION_DATA_LEN
+            split_option_encoded_len(DHCPV4_MAX_OPTION_DATA_LEN),
+            2 + DHCPV4_MAX_OPTION_DATA_LEN
         );
         assert_eq!(
-            split_option_encoded_len(DHCP_MAX_OPTION_DATA_LEN + 1),
-            2 + DHCP_MAX_OPTION_DATA_LEN + 2 + 1
+            split_option_encoded_len(DHCPV4_MAX_OPTION_DATA_LEN + 1),
+            2 + DHCPV4_MAX_OPTION_DATA_LEN + 2 + 1
         );
         assert_eq!(split_option_encoded_len(0), 2);
     }
@@ -4768,8 +4791,8 @@ mod dhcp_rfc3396 {
 #[cfg(test)]
 mod dhcp_rfc2132_base_options {
     use super::super::{
-        Dhcpv4, Dhcpv4ClientIdentifier, Dhcpv4MessageType, Dhcpv4Option, Dhcpv4OptionCode, Dhcpv4OptionFormat,
-        Dhcpv4OptionKind, Dhcpv4OptionValue, OptionOverload,
+        Dhcpv4, Dhcpv4ClientIdentifier, Dhcpv4MessageType, Dhcpv4Option, Dhcpv4OptionCode,
+        Dhcpv4OptionFormat, Dhcpv4OptionKind, Dhcpv4OptionValue, OptionOverload,
     };
     use super::dhcpv4_typed_option_value;
     use crate::error::CrafterError;
@@ -4851,7 +4874,10 @@ mod dhcp_rfc2132_base_options {
                 Dhcpv4OptionValue::ParameterRequestList(vec![1, 3, 6, 15, 51, 54]),
             ),
             // Message type (option 53) and option overload (option 52).
-            (53, Dhcpv4OptionValue::MessageType(Dhcpv4MessageType::Discover)),
+            (
+                53,
+                Dhcpv4OptionValue::MessageType(Dhcpv4MessageType::Discover),
+            ),
             (52, Dhcpv4OptionValue::OptionOverload(OptionOverload::Both)),
             // Opaque (option 60 vendor class id, option 43 vendor specific) -
             // raw bytes preserved.
@@ -5034,28 +5060,33 @@ mod dhcp_rfc2132_base_options {
         // Codes outside the typed-format set return Ok(None) so callers fall
         // back to raw-byte preservation. Code 100 (RFC 4833 PCode) has no
         // single authoritative typed format here and stays raw.
-        assert!(dhcpv4_typed_option_value(224, &[0xde, 0xad]).unwrap().is_none());
-        assert!(dhcpv4_typed_option_value(100, &[0x01, 0x00]).unwrap().is_none());
+        assert!(dhcpv4_typed_option_value(224, &[0xde, 0xad])
+            .unwrap()
+            .is_none());
+        assert!(dhcpv4_typed_option_value(100, &[0x01, 0x00])
+            .unwrap()
+            .is_none());
     }
 }
 
 #[cfg(test)]
 mod dhcp_route_domain_service {
     use super::super::{
-        Dhcpv4, Dhcpv4ClasslessRoute, Dhcpv4MessageType, Dhcpv4Option, Dhcpv4OptionKind, Dhcpv4OptionValue,
-        Dhcpv4StaticRoute, SipServers,
+        Dhcpv4, Dhcpv4ClasslessRoute, Dhcpv4MessageType, Dhcpv4Option, Dhcpv4OptionKind,
+        Dhcpv4OptionValue, Dhcpv4StaticRoute, SipServers,
     };
     use super::{
         decode_classless_routes, decode_domain_name_list, decode_static_routes,
-        encode_classless_routes, encode_domain_name_list, encode_static_routes, dhcpv4_typed_option_value,
+        dhcpv4_typed_option_value, encode_classless_routes, encode_domain_name_list,
+        encode_static_routes,
     };
     use crate::error::CrafterError;
     use core::net::Ipv4Addr;
 
-    const STATIC_ROUTE: u8 = super::super::DHCP_OPTION_STATIC_ROUTE; // 33
-    const DOMAIN_SEARCH: u8 = super::super::DHCP_OPTION_DOMAIN_SEARCH; // 119
-    const SIP_SERVERS: u8 = super::super::DHCP_OPTION_SIP_SERVERS; // 120
-    const CLASSLESS_ROUTE: u8 = super::super::DHCP_OPTION_CLASSLESS_STATIC_ROUTE; // 121
+    const STATIC_ROUTE: u8 = super::super::DHCPV4_OPTION_STATIC_ROUTE; // 33
+    const DOMAIN_SEARCH: u8 = super::super::DHCPV4_OPTION_DOMAIN_SEARCH; // 119
+    const SIP_SERVERS: u8 = super::super::DHCPV4_OPTION_SIP_SERVERS; // 120
+    const CLASSLESS_ROUTE: u8 = super::super::DHCPV4_OPTION_CLASSLESS_STATIC_ROUTE; // 121
 
     fn ip(a: u8, b: u8, c: u8, d: u8) -> Ipv4Addr {
         Ipv4Addr::new(a, b, c, d)
@@ -5144,7 +5175,9 @@ mod dhcp_route_domain_service {
         let payload = value.encode_payload();
         assert_eq!(payload.len(), routes.len() * 8);
 
-        let decoded = dhcpv4_typed_option_value(STATIC_ROUTE, &payload).unwrap().unwrap();
+        let decoded = dhcpv4_typed_option_value(STATIC_ROUTE, &payload)
+            .unwrap()
+            .unwrap();
         assert_eq!(decoded, value);
 
         let option = Dhcpv4Option::typed(Dhcpv4OptionKind::StaticRoute, value);
@@ -5329,29 +5362,30 @@ mod dhcp_route_domain_service {
 #[cfg(test)]
 mod dhcp_vendor_user_pxe {
     use super::super::{
-        decode_dhcpv4_tftp_server_addresses, ClientNetworkDeviceInterface, ClientSystemArchitecture, Dhcpv4,
-        Dhcpv4ClientUuid, Dhcpv4MessageType, Dhcpv4Option, Dhcpv4UserClass, Dhcpv4VendorClassData,
-        Dhcpv4VendorIdentifyingOption, Dhcpv4VendorSuboption,
+        decode_dhcpv4_tftp_server_addresses, ClientNetworkDeviceInterface,
+        ClientSystemArchitecture, Dhcpv4, Dhcpv4ClientUuid, Dhcpv4MessageType, Dhcpv4Option,
+        Dhcpv4UserClass, Dhcpv4VendorClassData, Dhcpv4VendorIdentifyingOption,
+        Dhcpv4VendorSuboption,
     };
     use super::{
         decode_client_ndi, decode_client_system_architecture, decode_client_uuid,
-        decode_user_class, decode_vi_vendor_class, decode_vi_vendor_specific, dhcpv4_typed_option_value,
-        Dhcpv4OptionValue,
+        decode_user_class, decode_vi_vendor_class, decode_vi_vendor_specific,
+        dhcpv4_typed_option_value, Dhcpv4OptionValue,
     };
     use crate::error::CrafterError;
     use core::net::Ipv4Addr;
 
-    const VENDOR_SPECIFIC: u8 = super::super::DHCP_OPTION_VENDOR_SPECIFIC; // 43
-    const VENDOR_CLASS_ID: u8 = super::super::DHCP_OPTION_VENDOR_CLASS_IDENTIFIER; // 60
-    const TFTP_SERVER_NAME: u8 = super::super::DHCP_OPTION_TFTP_SERVER_NAME; // 66
-    const BOOTFILE_NAME: u8 = super::super::DHCP_OPTION_BOOTFILE_NAME; // 67
-    const USER_CLASS: u8 = super::super::DHCP_OPTION_USER_CLASS; // 77
-    const CLIENT_ARCH: u8 = super::super::DHCP_OPTION_CLIENT_SYSTEM_ARCHITECTURE; // 93
-    const CLIENT_NDI: u8 = super::super::DHCP_OPTION_CLIENT_NDI; // 94
-    const CLIENT_UUID: u8 = super::super::DHCP_OPTION_CLIENT_MACHINE_IDENTIFIER; // 97
-    const VI_VENDOR_CLASS: u8 = super::super::DHCP_OPTION_VI_VENDOR_CLASS; // 124
-    const VI_VENDOR_SPECIFIC: u8 = super::super::DHCP_OPTION_VI_VENDOR_SPECIFIC; // 125
-    const TFTP_SERVER_ADDRESS: u8 = super::super::DHCP_OPTION_TFTP_SERVER_ADDRESS; // 150
+    const VENDOR_SPECIFIC: u8 = super::super::DHCPV4_OPTION_VENDOR_SPECIFIC; // 43
+    const VENDOR_CLASS_ID: u8 = super::super::DHCPV4_OPTION_VENDOR_CLASS_IDENTIFIER; // 60
+    const TFTP_SERVER_NAME: u8 = super::super::DHCPV4_OPTION_TFTP_SERVER_NAME; // 66
+    const BOOTFILE_NAME: u8 = super::super::DHCPV4_OPTION_BOOTFILE_NAME; // 67
+    const USER_CLASS: u8 = super::super::DHCPV4_OPTION_USER_CLASS; // 77
+    const CLIENT_ARCH: u8 = super::super::DHCPV4_OPTION_CLIENT_SYSTEM_ARCHITECTURE; // 93
+    const CLIENT_NDI: u8 = super::super::DHCPV4_OPTION_CLIENT_NDI; // 94
+    const CLIENT_UUID: u8 = super::super::DHCPV4_OPTION_CLIENT_MACHINE_IDENTIFIER; // 97
+    const VI_VENDOR_CLASS: u8 = super::super::DHCPV4_OPTION_VI_VENDOR_CLASS; // 124
+    const VI_VENDOR_SPECIFIC: u8 = super::super::DHCPV4_OPTION_VI_VENDOR_SPECIFIC; // 125
+    const TFTP_SERVER_ADDRESS: u8 = super::super::DHCPV4_OPTION_TFTP_SERVER_ADDRESS; // 150
 
     fn ip(a: u8, b: u8, c: u8, d: u8) -> Ipv4Addr {
         Ipv4Addr::new(a, b, c, d)
@@ -5505,7 +5539,9 @@ mod dhcp_vendor_user_pxe {
         let payload = arch_value.encode_payload();
         assert_eq!(payload, vec![0, 0, 0, 7, 0, 9]);
         assert_eq!(
-            dhcpv4_typed_option_value(CLIENT_ARCH, &payload).unwrap().unwrap(),
+            dhcpv4_typed_option_value(CLIENT_ARCH, &payload)
+                .unwrap()
+                .unwrap(),
             arch_value,
         );
         assert_eq!(decode_client_system_architecture(&payload).unwrap(), arch);
@@ -5521,7 +5557,9 @@ mod dhcp_vendor_user_pxe {
         let payload = ndi_value.encode_payload();
         assert_eq!(payload, vec![1, 2, 1]);
         assert_eq!(
-            dhcpv4_typed_option_value(CLIENT_NDI, &payload).unwrap().unwrap(),
+            dhcpv4_typed_option_value(CLIENT_NDI, &payload)
+                .unwrap()
+                .unwrap(),
             ndi_value,
         );
         assert_eq!(decode_client_ndi(&payload).unwrap(), ndi);
@@ -5541,7 +5579,9 @@ mod dhcp_vendor_user_pxe {
         assert_eq!(payload[0], 0);
         assert_eq!(&payload[1..], guid.as_slice());
         assert_eq!(
-            dhcpv4_typed_option_value(CLIENT_UUID, &payload).unwrap().unwrap(),
+            dhcpv4_typed_option_value(CLIENT_UUID, &payload)
+                .unwrap()
+                .unwrap(),
             uuid_value,
         );
         assert_eq!(decode_client_uuid(&payload).unwrap(), uuid);
@@ -5599,7 +5639,9 @@ mod dhcp_vendor_user_pxe {
         expected.extend_from_slice(b"linux-install");
         assert_eq!(payload, expected);
         assert_eq!(
-            dhcpv4_typed_option_value(USER_CLASS, &payload).unwrap().unwrap(),
+            dhcpv4_typed_option_value(USER_CLASS, &payload)
+                .unwrap()
+                .unwrap(),
             value,
         );
         assert_eq!(decode_user_class(&payload).unwrap(), user_class);
@@ -5650,9 +5692,11 @@ mod dhcp_vendor_user_pxe {
         ]);
         assert_eq!(parsed.tftp_server_addresses().unwrap().unwrap(), addresses);
         // The same option stays opaque to the default typed decoder.
-        assert!(dhcpv4_typed_option_value(TFTP_SERVER_ADDRESS, &[192, 0, 2, 10])
-            .unwrap()
-            .is_none());
+        assert!(
+            dhcpv4_typed_option_value(TFTP_SERVER_ADDRESS, &[192, 0, 2, 10])
+                .unwrap()
+                .is_none()
+        );
         recompile_is_stable(&parsed);
 
         // A length not a multiple of four is a structured error, never a panic.
@@ -5684,7 +5728,7 @@ mod dhcp_relay_agent {
     use crate::error::CrafterError;
     use core::net::Ipv4Addr;
 
-    const RELAY_AGENT_INFORMATION: u8 = super::super::DHCP_OPTION_RELAY_AGENT_INFORMATION; // 82
+    const RELAY_AGENT_INFORMATION: u8 = super::super::DHCPV4_OPTION_RELAY_AGENT_INFORMATION; // 82
 
     fn ip(a: u8, b: u8, c: u8, d: u8) -> Ipv4Addr {
         Ipv4Addr::new(a, b, c, d)
@@ -5744,7 +5788,7 @@ mod dhcp_relay_agent {
                 Dhcpv4RelayVendorSpecific::new(311, b"v".to_vec()),
             ]),
             // Sub-option 10 (RFC 5010): one-octet flags (Unicast bit set).
-            Dhcpv4RelaySuboption::RelayFlags(super::super::DHCP_RELAY_FLAG_UNICAST),
+            Dhcpv4RelaySuboption::RelayFlags(super::super::DHCPV4_RELAY_FLAG_UNICAST),
             // Sub-option 11 (RFC 5107): 4-octet server-id override address.
             Dhcpv4RelaySuboption::ServerIdOverride(ip(192, 0, 2, 1)),
             // Sub-option 12 (RFC 6925): opaque relay agent identifier.
@@ -5911,11 +5955,13 @@ mod dhcp_relay_agent {
 
 #[cfg(test)]
 mod dhcp_client_identifier {
-    use super::super::{Dhcpv4, Dhcpv4ClientIdentifier, Dhcpv4MessageType, Dhcpv4Option, Dhcpv4OptionValue};
+    use super::super::{
+        Dhcpv4, Dhcpv4ClientIdentifier, Dhcpv4MessageType, Dhcpv4Option, Dhcpv4OptionValue,
+    };
     use super::{decode_client_identifier, dhcpv4_typed_option_value};
     use crate::error::CrafterError;
 
-    const CLIENT_IDENTIFIER: u8 = super::super::DHCP_OPTION_CLIENT_IDENTIFIER; // 61
+    const CLIENT_IDENTIFIER: u8 = super::super::DHCPV4_OPTION_CLIENT_IDENTIFIER; // 61
 
     fn build_and_decode(option: Dhcpv4Option) -> Dhcpv4 {
         let dhcp = Dhcpv4::new()
@@ -6094,14 +6140,15 @@ mod dhcp_client_identifier {
 #[cfg(test)]
 mod dhcp_authentication {
     use super::super::{
-        Dhcpv4, Dhcpv4AuthAlgorithm, Dhcpv4AuthProtocol, Dhcpv4Authentication, Dhcpv4ForcerenewNonceCapable,
-        Dhcpv4MessageType, Dhcpv4Option, Dhcpv4OptionValue, Dhcpv4ReplayDetectionMethod,
+        Dhcpv4, Dhcpv4AuthAlgorithm, Dhcpv4AuthProtocol, Dhcpv4Authentication,
+        Dhcpv4ForcerenewNonceCapable, Dhcpv4MessageType, Dhcpv4Option, Dhcpv4OptionValue,
+        Dhcpv4ReplayDetectionMethod,
     };
     use super::{decode_authentication, dhcpv4_typed_option_value};
     use crate::error::CrafterError;
 
-    const AUTHENTICATION: u8 = super::super::DHCP_OPTION_AUTHENTICATION; // 90
-    const FORCERENEW_NONCE_CAPABLE: u8 = super::super::DHCP_OPTION_FORCERENEW_NONCE_CAPABLE; // 145
+    const AUTHENTICATION: u8 = super::super::DHCPV4_OPTION_AUTHENTICATION; // 90
+    const FORCERENEW_NONCE_CAPABLE: u8 = super::super::DHCPV4_OPTION_FORCERENEW_NONCE_CAPABLE; // 145
 
     fn build_and_decode(options: Vec<Dhcpv4Option>) -> Dhcpv4 {
         let dhcp = Dhcpv4::new()
@@ -6220,7 +6267,7 @@ mod dhcp_authentication {
         // (Protocol, Algorithm, RDM, and the 8-octet Replay Detection field). A
         // payload shorter than that is a structured BufferTooShort error, never
         // a panic, on both the decode helper and the typed dispatch.
-        for len in 0..super::super::DHCP_AUTH_HEADER_LEN {
+        for len in 0..super::super::DHCPV4_AUTH_HEADER_LEN {
             let short = vec![0u8; len];
             assert!(
                 matches!(
@@ -6288,15 +6335,16 @@ mod dhcp_leasequery {
     use crate::error::CrafterError;
     use core::net::Ipv4Addr;
 
-    const CLIENT_LAST_TRANSACTION_TIME: u8 = super::super::DHCP_OPTION_CLIENT_LAST_TRANSACTION_TIME; // 91
-    const ASSOCIATED_IP: u8 = super::super::DHCP_OPTION_ASSOCIATED_IP; // 92
-    const STATUS_CODE: u8 = super::super::DHCP_OPTION_STATUS_CODE; // 151
-    const BASE_TIME: u8 = super::super::DHCP_OPTION_BASE_TIME; // 152
-    const START_TIME_OF_STATE: u8 = super::super::DHCP_OPTION_START_TIME_OF_STATE; // 153
-    const QUERY_START_TIME: u8 = super::super::DHCP_OPTION_QUERY_START_TIME; // 154
-    const QUERY_END_TIME: u8 = super::super::DHCP_OPTION_QUERY_END_TIME; // 155
-    const DHCP_STATE: u8 = super::super::DHCP_OPTION_DHCP_STATE; // 156
-    const DATA_SOURCE: u8 = super::super::DHCP_OPTION_DATA_SOURCE; // 157
+    const CLIENT_LAST_TRANSACTION_TIME: u8 =
+        super::super::DHCPV4_OPTION_CLIENT_LAST_TRANSACTION_TIME; // 91
+    const ASSOCIATED_IP: u8 = super::super::DHCPV4_OPTION_ASSOCIATED_IP; // 92
+    const STATUS_CODE: u8 = super::super::DHCPV4_OPTION_STATUS_CODE; // 151
+    const BASE_TIME: u8 = super::super::DHCPV4_OPTION_BASE_TIME; // 152
+    const START_TIME_OF_STATE: u8 = super::super::DHCPV4_OPTION_START_TIME_OF_STATE; // 153
+    const QUERY_START_TIME: u8 = super::super::DHCPV4_OPTION_QUERY_START_TIME; // 154
+    const QUERY_END_TIME: u8 = super::super::DHCPV4_OPTION_QUERY_END_TIME; // 155
+    const DHCPV4_STATE: u8 = super::super::DHCPV4_OPTION_DHCP_STATE; // 156
+    const DATA_SOURCE: u8 = super::super::DHCPV4_OPTION_DATA_SOURCE; // 157
 
     fn ip(a: u8, b: u8, c: u8, d: u8) -> Ipv4Addr {
         Ipv4Addr::new(a, b, c, d)
@@ -6378,7 +6426,7 @@ mod dhcp_leasequery {
                 1_700_000_500u32.to_be_bytes().to_vec(),
             ),
             (
-                DHCP_STATE,
+                DHCPV4_STATE,
                 Dhcpv4OptionValue::Dhcpv4State(Dhcpv4State::Active),
                 vec![2],
             ),
@@ -6441,7 +6489,7 @@ mod dhcp_leasequery {
         assert_eq!(START_TIME_OF_STATE, 153);
         assert_eq!(QUERY_START_TIME, 154);
         assert_eq!(QUERY_END_TIME, 155);
-        assert_eq!(DHCP_STATE, 156);
+        assert_eq!(DHCPV4_STATE, 156);
         assert_eq!(DATA_SOURCE, 157);
     }
 
@@ -6450,7 +6498,10 @@ mod dhcp_leasequery {
         // RFC 6926 / RFC 7724 leave most status and state values unassigned; the
         // IANA sub-registries mark 9-255 Unassigned. Unknown values are preserved
         // verbatim through the Unknown variants rather than coerced.
-        assert_eq!(Dhcpv4StatusCode::from_code(200), Dhcpv4StatusCode::Unknown(200));
+        assert_eq!(
+            Dhcpv4StatusCode::from_code(200),
+            Dhcpv4StatusCode::Unknown(200)
+        );
         assert_eq!(Dhcpv4StatusCode::Unknown(200).code(), 200);
         assert_eq!(Dhcpv4State::from_code(99), Dhcpv4State::Unknown(99));
         assert_eq!(Dhcpv4State::Unknown(99).code(), 99);
@@ -6462,7 +6513,9 @@ mod dhcp_leasequery {
         let payload = Dhcpv4OptionValue::StatusCode(status.clone()).encode_payload();
         assert_eq!(payload, vec![0x40, 0xff, 0xfe, 0x00]);
         assert_eq!(
-            dhcpv4_typed_option_value(STATUS_CODE, &payload).unwrap().unwrap(),
+            dhcpv4_typed_option_value(STATUS_CODE, &payload)
+                .unwrap()
+                .unwrap(),
             Dhcpv4OptionValue::StatusCode(status.clone()),
         );
         let parsed = build_and_decode(vec![
@@ -6494,7 +6547,9 @@ mod dhcp_leasequery {
         let source_remote = Dhcpv4DataSource::new(0xFF);
         assert!(source_remote.is_remote());
         assert_eq!(
-            dhcpv4_typed_option_value(DATA_SOURCE, &[0xFE]).unwrap().unwrap(),
+            dhcpv4_typed_option_value(DATA_SOURCE, &[0xFE])
+                .unwrap()
+                .unwrap(),
             Dhcpv4OptionValue::DataSource(Dhcpv4DataSource::new(0xFE)),
         );
     }
@@ -6521,7 +6576,7 @@ mod dhcp_leasequery {
                 );
             }
         }
-        for code in [DHCP_STATE, DATA_SOURCE] {
+        for code in [DHCPV4_STATE, DATA_SOURCE] {
             for len in [0usize, 2, 3] {
                 assert!(
                     dhcpv4_typed_option_value(code, &vec![0u8; len]).is_err(),
@@ -6539,7 +6594,9 @@ mod dhcp_leasequery {
             Err(CrafterError::BufferTooShort { .. }),
         ));
         // status-code: a bare status octet with no message is valid (empty msg).
-        let bare = dhcpv4_typed_option_value(STATUS_CODE, &[3]).unwrap().unwrap();
+        let bare = dhcpv4_typed_option_value(STATUS_CODE, &[3])
+            .unwrap()
+            .unwrap();
         assert_eq!(
             bare,
             Dhcpv4OptionValue::StatusCode(Dhcpv4StatusCodeOption::new(
@@ -6552,25 +6609,25 @@ mod dhcp_leasequery {
 
 #[cfg(test)]
 mod dhcp_remaining_registry {
+    use super::super::DHCPV4_IPV6_ONLY_PREFERRED_LEN;
     use super::super::{
-        Dhcpv4, Dhcpv4MessageType, Dhcpv4Option, Dhcpv4OptionCode, Dhcpv4OptionKind, Dhcpv4OptionStatus,
-        Dhcpv4OptionValue,
+        Dhcpv4, Dhcpv4MessageType, Dhcpv4Option, Dhcpv4OptionCode, Dhcpv4OptionKind,
+        Dhcpv4OptionStatus, Dhcpv4OptionValue,
     };
     use super::dhcpv4_typed_option_value;
-    use super::super::DHCP_IPV6_ONLY_PREFERRED_LEN;
 
     // Modern registered options with a clear, safely supported wire format.
-    const IPV6_ONLY_PREFERRED: u8 = super::super::DHCP_OPTION_IPV6_ONLY_PREFERRED; // 108
-    const CAPTIVE_PORTAL: u8 = super::super::DHCP_OPTION_CAPTIVE_PORTAL; // 114
-    const MUD_URL: u8 = super::super::DHCP_OPTION_MUD_URL_V4; // 161
+    const IPV6_ONLY_PREFERRED: u8 = super::super::DHCPV4_OPTION_IPV6_ONLY_PREFERRED; // 108
+    const CAPTIVE_PORTAL: u8 = super::super::DHCPV4_OPTION_CAPTIVE_PORTAL; // 114
+    const MUD_URL: u8 = super::super::DHCPV4_OPTION_MUD_URL_V4; // 161
 
     // Modern registered options whose formats are nested/complex and are
     // intentionally preserved as raw bytes for now (PcpServer is a list of
     // length-prefixed address lists, Dnr and SixRd are nested TLV/prefix
     // structures). Their codepoints are still known to the library.
-    const PCP_SERVER: u8 = super::super::DHCP_OPTION_V4_PCP_SERVER; // 158 (PcpServer)
-    const DNR: u8 = super::super::DHCP_OPTION_V4_DNR; // 162 (Dnr)
-    const SIX_RD: u8 = super::super::DHCP_OPTION_6RD; // 212 (SixRd)
+    const PCP_SERVER: u8 = super::super::DHCPV4_OPTION_V4_PCP_SERVER; // 158 (PcpServer)
+    const DNR: u8 = super::super::DHCPV4_OPTION_V4_DNR; // 162 (Dnr)
+    const SIX_RD: u8 = super::super::DHCPV4_OPTION_6RD; // 212 (SixRd)
 
     fn build_and_decode(options: Vec<Dhcpv4Option>) -> Dhcpv4 {
         let dhcp = Dhcpv4::new()
@@ -6602,7 +6659,7 @@ mod dhcp_remaining_registry {
         // value decodes to U32 and re-encodes to the exact wire bytes.
         let wait = 1800u32;
         let payload = wait.to_be_bytes().to_vec();
-        assert_eq!(payload.len(), DHCP_IPV6_ONLY_PREFERRED_LEN);
+        assert_eq!(payload.len(), DHCPV4_IPV6_ONLY_PREFERRED_LEN);
         let value = dhcpv4_typed_option_value(IPV6_ONLY_PREFERRED, &payload)
             .unwrap()
             .expect("option 108 has a typed value");

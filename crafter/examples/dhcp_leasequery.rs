@@ -64,7 +64,9 @@ fn inspect(label: &str, src: Ipv4Addr, dst: Ipv4Addr, dhcp: Dhcpv4) -> ExampleRe
         .src(src)
         .dst(dst)
         .ipv4_protocol(Ipv4Protocol::Udp)
-        / Udp::new().sport(DHCP_SERVER_PORT).dport(DHCP_SERVER_PORT)
+        / Udp::new()
+            .sport(DHCPV4_SERVER_PORT)
+            .dport(DHCPV4_SERVER_PORT)
         / dhcp;
     let bytes = packet.compile()?;
     let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes())?;

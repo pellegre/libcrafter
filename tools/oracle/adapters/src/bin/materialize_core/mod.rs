@@ -5152,14 +5152,16 @@ fn dhcp_option_pair(name: &str, value: &str) -> ExampleResult<Dhcpv4Option> {
         "message_type" => Ok(Dhcpv4Option::message_type(dhcpv4_message_type(value))),
         "hostname" | "host_name" => Ok(Dhcpv4Option::host_name(value)),
         "domain_name" => Ok(Dhcpv4Option::domain_name(value)),
-        "requested_ip" | "requested_ip_address" => {
-            Ok(Dhcpv4Option::requested_ip_address(Ipv4Addr::from_str(value)?))
-        }
+        "requested_ip" | "requested_ip_address" => Ok(Dhcpv4Option::requested_ip_address(
+            Ipv4Addr::from_str(value)?,
+        )),
         "server_id" | "server_identifier" => {
             Ok(Dhcpv4Option::server_identifier(Ipv4Addr::from_str(value)?))
         }
         "router" => Ok(Dhcpv4Option::router(parse_ipv4_list(value)?)),
-        "dns" | "domain_name_server" => Ok(Dhcpv4Option::domain_name_server(parse_ipv4_list(value)?)),
+        "dns" | "domain_name_server" => {
+            Ok(Dhcpv4Option::domain_name_server(parse_ipv4_list(value)?))
+        }
         "lease_time" => Ok(Dhcpv4Option::lease_time(value.parse::<u32>()?)),
         _ => Ok(Dhcpv4Option::generic(254, value.as_bytes().to_vec())),
     }
@@ -5974,7 +5976,9 @@ mod dhcp_oracle_fixtures {
                 .src(Ipv4Addr::new(192, 0, 2, 1))
                 .dst(Ipv4Addr::new(192, 0, 2, 2))
                 .ipv4_protocol(Ipv4Protocol::Udp)
-            / Udp::new().sport(DHCP_SERVER_PORT).dport(DHCP_CLIENT_PORT)
+            / Udp::new()
+                .sport(DHCPV4_SERVER_PORT)
+                .dport(DHCPV4_CLIENT_PORT)
             / dhcp;
         packet
             .compile()
@@ -6285,7 +6289,7 @@ mod ipv4_dhcp_materialization {
             .expect("re-decoded packet must expose a DHCP layer");
         // Defaults: BOOTP request op and Ethernet hardware type/len.
         assert_eq!(dhcp.op_value(), BOOTP_REQUEST);
-        assert_eq!(dhcp.hardware_type_value(), DHCP_HTYPE_ETHERNET);
+        assert_eq!(dhcp.hardware_type_value(), DHCPV4_HTYPE_ETHERNET);
         assert_eq!(dhcp.hardware_len_value(), 6);
     }
 }
