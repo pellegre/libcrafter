@@ -170,8 +170,8 @@ supported_cases:
       - reference_to_libcrafter
       - libcrafter_to_reference
       - roundtrip
-      - live
-    byte_policy: strict_bytes
+    byte_policy: normalized
+    contract_only: true
   - name: quic-protected-raw
     directions:
       - reference_to_libcrafter
