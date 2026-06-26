@@ -29,8 +29,8 @@ pub use frame::QuicFrame;
 pub use header::QuicHeader;
 pub use packet::{
     Quic, QuicHandshakeBuilder, QuicInitialBuilder, QuicLongHeaderPacket, QuicPacket,
-    QuicRetryBuilder, QuicRetryPacket, QuicVersionNegotiationBuilder, QuicVersionNegotiationPacket,
-    QuicZeroRttBuilder, QUIC_RETRY_INTEGRITY_TAG_LEN,
+    QuicRetryBuilder, QuicRetryPacket, QuicShortHeaderPacket, QuicVersionNegotiationBuilder,
+    QuicVersionNegotiationPacket, QuicZeroRttBuilder, QUIC_RETRY_INTEGRITY_TAG_LEN,
 };
 pub use packet_number::QuicPacketNumber;
 pub use transport_parameter::QuicTransportParameter;
