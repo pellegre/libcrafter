@@ -37,9 +37,13 @@
 //! signs, or verifies authentication, and never runs a leasequery state
 //! machine.
 
+#[path = "v4/constants.rs"]
 mod constants;
+#[path = "v4/message.rs"]
 mod message;
+#[path = "v4/option.rs"]
 mod option;
+#[path = "v4/registry.rs"]
 mod registry;
 pub mod v4;
 pub mod v6;
