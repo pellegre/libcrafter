@@ -192,6 +192,18 @@ fn exports_quic_symbols() -> crafter::Result<()> {
         QuicFrame::from_handshake_done_frame(QuicHandshakeDoneFrame::new())?.frame_type_value(),
         Some(0x1e)
     );
+    let datagram = QuicDatagramFrame::new([0xde, 0xad]);
+    assert_eq!(
+        QuicFrame::from_datagram_frame(datagram)?.frame_type_value(),
+        Some(0x31)
+    );
+    assert_eq!(
+        QuicFrame::datagram_without_length([0xde, 0xad])?
+            .datagram_frame()?
+            .unwrap()
+            .data(),
+        &[0xde, 0xad]
+    );
     let unknown = QuicUnknownFrame::new(QuicVarInt::from_u64_unchecked(0xaf), [0xde, 0xad]);
     let unknown_frame = QuicFrame::from_unknown_frame(unknown)?;
     assert_eq!(unknown_frame.kind(), QuicFrameKind::Unknown);

@@ -2112,6 +2112,148 @@ impl QuicHandshakeDoneFrame {
     }
 }
 
+/// Parsed or buildable DATAGRAM frame fields.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuicDatagramFrame {
+    include_length: bool,
+    length: Option<QuicVarInt>,
+    data: Vec<u8>,
+}
+
+impl QuicDatagramFrame {
+    /// Construct a DATAGRAM_LEN frame with an auto-filled Length field.
+    pub fn new(data: impl AsRef<[u8]>) -> Self {
+        Self {
+            include_length: true,
+            length: None,
+            data: data.as_ref().to_vec(),
+        }
+    }
+
+    /// Preserve an explicit Length field and use frame type `0x31`.
+    pub fn with_length(mut self, length: QuicVarInt) -> Self {
+        self.include_length = true;
+        self.length = Some(length);
+        self
+    }
+
+    /// Omit the Length field so data extends to the containing packet end.
+    pub fn without_length(mut self) -> Self {
+        self.include_length = false;
+        self.length = None;
+        self
+    }
+
+    /// Return true when the Length field is present.
+    pub const fn has_length(&self) -> bool {
+        self.include_length
+    }
+
+    /// Return the DATAGRAM frame type value.
+    pub const fn frame_type_value(&self) -> u64 {
+        if self.include_length {
+            0x31
+        } else {
+            0x30
+        }
+    }
+
+    /// Return the advertised Length field when present.
+    pub fn length(&self) -> Result<Option<QuicVarInt>> {
+        if !self.include_length {
+            return Ok(None);
+        }
+        match self.length {
+            Some(length) => Ok(Some(length)),
+            None => Ok(Some(QuicVarInt::new(
+                u64::try_from(self.data.len()).map_err(|_| {
+                    CrafterError::invalid_field_value(
+                        "quic.frame.datagram.length",
+                        "data length exceeds u64",
+                    )
+                })?,
+            )?)),
+        }
+    }
+
+    /// Return a caller-pinned Length field when present.
+    pub const fn length_override(&self) -> Option<QuicVarInt> {
+        self.length
+    }
+
+    /// Borrow the opaque DATAGRAM payload bytes.
+    pub fn data(&self) -> &[u8] {
+        &self.data
+    }
+
+    /// Decode one DATAGRAM frame from bytes that include the Frame Type.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let bytes = bytes.as_ref();
+        let (frame, consumed) = decode_datagram_frame(bytes)?;
+        if consumed != bytes.len() {
+            return Err(CrafterError::invalid_field_value(
+                "quic.frame.datagram",
+                "DATAGRAM frame has trailing bytes",
+            ));
+        }
+        Ok(frame)
+    }
+
+    /// Append the DATAGRAM frame encoding, preserving explicit Length.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        QuicVarInt::from_u64_unchecked(self.frame_type_value()).encode(out)?;
+        if let Some(length) = self.length()? {
+            length.encode(out)?;
+        }
+        out.extend_from_slice(&self.data);
+        Ok(())
+    }
+
+    /// Return the DATAGRAM frame encoding.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Stable DATAGRAM summary for packet inspection.
+    pub fn summary(&self) -> String {
+        let kind = if self.include_length {
+            "DATAGRAM_LEN"
+        } else {
+            "DATAGRAM"
+        };
+        let length = self
+            .length()
+            .ok()
+            .flatten()
+            .map(|length| length.value().to_string())
+            .unwrap_or_else(|| "<none>".to_string());
+        format!(
+            "kind={kind} has_length={} length={length} data_len={}",
+            self.include_length,
+            self.data.len()
+        )
+    }
+
+    /// Stable field/value pairs for DATAGRAM inspection.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("datagram_has_length", self.include_length.to_string()),
+            (
+                "datagram_length",
+                self.length()
+                    .ok()
+                    .flatten()
+                    .map(|length| length.value().to_string())
+                    .unwrap_or_else(|| "<none>".to_string()),
+            ),
+            ("datagram_data_len", self.data.len().to_string()),
+            ("datagram_data", hex_bytes(&self.data)),
+        ]
+    }
+}
+
 /// Raw bytes for a caller-bounded unknown QUIC frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QuicUnknownFrame {
@@ -2522,6 +2664,21 @@ impl QuicFrame {
         Self::from_handshake_done_frame(QuicHandshakeDoneFrame::new())
     }
 
+    /// Construct a DATAGRAM frame from typed fields.
+    pub fn from_datagram_frame(datagram: QuicDatagramFrame) -> Result<Self> {
+        Ok(Self::from_bytes(datagram.encode_to_vec()?))
+    }
+
+    /// Construct a DATAGRAM_LEN frame with an auto-filled Length field.
+    pub fn datagram(data: impl AsRef<[u8]>) -> Result<Self> {
+        Self::from_datagram_frame(QuicDatagramFrame::new(data))
+    }
+
+    /// Construct a DATAGRAM frame without a Length field.
+    pub fn datagram_without_length(data: impl AsRef<[u8]>) -> Result<Self> {
+        Self::from_datagram_frame(QuicDatagramFrame::new(data).without_length())
+    }
+
     /// Decode a frame sequence within the caller-provided packet boundary.
     ///
     /// Supported fixed-boundary frames are split out first. The remaining
@@ -2657,6 +2814,12 @@ impl QuicFrame {
                 0x1e => {
                     let (_, handshake_done_len) = decode_handshake_done_frame(&bytes[offset..])?;
                     let end = offset + handshake_done_len;
+                    frames.push(Self::from_bytes(&bytes[offset..end]));
+                    offset = end;
+                }
+                0x30 | 0x31 => {
+                    let (_, datagram_len) = decode_datagram_frame(&bytes[offset..])?;
+                    let end = offset + datagram_len;
                     frames.push(Self::from_bytes(&bytes[offset..end]));
                     offset = end;
                 }
@@ -2851,6 +3014,14 @@ impl QuicFrame {
         }
     }
 
+    /// Decode this frame as DATAGRAM when applicable.
+    pub fn datagram_frame(&self) -> Result<Option<QuicDatagramFrame>> {
+        match self.frame_type_value() {
+            Some(0x30 | 0x31) => Ok(Some(QuicDatagramFrame::decode(&self.bytes)?)),
+            _ => Ok(None),
+        }
+    }
+
     /// Borrow the preserved frame bytes.
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes
@@ -2967,6 +3138,9 @@ impl QuicFrame {
         if let Ok(Some(handshake_done)) = self.handshake_done_frame() {
             return handshake_done.summary().to_string();
         }
+        if let Ok(Some(datagram)) = self.datagram_frame() {
+            return datagram.summary();
+        }
         match self.frame_type() {
             Some(frame_type) => format!(
                 "kind={} type=0x{:x} raw_len={}",
@@ -3057,6 +3231,9 @@ impl QuicFrame {
         }
         if let Ok(Some(handshake_done)) = self.handshake_done_frame() {
             fields.extend(handshake_done.inspection_fields());
+        }
+        if let Ok(Some(datagram)) = self.datagram_frame() {
+            fields.extend(datagram.inspection_fields());
         }
         if let Ok(Some(unknown)) = self.unknown_frame() {
             fields.extend(unknown.inspection_fields());
@@ -3632,6 +3809,45 @@ fn decode_handshake_done_frame(bytes: &[u8]) -> Result<(QuicHandshakeDoneFrame, 
     }
 }
 
+fn decode_datagram_frame(bytes: &[u8]) -> Result<(QuicDatagramFrame, usize)> {
+    let (frame_type, mut offset) = decode_frame_varint(bytes, 0, "quic.frame.type")?;
+    let frame_type_value = frame_type.value();
+    if !matches!(frame_type_value, 0x30 | 0x31) {
+        return Err(CrafterError::invalid_field_value(
+            "quic.frame.datagram.type",
+            "DATAGRAM frame type must be 0x30 or 0x31",
+        ));
+    }
+
+    let (length, data_len) = if frame_type_value & 0x01 != 0 {
+        let (length, next) = decode_frame_varint(bytes, offset, "quic.frame.datagram.length")?;
+        offset = next;
+        let data_len = usize::try_from(length.value()).map_err(|_| {
+            CrafterError::invalid_field_value("quic.frame.datagram.length", "length exceeds usize")
+        })?;
+        (Some(length), data_len)
+    } else {
+        (None, bytes.len().saturating_sub(offset))
+    };
+
+    let available = bytes.len().saturating_sub(offset);
+    if available < data_len {
+        return Err(CrafterError::buffer_too_short(
+            "quic.frame.datagram.data",
+            data_len,
+            available,
+        ));
+    }
+
+    let end = offset + data_len;
+    let mut datagram = QuicDatagramFrame::new(&bytes[offset..end]);
+    datagram = match length {
+        Some(length) => datagram.with_length(length),
+        None => datagram.without_length(),
+    };
+    Ok((datagram, end))
+}
+
 fn decode_frame_varint(
     bytes: &[u8],
     offset: usize,
@@ -3703,6 +3919,7 @@ fn known_frame_type(frame_type: u64) -> Option<QuicKnownFrameType> {
 
 #[cfg(test)]
 mod tests {
+    use crate::protocols::quic::{QuicIntegerTransportParameter, QuicTransportParameter};
     use crate::CrafterError;
 
     use super::*;
@@ -4892,5 +5109,123 @@ mod tests {
             QuicFrame::from_bytes([0x1e, 0x01]).kind(),
             QuicFrameKind::Unknown
         );
+    }
+
+    #[test]
+    fn quic_frame_datagram_len_decodes_and_continues_sequence() -> crate::Result<()> {
+        let bytes = [0x31, 0x03, 0xaa, 0xbb, 0xcc, 0x01];
+
+        let frames = QuicFrame::decode_sequence(bytes)?;
+
+        assert_eq!(frames.len(), 2);
+        assert_eq!(
+            frames[0].kind(),
+            QuicFrameKind::Known(QuicKnownFrameType::DatagramLen)
+        );
+        let datagram = frames[0].datagram_frame()?.unwrap();
+        assert!(datagram.has_length());
+        assert_eq!(datagram.frame_type_value(), 0x31);
+        assert_eq!(datagram.length()?.unwrap().value(), 3);
+        assert_eq!(datagram.length_override(), Some(v(3)));
+        assert_eq!(datagram.data(), &[0xaa, 0xbb, 0xcc]);
+        assert!(frames[1].is_ping());
+        assert_eq!(QuicFrame::encode_sequence(frames), bytes);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_datagram_without_length_consumes_packet_remainder() -> crate::Result<()> {
+        let bytes = [0x30, 0xaa, 0x01];
+
+        let frames = QuicFrame::decode_sequence(bytes)?;
+
+        assert_eq!(frames.len(), 1);
+        assert_eq!(
+            frames[0].kind(),
+            QuicFrameKind::Known(QuicKnownFrameType::Datagram)
+        );
+        let datagram = frames[0].datagram_frame()?.unwrap();
+        assert!(!datagram.has_length());
+        assert_eq!(datagram.frame_type_value(), 0x30);
+        assert_eq!(datagram.length()?, None);
+        assert_eq!(datagram.length_override(), None);
+        assert_eq!(datagram.data(), &[0xaa, 0x01]);
+        assert_eq!(QuicFrame::encode_sequence(frames), bytes);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_datagram_builders_emit_selected_variants() -> crate::Result<()> {
+        let with_length = QuicFrame::datagram([0xde, 0xad])?;
+        let without_length = QuicFrame::datagram_without_length([0xde, 0xad])?;
+        let empty_with_length = QuicFrame::from_datagram_frame(QuicDatagramFrame::new([]))?;
+        let empty_without_length =
+            QuicFrame::from_datagram_frame(QuicDatagramFrame::new([]).without_length())?;
+
+        assert_eq!(with_length.as_bytes(), &[0x31, 0x02, 0xde, 0xad]);
+        assert_eq!(without_length.as_bytes(), &[0x30, 0xde, 0xad]);
+        assert_eq!(empty_with_length.as_bytes(), &[0x31, 0x00]);
+        assert_eq!(empty_without_length.as_bytes(), &[0x30]);
+        assert_eq!(
+            with_length.summary(),
+            "kind=DATAGRAM_LEN has_length=true length=2 data_len=2"
+        );
+        assert_eq!(
+            without_length.summary(),
+            "kind=DATAGRAM has_length=false length=<none> data_len=2"
+        );
+        let fields = with_length.inspection_fields();
+        assert!(fields.contains(&("datagram_has_length", "true".to_string())));
+        assert!(fields.contains(&("datagram_length", "2".to_string())));
+        assert!(fields.contains(&("datagram_data", "de ad".to_string())));
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_datagram_preserves_explicit_malformed_length() -> crate::Result<()> {
+        let datagram = QuicDatagramFrame::new([0xaa]).with_length(v(3));
+        let frame = QuicFrame::from_datagram_frame(datagram)?;
+
+        assert_eq!(frame.as_bytes(), &[0x31, 0x03, 0xaa]);
+        assert_eq!(
+            frame.datagram_frame().unwrap_err(),
+            CrafterError::buffer_too_short("quic.frame.datagram.data", 3, 1)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_datagram_malformed_values_report_structured_errors() {
+        assert_eq!(
+            QuicDatagramFrame::decode([0x2f]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "quic.frame.datagram.type",
+                "DATAGRAM frame type must be 0x30 or 0x31"
+            )
+        );
+        assert_eq!(
+            QuicFrame::decode_sequence([0x31, 0x40]).unwrap_err(),
+            CrafterError::buffer_too_short("quic.frame.datagram.length", 2, 1)
+        );
+        assert_eq!(
+            QuicFrame::decode_sequence([0x31, 0x03, 0xaa]).unwrap_err(),
+            CrafterError::buffer_too_short("quic.frame.datagram.data", 3, 1)
+        );
+    }
+
+    #[test]
+    fn quic_frame_datagram_transport_parameter_linkage_is_inspectable() -> crate::Result<()> {
+        let parameter = QuicTransportParameter::max_datagram_frame_size(v(1200))?;
+        let frame = QuicFrame::datagram([0xaa, 0xbb])?;
+        let datagram = frame.datagram_frame()?.unwrap();
+
+        assert_eq!(
+            parameter.integer_type(),
+            Some(QuicIntegerTransportParameter::MaxDatagramFrameSize)
+        );
+        assert_eq!(parameter.integer_value()?.unwrap().value(), 1200);
+        assert!(datagram.encode_to_vec()?.len() <= 1200);
+        assert_eq!(datagram.data(), &[0xaa, 0xbb]);
+        Ok(())
     }
 }
