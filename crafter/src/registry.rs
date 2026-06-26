@@ -1982,8 +1982,8 @@ mod quic_udp_dispatch {
         Ipv4, NetworkLayer, Packet, Quic, Raw, Udp, QUIC_VERSION_1, QUIC_VERSION_NEGOTIATION,
     };
 
-    const QUIC_PAYLOAD: [u8; 12] = [
-        0xc3, 0x00, 0x00, 0x00, 0x01, 0x04, 0x83, 0x94, 0xc8, 0xf0, 0x00, 0x00,
+    const QUIC_PAYLOAD: [u8; 14] = [
+        0xc0, 0x00, 0x00, 0x00, 0x01, 0x04, 0x83, 0x94, 0xc8, 0xf0, 0x00, 0x00, 0x01, 0x00,
     ];
 
     fn udp_ipv4_packet(source_port: u16, destination_port: u16, payload: impl Into<Raw>) -> Packet {
@@ -2003,7 +2003,9 @@ mod quic_udp_dispatch {
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
         let quic = decoded.layer::<Quic>().expect("QUIC layer");
 
-        assert_eq!(quic.payload_bytes(), QUIC_PAYLOAD);
+        assert_eq!(quic.packets().len(), 1);
+        assert!(quic.packets()[0].is_long_header());
+        assert_eq!(quic.len(), QUIC_PAYLOAD.len());
         assert!(decoded.layer::<Raw>().is_none());
         assert_eq!(QUIC_VERSION_1, 0x0000_0001);
     }
