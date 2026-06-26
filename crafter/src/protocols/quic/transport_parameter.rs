@@ -8,6 +8,7 @@
 
 use std::collections::BTreeMap;
 
+use super::frame::QUIC_STATELESS_RESET_TOKEN_LEN;
 use super::QuicConnectionId;
 use super::{varint::encoded_len_from_prefix, QuicVarInt};
 use crate::protocols::transport::common::hex_bytes;
@@ -367,6 +368,57 @@ impl QuicConnectionIdTransportParameter {
     }
 }
 
+/// Fixed-size QUIC Stateless Reset Token carried by transport parameters and
+/// NEW_CONNECTION_ID frames.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct QuicStatelessResetToken {
+    bytes: [u8; QUIC_STATELESS_RESET_TOKEN_LEN],
+}
+
+impl QuicStatelessResetToken {
+    /// Construct a Stateless Reset Token from exactly 16 bytes.
+    pub const fn new(bytes: [u8; QUIC_STATELESS_RESET_TOKEN_LEN]) -> Self {
+        Self { bytes }
+    }
+
+    /// Decode a Stateless Reset Token from a byte slice that must be exactly
+    /// 16 bytes long.
+    pub fn try_from_bytes(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        decode_stateless_reset_token_value(bytes.as_ref())
+    }
+
+    /// Borrow the token bytes.
+    pub const fn as_bytes(&self) -> &[u8; QUIC_STATELESS_RESET_TOKEN_LEN] {
+        &self.bytes
+    }
+
+    /// Return the token as lowercase hexadecimal without separators.
+    pub fn to_hex(&self) -> String {
+        let mut output = String::with_capacity(QUIC_STATELESS_RESET_TOKEN_LEN * 2);
+        for byte in self.bytes {
+            output.push_str(&format!("{byte:02x}"));
+        }
+        output
+    }
+
+    /// Return the token as lowercase hexadecimal with spaces between octets.
+    pub fn to_spaced_hex(&self) -> String {
+        hex_bytes(&self.bytes)
+    }
+}
+
+impl From<[u8; QUIC_STATELESS_RESET_TOKEN_LEN]> for QuicStatelessResetToken {
+    fn from(bytes: [u8; QUIC_STATELESS_RESET_TOKEN_LEN]) -> Self {
+        Self::new(bytes)
+    }
+}
+
+impl AsRef<[u8]> for QuicStatelessResetToken {
+    fn as_ref(&self) -> &[u8] {
+        &self.bytes
+    }
+}
+
 /// Broad transport-parameter identifier classification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QuicTransportParameterKind {
@@ -572,6 +624,14 @@ impl QuicTransportParameter {
         )
     }
 
+    /// Construct `stateless_reset_token`.
+    pub fn stateless_reset_token(token: impl Into<QuicStatelessResetToken>) -> Self {
+        Self::known(
+            QuicKnownTransportParameter::StatelessResetToken,
+            token.into().as_bytes(),
+        )
+    }
+
     /// Preserve a caller-pinned identifier varint width.
     pub fn with_identifier_encoded_len(mut self, len: usize) -> Self {
         self.identifier_encoded_len = Some(len);
@@ -647,6 +707,25 @@ impl QuicTransportParameter {
     pub fn connection_id_value(&self) -> Option<QuicConnectionId> {
         self.connection_id_type()?;
         Some(QuicConnectionId::from_bytes(&self.value))
+    }
+
+    /// Return true when this is the registered `stateless_reset_token`
+    /// transport parameter.
+    pub const fn is_stateless_reset_token(&self) -> bool {
+        matches!(
+            self.known_type(),
+            Some(QuicKnownTransportParameter::StatelessResetToken)
+        )
+    }
+
+    /// Decode the value of the registered Stateless Reset Token transport
+    /// parameter. Unknown, grease, provisional, and other known parameters
+    /// return `Ok(None)`.
+    pub fn stateless_reset_token_value(&self) -> Result<Option<QuicStatelessResetToken>> {
+        if !self.is_stateless_reset_token() {
+            return Ok(None);
+        }
+        decode_stateless_reset_token_value(&self.value).map(Some)
     }
 
     /// Return the broad parameter identifier classification.
@@ -783,6 +862,9 @@ impl QuicTransportParameter {
                 if parameter.integer_type().is_some() {
                     parameter.integer_value()?;
                 }
+                if parameter.is_stateless_reset_token() {
+                    parameter.stateless_reset_token_value()?;
+                }
             }
             offset = end;
         }
@@ -837,6 +919,16 @@ impl QuicTransportParameter {
     /// Stable summary for packet inspection.
     pub fn summary(&self) -> String {
         match self.identifier {
+            Some(identifier)
+                if self.is_stateless_reset_token()
+                    && self.value.len() == QUIC_STATELESS_RESET_TOKEN_LEN =>
+            {
+                format!(
+                    "id=0x{:x} kind=stateless_reset_token token={}",
+                    identifier.value(),
+                    hex_bytes(&self.value)
+                )
+            }
             Some(identifier) => {
                 format!(
                     "id=0x{:x} kind={} value_len={}",
@@ -944,6 +1036,19 @@ fn decode_integer_transport_parameter_value(bytes: &[u8]) -> Result<QuicVarInt> 
         ));
     }
     Ok(value)
+}
+
+fn decode_stateless_reset_token_value(bytes: &[u8]) -> Result<QuicStatelessResetToken> {
+    if bytes.len() != QUIC_STATELESS_RESET_TOKEN_LEN {
+        return Err(CrafterError::invalid_field_value(
+            "quic.transport_parameter.stateless_reset_token",
+            "stateless_reset_token transport parameter value must be exactly 16 bytes",
+        ));
+    }
+
+    let mut token = [0u8; QUIC_STATELESS_RESET_TOKEN_LEN];
+    token.copy_from_slice(bytes);
+    Ok(QuicStatelessResetToken::new(token))
 }
 
 #[cfg(test)]
@@ -1242,6 +1347,110 @@ mod tests {
             QuicTransportParameter::decode_sequence([0x0f, 0x02, 0xaa]).unwrap_err(),
             CrafterError::buffer_too_short("quic.transport_parameter.value", 2, 1)
         );
+    }
+
+    #[test]
+    fn quic_transport_parameter_reset_token_builds_decodes_and_summarizes() -> Result<()> {
+        let token = QuicStatelessResetToken::new([
+            0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd,
+            0xee, 0xff,
+        ]);
+        let parameter = QuicTransportParameter::stateless_reset_token(token);
+
+        assert_eq!(
+            parameter.identifier(),
+            Some(QuicKnownTransportParameter::StatelessResetToken.id())
+        );
+        assert_eq!(parameter.value(), token.as_bytes());
+        assert!(parameter.is_stateless_reset_token());
+        assert_eq!(parameter.stateless_reset_token_value()?, Some(token));
+        assert_eq!(token.to_hex(), "00112233445566778899aabbccddeeff");
+
+        let encoded = parameter.encode_to_vec()?;
+        assert_eq!(
+            encoded,
+            [
+                0x02, 0x10, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb,
+                0xcc, 0xdd, 0xee, 0xff,
+            ]
+        );
+
+        let decoded = QuicTransportParameter::decode_sequence(&encoded)?;
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].stateless_reset_token_value()?, Some(token));
+        assert_eq!(
+            decoded[0].summary(),
+            "id=0x2 kind=stateless_reset_token token=00 11 22 33 44 55 66 77 88 99 aa bb cc dd ee ff"
+        );
+        assert_eq!(QuicTransportParameter::encode_sequence(decoded)?, encoded);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_transport_parameter_reset_token_reports_malformed_lengths() {
+        assert_eq!(
+            QuicTransportParameter::decode_sequence([0x02, 0x00]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "quic.transport_parameter.stateless_reset_token",
+                "stateless_reset_token transport parameter value must be exactly 16 bytes",
+            )
+        );
+
+        let mut short = vec![0x02, 0x0f];
+        short.extend_from_slice(&[0xab; QUIC_STATELESS_RESET_TOKEN_LEN - 1]);
+        assert_eq!(
+            QuicTransportParameter::decode_sequence(short).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "quic.transport_parameter.stateless_reset_token",
+                "stateless_reset_token transport parameter value must be exactly 16 bytes",
+            )
+        );
+
+        let mut long = vec![0x02, 0x11];
+        long.extend_from_slice(&[0xcd; QUIC_STATELESS_RESET_TOKEN_LEN + 1]);
+        assert_eq!(
+            QuicTransportParameter::decode_sequence(long).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "quic.transport_parameter.stateless_reset_token",
+                "stateless_reset_token transport parameter value must be exactly 16 bytes",
+            )
+        );
+    }
+
+    #[test]
+    fn quic_transport_parameter_reset_token_raw_build_preserves_malformed_value() -> Result<()> {
+        let parameter = QuicTransportParameter::raw(
+            QuicKnownTransportParameter::StatelessResetToken.id(),
+            [0xab; QUIC_STATELESS_RESET_TOKEN_LEN - 1],
+        );
+
+        let encoded = parameter.encode_to_vec()?;
+
+        assert_eq!(
+            parameter.value(),
+            [0xab; QUIC_STATELESS_RESET_TOKEN_LEN - 1]
+        );
+        assert_eq!(
+            parameter.stateless_reset_token_value().unwrap_err(),
+            CrafterError::invalid_field_value(
+                "quic.transport_parameter.stateless_reset_token",
+                "stateless_reset_token transport parameter value must be exactly 16 bytes",
+            )
+        );
+        assert_eq!(encoded[0], 0x02);
+        assert_eq!(encoded[1], 0x0f);
+        assert_eq!(encoded.len(), 2 + QUIC_STATELESS_RESET_TOKEN_LEN - 1);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_transport_parameter_reset_token_ignores_unknown_values() -> Result<()> {
+        let parameter = QuicTransportParameter::raw(QuicVarInt::from_u64_unchecked(0x26ab), [0xaa]);
+
+        assert!(!parameter.is_stateless_reset_token());
+        assert_eq!(parameter.stateless_reset_token_value()?, None);
+        assert_eq!(parameter.value(), &[0xaa]);
+        Ok(())
     }
 
     #[test]
