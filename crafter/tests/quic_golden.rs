@@ -6,18 +6,22 @@
 use crafter::protocols::quic::grease_transport_parameter_id;
 use crafter::protocols::quic::header::QuicLongPacketKind;
 use crafter::{
-    CrafterError, Packet, Quic, QuicConnectionId, QuicIntegerTransportParameter,
-    QuicKnownTransportParameter, QuicPacket, QuicShortHeaderPacket, QuicTransportParameter,
-    QuicTransportParameterKind, QuicVarInt, QUIC_VERSION_1, QUIC_VERSION_2,
+    CrafterError, Packet, Quic, QuicConnectionId, QuicDatagramFrame, QuicFrame,
+    QuicIntegerTransportParameter, QuicKnownTransportParameter, QuicLongHeaderPacket, QuicPacket,
+    QuicPacketNumber, QuicRetryPacket, QuicShortHeaderPacket, QuicTransportParameter,
+    QuicTransportParameterKind, QuicVarInt, QuicVersionNegotiationPacket, QUIC_VERSION_1,
+    QUIC_VERSION_2,
 };
 
 const VERSION_NEGOTIATION: &str = include_str!("fixtures/bytes/quic-version-negotiation.hex");
 const RETRY: &str = include_str!("fixtures/bytes/quic-retry.hex");
 const V1_INITIAL: &str = include_str!("fixtures/bytes/quic-v1-initial.hex");
+const V1_INITIAL_FRAMES: &str = include_str!("fixtures/bytes/quic-v1-initial-frames.hex");
 const V2_INITIAL: &str = include_str!("fixtures/bytes/quic-v2-initial.hex");
 const HANDSHAKE: &str = include_str!("fixtures/bytes/quic-handshake.hex");
 const ZERO_RTT: &str = include_str!("fixtures/bytes/quic-zero-rtt.hex");
 const SHORT_HEADER: &str = include_str!("fixtures/bytes/quic-short-header.hex");
+const FRAMES: &str = include_str!("fixtures/bytes/quic-frames.hex");
 const TRANSPORT_PARAMETERS: &str = include_str!("fixtures/bytes/quic-transport-parameters.hex");
 const MALFORMED_TRANSPORT_PARAMETERS: &str =
     include_str!("fixtures/malformed/quic-transport-parameters-corpus.hex");
@@ -167,6 +171,30 @@ fn assert_packet_roundtrip(packet: QuicPacket, expected: &[u8]) -> crafter::Resu
     Ok(())
 }
 
+fn cid_fixture() -> QuicConnectionId {
+    QuicConnectionId::from_bytes([0x83, 0x94, 0xc8, 0xf0])
+}
+
+fn scid_fixture() -> QuicConnectionId {
+    QuicConnectionId::from_bytes([0xaa])
+}
+
+fn retry_integrity_fixture() -> [u8; 16] {
+    [
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
+        0x0f,
+    ]
+}
+
+fn fixture_case<'a>(cases: &'a [NamedHexFixtureCase], required: &str) -> &'a [u8] {
+    cases
+        .iter()
+        .find(|case| case.name == required)
+        .unwrap_or_else(|| panic!("missing fixture case {required}"))
+        .bytes
+        .as_slice()
+}
+
 #[test]
 fn quic_header_golden_fixtures_decode_and_roundtrip() -> crafter::Result<()> {
     let version_negotiation = fixture_bytes(VERSION_NEGOTIATION);
@@ -224,6 +252,143 @@ fn quic_header_golden_fixtures_decode_and_roundtrip() -> crafter::Result<()> {
     assert_eq!(short.protected_payload(), [0xbe, 0xef]);
     assert_packet_roundtrip(QuicPacket::from_short_header(short), &short_header)?;
 
+    Ok(())
+}
+
+#[test]
+fn quic_packet_builder_golden_fixtures() -> crafter::Result<()> {
+    let version_negotiation = fixture_bytes(VERSION_NEGOTIATION);
+    let vn = QuicVersionNegotiationPacket::builder()
+        .destination_connection_id(cid_fixture())
+        .source_connection_id(scid_fixture())
+        .supported_versions([QUIC_VERSION_1, QUIC_VERSION_2])
+        .build()?;
+    assert_eq!(vn.as_bytes(), version_negotiation);
+    assert_packet_roundtrip(
+        QuicPacket::from_version_negotiation(vn),
+        &version_negotiation,
+    )?;
+
+    let retry = fixture_bytes(RETRY);
+    let retry_packet = QuicRetryPacket::builder()
+        .version(QUIC_VERSION_1)
+        .destination_connection_id(cid_fixture())
+        .source_connection_id(scid_fixture())
+        .token([0xde, 0xad, 0xbe])
+        .integrity_tag(retry_integrity_fixture())
+        .build()?;
+    assert_eq!(retry_packet.as_bytes(), retry);
+    assert_packet_roundtrip(QuicPacket::from_retry(retry_packet), &retry)?;
+
+    let initial_with_frames = fixture_bytes(V1_INITIAL_FRAMES);
+    let frame_cases = named_hex_fixture_cases(FRAMES, "QUIC frame fixtures");
+    let initial = QuicLongHeaderPacket::initial_builder()
+        .destination_connection_id(cid_fixture())
+        .source_connection_id(scid_fixture())
+        .packet_number(QuicPacketNumber::new(1))
+        .frames([
+            QuicFrame::ping(),
+            QuicFrame::crypto(QuicVarInt::from_u64_unchecked(0), [0xaa])?,
+        ])
+        .build()?;
+    assert_eq!(
+        initial.protected_payload(),
+        fixture_case(&frame_cases, "initial-ping-crypto")
+    );
+    assert_eq!(initial.as_bytes(), initial_with_frames);
+    assert_packet_roundtrip(QuicPacket::from_long_header(initial), &initial_with_frames)?;
+
+    let handshake = fixture_bytes(HANDSHAKE);
+    let handshake_packet = QuicLongHeaderPacket::handshake_builder()
+        .destination_connection_id(cid_fixture())
+        .source_connection_id(scid_fixture())
+        .packet_number(QuicPacketNumber::new(2))
+        .payload([0xca, 0xfe])
+        .build()?;
+    assert_eq!(handshake_packet.as_bytes(), handshake);
+    assert_packet_roundtrip(QuicPacket::from_long_header(handshake_packet), &handshake)?;
+
+    let short_header = fixture_bytes(SHORT_HEADER);
+    let short = QuicShortHeaderPacket::builder()
+        .destination_connection_id(cid_fixture())
+        .packet_number(QuicPacketNumber::new(0x1234).with_encoded_len(2))
+        .payload([0xbe, 0xef])
+        .build()?;
+    assert_eq!(short.as_bytes(), short_header);
+    assert_packet_roundtrip(QuicPacket::from_short_header(short), &short_header)?;
+
+    Ok(())
+}
+
+#[test]
+fn quic_frame_golden_fixtures_decode_and_roundtrip() -> crafter::Result<()> {
+    let cases = named_hex_fixture_cases(FRAMES, "QUIC frame fixtures");
+    assert_required_frame_fixture_cases(&cases);
+
+    for case in &cases {
+        let frames = QuicFrame::decode_sequence(&case.bytes)?;
+        assert_eq!(
+            QuicFrame::encode_sequence(frames.clone()),
+            case.bytes,
+            "case {}",
+            case.name
+        );
+
+        match case.name.as_str() {
+            "initial-ping-crypto" => assert_ping_crypto_frame_fixture(&frames)?,
+            "datagram-len" => assert_datagram_len_frame_fixture(&frames, &case.bytes)?,
+            "datagram-no-len" => assert_datagram_no_len_frame_fixture(&frames, &case.bytes)?,
+            name => panic!("unexpected QUIC frame fixture case {name}"),
+        }
+    }
+
+    Ok(())
+}
+
+fn assert_required_frame_fixture_cases(cases: &[NamedHexFixtureCase]) {
+    for required in ["initial-ping-crypto", "datagram-len", "datagram-no-len"] {
+        assert!(
+            cases.iter().any(|case| case.name == required),
+            "QUIC frame fixtures missing required case {required}"
+        );
+    }
+}
+
+fn assert_ping_crypto_frame_fixture(frames: &[QuicFrame]) -> crafter::Result<()> {
+    assert_eq!(frames.len(), 2);
+    assert_eq!(frames[0].frame_type_value(), Some(0x01));
+    let crypto = frames[1].crypto_frame()?.expect("CRYPTO frame");
+    assert_eq!(crypto.offset().value(), 0);
+    assert_eq!(crypto.data(), [0xaa]);
+    Ok(())
+}
+
+fn assert_datagram_len_frame_fixture(frames: &[QuicFrame], expected: &[u8]) -> crafter::Result<()> {
+    assert_eq!(frames.len(), 1);
+    let datagram = frames[0].datagram_frame()?.expect("DATAGRAM_LEN frame");
+    assert!(datagram.has_length());
+    assert_eq!(datagram.frame_type_value(), 0x31);
+    assert_eq!(datagram.length()?.unwrap().value(), 2);
+    assert_eq!(datagram.data(), [0xde, 0xad]);
+    assert_eq!(QuicFrame::datagram([0xde, 0xad])?.as_bytes(), expected);
+    Ok(())
+}
+
+fn assert_datagram_no_len_frame_fixture(
+    frames: &[QuicFrame],
+    expected: &[u8],
+) -> crafter::Result<()> {
+    assert_eq!(frames.len(), 1);
+    let datagram = frames[0].datagram_frame()?.expect("DATAGRAM frame");
+    assert!(!datagram.has_length());
+    assert_eq!(datagram.frame_type_value(), 0x30);
+    assert_eq!(datagram.length()?, None);
+    assert_eq!(datagram.data(), [0xde, 0xad]);
+    assert_eq!(
+        QuicFrame::from_datagram_frame(QuicDatagramFrame::new([0xde, 0xad]).without_length())?
+            .as_bytes(),
+        expected
+    );
     Ok(())
 }
 

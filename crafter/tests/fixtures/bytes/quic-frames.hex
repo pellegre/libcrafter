@@ -1,0 +1,8 @@
+# QUIC frame sequence fixtures.
+# Evidence: .agents/docs/quic-manifest.md E-RFC-9000/E-RFC-9221 and
+# .agents/docs/quic-frame-grammar.md.
+# Format: name|source-backed note|hex sequence
+
+initial-ping-crypto|RFC 9000 PING plus CRYPTO frame bytes used inside Initial packets|01 06 00 01 aa
+datagram-len|RFC 9221 DATAGRAM_LEN with two payload bytes|31 02 de ad
+datagram-no-len|RFC 9221 DATAGRAM without Length consuming packet remainder|30 de ad

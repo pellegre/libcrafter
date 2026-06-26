@@ -1,0 +1,6 @@
+# QUIC v1 Initial packet with frame sequence fixture.
+# Evidence: .agents/docs/quic-manifest.md E-RFC-9000 and
+# .agents/docs/quic-frame-grammar.md.
+# first=0xc0, version=v1, dcid=8394c8f0, scid=aa, token_len=0,
+# length=6, packet_number=01, frames=PING,CRYPTO(offset=0,data=aa).
+c000000001048394c8f001aa00060101060001aa
