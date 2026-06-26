@@ -39,7 +39,9 @@ The integration fixture catalog lives in
 - `preserve_exact_bytes`: whether decode/compile must preserve the fixture bytes.
 - `summary_path`: optional expected summary fixture.
 
-All files under `bytes/` must be listed in `VALID_FIXTURES`.
+All single-packet byte fixtures under `bytes/` must be listed in
+`VALID_FIXTURES`; multi-row QUIC frame and transport-parameter corpora under
+`bytes/` must be listed in `QUIC_SEQUENCE_FIXTURES`.
 All packet hex files under `dot11/` must be listed in `DOT11_FIXTURES`.
 All files under `pcaps/` must be listed in `PCAP_FIXTURES`.
 The catalog tests fail if checked-in fixtures are missing from the catalogs or
@@ -60,6 +62,12 @@ The deterministic malformed packet corpus is consumed by
 Valid byte fixtures cover:
 
 - raw payload decode: `raw-hello-agents.hex`
+- QUIC packet fixtures: `quic-version-negotiation.hex`, `quic-retry.hex`,
+  `quic-v1-initial.hex`, `quic-v1-initial-frames.hex`,
+  `quic-v2-initial.hex`, `quic-handshake.hex`, `quic-zero-rtt.hex`, and
+  `quic-short-header.hex`
+- QUIC frame and transport-parameter sequence corpora:
+  `quic-frames.hex`, `quic-transport-parameters.hex`
 - Ethernet unknown ethertype with raw payload:
   `ethernet-experimental-raw.bin`
 - Ethernet ARP request and reply: `arp-who-has.bin`,
@@ -135,7 +143,7 @@ Valid byte fixtures cover:
   `ipv6-udp-options-unknown-unsafe.hex`,
   `ipv6-udp-options-frag.hex`
 
-Summary fixtures cover representative raw, ARP, Linux cooked, IPv4 options,
+Summary fixtures cover representative raw, QUIC, ARP, Linux cooked, IPv4 options,
 IPv4 TCP options, IPv6 TCP options, IPv4 DNS response, IPv4 DHCP, UDP options,
 IGMP v1 query/report, IGMPv2 query/report/leave packets, IGMPv3 query/report
 packets carrying RFC 9279 generic extension TLVs, IPv6 option-header stacks,

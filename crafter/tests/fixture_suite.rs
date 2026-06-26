@@ -16,7 +16,8 @@ use crafter::core::{
     Ipv6HopByHopOptionsHeader, Ipv6MobileRoutingHeader, Ipv6MobileRoutingHeaderStatus, Ipv6Option,
     Ipv6RoutingHeader, Ipv6RoutingTypeStatus, Ipv6SegmentRoutingHeader, Layer, LinkType, LinuxSll,
     LlcSnap, MacAddr, NetworkLayer, NullByteOrder, NullLoopback, OptionOverload,
-    OspfChecksumStatus, Ospfv2, Ospfv3, Packet, Radiotap, Raw, Rip, Ripng, Snmp, Tcp, TcpOption,
+    OspfChecksumStatus, Ospfv2, Ospfv3, Packet, Quic, QuicFrame, QuicPacket,
+    QuicTransportParameter, QuicVarInt, Radiotap, Raw, Rip, Ripng, Snmp, Tcp, TcpOption,
     TcpSackBlock, Udp, UdpChecksumStatus, UdpOption, UdpOptionStatus, UdpOptions, Vlan,
     ARP_HRD_INFINIBAND, BOOTP_REQUEST, DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_CLASS_IN,
     DNS_EDNS_DEFAULT_UDP_PAYLOAD_SIZE, DNS_EDNS_OPTION_COOKIE, DNS_EDNS_OPTION_NSID,
@@ -30,8 +31,8 @@ use crafter::core::{
     IPPROTO_IPV6_DSTOPTS, IPPROTO_IPV6_EXPERIMENTAL_1, IPPROTO_IPV6_FRAGMENT, IPPROTO_IPV6_HOPOPTS,
     IPPROTO_IPV6_ROUTE, IPPROTO_TCP, IPPROTO_UDP, IPV4_FLAG_DONT_FRAGMENT,
     IPV4_FLAG_MORE_FRAGMENTS, IPV4_FLAG_RESERVED, IPV6_ROUTING_TYPE_MOBILE,
-    IPV6_ROUTING_TYPE_SEGMENT, SNMP_PORT, TCP_FLAG_ACK, TCP_FLAG_PSH, TCP_FLAG_SYN, UDP_HEADER_LEN,
-    UDP_OPTION_EOL, UDP_OPTION_NOP,
+    IPV6_ROUTING_TYPE_SEGMENT, QUIC_VERSION_1, QUIC_VERSION_2, SNMP_PORT, TCP_FLAG_ACK,
+    TCP_FLAG_PSH, TCP_FLAG_SYN, UDP_HEADER_LEN, UDP_OPTION_EOL, UDP_OPTION_NOP,
 };
 use crafter::protocols::igmp::IgmpExtension;
 use crafter::wire::backend::pcap::{
@@ -58,6 +59,7 @@ enum PacketDecodeTarget {
 enum FixtureDecodeTarget {
     Packet(PacketDecodeTarget),
     DhcpOptions,
+    QuicDatagram,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -115,6 +117,7 @@ enum ExpectedLayer {
     IkeSaPayload,
     IkeKePayload,
     IkeNoncePayload,
+    Quic,
     Raw,
 }
 
@@ -172,6 +175,13 @@ enum CoverageFamily {
     IpsecIkev2,
     Ipv4UdpRip,
     Ipv6UdpRipng,
+    QuicPackets,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum QuicSequenceFixtureTarget {
+    FrameSequence,
+    TransportParameters,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -195,6 +205,14 @@ struct ValidFixtureCase {
     expected_layers: &'static [ExpectedLayer],
     preserve_exact_bytes: bool,
     summary_path: Option<&'static str>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct QuicSequenceFixtureCase {
+    name: &'static str,
+    path: &'static str,
+    contents: &'static str,
+    target: QuicSequenceFixtureTarget,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -244,6 +262,33 @@ struct MalformedPcapRow {
     bytes: Vec<u8>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NamedHexFixtureRow {
+    name: String,
+    note: String,
+    bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct QuicPacketMalformedFixtureRow {
+    name: String,
+    target: String,
+    expected_kind: String,
+    expected_context_or_field: String,
+    required: Option<usize>,
+    available: Option<usize>,
+    bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct QuicVarintMalformedFixtureRow {
+    name: String,
+    context: String,
+    required: usize,
+    available: usize,
+    bytes: Vec<u8>,
+}
+
 const VALID_FIXTURES: &[ValidFixtureCase] = &[
     ValidFixtureCase {
         name: "raw-hello-agents",
@@ -258,8 +303,8 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         name: "quic-version-negotiation",
         path: "bytes/quic-version-negotiation.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/quic-version-negotiation.hex")),
-        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::Raw),
-        expected_layers: &[ExpectedLayer::Raw],
+        target: FixtureDecodeTarget::QuicDatagram,
+        expected_layers: &[ExpectedLayer::Quic],
         preserve_exact_bytes: true,
         summary_path: None,
     },
@@ -267,8 +312,8 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         name: "quic-retry",
         path: "bytes/quic-retry.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/quic-retry.hex")),
-        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::Raw),
-        expected_layers: &[ExpectedLayer::Raw],
+        target: FixtureDecodeTarget::QuicDatagram,
+        expected_layers: &[ExpectedLayer::Quic],
         preserve_exact_bytes: true,
         summary_path: None,
     },
@@ -276,17 +321,26 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         name: "quic-v1-initial",
         path: "bytes/quic-v1-initial.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/quic-v1-initial.hex")),
-        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::Raw),
-        expected_layers: &[ExpectedLayer::Raw],
+        target: FixtureDecodeTarget::QuicDatagram,
+        expected_layers: &[ExpectedLayer::Quic],
         preserve_exact_bytes: true,
         summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "quic-v1-initial-frames",
+        path: "bytes/quic-v1-initial-frames.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/quic-v1-initial-frames.hex")),
+        target: FixtureDecodeTarget::QuicDatagram,
+        expected_layers: &[ExpectedLayer::Quic],
+        preserve_exact_bytes: true,
+        summary_path: Some("summaries/quic-v1-initial-frames.summary.txt"),
     },
     ValidFixtureCase {
         name: "quic-v2-initial",
         path: "bytes/quic-v2-initial.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/quic-v2-initial.hex")),
-        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::Raw),
-        expected_layers: &[ExpectedLayer::Raw],
+        target: FixtureDecodeTarget::QuicDatagram,
+        expected_layers: &[ExpectedLayer::Quic],
         preserve_exact_bytes: true,
         summary_path: None,
     },
@@ -294,8 +348,8 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         name: "quic-handshake",
         path: "bytes/quic-handshake.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/quic-handshake.hex")),
-        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::Raw),
-        expected_layers: &[ExpectedLayer::Raw],
+        target: FixtureDecodeTarget::QuicDatagram,
+        expected_layers: &[ExpectedLayer::Quic],
         preserve_exact_bytes: true,
         summary_path: None,
     },
@@ -303,8 +357,8 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         name: "quic-zero-rtt",
         path: "bytes/quic-zero-rtt.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/quic-zero-rtt.hex")),
-        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::Raw),
-        expected_layers: &[ExpectedLayer::Raw],
+        target: FixtureDecodeTarget::QuicDatagram,
+        expected_layers: &[ExpectedLayer::Quic],
         preserve_exact_bytes: true,
         summary_path: None,
     },
@@ -312,8 +366,8 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         name: "quic-short-header",
         path: "bytes/quic-short-header.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/quic-short-header.hex")),
-        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::Raw),
-        expected_layers: &[ExpectedLayer::Raw],
+        target: FixtureDecodeTarget::QuicDatagram,
+        expected_layers: &[ExpectedLayer::Quic],
         preserve_exact_bytes: true,
         summary_path: None,
     },
@@ -1764,6 +1818,21 @@ const DOT15D4_FIXTURES: &[ValidFixtureCase] = &[
     },
 ];
 
+const QUIC_SEQUENCE_FIXTURES: &[QuicSequenceFixtureCase] = &[
+    QuicSequenceFixtureCase {
+        name: "quic-frames",
+        path: "bytes/quic-frames.hex",
+        contents: fixture_str!("bytes/quic-frames.hex"),
+        target: QuicSequenceFixtureTarget::FrameSequence,
+    },
+    QuicSequenceFixtureCase {
+        name: "quic-transport-parameters",
+        path: "bytes/quic-transport-parameters.hex",
+        contents: fixture_str!("bytes/quic-transport-parameters.hex"),
+        target: QuicSequenceFixtureTarget::TransportParameters,
+    },
+];
+
 const DOT11_TEXT_ARTIFACTS: &[Dot11TextArtifact] = &[
     Dot11TextArtifact {
         path: "docs/guide/dot11.md",
@@ -2393,6 +2462,10 @@ const REQUIRED_VALID_COVERAGE: &[(CoverageFamily, &str)] = &[
         CoverageFamily::IpsecIkev2,
         "IPSec IKEv2 IKE_SA_INIT message (RFC 7296) over UDP",
     ),
+    (
+        CoverageFamily::QuicPackets,
+        "QUIC packet fixtures and typed datagram layer",
+    ),
 ];
 
 const REQUIRED_PCAP_COVERAGE: &[(PcapCoverageFamily, &str)] = &[
@@ -2426,14 +2499,15 @@ const REQUIRED_PCAP_COVERAGE: &[(PcapCoverageFamily, &str)] = &[
 
 fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
     match name {
-        "raw-hello-agents"
-        | "quic-version-negotiation"
+        "raw-hello-agents" => &[CoverageFamily::RawPayload],
+        "quic-version-negotiation"
         | "quic-retry"
         | "quic-v1-initial"
+        | "quic-v1-initial-frames"
         | "quic-v2-initial"
         | "quic-handshake"
         | "quic-zero-rtt"
-        | "quic-short-header" => &[CoverageFamily::RawPayload],
+        | "quic-short-header" => &[CoverageFamily::QuicPackets],
         "arp-who-has" => &[CoverageFamily::EthernetArpRequest],
         "ethernet-arp-reply" => &[CoverageFamily::EthernetArpReply],
         "ethernet-arp-infiniband-ipv6-nonstandard" => &[CoverageFamily::EthernetArpNonstandard],
@@ -2588,6 +2662,12 @@ fn packet_target_for_case(case: &ValidFixtureCase) -> PacketDecodeTarget {
                 case.name
             )
         }
+        FixtureDecodeTarget::QuicDatagram => {
+            panic!(
+                "pcap fixture {} references QUIC datagram fixture",
+                case.name
+            )
+        }
     }
 }
 
@@ -2625,12 +2705,42 @@ fn decode_hex(label: &str, text: &str) -> Vec<u8> {
         .collect()
 }
 
+fn parse_named_hex_rows(path: &str, text: &str) -> Vec<NamedHexFixtureRow> {
+    text.lines()
+        .filter_map(|line| parse_named_hex_row(path, line))
+        .collect()
+}
+
+fn parse_named_hex_row(path: &str, line: &str) -> Option<NamedHexFixtureRow> {
+    let line = line.trim();
+    if line.is_empty() || line.starts_with('#') {
+        return None;
+    }
+
+    let fields = line.split('|').map(str::trim).collect::<Vec<_>>();
+    let [name, note, hex] = fields.as_slice() else {
+        panic!("fixture {path} row {line:?} must have 3 pipe-separated fields");
+    };
+
+    Some(NamedHexFixtureRow {
+        name: (*name).to_string(),
+        note: (*note).to_string(),
+        bytes: decode_hex(name, hex),
+    })
+}
+
 fn decode_packet(target: PacketDecodeTarget, bytes: &[u8]) -> crafter::core::Result<Packet> {
     match target {
         PacketDecodeTarget::Raw => Packet::decode_raw(bytes),
         PacketDecodeTarget::Link(link_type) => Packet::decode_from_link(link_type, bytes),
         PacketDecodeTarget::L3(network_layer) => Packet::decode_from_l3(network_layer, bytes),
     }
+}
+
+fn decode_quic_fixture_datagram(bytes: &[u8]) -> crafter::core::Result<Packet> {
+    Ok(Packet::from_layer(Quic::from_packets([
+        QuicPacket::decode(bytes)?,
+    ])))
 }
 
 fn ipv4_fragment_record_from_fixture(name: &str, timestamp_micros: u32) -> PacketRecord {
@@ -2687,6 +2797,41 @@ fn assert_compile_decode_compile(
         recompiled.as_bytes(),
         compiled.as_bytes(),
         "fixture {} compile/decode/compile bytes changed",
+        case.path
+    );
+}
+
+fn assert_quic_datagram_compile_decode_compile(
+    case: &ValidFixtureCase,
+    packet: &Packet,
+    fixture_bytes: &[u8],
+) {
+    let compiled = packet
+        .compile()
+        .unwrap_or_else(|err| panic!("fixture {} should compile: {err}", case.path));
+
+    if case.preserve_exact_bytes {
+        assert_eq!(
+            compiled.as_bytes(),
+            fixture_bytes,
+            "fixture {} did not preserve original bytes after QUIC decode/compile",
+            case.path
+        );
+    }
+
+    let decoded_again = decode_quic_fixture_datagram(compiled.as_bytes()).unwrap_or_else(|err| {
+        panic!(
+            "fixture {} should decode after QUIC compile/decode/compile setup: {err}",
+            case.path
+        )
+    });
+    let recompiled = decoded_again
+        .compile()
+        .unwrap_or_else(|err| panic!("fixture {} should recompile: {err}", case.path));
+    assert_eq!(
+        recompiled.as_bytes(),
+        compiled.as_bytes(),
+        "fixture {} QUIC compile/decode/compile bytes changed",
         case.path
     );
 }
@@ -2888,6 +3033,9 @@ fn assert_expected_layers(case: &ValidFixtureCase, packet: &Packet) {
             ExpectedLayer::IkeNoncePayload => {
                 let _ = expect_layer::<IkeNoncePayload>(case, packet);
             }
+            ExpectedLayer::Quic => {
+                let _ = expect_layer::<Quic>(case, packet);
+            }
             ExpectedLayer::Raw => {
                 let _ = expect_layer::<Raw>(case, packet);
             }
@@ -2960,6 +3108,7 @@ fn expected_layer_name(expected: ExpectedLayer) -> &'static str {
         ExpectedLayer::IkeSaPayload => "IkeSaPayload",
         ExpectedLayer::IkeKePayload => "IkeKePayload",
         ExpectedLayer::IkeNoncePayload => "IkeNoncePayload",
+        ExpectedLayer::Quic => "Quic",
         ExpectedLayer::Raw => "Raw",
     }
 }
@@ -3675,6 +3824,97 @@ fn assert_igmp_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
     }
 }
 
+fn assert_quic_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
+    let fixture_bytes = fixture_bytes_for_case(case);
+    let quic = expect_layer::<Quic>(case, packet);
+    assert_eq!(quic.len(), fixture_bytes.len());
+    assert_eq!(
+        quic.packets().len(),
+        1,
+        "fixture {} packet count",
+        case.path
+    );
+
+    let quic_packet = &quic.packets()[0];
+    assert_eq!(quic_packet.as_bytes(), fixture_bytes.as_slice());
+
+    match case.name {
+        "quic-version-negotiation" => {
+            let version_negotiation = quic_packet
+                .version_negotiation()
+                .expect("Version Negotiation fixture should decode as typed packet");
+            assert_eq!(
+                version_negotiation.supported_versions(),
+                &[QUIC_VERSION_1, QUIC_VERSION_2]
+            );
+        }
+        "quic-retry" => {
+            let retry = quic_packet
+                .retry()
+                .expect("Retry fixture should decode as typed packet");
+            assert_eq!(retry.version(), QUIC_VERSION_1);
+            assert_eq!(retry.token(), &[0xde, 0xad, 0xbe]);
+            assert_eq!(
+                retry.integrity_tag(),
+                &[
+                    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c,
+                    0x0d, 0x0e, 0x0f,
+                ]
+            );
+        }
+        "quic-v1-initial"
+        | "quic-v1-initial-frames"
+        | "quic-v2-initial"
+        | "quic-handshake"
+        | "quic-zero-rtt" => assert_quic_long_header_fixture_fields(case, quic_packet),
+        "quic-short-header" => {
+            assert!(!quic_packet.is_version_negotiation());
+            assert!(!quic_packet.is_retry());
+            assert!(!quic_packet.is_long_header());
+            assert!(!quic_packet.is_short_header());
+            assert!(quic_packet.summary().contains("header=short"));
+        }
+        other => panic!("QUIC fixture {other} is missing typed field assertions"),
+    }
+}
+
+fn assert_quic_long_header_fixture_fields(case: &ValidFixtureCase, quic_packet: &QuicPacket) {
+    let (packet_kind, version, length, packet_number, protected_payload): (
+        &str,
+        u32,
+        u64,
+        u64,
+        &'static [u8],
+    ) = match case.name {
+        "quic-v1-initial" => ("Initial", QUIC_VERSION_1, 3, 1, &[0xbe, 0xef]),
+        "quic-v1-initial-frames" => (
+            "Initial",
+            QUIC_VERSION_1,
+            6,
+            1,
+            &[0x01, 0x06, 0x00, 0x01, 0xaa],
+        ),
+        "quic-v2-initial" => ("Initial", QUIC_VERSION_2, 3, 1, &[0xbe, 0xef]),
+        "quic-handshake" => ("Handshake", QUIC_VERSION_1, 3, 2, &[0xca, 0xfe]),
+        "quic-zero-rtt" => ("0-RTT", QUIC_VERSION_1, 3, 3, &[0x0b, 0xad]),
+        other => panic!("QUIC fixture {other} is not a long-header fixture"),
+    };
+
+    let long_header = quic_packet
+        .long_header()
+        .expect("QUIC long-header fixture should decode as typed long header");
+    let fields = long_header.inspection_fields();
+
+    assert_eq!(
+        inspection_field_value(&fields, "packet_kind"),
+        Some(packet_kind)
+    );
+    assert_eq!(long_header.version(), version);
+    assert_eq!(long_header.length().value(), length);
+    assert_eq!(long_header.packet_number().value(), packet_number);
+    assert_eq!(long_header.protected_payload(), protected_payload);
+}
+
 fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
     match case.name {
         name if name.starts_with("ble-") => assert_ble_fixture_fields(case, packet),
@@ -3718,12 +3958,7 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
                 b"Hello, agents!"
             );
         }
-        name if name.starts_with("quic-") => {
-            assert_eq!(
-                expect_layer::<Raw>(case, packet).as_bytes(),
-                fixture_bytes_for_case(case).as_slice()
-            );
-        }
+        name if name.starts_with("quic-") => assert_quic_fixture_fields(case, packet),
         "ethernet-arp-reply" => {
             let ethernet = expect_layer::<Ethernet>(case, packet);
             assert_eq!(
@@ -6274,6 +6509,92 @@ fn parse_malformed_pcap_rows(path: &str) -> Vec<MalformedPcapRow> {
         .collect()
 }
 
+fn parse_quic_packet_malformed_rows(path: &str, text: &str) -> Vec<QuicPacketMalformedFixtureRow> {
+    text.lines()
+        .filter_map(|line| parse_quic_packet_malformed_row(path, line))
+        .collect()
+}
+
+fn parse_quic_packet_malformed_row(
+    path: &str,
+    line: &str,
+) -> Option<QuicPacketMalformedFixtureRow> {
+    let line = line.trim();
+    if line.is_empty() || line.starts_with('#') {
+        return None;
+    }
+
+    let fields = line.split('|').map(str::trim).collect::<Vec<_>>();
+    let [name, target, expected_kind, expected_context_or_field, required, available, hex] =
+        fields.as_slice()
+    else {
+        panic!("QUIC packet malformed fixture {path} row {line:?} must have 7 fields");
+    };
+
+    let (required, available) = match (*required, *available) {
+        ("-", "-") => (None, None),
+        (required, available) => (
+            Some(
+                required
+                    .parse()
+                    .unwrap_or_else(|_| panic!("case {name} has invalid required byte count")),
+            ),
+            Some(
+                available
+                    .parse()
+                    .unwrap_or_else(|_| panic!("case {name} has invalid available byte count")),
+            ),
+        ),
+    };
+
+    Some(QuicPacketMalformedFixtureRow {
+        name: (*name).to_string(),
+        target: (*target).to_string(),
+        expected_kind: (*expected_kind).to_string(),
+        expected_context_or_field: (*expected_context_or_field).to_string(),
+        required,
+        available,
+        bytes: decode_hex(name, hex),
+    })
+}
+
+fn parse_quic_varint_malformed_rows(path: &str, text: &str) -> Vec<QuicVarintMalformedFixtureRow> {
+    text.lines()
+        .filter_map(|line| parse_quic_varint_malformed_row(path, line))
+        .collect()
+}
+
+fn parse_quic_varint_malformed_row(
+    path: &str,
+    line: &str,
+) -> Option<QuicVarintMalformedFixtureRow> {
+    let line = line.trim();
+    if line.is_empty() || line.starts_with('#') {
+        return None;
+    }
+
+    let fields = line.split('|').map(str::trim).collect::<Vec<_>>();
+    let [name, expected_kind, context, required, available, hex] = fields.as_slice() else {
+        panic!("QUIC varint malformed fixture {path} row {line:?} must have 6 fields");
+    };
+    assert_eq!(
+        *expected_kind, "buffer-too-short",
+        "QUIC varint malformed case {name} must expect buffer-too-short"
+    );
+
+    Some(QuicVarintMalformedFixtureRow {
+        name: (*name).to_string(),
+        context: (*context).to_string(),
+        required: required
+            .parse()
+            .unwrap_or_else(|_| panic!("case {name} has invalid required byte count")),
+        available: available
+            .parse()
+            .unwrap_or_else(|_| panic!("case {name} has invalid available byte count")),
+        bytes: decode_hex(name, hex),
+    })
+}
+
 fn parse_malformed_pcap_row(path: &str, line: &str) -> Option<MalformedPcapRow> {
     let line = line.trim();
     if line.is_empty() || line.starts_with('#') {
@@ -6300,6 +6621,130 @@ fn assert_pcap_error_kind(row: &MalformedPcapRow, err: PcapError) {
             "malformed pcap fixture {} expected {expected}, got {actual:?}",
             row.name
         ),
+    }
+}
+
+fn assert_required_quic_packet_malformed_rows(rows: &[QuicPacketMalformedFixtureRow]) {
+    assert!(
+        !rows.is_empty(),
+        "QUIC packet malformed corpus must not be empty"
+    );
+    for required in [
+        "version-negotiation-supported-truncated",
+        "retry-integrity-short",
+        "short-header-dcid-truncated",
+        "short-header-packet-number-truncated",
+        "short-header-rejects-long-form",
+    ] {
+        assert!(
+            rows.iter().any(|row| row.name == required),
+            "QUIC packet malformed corpus missing required case {required}"
+        );
+    }
+}
+
+fn assert_required_quic_varint_malformed_rows(rows: &[QuicVarintMalformedFixtureRow]) {
+    assert!(
+        !rows.is_empty(),
+        "QUIC varint malformed corpus must not be empty"
+    );
+    for required in [
+        "empty",
+        "two-byte-truncated",
+        "four-byte-truncated",
+        "eight-byte-truncated",
+    ] {
+        assert!(
+            rows.iter().any(|row| row.name == required),
+            "QUIC varint malformed corpus missing required case {required}"
+        );
+    }
+}
+
+fn assert_quic_packet_malformed_row(row: &QuicPacketMalformedFixtureRow) {
+    assert_lower_dash_name(&row.name, &row.name);
+    assert!(
+        !row.bytes.is_empty(),
+        "QUIC packet malformed fixture {} should carry input bytes",
+        row.name
+    );
+
+    let err = match row.target.as_str() {
+        "packet" => QuicPacket::decode(&row.bytes).map(|_| ()).unwrap_err(),
+        "short-header-dcid-4" => QuicPacket::decode_short_header(&row.bytes, 4)
+            .map(|_| ())
+            .unwrap_err(),
+        "short-header-dcid-0" => QuicPacket::decode_short_header(&row.bytes, 0)
+            .map(|_| ())
+            .unwrap_err(),
+        target => panic!(
+            "QUIC packet malformed fixture {} has unknown target {}",
+            row.name, target
+        ),
+    };
+
+    match row.expected_kind.as_str() {
+        "buffer-too-short" => assert_quic_buffer_too_short(
+            &row.name,
+            err,
+            &row.expected_context_or_field,
+            row.required
+                .expect("buffer-too-short QUIC packet row must set required"),
+            row.available
+                .expect("buffer-too-short QUIC packet row must set available"),
+        ),
+        "invalid-field-value" => {
+            assert!(
+                row.required.is_none() && row.available.is_none(),
+                "invalid-field-value QUIC packet row {} must use '-' for sizes",
+                row.name
+            );
+            match err {
+                CrafterError::InvalidFieldValue { field, reason } => {
+                    assert_eq!(field, row.expected_context_or_field);
+                    assert!(
+                        !reason.is_empty(),
+                        "QUIC packet malformed fixture {} should report a reason",
+                        row.name
+                    );
+                }
+                other => panic!(
+                    "QUIC packet malformed fixture {} expected InvalidFieldValue, got {other:?}",
+                    row.name
+                ),
+            }
+        }
+        expected => panic!(
+            "QUIC packet malformed fixture {} has unknown expected kind {}",
+            row.name, expected
+        ),
+    }
+}
+
+fn assert_quic_varint_malformed_row(row: &QuicVarintMalformedFixtureRow) {
+    assert_lower_dash_name(&row.name, &row.name);
+    let err = QuicVarInt::decode(&row.bytes).map(|_| ()).unwrap_err();
+    assert_quic_buffer_too_short(&row.name, err, &row.context, row.required, row.available);
+}
+
+fn assert_quic_buffer_too_short(
+    name: &str,
+    err: CrafterError,
+    expected_context: &str,
+    expected_required: usize,
+    expected_available: usize,
+) {
+    match err {
+        CrafterError::BufferTooShort {
+            context,
+            required,
+            available,
+        } => {
+            assert_eq!(context, expected_context, "case {name} context");
+            assert_eq!(required, expected_required, "case {name} required");
+            assert_eq!(available, expected_available, "case {name} available");
+        }
+        other => panic!("QUIC malformed fixture {name} expected BufferTooShort, got {other:?}"),
     }
 }
 
@@ -7127,7 +7572,116 @@ fn valid_byte_fixtures_decode_compile_and_summarize() {
                 assert_compile_decode_compile(case, target, &packet, &bytes);
             }
             FixtureDecodeTarget::DhcpOptions => assert_dhcp_option_fixture(case, &bytes),
+            FixtureDecodeTarget::QuicDatagram => {
+                let packet = decode_quic_fixture_datagram(&bytes)
+                    .unwrap_or_else(|err| panic!("fixture {} should decode: {err}", case.path));
+                assert_packet_surface(case, &packet);
+                assert_fixture_fields(case, &packet);
+                assert_quic_datagram_compile_decode_compile(case, &packet, &bytes);
+            }
         }
+    }
+}
+
+#[test]
+fn quic_sequence_fixture_catalog_decodes_and_roundtrips() -> crafter::core::Result<()> {
+    for case in QUIC_SEQUENCE_FIXTURES {
+        assert_lower_dash_name(case.name, case.name);
+        ensure_fixture_exists(case.path);
+
+        let rows = parse_named_hex_rows(case.path, case.contents);
+        assert!(
+            !rows.is_empty(),
+            "QUIC sequence fixture {} must contain rows",
+            case.path
+        );
+
+        let mut covered = HashSet::new();
+        for row in rows {
+            assert_lower_dash_name(&row.name, &row.name);
+            assert!(
+                !row.note.is_empty(),
+                "QUIC sequence fixture {} row {} must include source-backed note",
+                case.path,
+                row.name
+            );
+            assert!(
+                !row.bytes.is_empty(),
+                "QUIC sequence fixture {} row {} must carry input bytes",
+                case.path,
+                row.name
+            );
+
+            match case.target {
+                QuicSequenceFixtureTarget::FrameSequence => {
+                    let frames = QuicFrame::decode_sequence(&row.bytes)?;
+                    assert!(
+                        !frames.is_empty(),
+                        "QUIC frame sequence {} should decode at least one frame",
+                        row.name
+                    );
+                    assert_eq!(QuicFrame::encode_sequence(frames), row.bytes);
+                }
+                QuicSequenceFixtureTarget::TransportParameters => {
+                    let parameters = QuicTransportParameter::decode_sequence(&row.bytes)?;
+                    assert!(
+                        !parameters.is_empty(),
+                        "QUIC transport-parameter sequence {} should decode at least one parameter",
+                        row.name
+                    );
+                    assert_eq!(
+                        QuicTransportParameter::encode_sequence(parameters)?,
+                        row.bytes
+                    );
+                }
+            }
+
+            covered.insert(row.name);
+        }
+
+        let required: &[&str] = match case.target {
+            QuicSequenceFixtureTarget::FrameSequence => {
+                &["initial-ping-crypto", "datagram-len", "datagram-no-len"]
+            }
+            QuicSequenceFixtureTarget::TransportParameters => &[
+                "common-v1",
+                "datagram-extension",
+                "version-information-v2",
+                "preferred-address",
+                "unknown-grease-duplicates",
+            ],
+        };
+        for required_row in required {
+            assert!(
+                covered.contains(*required_row),
+                "QUIC sequence fixture {} missing required row {}",
+                case.path,
+                required_row
+            );
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn quic_malformed_corpus_rows_are_registered() {
+    let packet_rows = parse_quic_packet_malformed_rows(
+        "malformed/quic-packet-corpus.hex",
+        fixture_str!("malformed/quic-packet-corpus.hex"),
+    );
+    assert_required_quic_packet_malformed_rows(&packet_rows);
+    for row in packet_rows {
+        assert_quic_packet_malformed_row(&row);
+    }
+
+    let varint_rows = parse_quic_varint_malformed_rows(
+        "malformed/quic-varint-corpus.hex",
+        fixture_str!("malformed/quic-varint-corpus.hex"),
+    );
+    assert_required_quic_varint_malformed_rows(&varint_rows);
+    for row in varint_rows {
+        assert_quic_varint_malformed_row(&row);
     }
 }
 
@@ -9072,13 +9626,14 @@ fn pcap_ipv6_roundtrip() {
 #[test]
 fn fixture_tree_hygiene_matches_readme_conventions() {
     let root = fixture_path("");
-    let catalog_paths = VALID_FIXTURES
+    let mut catalog_paths = VALID_FIXTURES
         .iter()
         .chain(DOT11_FIXTURES.iter())
         .chain(BLE_FIXTURES.iter())
         .chain(DOT15D4_FIXTURES.iter())
         .map(|case| case.path)
         .collect::<HashSet<_>>();
+    catalog_paths.extend(QUIC_SEQUENCE_FIXTURES.iter().map(|case| case.path));
     let mut cataloged_byte_fixture_paths = HashSet::new();
 
     for file in fixture_files(&root) {
@@ -9139,6 +9694,15 @@ fn fixture_tree_hygiene_matches_readme_conventions() {
         assert!(
             cataloged_byte_fixture_paths.contains(case.path),
             "catalog entry {} must live under the fixture dot15d4/ directory",
+            case.path
+        );
+    }
+
+    for case in QUIC_SEQUENCE_FIXTURES {
+        ensure_fixture_exists(case.path);
+        assert!(
+            cataloged_byte_fixture_paths.contains(case.path),
+            "catalog entry {} must live under the fixture bytes/ directory",
             case.path
         );
     }

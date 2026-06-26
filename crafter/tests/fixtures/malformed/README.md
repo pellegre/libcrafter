@@ -67,6 +67,37 @@ name|target|expected-kind|expected-context-or-marker|required|available|hex
   outcomes.
 - `decodes` markers pin byte-preserving behavior such as unknown frame tails.
 
+## QUIC packets — `quic-packet-corpus.hex`
+
+Consumed by `crafter/tests/quic_malformed.rs` and registered in
+`crafter/tests/fixture_suite.rs`. Format:
+
+```
+name|target|expected-kind|expected-context-or-field|required|available|hex
+```
+
+- `target` selects the packet decode surface:
+  - `packet` — `QuicPacket::decode`;
+  - `short-header-dcid-4` — `QuicPacket::decode_short_header` with a 4-byte
+    Destination Connection ID;
+  - `short-header-dcid-0` — `QuicPacket::decode_short_header` with an empty
+    Destination Connection ID.
+- `expected-kind` is `buffer-too-short` or `invalid-field-value`.
+- `required` and `available` pin `BufferTooShort` sizes; use `-` for invalid
+  field outcomes.
+
+## QUIC varints — `quic-varint-corpus.hex`
+
+Consumed by `crafter/tests/quic_malformed.rs` and registered in
+`crafter/tests/fixture_suite.rs`. Format:
+
+```
+name|expected-kind|expected-context|required|available|hex
+```
+
+All rows currently expect `buffer-too-short` from `QuicVarInt::decode`; the
+`empty` row intentionally has an empty hex field.
+
 ## Conventions
 
 - Frames use lab-safe documentation values (documentation PAN/address space,
