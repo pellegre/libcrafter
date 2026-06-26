@@ -156,6 +156,15 @@ backend_support:
     pcap_write: true
     notes:
       - Scapy does not provide a required native QUIC encoder for this suite; the oracle emits exact UDP payload bytes and canonicalizes Raw on UDP/443 or UDP/4433 as quic.
+  wireshark:
+    status: supported
+    native_layers:
+      - quic
+      - data
+    decode: true
+    pcap_read: true
+    notes:
+      - Parser-only support normalizes native QUIC dissector output when available and falls back to byte-level UDP/4433 data payload classification for protected raw packets.
   libcrafter:
     status: supported
     encode: true

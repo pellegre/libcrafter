@@ -147,3 +147,33 @@ class QuicScapyBackendTest(unittest.TestCase):
         )
         self.assertEqual(decoded.layers, ["ipv4", "udp", "quic"])
         self.assertEqual(decoded.fields["quic"]["packet_count"], 2)
+
+
+class QuicWiresharkBackendTest(unittest.TestCase):
+    def test_wireshark_quic_plugin_self_registers(self) -> None:
+        from tools.oracle.engine.backends.wireshark.protocols import WIRESHARK_REGISTRY
+
+        plugin = WIRESHARK_REGISTRY.require("quic")
+        self.assertIn("version", plugin.tshark_aliases)
+
+    def test_wireshark_canonicalizes_udp_data_payload_as_quic(self) -> None:
+        from tools.oracle.engine.backends.wireshark.protocols.quic import (
+            canonicalize_quic_payload,
+        )
+
+        raw_hex = "c000000001048394c8f001aa000301beef"
+        layers = ["ipv4", "udp", "payload"]
+        fields = {
+            "ipv4": {"protocol": 17},
+            "udp": {"src_port": 49152, "dst_port": 4433},
+            "payload": {"hex": raw_hex, "length": len(bytes.fromhex(raw_hex))},
+        }
+        canonicalize_quic_payload(
+            layers,
+            fields,
+            {"data": {"data.data": raw_hex}},
+        )
+        self.assertEqual(layers, ["ipv4", "udp", "quic"])
+        self.assertNotIn("payload", fields)
+        self.assertEqual(fields["quic"]["raw_hex"], raw_hex)
+        self.assertEqual(fields["quic"]["packet_count"], 1)
