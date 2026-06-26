@@ -34,6 +34,10 @@ fn exports_quic_symbols() -> crafter::Result<()> {
     let quic = Quic::from_bytes(quic_payload);
     let quic_packet = QuicPacket::from_bytes(quic_payload);
     assert_eq!(quic_packet.as_bytes(), quic_payload);
+    let short = QuicShortHeaderBuilder::new()
+        .packet_number(QuicPacketNumber::new(1))
+        .build()?;
+    assert_eq!(short.as_bytes(), [0x40, 0x01]);
 
     let packet = Ipv4::new()
         .src(Ipv4Addr::new(192, 0, 2, 10))
