@@ -629,7 +629,7 @@ mod send_recv_filters {
     }
 
     #[test]
-    fn reply_filter_for_dhcp_uses_server_to_client_ports() {
+    fn reply_filter_for_dhcpv4_uses_server_to_client_ports() {
         let mac = MacAddr::new([0x02, 0, 0, 0, 0, 1]);
         let packet = Ipv4::new()
             .src(Ipv4Addr::UNSPECIFIED)
@@ -1005,7 +1005,7 @@ mod reply_matching {
     }
 
     #[test]
-    fn matches_dhcp_offer_by_transaction_and_client_hardware_address() {
+    fn dhcpv4_reply_matches_offer_by_transaction_and_client_hardware_address() {
         let mac = MacAddr::new([0x02, 0, 0, 0, 0, 1]);
         let request = Ipv4::new()
             .src(Ipv4Addr::UNSPECIFIED)
@@ -1037,7 +1037,7 @@ mod reply_matching {
     }
 
     #[test]
-    fn matches_dhcp_reply_by_client_identifier() {
+    fn dhcpv4_reply_matches_by_client_identifier() {
         // RFC 6842: a server echoes the client identifier (option 61) unaltered
         // in its reply. A reply that carries the same xid, hardware address, and
         // client identifier matches; one that echoes a different client
@@ -1082,7 +1082,7 @@ mod reply_matching {
     }
 
     #[test]
-    fn matches_dhcp_leasequery_reply_without_client_hardware_address() {
+    fn dhcpv4_reply_matches_leasequery_without_client_hardware_address() {
         // RFC 4388 section 6.1: a DHCPLEASEQUERY by IP leaves chaddr empty and
         // carries the queried address in ciaddr. The reply is identified by the
         // shared xid plus a leasequery reply message type (here
@@ -1116,7 +1116,7 @@ mod reply_matching {
     }
 
     #[test]
-    fn rejects_dhcp_reply_with_mismatched_relay_giaddr() {
+    fn dhcpv4_reply_rejects_mismatched_relay_giaddr() {
         // RFC 2131 section 4.1: a relayed exchange stamps giaddr and the reply
         // returns through the same relay, so a non-zero giaddr must match.
         let mac = MacAddr::new([0x02, 0, 0, 0, 0, 1]);

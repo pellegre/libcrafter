@@ -40,7 +40,7 @@ pub fn reply_matches(request: &Packet, candidate: &Packet) -> bool {
         return dns_reply_matches(request, candidate);
     }
     if request.layer::<Dhcpv4>().is_some() {
-        return dhcp_reply_matches(request, candidate);
+        return dhcpv4_reply_matches(request, candidate);
     }
 
     arp_reply_matches(request, candidate)
@@ -52,7 +52,7 @@ pub fn reply_matches(request: &Packet, candidate: &Packet) -> bool {
 
 fn request_reply_filter(packet: &Packet) -> Option<String> {
     if packet.layer::<Dhcpv4>().is_some() {
-        return Some(dhcp_filter());
+        return Some(dhcpv4_filter());
     }
     if packet.layer::<Dns>().is_some() {
         return Some(transport_filter("udp", packet, Some(DNS_PORT), None));
@@ -123,7 +123,7 @@ pub(crate) fn batch_reply_filter(packets: &[Packet]) -> Option<String> {
     }
 }
 
-fn dhcp_filter() -> String {
+fn dhcpv4_filter() -> String {
     format!("udp and src port {DHCPV4_SERVER_PORT} and dst port {DHCPV4_CLIENT_PORT}")
 }
 
@@ -286,7 +286,7 @@ fn dns_reply_matches(request: &Packet, candidate: &Packet) -> bool {
         && udp_optional_reply_matches(request, candidate)
 }
 
-fn dhcp_reply_matches(request: &Packet, candidate: &Packet) -> bool {
+fn dhcpv4_reply_matches(request: &Packet, candidate: &Packet) -> bool {
     let Some(request_dhcp) = request.layer::<Dhcpv4>() else {
         return false;
     };
@@ -304,7 +304,7 @@ fn dhcp_reply_matches(request: &Packet, candidate: &Packet) -> bool {
         return false;
     }
 
-    if !dhcp_transport_reply_matches(request, candidate) {
+    if !dhcpv4_transport_reply_matches(request, candidate) {
         return false;
     }
 
@@ -312,11 +312,11 @@ fn dhcp_reply_matches(request: &Packet, candidate: &Packet) -> bool {
     // carries. Each identifier is only enforced when both sides expose it, so a
     // leasequery-by-IP request (which has no chaddr) still matches its reply
     // while a normal DISCOVER/OFFER also pins the client hardware address.
-    dhcp_client_hardware_address_matches(request_dhcp, candidate_dhcp)
-        && dhcp_client_identifier_matches(request_dhcp, candidate_dhcp)
-        && dhcp_server_identifier_matches(request_dhcp, candidate_dhcp)
-        && dhcp_relay_giaddr_matches(request_dhcp, candidate_dhcp)
-        && dhcp_message_type_matches(request_dhcp, candidate_dhcp)
+    dhcpv4_client_hardware_address_matches(request_dhcp, candidate_dhcp)
+        && dhcpv4_client_identifier_matches(request_dhcp, candidate_dhcp)
+        && dhcpv4_server_identifier_matches(request_dhcp, candidate_dhcp)
+        && dhcpv4_relay_giaddr_matches(request_dhcp, candidate_dhcp)
+        && dhcpv4_message_type_matches(request_dhcp, candidate_dhcp)
 }
 
 /// Match the BOOTP `chaddr` fixed field when both messages carry one.
@@ -325,7 +325,7 @@ fn dhcp_reply_matches(request: &Packet, candidate: &Packet) -> bool {
 /// Leasequery-by-IP requests (RFC 4388 section 6.1) leave `chaddr` empty, so the
 /// check is skipped when either side has no hardware address rather than
 /// rejecting an otherwise-matching reply.
-fn dhcp_client_hardware_address_matches(request: &Dhcpv4, candidate: &Dhcpv4) -> bool {
+fn dhcpv4_client_hardware_address_matches(request: &Dhcpv4, candidate: &Dhcpv4) -> bool {
     let request_chaddr = request.client_hardware_address_value();
     let candidate_chaddr = candidate.client_hardware_address_value();
     if request_chaddr.is_empty() || candidate_chaddr.is_empty() {
@@ -340,17 +340,17 @@ fn dhcp_client_hardware_address_matches(request: &Dhcpv4, candidate: &Dhcpv4) ->
 /// request supplied one and the reply carries one they must be equal. A
 /// malformed identifier on either side surfaces as `None`/error here and is
 /// treated as "not comparable", leaving the other identifiers to decide.
-fn dhcp_client_identifier_matches(request: &Dhcpv4, candidate: &Dhcpv4) -> bool {
+fn dhcpv4_client_identifier_matches(request: &Dhcpv4, candidate: &Dhcpv4) -> bool {
     match (
-        dhcp_client_identifier(request),
-        dhcp_client_identifier(candidate),
+        dhcpv4_client_identifier(request),
+        dhcpv4_client_identifier(candidate),
     ) {
         (Some(request_id), Some(candidate_id)) => request_id == candidate_id,
         _ => true,
     }
 }
 
-fn dhcp_client_identifier(dhcp: &Dhcpv4) -> Option<Dhcpv4ClientIdentifier> {
+fn dhcpv4_client_identifier(dhcp: &Dhcpv4) -> Option<Dhcpv4ClientIdentifier> {
     dhcp.client_identifier_value().and_then(Result::ok)
 }
 
@@ -360,7 +360,7 @@ fn dhcp_client_identifier(dhcp: &Dhcpv4) -> Option<Dhcpv4ClientIdentifier> {
 /// selected by carrying that server's identifier. When the request names a
 /// server identifier and the reply also carries one they must agree; replies
 /// that omit it (or requests that never selected a server) are not constrained.
-fn dhcp_server_identifier_matches(request: &Dhcpv4, candidate: &Dhcpv4) -> bool {
+fn dhcpv4_server_identifier_matches(request: &Dhcpv4, candidate: &Dhcpv4) -> bool {
     match (
         request.server_identifier_value(),
         candidate.server_identifier_value(),
@@ -376,7 +376,7 @@ fn dhcp_server_identifier_matches(request: &Dhcpv4, candidate: &Dhcpv4) -> bool 
 /// the server returns the reply through the same relay, so a non-zero `giaddr`
 /// on both sides must match. Directly broadcast/unicast exchanges leave it zero
 /// and are not constrained.
-fn dhcp_relay_giaddr_matches(request: &Dhcpv4, candidate: &Dhcpv4) -> bool {
+fn dhcpv4_relay_giaddr_matches(request: &Dhcpv4, candidate: &Dhcpv4) -> bool {
     let request_giaddr = request.gateway_ip_address_value();
     let candidate_giaddr = candidate.gateway_ip_address_value();
     if request_giaddr == Ipv4Addr::UNSPECIFIED || candidate_giaddr == Ipv4Addr::UNSPECIFIED {
@@ -392,7 +392,7 @@ fn dhcp_relay_giaddr_matches(request: &Dhcpv4, candidate: &Dhcpv4) -> bool {
 /// family message the candidate must answer with a leasequery reply family
 /// message. Non-leasequery requests (DISCOVER, REQUEST, INFORM, ...) impose no
 /// message-type constraint here so OFFER/ACK/NAK replies still match.
-fn dhcp_message_type_matches(request: &Dhcpv4, candidate: &Dhcpv4) -> bool {
+fn dhcpv4_message_type_matches(request: &Dhcpv4, candidate: &Dhcpv4) -> bool {
     let Some(request_type) = request.message_type_value() else {
         return true;
     };
@@ -436,7 +436,7 @@ fn is_leasequery_reply_type(message_type: Dhcpv4MessageType) -> bool {
     )
 }
 
-fn dhcp_transport_reply_matches(request: &Packet, candidate: &Packet) -> bool {
+fn dhcpv4_transport_reply_matches(request: &Packet, candidate: &Packet) -> bool {
     match (request.layer::<Udp>(), candidate.layer::<Udp>()) {
         (Some(request_udp), Some(candidate_udp)) => {
             request_udp.source_port_value() == DHCPV4_CLIENT_PORT
