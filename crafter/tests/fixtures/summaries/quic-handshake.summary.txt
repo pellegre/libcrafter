@@ -1,0 +1,1 @@
+Quic(raw_len=16, packets=1, header=long kind=Handshake first_byte=0xe0 fixed_bit=true quic_bit=set version=0x00000001(QUIC v1) dcid=len=4 value=8394c8f0 scid=len=1 value=aa protected_or_raw_len=4, frames=0, transport_parameters=0)

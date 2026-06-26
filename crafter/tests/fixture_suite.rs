@@ -17,8 +17,8 @@ use crafter::core::{
     Ipv6RoutingHeader, Ipv6RoutingTypeStatus, Ipv6SegmentRoutingHeader, Layer, LinkType, LinuxSll,
     LlcSnap, MacAddr, NetworkLayer, NullByteOrder, NullLoopback, OptionOverload,
     OspfChecksumStatus, Ospfv2, Ospfv3, Packet, Quic, QuicFrame, QuicPacket,
-    QuicTransportParameter, QuicVarInt, Radiotap, Raw, Rip, Ripng, Snmp, Tcp, TcpOption,
-    TcpSackBlock, Udp, UdpChecksumStatus, UdpOption, UdpOptionStatus, UdpOptions, Vlan,
+    QuicTransportParameter, QuicUnknownFrame, QuicVarInt, Radiotap, Raw, Rip, Ripng, Snmp, Tcp,
+    TcpOption, TcpSackBlock, Udp, UdpChecksumStatus, UdpOption, UdpOptionStatus, UdpOptions, Vlan,
     ARP_HRD_INFINIBAND, BOOTP_REQUEST, DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_CLASS_IN,
     DNS_EDNS_DEFAULT_UDP_PAYLOAD_SIZE, DNS_EDNS_OPTION_COOKIE, DNS_EDNS_OPTION_NSID,
     DNS_FLAG_AUTHORITATIVE, DNS_FLAG_QR_RESPONSE, DNS_FLAG_RECURSION_DESIRED, DNS_SVCB_KEY_ALPN,
@@ -10488,6 +10488,162 @@ fn summary_fixture_reader_matches_current_summary_fixture() {
     );
 
     assert_eq!(actual, expected);
+}
+
+fn quic_packet_from_fixture(name: &str) -> Packet {
+    let case = valid_fixture_case(name);
+    let bytes = fixture_bytes_for_case(case);
+    decode_quic_fixture_datagram(&bytes)
+        .unwrap_or_else(|err| panic!("QUIC fixture {} should decode: {err}", case.path))
+}
+
+fn quic_frame_sequence_summary_snapshot() -> String {
+    let case = QUIC_SEQUENCE_FIXTURES
+        .iter()
+        .find(|case| case.target == QuicSequenceFixtureTarget::FrameSequence)
+        .expect("QUIC frame sequence fixture should be cataloged");
+    let mut output = String::new();
+    for row in parse_named_hex_rows(case.path, case.contents) {
+        output.push_str(&format!("{}:\n", row.name));
+        let frames = QuicFrame::decode_sequence(&row.bytes)
+            .unwrap_or_else(|err| panic!("QUIC frame row {} should decode: {err}", row.name));
+        for frame in frames {
+            output.push_str(&format!("  {}\n", frame.summary()));
+        }
+    }
+    output
+}
+
+fn quic_transport_parameter_summary_snapshot() -> String {
+    let case = QUIC_SEQUENCE_FIXTURES
+        .iter()
+        .find(|case| case.target == QuicSequenceFixtureTarget::TransportParameters)
+        .expect("QUIC transport-parameter sequence fixture should be cataloged");
+    let mut output = String::new();
+    for row in parse_named_hex_rows(case.path, case.contents) {
+        output.push_str(&format!("{}:\n", row.name));
+        let parameters =
+            QuicTransportParameter::decode_sequence(&row.bytes).unwrap_or_else(|err| {
+                panic!(
+                    "QUIC transport-parameter row {} should decode: {err}",
+                    row.name
+                )
+            });
+        for parameter in parameters {
+            output.push_str(&format!("  {}\n", parameter.summary()));
+        }
+    }
+    output
+}
+
+fn quic_datagram_frame_summary_snapshot() -> String {
+    let datagram_len =
+        QuicFrame::datagram([0xde, 0xad]).expect("DATAGRAM_LEN frame should build for summary");
+    let datagram = QuicFrame::datagram_without_length([0xde, 0xad])
+        .expect("DATAGRAM frame should build for summary");
+    format!(
+        "datagram-len: {}\ndatagram-no-len: {}\n",
+        datagram_len.summary(),
+        datagram.summary()
+    )
+}
+
+fn quic_unknown_frame_summary_snapshot() -> String {
+    let unknown = QuicFrame::from_unknown_frame(QuicUnknownFrame::new(
+        QuicVarInt::from_u64_unchecked(0xaf),
+        [0xde, 0xad],
+    ))
+    .expect("unknown QUIC frame should build for summary");
+    format!("{}\n", unknown.summary())
+}
+
+fn quic_malformed_safe_raw_packet() -> Packet {
+    Packet::from_layer(Quic::from_bytes([0xc0]))
+}
+
+fn quic_summary_output_cases() -> Vec<(&'static str, String)> {
+    let packet_cases = [
+        ("quic-version-negotiation", "quic-version-negotiation"),
+        ("quic-retry", "quic-retry"),
+        ("quic-v1-initial", "quic-v1-initial"),
+        ("quic-handshake", "quic-handshake"),
+        ("quic-short-header", "quic-short-header"),
+    ];
+
+    let mut outputs = Vec::new();
+    for (fixture_name, output_name) in packet_cases {
+        let packet = quic_packet_from_fixture(fixture_name);
+        outputs.push((
+            match output_name {
+                "quic-version-negotiation" => "summaries/quic-version-negotiation.summary.txt",
+                "quic-retry" => "summaries/quic-retry.summary.txt",
+                "quic-v1-initial" => "summaries/quic-v1-initial.summary.txt",
+                "quic-handshake" => "summaries/quic-handshake.summary.txt",
+                "quic-short-header" => "summaries/quic-short-header.summary.txt",
+                _ => unreachable!("all QUIC packet summary cases are listed"),
+            },
+            format!("{}\n", packet.summary()),
+        ));
+        outputs.push((
+            match output_name {
+                "quic-version-negotiation" => "summaries/quic-version-negotiation-show.summary.txt",
+                "quic-retry" => "summaries/quic-retry-show.summary.txt",
+                "quic-v1-initial" => "summaries/quic-v1-initial-show.summary.txt",
+                "quic-handshake" => "summaries/quic-handshake-show.summary.txt",
+                "quic-short-header" => "summaries/quic-short-header-show.summary.txt",
+                _ => unreachable!("all QUIC packet show cases are listed"),
+            },
+            format!("{}\n", packet.show()),
+        ));
+    }
+
+    let malformed = quic_malformed_safe_raw_packet();
+    outputs.push((
+        "summaries/quic-malformed-safe-raw.summary.txt",
+        format!("{}\n", malformed.summary()),
+    ));
+    outputs.push((
+        "summaries/quic-malformed-safe-raw-show.summary.txt",
+        format!("{}\n", malformed.show()),
+    ));
+    outputs.push((
+        "summaries/quic-frame-sequence.summary.txt",
+        quic_frame_sequence_summary_snapshot(),
+    ));
+    outputs.push((
+        "summaries/quic-transport-parameters.summary.txt",
+        quic_transport_parameter_summary_snapshot(),
+    ));
+    outputs.push((
+        "summaries/quic-datagram-frame.summary.txt",
+        quic_datagram_frame_summary_snapshot(),
+    ));
+    outputs.push((
+        "summaries/quic-unknown-frame.summary.txt",
+        quic_unknown_frame_summary_snapshot(),
+    ));
+    outputs
+}
+
+#[test]
+fn quic_summary_fixtures_match_outputs() {
+    for (path, actual) in quic_summary_output_cases() {
+        let expected = read_summary_fixture(path);
+        assert_eq!(
+            expected.trim_end(),
+            actual.trim_end(),
+            "QUIC summary fixture {path} is stale"
+        );
+    }
+}
+
+#[test]
+#[ignore = "regenerates committed QUIC summary fixtures"]
+fn quic_summary_write_fixtures() {
+    for (path, output) in quic_summary_output_cases() {
+        fs::write(fixture_path(path), output)
+            .unwrap_or_else(|err| panic!("QUIC summary fixture {path} should write: {err}"));
+    }
 }
 
 #[test]

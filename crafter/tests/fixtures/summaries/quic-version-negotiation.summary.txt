@@ -1,0 +1,1 @@
+Quic(raw_len=20, packets=1, header=long kind=VersionNegotiation first_byte=0xc0 fixed_bit=true quic_bit=set version=0x00000000(Version Negotiation) dcid=len=4 value=8394c8f0 scid=len=1 value=aa protected_or_raw_len=8, frames=0, transport_parameters=0)
