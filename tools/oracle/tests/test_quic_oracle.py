@@ -28,6 +28,19 @@ def _quic_plan(case: str):
     return plans[0]
 
 
+def _require_scapy_backend():
+    try:
+        from tools.oracle.engine.backends.scapy import normalize, packets
+        from tools.oracle.engine.backends.scapy.bootstrap import import_scapy
+    except Exception as exc:  # pragma: no cover - environment-dependent.
+        raise unittest.SkipTest(f"Scapy backend unavailable: {exc}")
+    try:
+        import_scapy()
+    except Exception as exc:  # pragma: no cover - environment-dependent.
+        raise unittest.SkipTest(f"Scapy is not importable: {exc}")
+    return packets, normalize
+
+
 class QuicOracleSpecTest(unittest.TestCase):
     def setUp(self) -> None:
         self.specs = load_oracle_specs()
@@ -101,3 +114,36 @@ class QuicGeneratorTest(unittest.TestCase):
         self.assertEqual(policies["quic-v1-initial"], "strict_bytes")
         self.assertEqual(policies["quic-grease-bit"], "normalized")
         self.assertEqual(policies["quic-malformed-exclusions"], "structured_error")
+
+
+class QuicScapyBackendTest(unittest.TestCase):
+    def test_scapy_materializes_quic_as_udp_payload(self) -> None:
+        packets, normalize = _require_scapy_backend()
+        plan = _quic_plan("quic-v1-initial")
+        vector = packets.encode_packet_plan(plan)
+        raw = vector.to_bytes()
+        self.assertEqual(raw[0] >> 4, 4)
+        self.assertIn(plan.fields["quic"]["raw_hex"], vector.raw_hex)
+
+        decoded = normalize.decode_bytes(
+            raw,
+            root="l3:ipv4",
+            source_hex=vector.raw_hex,
+            feature_tags=plan.feature_tags,
+        )
+        self.assertEqual(decoded.layers, ["ipv4", "udp", "quic"])
+        self.assertEqual(decoded.fields["quic"]["raw_hex"], plan.fields["quic"]["raw_hex"])
+        self.assertEqual(decoded.fields["quic"]["packet_count"], 1)
+
+    def test_scapy_canonicalizes_coalesced_quic_packet_count(self) -> None:
+        packets, normalize = _require_scapy_backend()
+        plan = _quic_plan("quic-coalesced-initial-handshake")
+        vector = packets.encode_packet_plan(plan)
+        decoded = normalize.decode_bytes(
+            vector.to_bytes(),
+            root="l3:ipv4",
+            source_hex=vector.raw_hex,
+            feature_tags=plan.feature_tags,
+        )
+        self.assertEqual(decoded.layers, ["ipv4", "udp", "quic"])
+        self.assertEqual(decoded.fields["quic"]["packet_count"], 2)

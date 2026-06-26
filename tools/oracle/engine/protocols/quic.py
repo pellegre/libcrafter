@@ -88,7 +88,6 @@ def _apply_behavior(
     if "quic" not in fields:
         fields["quic"] = {}
     fields["quic"]["raw_hex"] = _raw_hex_for_case(case)
-    fields["quic"]["wire_role"] = "udp_payload"
 
     udp = fields.get("udp")
     if isinstance(udp, dict):
