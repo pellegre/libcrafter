@@ -52,7 +52,10 @@ pub use packet::{
     QUIC_RETRY_INTEGRITY_TAG_LEN,
 };
 pub use packet_number::QuicPacketNumber;
-pub use transport_parameter::QuicTransportParameter;
+pub use transport_parameter::{
+    is_grease_transport_parameter_id, QuicKnownTransportParameter, QuicTransportParameter,
+    QuicTransportParameterDuplicate, QuicTransportParameterKind,
+};
 pub use varint::QuicVarInt;
 
 #[cfg(test)]
