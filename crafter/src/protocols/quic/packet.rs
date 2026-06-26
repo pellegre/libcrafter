@@ -51,6 +51,11 @@ impl Quic {
         Self::from_bytes(bytes)
     }
 
+    /// Create a QUIC datagram from ordered packet entries.
+    pub fn from_packets(packets: impl IntoIterator<Item = QuicPacket>) -> Self {
+        Self::new().extend_packets(packets)
+    }
+
     #[allow(dead_code)]
     pub(crate) fn from_decoded_payload(bytes: &[u8]) -> Self {
         Self {
@@ -75,9 +80,33 @@ impl Quic {
         self
     }
 
+    /// Append ordered QUIC packet entries to this datagram.
+    pub fn extend_packets(mut self, packets: impl IntoIterator<Item = QuicPacket>) -> Self {
+        let mut packets = packets.into_iter();
+        if let Some(first) = packets.next() {
+            if !self.payload.is_unset() {
+                self.payload = Field::unset();
+            }
+            self.packets.push(first);
+            self.packets.extend(packets);
+        }
+        self
+    }
+
     /// Append raw QUIC packet bytes to this datagram.
     pub fn packet_bytes(self, bytes: impl AsRef<[u8]>) -> Self {
         self.packet(QuicPacket::from_bytes(bytes))
+    }
+
+    /// Append multiple raw QUIC packet byte sequences to this datagram.
+    pub fn packet_bytes_many<B>(mut self, packets: impl IntoIterator<Item = B>) -> Self
+    where
+        B: AsRef<[u8]>,
+    {
+        for bytes in packets {
+            self = self.packet_bytes(bytes);
+        }
+        self
     }
 
     /// Borrow ordered QUIC packet entries.
@@ -2444,6 +2473,8 @@ fn version_list_summary(versions: &[u32]) -> String {
 #[cfg(test)]
 mod tests {
     use crate::packet::Packet;
+    use crate::{Ipv4, Udp};
+    use std::net::Ipv4Addr;
 
     use super::*;
 
@@ -2494,6 +2525,101 @@ mod tests {
         assert!(datagram.packets().is_empty());
         assert_eq!(datagram.payload_bytes(), [0xaa, 0xbb]);
         assert_eq!(compiled.as_bytes(), [0xaa, 0xbb]);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_coalesced_compile_from_packets_auto_fills_long_lengths() -> crate::Result<()> {
+        let initial = QuicLongHeaderPacket::initial_builder()
+            .destination_connection_id(QuicConnectionId::from_bytes([0x83, 0x94, 0xc8, 0xf0]))
+            .source_connection_id(QuicConnectionId::from_bytes([0xaa]))
+            .packet_number(QuicPacketNumber::new(1))
+            .payload([0xbe])
+            .build()?;
+        let handshake = QuicLongHeaderPacket::handshake_builder()
+            .destination_connection_id(QuicConnectionId::from_bytes([0x83, 0x94, 0xc8, 0xf0]))
+            .source_connection_id(QuicConnectionId::from_bytes([0xaa]))
+            .packet_number(QuicPacketNumber::new(2))
+            .payload([0xef])
+            .build()?;
+        let datagram = Quic::from_packets([
+            QuicPacket::from_long_header(initial.clone()),
+            QuicPacket::from_long_header(handshake.clone()),
+        ]);
+
+        assert_eq!(initial.length().value(), 2);
+        assert_eq!(handshake.length().value(), 2);
+        assert_eq!(datagram.packets().len(), 2);
+        assert_eq!(datagram.len(), initial.len() + handshake.len());
+
+        let mut expected = initial.as_bytes().to_vec();
+        expected.extend_from_slice(handshake.as_bytes());
+        assert_eq!(
+            Packet::from_layer(datagram).compile()?.as_bytes(),
+            expected.as_slice()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn quic_coalesced_compile_extend_packets_preserves_explicit_lengths() -> crate::Result<()> {
+        let initial = QuicLongHeaderPacket::initial_builder()
+            .length(QuicVarInt::new(1).unwrap())
+            .length_encoded_len(2)
+            .packet_number(QuicPacketNumber::new(0x12).with_encoded_len(4))
+            .payload([0xcc])
+            .build()?;
+        let datagram = Quic::from_bytes([0xff])
+            .extend_packets([QuicPacket::from_long_header(initial.clone())]);
+
+        assert_eq!(datagram.payload_state(), FieldState::Unset);
+        assert_eq!(initial.length().value(), 1);
+        assert_eq!(initial.length_encoded_len(), 2);
+        assert_eq!(
+            Packet::from_layer(datagram).compile()?.as_bytes(),
+            initial.as_bytes()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn quic_coalesced_compile_packet_bytes_many_appends_raw_entries() -> crate::Result<()> {
+        let datagram = Quic::new().packet_bytes_many([vec![0xc0, 0x00], vec![0xd0, 0x01, 0x02]]);
+
+        assert_eq!(datagram.packets().len(), 2);
+        assert_eq!(
+            Packet::from_layer(datagram).compile()?.as_bytes(),
+            [0xc0, 0x00, 0xd0, 0x01, 0x02]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn quic_coalesced_compile_udp_length_covers_whole_datagram() -> crate::Result<()> {
+        let initial = QuicLongHeaderPacket::initial_builder()
+            .packet_number(QuicPacketNumber::new(1))
+            .payload([0xbe])
+            .build()?;
+        let handshake = QuicLongHeaderPacket::handshake_builder()
+            .packet_number(QuicPacketNumber::new(2))
+            .payload([0xef])
+            .build()?;
+        let datagram = Quic::new()
+            .packet(QuicPacket::from_long_header(initial.clone()))
+            .packet(QuicPacket::from_long_header(handshake.clone()));
+        let datagram_len = datagram.len();
+        let compiled = (Ipv4::new()
+            .src(Ipv4Addr::new(192, 0, 2, 10))
+            .dst(Ipv4Addr::new(198, 51, 100, 20))
+            / Udp::new().sport(4433).dport(4433)
+            / datagram)
+            .compile()?;
+
+        assert_eq!(
+            u16::from_be_bytes([compiled.as_bytes()[24], compiled.as_bytes()[25]]),
+            (8 + datagram_len) as u16
+        );
+        assert!(compiled.as_bytes().ends_with(handshake.as_bytes()));
         Ok(())
     }
 
