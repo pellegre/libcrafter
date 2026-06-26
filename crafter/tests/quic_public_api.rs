@@ -32,6 +32,12 @@ fn exports_quic_symbols() -> crafter::Result<()> {
         QuicRetryIntegrityStatus::UnsupportedVersion.label(),
         "unsupported_version"
     );
+    assert_eq!(QUIC_STATELESS_RESET_MIN_LEN, 21);
+    let reset_candidate = QuicStatelessResetCandidate::decode([
+        0x40, 0, 1, 2, 3, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc,
+        0xcc, 0xcc, 0xcc, 0xcc,
+    ])?;
+    assert!(reset_candidate.token_matches([0xcc; QUIC_STATELESS_RESET_TOKEN_LEN]));
     assert_eq!(quic_initial_salt(QUIC_VERSION_1)?, &QUIC_V1_INITIAL_SALT);
     assert_eq!(crafter::QUIC_V2_INITIAL_SALT.len(), 20);
     let initial_secrets = derive_quic_initial_secrets(QUIC_VERSION_1, &cid)?;
