@@ -27,6 +27,16 @@ fn exports_quic_symbols() -> crafter::Result<()> {
     assert_eq!(QuicHeaderProtectionAlgorithm::Aes128.label(), "aes128");
     assert_eq!(QuicInitialPacketDirection::Client.label(), "client");
     assert_eq!(QuicInitialPacketDirection::Server.label(), "server");
+    assert_eq!(
+        QuicFixedBitStatus::GreasedCleared.label(),
+        "greased_cleared"
+    );
+    assert_eq!(quic_fixed_bit_label(false), "greased_cleared");
+    assert_eq!(
+        quic_fixed_bit_status(quic_clear_fixed_bit(0xc0)),
+        QuicFixedBitStatus::GreasedCleared
+    );
+    assert_eq!(quic_set_fixed_bit(0x80), 0xc0);
     assert_eq!(QuicRetryIntegrityStatus::Valid.label(), "valid");
     assert_eq!(
         QuicRetryIntegrityStatus::UnsupportedVersion.label(),
@@ -75,6 +85,14 @@ fn exports_quic_symbols() -> crafter::Result<()> {
     let packet_number = QuicPacketNumber::new(0x1234).with_encoded_len(2);
     assert_eq!(packet_number.value(), 0x1234);
     assert_eq!(packet_number.encoded_len_value(), Some(2));
+    let greased_header = QuicHeader::new()
+        .header_form(QuicHeaderForm::Long)
+        .fixed_bit(true)
+        .grease_quic_bit();
+    assert_eq!(
+        greased_header.quic_bit_label_value(),
+        Some("greased_cleared")
+    );
 
     let frame = QuicFrame::from_bytes([0x01]);
     assert_eq!(frame.as_bytes(), &[0x01]);

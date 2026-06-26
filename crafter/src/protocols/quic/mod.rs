@@ -58,7 +58,10 @@ pub use frame::{
     QUIC_TRANSPORT_ERROR_STREAM_STATE_ERROR, QUIC_TRANSPORT_ERROR_TRANSPORT_PARAMETER_ERROR,
     QUIC_TRANSPORT_ERROR_VERSION_NEGOTIATION_ERROR,
 };
-pub use header::QuicHeader;
+pub use header::{
+    quic_clear_fixed_bit, quic_fixed_bit_label, quic_fixed_bit_status, quic_set_fixed_bit,
+    QuicFixedBitStatus, QuicHeader, QuicHeaderForm,
+};
 pub use packet::{
     Quic, QuicHandshakeBuilder, QuicInitialBuilder, QuicLongHeaderPacket, QuicPacket,
     QuicRetryBuilder, QuicRetryPacket, QuicShortHeaderBuilder, QuicShortHeaderPacket,
