@@ -1,0 +1,15 @@
+# QUIC transport-parameter malformed corpus.
+# Evidence: .agents/docs/quic-manifest.md E-RFC-9000, E-RFC-9287, and
+# E-RFC-9368; .agents/docs/quic-codepoints.md transport-parameter rows.
+# Format: name|expected-kind|expected-context-or-field|required|available|hex
+# expected-kind:
+#   buffer-too-short    -> Err(CrafterError::BufferTooShort)
+#   invalid-field-value -> Err(CrafterError::InvalidFieldValue)
+
+tuple-value-truncated|buffer-too-short|quic.transport_parameter.value|2|1|0f 02 aa
+integer-surplus|invalid-field-value|quic.transport_parameter.integer.value|-|-|01 02 01 02
+stateless-reset-token-short|invalid-field-value|quic.transport_parameter.stateless_reset_token|-|-|02 0f ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab
+preferred-address-token-truncated|buffer-too-short|quic.transport_parameter.preferred_address.stateless_reset_token|16|15|0d 2c c0 00 02 0a 11 51 20 01 0d b8 00 00 00 00 00 00 00 00 00 00 00 10 11 52 04 83 94 c8 f0 ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab
+version-information-short|buffer-too-short|quic.transport_parameter.version_information.chosen_version|4|3|11 03 00 00 01
+version-information-unaligned|invalid-field-value|quic.transport_parameter.version_information|-|-|11 05 00 00 00 01 ff
+grease-quic-bit-nonempty|invalid-field-value|quic.transport_parameter.grease_quic_bit|-|-|6a b2 01 ff
