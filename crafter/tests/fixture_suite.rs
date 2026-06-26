@@ -1975,6 +1975,20 @@ const PCAP_FIXTURES: &[PcapFixtureCase] = &[
             fixture_name: "ipv4-udp-snmp-response",
         }],
     },
+    PcapFixtureCase {
+        name: "ethernet-ipv4-udp-quic-initial",
+        path: "pcaps/ethernet-ipv4-udp-quic-initial.pcap",
+        contents: fixture_bytes!("pcaps/ethernet-ipv4-udp-quic-initial.pcap"),
+        pcap_link_type: PcapLinkType::Ethernet,
+        link_type: LinkType::Ethernet,
+        timestamp_precision: TimestampPrecision::Microseconds,
+        coverage: PcapCoverageFamily::Ethernet,
+        records: &[PcapFixtureRecord {
+            seconds: 87,
+            fractional: 403,
+            fixture_name: QUIC_PCAP_ETHERNET_RECORD_FIXTURE_NAME,
+        }],
+    },
     // RawIp pcap fixtures carrying the RIP / RIPng UDP fixtures so the full
     // read -> decode -> summary path is exercised: a RIPv1 whole-table request
     // (Ipv4/Udp 520), a RIPv2 simple-password authenticated response
@@ -2113,6 +2127,20 @@ const PCAP_FIXTURES: &[PcapFixtureCase] = &[
         }],
     },
     PcapFixtureCase {
+        name: "raw-ipv4-udp-quic-initial",
+        path: "pcaps/raw-ipv4-udp-quic-initial.pcap",
+        contents: fixture_bytes!("pcaps/raw-ipv4-udp-quic-initial.pcap"),
+        pcap_link_type: PcapLinkType::RawIp,
+        link_type: LinkType::Raw,
+        timestamp_precision: TimestampPrecision::Microseconds,
+        coverage: PcapCoverageFamily::RawIpIpv4,
+        records: &[PcapFixtureRecord {
+            seconds: 87,
+            fractional: 401,
+            fixture_name: QUIC_PCAP_RAW_IPV4_RECORD_FIXTURE_NAME,
+        }],
+    },
+    PcapFixtureCase {
         name: "raw-ipv4-ipfragment-generated",
         path: "pcaps/raw-ipv4-ipfragment-generated.pcap",
         contents: fixture_bytes!("pcaps/raw-ipv4-ipfragment-generated.pcap"),
@@ -2194,6 +2222,20 @@ const PCAP_FIXTURES: &[PcapFixtureCase] = &[
             seconds: 20,
             fractional: 3,
             fixture_name: "ipv6-base-traffic-flow-udp-raw",
+        }],
+    },
+    PcapFixtureCase {
+        name: "raw-ipv6-udp-quic-initial",
+        path: "pcaps/raw-ipv6-udp-quic-initial.pcap",
+        contents: fixture_bytes!("pcaps/raw-ipv6-udp-quic-initial.pcap"),
+        pcap_link_type: PcapLinkType::RawIp,
+        link_type: LinkType::Raw,
+        timestamp_precision: TimestampPrecision::Microseconds,
+        coverage: PcapCoverageFamily::RawIpIpv6,
+        records: &[PcapFixtureRecord {
+            seconds: 87,
+            fractional: 402,
+            fixture_name: QUIC_PCAP_RAW_IPV6_RECORD_FIXTURE_NAME,
         }],
     },
     PcapFixtureCase {
@@ -8156,12 +8198,18 @@ const BLE_LL_ACCESS_ADDRESS_LEN: usize = 4;
 // pattern as the BLE pcap fixture rather than a `ValidFixtureCase` file entry.
 const DOT15D4_TAP_PCAP_RECORD_FIXTURE_NAME: &str = "dot15d4-tap-record";
 const DOT15D4_WITHFCS_PCAP_RECORD_FIXTURE_NAME: &str = "dot15d4-withfcs-record";
+const QUIC_PCAP_RAW_IPV4_RECORD_FIXTURE_NAME: &str = "quic-pcap-raw-ipv4-record";
+const QUIC_PCAP_RAW_IPV6_RECORD_FIXTURE_NAME: &str = "quic-pcap-raw-ipv6-record";
+const QUIC_PCAP_ETHERNET_RECORD_FIXTURE_NAME: &str = "quic-pcap-ethernet-record";
 
 fn pcap_record_expected_bytes(fixture_name: &str) -> Vec<u8> {
     match fixture_name {
         BLE_PCAP_RECORD_FIXTURE_NAME => ble_le_ll_adv_record_bytes(),
         DOT15D4_TAP_PCAP_RECORD_FIXTURE_NAME => dot15d4_tap_pcap_record_bytes(),
         DOT15D4_WITHFCS_PCAP_RECORD_FIXTURE_NAME => dot15d4_withfcs_pcap_record_bytes(),
+        QUIC_PCAP_RAW_IPV4_RECORD_FIXTURE_NAME => quic_pcap_raw_ipv4_record_bytes(),
+        QUIC_PCAP_RAW_IPV6_RECORD_FIXTURE_NAME => quic_pcap_raw_ipv6_record_bytes(),
+        QUIC_PCAP_ETHERNET_RECORD_FIXTURE_NAME => quic_pcap_ethernet_record_bytes(),
         _ => fixture_bytes_for_case(valid_fixture_case(fixture_name)),
     }
 }
@@ -8170,9 +8218,138 @@ fn pcap_record_valid_fixture(fixture_name: &str) -> Option<&'static ValidFixture
     match fixture_name {
         BLE_PCAP_RECORD_FIXTURE_NAME
         | DOT15D4_TAP_PCAP_RECORD_FIXTURE_NAME
-        | DOT15D4_WITHFCS_PCAP_RECORD_FIXTURE_NAME => None,
+        | DOT15D4_WITHFCS_PCAP_RECORD_FIXTURE_NAME
+        | QUIC_PCAP_RAW_IPV4_RECORD_FIXTURE_NAME
+        | QUIC_PCAP_RAW_IPV6_RECORD_FIXTURE_NAME
+        | QUIC_PCAP_ETHERNET_RECORD_FIXTURE_NAME => None,
         _ => Some(valid_fixture_case(fixture_name)),
     }
+}
+
+fn quic_pcap_payload_layer() -> Quic {
+    let fixture = valid_fixture_case("quic-v1-initial-frames");
+    let bytes = fixture_bytes_for_case(fixture);
+    Quic::from_packets([QuicPacket::decode(&bytes).unwrap_or_else(|err| {
+        panic!(
+            "fixture {} should decode into a QUIC packet for pcap generation: {err}",
+            fixture.path
+        )
+    })])
+}
+
+fn quic_pcap_raw_ipv4_packet() -> Packet {
+    Ipv4::with_addresses(
+        Ipv4Addr::new(192, 0, 2, 87),
+        Ipv4Addr::new(198, 51, 100, 87),
+    )
+    .identification(0x5157)
+    .ttl(64)
+        / Udp::new().sport(49_152).dport(4433)
+        / quic_pcap_payload_layer()
+}
+
+fn quic_pcap_raw_ipv6_packet() -> Packet {
+    Ipv6::with_addresses(
+        Ipv6Addr::new(0x2001, 0x0db8, 0x0087, 0, 0, 0, 0, 1),
+        Ipv6Addr::new(0x2001, 0x0db8, 0x0087, 0, 0, 0, 0, 2),
+    )
+    .tc(0x2e)
+    .fl(0x87087)
+    .hlim(64)
+        / Udp::new().sport(49_153).dport(4433)
+        / quic_pcap_payload_layer()
+}
+
+fn quic_pcap_ethernet_packet() -> Packet {
+    Ethernet::new()
+        .src(MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0x87]))
+        .dst(MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0x88]))
+        .ethertype(ETHERTYPE_IPV4)
+        / Ipv4::with_addresses(
+            Ipv4Addr::new(192, 0, 2, 88),
+            Ipv4Addr::new(198, 51, 100, 88),
+        )
+        .identification(0x5158)
+        .ttl(64)
+        / Udp::new().sport(49_154).dport(4433)
+        / quic_pcap_payload_layer()
+}
+
+fn quic_pcap_raw_ipv4_record_bytes() -> Vec<u8> {
+    quic_pcap_raw_ipv4_packet()
+        .compile()
+        .expect("QUIC RawIp IPv4 pcap fixture packet should compile")
+        .as_bytes()
+        .to_vec()
+}
+
+fn quic_pcap_raw_ipv6_record_bytes() -> Vec<u8> {
+    quic_pcap_raw_ipv6_packet()
+        .compile()
+        .expect("QUIC RawIp IPv6 pcap fixture packet should compile")
+        .as_bytes()
+        .to_vec()
+}
+
+fn quic_pcap_ethernet_record_bytes() -> Vec<u8> {
+    quic_pcap_ethernet_packet()
+        .compile()
+        .expect("QUIC Ethernet pcap fixture packet should compile")
+        .as_bytes()
+        .to_vec()
+}
+
+fn quic_pcap_timestamp(record_fixture_name: &str) -> PcapTimestamp {
+    match record_fixture_name {
+        QUIC_PCAP_RAW_IPV4_RECORD_FIXTURE_NAME => PcapTimestamp::micros(87, 401),
+        QUIC_PCAP_RAW_IPV6_RECORD_FIXTURE_NAME => PcapTimestamp::micros(87, 402),
+        QUIC_PCAP_ETHERNET_RECORD_FIXTURE_NAME => PcapTimestamp::micros(87, 403),
+        other => panic!("unknown QUIC pcap record fixture {other}"),
+    }
+    .expect("QUIC pcap timestamp should be valid")
+}
+
+fn quic_pcap_bytes(
+    pcap_link_type: PcapLinkType,
+    record_fixture_name: &str,
+    packet: &Packet,
+) -> Vec<u8> {
+    let mut pcap = Vec::new();
+    {
+        let options =
+            PcapWriterOptions::new(pcap_link_type).precision(TimestampPrecision::Microseconds);
+        let mut writer = PcapWriter::from_writer_with_options(&mut pcap, options)
+            .expect("QUIC pcap writer should initialize");
+        writer
+            .write_packet_with_timestamp(packet, quic_pcap_timestamp(record_fixture_name))
+            .expect("QUIC pcap packet should write");
+        writer.flush().expect("QUIC pcap should flush");
+    }
+    pcap
+}
+
+fn quic_pcap_raw_ipv4_bytes() -> Vec<u8> {
+    quic_pcap_bytes(
+        PcapLinkType::RawIp,
+        QUIC_PCAP_RAW_IPV4_RECORD_FIXTURE_NAME,
+        &quic_pcap_raw_ipv4_packet(),
+    )
+}
+
+fn quic_pcap_raw_ipv6_bytes() -> Vec<u8> {
+    quic_pcap_bytes(
+        PcapLinkType::RawIp,
+        QUIC_PCAP_RAW_IPV6_RECORD_FIXTURE_NAME,
+        &quic_pcap_raw_ipv6_packet(),
+    )
+}
+
+fn quic_pcap_ethernet_bytes() -> Vec<u8> {
+    quic_pcap_bytes(
+        PcapLinkType::Ethernet,
+        QUIC_PCAP_ETHERNET_RECORD_FIXTURE_NAME,
+        &quic_pcap_ethernet_packet(),
+    )
 }
 
 /// Compiled bytes of the 802.15.4 TAP pcap fixture frame: a `Dot15d4Radio`
@@ -8321,6 +8498,81 @@ fn assert_ble_pcap_packet_surface(packet: &Packet) {
         ),
         "{adv_debug}"
     );
+}
+
+fn assert_quic_pcap_packet_surface(record_fixture_name: &str, packet: &Packet) {
+    let expected_layers = match record_fixture_name {
+        QUIC_PCAP_RAW_IPV4_RECORD_FIXTURE_NAME => vec!["Ipv4", "Udp", "Quic"],
+        QUIC_PCAP_RAW_IPV6_RECORD_FIXTURE_NAME => vec!["Ipv6", "Udp", "Quic"],
+        QUIC_PCAP_ETHERNET_RECORD_FIXTURE_NAME => vec!["Ethernet", "Ipv4", "Udp", "Quic"],
+        other => panic!("unknown QUIC pcap record fixture {other}"),
+    };
+    let layer_names = packet.iter().map(|layer| layer.name()).collect::<Vec<_>>();
+    assert_eq!(layer_names, expected_layers);
+    assert!(packet.layer::<Raw>().is_none());
+
+    match record_fixture_name {
+        QUIC_PCAP_RAW_IPV4_RECORD_FIXTURE_NAME => {
+            let ipv4 = packet.layer::<Ipv4>().expect("QUIC IPv4 pcap has IPv4");
+            assert_eq!(ipv4.source(), Ipv4Addr::new(192, 0, 2, 87));
+            assert_eq!(ipv4.destination(), Ipv4Addr::new(198, 51, 100, 87));
+            assert_eq!(ipv4.protocol_value(), IPPROTO_UDP);
+        }
+        QUIC_PCAP_RAW_IPV6_RECORD_FIXTURE_NAME => {
+            let ipv6 = packet.layer::<Ipv6>().expect("QUIC IPv6 pcap has IPv6");
+            assert_eq!(
+                ipv6.source(),
+                Ipv6Addr::new(0x2001, 0x0db8, 0x0087, 0, 0, 0, 0, 1)
+            );
+            assert_eq!(
+                ipv6.destination(),
+                Ipv6Addr::new(0x2001, 0x0db8, 0x0087, 0, 0, 0, 0, 2)
+            );
+            assert_eq!(ipv6.next_header_value(), IPPROTO_UDP);
+        }
+        QUIC_PCAP_ETHERNET_RECORD_FIXTURE_NAME => {
+            let ethernet = packet.layer::<Ethernet>().expect("QUIC pcap has Ethernet");
+            assert_eq!(
+                ethernet.source(),
+                Some(MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0x87]))
+            );
+            assert_eq!(
+                ethernet.destination(),
+                Some(MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0x88]))
+            );
+            assert_eq!(ethernet.ethertype_value(), Some(ETHERTYPE_IPV4));
+        }
+        other => panic!("unknown QUIC pcap record fixture {other}"),
+    }
+
+    let udp = packet.layer::<Udp>().expect("QUIC pcap has UDP");
+    assert_eq!(udp.destination_port_value(), 4433);
+    assert!(matches!(udp.source_port_value(), 49_152 | 49_153 | 49_154));
+    assert!(matches!(
+        udp.checksum_status(),
+        UdpChecksumStatus::Valid | UdpChecksumStatus::Ipv4NoChecksum
+    ));
+
+    let fixture = valid_fixture_case("quic-v1-initial-frames");
+    let fixture_bytes = fixture_bytes_for_case(fixture);
+    let quic = packet.layer::<Quic>().expect("QUIC pcap has Quic layer");
+    assert_eq!(quic.len(), fixture_bytes.len());
+    assert_eq!(quic.packets().len(), 1);
+    let quic_packet = &quic.packets()[0];
+    assert_eq!(quic_packet.as_bytes(), fixture_bytes.as_slice());
+    let long_header = quic_packet
+        .long_header()
+        .expect("QUIC pcap packet should decode long header");
+    assert_eq!(long_header.version(), QUIC_VERSION_1);
+    assert_eq!(
+        long_header.protected_payload(),
+        &[0x01, 0x06, 0x00, 0x01, 0xaa]
+    );
+
+    let summary = packet.summary();
+    assert!(summary.contains("Quic("), "{summary}");
+    assert!(summary.contains("kind=Initial"), "{summary}");
+    assert!(summary.contains("packets=1"), "{summary}");
 }
 
 fn packet_records_from_pcap_fixture(case: &PcapFixtureCase) -> Vec<PacketRecord> {
@@ -9190,6 +9442,11 @@ fn pcap_fixture_corpus_decodes_supported_link_types() {
                     DOT15D4_WITHFCS_PCAP_RECORD_FIXTURE_NAME => {
                         assert_dot15d4_withfcs_pcap_packet_surface(packet.packet())
                     }
+                    QUIC_PCAP_RAW_IPV4_RECORD_FIXTURE_NAME
+                    | QUIC_PCAP_RAW_IPV6_RECORD_FIXTURE_NAME
+                    | QUIC_PCAP_ETHERNET_RECORD_FIXTURE_NAME => {
+                        assert_quic_pcap_packet_surface(expected.fixture_name, packet.packet())
+                    }
                     other => panic!("pcap sentinel record {other} has no surface assertion"),
                 }
                 assert_eq!(
@@ -9309,6 +9566,129 @@ fn igmp_mrd_fixture_suite_raw_ip_pcap_decodes_records() {
             &expected_bytes,
         );
     }
+}
+
+#[test]
+fn quic_pcap_fixtures_decode_and_rewrite() {
+    for (case_name, expected_bytes) in [
+        ("raw-ipv4-udp-quic-initial", quic_pcap_raw_ipv4_bytes()),
+        ("raw-ipv6-udp-quic-initial", quic_pcap_raw_ipv6_bytes()),
+        ("ethernet-ipv4-udp-quic-initial", quic_pcap_ethernet_bytes()),
+    ] {
+        let case = pcap_fixture_case(case_name);
+        assert_eq!(case.records.len(), 1);
+        assert_eq!(case.contents, expected_bytes.as_slice());
+
+        let expected = case.records[0];
+        let expected_record_bytes = pcap_record_expected_bytes(expected.fixture_name);
+        let expected_timestamp = quic_pcap_timestamp(expected.fixture_name);
+
+        let reader = PcapReader::from_reader(case.contents)
+            .unwrap_or_else(|err| panic!("pcap fixture {} should parse: {err}", case.path));
+        assert_eq!(reader.pcap_link_type(), case.pcap_link_type);
+        assert_eq!(reader.link_type(), case.link_type);
+        assert_eq!(reader.header().precision(), case.timestamp_precision);
+
+        let records = PcapReader::from_reader(case.contents)
+            .unwrap_or_else(|err| {
+                panic!(
+                    "pcap fixture {} should parse header for records: {err}",
+                    case.path
+                )
+            })
+            .collect_records()
+            .unwrap_or_else(|err| panic!("pcap fixture {} should read records: {err}", case.path));
+        assert_eq!(records.len(), 1);
+        let record = &records[0];
+        assert_eq!(record.timestamp(), expected_timestamp);
+        assert_eq!(record.pcap_link_type(), case.pcap_link_type);
+        assert_eq!(record.link_type(), case.link_type);
+        assert_eq!(record.captured_len(), expected_record_bytes.len() as u32);
+        assert_eq!(record.original_len(), expected_record_bytes.len() as u32);
+        assert_eq!(record.data(), expected_record_bytes.as_slice());
+
+        let packets = PcapReader::from_reader(case.contents)
+            .unwrap_or_else(|err| {
+                panic!(
+                    "pcap fixture {} should parse header for packets: {err}",
+                    case.path
+                )
+            })
+            .collect_packets()
+            .unwrap_or_else(|err| {
+                panic!("pcap fixture {} should decode packets: {err}", case.path)
+            });
+        assert_eq!(packets.len(), 1);
+        let packet = &packets[0];
+        assert_eq!(packet.timestamp(), expected_timestamp);
+        assert_eq!(packet.original_len(), expected_record_bytes.len() as u32);
+        assert_eq!(packet.pcap_link_type(), case.pcap_link_type);
+        assert_eq!(packet.link_type(), case.link_type);
+        assert_eq!(packet.data(), expected_record_bytes.as_slice());
+        assert_quic_pcap_packet_surface(expected.fixture_name, packet.packet());
+
+        let mut rewritten_packet = Vec::new();
+        {
+            let options =
+                PcapWriterOptions::new(case.pcap_link_type).precision(case.timestamp_precision);
+            let mut writer = PcapWriter::from_writer_with_options(&mut rewritten_packet, options)
+                .unwrap_or_else(|err| {
+                    panic!(
+                        "pcap fixture {} packet writer should initialize: {err}",
+                        case.path
+                    )
+                });
+            writer
+                .write_packet_with_timestamp(packet.packet(), expected_timestamp)
+                .unwrap_or_else(|err| {
+                    panic!("pcap fixture {} packet should write: {err}", case.path)
+                });
+            writer.flush().unwrap_or_else(|err| {
+                panic!(
+                    "pcap fixture {} packet writer should flush: {err}",
+                    case.path
+                )
+            });
+        }
+        assert_eq!(rewritten_packet, case.contents);
+
+        let mut rewritten_record = Vec::new();
+        {
+            let options =
+                PcapWriterOptions::new(case.pcap_link_type).precision(case.timestamp_precision);
+            let mut writer = PcapWriter::from_writer_with_options(&mut rewritten_record, options)
+                .unwrap_or_else(|err| {
+                    panic!("pcap fixture {} writer should initialize: {err}", case.path)
+                });
+            writer.write_record(record).unwrap_or_else(|err| {
+                panic!("pcap fixture {} record should write: {err}", case.path)
+            });
+            writer.flush().unwrap_or_else(|err| {
+                panic!("pcap fixture {} writer should flush: {err}", case.path)
+            });
+        }
+        assert_eq!(rewritten_record, case.contents);
+    }
+}
+
+#[test]
+#[ignore = "regenerates committed QUIC pcap fixtures"]
+fn quic_pcap_write_fixtures() {
+    fs::write(
+        fixture_path("pcaps/raw-ipv4-udp-quic-initial.pcap"),
+        quic_pcap_raw_ipv4_bytes(),
+    )
+    .expect("QUIC RawIp IPv4 pcap fixture should write");
+    fs::write(
+        fixture_path("pcaps/raw-ipv6-udp-quic-initial.pcap"),
+        quic_pcap_raw_ipv6_bytes(),
+    )
+    .expect("QUIC RawIp IPv6 pcap fixture should write");
+    fs::write(
+        fixture_path("pcaps/ethernet-ipv4-udp-quic-initial.pcap"),
+        quic_pcap_ethernet_bytes(),
+    )
+    .expect("QUIC Ethernet pcap fixture should write");
 }
 
 #[test]
