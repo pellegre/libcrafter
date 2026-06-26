@@ -8275,6 +8275,7 @@ _SUITE_FEATURE_BY_FAMILY = {
     "igmp": "igmp_header",
     "ip": "ip_fragment_transforms",
     "ipv6": "ipv6_fragment_routing",
+    "quic": "quic_behavior",
     "snmp": ("snmp_basic", "snmp_pdu_matrix", "snmp_v3"),
 }
 _LAYER_ONLY_SUITE_FAMILIES = frozenset({"igmp"})

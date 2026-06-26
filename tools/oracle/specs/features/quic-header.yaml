@@ -1,0 +1,231 @@
+version: 1
+kind: feature
+name: quic_behavior
+summary: QUIC UDP packet-header behavior, version negotiation, retry, protected raw payload preservation, DATAGRAM coverage, and malformed exclusions.
+
+layers:
+  - udp
+  - quic
+directions:
+  - reference_to_libcrafter
+  - libcrafter_to_reference
+  - roundtrip
+  - live
+strict_bytes: true
+malformed: false
+categories:
+  - baseline
+  - boundary
+  - pcap
+  - live
+
+behaviors:
+  - name: v1-initial
+    version: 0x00000001
+    packet_type: initial
+    checks:
+      - long_header_detected
+      - connection_ids_preserved
+      - protected_payload_opaque
+  - name: v2-initial
+    version: 0x6b3343cf
+    packet_type: initial
+    checks:
+      - long_header_detected
+      - version_2_type_bits
+      - protected_payload_opaque
+  - name: version-negotiation
+    version: 0x00000000
+    checks:
+      - invariant_version_negotiation
+      - offered_versions_preserved
+  - name: retry
+    packet_type: retry
+    checks:
+      - retry_token_preserved
+      - integrity_tag_bytes_preserved
+  - name: handshake
+    packet_type: handshake
+    checks:
+      - long_header_detected
+      - packet_number_bytes_preserved
+  - name: zero-rtt
+    packet_type: zero_rtt
+    checks:
+      - long_header_detected
+      - encrypted_payload_preserved
+  - name: coalesced-initial-handshake
+    checks:
+      - multiple_packets_preserved_in_one_udp_datagram
+  - name: datagram-frame
+    source: RFC 9221
+    checks:
+      - datagram_codepoints_declared
+      - protected_payload_preserved
+  - name: grease-bit
+    source: RFC 9287
+    checks:
+      - nonzero_quic_bit_path_declared
+      - explicit_bytes_preserved
+  - name: protected-raw
+    checks:
+      - encrypted_payload_not_decrypted_by_oracle
+  - name: short-header-raw
+    checks:
+      - short_header_not_udp_autobound
+      - raw_payload_contract_declared
+  - name: stateless-reset-candidate
+    checks:
+      - short_random_datagram_contract_declared
+  - name: frame-sequence
+    checks:
+      - crate_fixture_coverage
+      - no_tls_transcript_required
+  - name: transport-parameters
+    checks:
+      - crate_fixture_coverage
+      - no_tls_extension_plumbing
+  - name: malformed-exclusions
+    checks:
+      - structured_decode_errors_only
+      - excluded_from_strict_backend_byte_comparison
+
+coverage_cases:
+  - quic-v1-initial
+  - quic-v2-initial
+  - quic-version-negotiation
+  - quic-retry
+  - quic-handshake
+  - quic-zero-rtt
+  - quic-coalesced-initial-handshake
+  - quic-datagram-frame
+  - quic-grease-bit
+  - quic-protected-raw
+  - quic-short-header-raw
+  - quic-stateless-reset-candidate
+  - quic-frame-sequence
+  - quic-transport-parameters
+  - quic-malformed-exclusions
+  - quic-pcap-udp-4433
+
+supported_cases:
+  - name: quic-v1-initial
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+      - live
+    byte_policy: strict_bytes
+  - name: quic-v2-initial
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+      - live
+    byte_policy: strict_bytes
+  - name: quic-version-negotiation
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+      - live
+    byte_policy: strict_bytes
+  - name: quic-retry
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+      - live
+    byte_policy: strict_bytes
+  - name: quic-handshake
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+      - live
+    byte_policy: strict_bytes
+  - name: quic-zero-rtt
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+      - live
+    byte_policy: strict_bytes
+  - name: quic-coalesced-initial-handshake
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+      - live
+    byte_policy: strict_bytes
+  - name: quic-datagram-frame
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+      - live
+    byte_policy: strict_bytes
+  - name: quic-grease-bit
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+      - live
+    byte_policy: strict_bytes
+  - name: quic-protected-raw
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+      - live
+    byte_policy: strict_bytes
+  - name: quic-pcap-udp-4433
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: strict_bytes
+  - name: quic-short-header-raw
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: normalized
+    contract_only: true
+  - name: quic-stateless-reset-candidate
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+      - roundtrip
+    byte_policy: normalized
+    contract_only: true
+  - name: quic-frame-sequence
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: normalized
+    contract_only: true
+  - name: quic-transport-parameters
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: normalized
+    contract_only: true
+  - name: quic-malformed-exclusions
+    directions:
+      - reference_to_libcrafter
+      - libcrafter_to_reference
+    byte_policy: structured_error
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - Raw
+    notes:
+      - Runnable cases materialize exact QUIC UDP payload bytes and compare decoded canonical packet metadata plus bytes.
+      - Short-header, stateless-reset, transport-parameter, and decrypted-frame contracts are declared here but validated by crate fixtures/properties because no TLS transcript or QUIC endpoint is in oracle scope.
+  libcrafter:
+    status: supported
+    notes:
+      - Decodes long-header QUIC on UDP/443 and UDP/4433, preserves encrypted/raw payload bytes, and exposes inspectable packet classification without implementing a QUIC endpoint.
