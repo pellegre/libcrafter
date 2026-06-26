@@ -73,6 +73,17 @@ jobs:
           curl -LsSf https://astral.sh/uv/install.sh | sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
+      - name: Fetch Rust dependencies
+        run: |
+          for attempt in 1 2 3; do
+            if cargo generate-lockfile && cargo fetch --locked; then
+              exit 0
+            fi
+            sleep $((attempt * 5))
+          done
+          cargo generate-lockfile
+          cargo fetch --locked
+
       - name: Run oracle Hetzner wire dry run
         run: |
           tools/oracle/run live --provider hetzner --dry-run \

@@ -88,7 +88,7 @@ REWRITE_DIGESTS: dict[str, str] = {
     "ndp-neighbor-solicitation": "370a344dc0fe7b07254594a2415c6f00b4d27734da865a637e7ef196cfd3ce4d",
     "ndp-router-solicitation": "16ea7b10442d032555bea4d2efa11dc43177f9587bdb65fe1e418e36eb5664a4",
     "ospf-hello-exchange": "9bf3e1d497c8e2404e80c95a0cf58f52cc93a8f68f784302d273a5818610bbb9",
-    "quic-initial-udp-observation": "ad00143fedbb6f4132893079d9bdd0f37e5ff542d54aa5110a55a061a6aea6c7",
+    "quic-initial-udp-observation": "333992d27b0cdca999480fad5358234724aaf8d277dbba4f654c7cf7ddfa781d",
     "snmp-get-response": "4105476f8a7d1da56f01073a02f72a18f304ae25909249a4d73a81cfd7e01ed4",
     "snmp-getbulk-response": "0207340c1e09e1bc71c30e23becdde9098904e30ff58206b5b5559179934b755",
     "snmp-notification-trap": "86a24d2f0a6d83fde84fa17c0a6ad6f70e1f8006bac836cbaf2ea5e3fdf0a0d0",

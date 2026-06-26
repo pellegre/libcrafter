@@ -211,7 +211,7 @@ def _quic_probe_plan(
     packet_count = 1
     planned_only = case_name in _QUIC_PLANNED_ONLY_CASES
     target_behavior = _target_behavior_for_case(case_name)
-    return {
+    plan: JSONObject = {
         "schema_version": 1,
         "case": case.name,
         "sequence": sequence,
@@ -220,7 +220,6 @@ def _quic_probe_plan(
         "seed": seed,
         "stimulus": case.stimulus,
         "expected_response": case.expected_response,
-        "planned_only": planned_only,
         "protocol": "quic",
         "source_ipv4": stimulus_ipv4,
         "destination_ipv4": target_ipv4,
@@ -288,6 +287,9 @@ def _quic_probe_plan(
         },
         "digest_hex": digest.hex()[:16],
     }
+    if planned_only:
+        plan["planned_only"] = True
+    return plan
 
 
 def _payload_hex_for_case(case_name: str) -> str:

@@ -77,7 +77,7 @@ class QuicProbePlanTest(unittest.TestCase):
         plan = _plan("quic-initial-udp-observation")
 
         self.assertEqual(plan["case"], "quic-initial-udp-observation")
-        self.assertFalse(plan["planned_only"])
+        self.assertNotIn("planned_only", plan)
         ipaddress.IPv4Address(plan["source_ipv4"])
         ipaddress.IPv4Address(plan["destination_ipv4"])
         self.assertEqual(plan["destination_port"], 4433)
