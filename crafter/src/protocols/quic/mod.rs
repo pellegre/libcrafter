@@ -53,11 +53,12 @@ pub use packet::{
 };
 pub use packet_number::QuicPacketNumber;
 pub use transport_parameter::{
-    is_grease_transport_parameter_id, QuicConnectionIdTransportParameter,
-    QuicIntegerTransportParameter, QuicIntegerTransportParameterValidation,
-    QuicKnownTransportParameter, QuicPreferredAddress, QuicPreferredAddressValidation,
-    QuicStatelessResetToken, QuicTransportParameter, QuicTransportParameterDuplicate,
-    QuicTransportParameterKind, QuicVersionInformation, QuicVersionInformationValidation,
+    grease_transport_parameter_id, is_grease_transport_parameter_id,
+    QuicConnectionIdTransportParameter, QuicIntegerTransportParameter,
+    QuicIntegerTransportParameterValidation, QuicKnownTransportParameter, QuicPreferredAddress,
+    QuicPreferredAddressValidation, QuicStatelessResetToken, QuicTransportParameter,
+    QuicTransportParameterDuplicate, QuicTransportParameterKind, QuicVersionInformation,
+    QuicVersionInformationValidation,
 };
 pub use varint::QuicVarInt;
 

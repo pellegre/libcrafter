@@ -786,6 +786,26 @@ pub const fn is_grease_transport_parameter_id(id: QuicVarInt) -> bool {
     value >= 27 && (value - 27) % 31 == 0
 }
 
+/// Return the reserved transport-parameter grease identifier for integer `N`
+/// in the RFC 9000 formula `31 * N + 27`.
+pub fn grease_transport_parameter_id(n: u64) -> Result<QuicVarInt> {
+    let value = n
+        .checked_mul(31)
+        .and_then(|value| value.checked_add(27))
+        .ok_or_else(|| {
+            CrafterError::invalid_field_value(
+                "quic.transport_parameter.grease.n",
+                "grease transport parameter identifier exceeds u64",
+            )
+        })?;
+    QuicVarInt::new(value).map_err(|_| {
+        CrafterError::invalid_field_value(
+            "quic.transport_parameter.grease.id",
+            "grease transport parameter identifier exceeds 62-bit QUIC varint space",
+        )
+    })
+}
+
 /// One duplicate transport-parameter identifier occurrence in a sequence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct QuicTransportParameterDuplicate {
@@ -845,6 +865,12 @@ impl QuicTransportParameter {
     /// Construct a selected known transport parameter with raw value bytes.
     pub fn known(known: QuicKnownTransportParameter, value: impl AsRef<[u8]>) -> Self {
         Self::raw(known.id(), value)
+    }
+
+    /// Construct a reserved grease transport parameter using the RFC 9000
+    /// identifier formula `31 * N + 27`.
+    pub fn grease(n: u64, value: impl AsRef<[u8]>) -> Result<Self> {
+        Ok(Self::raw(grease_transport_parameter_id(n)?, value))
     }
 
     /// Construct an integer-valued transport parameter with a canonical QUIC
@@ -983,6 +1009,11 @@ impl QuicTransportParameter {
         )
     }
 
+    /// Construct `grease_quic_bit`.
+    pub fn grease_quic_bit() -> Self {
+        Self::known(QuicKnownTransportParameter::GreaseQuicBit, [])
+    }
+
     /// Preserve a caller-pinned identifier varint width.
     pub fn with_identifier_encoded_len(mut self, len: usize) -> Self {
         self.identifier_encoded_len = Some(len);
@@ -1115,6 +1146,30 @@ impl QuicTransportParameter {
             return Ok(None);
         }
         decode_version_information_value(&self.value).map(Some)
+    }
+
+    /// Return true when this is the registered `grease_quic_bit` transport
+    /// parameter.
+    pub const fn is_grease_quic_bit(&self) -> bool {
+        matches!(
+            self.known_type(),
+            Some(QuicKnownTransportParameter::GreaseQuicBit)
+        )
+    }
+
+    /// Validate the registered `grease_quic_bit` transport parameter value.
+    /// Unknown, reserved grease, provisional, and other known parameters return
+    /// `Ok(None)`.
+    pub fn grease_quic_bit_value(&self) -> Result<Option<()>> {
+        if !self.is_grease_quic_bit() {
+            return Ok(None);
+        }
+        decode_empty_transport_parameter_value(
+            &self.value,
+            "quic.transport_parameter.grease_quic_bit",
+            "grease_quic_bit transport parameter value must be empty",
+        )?;
+        Ok(Some(()))
     }
 
     /// Return the broad parameter identifier classification.
@@ -1259,6 +1314,9 @@ impl QuicTransportParameter {
                 }
                 if parameter.is_version_information() {
                     parameter.version_information_value()?;
+                }
+                if parameter.is_grease_quic_bit() {
+                    parameter.grease_quic_bit_value()?;
                 }
             }
             offset = end;
@@ -1612,6 +1670,18 @@ fn decode_version_information_value(bytes: &[u8]) -> Result<QuicVersionInformati
     ))
 }
 
+fn decode_empty_transport_parameter_value(
+    bytes: &[u8],
+    context: &'static str,
+    message: &'static str,
+) -> Result<()> {
+    if bytes.is_empty() {
+        Ok(())
+    } else {
+        Err(CrafterError::invalid_field_value(context, message))
+    }
+}
+
 fn format_quic_version_hex(version: u32) -> String {
     format!("0x{version:08x}")
 }
@@ -1765,6 +1835,84 @@ mod tests {
         assert_eq!(
             QuicTransportParameter::decode_sequence([0x57, 0x3e, 0x03, 0xaa]).unwrap_err(),
             CrafterError::buffer_too_short("quic.transport_parameter.value", 3, 1)
+        );
+    }
+
+    #[test]
+    fn quic_transport_parameter_grease_classifies_formula_ids() -> Result<()> {
+        assert_eq!(grease_transport_parameter_id(0)?.value(), 27);
+        assert_eq!(grease_transport_parameter_id(1)?.value(), 58);
+        assert!(is_grease_transport_parameter_id(
+            grease_transport_parameter_id(1024)?
+        ));
+        assert!(!is_grease_transport_parameter_id(
+            QuicKnownTransportParameter::GreaseQuicBit.id()
+        ));
+
+        let parameter = QuicTransportParameter::grease(1, [0xde, 0xad])?;
+        let encoded = parameter.encode_to_vec()?;
+        assert_eq!(encoded, [0x3a, 0x02, 0xde, 0xad]);
+
+        let decoded = QuicTransportParameter::decode_sequence(&encoded)?;
+        assert_eq!(decoded[0].kind(), QuicTransportParameterKind::Grease);
+        assert_eq!(decoded[0].identifier().unwrap().value(), 58);
+        assert_eq!(decoded[0].value(), &[0xde, 0xad]);
+        assert_eq!(QuicTransportParameter::encode_sequence(decoded)?, encoded);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_transport_parameter_grease_builder_reports_identifier_overflow() {
+        assert_eq!(
+            grease_transport_parameter_id(u64::MAX).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "quic.transport_parameter.grease.n",
+                "grease transport parameter identifier exceeds u64",
+            )
+        );
+    }
+
+    #[test]
+    fn quic_transport_parameter_grease_quic_bit_builds_empty_known_parameter() -> Result<()> {
+        let parameter = QuicTransportParameter::grease_quic_bit();
+
+        assert_eq!(
+            parameter.known_type(),
+            Some(QuicKnownTransportParameter::GreaseQuicBit)
+        );
+        assert!(parameter.is_grease_quic_bit());
+        assert_eq!(parameter.grease_quic_bit_value()?, Some(()));
+        assert_eq!(
+            parameter.summary(),
+            "id=0x2ab2 kind=grease_quic_bit value_len=0"
+        );
+
+        let encoded = parameter.encode_to_vec()?;
+        assert_eq!(encoded, [0x6a, 0xb2, 0x00]);
+        let decoded = QuicTransportParameter::decode_sequence(&encoded)?;
+        assert_eq!(decoded[0].grease_quic_bit_value()?, Some(()));
+        assert_eq!(QuicTransportParameter::encode_sequence(decoded)?, encoded);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_transport_parameter_grease_quic_bit_rejects_non_empty_known_value() {
+        assert_eq!(
+            QuicTransportParameter::decode_sequence([0x6a, 0xb2, 0x01, 0xff]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "quic.transport_parameter.grease_quic_bit",
+                "grease_quic_bit transport parameter value must be empty",
+            )
+        );
+
+        let parameter =
+            QuicTransportParameter::known(QuicKnownTransportParameter::GreaseQuicBit, [0xff]);
+        assert_eq!(
+            parameter.grease_quic_bit_value().unwrap_err(),
+            CrafterError::invalid_field_value(
+                "quic.transport_parameter.grease_quic_bit",
+                "grease_quic_bit transport parameter value must be empty",
+            )
         );
     }
 
