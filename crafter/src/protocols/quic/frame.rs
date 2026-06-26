@@ -383,6 +383,111 @@ impl QuicAckFrame {
     }
 }
 
+/// Parsed RESET_STREAM frame fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QuicResetStreamFrame {
+    stream_id: QuicVarInt,
+    application_error_code: QuicVarInt,
+    final_size: QuicVarInt,
+}
+
+impl QuicResetStreamFrame {
+    /// Construct a RESET_STREAM frame from caller-supplied fields.
+    pub const fn new(
+        stream_id: QuicVarInt,
+        application_error_code: QuicVarInt,
+        final_size: QuicVarInt,
+    ) -> Self {
+        Self {
+            stream_id,
+            application_error_code,
+            final_size,
+        }
+    }
+
+    /// Construct a RESET_STREAM frame from validated integer values.
+    pub fn from_values(
+        stream_id: u64,
+        application_error_code: u64,
+        final_size: u64,
+    ) -> Result<Self> {
+        Ok(Self::new(
+            QuicVarInt::new(stream_id)?,
+            QuicVarInt::new(application_error_code)?,
+            QuicVarInt::new(final_size)?,
+        ))
+    }
+
+    /// Return the Stream ID field.
+    pub const fn stream_id(self) -> QuicVarInt {
+        self.stream_id
+    }
+
+    /// Return the application protocol error code as a raw numeric value.
+    pub const fn application_error_code(self) -> QuicVarInt {
+        self.application_error_code
+    }
+
+    /// Return the Final Size field.
+    pub const fn final_size(self) -> QuicVarInt {
+        self.final_size
+    }
+
+    /// Decode one RESET_STREAM frame from bytes that include the Frame Type.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let bytes = bytes.as_ref();
+        let (frame, consumed) = decode_reset_stream_frame(bytes)?;
+        if consumed != bytes.len() {
+            return Err(CrafterError::invalid_field_value(
+                "quic.frame.reset_stream",
+                "RESET_STREAM frame has trailing bytes",
+            ));
+        }
+        Ok(frame)
+    }
+
+    /// Append the canonical RESET_STREAM frame encoding.
+    pub fn encode(self, out: &mut Vec<u8>) -> Result<()> {
+        QuicVarInt::from_u64_unchecked(0x04).encode(out)?;
+        self.stream_id.encode(out)?;
+        self.application_error_code.encode(out)?;
+        self.final_size.encode(out)?;
+        Ok(())
+    }
+
+    /// Return the canonical RESET_STREAM frame encoding.
+    pub fn encode_to_vec(self) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Stable RESET_STREAM summary for packet inspection.
+    pub fn summary(self) -> String {
+        format!(
+            "kind=RESET_STREAM stream_id={} application_error_code={} final_size={}",
+            self.stream_id.value(),
+            self.application_error_code.value(),
+            self.final_size.value()
+        )
+    }
+
+    /// Stable field/value pairs for RESET_STREAM inspection.
+    pub fn inspection_fields(self) -> Vec<(&'static str, String)> {
+        vec![
+            ("reset_stream_id", self.stream_id.value().to_string()),
+            (
+                "reset_stream_application_error_code",
+                self.application_error_code.value().to_string(),
+            ),
+            (
+                "reset_stream_final_size",
+                self.final_size.value().to_string(),
+            ),
+        ]
+    }
+}
+
 /// Raw-preserving QUIC frame.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct QuicFrame {
@@ -451,6 +556,24 @@ impl QuicFrame {
         )
     }
 
+    /// Construct a RESET_STREAM frame from typed fields.
+    pub fn from_reset_stream_frame(reset_stream: QuicResetStreamFrame) -> Result<Self> {
+        Ok(Self::from_bytes(reset_stream.encode_to_vec()?))
+    }
+
+    /// Construct a RESET_STREAM frame from caller-supplied fields.
+    pub fn reset_stream(
+        stream_id: QuicVarInt,
+        application_error_code: QuicVarInt,
+        final_size: QuicVarInt,
+    ) -> Result<Self> {
+        Self::from_reset_stream_frame(QuicResetStreamFrame::new(
+            stream_id,
+            application_error_code,
+            final_size,
+        ))
+    }
+
     /// Decode a frame sequence within the caller-provided packet boundary.
     ///
     /// Supported fixed-boundary frames are split out first. The remaining
@@ -480,6 +603,12 @@ impl QuicFrame {
                 0x02 | 0x03 => {
                     let (_, ack_len) = decode_ack_frame(&bytes[offset..])?;
                     let end = offset + ack_len;
+                    frames.push(Self::from_bytes(&bytes[offset..end]));
+                    offset = end;
+                }
+                0x04 => {
+                    let (_, reset_stream_len) = decode_reset_stream_frame(&bytes[offset..])?;
+                    let end = offset + reset_stream_len;
                     frames.push(Self::from_bytes(&bytes[offset..end]));
                     offset = end;
                 }
@@ -529,6 +658,14 @@ impl QuicFrame {
     pub fn ack_frame(&self) -> Result<Option<QuicAckFrame>> {
         match self.frame_type_value() {
             Some(0x02 | 0x03) => Ok(Some(QuicAckFrame::decode(&self.bytes)?)),
+            _ => Ok(None),
+        }
+    }
+
+    /// Decode this frame as RESET_STREAM when applicable.
+    pub fn reset_stream_frame(&self) -> Result<Option<QuicResetStreamFrame>> {
+        match self.frame_type_value() {
+            Some(0x04) => Ok(Some(QuicResetStreamFrame::decode(&self.bytes)?)),
             _ => Ok(None),
         }
     }
@@ -590,6 +727,9 @@ impl QuicFrame {
         if let Ok(Some(ack)) = self.ack_frame() {
             return ack.summary();
         }
+        if let Ok(Some(reset_stream)) = self.reset_stream_frame() {
+            return reset_stream.summary();
+        }
         match self.frame_type() {
             Some(frame_type) => format!(
                 "kind={} type=0x{:x} raw_len={}",
@@ -629,6 +769,9 @@ impl QuicFrame {
         }
         if let Ok(Some(ack)) = self.ack_frame() {
             fields.extend(ack.inspection_fields());
+        }
+        if let Ok(Some(reset_stream)) = self.reset_stream_frame() {
+            fields.extend(reset_stream.inspection_fields());
         }
         fields
     }
@@ -693,6 +836,33 @@ fn decode_ack_frame(bytes: &[u8]) -> Result<(QuicAckFrame, usize)> {
             ack_ranges,
             ecn_counts,
         },
+        offset,
+    ))
+}
+
+fn decode_reset_stream_frame(bytes: &[u8]) -> Result<(QuicResetStreamFrame, usize)> {
+    let (frame_type, mut offset) = decode_frame_varint(bytes, 0, "quic.frame.type")?;
+    if frame_type.value() != 0x04 {
+        return Err(CrafterError::invalid_field_value(
+            "quic.frame.reset_stream.type",
+            "RESET_STREAM frame type must be 0x04",
+        ));
+    }
+    let (stream_id, next) =
+        decode_frame_varint(bytes, offset, "quic.frame.reset_stream.stream_id")?;
+    offset = next;
+    let (application_error_code, next) = decode_frame_varint(
+        bytes,
+        offset,
+        "quic.frame.reset_stream.application_error_code",
+    )?;
+    offset = next;
+    let (final_size, next) =
+        decode_frame_varint(bytes, offset, "quic.frame.reset_stream.final_size")?;
+    offset = next;
+
+    Ok((
+        QuicResetStreamFrame::new(stream_id, application_error_code, final_size),
         offset,
     ))
 }
@@ -928,5 +1098,46 @@ mod tests {
         assert!(fields.contains(&("ack_largest_acknowledged", "9".to_string())));
         assert!(fields.contains(&("ack_range", "gap=0 length=1".to_string())));
         Ok(())
+    }
+
+    #[test]
+    fn quic_frame_reset_stream_decodes_and_continues_sequence() -> crate::Result<()> {
+        let bytes = [0x04, 4, 0x12, 9, 0x01];
+
+        let frames = QuicFrame::decode_sequence(bytes)?;
+
+        assert_eq!(frames.len(), 2);
+        assert_eq!(
+            frames[0].kind(),
+            QuicFrameKind::Known(QuicKnownFrameType::ResetStream)
+        );
+        let reset_stream = frames[0].reset_stream_frame()?.unwrap();
+        assert_eq!(reset_stream.stream_id().value(), 4);
+        assert_eq!(reset_stream.application_error_code().value(), 0x12);
+        assert_eq!(reset_stream.final_size().value(), 9);
+        assert!(frames[1].is_ping());
+        assert_eq!(QuicFrame::encode_sequence(frames), bytes);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_reset_stream_serializes_unknown_error_codes() -> crate::Result<()> {
+        let reset_stream = QuicResetStreamFrame::from_values(1, 0x1234, 63)?;
+        let frame = QuicFrame::from_reset_stream_frame(reset_stream)?;
+
+        assert_eq!(frame.as_bytes(), &[0x04, 0x01, 0x52, 0x34, 0x3f]);
+        assert_eq!(
+            frame.summary(),
+            "kind=RESET_STREAM stream_id=1 application_error_code=4660 final_size=63"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_reset_stream_malformed_varint_reports_structured_error() {
+        assert_eq!(
+            QuicFrame::decode_sequence([0x04, 1, 2, 0x40]).unwrap_err(),
+            CrafterError::buffer_too_short("quic.frame.reset_stream.final_size", 2, 1)
+        );
     }
 }
