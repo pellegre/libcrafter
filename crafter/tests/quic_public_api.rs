@@ -153,6 +153,15 @@ fn exports_quic_symbols() -> crafter::Result<()> {
     let parameter = QuicTransportParameter::raw(varint, [0xde, 0xad]);
     assert_eq!(parameter.identifier(), Some(varint));
     assert_eq!(parameter.value(), &[0xde, 0xad]);
+    let known_parameter =
+        QuicTransportParameter::known(QuicKnownTransportParameter::MaxIdleTimeout, [0x03]);
+    assert_eq!(
+        known_parameter.kind(),
+        QuicTransportParameterKind::Known(QuicKnownTransportParameter::MaxIdleTimeout)
+    );
+    assert!(is_grease_transport_parameter_id(
+        QuicVarInt::from_u64_unchecked(27)
+    ));
 
     let quic_payload = [0xc3, 0x00, 0x00, 0x00, 0x01, 0x08, 0x00];
     let quic = Quic::from_bytes(quic_payload);
