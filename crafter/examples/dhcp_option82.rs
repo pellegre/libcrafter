@@ -38,7 +38,7 @@ fn main() -> ExampleResult<()> {
         DhcpOptionValue::ClasslessRoutes(routes),
     );
 
-    let dhcp = Dhcp::discover(client_mac)
+    let dhcp = Dhcpv4::discover(client_mac)
         .xid(0x0102_0304)
         .giaddr(giaddr)
         .relay_agent_info(relay_info)
@@ -60,7 +60,7 @@ fn main() -> ExampleResult<()> {
     let bytes = packet.compile()?;
     let decoded = Packet::decode_from_link(LinkType::Ethernet, bytes.as_bytes())?;
     let dhcp = decoded
-        .layer::<Dhcp>()
+        .layer::<Dhcpv4>()
         .expect("decoded packet should contain DHCP");
 
     println!("example: dhcp_option82");

@@ -238,7 +238,7 @@ mod message_type_tests {
 
     #[test]
     fn dhcp_leasequery_message_types_roundtrip() {
-        use super::super::Dhcp;
+        use super::super::Dhcpv4;
 
         // The leasequery message-type family is defined by RFC 4388 (codes
         // 10-13: DHCPLEASEQUERY, DHCPLEASEUNASSIGNED, DHCPLEASEUNKNOWN,
@@ -266,7 +266,7 @@ mod message_type_tests {
 
             // The message type survives a full DHCP packet compile -> decode
             // cycle through option 53, and the bytes re-compile identically.
-            let dhcp = Dhcp::new()
+            let dhcp = Dhcpv4::new()
                 .op(super::super::BOOTP_REPLY)
                 .message_type(message_type);
             let bytes = crate::Packet::from_layer(dhcp)
@@ -274,7 +274,7 @@ mod message_type_tests {
                 .unwrap()
                 .as_bytes()
                 .to_vec();
-            let parsed = Dhcp::decode(&bytes).unwrap();
+            let parsed = Dhcpv4::decode(&bytes).unwrap();
             assert_eq!(
                 parsed.message_type_value(),
                 Some(message_type),
@@ -291,7 +291,7 @@ mod message_type_tests {
 
     #[test]
     fn dhcp_message_type_matrix_full_packet_roundtrip() {
-        use super::super::Dhcp;
+        use super::super::Dhcpv4;
 
         // Every implemented DhcpMessageType (the full IANA option-53 matrix,
         // codes 1..=18: RFC 2132 1-8, RFC 3203 9, RFC 4388 10-13, RFC 6926
@@ -302,7 +302,7 @@ mod message_type_tests {
         for message_type in REGISTERED_MESSAGE_TYPES {
             // The opcode does not affect the option-53 round-trip; BOOTREPLY is
             // a valid carrier for both request- and reply-side message types.
-            let dhcp = Dhcp::new()
+            let dhcp = Dhcpv4::new()
                 .op(super::super::BOOTP_REPLY)
                 .message_type(message_type);
             let bytes = crate::Packet::from_layer(dhcp)
@@ -311,7 +311,7 @@ mod message_type_tests {
                 .as_bytes()
                 .to_vec();
 
-            let parsed = Dhcp::decode(&bytes).unwrap();
+            let parsed = Dhcpv4::decode(&bytes).unwrap();
             assert_eq!(
                 parsed.message_type_value(),
                 Some(message_type),

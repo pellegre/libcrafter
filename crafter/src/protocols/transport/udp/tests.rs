@@ -19,7 +19,7 @@ use crate::checksum::{
     crc32c, internet_checksum_chunks, ipv4_pseudo_header_checksum, ipv6_pseudo_header_checksum,
 };
 use crate::{
-    Dhcp, DhcpMessageType, Dns, Ipv4, Ipv4Protocol, Ipv6, Layer, LinkType, MacAddr, Packet, Raw,
+    Dhcpv4, DhcpMessageType, Dns, Ipv4, Ipv4Protocol, Ipv6, Layer, LinkType, MacAddr, Packet, Raw,
     DNS_PORT, DNS_TYPE_A, IPPROTO_UDP,
 };
 use core::net::{Ipv4Addr, Ipv6Addr};
@@ -2360,7 +2360,7 @@ fn udp_decode_surplus_dns_uses_user_payload_and_preserves_options() {
 #[test]
 fn udp_decode_surplus_dhcp_uses_user_payload_and_preserves_options() {
     let client_mac = MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0x01]);
-    let dhcp = Dhcp::discover(client_mac)
+    let dhcp = Dhcpv4::discover(client_mac)
         .transaction_id(0x3903_f326)
         .flags(0x8000)
         .host_name("agent");
@@ -2389,7 +2389,7 @@ fn udp_decode_surplus_dhcp_uses_user_payload_and_preserves_options() {
 
     let decoded = Packet::decode_from_l3(crate::NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
     let udp = decoded.layer::<Udp>().unwrap();
-    let dhcp = decoded.layer::<Dhcp>().unwrap();
+    let dhcp = decoded.layer::<Dhcpv4>().unwrap();
     let udp_options = decoded.layer::<UdpOptions>().unwrap();
 
     assert_eq!(udp.length_value(), Some((UDP_HEADER_LEN + dhcp_len) as u16));

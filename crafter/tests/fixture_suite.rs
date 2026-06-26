@@ -7,7 +7,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::{Path, PathBuf};
 
 use crafter::core::{
-    Ah, Arp, Bgp, Dhcp, DhcpMessageType, DhcpOption, DhcpRelayAgentInfo, DhcpRelaySuboption, Dns,
+    Ah, Arp, Bgp, Dhcpv4, DhcpMessageType, DhcpOption, DhcpRelayAgentInfo, DhcpRelaySuboption, Dns,
     DnsName, DnsRecord, DnsRecordData, Dot11, Dot11DataSubtype, Dot11ManagementSubtype, Dscp,
     Eapol, EapolKey, Ecn, EdnsOption, Esp, Ethernet, IcmpKind, Icmpv4, Icmpv6, Igmp,
     IgmpExtensionType, IgmpGroupRecord, IgmpQuery, IgmpRecordType, IgmpReport, IgmpType, IkeHeader,
@@ -108,7 +108,7 @@ enum ExpectedLayer {
     Rip,
     Ripng,
     Dns,
-    Dhcp,
+    Dhcpv4,
     Ospf,
     Ospfv3,
     Esp,
@@ -560,7 +560,7 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         path: "bytes/dhcp-option-overload-file-sname.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/dhcp-option-overload-file-sname.hex")),
         target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
-        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Udp, ExpectedLayer::Dhcp],
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Udp, ExpectedLayer::Dhcpv4],
         preserve_exact_bytes: true,
         summary_path: None,
     },
@@ -569,7 +569,7 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         path: "bytes/dhcp-rfc3396-long-option.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/dhcp-rfc3396-long-option.hex")),
         target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
-        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Udp, ExpectedLayer::Dhcp],
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Udp, ExpectedLayer::Dhcpv4],
         preserve_exact_bytes: true,
         summary_path: None,
     },
@@ -578,7 +578,7 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         path: "bytes/dhcp-relay-option82.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/dhcp-relay-option82.hex")),
         target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
-        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Udp, ExpectedLayer::Dhcp],
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Udp, ExpectedLayer::Dhcpv4],
         preserve_exact_bytes: true,
         summary_path: None,
     },
@@ -1294,7 +1294,7 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         path: "bytes/ipv4-udp-dhcp-discover.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-udp-dhcp-discover.hex")),
         target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
-        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Udp, ExpectedLayer::Dhcp],
+        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Udp, ExpectedLayer::Dhcpv4],
         preserve_exact_bytes: true,
         summary_path: Some("summaries/ipv4-udp-dhcp-discover.summary.txt"),
     },
@@ -3048,8 +3048,8 @@ fn assert_expected_layers(case: &ValidFixtureCase, packet: &Packet) {
             ExpectedLayer::Dns => {
                 let _ = expect_layer::<Dns>(case, packet);
             }
-            ExpectedLayer::Dhcp => {
-                let _ = expect_layer::<Dhcp>(case, packet);
+            ExpectedLayer::Dhcpv4 => {
+                let _ = expect_layer::<Dhcpv4>(case, packet);
             }
             ExpectedLayer::Ospf => {
                 let _ = expect_layer::<Ospfv2>(case, packet);
@@ -3141,7 +3141,7 @@ fn expected_layer_name(expected: ExpectedLayer) -> &'static str {
         ExpectedLayer::Rip => "Rip",
         ExpectedLayer::Ripng => "Ripng",
         ExpectedLayer::Dns => "Dns",
-        ExpectedLayer::Dhcp => "Dhcp",
+        ExpectedLayer::Dhcpv4 => "Dhcpv4",
         ExpectedLayer::Ospf => "Ospf",
         ExpectedLayer::Ospfv3 => "Ospfv3",
         ExpectedLayer::Esp => "Esp",
@@ -4689,7 +4689,7 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
             assert_eq!(udp.source_port_value(), DHCP_CLIENT_PORT);
             assert_eq!(udp.destination_port_value(), DHCP_SERVER_PORT);
 
-            let dhcp = expect_layer::<Dhcp>(case, packet);
+            let dhcp = expect_layer::<Dhcpv4>(case, packet);
             assert_eq!(dhcp.op_value(), BOOTP_REQUEST);
             assert_eq!(
                 dhcp.client_mac_value(),
@@ -5268,7 +5268,7 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
             );
         }
         "dhcp-option-overload-file-sname" => {
-            let dhcp = expect_layer::<Dhcp>(case, packet);
+            let dhcp = expect_layer::<Dhcpv4>(case, packet);
             assert_eq!(dhcp.message_type_value(), Some(DhcpMessageType::Discover));
             assert_eq!(dhcp.transaction_id_value(), 0x0102_0304);
             assert_eq!(dhcp.option_overload(), Some(OptionOverload::Both));
@@ -5292,7 +5292,7 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
             );
         }
         "dhcp-rfc3396-long-option" => {
-            let dhcp = expect_layer::<Dhcp>(case, packet);
+            let dhcp = expect_layer::<Dhcpv4>(case, packet);
             assert_eq!(dhcp.message_type_value(), Some(DhcpMessageType::Discover));
             assert_eq!(dhcp.transaction_id_value(), 0x1111_2222);
             let expected_domain = format!("{}.example", "a".repeat(300));
@@ -5312,7 +5312,7 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
             );
         }
         "dhcp-relay-option82" => {
-            let dhcp = expect_layer::<Dhcp>(case, packet);
+            let dhcp = expect_layer::<Dhcpv4>(case, packet);
             assert_eq!(dhcp.message_type_value(), Some(DhcpMessageType::Discover));
             assert_eq!(dhcp.transaction_id_value(), 0x3333_4444);
             let info = dhcp
@@ -6428,7 +6428,7 @@ fn expected_dhcp_options(name: &str) -> Vec<DhcpOption> {
         ],
         // Classless static routes (option 121) and domain search (option 119)
         // are preserved as raw Generic options by the legacy DhcpOption decoder;
-        // the typed views are asserted via the Dhcp-layer frame fixtures.
+        // the typed views are asserted via the Dhcpv4-layer frame fixtures.
         "dhcp-classless-static-routes-options" => vec![
             DhcpOption::MessageType(DhcpMessageType::Ack),
             DhcpOption::generic(
@@ -9284,7 +9284,7 @@ fn ipv4_udp_dns_decode_keeps_surplus_options_out_of_application_payload() {
 #[test]
 fn ipv4_udp_dhcp_decode_keeps_surplus_options_out_of_application_payload() {
     let client_mac = MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0x01]);
-    let dhcp = Dhcp::discover(client_mac)
+    let dhcp = Dhcpv4::discover(client_mac)
         .transaction_id(0x3903_f326)
         .flags(0x8000)
         .host_name("agent");
@@ -9306,7 +9306,7 @@ fn ipv4_udp_dhcp_decode_keeps_surplus_options_out_of_application_payload() {
     );
 
     let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
-    let dhcp = decoded.layer::<Dhcp>().unwrap();
+    let dhcp = decoded.layer::<Dhcpv4>().unwrap();
     assert_eq!(dhcp.transaction_id_value(), 0x3903_f326);
     assert_eq!(dhcp.message_type_value(), Some(DhcpMessageType::Discover));
     assert_eq!(dhcp.host_name_value(), Some("agent"));

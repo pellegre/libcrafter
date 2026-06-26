@@ -31,7 +31,7 @@ fn main() -> ExampleResult<()> {
         0x0000_0000_0000_0001,
         b"\x00\x00\x00\x01placeholder-mac".to_vec(),
     );
-    let query = Dhcp::lease_query_by_client_id(client_id)
+    let query = Dhcpv4::lease_query_by_client_id(client_id)
         .xid(0x4c51_0001)
         .option(DhcpOption::authentication(auth));
 
@@ -39,7 +39,7 @@ fn main() -> ExampleResult<()> {
 
     // A server answers with a lease binding and a status code (RFC 4388 /
     // RFC 6926). This is just packet data assembled from the public builders.
-    let reply = Dhcp::lease_query_by_mac(client_mac)
+    let reply = Dhcpv4::lease_query_by_mac(client_mac)
         .op(BOOTP_REPLY)
         .xid(0x4c51_0001)
         .ciaddr("192.0.2.50".parse()?)
@@ -59,7 +59,7 @@ fn main() -> ExampleResult<()> {
     Ok(())
 }
 
-fn inspect(label: &str, src: Ipv4Addr, dst: Ipv4Addr, dhcp: Dhcp) -> ExampleResult<()> {
+fn inspect(label: &str, src: Ipv4Addr, dst: Ipv4Addr, dhcp: Dhcpv4) -> ExampleResult<()> {
     let packet = Ipv4::new()
         .src(src)
         .dst(dst)
@@ -69,7 +69,7 @@ fn inspect(label: &str, src: Ipv4Addr, dst: Ipv4Addr, dhcp: Dhcp) -> ExampleResu
     let bytes = packet.compile()?;
     let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes())?;
     let dhcp = decoded
-        .layer::<Dhcp>()
+        .layer::<Dhcpv4>()
         .expect("decoded packet should contain DHCP");
 
     println!("packet: {label}");

@@ -53,7 +53,7 @@ pub mod exports {
     pub use dhcp::{
         decode_tftp_server_addresses, option_meta, option_name, option_status,
         scan_dhcp_option_segments, typed_option_value, ClientNetworkDeviceInterface,
-        ClientSystemArchitecture, Dhcp, DhcpAuthAlgorithm, DhcpAuthProtocol, DhcpAuthentication,
+        ClientSystemArchitecture, Dhcpv4, DhcpAuthAlgorithm, DhcpAuthProtocol, DhcpAuthentication,
         DhcpClasslessRoute, DhcpClientIdentifier, DhcpClientUuid, DhcpDataSource,
         DhcpForcerenewNonceCapable, DhcpMessageType, DhcpOption, DhcpOptionArea, DhcpOptionCode,
         DhcpOptionFormat, DhcpOptionKind, DhcpOptionMeta, DhcpOptionSegment, DhcpOptionStatus,

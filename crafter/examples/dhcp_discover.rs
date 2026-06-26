@@ -18,7 +18,7 @@ fn main() -> ExampleResult<()> {
     let iface = arg_or("--iface", EXAMPLE_IFACE);
     let client_mac = parse_mac_arg("--client-mac", local_mac())?;
     let hostname = arg_or("--hostname", "libcrafter-rust");
-    let dhcp = Dhcp::discover(client_mac)
+    let dhcp = Dhcpv4::discover(client_mac)
         .xid(0x0102_0304)
         .flags(0x8000)
         .host_name(hostname);
@@ -33,7 +33,7 @@ fn main() -> ExampleResult<()> {
         / Udp::new().sport(DHCP_CLIENT_PORT).dport(DHCP_SERVER_PORT)
         / dhcp;
     let dhcp = packet
-        .layer::<Dhcp>()
+        .layer::<Dhcpv4>()
         .expect("constructed packet should contain DHCP");
     let report = packet.send(send_options(&iface, live, true))?;
 
