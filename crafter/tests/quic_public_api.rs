@@ -53,6 +53,11 @@ fn exports_quic_symbols() -> crafter::Result<()> {
         QuicFrame::from_new_token_frame(new_token)?.frame_type_value(),
         Some(0x07)
     );
+    let stream = QuicStreamFrame::from_values(1, [0xaa])?.with_fin(true);
+    assert_eq!(
+        QuicFrame::from_stream_frame(stream)?.frame_type_value(),
+        Some(0x0b)
+    );
 
     let parameter = QuicTransportParameter::raw(varint, [0xde, 0xad]);
     assert_eq!(parameter.identifier(), Some(varint));

@@ -28,6 +28,7 @@ pub use crypto::QuicCryptoContext;
 pub use frame::{
     QuicAckEcnCounts, QuicAckFrame, QuicAckRange, QuicCryptoFrame, QuicFrame, QuicFrameKind,
     QuicKnownFrameType, QuicNewTokenFrame, QuicResetStreamFrame, QuicStopSendingFrame,
+    QuicStreamFrame,
 };
 pub use header::QuicHeader;
 pub use packet::{

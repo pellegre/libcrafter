@@ -782,6 +782,201 @@ impl QuicNewTokenFrame {
     }
 }
 
+/// Parsed or buildable STREAM frame fields.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuicStreamFrame {
+    stream_id: QuicVarInt,
+    offset: Option<QuicVarInt>,
+    include_length: bool,
+    length: Option<QuicVarInt>,
+    fin: bool,
+    data: Vec<u8>,
+}
+
+impl QuicStreamFrame {
+    /// Construct a STREAM frame with an auto-filled Length field.
+    pub fn new(stream_id: QuicVarInt, data: impl AsRef<[u8]>) -> Self {
+        Self {
+            stream_id,
+            offset: None,
+            include_length: true,
+            length: None,
+            fin: false,
+            data: data.as_ref().to_vec(),
+        }
+    }
+
+    /// Construct a STREAM frame from validated integer fields.
+    pub fn from_values(stream_id: u64, data: impl AsRef<[u8]>) -> Result<Self> {
+        Ok(Self::new(QuicVarInt::new(stream_id)?, data))
+    }
+
+    /// Include an Offset field.
+    pub fn with_offset(mut self, offset: QuicVarInt) -> Self {
+        self.offset = Some(offset);
+        self
+    }
+
+    /// Preserve an explicit Length field and set the LEN bit.
+    pub fn with_length(mut self, length: QuicVarInt) -> Self {
+        self.include_length = true;
+        self.length = Some(length);
+        self
+    }
+
+    /// Omit the Length field so data extends to the containing packet end.
+    pub fn without_length(mut self) -> Self {
+        self.include_length = false;
+        self.length = None;
+        self
+    }
+
+    /// Set or clear the FIN bit.
+    pub fn with_fin(mut self, fin: bool) -> Self {
+        self.fin = fin;
+        self
+    }
+
+    /// Return the Stream ID field.
+    pub const fn stream_id(&self) -> QuicVarInt {
+        self.stream_id
+    }
+
+    /// Return the Offset field when present.
+    pub const fn offset(&self) -> Option<QuicVarInt> {
+        self.offset
+    }
+
+    /// Return true when the LEN bit is present.
+    pub const fn has_length(&self) -> bool {
+        self.include_length
+    }
+
+    /// Return the advertised Length field when the LEN bit is present.
+    pub fn length(&self) -> Result<Option<QuicVarInt>> {
+        if !self.include_length {
+            return Ok(None);
+        }
+        match self.length {
+            Some(length) => Ok(Some(length)),
+            None => Ok(Some(QuicVarInt::new(
+                u64::try_from(self.data.len()).map_err(|_| {
+                    CrafterError::invalid_field_value(
+                        "quic.frame.stream.length",
+                        "data length exceeds u64",
+                    )
+                })?,
+            )?)),
+        }
+    }
+
+    /// Return a caller-pinned Length field when present.
+    pub const fn length_override(&self) -> Option<QuicVarInt> {
+        self.length
+    }
+
+    /// Return true when the FIN bit is set.
+    pub const fn fin(&self) -> bool {
+        self.fin
+    }
+
+    /// Borrow the stream data bytes.
+    pub fn data(&self) -> &[u8] {
+        &self.data
+    }
+
+    /// Decode one STREAM frame from bytes that include the Frame Type.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let bytes = bytes.as_ref();
+        let (frame, consumed) = decode_stream_frame(bytes)?;
+        if consumed != bytes.len() {
+            return Err(CrafterError::invalid_field_value(
+                "quic.frame.stream",
+                "STREAM frame has trailing bytes",
+            ));
+        }
+        Ok(frame)
+    }
+
+    /// Append the canonical STREAM frame encoding, preserving explicit Length.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        let mut frame_type = 0x08;
+        if self.offset.is_some() {
+            frame_type |= 0x04;
+        }
+        if self.include_length {
+            frame_type |= 0x02;
+        }
+        if self.fin {
+            frame_type |= 0x01;
+        }
+
+        QuicVarInt::from_u64_unchecked(frame_type).encode(out)?;
+        self.stream_id.encode(out)?;
+        if let Some(offset) = self.offset {
+            offset.encode(out)?;
+        }
+        if let Some(length) = self.length()? {
+            length.encode(out)?;
+        }
+        out.extend_from_slice(&self.data);
+        Ok(())
+    }
+
+    /// Return the canonical STREAM frame encoding.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Stable STREAM summary for packet inspection.
+    pub fn summary(&self) -> String {
+        let offset = self
+            .offset
+            .map(|offset| offset.value().to_string())
+            .unwrap_or_else(|| "<none>".to_string());
+        let length = self
+            .length()
+            .ok()
+            .flatten()
+            .map(|length| length.value().to_string())
+            .unwrap_or_else(|| "<packet-end>".to_string());
+        format!(
+            "kind=STREAM stream_id={} offset={} length={} fin={} data_len={}",
+            self.stream_id.value(),
+            offset,
+            length,
+            self.fin,
+            self.data.len()
+        )
+    }
+
+    /// Stable field/value pairs for STREAM inspection.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("stream_id", self.stream_id.value().to_string()),
+            (
+                "stream_offset",
+                self.offset
+                    .map(|offset| offset.value().to_string())
+                    .unwrap_or_else(|| "<none>".to_string()),
+            ),
+            (
+                "stream_length",
+                self.length()
+                    .ok()
+                    .flatten()
+                    .map(|length| length.value().to_string())
+                    .unwrap_or_else(|| "<packet-end>".to_string()),
+            ),
+            ("stream_fin", self.fin.to_string()),
+            ("stream_data_len", self.data.len().to_string()),
+            ("stream_data", hex_bytes(&self.data)),
+        ]
+    }
+}
+
 /// Raw-preserving QUIC frame.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct QuicFrame {
@@ -898,6 +1093,16 @@ impl QuicFrame {
         Self::from_new_token_frame(QuicNewTokenFrame::new(token))
     }
 
+    /// Construct a STREAM frame from typed fields.
+    pub fn from_stream_frame(stream: QuicStreamFrame) -> Result<Self> {
+        Ok(Self::from_bytes(stream.encode_to_vec()?))
+    }
+
+    /// Construct a STREAM frame with an auto-filled Length field.
+    pub fn stream(stream_id: QuicVarInt, data: impl AsRef<[u8]>) -> Result<Self> {
+        Self::from_stream_frame(QuicStreamFrame::new(stream_id, data))
+    }
+
     /// Decode a frame sequence within the caller-provided packet boundary.
     ///
     /// Supported fixed-boundary frames are split out first. The remaining
@@ -951,6 +1156,12 @@ impl QuicFrame {
                 0x07 => {
                     let (_, new_token_len) = decode_new_token_frame(&bytes[offset..])?;
                     let end = offset + new_token_len;
+                    frames.push(Self::from_bytes(&bytes[offset..end]));
+                    offset = end;
+                }
+                0x08..=0x0f => {
+                    let (_, stream_len) = decode_stream_frame(&bytes[offset..])?;
+                    let end = offset + stream_len;
                     frames.push(Self::from_bytes(&bytes[offset..end]));
                     offset = end;
                 }
@@ -1036,6 +1247,14 @@ impl QuicFrame {
         }
     }
 
+    /// Decode this frame as STREAM when applicable.
+    pub fn stream_frame(&self) -> Result<Option<QuicStreamFrame>> {
+        match self.frame_type_value() {
+            Some(0x08..=0x0f) => Ok(Some(QuicStreamFrame::decode(&self.bytes)?)),
+            _ => Ok(None),
+        }
+    }
+
     /// Borrow the preserved frame bytes.
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes
@@ -1105,6 +1324,9 @@ impl QuicFrame {
         if let Ok(Some(new_token)) = self.new_token_frame() {
             return new_token.summary();
         }
+        if let Ok(Some(stream)) = self.stream_frame() {
+            return stream.summary();
+        }
         match self.frame_type() {
             Some(frame_type) => format!(
                 "kind={} type=0x{:x} raw_len={}",
@@ -1156,6 +1378,9 @@ impl QuicFrame {
         }
         if let Ok(Some(new_token)) = self.new_token_frame() {
             fields.extend(new_token.inspection_fields());
+        }
+        if let Ok(Some(stream)) = self.stream_frame() {
+            fields.extend(stream.inspection_fields());
         }
         fields
     }
@@ -1337,6 +1562,63 @@ fn decode_new_token_frame(bytes: &[u8]) -> Result<(QuicNewTokenFrame, usize)> {
         QuicNewTokenFrame::new(&bytes[offset..end]).with_token_length(token_length),
         end,
     ))
+}
+
+fn decode_stream_frame(bytes: &[u8]) -> Result<(QuicStreamFrame, usize)> {
+    let (frame_type, mut offset) = decode_frame_varint(bytes, 0, "quic.frame.type")?;
+    let frame_type_value = frame_type.value();
+    if !(0x08..=0x0f).contains(&frame_type_value) {
+        return Err(CrafterError::invalid_field_value(
+            "quic.frame.stream.type",
+            "STREAM frame type must be 0x08..0x0f",
+        ));
+    }
+
+    let has_offset = frame_type_value & 0x04 != 0;
+    let has_length = frame_type_value & 0x02 != 0;
+    let fin = frame_type_value & 0x01 != 0;
+
+    let (stream_id, next) = decode_frame_varint(bytes, offset, "quic.frame.stream.stream_id")?;
+    offset = next;
+
+    let stream_offset = if has_offset {
+        let (stream_offset, next) = decode_frame_varint(bytes, offset, "quic.frame.stream.offset")?;
+        offset = next;
+        Some(stream_offset)
+    } else {
+        None
+    };
+
+    let (length, data_len) = if has_length {
+        let (length, next) = decode_frame_varint(bytes, offset, "quic.frame.stream.length")?;
+        offset = next;
+        let data_len = usize::try_from(length.value()).map_err(|_| {
+            CrafterError::invalid_field_value("quic.frame.stream.length", "length exceeds usize")
+        })?;
+        (Some(length), data_len)
+    } else {
+        (None, bytes.len().saturating_sub(offset))
+    };
+
+    let available = bytes.len().saturating_sub(offset);
+    if available < data_len {
+        return Err(CrafterError::buffer_too_short(
+            "quic.frame.stream.data",
+            data_len,
+            available,
+        ));
+    }
+    let end = offset + data_len;
+    let mut stream = QuicStreamFrame::new(stream_id, &bytes[offset..end]).with_fin(fin);
+    if let Some(stream_offset) = stream_offset {
+        stream = stream.with_offset(stream_offset);
+    }
+    stream = match length {
+        Some(length) => stream.with_length(length),
+        None => stream.without_length(),
+    };
+
+    Ok((stream, end))
 }
 
 fn decode_frame_varint(
@@ -1760,6 +2042,79 @@ mod tests {
         assert_eq!(
             QuicFrame::decode_sequence([0x07, 3, 0xaa]).unwrap_err(),
             CrafterError::buffer_too_short("quic.frame.new_token.token", 3, 1)
+        );
+    }
+
+    #[test]
+    fn quic_frame_stream_decodes_offset_length_fin_and_continues_sequence() -> crate::Result<()> {
+        let bytes = [0x0f, 4, 2, 3, 0xaa, 0xbb, 0xcc, 0x01];
+
+        let frames = QuicFrame::decode_sequence(bytes)?;
+
+        assert_eq!(frames.len(), 2);
+        assert_eq!(
+            frames[0].kind(),
+            QuicFrameKind::Known(QuicKnownFrameType::Stream)
+        );
+        let stream = frames[0].stream_frame()?.unwrap();
+        assert_eq!(stream.stream_id().value(), 4);
+        assert_eq!(stream.offset().unwrap().value(), 2);
+        assert_eq!(stream.length()?.unwrap().value(), 3);
+        assert!(stream.fin());
+        assert_eq!(stream.data(), &[0xaa, 0xbb, 0xcc]);
+        assert!(frames[1].is_ping());
+        assert_eq!(QuicFrame::encode_sequence(frames), bytes);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_stream_builder_auto_fills_length() -> crate::Result<()> {
+        let stream = QuicStreamFrame::new(v(1), [0xaa, 0xbb])
+            .with_offset(v(10))
+            .with_fin(true);
+        let frame = QuicFrame::from_stream_frame(stream)?;
+
+        assert_eq!(frame.as_bytes(), &[0x0f, 0x01, 0x0a, 0x02, 0xaa, 0xbb]);
+        assert_eq!(
+            frame.summary(),
+            "kind=STREAM stream_id=1 offset=10 length=2 fin=true data_len=2"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_stream_without_length_consumes_packet_remainder() -> crate::Result<()> {
+        let bytes = [0x08, 1, 0xaa, 0x01];
+
+        let frames = QuicFrame::decode_sequence(bytes)?;
+
+        assert_eq!(frames.len(), 1);
+        let stream = frames[0].stream_frame()?.unwrap();
+        assert!(!stream.has_length());
+        assert_eq!(stream.length()?, None);
+        assert_eq!(stream.data(), &[0xaa, 0x01]);
+        assert_eq!(QuicFrame::encode_sequence(frames), bytes);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_stream_preserves_explicit_malformed_length() -> crate::Result<()> {
+        let stream = QuicStreamFrame::new(v(1), [0xaa]).with_length(v(3));
+        let frame = QuicFrame::from_stream_frame(stream)?;
+
+        assert_eq!(frame.as_bytes(), &[0x0a, 0x01, 0x03, 0xaa]);
+        assert_eq!(
+            frame.stream_frame().unwrap_err(),
+            CrafterError::buffer_too_short("quic.frame.stream.data", 3, 1)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_stream_truncated_data_reports_structured_error() {
+        assert_eq!(
+            QuicFrame::decode_sequence([0x0a, 1, 3, 0xaa]).unwrap_err(),
+            CrafterError::buffer_too_short("quic.frame.stream.data", 3, 1)
         );
     }
 }
