@@ -252,7 +252,7 @@ coverage_cases:
 
 notes:
   - >-
-    Source authority lives in docs/snmp-rfc-manifest.md. The layer model is
+    Source authority lives in .agents/docs/snmp-rfc-manifest.md. The layer model is
     limited to RFC 1157 SNMPv1 message and Trap-PDU bytes, RFC 1901 community
     wrappers, RFC 3412 SNMPv3 message framing, RFC 3414 USM security-parameter
     wire fields, RFC 3416 protocol operation PDUs, RFC 3418 SNMPv2-MIB

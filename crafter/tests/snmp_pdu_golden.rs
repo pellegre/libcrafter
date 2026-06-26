@@ -68,7 +68,7 @@ fn snmp_request_style_pdu_golden_matrix_roundtrips() -> crafter::Result<()> {
         CommonPduCase {
             name: "get-request",
             pdu: SnmpPdu::get_request(1, SnmpVarBindList::empty())?,
-            // Source-backed: docs/snmp-rfc-manifest.md records RFC 1157
+            // Source-backed: .agents/docs/snmp-rfc-manifest.md records RFC 1157
             // Section 4.1.2 and RFC 3416 Sections 3 and 4.2.1 for
             // GetRequest-PDU tag 0 carrying request-id, error-status,
             // error-index, and VarBindList.
@@ -90,7 +90,7 @@ fn snmp_request_style_pdu_golden_matrix_roundtrips() -> crafter::Result<()> {
         CommonPduCase {
             name: "get-next-request",
             pdu: SnmpPdu::get_next_request(1, SnmpVarBindList::empty())?,
-            // Source-backed: docs/snmp-rfc-manifest.md records RFC 1157
+            // Source-backed: .agents/docs/snmp-rfc-manifest.md records RFC 1157
             // Section 4.1.3 and RFC 3416 Sections 3 and 4.2.2 for
             // GetNextRequest-PDU tag 1 using the common request fields.
             expected: vec![
@@ -111,7 +111,7 @@ fn snmp_request_style_pdu_golden_matrix_roundtrips() -> crafter::Result<()> {
         CommonPduCase {
             name: "set-request",
             pdu: SnmpPdu::set_request(1, SnmpVarBindList::empty())?,
-            // Source-backed: docs/snmp-rfc-manifest.md records RFC 1157
+            // Source-backed: .agents/docs/snmp-rfc-manifest.md records RFC 1157
             // Section 4.1.5 and RFC 3416 Sections 3 and 4.2.5 for
             // SetRequest-PDU tag 3 using the common request fields.
             expected: vec![
@@ -132,7 +132,7 @@ fn snmp_request_style_pdu_golden_matrix_roundtrips() -> crafter::Result<()> {
         CommonPduCase {
             name: "response",
             pdu: SnmpPdu::response(42, SnmpVarBindList::new(vec![uptime_value.clone()]))?,
-            // Source-backed: docs/snmp-rfc-manifest.md records RFC 1157
+            // Source-backed: .agents/docs/snmp-rfc-manifest.md records RFC 1157
             // Section 4.1.4 and RFC 3416 Sections 3 and 4.2.4 for
             // Response/GetResponse-PDU tag 2 using the common request fields.
             expected: vec![
@@ -155,7 +155,7 @@ fn snmp_request_style_pdu_golden_matrix_roundtrips() -> crafter::Result<()> {
         CommonPduCase {
             name: "inform-request",
             pdu: SnmpPdu::inform_request(7, SnmpVarBindList::new(vec![null_sys_uptime.clone()]))?,
-            // Source-backed: docs/snmp-rfc-manifest.md records RFC 3416
+            // Source-backed: .agents/docs/snmp-rfc-manifest.md records RFC 3416
             // Sections 3 and 4.2.7 for InformRequest-PDU tag 6 using the
             // common request fields.
             expected: vec![
@@ -180,7 +180,7 @@ fn snmp_request_style_pdu_golden_matrix_roundtrips() -> crafter::Result<()> {
                 42,
                 SnmpVarBindList::new(vec![uptime_value.clone(), trap_oid.clone()]),
             )?,
-            // Source-backed: docs/snmp-rfc-manifest.md records RFC 3416
+            // Source-backed: .agents/docs/snmp-rfc-manifest.md records RFC 3416
             // Sections 3 and 4.2.6 for SNMPv2-Trap-PDU tag 7. RFC 3418
             // Section 5 records sysUpTime.0 and snmpTrapOID notification
             // object identifiers used in this deterministic VarBindList.
@@ -205,7 +205,7 @@ fn snmp_request_style_pdu_golden_matrix_roundtrips() -> crafter::Result<()> {
         CommonPduCase {
             name: "report",
             pdu: SnmpPdu::report_with_fields(128, 2, 3, SnmpVarBindList::empty())?,
-            // Source-backed: docs/snmp-rfc-manifest.md records RFC 3416
+            // Source-backed: .agents/docs/snmp-rfc-manifest.md records RFC 3416
             // Section 3 and Section 4.2 notes for Report-PDU tag 8 using the
             // common PDU byte shape; administrative-framework behavior is
             // outside this packet primitive.
@@ -257,7 +257,7 @@ fn snmp_get_bulk_pdu_golden_roundtrips() -> crafter::Result<()> {
     let varbind = SnmpVarBind::null(oid("1.3.6.1.2.1.1.3.0")?);
     let pdu = SnmpPdu::get_bulk_request(7, 1, 10, SnmpVarBindList::new(vec![varbind.clone()]))?;
 
-    // Source-backed: docs/snmp-rfc-manifest.md records RFC 3416 Sections 3
+    // Source-backed: .agents/docs/snmp-rfc-manifest.md records RFC 3416 Sections 3
     // and 4.2.3 for GetBulkRequest-PDU tag 5 with request-id,
     // non-repeaters, max-repetitions, and VarBindList fields.
     let expected = [
@@ -316,7 +316,7 @@ fn snmp_v1_trap_pdu_golden_roundtrips() -> crafter::Result<()> {
         SnmpVarBindList::new(vec![varbind.clone()]),
     )?;
 
-    // Source-backed: docs/snmp-rfc-manifest.md records RFC 1157 Sections
+    // Source-backed: .agents/docs/snmp-rfc-manifest.md records RFC 1157 Sections
     // 4.1.6 and 5 for SNMPv1 Trap-PDU tag 4 with enterprise, agent address,
     // generic trap, specific trap, timestamp, and VarBindList fields.
     let expected = [
@@ -373,7 +373,7 @@ fn snmp_v1_trap_pdu_golden_roundtrips() -> crafter::Result<()> {
 fn snmp_unknown_pdu_golden_roundtrips() -> crafter::Result<()> {
     let pdu = SnmpPdu::unknown(9, true, [0x02, 0x01, 0x05]);
 
-    // Source-backed: docs/snmp-rfc-manifest.md records RFC 3416 Section 3
+    // Source-backed: .agents/docs/snmp-rfc-manifest.md records RFC 3416 Section 3
     // for assigned PDU tags 0 through 8, and records unknown PDU tags as
     // byte-preserving when the enclosing context-specific BER TLV is valid.
     let expected = [0xa9, 0x03, 0x02, 0x01, 0x05];

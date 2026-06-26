@@ -235,7 +235,7 @@ source_refs:
   - RFC 3414
   - RFC 3416
   - IANA SNMP Number Spaces
-  - docs/snmp-rfc-manifest.md
+  - .agents/docs/snmp-rfc-manifest.md
 
 notes:
   - >-

@@ -4,7 +4,7 @@ Reviewed: 2026-06-20
 
 This handoff records the source-backed IGMP codepoints that later implementation
 steps should use when adding constants, builders, decode labels, oracle specs,
-and reference-backend cases. It is derived from `docs/igmp-rfc-manifest.md`,
+and reference-backend cases. It is derived from `.agents/docs/igmp-rfc-manifest.md`,
 `.agents/docs/igmp-manifest.md`, the local protocol-facts manifest under
 `target/rfc-protocol-spec/igmp/`, and the official RFC/IANA pages below.
 

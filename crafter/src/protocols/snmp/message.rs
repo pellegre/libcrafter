@@ -1,6 +1,6 @@
 //! SNMP message layer.
 //!
-//! Source-gated by `docs/snmp-rfc-manifest.md`; this module models
+//! Source-gated by `.agents/docs/snmp-rfc-manifest.md`; this module models
 //! community-based SNMPv1/SNMPv2c packet bytes and the SNMPv3 top-level
 //! message wrapper. Manager sessions, credentials, retries, walks, and SNMPv3
 //! security behavior belong outside this packet primitive.
@@ -2260,7 +2260,7 @@ mod tests {
 
     #[test]
     fn snmp_version_labels_source_backed_values() {
-        // Source-backed: docs/snmp-rfc-manifest.md records RFC 1157 Section
+        // Source-backed: .agents/docs/snmp-rfc-manifest.md records RFC 1157 Section
         // 4.1.2 for SNMPv1 value 0, RFC 1901 Section 3 for SNMPv2c value 1,
         // and RFC 3412 Section 6.1 for SNMPv3 value 3.
         let cases = [
@@ -2374,7 +2374,7 @@ mod tests {
     fn snmp_v1_message_builders_emit_source_backed_request_response_and_trap_bytes() -> Result<()> {
         let request = Snmp::v1_get_request(b"public".to_vec(), 1, SnmpVarBindList::empty())?;
 
-        // Source-backed: docs/snmp-rfc-manifest.md records RFC 1157 Sections
+        // Source-backed: .agents/docs/snmp-rfc-manifest.md records RFC 1157 Sections
         // 4.1.2 and 4.1.3 for the SNMPv1 Message wrapper and GetRequest-PDU.
         assert_eq!(
             request.compile()?,
@@ -2386,7 +2386,7 @@ mod tests {
 
         let response = Snmp::v1_response([0x00, 0xff], 128, SnmpVarBindList::empty())?;
 
-        // Source-backed: docs/snmp-rfc-manifest.md records RFC 1157 Sections
+        // Source-backed: .agents/docs/snmp-rfc-manifest.md records RFC 1157 Sections
         // 4.1.2 and 4.1.4 for the SNMPv1 Message wrapper and GetResponse-PDU.
         assert_eq!(
             response.compile()?,
@@ -2407,7 +2407,7 @@ mod tests {
             SnmpVarBindList::new(vec![trap_varbind]),
         )?;
 
-        // Source-backed: docs/snmp-rfc-manifest.md records RFC 1157 Sections
+        // Source-backed: .agents/docs/snmp-rfc-manifest.md records RFC 1157 Sections
         // 4.1.2, 4.1.6, and 5 for the SNMPv1 Message wrapper and Trap-PDU.
         assert_eq!(
             trap.compile()?,
@@ -2536,7 +2536,7 @@ mod tests {
             0x02, 0x02, 0x03, 0xe7,
         ];
 
-        // Source-backed: docs/snmp-rfc-manifest.md records RFC 3412 Sections
+        // Source-backed: .agents/docs/snmp-rfc-manifest.md records RFC 3412 Sections
         // 6.2 through 6.5 for HeaderData msgID, msgMaxSize, msgFlags, and
         // msgSecurityModel wire fields.
         assert_eq!(global.encoded_len(), expected.len());
@@ -2668,7 +2668,7 @@ mod tests {
         );
         let expected = minimal_plaintext_v3_scoped_data();
 
-        // Source-backed: docs/snmp-rfc-manifest.md records RFC 3412 Sections
+        // Source-backed: .agents/docs/snmp-rfc-manifest.md records RFC 3412 Sections
         // 6.7 and 6.8 for plaintext ScopedPDU contextEngineID, contextName,
         // and PDU payload fields.
         assert_eq!(scoped.encoded_len(), expected.len());
@@ -2868,7 +2868,7 @@ mod tests {
             0x03, 0xff, 0x00, b'u', 0x04, 0x03, 0xaa, 0xbb, 0xcc, 0x04, 0x02, 0xde, 0xad,
         ];
 
-        // Source-backed: docs/snmp-rfc-manifest.md records RFC 3414 Section
+        // Source-backed: .agents/docs/snmp-rfc-manifest.md records RFC 3414 Section
         // 2.4 for the UsmSecurityParameters SEQUENCE and its six fields.
         assert_eq!(usm.encoded_len(), expected.len());
         assert_eq!(usm.compile()?, expected);
@@ -2968,7 +2968,7 @@ mod tests {
         .with_engine_boots(i64::from(i32::MAX))
         .with_engine_time(0);
 
-        // Source-backed: docs/snmp-rfc-manifest.md records RFC 3414 Section
+        // Source-backed: .agents/docs/snmp-rfc-manifest.md records RFC 3414 Section
         // 2.4 for msgAuthoritativeEngineBoots and msgAuthoritativeEngineTime.
         // The packet primitive preserves the caller's INTEGER values instead
         // of enforcing RFC 3414 timeliness windows.
@@ -3086,7 +3086,7 @@ mod tests {
     fn snmp_usm_auth_params_arbitrary_lengths_remain_packet_bytes() -> Result<()> {
         let cases = [Vec::<u8>::new(), vec![0xaa], vec![0xbb; 12], vec![0xcc; 13]];
 
-        // Source-backed: docs/snmp-rfc-manifest.md records RFC 3414 Sections
+        // Source-backed: .agents/docs/snmp-rfc-manifest.md records RFC 3414 Sections
         // 2.4, 6, and 7 for authentication-parameter bytes. `crafter`
         // preserves caller-provided bytes and lengths without requiring keys.
         for auth_parameters in cases {
@@ -3146,7 +3146,7 @@ mod tests {
         let v3 = decoded.as_v3().expect("v3 wrapper");
         let encrypted = v3.encrypted_scoped_data()?.expect("encrypted scoped data");
 
-        // Source-backed: docs/snmp-rfc-manifest.md records RFC 3412 Section 6
+        // Source-backed: .agents/docs/snmp-rfc-manifest.md records RFC 3412 Section 6
         // for encryptedPDU as OCTET STRING and RFC 3414 Section 8 for privacy
         // parameter bytes. The packet primitive preserves both without keys.
         assert_eq!(v3.flags_value().privacy(), true);
@@ -3423,7 +3423,7 @@ mod tests {
         let scoped = v3.scoped_pdu()?.expect("plaintext scoped PDU");
         let report = scoped.pdu().as_report()?.expect("Report fields");
 
-        // Source-backed: docs/snmp-rfc-manifest.md records RFC 3412 Section 6
+        // Source-backed: .agents/docs/snmp-rfc-manifest.md records RFC 3412 Section 6
         // for plaintext ScopedPDU and RFC 3416 Section 3 for Report-PDU tag 8.
         // The helper accepts caller-supplied report varbinds rather than
         // inventing source-unsupported named report shortcuts.
@@ -3514,7 +3514,7 @@ mod tests {
         let scoped_data = minimal_plaintext_v3_scoped_data();
         let snmp = Snmp::v3(1, 1500, [0x00], 3, Vec::<u8>::new(), scoped_data.clone());
 
-        // Source-backed: docs/snmp-rfc-manifest.md records RFC 3412 Sections
+        // Source-backed: .agents/docs/snmp-rfc-manifest.md records RFC 3412 Sections
         // 6.1 through 6.8 for the v3 message wrapper fields and plaintext
         // ScopedPduData CHOICE.
         let expected = [
@@ -3657,7 +3657,7 @@ mod tests {
     fn snmp_v2c_message_request_response_builders_emit_source_backed_wrappers() -> Result<()> {
         let request = Snmp::v2c_get_request(b"public".to_vec(), 1, SnmpVarBindList::empty())?;
 
-        // Source-backed: docs/snmp-rfc-manifest.md records RFC 1901 Section
+        // Source-backed: .agents/docs/snmp-rfc-manifest.md records RFC 1901 Section
         // 3 for the SNMPv2c Message wrapper and RFC 3416 Sections 3 and 4.2.1
         // for the GetRequest-PDU.
         assert_eq!(
@@ -3670,7 +3670,7 @@ mod tests {
 
         let response = Snmp::v2c_response(b"public".to_vec(), 128, SnmpVarBindList::empty())?;
 
-        // Source-backed: docs/snmp-rfc-manifest.md records RFC 1901 Section
+        // Source-backed: .agents/docs/snmp-rfc-manifest.md records RFC 1901 Section
         // 3 for the SNMPv2c Message wrapper and RFC 3416 Sections 3 and 4.2.2
         // for the Response-PDU.
         assert_eq!(

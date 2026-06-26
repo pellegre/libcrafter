@@ -1,6 +1,6 @@
 //! SNMP value scaffold.
 //!
-//! Source-gated by `docs/snmp-rfc-manifest.md`; value types and BER-backed
+//! Source-gated by `.agents/docs/snmp-rfc-manifest.md`; value types and BER-backed
 //! preservation behavior are added in later slices.
 
 #![cfg_attr(not(test), allow(dead_code))]
@@ -1108,7 +1108,7 @@ mod tests {
             ),
         ];
 
-        // Source-backed: docs/snmp-rfc-manifest.md, RFC 2578 Sections 7.1.1
+        // Source-backed: .agents/docs/snmp-rfc-manifest.md, RFC 2578 Sections 7.1.1
         // through 7.1.11 and RFC 3416 Section 3 record these value choices.
         for (value, expected) in cases {
             assert_eq!(value.compile()?, expected);

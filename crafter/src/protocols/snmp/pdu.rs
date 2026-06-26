@@ -1,6 +1,6 @@
 //! SNMP PDU tag metadata, request/trap fields, and raw-body preservation.
 //!
-//! Source-gated by `docs/snmp-rfc-manifest.md`; GetRequest-style common
+//! Source-gated by `.agents/docs/snmp-rfc-manifest.md`; GetRequest-style common
 //! request fields are modeled here for GetRequest, GetNextRequest, Response,
 //! SetRequest, InformRequest, SNMPv2-Trap, and Report, plus source-backed
 //! GetBulkRequest and SNMPv1 Trap-PDU wire fields.
@@ -1766,7 +1766,7 @@ mod tests {
     fn snmp_request_pdu_empty_varbinds_compile_and_decode() -> Result<()> {
         let pdu = SnmpPdu::get_request(1, SnmpVarBindList::empty())?;
 
-        // Source-backed: docs/snmp-rfc-manifest.md records RFC 1157 Section
+        // Source-backed: .agents/docs/snmp-rfc-manifest.md records RFC 1157 Section
         // 4.1.1 and RFC 3416 Section 3 for request-id, error-status,
         // error-index, and VarBindList as the common request PDU fields.
         let expected = [
@@ -1907,7 +1907,7 @@ mod tests {
         );
         let pdu = SnmpPdu::response(42, SnmpVarBindList::new(vec![varbind.clone()]))?;
 
-        // Source-backed: docs/snmp-rfc-manifest.md records RFC 1157 Section
+        // Source-backed: .agents/docs/snmp-rfc-manifest.md records RFC 1157 Section
         // 4.1.4 and RFC 3416 Sections 3 and 4.2.4 for Response/GetResponse
         // using request-id, error-status, error-index, and VarBindList fields.
         let expected = [
@@ -2137,7 +2137,7 @@ mod tests {
             0xa3, 0x0b, 0x02, 0x01, 0x01, 0x02, 0x01, 0x00, 0x02, 0x01, 0x00, 0x30, 0x00,
         ];
 
-        // Source-backed: docs/snmp-rfc-manifest.md records RFC 1157 Sections
+        // Source-backed: .agents/docs/snmp-rfc-manifest.md records RFC 1157 Sections
         // 4.1.3 and 4.1.5 plus RFC 3416 Sections 3, 4.2.2, and 4.2.5 for
         // GetNextRequest and SetRequest tags using the common request PDU
         // fields. Walk and set workflows are explicitly outside the crate.
@@ -2237,7 +2237,7 @@ mod tests {
             crate::protocols::snmp::SnmpVarBind::null(SnmpOid::from_dotted("1.3.6.1.2.1.1.3.0")?);
         let pdu = SnmpPdu::get_bulk_request(7, 1, 10, SnmpVarBindList::new(vec![varbind.clone()]))?;
 
-        // Source-backed: docs/snmp-rfc-manifest.md records RFC 3416 Sections
+        // Source-backed: .agents/docs/snmp-rfc-manifest.md records RFC 3416 Sections
         // 3 and 4.2.3 for GetBulkRequest-PDU fields: request-id,
         // non-repeaters, max-repetitions, and VarBindList. This builds only
         // the wire PDU, not a table walk.
@@ -2343,7 +2343,7 @@ mod tests {
             crate::protocols::snmp::SnmpVarBind::null(SnmpOid::from_dotted("1.3.6.1.2.1.1.3.0")?);
         let pdu = SnmpPdu::inform_request(7, SnmpVarBindList::new(vec![varbind.clone()]))?;
 
-        // Source-backed: docs/snmp-rfc-manifest.md records RFC 3416 Sections
+        // Source-backed: .agents/docs/snmp-rfc-manifest.md records RFC 3416 Sections
         // 3 and 4.2.7 for InformRequest-PDU tag 6 using the common PDU
         // fields. This builds only packet bytes, not delivery confirmation.
         let expected = [
@@ -2409,7 +2409,7 @@ mod tests {
             SnmpVarBindList::new(vec![uptime.clone(), trap_oid.clone()]),
         )?;
 
-        // Source-backed: docs/snmp-rfc-manifest.md records RFC 3416 Sections
+        // Source-backed: .agents/docs/snmp-rfc-manifest.md records RFC 3416 Sections
         // 3 and 4.2.6 for SNMPv2-Trap-PDU tag 7 using the common PDU fields.
         // The notification object ordering remains a VarBindList byte shape;
         // listener or delivery semantics stay outside this packet primitive.
@@ -2454,7 +2454,7 @@ mod tests {
     fn snmp_advanced_pdus_report_preserves_fields_without_security_engine() -> Result<()> {
         let pdu = SnmpPdu::report_with_fields(128, 2, 3, SnmpVarBindList::empty())?;
 
-        // Source-backed: docs/snmp-rfc-manifest.md records RFC 3416 Sections
+        // Source-backed: .agents/docs/snmp-rfc-manifest.md records RFC 3416 Sections
         // 3 and 4.2 notes for Report-PDU tag 8 using the common PDU byte
         // shape, with administrative-framework behavior left outside this
         // helper.
@@ -2510,7 +2510,7 @@ mod tests {
             SnmpVarBindList::new(vec![varbind.clone()]),
         )?;
 
-        // Source-backed: docs/snmp-rfc-manifest.md records RFC 1157 Sections
+        // Source-backed: .agents/docs/snmp-rfc-manifest.md records RFC 1157 Sections
         // 4.1.6 and 5 for SNMPv1 Trap-PDU fields: enterprise, agent address,
         // generic trap, specific trap, timestamp, and VarBindList.
         let expected = [

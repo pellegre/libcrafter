@@ -2,8 +2,7 @@
 
 This note is operating guidance for generated SNMP tools. User-facing packet
 coverage belongs in `docs/`; source authority and implementation status are
-tracked in `docs/snmp-rfc-manifest.md` and
-`docs/snmp-implementation-inventory.md`.
+tracked in `.agents/docs/snmp-rfc-manifest.md`.
 
 `crafter` SNMP work is wire-level only: build, compile, decode, preserve,
 summarize, show, and validate SNMP packet bytes. Generated tools must not turn
@@ -14,7 +13,7 @@ store, access-control engine, or monitoring product.
 
 - Use only codepoints, tags, versions, PDU kinds, error-status values, security
   model values, transport ports, and object identifiers backed by
-  `docs/snmp-rfc-manifest.md`.
+  `.agents/docs/snmp-rfc-manifest.md`.
 - If a needed SNMP fact is missing or ambiguous, update the manifest first or
   stop the slice as unsupported. Do not fill gaps from memory, examples, device
   behavior, or uncited library output.

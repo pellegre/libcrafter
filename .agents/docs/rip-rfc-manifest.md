@@ -11,12 +11,10 @@ distance-vector convergence, split-horizon, triggered-update timing, or any
 timer/state machine. Those are router behavior, not packet behavior, and are
 out of scope (see [Explicit Exclusions](#explicit-exclusions)).
 
-The user-facing wire guide is [`docs/rip.md`](rip.md); the field-by-field map
-from this manifest to the implemented surface is
-[`docs/rip-implementation-inventory.md`](rip-implementation-inventory.md). The
-agent-facing codepoint and scope notes live in
-[`.agents/docs/rip-codepoints.md`](../.agents/docs/rip-codepoints.md) and
-[`.agents/docs/rip-scope.md`](../.agents/docs/rip-scope.md).
+The user-facing wire guide is
+[`docs/guide/rip.md`](../../docs/guide/rip.md). The agent-facing codepoint and
+scope notes live in [`.agents/docs/rip-codepoints.md`](rip-codepoints.md) and
+[`.agents/docs/rip-scope.md`](rip-scope.md).
 
 Date checked: 2026-06-16 (RFC Editor and the IANA Address Family Numbers
 registry reviewed on this date).

@@ -25,11 +25,6 @@ control, and user/key management belong in generated tools outside the crate.
 | UDP dispatch | Supported | UDP/161 and UDP/162 decode as SNMP only when the payload looks like one complete SNMP BER message; non-SNMP payloads stay `Raw`. |
 | Live behavior | Out of crate scope | Use dry-run plans, oracle/probe fixtures, or provider-backed labs. The crate does not originate live SNMP workflows by itself. |
 
-The source map for these behaviors is in
-[`docs/snmp-rfc-manifest.md`](../snmp-rfc-manifest.md), and implementation
-status is tracked in
-[`docs/snmp-implementation-inventory.md`](../snmp-implementation-inventory.md).
-
 ## Public API
 
 SNMP is exported through `crafter::prelude::*`. Compose it like any other

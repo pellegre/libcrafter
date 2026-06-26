@@ -1,6 +1,6 @@
 //! SNMP decode scaffold.
 //!
-//! Source-gated by `docs/snmp-rfc-manifest.md`; UDP dispatch binding is added
+//! Source-gated by `.agents/docs/snmp-rfc-manifest.md`; UDP dispatch binding is added
 //! in a later step.
 
 use super::{ber, Snmp, SnmpVersion};
@@ -150,7 +150,7 @@ mod tests {
             [0x04, 0x03, 0xaa, 0xbb, 0xcc],
         );
 
-        // Source-backed: docs/snmp-rfc-manifest.md records RFC 1157, RFC
+        // Source-backed: .agents/docs/snmp-rfc-manifest.md records RFC 1157, RFC
         // 1901, and RFC 3412 message wrappers plus RFC 3417 BER restrictions.
         assert!(looks_like_snmp_payload(&v1.compile()?));
         assert!(looks_like_snmp_payload(&v2c.compile()?));
