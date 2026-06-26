@@ -36,6 +36,7 @@ from .protocols.ipv6 import (
     _normalize_ipv6_options_header,
     _normalize_ipv6_routing,
 )
+from .protocols.quic import canonicalize_quic_payload
 
 
 BACKEND_NAME = "wireshark"
@@ -80,6 +81,7 @@ _PROTOCOL_LAYER_ALIASES: dict[str, str | None] = {
     "ipv6.routing": "ipv6_routing",
     "llc": "llc_snap",
     "null": "null_loopback",
+    "quic": "quic",
     "radiotap": "radiotap",
     "raw": None,
     "rip": "rip",
@@ -213,6 +215,13 @@ def normalize_packet_json(
         key = _field_key(fields, layer_name)
         fields[key] = layer_fields
         normalized_layers.append(layer_name)
+
+    canonicalize_quic_payload(
+        normalized_layers,
+        fields,
+        layers_object,
+        source_hex=source_hex,
+    )
 
     return DecodedModel(
         backend=BACKEND_NAME,
