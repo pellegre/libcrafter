@@ -135,17 +135,57 @@ impl QuicFrame {
         }
     }
 
+    /// Construct a PADDING run that emits `count` zero bytes.
+    pub fn padding(count: usize) -> Self {
+        let bytes = vec![0x00; count];
+        Self {
+            kind: classify_frame_kind(&bytes),
+            bytes,
+        }
+    }
+
+    /// Construct a PING frame.
+    pub fn ping() -> Self {
+        Self {
+            bytes: vec![0x01],
+            kind: QuicFrameKind::Known(QuicKnownFrameType::Ping),
+        }
+    }
+
     /// Decode a frame sequence within the caller-provided packet boundary.
     ///
-    /// The skeleton can safely preserve one unsupported frame spanning the
-    /// entire sequence. Later typed frame parsers refine this entrypoint.
+    /// Supported fixed-boundary frames are split out first. The remaining
+    /// unsupported tail is preserved as one raw frame because QUIC frame types
+    /// are not self-describing without type-specific grammar.
     pub fn decode_sequence(bytes: impl AsRef<[u8]>) -> Result<Vec<Self>> {
         let bytes = bytes.as_ref();
-        if bytes.is_empty() {
-            return Ok(Vec::new());
+        let mut frames = Vec::new();
+        let mut offset = 0;
+
+        while offset < bytes.len() {
+            let (frame_type, consumed) = QuicVarInt::decode(&bytes[offset..])?;
+            match frame_type.value() {
+                0x00 if bytes[offset] == 0x00 => {
+                    let start = offset;
+                    offset += 1;
+                    while offset < bytes.len() && bytes[offset] == 0x00 {
+                        offset += 1;
+                    }
+                    frames.push(Self::from_bytes(&bytes[start..offset]));
+                }
+                0x01 => {
+                    let end = offset + consumed;
+                    frames.push(Self::from_bytes(&bytes[offset..end]));
+                    offset = end;
+                }
+                _ => {
+                    frames.push(Self::from_bytes(&bytes[offset..]));
+                    break;
+                }
+            }
         }
-        QuicVarInt::decode(bytes)?;
-        Ok(vec![Self::from_bytes(bytes)])
+
+        Ok(frames)
     }
 
     /// Encode a frame sequence into a contiguous payload buffer.
@@ -160,6 +200,24 @@ impl QuicFrame {
     /// Return the frame classification.
     pub const fn kind(&self) -> QuicFrameKind {
         self.kind
+    }
+
+    /// Return true when this frame is a byte-complete PADDING run.
+    pub fn is_padding(&self) -> bool {
+        matches!(self.kind, QuicFrameKind::Known(QuicKnownFrameType::Padding))
+            && self.bytes.iter().all(|byte| *byte == 0x00)
+    }
+
+    /// Return the number of zero bytes represented by this PADDING run.
+    pub fn padding_len(&self) -> Option<usize> {
+        self.is_padding().then_some(self.bytes.len())
+    }
+
+    /// Return true when this frame is a byte-complete PING frame.
+    pub fn is_ping(&self) -> bool {
+        matches!(self.kind, QuicFrameKind::Known(QuicKnownFrameType::Ping))
+            && self.frame_type_value() == Some(0x01)
+            && self.frame_type_encoded_len() == Some(self.bytes.len())
     }
 
     /// Borrow the preserved frame bytes.
@@ -213,6 +271,9 @@ impl QuicFrame {
 
     /// Stable summary for packet inspection.
     pub fn summary(&self) -> String {
+        if let Some(padding_len) = self.padding_len() {
+            return format!("kind=PADDING padding_len={padding_len}");
+        }
         match self.frame_type() {
             Some(frame_type) => format!(
                 "kind={} type=0x{:x} raw_len={}",
@@ -230,7 +291,7 @@ impl QuicFrame {
 
     /// Stable field/value pairs for packet inspection.
     pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
-        vec![
+        let mut fields = vec![
             ("frame_kind", self.kind.label().to_string()),
             (
                 "frame_type",
@@ -246,7 +307,11 @@ impl QuicFrame {
             ),
             ("raw_len", self.bytes.len().to_string()),
             ("raw_bytes", hex_bytes(&self.bytes)),
-        ]
+        ];
+        if let Some(padding_len) = self.padding_len() {
+            fields.push(("padding_len", padding_len.to_string()));
+        }
+        fields
     }
 }
 
@@ -260,9 +325,19 @@ fn classify_frame_kind(bytes: &[u8]) -> QuicFrameKind {
     if bytes.is_empty() {
         return QuicFrameKind::Empty;
     }
-    let Ok((frame_type, _)) = QuicVarInt::decode(bytes) else {
+    let Ok((frame_type, consumed)) = QuicVarInt::decode(bytes) else {
         return QuicFrameKind::Truncated;
     };
+    if frame_type.value() == 0x00 {
+        return if bytes.iter().all(|byte| *byte == 0x00) {
+            QuicFrameKind::Known(QuicKnownFrameType::Padding)
+        } else {
+            QuicFrameKind::Unknown
+        };
+    }
+    if frame_type.value() == 0x01 && consumed != bytes.len() {
+        return QuicFrameKind::Unknown;
+    }
     match known_frame_type(frame_type.value()) {
         Some(kind) => QuicFrameKind::Known(kind),
         None => QuicFrameKind::Unknown,
@@ -353,5 +428,45 @@ mod tests {
         let frame = QuicFrame::from_bytes([0x40]);
         assert_eq!(frame.kind(), QuicFrameKind::Truncated);
         assert_eq!(frame.summary(), "kind=TRUNCATED type=<truncated> raw_len=1");
+    }
+
+    #[test]
+    fn quic_frame_padding_ping_sequence_roundtrips() -> crate::Result<()> {
+        let bytes = [0x00, 0x00, 0x00, 0x01, 0x00];
+
+        let frames = QuicFrame::decode_sequence(bytes)?;
+
+        assert_eq!(frames.len(), 3);
+        assert_eq!(
+            frames[0].kind(),
+            QuicFrameKind::Known(QuicKnownFrameType::Padding)
+        );
+        assert_eq!(frames[0].padding_len(), Some(3));
+        assert!(frames[1].is_ping());
+        assert_eq!(frames[2].padding_len(), Some(1));
+        assert_eq!(QuicFrame::encode_sequence(frames), bytes);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_padding_ping_builders_emit_selected_bytes() {
+        let frames = [QuicFrame::padding(4), QuicFrame::ping()];
+
+        assert_eq!(
+            QuicFrame::encode_sequence(frames),
+            [0x00, 0x00, 0x00, 0x00, 0x01]
+        );
+    }
+
+    #[test]
+    fn quic_frame_padding_ping_summary_reports_names() {
+        let padding = QuicFrame::padding(2);
+        let ping = QuicFrame::ping();
+
+        assert_eq!(padding.summary(), "kind=PADDING padding_len=2");
+        assert_eq!(ping.summary(), "kind=PING type=0x1 raw_len=1");
+        assert!(padding
+            .inspection_fields()
+            .contains(&("padding_len", "2".to_string())));
     }
 }
