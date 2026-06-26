@@ -1123,6 +1123,119 @@ impl QuicMaxStreamDataFrame {
     }
 }
 
+/// MAX_STREAMS stream direction selected by the frame type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuicStreamDirection {
+    /// Bidirectional stream limit, encoded with frame type `0x12`.
+    Bidirectional,
+    /// Unidirectional stream limit, encoded with frame type `0x13`.
+    Unidirectional,
+}
+
+impl QuicStreamDirection {
+    /// Return the MAX_STREAMS frame type for this direction.
+    pub const fn max_streams_frame_type(self) -> u64 {
+        match self {
+            Self::Bidirectional => 0x12,
+            Self::Unidirectional => 0x13,
+        }
+    }
+
+    /// Stable lowercase label for summaries and inspection.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Bidirectional => "bidirectional",
+            Self::Unidirectional => "unidirectional",
+        }
+    }
+}
+
+/// Parsed MAX_STREAMS frame fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QuicMaxStreamsFrame {
+    direction: QuicStreamDirection,
+    maximum_streams: QuicVarInt,
+}
+
+impl QuicMaxStreamsFrame {
+    /// Construct a MAX_STREAMS frame from caller-supplied fields.
+    pub const fn new(direction: QuicStreamDirection, maximum_streams: QuicVarInt) -> Self {
+        Self {
+            direction,
+            maximum_streams,
+        }
+    }
+
+    /// Construct a bidirectional MAX_STREAMS frame from a caller-supplied varint.
+    pub const fn bidirectional(maximum_streams: QuicVarInt) -> Self {
+        Self::new(QuicStreamDirection::Bidirectional, maximum_streams)
+    }
+
+    /// Construct a unidirectional MAX_STREAMS frame from a caller-supplied varint.
+    pub const fn unidirectional(maximum_streams: QuicVarInt) -> Self {
+        Self::new(QuicStreamDirection::Unidirectional, maximum_streams)
+    }
+
+    /// Construct a MAX_STREAMS frame from a validated integer value.
+    pub fn from_value(direction: QuicStreamDirection, maximum_streams: u64) -> Result<Self> {
+        Ok(Self::new(direction, QuicVarInt::new(maximum_streams)?))
+    }
+
+    /// Return the stream direction selected by the frame type.
+    pub const fn direction(self) -> QuicStreamDirection {
+        self.direction
+    }
+
+    /// Return the Maximum Streams field.
+    pub const fn maximum_streams(self) -> QuicVarInt {
+        self.maximum_streams
+    }
+
+    /// Decode one MAX_STREAMS frame from bytes that include the Frame Type.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let bytes = bytes.as_ref();
+        let (frame, consumed) = decode_max_streams_frame(bytes)?;
+        if consumed != bytes.len() {
+            return Err(CrafterError::invalid_field_value(
+                "quic.frame.max_streams",
+                "MAX_STREAMS frame has trailing bytes",
+            ));
+        }
+        Ok(frame)
+    }
+
+    /// Append the canonical MAX_STREAMS frame encoding.
+    pub fn encode(self, out: &mut Vec<u8>) -> Result<()> {
+        QuicVarInt::from_u64_unchecked(self.direction.max_streams_frame_type()).encode(out)?;
+        self.maximum_streams.encode(out)?;
+        Ok(())
+    }
+
+    /// Return the canonical MAX_STREAMS frame encoding.
+    pub fn encode_to_vec(self) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Stable MAX_STREAMS summary for packet inspection.
+    pub fn summary(self) -> String {
+        format!(
+            "kind=MAX_STREAMS direction={} maximum_streams={}",
+            self.direction.label(),
+            self.maximum_streams.value()
+        )
+    }
+
+    /// Stable field/value pairs for MAX_STREAMS inspection.
+    pub fn inspection_fields(self) -> Vec<(&'static str, String)> {
+        vec![
+            ("max_streams_direction", self.direction.label().to_string()),
+            ("max_streams", self.maximum_streams.value().to_string()),
+        ]
+    }
+}
+
 /// Raw-preserving QUIC frame.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct QuicFrame {
@@ -1272,6 +1385,29 @@ impl QuicFrame {
         ))
     }
 
+    /// Construct a MAX_STREAMS frame from typed fields.
+    pub fn from_max_streams_frame(max_streams: QuicMaxStreamsFrame) -> Result<Self> {
+        Ok(Self::from_bytes(max_streams.encode_to_vec()?))
+    }
+
+    /// Construct a MAX_STREAMS frame from caller-supplied fields.
+    pub fn max_streams(
+        direction: QuicStreamDirection,
+        maximum_streams: QuicVarInt,
+    ) -> Result<Self> {
+        Self::from_max_streams_frame(QuicMaxStreamsFrame::new(direction, maximum_streams))
+    }
+
+    /// Construct a bidirectional MAX_STREAMS frame from a caller-supplied varint.
+    pub fn max_streams_bidirectional(maximum_streams: QuicVarInt) -> Result<Self> {
+        Self::from_max_streams_frame(QuicMaxStreamsFrame::bidirectional(maximum_streams))
+    }
+
+    /// Construct a unidirectional MAX_STREAMS frame from a caller-supplied varint.
+    pub fn max_streams_unidirectional(maximum_streams: QuicVarInt) -> Result<Self> {
+        Self::from_max_streams_frame(QuicMaxStreamsFrame::unidirectional(maximum_streams))
+    }
+
     /// Decode a frame sequence within the caller-provided packet boundary.
     ///
     /// Supported fixed-boundary frames are split out first. The remaining
@@ -1343,6 +1479,12 @@ impl QuicFrame {
                 0x11 => {
                     let (_, max_stream_data_len) = decode_max_stream_data_frame(&bytes[offset..])?;
                     let end = offset + max_stream_data_len;
+                    frames.push(Self::from_bytes(&bytes[offset..end]));
+                    offset = end;
+                }
+                0x12 | 0x13 => {
+                    let (_, max_streams_len) = decode_max_streams_frame(&bytes[offset..])?;
+                    let end = offset + max_streams_len;
                     frames.push(Self::from_bytes(&bytes[offset..end]));
                     offset = end;
                 }
@@ -1452,6 +1594,14 @@ impl QuicFrame {
         }
     }
 
+    /// Decode this frame as MAX_STREAMS when applicable.
+    pub fn max_streams_frame(&self) -> Result<Option<QuicMaxStreamsFrame>> {
+        match self.frame_type_value() {
+            Some(0x12 | 0x13) => Ok(Some(QuicMaxStreamsFrame::decode(&self.bytes)?)),
+            _ => Ok(None),
+        }
+    }
+
     /// Borrow the preserved frame bytes.
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes
@@ -1530,6 +1680,9 @@ impl QuicFrame {
         if let Ok(Some(max_stream_data)) = self.max_stream_data_frame() {
             return max_stream_data.summary();
         }
+        if let Ok(Some(max_streams)) = self.max_streams_frame() {
+            return max_streams.summary();
+        }
         match self.frame_type() {
             Some(frame_type) => format!(
                 "kind={} type=0x{:x} raw_len={}",
@@ -1590,6 +1743,9 @@ impl QuicFrame {
         }
         if let Ok(Some(max_stream_data)) = self.max_stream_data_frame() {
             fields.extend(max_stream_data.inspection_fields());
+        }
+        if let Ok(Some(max_streams)) = self.max_streams_frame() {
+            fields.extend(max_streams.inspection_fields());
         }
         fields
     }
@@ -1867,6 +2023,25 @@ fn decode_max_stream_data_frame(bytes: &[u8]) -> Result<(QuicMaxStreamDataFrame,
         QuicMaxStreamDataFrame::new(stream_id, maximum_stream_data),
         offset,
     ))
+}
+
+fn decode_max_streams_frame(bytes: &[u8]) -> Result<(QuicMaxStreamsFrame, usize)> {
+    let (frame_type, mut offset) = decode_frame_varint(bytes, 0, "quic.frame.type")?;
+    let direction = match frame_type.value() {
+        0x12 => QuicStreamDirection::Bidirectional,
+        0x13 => QuicStreamDirection::Unidirectional,
+        _ => {
+            return Err(CrafterError::invalid_field_value(
+                "quic.frame.max_streams.type",
+                "MAX_STREAMS frame type must be 0x12 or 0x13",
+            ))
+        }
+    };
+    let (maximum_streams, next) =
+        decode_frame_varint(bytes, offset, "quic.frame.max_streams.maximum_streams")?;
+    offset = next;
+
+    Ok((QuicMaxStreamsFrame::new(direction, maximum_streams), offset))
 }
 
 fn decode_frame_varint(
@@ -2443,6 +2618,62 @@ mod tests {
         assert_eq!(
             QuicFrame::decode_sequence([0x11, 1, 0x40]).unwrap_err(),
             CrafterError::buffer_too_short("quic.frame.max_stream_data.maximum_stream_data", 2, 1)
+        );
+    }
+
+    #[test]
+    fn quic_frame_max_streams_decodes_bidirectional_and_continues_sequence() -> crate::Result<()> {
+        let bytes = [0x12, 0x44, 0x00, 0x01];
+
+        let frames = QuicFrame::decode_sequence(bytes)?;
+
+        assert_eq!(frames.len(), 2);
+        assert_eq!(
+            frames[0].kind(),
+            QuicFrameKind::Known(QuicKnownFrameType::MaxStreams)
+        );
+        let max_streams = frames[0].max_streams_frame()?.unwrap();
+        assert_eq!(max_streams.direction(), QuicStreamDirection::Bidirectional);
+        assert_eq!(max_streams.maximum_streams().value(), 1024);
+        assert!(frames[1].is_ping());
+        assert_eq!(QuicFrame::encode_sequence(frames), bytes);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_max_streams_decodes_unidirectional() -> crate::Result<()> {
+        let frame = QuicMaxStreamsFrame::decode([0x13, 0x3f])?;
+
+        assert_eq!(frame.direction(), QuicStreamDirection::Unidirectional);
+        assert_eq!(frame.maximum_streams().value(), 63);
+        assert_eq!(frame.encode_to_vec()?, [0x13, 0x3f]);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_max_streams_serializes_and_summarizes() -> crate::Result<()> {
+        let frame = QuicFrame::max_streams_unidirectional(v(63))?;
+
+        assert_eq!(frame.as_bytes(), &[0x13, 0x3f]);
+        assert_eq!(
+            frame.summary(),
+            "kind=MAX_STREAMS direction=unidirectional maximum_streams=63"
+        );
+        assert!(frame
+            .inspection_fields()
+            .contains(&("max_streams_direction", "unidirectional".to_string())));
+        assert_eq!(
+            QuicFrame::max_streams_bidirectional(v(1))?.as_bytes(),
+            &[0x12, 0x01]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_max_streams_malformed_varint_reports_structured_error() {
+        assert_eq!(
+            QuicFrame::decode_sequence([0x12, 0x40]).unwrap_err(),
+            CrafterError::buffer_too_short("quic.frame.max_streams.maximum_streams", 2, 1)
         );
     }
 }
