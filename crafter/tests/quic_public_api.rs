@@ -162,6 +162,16 @@ fn exports_quic_symbols() -> crafter::Result<()> {
     assert!(is_grease_transport_parameter_id(
         QuicVarInt::from_u64_unchecked(27)
     ));
+    let integer_parameter =
+        QuicTransportParameter::max_udp_payload_size(QuicVarInt::from_u64_unchecked(1199))?;
+    assert_eq!(
+        integer_parameter.integer_type(),
+        Some(QuicIntegerTransportParameter::MaxUdpPayloadSize)
+    );
+    assert_eq!(
+        integer_parameter.integer_validation_finding()?,
+        Some(QuicIntegerTransportParameterValidation::MaxUdpPayloadSizeBelowMinimum)
+    );
 
     let quic_payload = [0xc3, 0x00, 0x00, 0x00, 0x01, 0x08, 0x00];
     let quic = Quic::from_bytes(quic_payload);
