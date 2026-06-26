@@ -25,6 +25,8 @@ fn exports_quic_symbols() -> crafter::Result<()> {
     assert_eq!(QUIC_AES128_HEADER_PROTECTION_KEY_LEN, 16);
     assert_eq!(QUIC_CHACHA20_HEADER_PROTECTION_KEY_LEN, 32);
     assert_eq!(QuicHeaderProtectionAlgorithm::Aes128.label(), "aes128");
+    assert_eq!(QuicInitialPacketDirection::Client.label(), "client");
+    assert_eq!(QuicInitialPacketDirection::Server.label(), "server");
     assert_eq!(quic_initial_salt(QUIC_VERSION_1)?, &QUIC_V1_INITIAL_SALT);
     assert_eq!(crafter::QUIC_V2_INITIAL_SALT.len(), 20);
     let initial_secrets = derive_quic_initial_secrets(QUIC_VERSION_1, &cid)?;
