@@ -172,11 +172,17 @@ Pcap fixtures cover:
   ports `54049 -> 1049`, a valid UDP checksum, and raw payload `base-v6!`.
   `raw-ipv4-udp-snmp-response.pcap` carries a synthetic RawIp SNMPv2c Response
   over UDP/161 with a valid checksum and no live capture data.
+  `raw-ipv4-udp-quic-initial.pcap` and
+  `raw-ipv6-udp-quic-initial.pcap` carry one synthetic UDP/4433 QUIC Initial
+  datagram each and decode as IPv4/UDP/QUIC and IPv6/UDP/QUIC.
   The RawIp pcap corpus also includes deterministic IP fragment transform
   fixtures: `raw-ipv4-ipfragment-generated.pcap` is byte-for-byte regenerated
   from `IpFragment`, and `raw-ipv6-fragment-oracle-reference.pcap` carries an
   oracle reference IPv6 fragment pair. Both are read back into `PacketRecord`s
   and reassembled through `IpDefrag`.
+- Ethernet link type also includes `ethernet-ipv4-udp-quic-initial.pcap`, a
+  synthetic Ethernet/IPv4/UDP/QUIC record using documentation MAC and IPv4
+  address space.
 - LinuxSll link type with an ARP payload.
 - NullLoopback link type with an IPv4 UDP payload.
 - IEEE 802.11 link type with a synthetic WPA2-PSK CCMP conversation:
