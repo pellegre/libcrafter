@@ -25,6 +25,14 @@ fn exports_quic_symbols() -> crafter::Result<()> {
 
     let frame = QuicFrame::from_bytes([0x01]);
     assert_eq!(frame.as_bytes(), &[0x01]);
+    assert_eq!(frame.kind(), QuicFrameKind::Known(QuicKnownFrameType::Ping));
+
+    let ack = QuicAckFrame::from_values(1, 0, 0, [QuicAckRange::from_values(0, 0)?])?
+        .with_ecn_counts(QuicAckEcnCounts::from_values(1, 2, 3)?);
+    assert_eq!(
+        QuicFrame::from_ack_frame(ack)?.frame_type_value(),
+        Some(0x03)
+    );
 
     let parameter = QuicTransportParameter::raw(varint, [0xde, 0xad]);
     assert_eq!(parameter.identifier(), Some(varint));
