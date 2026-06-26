@@ -67,6 +67,42 @@ fn mqtt_public_api_surface_resolves() {
     assert_eq!(crafter::protocols::mqtt::MQTT_TLS_PORT, MQTT_TLS_PORT);
 }
 
+#[test]
+fn dhcpv4_public_api_exports_build_discover() -> crafter::Result<()> {
+    let client_mac = documentation_mac(0x44);
+
+    let root: crafter::Dhcpv4 = crafter::Dhcpv4::discover(client_mac).xid(0x0102_0304);
+    let core: crafter::core::Dhcpv4 = crafter::core::Dhcpv4::discover(client_mac).xid(0x0102_0304);
+    let prelude: Dhcpv4 = Dhcpv4::discover(client_mac).xid(0x0102_0304);
+
+    assert_eq!(
+        root.message_type_value(),
+        Some(crafter::Dhcpv4MessageType::Discover)
+    );
+    assert_eq!(
+        core.message_type_value(),
+        Some(crafter::core::Dhcpv4MessageType::Discover)
+    );
+    assert_eq!(
+        prelude.message_type_value(),
+        Some(Dhcpv4MessageType::Discover)
+    );
+    assert_eq!(DHCPV4_CLIENT_PORT, 68);
+    assert_eq!(DHCPV4_SERVER_PORT, 67);
+
+    let packet = Ipv4::new()
+        .src(Ipv4Addr::new(0, 0, 0, 0))
+        .dst(Ipv4Addr::new(255, 255, 255, 255))
+        / Udp::new()
+        / prelude;
+    let compiled = packet.compile()?;
+
+    assert!(!compiled.is_empty());
+    assert!(packet.summary().contains("Dhcpv4(type=discover"));
+
+    Ok(())
+}
+
 #[cfg(feature = "whad")]
 #[test]
 fn whad_reexport_public_api_compile() {

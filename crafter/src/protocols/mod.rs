@@ -50,10 +50,11 @@ pub mod exports {
     pub use bgp::{
         Bgp, BgpCapability, BgpKeepalive, BgpNotification, BgpOpen, BgpRouteRefresh, BgpUpdate,
     };
+    pub use dhcp::Dhcpv4;
     pub use dhcp::{
         decode_dhcpv4_tftp_server_addresses, dhcpv4_option_meta, dhcpv4_option_name,
         dhcpv4_option_status, dhcpv4_typed_option_value, scan_dhcpv4_option_segments,
-        ClientNetworkDeviceInterface, ClientSystemArchitecture, Dhcpv4, Dhcpv4AuthAlgorithm,
+        ClientNetworkDeviceInterface, ClientSystemArchitecture, Dhcpv4AuthAlgorithm,
         Dhcpv4AuthProtocol, Dhcpv4Authentication, Dhcpv4ClasslessRoute, Dhcpv4ClientIdentifier,
         Dhcpv4ClientUuid, Dhcpv4DataSource, Dhcpv4ForcerenewNonceCapable, Dhcpv4MessageType,
         Dhcpv4Option, Dhcpv4OptionArea, Dhcpv4OptionCode, Dhcpv4OptionFormat, Dhcpv4OptionKind,
