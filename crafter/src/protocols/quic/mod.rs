@@ -55,8 +55,9 @@ pub use packet_number::QuicPacketNumber;
 pub use transport_parameter::{
     is_grease_transport_parameter_id, QuicConnectionIdTransportParameter,
     QuicIntegerTransportParameter, QuicIntegerTransportParameterValidation,
-    QuicKnownTransportParameter, QuicStatelessResetToken, QuicTransportParameter,
-    QuicTransportParameterDuplicate, QuicTransportParameterKind,
+    QuicKnownTransportParameter, QuicPreferredAddress, QuicPreferredAddressValidation,
+    QuicStatelessResetToken, QuicTransportParameter, QuicTransportParameterDuplicate,
+    QuicTransportParameterKind,
 };
 pub use varint::QuicVarInt;
 

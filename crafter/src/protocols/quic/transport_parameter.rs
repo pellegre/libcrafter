@@ -7,6 +7,7 @@
 //! policy are added by later steps.
 
 use std::collections::BTreeMap;
+use std::net::{Ipv4Addr, Ipv6Addr};
 
 use super::frame::QUIC_STATELESS_RESET_TOKEN_LEN;
 use super::QuicConnectionId;
@@ -419,6 +420,214 @@ impl AsRef<[u8]> for QuicStatelessResetToken {
     }
 }
 
+/// Parsed or buildable QUIC `preferred_address` transport parameter value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuicPreferredAddress {
+    ipv4_address: Ipv4Addr,
+    ipv4_port: u16,
+    ipv6_address: Ipv6Addr,
+    ipv6_port: u16,
+    connection_id_length: Option<u8>,
+    connection_id: QuicConnectionId,
+    stateless_reset_token: QuicStatelessResetToken,
+}
+
+impl QuicPreferredAddress {
+    /// Construct a preferred address value. The Connection ID Length byte is
+    /// auto-filled from the connection ID unless overridden.
+    pub fn new(
+        ipv4_address: Ipv4Addr,
+        ipv4_port: u16,
+        ipv6_address: Ipv6Addr,
+        ipv6_port: u16,
+        connection_id: QuicConnectionId,
+        stateless_reset_token: QuicStatelessResetToken,
+    ) -> Self {
+        Self {
+            ipv4_address,
+            ipv4_port,
+            ipv6_address,
+            ipv6_port,
+            connection_id_length: None,
+            connection_id,
+            stateless_reset_token,
+        }
+    }
+
+    /// Preserve an explicit Connection ID Length byte, even when it does not
+    /// match the stored connection ID bytes.
+    pub fn with_connection_id_length(mut self, connection_id_length: u8) -> Self {
+        self.connection_id_length = Some(connection_id_length);
+        self
+    }
+
+    /// Return the IPv4 address field.
+    pub const fn ipv4_address(&self) -> Ipv4Addr {
+        self.ipv4_address
+    }
+
+    /// Return the IPv4 port field.
+    pub const fn ipv4_port(&self) -> u16 {
+        self.ipv4_port
+    }
+
+    /// Return the IPv6 address field.
+    pub const fn ipv6_address(&self) -> Ipv6Addr {
+        self.ipv6_address
+    }
+
+    /// Return the IPv6 port field.
+    pub const fn ipv6_port(&self) -> u16 {
+        self.ipv6_port
+    }
+
+    /// Return a caller-pinned Connection ID Length byte when present.
+    pub const fn connection_id_length_override(&self) -> Option<u8> {
+        self.connection_id_length
+    }
+
+    /// Return the advertised Connection ID Length byte.
+    pub fn connection_id_length(&self) -> Result<u8> {
+        if let Some(connection_id_length) = self.connection_id_length {
+            return Ok(connection_id_length);
+        }
+        u8::try_from(self.connection_id.len()).map_err(|_| {
+            CrafterError::invalid_field_value(
+                "quic.transport_parameter.preferred_address.connection_id_length",
+                "preferred_address connection ID length exceeds u8",
+            )
+        })
+    }
+
+    /// Borrow the preferred-address connection ID bytes.
+    pub fn connection_id(&self) -> &QuicConnectionId {
+        &self.connection_id
+    }
+
+    /// Borrow the 16-byte Stateless Reset Token.
+    pub const fn stateless_reset_token(&self) -> &QuicStatelessResetToken {
+        &self.stateless_reset_token
+    }
+
+    /// Return endpoint-validation findings for byte-complete preferred-address
+    /// values. These facts do not make tuple parsing fail.
+    pub fn validation_findings(&self) -> Vec<QuicPreferredAddressValidation> {
+        let mut findings = Vec::new();
+        if self.connection_id.is_empty() {
+            findings.push(QuicPreferredAddressValidation::ZeroLengthConnectionId);
+        }
+        if self.connection_id.len() > 20 {
+            findings.push(QuicPreferredAddressValidation::ConnectionIdExceedsV1V2Limit);
+        }
+        if self.ipv4_address.is_unspecified() && self.ipv4_port == 0 {
+            findings.push(QuicPreferredAddressValidation::Ipv4AddressFamilyOmitted);
+        }
+        if self.ipv6_address.is_unspecified() && self.ipv6_port == 0 {
+            findings.push(QuicPreferredAddressValidation::Ipv6AddressFamilyOmitted);
+        }
+        findings
+    }
+
+    /// Append the preferred-address value encoding.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        out.extend_from_slice(&self.ipv4_address.octets());
+        out.extend_from_slice(&self.ipv4_port.to_be_bytes());
+        out.extend_from_slice(&self.ipv6_address.octets());
+        out.extend_from_slice(&self.ipv6_port.to_be_bytes());
+        out.push(self.connection_id_length()?);
+        out.extend_from_slice(self.connection_id.as_bytes());
+        out.extend_from_slice(self.stateless_reset_token.as_bytes());
+        Ok(())
+    }
+
+    /// Return the preferred-address value encoding as a new vector.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(41 + self.connection_id.len());
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Decode a preferred-address value.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        decode_preferred_address_value(bytes.as_ref())
+    }
+
+    /// Stable preferred-address summary for packet inspection.
+    pub fn summary(&self) -> String {
+        format!(
+            "ipv4={}:{} ipv6=[{}]:{} connection_id_len={} connection_id={}",
+            self.ipv4_address,
+            self.ipv4_port,
+            self.ipv6_address,
+            self.ipv6_port,
+            self.connection_id_length
+                .map(usize::from)
+                .unwrap_or_else(|| self.connection_id.len()),
+            self.connection_id.to_hex(),
+        )
+    }
+
+    /// Stable field/value pairs for preferred-address inspection.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        let findings = self
+            .validation_findings()
+            .into_iter()
+            .map(|finding| finding.label())
+            .collect::<Vec<_>>()
+            .join(",");
+        vec![
+            ("preferred_ipv4_address", self.ipv4_address.to_string()),
+            ("preferred_ipv4_port", self.ipv4_port.to_string()),
+            ("preferred_ipv6_address", self.ipv6_address.to_string()),
+            ("preferred_ipv6_port", self.ipv6_port.to_string()),
+            (
+                "preferred_connection_id_length",
+                self.connection_id_length
+                    .map(|len| len.to_string())
+                    .unwrap_or_else(|| self.connection_id.len().to_string()),
+            ),
+            ("preferred_connection_id", self.connection_id.to_hex()),
+            (
+                "preferred_stateless_reset_token",
+                self.stateless_reset_token.to_spaced_hex(),
+            ),
+            (
+                "preferred_validation",
+                if findings.is_empty() {
+                    "ok".to_string()
+                } else {
+                    findings
+                },
+            ),
+        ]
+    }
+}
+
+/// Endpoint-validation finding for a byte-complete preferred-address value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuicPreferredAddressValidation {
+    /// Preferred-address connection IDs are endpoint-invalid when zero length.
+    ZeroLengthConnectionId,
+    /// Preferred-address connection IDs are endpoint-invalid above 20 bytes.
+    ConnectionIdExceedsV1V2Limit,
+    /// The IPv4 address family is omitted via `0.0.0.0:0`.
+    Ipv4AddressFamilyOmitted,
+    /// The IPv6 address family is omitted via `[::]:0`.
+    Ipv6AddressFamilyOmitted,
+}
+
+impl QuicPreferredAddressValidation {
+    /// Stable validation label for summaries or agent diagnostics.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::ZeroLengthConnectionId => "preferred_address_zero_length_connection_id",
+            Self::ConnectionIdExceedsV1V2Limit => "preferred_address_connection_id_above_20",
+            Self::Ipv4AddressFamilyOmitted => "preferred_address_ipv4_omitted",
+            Self::Ipv6AddressFamilyOmitted => "preferred_address_ipv6_omitted",
+        }
+    }
+}
+
 /// Broad transport-parameter identifier classification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QuicTransportParameterKind {
@@ -632,6 +841,14 @@ impl QuicTransportParameter {
         )
     }
 
+    /// Construct `preferred_address`.
+    pub fn preferred_address(preferred_address: QuicPreferredAddress) -> Result<Self> {
+        Ok(Self::known(
+            QuicKnownTransportParameter::PreferredAddress,
+            preferred_address.encode_to_vec()?,
+        ))
+    }
+
     /// Preserve a caller-pinned identifier varint width.
     pub fn with_identifier_encoded_len(mut self, len: usize) -> Self {
         self.identifier_encoded_len = Some(len);
@@ -726,6 +943,25 @@ impl QuicTransportParameter {
             return Ok(None);
         }
         decode_stateless_reset_token_value(&self.value).map(Some)
+    }
+
+    /// Return true when this is the registered `preferred_address` transport
+    /// parameter.
+    pub const fn is_preferred_address(&self) -> bool {
+        matches!(
+            self.known_type(),
+            Some(QuicKnownTransportParameter::PreferredAddress)
+        )
+    }
+
+    /// Decode the value of the registered preferred-address transport
+    /// parameter. Unknown, grease, provisional, and other known parameters
+    /// return `Ok(None)`.
+    pub fn preferred_address_value(&self) -> Result<Option<QuicPreferredAddress>> {
+        if !self.is_preferred_address() {
+            return Ok(None);
+        }
+        decode_preferred_address_value(&self.value).map(Some)
     }
 
     /// Return the broad parameter identifier classification.
@@ -865,6 +1101,9 @@ impl QuicTransportParameter {
                 if parameter.is_stateless_reset_token() {
                     parameter.stateless_reset_token_value()?;
                 }
+                if parameter.is_preferred_address() {
+                    parameter.preferred_address_value()?;
+                }
             }
             offset = end;
         }
@@ -929,6 +1168,21 @@ impl QuicTransportParameter {
                     hex_bytes(&self.value)
                 )
             }
+            Some(identifier) if self.is_preferred_address() => {
+                if let Ok(Some(preferred_address)) = self.preferred_address_value() {
+                    format!(
+                        "id=0x{:x} kind=preferred_address {}",
+                        identifier.value(),
+                        preferred_address.summary()
+                    )
+                } else {
+                    format!(
+                        "id=0x{:x} kind=preferred_address value_len={}",
+                        identifier.value(),
+                        self.value.len()
+                    )
+                }
+            }
             Some(identifier) => {
                 format!(
                     "id=0x{:x} kind={} value_len={}",
@@ -943,7 +1197,7 @@ impl QuicTransportParameter {
 
     /// Stable field/value pairs for packet inspection.
     pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
-        vec![
+        let mut fields = vec![
             (
                 "identifier",
                 self.identifier
@@ -971,7 +1225,14 @@ impl QuicTransportParameter {
             ),
             ("value_len", self.value.len().to_string()),
             ("value", hex_bytes(&self.value)),
-        ]
+        ];
+        if let Ok(Some(token)) = self.stateless_reset_token_value() {
+            fields.push(("stateless_reset_token", token.to_spaced_hex()));
+        }
+        if let Ok(Some(preferred_address)) = self.preferred_address_value() {
+            fields.extend(preferred_address.inspection_fields());
+        }
+        fields
     }
 }
 
@@ -1051,10 +1312,110 @@ fn decode_stateless_reset_token_value(bytes: &[u8]) -> Result<QuicStatelessReset
     Ok(QuicStatelessResetToken::new(token))
 }
 
+fn decode_preferred_address_value(bytes: &[u8]) -> Result<QuicPreferredAddress> {
+    let mut offset = 0;
+
+    let ipv4_bytes = read_preferred_address_field(
+        bytes,
+        &mut offset,
+        4,
+        "quic.transport_parameter.preferred_address.ipv4_address",
+    )?;
+    let ipv4_address = Ipv4Addr::new(ipv4_bytes[0], ipv4_bytes[1], ipv4_bytes[2], ipv4_bytes[3]);
+
+    let ipv4_port = read_preferred_address_u16(
+        bytes,
+        &mut offset,
+        "quic.transport_parameter.preferred_address.ipv4_port",
+    )?;
+
+    let ipv6_bytes = read_preferred_address_field(
+        bytes,
+        &mut offset,
+        16,
+        "quic.transport_parameter.preferred_address.ipv6_address",
+    )?;
+    let mut ipv6_octets = [0u8; 16];
+    ipv6_octets.copy_from_slice(ipv6_bytes);
+    let ipv6_address = Ipv6Addr::from(ipv6_octets);
+
+    let ipv6_port = read_preferred_address_u16(
+        bytes,
+        &mut offset,
+        "quic.transport_parameter.preferred_address.ipv6_port",
+    )?;
+
+    let connection_id_length = read_preferred_address_field(
+        bytes,
+        &mut offset,
+        1,
+        "quic.transport_parameter.preferred_address.connection_id_length",
+    )?[0];
+
+    let connection_id_bytes = read_preferred_address_field(
+        bytes,
+        &mut offset,
+        usize::from(connection_id_length),
+        "quic.transport_parameter.preferred_address.connection_id",
+    )?;
+    let connection_id = QuicConnectionId::from_bytes(connection_id_bytes);
+
+    let token_bytes = read_preferred_address_field(
+        bytes,
+        &mut offset,
+        QUIC_STATELESS_RESET_TOKEN_LEN,
+        "quic.transport_parameter.preferred_address.stateless_reset_token",
+    )?;
+    let stateless_reset_token = decode_stateless_reset_token_value(token_bytes)?;
+
+    if offset != bytes.len() {
+        return Err(CrafterError::invalid_field_value(
+            "quic.transport_parameter.preferred_address",
+            "preferred_address transport parameter has trailing bytes",
+        ));
+    }
+
+    Ok(QuicPreferredAddress::new(
+        ipv4_address,
+        ipv4_port,
+        ipv6_address,
+        ipv6_port,
+        connection_id,
+        stateless_reset_token,
+    )
+    .with_connection_id_length(connection_id_length))
+}
+
+fn read_preferred_address_u16(
+    bytes: &[u8],
+    offset: &mut usize,
+    context: &'static str,
+) -> Result<u16> {
+    let field = read_preferred_address_field(bytes, offset, 2, context)?;
+    Ok(u16::from_be_bytes([field[0], field[1]]))
+}
+
+fn read_preferred_address_field<'a>(
+    bytes: &'a [u8],
+    offset: &mut usize,
+    len: usize,
+    context: &'static str,
+) -> Result<&'a [u8]> {
+    let available = bytes.len().saturating_sub(*offset);
+    if available < len {
+        return Err(CrafterError::buffer_too_short(context, len, available));
+    }
+    let start = *offset;
+    let end = start + len;
+    *offset = end;
+    Ok(&bytes[start..end])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::protocols::quic::varint::is_shortest_encoding;
+    use std::net::{Ipv4Addr, Ipv6Addr};
 
     #[test]
     fn quic_summary_inspection_transport_parameter_summary_preserves_unknown_codepoint() {
@@ -1454,6 +1815,179 @@ mod tests {
     }
 
     #[test]
+    fn quic_transport_parameter_preferred_address_builds_decodes_and_inspects() -> Result<()> {
+        let ipv4 = Ipv4Addr::new(192, 0, 2, 10);
+        let ipv6 = Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0x0010);
+        let token = QuicStatelessResetToken::new([0xab; QUIC_STATELESS_RESET_TOKEN_LEN]);
+        let preferred_address = QuicPreferredAddress::new(
+            ipv4,
+            4433,
+            ipv6,
+            4434,
+            QuicConnectionId::from_bytes([0x83, 0x94, 0xc8, 0xf0]),
+            token,
+        );
+        let parameter = QuicTransportParameter::preferred_address(preferred_address)?;
+
+        let mut expected_value = vec![0xc0, 0x00, 0x02, 0x0a, 0x11, 0x51];
+        expected_value.extend_from_slice(&ipv6.octets());
+        expected_value.extend_from_slice(&[0x11, 0x52, 0x04, 0x83, 0x94, 0xc8, 0xf0]);
+        expected_value.extend_from_slice(token.as_bytes());
+
+        let mut expected = vec![0x0d, 0x2d];
+        expected.extend_from_slice(&expected_value);
+        let encoded = parameter.encode_to_vec()?;
+        assert_eq!(encoded, expected);
+
+        let decoded = QuicTransportParameter::decode_sequence(&encoded)?;
+        assert_eq!(decoded.len(), 1);
+        assert!(decoded[0].is_preferred_address());
+        let decoded_preferred = decoded[0].preferred_address_value()?.unwrap();
+        assert_eq!(decoded_preferred.ipv4_address(), ipv4);
+        assert_eq!(decoded_preferred.ipv4_port(), 4433);
+        assert_eq!(decoded_preferred.ipv6_address(), ipv6);
+        assert_eq!(decoded_preferred.ipv6_port(), 4434);
+        assert_eq!(decoded_preferred.connection_id_length_override(), Some(4));
+        assert_eq!(decoded_preferred.connection_id_length()?, 4);
+        assert_eq!(
+            decoded_preferred.connection_id().as_bytes(),
+            &[0x83, 0x94, 0xc8, 0xf0]
+        );
+        assert_eq!(decoded_preferred.stateless_reset_token(), &token);
+        assert!(decoded_preferred.validation_findings().is_empty());
+        assert_eq!(
+            decoded[0].summary(),
+            "id=0xd kind=preferred_address ipv4=192.0.2.10:4433 ipv6=[2001:db8::10]:4434 connection_id_len=4 connection_id=8394c8f0"
+        );
+
+        let fields = decoded[0].inspection_fields();
+        assert!(fields.contains(&("preferred_ipv4_address", "192.0.2.10".to_string())));
+        assert!(fields.contains(&("preferred_ipv4_port", "4433".to_string())));
+        assert!(fields.contains(&("preferred_ipv6_address", "2001:db8::10".to_string())));
+        assert!(fields.contains(&("preferred_connection_id", "8394c8f0".to_string())));
+        assert!(fields.contains(&(
+            "preferred_stateless_reset_token",
+            "ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab".to_string(),
+        )));
+        assert_eq!(QuicTransportParameter::encode_sequence(decoded)?, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_transport_parameter_preferred_address_reports_validation_findings() {
+        let token = QuicStatelessResetToken::new([0xcd; QUIC_STATELESS_RESET_TOKEN_LEN]);
+        let omitted = QuicPreferredAddress::new(
+            Ipv4Addr::new(0, 0, 0, 0),
+            0,
+            Ipv6Addr::UNSPECIFIED,
+            0,
+            QuicConnectionId::new(),
+            token,
+        );
+        assert_eq!(
+            omitted.validation_findings(),
+            vec![
+                QuicPreferredAddressValidation::ZeroLengthConnectionId,
+                QuicPreferredAddressValidation::Ipv4AddressFamilyOmitted,
+                QuicPreferredAddressValidation::Ipv6AddressFamilyOmitted,
+            ]
+        );
+
+        let oversized = QuicPreferredAddress::new(
+            Ipv4Addr::new(192, 0, 2, 10),
+            4433,
+            Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0x0010),
+            4434,
+            QuicConnectionId::from_bytes([0xab; 21]),
+            token,
+        );
+        assert_eq!(
+            oversized.validation_findings(),
+            vec![QuicPreferredAddressValidation::ConnectionIdExceedsV1V2Limit]
+        );
+        assert_eq!(
+            QuicPreferredAddressValidation::ConnectionIdExceedsV1V2Limit.label(),
+            "preferred_address_connection_id_above_20"
+        );
+    }
+
+    #[test]
+    fn quic_transport_parameter_preferred_address_preserves_bad_cid_len() -> Result<()> {
+        let token = QuicStatelessResetToken::new([0xef; QUIC_STATELESS_RESET_TOKEN_LEN]);
+        let preferred_address = QuicPreferredAddress::new(
+            Ipv4Addr::new(192, 0, 2, 10),
+            4433,
+            Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0x0010),
+            4434,
+            QuicConnectionId::from_bytes([0xaa, 0xbb, 0xcc]),
+            token,
+        )
+        .with_connection_id_length(1);
+        let parameter = QuicTransportParameter::preferred_address(preferred_address)?;
+        let encoded = parameter.encode_to_vec()?;
+
+        assert_eq!(parameter.value()[24], 1);
+        assert_eq!(
+            QuicTransportParameter::decode_sequence(encoded).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "quic.transport_parameter.preferred_address",
+                "preferred_address transport parameter has trailing bytes",
+            )
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn quic_transport_parameter_preferred_address_reports_structured_truncation() {
+        assert_eq!(
+            QuicTransportParameter::decode_sequence([0x0d, 0x03, 0xc0, 0x00, 0x02]).unwrap_err(),
+            CrafterError::buffer_too_short(
+                "quic.transport_parameter.preferred_address.ipv4_address",
+                4,
+                3,
+            )
+        );
+
+        let mut truncated_cid = preferred_address_fixed_prefix();
+        truncated_cid.push(4);
+        truncated_cid.extend_from_slice(&[0xaa, 0xbb]);
+        assert_eq!(
+            QuicTransportParameter::decode_sequence(preferred_address_tuple(truncated_cid))
+                .unwrap_err(),
+            CrafterError::buffer_too_short(
+                "quic.transport_parameter.preferred_address.connection_id",
+                4,
+                2,
+            )
+        );
+
+        let mut truncated_token = preferred_address_fixed_prefix();
+        truncated_token.extend_from_slice(&[4, 0x83, 0x94, 0xc8, 0xf0]);
+        truncated_token.extend_from_slice(&[0xab; QUIC_STATELESS_RESET_TOKEN_LEN - 1]);
+        assert_eq!(
+            QuicTransportParameter::decode_sequence(preferred_address_tuple(truncated_token))
+                .unwrap_err(),
+            CrafterError::buffer_too_short(
+                "quic.transport_parameter.preferred_address.stateless_reset_token",
+                QUIC_STATELESS_RESET_TOKEN_LEN,
+                QUIC_STATELESS_RESET_TOKEN_LEN - 1,
+            )
+        );
+
+        let mut trailing = preferred_address_fixed_prefix();
+        trailing.extend_from_slice(&[1, 0xaa]);
+        trailing.extend_from_slice(&[0xbb; QUIC_STATELESS_RESET_TOKEN_LEN]);
+        trailing.push(0xcc);
+        assert_eq!(
+            QuicTransportParameter::decode_sequence(preferred_address_tuple(trailing)).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "quic.transport_parameter.preferred_address",
+                "preferred_address transport parameter has trailing bytes",
+            )
+        );
+    }
+
+    #[test]
     fn quic_transport_parameter_skeleton_reports_structured_truncation() {
         assert_eq!(
             QuicTransportParameter::decode_sequence([0x40]).unwrap_err(),
@@ -1467,5 +2001,18 @@ mod tests {
             QuicTransportParameter::decode_sequence([0x01, 0x03, 0xaa]).unwrap_err(),
             CrafterError::buffer_too_short("quic.transport_parameter.value", 3, 1)
         );
+    }
+
+    fn preferred_address_fixed_prefix() -> Vec<u8> {
+        let mut bytes = vec![0xc0, 0x00, 0x02, 0x0a, 0x11, 0x51];
+        bytes.extend_from_slice(&Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0x0010).octets());
+        bytes.extend_from_slice(&[0x11, 0x52]);
+        bytes
+    }
+
+    fn preferred_address_tuple(value: Vec<u8>) -> Vec<u8> {
+        let mut bytes = vec![0x0d, u8::try_from(value.len()).unwrap()];
+        bytes.extend_from_slice(&value);
+        bytes
     }
 }

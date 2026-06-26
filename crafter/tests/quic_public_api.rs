@@ -4,7 +4,7 @@
 //! and import QUIC symbols through `crafter::prelude::*`.
 
 use crafter::prelude::*;
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, Ipv6Addr};
 
 #[test]
 fn exports_quic_symbols() -> crafter::Result<()> {
@@ -192,6 +192,22 @@ fn exports_quic_symbols() -> crafter::Result<()> {
     assert_eq!(
         reset_token_parameter.stateless_reset_token_value()?,
         Some(reset_token)
+    );
+    let preferred_address = QuicPreferredAddress::new(
+        Ipv4Addr::new(192, 0, 2, 10),
+        4433,
+        Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0x0010),
+        4434,
+        QuicConnectionId::from_bytes([0x83, 0x94, 0xc8, 0xf0]),
+        reset_token,
+    );
+    let preferred_parameter = QuicTransportParameter::preferred_address(preferred_address)?;
+    assert_eq!(
+        preferred_parameter
+            .preferred_address_value()?
+            .unwrap()
+            .validation_findings(),
+        Vec::<QuicPreferredAddressValidation>::new()
     );
 
     let quic_payload = [0xc3, 0x00, 0x00, 0x00, 0x01, 0x08, 0x00];
