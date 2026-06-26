@@ -2111,6 +2111,90 @@ impl QuicHandshakeDoneFrame {
     }
 }
 
+/// Raw bytes for a caller-bounded unknown QUIC frame.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuicUnknownFrame {
+    frame_type: QuicVarInt,
+    raw_following_bytes: Vec<u8>,
+}
+
+impl QuicUnknownFrame {
+    /// Construct an unknown frame from a numeric Frame Type and caller-bounded bytes.
+    ///
+    /// QUIC frame bodies are not self-describing. For unselected or unknown frame
+    /// types, these bytes are the remainder selected by packet context or by the
+    /// caller; no length inference is attempted here.
+    pub fn new(frame_type: QuicVarInt, raw_following_bytes: impl AsRef<[u8]>) -> Self {
+        Self {
+            frame_type,
+            raw_following_bytes: raw_following_bytes.as_ref().to_vec(),
+        }
+    }
+
+    /// Decode an unknown frame from a caller-provided frame boundary.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let bytes = bytes.as_ref();
+        let (frame_type, offset) = decode_frame_varint(bytes, 0, "quic.frame.unknown.type")?;
+        Ok(Self::new(frame_type, &bytes[offset..]))
+    }
+
+    /// Return the numeric Frame Type.
+    pub const fn frame_type(&self) -> QuicVarInt {
+        self.frame_type
+    }
+
+    /// Return the numeric Frame Type value.
+    pub const fn frame_type_value(&self) -> u64 {
+        self.frame_type.value()
+    }
+
+    /// Borrow the raw bytes after the Frame Type.
+    pub fn raw_following_bytes(&self) -> &[u8] {
+        &self.raw_following_bytes
+    }
+
+    /// Append the caller-bounded unknown frame encoding.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        self.frame_type.encode(out)?;
+        out.extend_from_slice(&self.raw_following_bytes);
+        Ok(())
+    }
+
+    /// Return the caller-bounded unknown frame encoding.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Stable unknown-frame summary for packet inspection.
+    pub fn summary(&self) -> String {
+        format!(
+            "kind=UNKNOWN type=0x{:x} following_len={}",
+            self.frame_type.value(),
+            self.raw_following_bytes.len()
+        )
+    }
+
+    /// Stable field/value pairs for unknown-frame inspection.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            (
+                "unknown_frame_type",
+                format!("0x{:x}", self.frame_type.value()),
+            ),
+            (
+                "unknown_following_len",
+                self.raw_following_bytes.len().to_string(),
+            ),
+            (
+                "unknown_following_bytes",
+                hex_bytes(&self.raw_following_bytes),
+            ),
+        ]
+    }
+}
+
 /// Raw-preserving QUIC frame.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct QuicFrame {
@@ -2143,6 +2227,16 @@ impl QuicFrame {
             bytes: vec![0x01],
             kind: QuicFrameKind::Known(QuicKnownFrameType::Ping),
         }
+    }
+
+    /// Construct an unknown frame from typed caller-bounded bytes.
+    pub fn from_unknown_frame(unknown: QuicUnknownFrame) -> Result<Self> {
+        Ok(Self::from_bytes(unknown.encode_to_vec()?))
+    }
+
+    /// Construct an unknown frame from a numeric Frame Type and caller-bounded bytes.
+    pub fn unknown(frame_type: QuicVarInt, raw_following_bytes: impl AsRef<[u8]>) -> Result<Self> {
+        Self::from_unknown_frame(QuicUnknownFrame::new(frame_type, raw_following_bytes))
     }
 
     /// Construct an ACK or ACK_ECN frame from typed fields.
@@ -2790,6 +2884,14 @@ impl QuicFrame {
             .map(|(_, consumed)| consumed)
     }
 
+    /// Decode this frame as caller-bounded unknown bytes when applicable.
+    pub fn unknown_frame(&self) -> Result<Option<QuicUnknownFrame>> {
+        match self.kind {
+            QuicFrameKind::Unknown => Ok(Some(QuicUnknownFrame::decode(&self.bytes)?)),
+            _ => Ok(None),
+        }
+    }
+
     /// Append the frame bytes to `out`.
     pub fn encode(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(&self.bytes);
@@ -2949,6 +3051,9 @@ impl QuicFrame {
         }
         if let Ok(Some(handshake_done)) = self.handshake_done_frame() {
             fields.extend(handshake_done.inspection_fields());
+        }
+        if let Ok(Some(unknown)) = self.unknown_frame() {
+            fields.extend(unknown.inspection_fields());
         }
         fields
     }
@@ -3636,6 +3741,48 @@ mod tests {
         assert_eq!(frame.encode_to_vec(), bytes);
         assert_eq!(QuicFrame::encode_sequence(frames), bytes);
         Ok(())
+    }
+
+    #[test]
+    fn quic_frame_unknown_preservation_keeps_indeterminate_tail_at_packet_boundary(
+    ) -> crate::Result<()> {
+        let bytes = [0x40, 0xaf, 0xde, 0xad, 0x01];
+
+        let frames = QuicFrame::decode_sequence(bytes)?;
+
+        assert_eq!(frames.len(), 1);
+        let frame = &frames[0];
+        assert_eq!(frame.kind(), QuicFrameKind::Unknown);
+        let unknown = frame.unknown_frame()?.unwrap();
+        assert_eq!(unknown.frame_type_value(), 0xaf);
+        assert_eq!(unknown.raw_following_bytes(), &[0xde, 0xad, 0x01]);
+        assert_eq!(unknown.summary(), "kind=UNKNOWN type=0xaf following_len=3");
+        assert_eq!(frame.as_bytes(), &bytes);
+        assert_eq!(QuicFrame::encode_sequence(frames), bytes);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_unknown_preservation_builds_caller_bounded_unknown_frame() -> crate::Result<()> {
+        let unknown = QuicUnknownFrame::new(v(0x3e75), [0xaa, 0xbb]);
+        let frame = QuicFrame::from_unknown_frame(unknown.clone())?;
+
+        assert_eq!(unknown.encode_to_vec()?, [0x7e, 0x75, 0xaa, 0xbb]);
+        assert_eq!(frame.kind(), QuicFrameKind::Unknown);
+        assert_eq!(frame.frame_type_value(), Some(0x3e75));
+        assert_eq!(frame.unknown_frame()?.unwrap(), unknown);
+        assert!(frame
+            .inspection_fields()
+            .contains(&("unknown_following_bytes", "aa bb".to_string())));
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_unknown_preservation_truncated_type_reports_structured_error() {
+        assert_eq!(
+            QuicUnknownFrame::decode([0x40]).unwrap_err(),
+            CrafterError::buffer_too_short("quic.frame.unknown.type", 2, 1)
+        );
     }
 
     #[test]
