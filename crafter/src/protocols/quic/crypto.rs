@@ -15,6 +15,10 @@ use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
 use super::constants::{QUIC_VERSION_1, QUIC_VERSION_2};
+use super::frame::QuicFrame;
+use super::header::{classify_quic_header, QuicHeaderClassification, QuicLongPacketKind};
+use super::packet_number::{len_from_header_bits, QuicPacketNumber};
+use super::varint::{encoded_len_from_prefix, QuicVarInt};
 use crate::error::{CrafterError, Result};
 
 type HmacSha256 = Hmac<Sha256>;
@@ -167,6 +171,93 @@ impl QuicInitialPacketKeys {
             ciphertext_and_tag,
         )
     }
+
+    /// Remove Initial header protection, decrypt the payload, and decode frames.
+    pub fn decode_protected_initial_payload(
+        &self,
+        packet: impl AsRef<[u8]>,
+    ) -> Result<QuicInitialProtectedPayload> {
+        quic_decode_initial_protected_payload_with_keys(packet, self)
+    }
+}
+
+/// Direction of Initial keys used to protect a packet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuicInitialPacketDirection {
+    /// Packets protected with client Initial packet keys.
+    Client,
+    /// Packets protected with server Initial packet keys.
+    Server,
+}
+
+impl QuicInitialPacketDirection {
+    /// Return a stable label for summaries and diagnostics.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Client => "client",
+            Self::Server => "server",
+        }
+    }
+}
+
+/// Result of explicitly decoding a protected QUIC Initial payload.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuicInitialProtectedPayload {
+    version: u32,
+    packet_number: QuicPacketNumber,
+    packet_number_offset: usize,
+    packet_number_len: usize,
+    unprotected_header: Vec<u8>,
+    protected_payload: Vec<u8>,
+    decrypted_payload: Vec<u8>,
+    frames: Vec<QuicFrame>,
+}
+
+impl QuicInitialProtectedPayload {
+    /// QUIC version from the packet header.
+    pub const fn version(&self) -> u32 {
+        self.version
+    }
+
+    /// Decoded truncated packet number.
+    pub const fn packet_number(&self) -> QuicPacketNumber {
+        self.packet_number
+    }
+
+    /// Offset of the packet-number bytes in the packet header.
+    pub const fn packet_number_offset(&self) -> usize {
+        self.packet_number_offset
+    }
+
+    /// Encoded packet-number length after removing header protection.
+    pub const fn packet_number_len(&self) -> usize {
+        self.packet_number_len
+    }
+
+    /// Header bytes after removing header protection.
+    pub fn unprotected_header(&self) -> &[u8] {
+        &self.unprotected_header
+    }
+
+    /// Encrypted payload bytes, including the AEAD tag.
+    pub fn protected_payload(&self) -> &[u8] {
+        &self.protected_payload
+    }
+
+    /// Decrypted Initial payload bytes.
+    pub fn decrypted_payload(&self) -> &[u8] {
+        &self.decrypted_payload
+    }
+
+    /// Decoded frame sequence from the decrypted payload.
+    pub fn frames(&self) -> &[QuicFrame] {
+        &self.frames
+    }
+
+    /// Number of decoded frame entries.
+    pub fn frame_count(&self) -> usize {
+        self.frames.len()
+    }
 }
 
 /// Source-backed QUIC header-protection mask algorithms.
@@ -237,6 +328,98 @@ pub fn derive_quic_initial_secrets(
         initial_secret,
         client_initial_secret,
         server_initial_secret,
+    })
+}
+
+/// Explicitly remove Initial protection and decode the payload as frames.
+///
+/// `original_destination_connection_id` is the Destination Connection ID used
+/// for Initial secret derivation. For server Initial packets this can differ
+/// from the packet's current Destination Connection ID.
+pub fn quic_decode_initial_protected_payload(
+    version: u32,
+    original_destination_connection_id: impl AsRef<[u8]>,
+    direction: QuicInitialPacketDirection,
+    packet: impl AsRef<[u8]>,
+) -> Result<QuicInitialProtectedPayload> {
+    let packet = packet.as_ref();
+    let parts = parse_initial_protected_packet(packet)?;
+    if parts.version != version {
+        return Err(CrafterError::invalid_field_value(
+            "quic.crypto.initial.version",
+            "packet version does not match requested QUIC Initial version",
+        ));
+    }
+
+    let secrets = derive_quic_initial_secrets(version, original_destination_connection_id)?;
+    let keys = match direction {
+        QuicInitialPacketDirection::Client => secrets.client_packet_keys()?,
+        QuicInitialPacketDirection::Server => secrets.server_packet_keys()?,
+    };
+    let decoded = quic_decode_initial_protected_payload_with_keys(packet, &keys)?;
+    Ok(decoded)
+}
+
+/// Explicitly remove Initial protection using caller-supplied keys and decode frames.
+pub fn quic_decode_initial_protected_payload_with_keys(
+    packet: impl AsRef<[u8]>,
+    keys: &QuicInitialPacketKeys,
+) -> Result<QuicInitialProtectedPayload> {
+    let packet = packet.as_ref();
+    let parts = parse_initial_protected_packet(packet)?;
+    let sample = &packet[parts.header_protection_sample_start
+        ..parts.header_protection_sample_start + QUIC_HEADER_PROTECTION_SAMPLE_LEN];
+    let mask = keys.header_protection_mask(sample)?;
+    let first_byte = packet[0] ^ (mask[0] & 0x0f);
+    let packet_number_len = len_from_header_bits(first_byte);
+    if parts.length_value < packet_number_len {
+        return Err(CrafterError::invalid_field_value(
+            "quic.long_header.length",
+            "QUIC long-header length must cover the packet number",
+        ));
+    }
+
+    let protected_payload_start = parts
+        .packet_number_offset
+        .checked_add(packet_number_len)
+        .ok_or_else(initial_decode_length_overflow_error)?;
+    if parts.packet_end < protected_payload_start {
+        return Err(CrafterError::buffer_too_short(
+            "quic.long_header.packet_number",
+            protected_payload_start,
+            parts.packet_end,
+        ));
+    }
+
+    let mut unprotected_header = packet[..protected_payload_start].to_vec();
+    unprotected_header[0] = first_byte;
+    for i in 0..packet_number_len {
+        unprotected_header[parts.packet_number_offset + i] ^= mask[1 + i];
+    }
+
+    let (packet_number, consumed) = QuicPacketNumber::decode(
+        &unprotected_header[parts.packet_number_offset..protected_payload_start],
+        packet_number_len,
+    )?;
+    debug_assert_eq!(consumed, packet_number_len);
+
+    let protected_payload = packet[protected_payload_start..parts.packet_end].to_vec();
+    let decrypted_payload = keys.unprotect_payload(
+        packet_number.value(),
+        &unprotected_header,
+        &protected_payload,
+    )?;
+    let frames = QuicFrame::decode_sequence(&decrypted_payload)?;
+
+    Ok(QuicInitialProtectedPayload {
+        version: parts.version,
+        packet_number,
+        packet_number_offset: parts.packet_number_offset,
+        packet_number_len,
+        unprotected_header,
+        protected_payload,
+        decrypted_payload,
+        frames,
     })
 }
 
@@ -425,6 +608,125 @@ fn derive_initial_packet_keys(version: u32, secret: &[u8]) -> Result<QuicInitial
             "quic.crypto.initial.hp",
         )?,
     })
+}
+
+#[derive(Debug, Clone, Copy)]
+struct InitialProtectedPacketParts {
+    version: u32,
+    length_value: usize,
+    packet_number_offset: usize,
+    packet_end: usize,
+    header_protection_sample_start: usize,
+}
+
+fn parse_initial_protected_packet(packet: &[u8]) -> Result<InitialProtectedPacketParts> {
+    let classification = classify_quic_header(packet)?;
+    let QuicHeaderClassification::LongHeader {
+        version,
+        invariant_len,
+        packet_kind: QuicLongPacketKind::Initial,
+        ..
+    } = classification
+    else {
+        return Err(CrafterError::invalid_field_value(
+            "quic.crypto.initial.packet",
+            "packet is not a QUIC Initial long-header packet",
+        ));
+    };
+
+    let token_length_start = invariant_len;
+    let first_token_length_byte = packet.get(token_length_start).copied().ok_or_else(|| {
+        CrafterError::buffer_too_short(
+            "quic.initial.token_length",
+            token_length_start + 1,
+            packet.len(),
+        )
+    })?;
+    let token_length_encoded_len = encoded_len_from_prefix(first_token_length_byte);
+    let token_length_end = token_length_start
+        .checked_add(token_length_encoded_len)
+        .ok_or_else(initial_decode_length_overflow_error)?;
+    if packet.len() < token_length_end {
+        return Err(CrafterError::buffer_too_short(
+            "quic.initial.token_length",
+            token_length_end,
+            packet.len(),
+        ));
+    }
+    let (token_length, consumed) = QuicVarInt::decode(&packet[token_length_start..])?;
+    debug_assert_eq!(consumed, token_length_encoded_len);
+    let token_len = usize::try_from(token_length.value())
+        .map_err(|_| initial_decode_length_overflow_error())?;
+    let token_end = token_length_end
+        .checked_add(token_len)
+        .ok_or_else(initial_decode_length_overflow_error)?;
+    if packet.len() < token_end {
+        return Err(CrafterError::buffer_too_short(
+            "quic.initial.token",
+            token_end,
+            packet.len(),
+        ));
+    }
+
+    let first_length_byte = packet.get(token_end).copied().ok_or_else(|| {
+        CrafterError::buffer_too_short("quic.long_header.length", token_end + 1, packet.len())
+    })?;
+    let length_encoded_len = encoded_len_from_prefix(first_length_byte);
+    let length_end = token_end
+        .checked_add(length_encoded_len)
+        .ok_or_else(initial_decode_length_overflow_error)?;
+    if packet.len() < length_end {
+        return Err(CrafterError::buffer_too_short(
+            "quic.long_header.length",
+            length_end,
+            packet.len(),
+        ));
+    }
+    let (length, consumed) = QuicVarInt::decode(&packet[token_end..])?;
+    debug_assert_eq!(consumed, length_encoded_len);
+    let length_value =
+        usize::try_from(length.value()).map_err(|_| initial_decode_length_overflow_error())?;
+
+    let packet_number_offset = length_end;
+    let packet_end = length_end
+        .checked_add(length_value)
+        .ok_or_else(initial_decode_length_overflow_error)?;
+    if packet.len() < packet_end {
+        return Err(CrafterError::buffer_too_short(
+            "quic.long_header.protected_payload",
+            packet_end,
+            packet.len(),
+        ));
+    }
+
+    let header_protection_sample_start = packet_number_offset
+        .checked_add(4)
+        .ok_or_else(initial_decode_length_overflow_error)?;
+    let header_protection_sample_end = header_protection_sample_start
+        .checked_add(QUIC_HEADER_PROTECTION_SAMPLE_LEN)
+        .ok_or_else(initial_decode_length_overflow_error)?;
+    if packet_end < header_protection_sample_end {
+        return Err(CrafterError::buffer_too_short(
+            "quic.crypto.header_protection.sample",
+            header_protection_sample_end,
+            packet_end,
+        ));
+    }
+
+    Ok(InitialProtectedPacketParts {
+        version,
+        length_value,
+        packet_number_offset,
+        packet_end,
+        header_protection_sample_start,
+    })
+}
+
+fn initial_decode_length_overflow_error() -> CrafterError {
+    CrafterError::invalid_field_value(
+        "quic.crypto.initial.length",
+        "QUIC Initial protected packet length overflow",
+    )
 }
 
 fn fixed_bytes<const N: usize>(bytes: &[u8], field: &'static str) -> Result<[u8; N]> {
@@ -809,6 +1111,172 @@ mod tests {
                 "unexpected QUIC crypto input length"
             )
         );
+    }
+
+    #[test]
+    fn quic_protected_payload_decode_mode_decrypts_initial_into_frames() -> Result<()> {
+        let clear_payload = [0x01, 0x06, 0x00, 0x01, 0xaa];
+        let protected_packet = protected_initial_packet(
+            QUIC_VERSION_1,
+            QuicInitialPacketDirection::Client,
+            0x1234,
+            2,
+            &clear_payload,
+        )?;
+
+        let decoded = quic_decode_initial_protected_payload(
+            QUIC_VERSION_1,
+            TEST_DCID,
+            QuicInitialPacketDirection::Client,
+            &protected_packet,
+        )?;
+
+        assert_eq!(decoded.version(), QUIC_VERSION_1);
+        assert_eq!(decoded.packet_number().value(), 0x1234);
+        assert_eq!(decoded.packet_number_len(), 2);
+        assert_eq!(decoded.decrypted_payload(), clear_payload);
+        assert_eq!(decoded.frame_count(), 2);
+        assert!(decoded.frames()[0].is_ping());
+        assert_eq!(decoded.frames()[1].crypto_frame()?.unwrap().data(), &[0xaa]);
+        assert_eq!(
+            QuicFrame::encode_sequence(decoded.frames().iter().cloned()),
+            clear_payload
+        );
+
+        let default_packet = crate::protocols::quic::QuicPacket::decode(&protected_packet)?;
+        assert_eq!(default_packet.as_bytes(), protected_packet.as_slice());
+        assert!(default_packet.is_long_header());
+        assert_ne!(
+            default_packet.long_header().unwrap().protected_payload(),
+            clear_payload
+        );
+
+        let keys = derive_quic_initial_secrets(QUIC_VERSION_1, TEST_DCID)?.client_packet_keys()?;
+        let decoded_with_keys = keys.decode_protected_initial_payload(&protected_packet)?;
+        assert_eq!(decoded_with_keys.decrypted_payload(), clear_payload);
+        assert_eq!(
+            quic_decode_initial_protected_payload_with_keys(&protected_packet, &keys)?
+                .frame_count(),
+            2
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn quic_protected_payload_decode_mode_reports_authentication_failure() -> Result<()> {
+        let mut protected_packet = protected_initial_packet(
+            QUIC_VERSION_1,
+            QuicInitialPacketDirection::Client,
+            0x1234,
+            2,
+            [0x01, 0x06, 0x00, 0x01, 0xaa],
+        )?;
+        let last = protected_packet
+            .last_mut()
+            .expect("protected packet has ciphertext");
+        *last ^= 0x01;
+
+        assert_eq!(
+            quic_decode_initial_protected_payload(
+                QUIC_VERSION_1,
+                TEST_DCID,
+                QuicInitialPacketDirection::Client,
+                &protected_packet,
+            )
+            .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "quic.crypto.initial.ciphertext_tag",
+                "AES-128-GCM Initial authentication failed"
+            )
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn quic_protected_payload_decode_mode_rejects_version_mismatch() -> Result<()> {
+        let protected_packet = protected_initial_packet(
+            QUIC_VERSION_1,
+            QuicInitialPacketDirection::Client,
+            0x1234,
+            2,
+            [0x01, 0x06, 0x00, 0x01, 0xaa],
+        )?;
+
+        assert_eq!(
+            quic_decode_initial_protected_payload(
+                QUIC_VERSION_2,
+                TEST_DCID,
+                QuicInitialPacketDirection::Client,
+                &protected_packet,
+            )
+            .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "quic.crypto.initial.version",
+                "packet version does not match requested QUIC Initial version"
+            )
+        );
+
+        Ok(())
+    }
+
+    fn protected_initial_packet(
+        version: u32,
+        direction: QuicInitialPacketDirection,
+        packet_number: u64,
+        packet_number_len: usize,
+        clear_payload: impl AsRef<[u8]>,
+    ) -> Result<Vec<u8>> {
+        let secrets = derive_quic_initial_secrets(version, TEST_DCID)?;
+        let keys = match direction {
+            QuicInitialPacketDirection::Client => secrets.client_packet_keys()?,
+            QuicInitialPacketDirection::Server => secrets.server_packet_keys()?,
+        };
+        let packet_number_len_bits =
+            super::super::packet_number::header_bits_for_len(packet_number_len)?;
+        let first_byte = match version {
+            QUIC_VERSION_1 => 0xc0 | packet_number_len_bits,
+            QUIC_VERSION_2 => 0xd0 | packet_number_len_bits,
+            _ => {
+                return Err(CrafterError::invalid_field_value(
+                    "test.version",
+                    "unsupported test QUIC version",
+                ))
+            }
+        };
+
+        let mut header = Vec::new();
+        header.push(first_byte);
+        header.extend_from_slice(&version.to_be_bytes());
+        header.push(TEST_DCID.len() as u8);
+        header.extend_from_slice(&TEST_DCID);
+        header.push(0);
+        header.push(0);
+        let length = packet_number_len
+            .checked_add(clear_payload.as_ref().len())
+            .and_then(|len| len.checked_add(QUIC_INITIAL_AEAD_TAG_LEN))
+            .ok_or_else(initial_decode_length_overflow_error)?;
+        QuicVarInt::new(length as u64)?.encode(&mut header)?;
+        let packet_number_offset = header.len();
+        QuicPacketNumber::new(packet_number)
+            .with_encoded_len(packet_number_len)
+            .encode(&mut header)?;
+
+        let ciphertext = keys.protect_payload(packet_number, &header, clear_payload)?;
+        let sample_offset = 4usize
+            .checked_sub(packet_number_len)
+            .ok_or_else(initial_decode_length_overflow_error)?;
+        let mask = keys.header_protection_mask(
+            &ciphertext[sample_offset..sample_offset + QUIC_HEADER_PROTECTION_SAMPLE_LEN],
+        )?;
+        header[0] ^= mask[0] & 0x0f;
+        for i in 0..packet_number_len {
+            header[packet_number_offset + i] ^= mask[1 + i];
+        }
+
+        header.extend_from_slice(&ciphertext);
+        Ok(header)
     }
 
     fn hex_array<const N: usize>(hex: &str) -> [u8; N] {

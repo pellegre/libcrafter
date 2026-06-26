@@ -26,14 +26,16 @@ pub mod varint;
 pub use connection_id::QuicConnectionId;
 pub use crypto::{
     derive_quic_initial_secrets, quic_aes128_header_protection_mask,
-    quic_chacha20_header_protection_mask, quic_header_protection_mask,
+    quic_chacha20_header_protection_mask, quic_decode_initial_protected_payload,
+    quic_decode_initial_protected_payload_with_keys, quic_header_protection_mask,
     quic_initial_aes128gcm_protect_payload, quic_initial_aes128gcm_unprotect_payload,
     quic_initial_payload_nonce, quic_initial_salt, QuicCryptoContext,
-    QuicHeaderProtectionAlgorithm, QuicInitialPacketKeys, QuicInitialSecrets,
-    QUIC_AES128_HEADER_PROTECTION_KEY_LEN, QUIC_CHACHA20_HEADER_PROTECTION_KEY_LEN,
-    QUIC_HEADER_PROTECTION_MASK_LEN, QUIC_HEADER_PROTECTION_SAMPLE_LEN, QUIC_INITIAL_AEAD_TAG_LEN,
-    QUIC_INITIAL_AES_128_KEY_LEN, QUIC_INITIAL_HP_KEY_LEN, QUIC_INITIAL_IV_LEN,
-    QUIC_INITIAL_SECRET_LEN, QUIC_V1_INITIAL_SALT, QUIC_V2_INITIAL_SALT,
+    QuicHeaderProtectionAlgorithm, QuicInitialPacketDirection, QuicInitialPacketKeys,
+    QuicInitialProtectedPayload, QuicInitialSecrets, QUIC_AES128_HEADER_PROTECTION_KEY_LEN,
+    QUIC_CHACHA20_HEADER_PROTECTION_KEY_LEN, QUIC_HEADER_PROTECTION_MASK_LEN,
+    QUIC_HEADER_PROTECTION_SAMPLE_LEN, QUIC_INITIAL_AEAD_TAG_LEN, QUIC_INITIAL_AES_128_KEY_LEN,
+    QUIC_INITIAL_HP_KEY_LEN, QUIC_INITIAL_IV_LEN, QUIC_INITIAL_SECRET_LEN, QUIC_V1_INITIAL_SALT,
+    QUIC_V2_INITIAL_SALT,
 };
 pub use frame::{
     QuicAckEcnCounts, QuicAckFrame, QuicAckRange, QuicConnectionCloseFrame,
