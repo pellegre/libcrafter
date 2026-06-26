@@ -430,7 +430,7 @@ pub mod exports {
         quic_retry_pseudo_packet, quic_verify_retry_integrity_tag, Quic, QuicAckEcnCounts,
         QuicAckFrame, QuicAckRange, QuicConnectionCloseFrame, QuicConnectionCloseKind,
         QuicConnectionId, QuicConnectionIdTransportParameter, QuicCryptoFrame,
-        QuicDataBlockedFrame, QuicFrame, QuicFrameKind, QuicHandshakeBuilder,
+        QuicDataBlockedFrame, QuicDatagramFrame, QuicFrame, QuicFrameKind, QuicHandshakeBuilder,
         QuicHandshakeDoneFrame, QuicHeaderProtectionAlgorithm, QuicInitialBuilder,
         QuicInitialPacketDirection, QuicInitialPacketKeys, QuicInitialProtectedPayload,
         QuicInitialSecrets, QuicIntegerTransportParameter, QuicIntegerTransportParameterValidation,
