@@ -20,6 +20,7 @@ use crafter::protocols::mqtt::{
     Mqtt, MqttControlPacketType, MqttProperties, MqttProperty, MQTT_CONNECT_FLAG_CLEAN_SESSION,
     MQTT_PUBLISH_FLAG_DUP, MQTT_PUBLISH_FLAG_QOS_MASK, MQTT_PUBLISH_FLAG_RETAIN,
 };
+use crafter::protocols::quic::Quic;
 use crafter::protocols::rip::ripng::{Ripng, RipngRte};
 use crafter::protocols::rip::{Rip, RipAuth, RipAuthPayload, RipEntry, RIP_AFI_AUTH};
 use serde::{Deserialize, Serialize};
@@ -460,6 +461,8 @@ fn normalized_layer_name(layer: &dyn Layer) -> String {
         "rip"
     } else if layer.as_any().is::<Ripng>() {
         "ripng"
+    } else if layer.as_any().is::<Quic>() {
+        "quic"
     } else if layer.as_any().is::<Icmpv4>() {
         "icmp"
     } else if layer.as_any().is::<Icmpv6>() {
@@ -591,6 +594,9 @@ fn normalized_layer_fields(
     }
     if let Some(layer) = layer.as_any().downcast_ref::<Ripng>() {
         return ripng_fields(layer);
+    }
+    if let Some(layer) = layer.as_any().downcast_ref::<Quic>() {
+        return quic_fields(layer);
     }
     if let Some(layer) = layer.as_any().downcast_ref::<Icmpv4>() {
         return icmp_fields(layer);
@@ -2580,6 +2586,112 @@ fn payload_fields(layer: &Raw) -> BTreeMap<String, Value> {
             json!(String::from_utf8_lossy(layer.as_bytes()).into_owned()),
         ),
     ])
+}
+
+fn quic_fields(layer: &Quic) -> BTreeMap<String, Value> {
+    let raw = quic_raw_bytes(layer);
+    map([
+        ("raw_hex", json!(hex_bytes(&raw))),
+        ("raw_len", json!(raw.len())),
+        ("packet_count", json!(quic_packet_count(&raw))),
+    ])
+}
+
+fn quic_raw_bytes(layer: &Quic) -> Vec<u8> {
+    if layer.packets().is_empty() {
+        return layer.payload_bytes().to_vec();
+    }
+    let mut out = Vec::with_capacity(layer.len());
+    for packet in layer.packets() {
+        out.extend_from_slice(packet.as_bytes());
+    }
+    out
+}
+
+const ORACLE_QUIC_VERSION_1: u32 = 0x0000_0001;
+const ORACLE_QUIC_VERSION_2: u32 = 0x6b33_43cf;
+
+fn quic_packet_count(raw: &[u8]) -> usize {
+    let mut cursor = 0usize;
+    let mut count = 0usize;
+    while cursor < raw.len() {
+        let Some(next) = quic_next_packet_end(raw, cursor) else {
+            return count;
+        };
+        count += 1;
+        cursor = next;
+    }
+    count
+}
+
+fn quic_next_packet_end(raw: &[u8], cursor: usize) -> Option<usize> {
+    let first = *raw.get(cursor)?;
+    if first & 0x80 == 0 || cursor + 7 > raw.len() {
+        return None;
+    }
+    let version = u32::from_be_bytes(raw.get(cursor + 1..cursor + 5)?.try_into().ok()?);
+    let mut pos = cursor + 5;
+    let dcid_len = usize::from(*raw.get(pos)?);
+    pos += 1;
+    if pos + dcid_len >= raw.len() {
+        return None;
+    }
+    pos += dcid_len;
+    let scid_len = usize::from(*raw.get(pos)?);
+    pos += 1;
+    if pos + scid_len > raw.len() {
+        return None;
+    }
+    pos += scid_len;
+
+    if version == 0 {
+        return ((raw.len() - pos) % 4 == 0).then_some(raw.len());
+    }
+    if quic_is_retry(version, first) {
+        return Some(raw.len());
+    }
+    if quic_is_initial(version, first) {
+        let (token_len, next) = quic_read_varint(raw, pos)?;
+        pos = next.checked_add(token_len)?;
+        if pos > raw.len() {
+            return None;
+        }
+    }
+    let (packet_len, next) = quic_read_varint(raw, pos)?;
+    next.checked_add(packet_len).filter(|end| *end <= raw.len())
+}
+
+fn quic_is_initial(version: u32, first: u8) -> bool {
+    let bits = (first & 0x30) >> 4;
+    if version == ORACLE_QUIC_VERSION_2 {
+        bits == 1
+    } else {
+        bits == 0
+    }
+}
+
+fn quic_is_retry(version: u32, first: u8) -> bool {
+    let bits = (first & 0x30) >> 4;
+    if version == ORACLE_QUIC_VERSION_2 {
+        bits == 0
+    } else {
+        version == ORACLE_QUIC_VERSION_1 && bits == 3
+    }
+}
+
+fn quic_read_varint(raw: &[u8], cursor: usize) -> Option<(usize, usize)> {
+    let first = *raw.get(cursor)?;
+    let tag = first >> 6;
+    let len = 1usize << tag;
+    let end = cursor.checked_add(len)?;
+    if end > raw.len() {
+        return None;
+    }
+    let mut value = usize::from(first & (0x3f >> tag));
+    for byte in &raw[cursor + 1..end] {
+        value = (value << 8) | usize::from(*byte);
+    }
+    Some((value, end))
 }
 
 fn inspection_fields(layer: &dyn Layer) -> BTreeMap<String, Value> {

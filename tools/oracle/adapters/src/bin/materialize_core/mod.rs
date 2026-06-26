@@ -266,6 +266,7 @@ fn build_layer(plan: &Value, layer: &str) -> ExampleResult<Box<dyn Layer>> {
         "snmp" => Ok(Box::new(snmp_layer(plan)?)),
         "rip" => Ok(Box::new(rip_layer(plan)?)),
         "ripng" => Ok(Box::new(ripng_layer(plan)?)),
+        "quic" => Ok(Box::new(quic_layer(plan)?)),
         "bgp" => Ok(Box::new(bgp_layer(plan)?)),
         "mqtt" => Ok(Box::new(mqtt_layer(plan)?)),
         "radiotap" => Ok(Box::new(radiotap_layer(plan)?)),
@@ -1494,6 +1495,12 @@ fn validate_udp_options_payload(plan: &Value, options: &Map<String, Value>) -> E
 fn udp_option_item_uses_auto_apc(item: &Map<String, Value>) -> bool {
     item.get("kind").and_then(Value::as_u64) == Some(UDP_OPTION_APC as u64)
         && item.get("checksum").and_then(Value::as_str) == Some("auto_crc32c_application_payload")
+}
+
+fn quic_layer(plan: &Value) -> ExampleResult<Quic> {
+    let fields = layer_fields(plan, "quic")?;
+    let bytes = bytes_value(required(fields, &["raw_hex", "hex", "bytes_hex"])?)?;
+    Ok(Quic::from_bytes(bytes))
 }
 
 fn udp_option_item(item: &Map<String, Value>) -> ExampleResult<UdpOption> {
