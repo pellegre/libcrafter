@@ -38,6 +38,11 @@ fn exports_quic_symbols() -> crafter::Result<()> {
         QuicFrame::from_reset_stream_frame(reset_stream)?.frame_type_value(),
         Some(0x04)
     );
+    let stop_sending = QuicStopSendingFrame::from_values(4, 0x1234)?;
+    assert_eq!(
+        QuicFrame::from_stop_sending_frame(stop_sending)?.frame_type_value(),
+        Some(0x05)
+    );
 
     let parameter = QuicTransportParameter::raw(varint, [0xde, 0xad]);
     assert_eq!(parameter.identifier(), Some(varint));
