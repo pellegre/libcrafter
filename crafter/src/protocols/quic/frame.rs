@@ -488,6 +488,89 @@ impl QuicResetStreamFrame {
     }
 }
 
+/// Parsed STOP_SENDING frame fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QuicStopSendingFrame {
+    stream_id: QuicVarInt,
+    application_error_code: QuicVarInt,
+}
+
+impl QuicStopSendingFrame {
+    /// Construct a STOP_SENDING frame from caller-supplied fields.
+    pub const fn new(stream_id: QuicVarInt, application_error_code: QuicVarInt) -> Self {
+        Self {
+            stream_id,
+            application_error_code,
+        }
+    }
+
+    /// Construct a STOP_SENDING frame from validated integer values.
+    pub fn from_values(stream_id: u64, application_error_code: u64) -> Result<Self> {
+        Ok(Self::new(
+            QuicVarInt::new(stream_id)?,
+            QuicVarInt::new(application_error_code)?,
+        ))
+    }
+
+    /// Return the Stream ID field.
+    pub const fn stream_id(self) -> QuicVarInt {
+        self.stream_id
+    }
+
+    /// Return the application protocol error code as a raw numeric value.
+    pub const fn application_error_code(self) -> QuicVarInt {
+        self.application_error_code
+    }
+
+    /// Decode one STOP_SENDING frame from bytes that include the Frame Type.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let bytes = bytes.as_ref();
+        let (frame, consumed) = decode_stop_sending_frame(bytes)?;
+        if consumed != bytes.len() {
+            return Err(CrafterError::invalid_field_value(
+                "quic.frame.stop_sending",
+                "STOP_SENDING frame has trailing bytes",
+            ));
+        }
+        Ok(frame)
+    }
+
+    /// Append the canonical STOP_SENDING frame encoding.
+    pub fn encode(self, out: &mut Vec<u8>) -> Result<()> {
+        QuicVarInt::from_u64_unchecked(0x05).encode(out)?;
+        self.stream_id.encode(out)?;
+        self.application_error_code.encode(out)?;
+        Ok(())
+    }
+
+    /// Return the canonical STOP_SENDING frame encoding.
+    pub fn encode_to_vec(self) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Stable STOP_SENDING summary for packet inspection.
+    pub fn summary(self) -> String {
+        format!(
+            "kind=STOP_SENDING stream_id={} application_error_code={}",
+            self.stream_id.value(),
+            self.application_error_code.value()
+        )
+    }
+
+    /// Stable field/value pairs for STOP_SENDING inspection.
+    pub fn inspection_fields(self) -> Vec<(&'static str, String)> {
+        vec![
+            ("stop_sending_stream_id", self.stream_id.value().to_string()),
+            (
+                "stop_sending_application_error_code",
+                self.application_error_code.value().to_string(),
+            ),
+        ]
+    }
+}
+
 /// Raw-preserving QUIC frame.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct QuicFrame {
@@ -574,6 +657,16 @@ impl QuicFrame {
         ))
     }
 
+    /// Construct a STOP_SENDING frame from typed fields.
+    pub fn from_stop_sending_frame(stop_sending: QuicStopSendingFrame) -> Result<Self> {
+        Ok(Self::from_bytes(stop_sending.encode_to_vec()?))
+    }
+
+    /// Construct a STOP_SENDING frame from caller-supplied fields.
+    pub fn stop_sending(stream_id: QuicVarInt, application_error_code: QuicVarInt) -> Result<Self> {
+        Self::from_stop_sending_frame(QuicStopSendingFrame::new(stream_id, application_error_code))
+    }
+
     /// Decode a frame sequence within the caller-provided packet boundary.
     ///
     /// Supported fixed-boundary frames are split out first. The remaining
@@ -609,6 +702,12 @@ impl QuicFrame {
                 0x04 => {
                     let (_, reset_stream_len) = decode_reset_stream_frame(&bytes[offset..])?;
                     let end = offset + reset_stream_len;
+                    frames.push(Self::from_bytes(&bytes[offset..end]));
+                    offset = end;
+                }
+                0x05 => {
+                    let (_, stop_sending_len) = decode_stop_sending_frame(&bytes[offset..])?;
+                    let end = offset + stop_sending_len;
                     frames.push(Self::from_bytes(&bytes[offset..end]));
                     offset = end;
                 }
@@ -666,6 +765,14 @@ impl QuicFrame {
     pub fn reset_stream_frame(&self) -> Result<Option<QuicResetStreamFrame>> {
         match self.frame_type_value() {
             Some(0x04) => Ok(Some(QuicResetStreamFrame::decode(&self.bytes)?)),
+            _ => Ok(None),
+        }
+    }
+
+    /// Decode this frame as STOP_SENDING when applicable.
+    pub fn stop_sending_frame(&self) -> Result<Option<QuicStopSendingFrame>> {
+        match self.frame_type_value() {
+            Some(0x05) => Ok(Some(QuicStopSendingFrame::decode(&self.bytes)?)),
             _ => Ok(None),
         }
     }
@@ -730,6 +837,9 @@ impl QuicFrame {
         if let Ok(Some(reset_stream)) = self.reset_stream_frame() {
             return reset_stream.summary();
         }
+        if let Ok(Some(stop_sending)) = self.stop_sending_frame() {
+            return stop_sending.summary();
+        }
         match self.frame_type() {
             Some(frame_type) => format!(
                 "kind={} type=0x{:x} raw_len={}",
@@ -772,6 +882,9 @@ impl QuicFrame {
         }
         if let Ok(Some(reset_stream)) = self.reset_stream_frame() {
             fields.extend(reset_stream.inspection_fields());
+        }
+        if let Ok(Some(stop_sending)) = self.stop_sending_frame() {
+            fields.extend(stop_sending.inspection_fields());
         }
         fields
     }
@@ -863,6 +976,30 @@ fn decode_reset_stream_frame(bytes: &[u8]) -> Result<(QuicResetStreamFrame, usiz
 
     Ok((
         QuicResetStreamFrame::new(stream_id, application_error_code, final_size),
+        offset,
+    ))
+}
+
+fn decode_stop_sending_frame(bytes: &[u8]) -> Result<(QuicStopSendingFrame, usize)> {
+    let (frame_type, mut offset) = decode_frame_varint(bytes, 0, "quic.frame.type")?;
+    if frame_type.value() != 0x05 {
+        return Err(CrafterError::invalid_field_value(
+            "quic.frame.stop_sending.type",
+            "STOP_SENDING frame type must be 0x05",
+        ));
+    }
+    let (stream_id, next) =
+        decode_frame_varint(bytes, offset, "quic.frame.stop_sending.stream_id")?;
+    offset = next;
+    let (application_error_code, next) = decode_frame_varint(
+        bytes,
+        offset,
+        "quic.frame.stop_sending.application_error_code",
+    )?;
+    offset = next;
+
+    Ok((
+        QuicStopSendingFrame::new(stream_id, application_error_code),
         offset,
     ))
 }
@@ -1138,6 +1275,46 @@ mod tests {
         assert_eq!(
             QuicFrame::decode_sequence([0x04, 1, 2, 0x40]).unwrap_err(),
             CrafterError::buffer_too_short("quic.frame.reset_stream.final_size", 2, 1)
+        );
+    }
+
+    #[test]
+    fn quic_frame_stop_sending_decodes_and_continues_sequence() -> crate::Result<()> {
+        let bytes = [0x05, 4, 0x12, 0x01];
+
+        let frames = QuicFrame::decode_sequence(bytes)?;
+
+        assert_eq!(frames.len(), 2);
+        assert_eq!(
+            frames[0].kind(),
+            QuicFrameKind::Known(QuicKnownFrameType::StopSending)
+        );
+        let stop_sending = frames[0].stop_sending_frame()?.unwrap();
+        assert_eq!(stop_sending.stream_id().value(), 4);
+        assert_eq!(stop_sending.application_error_code().value(), 0x12);
+        assert!(frames[1].is_ping());
+        assert_eq!(QuicFrame::encode_sequence(frames), bytes);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_stop_sending_serializes_unknown_error_codes() -> crate::Result<()> {
+        let stop_sending = QuicStopSendingFrame::from_values(1, 0x1234)?;
+        let frame = QuicFrame::from_stop_sending_frame(stop_sending)?;
+
+        assert_eq!(frame.as_bytes(), &[0x05, 0x01, 0x52, 0x34]);
+        assert_eq!(
+            frame.summary(),
+            "kind=STOP_SENDING stream_id=1 application_error_code=4660"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_stop_sending_malformed_varint_reports_structured_error() {
+        assert_eq!(
+            QuicFrame::decode_sequence([0x05, 1, 0x40]).unwrap_err(),
+            CrafterError::buffer_too_short("quic.frame.stop_sending.application_error_code", 2, 1)
         );
     }
 }
