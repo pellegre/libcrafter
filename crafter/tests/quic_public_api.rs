@@ -68,6 +68,16 @@ fn exports_quic_symbols() -> crafter::Result<()> {
         QuicFrame::from_max_stream_data_frame(max_stream_data)?.frame_type_value(),
         Some(0x11)
     );
+    let max_streams = QuicMaxStreamsFrame::from_value(QuicStreamDirection::Bidirectional, 8)?;
+    assert_eq!(
+        QuicFrame::from_max_streams_frame(max_streams)?.frame_type_value(),
+        Some(0x12)
+    );
+    assert_eq!(
+        QuicFrame::max_streams_unidirectional(QuicVarInt::from_u64_unchecked(8))?
+            .frame_type_value(),
+        Some(0x13)
+    );
 
     let parameter = QuicTransportParameter::raw(varint, [0xde, 0xad]);
     assert_eq!(parameter.identifier(), Some(varint));
