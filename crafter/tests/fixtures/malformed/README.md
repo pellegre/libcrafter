@@ -50,6 +50,23 @@ name|link-type|expected-kind|expected-context-or-marker|hex
 
 Lines that are blank or start with `#` are comments and are skipped.
 
+## QUIC frames — `quic-frame-corpus.hex`
+
+Consumed by `crafter/tests/quic_malformed.rs`. Format:
+
+```
+name|target|expected-kind|expected-context-or-marker|required|available|hex
+```
+
+- `target` selects the decode surface:
+  - `sequence` — `QuicFrame::decode_sequence`;
+  - `handshake-done` — `QuicHandshakeDoneFrame::decode`;
+  - `raw-frame` — `QuicFrame::from_bytes`.
+- `expected-kind` is `buffer-too-short`, `invalid-field-value`, or `decodes`.
+- `required` and `available` pin `BufferTooShort` sizes; use `-` for other
+  outcomes.
+- `decodes` markers pin byte-preserving behavior such as unknown frame tails.
+
 ## Conventions
 
 - Frames use lab-safe documentation values (documentation PAN/address space,
