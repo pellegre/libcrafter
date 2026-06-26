@@ -58,6 +58,11 @@ fn exports_quic_symbols() -> crafter::Result<()> {
         QuicFrame::from_stream_frame(stream)?.frame_type_value(),
         Some(0x0b)
     );
+    let max_data = QuicMaxDataFrame::from_value(1024)?;
+    assert_eq!(
+        QuicFrame::from_max_data_frame(max_data)?.frame_type_value(),
+        Some(0x10)
+    );
 
     let parameter = QuicTransportParameter::raw(varint, [0xde, 0xad]);
     assert_eq!(parameter.identifier(), Some(varint));

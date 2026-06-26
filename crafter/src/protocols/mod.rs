@@ -423,7 +423,7 @@ pub mod exports {
     pub use quic::{
         Quic, QuicAckEcnCounts, QuicAckFrame, QuicAckRange, QuicConnectionId, QuicCryptoFrame,
         QuicFrame, QuicFrameKind, QuicHandshakeBuilder, QuicInitialBuilder, QuicKnownFrameType,
-        QuicLongHeaderPacket, QuicNewTokenFrame, QuicPacket, QuicPacketNumber,
+        QuicLongHeaderPacket, QuicMaxDataFrame, QuicNewTokenFrame, QuicPacket, QuicPacketNumber,
         QuicResetStreamFrame, QuicRetryBuilder, QuicRetryPacket, QuicShortHeaderBuilder,
         QuicShortHeaderPacket, QuicStopSendingFrame, QuicStreamFrame, QuicTransportParameter,
         QuicVarInt, QuicVersionNegotiationBuilder, QuicVersionNegotiationPacket,
