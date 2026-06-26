@@ -422,6 +422,11 @@ impl QuicLongHeaderPacket {
         QuicHandshakeBuilder::new()
     }
 
+    /// Start building a QUIC 0-RTT packet.
+    pub fn zero_rtt_builder() -> QuicZeroRttBuilder {
+        QuicZeroRttBuilder::new()
+    }
+
     /// Decode a byte-complete Initial, 0-RTT, or Handshake long-header packet.
     ///
     /// The QUIC Length field covers the packet-number bytes plus the protected
@@ -751,6 +756,156 @@ fn initial_token_length_overflow_error() -> CrafterError {
         "quic.initial.token_length",
         "QUIC Initial token length exceeds addressable packet bytes",
     )
+}
+
+/// Builder for QUIC 0-RTT packet emission.
+///
+/// This only emits packet bytes. Replay checks, remembered transport parameter
+/// validation, and endpoint 0-RTT acceptance policy are intentionally out of
+/// scope for this packet primitive.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct QuicZeroRttBuilder {
+    first_byte: Field<u8>,
+    version: Field<u32>,
+    destination_connection_id: Field<QuicConnectionId>,
+    source_connection_id: Field<QuicConnectionId>,
+    length: Field<QuicVarInt>,
+    length_encoded_len: Field<usize>,
+    packet_number: Field<QuicPacketNumber>,
+    protected_payload: Field<Vec<u8>>,
+}
+
+impl QuicZeroRttBuilder {
+    /// Create a 0-RTT builder with fields left available for defaults.
+    pub fn new() -> Self {
+        Self {
+            first_byte: Field::unset(),
+            version: Field::unset(),
+            destination_connection_id: Field::unset(),
+            source_connection_id: Field::unset(),
+            length: Field::unset(),
+            length_encoded_len: Field::unset(),
+            packet_number: Field::unset(),
+            protected_payload: Field::unset(),
+        }
+    }
+
+    /// Pin byte 0 explicitly, including intentionally malformed values.
+    pub fn first_byte(mut self, first_byte: u8) -> Self {
+        self.first_byte.set_user(first_byte);
+        self
+    }
+
+    /// Set the QUIC version field. Defaults to QUIC v1.
+    pub fn version(mut self, version: u32) -> Self {
+        self.version.set_user(version);
+        self
+    }
+
+    /// Set the Destination Connection ID bytes.
+    pub fn destination_connection_id(mut self, connection_id: QuicConnectionId) -> Self {
+        self.destination_connection_id.set_user(connection_id);
+        self
+    }
+
+    /// Set the Source Connection ID bytes.
+    pub fn source_connection_id(mut self, connection_id: QuicConnectionId) -> Self {
+        self.source_connection_id.set_user(connection_id);
+        self
+    }
+
+    /// Pin the QUIC Length field value, including intentionally malformed values.
+    pub fn length(mut self, length: QuicVarInt) -> Self {
+        self.length.set_user(length);
+        self
+    }
+
+    /// Pin the encoded width of the QUIC Length varint.
+    pub fn length_encoded_len(mut self, encoded_len: usize) -> Self {
+        self.length_encoded_len.set_user(encoded_len);
+        self
+    }
+
+    /// Set the packet number and optional encoded-length override.
+    pub fn packet_number(mut self, packet_number: QuicPacketNumber) -> Self {
+        self.packet_number.set_user(packet_number);
+        self
+    }
+
+    /// Set the protected/raw packet payload bytes.
+    pub fn protected_payload(mut self, payload: impl AsRef<[u8]>) -> Self {
+        self.protected_payload.set_user(payload.as_ref().to_vec());
+        self
+    }
+
+    /// Compatibility alias for callers treating the packet payload as raw bytes.
+    pub fn payload(self, payload: impl AsRef<[u8]>) -> Self {
+        self.protected_payload(payload)
+    }
+
+    /// Append one raw-preserving frame placeholder to the protected payload.
+    pub fn frame(mut self, frame: QuicFrame) -> Self {
+        if self.protected_payload.is_unset() {
+            self.protected_payload.set_user(Vec::new());
+        }
+        self.protected_payload
+            .value_mut()
+            .expect("payload set above")
+            .extend_from_slice(frame.as_bytes());
+        self
+    }
+
+    /// Append raw-preserving frame placeholders to the protected payload.
+    pub fn frames(mut self, frames: impl IntoIterator<Item = QuicFrame>) -> Self {
+        for frame in frames {
+            self = self.frame(frame);
+        }
+        self
+    }
+
+    /// Build 0-RTT packet bytes without applying endpoint acceptance policy.
+    pub fn build(self) -> Result<QuicLongHeaderPacket> {
+        let version = self.version.into_value().unwrap_or(QUIC_VERSION_1);
+        let destination_connection_id = self
+            .destination_connection_id
+            .into_value()
+            .unwrap_or_default();
+        let source_connection_id = self.source_connection_id.into_value().unwrap_or_default();
+        let protected_payload = self.protected_payload.into_value().unwrap_or_default();
+        let packet_number = self
+            .packet_number
+            .into_value()
+            .unwrap_or_else(|| QuicPacketNumber::new(0));
+        let packet_number_encoded_len = packet_number.effective_encoded_len()?;
+        let first_byte = match self.first_byte.into_value() {
+            Some(first_byte) => first_byte,
+            None => default_zero_rtt_first_byte(version, packet_number_encoded_len)?,
+        };
+        let length = match self.length.into_value() {
+            Some(length) => length,
+            None => {
+                let body_len = packet_number_encoded_len
+                    .checked_add(protected_payload.len())
+                    .ok_or_else(|| length_overflow_error())?;
+                QuicVarInt::new(u64::try_from(body_len).map_err(|_| length_overflow_error())?)?
+            }
+        };
+
+        QuicLongHeaderPacket::from_long_header_parts(QuicLongHeaderBuildParts {
+            packet_kind: QuicLongPacketKind::ZeroRtt,
+            first_byte,
+            version,
+            destination_connection_id,
+            source_connection_id,
+            token_length: None,
+            token_length_encoded_len: None,
+            token: Vec::new(),
+            length,
+            length_encoded_len: self.length_encoded_len.into_value(),
+            packet_number,
+            protected_payload,
+        })
+    }
 }
 
 /// Builder for QUIC Handshake packet emission.
@@ -1195,6 +1350,18 @@ fn default_handshake_first_byte(version: u32, packet_number_encoded_len: usize) 
         _ => Err(CrafterError::invalid_field_value(
             "quic.handshake.version",
             "cannot infer Handshake packet type bits for unsupported QUIC version",
+        )),
+    }
+}
+
+fn default_zero_rtt_first_byte(version: u32, packet_number_encoded_len: usize) -> Result<u8> {
+    let packet_number_len_bits = header_bits_for_len(packet_number_encoded_len)?;
+    match version {
+        QUIC_VERSION_1 => Ok(0xd0 | packet_number_len_bits),
+        QUIC_VERSION_2 => Ok(0xe0 | packet_number_len_bits),
+        _ => Err(CrafterError::invalid_field_value(
+            "quic.zero_rtt.version",
+            "cannot infer 0-RTT packet type bits for unsupported QUIC version",
         )),
     }
 }
@@ -2246,6 +2413,102 @@ mod tests {
             .unwrap();
         assert_eq!(handshake.version(), 0xface_feed);
         assert_eq!(handshake.first_byte(), 0xe0);
+    }
+
+    #[test]
+    fn quic_zero_rtt_packet_build_auto_fills_length_and_roundtrips() -> crate::Result<()> {
+        let zero_rtt = QuicLongHeaderPacket::zero_rtt_builder()
+            .destination_connection_id(QuicConnectionId::from_bytes([0x83, 0x94, 0xc8, 0xf0]))
+            .source_connection_id(QuicConnectionId::from_bytes([0xaa]))
+            .packet_number(QuicPacketNumber::new(0x1234).with_encoded_len(2))
+            .protected_payload([0xbe, 0xef])
+            .build()?;
+
+        assert_eq!(
+            zero_rtt.as_bytes(),
+            [
+                0xd1, 0x00, 0x00, 0x00, 0x01, 0x04, 0x83, 0x94, 0xc8, 0xf0, 0x01, 0xaa, 0x04, 0x12,
+                0x34, 0xbe, 0xef,
+            ]
+        );
+        assert_eq!(zero_rtt.packet_kind(), QuicLongPacketKind::ZeroRtt);
+        assert_eq!(zero_rtt.token(), []);
+        assert_eq!(zero_rtt.length().value(), 4);
+
+        let decoded = QuicLongHeaderPacket::decode(zero_rtt.as_bytes())?;
+        assert_eq!(decoded.packet_kind(), QuicLongPacketKind::ZeroRtt);
+        assert_eq!(decoded.packet_number().value(), 0x1234);
+        assert_eq!(decoded.protected_payload(), [0xbe, 0xef]);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_zero_rtt_packet_build_preserves_raw_encrypted_payload() -> crate::Result<()> {
+        let zero_rtt = QuicLongHeaderPacket::zero_rtt_builder()
+            .packet_number(QuicPacketNumber::new(0x05))
+            .payload([0xc0, 0xff, 0xee, 0x00])
+            .build()?;
+
+        assert_eq!(zero_rtt.first_byte(), 0xd0);
+        assert_eq!(zero_rtt.protected_payload(), [0xc0, 0xff, 0xee, 0x00]);
+        assert_eq!(zero_rtt.length().value(), 5);
+        assert_eq!(zero_rtt.packet_number_bytes(), [0x05]);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_zero_rtt_packet_build_uses_v2_zero_rtt_type_bits() -> crate::Result<()> {
+        let zero_rtt = QuicLongHeaderPacket::zero_rtt_builder()
+            .version(QUIC_VERSION_2)
+            .packet_number(QuicPacketNumber::new(1))
+            .build()?;
+
+        assert_eq!(zero_rtt.first_byte(), 0xe0);
+        assert_eq!(zero_rtt.packet_kind(), QuicLongPacketKind::ZeroRtt);
+        assert_eq!(zero_rtt.as_bytes()[1..5], QUIC_VERSION_2.to_be_bytes());
+        Ok(())
+    }
+
+    #[test]
+    fn quic_zero_rtt_packet_build_preserves_explicit_malformed_lengths() -> crate::Result<()> {
+        let zero_rtt = QuicLongHeaderPacket::zero_rtt_builder()
+            .length(QuicVarInt::new(1).unwrap())
+            .length_encoded_len(2)
+            .packet_number(QuicPacketNumber::new(0x12).with_encoded_len(4))
+            .payload([0xcc])
+            .build()?;
+
+        assert_eq!(zero_rtt.first_byte(), 0xd3);
+        assert_eq!(
+            zero_rtt.as_bytes(),
+            [0xd3, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x40, 0x01, 0x00, 0x00, 0x00, 0x12, 0xcc,]
+        );
+        assert_eq!(zero_rtt.length().value(), 1);
+        assert_eq!(zero_rtt.length_encoded_len(), 2);
+        assert_eq!(zero_rtt.packet_number_bytes(), [0x00, 0x00, 0x00, 0x12]);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_zero_rtt_packet_build_rejects_unsupported_version_without_first_byte() {
+        assert_eq!(
+            QuicLongHeaderPacket::zero_rtt_builder()
+                .version(0xface_feed)
+                .build()
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "quic.zero_rtt.version",
+                "cannot infer 0-RTT packet type bits for unsupported QUIC version",
+            )
+        );
+
+        let zero_rtt = QuicLongHeaderPacket::zero_rtt_builder()
+            .version(0xface_feed)
+            .first_byte(0xd0)
+            .build()
+            .unwrap();
+        assert_eq!(zero_rtt.version(), 0xface_feed);
+        assert_eq!(zero_rtt.first_byte(), 0xd0);
     }
 
     #[test]
