@@ -1,7 +1,7 @@
 use std::net::Ipv4Addr;
 
 use crate::{
-    Arp, ArpOperation, Dhcpv4, DhcpClientIdentifier, Dhcpv4MessageType, Dns, Icmpv4, Icmpv6, Igmp,
+    Arp, ArpOperation, Dhcpv4, Dhcpv4ClientIdentifier, Dhcpv4MessageType, Dns, Icmpv4, Icmpv6, Igmp,
     Ipv4, Ipv6, Packet, Tcp, Udp, BOOTP_REPLY, DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT,
     ICMPV6_ECHO_REPLY, ICMPV6_ECHO_REQUEST, ICMP_ECHO_REPLY, ICMP_ECHO_REQUEST,
 };
@@ -350,7 +350,7 @@ fn dhcp_client_identifier_matches(request: &Dhcpv4, candidate: &Dhcpv4) -> bool 
     }
 }
 
-fn dhcp_client_identifier(dhcp: &Dhcpv4) -> Option<DhcpClientIdentifier> {
+fn dhcp_client_identifier(dhcp: &Dhcpv4) -> Option<Dhcpv4ClientIdentifier> {
     dhcp.client_identifier_value().and_then(Result::ok)
 }
 

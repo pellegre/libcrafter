@@ -712,7 +712,7 @@ mod reply_matching {
     use std::net::{Ipv4Addr, Ipv6Addr};
 
     use crate::{
-        Arp, ArpOperation, Dhcpv4, DhcpClientIdentifier, Dhcpv4MessageType, Dns, DnsRecord, Icmpv4,
+        Arp, ArpOperation, Dhcpv4, Dhcpv4ClientIdentifier, Dhcpv4MessageType, Dns, DnsRecord, Icmpv4,
         Icmpv6, IntoPacket, Ipv4, Ipv6, MacAddr, Packet, Raw, Tcp, Udp, DNS_TYPE_A, TCP_FLAG_ACK,
         TCP_FLAG_RST, TCP_FLAG_SYN,
     };
@@ -1044,8 +1044,8 @@ mod reply_matching {
         // identifier does not, even with a matching xid and hardware address.
         let mac_bytes = [0x02, 0, 0, 0, 0, 1];
         let mac = MacAddr::new(mac_bytes);
-        let client_id = DhcpClientIdentifier::ethernet_mac(mac_bytes);
-        let other_id = DhcpClientIdentifier::ethernet_mac([0x02, 0, 0, 0, 0, 9]);
+        let client_id = Dhcpv4ClientIdentifier::ethernet_mac(mac_bytes);
+        let other_id = Dhcpv4ClientIdentifier::ethernet_mac([0x02, 0, 0, 0, 0, 9]);
 
         let request = Ipv4::new()
             .src(Ipv4Addr::UNSPECIFIED)

@@ -21,21 +21,21 @@ fn main() -> ExampleResult<()> {
 
     // A relay agent adds option 82 sub-options when forwarding a client message
     // toward the server. Registered sub-options decode to typed values; unknown
-    // codes are preserved verbatim through DhcpRelaySuboption::other.
-    let relay_info = DhcpRelayAgentInfo::new(vec![
-        DhcpRelaySuboption::circuit_id(b"eth0:vlan100".to_vec()),
-        DhcpRelaySuboption::remote_id(b"relay-1".to_vec()),
-        DhcpRelaySuboption::other(254, b"vendor-bytes".to_vec()),
+    // codes are preserved verbatim through Dhcpv4RelaySuboption::other.
+    let relay_info = Dhcpv4RelayAgentInfo::new(vec![
+        Dhcpv4RelaySuboption::circuit_id(b"eth0:vlan100".to_vec()),
+        Dhcpv4RelaySuboption::remote_id(b"relay-1".to_vec()),
+        Dhcpv4RelaySuboption::other(254, b"vendor-bytes".to_vec()),
     ]);
 
     // RFC 3442 classless static routes (option 121).
     let routes = vec![
-        DhcpClasslessRoute::new(24, "198.51.100.0".parse()?, "192.0.2.1".parse()?),
-        DhcpClasslessRoute::new(0, Ipv4Addr::UNSPECIFIED, "192.0.2.254".parse()?),
+        Dhcpv4ClasslessRoute::new(24, "198.51.100.0".parse()?, "192.0.2.1".parse()?),
+        Dhcpv4ClasslessRoute::new(0, Ipv4Addr::UNSPECIFIED, "192.0.2.254".parse()?),
     ];
-    let routes_option = DhcpOption::typed(
-        DhcpOptionKind::ClasslessStaticRoute,
-        DhcpOptionValue::ClasslessRoutes(routes),
+    let routes_option = Dhcpv4Option::typed(
+        Dhcpv4OptionKind::ClasslessStaticRoute,
+        Dhcpv4OptionValue::ClasslessRoutes(routes),
     );
 
     let dhcp = Dhcpv4::discover(client_mac)

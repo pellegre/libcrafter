@@ -5123,16 +5123,16 @@ fn dns_class(value: &Value) -> ExampleResult<u16> {
     u16_value(value)
 }
 
-fn dhcp_options(value: &Value) -> ExampleResult<Vec<DhcpOption>> {
+fn dhcp_options(value: &Value) -> ExampleResult<Vec<Dhcpv4Option>> {
     let mut options = Vec::new();
     for item in array_values(value)? {
         if let Some(text) = item.as_str() {
             if text == "end" {
-                options.push(DhcpOption::End);
+                options.push(Dhcpv4Option::End);
                 continue;
             }
             if text == "pad" {
-                options.push(DhcpOption::Pad);
+                options.push(Dhcpv4Option::Pad);
                 continue;
             }
             if let Some((name, raw_value)) = text.split_once('=') {
@@ -5141,27 +5141,27 @@ fn dhcp_options(value: &Value) -> ExampleResult<Vec<DhcpOption>> {
             }
         }
     }
-    if !matches!(options.last(), Some(DhcpOption::End)) {
-        options.push(DhcpOption::End);
+    if !matches!(options.last(), Some(Dhcpv4Option::End)) {
+        options.push(Dhcpv4Option::End);
     }
     Ok(options)
 }
 
-fn dhcp_option_pair(name: &str, value: &str) -> ExampleResult<DhcpOption> {
+fn dhcp_option_pair(name: &str, value: &str) -> ExampleResult<Dhcpv4Option> {
     match name.replace('-', "_").as_str() {
-        "message_type" => Ok(DhcpOption::message_type(dhcpv4_message_type(value))),
-        "hostname" | "host_name" => Ok(DhcpOption::host_name(value)),
-        "domain_name" => Ok(DhcpOption::domain_name(value)),
+        "message_type" => Ok(Dhcpv4Option::message_type(dhcpv4_message_type(value))),
+        "hostname" | "host_name" => Ok(Dhcpv4Option::host_name(value)),
+        "domain_name" => Ok(Dhcpv4Option::domain_name(value)),
         "requested_ip" | "requested_ip_address" => {
-            Ok(DhcpOption::requested_ip_address(Ipv4Addr::from_str(value)?))
+            Ok(Dhcpv4Option::requested_ip_address(Ipv4Addr::from_str(value)?))
         }
         "server_id" | "server_identifier" => {
-            Ok(DhcpOption::server_identifier(Ipv4Addr::from_str(value)?))
+            Ok(Dhcpv4Option::server_identifier(Ipv4Addr::from_str(value)?))
         }
-        "router" => Ok(DhcpOption::router(parse_ipv4_list(value)?)),
-        "dns" | "domain_name_server" => Ok(DhcpOption::domain_name_server(parse_ipv4_list(value)?)),
-        "lease_time" => Ok(DhcpOption::lease_time(value.parse::<u32>()?)),
-        _ => Ok(DhcpOption::generic(254, value.as_bytes().to_vec())),
+        "router" => Ok(Dhcpv4Option::router(parse_ipv4_list(value)?)),
+        "dns" | "domain_name_server" => Ok(Dhcpv4Option::domain_name_server(parse_ipv4_list(value)?)),
+        "lease_time" => Ok(Dhcpv4Option::lease_time(value.parse::<u32>()?)),
+        _ => Ok(Dhcpv4Option::generic(254, value.as_bytes().to_vec())),
     }
 }
 
@@ -6017,8 +6017,8 @@ mod dhcp_oracle_fixtures {
         // (RFC 2131 section 4.1). Scapy does not model overloaded BOOTP fields.
         let dhcp = Dhcpv4::discover(client_mac())
             .xid(0x0102_0304)
-            .file_option(DhcpOption::bootfile_name(b"boot/pxelinux.0".to_vec()))
-            .sname_option(DhcpOption::host_name("oracle-server"));
+            .file_option(Dhcpv4Option::bootfile_name(b"boot/pxelinux.0".to_vec()))
+            .sname_option(Dhcpv4Option::host_name("oracle-server"));
         let decoded = assert_byte_roundtrip(dhcp);
         assert_eq!(decoded.option_overload(), Some(OptionOverload::Both));
     }
@@ -6030,7 +6030,7 @@ mod dhcp_oracle_fixtures {
         let long_domain = format!("{}.example", "a".repeat(300));
         let dhcp = Dhcpv4::discover(client_mac())
             .xid(0x1111_2222)
-            .option(DhcpOption::domain_name(long_domain.clone()));
+            .option(Dhcpv4Option::domain_name(long_domain.clone()));
         let decoded = assert_byte_roundtrip(dhcp);
         let concatenated = decoded
             .concatenated_option(15)
@@ -6050,9 +6050,9 @@ mod dhcp_oracle_fixtures {
     fn dhcp_relay_agent_option82_suboptions() {
         // RFC 3046 relay-agent option 82 with typed circuit-id and remote-id
         // sub-options. Scapy treats option 82 as opaque bytes.
-        let info = DhcpRelayAgentInfo::new(vec![
-            DhcpRelaySuboption::circuit_id(b"eth0:vlan100".to_vec()),
-            DhcpRelaySuboption::remote_id(RELAY_MAC.to_vec()),
+        let info = Dhcpv4RelayAgentInfo::new(vec![
+            Dhcpv4RelaySuboption::circuit_id(b"eth0:vlan100".to_vec()),
+            Dhcpv4RelaySuboption::remote_id(RELAY_MAC.to_vec()),
         ]);
         let dhcp = Dhcpv4::discover(client_mac())
             .xid(0x3333_4444)
@@ -6070,10 +6070,10 @@ mod dhcp_oracle_fixtures {
         // RFC 4361 type-255 client identifier (IAID + DUID). Scapy carries
         // option 61 only as an opaque string.
         let identifier =
-            DhcpClientIdentifier::node_specific(0x0a0b_0c0d, vec![0x00, 0x01, 0x02, 0x03]);
+            Dhcpv4ClientIdentifier::node_specific(0x0a0b_0c0d, vec![0x00, 0x01, 0x02, 0x03]);
         let dhcp = Dhcpv4::discover(client_mac())
             .xid(0x5555_6666)
-            .option(DhcpOption::client_identifier_value(identifier.clone()));
+            .option(Dhcpv4Option::client_identifier_value(identifier.clone()));
         let decoded = assert_byte_roundtrip(dhcp);
         let recovered = decoded
             .client_identifier_value()
@@ -6086,10 +6086,10 @@ mod dhcp_oracle_fixtures {
     fn dhcp_rfc3118_authentication_option() {
         // RFC 3118 option 90 delayed authentication with HMAC-MD5. Scapy has no
         // typed authentication option.
-        let auth = DhcpAuthentication::new(
-            DhcpAuthProtocol::Delayed,
-            DhcpAuthAlgorithm::HmacMd5,
-            DhcpReplayDetectionMethod::MonotonicCounter,
+        let auth = Dhcpv4Authentication::new(
+            Dhcpv4AuthProtocol::Delayed,
+            Dhcpv4AuthAlgorithm::HmacMd5,
+            Dhcpv4ReplayDetectionMethod::MonotonicCounter,
             0x0000_0001_0000_0002,
             vec![0xab; 16],
         );
@@ -6099,7 +6099,7 @@ mod dhcp_oracle_fixtures {
             Ipv4Addr::new(192, 0, 2, 1),
         )
         .xid(0x7777_8888)
-        .option(DhcpOption::authentication(auth.clone()));
+        .option(Dhcpv4Option::authentication(auth.clone()));
         let decoded = assert_byte_roundtrip(dhcp);
         let recovered = decoded
             .authentication()
@@ -6113,12 +6113,12 @@ mod dhcp_oracle_fixtures {
         // RFC 3442 classless static routes (option 121) with the canonical
         // significant-octet widths.
         let routes = vec![
-            DhcpClasslessRoute::new(
+            Dhcpv4ClasslessRoute::new(
                 24,
                 Ipv4Addr::new(192, 0, 2, 0),
                 Ipv4Addr::new(198, 51, 100, 1),
             ),
-            DhcpClasslessRoute::new(0, Ipv4Addr::UNSPECIFIED, Ipv4Addr::new(198, 51, 100, 254)),
+            Dhcpv4ClasslessRoute::new(0, Ipv4Addr::UNSPECIFIED, Ipv4Addr::new(198, 51, 100, 254)),
         ];
         let dhcp = Dhcpv4::ack(
             client_mac(),
@@ -6126,9 +6126,9 @@ mod dhcp_oracle_fixtures {
             Ipv4Addr::new(192, 0, 2, 1),
         )
         .xid(0x9999_aaaa)
-        .option(DhcpOption::typed(
-            DhcpOptionKind::ClasslessStaticRoute,
-            DhcpOptionValue::ClasslessRoutes(routes.clone()),
+        .option(Dhcpv4Option::typed(
+            Dhcpv4OptionKind::ClasslessStaticRoute,
+            Dhcpv4OptionValue::ClasslessRoutes(routes.clone()),
         ));
         let decoded = assert_byte_roundtrip(dhcp);
         let recovered = decoded
@@ -6142,11 +6142,11 @@ mod dhcp_oracle_fixtures {
     fn dhcp_leasequery_status_and_state() {
         // RFC 4388 leasequery reply carrying a status-code option (151) and a
         // dhcp-state option (153). Scapy has no leasequery option support.
-        let status = DhcpStatusCodeOption::new(DhcpStatusCode::Success, b"ok".to_vec());
+        let status = Dhcpv4StatusCodeOption::new(Dhcpv4StatusCode::Success, b"ok".to_vec());
         let dhcp = Dhcpv4::lease_query_by_ip(Ipv4Addr::new(192, 0, 2, 100))
             .xid(0xbbbb_cccc)
-            .option(DhcpOption::status_code(status.clone()))
-            .option(DhcpOption::dhcp_state(DhcpState::Active));
+            .option(Dhcpv4Option::status_code(status.clone()))
+            .option(Dhcpv4Option::dhcp_state(Dhcpv4State::Active));
         let decoded = assert_byte_roundtrip(dhcp);
         let recovered = decoded
             .status_code()

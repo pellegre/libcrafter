@@ -350,7 +350,7 @@ pub struct ProbePlan {
     // address, so the DHCP dispatch can build/send two Discovers and validate two
     // independently-decoded Offers. Single-send DHCP cases leave this unset.
     #[serde(default)]
-    pub dhcp_sends: Option<Vec<DhcpSend>>,
+    pub dhcp_sends: Option<Vec<Dhcpv4Send>>,
     // Multi-send UDP behavioral case fields (`udp-multi-shot-order`). The plan
     // carries a `udp_sends` array (one entry per datagram), each with its own
     // ordered sequence marker and payload while sharing the same peer tuple. The
@@ -626,7 +626,7 @@ pub struct ArpSend {
 /// Discover independently and match every Offer back to *its* send by the echoed
 /// transaction id — never confusing two Offers.
 #[derive(Debug, Clone, Deserialize)]
-pub struct DhcpSend {
+pub struct Dhcpv4Send {
     #[serde(default)]
     pub index: Option<usize>,
     #[serde(default)]

@@ -7,7 +7,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::{Path, PathBuf};
 
 use crafter::core::{
-    Ah, Arp, Bgp, Dhcpv4, Dhcpv4MessageType, DhcpOption, DhcpRelayAgentInfo, DhcpRelaySuboption, Dns,
+    Ah, Arp, Bgp, Dhcpv4, Dhcpv4MessageType, Dhcpv4Option, Dhcpv4RelayAgentInfo, Dhcpv4RelaySuboption, Dns,
     DnsName, DnsRecord, DnsRecordData, Dot11, Dot11DataSubtype, Dot11ManagementSubtype, Dscp,
     Eapol, EapolKey, Ecn, EdnsOption, Esp, Ethernet, IcmpKind, Icmpv4, Icmpv6, Igmp,
     IgmpExtensionType, IgmpGroupRecord, IgmpQuery, IgmpRecordType, IgmpReport, IgmpType, IkeHeader,
@@ -58,7 +58,7 @@ enum PacketDecodeTarget {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum FixtureDecodeTarget {
     Packet(PacketDecodeTarget),
-    DhcpOptions,
+    Dhcpv4Options,
     QuicDatagram,
 }
 
@@ -160,16 +160,16 @@ enum CoverageFamily {
     Ipv6UdpOptions,
     Ipv6Tcp,
     Ipv6ExtensionHeader,
-    DhcpOptions,
-    DhcpMessageTypes,
-    DhcpRoutesDomains,
-    DhcpClientIdentifier,
-    DhcpAuthForcerenew,
-    DhcpLeasequery,
-    DhcpUnknownOptions,
-    DhcpOptionOverload,
-    DhcpLongOption,
-    DhcpRelayOption82,
+    Dhcpv4Options,
+    Dhcpv4MessageTypes,
+    Dhcpv4RoutesDomains,
+    Dhcpv4ClientIdentifier,
+    Dhcpv4AuthForcerenew,
+    Dhcpv4Leasequery,
+    Dhcpv4UnknownOptions,
+    Dhcpv4OptionOverload,
+    Dhcpv4LongOption,
+    Dhcpv4RelayOption82,
     IpsecEsp,
     IpsecAh,
     IpsecIkev2,
@@ -404,7 +404,7 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         name: "dhcp-offer-options",
         path: "bytes/dhcp-offer-options.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/dhcp-offer-options.hex")),
-        target: FixtureDecodeTarget::DhcpOptions,
+        target: FixtureDecodeTarget::Dhcpv4Options,
         expected_layers: &[],
         preserve_exact_bytes: true,
         summary_path: None,
@@ -413,7 +413,7 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         name: "dhcp-discover-options",
         path: "bytes/dhcp-discover-options.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/dhcp-discover-options.hex")),
-        target: FixtureDecodeTarget::DhcpOptions,
+        target: FixtureDecodeTarget::Dhcpv4Options,
         expected_layers: &[],
         preserve_exact_bytes: true,
         summary_path: None,
@@ -422,7 +422,7 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         name: "dhcp-request-options",
         path: "bytes/dhcp-request-options.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/dhcp-request-options.hex")),
-        target: FixtureDecodeTarget::DhcpOptions,
+        target: FixtureDecodeTarget::Dhcpv4Options,
         expected_layers: &[],
         preserve_exact_bytes: true,
         summary_path: None,
@@ -431,7 +431,7 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         name: "dhcp-offer-extended-options",
         path: "bytes/dhcp-offer-extended-options.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/dhcp-offer-extended-options.hex")),
-        target: FixtureDecodeTarget::DhcpOptions,
+        target: FixtureDecodeTarget::Dhcpv4Options,
         expected_layers: &[],
         preserve_exact_bytes: true,
         summary_path: None,
@@ -440,7 +440,7 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         name: "dhcp-ack-options",
         path: "bytes/dhcp-ack-options.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/dhcp-ack-options.hex")),
-        target: FixtureDecodeTarget::DhcpOptions,
+        target: FixtureDecodeTarget::Dhcpv4Options,
         expected_layers: &[],
         preserve_exact_bytes: true,
         summary_path: None,
@@ -449,7 +449,7 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         name: "dhcp-nak-options",
         path: "bytes/dhcp-nak-options.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/dhcp-nak-options.hex")),
-        target: FixtureDecodeTarget::DhcpOptions,
+        target: FixtureDecodeTarget::Dhcpv4Options,
         expected_layers: &[],
         preserve_exact_bytes: true,
         summary_path: None,
@@ -458,7 +458,7 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         name: "dhcp-decline-options",
         path: "bytes/dhcp-decline-options.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/dhcp-decline-options.hex")),
-        target: FixtureDecodeTarget::DhcpOptions,
+        target: FixtureDecodeTarget::Dhcpv4Options,
         expected_layers: &[],
         preserve_exact_bytes: true,
         summary_path: None,
@@ -467,7 +467,7 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         name: "dhcp-release-options",
         path: "bytes/dhcp-release-options.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/dhcp-release-options.hex")),
-        target: FixtureDecodeTarget::DhcpOptions,
+        target: FixtureDecodeTarget::Dhcpv4Options,
         expected_layers: &[],
         preserve_exact_bytes: true,
         summary_path: None,
@@ -476,7 +476,7 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         name: "dhcp-inform-options",
         path: "bytes/dhcp-inform-options.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/dhcp-inform-options.hex")),
-        target: FixtureDecodeTarget::DhcpOptions,
+        target: FixtureDecodeTarget::Dhcpv4Options,
         expected_layers: &[],
         preserve_exact_bytes: true,
         summary_path: None,
@@ -487,7 +487,7 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         contents: FixtureContents::Hex(fixture_str!(
             "bytes/dhcp-classless-static-routes-options.hex"
         )),
-        target: FixtureDecodeTarget::DhcpOptions,
+        target: FixtureDecodeTarget::Dhcpv4Options,
         expected_layers: &[],
         preserve_exact_bytes: true,
         summary_path: None,
@@ -496,7 +496,7 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         name: "dhcp-domain-search-options",
         path: "bytes/dhcp-domain-search-options.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/dhcp-domain-search-options.hex")),
-        target: FixtureDecodeTarget::DhcpOptions,
+        target: FixtureDecodeTarget::Dhcpv4Options,
         expected_layers: &[],
         preserve_exact_bytes: true,
         summary_path: None,
@@ -505,7 +505,7 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         name: "dhcp-client-id-rfc4361-options",
         path: "bytes/dhcp-client-id-rfc4361-options.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/dhcp-client-id-rfc4361-options.hex")),
-        target: FixtureDecodeTarget::DhcpOptions,
+        target: FixtureDecodeTarget::Dhcpv4Options,
         expected_layers: &[],
         preserve_exact_bytes: true,
         summary_path: None,
@@ -514,7 +514,7 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         name: "dhcp-authentication-options",
         path: "bytes/dhcp-authentication-options.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/dhcp-authentication-options.hex")),
-        target: FixtureDecodeTarget::DhcpOptions,
+        target: FixtureDecodeTarget::Dhcpv4Options,
         expected_layers: &[],
         preserve_exact_bytes: true,
         summary_path: None,
@@ -523,7 +523,7 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         name: "dhcp-forcerenew-options",
         path: "bytes/dhcp-forcerenew-options.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/dhcp-forcerenew-options.hex")),
-        target: FixtureDecodeTarget::DhcpOptions,
+        target: FixtureDecodeTarget::Dhcpv4Options,
         expected_layers: &[],
         preserve_exact_bytes: true,
         summary_path: None,
@@ -532,7 +532,7 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         name: "dhcp-leasequery-options",
         path: "bytes/dhcp-leasequery-options.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/dhcp-leasequery-options.hex")),
-        target: FixtureDecodeTarget::DhcpOptions,
+        target: FixtureDecodeTarget::Dhcpv4Options,
         expected_layers: &[],
         preserve_exact_bytes: true,
         summary_path: None,
@@ -541,7 +541,7 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         name: "dhcp-leasequery-status-options",
         path: "bytes/dhcp-leasequery-status-options.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/dhcp-leasequery-status-options.hex")),
-        target: FixtureDecodeTarget::DhcpOptions,
+        target: FixtureDecodeTarget::Dhcpv4Options,
         expected_layers: &[],
         preserve_exact_bytes: true,
         summary_path: None,
@@ -550,7 +550,7 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         name: "dhcp-unknown-private-options",
         path: "bytes/dhcp-unknown-private-options.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/dhcp-unknown-private-options.hex")),
-        target: FixtureDecodeTarget::DhcpOptions,
+        target: FixtureDecodeTarget::Dhcpv4Options,
         expected_layers: &[],
         preserve_exact_bytes: true,
         summary_path: None,
@@ -2455,41 +2455,41 @@ const REQUIRED_VALID_COVERAGE: &[(CoverageFamily, &str)] = &[
         CoverageFamily::Ipv6ExtensionHeader,
         "IPv6 extension header stack",
     ),
-    (CoverageFamily::DhcpOptions, "DHCP option corpus"),
+    (CoverageFamily::Dhcpv4Options, "DHCP option corpus"),
     (
-        CoverageFamily::DhcpMessageTypes,
+        CoverageFamily::Dhcpv4MessageTypes,
         "DHCP message type option corpus",
     ),
     (
-        CoverageFamily::DhcpRoutesDomains,
+        CoverageFamily::Dhcpv4RoutesDomains,
         "DHCP classless route and domain search options",
     ),
     (
-        CoverageFamily::DhcpClientIdentifier,
+        CoverageFamily::Dhcpv4ClientIdentifier,
         "DHCP RFC 4361 client identifier option",
     ),
     (
-        CoverageFamily::DhcpAuthForcerenew,
+        CoverageFamily::Dhcpv4AuthForcerenew,
         "DHCP authentication and FORCERENEW options",
     ),
     (
-        CoverageFamily::DhcpLeasequery,
+        CoverageFamily::Dhcpv4Leasequery,
         "DHCP leasequery and leasequery status options",
     ),
     (
-        CoverageFamily::DhcpUnknownOptions,
+        CoverageFamily::Dhcpv4UnknownOptions,
         "DHCP unknown and private-use options",
     ),
     (
-        CoverageFamily::DhcpOptionOverload,
+        CoverageFamily::Dhcpv4OptionOverload,
         "DHCP option overload across file and sname",
     ),
     (
-        CoverageFamily::DhcpLongOption,
+        CoverageFamily::Dhcpv4LongOption,
         "DHCP RFC 3396 long option splitting",
     ),
     (
-        CoverageFamily::DhcpRelayOption82,
+        CoverageFamily::Dhcpv4RelayOption82,
         "DHCP relay agent option 82 with multiple suboptions",
     ),
     (
@@ -2553,7 +2553,7 @@ fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
         "arp-who-has" => &[CoverageFamily::EthernetArpRequest],
         "ethernet-arp-reply" => &[CoverageFamily::EthernetArpReply],
         "ethernet-arp-infiniband-ipv6-nonstandard" => &[CoverageFamily::EthernetArpNonstandard],
-        "dhcp-offer-options" => &[CoverageFamily::DhcpOptions],
+        "dhcp-offer-options" => &[CoverageFamily::Dhcpv4Options],
         "dhcp-discover-options"
         | "dhcp-request-options"
         | "dhcp-offer-extended-options"
@@ -2561,21 +2561,21 @@ fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
         | "dhcp-nak-options"
         | "dhcp-decline-options"
         | "dhcp-release-options"
-        | "dhcp-inform-options" => &[CoverageFamily::DhcpMessageTypes],
+        | "dhcp-inform-options" => &[CoverageFamily::Dhcpv4MessageTypes],
         "dhcp-classless-static-routes-options" | "dhcp-domain-search-options" => {
-            &[CoverageFamily::DhcpRoutesDomains]
+            &[CoverageFamily::Dhcpv4RoutesDomains]
         }
-        "dhcp-client-id-rfc4361-options" => &[CoverageFamily::DhcpClientIdentifier],
+        "dhcp-client-id-rfc4361-options" => &[CoverageFamily::Dhcpv4ClientIdentifier],
         "dhcp-authentication-options" | "dhcp-forcerenew-options" => {
-            &[CoverageFamily::DhcpAuthForcerenew]
+            &[CoverageFamily::Dhcpv4AuthForcerenew]
         }
         "dhcp-leasequery-options" | "dhcp-leasequery-status-options" => {
-            &[CoverageFamily::DhcpLeasequery]
+            &[CoverageFamily::Dhcpv4Leasequery]
         }
-        "dhcp-unknown-private-options" => &[CoverageFamily::DhcpUnknownOptions],
-        "dhcp-option-overload-file-sname" => &[CoverageFamily::DhcpOptionOverload],
-        "dhcp-rfc3396-long-option" => &[CoverageFamily::DhcpLongOption],
-        "dhcp-relay-option82" => &[CoverageFamily::DhcpRelayOption82],
+        "dhcp-unknown-private-options" => &[CoverageFamily::Dhcpv4UnknownOptions],
+        "dhcp-option-overload-file-sname" => &[CoverageFamily::Dhcpv4OptionOverload],
+        "dhcp-rfc3396-long-option" => &[CoverageFamily::Dhcpv4LongOption],
+        "dhcp-relay-option82" => &[CoverageFamily::Dhcpv4RelayOption82],
         "ethernet-experimental-raw" => &[CoverageFamily::EthernetUnknownEthertype],
         "ethernet-vlan-ipv4-udp-raw" => &[CoverageFamily::VlanIpv4Udp],
         "linux-sll-arp-who-has" => &[CoverageFamily::LinuxSllArp],
@@ -2698,7 +2698,7 @@ fn valid_fixture_case(name: &str) -> &'static ValidFixtureCase {
 fn packet_target_for_case(case: &ValidFixtureCase) -> PacketDecodeTarget {
     match case.target {
         FixtureDecodeTarget::Packet(target) => target,
-        FixtureDecodeTarget::DhcpOptions => {
+        FixtureDecodeTarget::Dhcpv4Options => {
             panic!(
                 "pcap fixture {} references DHCP option-only fixture",
                 case.name
@@ -5277,16 +5277,16 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
             assert_eq!(
                 dhcp.file_options_value(),
                 &[
-                    DhcpOption::bootfile_name(b"boot/pxelinux.0".to_vec()),
-                    DhcpOption::End,
+                    Dhcpv4Option::bootfile_name(b"boot/pxelinux.0".to_vec()),
+                    Dhcpv4Option::End,
                 ],
                 "overloaded file area must surface the bootfile-name option"
             );
             assert_eq!(
                 dhcp.sname_options_value(),
                 &[
-                    DhcpOption::HostName("oracle-server".to_string()),
-                    DhcpOption::End,
+                    Dhcpv4Option::HostName("oracle-server".to_string()),
+                    Dhcpv4Option::End,
                 ],
                 "overloaded sname area must surface the host-name option"
             );
@@ -5323,9 +5323,9 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
                 });
             assert_eq!(
                 info,
-                DhcpRelayAgentInfo::new(vec![
-                    DhcpRelaySuboption::circuit_id(b"eth0:vlan100".to_vec()),
-                    DhcpRelaySuboption::remote_id(vec![0x02, 0x00, 0x5e, 0x00, 0x53, 0xff]),
+                Dhcpv4RelayAgentInfo::new(vec![
+                    Dhcpv4RelaySuboption::circuit_id(b"eth0:vlan100".to_vec()),
+                    Dhcpv4RelaySuboption::remote_id(vec![0x02, 0x00, 0x5e, 0x00, 0x53, 0xff]),
                 ])
             );
         }
@@ -6338,7 +6338,7 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
 }
 
 fn assert_dhcp_option_fixture(case: &ValidFixtureCase, bytes: &[u8]) {
-    let options = DhcpOption::decode_all(bytes)
+    let options = Dhcpv4Option::decode_all(bytes)
         .unwrap_or_else(|err| panic!("fixture {} should decode DHCP options: {err}", case.path));
     assert_eq!(
         options,
@@ -6357,140 +6357,140 @@ fn assert_dhcp_option_fixture(case: &ValidFixtureCase, bytes: &[u8]) {
     }
 }
 
-fn expected_dhcp_options(name: &str) -> Vec<DhcpOption> {
+fn expected_dhcp_options(name: &str) -> Vec<Dhcpv4Option> {
     match name {
         "dhcp-offer-options" => vec![
-            DhcpOption::MessageType(Dhcpv4MessageType::Offer),
-            DhcpOption::ServerIdentifier(Ipv4Addr::new(192, 0, 2, 1)),
-            DhcpOption::SubnetMask(Ipv4Addr::new(255, 255, 255, 0)),
-            DhcpOption::Router(vec![Ipv4Addr::new(192, 0, 2, 1)]),
-            DhcpOption::DomainNameServer(vec![
+            Dhcpv4Option::MessageType(Dhcpv4MessageType::Offer),
+            Dhcpv4Option::ServerIdentifier(Ipv4Addr::new(192, 0, 2, 1)),
+            Dhcpv4Option::SubnetMask(Ipv4Addr::new(255, 255, 255, 0)),
+            Dhcpv4Option::Router(vec![Ipv4Addr::new(192, 0, 2, 1)]),
+            Dhcpv4Option::DomainNameServer(vec![
                 Ipv4Addr::new(192, 0, 2, 53),
                 Ipv4Addr::new(198, 51, 100, 53),
             ]),
-            DhcpOption::IpAddressLeaseTime(3_600),
-            DhcpOption::End,
+            Dhcpv4Option::IpAddressLeaseTime(3_600),
+            Dhcpv4Option::End,
         ],
         "dhcp-discover-options" => vec![
-            DhcpOption::MessageType(Dhcpv4MessageType::Discover),
-            DhcpOption::ParameterRequestList(vec![1, 3, 6, 15, 51, 54]),
-            DhcpOption::HostName("agent".to_string()),
-            DhcpOption::End,
+            Dhcpv4Option::MessageType(Dhcpv4MessageType::Discover),
+            Dhcpv4Option::ParameterRequestList(vec![1, 3, 6, 15, 51, 54]),
+            Dhcpv4Option::HostName("agent".to_string()),
+            Dhcpv4Option::End,
         ],
         "dhcp-request-options" => vec![
-            DhcpOption::MessageType(Dhcpv4MessageType::Request),
-            DhcpOption::RequestedIpAddress(Ipv4Addr::new(192, 0, 2, 100)),
-            DhcpOption::ServerIdentifier(Ipv4Addr::new(192, 0, 2, 1)),
-            DhcpOption::ParameterRequestList(vec![1, 3, 6, 15]),
-            DhcpOption::End,
+            Dhcpv4Option::MessageType(Dhcpv4MessageType::Request),
+            Dhcpv4Option::RequestedIpAddress(Ipv4Addr::new(192, 0, 2, 100)),
+            Dhcpv4Option::ServerIdentifier(Ipv4Addr::new(192, 0, 2, 1)),
+            Dhcpv4Option::ParameterRequestList(vec![1, 3, 6, 15]),
+            Dhcpv4Option::End,
         ],
         "dhcp-offer-extended-options" => vec![
-            DhcpOption::MessageType(Dhcpv4MessageType::Offer),
-            DhcpOption::ServerIdentifier(Ipv4Addr::new(192, 0, 2, 1)),
-            DhcpOption::SubnetMask(Ipv4Addr::new(255, 255, 255, 0)),
-            DhcpOption::Router(vec![Ipv4Addr::new(192, 0, 2, 1)]),
-            DhcpOption::DomainNameServer(vec![
+            Dhcpv4Option::MessageType(Dhcpv4MessageType::Offer),
+            Dhcpv4Option::ServerIdentifier(Ipv4Addr::new(192, 0, 2, 1)),
+            Dhcpv4Option::SubnetMask(Ipv4Addr::new(255, 255, 255, 0)),
+            Dhcpv4Option::Router(vec![Ipv4Addr::new(192, 0, 2, 1)]),
+            Dhcpv4Option::DomainNameServer(vec![
                 Ipv4Addr::new(192, 0, 2, 53),
                 Ipv4Addr::new(198, 51, 100, 53),
             ]),
-            DhcpOption::IpAddressLeaseTime(3_600),
-            DhcpOption::RenewalTime(1_800),
-            DhcpOption::RebindingTime(3_150),
-            DhcpOption::End,
+            Dhcpv4Option::IpAddressLeaseTime(3_600),
+            Dhcpv4Option::RenewalTime(1_800),
+            Dhcpv4Option::RebindingTime(3_150),
+            Dhcpv4Option::End,
         ],
         "dhcp-ack-options" => vec![
-            DhcpOption::MessageType(Dhcpv4MessageType::Ack),
-            DhcpOption::ServerIdentifier(Ipv4Addr::new(192, 0, 2, 1)),
-            DhcpOption::SubnetMask(Ipv4Addr::new(255, 255, 255, 0)),
-            DhcpOption::IpAddressLeaseTime(3_600),
-            DhcpOption::End,
+            Dhcpv4Option::MessageType(Dhcpv4MessageType::Ack),
+            Dhcpv4Option::ServerIdentifier(Ipv4Addr::new(192, 0, 2, 1)),
+            Dhcpv4Option::SubnetMask(Ipv4Addr::new(255, 255, 255, 0)),
+            Dhcpv4Option::IpAddressLeaseTime(3_600),
+            Dhcpv4Option::End,
         ],
         "dhcp-nak-options" => vec![
-            DhcpOption::MessageType(Dhcpv4MessageType::Nak),
-            DhcpOption::ServerIdentifier(Ipv4Addr::new(192, 0, 2, 1)),
-            DhcpOption::End,
+            Dhcpv4Option::MessageType(Dhcpv4MessageType::Nak),
+            Dhcpv4Option::ServerIdentifier(Ipv4Addr::new(192, 0, 2, 1)),
+            Dhcpv4Option::End,
         ],
         "dhcp-decline-options" => vec![
-            DhcpOption::MessageType(Dhcpv4MessageType::Decline),
-            DhcpOption::RequestedIpAddress(Ipv4Addr::new(192, 0, 2, 100)),
-            DhcpOption::ServerIdentifier(Ipv4Addr::new(192, 0, 2, 1)),
-            DhcpOption::End,
+            Dhcpv4Option::MessageType(Dhcpv4MessageType::Decline),
+            Dhcpv4Option::RequestedIpAddress(Ipv4Addr::new(192, 0, 2, 100)),
+            Dhcpv4Option::ServerIdentifier(Ipv4Addr::new(192, 0, 2, 1)),
+            Dhcpv4Option::End,
         ],
         "dhcp-release-options" => vec![
-            DhcpOption::MessageType(Dhcpv4MessageType::Release),
-            DhcpOption::ServerIdentifier(Ipv4Addr::new(192, 0, 2, 1)),
-            DhcpOption::End,
+            Dhcpv4Option::MessageType(Dhcpv4MessageType::Release),
+            Dhcpv4Option::ServerIdentifier(Ipv4Addr::new(192, 0, 2, 1)),
+            Dhcpv4Option::End,
         ],
         "dhcp-inform-options" => vec![
-            DhcpOption::MessageType(Dhcpv4MessageType::Inform),
-            DhcpOption::ParameterRequestList(vec![1, 3, 6, 15]),
-            DhcpOption::End,
+            Dhcpv4Option::MessageType(Dhcpv4MessageType::Inform),
+            Dhcpv4Option::ParameterRequestList(vec![1, 3, 6, 15]),
+            Dhcpv4Option::End,
         ],
         // Classless static routes (option 121) and domain search (option 119)
-        // are preserved as raw Generic options by the legacy DhcpOption decoder;
+        // are preserved as raw Generic options by the legacy Dhcpv4Option decoder;
         // the typed views are asserted via the Dhcpv4-layer frame fixtures.
         "dhcp-classless-static-routes-options" => vec![
-            DhcpOption::MessageType(Dhcpv4MessageType::Ack),
-            DhcpOption::generic(
+            Dhcpv4Option::MessageType(Dhcpv4MessageType::Ack),
+            Dhcpv4Option::generic(
                 121,
                 vec![24, 192, 0, 2, 198, 51, 100, 1, 0, 198, 51, 100, 254],
             ),
-            DhcpOption::End,
+            Dhcpv4Option::End,
         ],
         "dhcp-domain-search-options" => vec![
-            DhcpOption::MessageType(Dhcpv4MessageType::Ack),
-            DhcpOption::generic(
+            Dhcpv4Option::MessageType(Dhcpv4MessageType::Ack),
+            Dhcpv4Option::generic(
                 119,
                 vec![
                     7, 101, 120, 97, 109, 112, 108, 101, 3, 99, 111, 109, 0, 3, 101, 110, 103, 7,
                     101, 120, 97, 109, 112, 108, 101, 3, 99, 111, 109, 0,
                 ],
             ),
-            DhcpOption::End,
+            Dhcpv4Option::End,
         ],
         "dhcp-client-id-rfc4361-options" => vec![
-            DhcpOption::MessageType(Dhcpv4MessageType::Discover),
-            DhcpOption::ClientIdentifier(vec![255, 10, 11, 12, 13, 0, 1, 2, 3]),
-            DhcpOption::End,
+            Dhcpv4Option::MessageType(Dhcpv4MessageType::Discover),
+            Dhcpv4Option::ClientIdentifier(vec![255, 10, 11, 12, 13, 0, 1, 2, 3]),
+            Dhcpv4Option::End,
         ],
         "dhcp-authentication-options" => vec![
-            DhcpOption::MessageType(Dhcpv4MessageType::Request),
-            DhcpOption::generic(
+            Dhcpv4Option::MessageType(Dhcpv4MessageType::Request),
+            Dhcpv4Option::generic(
                 90,
                 vec![
                     1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 2, 171, 171, 171, 171, 171, 171, 171, 171, 171,
                     171, 171, 171, 171, 171, 171, 171,
                 ],
             ),
-            DhcpOption::End,
+            Dhcpv4Option::End,
         ],
         "dhcp-forcerenew-options" => vec![
-            DhcpOption::MessageType(Dhcpv4MessageType::Discover),
-            DhcpOption::generic(145, vec![1]),
-            DhcpOption::End,
+            Dhcpv4Option::MessageType(Dhcpv4MessageType::Discover),
+            Dhcpv4Option::generic(145, vec![1]),
+            Dhcpv4Option::End,
         ],
         "dhcp-leasequery-options" => vec![
-            DhcpOption::MessageType(Dhcpv4MessageType::LeaseQuery),
-            DhcpOption::generic(92, vec![192, 0, 2, 100, 192, 0, 2, 101]),
-            DhcpOption::End,
+            Dhcpv4Option::MessageType(Dhcpv4MessageType::LeaseQuery),
+            Dhcpv4Option::generic(92, vec![192, 0, 2, 100, 192, 0, 2, 101]),
+            Dhcpv4Option::End,
         ],
         "dhcp-leasequery-status-options" => vec![
-            DhcpOption::MessageType(Dhcpv4MessageType::LeaseUnknown),
-            DhcpOption::generic(151, vec![0, 111, 107]),
-            DhcpOption::generic(156, vec![2]),
-            DhcpOption::End,
+            Dhcpv4Option::MessageType(Dhcpv4MessageType::LeaseUnknown),
+            Dhcpv4Option::generic(151, vec![0, 111, 107]),
+            Dhcpv4Option::generic(156, vec![2]),
+            Dhcpv4Option::End,
         ],
         "dhcp-unknown-private-options" => vec![
-            DhcpOption::MessageType(Dhcpv4MessageType::Discover),
-            DhcpOption::generic(224, vec![0xde, 0xad, 0xbe, 0xef]),
-            DhcpOption::generic(250, vec![0x01, 0x02, 0x03]),
-            DhcpOption::End,
+            Dhcpv4Option::MessageType(Dhcpv4MessageType::Discover),
+            Dhcpv4Option::generic(224, vec![0xde, 0xad, 0xbe, 0xef]),
+            Dhcpv4Option::generic(250, vec![0x01, 0x02, 0x03]),
+            Dhcpv4Option::End,
         ],
         other => panic!("DHCP option fixture {other} has no expected option list"),
     }
 }
 
-fn encode_dhcp_options(options: &[DhcpOption]) -> Vec<u8> {
+fn encode_dhcp_options(options: &[Dhcpv4Option]) -> Vec<u8> {
     let mut encoded = Vec::new();
     for option in options {
         encoded.extend(
@@ -7613,7 +7613,7 @@ fn valid_byte_fixtures_decode_compile_and_summarize() {
                 assert_fixture_fields(case, &packet);
                 assert_compile_decode_compile(case, target, &packet, &bytes);
             }
-            FixtureDecodeTarget::DhcpOptions => assert_dhcp_option_fixture(case, &bytes),
+            FixtureDecodeTarget::Dhcpv4Options => assert_dhcp_option_fixture(case, &bytes),
             FixtureDecodeTarget::QuicDatagram => {
                 let packet = decode_quic_fixture_datagram(&bytes)
                     .unwrap_or_else(|err| panic!("fixture {} should decode: {err}", case.path));

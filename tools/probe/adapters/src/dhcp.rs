@@ -18,7 +18,7 @@ use std::time::Duration;
 use crate::common::{
     capture_filter, captured_data, decode_hex, decoded_packet_json, failed_outcome, hex_bytes,
     observed_response, open_capture_sniffer, plan_json, required_str, required_u32,
-    required_u8_list, send_report_json, target_service_json, CandidateValidation, DhcpSend,
+    required_u8_list, send_report_json, target_service_json, CandidateValidation, Dhcpv4Send,
     ExampleResult, ProbeOutcome, ProbePlan, StimulusEndpointRequest, FAILURE_DECODE_FAILED,
     FAILURE_TIMEOUT, FAILURE_WRONG_PAYLOAD, FAILURE_WRONG_PEER,
 };
@@ -231,7 +231,7 @@ pub fn run_dhcp_live(
 /// lease timing options, and capture filter so the existing single-send builders
 /// (`dhcp_packet`, `validate_dhcp_candidate`) operate on exactly this one
 /// Discover and its own expected Offer.
-fn send_as_plan(parent: &ProbePlan, send: &DhcpSend) -> ProbePlan {
+fn send_as_plan(parent: &ProbePlan, send: &Dhcpv4Send) -> ProbePlan {
     let mut derived = parent.clone();
     // This send is a single, self-contained Discover->Offer exchange; clear the
     // multi-send markers so the single-send build/validate path runs against just
@@ -297,7 +297,7 @@ fn send_as_plan(parent: &ProbePlan, send: &DhcpSend) -> ProbePlan {
 fn run_dhcp_multi_send_dry_run(
     request: &StimulusEndpointRequest,
     plan: &ProbePlan,
-    sends: &[DhcpSend],
+    sends: &[Dhcpv4Send],
 ) -> ExampleResult<ProbeOutcome> {
     let mut planned_sends = Vec::with_capacity(sends.len());
     for (offset, send) in sends.iter().enumerate() {
@@ -376,7 +376,7 @@ fn run_dhcp_multi_send_dry_run(
 fn run_dhcp_multi_send_live(
     request: &StimulusEndpointRequest,
     plan: &ProbePlan,
-    sends: &[DhcpSend],
+    sends: &[Dhcpv4Send],
 ) -> ExampleResult<ProbeOutcome> {
     let mut send_results = Vec::with_capacity(sends.len());
     let mut all_passed = true;
@@ -509,7 +509,7 @@ fn dhcp_expected_response_json(send_plan: &ProbePlan) -> Value {
 
 /// JSON view of a plan's `dhcp_sends` array for the plan echo. `None` renders
 /// null.
-pub fn sends_json(sends: Option<&[DhcpSend]>) -> Value {
+pub fn sends_json(sends: Option<&[Dhcpv4Send]>) -> Value {
     match sends {
         Some(sends) => Value::Array(
             sends
@@ -545,7 +545,7 @@ pub fn sends_json(sends: Option<&[DhcpSend]>) -> Value {
 /// JSON view of a plan's `dhcp_sends` for the responder's `rapid_repeat`
 /// descriptor: the per-send transaction id, client MAC, and offered address the
 /// responder keys each Offer to.
-pub fn repeat_sends_json(sends: Option<&[DhcpSend]>) -> Value {
+pub fn repeat_sends_json(sends: Option<&[Dhcpv4Send]>) -> Value {
     match sends {
         Some(sends) => Value::Array(
             sends
@@ -2590,15 +2590,15 @@ mod tests {
         assert!(matches!(validation, CandidateValidation::WrongPeer(_)));
     }
 
-    /// Build one `DhcpSend` for a `dhcp-rapid-repeat` plan with a distinct
+    /// Build one `Dhcpv4Send` for a `dhcp-rapid-repeat` plan with a distinct
     /// transaction id, client identity (chaddr), and offered address.
     fn rapid_repeat_send(
         index: usize,
         transaction_id: u32,
         client_mac: &str,
         offered: &str,
-    ) -> DhcpSend {
-        DhcpSend {
+    ) -> Dhcpv4Send {
+        Dhcpv4Send {
             index: Some(index),
             source_ipv4: Some("10.64.0.10".to_string()),
             destination_ipv4: Some("10.64.0.20".to_string()),

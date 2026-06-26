@@ -11,7 +11,7 @@
 //! This table is intentionally metadata only: it names codepoints and ranges.
 //! The wire-format codec for each option lives with [`super::option`]. Codes
 //! whose registry rows carry multiple historical or vendor-specific meanings
-//! are marked [`DhcpOptionStatus::Ambiguous`] so callers do not assume a single
+//! are marked [`Dhcpv4OptionStatus::Ambiguous`] so callers do not assume a single
 //! decode.
 
 /// Registry assignment status for a DHCPv4 option codepoint.
@@ -19,7 +19,7 @@
 /// Source: IANA "BOOTP Vendor Extensions and DHCP Options" registry status
 /// column and RFC 3942 / RFC 3679 reclassifications.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum DhcpOptionStatus {
+pub enum Dhcpv4OptionStatus {
     /// Assigned to a single registered option by an RFC.
     Assigned,
     /// Registered but carrying multiple historical or vendor-specific meanings
@@ -36,13 +36,13 @@ pub enum DhcpOptionStatus {
 
 /// One source-backed DHCPv4 option-code registry entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct DhcpOptionMeta {
+pub struct Dhcpv4OptionMeta {
     /// Wire codepoint.
     pub code: u8,
     /// Registered short name, or a range/status label for non-assigned codes.
     pub name: &'static str,
     /// Registry assignment status.
-    pub status: DhcpOptionStatus,
+    pub status: Dhcpv4OptionStatus,
 }
 
 /// Lowest private-use DHCPv4 option code (inclusive).
@@ -54,29 +54,29 @@ pub const DHCP_OPTION_PRIVATE_USE_END: u8 = 254;
 
 /// Return the registry metadata for a DHCPv4 option code.
 ///
-/// Unknown codes fall through to a generated [`DhcpOptionStatus`] derived from
+/// Unknown codes fall through to a generated [`Dhcpv4OptionStatus`] derived from
 /// the registry's range rules so private-use and unassigned ranges still carry
 /// useful diagnostics.
-pub const fn option_meta(code: u8) -> DhcpOptionMeta {
+pub const fn option_meta(code: u8) -> Dhcpv4OptionMeta {
     if let Some(meta) = assigned_meta(code) {
         return meta;
     }
     if code >= DHCP_OPTION_PRIVATE_USE_START && code <= DHCP_OPTION_PRIVATE_USE_END {
-        return DhcpOptionMeta {
+        return Dhcpv4OptionMeta {
             code,
             name: "Reserved (Private Use)",
-            status: DhcpOptionStatus::PrivateUse,
+            status: Dhcpv4OptionStatus::PrivateUse,
         };
     }
-    DhcpOptionMeta {
+    Dhcpv4OptionMeta {
         code,
         name: "Unassigned",
-        status: DhcpOptionStatus::RemovedOrUnassigned,
+        status: Dhcpv4OptionStatus::RemovedOrUnassigned,
     }
 }
 
 /// Registry status for a DHCPv4 option code.
-pub const fn option_status(code: u8) -> DhcpOptionStatus {
+pub const fn option_status(code: u8) -> Dhcpv4OptionStatus {
     option_meta(code).status
 }
 
@@ -88,13 +88,13 @@ pub const fn option_name(code: u8) -> Option<&'static str> {
     }
 }
 
-const fn entry(code: u8, name: &'static str, status: DhcpOptionStatus) -> DhcpOptionMeta {
-    DhcpOptionMeta { code, name, status }
+const fn entry(code: u8, name: &'static str, status: Dhcpv4OptionStatus) -> Dhcpv4OptionMeta {
+    Dhcpv4OptionMeta { code, name, status }
 }
 
-const A: DhcpOptionStatus = DhcpOptionStatus::Assigned;
-const AMB: DhcpOptionStatus = DhcpOptionStatus::Ambiguous;
-const REM: DhcpOptionStatus = DhcpOptionStatus::RemovedOrUnassigned;
+const A: Dhcpv4OptionStatus = Dhcpv4OptionStatus::Assigned;
+const AMB: Dhcpv4OptionStatus = Dhcpv4OptionStatus::Ambiguous;
+const REM: Dhcpv4OptionStatus = Dhcpv4OptionStatus::RemovedOrUnassigned;
 
 /// Look up an explicitly listed registry row for a code.
 ///
@@ -102,7 +102,7 @@ const REM: DhcpOptionStatus = DhcpOptionStatus::RemovedOrUnassigned;
 /// (updated 2026-02-02), reconciled with RFC 2132. Codes covered only by the
 /// private-use or unassigned range rules are intentionally absent here and
 /// handled by [`option_meta`].
-const fn assigned_meta(code: u8) -> Option<DhcpOptionMeta> {
+const fn assigned_meta(code: u8) -> Option<Dhcpv4OptionMeta> {
     let meta = match code {
         0 => entry(0, "Pad", A),
         1 => entry(1, "Subnet Mask", A),
@@ -285,27 +285,27 @@ mod registry_tests {
     #[test]
     fn dhcp_option_registry_classifies_known_ranges() {
         // RFC 2132 assigned codes.
-        assert_eq!(option_status(0), DhcpOptionStatus::Assigned);
+        assert_eq!(option_status(0), Dhcpv4OptionStatus::Assigned);
         assert_eq!(option_name(53), Some("DHCP Msg Type"));
-        assert_eq!(option_status(255), DhcpOptionStatus::Assigned);
+        assert_eq!(option_status(255), Dhcpv4OptionStatus::Assigned);
 
         // Relay agent and authentication are assigned.
         assert_eq!(option_name(82), Some("Relay Agent Information"));
         assert_eq!(option_name(90), Some("Authentication"));
 
         // Ambiguous historical codes are flagged, not single-typed.
-        assert_eq!(option_status(128), DhcpOptionStatus::Ambiguous);
-        assert_eq!(option_status(150), DhcpOptionStatus::Ambiguous);
+        assert_eq!(option_status(128), Dhcpv4OptionStatus::Ambiguous);
+        assert_eq!(option_status(150), Dhcpv4OptionStatus::Ambiguous);
 
         // Removed/unassigned codes from RFC 3679 / RFC 3942.
-        assert_eq!(option_status(84), DhcpOptionStatus::RemovedOrUnassigned);
-        assert_eq!(option_status(102), DhcpOptionStatus::RemovedOrUnassigned);
-        assert_eq!(option_status(163), DhcpOptionStatus::RemovedOrUnassigned);
+        assert_eq!(option_status(84), Dhcpv4OptionStatus::RemovedOrUnassigned);
+        assert_eq!(option_status(102), Dhcpv4OptionStatus::RemovedOrUnassigned);
+        assert_eq!(option_status(163), Dhcpv4OptionStatus::RemovedOrUnassigned);
 
         // Private use range 224-254.
-        assert_eq!(option_status(224), DhcpOptionStatus::PrivateUse);
-        assert_eq!(option_status(240), DhcpOptionStatus::PrivateUse);
-        assert_eq!(option_status(254), DhcpOptionStatus::PrivateUse);
+        assert_eq!(option_status(224), Dhcpv4OptionStatus::PrivateUse);
+        assert_eq!(option_status(240), Dhcpv4OptionStatus::PrivateUse);
+        assert_eq!(option_status(254), Dhcpv4OptionStatus::PrivateUse);
         assert_eq!(option_name(240), None);
     }
 
@@ -318,11 +318,11 @@ mod registry_tests {
             assert!(!meta.name.is_empty());
             // option_name agrees with assigned_meta.
             match meta.status {
-                DhcpOptionStatus::Assigned | DhcpOptionStatus::Ambiguous => {
+                Dhcpv4OptionStatus::Assigned | Dhcpv4OptionStatus::Ambiguous => {
                     assert_eq!(option_name(code), Some(meta.name));
                 }
-                DhcpOptionStatus::PrivateUse | DhcpOptionStatus::RemovedOrUnassigned => {}
-                DhcpOptionStatus::Unknown => panic!("range table should not yield Unknown"),
+                Dhcpv4OptionStatus::PrivateUse | Dhcpv4OptionStatus::RemovedOrUnassigned => {}
+                Dhcpv4OptionStatus::Unknown => panic!("range table should not yield Unknown"),
             }
         }
     }
@@ -368,7 +368,7 @@ mod registry_tests {
             assert!(
                 matches!(
                     meta.status,
-                    DhcpOptionStatus::Assigned | DhcpOptionStatus::Ambiguous
+                    Dhcpv4OptionStatus::Assigned | Dhcpv4OptionStatus::Ambiguous
                 ),
                 "IANA-assigned option code {code} is missing from local metadata \
                  (got status {:?}, name {:?})",
@@ -390,11 +390,11 @@ mod registry_tests {
             // as their own classified variants.
             assert!(
                 matches!(
-                    super::super::DhcpOptionCode::from_code(code),
-                    super::super::DhcpOptionCode::Assigned(_)
-                        | super::super::DhcpOptionCode::Ambiguous(_)
-                        | super::super::DhcpOptionCode::Pad
-                        | super::super::DhcpOptionCode::End
+                    super::super::Dhcpv4OptionCode::from_code(code),
+                    super::super::Dhcpv4OptionCode::Assigned(_)
+                        | super::super::Dhcpv4OptionCode::Ambiguous(_)
+                        | super::super::Dhcpv4OptionCode::Pad
+                        | super::super::Dhcpv4OptionCode::End
                 ),
                 "assigned option code {code} must classify as Assigned/Ambiguous",
             );
@@ -412,7 +412,7 @@ mod registry_tests {
             assert!(
                 matches!(
                     option_status(code),
-                    DhcpOptionStatus::PrivateUse | DhcpOptionStatus::RemovedOrUnassigned
+                    Dhcpv4OptionStatus::PrivateUse | Dhcpv4OptionStatus::RemovedOrUnassigned
                 ),
                 "unassigned/private code {code} must not be reported as assigned",
             );
