@@ -78,6 +78,11 @@ fn exports_quic_symbols() -> crafter::Result<()> {
             .frame_type_value(),
         Some(0x13)
     );
+    let data_blocked = QuicDataBlockedFrame::from_value(1024)?;
+    assert_eq!(
+        QuicFrame::from_data_blocked_frame(data_blocked)?.frame_type_value(),
+        Some(0x14)
+    );
 
     let parameter = QuicTransportParameter::raw(varint, [0xde, 0xad]);
     assert_eq!(parameter.identifier(), Some(varint));

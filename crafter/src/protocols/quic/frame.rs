@@ -1236,6 +1236,66 @@ impl QuicMaxStreamsFrame {
     }
 }
 
+/// Parsed DATA_BLOCKED frame fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QuicDataBlockedFrame {
+    data_limit: QuicVarInt,
+}
+
+impl QuicDataBlockedFrame {
+    /// Construct a DATA_BLOCKED frame from a caller-supplied varint.
+    pub const fn new(data_limit: QuicVarInt) -> Self {
+        Self { data_limit }
+    }
+
+    /// Construct a DATA_BLOCKED frame from a validated integer value.
+    pub fn from_value(data_limit: u64) -> Result<Self> {
+        Ok(Self::new(QuicVarInt::new(data_limit)?))
+    }
+
+    /// Return the Data Limit field.
+    pub const fn data_limit(self) -> QuicVarInt {
+        self.data_limit
+    }
+
+    /// Decode one DATA_BLOCKED frame from bytes that include the Frame Type.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let bytes = bytes.as_ref();
+        let (frame, consumed) = decode_data_blocked_frame(bytes)?;
+        if consumed != bytes.len() {
+            return Err(CrafterError::invalid_field_value(
+                "quic.frame.data_blocked",
+                "DATA_BLOCKED frame has trailing bytes",
+            ));
+        }
+        Ok(frame)
+    }
+
+    /// Append the canonical DATA_BLOCKED frame encoding.
+    pub fn encode(self, out: &mut Vec<u8>) -> Result<()> {
+        QuicVarInt::from_u64_unchecked(0x14).encode(out)?;
+        self.data_limit.encode(out)?;
+        Ok(())
+    }
+
+    /// Return the canonical DATA_BLOCKED frame encoding.
+    pub fn encode_to_vec(self) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Stable DATA_BLOCKED summary for packet inspection.
+    pub fn summary(self) -> String {
+        format!("kind=DATA_BLOCKED data_limit={}", self.data_limit.value())
+    }
+
+    /// Stable field/value pairs for DATA_BLOCKED inspection.
+    pub fn inspection_fields(self) -> Vec<(&'static str, String)> {
+        vec![("data_blocked_limit", self.data_limit.value().to_string())]
+    }
+}
+
 /// Raw-preserving QUIC frame.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct QuicFrame {
@@ -1408,6 +1468,16 @@ impl QuicFrame {
         Self::from_max_streams_frame(QuicMaxStreamsFrame::unidirectional(maximum_streams))
     }
 
+    /// Construct a DATA_BLOCKED frame from typed fields.
+    pub fn from_data_blocked_frame(data_blocked: QuicDataBlockedFrame) -> Result<Self> {
+        Ok(Self::from_bytes(data_blocked.encode_to_vec()?))
+    }
+
+    /// Construct a DATA_BLOCKED frame from a caller-supplied varint.
+    pub fn data_blocked(data_limit: QuicVarInt) -> Result<Self> {
+        Self::from_data_blocked_frame(QuicDataBlockedFrame::new(data_limit))
+    }
+
     /// Decode a frame sequence within the caller-provided packet boundary.
     ///
     /// Supported fixed-boundary frames are split out first. The remaining
@@ -1485,6 +1555,12 @@ impl QuicFrame {
                 0x12 | 0x13 => {
                     let (_, max_streams_len) = decode_max_streams_frame(&bytes[offset..])?;
                     let end = offset + max_streams_len;
+                    frames.push(Self::from_bytes(&bytes[offset..end]));
+                    offset = end;
+                }
+                0x14 => {
+                    let (_, data_blocked_len) = decode_data_blocked_frame(&bytes[offset..])?;
+                    let end = offset + data_blocked_len;
                     frames.push(Self::from_bytes(&bytes[offset..end]));
                     offset = end;
                 }
@@ -1602,6 +1678,14 @@ impl QuicFrame {
         }
     }
 
+    /// Decode this frame as DATA_BLOCKED when applicable.
+    pub fn data_blocked_frame(&self) -> Result<Option<QuicDataBlockedFrame>> {
+        match self.frame_type_value() {
+            Some(0x14) => Ok(Some(QuicDataBlockedFrame::decode(&self.bytes)?)),
+            _ => Ok(None),
+        }
+    }
+
     /// Borrow the preserved frame bytes.
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes
@@ -1683,6 +1767,9 @@ impl QuicFrame {
         if let Ok(Some(max_streams)) = self.max_streams_frame() {
             return max_streams.summary();
         }
+        if let Ok(Some(data_blocked)) = self.data_blocked_frame() {
+            return data_blocked.summary();
+        }
         match self.frame_type() {
             Some(frame_type) => format!(
                 "kind={} type=0x{:x} raw_len={}",
@@ -1746,6 +1833,9 @@ impl QuicFrame {
         }
         if let Ok(Some(max_streams)) = self.max_streams_frame() {
             fields.extend(max_streams.inspection_fields());
+        }
+        if let Ok(Some(data_blocked)) = self.data_blocked_frame() {
+            fields.extend(data_blocked.inspection_fields());
         }
         fields
     }
@@ -2042,6 +2132,21 @@ fn decode_max_streams_frame(bytes: &[u8]) -> Result<(QuicMaxStreamsFrame, usize)
     offset = next;
 
     Ok((QuicMaxStreamsFrame::new(direction, maximum_streams), offset))
+}
+
+fn decode_data_blocked_frame(bytes: &[u8]) -> Result<(QuicDataBlockedFrame, usize)> {
+    let (frame_type, mut offset) = decode_frame_varint(bytes, 0, "quic.frame.type")?;
+    if frame_type.value() != 0x14 {
+        return Err(CrafterError::invalid_field_value(
+            "quic.frame.data_blocked.type",
+            "DATA_BLOCKED frame type must be 0x14",
+        ));
+    }
+    let (data_limit, next) =
+        decode_frame_varint(bytes, offset, "quic.frame.data_blocked.data_limit")?;
+    offset = next;
+
+    Ok((QuicDataBlockedFrame::new(data_limit), offset))
 }
 
 fn decode_frame_varint(
@@ -2674,6 +2779,44 @@ mod tests {
         assert_eq!(
             QuicFrame::decode_sequence([0x12, 0x40]).unwrap_err(),
             CrafterError::buffer_too_short("quic.frame.max_streams.maximum_streams", 2, 1)
+        );
+    }
+
+    #[test]
+    fn quic_frame_data_blocked_decodes_and_continues_sequence() -> crate::Result<()> {
+        let bytes = [0x14, 0x44, 0x00, 0x01];
+
+        let frames = QuicFrame::decode_sequence(bytes)?;
+
+        assert_eq!(frames.len(), 2);
+        assert_eq!(
+            frames[0].kind(),
+            QuicFrameKind::Known(QuicKnownFrameType::DataBlocked)
+        );
+        let data_blocked = frames[0].data_blocked_frame()?.unwrap();
+        assert_eq!(data_blocked.data_limit().value(), 1024);
+        assert!(frames[1].is_ping());
+        assert_eq!(QuicFrame::encode_sequence(frames), bytes);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_data_blocked_serializes_and_summarizes() -> crate::Result<()> {
+        let frame = QuicFrame::data_blocked(v(63))?;
+
+        assert_eq!(frame.as_bytes(), &[0x14, 0x3f]);
+        assert_eq!(frame.summary(), "kind=DATA_BLOCKED data_limit=63");
+        assert!(frame
+            .inspection_fields()
+            .contains(&("data_blocked_limit", "63".to_string())));
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_data_blocked_malformed_varint_reports_structured_error() {
+        assert_eq!(
+            QuicFrame::decode_sequence([0x14, 0x40]).unwrap_err(),
+            CrafterError::buffer_too_short("quic.frame.data_blocked.data_limit", 2, 1)
         );
     }
 }

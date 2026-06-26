@@ -422,13 +422,13 @@ pub mod exports {
     pub use quic::constants::{QUIC_VERSION_1, QUIC_VERSION_2, QUIC_VERSION_NEGOTIATION};
     pub use quic::{
         Quic, QuicAckEcnCounts, QuicAckFrame, QuicAckRange, QuicConnectionId, QuicCryptoFrame,
-        QuicFrame, QuicFrameKind, QuicHandshakeBuilder, QuicInitialBuilder, QuicKnownFrameType,
-        QuicLongHeaderPacket, QuicMaxDataFrame, QuicMaxStreamDataFrame, QuicMaxStreamsFrame,
-        QuicNewTokenFrame, QuicPacket, QuicPacketNumber, QuicResetStreamFrame, QuicRetryBuilder,
-        QuicRetryPacket, QuicShortHeaderBuilder, QuicShortHeaderPacket, QuicStopSendingFrame,
-        QuicStreamDirection, QuicStreamFrame, QuicTransportParameter, QuicVarInt,
-        QuicVersionNegotiationBuilder, QuicVersionNegotiationPacket, QuicZeroRttBuilder,
-        QUIC_RETRY_INTEGRITY_TAG_LEN,
+        QuicDataBlockedFrame, QuicFrame, QuicFrameKind, QuicHandshakeBuilder, QuicInitialBuilder,
+        QuicKnownFrameType, QuicLongHeaderPacket, QuicMaxDataFrame, QuicMaxStreamDataFrame,
+        QuicMaxStreamsFrame, QuicNewTokenFrame, QuicPacket, QuicPacketNumber, QuicResetStreamFrame,
+        QuicRetryBuilder, QuicRetryPacket, QuicShortHeaderBuilder, QuicShortHeaderPacket,
+        QuicStopSendingFrame, QuicStreamDirection, QuicStreamFrame, QuicTransportParameter,
+        QuicVarInt, QuicVersionNegotiationBuilder, QuicVersionNegotiationPacket,
+        QuicZeroRttBuilder, QUIC_RETRY_INTEGRITY_TAG_LEN,
     };
     pub use rip::ripng::{
         Ripng, RipngRte, RIPNG_COMMAND_REQUEST, RIPNG_COMMAND_RESPONSE, RIPNG_METRIC_INFINITY,
