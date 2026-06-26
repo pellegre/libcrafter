@@ -193,6 +193,7 @@ MQTT_SMOKE_PROFILE = "mqtt-smoke"
 OSPF_SMOKE_PROFILE = "ospf-smoke"
 IGMP_PROFILE = "igmp"
 IPSEC_PROFILE = "ipsec"
+QUIC_SMOKE_PROFILE = "quic-smoke"
 SNMP_SMOKE_PROFILE = "snmp-smoke"
 
 # Legacy default count used by the smoke profile and any profile without an
@@ -409,6 +410,15 @@ SNMP_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
     if case.metadata.get("protocol") == "snmp"
 )
 
+# The QUIC smoke profile carries focused UDP/QUIC datagram planning cases. It is
+# isolated from the general behavior profile so adding QUIC does not disturb the
+# existing behavior profile's protocol order.
+QUIC_SMOKE_PROFILE_CASE_NAMES: tuple[str, ...] = tuple(
+    case.name
+    for case in _registry_cases()
+    if case.metadata.get("protocol") == "quic"
+)
+
 
 # Profiles that select an explicit ordered case subset. A profile not listed
 # here selects the full catalog. ``smoke`` is pinned to the historical
@@ -429,6 +439,7 @@ _PROFILE_CASE_NAMES: dict[str, tuple[str, ...]] = {
     OSPF_SMOKE_PROFILE: OSPF_SMOKE_PROFILE_CASE_NAMES,
     IGMP_PROFILE: IGMP_PROFILE_CASE_NAMES,
     IPSEC_PROFILE: IPSEC_PROFILE_CASE_NAMES,
+    QUIC_SMOKE_PROFILE: QUIC_SMOKE_PROFILE_CASE_NAMES,
     SNMP_SMOKE_PROFILE: SNMP_SMOKE_PROFILE_CASE_NAMES,
 }
 
@@ -443,6 +454,7 @@ _PROFILE_DEFAULT_COUNTS: dict[str, int] = {
     OSPF_SMOKE_PROFILE: len(OSPF_SMOKE_PROFILE_CASE_NAMES),
     IGMP_PROFILE: len(IGMP_PROFILE_CASE_NAMES),
     IPSEC_PROFILE: len(IPSEC_PROFILE_CASE_NAMES),
+    QUIC_SMOKE_PROFILE: len(QUIC_SMOKE_PROFILE_CASE_NAMES),
     SNMP_SMOKE_PROFILE: len(SNMP_SMOKE_PROFILE_CASE_NAMES),
 }
 
