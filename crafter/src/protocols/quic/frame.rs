@@ -571,6 +571,118 @@ impl QuicStopSendingFrame {
     }
 }
 
+/// Parsed or buildable CRYPTO frame fields.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuicCryptoFrame {
+    offset: QuicVarInt,
+    length: Option<QuicVarInt>,
+    data: Vec<u8>,
+}
+
+impl QuicCryptoFrame {
+    /// Construct a CRYPTO frame with an auto-filled data length.
+    pub fn new(offset: QuicVarInt, data: impl AsRef<[u8]>) -> Self {
+        Self {
+            offset,
+            length: None,
+            data: data.as_ref().to_vec(),
+        }
+    }
+
+    /// Construct a CRYPTO frame from validated integer fields.
+    pub fn from_values(offset: u64, data: impl AsRef<[u8]>) -> Result<Self> {
+        Ok(Self::new(QuicVarInt::new(offset)?, data))
+    }
+
+    /// Preserve an explicit Length field, even when it does not match data.
+    pub fn with_length(mut self, length: QuicVarInt) -> Self {
+        self.length = Some(length);
+        self
+    }
+
+    /// Return the Offset field.
+    pub const fn offset(&self) -> QuicVarInt {
+        self.offset
+    }
+
+    /// Return the advertised Length field, auto-filled from data when unset.
+    pub fn length(&self) -> Result<QuicVarInt> {
+        match self.length {
+            Some(length) => Ok(length),
+            None => QuicVarInt::new(u64::try_from(self.data.len()).map_err(|_| {
+                CrafterError::invalid_field_value(
+                    "quic.frame.crypto.length",
+                    "data length exceeds u64",
+                )
+            })?),
+        }
+    }
+
+    /// Return a caller-pinned Length field when present.
+    pub const fn length_override(&self) -> Option<QuicVarInt> {
+        self.length
+    }
+
+    /// Borrow the opaque CRYPTO data bytes.
+    pub fn data(&self) -> &[u8] {
+        &self.data
+    }
+
+    /// Decode one CRYPTO frame from bytes that include the Frame Type.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let bytes = bytes.as_ref();
+        let (frame, consumed) = decode_crypto_frame(bytes)?;
+        if consumed != bytes.len() {
+            return Err(CrafterError::invalid_field_value(
+                "quic.frame.crypto",
+                "CRYPTO frame has trailing bytes",
+            ));
+        }
+        Ok(frame)
+    }
+
+    /// Append the canonical CRYPTO frame encoding, preserving explicit Length.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        QuicVarInt::from_u64_unchecked(0x06).encode(out)?;
+        self.offset.encode(out)?;
+        self.length()?.encode(out)?;
+        out.extend_from_slice(&self.data);
+        Ok(())
+    }
+
+    /// Return the canonical CRYPTO frame encoding.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Stable CRYPTO summary for packet inspection.
+    pub fn summary(&self) -> String {
+        format!(
+            "kind=CRYPTO offset={} length={} data_len={}",
+            self.offset.value(),
+            self.length().map(|length| length.value()).unwrap_or(0),
+            self.data.len()
+        )
+    }
+
+    /// Stable field/value pairs for CRYPTO inspection.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("crypto_offset", self.offset.value().to_string()),
+            (
+                "crypto_length",
+                self.length()
+                    .map(|length| length.value().to_string())
+                    .unwrap_or_else(|_| "<invalid>".to_string()),
+            ),
+            ("crypto_data_len", self.data.len().to_string()),
+            ("crypto_data", hex_bytes(&self.data)),
+        ]
+    }
+}
+
 /// Raw-preserving QUIC frame.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct QuicFrame {
@@ -667,6 +779,16 @@ impl QuicFrame {
         Self::from_stop_sending_frame(QuicStopSendingFrame::new(stream_id, application_error_code))
     }
 
+    /// Construct a CRYPTO frame from typed fields.
+    pub fn from_crypto_frame(crypto: QuicCryptoFrame) -> Result<Self> {
+        Ok(Self::from_bytes(crypto.encode_to_vec()?))
+    }
+
+    /// Construct a CRYPTO frame with an auto-filled data length.
+    pub fn crypto(offset: QuicVarInt, data: impl AsRef<[u8]>) -> Result<Self> {
+        Self::from_crypto_frame(QuicCryptoFrame::new(offset, data))
+    }
+
     /// Decode a frame sequence within the caller-provided packet boundary.
     ///
     /// Supported fixed-boundary frames are split out first. The remaining
@@ -708,6 +830,12 @@ impl QuicFrame {
                 0x05 => {
                     let (_, stop_sending_len) = decode_stop_sending_frame(&bytes[offset..])?;
                     let end = offset + stop_sending_len;
+                    frames.push(Self::from_bytes(&bytes[offset..end]));
+                    offset = end;
+                }
+                0x06 => {
+                    let (_, crypto_len) = decode_crypto_frame(&bytes[offset..])?;
+                    let end = offset + crypto_len;
                     frames.push(Self::from_bytes(&bytes[offset..end]));
                     offset = end;
                 }
@@ -777,6 +905,14 @@ impl QuicFrame {
         }
     }
 
+    /// Decode this frame as CRYPTO when applicable.
+    pub fn crypto_frame(&self) -> Result<Option<QuicCryptoFrame>> {
+        match self.frame_type_value() {
+            Some(0x06) => Ok(Some(QuicCryptoFrame::decode(&self.bytes)?)),
+            _ => Ok(None),
+        }
+    }
+
     /// Borrow the preserved frame bytes.
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes
@@ -840,6 +976,9 @@ impl QuicFrame {
         if let Ok(Some(stop_sending)) = self.stop_sending_frame() {
             return stop_sending.summary();
         }
+        if let Ok(Some(crypto)) = self.crypto_frame() {
+            return crypto.summary();
+        }
         match self.frame_type() {
             Some(frame_type) => format!(
                 "kind={} type=0x{:x} raw_len={}",
@@ -885,6 +1024,9 @@ impl QuicFrame {
         }
         if let Ok(Some(stop_sending)) = self.stop_sending_frame() {
             fields.extend(stop_sending.inspection_fields());
+        }
+        if let Ok(Some(crypto)) = self.crypto_frame() {
+            fields.extend(crypto.inspection_fields());
         }
         fields
     }
@@ -1001,6 +1143,37 @@ fn decode_stop_sending_frame(bytes: &[u8]) -> Result<(QuicStopSendingFrame, usiz
     Ok((
         QuicStopSendingFrame::new(stream_id, application_error_code),
         offset,
+    ))
+}
+
+fn decode_crypto_frame(bytes: &[u8]) -> Result<(QuicCryptoFrame, usize)> {
+    let (frame_type, mut offset) = decode_frame_varint(bytes, 0, "quic.frame.type")?;
+    if frame_type.value() != 0x06 {
+        return Err(CrafterError::invalid_field_value(
+            "quic.frame.crypto.type",
+            "CRYPTO frame type must be 0x06",
+        ));
+    }
+    let (crypto_offset, next) = decode_frame_varint(bytes, offset, "quic.frame.crypto.offset")?;
+    offset = next;
+    let (length, next) = decode_frame_varint(bytes, offset, "quic.frame.crypto.length")?;
+    offset = next;
+
+    let data_len = usize::try_from(length.value()).map_err(|_| {
+        CrafterError::invalid_field_value("quic.frame.crypto.length", "length exceeds usize")
+    })?;
+    let available = bytes.len().saturating_sub(offset);
+    if available < data_len {
+        return Err(CrafterError::buffer_too_short(
+            "quic.frame.crypto.data",
+            data_len,
+            available,
+        ));
+    }
+    let end = offset + data_len;
+    Ok((
+        QuicCryptoFrame::new(crypto_offset, &bytes[offset..end]).with_length(length),
+        end,
     ))
 }
 
@@ -1315,6 +1488,56 @@ mod tests {
         assert_eq!(
             QuicFrame::decode_sequence([0x05, 1, 0x40]).unwrap_err(),
             CrafterError::buffer_too_short("quic.frame.stop_sending.application_error_code", 2, 1)
+        );
+    }
+
+    #[test]
+    fn quic_frame_crypto_decodes_data_and_continues_sequence() -> crate::Result<()> {
+        let bytes = [0x06, 2, 3, 0xaa, 0xbb, 0xcc, 0x01];
+
+        let frames = QuicFrame::decode_sequence(bytes)?;
+
+        assert_eq!(frames.len(), 2);
+        assert_eq!(
+            frames[0].kind(),
+            QuicFrameKind::Known(QuicKnownFrameType::Crypto)
+        );
+        let crypto = frames[0].crypto_frame()?.unwrap();
+        assert_eq!(crypto.offset().value(), 2);
+        assert_eq!(crypto.length()?.value(), 3);
+        assert_eq!(crypto.data(), &[0xaa, 0xbb, 0xcc]);
+        assert!(frames[1].is_ping());
+        assert_eq!(QuicFrame::encode_sequence(frames), bytes);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_crypto_auto_fills_length() -> crate::Result<()> {
+        let frame = QuicFrame::crypto(v(0), [0x16, 0x03, 0x03])?;
+
+        assert_eq!(frame.as_bytes(), &[0x06, 0x00, 0x03, 0x16, 0x03, 0x03]);
+        assert_eq!(frame.summary(), "kind=CRYPTO offset=0 length=3 data_len=3");
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_crypto_preserves_explicit_malformed_length() -> crate::Result<()> {
+        let crypto = QuicCryptoFrame::new(v(0), [0xaa]).with_length(v(3));
+        let frame = QuicFrame::from_crypto_frame(crypto)?;
+
+        assert_eq!(frame.as_bytes(), &[0x06, 0x00, 0x03, 0xaa]);
+        assert_eq!(
+            frame.crypto_frame().unwrap_err(),
+            CrafterError::buffer_too_short("quic.frame.crypto.data", 3, 1)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_crypto_truncated_data_reports_structured_error() {
+        assert_eq!(
+            QuicFrame::decode_sequence([0x06, 0, 3, 0xaa]).unwrap_err(),
+            CrafterError::buffer_too_short("quic.frame.crypto.data", 3, 1)
         );
     }
 }

@@ -421,8 +421,8 @@ pub mod exports {
     pub use ospf::Ospf;
     pub use quic::constants::{QUIC_VERSION_1, QUIC_VERSION_2, QUIC_VERSION_NEGOTIATION};
     pub use quic::{
-        Quic, QuicAckEcnCounts, QuicAckFrame, QuicAckRange, QuicConnectionId, QuicFrame,
-        QuicFrameKind, QuicHandshakeBuilder, QuicInitialBuilder, QuicKnownFrameType,
+        Quic, QuicAckEcnCounts, QuicAckFrame, QuicAckRange, QuicConnectionId, QuicCryptoFrame,
+        QuicFrame, QuicFrameKind, QuicHandshakeBuilder, QuicInitialBuilder, QuicKnownFrameType,
         QuicLongHeaderPacket, QuicPacket, QuicPacketNumber, QuicResetStreamFrame, QuicRetryBuilder,
         QuicRetryPacket, QuicShortHeaderBuilder, QuicShortHeaderPacket, QuicStopSendingFrame,
         QuicTransportParameter, QuicVarInt, QuicVersionNegotiationBuilder,
