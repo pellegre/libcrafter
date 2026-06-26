@@ -1,0 +1,166 @@
+version: 1
+kind: layer
+name: quic
+summary: QUIC UDP datagram payloads from RFC 8999, RFC 9000, RFC 9001, RFC 9221, RFC 9287, RFC 9368, RFC 9369, and RFC 9443, modeled as raw-preserving packets with source-backed header classification and encrypted payloads left opaque.
+
+roots: []
+parents:
+  - udp
+children: []
+
+fields:
+  - name: raw_hex
+    type: bytes
+    required: true
+    domains:
+      - v1_initial
+      - v2_initial
+      - version_negotiation
+      - retry
+      - handshake
+      - zero_rtt
+      - coalesced
+      - protected_raw
+      - datagram_frame
+      - grease_quic_bit
+    note: >-
+      The oracle materializes QUIC as exact UDP payload bytes. This mirrors the
+      crate boundary: QUIC packet and frame grammar is decoded where source-backed
+      and inspectable, while protected TLS/application payloads remain opaque raw
+      bytes unless a test vector deliberately supplies decrypted frame bytes.
+  - name: packet_form
+    type: enum
+    required: false
+    domains:
+      - long
+      - short_ambiguous
+      - version_negotiation
+      - stateless_reset_candidate
+    note: RFC 8999 invariant packet form classification; short packets are not auto-bound from UDP by default.
+  - name: packet_kind
+    type: enum
+    required: false
+    domains:
+      - version_negotiation
+      - initial
+      - zero_rtt
+      - handshake
+      - retry
+      - short_header_raw
+      - coalesced
+      - stateless_reset_candidate
+      - raw
+  - name: version
+    type: enum
+    required: false
+    domains:
+      - v1
+      - v2
+      - version_negotiation
+      - reserved_grease
+      - unknown
+    codepoints:
+      - value: 0x00000000
+        name: version_negotiation
+        registry: quic-version-numbers
+        source: RFC 9000
+        note: Invariant Version Negotiation packet version field.
+      - value: 0x00000001
+        name: quic_v1
+        registry: quic-version-numbers
+        source: RFC 9000, RFC 9001
+        note: QUIC version 1.
+      - value: 0x6b3343cf
+        name: quic_v2
+        registry: quic-version-numbers
+        source: RFC 9369
+        note: QUIC version 2.
+      - value: 0x0a0a0a0a
+        name: reserved_grease
+        registry: quic-version-numbers
+        source: RFC 8999
+        note: Reserved version pattern used to exercise version agility.
+  - name: destination_connection_id
+    type: bytes
+    required: false
+    domains:
+      - empty
+      - sample
+      - max_len
+  - name: source_connection_id
+    type: bytes
+    required: false
+    domains:
+      - empty
+      - sample
+      - max_len
+  - name: packet_number
+    type: uint32
+    required: false
+    domains:
+      - one_byte
+      - two_byte
+      - four_byte
+    note: Packet number length is encoded in packet-specific low bits and explicit values are preserved.
+  - name: frames
+    type: list
+    required: false
+    domains:
+      - ping_crypto
+      - datagram_len
+      - unknown_preserved
+    note: Decrypted frame vectors are covered in crate fixtures; oracle packets keep protected datagrams opaque.
+  - name: transport_parameters
+    type: list
+    required: false
+    domains:
+      - core
+      - datagram
+      - grease_quic_bit
+      - version_information
+      - unknown_duplicate
+    note: TLS extension plumbing is out of crate scope; parameter encoders/decoders are exercised by fixtures and properties.
+  - name: protected_payload
+    type: bytes
+    required: false
+    domains:
+      - opaque
+      - empty
+
+coverage_cases:
+  - quic-v1-initial
+  - quic-v2-initial
+  - quic-version-negotiation
+  - quic-retry
+  - quic-handshake
+  - quic-zero-rtt
+  - quic-short-header-raw
+  - quic-stateless-reset-candidate
+  - quic-coalesced-initial-handshake
+  - quic-frame-sequence
+  - quic-transport-parameters
+  - quic-datagram-frame
+  - quic-grease-bit
+  - quic-protected-raw
+  - quic-malformed-exclusions
+  - quic-pcap-udp-4433
+
+backend_support:
+  scapy:
+    status: supported
+    native_layers:
+      - Raw
+    encode: true
+    decode: true
+    pcap_read: true
+    pcap_write: true
+    notes:
+      - Scapy does not provide a required native QUIC encoder for this suite; the oracle emits exact UDP payload bytes and canonicalizes Raw on UDP/443 or UDP/4433 as quic.
+  libcrafter:
+    status: supported
+    encode: true
+    decode: true
+    pcap_read: true
+    pcap_write: true
+    notes:
+      - QUIC is a packet abstraction layer over UDP that preserves explicit malformed bytes, decodes source-backed long-header grammar, and leaves protected data opaque.
