@@ -41,6 +41,8 @@ mod constants;
 mod message;
 mod option;
 mod registry;
+pub mod v4;
+pub mod v6;
 
 use core::any::Any;
 use core::net::Ipv4Addr;
