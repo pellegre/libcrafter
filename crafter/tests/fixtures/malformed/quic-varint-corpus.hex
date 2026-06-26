@@ -1,0 +1,9 @@
+# QUIC varint malformed corpus.
+# Format: name|expected-kind|expected-context|required|available|hex
+# expected-kind:
+#   buffer-too-short -> Err(CrafterError::BufferTooShort)
+
+empty|buffer-too-short|quic.varint|1|0|
+two-byte-truncated|buffer-too-short|quic.varint|2|1|40
+four-byte-truncated|buffer-too-short|quic.varint|4|3|80 00 00
+eight-byte-truncated|buffer-too-short|quic.varint|8|7|c0 00 00 00 00 00 00

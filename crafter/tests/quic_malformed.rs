@@ -6,7 +6,7 @@
 use crafter::protocols::quic::{QuicFrame, QuicFrameKind, QuicHandshakeDoneFrame, QuicHeader};
 use crafter::{
     CrafterError, Ipv4, NetworkLayer, Packet, QuicLongHeaderPacket, QuicPacket, QuicPacketNumber,
-    QuicRetryPacket, Raw, Udp,
+    QuicRetryPacket, QuicVarInt, Raw, Udp,
 };
 use std::net::Ipv4Addr;
 
@@ -58,6 +58,42 @@ struct QuicFrameMalformedCase {
     name: String,
     target: QuicFrameMalformedTarget,
     expected: QuicFrameMalformedExpected,
+    bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum QuicPacketMalformedTarget {
+    Packet,
+    ShortHeaderDcid4,
+    ShortHeaderDcid0,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum QuicPacketMalformedExpected {
+    BufferTooShort {
+        context: String,
+        required: usize,
+        available: usize,
+    },
+    InvalidFieldValue {
+        field: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct QuicPacketMalformedCase {
+    name: String,
+    target: QuicPacketMalformedTarget,
+    expected: QuicPacketMalformedExpected,
+    bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct QuicVarintMalformedCase {
+    name: String,
+    context: String,
+    required: usize,
+    available: usize,
     bytes: Vec<u8>,
 }
 
@@ -149,6 +185,264 @@ fn quic_frame_malformed_corpus_reports_structured_outcomes() {
     for case in cases {
         std::panic::catch_unwind(|| assert_quic_frame_malformed_case(&case))
             .unwrap_or_else(|_| panic!("QUIC frame malformed corpus case {} panicked", case.name));
+    }
+}
+
+#[test]
+fn quic_packet_malformed_corpus_reports_structured_outcomes() {
+    let cases = quic_packet_malformed_cases();
+    assert_required_quic_packet_malformed_cases(&cases);
+
+    for case in cases {
+        std::panic::catch_unwind(|| assert_quic_packet_malformed_case(&case))
+            .unwrap_or_else(|_| panic!("QUIC packet malformed corpus case {} panicked", case.name));
+    }
+}
+
+#[test]
+fn quic_varint_malformed_corpus_reports_structured_outcomes() {
+    let cases = quic_varint_malformed_cases();
+    assert_required_quic_varint_malformed_cases(&cases);
+
+    for case in cases {
+        std::panic::catch_unwind(|| {
+            let err = QuicVarInt::decode(&case.bytes).map(|_| ()).unwrap_err();
+            match err {
+                CrafterError::BufferTooShort {
+                    context,
+                    required,
+                    available,
+                } => {
+                    assert_eq!(context, case.context, "case {}", case.name);
+                    assert_eq!(required, case.required, "case {}", case.name);
+                    assert_eq!(available, case.available, "case {}", case.name);
+                }
+                other => panic!(
+                    "QUIC varint malformed corpus case {} expected BufferTooShort, got {other:?}",
+                    case.name
+                ),
+            }
+        })
+        .unwrap_or_else(|_| panic!("QUIC varint malformed corpus case {} panicked", case.name));
+    }
+}
+
+#[test]
+fn quic_varint_malformed_encode_rejects_impossible_values_without_panic() {
+    std::panic::catch_unwind(|| {
+        assert_eq!(
+            QuicVarInt::new(1u64 << 62).unwrap_err(),
+            CrafterError::invalid_field_value("quic.varint", "QUIC varint value exceeds 62 bits")
+        );
+        assert_eq!(
+            QuicVarInt::from_u64_unchecked(64)
+                .encode_with_len(1, &mut Vec::new())
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "quic.varint",
+                "value does not fit requested QUIC varint length",
+            )
+        );
+        assert_eq!(
+            QuicVarInt::from_u64_unchecked(1)
+                .encode_with_len(3, &mut Vec::new())
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "quic.varint.length",
+                "QUIC varint length must be 1, 2, 4, or 8 bytes",
+            )
+        );
+    })
+    .expect("QUIC varint malformed encode guards must not panic");
+}
+
+fn quic_packet_malformed_cases() -> Vec<QuicPacketMalformedCase> {
+    include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/malformed/quic-packet-corpus.hex"
+    ))
+    .lines()
+    .enumerate()
+    .filter_map(|(line_number, line)| {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            return None;
+        }
+        let parts = line.split('|').map(str::trim).collect::<Vec<_>>();
+        assert_eq!(
+            parts.len(),
+            7,
+            "QUIC packet malformed corpus line {} must have 7 fields",
+            line_number + 1
+        );
+        let name = parts[0].to_string();
+        let target = parse_quic_packet_malformed_target(&name, parts[1]);
+        let expected = parse_quic_packet_malformed_expected(&name, &parts);
+        let bytes = parse_hex(&name, parts[6]);
+        Some(QuicPacketMalformedCase {
+            name,
+            target,
+            expected,
+            bytes,
+        })
+    })
+    .collect()
+}
+
+fn quic_varint_malformed_cases() -> Vec<QuicVarintMalformedCase> {
+    include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/malformed/quic-varint-corpus.hex"
+    ))
+    .lines()
+    .enumerate()
+    .filter_map(|(line_number, line)| {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            return None;
+        }
+        let parts = line.split('|').map(str::trim).collect::<Vec<_>>();
+        assert_eq!(
+            parts.len(),
+            6,
+            "QUIC varint malformed corpus line {} must have 6 fields",
+            line_number + 1
+        );
+        assert_eq!(
+            parts[1],
+            "buffer-too-short",
+            "QUIC varint malformed corpus line {} must expect buffer-too-short",
+            line_number + 1
+        );
+        Some(QuicVarintMalformedCase {
+            name: parts[0].to_string(),
+            context: parts[2].to_string(),
+            required: parts[3]
+                .parse()
+                .unwrap_or_else(|_| panic!("case {} has invalid required byte count", parts[0])),
+            available: parts[4]
+                .parse()
+                .unwrap_or_else(|_| panic!("case {} has invalid available byte count", parts[0])),
+            bytes: parse_hex(parts[0], parts[5]),
+        })
+    })
+    .collect()
+}
+
+fn parse_quic_packet_malformed_target(name: &str, target: &str) -> QuicPacketMalformedTarget {
+    match target {
+        "packet" => QuicPacketMalformedTarget::Packet,
+        "short-header-dcid-4" => QuicPacketMalformedTarget::ShortHeaderDcid4,
+        "short-header-dcid-0" => QuicPacketMalformedTarget::ShortHeaderDcid0,
+        _ => panic!("QUIC packet malformed corpus case {name} has unknown target {target}"),
+    }
+}
+
+fn parse_quic_packet_malformed_expected(name: &str, parts: &[&str]) -> QuicPacketMalformedExpected {
+    match parts[2] {
+        "buffer-too-short" => QuicPacketMalformedExpected::BufferTooShort {
+            context: parts[3].to_string(),
+            required: parts[4]
+                .parse()
+                .unwrap_or_else(|_| panic!("case {name} has invalid required byte count")),
+            available: parts[5]
+                .parse()
+                .unwrap_or_else(|_| panic!("case {name} has invalid available byte count")),
+        },
+        "invalid-field-value" => {
+            assert_eq!(parts[4], "-", "case {name} must use '-' for required");
+            assert_eq!(parts[5], "-", "case {name} must use '-' for available");
+            QuicPacketMalformedExpected::InvalidFieldValue {
+                field: parts[3].to_string(),
+            }
+        }
+        expected => panic!("QUIC packet malformed corpus case {name} has unknown kind {expected}"),
+    }
+}
+
+fn assert_required_quic_packet_malformed_cases(cases: &[QuicPacketMalformedCase]) {
+    for required in [
+        "version-negotiation-supported-truncated",
+        "retry-integrity-short",
+        "short-header-dcid-truncated",
+        "short-header-packet-number-truncated",
+        "short-header-rejects-long-form",
+    ] {
+        assert!(
+            cases.iter().any(|case| case.name == required),
+            "QUIC packet malformed corpus missing required case {required}"
+        );
+    }
+}
+
+fn assert_required_quic_varint_malformed_cases(cases: &[QuicVarintMalformedCase]) {
+    for required in [
+        "empty",
+        "two-byte-truncated",
+        "four-byte-truncated",
+        "eight-byte-truncated",
+    ] {
+        assert!(
+            cases.iter().any(|case| case.name == required),
+            "QUIC varint malformed corpus missing required case {required}"
+        );
+    }
+}
+
+fn assert_quic_packet_malformed_case(case: &QuicPacketMalformedCase) {
+    let err = decode_quic_packet_malformed_error(case);
+    match &case.expected {
+        QuicPacketMalformedExpected::BufferTooShort {
+            context,
+            required,
+            available,
+        } => match err {
+            CrafterError::BufferTooShort {
+                context: got_context,
+                required: got_required,
+                available: got_available,
+            } => {
+                assert_eq!(got_context, context.as_str(), "case {}", case.name);
+                assert_eq!(got_required, *required, "case {}", case.name);
+                assert_eq!(got_available, *available, "case {}", case.name);
+            }
+            other => panic!(
+                "QUIC packet malformed corpus case {} expected BufferTooShort, got {other:?}",
+                case.name
+            ),
+        },
+        QuicPacketMalformedExpected::InvalidFieldValue { field } => match err {
+            CrafterError::InvalidFieldValue { field: got, reason } => {
+                assert_eq!(got, field.as_str(), "case {}", case.name);
+                assert!(
+                    !reason.is_empty(),
+                    "case {} InvalidFieldValue must carry a reason",
+                    case.name
+                );
+            }
+            other => panic!(
+                "QUIC packet malformed corpus case {} expected InvalidFieldValue, got {other:?}",
+                case.name
+            ),
+        },
+    }
+}
+
+fn decode_quic_packet_malformed_error(case: &QuicPacketMalformedCase) -> CrafterError {
+    match case.target {
+        QuicPacketMalformedTarget::Packet => {
+            QuicPacket::decode(&case.bytes).map(|_| ()).unwrap_err()
+        }
+        QuicPacketMalformedTarget::ShortHeaderDcid4 => {
+            QuicPacket::decode_short_header(&case.bytes, 4)
+                .map(|_| ())
+                .unwrap_err()
+        }
+        QuicPacketMalformedTarget::ShortHeaderDcid0 => {
+            QuicPacket::decode_short_header(&case.bytes, 0)
+                .map(|_| ())
+                .unwrap_err()
+        }
     }
 }
 
