@@ -139,6 +139,173 @@ impl QuicKnownTransportParameter {
     }
 }
 
+/// Known transport parameters whose value format is one QUIC varint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuicIntegerTransportParameter {
+    /// `max_idle_timeout` (`0x01`).
+    MaxIdleTimeout,
+    /// `max_udp_payload_size` (`0x03`).
+    MaxUdpPayloadSize,
+    /// `initial_max_data` (`0x04`).
+    InitialMaxData,
+    /// `initial_max_stream_data_bidi_local` (`0x05`).
+    InitialMaxStreamDataBidiLocal,
+    /// `initial_max_stream_data_bidi_remote` (`0x06`).
+    InitialMaxStreamDataBidiRemote,
+    /// `initial_max_stream_data_uni` (`0x07`).
+    InitialMaxStreamDataUni,
+    /// `initial_max_streams_bidi` (`0x08`).
+    InitialMaxStreamsBidi,
+    /// `initial_max_streams_uni` (`0x09`).
+    InitialMaxStreamsUni,
+    /// `ack_delay_exponent` (`0x0a`).
+    AckDelayExponent,
+    /// `max_ack_delay` (`0x0b`).
+    MaxAckDelay,
+    /// `active_connection_id_limit` (`0x0e`).
+    ActiveConnectionIdLimit,
+    /// `max_datagram_frame_size` (`0x20`).
+    MaxDatagramFrameSize,
+}
+
+impl QuicIntegerTransportParameter {
+    /// Return the corresponding known transport-parameter registry row.
+    pub const fn known_parameter(self) -> QuicKnownTransportParameter {
+        match self {
+            Self::MaxIdleTimeout => QuicKnownTransportParameter::MaxIdleTimeout,
+            Self::MaxUdpPayloadSize => QuicKnownTransportParameter::MaxUdpPayloadSize,
+            Self::InitialMaxData => QuicKnownTransportParameter::InitialMaxData,
+            Self::InitialMaxStreamDataBidiLocal => {
+                QuicKnownTransportParameter::InitialMaxStreamDataBidiLocal
+            }
+            Self::InitialMaxStreamDataBidiRemote => {
+                QuicKnownTransportParameter::InitialMaxStreamDataBidiRemote
+            }
+            Self::InitialMaxStreamDataUni => QuicKnownTransportParameter::InitialMaxStreamDataUni,
+            Self::InitialMaxStreamsBidi => QuicKnownTransportParameter::InitialMaxStreamsBidi,
+            Self::InitialMaxStreamsUni => QuicKnownTransportParameter::InitialMaxStreamsUni,
+            Self::AckDelayExponent => QuicKnownTransportParameter::AckDelayExponent,
+            Self::MaxAckDelay => QuicKnownTransportParameter::MaxAckDelay,
+            Self::ActiveConnectionIdLimit => QuicKnownTransportParameter::ActiveConnectionIdLimit,
+            Self::MaxDatagramFrameSize => QuicKnownTransportParameter::MaxDatagramFrameSize,
+        }
+    }
+
+    /// Return the numeric transport-parameter identifier.
+    pub const fn id(self) -> QuicVarInt {
+        self.known_parameter().id()
+    }
+
+    /// Return the registry name used in summaries and validation output.
+    pub const fn name(self) -> &'static str {
+        self.known_parameter().name()
+    }
+
+    /// Map a selected known transport-parameter row to an integer parameter.
+    pub const fn from_known(known: QuicKnownTransportParameter) -> Option<Self> {
+        match known {
+            QuicKnownTransportParameter::MaxIdleTimeout => Some(Self::MaxIdleTimeout),
+            QuicKnownTransportParameter::MaxUdpPayloadSize => Some(Self::MaxUdpPayloadSize),
+            QuicKnownTransportParameter::InitialMaxData => Some(Self::InitialMaxData),
+            QuicKnownTransportParameter::InitialMaxStreamDataBidiLocal => {
+                Some(Self::InitialMaxStreamDataBidiLocal)
+            }
+            QuicKnownTransportParameter::InitialMaxStreamDataBidiRemote => {
+                Some(Self::InitialMaxStreamDataBidiRemote)
+            }
+            QuicKnownTransportParameter::InitialMaxStreamDataUni => {
+                Some(Self::InitialMaxStreamDataUni)
+            }
+            QuicKnownTransportParameter::InitialMaxStreamsBidi => Some(Self::InitialMaxStreamsBidi),
+            QuicKnownTransportParameter::InitialMaxStreamsUni => Some(Self::InitialMaxStreamsUni),
+            QuicKnownTransportParameter::AckDelayExponent => Some(Self::AckDelayExponent),
+            QuicKnownTransportParameter::MaxAckDelay => Some(Self::MaxAckDelay),
+            QuicKnownTransportParameter::ActiveConnectionIdLimit => {
+                Some(Self::ActiveConnectionIdLimit)
+            }
+            QuicKnownTransportParameter::MaxDatagramFrameSize => Some(Self::MaxDatagramFrameSize),
+            _ => None,
+        }
+    }
+
+    /// Map a transport-parameter identifier to an integer parameter.
+    pub const fn from_id(id: QuicVarInt) -> Option<Self> {
+        match QuicKnownTransportParameter::from_id(id) {
+            Some(known) => Self::from_known(known),
+            None => None,
+        }
+    }
+
+    /// Return the documented default value when the notes record one.
+    pub const fn default_value(self) -> Option<QuicVarInt> {
+        match self {
+            Self::MaxIdleTimeout => Some(QuicVarInt::from_u64_unchecked(0)),
+            Self::MaxUdpPayloadSize => Some(QuicVarInt::from_u64_unchecked(65_527)),
+            Self::AckDelayExponent => Some(QuicVarInt::from_u64_unchecked(3)),
+            Self::MaxAckDelay => Some(QuicVarInt::from_u64_unchecked(25)),
+            Self::ActiveConnectionIdLimit => Some(QuicVarInt::from_u64_unchecked(2)),
+            Self::MaxDatagramFrameSize => Some(QuicVarInt::from_u64_unchecked(0)),
+            _ => None,
+        }
+    }
+
+    /// Return an endpoint-validation finding for byte-complete values whose
+    /// protocol policy is invalid. These are not decode truncation errors.
+    pub const fn validation_finding(
+        self,
+        value: QuicVarInt,
+    ) -> Option<QuicIntegerTransportParameterValidation> {
+        match self {
+            Self::MaxUdpPayloadSize if value.value() < 1200 => {
+                Some(QuicIntegerTransportParameterValidation::MaxUdpPayloadSizeBelowMinimum)
+            }
+            Self::InitialMaxStreamsBidi | Self::InitialMaxStreamsUni
+                if value.value() > (1u64 << 60) =>
+            {
+                Some(QuicIntegerTransportParameterValidation::InitialMaxStreamsExceedsLimit)
+            }
+            Self::AckDelayExponent if value.value() > 20 => {
+                Some(QuicIntegerTransportParameterValidation::AckDelayExponentExceedsLimit)
+            }
+            Self::MaxAckDelay if value.value() >= (1u64 << 14) => {
+                Some(QuicIntegerTransportParameterValidation::MaxAckDelayExceedsLimit)
+            }
+            Self::ActiveConnectionIdLimit if value.value() < 2 => {
+                Some(QuicIntegerTransportParameterValidation::ActiveConnectionIdLimitBelowMinimum)
+            }
+            _ => None,
+        }
+    }
+}
+
+/// Endpoint-validation finding for a byte-complete integer transport parameter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuicIntegerTransportParameterValidation {
+    /// `max_udp_payload_size` is below 1200.
+    MaxUdpPayloadSizeBelowMinimum,
+    /// `initial_max_streams_bidi` or `initial_max_streams_uni` is above `2^60`.
+    InitialMaxStreamsExceedsLimit,
+    /// `ack_delay_exponent` is above 20.
+    AckDelayExponentExceedsLimit,
+    /// `max_ack_delay` is greater than or equal to `2^14`.
+    MaxAckDelayExceedsLimit,
+    /// `active_connection_id_limit` is below 2.
+    ActiveConnectionIdLimitBelowMinimum,
+}
+
+impl QuicIntegerTransportParameterValidation {
+    /// Stable validation label for summaries or agent diagnostics.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::MaxUdpPayloadSizeBelowMinimum => "max_udp_payload_size_below_1200",
+            Self::InitialMaxStreamsExceedsLimit => "initial_max_streams_above_2^60",
+            Self::AckDelayExponentExceedsLimit => "ack_delay_exponent_above_20",
+            Self::MaxAckDelayExceedsLimit => "max_ack_delay_at_or_above_2^14",
+            Self::ActiveConnectionIdLimitBelowMinimum => "active_connection_id_limit_below_2",
+        }
+    }
+}
+
 /// Broad transport-parameter identifier classification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QuicTransportParameterKind {
@@ -232,6 +399,86 @@ impl QuicTransportParameter {
         Self::raw(known.id(), value)
     }
 
+    /// Construct an integer-valued transport parameter with a canonical QUIC
+    /// varint value.
+    pub fn integer(kind: QuicIntegerTransportParameter, value: QuicVarInt) -> Result<Self> {
+        let mut encoded = Vec::new();
+        value.encode(&mut encoded)?;
+        Ok(Self::known(kind.known_parameter(), encoded))
+    }
+
+    /// Construct `max_idle_timeout`.
+    pub fn max_idle_timeout(value: QuicVarInt) -> Result<Self> {
+        Self::integer(QuicIntegerTransportParameter::MaxIdleTimeout, value)
+    }
+
+    /// Construct `max_udp_payload_size`.
+    pub fn max_udp_payload_size(value: QuicVarInt) -> Result<Self> {
+        Self::integer(QuicIntegerTransportParameter::MaxUdpPayloadSize, value)
+    }
+
+    /// Construct `initial_max_data`.
+    pub fn initial_max_data(value: QuicVarInt) -> Result<Self> {
+        Self::integer(QuicIntegerTransportParameter::InitialMaxData, value)
+    }
+
+    /// Construct `initial_max_stream_data_bidi_local`.
+    pub fn initial_max_stream_data_bidi_local(value: QuicVarInt) -> Result<Self> {
+        Self::integer(
+            QuicIntegerTransportParameter::InitialMaxStreamDataBidiLocal,
+            value,
+        )
+    }
+
+    /// Construct `initial_max_stream_data_bidi_remote`.
+    pub fn initial_max_stream_data_bidi_remote(value: QuicVarInt) -> Result<Self> {
+        Self::integer(
+            QuicIntegerTransportParameter::InitialMaxStreamDataBidiRemote,
+            value,
+        )
+    }
+
+    /// Construct `initial_max_stream_data_uni`.
+    pub fn initial_max_stream_data_uni(value: QuicVarInt) -> Result<Self> {
+        Self::integer(
+            QuicIntegerTransportParameter::InitialMaxStreamDataUni,
+            value,
+        )
+    }
+
+    /// Construct `initial_max_streams_bidi`.
+    pub fn initial_max_streams_bidi(value: QuicVarInt) -> Result<Self> {
+        Self::integer(QuicIntegerTransportParameter::InitialMaxStreamsBidi, value)
+    }
+
+    /// Construct `initial_max_streams_uni`.
+    pub fn initial_max_streams_uni(value: QuicVarInt) -> Result<Self> {
+        Self::integer(QuicIntegerTransportParameter::InitialMaxStreamsUni, value)
+    }
+
+    /// Construct `ack_delay_exponent`.
+    pub fn ack_delay_exponent(value: QuicVarInt) -> Result<Self> {
+        Self::integer(QuicIntegerTransportParameter::AckDelayExponent, value)
+    }
+
+    /// Construct `max_ack_delay`.
+    pub fn max_ack_delay(value: QuicVarInt) -> Result<Self> {
+        Self::integer(QuicIntegerTransportParameter::MaxAckDelay, value)
+    }
+
+    /// Construct `active_connection_id_limit`.
+    pub fn active_connection_id_limit(value: QuicVarInt) -> Result<Self> {
+        Self::integer(
+            QuicIntegerTransportParameter::ActiveConnectionIdLimit,
+            value,
+        )
+    }
+
+    /// Construct `max_datagram_frame_size`.
+    pub fn max_datagram_frame_size(value: QuicVarInt) -> Result<Self> {
+        Self::integer(QuicIntegerTransportParameter::MaxDatagramFrameSize, value)
+    }
+
     /// Preserve a caller-pinned identifier varint width.
     pub fn with_identifier_encoded_len(mut self, len: usize) -> Self {
         self.identifier_encoded_len = Some(len);
@@ -261,6 +508,35 @@ impl QuicTransportParameter {
             Some(identifier) => QuicKnownTransportParameter::from_id(identifier),
             None => None,
         }
+    }
+
+    /// Return the integer parameter type when this is a registered integer
+    /// parameter.
+    pub const fn integer_type(&self) -> Option<QuicIntegerTransportParameter> {
+        match self.identifier {
+            Some(identifier) => QuicIntegerTransportParameter::from_id(identifier),
+            None => None,
+        }
+    }
+
+    /// Decode the value of a registered integer transport parameter. Unknown,
+    /// grease, provisional, and non-integer known parameters return `Ok(None)`.
+    pub fn integer_value(&self) -> Result<Option<QuicVarInt>> {
+        if self.integer_type().is_none() {
+            return Ok(None);
+        }
+        decode_integer_transport_parameter_value(&self.value).map(Some)
+    }
+
+    /// Return the endpoint-validation finding for this integer value, if any.
+    pub fn integer_validation_finding(
+        &self,
+    ) -> Result<Option<QuicIntegerTransportParameterValidation>> {
+        let Some(kind) = self.integer_type() else {
+            return Ok(None);
+        };
+        let value = decode_integer_transport_parameter_value(&self.value)?;
+        Ok(kind.validation_finding(value))
     }
 
     /// Return the broad parameter identifier classification.
@@ -393,6 +669,11 @@ impl QuicTransportParameter {
                     .with_length_encoded_len(length_encoded_len)
                     .with_declared_value_len(value_length),
             );
+            if let Some(parameter) = parameters.last() {
+                if parameter.integer_type().is_some() {
+                    parameter.integer_value()?;
+                }
+            }
             offset = end;
         }
 
@@ -543,6 +824,18 @@ fn decode_parameter_varint(
     Ok((value, offset + consumed))
 }
 
+fn decode_integer_transport_parameter_value(bytes: &[u8]) -> Result<QuicVarInt> {
+    let (value, consumed) =
+        decode_parameter_varint(bytes, 0, "quic.transport_parameter.integer.value")?;
+    if consumed != bytes.len() {
+        return Err(CrafterError::invalid_field_value(
+            "quic.transport_parameter.integer.value",
+            "integer transport parameter value has surplus bytes",
+        ));
+    }
+    Ok(value)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -590,7 +883,7 @@ mod tests {
         let bytes = [
             0x01, 0x01, 0x03, // max_idle_timeout, one-byte value
             0x40, 0xaf, 0x02, 0xde, 0xad, // unknown two-byte ID with raw value
-            0x01, 0x00, // duplicate max_idle_timeout with empty value
+            0x01, 0x01, 0x00, // duplicate max_idle_timeout with zero value
         ];
 
         let parameters = QuicTransportParameter::decode_sequence(bytes)?;
@@ -642,11 +935,11 @@ mod tests {
 
     #[test]
     fn quic_transport_parameter_skeleton_preserves_non_shortest_tuple_varints() -> Result<()> {
-        let bytes = [0x40, 0x01, 0x40, 0x00];
+        let bytes = [0x40, 0x21, 0x40, 0x00];
 
         let parameters = QuicTransportParameter::decode_sequence(bytes)?;
 
-        assert_eq!(parameters[0].identifier().unwrap().value(), 1);
+        assert_eq!(parameters[0].identifier().unwrap().value(), 0x21);
         assert_eq!(parameters[0].identifier_encoded_len(), Some(2));
         assert_eq!(parameters[0].length_encoded_len(), Some(2));
         assert!(!is_shortest_encoding(
@@ -655,6 +948,115 @@ mod tests {
         ));
         assert_eq!(QuicTransportParameter::encode_sequence(parameters)?, bytes);
         Ok(())
+    }
+
+    #[test]
+    fn quic_transport_parameters_integer_builds_and_decodes_registered_values() -> Result<()> {
+        let parameters = vec![
+            QuicTransportParameter::max_idle_timeout(QuicVarInt::from_u64_unchecked(30))?,
+            QuicTransportParameter::initial_max_data(QuicVarInt::from_u64_unchecked(16_384))?,
+            QuicTransportParameter::max_datagram_frame_size(QuicVarInt::from_u64_unchecked(1200))?,
+        ];
+
+        let bytes = QuicTransportParameter::encode_sequence(parameters)?;
+
+        assert_eq!(
+            bytes,
+            [0x01, 0x01, 0x1e, 0x04, 0x04, 0x80, 0x00, 0x40, 0x00, 0x20, 0x02, 0x44, 0xb0,]
+        );
+        let decoded = QuicTransportParameter::decode_sequence(bytes)?;
+        assert_eq!(
+            decoded[0].integer_type(),
+            Some(QuicIntegerTransportParameter::MaxIdleTimeout)
+        );
+        assert_eq!(decoded[0].integer_value()?.unwrap().value(), 30);
+        assert_eq!(
+            decoded[1].integer_type(),
+            Some(QuicIntegerTransportParameter::InitialMaxData)
+        );
+        assert_eq!(decoded[1].integer_value()?.unwrap().value(), 16_384);
+        assert_eq!(
+            decoded[2].integer_type(),
+            Some(QuicIntegerTransportParameter::MaxDatagramFrameSize)
+        );
+        assert_eq!(decoded[2].integer_value()?.unwrap().value(), 1200);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_transport_parameters_integer_reports_validation_findings() -> Result<()> {
+        assert_eq!(
+            QuicIntegerTransportParameter::MaxUdpPayloadSize
+                .default_value()
+                .unwrap()
+                .value(),
+            65_527
+        );
+        assert_eq!(
+            QuicIntegerTransportParameter::InitialMaxData.default_value(),
+            None
+        );
+        assert_eq!(
+            QuicTransportParameter::max_udp_payload_size(QuicVarInt::from_u64_unchecked(1199))?
+                .integer_validation_finding()?,
+            Some(QuicIntegerTransportParameterValidation::MaxUdpPayloadSizeBelowMinimum)
+        );
+        assert_eq!(
+            QuicTransportParameter::ack_delay_exponent(QuicVarInt::from_u64_unchecked(21))?
+                .integer_validation_finding()?
+                .unwrap()
+                .label(),
+            "ack_delay_exponent_above_20"
+        );
+        assert_eq!(
+            QuicTransportParameter::max_ack_delay(QuicVarInt::from_u64_unchecked(1 << 14))?
+                .integer_validation_finding()?,
+            Some(QuicIntegerTransportParameterValidation::MaxAckDelayExceedsLimit)
+        );
+        assert_eq!(
+            QuicTransportParameter::active_connection_id_limit(QuicVarInt::from_u64_unchecked(1))?
+                .integer_validation_finding()?,
+            Some(QuicIntegerTransportParameterValidation::ActiveConnectionIdLimitBelowMinimum)
+        );
+        assert_eq!(
+            QuicTransportParameter::initial_max_streams_bidi(QuicVarInt::from_u64_unchecked(
+                (1u64 << 60) + 1,
+            ))?
+            .integer_validation_finding()?,
+            Some(QuicIntegerTransportParameterValidation::InitialMaxStreamsExceedsLimit)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn quic_transport_parameters_integer_leaves_unknown_integer_looking_values_raw() -> Result<()> {
+        let parameter = QuicTransportParameter::raw(QuicVarInt::from_u64_unchecked(0x26ab), [0x01]);
+
+        assert_eq!(parameter.kind(), QuicTransportParameterKind::Unknown);
+        assert_eq!(parameter.integer_type(), None);
+        assert_eq!(parameter.integer_value()?, None);
+        assert_eq!(parameter.integer_validation_finding()?, None);
+        assert_eq!(parameter.value(), &[0x01]);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_transport_parameters_integer_reports_structured_value_errors() {
+        assert_eq!(
+            QuicTransportParameter::decode_sequence([0x01, 0x00]).unwrap_err(),
+            CrafterError::buffer_too_short("quic.transport_parameter.integer.value", 1, 0)
+        );
+        assert_eq!(
+            QuicTransportParameter::decode_sequence([0x01, 0x01, 0x40]).unwrap_err(),
+            CrafterError::buffer_too_short("quic.transport_parameter.integer.value", 2, 1)
+        );
+        assert_eq!(
+            QuicTransportParameter::decode_sequence([0x01, 0x02, 0x01, 0x02]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "quic.transport_parameter.integer.value",
+                "integer transport parameter value has surplus bytes",
+            )
+        );
     }
 
     #[test]
