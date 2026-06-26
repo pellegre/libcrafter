@@ -51,6 +51,7 @@ from .protocols.dhcp import (
     _apply_dhcp_option_details,
     _decode_dhcp_option_tlvs,
 )
+from .protocols.quic import canonicalize_quic_payload
 
 
 BACKEND_NAME = "scapy"
@@ -396,6 +397,7 @@ def normalize_packet(
     _canonicalize_snmp_raw(normalized_layers, normalized_fields, feature_tags)
     _canonicalize_dot15d4_zigbee(normalized_layers, normalized_fields)
     _canonicalize_mqtt(packet, normalized_layers, normalized_fields)
+    canonicalize_quic_payload(packet, normalized_layers, normalized_fields)
     if source_hex is not None:
         _canonicalize_bgp_from_wire(source_hex, normalized_fields)
 

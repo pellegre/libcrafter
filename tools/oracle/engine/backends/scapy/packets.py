@@ -236,6 +236,7 @@ _SUPPORTED_FEATURES = {
     "ip_fragment_transforms",
     "ipv4_options",
     "ipv6_fragment_routing",
+    "quic_behavior",
     "mqtt_connect",
     "mqtt_ping_disconnect",
     "mqtt_publish",
