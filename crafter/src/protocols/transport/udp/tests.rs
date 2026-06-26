@@ -2371,7 +2371,7 @@ fn udp_decode_surplus_dhcp_uses_user_payload_and_preserves_options() {
         .src(Ipv4Addr::UNSPECIFIED)
         .dst(Ipv4Addr::BROADCAST)
         .id(0x2227)
-        / Udp::dhcp_client()
+        / Udp::dhcpv4_client()
         / dhcp
         / UdpOptions::from_bytes(surplus))
     .compile()

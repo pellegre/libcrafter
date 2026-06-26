@@ -13,6 +13,10 @@ use super::super::common::{
 use super::constants::UDP_HEADER_LEN;
 use super::surplus::{udp_decoded_surplus_offset_in_ip_datagram, UdpOptions};
 
+// DHCPv6 UDP ports from the base DHCPv6 specification.
+const DHCPV6_CLIENT_PORT: u16 = 546;
+const DHCPV6_SERVER_PORT: u16 = 547;
+
 /// Inspection status for UDP checksum handling.
 ///
 /// IPv6 zero-checksum UDP is not treated as normal UDP by default: RFC 8200
@@ -64,18 +68,32 @@ impl Udp {
         }
     }
 
-    /// Create a DHCP client-to-server UDP header.
-    pub fn dhcp_client() -> Self {
+    /// Create a DHCPv4 client-to-server UDP header.
+    pub fn dhcpv4_client() -> Self {
         Self::new()
             .source_port(DHCPV4_CLIENT_PORT)
             .destination_port(DHCPV4_SERVER_PORT)
     }
 
-    /// Create a DHCP server-to-client UDP header.
-    pub fn dhcp_server() -> Self {
+    /// Create a DHCPv4 server-to-client UDP header.
+    pub fn dhcpv4_server() -> Self {
         Self::new()
             .source_port(DHCPV4_SERVER_PORT)
             .destination_port(DHCPV4_CLIENT_PORT)
+    }
+
+    /// Create a DHCPv6 client-to-server UDP header.
+    pub fn dhcpv6_client() -> Self {
+        Self::new()
+            .source_port(DHCPV6_CLIENT_PORT)
+            .destination_port(DHCPV6_SERVER_PORT)
+    }
+
+    /// Create a DHCPv6 server-to-client UDP header.
+    pub fn dhcpv6_server() -> Self {
+        Self::new()
+            .source_port(DHCPV6_SERVER_PORT)
+            .destination_port(DHCPV6_CLIENT_PORT)
     }
 
     /// Set the source port.

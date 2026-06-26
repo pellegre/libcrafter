@@ -9310,7 +9310,7 @@ fn ipv4_udp_dhcp_decode_keeps_surplus_options_out_of_application_payload() {
         .src(Ipv4Addr::UNSPECIFIED)
         .dst(Ipv4Addr::BROADCAST)
         .id(0x3327)
-        / Udp::dhcp_client()
+        / Udp::dhcpv4_client()
         / dhcp
         / UdpOptions::from_bytes(option_bytes))
     .compile()

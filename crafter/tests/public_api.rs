@@ -1653,14 +1653,27 @@ fn tcp_mptcp_tcprst_reason_constants_are_public() {
 }
 
 #[test]
-fn udp_dhcp_helpers_compile_expected_ports() -> crafter::Result<()> {
-    let client = (Udp::dhcp_client() / Raw::from("discover")).compile()?;
-    let server = (Udp::dhcp_server() / Raw::from("offer")).compile()?;
+fn udp_dhcpv4_helpers_compile_expected_ports() -> crafter::Result<()> {
+    let client = (Udp::dhcpv4_client() / Raw::from("discover")).compile()?;
+    let server = (Udp::dhcpv4_server() / Raw::from("offer")).compile()?;
 
     assert_eq!(&client.as_bytes()[0..2], &68u16.to_be_bytes());
     assert_eq!(&client.as_bytes()[2..4], &67u16.to_be_bytes());
     assert_eq!(&server.as_bytes()[0..2], &67u16.to_be_bytes());
     assert_eq!(&server.as_bytes()[2..4], &68u16.to_be_bytes());
+
+    Ok(())
+}
+
+#[test]
+fn udp_dhcpv6_helpers_compile_expected_ports() -> crafter::Result<()> {
+    let client = (Udp::dhcpv6_client() / Raw::from("solicit")).compile()?;
+    let server = (Udp::dhcpv6_server() / Raw::from("advertise")).compile()?;
+
+    assert_eq!(&client.as_bytes()[0..2], &546u16.to_be_bytes());
+    assert_eq!(&client.as_bytes()[2..4], &547u16.to_be_bytes());
+    assert_eq!(&server.as_bytes()[0..2], &547u16.to_be_bytes());
+    assert_eq!(&server.as_bytes()[2..4], &546u16.to_be_bytes());
 
     Ok(())
 }

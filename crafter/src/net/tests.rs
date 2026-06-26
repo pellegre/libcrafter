@@ -634,7 +634,7 @@ mod send_recv_filters {
         let packet = Ipv4::new()
             .src(Ipv4Addr::UNSPECIFIED)
             .dst(Ipv4Addr::BROADCAST)
-            / Udp::dhcp_client()
+            / Udp::dhcpv4_client()
             / crate::Dhcpv4::discover(mac).xid(0xfeed_beef);
 
         assert_eq!(
@@ -1010,12 +1010,12 @@ mod reply_matching {
         let request = Ipv4::new()
             .src(Ipv4Addr::UNSPECIFIED)
             .dst(Ipv4Addr::BROADCAST)
-            / Udp::dhcp_client()
+            / Udp::dhcpv4_client()
             / Dhcpv4::discover(mac).xid(0xfeed_beef);
         let reply = Ipv4::new()
             .src(Ipv4Addr::new(192, 0, 2, 1))
             .dst(Ipv4Addr::BROADCAST)
-            / Udp::dhcp_server()
+            / Udp::dhcpv4_server()
             / Dhcpv4::offer(
                 mac,
                 Ipv4Addr::new(192, 0, 2, 100),
@@ -1025,7 +1025,7 @@ mod reply_matching {
         let wrong_xid = Ipv4::new()
             .src(Ipv4Addr::new(192, 0, 2, 1))
             .dst(Ipv4Addr::BROADCAST)
-            / Udp::dhcp_server()
+            / Udp::dhcpv4_server()
             / Dhcpv4::new()
                 .op(crate::BOOTP_REPLY)
                 .client_mac(mac)
@@ -1050,14 +1050,14 @@ mod reply_matching {
         let request = Ipv4::new()
             .src(Ipv4Addr::UNSPECIFIED)
             .dst(Ipv4Addr::BROADCAST)
-            / Udp::dhcp_client()
+            / Udp::dhcpv4_client()
             / Dhcpv4::discover(mac)
                 .xid(0xfeed_beef)
                 .client_id_value(client_id.clone());
         let reply = Ipv4::new()
             .src(Ipv4Addr::new(192, 0, 2, 1))
             .dst(Ipv4Addr::BROADCAST)
-            / Udp::dhcp_server()
+            / Udp::dhcpv4_server()
             / Dhcpv4::offer(
                 mac,
                 Ipv4Addr::new(192, 0, 2, 100),
@@ -1068,7 +1068,7 @@ mod reply_matching {
         let echoes_other_id = Ipv4::new()
             .src(Ipv4Addr::new(192, 0, 2, 1))
             .dst(Ipv4Addr::BROADCAST)
-            / Udp::dhcp_server()
+            / Udp::dhcpv4_server()
             / Dhcpv4::offer(
                 mac,
                 Ipv4Addr::new(192, 0, 2, 100),
@@ -1090,12 +1090,12 @@ mod reply_matching {
         let request = Ipv4::new()
             .src(Ipv4Addr::new(192, 0, 2, 9))
             .dst(Ipv4Addr::new(192, 0, 2, 1))
-            / Udp::dhcp_client()
+            / Udp::dhcpv4_client()
             / Dhcpv4::lease_query_by_ip(Ipv4Addr::new(192, 0, 2, 100)).xid(0x0c0f_fee0);
         let reply = Ipv4::new()
             .src(Ipv4Addr::new(192, 0, 2, 1))
             .dst(Ipv4Addr::new(192, 0, 2, 9))
-            / Udp::dhcp_server()
+            / Udp::dhcpv4_server()
             / Dhcpv4::new()
                 .op(crate::BOOTP_REPLY)
                 .message_type(Dhcpv4MessageType::LeaseActive)
@@ -1103,7 +1103,7 @@ mod reply_matching {
         let non_leasequery_reply = Ipv4::new()
             .src(Ipv4Addr::new(192, 0, 2, 1))
             .dst(Ipv4Addr::new(192, 0, 2, 9))
-            / Udp::dhcp_server()
+            / Udp::dhcpv4_server()
             / Dhcpv4::new()
                 .op(crate::BOOTP_REPLY)
                 .message_type(Dhcpv4MessageType::Ack)
@@ -1123,14 +1123,14 @@ mod reply_matching {
         let request = Ipv4::new()
             .src(Ipv4Addr::new(192, 0, 2, 9))
             .dst(Ipv4Addr::new(192, 0, 2, 1))
-            / Udp::dhcp_client()
+            / Udp::dhcpv4_client()
             / Dhcpv4::discover(mac)
                 .xid(0xfeed_beef)
                 .giaddr(Ipv4Addr::new(192, 0, 2, 9));
         let same_relay = Ipv4::new()
             .src(Ipv4Addr::new(192, 0, 2, 1))
             .dst(Ipv4Addr::new(192, 0, 2, 9))
-            / Udp::dhcp_server()
+            / Udp::dhcpv4_server()
             / Dhcpv4::offer(
                 mac,
                 Ipv4Addr::new(192, 0, 2, 100),
@@ -1141,7 +1141,7 @@ mod reply_matching {
         let other_relay = Ipv4::new()
             .src(Ipv4Addr::new(192, 0, 2, 1))
             .dst(Ipv4Addr::new(198, 51, 100, 9))
-            / Udp::dhcp_server()
+            / Udp::dhcpv4_server()
             / Dhcpv4::offer(
                 mac,
                 Ipv4Addr::new(192, 0, 2, 100),
@@ -1221,7 +1221,7 @@ mod dhcp_udp_binding {
         let dhcp = Ipv4::new()
             .src(Ipv4Addr::UNSPECIFIED)
             .dst(Ipv4Addr::BROADCAST)
-            / Udp::dhcp_client()
+            / Udp::dhcpv4_client()
             / Dhcpv4::discover(mac).xid(0xfeed_beef);
         let decoded_dhcp =
             Packet::decode_from_l3(NetworkLayer::Ipv4, dhcp.compile().unwrap().as_bytes()).unwrap();
