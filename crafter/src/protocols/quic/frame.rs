@@ -11,6 +11,60 @@ use super::{connection_id::QUIC_CONNECTION_ID_MAX_LEN, QuicConnectionId, QuicVar
 const QUIC_STATELESS_RESET_TOKEN_LEN: usize = 16;
 const QUIC_PATH_VALIDATION_DATA_LEN: usize = 8;
 
+/// QUIC transport error code: NO_ERROR.
+pub const QUIC_TRANSPORT_ERROR_NO_ERROR: QuicVarInt = QuicVarInt::from_u64_unchecked(0x00);
+/// QUIC transport error code: INTERNAL_ERROR.
+pub const QUIC_TRANSPORT_ERROR_INTERNAL_ERROR: QuicVarInt = QuicVarInt::from_u64_unchecked(0x01);
+/// QUIC transport error code: CONNECTION_REFUSED.
+pub const QUIC_TRANSPORT_ERROR_CONNECTION_REFUSED: QuicVarInt =
+    QuicVarInt::from_u64_unchecked(0x02);
+/// QUIC transport error code: FLOW_CONTROL_ERROR.
+pub const QUIC_TRANSPORT_ERROR_FLOW_CONTROL_ERROR: QuicVarInt =
+    QuicVarInt::from_u64_unchecked(0x03);
+/// QUIC transport error code: STREAM_LIMIT_ERROR.
+pub const QUIC_TRANSPORT_ERROR_STREAM_LIMIT_ERROR: QuicVarInt =
+    QuicVarInt::from_u64_unchecked(0x04);
+/// QUIC transport error code: STREAM_STATE_ERROR.
+pub const QUIC_TRANSPORT_ERROR_STREAM_STATE_ERROR: QuicVarInt =
+    QuicVarInt::from_u64_unchecked(0x05);
+/// QUIC transport error code: FINAL_SIZE_ERROR.
+pub const QUIC_TRANSPORT_ERROR_FINAL_SIZE_ERROR: QuicVarInt = QuicVarInt::from_u64_unchecked(0x06);
+/// QUIC transport error code: FRAME_ENCODING_ERROR.
+pub const QUIC_TRANSPORT_ERROR_FRAME_ENCODING_ERROR: QuicVarInt =
+    QuicVarInt::from_u64_unchecked(0x07);
+/// QUIC transport error code: TRANSPORT_PARAMETER_ERROR.
+pub const QUIC_TRANSPORT_ERROR_TRANSPORT_PARAMETER_ERROR: QuicVarInt =
+    QuicVarInt::from_u64_unchecked(0x08);
+/// QUIC transport error code: CONNECTION_ID_LIMIT_ERROR.
+pub const QUIC_TRANSPORT_ERROR_CONNECTION_ID_LIMIT_ERROR: QuicVarInt =
+    QuicVarInt::from_u64_unchecked(0x09);
+/// QUIC transport error code: PROTOCOL_VIOLATION.
+pub const QUIC_TRANSPORT_ERROR_PROTOCOL_VIOLATION: QuicVarInt =
+    QuicVarInt::from_u64_unchecked(0x0a);
+/// QUIC transport error code: INVALID_TOKEN.
+pub const QUIC_TRANSPORT_ERROR_INVALID_TOKEN: QuicVarInt = QuicVarInt::from_u64_unchecked(0x0b);
+/// QUIC transport error code: APPLICATION_ERROR.
+pub const QUIC_TRANSPORT_ERROR_APPLICATION_ERROR: QuicVarInt = QuicVarInt::from_u64_unchecked(0x0c);
+/// QUIC transport error code: CRYPTO_BUFFER_EXCEEDED.
+pub const QUIC_TRANSPORT_ERROR_CRYPTO_BUFFER_EXCEEDED: QuicVarInt =
+    QuicVarInt::from_u64_unchecked(0x0d);
+/// QUIC transport error code: KEY_UPDATE_ERROR.
+pub const QUIC_TRANSPORT_ERROR_KEY_UPDATE_ERROR: QuicVarInt = QuicVarInt::from_u64_unchecked(0x0e);
+/// QUIC transport error code: AEAD_LIMIT_REACHED.
+pub const QUIC_TRANSPORT_ERROR_AEAD_LIMIT_REACHED: QuicVarInt =
+    QuicVarInt::from_u64_unchecked(0x0f);
+/// QUIC transport error code: NO_VIABLE_PATH.
+pub const QUIC_TRANSPORT_ERROR_NO_VIABLE_PATH: QuicVarInt = QuicVarInt::from_u64_unchecked(0x10);
+/// QUIC transport error code: VERSION_NEGOTIATION_ERROR.
+pub const QUIC_TRANSPORT_ERROR_VERSION_NEGOTIATION_ERROR: QuicVarInt =
+    QuicVarInt::from_u64_unchecked(0x11);
+/// Start of the RFC 9000 CRYPTO_ERROR TLS alert-code range.
+pub const QUIC_TRANSPORT_ERROR_CRYPTO_ERROR_START: QuicVarInt =
+    QuicVarInt::from_u64_unchecked(0x0100);
+/// End of the RFC 9000 CRYPTO_ERROR TLS alert-code range.
+pub const QUIC_TRANSPORT_ERROR_CRYPTO_ERROR_END: QuicVarInt =
+    QuicVarInt::from_u64_unchecked(0x01ff);
+
 /// Core QUIC frame type families selected for packet-layer parsing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QuicKnownFrameType {
@@ -1813,6 +1867,203 @@ impl QuicPathResponseFrame {
     }
 }
 
+/// CONNECTION_CLOSE variant selected by the frame type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuicConnectionCloseKind {
+    /// Transport CONNECTION_CLOSE frame (`0x1c`).
+    Transport,
+    /// Application CONNECTION_CLOSE frame (`0x1d`).
+    Application,
+}
+
+impl QuicConnectionCloseKind {
+    /// Return the CONNECTION_CLOSE frame type for this variant.
+    pub const fn frame_type_value(self) -> u64 {
+        match self {
+            Self::Transport => 0x1c,
+            Self::Application => 0x1d,
+        }
+    }
+
+    /// Stable label for summaries and inspection.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Transport => "transport",
+            Self::Application => "application",
+        }
+    }
+}
+
+/// Parsed or buildable CONNECTION_CLOSE frame fields.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuicConnectionCloseFrame {
+    kind: QuicConnectionCloseKind,
+    error_code: QuicVarInt,
+    frame_type: Option<QuicVarInt>,
+    reason_length: Option<QuicVarInt>,
+    reason_phrase: Vec<u8>,
+}
+
+impl QuicConnectionCloseFrame {
+    /// Construct a transport CONNECTION_CLOSE frame with an auto-filled Reason Phrase Length.
+    pub fn transport(
+        error_code: QuicVarInt,
+        frame_type: QuicVarInt,
+        reason_phrase: impl AsRef<[u8]>,
+    ) -> Self {
+        Self {
+            kind: QuicConnectionCloseKind::Transport,
+            error_code,
+            frame_type: Some(frame_type),
+            reason_length: None,
+            reason_phrase: reason_phrase.as_ref().to_vec(),
+        }
+    }
+
+    /// Construct an application CONNECTION_CLOSE frame with an auto-filled Reason Phrase Length.
+    pub fn application(error_code: QuicVarInt, reason_phrase: impl AsRef<[u8]>) -> Self {
+        Self {
+            kind: QuicConnectionCloseKind::Application,
+            error_code,
+            frame_type: None,
+            reason_length: None,
+            reason_phrase: reason_phrase.as_ref().to_vec(),
+        }
+    }
+
+    /// Preserve an explicit Reason Phrase Length field, even when it does not match.
+    pub fn with_reason_length(mut self, reason_length: QuicVarInt) -> Self {
+        self.reason_length = Some(reason_length);
+        self
+    }
+
+    /// Return the CONNECTION_CLOSE variant.
+    pub const fn kind(&self) -> QuicConnectionCloseKind {
+        self.kind
+    }
+
+    /// Return the Error Code field.
+    pub const fn error_code(&self) -> QuicVarInt {
+        self.error_code
+    }
+
+    /// Return the transport triggering Frame Type when this is the transport variant.
+    pub const fn triggering_frame_type(&self) -> Option<QuicVarInt> {
+        self.frame_type
+    }
+
+    /// Return the advertised Reason Phrase Length field.
+    pub fn reason_length(&self) -> Result<QuicVarInt> {
+        match self.reason_length {
+            Some(reason_length) => Ok(reason_length),
+            None => QuicVarInt::new(u64::try_from(self.reason_phrase.len()).map_err(|_| {
+                CrafterError::invalid_field_value(
+                    "quic.frame.connection_close.reason_length",
+                    "reason phrase length exceeds u64",
+                )
+            })?),
+        }
+    }
+
+    /// Return a caller-pinned Reason Phrase Length field when present.
+    pub const fn reason_length_override(&self) -> Option<QuicVarInt> {
+        self.reason_length
+    }
+
+    /// Borrow the opaque Reason Phrase bytes.
+    pub fn reason_phrase(&self) -> &[u8] {
+        &self.reason_phrase
+    }
+
+    /// Return the Reason Phrase as UTF-8 when it is valid text.
+    pub fn reason_phrase_str(&self) -> Option<&str> {
+        core::str::from_utf8(&self.reason_phrase).ok()
+    }
+
+    /// Return a lossy UTF-8 rendering of the Reason Phrase.
+    pub fn reason_phrase_lossy(&self) -> String {
+        String::from_utf8_lossy(&self.reason_phrase).into_owned()
+    }
+
+    /// Decode one CONNECTION_CLOSE frame from bytes that include the Frame Type.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let bytes = bytes.as_ref();
+        let (frame, consumed) = decode_connection_close_frame(bytes)?;
+        if consumed != bytes.len() {
+            return Err(CrafterError::invalid_field_value(
+                "quic.frame.connection_close",
+                "CONNECTION_CLOSE frame has trailing bytes",
+            ));
+        }
+        Ok(frame)
+    }
+
+    /// Append the canonical CONNECTION_CLOSE frame encoding, preserving explicit Length.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        QuicVarInt::from_u64_unchecked(self.kind.frame_type_value()).encode(out)?;
+        self.error_code.encode(out)?;
+        if let Some(frame_type) = self.frame_type {
+            frame_type.encode(out)?;
+        }
+        self.reason_length()?.encode(out)?;
+        out.extend_from_slice(&self.reason_phrase);
+        Ok(())
+    }
+
+    /// Return the canonical CONNECTION_CLOSE frame encoding.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Stable CONNECTION_CLOSE summary for packet inspection.
+    pub fn summary(&self) -> String {
+        match self.kind {
+            QuicConnectionCloseKind::Transport => format!(
+                "kind=CONNECTION_CLOSE_TRANSPORT error_code=0x{:x} frame_type=0x{:x} reason_len={}",
+                self.error_code.value(),
+                self.frame_type.map(QuicVarInt::value).unwrap_or(0),
+                self.reason_phrase.len()
+            ),
+            QuicConnectionCloseKind::Application => format!(
+                "kind=CONNECTION_CLOSE_APPLICATION error_code=0x{:x} reason_len={}",
+                self.error_code.value(),
+                self.reason_phrase.len()
+            ),
+        }
+    }
+
+    /// Stable field/value pairs for CONNECTION_CLOSE inspection.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("connection_close_kind", self.kind.label().to_string()),
+            (
+                "connection_close_error_code",
+                format!("0x{:x}", self.error_code.value()),
+            ),
+            (
+                "connection_close_frame_type",
+                self.frame_type
+                    .map(|frame_type| format!("0x{:x}", frame_type.value()))
+                    .unwrap_or_else(|| "<none>".to_string()),
+            ),
+            (
+                "connection_close_reason_length",
+                self.reason_length()
+                    .map(|length| length.value().to_string())
+                    .unwrap_or_else(|_| "<invalid>".to_string()),
+            ),
+            (
+                "connection_close_reason_len",
+                self.reason_phrase.len().to_string(),
+            ),
+            ("connection_close_reason", hex_bytes(&self.reason_phrase)),
+            ("connection_close_reason_text", self.reason_phrase_lossy()),
+        ]
+    }
+}
+
 /// Raw-preserving QUIC frame.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct QuicFrame {
@@ -2090,6 +2341,35 @@ impl QuicFrame {
         Self::from_path_response_frame(QuicPathResponseFrame::new(data))
     }
 
+    /// Construct a CONNECTION_CLOSE frame from typed fields.
+    pub fn from_connection_close_frame(connection_close: QuicConnectionCloseFrame) -> Result<Self> {
+        Ok(Self::from_bytes(connection_close.encode_to_vec()?))
+    }
+
+    /// Construct a transport CONNECTION_CLOSE frame.
+    pub fn connection_close_transport(
+        error_code: QuicVarInt,
+        frame_type: QuicVarInt,
+        reason_phrase: impl AsRef<[u8]>,
+    ) -> Result<Self> {
+        Self::from_connection_close_frame(QuicConnectionCloseFrame::transport(
+            error_code,
+            frame_type,
+            reason_phrase,
+        ))
+    }
+
+    /// Construct an application CONNECTION_CLOSE frame.
+    pub fn connection_close_application(
+        error_code: QuicVarInt,
+        reason_phrase: impl AsRef<[u8]>,
+    ) -> Result<Self> {
+        Self::from_connection_close_frame(QuicConnectionCloseFrame::application(
+            error_code,
+            reason_phrase,
+        ))
+    }
+
     /// Decode a frame sequence within the caller-provided packet boundary.
     ///
     /// Supported fixed-boundary frames are split out first. The remaining
@@ -2212,6 +2492,13 @@ impl QuicFrame {
                 0x1b => {
                     let (_, path_response_len) = decode_path_response_frame(&bytes[offset..])?;
                     let end = offset + path_response_len;
+                    frames.push(Self::from_bytes(&bytes[offset..end]));
+                    offset = end;
+                }
+                0x1c | 0x1d => {
+                    let (_, connection_close_len) =
+                        decode_connection_close_frame(&bytes[offset..])?;
+                    let end = offset + connection_close_len;
                     frames.push(Self::from_bytes(&bytes[offset..end]));
                     offset = end;
                 }
@@ -2385,6 +2672,14 @@ impl QuicFrame {
         }
     }
 
+    /// Decode this frame as CONNECTION_CLOSE when applicable.
+    pub fn connection_close_frame(&self) -> Result<Option<QuicConnectionCloseFrame>> {
+        match self.frame_type_value() {
+            Some(0x1c | 0x1d) => Ok(Some(QuicConnectionCloseFrame::decode(&self.bytes)?)),
+            _ => Ok(None),
+        }
+    }
+
     /// Borrow the preserved frame bytes.
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes
@@ -2487,6 +2782,9 @@ impl QuicFrame {
         if let Ok(Some(path_response)) = self.path_response_frame() {
             return path_response.summary();
         }
+        if let Ok(Some(connection_close)) = self.connection_close_frame() {
+            return connection_close.summary();
+        }
         match self.frame_type() {
             Some(frame_type) => format!(
                 "kind={} type=0x{:x} raw_len={}",
@@ -2571,6 +2869,9 @@ impl QuicFrame {
         }
         if let Ok(Some(path_response)) = self.path_response_frame() {
             fields.extend(path_response.inspection_fields());
+        }
+        if let Ok(Some(connection_close)) = self.connection_close_frame() {
+            fields.extend(connection_close.inspection_fields());
         }
         fields
     }
@@ -3072,6 +3373,64 @@ fn decode_path_validation_data(
     let mut data = [0u8; QUIC_PATH_VALIDATION_DATA_LEN];
     data.copy_from_slice(&bytes[offset..offset + QUIC_PATH_VALIDATION_DATA_LEN]);
     Ok((data, offset + QUIC_PATH_VALIDATION_DATA_LEN))
+}
+
+fn decode_connection_close_frame(bytes: &[u8]) -> Result<(QuicConnectionCloseFrame, usize)> {
+    let (frame_type, mut offset) = decode_frame_varint(bytes, 0, "quic.frame.type")?;
+    let kind = match frame_type.value() {
+        0x1c => QuicConnectionCloseKind::Transport,
+        0x1d => QuicConnectionCloseKind::Application,
+        _ => {
+            return Err(CrafterError::invalid_field_value(
+                "quic.frame.connection_close.type",
+                "CONNECTION_CLOSE frame type must be 0x1c or 0x1d",
+            ))
+        }
+    };
+    let (error_code, next) =
+        decode_frame_varint(bytes, offset, "quic.frame.connection_close.error_code")?;
+    offset = next;
+
+    let triggering_frame_type = if kind == QuicConnectionCloseKind::Transport {
+        let (triggering_frame_type, next) =
+            decode_frame_varint(bytes, offset, "quic.frame.connection_close.frame_type")?;
+        offset = next;
+        Some(triggering_frame_type)
+    } else {
+        None
+    };
+
+    let (reason_length, next) =
+        decode_frame_varint(bytes, offset, "quic.frame.connection_close.reason_length")?;
+    offset = next;
+    let reason_len = usize::try_from(reason_length.value()).map_err(|_| {
+        CrafterError::invalid_field_value(
+            "quic.frame.connection_close.reason_length",
+            "length exceeds usize",
+        )
+    })?;
+    let available = bytes.len().saturating_sub(offset);
+    if available < reason_len {
+        return Err(CrafterError::buffer_too_short(
+            "quic.frame.connection_close.reason_phrase",
+            reason_len,
+            available,
+        ));
+    }
+    let end = offset + reason_len;
+    let frame = match kind {
+        QuicConnectionCloseKind::Transport => QuicConnectionCloseFrame::transport(
+            error_code,
+            triggering_frame_type.expect("transport close has a decoded frame type"),
+            &bytes[offset..end],
+        ),
+        QuicConnectionCloseKind::Application => {
+            QuicConnectionCloseFrame::application(error_code, &bytes[offset..end])
+        }
+    }
+    .with_reason_length(reason_length);
+
+    Ok((frame, end))
 }
 
 fn decode_frame_varint(
@@ -4074,6 +4433,98 @@ mod tests {
         assert_eq!(
             QuicFrame::decode_sequence([0x1b, 0, 1, 2, 3, 4, 5, 6]).unwrap_err(),
             CrafterError::buffer_too_short("quic.frame.path_response.data", 8, 7)
+        );
+    }
+
+    #[test]
+    fn quic_frame_connection_close_decodes_transport_application_and_continues_sequence(
+    ) -> crate::Result<()> {
+        let bytes = [
+            0x1c, 0x07, 0x08, 0x03, b'b', b'a', b'd', 0x1d, 0x0c, 0x02, b'n', b'o', 0x01,
+        ];
+
+        let frames = QuicFrame::decode_sequence(bytes)?;
+
+        assert_eq!(frames.len(), 3);
+        assert_eq!(
+            frames[0].kind(),
+            QuicFrameKind::Known(QuicKnownFrameType::ConnectionCloseTransport)
+        );
+        let transport = frames[0].connection_close_frame()?.unwrap();
+        assert_eq!(transport.kind(), QuicConnectionCloseKind::Transport);
+        assert_eq!(
+            transport.error_code(),
+            QUIC_TRANSPORT_ERROR_FRAME_ENCODING_ERROR
+        );
+        assert_eq!(transport.triggering_frame_type().unwrap().value(), 0x08);
+        assert_eq!(transport.reason_phrase_str(), Some("bad"));
+
+        assert_eq!(
+            frames[1].kind(),
+            QuicFrameKind::Known(QuicKnownFrameType::ConnectionCloseApplication)
+        );
+        let application = frames[1].connection_close_frame()?.unwrap();
+        assert_eq!(application.kind(), QuicConnectionCloseKind::Application);
+        assert_eq!(
+            application.error_code(),
+            QUIC_TRANSPORT_ERROR_APPLICATION_ERROR
+        );
+        assert_eq!(application.triggering_frame_type(), None);
+        assert_eq!(application.reason_phrase(), b"no");
+        assert!(frames[2].is_ping());
+        assert_eq!(QuicFrame::encode_sequence(frames), bytes);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_connection_close_serializes_unknown_error_codes() -> crate::Result<()> {
+        let frame = QuicFrame::connection_close_transport(
+            QuicVarInt::from_u64_unchecked(0x1234),
+            QuicVarInt::from_u64_unchecked(0xaf),
+            b"why",
+        )?;
+
+        assert_eq!(
+            frame.as_bytes(),
+            &[0x1c, 0x52, 0x34, 0x40, 0xaf, 0x03, b'w', b'h', b'y']
+        );
+        assert_eq!(
+            frame.summary(),
+            "kind=CONNECTION_CLOSE_TRANSPORT error_code=0x1234 frame_type=0xaf reason_len=3"
+        );
+        assert!(frame
+            .inspection_fields()
+            .contains(&("connection_close_reason_text", "why".to_string())));
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_connection_close_preserves_explicit_malformed_reason_length() -> crate::Result<()>
+    {
+        let frame =
+            QuicConnectionCloseFrame::application(QUIC_TRANSPORT_ERROR_APPLICATION_ERROR, b"oops")
+                .with_reason_length(v(1));
+
+        let encoded = frame.encode_to_vec()?;
+
+        assert_eq!(frame.reason_length_override(), Some(v(1)));
+        assert_eq!(encoded, [0x1d, 0x0c, 0x01, b'o', b'o', b'p', b's']);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_connection_close_malformed_reason_length_reports_structured_error() {
+        assert_eq!(
+            QuicFrame::decode_sequence([0x1d, 0x0c, 0x03, b'n']).unwrap_err(),
+            CrafterError::buffer_too_short("quic.frame.connection_close.reason_phrase", 3, 1)
+        );
+    }
+
+    #[test]
+    fn quic_frame_connection_close_malformed_varint_reports_structured_error() {
+        assert_eq!(
+            QuicFrame::decode_sequence([0x1c, 0x07, 0x40]).unwrap_err(),
+            CrafterError::buffer_too_short("quic.frame.connection_close.frame_type", 2, 1)
         );
     }
 }

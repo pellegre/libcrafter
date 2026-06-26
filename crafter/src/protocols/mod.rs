@@ -421,16 +421,27 @@ pub mod exports {
     pub use ospf::Ospf;
     pub use quic::constants::{QUIC_VERSION_1, QUIC_VERSION_2, QUIC_VERSION_NEGOTIATION};
     pub use quic::{
-        Quic, QuicAckEcnCounts, QuicAckFrame, QuicAckRange, QuicConnectionId, QuicCryptoFrame,
-        QuicDataBlockedFrame, QuicFrame, QuicFrameKind, QuicHandshakeBuilder, QuicInitialBuilder,
-        QuicKnownFrameType, QuicLongHeaderPacket, QuicMaxDataFrame, QuicMaxStreamDataFrame,
-        QuicMaxStreamsFrame, QuicNewConnectionIdFrame, QuicNewTokenFrame, QuicPacket,
-        QuicPacketNumber, QuicPathChallengeFrame, QuicPathResponseFrame, QuicResetStreamFrame,
+        Quic, QuicAckEcnCounts, QuicAckFrame, QuicAckRange, QuicConnectionCloseFrame,
+        QuicConnectionCloseKind, QuicConnectionId, QuicCryptoFrame, QuicDataBlockedFrame,
+        QuicFrame, QuicFrameKind, QuicHandshakeBuilder, QuicInitialBuilder, QuicKnownFrameType,
+        QuicLongHeaderPacket, QuicMaxDataFrame, QuicMaxStreamDataFrame, QuicMaxStreamsFrame,
+        QuicNewConnectionIdFrame, QuicNewTokenFrame, QuicPacket, QuicPacketNumber,
+        QuicPathChallengeFrame, QuicPathResponseFrame, QuicResetStreamFrame,
         QuicRetireConnectionIdFrame, QuicRetryBuilder, QuicRetryPacket, QuicShortHeaderBuilder,
         QuicShortHeaderPacket, QuicStopSendingFrame, QuicStreamDataBlockedFrame,
         QuicStreamDirection, QuicStreamFrame, QuicStreamsBlockedFrame, QuicTransportParameter,
         QuicVarInt, QuicVersionNegotiationBuilder, QuicVersionNegotiationPacket,
-        QuicZeroRttBuilder, QUIC_RETRY_INTEGRITY_TAG_LEN,
+        QuicZeroRttBuilder, QUIC_RETRY_INTEGRITY_TAG_LEN, QUIC_TRANSPORT_ERROR_AEAD_LIMIT_REACHED,
+        QUIC_TRANSPORT_ERROR_APPLICATION_ERROR, QUIC_TRANSPORT_ERROR_CONNECTION_ID_LIMIT_ERROR,
+        QUIC_TRANSPORT_ERROR_CONNECTION_REFUSED, QUIC_TRANSPORT_ERROR_CRYPTO_BUFFER_EXCEEDED,
+        QUIC_TRANSPORT_ERROR_CRYPTO_ERROR_END, QUIC_TRANSPORT_ERROR_CRYPTO_ERROR_START,
+        QUIC_TRANSPORT_ERROR_FINAL_SIZE_ERROR, QUIC_TRANSPORT_ERROR_FLOW_CONTROL_ERROR,
+        QUIC_TRANSPORT_ERROR_FRAME_ENCODING_ERROR, QUIC_TRANSPORT_ERROR_INTERNAL_ERROR,
+        QUIC_TRANSPORT_ERROR_INVALID_TOKEN, QUIC_TRANSPORT_ERROR_KEY_UPDATE_ERROR,
+        QUIC_TRANSPORT_ERROR_NO_ERROR, QUIC_TRANSPORT_ERROR_NO_VIABLE_PATH,
+        QUIC_TRANSPORT_ERROR_PROTOCOL_VIOLATION, QUIC_TRANSPORT_ERROR_STREAM_LIMIT_ERROR,
+        QUIC_TRANSPORT_ERROR_STREAM_STATE_ERROR, QUIC_TRANSPORT_ERROR_TRANSPORT_PARAMETER_ERROR,
+        QUIC_TRANSPORT_ERROR_VERSION_NEGOTIATION_ERROR,
     };
     pub use rip::ripng::{
         Ripng, RipngRte, RIPNG_COMMAND_REQUEST, RIPNG_COMMAND_RESPONSE, RIPNG_METRIC_INFINITY,
