@@ -1,6 +1,6 @@
 //! BER OBJECT IDENTIFIER support for SNMP packet values.
 //!
-//! Source-gated by `docs/snmp-rfc-manifest.md`; this module treats OIDs as
+//! Source-gated by `.agents/docs/snmp-rfc-manifest.md`; this module treats OIDs as
 //! ordered packet arcs and does not perform MIB name resolution.
 
 #![cfg_attr(not(test), allow(dead_code))]

@@ -1,7 +1,7 @@
 //! Internet Group Management Protocol (IGMP) support.
 //!
 //! IGMP is the IPv4 multicast group-management protocol. Source authority for
-//! this implementation is tracked in `docs/igmp-rfc-manifest.md`; field-level
+//! this implementation is tracked in `.agents/docs/igmp-rfc-manifest.md`; field-level
 //! behavior should be added only after the corresponding source-review step.
 //!
 //! This module starts as a private scaffold. Later steps add the typed header,

@@ -44,11 +44,9 @@ Per-protocol wire coverage for building and decoding packets.
   preservation, pcap fixtures, and the dry-run/live-lab boundary. SNMP support
   is not a scanner, manager, agent daemon, MIB engine, credential store, or
   VACM evaluator.
-- [RIP wire coverage](rip.md) — RIPv1/RIPv2 and RIPng message construction,
-  route entries, authentication, UDP/520 and UDP/521 decode dispatch, and the
-  offline/live surfaces. Source mapping:
-  [RIP RFC manifest](rip-rfc-manifest.md) and
-  [RIP implementation inventory](rip-implementation-inventory.md).
+- [RIP wire coverage](guide/rip.md) — RIPv1/RIPv2 and RIPng message
+  construction, route entries, authentication, UDP/520 and UDP/521 decode
+  dispatch, and the offline/live surfaces.
 - [Dot11 wire coverage](guide/dot11.md) — bare IEEE 802.11, radiotap, LLC/SNAP,
   EAPOL, RSN foundations, pcap link types, and the dry-run/manual live boundary.
 - [BLE advertising wire coverage](guide/ble.md) — BLE radio pseudo-header,

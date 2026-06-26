@@ -1,6 +1,6 @@
 # SNMP source scope
 
-This note turns `docs/snmp-rfc-manifest.md` into an implementation scope for
+This note turns `.agents/docs/snmp-rfc-manifest.md` into an implementation scope for
 SNMP work in `crafter`. The crate may model SNMP packet bytes, compile them,
 decode them, preserve unknown but well-formed values, and validate them through
 offline and provider-backed packet workflows. It must not become an SNMP
@@ -8,7 +8,7 @@ manager, scanner, trap receiver, MIB engine, credential store, or policy
 implementation.
 
 Before adding any SNMP tag, PDU, value type, security field, transport mapping,
-oracle expectation, or live probe behavior, update `docs/snmp-rfc-manifest.md`
+oracle expectation, or live probe behavior, update `.agents/docs/snmp-rfc-manifest.md`
 with the RFC section, IANA registry row, Datatracker/RFC-Editor relationship, or
 errata record that authorizes the exact wire fact. If the manifest does not
 support the behavior, stop the slice as unsupported instead of guessing.

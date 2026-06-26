@@ -1,6 +1,6 @@
 //! SNMP registry metadata.
 //!
-//! Source-gated by `docs/snmp-rfc-manifest.md`; this module does not register
+//! Source-gated by `.agents/docs/snmp-rfc-manifest.md`; this module does not register
 //! UDP dispatch or expose payload detection.
 
 #![cfg_attr(not(test), allow(dead_code))]
@@ -47,7 +47,7 @@ pub struct SnmpUdpPortMeta {
 
 /// Return source-backed metadata for SNMP UDP ports.
 ///
-/// Source: `docs/snmp-rfc-manifest.md` records the IANA Service Name and
+/// Source: `.agents/docs/snmp-rfc-manifest.md` records the IANA Service Name and
 /// Transport Protocol Port Number Registry rows for `snmp`/UDP and
 /// `snmptrap`/UDP, plus RFC 3417 Section 3 for UDP/IPv4 SNMP messages.
 pub const fn snmp_udp_port_meta(port: u16) -> Option<SnmpUdpPortMeta> {
@@ -88,15 +88,15 @@ pub fn snmp_udp_port_summary(port: u16) -> String {
 
 /// SNMPv3 msgFlags authFlag bit.
 ///
-/// Source: `docs/snmp-rfc-manifest.md` records RFC 3412 Section 6.4.
+/// Source: `.agents/docs/snmp-rfc-manifest.md` records RFC 3412 Section 6.4.
 pub const SNMP_V3_FLAG_AUTH: u8 = 0x01;
 /// SNMPv3 msgFlags privFlag bit.
 ///
-/// Source: `docs/snmp-rfc-manifest.md` records RFC 3412 Section 6.4.
+/// Source: `.agents/docs/snmp-rfc-manifest.md` records RFC 3412 Section 6.4.
 pub const SNMP_V3_FLAG_PRIVACY: u8 = 0x02;
 /// SNMPv3 msgFlags reportableFlag bit.
 ///
-/// Source: `docs/snmp-rfc-manifest.md` records RFC 3412 Section 6.4.
+/// Source: `.agents/docs/snmp-rfc-manifest.md` records RFC 3412 Section 6.4.
 pub const SNMP_V3_FLAG_REPORTABLE: u8 = 0x04;
 /// Source-backed SNMPv3 msgFlags bits currently named by RFC 3412.
 pub const SNMP_V3_FLAG_KNOWN_MASK: u8 =
@@ -323,7 +323,7 @@ impl fmt::Display for SnmpSecurityModel {
 
 /// Return source-backed metadata for an SNMPv3 security model value.
 ///
-/// Source: `docs/snmp-rfc-manifest.md` records the IANA SNMP Number Spaces
+/// Source: `.agents/docs/snmp-rfc-manifest.md` records the IANA SNMP Number Spaces
 /// Security Models rows: 0 reserved for any, 1 SNMPv1, 2 SNMPv2c, 3 USM,
 /// 4 TSM, and 5-255 unassigned.
 pub const fn snmp_security_model_meta(code: i64) -> SnmpSecurityModelMeta {
@@ -371,97 +371,97 @@ pub fn snmp_security_model_summary(code: i64) -> String {
 
 /// noError(0) error-status value.
 ///
-/// Source: `docs/snmp-rfc-manifest.md` records RFC 1157 Section 4.1.1 and
+/// Source: `.agents/docs/snmp-rfc-manifest.md` records RFC 1157 Section 4.1.1 and
 /// RFC 3416 Section 3 as error-status authority.
 pub const SNMP_ERROR_STATUS_NO_ERROR: i64 = 0;
 /// tooBig(1) error-status value.
 ///
-/// Source: `docs/snmp-rfc-manifest.md` records RFC 1157 Section 4.1.1 and
+/// Source: `.agents/docs/snmp-rfc-manifest.md` records RFC 1157 Section 4.1.1 and
 /// RFC 3416 Section 3 as error-status authority.
 pub const SNMP_ERROR_STATUS_TOO_BIG: i64 = 1;
 /// noSuchName(2) error-status value.
 ///
-/// Source: `docs/snmp-rfc-manifest.md` records RFC 1157 Section 4.1.1 and
+/// Source: `.agents/docs/snmp-rfc-manifest.md` records RFC 1157 Section 4.1.1 and
 /// RFC 3416 Section 3 as error-status authority.
 pub const SNMP_ERROR_STATUS_NO_SUCH_NAME: i64 = 2;
 /// badValue(3) error-status value.
 ///
-/// Source: `docs/snmp-rfc-manifest.md` records RFC 1157 Section 4.1.1 and
+/// Source: `.agents/docs/snmp-rfc-manifest.md` records RFC 1157 Section 4.1.1 and
 /// RFC 3416 Section 3 as error-status authority.
 pub const SNMP_ERROR_STATUS_BAD_VALUE: i64 = 3;
 /// readOnly(4) error-status value.
 ///
-/// Source: `docs/snmp-rfc-manifest.md` records RFC 1157 Section 4.1.1 and
+/// Source: `.agents/docs/snmp-rfc-manifest.md` records RFC 1157 Section 4.1.1 and
 /// RFC 3416 Section 3 as error-status authority.
 pub const SNMP_ERROR_STATUS_READ_ONLY: i64 = 4;
 /// genErr(5) error-status value.
 ///
-/// Source: `docs/snmp-rfc-manifest.md` records RFC 1157 Section 4.1.1 and
+/// Source: `.agents/docs/snmp-rfc-manifest.md` records RFC 1157 Section 4.1.1 and
 /// RFC 3416 Section 3 as error-status authority.
 pub const SNMP_ERROR_STATUS_GEN_ERR: i64 = 5;
 /// noAccess(6) error-status value.
 ///
-/// Source: `docs/snmp-rfc-manifest.md` records RFC 3416 Section 3 as
+/// Source: `.agents/docs/snmp-rfc-manifest.md` records RFC 3416 Section 3 as
 /// error-status authority.
 pub const SNMP_ERROR_STATUS_NO_ACCESS: i64 = 6;
 /// wrongType(7) error-status value.
 ///
-/// Source: `docs/snmp-rfc-manifest.md` records RFC 3416 Section 3 as
+/// Source: `.agents/docs/snmp-rfc-manifest.md` records RFC 3416 Section 3 as
 /// error-status authority.
 pub const SNMP_ERROR_STATUS_WRONG_TYPE: i64 = 7;
 /// wrongLength(8) error-status value.
 ///
-/// Source: `docs/snmp-rfc-manifest.md` records RFC 3416 Section 3 as
+/// Source: `.agents/docs/snmp-rfc-manifest.md` records RFC 3416 Section 3 as
 /// error-status authority.
 pub const SNMP_ERROR_STATUS_WRONG_LENGTH: i64 = 8;
 /// wrongEncoding(9) error-status value.
 ///
-/// Source: `docs/snmp-rfc-manifest.md` records RFC 3416 Section 3 as
+/// Source: `.agents/docs/snmp-rfc-manifest.md` records RFC 3416 Section 3 as
 /// error-status authority.
 pub const SNMP_ERROR_STATUS_WRONG_ENCODING: i64 = 9;
 /// wrongValue(10) error-status value.
 ///
-/// Source: `docs/snmp-rfc-manifest.md` records RFC 3416 Section 3 as
+/// Source: `.agents/docs/snmp-rfc-manifest.md` records RFC 3416 Section 3 as
 /// error-status authority.
 pub const SNMP_ERROR_STATUS_WRONG_VALUE: i64 = 10;
 /// noCreation(11) error-status value.
 ///
-/// Source: `docs/snmp-rfc-manifest.md` records RFC 3416 Section 3 as
+/// Source: `.agents/docs/snmp-rfc-manifest.md` records RFC 3416 Section 3 as
 /// error-status authority.
 pub const SNMP_ERROR_STATUS_NO_CREATION: i64 = 11;
 /// inconsistentValue(12) error-status value.
 ///
-/// Source: `docs/snmp-rfc-manifest.md` records RFC 3416 Section 3 as
+/// Source: `.agents/docs/snmp-rfc-manifest.md` records RFC 3416 Section 3 as
 /// error-status authority.
 pub const SNMP_ERROR_STATUS_INCONSISTENT_VALUE: i64 = 12;
 /// resourceUnavailable(13) error-status value.
 ///
-/// Source: `docs/snmp-rfc-manifest.md` records RFC 3416 Section 3 as
+/// Source: `.agents/docs/snmp-rfc-manifest.md` records RFC 3416 Section 3 as
 /// error-status authority.
 pub const SNMP_ERROR_STATUS_RESOURCE_UNAVAILABLE: i64 = 13;
 /// commitFailed(14) error-status value.
 ///
-/// Source: `docs/snmp-rfc-manifest.md` records RFC 3416 Section 3 as
+/// Source: `.agents/docs/snmp-rfc-manifest.md` records RFC 3416 Section 3 as
 /// error-status authority.
 pub const SNMP_ERROR_STATUS_COMMIT_FAILED: i64 = 14;
 /// undoFailed(15) error-status value.
 ///
-/// Source: `docs/snmp-rfc-manifest.md` records RFC 3416 Section 3 as
+/// Source: `.agents/docs/snmp-rfc-manifest.md` records RFC 3416 Section 3 as
 /// error-status authority.
 pub const SNMP_ERROR_STATUS_UNDO_FAILED: i64 = 15;
 /// authorizationError(16) error-status value.
 ///
-/// Source: `docs/snmp-rfc-manifest.md` records RFC 3416 Section 3 as
+/// Source: `.agents/docs/snmp-rfc-manifest.md` records RFC 3416 Section 3 as
 /// error-status authority.
 pub const SNMP_ERROR_STATUS_AUTHORIZATION_ERROR: i64 = 16;
 /// notWritable(17) error-status value.
 ///
-/// Source: `docs/snmp-rfc-manifest.md` records RFC 3416 Section 3 as
+/// Source: `.agents/docs/snmp-rfc-manifest.md` records RFC 3416 Section 3 as
 /// error-status authority.
 pub const SNMP_ERROR_STATUS_NOT_WRITABLE: i64 = 17;
 /// inconsistentName(18) error-status value.
 ///
-/// Source: `docs/snmp-rfc-manifest.md` records RFC 3416 Section 3 as
+/// Source: `.agents/docs/snmp-rfc-manifest.md` records RFC 3416 Section 3 as
 /// error-status authority.
 pub const SNMP_ERROR_STATUS_INCONSISTENT_NAME: i64 = 18;
 
@@ -565,7 +565,7 @@ impl fmt::Display for SnmpErrorStatus {
 /// Return source-backed metadata for an SNMP PDU error-status value.
 ///
 /// Source: RFC 1157 Section 4.1.1 and RFC 3416 Section 3, both recorded in
-/// `docs/snmp-rfc-manifest.md`.
+/// `.agents/docs/snmp-rfc-manifest.md`.
 pub const fn snmp_error_status_meta(code: i64) -> SnmpErrorStatusMeta {
     let (name, status) = match code {
         SNMP_ERROR_STATUS_NO_ERROR => ("no-error", SnmpErrorStatusAssignment::Assigned),
@@ -723,7 +723,7 @@ mod tests {
             (constants::SNMP_TRAP_PORT, "snmptrap", "notification"),
         ];
 
-        // Source-backed: docs/snmp-rfc-manifest.md records the IANA service
+        // Source-backed: .agents/docs/snmp-rfc-manifest.md records the IANA service
         // name registry rows for UDP/161 `snmp` and UDP/162 `snmptrap`; RFC
         // 3417 Section 3 records the preferred UDP/IPv4 mapping for messages.
         assert_eq!(constants::SNMP_PORT, 161);
@@ -751,7 +751,7 @@ mod tests {
             SNMP_V3_FLAG_AUTH | SNMP_V3_FLAG_PRIVACY | SNMP_V3_FLAG_REPORTABLE | 0x80,
         );
 
-        // Source-backed: docs/snmp-rfc-manifest.md records RFC 3412 Section
+        // Source-backed: .agents/docs/snmp-rfc-manifest.md records RFC 3412 Section
         // 6.4 for authFlag, privFlag, reportableFlag, reserved msgFlags bits,
         // and the reserved privFlag-without-authFlag combination.
         assert_eq!(flags.bits(), 0x87);
@@ -807,7 +807,7 @@ mod tests {
             ),
         ];
 
-        // Source-backed: docs/snmp-rfc-manifest.md records the IANA SNMP
+        // Source-backed: .agents/docs/snmp-rfc-manifest.md records the IANA SNMP
         // Number Spaces Security Models rows.
         for (code, name, status) in cases {
             let meta = snmp_security_model_meta(code);
@@ -921,7 +921,7 @@ mod tests {
             (SNMP_ERROR_STATUS_INCONSISTENT_NAME, "inconsistent-name"),
         ];
 
-        // Source-backed: docs/snmp-rfc-manifest.md records RFC 1157 Section
+        // Source-backed: .agents/docs/snmp-rfc-manifest.md records RFC 1157 Section
         // 4.1.1 for values 0 through 5 and RFC 3416 Section 3 for values
         // 0 through 18.
         for (code, name) in cases {

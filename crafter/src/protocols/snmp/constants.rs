@@ -1,6 +1,6 @@
 //! SNMP constants.
 //!
-//! Source-gated by `docs/snmp-rfc-manifest.md`.
+//! Source-gated by `.agents/docs/snmp-rfc-manifest.md`.
 
 /// SNMP message UDP port.
 ///

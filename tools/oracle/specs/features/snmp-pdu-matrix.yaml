@@ -276,7 +276,7 @@ source_refs:
   - RFC 3412
   - RFC 3416
   - RFC 3418
-  - docs/snmp-rfc-manifest.md
+  - .agents/docs/snmp-rfc-manifest.md
 
 notes:
   - >-

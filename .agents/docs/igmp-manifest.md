@@ -3,7 +3,7 @@
 Reviewed: 2026-06-19
 
 This is the agent-facing source handoff for IGMP work in `crafter`. The full
-review record is in `docs/igmp-rfc-manifest.md`.
+review record is in `.agents/docs/igmp-rfc-manifest.md`.
 
 ## Retrieval Summary
 

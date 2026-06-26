@@ -292,7 +292,7 @@ tools/probe/run --provider qemu --dry-run --profile rip-smoke --seed 1
 
 Live runs are intended for disposable provider-backed lab endpoints, not the
 developer host. For the agent-facing live procedure and generated-tool guidance,
-see [`.agents/docs/cookbook.md`](../.agents/docs/cookbook.md).
+see [`.agents/docs/cookbook.md`](../../.agents/docs/cookbook.md).
 
 ## Explicit Exclusions
 

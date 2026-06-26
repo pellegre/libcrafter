@@ -1385,7 +1385,7 @@ provision a provider-backed routing daemon through a `lab-session` (see Live-Lab
 Sending and the `lab-session` skill); collect artifacts and tear the session
 down afterward. The RIP target-service assets live under
 `tools/probe/target_services/rip/`. For the user-facing coverage boundary, see
-[`docs/rip.md`](../../docs/rip.md), and for the RFC/IANA source mapping see
+[`docs/guide/rip.md`](../../docs/guide/rip.md), and for the RFC/IANA source mapping see
 [`.agents/docs/rip-manifest.md`](rip-manifest.md).
 
 ## Build IPSec (ESP, AH, IKEv2)

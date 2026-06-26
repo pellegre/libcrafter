@@ -42,7 +42,7 @@ fn snmpv3_golden_plaintext_scoped_pdu_decodes_minimal_get_request() -> crafter::
         0x02, 0x01, 0x01, 0x02, 0x01, 0x00, 0x02, 0x01, 0x00, 0x30, 0x00,
     ];
 
-    // Source-backed: docs/snmp-rfc-manifest.md records RFC 3412 Section 6 for
+    // Source-backed: .agents/docs/snmp-rfc-manifest.md records RFC 3412 Section 6 for
     // SNMPv3Message, HeaderData, and plaintext ScopedPDU.
     let message = Snmp::v3(
         1,

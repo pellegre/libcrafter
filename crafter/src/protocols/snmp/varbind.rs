@@ -1,6 +1,6 @@
 //! SNMP variable binding support.
 //!
-//! Source-gated by `docs/snmp-rfc-manifest.md`; this module models one
+//! Source-gated by `.agents/docs/snmp-rfc-manifest.md`; this module models one
 //! VarBind as packet bytes only and does not perform MIB lookup.
 
 use super::{ber, oid::SnmpOid, value::SnmpValue};
@@ -468,7 +468,7 @@ mod tests {
         let name = SnmpOid::from_dotted("1.3.6.1.2.1.1.3.0")?;
         let varbind = SnmpVarBind::request_null(name.clone());
 
-        // Source-backed: docs/snmp-rfc-manifest.md records RFC 1157 Section
+        // Source-backed: .agents/docs/snmp-rfc-manifest.md records RFC 1157 Section
         // 4.1.1 and RFC 3416 Section 3 for VarBind as `{ name, value }`, with
         // NULL used by request variable bindings that carry no supplied value.
         let expected = [
@@ -505,7 +505,7 @@ mod tests {
         let name = SnmpOid::from_dotted("1.3.6.1.2.1.1.3.0")?;
         let varbind = SnmpVarBind::time_ticks(name.clone(), 12_345);
 
-        // Source-backed: docs/snmp-rfc-manifest.md records RFC 2578 Section
+        // Source-backed: .agents/docs/snmp-rfc-manifest.md records RFC 2578 Section
         // 7.1.9 and RFC 3416 Section 3 for TimeTicks as an application value
         // that can appear in a response VarBind value choice.
         let expected = [
@@ -618,7 +618,7 @@ mod tests {
     fn snmp_varbind_list_empty_compiles_and_decodes() -> Result<()> {
         let list = SnmpVarBindList::empty();
 
-        // Source-backed: docs/snmp-rfc-manifest.md records RFC 1157 Section
+        // Source-backed: .agents/docs/snmp-rfc-manifest.md records RFC 1157 Section
         // 4.1.1 and RFC 3416 Section 3 for VarBindList as an ordered
         // SEQUENCE OF VarBind, which may be empty at the BER layer.
         assert_eq!(list.compile()?, [0x30, 0x00]);

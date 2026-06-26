@@ -8,7 +8,7 @@
 //! evaluator, or live workflow.
 //!
 //! Source gate: any SNMP wire behavior added here must first be authorized by
-//! `docs/snmp-rfc-manifest.md`.
+//! `.agents/docs/snmp-rfc-manifest.md`.
 //!
 //! Build an SNMP message as one layer in an IPv4/UDP packet, compile it, print
 //! packet inspection text, and decode the bytes back through the L3 entrypoint:
@@ -174,7 +174,7 @@ mod tests {
             ),
         ];
 
-        // Source-backed: docs/snmp-rfc-manifest.md, RFC 3417 Section 8
+        // Source-backed: .agents/docs/snmp-rfc-manifest.md, RFC 3417 Section 8
         // records SNMP BER definite-length encoding and constructed SEQUENCE
         // form; RFC 3416 Section 3 records application and PDU tag choices.
         for (tag, expected_octet) in identifier_cases {
@@ -195,7 +195,7 @@ mod tests {
             (256, &[0x82, 0x01, 0x00]),
         ];
 
-        // Source-backed: docs/snmp-rfc-manifest.md, RFC 3417 Sections 8 and
+        // Source-backed: .agents/docs/snmp-rfc-manifest.md, RFC 3417 Sections 8 and
         // 8.1 record definite length form and permit non-minimal long-form
         // length decoding while the encoder emits minimal definite lengths.
         for (length, expected) in length_cases {
@@ -226,7 +226,7 @@ mod tests {
         let mut encoded = Vec::new();
         ber::encode_sequence(&content, &mut encoded)?;
 
-        // Source-backed: docs/snmp-rfc-manifest.md, RFC 3417 Section 8
+        // Source-backed: .agents/docs/snmp-rfc-manifest.md, RFC 3417 Section 8
         // records primitive form for simple types and constructed form for
         // SEQUENCE under SNMP BER restrictions.
         assert_eq!(
@@ -253,7 +253,7 @@ mod tests {
         let oid = SnmpOid::from_slice(&[1, 3, 6, 1, 2, 1, 1, 3, 0])?;
         let encoded = oid.to_bytes()?;
 
-        // Source-backed: docs/snmp-rfc-manifest.md, RFC 2578 Section 3.5
+        // Source-backed: .agents/docs/snmp-rfc-manifest.md, RFC 2578 Section 3.5
         // records OBJECT IDENTIFIER values as ordered sub-identifiers.
         assert_eq!(
             encoded,
@@ -299,7 +299,7 @@ mod tests {
             ),
         ];
 
-        // Source-backed: docs/snmp-rfc-manifest.md, RFC 2578 Sections 7.1.5
+        // Source-backed: .agents/docs/snmp-rfc-manifest.md, RFC 2578 Sections 7.1.5
         // through 7.1.11 and RFC 3416 Section 3 record the SNMP application
         // value tags used by these BER fixtures.
         for (value, expected) in cases {

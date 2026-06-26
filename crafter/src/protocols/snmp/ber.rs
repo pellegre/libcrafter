@@ -1,6 +1,6 @@
 //! BER TLV scaffolding for SNMP.
 //!
-//! Source-gated by `docs/snmp-rfc-manifest.md`.
+//! Source-gated by `.agents/docs/snmp-rfc-manifest.md`.
 
 #![cfg_attr(not(test), allow(dead_code))]
 

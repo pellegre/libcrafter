@@ -49,7 +49,7 @@ fn snmp_golden_v1_get_request_roundtrips() -> crafter::Result<()> {
     let varbind = SnmpVarBind::null(oid("1.3.6.1.2.1.1.3.0")?);
     let message = Snmp::v1_get_request(b"public".to_vec(), 7, SnmpVarBindList::new(vec![varbind]))?;
 
-    // Source-backed: docs/snmp-rfc-manifest.md records RFC 1157 Section 4.1.2
+    // Source-backed: .agents/docs/snmp-rfc-manifest.md records RFC 1157 Section 4.1.2
     // for GetRequest-PDU and RFC 1157 Section 4.1 for the message wrapper.
     assert_message_case(MessageCase {
         name: "v1-get-request",
@@ -91,7 +91,7 @@ fn snmp_golden_v1_trap_roundtrips() -> crafter::Result<()> {
         SnmpVarBindList::new(vec![varbind]),
     )?;
 
-    // Source-backed: docs/snmp-rfc-manifest.md records RFC 1157 Section 4.1.6
+    // Source-backed: .agents/docs/snmp-rfc-manifest.md records RFC 1157 Section 4.1.6
     // for Trap-PDU fields.
     assert_message_case(MessageCase {
         name: "v1-trap",
@@ -133,7 +133,7 @@ fn snmp_golden_v2c_get_bulk_roundtrips() -> crafter::Result<()> {
         SnmpVarBindList::new(vec![varbind]),
     )?;
 
-    // Source-backed: docs/snmp-rfc-manifest.md records RFC 3416 Sections 3
+    // Source-backed: .agents/docs/snmp-rfc-manifest.md records RFC 3416 Sections 3
     // and 4.2.3 for GetBulkRequest-PDU.
     assert_message_case(MessageCase {
         name: "v2c-get-bulk",
