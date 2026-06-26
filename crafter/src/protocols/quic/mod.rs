@@ -29,8 +29,8 @@ pub use frame::{
     QuicAckEcnCounts, QuicAckFrame, QuicAckRange, QuicCryptoFrame, QuicDataBlockedFrame, QuicFrame,
     QuicFrameKind, QuicKnownFrameType, QuicMaxDataFrame, QuicMaxStreamDataFrame,
     QuicMaxStreamsFrame, QuicNewConnectionIdFrame, QuicNewTokenFrame, QuicResetStreamFrame,
-    QuicStopSendingFrame, QuicStreamDataBlockedFrame, QuicStreamDirection, QuicStreamFrame,
-    QuicStreamsBlockedFrame,
+    QuicRetireConnectionIdFrame, QuicStopSendingFrame, QuicStreamDataBlockedFrame,
+    QuicStreamDirection, QuicStreamFrame, QuicStreamsBlockedFrame,
 };
 pub use header::QuicHeader;
 pub use packet::{

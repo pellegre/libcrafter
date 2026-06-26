@@ -1636,6 +1636,72 @@ impl QuicNewConnectionIdFrame {
     }
 }
 
+/// Parsed RETIRE_CONNECTION_ID frame fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QuicRetireConnectionIdFrame {
+    sequence_number: QuicVarInt,
+}
+
+impl QuicRetireConnectionIdFrame {
+    /// Construct a RETIRE_CONNECTION_ID frame from a caller-supplied varint.
+    pub const fn new(sequence_number: QuicVarInt) -> Self {
+        Self { sequence_number }
+    }
+
+    /// Construct a RETIRE_CONNECTION_ID frame from a validated integer value.
+    pub fn from_value(sequence_number: u64) -> Result<Self> {
+        Ok(Self::new(QuicVarInt::new(sequence_number)?))
+    }
+
+    /// Return the Sequence Number field.
+    pub const fn sequence_number(self) -> QuicVarInt {
+        self.sequence_number
+    }
+
+    /// Decode one RETIRE_CONNECTION_ID frame from bytes that include the Frame Type.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let bytes = bytes.as_ref();
+        let (frame, consumed) = decode_retire_connection_id_frame(bytes)?;
+        if consumed != bytes.len() {
+            return Err(CrafterError::invalid_field_value(
+                "quic.frame.retire_connection_id",
+                "RETIRE_CONNECTION_ID frame has trailing bytes",
+            ));
+        }
+        Ok(frame)
+    }
+
+    /// Append the canonical RETIRE_CONNECTION_ID frame encoding.
+    pub fn encode(self, out: &mut Vec<u8>) -> Result<()> {
+        QuicVarInt::from_u64_unchecked(0x19).encode(out)?;
+        self.sequence_number.encode(out)?;
+        Ok(())
+    }
+
+    /// Return the canonical RETIRE_CONNECTION_ID frame encoding.
+    pub fn encode_to_vec(self) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Stable RETIRE_CONNECTION_ID summary for packet inspection.
+    pub fn summary(self) -> String {
+        format!(
+            "kind=RETIRE_CONNECTION_ID sequence_number={}",
+            self.sequence_number.value()
+        )
+    }
+
+    /// Stable field/value pairs for RETIRE_CONNECTION_ID inspection.
+    pub fn inspection_fields(self) -> Vec<(&'static str, String)> {
+        vec![(
+            "retire_connection_id_sequence_number",
+            self.sequence_number.value().to_string(),
+        )]
+    }
+}
+
 /// Raw-preserving QUIC frame.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct QuicFrame {
@@ -1881,6 +1947,18 @@ impl QuicFrame {
         ))
     }
 
+    /// Construct a RETIRE_CONNECTION_ID frame from typed fields.
+    pub fn from_retire_connection_id_frame(
+        retire_connection_id: QuicRetireConnectionIdFrame,
+    ) -> Result<Self> {
+        Ok(Self::from_bytes(retire_connection_id.encode_to_vec()?))
+    }
+
+    /// Construct a RETIRE_CONNECTION_ID frame from a caller-supplied varint.
+    pub fn retire_connection_id(sequence_number: QuicVarInt) -> Result<Self> {
+        Self::from_retire_connection_id_frame(QuicRetireConnectionIdFrame::new(sequence_number))
+    }
+
     /// Decode a frame sequence within the caller-provided packet boundary.
     ///
     /// Supported fixed-boundary frames are split out first. The remaining
@@ -1984,6 +2062,13 @@ impl QuicFrame {
                     let (_, new_connection_id_len) =
                         decode_new_connection_id_frame(&bytes[offset..])?;
                     let end = offset + new_connection_id_len;
+                    frames.push(Self::from_bytes(&bytes[offset..end]));
+                    offset = end;
+                }
+                0x19 => {
+                    let (_, retire_connection_id_len) =
+                        decode_retire_connection_id_frame(&bytes[offset..])?;
+                    let end = offset + retire_connection_id_len;
                     frames.push(Self::from_bytes(&bytes[offset..end]));
                     offset = end;
                 }
@@ -2133,6 +2218,14 @@ impl QuicFrame {
         }
     }
 
+    /// Decode this frame as RETIRE_CONNECTION_ID when applicable.
+    pub fn retire_connection_id_frame(&self) -> Result<Option<QuicRetireConnectionIdFrame>> {
+        match self.frame_type_value() {
+            Some(0x19) => Ok(Some(QuicRetireConnectionIdFrame::decode(&self.bytes)?)),
+            _ => Ok(None),
+        }
+    }
+
     /// Borrow the preserved frame bytes.
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes
@@ -2226,6 +2319,9 @@ impl QuicFrame {
         if let Ok(Some(new_connection_id)) = self.new_connection_id_frame() {
             return new_connection_id.summary();
         }
+        if let Ok(Some(retire_connection_id)) = self.retire_connection_id_frame() {
+            return retire_connection_id.summary();
+        }
         match self.frame_type() {
             Some(frame_type) => format!(
                 "kind={} type=0x{:x} raw_len={}",
@@ -2301,6 +2397,9 @@ impl QuicFrame {
         }
         if let Ok(Some(new_connection_id)) = self.new_connection_id_frame() {
             fields.extend(new_connection_id.inspection_fields());
+        }
+        if let Ok(Some(retire_connection_id)) = self.retire_connection_id_frame() {
+            fields.extend(retire_connection_id.inspection_fields());
         }
         fields
     }
@@ -2738,6 +2837,24 @@ fn validate_new_connection_id_len(len: usize) -> Result<()> {
             "NEW_CONNECTION_ID connection ID length must be 1..=20",
         ))
     }
+}
+
+fn decode_retire_connection_id_frame(bytes: &[u8]) -> Result<(QuicRetireConnectionIdFrame, usize)> {
+    let (frame_type, mut offset) = decode_frame_varint(bytes, 0, "quic.frame.type")?;
+    if frame_type.value() != 0x19 {
+        return Err(CrafterError::invalid_field_value(
+            "quic.frame.retire_connection_id.type",
+            "RETIRE_CONNECTION_ID frame type must be 0x19",
+        ));
+    }
+    let (sequence_number, next) = decode_frame_varint(
+        bytes,
+        offset,
+        "quic.frame.retire_connection_id.sequence_number",
+    )?;
+    offset = next;
+
+    Ok((QuicRetireConnectionIdFrame::new(sequence_number), offset))
 }
 
 fn decode_frame_varint(
@@ -3633,6 +3750,47 @@ mod tests {
                 QUIC_STATELESS_RESET_TOKEN_LEN,
                 QUIC_STATELESS_RESET_TOKEN_LEN - 1
             )
+        );
+    }
+
+    #[test]
+    fn quic_frame_retire_connection_id_decodes_and_continues_sequence() -> crate::Result<()> {
+        let bytes = [0x19, 0x44, 0x00, 0x01];
+
+        let frames = QuicFrame::decode_sequence(bytes)?;
+
+        assert_eq!(frames.len(), 2);
+        assert_eq!(
+            frames[0].kind(),
+            QuicFrameKind::Known(QuicKnownFrameType::RetireConnectionId)
+        );
+        let retire_connection_id = frames[0].retire_connection_id_frame()?.unwrap();
+        assert_eq!(retire_connection_id.sequence_number().value(), 1024);
+        assert!(frames[1].is_ping());
+        assert_eq!(QuicFrame::encode_sequence(frames), bytes);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_retire_connection_id_serializes_and_summarizes() -> crate::Result<()> {
+        let frame = QuicFrame::retire_connection_id(v(63))?;
+
+        assert_eq!(frame.as_bytes(), &[0x19, 0x3f]);
+        assert_eq!(
+            frame.summary(),
+            "kind=RETIRE_CONNECTION_ID sequence_number=63"
+        );
+        assert!(frame
+            .inspection_fields()
+            .contains(&("retire_connection_id_sequence_number", "63".to_string())));
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_retire_connection_id_malformed_varint_reports_structured_error() {
+        assert_eq!(
+            QuicFrame::decode_sequence([0x19, 0x40]).unwrap_err(),
+            CrafterError::buffer_too_short("quic.frame.retire_connection_id.sequence_number", 2, 1)
         );
     }
 }

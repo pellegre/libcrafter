@@ -109,6 +109,11 @@ fn exports_quic_symbols() -> crafter::Result<()> {
         QuicFrame::from_new_connection_id_frame(new_connection_id)?.frame_type_value(),
         Some(0x18)
     );
+    let retire_connection_id = QuicRetireConnectionIdFrame::from_value(1)?;
+    assert_eq!(
+        QuicFrame::from_retire_connection_id_frame(retire_connection_id)?.frame_type_value(),
+        Some(0x19)
+    );
 
     let parameter = QuicTransportParameter::raw(varint, [0xde, 0xad]);
     assert_eq!(parameter.identifier(), Some(varint));
