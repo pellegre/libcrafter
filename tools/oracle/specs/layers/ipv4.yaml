@@ -204,6 +204,12 @@ backend_support:
       - IP
     encode: true
     decode: true
+  wireshark:
+    status: supported
+    native_layers:
+      - ip
+    decode: true
+    pcap_read: true
   libcrafter:
     status: supported
     encode: true

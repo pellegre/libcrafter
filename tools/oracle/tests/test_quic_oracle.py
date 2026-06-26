@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import argparse
+import struct
+import tempfile
+from pathlib import Path
 import unittest
 
 from tools.oracle.engine.generator import case_byte_policy_index, generate_plans
@@ -177,3 +181,55 @@ class QuicWiresharkBackendTest(unittest.TestCase):
         self.assertNotIn("payload", fields)
         self.assertEqual(fields["quic"]["raw_hex"], raw_hex)
         self.assertEqual(fields["quic"]["packet_count"], 1)
+
+    def test_wireshark_quic_pcap_fallback_decodes_raw_ipv4_without_tshark(self) -> None:
+        from tools.oracle.engine.backends.wireshark import pcap
+        from tools.oracle.engine.backends.wireshark.normalize import (
+            WiresharkNormalizationUnsupported,
+        )
+
+        raw = bytes.fromhex(
+            "4500002d0000000040110000c000020ac6336414"
+            "c000115100190000"
+            "c000000001048394c8f001aa000301beef"
+        )
+
+        def unavailable(_path: Path):
+            raise WiresharkNormalizationUnsupported("tshark not found on PATH")
+
+        original = pcap._tshark_json_packets
+        pcap._tshark_json_packets = unavailable
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                path = Path(temp_dir) / "quic-raw.pcap"
+                path.write_bytes(
+                    b"\xd4\xc3\xb2\xa1"
+                    + struct.pack("<HHIIII", 2, 4, 0, 0, 65535, 101)
+                    + struct.pack("<IIII", 1, 2, len(raw), len(raw))
+                    + raw
+                )
+                records = pcap.read_pcap(path)
+        finally:
+            pcap._tshark_json_packets = original
+
+        self.assertEqual(records[0]["layers"], ["ipv4", "udp", "quic"])
+        decoded = records[0]["decoded"]
+        self.assertEqual(decoded["fields"]["quic"]["raw_len"], 17)
+        self.assertEqual(
+            decoded["metadata"]["fallback"]["parser"],
+            "classic_pcap_quic_bytes_without_tshark",
+        )
+
+    def test_cli_allows_quic_wireshark_pcap_read_fallback(self) -> None:
+        from tools.oracle.engine import cli
+        from tools.oracle.engine.backends.registry import get_backend
+
+        args = argparse.Namespace(family="quic")
+        self.assertTrue(
+            cli._backend_has_local_pcap_read_fallback(
+                args,
+                get_backend("wireshark"),
+                ("pcap_read",),
+                mode="pcap",
+            )
+        )
