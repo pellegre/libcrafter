@@ -19,6 +19,7 @@ fn exports_quic_symbols() -> crafter::Result<()> {
     assert_eq!(QUIC_INITIAL_AES_128_KEY_LEN, 16);
     assert_eq!(QUIC_INITIAL_IV_LEN, 12);
     assert_eq!(QUIC_INITIAL_HP_KEY_LEN, 16);
+    assert_eq!(QUIC_INITIAL_AEAD_TAG_LEN, 16);
     assert_eq!(QUIC_HEADER_PROTECTION_SAMPLE_LEN, 16);
     assert_eq!(QUIC_HEADER_PROTECTION_MASK_LEN, 5);
     assert_eq!(QUIC_AES128_HEADER_PROTECTION_KEY_LEN, 16);
@@ -33,6 +34,19 @@ fn exports_quic_symbols() -> crafter::Result<()> {
         QUIC_INITIAL_SECRET_LEN
     );
     assert_eq!(initial_keys.key().len(), QUIC_INITIAL_AES_128_KEY_LEN);
+    assert_eq!(
+        quic_initial_payload_nonce(initial_keys.iv(), 0),
+        *initial_keys.iv()
+    );
+    let protected = quic_initial_aes128gcm_protect_payload(&initial_keys, 0, b"aad", b"payload")?;
+    assert_eq!(
+        quic_initial_aes128gcm_unprotect_payload(&initial_keys, 0, b"aad", &protected)?,
+        b"payload"
+    );
+    assert_eq!(
+        initial_keys.protect_payload(0, b"aad", b"payload")?.len(),
+        23
+    );
     assert_eq!(
         quic_aes128_header_protection_mask([0u8; 16], [0u8; 16])?.len(),
         QUIC_HEADER_PROTECTION_MASK_LEN

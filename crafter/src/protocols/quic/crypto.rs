@@ -6,6 +6,8 @@
 
 use aes::cipher::{BlockEncrypt, KeyInit as AesKeyInit};
 use aes::Aes128;
+use aes_gcm::aead::{Aead, Payload};
+use aes_gcm::{Aes128Gcm, Nonce};
 use chacha20::cipher::{KeyIvInit as ChaChaKeyIvInit, StreamCipher, StreamCipherSeek};
 use chacha20::ChaCha20;
 use cipher::generic_array::GenericArray;
@@ -25,6 +27,8 @@ pub const QUIC_INITIAL_AES_128_KEY_LEN: usize = 16;
 pub const QUIC_INITIAL_IV_LEN: usize = 12;
 /// Length of the AES header-protection key used by Initial vectors.
 pub const QUIC_INITIAL_HP_KEY_LEN: usize = 16;
+/// Length of the AES-GCM authentication tag carried by Initial payloads.
+pub const QUIC_INITIAL_AEAD_TAG_LEN: usize = 16;
 /// Length of a QUIC header-protection ciphertext sample.
 pub const QUIC_HEADER_PROTECTION_SAMPLE_LEN: usize = 16;
 /// Length of the QUIC header-protection mask consumed by packet headers.
@@ -138,6 +142,31 @@ impl QuicInitialPacketKeys {
     ) -> Result<[u8; QUIC_HEADER_PROTECTION_MASK_LEN]> {
         quic_aes128_header_protection_mask(&self.header_protection_key, sample)
     }
+
+    /// Encrypt an Initial packet payload with AES-128-GCM and append the tag.
+    pub fn protect_payload(
+        &self,
+        packet_number: u64,
+        associated_data: impl AsRef<[u8]>,
+        plaintext: impl AsRef<[u8]>,
+    ) -> Result<Vec<u8>> {
+        quic_initial_aes128gcm_protect_payload(self, packet_number, associated_data, plaintext)
+    }
+
+    /// Decrypt an Initial packet ciphertext-and-tag with AES-128-GCM.
+    pub fn unprotect_payload(
+        &self,
+        packet_number: u64,
+        associated_data: impl AsRef<[u8]>,
+        ciphertext_and_tag: impl AsRef<[u8]>,
+    ) -> Result<Vec<u8>> {
+        quic_initial_aes128gcm_unprotect_payload(
+            self,
+            packet_number,
+            associated_data,
+            ciphertext_and_tag,
+        )
+    }
 }
 
 /// Source-backed QUIC header-protection mask algorithms.
@@ -209,6 +238,101 @@ pub fn derive_quic_initial_secrets(
         client_initial_secret,
         server_initial_secret,
     })
+}
+
+/// Build the AEAD nonce for an Initial packet number.
+///
+/// QUIC left-pads the packet number to the IV length and XORs it with the IV.
+pub fn quic_initial_payload_nonce(
+    iv: &[u8; QUIC_INITIAL_IV_LEN],
+    packet_number: u64,
+) -> [u8; QUIC_INITIAL_IV_LEN] {
+    let mut packet_number_bytes = [0u8; QUIC_INITIAL_IV_LEN];
+    packet_number_bytes[QUIC_INITIAL_IV_LEN - 8..].copy_from_slice(&packet_number.to_be_bytes());
+
+    let mut nonce = [0u8; QUIC_INITIAL_IV_LEN];
+    for (out, (iv_byte, pn_byte)) in nonce
+        .iter_mut()
+        .zip(iv.iter().zip(packet_number_bytes.iter()))
+    {
+        *out = *iv_byte ^ *pn_byte;
+    }
+    nonce
+}
+
+/// Encrypt a QUIC Initial packet payload with AES-128-GCM.
+///
+/// The returned bytes are `ciphertext || tag`. The caller supplies the
+/// unprotected packet header, including packet-number bytes, as associated data.
+pub fn quic_initial_aes128gcm_protect_payload(
+    keys: &QuicInitialPacketKeys,
+    packet_number: u64,
+    associated_data: impl AsRef<[u8]>,
+    plaintext: impl AsRef<[u8]>,
+) -> Result<Vec<u8>> {
+    let cipher = Aes128Gcm::new_from_slice(keys.key()).map_err(|_| {
+        CrafterError::invalid_field_value(
+            "quic.crypto.initial.key",
+            "invalid AES-128-GCM Initial key length",
+        )
+    })?;
+    let nonce = quic_initial_payload_nonce(keys.iv(), packet_number);
+    cipher
+        .encrypt(
+            Nonce::from_slice(&nonce),
+            Payload {
+                msg: plaintext.as_ref(),
+                aad: associated_data.as_ref(),
+            },
+        )
+        .map_err(|_| {
+            CrafterError::invalid_field_value(
+                "quic.crypto.initial.payload",
+                "AES-128-GCM Initial encryption failed",
+            )
+        })
+}
+
+/// Decrypt a QUIC Initial packet payload with AES-128-GCM.
+///
+/// The input bytes are `ciphertext || tag`. The caller supplies the
+/// unprotected packet header, including packet-number bytes, as associated data.
+pub fn quic_initial_aes128gcm_unprotect_payload(
+    keys: &QuicInitialPacketKeys,
+    packet_number: u64,
+    associated_data: impl AsRef<[u8]>,
+    ciphertext_and_tag: impl AsRef<[u8]>,
+) -> Result<Vec<u8>> {
+    let ciphertext_and_tag = ciphertext_and_tag.as_ref();
+    if ciphertext_and_tag.len() < QUIC_INITIAL_AEAD_TAG_LEN {
+        return Err(CrafterError::buffer_too_short(
+            "quic.crypto.initial.ciphertext_tag",
+            QUIC_INITIAL_AEAD_TAG_LEN,
+            ciphertext_and_tag.len(),
+        ));
+    }
+
+    let cipher = Aes128Gcm::new_from_slice(keys.key()).map_err(|_| {
+        CrafterError::invalid_field_value(
+            "quic.crypto.initial.key",
+            "invalid AES-128-GCM Initial key length",
+        )
+    })?;
+    let nonce = quic_initial_payload_nonce(keys.iv(), packet_number);
+    cipher
+        .decrypt(
+            Nonce::from_slice(&nonce),
+            Payload {
+                msg: ciphertext_and_tag,
+                aad: associated_data.as_ref(),
+            },
+        )
+        .map_err(|_| {
+            CrafterError::invalid_field_value(
+                "quic.crypto.initial.ciphertext_tag",
+                "AES-128-GCM Initial authentication failed",
+            )
+        })
 }
 
 /// Generate a QUIC header-protection mask with an explicit algorithm.
