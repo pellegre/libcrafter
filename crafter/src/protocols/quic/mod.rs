@@ -24,7 +24,11 @@ pub mod transport_parameter;
 pub mod varint;
 
 pub use connection_id::QuicConnectionId;
-pub use crypto::QuicCryptoContext;
+pub use crypto::{
+    derive_quic_initial_secrets, quic_initial_salt, QuicCryptoContext, QuicInitialPacketKeys,
+    QuicInitialSecrets, QUIC_INITIAL_AES_128_KEY_LEN, QUIC_INITIAL_HP_KEY_LEN, QUIC_INITIAL_IV_LEN,
+    QUIC_INITIAL_SECRET_LEN, QUIC_V1_INITIAL_SALT, QUIC_V2_INITIAL_SALT,
+};
 pub use frame::{
     QuicAckEcnCounts, QuicAckFrame, QuicAckRange, QuicConnectionCloseFrame,
     QuicConnectionCloseKind, QuicCryptoFrame, QuicDataBlockedFrame, QuicFrame, QuicFrameKind,
