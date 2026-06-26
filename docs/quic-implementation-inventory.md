@@ -182,13 +182,13 @@ logic, or fuzzer logic to `crafter`.
   and `tools/oracle/specs/profiles.yaml` in the step that adds executable specs.
 - `tools/oracle/engine/protocols/quic.py`: generator-stage sampler and feature
   behavior for QUIC packet plans.
-- `tools/oracle/engine/backends/scapy/protocols/quic.py`: Scapy reference
+- `tools/oracle/engine/backends/<reference>/protocols/quic.py`: reference
   encode/decode support or explicit unsupported-case normalization for features
-  Scapy cannot model.
+  the reference backend cannot model.
 - `tools/oracle/engine/backends/wireshark/protocols/quic.py`: optional
   parser-only normalization for pcap/decode comparisons once the layer declares
   Wireshark backend support.
-- `tools/oracle/specs/fixtures/quic-scapy-coverage.md`: backend coverage notes
+- `tools/oracle/specs/fixtures/quic-reference-coverage.md`: backend coverage notes
   for unsupported encrypted or extension cases.
 
 ## Probe And Lab Integration Points

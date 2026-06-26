@@ -400,6 +400,15 @@ class ProbePlanningRegistryTest(unittest.TestCase):
                         name,
                     )
                     self.assertIn("broker_exchange", plan, name)
+                elif case.metadata.get("protocol") == "quic":
+                    self.assertEqual(plan["protocol"], "quic", name)
+                    self.assertEqual(plan["destination_port"], 4433, name)
+                    self.assertIn("quic", plan, name)
+                    self.assertEqual(
+                        plan["target_service"]["kind"],
+                        "quic-controlled-udp",
+                        name,
+                    )
                 elif case.metadata.get("protocol") == "snmp":
                     self.assertEqual(plan["protocol"], "snmp", name)
                     self.assertIn("snmp_request", plan, name)
