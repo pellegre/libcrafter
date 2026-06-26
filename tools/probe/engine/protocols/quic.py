@@ -2,9 +2,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
+
+from ..capability_derivation import capability
 from ..case_helpers import _behavior_case
-from ..model import JSONObject, ProbeCase
+from ..endpoint_addressing import apply_shared_ipv4_rewrite_tail
+from ..model import JSONObject, JSONValue, ProbeCase, json_object
 from ..planning_helpers import deterministic_bytes, deterministic_ipv4_pair
+from ..target_service_helpers import (
+    plans_by_destination_port,
+    target_service_address_fields,
+)
 from .base import ProtocolPlugin, register
 
 
@@ -109,6 +117,7 @@ _QUIC_PLANNED_ONLY_CASES = frozenset(
         "quic-protected-flow-plan",
     }
 )
+_QUIC_STIMULUS_ENDPOINT_CASES = frozenset({"quic-initial-udp-observation"})
 
 
 def _quic_initial_udp_observation_probe_plan(
@@ -219,6 +228,10 @@ def _quic_probe_plan(
         "expected_reply_destination_ipv4": stimulus_ipv4,
         "source_port": source_port,
         "destination_port": QUIC_SERVICE_PORT,
+        "payload_hex": payload_hex,
+        "payload_length": payload_length,
+        "expected_payload_hex": payload_hex,
+        "expected_payload_length": payload_length,
         "quic_payload_hex": payload_hex,
         "quic_payload_length": payload_length,
         "udp_payload_hex": payload_hex,
@@ -247,7 +260,7 @@ def _quic_probe_plan(
         "stimulus_driver": {
             "name": case.stimulus,
             "adapter_module": QUIC_ADAPTER_MODULE,
-            "state": "planned-only" if planned_only else "adapter-pending",
+            "state": "planned-only" if planned_only else "adapter-ready",
             "planned_only": planned_only,
         },
         "capture_filter": (
@@ -307,6 +320,126 @@ def _target_behavior_for_case(case_name: str) -> str:
     }[case_name]
 
 
+def quic_udp_probe_plans(probe_plans: Sequence[JSONObject]) -> list[JSONObject]:
+    """Return QUIC plans that can use the controlled UDP echo responder."""
+
+    return [
+        plan
+        for plan in probe_plans
+        if plan.get("case") in _QUIC_STIMULUS_ENDPOINT_CASES
+    ]
+
+
+def quic_target_service_contribution(
+    probe_plans: Sequence[JSONObject],
+    *,
+    dry_run: bool,
+) -> JSONObject:
+    """Return target-service setup metadata for the QUIC UDP echo case."""
+
+    quic_plans = quic_udp_probe_plans(probe_plans)
+    plans_by_port = plans_by_destination_port(quic_plans)
+    services = [
+        {
+            "name": "quic-controlled-udp",
+            "protocol": "udp",
+            "port": port,
+            "purpose": "quic-initial-udp-observation",
+            "deterministic": True,
+            "echo": True,
+            "payload_count": sum(
+                1 for plan in quic_plans if int(plan.get("destination_port", 0)) == port
+            ),
+            **target_service_address_fields(plan),
+            "log_paths": [
+                f"live-artifacts/probe/target-services/udp-responder-{port}.stdout.txt",
+                f"live-artifacts/probe/target-services/udp-responder-{port}.stderr.txt",
+            ],
+        }
+        for port, plan in plans_by_port.items()
+    ]
+    return {
+        "services": services,
+        "starts_services": not dry_run and bool(plans_by_port),
+    }
+
+
+def quic_rewrite_endpoint_addresses(
+    plan: JSONObject,
+    *,
+    source_ipv4: str,
+    target_ipv4: str,
+    source_mac: str | None = None,
+    target_mac: str | None = None,
+    target_interface: str | None = None,
+    rewrite_source: str = "wire_endpoint_plan",
+) -> JSONObject:
+    """Rewrite the QUIC UDP probe plan onto lab-session endpoint addresses."""
+
+    updated = dict(plan)
+    updated["source_ipv4"] = source_ipv4
+    updated["destination_ipv4"] = target_ipv4
+    updated["expected_reply_source_ipv4"] = target_ipv4
+    updated["expected_reply_destination_ipv4"] = source_ipv4
+    case_name = str(updated.get("case", ""))
+    source_port = int(updated.get("source_port", 0))
+    destination_port = int(updated.get("destination_port", QUIC_SERVICE_PORT))
+    updated["capture_filter"] = (
+        f"udp and src host {target_ipv4} and dst host {source_ipv4} "
+        f"and src port {destination_port} and dst port {source_port}"
+    )
+    target_service = dict(
+        json_object(updated.get("target_service", {}), "probe_plan.target_service")
+    )
+    target_service.update(
+        {
+            "bind_ipv4": target_ipv4,
+            "port": destination_port,
+            "source_ipv4": source_ipv4,
+        }
+    )
+    updated["target_service"] = target_service
+    validation = dict(json_object(updated.get("validation", {}), "probe_plan.validation"))
+    validation.update(
+        {
+            "source_ipv4": target_ipv4,
+            "destination_ipv4": source_ipv4,
+            "source_port": destination_port,
+            "destination_port": source_port,
+        }
+    )
+    updated["validation"] = validation
+    return apply_shared_ipv4_rewrite_tail(
+        updated,
+        case_name=case_name,
+        source_ipv4=source_ipv4,
+        target_ipv4=target_ipv4,
+        rewrite_source=rewrite_source,
+    )
+
+
+def quic_failure_reasons(case_name: str) -> list[str] | None:
+    if case_name in _QUIC_STIMULUS_ENDPOINT_CASES:
+        return [
+            "timeout",
+            "wrong_peer",
+            "wrong_payload",
+            "decode_failed",
+            "target_setup_failed",
+        ]
+    return None
+
+
+def quic_lab_capabilities(substrate: Mapping[str, JSONValue]) -> Mapping[str, object]:
+    ipv4_unicast = capability(substrate, "ipv4_unicast", "ipv4")
+    controlled_services = capability(
+        substrate,
+        "controlled_services",
+        "controlled_service",
+    )
+    return {"quic_udp_service": ipv4_unicast and controlled_services}
+
+
 _QUIC_PLAN_BUILDERS: dict[str, object] = {
     "quic-initial-udp-observation": _quic_initial_udp_observation_probe_plan,
     "quic-version-negotiation-observation": _quic_version_negotiation_observation_probe_plan,
@@ -323,11 +456,11 @@ register(
         plan_builders=_QUIC_PLAN_BUILDERS,
         planned_only_cases=_QUIC_PLANNED_ONLY_CASES,
         profile_counts={},
-        stimulus_endpoint_cases=frozenset(),
-        target_service=None,
+        stimulus_endpoint_cases=_QUIC_STIMULUS_ENDPOINT_CASES,
+        target_service=quic_target_service_contribution,
         setup_script=None,
-        rewrite_endpoint_addresses=None,
-        failure_reasons=None,
-        lab_capabilities=None,
+        rewrite_endpoint_addresses=quic_rewrite_endpoint_addresses,
+        failure_reasons=quic_failure_reasons,
+        lab_capabilities=quic_lab_capabilities,
     )
 )

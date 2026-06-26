@@ -51,6 +51,21 @@ come from a missing declared capability; a supported case that fails to build,
 send, capture, decode, or validate is a failure to fix in libcrafter or probe
 infrastructure.
 
+The focused QUIC probe profile is `quic-smoke`. Its initial observation case is
+live-capable through the Rust probe adapter and a controlled target-side UDP
+echo service on port 4433; the Version Negotiation, Retry, stateless reset, and
+protected-flow cases remain planned-only until the lab owns a stateful QUIC
+target. Validate QUIC probe work through dry-run planning first:
+
+```sh
+tools/probe/run --provider qemu --dry-run --profile quic-smoke --seed 1 --count 5 --out target/probe/quic-smoke-dry-run
+tools/lab/run plan --provider qemu --dry-run --profile quic-smoke --seed 1 --role stimulus --role target --json
+```
+
+If live QUIC prerequisites or authorization are missing, record a structured
+skip artifact under `target/lab/quic-live-validation/README.md` rather than
+sending traffic from the developer host.
+
 ## Oracle CLI modes
 
 `tools/oracle/run` is the single entrypoint for every oracle mode. Each mode is

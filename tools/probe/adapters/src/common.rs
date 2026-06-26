@@ -17,7 +17,7 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::{arp, dhcp, dns, icmp, mqtt, ndp, ospf, rip, snmp, tcp, udp};
+use crate::{arp, dhcp, dns, icmp, mqtt, ndp, ospf, quic, rip, snmp, tcp, udp};
 
 pub type ExampleResult<T> = std::result::Result<T, Box<dyn Error>>;
 
@@ -97,6 +97,14 @@ pub struct ProbePlan {
     pub payload_hex: Option<String>,
     #[serde(default)]
     pub payload_length: Option<usize>,
+    #[serde(default)]
+    pub quic_payload_hex: Option<String>,
+    #[serde(default)]
+    pub quic_payload_length: Option<usize>,
+    #[serde(default)]
+    pub udp_payload_hex: Option<String>,
+    #[serde(default)]
+    pub udp_payload_length: Option<usize>,
     #[serde(default)]
     pub expected_payload_hex: Option<String>,
     #[serde(default)]
@@ -1115,6 +1123,8 @@ fn dispatch_case(
         (RunMode::Live, "rip-update-v2") => rip::run_rip_live(request, plan),
         (RunMode::DryRun, "ospf-hello-exchange") => ospf::run_ospf_dry_run(request, plan),
         (RunMode::Live, "ospf-hello-exchange") => ospf::run_ospf_live(request, plan),
+        (RunMode::DryRun, "quic-initial-udp-observation") => quic::run_quic_dry_run(request, plan),
+        (RunMode::Live, "quic-initial-udp-observation") => quic::run_quic_live(request, plan),
         (
             RunMode::DryRun,
             "mqtt-connect-connack"
@@ -1256,6 +1266,10 @@ pub fn plan_json(plan: &ProbePlan) -> Value {
         "sequence_number": plan.sequence_number,
         "payload_hex": plan.payload_hex,
         "payload_length": plan.payload_length,
+        "quic_payload_hex": plan.quic_payload_hex,
+        "quic_payload_length": plan.quic_payload_length,
+        "udp_payload_hex": plan.udp_payload_hex,
+        "udp_payload_length": plan.udp_payload_length,
         "expected_payload_hex": plan.expected_payload_hex,
         "expected_payload_length": plan.expected_payload_length,
         "expected_udp_length": plan.expected_udp_length,
@@ -1456,6 +1470,7 @@ pub fn decoded_packet_json(packet: &Packet, raw: &[u8]) -> Value {
     let dns = packet.layer::<Dns>();
     let dhcp = packet.layer::<Dhcp>();
     let snmp_layer = packet.layer::<Snmp>();
+    let quic_layer = packet.layer::<Quic>();
     let udp_options = packet.layer::<UdpOptions>();
     let ethernet = packet.layer::<Ethernet>();
     let arp_layer = packet.layer::<Arp>();
@@ -1502,6 +1517,7 @@ pub fn decoded_packet_json(packet: &Packet, raw: &[u8]) -> Value {
         "dns": dns.map(dns::dns_json),
         "dhcp": dhcp.map(dhcp::dhcp_json),
         "snmp": snmp_layer.map(snmp::snmp_json),
+        "quic": quic_layer.map(quic::quic_json),
         "payload_hex": hex_bytes(raw_payload(packet)),
     })
 }
@@ -1615,7 +1631,8 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
         | "udp-source-port-reflection"
         | "udp-multi-shot-order"
         | "udp-zero-checksum-ipv4"
-        | "udp-options-surplus-echo" => {
+        | "udp-options-surplus-echo"
+        | "quic-initial-udp-observation" => {
             format!(
                 "udp and src host {} and dst host {} and src port {} and dst port {}",
                 plan.expected_reply_source_ipv4.as_deref().unwrap_or(""),
@@ -2273,6 +2290,16 @@ pub fn target_service_json(plan: &ProbePlan) -> Value {
             "peer_router_id": plan.expected_ospf_router_id,
             "expected_packet_type": plan.expected_ospf_packet_type,
         }),
+        "quic-initial-udp-observation" => json!({
+            "required": true,
+            "kind": "quic-controlled-udp",
+            "protocol": "udp",
+            "port": plan.destination_port,
+            "behavior": "echo_udp_payload",
+            "payload_hex": plan.quic_payload_hex.as_deref().or(plan.udp_payload_hex.as_deref()).or(plan.payload_hex.as_deref()),
+            "payload_length": plan.quic_payload_length.or(plan.udp_payload_length).or(plan.payload_length),
+            "deterministic": true,
+        }),
         _ => json!({}),
     }
 }
@@ -2311,6 +2338,17 @@ pub fn validation_json(plan: &ProbePlan) -> Value {
             "expected_udp_surplus_alignment_length": plan.expected_udp_surplus_alignment_length,
             "expected_udp_surplus_length": plan.expected_udp_surplus_length,
             "expected_ipv4_total_length": plan.expected_ipv4_total_length,
+        }),
+        "quic-initial-udp-observation" => json!({
+            "source_ipv4": plan.expected_reply_source_ipv4,
+            "destination_ipv4": plan.expected_reply_destination_ipv4,
+            "source_port": plan.destination_port,
+            "destination_port": plan.source_port,
+            "payload_hex": plan.quic_payload_hex.as_deref().or(plan.udp_payload_hex.as_deref()).or(plan.payload_hex.as_deref()),
+            "payload_length": plan.quic_payload_length.or(plan.udp_payload_length).or(plan.payload_length),
+            "udp_length": plan.expected_udp_length,
+            "quic_packet_count": 1,
+            "target_behavior": "echo_udp_payload",
         }),
         "udp-closed-port-icmp" => json!({
             "source_ipv4": plan.expected_reply_source_ipv4,

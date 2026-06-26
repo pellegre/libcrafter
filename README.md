@@ -224,6 +224,7 @@ preserved as `Raw` payloads when the enclosing header is valid.
 | ICMPv4 / ICMPv6 | ICMPv4 (with `Icmp` deprecated alias) and ICMP extensions (RFC 4884); ICMPv6 echo/errors, Neighbor Discovery (RFC 4861), MLD v1/v2, Extended Echo, experimental Node Information | [icmpv6](docs/guide/icmpv6.md) |
 | TCP | Segment construction, typed options, checksums | [tcp](docs/guide/tcp.md) |
 | UDP | UDP with options (RFC 9868) and checksum status | [udp](docs/guide/udp.md) |
+| QUIC | UDP-carried QUIC datagrams, long/short headers, Version Negotiation, Retry, Initial/Handshake/0-RTT packets, frames, transport parameters, protected-payload preservation, and probe dry-run/lab planning; not a QUIC endpoint stack | [quic](docs/guide/quic.md) |
 | DNS | EDNS(0), SVCB/HTTPS, DNSSEC record types | [dns](docs/guide/dns.md) |
 | DHCPv4 | Option overload, RFC 3396 long options, relay agent option 82, client identifiers, authentication, leasequery fields | — |
 | BGP | OPEN, UPDATE, KEEPALIVE, NOTIFICATION, ROUTE-REFRESH, path attributes, capabilities | [bgp](docs/guide/bgp.md) |

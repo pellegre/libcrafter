@@ -5,7 +5,7 @@ from __future__ import annotations
 import ipaddress
 import unittest
 
-from tools.probe.engine import cases, planning
+from tools.probe.engine import cases, cli, planning, target_services
 from tools.probe.engine.model import ProbeRunRequest
 
 
@@ -88,6 +88,8 @@ class QuicProbePlanTest(unittest.TestCase):
             "c000000001048394c8f001aa000301beef",
         )
         self.assertEqual(plan["udp_payload_hex"], plan["quic_payload_hex"])
+        self.assertEqual(plan["payload_hex"], plan["quic_payload_hex"])
+        self.assertEqual(plan["expected_payload_hex"], plan["quic_payload_hex"])
         self.assertEqual(plan["quic_payload_length"], 17)
         self.assertEqual(plan["expected_udp_length"], 25)
         self.assertEqual(plan["target_service"]["kind"], "quic-controlled-udp")
@@ -97,6 +99,7 @@ class QuicProbePlanTest(unittest.TestCase):
             "tools/probe/adapters/src/quic.rs",
         )
         self.assertIn("udp", plan["capture_filter"])
+        self.assertIn("quic-initial-udp-observation", cli._STIMULUS_ENDPOINT_CASES)
 
     def test_planned_only_cases_record_controlled_target_requirements(self) -> None:
         for case_name in cases.QUIC_SMOKE_PROFILE_CASE_NAMES[1:]:
@@ -109,6 +112,7 @@ class QuicProbePlanTest(unittest.TestCase):
                 self.assertEqual(plan["destination_port"], 4433)
                 self.assertGreater(plan["quic_payload_length"], 0)
                 self.assertTrue(plan["wire_requirements"]["requires_udp_service"])
+                self.assertNotIn(case_name, cli._STIMULUS_ENDPOINT_CASES)
 
     def test_version_negotiation_plan_uses_zero_version_payload(self) -> None:
         plan = _plan("quic-version-negotiation-observation")
@@ -133,6 +137,19 @@ class QuicProbePlanTest(unittest.TestCase):
             _plan("quic-retry-observation", seed=9810, sequence=2),
             _plan("quic-retry-observation", seed=9810, sequence=2),
         )
+
+    def test_target_setup_routes_initial_case_to_udp_responder(self) -> None:
+        setup = target_services.target_service_setup_plan(
+            probe_plans=[_plan("quic-initial-udp-observation")],
+            dry_run=True,
+        )
+
+        services = setup["services"]
+        self.assertEqual(len(services), 1)
+        self.assertEqual(services[0]["name"], "quic-controlled-udp")
+        self.assertEqual(services[0]["protocol"], "udp")
+        self.assertEqual(services[0]["port"], 4433)
+        self.assertFalse(setup["starts_services"])
 
 
 if __name__ == "__main__":
