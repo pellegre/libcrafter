@@ -4,7 +4,7 @@
 //! source-backed typed bodies for individual frame grammars.
 
 use crate::protocols::transport::common::hex_bytes;
-use crate::Result;
+use crate::{CrafterError, Result};
 
 use super::QuicVarInt;
 
@@ -118,6 +118,271 @@ impl QuicFrameKind {
     }
 }
 
+/// One ACK Gap / ACK Range Length pair following the first ACK range.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QuicAckRange {
+    gap: QuicVarInt,
+    ack_range_length: QuicVarInt,
+}
+
+impl QuicAckRange {
+    /// Construct an ACK range pair from caller-supplied QUIC varints.
+    pub const fn new(gap: QuicVarInt, ack_range_length: QuicVarInt) -> Self {
+        Self {
+            gap,
+            ack_range_length,
+        }
+    }
+
+    /// Construct an ACK range pair from validated integer values.
+    pub fn from_values(gap: u64, ack_range_length: u64) -> Result<Self> {
+        Ok(Self {
+            gap: QuicVarInt::new(gap)?,
+            ack_range_length: QuicVarInt::new(ack_range_length)?,
+        })
+    }
+
+    /// Return the encoded Gap field.
+    pub const fn gap(self) -> QuicVarInt {
+        self.gap
+    }
+
+    /// Return the encoded ACK Range Length field.
+    pub const fn ack_range_length(self) -> QuicVarInt {
+        self.ack_range_length
+    }
+}
+
+/// ACK_ECN ECN counters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QuicAckEcnCounts {
+    ect0_count: QuicVarInt,
+    ect1_count: QuicVarInt,
+    ce_count: QuicVarInt,
+}
+
+impl QuicAckEcnCounts {
+    /// Construct ACK_ECN counters from caller-supplied QUIC varints.
+    pub const fn new(ect0_count: QuicVarInt, ect1_count: QuicVarInt, ce_count: QuicVarInt) -> Self {
+        Self {
+            ect0_count,
+            ect1_count,
+            ce_count,
+        }
+    }
+
+    /// Construct ACK_ECN counters from validated integer values.
+    pub fn from_values(ect0_count: u64, ect1_count: u64, ce_count: u64) -> Result<Self> {
+        Ok(Self {
+            ect0_count: QuicVarInt::new(ect0_count)?,
+            ect1_count: QuicVarInt::new(ect1_count)?,
+            ce_count: QuicVarInt::new(ce_count)?,
+        })
+    }
+
+    /// Return the ECT(0) count.
+    pub const fn ect0_count(self) -> QuicVarInt {
+        self.ect0_count
+    }
+
+    /// Return the ECT(1) count.
+    pub const fn ect1_count(self) -> QuicVarInt {
+        self.ect1_count
+    }
+
+    /// Return the ECN-CE count.
+    pub const fn ce_count(self) -> QuicVarInt {
+        self.ce_count
+    }
+}
+
+/// Parsed ACK or ACK_ECN frame fields.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuicAckFrame {
+    largest_acknowledged: QuicVarInt,
+    ack_delay: QuicVarInt,
+    first_ack_range: QuicVarInt,
+    ack_ranges: Vec<QuicAckRange>,
+    ecn_counts: Option<QuicAckEcnCounts>,
+}
+
+impl QuicAckFrame {
+    /// Construct an ACK frame from caller-supplied fields.
+    pub fn new(
+        largest_acknowledged: QuicVarInt,
+        ack_delay: QuicVarInt,
+        first_ack_range: QuicVarInt,
+        ack_ranges: impl IntoIterator<Item = QuicAckRange>,
+    ) -> Self {
+        Self {
+            largest_acknowledged,
+            ack_delay,
+            first_ack_range,
+            ack_ranges: ack_ranges.into_iter().collect(),
+            ecn_counts: None,
+        }
+    }
+
+    /// Construct an ACK frame from validated integer values.
+    pub fn from_values(
+        largest_acknowledged: u64,
+        ack_delay: u64,
+        first_ack_range: u64,
+        ack_ranges: impl IntoIterator<Item = QuicAckRange>,
+    ) -> Result<Self> {
+        Ok(Self::new(
+            QuicVarInt::new(largest_acknowledged)?,
+            QuicVarInt::new(ack_delay)?,
+            QuicVarInt::new(first_ack_range)?,
+            ack_ranges,
+        ))
+    }
+
+    /// Add ACK_ECN counters, selecting frame type `0x03` during encoding.
+    pub fn with_ecn_counts(mut self, ecn_counts: QuicAckEcnCounts) -> Self {
+        self.ecn_counts = Some(ecn_counts);
+        self
+    }
+
+    /// Return true when this frame encodes ACK_ECN counters.
+    pub const fn is_ecn(&self) -> bool {
+        self.ecn_counts.is_some()
+    }
+
+    /// Return the frame type selected by the parsed fields.
+    pub const fn frame_type(&self) -> QuicKnownFrameType {
+        if self.is_ecn() {
+            QuicKnownFrameType::AckEcn
+        } else {
+            QuicKnownFrameType::Ack
+        }
+    }
+
+    /// Return the largest acknowledged packet number value.
+    pub const fn largest_acknowledged(&self) -> QuicVarInt {
+        self.largest_acknowledged
+    }
+
+    /// Return the raw ACK Delay value.
+    pub const fn ack_delay(&self) -> QuicVarInt {
+        self.ack_delay
+    }
+
+    /// Return the first ACK Range value.
+    pub const fn first_ack_range(&self) -> QuicVarInt {
+        self.first_ack_range
+    }
+
+    /// Return the additional ACK ranges.
+    pub fn ack_ranges(&self) -> &[QuicAckRange] {
+        &self.ack_ranges
+    }
+
+    /// Return the encoded ACK Range Count value.
+    pub fn ack_range_count(&self) -> Result<QuicVarInt> {
+        QuicVarInt::new(u64::try_from(self.ack_ranges.len()).map_err(|_| {
+            CrafterError::invalid_field_value("quic.frame.ack.range_count", "too many ACK ranges")
+        })?)
+    }
+
+    /// Return optional ACK_ECN counters.
+    pub const fn ecn_counts(&self) -> Option<QuicAckEcnCounts> {
+        self.ecn_counts
+    }
+
+    /// Decode one ACK or ACK_ECN frame from bytes that include the Frame Type.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let bytes = bytes.as_ref();
+        let (frame, consumed) = decode_ack_frame(bytes)?;
+        if consumed != bytes.len() {
+            return Err(CrafterError::invalid_field_value(
+                "quic.frame.ack",
+                "ACK frame has trailing bytes",
+            ));
+        }
+        Ok(frame)
+    }
+
+    /// Append the canonical ACK or ACK_ECN frame encoding.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        let frame_type = if self.is_ecn() { 0x03 } else { 0x02 };
+        QuicVarInt::from_u64_unchecked(frame_type).encode(out)?;
+        self.largest_acknowledged.encode(out)?;
+        self.ack_delay.encode(out)?;
+        self.ack_range_count()?.encode(out)?;
+        self.first_ack_range.encode(out)?;
+        for range in &self.ack_ranges {
+            range.gap.encode(out)?;
+            range.ack_range_length.encode(out)?;
+        }
+        if let Some(ecn_counts) = self.ecn_counts {
+            ecn_counts.ect0_count.encode(out)?;
+            ecn_counts.ect1_count.encode(out)?;
+            ecn_counts.ce_count.encode(out)?;
+        }
+        Ok(())
+    }
+
+    /// Return the canonical ACK or ACK_ECN frame encoding.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Stable ACK summary for packet inspection.
+    pub fn summary(&self) -> String {
+        let mut summary = format!(
+            "kind={} largest_acknowledged={} ack_delay={} first_ack_range={} ranges={}",
+            self.frame_type().name(),
+            self.largest_acknowledged.value(),
+            self.ack_delay.value(),
+            self.first_ack_range.value(),
+            self.ack_ranges.len()
+        );
+        if let Some(ecn_counts) = self.ecn_counts {
+            summary.push_str(&format!(
+                " ect0={} ect1={} ce={}",
+                ecn_counts.ect0_count.value(),
+                ecn_counts.ect1_count.value(),
+                ecn_counts.ce_count.value()
+            ));
+        }
+        summary
+    }
+
+    /// Stable field/value pairs for ACK inspection.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        let mut fields = vec![
+            (
+                "ack_largest_acknowledged",
+                self.largest_acknowledged.value().to_string(),
+            ),
+            ("ack_delay", self.ack_delay.value().to_string()),
+            ("ack_range_count", self.ack_ranges.len().to_string()),
+            ("ack_first_range", self.first_ack_range.value().to_string()),
+        ];
+        for range in &self.ack_ranges {
+            fields.push((
+                "ack_range",
+                format!(
+                    "gap={} length={}",
+                    range.gap.value(),
+                    range.ack_range_length.value()
+                ),
+            ));
+        }
+        if let Some(ecn_counts) = self.ecn_counts {
+            fields.extend([
+                ("ack_ecn_ect0", ecn_counts.ect0_count.value().to_string()),
+                ("ack_ecn_ect1", ecn_counts.ect1_count.value().to_string()),
+                ("ack_ecn_ce", ecn_counts.ce_count.value().to_string()),
+            ]);
+        }
+        fields
+    }
+}
+
 /// Raw-preserving QUIC frame.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct QuicFrame {
@@ -152,6 +417,40 @@ impl QuicFrame {
         }
     }
 
+    /// Construct an ACK or ACK_ECN frame from typed fields.
+    pub fn from_ack_frame(ack: QuicAckFrame) -> Result<Self> {
+        Ok(Self::from_bytes(ack.encode_to_vec()?))
+    }
+
+    /// Construct an ACK frame from caller-supplied fields.
+    pub fn ack(
+        largest_acknowledged: QuicVarInt,
+        ack_delay: QuicVarInt,
+        first_ack_range: QuicVarInt,
+        ack_ranges: impl IntoIterator<Item = QuicAckRange>,
+    ) -> Result<Self> {
+        Self::from_ack_frame(QuicAckFrame::new(
+            largest_acknowledged,
+            ack_delay,
+            first_ack_range,
+            ack_ranges,
+        ))
+    }
+
+    /// Construct an ACK_ECN frame from caller-supplied fields.
+    pub fn ack_ecn(
+        largest_acknowledged: QuicVarInt,
+        ack_delay: QuicVarInt,
+        first_ack_range: QuicVarInt,
+        ack_ranges: impl IntoIterator<Item = QuicAckRange>,
+        ecn_counts: QuicAckEcnCounts,
+    ) -> Result<Self> {
+        Self::from_ack_frame(
+            QuicAckFrame::new(largest_acknowledged, ack_delay, first_ack_range, ack_ranges)
+                .with_ecn_counts(ecn_counts),
+        )
+    }
+
     /// Decode a frame sequence within the caller-provided packet boundary.
     ///
     /// Supported fixed-boundary frames are split out first. The remaining
@@ -175,6 +474,12 @@ impl QuicFrame {
                 }
                 0x01 => {
                     let end = offset + consumed;
+                    frames.push(Self::from_bytes(&bytes[offset..end]));
+                    offset = end;
+                }
+                0x02 | 0x03 => {
+                    let (_, ack_len) = decode_ack_frame(&bytes[offset..])?;
+                    let end = offset + ack_len;
                     frames.push(Self::from_bytes(&bytes[offset..end]));
                     offset = end;
                 }
@@ -218,6 +523,14 @@ impl QuicFrame {
         matches!(self.kind, QuicFrameKind::Known(QuicKnownFrameType::Ping))
             && self.frame_type_value() == Some(0x01)
             && self.frame_type_encoded_len() == Some(self.bytes.len())
+    }
+
+    /// Decode this frame as ACK or ACK_ECN when applicable.
+    pub fn ack_frame(&self) -> Result<Option<QuicAckFrame>> {
+        match self.frame_type_value() {
+            Some(0x02 | 0x03) => Ok(Some(QuicAckFrame::decode(&self.bytes)?)),
+            _ => Ok(None),
+        }
     }
 
     /// Borrow the preserved frame bytes.
@@ -274,6 +587,9 @@ impl QuicFrame {
         if let Some(padding_len) = self.padding_len() {
             return format!("kind=PADDING padding_len={padding_len}");
         }
+        if let Ok(Some(ack)) = self.ack_frame() {
+            return ack.summary();
+        }
         match self.frame_type() {
             Some(frame_type) => format!(
                 "kind={} type=0x{:x} raw_len={}",
@@ -311,6 +627,9 @@ impl QuicFrame {
         if let Some(padding_len) = self.padding_len() {
             fields.push(("padding_len", padding_len.to_string()));
         }
+        if let Ok(Some(ack)) = self.ack_frame() {
+            fields.extend(ack.inspection_fields());
+        }
         fields
     }
 }
@@ -318,6 +637,79 @@ impl QuicFrame {
 impl Default for QuicFrameKind {
     fn default() -> Self {
         Self::Empty
+    }
+}
+
+fn decode_ack_frame(bytes: &[u8]) -> Result<(QuicAckFrame, usize)> {
+    let (frame_type, mut offset) = decode_frame_varint(bytes, 0, "quic.frame.type")?;
+    let is_ecn = match frame_type.value() {
+        0x02 => false,
+        0x03 => true,
+        _ => {
+            return Err(CrafterError::invalid_field_value(
+                "quic.frame.ack.type",
+                "ACK frame type must be 0x02 or 0x03",
+            ))
+        }
+    };
+
+    let (largest_acknowledged, next) =
+        decode_frame_varint(bytes, offset, "quic.frame.ack.largest_acknowledged")?;
+    offset = next;
+    let (ack_delay, next) = decode_frame_varint(bytes, offset, "quic.frame.ack.ack_delay")?;
+    offset = next;
+    let (range_count, next) = decode_frame_varint(bytes, offset, "quic.frame.ack.range_count")?;
+    offset = next;
+    let (first_ack_range, next) = decode_frame_varint(bytes, offset, "quic.frame.ack.first_range")?;
+    offset = next;
+
+    let mut ack_ranges = Vec::new();
+    for _ in 0..range_count.value() {
+        let (gap, next) = decode_frame_varint(bytes, offset, "quic.frame.ack.range.gap")?;
+        offset = next;
+        let (ack_range_length, next) =
+            decode_frame_varint(bytes, offset, "quic.frame.ack.range.length")?;
+        offset = next;
+        ack_ranges.push(QuicAckRange::new(gap, ack_range_length));
+    }
+
+    let ecn_counts = if is_ecn {
+        let (ect0_count, next) = decode_frame_varint(bytes, offset, "quic.frame.ack.ecn.ect0")?;
+        offset = next;
+        let (ect1_count, next) = decode_frame_varint(bytes, offset, "quic.frame.ack.ecn.ect1")?;
+        offset = next;
+        let (ce_count, next) = decode_frame_varint(bytes, offset, "quic.frame.ack.ecn.ce")?;
+        offset = next;
+        Some(QuicAckEcnCounts::new(ect0_count, ect1_count, ce_count))
+    } else {
+        None
+    };
+
+    Ok((
+        QuicAckFrame {
+            largest_acknowledged,
+            ack_delay,
+            first_ack_range,
+            ack_ranges,
+            ecn_counts,
+        },
+        offset,
+    ))
+}
+
+fn decode_frame_varint(
+    bytes: &[u8],
+    offset: usize,
+    context: &'static str,
+) -> Result<(QuicVarInt, usize)> {
+    match QuicVarInt::decode(&bytes[offset..]) {
+        Ok((value, consumed)) => Ok((value, offset + consumed)),
+        Err(CrafterError::BufferTooShort {
+            required,
+            available,
+            ..
+        }) => Err(CrafterError::buffer_too_short(context, required, available)),
+        Err(error) => Err(error),
     }
 }
 
@@ -379,6 +771,10 @@ mod tests {
     use crate::CrafterError;
 
     use super::*;
+
+    fn v(value: u64) -> QuicVarInt {
+        QuicVarInt::new(value).unwrap()
+    }
 
     #[test]
     fn quic_summary_inspection_frame_summary_preserves_unknown_codepoint() {
@@ -468,5 +864,69 @@ mod tests {
         assert!(padding
             .inspection_fields()
             .contains(&("padding_len", "2".to_string())));
+    }
+
+    #[test]
+    fn quic_frame_ack_decodes_ranges_and_continues_sequence() -> crate::Result<()> {
+        let bytes = [0x02, 10, 1, 1, 2, 0, 3, 0x01];
+
+        let frames = QuicFrame::decode_sequence(bytes)?;
+
+        assert_eq!(frames.len(), 2);
+        assert_eq!(
+            frames[0].kind(),
+            QuicFrameKind::Known(QuicKnownFrameType::Ack)
+        );
+        let ack = frames[0].ack_frame()?.unwrap();
+        assert!(!ack.is_ecn());
+        assert_eq!(ack.largest_acknowledged().value(), 10);
+        assert_eq!(ack.ack_delay().value(), 1);
+        assert_eq!(ack.ack_range_count()?.value(), 1);
+        assert_eq!(ack.first_ack_range().value(), 2);
+        assert_eq!(ack.ack_ranges(), &[QuicAckRange::from_values(0, 3)?]);
+        assert!(frames[1].is_ping());
+        assert_eq!(QuicFrame::encode_sequence(frames), bytes);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_ack_ecn_serializes_counts() -> crate::Result<()> {
+        let frame = QuicFrame::ack_ecn(
+            v(10),
+            v(0),
+            v(2),
+            [QuicAckRange::from_values(1, 4)?],
+            QuicAckEcnCounts::from_values(5, 6, 7)?,
+        )?;
+
+        assert_eq!(frame.as_bytes(), &[0x03, 10, 0, 1, 2, 1, 4, 5, 6, 7]);
+        let ack = frame.ack_frame()?.unwrap();
+        assert!(ack.is_ecn());
+        assert_eq!(ack.ecn_counts().unwrap().ect0_count().value(), 5);
+        assert_eq!(ack.ecn_counts().unwrap().ect1_count().value(), 6);
+        assert_eq!(ack.ecn_counts().unwrap().ce_count().value(), 7);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_ack_malformed_range_varint_reports_structured_error() {
+        assert_eq!(
+            QuicFrame::decode_sequence([0x02, 10, 1, 1, 2, 0]).unwrap_err(),
+            CrafterError::buffer_too_short("quic.frame.ack.range.length", 1, 0)
+        );
+    }
+
+    #[test]
+    fn quic_frame_ack_summary_reports_ack_fields() -> crate::Result<()> {
+        let frame = QuicFrame::ack(v(9), v(3), v(2), [QuicAckRange::from_values(0, 1)?])?;
+
+        assert_eq!(
+            frame.summary(),
+            "kind=ACK largest_acknowledged=9 ack_delay=3 first_ack_range=2 ranges=1"
+        );
+        let fields = frame.inspection_fields();
+        assert!(fields.contains(&("ack_largest_acknowledged", "9".to_string())));
+        assert!(fields.contains(&("ack_range", "gap=0 length=1".to_string())));
+        Ok(())
     }
 }
