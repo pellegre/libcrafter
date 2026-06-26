@@ -1130,7 +1130,7 @@ fn canonical_compare_root(root: &str) -> ExampleResult<&'static str> {
 fn normalize_layer_name(name: &str) -> &str {
     match name {
         "Dns" => "dns",
-        "Dhcp" => "dhcp",
+        "Dhcpv4" => "dhcp",
         "Ethernet" => "ethernet",
         "ICMP" => "icmp",
         "Icmp" => "icmp",
@@ -1164,7 +1164,7 @@ fn typed_layer_fields(layer: &dyn Layer, name: &str) -> Option<Map<String, Value
         "icmp" => layer.as_any().downcast_ref::<Icmpv4>().map(icmp_fields),
         "icmpv6" => layer.as_any().downcast_ref::<Icmpv6>().map(icmpv6_fields),
         "dns" => layer.as_any().downcast_ref::<Dns>().map(dns_fields),
-        "dhcp" => layer.as_any().downcast_ref::<Dhcp>().map(dhcp_fields),
+        "dhcp" => layer.as_any().downcast_ref::<Dhcpv4>().map(dhcp_fields),
         _ => None,
     }
 }
@@ -1361,7 +1361,7 @@ fn dns_fields(layer: &Dns) -> Map<String, Value> {
     fields
 }
 
-fn dhcp_fields(layer: &Dhcp) -> Map<String, Value> {
+fn dhcp_fields(layer: &Dhcpv4) -> Map<String, Value> {
     let mut fields = Map::new();
     fields.insert("opcode".to_string(), json!(layer.op_value()));
     fields.insert(
@@ -1414,7 +1414,7 @@ fn dhcp_fields(layer: &Dhcp) -> Map<String, Value> {
     fields
 }
 
-fn decoded_dhcp_options(layer: &Dhcp) -> Vec<Value> {
+fn decoded_dhcp_options(layer: &Dhcpv4) -> Vec<Value> {
     layer
         .options_value()
         .iter()
@@ -1754,14 +1754,14 @@ fn dns_answer(object: &Map<String, Value>) -> ExampleResult<DnsRecord> {
     Ok(DnsRecord::a(name, Ipv4Addr::from_str(address)?, ttl))
 }
 
-fn dhcp_layer(plan: &Value) -> ExampleResult<Dhcp> {
+fn dhcp_layer(plan: &Value) -> ExampleResult<Dhcpv4> {
     let fields = layer_fields(plan, "dhcp")?;
     // The fixed BOOTP header fields are optional: a minimal live-friendly DHCP
-    // plan emits only op/flags/options and relies on `Dhcp::new()` defaults
+    // plan emits only op/flags/options and relies on `Dhcpv4::new()` defaults
     // (BOOTP_REQUEST op, Ethernet htype, hlen 6, xid 0, zero MAC, unspecified
     // addresses) for anything it does not set. This mirrors the materialize
     // adapter so DHCP flows through the same generic endpoint batch contract.
-    let mut layer = Dhcp::new();
+    let mut layer = Dhcpv4::new();
     if let Some(value) = optional(fields, &["op"]) {
         layer = layer.op(dhcp_op(value)?);
     }
@@ -1818,7 +1818,7 @@ fn dhcp_options(value: &Value) -> ExampleResult<Vec<DhcpOption>> {
 
 fn dhcp_option_pair(name: &str, value: &str) -> ExampleResult<DhcpOption> {
     match name.replace('-', "_").as_str() {
-        "message_type" => Ok(DhcpOption::message_type(dhcp_message_type(value))),
+        "message_type" => Ok(DhcpOption::message_type(dhcpv4_message_type(value))),
         "hostname" | "host_name" => Ok(DhcpOption::host_name(value)),
         "domain_name" => Ok(DhcpOption::domain_name(value)),
         "requested_ip" | "requested_ip_address" => {
@@ -1834,20 +1834,20 @@ fn dhcp_option_pair(name: &str, value: &str) -> ExampleResult<DhcpOption> {
     }
 }
 
-fn dhcp_message_type(value: &str) -> DhcpMessageType {
+fn dhcpv4_message_type(value: &str) -> Dhcpv4MessageType {
     match value.replace('-', "_").as_str() {
-        "discover" => DhcpMessageType::Discover,
-        "offer" => DhcpMessageType::Offer,
-        "request" => DhcpMessageType::Request,
-        "decline" => DhcpMessageType::Decline,
-        "ack" => DhcpMessageType::Ack,
-        "nak" => DhcpMessageType::Nak,
-        "release" => DhcpMessageType::Release,
-        "inform" => DhcpMessageType::Inform,
+        "discover" => Dhcpv4MessageType::Discover,
+        "offer" => Dhcpv4MessageType::Offer,
+        "request" => Dhcpv4MessageType::Request,
+        "decline" => Dhcpv4MessageType::Decline,
+        "ack" => Dhcpv4MessageType::Ack,
+        "nak" => Dhcpv4MessageType::Nak,
+        "release" => Dhcpv4MessageType::Release,
+        "inform" => Dhcpv4MessageType::Inform,
         _ => value
             .parse::<u8>()
-            .map(DhcpMessageType::Unknown)
-            .unwrap_or(DhcpMessageType::Discover),
+            .map(Dhcpv4MessageType::Unknown)
+            .unwrap_or(Dhcpv4MessageType::Discover),
     }
 }
 
@@ -2514,7 +2514,7 @@ mod ipv4_dhcp_live_endpoint {
 
     /// A minimal live-friendly `ipv4 / udp / dhcp` plan matching the seeded
     /// generator output: only the DHCP op/flags/options are set so the fixed
-    /// BOOTP header falls back to `Dhcp::new()` defaults.
+    /// BOOTP header falls back to `Dhcpv4::new()` defaults.
     fn ipv4_dhcp_discover_plan(index: usize) -> Value {
         json!({
             "stack": ["ipv4", "udp", "dhcp"],
@@ -2669,9 +2669,9 @@ mod ipv4_dhcp_live_endpoint {
             assert_eq!(udp.source_port_value(), 68, "BOOTP client port");
             assert_eq!(udp.destination_port_value(), 67, "BOOTP server port");
             let dhcp = decoded
-                .layer::<Dhcp>()
+                .layer::<Dhcpv4>()
                 .expect("re-decoded packet must expose a DHCP layer over UDP");
-            assert_eq!(dhcp.message_type_value(), Some(DhcpMessageType::Discover));
+            assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Discover));
         }
     }
 

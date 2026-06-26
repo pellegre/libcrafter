@@ -14,7 +14,7 @@ use super::constants::{
 
 /// DHCP message type (option 53 value).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum DhcpMessageType {
+pub enum Dhcpv4MessageType {
     /// DHCPDISCOVER (RFC 2132).
     Discover,
     /// DHCPOFFER (RFC 2132).
@@ -55,7 +55,7 @@ pub enum DhcpMessageType {
     Unknown(u8),
 }
 
-impl DhcpMessageType {
+impl Dhcpv4MessageType {
     /// Create a DHCP message type from its wire value.
     pub const fn from_code(code: u8) -> Self {
         match code {
@@ -112,61 +112,61 @@ impl DhcpMessageType {
 /// Source: IANA "DHCP Message Type 53 Values" registry (updated 2026-02-02),
 /// values 1 through 18. Used by tests to prove the enum covers the registry.
 #[cfg(test)]
-pub(crate) const REGISTERED_MESSAGE_TYPES: [DhcpMessageType; 18] = [
-    DhcpMessageType::Discover,
-    DhcpMessageType::Offer,
-    DhcpMessageType::Request,
-    DhcpMessageType::Decline,
-    DhcpMessageType::Ack,
-    DhcpMessageType::Nak,
-    DhcpMessageType::Release,
-    DhcpMessageType::Inform,
-    DhcpMessageType::ForceRenew,
-    DhcpMessageType::LeaseQuery,
-    DhcpMessageType::LeaseUnassigned,
-    DhcpMessageType::LeaseUnknown,
-    DhcpMessageType::LeaseActive,
-    DhcpMessageType::BulkLeaseQuery,
-    DhcpMessageType::LeaseQueryDone,
-    DhcpMessageType::ActiveLeaseQuery,
-    DhcpMessageType::LeaseQueryStatus,
-    DhcpMessageType::DhcpTls,
+pub(crate) const REGISTERED_DHCPV4_MESSAGE_TYPES: [Dhcpv4MessageType; 18] = [
+    Dhcpv4MessageType::Discover,
+    Dhcpv4MessageType::Offer,
+    Dhcpv4MessageType::Request,
+    Dhcpv4MessageType::Decline,
+    Dhcpv4MessageType::Ack,
+    Dhcpv4MessageType::Nak,
+    Dhcpv4MessageType::Release,
+    Dhcpv4MessageType::Inform,
+    Dhcpv4MessageType::ForceRenew,
+    Dhcpv4MessageType::LeaseQuery,
+    Dhcpv4MessageType::LeaseUnassigned,
+    Dhcpv4MessageType::LeaseUnknown,
+    Dhcpv4MessageType::LeaseActive,
+    Dhcpv4MessageType::BulkLeaseQuery,
+    Dhcpv4MessageType::LeaseQueryDone,
+    Dhcpv4MessageType::ActiveLeaseQuery,
+    Dhcpv4MessageType::LeaseQueryStatus,
+    Dhcpv4MessageType::DhcpTls,
 ];
 
-impl From<DhcpMessageType> for u8 {
-    fn from(value: DhcpMessageType) -> Self {
+impl From<Dhcpv4MessageType> for u8 {
+    fn from(value: Dhcpv4MessageType) -> Self {
         value.code()
     }
 }
 
 /// Human-readable summary label for a DHCP message type.
-pub(crate) fn message_type_summary(message_type: DhcpMessageType) -> String {
+pub(crate) fn dhcpv4_message_type_summary(message_type: Dhcpv4MessageType) -> String {
     match message_type {
-        DhcpMessageType::Discover => "discover".to_string(),
-        DhcpMessageType::Offer => "offer".to_string(),
-        DhcpMessageType::Request => "request".to_string(),
-        DhcpMessageType::Decline => "decline".to_string(),
-        DhcpMessageType::Ack => "ack".to_string(),
-        DhcpMessageType::Nak => "nak".to_string(),
-        DhcpMessageType::Release => "release".to_string(),
-        DhcpMessageType::Inform => "inform".to_string(),
-        DhcpMessageType::ForceRenew => "forcerenew".to_string(),
-        DhcpMessageType::LeaseQuery => "leasequery".to_string(),
-        DhcpMessageType::LeaseUnassigned => "leaseunassigned".to_string(),
-        DhcpMessageType::LeaseUnknown => "leaseunknown".to_string(),
-        DhcpMessageType::LeaseActive => "leaseactive".to_string(),
-        DhcpMessageType::BulkLeaseQuery => "bulkleasequery".to_string(),
-        DhcpMessageType::LeaseQueryDone => "leasequerydone".to_string(),
-        DhcpMessageType::ActiveLeaseQuery => "activeleasequery".to_string(),
-        DhcpMessageType::LeaseQueryStatus => "leasequerystatus".to_string(),
-        DhcpMessageType::DhcpTls => "dhcptls".to_string(),
-        DhcpMessageType::Unknown(value) => format!("unknown({value})"),
+        Dhcpv4MessageType::Discover => "discover".to_string(),
+        Dhcpv4MessageType::Offer => "offer".to_string(),
+        Dhcpv4MessageType::Request => "request".to_string(),
+        Dhcpv4MessageType::Decline => "decline".to_string(),
+        Dhcpv4MessageType::Ack => "ack".to_string(),
+        Dhcpv4MessageType::Nak => "nak".to_string(),
+        Dhcpv4MessageType::Release => "release".to_string(),
+        Dhcpv4MessageType::Inform => "inform".to_string(),
+        Dhcpv4MessageType::ForceRenew => "forcerenew".to_string(),
+        Dhcpv4MessageType::LeaseQuery => "leasequery".to_string(),
+        Dhcpv4MessageType::LeaseUnassigned => "leaseunassigned".to_string(),
+        Dhcpv4MessageType::LeaseUnknown => "leaseunknown".to_string(),
+        Dhcpv4MessageType::LeaseActive => "leaseactive".to_string(),
+        Dhcpv4MessageType::BulkLeaseQuery => "bulkleasequery".to_string(),
+        Dhcpv4MessageType::LeaseQueryDone => "leasequerydone".to_string(),
+        Dhcpv4MessageType::ActiveLeaseQuery => "activeleasequery".to_string(),
+        Dhcpv4MessageType::LeaseQueryStatus => "leasequerystatus".to_string(),
+        Dhcpv4MessageType::DhcpTls => "dhcptls".to_string(),
+        Dhcpv4MessageType::Unknown(value) => format!("unknown({value})"),
     }
 }
 
 #[cfg(test)]
 mod message_type_tests {
-    use super::{DhcpMessageType, REGISTERED_MESSAGE_TYPES};
+    use super::{Dhcpv4MessageType, REGISTERED_DHCPV4_MESSAGE_TYPES};
 
     /// Expected IANA codepoints, mirroring the "DHCP Message Type 53 Values"
     /// registry (updated 2026-02-02): values 1..=18.
@@ -177,13 +177,13 @@ mod message_type_tests {
     #[test]
     fn dhcp_message_type_registry_is_complete() {
         assert_eq!(
-            REGISTERED_MESSAGE_TYPES.len(),
+            REGISTERED_DHCPV4_MESSAGE_TYPES.len(),
             REGISTERED_CODES.len(),
             "registered message type table must cover every IANA codepoint",
         );
 
         for (message_type, expected_code) in
-            REGISTERED_MESSAGE_TYPES.into_iter().zip(REGISTERED_CODES)
+            REGISTERED_DHCPV4_MESSAGE_TYPES.into_iter().zip(REGISTERED_CODES)
         {
             // enum -> code
             assert_eq!(
@@ -193,7 +193,7 @@ mod message_type_tests {
             );
             // code -> enum
             assert_eq!(
-                DhcpMessageType::from_code(expected_code),
+                Dhcpv4MessageType::from_code(expected_code),
                 message_type,
                 "code {expected_code} must decode to {message_type:?}",
             );
@@ -201,7 +201,7 @@ mod message_type_tests {
             assert_eq!(u8::from(message_type), expected_code);
             // never decode a registered codepoint as Unknown
             assert!(
-                !matches!(message_type, DhcpMessageType::Unknown(_)),
+                !matches!(message_type, Dhcpv4MessageType::Unknown(_)),
                 "{message_type:?} is a registered type and must not be Unknown",
             );
         }
@@ -217,17 +217,17 @@ mod message_type_tests {
     fn dhcp_message_type_unknown_values_roundtrip() {
         // 0 and 19..=255 are not registered DHCP message type values.
         let registered: std::collections::HashSet<u8> =
-            REGISTERED_MESSAGE_TYPES.iter().map(|m| m.code()).collect();
+            REGISTERED_DHCPV4_MESSAGE_TYPES.iter().map(|m| m.code()).collect();
 
         for code in 0u8..=255 {
-            let message_type = DhcpMessageType::from_code(code);
+            let message_type = Dhcpv4MessageType::from_code(code);
             if registered.contains(&code) {
-                assert!(!matches!(message_type, DhcpMessageType::Unknown(_)));
+                assert!(!matches!(message_type, Dhcpv4MessageType::Unknown(_)));
                 continue;
             }
             assert_eq!(
                 message_type,
-                DhcpMessageType::Unknown(code),
+                Dhcpv4MessageType::Unknown(code),
                 "unregistered code {code} must be preserved as Unknown",
             );
             // Unknown values round-trip code -> enum -> code without loss.
@@ -247,22 +247,22 @@ mod message_type_tests {
         // DHCPLEASEQUERYSTATUS, DHCPTLS). Each value carries through option 53 in
         // a full DHCP packet without loss, and pins to its IANA codepoint.
         let leasequery_family = [
-            (DhcpMessageType::LeaseQuery, 10u8),
-            (DhcpMessageType::LeaseUnassigned, 11),
-            (DhcpMessageType::LeaseUnknown, 12),
-            (DhcpMessageType::LeaseActive, 13),
-            (DhcpMessageType::BulkLeaseQuery, 14),
-            (DhcpMessageType::LeaseQueryDone, 15),
-            (DhcpMessageType::ActiveLeaseQuery, 16),
-            (DhcpMessageType::LeaseQueryStatus, 17),
-            (DhcpMessageType::DhcpTls, 18),
+            (Dhcpv4MessageType::LeaseQuery, 10u8),
+            (Dhcpv4MessageType::LeaseUnassigned, 11),
+            (Dhcpv4MessageType::LeaseUnknown, 12),
+            (Dhcpv4MessageType::LeaseActive, 13),
+            (Dhcpv4MessageType::BulkLeaseQuery, 14),
+            (Dhcpv4MessageType::LeaseQueryDone, 15),
+            (Dhcpv4MessageType::ActiveLeaseQuery, 16),
+            (Dhcpv4MessageType::LeaseQueryStatus, 17),
+            (Dhcpv4MessageType::DhcpTls, 18),
         ];
 
         for (message_type, code) in leasequery_family {
             // enum <-> codepoint mapping is exact and never Unknown.
             assert_eq!(message_type.code(), code, "{message_type:?} codepoint");
-            assert_eq!(DhcpMessageType::from_code(code), message_type);
-            assert!(!matches!(message_type, DhcpMessageType::Unknown(_)));
+            assert_eq!(Dhcpv4MessageType::from_code(code), message_type);
+            assert!(!matches!(message_type, Dhcpv4MessageType::Unknown(_)));
 
             // The message type survives a full DHCP packet compile -> decode
             // cycle through option 53, and the bytes re-compile identically.
@@ -293,13 +293,13 @@ mod message_type_tests {
     fn dhcp_message_type_matrix_full_packet_roundtrip() {
         use super::super::Dhcpv4;
 
-        // Every implemented DhcpMessageType (the full IANA option-53 matrix,
+        // Every implemented Dhcpv4MessageType (the full IANA option-53 matrix,
         // codes 1..=18: RFC 2132 1-8, RFC 3203 9, RFC 4388 10-13, RFC 6926
         // 14-15, RFC 7724 16-18) must encode, decode, and re-encode through a
         // full DHCP packet without loss. This test is named so the
         // `dhcp_message` filter covers the complete matrix, not just the
         // RFC 2132 base types.
-        for message_type in REGISTERED_MESSAGE_TYPES {
+        for message_type in REGISTERED_DHCPV4_MESSAGE_TYPES {
             // The opcode does not affect the option-53 round-trip; BOOTREPLY is
             // a valid carrier for both request- and reply-side message types.
             let dhcp = Dhcpv4::new()
@@ -321,7 +321,7 @@ mod message_type_tests {
             assert!(
                 !matches!(
                     parsed.message_type_value(),
-                    Some(DhcpMessageType::Unknown(_))
+                    Some(Dhcpv4MessageType::Unknown(_))
                 ),
                 "{message_type:?} must decode to a registered type, not Unknown",
             );

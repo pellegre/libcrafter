@@ -95,7 +95,7 @@ pub use constants::{
     DHCP_RELAY_SUBOPTION_VSS, DHCP_RELAY_SUBOPTION_VSS_CONTROL, DHCP_RELEASE, DHCP_REQUEST,
     DHCP_SERVER_PORT, DHCP_VSS_TYPE_GLOBAL_DEFAULT, DHCP_VSS_TYPE_NVT_ASCII, DHCP_VSS_TYPE_VPN_ID,
 };
-pub use message::DhcpMessageType;
+pub use message::Dhcpv4MessageType;
 pub use option::{
     decode_tftp_server_addresses, scan_dhcp_option_segments, typed_option_value,
     ClientNetworkDeviceInterface, ClientSystemArchitecture, DhcpAuthAlgorithm, DhcpAuthProtocol,
@@ -112,7 +112,7 @@ pub use registry::{
 };
 
 use constants::{DHCP_CHADDR_LEN, DHCP_DEFAULT_PARAMETER_REQUESTS, DHCP_FILE_LEN, DHCP_SNAME_LEN};
-use message::message_type_summary;
+use message::dhcpv4_message_type_summary;
 use option::{
     decode_dhcp_option, decode_overload_area_options, encode_dhcp_options,
     encode_overload_area_options, encoded_options_len_lossy, find_option_overload,
@@ -207,7 +207,7 @@ impl Dhcpv4 {
     pub fn discover(client_mac: MacAddr) -> Self {
         Self::new()
             .client_mac(client_mac)
-            .message_type(DhcpMessageType::Discover)
+            .message_type(Dhcpv4MessageType::Discover)
             .parameter_request_list(DHCP_DEFAULT_PARAMETER_REQUESTS)
     }
 
@@ -219,7 +219,7 @@ impl Dhcpv4 {
     ) -> Self {
         Self::new()
             .client_mac(client_mac)
-            .message_type(DhcpMessageType::Request)
+            .message_type(Dhcpv4MessageType::Request)
             .requested_ip_address(requested_ip)
             .server_identifier(server_identifier)
             .parameter_request_list(DHCP_DEFAULT_PARAMETER_REQUESTS)
@@ -231,7 +231,7 @@ impl Dhcpv4 {
             .op(BOOTP_REPLY)
             .client_mac(client_mac)
             .yiaddr(offered_ip)
-            .message_type(DhcpMessageType::Offer)
+            .message_type(Dhcpv4MessageType::Offer)
             .server_identifier(server_identifier)
     }
 
@@ -248,7 +248,7 @@ impl Dhcpv4 {
     ) -> Self {
         Self::new()
             .client_mac(client_mac)
-            .message_type(DhcpMessageType::Decline)
+            .message_type(Dhcpv4MessageType::Decline)
             .requested_ip_address(declined_ip)
             .server_identifier(server_identifier)
     }
@@ -264,7 +264,7 @@ impl Dhcpv4 {
             .op(BOOTP_REPLY)
             .client_mac(client_mac)
             .yiaddr(assigned_ip)
-            .message_type(DhcpMessageType::Ack)
+            .message_type(Dhcpv4MessageType::Ack)
             .server_identifier(server_identifier)
     }
 
@@ -277,7 +277,7 @@ impl Dhcpv4 {
         Self::new()
             .op(BOOTP_REPLY)
             .client_mac(client_mac)
-            .message_type(DhcpMessageType::Nak)
+            .message_type(Dhcpv4MessageType::Nak)
             .server_identifier(server_identifier)
     }
 
@@ -291,7 +291,7 @@ impl Dhcpv4 {
         Self::new()
             .client_mac(client_mac)
             .ciaddr(client_ip)
-            .message_type(DhcpMessageType::Release)
+            .message_type(Dhcpv4MessageType::Release)
             .server_identifier(server_identifier)
     }
 
@@ -305,7 +305,7 @@ impl Dhcpv4 {
         Self::new()
             .client_mac(client_mac)
             .ciaddr(client_ip)
-            .message_type(DhcpMessageType::Inform)
+            .message_type(Dhcpv4MessageType::Inform)
             .parameter_request_list(DHCP_DEFAULT_PARAMETER_REQUESTS)
     }
 
@@ -320,7 +320,7 @@ impl Dhcpv4 {
         Self::new()
             .op(BOOTP_REPLY)
             .client_mac(client_mac)
-            .message_type(DhcpMessageType::ForceRenew)
+            .message_type(Dhcpv4MessageType::ForceRenew)
             .server_identifier(server_identifier)
     }
 
@@ -334,7 +334,7 @@ impl Dhcpv4 {
     pub fn lease_query_by_ip(query_ip: Ipv4Addr) -> Self {
         Self::new()
             .ciaddr(query_ip)
-            .message_type(DhcpMessageType::LeaseQuery)
+            .message_type(Dhcpv4MessageType::LeaseQuery)
     }
 
     /// Create a DHCPLEASEQUERY message that queries by MAC address (RFC 4388,
@@ -346,7 +346,7 @@ impl Dhcpv4 {
     pub fn lease_query_by_mac(client_mac: MacAddr) -> Self {
         Self::new()
             .client_mac(client_mac)
-            .message_type(DhcpMessageType::LeaseQuery)
+            .message_type(Dhcpv4MessageType::LeaseQuery)
     }
 
     /// Create a DHCPLEASEQUERY message that queries by client identifier
@@ -357,7 +357,7 @@ impl Dhcpv4 {
     /// and `chaddr` empty.
     pub fn lease_query_by_client_id(client_id: DhcpClientIdentifier) -> Self {
         Self::new()
-            .message_type(DhcpMessageType::LeaseQuery)
+            .message_type(Dhcpv4MessageType::LeaseQuery)
             .client_id_value(client_id)
     }
 
@@ -561,7 +561,7 @@ impl Dhcpv4 {
     }
 
     /// Append a DHCP message type option.
-    pub fn message_type(self, message_type: DhcpMessageType) -> Self {
+    pub fn message_type(self, message_type: Dhcpv4MessageType) -> Self {
         self.option(DhcpOption::message_type(message_type))
     }
 
@@ -855,7 +855,7 @@ impl Dhcpv4 {
     }
 
     /// DHCP message type option, when present.
-    pub fn message_type_value(&self) -> Option<DhcpMessageType> {
+    pub fn message_type_value(&self) -> Option<Dhcpv4MessageType> {
         self.options.iter().find_map(|option| match option {
             DhcpOption::MessageType(message_type) => Some(*message_type),
             _ => None,
@@ -1603,7 +1603,7 @@ impl Layer for Dhcpv4 {
         format!(
             "Dhcpv4(type={}, xid=0x{:08x}, yiaddr={})",
             self.message_type_value()
-                .map(message_type_summary)
+                .map(dhcpv4_message_type_summary)
                 .unwrap_or_else(|| "unknown".to_string()),
             self.transaction_id_value(),
             self.your_ip_address_value(),
@@ -1625,7 +1625,7 @@ impl Layer for Dhcpv4 {
             (
                 "message_type",
                 self.message_type_value()
-                    .map(message_type_summary)
+                    .map(dhcpv4_message_type_summary)
                     .unwrap_or_else(|| "none".to_string()),
             ),
             ("options", self.options.len().to_string()),
@@ -1824,7 +1824,7 @@ fn hex_bytes(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod dhcp_tests {
     use super::{
-        Dhcpv4, DhcpMessageType, BOOTP_REPLY, DHCP_CLIENT_PORT, DHCP_MAGIC_COOKIE, DHCP_SERVER_PORT,
+        Dhcpv4, Dhcpv4MessageType, BOOTP_REPLY, DHCP_CLIENT_PORT, DHCP_MAGIC_COOKIE, DHCP_SERVER_PORT,
     };
     use crate::{Ipv4, MacAddr, NetworkLayer, Packet, Udp};
     use core::net::Ipv4Addr;
@@ -1867,7 +1867,7 @@ mod dhcp_tests {
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
         let dhcp = decoded.layer::<Dhcpv4>().unwrap();
 
-        assert_eq!(dhcp.message_type_value(), Some(DhcpMessageType::Discover));
+        assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Discover));
         assert_eq!(dhcp.client_mac_value(), Some(mac()));
         assert_eq!(dhcp.transaction_id_value(), 0x3903_f326);
         assert_eq!(dhcp.host_name_value(), Some("agent"));
@@ -1895,7 +1895,7 @@ mod dhcp_tests {
         let dhcp = decoded.layer::<Dhcpv4>().unwrap();
 
         assert_eq!(dhcp.op_value(), BOOTP_REPLY);
-        assert_eq!(dhcp.message_type_value(), Some(DhcpMessageType::Offer));
+        assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Offer));
         assert_eq!(dhcp.offered_ip_address(), Some(offered));
         assert_eq!(dhcp.server_identifier_value(), Some(server));
         assert_eq!(
@@ -1913,7 +1913,7 @@ mod dhcp_tests {
         let server = Ipv4Addr::new(192, 0, 2, 1);
         let dhcp = Dhcpv4::request(mac(), requested, server).xid(7);
 
-        assert_eq!(dhcp.message_type_value(), Some(DhcpMessageType::Request));
+        assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Request));
         assert_eq!(dhcp.requested_ip_address_value(), Some(requested));
         assert_eq!(dhcp.server_identifier_value(), Some(server));
         assert_eq!(dhcp.transaction_id_value(), 7);
@@ -1931,7 +1931,7 @@ mod dhcp_tests {
             / Udp::dhcp_client()
             / Dhcpv4::new()
                 .client_mac(mac())
-                .message_type(DhcpMessageType::Discover)
+                .message_type(Dhcpv4MessageType::Discover)
                 .xid(0x1234_5678)
                 .parameter_request_list(requests.clone()))
         .compile()
@@ -2044,7 +2044,7 @@ mod dhcp_malformed {
 #[cfg(test)]
 mod dhcp_fixed_header {
     use super::{
-        Dhcpv4, DhcpMessageType, BOOTP_REPLY, DHCP_FIXED_HEADER_LEN, DHCP_MAGIC_COOKIE, DHCP_MIN_LEN,
+        Dhcpv4, Dhcpv4MessageType, BOOTP_REPLY, DHCP_FIXED_HEADER_LEN, DHCP_MAGIC_COOKIE, DHCP_MIN_LEN,
     };
     use crate::error::CrafterError;
     use crate::{MacAddr, Packet};
@@ -2076,7 +2076,7 @@ mod dhcp_fixed_header {
             .chaddr(chaddr)
             .sname("boot-server")
             .file("pxelinux.0")
-            .message_type(DhcpMessageType::Ack);
+            .message_type(Dhcpv4MessageType::Ack);
 
         let compiled = Packet::from_layer(dhcp.clone()).compile().unwrap();
         let bytes = compiled.as_bytes();
@@ -2149,7 +2149,7 @@ mod dhcp_fixed_header {
             .htype(0xfe)
             .hlen(0)
             .chaddr([0xaa, 0xbb, 0xcc])
-            .message_type(DhcpMessageType::Discover);
+            .message_type(Dhcpv4MessageType::Discover);
 
         let bytes = Packet::from_layer(dhcp).compile().unwrap();
         let parsed = Dhcpv4::decode(bytes.as_bytes()).unwrap();
@@ -2190,7 +2190,7 @@ mod dhcp_fixed_header {
 #[cfg(test)]
 mod dhcp_option_overload {
     use super::{
-        Dhcpv4, DhcpMessageType, DhcpOption, DhcpOptionArea, OptionOverload, DHCP_CLIENT_PORT,
+        Dhcpv4, Dhcpv4MessageType, DhcpOption, DhcpOptionArea, OptionOverload, DHCP_CLIENT_PORT,
         DHCP_FILE_LEN, DHCP_MIN_LEN, DHCP_OPTION_OVERLOAD, DHCP_SERVER_PORT, DHCP_SNAME_LEN,
     };
     use crate::error::CrafterError;
@@ -2217,7 +2217,7 @@ mod dhcp_option_overload {
         // Without any overloaded options, `sname`/`file` stay plain strings and
         // no option 52 is emitted.
         let dhcp = Dhcpv4::new()
-            .message_type(DhcpMessageType::Discover)
+            .message_type(Dhcpv4MessageType::Discover)
             .sname("boot-server")
             .file("pxelinux.0");
 
@@ -2251,7 +2251,7 @@ mod dhcp_option_overload {
         // Placing options in the `file` area overloads only `file`; option 52 is
         // auto-inserted with value 1.
         let dhcp = Dhcpv4::new()
-            .message_type(DhcpMessageType::Ack)
+            .message_type(Dhcpv4MessageType::Ack)
             .sname("boot-server")
             .file_option(DhcpOption::host_name("from-file"))
             .file_option(DhcpOption::End);
@@ -2282,7 +2282,7 @@ mod dhcp_option_overload {
     #[test]
     fn dhcp_option_overload_sname_only() {
         let dhcp = Dhcpv4::new()
-            .message_type(DhcpMessageType::Ack)
+            .message_type(Dhcpv4MessageType::Ack)
             .file("pxelinux.0")
             .sname_option(DhcpOption::host_name("from-sname"))
             .sname_option(DhcpOption::End);
@@ -2313,7 +2313,7 @@ mod dhcp_option_overload {
         // each area plus the normal area. Decode must surface each option with
         // exact source-area metadata and re-encode consistently.
         let dhcp = Dhcpv4::new()
-            .message_type(DhcpMessageType::Ack)
+            .message_type(Dhcpv4MessageType::Ack)
             .server_identifier(Ipv4Addr::new(192, 0, 2, 1))
             .file_option(DhcpOption::subnet_mask(Ipv4Addr::new(255, 255, 255, 0)))
             .file_option(DhcpOption::End)
@@ -2336,7 +2336,7 @@ mod dhcp_option_overload {
         assert!(parsed.sname_is_overloaded());
 
         // The normal area carries the message type, server id, and option 52.
-        assert_eq!(parsed.message_type_value(), Some(DhcpMessageType::Ack));
+        assert_eq!(parsed.message_type_value(), Some(Dhcpv4MessageType::Ack));
         assert_eq!(
             parsed.server_identifier_value(),
             Some(Ipv4Addr::new(192, 0, 2, 1))
@@ -2395,7 +2395,7 @@ mod dhcp_option_overload {
         // None: no overload row value other than `none`.
         let plain = Packet::from_layer(
             Dhcpv4::new()
-                .message_type(DhcpMessageType::Discover)
+                .message_type(Dhcpv4MessageType::Discover)
                 .sname("boot-server")
                 .file("pxelinux.0"),
         );
@@ -2408,7 +2408,7 @@ mod dhcp_option_overload {
         // File only.
         let file = Packet::from_layer(
             Dhcpv4::new()
-                .message_type(DhcpMessageType::Ack)
+                .message_type(Dhcpv4MessageType::Ack)
                 .file_option(DhcpOption::host_name("from-file"))
                 .file_option(DhcpOption::End),
         );
@@ -2421,7 +2421,7 @@ mod dhcp_option_overload {
         // Sname only.
         let sname = Packet::from_layer(
             Dhcpv4::new()
-                .message_type(DhcpMessageType::Ack)
+                .message_type(Dhcpv4MessageType::Ack)
                 .sname_option(DhcpOption::host_name("from-sname"))
                 .sname_option(DhcpOption::End),
         );
@@ -2434,7 +2434,7 @@ mod dhcp_option_overload {
         // Both file and sname: decode from compiled bytes so the visibility is
         // checked on a fully round-tripped packet, not just the builder.
         let both = Dhcpv4::new()
-            .message_type(DhcpMessageType::Ack)
+            .message_type(Dhcpv4MessageType::Ack)
             .file_option(DhcpOption::subnet_mask(Ipv4Addr::new(255, 255, 255, 0)))
             .file_option(DhcpOption::End)
             .sname_option(DhcpOption::router([Ipv4Addr::new(192, 0, 2, 254)]))
@@ -2460,7 +2460,7 @@ mod dhcp_option_overload {
         let chaddr = MacAddr::new([0x02, 0x00, 0x5e, 0x00, 0x53, 0x01]);
         let xid = 0x3903_f326u32;
         let dhcp = Dhcpv4::new()
-            .message_type(DhcpMessageType::Discover)
+            .message_type(Dhcpv4MessageType::Discover)
             .transaction_id(xid)
             .client_mac(chaddr)
             .your_ip_address(Ipv4Addr::new(0, 0, 0, 0))
@@ -2509,7 +2509,7 @@ mod dhcp_option_overload {
         let dhcp_layer = decoded.layer::<Dhcpv4>().expect("dhcp layer present");
         assert_eq!(
             dhcp_layer.message_type_value(),
-            Some(DhcpMessageType::Discover)
+            Some(Dhcpv4MessageType::Discover)
         );
         assert_eq!(dhcp_layer.transaction_id_value(), xid);
         assert_eq!(
@@ -2539,7 +2539,7 @@ mod dhcp_option_overload {
         // When the caller sets option 52 explicitly, it is honored untouched and
         // not duplicated by the auto-insert path.
         let dhcp = Dhcpv4::new()
-            .message_type(DhcpMessageType::Ack)
+            .message_type(Dhcpv4MessageType::Ack)
             .option(DhcpOption::option_overload(OptionOverload::File))
             .file_option(DhcpOption::host_name("from-file"))
             .file_option(DhcpOption::End);
@@ -2568,7 +2568,7 @@ mod dhcp_option_overload {
     fn dhcp_option_overload_rejects_string_and_options_in_same_field() {
         // A field cannot be both a string and an overloaded option area.
         let file_conflict = Dhcpv4::new()
-            .message_type(DhcpMessageType::Ack)
+            .message_type(Dhcpv4MessageType::Ack)
             .file("pxelinux.0")
             .file_option(DhcpOption::host_name("x"))
             .file_option(DhcpOption::End);
@@ -2579,7 +2579,7 @@ mod dhcp_option_overload {
         ));
 
         let sname_conflict = Dhcpv4::new()
-            .message_type(DhcpMessageType::Ack)
+            .message_type(Dhcpv4MessageType::Ack)
             .sname("boot-server")
             .sname_option(DhcpOption::host_name("x"))
             .sname_option(DhcpOption::End);
@@ -2595,7 +2595,7 @@ mod dhcp_option_overload {
         // Overloaded option data that does not fit the fixed field width is a
         // structured error, not a panic.
         let too_big = Dhcpv4::new()
-            .message_type(DhcpMessageType::Ack)
+            .message_type(Dhcpv4MessageType::Ack)
             .sname_option(DhcpOption::generic(60, vec![0u8; 200]))
             .sname_option(DhcpOption::End);
         let error = Packet::from_layer(too_big).compile().unwrap_err();
@@ -2611,7 +2611,7 @@ mod dhcp_option_overload {
         // field so it lacks an end marker. Decode must report a structured
         // error scoped to the file area and never panic.
         let dhcp = Dhcpv4::new()
-            .message_type(DhcpMessageType::Ack)
+            .message_type(Dhcpv4MessageType::Ack)
             .option(DhcpOption::option_overload(OptionOverload::File))
             .file_option(DhcpOption::host_name("from-file"))
             .file_option(DhcpOption::End);
@@ -2634,7 +2634,7 @@ mod dhcp_forcerenew {
     use super::constants::DHCP_FORCE_RENEW;
     use super::{
         Dhcpv4, DhcpAuthAlgorithm, DhcpAuthProtocol, DhcpAuthentication, DhcpForcerenewNonceCapable,
-        DhcpMessageType, DhcpOption, DhcpReplayDetectionMethod, BOOTP_REPLY,
+        Dhcpv4MessageType, DhcpOption, DhcpReplayDetectionMethod, BOOTP_REPLY,
     };
     use crate::Packet;
     use core::net::Ipv4Addr;
@@ -2664,7 +2664,7 @@ mod dhcp_forcerenew {
             .op(BOOTP_REPLY)
             .xid(0xCAFE_F00D)
             .ciaddr(Ipv4Addr::new(192, 0, 2, 25))
-            .message_type(DhcpMessageType::ForceRenew)
+            .message_type(Dhcpv4MessageType::ForceRenew)
             .option(DhcpOption::server_identifier(Ipv4Addr::new(192, 0, 2, 1)))
             .option(DhcpOption::authentication(auth.clone()))
             .option(DhcpOption::forcerenew_nonce_capable(nonce_capable.clone()));
@@ -2676,9 +2676,9 @@ mod dhcp_forcerenew {
         // The FORCERENEW message type round-trips and pins to its RFC 3203 value.
         assert_eq!(
             parsed.message_type_value(),
-            Some(DhcpMessageType::ForceRenew)
+            Some(Dhcpv4MessageType::ForceRenew)
         );
-        assert_eq!(DhcpMessageType::ForceRenew.code(), DHCP_FORCE_RENEW);
+        assert_eq!(Dhcpv4MessageType::ForceRenew.code(), DHCP_FORCE_RENEW);
         assert_eq!(DHCP_FORCE_RENEW, 9);
         assert_eq!(parsed.op_value(), BOOTP_REPLY);
         assert_eq!(parsed.transaction_id_value(), 0xCAFE_F00D);
@@ -2715,7 +2715,7 @@ mod dhcp_forcerenew {
 #[cfg(test)]
 mod dhcp_message_builders {
     use super::{
-        Dhcpv4, DhcpClientIdentifier, DhcpMessageType, DhcpOption, DhcpRelayAgentInfo,
+        Dhcpv4, DhcpClientIdentifier, Dhcpv4MessageType, DhcpOption, DhcpRelayAgentInfo,
         DhcpRelaySuboption, BOOTP_REPLY, BOOTP_REQUEST,
     };
     use crate::{MacAddr, Packet};
@@ -2753,14 +2753,14 @@ mod dhcp_message_builders {
         assert_eq!(discover.op_value(), BOOTP_REQUEST);
         assert_eq!(
             discover.message_type_value(),
-            Some(DhcpMessageType::Discover)
+            Some(Dhcpv4MessageType::Discover)
         );
         assert_eq!(discover.client_mac_value(), Some(client_mac()));
 
         // DHCPOFFER (RFC 2131 section 3.1 step 2): server BOOTREPLY.
         let offer = roundtrip(Dhcpv4::offer(client_mac(), assigned, server()));
         assert_eq!(offer.op_value(), BOOTP_REPLY);
-        assert_eq!(offer.message_type_value(), Some(DhcpMessageType::Offer));
+        assert_eq!(offer.message_type_value(), Some(Dhcpv4MessageType::Offer));
         assert_eq!(offer.offered_ip_address(), Some(assigned));
         assert_eq!(offer.server_identifier_value(), Some(server()));
 
@@ -2768,7 +2768,7 @@ mod dhcp_message_builders {
         // carrying both requested-address (50) and server-identifier (54).
         let request = roundtrip(Dhcpv4::request(client_mac(), assigned, server()));
         assert_eq!(request.op_value(), BOOTP_REQUEST);
-        assert_eq!(request.message_type_value(), Some(DhcpMessageType::Request));
+        assert_eq!(request.message_type_value(), Some(Dhcpv4MessageType::Request));
         assert_eq!(request.requested_ip_address_value(), Some(assigned));
         assert_eq!(request.server_identifier_value(), Some(server()));
 
@@ -2776,7 +2776,7 @@ mod dhcp_message_builders {
         // requested-address (50), chosen server in server-identifier (54).
         let decline = roundtrip(Dhcpv4::decline(client_mac(), assigned, server()));
         assert_eq!(decline.op_value(), BOOTP_REQUEST);
-        assert_eq!(decline.message_type_value(), Some(DhcpMessageType::Decline));
+        assert_eq!(decline.message_type_value(), Some(Dhcpv4MessageType::Decline));
         assert_eq!(decline.requested_ip_address_value(), Some(assigned));
         assert_eq!(decline.server_identifier_value(), Some(server()));
 
@@ -2784,28 +2784,28 @@ mod dhcp_message_builders {
         // yiaddr set and server-identifier (54).
         let ack = roundtrip(Dhcpv4::ack(client_mac(), assigned, server()));
         assert_eq!(ack.op_value(), BOOTP_REPLY);
-        assert_eq!(ack.message_type_value(), Some(DhcpMessageType::Ack));
+        assert_eq!(ack.message_type_value(), Some(Dhcpv4MessageType::Ack));
         assert_eq!(ack.offered_ip_address(), Some(assigned));
         assert_eq!(ack.server_identifier_value(), Some(server()));
 
         // DHCPNAK (RFC 2131 section 4.3.2): refusal with no yiaddr.
         let nak = roundtrip(Dhcpv4::nak(client_mac(), server()));
         assert_eq!(nak.op_value(), BOOTP_REPLY);
-        assert_eq!(nak.message_type_value(), Some(DhcpMessageType::Nak));
+        assert_eq!(nak.message_type_value(), Some(Dhcpv4MessageType::Nak));
         assert_eq!(nak.your_ip_address_value(), Ipv4Addr::UNSPECIFIED);
         assert_eq!(nak.server_identifier_value(), Some(server()));
 
         // DHCPRELEASE (RFC 2131 section 4.4.4): released address in ciaddr.
         let release = roundtrip(Dhcpv4::release(client_mac(), assigned, server()));
         assert_eq!(release.op_value(), BOOTP_REQUEST);
-        assert_eq!(release.message_type_value(), Some(DhcpMessageType::Release));
+        assert_eq!(release.message_type_value(), Some(Dhcpv4MessageType::Release));
         assert_eq!(release.client_ip_address_value(), assigned);
         assert_eq!(release.server_identifier_value(), Some(server()));
 
         // DHCPINFORM (RFC 2131 section 3.4): ciaddr holds the configured address.
         let inform = roundtrip(Dhcpv4::inform(client_mac(), assigned));
         assert_eq!(inform.op_value(), BOOTP_REQUEST);
-        assert_eq!(inform.message_type_value(), Some(DhcpMessageType::Inform));
+        assert_eq!(inform.message_type_value(), Some(Dhcpv4MessageType::Inform));
         assert_eq!(inform.client_ip_address_value(), assigned);
 
         // DHCPFORCERENEW (RFC 3203 section 2): server BOOTREPLY to a bound client.
@@ -2813,7 +2813,7 @@ mod dhcp_message_builders {
         assert_eq!(force_renew.op_value(), BOOTP_REPLY);
         assert_eq!(
             force_renew.message_type_value(),
-            Some(DhcpMessageType::ForceRenew)
+            Some(Dhcpv4MessageType::ForceRenew)
         );
         assert_eq!(force_renew.server_identifier_value(), Some(server()));
 
@@ -2823,7 +2823,7 @@ mod dhcp_message_builders {
         assert_eq!(lq_ip.op_value(), BOOTP_REQUEST);
         assert_eq!(
             lq_ip.message_type_value(),
-            Some(DhcpMessageType::LeaseQuery)
+            Some(Dhcpv4MessageType::LeaseQuery)
         );
         assert_eq!(lq_ip.client_ip_address_value(), query_ip);
 
@@ -2831,7 +2831,7 @@ mod dhcp_message_builders {
         let lq_mac = roundtrip(Dhcpv4::lease_query_by_mac(client_mac()));
         assert_eq!(
             lq_mac.message_type_value(),
-            Some(DhcpMessageType::LeaseQuery)
+            Some(Dhcpv4MessageType::LeaseQuery)
         );
         assert_eq!(lq_mac.client_mac_value(), Some(client_mac()));
         assert_eq!(lq_mac.client_ip_address_value(), Ipv4Addr::UNSPECIFIED);
@@ -2842,7 +2842,7 @@ mod dhcp_message_builders {
         let lq_cid = roundtrip(Dhcpv4::lease_query_by_client_id(client_id.clone()));
         assert_eq!(
             lq_cid.message_type_value(),
-            Some(DhcpMessageType::LeaseQuery)
+            Some(Dhcpv4MessageType::LeaseQuery)
         );
         assert_eq!(
             lq_cid.client_identifier_value().unwrap().unwrap(),
@@ -2890,7 +2890,7 @@ mod dhcp_message_builders {
         let nak = roundtrip(
             Dhcpv4::nak(client_mac(), server()).message("requested address not on this network"),
         );
-        assert_eq!(nak.message_type_value(), Some(DhcpMessageType::Nak));
+        assert_eq!(nak.message_type_value(), Some(Dhcpv4MessageType::Nak));
         assert_eq!(
             nak.message_value(),
             Some("requested address not on this network")
@@ -2932,7 +2932,7 @@ mod dhcp_message_builders {
         );
         assert_eq!(parsed.magic_cookie_value(), weird_cookie);
         // The discover message type the constructor set still survives.
-        assert_eq!(parsed.message_type_value(), Some(DhcpMessageType::Discover));
+        assert_eq!(parsed.message_type_value(), Some(Dhcpv4MessageType::Discover));
     }
 
     /// Round-trip a packet whose magic cookie was deliberately overridden away

@@ -55,7 +55,7 @@ pub mod exports {
         scan_dhcp_option_segments, typed_option_value, ClientNetworkDeviceInterface,
         ClientSystemArchitecture, Dhcpv4, DhcpAuthAlgorithm, DhcpAuthProtocol, DhcpAuthentication,
         DhcpClasslessRoute, DhcpClientIdentifier, DhcpClientUuid, DhcpDataSource,
-        DhcpForcerenewNonceCapable, DhcpMessageType, DhcpOption, DhcpOptionArea, DhcpOptionCode,
+        DhcpForcerenewNonceCapable, Dhcpv4MessageType, DhcpOption, DhcpOptionArea, DhcpOptionCode,
         DhcpOptionFormat, DhcpOptionKind, DhcpOptionMeta, DhcpOptionSegment, DhcpOptionStatus,
         DhcpOptionValue, DhcpRelayAgentInfo, DhcpRelaySuboption, DhcpRelayVendorSpecific,
         DhcpReplayDetectionMethod, DhcpState, DhcpStaticRoute, DhcpStatusCode,

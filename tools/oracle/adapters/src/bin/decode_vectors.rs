@@ -1,5 +1,5 @@
 use crafter::core::{
-    Ah, Arp, Dhcp, Dns, Dot11, Eapol, EapolKey, Esp, Ethernet, Icmpv4, Icmpv4QuotedIp, Icmpv6,
+    Ah, Arp, Dhcpv4, Dns, Dot11, Eapol, EapolKey, Esp, Ethernet, Icmpv4, Icmpv4QuotedIp, Icmpv6,
     Ipv4, Ipv6, Ipv6DestinationOptionsHeader, Ipv6FragmentHeader, Ipv6FragmentHeaderStatus,
     Ipv6HopByHopOptionsHeader, Ipv6MobileRoutingHeader, Ipv6Option, Ipv6RoutingHeader,
     Ipv6RoutingTypeStatus, Ipv6SegmentRoutingHeader, Layer, LinkType, LinuxSll, LlcSnap,
@@ -477,7 +477,7 @@ fn normalized_layer_name(layer: &dyn Layer) -> String {
         "igmp_extension"
     } else if layer.as_any().is::<Dns>() {
         "dns"
-    } else if layer.as_any().is::<Dhcp>() {
+    } else if layer.as_any().is::<Dhcpv4>() {
         "dhcp"
     } else if layer.as_any().is::<Snmp>() {
         "snmp"
@@ -619,7 +619,7 @@ fn normalized_layer_fields(
     if let Some(layer) = layer.as_any().downcast_ref::<Dns>() {
         return dns_fields(layer);
     }
-    if let Some(layer) = layer.as_any().downcast_ref::<Dhcp>() {
+    if let Some(layer) = layer.as_any().downcast_ref::<Dhcpv4>() {
         return dhcp_fields(layer);
     }
     if let Some(layer) = layer.as_any().downcast_ref::<Snmp>() {
@@ -2524,7 +2524,7 @@ fn dns_fields(layer: &Dns) -> BTreeMap<String, Value> {
     ])
 }
 
-fn dhcp_fields(layer: &Dhcp) -> BTreeMap<String, Value> {
+fn dhcp_fields(layer: &Dhcpv4) -> BTreeMap<String, Value> {
     let mut fields = map([
         ("opcode", json!(layer.op_value())),
         ("hardware_type", json!(layer.hardware_type_value())),
@@ -2563,7 +2563,7 @@ fn dhcp_fields(layer: &Dhcp) -> BTreeMap<String, Value> {
 /// Normalize DHCP options to backend-neutral `{code, payload_hex}` entries in
 /// wire order, carrying the raw reassembled option payload (no typed
 /// reinterpretation) so they compare cleanly against the Scapy reference view.
-fn dhcp_options(layer: &Dhcp) -> Vec<Value> {
+fn dhcp_options(layer: &Dhcpv4) -> Vec<Value> {
     layer
         .options_value()
         .iter()

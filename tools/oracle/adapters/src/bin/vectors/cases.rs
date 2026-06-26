@@ -379,7 +379,7 @@ fn dhcp_discover() -> ExampleResult<Vector> {
             .id(0x1238)
             .ttl(64)
         / Udp::dhcp_client()
-        / Dhcp::discover(src_mac)
+        / Dhcpv4::discover(src_mac)
             .xid(0x3903_f326)
             .flags(0x8000)
             .hostname("libcrafter-test")

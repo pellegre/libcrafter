@@ -712,7 +712,7 @@ mod reply_matching {
     use std::net::{Ipv4Addr, Ipv6Addr};
 
     use crate::{
-        Arp, ArpOperation, Dhcpv4, DhcpClientIdentifier, DhcpMessageType, Dns, DnsRecord, Icmpv4,
+        Arp, ArpOperation, Dhcpv4, DhcpClientIdentifier, Dhcpv4MessageType, Dns, DnsRecord, Icmpv4,
         Icmpv6, IntoPacket, Ipv4, Ipv6, MacAddr, Packet, Raw, Tcp, Udp, DNS_TYPE_A, TCP_FLAG_ACK,
         TCP_FLAG_RST, TCP_FLAG_SYN,
     };
@@ -1029,7 +1029,7 @@ mod reply_matching {
             / Dhcpv4::new()
                 .op(crate::BOOTP_REPLY)
                 .client_mac(mac)
-                .message_type(DhcpMessageType::Offer)
+                .message_type(Dhcpv4MessageType::Offer)
                 .xid(0xfeed_beee);
 
         assert!(reply_matches(&request, &reply));
@@ -1098,7 +1098,7 @@ mod reply_matching {
             / Udp::dhcp_server()
             / Dhcpv4::new()
                 .op(crate::BOOTP_REPLY)
-                .message_type(DhcpMessageType::LeaseActive)
+                .message_type(Dhcpv4MessageType::LeaseActive)
                 .xid(0x0c0f_fee0);
         let non_leasequery_reply = Ipv4::new()
             .src(Ipv4Addr::new(192, 0, 2, 1))
@@ -1106,7 +1106,7 @@ mod reply_matching {
             / Udp::dhcp_server()
             / Dhcpv4::new()
                 .op(crate::BOOTP_REPLY)
-                .message_type(DhcpMessageType::Ack)
+                .message_type(Dhcpv4MessageType::Ack)
                 .xid(0x0c0f_fee0);
 
         assert!(reply_matches(&request, &reply));
