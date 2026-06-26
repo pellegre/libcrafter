@@ -6,6 +6,7 @@ use crafter::core::{
 use crafter::prelude::*;
 use crafter::protocols::igmp::IgmpExtension;
 use crafter::protocols::mqtt::Mqtt;
+use crafter::protocols::quic::Quic;
 use crafter::wire::backend::pcap::{
     PcapLinkType, PcapReader, PcapRecord, PcapTimestamp, PcapWriter, TimestampPrecision,
 };
@@ -450,6 +451,8 @@ fn normalized_layer_name(layer: &dyn Layer) -> String {
         "rip"
     } else if layer.as_any().is::<Ripng>() {
         "ripng"
+    } else if layer.as_any().is::<Quic>() {
+        "quic"
     } else if layer.as_any().is::<Icmpv4>() {
         "icmp"
     } else if layer.as_any().is::<Icmpv6>() {

@@ -1075,7 +1075,16 @@ def _require_backend_capabilities(
             selected_specs=selected_specs,
         )
 
-    if required and not backend.availability.available:
+    if (
+        required
+        and not backend.availability.available
+        and not _backend_has_local_pcap_read_fallback(
+            args,
+            backend,
+            required,
+            mode=mode,
+        )
+    ):
         reason = backend.availability.reason or "backend dependency is unavailable"
         message = (
             f"unsupported backend availability: backend {backend.name} is unavailable: "
@@ -1094,6 +1103,23 @@ def _require_backend_capabilities(
         )
 
     return None
+
+
+def _backend_has_local_pcap_read_fallback(
+    args: argparse.Namespace,
+    backend: BackendRegistration,
+    required: Sequence[BackendCapabilityName],
+    *,
+    mode: str,
+) -> bool:
+    """Return true for pcap-read paths with an explicit in-process fallback."""
+
+    return (
+        mode == "pcap"
+        and backend.name == "wireshark"
+        and tuple(required) == ("pcap_read",)
+        and getattr(args, "family", None) == "quic"
+    )
 
 
 def _missing_capability_message(
@@ -7567,8 +7593,9 @@ def _pcap_corpus_plan_groups(
     corpus_source = "generated"
     if getattr(args, "corpus", None) is None:
         corpus_direction = directions[0] if directions else "reference_to_libcrafter"
+        generation_args = _pcap_generation_args(args)
         corpus_report = _build_corpus_report_from_generation(
-            args,
+            generation_args,
             direction=corpus_direction,
         )
     else:
@@ -7912,7 +7939,11 @@ def _pcap_vector_groups(args: argparse.Namespace, direction: str) -> list[JSONOb
     from ..generator import PacketGenerator
 
     cases = _pcap_cases_for_direction(args=args, direction=direction, dry_plan=False)
-    generator = PacketGenerator(seed=args.seed, profile=args.profile, backend=args.backend)
+    generator = PacketGenerator(
+        seed=args.seed,
+        profile=args.profile,
+        backend=_pcap_generation_backend(args.backend),
+    )
     groups: dict[tuple[str, str], JSONObject] = {}
     for offset, index in enumerate(_pcap_indices(args)):
         pcap_case = cases[offset % len(cases)]
@@ -7959,6 +7990,24 @@ def _pcap_vector_groups(args: argparse.Namespace, direction: str) -> list[JSONOb
         group["plans"].append(plan)  # type: ignore[union-attr]
         group["vectors"].append(vector)  # type: ignore[union-attr]
     return list(groups.values())
+
+
+def _pcap_generation_args(args: argparse.Namespace) -> argparse.Namespace:
+    generation_backend = _pcap_generation_backend(args.backend)
+    if generation_backend == args.backend:
+        return args
+    values = vars(args).copy()
+    values["backend"] = generation_backend
+    return argparse.Namespace(**values)
+
+
+def _pcap_generation_backend(backend: str) -> str:
+    # Wireshark is parser-only. Pcap mode still needs a writer-capable generator
+    # to produce deterministic packet bytes before the requested backend reads
+    # the pcap. The actual comparison remains under the requested backend.
+    if backend == "wireshark":
+        return "scapy"
+    return backend
 
 
 def _pcap_plan(

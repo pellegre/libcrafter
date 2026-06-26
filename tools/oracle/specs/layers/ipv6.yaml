@@ -416,6 +416,16 @@ backend_support:
       - IPv6ExtHdrSegmentRouting
     encode: true
     decode: true
+  wireshark:
+    status: supported
+    native_layers:
+      - ipv6
+      - ipv6.fragment
+      - ipv6.routing
+      - ipv6.hopopts
+      - ipv6.dstopts
+    decode: true
+    pcap_read: true
   libcrafter:
     status: supported
     encode: true
