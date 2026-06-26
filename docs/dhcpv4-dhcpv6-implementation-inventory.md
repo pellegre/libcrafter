@@ -54,9 +54,9 @@ artifact names.
 
 | Path | Current DHCPv4 role | Target versioned role |
 | --- | --- | --- |
-| `crafter/examples/dhcp_discover.rs` | Builds a DHCPv4 discover packet; live mode is explicitly gated and dry-run is default. | Rename to DHCPv4 naming and API; keep dry-run default and documentation-space behavior. |
-| `crafter/examples/dhcp_option82.rs` | Demonstrates DHCPv4 relay agent information, classless routes, and option overload offline. | Rename to DHCPv4 naming and API. |
-| `crafter/examples/dhcp_leasequery.rs` | Demonstrates DHCPv4 leasequery, typed client identifiers, authentication, and status/state packet fields offline. | Rename to DHCPv4 naming and API. |
+| `crafter/examples/dhcpv4_discover.rs` | Builds a DHCPv4 discover packet; live mode is explicitly gated and dry-run is default. | Keep dry-run default and documentation-space behavior. |
+| `crafter/examples/dhcpv4_option82.rs` | Demonstrates DHCPv4 relay agent information, classless routes, and option overload offline. | Keep offline construction and decode coverage. |
+| `crafter/examples/dhcpv4_leasequery.rs` | Demonstrates DHCPv4 leasequery, typed client identifiers, authentication, and status/state packet fields offline. | Keep offline construction and decode coverage. |
 | `crafter/examples/README.md` | Lists DHCPv4 examples. | List DHCPv4 examples with versioned names and add DHCPv6 examples only after they compile offline. |
 | `README.md` | Holds protocol coverage and example references. | Keep protocol coverage versioned and add DHCPv6 only after implementation and validation land. |
 | `docs/reference/api.md` | Documents the DHCPv4 layer and examples. | Keep the API section named `Dhcpv4` and add a separate DHCPv6 guide/API section later. |
