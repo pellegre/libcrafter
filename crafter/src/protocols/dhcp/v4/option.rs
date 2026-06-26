@@ -65,7 +65,7 @@ use super::constants::{
     DHCPV4_VSS_TYPE_GLOBAL_DEFAULT, DHCPV4_VSS_TYPE_NVT_ASCII, DHCPV4_VSS_TYPE_VPN_ID,
 };
 use super::message::Dhcpv4MessageType;
-use super::registry::{option_name, option_status, Dhcpv4OptionStatus};
+use super::registry::{dhcpv4_option_name, dhcpv4_option_status, Dhcpv4OptionStatus};
 
 /// Source area a DHCPv4 option segment was decoded from.
 ///
@@ -1242,7 +1242,7 @@ impl Dhcpv4OptionCode {
         match code {
             DHCPV4_OPTION_PAD => Self::Pad,
             DHCPV4_OPTION_END => Self::End,
-            _ => match option_status(code) {
+            _ => match dhcpv4_option_status(code) {
                 Dhcpv4OptionStatus::Assigned => Self::Assigned(code),
                 Dhcpv4OptionStatus::Ambiguous => Self::Ambiguous(code),
                 Dhcpv4OptionStatus::PrivateUse => Self::PrivateUse(code),
@@ -1267,7 +1267,7 @@ impl Dhcpv4OptionCode {
 
     /// Registered short name when the registry assigns one.
     pub fn name(self) -> Option<&'static str> {
-        option_name(self.code())
+        dhcpv4_option_name(self.code())
     }
 
     /// True when the codepoint is a single-octet option (pad or end).
@@ -2648,7 +2648,7 @@ impl Dhcpv4Option {
 
     /// Source-backed registry name for this option, when assigned.
     pub fn registry_name(&self) -> Option<&'static str> {
-        option_name(self.code())
+        dhcpv4_option_name(self.code())
     }
 
     /// Logical wire-format value family for this option.
@@ -4431,7 +4431,7 @@ mod dhcp_options {
             Dhcpv4OptionCode::PrivateUse(224)
         );
         assert_eq!(
-            super::option_status(84),
+            super::dhcpv4_option_status(84),
             Dhcpv4OptionStatus::RemovedOrUnassigned
         );
     }
@@ -6786,7 +6786,7 @@ mod dhcp_remaining_registry {
         // unknown/private/removed codes carry their range classifications.
         for code in [PCP_SERVER, DNR, SIX_RD] {
             assert_eq!(
-                super::super::option_status(code),
+                super::super::dhcpv4_option_status(code),
                 Dhcpv4OptionStatus::Assigned
             );
             assert!(matches!(
@@ -6795,7 +6795,7 @@ mod dhcp_remaining_registry {
             ));
         }
         assert_eq!(
-            super::super::option_status(130),
+            super::super::dhcpv4_option_status(130),
             Dhcpv4OptionStatus::Ambiguous
         );
         assert_eq!(
@@ -6810,7 +6810,7 @@ mod dhcp_remaining_registry {
 
     #[test]
     fn dhcp_remaining_registry_option_metadata_is_inspectable() {
-        use super::super::{option_meta, option_name, Dhcpv4OptionMeta};
+        use super::super::{dhcpv4_option_meta, dhcpv4_option_name, Dhcpv4OptionMeta};
 
         // The source-backed registry names every modern codepoint the crate
         // implements, regardless of whether the payload is decoded into a typed
@@ -6831,11 +6831,11 @@ mod dhcp_remaining_registry {
             // The free-function and metadata-struct views agree on the name and
             // the Assigned status.
             assert_eq!(
-                option_name(code),
+                dhcpv4_option_name(code),
                 Some(name),
                 "option {code} must expose its registered name",
             );
-            let meta: Dhcpv4OptionMeta = option_meta(code);
+            let meta: Dhcpv4OptionMeta = dhcpv4_option_meta(code);
             assert_eq!(meta.code, code);
             assert_eq!(meta.name, name);
             assert_eq!(meta.status, Dhcpv4OptionStatus::Assigned);
@@ -6859,19 +6859,19 @@ mod dhcp_remaining_registry {
         // their range label and status while declining to claim a registered
         // name, so callers can preserve the raw bytes and still report status.
         // Ambiguous historical codepoint (PXE / vendor range 128-135).
-        let ambiguous = option_meta(130);
+        let ambiguous = dhcpv4_option_meta(130);
         assert_eq!(ambiguous.status, Dhcpv4OptionStatus::Ambiguous);
         assert!(!ambiguous.name.is_empty());
-        assert_eq!(option_name(130), Some(ambiguous.name));
+        assert_eq!(dhcpv4_option_name(130), Some(ambiguous.name));
 
         // Removed/unassigned codepoint (RFC 3679 range): the registry row carries
         // an explicit range label rather than a single registered option name, so
-        // option_name surfaces that label (it is not a generated fallback) while
+        // dhcpv4_option_name surfaces that label (it is not a generated fallback) while
         // the status stays RemovedOrUnassigned and no typed decode is implied.
-        let removed = option_meta(110);
+        let removed = dhcpv4_option_meta(110);
         assert_eq!(removed.status, Dhcpv4OptionStatus::RemovedOrUnassigned);
         assert_eq!(removed.name, "REMOVED/Unassigned");
-        assert_eq!(option_name(110), Some("REMOVED/Unassigned"));
+        assert_eq!(dhcpv4_option_name(110), Some("REMOVED/Unassigned"));
         assert_eq!(
             Dhcpv4OptionCode::from_code(110).name(),
             Some("REMOVED/Unassigned"),
@@ -6879,11 +6879,11 @@ mod dhcp_remaining_registry {
 
         // Private-use codepoint (224-254): labelled and statused via the range
         // fallback, but never carries a single registered option name, so
-        // option_name declines while option_meta still describes it.
-        let private = option_meta(240);
+        // dhcpv4_option_name declines while dhcpv4_option_meta still describes it.
+        let private = dhcpv4_option_meta(240);
         assert_eq!(private.status, Dhcpv4OptionStatus::PrivateUse);
         assert_eq!(private.name, "Reserved (Private Use)");
-        assert_eq!(option_name(240), None);
+        assert_eq!(dhcpv4_option_name(240), None);
         assert_eq!(Dhcpv4OptionCode::from_code(240).name(), None);
     }
 }
