@@ -4,6 +4,11 @@
 //! explicit caller-supplied inputs and fixed vectors, but it never implies
 //! ownership of TLS session state or a complete QUIC endpoint.
 
+use aes::cipher::{BlockEncrypt, KeyInit as AesKeyInit};
+use aes::Aes128;
+use chacha20::cipher::{KeyIvInit as ChaChaKeyIvInit, StreamCipher, StreamCipherSeek};
+use chacha20::ChaCha20;
+use cipher::generic_array::GenericArray;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
@@ -20,6 +25,14 @@ pub const QUIC_INITIAL_AES_128_KEY_LEN: usize = 16;
 pub const QUIC_INITIAL_IV_LEN: usize = 12;
 /// Length of the AES header-protection key used by Initial vectors.
 pub const QUIC_INITIAL_HP_KEY_LEN: usize = 16;
+/// Length of a QUIC header-protection ciphertext sample.
+pub const QUIC_HEADER_PROTECTION_SAMPLE_LEN: usize = 16;
+/// Length of the QUIC header-protection mask consumed by packet headers.
+pub const QUIC_HEADER_PROTECTION_MASK_LEN: usize = 5;
+/// Length of the AES-128 header-protection key.
+pub const QUIC_AES128_HEADER_PROTECTION_KEY_LEN: usize = 16;
+/// Length of the ChaCha20 header-protection key.
+pub const QUIC_CHACHA20_HEADER_PROTECTION_KEY_LEN: usize = 32;
 
 /// RFC 9001 QUIC v1 Initial salt.
 pub const QUIC_V1_INITIAL_SALT: [u8; 20] = [
@@ -116,6 +129,42 @@ impl QuicInitialPacketKeys {
     pub const fn header_protection_key(&self) -> &[u8; QUIC_INITIAL_HP_KEY_LEN] {
         &self.header_protection_key
     }
+
+    /// Generate the AES-128 Initial header-protection mask for a ciphertext
+    /// sample.
+    pub fn header_protection_mask(
+        &self,
+        sample: impl AsRef<[u8]>,
+    ) -> Result<[u8; QUIC_HEADER_PROTECTION_MASK_LEN]> {
+        quic_aes128_header_protection_mask(&self.header_protection_key, sample)
+    }
+}
+
+/// Source-backed QUIC header-protection mask algorithms.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuicHeaderProtectionAlgorithm {
+    /// AES-128 ECB mask generation, used with AES-128-GCM Initial vectors.
+    Aes128,
+    /// Raw ChaCha20 mask generation, used with ChaCha20-Poly1305 vectors.
+    ChaCha20,
+}
+
+impl QuicHeaderProtectionAlgorithm {
+    /// Return the expected header-protection key length.
+    pub const fn key_len(self) -> usize {
+        match self {
+            Self::Aes128 => QUIC_AES128_HEADER_PROTECTION_KEY_LEN,
+            Self::ChaCha20 => QUIC_CHACHA20_HEADER_PROTECTION_KEY_LEN,
+        }
+    }
+
+    /// Return a stable algorithm label for inspection and diagnostics.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Aes128 => "aes128",
+            Self::ChaCha20 => "chacha20",
+        }
+    }
 }
 
 /// Return the source-backed QUIC Initial salt for supported versions.
@@ -162,6 +211,75 @@ pub fn derive_quic_initial_secrets(
     })
 }
 
+/// Generate a QUIC header-protection mask with an explicit algorithm.
+pub fn quic_header_protection_mask(
+    algorithm: QuicHeaderProtectionAlgorithm,
+    key: impl AsRef<[u8]>,
+    sample: impl AsRef<[u8]>,
+) -> Result<[u8; QUIC_HEADER_PROTECTION_MASK_LEN]> {
+    match algorithm {
+        QuicHeaderProtectionAlgorithm::Aes128 => quic_aes128_header_protection_mask(key, sample),
+        QuicHeaderProtectionAlgorithm::ChaCha20 => {
+            quic_chacha20_header_protection_mask(key, sample)
+        }
+    }
+}
+
+/// Generate the RFC 9001 AES-128 header-protection mask.
+pub fn quic_aes128_header_protection_mask(
+    key: impl AsRef<[u8]>,
+    sample: impl AsRef<[u8]>,
+) -> Result<[u8; QUIC_HEADER_PROTECTION_MASK_LEN]> {
+    let key = fixed_bytes::<QUIC_AES128_HEADER_PROTECTION_KEY_LEN>(
+        key.as_ref(),
+        "quic.crypto.header_protection.aes128.key",
+    )?;
+    let sample = fixed_bytes::<QUIC_HEADER_PROTECTION_SAMPLE_LEN>(
+        sample.as_ref(),
+        "quic.crypto.header_protection.sample",
+    )?;
+    let cipher = Aes128::new(GenericArray::from_slice(&key));
+    let mut block = GenericArray::clone_from_slice(&sample);
+    cipher.encrypt_block(&mut block);
+    let mut mask = [0u8; QUIC_HEADER_PROTECTION_MASK_LEN];
+    mask.copy_from_slice(&block[..QUIC_HEADER_PROTECTION_MASK_LEN]);
+    Ok(mask)
+}
+
+/// Generate the RFC 9001 ChaCha20 header-protection mask.
+pub fn quic_chacha20_header_protection_mask(
+    key: impl AsRef<[u8]>,
+    sample: impl AsRef<[u8]>,
+) -> Result<[u8; QUIC_HEADER_PROTECTION_MASK_LEN]> {
+    let key = fixed_bytes::<QUIC_CHACHA20_HEADER_PROTECTION_KEY_LEN>(
+        key.as_ref(),
+        "quic.crypto.header_protection.chacha20.key",
+    )?;
+    let sample = fixed_bytes::<QUIC_HEADER_PROTECTION_SAMPLE_LEN>(
+        sample.as_ref(),
+        "quic.crypto.header_protection.sample",
+    )?;
+    let counter = u32::from_le_bytes([sample[0], sample[1], sample[2], sample[3]]);
+    let mut nonce = [0u8; 12];
+    nonce.copy_from_slice(&sample[4..]);
+
+    let mut cipher = ChaCha20::new(&key.into(), &nonce.into());
+    cipher.try_seek(u64::from(counter) * 64).map_err(|_| {
+        CrafterError::invalid_field_value(
+            "quic.crypto.header_protection.chacha20.counter",
+            "invalid ChaCha20 header-protection counter",
+        )
+    })?;
+    let mut mask = [0u8; QUIC_HEADER_PROTECTION_MASK_LEN];
+    cipher.try_apply_keystream(&mut mask).map_err(|_| {
+        CrafterError::invalid_field_value(
+            "quic.crypto.header_protection.chacha20.mask",
+            "failed to generate ChaCha20 header-protection mask",
+        )
+    })?;
+    Ok(mask)
+}
+
 fn derive_initial_packet_keys(version: u32, secret: &[u8]) -> Result<QuicInitialPacketKeys> {
     Ok(QuicInitialPacketKeys {
         key: hkdf_expand_label_sha256_array(
@@ -183,6 +301,18 @@ fn derive_initial_packet_keys(version: u32, secret: &[u8]) -> Result<QuicInitial
             "quic.crypto.initial.hp",
         )?,
     })
+}
+
+fn fixed_bytes<const N: usize>(bytes: &[u8], field: &'static str) -> Result<[u8; N]> {
+    if bytes.len() != N {
+        return Err(CrafterError::invalid_field_value(
+            field,
+            "unexpected QUIC crypto input length",
+        ));
+    }
+    let mut out = [0u8; N];
+    out.copy_from_slice(bytes);
+    Ok(out)
 }
 
 fn packet_key_label(version: u32) -> Result<&'static str> {
@@ -466,6 +596,95 @@ mod tests {
             hex_vec("00100f746c7331332071756963763220687000")
         );
         Ok(())
+    }
+
+    #[test]
+    fn quic_header_protection_utilities_aes128_match_rfc9001_vectors() -> Result<()> {
+        let secrets = derive_quic_initial_secrets(QUIC_VERSION_1, TEST_DCID)?;
+        let client_keys = secrets.client_packet_keys()?;
+        let server_keys = secrets.server_packet_keys()?;
+
+        assert_eq!(QuicHeaderProtectionAlgorithm::Aes128.key_len(), 16);
+        assert_eq!(QuicHeaderProtectionAlgorithm::Aes128.label(), "aes128");
+        assert_eq!(
+            client_keys.header_protection_mask(hex_vec("d1b1c98dd7689fb8ec11d242b123dc9b"))?,
+            hex_array::<5>("437b9aec36")
+        );
+        assert_eq!(
+            quic_header_protection_mask(
+                QuicHeaderProtectionAlgorithm::Aes128,
+                client_keys.header_protection_key(),
+                hex_vec("d1b1c98dd7689fb8ec11d242b123dc9b")
+            )?,
+            hex_array::<5>("437b9aec36")
+        );
+        assert_eq!(
+            quic_aes128_header_protection_mask(
+                server_keys.header_protection_key(),
+                hex_vec("2cd0991cd25b0aac406a5816b6394100")
+            )?,
+            hex_array::<5>("2ec0d8356a")
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn quic_header_protection_utilities_aes128_match_rfc9369_vectors() -> Result<()> {
+        let secrets = derive_quic_initial_secrets(QUIC_VERSION_2, TEST_DCID)?;
+        let client_keys = secrets.client_packet_keys()?;
+        let server_keys = secrets.server_packet_keys()?;
+
+        assert_eq!(
+            client_keys.header_protection_mask(hex_vec("ffe67b6abcdb4298b485dd04de806071"))?,
+            hex_array::<5>("94a0c95e80")
+        );
+        assert_eq!(
+            server_keys.header_protection_mask(hex_vec("6f05d8a4398c47089698baeea26b91eb"))?,
+            hex_array::<5>("4dd92e91ea")
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn quic_header_protection_utilities_chacha20_match_rfc9001_and_rfc9369_vectors() -> Result<()> {
+        assert_eq!(QuicHeaderProtectionAlgorithm::ChaCha20.key_len(), 32);
+        assert_eq!(QuicHeaderProtectionAlgorithm::ChaCha20.label(), "chacha20");
+        assert_eq!(
+            quic_chacha20_header_protection_mask(
+                hex_vec("25a282b9e82f06f21f488917a4fc8f1b73573685608597d0efcb076b0ab7a7a4"),
+                hex_vec("5e5cd55c41f69080575d7999c25a5bfb")
+            )?,
+            hex_array::<5>("aefefe7d03")
+        );
+        assert_eq!(
+            quic_header_protection_mask(
+                QuicHeaderProtectionAlgorithm::ChaCha20,
+                hex_vec("d659760d2ba434a226fd37b35c69e2da8211d10c4f12538787d65645d5d1b8e2"),
+                hex_vec("e7b6b932bc27d786f4bc2bb20f2162ba")
+            )?,
+            hex_array::<5>("97580e32bf")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn quic_header_protection_utilities_report_bad_lengths() {
+        assert_eq!(
+            quic_aes128_header_protection_mask([0u8; 15], [0u8; 16]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "quic.crypto.header_protection.aes128.key",
+                "unexpected QUIC crypto input length"
+            )
+        );
+        assert_eq!(
+            quic_chacha20_header_protection_mask([0u8; 32], [0u8; 15]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "quic.crypto.header_protection.sample",
+                "unexpected QUIC crypto input length"
+            )
+        );
     }
 
     fn hex_array<const N: usize>(hex: &str) -> [u8; N] {

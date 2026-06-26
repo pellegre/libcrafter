@@ -19,6 +19,11 @@ fn exports_quic_symbols() -> crafter::Result<()> {
     assert_eq!(QUIC_INITIAL_AES_128_KEY_LEN, 16);
     assert_eq!(QUIC_INITIAL_IV_LEN, 12);
     assert_eq!(QUIC_INITIAL_HP_KEY_LEN, 16);
+    assert_eq!(QUIC_HEADER_PROTECTION_SAMPLE_LEN, 16);
+    assert_eq!(QUIC_HEADER_PROTECTION_MASK_LEN, 5);
+    assert_eq!(QUIC_AES128_HEADER_PROTECTION_KEY_LEN, 16);
+    assert_eq!(QUIC_CHACHA20_HEADER_PROTECTION_KEY_LEN, 32);
+    assert_eq!(QuicHeaderProtectionAlgorithm::Aes128.label(), "aes128");
     assert_eq!(quic_initial_salt(QUIC_VERSION_1)?, &QUIC_V1_INITIAL_SALT);
     assert_eq!(crafter::QUIC_V2_INITIAL_SALT.len(), 20);
     let initial_secrets = derive_quic_initial_secrets(QUIC_VERSION_1, &cid)?;
@@ -28,6 +33,14 @@ fn exports_quic_symbols() -> crafter::Result<()> {
         QUIC_INITIAL_SECRET_LEN
     );
     assert_eq!(initial_keys.key().len(), QUIC_INITIAL_AES_128_KEY_LEN);
+    assert_eq!(
+        quic_aes128_header_protection_mask([0u8; 16], [0u8; 16])?.len(),
+        QUIC_HEADER_PROTECTION_MASK_LEN
+    );
+    assert_eq!(
+        quic_chacha20_header_protection_mask([0u8; 32], [0u8; 16])?.len(),
+        QUIC_HEADER_PROTECTION_MASK_LEN
+    );
 
     let varint = QuicVarInt::from_u64_unchecked(QUIC_VERSION_1 as u64);
     assert_eq!(varint.value(), QUIC_VERSION_1 as u64);

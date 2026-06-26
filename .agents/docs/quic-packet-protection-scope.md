@@ -22,6 +22,7 @@ offline helpers:
 | `hmac` | Direct dependency | HKDF-Extract and HKDF-Expand implementation for Initial secrets and labels. |
 | `aes` | Direct dependency | AES header-protection block primitive when a future helper needs direct block encryption. |
 | `aes-gcm` | Direct dependency | AES-128-GCM vector helpers and Retry integrity tag verification. |
+| `chacha20` | Direct dependency as of the header-protection utility step | Raw ChaCha20 mask generation for RFC 9001 / RFC 9369 header-protection vectors. |
 | `chacha20poly1305` | Direct dependency | Reserved for future ChaCha20-Poly1305 packet-protection vector coverage; not needed for the Initial v1/v2 gates. |
 | `cipher` | Direct dependency | Common traits for small packet-protection primitives. |
 | `subtle` | Direct dependency | Constant-time tag or byte comparison where public helpers expose verification. |
