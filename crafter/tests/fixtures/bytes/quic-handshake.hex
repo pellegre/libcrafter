@@ -1,0 +1,5 @@
+# QUIC v1 Handshake header fixture.
+# Evidence: .agents/docs/quic-manifest.md E-RFC-9000.
+# first=0xe0, version=v1, dcid=8394c8f0, scid=aa,
+# length=3, packet_number=02, protected_payload=cafe.
+e000000001048394c8f001aa0302cafe

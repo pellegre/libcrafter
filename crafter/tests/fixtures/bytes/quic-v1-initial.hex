@@ -1,0 +1,6 @@
+# QUIC v1 Initial header fixture.
+# Evidence: .agents/docs/quic-manifest.md E-RFC-9000 and
+# .agents/docs/quic-codepoints.md QUIC version 1 row.
+# first=0xc0, version=v1, dcid=8394c8f0, scid=aa, token_len=0,
+# length=3, packet_number=01, protected_payload=beef.
+c000000001048394c8f001aa000301beef

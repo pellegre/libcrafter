@@ -1,0 +1,5 @@
+# QUIC Retry header fixture.
+# Evidence: .agents/docs/quic-manifest.md E-RFC-9000/E-RFC-9001.
+# first=0xf0, version=v1, dcid=8394c8f0, scid=aa, token=deadbe,
+# retry_integrity_tag=000102030405060708090a0b0c0d0e0f.
+f000000001048394c8f001aadeadbe000102030405060708090a0b0c0d0e0f

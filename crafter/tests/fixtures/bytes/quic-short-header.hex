@@ -1,0 +1,5 @@
+# QUIC short-header fixture.
+# Evidence: .agents/docs/quic-manifest.md E-RFC-8999/E-RFC-9000.
+# first=0x41, dcid=8394c8f0 (caller-supplied length 4),
+# packet_number=1234, protected_payload=beef.
+418394c8f01234beef

@@ -1,0 +1,5 @@
+# QUIC v1 0-RTT header fixture.
+# Evidence: .agents/docs/quic-manifest.md E-RFC-9000.
+# first=0xd0, version=v1, dcid=8394c8f0, scid=aa,
+# length=3, packet_number=03, protected_payload=0bad.
+d000000001048394c8f001aa03030bad
