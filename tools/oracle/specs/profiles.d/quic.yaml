@@ -1,0 +1,35 @@
+version: 1
+kind: profiles
+name: quic_profiles
+
+profiles:
+  - name: quic-smoke
+    purpose: focused offline and dry-run QUIC UDP smoke coverage using documentation address space and opaque protected payloads
+    default_count: 20
+    family_weights:
+      - name: quic
+        weight: 1
+    payload_length:
+      min: 0
+      max: 64
+    feature_weights:
+      baseline: 10
+      boundary: 4
+      malformed: 0
+      pcap: 1
+      live: 1
+  - name: quic-ci
+    purpose: deterministic QUIC UDP pull-request coverage for well-formed strict-byte oracle cases
+    default_count: 50
+    family_weights:
+      - name: quic
+        weight: 1
+    payload_length:
+      min: 0
+      max: 128
+    feature_weights:
+      baseline: 10
+      boundary: 6
+      malformed: 0
+      pcap: 1
+      live: 0

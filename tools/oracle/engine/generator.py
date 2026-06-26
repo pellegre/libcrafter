@@ -1233,6 +1233,11 @@ class PacketGenerator:
                 "ipv6_fragment_routing",
             ):
                 continue
+            # QUIC profiles are focused UDP/QUIC packet runs. Keep automatic
+            # feature selection on the QUIC feature so unrelated IPv4/UDP
+            # features do not attach to the same transport stack.
+            if self.profile in {"quic-smoke", "quic-ci"} and name != "quic_behavior":
+                continue
             feature = _object(raw_feature, f"features.{name}")
             layers = _string_list(feature.get("layers"), f"features.{name}.layers")
             directions = _string_list(feature.get("directions"), f"features.{name}.directions")
@@ -2423,6 +2428,8 @@ def _stack_families(layers: Sequence[str], root_families: Sequence[str]) -> list
         families.append("transport")
     if "icmp" in root_families and layer_set.intersection({"icmp", "icmpv6"}):
         families.append("icmp")
+    if "quic" in layer_set:
+        families.append("quic")
     if "link" in root_families and layer_set.intersection(
         {"ethernet", "vlan", "payload", "linux_cooked", "null_loopback"}
     ):

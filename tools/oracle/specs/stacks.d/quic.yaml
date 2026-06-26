@@ -1,0 +1,102 @@
+version: 1
+kind: stack_grammar
+name: quic_stacks
+
+families:
+  - name: quic
+    default_stack:
+      - ipv4
+      - udp
+      - quic
+    feature_tags:
+      - ipv4
+      - ipv6
+      - udp
+      - quic
+
+stacks:
+  - name: ipv4_udp_quic
+    root: "l3:ipv4"
+    layers:
+      - ipv4
+      - udp
+      - quic
+    coverage_cases:
+      - quic-v1-initial
+      - quic-v2-initial
+      - quic-version-negotiation
+      - quic-retry
+      - quic-handshake
+      - quic-zero-rtt
+      - quic-coalesced-initial-handshake
+      - quic-datagram-frame
+      - quic-grease-bit
+      - quic-protected-raw
+      - quic-short-header-raw
+      - quic-stateless-reset-candidate
+      - quic-frame-sequence
+      - quic-transport-parameters
+      - quic-malformed-exclusions
+      - quic-pcap-udp-4433
+  - name: ipv6_udp_quic
+    root: "l3:ipv6"
+    layers:
+      - ipv6
+      - udp
+      - quic
+    coverage_cases:
+      - quic-v1-initial
+      - quic-v2-initial
+      - quic-version-negotiation
+      - quic-retry
+      - quic-handshake
+      - quic-zero-rtt
+      - quic-coalesced-initial-handshake
+      - quic-datagram-frame
+      - quic-grease-bit
+      - quic-protected-raw
+      - quic-pcap-udp-4433
+  - name: ethernet_ipv4_udp_quic
+    root: "link:ethernet"
+    layers:
+      - ethernet
+      - ipv4
+      - udp
+      - quic
+    coverage_cases:
+      - quic-v1-initial
+      - quic-v2-initial
+      - quic-version-negotiation
+      - quic-retry
+      - quic-handshake
+      - quic-zero-rtt
+      - quic-coalesced-initial-handshake
+      - quic-datagram-frame
+      - quic-grease-bit
+      - quic-protected-raw
+      - quic-pcap-udp-4433
+  - name: ethernet_ipv6_udp_quic
+    root: "link:ethernet"
+    layers:
+      - ethernet
+      - ipv6
+      - udp
+      - quic
+    coverage_cases:
+      - quic-v1-initial
+      - quic-v2-initial
+      - quic-version-negotiation
+      - quic-retry
+      - quic-handshake
+      - quic-zero-rtt
+      - quic-coalesced-initial-handshake
+      - quic-datagram-frame
+      - quic-grease-bit
+      - quic-protected-raw
+      - quic-pcap-udp-4433
+
+constraints:
+  - name: quic_udp_children
+    parent: udp
+    children:
+      - quic
