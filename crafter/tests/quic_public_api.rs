@@ -6,6 +6,16 @@
 use crafter::prelude::*;
 use std::net::{Ipv4Addr, Ipv6Addr};
 
+fn public_api_initial(payload: impl AsRef<[u8]>) -> crafter::Result<QuicLongHeaderPacket> {
+    let crypto = QuicFrame::crypto(QuicVarInt::from_u64_unchecked(0), payload)?;
+    QuicLongHeaderPacket::initial_builder()
+        .destination_connection_id(QuicConnectionId::from_bytes([0x83, 0x94, 0xc8, 0xf0]))
+        .source_connection_id(QuicConnectionId::from_bytes([0xaa]))
+        .packet_number(QuicPacketNumber::new(1))
+        .frames([crypto])
+        .build()
+}
+
 #[test]
 fn exports_quic_symbols() -> crafter::Result<()> {
     assert_eq!(QUIC_VERSION_NEGOTIATION, 0x0000_0000);
@@ -351,6 +361,70 @@ fn exports_quic_symbols() -> crafter::Result<()> {
     let root_quic: crafter::Quic = Quic::raw([]);
     assert!(root_quic.is_empty());
 
+    Ok(())
+}
+
+#[test]
+fn ipv4_udp_quic_public_api_compile_decode_offline() -> crafter::Result<()> {
+    let initial = public_api_initial([0x16, 0x03, 0x03])?;
+    let initial_bytes = initial.as_bytes().to_vec();
+    let packet = Ipv4::new()
+        .src(Ipv4Addr::new(192, 0, 2, 10))
+        .dst(Ipv4Addr::new(198, 51, 100, 20))
+        / Udp::new().sport(49_152).dport(4433)
+        / Quic::new().packet(QuicPacket::from_long_header(initial));
+
+    let compiled = packet.compile()?;
+    assert!(compiled.as_bytes().ends_with(&initial_bytes));
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, compiled.as_bytes())?;
+    let quic = decoded.layer::<Quic>().expect("typed QUIC layer");
+    assert_eq!(quic.len(), initial_bytes.len());
+    assert_eq!(quic.packets().len(), 1);
+    assert!(quic.packets()[0].is_long_header());
+    assert_eq!(
+        quic.packets()[0].long_header().unwrap().version(),
+        QUIC_VERSION_1
+    );
+    assert!(decoded.layer::<Raw>().is_none());
+
+    let summary = decoded.summary();
+    assert!(summary.contains("Ipv4("), "{summary}");
+    assert!(summary.contains("Udp("), "{summary}");
+    assert!(summary.contains("Quic("), "{summary}");
+    assert!(summary.contains("packets=1"), "{summary}");
+    Ok(())
+}
+
+#[test]
+fn ipv6_udp_quic_public_api_compile_decode_offline() -> crafter::Result<()> {
+    let initial = public_api_initial([0x01])?;
+    let initial_bytes = initial.as_bytes().to_vec();
+    let packet = Ipv6::new()
+        .src(Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0x0010))
+        .dst(Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 0x0020))
+        / Udp::new().sport(49_153).dport(4433)
+        / Quic::new().packet(QuicPacket::from_long_header(initial));
+
+    let compiled = packet.compile()?;
+    assert!(compiled.as_bytes().ends_with(&initial_bytes));
+
+    let decoded = Packet::decode_from_l3(NetworkLayer::Ipv6, compiled.as_bytes())?;
+    let quic = decoded.layer::<Quic>().expect("typed QUIC layer");
+    assert_eq!(quic.len(), initial_bytes.len());
+    assert_eq!(quic.packets().len(), 1);
+    assert!(quic.packets()[0].is_long_header());
+    assert_eq!(
+        quic.packets()[0].long_header().unwrap().version(),
+        QUIC_VERSION_1
+    );
+    assert!(decoded.layer::<Raw>().is_none());
+
+    let summary = decoded.summary();
+    assert!(summary.contains("Ipv6("), "{summary}");
+    assert!(summary.contains("Udp("), "{summary}");
+    assert!(summary.contains("Quic("), "{summary}");
+    assert!(summary.contains("packets=1"), "{summary}");
     Ok(())
 }
 
