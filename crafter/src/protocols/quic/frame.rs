@@ -6,7 +6,9 @@
 use crate::protocols::transport::common::hex_bytes;
 use crate::{CrafterError, Result};
 
-use super::QuicVarInt;
+use super::{connection_id::QUIC_CONNECTION_ID_MAX_LEN, QuicConnectionId, QuicVarInt};
+
+const QUIC_STATELESS_RESET_TOKEN_LEN: usize = 16;
 
 /// Core QUIC frame type families selected for packet-layer parsing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1475,6 +1477,165 @@ impl QuicStreamsBlockedFrame {
     }
 }
 
+/// Parsed or buildable NEW_CONNECTION_ID frame fields.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuicNewConnectionIdFrame {
+    sequence_number: QuicVarInt,
+    retire_prior_to: QuicVarInt,
+    connection_id_length: Option<u8>,
+    connection_id: QuicConnectionId,
+    stateless_reset_token: [u8; QUIC_STATELESS_RESET_TOKEN_LEN],
+}
+
+impl QuicNewConnectionIdFrame {
+    /// Construct a NEW_CONNECTION_ID frame with an auto-filled Connection ID Length.
+    pub fn new(
+        sequence_number: QuicVarInt,
+        retire_prior_to: QuicVarInt,
+        connection_id: QuicConnectionId,
+        stateless_reset_token: [u8; QUIC_STATELESS_RESET_TOKEN_LEN],
+    ) -> Self {
+        Self {
+            sequence_number,
+            retire_prior_to,
+            connection_id_length: None,
+            connection_id,
+            stateless_reset_token,
+        }
+    }
+
+    /// Construct a NEW_CONNECTION_ID frame from validated integer fields.
+    pub fn from_values(
+        sequence_number: u64,
+        retire_prior_to: u64,
+        connection_id: impl AsRef<[u8]>,
+        stateless_reset_token: [u8; QUIC_STATELESS_RESET_TOKEN_LEN],
+    ) -> Result<Self> {
+        Ok(Self::new(
+            QuicVarInt::new(sequence_number)?,
+            QuicVarInt::new(retire_prior_to)?,
+            QuicConnectionId::try_from_bytes(connection_id)?,
+            stateless_reset_token,
+        ))
+    }
+
+    /// Preserve an explicit Connection ID Length byte, even when it does not match.
+    pub fn with_connection_id_length(mut self, connection_id_length: u8) -> Self {
+        self.connection_id_length = Some(connection_id_length);
+        self
+    }
+
+    /// Return the Sequence Number field.
+    pub const fn sequence_number(&self) -> QuicVarInt {
+        self.sequence_number
+    }
+
+    /// Return the Retire Prior To field.
+    pub const fn retire_prior_to(&self) -> QuicVarInt {
+        self.retire_prior_to
+    }
+
+    /// Return the advertised Connection ID Length field.
+    pub fn connection_id_length(&self) -> Result<u8> {
+        if let Some(connection_id_length) = self.connection_id_length {
+            return Ok(connection_id_length);
+        }
+        validate_new_connection_id_len(self.connection_id.len())?;
+        u8::try_from(self.connection_id.len()).map_err(|_| {
+            CrafterError::invalid_field_value(
+                "quic.frame.new_connection_id.connection_id_length",
+                "Connection ID length exceeds u8",
+            )
+        })
+    }
+
+    /// Return a caller-pinned Connection ID Length byte when present.
+    pub const fn connection_id_length_override(&self) -> Option<u8> {
+        self.connection_id_length
+    }
+
+    /// Borrow the Connection ID bytes.
+    pub fn connection_id(&self) -> &QuicConnectionId {
+        &self.connection_id
+    }
+
+    /// Borrow the 16-byte Stateless Reset Token.
+    pub const fn stateless_reset_token(&self) -> &[u8; QUIC_STATELESS_RESET_TOKEN_LEN] {
+        &self.stateless_reset_token
+    }
+
+    /// Decode one NEW_CONNECTION_ID frame from bytes that include the Frame Type.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let bytes = bytes.as_ref();
+        let (frame, consumed) = decode_new_connection_id_frame(bytes)?;
+        if consumed != bytes.len() {
+            return Err(CrafterError::invalid_field_value(
+                "quic.frame.new_connection_id",
+                "NEW_CONNECTION_ID frame has trailing bytes",
+            ));
+        }
+        Ok(frame)
+    }
+
+    /// Append the canonical NEW_CONNECTION_ID frame encoding, preserving explicit Length.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        QuicVarInt::from_u64_unchecked(0x18).encode(out)?;
+        self.sequence_number.encode(out)?;
+        self.retire_prior_to.encode(out)?;
+        out.push(self.connection_id_length()?);
+        out.extend_from_slice(self.connection_id.as_bytes());
+        out.extend_from_slice(&self.stateless_reset_token);
+        Ok(())
+    }
+
+    /// Return the canonical NEW_CONNECTION_ID frame encoding.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Stable NEW_CONNECTION_ID summary for packet inspection.
+    pub fn summary(&self) -> String {
+        format!(
+            "kind=NEW_CONNECTION_ID sequence_number={} retire_prior_to={} connection_id_len={} connection_id={}",
+            self.sequence_number.value(),
+            self.retire_prior_to.value(),
+            self.connection_id.len(),
+            self.connection_id.to_hex()
+        )
+    }
+
+    /// Stable field/value pairs for NEW_CONNECTION_ID inspection.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            (
+                "new_connection_id_sequence_number",
+                self.sequence_number.value().to_string(),
+            ),
+            (
+                "new_connection_id_retire_prior_to",
+                self.retire_prior_to.value().to_string(),
+            ),
+            (
+                "new_connection_id_length",
+                self.connection_id_length()
+                    .map(|len| len.to_string())
+                    .unwrap_or_else(|_| "<invalid>".to_string()),
+            ),
+            (
+                "new_connection_id_len",
+                self.connection_id.len().to_string(),
+            ),
+            ("new_connection_id", self.connection_id.to_hex()),
+            (
+                "new_connection_id_stateless_reset_token",
+                hex_bytes(&self.stateless_reset_token),
+            ),
+        ]
+    }
+}
+
 /// Raw-preserving QUIC frame.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct QuicFrame {
@@ -1698,6 +1859,28 @@ impl QuicFrame {
         Self::from_streams_blocked_frame(QuicStreamsBlockedFrame::unidirectional(maximum_streams))
     }
 
+    /// Construct a NEW_CONNECTION_ID frame from typed fields.
+    pub fn from_new_connection_id_frame(
+        new_connection_id: QuicNewConnectionIdFrame,
+    ) -> Result<Self> {
+        Ok(Self::from_bytes(new_connection_id.encode_to_vec()?))
+    }
+
+    /// Construct a NEW_CONNECTION_ID frame with an auto-filled Connection ID Length.
+    pub fn new_connection_id(
+        sequence_number: QuicVarInt,
+        retire_prior_to: QuicVarInt,
+        connection_id: QuicConnectionId,
+        stateless_reset_token: [u8; QUIC_STATELESS_RESET_TOKEN_LEN],
+    ) -> Result<Self> {
+        Self::from_new_connection_id_frame(QuicNewConnectionIdFrame::new(
+            sequence_number,
+            retire_prior_to,
+            connection_id,
+            stateless_reset_token,
+        ))
+    }
+
     /// Decode a frame sequence within the caller-provided packet boundary.
     ///
     /// Supported fixed-boundary frames are split out first. The remaining
@@ -1794,6 +1977,13 @@ impl QuicFrame {
                 0x16 | 0x17 => {
                     let (_, streams_blocked_len) = decode_streams_blocked_frame(&bytes[offset..])?;
                     let end = offset + streams_blocked_len;
+                    frames.push(Self::from_bytes(&bytes[offset..end]));
+                    offset = end;
+                }
+                0x18 => {
+                    let (_, new_connection_id_len) =
+                        decode_new_connection_id_frame(&bytes[offset..])?;
+                    let end = offset + new_connection_id_len;
                     frames.push(Self::from_bytes(&bytes[offset..end]));
                     offset = end;
                 }
@@ -1935,6 +2125,14 @@ impl QuicFrame {
         }
     }
 
+    /// Decode this frame as NEW_CONNECTION_ID when applicable.
+    pub fn new_connection_id_frame(&self) -> Result<Option<QuicNewConnectionIdFrame>> {
+        match self.frame_type_value() {
+            Some(0x18) => Ok(Some(QuicNewConnectionIdFrame::decode(&self.bytes)?)),
+            _ => Ok(None),
+        }
+    }
+
     /// Borrow the preserved frame bytes.
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes
@@ -2025,6 +2223,9 @@ impl QuicFrame {
         if let Ok(Some(streams_blocked)) = self.streams_blocked_frame() {
             return streams_blocked.summary();
         }
+        if let Ok(Some(new_connection_id)) = self.new_connection_id_frame() {
+            return new_connection_id.summary();
+        }
         match self.frame_type() {
             Some(frame_type) => format!(
                 "kind={} type=0x{:x} raw_len={}",
@@ -2097,6 +2298,9 @@ impl QuicFrame {
         }
         if let Ok(Some(streams_blocked)) = self.streams_blocked_frame() {
             fields.extend(streams_blocked.inspection_fields());
+        }
+        if let Ok(Some(new_connection_id)) = self.new_connection_id_frame() {
+            fields.extend(new_connection_id.inspection_fields());
         }
         fields
     }
@@ -2454,6 +2658,86 @@ fn decode_streams_blocked_frame(bytes: &[u8]) -> Result<(QuicStreamsBlockedFrame
         QuicStreamsBlockedFrame::new(direction, maximum_streams),
         offset,
     ))
+}
+
+fn decode_new_connection_id_frame(bytes: &[u8]) -> Result<(QuicNewConnectionIdFrame, usize)> {
+    let (frame_type, mut offset) = decode_frame_varint(bytes, 0, "quic.frame.type")?;
+    if frame_type.value() != 0x18 {
+        return Err(CrafterError::invalid_field_value(
+            "quic.frame.new_connection_id.type",
+            "NEW_CONNECTION_ID frame type must be 0x18",
+        ));
+    }
+    let (sequence_number, next) = decode_frame_varint(
+        bytes,
+        offset,
+        "quic.frame.new_connection_id.sequence_number",
+    )?;
+    offset = next;
+    let (retire_prior_to, next) = decode_frame_varint(
+        bytes,
+        offset,
+        "quic.frame.new_connection_id.retire_prior_to",
+    )?;
+    offset = next;
+
+    let available = bytes.len().saturating_sub(offset);
+    if available < 1 {
+        return Err(CrafterError::buffer_too_short(
+            "quic.frame.new_connection_id.connection_id_length",
+            1,
+            available,
+        ));
+    }
+    let connection_id_length = bytes[offset];
+    offset += 1;
+    let connection_id_len = usize::from(connection_id_length);
+    validate_new_connection_id_len(connection_id_len)?;
+
+    let available = bytes.len().saturating_sub(offset);
+    if available < connection_id_len {
+        return Err(CrafterError::buffer_too_short(
+            "quic.frame.new_connection_id.connection_id",
+            connection_id_len,
+            available,
+        ));
+    }
+    let connection_id = QuicConnectionId::from_bytes(&bytes[offset..offset + connection_id_len]);
+    offset += connection_id_len;
+
+    let available = bytes.len().saturating_sub(offset);
+    if available < QUIC_STATELESS_RESET_TOKEN_LEN {
+        return Err(CrafterError::buffer_too_short(
+            "quic.frame.new_connection_id.stateless_reset_token",
+            QUIC_STATELESS_RESET_TOKEN_LEN,
+            available,
+        ));
+    }
+    let mut stateless_reset_token = [0u8; QUIC_STATELESS_RESET_TOKEN_LEN];
+    stateless_reset_token.copy_from_slice(&bytes[offset..offset + QUIC_STATELESS_RESET_TOKEN_LEN]);
+    offset += QUIC_STATELESS_RESET_TOKEN_LEN;
+
+    Ok((
+        QuicNewConnectionIdFrame::new(
+            sequence_number,
+            retire_prior_to,
+            connection_id,
+            stateless_reset_token,
+        )
+        .with_connection_id_length(connection_id_length),
+        offset,
+    ))
+}
+
+fn validate_new_connection_id_len(len: usize) -> Result<()> {
+    if (1..=QUIC_CONNECTION_ID_MAX_LEN).contains(&len) {
+        Ok(())
+    } else {
+        Err(CrafterError::invalid_field_value(
+            "quic.frame.new_connection_id.connection_id_length",
+            "NEW_CONNECTION_ID connection ID length must be 1..=20",
+        ))
+    }
 }
 
 fn decode_frame_varint(
@@ -3230,6 +3514,125 @@ mod tests {
         assert_eq!(
             QuicFrame::decode_sequence([0x17, 0x40]).unwrap_err(),
             CrafterError::buffer_too_short("quic.frame.streams_blocked.maximum_streams", 2, 1)
+        );
+    }
+
+    #[test]
+    fn quic_frame_new_connection_id_decodes_and_continues_sequence() -> crate::Result<()> {
+        let token = [
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d,
+            0x0e, 0x0f,
+        ];
+        let mut bytes = vec![0x18, 0x01, 0x00, 0x04, 0x83, 0x94, 0xc8, 0xf0];
+        bytes.extend_from_slice(&token);
+        bytes.push(0x01);
+
+        let frames = QuicFrame::decode_sequence(&bytes)?;
+
+        assert_eq!(frames.len(), 2);
+        assert_eq!(
+            frames[0].kind(),
+            QuicFrameKind::Known(QuicKnownFrameType::NewConnectionId)
+        );
+        let new_connection_id = frames[0].new_connection_id_frame()?.unwrap();
+        assert_eq!(new_connection_id.sequence_number().value(), 1);
+        assert_eq!(new_connection_id.retire_prior_to().value(), 0);
+        assert_eq!(new_connection_id.connection_id_length()?, 4);
+        assert_eq!(
+            new_connection_id.connection_id().as_bytes(),
+            &[0x83, 0x94, 0xc8, 0xf0]
+        );
+        assert_eq!(new_connection_id.stateless_reset_token(), &token);
+        assert!(frames[1].is_ping());
+        assert_eq!(QuicFrame::encode_sequence(frames), bytes);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_new_connection_id_serializes_and_summarizes() -> crate::Result<()> {
+        let token = [0xab; QUIC_STATELESS_RESET_TOKEN_LEN];
+        let frame = QuicFrame::new_connection_id(
+            v(3),
+            v(1),
+            QuicConnectionId::from_bytes([0xaa, 0xbb]),
+            token,
+        )?;
+
+        let mut expected = vec![0x18, 0x03, 0x01, 0x02, 0xaa, 0xbb];
+        expected.extend_from_slice(&token);
+        assert_eq!(frame.as_bytes(), expected);
+        assert_eq!(
+            frame.summary(),
+            "kind=NEW_CONNECTION_ID sequence_number=3 retire_prior_to=1 connection_id_len=2 connection_id=aabb"
+        );
+        assert!(frame.inspection_fields().contains(&(
+            "new_connection_id_stateless_reset_token",
+            "ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab".to_string()
+        )));
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_new_connection_id_preserves_explicit_malformed_length() -> crate::Result<()> {
+        let token = [0; QUIC_STATELESS_RESET_TOKEN_LEN];
+        let frame = QuicNewConnectionIdFrame::new(
+            v(1),
+            v(0),
+            QuicConnectionId::from_bytes([0xaa, 0xbb, 0xcc]),
+            token,
+        )
+        .with_connection_id_length(1);
+
+        let encoded = frame.encode_to_vec()?;
+
+        assert_eq!(frame.connection_id_length_override(), Some(1));
+        assert_eq!(encoded[3], 1);
+        assert_eq!(
+            encoded.len(),
+            1 + 1 + 1 + 1 + 3 + QUIC_STATELESS_RESET_TOKEN_LEN
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_new_connection_id_invalid_connection_id_lengths_report_structured_errors() {
+        assert_eq!(
+            QuicFrame::decode_sequence([0x18, 0x01, 0x00, 0x00]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "quic.frame.new_connection_id.connection_id_length",
+                "NEW_CONNECTION_ID connection ID length must be 1..=20"
+            )
+        );
+
+        assert_eq!(
+            QuicFrame::decode_sequence([0x18, 0x01, 0x00, 0x15]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "quic.frame.new_connection_id.connection_id_length",
+                "NEW_CONNECTION_ID connection ID length must be 1..=20"
+            )
+        );
+    }
+
+    #[test]
+    fn quic_frame_new_connection_id_truncated_connection_id_reports_structured_error() {
+        assert_eq!(
+            QuicFrame::decode_sequence([0x18, 0x01, 0x00, 0x04, 0xaa, 0xbb]).unwrap_err(),
+            CrafterError::buffer_too_short("quic.frame.new_connection_id.connection_id", 4, 2)
+        );
+    }
+
+    #[test]
+    fn quic_frame_new_connection_id_truncated_reset_token_reports_structured_error() {
+        let mut bytes = vec![0x18, 0x01, 0x00, 0x02, 0xaa, 0xbb];
+        bytes.extend_from_slice(&[0xcc; QUIC_STATELESS_RESET_TOKEN_LEN - 1]);
+
+        assert_eq!(
+            QuicFrame::decode_sequence(bytes).unwrap_err(),
+            CrafterError::buffer_too_short(
+                "quic.frame.new_connection_id.stateless_reset_token",
+                QUIC_STATELESS_RESET_TOKEN_LEN,
+                QUIC_STATELESS_RESET_TOKEN_LEN - 1
+            )
         );
     }
 }
