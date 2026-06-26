@@ -26,8 +26,8 @@ pub mod varint;
 pub use connection_id::QuicConnectionId;
 pub use crypto::QuicCryptoContext;
 pub use frame::{
-    QuicAckEcnCounts, QuicAckFrame, QuicAckRange, QuicFrame, QuicFrameKind, QuicKnownFrameType,
-    QuicResetStreamFrame, QuicStopSendingFrame,
+    QuicAckEcnCounts, QuicAckFrame, QuicAckRange, QuicCryptoFrame, QuicFrame, QuicFrameKind,
+    QuicKnownFrameType, QuicResetStreamFrame, QuicStopSendingFrame,
 };
 pub use header::QuicHeader;
 pub use packet::{
