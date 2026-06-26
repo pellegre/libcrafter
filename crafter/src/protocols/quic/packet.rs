@@ -798,9 +798,7 @@ impl QuicShortHeaderBuilder {
 
     /// Append raw-preserving frame placeholders to the protected payload.
     pub fn frames(mut self, frames: impl IntoIterator<Item = QuicFrame>) -> Self {
-        for frame in frames {
-            self = self.frame(frame);
-        }
+        append_frame_sequence(&mut self.protected_payload, frames);
         self
     }
 
@@ -834,6 +832,23 @@ impl QuicShortHeaderBuilder {
             protected_payload,
         })
     }
+}
+
+fn append_frame_sequence(
+    protected_payload: &mut Field<Vec<u8>>,
+    frames: impl IntoIterator<Item = QuicFrame>,
+) {
+    let encoded = QuicFrame::encode_sequence(frames);
+    if encoded.is_empty() {
+        return;
+    }
+    if protected_payload.is_unset() {
+        protected_payload.set_user(Vec::new());
+    }
+    protected_payload
+        .value_mut()
+        .expect("payload set above")
+        .extend_from_slice(&encoded);
 }
 
 fn default_short_header_first_byte(
@@ -1329,9 +1344,7 @@ impl QuicZeroRttBuilder {
 
     /// Append raw-preserving frame placeholders to the protected payload.
     pub fn frames(mut self, frames: impl IntoIterator<Item = QuicFrame>) -> Self {
-        for frame in frames {
-            self = self.frame(frame);
-        }
+        append_frame_sequence(&mut self.protected_payload, frames);
         self
     }
 
@@ -1475,9 +1488,7 @@ impl QuicHandshakeBuilder {
 
     /// Append raw-preserving frame placeholders to the protected payload.
     pub fn frames(mut self, frames: impl IntoIterator<Item = QuicFrame>) -> Self {
-        for frame in frames {
-            self = self.frame(frame);
-        }
+        append_frame_sequence(&mut self.protected_payload, frames);
         self
     }
 
@@ -1645,9 +1656,7 @@ impl QuicInitialBuilder {
 
     /// Append raw-preserving frame placeholders to the protected payload.
     pub fn frames(mut self, frames: impl IntoIterator<Item = QuicFrame>) -> Self {
-        for frame in frames {
-            self = self.frame(frame);
-        }
+        append_frame_sequence(&mut self.protected_payload, frames);
         self
     }
 
@@ -3001,6 +3010,44 @@ mod tests {
         assert_eq!(initial.protected_payload(), [0x00, 0x01, 0x40, 0xaf]);
         assert_eq!(initial.length().value(), 5);
         assert_eq!(initial.packet_number_bytes(), [0x00]);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_sequence_encode_integrates_with_initial_and_handshake_builders(
+    ) -> crate::Result<()> {
+        let ping = QuicFrame::ping();
+        let crypto = QuicFrame::crypto(QuicVarInt::from_u64_unchecked(0), [0xaa])?;
+
+        let initial = QuicLongHeaderPacket::initial_builder()
+            .packet_number(QuicPacketNumber::new(0x1234).with_encoded_len(2))
+            .frames([ping.clone(), crypto.clone()])
+            .build()?;
+        assert_eq!(initial.protected_payload(), [0x01, 0x06, 0x00, 0x01, 0xaa]);
+        assert_eq!(initial.length().value(), 7);
+
+        let handshake = QuicLongHeaderPacket::handshake_builder()
+            .packet_number(QuicPacketNumber::new(0x12))
+            .frames([crypto, ping])
+            .build()?;
+        assert_eq!(
+            handshake.protected_payload(),
+            [0x06, 0x00, 0x01, 0xaa, 0x01]
+        );
+        assert_eq!(handshake.length().value(), 6);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_sequence_encode_preserves_explicit_raw_payload_alternative() -> crate::Result<()>
+    {
+        let initial = QuicLongHeaderPacket::initial_builder()
+            .packet_number(QuicPacketNumber::new(0x12))
+            .protected_payload([0xbe, 0xef])
+            .build()?;
+
+        assert_eq!(initial.protected_payload(), [0xbe, 0xef]);
+        assert_eq!(initial.length().value(), 3);
         Ok(())
     }
 

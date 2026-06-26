@@ -2678,6 +2678,11 @@ impl QuicFrame {
         out
     }
 
+    /// Return the encoded length of a frame sequence without concatenating bytes.
+    pub fn encoded_sequence_len<'a>(frames: impl IntoIterator<Item = &'a Self>) -> usize {
+        frames.into_iter().map(Self::encoded_len).sum()
+    }
+
     /// Return the frame classification.
     pub const fn kind(&self) -> QuicFrameKind {
         self.kind
@@ -3879,6 +3884,22 @@ mod tests {
             QuicFrame::encode_sequence(frames),
             [0x00, 0x00, 0x00, 0x00, 0x01]
         );
+    }
+
+    #[test]
+    fn quic_frame_sequence_encode_preserves_order_and_reports_encoded_len() -> crate::Result<()> {
+        let frames = vec![
+            QuicFrame::ping(),
+            QuicFrame::crypto(v(0), [0xaa, 0xbb])?,
+            QuicFrame::unknown(v(0xaf), [0xcc])?,
+        ];
+
+        assert_eq!(QuicFrame::encoded_sequence_len(frames.iter()), 9);
+        assert_eq!(
+            QuicFrame::encode_sequence(frames),
+            [0x01, 0x06, 0x00, 0x02, 0xaa, 0xbb, 0x40, 0xaf, 0xcc]
+        );
+        Ok(())
     }
 
     #[test]
