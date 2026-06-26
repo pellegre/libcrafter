@@ -1,7 +1,8 @@
 //! RFC-backed QUIC packet-protection vectors.
 //!
-//! These tests are offline-only and use the deterministic RFC 9001 Appendix A
-//! Initial examples. They do not open sockets or attempt live QUIC behavior.
+//! These tests are offline-only and use the deterministic RFC 9001 and RFC 9369
+//! Appendix A Initial examples. They do not open sockets or attempt live QUIC
+//! behavior.
 
 use crafter::prelude::*;
 
@@ -41,6 +42,28 @@ const SERVER_PROTECTED_PACKET: &str = "\
     2158407dd074ee";
 const SERVER_SAMPLE: &str = "2cd0991cd25b0aac406a5816b6394100";
 const SERVER_MASK: &str = "2ec0d8356a";
+
+const V2_CLIENT_UNPROTECTED_HEADER: &str = "d36b3343cf088394c8f03e5157080000449e00000002";
+const V2_CLIENT_PROTECTED_HEADER: &str = "d76b3343cf088394c8f03e5157080000449ea0c95e82";
+const V2_CLIENT_PROTECTED_PACKET_PREFIX: &str =
+    "d76b3343cf088394c8f03e5157080000449ea0c95e82ffe67b6abcdb4298b485";
+const V2_CLIENT_PROTECTED_PACKET_SUFFIX: &str = "\
+    6f4c4938ae79324dc402894b44faf8afbab35282ab659d13c93f70412e85cb19\
+    9a37ddec600545473cfb5a05e08d0b209973b2172b4d21fb69745a262ccde96b\
+    a18b2faa745b6fe189cf772a9f84cbfc";
+const V2_CLIENT_SAMPLE: &str = "ffe67b6abcdb4298b485dd04de806071";
+const V2_CLIENT_MASK: &str = "94a0c95e80";
+
+const V2_SERVER_UNPROTECTED_HEADER: &str = "d16b3343cf0008f067a5502a4262b50040750001";
+const V2_SERVER_PROTECTED_HEADER: &str = "dc6b3343cf0008f067a5502a4262b5004075d92f";
+const V2_SERVER_PROTECTED_PACKET: &str = "\
+    dc6b3343cf0008f067a5502a4262b5004075d92faaf16f05d8a4398c47089698\
+    baeea26b91eb761d9b89237bbf87263017915358230035f7fd3945d88965cf17\
+    f9af6e16886c61bfc703106fbaf3cb4cfa52382dd16a393e42757507698075b2\
+    c984c707f0a0812d8cd5a6881eaf21ceda98f4bd23f6fe1a3e2c43edd9ce7ca8\
+    4bed8521e2e140";
+const V2_SERVER_SAMPLE: &str = "6f05d8a4398c47089698baeea26b91eb";
+const V2_SERVER_MASK: &str = "4dd92e91ea";
 
 #[test]
 fn quic_v1_initial_vectors_encrypt_decrypt_and_preserve_decode() -> crafter::Result<()> {
@@ -128,6 +151,110 @@ fn quic_v1_initial_vectors_encrypt_decrypt_and_preserve_decode() -> crafter::Res
             &server_header,
             &server_ciphertext
         )?,
+        server_payload
+    );
+
+    let decoded_server = QuicPacket::decode(&protected_server_packet)?;
+    assert_eq!(
+        decoded_server.as_bytes(),
+        protected_server_packet.as_slice()
+    );
+    assert!(decoded_server.is_long_header());
+
+    Ok(())
+}
+
+#[test]
+fn quic_v2_initial_vectors_encrypt_decrypt_and_preserve_decode() -> crafter::Result<()> {
+    let dcid = hex_bytes(TEST_DCID);
+    let secrets = derive_quic_initial_secrets(QUIC_VERSION_2, dcid)?;
+
+    let client_keys = secrets.client_packet_keys()?;
+    let client_header = hex_bytes(V2_CLIENT_UNPROTECTED_HEADER);
+    let mut client_payload = hex_bytes(CLIENT_INITIAL_PAYLOAD_PREFIX);
+    client_payload.resize(CLIENT_INITIAL_PAYLOAD_LEN, 0);
+    assert_eq!(
+        quic_initial_payload_nonce(client_keys.iv(), 2),
+        hex_array::<QUIC_INITIAL_IV_LEN>("91f73e2351d8fa91660e909d")
+    );
+
+    let client_ciphertext =
+        quic_initial_aes128gcm_protect_payload(&client_keys, 2, &client_header, &client_payload)?;
+    assert_eq!(
+        &client_ciphertext[..QUIC_HEADER_PROTECTION_SAMPLE_LEN],
+        hex_bytes(V2_CLIENT_SAMPLE).as_slice()
+    );
+    let client_mask = client_keys.header_protection_mask(&client_ciphertext[..16])?;
+    assert_eq!(
+        client_mask,
+        hex_array::<QUIC_HEADER_PROTECTION_MASK_LEN>(V2_CLIENT_MASK)
+    );
+
+    let mut protected_client_header = client_header.clone();
+    apply_long_header_protection(&mut protected_client_header, 18, 4, client_mask);
+    assert_eq!(
+        protected_client_header,
+        hex_bytes(V2_CLIENT_PROTECTED_HEADER)
+    );
+
+    let mut protected_client_packet = protected_client_header;
+    protected_client_packet.extend_from_slice(&client_ciphertext);
+    assert!(protected_client_packet.starts_with(&hex_bytes(V2_CLIENT_PROTECTED_PACKET_PREFIX)));
+    assert!(protected_client_packet.ends_with(&hex_bytes(V2_CLIENT_PROTECTED_PACKET_SUFFIX)));
+    assert_eq!(
+        quic_initial_aes128gcm_unprotect_payload(
+            &client_keys,
+            2,
+            &client_header,
+            &client_ciphertext
+        )?,
+        client_payload
+    );
+
+    let decoded_client = QuicPacket::decode(&protected_client_packet)?;
+    assert_eq!(
+        decoded_client.as_bytes(),
+        protected_client_packet.as_slice()
+    );
+    assert!(decoded_client.is_long_header());
+
+    let server_keys = secrets.server_packet_keys()?;
+    let server_header = hex_bytes(V2_SERVER_UNPROTECTED_HEADER);
+    let server_payload = hex_bytes(SERVER_INITIAL_PAYLOAD);
+    assert_eq!(
+        quic_initial_payload_nonce(server_keys.iv(), 1),
+        hex_array::<QUIC_INITIAL_IV_LEN>("dd13c276499c0249d3310653")
+    );
+
+    let server_ciphertext = server_keys.protect_payload(1, &server_header, &server_payload)?;
+    assert_eq!(
+        &server_ciphertext[2..2 + QUIC_HEADER_PROTECTION_SAMPLE_LEN],
+        hex_bytes(V2_SERVER_SAMPLE).as_slice()
+    );
+    let server_mask = quic_aes128_header_protection_mask(
+        server_keys.header_protection_key(),
+        &server_ciphertext[2..18],
+    )?;
+    assert_eq!(
+        server_mask,
+        hex_array::<QUIC_HEADER_PROTECTION_MASK_LEN>(V2_SERVER_MASK)
+    );
+
+    let mut protected_server_header = server_header.clone();
+    apply_long_header_protection(&mut protected_server_header, 18, 2, server_mask);
+    assert_eq!(
+        protected_server_header,
+        hex_bytes(V2_SERVER_PROTECTED_HEADER)
+    );
+
+    let mut protected_server_packet = protected_server_header;
+    protected_server_packet.extend_from_slice(&server_ciphertext);
+    assert_eq!(
+        protected_server_packet,
+        hex_bytes(V2_SERVER_PROTECTED_PACKET)
+    );
+    assert_eq!(
+        server_keys.unprotect_payload(1, &server_header, &server_ciphertext)?,
         server_payload
     );
 
