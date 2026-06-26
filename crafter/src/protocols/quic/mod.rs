@@ -27,7 +27,7 @@ pub use connection_id::QuicConnectionId;
 pub use crypto::QuicCryptoContext;
 pub use frame::{
     QuicAckEcnCounts, QuicAckFrame, QuicAckRange, QuicCryptoFrame, QuicFrame, QuicFrameKind,
-    QuicKnownFrameType, QuicResetStreamFrame, QuicStopSendingFrame,
+    QuicKnownFrameType, QuicNewTokenFrame, QuicResetStreamFrame, QuicStopSendingFrame,
 };
 pub use header::QuicHeader;
 pub use packet::{

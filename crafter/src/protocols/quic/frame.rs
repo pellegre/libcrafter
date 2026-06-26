@@ -683,6 +683,105 @@ impl QuicCryptoFrame {
     }
 }
 
+/// Parsed or buildable NEW_TOKEN frame fields.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuicNewTokenFrame {
+    token_length: Option<QuicVarInt>,
+    token: Vec<u8>,
+}
+
+impl QuicNewTokenFrame {
+    /// Construct a NEW_TOKEN frame with an auto-filled token length.
+    pub fn new(token: impl AsRef<[u8]>) -> Self {
+        Self {
+            token_length: None,
+            token: token.as_ref().to_vec(),
+        }
+    }
+
+    /// Preserve an explicit Token Length field, even when it does not match.
+    pub fn with_token_length(mut self, token_length: QuicVarInt) -> Self {
+        self.token_length = Some(token_length);
+        self
+    }
+
+    /// Return the advertised Token Length field, auto-filled from token bytes.
+    pub fn token_length(&self) -> Result<QuicVarInt> {
+        match self.token_length {
+            Some(token_length) => Ok(token_length),
+            None => QuicVarInt::new(u64::try_from(self.token.len()).map_err(|_| {
+                CrafterError::invalid_field_value(
+                    "quic.frame.new_token.token_length",
+                    "token length exceeds u64",
+                )
+            })?),
+        }
+    }
+
+    /// Return a caller-pinned Token Length field when present.
+    pub const fn token_length_override(&self) -> Option<QuicVarInt> {
+        self.token_length
+    }
+
+    /// Borrow the opaque token bytes.
+    pub fn token(&self) -> &[u8] {
+        &self.token
+    }
+
+    /// Decode one NEW_TOKEN frame from bytes that include the Frame Type.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let bytes = bytes.as_ref();
+        let (frame, consumed) = decode_new_token_frame(bytes)?;
+        if consumed != bytes.len() {
+            return Err(CrafterError::invalid_field_value(
+                "quic.frame.new_token",
+                "NEW_TOKEN frame has trailing bytes",
+            ));
+        }
+        Ok(frame)
+    }
+
+    /// Append the canonical NEW_TOKEN frame encoding, preserving explicit Length.
+    pub fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
+        QuicVarInt::from_u64_unchecked(0x07).encode(out)?;
+        self.token_length()?.encode(out)?;
+        out.extend_from_slice(&self.token);
+        Ok(())
+    }
+
+    /// Return the canonical NEW_TOKEN frame encoding.
+    pub fn encode_to_vec(&self) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Stable NEW_TOKEN summary for packet inspection.
+    pub fn summary(&self) -> String {
+        format!(
+            "kind=NEW_TOKEN token_length={} token_len={}",
+            self.token_length()
+                .map(|length| length.value())
+                .unwrap_or(0),
+            self.token.len()
+        )
+    }
+
+    /// Stable field/value pairs for NEW_TOKEN inspection.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            (
+                "new_token_length",
+                self.token_length()
+                    .map(|length| length.value().to_string())
+                    .unwrap_or_else(|_| "<invalid>".to_string()),
+            ),
+            ("new_token_len", self.token.len().to_string()),
+            ("new_token", hex_bytes(&self.token)),
+        ]
+    }
+}
+
 /// Raw-preserving QUIC frame.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct QuicFrame {
@@ -789,6 +888,16 @@ impl QuicFrame {
         Self::from_crypto_frame(QuicCryptoFrame::new(offset, data))
     }
 
+    /// Construct a NEW_TOKEN frame from typed fields.
+    pub fn from_new_token_frame(new_token: QuicNewTokenFrame) -> Result<Self> {
+        Ok(Self::from_bytes(new_token.encode_to_vec()?))
+    }
+
+    /// Construct a NEW_TOKEN frame with an auto-filled token length.
+    pub fn new_token(token: impl AsRef<[u8]>) -> Result<Self> {
+        Self::from_new_token_frame(QuicNewTokenFrame::new(token))
+    }
+
     /// Decode a frame sequence within the caller-provided packet boundary.
     ///
     /// Supported fixed-boundary frames are split out first. The remaining
@@ -836,6 +945,12 @@ impl QuicFrame {
                 0x06 => {
                     let (_, crypto_len) = decode_crypto_frame(&bytes[offset..])?;
                     let end = offset + crypto_len;
+                    frames.push(Self::from_bytes(&bytes[offset..end]));
+                    offset = end;
+                }
+                0x07 => {
+                    let (_, new_token_len) = decode_new_token_frame(&bytes[offset..])?;
+                    let end = offset + new_token_len;
                     frames.push(Self::from_bytes(&bytes[offset..end]));
                     offset = end;
                 }
@@ -913,6 +1028,14 @@ impl QuicFrame {
         }
     }
 
+    /// Decode this frame as NEW_TOKEN when applicable.
+    pub fn new_token_frame(&self) -> Result<Option<QuicNewTokenFrame>> {
+        match self.frame_type_value() {
+            Some(0x07) => Ok(Some(QuicNewTokenFrame::decode(&self.bytes)?)),
+            _ => Ok(None),
+        }
+    }
+
     /// Borrow the preserved frame bytes.
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes
@@ -979,6 +1102,9 @@ impl QuicFrame {
         if let Ok(Some(crypto)) = self.crypto_frame() {
             return crypto.summary();
         }
+        if let Ok(Some(new_token)) = self.new_token_frame() {
+            return new_token.summary();
+        }
         match self.frame_type() {
             Some(frame_type) => format!(
                 "kind={} type=0x{:x} raw_len={}",
@@ -1027,6 +1153,9 @@ impl QuicFrame {
         }
         if let Ok(Some(crypto)) = self.crypto_frame() {
             fields.extend(crypto.inspection_fields());
+        }
+        if let Ok(Some(new_token)) = self.new_token_frame() {
+            fields.extend(new_token.inspection_fields());
         }
         fields
     }
@@ -1173,6 +1302,39 @@ fn decode_crypto_frame(bytes: &[u8]) -> Result<(QuicCryptoFrame, usize)> {
     let end = offset + data_len;
     Ok((
         QuicCryptoFrame::new(crypto_offset, &bytes[offset..end]).with_length(length),
+        end,
+    ))
+}
+
+fn decode_new_token_frame(bytes: &[u8]) -> Result<(QuicNewTokenFrame, usize)> {
+    let (frame_type, mut offset) = decode_frame_varint(bytes, 0, "quic.frame.type")?;
+    if frame_type.value() != 0x07 {
+        return Err(CrafterError::invalid_field_value(
+            "quic.frame.new_token.type",
+            "NEW_TOKEN frame type must be 0x07",
+        ));
+    }
+    let (token_length, next) =
+        decode_frame_varint(bytes, offset, "quic.frame.new_token.token_length")?;
+    offset = next;
+
+    let token_len = usize::try_from(token_length.value()).map_err(|_| {
+        CrafterError::invalid_field_value(
+            "quic.frame.new_token.token_length",
+            "length exceeds usize",
+        )
+    })?;
+    let available = bytes.len().saturating_sub(offset);
+    if available < token_len {
+        return Err(CrafterError::buffer_too_short(
+            "quic.frame.new_token.token",
+            token_len,
+            available,
+        ));
+    }
+    let end = offset + token_len;
+    Ok((
+        QuicNewTokenFrame::new(&bytes[offset..end]).with_token_length(token_length),
         end,
     ))
 }
@@ -1538,6 +1700,66 @@ mod tests {
         assert_eq!(
             QuicFrame::decode_sequence([0x06, 0, 3, 0xaa]).unwrap_err(),
             CrafterError::buffer_too_short("quic.frame.crypto.data", 3, 1)
+        );
+    }
+
+    #[test]
+    fn quic_frame_new_token_decodes_token_and_continues_sequence() -> crate::Result<()> {
+        let bytes = [0x07, 3, 0xde, 0xad, 0xbe, 0x01];
+
+        let frames = QuicFrame::decode_sequence(bytes)?;
+
+        assert_eq!(frames.len(), 2);
+        assert_eq!(
+            frames[0].kind(),
+            QuicFrameKind::Known(QuicKnownFrameType::NewToken)
+        );
+        let new_token = frames[0].new_token_frame()?.unwrap();
+        assert_eq!(new_token.token_length()?.value(), 3);
+        assert_eq!(new_token.token(), &[0xde, 0xad, 0xbe]);
+        assert!(frames[1].is_ping());
+        assert_eq!(QuicFrame::encode_sequence(frames), bytes);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_new_token_builder_auto_fills_length() -> crate::Result<()> {
+        let frame = QuicFrame::new_token([0xde, 0xad])?;
+
+        assert_eq!(frame.as_bytes(), &[0x07, 0x02, 0xde, 0xad]);
+        assert_eq!(frame.summary(), "kind=NEW_TOKEN token_length=2 token_len=2");
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_new_token_empty_token_is_byte_complete() -> crate::Result<()> {
+        let frame = QuicFrame::new_token([])?;
+        let decoded = frame.new_token_frame()?.unwrap();
+
+        assert_eq!(frame.as_bytes(), &[0x07, 0x00]);
+        assert_eq!(decoded.token(), &[]);
+        assert_eq!(decoded.token_length()?.value(), 0);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_new_token_preserves_explicit_malformed_length() -> crate::Result<()> {
+        let new_token = QuicNewTokenFrame::new([0xaa]).with_token_length(v(3));
+        let frame = QuicFrame::from_new_token_frame(new_token)?;
+
+        assert_eq!(frame.as_bytes(), &[0x07, 0x03, 0xaa]);
+        assert_eq!(
+            frame.new_token_frame().unwrap_err(),
+            CrafterError::buffer_too_short("quic.frame.new_token.token", 3, 1)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_new_token_truncated_token_reports_structured_error() {
+        assert_eq!(
+            QuicFrame::decode_sequence([0x07, 3, 0xaa]).unwrap_err(),
+            CrafterError::buffer_too_short("quic.frame.new_token.token", 3, 1)
         );
     }
 }

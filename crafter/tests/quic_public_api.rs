@@ -48,6 +48,11 @@ fn exports_quic_symbols() -> crafter::Result<()> {
         QuicFrame::from_crypto_frame(crypto)?.frame_type_value(),
         Some(0x06)
     );
+    let new_token = QuicNewTokenFrame::new([0xde, 0xad]);
+    assert_eq!(
+        QuicFrame::from_new_token_frame(new_token)?.frame_type_value(),
+        Some(0x07)
+    );
 
     let parameter = QuicTransportParameter::raw(varint, [0xde, 0xad]);
     assert_eq!(parameter.identifier(), Some(varint));
