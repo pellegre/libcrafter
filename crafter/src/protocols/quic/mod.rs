@@ -28,9 +28,9 @@ pub use crypto::QuicCryptoContext;
 pub use frame::{
     QuicAckEcnCounts, QuicAckFrame, QuicAckRange, QuicConnectionCloseFrame,
     QuicConnectionCloseKind, QuicCryptoFrame, QuicDataBlockedFrame, QuicFrame, QuicFrameKind,
-    QuicKnownFrameType, QuicMaxDataFrame, QuicMaxStreamDataFrame, QuicMaxStreamsFrame,
-    QuicNewConnectionIdFrame, QuicNewTokenFrame, QuicPathChallengeFrame, QuicPathResponseFrame,
-    QuicResetStreamFrame, QuicRetireConnectionIdFrame, QuicStopSendingFrame,
+    QuicHandshakeDoneFrame, QuicKnownFrameType, QuicMaxDataFrame, QuicMaxStreamDataFrame,
+    QuicMaxStreamsFrame, QuicNewConnectionIdFrame, QuicNewTokenFrame, QuicPathChallengeFrame,
+    QuicPathResponseFrame, QuicResetStreamFrame, QuicRetireConnectionIdFrame, QuicStopSendingFrame,
     QuicStreamDataBlockedFrame, QuicStreamDirection, QuicStreamFrame, QuicStreamsBlockedFrame,
     QUIC_TRANSPORT_ERROR_AEAD_LIMIT_REACHED, QUIC_TRANSPORT_ERROR_APPLICATION_ERROR,
     QUIC_TRANSPORT_ERROR_CONNECTION_ID_LIMIT_ERROR, QUIC_TRANSPORT_ERROR_CONNECTION_REFUSED,

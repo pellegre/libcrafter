@@ -135,6 +135,10 @@ fn exports_quic_symbols() -> crafter::Result<()> {
         Some(0x1c)
     );
     assert_eq!(QUIC_TRANSPORT_ERROR_NO_ERROR.value(), 0);
+    assert_eq!(
+        QuicFrame::from_handshake_done_frame(QuicHandshakeDoneFrame::new())?.frame_type_value(),
+        Some(0x1e)
+    );
 
     let parameter = QuicTransportParameter::raw(varint, [0xde, 0xad]);
     assert_eq!(parameter.identifier(), Some(varint));
