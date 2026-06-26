@@ -34,7 +34,7 @@ The integration fixture catalog lives in
 - `path`: path below this fixture directory.
 - `contents`: checked-in bytes or checked-in hex text.
 - `target`: public decode entrypoint, such as a link type, L3 protocol, raw
-  decode, or DHCP option decoder.
+  decode, or DHCPv4 option decoder.
 - `expected_layers`: typed layers that must be present after decode.
 - `preserve_exact_bytes`: whether decode/compile must preserve the fixture bytes.
 - `summary_path`: optional expected summary fixture.
@@ -109,8 +109,8 @@ Valid byte fixtures cover:
 - IPv4 UDP DNS query and response:
   `ipv4-udp-dns-query-example-com.bin`,
   `ipv4-udp-dns-response-example-com.hex`
-- IPv4 UDP DHCP message and DHCP option corpus:
-  `ipv4-udp-dhcp-discover.hex`, `dhcp-offer-options.hex`
+- IPv4 UDP DHCPv4 message and DHCPv4 option corpus:
+  `ipv4-udp-dhcpv4-discover.hex`, `dhcpv4-offer-options.hex`
 - IPv4 UDP SNMP message fixtures:
   `ethernet-ipv4-udp-snmp-get-request.hex` and
   `ipv4-udp-snmp-response.hex` cover v2c GetRequest / Response payloads over
@@ -144,7 +144,7 @@ Valid byte fixtures cover:
   `ipv6-udp-options-frag.hex`
 
 Summary fixtures cover representative raw, QUIC, ARP, Linux cooked, IPv4 options,
-IPv4 TCP options, IPv6 TCP options, IPv4 DNS response, IPv4 DHCP, UDP options,
+IPv4 TCP options, IPv6 TCP options, IPv4 DNS response, IPv4 DHCPv4, UDP options,
 IGMP v1 query/report, IGMPv2 query/report/leave packets, IGMPv3 query/report
 packets carrying RFC 9279 generic extension TLVs, IPv6 option-header stacks,
 and IPv6 fragment stacks.
@@ -205,7 +205,7 @@ fixture is added.
 
 Malformed packet fixtures cover short or inconsistent Ethernet, VLAN, ARP,
 Linux cooked, null loopback, IPv4, IPv4 options, IPv6 extension headers, UDP,
-TCP, TCP options, ICMP, ICMPv6, DNS, DHCP, and DHCP option inputs. The random
+TCP, TCP options, ICMP, ICMPv6, DNS, DHCPv4, and DHCPv4 option inputs. The random
 resilience tests remain broad panic guards; named malformed fixtures provide the
 deterministic regression coverage.
 
@@ -253,7 +253,7 @@ name|target|expected-kind|expected-context-or-field|hex
 Supported `target` values are defined by the resilience test runner and include
 packet decode targets such as `ethernet`, `linux-sll`, `null-loopback`, `ipv4`,
 and `ipv6`, plus focused decoders such as `ipv4-options`, `tcp-options`,
-`dhcp`, `dhcp-options`, and `dns-name`.
+`dhcp`, `dhcpv4-options`, and `dns-name`.
 
 Supported `expected-kind` values currently map to structured `CrafterError`
 variants:
