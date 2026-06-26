@@ -1382,6 +1382,99 @@ impl QuicStreamDataBlockedFrame {
     }
 }
 
+/// Parsed STREAMS_BLOCKED frame fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QuicStreamsBlockedFrame {
+    direction: QuicStreamDirection,
+    maximum_streams: QuicVarInt,
+}
+
+impl QuicStreamsBlockedFrame {
+    /// Construct a STREAMS_BLOCKED frame from caller-supplied fields.
+    pub const fn new(direction: QuicStreamDirection, maximum_streams: QuicVarInt) -> Self {
+        Self {
+            direction,
+            maximum_streams,
+        }
+    }
+
+    /// Construct a bidirectional STREAMS_BLOCKED frame from a caller-supplied varint.
+    pub const fn bidirectional(maximum_streams: QuicVarInt) -> Self {
+        Self::new(QuicStreamDirection::Bidirectional, maximum_streams)
+    }
+
+    /// Construct a unidirectional STREAMS_BLOCKED frame from a caller-supplied varint.
+    pub const fn unidirectional(maximum_streams: QuicVarInt) -> Self {
+        Self::new(QuicStreamDirection::Unidirectional, maximum_streams)
+    }
+
+    /// Construct a STREAMS_BLOCKED frame from a validated integer value.
+    pub fn from_value(direction: QuicStreamDirection, maximum_streams: u64) -> Result<Self> {
+        Ok(Self::new(direction, QuicVarInt::new(maximum_streams)?))
+    }
+
+    /// Return the stream direction selected by the frame type.
+    pub const fn direction(self) -> QuicStreamDirection {
+        self.direction
+    }
+
+    /// Return the Maximum Streams field.
+    pub const fn maximum_streams(self) -> QuicVarInt {
+        self.maximum_streams
+    }
+
+    /// Decode one STREAMS_BLOCKED frame from bytes that include the Frame Type.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let bytes = bytes.as_ref();
+        let (frame, consumed) = decode_streams_blocked_frame(bytes)?;
+        if consumed != bytes.len() {
+            return Err(CrafterError::invalid_field_value(
+                "quic.frame.streams_blocked",
+                "STREAMS_BLOCKED frame has trailing bytes",
+            ));
+        }
+        Ok(frame)
+    }
+
+    /// Append the canonical STREAMS_BLOCKED frame encoding.
+    pub fn encode(self, out: &mut Vec<u8>) -> Result<()> {
+        let frame_type = match self.direction {
+            QuicStreamDirection::Bidirectional => 0x16,
+            QuicStreamDirection::Unidirectional => 0x17,
+        };
+        QuicVarInt::from_u64_unchecked(frame_type).encode(out)?;
+        self.maximum_streams.encode(out)?;
+        Ok(())
+    }
+
+    /// Return the canonical STREAMS_BLOCKED frame encoding.
+    pub fn encode_to_vec(self) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Stable STREAMS_BLOCKED summary for packet inspection.
+    pub fn summary(self) -> String {
+        format!(
+            "kind=STREAMS_BLOCKED direction={} maximum_streams={}",
+            self.direction.label(),
+            self.maximum_streams.value()
+        )
+    }
+
+    /// Stable field/value pairs for STREAMS_BLOCKED inspection.
+    pub fn inspection_fields(self) -> Vec<(&'static str, String)> {
+        vec![
+            (
+                "streams_blocked_direction",
+                self.direction.label().to_string(),
+            ),
+            ("streams_blocked", self.maximum_streams.value().to_string()),
+        ]
+    }
+}
+
 /// Raw-preserving QUIC frame.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct QuicFrame {
@@ -1582,6 +1675,29 @@ impl QuicFrame {
         ))
     }
 
+    /// Construct a STREAMS_BLOCKED frame from typed fields.
+    pub fn from_streams_blocked_frame(streams_blocked: QuicStreamsBlockedFrame) -> Result<Self> {
+        Ok(Self::from_bytes(streams_blocked.encode_to_vec()?))
+    }
+
+    /// Construct a STREAMS_BLOCKED frame from caller-supplied fields.
+    pub fn streams_blocked(
+        direction: QuicStreamDirection,
+        maximum_streams: QuicVarInt,
+    ) -> Result<Self> {
+        Self::from_streams_blocked_frame(QuicStreamsBlockedFrame::new(direction, maximum_streams))
+    }
+
+    /// Construct a bidirectional STREAMS_BLOCKED frame from a caller-supplied varint.
+    pub fn streams_blocked_bidirectional(maximum_streams: QuicVarInt) -> Result<Self> {
+        Self::from_streams_blocked_frame(QuicStreamsBlockedFrame::bidirectional(maximum_streams))
+    }
+
+    /// Construct a unidirectional STREAMS_BLOCKED frame from a caller-supplied varint.
+    pub fn streams_blocked_unidirectional(maximum_streams: QuicVarInt) -> Result<Self> {
+        Self::from_streams_blocked_frame(QuicStreamsBlockedFrame::unidirectional(maximum_streams))
+    }
+
     /// Decode a frame sequence within the caller-provided packet boundary.
     ///
     /// Supported fixed-boundary frames are split out first. The remaining
@@ -1672,6 +1788,12 @@ impl QuicFrame {
                     let (_, stream_data_blocked_len) =
                         decode_stream_data_blocked_frame(&bytes[offset..])?;
                     let end = offset + stream_data_blocked_len;
+                    frames.push(Self::from_bytes(&bytes[offset..end]));
+                    offset = end;
+                }
+                0x16 | 0x17 => {
+                    let (_, streams_blocked_len) = decode_streams_blocked_frame(&bytes[offset..])?;
+                    let end = offset + streams_blocked_len;
                     frames.push(Self::from_bytes(&bytes[offset..end]));
                     offset = end;
                 }
@@ -1805,6 +1927,14 @@ impl QuicFrame {
         }
     }
 
+    /// Decode this frame as STREAMS_BLOCKED when applicable.
+    pub fn streams_blocked_frame(&self) -> Result<Option<QuicStreamsBlockedFrame>> {
+        match self.frame_type_value() {
+            Some(0x16 | 0x17) => Ok(Some(QuicStreamsBlockedFrame::decode(&self.bytes)?)),
+            _ => Ok(None),
+        }
+    }
+
     /// Borrow the preserved frame bytes.
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes
@@ -1892,6 +2022,9 @@ impl QuicFrame {
         if let Ok(Some(stream_data_blocked)) = self.stream_data_blocked_frame() {
             return stream_data_blocked.summary();
         }
+        if let Ok(Some(streams_blocked)) = self.streams_blocked_frame() {
+            return streams_blocked.summary();
+        }
         match self.frame_type() {
             Some(frame_type) => format!(
                 "kind={} type=0x{:x} raw_len={}",
@@ -1961,6 +2094,9 @@ impl QuicFrame {
         }
         if let Ok(Some(stream_data_blocked)) = self.stream_data_blocked_frame() {
             fields.extend(stream_data_blocked.inspection_fields());
+        }
+        if let Ok(Some(streams_blocked)) = self.streams_blocked_frame() {
+            fields.extend(streams_blocked.inspection_fields());
         }
         fields
     }
@@ -2294,6 +2430,28 @@ fn decode_stream_data_blocked_frame(bytes: &[u8]) -> Result<(QuicStreamDataBlock
 
     Ok((
         QuicStreamDataBlockedFrame::new(stream_id, maximum_stream_data),
+        offset,
+    ))
+}
+
+fn decode_streams_blocked_frame(bytes: &[u8]) -> Result<(QuicStreamsBlockedFrame, usize)> {
+    let (frame_type, mut offset) = decode_frame_varint(bytes, 0, "quic.frame.type")?;
+    let direction = match frame_type.value() {
+        0x16 => QuicStreamDirection::Bidirectional,
+        0x17 => QuicStreamDirection::Unidirectional,
+        _ => {
+            return Err(CrafterError::invalid_field_value(
+                "quic.frame.streams_blocked.type",
+                "STREAMS_BLOCKED frame type must be 0x16 or 0x17",
+            ))
+        }
+    };
+    let (maximum_streams, next) =
+        decode_frame_varint(bytes, offset, "quic.frame.streams_blocked.maximum_streams")?;
+    offset = next;
+
+    Ok((
+        QuicStreamsBlockedFrame::new(direction, maximum_streams),
         offset,
     ))
 }
@@ -3012,6 +3170,66 @@ mod tests {
                 2,
                 1
             )
+        );
+    }
+
+    #[test]
+    fn quic_frame_streams_blocked_decodes_bidirectional_and_continues_sequence() -> crate::Result<()>
+    {
+        let bytes = [0x16, 0x44, 0x00, 0x01];
+
+        let frames = QuicFrame::decode_sequence(bytes)?;
+
+        assert_eq!(frames.len(), 2);
+        assert_eq!(
+            frames[0].kind(),
+            QuicFrameKind::Known(QuicKnownFrameType::StreamsBlocked)
+        );
+        let streams_blocked = frames[0].streams_blocked_frame()?.unwrap();
+        assert_eq!(
+            streams_blocked.direction(),
+            QuicStreamDirection::Bidirectional
+        );
+        assert_eq!(streams_blocked.maximum_streams().value(), 1024);
+        assert!(frames[1].is_ping());
+        assert_eq!(QuicFrame::encode_sequence(frames), bytes);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_streams_blocked_decodes_unidirectional() -> crate::Result<()> {
+        let frame = QuicStreamsBlockedFrame::decode([0x17, 0x3f])?;
+
+        assert_eq!(frame.direction(), QuicStreamDirection::Unidirectional);
+        assert_eq!(frame.maximum_streams().value(), 63);
+        assert_eq!(frame.encode_to_vec()?, [0x17, 0x3f]);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_streams_blocked_serializes_and_summarizes() -> crate::Result<()> {
+        let frame = QuicFrame::streams_blocked_unidirectional(v(63))?;
+
+        assert_eq!(frame.as_bytes(), &[0x17, 0x3f]);
+        assert_eq!(
+            frame.summary(),
+            "kind=STREAMS_BLOCKED direction=unidirectional maximum_streams=63"
+        );
+        assert!(frame
+            .inspection_fields()
+            .contains(&("streams_blocked_direction", "unidirectional".to_string())));
+        assert_eq!(
+            QuicFrame::streams_blocked_bidirectional(v(1))?.as_bytes(),
+            &[0x16, 0x01]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_streams_blocked_malformed_varint_reports_structured_error() {
+        assert_eq!(
+            QuicFrame::decode_sequence([0x17, 0x40]).unwrap_err(),
+            CrafterError::buffer_too_short("quic.frame.streams_blocked.maximum_streams", 2, 1)
         );
     }
 }
