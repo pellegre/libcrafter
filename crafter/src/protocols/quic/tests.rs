@@ -7,7 +7,9 @@ use crate::protocols::ip::v4::Ipv4;
 use crate::protocols::transport::Udp;
 
 use super::decode::{append_quic_packet, decode_quic_datagram};
-use super::{Quic, QuicFrame, QuicLongHeaderPacket, QuicPacket, QuicPacketNumber};
+use super::{
+    Quic, QuicConnectionId, QuicFrame, QuicLongHeaderPacket, QuicPacket, QuicPacketNumber,
+};
 
 #[test]
 fn quic_module_skeleton_layer_compiles_raw_payload() -> crate::Result<()> {
@@ -142,5 +144,80 @@ fn quic_unknown_payload_preservation_unsupported_frame_bytes_stay_protected() ->
             .as_bytes(),
         initial.as_bytes()
     );
+    Ok(())
+}
+
+#[test]
+fn quic_encrypted_payload_raw_default_keeps_packet_payloads_opaque() -> crate::Result<()> {
+    let dcid = QuicConnectionId::from_bytes([0x83, 0x94, 0xc8, 0xf0]);
+    let frame_like_payload = [0x01, 0x06, 0x00, 0x01, 0xaa];
+
+    let initial = QuicLongHeaderPacket::initial_builder()
+        .destination_connection_id(dcid.clone())
+        .packet_number(QuicPacketNumber::new(0x1234).with_encoded_len(2))
+        .protected_payload(frame_like_payload)
+        .build()?;
+    let initial_packet = QuicPacket::decode(initial.as_bytes())?;
+    assert_long_payload_stays_raw(initial_packet, initial.as_bytes(), frame_like_payload)?;
+
+    let handshake = QuicLongHeaderPacket::handshake_builder()
+        .destination_connection_id(dcid.clone())
+        .packet_number(QuicPacketNumber::new(0x1234).with_encoded_len(2))
+        .protected_payload(frame_like_payload)
+        .build()?;
+    let handshake_packet = QuicPacket::decode(handshake.as_bytes())?;
+    assert_long_payload_stays_raw(handshake_packet, handshake.as_bytes(), frame_like_payload)?;
+
+    let zero_rtt = QuicLongHeaderPacket::zero_rtt_builder()
+        .destination_connection_id(dcid.clone())
+        .packet_number(QuicPacketNumber::new(0x1234).with_encoded_len(2))
+        .protected_payload(frame_like_payload)
+        .build()?;
+    let zero_rtt_packet = QuicPacket::decode(zero_rtt.as_bytes())?;
+    assert_long_payload_stays_raw(zero_rtt_packet, zero_rtt.as_bytes(), frame_like_payload)?;
+
+    let short = super::QuicShortHeaderBuilder::new()
+        .destination_connection_id(dcid.clone())
+        .packet_number(QuicPacketNumber::new(0x1234).with_encoded_len(2))
+        .protected_payload(frame_like_payload)
+        .build()?;
+    let short_with_context = QuicPacket::decode_short_header(short.as_bytes(), dcid.len())?;
+    let short_header = short_with_context
+        .short_header()
+        .expect("caller-context short header");
+    assert_eq!(short_header.protected_payload(), frame_like_payload);
+    assert_eq!(short_with_context.as_bytes(), short.as_bytes());
+    let short_quic = Quic::from_packets([short_with_context]);
+    assert_eq!(short_quic.frame_count(), 0);
+    assert_eq!(
+        Packet::from_layer(short_quic).compile()?.as_bytes(),
+        short.as_bytes()
+    );
+
+    let default_short = QuicPacket::decode(short.as_bytes())?;
+    assert!(!default_short.is_short_header());
+    assert_eq!(default_short.as_bytes(), short.as_bytes());
+
+    Ok(())
+}
+
+fn assert_long_payload_stays_raw(
+    packet: QuicPacket,
+    expected_packet_bytes: &[u8],
+    expected_payload: [u8; 5],
+) -> crate::Result<()> {
+    let long = packet.long_header().expect("long header packet");
+    assert_eq!(long.protected_payload(), expected_payload);
+    assert_eq!(packet.as_bytes(), expected_packet_bytes);
+
+    let quic = Quic::from_packets([packet]);
+    assert_eq!(quic.frame_count(), 0);
+    assert_eq!(quic.transport_parameter_count(), 0);
+    assert!(quic.summary().contains("frames=0"));
+    assert_eq!(
+        Packet::from_layer(quic).compile()?.as_bytes(),
+        expected_packet_bytes
+    );
+
     Ok(())
 }
