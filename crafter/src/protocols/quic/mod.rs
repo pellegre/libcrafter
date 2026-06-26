@@ -57,7 +57,7 @@ pub use transport_parameter::{
     QuicIntegerTransportParameter, QuicIntegerTransportParameterValidation,
     QuicKnownTransportParameter, QuicPreferredAddress, QuicPreferredAddressValidation,
     QuicStatelessResetToken, QuicTransportParameter, QuicTransportParameterDuplicate,
-    QuicTransportParameterKind,
+    QuicTransportParameterKind, QuicVersionInformation, QuicVersionInformationValidation,
 };
 pub use varint::QuicVarInt;
 
