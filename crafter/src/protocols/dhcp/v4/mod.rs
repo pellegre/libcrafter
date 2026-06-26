@@ -112,8 +112,8 @@ pub use option::{
     Dhcpv4VendorSuboption, Dhcpv4VssInfo, OptionOverload, SipServers,
 };
 pub use registry::{
-    option_meta, option_name, option_status, Dhcpv4OptionMeta, Dhcpv4OptionStatus,
-    DHCPV4_OPTION_PRIVATE_USE_END, DHCPV4_OPTION_PRIVATE_USE_START,
+    dhcpv4_option_meta, dhcpv4_option_name, dhcpv4_option_status, Dhcpv4OptionMeta,
+    Dhcpv4OptionStatus, DHCPV4_OPTION_PRIVATE_USE_END, DHCPV4_OPTION_PRIVATE_USE_START,
 };
 
 use constants::{
