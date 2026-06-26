@@ -1,0 +1,35 @@
+# QUIC frame malformed corpus.
+# Format: name|target|expected-kind|expected-context-or-marker|required|available|hex
+# target:
+#   sequence            -> QuicFrame::decode_sequence
+#   handshake-done      -> QuicHandshakeDoneFrame::decode
+#   raw-frame           -> QuicFrame::from_bytes
+# expected-kind:
+#   buffer-too-short    -> Err(CrafterError::BufferTooShort)
+#   invalid-field-value -> Err(CrafterError::InvalidFieldValue)
+#   decodes             -> byte-preserving decode path; context column is a marker
+
+frame-type-truncated|sequence|buffer-too-short|quic.varint|2|1|40
+ack-range-length-truncated|sequence|buffer-too-short|quic.frame.ack.range.length|1|0|020a01010200
+reset-stream-final-size-truncated|sequence|buffer-too-short|quic.frame.reset_stream.final_size|2|1|04010240
+stop-sending-error-code-truncated|sequence|buffer-too-short|quic.frame.stop_sending.application_error_code|2|1|050140
+crypto-data-overrun|sequence|buffer-too-short|quic.frame.crypto.data|3|1|060003aa
+new-token-overrun|sequence|buffer-too-short|quic.frame.new_token.token|3|1|0703aa
+stream-data-overrun|sequence|buffer-too-short|quic.frame.stream.data|3|1|0a0103aa
+max-data-varint-truncated|sequence|buffer-too-short|quic.frame.max_data.maximum_data|2|1|1040
+max-stream-data-varint-truncated|sequence|buffer-too-short|quic.frame.max_stream_data.maximum_stream_data|2|1|110140
+max-streams-varint-truncated|sequence|buffer-too-short|quic.frame.max_streams.maximum_streams|2|1|1240
+data-blocked-varint-truncated|sequence|buffer-too-short|quic.frame.data_blocked.data_limit|2|1|1440
+stream-data-blocked-varint-truncated|sequence|buffer-too-short|quic.frame.stream_data_blocked.maximum_stream_data|2|1|150140
+streams-blocked-varint-truncated|sequence|buffer-too-short|quic.frame.streams_blocked.maximum_streams|2|1|1740
+new-connection-id-zero-length|sequence|invalid-field-value|quic.frame.new_connection_id.connection_id_length|-|-|18010000
+new-connection-id-cid-truncated|sequence|buffer-too-short|quic.frame.new_connection_id.connection_id|4|2|18010004aabb
+new-connection-id-reset-token-truncated|sequence|buffer-too-short|quic.frame.new_connection_id.stateless_reset_token|16|15|18010002aabbcccccccccccccccccccccccccccccc
+retire-connection-id-varint-truncated|sequence|buffer-too-short|quic.frame.retire_connection_id.sequence_number|2|1|1940
+path-challenge-underrun|sequence|buffer-too-short|quic.frame.path_challenge.data|8|7|1a00010203040506
+path-response-underrun|sequence|buffer-too-short|quic.frame.path_response.data|8|7|1b00010203040506
+connection-close-reason-overrun|sequence|buffer-too-short|quic.frame.connection_close.reason_phrase|3|1|1d0c036e
+connection-close-frame-type-truncated|sequence|buffer-too-short|quic.frame.connection_close.frame_type|2|1|1c0740
+handshake-done-trailing-bytes|handshake-done|invalid-field-value|quic.frame.handshake_done|-|-|1e01
+provisional-frame-tail-preserved|sequence|decodes|unknown-tail|-|-|40afdead1e
+ping-with-caller-bounded-tail|raw-frame|decodes|unknown-kind|-|-|0102
