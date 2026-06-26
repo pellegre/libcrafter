@@ -8,7 +8,7 @@ use crate::error::{CrafterError, Result};
 use crate::packet::Packet;
 
 use super::header::{classify_quic_header, QuicHeaderClassification, QuicLongPacketKind};
-use super::{Quic, QuicPacket};
+use super::{Quic, QuicLongHeaderPacket, QuicPacket};
 
 /// Explicitly append a raw-preserving QUIC placeholder layer.
 pub(crate) fn append_quic_packet(packet: Packet, payload: &[u8]) -> Result<Packet> {
@@ -45,17 +45,78 @@ pub(crate) fn decode_quic_datagram(payload: &[u8]) -> Result<Quic> {
         ));
     }
 
-    let packet = QuicPacket::decode(payload)?;
-    if packet.is_version_negotiation() || packet.is_retry() || packet.is_long_header() {
-        return Ok(Quic::new().packet(packet));
+    let mut offset = 0usize;
+    let mut packets = Vec::new();
+    while offset < payload.len() {
+        let remaining = &payload[offset..];
+        match classify_quic_header(remaining)? {
+            QuicHeaderClassification::LongHeader {
+                packet_kind:
+                    QuicLongPacketKind::Initial
+                    | QuicLongPacketKind::ZeroRtt
+                    | QuicLongPacketKind::Handshake,
+                ..
+            } => {
+                let long_header = QuicLongHeaderPacket::decode(remaining)?;
+                offset = offset
+                    .checked_add(long_header.len())
+                    .ok_or_else(datagram_length_overflow_error)?;
+                packets.push(QuicPacket::from_long_header(long_header));
+            }
+            QuicHeaderClassification::LongHeader {
+                packet_kind: QuicLongPacketKind::VersionNegotiation | QuicLongPacketKind::Retry,
+                ..
+            } => {
+                packets.push(QuicPacket::decode(remaining)?);
+                offset = payload.len();
+            }
+            QuicHeaderClassification::LongHeader {
+                packet_kind: QuicLongPacketKind::UnknownVersion,
+                ..
+            } if packets.is_empty() => {
+                return Ok(Quic::from_decoded_payload(payload));
+            }
+            QuicHeaderClassification::ShortHeaderAmbiguous { .. } if packets.is_empty() => {
+                return Ok(Quic::from_decoded_payload(payload));
+            }
+            QuicHeaderClassification::LongHeader {
+                packet_kind: QuicLongPacketKind::UnknownVersion,
+                ..
+            }
+            | QuicHeaderClassification::ShortHeaderAmbiguous { .. } => {
+                packets.push(QuicPacket::from_bytes(remaining));
+                offset = payload.len();
+            }
+            QuicHeaderClassification::NonQuic if packets.is_empty() => {
+                return Ok(Quic::from_decoded_payload(payload));
+            }
+            QuicHeaderClassification::NonQuic => {
+                return Err(CrafterError::invalid_field_value(
+                    "quic.datagram",
+                    "coalesced QUIC datagram contains non-QUIC trailing bytes",
+                ));
+            }
+        }
     }
 
-    Ok(Quic::from_decoded_payload(payload))
+    let mut quic = Quic::new();
+    for packet in packets {
+        quic = quic.packet(packet);
+    }
+    Ok(quic)
+}
+
+fn datagram_length_overflow_error() -> CrafterError {
+    CrafterError::invalid_field_value(
+        "quic.datagram.length",
+        "QUIC datagram length exceeds addressable packet bytes",
+    )
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::packet::Packet;
+    use crate::packet::{Layer, Packet};
+    use crate::protocols::quic::{QuicConnectionId, QuicPacketNumber};
 
     use super::*;
 
@@ -87,6 +148,84 @@ mod tests {
         assert!(quic.packets()[0].is_retry());
         let compiled = Packet::from_layer(quic).compile()?;
         assert_eq!(compiled.as_bytes(), payload);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_coalesced_decode_walks_long_header_packet_lengths() -> crate::Result<()> {
+        let initial = QuicLongHeaderPacket::initial_builder()
+            .destination_connection_id(QuicConnectionId::from_bytes([0x83, 0x94, 0xc8, 0xf0]))
+            .source_connection_id(QuicConnectionId::from_bytes([0xaa]))
+            .packet_number(QuicPacketNumber::new(1))
+            .payload([0xbe])
+            .build()?;
+        let handshake = QuicLongHeaderPacket::handshake_builder()
+            .destination_connection_id(QuicConnectionId::from_bytes([0x83, 0x94, 0xc8, 0xf0]))
+            .source_connection_id(QuicConnectionId::from_bytes([0xaa]))
+            .packet_number(QuicPacketNumber::new(2))
+            .payload([0xef])
+            .build()?;
+        let mut payload = initial.as_bytes().to_vec();
+        payload.extend_from_slice(handshake.as_bytes());
+
+        let quic = decode_quic_datagram(&payload)?;
+
+        assert_eq!(quic.packets().len(), 2);
+        assert!(quic.packets()[0].is_long_header());
+        assert!(quic.packets()[1].is_long_header());
+        assert_eq!(
+            quic.packets()[0].long_header().unwrap().packet_kind(),
+            QuicLongPacketKind::Initial
+        );
+        assert_eq!(
+            quic.packets()[1].long_header().unwrap().packet_kind(),
+            QuicLongPacketKind::Handshake
+        );
+        assert!(quic.summary().contains("packets=2"));
+
+        let compiled = Packet::from_layer(quic).compile()?;
+        assert_eq!(compiled.as_bytes(), payload);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_coalesced_decode_allows_final_raw_short_header_tail() -> crate::Result<()> {
+        let initial = QuicLongHeaderPacket::initial_builder()
+            .packet_number(QuicPacketNumber::new(1))
+            .payload([0xbe])
+            .build()?;
+        let short_tail = [0x40, 0x01, 0xaa];
+        let mut payload = initial.as_bytes().to_vec();
+        payload.extend_from_slice(&short_tail);
+
+        let quic = decode_quic_datagram(&payload)?;
+
+        assert_eq!(quic.packets().len(), 2);
+        assert!(quic.packets()[0].is_long_header());
+        assert!(!quic.packets()[1].is_short_header());
+        assert_eq!(quic.packets()[1].as_bytes(), short_tail);
+        assert_eq!(Packet::from_layer(quic).compile()?.as_bytes(), payload);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_coalesced_decode_reports_declared_length_overrun() -> crate::Result<()> {
+        let initial = QuicLongHeaderPacket::initial_builder()
+            .packet_number(QuicPacketNumber::new(1))
+            .payload([0xbe])
+            .build()?;
+        let malformed_handshake = [0xe0, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x03, 0x02, 0xef];
+        let mut payload = initial.as_bytes().to_vec();
+        payload.extend_from_slice(&malformed_handshake);
+
+        assert_eq!(
+            decode_quic_datagram(&payload).unwrap_err(),
+            CrafterError::buffer_too_short(
+                "quic.long_header.protected_payload",
+                11,
+                malformed_handshake.len(),
+            )
+        );
         Ok(())
     }
 }
