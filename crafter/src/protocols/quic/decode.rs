@@ -228,4 +228,48 @@ mod tests {
         );
         Ok(())
     }
+
+    #[test]
+    fn quic_multiplexing_classifier_accepts_source_backed_long_header_shapes() {
+        let initial = [
+            0xc0, 0x00, 0x00, 0x00, 0x01, 0x04, 0x83, 0x94, 0xc8, 0xf0, 0x00, 0x00, 0x01, 0x00,
+        ];
+        let version_negotiation = [
+            0x80, 0x00, 0x00, 0x00, 0x00, 0x04, 0x83, 0x94, 0xc8, 0xf0, 0x00, 0x00, 0x00, 0x00,
+            0x01,
+        ];
+
+        assert!(looks_like_quic_udp_payload(&initial));
+        assert!(looks_like_quic_udp_payload(&version_negotiation));
+    }
+
+    #[test]
+    fn quic_multiplexing_classifier_rejects_neighbor_udp_shapes() {
+        let cases: &[(&str, &[u8])] = &[
+            (
+                "dtls_handshake",
+                &[0x16, 0xfe, 0xfd, 0x00, 0x00, 0xde, 0xad],
+            ),
+            (
+                "stun_binding",
+                &[0x00, 0x01, 0x00, 0x00, 0x21, 0x12, 0xa4, 0x42],
+            ),
+            ("rtp", &[0x80, 0x60, 0x00, 0x01, 0x00, 0x00, 0xde, 0xad]),
+            ("zrtp", &[0x10, 0x00, b'Z', b'R', b'T', b'P']),
+            ("turn_channel_data", &[0x40, 0x00, 0x00, 0x04, 0xde, 0xad]),
+            ("short_header_ambiguous", &[0x43, 0x83, 0x94, 0xc8, 0xf0]),
+            ("greased_short_quic_bit", &[0x03, 0x83, 0x94, 0xc8, 0xf0]),
+            (
+                "greased_non_vn_long_header",
+                &[0x80, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00],
+            ),
+        ];
+
+        for (name, payload) in cases {
+            assert!(
+                !looks_like_quic_udp_payload(payload),
+                "{name} should not be claimed as QUIC"
+            );
+        }
+    }
 }

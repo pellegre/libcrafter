@@ -2053,6 +2053,60 @@ mod quic_udp_dispatch {
     }
 
     #[test]
+    fn quic_multiplexing_classifier_preserves_neighbor_udp_payloads_as_raw_on_quic_ports() {
+        let cases: &[(&str, &[u8])] = &[
+            (
+                "dtls_handshake",
+                &[0x16, 0xfe, 0xfd, 0x00, 0x00, 0xde, 0xad],
+            ),
+            (
+                "stun_binding",
+                &[0x00, 0x01, 0x00, 0x00, 0x21, 0x12, 0xa4, 0x42],
+            ),
+            ("rtp", &[0x80, 0x60, 0x00, 0x01, 0x00, 0x00, 0xde, 0xad]),
+            ("zrtp", &[0x10, 0x00, b'Z', b'R', b'T', b'P']),
+            ("turn_channel_data", &[0x40, 0x00, 0x00, 0x04, 0xde, 0xad]),
+        ];
+
+        for (name, payload) in cases {
+            let bytes = udp_ipv4_packet(49_152, 4433, Raw::from_bytes(payload))
+                .compile()
+                .unwrap();
+
+            let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes())
+                .unwrap_or_else(|err| panic!("{name} should decode as raw: {err}"));
+
+            assert!(
+                decoded.layer::<Quic>().is_none(),
+                "{name} should not produce QUIC"
+            );
+            assert_eq!(
+                decoded.layer::<Raw>().unwrap().as_bytes(),
+                *payload,
+                "{name} raw payload should be preserved"
+            );
+        }
+    }
+
+    #[test]
+    fn quic_multiplexing_classifier_preserves_custom_udp_binding_precedence() {
+        let mut registry = ProtocolRegistry::new();
+        registry.bind_udp_port(4433, |packet, payload| {
+            Ok(packet.push(Raw::from_bytes(payload)))
+        });
+        let bytes = udp_ipv4_packet(49_152, 4433, Raw::from_bytes(QUIC_PAYLOAD))
+            .compile()
+            .unwrap();
+
+        let decoded =
+            Packet::decode_from_l3_with_registry(&registry, NetworkLayer::Ipv4, bytes.as_bytes())
+                .unwrap();
+
+        assert!(decoded.layer::<Quic>().is_none());
+        assert_eq!(decoded.layer::<Raw>().unwrap().as_bytes(), QUIC_PAYLOAD);
+    }
+
+    #[test]
     fn quic_udp_dispatch_custom_binding_overrides_builtin() {
         let mut registry = ProtocolRegistry::new();
         registry.bind_udp_port(4433, |packet, payload| {
