@@ -172,6 +172,19 @@ fn exports_quic_symbols() -> crafter::Result<()> {
         integer_parameter.integer_validation_finding()?,
         Some(QuicIntegerTransportParameterValidation::MaxUdpPayloadSizeBelowMinimum)
     );
+    let connection_id_parameter =
+        QuicTransportParameter::initial_source_connection_id(QuicConnectionId::from_bytes([0xaa]));
+    assert_eq!(
+        connection_id_parameter.connection_id_type(),
+        Some(QuicConnectionIdTransportParameter::InitialSourceConnectionId)
+    );
+    assert_eq!(
+        connection_id_parameter
+            .connection_id_value()
+            .unwrap()
+            .as_bytes(),
+        &[0xaa]
+    );
 
     let quic_payload = [0xc3, 0x00, 0x00, 0x00, 0x01, 0x08, 0x00];
     let quic = Quic::from_bytes(quic_payload);

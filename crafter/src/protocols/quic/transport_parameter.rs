@@ -8,6 +8,7 @@
 
 use std::collections::BTreeMap;
 
+use super::QuicConnectionId;
 use super::{varint::encoded_len_from_prefix, QuicVarInt};
 use crate::protocols::transport::common::hex_bytes;
 use crate::{CrafterError, Result};
@@ -306,6 +307,66 @@ impl QuicIntegerTransportParameterValidation {
     }
 }
 
+/// Known transport parameters whose value format is raw connection ID bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuicConnectionIdTransportParameter {
+    /// `original_destination_connection_id` (`0x00`).
+    OriginalDestinationConnectionId,
+    /// `initial_source_connection_id` (`0x0f`).
+    InitialSourceConnectionId,
+    /// `retry_source_connection_id` (`0x10`).
+    RetrySourceConnectionId,
+}
+
+impl QuicConnectionIdTransportParameter {
+    /// Return the corresponding known transport-parameter registry row.
+    pub const fn known_parameter(self) -> QuicKnownTransportParameter {
+        match self {
+            Self::OriginalDestinationConnectionId => {
+                QuicKnownTransportParameter::OriginalDestinationConnectionId
+            }
+            Self::InitialSourceConnectionId => {
+                QuicKnownTransportParameter::InitialSourceConnectionId
+            }
+            Self::RetrySourceConnectionId => QuicKnownTransportParameter::RetrySourceConnectionId,
+        }
+    }
+
+    /// Return the numeric transport-parameter identifier.
+    pub const fn id(self) -> QuicVarInt {
+        self.known_parameter().id()
+    }
+
+    /// Return the registry name used in summaries and inspection output.
+    pub const fn name(self) -> &'static str {
+        self.known_parameter().name()
+    }
+
+    /// Map a selected known transport-parameter row to a connection-ID parameter.
+    pub const fn from_known(known: QuicKnownTransportParameter) -> Option<Self> {
+        match known {
+            QuicKnownTransportParameter::OriginalDestinationConnectionId => {
+                Some(Self::OriginalDestinationConnectionId)
+            }
+            QuicKnownTransportParameter::InitialSourceConnectionId => {
+                Some(Self::InitialSourceConnectionId)
+            }
+            QuicKnownTransportParameter::RetrySourceConnectionId => {
+                Some(Self::RetrySourceConnectionId)
+            }
+            _ => None,
+        }
+    }
+
+    /// Map a transport-parameter identifier to a connection-ID parameter.
+    pub const fn from_id(id: QuicVarInt) -> Option<Self> {
+        match QuicKnownTransportParameter::from_id(id) {
+            Some(known) => Self::from_known(known),
+            None => None,
+        }
+    }
+}
+
 /// Broad transport-parameter identifier classification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QuicTransportParameterKind {
@@ -479,6 +540,38 @@ impl QuicTransportParameter {
         Self::integer(QuicIntegerTransportParameter::MaxDatagramFrameSize, value)
     }
 
+    /// Construct a connection-ID-valued transport parameter.
+    pub fn connection_id(
+        kind: QuicConnectionIdTransportParameter,
+        connection_id: QuicConnectionId,
+    ) -> Self {
+        Self::known(kind.known_parameter(), connection_id.as_bytes())
+    }
+
+    /// Construct `original_destination_connection_id`.
+    pub fn original_destination_connection_id(connection_id: QuicConnectionId) -> Self {
+        Self::connection_id(
+            QuicConnectionIdTransportParameter::OriginalDestinationConnectionId,
+            connection_id,
+        )
+    }
+
+    /// Construct `initial_source_connection_id`.
+    pub fn initial_source_connection_id(connection_id: QuicConnectionId) -> Self {
+        Self::connection_id(
+            QuicConnectionIdTransportParameter::InitialSourceConnectionId,
+            connection_id,
+        )
+    }
+
+    /// Construct `retry_source_connection_id`.
+    pub fn retry_source_connection_id(connection_id: QuicConnectionId) -> Self {
+        Self::connection_id(
+            QuicConnectionIdTransportParameter::RetrySourceConnectionId,
+            connection_id,
+        )
+    }
+
     /// Preserve a caller-pinned identifier varint width.
     pub fn with_identifier_encoded_len(mut self, len: usize) -> Self {
         self.identifier_encoded_len = Some(len);
@@ -537,6 +630,23 @@ impl QuicTransportParameter {
         };
         let value = decode_integer_transport_parameter_value(&self.value)?;
         Ok(kind.validation_finding(value))
+    }
+
+    /// Return the connection-ID parameter type when this is a registered
+    /// connection-ID-valued transport parameter.
+    pub const fn connection_id_type(&self) -> Option<QuicConnectionIdTransportParameter> {
+        match self.identifier {
+            Some(identifier) => QuicConnectionIdTransportParameter::from_id(identifier),
+            None => None,
+        }
+    }
+
+    /// Decode the value of a registered connection-ID transport parameter.
+    /// Unknown, grease, provisional, and non-connection-ID known parameters
+    /// return `None`.
+    pub fn connection_id_value(&self) -> Option<QuicConnectionId> {
+        self.connection_id_type()?;
+        Some(QuicConnectionId::from_bytes(&self.value))
     }
 
     /// Return the broad parameter identifier classification.
@@ -1056,6 +1166,81 @@ mod tests {
                 "quic.transport_parameter.integer.value",
                 "integer transport parameter value has surplus bytes",
             )
+        );
+    }
+
+    #[test]
+    fn quic_transport_parameters_connection_id_builds_decodes_and_roundtrips() -> Result<()> {
+        let oversized = QuicConnectionId::from_bytes([0xab; 21]);
+        let parameters = vec![
+            QuicTransportParameter::original_destination_connection_id(
+                QuicConnectionId::from_bytes([0x83, 0x94, 0xc8, 0xf0]),
+            ),
+            QuicTransportParameter::initial_source_connection_id(QuicConnectionId::new()),
+            QuicTransportParameter::retry_source_connection_id(oversized.clone()),
+        ];
+
+        let mut expected = vec![
+            0x00, 0x04, 0x83, 0x94, 0xc8, 0xf0, // original DCID
+            0x0f, 0x00, // zero-length initial SCID
+            0x10, 0x15, // retry SCID with 21 raw bytes
+        ];
+        expected.extend_from_slice(&[0xab; 21]);
+
+        let encoded = QuicTransportParameter::encode_sequence(parameters)?;
+        assert_eq!(encoded, expected);
+
+        let decoded = QuicTransportParameter::decode_sequence(&encoded)?;
+        assert_eq!(
+            decoded[0].connection_id_type(),
+            Some(QuicConnectionIdTransportParameter::OriginalDestinationConnectionId)
+        );
+        assert_eq!(
+            decoded[0].connection_id_value().unwrap().as_bytes(),
+            &[0x83, 0x94, 0xc8, 0xf0]
+        );
+        assert_eq!(
+            decoded[1].connection_id_type(),
+            Some(QuicConnectionIdTransportParameter::InitialSourceConnectionId)
+        );
+        assert!(decoded[1].connection_id_value().unwrap().is_empty());
+        assert_eq!(
+            decoded[2].connection_id_type(),
+            Some(QuicConnectionIdTransportParameter::RetrySourceConnectionId)
+        );
+        assert_eq!(
+            decoded[2].connection_id_value().unwrap().as_bytes(),
+            [0xab; 21]
+        );
+        assert_eq!(
+            decoded[2]
+                .connection_id_value()
+                .unwrap()
+                .validate_v1_v2_len()
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "quic.connection_id.length",
+                "QUIC v1/v2 connection IDs must be at most 20 bytes",
+            )
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn quic_transport_parameters_connection_id_leaves_unknown_values_raw() {
+        let parameter = QuicTransportParameter::raw(QuicVarInt::from_u64_unchecked(0x26ab), [0xaa]);
+
+        assert_eq!(parameter.kind(), QuicTransportParameterKind::Unknown);
+        assert_eq!(parameter.connection_id_type(), None);
+        assert_eq!(parameter.connection_id_value(), None);
+        assert_eq!(parameter.value(), &[0xaa]);
+    }
+
+    #[test]
+    fn quic_transport_parameters_connection_id_reports_tuple_length_errors() {
+        assert_eq!(
+            QuicTransportParameter::decode_sequence([0x0f, 0x02, 0xaa]).unwrap_err(),
+            CrafterError::buffer_too_short("quic.transport_parameter.value", 2, 1)
         );
     }
 
