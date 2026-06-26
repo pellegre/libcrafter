@@ -124,6 +124,17 @@ fn exports_quic_symbols() -> crafter::Result<()> {
             .frame_type_value(),
         Some(0x1b)
     );
+    let connection_close = QuicConnectionCloseFrame::transport(
+        QUIC_TRANSPORT_ERROR_FRAME_ENCODING_ERROR,
+        QuicVarInt::from_u64_unchecked(0x08),
+        b"bad",
+    );
+    assert_eq!(connection_close.kind(), QuicConnectionCloseKind::Transport);
+    assert_eq!(
+        QuicFrame::from_connection_close_frame(connection_close)?.frame_type_value(),
+        Some(0x1c)
+    );
+    assert_eq!(QUIC_TRANSPORT_ERROR_NO_ERROR.value(), 0);
 
     let parameter = QuicTransportParameter::raw(varint, [0xde, 0xad]);
     assert_eq!(parameter.identifier(), Some(varint));
