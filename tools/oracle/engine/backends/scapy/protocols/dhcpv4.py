@@ -1,30 +1,11 @@
-"""Scapy-stage encode + decode plugin for the DHCP layer.
+"""Scapy-stage encode + decode plugin for the DHCPv4 layer.
 
-Moves the ``_dhcp`` (BOOTP / DHCP) builder and its option helpers verbatim out of
-:mod:`..packets`, and the per-layer ``_normalize_dhcp_fields`` decoder (the ``dhcp``
-branch of ``normalize._normalize_fields``) plus its tightly-coupled option-region
-helpers out of :mod:`..normalize`, and registers the ``dhcp`` layer through the
-:class:`~.base.ScapyProtocol` contract; only the dispatch moves out of the legacy
-``_build_layer`` / ``_normalize_fields`` if/elif. Behavior must stay byte-identical.
-
-The ``_dhcp`` builder materializes a ``BOOTP`` / ``DHCP`` Scapy chain; the layer's
-``scapy_class`` mirrors the former ``packets._SCAPY_LAYER_BY_LAYER["dhcp"]`` value
-(``"DHCP"``) so the materialized-layer metadata stays unchanged.
-
-DHCP decode has two surfaces. The per-layer field normalizer (the former
-``normalize._normalize_dhcp_fields`` dispatched from ``_normalize_fields``) moves here
-and is wired up as this plugin's :func:`_normalize` callback, byte-identical to the
-legacy ``dhcp`` branch: the four BOOTP IPv4/hardware fields are renamed through the
-DHCP field-name map (the lookup order the legacy code applied), the ``flags`` value is
-reduced through ``_normalize_dhcp_flags``, ``client_hardware_address`` is trimmed to
-the hardware length, the magic-cookie ``options`` artifact is folded into
-``magic_cookie``, and the raw option TLV region is decoded into backend-neutral
-``{code, payload_hex}`` details. The option-region decode helpers
-(``_apply_dhcp_option_details`` / ``_decode_dhcp_option_tlvs``) and the synthetic
-option-region key (``_DHCP_OPTION_REGION_KEY``) are also consumed by the whole-packet
-``_packet_layers`` capture in :mod:`..normalize`, so — like the IPv6 ext-header
-option-region helpers — they are re-imported back there (where the existing
-``test_dhcp_oracle.py`` references resolve them through the ``normalize`` module).
+The builder materializes a ``BOOTP`` / ``DHCP`` Scapy chain while the oracle layer
+name remains ``dhcpv4``. Decode normalizes BOOTP/DHCP fields to the comparable
+DHCPv4 model, folds the magic-cookie artifact into ``magic_cookie``, and expands
+the raw option TLV region into backend-neutral ``{code, payload_hex}`` details.
+The option-region helpers are also imported by :mod:`..normalize` for whole-packet
+capture and focused unit tests.
 
 Shared primitives come from the helper modules so this plugin does not depend on the
 ``packets``/``normalize`` orchestrators (which would create a circular import).
@@ -50,9 +31,8 @@ from ..encode_helpers import (
 from .base import ScapyProtocol, register
 
 
-# Encode-side field allowlist for ``_validate_layer_fields`` — the canonical field
-# names plus every Scapy/oracle alias the DHCP builder accepts. Mirrors the former
-# ``packets._SUPPORTED_FIELDS_BY_LAYER["dhcp"]`` entry exactly.
+# Encode-side field allowlist for ``_validate_layer_fields``: canonical field names
+# plus every Scapy/oracle alias the DHCPv4 builder accepts.
 _SUPPORTED_FIELDS = frozenset(
     {
         "op",
@@ -90,13 +70,13 @@ def _build(
 
 
 def _dhcp(fields: Mapping[str, JSONObject], scapy_all: Any) -> Any:
-    dhcp_fields = _layer_fields(fields, "dhcp")
+    dhcp_fields = _layer_fields(fields, "dhcpv4")
     bootp = scapy_all.BOOTP(
-        op=_dhcp_op(_required_field(dhcp_fields, "dhcp", "op")),
-        htype=_hardware_type_value(_required_field(dhcp_fields, "dhcp", "hardware_type", "htype")),
-        hlen=_int(_required_field(dhcp_fields, "dhcp", "hardware_length", "hlen"), 0),
+        op=_dhcp_op(_required_field(dhcp_fields, "dhcpv4", "op")),
+        htype=_hardware_type_value(_required_field(dhcp_fields, "dhcpv4", "hardware_type", "htype")),
+        hlen=_int(_required_field(dhcp_fields, "dhcpv4", "hardware_length", "hlen"), 0),
         xid=_int(_optional_field(dhcp_fields, "transaction_id", "xid"), 0),
-        flags=_dhcp_flags(_required_field(dhcp_fields, "dhcp", "flags")),
+        flags=_dhcp_flags(_required_field(dhcp_fields, "dhcpv4", "flags")),
         ciaddr=_text(_optional_field(dhcp_fields, "client_ip", "ciaddr"), "0.0.0.0"),
         yiaddr=_text(_optional_field(dhcp_fields, "your_ip", "yiaddr"), "0.0.0.0"),
         chaddr=_dhcp_chaddr(
@@ -104,7 +84,7 @@ def _dhcp(fields: Mapping[str, JSONObject], scapy_all: Any) -> Any:
         ),
     )
     return bootp / scapy_all.DHCP(
-        options=_dhcp_options(_required_field(dhcp_fields, "dhcp", "options"))
+        options=_dhcp_options(_required_field(dhcp_fields, "dhcpv4", "options"))
     )
 
 
@@ -224,12 +204,10 @@ _DHCP_OPTION_MESSAGE_TYPE = 53
 _DHCP_OPTION_PAD = 0
 _DHCP_OPTION_END = 255
 
-# Decode-side native-name aliases the DHCP layer owns. ``_LAYER_ALIASES`` maps the
-# Scapy class names to the oracle layer name (the former ``normalize._LAYER_ALIASES``
-# ``"BOOTP"``/``"DHCP" -> "dhcp"`` entries); ``_FIELD_ALIASES`` records the DHCP
-# layer-specific field renames the legacy ``_normalize_field_name("dhcp", ...)``
-# consulted (the former ``normalize._LAYER_FIELD_ALIASES["dhcp"]`` entry).
-_LAYER_ALIASES = (("BOOTP", "dhcp"), ("DHCP", "dhcp"))
+# Decode-side native-name aliases the DHCPv4 layer owns. ``_LAYER_ALIASES`` maps
+# Scapy class names to the oracle layer name; ``_FIELD_ALIASES`` records the
+# layer-specific field renames used by normalization.
+_LAYER_ALIASES = (("BOOTP", "dhcpv4"), ("DHCP", "dhcpv4"))
 _FIELD_ALIASES = (
     ("ciaddr", "client_ip"),
     ("chaddr", "client_hardware_address"),
@@ -241,10 +219,9 @@ _FIELD_ALIASES = (
     ("yiaddr", "your_ip"),
 )
 
-# Global cross-layer field aliases the legacy ``_normalize_field_name`` consulted as
-# a fallback after the layer-specific map (mirrors ``normalize._FIELD_ALIASES``). No
-# native DHCP field name collides with any of these, so carrying the full map is
-# harmless and keeps the lookup byte-identical to the legacy generic path.
+# Global cross-layer field aliases used as a fallback after the layer-specific map.
+# No native DHCPv4 field name collides with any of these, so carrying the full map
+# keeps generic normalization behavior consistent across layers.
 _GLOBAL_FIELD_ALIASES: dict[str, str] = {
     "chksum": "checksum",
     "dataofs": "data_offset",
@@ -258,9 +235,8 @@ _GLOBAL_FIELD_ALIASES: dict[str, str] = {
     "urgptr": "urgent_pointer",
 }
 
-# The richer per-field rename table the former ``_normalize_dhcp_fields`` checked
-# first (a superset of ``_FIELD_ALIASES``, adding ``op -> opcode`` and
-# ``secs -> seconds``). Mirrors the local ``aliases`` mapping verbatim.
+# The richer per-field rename table checked first, adding ``op -> opcode`` and
+# ``secs -> seconds`` on top of ``_FIELD_ALIASES``.
 _DHCP_FIELD_NAME_ALIASES: dict[str, str] = {
     "op": "opcode",
     "htype": "hardware_type",
@@ -274,31 +250,28 @@ _DHCP_FIELD_NAME_ALIASES: dict[str, str] = {
     "chaddr": "client_hardware_address",
 }
 
-# Effective DHCP field-name map: global aliases overlaid by the DHCP layer-specific
-# aliases and then the richer local rename table, exactly the precedence the legacy
-# ``aliases.get(native_name, _normalize_field_name("dhcp", native_name))`` applied.
+# Effective DHCPv4 field-name map: global aliases overlaid by layer-specific aliases
+# and then the richer local rename table.
 _DHCP_FIELD_NAME_MAP: dict[str, str] = {
     **_GLOBAL_FIELD_ALIASES,
     **dict(_FIELD_ALIASES),
     **_DHCP_FIELD_NAME_ALIASES,
 }
 
-# Native DHCP fields the former normalizer dropped before the rename pass.
+# Native DHCPv4 fields dropped before the rename pass.
 _DHCP_SKIP_FIELDS = frozenset({"sname", "file", _DHCP_OPTION_REGION_KEY})
 
 
 def _normalize(fields: JSONObject) -> JSONObject:
     """Normalize a decoded Scapy BOOTP/DHCP layer to the comparable oracle shape.
 
-    Byte-identical to the legacy ``_normalize_dhcp_fields`` path: ``sname`` /
-    ``file`` and the synthetic option-region key are dropped, a typed ``options``
-    list is reduced to ``option_count``, each remaining native field name is renamed
-    via the DHCP field-name map (the lookup order the legacy code applied), and the
-    ``flags`` value is reduced through ``_normalize_dhcp_flags``. The
-    ``client_hardware_address`` is trimmed to the hardware length, the magic-cookie
-    ``options`` artifact is folded into ``magic_cookie``, and the raw option TLV
-    region (if captured) is expanded into backend-neutral ``{code, payload_hex}``
-    option details.
+    ``sname`` / ``file`` and the synthetic option-region key are dropped, a typed
+    ``options`` list is reduced to ``option_count``, each remaining native field
+    name is renamed via the DHCPv4 field-name map, and the ``flags`` value is
+    reduced through ``_normalize_dhcp_flags``. The ``client_hardware_address`` is
+    trimmed to the hardware length, the magic-cookie ``options`` artifact is folded
+    into ``magic_cookie``, and the raw option TLV region (if captured) is expanded
+    into backend-neutral ``{code, payload_hex}`` option details.
     """
 
     option_region_hex = fields.get(_DHCP_OPTION_REGION_KEY)
@@ -418,7 +391,7 @@ def _decode_dhcp_option_tlvs(option_region_hex: str) -> list[JSONObject] | None:
 
 register(
     ScapyProtocol(
-        layer="dhcp",
+        layer="dhcpv4",
         scapy_class="DHCP",
         supported_fields=_SUPPORTED_FIELDS,
         build=_build,

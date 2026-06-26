@@ -211,7 +211,7 @@ _SUPPORTED_FEATURES = {
     "ble-adv-pdu",
     "ble-pcap-link-types",
     "ble-radio-phdr",
-    "dhcp_behavior",
+    "dhcpv4_behavior",
     "dns_behavior",
     "dot11_basic",
     "dot11_data_llc",
@@ -894,8 +894,8 @@ def _capability_contract(
 
 # The DHCP (BOOTP / DHCP) materializer ``_dhcp`` and its ``_dhcp_op`` /
 # ``_dhcp_flags`` / ``_dhcp_chaddr`` / ``_dhcp_options`` option helpers moved to
-# ``protocols/dhcp.py`` and are registered in ``SCAPY_REGISTRY`` (so ``_build_layer``
-# routes ``dhcp`` to the plugin's ``build``).
+# ``protocols/dhcpv4.py`` and are registered in ``SCAPY_REGISTRY`` (so ``_build_layer``
+# routes ``dhcpv4`` to the plugin's ``build``).
 
 
 def _scapy_decoder(root: str) -> str:

@@ -514,22 +514,22 @@ def _dot11_is_management(frame_control: int) -> bool:
 
 
 def _is_ipv4_root_dhcp_stack(stack: Sequence[str]) -> bool:
-    """Return True for the IPv4-root, unicast live DHCP stack.
+    """Return True for the IPv4-root, unicast live DHCPv4 stack.
 
-    The ``ipv4 / udp / dhcp`` stack carries DHCP as a one-way unicast oracle
+    The ``ipv4 / udp / dhcpv4`` stack carries DHCPv4 as a one-way unicast oracle
     packet between provider endpoints. It has no Ethernet frame, so link-layer
     broadcast delivery, the IPv4 limited-broadcast destination, and the DHCP
     broadcast flag have no meaning and would make the packet ineligible for
-    provider-backed live exchange. The Ethernet-root DHCP stack keeps those
+    provider-backed live exchange. The Ethernet-root DHCPv4 stack keeps those
     domains for offline link-layer coverage.
 
     Shared sampling primitive: the IPv4 sampler plugin uses it to resolve the
-    IPv4 destination domain, and the (still legacy) DHCP sampler uses it for the
+    IPv4 destination domain, and the (still legacy) DHCPv4 sampler uses it for the
     broadcast destination. Kept here so the migrated IPv4 plugin can import it
     without depending on ``generator``.
     """
 
-    return "dhcp" in stack and "ethernet" not in stack
+    return "dhcpv4" in stack and "ethernet" not in stack
 
 
 # ---------------------------------------------------------------------------

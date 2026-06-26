@@ -1,11 +1,11 @@
 """Unit coverage for DHCP oracle generator selection and Scapy materialization.
 
-These tests pin the packet plan shape that ``--case dhcp-discover`` must
-produce so the IPv4-root ``ipv4 / udp / dhcp`` stack stays available for
+These tests pin the packet plan shape that ``--case dhcpv4-discover`` must
+produce so the IPv4-root ``ipv4 / udp / dhcpv4`` stack stays available for
 live-friendly oracle validation while the Ethernet-root stack keeps its
 link-layer coverage. They also pin how the Scapy reference backend
 materializes that IPv4-root stack as ``IP / UDP / BOOTP / DHCP`` (no Ethernet)
-and decodes back to the normalized ``ipv4 / udp / dhcp`` model.
+and decodes back to the normalized ``ipv4 / udp / dhcpv4`` model.
 """
 
 from __future__ import annotations
@@ -21,12 +21,12 @@ from tools.oracle.engine.backends.scapy import normalize
 from tools.oracle.engine.model import PacketPlan
 
 
-_IPV4_ROOT_STACK = ["ipv4", "udp", "dhcp"]
+_IPV4_ROOT_STACK = ["ipv4", "udp", "dhcpv4"]
 
-# The Scapy-byte-safe option kinds the dhcp_behavior option_matrix samples
+# The Scapy-byte-safe option kinds the dhcpv4_behavior option_matrix samples
 # cross-backend, expressed as the backend-neutral option names the generated
 # plans carry. Kinds Scapy cannot encode byte-for-byte are covered by native
-# libcrafter fixtures instead; see tools/oracle/specs/layers/dhcp.yaml.
+# libcrafter fixtures instead; see tools/oracle/specs/layers/dhcpv4.yaml.
 _EXPECTED_OPTION_MATRIX_KINDS = (
     "message-type",
     "hostname",
@@ -71,12 +71,12 @@ def _require_scapy_backend():
 def _dhcp_message_type(plan: PacketPlan) -> str | None:
     """Return the DHCP message type a plan encodes, if any.
 
-    The generator carries the DHCP message type in the ``dhcp.options`` list as
+    The generator carries the DHCP message type in the ``dhcpv4.options`` list as
     a ``message-type=<value>`` token rather than a dedicated field, so the
     discover assertion has to look there.
     """
 
-    dhcp = plan.fields.get("dhcp")
+    dhcp = plan.fields.get("dhcpv4")
     if not isinstance(dhcp, Mapping):
         return None
     options = dhcp.get("options")
@@ -103,11 +103,11 @@ def _packet_root(plan: PacketPlan) -> str | None:
 def _dhcp_option_kinds(plan: PacketPlan) -> list[str]:
     """Return the DHCP option kinds a plan encodes, in order.
 
-    Options are carried in ``dhcp.options`` either as ``name=value`` strings or
+    Options are carried in ``dhcpv4.options`` either as ``name=value`` strings or
     as ``[name, value]`` lists; the bare ``end``/``pad`` markers are kinds too.
     """
 
-    dhcp = plan.fields.get("dhcp")
+    dhcp = plan.fields.get("dhcpv4")
     if not isinstance(dhcp, Mapping):
         return []
     options = dhcp.get("options")
@@ -128,15 +128,15 @@ def _dhcp_option_kinds(plan: PacketPlan) -> list[str]:
 
 
 class DhcpGeneratorSelectionTest(unittest.TestCase):
-    """Prove ``dhcp-discover`` selects the IPv4-root live DHCP stack."""
+    """Prove ``dhcpv4-discover`` selects the IPv4-root live DHCPv4 stack."""
 
     def _ipv4_root_dhcp_plan(self, plans: Sequence[PacketPlan]) -> PacketPlan:
         matches = [plan for plan in plans if list(plan.stack) == _IPV4_ROOT_STACK]
         self.assertTrue(
             matches,
             msg=(
-                "expected at least one ipv4/udp/dhcp plan for --case "
-                "dhcp-discover, got stacks "
+                "expected at least one ipv4/udp/dhcpv4 plan for --case "
+                "dhcpv4-discover, got stacks "
                 f"{[list(plan.stack) for plan in plans]}"
             ),
         )
@@ -148,14 +148,14 @@ class DhcpGeneratorSelectionTest(unittest.TestCase):
             profile="smoke",
             count=3,
             backend="scapy",
-            case="dhcp-discover",
+            case="dhcpv4-discover",
         )
 
         plan = self._ipv4_root_dhcp_plan(plans)
 
         self.assertEqual(list(plan.stack), _IPV4_ROOT_STACK)
         self.assertEqual(_packet_root(plan), "l3:ipv4")
-        self.assertEqual(plan.case, "dhcp-discover")
+        self.assertEqual(plan.case, "dhcpv4-discover")
 
     def test_dhcp_discover_ipv4_root_uses_bootp_ports(self) -> None:
         plans = generate_plans(
@@ -163,7 +163,7 @@ class DhcpGeneratorSelectionTest(unittest.TestCase):
             profile="smoke",
             count=3,
             backend="scapy",
-            case="dhcp-discover",
+            case="dhcpv4-discover",
         )
 
         plan = self._ipv4_root_dhcp_plan(plans)
@@ -179,7 +179,7 @@ class DhcpGeneratorSelectionTest(unittest.TestCase):
             profile="smoke",
             count=3,
             backend="scapy",
-            case="dhcp-discover",
+            case="dhcpv4-discover",
         )
 
         plan = self._ipv4_root_dhcp_plan(plans)
@@ -193,7 +193,7 @@ class DhcpGeneratorSelectionTest(unittest.TestCase):
                 profile="smoke",
                 count=3,
                 backend="scapy",
-                case="dhcp-discover",
+                case="dhcpv4-discover",
             )
         )
         second = self._ipv4_root_dhcp_plan(
@@ -202,7 +202,7 @@ class DhcpGeneratorSelectionTest(unittest.TestCase):
                 profile="smoke",
                 count=3,
                 backend="scapy",
-                case="dhcp-discover",
+                case="dhcpv4-discover",
             )
         )
 
@@ -210,11 +210,11 @@ class DhcpGeneratorSelectionTest(unittest.TestCase):
 
 
 class ScapyIpv4DhcpMaterializationTest(unittest.TestCase):
-    """Prove Scapy materializes the IPv4-root ``ipv4 / udp / dhcp`` stack.
+    """Prove Scapy materializes the IPv4-root ``ipv4 / udp / dhcpv4`` stack.
 
-    The reference backend must build the live DHCP packet as
+    The reference backend must build the live DHCPv4 packet as
     ``IP / UDP / BOOTP / DHCP`` without an Ethernet frame and decode it back to
-    the normalized ``ipv4 / udp / dhcp`` model with equivalent UDP ports and
+    the normalized ``ipv4 / udp / dhcpv4`` model with equivalent UDP ports and
     DHCP fields.
     """
 
@@ -224,14 +224,14 @@ class ScapyIpv4DhcpMaterializationTest(unittest.TestCase):
             profile="smoke",
             count=4,
             backend="scapy",
-            case="dhcp-discover",
+            case="dhcpv4-discover",
         )
         matches = [plan for plan in plans if list(plan.stack) == _IPV4_ROOT_STACK]
         self.assertTrue(
             matches,
             msg=(
-                "expected at least one ipv4/udp/dhcp plan for --case "
-                "dhcp-discover, got stacks "
+                "expected at least one ipv4/udp/dhcpv4 plan for --case "
+                "dhcpv4-discover, got stacks "
                 f"{[list(plan.stack) for plan in plans]}"
             ),
         )
@@ -246,7 +246,7 @@ class ScapyIpv4DhcpMaterializationTest(unittest.TestCase):
         self.assertEqual(vector.root, "l3:ipv4")
         self.assertEqual(vector.decoder, "IP")
         # The IPv4-root stack must materialize as IP / UDP / BOOTP / DHCP with
-        # no Ethernet frame; Scapy reports BOOTP/DHCP as a single DHCP layer.
+        # no Ethernet frame; Scapy reports BOOTP/DHCPv4 as a single DHCPv4 layer.
         self.assertEqual(vector.metadata.get("scapy_stack"), ["IP", "UDP", "DHCP"])
 
     def test_scapy_decodes_ipv4_dhcp_stack_and_root(self) -> None:
@@ -274,7 +274,7 @@ class ScapyIpv4DhcpMaterializationTest(unittest.TestCase):
 
         plan = self._ipv4_root_dhcp_plan()
         decoded = decode_vector(encode_packet_plan(plan))
-        dhcp = decoded.fields.get("dhcp")
+        dhcp = decoded.fields.get("dhcpv4")
 
         self.assertIsInstance(dhcp, Mapping)
         # BOOTP request carrying the Ethernet hardware type and the DHCP magic
@@ -319,7 +319,7 @@ class DhcpOptionNormalizeTest(unittest.TestCase):
 class DhcpOptionMatrixGeneratorTest(unittest.TestCase):
     """Prove the generator samples the byte-safe DHCP option matrix.
 
-    The ``dhcp_behavior`` ``dhcp-option-matrix`` case must materialize every
+    The ``dhcpv4_behavior`` ``dhcpv4-option-matrix`` case must materialize every
     Scapy-byte-safe option kind in a deterministic order for both DHCP roots
     and both directions, so the cross-backend offline runs exercise the option
     matrix rather than only the message-type/server-id subset.
@@ -335,19 +335,29 @@ class DhcpOptionMatrixGeneratorTest(unittest.TestCase):
             profile=self._PROFILE,
             count=self._COUNT,
             backend="scapy",
-            feature="dhcp_behavior",
+            feature="dhcpv4_behavior",
             direction=direction,
         )
-        matrix = [plan for plan in plans if plan.case == "dhcp-option-matrix"]
+        matrix = [plan for plan in plans if plan.case == "dhcpv4-option-matrix"]
         self.assertTrue(
             matrix,
             msg=(
-                "expected at least one dhcp-option-matrix plan for "
+                "expected at least one dhcpv4-option-matrix plan for "
                 f"direction={direction!r}, got cases "
                 f"{sorted({plan.case for plan in plans})}"
             ),
         )
         return matrix
+
+    def _matrix_case_plans(self, direction: str) -> list[PacketPlan]:
+        return generate_plans(
+            seed=self._SEED,
+            profile=self._PROFILE,
+            count=16,
+            backend="scapy",
+            case="dhcpv4-option-matrix",
+            direction=direction,
+        )
 
     def test_option_matrix_case_is_sampled_in_both_directions(self) -> None:
         for direction in ("libcrafter_to_reference", "reference_to_libcrafter"):
@@ -371,7 +381,7 @@ class DhcpOptionMatrixGeneratorTest(unittest.TestCase):
         # live-friendly cross-backend coverage stays available.
         for direction in ("libcrafter_to_reference", "reference_to_libcrafter"):
             with self.subTest(direction=direction):
-                roots = {_packet_root(plan) for plan in self._matrix_plans(direction)}
+                roots = {_packet_root(plan) for plan in self._matrix_case_plans(direction)}
                 self.assertIn("l3:ipv4", roots)
 
     def test_option_matrix_is_deterministic(self) -> None:
@@ -384,7 +394,7 @@ class DhcpOptionMatrixGeneratorTest(unittest.TestCase):
 
     def test_option_matrix_tokens_match_published_order(self) -> None:
         plan = self._matrix_plans("reference_to_libcrafter")[0]
-        options = plan.fields["dhcp"]["options"]
+        options = plan.fields["dhcpv4"]["options"]
         self.assertEqual(list(options), list(DHCPV4_OPTION_MATRIX_TOKENS))
 
 

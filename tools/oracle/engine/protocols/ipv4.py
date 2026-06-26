@@ -111,7 +111,7 @@ def _sample_ipv4_field(
     if field_name == "flags":
         if "fragment-mf-offset" in ctx.case:
             return "mf"
-        if any(layer in ctx.stack for layer in ("tcp", "udp", "icmp", "dns", "dhcp")):
+        if any(layer in ctx.stack for layer in ("tcp", "udp", "icmp", "dns", "dhcpv4")):
             return "none"
         # ESP/AH/IKEv2 datagrams are never carried as IP fragments in the oracle
         # corpus: libcrafter (correctly) leaves a non-first fragment body opaque
@@ -127,7 +127,7 @@ def _sample_ipv4_field(
     if field_name == "fragment_offset":
         if "fragment-mf-offset" in ctx.case:
             return 1
-        if any(layer in ctx.stack for layer in ("tcp", "udp", "icmp", "dns", "dhcp")):
+        if any(layer in ctx.stack for layer in ("tcp", "udp", "icmp", "dns", "dhcpv4")):
             return 0
         if any(layer in ctx.stack for layer in ("esp", "ah", "ikev2")):
             return 0

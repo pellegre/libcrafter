@@ -386,8 +386,8 @@ fn dhcp_discover() -> ExampleResult<Vector> {
             .parameter_request_list(vec![1, 3, 6, 15]);
 
     vector(
-        "dhcp-discover",
-        "dhcp",
+        "dhcpv4-discover",
+        "dhcpv4",
         "link:ethernet",
         vec!["Ether", "IP", "UDP", "BOOTP", "DHCP"],
         "Ether / IP / UDP / BOOTP / DHCP Discover",

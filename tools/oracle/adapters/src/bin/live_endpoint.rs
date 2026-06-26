@@ -1130,7 +1130,7 @@ fn canonical_compare_root(root: &str) -> ExampleResult<&'static str> {
 fn normalize_layer_name(name: &str) -> &str {
     match name {
         "Dns" => "dns",
-        "Dhcpv4" => "dhcp",
+        "Dhcpv4" => "dhcpv4",
         "Ethernet" => "ethernet",
         "ICMP" => "icmp",
         "Icmp" => "icmp",
@@ -1164,7 +1164,7 @@ fn typed_layer_fields(layer: &dyn Layer, name: &str) -> Option<Map<String, Value
         "icmp" => layer.as_any().downcast_ref::<Icmpv4>().map(icmp_fields),
         "icmpv6" => layer.as_any().downcast_ref::<Icmpv6>().map(icmpv6_fields),
         "dns" => layer.as_any().downcast_ref::<Dns>().map(dns_fields),
-        "dhcp" => layer.as_any().downcast_ref::<Dhcpv4>().map(dhcp_fields),
+        "dhcpv4" => layer.as_any().downcast_ref::<Dhcpv4>().map(dhcp_fields),
         _ => None,
     }
 }
@@ -1755,12 +1755,12 @@ fn dns_answer(object: &Map<String, Value>) -> ExampleResult<DnsRecord> {
 }
 
 fn dhcp_layer(plan: &Value) -> ExampleResult<Dhcpv4> {
-    let fields = layer_fields(plan, "dhcp")?;
+    let fields = layer_fields(plan, "dhcpv4")?;
     // The fixed BOOTP header fields are optional: a minimal live-friendly DHCP
     // plan emits only op/flags/options and relies on `Dhcpv4::new()` defaults
     // (BOOTP_REQUEST op, Ethernet htype, hlen 6, xid 0, zero MAC, unspecified
     // addresses) for anything it does not set. This mirrors the materialize
-    // adapter so DHCP flows through the same generic endpoint batch contract.
+    // adapter so DHCPv4 flows through the same generic endpoint batch contract.
     let mut layer = Dhcpv4::new();
     if let Some(value) = optional(fields, &["op"]) {
         layer = layer.op(dhcp_op(value)?);
@@ -2489,12 +2489,12 @@ mod live_capture_polling {
     }
 }
 
-/// Live endpoint batch contract coverage for the IPv4-root `ipv4 / udp / dhcp`
+/// Live endpoint batch contract coverage for the IPv4-root `ipv4 / udp / dhcpv4`
 /// stack.
 ///
-/// DHCP flows through the same generic endpoint batch contract every other
+/// DHCPv4 flows through the same generic endpoint batch contract every other
 /// protocol uses: the libcrafter live endpoint binary must build the
-/// `ipv4 / udp / dhcp` packet (no Ethernet frame, no DHCP-specific protocol),
+/// `ipv4 / udp / dhcpv4` packet (no Ethernet frame, no DHCPv4-specific protocol),
 /// compile it, and run the dry-run sender/receiver phases for both oracle
 /// directions. The dry-run path sends and captures nothing; all addresses are
 /// RFC 5737 documentation space and the run never touches a network.
@@ -2509,23 +2509,23 @@ mod ipv4_dhcp_live_endpoint {
     /// never writes artifacts into the source tree.
     fn artifact_root() -> PathBuf {
         std::env::temp_dir().join(format!(
-            "libcrafter-test-ipv4-dhcp-live-endpoint-{}",
+            "libcrafter-test-ipv4-dhcpv4-live-endpoint-{}",
             std::process::id()
         ))
     }
 
-    /// A minimal live-friendly `ipv4 / udp / dhcp` plan matching the seeded
+    /// A minimal live-friendly `ipv4 / udp / dhcpv4` plan matching the seeded
     /// generator output: only the DHCP op/flags/options are set so the fixed
     /// BOOTP header falls back to `Dhcpv4::new()` defaults.
     fn ipv4_dhcp_discover_plan(index: usize) -> Value {
         json!({
-            "stack": ["ipv4", "udp", "dhcp"],
+            "stack": ["ipv4", "udp", "dhcpv4"],
             "index": index,
             "metadata": {
                 "root_decoder": "l3:ipv4",
                 "root": "l3:ipv4"
             },
-            "feature_tags": ["ipv4", "udp", "dhcp", "dhcp_behavior"],
+            "feature_tags": ["ipv4", "udp", "dhcpv4", "dhcpv4_behavior"],
             "strict_bytes": true,
             "fields": {
                 "ipv4": {
@@ -2540,7 +2540,7 @@ mod ipv4_dhcp_live_endpoint {
                     "src_port": 68,
                     "dst_port": 67
                 },
-                "dhcp": {
+                "dhcpv4": {
                     "op": "bootrequest",
                     "flags": "none",
                     "options": ["message-type=discover", "end"]
@@ -2624,7 +2624,7 @@ mod ipv4_dhcp_live_endpoint {
             mode: RunMode::DryRun,
         };
         run_endpoint(&request, request_json, &args)
-            .expect("ipv4/udp/dhcp dry-run endpoint batch must run")
+            .expect("ipv4/udp/dhcpv4 dry-run endpoint batch must run")
     }
 
     fn status_indexes(response: &Value) -> Vec<u64> {
@@ -2644,11 +2644,11 @@ mod ipv4_dhcp_live_endpoint {
 
     #[test]
     fn ipv4_dhcp_plan_builds_through_generic_live_endpoint_contract() {
-        // The generic batch contract must materialize the DHCP stack with no
-        // DHCP-specific protocol: ipv4 / udp / dhcp, compiled and re-decodable.
+        // The generic batch contract must materialize the DHCPv4 stack with no
+        // DHCPv4-specific protocol: ipv4 / udp / dhcpv4, compiled and re-decodable.
         let request = dhcp_request("libcrafter_to_reference");
         let prepared = prepare_packets(&request.packet_plans)
-            .expect("ipv4/udp/dhcp plans must prepare through the generic contract");
+            .expect("ipv4/udp/dhcpv4 plans must prepare through the generic contract");
 
         assert_eq!(prepared.len(), 2);
         for (offset, prepared_packet) in prepared.iter().enumerate() {
@@ -2656,12 +2656,12 @@ mod ipv4_dhcp_live_endpoint {
             assert_eq!(prepared_packet.root, "l3:ipv4");
             assert!(
                 !prepared_packet.raw_hex.is_empty(),
-                "compiled DHCP packet must carry bytes"
+                "compiled DHCPv4 packet must carry bytes"
             );
 
             let bytes = decode_hex(&prepared_packet.raw_hex).expect("raw_hex must decode");
             let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, &bytes)
-                .expect("compiled IPv4 DHCP packet must re-decode from l3");
+                .expect("compiled IPv4 DHCPv4 packet must re-decode from l3");
             decoded
                 .layer::<Ipv4>()
                 .expect("re-decoded packet must expose an IPv4 layer");
@@ -2672,7 +2672,7 @@ mod ipv4_dhcp_live_endpoint {
             assert_eq!(udp.destination_port_value(), 67, "BOOTP server port");
             let dhcp = decoded
                 .layer::<Dhcpv4>()
-                .expect("re-decoded packet must expose a DHCP layer over UDP");
+                .expect("re-decoded packet must expose a DHCPv4 layer over UDP");
             assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Discover));
         }
     }

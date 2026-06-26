@@ -62,9 +62,9 @@ _DLT_BY_ROOT: dict[str, int] = {
 }
 _PROTOCOL_LAYER_ALIASES: dict[str, str | None] = {
     "arp": "arp",
-    "bootp": "dhcp",
+    "bootp": "dhcpv4",
     "data": "payload",
-    "dhcp": "dhcp",
+    "dhcp": "dhcpv4",
     "eapol": "eapol",
     "eth": "ethernet",
     "ethertype": None,
@@ -421,9 +421,9 @@ def _dot11_source_model(
 
 # The DHCP tshark normalizer ``_normalize_dhcp`` and its ``_dhcp_flags`` /
 # ``_dhcp_options_from_source`` / ``_decode_dhcp_option_tlvs`` / ``_dhcp_layer``
-# helpers and the DHCP option/cookie constants moved to ``protocols/dhcp.py`` and are
+# helpers and the DHCP option/cookie constants moved to ``protocols/dhcpv4.py`` and are
 # registered in ``WIRESHARK_REGISTRY`` (so ``_normalize_protocol_fields`` routes the
-# ``dhcp`` layer to the plugin's ``normalize``).
+# canonical ``dhcpv4`` layer to the plugin's ``normalize``).
 
 
 def _normalize_linux_sll(layer: JSONObject) -> JSONObject:

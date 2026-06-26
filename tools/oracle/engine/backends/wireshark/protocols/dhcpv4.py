@@ -1,16 +1,9 @@
-"""Wireshark-stage decode plugin for the DHCP layer.
-
-Moves the ``_normalize_dhcp`` tshark normalizer and its DHCP helpers
-(``_dhcp_flags``, ``_dhcp_options_from_source``, ``_decode_dhcp_option_tlvs``,
-``_dhcp_layer``) and the DHCP option/cookie constants verbatim out of
-:mod:`..normalize` and registers the ``dhcp`` layer through the
-:class:`~.base.WiresharkProtocol` contract; only the dispatch moves out of the
-legacy ``_normalize_protocol_fields`` if/elif. Behavior must stay byte-identical.
+"""Wireshark-stage decode plugin for the DHCPv4 layer.
 
 The plugin's :func:`_normalize` callback receives the full tshark ``layers`` object
 and selects the BOOTP/DHCP sub-layer with :func:`_dhcp_layer` (Wireshark renamed the
 dissector prefix from ``bootp.`` to ``dhcp.`` around 3.0, so both are accepted),
-exactly as the legacy ``_normalize_dhcp(_dhcp_layer(layers), ...)`` call did.
+then emits the canonical ``dhcpv4`` oracle model.
 
 Shared primitives come from :mod:`..decode_helpers` so this plugin does not depend on
 the ``normalize`` orchestrator (which would create a circular import). Relative
@@ -148,7 +141,7 @@ def _dhcp_options_from_source(source_hex: str | None) -> list[JSONObject] | None
 
 def _decode_dhcp_option_tlvs(raw: bytes) -> list[JSONObject] | None:
     # Mirrors the Scapy reference parser
-    # (tools/oracle/engine/backends/scapy/protocols/dhcp.py::_decode_dhcp_option_tlvs):
+    # (tools/oracle/engine/backends/scapy/protocols/dhcpv4.py::_decode_dhcp_option_tlvs):
     # pad/end are single-octet options with empty payloads and END does not stop
     # parsing, so the ``option_count`` stays byte-identical across backends. The
     # wire bytes are identical for the offline strict-byte path, so the region
@@ -183,7 +176,7 @@ def _dhcp_layer(layers: JSONObject) -> JSONObject:
 
 register(
     WiresharkProtocol(
-        layer="dhcp",
+        layer="dhcpv4",
         normalize=_normalize,
         tshark_aliases=dict(_TSHARK_ALIASES),
     )
