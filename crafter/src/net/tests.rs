@@ -635,7 +635,7 @@ mod send_recv_filters {
             .src(Ipv4Addr::UNSPECIFIED)
             .dst(Ipv4Addr::BROADCAST)
             / Udp::dhcp_client()
-            / crate::Dhcp::discover(mac).xid(0xfeed_beef);
+            / crate::Dhcpv4::discover(mac).xid(0xfeed_beef);
 
         assert_eq!(
             packet.reply_filter().unwrap(),
@@ -712,7 +712,7 @@ mod reply_matching {
     use std::net::{Ipv4Addr, Ipv6Addr};
 
     use crate::{
-        Arp, ArpOperation, Dhcp, DhcpClientIdentifier, DhcpMessageType, Dns, DnsRecord, Icmpv4,
+        Arp, ArpOperation, Dhcpv4, DhcpClientIdentifier, DhcpMessageType, Dns, DnsRecord, Icmpv4,
         Icmpv6, IntoPacket, Ipv4, Ipv6, MacAddr, Packet, Raw, Tcp, Udp, DNS_TYPE_A, TCP_FLAG_ACK,
         TCP_FLAG_RST, TCP_FLAG_SYN,
     };
@@ -1011,12 +1011,12 @@ mod reply_matching {
             .src(Ipv4Addr::UNSPECIFIED)
             .dst(Ipv4Addr::BROADCAST)
             / Udp::dhcp_client()
-            / Dhcp::discover(mac).xid(0xfeed_beef);
+            / Dhcpv4::discover(mac).xid(0xfeed_beef);
         let reply = Ipv4::new()
             .src(Ipv4Addr::new(192, 0, 2, 1))
             .dst(Ipv4Addr::BROADCAST)
             / Udp::dhcp_server()
-            / Dhcp::offer(
+            / Dhcpv4::offer(
                 mac,
                 Ipv4Addr::new(192, 0, 2, 100),
                 Ipv4Addr::new(192, 0, 2, 1),
@@ -1026,7 +1026,7 @@ mod reply_matching {
             .src(Ipv4Addr::new(192, 0, 2, 1))
             .dst(Ipv4Addr::BROADCAST)
             / Udp::dhcp_server()
-            / Dhcp::new()
+            / Dhcpv4::new()
                 .op(crate::BOOTP_REPLY)
                 .client_mac(mac)
                 .message_type(DhcpMessageType::Offer)
@@ -1051,14 +1051,14 @@ mod reply_matching {
             .src(Ipv4Addr::UNSPECIFIED)
             .dst(Ipv4Addr::BROADCAST)
             / Udp::dhcp_client()
-            / Dhcp::discover(mac)
+            / Dhcpv4::discover(mac)
                 .xid(0xfeed_beef)
                 .client_id_value(client_id.clone());
         let reply = Ipv4::new()
             .src(Ipv4Addr::new(192, 0, 2, 1))
             .dst(Ipv4Addr::BROADCAST)
             / Udp::dhcp_server()
-            / Dhcp::offer(
+            / Dhcpv4::offer(
                 mac,
                 Ipv4Addr::new(192, 0, 2, 100),
                 Ipv4Addr::new(192, 0, 2, 1),
@@ -1069,7 +1069,7 @@ mod reply_matching {
             .src(Ipv4Addr::new(192, 0, 2, 1))
             .dst(Ipv4Addr::BROADCAST)
             / Udp::dhcp_server()
-            / Dhcp::offer(
+            / Dhcpv4::offer(
                 mac,
                 Ipv4Addr::new(192, 0, 2, 100),
                 Ipv4Addr::new(192, 0, 2, 1),
@@ -1091,12 +1091,12 @@ mod reply_matching {
             .src(Ipv4Addr::new(192, 0, 2, 9))
             .dst(Ipv4Addr::new(192, 0, 2, 1))
             / Udp::dhcp_client()
-            / Dhcp::lease_query_by_ip(Ipv4Addr::new(192, 0, 2, 100)).xid(0x0c0f_fee0);
+            / Dhcpv4::lease_query_by_ip(Ipv4Addr::new(192, 0, 2, 100)).xid(0x0c0f_fee0);
         let reply = Ipv4::new()
             .src(Ipv4Addr::new(192, 0, 2, 1))
             .dst(Ipv4Addr::new(192, 0, 2, 9))
             / Udp::dhcp_server()
-            / Dhcp::new()
+            / Dhcpv4::new()
                 .op(crate::BOOTP_REPLY)
                 .message_type(DhcpMessageType::LeaseActive)
                 .xid(0x0c0f_fee0);
@@ -1104,7 +1104,7 @@ mod reply_matching {
             .src(Ipv4Addr::new(192, 0, 2, 1))
             .dst(Ipv4Addr::new(192, 0, 2, 9))
             / Udp::dhcp_server()
-            / Dhcp::new()
+            / Dhcpv4::new()
                 .op(crate::BOOTP_REPLY)
                 .message_type(DhcpMessageType::Ack)
                 .xid(0x0c0f_fee0);
@@ -1124,14 +1124,14 @@ mod reply_matching {
             .src(Ipv4Addr::new(192, 0, 2, 9))
             .dst(Ipv4Addr::new(192, 0, 2, 1))
             / Udp::dhcp_client()
-            / Dhcp::discover(mac)
+            / Dhcpv4::discover(mac)
                 .xid(0xfeed_beef)
                 .giaddr(Ipv4Addr::new(192, 0, 2, 9));
         let same_relay = Ipv4::new()
             .src(Ipv4Addr::new(192, 0, 2, 1))
             .dst(Ipv4Addr::new(192, 0, 2, 9))
             / Udp::dhcp_server()
-            / Dhcp::offer(
+            / Dhcpv4::offer(
                 mac,
                 Ipv4Addr::new(192, 0, 2, 100),
                 Ipv4Addr::new(192, 0, 2, 1),
@@ -1142,7 +1142,7 @@ mod reply_matching {
             .src(Ipv4Addr::new(192, 0, 2, 1))
             .dst(Ipv4Addr::new(198, 51, 100, 9))
             / Udp::dhcp_server()
-            / Dhcp::offer(
+            / Dhcpv4::offer(
                 mac,
                 Ipv4Addr::new(192, 0, 2, 100),
                 Ipv4Addr::new(192, 0, 2, 1),
@@ -1159,7 +1159,7 @@ mod reply_matching {
 mod dhcp_udp_binding {
     use std::net::Ipv4Addr;
 
-    use crate::{Dhcp, Ipv4, MacAddr, NetworkLayer, Packet, Raw, Udp};
+    use crate::{Dhcpv4, Ipv4, MacAddr, NetworkLayer, Packet, Raw, Udp};
 
     #[test]
     fn dhcp_decode_binding_rejects_non_dhcp_payloads_on_dhcp_ports() {
@@ -1167,7 +1167,7 @@ mod dhcp_udp_binding {
         // alone is not enough; the payload must also carry the BOOTP structure
         // and the valid magic cookie. These cases all sit on a DHCP port pair
         // but are not DHCP, so they must fall through to Raw rather than
-        // misdecode as `Dhcp`.
+        // misdecode as `Dhcpv4`.
 
         // 1. A payload long enough for the fixed header plus cookie region but
         //    with the wrong four magic-cookie octets (here a
@@ -1191,7 +1191,7 @@ mod dhcp_udp_binding {
         )
         .unwrap();
         assert!(
-            decoded.layer::<Dhcp>().is_none(),
+            decoded.layer::<Dhcpv4>().is_none(),
             "wrong magic cookie on DHCP ports must not decode as DHCP",
         );
         assert!(decoded.layer::<Raw>().is_some());
@@ -1209,7 +1209,7 @@ mod dhcp_udp_binding {
             Packet::decode_from_l3(NetworkLayer::Ipv4, short.compile().unwrap().as_bytes())
                 .unwrap();
         assert!(
-            decoded_short.layer::<Dhcp>().is_none(),
+            decoded_short.layer::<Dhcpv4>().is_none(),
             "short payload on DHCP ports must not decode as DHCP",
         );
         assert!(decoded_short.layer::<Raw>().is_some());
@@ -1222,11 +1222,11 @@ mod dhcp_udp_binding {
             .src(Ipv4Addr::UNSPECIFIED)
             .dst(Ipv4Addr::BROADCAST)
             / Udp::dhcp_client()
-            / Dhcp::discover(mac).xid(0xfeed_beef);
+            / Dhcpv4::discover(mac).xid(0xfeed_beef);
         let decoded_dhcp =
             Packet::decode_from_l3(NetworkLayer::Ipv4, dhcp.compile().unwrap().as_bytes()).unwrap();
         assert!(
-            decoded_dhcp.layer::<Dhcp>().is_some(),
+            decoded_dhcp.layer::<Dhcpv4>().is_some(),
             "valid DHCP on the standard port pair must still decode as DHCP",
         );
     }

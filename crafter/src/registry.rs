@@ -368,7 +368,7 @@ impl ProtocolRegistry {
         // server port pair (67/68, in either direction) AND the payload carries
         // enough BOOTP structure with the valid magic cookie. The magic-cookie
         // check is what keeps unrelated traffic that merely happens to use a
-        // DHCP port from misdecoding as `Dhcp`.
+        // DHCP port from misdecoding as `Dhcpv4`.
         //
         // Intentionally unsupported port inference: RFC 8357 lets a relay agent
         // advertise a non-67 UDP source port through the relay source-port
