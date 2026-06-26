@@ -1,0 +1,15 @@
+# QUIC packet malformed corpus.
+# Format: name|target|expected-kind|expected-context-or-field|required|available|hex
+# target:
+#   packet              -> QuicPacket::decode
+#   short-header-dcid-4 -> QuicPacket::decode_short_header with DCID length 4
+#   short-header-dcid-0 -> QuicPacket::decode_short_header with DCID length 0
+# expected-kind:
+#   buffer-too-short    -> Err(CrafterError::BufferTooShort)
+#   invalid-field-value -> Err(CrafterError::InvalidFieldValue)
+
+version-negotiation-supported-truncated|packet|buffer-too-short|quic.version_negotiation.supported_versions|11|8|80 00 00 00 00 00 00 01
+retry-integrity-short|packet|buffer-too-short|quic.retry.integrity_tag|23|8|f0 00 00 00 01 00 00 00
+short-header-dcid-truncated|short-header-dcid-4|buffer-too-short|quic.short_header.dcid|5|2|40 aa
+short-header-packet-number-truncated|short-header-dcid-4|buffer-too-short|quic.short_header.packet_number|7|6|41 83 94 c8 f0 12
+short-header-rejects-long-form|short-header-dcid-0|invalid-field-value|quic.short_header|-|-|c0
