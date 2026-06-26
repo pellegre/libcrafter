@@ -378,7 +378,7 @@ fn dhcp_discover() -> ExampleResult<Vector> {
             .dst(Ipv4Addr::BROADCAST)
             .id(0x1238)
             .ttl(64)
-        / Udp::dhcp_client()
+        / Udp::dhcpv4_client()
         / Dhcpv4::discover(src_mac)
             .xid(0x3903_f326)
             .flags(0x8000)

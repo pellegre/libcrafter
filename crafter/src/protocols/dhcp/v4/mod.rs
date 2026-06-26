@@ -1856,7 +1856,7 @@ mod dhcp_tests {
             .src(Ipv4Addr::UNSPECIFIED)
             .dst(Ipv4Addr::BROADCAST)
             .id(0x4444)
-            / Udp::dhcp_client()
+            / Udp::dhcpv4_client()
             / Dhcpv4::discover(mac())
                 .xid(0x3903_f326)
                 .flags(0x8000)
@@ -1890,7 +1890,7 @@ mod dhcp_tests {
         let dns = Ipv4Addr::new(198, 51, 100, 53);
 
         let bytes = (Ipv4::new().src(server).dst(Ipv4Addr::BROADCAST)
-            / Udp::dhcp_server()
+            / Udp::dhcpv4_server()
             / Dhcpv4::offer(mac(), offered, server)
                 .subnet_mask(Ipv4Addr::new(255, 255, 255, 0))
                 .router([router])
@@ -1936,7 +1936,7 @@ mod dhcp_tests {
         let bytes = (Ipv4::new()
             .src(Ipv4Addr::UNSPECIFIED)
             .dst(Ipv4Addr::BROADCAST)
-            / Udp::dhcp_client()
+            / Udp::dhcpv4_client()
             / Dhcpv4::new()
                 .client_mac(mac())
                 .message_type(Dhcpv4MessageType::Discover)
@@ -2025,7 +2025,7 @@ mod dhcp_malformed {
         let bytes = (Ipv4::new()
             .src(Ipv4Addr::UNSPECIFIED)
             .dst(Ipv4Addr::BROADCAST)
-            / Udp::dhcp_client()
+            / Udp::dhcpv4_client()
             / Raw::from("not a dhcp packet"))
         .compile()
         .unwrap();
