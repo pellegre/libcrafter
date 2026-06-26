@@ -426,9 +426,9 @@ pub mod exports {
         QuicKnownFrameType, QuicLongHeaderPacket, QuicMaxDataFrame, QuicMaxStreamDataFrame,
         QuicMaxStreamsFrame, QuicNewTokenFrame, QuicPacket, QuicPacketNumber, QuicResetStreamFrame,
         QuicRetryBuilder, QuicRetryPacket, QuicShortHeaderBuilder, QuicShortHeaderPacket,
-        QuicStopSendingFrame, QuicStreamDirection, QuicStreamFrame, QuicTransportParameter,
-        QuicVarInt, QuicVersionNegotiationBuilder, QuicVersionNegotiationPacket,
-        QuicZeroRttBuilder, QUIC_RETRY_INTEGRITY_TAG_LEN,
+        QuicStopSendingFrame, QuicStreamDataBlockedFrame, QuicStreamDirection, QuicStreamFrame,
+        QuicTransportParameter, QuicVarInt, QuicVersionNegotiationBuilder,
+        QuicVersionNegotiationPacket, QuicZeroRttBuilder, QUIC_RETRY_INTEGRITY_TAG_LEN,
     };
     pub use rip::ripng::{
         Ripng, RipngRte, RIPNG_COMMAND_REQUEST, RIPNG_COMMAND_RESPONSE, RIPNG_METRIC_INFINITY,
