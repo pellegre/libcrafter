@@ -19,8 +19,8 @@ use crate::checksum::{
     crc32c, internet_checksum_chunks, ipv4_pseudo_header_checksum, ipv6_pseudo_header_checksum,
 };
 use crate::{
-    Dhcpv4, Dhcpv4MessageType, Dns, Ipv4, Ipv4Protocol, Ipv6, Layer, LinkType, MacAddr, Packet, Raw,
-    DNS_PORT, DNS_TYPE_A, IPPROTO_UDP,
+    Dhcpv4, Dhcpv4MessageType, Dns, Ipv4, Ipv4Protocol, Ipv6, Layer, LinkType, MacAddr, Packet,
+    Raw, DNS_PORT, DNS_TYPE_A, IPPROTO_UDP,
 };
 use core::net::{Ipv4Addr, Ipv6Addr};
 

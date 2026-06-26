@@ -14,7 +14,7 @@ import unittest
 from collections.abc import Mapping, Sequence
 
 from tools.oracle.engine.generator import (
-    DHCP_OPTION_MATRIX_TOKENS,
+    DHCPV4_OPTION_MATRIX_TOKENS,
     generate_plans,
 )
 from tools.oracle.engine.backends.scapy import normalize
@@ -385,7 +385,7 @@ class DhcpOptionMatrixGeneratorTest(unittest.TestCase):
     def test_option_matrix_tokens_match_published_order(self) -> None:
         plan = self._matrix_plans("reference_to_libcrafter")[0]
         options = plan.fields["dhcp"]["options"]
-        self.assertEqual(list(options), list(DHCP_OPTION_MATRIX_TOKENS))
+        self.assertEqual(list(options), list(DHCPV4_OPTION_MATRIX_TOKENS))
 
 
 if __name__ == "__main__":

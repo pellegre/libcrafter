@@ -1,9 +1,9 @@
 use std::net::Ipv4Addr;
 
 use crate::{
-    Arp, ArpOperation, Dhcpv4, Dhcpv4ClientIdentifier, Dhcpv4MessageType, Dns, Icmpv4, Icmpv6, Igmp,
-    Ipv4, Ipv6, Packet, Tcp, Udp, BOOTP_REPLY, DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT,
-    ICMPV6_ECHO_REPLY, ICMPV6_ECHO_REQUEST, ICMP_ECHO_REPLY, ICMP_ECHO_REQUEST,
+    Arp, ArpOperation, Dhcpv4, Dhcpv4ClientIdentifier, Dhcpv4MessageType, Dns, Icmpv4, Icmpv6,
+    Igmp, Ipv4, Ipv6, Packet, Tcp, Udp, BOOTP_REPLY, DHCPV4_CLIENT_PORT, DHCPV4_SERVER_PORT,
+    DNS_PORT, ICMPV6_ECHO_REPLY, ICMPV6_ECHO_REQUEST, ICMP_ECHO_REPLY, ICMP_ECHO_REQUEST,
 };
 
 pub struct ReplyMatcher {
@@ -124,7 +124,7 @@ pub(crate) fn batch_reply_filter(packets: &[Packet]) -> Option<String> {
 }
 
 fn dhcp_filter() -> String {
-    format!("udp and src port {DHCP_SERVER_PORT} and dst port {DHCP_CLIENT_PORT}")
+    format!("udp and src port {DHCPV4_SERVER_PORT} and dst port {DHCPV4_CLIENT_PORT}")
 }
 
 fn arp_filter(arp: &Arp) -> String {
@@ -439,10 +439,10 @@ fn is_leasequery_reply_type(message_type: Dhcpv4MessageType) -> bool {
 fn dhcp_transport_reply_matches(request: &Packet, candidate: &Packet) -> bool {
     match (request.layer::<Udp>(), candidate.layer::<Udp>()) {
         (Some(request_udp), Some(candidate_udp)) => {
-            request_udp.source_port_value() == DHCP_CLIENT_PORT
-                && request_udp.destination_port_value() == DHCP_SERVER_PORT
-                && candidate_udp.source_port_value() == DHCP_SERVER_PORT
-                && candidate_udp.destination_port_value() == DHCP_CLIENT_PORT
+            request_udp.source_port_value() == DHCPV4_CLIENT_PORT
+                && request_udp.destination_port_value() == DHCPV4_SERVER_PORT
+                && candidate_udp.source_port_value() == DHCPV4_SERVER_PORT
+                && candidate_udp.destination_port_value() == DHCPV4_CLIENT_PORT
         }
         (None, None) => true,
         _ => false,

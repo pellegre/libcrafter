@@ -6,10 +6,10 @@
 //! RFC 7724 (16-18). Unknown values are preserved as `Unknown(u8)`.
 
 use super::constants::{
-    DHCP_ACK, DHCP_ACTIVE_LEASE_QUERY, DHCP_BULK_LEASE_QUERY, DHCP_DECLINE, DHCP_DISCOVER,
-    DHCP_FORCE_RENEW, DHCP_INFORM, DHCP_LEASE_ACTIVE, DHCP_LEASE_QUERY, DHCP_LEASE_QUERY_DONE,
-    DHCP_LEASE_QUERY_STATUS, DHCP_LEASE_UNASSIGNED, DHCP_LEASE_UNKNOWN, DHCP_NAK, DHCP_OFFER,
-    DHCP_RELEASE, DHCP_REQUEST, DHCP_TLS,
+    DHCPV4_ACK, DHCPV4_ACTIVE_LEASE_QUERY, DHCPV4_BULK_LEASE_QUERY, DHCPV4_DECLINE,
+    DHCPV4_DISCOVER, DHCPV4_FORCE_RENEW, DHCPV4_INFORM, DHCPV4_LEASE_ACTIVE, DHCPV4_LEASE_QUERY,
+    DHCPV4_LEASE_QUERY_DONE, DHCPV4_LEASE_QUERY_STATUS, DHCPV4_LEASE_UNASSIGNED,
+    DHCPV4_LEASE_UNKNOWN, DHCPV4_NAK, DHCPV4_OFFER, DHCPV4_RELEASE, DHCPV4_REQUEST, DHCPV4_TLS,
 };
 
 /// DHCP message type (option 53 value).
@@ -59,24 +59,24 @@ impl Dhcpv4MessageType {
     /// Create a DHCP message type from its wire value.
     pub const fn from_code(code: u8) -> Self {
         match code {
-            DHCP_DISCOVER => Self::Discover,
-            DHCP_OFFER => Self::Offer,
-            DHCP_REQUEST => Self::Request,
-            DHCP_DECLINE => Self::Decline,
-            DHCP_ACK => Self::Ack,
-            DHCP_NAK => Self::Nak,
-            DHCP_RELEASE => Self::Release,
-            DHCP_INFORM => Self::Inform,
-            DHCP_FORCE_RENEW => Self::ForceRenew,
-            DHCP_LEASE_QUERY => Self::LeaseQuery,
-            DHCP_LEASE_UNASSIGNED => Self::LeaseUnassigned,
-            DHCP_LEASE_UNKNOWN => Self::LeaseUnknown,
-            DHCP_LEASE_ACTIVE => Self::LeaseActive,
-            DHCP_BULK_LEASE_QUERY => Self::BulkLeaseQuery,
-            DHCP_LEASE_QUERY_DONE => Self::LeaseQueryDone,
-            DHCP_ACTIVE_LEASE_QUERY => Self::ActiveLeaseQuery,
-            DHCP_LEASE_QUERY_STATUS => Self::LeaseQueryStatus,
-            DHCP_TLS => Self::Dhcpv4Tls,
+            DHCPV4_DISCOVER => Self::Discover,
+            DHCPV4_OFFER => Self::Offer,
+            DHCPV4_REQUEST => Self::Request,
+            DHCPV4_DECLINE => Self::Decline,
+            DHCPV4_ACK => Self::Ack,
+            DHCPV4_NAK => Self::Nak,
+            DHCPV4_RELEASE => Self::Release,
+            DHCPV4_INFORM => Self::Inform,
+            DHCPV4_FORCE_RENEW => Self::ForceRenew,
+            DHCPV4_LEASE_QUERY => Self::LeaseQuery,
+            DHCPV4_LEASE_UNASSIGNED => Self::LeaseUnassigned,
+            DHCPV4_LEASE_UNKNOWN => Self::LeaseUnknown,
+            DHCPV4_LEASE_ACTIVE => Self::LeaseActive,
+            DHCPV4_BULK_LEASE_QUERY => Self::BulkLeaseQuery,
+            DHCPV4_LEASE_QUERY_DONE => Self::LeaseQueryDone,
+            DHCPV4_ACTIVE_LEASE_QUERY => Self::ActiveLeaseQuery,
+            DHCPV4_LEASE_QUERY_STATUS => Self::LeaseQueryStatus,
+            DHCPV4_TLS => Self::Dhcpv4Tls,
             value => Self::Unknown(value),
         }
     }
@@ -84,24 +84,24 @@ impl Dhcpv4MessageType {
     /// Wire value.
     pub const fn code(self) -> u8 {
         match self {
-            Self::Discover => DHCP_DISCOVER,
-            Self::Offer => DHCP_OFFER,
-            Self::Request => DHCP_REQUEST,
-            Self::Decline => DHCP_DECLINE,
-            Self::Ack => DHCP_ACK,
-            Self::Nak => DHCP_NAK,
-            Self::Release => DHCP_RELEASE,
-            Self::Inform => DHCP_INFORM,
-            Self::ForceRenew => DHCP_FORCE_RENEW,
-            Self::LeaseQuery => DHCP_LEASE_QUERY,
-            Self::LeaseUnassigned => DHCP_LEASE_UNASSIGNED,
-            Self::LeaseUnknown => DHCP_LEASE_UNKNOWN,
-            Self::LeaseActive => DHCP_LEASE_ACTIVE,
-            Self::BulkLeaseQuery => DHCP_BULK_LEASE_QUERY,
-            Self::LeaseQueryDone => DHCP_LEASE_QUERY_DONE,
-            Self::ActiveLeaseQuery => DHCP_ACTIVE_LEASE_QUERY,
-            Self::LeaseQueryStatus => DHCP_LEASE_QUERY_STATUS,
-            Self::Dhcpv4Tls => DHCP_TLS,
+            Self::Discover => DHCPV4_DISCOVER,
+            Self::Offer => DHCPV4_OFFER,
+            Self::Request => DHCPV4_REQUEST,
+            Self::Decline => DHCPV4_DECLINE,
+            Self::Ack => DHCPV4_ACK,
+            Self::Nak => DHCPV4_NAK,
+            Self::Release => DHCPV4_RELEASE,
+            Self::Inform => DHCPV4_INFORM,
+            Self::ForceRenew => DHCPV4_FORCE_RENEW,
+            Self::LeaseQuery => DHCPV4_LEASE_QUERY,
+            Self::LeaseUnassigned => DHCPV4_LEASE_UNASSIGNED,
+            Self::LeaseUnknown => DHCPV4_LEASE_UNKNOWN,
+            Self::LeaseActive => DHCPV4_LEASE_ACTIVE,
+            Self::BulkLeaseQuery => DHCPV4_BULK_LEASE_QUERY,
+            Self::LeaseQueryDone => DHCPV4_LEASE_QUERY_DONE,
+            Self::ActiveLeaseQuery => DHCPV4_ACTIVE_LEASE_QUERY,
+            Self::LeaseQueryStatus => DHCPV4_LEASE_QUERY_STATUS,
+            Self::Dhcpv4Tls => DHCPV4_TLS,
             Self::Unknown(value) => value,
         }
     }
@@ -182,8 +182,9 @@ mod message_type_tests {
             "registered message type table must cover every IANA codepoint",
         );
 
-        for (message_type, expected_code) in
-            REGISTERED_DHCPV4_MESSAGE_TYPES.into_iter().zip(REGISTERED_CODES)
+        for (message_type, expected_code) in REGISTERED_DHCPV4_MESSAGE_TYPES
+            .into_iter()
+            .zip(REGISTERED_CODES)
         {
             // enum -> code
             assert_eq!(
@@ -216,8 +217,10 @@ mod message_type_tests {
     #[test]
     fn dhcp_message_type_unknown_values_roundtrip() {
         // 0 and 19..=255 are not registered DHCP message type values.
-        let registered: std::collections::HashSet<u8> =
-            REGISTERED_DHCPV4_MESSAGE_TYPES.iter().map(|m| m.code()).collect();
+        let registered: std::collections::HashSet<u8> = REGISTERED_DHCPV4_MESSAGE_TYPES
+            .iter()
+            .map(|m| m.code())
+            .collect();
 
         for code in 0u8..=255 {
             let message_type = Dhcpv4MessageType::from_code(code);

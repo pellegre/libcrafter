@@ -30,7 +30,9 @@ fn main() -> ExampleResult<()> {
             .src(Ipv4Addr::UNSPECIFIED)
             .dst(Ipv4Addr::BROADCAST)
             .ipv4_protocol(Ipv4Protocol::Udp)
-        / Udp::new().sport(DHCP_CLIENT_PORT).dport(DHCP_SERVER_PORT)
+        / Udp::new()
+            .sport(DHCPV4_CLIENT_PORT)
+            .dport(DHCPV4_SERVER_PORT)
         / dhcp;
     let dhcp = packet
         .layer::<Dhcpv4>()

@@ -53,65 +53,72 @@ use crate::mac::MacAddr;
 use crate::packet::{IntoPacket, Layer, LayerContext, Packet};
 
 pub use constants::{
-    BOOTP_REPLY, BOOTP_REQUEST, DHCP_ACK, DHCP_AUTH_ALGORITHM_HMAC_MD5, DHCP_AUTH_HEADER_LEN,
-    DHCP_AUTH_PROTOCOL_CONFIGURATION_TOKEN, DHCP_AUTH_PROTOCOL_DELAYED,
-    DHCP_AUTH_PROTOCOL_RECONFIGURE_KEY, DHCP_AUTH_RDM_MONOTONIC_COUNTER,
-    DHCP_AUTH_REPLAY_DETECTION_LEN, DHCP_CLIENT_PORT, DHCP_DECLINE, DHCP_DISCOVER,
-    DHCP_FIXED_HEADER_LEN, DHCP_FORCERENEW_NONCE_TYPE_HMAC_MD5, DHCP_FORCERENEW_NONCE_TYPE_NONCE,
-    DHCP_HTYPE_ETHERNET, DHCP_INFORM, DHCP_IPV6_ONLY_PREFERRED_LEN, DHCP_MAGIC_COOKIE,
-    DHCP_MAGIC_COOKIE_LEN, DHCP_MIN_LEN, DHCP_NAK, DHCP_OFFER, DHCP_OPTION_6RD,
-    DHCP_OPTION_ASSOCIATED_IP, DHCP_OPTION_AUTHENTICATION, DHCP_OPTION_BASE_TIME,
-    DHCP_OPTION_BCMCS_DOMAIN_LIST, DHCP_OPTION_BCMCS_IPV4_LIST, DHCP_OPTION_BOOTFILE_NAME,
-    DHCP_OPTION_BROADCAST_ADDRESS, DHCP_OPTION_CAPTIVE_PORTAL, DHCP_OPTION_CLASSLESS_STATIC_ROUTE,
-    DHCP_OPTION_CLIENT_IDENTIFIER, DHCP_OPTION_CLIENT_LAST_TRANSACTION_TIME,
-    DHCP_OPTION_CLIENT_MACHINE_IDENTIFIER, DHCP_OPTION_CLIENT_NDI,
-    DHCP_OPTION_CLIENT_SYSTEM_ARCHITECTURE, DHCP_OPTION_DATA_SOURCE, DHCP_OPTION_DHCP_STATE,
-    DHCP_OPTION_DOMAIN_NAME, DHCP_OPTION_DOMAIN_NAME_SERVER, DHCP_OPTION_DOMAIN_SEARCH,
-    DHCP_OPTION_END, DHCP_OPTION_FORCERENEW_NONCE_CAPABLE, DHCP_OPTION_GEOCONF,
-    DHCP_OPTION_GEOCONF_CIVIC, DHCP_OPTION_GEOLOC, DHCP_OPTION_HOST_NAME,
-    DHCP_OPTION_IPV6_ONLY_PREFERRED, DHCP_OPTION_IP_ADDRESS_LEASE_TIME, DHCP_OPTION_MESSAGE_TYPE,
-    DHCP_OPTION_MUD_URL_V4, DHCP_OPTION_NAME_SERVICE_SEARCH, DHCP_OPTION_OVERLOAD, DHCP_OPTION_PAD,
-    DHCP_OPTION_PARAMETER_REQUEST_LIST, DHCP_OPTION_PCODE, DHCP_OPTION_PXELINUX_CONFIGFILE,
-    DHCP_OPTION_PXELINUX_MAGIC, DHCP_OPTION_PXELINUX_PATHPREFIX, DHCP_OPTION_PXELINUX_REBOOTTIME,
-    DHCP_OPTION_QUERY_END_TIME, DHCP_OPTION_QUERY_START_TIME, DHCP_OPTION_RDNSS_SELECTION,
-    DHCP_OPTION_REBINDING_TIME, DHCP_OPTION_RELAY_AGENT_INFORMATION, DHCP_OPTION_RENEWAL_TIME,
-    DHCP_OPTION_REQUESTED_IP_ADDRESS, DHCP_OPTION_ROUTER, DHCP_OPTION_SERVER_IDENTIFIER,
-    DHCP_OPTION_SIP_SERVERS, DHCP_OPTION_SIP_UA_CONFIG_DOMAINS, DHCP_OPTION_START_TIME_OF_STATE,
-    DHCP_OPTION_STATIC_ROUTE, DHCP_OPTION_STATUS_CODE, DHCP_OPTION_SUBNET_MASK, DHCP_OPTION_TCODE,
-    DHCP_OPTION_TFTP_SERVER_ADDRESS, DHCP_OPTION_TFTP_SERVER_NAME, DHCP_OPTION_USER_CLASS,
-    DHCP_OPTION_V4_DNR, DHCP_OPTION_V4_DOTS_ADDRESS, DHCP_OPTION_V4_DOTS_RI,
-    DHCP_OPTION_V4_PCP_SERVER, DHCP_OPTION_VENDOR_CLASS_IDENTIFIER, DHCP_OPTION_VENDOR_SPECIFIC,
-    DHCP_OPTION_VI_VENDOR_CLASS, DHCP_OPTION_VI_VENDOR_SPECIFIC, DHCP_OVERLOAD_BOTH,
-    DHCP_OVERLOAD_FILE, DHCP_OVERLOAD_SNAME, DHCP_RELAY_FLAG_UNICAST,
-    DHCP_RELAY_SUBOPTION_ACCESS_NETWORK_NAME, DHCP_RELAY_SUBOPTION_ACCESS_POINT_BSSID,
-    DHCP_RELAY_SUBOPTION_ACCESS_POINT_NAME, DHCP_RELAY_SUBOPTION_ACCESS_TECHNOLOGY_TYPE,
-    DHCP_RELAY_SUBOPTION_AUTHENTICATION, DHCP_RELAY_SUBOPTION_CIRCUIT_ID,
-    DHCP_RELAY_SUBOPTION_DOCSIS_DEVICE_CLASS, DHCP_RELAY_SUBOPTION_LINK_SELECTION,
-    DHCP_RELAY_SUBOPTION_OPERATOR_IDENTIFIER, DHCP_RELAY_SUBOPTION_OPERATOR_REALM,
-    DHCP_RELAY_SUBOPTION_RADIUS_ATTRIBUTES, DHCP_RELAY_SUBOPTION_RELAY_AGENT_ID,
-    DHCP_RELAY_SUBOPTION_RELAY_FLAGS, DHCP_RELAY_SUBOPTION_RELAY_SOURCE_PORT,
-    DHCP_RELAY_SUBOPTION_REMOTE_ID, DHCP_RELAY_SUBOPTION_SERVER_ID_OVERRIDE,
-    DHCP_RELAY_SUBOPTION_SUBSCRIBER_ID, DHCP_RELAY_SUBOPTION_VENDOR_SPECIFIC,
-    DHCP_RELAY_SUBOPTION_VSS, DHCP_RELAY_SUBOPTION_VSS_CONTROL, DHCP_RELEASE, DHCP_REQUEST,
-    DHCP_SERVER_PORT, DHCP_VSS_TYPE_GLOBAL_DEFAULT, DHCP_VSS_TYPE_NVT_ASCII, DHCP_VSS_TYPE_VPN_ID,
+    BOOTP_REPLY, BOOTP_REQUEST, DHCPV4_ACK, DHCPV4_AUTH_ALGORITHM_HMAC_MD5, DHCPV4_AUTH_HEADER_LEN,
+    DHCPV4_AUTH_PROTOCOL_CONFIGURATION_TOKEN, DHCPV4_AUTH_PROTOCOL_DELAYED,
+    DHCPV4_AUTH_PROTOCOL_RECONFIGURE_KEY, DHCPV4_AUTH_RDM_MONOTONIC_COUNTER,
+    DHCPV4_AUTH_REPLAY_DETECTION_LEN, DHCPV4_CLIENT_PORT, DHCPV4_DECLINE, DHCPV4_DISCOVER,
+    DHCPV4_FIXED_HEADER_LEN, DHCPV4_FORCERENEW_NONCE_TYPE_HMAC_MD5,
+    DHCPV4_FORCERENEW_NONCE_TYPE_NONCE, DHCPV4_HTYPE_ETHERNET, DHCPV4_INFORM,
+    DHCPV4_IPV6_ONLY_PREFERRED_LEN, DHCPV4_MAGIC_COOKIE, DHCPV4_MAGIC_COOKIE_LEN, DHCPV4_MIN_LEN,
+    DHCPV4_NAK, DHCPV4_OFFER, DHCPV4_OPTION_6RD, DHCPV4_OPTION_ASSOCIATED_IP,
+    DHCPV4_OPTION_AUTHENTICATION, DHCPV4_OPTION_BASE_TIME, DHCPV4_OPTION_BCMCS_DOMAIN_LIST,
+    DHCPV4_OPTION_BCMCS_IPV4_LIST, DHCPV4_OPTION_BOOTFILE_NAME, DHCPV4_OPTION_BROADCAST_ADDRESS,
+    DHCPV4_OPTION_CAPTIVE_PORTAL, DHCPV4_OPTION_CLASSLESS_STATIC_ROUTE,
+    DHCPV4_OPTION_CLIENT_IDENTIFIER, DHCPV4_OPTION_CLIENT_LAST_TRANSACTION_TIME,
+    DHCPV4_OPTION_CLIENT_MACHINE_IDENTIFIER, DHCPV4_OPTION_CLIENT_NDI,
+    DHCPV4_OPTION_CLIENT_SYSTEM_ARCHITECTURE, DHCPV4_OPTION_DATA_SOURCE, DHCPV4_OPTION_DHCP_STATE,
+    DHCPV4_OPTION_DOMAIN_NAME, DHCPV4_OPTION_DOMAIN_NAME_SERVER, DHCPV4_OPTION_DOMAIN_SEARCH,
+    DHCPV4_OPTION_END, DHCPV4_OPTION_FORCERENEW_NONCE_CAPABLE, DHCPV4_OPTION_GEOCONF,
+    DHCPV4_OPTION_GEOCONF_CIVIC, DHCPV4_OPTION_GEOLOC, DHCPV4_OPTION_HOST_NAME,
+    DHCPV4_OPTION_IPV6_ONLY_PREFERRED, DHCPV4_OPTION_IP_ADDRESS_LEASE_TIME,
+    DHCPV4_OPTION_MESSAGE_TYPE, DHCPV4_OPTION_MUD_URL_V4, DHCPV4_OPTION_NAME_SERVICE_SEARCH,
+    DHCPV4_OPTION_OVERLOAD, DHCPV4_OPTION_PAD, DHCPV4_OPTION_PARAMETER_REQUEST_LIST,
+    DHCPV4_OPTION_PCODE, DHCPV4_OPTION_PXELINUX_CONFIGFILE, DHCPV4_OPTION_PXELINUX_MAGIC,
+    DHCPV4_OPTION_PXELINUX_PATHPREFIX, DHCPV4_OPTION_PXELINUX_REBOOTTIME,
+    DHCPV4_OPTION_QUERY_END_TIME, DHCPV4_OPTION_QUERY_START_TIME, DHCPV4_OPTION_RDNSS_SELECTION,
+    DHCPV4_OPTION_REBINDING_TIME, DHCPV4_OPTION_RELAY_AGENT_INFORMATION,
+    DHCPV4_OPTION_RENEWAL_TIME, DHCPV4_OPTION_REQUESTED_IP_ADDRESS, DHCPV4_OPTION_ROUTER,
+    DHCPV4_OPTION_SERVER_IDENTIFIER, DHCPV4_OPTION_SIP_SERVERS,
+    DHCPV4_OPTION_SIP_UA_CONFIG_DOMAINS, DHCPV4_OPTION_START_TIME_OF_STATE,
+    DHCPV4_OPTION_STATIC_ROUTE, DHCPV4_OPTION_STATUS_CODE, DHCPV4_OPTION_SUBNET_MASK,
+    DHCPV4_OPTION_TCODE, DHCPV4_OPTION_TFTP_SERVER_ADDRESS, DHCPV4_OPTION_TFTP_SERVER_NAME,
+    DHCPV4_OPTION_USER_CLASS, DHCPV4_OPTION_V4_DNR, DHCPV4_OPTION_V4_DOTS_ADDRESS,
+    DHCPV4_OPTION_V4_DOTS_RI, DHCPV4_OPTION_V4_PCP_SERVER, DHCPV4_OPTION_VENDOR_CLASS_IDENTIFIER,
+    DHCPV4_OPTION_VENDOR_SPECIFIC, DHCPV4_OPTION_VI_VENDOR_CLASS, DHCPV4_OPTION_VI_VENDOR_SPECIFIC,
+    DHCPV4_OVERLOAD_BOTH, DHCPV4_OVERLOAD_FILE, DHCPV4_OVERLOAD_SNAME, DHCPV4_RELAY_FLAG_UNICAST,
+    DHCPV4_RELAY_SUBOPTION_ACCESS_NETWORK_NAME, DHCPV4_RELAY_SUBOPTION_ACCESS_POINT_BSSID,
+    DHCPV4_RELAY_SUBOPTION_ACCESS_POINT_NAME, DHCPV4_RELAY_SUBOPTION_ACCESS_TECHNOLOGY_TYPE,
+    DHCPV4_RELAY_SUBOPTION_AUTHENTICATION, DHCPV4_RELAY_SUBOPTION_CIRCUIT_ID,
+    DHCPV4_RELAY_SUBOPTION_DOCSIS_DEVICE_CLASS, DHCPV4_RELAY_SUBOPTION_LINK_SELECTION,
+    DHCPV4_RELAY_SUBOPTION_OPERATOR_IDENTIFIER, DHCPV4_RELAY_SUBOPTION_OPERATOR_REALM,
+    DHCPV4_RELAY_SUBOPTION_RADIUS_ATTRIBUTES, DHCPV4_RELAY_SUBOPTION_RELAY_AGENT_ID,
+    DHCPV4_RELAY_SUBOPTION_RELAY_FLAGS, DHCPV4_RELAY_SUBOPTION_RELAY_SOURCE_PORT,
+    DHCPV4_RELAY_SUBOPTION_REMOTE_ID, DHCPV4_RELAY_SUBOPTION_SERVER_ID_OVERRIDE,
+    DHCPV4_RELAY_SUBOPTION_SUBSCRIBER_ID, DHCPV4_RELAY_SUBOPTION_VENDOR_SPECIFIC,
+    DHCPV4_RELAY_SUBOPTION_VSS, DHCPV4_RELAY_SUBOPTION_VSS_CONTROL, DHCPV4_RELEASE, DHCPV4_REQUEST,
+    DHCPV4_SERVER_PORT, DHCPV4_VSS_TYPE_GLOBAL_DEFAULT, DHCPV4_VSS_TYPE_NVT_ASCII,
+    DHCPV4_VSS_TYPE_VPN_ID,
 };
 pub use message::Dhcpv4MessageType;
 pub use option::{
-    decode_dhcpv4_tftp_server_addresses, scan_dhcpv4_option_segments, dhcpv4_typed_option_value,
-    ClientNetworkDeviceInterface, ClientSystemArchitecture, Dhcpv4AuthAlgorithm, Dhcpv4AuthProtocol,
-    Dhcpv4Authentication, Dhcpv4ClasslessRoute, Dhcpv4ClientIdentifier, Dhcpv4ClientUuid, Dhcpv4DataSource,
-    Dhcpv4ForcerenewNonceCapable, Dhcpv4Option, Dhcpv4OptionArea, Dhcpv4OptionCode, Dhcpv4OptionFormat,
-    Dhcpv4OptionKind, Dhcpv4OptionSegment, Dhcpv4OptionValue, Dhcpv4RelayAgentInfo, Dhcpv4RelaySuboption,
-    Dhcpv4RelayVendorSpecific, Dhcpv4ReplayDetectionMethod, Dhcpv4State, Dhcpv4StaticRoute, Dhcpv4StatusCode,
+    decode_dhcpv4_tftp_server_addresses, dhcpv4_typed_option_value, scan_dhcpv4_option_segments,
+    ClientNetworkDeviceInterface, ClientSystemArchitecture, Dhcpv4AuthAlgorithm,
+    Dhcpv4AuthProtocol, Dhcpv4Authentication, Dhcpv4ClasslessRoute, Dhcpv4ClientIdentifier,
+    Dhcpv4ClientUuid, Dhcpv4DataSource, Dhcpv4ForcerenewNonceCapable, Dhcpv4Option,
+    Dhcpv4OptionArea, Dhcpv4OptionCode, Dhcpv4OptionFormat, Dhcpv4OptionKind, Dhcpv4OptionSegment,
+    Dhcpv4OptionValue, Dhcpv4RelayAgentInfo, Dhcpv4RelaySuboption, Dhcpv4RelayVendorSpecific,
+    Dhcpv4ReplayDetectionMethod, Dhcpv4State, Dhcpv4StaticRoute, Dhcpv4StatusCode,
     Dhcpv4StatusCodeOption, Dhcpv4UserClass, Dhcpv4VendorClassData, Dhcpv4VendorIdentifyingOption,
     Dhcpv4VendorSuboption, Dhcpv4VssInfo, OptionOverload, SipServers,
 };
 pub use registry::{
     option_meta, option_name, option_status, Dhcpv4OptionMeta, Dhcpv4OptionStatus,
-    DHCP_OPTION_PRIVATE_USE_END, DHCP_OPTION_PRIVATE_USE_START,
+    DHCPV4_OPTION_PRIVATE_USE_END, DHCPV4_OPTION_PRIVATE_USE_START,
 };
 
-use constants::{DHCP_CHADDR_LEN, DHCP_DEFAULT_PARAMETER_REQUESTS, DHCP_FILE_LEN, DHCP_SNAME_LEN};
+use constants::{
+    DHCPV4_CHADDR_LEN, DHCPV4_DEFAULT_PARAMETER_REQUESTS, DHCPV4_FILE_LEN, DHCPV4_SNAME_LEN,
+};
 use message::dhcpv4_message_type_summary;
 use option::{
     decode_dhcp_option, decode_overload_area_options, encode_dhcp_options,
@@ -183,7 +190,7 @@ impl Dhcpv4 {
     pub fn new() -> Self {
         Self {
             op: Field::defaulted(BOOTP_REQUEST),
-            hardware_type: Field::defaulted(DHCP_HTYPE_ETHERNET),
+            hardware_type: Field::defaulted(DHCPV4_HTYPE_ETHERNET),
             hardware_len: Field::defaulted(6),
             hops: Field::defaulted(0),
             transaction_id: Field::defaulted(0),
@@ -196,7 +203,7 @@ impl Dhcpv4 {
             client_hardware_address: MacAddr::ZERO.octets().to_vec(),
             server_name: Vec::new(),
             boot_file_name: Vec::new(),
-            magic_cookie: Field::defaulted(DHCP_MAGIC_COOKIE),
+            magic_cookie: Field::defaulted(DHCPV4_MAGIC_COOKIE),
             options: Vec::new(),
             file_options: Vec::new(),
             sname_options: Vec::new(),
@@ -208,7 +215,7 @@ impl Dhcpv4 {
         Self::new()
             .client_mac(client_mac)
             .message_type(Dhcpv4MessageType::Discover)
-            .parameter_request_list(DHCP_DEFAULT_PARAMETER_REQUESTS)
+            .parameter_request_list(DHCPV4_DEFAULT_PARAMETER_REQUESTS)
     }
 
     /// Create a DHCP request message for an Ethernet client.
@@ -222,7 +229,7 @@ impl Dhcpv4 {
             .message_type(Dhcpv4MessageType::Request)
             .requested_ip_address(requested_ip)
             .server_identifier(server_identifier)
-            .parameter_request_list(DHCP_DEFAULT_PARAMETER_REQUESTS)
+            .parameter_request_list(DHCPV4_DEFAULT_PARAMETER_REQUESTS)
     }
 
     /// Create a DHCP offer message.
@@ -306,7 +313,7 @@ impl Dhcpv4 {
             .client_mac(client_mac)
             .ciaddr(client_ip)
             .message_type(Dhcpv4MessageType::Inform)
-            .parameter_request_list(DHCP_DEFAULT_PARAMETER_REQUESTS)
+            .parameter_request_list(DHCPV4_DEFAULT_PARAMETER_REQUESTS)
     }
 
     /// Create a DHCP FORCERENEW message (RFC 3203, message type 9).
@@ -478,7 +485,7 @@ impl Dhcpv4 {
         self.client_hardware_address.clear();
         self.client_hardware_address.extend_from_slice(address);
         if !self.hardware_len.is_user_set() {
-            self.hardware_len = Field::defaulted(address.len().min(DHCP_CHADDR_LEN) as u8);
+            self.hardware_len = Field::defaulted(address.len().min(DHCPV4_CHADDR_LEN) as u8);
         }
         self
     }
@@ -662,7 +669,7 @@ impl Dhcpv4 {
 
     /// Hardware type value.
     pub fn hardware_type_value(&self) -> u8 {
-        value_or_copy(&self.hardware_type, DHCP_HTYPE_ETHERNET)
+        value_or_copy(&self.hardware_type, DHCPV4_HTYPE_ETHERNET)
     }
 
     /// Hardware address length value.
@@ -774,7 +781,7 @@ impl Dhcpv4 {
 
     /// Magic cookie value.
     pub fn magic_cookie_value(&self) -> u32 {
-        value_or_copy(&self.magic_cookie, DHCP_MAGIC_COOKIE)
+        value_or_copy(&self.magic_cookie, DHCPV4_MAGIC_COOKIE)
     }
 
     /// DHCP options in the normal options area.
@@ -984,7 +991,7 @@ impl Dhcpv4 {
     /// typed destination/router pairs. Returns `None` when no area carries the
     /// option; a malformed payload surfaces as a structured error.
     pub fn static_routes(&self) -> Option<Result<Vec<Dhcpv4StaticRoute>>> {
-        self.typed_value_in_areas(DHCP_OPTION_STATIC_ROUTE)
+        self.typed_value_in_areas(DHCPV4_OPTION_STATIC_ROUTE)
             .map(|result| {
                 result.map(|value| match value {
                     Dhcpv4OptionValue::StaticRoutes(routes) => routes,
@@ -1000,7 +1007,7 @@ impl Dhcpv4 {
     /// when no area carries the option; an invalid prefix length or truncated
     /// route surfaces as a structured error.
     pub fn classless_static_routes(&self) -> Option<Result<Vec<Dhcpv4ClasslessRoute>>> {
-        self.typed_value_in_areas(DHCP_OPTION_CLASSLESS_STATIC_ROUTE)
+        self.typed_value_in_areas(DHCPV4_OPTION_CLASSLESS_STATIC_ROUTE)
             .map(|result| {
                 result.map(|value| match value {
                     Dhcpv4OptionValue::ClasslessRoutes(routes) => routes,
@@ -1017,7 +1024,7 @@ impl Dhcpv4 {
     /// Returns `None` when no area carries the option; a malformed encoding
     /// surfaces as a structured error.
     pub fn domain_search(&self) -> Option<Result<Vec<String>>> {
-        self.typed_value_in_areas(DHCP_OPTION_DOMAIN_SEARCH)
+        self.typed_value_in_areas(DHCPV4_OPTION_DOMAIN_SEARCH)
             .map(|result| {
                 result.map(|value| match value {
                     Dhcpv4OptionValue::DomainSearch(names) => names,
@@ -1034,7 +1041,7 @@ impl Dhcpv4 {
     /// `None` when no area carries the option; a malformed payload surfaces as a
     /// structured error.
     pub fn sip_servers(&self) -> Option<Result<SipServers>> {
-        self.typed_value_in_areas(DHCP_OPTION_SIP_SERVERS)
+        self.typed_value_in_areas(DHCPV4_OPTION_SIP_SERVERS)
             .map(|result| {
                 result.map(|value| match value {
                     Dhcpv4OptionValue::SipServers(servers) => servers,
@@ -1050,7 +1057,7 @@ impl Dhcpv4 {
     /// internal format is defined by the vendor (option 60); it is returned
     /// verbatim. Returns `None` when no area carries the option.
     pub fn vendor_specific_information(&self) -> Option<Vec<u8>> {
-        self.concatenated_payload(DHCP_OPTION_VENDOR_SPECIFIC)
+        self.concatenated_payload(DHCPV4_OPTION_VENDOR_SPECIFIC)
     }
 
     /// RFC 2132 vendor class identifier (option 60), concatenated across areas.
@@ -1059,7 +1066,7 @@ impl Dhcpv4 {
     /// interpreted by servers; it is returned verbatim. Returns `None` when no
     /// area carries the option.
     pub fn vendor_class_identifier(&self) -> Option<Vec<u8>> {
-        self.concatenated_payload(DHCP_OPTION_VENDOR_CLASS_IDENTIFIER)
+        self.concatenated_payload(DHCPV4_OPTION_VENDOR_CLASS_IDENTIFIER)
     }
 
     /// RFC 2132 TFTP server name (option 66), concatenated across areas.
@@ -1068,7 +1075,7 @@ impl Dhcpv4 {
     /// bytes are returned because the value is not guaranteed UTF-8. Returns
     /// `None` when no area carries the option.
     pub fn tftp_server_name(&self) -> Option<Vec<u8>> {
-        self.concatenated_payload(DHCP_OPTION_TFTP_SERVER_NAME)
+        self.concatenated_payload(DHCPV4_OPTION_TFTP_SERVER_NAME)
     }
 
     /// RFC 2132 bootfile name (option 67), concatenated across areas.
@@ -1076,7 +1083,7 @@ impl Dhcpv4 {
     /// Source: RFC 2132 section 9.5. The payload is an NVT ASCII string returned
     /// as raw bytes. Returns `None` when no area carries the option.
     pub fn bootfile_name(&self) -> Option<Vec<u8>> {
-        self.concatenated_payload(DHCP_OPTION_BOOTFILE_NAME)
+        self.concatenated_payload(DHCPV4_OPTION_BOOTFILE_NAME)
     }
 
     /// RFC 3004 user class (option 77), concatenated across areas.
@@ -1086,7 +1093,7 @@ impl Dhcpv4 {
     /// carries the option; a malformed instance length surfaces as a structured
     /// error.
     pub fn user_class(&self) -> Option<Result<Dhcpv4UserClass>> {
-        self.typed_value_in_areas(DHCP_OPTION_USER_CLASS)
+        self.typed_value_in_areas(DHCPV4_OPTION_USER_CLASS)
             .map(|result| {
                 result.map(|value| match value {
                     Dhcpv4OptionValue::UserClass(user_class) => user_class,
@@ -1103,7 +1110,7 @@ impl Dhcpv4 {
     /// area carries the option; a length that is not a non-zero multiple of two
     /// surfaces as a structured error.
     pub fn client_system_architecture(&self) -> Option<Result<ClientSystemArchitecture>> {
-        self.typed_value_in_areas(DHCP_OPTION_CLIENT_SYSTEM_ARCHITECTURE)
+        self.typed_value_in_areas(DHCPV4_OPTION_CLIENT_SYSTEM_ARCHITECTURE)
             .map(|result| {
                 result.map(|value| match value {
                     Dhcpv4OptionValue::ClientSystemArchitecture(arch) => arch,
@@ -1119,7 +1126,7 @@ impl Dhcpv4 {
     /// Returns `None` when no area carries the option; a length other than three
     /// surfaces as a structured error.
     pub fn client_network_device_interface(&self) -> Option<Result<ClientNetworkDeviceInterface>> {
-        self.typed_value_in_areas(DHCP_OPTION_CLIENT_NDI)
+        self.typed_value_in_areas(DHCPV4_OPTION_CLIENT_NDI)
             .map(|result| {
                 result.map(|value| match value {
                     Dhcpv4OptionValue::ClientNetworkDeviceInterface(ndi) => ndi,
@@ -1135,7 +1142,7 @@ impl Dhcpv4 {
     /// (a 16-octet GUID for type `0`). Returns `None` when no area carries the
     /// option; an empty payload surfaces as a structured error.
     pub fn client_uuid(&self) -> Option<Result<Dhcpv4ClientUuid>> {
-        self.typed_value_in_areas(DHCP_OPTION_CLIENT_MACHINE_IDENTIFIER)
+        self.typed_value_in_areas(DHCPV4_OPTION_CLIENT_MACHINE_IDENTIFIER)
             .map(|result| {
                 result.map(|value| match value {
                     Dhcpv4OptionValue::ClientUuid(uuid) => uuid,
@@ -1155,7 +1162,7 @@ impl Dhcpv4 {
     /// a server echoes back per RFC 6842. Returns `None` when no area carries the
     /// option; a malformed RFC 4361 identifier surfaces as a structured error.
     pub fn client_identifier_value(&self) -> Option<Result<Dhcpv4ClientIdentifier>> {
-        self.typed_value_in_areas(DHCP_OPTION_CLIENT_IDENTIFIER)
+        self.typed_value_in_areas(DHCPV4_OPTION_CLIENT_IDENTIFIER)
             .map(|result| {
                 result.map(|value| match value {
                     Dhcpv4OptionValue::ClientIdentifier(identifier) => identifier,
@@ -1171,7 +1178,7 @@ impl Dhcpv4 {
     /// vendor-class-data instances. Returns `None` when no area carries the
     /// option; a truncated instance surfaces as a structured error.
     pub fn vi_vendor_class(&self) -> Option<Result<Vec<Dhcpv4VendorClassData>>> {
-        self.typed_value_in_areas(DHCP_OPTION_VI_VENDOR_CLASS)
+        self.typed_value_in_areas(DHCPV4_OPTION_VI_VENDOR_CLASS)
             .map(|result| {
                 result.map(|value| match value {
                     Dhcpv4OptionValue::ViVendorClass(instances) => instances,
@@ -1187,7 +1194,7 @@ impl Dhcpv4 {
     /// their nested suboptions. Returns `None` when no area carries the option;
     /// a truncated instance or suboption surfaces as a structured error.
     pub fn vi_vendor_specific(&self) -> Option<Result<Vec<Dhcpv4VendorIdentifyingOption>>> {
-        self.typed_value_in_areas(DHCP_OPTION_VI_VENDOR_SPECIFIC)
+        self.typed_value_in_areas(DHCPV4_OPTION_VI_VENDOR_SPECIFIC)
             .map(|result| {
                 result.map(|value| match value {
                     Dhcpv4OptionValue::ViVendorSpecific(instances) => instances,
@@ -1205,7 +1212,7 @@ impl Dhcpv4 {
     /// preserved as raw code and data. Returns `None` when no area carries the
     /// option; a truncated sub-option surfaces as a structured error.
     pub fn relay_agent_information(&self) -> Option<Result<Dhcpv4RelayAgentInfo>> {
-        self.typed_value_in_areas(DHCP_OPTION_RELAY_AGENT_INFORMATION)
+        self.typed_value_in_areas(DHCPV4_OPTION_RELAY_AGENT_INFORMATION)
             .map(|result| {
                 result.map(|value| match value {
                     Dhcpv4OptionValue::RelayAgentInformation(info) => info,
@@ -1224,7 +1231,7 @@ impl Dhcpv4 {
     /// Returns `None` when no area carries the option; a payload shorter than
     /// the 11-octet header surfaces as a structured error.
     pub fn authentication(&self) -> Option<Result<Dhcpv4Authentication>> {
-        self.typed_value_in_areas(DHCP_OPTION_AUTHENTICATION)
+        self.typed_value_in_areas(DHCPV4_OPTION_AUTHENTICATION)
             .map(|result| {
                 result.map(|value| match value {
                     Dhcpv4OptionValue::Authentication(auth) => auth,
@@ -1245,7 +1252,7 @@ impl Dhcpv4 {
     /// and surfaces the list of supported authentication algorithm octets.
     /// Returns `None` when no area carries the option.
     pub fn forcerenew_nonce_capable(&self) -> Option<Result<Dhcpv4ForcerenewNonceCapable>> {
-        self.typed_value_in_areas(DHCP_OPTION_FORCERENEW_NONCE_CAPABLE)
+        self.typed_value_in_areas(DHCPV4_OPTION_FORCERENEW_NONCE_CAPABLE)
             .map(|result| {
                 result.map(|value| match value {
                     Dhcpv4OptionValue::ForcerenewNonceCapable(value) => value,
@@ -1262,7 +1269,7 @@ impl Dhcpv4 {
     /// when no area carries the option; a length other than four surfaces as a
     /// structured error.
     pub fn client_last_transaction_time(&self) -> Option<Result<u32>> {
-        self.u32_value_in_areas(DHCP_OPTION_CLIENT_LAST_TRANSACTION_TIME)
+        self.u32_value_in_areas(DHCPV4_OPTION_CLIENT_LAST_TRANSACTION_TIME)
     }
 
     /// RFC 4388 associated-ip (option 92), concatenated across areas.
@@ -1271,7 +1278,7 @@ impl Dhcpv4 {
     /// Returns `None` when no area carries the option; a length that is not a
     /// non-zero multiple of four surfaces as a structured error.
     pub fn associated_ip(&self) -> Option<Result<Vec<Ipv4Addr>>> {
-        self.typed_value_in_areas(DHCP_OPTION_ASSOCIATED_IP)
+        self.typed_value_in_areas(DHCPV4_OPTION_ASSOCIATED_IP)
             .map(|result| {
                 result.map(|value| match value {
                     Dhcpv4OptionValue::Ipv4List(addresses) => addresses,
@@ -1287,7 +1294,7 @@ impl Dhcpv4 {
     /// optional status message as raw bytes. Returns `None` when no area carries
     /// the option; an empty payload surfaces as a structured error.
     pub fn status_code(&self) -> Option<Result<Dhcpv4StatusCodeOption>> {
-        self.typed_value_in_areas(DHCP_OPTION_STATUS_CODE)
+        self.typed_value_in_areas(DHCPV4_OPTION_STATUS_CODE)
             .map(|result| {
                 result.map(|value| match value {
                     Dhcpv4OptionValue::StatusCode(status) => status,
@@ -1303,7 +1310,7 @@ impl Dhcpv4 {
     /// carries the option; a length other than four surfaces as a structured
     /// error.
     pub fn base_time(&self) -> Option<Result<u32>> {
-        self.u32_value_in_areas(DHCP_OPTION_BASE_TIME)
+        self.u32_value_in_areas(DHCPV4_OPTION_BASE_TIME)
     }
 
     /// RFC 6926 start-time-of-state (option 153), concatenated across areas.
@@ -1313,7 +1320,7 @@ impl Dhcpv4 {
     /// Returns `None` when no area carries the option; a length other than four
     /// surfaces as a structured error.
     pub fn start_time_of_state(&self) -> Option<Result<u32>> {
-        self.u32_value_in_areas(DHCP_OPTION_START_TIME_OF_STATE)
+        self.u32_value_in_areas(DHCPV4_OPTION_START_TIME_OF_STATE)
     }
 
     /// RFC 6926 query-start-time (option 154), concatenated across areas.
@@ -1323,7 +1330,7 @@ impl Dhcpv4 {
     /// carries the option; a length other than four surfaces as a structured
     /// error.
     pub fn query_start_time(&self) -> Option<Result<u32>> {
-        self.u32_value_in_areas(DHCP_OPTION_QUERY_START_TIME)
+        self.u32_value_in_areas(DHCPV4_OPTION_QUERY_START_TIME)
     }
 
     /// RFC 6926 query-end-time (option 155), concatenated across areas.
@@ -1333,7 +1340,7 @@ impl Dhcpv4 {
     /// carries the option; a length other than four surfaces as a structured
     /// error.
     pub fn query_end_time(&self) -> Option<Result<u32>> {
-        self.u32_value_in_areas(DHCP_OPTION_QUERY_END_TIME)
+        self.u32_value_in_areas(DHCPV4_OPTION_QUERY_END_TIME)
     }
 
     /// RFC 6926 dhcp-state (option 156), concatenated across areas.
@@ -1343,7 +1350,7 @@ impl Dhcpv4 {
     /// area carries the option; a length other than one surfaces as a structured
     /// error.
     pub fn dhcp_state(&self) -> Option<Result<Dhcpv4State>> {
-        self.typed_value_in_areas(DHCP_OPTION_DHCP_STATE)
+        self.typed_value_in_areas(DHCPV4_OPTION_DHCP_STATE)
             .map(|result| {
                 result.map(|value| match value {
                     Dhcpv4OptionValue::Dhcpv4State(state) => state,
@@ -1359,7 +1366,7 @@ impl Dhcpv4 {
     /// are preserved). Returns `None` when no area carries the option; a length
     /// other than one surfaces as a structured error.
     pub fn data_source(&self) -> Option<Result<Dhcpv4DataSource>> {
-        self.typed_value_in_areas(DHCP_OPTION_DATA_SOURCE)
+        self.typed_value_in_areas(DHCPV4_OPTION_DATA_SOURCE)
             .map(|result| {
                 result.map(|value| match value {
                     Dhcpv4OptionValue::DataSource(source) => source,
@@ -1378,7 +1385,7 @@ impl Dhcpv4 {
     /// carries the option; a length that is not a non-zero multiple of four
     /// surfaces as a structured error.
     pub fn tftp_server_addresses(&self) -> Option<Result<Vec<Ipv4Addr>>> {
-        let payload = self.concatenated_payload(DHCP_OPTION_TFTP_SERVER_ADDRESS)?;
+        let payload = self.concatenated_payload(DHCPV4_OPTION_TFTP_SERVER_ADDRESS)?;
         Some(decode_dhcpv4_tftp_server_addresses(&payload))
     }
 
@@ -1387,7 +1394,7 @@ impl Dhcpv4 {
     /// Source: RFC 5071. The payload is the fixed 4-octet magic value; it is
     /// returned verbatim. Returns `None` when no area carries the option.
     pub fn pxelinux_magic(&self) -> Option<Vec<u8>> {
-        self.concatenated_payload(DHCP_OPTION_PXELINUX_MAGIC)
+        self.concatenated_payload(DHCPV4_OPTION_PXELINUX_MAGIC)
     }
 
     /// RFC 5071 PXELINUX configuration file path (option 209), concatenated
@@ -1396,7 +1403,7 @@ impl Dhcpv4 {
     /// Source: RFC 5071. The payload is an NVT ASCII string returned as raw
     /// bytes. Returns `None` when no area carries the option.
     pub fn pxelinux_config_file(&self) -> Option<Vec<u8>> {
-        self.concatenated_payload(DHCP_OPTION_PXELINUX_CONFIGFILE)
+        self.concatenated_payload(DHCPV4_OPTION_PXELINUX_CONFIGFILE)
     }
 
     /// RFC 5071 PXELINUX path prefix (option 210), concatenated across areas.
@@ -1404,7 +1411,7 @@ impl Dhcpv4 {
     /// Source: RFC 5071. The payload is an NVT ASCII string returned as raw
     /// bytes. Returns `None` when no area carries the option.
     pub fn pxelinux_path_prefix(&self) -> Option<Vec<u8>> {
-        self.concatenated_payload(DHCP_OPTION_PXELINUX_PATHPREFIX)
+        self.concatenated_payload(DHCPV4_OPTION_PXELINUX_PATHPREFIX)
     }
 
     /// RFC 5071 PXELINUX reboot time in seconds (option 211), concatenated
@@ -1414,7 +1421,7 @@ impl Dhcpv4 {
     /// Returns `None` when no area carries the option; a length other than four
     /// surfaces as a structured error.
     pub fn pxelinux_reboot_time(&self) -> Option<Result<u32>> {
-        self.typed_value_in_areas(DHCP_OPTION_PXELINUX_REBOOTTIME)
+        self.typed_value_in_areas(DHCPV4_OPTION_PXELINUX_REBOOTTIME)
             .map(|result| {
                 result.map(|value| match value {
                     Dhcpv4OptionValue::U32(seconds) => seconds,
@@ -1521,7 +1528,7 @@ impl Dhcpv4 {
         Ok(Some(encode_overload_area_options(
             "dhcp.file.options",
             &self.file_options,
-            DHCP_FILE_LEN,
+            DHCPV4_FILE_LEN,
         )?))
     }
 
@@ -1533,30 +1540,30 @@ impl Dhcpv4 {
         Ok(Some(encode_overload_area_options(
             "dhcp.sname.options",
             &self.sname_options,
-            DHCP_SNAME_LEN,
+            DHCPV4_SNAME_LEN,
         )?))
     }
 
     fn validate_fixed_fields(&self) -> Result<()> {
-        if self.hardware_len_value() as usize > DHCP_CHADDR_LEN {
+        if self.hardware_len_value() as usize > DHCPV4_CHADDR_LEN {
             return Err(CrafterError::invalid_field_value(
                 "dhcp.hlen",
                 "hardware address length must fit in the 16-byte chaddr field",
             ));
         }
-        if self.client_hardware_address.len() > DHCP_CHADDR_LEN {
+        if self.client_hardware_address.len() > DHCPV4_CHADDR_LEN {
             return Err(CrafterError::invalid_field_value(
                 "dhcp.chaddr",
                 "client hardware address field must be at most 16 bytes",
             ));
         }
-        if self.server_name.len() > DHCP_SNAME_LEN {
+        if self.server_name.len() > DHCPV4_SNAME_LEN {
             return Err(CrafterError::invalid_field_value(
                 "dhcp.sname",
                 "server name field must be at most 64 bytes",
             ));
         }
-        if self.boot_file_name.len() > DHCP_FILE_LEN {
+        if self.boot_file_name.len() > DHCPV4_FILE_LEN {
             return Err(CrafterError::invalid_field_value(
                 "dhcp.file",
                 "boot file name field must be at most 128 bytes",
@@ -1579,7 +1586,7 @@ impl Dhcpv4 {
     }
 
     fn encoded_dhcp_len(&self) -> usize {
-        DHCP_MIN_LEN
+        DHCPV4_MIN_LEN
             + if self.synthetic_option_overload().is_none() {
                 encoded_options_len_lossy(&self.options)
             } else {
@@ -1652,7 +1659,7 @@ impl Layer for Dhcpv4 {
         let file_field = self.encoded_file_field()?;
         let sname_field = self.encoded_sname_field()?;
 
-        out.reserve(DHCP_MIN_LEN + options.len());
+        out.reserve(DHCPV4_MIN_LEN + options.len());
         out.push(self.op_value());
         out.push(self.hardware_type_value());
         out.push(self.hardware_len_value());
@@ -1664,17 +1671,17 @@ impl Layer for Dhcpv4 {
         out.extend_from_slice(&self.your_ip_address_value().octets());
         out.extend_from_slice(&self.server_ip_address_value().octets());
         out.extend_from_slice(&self.gateway_ip_address_value().octets());
-        append_fixed_field(out, &self.client_hardware_address, DHCP_CHADDR_LEN);
+        append_fixed_field(out, &self.client_hardware_address, DHCPV4_CHADDR_LEN);
         // RFC 2131 section 4.1: when overloaded, `sname`/`file` carry their
         // option list (already padded to the fixed width); otherwise they hold
         // the host name / boot file name string.
         match sname_field {
             Some(bytes) => out.extend_from_slice(&bytes),
-            None => append_fixed_field(out, &self.server_name, DHCP_SNAME_LEN),
+            None => append_fixed_field(out, &self.server_name, DHCPV4_SNAME_LEN),
         }
         match file_field {
             Some(bytes) => out.extend_from_slice(&bytes),
-            None => append_fixed_field(out, &self.boot_file_name, DHCP_FILE_LEN),
+            None => append_fixed_field(out, &self.boot_file_name, DHCPV4_FILE_LEN),
         }
         out.extend_from_slice(&self.magic_cookie_value().to_be_bytes());
         out.extend_from_slice(&options);
@@ -1693,35 +1700,35 @@ pub(crate) fn append_dhcp_packet(packet: Packet, bytes: &[u8]) -> Result<Packet>
 
 /// Return true when bytes have enough structure to decode as DHCP.
 pub(crate) fn looks_like_dhcp_payload(bytes: &[u8]) -> bool {
-    bytes.len() >= DHCP_MIN_LEN
-        && bytes[DHCP_FIXED_HEADER_LEN..DHCP_MIN_LEN] == DHCP_MAGIC_COOKIE.to_be_bytes()
+    bytes.len() >= DHCPV4_MIN_LEN
+        && bytes[DHCPV4_FIXED_HEADER_LEN..DHCPV4_MIN_LEN] == DHCPV4_MAGIC_COOKIE.to_be_bytes()
 }
 
 /// Return true when the UDP source/destination pair is a DHCP client/server pair.
 pub(crate) const fn is_dhcp_port_pair(source_port: u16, destination_port: u16) -> bool {
-    matches!(source_port, DHCP_CLIENT_PORT | DHCP_SERVER_PORT)
-        && matches!(destination_port, DHCP_CLIENT_PORT | DHCP_SERVER_PORT)
+    matches!(source_port, DHCPV4_CLIENT_PORT | DHCPV4_SERVER_PORT)
+        && matches!(destination_port, DHCPV4_CLIENT_PORT | DHCPV4_SERVER_PORT)
 }
 
 fn decode_dhcp(bytes: &[u8]) -> Result<Dhcpv4> {
-    if bytes.len() < DHCP_MIN_LEN {
+    if bytes.len() < DHCPV4_MIN_LEN {
         return Err(CrafterError::buffer_too_short(
             "dhcp packet",
-            DHCP_MIN_LEN,
+            DHCPV4_MIN_LEN,
             bytes.len(),
         ));
     }
 
     let hardware_len = bytes[2];
-    if hardware_len as usize > DHCP_CHADDR_LEN {
+    if hardware_len as usize > DHCPV4_CHADDR_LEN {
         return Err(CrafterError::invalid_field_value(
             "dhcp.hlen",
             "hardware address length must fit in the 16-byte chaddr field",
         ));
     }
 
-    let magic_cookie = read_u32_be(&bytes[DHCP_FIXED_HEADER_LEN..DHCP_MIN_LEN])?;
-    if magic_cookie != DHCP_MAGIC_COOKIE {
+    let magic_cookie = read_u32_be(&bytes[DHCPV4_FIXED_HEADER_LEN..DHCPV4_MIN_LEN])?;
+    if magic_cookie != DHCPV4_MAGIC_COOKIE {
         return Err(CrafterError::invalid_field_value(
             "dhcp.magic_cookie",
             "DHCP magic cookie is missing or invalid",
@@ -1731,7 +1738,7 @@ fn decode_dhcp(bytes: &[u8]) -> Result<Dhcpv4> {
     // RFC 2131 section 4.1: interpret the normal options area first so any
     // option-overload option (52) is available before the `sname`/`file`
     // fields are examined.
-    let options = Dhcpv4Option::decode_all(&bytes[DHCP_MIN_LEN..])?;
+    let options = Dhcpv4Option::decode_all(&bytes[DHCPV4_MIN_LEN..])?;
     let overload = find_option_overload(&options);
 
     let mut server_name = bytes[44..108].to_vec();
@@ -1799,12 +1806,12 @@ fn missing_typed_value(code: u8) -> CrafterError {
     CrafterError::invalid_field_value(
         "dhcp.option.value",
         match code {
-            DHCP_OPTION_STATIC_ROUTE => "static route option has no typed value",
-            DHCP_OPTION_CLASSLESS_STATIC_ROUTE => {
+            DHCPV4_OPTION_STATIC_ROUTE => "static route option has no typed value",
+            DHCPV4_OPTION_CLASSLESS_STATIC_ROUTE => {
                 "classless static route option has no typed value"
             }
-            DHCP_OPTION_DOMAIN_SEARCH => "domain search option has no typed value",
-            DHCP_OPTION_SIP_SERVERS => "SIP servers option has no typed value",
+            DHCPV4_OPTION_DOMAIN_SEARCH => "domain search option has no typed value",
+            DHCPV4_OPTION_SIP_SERVERS => "SIP servers option has no typed value",
             _ => "DHCP option has no typed value",
         },
     )
@@ -1824,7 +1831,8 @@ fn hex_bytes(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod dhcp_tests {
     use super::{
-        Dhcpv4, Dhcpv4MessageType, BOOTP_REPLY, DHCP_CLIENT_PORT, DHCP_MAGIC_COOKIE, DHCP_SERVER_PORT,
+        Dhcpv4, Dhcpv4MessageType, BOOTP_REPLY, DHCPV4_CLIENT_PORT, DHCPV4_MAGIC_COOKIE,
+        DHCPV4_SERVER_PORT,
     };
     use crate::{Ipv4, MacAddr, NetworkLayer, Packet, Udp};
     use core::net::Ipv4Addr;
@@ -1856,12 +1864,12 @@ mod dhcp_tests {
         .compile()
         .unwrap();
 
-        assert_eq!(&bytes.as_bytes()[20..22], &DHCP_CLIENT_PORT.to_be_bytes());
-        assert_eq!(&bytes.as_bytes()[22..24], &DHCP_SERVER_PORT.to_be_bytes());
+        assert_eq!(&bytes.as_bytes()[20..22], &DHCPV4_CLIENT_PORT.to_be_bytes());
+        assert_eq!(&bytes.as_bytes()[22..24], &DHCPV4_SERVER_PORT.to_be_bytes());
         let dhcp_start = 20 + 8;
         assert_eq!(
             &bytes.as_bytes()[dhcp_start + 236..dhcp_start + 240],
-            &DHCP_MAGIC_COOKIE.to_be_bytes()
+            &DHCPV4_MAGIC_COOKIE.to_be_bytes()
         );
 
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
@@ -1959,28 +1967,30 @@ mod dhcp_tests {
 #[cfg(test)]
 mod dhcp_malformed {
     use super::{
-        Dhcpv4, Dhcpv4Option, DHCP_FIXED_HEADER_LEN, DHCP_MAGIC_COOKIE, DHCP_MIN_LEN, DHCP_OPTION_END,
-        DHCP_OPTION_MESSAGE_TYPE,
+        Dhcpv4, Dhcpv4Option, DHCPV4_FIXED_HEADER_LEN, DHCPV4_MAGIC_COOKIE, DHCPV4_MIN_LEN,
+        DHCPV4_OPTION_END, DHCPV4_OPTION_MESSAGE_TYPE,
     };
     use crate::{Ipv4, NetworkLayer, Packet, Raw, Udp};
     use core::net::Ipv4Addr;
 
     fn valid_minimal_payload(options: &[u8]) -> Vec<u8> {
-        let mut bytes = vec![0u8; DHCP_MIN_LEN];
+        let mut bytes = vec![0u8; DHCPV4_MIN_LEN];
         bytes[0] = super::BOOTP_REQUEST;
-        bytes[1] = super::DHCP_HTYPE_ETHERNET;
+        bytes[1] = super::DHCPV4_HTYPE_ETHERNET;
         bytes[2] = 6;
-        bytes[DHCP_FIXED_HEADER_LEN..DHCP_MIN_LEN]
-            .copy_from_slice(&DHCP_MAGIC_COOKIE.to_be_bytes());
+        bytes[DHCPV4_FIXED_HEADER_LEN..DHCPV4_MIN_LEN]
+            .copy_from_slice(&DHCPV4_MAGIC_COOKIE.to_be_bytes());
         bytes.extend_from_slice(options);
         bytes
     }
 
     #[test]
     fn invalid_magic_cookie_is_rejected() {
-        let mut payload = valid_minimal_payload(&[DHCP_OPTION_MESSAGE_TYPE, 1, 1, DHCP_OPTION_END]);
+        let mut payload =
+            valid_minimal_payload(&[DHCPV4_OPTION_MESSAGE_TYPE, 1, 1, DHCPV4_OPTION_END]);
         let bogus_cookie = 0xdead_beefu32;
-        payload[DHCP_FIXED_HEADER_LEN..DHCP_MIN_LEN].copy_from_slice(&bogus_cookie.to_be_bytes());
+        payload[DHCPV4_FIXED_HEADER_LEN..DHCPV4_MIN_LEN]
+            .copy_from_slice(&bogus_cookie.to_be_bytes());
 
         let error = Dhcpv4::decode(&payload).unwrap_err();
         assert!(matches!(
@@ -1991,21 +2001,21 @@ mod dhcp_malformed {
 
     #[test]
     fn malformed_option_lengths_are_rejected() {
-        let payload = valid_minimal_payload(&[DHCP_OPTION_MESSAGE_TYPE, 2, 1, DHCP_OPTION_END]);
+        let payload = valid_minimal_payload(&[DHCPV4_OPTION_MESSAGE_TYPE, 2, 1, DHCPV4_OPTION_END]);
 
         assert!(Dhcpv4::decode(&payload).is_err());
     }
 
     #[test]
     fn missing_end_marker_is_rejected() {
-        let payload = valid_minimal_payload(&[DHCP_OPTION_MESSAGE_TYPE, 1, 1]);
+        let payload = valid_minimal_payload(&[DHCPV4_OPTION_MESSAGE_TYPE, 1, 1]);
 
         assert!(Dhcpv4::decode(&payload).is_err());
     }
 
     #[test]
     fn non_padding_after_end_is_rejected() {
-        let payload = valid_minimal_payload(&[DHCP_OPTION_END, 1]);
+        let payload = valid_minimal_payload(&[DHCPV4_OPTION_END, 1]);
 
         assert!(Dhcpv4::decode(&payload).is_err());
     }
@@ -2031,11 +2041,13 @@ mod dhcp_malformed {
 
     #[test]
     fn invalid_builder_lengths_are_rejected() {
-        assert!(Packet::from_layer(Dhcpv4::new().hlen(17)).compile().is_err());
+        assert!(Packet::from_layer(Dhcpv4::new().hlen(17))
+            .compile()
+            .is_err());
         assert!(Packet::from_layer(Dhcpv4::new().chaddr([0u8; 17]))
             .compile()
             .is_err());
-        assert!(Dhcpv4Option::generic(super::DHCP_OPTION_PAD, [])
+        assert!(Dhcpv4Option::generic(super::DHCPV4_OPTION_PAD, [])
             .encode()
             .is_err());
     }
@@ -2044,7 +2056,8 @@ mod dhcp_malformed {
 #[cfg(test)]
 mod dhcp_fixed_header {
     use super::{
-        Dhcpv4, Dhcpv4MessageType, BOOTP_REPLY, DHCP_FIXED_HEADER_LEN, DHCP_MAGIC_COOKIE, DHCP_MIN_LEN,
+        Dhcpv4, Dhcpv4MessageType, BOOTP_REPLY, DHCPV4_FIXED_HEADER_LEN, DHCPV4_MAGIC_COOKIE,
+        DHCPV4_MIN_LEN,
     };
     use crate::error::CrafterError;
     use crate::{MacAddr, Packet};
@@ -2100,8 +2113,8 @@ mod dhcp_fixed_header {
         assert_eq!(&bytes[44..55], b"boot-server");
         assert_eq!(&bytes[108..118], b"pxelinux.0");
         assert_eq!(
-            &bytes[DHCP_FIXED_HEADER_LEN..DHCP_MIN_LEN],
-            &DHCP_MAGIC_COOKIE.to_be_bytes()
+            &bytes[DHCPV4_FIXED_HEADER_LEN..DHCPV4_MIN_LEN],
+            &DHCPV4_MAGIC_COOKIE.to_be_bytes()
         );
 
         // Decode and re-compile: the wire bytes must be reproduced exactly.
@@ -2175,10 +2188,10 @@ mod dhcp_fixed_header {
             CrafterError::InvalidFieldValue { field, .. } if field == "dhcp.hlen"
         ));
 
-        let mut bytes = vec![0u8; DHCP_MIN_LEN];
+        let mut bytes = vec![0u8; DHCPV4_MIN_LEN];
         bytes[2] = 17;
-        bytes[DHCP_FIXED_HEADER_LEN..DHCP_MIN_LEN]
-            .copy_from_slice(&DHCP_MAGIC_COOKIE.to_be_bytes());
+        bytes[DHCPV4_FIXED_HEADER_LEN..DHCPV4_MIN_LEN]
+            .copy_from_slice(&DHCPV4_MAGIC_COOKIE.to_be_bytes());
         let decode_error = Dhcpv4::decode(&bytes).unwrap_err();
         assert!(matches!(
             decode_error,
@@ -2190,8 +2203,9 @@ mod dhcp_fixed_header {
 #[cfg(test)]
 mod dhcp_option_overload {
     use super::{
-        Dhcpv4, Dhcpv4MessageType, Dhcpv4Option, Dhcpv4OptionArea, OptionOverload, DHCP_CLIENT_PORT,
-        DHCP_FILE_LEN, DHCP_MIN_LEN, DHCP_OPTION_OVERLOAD, DHCP_SERVER_PORT, DHCP_SNAME_LEN,
+        Dhcpv4, Dhcpv4MessageType, Dhcpv4Option, Dhcpv4OptionArea, OptionOverload,
+        DHCPV4_CLIENT_PORT, DHCPV4_FILE_LEN, DHCPV4_MIN_LEN, DHCPV4_OPTION_OVERLOAD,
+        DHCPV4_SERVER_PORT, DHCPV4_SNAME_LEN,
     };
     use crate::error::CrafterError;
     use crate::{Ipv4, MacAddr, NetworkLayer, Packet, Udp};
@@ -2200,9 +2214,9 @@ mod dhcp_option_overload {
     // Fixed-field byte ranges within the DHCP message (RFC 2131 section 2):
     // sname[64] starts at offset 44, file[128] starts at offset 108.
     const SNAME_START: usize = 44;
-    const SNAME_END: usize = SNAME_START + DHCP_SNAME_LEN;
+    const SNAME_END: usize = SNAME_START + DHCPV4_SNAME_LEN;
     const FILE_START: usize = 108;
-    const FILE_END: usize = FILE_START + DHCP_FILE_LEN;
+    const FILE_END: usize = FILE_START + DHCPV4_FILE_LEN;
 
     fn compiled_bytes(dhcp: Dhcpv4) -> Vec<u8> {
         Packet::from_layer(dhcp)
@@ -2239,7 +2253,7 @@ mod dhcp_option_overload {
         assert!(parsed
             .options_value()
             .iter()
-            .all(|o| o.code() != DHCP_OPTION_OVERLOAD));
+            .all(|o| o.code() != DHCPV4_OPTION_OVERLOAD));
         assert_eq!(
             Packet::from_layer(parsed).compile().unwrap().as_bytes(),
             bytes
@@ -2327,7 +2341,7 @@ mod dhcp_option_overload {
         // Fixed fields are exactly their fixed widths even when overloaded.
         assert_eq!(
             bytes.len(),
-            DHCP_MIN_LEN + dhcp.encoded_options().unwrap().len()
+            DHCPV4_MIN_LEN + dhcp.encoded_options().unwrap().len()
         );
 
         let parsed = Dhcpv4::decode(&bytes).unwrap();
@@ -2364,22 +2378,28 @@ mod dhcp_option_overload {
 
         // Source-area metadata is exact: scanning each fixed field reports the
         // matching area for every segment.
-        let file_segments =
-            super::scan_dhcpv4_option_segments(Dhcpv4OptionArea::File, &bytes[FILE_START..FILE_END])
-                .unwrap();
-        assert!(file_segments.iter().all(|s| s.area == Dhcpv4OptionArea::File));
+        let file_segments = super::scan_dhcpv4_option_segments(
+            Dhcpv4OptionArea::File,
+            &bytes[FILE_START..FILE_END],
+        )
+        .unwrap();
+        assert!(file_segments
+            .iter()
+            .all(|s| s.area == Dhcpv4OptionArea::File));
         assert_eq!(
             file_segments[0].code_value(),
-            super::DHCP_OPTION_SUBNET_MASK
+            super::DHCPV4_OPTION_SUBNET_MASK
         );
 
-        let sname_segments =
-            super::scan_dhcpv4_option_segments(Dhcpv4OptionArea::Sname, &bytes[SNAME_START..SNAME_END])
-                .unwrap();
+        let sname_segments = super::scan_dhcpv4_option_segments(
+            Dhcpv4OptionArea::Sname,
+            &bytes[SNAME_START..SNAME_END],
+        )
+        .unwrap();
         assert!(sname_segments
             .iter()
             .all(|s| s.area == Dhcpv4OptionArea::Sname));
-        assert_eq!(sname_segments[0].code_value(), super::DHCP_OPTION_ROUTER);
+        assert_eq!(sname_segments[0].code_value(), super::DHCPV4_OPTION_ROUTER);
 
         // Re-encode reproduces the exact wire bytes.
         assert_eq!(
@@ -2471,8 +2491,8 @@ mod dhcp_option_overload {
             .src(Ipv4Addr::new(0, 0, 0, 0))
             .dst(Ipv4Addr::new(255, 255, 255, 255))
             / Udp::new()
-                .source_port(DHCP_CLIENT_PORT)
-                .destination_port(DHCP_SERVER_PORT)
+                .source_port(DHCPV4_CLIENT_PORT)
+                .destination_port(DHCPV4_SERVER_PORT)
             / dhcp;
 
         let bytes = packet.compile().unwrap().as_bytes().to_vec();
@@ -2550,7 +2570,7 @@ mod dhcp_option_overload {
         let count = parsed
             .options_value()
             .iter()
-            .filter(|o| o.code() == DHCP_OPTION_OVERLOAD)
+            .filter(|o| o.code() == DHCPV4_OPTION_OVERLOAD)
             .count();
         assert_eq!(count, 1);
         assert_eq!(parsed.option_overload(), Some(OptionOverload::File));
@@ -2619,7 +2639,7 @@ mod dhcp_option_overload {
         // Overwrite the entire overloaded `file` field with pad bytes so it
         // contains options-area data but no terminating end marker (255).
         for byte in &mut bytes[FILE_START..FILE_END] {
-            *byte = super::DHCP_OPTION_PAD;
+            *byte = super::DHCPV4_OPTION_PAD;
         }
         let error = Dhcpv4::decode(&bytes).unwrap_err();
         assert!(matches!(
@@ -2631,10 +2651,11 @@ mod dhcp_option_overload {
 
 #[cfg(test)]
 mod dhcp_forcerenew {
-    use super::constants::DHCP_FORCE_RENEW;
+    use super::constants::DHCPV4_FORCE_RENEW;
     use super::{
-        Dhcpv4, Dhcpv4AuthAlgorithm, Dhcpv4AuthProtocol, Dhcpv4Authentication, Dhcpv4ForcerenewNonceCapable,
-        Dhcpv4MessageType, Dhcpv4Option, Dhcpv4ReplayDetectionMethod, BOOTP_REPLY,
+        Dhcpv4, Dhcpv4AuthAlgorithm, Dhcpv4AuthProtocol, Dhcpv4Authentication,
+        Dhcpv4ForcerenewNonceCapable, Dhcpv4MessageType, Dhcpv4Option, Dhcpv4ReplayDetectionMethod,
+        BOOTP_REPLY,
     };
     use crate::Packet;
     use core::net::Ipv4Addr;
@@ -2667,7 +2688,9 @@ mod dhcp_forcerenew {
             .message_type(Dhcpv4MessageType::ForceRenew)
             .option(Dhcpv4Option::server_identifier(Ipv4Addr::new(192, 0, 2, 1)))
             .option(Dhcpv4Option::authentication(auth.clone()))
-            .option(Dhcpv4Option::forcerenew_nonce_capable(nonce_capable.clone()));
+            .option(Dhcpv4Option::forcerenew_nonce_capable(
+                nonce_capable.clone(),
+            ));
 
         let compiled = Packet::from_layer(dhcp).compile().unwrap();
         let bytes = compiled.as_bytes().to_vec();
@@ -2678,8 +2701,8 @@ mod dhcp_forcerenew {
             parsed.message_type_value(),
             Some(Dhcpv4MessageType::ForceRenew)
         );
-        assert_eq!(Dhcpv4MessageType::ForceRenew.code(), DHCP_FORCE_RENEW);
-        assert_eq!(DHCP_FORCE_RENEW, 9);
+        assert_eq!(Dhcpv4MessageType::ForceRenew.code(), DHCPV4_FORCE_RENEW);
+        assert_eq!(DHCPV4_FORCE_RENEW, 9);
         assert_eq!(parsed.op_value(), BOOTP_REPLY);
         assert_eq!(parsed.transaction_id_value(), 0xCAFE_F00D);
         assert_eq!(
@@ -2768,7 +2791,10 @@ mod dhcp_message_builders {
         // carrying both requested-address (50) and server-identifier (54).
         let request = roundtrip(Dhcpv4::request(client_mac(), assigned, server()));
         assert_eq!(request.op_value(), BOOTP_REQUEST);
-        assert_eq!(request.message_type_value(), Some(Dhcpv4MessageType::Request));
+        assert_eq!(
+            request.message_type_value(),
+            Some(Dhcpv4MessageType::Request)
+        );
         assert_eq!(request.requested_ip_address_value(), Some(assigned));
         assert_eq!(request.server_identifier_value(), Some(server()));
 
@@ -2776,7 +2802,10 @@ mod dhcp_message_builders {
         // requested-address (50), chosen server in server-identifier (54).
         let decline = roundtrip(Dhcpv4::decline(client_mac(), assigned, server()));
         assert_eq!(decline.op_value(), BOOTP_REQUEST);
-        assert_eq!(decline.message_type_value(), Some(Dhcpv4MessageType::Decline));
+        assert_eq!(
+            decline.message_type_value(),
+            Some(Dhcpv4MessageType::Decline)
+        );
         assert_eq!(decline.requested_ip_address_value(), Some(assigned));
         assert_eq!(decline.server_identifier_value(), Some(server()));
 
@@ -2798,7 +2827,10 @@ mod dhcp_message_builders {
         // DHCPRELEASE (RFC 2131 section 4.4.4): released address in ciaddr.
         let release = roundtrip(Dhcpv4::release(client_mac(), assigned, server()));
         assert_eq!(release.op_value(), BOOTP_REQUEST);
-        assert_eq!(release.message_type_value(), Some(Dhcpv4MessageType::Release));
+        assert_eq!(
+            release.message_type_value(),
+            Some(Dhcpv4MessageType::Release)
+        );
         assert_eq!(release.client_ip_address_value(), assigned);
         assert_eq!(release.server_identifier_value(), Some(server()));
 
@@ -2932,7 +2964,10 @@ mod dhcp_message_builders {
         );
         assert_eq!(parsed.magic_cookie_value(), weird_cookie);
         // The discover message type the constructor set still survives.
-        assert_eq!(parsed.message_type_value(), Some(Dhcpv4MessageType::Discover));
+        assert_eq!(
+            parsed.message_type_value(),
+            Some(Dhcpv4MessageType::Discover)
+        );
     }
 
     /// Round-trip a packet whose magic cookie was deliberately overridden away

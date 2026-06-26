@@ -1821,14 +1821,16 @@ fn dhcp_option_pair(name: &str, value: &str) -> ExampleResult<Dhcpv4Option> {
         "message_type" => Ok(Dhcpv4Option::message_type(dhcpv4_message_type(value))),
         "hostname" | "host_name" => Ok(Dhcpv4Option::host_name(value)),
         "domain_name" => Ok(Dhcpv4Option::domain_name(value)),
-        "requested_ip" | "requested_ip_address" => {
-            Ok(Dhcpv4Option::requested_ip_address(Ipv4Addr::from_str(value)?))
-        }
+        "requested_ip" | "requested_ip_address" => Ok(Dhcpv4Option::requested_ip_address(
+            Ipv4Addr::from_str(value)?,
+        )),
         "server_id" | "server_identifier" => {
             Ok(Dhcpv4Option::server_identifier(Ipv4Addr::from_str(value)?))
         }
         "router" => Ok(Dhcpv4Option::router(parse_ipv4_list(value)?)),
-        "dns" | "domain_name_server" => Ok(Dhcpv4Option::domain_name_server(parse_ipv4_list(value)?)),
+        "dns" | "domain_name_server" => {
+            Ok(Dhcpv4Option::domain_name_server(parse_ipv4_list(value)?))
+        }
         "lease_time" => Ok(Dhcpv4Option::lease_time(value.parse::<u32>()?)),
         _ => Ok(Dhcpv4Option::generic(254, value.as_bytes().to_vec())),
     }

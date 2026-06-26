@@ -14,7 +14,7 @@ the generator's registry-first feature loop runs it exactly once. The legacy
 branch gated on ``"dhcp" in fields`` and mutated ``fields["dhcp"]`` in place;
 that guard is reproduced here.
 
-``DHCP_OPTION_MATRIX_TOKENS`` stays generator-visible because
+``DHCPV4_OPTION_MATRIX_TOKENS`` stays generator-visible because
 ``tools/oracle/tests/test_dhcp_oracle.py`` imports it from ``generator``. It is
 defined here (the owning module) and re-imported back into ``generator`` so the
 test's import keeps working — the same co-locate-and-re-import pattern as the DNS
@@ -119,7 +119,7 @@ def _dhcp_option_domains(ctx: _SamplingContext, domain: object) -> list[object]:
 # classless_static_route, relay_agent, generic) are covered by native libcrafter
 # fixtures rather than this cross-backend matrix; see
 # tools/oracle/specs/layers/dhcp.yaml and features/dhcp-behavior.yaml.
-DHCP_OPTION_MATRIX_TOKENS: tuple[str, ...] = (
+DHCPV4_OPTION_MATRIX_TOKENS: tuple[str, ...] = (
     "message-type=discover",
     "hostname=libcrafter-oracle",
     "domain_name=example.com",
@@ -141,7 +141,7 @@ def _dhcp_option_matrix() -> list[object]:
     for both directions and both DHCP roots.
     """
 
-    return list(DHCP_OPTION_MATRIX_TOKENS)
+    return list(DHCPV4_OPTION_MATRIX_TOKENS)
 
 
 def _apply_dhcp_behavior(fields: JSONObject, *, case: str, behavior: str) -> None:

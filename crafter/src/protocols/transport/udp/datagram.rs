@@ -1,7 +1,7 @@
 use crate::error::{CrafterError, Result};
 use crate::field::Field;
 use crate::packet::{Layer, LayerContext, Packet, Raw, TransportChecksumContext};
-use crate::protocols::dhcp::{Dhcpv4, DHCP_CLIENT_PORT, DHCP_SERVER_PORT};
+use crate::protocols::dhcp::{Dhcpv4, DHCPV4_CLIENT_PORT, DHCPV4_SERVER_PORT};
 use crate::protocols::dns::Dns;
 use crate::protocols::ipv4::IPPROTO_UDP;
 use crate::protocols::quic::Quic;
@@ -67,15 +67,15 @@ impl Udp {
     /// Create a DHCP client-to-server UDP header.
     pub fn dhcp_client() -> Self {
         Self::new()
-            .source_port(DHCP_CLIENT_PORT)
-            .destination_port(DHCP_SERVER_PORT)
+            .source_port(DHCPV4_CLIENT_PORT)
+            .destination_port(DHCPV4_SERVER_PORT)
     }
 
     /// Create a DHCP server-to-client UDP header.
     pub fn dhcp_server() -> Self {
         Self::new()
-            .source_port(DHCP_SERVER_PORT)
-            .destination_port(DHCP_CLIENT_PORT)
+            .source_port(DHCPV4_SERVER_PORT)
+            .destination_port(DHCPV4_CLIENT_PORT)
     }
 
     /// Set the source port.

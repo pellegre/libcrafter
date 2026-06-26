@@ -1619,8 +1619,8 @@ pub fn capture_filter(plan: &ProbePlan) -> String {
                 plan.expected_reply_destination_ipv4
                     .as_deref()
                     .unwrap_or(""),
-                plan.destination_port.unwrap_or(DHCP_SERVER_PORT),
-                plan.source_port.unwrap_or(DHCP_CLIENT_PORT),
+                plan.destination_port.unwrap_or(DHCPV4_SERVER_PORT),
+                plan.source_port.unwrap_or(DHCPV4_CLIENT_PORT),
             )
         }
         "udp-echo-empty"

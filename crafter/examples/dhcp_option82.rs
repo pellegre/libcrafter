@@ -54,7 +54,9 @@ fn main() -> ExampleResult<()> {
             .src(giaddr)
             .dst(Ipv4Addr::BROADCAST)
             .ipv4_protocol(Ipv4Protocol::Udp)
-        / Udp::new().sport(DHCP_SERVER_PORT).dport(DHCP_SERVER_PORT)
+        / Udp::new()
+            .sport(DHCPV4_SERVER_PORT)
+            .dport(DHCPV4_SERVER_PORT)
         / dhcp;
 
     let bytes = packet.compile()?;

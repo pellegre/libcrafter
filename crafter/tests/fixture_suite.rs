@@ -7,32 +7,32 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::{Path, PathBuf};
 
 use crafter::core::{
-    Ah, Arp, Bgp, Dhcpv4, Dhcpv4MessageType, Dhcpv4Option, Dhcpv4RelayAgentInfo, Dhcpv4RelaySuboption, Dns,
-    DnsName, DnsRecord, DnsRecordData, Dot11, Dot11DataSubtype, Dot11ManagementSubtype, Dscp,
-    Eapol, EapolKey, Ecn, EdnsOption, Esp, Ethernet, IcmpKind, Icmpv4, Icmpv6, Igmp,
-    IgmpExtensionType, IgmpGroupRecord, IgmpQuery, IgmpRecordType, IgmpReport, IgmpType, IkeHeader,
-    IkeKePayload, IkeNoncePayload, IkeSaPayload, Ipv4, Ipv4ChecksumStatus, Ipv4Option, Ipv6,
-    Ipv6DestinationOptionsHeader, Ipv6FragmentHeader, Ipv6FragmentHeaderStatus,
-    Ipv6HopByHopOptionsHeader, Ipv6MobileRoutingHeader, Ipv6MobileRoutingHeaderStatus, Ipv6Option,
-    Ipv6RoutingHeader, Ipv6RoutingTypeStatus, Ipv6SegmentRoutingHeader, Layer, LinkType, LinuxSll,
-    LlcSnap, MacAddr, NetworkLayer, NullByteOrder, NullLoopback, OptionOverload,
-    OspfChecksumStatus, Ospfv2, Ospfv3, Packet, Quic, QuicFrame, QuicPacket,
-    QuicTransportParameter, QuicUnknownFrame, QuicVarInt, Radiotap, Raw, Rip, Ripng, Snmp, Tcp,
-    TcpOption, TcpSackBlock, Udp, UdpChecksumStatus, UdpOption, UdpOptionStatus, UdpOptions, Vlan,
-    ARP_HRD_INFINIBAND, BOOTP_REQUEST, DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_CLASS_IN,
-    DNS_EDNS_DEFAULT_UDP_PAYLOAD_SIZE, DNS_EDNS_OPTION_COOKIE, DNS_EDNS_OPTION_NSID,
-    DNS_FLAG_AUTHORITATIVE, DNS_FLAG_QR_RESPONSE, DNS_FLAG_RECURSION_DESIRED, DNS_SVCB_KEY_ALPN,
-    DNS_SVCB_KEY_IPV4HINT, DNS_SVCB_KEY_IPV6HINT, DNS_SVCB_KEY_PORT, DNS_TYPE_A, DNS_TYPE_AAAA,
-    DNS_TYPE_CNAME, DNS_TYPE_DNSKEY, DNS_TYPE_DS, DNS_TYPE_HTTPS, DNS_TYPE_NS, DNS_TYPE_NSEC,
-    DNS_TYPE_NSEC3, DNS_TYPE_OPT, DNS_TYPE_RRSIG, DNS_TYPE_SOA, DNS_TYPE_SRV, DNS_TYPE_SVCB,
-    ETHERTYPE_ARP, ETHERTYPE_EAPOL, ETHERTYPE_IPV4, ETHERTYPE_VLAN, ICMPV6_ECHO_REQUEST,
-    ICMPV6_TIME_EXCEEDED, ICMP_DESTINATION_UNREACHABLE, ICMP_ECHO_REQUEST, IGMP_FIXED_HEADER_LEN,
-    IGMP_QUERY_CODE_V1, IGMP_TYPE_UNASSIGNED_FIRST, IPPROTO_ICMP, IPPROTO_ICMPV6, IPPROTO_IGMP,
-    IPPROTO_IPV6_DSTOPTS, IPPROTO_IPV6_EXPERIMENTAL_1, IPPROTO_IPV6_FRAGMENT, IPPROTO_IPV6_HOPOPTS,
-    IPPROTO_IPV6_ROUTE, IPPROTO_TCP, IPPROTO_UDP, IPV4_FLAG_DONT_FRAGMENT,
-    IPV4_FLAG_MORE_FRAGMENTS, IPV4_FLAG_RESERVED, IPV6_ROUTING_TYPE_MOBILE,
-    IPV6_ROUTING_TYPE_SEGMENT, QUIC_VERSION_1, QUIC_VERSION_2, SNMP_PORT, TCP_FLAG_ACK,
-    TCP_FLAG_PSH, TCP_FLAG_SYN, UDP_HEADER_LEN, UDP_OPTION_EOL, UDP_OPTION_NOP,
+    Ah, Arp, Bgp, Dhcpv4, Dhcpv4MessageType, Dhcpv4Option, Dhcpv4RelayAgentInfo,
+    Dhcpv4RelaySuboption, Dns, DnsName, DnsRecord, DnsRecordData, Dot11, Dot11DataSubtype,
+    Dot11ManagementSubtype, Dscp, Eapol, EapolKey, Ecn, EdnsOption, Esp, Ethernet, IcmpKind,
+    Icmpv4, Icmpv6, Igmp, IgmpExtensionType, IgmpGroupRecord, IgmpQuery, IgmpRecordType,
+    IgmpReport, IgmpType, IkeHeader, IkeKePayload, IkeNoncePayload, IkeSaPayload, Ipv4,
+    Ipv4ChecksumStatus, Ipv4Option, Ipv6, Ipv6DestinationOptionsHeader, Ipv6FragmentHeader,
+    Ipv6FragmentHeaderStatus, Ipv6HopByHopOptionsHeader, Ipv6MobileRoutingHeader,
+    Ipv6MobileRoutingHeaderStatus, Ipv6Option, Ipv6RoutingHeader, Ipv6RoutingTypeStatus,
+    Ipv6SegmentRoutingHeader, Layer, LinkType, LinuxSll, LlcSnap, MacAddr, NetworkLayer,
+    NullByteOrder, NullLoopback, OptionOverload, OspfChecksumStatus, Ospfv2, Ospfv3, Packet, Quic,
+    QuicFrame, QuicPacket, QuicTransportParameter, QuicUnknownFrame, QuicVarInt, Radiotap, Raw,
+    Rip, Ripng, Snmp, Tcp, TcpOption, TcpSackBlock, Udp, UdpChecksumStatus, UdpOption,
+    UdpOptionStatus, UdpOptions, Vlan, ARP_HRD_INFINIBAND, BOOTP_REQUEST, DHCPV4_CLIENT_PORT,
+    DHCPV4_SERVER_PORT, DNS_CLASS_IN, DNS_EDNS_DEFAULT_UDP_PAYLOAD_SIZE, DNS_EDNS_OPTION_COOKIE,
+    DNS_EDNS_OPTION_NSID, DNS_FLAG_AUTHORITATIVE, DNS_FLAG_QR_RESPONSE, DNS_FLAG_RECURSION_DESIRED,
+    DNS_SVCB_KEY_ALPN, DNS_SVCB_KEY_IPV4HINT, DNS_SVCB_KEY_IPV6HINT, DNS_SVCB_KEY_PORT, DNS_TYPE_A,
+    DNS_TYPE_AAAA, DNS_TYPE_CNAME, DNS_TYPE_DNSKEY, DNS_TYPE_DS, DNS_TYPE_HTTPS, DNS_TYPE_NS,
+    DNS_TYPE_NSEC, DNS_TYPE_NSEC3, DNS_TYPE_OPT, DNS_TYPE_RRSIG, DNS_TYPE_SOA, DNS_TYPE_SRV,
+    DNS_TYPE_SVCB, ETHERTYPE_ARP, ETHERTYPE_EAPOL, ETHERTYPE_IPV4, ETHERTYPE_VLAN,
+    ICMPV6_ECHO_REQUEST, ICMPV6_TIME_EXCEEDED, ICMP_DESTINATION_UNREACHABLE, ICMP_ECHO_REQUEST,
+    IGMP_FIXED_HEADER_LEN, IGMP_QUERY_CODE_V1, IGMP_TYPE_UNASSIGNED_FIRST, IPPROTO_ICMP,
+    IPPROTO_ICMPV6, IPPROTO_IGMP, IPPROTO_IPV6_DSTOPTS, IPPROTO_IPV6_EXPERIMENTAL_1,
+    IPPROTO_IPV6_FRAGMENT, IPPROTO_IPV6_HOPOPTS, IPPROTO_IPV6_ROUTE, IPPROTO_TCP, IPPROTO_UDP,
+    IPV4_FLAG_DONT_FRAGMENT, IPV4_FLAG_MORE_FRAGMENTS, IPV4_FLAG_RESERVED,
+    IPV6_ROUTING_TYPE_MOBILE, IPV6_ROUTING_TYPE_SEGMENT, QUIC_VERSION_1, QUIC_VERSION_2, SNMP_PORT,
+    TCP_FLAG_ACK, TCP_FLAG_PSH, TCP_FLAG_SYN, UDP_HEADER_LEN, UDP_OPTION_EOL, UDP_OPTION_NOP,
 };
 use crafter::protocols::igmp::IgmpExtension;
 use crafter::wire::backend::pcap::{
@@ -560,7 +560,11 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         path: "bytes/dhcp-option-overload-file-sname.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/dhcp-option-overload-file-sname.hex")),
         target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
-        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Udp, ExpectedLayer::Dhcpv4],
+        expected_layers: &[
+            ExpectedLayer::Ipv4,
+            ExpectedLayer::Udp,
+            ExpectedLayer::Dhcpv4,
+        ],
         preserve_exact_bytes: true,
         summary_path: None,
     },
@@ -569,7 +573,11 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         path: "bytes/dhcp-rfc3396-long-option.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/dhcp-rfc3396-long-option.hex")),
         target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
-        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Udp, ExpectedLayer::Dhcpv4],
+        expected_layers: &[
+            ExpectedLayer::Ipv4,
+            ExpectedLayer::Udp,
+            ExpectedLayer::Dhcpv4,
+        ],
         preserve_exact_bytes: true,
         summary_path: None,
     },
@@ -578,7 +586,11 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         path: "bytes/dhcp-relay-option82.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/dhcp-relay-option82.hex")),
         target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
-        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Udp, ExpectedLayer::Dhcpv4],
+        expected_layers: &[
+            ExpectedLayer::Ipv4,
+            ExpectedLayer::Udp,
+            ExpectedLayer::Dhcpv4,
+        ],
         preserve_exact_bytes: true,
         summary_path: None,
     },
@@ -1294,7 +1306,11 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         path: "bytes/ipv4-udp-dhcp-discover.hex",
         contents: FixtureContents::Hex(fixture_str!("bytes/ipv4-udp-dhcp-discover.hex")),
         target: FixtureDecodeTarget::Packet(PacketDecodeTarget::L3(NetworkLayer::Ipv4)),
-        expected_layers: &[ExpectedLayer::Ipv4, ExpectedLayer::Udp, ExpectedLayer::Dhcpv4],
+        expected_layers: &[
+            ExpectedLayer::Ipv4,
+            ExpectedLayer::Udp,
+            ExpectedLayer::Dhcpv4,
+        ],
         preserve_exact_bytes: true,
         summary_path: Some("summaries/ipv4-udp-dhcp-discover.summary.txt"),
     },
@@ -4686,8 +4702,8 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
             assert_eq!(ipv4.protocol_value(), IPPROTO_UDP);
 
             let udp = expect_layer::<Udp>(case, packet);
-            assert_eq!(udp.source_port_value(), DHCP_CLIENT_PORT);
-            assert_eq!(udp.destination_port_value(), DHCP_SERVER_PORT);
+            assert_eq!(udp.source_port_value(), DHCPV4_CLIENT_PORT);
+            assert_eq!(udp.destination_port_value(), DHCPV4_SERVER_PORT);
 
             let dhcp = expect_layer::<Dhcpv4>(case, packet);
             assert_eq!(dhcp.op_value(), BOOTP_REQUEST);

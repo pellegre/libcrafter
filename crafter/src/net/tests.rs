@@ -712,9 +712,9 @@ mod reply_matching {
     use std::net::{Ipv4Addr, Ipv6Addr};
 
     use crate::{
-        Arp, ArpOperation, Dhcpv4, Dhcpv4ClientIdentifier, Dhcpv4MessageType, Dns, DnsRecord, Icmpv4,
-        Icmpv6, IntoPacket, Ipv4, Ipv6, MacAddr, Packet, Raw, Tcp, Udp, DNS_TYPE_A, TCP_FLAG_ACK,
-        TCP_FLAG_RST, TCP_FLAG_SYN,
+        Arp, ArpOperation, Dhcpv4, Dhcpv4ClientIdentifier, Dhcpv4MessageType, Dns, DnsRecord,
+        Icmpv4, Icmpv6, IntoPacket, Ipv4, Ipv6, MacAddr, Packet, Raw, Tcp, Udp, DNS_TYPE_A,
+        TCP_FLAG_ACK, TCP_FLAG_RST, TCP_FLAG_SYN,
     };
 
     use crate::net::{reply_matches, ReplyMatcher};
@@ -1172,18 +1172,18 @@ mod dhcp_udp_binding {
         // 1. A payload long enough for the fixed header plus cookie region but
         //    with the wrong four magic-cookie octets (here a
         //    plausible-but-not-DHCP application record) must not bind to DHCP.
-        //    `DHCP_MIN_LEN` is the fixed header (236) plus the 4 cookie octets;
+        //    `DHCPV4_MIN_LEN` is the fixed header (236) plus the 4 cookie octets;
         //    overwriting those last four with non-cookie bytes is enough to fail
         //    the magic-cookie gate.
-        let mut not_dhcp = vec![0u8; crate::DHCP_MIN_LEN];
-        let cookie_offset = crate::DHCP_MIN_LEN - 4;
+        let mut not_dhcp = vec![0u8; crate::DHCPV4_MIN_LEN];
+        let cookie_offset = crate::DHCPV4_MIN_LEN - 4;
         not_dhcp[cookie_offset..].copy_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF]);
         let wrong_cookie = Ipv4::new()
             .src(Ipv4Addr::new(192, 0, 2, 9))
             .dst(Ipv4Addr::new(192, 0, 2, 1))
             / Udp::new()
-                .sport(crate::DHCP_CLIENT_PORT)
-                .dport(crate::DHCP_SERVER_PORT)
+                .sport(crate::DHCPV4_CLIENT_PORT)
+                .dport(crate::DHCPV4_SERVER_PORT)
             / Raw::from_bytes(not_dhcp);
         let decoded = Packet::decode_from_l3(
             NetworkLayer::Ipv4,
@@ -1202,8 +1202,8 @@ mod dhcp_udp_binding {
             .src(Ipv4Addr::new(192, 0, 2, 1))
             .dst(Ipv4Addr::new(192, 0, 2, 9))
             / Udp::new()
-                .sport(crate::DHCP_SERVER_PORT)
-                .dport(crate::DHCP_CLIENT_PORT)
+                .sport(crate::DHCPV4_SERVER_PORT)
+                .dport(crate::DHCPV4_CLIENT_PORT)
             / Raw::from("not-dhcp");
         let decoded_short =
             Packet::decode_from_l3(NetworkLayer::Ipv4, short.compile().unwrap().as_bytes())

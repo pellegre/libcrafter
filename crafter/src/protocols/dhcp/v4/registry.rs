@@ -48,9 +48,9 @@ pub struct Dhcpv4OptionMeta {
 /// Lowest private-use DHCPv4 option code (inclusive).
 ///
 /// Source: IANA registry rows "224-254 Reserved (Private Use)".
-pub const DHCP_OPTION_PRIVATE_USE_START: u8 = 224;
+pub const DHCPV4_OPTION_PRIVATE_USE_START: u8 = 224;
 /// Highest private-use DHCPv4 option code (inclusive).
-pub const DHCP_OPTION_PRIVATE_USE_END: u8 = 254;
+pub const DHCPV4_OPTION_PRIVATE_USE_END: u8 = 254;
 
 /// Return the registry metadata for a DHCPv4 option code.
 ///
@@ -61,7 +61,7 @@ pub const fn option_meta(code: u8) -> Dhcpv4OptionMeta {
     if let Some(meta) = assigned_meta(code) {
         return meta;
     }
-    if code >= DHCP_OPTION_PRIVATE_USE_START && code <= DHCP_OPTION_PRIVATE_USE_END {
+    if code >= DHCPV4_OPTION_PRIVATE_USE_START && code <= DHCPV4_OPTION_PRIVATE_USE_END {
         return Dhcpv4OptionMeta {
             code,
             name: "Reserved (Private Use)",
