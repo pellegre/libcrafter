@@ -13,7 +13,11 @@ use crate::{CrafterError, Result};
 
 use super::constants::{quic_version_label, quic_version_status, QUIC_VERSION_1, QUIC_VERSION_2};
 use super::frame::QuicFrame;
-use super::header::{classify_quic_header, QuicHeaderClassification, QuicLongPacketKind};
+use super::header::{
+    classify_quic_header, QuicHeaderClassification, QuicLongPacketKind, QUIC_FIXED_BIT_MASK,
+    QUIC_HEADER_FORM_MASK, QUIC_SHORT_KEY_PHASE_MASK, QUIC_SHORT_RESERVED_BITS_MASK,
+    QUIC_SHORT_SPIN_BIT_MASK,
+};
 use super::packet_number::{header_bits_for_len, len_from_header_bits, QuicPacketNumber};
 use super::varint::{encoded_len_from_prefix, QuicVarInt};
 use super::QuicConnectionId;
@@ -213,6 +217,7 @@ pub struct QuicPacket {
     version_negotiation: Option<QuicVersionNegotiationPacket>,
     retry: Option<QuicRetryPacket>,
     long_header: Option<QuicLongHeaderPacket>,
+    short_header: Option<QuicShortHeaderPacket>,
 }
 
 impl QuicPacket {
@@ -223,6 +228,7 @@ impl QuicPacket {
             version_negotiation: None,
             retry: None,
             long_header: None,
+            short_header: None,
         }
     }
 
@@ -233,6 +239,7 @@ impl QuicPacket {
             version_negotiation: Some(packet),
             retry: None,
             long_header: None,
+            short_header: None,
         }
     }
 
@@ -243,6 +250,7 @@ impl QuicPacket {
             version_negotiation: None,
             retry: Some(packet),
             long_header: None,
+            short_header: None,
         }
     }
 
@@ -253,6 +261,18 @@ impl QuicPacket {
             version_negotiation: None,
             retry: None,
             long_header: Some(packet),
+            short_header: None,
+        }
+    }
+
+    /// Preserve a decoded short-header packet entry.
+    pub fn from_short_header(packet: QuicShortHeaderPacket) -> Self {
+        Self {
+            bytes: packet.as_bytes().to_vec(),
+            version_negotiation: None,
+            retry: None,
+            long_header: None,
+            short_header: Some(packet),
         }
     }
 
@@ -270,6 +290,7 @@ impl QuicPacket {
                     version_negotiation: Some(version_negotiation),
                     retry: None,
                     long_header: None,
+                    short_header: None,
                 })
             }
             QuicHeaderClassification::LongHeader {
@@ -282,6 +303,7 @@ impl QuicPacket {
                     version_negotiation: None,
                     retry: Some(retry),
                     long_header: None,
+                    short_header: None,
                 })
             }
             QuicHeaderClassification::LongHeader {
@@ -300,6 +322,15 @@ impl QuicPacket {
             }
             _ => Ok(Self::from_bytes(bytes)),
         }
+    }
+
+    /// Decode a short-header packet when caller context supplies the DCID length.
+    pub fn decode_short_header(
+        bytes: impl AsRef<[u8]>,
+        destination_connection_id_len: usize,
+    ) -> Result<Self> {
+        QuicShortHeaderPacket::decode(bytes, destination_connection_id_len)
+            .map(Self::from_short_header)
     }
 
     /// Return the decoded Version Negotiation packet, when this packet is one.
@@ -332,6 +363,16 @@ impl QuicPacket {
         self.long_header.is_some()
     }
 
+    /// Return the decoded short-header packet, when caller context supplied DCID length.
+    pub fn short_header(&self) -> Option<&QuicShortHeaderPacket> {
+        self.short_header.as_ref()
+    }
+
+    /// Return true when this packet is a decoded short-header packet.
+    pub fn is_short_header(&self) -> bool {
+        self.short_header.is_some()
+    }
+
     /// Borrow the preserved packet bytes.
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes
@@ -358,6 +399,9 @@ impl QuicPacket {
         if let Some(long_header) = &self.long_header {
             return long_header.summary();
         }
+        if let Some(short_header) = &self.short_header {
+            return short_header.summary();
+        }
         match classify_quic_header(&self.bytes) {
             Ok(classification) => {
                 format!("raw_len={} {}", self.bytes.len(), classification.summary())
@@ -377,6 +421,9 @@ impl QuicPacket {
         if let Some(long_header) = &self.long_header {
             return long_header.inspection_fields();
         }
+        if let Some(short_header) = &self.short_header {
+            return short_header.inspection_fields();
+        }
         let mut fields = vec![
             ("raw_len", self.bytes.len().to_string()),
             ("raw_bytes", hex_bytes(&self.bytes)),
@@ -390,6 +437,199 @@ impl QuicPacket {
         }
         fields
     }
+}
+
+/// Decoded QUIC short-header packet with caller-supplied DCID length.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuicShortHeaderPacket {
+    first_byte: u8,
+    fixed_bit: bool,
+    spin_bit: bool,
+    reserved_bits: u8,
+    key_phase: bool,
+    destination_connection_id: QuicConnectionId,
+    packet_number: QuicPacketNumber,
+    packet_number_bytes: Vec<u8>,
+    protected_payload: Vec<u8>,
+    raw: Vec<u8>,
+}
+
+impl QuicShortHeaderPacket {
+    /// Decode a short-header packet when caller or registry context supplies DCID length.
+    pub fn decode(bytes: impl AsRef<[u8]>, destination_connection_id_len: usize) -> Result<Self> {
+        let bytes = bytes.as_ref();
+        let first_byte = *bytes
+            .first()
+            .ok_or_else(|| CrafterError::buffer_too_short("quic.short_header", 1, bytes.len()))?;
+        if first_byte & QUIC_HEADER_FORM_MASK != 0 {
+            return Err(CrafterError::invalid_field_value(
+                "quic.short_header",
+                "packet is not a short-header packet",
+            ));
+        }
+
+        let dcid_start = 1usize;
+        let dcid_end = dcid_start
+            .checked_add(destination_connection_id_len)
+            .ok_or_else(|| short_header_length_overflow_error())?;
+        if bytes.len() < dcid_end {
+            return Err(CrafterError::buffer_too_short(
+                "quic.short_header.dcid",
+                dcid_end,
+                bytes.len(),
+            ));
+        }
+
+        let packet_number_len = len_from_header_bits(first_byte);
+        let packet_number_start = dcid_end;
+        let protected_payload_start = packet_number_start
+            .checked_add(packet_number_len)
+            .ok_or_else(|| short_header_length_overflow_error())?;
+        if bytes.len() < protected_payload_start {
+            return Err(CrafterError::buffer_too_short(
+                "quic.short_header.packet_number",
+                protected_payload_start,
+                bytes.len(),
+            ));
+        }
+        let (packet_number, consumed) = QuicPacketNumber::decode(
+            &bytes[packet_number_start..protected_payload_start],
+            packet_number_len,
+        )?;
+        debug_assert_eq!(consumed, packet_number_len);
+
+        Ok(Self {
+            first_byte,
+            fixed_bit: first_byte & QUIC_FIXED_BIT_MASK != 0,
+            spin_bit: first_byte & QUIC_SHORT_SPIN_BIT_MASK != 0,
+            reserved_bits: (first_byte & QUIC_SHORT_RESERVED_BITS_MASK) >> 3,
+            key_phase: first_byte & QUIC_SHORT_KEY_PHASE_MASK != 0,
+            destination_connection_id: QuicConnectionId::from_bytes(&bytes[dcid_start..dcid_end]),
+            packet_number,
+            packet_number_bytes: bytes[packet_number_start..protected_payload_start].to_vec(),
+            protected_payload: bytes[protected_payload_start..].to_vec(),
+            raw: bytes.to_vec(),
+        })
+    }
+
+    /// Raw first byte, including protected packet-type-specific bits.
+    pub const fn first_byte(&self) -> u8 {
+        self.first_byte
+    }
+
+    /// QUIC/fixed bit value.
+    pub const fn fixed_bit(&self) -> bool {
+        self.fixed_bit
+    }
+
+    /// Short-header spin bit value.
+    pub const fn spin_bit(&self) -> bool {
+        self.spin_bit
+    }
+
+    /// Short-header reserved bits.
+    pub const fn reserved_bits(&self) -> u8 {
+        self.reserved_bits
+    }
+
+    /// Short-header key phase bit.
+    pub const fn key_phase(&self) -> bool {
+        self.key_phase
+    }
+
+    /// Borrow the Destination Connection ID.
+    pub fn destination_connection_id(&self) -> &QuicConnectionId {
+        &self.destination_connection_id
+    }
+
+    /// Decoded truncated packet-number value.
+    pub const fn packet_number(&self) -> QuicPacketNumber {
+        self.packet_number
+    }
+
+    /// Borrow the raw packet-number bytes.
+    pub fn packet_number_bytes(&self) -> &[u8] {
+        &self.packet_number_bytes
+    }
+
+    /// Borrow the protected payload bytes after the packet number.
+    pub fn protected_payload(&self) -> &[u8] {
+        &self.protected_payload
+    }
+
+    /// Borrow the preserved packet bytes.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.raw
+    }
+
+    /// Packet length in bytes.
+    pub fn len(&self) -> usize {
+        self.raw.len()
+    }
+
+    /// Return true when no packet bytes are present.
+    pub fn is_empty(&self) -> bool {
+        self.raw.is_empty()
+    }
+
+    /// One-line short-header summary.
+    pub fn summary(&self) -> String {
+        format!(
+            "ShortHeader(raw_len={}, fixed_bit={}, spin_bit={}, reserved_bits={}, key_phase={}, dcid={}, packet_number={}, protected_payload_len={})",
+            self.raw.len(),
+            self.fixed_bit,
+            self.spin_bit,
+            self.reserved_bits,
+            self.key_phase,
+            self.destination_connection_id.summary(),
+            self.packet_number.summary(),
+            self.protected_payload.len(),
+        )
+    }
+
+    /// Stable field/value pairs for packet inspection.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("classification", "short_header".to_string()),
+            ("header_form", "short".to_string()),
+            ("first_byte", format!("0x{:02x}", self.first_byte)),
+            ("fixed_bit", self.fixed_bit.to_string()),
+            ("spin_bit", self.spin_bit.to_string()),
+            ("reserved_bits", self.reserved_bits.to_string()),
+            ("key_phase", self.key_phase.to_string()),
+            (
+                "destination_connection_id_len",
+                self.destination_connection_id.len().to_string(),
+            ),
+            (
+                "destination_connection_id",
+                self.destination_connection_id.to_spaced_hex(),
+            ),
+            ("packet_number", self.packet_number.value().to_string()),
+            (
+                "packet_number_encoded_len",
+                self.packet_number
+                    .encoded_len_value()
+                    .unwrap_or_default()
+                    .to_string(),
+            ),
+            ("packet_number_bytes", hex_bytes(&self.packet_number_bytes)),
+            (
+                "protected_payload_len",
+                self.protected_payload.len().to_string(),
+            ),
+            ("protected_payload", hex_bytes(&self.protected_payload)),
+            ("raw_len", self.raw.len().to_string()),
+            ("raw_bytes", hex_bytes(&self.raw)),
+        ]
+    }
+}
+
+fn short_header_length_overflow_error() -> CrafterError {
+    CrafterError::invalid_field_value(
+        "quic.short_header.length",
+        "QUIC short-header length exceeds addressable packet bytes",
+    )
 }
 
 /// Decoded QUIC Initial, 0-RTT, or Handshake long-header packet.
@@ -2087,6 +2327,94 @@ mod tests {
         let fields = quic_packet.inspection_fields();
         assert!(fields.contains(&("classification", "short_header_ambiguous".to_string())));
         assert!(fields.contains(&("raw_len", "7".to_string())));
+    }
+
+    #[test]
+    fn quic_short_header_decode_parses_fields_with_supplied_dcid_length() {
+        let bytes = [0x5d, 0x83, 0x94, 0xc8, 0xf0, 0x12, 0x34, 0xbe, 0xef];
+
+        let short = QuicShortHeaderPacket::decode(bytes, 4).unwrap();
+
+        assert_eq!(short.first_byte(), 0x5d);
+        assert!(short.fixed_bit());
+        assert!(!short.spin_bit());
+        assert_eq!(short.reserved_bits(), 3);
+        assert!(short.key_phase());
+        assert_eq!(
+            short.destination_connection_id().as_bytes(),
+            [0x83, 0x94, 0xc8, 0xf0]
+        );
+        assert_eq!(short.packet_number().value(), 0x1234);
+        assert_eq!(short.packet_number_bytes(), [0x12, 0x34]);
+        assert_eq!(short.protected_payload(), [0xbe, 0xef]);
+        assert_eq!(short.as_bytes(), bytes);
+        assert_eq!(
+            short.summary(),
+            "ShortHeader(raw_len=9, fixed_bit=true, spin_bit=false, reserved_bits=3, key_phase=true, dcid=len=4 value=8394c8f0, packet_number=value=4660 encoded_len=2, protected_payload_len=2)"
+        );
+
+        let packet = QuicPacket::decode_short_header(bytes, 4).unwrap();
+        assert!(packet.is_short_header());
+        assert_eq!(
+            packet
+                .short_header()
+                .unwrap()
+                .destination_connection_id()
+                .as_bytes(),
+            [0x83, 0x94, 0xc8, 0xf0]
+        );
+    }
+
+    #[test]
+    fn quic_short_header_decode_preserves_cleared_fixed_bit_when_explicit() {
+        let bytes = [0x26, 0x01, 0x02, 0x03, 0xc0, 0xff, 0xee];
+
+        let short = QuicShortHeaderPacket::decode(bytes, 0).unwrap();
+
+        assert_eq!(short.first_byte(), 0x26);
+        assert!(!short.fixed_bit());
+        assert!(short.spin_bit());
+        assert_eq!(short.reserved_bits(), 0);
+        assert!(short.key_phase());
+        assert_eq!(short.packet_number().value(), 0x01_02_03);
+        assert_eq!(short.protected_payload(), [0xc0, 0xff, 0xee]);
+    }
+
+    #[test]
+    fn quic_short_header_decode_default_packet_decode_preserves_ambiguous_raw() {
+        let bytes = [0x40, 0x83, 0x94, 0xc8, 0xf0, 0x12, 0x34];
+
+        let packet = QuicPacket::decode(bytes).unwrap();
+
+        assert!(!packet.is_short_header());
+        assert_eq!(packet.as_bytes(), bytes);
+        assert_eq!(
+            packet.summary(),
+            "raw_len=7 header=short-ambiguous first_byte=0x40 fixed_bit=true"
+        );
+    }
+
+    #[test]
+    fn quic_short_header_decode_reports_structured_errors() {
+        assert_eq!(
+            QuicShortHeaderPacket::decode([], 0).unwrap_err(),
+            CrafterError::buffer_too_short("quic.short_header", 1, 0)
+        );
+        assert_eq!(
+            QuicShortHeaderPacket::decode([0xc0, 0x00, 0x00, 0x00, 0x01], 0).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "quic.short_header",
+                "packet is not a short-header packet",
+            )
+        );
+        assert_eq!(
+            QuicShortHeaderPacket::decode([0x40, 0xaa], 2).unwrap_err(),
+            CrafterError::buffer_too_short("quic.short_header.dcid", 3, 2)
+        );
+        assert_eq!(
+            QuicShortHeaderPacket::decode([0x43, 0xaa, 0x01, 0x02], 1).unwrap_err(),
+            CrafterError::buffer_too_short("quic.short_header.packet_number", 6, 4)
+        );
     }
 
     #[test]

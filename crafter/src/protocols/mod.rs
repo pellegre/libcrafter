@@ -423,7 +423,7 @@ pub mod exports {
     pub use quic::{
         Quic, QuicConnectionId, QuicFrame, QuicHandshakeBuilder, QuicInitialBuilder,
         QuicLongHeaderPacket, QuicPacket, QuicPacketNumber, QuicRetryBuilder, QuicRetryPacket,
-        QuicTransportParameter, QuicVarInt, QuicVersionNegotiationBuilder,
+        QuicShortHeaderPacket, QuicTransportParameter, QuicVarInt, QuicVersionNegotiationBuilder,
         QuicVersionNegotiationPacket, QuicZeroRttBuilder, QUIC_RETRY_INTEGRITY_TAG_LEN,
     };
     pub use rip::ripng::{
