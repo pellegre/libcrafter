@@ -114,6 +114,16 @@ fn exports_quic_symbols() -> crafter::Result<()> {
         QuicFrame::from_retire_connection_id_frame(retire_connection_id)?.frame_type_value(),
         Some(0x19)
     );
+    assert_eq!(
+        QuicFrame::from_path_challenge_frame(QuicPathChallengeFrame::new([0xaa; 8]))?
+            .frame_type_value(),
+        Some(0x1a)
+    );
+    assert_eq!(
+        QuicFrame::from_path_response_frame(QuicPathResponseFrame::new([0xbb; 8]))?
+            .frame_type_value(),
+        Some(0x1b)
+    );
 
     let parameter = QuicTransportParameter::raw(varint, [0xde, 0xad]);
     assert_eq!(parameter.identifier(), Some(varint));

@@ -9,6 +9,7 @@ use crate::{CrafterError, Result};
 use super::{connection_id::QUIC_CONNECTION_ID_MAX_LEN, QuicConnectionId, QuicVarInt};
 
 const QUIC_STATELESS_RESET_TOKEN_LEN: usize = 16;
+const QUIC_PATH_VALIDATION_DATA_LEN: usize = 8;
 
 /// Core QUIC frame type families selected for packet-layer parsing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1702,6 +1703,116 @@ impl QuicRetireConnectionIdFrame {
     }
 }
 
+/// Parsed PATH_CHALLENGE frame fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QuicPathChallengeFrame {
+    data: [u8; QUIC_PATH_VALIDATION_DATA_LEN],
+}
+
+impl QuicPathChallengeFrame {
+    /// Construct a PATH_CHALLENGE frame from fixed opaque data.
+    pub const fn new(data: [u8; QUIC_PATH_VALIDATION_DATA_LEN]) -> Self {
+        Self { data }
+    }
+
+    /// Borrow the opaque Data field.
+    pub const fn data(&self) -> &[u8; QUIC_PATH_VALIDATION_DATA_LEN] {
+        &self.data
+    }
+
+    /// Decode one PATH_CHALLENGE frame from bytes that include the Frame Type.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let bytes = bytes.as_ref();
+        let (frame, consumed) = decode_path_challenge_frame(bytes)?;
+        if consumed != bytes.len() {
+            return Err(CrafterError::invalid_field_value(
+                "quic.frame.path_challenge",
+                "PATH_CHALLENGE frame has trailing bytes",
+            ));
+        }
+        Ok(frame)
+    }
+
+    /// Append the canonical PATH_CHALLENGE frame encoding.
+    pub fn encode(self, out: &mut Vec<u8>) -> Result<()> {
+        QuicVarInt::from_u64_unchecked(0x1a).encode(out)?;
+        out.extend_from_slice(&self.data);
+        Ok(())
+    }
+
+    /// Return the canonical PATH_CHALLENGE frame encoding.
+    pub fn encode_to_vec(self) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Stable PATH_CHALLENGE summary for packet inspection.
+    pub fn summary(self) -> String {
+        format!("kind=PATH_CHALLENGE data={}", hex_bytes(&self.data))
+    }
+
+    /// Stable field/value pairs for PATH_CHALLENGE inspection.
+    pub fn inspection_fields(self) -> Vec<(&'static str, String)> {
+        vec![("path_challenge_data", hex_bytes(&self.data))]
+    }
+}
+
+/// Parsed PATH_RESPONSE frame fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QuicPathResponseFrame {
+    data: [u8; QUIC_PATH_VALIDATION_DATA_LEN],
+}
+
+impl QuicPathResponseFrame {
+    /// Construct a PATH_RESPONSE frame from fixed opaque data.
+    pub const fn new(data: [u8; QUIC_PATH_VALIDATION_DATA_LEN]) -> Self {
+        Self { data }
+    }
+
+    /// Borrow the opaque Data field.
+    pub const fn data(&self) -> &[u8; QUIC_PATH_VALIDATION_DATA_LEN] {
+        &self.data
+    }
+
+    /// Decode one PATH_RESPONSE frame from bytes that include the Frame Type.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let bytes = bytes.as_ref();
+        let (frame, consumed) = decode_path_response_frame(bytes)?;
+        if consumed != bytes.len() {
+            return Err(CrafterError::invalid_field_value(
+                "quic.frame.path_response",
+                "PATH_RESPONSE frame has trailing bytes",
+            ));
+        }
+        Ok(frame)
+    }
+
+    /// Append the canonical PATH_RESPONSE frame encoding.
+    pub fn encode(self, out: &mut Vec<u8>) -> Result<()> {
+        QuicVarInt::from_u64_unchecked(0x1b).encode(out)?;
+        out.extend_from_slice(&self.data);
+        Ok(())
+    }
+
+    /// Return the canonical PATH_RESPONSE frame encoding.
+    pub fn encode_to_vec(self) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Stable PATH_RESPONSE summary for packet inspection.
+    pub fn summary(self) -> String {
+        format!("kind=PATH_RESPONSE data={}", hex_bytes(&self.data))
+    }
+
+    /// Stable field/value pairs for PATH_RESPONSE inspection.
+    pub fn inspection_fields(self) -> Vec<(&'static str, String)> {
+        vec![("path_response_data", hex_bytes(&self.data))]
+    }
+}
+
 /// Raw-preserving QUIC frame.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct QuicFrame {
@@ -1959,6 +2070,26 @@ impl QuicFrame {
         Self::from_retire_connection_id_frame(QuicRetireConnectionIdFrame::new(sequence_number))
     }
 
+    /// Construct a PATH_CHALLENGE frame from typed fields.
+    pub fn from_path_challenge_frame(path_challenge: QuicPathChallengeFrame) -> Result<Self> {
+        Ok(Self::from_bytes(path_challenge.encode_to_vec()?))
+    }
+
+    /// Construct a PATH_CHALLENGE frame from fixed opaque data.
+    pub fn path_challenge(data: [u8; QUIC_PATH_VALIDATION_DATA_LEN]) -> Result<Self> {
+        Self::from_path_challenge_frame(QuicPathChallengeFrame::new(data))
+    }
+
+    /// Construct a PATH_RESPONSE frame from typed fields.
+    pub fn from_path_response_frame(path_response: QuicPathResponseFrame) -> Result<Self> {
+        Ok(Self::from_bytes(path_response.encode_to_vec()?))
+    }
+
+    /// Construct a PATH_RESPONSE frame from fixed opaque data.
+    pub fn path_response(data: [u8; QUIC_PATH_VALIDATION_DATA_LEN]) -> Result<Self> {
+        Self::from_path_response_frame(QuicPathResponseFrame::new(data))
+    }
+
     /// Decode a frame sequence within the caller-provided packet boundary.
     ///
     /// Supported fixed-boundary frames are split out first. The remaining
@@ -2069,6 +2200,18 @@ impl QuicFrame {
                     let (_, retire_connection_id_len) =
                         decode_retire_connection_id_frame(&bytes[offset..])?;
                     let end = offset + retire_connection_id_len;
+                    frames.push(Self::from_bytes(&bytes[offset..end]));
+                    offset = end;
+                }
+                0x1a => {
+                    let (_, path_challenge_len) = decode_path_challenge_frame(&bytes[offset..])?;
+                    let end = offset + path_challenge_len;
+                    frames.push(Self::from_bytes(&bytes[offset..end]));
+                    offset = end;
+                }
+                0x1b => {
+                    let (_, path_response_len) = decode_path_response_frame(&bytes[offset..])?;
+                    let end = offset + path_response_len;
                     frames.push(Self::from_bytes(&bytes[offset..end]));
                     offset = end;
                 }
@@ -2226,6 +2369,22 @@ impl QuicFrame {
         }
     }
 
+    /// Decode this frame as PATH_CHALLENGE when applicable.
+    pub fn path_challenge_frame(&self) -> Result<Option<QuicPathChallengeFrame>> {
+        match self.frame_type_value() {
+            Some(0x1a) => Ok(Some(QuicPathChallengeFrame::decode(&self.bytes)?)),
+            _ => Ok(None),
+        }
+    }
+
+    /// Decode this frame as PATH_RESPONSE when applicable.
+    pub fn path_response_frame(&self) -> Result<Option<QuicPathResponseFrame>> {
+        match self.frame_type_value() {
+            Some(0x1b) => Ok(Some(QuicPathResponseFrame::decode(&self.bytes)?)),
+            _ => Ok(None),
+        }
+    }
+
     /// Borrow the preserved frame bytes.
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes
@@ -2322,6 +2481,12 @@ impl QuicFrame {
         if let Ok(Some(retire_connection_id)) = self.retire_connection_id_frame() {
             return retire_connection_id.summary();
         }
+        if let Ok(Some(path_challenge)) = self.path_challenge_frame() {
+            return path_challenge.summary();
+        }
+        if let Ok(Some(path_response)) = self.path_response_frame() {
+            return path_response.summary();
+        }
         match self.frame_type() {
             Some(frame_type) => format!(
                 "kind={} type=0x{:x} raw_len={}",
@@ -2400,6 +2565,12 @@ impl QuicFrame {
         }
         if let Ok(Some(retire_connection_id)) = self.retire_connection_id_frame() {
             fields.extend(retire_connection_id.inspection_fields());
+        }
+        if let Ok(Some(path_challenge)) = self.path_challenge_frame() {
+            fields.extend(path_challenge.inspection_fields());
+        }
+        if let Ok(Some(path_response)) = self.path_response_frame() {
+            fields.extend(path_response.inspection_fields());
         }
         fields
     }
@@ -2855,6 +3026,52 @@ fn decode_retire_connection_id_frame(bytes: &[u8]) -> Result<(QuicRetireConnecti
     offset = next;
 
     Ok((QuicRetireConnectionIdFrame::new(sequence_number), offset))
+}
+
+fn decode_path_challenge_frame(bytes: &[u8]) -> Result<(QuicPathChallengeFrame, usize)> {
+    let (data, consumed) = decode_path_validation_data(
+        bytes,
+        0x1a,
+        "quic.frame.path_challenge.type",
+        "PATH_CHALLENGE frame type must be 0x1a",
+        "quic.frame.path_challenge.data",
+    )?;
+    Ok((QuicPathChallengeFrame::new(data), consumed))
+}
+
+fn decode_path_response_frame(bytes: &[u8]) -> Result<(QuicPathResponseFrame, usize)> {
+    let (data, consumed) = decode_path_validation_data(
+        bytes,
+        0x1b,
+        "quic.frame.path_response.type",
+        "PATH_RESPONSE frame type must be 0x1b",
+        "quic.frame.path_response.data",
+    )?;
+    Ok((QuicPathResponseFrame::new(data), consumed))
+}
+
+fn decode_path_validation_data(
+    bytes: &[u8],
+    expected_type: u64,
+    type_context: &'static str,
+    type_reason: &'static str,
+    data_context: &'static str,
+) -> Result<([u8; QUIC_PATH_VALIDATION_DATA_LEN], usize)> {
+    let (frame_type, offset) = decode_frame_varint(bytes, 0, "quic.frame.type")?;
+    if frame_type.value() != expected_type {
+        return Err(CrafterError::invalid_field_value(type_context, type_reason));
+    }
+    let available = bytes.len().saturating_sub(offset);
+    if available < QUIC_PATH_VALIDATION_DATA_LEN {
+        return Err(CrafterError::buffer_too_short(
+            data_context,
+            QUIC_PATH_VALIDATION_DATA_LEN,
+            available,
+        ));
+    }
+    let mut data = [0u8; QUIC_PATH_VALIDATION_DATA_LEN];
+    data.copy_from_slice(&bytes[offset..offset + QUIC_PATH_VALIDATION_DATA_LEN]);
+    Ok((data, offset + QUIC_PATH_VALIDATION_DATA_LEN))
 }
 
 fn decode_frame_varint(
@@ -3791,6 +4008,72 @@ mod tests {
         assert_eq!(
             QuicFrame::decode_sequence([0x19, 0x40]).unwrap_err(),
             CrafterError::buffer_too_short("quic.frame.retire_connection_id.sequence_number", 2, 1)
+        );
+    }
+
+    #[test]
+    fn quic_frame_path_challenge_response_decodes_and_continues_sequence() -> crate::Result<()> {
+        let challenge = [0, 1, 2, 3, 4, 5, 6, 7];
+        let response = [8, 9, 10, 11, 12, 13, 14, 15];
+        let mut bytes = vec![0x1a];
+        bytes.extend_from_slice(&challenge);
+        bytes.push(0x1b);
+        bytes.extend_from_slice(&response);
+        bytes.push(0x01);
+
+        let frames = QuicFrame::decode_sequence(&bytes)?;
+
+        assert_eq!(frames.len(), 3);
+        assert_eq!(
+            frames[0].kind(),
+            QuicFrameKind::Known(QuicKnownFrameType::PathChallenge)
+        );
+        assert_eq!(
+            frames[0].path_challenge_frame()?.unwrap().data(),
+            &challenge
+        );
+        assert_eq!(
+            frames[1].kind(),
+            QuicFrameKind::Known(QuicKnownFrameType::PathResponse)
+        );
+        assert_eq!(frames[1].path_response_frame()?.unwrap().data(), &response);
+        assert!(frames[2].is_ping());
+        assert_eq!(QuicFrame::encode_sequence(frames), bytes);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_path_challenge_response_serializes_and_summarizes() -> crate::Result<()> {
+        let challenge = QuicFrame::path_challenge([0xaa; QUIC_PATH_VALIDATION_DATA_LEN])?;
+        let response = QuicFrame::path_response([0xbb; QUIC_PATH_VALIDATION_DATA_LEN])?;
+
+        assert_eq!(
+            challenge.as_bytes(),
+            &[0x1a, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa]
+        );
+        assert_eq!(
+            challenge.summary(),
+            "kind=PATH_CHALLENGE data=aa aa aa aa aa aa aa aa"
+        );
+        assert_eq!(
+            response.as_bytes(),
+            &[0x1b, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb]
+        );
+        assert!(response
+            .inspection_fields()
+            .contains(&("path_response_data", "bb bb bb bb bb bb bb bb".to_string())));
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_path_challenge_response_truncated_data_reports_structured_error() {
+        assert_eq!(
+            QuicFrame::decode_sequence([0x1a, 0, 1, 2, 3, 4, 5, 6]).unwrap_err(),
+            CrafterError::buffer_too_short("quic.frame.path_challenge.data", 8, 7)
+        );
+        assert_eq!(
+            QuicFrame::decode_sequence([0x1b, 0, 1, 2, 3, 4, 5, 6]).unwrap_err(),
+            CrafterError::buffer_too_short("quic.frame.path_response.data", 8, 7)
         );
     }
 }
