@@ -1705,6 +1705,70 @@ mod tests {
     }
 
     #[test]
+    fn quic_transport_parameter_unknown_preserves_grease_and_provisional_rows() -> Result<()> {
+        let bytes = [
+            0x1b, 0x03, 0xaa, 0xbb, 0xcc, // reserved grease ID 27
+            0x57, 0x3e, 0x02, 0xde, 0xad, // provisional discard (0x173e)
+            0x66, 0xab, 0x01, 0x99, // provisional Google handshake message (0x26ab)
+            0x57, 0x3e, 0x00, // duplicate provisional discard with empty value
+        ];
+
+        let parameters = QuicTransportParameter::decode_sequence(bytes)?;
+
+        assert_eq!(parameters.len(), 4);
+        assert_eq!(parameters[0].identifier().unwrap().value(), 27);
+        assert_eq!(parameters[0].kind(), QuicTransportParameterKind::Grease);
+        assert_eq!(parameters[0].value(), &[0xaa, 0xbb, 0xcc]);
+        assert_eq!(parameters[0].summary(), "id=0x1b kind=grease value_len=3");
+
+        assert_eq!(parameters[1].identifier().unwrap().value(), 0x173e);
+        assert_eq!(parameters[1].identifier_encoded_len(), Some(2));
+        assert_eq!(parameters[1].kind(), QuicTransportParameterKind::Unknown);
+        assert_eq!(parameters[1].value(), &[0xde, 0xad]);
+
+        assert_eq!(parameters[2].identifier().unwrap().value(), 0x26ab);
+        assert_eq!(parameters[2].kind(), QuicTransportParameterKind::Unknown);
+        assert_eq!(parameters[2].value(), &[0x99]);
+
+        assert_eq!(
+            QuicTransportParameter::duplicate_identifiers(parameters.iter()),
+            vec![QuicTransportParameterDuplicate::new(
+                QuicVarInt::from_u64_unchecked(0x173e),
+                1,
+                3,
+            )]
+        );
+        assert_eq!(QuicTransportParameter::encode_sequence(parameters)?, bytes);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_transport_parameter_unknown_preserves_pinned_varint_widths() -> Result<()> {
+        let parameter =
+            QuicTransportParameter::raw(QuicVarInt::from_u64_unchecked(0x173e), [0xca, 0xfe])
+                .with_identifier_encoded_len(4)
+                .with_length_encoded_len(2);
+
+        let encoded = parameter.encode_to_vec()?;
+        let decoded = QuicTransportParameter::decode_sequence(&encoded)?;
+
+        assert_eq!(decoded[0].identifier().unwrap().value(), 0x173e);
+        assert_eq!(decoded[0].identifier_encoded_len(), Some(4));
+        assert_eq!(decoded[0].length_encoded_len(), Some(2));
+        assert_eq!(decoded[0].value(), &[0xca, 0xfe]);
+        assert_eq!(QuicTransportParameter::encode_sequence(decoded)?, encoded);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_transport_parameter_unknown_rejects_only_incomplete_tuple_boundaries() {
+        assert_eq!(
+            QuicTransportParameter::decode_sequence([0x57, 0x3e, 0x03, 0xaa]).unwrap_err(),
+            CrafterError::buffer_too_short("quic.transport_parameter.value", 3, 1)
+        );
+    }
+
+    #[test]
     fn quic_transport_parameter_skeleton_encodes_sequences_and_lengths() -> Result<()> {
         let parameters = vec![
             QuicTransportParameter::known(
