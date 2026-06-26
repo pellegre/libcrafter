@@ -1076,15 +1076,15 @@ _DHCP_SENDER_ROLE = {
 
 
 def _ipv4_dhcp_plan(index: int) -> PacketPlan:
-    """An IPv4-root ``ipv4 / udp / dhcp`` plan carrying corpus/wire metadata.
+    """An IPv4-root ``ipv4 / udp / dhcpv4`` plan carrying corpus/wire metadata.
 
-    DHCP flows through the same generic endpoint batch contract as every other
+    DHCPv4 flows through the same generic endpoint batch contract as every other
     protocol: the live packet under test is an IPv4 packet carrying UDP 68->67
-    with a DHCP payload, rooted at ``l3:ipv4`` with no Ethernet frame.
+    with a DHCPv4 payload, rooted at ``l3:ipv4`` with no Ethernet frame.
     """
 
     return PacketPlan(
-        stack=["ipv4", "udp", "dhcp"],
+        stack=["ipv4", "udp", "dhcpv4"],
         fields={
             "ipv4": {
                 "src": "192.0.2.10",
@@ -1095,7 +1095,7 @@ def _ipv4_dhcp_plan(index: int) -> PacketPlan:
                 "protocol": "udp",
             },
             "udp": {"src_port": 68, "dst_port": 67},
-            "dhcp": {
+            "dhcpv4": {
                 "op": "bootrequest",
                 "flags": "none",
                 "options": ["message-type=discover", "end"],
@@ -1106,11 +1106,11 @@ def _ipv4_dhcp_plan(index: int) -> PacketPlan:
         index=index,
         direction="live_exchange",
         family="ipv4",
-        feature_tags=["ipv4", "udp", "dhcp", "dhcp_behavior"],
-        case="dhcp-discover",
+        feature_tags=["ipv4", "udp", "dhcpv4", "dhcpv4_behavior"],
+        case="dhcpv4-discover",
         strict_bytes=True,
         metadata={
-            "plan_id": f"dhcp-discover-{index}",
+            "plan_id": f"dhcpv4-discover-{index}",
             "root": "l3:ipv4",
             "root_decoder": "l3:ipv4",
             "wire": {
@@ -1120,8 +1120,8 @@ def _ipv4_dhcp_plan(index: int) -> PacketPlan:
                 "strict_bytes": True,
             },
             "corpus": {
-                "corpus_id": "dhcp-discover-corpus",
-                "packet_id": f"dhcp-packet-{index}",
+                "corpus_id": "dhcpv4-discover-corpus",
+                "packet_id": f"dhcpv4-packet-{index}",
                 "corpus_index": 0,
                 "packet_index": index,
                 "corpus_source": "generated",
@@ -1132,10 +1132,10 @@ def _ipv4_dhcp_plan(index: int) -> PacketPlan:
 
 
 class DhcpLiveEndpointContractTest(unittest.TestCase):
-    """Cover live endpoint batch construction for IPv4-root DHCP.
+    """Cover live endpoint batch construction for IPv4-root DHCPv4.
 
-    The IPv4-root ``ipv4 / udp / dhcp`` stack must ride the existing generic
-    endpoint batch contract in both oracle directions; there is no DHCP-specific
+    The IPv4-root ``ipv4 / udp / dhcpv4`` stack must ride the existing generic
+    endpoint batch contract in both oracle directions; there is no DHCPv4-specific
     live endpoint protocol. Live runs stay dry-run and never send packets.
     """
 
@@ -1166,7 +1166,7 @@ class DhcpLiveEndpointContractTest(unittest.TestCase):
         endpoint = self._ENDPOINTS[endpoint_role]
         peer = self._ENDPOINTS[peer_role]
         artifact_paths = live_endpoint_artifact_paths(
-            output_dir="target/oracle/test-dhcp-live-endpoint",
+            output_dir="target/oracle/test-dhcpv4-live-endpoint",
             direction=direction,
             endpoint_role=endpoint.role,
         )
@@ -1191,26 +1191,26 @@ class DhcpLiveEndpointContractTest(unittest.TestCase):
                 self.assertEqual(list(request.packet_plans), plans)
                 self.assertEqual(
                     request.metadata["packet_ids"],
-                    ["dhcp-packet-11", "dhcp-packet-12"],
+                    ["dhcpv4-packet-11", "dhcpv4-packet-12"],
                 )
-                self.assertEqual(request.metadata["corpus_id"], "dhcp-discover-corpus")
+                self.assertEqual(request.metadata["corpus_id"], "dhcpv4-discover-corpus")
                 packets = request.metadata["packets"]
                 self.assertEqual([packet["index"] for packet in packets], [11, 12])
                 self.assertEqual(
                     [packet["packet_id"] for packet in packets],
-                    ["dhcp-packet-11", "dhcp-packet-12"],
+                    ["dhcpv4-packet-11", "dhcpv4-packet-12"],
                 )
                 self.assertTrue(
                     all(
                         packet["compare_root"] == "l3:ipv4" for packet in packets
                     ),
-                    msg=f"DHCP live packets must compare at l3:ipv4 for {direction}",
+                    msg=f"DHCPv4 live packets must compare at l3:ipv4 for {direction}",
                 )
                 # The packet is DHCP over UDP over IPv4: the capture match
                 # records the stack and an IPv4 + UDP BPF filter.
                 self.assertTrue(
                     all(
-                        packet["capture_match"]["layers"] == ["ipv4", "udp", "dhcp"]
+                        packet["capture_match"]["layers"] == ["ipv4", "udp", "dhcpv4"]
                         for packet in packets
                     )
                 )

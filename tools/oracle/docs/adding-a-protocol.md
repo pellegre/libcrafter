@@ -18,7 +18,7 @@ plugs into three Python stages plus the spec layer:
 Each module self-registers on import; the package `__init__.py` auto-discovers
 it via `pkgutil.iter_modules`, so there is no manifest to update. The Wireshark
 stage is optional — it only matters for layers that declare `wireshark` backend
-support; only a handful of layers (`arp`, `dns`, `dhcp`, etc.) ship one.
+support; only a handful of layers (`arp`, `dns`, `dhcpv4`, etc.) ship one.
 
 ARP is the reference vertical slice. Read these three files alongside this
 guide; they are intentionally minimal and self-contained:

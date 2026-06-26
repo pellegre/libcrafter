@@ -98,12 +98,12 @@ from .protocols.ripng import _apply_ripng_behavior
 # BGP/OSPF/RIP body injectors above.
 from .protocols.dns import _dns_behavior_emits_raw
 # ``DHCPV4_OPTION_MATRIX_TOKENS`` moved to the DHCP sampler plugin
-# (``protocols/dhcp.py``) with the rest of the DHCP sampler and ``dhcp_behavior``
+# (``protocols/dhcpv4.py``) with the rest of the DHCP sampler and ``dhcpv4_behavior``
 # feature behavior. It is re-imported here because
-# ``tools/oracle/tests/test_dhcp_oracle.py`` imports it from ``generator`` to pin
+# ``tools/oracle/tests/test_dhcpv4_oracle.py`` imports it from ``generator`` to pin
 # the cross-backend option matrix — the same co-locate-and-re-import pattern as
 # the DNS ``_dns_behavior_emits_raw`` helper above.
-from .protocols.dhcp import DHCPV4_OPTION_MATRIX_TOKENS
+from .protocols.dhcpv4 import DHCPV4_OPTION_MATRIX_TOKENS
 # The ``radiotap`` / ``dot11`` / ``eapol`` / ``rsn`` samplers and the
 # ``_rsn_information_value_hex`` helper all live in the Wi-Fi sampler plugin
 # (``protocols/wifi.py``); the generator reaches them through ``SAMPLER_REGISTRY``
@@ -189,7 +189,7 @@ _SUPPORTED_FIELD_DOMAINS: dict[tuple[str, str], set[object]] = {
 }
 _SCAPY_MATERIALIZED_LAYERS = {
     "arp",
-    "dhcp",
+    "dhcpv4",
     "dot11",
     "dot15d4",
     "dot15d4_radio",
@@ -688,7 +688,7 @@ class PacketGenerator:
                 profile_families = set(profile_family_names)
                 if not profile_families.intersection(stack_families):
                     continue
-            if feature is None and case is None and self.profile == "smoke" and "dhcp" in stack_layers:
+            if feature is None and case is None and self.profile == "smoke" and "dhcpv4" in stack_layers:
                 continue
             if (
                 feature is None
@@ -866,7 +866,7 @@ class PacketGenerator:
         if stack_families:
             return stack_families[0]
         for layer in stack:
-            if layer in {"ipv4", "ipv6", "arp", "dns", "dhcp"}:
+            if layer in {"ipv4", "ipv6", "arp", "dns", "dhcpv4"}:
                 return layer
         return "link"
 
@@ -1786,7 +1786,7 @@ def _domain_weight(ctx: _SamplingContext, layer: str, field_name: str, domain: o
         return 0
     if ctx.profile == "smoke" and _is_boundary_domain(domain):
         return 0
-    if ctx.profile == "smoke" and layer in {"dns", "dhcp"}:
+    if ctx.profile == "smoke" and layer in {"dns", "dhcpv4"}:
         smoke_domains = {
             False,
             0,

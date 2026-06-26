@@ -177,19 +177,19 @@ captures in the ignored `target/` artifact tree, not tracked files.
 
 Live DHCP validation is a one-way packet-equivalence exchange, not a DHCP
 client, server, lease negotiation, or reply workflow. The packet under test is
-the `ipv4 / udp / dhcp` stack (root `l3:ipv4`, UDP ports 68 to 67), selected
-with `--case dhcp-discover`. It runs in both standard directions:
+the `ipv4 / udp / dhcpv4` stack (root `l3:ipv4`, UDP ports 68 to 67), selected
+with `--case dhcpv4-discover`. It runs in both standard directions:
 
-- `libcrafter_to_reference`: libcrafter sends the DHCP packet, the reference
+- `libcrafter_to_reference`: libcrafter sends the DHCPv4 packet, the reference
   backend captures and decodes it.
-- `reference_to_libcrafter`: the reference backend sends the DHCP packet,
+- `reference_to_libcrafter`: the reference backend sends the DHCPv4 packet,
   libcrafter captures and decodes it.
 
-Each direction sends one DHCP packet and compares the receiver's normalized
-decoded model. No DHCP reply is expected and no lease state is established.
+Each direction sends one DHCPv4 packet and compares the receiver's normalized
+decoded model. No DHCPv4 reply is expected and no lease state is established.
 Because the packet is rooted at IPv4 unicast, it is wire-eligible without
 Ethernet framing, link-layer broadcast, or provider MAC discovery. The
-`ethernet / ipv4 / udp / dhcp` stack (root `link:ethernet`) is reserved for
+`ethernet / ipv4 / udp / dhcpv4` stack (root `link:ethernet`) is reserved for
 offline/link-layer/pcap coverage and stays link-layer-gated for live runs
 (`requires_l2`, `requires_provider_mac`, `requires_broadcast`).
 
@@ -198,64 +198,64 @@ acts as a live endpoint for DHCP.
 
 ### Guarded DHCP VM Live Exchange
 
-DHCP live exchange (the `ipv4 / udp / dhcp` packet, selected with
-`--case dhcp-discover`) runs through the same guarded VM matrix. Keep it opt-in
+DHCPv4 live exchange (the `ipv4 / udp / dhcpv4` packet, selected with
+`--case dhcpv4-discover`) runs through the same guarded VM matrix. Keep it opt-in
 behind an explicit environment gate so unattended CI never sends real DHCP
 packets or creates VMs:
 
 ```sh
-if [ "${LIBCRAFTER_RUN_DHCP_VM_LIVE:-0}" = "1" ]; then
+if [ "${LIBCRAFTER_RUN_DHCPV4_VM_LIVE:-0}" = "1" ]; then
   python3 tools/oracle/engine/live_provider_matrix.py \
     --providers qemu,virtualbox --backend scapy --profile smoke \
-    --seed 132 --count 2 --case dhcp-discover \
+    --seed 132 --count 2 --case dhcpv4-discover \
     --real --skip-unavailable --allow-vm-create --confirm-live-run \
-    --out target/oracle/dhcp-vm-live
+    --out target/oracle/dhcpv4-vm-live
 else
-  echo "skipping protected VM DHCP live run; set LIBCRAFTER_RUN_DHCP_VM_LIVE=1 to execute"
+  echo "skipping protected VM DHCPv4 live run; set LIBCRAFTER_RUN_DHCPV4_VM_LIVE=1 to execute"
 fi
 ```
 
-With `LIBCRAFTER_RUN_DHCP_VM_LIVE` unset (the default), the gate takes the
+With `LIBCRAFTER_RUN_DHCPV4_VM_LIVE` unset (the default), the gate takes the
 echo-skip branch and nothing runs. When it is `1`, the matrix runs provider
 doctors first, skips any unavailable VM provider cleanly, refuses to send
 packets without `--confirm-live-run`, creates VMs only because
 `--allow-vm-create` is present, collects artifacts under `--out`, and tears the
-endpoints down. Always validate the focused DHCP path with `--dry-run` first:
+endpoints down. Always validate the focused DHCPv4 path with `--dry-run` first:
 
 ```sh
-python3 tools/oracle/engine/live_provider_matrix.py --providers qemu,virtualbox --backend scapy --profile smoke --seed 132 --count 2 --case dhcp-discover --dry-run --out target/oracle/dhcp-vm-dry-run
+python3 tools/oracle/engine/live_provider_matrix.py --providers qemu,virtualbox --backend scapy --profile smoke --seed 132 --count 2 --case dhcpv4-discover --dry-run --out target/oracle/dhcpv4-vm-dry-run
 ```
 
 ### Guarded DHCP Hetzner Live Exchange
 
-The same `ipv4 / udp / dhcp` packet (selected with `--case dhcp-discover`) runs
+The same `ipv4 / udp / dhcpv4` packet (selected with `--case dhcpv4-discover`) runs
 against Hetzner private cloud networking through `tools/oracle/run live
---provider hetzner`. Hetzner is a routed private cloud segment: the DHCP packet
+--provider hetzner`. Hetzner is a routed private cloud segment: the DHCPv4 packet
 under test is wire-eligible there because it is IPv4 unicast, while the
-Ethernet-root DHCP stack stays skipped for `requires_l2` and
-`requires_provider_mac`. Always plan the focused DHCP path with `--dry-run`
+Ethernet-root DHCPv4 stack stays skipped for `requires_l2` and
+`requires_provider_mac`. Always plan the focused DHCPv4 path with `--dry-run`
 first; it creates no cloud resources and sends no packets:
 
 ```sh
-tools/oracle/run live --backend scapy --provider hetzner --dry-run --profile smoke --seed 133 --count 2 --case dhcp-discover --out target/oracle/dhcp-hetzner-dry-run
+tools/oracle/run live --backend scapy --provider hetzner --dry-run --profile smoke --seed 133 --count 2 --case dhcpv4-discover --out target/oracle/dhcpv4-hetzner-dry-run
 ```
 
 Keep the real Hetzner live run opt-in behind an explicit environment gate so
-unattended CI never provisions cloud endpoints or sends real DHCP packets:
+unattended CI never provisions cloud endpoints or sends real DHCPv4 packets:
 
 ```sh
-if [ "${LIBCRAFTER_RUN_DHCP_HETZNER_LIVE:-0}" = "1" ]; then
+if [ "${LIBCRAFTER_RUN_DHCPV4_HETZNER_LIVE:-0}" = "1" ]; then
   tools/oracle/run live \
     --backend scapy --provider hetzner --profile smoke \
-    --seed 133 --count 2 --case dhcp-discover \
+    --seed 133 --count 2 --case dhcpv4-discover \
     --confirm-live-run \
-    --out target/oracle/dhcp-hetzner-live
+    --out target/oracle/dhcpv4-hetzner-live
 else
-  echo "skipping protected Hetzner DHCP live run; set LIBCRAFTER_RUN_DHCP_HETZNER_LIVE=1 to execute"
+  echo "skipping protected Hetzner DHCPv4 live run; set LIBCRAFTER_RUN_DHCPV4_HETZNER_LIVE=1 to execute"
 fi
 ```
 
-With `LIBCRAFTER_RUN_DHCP_HETZNER_LIVE` unset (the default), the gate takes the
+With `LIBCRAFTER_RUN_DHCPV4_HETZNER_LIVE` unset (the default), the gate takes the
 echo-skip branch and nothing runs. When it is `1`, the run still refuses to
 exchange packets unless `--confirm-live-run` is passed, and it refuses again
 unless Hetzner credentials are present in the environment: the endpoint provider

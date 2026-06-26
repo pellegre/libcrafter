@@ -60,7 +60,7 @@ coverage_cases:
   - udp-ipv6-zero-checksum
   - udp-options-surplus-application-boundary
   - udp-options-known-dns-surplus
-  - udp-options-known-dhcp-surplus
+  - udp-options-known-dhcpv4-surplus
 
 live_cases:
   - name: no-options
@@ -99,8 +99,8 @@ live_cases:
     family: udp
     feature: udp_options
     expected_live: eligible
-  - name: dhcp-surplus
-    case: udp-options-known-dhcp-surplus
+  - name: dhcpv4-surplus
+    case: udp-options-known-dhcpv4-surplus
     root: "link:ethernet"
     family: udp
     feature: udp_options

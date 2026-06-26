@@ -262,7 +262,7 @@ fn build_layer(plan: &Value, layer: &str) -> ExampleResult<Box<dyn Layer>> {
         "igmp_report" => Ok(Box::new(igmp_report_layer(plan)?)),
         "igmp_extension" => Ok(Box::new(igmp_extension_layer(plan)?)),
         "dns" => Ok(Box::new(dns_layer(plan)?)),
-        "dhcp" => Ok(Box::new(dhcp_layer(plan)?)),
+        "dhcpv4" => Ok(Box::new(dhcp_layer(plan)?)),
         "snmp" => Ok(Box::new(snmp_layer(plan)?)),
         "rip" => Ok(Box::new(rip_layer(plan)?)),
         "ripng" => Ok(Box::new(ripng_layer(plan)?)),
@@ -3431,7 +3431,7 @@ fn dns_question(question: &Value) -> ExampleResult<DnsQuestion> {
 }
 
 fn dhcp_layer(plan: &Value) -> ExampleResult<Dhcpv4> {
-    let fields = layer_fields(plan, "dhcp")?;
+    let fields = layer_fields(plan, "dhcpv4")?;
     // The fixed BOOTP header fields are optional: a minimal live-friendly DHCP
     // plan emits only op/flags/options and relies on `Dhcpv4::new()` defaults
     // (BOOTP_REQUEST op, Ethernet htype, hlen 6, xid 0, zero MAC, unspecified
@@ -5937,7 +5937,7 @@ mod bgp_materializer_tests {
 ///
 /// The seeded Scapy reference backend covers the DHCPv4 cases Scapy can encode
 /// byte-for-byte (the message-type matrix plus simple option domains; see
-/// `tools/oracle/specs/layers/dhcp.yaml`). Scapy cannot represent option
+/// `tools/oracle/specs/layers/dhcpv4.yaml`). Scapy cannot represent option
 /// overload (52 across `file`/`sname`), RFC 3396 long-option concatenation,
 /// typed relay-agent option 82 sub-options, RFC 4361 node-specific client
 /// identifiers, RFC 3118 authentication (90), classless static routes (121),
@@ -5982,23 +5982,23 @@ mod dhcp_oracle_fixtures {
             / dhcp;
         packet
             .compile()
-            .expect("documentation DHCP frame must compile")
+            .expect("documentation DHCPv4 frame must compile")
             .as_bytes()
             .to_vec()
     }
 
     /// Decode a compiled frame and return the recompiled bytes plus the decoded
-    /// DHCP layer, asserting the registry surfaced a DHCP layer over UDP.
+    /// DHCPv4 layer, asserting the registry surfaced a DHCPv4 layer over UDP.
     fn decode_roundtrip(bytes: &[u8]) -> (Vec<u8>, Dhcpv4) {
         let decoded = Packet::decode_from_link(LinkType::Ethernet, bytes)
-            .expect("documentation DHCP frame must decode without panic");
+            .expect("documentation DHCPv4 frame must decode without panic");
         let dhcp = decoded
             .layer::<Dhcpv4>()
-            .expect("decoded frame must expose a DHCP layer over UDP")
+            .expect("decoded frame must expose a DHCPv4 layer over UDP")
             .clone();
         let recompiled = decoded
             .compile()
-            .expect("decoded DHCP frame must recompile")
+            .expect("decoded DHCPv4 frame must recompile")
             .as_bytes()
             .to_vec();
         (recompiled, dhcp)
@@ -6164,14 +6164,14 @@ mod dhcp_oracle_fixtures {
     }
 }
 
-/// Materializer coverage for IPv4-root DHCP plans.
+/// Materializer coverage for IPv4-root DHCPv4 plans.
 ///
 /// These tests drive the live offline `libcrafter_to_reference` materialization
-/// path directly: they feed an `ipv4 / udp / dhcp` plan (the shape the seeded
-/// generator emits for `--case dhcp-discover` rooted at `l3:ipv4`) to
+/// path directly: they feed an `ipv4 / udp / dhcpv4` plan (the shape the seeded
+/// generator emits for `--case dhcpv4-discover` rooted at `l3:ipv4`) to
 /// [`materialize_plan`], then assert the emitted vector roots at `l3:ipv4`,
 /// carries the BOOTP port pair (68 -> 67), and re-decodes through the public
-/// `decode_from_l3` entrypoint with a recoverable DHCP message type. Addresses
+/// `decode_from_l3` entrypoint with a recoverable DHCPv4 message type. Addresses
 /// are RFC 5737 documentation space; nothing touches a network.
 #[cfg(test)]
 mod ipv4_dhcp_materialization {
@@ -6179,17 +6179,17 @@ mod ipv4_dhcp_materialization {
     use crafter::prelude::*;
     use serde_json::{json, Value};
 
-    /// A minimal live-friendly `ipv4 / udp / dhcp` plan, matching the seeded
+    /// A minimal live-friendly `ipv4 / udp / dhcpv4` plan, matching the seeded
     /// generator output: only the DHCP op/flags/options are set, so the fixed
     /// BOOTP header fields must fall back to `Dhcpv4::new()` defaults.
     fn ipv4_dhcp_discover_plan() -> Value {
         json!({
-            "stack": ["ipv4", "udp", "dhcp"],
+            "stack": ["ipv4", "udp", "dhcpv4"],
             "metadata": {
                 "root_decoder": "l3:ipv4",
                 "root": "l3:ipv4"
             },
-            "feature_tags": ["ipv4", "udp", "dhcp", "dhcp_behavior"],
+            "feature_tags": ["ipv4", "udp", "dhcpv4", "dhcpv4_behavior"],
             "strict_bytes": true,
             "fields": {
                 "ipv4": {
@@ -6204,7 +6204,7 @@ mod ipv4_dhcp_materialization {
                     "src_port": 68,
                     "dst_port": 67
                 },
-                "dhcp": {
+                "dhcpv4": {
                     "op": "bootrequest",
                     "flags": "none",
                     "options": ["message-type=discover", "end"]
@@ -6216,7 +6216,7 @@ mod ipv4_dhcp_materialization {
     #[test]
     fn ipv4_dhcp_plan_materializes_through_public_surface() {
         let plan = ipv4_dhcp_discover_plan();
-        let vector = materialize_plan(&plan).expect("ipv4/udp/dhcp plan must materialize");
+        let vector = materialize_plan(&plan).expect("ipv4/udp/dhcpv4 plan must materialize");
 
         // The vector must root at the IPv4 network layer.
         assert_eq!(
@@ -6236,7 +6236,7 @@ mod ipv4_dhcp_materialization {
             .iter()
             .filter_map(Value::as_str)
             .collect();
-        assert_eq!(stack, ["ipv4", "udp", "dhcp"]);
+        assert_eq!(stack, ["ipv4", "udp", "dhcpv4"]);
 
         let raw_hex = vector
             .get("raw_hex")
@@ -6247,7 +6247,7 @@ mod ipv4_dhcp_materialization {
 
         // Re-decode the produced bytes through the public IPv4 entrypoint.
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, &bytes)
-            .expect("materialized IPv4 DHCP vector must re-decode from l3");
+            .expect("materialized IPv4 DHCPv4 vector must re-decode from l3");
 
         decoded
             .layer::<Ipv4>()
@@ -6261,11 +6261,11 @@ mod ipv4_dhcp_materialization {
 
         let dhcp = decoded
             .layer::<Dhcpv4>()
-            .expect("re-decoded packet must expose a DHCP layer over UDP");
+            .expect("re-decoded packet must expose a DHCPv4 layer over UDP");
         assert_eq!(
             dhcp.message_type_value(),
             Some(Dhcpv4MessageType::Discover),
-            "DHCP message type must be present and decode to discover"
+            "DHCPv4 message type must be present and decode to discover"
         );
     }
 
@@ -6276,17 +6276,17 @@ mod ipv4_dhcp_materialization {
         // failing with a missing-required-field error.
         let plan = ipv4_dhcp_discover_plan();
         let vector = materialize_plan(&plan)
-            .expect("ipv4/udp/dhcp plan without fixed BOOTP fields must materialize");
+            .expect("ipv4/udp/dhcpv4 plan without fixed BOOTP fields must materialize");
         let raw_hex = vector
             .get("raw_hex")
             .and_then(Value::as_str)
             .expect("vector must carry raw_hex bytes");
         let bytes = decode_hex(raw_hex).expect("raw_hex must decode to bytes");
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, &bytes)
-            .expect("default-filled IPv4 DHCP vector must re-decode");
+            .expect("default-filled IPv4 DHCPv4 vector must re-decode");
         let dhcp = decoded
             .layer::<Dhcpv4>()
-            .expect("re-decoded packet must expose a DHCP layer");
+            .expect("re-decoded packet must expose a DHCPv4 layer");
         // Defaults: BOOTP request op and Ethernet hardware type/len.
         assert_eq!(dhcp.op_value(), BOOTP_REQUEST);
         assert_eq!(dhcp.hardware_type_value(), DHCPV4_HTYPE_ETHERNET);

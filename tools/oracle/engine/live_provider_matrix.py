@@ -797,7 +797,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         dest="case_name",
         default=None,
         help=(
-            "focused packet-generation case (e.g. dhcp-discover) threaded into "
+            "focused packet-generation case (e.g. dhcpv4-discover) threaded into "
             "the corpus and provider live commands"
         ),
     )

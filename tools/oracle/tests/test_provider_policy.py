@@ -242,7 +242,7 @@ class DhcpLiveEligibilityPolicyTest(unittest.TestCase):
     def test_ethernet_root_dhcp_skipped_on_routed_only_provider_without_l2(
         self,
     ) -> None:
-        # Adding IPv4-root DHCP must not make ethernet / ipv4 / udp / dhcp look
+        # Adding IPv4-root DHCPv4 must not make ethernet / ipv4 / udp / dhcpv4 look
         # safe for live validation on a routed-only provider. Build a provider
         # that explicitly lacks L2 send/capture, broadcast, and provider MAC
         # discovery, then prove the Ethernet-root DHCP plan stays gated with
@@ -284,8 +284,8 @@ class DhcpLiveEligibilityPolicyTest(unittest.TestCase):
         self.assertTrue(packet.wire.eligible)
         self.assertEqual(packet.wire.skip_reasons, [])
         self.assertEqual(packet.wire.compare_root, "l3:ipv4")
-        # IPv4-root DHCP is a one-way application payload, not a service or
-        # lease workflow, so it must not demand a controlled DHCP service nor
+        # IPv4-root DHCPv4 is a one-way application payload, not a service or
+        # lease workflow, so it must not demand a controlled DHCPv4 service nor
         # any other link-layer substrate capability.
         self.assertNotIn(SKIP_REQUIRES_CONTROLLED_SERVICE, packet.wire.skip_reasons)
         self.assertNotIn(SKIP_REQUIRES_L2, packet.wire.skip_reasons)
@@ -362,25 +362,25 @@ def _ipv4_plan() -> PacketPlan:
 
 def _ipv4_dhcp_plan() -> PacketPlan:
     return PacketPlan(
-        stack=["ipv4", "udp", "dhcp"],
+        stack=["ipv4", "udp", "dhcpv4"],
         fields={
             "ipv4": {"src": "192.0.2.1", "dst": "192.0.2.2"},
             "udp": {"sport": 68, "dport": 67},
-            "dhcp": {"op": 1, "message_type": "discover"},
+            "dhcpv4": {"op": 1, "message_type": "discover"},
         },
         profile="smoke",
         seed=1,
         index=0,
         direction="libcrafter_to_reference",
         family="ipv4",
-        case="dhcp-discover",
+        case="dhcpv4-discover",
         metadata={"root": "l3:ipv4"},
     )
 
 
 def _ethernet_dhcp_plan() -> PacketPlan:
     return PacketPlan(
-        stack=["ethernet", "ipv4", "udp", "dhcp"],
+        stack=["ethernet", "ipv4", "udp", "dhcpv4"],
         fields={
             "ethernet": {
                 "src": "02:00:00:00:00:01",
@@ -388,14 +388,14 @@ def _ethernet_dhcp_plan() -> PacketPlan:
             },
             "ipv4": {"src": "0.0.0.0", "dst": "255.255.255.255"},
             "udp": {"sport": 68, "dport": 67},
-            "dhcp": {"op": 1, "message_type": "discover", "flags": "broadcast"},
+            "dhcpv4": {"op": 1, "message_type": "discover", "flags": "broadcast"},
         },
         profile="smoke",
         seed=1,
         index=1,
         direction="libcrafter_to_reference",
         family="ipv4",
-        case="dhcp-discover",
+        case="dhcpv4-discover",
         metadata={"root": "link:ethernet"},
     )
 

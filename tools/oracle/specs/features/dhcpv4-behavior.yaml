@@ -1,16 +1,16 @@
 version: 1
 kind: feature
-name: dhcp_behavior
+name: dhcpv4_behavior
 summary: DHCP message matrix and option list behavior over BOOTP.
 
 # DHCP message and option behavior rides on the IP-layer stack and does not
-# depend on Ethernet framing. Listing ipv4/udp/dhcp lets this feature match both
-# the Ethernet-root stack (ethernet/ipv4/udp/dhcp) and the IPv4-root live stack
-# (ipv4/udp/dhcp) without requiring link-layer authoring.
+# depend on Ethernet framing. Listing ipv4/udp/dhcpv4 lets this feature match both
+# the Ethernet-root stack (ethernet/ipv4/udp/dhcpv4) and the IPv4-root live stack
+# (ipv4/udp/dhcpv4) without requiring link-layer authoring.
 layers:
   - ipv4
   - udp
-  - dhcp
+  - dhcpv4
 directions:
   - reference_to_libcrafter
   - libcrafter_to_reference
@@ -59,15 +59,15 @@ behaviors:
       - end
 
 coverage_cases:
-  - dhcp-discover
-  - dhcp-request-offer-ack
-  - dhcp-inform-release-generic-options
-  - dhcp-decline-nak
-  - dhcp-force-renew
-  - dhcp-lease-query
-  - dhcp-option-matrix
-  - malformed-dhcp-options
-  - crafter-dhcp-message-matrix
+  - dhcpv4-discover
+  - dhcpv4-request-offer-ack
+  - dhcpv4-inform-release-generic-options
+  - dhcpv4-decline-nak
+  - dhcpv4-force-renew
+  - dhcpv4-lease-query
+  - dhcpv4-option-matrix
+  - malformed-dhcpv4-options
+  - crafter-dhcpv4-message-matrix
 
 backend_support:
   scapy:

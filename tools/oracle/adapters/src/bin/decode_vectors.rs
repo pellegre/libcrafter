@@ -478,7 +478,7 @@ fn normalized_layer_name(layer: &dyn Layer) -> String {
     } else if layer.as_any().is::<Dns>() {
         "dns"
     } else if layer.as_any().is::<Dhcpv4>() {
-        "dhcp"
+        "dhcpv4"
     } else if layer.as_any().is::<Snmp>() {
         "snmp"
     } else if layer.as_any().is::<Eapol>() {

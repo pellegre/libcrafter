@@ -19,7 +19,7 @@ roots:
       - ipv6
       - udp
       - dns
-      - dhcp
+      - dhcpv4
       - snmp
   - name: "link:linux-cooked"
     layers:
@@ -935,47 +935,47 @@ stacks:
       - dns-section-additional
       - dns-section-multi
       - udp-options-known-dns-surplus
-  # ethernet / ipv4 / udp / dhcp: link-layer DHCP for offline byte
+  # ethernet / ipv4 / udp / dhcpv4: link-layer DHCP for offline byte
   # equivalence, pcap, link-type, and decode-root coverage. It stays
   # link-layer-gated for live (requires_l2 / requires_provider_mac /
   # requires_broadcast) and is not used for provider-backed live exchanges.
-  - name: ethernet_dhcp
+  - name: ethernet_dhcpv4
     root: "link:ethernet"
     layers:
       - ethernet
       - ipv4
       - udp
-      - dhcp
+      - dhcpv4
     coverage_cases:
-      - dhcp-discover
-      - udp-options-known-dhcp-surplus
-      - dhcp-request-offer-ack
-      - dhcp-inform-release-generic-options
-      - dhcp-decline-nak
-      - dhcp-force-renew
-      - dhcp-lease-query
-      - dhcp-option-matrix
-  # ipv4 / udp / dhcp (root l3:ipv4): the live DHCP packet under test. Live
+      - dhcpv4-discover
+      - udp-options-known-dhcpv4-surplus
+      - dhcpv4-request-offer-ack
+      - dhcpv4-inform-release-generic-options
+      - dhcpv4-decline-nak
+      - dhcpv4-force-renew
+      - dhcpv4-lease-query
+      - dhcpv4-option-matrix
+  # ipv4 / udp / dhcpv4 (root l3:ipv4): the live DHCP packet under test. Live
   # validation is a one-way packet-equivalence exchange run in both directions
   # (libcrafter_to_reference and reference_to_libcrafter) with NO expected DHCP
   # reply. It is not a DHCP client, server, lease, or relay emulation. Rooted at
   # IPv4 unicast it is wire-eligible without L2 framing, broadcast, or provider
   # MAC discovery. Scapy is the live reference backend; Wireshark/tshark is
   # parser-only and never acts as a live endpoint.
-  - name: ipv4_udp_dhcp
+  - name: ipv4_udp_dhcpv4
     root: "l3:ipv4"
     layers:
       - ipv4
       - udp
-      - dhcp
+      - dhcpv4
     coverage_cases:
-      - dhcp-discover
-      - dhcp-request-offer-ack
-      - dhcp-inform-release-generic-options
-      - dhcp-decline-nak
-      - dhcp-force-renew
-      - dhcp-lease-query
-      - dhcp-option-matrix
+      - dhcpv4-discover
+      - dhcpv4-request-offer-ack
+      - dhcpv4-inform-release-generic-options
+      - dhcpv4-decline-nak
+      - dhcpv4-force-renew
+      - dhcpv4-lease-query
+      - dhcpv4-option-matrix
   # ipv4 / udp / rip: the Routing Information Protocol message under test
   # (RFC 1058 RIPv1 and RFC 2453 RIPv2, plus RFC 2453/2082/4822 authentication
   # entries) over UDP/520. Rooted at IPv4 unicast it is offline byte-equivalence
@@ -1327,14 +1327,14 @@ constraints:
       - icmp
   # UDP carries IKEv2 (UDP/500, and UDP/4500 after the non-ESP marker) and, for
   # NAT-T, UDP-encapsulated ESP (UDP/4500, RFC 3948). It also carries RIP
-  # (UDP/520, RFC 1058/2453) and RIPng (UDP/521, RFC 2080). The dns/dhcp/payload
+  # (UDP/520, RFC 1058/2453) and RIPng (UDP/521, RFC 2080). The dns/dhcpv4/payload
   # children come from the udp layer spec; this constraint unions in the IPSec
   # and RIP children.
   - name: udp_children
     parent: udp
     children:
       - dns
-      - dhcp
+      - dhcpv4
       - ikev2
       - esp
       - rip

@@ -7494,7 +7494,7 @@ def _pcap_cases_for_direction(
     direction: str,
     dry_plan: bool,
 ) -> list[JSONObject]:
-    # `--case` carries a packet-generation case (e.g. dhcp-discover) that selects
+    # `--case` carries a packet-generation case (e.g. dhcpv4-discover) that selects
     # which packets the corpus generator emits. It is a different namespace from
     # the pcap contract case names declared in features/pcap.yaml (e.g.
     # raw-link-type, scapy-writes-pcap-libcrafter-reads). Only filter the pcap

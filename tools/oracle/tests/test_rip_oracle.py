@@ -1,7 +1,7 @@
 """Unit coverage for the RIP oracle path: specs, plan generation, backends.
 
 These tests guard the offline RIP oracle path end-to-end inside the engine the
-way ``test_dhcp_oracle.py`` does for DHCP, without provisioning anything:
+way ``test_dhcpv4_oracle.py`` does for DHCP, without provisioning anything:
 
   * the RIP layer and feature specs load and declare the ``rip`` layer,
     the command/version matrix, the route-entry surface, and the AFI 0xFFFF
@@ -19,7 +19,7 @@ reserved, entries with address_family / route_tag / address / subnet_mask /
 next_hop / metric, and an auth sub-object), per
 ``tools/oracle/specs/layers/rip.yaml``. The Scapy reference backend must
 reproduce that model from the same plan. Scapy assertions skip cleanly when the
-backend is unavailable, matching ``test_dhcp_oracle.py`` and
+backend is unavailable, matching ``test_dhcpv4_oracle.py`` and
 ``test_scapy_backend.py`` — the bare ``python3 -m unittest`` interpreter does
 not have Scapy installed (the oracle CLI bootstraps it through ``uv``).
 """

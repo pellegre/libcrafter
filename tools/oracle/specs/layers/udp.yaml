@@ -9,7 +9,7 @@ parents:
   - ipv6
 children:
   - dns
-  - dhcp
+  - dhcpv4
   - payload
 
 fields:

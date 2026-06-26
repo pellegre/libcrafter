@@ -38,15 +38,15 @@ from .protocols.ipv6 import (
     _normalize_ipv6_options_header_fields,
     _normalize_ipv6_routing_fields,
 )
-# The ``dhcp`` layer is migrated to ``protocols/dhcp.py`` and registered in
+# The ``dhcpv4`` layer is migrated to ``protocols/dhcpv4.py`` and registered in
 # ``SCAPY_REGISTRY`` (its ``ScapyProtocol.normalize`` hook owns the per-layer DHCP
 # decode). The synthetic option-region key and the option-region decode helpers are
 # co-located there but, like the IPv6 ext-header option-region helpers, are also
 # consumed by the whole-packet ``_packet_layers`` capture below; they are re-imported
-# here so that capture and the existing ``test_dhcp_oracle.py`` references
+# here so that capture and the existing ``test_dhcpv4_oracle.py`` references
 # (``normalize._decode_dhcp_option_tlvs`` / ``normalize._apply_dhcp_option_details``)
 # keep resolving through the ``normalize`` module after the move.
-from .protocols.dhcp import (
+from .protocols.dhcpv4 import (
     _DHCP_OPTION_REGION_KEY,
     _apply_dhcp_option_details,
     _decode_dhcp_option_tlvs,
@@ -367,8 +367,8 @@ def normalize_packet(
             normalized_layer,
             _object(layer["fields"], f"{layer['name']}.fields"),
         )
-        if normalized_layer == "dhcp" and "dhcp" in normalized_fields:
-            normalized_fields["dhcp"].update(layer_fields)
+        if normalized_layer == "dhcpv4" and "dhcpv4" in normalized_fields:
+            normalized_fields["dhcpv4"].update(layer_fields)
             continue
         if normalized_layer == "bgp" and _is_bgp_body_layer(native_layer):
             key = _last_layer_field_key(normalized_fields, "bgp")
@@ -3286,7 +3286,7 @@ def _apply_udp_surplus_normalization(
     option_metadata = _udp_surplus_metadata(raw, layout, user_payload, surplus)
     key = _field_key(fields, "UdpOptions")
     if key not in fields:
-        _insert_layer_after(layers, "UdpOptions", after={"payload", "dns", "dhcp", "udp"})
+        _insert_layer_after(layers, "UdpOptions", after={"payload", "dns", "dhcpv4", "udp"})
         fields[key] = {}
     fields[key]["options"] = option_metadata
 
@@ -3341,7 +3341,7 @@ def _normalize_udp_user_payload(
 
 
 def _has_udp_typed_application_layer(layers: Sequence[str]) -> bool:
-    return any(layer in {"dns", "dhcp"} for layer in layers)
+    return any(layer in {"dns", "dhcpv4"} for layer in layers)
 
 
 def _base_layer_name(layer_name: str) -> str:
@@ -3692,7 +3692,7 @@ def _expected_stack(plan: PacketPlan) -> list[str]:
 
 
 def _udp_options_expected_insert_after(layers: Sequence[str]) -> str:
-    for layer in ("payload", "dns", "dhcp", "udp"):
+    for layer in ("payload", "dns", "dhcpv4", "udp"):
         if layer in layers:
             return layer
     return "udp"

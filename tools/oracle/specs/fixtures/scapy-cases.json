@@ -2001,8 +2001,8 @@
       "notes": "DNS generic record data, truncation flag, nonzero rcode, counts, TTLs, and raw RDATA preservation."
     },
     {
-      "name": "dhcp-discover",
-      "family": "dhcp",
+      "name": "dhcpv4-discover",
+      "family": "dhcpv4",
       "direction": "scapy_to_libcrafter",
       "root": "link:ethernet",
       "expected_stack": [
@@ -2017,8 +2017,8 @@
       "notes": "Oracle fixture case. DHCP discover validates op, htype, hlen, xid, flags, chaddr, hostname, parameter request list, pad, and end."
     },
     {
-      "name": "dhcp-request-offer-ack",
-      "family": "dhcp",
+      "name": "dhcpv4-request-offer-ack",
+      "family": "dhcpv4",
       "direction": "scapy_to_libcrafter",
       "root": "link:ethernet",
       "expected_stack": [
@@ -2033,8 +2033,8 @@
       "notes": "DHCP request, offer, and ack variants cover ciaddr, yiaddr, siaddr, giaddr, sname/file, router/DNS lists, and lease timers."
     },
     {
-      "name": "dhcp-inform-release-generic-options",
-      "family": "dhcp",
+      "name": "dhcpv4-inform-release-generic-options",
+      "family": "dhcpv4",
       "direction": "scapy_to_libcrafter",
       "root": "link:ethernet",
       "expected_stack": [
@@ -2140,7 +2140,7 @@
       "notes": "DNS compression loop, impossible pointer offset, out-of-range pointer, and truncated question cases."
     },
     {
-      "name": "malformed-dhcp-options",
+      "name": "malformed-dhcpv4-options",
       "family": "malformed",
       "direction": "scapy_to_libcrafter",
       "root": "malformed:link:ethernet",
@@ -2600,8 +2600,8 @@
       "notes": "libcrafter DNS vectors cover query and response sections, compressed names, common record types, generic records, flags, counts, TTLs, and RDATA."
     },
     {
-      "name": "crafter-dhcp-message-matrix",
-      "family": "dhcp",
+      "name": "crafter-dhcpv4-message-matrix",
+      "family": "dhcpv4",
       "direction": "libcrafter_to_scapy",
       "root": "link:ethernet",
       "expected_stack": [
