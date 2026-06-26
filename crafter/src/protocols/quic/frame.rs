@@ -2064,6 +2064,53 @@ impl QuicConnectionCloseFrame {
     }
 }
 
+/// Parsed or buildable HANDSHAKE_DONE frame.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct QuicHandshakeDoneFrame;
+
+impl QuicHandshakeDoneFrame {
+    /// Construct a HANDSHAKE_DONE frame.
+    pub const fn new() -> Self {
+        Self
+    }
+
+    /// Decode one HANDSHAKE_DONE frame from bytes that include the Frame Type.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let bytes = bytes.as_ref();
+        let (frame, consumed) = decode_handshake_done_frame(bytes)?;
+        if consumed != bytes.len() {
+            return Err(CrafterError::invalid_field_value(
+                "quic.frame.handshake_done",
+                "HANDSHAKE_DONE frame has trailing bytes",
+            ));
+        }
+        Ok(frame)
+    }
+
+    /// Append the canonical HANDSHAKE_DONE frame encoding.
+    pub fn encode(self, out: &mut Vec<u8>) -> Result<()> {
+        QuicVarInt::from_u64_unchecked(0x1e).encode(out)?;
+        Ok(())
+    }
+
+    /// Return the canonical HANDSHAKE_DONE frame encoding.
+    pub fn encode_to_vec(self) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        self.encode(&mut out)?;
+        Ok(out)
+    }
+
+    /// Stable HANDSHAKE_DONE summary for packet inspection.
+    pub const fn summary(self) -> &'static str {
+        "kind=HANDSHAKE_DONE"
+    }
+
+    /// Stable field/value pairs for HANDSHAKE_DONE inspection.
+    pub fn inspection_fields(self) -> Vec<(&'static str, String)> {
+        vec![("handshake_done", "true".to_string())]
+    }
+}
+
 /// Raw-preserving QUIC frame.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct QuicFrame {
@@ -2370,6 +2417,16 @@ impl QuicFrame {
         ))
     }
 
+    /// Construct a HANDSHAKE_DONE frame from typed fields.
+    pub fn from_handshake_done_frame(handshake_done: QuicHandshakeDoneFrame) -> Result<Self> {
+        Ok(Self::from_bytes(handshake_done.encode_to_vec()?))
+    }
+
+    /// Construct a HANDSHAKE_DONE frame.
+    pub fn handshake_done() -> Result<Self> {
+        Self::from_handshake_done_frame(QuicHandshakeDoneFrame::new())
+    }
+
     /// Decode a frame sequence within the caller-provided packet boundary.
     ///
     /// Supported fixed-boundary frames are split out first. The remaining
@@ -2499,6 +2556,12 @@ impl QuicFrame {
                     let (_, connection_close_len) =
                         decode_connection_close_frame(&bytes[offset..])?;
                     let end = offset + connection_close_len;
+                    frames.push(Self::from_bytes(&bytes[offset..end]));
+                    offset = end;
+                }
+                0x1e => {
+                    let (_, handshake_done_len) = decode_handshake_done_frame(&bytes[offset..])?;
+                    let end = offset + handshake_done_len;
                     frames.push(Self::from_bytes(&bytes[offset..end]));
                     offset = end;
                 }
@@ -2680,6 +2743,14 @@ impl QuicFrame {
         }
     }
 
+    /// Decode this frame as HANDSHAKE_DONE when applicable.
+    pub fn handshake_done_frame(&self) -> Result<Option<QuicHandshakeDoneFrame>> {
+        match self.frame_type_value() {
+            Some(0x1e) => Ok(Some(QuicHandshakeDoneFrame::decode(&self.bytes)?)),
+            _ => Ok(None),
+        }
+    }
+
     /// Borrow the preserved frame bytes.
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes
@@ -2785,6 +2856,9 @@ impl QuicFrame {
         if let Ok(Some(connection_close)) = self.connection_close_frame() {
             return connection_close.summary();
         }
+        if let Ok(Some(handshake_done)) = self.handshake_done_frame() {
+            return handshake_done.summary().to_string();
+        }
         match self.frame_type() {
             Some(frame_type) => format!(
                 "kind={} type=0x{:x} raw_len={}",
@@ -2872,6 +2946,9 @@ impl QuicFrame {
         }
         if let Ok(Some(connection_close)) = self.connection_close_frame() {
             fields.extend(connection_close.inspection_fields());
+        }
+        if let Ok(Some(handshake_done)) = self.handshake_done_frame() {
+            fields.extend(handshake_done.inspection_fields());
         }
         fields
     }
@@ -3433,6 +3510,17 @@ fn decode_connection_close_frame(bytes: &[u8]) -> Result<(QuicConnectionCloseFra
     Ok((frame, end))
 }
 
+fn decode_handshake_done_frame(bytes: &[u8]) -> Result<(QuicHandshakeDoneFrame, usize)> {
+    let (frame_type, offset) = decode_frame_varint(bytes, 0, "quic.frame.type")?;
+    match frame_type.value() {
+        0x1e => Ok((QuicHandshakeDoneFrame::new(), offset)),
+        _ => Err(CrafterError::invalid_field_value(
+            "quic.frame.handshake_done.type",
+            "HANDSHAKE_DONE frame type must be 0x1e",
+        )),
+    }
+}
+
 fn decode_frame_varint(
     bytes: &[u8],
     offset: usize,
@@ -3463,7 +3551,7 @@ fn classify_frame_kind(bytes: &[u8]) -> QuicFrameKind {
             QuicFrameKind::Unknown
         };
     }
-    if frame_type.value() == 0x01 && consumed != bytes.len() {
+    if matches!(frame_type.value(), 0x01 | 0x1e) && consumed != bytes.len() {
         return QuicFrameKind::Unknown;
     }
     match known_frame_type(frame_type.value()) {
@@ -4525,6 +4613,59 @@ mod tests {
         assert_eq!(
             QuicFrame::decode_sequence([0x1c, 0x07, 0x40]).unwrap_err(),
             CrafterError::buffer_too_short("quic.frame.connection_close.frame_type", 2, 1)
+        );
+    }
+
+    #[test]
+    fn quic_frame_handshake_done_decodes_without_consuming_following_frames() -> crate::Result<()> {
+        let bytes = [0x1e, 0x01, 0x1e, 0x00, 0x00];
+
+        let frames = QuicFrame::decode_sequence(bytes)?;
+
+        assert_eq!(frames.len(), 4);
+        assert_eq!(
+            frames[0].kind(),
+            QuicFrameKind::Known(QuicKnownFrameType::HandshakeDone)
+        );
+        assert!(frames[0].handshake_done_frame()?.is_some());
+        assert!(frames[1].is_ping());
+        assert_eq!(
+            frames[2].kind(),
+            QuicFrameKind::Known(QuicKnownFrameType::HandshakeDone)
+        );
+        assert_eq!(frames[2].len(), 1);
+        assert_eq!(frames[3].padding_len(), Some(2));
+        assert_eq!(QuicFrame::encode_sequence(frames), bytes);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_handshake_done_serializes_and_summarizes() -> crate::Result<()> {
+        let typed = QuicHandshakeDoneFrame::new();
+        let frame = QuicFrame::handshake_done()?;
+
+        assert_eq!(typed.encode_to_vec()?, [0x1e]);
+        assert_eq!(typed.summary(), "kind=HANDSHAKE_DONE");
+        assert_eq!(frame.as_bytes(), &[0x1e]);
+        assert_eq!(frame.summary(), "kind=HANDSHAKE_DONE");
+        assert!(frame
+            .inspection_fields()
+            .contains(&("handshake_done", "true".to_string())));
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_handshake_done_rejects_trailing_bytes_for_single_frame_decode() {
+        assert_eq!(
+            QuicHandshakeDoneFrame::decode([0x1e, 0x01]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "quic.frame.handshake_done",
+                "HANDSHAKE_DONE frame has trailing bytes"
+            )
+        );
+        assert_eq!(
+            QuicFrame::from_bytes([0x1e, 0x01]).kind(),
+            QuicFrameKind::Unknown
         );
     }
 }
