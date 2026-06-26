@@ -3798,6 +3798,62 @@ mod tests {
     }
 
     #[test]
+    fn quic_frame_sequence_decode_splits_ordered_cleartext_payload_until_end() -> crate::Result<()>
+    {
+        let bytes = [0x00, 0x00, 0x01, 0x06, 0x00, 0x02, 0xaa, 0xbb, 0x1e];
+
+        let frames = QuicFrame::decode_sequence(bytes)?;
+
+        assert_eq!(frames.len(), 4);
+        assert_eq!(frames[0].padding_len(), Some(2));
+        assert!(frames[1].is_ping());
+        assert_eq!(frames[2].crypto_frame()?.unwrap().data(), &[0xaa, 0xbb]);
+        assert!(frames[3].handshake_done_frame()?.is_some());
+        assert_eq!(QuicFrame::encode_sequence(frames), bytes);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_sequence_decode_preserves_unknown_tail_without_guessing_boundary(
+    ) -> crate::Result<()> {
+        let bytes = [0x01, 0x40, 0xaf, 0xde, 0xad, 0x1e];
+
+        let frames = QuicFrame::decode_sequence(bytes)?;
+
+        assert_eq!(frames.len(), 2);
+        assert!(frames[0].is_ping());
+        let unknown = frames[1].unknown_frame()?.unwrap();
+        assert_eq!(unknown.frame_type_value(), 0xaf);
+        assert_eq!(unknown.raw_following_bytes(), &[0xde, 0xad, 0x1e]);
+        assert_eq!(QuicFrame::encode_sequence(frames), bytes);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_frame_sequence_decode_truncated_known_frame_reports_structured_error() {
+        assert_eq!(
+            QuicFrame::decode_sequence([0x01, 0x06, 0x00, 0x03, 0xaa]).unwrap_err(),
+            CrafterError::buffer_too_short("quic.frame.crypto.data", 3, 1)
+        );
+    }
+
+    #[test]
+    fn quic_frame_sequence_decode_keeps_quic_payload_raw_unless_called_explicitly(
+    ) -> crate::Result<()> {
+        let payload = [0x01, 0x06, 0x00, 0x01, 0xaa];
+        let quic = crate::protocols::quic::Quic::from_bytes(payload);
+
+        assert_eq!(quic.payload_bytes(), payload);
+        assert_eq!(quic.frame_count(), 0);
+
+        let frames = QuicFrame::decode_sequence(quic.payload_bytes())?;
+        assert_eq!(frames.len(), 2);
+        assert!(frames[0].is_ping());
+        assert_eq!(frames[1].crypto_frame()?.unwrap().data(), &[0xaa]);
+        Ok(())
+    }
+
+    #[test]
     fn quic_frame_padding_ping_sequence_roundtrips() -> crate::Result<()> {
         let bytes = [0x00, 0x00, 0x00, 0x01, 0x00];
 
