@@ -255,6 +255,69 @@ const VALID_FIXTURES: &[ValidFixtureCase] = &[
         summary_path: None,
     },
     ValidFixtureCase {
+        name: "quic-version-negotiation",
+        path: "bytes/quic-version-negotiation.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/quic-version-negotiation.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::Raw),
+        expected_layers: &[ExpectedLayer::Raw],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "quic-retry",
+        path: "bytes/quic-retry.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/quic-retry.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::Raw),
+        expected_layers: &[ExpectedLayer::Raw],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "quic-v1-initial",
+        path: "bytes/quic-v1-initial.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/quic-v1-initial.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::Raw),
+        expected_layers: &[ExpectedLayer::Raw],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "quic-v2-initial",
+        path: "bytes/quic-v2-initial.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/quic-v2-initial.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::Raw),
+        expected_layers: &[ExpectedLayer::Raw],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "quic-handshake",
+        path: "bytes/quic-handshake.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/quic-handshake.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::Raw),
+        expected_layers: &[ExpectedLayer::Raw],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "quic-zero-rtt",
+        path: "bytes/quic-zero-rtt.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/quic-zero-rtt.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::Raw),
+        expected_layers: &[ExpectedLayer::Raw],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
+        name: "quic-short-header",
+        path: "bytes/quic-short-header.hex",
+        contents: FixtureContents::Hex(fixture_str!("bytes/quic-short-header.hex")),
+        target: FixtureDecodeTarget::Packet(PacketDecodeTarget::Raw),
+        expected_layers: &[ExpectedLayer::Raw],
+        preserve_exact_bytes: true,
+        summary_path: None,
+    },
+    ValidFixtureCase {
         name: "arp-who-has",
         path: "bytes/arp-who-has.bin",
         contents: FixtureContents::Bytes(fixture_bytes!("bytes/arp-who-has.bin")),
@@ -2363,7 +2426,14 @@ const REQUIRED_PCAP_COVERAGE: &[(PcapCoverageFamily, &str)] = &[
 
 fn coverage_for_case(name: &str) -> &'static [CoverageFamily] {
     match name {
-        "raw-hello-agents" => &[CoverageFamily::RawPayload],
+        "raw-hello-agents"
+        | "quic-version-negotiation"
+        | "quic-retry"
+        | "quic-v1-initial"
+        | "quic-v2-initial"
+        | "quic-handshake"
+        | "quic-zero-rtt"
+        | "quic-short-header" => &[CoverageFamily::RawPayload],
         "arp-who-has" => &[CoverageFamily::EthernetArpRequest],
         "ethernet-arp-reply" => &[CoverageFamily::EthernetArpReply],
         "ethernet-arp-infiniband-ipv6-nonstandard" => &[CoverageFamily::EthernetArpNonstandard],
@@ -3646,6 +3716,12 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
             assert_eq!(
                 expect_layer::<Raw>(case, packet).as_bytes(),
                 b"Hello, agents!"
+            );
+        }
+        name if name.starts_with("quic-") => {
+            assert_eq!(
+                expect_layer::<Raw>(case, packet).as_bytes(),
+                fixture_bytes_for_case(case).as_slice()
             );
         }
         "ethernet-arp-reply" => {

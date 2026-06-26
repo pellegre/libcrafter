@@ -1,0 +1,6 @@
+# QUIC v2 Initial header fixture.
+# Evidence: .agents/docs/quic-manifest.md E-RFC-9369 and
+# .agents/docs/quic-codepoints.md QUIC version 2 row.
+# first=0xd0, version=v2, dcid=8394c8f0, scid=aa, token_len=0,
+# length=3, packet_number=01, protected_payload=beef.
+d06b3343cf048394c8f001aa000301beef

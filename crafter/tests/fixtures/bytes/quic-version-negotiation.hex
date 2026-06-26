@@ -1,0 +1,5 @@
+# QUIC Version Negotiation header fixture.
+# Evidence: .agents/docs/quic-manifest.md E-RFC-8999/E-RFC-9000 and
+# .agents/docs/quic-codepoints.md default-eligible QUIC version rows.
+# first=0xc0, version=0, dcid=8394c8f0, scid=aa, versions=v1,v2.
+c000000000048394c8f001aa000000016b3343cf
