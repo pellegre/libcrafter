@@ -50,7 +50,7 @@ pub enum Dhcpv4MessageType {
     /// DHCPLEASEQUERYSTATUS (RFC 7724).
     LeaseQueryStatus,
     /// DHCPTLS (RFC 7724).
-    DhcpTls,
+    Dhcpv4Tls,
     /// Unknown message type value preserved from decode.
     Unknown(u8),
 }
@@ -76,7 +76,7 @@ impl Dhcpv4MessageType {
             DHCP_LEASE_QUERY_DONE => Self::LeaseQueryDone,
             DHCP_ACTIVE_LEASE_QUERY => Self::ActiveLeaseQuery,
             DHCP_LEASE_QUERY_STATUS => Self::LeaseQueryStatus,
-            DHCP_TLS => Self::DhcpTls,
+            DHCP_TLS => Self::Dhcpv4Tls,
             value => Self::Unknown(value),
         }
     }
@@ -101,7 +101,7 @@ impl Dhcpv4MessageType {
             Self::LeaseQueryDone => DHCP_LEASE_QUERY_DONE,
             Self::ActiveLeaseQuery => DHCP_ACTIVE_LEASE_QUERY,
             Self::LeaseQueryStatus => DHCP_LEASE_QUERY_STATUS,
-            Self::DhcpTls => DHCP_TLS,
+            Self::Dhcpv4Tls => DHCP_TLS,
             Self::Unknown(value) => value,
         }
     }
@@ -130,7 +130,7 @@ pub(crate) const REGISTERED_DHCPV4_MESSAGE_TYPES: [Dhcpv4MessageType; 18] = [
     Dhcpv4MessageType::LeaseQueryDone,
     Dhcpv4MessageType::ActiveLeaseQuery,
     Dhcpv4MessageType::LeaseQueryStatus,
-    Dhcpv4MessageType::DhcpTls,
+    Dhcpv4MessageType::Dhcpv4Tls,
 ];
 
 impl From<Dhcpv4MessageType> for u8 {
@@ -159,7 +159,7 @@ pub(crate) fn dhcpv4_message_type_summary(message_type: Dhcpv4MessageType) -> St
         Dhcpv4MessageType::LeaseQueryDone => "leasequerydone".to_string(),
         Dhcpv4MessageType::ActiveLeaseQuery => "activeleasequery".to_string(),
         Dhcpv4MessageType::LeaseQueryStatus => "leasequerystatus".to_string(),
-        Dhcpv4MessageType::DhcpTls => "dhcptls".to_string(),
+        Dhcpv4MessageType::Dhcpv4Tls => "dhcptls".to_string(),
         Dhcpv4MessageType::Unknown(value) => format!("unknown({value})"),
     }
 }
@@ -255,7 +255,7 @@ mod message_type_tests {
             (Dhcpv4MessageType::LeaseQueryDone, 15),
             (Dhcpv4MessageType::ActiveLeaseQuery, 16),
             (Dhcpv4MessageType::LeaseQueryStatus, 17),
-            (Dhcpv4MessageType::DhcpTls, 18),
+            (Dhcpv4MessageType::Dhcpv4Tls, 18),
         ];
 
         for (message_type, code) in leasequery_family {

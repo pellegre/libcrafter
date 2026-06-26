@@ -22,18 +22,18 @@ fn main() -> ExampleResult<()> {
     let requestor_ip: Ipv4Addr = "192.0.2.10".parse()?;
 
     // A requestor that knows a client identifier can query by it (RFC 4388
-    // section 6.1). client_id_value carries a typed DhcpClientIdentifier.
-    let client_id = DhcpClientIdentifier::ethernet_mac(client_mac.octets());
-    let auth = DhcpAuthentication::new(
-        DhcpAuthProtocol::Delayed,
-        DhcpAuthAlgorithm::HmacMd5,
-        DhcpReplayDetectionMethod::MonotonicCounter,
+    // section 6.1). client_id_value carries a typed Dhcpv4ClientIdentifier.
+    let client_id = Dhcpv4ClientIdentifier::ethernet_mac(client_mac.octets());
+    let auth = Dhcpv4Authentication::new(
+        Dhcpv4AuthProtocol::Delayed,
+        Dhcpv4AuthAlgorithm::HmacMd5,
+        Dhcpv4ReplayDetectionMethod::MonotonicCounter,
         0x0000_0000_0000_0001,
         b"\x00\x00\x00\x01placeholder-mac".to_vec(),
     );
     let query = Dhcpv4::lease_query_by_client_id(client_id)
         .xid(0x4c51_0001)
-        .option(DhcpOption::authentication(auth));
+        .option(Dhcpv4Option::authentication(auth));
 
     inspect("leasequery request", requestor_ip, server_ip, query)?;
 
@@ -45,14 +45,14 @@ fn main() -> ExampleResult<()> {
         .ciaddr("192.0.2.50".parse()?)
         .server_identifier(server_ip)
         .lease_time(3600)
-        .option(DhcpOption::associated_ip(vec![
+        .option(Dhcpv4Option::associated_ip(vec![
             "192.0.2.50".parse::<Ipv4Addr>()?
         ]))
-        .option(DhcpOption::status_code(DhcpStatusCodeOption::new(
-            DhcpStatusCode::Success,
+        .option(Dhcpv4Option::status_code(Dhcpv4StatusCodeOption::new(
+            Dhcpv4StatusCode::Success,
             b"ok".to_vec(),
         )))
-        .option(DhcpOption::dhcp_state(DhcpState::Active));
+        .option(Dhcpv4Option::dhcp_state(Dhcpv4State::Active));
 
     inspect("leasequery reply", server_ip, requestor_ip, reply)?;
 

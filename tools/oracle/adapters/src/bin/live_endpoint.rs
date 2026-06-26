@@ -1792,16 +1792,16 @@ fn dhcp_layer(plan: &Value) -> ExampleResult<Dhcpv4> {
     Ok(layer)
 }
 
-fn dhcp_options(value: &Value) -> ExampleResult<Vec<DhcpOption>> {
+fn dhcp_options(value: &Value) -> ExampleResult<Vec<Dhcpv4Option>> {
     let mut options = Vec::new();
     for item in array_values(value)? {
         if let Some(text) = item.as_str() {
             if text == "end" {
-                options.push(DhcpOption::End);
+                options.push(Dhcpv4Option::End);
                 continue;
             }
             if text == "pad" {
-                options.push(DhcpOption::Pad);
+                options.push(Dhcpv4Option::Pad);
                 continue;
             }
             if let Some((name, raw_value)) = text.split_once('=') {
@@ -1810,27 +1810,27 @@ fn dhcp_options(value: &Value) -> ExampleResult<Vec<DhcpOption>> {
             }
         }
     }
-    if !matches!(options.last(), Some(DhcpOption::End)) {
-        options.push(DhcpOption::End);
+    if !matches!(options.last(), Some(Dhcpv4Option::End)) {
+        options.push(Dhcpv4Option::End);
     }
     Ok(options)
 }
 
-fn dhcp_option_pair(name: &str, value: &str) -> ExampleResult<DhcpOption> {
+fn dhcp_option_pair(name: &str, value: &str) -> ExampleResult<Dhcpv4Option> {
     match name.replace('-', "_").as_str() {
-        "message_type" => Ok(DhcpOption::message_type(dhcpv4_message_type(value))),
-        "hostname" | "host_name" => Ok(DhcpOption::host_name(value)),
-        "domain_name" => Ok(DhcpOption::domain_name(value)),
+        "message_type" => Ok(Dhcpv4Option::message_type(dhcpv4_message_type(value))),
+        "hostname" | "host_name" => Ok(Dhcpv4Option::host_name(value)),
+        "domain_name" => Ok(Dhcpv4Option::domain_name(value)),
         "requested_ip" | "requested_ip_address" => {
-            Ok(DhcpOption::requested_ip_address(Ipv4Addr::from_str(value)?))
+            Ok(Dhcpv4Option::requested_ip_address(Ipv4Addr::from_str(value)?))
         }
         "server_id" | "server_identifier" => {
-            Ok(DhcpOption::server_identifier(Ipv4Addr::from_str(value)?))
+            Ok(Dhcpv4Option::server_identifier(Ipv4Addr::from_str(value)?))
         }
-        "router" => Ok(DhcpOption::router(parse_ipv4_list(value)?)),
-        "dns" | "domain_name_server" => Ok(DhcpOption::domain_name_server(parse_ipv4_list(value)?)),
-        "lease_time" => Ok(DhcpOption::lease_time(value.parse::<u32>()?)),
-        _ => Ok(DhcpOption::generic(254, value.as_bytes().to_vec())),
+        "router" => Ok(Dhcpv4Option::router(parse_ipv4_list(value)?)),
+        "dns" | "domain_name_server" => Ok(Dhcpv4Option::domain_name_server(parse_ipv4_list(value)?)),
+        "lease_time" => Ok(Dhcpv4Option::lease_time(value.parse::<u32>()?)),
+        _ => Ok(Dhcpv4Option::generic(254, value.as_bytes().to_vec())),
     }
 }
 

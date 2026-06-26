@@ -62,7 +62,7 @@ use super::constants::{
     DHCP_VSS_TYPE_GLOBAL_DEFAULT, DHCP_VSS_TYPE_NVT_ASCII, DHCP_VSS_TYPE_VPN_ID,
 };
 use super::message::Dhcpv4MessageType;
-use super::registry::{option_name, option_status, DhcpOptionStatus};
+use super::registry::{option_name, option_status, Dhcpv4OptionStatus};
 
 /// Source area a DHCPv4 option segment was decoded from.
 ///
@@ -71,7 +71,7 @@ use super::registry::{option_name, option_status, DhcpOptionStatus};
 /// fixed fields carry additional options. The normal options area always
 /// follows the magic cookie.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum DhcpOptionArea {
+pub enum Dhcpv4OptionArea {
     /// The normal options area following the magic cookie.
     Options,
     /// The overloaded BOOTP `file` (boot file name) field.
@@ -80,7 +80,7 @@ pub enum DhcpOptionArea {
     Sname,
 }
 
-impl DhcpOptionArea {
+impl Dhcpv4OptionArea {
     /// Stable lowercase label for summaries and diagnostics.
     pub const fn label(self) -> &'static str {
         match self {
@@ -143,11 +143,11 @@ impl OptionOverload {
     }
 
     /// True when the given area is overloaded with options.
-    pub const fn overloads(self, area: DhcpOptionArea) -> bool {
+    pub const fn overloads(self, area: Dhcpv4OptionArea) -> bool {
         match area {
-            DhcpOptionArea::Options => true,
-            DhcpOptionArea::File => self.overloads_file(),
-            DhcpOptionArea::Sname => self.overloads_sname(),
+            Dhcpv4OptionArea::Options => true,
+            Dhcpv4OptionArea::File => self.overloads_file(),
+            Dhcpv4OptionArea::Sname => self.overloads_sname(),
         }
     }
 }
@@ -162,14 +162,14 @@ impl OptionOverload {
 /// destination per the RFC, but the codec preserves caller-supplied values
 /// verbatim so intentionally malformed packets can still be built.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct DhcpStaticRoute {
+pub struct Dhcpv4StaticRoute {
     /// Route destination address.
     pub destination: Ipv4Addr,
     /// Router address used to reach the destination.
     pub router: Ipv4Addr,
 }
 
-impl DhcpStaticRoute {
+impl Dhcpv4StaticRoute {
     /// Create a static route from a destination and router address.
     pub const fn new(destination: Ipv4Addr, router: Ipv4Addr) -> Self {
         Self {
@@ -188,7 +188,7 @@ impl DhcpStaticRoute {
 /// Insignificant trailing octets are omitted on the wire, so a `/24` route
 /// carries three subnet octets and a `/0` default route carries none.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct DhcpClasslessRoute {
+pub struct Dhcpv4ClasslessRoute {
     /// Subnet-mask width in bits (number of one bits, 0-32).
     pub prefix_length: u8,
     /// Subnet (destination network) number. Only the significant octets, as
@@ -198,7 +198,7 @@ pub struct DhcpClasslessRoute {
     pub router: Ipv4Addr,
 }
 
-impl DhcpClasslessRoute {
+impl Dhcpv4ClasslessRoute {
     /// Create a classless static route from a prefix length, destination
     /// network, and router address.
     pub const fn new(prefix_length: u8, destination: Ipv4Addr, router: Ipv4Addr) -> Self {
@@ -248,13 +248,13 @@ pub enum SipServers {
 /// any vendor-defined contents are preserved verbatim. This type holds the raw
 /// opaque class values; the length-prefix framing is applied on encode.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct DhcpUserClass {
+pub struct Dhcpv4UserClass {
     /// The opaque user-class data instances, in wire order. Each is preserved
     /// verbatim; the codec adds and removes the per-instance length octet.
     pub classes: Vec<Vec<u8>>,
 }
 
-impl DhcpUserClass {
+impl Dhcpv4UserClass {
     /// Create a user-class value from a list of opaque class instances.
     pub fn new(classes: impl Into<Vec<Vec<u8>>>) -> Self {
         Self {
@@ -325,14 +325,14 @@ impl ClientNetworkDeviceInterface {
 /// type models the three forms that appear on the wire without ever losing the
 /// raw bytes:
 ///
-/// - [`DhcpClientIdentifier::LegacyHardware`]: the RFC 2132 form, a hardware
+/// - [`Dhcpv4ClientIdentifier::LegacyHardware`]: the RFC 2132 form, a hardware
 ///   type (an ARP hardware type per STD 2, for example `1` for Ethernet)
 ///   followed by a hardware address. With type `1` and a 6-octet address this
 ///   is the common Ethernet MAC client identifier.
-/// - [`DhcpClientIdentifier::NodeSpecific`]: the RFC 4361 form, type `255`
+/// - [`Dhcpv4ClientIdentifier::NodeSpecific`]: the RFC 4361 form, type `255`
 ///   followed by a 4-octet IAID and a variable-length DUID, giving a node a
 ///   stable identity across interfaces and across DHCPv4/DHCPv6.
-/// - [`DhcpClientIdentifier::Raw`]: any other form (including type `0`
+/// - [`Dhcpv4ClientIdentifier::Raw`]: any other form (including type `0`
 ///   non-hardware identifiers such as a fully-qualified domain name, or
 ///   identifiers whose internal structure the codec does not interpret),
 ///   preserved verbatim including the type octet.
@@ -341,7 +341,7 @@ impl ClientNetworkDeviceInterface {
 /// crate models the option as packet data so a reply can carry exactly what the
 /// client sent. This is a packet-field model, not lease policy.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum DhcpClientIdentifier {
+pub enum Dhcpv4ClientIdentifier {
     /// RFC 2132 hardware-type identifier: an ARP hardware type octet followed by
     /// a hardware address (for example type `1` plus a 6-octet Ethernet MAC).
     LegacyHardware {
@@ -361,7 +361,7 @@ pub enum DhcpClientIdentifier {
     Raw(Vec<u8>),
 }
 
-impl DhcpClientIdentifier {
+impl Dhcpv4ClientIdentifier {
     /// Create an RFC 2132 hardware-type identifier from a hardware type octet and
     /// hardware address bytes.
     pub fn legacy_hardware(hardware_type: u8, address: impl Into<Vec<u8>>) -> Self {
@@ -397,7 +397,7 @@ impl DhcpClientIdentifier {
     }
 
     /// The option `type` octet this identifier encodes with (RFC 2132 / RFC
-    /// 4361). Returns `None` for an empty [`DhcpClientIdentifier::Raw`], which
+    /// 4361). Returns `None` for an empty [`Dhcpv4ClientIdentifier::Raw`], which
     /// carries no type octet.
     pub fn type_octet(&self) -> Option<u8> {
         match self {
@@ -438,10 +438,10 @@ impl DhcpClientIdentifier {
 /// sub-registry. The Protocol field selects how the variable Authentication
 /// Information is interpreted. Registered values are surfaced as named variants;
 /// any unassigned or reserved value is preserved verbatim through
-/// [`DhcpAuthProtocol::Unknown`] so no information is lost. This is a packet
+/// [`Dhcpv4AuthProtocol::Unknown`] so no information is lost. This is a packet
 /// field only: the crate never selects or runs an authentication protocol.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum DhcpAuthProtocol {
+pub enum Dhcpv4AuthProtocol {
     /// Configuration token protocol (value `0`, RFC 3118 section 4): the
     /// authentication information is an opaque shared token.
     ConfigurationToken,
@@ -455,7 +455,7 @@ pub enum DhcpAuthProtocol {
     Unknown(u8),
 }
 
-impl DhcpAuthProtocol {
+impl Dhcpv4AuthProtocol {
     /// Classify a raw Protocol octet (RFC 3118 section 2).
     pub const fn from_code(code: u8) -> Self {
         match code {
@@ -483,9 +483,9 @@ impl DhcpAuthProtocol {
 /// Algorithm" sub-registry. The Algorithm value is interpreted relative to the
 /// Protocol. The well-known value is HMAC-MD5 (`1`), used by the Delayed
 /// Authentication protocol and by RFC 6704. Other values are preserved
-/// verbatim through [`DhcpAuthAlgorithm::Unknown`].
+/// verbatim through [`Dhcpv4AuthAlgorithm::Unknown`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum DhcpAuthAlgorithm {
+pub enum Dhcpv4AuthAlgorithm {
     /// HMAC-MD5 generating function (value `1`, RFC 3118 section 5.1).
     HmacMd5,
     /// Any other Algorithm value, preserved verbatim (including the Protocol-0
@@ -493,7 +493,7 @@ pub enum DhcpAuthAlgorithm {
     Unknown(u8),
 }
 
-impl DhcpAuthAlgorithm {
+impl Dhcpv4AuthAlgorithm {
     /// Classify a raw Algorithm octet (RFC 3118 section 5.1).
     pub const fn from_code(code: u8) -> Self {
         match code {
@@ -517,16 +517,16 @@ impl DhcpAuthAlgorithm {
 /// Source: RFC 3118 section 2. The RDM names how the 64-bit Replay Detection
 /// field is interpreted. RFC 3118 defines value `0`, a monotonically increasing
 /// counter (NTP timestamps are recommended). Other values are preserved
-/// verbatim through [`DhcpReplayDetectionMethod::Unknown`].
+/// verbatim through [`Dhcpv4ReplayDetectionMethod::Unknown`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum DhcpReplayDetectionMethod {
+pub enum Dhcpv4ReplayDetectionMethod {
     /// Monotonically increasing counter (value `0`, RFC 3118 section 2).
     MonotonicCounter,
     /// Any other RDM value, preserved verbatim.
     Unknown(u8),
 }
 
-impl DhcpReplayDetectionMethod {
+impl Dhcpv4ReplayDetectionMethod {
     /// Classify a raw RDM octet (RFC 3118 section 2).
     pub const fn from_code(code: u8) -> Self {
         match code {
@@ -560,13 +560,13 @@ impl DhcpReplayDetectionMethod {
 /// The crate models these as packet data only: it never derives, signs,
 /// verifies, or looks up keys or secrets.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct DhcpAuthentication {
+pub struct Dhcpv4Authentication {
     /// Authentication Protocol (RFC 3118 section 2, first octet).
-    pub protocol: DhcpAuthProtocol,
+    pub protocol: Dhcpv4AuthProtocol,
     /// Authentication Algorithm (RFC 3118 section 2, second octet).
-    pub algorithm: DhcpAuthAlgorithm,
+    pub algorithm: Dhcpv4AuthAlgorithm,
     /// Replay Detection Method (RFC 3118 section 2, third octet).
-    pub rdm: DhcpReplayDetectionMethod,
+    pub rdm: Dhcpv4ReplayDetectionMethod,
     /// The 64-bit Replay Detection field (RFC 3118 section 2). For RDM `0` this
     /// is a monotonically increasing counter value.
     pub replay_detection: u64,
@@ -575,13 +575,13 @@ pub struct DhcpAuthentication {
     pub authentication_information: Vec<u8>,
 }
 
-impl DhcpAuthentication {
+impl Dhcpv4Authentication {
     /// Create an authentication option value from its typed header fields and the
     /// raw authentication information bytes.
     pub fn new(
-        protocol: DhcpAuthProtocol,
-        algorithm: DhcpAuthAlgorithm,
-        rdm: DhcpReplayDetectionMethod,
+        protocol: Dhcpv4AuthProtocol,
+        algorithm: Dhcpv4AuthAlgorithm,
+        rdm: Dhcpv4ReplayDetectionMethod,
         replay_detection: u64,
         authentication_information: impl Into<Vec<u8>>,
     ) -> Self {
@@ -623,13 +623,13 @@ impl DhcpAuthentication {
 /// round-trip. This is packet data only; the crate does not negotiate or run an
 /// algorithm.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
-pub struct DhcpForcerenewNonceCapable {
+pub struct Dhcpv4ForcerenewNonceCapable {
     /// The supported authentication algorithm identifiers, one per octet
     /// (RFC 6704 section 4). HMAC-MD5 is value `1`.
     pub algorithms: Vec<u8>,
 }
 
-impl DhcpForcerenewNonceCapable {
+impl Dhcpv4ForcerenewNonceCapable {
     /// Create a FORCERENEW_NONCE_CAPABLE value from a list of algorithm octets.
     pub fn new(algorithms: impl Into<Vec<u8>>) -> Self {
         Self {
@@ -658,9 +658,9 @@ impl DhcpForcerenewNonceCapable {
 /// Values" sub-registry (XML retrieved 2026-05-29). The status octet conveys
 /// the result of a (bulk) leasequery. Registered values are surfaced as named
 /// variants; any unassigned value is preserved verbatim through
-/// [`DhcpStatusCode::Unknown`] so no information is lost.
+/// [`Dhcpv4StatusCode::Unknown`] so no information is lost.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum DhcpStatusCode {
+pub enum Dhcpv4StatusCode {
     /// Success (value `0`, RFC 6926).
     Success,
     /// UnspecFail (value `1`, RFC 6926).
@@ -683,7 +683,7 @@ pub enum DhcpStatusCode {
     Unknown(u8),
 }
 
-impl DhcpStatusCode {
+impl Dhcpv4StatusCode {
     /// Classify a raw status octet (RFC 6926 section 6.2.2).
     pub const fn from_code(code: u8) -> Self {
         match code {
@@ -727,23 +727,23 @@ impl DhcpStatusCode {
 /// Code (151) | Len (n+1) | status | s1 | s2 | ... | sn
 /// ```
 ///
-/// The status octet is decoded into a typed [`DhcpStatusCode`] (unknown values
+/// The status octet is decoded into a typed [`Dhcpv4StatusCode`] (unknown values
 /// preserved verbatim) and the message bytes are kept raw, because the text is
 /// not guaranteed to be valid UTF-8 in arbitrary captures. Use
-/// [`DhcpStatusCodeOption::message_lossy`] for a convenience string view.
+/// [`Dhcpv4StatusCodeOption::message_lossy`] for a convenience string view.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct DhcpStatusCodeOption {
+pub struct Dhcpv4StatusCodeOption {
     /// The leasequery status code (RFC 6926 section 6.2.2, first octet).
-    pub status: DhcpStatusCode,
+    pub status: Dhcpv4StatusCode,
     /// The optional status message bytes, preserved verbatim (RFC 6926 says the
     /// message is UTF-8 with no termination or null characters, but captured
     /// bytes are kept raw rather than forced through a lossy decode).
     pub message: Vec<u8>,
 }
 
-impl DhcpStatusCodeOption {
+impl Dhcpv4StatusCodeOption {
     /// Create a status-code value from a typed status and raw message bytes.
-    pub fn new(status: DhcpStatusCode, message: impl Into<Vec<u8>>) -> Self {
+    pub fn new(status: Dhcpv4StatusCode, message: impl Into<Vec<u8>>) -> Self {
         Self {
             status,
             message: message.into(),
@@ -770,9 +770,9 @@ impl DhcpStatusCodeOption {
 /// Source: RFC 6926 section 6.2.7 and the IANA "DHCP State Type 156 Values"
 /// sub-registry (XML retrieved 2026-05-29). Registered values are surfaced as
 /// named variants; any unassigned value is preserved verbatim through
-/// [`DhcpState::Unknown`].
+/// [`Dhcpv4State::Unknown`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum DhcpState {
+pub enum Dhcpv4State {
     /// Reserved (value `0`, RFC 6926).
     Reserved,
     /// AVAILABLE (value `1`, RFC 6926).
@@ -795,7 +795,7 @@ pub enum DhcpState {
     Unknown(u8),
 }
 
-impl DhcpState {
+impl Dhcpv4State {
     /// Classify a raw State octet (RFC 6926 section 6.2.7).
     pub const fn from_code(code: u8) -> Self {
         match code {
@@ -837,12 +837,12 @@ impl DhcpState {
 /// remaining bits (the `UNA` field) are unassigned and MUST be ignored, but
 /// they are preserved verbatim here so the octet round-trips exactly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub struct DhcpDataSource {
+pub struct Dhcpv4DataSource {
     /// The raw Flags octet (RFC 6926 section 6.2.8), preserved verbatim.
     pub flags: u8,
 }
 
-impl DhcpDataSource {
+impl Dhcpv4DataSource {
     /// Create a data-source value from a raw Flags octet.
     pub const fn new(flags: u8) -> Self {
         Self { flags }
@@ -880,14 +880,14 @@ impl DhcpDataSource {
 /// bytes are preserved verbatim so non-zero types and non-16-octet identifiers
 /// still round-trip.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct DhcpClientUuid {
+pub struct Dhcpv4ClientUuid {
     /// Identifier type octet (`0` = GUID per RFC 4578).
     pub identifier_type: u8,
     /// The machine identifier bytes (a 16-octet GUID for type `0`).
     pub identifier: Vec<u8>,
 }
 
-impl DhcpClientUuid {
+impl Dhcpv4ClientUuid {
     /// Create a client machine identifier value from a type and identifier.
     pub fn new(identifier_type: u8, identifier: impl Into<Vec<u8>>) -> Self {
         Self {
@@ -909,14 +909,14 @@ impl DhcpClientUuid {
 /// opaque vendor-class-data octets. The data bytes are vendor-defined and are
 /// preserved verbatim.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct DhcpVendorClassData {
+pub struct Dhcpv4VendorClassData {
     /// The vendor's 32-bit IANA Enterprise Number.
     pub enterprise_number: u32,
     /// Opaque vendor-class data, preserved verbatim.
     pub data: Vec<u8>,
 }
 
-impl DhcpVendorClassData {
+impl Dhcpv4VendorClassData {
     /// Create a V-I vendor-class instance from an enterprise number and data.
     pub fn new(enterprise_number: u32, data: impl Into<Vec<u8>>) -> Self {
         Self {
@@ -934,14 +934,14 @@ impl DhcpVendorClassData {
 /// The suboption code space is vendor-defined, so the data is opaque to the
 /// codec and preserved verbatim.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct DhcpVendorSuboption {
+pub struct Dhcpv4VendorSuboption {
     /// Vendor-defined suboption code.
     pub code: u8,
     /// Opaque suboption data, preserved verbatim.
     pub data: Vec<u8>,
 }
 
-impl DhcpVendorSuboption {
+impl Dhcpv4VendorSuboption {
     /// Create a vendor suboption from a code and opaque data.
     pub fn new(code: u8, data: impl Into<Vec<u8>>) -> Self {
         Self {
@@ -956,21 +956,21 @@ impl DhcpVendorSuboption {
 /// Source: RFC 3925 section 4. Option 125 carries one or more vendor instances,
 /// each a 4-octet IANA Enterprise Number, a one-octet `data-len`, and that many
 /// octets of `option-data`. The option-data is itself a sequence of
-/// [`DhcpVendorSuboption`] code/length/value triples (nested TLVs). Because the
+/// [`Dhcpv4VendorSuboption`] code/length/value triples (nested TLVs). Because the
 /// suboption code space is vendor-defined and known only by the vendor class,
 /// the suboption payloads stay opaque.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct DhcpVendorIdentifyingOption {
+pub struct Dhcpv4VendorIdentifyingOption {
     /// The vendor's 32-bit IANA Enterprise Number.
     pub enterprise_number: u32,
     /// The vendor-defined nested suboptions carried in this instance.
-    pub suboptions: Vec<DhcpVendorSuboption>,
+    pub suboptions: Vec<Dhcpv4VendorSuboption>,
 }
 
-impl DhcpVendorIdentifyingOption {
+impl Dhcpv4VendorIdentifyingOption {
     /// Create a V-I vendor-specific instance from an enterprise number and
     /// nested suboptions.
-    pub fn new(enterprise_number: u32, suboptions: impl Into<Vec<DhcpVendorSuboption>>) -> Self {
+    pub fn new(enterprise_number: u32, suboptions: impl Into<Vec<Dhcpv4VendorSuboption>>) -> Self {
         Self {
             enterprise_number,
             suboptions: suboptions.into(),
@@ -986,14 +986,14 @@ impl DhcpVendorIdentifyingOption {
 /// vendor-defined octets. The data bytes are vendor-defined and preserved
 /// verbatim.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct DhcpRelayVendorSpecific {
+pub struct Dhcpv4RelayVendorSpecific {
     /// The vendor's 32-bit IANA Enterprise Number.
     pub enterprise_number: u32,
     /// Opaque vendor-defined data, preserved verbatim.
     pub data: Vec<u8>,
 }
 
-impl DhcpRelayVendorSpecific {
+impl Dhcpv4RelayVendorSpecific {
     /// Create a relay vendor-specific tuple from an enterprise number and data.
     pub fn new(enterprise_number: u32, data: impl Into<Vec<u8>>) -> Self {
         Self {
@@ -1012,14 +1012,14 @@ impl DhcpRelayVendorSpecific {
 /// VPN with no following information. The `type` octet and the information bytes
 /// are preserved verbatim so unspecified types still round-trip.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct DhcpVssInfo {
+pub struct Dhcpv4VssInfo {
     /// VSS type octet (`0` NVT ASCII, `1` RFC 2685 VPN-ID, `255` global default).
     pub vss_type: u8,
     /// Type-specific VSS information bytes, preserved verbatim.
     pub information: Vec<u8>,
 }
 
-impl DhcpVssInfo {
+impl Dhcpv4VssInfo {
     /// Create a VSS value from a type octet and information bytes.
     pub fn new(vss_type: u8, information: impl Into<Vec<u8>>) -> Self {
         Self {
@@ -1051,9 +1051,9 @@ impl DhcpVssInfo {
 /// triple. Registered sub-options whose wire format is specified are decoded
 /// into typed variants; codes without a single authoritative typed format, and
 /// unknown or reserved codes, are preserved verbatim through
-/// [`DhcpRelaySuboption::Other`] so no bytes are lost.
+/// [`Dhcpv4RelaySuboption::Other`] so no bytes are lost.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum DhcpRelaySuboption {
+pub enum Dhcpv4RelaySuboption {
     /// Agent Circuit ID (sub-option 1, RFC 3046): opaque relay-defined bytes.
     CircuitId(Vec<u8>),
     /// Agent Remote ID (sub-option 2, RFC 3046): opaque relay-defined bytes.
@@ -1072,7 +1072,7 @@ pub enum DhcpRelaySuboption {
     Authentication(Vec<u8>),
     /// Vendor-Specific Information (sub-option 9, RFC 4243): one or more
     /// enterprise-number plus opaque-data tuples.
-    VendorSpecific(Vec<DhcpRelayVendorSpecific>),
+    VendorSpecific(Vec<Dhcpv4RelayVendorSpecific>),
     /// Relay Agent Flags (sub-option 10, RFC 5010): a one-octet flags field
     /// (bit 0 / `0x80` is the Unicast flag).
     RelayFlags(u8),
@@ -1088,7 +1088,7 @@ pub enum DhcpRelaySuboption {
     RelaySourcePort,
     /// Virtual Subnet Selection (sub-option 151, RFC 6607): a type octet plus
     /// VSS information.
-    Vss(DhcpVssInfo),
+    Vss(Dhcpv4VssInfo),
     /// Virtual Subnet Selection Control (sub-option 152, RFC 6607): a
     /// zero-length control sub-option.
     VssControl,
@@ -1102,7 +1102,7 @@ pub enum DhcpRelaySuboption {
     },
 }
 
-impl DhcpRelaySuboption {
+impl Dhcpv4RelaySuboption {
     /// Create an Agent Circuit ID sub-option (sub-option 1, RFC 3046).
     pub fn circuit_id(data: impl Into<Vec<u8>>) -> Self {
         Self::CircuitId(data.into())
@@ -1186,27 +1186,27 @@ impl DhcpRelaySuboption {
 /// relay-agent sub-options. There is no pad sub-option and the field is not
 /// terminated with an end marker; the option length bounds the sub-options.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
-pub struct DhcpRelayAgentInfo {
+pub struct Dhcpv4RelayAgentInfo {
     /// The relay-agent sub-options carried in this option, in wire order.
-    pub suboptions: Vec<DhcpRelaySuboption>,
+    pub suboptions: Vec<Dhcpv4RelaySuboption>,
 }
 
-impl DhcpRelayAgentInfo {
+impl Dhcpv4RelayAgentInfo {
     /// Create a relay agent information value from a list of sub-options.
-    pub fn new(suboptions: impl Into<Vec<DhcpRelaySuboption>>) -> Self {
+    pub fn new(suboptions: impl Into<Vec<Dhcpv4RelaySuboption>>) -> Self {
         Self {
             suboptions: suboptions.into(),
         }
     }
 
     /// Append a sub-option and return the updated value (builder style).
-    pub fn with(mut self, suboption: DhcpRelaySuboption) -> Self {
+    pub fn with(mut self, suboption: Dhcpv4RelaySuboption) -> Self {
         self.suboptions.push(suboption);
         self
     }
 
     /// First sub-option with the given code, when present.
-    pub fn suboption(&self, code: u8) -> Option<&DhcpRelaySuboption> {
+    pub fn suboption(&self, code: u8) -> Option<&Dhcpv4RelaySuboption> {
         self.suboptions.iter().find(|sub| sub.code() == code)
     }
 }
@@ -1214,11 +1214,11 @@ impl DhcpRelayAgentInfo {
 /// A DHCPv4 option codepoint with source-backed registry awareness.
 ///
 /// Source: IANA "BOOTP Vendor Extensions and DHCP Options" registry (updated
-/// 2026-02-02). Every wire codepoint maps to a `DhcpOptionCode`; the variant
+/// 2026-02-02). Every wire codepoint maps to a `Dhcpv4OptionCode`; the variant
 /// distinguishes assigned codes from ambiguous, private-use, removed, and
 /// unassigned ranges so unknown payloads can always be preserved as raw bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum DhcpOptionCode {
+pub enum Dhcpv4OptionCode {
     /// Pad option (code 0), a single octet with no length or payload.
     Pad,
     /// End option (code 255), a single octet marking the end of options.
@@ -1233,17 +1233,17 @@ pub enum DhcpOptionCode {
     RemovedOrUnassigned(u8),
 }
 
-impl DhcpOptionCode {
+impl Dhcpv4OptionCode {
     /// Classify a wire codepoint using the source-backed registry.
     pub const fn from_code(code: u8) -> Self {
         match code {
             DHCP_OPTION_PAD => Self::Pad,
             DHCP_OPTION_END => Self::End,
             _ => match option_status(code) {
-                DhcpOptionStatus::Assigned => Self::Assigned(code),
-                DhcpOptionStatus::Ambiguous => Self::Ambiguous(code),
-                DhcpOptionStatus::PrivateUse => Self::PrivateUse(code),
-                DhcpOptionStatus::RemovedOrUnassigned | DhcpOptionStatus::Unknown => {
+                Dhcpv4OptionStatus::Assigned => Self::Assigned(code),
+                Dhcpv4OptionStatus::Ambiguous => Self::Ambiguous(code),
+                Dhcpv4OptionStatus::PrivateUse => Self::PrivateUse(code),
+                Dhcpv4OptionStatus::RemovedOrUnassigned | Dhcpv4OptionStatus::Unknown => {
                     Self::RemovedOrUnassigned(code)
                 }
             },
@@ -1273,14 +1273,14 @@ impl DhcpOptionCode {
     }
 }
 
-impl From<u8> for DhcpOptionCode {
+impl From<u8> for Dhcpv4OptionCode {
     fn from(code: u8) -> Self {
         Self::from_code(code)
     }
 }
 
-impl From<DhcpOptionCode> for u8 {
-    fn from(code: DhcpOptionCode) -> Self {
+impl From<Dhcpv4OptionCode> for u8 {
+    fn from(code: Dhcpv4OptionCode) -> Self {
         code.code()
     }
 }
@@ -1290,9 +1290,9 @@ impl From<DhcpOptionCode> for u8 {
 /// Source: RFC 2132 option formats and the IANA registry length column. This
 /// is the logical decoded view of an option payload. Families that the codec
 /// does not yet decode into a richer structure are preserved verbatim as
-/// [`DhcpOptionValue::Opaque`] so no bytes are lost.
+/// [`Dhcpv4OptionValue::Opaque`] so no bytes are lost.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum DhcpOptionValue {
+pub enum Dhcpv4OptionValue {
     /// No payload (length zero), used by flag-style options.
     Empty,
     /// A single unsigned byte.
@@ -1326,9 +1326,9 @@ pub enum DhcpOptionValue {
     ParameterRequestList(Vec<u8>),
     /// A list of RFC 2132 static routes (option 33), each a destination and
     /// router IPv4 address pair.
-    StaticRoutes(Vec<DhcpStaticRoute>),
+    StaticRoutes(Vec<Dhcpv4StaticRoute>),
     /// A list of RFC 3442 classless static routes (option 121).
-    ClasslessRoutes(Vec<DhcpClasslessRoute>),
+    ClasslessRoutes(Vec<Dhcpv4ClasslessRoute>),
     /// An RFC 3397 / RFC 1035 domain-search list (option 119), decoded to its
     /// logical fully-qualified domain names.
     DomainSearch(Vec<String>),
@@ -1337,47 +1337,47 @@ pub enum DhcpOptionValue {
     SipServers(SipServers),
     /// An RFC 3004 user-class value (option 77): one or more length-prefixed
     /// opaque class instances.
-    UserClass(DhcpUserClass),
+    UserClass(Dhcpv4UserClass),
     /// An RFC 4578 client system architecture list (option 93): 16-bit type
     /// values.
     ClientSystemArchitecture(ClientSystemArchitecture),
     /// An RFC 4578 client network device interface value (option 94).
     ClientNetworkDeviceInterface(ClientNetworkDeviceInterface),
     /// An RFC 4578 UUID/GUID-based client machine identifier (option 97).
-    ClientUuid(DhcpClientUuid),
+    ClientUuid(Dhcpv4ClientUuid),
     /// An RFC 3925 V-I Vendor Class value (option 124): one or more
     /// enterprise-number plus opaque vendor-class-data instances.
-    ViVendorClass(Vec<DhcpVendorClassData>),
+    ViVendorClass(Vec<Dhcpv4VendorClassData>),
     /// An RFC 3925 V-I Vendor-Specific Information value (option 125): one or
     /// more enterprise-number instances each carrying nested suboptions.
-    ViVendorSpecific(Vec<DhcpVendorIdentifyingOption>),
+    ViVendorSpecific(Vec<Dhcpv4VendorIdentifyingOption>),
     /// An RFC 3046 Relay Agent Information value (option 82): a sequence of
     /// relay-agent sub-options.
-    RelayAgentInformation(DhcpRelayAgentInfo),
+    RelayAgentInformation(Dhcpv4RelayAgentInfo),
     /// A DHCPv4 Client-identifier value (option 61): an RFC 2132 hardware-type
     /// identifier, an RFC 4361 IAID+DUID identifier, or a raw identifier.
-    ClientIdentifier(DhcpClientIdentifier),
+    ClientIdentifier(Dhcpv4ClientIdentifier),
     /// An RFC 3118 Authentication value (option 90): typed Protocol, Algorithm,
     /// RDM, and Replay Detection header fields plus raw authentication
     /// information.
-    Authentication(DhcpAuthentication),
+    Authentication(Dhcpv4Authentication),
     /// An RFC 6704 FORCERENEW_NONCE_CAPABLE value (option 145): the list of
     /// supported authentication algorithm octets.
-    ForcerenewNonceCapable(DhcpForcerenewNonceCapable),
+    ForcerenewNonceCapable(Dhcpv4ForcerenewNonceCapable),
     /// An RFC 6926 leasequery status-code value (option 151): a typed status
     /// octet plus an optional raw status message.
-    StatusCode(DhcpStatusCodeOption),
+    StatusCode(Dhcpv4StatusCodeOption),
     /// An RFC 6926 dhcp-state value (option 156): a typed IP-address binding
     /// state octet.
-    DhcpState(DhcpState),
+    Dhcpv4State(Dhcpv4State),
     /// An RFC 6926 data-source value (option 157): the Flags octet, including
     /// the REMOTE (`R`) flag.
-    DataSource(DhcpDataSource),
+    DataSource(Dhcpv4DataSource),
     /// Opaque bytes preserved verbatim for options without a richer decode yet.
     Opaque(Vec<u8>),
 }
 
-impl DhcpOptionValue {
+impl Dhcpv4OptionValue {
     /// View the value as raw payload bytes when it is byte-like.
     pub fn as_bytes(&self) -> Option<&[u8]> {
         match self {
@@ -1444,7 +1444,7 @@ impl DhcpOptionValue {
             Self::Authentication(auth) => auth.encode(),
             Self::ForcerenewNonceCapable(value) => value.encode(),
             Self::StatusCode(status) => status.encode(),
-            Self::DhcpState(state) => vec![state.code()],
+            Self::Dhcpv4State(state) => vec![state.code()],
             Self::DataSource(source) => source.encode(),
             Self::Text(bytes) | Self::ParameterRequestList(bytes) | Self::Opaque(bytes) => {
                 bytes.clone()
@@ -1461,7 +1461,7 @@ impl DhcpOptionValue {
 /// per code. Options whose contents are only opaque bytes, vendor data, or text
 /// keep the corresponding raw-preserving format.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum DhcpOptionFormat {
+pub enum Dhcpv4OptionFormat {
     /// A single IPv4 address (4 octets).
     Ipv4,
     /// One or more IPv4 addresses (length a non-zero multiple of 4).
@@ -1527,7 +1527,7 @@ pub enum DhcpOptionFormat {
     /// optional text message.
     StatusCode,
     /// RFC 6926 dhcp-state (option 156): a single IP-address binding state octet.
-    DhcpState,
+    Dhcpv4State,
     /// RFC 6926 data-source (option 157): a single Flags octet.
     DataSource,
     /// Opaque bytes preserved verbatim (vendor-specific, client/vendor id).
@@ -1538,7 +1538,7 @@ pub enum DhcpOptionFormat {
 ///
 /// Source: RFC 2132 and the IANA "BOOTP Vendor Extensions and DHCP Options"
 /// registry (updated 2026-02-02). Each kind maps to its wire codepoint and its
-/// [`DhcpOptionFormat`], giving callers a source-backed, format-aware view of
+/// [`Dhcpv4OptionFormat`], giving callers a source-backed, format-aware view of
 /// the option without forcing a bespoke decoder per code. This covers the RFC
 /// 2132 base options (codes 1-61) plus later route, domain, and
 /// service-discovery options whose wire formats are specified by their own RFC
@@ -1547,7 +1547,7 @@ pub enum DhcpOptionFormat {
 /// preserved as raw segments and classified by the option-code registry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[allow(missing_docs)]
-pub enum DhcpOptionKind {
+pub enum Dhcpv4OptionKind {
     SubnetMask,
     TimeOffset,
     Router,
@@ -1603,7 +1603,7 @@ pub enum DhcpOptionKind {
     Dhcpv4MessageType,
     ServerIdentifier,
     ParameterRequestList,
-    DhcpMessage,
+    Dhcpv4Message,
     MaximumDhcpMessageSize,
     RenewalTime,
     RebindingTime,
@@ -1630,7 +1630,7 @@ pub enum DhcpOptionKind {
     StartTimeOfState,
     QueryStartTime,
     QueryEndTime,
-    DhcpState,
+    Dhcpv4State,
     DataSource,
     PxelinuxMagic,
     PxelinuxConfigFile,
@@ -1641,7 +1641,7 @@ pub enum DhcpOptionKind {
     MudUrl,
 }
 
-impl DhcpOptionKind {
+impl Dhcpv4OptionKind {
     /// Registered option kind for a wire codepoint, when one has a typed format.
     pub const fn from_code(code: u8) -> Option<Self> {
         let kind = match code {
@@ -1700,7 +1700,7 @@ impl DhcpOptionKind {
             DHCP_OPTION_MESSAGE_TYPE => Self::Dhcpv4MessageType,
             DHCP_OPTION_SERVER_IDENTIFIER => Self::ServerIdentifier,
             DHCP_OPTION_PARAMETER_REQUEST_LIST => Self::ParameterRequestList,
-            DHCP_OPTION_MESSAGE => Self::DhcpMessage,
+            DHCP_OPTION_MESSAGE => Self::Dhcpv4Message,
             DHCP_OPTION_MAX_MESSAGE_SIZE => Self::MaximumDhcpMessageSize,
             DHCP_OPTION_RENEWAL_TIME => Self::RenewalTime,
             DHCP_OPTION_REBINDING_TIME => Self::RebindingTime,
@@ -1727,7 +1727,7 @@ impl DhcpOptionKind {
             DHCP_OPTION_START_TIME_OF_STATE => Self::StartTimeOfState,
             DHCP_OPTION_QUERY_START_TIME => Self::QueryStartTime,
             DHCP_OPTION_QUERY_END_TIME => Self::QueryEndTime,
-            DHCP_OPTION_DHCP_STATE => Self::DhcpState,
+            DHCP_OPTION_DHCP_STATE => Self::Dhcpv4State,
             DHCP_OPTION_DATA_SOURCE => Self::DataSource,
             DHCP_OPTION_PXELINUX_MAGIC => Self::PxelinuxMagic,
             DHCP_OPTION_PXELINUX_CONFIGFILE => Self::PxelinuxConfigFile,
@@ -1799,7 +1799,7 @@ impl DhcpOptionKind {
             Self::Dhcpv4MessageType => DHCP_OPTION_MESSAGE_TYPE,
             Self::ServerIdentifier => DHCP_OPTION_SERVER_IDENTIFIER,
             Self::ParameterRequestList => DHCP_OPTION_PARAMETER_REQUEST_LIST,
-            Self::DhcpMessage => DHCP_OPTION_MESSAGE,
+            Self::Dhcpv4Message => DHCP_OPTION_MESSAGE,
             Self::MaximumDhcpMessageSize => DHCP_OPTION_MAX_MESSAGE_SIZE,
             Self::RenewalTime => DHCP_OPTION_RENEWAL_TIME,
             Self::RebindingTime => DHCP_OPTION_REBINDING_TIME,
@@ -1826,7 +1826,7 @@ impl DhcpOptionKind {
             Self::StartTimeOfState => DHCP_OPTION_START_TIME_OF_STATE,
             Self::QueryStartTime => DHCP_OPTION_QUERY_START_TIME,
             Self::QueryEndTime => DHCP_OPTION_QUERY_END_TIME,
-            Self::DhcpState => DHCP_OPTION_DHCP_STATE,
+            Self::Dhcpv4State => DHCP_OPTION_DHCP_STATE,
             Self::DataSource => DHCP_OPTION_DATA_SOURCE,
             Self::PxelinuxMagic => DHCP_OPTION_PXELINUX_MAGIC,
             Self::PxelinuxConfigFile => DHCP_OPTION_PXELINUX_CONFIGFILE,
@@ -1839,8 +1839,8 @@ impl DhcpOptionKind {
     }
 
     /// Wire-format family for this option (RFC 2132 option formats).
-    pub const fn format(self) -> DhcpOptionFormat {
-        use DhcpOptionFormat as F;
+    pub const fn format(self) -> Dhcpv4OptionFormat {
+        use Dhcpv4OptionFormat as F;
         match self {
             // Single IPv4 address.
             Self::SubnetMask
@@ -1926,7 +1926,7 @@ impl DhcpOptionKind {
             | Self::ExtensionsPath
             | Self::NisDomain
             | Self::NetbiosScope
-            | Self::DhcpMessage
+            | Self::Dhcpv4Message
             | Self::TftpServerName
             | Self::BootfileName
             | Self::PxelinuxConfigFile
@@ -1962,7 +1962,7 @@ impl DhcpOptionKind {
             // RFC 6926 leasequery status-code (option 151): status octet + text.
             Self::StatusCode => F::StatusCode,
             // RFC 6926 dhcp-state (option 156): a single binding-state octet.
-            Self::DhcpState => F::DhcpState,
+            Self::Dhcpv4State => F::Dhcpv4State,
             // RFC 6926 data-source (option 157): a single Flags octet.
             Self::DataSource => F::DataSource,
             // Opaque/vendor data preserved verbatim. The PXELINUX magic is a
@@ -1975,97 +1975,97 @@ impl DhcpOptionKind {
     }
 }
 
-/// Decode an option payload into its logical [`DhcpOptionValue`] using the
+/// Decode an option payload into its logical [`Dhcpv4OptionValue`] using the
 /// source-backed format table, when the code is a registered RFC 2132 base
 /// option. Returns `Ok(None)` for codes outside that set so callers fall back
 /// to preserving raw bytes. Length and format violations surface as structured
 /// [`CrafterError`] values rather than panics.
-pub fn typed_option_value(code: u8, data: &[u8]) -> Result<Option<DhcpOptionValue>> {
-    let Some(kind) = DhcpOptionKind::from_code(code) else {
+pub fn dhcpv4_typed_option_value(code: u8, data: &[u8]) -> Result<Option<Dhcpv4OptionValue>> {
+    let Some(kind) = Dhcpv4OptionKind::from_code(code) else {
         return Ok(None);
     };
     let field = "dhcp.option.value";
     let value = match kind.format() {
-        DhcpOptionFormat::Ipv4 => DhcpOptionValue::Ipv4(decode_ipv4_option(field, data)?),
-        DhcpOptionFormat::Ipv4List => DhcpOptionValue::Ipv4List(decode_ipv4_list(field, data)?),
-        DhcpOptionFormat::Ipv4Pairs => DhcpOptionValue::Ipv4Pairs(decode_ipv4_pairs(field, data)?),
-        DhcpOptionFormat::Bool => DhcpOptionValue::Bool(decode_bool_option(field, data)?),
-        DhcpOptionFormat::U8 => {
+        Dhcpv4OptionFormat::Ipv4 => Dhcpv4OptionValue::Ipv4(decode_ipv4_option(field, data)?),
+        Dhcpv4OptionFormat::Ipv4List => Dhcpv4OptionValue::Ipv4List(decode_ipv4_list(field, data)?),
+        Dhcpv4OptionFormat::Ipv4Pairs => Dhcpv4OptionValue::Ipv4Pairs(decode_ipv4_pairs(field, data)?),
+        Dhcpv4OptionFormat::Bool => Dhcpv4OptionValue::Bool(decode_bool_option(field, data)?),
+        Dhcpv4OptionFormat::U8 => {
             validate_fixed_len(field, data.len(), 1)?;
-            DhcpOptionValue::U8(data[0])
+            Dhcpv4OptionValue::U8(data[0])
         }
-        DhcpOptionFormat::U16 => DhcpOptionValue::U16(decode_u16_option(field, data)?),
-        DhcpOptionFormat::U16List => DhcpOptionValue::U16List(decode_u16_list(field, data)?),
-        DhcpOptionFormat::I32 => {
+        Dhcpv4OptionFormat::U16 => Dhcpv4OptionValue::U16(decode_u16_option(field, data)?),
+        Dhcpv4OptionFormat::U16List => Dhcpv4OptionValue::U16List(decode_u16_list(field, data)?),
+        Dhcpv4OptionFormat::I32 => {
             validate_fixed_len(field, data.len(), 4)?;
-            DhcpOptionValue::I32(i32::from_be_bytes([data[0], data[1], data[2], data[3]]))
+            Dhcpv4OptionValue::I32(i32::from_be_bytes([data[0], data[1], data[2], data[3]]))
         }
-        DhcpOptionFormat::U32 => DhcpOptionValue::U32(decode_u32_option(field, data)?),
-        DhcpOptionFormat::Text => DhcpOptionValue::Text(data.to_vec()),
-        DhcpOptionFormat::ParameterRequestList => {
-            DhcpOptionValue::ParameterRequestList(data.to_vec())
+        Dhcpv4OptionFormat::U32 => Dhcpv4OptionValue::U32(decode_u32_option(field, data)?),
+        Dhcpv4OptionFormat::Text => Dhcpv4OptionValue::Text(data.to_vec()),
+        Dhcpv4OptionFormat::ParameterRequestList => {
+            Dhcpv4OptionValue::ParameterRequestList(data.to_vec())
         }
-        DhcpOptionFormat::MessageType => {
+        Dhcpv4OptionFormat::MessageType => {
             validate_fixed_len(field, data.len(), 1)?;
-            DhcpOptionValue::MessageType(Dhcpv4MessageType::from_code(data[0]))
+            Dhcpv4OptionValue::MessageType(Dhcpv4MessageType::from_code(data[0]))
         }
-        DhcpOptionFormat::OptionOverload => {
+        Dhcpv4OptionFormat::OptionOverload => {
             validate_fixed_len(field, data.len(), 1)?;
-            DhcpOptionValue::OptionOverload(OptionOverload::from_code(data[0]))
+            Dhcpv4OptionValue::OptionOverload(OptionOverload::from_code(data[0]))
         }
-        DhcpOptionFormat::StaticRoutes => {
-            DhcpOptionValue::StaticRoutes(decode_static_routes(data)?)
+        Dhcpv4OptionFormat::StaticRoutes => {
+            Dhcpv4OptionValue::StaticRoutes(decode_static_routes(data)?)
         }
-        DhcpOptionFormat::ClasslessRoutes => {
-            DhcpOptionValue::ClasslessRoutes(decode_classless_routes(data)?)
+        Dhcpv4OptionFormat::ClasslessRoutes => {
+            Dhcpv4OptionValue::ClasslessRoutes(decode_classless_routes(data)?)
         }
-        DhcpOptionFormat::DomainSearch => DhcpOptionValue::DomainSearch(decode_domain_name_list(
+        Dhcpv4OptionFormat::DomainSearch => Dhcpv4OptionValue::DomainSearch(decode_domain_name_list(
             "dhcp.option.domain_search",
             data,
         )?),
-        DhcpOptionFormat::SipServers => DhcpOptionValue::SipServers(decode_sip_servers(data)?),
-        DhcpOptionFormat::UserClass => DhcpOptionValue::UserClass(decode_user_class(data)?),
-        DhcpOptionFormat::ClientSystemArchitecture => {
-            DhcpOptionValue::ClientSystemArchitecture(decode_client_system_architecture(data)?)
+        Dhcpv4OptionFormat::SipServers => Dhcpv4OptionValue::SipServers(decode_sip_servers(data)?),
+        Dhcpv4OptionFormat::UserClass => Dhcpv4OptionValue::UserClass(decode_user_class(data)?),
+        Dhcpv4OptionFormat::ClientSystemArchitecture => {
+            Dhcpv4OptionValue::ClientSystemArchitecture(decode_client_system_architecture(data)?)
         }
-        DhcpOptionFormat::ClientNetworkDeviceInterface => {
-            DhcpOptionValue::ClientNetworkDeviceInterface(decode_client_ndi(data)?)
+        Dhcpv4OptionFormat::ClientNetworkDeviceInterface => {
+            Dhcpv4OptionValue::ClientNetworkDeviceInterface(decode_client_ndi(data)?)
         }
-        DhcpOptionFormat::ClientUuid => DhcpOptionValue::ClientUuid(decode_client_uuid(data)?),
-        DhcpOptionFormat::ViVendorClass => {
-            DhcpOptionValue::ViVendorClass(decode_vi_vendor_class(data)?)
+        Dhcpv4OptionFormat::ClientUuid => Dhcpv4OptionValue::ClientUuid(decode_client_uuid(data)?),
+        Dhcpv4OptionFormat::ViVendorClass => {
+            Dhcpv4OptionValue::ViVendorClass(decode_vi_vendor_class(data)?)
         }
-        DhcpOptionFormat::ViVendorSpecific => {
-            DhcpOptionValue::ViVendorSpecific(decode_vi_vendor_specific(data)?)
+        Dhcpv4OptionFormat::ViVendorSpecific => {
+            Dhcpv4OptionValue::ViVendorSpecific(decode_vi_vendor_specific(data)?)
         }
-        DhcpOptionFormat::RelayAgentInformation => {
-            DhcpOptionValue::RelayAgentInformation(decode_relay_agent_information(data)?)
+        Dhcpv4OptionFormat::RelayAgentInformation => {
+            Dhcpv4OptionValue::RelayAgentInformation(decode_relay_agent_information(data)?)
         }
-        DhcpOptionFormat::ClientIdentifier => {
-            DhcpOptionValue::ClientIdentifier(decode_client_identifier(data)?)
+        Dhcpv4OptionFormat::ClientIdentifier => {
+            Dhcpv4OptionValue::ClientIdentifier(decode_client_identifier(data)?)
         }
-        DhcpOptionFormat::Authentication => {
-            DhcpOptionValue::Authentication(decode_authentication(data)?)
+        Dhcpv4OptionFormat::Authentication => {
+            Dhcpv4OptionValue::Authentication(decode_authentication(data)?)
         }
-        DhcpOptionFormat::ForcerenewNonceCapable => {
-            DhcpOptionValue::ForcerenewNonceCapable(DhcpForcerenewNonceCapable::new(data.to_vec()))
+        Dhcpv4OptionFormat::ForcerenewNonceCapable => {
+            Dhcpv4OptionValue::ForcerenewNonceCapable(Dhcpv4ForcerenewNonceCapable::new(data.to_vec()))
         }
-        DhcpOptionFormat::StatusCode => {
-            DhcpOptionValue::StatusCode(decode_status_code(field, data)?)
+        Dhcpv4OptionFormat::StatusCode => {
+            Dhcpv4OptionValue::StatusCode(decode_status_code(field, data)?)
         }
-        DhcpOptionFormat::DhcpState => {
+        Dhcpv4OptionFormat::Dhcpv4State => {
             validate_fixed_len(field, data.len(), 1)?;
-            DhcpOptionValue::DhcpState(DhcpState::from_code(data[0]))
+            Dhcpv4OptionValue::Dhcpv4State(Dhcpv4State::from_code(data[0]))
         }
-        DhcpOptionFormat::DataSource => {
+        Dhcpv4OptionFormat::DataSource => {
             validate_fixed_len(field, data.len(), 1)?;
-            DhcpOptionValue::DataSource(DhcpDataSource::new(data[0]))
+            Dhcpv4OptionValue::DataSource(Dhcpv4DataSource::new(data[0]))
         }
-        DhcpOptionFormat::Opaque => {
+        Dhcpv4OptionFormat::Opaque => {
             if data.is_empty() {
-                DhcpOptionValue::Empty
+                Dhcpv4OptionValue::Empty
             } else {
-                DhcpOptionValue::Opaque(data.to_vec())
+                Dhcpv4OptionValue::Opaque(data.to_vec())
             }
         }
     };
@@ -2081,7 +2081,7 @@ pub fn typed_option_value(code: u8, data: &[u8]) -> Result<Option<DhcpOptionValu
 /// decoder preserves code 150 as raw bytes; this is an explicit opt-in to the
 /// RFC 5859 interpretation. A length that is not a non-zero multiple of four
 /// surfaces as a structured error rather than a panic.
-pub fn decode_tftp_server_addresses(data: &[u8]) -> Result<Vec<Ipv4Addr>> {
+pub fn decode_dhcpv4_tftp_server_addresses(data: &[u8]) -> Result<Vec<Ipv4Addr>> {
     let field = "dhcp.option.tftp_server_address";
     if data.is_empty() || data.len() % 4 != 0 {
         return Err(CrafterError::invalid_field_value(
@@ -2099,11 +2099,11 @@ pub fn decode_tftp_server_addresses(data: &[u8]) -> Result<Vec<Ipv4Addr>> {
 /// data bytes, and the byte offset within its area so callers can inspect or
 /// re-encode the exact wire bytes even for unknown or malformed options.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct DhcpOptionSegment {
+pub struct Dhcpv4OptionSegment {
     /// Source area this segment was decoded from.
-    pub area: DhcpOptionArea,
+    pub area: Dhcpv4OptionArea,
     /// Option codepoint with registry classification.
-    pub code: DhcpOptionCode,
+    pub code: Dhcpv4OptionCode,
     /// Declared length byte. `None` for the single-octet pad/end options.
     pub declared_len: Option<u8>,
     /// Byte offset of the option code within its source area.
@@ -2112,7 +2112,7 @@ pub struct DhcpOptionSegment {
     pub data: Vec<u8>,
 }
 
-impl DhcpOptionSegment {
+impl Dhcpv4OptionSegment {
     /// Wire codepoint of this segment.
     pub const fn code_value(&self) -> u8 {
         self.code.code()
@@ -2136,10 +2136,10 @@ impl DhcpOptionSegment {
 /// inspect and re-encode the exact wire bytes even for malformed streams.
 /// Truncated code/length/data are reported as structured [`CrafterError`]
 /// values rather than panics.
-pub fn scan_dhcp_option_segments(
-    area: DhcpOptionArea,
+pub fn scan_dhcpv4_option_segments(
+    area: Dhcpv4OptionArea,
     bytes: &[u8],
-) -> Result<Vec<DhcpOptionSegment>> {
+) -> Result<Vec<Dhcpv4OptionSegment>> {
     let mut segments = Vec::new();
     let mut offset = 0usize;
 
@@ -2149,16 +2149,16 @@ pub fn scan_dhcp_option_segments(
         offset += 1;
 
         match code {
-            DHCP_OPTION_PAD => segments.push(DhcpOptionSegment {
+            DHCP_OPTION_PAD => segments.push(Dhcpv4OptionSegment {
                 area,
-                code: DhcpOptionCode::Pad,
+                code: Dhcpv4OptionCode::Pad,
                 declared_len: None,
                 offset: code_offset,
                 data: Vec::new(),
             }),
-            DHCP_OPTION_END => segments.push(DhcpOptionSegment {
+            DHCP_OPTION_END => segments.push(Dhcpv4OptionSegment {
                 area,
-                code: DhcpOptionCode::End,
+                code: Dhcpv4OptionCode::End,
                 declared_len: None,
                 offset: code_offset,
                 data: Vec::new(),
@@ -2181,9 +2181,9 @@ pub fn scan_dhcp_option_segments(
                         bytes.len(),
                     ));
                 }
-                segments.push(DhcpOptionSegment {
+                segments.push(Dhcpv4OptionSegment {
                     area,
-                    code: DhcpOptionCode::from_code(code),
+                    code: Dhcpv4OptionCode::from_code(code),
                     declared_len: Some(len as u8),
                     offset: code_offset,
                     data: bytes[offset..end].to_vec(),
@@ -2198,7 +2198,7 @@ pub fn scan_dhcp_option_segments(
 
 /// Parsed or constructible DHCP option.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum DhcpOption {
+pub enum Dhcpv4Option {
     /// Padding byte.
     Pad,
     /// End marker.
@@ -2219,7 +2219,7 @@ pub enum DhcpOption {
     DomainName(String),
     /// DHCP message (option 56): a text status message, typically carried by a
     /// DHCPNAK to explain why the request was refused (RFC 2132 section 9.9).
-    DhcpMessage(String),
+    Dhcpv4Message(String),
     /// Broadcast address.
     BroadcastAddress(Ipv4Addr),
     /// Requested IP address.
@@ -2245,7 +2245,7 @@ pub enum DhcpOption {
     },
 }
 
-impl DhcpOption {
+impl Dhcpv4Option {
     /// Create a DHCP message type option.
     pub const fn message_type(message_type: Dhcpv4MessageType) -> Self {
         Self::MessageType(message_type)
@@ -2286,7 +2286,7 @@ impl DhcpOption {
     /// Source: RFC 2132 section 9.9. The text message a server may include in a
     /// DHCPNAK (or DHCPDECLINE) to explain the error condition.
     pub fn message(message: impl Into<String>) -> Self {
-        Self::DhcpMessage(message.into())
+        Self::Dhcpv4Message(message.into())
     }
 
     /// Create a requested IP address option.
@@ -2326,15 +2326,15 @@ impl DhcpOption {
     }
 
     /// Create a typed client identifier option (option 61) from a
-    /// [`DhcpClientIdentifier`].
+    /// [`Dhcpv4ClientIdentifier`].
     ///
     /// Source: RFC 2132 section 9.14 and RFC 4361 section 6.1. The value is
     /// serialized to its option 61 wire layout and re-decodes through
-    /// [`DhcpOption::typed_value`] into a [`DhcpOptionValue::ClientIdentifier`].
-    /// Use [`DhcpClientIdentifier::ethernet_mac`] for a legacy Ethernet MAC
-    /// identifier or [`DhcpClientIdentifier::node_specific`] for an RFC 4361
+    /// [`Dhcpv4Option::typed_value`] into a [`Dhcpv4OptionValue::ClientIdentifier`].
+    /// Use [`Dhcpv4ClientIdentifier::ethernet_mac`] for a legacy Ethernet MAC
+    /// identifier or [`Dhcpv4ClientIdentifier::node_specific`] for an RFC 4361
     /// IAID+DUID identifier.
-    pub fn client_identifier_value(identifier: DhcpClientIdentifier) -> Self {
+    pub fn client_identifier_value(identifier: Dhcpv4ClientIdentifier) -> Self {
         Self::ClientIdentifier(identifier.encode())
     }
 
@@ -2350,12 +2350,12 @@ impl DhcpOption {
     ///
     /// The value is serialized to its RFC 2132 wire layout (big-endian integers,
     /// single-octet booleans, concatenated address pairs) and carried under the
-    /// option's codepoint. The result re-decodes through [`DhcpOption::kind`] and
-    /// [`DhcpOption::typed_value`], and round-trips byte-for-byte through the
+    /// option's codepoint. The result re-decodes through [`Dhcpv4Option::kind`] and
+    /// [`Dhcpv4Option::typed_value`], and round-trips byte-for-byte through the
     /// codec. Constructing a value family that does not match the option's
     /// registered format still encodes the bytes the caller supplied, leaving
     /// intentional malformation to the explicit malformed surface.
-    pub fn typed(kind: DhcpOptionKind, value: DhcpOptionValue) -> Self {
+    pub fn typed(kind: Dhcpv4OptionKind, value: Dhcpv4OptionValue) -> Self {
         Self::Generic {
             code: kind.code(),
             data: value.encode_payload(),
@@ -2386,50 +2386,50 @@ impl DhcpOption {
     }
 
     /// Create an RFC 3004 user-class option (option 77).
-    pub fn user_class(user_class: DhcpUserClass) -> Self {
+    pub fn user_class(user_class: Dhcpv4UserClass) -> Self {
         Self::typed(
-            DhcpOptionKind::UserClass,
-            DhcpOptionValue::UserClass(user_class),
+            Dhcpv4OptionKind::UserClass,
+            Dhcpv4OptionValue::UserClass(user_class),
         )
     }
 
     /// Create an RFC 4578 client system architecture option (option 93).
     pub fn client_system_architecture(arch: ClientSystemArchitecture) -> Self {
         Self::typed(
-            DhcpOptionKind::ClientSystemArchitecture,
-            DhcpOptionValue::ClientSystemArchitecture(arch),
+            Dhcpv4OptionKind::ClientSystemArchitecture,
+            Dhcpv4OptionValue::ClientSystemArchitecture(arch),
         )
     }
 
     /// Create an RFC 4578 client network device interface option (option 94).
     pub fn client_network_device_interface(ndi: ClientNetworkDeviceInterface) -> Self {
         Self::typed(
-            DhcpOptionKind::ClientNetworkDeviceInterface,
-            DhcpOptionValue::ClientNetworkDeviceInterface(ndi),
+            Dhcpv4OptionKind::ClientNetworkDeviceInterface,
+            Dhcpv4OptionValue::ClientNetworkDeviceInterface(ndi),
         )
     }
 
     /// Create an RFC 4578 UUID/GUID client machine identifier option (option 97).
-    pub fn client_uuid(uuid: DhcpClientUuid) -> Self {
+    pub fn client_uuid(uuid: Dhcpv4ClientUuid) -> Self {
         Self::typed(
-            DhcpOptionKind::ClientMachineIdentifier,
-            DhcpOptionValue::ClientUuid(uuid),
+            Dhcpv4OptionKind::ClientMachineIdentifier,
+            Dhcpv4OptionValue::ClientUuid(uuid),
         )
     }
 
     /// Create an RFC 3925 V-I Vendor Class option (option 124).
-    pub fn vi_vendor_class(instances: impl Into<Vec<DhcpVendorClassData>>) -> Self {
+    pub fn vi_vendor_class(instances: impl Into<Vec<Dhcpv4VendorClassData>>) -> Self {
         Self::typed(
-            DhcpOptionKind::ViVendorClass,
-            DhcpOptionValue::ViVendorClass(instances.into()),
+            Dhcpv4OptionKind::ViVendorClass,
+            Dhcpv4OptionValue::ViVendorClass(instances.into()),
         )
     }
 
     /// Create an RFC 3925 V-I Vendor-Specific Information option (option 125).
-    pub fn vi_vendor_specific(instances: impl Into<Vec<DhcpVendorIdentifyingOption>>) -> Self {
+    pub fn vi_vendor_specific(instances: impl Into<Vec<Dhcpv4VendorIdentifyingOption>>) -> Self {
         Self::typed(
-            DhcpOptionKind::ViVendorSpecificInformation,
-            DhcpOptionValue::ViVendorSpecific(instances.into()),
+            Dhcpv4OptionKind::ViVendorSpecificInformation,
+            Dhcpv4OptionValue::ViVendorSpecific(instances.into()),
         )
     }
 
@@ -2437,12 +2437,12 @@ impl DhcpOption {
     ///
     /// The sub-options are serialized to their RFC 3046 sub-option layout
     /// (code/length/value triples, no pad, no end marker) and re-decode through
-    /// [`DhcpOption::typed_value`] into a
-    /// [`DhcpOptionValue::RelayAgentInformation`].
-    pub fn relay_agent_information(info: DhcpRelayAgentInfo) -> Self {
+    /// [`Dhcpv4Option::typed_value`] into a
+    /// [`Dhcpv4OptionValue::RelayAgentInformation`].
+    pub fn relay_agent_information(info: Dhcpv4RelayAgentInfo) -> Self {
         Self::typed(
-            DhcpOptionKind::RelayAgentInformation,
-            DhcpOptionValue::RelayAgentInformation(info),
+            Dhcpv4OptionKind::RelayAgentInformation,
+            Dhcpv4OptionValue::RelayAgentInformation(info),
         )
     }
 
@@ -2450,25 +2450,25 @@ impl DhcpOption {
     ///
     /// The header fields (Protocol, Algorithm, RDM, Replay Detection) and the
     /// raw authentication information are serialized to the RFC 3118 layout and
-    /// re-decode through [`DhcpOption::typed_value`] into a
-    /// [`DhcpOptionValue::Authentication`]. This is packet data only: the crate
+    /// re-decode through [`Dhcpv4Option::typed_value`] into a
+    /// [`Dhcpv4OptionValue::Authentication`]. This is packet data only: the crate
     /// does not derive, sign, or verify the authentication information.
-    pub fn authentication(auth: DhcpAuthentication) -> Self {
+    pub fn authentication(auth: Dhcpv4Authentication) -> Self {
         Self::typed(
-            DhcpOptionKind::Authentication,
-            DhcpOptionValue::Authentication(auth),
+            Dhcpv4OptionKind::Authentication,
+            Dhcpv4OptionValue::Authentication(auth),
         )
     }
 
     /// Create an RFC 6704 FORCERENEW_NONCE_CAPABLE option (option 145).
     ///
     /// The supported authentication algorithm octets are carried verbatim and
-    /// re-decode through [`DhcpOption::typed_value`] into a
-    /// [`DhcpOptionValue::ForcerenewNonceCapable`].
-    pub fn forcerenew_nonce_capable(value: DhcpForcerenewNonceCapable) -> Self {
+    /// re-decode through [`Dhcpv4Option::typed_value`] into a
+    /// [`Dhcpv4OptionValue::ForcerenewNonceCapable`].
+    pub fn forcerenew_nonce_capable(value: Dhcpv4ForcerenewNonceCapable) -> Self {
         Self::typed(
-            DhcpOptionKind::ForcerenewNonceCapable,
-            DhcpOptionValue::ForcerenewNonceCapable(value),
+            Dhcpv4OptionKind::ForcerenewNonceCapable,
+            Dhcpv4OptionValue::ForcerenewNonceCapable(value),
         )
     }
 
@@ -2479,8 +2479,8 @@ impl DhcpOption {
     /// server about this IP address (RFC 4388 section 6.1).
     pub fn client_last_transaction_time(seconds: u32) -> Self {
         Self::typed(
-            DhcpOptionKind::ClientLastTransactionTime,
-            DhcpOptionValue::U32(seconds),
+            Dhcpv4OptionKind::ClientLastTransactionTime,
+            Dhcpv4OptionValue::U32(seconds),
         )
     }
 
@@ -2490,19 +2490,19 @@ impl DhcpOption {
     /// client (RFC 4388 section 6.1).
     pub fn associated_ip(addresses: impl Into<Vec<Ipv4Addr>>) -> Self {
         Self::typed(
-            DhcpOptionKind::AssociatedIp,
-            DhcpOptionValue::Ipv4List(addresses.into()),
+            Dhcpv4OptionKind::AssociatedIp,
+            Dhcpv4OptionValue::Ipv4List(addresses.into()),
         )
     }
 
     /// Create an RFC 6926 status-code option (option 151).
     ///
     /// The status octet and optional message re-decode through
-    /// [`DhcpOption::typed_value`] into a [`DhcpOptionValue::StatusCode`].
-    pub fn status_code(status: DhcpStatusCodeOption) -> Self {
+    /// [`Dhcpv4Option::typed_value`] into a [`Dhcpv4OptionValue::StatusCode`].
+    pub fn status_code(status: Dhcpv4StatusCodeOption) -> Self {
         Self::typed(
-            DhcpOptionKind::StatusCode,
-            DhcpOptionValue::StatusCode(status),
+            Dhcpv4OptionKind::StatusCode,
+            Dhcpv4OptionValue::StatusCode(status),
         )
     }
 
@@ -2511,7 +2511,7 @@ impl DhcpOption {
     /// The value is the absolute time (seconds since Jan 1, 1970) the message
     /// was created (RFC 6926 section 6.2.3).
     pub fn base_time(seconds: u32) -> Self {
-        Self::typed(DhcpOptionKind::BaseTime, DhcpOptionValue::U32(seconds))
+        Self::typed(Dhcpv4OptionKind::BaseTime, Dhcpv4OptionValue::U32(seconds))
     }
 
     /// Create an RFC 6926 start-time-of-state option (option 153).
@@ -2520,8 +2520,8 @@ impl DhcpOption {
     /// IP address entered its current state (RFC 6926 section 6.2.4).
     pub fn start_time_of_state(seconds: u32) -> Self {
         Self::typed(
-            DhcpOptionKind::StartTimeOfState,
-            DhcpOptionValue::U32(seconds),
+            Dhcpv4OptionKind::StartTimeOfState,
+            Dhcpv4OptionValue::U32(seconds),
         )
     }
 
@@ -2531,8 +2531,8 @@ impl DhcpOption {
     /// query (RFC 6926 section 6.2.5).
     pub fn query_start_time(seconds: u32) -> Self {
         Self::typed(
-            DhcpOptionKind::QueryStartTime,
-            DhcpOptionValue::U32(seconds),
+            Dhcpv4OptionKind::QueryStartTime,
+            Dhcpv4OptionValue::U32(seconds),
         )
     }
 
@@ -2541,26 +2541,26 @@ impl DhcpOption {
     /// The value is the absolute end time (seconds since Jan 1, 1970) of the
     /// query (RFC 6926 section 6.2.6).
     pub fn query_end_time(seconds: u32) -> Self {
-        Self::typed(DhcpOptionKind::QueryEndTime, DhcpOptionValue::U32(seconds))
+        Self::typed(Dhcpv4OptionKind::QueryEndTime, Dhcpv4OptionValue::U32(seconds))
     }
 
     /// Create an RFC 6926 dhcp-state option (option 156).
     ///
-    /// The state octet re-decodes through [`DhcpOption::typed_value`] into a
-    /// [`DhcpOptionValue::DhcpState`] (RFC 6926 section 6.2.7).
-    pub fn dhcp_state(state: DhcpState) -> Self {
-        Self::typed(DhcpOptionKind::DhcpState, DhcpOptionValue::DhcpState(state))
+    /// The state octet re-decodes through [`Dhcpv4Option::typed_value`] into a
+    /// [`Dhcpv4OptionValue::Dhcpv4State`] (RFC 6926 section 6.2.7).
+    pub fn dhcp_state(state: Dhcpv4State) -> Self {
+        Self::typed(Dhcpv4OptionKind::Dhcpv4State, Dhcpv4OptionValue::Dhcpv4State(state))
     }
 
     /// Create an RFC 6926 data-source option (option 157).
     ///
     /// The Flags octet (including the REMOTE flag) re-decodes through
-    /// [`DhcpOption::typed_value`] into a [`DhcpOptionValue::DataSource`] (RFC
+    /// [`Dhcpv4Option::typed_value`] into a [`Dhcpv4OptionValue::DataSource`] (RFC
     /// 6926 section 6.2.8).
-    pub fn data_source(source: DhcpDataSource) -> Self {
+    pub fn data_source(source: Dhcpv4DataSource) -> Self {
         Self::typed(
-            DhcpOptionKind::DataSource,
-            DhcpOptionValue::DataSource(source),
+            Dhcpv4OptionKind::DataSource,
+            Dhcpv4OptionValue::DataSource(source),
         )
     }
 
@@ -2601,8 +2601,8 @@ impl DhcpOption {
     /// Create an RFC 5071 PXELINUX reboot time option (option 211), in seconds.
     pub fn pxelinux_reboot_time(seconds: u32) -> Self {
         Self::typed(
-            DhcpOptionKind::PxelinuxRebootTime,
-            DhcpOptionValue::U32(seconds),
+            Dhcpv4OptionKind::PxelinuxRebootTime,
+            Dhcpv4OptionValue::U32(seconds),
         )
     }
 
@@ -2618,7 +2618,7 @@ impl DhcpOption {
             Self::DomainNameServer(_) => DHCP_OPTION_DOMAIN_NAME_SERVER,
             Self::HostName(_) => DHCP_OPTION_HOST_NAME,
             Self::DomainName(_) => DHCP_OPTION_DOMAIN_NAME,
-            Self::DhcpMessage(_) => DHCP_OPTION_MESSAGE,
+            Self::Dhcpv4Message(_) => DHCP_OPTION_MESSAGE,
             Self::BroadcastAddress(_) => DHCP_OPTION_BROADCAST_ADDRESS,
             Self::RequestedIpAddress(_) => DHCP_OPTION_REQUESTED_IP_ADDRESS,
             Self::IpAddressLeaseTime(_) => DHCP_OPTION_IP_ADDRESS_LEASE_TIME,
@@ -2632,8 +2632,8 @@ impl DhcpOption {
     }
 
     /// Registry-classified codepoint for this option.
-    pub fn option_code(&self) -> DhcpOptionCode {
-        DhcpOptionCode::from_code(self.code())
+    pub fn option_code(&self) -> Dhcpv4OptionCode {
+        Dhcpv4OptionCode::from_code(self.code())
     }
 
     /// Source-backed registry name for this option, when assigned.
@@ -2643,35 +2643,35 @@ impl DhcpOption {
 
     /// Logical wire-format value family for this option.
     ///
-    /// Maps the typed enum onto the reusable [`DhcpOptionValue`] families so
+    /// Maps the typed enum onto the reusable [`Dhcpv4OptionValue`] families so
     /// callers can reason about option payloads uniformly. Pad and end have no
     /// value family and return `None`.
-    pub fn logical_value(&self) -> Option<DhcpOptionValue> {
+    pub fn logical_value(&self) -> Option<Dhcpv4OptionValue> {
         let value = match self {
             Self::Pad | Self::End => return None,
-            Self::MessageType(message_type) => DhcpOptionValue::MessageType(*message_type),
-            Self::OptionOverload(overload) => DhcpOptionValue::OptionOverload(*overload),
+            Self::MessageType(message_type) => Dhcpv4OptionValue::MessageType(*message_type),
+            Self::OptionOverload(overload) => Dhcpv4OptionValue::OptionOverload(*overload),
             Self::SubnetMask(address)
             | Self::BroadcastAddress(address)
             | Self::RequestedIpAddress(address)
-            | Self::ServerIdentifier(address) => DhcpOptionValue::Ipv4(*address),
+            | Self::ServerIdentifier(address) => Dhcpv4OptionValue::Ipv4(*address),
             Self::Router(addresses) | Self::DomainNameServer(addresses) => {
-                DhcpOptionValue::Ipv4List(addresses.clone())
+                Dhcpv4OptionValue::Ipv4List(addresses.clone())
             }
-            Self::HostName(text) | Self::DomainName(text) | Self::DhcpMessage(text) => {
-                DhcpOptionValue::Text(text.as_bytes().to_vec())
+            Self::HostName(text) | Self::DomainName(text) | Self::Dhcpv4Message(text) => {
+                Dhcpv4OptionValue::Text(text.as_bytes().to_vec())
             }
             Self::IpAddressLeaseTime(seconds)
             | Self::RenewalTime(seconds)
-            | Self::RebindingTime(seconds) => DhcpOptionValue::U32(*seconds),
+            | Self::RebindingTime(seconds) => Dhcpv4OptionValue::U32(*seconds),
             Self::ParameterRequestList(requests) => {
-                DhcpOptionValue::ParameterRequestList(requests.clone())
+                Dhcpv4OptionValue::ParameterRequestList(requests.clone())
             }
             Self::ClientIdentifier(data) | Self::Generic { data, .. } => {
                 if data.is_empty() {
-                    DhcpOptionValue::Empty
+                    Dhcpv4OptionValue::Empty
                 } else {
-                    DhcpOptionValue::Opaque(data.clone())
+                    Dhcpv4OptionValue::Opaque(data.clone())
                 }
             }
         };
@@ -2680,26 +2680,26 @@ impl DhcpOption {
 
     /// Registered RFC 2132 base option kind for this option, when its codepoint
     /// is one (codes 1-61).
-    pub fn kind(&self) -> Option<DhcpOptionKind> {
-        DhcpOptionKind::from_code(self.code())
+    pub fn kind(&self) -> Option<Dhcpv4OptionKind> {
+        Dhcpv4OptionKind::from_code(self.code())
     }
 
     /// Format-aware decode of this option's logical payload, driven by the
     /// source-backed RFC 2132 format table.
     ///
-    /// Unlike [`DhcpOption::logical_value`], which mirrors the legacy typed enum
+    /// Unlike [`Dhcpv4Option::logical_value`], which mirrors the legacy typed enum
     /// shape, this reinterprets the reassembled payload bytes through the wire
     /// format registered for the option code. For example option 2 (time
-    /// offset) decodes to [`DhcpOptionValue::I32`], boolean flag options decode
-    /// to [`DhcpOptionValue::Bool`], and the path MTU plateau table decodes to
-    /// [`DhcpOptionValue::U16List`]. Codes outside the RFC 2132 base set return
+    /// offset) decodes to [`Dhcpv4OptionValue::I32`], boolean flag options decode
+    /// to [`Dhcpv4OptionValue::Bool`], and the path MTU plateau table decodes to
+    /// [`Dhcpv4OptionValue::U16List`]. Codes outside the RFC 2132 base set return
     /// `Ok(None)`, and length or format violations surface as structured
     /// errors. Pad and end options have no payload and return `Ok(None)`.
-    pub fn typed_value(&self) -> Result<Option<DhcpOptionValue>> {
+    pub fn typed_value(&self) -> Result<Option<Dhcpv4OptionValue>> {
         if matches!(self, Self::Pad | Self::End) {
             return Ok(None);
         }
-        typed_option_value(self.code(), &self.payload_bytes()?)
+        dhcpv4_typed_option_value(self.code(), &self.payload_bytes()?)
     }
 
     /// Encoded option length in bytes.
@@ -2718,7 +2718,7 @@ impl DhcpOption {
             Self::Router(addresses) | Self::DomainNameServer(addresses) => {
                 split_option_encoded_len(addresses.len() * 4)
             }
-            Self::HostName(name) | Self::DomainName(name) | Self::DhcpMessage(name) => {
+            Self::HostName(name) | Self::DomainName(name) | Self::Dhcpv4Message(name) => {
                 split_option_encoded_len(name.len())
             }
             Self::IpAddressLeaseTime(_) | Self::RenewalTime(_) | Self::RebindingTime(_) => 6,
@@ -2791,7 +2791,7 @@ impl DhcpOption {
                 encode_split_option(DHCP_OPTION_DOMAIN_NAME, domain_name.as_bytes(), out);
                 Ok(())
             }
-            Self::DhcpMessage(message) => {
+            Self::Dhcpv4Message(message) => {
                 encode_split_option(DHCP_OPTION_MESSAGE, message.as_bytes(), out);
                 Ok(())
             }
@@ -2846,7 +2846,7 @@ impl DhcpOption {
             }
             Self::HostName(host_name)
             | Self::DomainName(host_name)
-            | Self::DhcpMessage(host_name) => host_name.as_bytes().to_vec(),
+            | Self::Dhcpv4Message(host_name) => host_name.as_bytes().to_vec(),
             Self::IpAddressLeaseTime(seconds)
             | Self::RenewalTime(seconds)
             | Self::RebindingTime(seconds) => seconds.to_be_bytes().to_vec(),
@@ -2877,7 +2877,7 @@ fn validate_data_option_code(code: u8) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn decode_dhcp_options(bytes: &[u8]) -> Result<Vec<DhcpOption>> {
+pub(super) fn decode_dhcp_options(bytes: &[u8]) -> Result<Vec<Dhcpv4Option>> {
     let mut options = Vec::with_capacity(8);
     let mut seen_content = [false; 256];
     let mut saw_end = false;
@@ -2888,9 +2888,9 @@ pub(super) fn decode_dhcp_options(bytes: &[u8]) -> Result<Vec<DhcpOption>> {
         offset += 1;
 
         match code {
-            DHCP_OPTION_PAD => options.push(DhcpOption::Pad),
+            DHCP_OPTION_PAD => options.push(Dhcpv4Option::Pad),
             DHCP_OPTION_END if !saw_end => {
-                options.push(DhcpOption::End);
+                options.push(Dhcpv4Option::End);
                 saw_end = true;
             }
             DHCP_OPTION_END => {
@@ -2926,8 +2926,8 @@ pub(super) fn decode_dhcp_options(bytes: &[u8]) -> Result<Vec<DhcpOption>> {
                 }
 
                 if seen_content[code as usize] {
-                    return decode_segments_to_options(&scan_dhcp_option_segments(
-                        DhcpOptionArea::Options,
+                    return decode_segments_to_options(&scan_dhcpv4_option_segments(
+                        Dhcpv4OptionArea::Options,
                         bytes,
                     )?);
                 }
@@ -2950,9 +2950,9 @@ pub(super) fn decode_dhcp_options(bytes: &[u8]) -> Result<Vec<DhcpOption>> {
 
 /// Find the option-overload value (option 52) carried in a normal-area option
 /// list, when present (RFC 2132 section 9.3).
-pub(super) fn find_option_overload(options: &[DhcpOption]) -> Option<OptionOverload> {
+pub(super) fn find_option_overload(options: &[Dhcpv4Option]) -> Option<OptionOverload> {
     options.iter().find_map(|option| match option {
-        DhcpOption::OptionOverload(overload) => Some(*overload),
+        Dhcpv4Option::OptionOverload(overload) => Some(*overload),
         _ => None,
     })
 }
@@ -2967,23 +2967,23 @@ pub(super) fn find_option_overload(options: &[DhcpOption]) -> Option<OptionOverl
 /// after the end marker is reported as a structured error with a field name
 /// scoped to the source area; truncation never panics.
 pub(super) fn decode_overload_area_options(
-    area: DhcpOptionArea,
+    area: Dhcpv4OptionArea,
     bytes: &[u8],
-) -> Result<Vec<DhcpOption>> {
-    let segments = scan_dhcp_option_segments(area, bytes)?;
+) -> Result<Vec<Dhcpv4Option>> {
+    let segments = scan_dhcpv4_option_segments(area, bytes)?;
     let mut order = SegmentOrder::new();
     let mut saw_end = false;
 
     for segment in &segments {
         match segment.code {
-            DhcpOptionCode::Pad => {
+            Dhcpv4OptionCode::Pad => {
                 // Pad both before and after the end marker is allowed; the
                 // remainder of the fixed-width field is zero-padded.
                 if !saw_end {
                     order.push_pad();
                 }
             }
-            DhcpOptionCode::End if !saw_end => {
+            Dhcpv4OptionCode::End if !saw_end => {
                 order.push_end();
                 saw_end = true;
             }
@@ -3014,19 +3014,19 @@ pub(super) fn decode_overload_area_options(
     Ok(options)
 }
 
-const fn overload_field(area: DhcpOptionArea) -> &'static str {
+const fn overload_field(area: Dhcpv4OptionArea) -> &'static str {
     match area {
-        DhcpOptionArea::Options => "dhcp.options",
-        DhcpOptionArea::File => "dhcp.file.options",
-        DhcpOptionArea::Sname => "dhcp.sname.options",
+        Dhcpv4OptionArea::Options => "dhcp.options",
+        Dhcpv4OptionArea::File => "dhcp.file.options",
+        Dhcpv4OptionArea::Sname => "dhcp.sname.options",
     }
 }
 
-const fn overload_end_field(area: DhcpOptionArea) -> &'static str {
+const fn overload_end_field(area: Dhcpv4OptionArea) -> &'static str {
     match area {
-        DhcpOptionArea::Options => "dhcp.option.end",
-        DhcpOptionArea::File => "dhcp.file.option.end",
-        DhcpOptionArea::Sname => "dhcp.sname.option.end",
+        Dhcpv4OptionArea::Options => "dhcp.option.end",
+        Dhcpv4OptionArea::File => "dhcp.file.option.end",
+        Dhcpv4OptionArea::Sname => "dhcp.sname.option.end",
     }
 }
 
@@ -3038,7 +3038,7 @@ const fn overload_end_field(area: DhcpOptionArea) -> &'static str {
 /// encoded options do not fit within the field.
 pub(super) fn encode_overload_area_options(
     field: &'static str,
-    options: &[DhcpOption],
+    options: &[Dhcpv4Option],
     width: usize,
 ) -> Result<Vec<u8>> {
     let mut bytes = encode_dhcp_options(options)?;
@@ -3060,15 +3060,15 @@ pub(super) fn encode_overload_area_options(
 /// option concatenation is applied here: repeated instances of the same option
 /// code are reassembled, in declaration order, into one logical option whose
 /// payload is the concatenation of every instance's data. The raw per-instance
-/// segments stay inspectable through [`scan_dhcp_option_segments`].
-fn decode_segments_to_options(segments: &[DhcpOptionSegment]) -> Result<Vec<DhcpOption>> {
+/// segments stay inspectable through [`scan_dhcpv4_option_segments`].
+fn decode_segments_to_options(segments: &[Dhcpv4OptionSegment]) -> Result<Vec<Dhcpv4Option>> {
     let mut order = SegmentOrder::new();
     let mut saw_end = false;
 
     for segment in segments {
         match segment.code {
-            DhcpOptionCode::Pad => order.push_pad(),
-            DhcpOptionCode::End if !saw_end => {
+            Dhcpv4OptionCode::Pad => order.push_pad(),
+            Dhcpv4OptionCode::End if !saw_end => {
                 order.push_end();
                 saw_end = true;
             }
@@ -3148,12 +3148,12 @@ impl SegmentOrder {
         });
     }
 
-    fn into_options(self) -> Result<Vec<DhcpOption>> {
+    fn into_options(self) -> Result<Vec<Dhcpv4Option>> {
         let mut options = Vec::with_capacity(self.slots.len());
         for slot in self.slots {
             match slot {
-                Slot::Pad => options.push(DhcpOption::Pad),
-                Slot::End => options.push(DhcpOption::End),
+                Slot::Pad => options.push(Dhcpv4Option::Pad),
+                Slot::End => options.push(Dhcpv4Option::End),
                 Slot::Content { code, data } => options.push(decode_dhcp_option(code, &data)?),
             }
         }
@@ -3161,26 +3161,26 @@ impl SegmentOrder {
     }
 }
 
-pub(super) fn decode_dhcp_option(code: u8, data: &[u8]) -> Result<DhcpOption> {
+pub(super) fn decode_dhcp_option(code: u8, data: &[u8]) -> Result<Dhcpv4Option> {
     match code {
         DHCP_OPTION_MESSAGE_TYPE => {
             validate_fixed_len("dhcp.option.message_type", data.len(), 1)?;
-            Ok(DhcpOption::MessageType(Dhcpv4MessageType::from_code(data[0])))
+            Ok(Dhcpv4Option::MessageType(Dhcpv4MessageType::from_code(data[0])))
         }
         DHCP_OPTION_OVERLOAD => {
             validate_fixed_len("dhcp.option.overload", data.len(), 1)?;
             let overload = OptionOverload::from_code(data[0]);
-            Ok(DhcpOption::OptionOverload(overload))
+            Ok(Dhcpv4Option::OptionOverload(overload))
         }
-        DHCP_OPTION_SUBNET_MASK => Ok(DhcpOption::SubnetMask(decode_ipv4_option(
+        DHCP_OPTION_SUBNET_MASK => Ok(Dhcpv4Option::SubnetMask(decode_ipv4_option(
             "dhcp.option.subnet_mask",
             data,
         )?)),
-        DHCP_OPTION_ROUTER => Ok(DhcpOption::Router(decode_ipv4_list(
+        DHCP_OPTION_ROUTER => Ok(Dhcpv4Option::Router(decode_ipv4_list(
             "dhcp.option.router",
             data,
         )?)),
-        DHCP_OPTION_DOMAIN_NAME_SERVER => Ok(DhcpOption::DomainNameServer(decode_ipv4_list(
+        DHCP_OPTION_DOMAIN_NAME_SERVER => Ok(Dhcpv4Option::DomainNameServer(decode_ipv4_list(
             "dhcp.option.domain_name_server",
             data,
         )?)),
@@ -3188,17 +3188,17 @@ pub(super) fn decode_dhcp_option(code: u8, data: &[u8]) -> Result<DhcpOption> {
         // the bytes decode as UTF-8 the convenience String variant is used;
         // otherwise the raw bytes are preserved verbatim through the generic
         // variant so no data is lost. The format-aware `typed_value()` view
-        // still surfaces these as `DhcpOptionValue::Text` in both cases.
+        // still surfaces these as `Dhcpv4OptionValue::Text` in both cases.
         DHCP_OPTION_HOST_NAME => Ok(match decode_optional_text(data) {
-            Some(text) => DhcpOption::HostName(text),
-            None => DhcpOption::Generic {
+            Some(text) => Dhcpv4Option::HostName(text),
+            None => Dhcpv4Option::Generic {
                 code,
                 data: data.to_vec(),
             },
         }),
         DHCP_OPTION_DOMAIN_NAME => Ok(match decode_optional_text(data) {
-            Some(text) => DhcpOption::DomainName(text),
-            None => DhcpOption::Generic {
+            Some(text) => Dhcpv4Option::DomainName(text),
+            None => Dhcpv4Option::Generic {
                 code,
                 data: data.to_vec(),
             },
@@ -3208,57 +3208,57 @@ pub(super) fn decode_dhcp_option(code: u8, data: &[u8]) -> Result<DhcpOption> {
         // used; otherwise the raw bytes are preserved verbatim through the generic
         // variant so no data is lost.
         DHCP_OPTION_MESSAGE => Ok(match decode_optional_text(data) {
-            Some(text) => DhcpOption::DhcpMessage(text),
-            None => DhcpOption::Generic {
+            Some(text) => Dhcpv4Option::Dhcpv4Message(text),
+            None => Dhcpv4Option::Generic {
                 code,
                 data: data.to_vec(),
             },
         }),
-        DHCP_OPTION_BROADCAST_ADDRESS => Ok(DhcpOption::BroadcastAddress(decode_ipv4_option(
+        DHCP_OPTION_BROADCAST_ADDRESS => Ok(Dhcpv4Option::BroadcastAddress(decode_ipv4_option(
             "dhcp.option.broadcast_address",
             data,
         )?)),
-        DHCP_OPTION_REQUESTED_IP_ADDRESS => Ok(DhcpOption::RequestedIpAddress(decode_ipv4_option(
+        DHCP_OPTION_REQUESTED_IP_ADDRESS => Ok(Dhcpv4Option::RequestedIpAddress(decode_ipv4_option(
             "dhcp.option.requested_ip_address",
             data,
         )?)),
-        DHCP_OPTION_IP_ADDRESS_LEASE_TIME => Ok(DhcpOption::IpAddressLeaseTime(decode_u32_option(
+        DHCP_OPTION_IP_ADDRESS_LEASE_TIME => Ok(Dhcpv4Option::IpAddressLeaseTime(decode_u32_option(
             "dhcp.option.lease_time",
             data,
         )?)),
-        DHCP_OPTION_SERVER_IDENTIFIER => Ok(DhcpOption::ServerIdentifier(decode_ipv4_option(
+        DHCP_OPTION_SERVER_IDENTIFIER => Ok(Dhcpv4Option::ServerIdentifier(decode_ipv4_option(
             "dhcp.option.server_identifier",
             data,
         )?)),
-        DHCP_OPTION_PARAMETER_REQUEST_LIST => Ok(DhcpOption::ParameterRequestList(data.to_vec())),
-        DHCP_OPTION_RENEWAL_TIME => Ok(DhcpOption::RenewalTime(decode_u32_option(
+        DHCP_OPTION_PARAMETER_REQUEST_LIST => Ok(Dhcpv4Option::ParameterRequestList(data.to_vec())),
+        DHCP_OPTION_RENEWAL_TIME => Ok(Dhcpv4Option::RenewalTime(decode_u32_option(
             "dhcp.option.renewal_time",
             data,
         )?)),
-        DHCP_OPTION_REBINDING_TIME => Ok(DhcpOption::RebindingTime(decode_u32_option(
+        DHCP_OPTION_REBINDING_TIME => Ok(Dhcpv4Option::RebindingTime(decode_u32_option(
             "dhcp.option.rebinding_time",
             data,
         )?)),
-        DHCP_OPTION_CLIENT_IDENTIFIER => Ok(DhcpOption::ClientIdentifier(data.to_vec())),
-        _ => Ok(DhcpOption::Generic {
+        DHCP_OPTION_CLIENT_IDENTIFIER => Ok(Dhcpv4Option::ClientIdentifier(data.to_vec())),
+        _ => Ok(Dhcpv4Option::Generic {
             code,
             data: data.to_vec(),
         }),
     }
 }
 
-pub(super) fn encode_dhcp_options(options: &[DhcpOption]) -> Result<Vec<u8>> {
+pub(super) fn encode_dhcp_options(options: &[Dhcpv4Option]) -> Result<Vec<u8>> {
     let mut out = Vec::with_capacity(encoded_options_len_lossy(options));
     let mut saw_end = false;
 
     for option in options {
-        if saw_end && !matches!(option, DhcpOption::Pad) {
+        if saw_end && !matches!(option, Dhcpv4Option::Pad) {
             return Err(CrafterError::invalid_field_value(
                 "dhcp.options",
                 "only padding may follow the DHCP end option",
             ));
         }
-        if matches!(option, DhcpOption::End) {
+        if matches!(option, Dhcpv4Option::End) {
             saw_end = true;
         }
         option.encode_into(&mut out)?;
@@ -3270,11 +3270,11 @@ pub(super) fn encode_dhcp_options(options: &[DhcpOption]) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-pub(super) fn encoded_options_len_lossy(options: &[DhcpOption]) -> usize {
-    let len = options.iter().map(DhcpOption::encoded_len).sum::<usize>();
+pub(super) fn encoded_options_len_lossy(options: &[Dhcpv4Option]) -> usize {
+    let len = options.iter().map(Dhcpv4Option::encoded_len).sum::<usize>();
     if options
         .iter()
-        .any(|option| matches!(option, DhcpOption::End))
+        .any(|option| matches!(option, Dhcpv4Option::End))
     {
         len
     } else {
@@ -3400,7 +3400,7 @@ const DHCP_SIP_ENC_ADDRESS: u8 = 1;
 /// each a destination IPv4 address followed by the router IPv4 address. The
 /// length must be a non-zero multiple of eight; anything else is a structured
 /// error rather than a panic.
-fn decode_static_routes(data: &[u8]) -> Result<Vec<DhcpStaticRoute>> {
+fn decode_static_routes(data: &[u8]) -> Result<Vec<Dhcpv4StaticRoute>> {
     let field = "dhcp.option.static_route";
     if data.is_empty() || data.len() % DHCP_STATIC_ROUTE_ENTRY_LEN != 0 {
         return Err(CrafterError::invalid_field_value(
@@ -3411,7 +3411,7 @@ fn decode_static_routes(data: &[u8]) -> Result<Vec<DhcpStaticRoute>> {
     Ok(data
         .chunks_exact(DHCP_STATIC_ROUTE_ENTRY_LEN)
         .map(|chunk| {
-            DhcpStaticRoute::new(
+            Dhcpv4StaticRoute::new(
                 Ipv4Addr::new(chunk[0], chunk[1], chunk[2], chunk[3]),
                 Ipv4Addr::new(chunk[4], chunk[5], chunk[6], chunk[7]),
             )
@@ -3420,7 +3420,7 @@ fn decode_static_routes(data: &[u8]) -> Result<Vec<DhcpStaticRoute>> {
 }
 
 /// Encode an RFC 2132 static route list (option 33).
-fn encode_static_routes(routes: &[DhcpStaticRoute]) -> Vec<u8> {
+fn encode_static_routes(routes: &[Dhcpv4StaticRoute]) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(routes.len() * DHCP_STATIC_ROUTE_ENTRY_LEN);
     for route in routes {
         bytes.extend_from_slice(&route.destination.octets());
@@ -3436,7 +3436,7 @@ fn encode_static_routes(routes: &[DhcpStaticRoute]) -> Vec<u8> {
 /// 4-octet router address. Prefix lengths above 32, truncated descriptors, and
 /// truncated router addresses all surface as structured errors; the function
 /// never panics on short input.
-fn decode_classless_routes(data: &[u8]) -> Result<Vec<DhcpClasslessRoute>> {
+fn decode_classless_routes(data: &[u8]) -> Result<Vec<Dhcpv4ClasslessRoute>> {
     let field = "dhcp.option.classless_static_route";
     let mut routes = Vec::new();
     let mut offset = 0usize;
@@ -3450,7 +3450,7 @@ fn decode_classless_routes(data: &[u8]) -> Result<Vec<DhcpClasslessRoute>> {
                 "classless route prefix length exceeds 32 bits",
             ));
         }
-        let significant = DhcpClasslessRoute::significant_octets(prefix_length);
+        let significant = Dhcpv4ClasslessRoute::significant_octets(prefix_length);
         if offset + significant + DHCP_CLASSLESS_ROUTER_LEN > data.len() {
             return Err(CrafterError::buffer_too_short(
                 field,
@@ -3468,7 +3468,7 @@ fn decode_classless_routes(data: &[u8]) -> Result<Vec<DhcpClasslessRoute>> {
             data[offset + 3],
         );
         offset += DHCP_CLASSLESS_ROUTER_LEN;
-        routes.push(DhcpClasslessRoute::new(
+        routes.push(Dhcpv4ClasslessRoute::new(
             prefix_length,
             Ipv4Addr::from(subnet),
             router,
@@ -3482,10 +3482,10 @@ fn decode_classless_routes(data: &[u8]) -> Result<Vec<DhcpClasslessRoute>> {
 ///
 /// Only the `ceil(prefix_length / 8)` significant subnet octets are emitted, in
 /// order, before each route's 4-octet router address (RFC 3442).
-fn encode_classless_routes(routes: &[DhcpClasslessRoute]) -> Vec<u8> {
+fn encode_classless_routes(routes: &[Dhcpv4ClasslessRoute]) -> Vec<u8> {
     let mut bytes = Vec::new();
     for route in routes {
-        let significant = DhcpClasslessRoute::significant_octets(route.prefix_length).min(4);
+        let significant = Dhcpv4ClasslessRoute::significant_octets(route.prefix_length).min(4);
         bytes.push(route.prefix_length);
         bytes.extend_from_slice(&route.destination.octets()[..significant]);
         bytes.extend_from_slice(&route.router.octets());
@@ -3685,7 +3685,7 @@ const DHCP_ENTERPRISE_NUMBER_LEN: usize = 4;
 /// each a one-octet length followed by that many opaque data octets. A
 /// zero-length instance is malformed per the RFC, and a length that runs past
 /// the end of the data is a structured error rather than a panic.
-fn decode_user_class(data: &[u8]) -> Result<DhcpUserClass> {
+fn decode_user_class(data: &[u8]) -> Result<Dhcpv4UserClass> {
     let field = "dhcp.option.user_class";
     let mut classes = Vec::new();
     let mut offset = 0usize;
@@ -3707,7 +3707,7 @@ fn decode_user_class(data: &[u8]) -> Result<DhcpUserClass> {
         offset = end;
     }
 
-    Ok(DhcpUserClass::new(classes))
+    Ok(Dhcpv4UserClass::new(classes))
 }
 
 /// Encode an RFC 3004 user-class option (option 77).
@@ -3715,7 +3715,7 @@ fn decode_user_class(data: &[u8]) -> Result<DhcpUserClass> {
 /// Each opaque class instance is emitted as a one-octet length prefix followed
 /// by its data bytes, in order. Instance lengths are bounded to the 255-octet
 /// length field; longer instances are truncated to the field width.
-fn encode_user_class(user_class: &DhcpUserClass) -> Vec<u8> {
+fn encode_user_class(user_class: &Dhcpv4UserClass) -> Vec<u8> {
     let mut bytes = Vec::new();
     for class in &user_class.classes {
         let len = class.len().min(DHCP_MAX_OPTION_DATA_LEN);
@@ -3760,12 +3760,12 @@ fn decode_client_ndi(data: &[u8]) -> Result<ClientNetworkDeviceInterface> {
 /// machine identifier. At least the type octet must be present; the identifier
 /// bytes (a 16-octet GUID for type `0`) are preserved verbatim, so non-standard
 /// type values and identifier lengths still round-trip.
-fn decode_client_uuid(data: &[u8]) -> Result<DhcpClientUuid> {
+fn decode_client_uuid(data: &[u8]) -> Result<Dhcpv4ClientUuid> {
     let field = "dhcp.option.client_uuid";
     let Some((&identifier_type, rest)) = data.split_first() else {
         return Err(CrafterError::buffer_too_short(field, 1, 0));
     };
-    Ok(DhcpClientUuid::new(identifier_type, rest.to_vec()))
+    Ok(Dhcpv4ClientUuid::new(identifier_type, rest.to_vec()))
 }
 
 /// Decode a DHCPv4 Client-identifier option (option 61).
@@ -3778,11 +3778,11 @@ fn decode_client_uuid(data: &[u8]) -> Result<DhcpClientUuid> {
 /// as an empty raw identifier rather than treated as a panic-worthy buffer. A
 /// type-`255` identifier with fewer than four IAID octets surfaces as a
 /// structured error rather than a panic.
-fn decode_client_identifier(data: &[u8]) -> Result<DhcpClientIdentifier> {
+fn decode_client_identifier(data: &[u8]) -> Result<Dhcpv4ClientIdentifier> {
     let field = "dhcp.option.client_identifier";
     let Some((&type_octet, rest)) = data.split_first() else {
         // No type octet present: preserve the empty payload verbatim.
-        return Ok(DhcpClientIdentifier::Raw(Vec::new()));
+        return Ok(Dhcpv4ClientIdentifier::Raw(Vec::new()));
     };
     if type_octet == DHCP_CLIENT_ID_TYPE_RFC4361 {
         if rest.len() < DHCP_IAID_LEN {
@@ -3794,15 +3794,15 @@ fn decode_client_identifier(data: &[u8]) -> Result<DhcpClientIdentifier> {
         }
         let iaid = read_u32_be(&rest[..DHCP_IAID_LEN])?;
         let duid = rest[DHCP_IAID_LEN..].to_vec();
-        return Ok(DhcpClientIdentifier::NodeSpecific { iaid, duid });
+        return Ok(Dhcpv4ClientIdentifier::NodeSpecific { iaid, duid });
     }
     if type_octet == DHCP_CLIENT_ID_TYPE_NONE {
         // RFC 2132: a type of 0 is a non-hardware identifier (for example a
         // fully-qualified domain name). The structure beyond the type octet is
         // not specified, so the whole payload is preserved verbatim.
-        return Ok(DhcpClientIdentifier::Raw(data.to_vec()));
+        return Ok(Dhcpv4ClientIdentifier::Raw(data.to_vec()));
     }
-    Ok(DhcpClientIdentifier::LegacyHardware {
+    Ok(Dhcpv4ClientIdentifier::LegacyHardware {
         hardware_type: type_octet,
         address: rest.to_vec(),
     })
@@ -3817,7 +3817,7 @@ fn decode_client_identifier(data: &[u8]) -> Result<DhcpClientIdentifier> {
 /// [`CrafterError`] rather than a panic. The Authentication Information is
 /// preserved verbatim because its structure depends on the Protocol; the codec
 /// never interprets, signs, or verifies it.
-fn decode_authentication(data: &[u8]) -> Result<DhcpAuthentication> {
+fn decode_authentication(data: &[u8]) -> Result<Dhcpv4Authentication> {
     let field = "dhcp.option.authentication";
     if data.len() < DHCP_AUTH_HEADER_LEN {
         return Err(CrafterError::buffer_too_short(
@@ -3826,16 +3826,16 @@ fn decode_authentication(data: &[u8]) -> Result<DhcpAuthentication> {
             data.len(),
         ));
     }
-    let protocol = DhcpAuthProtocol::from_code(data[0]);
-    let algorithm = DhcpAuthAlgorithm::from_code(data[1]);
-    let rdm = DhcpReplayDetectionMethod::from_code(data[2]);
+    let protocol = Dhcpv4AuthProtocol::from_code(data[0]);
+    let algorithm = Dhcpv4AuthAlgorithm::from_code(data[1]);
+    let rdm = Dhcpv4ReplayDetectionMethod::from_code(data[2]);
     let replay_end = 3 + DHCP_AUTH_REPLAY_DETECTION_LEN;
     // The length check above guarantees at least DHCP_AUTH_HEADER_LEN (11)
     // octets, so this 8-octet slice is always present.
     let mut replay_bytes = [0u8; DHCP_AUTH_REPLAY_DETECTION_LEN];
     replay_bytes.copy_from_slice(&data[3..replay_end]);
     let replay_detection = u64::from_be_bytes(replay_bytes);
-    Ok(DhcpAuthentication {
+    Ok(Dhcpv4Authentication {
         protocol,
         algorithm,
         rdm,
@@ -3852,18 +3852,18 @@ fn decode_authentication(data: &[u8]) -> Result<DhcpAuthentication> {
 /// the bytes are preserved verbatim). At least the status octet must be present;
 /// an empty payload surfaces as a structured [`CrafterError`] rather than a
 /// panic.
-fn decode_status_code(field: &'static str, data: &[u8]) -> Result<DhcpStatusCodeOption> {
+fn decode_status_code(field: &'static str, data: &[u8]) -> Result<Dhcpv4StatusCodeOption> {
     let Some((&status, message)) = data.split_first() else {
         return Err(CrafterError::buffer_too_short(field, 1, 0));
     };
-    Ok(DhcpStatusCodeOption::new(
-        DhcpStatusCode::from_code(status),
+    Ok(Dhcpv4StatusCodeOption::new(
+        Dhcpv4StatusCode::from_code(status),
         message.to_vec(),
     ))
 }
 
 /// Encode an RFC 4578 UUID/GUID client machine identifier (option 97).
-fn encode_client_uuid(uuid: &DhcpClientUuid) -> Vec<u8> {
+fn encode_client_uuid(uuid: &Dhcpv4ClientUuid) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(1 + uuid.identifier.len());
     bytes.push(uuid.identifier_type);
     bytes.extend_from_slice(&uuid.identifier);
@@ -3877,7 +3877,7 @@ fn encode_client_uuid(uuid: &DhcpClientUuid) -> Vec<u8> {
 /// vendor-class-data octets. A truncated enterprise number, missing data-len,
 /// or a data-len that runs past the end of the option surfaces as a structured
 /// error rather than a panic.
-fn decode_vi_vendor_class(data: &[u8]) -> Result<Vec<DhcpVendorClassData>> {
+fn decode_vi_vendor_class(data: &[u8]) -> Result<Vec<Dhcpv4VendorClassData>> {
     let field = "dhcp.option.vi_vendor_class";
     let mut instances = Vec::new();
     let mut offset = 0usize;
@@ -3898,7 +3898,7 @@ fn decode_vi_vendor_class(data: &[u8]) -> Result<Vec<DhcpVendorClassData>> {
         if end > data.len() {
             return Err(CrafterError::buffer_too_short(field, end, data.len()));
         }
-        instances.push(DhcpVendorClassData::new(
+        instances.push(Dhcpv4VendorClassData::new(
             enterprise_number,
             data[offset..end].to_vec(),
         ));
@@ -3909,7 +3909,7 @@ fn decode_vi_vendor_class(data: &[u8]) -> Result<Vec<DhcpVendorClassData>> {
 }
 
 /// Encode an RFC 3925 V-I Vendor Class option (option 124).
-fn encode_vi_vendor_class(instances: &[DhcpVendorClassData]) -> Vec<u8> {
+fn encode_vi_vendor_class(instances: &[Dhcpv4VendorClassData]) -> Vec<u8> {
     let mut bytes = Vec::new();
     for instance in instances {
         bytes.extend_from_slice(&instance.enterprise_number.to_be_bytes());
@@ -3929,7 +3929,7 @@ fn encode_vi_vendor_class(instances: &[DhcpVendorClassData]) -> Vec<u8> {
 /// past the instance, and truncated suboption data all surface as structured
 /// errors. The suboption data stays opaque because its code space is
 /// vendor-defined.
-fn decode_vi_vendor_specific(data: &[u8]) -> Result<Vec<DhcpVendorIdentifyingOption>> {
+fn decode_vi_vendor_specific(data: &[u8]) -> Result<Vec<Dhcpv4VendorIdentifyingOption>> {
     let field = "dhcp.option.vi_vendor_specific";
     let mut instances = Vec::new();
     let mut offset = 0usize;
@@ -3951,7 +3951,7 @@ fn decode_vi_vendor_specific(data: &[u8]) -> Result<Vec<DhcpVendorIdentifyingOpt
             return Err(CrafterError::buffer_too_short(field, end, data.len()));
         }
         let suboptions = decode_vendor_suboptions(field, &data[offset..end])?;
-        instances.push(DhcpVendorIdentifyingOption::new(
+        instances.push(Dhcpv4VendorIdentifyingOption::new(
             enterprise_number,
             suboptions,
         ));
@@ -3962,7 +3962,7 @@ fn decode_vi_vendor_specific(data: &[u8]) -> Result<Vec<DhcpVendorIdentifyingOpt
 }
 
 /// Decode the nested RFC 3925 suboptions inside one option-125 instance.
-fn decode_vendor_suboptions(field: &'static str, data: &[u8]) -> Result<Vec<DhcpVendorSuboption>> {
+fn decode_vendor_suboptions(field: &'static str, data: &[u8]) -> Result<Vec<Dhcpv4VendorSuboption>> {
     let mut suboptions = Vec::new();
     let mut offset = 0usize;
 
@@ -3982,7 +3982,7 @@ fn decode_vendor_suboptions(field: &'static str, data: &[u8]) -> Result<Vec<Dhcp
         if end > data.len() {
             return Err(CrafterError::buffer_too_short(field, end, data.len()));
         }
-        suboptions.push(DhcpVendorSuboption::new(code, data[offset..end].to_vec()));
+        suboptions.push(Dhcpv4VendorSuboption::new(code, data[offset..end].to_vec()));
         offset = end;
     }
 
@@ -3990,7 +3990,7 @@ fn decode_vendor_suboptions(field: &'static str, data: &[u8]) -> Result<Vec<Dhcp
 }
 
 /// Encode an RFC 3925 V-I Vendor-Specific Information option (option 125).
-fn encode_vi_vendor_specific(instances: &[DhcpVendorIdentifyingOption]) -> Vec<u8> {
+fn encode_vi_vendor_specific(instances: &[Dhcpv4VendorIdentifyingOption]) -> Vec<u8> {
     let mut bytes = Vec::new();
     for instance in instances {
         bytes.extend_from_slice(&instance.enterprise_number.to_be_bytes());
@@ -4003,7 +4003,7 @@ fn encode_vi_vendor_specific(instances: &[DhcpVendorIdentifyingOption]) -> Vec<u
 }
 
 /// Encode the nested RFC 3925 suboptions of one option-125 instance.
-fn encode_vendor_suboptions(suboptions: &[DhcpVendorSuboption]) -> Vec<u8> {
+fn encode_vendor_suboptions(suboptions: &[Dhcpv4VendorSuboption]) -> Vec<u8> {
     let mut bytes = Vec::new();
     for suboption in suboptions {
         bytes.push(suboption.code);
@@ -4032,7 +4032,7 @@ fn read_enterprise_number(field: &'static str, data: &[u8], offset: usize) -> Re
 /// and unknown or reserved codes are preserved verbatim. A truncated sub-option
 /// header or a length that runs past the end of the option surfaces as a
 /// structured error rather than a panic.
-fn decode_relay_agent_information(data: &[u8]) -> Result<DhcpRelayAgentInfo> {
+fn decode_relay_agent_information(data: &[u8]) -> Result<Dhcpv4RelayAgentInfo> {
     let field = "dhcp.option.relay_agent_information";
     let mut suboptions = Vec::new();
     let mut offset = 0usize;
@@ -4058,7 +4058,7 @@ fn decode_relay_agent_information(data: &[u8]) -> Result<DhcpRelayAgentInfo> {
         offset = end;
     }
 
-    Ok(DhcpRelayAgentInfo::new(suboptions))
+    Ok(Dhcpv4RelayAgentInfo::new(suboptions))
 }
 
 /// Decode one relay-agent sub-option from its code and value bytes.
@@ -4066,52 +4066,52 @@ fn decode_relay_suboption(
     field: &'static str,
     code: u8,
     value: &[u8],
-) -> Result<DhcpRelaySuboption> {
+) -> Result<Dhcpv4RelaySuboption> {
     let suboption = match code {
-        DHCP_RELAY_SUBOPTION_CIRCUIT_ID => DhcpRelaySuboption::CircuitId(value.to_vec()),
-        DHCP_RELAY_SUBOPTION_REMOTE_ID => DhcpRelaySuboption::RemoteId(value.to_vec()),
+        DHCP_RELAY_SUBOPTION_CIRCUIT_ID => Dhcpv4RelaySuboption::CircuitId(value.to_vec()),
+        DHCP_RELAY_SUBOPTION_REMOTE_ID => Dhcpv4RelaySuboption::RemoteId(value.to_vec()),
         DHCP_RELAY_SUBOPTION_DOCSIS_DEVICE_CLASS => {
             validate_fixed_len(field, value.len(), 4)?;
-            DhcpRelaySuboption::DocsisDeviceClass(read_u32_be(value)?)
+            Dhcpv4RelaySuboption::DocsisDeviceClass(read_u32_be(value)?)
         }
         DHCP_RELAY_SUBOPTION_LINK_SELECTION => {
-            DhcpRelaySuboption::LinkSelection(decode_ipv4_option(field, value)?)
+            Dhcpv4RelaySuboption::LinkSelection(decode_ipv4_option(field, value)?)
         }
-        DHCP_RELAY_SUBOPTION_SUBSCRIBER_ID => DhcpRelaySuboption::SubscriberId(value.to_vec()),
+        DHCP_RELAY_SUBOPTION_SUBSCRIBER_ID => Dhcpv4RelaySuboption::SubscriberId(value.to_vec()),
         DHCP_RELAY_SUBOPTION_RADIUS_ATTRIBUTES => {
-            DhcpRelaySuboption::RadiusAttributes(value.to_vec())
+            Dhcpv4RelaySuboption::RadiusAttributes(value.to_vec())
         }
-        DHCP_RELAY_SUBOPTION_AUTHENTICATION => DhcpRelaySuboption::Authentication(value.to_vec()),
+        DHCP_RELAY_SUBOPTION_AUTHENTICATION => Dhcpv4RelaySuboption::Authentication(value.to_vec()),
         DHCP_RELAY_SUBOPTION_VENDOR_SPECIFIC => {
-            DhcpRelaySuboption::VendorSpecific(decode_relay_vendor_specific(field, value)?)
+            Dhcpv4RelaySuboption::VendorSpecific(decode_relay_vendor_specific(field, value)?)
         }
         DHCP_RELAY_SUBOPTION_RELAY_FLAGS => {
             validate_fixed_len(field, value.len(), 1)?;
-            DhcpRelaySuboption::RelayFlags(value[0])
+            Dhcpv4RelaySuboption::RelayFlags(value[0])
         }
         DHCP_RELAY_SUBOPTION_SERVER_ID_OVERRIDE => {
-            DhcpRelaySuboption::ServerIdOverride(decode_ipv4_option(field, value)?)
+            Dhcpv4RelaySuboption::ServerIdOverride(decode_ipv4_option(field, value)?)
         }
-        DHCP_RELAY_SUBOPTION_RELAY_AGENT_ID => DhcpRelaySuboption::RelayAgentId(value.to_vec()),
+        DHCP_RELAY_SUBOPTION_RELAY_AGENT_ID => Dhcpv4RelaySuboption::RelayAgentId(value.to_vec()),
         DHCP_RELAY_SUBOPTION_RELAY_SOURCE_PORT => {
             // RFC 8357: the relay source port sub-option carries no value; the
             // length must be zero and the actual port is learned from the UDP
             // header. A non-zero length is malformed for the typed view.
             validate_fixed_len(field, value.len(), 0)?;
-            DhcpRelaySuboption::RelaySourcePort
+            Dhcpv4RelaySuboption::RelaySourcePort
         }
         DHCP_RELAY_SUBOPTION_VSS => {
             // RFC 6607: a one-octet Type followed by type-specific VSS Info.
             if value.is_empty() {
                 return Err(CrafterError::buffer_too_short(field, 1, value.len()));
             }
-            DhcpRelaySuboption::Vss(DhcpVssInfo::new(value[0], value[1..].to_vec()))
+            Dhcpv4RelaySuboption::Vss(Dhcpv4VssInfo::new(value[0], value[1..].to_vec()))
         }
         DHCP_RELAY_SUBOPTION_VSS_CONTROL => {
             validate_fixed_len(field, value.len(), 0)?;
-            DhcpRelaySuboption::VssControl
+            Dhcpv4RelaySuboption::VssControl
         }
-        _ => DhcpRelaySuboption::Other {
+        _ => Dhcpv4RelaySuboption::Other {
             code,
             data: value.to_vec(),
         },
@@ -4129,7 +4129,7 @@ fn decode_relay_suboption(
 fn decode_relay_vendor_specific(
     field: &'static str,
     data: &[u8],
-) -> Result<Vec<DhcpRelayVendorSpecific>> {
+) -> Result<Vec<Dhcpv4RelayVendorSpecific>> {
     let mut tuples = Vec::new();
     let mut offset = 0usize;
 
@@ -4149,7 +4149,7 @@ fn decode_relay_vendor_specific(
         if end > data.len() {
             return Err(CrafterError::buffer_too_short(field, end, data.len()));
         }
-        tuples.push(DhcpRelayVendorSpecific::new(
+        tuples.push(Dhcpv4RelayVendorSpecific::new(
             enterprise_number,
             data[offset..end].to_vec(),
         ));
@@ -4161,7 +4161,7 @@ fn decode_relay_vendor_specific(
 
 /// Encode an RFC 3046 Relay Agent Information option (option 82) value to its
 /// option payload bytes (without the option code or length byte).
-fn encode_relay_agent_information(info: &DhcpRelayAgentInfo) -> Vec<u8> {
+fn encode_relay_agent_information(info: &Dhcpv4RelayAgentInfo) -> Vec<u8> {
     let mut bytes = Vec::new();
     for suboption in &info.suboptions {
         let value = suboption.encode_value();
@@ -4175,7 +4175,7 @@ fn encode_relay_agent_information(info: &DhcpRelayAgentInfo) -> Vec<u8> {
 
 /// Encode the RFC 4243 relay Vendor-Specific Information tuples (relay
 /// sub-option 9) into their sub-option value bytes.
-fn encode_relay_vendor_specific(tuples: &[DhcpRelayVendorSpecific]) -> Vec<u8> {
+fn encode_relay_vendor_specific(tuples: &[Dhcpv4RelayVendorSpecific]) -> Vec<u8> {
     let mut bytes = Vec::new();
     for tuple in tuples {
         bytes.extend_from_slice(&tuple.enterprise_number.to_be_bytes());
@@ -4222,8 +4222,8 @@ pub(super) fn split_option_encoded_len(data_len: usize) -> usize {
 #[cfg(test)]
 mod dhcp_options {
     use super::super::{
-        scan_dhcp_option_segments, Dhcpv4, Dhcpv4MessageType, DhcpOption, DhcpOptionArea,
-        DhcpOptionCode, DhcpOptionSegment, DhcpOptionStatus, DhcpOptionValue,
+        scan_dhcpv4_option_segments, Dhcpv4, Dhcpv4MessageType, Dhcpv4Option, Dhcpv4OptionArea,
+        Dhcpv4OptionCode, Dhcpv4OptionSegment, Dhcpv4OptionStatus, Dhcpv4OptionValue,
     };
     use crate::error::CrafterError;
     use core::net::Ipv4Addr;
@@ -4232,7 +4232,7 @@ mod dhcp_options {
 
     #[test]
     fn option_fixture_decodes_common_offer_values() {
-        let options = DhcpOption::decode_all(&hex_fixture(OFFER_OPTIONS)).unwrap();
+        let options = Dhcpv4Option::decode_all(&hex_fixture(OFFER_OPTIONS)).unwrap();
         let dhcp = Dhcpv4::new().options(options);
 
         assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Offer));
@@ -4258,19 +4258,19 @@ mod dhcp_options {
     #[test]
     fn typed_options_roundtrip_and_preserve_unknown_options() {
         let options = vec![
-            DhcpOption::Pad,
-            DhcpOption::message_type(Dhcpv4MessageType::Ack),
-            DhcpOption::host_name("agent-host"),
-            DhcpOption::generic(224, [0xde, 0xad, 0xbe, 0xef]),
-            DhcpOption::End,
-            DhcpOption::Pad,
+            Dhcpv4Option::Pad,
+            Dhcpv4Option::message_type(Dhcpv4MessageType::Ack),
+            Dhcpv4Option::host_name("agent-host"),
+            Dhcpv4Option::generic(224, [0xde, 0xad, 0xbe, 0xef]),
+            Dhcpv4Option::End,
+            Dhcpv4Option::Pad,
         ];
 
         let encoded = Dhcpv4::new()
             .options(options.clone())
             .encoded_options()
             .unwrap();
-        let decoded = DhcpOption::decode_all(&encoded).unwrap();
+        let decoded = Dhcpv4Option::decode_all(&encoded).unwrap();
 
         assert_eq!(decoded, options);
     }
@@ -4291,18 +4291,18 @@ mod dhcp_options {
 
         // The raw segment scanner surfaces each on-the-wire option instance
         // with source-area, codepoint, declared length, offset, and bytes.
-        let segments = scan_dhcp_option_segments(DhcpOptionArea::Options, &bytes).unwrap();
+        let segments = scan_dhcpv4_option_segments(Dhcpv4OptionArea::Options, &bytes).unwrap();
 
         let codes: Vec<u8> = segments.iter().map(|s| s.code_value()).collect();
         assert_eq!(codes, vec![53, 54, 1, 3, 6, 51, 255]);
 
         // Every segment reports the area it came from.
-        assert!(segments.iter().all(|s| s.area == DhcpOptionArea::Options));
+        assert!(segments.iter().all(|s| s.area == Dhcpv4OptionArea::Options));
 
         // Declared length and offsets are inspectable for non-single-octet
         // options; pad/end carry no declared length.
         let message_type = &segments[0];
-        assert_eq!(message_type.code, DhcpOptionCode::Assigned(53));
+        assert_eq!(message_type.code, Dhcpv4OptionCode::Assigned(53));
         assert_eq!(message_type.declared_len, Some(1));
         assert_eq!(message_type.offset, 0);
         assert_eq!(message_type.data, vec![Dhcpv4MessageType::Offer.code()]);
@@ -4313,30 +4313,30 @@ mod dhcp_options {
         assert_eq!(server_id.data, vec![192, 0, 2, 1]);
 
         let end = segments.last().unwrap();
-        assert_eq!(end.code, DhcpOptionCode::End);
+        assert_eq!(end.code, Dhcpv4OptionCode::End);
         assert!(end.is_single_octet());
         assert_eq!(end.declared_len, None);
 
         // The logical typed decode bridges onto reusable value families.
-        let options = DhcpOption::decode_all(&bytes).unwrap();
-        let logical: Vec<Option<DhcpOptionValue>> =
-            options.iter().map(DhcpOption::logical_value).collect();
+        let options = Dhcpv4Option::decode_all(&bytes).unwrap();
+        let logical: Vec<Option<Dhcpv4OptionValue>> =
+            options.iter().map(Dhcpv4Option::logical_value).collect();
         assert_eq!(
             logical[0],
-            Some(DhcpOptionValue::MessageType(Dhcpv4MessageType::Offer))
+            Some(Dhcpv4OptionValue::MessageType(Dhcpv4MessageType::Offer))
         );
         assert_eq!(
             logical[2],
-            Some(DhcpOptionValue::Ipv4(Ipv4Addr::new(255, 255, 255, 0)))
+            Some(Dhcpv4OptionValue::Ipv4(Ipv4Addr::new(255, 255, 255, 0)))
         );
         assert_eq!(
             logical[4],
-            Some(DhcpOptionValue::Ipv4List(vec![
+            Some(Dhcpv4OptionValue::Ipv4List(vec![
                 Ipv4Addr::new(192, 0, 2, 53),
                 Ipv4Addr::new(198, 51, 100, 53),
             ]))
         );
-        assert_eq!(logical[5], Some(DhcpOptionValue::U32(3_600)));
+        assert_eq!(logical[5], Some(Dhcpv4OptionValue::U32(3_600)));
         // The end marker has no value family.
         assert_eq!(options.last().unwrap().logical_value(), None);
 
@@ -4354,10 +4354,10 @@ mod dhcp_options {
         let removed_payload = [0x01, 0x02];
 
         let options = vec![
-            DhcpOption::message_type(Dhcpv4MessageType::Ack),
-            DhcpOption::generic(224, private_payload),
-            DhcpOption::generic(84, removed_payload),
-            DhcpOption::End,
+            Dhcpv4Option::message_type(Dhcpv4MessageType::Ack),
+            Dhcpv4Option::generic(224, private_payload),
+            Dhcpv4Option::generic(84, removed_payload),
+            Dhcpv4Option::End,
         ];
 
         let encoded = Dhcpv4::new()
@@ -4366,14 +4366,14 @@ mod dhcp_options {
             .unwrap();
 
         // Round-trip through the typed decoder preserves the unknown bytes.
-        let decoded = DhcpOption::decode_all(&encoded).unwrap();
+        let decoded = Dhcpv4Option::decode_all(&encoded).unwrap();
         assert_eq!(decoded, options);
 
         // Codepoint classification is source-backed.
-        assert_eq!(decoded[1].option_code(), DhcpOptionCode::PrivateUse(224));
+        assert_eq!(decoded[1].option_code(), Dhcpv4OptionCode::PrivateUse(224));
         assert_eq!(
             decoded[2].option_code(),
-            DhcpOptionCode::RemovedOrUnassigned(84)
+            Dhcpv4OptionCode::RemovedOrUnassigned(84)
         );
         assert_eq!(decoded[1].registry_name(), None);
         assert_eq!(decoded[2].registry_name(), Some("REMOVED/Unassigned"));
@@ -4381,7 +4381,7 @@ mod dhcp_options {
         // The logical value preserves opaque bytes verbatim.
         assert_eq!(
             decoded[1].logical_value(),
-            Some(DhcpOptionValue::Opaque(private_payload.to_vec()))
+            Some(Dhcpv4OptionValue::Opaque(private_payload.to_vec()))
         );
         assert_eq!(
             decoded[1]
@@ -4392,12 +4392,12 @@ mod dhcp_options {
 
         // The raw segment scanner exposes declared length, offset, and bytes
         // for the unknown/private options without losing data.
-        let segments = scan_dhcp_option_segments(DhcpOptionArea::Options, &encoded).unwrap();
+        let segments = scan_dhcpv4_option_segments(Dhcpv4OptionArea::Options, &encoded).unwrap();
         let private = segments
             .iter()
             .find(|s| s.code_value() == 224)
             .expect("private-use segment present");
-        assert_eq!(private.code, DhcpOptionCode::PrivateUse(224));
+        assert_eq!(private.code, Dhcpv4OptionCode::PrivateUse(224));
         assert_eq!(private.declared_len, Some(private_payload.len() as u8));
         assert_eq!(private.data, private_payload);
 
@@ -4405,17 +4405,17 @@ mod dhcp_options {
             .iter()
             .find(|s| s.code_value() == 84)
             .expect("removed segment present");
-        assert_eq!(removed.code, DhcpOptionCode::RemovedOrUnassigned(84));
+        assert_eq!(removed.code, Dhcpv4OptionCode::RemovedOrUnassigned(84));
         assert_eq!(removed.data, removed_payload);
 
         // Codepoint status is classified directly as well.
         assert_eq!(
-            DhcpOptionCode::from_code(224),
-            DhcpOptionCode::PrivateUse(224)
+            Dhcpv4OptionCode::from_code(224),
+            Dhcpv4OptionCode::PrivateUse(224)
         );
         assert_eq!(
             super::option_status(84),
-            DhcpOptionStatus::RemovedOrUnassigned
+            Dhcpv4OptionStatus::RemovedOrUnassigned
         );
     }
 
@@ -4426,12 +4426,12 @@ mod dhcp_options {
         // decoder routes through the raw scanner, so the segment view and the
         // typed view must agree, and an exact byte round-trip must hold.
         let options = vec![
-            DhcpOption::Pad,
-            DhcpOption::message_type(Dhcpv4MessageType::Ack),
-            DhcpOption::subnet_mask(Ipv4Addr::new(255, 255, 255, 0)),
-            DhcpOption::generic(224, [0xde, 0xad, 0xbe, 0xef]),
-            DhcpOption::End,
-            DhcpOption::Pad,
+            Dhcpv4Option::Pad,
+            Dhcpv4Option::message_type(Dhcpv4MessageType::Ack),
+            Dhcpv4Option::subnet_mask(Ipv4Addr::new(255, 255, 255, 0)),
+            Dhcpv4Option::generic(224, [0xde, 0xad, 0xbe, 0xef]),
+            Dhcpv4Option::End,
+            Dhcpv4Option::Pad,
         ];
 
         let encoded = Dhcpv4::new()
@@ -4441,28 +4441,28 @@ mod dhcp_options {
 
         // Raw scanner records every on-the-wire instance in order, including
         // the leading and trailing pad and the end marker.
-        let segments = scan_dhcp_option_segments(DhcpOptionArea::Options, &encoded).unwrap();
-        let codes: Vec<u8> = segments.iter().map(DhcpOptionSegment::code_value).collect();
+        let segments = scan_dhcpv4_option_segments(Dhcpv4OptionArea::Options, &encoded).unwrap();
+        let codes: Vec<u8> = segments.iter().map(Dhcpv4OptionSegment::code_value).collect();
         assert_eq!(codes, vec![0, 53, 1, 224, 255, 0]);
-        assert!(segments.iter().all(|s| s.area == DhcpOptionArea::Options));
+        assert!(segments.iter().all(|s| s.area == Dhcpv4OptionArea::Options));
 
         // The unknown private-use option keeps its declared length and bytes.
         let private = &segments[3];
-        assert_eq!(private.code, DhcpOptionCode::PrivateUse(224));
+        assert_eq!(private.code, Dhcpv4OptionCode::PrivateUse(224));
         assert_eq!(private.declared_len, Some(4));
         assert_eq!(private.data, vec![0xde, 0xad, 0xbe, 0xef]);
 
         // The end marker is a single-octet option with no declared length, and
         // a pad segment may legally follow it.
         let end = &segments[4];
-        assert_eq!(end.code, DhcpOptionCode::End);
+        assert_eq!(end.code, Dhcpv4OptionCode::End);
         assert!(end.is_single_octet());
         assert_eq!(end.declared_len, None);
-        assert_eq!(segments[5].code, DhcpOptionCode::Pad);
+        assert_eq!(segments[5].code, Dhcpv4OptionCode::Pad);
 
         // The logical decode matches the original options exactly, and a second
         // encode reproduces the original bytes (exact round-trip).
-        let decoded = DhcpOption::decode_all(&encoded).unwrap();
+        let decoded = Dhcpv4Option::decode_all(&encoded).unwrap();
         assert_eq!(decoded, options);
         let re_encoded = Dhcpv4::new().options(decoded).encoded_options().unwrap();
         assert_eq!(re_encoded, encoded);
@@ -4479,7 +4479,7 @@ mod dhcp_options {
             1,
         ];
 
-        let error = DhcpOption::decode_all(&bytes).unwrap_err();
+        let error = Dhcpv4Option::decode_all(&bytes).unwrap_err();
         assert!(matches!(
             error,
             CrafterError::InvalidFieldValue { field, .. } if field == "dhcp.option.end"
@@ -4487,8 +4487,8 @@ mod dhcp_options {
 
         // The raw scanner itself stays permissive and records the trailing
         // option as a segment so callers can still inspect the malformed bytes.
-        let segments = scan_dhcp_option_segments(DhcpOptionArea::Options, &bytes).unwrap();
-        let codes: Vec<u8> = segments.iter().map(DhcpOptionSegment::code_value).collect();
+        let segments = scan_dhcpv4_option_segments(Dhcpv4OptionArea::Options, &bytes).unwrap();
+        let codes: Vec<u8> = segments.iter().map(Dhcpv4OptionSegment::code_value).collect();
         assert_eq!(codes, vec![255, 53]);
     }
 
@@ -4498,7 +4498,7 @@ mod dhcp_options {
         // logical decoder with a stable field name.
         let bytes = [super::DHCP_OPTION_MESSAGE_TYPE, 1, 1];
 
-        let error = DhcpOption::decode_all(&bytes).unwrap_err();
+        let error = Dhcpv4Option::decode_all(&bytes).unwrap_err();
         assert!(matches!(
             error,
             CrafterError::InvalidFieldValue { field, .. } if field == "dhcp.options"
@@ -4513,11 +4513,11 @@ mod dhcp_options {
         let truncated_data = [super::DHCP_OPTION_MESSAGE_TYPE, 4, 0x01];
 
         for bytes in [truncated_length.as_slice(), truncated_data.as_slice()] {
-            let error = scan_dhcp_option_segments(DhcpOptionArea::Options, bytes).unwrap_err();
+            let error = scan_dhcpv4_option_segments(Dhcpv4OptionArea::Options, bytes).unwrap_err();
             assert!(matches!(error, CrafterError::BufferTooShort { .. }));
             // The logical decoder propagates the same structured error.
             assert!(matches!(
-                DhcpOption::decode_all(bytes),
+                Dhcpv4Option::decode_all(bytes),
                 Err(CrafterError::BufferTooShort { .. })
             ));
         }
@@ -4528,27 +4528,27 @@ mod dhcp_options {
         // Padding before and after content, plus an unknown removed/unassigned
         // codepoint, round-trip exactly and stay classified by the registry.
         let options = vec![
-            DhcpOption::Pad,
-            DhcpOption::Pad,
-            DhcpOption::message_type(Dhcpv4MessageType::Discover),
-            DhcpOption::generic(84, [0x01, 0x02]),
-            DhcpOption::End,
+            Dhcpv4Option::Pad,
+            Dhcpv4Option::Pad,
+            Dhcpv4Option::message_type(Dhcpv4MessageType::Discover),
+            Dhcpv4Option::generic(84, [0x01, 0x02]),
+            Dhcpv4Option::End,
         ];
 
         let encoded = Dhcpv4::new()
             .options(options.clone())
             .encoded_options()
             .unwrap();
-        let decoded = DhcpOption::decode_all(&encoded).unwrap();
+        let decoded = Dhcpv4Option::decode_all(&encoded).unwrap();
         assert_eq!(decoded, options);
 
         assert_eq!(
             decoded[3].option_code(),
-            DhcpOptionCode::RemovedOrUnassigned(84)
+            Dhcpv4OptionCode::RemovedOrUnassigned(84)
         );
         assert_eq!(
             decoded[3].logical_value(),
-            Some(DhcpOptionValue::Opaque(vec![0x01, 0x02]))
+            Some(Dhcpv4OptionValue::Opaque(vec![0x01, 0x02]))
         );
     }
 
@@ -4563,7 +4563,7 @@ mod dhcp_options {
 #[cfg(test)]
 mod dhcp_rfc3396 {
     use super::super::{
-        scan_dhcp_option_segments, Dhcpv4, Dhcpv4MessageType, DhcpOption, DhcpOptionArea,
+        scan_dhcpv4_option_segments, Dhcpv4, Dhcpv4MessageType, Dhcpv4Option, Dhcpv4OptionArea,
     };
     use super::{encode_split_option, split_option_encoded_len, DHCP_MAX_OPTION_DATA_LEN};
     use core::net::Ipv4Addr;
@@ -4573,7 +4573,7 @@ mod dhcp_rfc3396 {
     const DOMAIN_SEARCH: u8 = 119; // RFC 3397, decoded as opaque/generic here.
     const VENDOR_CLASS: u8 = 60; // Vendor class identifier, generic opaque.
 
-    fn build_options(payload_options: Vec<DhcpOption>) -> Vec<u8> {
+    fn build_options(payload_options: Vec<Dhcpv4Option>) -> Vec<u8> {
         Dhcpv4::new()
             .options(payload_options)
             .encoded_options()
@@ -4602,8 +4602,8 @@ mod dhcp_rfc3396 {
         wire.push(super::super::DHCP_OPTION_END);
 
         // Raw segments: two separate host-name instances remain inspectable.
-        let segments = scan_dhcp_option_segments(DhcpOptionArea::Options, &wire).unwrap();
-        let host_segments: Vec<&super::DhcpOptionSegment> = segments
+        let segments = scan_dhcpv4_option_segments(Dhcpv4OptionArea::Options, &wire).unwrap();
+        let host_segments: Vec<&super::Dhcpv4OptionSegment> = segments
             .iter()
             .filter(|s| s.code_value() == HOST_NAME)
             .collect();
@@ -4612,12 +4612,12 @@ mod dhcp_rfc3396 {
         assert_eq!(host_segments[1].data, part_two);
 
         // Logical decode: exactly one host-name option, value concatenated.
-        let decoded = DhcpOption::decode_all(&wire).unwrap();
-        let host_options: Vec<&DhcpOption> =
+        let decoded = Dhcpv4Option::decode_all(&wire).unwrap();
+        let host_options: Vec<&Dhcpv4Option> =
             decoded.iter().filter(|o| o.code() == HOST_NAME).collect();
         assert_eq!(host_options.len(), 1);
         match host_options[0] {
-            DhcpOption::HostName(name) => {
+            Dhcpv4Option::HostName(name) => {
                 assert_eq!(name.as_bytes(), full.as_slice());
                 assert_eq!(name.len(), DHCP_MAX_OPTION_DATA_LEN + 40);
             }
@@ -4631,12 +4631,12 @@ mod dhcp_rfc3396 {
         // multiple same-code segments, each at most 255 bytes, in order.
         let long_name = "x".repeat(600);
         let encoded = build_options(vec![
-            DhcpOption::host_name(long_name.clone()),
-            DhcpOption::End,
+            Dhcpv4Option::host_name(long_name.clone()),
+            Dhcpv4Option::End,
         ]);
 
-        let segments = scan_dhcp_option_segments(DhcpOptionArea::Options, &encoded).unwrap();
-        let host_segments: Vec<&super::DhcpOptionSegment> = segments
+        let segments = scan_dhcpv4_option_segments(Dhcpv4OptionArea::Options, &encoded).unwrap();
+        let host_segments: Vec<&super::Dhcpv4OptionSegment> = segments
             .iter()
             .filter(|s| s.code_value() == HOST_NAME)
             .collect();
@@ -4652,12 +4652,12 @@ mod dhcp_rfc3396 {
 
         // Decoding the split bytes reassembles the original logical value, and a
         // re-encode reproduces the same wire bytes (the splits are canonical).
-        let decoded = DhcpOption::decode_all(&encoded).unwrap();
+        let decoded = Dhcpv4Option::decode_all(&encoded).unwrap();
         let host = decoded
             .iter()
             .find(|o| o.code() == HOST_NAME)
             .expect("host name present");
-        assert_eq!(host, &DhcpOption::host_name(long_name));
+        assert_eq!(host, &Dhcpv4Option::host_name(long_name));
         let re_encoded = Dhcpv4::new().options(decoded).encoded_options().unwrap();
         assert_eq!(re_encoded, encoded);
     }
@@ -4677,7 +4677,7 @@ mod dhcp_rfc3396 {
         let mut out = Vec::new();
         encode_split_option(VENDOR_CLASS, &just_over, &mut out);
         // Two segments: 255 + 1.
-        let segments = scan_dhcp_option_segments(DhcpOptionArea::Options, &out).unwrap();
+        let segments = scan_dhcpv4_option_segments(Dhcpv4OptionArea::Options, &out).unwrap();
         assert_eq!(segments.len(), 2);
         assert_eq!(segments[0].data.len(), DHCP_MAX_OPTION_DATA_LEN);
         assert_eq!(segments[1].data.len(), 1);
@@ -4701,11 +4701,11 @@ mod dhcp_rfc3396 {
         // option reports must match the actual encoded bytes so the layer length
         // accounting stays correct.
         let payload = (0u16..700).map(|n| n as u8).collect::<Vec<u8>>();
-        let option = DhcpOption::generic(VENDOR_CLASS, payload.clone());
+        let option = Dhcpv4Option::generic(VENDOR_CLASS, payload.clone());
         assert_eq!(option.encode().unwrap().len(), option.encoded_len());
 
-        let encoded = build_options(vec![option.clone(), DhcpOption::End]);
-        let decoded = DhcpOption::decode_all(&encoded).unwrap();
+        let encoded = build_options(vec![option.clone(), Dhcpv4Option::End]);
+        let decoded = Dhcpv4Option::decode_all(&encoded).unwrap();
         let vendor = decoded
             .iter()
             .find(|o| o.code() == VENDOR_CLASS)
@@ -4726,11 +4726,11 @@ mod dhcp_rfc3396 {
         let dhcp = Dhcpv4::new()
             .message_type(Dhcpv4MessageType::Ack)
             .server_identifier(Ipv4Addr::new(192, 0, 2, 1))
-            .option(DhcpOption::generic(DOMAIN_SEARCH, b"aaa".to_vec()))
-            .file_option(DhcpOption::generic(DOMAIN_SEARCH, b"bbb".to_vec()))
-            .file_option(DhcpOption::End)
-            .sname_option(DhcpOption::generic(DOMAIN_SEARCH, b"ccc".to_vec()))
-            .sname_option(DhcpOption::End);
+            .option(Dhcpv4Option::generic(DOMAIN_SEARCH, b"aaa".to_vec()))
+            .file_option(Dhcpv4Option::generic(DOMAIN_SEARCH, b"bbb".to_vec()))
+            .file_option(Dhcpv4Option::End)
+            .sname_option(Dhcpv4Option::generic(DOMAIN_SEARCH, b"ccc".to_vec()))
+            .sname_option(Dhcpv4Option::End);
 
         let bytes = crate::Packet::from_layer(dhcp)
             .compile()
@@ -4768,10 +4768,10 @@ mod dhcp_rfc3396 {
 #[cfg(test)]
 mod dhcp_rfc2132_base_options {
     use super::super::{
-        Dhcpv4, DhcpClientIdentifier, Dhcpv4MessageType, DhcpOption, DhcpOptionCode, DhcpOptionFormat,
-        DhcpOptionKind, DhcpOptionValue, OptionOverload,
+        Dhcpv4, Dhcpv4ClientIdentifier, Dhcpv4MessageType, Dhcpv4Option, Dhcpv4OptionCode, Dhcpv4OptionFormat,
+        Dhcpv4OptionKind, Dhcpv4OptionValue, OptionOverload,
     };
-    use super::typed_option_value;
+    use super::dhcpv4_typed_option_value;
     use crate::error::CrafterError;
     use core::net::Ipv4Addr;
 
@@ -4782,89 +4782,89 @@ mod dhcp_rfc2132_base_options {
     // One representative option per RFC 2132 base format family, chosen to cover
     // both the historical typed subset and codes that were previously decoded
     // only as Generic opaque bytes. Each tuple is (code, logical value).
-    fn family_samples() -> Vec<(u8, DhcpOptionValue)> {
+    fn family_samples() -> Vec<(u8, Dhcpv4OptionValue)> {
         vec![
             // IPv4 single address (option 1, subnet mask).
-            (1, DhcpOptionValue::Ipv4(ip(255, 255, 255, 0))),
+            (1, Dhcpv4OptionValue::Ipv4(ip(255, 255, 255, 0))),
             // IPv4 single address that was NOT in the old typed subset
             // (option 16, swap server; option 32, router solicitation).
-            (16, DhcpOptionValue::Ipv4(ip(192, 0, 2, 9))),
-            (32, DhcpOptionValue::Ipv4(ip(192, 0, 2, 7))),
+            (16, Dhcpv4OptionValue::Ipv4(ip(192, 0, 2, 9))),
+            (32, Dhcpv4OptionValue::Ipv4(ip(192, 0, 2, 7))),
             // IPv4 list (option 6, DNS) and a previously-Generic list
             // (option 42, NTP servers; option 44, NetBIOS name server).
             (
                 6,
-                DhcpOptionValue::Ipv4List(vec![ip(192, 0, 2, 53), ip(198, 51, 100, 53)]),
+                Dhcpv4OptionValue::Ipv4List(vec![ip(192, 0, 2, 53), ip(198, 51, 100, 53)]),
             ),
-            (42, DhcpOptionValue::Ipv4List(vec![ip(192, 0, 2, 123)])),
+            (42, Dhcpv4OptionValue::Ipv4List(vec![ip(192, 0, 2, 123)])),
             (
                 44,
-                DhcpOptionValue::Ipv4List(vec![ip(192, 0, 2, 200), ip(192, 0, 2, 201)]),
+                Dhcpv4OptionValue::Ipv4List(vec![ip(192, 0, 2, 200), ip(192, 0, 2, 201)]),
             ),
             // IPv4 address pairs (option 21 policy filter).
             (
                 21,
-                DhcpOptionValue::Ipv4Pairs(vec![(ip(192, 0, 2, 0), ip(255, 255, 255, 0))]),
+                Dhcpv4OptionValue::Ipv4Pairs(vec![(ip(192, 0, 2, 0), ip(255, 255, 255, 0))]),
             ),
             // Static routes (option 33) decode to typed destination/router
             // pairs (RFC 2132 section 5.8).
             (
                 33,
-                DhcpOptionValue::StaticRoutes(vec![
-                    super::DhcpStaticRoute::new(ip(198, 51, 100, 0), ip(192, 0, 2, 1)),
-                    super::DhcpStaticRoute::new(ip(203, 0, 113, 0), ip(192, 0, 2, 2)),
+                Dhcpv4OptionValue::StaticRoutes(vec![
+                    super::Dhcpv4StaticRoute::new(ip(198, 51, 100, 0), ip(192, 0, 2, 1)),
+                    super::Dhcpv4StaticRoute::new(ip(203, 0, 113, 0), ip(192, 0, 2, 2)),
                 ]),
             ),
             // Boolean flag bytes (option 19 IP forwarding, option 27 all subnets
             // local, option 39 TCP keepalive garbage) - a new format family.
-            (19, DhcpOptionValue::Bool(true)),
-            (27, DhcpOptionValue::Bool(false)),
-            (39, DhcpOptionValue::Bool(true)),
+            (19, Dhcpv4OptionValue::Bool(true)),
+            (27, Dhcpv4OptionValue::Bool(false)),
+            (39, Dhcpv4OptionValue::Bool(true)),
             // Single unsigned octet (option 23 default IP TTL, option 46 NetBIOS
             // node type).
-            (23, DhcpOptionValue::U8(64)),
-            (46, DhcpOptionValue::U8(8)),
+            (23, Dhcpv4OptionValue::U8(64)),
+            (46, Dhcpv4OptionValue::U8(8)),
             // 16-bit unsigned (option 13 boot file size, option 22 max datagram
             // reassembly, option 26 interface MTU, option 57 max message size).
-            (13, DhcpOptionValue::U16(1024)),
-            (22, DhcpOptionValue::U16(576)),
-            (26, DhcpOptionValue::U16(1500)),
-            (57, DhcpOptionValue::U16(1400)),
+            (13, Dhcpv4OptionValue::U16(1024)),
+            (22, Dhcpv4OptionValue::U16(576)),
+            (26, Dhcpv4OptionValue::U16(1500)),
+            (57, Dhcpv4OptionValue::U16(1400)),
             // 16-bit unsigned list (option 25 path MTU plateau table) - a new
             // format family.
-            (25, DhcpOptionValue::U16List(vec![68, 296, 1500])),
+            (25, Dhcpv4OptionValue::U16List(vec![68, 296, 1500])),
             // 32-bit signed (option 2 time offset) - a new format family.
-            (2, DhcpOptionValue::I32(-18_000)),
+            (2, Dhcpv4OptionValue::I32(-18_000)),
             // 32-bit unsigned (option 24 MTU aging, option 35 ARP timeout,
             // option 51 lease time).
-            (24, DhcpOptionValue::U32(1_200)),
-            (35, DhcpOptionValue::U32(60)),
-            (51, DhcpOptionValue::U32(86_400)),
+            (24, Dhcpv4OptionValue::U32(1_200)),
+            (35, Dhcpv4OptionValue::U32(60)),
+            (51, Dhcpv4OptionValue::U32(86_400)),
             // Text / NVT ASCII (option 12 host name, option 40 NIS domain,
             // option 56 message) - bytes preserved, never lossy.
-            (12, DhcpOptionValue::Text(b"agent-host".to_vec())),
-            (40, DhcpOptionValue::Text(b"corp.example".to_vec())),
-            (56, DhcpOptionValue::Text(b"lease denied".to_vec())),
+            (12, Dhcpv4OptionValue::Text(b"agent-host".to_vec())),
+            (40, Dhcpv4OptionValue::Text(b"corp.example".to_vec())),
+            (56, Dhcpv4OptionValue::Text(b"lease denied".to_vec())),
             // Parameter request list (option 55).
             (
                 55,
-                DhcpOptionValue::ParameterRequestList(vec![1, 3, 6, 15, 51, 54]),
+                Dhcpv4OptionValue::ParameterRequestList(vec![1, 3, 6, 15, 51, 54]),
             ),
             // Message type (option 53) and option overload (option 52).
-            (53, DhcpOptionValue::MessageType(Dhcpv4MessageType::Discover)),
-            (52, DhcpOptionValue::OptionOverload(OptionOverload::Both)),
+            (53, Dhcpv4OptionValue::MessageType(Dhcpv4MessageType::Discover)),
+            (52, Dhcpv4OptionValue::OptionOverload(OptionOverload::Both)),
             // Opaque (option 60 vendor class id, option 43 vendor specific) -
             // raw bytes preserved.
-            (60, DhcpOptionValue::Opaque(b"MSFT 5.0".to_vec())),
+            (60, Dhcpv4OptionValue::Opaque(b"MSFT 5.0".to_vec())),
             // Client identifier (option 61): the legacy RFC 2132 Ethernet
             // hardware-type form (type 1 plus a 6-octet MAC).
             (
                 61,
-                DhcpOptionValue::ClientIdentifier(DhcpClientIdentifier::ethernet_mac([
+                Dhcpv4OptionValue::ClientIdentifier(Dhcpv4ClientIdentifier::ethernet_mac([
                     0x02, 0x00, 0x5e, 0x10, 0x00, 0x01,
                 ])),
             ),
-            (43, DhcpOptionValue::Opaque(vec![0xde, 0xad, 0xbe, 0xef])),
+            (43, Dhcpv4OptionValue::Opaque(vec![0xde, 0xad, 0xbe, 0xef])),
         ]
     }
 
@@ -4876,33 +4876,33 @@ mod dhcp_rfc2132_base_options {
         // Generic bytes.
         let samples = family_samples();
 
-        // Prove the sample set spans every DhcpOptionFormat variant so no
+        // Prove the sample set spans every Dhcpv4OptionFormat variant so no
         // family is left untested.
         use std::collections::HashSet;
-        let covered: HashSet<DhcpOptionFormat> = samples
+        let covered: HashSet<Dhcpv4OptionFormat> = samples
             .iter()
             .map(|(code, _)| {
-                DhcpOptionKind::from_code(*code)
+                Dhcpv4OptionKind::from_code(*code)
                     .expect("sample code is a registered base option")
                     .format()
             })
             .collect();
         let all_families = [
-            DhcpOptionFormat::Ipv4,
-            DhcpOptionFormat::Ipv4List,
-            DhcpOptionFormat::Ipv4Pairs,
-            DhcpOptionFormat::Bool,
-            DhcpOptionFormat::U8,
-            DhcpOptionFormat::U16,
-            DhcpOptionFormat::U16List,
-            DhcpOptionFormat::I32,
-            DhcpOptionFormat::U32,
-            DhcpOptionFormat::Text,
-            DhcpOptionFormat::ParameterRequestList,
-            DhcpOptionFormat::MessageType,
-            DhcpOptionFormat::OptionOverload,
-            DhcpOptionFormat::ClientIdentifier,
-            DhcpOptionFormat::Opaque,
+            Dhcpv4OptionFormat::Ipv4,
+            Dhcpv4OptionFormat::Ipv4List,
+            Dhcpv4OptionFormat::Ipv4Pairs,
+            Dhcpv4OptionFormat::Bool,
+            Dhcpv4OptionFormat::U8,
+            Dhcpv4OptionFormat::U16,
+            Dhcpv4OptionFormat::U16List,
+            Dhcpv4OptionFormat::I32,
+            Dhcpv4OptionFormat::U32,
+            Dhcpv4OptionFormat::Text,
+            Dhcpv4OptionFormat::ParameterRequestList,
+            Dhcpv4OptionFormat::MessageType,
+            Dhcpv4OptionFormat::OptionOverload,
+            Dhcpv4OptionFormat::ClientIdentifier,
+            Dhcpv4OptionFormat::Opaque,
         ];
         for family in all_families {
             assert!(
@@ -4914,16 +4914,16 @@ mod dhcp_rfc2132_base_options {
         for (code, value) in samples {
             // The free typed-decode function and the option accessor agree.
             let payload = value.encode_payload();
-            let decoded = typed_option_value(code, &payload)
+            let decoded = dhcpv4_typed_option_value(code, &payload)
                 .unwrap()
                 .unwrap_or_else(|| panic!("code {code} has no typed value"));
             assert_eq!(decoded, value, "typed decode mismatch for code {code}");
 
             // Constructed through the kind+value builder, the option re-decodes
             // to the same logical value and reports its registered kind.
-            let kind = DhcpOptionKind::from_code(code).unwrap();
+            let kind = Dhcpv4OptionKind::from_code(code).unwrap();
             assert_eq!(kind.code(), code);
-            let option = DhcpOption::typed(kind, value.clone());
+            let option = Dhcpv4Option::typed(kind, value.clone());
             assert_eq!(option.code(), code);
             assert_eq!(option.kind(), Some(kind));
             assert_eq!(option.typed_value().unwrap(), Some(value.clone()));
@@ -4931,8 +4931,8 @@ mod dhcp_rfc2132_base_options {
             // The codepoint is registry-classified, never RemovedOrUnassigned
             // for a base option.
             assert!(matches!(
-                DhcpOptionCode::from_code(code),
-                DhcpOptionCode::Assigned(_)
+                Dhcpv4OptionCode::from_code(code),
+                Dhcpv4OptionCode::Assigned(_)
             ));
         }
     }
@@ -4943,16 +4943,16 @@ mod dhcp_rfc2132_base_options {
         // inside a real DHCP packet without data loss, and the typed value is
         // recoverable from the decoded option in each area position.
         let samples = family_samples();
-        let mut options: Vec<DhcpOption> = samples
+        let mut options: Vec<Dhcpv4Option> = samples
             .iter()
             // Skip the overload sample here: option 52 changes how the sname/file
             // fields are interpreted, which is exercised by the overload tests.
             .filter(|(code, _)| *code != 52)
             .map(|(code, value)| {
-                DhcpOption::typed(DhcpOptionKind::from_code(*code).unwrap(), value.clone())
+                Dhcpv4Option::typed(Dhcpv4OptionKind::from_code(*code).unwrap(), value.clone())
             })
             .collect();
-        options.push(DhcpOption::End);
+        options.push(Dhcpv4Option::End);
 
         let dhcp = Dhcpv4::new()
             .op(super::super::BOOTP_REPLY)
@@ -4990,11 +4990,11 @@ mod dhcp_rfc2132_base_options {
 
         // Text options preserve raw bytes and never force lossy UTF-8: a non-UTF-8
         // host name survives byte-for-byte.
-        let raw_text = DhcpOption::typed(
-            DhcpOptionKind::HostName,
-            DhcpOptionValue::Text(vec![0xff, 0xfe, b'x']),
+        let raw_text = Dhcpv4Option::typed(
+            Dhcpv4OptionKind::HostName,
+            Dhcpv4OptionValue::Text(vec![0xff, 0xfe, b'x']),
         );
-        let dhcp = Dhcpv4::new().options([raw_text, DhcpOption::End]);
+        let dhcp = Dhcpv4::new().options([raw_text, Dhcpv4Option::End]);
         let bytes = crate::Packet::from_layer(dhcp)
             .compile()
             .unwrap()
@@ -5008,7 +5008,7 @@ mod dhcp_rfc2132_base_options {
             .unwrap();
         assert_eq!(
             host.typed_value().unwrap(),
-            Some(DhcpOptionValue::Text(vec![0xff, 0xfe, b'x'])),
+            Some(Dhcpv4OptionValue::Text(vec![0xff, 0xfe, b'x'])),
         );
     }
 
@@ -5024,7 +5024,7 @@ mod dhcp_rfc2132_base_options {
             (33, vec![192, 0, 2, 1]), // static route must be a multiple of 8
             (25, vec![0]),            // u16 list must be a multiple of 2
         ] {
-            let error = typed_option_value(code, &bad).unwrap_err();
+            let error = dhcpv4_typed_option_value(code, &bad).unwrap_err();
             assert!(
                 matches!(error, CrafterError::InvalidFieldValue { .. }),
                 "code {code} should yield a structured field error",
@@ -5034,20 +5034,20 @@ mod dhcp_rfc2132_base_options {
         // Codes outside the typed-format set return Ok(None) so callers fall
         // back to raw-byte preservation. Code 100 (RFC 4833 PCode) has no
         // single authoritative typed format here and stays raw.
-        assert!(typed_option_value(224, &[0xde, 0xad]).unwrap().is_none());
-        assert!(typed_option_value(100, &[0x01, 0x00]).unwrap().is_none());
+        assert!(dhcpv4_typed_option_value(224, &[0xde, 0xad]).unwrap().is_none());
+        assert!(dhcpv4_typed_option_value(100, &[0x01, 0x00]).unwrap().is_none());
     }
 }
 
 #[cfg(test)]
 mod dhcp_route_domain_service {
     use super::super::{
-        Dhcpv4, DhcpClasslessRoute, Dhcpv4MessageType, DhcpOption, DhcpOptionKind, DhcpOptionValue,
-        DhcpStaticRoute, SipServers,
+        Dhcpv4, Dhcpv4ClasslessRoute, Dhcpv4MessageType, Dhcpv4Option, Dhcpv4OptionKind, Dhcpv4OptionValue,
+        Dhcpv4StaticRoute, SipServers,
     };
     use super::{
         decode_classless_routes, decode_domain_name_list, decode_static_routes,
-        encode_classless_routes, encode_domain_name_list, encode_static_routes, typed_option_value,
+        encode_classless_routes, encode_domain_name_list, encode_static_routes, dhcpv4_typed_option_value,
     };
     use crate::error::CrafterError;
     use core::net::Ipv4Addr;
@@ -5061,11 +5061,11 @@ mod dhcp_route_domain_service {
         Ipv4Addr::new(a, b, c, d)
     }
 
-    fn build_and_decode(option: DhcpOption) -> Dhcpv4 {
+    fn build_and_decode(option: Dhcpv4Option) -> Dhcpv4 {
         let dhcp = Dhcpv4::new()
             .op(super::super::BOOTP_REPLY)
             .message_type(Dhcpv4MessageType::Ack)
-            .options([option, DhcpOption::End]);
+            .options([option, Dhcpv4Option::End]);
         let bytes = crate::Packet::from_layer(dhcp)
             .compile()
             .unwrap()
@@ -5080,12 +5080,12 @@ mod dhcp_route_domain_service {
         // default route carries none, and a /32 host route carries four. Each
         // route is followed by a 4-octet router address.
         let routes = vec![
-            DhcpClasslessRoute::new(24, ip(198, 51, 100, 0), ip(192, 0, 2, 1)),
-            DhcpClasslessRoute::new(0, ip(0, 0, 0, 0), ip(192, 0, 2, 254)),
-            DhcpClasslessRoute::new(32, ip(203, 0, 113, 7), ip(192, 0, 2, 9)),
-            DhcpClasslessRoute::new(16, ip(172, 16, 0, 0), ip(192, 0, 2, 8)),
+            Dhcpv4ClasslessRoute::new(24, ip(198, 51, 100, 0), ip(192, 0, 2, 1)),
+            Dhcpv4ClasslessRoute::new(0, ip(0, 0, 0, 0), ip(192, 0, 2, 254)),
+            Dhcpv4ClasslessRoute::new(32, ip(203, 0, 113, 7), ip(192, 0, 2, 9)),
+            Dhcpv4ClasslessRoute::new(16, ip(172, 16, 0, 0), ip(192, 0, 2, 8)),
         ];
-        let value = DhcpOptionValue::ClasslessRoutes(routes.clone());
+        let value = Dhcpv4OptionValue::ClasslessRoutes(routes.clone());
 
         // Wire layout matches the RFC 3442 destination-descriptor encoding:
         // significant octets = ceil(prefix / 8).
@@ -5099,18 +5099,18 @@ mod dhcp_route_domain_service {
         assert_eq!(payload, expected);
 
         // typed decode reproduces the exact routes.
-        let decoded = typed_option_value(CLASSLESS_ROUTE, &payload)
+        let decoded = dhcpv4_typed_option_value(CLASSLESS_ROUTE, &payload)
             .unwrap()
             .unwrap();
         assert_eq!(decoded, value);
         assert_eq!(
-            DhcpClasslessRoute::significant_octets(24),
+            Dhcpv4ClasslessRoute::significant_octets(24),
             3,
             "ceil(24/8) significant octets",
         );
 
         // Full packet round-trip through the typed builder and the accessor.
-        let option = DhcpOption::typed(DhcpOptionKind::ClasslessStaticRoute, value.clone());
+        let option = Dhcpv4Option::typed(Dhcpv4OptionKind::ClasslessStaticRoute, value.clone());
         assert_eq!(option.code(), CLASSLESS_ROUTE);
         let parsed = build_and_decode(option);
         assert_eq!(parsed.classless_static_routes().unwrap().unwrap(), routes);
@@ -5137,17 +5137,17 @@ mod dhcp_route_domain_service {
     fn dhcp_static_routes_roundtrip() {
         // RFC 2132 section 5.8: option 33 is destination/router IPv4 pairs.
         let routes = vec![
-            DhcpStaticRoute::new(ip(198, 51, 100, 0), ip(192, 0, 2, 1)),
-            DhcpStaticRoute::new(ip(203, 0, 113, 0), ip(192, 0, 2, 2)),
+            Dhcpv4StaticRoute::new(ip(198, 51, 100, 0), ip(192, 0, 2, 1)),
+            Dhcpv4StaticRoute::new(ip(203, 0, 113, 0), ip(192, 0, 2, 2)),
         ];
-        let value = DhcpOptionValue::StaticRoutes(routes.clone());
+        let value = Dhcpv4OptionValue::StaticRoutes(routes.clone());
         let payload = value.encode_payload();
         assert_eq!(payload.len(), routes.len() * 8);
 
-        let decoded = typed_option_value(STATIC_ROUTE, &payload).unwrap().unwrap();
+        let decoded = dhcpv4_typed_option_value(STATIC_ROUTE, &payload).unwrap().unwrap();
         assert_eq!(decoded, value);
 
-        let option = DhcpOption::typed(DhcpOptionKind::StaticRoute, value);
+        let option = Dhcpv4Option::typed(Dhcpv4OptionKind::StaticRoute, value);
         let parsed = build_and_decode(option);
         assert_eq!(parsed.static_routes().unwrap().unwrap(), routes);
 
@@ -5160,7 +5160,7 @@ mod dhcp_route_domain_service {
         // RFC 3397 / RFC 1035: a domain-search list is label-encoded names, each
         // terminated by a zero root label.
         let names = vec!["eng.example.com".to_string(), "example.net".to_string()];
-        let value = DhcpOptionValue::DomainSearch(names.clone());
+        let value = Dhcpv4OptionValue::DomainSearch(names.clone());
 
         // The uncompressed encoding is a sequence of length-prefixed labels.
         let payload = value.encode_payload();
@@ -5178,13 +5178,13 @@ mod dhcp_route_domain_service {
         assert_eq!(payload, expected);
 
         // typed decode reproduces the logical names.
-        let decoded = typed_option_value(DOMAIN_SEARCH, &payload)
+        let decoded = dhcpv4_typed_option_value(DOMAIN_SEARCH, &payload)
             .unwrap()
             .unwrap();
         assert_eq!(decoded, value);
 
         // Full packet round-trip and accessor.
-        let option = DhcpOption::typed(DhcpOptionKind::DomainSearch, value);
+        let option = Dhcpv4Option::typed(Dhcpv4OptionKind::DomainSearch, value);
         let parsed = build_and_decode(option);
         assert_eq!(parsed.domain_search().unwrap().unwrap(), names);
 
@@ -5226,37 +5226,37 @@ mod dhcp_route_domain_service {
             "sip.example.com".to_string(),
             "sip.example.net".to_string(),
         ]);
-        let domain_payload = DhcpOptionValue::SipServers(domains.clone()).encode_payload();
+        let domain_payload = Dhcpv4OptionValue::SipServers(domains.clone()).encode_payload();
         assert_eq!(domain_payload[0], 0, "enc byte selects domain names");
-        let decoded = typed_option_value(SIP_SERVERS, &domain_payload)
+        let decoded = dhcpv4_typed_option_value(SIP_SERVERS, &domain_payload)
             .unwrap()
             .unwrap();
-        assert_eq!(decoded, DhcpOptionValue::SipServers(domains.clone()));
+        assert_eq!(decoded, Dhcpv4OptionValue::SipServers(domains.clone()));
 
         let addresses = SipServers::Addresses(vec![ip(192, 0, 2, 10), ip(198, 51, 100, 10)]);
-        let address_payload = DhcpOptionValue::SipServers(addresses.clone()).encode_payload();
+        let address_payload = Dhcpv4OptionValue::SipServers(addresses.clone()).encode_payload();
         assert_eq!(address_payload[0], 1, "enc byte selects addresses");
-        let decoded = typed_option_value(SIP_SERVERS, &address_payload)
+        let decoded = dhcpv4_typed_option_value(SIP_SERVERS, &address_payload)
             .unwrap()
             .unwrap();
-        assert_eq!(decoded, DhcpOptionValue::SipServers(addresses.clone()));
+        assert_eq!(decoded, Dhcpv4OptionValue::SipServers(addresses.clone()));
 
         // An unspecified enc value is preserved verbatim, not coerced.
-        let unknown = typed_option_value(SIP_SERVERS, &[0x09, 0xde, 0xad])
+        let unknown = dhcpv4_typed_option_value(SIP_SERVERS, &[0x09, 0xde, 0xad])
             .unwrap()
             .unwrap();
         assert_eq!(
             unknown,
-            DhcpOptionValue::SipServers(SipServers::Unknown {
+            Dhcpv4OptionValue::SipServers(SipServers::Unknown {
                 encoding: 0x09,
                 data: vec![0xde, 0xad],
             }),
         );
 
         // Accessor surfaces the address-list encoding from a full packet.
-        let option = DhcpOption::typed(
-            DhcpOptionKind::SipServers,
-            DhcpOptionValue::SipServers(addresses.clone()),
+        let option = Dhcpv4Option::typed(
+            Dhcpv4OptionKind::SipServers,
+            Dhcpv4OptionValue::SipServers(addresses.clone()),
         );
         let parsed = build_and_decode(option);
         assert_eq!(parsed.sip_servers().unwrap().unwrap(), addresses);
@@ -5280,8 +5280,8 @@ mod dhcp_route_domain_service {
             decode_classless_routes(&truncated_route),
             Err(CrafterError::BufferTooShort { .. }),
         ));
-        // The same surfaces through typed_option_value without panicking.
-        assert!(typed_option_value(CLASSLESS_ROUTE, &truncated_route).is_err());
+        // The same surfaces through dhcpv4_typed_option_value without panicking.
+        assert!(dhcpv4_typed_option_value(CLASSLESS_ROUTE, &truncated_route).is_err());
 
         // RFC 2132 static route: length not a multiple of eight.
         assert!(matches!(
@@ -5313,14 +5313,14 @@ mod dhcp_route_domain_service {
 
         // RFC 3361 SIP servers: empty payload (no enc byte).
         assert!(matches!(
-            typed_option_value(SIP_SERVERS, &[]),
+            dhcpv4_typed_option_value(SIP_SERVERS, &[]),
             Err(CrafterError::BufferTooShort { .. }),
         ));
 
         // RFC 3361 SIP servers: address encoding with a length that is not a
         // multiple of four after the enc byte.
         assert!(matches!(
-            typed_option_value(SIP_SERVERS, &[1, 192, 0, 2]),
+            dhcpv4_typed_option_value(SIP_SERVERS, &[1, 192, 0, 2]),
             Err(CrafterError::InvalidFieldValue { .. }),
         ));
     }
@@ -5329,14 +5329,14 @@ mod dhcp_route_domain_service {
 #[cfg(test)]
 mod dhcp_vendor_user_pxe {
     use super::super::{
-        decode_tftp_server_addresses, ClientNetworkDeviceInterface, ClientSystemArchitecture, Dhcpv4,
-        DhcpClientUuid, Dhcpv4MessageType, DhcpOption, DhcpUserClass, DhcpVendorClassData,
-        DhcpVendorIdentifyingOption, DhcpVendorSuboption,
+        decode_dhcpv4_tftp_server_addresses, ClientNetworkDeviceInterface, ClientSystemArchitecture, Dhcpv4,
+        Dhcpv4ClientUuid, Dhcpv4MessageType, Dhcpv4Option, Dhcpv4UserClass, Dhcpv4VendorClassData,
+        Dhcpv4VendorIdentifyingOption, Dhcpv4VendorSuboption,
     };
     use super::{
         decode_client_ndi, decode_client_system_architecture, decode_client_uuid,
-        decode_user_class, decode_vi_vendor_class, decode_vi_vendor_specific, typed_option_value,
-        DhcpOptionValue,
+        decode_user_class, decode_vi_vendor_class, decode_vi_vendor_specific, dhcpv4_typed_option_value,
+        Dhcpv4OptionValue,
     };
     use crate::error::CrafterError;
     use core::net::Ipv4Addr;
@@ -5357,7 +5357,7 @@ mod dhcp_vendor_user_pxe {
         Ipv4Addr::new(a, b, c, d)
     }
 
-    fn build_and_decode(options: Vec<DhcpOption>) -> Dhcpv4 {
+    fn build_and_decode(options: Vec<Dhcpv4Option>) -> Dhcpv4 {
         let dhcp = Dhcpv4::new()
             .op(super::super::BOOTP_REQUEST)
             .message_type(Dhcpv4MessageType::Discover)
@@ -5390,10 +5390,10 @@ mod dhcp_vendor_user_pxe {
         // 4-octet enterprise number, a data-len octet, and opaque
         // vendor-class-data.
         let vivco = vec![
-            DhcpVendorClassData::new(3561, b"PXEClient:Arch:00009".to_vec()),
-            DhcpVendorClassData::new(311, vec![0xde, 0xad, 0xbe, 0xef]),
+            Dhcpv4VendorClassData::new(3561, b"PXEClient:Arch:00009".to_vec()),
+            Dhcpv4VendorClassData::new(311, vec![0xde, 0xad, 0xbe, 0xef]),
         ];
-        let vivco_value = DhcpOptionValue::ViVendorClass(vivco.clone());
+        let vivco_value = Dhcpv4OptionValue::ViVendorClass(vivco.clone());
         let payload = vivco_value.encode_payload();
         // Wire layout: enterprise(4) + data-len(1) + data, repeated.
         let mut expected: Vec<u8> = Vec::new();
@@ -5405,7 +5405,7 @@ mod dhcp_vendor_user_pxe {
         expected.extend_from_slice(&[0xde, 0xad, 0xbe, 0xef]);
         assert_eq!(payload, expected);
         assert_eq!(
-            typed_option_value(VI_VENDOR_CLASS, &payload)
+            dhcpv4_typed_option_value(VI_VENDOR_CLASS, &payload)
                 .unwrap()
                 .unwrap(),
             vivco_value,
@@ -5414,14 +5414,14 @@ mod dhcp_vendor_user_pxe {
 
         // RFC 3925 option 125 (V-I Vendor-Specific Information): enterprise
         // number, data-len, then nested code/length/value suboptions.
-        let vivso = vec![DhcpVendorIdentifyingOption::new(
+        let vivso = vec![Dhcpv4VendorIdentifyingOption::new(
             3561,
             vec![
-                DhcpVendorSuboption::new(1, vec![0x01, 0x02, 0x03]),
-                DhcpVendorSuboption::new(2, b"opaque".to_vec()),
+                Dhcpv4VendorSuboption::new(1, vec![0x01, 0x02, 0x03]),
+                Dhcpv4VendorSuboption::new(2, b"opaque".to_vec()),
             ],
         )];
-        let vivso_value = DhcpOptionValue::ViVendorSpecific(vivso.clone());
+        let vivso_value = Dhcpv4OptionValue::ViVendorSpecific(vivso.clone());
         let payload = vivso_value.encode_payload();
         let mut expected: Vec<u8> = Vec::new();
         expected.extend_from_slice(&3561u32.to_be_bytes());
@@ -5434,7 +5434,7 @@ mod dhcp_vendor_user_pxe {
         expected.extend_from_slice(b"opaque");
         assert_eq!(payload, expected);
         assert_eq!(
-            typed_option_value(VI_VENDOR_SPECIFIC, &payload)
+            dhcpv4_typed_option_value(VI_VENDOR_SPECIFIC, &payload)
                 .unwrap()
                 .unwrap(),
             vivso_value,
@@ -5443,9 +5443,9 @@ mod dhcp_vendor_user_pxe {
 
         // Full packet round-trip through the typed builders and accessors.
         let parsed = build_and_decode(vec![
-            DhcpOption::vi_vendor_class(vivco.clone()),
-            DhcpOption::vi_vendor_specific(vivso.clone()),
-            DhcpOption::End,
+            Dhcpv4Option::vi_vendor_class(vivco.clone()),
+            Dhcpv4Option::vi_vendor_specific(vivso.clone()),
+            Dhcpv4Option::End,
         ]);
         assert_eq!(parsed.vi_vendor_class().unwrap().unwrap(), vivco);
         assert_eq!(parsed.vi_vendor_specific().unwrap().unwrap(), vivso);
@@ -5455,9 +5455,9 @@ mod dhcp_vendor_user_pxe {
         // the exact bytes the caller supplied.
         let opaque = vec![0x01, 0xff, 0x00, 0xab];
         let parsed = build_and_decode(vec![
-            DhcpOption::vendor_specific(opaque.clone()),
-            DhcpOption::vendor_class_identifier(b"MSFT 5.0".to_vec()),
-            DhcpOption::End,
+            Dhcpv4Option::vendor_specific(opaque.clone()),
+            Dhcpv4Option::vendor_class_identifier(b"MSFT 5.0".to_vec()),
+            Dhcpv4Option::End,
         ]);
         assert_eq!(parsed.vendor_specific_information().unwrap(), opaque);
         assert_eq!(
@@ -5469,7 +5469,7 @@ mod dhcp_vendor_user_pxe {
         // panics.
         // Enterprise number present but no data-len octet.
         assert!(matches!(
-            typed_option_value(VI_VENDOR_CLASS, &3561u32.to_be_bytes()),
+            dhcpv4_typed_option_value(VI_VENDOR_CLASS, &3561u32.to_be_bytes()),
             Err(CrafterError::BufferTooShort { .. }),
         ));
         // data-len claims more bytes than remain.
@@ -5501,66 +5501,66 @@ mod dhcp_vendor_user_pxe {
         // RFC 4578 option 93 (Client System Architecture): a list of 16-bit
         // architecture type values. 0 = Intel x86PC, 7 = EFI BC, 9 = EFI x86-64.
         let arch = ClientSystemArchitecture::new(vec![0u16, 7, 9]);
-        let arch_value = DhcpOptionValue::ClientSystemArchitecture(arch.clone());
+        let arch_value = Dhcpv4OptionValue::ClientSystemArchitecture(arch.clone());
         let payload = arch_value.encode_payload();
         assert_eq!(payload, vec![0, 0, 0, 7, 0, 9]);
         assert_eq!(
-            typed_option_value(CLIENT_ARCH, &payload).unwrap().unwrap(),
+            dhcpv4_typed_option_value(CLIENT_ARCH, &payload).unwrap().unwrap(),
             arch_value,
         );
         assert_eq!(decode_client_system_architecture(&payload).unwrap(), arch);
         // Odd length is rejected as a structured error (must be a multiple of 2).
         assert!(matches!(
-            typed_option_value(CLIENT_ARCH, &[0, 7, 9]),
+            dhcpv4_typed_option_value(CLIENT_ARCH, &[0, 7, 9]),
             Err(CrafterError::InvalidFieldValue { .. }),
         ));
 
         // RFC 4578 option 94 (Client Network Device Interface): type/major/minor.
         let ndi = ClientNetworkDeviceInterface::undi(2, 1);
-        let ndi_value = DhcpOptionValue::ClientNetworkDeviceInterface(ndi);
+        let ndi_value = Dhcpv4OptionValue::ClientNetworkDeviceInterface(ndi);
         let payload = ndi_value.encode_payload();
         assert_eq!(payload, vec![1, 2, 1]);
         assert_eq!(
-            typed_option_value(CLIENT_NDI, &payload).unwrap().unwrap(),
+            dhcpv4_typed_option_value(CLIENT_NDI, &payload).unwrap().unwrap(),
             ndi_value,
         );
         assert_eq!(decode_client_ndi(&payload).unwrap(), ndi);
         // Any length other than three is a structured error.
         assert!(matches!(
-            typed_option_value(CLIENT_NDI, &[1, 2]),
+            dhcpv4_typed_option_value(CLIENT_NDI, &[1, 2]),
             Err(CrafterError::InvalidFieldValue { .. }),
         ));
 
         // RFC 4578 option 97 (UUID/GUID client identifier): type 0 + 16-octet
         // GUID.
         let guid: Vec<u8> = (0u8..16).collect();
-        let uuid = DhcpClientUuid::guid(guid.clone());
-        let uuid_value = DhcpOptionValue::ClientUuid(uuid.clone());
+        let uuid = Dhcpv4ClientUuid::guid(guid.clone());
+        let uuid_value = Dhcpv4OptionValue::ClientUuid(uuid.clone());
         let payload = uuid_value.encode_payload();
         assert_eq!(payload.len(), 17);
         assert_eq!(payload[0], 0);
         assert_eq!(&payload[1..], guid.as_slice());
         assert_eq!(
-            typed_option_value(CLIENT_UUID, &payload).unwrap().unwrap(),
+            dhcpv4_typed_option_value(CLIENT_UUID, &payload).unwrap().unwrap(),
             uuid_value,
         );
         assert_eq!(decode_client_uuid(&payload).unwrap(), uuid);
         // Empty payload (no type octet) is a structured error.
         assert!(matches!(
-            typed_option_value(CLIENT_UUID, &[]),
+            dhcpv4_typed_option_value(CLIENT_UUID, &[]),
             Err(CrafterError::BufferTooShort { .. }),
         ));
 
         // Full packet round-trip through builders and accessors.
         let parsed = build_and_decode(vec![
-            DhcpOption::client_system_architecture(arch.clone()),
-            DhcpOption::client_network_device_interface(ndi),
-            DhcpOption::client_uuid(uuid.clone()),
-            DhcpOption::pxelinux_magic(),
-            DhcpOption::pxelinux_config_file(b"pxelinux.cfg/default".to_vec()),
-            DhcpOption::pxelinux_path_prefix(b"tftp://192.0.2.1/".to_vec()),
-            DhcpOption::pxelinux_reboot_time(30),
-            DhcpOption::End,
+            Dhcpv4Option::client_system_architecture(arch.clone()),
+            Dhcpv4Option::client_network_device_interface(ndi),
+            Dhcpv4Option::client_uuid(uuid.clone()),
+            Dhcpv4Option::pxelinux_magic(),
+            Dhcpv4Option::pxelinux_config_file(b"pxelinux.cfg/default".to_vec()),
+            Dhcpv4Option::pxelinux_path_prefix(b"tftp://192.0.2.1/".to_vec()),
+            Dhcpv4Option::pxelinux_reboot_time(30),
+            Dhcpv4Option::End,
         ]);
         assert_eq!(parsed.client_system_architecture().unwrap().unwrap(), arch,);
         assert_eq!(
@@ -5590,8 +5590,8 @@ mod dhcp_vendor_user_pxe {
     fn dhcp_user_class_roundtrip() {
         // RFC 3004 option 77: one or more length-prefixed opaque class
         // instances.
-        let user_class = DhcpUserClass::new(vec![b"iPXE".to_vec(), b"linux-install".to_vec()]);
-        let value = DhcpOptionValue::UserClass(user_class.clone());
+        let user_class = Dhcpv4UserClass::new(vec![b"iPXE".to_vec(), b"linux-install".to_vec()]);
+        let value = Dhcpv4OptionValue::UserClass(user_class.clone());
         let payload = value.encode_payload();
         let mut expected = vec![4u8];
         expected.extend_from_slice(b"iPXE");
@@ -5599,15 +5599,15 @@ mod dhcp_vendor_user_pxe {
         expected.extend_from_slice(b"linux-install");
         assert_eq!(payload, expected);
         assert_eq!(
-            typed_option_value(USER_CLASS, &payload).unwrap().unwrap(),
+            dhcpv4_typed_option_value(USER_CLASS, &payload).unwrap().unwrap(),
             value,
         );
         assert_eq!(decode_user_class(&payload).unwrap(), user_class);
 
         // Full packet round-trip and accessor.
         let parsed = build_and_decode(vec![
-            DhcpOption::user_class(user_class.clone()),
-            DhcpOption::End,
+            Dhcpv4Option::user_class(user_class.clone()),
+            Dhcpv4Option::End,
         ]);
         assert_eq!(parsed.user_class().unwrap().unwrap(), user_class);
         recompile_is_stable(&parsed);
@@ -5629,9 +5629,9 @@ mod dhcp_vendor_user_pxe {
     fn dhcp_tftp_and_bootfile_options_roundtrip() {
         // RFC 2132 options 66/67 are NVT ASCII strings carried as raw bytes.
         let parsed = build_and_decode(vec![
-            DhcpOption::tftp_server_name(b"tftp.example.com".to_vec()),
-            DhcpOption::bootfile_name(b"undionly.kpxe".to_vec()),
-            DhcpOption::End,
+            Dhcpv4Option::tftp_server_name(b"tftp.example.com".to_vec()),
+            Dhcpv4Option::bootfile_name(b"undionly.kpxe".to_vec()),
+            Dhcpv4Option::End,
         ]);
         assert_eq!(
             parsed.tftp_server_name().unwrap(),
@@ -5645,23 +5645,23 @@ mod dhcp_vendor_user_pxe {
         // raw; the explicit accessor applies the RFC 5859 interpretation.
         let addresses = vec![ip(192, 0, 2, 10), ip(198, 51, 100, 10)];
         let parsed = build_and_decode(vec![
-            DhcpOption::tftp_server_addresses(addresses.clone()),
-            DhcpOption::End,
+            Dhcpv4Option::tftp_server_addresses(addresses.clone()),
+            Dhcpv4Option::End,
         ]);
         assert_eq!(parsed.tftp_server_addresses().unwrap().unwrap(), addresses);
         // The same option stays opaque to the default typed decoder.
-        assert!(typed_option_value(TFTP_SERVER_ADDRESS, &[192, 0, 2, 10])
+        assert!(dhcpv4_typed_option_value(TFTP_SERVER_ADDRESS, &[192, 0, 2, 10])
             .unwrap()
             .is_none());
         recompile_is_stable(&parsed);
 
         // A length not a multiple of four is a structured error, never a panic.
         assert!(matches!(
-            decode_tftp_server_addresses(&[192, 0, 2]),
+            decode_dhcpv4_tftp_server_addresses(&[192, 0, 2]),
             Err(CrafterError::InvalidFieldValue { .. }),
         ));
         assert!(matches!(
-            decode_tftp_server_addresses(&[]),
+            decode_dhcpv4_tftp_server_addresses(&[]),
             Err(CrafterError::InvalidFieldValue { .. }),
         ));
 
@@ -5677,10 +5677,10 @@ mod dhcp_vendor_user_pxe {
 #[cfg(test)]
 mod dhcp_relay_agent {
     use super::super::{
-        scan_dhcp_option_segments, Dhcpv4, Dhcpv4MessageType, DhcpOption, DhcpOptionArea,
-        DhcpRelayAgentInfo, DhcpRelaySuboption, DhcpRelayVendorSpecific, DhcpVssInfo,
+        scan_dhcpv4_option_segments, Dhcpv4, Dhcpv4MessageType, Dhcpv4Option, Dhcpv4OptionArea,
+        Dhcpv4RelayAgentInfo, Dhcpv4RelaySuboption, Dhcpv4RelayVendorSpecific, Dhcpv4VssInfo,
     };
-    use super::{decode_relay_agent_information, typed_option_value, DhcpOptionValue};
+    use super::{decode_relay_agent_information, dhcpv4_typed_option_value, Dhcpv4OptionValue};
     use crate::error::CrafterError;
     use core::net::Ipv4Addr;
 
@@ -5690,7 +5690,7 @@ mod dhcp_relay_agent {
         Ipv4Addr::new(a, b, c, d)
     }
 
-    fn build_and_decode(options: Vec<DhcpOption>) -> Dhcpv4 {
+    fn build_and_decode(options: Vec<Dhcpv4Option>) -> Dhcpv4 {
         let dhcp = Dhcpv4::new()
             .op(super::super::BOOTP_REPLY)
             .message_type(Dhcpv4MessageType::Ack)
@@ -5724,44 +5724,44 @@ mod dhcp_relay_agent {
         // registered sub-option whose wire format is specified by the IANA
         // "DHCP Relay Agent Sub-Option Codes" registry is exercised here, plus an
         // unknown sub-option that must be preserved verbatim.
-        let info = DhcpRelayAgentInfo::new(vec![
+        let info = Dhcpv4RelayAgentInfo::new(vec![
             // Sub-option 1 / 2 (RFC 3046): opaque relay-defined bytes.
-            DhcpRelaySuboption::circuit_id(b"eth0:vlan100".to_vec()),
-            DhcpRelaySuboption::remote_id(vec![0x00, 0x0c, 0x29, 0xab, 0xcd, 0xef]),
+            Dhcpv4RelaySuboption::circuit_id(b"eth0:vlan100".to_vec()),
+            Dhcpv4RelaySuboption::remote_id(vec![0x00, 0x0c, 0x29, 0xab, 0xcd, 0xef]),
             // Sub-option 4 (RFC 3256): 32-bit DOCSIS device class bitfield.
-            DhcpRelaySuboption::DocsisDeviceClass(0x0000_0001),
+            Dhcpv4RelaySuboption::DocsisDeviceClass(0x0000_0001),
             // Sub-option 5 (RFC 3527): subnet IPv4 link selection address.
-            DhcpRelaySuboption::LinkSelection(ip(192, 0, 2, 0)),
+            Dhcpv4RelaySuboption::LinkSelection(ip(192, 0, 2, 0)),
             // Sub-option 6 (RFC 3993): opaque NVT ASCII subscriber id.
-            DhcpRelaySuboption::subscriber_id(b"sub-42".to_vec()),
+            Dhcpv4RelaySuboption::subscriber_id(b"sub-42".to_vec()),
             // Sub-option 7 (RFC 4014): opaque RADIUS attributes.
-            DhcpRelaySuboption::RadiusAttributes(vec![0x01, 0x06, 0x00, 0x00, 0x00, 0x2a]),
+            Dhcpv4RelaySuboption::RadiusAttributes(vec![0x01, 0x06, 0x00, 0x00, 0x00, 0x2a]),
             // Sub-option 8 (RFC 4030): opaque authentication payload.
-            DhcpRelaySuboption::Authentication(vec![0x01, 0x00, 0x00, 0x00]),
+            Dhcpv4RelaySuboption::Authentication(vec![0x01, 0x00, 0x00, 0x00]),
             // Sub-option 9 (RFC 4243): enterprise-number plus opaque-data tuples.
-            DhcpRelaySuboption::VendorSpecific(vec![
-                DhcpRelayVendorSpecific::new(3561, vec![0xde, 0xad]),
-                DhcpRelayVendorSpecific::new(311, b"v".to_vec()),
+            Dhcpv4RelaySuboption::VendorSpecific(vec![
+                Dhcpv4RelayVendorSpecific::new(3561, vec![0xde, 0xad]),
+                Dhcpv4RelayVendorSpecific::new(311, b"v".to_vec()),
             ]),
             // Sub-option 10 (RFC 5010): one-octet flags (Unicast bit set).
-            DhcpRelaySuboption::RelayFlags(super::super::DHCP_RELAY_FLAG_UNICAST),
+            Dhcpv4RelaySuboption::RelayFlags(super::super::DHCP_RELAY_FLAG_UNICAST),
             // Sub-option 11 (RFC 5107): 4-octet server-id override address.
-            DhcpRelaySuboption::ServerIdOverride(ip(192, 0, 2, 1)),
+            Dhcpv4RelaySuboption::ServerIdOverride(ip(192, 0, 2, 1)),
             // Sub-option 12 (RFC 6925): opaque relay agent identifier.
-            DhcpRelaySuboption::relay_agent_id(vec![0xab, 0xcd]),
+            Dhcpv4RelaySuboption::relay_agent_id(vec![0xab, 0xcd]),
             // Sub-option 19 (RFC 8357): zero-length relay source port flag.
-            DhcpRelaySuboption::RelaySourcePort,
+            Dhcpv4RelaySuboption::RelaySourcePort,
             // Sub-option 151 (RFC 6607): VSS type octet plus VSS information.
-            DhcpRelaySuboption::Vss(DhcpVssInfo::nvt_ascii(b"vpn-blue".to_vec())),
+            Dhcpv4RelaySuboption::Vss(Dhcpv4VssInfo::nvt_ascii(b"vpn-blue".to_vec())),
             // Sub-option 152 (RFC 6607): zero-length VSS control.
-            DhcpRelaySuboption::VssControl,
+            Dhcpv4RelaySuboption::VssControl,
             // An unknown/reserved sub-option is preserved verbatim.
-            DhcpRelaySuboption::other(200, vec![0x01, 0x02, 0x03]),
+            Dhcpv4RelaySuboption::other(200, vec![0x01, 0x02, 0x03]),
         ]);
 
         // The typed value encodes to RFC 3046 sub-option layout and decodes back
         // losslessly.
-        let value = DhcpOptionValue::RelayAgentInformation(info.clone());
+        let value = Dhcpv4OptionValue::RelayAgentInformation(info.clone());
         let payload = value.encode_payload();
         assert_eq!(
             decode_relay_agent_information(&payload).unwrap(),
@@ -5769,7 +5769,7 @@ mod dhcp_relay_agent {
             "relay agent information must round-trip through the codec",
         );
         assert_eq!(
-            typed_option_value(RELAY_AGENT_INFORMATION, &payload)
+            dhcpv4_typed_option_value(RELAY_AGENT_INFORMATION, &payload)
                 .unwrap()
                 .unwrap(),
             value,
@@ -5781,15 +5781,15 @@ mod dhcp_relay_agent {
 
         // Full packet round-trip through the typed builder and accessor.
         let parsed = build_and_decode(vec![
-            DhcpOption::relay_agent_information(info.clone()),
-            DhcpOption::End,
+            Dhcpv4Option::relay_agent_information(info.clone()),
+            Dhcpv4Option::End,
         ]);
         let decoded = parsed.relay_agent_information().unwrap().unwrap();
         assert_eq!(decoded, info);
         // The unknown sub-option is preserved with its exact code and data.
         assert_eq!(
             decoded.suboption(200),
-            Some(&DhcpRelaySuboption::other(200, vec![0x01, 0x02, 0x03])),
+            Some(&Dhcpv4RelaySuboption::other(200, vec![0x01, 0x02, 0x03])),
         );
         recompile_is_stable(&parsed);
     }
@@ -5804,8 +5804,8 @@ mod dhcp_relay_agent {
             decode_relay_agent_information(&truncated),
             Err(CrafterError::BufferTooShort { .. }),
         ));
-        // The same surfaces through typed_option_value without panicking.
-        assert!(typed_option_value(RELAY_AGENT_INFORMATION, &truncated).is_err());
+        // The same surfaces through dhcpv4_typed_option_value without panicking.
+        assert!(dhcpv4_typed_option_value(RELAY_AGENT_INFORMATION, &truncated).is_err());
 
         // A sub-option header missing its length octet is also rejected.
         let no_len = [1u8];
@@ -5832,11 +5832,11 @@ mod dhcp_relay_agent {
         // Unknown and reserved relay sub-option codes (here code 3, which RFC
         // 3046 reserves, and code 99, unassigned) are preserved as raw code and
         // data so no bytes are lost and the option re-encodes byte-exactly.
-        let info = DhcpRelayAgentInfo::new(vec![
-            DhcpRelaySuboption::other(3, vec![0xca, 0xfe]),
-            DhcpRelaySuboption::other(99, b"private".to_vec()),
+        let info = Dhcpv4RelayAgentInfo::new(vec![
+            Dhcpv4RelaySuboption::other(3, vec![0xca, 0xfe]),
+            Dhcpv4RelaySuboption::other(99, b"private".to_vec()),
         ]);
-        let payload = DhcpOptionValue::RelayAgentInformation(info.clone()).encode_payload();
+        let payload = Dhcpv4OptionValue::RelayAgentInformation(info.clone()).encode_payload();
         // Wire layout: code, len, data per sub-option.
         assert_eq!(
             payload,
@@ -5845,8 +5845,8 @@ mod dhcp_relay_agent {
         assert_eq!(decode_relay_agent_information(&payload).unwrap(), info);
 
         let parsed = build_and_decode(vec![
-            DhcpOption::relay_agent_information(info.clone()),
-            DhcpOption::End,
+            Dhcpv4Option::relay_agent_information(info.clone()),
+            Dhcpv4Option::End,
         ]);
         assert_eq!(parsed.relay_agent_information().unwrap().unwrap(), info);
         recompile_is_stable(&parsed);
@@ -5856,14 +5856,14 @@ mod dhcp_relay_agent {
     fn dhcp_relay_agent_option82_overload_and_long_options() {
         // Option 52 overload: option 82 carried in the overloaded `file` field
         // must surface through the cross-area accessor and re-encode consistently.
-        let info = DhcpRelayAgentInfo::new(vec![
-            DhcpRelaySuboption::circuit_id(b"port-7".to_vec()),
-            DhcpRelaySuboption::ServerIdOverride(ip(198, 51, 100, 1)),
+        let info = Dhcpv4RelayAgentInfo::new(vec![
+            Dhcpv4RelaySuboption::circuit_id(b"port-7".to_vec()),
+            Dhcpv4RelaySuboption::ServerIdOverride(ip(198, 51, 100, 1)),
         ]);
         let dhcp = Dhcpv4::new()
             .op(super::super::BOOTP_REPLY)
             .message_type(Dhcpv4MessageType::Ack)
-            .file_options(vec![DhcpOption::relay_agent_information(info.clone())]);
+            .file_options(vec![Dhcpv4Option::relay_agent_information(info.clone())]);
         let bytes = crate::Packet::from_layer(dhcp)
             .compile()
             .unwrap()
@@ -5878,20 +5878,20 @@ mod dhcp_relay_agent {
         // into one logical value. The option-82 length is the single octet that
         // overflows, so several sub-options (each <=255 octets) are combined to
         // push the total option payload past one segment.
-        let big_info = DhcpRelayAgentInfo::new(vec![
-            DhcpRelaySuboption::circuit_id(vec![0x5au8; 200]),
-            DhcpRelaySuboption::remote_id(vec![0xa5u8; 200]),
+        let big_info = Dhcpv4RelayAgentInfo::new(vec![
+            Dhcpv4RelaySuboption::circuit_id(vec![0x5au8; 200]),
+            Dhcpv4RelaySuboption::remote_id(vec![0xa5u8; 200]),
         ]);
-        let payload = DhcpOptionValue::RelayAgentInformation(big_info.clone()).encode_payload();
+        let payload = Dhcpv4OptionValue::RelayAgentInformation(big_info.clone()).encode_payload();
         assert!(payload.len() > 255, "payload must exceed one segment");
         let parsed = build_and_decode(vec![
-            DhcpOption::relay_agent_information(big_info.clone()),
-            DhcpOption::End,
+            Dhcpv4Option::relay_agent_information(big_info.clone()),
+            Dhcpv4Option::End,
         ]);
         // The raw wire form is split into more than one option-82 segment, while
         // decode (RFC 3396) concatenates them into one logical option.
         let encoded = parsed.encoded_options().unwrap();
-        let segments = scan_dhcp_option_segments(DhcpOptionArea::Options, &encoded)
+        let segments = scan_dhcpv4_option_segments(Dhcpv4OptionArea::Options, &encoded)
             .unwrap()
             .into_iter()
             .filter(|seg| seg.code_value() == RELAY_AGENT_INFORMATION)
@@ -5911,17 +5911,17 @@ mod dhcp_relay_agent {
 
 #[cfg(test)]
 mod dhcp_client_identifier {
-    use super::super::{Dhcpv4, DhcpClientIdentifier, Dhcpv4MessageType, DhcpOption, DhcpOptionValue};
-    use super::{decode_client_identifier, typed_option_value};
+    use super::super::{Dhcpv4, Dhcpv4ClientIdentifier, Dhcpv4MessageType, Dhcpv4Option, Dhcpv4OptionValue};
+    use super::{decode_client_identifier, dhcpv4_typed_option_value};
     use crate::error::CrafterError;
 
     const CLIENT_IDENTIFIER: u8 = super::super::DHCP_OPTION_CLIENT_IDENTIFIER; // 61
 
-    fn build_and_decode(option: DhcpOption) -> Dhcpv4 {
+    fn build_and_decode(option: Dhcpv4Option) -> Dhcpv4 {
         let dhcp = Dhcpv4::new()
             .op(super::super::BOOTP_REQUEST)
             .message_type(Dhcpv4MessageType::Request)
-            .options(vec![option, DhcpOption::End]);
+            .options(vec![option, Dhcpv4Option::End]);
         let bytes = crate::Packet::from_layer(dhcp)
             .compile()
             .unwrap()
@@ -5949,17 +5949,17 @@ mod dhcp_client_identifier {
         // RFC 2132 section 9.14: the common client identifier is a hardware type
         // (1 = Ethernet) followed by a 6-octet MAC address.
         let mac = [0x02, 0x00, 0x5e, 0x10, 0x00, 0x01];
-        let identifier = DhcpClientIdentifier::ethernet_mac(mac);
+        let identifier = Dhcpv4ClientIdentifier::ethernet_mac(mac);
         assert_eq!(identifier.type_octet(), Some(1));
 
         // The typed value encodes to the option-61 wire layout (type octet plus
         // address) and decodes back losslessly.
-        let value = DhcpOptionValue::ClientIdentifier(identifier.clone());
+        let value = Dhcpv4OptionValue::ClientIdentifier(identifier.clone());
         let payload = value.encode_payload();
         assert_eq!(payload, vec![0x01, 0x02, 0x00, 0x5e, 0x10, 0x00, 0x01]);
         assert_eq!(decode_client_identifier(&payload).unwrap(), identifier);
         assert_eq!(
-            typed_option_value(CLIENT_IDENTIFIER, &payload)
+            dhcpv4_typed_option_value(CLIENT_IDENTIFIER, &payload)
                 .unwrap()
                 .unwrap(),
             value,
@@ -5967,7 +5967,7 @@ mod dhcp_client_identifier {
 
         // Full packet round-trip through the typed builder and the accessor,
         // which surfaces the identifier independently from chaddr.
-        let parsed = build_and_decode(DhcpOption::client_identifier_value(identifier.clone()));
+        let parsed = build_and_decode(Dhcpv4Option::client_identifier_value(identifier.clone()));
         assert_eq!(
             parsed.client_identifier_value().unwrap().unwrap(),
             identifier,
@@ -5975,7 +5975,7 @@ mod dhcp_client_identifier {
         recompile_is_stable(&parsed);
 
         // The legacy raw-byte constructor produces the same wire bytes.
-        let raw = build_and_decode(DhcpOption::client_identifier(payload.clone()));
+        let raw = build_and_decode(Dhcpv4Option::client_identifier(payload.clone()));
         assert_eq!(raw.client_identifier_value().unwrap().unwrap(), identifier);
     }
 
@@ -5991,11 +5991,11 @@ mod dhcp_client_identifier {
             0x12, 0x34, 0x56, 0x78, // DUID time
             0x02, 0x00, 0x5e, 0x10, 0x00, 0x01, // link-layer address
         ];
-        let identifier = DhcpClientIdentifier::node_specific(iaid, duid.clone());
+        let identifier = Dhcpv4ClientIdentifier::node_specific(iaid, duid.clone());
         assert_eq!(identifier.type_octet(), Some(255));
 
         // The encoded payload is type 255 + IAID + DUID.
-        let value = DhcpOptionValue::ClientIdentifier(identifier.clone());
+        let value = Dhcpv4OptionValue::ClientIdentifier(identifier.clone());
         let payload = value.encode_payload();
         assert_eq!(payload[0], 255, "RFC 4361 identifier uses type 255");
         assert_eq!(&payload[1..5], &iaid.to_be_bytes(), "IAID is 4 octets");
@@ -6003,14 +6003,14 @@ mod dhcp_client_identifier {
 
         assert_eq!(decode_client_identifier(&payload).unwrap(), identifier);
         assert_eq!(
-            typed_option_value(CLIENT_IDENTIFIER, &payload)
+            dhcpv4_typed_option_value(CLIENT_IDENTIFIER, &payload)
                 .unwrap()
                 .unwrap(),
             value,
         );
 
         // Full packet round-trip through the typed builder and accessor.
-        let parsed = build_and_decode(DhcpOption::client_identifier_value(identifier.clone()));
+        let parsed = build_and_decode(Dhcpv4Option::client_identifier_value(identifier.clone()));
         assert_eq!(
             parsed.client_identifier_value().unwrap().unwrap(),
             identifier,
@@ -6029,21 +6029,21 @@ mod dhcp_client_identifier {
             bytes
         };
         let decoded = decode_client_identifier(&fqdn_payload).unwrap();
-        assert_eq!(decoded, DhcpClientIdentifier::Raw(fqdn_payload.clone()));
-        let parsed = build_and_decode(DhcpOption::client_identifier(fqdn_payload.clone()));
+        assert_eq!(decoded, Dhcpv4ClientIdentifier::Raw(fqdn_payload.clone()));
+        let parsed = build_and_decode(Dhcpv4Option::client_identifier(fqdn_payload.clone()));
         assert_eq!(
             parsed.client_identifier_value().unwrap().unwrap(),
-            DhcpClientIdentifier::Raw(fqdn_payload),
+            Dhcpv4ClientIdentifier::Raw(fqdn_payload),
         );
 
         // An empty payload carries no type octet and round-trips as empty raw.
         assert_eq!(
             decode_client_identifier(&[]).unwrap(),
-            DhcpClientIdentifier::Raw(Vec::new()),
+            Dhcpv4ClientIdentifier::Raw(Vec::new()),
         );
 
         // The Raw constructor encodes its bytes verbatim (no synthesized type).
-        let raw = DhcpClientIdentifier::raw(vec![0x07, 0xaa, 0xbb]);
+        let raw = Dhcpv4ClientIdentifier::raw(vec![0x07, 0xaa, 0xbb]);
         assert_eq!(raw.encode(), vec![0x07, 0xaa, 0xbb]);
         assert_eq!(raw.type_octet(), Some(0x07));
 
@@ -6062,16 +6062,16 @@ mod dhcp_client_identifier {
         // in its reply. The crate models this as packet data, so a reply (op =
         // BOOTREPLY, message type ACK) can carry exactly what the client sent.
         let identifier =
-            DhcpClientIdentifier::node_specific(0xdead_beef, vec![0x00, 0x03, 0x00, 0x01, 0x11]);
+            Dhcpv4ClientIdentifier::node_specific(0xdead_beef, vec![0x00, 0x03, 0x00, 0x01, 0x11]);
         let request_payload =
-            DhcpOptionValue::ClientIdentifier(identifier.clone()).encode_payload();
+            Dhcpv4OptionValue::ClientIdentifier(identifier.clone()).encode_payload();
 
         let reply = Dhcpv4::new()
             .op(super::super::BOOTP_REPLY)
             .message_type(Dhcpv4MessageType::Ack)
             .options(vec![
-                DhcpOption::client_identifier_value(identifier.clone()),
-                DhcpOption::End,
+                Dhcpv4Option::client_identifier_value(identifier.clone()),
+                Dhcpv4Option::End,
             ]);
         let bytes = crate::Packet::from_layer(reply)
             .compile()
@@ -6094,16 +6094,16 @@ mod dhcp_client_identifier {
 #[cfg(test)]
 mod dhcp_authentication {
     use super::super::{
-        Dhcpv4, DhcpAuthAlgorithm, DhcpAuthProtocol, DhcpAuthentication, DhcpForcerenewNonceCapable,
-        Dhcpv4MessageType, DhcpOption, DhcpOptionValue, DhcpReplayDetectionMethod,
+        Dhcpv4, Dhcpv4AuthAlgorithm, Dhcpv4AuthProtocol, Dhcpv4Authentication, Dhcpv4ForcerenewNonceCapable,
+        Dhcpv4MessageType, Dhcpv4Option, Dhcpv4OptionValue, Dhcpv4ReplayDetectionMethod,
     };
-    use super::{decode_authentication, typed_option_value};
+    use super::{decode_authentication, dhcpv4_typed_option_value};
     use crate::error::CrafterError;
 
     const AUTHENTICATION: u8 = super::super::DHCP_OPTION_AUTHENTICATION; // 90
     const FORCERENEW_NONCE_CAPABLE: u8 = super::super::DHCP_OPTION_FORCERENEW_NONCE_CAPABLE; // 145
 
-    fn build_and_decode(options: Vec<DhcpOption>) -> Dhcpv4 {
+    fn build_and_decode(options: Vec<Dhcpv4Option>) -> Dhcpv4 {
         let dhcp = Dhcpv4::new()
             .op(super::super::BOOTP_REQUEST)
             .message_type(Dhcpv4MessageType::Request)
@@ -6143,17 +6143,17 @@ mod dhcp_authentication {
         let mut auth_info = Vec::new();
         auth_info.extend_from_slice(&secret_id);
         auth_info.extend_from_slice(&digest);
-        let auth = DhcpAuthentication::new(
-            DhcpAuthProtocol::Delayed,
-            DhcpAuthAlgorithm::HmacMd5,
-            DhcpReplayDetectionMethod::MonotonicCounter,
+        let auth = Dhcpv4Authentication::new(
+            Dhcpv4AuthProtocol::Delayed,
+            Dhcpv4AuthAlgorithm::HmacMd5,
+            Dhcpv4ReplayDetectionMethod::MonotonicCounter,
             0x0102_0304_0506_0708,
             auth_info.clone(),
         );
 
         // The typed value encodes to the RFC 3118 wire layout and decodes back
         // losslessly.
-        let value = DhcpOptionValue::Authentication(auth.clone());
+        let value = Dhcpv4OptionValue::Authentication(auth.clone());
         let payload = value.encode_payload();
         let mut expected = vec![1u8, 1, 0]; // Protocol, Algorithm, RDM
         expected.extend_from_slice(&0x0102_0304_0506_0708u64.to_be_bytes());
@@ -6161,7 +6161,7 @@ mod dhcp_authentication {
         assert_eq!(payload, expected);
         assert_eq!(decode_authentication(&payload).unwrap(), auth);
         assert_eq!(
-            typed_option_value(AUTHENTICATION, &payload)
+            dhcpv4_typed_option_value(AUTHENTICATION, &payload)
                 .unwrap()
                 .unwrap(),
             value,
@@ -6170,8 +6170,8 @@ mod dhcp_authentication {
         // Full packet round-trip through the typed builder and the cross-area
         // accessor.
         let parsed = build_and_decode(vec![
-            DhcpOption::authentication(auth.clone()),
-            DhcpOption::End,
+            Dhcpv4Option::authentication(auth.clone()),
+            Dhcpv4Option::End,
         ]);
         let decoded = parsed.authentication().unwrap().unwrap();
         assert_eq!(decoded, auth);
@@ -6187,14 +6187,14 @@ mod dhcp_authentication {
         // RFC 3118 leaves most Protocol, Algorithm, and RDM values unassigned.
         // Unknown values in any of those fields are preserved verbatim rather
         // than coerced, and the authentication information stays raw.
-        let auth = DhcpAuthentication::new(
-            DhcpAuthProtocol::Unknown(0x7f),
-            DhcpAuthAlgorithm::Unknown(0x42),
-            DhcpReplayDetectionMethod::Unknown(0x99),
+        let auth = Dhcpv4Authentication::new(
+            Dhcpv4AuthProtocol::Unknown(0x7f),
+            Dhcpv4AuthAlgorithm::Unknown(0x42),
+            Dhcpv4ReplayDetectionMethod::Unknown(0x99),
             0,
             vec![0xde, 0xad, 0xbe, 0xef],
         );
-        let payload = DhcpOptionValue::Authentication(auth.clone()).encode_payload();
+        let payload = Dhcpv4OptionValue::Authentication(auth.clone()).encode_payload();
         assert_eq!(payload[0], 0x7f, "unknown Protocol preserved");
         assert_eq!(payload[1], 0x42, "unknown Algorithm preserved");
         assert_eq!(payload[2], 0x99, "unknown RDM preserved");
@@ -6207,8 +6207,8 @@ mod dhcp_authentication {
         assert_eq!(decoded.rdm.code(), 0x99);
 
         let parsed = build_and_decode(vec![
-            DhcpOption::authentication(auth.clone()),
-            DhcpOption::End,
+            Dhcpv4Option::authentication(auth.clone()),
+            Dhcpv4Option::End,
         ]);
         assert_eq!(parsed.authentication().unwrap().unwrap(), auth);
         recompile_is_stable(&parsed);
@@ -6229,7 +6229,7 @@ mod dhcp_authentication {
                 ),
                 "len {len} must be rejected",
             );
-            assert!(typed_option_value(AUTHENTICATION, &short).is_err());
+            assert!(dhcpv4_typed_option_value(AUTHENTICATION, &short).is_err());
         }
 
         // A payload of exactly the header length is valid with empty auth info.
@@ -6244,22 +6244,22 @@ mod dhcp_authentication {
         // RFC 6704 section 4: the FORCERENEW_NONCE_CAPABLE option (145) carries
         // the list of supported authentication algorithm octets. HMAC-MD5 is
         // algorithm 1.
-        let value = DhcpForcerenewNonceCapable::hmac_md5();
+        let value = Dhcpv4ForcerenewNonceCapable::hmac_md5();
         assert_eq!(value.algorithms, vec![1]);
-        let payload = DhcpOptionValue::ForcerenewNonceCapable(value.clone()).encode_payload();
+        let payload = Dhcpv4OptionValue::ForcerenewNonceCapable(value.clone()).encode_payload();
         assert_eq!(payload, vec![1]);
         assert_eq!(
-            typed_option_value(FORCERENEW_NONCE_CAPABLE, &payload)
+            dhcpv4_typed_option_value(FORCERENEW_NONCE_CAPABLE, &payload)
                 .unwrap()
                 .unwrap(),
-            DhcpOptionValue::ForcerenewNonceCapable(value.clone()),
+            Dhcpv4OptionValue::ForcerenewNonceCapable(value.clone()),
         );
 
         // Multiple algorithm octets (including unspecified values) round-trip.
-        let multi = DhcpForcerenewNonceCapable::new(vec![1, 2, 0xff]);
+        let multi = Dhcpv4ForcerenewNonceCapable::new(vec![1, 2, 0xff]);
         let parsed = build_and_decode(vec![
-            DhcpOption::forcerenew_nonce_capable(multi.clone()),
-            DhcpOption::End,
+            Dhcpv4Option::forcerenew_nonce_capable(multi.clone()),
+            Dhcpv4Option::End,
         ]);
         assert_eq!(parsed.forcerenew_nonce_capable().unwrap().unwrap(), multi);
         recompile_is_stable(&parsed);
@@ -6267,10 +6267,10 @@ mod dhcp_authentication {
         // An empty algorithm list (zero-length option) is valid and parses to an
         // empty list rather than panicking.
         assert_eq!(
-            typed_option_value(FORCERENEW_NONCE_CAPABLE, &[])
+            dhcpv4_typed_option_value(FORCERENEW_NONCE_CAPABLE, &[])
                 .unwrap()
                 .unwrap(),
-            DhcpOptionValue::ForcerenewNonceCapable(DhcpForcerenewNonceCapable::default()),
+            Dhcpv4OptionValue::ForcerenewNonceCapable(Dhcpv4ForcerenewNonceCapable::default()),
         );
 
         // The codepoint is pinned to its IANA value for clarity.
@@ -6281,10 +6281,10 @@ mod dhcp_authentication {
 #[cfg(test)]
 mod dhcp_leasequery {
     use super::super::{
-        Dhcpv4, DhcpDataSource, Dhcpv4MessageType, DhcpOption, DhcpOptionValue, DhcpState,
-        DhcpStatusCode, DhcpStatusCodeOption,
+        Dhcpv4, Dhcpv4DataSource, Dhcpv4MessageType, Dhcpv4Option, Dhcpv4OptionValue, Dhcpv4State,
+        Dhcpv4StatusCode, Dhcpv4StatusCodeOption,
     };
-    use super::typed_option_value;
+    use super::dhcpv4_typed_option_value;
     use crate::error::CrafterError;
     use core::net::Ipv4Addr;
 
@@ -6302,7 +6302,7 @@ mod dhcp_leasequery {
         Ipv4Addr::new(a, b, c, d)
     }
 
-    fn build_and_decode(options: Vec<DhcpOption>) -> Dhcpv4 {
+    fn build_and_decode(options: Vec<Dhcpv4Option>) -> Dhcpv4 {
         let dhcp = Dhcpv4::new()
             .op(super::super::BOOTP_REPLY)
             .message_type(Dhcpv4MessageType::LeaseActive)
@@ -6337,54 +6337,54 @@ mod dhcp_leasequery {
         // start-time-of-state (153), query-start-time (154), query-end-time
         // (155), dhcp-state (156), and data-source (157). Documentation IPv4
         // addresses and arbitrary times are used; no live traffic is involved.
-        let status = DhcpStatusCodeOption::new(DhcpStatusCode::Success, b"ok".to_vec());
+        let status = Dhcpv4StatusCodeOption::new(Dhcpv4StatusCode::Success, b"ok".to_vec());
 
         // Each typed value encodes to the expected wire layout and decodes back
         // losslessly through the source-backed format dispatch.
-        let cases: Vec<(u8, DhcpOptionValue, Vec<u8>)> = vec![
+        let cases: Vec<(u8, Dhcpv4OptionValue, Vec<u8>)> = vec![
             (
                 CLIENT_LAST_TRANSACTION_TIME,
-                DhcpOptionValue::U32(3600),
+                Dhcpv4OptionValue::U32(3600),
                 3600u32.to_be_bytes().to_vec(),
             ),
             (
                 ASSOCIATED_IP,
-                DhcpOptionValue::Ipv4List(vec![ip(192, 0, 2, 10), ip(198, 51, 100, 20)]),
+                Dhcpv4OptionValue::Ipv4List(vec![ip(192, 0, 2, 10), ip(198, 51, 100, 20)]),
                 vec![192, 0, 2, 10, 198, 51, 100, 20],
             ),
             (
                 STATUS_CODE,
-                DhcpOptionValue::StatusCode(status.clone()),
+                Dhcpv4OptionValue::StatusCode(status.clone()),
                 vec![0, b'o', b'k'],
             ),
             (
                 BASE_TIME,
-                DhcpOptionValue::U32(1_700_000_000),
+                Dhcpv4OptionValue::U32(1_700_000_000),
                 1_700_000_000u32.to_be_bytes().to_vec(),
             ),
             (
                 START_TIME_OF_STATE,
-                DhcpOptionValue::U32(120),
+                Dhcpv4OptionValue::U32(120),
                 120u32.to_be_bytes().to_vec(),
             ),
             (
                 QUERY_START_TIME,
-                DhcpOptionValue::U32(1_699_999_000),
+                Dhcpv4OptionValue::U32(1_699_999_000),
                 1_699_999_000u32.to_be_bytes().to_vec(),
             ),
             (
                 QUERY_END_TIME,
-                DhcpOptionValue::U32(1_700_000_500),
+                Dhcpv4OptionValue::U32(1_700_000_500),
                 1_700_000_500u32.to_be_bytes().to_vec(),
             ),
             (
                 DHCP_STATE,
-                DhcpOptionValue::DhcpState(DhcpState::Active),
+                Dhcpv4OptionValue::Dhcpv4State(Dhcpv4State::Active),
                 vec![2],
             ),
             (
                 DATA_SOURCE,
-                DhcpOptionValue::DataSource(DhcpDataSource::from_remote(true)),
+                Dhcpv4OptionValue::DataSource(Dhcpv4DataSource::from_remote(true)),
                 vec![1],
             ),
         ];
@@ -6392,7 +6392,7 @@ mod dhcp_leasequery {
             let payload = value.encode_payload();
             assert_eq!(&payload, expected, "wire payload for code {code}");
             assert_eq!(
-                typed_option_value(*code, &payload).unwrap().unwrap(),
+                dhcpv4_typed_option_value(*code, &payload).unwrap().unwrap(),
                 *value,
                 "typed decode mismatch for code {code}",
             );
@@ -6401,16 +6401,16 @@ mod dhcp_leasequery {
         // Full packet round-trip through the typed builders and the cross-area
         // accessors, with no loss across compile -> decode -> compile.
         let parsed = build_and_decode(vec![
-            DhcpOption::client_last_transaction_time(3600),
-            DhcpOption::associated_ip(vec![ip(192, 0, 2, 10), ip(198, 51, 100, 20)]),
-            DhcpOption::status_code(status.clone()),
-            DhcpOption::base_time(1_700_000_000),
-            DhcpOption::start_time_of_state(120),
-            DhcpOption::query_start_time(1_699_999_000),
-            DhcpOption::query_end_time(1_700_000_500),
-            DhcpOption::dhcp_state(DhcpState::Active),
-            DhcpOption::data_source(DhcpDataSource::from_remote(true)),
-            DhcpOption::End,
+            Dhcpv4Option::client_last_transaction_time(3600),
+            Dhcpv4Option::associated_ip(vec![ip(192, 0, 2, 10), ip(198, 51, 100, 20)]),
+            Dhcpv4Option::status_code(status.clone()),
+            Dhcpv4Option::base_time(1_700_000_000),
+            Dhcpv4Option::start_time_of_state(120),
+            Dhcpv4Option::query_start_time(1_699_999_000),
+            Dhcpv4Option::query_end_time(1_700_000_500),
+            Dhcpv4Option::dhcp_state(Dhcpv4State::Active),
+            Dhcpv4Option::data_source(Dhcpv4DataSource::from_remote(true)),
+            Dhcpv4Option::End,
         ]);
         assert_eq!(
             parsed.client_last_transaction_time().unwrap().unwrap(),
@@ -6421,14 +6421,14 @@ mod dhcp_leasequery {
             vec![ip(192, 0, 2, 10), ip(198, 51, 100, 20)],
         );
         let decoded_status = parsed.status_code().unwrap().unwrap();
-        assert_eq!(decoded_status.status, DhcpStatusCode::Success);
+        assert_eq!(decoded_status.status, Dhcpv4StatusCode::Success);
         assert_eq!(decoded_status.message, b"ok");
         assert_eq!(decoded_status.message_lossy(), "ok");
         assert_eq!(parsed.base_time().unwrap().unwrap(), 1_700_000_000);
         assert_eq!(parsed.start_time_of_state().unwrap().unwrap(), 120);
         assert_eq!(parsed.query_start_time().unwrap().unwrap(), 1_699_999_000);
         assert_eq!(parsed.query_end_time().unwrap().unwrap(), 1_700_000_500);
-        assert_eq!(parsed.dhcp_state().unwrap().unwrap(), DhcpState::Active);
+        assert_eq!(parsed.dhcp_state().unwrap().unwrap(), Dhcpv4State::Active);
         let source = parsed.data_source().unwrap().unwrap();
         assert!(source.is_remote());
         recompile_is_stable(&parsed);
@@ -6450,52 +6450,52 @@ mod dhcp_leasequery {
         // RFC 6926 / RFC 7724 leave most status and state values unassigned; the
         // IANA sub-registries mark 9-255 Unassigned. Unknown values are preserved
         // verbatim through the Unknown variants rather than coerced.
-        assert_eq!(DhcpStatusCode::from_code(200), DhcpStatusCode::Unknown(200));
-        assert_eq!(DhcpStatusCode::Unknown(200).code(), 200);
-        assert_eq!(DhcpState::from_code(99), DhcpState::Unknown(99));
-        assert_eq!(DhcpState::Unknown(99).code(), 99);
+        assert_eq!(Dhcpv4StatusCode::from_code(200), Dhcpv4StatusCode::Unknown(200));
+        assert_eq!(Dhcpv4StatusCode::Unknown(200).code(), 200);
+        assert_eq!(Dhcpv4State::from_code(99), Dhcpv4State::Unknown(99));
+        assert_eq!(Dhcpv4State::Unknown(99).code(), 99);
 
         // A status-code option with an unassigned status and non-UTF-8 message
         // bytes round-trips with the raw message preserved.
         let status =
-            DhcpStatusCodeOption::new(DhcpStatusCode::Unknown(0x40), vec![0xff, 0xfe, 0x00]);
-        let payload = DhcpOptionValue::StatusCode(status.clone()).encode_payload();
+            Dhcpv4StatusCodeOption::new(Dhcpv4StatusCode::Unknown(0x40), vec![0xff, 0xfe, 0x00]);
+        let payload = Dhcpv4OptionValue::StatusCode(status.clone()).encode_payload();
         assert_eq!(payload, vec![0x40, 0xff, 0xfe, 0x00]);
         assert_eq!(
-            typed_option_value(STATUS_CODE, &payload).unwrap().unwrap(),
-            DhcpOptionValue::StatusCode(status.clone()),
+            dhcpv4_typed_option_value(STATUS_CODE, &payload).unwrap().unwrap(),
+            Dhcpv4OptionValue::StatusCode(status.clone()),
         );
         let parsed = build_and_decode(vec![
-            DhcpOption::status_code(status.clone()),
-            DhcpOption::End,
+            Dhcpv4Option::status_code(status.clone()),
+            Dhcpv4Option::End,
         ]);
         assert_eq!(parsed.status_code().unwrap().unwrap(), status);
         recompile_is_stable(&parsed);
 
         // An unassigned dhcp-state octet round-trips through the typed value.
         let parsed_state = build_and_decode(vec![
-            DhcpOption::dhcp_state(DhcpState::Unknown(0x55)),
-            DhcpOption::End,
+            Dhcpv4Option::dhcp_state(Dhcpv4State::Unknown(0x55)),
+            Dhcpv4Option::End,
         ]);
         assert_eq!(
             parsed_state.dhcp_state().unwrap().unwrap(),
-            DhcpState::Unknown(0x55),
+            Dhcpv4State::Unknown(0x55),
         );
 
         // The data-source UNA bits (RFC 6926 section 6.2.8, "MUST be ignored")
         // are preserved verbatim so the octet round-trips exactly, while the
         // typed REMOTE flag is still readable.
-        let source = DhcpDataSource::new(0xFE);
+        let source = Dhcpv4DataSource::new(0xFE);
         assert!(
             !source.is_remote(),
             "REMOTE bit clear when only UNA bits set"
         );
         assert_eq!(source.encode(), vec![0xFE]);
-        let source_remote = DhcpDataSource::new(0xFF);
+        let source_remote = Dhcpv4DataSource::new(0xFF);
         assert!(source_remote.is_remote());
         assert_eq!(
-            typed_option_value(DATA_SOURCE, &[0xFE]).unwrap().unwrap(),
-            DhcpOptionValue::DataSource(DhcpDataSource::new(0xFE)),
+            dhcpv4_typed_option_value(DATA_SOURCE, &[0xFE]).unwrap().unwrap(),
+            Dhcpv4OptionValue::DataSource(Dhcpv4DataSource::new(0xFE)),
         );
     }
 
@@ -6516,7 +6516,7 @@ mod dhcp_leasequery {
         ] {
             for len in [0usize, 1, 2, 3, 5, 8] {
                 assert!(
-                    typed_option_value(code, &vec![0u8; len]).is_err(),
+                    dhcpv4_typed_option_value(code, &vec![0u8; len]).is_err(),
                     "code {code} len {len} must be rejected",
                 );
             }
@@ -6524,26 +6524,26 @@ mod dhcp_leasequery {
         for code in [DHCP_STATE, DATA_SOURCE] {
             for len in [0usize, 2, 3] {
                 assert!(
-                    typed_option_value(code, &vec![0u8; len]).is_err(),
+                    dhcpv4_typed_option_value(code, &vec![0u8; len]).is_err(),
                     "code {code} len {len} must be rejected",
                 );
             }
         }
         // associated-ip: a length that is not a non-zero multiple of four.
         for len in [1usize, 2, 3, 5, 7] {
-            assert!(typed_option_value(ASSOCIATED_IP, &vec![0u8; len]).is_err());
+            assert!(dhcpv4_typed_option_value(ASSOCIATED_IP, &vec![0u8; len]).is_err());
         }
         // status-code: an empty payload has no status octet.
         assert!(matches!(
-            typed_option_value(STATUS_CODE, &[]),
+            dhcpv4_typed_option_value(STATUS_CODE, &[]),
             Err(CrafterError::BufferTooShort { .. }),
         ));
         // status-code: a bare status octet with no message is valid (empty msg).
-        let bare = typed_option_value(STATUS_CODE, &[3]).unwrap().unwrap();
+        let bare = dhcpv4_typed_option_value(STATUS_CODE, &[3]).unwrap().unwrap();
         assert_eq!(
             bare,
-            DhcpOptionValue::StatusCode(DhcpStatusCodeOption::new(
-                DhcpStatusCode::MalformedQuery,
+            Dhcpv4OptionValue::StatusCode(Dhcpv4StatusCodeOption::new(
+                Dhcpv4StatusCode::MalformedQuery,
                 Vec::new(),
             )),
         );
@@ -6553,10 +6553,10 @@ mod dhcp_leasequery {
 #[cfg(test)]
 mod dhcp_remaining_registry {
     use super::super::{
-        Dhcpv4, Dhcpv4MessageType, DhcpOption, DhcpOptionCode, DhcpOptionKind, DhcpOptionStatus,
-        DhcpOptionValue,
+        Dhcpv4, Dhcpv4MessageType, Dhcpv4Option, Dhcpv4OptionCode, Dhcpv4OptionKind, Dhcpv4OptionStatus,
+        Dhcpv4OptionValue,
     };
-    use super::typed_option_value;
+    use super::dhcpv4_typed_option_value;
     use super::super::DHCP_IPV6_ONLY_PREFERRED_LEN;
 
     // Modern registered options with a clear, safely supported wire format.
@@ -6572,7 +6572,7 @@ mod dhcp_remaining_registry {
     const DNR: u8 = super::super::DHCP_OPTION_V4_DNR; // 162 (Dnr)
     const SIX_RD: u8 = super::super::DHCP_OPTION_6RD; // 212 (SixRd)
 
-    fn build_and_decode(options: Vec<DhcpOption>) -> Dhcpv4 {
+    fn build_and_decode(options: Vec<Dhcpv4Option>) -> Dhcpv4 {
         let dhcp = Dhcpv4::new()
             .op(super::super::BOOTP_REPLY)
             .message_type(Dhcpv4MessageType::Ack)
@@ -6603,55 +6603,55 @@ mod dhcp_remaining_registry {
         let wait = 1800u32;
         let payload = wait.to_be_bytes().to_vec();
         assert_eq!(payload.len(), DHCP_IPV6_ONLY_PREFERRED_LEN);
-        let value = typed_option_value(IPV6_ONLY_PREFERRED, &payload)
+        let value = dhcpv4_typed_option_value(IPV6_ONLY_PREFERRED, &payload)
             .unwrap()
             .expect("option 108 has a typed value");
-        assert_eq!(value, DhcpOptionValue::U32(wait));
+        assert_eq!(value, Dhcpv4OptionValue::U32(wait));
         assert_eq!(value.encode_payload(), payload);
         assert_eq!(
-            DhcpOptionKind::from_code(IPV6_ONLY_PREFERRED),
-            Some(DhcpOptionKind::Ipv6OnlyPreferred),
+            Dhcpv4OptionKind::from_code(IPV6_ONLY_PREFERRED),
+            Some(Dhcpv4OptionKind::Ipv6OnlyPreferred),
         );
         // A length other than 4 octets is a structured error, never a panic.
-        assert!(typed_option_value(IPV6_ONLY_PREFERRED, &[0u8; 3]).is_err());
+        assert!(dhcpv4_typed_option_value(IPV6_ONLY_PREFERRED, &[0u8; 3]).is_err());
 
         // RFC 8910 Captive-Portal (114) and RFC 8520 MUD URL (161): URI/URL
         // text-like bytes preserved verbatim (not coerced to UTF-8).
         let portal = b"https://portal.example.com/captive".to_vec();
-        let captive = typed_option_value(CAPTIVE_PORTAL, &portal)
+        let captive = dhcpv4_typed_option_value(CAPTIVE_PORTAL, &portal)
             .unwrap()
             .expect("option 114 has a typed value");
-        assert_eq!(captive, DhcpOptionValue::Text(portal.clone()));
+        assert_eq!(captive, Dhcpv4OptionValue::Text(portal.clone()));
         assert_eq!(captive.encode_payload(), portal);
         assert_eq!(
-            DhcpOptionKind::from_code(CAPTIVE_PORTAL),
-            Some(DhcpOptionKind::CaptivePortal),
+            Dhcpv4OptionKind::from_code(CAPTIVE_PORTAL),
+            Some(Dhcpv4OptionKind::CaptivePortal),
         );
 
         let mud = b"https://mud.example.com/device.json".to_vec();
-        let mud_url = typed_option_value(MUD_URL, &mud)
+        let mud_url = dhcpv4_typed_option_value(MUD_URL, &mud)
             .unwrap()
             .expect("option 161 has a typed value");
-        assert_eq!(mud_url, DhcpOptionValue::Text(mud.clone()));
+        assert_eq!(mud_url, Dhcpv4OptionValue::Text(mud.clone()));
         assert_eq!(
-            DhcpOptionKind::from_code(MUD_URL),
-            Some(DhcpOptionKind::MudUrl),
+            Dhcpv4OptionKind::from_code(MUD_URL),
+            Some(Dhcpv4OptionKind::MudUrl),
         );
 
         // Non-UTF-8 bytes in a text-like modern option are still preserved.
         let raw_text = vec![0xff, 0x00, 0x80, 0x41];
-        let preserved = typed_option_value(CAPTIVE_PORTAL, &raw_text)
+        let preserved = dhcpv4_typed_option_value(CAPTIVE_PORTAL, &raw_text)
             .unwrap()
             .unwrap();
-        assert_eq!(preserved, DhcpOptionValue::Text(raw_text));
+        assert_eq!(preserved, Dhcpv4OptionValue::Text(raw_text));
 
         // Each newly typed option round-trips inside a full DHCP packet.
         let parsed = build_and_decode(vec![
-            DhcpOption::message_type(Dhcpv4MessageType::Ack),
-            DhcpOption::generic(IPV6_ONLY_PREFERRED, payload.clone()),
-            DhcpOption::generic(CAPTIVE_PORTAL, portal.clone()),
-            DhcpOption::generic(MUD_URL, mud.clone()),
-            DhcpOption::End,
+            Dhcpv4Option::message_type(Dhcpv4MessageType::Ack),
+            Dhcpv4Option::generic(IPV6_ONLY_PREFERRED, payload.clone()),
+            Dhcpv4Option::generic(CAPTIVE_PORTAL, portal.clone()),
+            Dhcpv4Option::generic(MUD_URL, mud.clone()),
+            Dhcpv4Option::End,
         ]);
         assert_eq!(option_payload(&parsed, IPV6_ONLY_PREFERRED), payload);
         assert_eq!(option_payload(&parsed, CAPTIVE_PORTAL), portal);
@@ -6696,16 +6696,16 @@ mod dhcp_remaining_registry {
             // The typed-format dispatch declines to reinterpret these codes, so
             // the raw bytes are preserved instead of being parsed.
             assert!(
-                typed_option_value(code, payload).unwrap().is_none(),
+                dhcpv4_typed_option_value(code, payload).unwrap().is_none(),
                 "code {code} must stay raw (Ok(None) from the typed dispatch)",
             );
 
             // Built as a raw option and round-tripped through a full packet, the
             // codepoint and payload bytes survive without loss.
             let parsed = build_and_decode(vec![
-                DhcpOption::message_type(Dhcpv4MessageType::Ack),
-                DhcpOption::generic(code, payload.clone()),
-                DhcpOption::End,
+                Dhcpv4Option::message_type(Dhcpv4MessageType::Ack),
+                Dhcpv4Option::generic(code, payload.clone()),
+                Dhcpv4Option::End,
             ]);
             assert_eq!(
                 option_payload(&parsed, code),
@@ -6715,11 +6715,11 @@ mod dhcp_remaining_registry {
 
             // The decoded raw option preserves the bytes and the codepoint
             // classification, and its logical value is opaque bytes.
-            let option = DhcpOption::generic(code, payload.clone());
+            let option = Dhcpv4Option::generic(code, payload.clone());
             assert_eq!(option.code(), code);
             assert_eq!(
                 option.logical_value(),
-                Some(DhcpOptionValue::Opaque(payload.clone())),
+                Some(Dhcpv4OptionValue::Opaque(payload.clone())),
             );
             assert_eq!(option.typed_value().unwrap(), None);
         }
@@ -6730,30 +6730,30 @@ mod dhcp_remaining_registry {
         for code in [PCP_SERVER, DNR, SIX_RD] {
             assert_eq!(
                 super::super::option_status(code),
-                DhcpOptionStatus::Assigned
+                Dhcpv4OptionStatus::Assigned
             );
             assert!(matches!(
-                DhcpOptionCode::from_code(code),
-                DhcpOptionCode::Assigned(_)
+                Dhcpv4OptionCode::from_code(code),
+                Dhcpv4OptionCode::Assigned(_)
             ));
         }
         assert_eq!(
             super::super::option_status(130),
-            DhcpOptionStatus::Ambiguous
+            Dhcpv4OptionStatus::Ambiguous
         );
         assert_eq!(
-            DhcpOptionCode::from_code(110),
-            DhcpOptionCode::RemovedOrUnassigned(110),
+            Dhcpv4OptionCode::from_code(110),
+            Dhcpv4OptionCode::RemovedOrUnassigned(110),
         );
         assert_eq!(
-            DhcpOptionCode::from_code(240),
-            DhcpOptionCode::PrivateUse(240)
+            Dhcpv4OptionCode::from_code(240),
+            Dhcpv4OptionCode::PrivateUse(240)
         );
     }
 
     #[test]
     fn dhcp_remaining_registry_option_metadata_is_inspectable() {
-        use super::super::{option_meta, option_name, DhcpOptionMeta};
+        use super::super::{option_meta, option_name, Dhcpv4OptionMeta};
 
         // The source-backed registry names every modern codepoint the crate
         // implements, regardless of whether the payload is decoded into a typed
@@ -6778,22 +6778,22 @@ mod dhcp_remaining_registry {
                 Some(name),
                 "option {code} must expose its registered name",
             );
-            let meta: DhcpOptionMeta = option_meta(code);
+            let meta: Dhcpv4OptionMeta = option_meta(code);
             assert_eq!(meta.code, code);
             assert_eq!(meta.name, name);
-            assert_eq!(meta.status, DhcpOptionStatus::Assigned);
+            assert_eq!(meta.status, Dhcpv4OptionStatus::Assigned);
 
             // The registry-classified codepoint and the option-instance accessor
-            // surface the same name through the public DhcpOptionCode/DhcpOption
+            // surface the same name through the public Dhcpv4OptionCode/Dhcpv4Option
             // inspection surface.
-            let classified = DhcpOptionCode::from_code(code);
+            let classified = Dhcpv4OptionCode::from_code(code);
             assert_eq!(classified.code(), code);
             assert_eq!(classified.name(), Some(name));
             assert!(
                 !classified.is_single_octet(),
                 "option {code} is a length-prefixed option, not pad/end",
             );
-            let option = DhcpOption::generic(code, vec![0u8; 4]);
+            let option = Dhcpv4Option::generic(code, vec![0u8; 4]);
             assert_eq!(option.registry_name(), Some(name));
             assert_eq!(option.option_code(), classified);
         }
@@ -6803,7 +6803,7 @@ mod dhcp_remaining_registry {
         // name, so callers can preserve the raw bytes and still report status.
         // Ambiguous historical codepoint (PXE / vendor range 128-135).
         let ambiguous = option_meta(130);
-        assert_eq!(ambiguous.status, DhcpOptionStatus::Ambiguous);
+        assert_eq!(ambiguous.status, Dhcpv4OptionStatus::Ambiguous);
         assert!(!ambiguous.name.is_empty());
         assert_eq!(option_name(130), Some(ambiguous.name));
 
@@ -6812,11 +6812,11 @@ mod dhcp_remaining_registry {
         // option_name surfaces that label (it is not a generated fallback) while
         // the status stays RemovedOrUnassigned and no typed decode is implied.
         let removed = option_meta(110);
-        assert_eq!(removed.status, DhcpOptionStatus::RemovedOrUnassigned);
+        assert_eq!(removed.status, Dhcpv4OptionStatus::RemovedOrUnassigned);
         assert_eq!(removed.name, "REMOVED/Unassigned");
         assert_eq!(option_name(110), Some("REMOVED/Unassigned"));
         assert_eq!(
-            DhcpOptionCode::from_code(110).name(),
+            Dhcpv4OptionCode::from_code(110).name(),
             Some("REMOVED/Unassigned"),
         );
 
@@ -6824,9 +6824,9 @@ mod dhcp_remaining_registry {
         // fallback, but never carries a single registered option name, so
         // option_name declines while option_meta still describes it.
         let private = option_meta(240);
-        assert_eq!(private.status, DhcpOptionStatus::PrivateUse);
+        assert_eq!(private.status, Dhcpv4OptionStatus::PrivateUse);
         assert_eq!(private.name, "Reserved (Private Use)");
         assert_eq!(option_name(240), None);
-        assert_eq!(DhcpOptionCode::from_code(240).name(), None);
+        assert_eq!(Dhcpv4OptionCode::from_code(240).name(), None);
     }
 }
