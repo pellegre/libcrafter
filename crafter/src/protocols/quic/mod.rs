@@ -28,7 +28,7 @@ pub use crypto::QuicCryptoContext;
 pub use frame::QuicFrame;
 pub use header::QuicHeader;
 pub use packet::{
-    Quic, QuicLongHeaderPacket, QuicPacket, QuicRetryBuilder, QuicRetryPacket,
+    Quic, QuicInitialBuilder, QuicLongHeaderPacket, QuicPacket, QuicRetryBuilder, QuicRetryPacket,
     QuicVersionNegotiationBuilder, QuicVersionNegotiationPacket, QUIC_RETRY_INTEGRITY_TAG_LEN,
 };
 pub use packet_number::QuicPacketNumber;
