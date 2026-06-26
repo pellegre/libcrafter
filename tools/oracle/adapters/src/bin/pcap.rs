@@ -1,5 +1,5 @@
 use crafter::core::{
-    Ah, Arp, Bgp, Dhcp, Dns, Dot11, Eapol, EapolKey, Esp, Ethernet, Icmpv4, Icmpv6, Ipv4, Ipv6,
+    Ah, Arp, Bgp, Dhcpv4, Dns, Dot11, Eapol, EapolKey, Esp, Ethernet, Icmpv4, Icmpv6, Ipv4, Ipv6,
     Ipv6FragmentHeader, Ipv6MobileRoutingHeader, Ipv6RoutingHeader, Ipv6SegmentRoutingHeader,
     Layer, LinuxSll, LlcSnap, NullLoopback, Radiotap, Raw, Rip, Ripng, Tcp, Udp, Vlan,
 };
@@ -467,7 +467,7 @@ fn normalized_layer_name(layer: &dyn Layer) -> String {
         "igmp_extension"
     } else if layer.as_any().is::<Dns>() {
         "dns"
-    } else if layer.as_any().is::<Dhcp>() {
+    } else if layer.as_any().is::<Dhcpv4>() {
         "dhcp"
     } else if layer.as_any().is::<Esp>() {
         // The Scapy reference normalizes ESP to the lowercase oracle name; mirror

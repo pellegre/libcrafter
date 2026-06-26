@@ -595,7 +595,7 @@ pub fn dhcp_packet(plan: &ProbePlan) -> ExampleResult<Packet> {
             required_str(plan.requested_ipv4.as_deref(), "requested_ipv4")?.parse()?;
         let server_identifier: Ipv4Addr =
             required_str(plan.server_identifier.as_deref(), "server_identifier")?.parse()?;
-        Dhcp::request(client_mac, requested_ip, server_identifier).transaction_id(transaction_id)
+        Dhcpv4::request(client_mac, requested_ip, server_identifier).transaction_id(transaction_id)
     } else if plan.case == "dhcp-renewal-unicast-ack" {
         // RFC 2131 section 4.3.6 (table 4) and section 4.4.5: a client in the
         // RENEWING state unicasts its DHCPREQUEST directly to the server that
@@ -603,7 +603,7 @@ pub fn dhcp_packet(plan: &ProbePlan) -> ExampleResult<Packet> {
         // bound to, leaves the broadcast flag clear, and MUST NOT set the
         // server-identifier option (54) or the requested-IP option (50) — the
         // request is addressed to the one server, not broadcast to all servers.
-        // Build the Request shape directly (rather than `Dhcp::request`, which
+        // Build the Request shape directly (rather than `Dhcpv4::request`, which
         // injects options 50/54) and set only the renewal-state fields: the
         // bound `ciaddr` and the parameter request list (option 55) naming the
         // configuration/lease options the unicast Ack confirms. `compile()`
@@ -617,9 +617,9 @@ pub fn dhcp_packet(plan: &ProbePlan) -> ExampleResult<Packet> {
             "parameter_request_list",
         )?
         .to_vec();
-        Dhcp::new()
+        Dhcpv4::new()
             .client_mac(client_mac)
-            .message_type(DhcpMessageType::Request)
+            .message_type(Dhcpv4MessageType::Request)
             .ciaddr(client_ciaddr)
             .transaction_id(transaction_id)
             .parameter_request_list(requests)
@@ -630,7 +630,7 @@ pub fn dhcp_packet(plan: &ProbePlan) -> ExampleResult<Packet> {
         // is already using and names the wanted options in the parameter request
         // list (option 55), but it does NOT request a lease, so it omits the
         // requested-IP option (50). Build the Inform shape directly (rather than
-        // `Dhcp::inform`, which injects a default request list) so the stimulus
+        // `Dhcpv4::inform`, which injects a default request list) so the stimulus
         // carries exactly the caller's configuration-only request list (no lease
         // options). `compile()` fills the BOOTP op/htype/hlen, magic cookie, and
         // lengths; the caller-set ciaddr, client MAC, transaction id, and request
@@ -642,9 +642,9 @@ pub fn dhcp_packet(plan: &ProbePlan) -> ExampleResult<Packet> {
             "parameter_request_list",
         )?
         .to_vec();
-        Dhcp::new()
+        Dhcpv4::new()
             .client_mac(client_mac)
-            .message_type(DhcpMessageType::Inform)
+            .message_type(Dhcpv4MessageType::Inform)
             .ciaddr(client_ciaddr)
             .transaction_id(transaction_id)
             .parameter_request_list(requests)
@@ -657,7 +657,7 @@ pub fn dhcp_packet(plan: &ProbePlan) -> ExampleResult<Packet> {
             plan.client_identifier_hex.as_deref(),
             "client_identifier_hex",
         )?)?;
-        Dhcp::discover(client_mac)
+        Dhcpv4::discover(client_mac)
             .transaction_id(transaction_id)
             .client_id(client_identifier)
     } else if plan.case == "dhcp-hostname" {
@@ -666,14 +666,14 @@ pub fn dhcp_packet(plan: &ProbePlan) -> ExampleResult<Packet> {
         // carried verbatim in the plan; `compile()` fills the option
         // code/length and the magic cookie. The caller-set string survives.
         let hostname = required_str(plan.hostname.as_deref(), "hostname")?;
-        Dhcp::discover(client_mac)
+        Dhcpv4::discover(client_mac)
             .transaction_id(transaction_id)
             .hostname(hostname)
     } else if plan.case == "dhcp-parameter-request-list" {
         // RFC 2132 section 9.8: the client names the option codes it wants the
         // server to return in the parameter request list (option 55). The plan
         // carries an explicit deterministic list, so build the Discover shape
-        // directly (rather than `Dhcp::discover`, which injects a default list)
+        // directly (rather than `Dhcpv4::discover`, which injects a default list)
         // and set exactly the caller's codes. `compile()` fills the BOOTP
         // op/htype/hlen, magic cookie, and lengths; the caller-set request list,
         // client MAC, and transaction id survive untouched.
@@ -682,9 +682,9 @@ pub fn dhcp_packet(plan: &ProbePlan) -> ExampleResult<Packet> {
             "parameter_request_list",
         )?
         .to_vec();
-        Dhcp::new()
+        Dhcpv4::new()
             .client_mac(client_mac)
-            .message_type(DhcpMessageType::Discover)
+            .message_type(Dhcpv4MessageType::Discover)
             .transaction_id(transaction_id)
             .parameter_request_list(requests)
     } else {
@@ -692,7 +692,7 @@ pub fn dhcp_packet(plan: &ProbePlan) -> ExampleResult<Packet> {
         // address is configured sets the broadcast flag. The lab transport
         // unicasts the Offer back over the private segment, so the responder uses
         // the recorded source address; the flag stays a faithful Discover shape.
-        Dhcp::discover(client_mac).transaction_id(transaction_id)
+        Dhcpv4::discover(client_mac).transaction_id(transaction_id)
     };
 
     Ok(Ipv4::new().src(source).dst(destination)
@@ -776,7 +776,7 @@ pub fn validate_dhcp_candidate(
         })));
     }
 
-    let Some(dhcp) = packet.layer::<Dhcp>() else {
+    let Some(dhcp) = packet.layer::<Dhcpv4>() else {
         return Ok(CandidateValidation::WrongPayload(json!({
             "packet": decoded,
             "mismatches": [{
@@ -802,7 +802,7 @@ pub fn validate_dhcp_candidate(
 
     // Message type (option 53): Offer.
     let expected_message_type = plan.expected_message_type_value.unwrap_or(DHCP_OFFER);
-    let actual_message_type = dhcp.message_type_value().map(DhcpMessageType::code);
+    let actual_message_type = dhcp.message_type_value().map(Dhcpv4MessageType::code);
     if actual_message_type != Some(expected_message_type) {
         mismatches.push(json!({
             "field": "dhcp.message_type",
@@ -1055,7 +1055,7 @@ pub fn validate_dhcp_candidate(
 }
 
 /// JSON view of a decoded DHCP layer for the observed-response artifact.
-pub fn dhcp_json(dhcp: &Dhcp) -> Value {
+pub fn dhcp_json(dhcp: &Dhcpv4) -> Value {
     json!({
         "op": dhcp.op_value(),
         "is_reply": dhcp.op_value() == BOOTP_REPLY,
@@ -1069,7 +1069,7 @@ pub fn dhcp_json(dhcp: &Dhcp) -> Value {
         "gateway_ip_address": dhcp.gateway_ip_address_value().to_string(),
         "client_hardware_address": hex_bytes(dhcp.client_hardware_address_value()),
         "client_mac": dhcp.client_mac_value().map(|mac| mac.to_string()),
-        "message_type": dhcp.message_type_value().map(DhcpMessageType::code),
+        "message_type": dhcp.message_type_value().map(Dhcpv4MessageType::code),
         "server_identifier": dhcp
             .server_identifier_value()
             .map(|address| address.to_string()),
@@ -1131,7 +1131,7 @@ mod tests {
             .parse()
             .unwrap();
         let offered: Ipv4Addr = plan.expected_yiaddr.as_deref().unwrap().parse().unwrap();
-        let dhcp = Dhcp::offer(client_mac, offered, server_identifier)
+        let dhcp = Dhcpv4::offer(client_mac, offered, server_identifier)
             .transaction_id(plan.transaction_id.unwrap())
             .lease_time(plan.expected_lease_time.unwrap())
             .renewal_time(plan.expected_renewal_time.unwrap())
@@ -1204,7 +1204,7 @@ mod tests {
             .parse()
             .unwrap();
         let dns: Ipv4Addr = plan.expected_dns_ipv4.as_deref().unwrap().parse().unwrap();
-        let dhcp = Dhcp::ack(client_mac, assigned, server_identifier)
+        let dhcp = Dhcpv4::ack(client_mac, assigned, server_identifier)
             .transaction_id(plan.transaction_id.unwrap())
             .lease_time(plan.expected_lease_time.unwrap())
             .renewal_time(plan.expected_renewal_time.unwrap())
@@ -1239,7 +1239,7 @@ mod tests {
 
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
         let udp = decoded.layer::<Udp>().unwrap();
-        let dhcp = decoded.layer::<Dhcp>().unwrap();
+        let dhcp = decoded.layer::<Dhcpv4>().unwrap();
 
         // Client 68 -> server 67.
         assert_eq!(udp.source_port_value(), DHCP_CLIENT_PORT);
@@ -1247,7 +1247,7 @@ mod tests {
         // BOOTP request carrying a Request with the caller's xid, requested IP
         // (option 50), and server identifier (option 54).
         assert_eq!(dhcp.op_value(), BOOTP_REQUEST);
-        assert_eq!(dhcp.message_type_value(), Some(DhcpMessageType::Request));
+        assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Request));
         assert_eq!(dhcp.transaction_id_value(), 0x3903_f326);
         assert_eq!(
             dhcp.requested_ip_address_value(),
@@ -1298,7 +1298,7 @@ mod tests {
             .parse()
             .unwrap();
         let dhcp =
-            Dhcp::nak(client_mac, server_identifier).transaction_id(plan.transaction_id.unwrap());
+            Dhcpv4::nak(client_mac, server_identifier).transaction_id(plan.transaction_id.unwrap());
         let packet = Ipv4::new()
             .src("10.64.0.20".parse::<Ipv4Addr>().unwrap())
             .dst("10.64.0.10".parse::<Ipv4Addr>().unwrap())
@@ -1322,7 +1322,7 @@ mod tests {
             .unwrap();
         let assigned: Ipv4Addr = plan.expected_yiaddr.as_deref().unwrap().parse().unwrap();
         // Same Ack but without the DNS server option (6) the plan requires.
-        let dhcp = Dhcp::ack(client_mac, assigned, server_identifier)
+        let dhcp = Dhcpv4::ack(client_mac, assigned, server_identifier)
             .transaction_id(plan.transaction_id.unwrap())
             .lease_time(plan.expected_lease_time.unwrap())
             .renewal_time(plan.expected_renewal_time.unwrap())
@@ -1374,14 +1374,14 @@ mod tests {
 
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
         let udp = decoded.layer::<Udp>().unwrap();
-        let dhcp = decoded.layer::<Dhcp>().unwrap();
+        let dhcp = decoded.layer::<Dhcpv4>().unwrap();
 
         // Client 68 -> server 67.
         assert_eq!(udp.source_port_value(), DHCP_CLIENT_PORT);
         assert_eq!(udp.destination_port_value(), DHCP_SERVER_PORT);
         // BOOTP request carrying a Discover with the caller's xid and chaddr.
         assert_eq!(dhcp.op_value(), BOOTP_REQUEST);
-        assert_eq!(dhcp.message_type_value(), Some(DhcpMessageType::Discover));
+        assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Discover));
         assert_eq!(dhcp.transaction_id_value(), 0x3903_f326);
         assert_eq!(
             dhcp.client_mac_value(),
@@ -1460,7 +1460,7 @@ mod tests {
         let offered: Ipv4Addr = plan.expected_yiaddr.as_deref().unwrap().parse().unwrap();
         let client_identifier =
             decode_hex(plan.expected_client_identifier_hex.as_deref().unwrap()).unwrap();
-        let dhcp = Dhcp::offer(client_mac, offered, server_identifier)
+        let dhcp = Dhcpv4::offer(client_mac, offered, server_identifier)
             .transaction_id(plan.transaction_id.unwrap())
             .lease_time(plan.expected_lease_time.unwrap())
             .renewal_time(plan.expected_renewal_time.unwrap())
@@ -1494,13 +1494,13 @@ mod tests {
 
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
         let udp = decoded.layer::<Udp>().unwrap();
-        let dhcp = decoded.layer::<Dhcp>().unwrap();
+        let dhcp = decoded.layer::<Dhcpv4>().unwrap();
 
         // Client 68 -> server 67; a Discover carrying chaddr plus option 61.
         assert_eq!(udp.source_port_value(), DHCP_CLIENT_PORT);
         assert_eq!(udp.destination_port_value(), DHCP_SERVER_PORT);
         assert_eq!(dhcp.op_value(), BOOTP_REQUEST);
-        assert_eq!(dhcp.message_type_value(), Some(DhcpMessageType::Discover));
+        assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Discover));
         assert_eq!(dhcp.transaction_id_value(), 0x3903_f326);
         // The decoded client identifier (option 61) re-encodes to the bytes the
         // plan carried.
@@ -1546,7 +1546,7 @@ mod tests {
             .parse()
             .unwrap();
         let offered: Ipv4Addr = plan.expected_yiaddr.as_deref().unwrap().parse().unwrap();
-        let dhcp = Dhcp::offer(client_mac, offered, server_identifier)
+        let dhcp = Dhcpv4::offer(client_mac, offered, server_identifier)
             .transaction_id(plan.transaction_id.unwrap())
             .lease_time(plan.expected_lease_time.unwrap())
             .renewal_time(plan.expected_renewal_time.unwrap())
@@ -1613,7 +1613,7 @@ mod tests {
             .unwrap();
         let offered: Ipv4Addr = plan.expected_yiaddr.as_deref().unwrap().parse().unwrap();
         let hostname = plan.expected_hostname.as_deref().unwrap().to_string();
-        let dhcp = Dhcp::offer(client_mac, offered, server_identifier)
+        let dhcp = Dhcpv4::offer(client_mac, offered, server_identifier)
             .transaction_id(plan.transaction_id.unwrap())
             .lease_time(plan.expected_lease_time.unwrap())
             .renewal_time(plan.expected_renewal_time.unwrap())
@@ -1647,13 +1647,13 @@ mod tests {
 
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
         let udp = decoded.layer::<Udp>().unwrap();
-        let dhcp = decoded.layer::<Dhcp>().unwrap();
+        let dhcp = decoded.layer::<Dhcpv4>().unwrap();
 
         // Client 68 -> server 67; a Discover carrying chaddr plus option 12.
         assert_eq!(udp.source_port_value(), DHCP_CLIENT_PORT);
         assert_eq!(udp.destination_port_value(), DHCP_SERVER_PORT);
         assert_eq!(dhcp.op_value(), BOOTP_REQUEST);
-        assert_eq!(dhcp.message_type_value(), Some(DhcpMessageType::Discover));
+        assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Discover));
         assert_eq!(dhcp.transaction_id_value(), 0x3903_f326);
         // The decoded hostname (option 12) round-trips to the planned string.
         assert_eq!(dhcp.host_name_value(), plan.hostname.as_deref());
@@ -1696,7 +1696,7 @@ mod tests {
             .parse()
             .unwrap();
         let offered: Ipv4Addr = plan.expected_yiaddr.as_deref().unwrap().parse().unwrap();
-        let dhcp = Dhcp::offer(client_mac, offered, server_identifier)
+        let dhcp = Dhcpv4::offer(client_mac, offered, server_identifier)
             .transaction_id(plan.transaction_id.unwrap())
             .lease_time(plan.expected_lease_time.unwrap())
             .renewal_time(plan.expected_renewal_time.unwrap())
@@ -1762,7 +1762,7 @@ mod tests {
             .parse()
             .unwrap();
         let offered: Ipv4Addr = plan.expected_yiaddr.as_deref().unwrap().parse().unwrap();
-        let dhcp = Dhcp::offer(client_mac, offered, server_identifier)
+        let dhcp = Dhcpv4::offer(client_mac, offered, server_identifier)
             .transaction_id(plan.transaction_id.unwrap())
             .lease_time(plan.expected_lease_time.unwrap())
             .renewal_time(plan.expected_renewal_time.unwrap())
@@ -1796,7 +1796,7 @@ mod tests {
             .as_bytes()
             .to_vec();
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
-        let dhcp = decoded.layer::<Dhcp>().unwrap();
+        let dhcp = decoded.layer::<Dhcpv4>().unwrap();
         // Each timing option decodes to the planned 32-bit second count.
         assert_eq!(dhcp.lease_time_value(), Some(3600));
         assert_eq!(dhcp.renewal_time_value(), Some(1800));
@@ -1848,7 +1848,7 @@ mod tests {
             .parse()
             .unwrap();
         let offered: Ipv4Addr = plan.expected_yiaddr.as_deref().unwrap().parse().unwrap();
-        let dhcp = Dhcp::offer(client_mac, offered, server_identifier)
+        let dhcp = Dhcpv4::offer(client_mac, offered, server_identifier)
             .transaction_id(plan.transaction_id.unwrap())
             .lease_time(plan.expected_lease_time.unwrap())
             .renewal_time(plan.expected_renewal_time.unwrap())
@@ -1915,7 +1915,7 @@ mod tests {
             .parse()
             .unwrap();
         let dns: Ipv4Addr = plan.expected_dns_ipv4.as_deref().unwrap().parse().unwrap();
-        let dhcp = Dhcp::offer(client_mac, offered, server_identifier)
+        let dhcp = Dhcpv4::offer(client_mac, offered, server_identifier)
             .transaction_id(plan.transaction_id.unwrap())
             .lease_time(plan.expected_lease_time.unwrap())
             .renewal_time(plan.expected_renewal_time.unwrap())
@@ -1950,13 +1950,13 @@ mod tests {
 
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
         let udp = decoded.layer::<Udp>().unwrap();
-        let dhcp = decoded.layer::<Dhcp>().unwrap();
+        let dhcp = decoded.layer::<Dhcpv4>().unwrap();
 
         // Client 68 -> server 67; a Discover carrying chaddr plus option 55.
         assert_eq!(udp.source_port_value(), DHCP_CLIENT_PORT);
         assert_eq!(udp.destination_port_value(), DHCP_SERVER_PORT);
         assert_eq!(dhcp.op_value(), BOOTP_REQUEST);
-        assert_eq!(dhcp.message_type_value(), Some(DhcpMessageType::Discover));
+        assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Discover));
         assert_eq!(dhcp.transaction_id_value(), 0x3903_f326);
         // The decoded parameter request list (option 55) is exactly the codes the
         // plan named; the default list the discover builder injects is overridden.
@@ -2003,7 +2003,7 @@ mod tests {
             .parse()
             .unwrap();
         let offered: Ipv4Addr = plan.expected_yiaddr.as_deref().unwrap().parse().unwrap();
-        let dhcp = Dhcp::offer(client_mac, offered, server_identifier)
+        let dhcp = Dhcpv4::offer(client_mac, offered, server_identifier)
             .transaction_id(plan.transaction_id.unwrap())
             .lease_time(plan.expected_lease_time.unwrap())
             .renewal_time(plan.expected_renewal_time.unwrap())
@@ -2068,13 +2068,13 @@ mod tests {
 
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
         let udp = decoded.layer::<Udp>().unwrap();
-        let dhcp = decoded.layer::<Dhcp>().unwrap();
+        let dhcp = decoded.layer::<Dhcpv4>().unwrap();
 
         // Client 68 -> server 67; a RENEWING-state Request.
         assert_eq!(udp.source_port_value(), DHCP_CLIENT_PORT);
         assert_eq!(udp.destination_port_value(), DHCP_SERVER_PORT);
         assert_eq!(dhcp.op_value(), BOOTP_REQUEST);
-        assert_eq!(dhcp.message_type_value(), Some(DhcpMessageType::Request));
+        assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Request));
         assert_eq!(dhcp.transaction_id_value(), 0x3903_f326);
         // The bound address is carried in ciaddr.
         assert_eq!(
@@ -2183,9 +2183,9 @@ mod tests {
             .unwrap();
         let dns: Ipv4Addr = plan.expected_dns_ipv4.as_deref().unwrap().parse().unwrap();
         // An Ack in response to an Inform commits no binding: yiaddr is left as the
-        // all-zero address (Dhcp::ack with the unspecified address) and no lease
+        // all-zero address (Dhcpv4::ack with the unspecified address) and no lease
         // timing options are set.
-        let dhcp = Dhcp::ack(client_mac, Ipv4Addr::UNSPECIFIED, server_identifier)
+        let dhcp = Dhcpv4::ack(client_mac, Ipv4Addr::UNSPECIFIED, server_identifier)
             .transaction_id(plan.transaction_id.unwrap())
             .subnet_mask(subnet_mask)
             .router(vec![router])
@@ -2217,13 +2217,13 @@ mod tests {
 
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
         let udp = decoded.layer::<Udp>().unwrap();
-        let dhcp = decoded.layer::<Dhcp>().unwrap();
+        let dhcp = decoded.layer::<Dhcpv4>().unwrap();
 
         // Client 68 -> server 67; a BOOTP request carrying an Inform (type 8).
         assert_eq!(udp.source_port_value(), DHCP_CLIENT_PORT);
         assert_eq!(udp.destination_port_value(), DHCP_SERVER_PORT);
         assert_eq!(dhcp.op_value(), BOOTP_REQUEST);
-        assert_eq!(dhcp.message_type_value(), Some(DhcpMessageType::Inform));
+        assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Inform));
         assert_eq!(dhcp.transaction_id_value(), 0x3903_f326);
         // The externally-configured address is carried in ciaddr.
         assert_eq!(
@@ -2265,7 +2265,7 @@ mod tests {
             .to_vec();
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
         // The Inform Ack carries config options, no allocated address, and no lease.
-        let dhcp = decoded.layer::<Dhcp>().unwrap();
+        let dhcp = decoded.layer::<Dhcpv4>().unwrap();
         assert_eq!(dhcp.your_ip_address_value(), Ipv4Addr::UNSPECIFIED);
         assert_eq!(dhcp.lease_time_value(), None);
         let validation = validate_dhcp_candidate(&plan, &decoded, &bytes).unwrap();
@@ -2287,7 +2287,7 @@ mod tests {
             .unwrap()
             .parse()
             .unwrap();
-        let dhcp = Dhcp::ack(
+        let dhcp = Dhcpv4::ack(
             client_mac,
             "198.51.100.42".parse().unwrap(),
             server_identifier,
@@ -2319,7 +2319,7 @@ mod tests {
             .unwrap()
             .parse()
             .unwrap();
-        let dhcp = Dhcp::ack(client_mac, Ipv4Addr::UNSPECIFIED, server_identifier)
+        let dhcp = Dhcpv4::ack(client_mac, Ipv4Addr::UNSPECIFIED, server_identifier)
             .transaction_id(plan.transaction_id.unwrap())
             .lease_time(3600)
             .subnet_mask("255.255.255.0".parse().unwrap())
@@ -2348,7 +2348,7 @@ mod tests {
             .unwrap()
             .parse()
             .unwrap();
-        let dhcp = Dhcp::ack(client_mac, Ipv4Addr::UNSPECIFIED, server_identifier)
+        let dhcp = Dhcpv4::ack(client_mac, Ipv4Addr::UNSPECIFIED, server_identifier)
             .transaction_id(plan.transaction_id.unwrap())
             .subnet_mask("255.255.255.0".parse().unwrap())
             .router(vec!["10.64.0.1".parse().unwrap()]);
@@ -2401,7 +2401,7 @@ mod tests {
             .unwrap()
             .parse()
             .unwrap();
-        let dhcp = Dhcp::nak(client_mac, server_identifier)
+        let dhcp = Dhcpv4::nak(client_mac, server_identifier)
             .transaction_id(plan.transaction_id.unwrap())
             .message(plan.expected_message.as_deref().unwrap().to_string());
         Ipv4::new()
@@ -2431,14 +2431,14 @@ mod tests {
 
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
         let udp = decoded.layer::<Udp>().unwrap();
-        let dhcp = decoded.layer::<Dhcp>().unwrap();
+        let dhcp = decoded.layer::<Dhcpv4>().unwrap();
 
         // Client 68 -> server 67; a SELECTING-style Request carrying the invalid
         // requested IP (option 50) and the chosen server (option 54).
         assert_eq!(udp.source_port_value(), DHCP_CLIENT_PORT);
         assert_eq!(udp.destination_port_value(), DHCP_SERVER_PORT);
         assert_eq!(dhcp.op_value(), BOOTP_REQUEST);
-        assert_eq!(dhcp.message_type_value(), Some(DhcpMessageType::Request));
+        assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Request));
         assert_eq!(dhcp.transaction_id_value(), 0x3903_f326);
         assert_eq!(
             dhcp.requested_ip_address_value(),
@@ -2458,8 +2458,8 @@ mod tests {
         let decoded = Packet::decode_from_l3(crafter::NetworkLayer::Ipv4, &bytes).unwrap();
         // The Nak refuses the request: message type 6, no allocation, no lease, the
         // server identifier (54), and the message (56) decode as planned.
-        let dhcp = decoded.layer::<Dhcp>().unwrap();
-        assert_eq!(dhcp.message_type_value(), Some(DhcpMessageType::Nak));
+        let dhcp = decoded.layer::<Dhcpv4>().unwrap();
+        assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Nak));
         assert_eq!(dhcp.your_ip_address_value(), Ipv4Addr::UNSPECIFIED);
         assert_eq!(dhcp.lease_time_value(), None);
         assert_eq!(
@@ -2486,7 +2486,7 @@ mod tests {
             .unwrap()
             .parse()
             .unwrap();
-        let dhcp = Dhcp::ack(client_mac, "192.0.2.42".parse().unwrap(), server_identifier)
+        let dhcp = Dhcpv4::ack(client_mac, "192.0.2.42".parse().unwrap(), server_identifier)
             .transaction_id(plan.transaction_id.unwrap())
             .lease_time(3600);
         let packet = Ipv4::new()
@@ -2513,7 +2513,7 @@ mod tests {
             .parse()
             .unwrap();
         let dhcp =
-            Dhcp::nak(client_mac, server_identifier).transaction_id(plan.transaction_id.unwrap());
+            Dhcpv4::nak(client_mac, server_identifier).transaction_id(plan.transaction_id.unwrap());
         let packet = Ipv4::new()
             .src("10.64.0.20".parse::<Ipv4Addr>().unwrap())
             .dst("10.64.0.10".parse::<Ipv4Addr>().unwrap())
@@ -2549,7 +2549,7 @@ mod tests {
             .unwrap()
             .parse()
             .unwrap();
-        let dhcp = Dhcp::nak(client_mac, server_identifier)
+        let dhcp = Dhcpv4::nak(client_mac, server_identifier)
             .transaction_id(plan.transaction_id.unwrap())
             .yiaddr("192.0.2.42".parse().unwrap())
             .message(plan.expected_message.as_deref().unwrap().to_string());
@@ -2577,7 +2577,7 @@ mod tests {
             .parse()
             .unwrap();
         let offered: Ipv4Addr = plan.expected_yiaddr.as_deref().unwrap().parse().unwrap();
-        let dhcp = Dhcp::offer(client_mac, offered, server_identifier)
+        let dhcp = Dhcpv4::offer(client_mac, offered, server_identifier)
             .transaction_id(plan.transaction_id.unwrap());
         let packet = Ipv4::new()
             .src("10.64.0.20".parse::<Ipv4Addr>().unwrap())
@@ -2670,16 +2670,16 @@ mod tests {
         // Each derived plan compiles into a real Discover with its own xid/chaddr.
         let first_packet = dhcp_packet(&first).unwrap();
         let second_packet = dhcp_packet(&second).unwrap();
-        let first_dhcp = first_packet.layer::<Dhcp>().unwrap();
-        let second_dhcp = second_packet.layer::<Dhcp>().unwrap();
+        let first_dhcp = first_packet.layer::<Dhcpv4>().unwrap();
+        let second_dhcp = second_packet.layer::<Dhcpv4>().unwrap();
         assert_eq!(first_dhcp.transaction_id_value(), 0x3903_f326);
         assert_eq!(second_dhcp.transaction_id_value(), 0x7c4e_1b09);
         assert_eq!(
-            first_dhcp.message_type_value().map(DhcpMessageType::code),
+            first_dhcp.message_type_value().map(Dhcpv4MessageType::code),
             Some(1)
         );
         assert_eq!(
-            second_dhcp.message_type_value().map(DhcpMessageType::code),
+            second_dhcp.message_type_value().map(Dhcpv4MessageType::code),
             Some(1)
         );
     }

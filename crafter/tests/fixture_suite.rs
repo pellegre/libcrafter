@@ -7,7 +7,7 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::{Path, PathBuf};
 
 use crafter::core::{
-    Ah, Arp, Bgp, Dhcpv4, DhcpMessageType, DhcpOption, DhcpRelayAgentInfo, DhcpRelaySuboption, Dns,
+    Ah, Arp, Bgp, Dhcpv4, Dhcpv4MessageType, DhcpOption, DhcpRelayAgentInfo, DhcpRelaySuboption, Dns,
     DnsName, DnsRecord, DnsRecordData, Dot11, Dot11DataSubtype, Dot11ManagementSubtype, Dscp,
     Eapol, EapolKey, Ecn, EdnsOption, Esp, Ethernet, IcmpKind, Icmpv4, Icmpv6, Igmp,
     IgmpExtensionType, IgmpGroupRecord, IgmpQuery, IgmpRecordType, IgmpReport, IgmpType, IkeHeader,
@@ -4697,7 +4697,7 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
             );
             assert_eq!(dhcp.transaction_id_value(), 0x3903_f326);
             assert_eq!(dhcp.flags_value(), 0x8000);
-            assert_eq!(dhcp.message_type_value(), Some(DhcpMessageType::Discover));
+            assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Discover));
             assert_eq!(dhcp.host_name_value(), Some("agent"));
         }
         "ipv4-udp-options-known" => {
@@ -5269,7 +5269,7 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
         }
         "dhcp-option-overload-file-sname" => {
             let dhcp = expect_layer::<Dhcpv4>(case, packet);
-            assert_eq!(dhcp.message_type_value(), Some(DhcpMessageType::Discover));
+            assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Discover));
             assert_eq!(dhcp.transaction_id_value(), 0x0102_0304);
             assert_eq!(dhcp.option_overload(), Some(OptionOverload::Both));
             assert!(dhcp.file_is_overloaded());
@@ -5293,7 +5293,7 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
         }
         "dhcp-rfc3396-long-option" => {
             let dhcp = expect_layer::<Dhcpv4>(case, packet);
-            assert_eq!(dhcp.message_type_value(), Some(DhcpMessageType::Discover));
+            assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Discover));
             assert_eq!(dhcp.transaction_id_value(), 0x1111_2222);
             let expected_domain = format!("{}.example", "a".repeat(300));
             let concatenated = dhcp
@@ -5313,7 +5313,7 @@ fn assert_fixture_fields(case: &ValidFixtureCase, packet: &Packet) {
         }
         "dhcp-relay-option82" => {
             let dhcp = expect_layer::<Dhcpv4>(case, packet);
-            assert_eq!(dhcp.message_type_value(), Some(DhcpMessageType::Discover));
+            assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Discover));
             assert_eq!(dhcp.transaction_id_value(), 0x3333_4444);
             let info = dhcp
                 .relay_agent_information()
@@ -6360,7 +6360,7 @@ fn assert_dhcp_option_fixture(case: &ValidFixtureCase, bytes: &[u8]) {
 fn expected_dhcp_options(name: &str) -> Vec<DhcpOption> {
     match name {
         "dhcp-offer-options" => vec![
-            DhcpOption::MessageType(DhcpMessageType::Offer),
+            DhcpOption::MessageType(Dhcpv4MessageType::Offer),
             DhcpOption::ServerIdentifier(Ipv4Addr::new(192, 0, 2, 1)),
             DhcpOption::SubnetMask(Ipv4Addr::new(255, 255, 255, 0)),
             DhcpOption::Router(vec![Ipv4Addr::new(192, 0, 2, 1)]),
@@ -6372,20 +6372,20 @@ fn expected_dhcp_options(name: &str) -> Vec<DhcpOption> {
             DhcpOption::End,
         ],
         "dhcp-discover-options" => vec![
-            DhcpOption::MessageType(DhcpMessageType::Discover),
+            DhcpOption::MessageType(Dhcpv4MessageType::Discover),
             DhcpOption::ParameterRequestList(vec![1, 3, 6, 15, 51, 54]),
             DhcpOption::HostName("agent".to_string()),
             DhcpOption::End,
         ],
         "dhcp-request-options" => vec![
-            DhcpOption::MessageType(DhcpMessageType::Request),
+            DhcpOption::MessageType(Dhcpv4MessageType::Request),
             DhcpOption::RequestedIpAddress(Ipv4Addr::new(192, 0, 2, 100)),
             DhcpOption::ServerIdentifier(Ipv4Addr::new(192, 0, 2, 1)),
             DhcpOption::ParameterRequestList(vec![1, 3, 6, 15]),
             DhcpOption::End,
         ],
         "dhcp-offer-extended-options" => vec![
-            DhcpOption::MessageType(DhcpMessageType::Offer),
+            DhcpOption::MessageType(Dhcpv4MessageType::Offer),
             DhcpOption::ServerIdentifier(Ipv4Addr::new(192, 0, 2, 1)),
             DhcpOption::SubnetMask(Ipv4Addr::new(255, 255, 255, 0)),
             DhcpOption::Router(vec![Ipv4Addr::new(192, 0, 2, 1)]),
@@ -6399,30 +6399,30 @@ fn expected_dhcp_options(name: &str) -> Vec<DhcpOption> {
             DhcpOption::End,
         ],
         "dhcp-ack-options" => vec![
-            DhcpOption::MessageType(DhcpMessageType::Ack),
+            DhcpOption::MessageType(Dhcpv4MessageType::Ack),
             DhcpOption::ServerIdentifier(Ipv4Addr::new(192, 0, 2, 1)),
             DhcpOption::SubnetMask(Ipv4Addr::new(255, 255, 255, 0)),
             DhcpOption::IpAddressLeaseTime(3_600),
             DhcpOption::End,
         ],
         "dhcp-nak-options" => vec![
-            DhcpOption::MessageType(DhcpMessageType::Nak),
+            DhcpOption::MessageType(Dhcpv4MessageType::Nak),
             DhcpOption::ServerIdentifier(Ipv4Addr::new(192, 0, 2, 1)),
             DhcpOption::End,
         ],
         "dhcp-decline-options" => vec![
-            DhcpOption::MessageType(DhcpMessageType::Decline),
+            DhcpOption::MessageType(Dhcpv4MessageType::Decline),
             DhcpOption::RequestedIpAddress(Ipv4Addr::new(192, 0, 2, 100)),
             DhcpOption::ServerIdentifier(Ipv4Addr::new(192, 0, 2, 1)),
             DhcpOption::End,
         ],
         "dhcp-release-options" => vec![
-            DhcpOption::MessageType(DhcpMessageType::Release),
+            DhcpOption::MessageType(Dhcpv4MessageType::Release),
             DhcpOption::ServerIdentifier(Ipv4Addr::new(192, 0, 2, 1)),
             DhcpOption::End,
         ],
         "dhcp-inform-options" => vec![
-            DhcpOption::MessageType(DhcpMessageType::Inform),
+            DhcpOption::MessageType(Dhcpv4MessageType::Inform),
             DhcpOption::ParameterRequestList(vec![1, 3, 6, 15]),
             DhcpOption::End,
         ],
@@ -6430,7 +6430,7 @@ fn expected_dhcp_options(name: &str) -> Vec<DhcpOption> {
         // are preserved as raw Generic options by the legacy DhcpOption decoder;
         // the typed views are asserted via the Dhcpv4-layer frame fixtures.
         "dhcp-classless-static-routes-options" => vec![
-            DhcpOption::MessageType(DhcpMessageType::Ack),
+            DhcpOption::MessageType(Dhcpv4MessageType::Ack),
             DhcpOption::generic(
                 121,
                 vec![24, 192, 0, 2, 198, 51, 100, 1, 0, 198, 51, 100, 254],
@@ -6438,7 +6438,7 @@ fn expected_dhcp_options(name: &str) -> Vec<DhcpOption> {
             DhcpOption::End,
         ],
         "dhcp-domain-search-options" => vec![
-            DhcpOption::MessageType(DhcpMessageType::Ack),
+            DhcpOption::MessageType(Dhcpv4MessageType::Ack),
             DhcpOption::generic(
                 119,
                 vec![
@@ -6449,12 +6449,12 @@ fn expected_dhcp_options(name: &str) -> Vec<DhcpOption> {
             DhcpOption::End,
         ],
         "dhcp-client-id-rfc4361-options" => vec![
-            DhcpOption::MessageType(DhcpMessageType::Discover),
+            DhcpOption::MessageType(Dhcpv4MessageType::Discover),
             DhcpOption::ClientIdentifier(vec![255, 10, 11, 12, 13, 0, 1, 2, 3]),
             DhcpOption::End,
         ],
         "dhcp-authentication-options" => vec![
-            DhcpOption::MessageType(DhcpMessageType::Request),
+            DhcpOption::MessageType(Dhcpv4MessageType::Request),
             DhcpOption::generic(
                 90,
                 vec![
@@ -6465,23 +6465,23 @@ fn expected_dhcp_options(name: &str) -> Vec<DhcpOption> {
             DhcpOption::End,
         ],
         "dhcp-forcerenew-options" => vec![
-            DhcpOption::MessageType(DhcpMessageType::Discover),
+            DhcpOption::MessageType(Dhcpv4MessageType::Discover),
             DhcpOption::generic(145, vec![1]),
             DhcpOption::End,
         ],
         "dhcp-leasequery-options" => vec![
-            DhcpOption::MessageType(DhcpMessageType::LeaseQuery),
+            DhcpOption::MessageType(Dhcpv4MessageType::LeaseQuery),
             DhcpOption::generic(92, vec![192, 0, 2, 100, 192, 0, 2, 101]),
             DhcpOption::End,
         ],
         "dhcp-leasequery-status-options" => vec![
-            DhcpOption::MessageType(DhcpMessageType::LeaseUnknown),
+            DhcpOption::MessageType(Dhcpv4MessageType::LeaseUnknown),
             DhcpOption::generic(151, vec![0, 111, 107]),
             DhcpOption::generic(156, vec![2]),
             DhcpOption::End,
         ],
         "dhcp-unknown-private-options" => vec![
-            DhcpOption::MessageType(DhcpMessageType::Discover),
+            DhcpOption::MessageType(Dhcpv4MessageType::Discover),
             DhcpOption::generic(224, vec![0xde, 0xad, 0xbe, 0xef]),
             DhcpOption::generic(250, vec![0x01, 0x02, 0x03]),
             DhcpOption::End,
@@ -9308,7 +9308,7 @@ fn ipv4_udp_dhcp_decode_keeps_surplus_options_out_of_application_payload() {
     let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes()).unwrap();
     let dhcp = decoded.layer::<Dhcpv4>().unwrap();
     assert_eq!(dhcp.transaction_id_value(), 0x3903_f326);
-    assert_eq!(dhcp.message_type_value(), Some(DhcpMessageType::Discover));
+    assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Discover));
     assert_eq!(dhcp.host_name_value(), Some("agent"));
     assert!(decoded.layers::<Raw>().next().is_none());
 

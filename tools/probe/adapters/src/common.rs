@@ -1468,7 +1468,7 @@ pub fn decoded_packet_json(packet: &Packet, raw: &[u8]) -> Value {
     let mqtt_layer = packet.layer::<Mqtt>();
     let udp = packet.layer::<Udp>();
     let dns = packet.layer::<Dns>();
-    let dhcp = packet.layer::<Dhcp>();
+    let dhcp = packet.layer::<Dhcpv4>();
     let snmp_layer = packet.layer::<Snmp>();
     let quic_layer = packet.layer::<Quic>();
     let udp_options = packet.layer::<UdpOptions>();

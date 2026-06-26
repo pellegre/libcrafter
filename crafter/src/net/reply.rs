@@ -1,7 +1,7 @@
 use std::net::Ipv4Addr;
 
 use crate::{
-    Arp, ArpOperation, Dhcpv4, DhcpClientIdentifier, DhcpMessageType, Dns, Icmpv4, Icmpv6, Igmp,
+    Arp, ArpOperation, Dhcpv4, DhcpClientIdentifier, Dhcpv4MessageType, Dns, Icmpv4, Icmpv6, Igmp,
     Ipv4, Ipv6, Packet, Tcp, Udp, BOOTP_REPLY, DHCP_CLIENT_PORT, DHCP_SERVER_PORT, DNS_PORT,
     ICMPV6_ECHO_REPLY, ICMPV6_ECHO_REQUEST, ICMP_ECHO_REPLY, ICMP_ECHO_REQUEST,
 };
@@ -408,12 +408,12 @@ fn dhcp_message_type_matches(request: &Dhcpv4, candidate: &Dhcpv4) -> bool {
 ///
 /// Source: RFC 4388 (DHCPLEASEQUERY), RFC 6926 (DHCPBULKLEASEQUERY), and
 /// RFC 7724 (DHCPACTIVELEASEQUERY).
-fn is_leasequery_request_type(message_type: DhcpMessageType) -> bool {
+fn is_leasequery_request_type(message_type: Dhcpv4MessageType) -> bool {
     matches!(
         message_type,
-        DhcpMessageType::LeaseQuery
-            | DhcpMessageType::BulkLeaseQuery
-            | DhcpMessageType::ActiveLeaseQuery
+        Dhcpv4MessageType::LeaseQuery
+            | Dhcpv4MessageType::BulkLeaseQuery
+            | Dhcpv4MessageType::ActiveLeaseQuery
     )
 }
 
@@ -422,17 +422,17 @@ fn is_leasequery_request_type(message_type: DhcpMessageType) -> bool {
 /// Source: RFC 4388 (DHCPLEASEUNASSIGNED/UNKNOWN/ACTIVE), RFC 6926
 /// (DHCPLEASEQUERYDONE), and RFC 7724 (DHCPLEASEQUERYSTATUS). A reply may also
 /// echo the query type itself, so those are accepted as well.
-fn is_leasequery_reply_type(message_type: DhcpMessageType) -> bool {
+fn is_leasequery_reply_type(message_type: Dhcpv4MessageType) -> bool {
     matches!(
         message_type,
-        DhcpMessageType::LeaseUnassigned
-            | DhcpMessageType::LeaseUnknown
-            | DhcpMessageType::LeaseActive
-            | DhcpMessageType::LeaseQueryDone
-            | DhcpMessageType::LeaseQueryStatus
-            | DhcpMessageType::LeaseQuery
-            | DhcpMessageType::BulkLeaseQuery
-            | DhcpMessageType::ActiveLeaseQuery
+        Dhcpv4MessageType::LeaseUnassigned
+            | Dhcpv4MessageType::LeaseUnknown
+            | Dhcpv4MessageType::LeaseActive
+            | Dhcpv4MessageType::LeaseQueryDone
+            | Dhcpv4MessageType::LeaseQueryStatus
+            | Dhcpv4MessageType::LeaseQuery
+            | Dhcpv4MessageType::BulkLeaseQuery
+            | Dhcpv4MessageType::ActiveLeaseQuery
     )
 }
 

@@ -19,7 +19,7 @@ use crate::checksum::{
     crc32c, internet_checksum_chunks, ipv4_pseudo_header_checksum, ipv6_pseudo_header_checksum,
 };
 use crate::{
-    Dhcpv4, DhcpMessageType, Dns, Ipv4, Ipv4Protocol, Ipv6, Layer, LinkType, MacAddr, Packet, Raw,
+    Dhcpv4, Dhcpv4MessageType, Dns, Ipv4, Ipv4Protocol, Ipv6, Layer, LinkType, MacAddr, Packet, Raw,
     DNS_PORT, DNS_TYPE_A, IPPROTO_UDP,
 };
 use core::net::{Ipv4Addr, Ipv6Addr};
@@ -2394,7 +2394,7 @@ fn udp_decode_surplus_dhcp_uses_user_payload_and_preserves_options() {
 
     assert_eq!(udp.length_value(), Some((UDP_HEADER_LEN + dhcp_len) as u16));
     assert_eq!(dhcp.transaction_id_value(), 0x3903_f326);
-    assert_eq!(dhcp.message_type_value(), Some(DhcpMessageType::Discover));
+    assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Discover));
     assert_eq!(dhcp.host_name_value(), Some("agent"));
     assert!(decoded.layers::<Raw>().next().is_none());
     assert_eq!(udp_options.as_bytes(), &surplus);

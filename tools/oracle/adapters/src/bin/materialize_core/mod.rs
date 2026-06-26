@@ -3430,14 +3430,14 @@ fn dns_question(question: &Value) -> ExampleResult<DnsQuestion> {
     })
 }
 
-fn dhcp_layer(plan: &Value) -> ExampleResult<Dhcp> {
+fn dhcp_layer(plan: &Value) -> ExampleResult<Dhcpv4> {
     let fields = layer_fields(plan, "dhcp")?;
     // The fixed BOOTP header fields are optional: a minimal live-friendly DHCP
-    // plan emits only op/flags/options and relies on `Dhcp::new()` defaults
+    // plan emits only op/flags/options and relies on `Dhcpv4::new()` defaults
     // (BOOTP_REQUEST op, Ethernet htype, hlen 6, xid 0, zero MAC, unspecified
     // addresses) for anything it does not set. Honor every field the plan does
     // provide and leave the rest at their protocol-correct defaults.
-    let mut layer = Dhcp::new();
+    let mut layer = Dhcpv4::new();
     if let Some(value) = optional(fields, &["op"]) {
         layer = layer.op(dhcp_op(value)?);
     }
@@ -5149,7 +5149,7 @@ fn dhcp_options(value: &Value) -> ExampleResult<Vec<DhcpOption>> {
 
 fn dhcp_option_pair(name: &str, value: &str) -> ExampleResult<DhcpOption> {
     match name.replace('-', "_").as_str() {
-        "message_type" => Ok(DhcpOption::message_type(dhcp_message_type(value))),
+        "message_type" => Ok(DhcpOption::message_type(dhcpv4_message_type(value))),
         "hostname" | "host_name" => Ok(DhcpOption::host_name(value)),
         "domain_name" => Ok(DhcpOption::domain_name(value)),
         "requested_ip" | "requested_ip_address" => {
@@ -5165,20 +5165,20 @@ fn dhcp_option_pair(name: &str, value: &str) -> ExampleResult<DhcpOption> {
     }
 }
 
-fn dhcp_message_type(value: &str) -> DhcpMessageType {
+fn dhcpv4_message_type(value: &str) -> Dhcpv4MessageType {
     match value.replace('-', "_").as_str() {
-        "discover" => DhcpMessageType::Discover,
-        "offer" => DhcpMessageType::Offer,
-        "request" => DhcpMessageType::Request,
-        "decline" => DhcpMessageType::Decline,
-        "ack" => DhcpMessageType::Ack,
-        "nak" => DhcpMessageType::Nak,
-        "release" => DhcpMessageType::Release,
-        "inform" => DhcpMessageType::Inform,
+        "discover" => Dhcpv4MessageType::Discover,
+        "offer" => Dhcpv4MessageType::Offer,
+        "request" => Dhcpv4MessageType::Request,
+        "decline" => Dhcpv4MessageType::Decline,
+        "ack" => Dhcpv4MessageType::Ack,
+        "nak" => Dhcpv4MessageType::Nak,
+        "release" => Dhcpv4MessageType::Release,
+        "inform" => Dhcpv4MessageType::Inform,
         _ => value
             .parse::<u8>()
-            .map(DhcpMessageType::Unknown)
-            .unwrap_or(DhcpMessageType::Discover),
+            .map(Dhcpv4MessageType::Unknown)
+            .unwrap_or(Dhcpv4MessageType::Discover),
     }
 }
 
@@ -5962,10 +5962,10 @@ mod dhcp_oracle_fixtures {
         MacAddr::from(RELAY_MAC)
     }
 
-    /// Wrap a built `Dhcp` layer in an Ethernet/IPv4/UDP frame on the BOOTP
+    /// Wrap a built `Dhcpv4` layer in an Ethernet/IPv4/UDP frame on the BOOTP
     /// port pair so the registry decodes it as DHCP, then return the compiled
     /// frame bytes.
-    fn frame_bytes(dhcp: Dhcp) -> Vec<u8> {
+    fn frame_bytes(dhcp: Dhcpv4) -> Vec<u8> {
         let packet = Ethernet::new()
             .src(relay_mac())
             .dst(MacAddr::BROADCAST)
@@ -5985,11 +5985,11 @@ mod dhcp_oracle_fixtures {
 
     /// Decode a compiled frame and return the recompiled bytes plus the decoded
     /// DHCP layer, asserting the registry surfaced a DHCP layer over UDP.
-    fn decode_roundtrip(bytes: &[u8]) -> (Vec<u8>, Dhcp) {
+    fn decode_roundtrip(bytes: &[u8]) -> (Vec<u8>, Dhcpv4) {
         let decoded = Packet::decode_from_link(LinkType::Ethernet, bytes)
             .expect("documentation DHCP frame must decode without panic");
         let dhcp = decoded
-            .layer::<Dhcp>()
+            .layer::<Dhcpv4>()
             .expect("decoded frame must expose a DHCP layer over UDP")
             .clone();
         let recompiled = decoded
@@ -6001,7 +6001,7 @@ mod dhcp_oracle_fixtures {
     }
 
     /// Build, compile, decode, and recompile, asserting a byte-exact round-trip.
-    fn assert_byte_roundtrip(dhcp: Dhcp) -> Dhcp {
+    fn assert_byte_roundtrip(dhcp: Dhcpv4) -> Dhcpv4 {
         let original = frame_bytes(dhcp);
         let (recompiled, decoded) = decode_roundtrip(&original);
         assert_eq!(
@@ -6015,7 +6015,7 @@ mod dhcp_oracle_fixtures {
     fn dhcp_option_overload_file_and_sname() {
         // Option 52 marks both file and sname as overloaded option areas
         // (RFC 2131 section 4.1). Scapy does not model overloaded BOOTP fields.
-        let dhcp = Dhcp::discover(client_mac())
+        let dhcp = Dhcpv4::discover(client_mac())
             .xid(0x0102_0304)
             .file_option(DhcpOption::bootfile_name(b"boot/pxelinux.0".to_vec()))
             .sname_option(DhcpOption::host_name("oracle-server"));
@@ -6028,7 +6028,7 @@ mod dhcp_oracle_fixtures {
         // RFC 3396: a value longer than 255 octets is split across repeated
         // instances of the same option code and read back as one logical value.
         let long_domain = format!("{}.example", "a".repeat(300));
-        let dhcp = Dhcp::discover(client_mac())
+        let dhcp = Dhcpv4::discover(client_mac())
             .xid(0x1111_2222)
             .option(DhcpOption::domain_name(long_domain.clone()));
         let decoded = assert_byte_roundtrip(dhcp);
@@ -6054,7 +6054,7 @@ mod dhcp_oracle_fixtures {
             DhcpRelaySuboption::circuit_id(b"eth0:vlan100".to_vec()),
             DhcpRelaySuboption::remote_id(RELAY_MAC.to_vec()),
         ]);
-        let dhcp = Dhcp::discover(client_mac())
+        let dhcp = Dhcpv4::discover(client_mac())
             .xid(0x3333_4444)
             .relay_agent_info(info.clone());
         let decoded = assert_byte_roundtrip(dhcp);
@@ -6071,7 +6071,7 @@ mod dhcp_oracle_fixtures {
         // option 61 only as an opaque string.
         let identifier =
             DhcpClientIdentifier::node_specific(0x0a0b_0c0d, vec![0x00, 0x01, 0x02, 0x03]);
-        let dhcp = Dhcp::discover(client_mac())
+        let dhcp = Dhcpv4::discover(client_mac())
             .xid(0x5555_6666)
             .option(DhcpOption::client_identifier_value(identifier.clone()));
         let decoded = assert_byte_roundtrip(dhcp);
@@ -6093,7 +6093,7 @@ mod dhcp_oracle_fixtures {
             0x0000_0001_0000_0002,
             vec![0xab; 16],
         );
-        let dhcp = Dhcp::request(
+        let dhcp = Dhcpv4::request(
             client_mac(),
             Ipv4Addr::new(192, 0, 2, 100),
             Ipv4Addr::new(192, 0, 2, 1),
@@ -6120,7 +6120,7 @@ mod dhcp_oracle_fixtures {
             ),
             DhcpClasslessRoute::new(0, Ipv4Addr::UNSPECIFIED, Ipv4Addr::new(198, 51, 100, 254)),
         ];
-        let dhcp = Dhcp::ack(
+        let dhcp = Dhcpv4::ack(
             client_mac(),
             Ipv4Addr::new(192, 0, 2, 100),
             Ipv4Addr::new(192, 0, 2, 1),
@@ -6143,7 +6143,7 @@ mod dhcp_oracle_fixtures {
         // RFC 4388 leasequery reply carrying a status-code option (151) and a
         // dhcp-state option (153). Scapy has no leasequery option support.
         let status = DhcpStatusCodeOption::new(DhcpStatusCode::Success, b"ok".to_vec());
-        let dhcp = Dhcp::lease_query_by_ip(Ipv4Addr::new(192, 0, 2, 100))
+        let dhcp = Dhcpv4::lease_query_by_ip(Ipv4Addr::new(192, 0, 2, 100))
             .xid(0xbbbb_cccc)
             .option(DhcpOption::status_code(status.clone()))
             .option(DhcpOption::dhcp_state(DhcpState::Active));
@@ -6155,7 +6155,7 @@ mod dhcp_oracle_fixtures {
         assert_eq!(recovered, status);
         assert_eq!(
             decoded.message_type_value(),
-            Some(DhcpMessageType::LeaseQuery)
+            Some(Dhcpv4MessageType::LeaseQuery)
         );
     }
 }
@@ -6177,7 +6177,7 @@ mod ipv4_dhcp_materialization {
 
     /// A minimal live-friendly `ipv4 / udp / dhcp` plan, matching the seeded
     /// generator output: only the DHCP op/flags/options are set, so the fixed
-    /// BOOTP header fields must fall back to `Dhcp::new()` defaults.
+    /// BOOTP header fields must fall back to `Dhcpv4::new()` defaults.
     fn ipv4_dhcp_discover_plan() -> Value {
         json!({
             "stack": ["ipv4", "udp", "dhcp"],
@@ -6256,11 +6256,11 @@ mod ipv4_dhcp_materialization {
         assert_eq!(udp.destination_port_value(), 67, "BOOTP server port");
 
         let dhcp = decoded
-            .layer::<Dhcp>()
+            .layer::<Dhcpv4>()
             .expect("re-decoded packet must expose a DHCP layer over UDP");
         assert_eq!(
             dhcp.message_type_value(),
-            Some(DhcpMessageType::Discover),
+            Some(Dhcpv4MessageType::Discover),
             "DHCP message type must be present and decode to discover"
         );
     }
@@ -6268,7 +6268,7 @@ mod ipv4_dhcp_materialization {
     #[test]
     fn ipv4_dhcp_plan_defaults_fixed_bootp_fields() {
         // A plan that omits xid/ciaddr/yiaddr/chaddr (as the smoke generator
-        // does) must still materialize via Dhcp::new() defaults rather than
+        // does) must still materialize via Dhcpv4::new() defaults rather than
         // failing with a missing-required-field error.
         let plan = ipv4_dhcp_discover_plan();
         let vector = materialize_plan(&plan)
@@ -6281,7 +6281,7 @@ mod ipv4_dhcp_materialization {
         let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, &bytes)
             .expect("default-filled IPv4 DHCP vector must re-decode");
         let dhcp = decoded
-            .layer::<Dhcp>()
+            .layer::<Dhcpv4>()
             .expect("re-decoded packet must expose a DHCP layer");
         // Defaults: BOOTP request op and Ethernet hardware type/len.
         assert_eq!(dhcp.op_value(), BOOTP_REQUEST);

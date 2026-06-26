@@ -61,7 +61,7 @@ use super::constants::{
     DHCP_STATUS_SUCCESS, DHCP_STATUS_TLS_CONNECTION_REFUSED, DHCP_STATUS_UNSPEC_FAIL,
     DHCP_VSS_TYPE_GLOBAL_DEFAULT, DHCP_VSS_TYPE_NVT_ASCII, DHCP_VSS_TYPE_VPN_ID,
 };
-use super::message::DhcpMessageType;
+use super::message::Dhcpv4MessageType;
 use super::registry::{option_name, option_status, DhcpOptionStatus};
 
 /// Source area a DHCPv4 option segment was decoded from.
@@ -1319,7 +1319,7 @@ pub enum DhcpOptionValue {
     /// Text-like bytes. Not guaranteed to be UTF-8; raw bytes are preserved.
     Text(Vec<u8>),
     /// A DHCP message type (option 53).
-    MessageType(DhcpMessageType),
+    MessageType(Dhcpv4MessageType),
     /// An option overload value (option 52).
     OptionOverload(OptionOverload),
     /// A parameter request list (option 55): a sequence of option codes.
@@ -1600,7 +1600,7 @@ pub enum DhcpOptionKind {
     RequestedIpAddress,
     IpAddressLeaseTime,
     OptionOverload,
-    DhcpMessageType,
+    Dhcpv4MessageType,
     ServerIdentifier,
     ParameterRequestList,
     DhcpMessage,
@@ -1697,7 +1697,7 @@ impl DhcpOptionKind {
             DHCP_OPTION_REQUESTED_IP_ADDRESS => Self::RequestedIpAddress,
             DHCP_OPTION_IP_ADDRESS_LEASE_TIME => Self::IpAddressLeaseTime,
             DHCP_OPTION_OVERLOAD => Self::OptionOverload,
-            DHCP_OPTION_MESSAGE_TYPE => Self::DhcpMessageType,
+            DHCP_OPTION_MESSAGE_TYPE => Self::Dhcpv4MessageType,
             DHCP_OPTION_SERVER_IDENTIFIER => Self::ServerIdentifier,
             DHCP_OPTION_PARAMETER_REQUEST_LIST => Self::ParameterRequestList,
             DHCP_OPTION_MESSAGE => Self::DhcpMessage,
@@ -1796,7 +1796,7 @@ impl DhcpOptionKind {
             Self::RequestedIpAddress => DHCP_OPTION_REQUESTED_IP_ADDRESS,
             Self::IpAddressLeaseTime => DHCP_OPTION_IP_ADDRESS_LEASE_TIME,
             Self::OptionOverload => DHCP_OPTION_OVERLOAD,
-            Self::DhcpMessageType => DHCP_OPTION_MESSAGE_TYPE,
+            Self::Dhcpv4MessageType => DHCP_OPTION_MESSAGE_TYPE,
             Self::ServerIdentifier => DHCP_OPTION_SERVER_IDENTIFIER,
             Self::ParameterRequestList => DHCP_OPTION_PARAMETER_REQUEST_LIST,
             Self::DhcpMessage => DHCP_OPTION_MESSAGE,
@@ -1940,7 +1940,7 @@ impl DhcpOptionKind {
             Self::PxelinuxRebootTime => F::U32,
             // Special single-octet codecs and lists.
             Self::ParameterRequestList => F::ParameterRequestList,
-            Self::DhcpMessageType => F::MessageType,
+            Self::Dhcpv4MessageType => F::MessageType,
             Self::OptionOverload => F::OptionOverload,
             // Vendor/user-class/PXE structured formats.
             Self::UserClass => F::UserClass,
@@ -2007,7 +2007,7 @@ pub fn typed_option_value(code: u8, data: &[u8]) -> Result<Option<DhcpOptionValu
         }
         DhcpOptionFormat::MessageType => {
             validate_fixed_len(field, data.len(), 1)?;
-            DhcpOptionValue::MessageType(DhcpMessageType::from_code(data[0]))
+            DhcpOptionValue::MessageType(Dhcpv4MessageType::from_code(data[0]))
         }
         DhcpOptionFormat::OptionOverload => {
             validate_fixed_len(field, data.len(), 1)?;
@@ -2204,7 +2204,7 @@ pub enum DhcpOption {
     /// End marker.
     End,
     /// DHCP message type.
-    MessageType(DhcpMessageType),
+    MessageType(Dhcpv4MessageType),
     /// Option overload (option 52): which fixed fields carry options.
     OptionOverload(OptionOverload),
     /// Subnet mask.
@@ -2247,7 +2247,7 @@ pub enum DhcpOption {
 
 impl DhcpOption {
     /// Create a DHCP message type option.
-    pub const fn message_type(message_type: DhcpMessageType) -> Self {
+    pub const fn message_type(message_type: Dhcpv4MessageType) -> Self {
         Self::MessageType(message_type)
     }
 
@@ -3165,7 +3165,7 @@ pub(super) fn decode_dhcp_option(code: u8, data: &[u8]) -> Result<DhcpOption> {
     match code {
         DHCP_OPTION_MESSAGE_TYPE => {
             validate_fixed_len("dhcp.option.message_type", data.len(), 1)?;
-            Ok(DhcpOption::MessageType(DhcpMessageType::from_code(data[0])))
+            Ok(DhcpOption::MessageType(Dhcpv4MessageType::from_code(data[0])))
         }
         DHCP_OPTION_OVERLOAD => {
             validate_fixed_len("dhcp.option.overload", data.len(), 1)?;
@@ -4222,7 +4222,7 @@ pub(super) fn split_option_encoded_len(data_len: usize) -> usize {
 #[cfg(test)]
 mod dhcp_options {
     use super::super::{
-        scan_dhcp_option_segments, Dhcpv4, DhcpMessageType, DhcpOption, DhcpOptionArea,
+        scan_dhcp_option_segments, Dhcpv4, Dhcpv4MessageType, DhcpOption, DhcpOptionArea,
         DhcpOptionCode, DhcpOptionSegment, DhcpOptionStatus, DhcpOptionValue,
     };
     use crate::error::CrafterError;
@@ -4235,7 +4235,7 @@ mod dhcp_options {
         let options = DhcpOption::decode_all(&hex_fixture(OFFER_OPTIONS)).unwrap();
         let dhcp = Dhcpv4::new().options(options);
 
-        assert_eq!(dhcp.message_type_value(), Some(DhcpMessageType::Offer));
+        assert_eq!(dhcp.message_type_value(), Some(Dhcpv4MessageType::Offer));
         assert_eq!(
             dhcp.server_identifier_value(),
             Some(Ipv4Addr::new(192, 0, 2, 1))
@@ -4259,7 +4259,7 @@ mod dhcp_options {
     fn typed_options_roundtrip_and_preserve_unknown_options() {
         let options = vec![
             DhcpOption::Pad,
-            DhcpOption::message_type(DhcpMessageType::Ack),
+            DhcpOption::message_type(Dhcpv4MessageType::Ack),
             DhcpOption::host_name("agent-host"),
             DhcpOption::generic(224, [0xde, 0xad, 0xbe, 0xef]),
             DhcpOption::End,
@@ -4278,7 +4278,7 @@ mod dhcp_options {
     #[test]
     fn builder_appends_end_marker_deterministically() {
         let encoded = Dhcpv4::new()
-            .message_type(DhcpMessageType::Discover)
+            .message_type(Dhcpv4MessageType::Discover)
             .encoded_options()
             .unwrap();
 
@@ -4305,7 +4305,7 @@ mod dhcp_options {
         assert_eq!(message_type.code, DhcpOptionCode::Assigned(53));
         assert_eq!(message_type.declared_len, Some(1));
         assert_eq!(message_type.offset, 0);
-        assert_eq!(message_type.data, vec![DhcpMessageType::Offer.code()]);
+        assert_eq!(message_type.data, vec![Dhcpv4MessageType::Offer.code()]);
 
         let server_id = &segments[1];
         assert_eq!(server_id.declared_len, Some(4));
@@ -4323,7 +4323,7 @@ mod dhcp_options {
             options.iter().map(DhcpOption::logical_value).collect();
         assert_eq!(
             logical[0],
-            Some(DhcpOptionValue::MessageType(DhcpMessageType::Offer))
+            Some(DhcpOptionValue::MessageType(Dhcpv4MessageType::Offer))
         );
         assert_eq!(
             logical[2],
@@ -4354,7 +4354,7 @@ mod dhcp_options {
         let removed_payload = [0x01, 0x02];
 
         let options = vec![
-            DhcpOption::message_type(DhcpMessageType::Ack),
+            DhcpOption::message_type(Dhcpv4MessageType::Ack),
             DhcpOption::generic(224, private_payload),
             DhcpOption::generic(84, removed_payload),
             DhcpOption::End,
@@ -4427,7 +4427,7 @@ mod dhcp_options {
         // typed view must agree, and an exact byte round-trip must hold.
         let options = vec![
             DhcpOption::Pad,
-            DhcpOption::message_type(DhcpMessageType::Ack),
+            DhcpOption::message_type(Dhcpv4MessageType::Ack),
             DhcpOption::subnet_mask(Ipv4Addr::new(255, 255, 255, 0)),
             DhcpOption::generic(224, [0xde, 0xad, 0xbe, 0xef]),
             DhcpOption::End,
@@ -4530,7 +4530,7 @@ mod dhcp_options {
         let options = vec![
             DhcpOption::Pad,
             DhcpOption::Pad,
-            DhcpOption::message_type(DhcpMessageType::Discover),
+            DhcpOption::message_type(Dhcpv4MessageType::Discover),
             DhcpOption::generic(84, [0x01, 0x02]),
             DhcpOption::End,
         ];
@@ -4563,7 +4563,7 @@ mod dhcp_options {
 #[cfg(test)]
 mod dhcp_rfc3396 {
     use super::super::{
-        scan_dhcp_option_segments, Dhcpv4, DhcpMessageType, DhcpOption, DhcpOptionArea,
+        scan_dhcp_option_segments, Dhcpv4, Dhcpv4MessageType, DhcpOption, DhcpOptionArea,
     };
     use super::{encode_split_option, split_option_encoded_len, DHCP_MAX_OPTION_DATA_LEN};
     use core::net::Ipv4Addr;
@@ -4724,7 +4724,7 @@ mod dhcp_rfc3396 {
         // reassemble into one logical value in aggregate order, while each area's
         // raw options stay separately inspectable.
         let dhcp = Dhcpv4::new()
-            .message_type(DhcpMessageType::Ack)
+            .message_type(Dhcpv4MessageType::Ack)
             .server_identifier(Ipv4Addr::new(192, 0, 2, 1))
             .option(DhcpOption::generic(DOMAIN_SEARCH, b"aaa".to_vec()))
             .file_option(DhcpOption::generic(DOMAIN_SEARCH, b"bbb".to_vec()))
@@ -4768,7 +4768,7 @@ mod dhcp_rfc3396 {
 #[cfg(test)]
 mod dhcp_rfc2132_base_options {
     use super::super::{
-        Dhcpv4, DhcpClientIdentifier, DhcpMessageType, DhcpOption, DhcpOptionCode, DhcpOptionFormat,
+        Dhcpv4, DhcpClientIdentifier, Dhcpv4MessageType, DhcpOption, DhcpOptionCode, DhcpOptionFormat,
         DhcpOptionKind, DhcpOptionValue, OptionOverload,
     };
     use super::typed_option_value;
@@ -4851,7 +4851,7 @@ mod dhcp_rfc2132_base_options {
                 DhcpOptionValue::ParameterRequestList(vec![1, 3, 6, 15, 51, 54]),
             ),
             // Message type (option 53) and option overload (option 52).
-            (53, DhcpOptionValue::MessageType(DhcpMessageType::Discover)),
+            (53, DhcpOptionValue::MessageType(Dhcpv4MessageType::Discover)),
             (52, DhcpOptionValue::OptionOverload(OptionOverload::Both)),
             // Opaque (option 60 vendor class id, option 43 vendor specific) -
             // raw bytes preserved.
@@ -5042,7 +5042,7 @@ mod dhcp_rfc2132_base_options {
 #[cfg(test)]
 mod dhcp_route_domain_service {
     use super::super::{
-        Dhcpv4, DhcpClasslessRoute, DhcpMessageType, DhcpOption, DhcpOptionKind, DhcpOptionValue,
+        Dhcpv4, DhcpClasslessRoute, Dhcpv4MessageType, DhcpOption, DhcpOptionKind, DhcpOptionValue,
         DhcpStaticRoute, SipServers,
     };
     use super::{
@@ -5064,7 +5064,7 @@ mod dhcp_route_domain_service {
     fn build_and_decode(option: DhcpOption) -> Dhcpv4 {
         let dhcp = Dhcpv4::new()
             .op(super::super::BOOTP_REPLY)
-            .message_type(DhcpMessageType::Ack)
+            .message_type(Dhcpv4MessageType::Ack)
             .options([option, DhcpOption::End]);
         let bytes = crate::Packet::from_layer(dhcp)
             .compile()
@@ -5330,7 +5330,7 @@ mod dhcp_route_domain_service {
 mod dhcp_vendor_user_pxe {
     use super::super::{
         decode_tftp_server_addresses, ClientNetworkDeviceInterface, ClientSystemArchitecture, Dhcpv4,
-        DhcpClientUuid, DhcpMessageType, DhcpOption, DhcpUserClass, DhcpVendorClassData,
+        DhcpClientUuid, Dhcpv4MessageType, DhcpOption, DhcpUserClass, DhcpVendorClassData,
         DhcpVendorIdentifyingOption, DhcpVendorSuboption,
     };
     use super::{
@@ -5360,7 +5360,7 @@ mod dhcp_vendor_user_pxe {
     fn build_and_decode(options: Vec<DhcpOption>) -> Dhcpv4 {
         let dhcp = Dhcpv4::new()
             .op(super::super::BOOTP_REQUEST)
-            .message_type(DhcpMessageType::Discover)
+            .message_type(Dhcpv4MessageType::Discover)
             .options(options);
         let bytes = crate::Packet::from_layer(dhcp)
             .compile()
@@ -5677,7 +5677,7 @@ mod dhcp_vendor_user_pxe {
 #[cfg(test)]
 mod dhcp_relay_agent {
     use super::super::{
-        scan_dhcp_option_segments, Dhcpv4, DhcpMessageType, DhcpOption, DhcpOptionArea,
+        scan_dhcp_option_segments, Dhcpv4, Dhcpv4MessageType, DhcpOption, DhcpOptionArea,
         DhcpRelayAgentInfo, DhcpRelaySuboption, DhcpRelayVendorSpecific, DhcpVssInfo,
     };
     use super::{decode_relay_agent_information, typed_option_value, DhcpOptionValue};
@@ -5693,7 +5693,7 @@ mod dhcp_relay_agent {
     fn build_and_decode(options: Vec<DhcpOption>) -> Dhcpv4 {
         let dhcp = Dhcpv4::new()
             .op(super::super::BOOTP_REPLY)
-            .message_type(DhcpMessageType::Ack)
+            .message_type(Dhcpv4MessageType::Ack)
             .options(options);
         let bytes = crate::Packet::from_layer(dhcp)
             .compile()
@@ -5862,7 +5862,7 @@ mod dhcp_relay_agent {
         ]);
         let dhcp = Dhcpv4::new()
             .op(super::super::BOOTP_REPLY)
-            .message_type(DhcpMessageType::Ack)
+            .message_type(Dhcpv4MessageType::Ack)
             .file_options(vec![DhcpOption::relay_agent_information(info.clone())]);
         let bytes = crate::Packet::from_layer(dhcp)
             .compile()
@@ -5911,7 +5911,7 @@ mod dhcp_relay_agent {
 
 #[cfg(test)]
 mod dhcp_client_identifier {
-    use super::super::{Dhcpv4, DhcpClientIdentifier, DhcpMessageType, DhcpOption, DhcpOptionValue};
+    use super::super::{Dhcpv4, DhcpClientIdentifier, Dhcpv4MessageType, DhcpOption, DhcpOptionValue};
     use super::{decode_client_identifier, typed_option_value};
     use crate::error::CrafterError;
 
@@ -5920,7 +5920,7 @@ mod dhcp_client_identifier {
     fn build_and_decode(option: DhcpOption) -> Dhcpv4 {
         let dhcp = Dhcpv4::new()
             .op(super::super::BOOTP_REQUEST)
-            .message_type(DhcpMessageType::Request)
+            .message_type(Dhcpv4MessageType::Request)
             .options(vec![option, DhcpOption::End]);
         let bytes = crate::Packet::from_layer(dhcp)
             .compile()
@@ -6068,7 +6068,7 @@ mod dhcp_client_identifier {
 
         let reply = Dhcpv4::new()
             .op(super::super::BOOTP_REPLY)
-            .message_type(DhcpMessageType::Ack)
+            .message_type(Dhcpv4MessageType::Ack)
             .options(vec![
                 DhcpOption::client_identifier_value(identifier.clone()),
                 DhcpOption::End,
@@ -6095,7 +6095,7 @@ mod dhcp_client_identifier {
 mod dhcp_authentication {
     use super::super::{
         Dhcpv4, DhcpAuthAlgorithm, DhcpAuthProtocol, DhcpAuthentication, DhcpForcerenewNonceCapable,
-        DhcpMessageType, DhcpOption, DhcpOptionValue, DhcpReplayDetectionMethod,
+        Dhcpv4MessageType, DhcpOption, DhcpOptionValue, DhcpReplayDetectionMethod,
     };
     use super::{decode_authentication, typed_option_value};
     use crate::error::CrafterError;
@@ -6106,7 +6106,7 @@ mod dhcp_authentication {
     fn build_and_decode(options: Vec<DhcpOption>) -> Dhcpv4 {
         let dhcp = Dhcpv4::new()
             .op(super::super::BOOTP_REQUEST)
-            .message_type(DhcpMessageType::Request)
+            .message_type(Dhcpv4MessageType::Request)
             .options(options);
         let bytes = crate::Packet::from_layer(dhcp)
             .compile()
@@ -6281,7 +6281,7 @@ mod dhcp_authentication {
 #[cfg(test)]
 mod dhcp_leasequery {
     use super::super::{
-        Dhcpv4, DhcpDataSource, DhcpMessageType, DhcpOption, DhcpOptionValue, DhcpState,
+        Dhcpv4, DhcpDataSource, Dhcpv4MessageType, DhcpOption, DhcpOptionValue, DhcpState,
         DhcpStatusCode, DhcpStatusCodeOption,
     };
     use super::typed_option_value;
@@ -6305,7 +6305,7 @@ mod dhcp_leasequery {
     fn build_and_decode(options: Vec<DhcpOption>) -> Dhcpv4 {
         let dhcp = Dhcpv4::new()
             .op(super::super::BOOTP_REPLY)
-            .message_type(DhcpMessageType::LeaseActive)
+            .message_type(Dhcpv4MessageType::LeaseActive)
             .options(options);
         let bytes = crate::Packet::from_layer(dhcp)
             .compile()
@@ -6553,7 +6553,7 @@ mod dhcp_leasequery {
 #[cfg(test)]
 mod dhcp_remaining_registry {
     use super::super::{
-        Dhcpv4, DhcpMessageType, DhcpOption, DhcpOptionCode, DhcpOptionKind, DhcpOptionStatus,
+        Dhcpv4, Dhcpv4MessageType, DhcpOption, DhcpOptionCode, DhcpOptionKind, DhcpOptionStatus,
         DhcpOptionValue,
     };
     use super::typed_option_value;
@@ -6575,7 +6575,7 @@ mod dhcp_remaining_registry {
     fn build_and_decode(options: Vec<DhcpOption>) -> Dhcpv4 {
         let dhcp = Dhcpv4::new()
             .op(super::super::BOOTP_REPLY)
-            .message_type(DhcpMessageType::Ack)
+            .message_type(Dhcpv4MessageType::Ack)
             .options(options);
         let bytes = crate::Packet::from_layer(dhcp)
             .compile()
@@ -6647,7 +6647,7 @@ mod dhcp_remaining_registry {
 
         // Each newly typed option round-trips inside a full DHCP packet.
         let parsed = build_and_decode(vec![
-            DhcpOption::message_type(DhcpMessageType::Ack),
+            DhcpOption::message_type(Dhcpv4MessageType::Ack),
             DhcpOption::generic(IPV6_ONLY_PREFERRED, payload.clone()),
             DhcpOption::generic(CAPTIVE_PORTAL, portal.clone()),
             DhcpOption::generic(MUD_URL, mud.clone()),
@@ -6703,7 +6703,7 @@ mod dhcp_remaining_registry {
             // Built as a raw option and round-tripped through a full packet, the
             // codepoint and payload bytes survive without loss.
             let parsed = build_and_decode(vec![
-                DhcpOption::message_type(DhcpMessageType::Ack),
+                DhcpOption::message_type(Dhcpv4MessageType::Ack),
                 DhcpOption::generic(code, payload.clone()),
                 DhcpOption::End,
             ]);
