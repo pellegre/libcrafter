@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 use std::net::{Ipv4Addr, Ipv6Addr};
 
-use super::constants::quic_version_label;
+use super::constants::{quic_version_label, QUIC_VERSION_1, QUIC_VERSION_2};
 use super::frame::QUIC_STATELESS_RESET_TOKEN_LEN;
 use super::QuicConnectionId;
 use super::{varint::encoded_len_from_prefix, QuicVarInt};
@@ -645,14 +645,38 @@ impl QuicVersionInformation {
         }
     }
 
+    /// Construct a v1-compatible value that advertises QUIC v2 as available.
+    pub fn v1_with_v2_available() -> Self {
+        Self::new(QUIC_VERSION_1, [QUIC_VERSION_2])
+    }
+
+    /// Construct a v2-compatible value that advertises QUIC v1 as available.
+    pub fn v2_with_v1_available() -> Self {
+        Self::new(QUIC_VERSION_2, [QUIC_VERSION_1])
+    }
+
     /// Return the chosen version.
     pub const fn chosen_version(&self) -> u32 {
         self.chosen_version
     }
 
+    /// Return a stable label for the chosen version.
+    pub fn chosen_version_label(&self) -> String {
+        quic_version_label(self.chosen_version)
+    }
+
     /// Borrow available versions in wire order.
     pub fn available_versions(&self) -> &[u32] {
         &self.available_versions
+    }
+
+    /// Return stable labels for available versions in wire order.
+    pub fn available_version_labels(&self) -> Vec<String> {
+        self.available_versions
+            .iter()
+            .copied()
+            .map(quic_version_label)
+            .collect()
     }
 
     /// Return endpoint-validation findings for byte-complete version
@@ -714,7 +738,7 @@ impl QuicVersionInformation {
             ),
             (
                 "version_information_chosen_version_label",
-                quic_version_label(self.chosen_version),
+                self.chosen_version_label(),
             ),
             (
                 "version_information_available_versions",
@@ -1703,6 +1727,7 @@ mod tests {
     use super::*;
     use crate::protocols::quic::constants::{QUIC_VERSION_1, QUIC_VERSION_2};
     use crate::protocols::quic::varint::is_shortest_encoding;
+    use crate::protocols::quic::{QuicFrame, QuicLongHeaderPacket, QuicPacketNumber};
     use std::net::{Ipv4Addr, Ipv6Addr};
 
     #[test]
@@ -2566,6 +2591,59 @@ mod tests {
         assert!(!parameter.is_version_information());
         assert_eq!(parameter.version_information_value()?, None);
         assert_eq!(parameter.value(), &[0, 0, 0, 1]);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_compatible_version_negotiation_helpers_label_v1_v2_examples() {
+        let v1 = QuicVersionInformation::v1_with_v2_available();
+        assert_eq!(v1.chosen_version(), QUIC_VERSION_1);
+        assert_eq!(v1.available_versions(), &[QUIC_VERSION_2]);
+        assert_eq!(v1.chosen_version_label(), "QUIC v1");
+        assert_eq!(v1.available_version_labels(), vec!["QUIC v2".to_string()]);
+        assert!(v1.validation_findings().is_empty());
+
+        let v2 = QuicVersionInformation::v2_with_v1_available();
+        assert_eq!(v2.chosen_version(), QUIC_VERSION_2);
+        assert_eq!(v2.available_versions(), &[QUIC_VERSION_1]);
+        assert_eq!(v2.chosen_version_label(), "QUIC v2");
+        assert_eq!(v2.available_version_labels(), vec!["QUIC v1".to_string()]);
+        assert!(v2.validation_findings().is_empty());
+    }
+
+    #[test]
+    fn quic_compatible_version_negotiation_round_trips_packet_carried_version_information(
+    ) -> Result<()> {
+        let version_information = QuicVersionInformation::v2_with_v1_available();
+        let parameter = QuicTransportParameter::version_information(version_information.clone());
+        let crypto = QuicFrame::crypto(
+            QuicVarInt::from_u64_unchecked(0),
+            parameter.encode_to_vec()?,
+        )?;
+        let initial = QuicLongHeaderPacket::initial_builder()
+            .version(QUIC_VERSION_2)
+            .packet_number(QuicPacketNumber::new(1))
+            .frames([crypto])
+            .build()?;
+
+        let decoded = QuicLongHeaderPacket::decode(initial.as_bytes())?;
+        assert_eq!(decoded.version(), QUIC_VERSION_2);
+        let frames = QuicFrame::decode_sequence(decoded.protected_payload())?;
+        assert_eq!(frames.len(), 1);
+        let crypto = frames[0].crypto_frame()?.expect("CRYPTO frame");
+        let parameters = QuicTransportParameter::decode_sequence(crypto.data())?;
+        assert_eq!(parameters.len(), 1);
+
+        let decoded_value = parameters[0]
+            .version_information_value()?
+            .expect("version_information value");
+        assert_eq!(decoded_value, version_information);
+        assert_eq!(decoded_value.chosen_version_label(), "QUIC v2");
+        assert_eq!(
+            decoded_value.available_version_labels(),
+            vec!["QUIC v1".to_string()]
+        );
+        assert!(decoded_value.validation_findings().is_empty());
         Ok(())
     }
 

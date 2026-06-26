@@ -306,6 +306,11 @@ fn exports_quic_symbols() -> crafter::Result<()> {
     );
     let version_information =
         QuicVersionInformation::new(QUIC_VERSION_1, [QUIC_VERSION_2, QUIC_VERSION_1]);
+    assert_eq!(version_information.chosen_version_label(), "QUIC v1");
+    assert_eq!(
+        version_information.available_version_labels(),
+        vec!["QUIC v2".to_string(), "QUIC v1".to_string()]
+    );
     let version_parameter = QuicTransportParameter::version_information(version_information);
     assert_eq!(
         version_parameter
@@ -313,6 +318,10 @@ fn exports_quic_symbols() -> crafter::Result<()> {
             .unwrap()
             .available_versions(),
         &[QUIC_VERSION_2, QUIC_VERSION_1]
+    );
+    assert_eq!(
+        QuicVersionInformation::v2_with_v1_available().available_versions(),
+        &[QUIC_VERSION_1]
     );
     assert_eq!(
         QuicVersionInformation::new(0, [0])
