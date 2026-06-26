@@ -88,6 +88,17 @@ fn exports_quic_symbols() -> crafter::Result<()> {
         QuicFrame::from_stream_data_blocked_frame(stream_data_blocked)?.frame_type_value(),
         Some(0x15)
     );
+    let streams_blocked =
+        QuicStreamsBlockedFrame::from_value(QuicStreamDirection::Bidirectional, 8)?;
+    assert_eq!(
+        QuicFrame::from_streams_blocked_frame(streams_blocked)?.frame_type_value(),
+        Some(0x16)
+    );
+    assert_eq!(
+        QuicFrame::streams_blocked_unidirectional(QuicVarInt::from_u64_unchecked(8))?
+            .frame_type_value(),
+        Some(0x17)
+    );
 
     let parameter = QuicTransportParameter::raw(varint, [0xde, 0xad]);
     assert_eq!(parameter.identifier(), Some(varint));
