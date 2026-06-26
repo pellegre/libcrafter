@@ -209,6 +209,22 @@ fn exports_quic_symbols() -> crafter::Result<()> {
             .validation_findings(),
         Vec::<QuicPreferredAddressValidation>::new()
     );
+    let version_information =
+        QuicVersionInformation::new(QUIC_VERSION_1, [QUIC_VERSION_2, QUIC_VERSION_1]);
+    let version_parameter = QuicTransportParameter::version_information(version_information);
+    assert_eq!(
+        version_parameter
+            .version_information_value()?
+            .unwrap()
+            .available_versions(),
+        &[QUIC_VERSION_2, QUIC_VERSION_1]
+    );
+    assert_eq!(
+        QuicVersionInformation::new(0, [0])
+            .validation_findings()
+            .len(),
+        2
+    );
 
     let quic_payload = [0xc3, 0x00, 0x00, 0x00, 0x01, 0x08, 0x00];
     let quic = Quic::from_bytes(quic_payload);

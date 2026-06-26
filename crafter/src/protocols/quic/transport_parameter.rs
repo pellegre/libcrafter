@@ -9,6 +9,7 @@
 use std::collections::BTreeMap;
 use std::net::{Ipv4Addr, Ipv6Addr};
 
+use super::constants::quic_version_label;
 use super::frame::QUIC_STATELESS_RESET_TOKEN_LEN;
 use super::QuicConnectionId;
 use super::{varint::encoded_len_from_prefix, QuicVarInt};
@@ -628,6 +629,131 @@ impl QuicPreferredAddressValidation {
     }
 }
 
+/// Parsed or buildable `version_information` transport parameter value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuicVersionInformation {
+    chosen_version: u32,
+    available_versions: Vec<u32>,
+}
+
+impl QuicVersionInformation {
+    /// Construct a compatible version negotiation value.
+    pub fn new(chosen_version: u32, available_versions: impl IntoIterator<Item = u32>) -> Self {
+        Self {
+            chosen_version,
+            available_versions: available_versions.into_iter().collect(),
+        }
+    }
+
+    /// Return the chosen version.
+    pub const fn chosen_version(&self) -> u32 {
+        self.chosen_version
+    }
+
+    /// Borrow available versions in wire order.
+    pub fn available_versions(&self) -> &[u32] {
+        &self.available_versions
+    }
+
+    /// Return endpoint-validation findings for byte-complete version
+    /// information values. These facts do not make tuple parsing fail.
+    pub fn validation_findings(&self) -> Vec<QuicVersionInformationValidation> {
+        let mut findings = Vec::new();
+        if self.chosen_version == 0 {
+            findings.push(QuicVersionInformationValidation::ChosenVersionZero);
+        }
+        for (index, version) in self.available_versions.iter().copied().enumerate() {
+            if version == 0 {
+                findings.push(QuicVersionInformationValidation::AvailableVersionZero { index });
+            }
+        }
+        findings
+    }
+
+    /// Append the version-information value encoding.
+    pub fn encode(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.chosen_version.to_be_bytes());
+        for version in &self.available_versions {
+            out.extend_from_slice(&version.to_be_bytes());
+        }
+    }
+
+    /// Return the version-information value encoding as a new vector.
+    pub fn encode_to_vec(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(4 + self.available_versions.len() * 4);
+        self.encode(&mut out);
+        out
+    }
+
+    /// Decode a version-information value.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        decode_version_information_value(bytes.as_ref())
+    }
+
+    /// Stable version-information summary for packet inspection.
+    pub fn summary(&self) -> String {
+        format!(
+            "chosen_version={} available_versions={}",
+            format_quic_version_hex(self.chosen_version),
+            format_quic_version_list(&self.available_versions)
+        )
+    }
+
+    /// Stable field/value pairs for version-information inspection.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        let findings = self
+            .validation_findings()
+            .into_iter()
+            .map(|finding| finding.label().to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        vec![
+            (
+                "version_information_chosen_version",
+                format_quic_version_hex(self.chosen_version),
+            ),
+            (
+                "version_information_chosen_version_label",
+                quic_version_label(self.chosen_version),
+            ),
+            (
+                "version_information_available_versions",
+                format_quic_version_list(&self.available_versions),
+            ),
+            (
+                "version_information_validation",
+                if findings.is_empty() {
+                    "ok".to_string()
+                } else {
+                    findings
+                },
+            ),
+        ]
+    }
+}
+
+/// Endpoint-validation finding for a byte-complete version-information value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum QuicVersionInformationValidation {
+    /// The chosen version is zero.
+    ChosenVersionZero,
+    /// An available-version entry is zero.
+    AvailableVersionZero {
+        /// Zero-based index within the Available Versions list.
+        index: usize,
+    },
+}
+
+impl QuicVersionInformationValidation {
+    /// Stable validation label for summaries or agent diagnostics.
+    pub const fn label(&self) -> &'static str {
+        match self {
+            Self::ChosenVersionZero => "version_information_chosen_version_zero",
+            Self::AvailableVersionZero { .. } => "version_information_available_version_zero",
+        }
+    }
+}
+
 /// Broad transport-parameter identifier classification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QuicTransportParameterKind {
@@ -849,6 +975,14 @@ impl QuicTransportParameter {
         ))
     }
 
+    /// Construct `version_information`.
+    pub fn version_information(version_information: QuicVersionInformation) -> Self {
+        Self::known(
+            QuicKnownTransportParameter::VersionInformation,
+            version_information.encode_to_vec(),
+        )
+    }
+
     /// Preserve a caller-pinned identifier varint width.
     pub fn with_identifier_encoded_len(mut self, len: usize) -> Self {
         self.identifier_encoded_len = Some(len);
@@ -962,6 +1096,25 @@ impl QuicTransportParameter {
             return Ok(None);
         }
         decode_preferred_address_value(&self.value).map(Some)
+    }
+
+    /// Return true when this is the registered `version_information` transport
+    /// parameter.
+    pub const fn is_version_information(&self) -> bool {
+        matches!(
+            self.known_type(),
+            Some(QuicKnownTransportParameter::VersionInformation)
+        )
+    }
+
+    /// Decode the value of the registered version-information transport
+    /// parameter. Unknown, grease, provisional, and other known parameters
+    /// return `Ok(None)`.
+    pub fn version_information_value(&self) -> Result<Option<QuicVersionInformation>> {
+        if !self.is_version_information() {
+            return Ok(None);
+        }
+        decode_version_information_value(&self.value).map(Some)
     }
 
     /// Return the broad parameter identifier classification.
@@ -1104,6 +1257,9 @@ impl QuicTransportParameter {
                 if parameter.is_preferred_address() {
                     parameter.preferred_address_value()?;
                 }
+                if parameter.is_version_information() {
+                    parameter.version_information_value()?;
+                }
             }
             offset = end;
         }
@@ -1183,6 +1339,21 @@ impl QuicTransportParameter {
                     )
                 }
             }
+            Some(identifier) if self.is_version_information() => {
+                if let Ok(Some(version_information)) = self.version_information_value() {
+                    format!(
+                        "id=0x{:x} kind=version_information {}",
+                        identifier.value(),
+                        version_information.summary()
+                    )
+                } else {
+                    format!(
+                        "id=0x{:x} kind=version_information value_len={}",
+                        identifier.value(),
+                        self.value.len()
+                    )
+                }
+            }
             Some(identifier) => {
                 format!(
                     "id=0x{:x} kind={} value_len={}",
@@ -1231,6 +1402,9 @@ impl QuicTransportParameter {
         }
         if let Ok(Some(preferred_address)) = self.preferred_address_value() {
             fields.extend(preferred_address.inspection_fields());
+        }
+        if let Ok(Some(version_information)) = self.version_information_value() {
+            fields.extend(version_information.inspection_fields());
         }
         fields
     }
@@ -1411,9 +1585,53 @@ fn read_preferred_address_field<'a>(
     Ok(&bytes[start..end])
 }
 
+fn decode_version_information_value(bytes: &[u8]) -> Result<QuicVersionInformation> {
+    if bytes.len() < 4 {
+        return Err(CrafterError::buffer_too_short(
+            "quic.transport_parameter.version_information.chosen_version",
+            4,
+            bytes.len(),
+        ));
+    }
+    if bytes.len() % 4 != 0 {
+        return Err(CrafterError::invalid_field_value(
+            "quic.transport_parameter.version_information",
+            "version_information value length must be divisible by 4",
+        ));
+    }
+
+    let chosen_version = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+    let mut available_versions = Vec::new();
+    for chunk in bytes[4..].chunks_exact(4) {
+        available_versions.push(u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+    }
+
+    Ok(QuicVersionInformation::new(
+        chosen_version,
+        available_versions,
+    ))
+}
+
+fn format_quic_version_hex(version: u32) -> String {
+    format!("0x{version:08x}")
+}
+
+fn format_quic_version_list(versions: &[u32]) -> String {
+    if versions.is_empty() {
+        return "<empty>".to_string();
+    }
+    versions
+        .iter()
+        .copied()
+        .map(format_quic_version_hex)
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocols::quic::constants::{QUIC_VERSION_1, QUIC_VERSION_2};
     use crate::protocols::quic::varint::is_shortest_encoding;
     use std::net::{Ipv4Addr, Ipv6Addr};
 
@@ -1985,6 +2203,158 @@ mod tests {
                 "preferred_address transport parameter has trailing bytes",
             )
         );
+    }
+
+    #[test]
+    fn quic_transport_parameter_version_information_builds_decodes_and_inspects() -> Result<()> {
+        let version_information = QuicVersionInformation::new(
+            QUIC_VERSION_1,
+            [QUIC_VERSION_2, QUIC_VERSION_1, 0x0a0a_0a0a, 0xface_feed],
+        );
+        let parameter = QuicTransportParameter::version_information(version_information.clone());
+
+        assert_eq!(
+            parameter.identifier(),
+            Some(QuicKnownTransportParameter::VersionInformation.id())
+        );
+        assert!(parameter.is_version_information());
+        assert_eq!(
+            parameter.version_information_value()?,
+            Some(version_information.clone())
+        );
+
+        let encoded = parameter.encode_to_vec()?;
+        assert_eq!(
+            encoded,
+            [
+                0x11, 0x14, // ID + 20-byte value length
+                0x00, 0x00, 0x00, 0x01, // chosen QUIC v1
+                0x6b, 0x33, 0x43, 0xcf, // available QUIC v2
+                0x00, 0x00, 0x00, 0x01, // available QUIC v1
+                0x0a, 0x0a, 0x0a, 0x0a, // reserved grease version
+                0xfa, 0xce, 0xfe, 0xed, // unknown version
+            ]
+        );
+
+        let decoded = QuicTransportParameter::decode_sequence(&encoded)?;
+        let decoded_value = decoded[0].version_information_value()?.unwrap();
+        assert_eq!(decoded_value.chosen_version(), QUIC_VERSION_1);
+        assert_eq!(
+            decoded_value.available_versions(),
+            &[QUIC_VERSION_2, QUIC_VERSION_1, 0x0a0a_0a0a, 0xface_feed]
+        );
+        assert!(decoded_value.validation_findings().is_empty());
+        assert_eq!(
+            decoded[0].summary(),
+            "id=0x11 kind=version_information chosen_version=0x00000001 available_versions=0x6b3343cf,0x00000001,0x0a0a0a0a,0xfacefeed"
+        );
+
+        let fields = decoded[0].inspection_fields();
+        assert!(fields.contains(&(
+            "version_information_chosen_version",
+            "0x00000001".to_string(),
+        )));
+        assert!(fields.contains(&(
+            "version_information_chosen_version_label",
+            "QUIC v1".to_string(),
+        )));
+        assert!(fields.contains(&(
+            "version_information_available_versions",
+            "0x6b3343cf,0x00000001,0x0a0a0a0a,0xfacefeed".to_string(),
+        )));
+        assert_eq!(QuicTransportParameter::encode_sequence(decoded)?, encoded);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_transport_parameter_version_information_allows_empty_available() -> Result<()> {
+        let parameter = QuicTransportParameter::version_information(QuicVersionInformation::new(
+            QUIC_VERSION_2,
+            [],
+        ));
+
+        assert_eq!(
+            parameter.encode_to_vec()?,
+            [0x11, 0x04, 0x6b, 0x33, 0x43, 0xcf]
+        );
+        assert_eq!(
+            parameter.summary(),
+            "id=0x11 kind=version_information chosen_version=0x6b3343cf available_versions=<empty>"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn quic_transport_parameter_version_information_reports_validation_findings() -> Result<()> {
+        let version_information = QuicVersionInformation::new(0, [QUIC_VERSION_1, 0]);
+        assert_eq!(
+            version_information.validation_findings(),
+            vec![
+                QuicVersionInformationValidation::ChosenVersionZero,
+                QuicVersionInformationValidation::AvailableVersionZero { index: 1 },
+            ]
+        );
+        let parameter = QuicTransportParameter::version_information(version_information);
+        assert_eq!(
+            parameter
+                .version_information_value()?
+                .unwrap()
+                .validation_findings()[1]
+                .label(),
+            "version_information_available_version_zero"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn quic_transport_parameter_version_information_reports_malformed_lengths() {
+        assert_eq!(
+            QuicTransportParameter::decode_sequence([0x11, 0x00]).unwrap_err(),
+            CrafterError::buffer_too_short(
+                "quic.transport_parameter.version_information.chosen_version",
+                4,
+                0,
+            )
+        );
+
+        assert_eq!(
+            QuicTransportParameter::decode_sequence([0x11, 0x05, 0x00, 0x00, 0x00, 0x01, 0xff])
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "quic.transport_parameter.version_information",
+                "version_information value length must be divisible by 4",
+            )
+        );
+    }
+
+    #[test]
+    fn quic_transport_parameter_version_information_raw_build_preserves_bad_value() -> Result<()> {
+        let parameter = QuicTransportParameter::raw(
+            QuicKnownTransportParameter::VersionInformation.id(),
+            [0xaa],
+        );
+
+        assert_eq!(parameter.encode_to_vec()?, [0x11, 0x01, 0xaa]);
+        assert_eq!(
+            parameter.version_information_value().unwrap_err(),
+            CrafterError::buffer_too_short(
+                "quic.transport_parameter.version_information.chosen_version",
+                4,
+                1,
+            )
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn quic_transport_parameter_version_information_ignores_unknown_values() -> Result<()> {
+        let parameter =
+            QuicTransportParameter::raw(QuicVarInt::from_u64_unchecked(0x26ab), [0, 0, 0, 1]);
+
+        assert!(!parameter.is_version_information());
+        assert_eq!(parameter.version_information_value()?, None);
+        assert_eq!(parameter.value(), &[0, 0, 0, 1]);
+        Ok(())
     }
 
     #[test]
