@@ -13,10 +13,13 @@ use chacha20::ChaCha20;
 use cipher::generic_array::GenericArray;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
+use subtle::ConstantTimeEq;
 
+use super::connection_id::QUIC_CONNECTION_ID_MAX_LEN;
 use super::constants::{QUIC_VERSION_1, QUIC_VERSION_2};
 use super::frame::QuicFrame;
 use super::header::{classify_quic_header, QuicHeaderClassification, QuicLongPacketKind};
+use super::packet::{QuicRetryPacket, QUIC_RETRY_INTEGRITY_TAG_LEN};
 use super::packet_number::{len_from_header_bits, QuicPacketNumber};
 use super::varint::{encoded_len_from_prefix, QuicVarInt};
 use crate::error::{CrafterError, Result};
@@ -42,6 +45,9 @@ pub const QUIC_AES128_HEADER_PROTECTION_KEY_LEN: usize = 16;
 /// Length of the ChaCha20 header-protection key.
 pub const QUIC_CHACHA20_HEADER_PROTECTION_KEY_LEN: usize = 32;
 
+const QUIC_RETRY_INTEGRITY_KEY_LEN: usize = 16;
+const QUIC_RETRY_INTEGRITY_NONCE_LEN: usize = 12;
+
 /// RFC 9001 QUIC v1 Initial salt.
 pub const QUIC_V1_INITIAL_SALT: [u8; 20] = [
     0x38, 0x76, 0x2c, 0xf7, 0xf5, 0x59, 0x34, 0xb3, 0x4d, 0x17, 0x9a, 0xe6, 0xa4, 0xc8, 0x0c, 0xad,
@@ -52,6 +58,22 @@ pub const QUIC_V1_INITIAL_SALT: [u8; 20] = [
 pub const QUIC_V2_INITIAL_SALT: [u8; 20] = [
     0x0d, 0xed, 0xe3, 0xde, 0xf7, 0x00, 0xa6, 0xdb, 0x81, 0x93, 0x81, 0xbe, 0x6e, 0x26, 0x9d, 0xcb,
     0xf9, 0xbd, 0x2e, 0xd9,
+];
+
+const QUIC_V1_RETRY_INTEGRITY_KEY: [u8; QUIC_RETRY_INTEGRITY_KEY_LEN] = [
+    0xbe, 0x0c, 0x69, 0x0b, 0x9f, 0x66, 0x57, 0x5a, 0x1d, 0x76, 0x6b, 0x54, 0xe3, 0x68, 0xc8, 0x4e,
+];
+
+const QUIC_V1_RETRY_INTEGRITY_NONCE: [u8; QUIC_RETRY_INTEGRITY_NONCE_LEN] = [
+    0x46, 0x15, 0x99, 0xd3, 0x5d, 0x63, 0x2b, 0xf2, 0x23, 0x98, 0x25, 0xbb,
+];
+
+const QUIC_V2_RETRY_INTEGRITY_KEY: [u8; QUIC_RETRY_INTEGRITY_KEY_LEN] = [
+    0x8f, 0xb4, 0xb0, 0x1b, 0x56, 0xac, 0x48, 0xe2, 0x60, 0xfb, 0xcb, 0xce, 0xad, 0x7c, 0xcc, 0x92,
+];
+
+const QUIC_V2_RETRY_INTEGRITY_NONCE: [u8; QUIC_RETRY_INTEGRITY_NONCE_LEN] = [
+    0xd8, 0x69, 0x69, 0xbc, 0x2d, 0x7c, 0x6d, 0x99, 0x90, 0xef, 0xb0, 0x4a,
 ];
 
 /// Placeholder context for future higher-level packet-protection helpers.
@@ -211,6 +233,28 @@ pub struct QuicInitialProtectedPayload {
     protected_payload: Vec<u8>,
     decrypted_payload: Vec<u8>,
     frames: Vec<QuicFrame>,
+}
+
+/// Retry Integrity Tag verification outcome.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuicRetryIntegrityStatus {
+    /// The supplied tag matches the source-backed computed tag.
+    Valid,
+    /// The supplied tag does not match the source-backed computed tag.
+    Invalid,
+    /// The packet version has no source-backed Retry integrity key in this crate.
+    UnsupportedVersion,
+}
+
+impl QuicRetryIntegrityStatus {
+    /// Return a stable label for summaries and diagnostics.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Valid => "valid",
+            Self::Invalid => "invalid",
+            Self::UnsupportedVersion => "unsupported_version",
+        }
+    }
 }
 
 impl QuicInitialProtectedPayload {
@@ -423,6 +467,66 @@ pub fn quic_decode_initial_protected_payload_with_keys(
     })
 }
 
+/// Build the RFC 9001 Retry pseudo-packet bytes.
+pub fn quic_retry_pseudo_packet(
+    original_destination_connection_id: impl AsRef<[u8]>,
+    retry_without_integrity_tag: impl AsRef<[u8]>,
+) -> Result<Vec<u8>> {
+    let original_destination_connection_id = original_destination_connection_id.as_ref();
+    if original_destination_connection_id.len() > QUIC_CONNECTION_ID_MAX_LEN {
+        return Err(CrafterError::invalid_field_value(
+            "quic.retry.original_destination_connection_id",
+            "QUIC Retry original destination connection ID exceeds 20 bytes",
+        ));
+    }
+
+    let retry_without_integrity_tag = retry_without_integrity_tag.as_ref();
+    let mut pseudo = Vec::with_capacity(
+        1 + original_destination_connection_id.len() + retry_without_integrity_tag.len(),
+    );
+    pseudo.push(original_destination_connection_id.len() as u8);
+    pseudo.extend_from_slice(original_destination_connection_id);
+    pseudo.extend_from_slice(retry_without_integrity_tag);
+    Ok(pseudo)
+}
+
+/// Compute a Retry Integrity Tag for a Retry packet without its tag bytes.
+pub fn quic_retry_integrity_tag(
+    version: u32,
+    original_destination_connection_id: impl AsRef<[u8]>,
+    retry_without_integrity_tag: impl AsRef<[u8]>,
+) -> Result<[u8; QUIC_RETRY_INTEGRITY_TAG_LEN]> {
+    let (key, nonce) = retry_integrity_key_nonce(version).ok_or_else(|| {
+        CrafterError::invalid_field_value(
+            "quic.retry.version",
+            "unsupported QUIC Retry integrity version",
+        )
+    })?;
+    let pseudo = quic_retry_pseudo_packet(
+        original_destination_connection_id,
+        retry_without_integrity_tag,
+    )?;
+    retry_integrity_tag_with_key(key, nonce, &pseudo)
+}
+
+/// Verify a decoded Retry packet's Retry Integrity Tag.
+pub fn quic_verify_retry_integrity_tag(
+    original_destination_connection_id: impl AsRef<[u8]>,
+    retry: &QuicRetryPacket,
+) -> Result<QuicRetryIntegrityStatus> {
+    let Some((key, nonce)) = retry_integrity_key_nonce(retry.version()) else {
+        return Ok(QuicRetryIntegrityStatus::UnsupportedVersion);
+    };
+    let retry_without_tag = &retry.as_bytes()[..retry.len() - QUIC_RETRY_INTEGRITY_TAG_LEN];
+    let pseudo = quic_retry_pseudo_packet(original_destination_connection_id, retry_without_tag)?;
+    let expected = retry_integrity_tag_with_key(key, nonce, &pseudo)?;
+    if expected.ct_eq(retry.integrity_tag()).into() {
+        Ok(QuicRetryIntegrityStatus::Valid)
+    } else {
+        Ok(QuicRetryIntegrityStatus::Invalid)
+    }
+}
+
 /// Build the AEAD nonce for an Initial packet number.
 ///
 /// QUIC left-pads the packet number to the IV length and XORs it with the IV.
@@ -608,6 +712,47 @@ fn derive_initial_packet_keys(version: u32, secret: &[u8]) -> Result<QuicInitial
             "quic.crypto.initial.hp",
         )?,
     })
+}
+
+fn retry_integrity_key_nonce(
+    version: u32,
+) -> Option<(
+    &'static [u8; QUIC_RETRY_INTEGRITY_KEY_LEN],
+    &'static [u8; QUIC_RETRY_INTEGRITY_NONCE_LEN],
+)> {
+    match version {
+        QUIC_VERSION_1 => Some((&QUIC_V1_RETRY_INTEGRITY_KEY, &QUIC_V1_RETRY_INTEGRITY_NONCE)),
+        QUIC_VERSION_2 => Some((&QUIC_V2_RETRY_INTEGRITY_KEY, &QUIC_V2_RETRY_INTEGRITY_NONCE)),
+        _ => None,
+    }
+}
+
+fn retry_integrity_tag_with_key(
+    key: &[u8; QUIC_RETRY_INTEGRITY_KEY_LEN],
+    nonce: &[u8; QUIC_RETRY_INTEGRITY_NONCE_LEN],
+    pseudo_packet: &[u8],
+) -> Result<[u8; QUIC_RETRY_INTEGRITY_TAG_LEN]> {
+    let cipher = Aes128Gcm::new_from_slice(key).map_err(|_| {
+        CrafterError::invalid_field_value(
+            "quic.retry.integrity_key",
+            "invalid AES-128-GCM Retry integrity key length",
+        )
+    })?;
+    let tag = cipher
+        .encrypt(
+            Nonce::from_slice(nonce),
+            Payload {
+                msg: &[],
+                aad: pseudo_packet,
+            },
+        )
+        .map_err(|_| {
+            CrafterError::invalid_field_value(
+                "quic.retry.integrity_tag",
+                "AES-128-GCM Retry integrity tag computation failed",
+            )
+        })?;
+    fixed_bytes::<QUIC_RETRY_INTEGRITY_TAG_LEN>(&tag, "quic.retry.integrity_tag")
 }
 
 #[derive(Debug, Clone, Copy)]

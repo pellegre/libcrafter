@@ -12,6 +12,9 @@ use crate::protocols::transport::common::{hex_bytes, impl_layer_div, impl_layer_
 use crate::{CrafterError, Result};
 
 use super::constants::{quic_version_label, quic_version_status, QUIC_VERSION_1, QUIC_VERSION_2};
+use super::crypto::{
+    quic_retry_integrity_tag, quic_verify_retry_integrity_tag, QuicRetryIntegrityStatus,
+};
 use super::frame::QuicFrame;
 use super::header::{
     classify_quic_header, QuicHeaderClassification, QuicLongPacketKind, QUIC_FIXED_BIT_MASK,
@@ -1999,6 +2002,27 @@ impl QuicRetryPacket {
         &self.integrity_tag
     }
 
+    /// Compute the Retry Integrity Tag for this packet and an Original DCID.
+    pub fn computed_integrity_tag(
+        &self,
+        original_destination_connection_id: impl AsRef<[u8]>,
+    ) -> Result<[u8; QUIC_RETRY_INTEGRITY_TAG_LEN]> {
+        let retry_without_tag = &self.raw[..self.raw.len() - QUIC_RETRY_INTEGRITY_TAG_LEN];
+        quic_retry_integrity_tag(
+            self.version,
+            original_destination_connection_id,
+            retry_without_tag,
+        )
+    }
+
+    /// Verify this packet's Retry Integrity Tag against an Original DCID.
+    pub fn integrity_status(
+        &self,
+        original_destination_connection_id: impl AsRef<[u8]>,
+    ) -> Result<QuicRetryIntegrityStatus> {
+        quic_verify_retry_integrity_tag(original_destination_connection_id, self)
+    }
+
     /// Borrow the preserved packet bytes.
     pub fn as_bytes(&self) -> &[u8] {
         &self.raw
@@ -2083,6 +2107,7 @@ pub struct QuicRetryBuilder {
     source_connection_id: Field<QuicConnectionId>,
     token: Field<Vec<u8>>,
     integrity_tag: Field<[u8; QUIC_RETRY_INTEGRITY_TAG_LEN]>,
+    computed_integrity_original_destination_connection_id: Field<Vec<u8>>,
 }
 
 impl QuicRetryBuilder {
@@ -2095,6 +2120,7 @@ impl QuicRetryBuilder {
             source_connection_id: Field::unset(),
             token: Field::unset(),
             integrity_tag: Field::unset(),
+            computed_integrity_original_destination_connection_id: Field::unset(),
         }
     }
 
@@ -2134,6 +2160,16 @@ impl QuicRetryBuilder {
         self
     }
 
+    /// Compute the Retry Integrity Tag from the supplied Original DCID.
+    pub fn compute_integrity_tag(
+        mut self,
+        original_destination_connection_id: impl AsRef<[u8]>,
+    ) -> Self {
+        self.computed_integrity_original_destination_connection_id
+            .set_user(original_destination_connection_id.as_ref().to_vec());
+        self
+    }
+
     /// Build the packet bytes.
     pub fn build(self) -> Result<QuicRetryPacket> {
         let version = self.version.into_value().ok_or_else(|| {
@@ -2154,12 +2190,42 @@ impl QuicRetryBuilder {
         let token = self.token.into_value().ok_or_else(|| {
             CrafterError::invalid_field_value("quic.retry.token", "Retry token must be set")
         })?;
-        let integrity_tag = self.integrity_tag.into_value().ok_or_else(|| {
-            CrafterError::invalid_field_value(
-                "quic.retry.integrity_tag",
-                "Retry Integrity Tag must be set",
-            )
-        })?;
+        let explicit_integrity_tag = self.integrity_tag.into_value();
+        let compute_original_destination_connection_id = self
+            .computed_integrity_original_destination_connection_id
+            .into_value();
+        let integrity_tag = match (
+            explicit_integrity_tag,
+            compute_original_destination_connection_id,
+        ) {
+            (Some(integrity_tag), None) => integrity_tag,
+            (Some(_), Some(_)) => {
+                return Err(CrafterError::invalid_field_value(
+                    "quic.retry.integrity_tag",
+                    "Retry Integrity Tag cannot be both explicit and computed",
+                ))
+            }
+            (None, Some(original_destination_connection_id)) => {
+                let retry_without_tag = retry_without_integrity_tag_bytes(
+                    first_byte,
+                    version,
+                    &destination_connection_id,
+                    &source_connection_id,
+                    &token,
+                )?;
+                quic_retry_integrity_tag(
+                    version,
+                    original_destination_connection_id,
+                    retry_without_tag,
+                )?
+            }
+            (None, None) => {
+                return Err(CrafterError::invalid_field_value(
+                    "quic.retry.integrity_tag",
+                    "Retry Integrity Tag must be set",
+                ))
+            }
+        };
 
         QuicRetryPacket::from_parts(
             first_byte,
@@ -2170,6 +2236,29 @@ impl QuicRetryBuilder {
             integrity_tag,
         )
     }
+}
+
+fn retry_without_integrity_tag_bytes(
+    first_byte: u8,
+    version: u32,
+    destination_connection_id: &QuicConnectionId,
+    source_connection_id: &QuicConnectionId,
+    token: &[u8],
+) -> Result<Vec<u8>> {
+    validate_one_byte_connection_id_len(destination_connection_id.len())?;
+    validate_one_byte_connection_id_len(source_connection_id.len())?;
+
+    let mut raw = Vec::with_capacity(
+        1 + 4 + 1 + destination_connection_id.len() + 1 + source_connection_id.len() + token.len(),
+    );
+    raw.push(first_byte);
+    raw.extend_from_slice(&version.to_be_bytes());
+    raw.push(destination_connection_id.len() as u8);
+    raw.extend_from_slice(destination_connection_id.as_bytes());
+    raw.push(source_connection_id.len() as u8);
+    raw.extend_from_slice(source_connection_id.as_bytes());
+    raw.extend_from_slice(token);
+    Ok(raw)
 }
 
 fn default_retry_first_byte(version: u32) -> Result<u8> {
@@ -3538,6 +3627,123 @@ mod tests {
     }
 
     #[test]
+    fn quic_retry_integrity_tag_verifies_rfc9001_and_rfc9369_vectors() {
+        const ODCID: [u8; 8] = [0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08];
+        let v1_retry =
+            parse_hex("ff000000010008f067a5502a4262b5746f6b656e04a265ba2eff4d829058fb3f0f2496ba");
+        let v1 = QuicRetryPacket::decode(&v1_retry).unwrap();
+        assert_eq!(v1.version(), QUIC_VERSION_1);
+        assert_eq!(v1.token(), b"token");
+        assert_eq!(
+            v1.integrity_status(ODCID).unwrap(),
+            QuicRetryIntegrityStatus::Valid
+        );
+        assert_eq!(
+            quic_verify_retry_integrity_tag(ODCID, &v1).unwrap(),
+            QuicRetryIntegrityStatus::Valid
+        );
+        assert_eq!(
+            v1.computed_integrity_tag(ODCID).unwrap(),
+            *v1.integrity_tag()
+        );
+        assert_eq!(
+            quic_retry_integrity_tag(
+                QUIC_VERSION_1,
+                ODCID,
+                &v1_retry[..v1_retry.len() - QUIC_RETRY_INTEGRITY_TAG_LEN],
+            )
+            .unwrap(),
+            *v1.integrity_tag()
+        );
+
+        let pseudo = super::super::crypto::quic_retry_pseudo_packet(
+            ODCID,
+            &v1_retry[..v1_retry.len() - QUIC_RETRY_INTEGRITY_TAG_LEN],
+        )
+        .unwrap();
+        assert_eq!(
+            &pseudo[..1 + ODCID.len()],
+            &[0x08, 0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08]
+        );
+
+        let v2_retry =
+            parse_hex("cf6b3343cf0008f067a5502a4262b5746f6b656ec8646ce8bfe33952d955543665dcc7b6");
+        let v2 = QuicRetryPacket::decode(&v2_retry).unwrap();
+        assert_eq!(v2.version(), QUIC_VERSION_2);
+        assert_eq!(v2.token(), b"token");
+        assert_eq!(
+            v2.integrity_status(ODCID).unwrap(),
+            QuicRetryIntegrityStatus::Valid
+        );
+        assert_eq!(
+            v2.computed_integrity_tag(ODCID).unwrap(),
+            *v2.integrity_tag()
+        );
+
+        let mut tampered = v1_retry;
+        let last = tampered.last_mut().unwrap();
+        *last ^= 0x01;
+        let tampered_retry = QuicRetryPacket::decode(tampered).unwrap();
+        assert_eq!(
+            tampered_retry.integrity_status(ODCID).unwrap(),
+            QuicRetryIntegrityStatus::Invalid
+        );
+    }
+
+    #[test]
+    fn quic_retry_integrity_tag_builder_computes_only_when_requested() {
+        const ODCID: [u8; 8] = [0x83, 0x94, 0xc8, 0xf0, 0x3e, 0x51, 0x57, 0x08];
+        let retry = QuicRetryPacket::builder()
+            .version(QUIC_VERSION_1)
+            .first_byte(0xff)
+            .source_connection_id(QuicConnectionId::from_bytes([
+                0xf0, 0x67, 0xa5, 0x50, 0x2a, 0x42, 0x62, 0xb5,
+            ]))
+            .token(b"token")
+            .compute_integrity_tag(ODCID)
+            .build()
+            .unwrap();
+
+        assert_eq!(
+            retry.as_bytes(),
+            parse_hex("ff000000010008f067a5502a4262b5746f6b656e04a265ba2eff4d829058fb3f0f2496ba")
+        );
+
+        assert_eq!(
+            QuicRetryPacket::builder()
+                .version(QUIC_VERSION_1)
+                .token([])
+                .integrity_tag([0xaa; QUIC_RETRY_INTEGRITY_TAG_LEN])
+                .compute_integrity_tag(ODCID)
+                .build()
+                .unwrap_err(),
+            CrafterError::invalid_field_value(
+                "quic.retry.integrity_tag",
+                "Retry Integrity Tag cannot be both explicit and computed"
+            )
+        );
+
+        let unsupported = QuicRetryPacket::builder()
+            .version(0xface_feed)
+            .first_byte(0xff)
+            .token([])
+            .integrity_tag([0xaa; QUIC_RETRY_INTEGRITY_TAG_LEN])
+            .build()
+            .unwrap();
+        assert_eq!(
+            unsupported.integrity_status(ODCID).unwrap(),
+            QuicRetryIntegrityStatus::UnsupportedVersion
+        );
+        assert_eq!(
+            unsupported.computed_integrity_tag(ODCID).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "quic.retry.version",
+                "unsupported QUIC Retry integrity version"
+            )
+        );
+    }
+
+    #[test]
     fn quic_retry_decode_inspection_fields_are_stable() {
         let retry = QuicRetryPacket::decode([
             0xf0, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0xaa, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15,
@@ -3689,5 +3895,13 @@ mod tests {
                 "Retry Integrity Tag must be set",
             )
         );
+    }
+
+    fn parse_hex(hex: &str) -> Vec<u8> {
+        assert_eq!(hex.len() % 2, 0, "test hex must have even length");
+        (0..hex.len())
+            .step_by(2)
+            .map(|index| u8::from_str_radix(&hex[index..index + 2], 16).expect("valid test hex"))
+            .collect()
     }
 }
