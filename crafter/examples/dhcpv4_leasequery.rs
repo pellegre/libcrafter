@@ -12,7 +12,7 @@ use std::net::Ipv4Addr;
 // traffic is involved.
 fn main() -> ExampleResult<()> {
     if print_help_if_requested(
-        "usage: cargo run --example dhcp_leasequery --\n\nBuild a DHCP leasequery request and a status-bearing reply, then decode both offline.",
+        "usage: cargo run --example dhcpv4_leasequery --\n\nBuild a DHCPv4 leasequery request and a status-bearing reply, then decode both offline.",
     ) {
         return Ok(());
     }
@@ -72,7 +72,7 @@ fn inspect(label: &str, src: Ipv4Addr, dst: Ipv4Addr, dhcp: Dhcpv4) -> ExampleRe
     let decoded = Packet::decode_from_l3(NetworkLayer::Ipv4, bytes.as_bytes())?;
     let dhcp = decoded
         .layer::<Dhcpv4>()
-        .expect("decoded packet should contain DHCP");
+        .expect("decoded packet should contain DHCPv4");
 
     println!("packet: {label}");
     println!("mode: offline");
