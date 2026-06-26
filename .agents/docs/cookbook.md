@@ -853,6 +853,60 @@ or timeouts and lab-safe channel and PAN/address values. Live WHAD 802.15.4
 paths are for manual or operator-gated runs, not default generated-tool
 behavior.
 
+## Build QUIC Packet Primitives
+
+Generated QUIC tools should treat `crafter` as a packet primitive, not as an
+HTTP/3, QPACK, MASQUE, DoQ, or endpoint stack. Build UDP/QUIC datagrams, frames,
+transport parameters, and opaque protected or stream bytes through
+`crafter::prelude::*`; keep application semantics in the generated tool that
+needs them.
+
+Use `Raw` for bytes whose enclosing QUIC structure is not being modeled, and
+use QUIC STREAM or DATAGRAM frame helpers when a fixture needs a packet-level
+frame boundary. Do not add an in-crate HTTP/3 parser, QPACK encoder, resolver,
+scanner, or stream reassembler to make one generated experiment easier.
+
+```rust
+use crafter::prelude::*;
+
+fn main() -> crafter::Result<()> {
+    let stream = QuicFrame::stream(
+        QuicVarInt::from_u64_unchecked(0),
+        b"opaque application stream bytes",
+    )?;
+    let initial = QuicLongHeaderPacket::initial_builder()
+        .packet_number(QuicPacketNumber::new(1))
+        .frames([stream])
+        .build()?;
+
+    let packet = Ipv4::new()
+        .src("192.0.2.10".parse().unwrap())
+        .dst("198.51.100.10".parse().unwrap())
+        / Udp::new().sport(49152).dport(4433)
+        / Quic::new().packet(QuicPacket::from_long_header(initial));
+
+    println!("{}", packet.compile()?.hexdump());
+    Ok(())
+}
+```
+
+For encrypted or unsupported QUIC content, preserve bytes instead of guessing:
+
+```rust
+use crafter::prelude::*;
+
+let packet = Ipv4::new()
+    / Udp::new().sport(49152).dport(4433)
+    / Quic::from_bytes([0xc0, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00]);
+let bytes = packet.compile()?;
+assert!(!bytes.as_bytes().is_empty());
+# Ok::<(), crafter::CrafterError>(())
+```
+
+Keep validation offline first: golden bytes, malformed cases, pcap fixtures,
+and oracle/probe dry-runs. Use provider-backed lab sessions for any later live
+traffic; do not send crafted QUIC traffic from the developer machine by default.
+
 ## Build UDP Options
 
 Generated tools should build UDP options as a separate `UdpOptions` layer after
