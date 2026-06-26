@@ -139,6 +139,16 @@ fn exports_quic_symbols() -> crafter::Result<()> {
         QuicFrame::from_handshake_done_frame(QuicHandshakeDoneFrame::new())?.frame_type_value(),
         Some(0x1e)
     );
+    let unknown = QuicUnknownFrame::new(QuicVarInt::from_u64_unchecked(0xaf), [0xde, 0xad]);
+    let unknown_frame = QuicFrame::from_unknown_frame(unknown)?;
+    assert_eq!(unknown_frame.kind(), QuicFrameKind::Unknown);
+    assert_eq!(
+        unknown_frame
+            .unknown_frame()?
+            .unwrap()
+            .raw_following_bytes(),
+        &[0xde, 0xad]
+    );
 
     let parameter = QuicTransportParameter::raw(varint, [0xde, 0xad]);
     assert_eq!(parameter.identifier(), Some(varint));

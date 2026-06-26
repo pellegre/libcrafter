@@ -430,7 +430,7 @@ pub mod exports {
         QuicRetireConnectionIdFrame, QuicRetryBuilder, QuicRetryPacket, QuicShortHeaderBuilder,
         QuicShortHeaderPacket, QuicStopSendingFrame, QuicStreamDataBlockedFrame,
         QuicStreamDirection, QuicStreamFrame, QuicStreamsBlockedFrame, QuicTransportParameter,
-        QuicVarInt, QuicVersionNegotiationBuilder, QuicVersionNegotiationPacket,
+        QuicUnknownFrame, QuicVarInt, QuicVersionNegotiationBuilder, QuicVersionNegotiationPacket,
         QuicZeroRttBuilder, QUIC_RETRY_INTEGRITY_TAG_LEN, QUIC_TRANSPORT_ERROR_AEAD_LIMIT_REACHED,
         QUIC_TRANSPORT_ERROR_APPLICATION_ERROR, QUIC_TRANSPORT_ERROR_CONNECTION_ID_LIMIT_ERROR,
         QUIC_TRANSPORT_ERROR_CONNECTION_REFUSED, QUIC_TRANSPORT_ERROR_CRYPTO_BUFFER_EXCEEDED,
