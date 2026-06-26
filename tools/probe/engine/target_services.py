@@ -147,6 +147,13 @@ from .protocols.ndp import (
     ndp_target_setup_lines,
 )
 
+# QUIC's live-capable initial observation uses the same controlled UDP echo
+# responder as the UDP behavioral cases. The QUIC plugin contributes the
+# target-service metadata; this selector lets live target setup render the
+# existing UDP responder script for QUIC plans without a second service
+# implementation.
+from .protocols.quic import quic_udp_probe_plans
+
 # BGP's target-service constants, the ``frr_bgp_peer_descriptor``, the FRR BGP
 # peer service-plan builder, the ``bgp-`` name-prefix plan selector
 # (``probe_plan_requires_bgp_peer``), and the ``bgp_peer_probe_plans`` selector
@@ -572,7 +579,7 @@ def prepare_wire_probe_target(
     dhcp_plans = dhcp_probe_plans(probe_plans)
     arp_plans = arp_probe_plans(probe_plans)
     ndp_plans = ndp_probe_plans(probe_plans)
-    udp_plans = udp_probe_plans(probe_plans)
+    udp_plans = [*udp_probe_plans(probe_plans), *quic_udp_probe_plans(probe_plans)]
     closed_udp_plans = closed_udp_probe_plans(probe_plans)
     if (
         not tcp_plans

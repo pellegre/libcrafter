@@ -907,6 +907,17 @@ Keep validation offline first: golden bytes, malformed cases, pcap fixtures,
 and oracle/probe dry-runs. Use provider-backed lab sessions for any later live
 traffic; do not send crafted QUIC traffic from the developer machine by default.
 
+The `quic-smoke` probe profile is the generated-tool behavior path. Only
+`quic-initial-udp-observation` has a Rust stimulus adapter today; it sends an
+IPv4/UDP/QUIC datagram to a controlled UDP echo target on port 4433. Version
+Negotiation, Retry, stateless reset, and protected-flow cases are planned-only
+until a stateful controlled QUIC target exists.
+
+```sh
+tools/probe/run --provider qemu --dry-run --profile quic-smoke --seed 1 --count 5 --out target/probe/quic-agent-dry-run
+tools/lab/run plan --provider qemu --dry-run --profile quic-smoke --seed 1 --role stimulus --role target --json
+```
+
 ## Build UDP Options
 
 Generated tools should build UDP options as a separate `UdpOptions` layer after

@@ -69,5 +69,19 @@ Keep QUIC validation offline by default:
 - Pcap fixtures and oracle/probe dry-run plans before any provider-backed live
   work.
 
+The focused probe profile is `quic-smoke`. It includes one live-capable case,
+`quic-initial-udp-observation`, which builds an IPv4/UDP/QUIC datagram through
+the Rust stimulus adapter and targets a controlled UDP echo service on port
+4433. The Version Negotiation, Retry, stateless reset, and protected-flow cases
+are planned-only; they record target requirements and packet bytes without
+claiming state-machine behavior.
+
+```sh
+tools/probe/run --provider qemu --dry-run --profile quic-smoke --seed 1 --count 5 --out target/probe/quic-smoke-dry-run
+tools/lab/run plan --provider qemu --dry-run --profile quic-smoke --seed 1 --role stimulus --role target --json
+```
+
 Live QUIC traffic is not a default guide path. Use provider-backed lab sessions
-and explicit dry-run plans before any authorized live validation.
+and explicit dry-run plans before any authorized live validation. A live run must
+use `--confirm-live-run`, disposable endpoints, captured artifacts under
+`target/`, and teardown.
