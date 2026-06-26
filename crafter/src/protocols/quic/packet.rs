@@ -19,9 +19,9 @@ use super::crypto::{
 };
 use super::frame::{QuicFrame, QUIC_STATELESS_RESET_TOKEN_LEN};
 use super::header::{
-    classify_quic_header, QuicHeaderClassification, QuicLongPacketKind, QUIC_FIXED_BIT_MASK,
-    QUIC_HEADER_FORM_MASK, QUIC_SHORT_KEY_PHASE_MASK, QUIC_SHORT_RESERVED_BITS_MASK,
-    QUIC_SHORT_SPIN_BIT_MASK,
+    classify_quic_header, quic_fixed_bit_label, QuicFixedBitStatus, QuicHeaderClassification,
+    QuicLongPacketKind, QUIC_FIXED_BIT_MASK, QUIC_HEADER_FORM_MASK, QUIC_SHORT_KEY_PHASE_MASK,
+    QUIC_SHORT_RESERVED_BITS_MASK, QUIC_SHORT_SPIN_BIT_MASK,
 };
 use super::packet_number::{header_bits_for_len, len_from_header_bits, QuicPacketNumber};
 use super::varint::{encoded_len_from_prefix, QuicVarInt};
@@ -730,6 +730,11 @@ impl QuicShortHeaderPacket {
         self.fixed_bit
     }
 
+    /// RFC 9287 QUIC bit status.
+    pub const fn quic_bit_status(&self) -> QuicFixedBitStatus {
+        QuicFixedBitStatus::from_fixed_bit(self.fixed_bit)
+    }
+
     /// Short-header spin bit value.
     pub const fn spin_bit(&self) -> bool {
         self.spin_bit
@@ -783,9 +788,10 @@ impl QuicShortHeaderPacket {
     /// One-line short-header summary.
     pub fn summary(&self) -> String {
         format!(
-            "ShortHeader(raw_len={}, fixed_bit={}, spin_bit={}, reserved_bits={}, key_phase={}, dcid={}, packet_number={}, protected_payload_len={})",
+            "ShortHeader(raw_len={}, fixed_bit={} quic_bit={}, spin_bit={}, reserved_bits={}, key_phase={}, dcid={}, packet_number={}, protected_payload_len={})",
             self.raw.len(),
             self.fixed_bit,
+            quic_fixed_bit_label(self.fixed_bit),
             self.spin_bit,
             self.reserved_bits,
             self.key_phase,
@@ -802,6 +808,7 @@ impl QuicShortHeaderPacket {
             ("header_form", "short".to_string()),
             ("first_byte", format!("0x{:02x}", self.first_byte)),
             ("fixed_bit", self.fixed_bit.to_string()),
+            ("quic_bit", quic_fixed_bit_label(self.fixed_bit).to_string()),
             ("spin_bit", self.spin_bit.to_string()),
             ("reserved_bits", self.reserved_bits.to_string()),
             ("key_phase", self.key_phase.to_string()),
@@ -886,6 +893,11 @@ impl QuicShortHeaderBuilder {
     pub fn fixed_bit(mut self, fixed_bit: bool) -> Self {
         self.fixed_bit.set_user(fixed_bit);
         self
+    }
+
+    /// Clear the QUIC bit explicitly for RFC 9287 greasing.
+    pub fn grease_quic_bit(self) -> Self {
+        self.fixed_bit(false)
     }
 
     /// Set the short-header spin bit used when byte 0 is not pinned explicitly.
@@ -1213,6 +1225,16 @@ impl QuicLongHeaderPacket {
         self.first_byte
     }
 
+    /// QUIC/fixed bit value.
+    pub const fn fixed_bit(&self) -> bool {
+        self.first_byte & QUIC_FIXED_BIT_MASK != 0
+    }
+
+    /// RFC 9287 QUIC bit status.
+    pub const fn quic_bit_status(&self) -> QuicFixedBitStatus {
+        QuicFixedBitStatus::from_fixed_bit(self.fixed_bit())
+    }
+
     /// QUIC version field.
     pub const fn version(&self) -> u32 {
         self.version
@@ -1291,9 +1313,12 @@ impl QuicLongHeaderPacket {
     /// One-line long-header summary.
     pub fn summary(&self) -> String {
         format!(
-            "{}(raw_len={}, version=0x{:08x}({}), dcid={}, scid={}, token_len={}, length={} length_encoded_len={}, packet_number={}, protected_payload_len={})",
+            "{}(raw_len={}, first_byte=0x{:02x}, fixed_bit={} quic_bit={}, version=0x{:08x}({}), dcid={}, scid={}, token_len={}, length={} length_encoded_len={}, packet_number={}, protected_payload_len={})",
             self.packet_kind.label(),
             self.raw.len(),
+            self.first_byte,
+            self.fixed_bit(),
+            quic_fixed_bit_label(self.fixed_bit()),
             self.version,
             quic_version_label(self.version),
             self.destination_connection_id.summary(),
@@ -1312,6 +1337,11 @@ impl QuicLongHeaderPacket {
             ("classification", "long_header_packet".to_string()),
             ("packet_kind", self.packet_kind.label().to_string()),
             ("first_byte", format!("0x{:02x}", self.first_byte)),
+            ("fixed_bit", self.fixed_bit().to_string()),
+            (
+                "quic_bit",
+                quic_fixed_bit_label(self.fixed_bit()).to_string(),
+            ),
             (
                 "version",
                 format!(
@@ -1398,6 +1428,7 @@ fn initial_token_length_overflow_error() -> CrafterError {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct QuicZeroRttBuilder {
     first_byte: Field<u8>,
+    fixed_bit: Field<bool>,
     version: Field<u32>,
     destination_connection_id: Field<QuicConnectionId>,
     source_connection_id: Field<QuicConnectionId>,
@@ -1412,6 +1443,7 @@ impl QuicZeroRttBuilder {
     pub fn new() -> Self {
         Self {
             first_byte: Field::unset(),
+            fixed_bit: Field::unset(),
             version: Field::unset(),
             destination_connection_id: Field::unset(),
             source_connection_id: Field::unset(),
@@ -1426,6 +1458,17 @@ impl QuicZeroRttBuilder {
     pub fn first_byte(mut self, first_byte: u8) -> Self {
         self.first_byte.set_user(first_byte);
         self
+    }
+
+    /// Set the QUIC bit used when byte 0 is not pinned explicitly.
+    pub fn fixed_bit(mut self, fixed_bit: bool) -> Self {
+        self.fixed_bit.set_user(fixed_bit);
+        self
+    }
+
+    /// Clear the QUIC bit explicitly for RFC 9287 greasing.
+    pub fn grease_quic_bit(self) -> Self {
+        self.fixed_bit(false)
     }
 
     /// Set the QUIC version field. Defaults to QUIC v1.
@@ -1507,9 +1550,10 @@ impl QuicZeroRttBuilder {
             .into_value()
             .unwrap_or_else(|| QuicPacketNumber::new(0));
         let packet_number_encoded_len = packet_number.effective_encoded_len()?;
+        let fixed_bit = self.fixed_bit.into_value().unwrap_or(true);
         let first_byte = match self.first_byte.into_value() {
             Some(first_byte) => first_byte,
-            None => default_zero_rtt_first_byte(version, packet_number_encoded_len)?,
+            None => default_zero_rtt_first_byte(version, packet_number_encoded_len, fixed_bit)?,
         };
         let length = match self.length.into_value() {
             Some(length) => length,
@@ -1542,6 +1586,7 @@ impl QuicZeroRttBuilder {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct QuicHandshakeBuilder {
     first_byte: Field<u8>,
+    fixed_bit: Field<bool>,
     version: Field<u32>,
     destination_connection_id: Field<QuicConnectionId>,
     source_connection_id: Field<QuicConnectionId>,
@@ -1556,6 +1601,7 @@ impl QuicHandshakeBuilder {
     pub fn new() -> Self {
         Self {
             first_byte: Field::unset(),
+            fixed_bit: Field::unset(),
             version: Field::unset(),
             destination_connection_id: Field::unset(),
             source_connection_id: Field::unset(),
@@ -1570,6 +1616,17 @@ impl QuicHandshakeBuilder {
     pub fn first_byte(mut self, first_byte: u8) -> Self {
         self.first_byte.set_user(first_byte);
         self
+    }
+
+    /// Set the QUIC bit used when byte 0 is not pinned explicitly.
+    pub fn fixed_bit(mut self, fixed_bit: bool) -> Self {
+        self.fixed_bit.set_user(fixed_bit);
+        self
+    }
+
+    /// Clear the QUIC bit explicitly for RFC 9287 greasing.
+    pub fn grease_quic_bit(self) -> Self {
+        self.fixed_bit(false)
     }
 
     /// Set the QUIC version field. Defaults to QUIC v1.
@@ -1651,9 +1708,10 @@ impl QuicHandshakeBuilder {
             .into_value()
             .unwrap_or_else(|| QuicPacketNumber::new(0));
         let packet_number_encoded_len = packet_number.effective_encoded_len()?;
+        let fixed_bit = self.fixed_bit.into_value().unwrap_or(true);
         let first_byte = match self.first_byte.into_value() {
             Some(first_byte) => first_byte,
-            None => default_handshake_first_byte(version, packet_number_encoded_len)?,
+            None => default_handshake_first_byte(version, packet_number_encoded_len, fixed_bit)?,
         };
         let length = match self.length.into_value() {
             Some(length) => length,
@@ -1686,6 +1744,7 @@ impl QuicHandshakeBuilder {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct QuicInitialBuilder {
     first_byte: Field<u8>,
+    fixed_bit: Field<bool>,
     version: Field<u32>,
     destination_connection_id: Field<QuicConnectionId>,
     source_connection_id: Field<QuicConnectionId>,
@@ -1703,6 +1762,7 @@ impl QuicInitialBuilder {
     pub fn new() -> Self {
         Self {
             first_byte: Field::unset(),
+            fixed_bit: Field::unset(),
             version: Field::unset(),
             destination_connection_id: Field::unset(),
             source_connection_id: Field::unset(),
@@ -1720,6 +1780,17 @@ impl QuicInitialBuilder {
     pub fn first_byte(mut self, first_byte: u8) -> Self {
         self.first_byte.set_user(first_byte);
         self
+    }
+
+    /// Set the QUIC bit used when byte 0 is not pinned explicitly.
+    pub fn fixed_bit(mut self, fixed_bit: bool) -> Self {
+        self.fixed_bit.set_user(fixed_bit);
+        self
+    }
+
+    /// Clear the QUIC bit explicitly for RFC 9287 greasing.
+    pub fn grease_quic_bit(self) -> Self {
+        self.fixed_bit(false)
     }
 
     /// Set the QUIC version field. Defaults to QUIC v1.
@@ -1820,9 +1891,10 @@ impl QuicInitialBuilder {
             .into_value()
             .unwrap_or_else(|| QuicPacketNumber::new(0));
         let packet_number_encoded_len = packet_number.effective_encoded_len()?;
+        let fixed_bit = self.fixed_bit.into_value().unwrap_or(true);
         let first_byte = match self.first_byte.into_value() {
             Some(first_byte) => first_byte,
-            None => default_initial_first_byte(version, packet_number_encoded_len)?,
+            None => default_initial_first_byte(version, packet_number_encoded_len, fixed_bit)?,
         };
 
         let token_length = match self.token_length.into_value() {
@@ -1956,11 +2028,16 @@ impl QuicLongHeaderPacket {
     }
 }
 
-fn default_initial_first_byte(version: u32, packet_number_encoded_len: usize) -> Result<u8> {
+fn default_initial_first_byte(
+    version: u32,
+    packet_number_encoded_len: usize,
+    fixed_bit: bool,
+) -> Result<u8> {
     let packet_number_len_bits = header_bits_for_len(packet_number_encoded_len)?;
+    let fixed_bit = if fixed_bit { QUIC_FIXED_BIT_MASK } else { 0 };
     match version {
-        QUIC_VERSION_1 => Ok(0xc0 | packet_number_len_bits),
-        QUIC_VERSION_2 => Ok(0xd0 | packet_number_len_bits),
+        QUIC_VERSION_1 => Ok(0x80 | fixed_bit | packet_number_len_bits),
+        QUIC_VERSION_2 => Ok(0x90 | fixed_bit | packet_number_len_bits),
         _ => Err(CrafterError::invalid_field_value(
             "quic.initial.version",
             "cannot infer Initial packet type bits for unsupported QUIC version",
@@ -1968,11 +2045,16 @@ fn default_initial_first_byte(version: u32, packet_number_encoded_len: usize) ->
     }
 }
 
-fn default_handshake_first_byte(version: u32, packet_number_encoded_len: usize) -> Result<u8> {
+fn default_handshake_first_byte(
+    version: u32,
+    packet_number_encoded_len: usize,
+    fixed_bit: bool,
+) -> Result<u8> {
     let packet_number_len_bits = header_bits_for_len(packet_number_encoded_len)?;
+    let fixed_bit = if fixed_bit { QUIC_FIXED_BIT_MASK } else { 0 };
     match version {
-        QUIC_VERSION_1 => Ok(0xe0 | packet_number_len_bits),
-        QUIC_VERSION_2 => Ok(0xf0 | packet_number_len_bits),
+        QUIC_VERSION_1 => Ok(0xa0 | fixed_bit | packet_number_len_bits),
+        QUIC_VERSION_2 => Ok(0xb0 | fixed_bit | packet_number_len_bits),
         _ => Err(CrafterError::invalid_field_value(
             "quic.handshake.version",
             "cannot infer Handshake packet type bits for unsupported QUIC version",
@@ -1980,11 +2062,16 @@ fn default_handshake_first_byte(version: u32, packet_number_encoded_len: usize) 
     }
 }
 
-fn default_zero_rtt_first_byte(version: u32, packet_number_encoded_len: usize) -> Result<u8> {
+fn default_zero_rtt_first_byte(
+    version: u32,
+    packet_number_encoded_len: usize,
+    fixed_bit: bool,
+) -> Result<u8> {
     let packet_number_len_bits = header_bits_for_len(packet_number_encoded_len)?;
+    let fixed_bit = if fixed_bit { QUIC_FIXED_BIT_MASK } else { 0 };
     match version {
-        QUIC_VERSION_1 => Ok(0xd0 | packet_number_len_bits),
-        QUIC_VERSION_2 => Ok(0xe0 | packet_number_len_bits),
+        QUIC_VERSION_1 => Ok(0x90 | fixed_bit | packet_number_len_bits),
+        QUIC_VERSION_2 => Ok(0xa0 | fixed_bit | packet_number_len_bits),
         _ => Err(CrafterError::invalid_field_value(
             "quic.zero_rtt.version",
             "cannot infer 0-RTT packet type bits for unsupported QUIC version",
@@ -2119,6 +2206,16 @@ impl QuicRetryPacket {
         self.first_byte
     }
 
+    /// QUIC/fixed bit value.
+    pub const fn fixed_bit(&self) -> bool {
+        self.first_byte & QUIC_FIXED_BIT_MASK != 0
+    }
+
+    /// RFC 9287 QUIC bit status.
+    pub const fn quic_bit_status(&self) -> QuicFixedBitStatus {
+        QuicFixedBitStatus::from_fixed_bit(self.fixed_bit())
+    }
+
     /// QUIC version field.
     pub const fn version(&self) -> u32 {
         self.version
@@ -2183,8 +2280,11 @@ impl QuicRetryPacket {
     /// One-line Retry summary.
     pub fn summary(&self) -> String {
         format!(
-            "Retry(raw_len={}, version=0x{:08x}({}), dcid={}, scid={}, token_len={}, tag={})",
+            "Retry(raw_len={}, first_byte=0x{:02x}, fixed_bit={} quic_bit={}, version=0x{:08x}({}), dcid={}, scid={}, token_len={}, tag={})",
             self.raw.len(),
+            self.first_byte,
+            self.fixed_bit(),
+            quic_fixed_bit_label(self.fixed_bit()),
             self.version,
             quic_version_label(self.version),
             self.destination_connection_id.summary(),
@@ -2199,6 +2299,11 @@ impl QuicRetryPacket {
         vec![
             ("classification", "retry".to_string()),
             ("first_byte", format!("0x{:02x}", self.first_byte)),
+            ("fixed_bit", self.fixed_bit().to_string()),
+            (
+                "quic_bit",
+                quic_fixed_bit_label(self.fixed_bit()).to_string(),
+            ),
             (
                 "version",
                 format!(
@@ -2244,6 +2349,7 @@ impl QuicRetryPacket {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct QuicRetryBuilder {
     first_byte: Field<u8>,
+    fixed_bit: Field<bool>,
     version: Field<u32>,
     destination_connection_id: Field<QuicConnectionId>,
     source_connection_id: Field<QuicConnectionId>,
@@ -2257,6 +2363,7 @@ impl QuicRetryBuilder {
     pub fn new() -> Self {
         Self {
             first_byte: Field::unset(),
+            fixed_bit: Field::unset(),
             version: Field::unset(),
             destination_connection_id: Field::unset(),
             source_connection_id: Field::unset(),
@@ -2270,6 +2377,17 @@ impl QuicRetryBuilder {
     pub fn first_byte(mut self, first_byte: u8) -> Self {
         self.first_byte.set_user(first_byte);
         self
+    }
+
+    /// Set the QUIC bit used when byte 0 is not pinned explicitly.
+    pub fn fixed_bit(mut self, fixed_bit: bool) -> Self {
+        self.fixed_bit.set_user(fixed_bit);
+        self
+    }
+
+    /// Clear the QUIC bit explicitly for RFC 9287 greasing.
+    pub fn grease_quic_bit(self) -> Self {
+        self.fixed_bit(false)
     }
 
     /// Set the QUIC version field.
@@ -2320,9 +2438,10 @@ impl QuicRetryBuilder {
                 "Retry packet version must be set",
             )
         })?;
+        let fixed_bit = self.fixed_bit.into_value().unwrap_or(true);
         let first_byte = match self.first_byte.into_value() {
             Some(first_byte) => first_byte,
-            None => default_retry_first_byte(version)?,
+            None => default_retry_first_byte(version, fixed_bit)?,
         };
         let destination_connection_id = self
             .destination_connection_id
@@ -2403,10 +2522,11 @@ fn retry_without_integrity_tag_bytes(
     Ok(raw)
 }
 
-fn default_retry_first_byte(version: u32) -> Result<u8> {
+fn default_retry_first_byte(version: u32, fixed_bit: bool) -> Result<u8> {
+    let fixed_bit = if fixed_bit { QUIC_FIXED_BIT_MASK } else { 0 };
     match version {
-        QUIC_VERSION_1 => Ok(0xf0),
-        QUIC_VERSION_2 => Ok(0xc0),
+        QUIC_VERSION_1 => Ok(0xb0 | fixed_bit),
+        QUIC_VERSION_2 => Ok(0x80 | fixed_bit),
         _ => Err(CrafterError::invalid_field_value(
             "quic.retry.version",
             "cannot infer Retry packet type bits for unsupported QUIC version",
@@ -2540,6 +2660,16 @@ impl QuicVersionNegotiationPacket {
         self.first_byte
     }
 
+    /// QUIC/fixed bit value.
+    pub const fn fixed_bit(&self) -> bool {
+        self.first_byte & QUIC_FIXED_BIT_MASK != 0
+    }
+
+    /// RFC 9287 QUIC bit status.
+    pub const fn quic_bit_status(&self) -> QuicFixedBitStatus {
+        QuicFixedBitStatus::from_fixed_bit(self.fixed_bit())
+    }
+
     /// Borrow the Destination Connection ID.
     pub fn destination_connection_id(&self) -> &QuicConnectionId {
         &self.destination_connection_id
@@ -2573,8 +2703,11 @@ impl QuicVersionNegotiationPacket {
     /// One-line Version Negotiation summary.
     pub fn summary(&self) -> String {
         format!(
-            "VersionNegotiation(raw_len={}, dcid={}, scid={}, supported_versions={})",
+            "VersionNegotiation(raw_len={}, first_byte=0x{:02x}, fixed_bit={} quic_bit={}, dcid={}, scid={}, supported_versions={})",
             self.raw.len(),
+            self.first_byte,
+            self.fixed_bit(),
+            quic_fixed_bit_label(self.fixed_bit()),
             self.destination_connection_id.summary(),
             self.source_connection_id.summary(),
             version_list_summary(&self.supported_versions)
@@ -2586,6 +2719,11 @@ impl QuicVersionNegotiationPacket {
         vec![
             ("classification", "version_negotiation".to_string()),
             ("first_byte", format!("0x{:02x}", self.first_byte)),
+            ("fixed_bit", self.fixed_bit().to_string()),
+            (
+                "quic_bit",
+                quic_fixed_bit_label(self.fixed_bit()).to_string(),
+            ),
             (
                 "destination_connection_id_len",
                 self.destination_connection_id.len().to_string(),
@@ -2628,6 +2766,7 @@ impl QuicVersionNegotiationPacket {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct QuicVersionNegotiationBuilder {
     first_byte: Field<u8>,
+    fixed_bit: Field<bool>,
     destination_connection_id: Field<QuicConnectionId>,
     source_connection_id: Field<QuicConnectionId>,
     supported_versions: Vec<u32>,
@@ -2638,6 +2777,7 @@ impl QuicVersionNegotiationBuilder {
     pub fn new() -> Self {
         Self {
             first_byte: Field::unset(),
+            fixed_bit: Field::unset(),
             destination_connection_id: Field::unset(),
             source_connection_id: Field::unset(),
             supported_versions: Vec::new(),
@@ -2648,6 +2788,17 @@ impl QuicVersionNegotiationBuilder {
     pub fn first_byte(mut self, first_byte: u8) -> Self {
         self.first_byte.set_user(first_byte);
         self
+    }
+
+    /// Set the QUIC bit used when byte 0 is not pinned explicitly.
+    pub fn fixed_bit(mut self, fixed_bit: bool) -> Self {
+        self.fixed_bit.set_user(fixed_bit);
+        self
+    }
+
+    /// Clear the QUIC bit explicitly for RFC 9287 greasing.
+    pub fn grease_quic_bit(self) -> Self {
+        self.fixed_bit(false)
     }
 
     /// Set the Destination Connection ID bytes.
@@ -2676,7 +2827,11 @@ impl QuicVersionNegotiationBuilder {
 
     /// Build the packet bytes.
     pub fn build(self) -> Result<QuicVersionNegotiationPacket> {
-        let first_byte = self.first_byte.into_value().unwrap_or(0xc0);
+        let fixed_bit = self.fixed_bit.into_value().unwrap_or(true);
+        let first_byte =
+            self.first_byte
+                .into_value()
+                .unwrap_or(if fixed_bit { 0xc0 } else { 0x80 });
         let destination_connection_id = self
             .destination_connection_id
             .into_value()
@@ -2872,7 +3027,7 @@ mod tests {
 
         assert_eq!(
             packet.summary(),
-            "Quic(raw_len=13, packets=0, header=long kind=Initial version=0x00000001(QUIC v1) dcid=len=4 value=8394c8f0 scid=len=1 value=aa protected_or_raw_len=1, frames=0, transport_parameters=0)"
+            "Quic(raw_len=13, packets=0, header=long kind=Initial first_byte=0xc3 fixed_bit=true quic_bit=set version=0x00000001(QUIC v1) dcid=len=4 value=8394c8f0 scid=len=1 value=aa protected_or_raw_len=1, frames=0, transport_parameters=0)"
         );
         let show = packet.show();
         assert!(show.contains("classification: long_header"), "{show}");
@@ -2891,7 +3046,7 @@ mod tests {
 
         assert_eq!(
             quic_packet.summary(),
-            "raw_len=7 header=short-ambiguous first_byte=0x40 fixed_bit=true"
+            "raw_len=7 header=short-ambiguous first_byte=0x40 fixed_bit=true quic_bit=set"
         );
         let fields = quic_packet.inspection_fields();
         assert!(fields.contains(&("classification", "short_header_ambiguous".to_string())));
@@ -3003,7 +3158,7 @@ mod tests {
         assert_eq!(short.as_bytes(), bytes);
         assert_eq!(
             short.summary(),
-            "ShortHeader(raw_len=9, fixed_bit=true, spin_bit=false, reserved_bits=3, key_phase=true, dcid=len=4 value=8394c8f0, packet_number=value=4660 encoded_len=2, protected_payload_len=2)"
+            "ShortHeader(raw_len=9, fixed_bit=true quic_bit=set, spin_bit=false, reserved_bits=3, key_phase=true, dcid=len=4 value=8394c8f0, packet_number=value=4660 encoded_len=2, protected_payload_len=2)"
         );
 
         let packet = QuicPacket::decode_short_header(bytes, 4).unwrap();
@@ -3043,7 +3198,7 @@ mod tests {
         assert_eq!(packet.as_bytes(), bytes);
         assert_eq!(
             packet.summary(),
-            "raw_len=7 header=short-ambiguous first_byte=0x40 fixed_bit=true"
+            "raw_len=7 header=short-ambiguous first_byte=0x40 fixed_bit=true quic_bit=set"
         );
     }
 
@@ -3128,6 +3283,88 @@ mod tests {
         assert_eq!(decoded.first_byte(), 0x36);
         assert!(!decoded.fixed_bit());
         assert_eq!(decoded.packet_number().value(), 0x01_02_03);
+        Ok(())
+    }
+
+    #[test]
+    fn quic_bit_grease_packet_builders_clear_quic_bit_when_requested() -> crate::Result<()> {
+        let short = QuicShortHeaderPacket::builder()
+            .grease_quic_bit()
+            .packet_number(QuicPacketNumber::new(0x01))
+            .build()?;
+        assert_eq!(short.first_byte(), 0x00);
+        assert_eq!(short.quic_bit_status(), QuicFixedBitStatus::GreasedCleared);
+        assert!(short.summary().contains("quic_bit=greased_cleared"));
+        assert_eq!(
+            QuicShortHeaderPacket::decode(short.as_bytes(), 0)?.quic_bit_status(),
+            QuicFixedBitStatus::GreasedCleared
+        );
+
+        let initial = QuicInitialBuilder::new()
+            .grease_quic_bit()
+            .packet_number(QuicPacketNumber::new(0x01))
+            .payload([0xaa])
+            .build()?;
+        assert_eq!(initial.first_byte(), 0x80);
+        assert_eq!(
+            initial.quic_bit_status(),
+            QuicFixedBitStatus::GreasedCleared
+        );
+        assert!(initial.summary().contains("quic_bit=greased_cleared"));
+        assert_eq!(
+            QuicLongHeaderPacket::decode(initial.as_bytes())?.quic_bit_status(),
+            QuicFixedBitStatus::GreasedCleared
+        );
+
+        let handshake = QuicHandshakeBuilder::new()
+            .grease_quic_bit()
+            .packet_number(QuicPacketNumber::new(0x01))
+            .payload([0xbb])
+            .build()?;
+        assert_eq!(handshake.first_byte(), 0xa0);
+        assert_eq!(
+            handshake.quic_bit_status(),
+            QuicFixedBitStatus::GreasedCleared
+        );
+
+        let zero_rtt = QuicZeroRttBuilder::new()
+            .version(QUIC_VERSION_2)
+            .grease_quic_bit()
+            .packet_number(QuicPacketNumber::new(0x01))
+            .payload([0xcc])
+            .build()?;
+        assert_eq!(zero_rtt.first_byte(), 0xa0);
+        assert_eq!(
+            zero_rtt.quic_bit_status(),
+            QuicFixedBitStatus::GreasedCleared
+        );
+
+        let retry = QuicRetryPacket::builder()
+            .version(QUIC_VERSION_1)
+            .grease_quic_bit()
+            .token([])
+            .integrity_tag([0; QUIC_RETRY_INTEGRITY_TAG_LEN])
+            .build()?;
+        assert_eq!(retry.first_byte(), 0xb0);
+        assert_eq!(retry.quic_bit_status(), QuicFixedBitStatus::GreasedCleared);
+        assert_eq!(
+            QuicRetryPacket::decode(retry.as_bytes())?.quic_bit_status(),
+            QuicFixedBitStatus::GreasedCleared
+        );
+
+        let version_negotiation = QuicVersionNegotiationPacket::builder()
+            .grease_quic_bit()
+            .supported_version(QUIC_VERSION_1)
+            .build()?;
+        assert_eq!(version_negotiation.first_byte(), 0x80);
+        assert_eq!(
+            version_negotiation.quic_bit_status(),
+            QuicFixedBitStatus::GreasedCleared
+        );
+        assert_eq!(
+            QuicVersionNegotiationPacket::decode(version_negotiation.as_bytes())?.quic_bit_status(),
+            QuicFixedBitStatus::GreasedCleared
+        );
         Ok(())
     }
 
@@ -3668,7 +3905,7 @@ mod tests {
         assert_eq!(vn.as_bytes(), bytes);
         assert_eq!(
             vn.summary(),
-            "VersionNegotiation(raw_len=24, dcid=len=4 value=8394c8f0, scid=len=1 value=aa, supported_versions=0x00000001(QUIC v1),0x6b3343cf(QUIC v2),0xfacefeed(unknown version 0xfacefeed))"
+            "VersionNegotiation(raw_len=24, first_byte=0xc0, fixed_bit=true quic_bit=set, dcid=len=4 value=8394c8f0, scid=len=1 value=aa, supported_versions=0x00000001(QUIC v1),0x6b3343cf(QUIC v2),0xfacefeed(unknown version 0xfacefeed))"
         );
 
         let packet = QuicPacket::decode(bytes).unwrap();
@@ -3832,7 +4069,7 @@ mod tests {
         assert_eq!(packet.retry().unwrap(), &retry);
         assert_eq!(
             retry.summary(),
-            "Retry(raw_len=31, version=0x00000001(QUIC v1), dcid=len=4 value=8394c8f0, scid=len=1 value=aa, token_len=3, tag=00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f)"
+            "Retry(raw_len=31, first_byte=0xf0, fixed_bit=true quic_bit=set, version=0x00000001(QUIC v1), dcid=len=4 value=8394c8f0, scid=len=1 value=aa, token_len=3, tag=00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f)"
         );
     }
 

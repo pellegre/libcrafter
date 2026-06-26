@@ -31,6 +31,54 @@ pub const QUIC_SHORT_KEY_PHASE_MASK: u8 = 0x04;
 /// QUIC packet-number length mask in byte 0.
 pub const QUIC_PACKET_NUMBER_LEN_MASK: u8 = 0x03;
 
+/// RFC 9287 QUIC bit state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuicFixedBitStatus {
+    /// The QUIC bit is set to the ordinary fixed value.
+    Set,
+    /// The QUIC bit is cleared as an explicit greasing signal.
+    GreasedCleared,
+}
+
+impl QuicFixedBitStatus {
+    /// Build a status value from the decoded fixed-bit boolean.
+    pub const fn from_fixed_bit(fixed_bit: bool) -> Self {
+        if fixed_bit {
+            Self::Set
+        } else {
+            Self::GreasedCleared
+        }
+    }
+
+    /// Stable label for summaries and diagnostics.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Set => "set",
+            Self::GreasedCleared => "greased_cleared",
+        }
+    }
+}
+
+/// Return the RFC 9287 QUIC bit status for byte 0.
+pub const fn quic_fixed_bit_status(first_byte: u8) -> QuicFixedBitStatus {
+    QuicFixedBitStatus::from_fixed_bit(first_byte & QUIC_FIXED_BIT_MASK != 0)
+}
+
+/// Return a stable RFC 9287 QUIC bit label from a fixed-bit boolean.
+pub const fn quic_fixed_bit_label(fixed_bit: bool) -> &'static str {
+    QuicFixedBitStatus::from_fixed_bit(fixed_bit).label()
+}
+
+/// Set the QUIC bit in byte 0.
+pub const fn quic_set_fixed_bit(first_byte: u8) -> u8 {
+    first_byte | QUIC_FIXED_BIT_MASK
+}
+
+/// Clear the QUIC bit in byte 0 for explicit RFC 9287 greasing.
+pub const fn quic_clear_fixed_bit(first_byte: u8) -> u8 {
+    first_byte & !QUIC_FIXED_BIT_MASK
+}
+
 /// QUIC invariant header form.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QuicHeaderForm {
@@ -138,6 +186,11 @@ impl QuicHeader {
         self
     }
 
+    /// Clear the QUIC bit explicitly for RFC 9287 greasing.
+    pub fn grease_quic_bit(self) -> Self {
+        self.fixed_bit(false)
+    }
+
     /// Set the v1/v2 long-header packet type bits while preserving other bits.
     pub fn long_packet_type_bits(mut self, bits: u8) -> Self {
         self.update_first_byte_mask(QUIC_LONG_PACKET_TYPE_MASK, (bits & 0x03) << 4);
@@ -218,6 +271,16 @@ impl QuicHeader {
     pub fn fixed_bit_value(&self) -> Option<bool> {
         self.first_byte_value()
             .map(|first| first & QUIC_FIXED_BIT_MASK != 0)
+    }
+
+    /// RFC 9287 QUIC bit status, if byte 0 is present.
+    pub fn quic_bit_status_value(&self) -> Option<QuicFixedBitStatus> {
+        self.first_byte_value().map(quic_fixed_bit_status)
+    }
+
+    /// RFC 9287 QUIC bit label, if byte 0 is present.
+    pub fn quic_bit_label_value(&self) -> Option<&'static str> {
+        self.quic_bit_status_value().map(QuicFixedBitStatus::label)
     }
 
     /// Raw v1/v2 long-header packet type bits, if byte 0 is present.
@@ -322,9 +385,12 @@ impl QuicHeaderClassification {
                 first_byte,
                 fixed_bit,
             } => format!(
-                "header=short-ambiguous first_byte=0x{first_byte:02x} fixed_bit={fixed_bit}"
+                "header=short-ambiguous first_byte=0x{first_byte:02x} fixed_bit={fixed_bit} quic_bit={}",
+                quic_fixed_bit_label(*fixed_bit)
             ),
             Self::LongHeader {
+                first_byte,
+                fixed_bit,
                 version,
                 destination_connection_id,
                 source_connection_id,
@@ -332,8 +398,9 @@ impl QuicHeaderClassification {
                 packet_kind,
                 ..
             } => format!(
-                "header=long kind={} version=0x{version:08x}({}) dcid={} scid={} protected_or_raw_len={remaining_len}",
+                "header=long kind={} first_byte=0x{first_byte:02x} fixed_bit={fixed_bit} quic_bit={} version=0x{version:08x}({}) dcid={} scid={} protected_or_raw_len={remaining_len}",
                 packet_kind.label(),
+                quic_fixed_bit_label(*fixed_bit),
                 quic_version_label(*version),
                 destination_connection_id.summary(),
                 source_connection_id.summary(),
@@ -353,6 +420,7 @@ impl QuicHeaderClassification {
                 ("header_form", "short".to_string()),
                 ("first_byte", format!("0x{first_byte:02x}")),
                 ("fixed_bit", fixed_bit.to_string()),
+                ("quic_bit", quic_fixed_bit_label(*fixed_bit).to_string()),
                 ("destination_connection_id", "contextual".to_string()),
             ],
             Self::LongHeader {
@@ -369,6 +437,7 @@ impl QuicHeaderClassification {
                 ("header_form", "long".to_string()),
                 ("first_byte", format!("0x{first_byte:02x}")),
                 ("fixed_bit", fixed_bit.to_string()),
+                ("quic_bit", quic_fixed_bit_label(*fixed_bit).to_string()),
                 ("packet_kind", packet_kind.label().to_string()),
                 (
                     "version",
@@ -571,6 +640,31 @@ mod tests {
     }
 
     #[test]
+    fn quic_bit_grease_header_helpers_label_cleared_bit() {
+        let header = QuicHeader::new()
+            .header_form(QuicHeaderForm::Long)
+            .fixed_bit(true)
+            .long_packet_type_bits(3)
+            .grease_quic_bit();
+
+        assert_eq!(header.first_byte_value(), Some(0xb0));
+        assert_eq!(header.fixed_bit_value(), Some(false));
+        assert_eq!(
+            header.quic_bit_status_value(),
+            Some(QuicFixedBitStatus::GreasedCleared)
+        );
+        assert_eq!(header.quic_bit_label_value(), Some("greased_cleared"));
+        assert_eq!(quic_fixed_bit_label(true), "set");
+        assert_eq!(quic_fixed_bit_label(false), "greased_cleared");
+        assert_eq!(
+            quic_fixed_bit_status(0x80),
+            QuicFixedBitStatus::GreasedCleared
+        );
+        assert_eq!(quic_clear_fixed_bit(0xf0), 0xb0);
+        assert_eq!(quic_set_fixed_bit(0x80), 0xc0);
+    }
+
+    #[test]
     fn quic_header_bits_reject_invalid_packet_number_length_builder() {
         assert_eq!(
             QuicHeader::new().packet_number_len(0).unwrap_err(),
@@ -652,10 +746,11 @@ mod tests {
 
         assert_eq!(
             classified.summary(),
-            "header=long kind=Initial version=0x00000001(QUIC v1) dcid=len=4 value=8394c8f0 scid=len=1 value=aa protected_or_raw_len=1"
+            "header=long kind=Initial first_byte=0xc3 fixed_bit=true quic_bit=set version=0x00000001(QUIC v1) dcid=len=4 value=8394c8f0 scid=len=1 value=aa protected_or_raw_len=1"
         );
         let fields = classified.inspection_fields();
         assert!(fields.contains(&("classification", "long_header".to_string())));
+        assert!(fields.contains(&("quic_bit", "set".to_string())));
         assert!(fields.contains(&("version", "0x00000001 (QUIC v1)".to_string())));
         assert!(fields.contains(&("destination_connection_id", "83 94 c8 f0".to_string())));
         assert!(fields.contains(&("protected_or_raw_remainder_len", "1".to_string())));
