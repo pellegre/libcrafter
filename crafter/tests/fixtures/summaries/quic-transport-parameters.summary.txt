@@ -1,0 +1,18 @@
+common-v1:
+  id=0xf kind=initial_source_connection_id value_len=4
+  id=0x1 kind=max_idle_timeout value_len=1
+  id=0x3 kind=max_udp_payload_size value_len=2
+  id=0x4 kind=initial_max_data value_len=2
+  id=0x8 kind=initial_max_streams_bidi value_len=1
+  id=0xa kind=ack_delay_exponent value_len=1
+  id=0xe kind=active_connection_id_limit value_len=1
+datagram-extension:
+  id=0x20 kind=max_datagram_frame_size value_len=2
+version-information-v2:
+  id=0x11 kind=version_information chosen_version=0x6b3343cf available_versions=0x00000001
+preferred-address:
+  id=0xd kind=preferred_address ipv4=192.0.2.10:4433 ipv6=[2001:db8::10]:4434 connection_id_len=4 connection_id=8394c8f0
+unknown-grease-duplicates:
+  id=0x1b kind=grease value_len=3
+  id=0x173e kind=unknown value_len=2
+  id=0x173e kind=unknown value_len=0

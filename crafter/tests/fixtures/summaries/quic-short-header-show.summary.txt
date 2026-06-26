@@ -1,0 +1,15 @@
+Packet(len=9, layers=1)
+  [0] Quic
+      raw_len: 9
+      packet_count: 1
+      payload_state: Unset
+      raw_bytes: 
+      frame_count: 0
+      transport_parameter_count: 0
+      classification: short_header_ambiguous
+      header_form: short
+      first_byte: 0x41
+      fixed_bit: true
+      quic_bit: set
+      destination_connection_id: contextual
+      packet: #0 raw_len=9 header=short-ambiguous first_byte=0x41 fixed_bit=true quic_bit=set

@@ -1,0 +1,7 @@
+initial-ping-crypto:
+  kind=PING type=0x1 raw_len=1
+  kind=CRYPTO offset=0 length=1 data_len=1
+datagram-len:
+  kind=DATAGRAM_LEN has_length=true length=2 data_len=2
+datagram-no-len:
+  kind=DATAGRAM has_length=false length=<none> data_len=2

@@ -1,0 +1,23 @@
+Packet(len=31, layers=1)
+  [0] Quic
+      raw_len: 31
+      packet_count: 1
+      payload_state: Unset
+      raw_bytes: 
+      frame_count: 0
+      transport_parameter_count: 0
+      classification: long_header
+      header_form: long
+      first_byte: 0xf0
+      fixed_bit: true
+      quic_bit: set
+      packet_kind: Retry
+      version: 0x00000001 (QUIC v1)
+      version_status: Permanent
+      destination_connection_id_len: 4
+      destination_connection_id: 83 94 c8 f0
+      source_connection_id_len: 1
+      source_connection_id: aa
+      invariant_header_len: 12
+      protected_or_raw_remainder_len: 19
+      packet: #0 Retry(raw_len=31, first_byte=0xf0, fixed_bit=true quic_bit=set, version=0x00000001(QUIC v1), dcid=len=4 value=8394c8f0, scid=len=1 value=aa, token_len=3, tag=00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f)

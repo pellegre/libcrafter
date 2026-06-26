@@ -1,0 +1,23 @@
+Packet(len=20, layers=1)
+  [0] Quic
+      raw_len: 20
+      packet_count: 1
+      payload_state: Unset
+      raw_bytes: 
+      frame_count: 0
+      transport_parameter_count: 0
+      classification: long_header
+      header_form: long
+      first_byte: 0xc0
+      fixed_bit: true
+      quic_bit: set
+      packet_kind: VersionNegotiation
+      version: 0x00000000 (Version Negotiation)
+      version_status: VersionNegotiation
+      destination_connection_id_len: 4
+      destination_connection_id: 83 94 c8 f0
+      source_connection_id_len: 1
+      source_connection_id: aa
+      invariant_header_len: 12
+      protected_or_raw_remainder_len: 8
+      packet: #0 VersionNegotiation(raw_len=20, first_byte=0xc0, fixed_bit=true quic_bit=set, dcid=len=4 value=8394c8f0, scid=len=1 value=aa, supported_versions=0x00000001(QUIC v1),0x6b3343cf(QUIC v2))

@@ -1,0 +1,1 @@
+Quic(raw_len=9, packets=1, header=short-ambiguous first_byte=0x41 fixed_bit=true quic_bit=set, frames=0, transport_parameters=0)

@@ -1,0 +1,2 @@
+datagram-len: kind=DATAGRAM_LEN has_length=true length=2 data_len=2
+datagram-no-len: kind=DATAGRAM has_length=false length=<none> data_len=2
