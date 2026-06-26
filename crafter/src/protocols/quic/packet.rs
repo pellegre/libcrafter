@@ -6,6 +6,8 @@
 //! not infer packet type, version, connection IDs, frame boundaries, packet
 //! protection, or endpoint behavior.
 
+use subtle::ConstantTimeEq;
+
 use crate::field::{Field, FieldState};
 use crate::packet::{Layer, LayerContext};
 use crate::protocols::transport::common::{hex_bytes, impl_layer_div, impl_layer_object};
@@ -15,7 +17,7 @@ use super::constants::{quic_version_label, quic_version_status, QUIC_VERSION_1, 
 use super::crypto::{
     quic_retry_integrity_tag, quic_verify_retry_integrity_tag, QuicRetryIntegrityStatus,
 };
-use super::frame::QuicFrame;
+use super::frame::{QuicFrame, QUIC_STATELESS_RESET_TOKEN_LEN};
 use super::header::{
     classify_quic_header, QuicHeaderClassification, QuicLongPacketKind, QUIC_FIXED_BIT_MASK,
     QUIC_HEADER_FORM_MASK, QUIC_SHORT_KEY_PHASE_MASK, QUIC_SHORT_RESERVED_BITS_MASK,
@@ -405,6 +407,16 @@ impl QuicPacket {
         self.short_header.is_some()
     }
 
+    /// Return a conservative stateless reset candidate view, if the raw bytes match RFC shape.
+    pub fn stateless_reset_candidate(&self) -> Option<QuicStatelessResetCandidate> {
+        QuicStatelessResetCandidate::decode(&self.bytes).ok()
+    }
+
+    /// Return true when this packet is a possible stateless reset candidate.
+    pub fn is_stateless_reset_candidate(&self) -> bool {
+        self.stateless_reset_candidate().is_some()
+    }
+
     /// Borrow the preserved packet bytes.
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes
@@ -468,6 +480,136 @@ impl QuicPacket {
             }
         }
         fields
+    }
+}
+
+/// Minimum RFC 9000 stateless reset datagram size.
+///
+/// A stateless reset carries short-header fixed bits, at least 38 unpredictable
+/// bits, and a terminal 16-byte Stateless Reset Token.
+pub const QUIC_STATELESS_RESET_MIN_LEN: usize = 21;
+
+/// Conservative view of a possible QUIC stateless reset datagram.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuicStatelessResetCandidate {
+    first_byte: u8,
+    token: [u8; QUIC_STATELESS_RESET_TOKEN_LEN],
+    raw: Vec<u8>,
+}
+
+impl QuicStatelessResetCandidate {
+    /// Decode a possible stateless reset from a whole UDP datagram payload.
+    ///
+    /// This checks only source-backed packet shape. Endpoint token lookup is
+    /// intentionally left to callers that have connection state.
+    pub fn decode(bytes: impl AsRef<[u8]>) -> Result<Self> {
+        let bytes = bytes.as_ref();
+        let first_byte = *bytes.first().ok_or_else(|| {
+            CrafterError::buffer_too_short("quic.stateless_reset", 1, bytes.len())
+        })?;
+        if bytes.len() < QUIC_STATELESS_RESET_MIN_LEN {
+            return Err(CrafterError::buffer_too_short(
+                "quic.stateless_reset",
+                QUIC_STATELESS_RESET_MIN_LEN,
+                bytes.len(),
+            ));
+        }
+        if first_byte & QUIC_HEADER_FORM_MASK != 0 || first_byte & QUIC_FIXED_BIT_MASK == 0 {
+            return Err(CrafterError::invalid_field_value(
+                "quic.stateless_reset",
+                "packet does not have the RFC 9000 short-header fixed-bit shape",
+            ));
+        }
+
+        let token_start = bytes.len() - QUIC_STATELESS_RESET_TOKEN_LEN;
+        let mut token = [0u8; QUIC_STATELESS_RESET_TOKEN_LEN];
+        token.copy_from_slice(&bytes[token_start..]);
+
+        Ok(Self {
+            first_byte,
+            token,
+            raw: bytes.to_vec(),
+        })
+    }
+
+    /// Return true when the bytes match the conservative stateless reset shape.
+    pub fn is_possible(bytes: impl AsRef<[u8]>) -> bool {
+        Self::decode(bytes).is_ok()
+    }
+
+    /// Raw first byte.
+    pub const fn first_byte(&self) -> u8 {
+        self.first_byte
+    }
+
+    /// QUIC/fixed bit value.
+    pub const fn fixed_bit(&self) -> bool {
+        true
+    }
+
+    /// Borrow the raw datagram prefix before the terminal token.
+    pub fn prefix_bytes(&self) -> &[u8] {
+        &self.raw[..self.raw.len() - QUIC_STATELESS_RESET_TOKEN_LEN]
+    }
+
+    /// Borrow the terminal 16-byte Stateless Reset Token candidate.
+    pub const fn stateless_reset_token(&self) -> &[u8; QUIC_STATELESS_RESET_TOKEN_LEN] {
+        &self.token
+    }
+
+    /// Constant-time comparison against a caller-supplied token.
+    pub fn token_matches(&self, token: impl AsRef<[u8]>) -> bool {
+        let token = token.as_ref();
+        if token.len() != QUIC_STATELESS_RESET_TOKEN_LEN {
+            return false;
+        }
+        let mut expected = [0u8; QUIC_STATELESS_RESET_TOKEN_LEN];
+        expected.copy_from_slice(token);
+        self.token.ct_eq(&expected).into()
+    }
+
+    /// Borrow the preserved datagram bytes.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.raw
+    }
+
+    /// Datagram length in bytes.
+    pub fn len(&self) -> usize {
+        self.raw.len()
+    }
+
+    /// Return true when no datagram bytes are present.
+    pub fn is_empty(&self) -> bool {
+        self.raw.is_empty()
+    }
+
+    /// One-line candidate summary.
+    pub fn summary(&self) -> String {
+        format!(
+            "StatelessResetCandidate(raw_len={}, fixed_bit=true, prefix_len={}, stateless_reset_token={}, endpoint_validated=false)",
+            self.raw.len(),
+            self.prefix_bytes().len(),
+            hex_bytes(&self.token),
+        )
+    }
+
+    /// Stable field/value pairs for candidate inspection.
+    pub fn inspection_fields(&self) -> Vec<(&'static str, String)> {
+        vec![
+            ("classification", "stateless_reset_candidate".to_string()),
+            ("header_form", "short".to_string()),
+            ("first_byte", format!("0x{:02x}", self.first_byte)),
+            ("fixed_bit", "true".to_string()),
+            ("prefix_len", self.prefix_bytes().len().to_string()),
+            ("prefix_bytes", hex_bytes(self.prefix_bytes())),
+            (
+                "stateless_reset_token",
+                hex_bytes(self.stateless_reset_token()),
+            ),
+            ("endpoint_validated", "false".to_string()),
+            ("raw_len", self.raw.len().to_string()),
+            ("raw_bytes", hex_bytes(&self.raw)),
+        ]
     }
 }
 
@@ -2754,6 +2896,90 @@ mod tests {
         let fields = quic_packet.inspection_fields();
         assert!(fields.contains(&("classification", "short_header_ambiguous".to_string())));
         assert!(fields.contains(&("raw_len", "7".to_string())));
+    }
+
+    #[test]
+    fn quic_stateless_reset_recognition_exposes_candidate_without_validation() {
+        let token = [
+            0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7, 0xa8, 0xa9, 0xaa, 0xab, 0xac, 0xad,
+            0xae, 0xaf,
+        ];
+        let mut datagram = vec![0x40, 0x83, 0x94, 0xc8, 0xf0];
+        datagram.extend_from_slice(&token);
+
+        let candidate = QuicStatelessResetCandidate::decode(&datagram).unwrap();
+
+        assert_eq!(candidate.first_byte(), 0x40);
+        assert!(candidate.fixed_bit());
+        assert_eq!(candidate.prefix_bytes(), [0x40, 0x83, 0x94, 0xc8, 0xf0]);
+        assert_eq!(candidate.stateless_reset_token(), &token);
+        assert!(candidate.token_matches(token));
+        assert!(!candidate.token_matches([0xff; QUIC_STATELESS_RESET_TOKEN_LEN]));
+        assert!(!candidate.token_matches([0xff; QUIC_STATELESS_RESET_TOKEN_LEN - 1]));
+        assert_eq!(candidate.as_bytes(), datagram);
+        assert_eq!(candidate.len(), QUIC_STATELESS_RESET_MIN_LEN);
+        assert!(!candidate.is_empty());
+        assert_eq!(
+            candidate.summary(),
+            "StatelessResetCandidate(raw_len=21, fixed_bit=true, prefix_len=5, stateless_reset_token=a0 a1 a2 a3 a4 a5 a6 a7 a8 a9 aa ab ac ad ae af, endpoint_validated=false)"
+        );
+        let fields = candidate.inspection_fields();
+        assert!(fields.contains(&("classification", "stateless_reset_candidate".to_string())));
+        assert!(fields.contains(&("endpoint_validated", "false".to_string())));
+
+        let packet = QuicPacket::decode(&datagram).unwrap();
+        assert!(!packet.is_short_header());
+        assert!(packet.is_stateless_reset_candidate());
+        assert_eq!(
+            packet
+                .stateless_reset_candidate()
+                .unwrap()
+                .stateless_reset_token(),
+            &token
+        );
+        assert!(QuicStatelessResetCandidate::is_possible(datagram));
+    }
+
+    #[test]
+    fn quic_stateless_reset_recognition_rejects_non_source_backed_shapes() {
+        assert_eq!(
+            QuicStatelessResetCandidate::decode([]).unwrap_err(),
+            CrafterError::buffer_too_short("quic.stateless_reset", 1, 0)
+        );
+        assert_eq!(
+            QuicStatelessResetCandidate::decode([0x40; QUIC_STATELESS_RESET_MIN_LEN - 1])
+                .unwrap_err(),
+            CrafterError::buffer_too_short(
+                "quic.stateless_reset",
+                QUIC_STATELESS_RESET_MIN_LEN,
+                QUIC_STATELESS_RESET_MIN_LEN - 1,
+            )
+        );
+        assert_eq!(
+            QuicStatelessResetCandidate::decode([0xc0; QUIC_STATELESS_RESET_MIN_LEN]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "quic.stateless_reset",
+                "packet does not have the RFC 9000 short-header fixed-bit shape",
+            )
+        );
+        assert_eq!(
+            QuicStatelessResetCandidate::decode([0x00; QUIC_STATELESS_RESET_MIN_LEN]).unwrap_err(),
+            CrafterError::invalid_field_value(
+                "quic.stateless_reset",
+                "packet does not have the RFC 9000 short-header fixed-bit shape",
+            )
+        );
+
+        let ordinary_short = QuicShortHeaderPacket::builder()
+            .destination_connection_id(QuicConnectionId::from_bytes([0x83, 0x94, 0xc8, 0xf0]))
+            .packet_number(QuicPacketNumber::new(0x1234).with_encoded_len(2))
+            .payload([0xbe, 0xef])
+            .build()
+            .unwrap();
+        assert!(QuicShortHeaderPacket::decode(ordinary_short.as_bytes(), 4).is_ok());
+        assert!(!QuicStatelessResetCandidate::is_possible(
+            ordinary_short.as_bytes()
+        ));
     }
 
     #[test]
