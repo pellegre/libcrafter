@@ -66,6 +66,9 @@ PROFILE_PLAN_DIGESTS: dict[str, str] = {
     "ospf-smoke:1": "e102a929bb6296c0172a7e9ddd8db161aabba7e5c390edec9ada931aabcc3ab4",
     "ospf-smoke:7": "c0adcbf467a43743d413aec17423c37ae5442826435c84367dbae9cacd2e1025",
     "ospf-smoke:12345": "1c65414e4d63f27f33f9b00c47ade7af96e72a468b51677d33e2dfe0001f5646",
+    "quic-smoke:1": "dc6fdb0a0d2fb9b2ad52cba0f9e0700bd356c27072c23b0dd15fdc18cc89e8c7",
+    "quic-smoke:7": "49595d06f963e164f21edad9dee3cd3580b5fb51f988657ff1f93873236958bb",
+    "quic-smoke:12345": "cbc5a6a6cc0edc5fc93db53dbd8cb80171a86bf7a24c6495498df080d8d0b556",
     "rip-smoke:1": "c47612480e42b8d425be82d6915e8a4d3e88c2049c9660dc5e36b0ceb7f83898",
     "rip-smoke:7": "775c38236cf78b4a1979d23dcbe51876aaf20717c8af6221ec0df81d354ea5e4",
     "rip-smoke:12345": "63f47505202021c685c88d86d4393ad7f5aa85baf465a192084398f971cc514c",
@@ -155,6 +158,11 @@ CASE_PLAN_DIGESTS: dict[str, str] = {
     "esp-tunnel-echo": "982ef30418b05851f42da88d28d167e3f3b2f692993afde04146219796c51296",
     "ah-transport-verify": "b9c42a15caea17c29f53759034586520f11873cdfe97125e64ebce1eac8973c5",
     "ikev2-sa-init": "0c375af8619b2b4564928107c310dad77b7c69227972e057b8c18f91bdbb391a",
+    "quic-initial-udp-observation": "71c7ff8db7fd00774b1a479aebb7e4992b98da0d80f9bb8efc67fd49afae72bc",
+    "quic-version-negotiation-observation": "e9382e4f00e501edad1a60ca375b63278ab62cc805e6300aa5d6a5fc6ef3b32f",
+    "quic-retry-observation": "85b66a8c8098fcf17843ef46aca54aa6b980d01471637b3fcfbea9b298beda35",
+    "quic-stateless-reset-observation": "5bf10cffff720854b6a7c60159e54a362799827f5b856b0914f7b6954c0aff95",
+    "quic-protected-flow-plan": "9dc5f5bf554376f93ace6227591c61d49d6317b096604f6648efca949a5cbcfd",
 }
 
 

@@ -234,6 +234,13 @@ from .protocols.ipsec import (  # noqa: F401  (re-exported for identity/back-com
 from .protocols.mqtt import (  # noqa: F401  (re-exported for identity/back-compat)
     _mqtt_probe_plan,
 )
+from .protocols.quic import (  # noqa: F401  (re-exported for identity/back-compat)
+    _quic_initial_udp_observation_probe_plan,
+    _quic_protected_flow_plan_probe_plan,
+    _quic_retry_observation_probe_plan,
+    _quic_stateless_reset_observation_probe_plan,
+    _quic_version_negotiation_observation_probe_plan,
+)
 
 
 def planned_cases(

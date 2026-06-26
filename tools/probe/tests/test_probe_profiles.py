@@ -35,6 +35,7 @@ _BEHAVIOR_CASE_COUNT = len(cases.BEHAVIOR_PROFILE_CASE_NAMES)
 _BGP_CASE_COUNT = len(cases.BGP_SESSION_PROFILE_CASE_NAMES)
 _MQTT_SMOKE_CASE_COUNT = len(cases.MQTT_SMOKE_PROFILE_CASE_NAMES)
 _OSPF_SMOKE_CASE_COUNT = len(cases.OSPF_SMOKE_PROFILE_CASE_NAMES)
+_QUIC_SMOKE_CASE_COUNT = len(cases.QUIC_SMOKE_PROFILE_CASE_NAMES)
 _SNMP_CASE_COUNT = len(cases.SNMP_SMOKE_PROFILE_CASE_NAMES)
 _BEHAVIOR_PROTOCOL_COMPOSITION = {
     "dns": 10,
@@ -137,6 +138,7 @@ class ProbeProfileMembershipTest(unittest.TestCase):
                 "ipsec",
                 "mqtt-smoke",
                 "ospf-smoke",
+                "quic-smoke",
                 "rip-smoke",
                 "smoke",
                 "snmp-smoke",
@@ -190,6 +192,25 @@ class ProbeProfileMembershipTest(unittest.TestCase):
                 self.assertIs(case.metadata["stateful"], True)
                 self.assertIs(case.metadata["planned_only"], True)
         self.assertNotIn("mqtt-connect-connack", cases.SMOKE_PROFILE_CASE_NAMES)
+
+    def test_quic_smoke_profile_selects_quic_cases(self) -> None:
+        names = cases.profile_case_names("quic-smoke")
+
+        self.assertEqual(
+            names,
+            (
+                "quic-initial-udp-observation",
+                "quic-version-negotiation-observation",
+                "quic-retry-observation",
+                "quic-stateless-reset-observation",
+                "quic-protected-flow-plan",
+            ),
+        )
+        selected = cases.profile_selected_cases("quic-smoke", [])
+        self.assertEqual([case.name for case in selected], list(names))
+        for case in selected:
+            self.assertEqual(case.metadata["protocol"], "quic")
+        self.assertNotIn("quic-initial-udp-observation", cases.BEHAVIOR_PROFILE_CASE_NAMES)
 
     def test_tcp_smoke_profile_selects_tcp_cases_with_options(self) -> None:
         names = cases.profile_case_names("tcp-smoke")
@@ -277,6 +298,11 @@ class ProbeProfileDefaultCountTest(unittest.TestCase):
     def test_behavior_profile_default_count_is_full_suite(self) -> None:
         self.assertEqual(
             cases.profile_default_count("behavior"), _BEHAVIOR_CASE_COUNT
+        )
+
+    def test_quic_smoke_profile_default_count_is_full_suite(self) -> None:
+        self.assertEqual(
+            cases.profile_default_count("quic-smoke"), _QUIC_SMOKE_CASE_COUNT
         )
         self.assertEqual(
             cases.profile_default_count("behavior"),
