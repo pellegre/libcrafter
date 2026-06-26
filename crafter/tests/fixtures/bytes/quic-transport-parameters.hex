@@ -1,0 +1,11 @@
+# QUIC transport-parameter sequence fixtures.
+# Evidence: .agents/docs/quic-manifest.md E-RFC-9000, E-RFC-9221,
+# E-RFC-9287, and E-RFC-9368; .agents/docs/quic-codepoints.md
+# transport-parameter registry rows.
+# Format: name|source-backed note|hex sequence
+
+common-v1|RFC 9000 v1 connection-ID and integer transport parameters|0f 04 83 94 c8 f0 01 01 1e 03 02 44 b0 04 02 40 64 08 01 08 0a 01 03 0e 01 02
+datagram-extension|RFC 9221 max_datagram_frame_size transport parameter|20 02 44 b0
+version-information-v2|RFC 9368 version_information with QUIC v2 chosen and QUIC v1 available|11 08 6b 33 43 cf 00 00 00 01
+preferred-address|RFC 9000 preferred_address using documentation address space|0d 2d c0 00 02 0a 11 51 20 01 0d b8 00 00 00 00 00 00 00 00 00 00 00 10 11 52 04 83 94 c8 f0 ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab
+unknown-grease-duplicates|RFC 9000 requires unknown parameters to be ignored and duplicate identifiers to be detectable|1b 03 aa bb cc 57 3e 02 de ad 57 3e 00
