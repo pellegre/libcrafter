@@ -44,9 +44,9 @@ values use `Ipv4Protocol`.
 | `capture_pcap` | Pcap and sniffing | Live-gated; plan by default | Bounded libpcap capture configuration and pcap writing on an isolated wire endpoint. | `cargo run -p crafter --example capture_pcap` |
 | `arp_who_has` | Protocols | Dry-run | Explicit Ethernet broadcast ARP who-has construction from known MAC and IPv4 values. | `cargo run -p crafter --example arp_who_has` |
 | `dns_query` | Protocols | Dry-run send/receive plus offline decode | DNS query construction, dry-run send/receive reporting, and synthetic response decoding. | `cargo run -p crafter --example dns_query -- --name example.com` |
-| `dhcp_discover` | Protocols | Dry-run by default; live-gated with `--live` | DHCP discover construction with an explicit client MAC and link-layer send options. | `cargo run -p crafter --example dhcp_discover` |
-| `dhcp_option82` | Protocols | Offline | DHCP relay agent information (option 82), classless static routes, and option overload construction and offline decode. | `cargo run -p crafter --example dhcp_option82` |
-| `dhcp_leasequery` | Protocols | Offline | DHCP leasequery, typed client identifier, authentication, and status/state packet-field construction and offline decode. | `cargo run -p crafter --example dhcp_leasequery` |
+| `dhcpv4_discover` | Protocols | Dry-run by default; live-gated with `--live` | DHCPv4 discover construction with an explicit client MAC and link-layer send options. | `cargo run -p crafter --example dhcpv4_discover` |
+| `dhcpv4_option82` | Protocols | Offline | DHCPv4 relay agent information (option 82), classless static routes, and option overload construction and offline decode. | `cargo run -p crafter --example dhcpv4_option82` |
+| `dhcpv4_leasequery` | Protocols | Offline | DHCPv4 leasequery, typed client identifier, authentication, and status/state packet-field construction and offline decode. | `cargo run -p crafter --example dhcpv4_leasequery` |
 | `icmpv4_error` | Protocols | Offline | ICMPv4 time-exceeded error with a quoted datagram and an RFC 4884/4950 MPLS extension object, compiled and decoded offline. | `cargo run -p crafter --example icmpv4_error` |
 | `icmpv6_echo` | Protocols | Offline by default; dry-run with `--send-recv` | IPv6 ICMPv6 echo construction and optional dry-run send/receive reporting. | `cargo run -p crafter --example icmpv6_echo` |
 | `snmp_get` | Protocols | Offline | SNMPv1 and SNMPv2c GetRequest packet construction, decode, show, and hexdump output. | `cargo run -p crafter --example snmp_get` |

@@ -9,12 +9,12 @@ use std::net::Ipv4Addr;
 
 fn main() -> ExampleResult<()> {
     if print_help_if_requested(
-        "usage: cargo run --example dhcp_discover -- [--live] [--iface IFACE] [--client-mac MAC] [--hostname NAME]\n\nBuild a DHCP discover with an explicit client MAC. The default is a link-layer dry-run.",
+        "usage: cargo run --example dhcpv4_discover -- [--live] [--iface IFACE] [--client-mac MAC] [--hostname NAME]\n\nBuild a DHCPv4 discover with an explicit client MAC. The default is a link-layer dry-run.",
     ) {
         return Ok(());
     }
 
-    let live = live_mode("dhcp_discover")?;
+    let live = live_mode("dhcpv4_discover")?;
     let iface = arg_or("--iface", EXAMPLE_IFACE);
     let client_mac = parse_mac_arg("--client-mac", local_mac())?;
     let hostname = arg_or("--hostname", "libcrafter-rust");
@@ -36,10 +36,10 @@ fn main() -> ExampleResult<()> {
         / dhcp;
     let dhcp = packet
         .layer::<Dhcpv4>()
-        .expect("constructed packet should contain DHCP");
+        .expect("constructed packet should contain DHCPv4");
     let report = packet.send(send_options(&iface, live, true))?;
 
-    print_advanced_safety("dhcp_discover", live);
+    print_advanced_safety("dhcpv4_discover", live);
     println!(
         "client mac: {}",
         dhcp.client_mac_value().unwrap_or(client_mac)
@@ -50,7 +50,7 @@ fn main() -> ExampleResult<()> {
         "reply filter: {}",
         reply_filter(&packet).unwrap_or_default()
     );
-    print_send_report("dhcp_discover", &packet, &report);
+    print_send_report("dhcpv4_discover", &packet, &report);
 
     Ok(())
 }

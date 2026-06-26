@@ -10,7 +10,7 @@ use std::net::Ipv4Addr;
 // traffic. The packet is compiled and decoded in-process.
 fn main() -> ExampleResult<()> {
     if print_help_if_requested(
-        "usage: cargo run --example dhcp_option82 --\n\nBuild a relay-forwarded DHCP discover with option 82, classless routes, and option overload, then decode it offline.",
+        "usage: cargo run --example dhcpv4_option82 --\n\nBuild a relay-forwarded DHCPv4 discover with option 82, classless routes, and option overload, then decode it offline.",
     ) {
         return Ok(());
     }
@@ -63,9 +63,9 @@ fn main() -> ExampleResult<()> {
     let decoded = Packet::decode_from_link(LinkType::Ethernet, bytes.as_bytes())?;
     let dhcp = decoded
         .layer::<Dhcpv4>()
-        .expect("decoded packet should contain DHCP");
+        .expect("decoded packet should contain DHCPv4");
 
-    println!("example: dhcp_option82");
+    println!("example: dhcpv4_option82");
     println!("mode: offline");
     println!("decoded summary: {}", decoded.summary());
     println!("transaction id: 0x{:08x}", dhcp.transaction_id_value());
