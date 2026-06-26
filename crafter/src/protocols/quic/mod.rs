@@ -32,7 +32,7 @@ pub use frame::{
     QuicMaxStreamsFrame, QuicNewConnectionIdFrame, QuicNewTokenFrame, QuicPathChallengeFrame,
     QuicPathResponseFrame, QuicResetStreamFrame, QuicRetireConnectionIdFrame, QuicStopSendingFrame,
     QuicStreamDataBlockedFrame, QuicStreamDirection, QuicStreamFrame, QuicStreamsBlockedFrame,
-    QuicUnknownFrame, QUIC_TRANSPORT_ERROR_AEAD_LIMIT_REACHED,
+    QuicUnknownFrame, QUIC_STATELESS_RESET_TOKEN_LEN, QUIC_TRANSPORT_ERROR_AEAD_LIMIT_REACHED,
     QUIC_TRANSPORT_ERROR_APPLICATION_ERROR, QUIC_TRANSPORT_ERROR_CONNECTION_ID_LIMIT_ERROR,
     QUIC_TRANSPORT_ERROR_CONNECTION_REFUSED, QUIC_TRANSPORT_ERROR_CRYPTO_BUFFER_EXCEEDED,
     QUIC_TRANSPORT_ERROR_CRYPTO_ERROR_END, QUIC_TRANSPORT_ERROR_CRYPTO_ERROR_START,
@@ -55,8 +55,8 @@ pub use packet_number::QuicPacketNumber;
 pub use transport_parameter::{
     is_grease_transport_parameter_id, QuicConnectionIdTransportParameter,
     QuicIntegerTransportParameter, QuicIntegerTransportParameterValidation,
-    QuicKnownTransportParameter, QuicTransportParameter, QuicTransportParameterDuplicate,
-    QuicTransportParameterKind,
+    QuicKnownTransportParameter, QuicStatelessResetToken, QuicTransportParameter,
+    QuicTransportParameterDuplicate, QuicTransportParameterKind,
 };
 pub use varint::QuicVarInt;
 

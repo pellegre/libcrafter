@@ -185,6 +185,14 @@ fn exports_quic_symbols() -> crafter::Result<()> {
             .as_bytes(),
         &[0xaa]
     );
+    assert_eq!(QUIC_STATELESS_RESET_TOKEN_LEN, 16);
+    let reset_token = QuicStatelessResetToken::new([0xcc; QUIC_STATELESS_RESET_TOKEN_LEN]);
+    let reset_token_parameter = QuicTransportParameter::stateless_reset_token(reset_token);
+    assert!(reset_token_parameter.is_stateless_reset_token());
+    assert_eq!(
+        reset_token_parameter.stateless_reset_token_value()?,
+        Some(reset_token)
+    );
 
     let quic_payload = [0xc3, 0x00, 0x00, 0x00, 0x01, 0x08, 0x00];
     let quic = Quic::from_bytes(quic_payload);

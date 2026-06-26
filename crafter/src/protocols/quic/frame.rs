@@ -8,7 +8,8 @@ use crate::{CrafterError, Result};
 
 use super::{connection_id::QUIC_CONNECTION_ID_MAX_LEN, QuicConnectionId, QuicVarInt};
 
-const QUIC_STATELESS_RESET_TOKEN_LEN: usize = 16;
+/// Length in bytes of a QUIC Stateless Reset Token.
+pub const QUIC_STATELESS_RESET_TOKEN_LEN: usize = 16;
 const QUIC_PATH_VALIDATION_DATA_LEN: usize = 8;
 
 /// QUIC transport error code: NO_ERROR.
