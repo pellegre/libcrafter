@@ -1,0 +1,3 @@
+# dhcpv6 malformed fixture: Client ID option carries a one-byte DUID.
+01 00 00 00
+00 01 00 01 aa

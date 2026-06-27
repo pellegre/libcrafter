@@ -1,0 +1,4 @@
+# dhcpv6 malformed fixture: IA_PD payload is one byte short.
+01 00 00 00
+00 19 00 0b
+00 00 00 00 00 00 00 00 00 00 00

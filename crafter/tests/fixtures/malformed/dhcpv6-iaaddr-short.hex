@@ -1,0 +1,5 @@
+# dhcpv6 malformed fixture: IAADDR payload is one byte short.
+01 00 00 00
+00 05 00 17
+00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+00 00 00 00 00 00 00
