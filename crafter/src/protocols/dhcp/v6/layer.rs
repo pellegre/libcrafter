@@ -71,6 +71,13 @@ impl Dhcpv6 {
         self
     }
 
+    /// Try to set the 24-bit DHCPv6 transaction ID.
+    pub fn try_transaction_id(mut self, transaction_id: u32) -> Result<Self> {
+        validate_transaction_id(transaction_id)?;
+        self.transaction_id.set_user(transaction_id);
+        Ok(self)
+    }
+
     /// Current transaction ID value.
     pub fn transaction_id_value(&self) -> u32 {
         self.transaction_id.value().copied().unwrap_or(0)
@@ -154,12 +161,7 @@ impl Layer for Dhcpv6 {
 
     fn compile(&self, _ctx: &LayerContext<'_>, out: &mut Vec<u8>) -> Result<()> {
         let transaction_id = self.transaction_id_value();
-        if transaction_id > DHCPV6_TRANSACTION_ID_MAX {
-            return Err(CrafterError::invalid_field_value(
-                "dhcpv6.transaction_id",
-                "value exceeds 24 bits",
-            ));
-        }
+        validate_transaction_id(transaction_id)?;
 
         out.reserve(self.encoded_dhcpv6_len());
         out.push(self.message_type_value().code());
@@ -215,6 +217,16 @@ fn decode_dhcpv6_client_server(bytes: &[u8]) -> Result<Dhcpv6> {
         transaction_id: Field::user(transaction_id),
         options: Dhcpv6Option::decode_all(&bytes[DHCPV6_CLIENT_SERVER_HEADER_LEN..])?,
     })
+}
+
+fn validate_transaction_id(transaction_id: u32) -> Result<()> {
+    if transaction_id > DHCPV6_TRANSACTION_ID_MAX {
+        return Err(CrafterError::invalid_field_value(
+            "dhcpv6.transaction_id",
+            "value exceeds 24 bits",
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -295,6 +307,70 @@ mod dhcpv6_client_header_tests {
         assert_eq!(
             error,
             CrafterError::invalid_field_value("dhcpv6.transaction_id", "value exceeds 24 bits",),
+        );
+    }
+}
+
+#[cfg(test)]
+mod dhcpv6_transaction_id_tests {
+    use super::Dhcpv6;
+    use crate::error::CrafterError;
+    use crate::packet::Packet;
+    use crate::protocols::dhcp::v6::Dhcpv6MessageType;
+
+    #[test]
+    fn dhcpv6_transaction_id_default_is_deterministic() {
+        let first = Packet::from_layer(Dhcpv6::new()).compile().unwrap();
+        let second = Packet::from_layer(Dhcpv6::default()).compile().unwrap();
+
+        assert_eq!(first.as_bytes(), &[1, 0, 0, 0]);
+        assert_eq!(first.as_bytes(), second.as_bytes());
+    }
+
+    #[test]
+    fn dhcpv6_transaction_id_explicit_value_roundtrips() {
+        let packet = Dhcpv6::new()
+            .message_type(Dhcpv6MessageType::InformationRequest)
+            .transaction_id(0x0012_3456);
+        let bytes = Packet::from_layer(packet).compile().unwrap();
+
+        assert_eq!(bytes.as_bytes(), &[11, 0x12, 0x34, 0x56]);
+        let decoded = Dhcpv6::decode(bytes.as_bytes()).unwrap();
+        assert_eq!(decoded.transaction_id_value(), 0x0012_3456);
+        assert_eq!(
+            Packet::from_layer(decoded).compile().unwrap().as_bytes(),
+            bytes.as_bytes(),
+        );
+    }
+
+    #[test]
+    fn dhcpv6_transaction_id_maximum_value_works() {
+        let packet = Dhcpv6::new().try_transaction_id(0x00ff_ffff).unwrap();
+        let bytes = Packet::from_layer(packet).compile().unwrap();
+
+        assert_eq!(bytes.as_bytes(), &[1, 0xff, 0xff, 0xff]);
+        assert_eq!(
+            Dhcpv6::decode(bytes.as_bytes())
+                .unwrap()
+                .transaction_id_value(),
+            0x00ff_ffff
+        );
+    }
+
+    #[test]
+    fn dhcpv6_transaction_id_invalid_typed_values_are_structured_errors() {
+        let expected =
+            CrafterError::invalid_field_value("dhcpv6.transaction_id", "value exceeds 24 bits");
+
+        assert_eq!(
+            Dhcpv6::new().try_transaction_id(0x0100_0000).unwrap_err(),
+            expected,
+        );
+        assert_eq!(
+            Packet::from_layer(Dhcpv6::new().transaction_id(0x0100_0000))
+                .compile()
+                .unwrap_err(),
+            expected,
         );
     }
 }
