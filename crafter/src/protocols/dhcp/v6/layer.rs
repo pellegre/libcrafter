@@ -110,9 +110,57 @@ impl Dhcpv6 {
 
     /// Create a DHCPv6 Solicit message with the supplied transaction ID.
     pub fn solicit(transaction_id: u32) -> Self {
-        Self::new()
-            .message_type(Dhcpv6MessageType::Solicit)
-            .transaction_id(transaction_id)
+        Self::client_server_message(Dhcpv6MessageType::Solicit, transaction_id)
+    }
+
+    /// Create a DHCPv6 Advertise message with the supplied transaction ID.
+    pub fn advertise(transaction_id: u32) -> Self {
+        Self::client_server_message(Dhcpv6MessageType::Advertise, transaction_id)
+    }
+
+    /// Create a DHCPv6 Request message with the supplied transaction ID.
+    pub fn request(transaction_id: u32) -> Self {
+        Self::client_server_message(Dhcpv6MessageType::Request, transaction_id)
+    }
+
+    /// Create a DHCPv6 Confirm message with the supplied transaction ID.
+    pub fn confirm(transaction_id: u32) -> Self {
+        Self::client_server_message(Dhcpv6MessageType::Confirm, transaction_id)
+    }
+
+    /// Create a DHCPv6 Renew message with the supplied transaction ID.
+    pub fn renew(transaction_id: u32) -> Self {
+        Self::client_server_message(Dhcpv6MessageType::Renew, transaction_id)
+    }
+
+    /// Create a DHCPv6 Rebind message with the supplied transaction ID.
+    pub fn rebind(transaction_id: u32) -> Self {
+        Self::client_server_message(Dhcpv6MessageType::Rebind, transaction_id)
+    }
+
+    /// Create a DHCPv6 Reply message with the supplied transaction ID.
+    pub fn reply(transaction_id: u32) -> Self {
+        Self::client_server_message(Dhcpv6MessageType::Reply, transaction_id)
+    }
+
+    /// Create a DHCPv6 Release message with the supplied transaction ID.
+    pub fn release(transaction_id: u32) -> Self {
+        Self::client_server_message(Dhcpv6MessageType::Release, transaction_id)
+    }
+
+    /// Create a DHCPv6 Decline message with the supplied transaction ID.
+    pub fn decline(transaction_id: u32) -> Self {
+        Self::client_server_message(Dhcpv6MessageType::Decline, transaction_id)
+    }
+
+    /// Create a DHCPv6 Reconfigure message with the supplied transaction ID.
+    pub fn reconfigure(transaction_id: u32) -> Self {
+        Self::client_server_message(Dhcpv6MessageType::Reconfigure, transaction_id)
+    }
+
+    /// Create a DHCPv6 Information-request message with the supplied transaction ID.
+    pub fn information_request(transaction_id: u32) -> Self {
+        Self::client_server_message(Dhcpv6MessageType::InformationRequest, transaction_id)
     }
 
     /// Create a DHCPv6 Relay-forward message body.
@@ -132,6 +180,12 @@ impl Dhcpv6 {
     /// Decode a DHCPv6 message.
     pub fn decode(bytes: &[u8]) -> Result<Self> {
         decode_dhcpv6(bytes)
+    }
+
+    fn client_server_message(message_type: Dhcpv6MessageType, transaction_id: u32) -> Self {
+        Self::new()
+            .message_type(message_type)
+            .transaction_id(transaction_id)
     }
 
     /// Set the DHCPv6 message type.

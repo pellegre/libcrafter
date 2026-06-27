@@ -64,3 +64,45 @@ fn dhcpv6_ipv6_udp_stack_preserves_udp_overrides() -> crafter::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn dhcpv6_core_builders_compile_and_decode_message_types() -> crafter::Result<()> {
+    let cases: &[(&str, fn(u32) -> Dhcpv6, Dhcpv6MessageType)] = &[
+        ("solicit", Dhcpv6::solicit, Dhcpv6MessageType::Solicit),
+        ("advertise", Dhcpv6::advertise, Dhcpv6MessageType::Advertise),
+        ("request", Dhcpv6::request, Dhcpv6MessageType::Request),
+        ("confirm", Dhcpv6::confirm, Dhcpv6MessageType::Confirm),
+        ("renew", Dhcpv6::renew, Dhcpv6MessageType::Renew),
+        ("rebind", Dhcpv6::rebind, Dhcpv6MessageType::Rebind),
+        ("reply", Dhcpv6::reply, Dhcpv6MessageType::Reply),
+        ("release", Dhcpv6::release, Dhcpv6MessageType::Release),
+        ("decline", Dhcpv6::decline, Dhcpv6MessageType::Decline),
+        (
+            "reconfigure",
+            Dhcpv6::reconfigure,
+            Dhcpv6MessageType::Reconfigure,
+        ),
+        (
+            "information-request",
+            Dhcpv6::information_request,
+            Dhcpv6MessageType::InformationRequest,
+        ),
+    ];
+
+    for (name, builder, expected) in cases {
+        let message = builder(0x0a0b0c);
+        assert_eq!(message.message_type_value(), *expected, "{name}");
+        assert_eq!(message.transaction_id_value(), 0x0a0b0c, "{name}");
+        assert!(message.options_ref().is_empty(), "{name}");
+
+        let bytes = Packet::from_layer(message).compile()?;
+        assert_eq!(bytes.as_bytes()[0], expected.code(), "{name}");
+
+        let decoded = Dhcpv6::decode(bytes.as_bytes())?;
+        assert_eq!(decoded.message_type_value(), *expected, "{name}");
+        assert_eq!(decoded.transaction_id_value(), 0x0a0b0c, "{name}");
+        assert!(decoded.options_ref().is_empty(), "{name}");
+    }
+
+    Ok(())
+}
