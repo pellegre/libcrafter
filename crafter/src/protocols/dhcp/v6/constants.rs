@@ -48,6 +48,10 @@ pub const DHCPV6_OPTION_PREFERENCE: u16 = 7;
 pub const DHCPV6_OPTION_ELAPSED_TIME: u16 = 8;
 /// DHCPv6 OPTION_RAPID_COMMIT option code.
 pub const DHCPV6_OPTION_RAPID_COMMIT: u16 = 14;
+/// DHCPv6 OPTION_IA_PD option code.
+pub const DHCPV6_OPTION_IA_PD: u16 = 25;
+/// DHCPv6 OPTION_IAPREFIX option code.
+pub const DHCPV6_OPTION_IAPREFIX: u16 = 26;
 
 /// DHCPv6 SOLICIT message type.
 pub const DHCPV6_SOLICIT: u8 = 1;
