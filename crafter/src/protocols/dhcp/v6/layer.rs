@@ -199,6 +199,16 @@ impl Dhcpv6 {
         Self::client_server_message(Dhcpv6MessageType::LeaseQueryData, transaction_id)
     }
 
+    /// Create a DHCPv6 ACTIVELEASEQUERY message with the supplied transaction ID.
+    pub fn active_leasequery(transaction_id: u32) -> Self {
+        Self::client_server_message(Dhcpv6MessageType::ActiveLeaseQuery, transaction_id)
+    }
+
+    /// Create a DHCPv6 STARTTLS message with the supplied transaction ID.
+    pub fn starttls(transaction_id: u32) -> Self {
+        Self::client_server_message(Dhcpv6MessageType::StartTls, transaction_id)
+    }
+
     /// Create a DHCPv6 ADDR-REG-INFORM message with the supplied transaction ID.
     pub fn addr_reg_inform(transaction_id: u32) -> Self {
         Self::client_server_message(Dhcpv6MessageType::AddrRegInform, transaction_id)
@@ -2379,5 +2389,78 @@ mod dhcpv6_bulk_leasequery_tests {
                 ),
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod dhcpv6_active_leasequery_tests {
+    use super::Dhcpv6;
+    use crate::packet::Packet;
+    use crate::protocols::dhcp::v6::{
+        Dhcpv6MessageType, Dhcpv6Option, Dhcpv6StatusCode, DHCPV6_ACTIVE_LEASEQUERY,
+        DHCPV6_STARTTLS,
+    };
+
+    #[test]
+    fn dhcpv6_active_leasequery_constructors_use_registered_codepoints() {
+        let active = Dhcpv6::active_leasequery(0x010203);
+        let starttls = Dhcpv6::starttls(0x0a0b0c);
+
+        assert_eq!(
+            Dhcpv6MessageType::ActiveLeaseQuery.code(),
+            DHCPV6_ACTIVE_LEASEQUERY
+        );
+        assert_eq!(Dhcpv6MessageType::StartTls.code(), DHCPV6_STARTTLS);
+        assert_eq!(
+            active.message_type_value(),
+            Dhcpv6MessageType::ActiveLeaseQuery
+        );
+        assert_eq!(starttls.message_type_value(), Dhcpv6MessageType::StartTls);
+    }
+
+    #[test]
+    fn dhcpv6_active_leasequery_decodes_options_and_summary_labels() {
+        let message = Dhcpv6::active_leasequery(0x010203)
+            .leasequery_base_time(1_000)
+            .status(Dhcpv6StatusCode::CatchUpComplete)
+            .option(Dhcpv6Option::raw(65_009u16, [0xca, 0xfe]));
+        let decoded =
+            Dhcpv6::decode(Packet::from_layer(message).compile().unwrap().as_bytes()).unwrap();
+
+        assert_eq!(
+            decoded.message_type_value(),
+            Dhcpv6MessageType::ActiveLeaseQuery,
+        );
+        assert_eq!(decoded.leasequery_base_time_value().unwrap(), Some(1_000));
+        assert_eq!(
+            decoded.status_code_value().unwrap().unwrap().status(),
+            Dhcpv6StatusCode::CatchUpComplete,
+        );
+        assert_eq!(
+            decoded.options_ref().last().unwrap().payload(),
+            &[0xca, 0xfe]
+        );
+        assert!(crate::packet::Layer::summary(&decoded).contains("activeleasequery"));
+    }
+
+    #[test]
+    fn dhcpv6_starttls_is_packet_data_only_and_roundtrips_raw_options() {
+        let message = Dhcpv6::starttls(0x0a0b0c)
+            .status(Dhcpv6StatusCode::TlsConnectionRefused)
+            .option(Dhcpv6Option::raw(65_010u16, [1, 2, 3, 4]));
+        let bytes = Packet::from_layer(message).compile().unwrap();
+        let decoded = Dhcpv6::decode(bytes.as_bytes()).unwrap();
+
+        assert_eq!(decoded.message_type_value(), Dhcpv6MessageType::StartTls);
+        assert_eq!(
+            decoded.status_code_value().unwrap().unwrap().status(),
+            Dhcpv6StatusCode::TlsConnectionRefused,
+        );
+        assert_eq!(
+            decoded.options_ref().last().unwrap().payload(),
+            &[1, 2, 3, 4]
+        );
+        assert!(crate::packet::Layer::summary(&decoded).contains("starttls"));
+        assert_eq!(Packet::from_layer(decoded).compile().unwrap(), bytes);
     }
 }
