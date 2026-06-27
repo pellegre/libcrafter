@@ -90,6 +90,11 @@ from .protocols.dhcpv4 import (
     dhcpv4_responder_descriptor,
     dhcpv4_responder_setup_lines,
 )
+from .protocols.dhcpv6 import (
+    dhcpv6_port_check_lines,
+    dhcpv6_probe_plans,
+    dhcpv6_responder_setup_lines,
+)
 
 # UDP's target-service descriptors (responder + closed-port), responder /
 # closed-port case sets, plan selectors, and the setup-script blocks (the
@@ -190,6 +195,7 @@ from .target_service_helpers import (
     TargetServiceDescriptor,
     dedupe_ints,
     plans_by_destination_port,
+    string_or,
     target_service_address_fields,
 )
 
@@ -565,6 +571,7 @@ def prepare_wire_probe_target(
     tcp_plans = tcp_probe_plans(probe_plans)
     dns_plans = dns_probe_plans(probe_plans)
     dhcpv4_plans = dhcpv4_probe_plans(probe_plans)
+    dhcpv6_plans = dhcpv6_probe_plans(probe_plans)
     arp_plans = arp_probe_plans(probe_plans)
     ndp_plans = ndp_probe_plans(probe_plans)
     udp_plans = [*udp_probe_plans(probe_plans), *quic_udp_probe_plans(probe_plans)]
@@ -573,6 +580,7 @@ def prepare_wire_probe_target(
         not tcp_plans
         and not dns_plans
         and not dhcpv4_plans
+        and not dhcpv6_plans
         and not arp_plans
         and not ndp_plans
         and not udp_plans
@@ -581,6 +589,7 @@ def prepare_wire_probe_target(
         return None
     endpoint_id = endpoint_id_resolver(target_endpoint, role=TARGET_ROLE)
     bind_ipv4 = endpoint_ipv4_resolver(target_endpoint, role=TARGET_ROLE)
+    bind_ipv6 = string_or(target_endpoint.get("ipv6"), "")
     target_interface = endpoint_interface_resolver(target_endpoint, role=TARGET_ROLE)
     open_ports = dedupe_ints(
         int(plan["destination_port"])
@@ -598,10 +607,12 @@ def prepare_wire_probe_target(
     script = target_service_setup_script(
         artifact_root=artifact_root,
         bind_ipv4=bind_ipv4,
+        bind_ipv6=bind_ipv6,
         open_ports=open_ports,
         closed_ports=closed_ports,
         dns_plans=dns_plans,
         dhcpv4_plans=dhcpv4_plans,
+        dhcpv6_plans=dhcpv6_plans,
         arp_plans=arp_plans,
         ndp_plans=ndp_plans,
         udp_plans=udp_plans,
@@ -653,7 +664,9 @@ def target_service_setup_script(
     open_ports: Sequence[int],
     closed_ports: Sequence[int],
     dns_plans: Sequence[JSONObject],
+    bind_ipv6: str = "",
     dhcpv4_plans: Sequence[JSONObject] = (),
+    dhcpv6_plans: Sequence[JSONObject] = (),
     arp_plans: Sequence[JSONObject] = (),
     ndp_plans: Sequence[JSONObject] = (),
     udp_plans: Sequence[JSONObject] = (),
@@ -673,6 +686,7 @@ def target_service_setup_script(
         f"tcp_bind_ipv4={shlex.quote(bind_ipv4)}",
         f"dns_bind_ipv4={shlex.quote(bind_ipv4)}",
         f"dhcpv4_bind_ipv4={shlex.quote(bind_ipv4)}",
+        f"dhcpv6_bind_ipv6={shlex.quote(bind_ipv6)}",
         f"udp_bind_ipv4={shlex.quote(bind_ipv4)}",
         f"target_interface={shlex.quote(target_interface)}",
         'mkdir -p "$artifact_root"',
@@ -712,6 +726,22 @@ def target_service_setup_script(
         "    sock.close()",
         "PY",
         "}",
+        "check_udp6_port_free() {",
+        "  python3 - \"$1\" \"$2\" <<'PY'",
+        "import socket",
+        "import sys",
+        "bind_ip = sys.argv[1]",
+        "port = int(sys.argv[2])",
+        "sock = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)",
+        "try:",
+        "    sock.bind((bind_ip, port))",
+        "except OSError as exc:",
+        "    print(f'udp6 port [{bind_ip}]:{port} is not free: {exc}', file=sys.stderr)",
+        "    sys.exit(1)",
+        "finally:",
+        "    sock.close()",
+        "PY",
+        "}",
     ]
     # The DNS per-port UDP port-free check moved to
     # ``protocols.dns.dns_port_check_lines``; render it here so the script bytes
@@ -719,6 +749,9 @@ def target_service_setup_script(
     lines.extend(dns_port_check_lines(dns_plans))
     # DHCPv4 renders its per-port UDP free checks with the materialized plans.
     lines.extend(dhcpv4_port_check_lines(dhcpv4_plans))
+    # DHCPv6 renders its per-port UDP/IPv6 free checks with the materialized
+    # plans; the live caller supplies the target endpoint's IPv6 address.
+    lines.extend(dhcpv6_port_check_lines(dhcpv6_plans))
     # The closed-TCP-port free-check moved to
     # ``protocols.tcp.tcp_closed_port_check_lines``; render it here so the script
     # bytes stay byte-identical to the legacy inline ``for port in closed_ports:``
@@ -754,6 +787,14 @@ def target_service_setup_script(
         dhcpv4_responder_setup_lines(
             artifact_root=artifact_root,
             dhcpv4_plans=dhcpv4_plans,
+        )
+    )
+    # DHCPv6 renders its responder heredoc and launch block with materialized
+    # plans and binds only on the target endpoint IPv6 address supplied above.
+    lines.extend(
+        dhcpv6_responder_setup_lines(
+            artifact_root=artifact_root,
+            dhcpv6_plans=dhcpv6_plans,
         )
     )
     # The UDP responder heredoc + launch block moved to
@@ -839,6 +880,9 @@ __all__ = [
     "dedupe_ints",
     "dhcpv4_probe_plans",
     "dhcpv4_responder_descriptor",
+    "dhcpv6_probe_plans",
+    "dhcpv6_port_check_lines",
+    "dhcpv6_responder_setup_lines",
     "dns_probe_plans",
     "dns_responder_descriptor",
     "mqtt_broker_descriptor",

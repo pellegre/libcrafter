@@ -165,10 +165,25 @@ class Dhcpv6ProbePlanTest(unittest.TestCase):
         services = setup["services"]
         self.assertEqual(len(services), 1)
         self.assertEqual(services[0]["name"], "dhcpv6-controlled-responder")
+        self.assertEqual(services[0]["kind"], "dhcpv6-controlled-responder")
         self.assertEqual(services[0]["protocol"], "udp")
         self.assertEqual(services[0]["port"], 547)
-        self.assertTrue(services[0]["planned_only"])
+        self.assertEqual(services[0]["request_count"], 1)
+        self.assertIn("reply", services[0]["expected_replies"])
+        self.assertIn(
+            "live-artifacts/probe/target-services/dhcpv6-responder-547.stdout.txt",
+            services[0]["artifacts"],
+        )
         self.assertFalse(setup["starts_services"])
+
+    def test_live_target_service_setup_would_start_inside_lab_endpoint(self) -> None:
+        setup = target_services.target_service_setup_plan(
+            probe_plans=[_dhcpv6_plan(INFO_REQUEST_CASE)],
+            dry_run=False,
+        )
+
+        self.assertTrue(setup["starts_services"])
+        self.assertEqual(setup["services"][0]["runtime"], "probe-dhcpv6-reference")
 
 
 if __name__ == "__main__":

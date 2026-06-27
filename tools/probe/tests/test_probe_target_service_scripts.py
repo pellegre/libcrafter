@@ -39,6 +39,41 @@ def _dns_plan(*, port: int = 53, sequence: int = 0) -> dict[str, object]:
     }
 
 
+def _dhcpv6_plan(*, port: int = 547, sequence: int = 0) -> dict[str, object]:
+    return {
+        "case": "dhcpv6-information-request-reply",
+        "sequence": sequence,
+        "destination_port": port,
+        "source_port": 546,
+        "source_ipv6": "2001:db8::10",
+        "target_ipv6": "2001:db8::20",
+        "dhcpv6": {
+            "message_type": "information-request",
+            "message_type_code": 11,
+            "expected_message_type": "reply",
+            "expected_message_type_code": 7,
+            "transaction_id": 0x010203,
+            "expected_options": [
+                {"code": 2, "name": "server_identifier", "duid_hex": "0003000100005e005301"}
+            ],
+        },
+        "dhcpv6_sends": [
+            {
+                "send_index": 0,
+                "message_type": "information-request",
+                "message_type_code": 11,
+                "transaction_id": 0x010203,
+            }
+        ],
+        "target_service": {
+            "kind": "dhcpv6-controlled-responder",
+            "bind_ipv6": "2001:db8::20",
+            "source_ipv6": "2001:db8::10",
+            "port": port,
+        },
+    }
+
+
 def _tcp_plan(*, case: str, port: int, sequence: int = 0) -> dict[str, object]:
     return {
         "case": case,
@@ -116,6 +151,25 @@ class TargetServiceScriptTest(unittest.TestCase):
         self.assertIn('cleanup="$artifact_root/cleanup.sh"', script)
         self.assertIn("echo target_service_setup=ok", script)
 
+    def test_setup_script_binds_and_starts_dhcpv6_responder(self) -> None:
+        script = ts.target_service_setup_script(
+            artifact_root="/root/libcrafter/artifacts/probe/target-services",
+            bind_ipv4="10.77.0.20",
+            bind_ipv6="2001:db8::20",
+            open_ports=[],
+            closed_ports=[],
+            dns_plans=[],
+            dhcpv6_plans=[_dhcpv6_plan(port=547)],
+        )
+
+        self.assertIn("dhcpv6_bind_ipv6=2001:db8::20", script)
+        self.assertIn('check_udp6_port_free "$dhcpv6_bind_ipv6" 547', script)
+        self.assertIn("socket.AF_INET6", script)
+        self.assertIn("dhcpv6-plans.json", script)
+        self.assertIn("dhcpv6-responder.py", script)
+        self.assertIn("def response_for(data):", script)
+        self.assertIn("echo dhcpv6_responder_547=running", script)
+
     def test_setup_script_without_services_only_verifies_closed_ports(self) -> None:
         script = ts.target_service_setup_script(
             artifact_root="/root/libcrafter/artifacts/probe/target-services",
@@ -160,6 +214,24 @@ class TargetServiceSetupPlanTest(unittest.TestCase):
         )
         self.assertTrue(plan["starts_services"])
         self.assertEqual(plan["closed_tcp_ports"][0]["state"], "verified-unbound")
+
+    def test_dry_run_plan_includes_dhcpv6_responder_artifacts(self) -> None:
+        plan = ts.target_service_setup_plan(
+            probe_plans=[_dhcpv6_plan(port=547)],
+            dry_run=True,
+        )
+
+        self.assertFalse(plan["starts_services"])
+        self.assertEqual(len(plan["services"]), 1)
+        service = plan["services"][0]
+        self.assertEqual(service["name"], "dhcpv6-controlled-responder")
+        self.assertEqual(service["protocol"], "udp")
+        self.assertEqual(service["port"], 547)
+        self.assertEqual(service["bind_ipv6"], "2001:db8::20")
+        self.assertEqual(service["source_ipv6"], "2001:db8::10")
+        self.assertEqual(service["request_count"], 1)
+        self.assertIn("reply", service["expected_replies"])
+        self.assertIn("dhcpv6-plans.json", service["artifacts"][0])
 
     def test_dry_run_plan_includes_bgp_peer_service_from_kind(self) -> None:
         plan = ts.target_service_setup_plan(

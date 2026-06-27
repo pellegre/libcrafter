@@ -112,7 +112,7 @@ def target_service_address_fields(plan: Mapping[str, JSONValue]) -> JSONObject:
 def probe_plan_send_count(plan: Mapping[str, JSONValue]) -> int:
     """Return the number of endpoint sends represented by a probe plan."""
 
-    for key in ("sends", "dhcpv4_sends", "arp_sends", "udp_sends"):
+    for key in ("sends", "dhcpv4_sends", "dhcpv6_sends", "arp_sends", "udp_sends"):
         value = plan.get(key)
         if isinstance(value, Sequence) and not isinstance(
             value, (str, bytes, bytearray)
